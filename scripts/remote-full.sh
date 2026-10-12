@@ -8,6 +8,12 @@
 #   COMMIT defaults to HEAD. The log lands in
 #   $XO_REMOTE_OUT (default bench/results/remote/<commit>.log, not
 #   committed by this script).
+#   XO_REMOTE_PKGS: the packages to test (default every package but
+#   runs/), e.g. ./internal/selfhost; XO_REMOTE_TESTFLAGS: more go test
+#   flags (e.g. -v for per-test times). XO_SELFHOST_JOBS is the
+#   instance's core count (internal/selfhost/jobs_test.go), unless set
+#   here; XO_SELFHOST_HEAVY_JOBS passes through when set. The log ends
+#   with the peak memory in use (free -m, sampled every 10 s).
 #
 # Safety: the instance shuts itself down (and so terminates, by
 # instance-initiated-shutdown-behavior) after XO_REMOTE_MAX_MIN minutes
@@ -95,10 +101,16 @@ bundle=$(mktemp -t xo-bundle).bundle
 git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
 scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$bundle" "ec2-user@$ip:xo.bundle"
 rm -f "$bundle"
+pkgs=${XO_REMOTE_PKGS:-'$(go list ./... 2>/dev/null | grep -v /runs/)'}
+jobs=${XO_SELFHOST_JOBS:-'$(nproc)'}
+heavy=""; [ -n "${XO_SELFHOST_HEAVY_JOBS:-}" ] && heavy="XO_SELFHOST_HEAVY_JOBS=$XO_SELFHOST_HEAVY_JOBS"
 log "running the full suite (XO_SELFHOST_TIER=full) on $commit"
 ssh_ "set -o pipefail; export PATH=/usr/local/go/bin:\$PATH; git clone -q xo.bundle xo && cd xo && git checkout -q $commit && \
   { uname -a; nproc; free -g; go version; clang --version | head -1; } && \
-  XO_SELFHOST_TIER=full go test -count=1 -timeout 240m \$(go list ./... 2>/dev/null | grep -v /runs/) 2>&1" > "$out" || true
+  { while sleep 10; do free -m | awk '/^Mem:/ {print \$3}'; done > ../mem.txt 2>/dev/null </dev/null & sampler=\$!; } && \
+  echo XO_SELFHOST_JOBS=$jobs $heavy && \
+  { XO_SELFHOST_TIER=full XO_SELFHOST_JOBS=$jobs $heavy go test -count=1 -timeout 240m ${XO_REMOTE_TESTFLAGS:-} $pkgs 2>&1; \
+    kill \$sampler; echo \"remote-full: peak memory in use \$(sort -n ../mem.txt | tail -1) MB\"; }" > "$out" || true
 log "log: $out"
 grep -E '^(FAIL|--- FAIL|ok|panic)' "$out" | grep -v '^ok' | head -30 >&2 || true
 grep -c '^ok' "$out" | sed 's/^/remote-full: packages ok: /' >&2
