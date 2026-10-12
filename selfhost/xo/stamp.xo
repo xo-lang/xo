@@ -1,0 +1,60 @@
+// `--stamp NAME=VALUE` (decision 0165; internal/build stamp.go): the
+// literal of `const NAME: Str = "..."` in a root module is replaced in
+// the checked syntax tree before code generation, so every backend sees
+// the stamped text. A name that is not such a constant is XO1501.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// applyStamps: the stamped constants of the root modules replaced in c;
+/// the XO1501 diagnostics of the names that are not stamped constants.
+fn apply_stamps(var c: check.Checker, stamps: List[(Str, Str)]) -> List[check.Diag] {
+  var ds: List[check.Diag] = []
+  if stamps.is_empty() {
+    return ds
+  }
+  var roots: List[Int] = []
+  for (i, m) in c.mods.indexed() {
+    if m.root && !m.is_std {
+      roots.push(i)
+    }
+  }
+  for (name, value) in stamps.sort_by(fn(s) { s.0 }) {
+    var found = false
+    for m in roots {
+      let o = c.mods[m].members.get(name.bytes()) ?? -1
+      if o < 0 || c.objs[o].kind != check.ObjKind.Const || c.objs[o].decl_file < 0 {
+        continue
+      }
+      let f = c.objs[o].decl_file
+      let di = c.objs[o].decl_idx
+      if let ConstDecl(d: cd) = c.files[f].ast.decls[di] {
+        found = true
+        var lit_ok = false
+        var lit = parser.StringLit{span: cd.span, kind: parser.StringKind.Plain}
+        if let StringLit(s: s) = cd.value {
+          lit = s
+          lit_ok = true
+          for p in s.parts {
+            if p.expr != None {
+              lit_ok = false
+            }
+          }
+        }
+        if !lit_ok || !c.is_prelude(c.objs[o].ty, "Str") {
+          ds.push(check.Diag{code: "XO1501", file: c.files[f].path, line: cd.span.start.line, col: cd.span.start.col, end_line: cd.span.end.line, end_col: cd.span.end.col, message: "--stamp ${name}: `${name}` must be declared `const ${name}: Str = \"...\"` with a plain string literal to be stamped"})
+          continue
+        }
+        lit.parts = [parser.StringPart{text: value.bytes(), expr: None}]
+        var nd = cd
+        nd.value = parser.Expr.StringLit(s: lit)
+        c.files[f].ast.decls[di] = parser.Decl.ConstDecl(d: nd)
+      }
+    }
+    if !found {
+      let file = if roots.is_empty() { "" } else { c.mods[roots[0]].dir }
+      ds.push(check.Diag{code: "XO1501", file: file, line: 0, col: 0, end_line: 0, end_col: 0, message: "--stamp ${name}: the main module has no constant `${name}`; declare `const ${name}: Str = \"dev\"` and read it"})
+    }
+  }
+  ds
+}

@@ -1,0 +1,437 @@
+// The split LLVM build (decision 0168; internal/llvm modules.go Split,
+// internal/build llvmsplit.go): XO_LLVM_SPLIT divides the IR into that
+// many modules, compiled by at most XO_LLVM_JOBS clang processes at once
+// and linked with XO_LLVM_LTO (thin, the default, or none). The modules
+// are the bytes the Go driver writes for the same IR and count, so both
+// drivers share the binary cache entry.
+
+/// SplitConfig: the module count (1: one module with full LTO), the job
+/// bound, and the LTO mode of split builds.
+struct SplitConfig {
+  modules: Int = 1
+  jobs: Int = 6
+  lto: Str = "thin"
+}
+
+/// LLVMSplitConfig from the environment.
+fn split_config(os: Os) -> SplitConfig {
+  var c = SplitConfig{jobs: min(ncpu(os), 6)}
+  let n = Int.parse(os.env.get("XO_LLVM_SPLIT") ?? "") ?? 0
+  if n > 1 {
+    c.modules = n
+  }
+  let j = Int.parse(os.env.get("XO_LLVM_JOBS") ?? "") ?? 0
+  if j > 0 {
+    c.jobs = j
+  }
+  let l = os.env.get("XO_LLVM_LTO") ?? ""
+  if l == "none" || l == "thin" {
+    c.lto = l
+  }
+  c
+}
+
+/// runtime.NumCPU, from sysctl or nproc (1 when neither answers).
+fn ncpu(os: Os) -> Int {
+  let (out, err) = combined(os, "sysctl", ["-n", "hw.ncpu"])
+  if err.is_empty() {
+    if let Some(n) = Int.parse(out.trim()) {
+      return n
+    }
+  }
+  let (out2, err2) = combined(os, "nproc", [])
+  if err2.is_empty() {
+    if let Some(n) = Int.parse(out2.trim()) {
+      return n
+    }
+  }
+  1
+}
+
+/// ltoFlags of a split build.
+fn lto_flags(lto: Str) -> List[Str] {
+  if lto == "thin" { ["-flto=thin"] } else { [] }
+}
+
+/// A top level item of the IR: a function or a constant.
+struct IRItem {
+  name: Str
+  text: Str
+  refs: List[Str] = []
+  helper: Bool = false
+  decl: Str = ""
+}
+
+/// The IR cut into its header, constants, and functions (parseIR).
+struct ParsedIR {
+  header: Str = ""
+  globals: List[IRItem] = []
+  global_at: Map[Str, Int] = {}
+  defs: List[IRItem] = []
+  def_at: Map[Str, Int] = {}
+}
+
+/// parseIR: top level entities start a line, function bodies end at a
+/// line "}", constants are one line; every other line is the header.
+fn parse_ir(ir: Str) -> ParsedIR {
+  var p = ParsedIR{}
+  var header = StrBuilder.new()
+  let lines = ir.split("\n")
+  // each line with its newline (the last one has none when ir does not
+  // end in one)
+  var i = 0
+  let n = lines.len()
+  while i < n {
+    var line = lines[i]
+    if i < n - 1 {
+      line = line + "\n"
+    }
+    if line.is_empty() {
+      i += 1
+      continue
+    }
+    if line.starts_with("define ") {
+      var text = StrBuilder.new()
+      text.write(line)
+      i += 1
+      while i < n {
+        var l = lines[i]
+        if i < n - 1 {
+          l = l + "\n"
+        }
+        text.write(l)
+        i += 1
+        if l == "}\n" || l == "}" {
+          break
+        }
+      }
+      // a blank line after a body goes with it
+      while i < n - 1 && lines[i].is_empty() {
+        text.write("\n")
+        i += 1
+      }
+      let body = text.freeze()
+      let name = def_symbol(line)
+      var d = IRItem{name: name, text: body, helper: name.starts_with("@\"xo.")}
+      let lb = line.bytes()
+      let bb = body.bytes()
+      d.refs = symbol_refs(bb[lb.len()..bb.len()], name) + symbol_refs(lb[index_byte(lb, '(')..lb.len()], name)
+      d.decl = decl_of(line)
+      p.def_at[name] = p.defs.len()
+      p.defs.push(d)
+      continue
+    }
+    if line.starts_with("@") {
+      let name = symbol_at(line.bytes(), 0)
+      let lb = line.bytes()
+      let g = IRItem{name: name, text: line, refs: symbol_refs(lb[name.len()..lb.len()], name)}
+      p.global_at[name] = p.globals.len()
+      p.globals.push(g)
+      i += 1
+      continue
+    }
+    header.write(line)
+    i += 1
+  }
+  p.header = header.freeze()
+  p
+}
+
+fn index_byte(b: Bytes, c: UInt8) -> Int {
+  for i in 0..b.len() {
+    if b[i] == c {
+      return i
+    }
+  }
+  -1
+}
+
+/// defSymbol: the symbol a define line defines.
+fn def_symbol(line: Str) -> Str {
+  let b = line.bytes()
+  symbol_at(b, index_byte(b, '@'))
+}
+
+/// symbolAt: the symbol starting at the @ at b[i]: @"quoted" or @plain.
+fn symbol_at(b: Bytes, i: Int) -> Str {
+  var j = i + 1
+  if j < b.len() && b[j] == '"' {
+    var k = j + 1
+    while k < b.len() && b[k] != '"' {
+      k += 1
+    }
+    return b[i..k + 1].to_str() ?? ""
+  }
+  while j < b.len() && is_sym_char(b[j]) {
+    j += 1
+  }
+  b[i..j].to_str() ?? ""
+}
+
+fn is_sym_char(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '$' ||
+    c == '-'
+}
+
+/// symbolRefs: the symbols b mentions other than self, skipping string
+/// literals, quoted local and type names, and comments.
+fn symbol_refs(b: Bytes, self: Str) -> List[Str] {
+  var seen: Map[Str, Bool] = {}
+  seen[self] = true
+  var out: List[Str] = []
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == '"' {
+      var k = i + 1
+      while k < b.len() && b[k] != '"' {
+        k += 1
+      }
+      if k >= b.len() {
+        return out
+      }
+      i = k
+    } else if c == ';' {
+      var k = i
+      while k < b.len() && b[k] != '\n' {
+        k += 1
+      }
+      if k >= b.len() {
+        return out
+      }
+      i = k
+    } else if c == '@' {
+      let s = symbol_at(b, i)
+      i += s.len() - 1
+      if s.len() > 1 && !seen.contains(s) {
+        seen[s] = true
+        out.push(s)
+      }
+    }
+    i += 1
+  }
+  out
+}
+
+/// declOf: the declaration other modules use for a define line: hidden
+/// linkage, the parameter list, and the attribute groups.
+fn decl_of(line: Str) -> Str {
+  var rest = line.trim_prefix("define ")
+  rest = rest.trim_prefix("internal ")
+  rest = rest.trim_prefix("hidden ")
+  let b = rest.bytes()
+  let at = index_byte(b, '@')
+  let name = symbol_at(b, at)
+  var i = at + name.len()
+  var depth = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == '"' {
+      var k = i + 1
+      while k < b.len() && b[k] != '"' {
+        k += 1
+      }
+      i = k + 1
+      continue
+    }
+    if c == '(' {
+      depth += 1
+    } else if c == ')' {
+      depth -= 1
+      if depth == 0 {
+        break
+      }
+    }
+    i += 1
+  }
+  var out = StrBuilder.new()
+  out.write("declare hidden ")
+  out.write(b[0..i + 1].to_str() ?? "")
+  let tail = b[i + 1..b.len()].to_str() ?? ""
+  for f in tail.replace("\t", " ").replace("\n", " ").split(" ") {
+    if f.starts_with("#") {
+      out.write(" ${f}")
+    }
+  }
+  out.write("\n")
+  out.freeze()
+}
+
+/// llvm.Split: the IR divided into n modules, the functions placed
+/// largest first onto the lightest module, each module with the
+/// constants and helpers it uses and declarations of the functions of
+/// other modules it calls (internal to hidden linkage for those). n <= 1,
+/// or fewer than two functions, gives the IR back as one module.
+fn split_ir(ir: Str, n0: Int) -> List[Str] {
+  if n0 <= 1 {
+    return [ir]
+  }
+  let p = parse_ir(ir)
+  var fns: List[Int] = []
+  for (i, d) in p.defs.indexed() {
+    if !d.helper {
+      fns.push(i)
+    }
+  }
+  if fns.len() < 2 {
+    return [ir]
+  }
+  let n = min(n0, fns.len())
+  // largest first (stable: ties keep the order of the IR)
+  var keyed: List[(Int, Int)] = []
+  for (k, i) in fns.indexed() {
+    keyed.push((k, i))
+  }
+  let order = keyed.sort_by(fn(e) { (0 - p.defs[e.1].text.len()) * 10000000 + e.0 })
+  var home: List[Int] = []
+  for _ in p.defs {
+    home.push(-1)
+  }
+  var load: List[Int] = []
+  for _ in 0..n {
+    load.push(0)
+  }
+  for (_, i) in order {
+    var m = 0
+    for k in 1..n {
+      if load[k] < load[m] {
+        m = k
+      }
+    }
+    home[i] = m
+    load[m] += p.defs[i].text.len()
+  }
+  var members: List[List[Int]] = []
+  for _ in 0..n {
+    members.push([])
+  }
+  for i in 0..p.defs.len() {
+    if home[i] >= 0 {
+      members[home[i]].push(i)
+    }
+  }
+  var used: List[Map[Str, Bool]] = []
+  var exported: Map[Int, Bool] = {}
+  for m in 0..n {
+    var u: Map[Str, Bool] = {}
+    var work: List[Str] = []
+    for i in members[m] {
+      for r in p.defs[i].refs {
+        if !u.contains(r) {
+          u[r] = true
+          work.push(r)
+        }
+      }
+    }
+    while !work.is_empty() {
+      let r = work.pop() ?? ""
+      var refs: List[Str] = []
+      if let Some(g) = p.global_at.get(r) {
+        refs = p.globals[g].refs
+      } else if let Some(i) = p.def_at.get(r) {
+        if p.defs[i].helper {
+          refs = p.defs[i].refs
+        }
+      }
+      for x in refs {
+        if !u.contains(x) {
+          u[x] = true
+          work.push(x)
+        }
+      }
+    }
+    for r in u.keys() {
+      if let Some(i) = p.def_at.get(r) {
+        if !p.defs[i].helper && home[i] != m {
+          exported[i] = true
+        }
+      }
+    }
+    used.push(u)
+  }
+  var out: List[Str] = []
+  for m in 0..n {
+    var b = StrBuilder.new()
+    b.write(p.header)
+    b.write("\n")
+    for g in p.globals {
+      if used[m].contains(g.name) {
+        b.write(g.text)
+      }
+    }
+    b.write("\n")
+    for (i, d) in p.defs.indexed() {
+      if !used[m].contains(d.name) || home[i] == m {
+        continue
+      }
+      if d.helper {
+        b.write(d.text)
+      } else {
+        b.write(d.decl)
+      }
+    }
+    b.write("\n")
+    for i in members[m] {
+      let d = p.defs[i]
+      if exported.contains(i) && d.text.starts_with("define internal ") {
+        b.write("define hidden ")
+        b.write(d.text.trim_prefix("define internal "))
+      } else {
+        b.write(d.text)
+      }
+    }
+    out.push(b.freeze())
+  }
+  out
+}
+
+/// splitBuild: compiles the modules lls in parallel (at most c.jobs
+/// clang processes), then links their objects with the other sources
+/// into bin through cc_build. The compiler's output of a failure, "" on
+/// success.
+fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], bin: Str, c: SplitConfig, flags: List[Str], tls: Bool) -> Str {
+  var objs: List[Str] = []
+  for ll in lls {
+    objs.push(ll.trim_suffix(".ll") + ".o")
+  }
+  var next = 0
+  var running: List[(Int, Child)] = []
+  var fails: List[Str] = []
+  while next < lls.len() || !running.is_empty() {
+    while next < lls.len() && running.len() < c.jobs {
+      let args = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
+      match os.proc.cmd(clang, args).merge_stderr().spawn() {
+        Ok(ch) => running.push((next, ch))
+        Err(e) => fails.push("${lls[next]}: ${e}\n")
+      }
+      next += 1
+    }
+    if running.is_empty() {
+      break
+    }
+    // the oldest first: its output, then its status
+    let (k, ch) = running[0]
+    running = running[1..running.len()]
+    var outb = BytesBuilder.new()
+    var reading = true
+    while reading {
+      match ch.read(65536) {
+        Ok(Some(data)) => outb.write(data)
+        _ => reading = false
+      }
+    }
+    match ch.wait() {
+      Ok(code) => {
+        if code != 0 {
+          fails.push("${lls[k]}: exit status ${code}\n${outb.freeze().to_str() ?? ""}")
+        }
+      }
+      Err(e) => fails.push("${lls[k]}: ${e}\n")
+    }
+  }
+  if !fails.is_empty() {
+    return fails[0]
+  }
+  let lf = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module"]
+  cc_build(os, ctx, clang, lf + flags, objs + others, bin, tls)
+}

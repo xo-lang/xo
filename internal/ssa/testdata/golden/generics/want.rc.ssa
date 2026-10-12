@@ -149,12 +149,12 @@ b8:  ; preds b6
   br v135, b12(), b11()
 b9:  ; preds b13
   release v102
-  release v172
+  release v170
   jump b1()
 b10:  ; preds b13
   release v102
-  v141: Str = call str.concat, v172, v175
-  release v175
+  v141: Str = call str.concat, v170, v173
+  release v173
   v143: () = call Stdio.println, v103, v141
   release v141
   ret v143
@@ -182,17 +182,15 @@ b12:  ; preds b8
   release v132
   jump b1()
 b13:  ; preds b11
-  retain v159
+  v167: Str = call str.concat, v157, v159
   release v84
-  v169: Str = call str.concat, v157, v159
-  release v159
-  v171: Str = const " "
-  v172: Str = call str.concat, v169, v171
-  v173: Str = const "id"
-  retain v173
-  v175: Str = callv v102, v173 lands v176
-  v176: Bool = call rt.landing
-  br v176, b9(), b10()
+  v169: Str = const " "
+  v170: Str = call str.concat, v167, v169
+  v171: Str = const "id"
+  retain v171
+  v173: Str = callv v102, v171 lands v174
+  v174: Bool = call rt.landing
+  br v174, b9(), b10()
 b14:  ; preds b11
   release v84
   release v102

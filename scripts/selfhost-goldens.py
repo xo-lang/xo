@@ -9,7 +9,10 @@
 # a --backend= to pass the compiler, such as llvm, decision 0178;
 # XO1_FLAGS: more flags for `<compiler> build`, split at spaces, such as
 # --ld=macho; XO1_PATH: the PATH of `<compiler> build` alone, such as
-# /nonexistent to show a build needs no external tool, decision 0182).
+# /nonexistent to show a build needs no external tool, decision 0182;
+# XO1_CMD=run: `<compiler> run` builds and runs each program in one
+# command, in the program's directory, its output compared the same way,
+# decision 0178 stage 1).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -59,15 +62,51 @@ def run(bin, d):
     return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, so, stable(se)), leak
 
 
+def run_cmd(d, flags):
+    # `<compiler> run` in the program's directory: the build and the run
+    # in one command, the program's output and status passed through
+    args, env, stdin = harness(d)
+    env['XO_LEAKCHECK'] = '1'
+    env['PWD'] = os.path.abspath(d)
+    # env.txt is the program's environment, and the compiler sees it too:
+    # a HOME such as env_dirs' /home/test has no user cache to build in
+    env['XO_BUILD_DIR'] = os.path.join(out, 'runbuild')
+    p = subprocess.run([comp, 'run'] + flags + ['--std=' + os.path.join(root, 'std'), '.', '--'] + args,
+                       cwd=d, capture_output=True, env=env, input=stdin)
+    so = p.stdout.decode('utf-8', 'replace')
+    se = p.stderr.decode('utf-8', 'replace')
+    if p.returncode != 0 and se.startswith('xo1: '):
+        return None, 'build: ' + se.strip().split('\n')[-1][:200]
+    leak = ''
+    if p.returncode == 0:
+        m = leak_re.search(se)
+        if not m:
+            leak = 'no leak check line'
+        elif m.group(1) != '0':
+            leak = '%s allocations live' % m.group(1)
+    return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, so, stable(se)), leak
+
+
 def one(d, want_fn):
     name = d.replace('/', '_')
     bin = os.path.join(out, name)
     be = os.environ.get('XO1_BACKEND', '')
     flags = ['--backend=' + be] if be else []
+    flags = flags + os.environ.get('XO1_FLAGS', '').split()
+    if os.environ.get('XO1_CMD') == 'run':
+        got, leak = run_cmd(d, flags)
+        if got is None:
+            return d, leak
+        want = want_fn(d)
+        if got != want:
+            return d, 'differs:\n--- want\n%s--- got\n%s' % (want[:600], got[:600])
+        if leak:
+            return d, leak
+        return d, ''
     benv = dict(os.environ)
     if 'XO1_PATH' in os.environ:
         benv['PATH'] = os.environ['XO1_PATH']
-    b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std')] + os.environ.get('XO1_FLAGS', '').split() + ['-o', bin, d], capture_output=True, text=True, env=benv)
+    b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True, env=benv)
     if b.returncode != 0:
         return d, 'build: ' + (b.stderr.strip().split('\n') or [''])[-1][:200]
     got, leak = run(bin, d)

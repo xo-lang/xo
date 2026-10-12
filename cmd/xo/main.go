@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/xo-lang/xo/internal/fix"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/query"
+	"github.com/xo-lang/xo/internal/selfdriver"
 	"github.com/xo-lang/xo/internal/serve"
 )
 
@@ -228,6 +230,12 @@ commands:
       Print the toolchain version, the source revision, and the host target.
 `
 
+// selfDriver, when set, runs `build`, `run`, and `test` instead of this
+// CLI: cmd/xo's tests set it with XO_SELF_DRIVER_ALL=1 to run those commands
+// through the self hosted driver xo1 (decision 0178 stage 1's gate,
+// selfdriver_test.go). It is nil in the released xo.
+var selfDriver func(args []string, stdout, stderr io.Writer) int
+
 // runXo is the xo command line: it dispatches args[0] to its command and
 // returns the exit status. Tests call it through run (cli_test.go), which
 // execs $XO_CLI instead when that is set (decision 0178 stage 2).
@@ -243,6 +251,20 @@ func runXo(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	args = append([]string{args[0]}, rest...)
+	if selfDriver != nil && (args[0] == "build" || args[0] == "run" || args[0] == "test") {
+		return selfDriver(args, stdout, stderr)
+	}
+	// decision 0178 switch point A: native builds run the self hosted
+	// driver xo1 (XO_SELF_DRIVER=0 restores the Go driver)
+	if selfdriver.Wants(args[0], args[1:]) {
+		code, err := selfdriver.Run(args, stdout, stderr)
+		if !errors.Is(err, selfdriver.ErrFallback) {
+			if err != nil {
+				fmt.Fprintf(stderr, "xo %s: %v\n", args[0], err)
+			}
+			return code
+		}
+	}
 	switch args[0] {
 	case "get":
 		return runGet(args[1:], stdout, stderr)

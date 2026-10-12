@@ -1,0 +1,22 @@
+// `xo1 run` (decision 0178 stage 1, cmd/xo runRun): the program is built
+// as `xo1 build` builds it, then run with the arguments after its
+// directory (or after `--`) on xo1's own standard streams; xo1 exits with
+// its status (128 plus the signal number for a program a signal ended).
+
+/// execBinary: runs bin with args and the extra environment (NAME=value
+/// words) on this process's standard input, output, and error; its exit
+/// status.
+fn exec_binary(os: Os, bin: Str, args: List[Str], env: List[Str]) -> Int {
+  var cmd = os.proc.cmd(bin, args).inherit()
+  for kv in env {
+    let parts = kv.split("=")
+    cmd = cmd.set_env(parts[0], parts[1..parts.len()].join("="))
+  }
+  match cmd.run() {
+    Ok(code) => code
+    Err(e) => {
+      os.stdio.eprintln("xo: ${e}")
+      1
+    }
+  }
+}
