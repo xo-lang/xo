@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
+  0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
+  assembles it with an assembler written in Xo, and links a runtime of
+  its own over WASI preview1; no C compiler, linker, or Go toolchain.
+  71 of the 133 LLVM goldens run under Node with the output of the
+  native backends; the rest (tasks, network, files, time, strconv
+  quoting, more of the std runtime) fail the build with a clear reason.
 - Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
   runtime are written in Xo (decision 0180, the runtime pilot):
   `std/native/llrt/unicode.xo` with generated tables

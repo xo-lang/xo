@@ -1,0 +1,1164 @@
+// The WAT assembler of the WebAssembly backend (decision 0179): the text
+// the emitter and the runtime write (WAT in the flat form, standard
+// syntax that wat2wasm also takes) to the binary format, so a build needs
+// no external tool. It takes the subset this backend writes: the module
+// fields type, import (functions), func (named or numbered params and
+// locals, inline export), table, elem, memory (inline export), global,
+// export, and data; instructions in the flat form only (no folded
+// expressions), with `(result t)` after block, loop, and if,
+// `(type $t)` after call_indirect, and `offset=`/`align=` after loads and
+// stores. f32.const and f64.const are not taken (the emitter writes a
+// Float constant as its bits and f64.reinterpret_i64).
+
+/// A token: `(`, `)`, an atom, or a string (its bytes decoded).
+struct Tok {
+  kind: Int
+  text: Str = ""
+  data: List[Int] = []
+}
+
+const T_OPEN = 0
+const T_CLOSE = 1
+const T_ATOM = 2
+const T_STR = 3
+
+/// A function's signature: its parameter and result value types (the
+/// binary codes).
+struct Sig {
+  params: List[Int] = []
+  results: List[Int] = []
+}
+
+/// A function of the module: an import or a definition whose body starts
+/// at token `body`.
+struct AFunc {
+  name: Str
+  ty: Int
+  imported: Bool = false
+  module: Str = ""
+  field: Str = ""
+  body: Int = -1
+  /// The names of its params and locals (by index), "" when numbered.
+  local_names: Map[Str, Int] = {}
+  locals: List[Int] = []
+}
+
+struct AGlobal {
+  name: Str
+  ty: Int
+  mutable: Bool
+  init: Int
+}
+
+struct AData {
+  offset: Int
+  bytes: List[Int] = []
+}
+
+struct AExport {
+  name: Str
+  kind: Int
+  index: Int
+}
+
+/// The assembler's state.
+pub struct Asm {
+  toks: List[Tok] = []
+  pos: Int = 0
+  sigs: List[Sig] = []
+  sig_at: Map[Str, Int] = {}
+  type_names: Map[Str, Int] = {}
+  funcs: List[AFunc] = []
+  func_at: Map[Str, Int] = {}
+  globals: List[AGlobal] = []
+  global_at: Map[Str, Int] = {}
+  datas: List[AData] = []
+  exports: List[AExport] = []
+  /// Pending exports of functions named before they are defined.
+  export_names: List[(Str, Str)] = []
+  mem_pages: Int = -1
+  table_size: Int = -1
+  elems: List[Str] = []
+  pub err: Str = ""
+}
+
+/// The binary module of WAT text src, or the first error.
+pub fn assemble(src: Str) -> (Bytes, Str) {
+  var a = Asm{}
+  a.tokenize(src.bytes())
+  if a.err.is_empty() {
+    a.parse_module()
+  }
+  if !a.err.is_empty() {
+    return (b"", a.err)
+  }
+  let out = a.encode()
+  if !a.err.is_empty() {
+    return (b"", a.err)
+  }
+  var bb = BytesBuilder.with_capacity(out.len())
+  for x in out {
+    bb.write_byte(UInt8(x & 255))
+  }
+  (bb.freeze(), "")
+}
+
+fn (var a: Asm) fail(msg: Str) {
+  if a.err.is_empty() {
+    var near = ""
+    if a.pos < a.toks.len() {
+      near = " near `${a.toks[a.pos].text}` (token ${a.pos})"
+    }
+    a.err = "wat: ${msg}${near}"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tokens
+
+fn is_space(c: Int) -> Bool {
+  c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn hex_val(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  -1
+}
+
+fn (var a: Asm) tokenize(src: Bytes) {
+  let n = src.len()
+  var i = 0
+  while i < n {
+    let c = Int(src[i])
+    if is_space(c) {
+      i += 1
+      continue
+    }
+    if c == 59 && i + 1 < n && Int(src[i + 1]) == 59 {
+      // ;; to the end of the line
+      while i < n && Int(src[i]) != 10 {
+        i += 1
+      }
+      continue
+    }
+    if c == 40 && i + 1 < n && Int(src[i + 1]) == 59 {
+      // (; block comment ;)
+      i += 2
+      while i + 1 < n && !(Int(src[i]) == 59 && Int(src[i + 1]) == 41) {
+        i += 1
+      }
+      i += 2
+      continue
+    }
+    if c == 40 {
+      a.toks.push(Tok{kind: T_OPEN, text: "("})
+      i += 1
+      continue
+    }
+    if c == 41 {
+      a.toks.push(Tok{kind: T_CLOSE, text: ")"})
+      i += 1
+      continue
+    }
+    if c == 34 {
+      var data: List[Int] = []
+      i += 1
+      while i < n && Int(src[i]) != 34 {
+        let d = Int(src[i])
+        if d == 92 && i + 1 < n {
+          let e = Int(src[i + 1])
+          if e == 110 {
+            data.push(10)
+            i += 2
+          } else if e == 116 {
+            data.push(9)
+            i += 2
+          } else if e == 114 {
+            data.push(13)
+            i += 2
+          } else if e == 34 || e == 39 || e == 92 {
+            data.push(e)
+            i += 2
+          } else if i + 2 < n && hex_val(e) >= 0 && hex_val(Int(src[i + 2])) >= 0 {
+            data.push(hex_val(e) * 16 + hex_val(Int(src[i + 2])))
+            i += 3
+          } else {
+            a.err = "wat: bad escape in a string"
+            return
+          }
+          continue
+        }
+        data.push(d)
+        i += 1
+      }
+      i += 1
+      a.toks.push(Tok{kind: T_STR, text: "\"...\"", data: data})
+      continue
+    }
+    let start = i
+    while i < n {
+      let d = Int(src[i])
+      if is_space(d) || d == 40 || d == 41 {
+        break
+      }
+      i += 1
+    }
+    a.toks.push(Tok{kind: T_ATOM, text: src[start..i].to_str() ?? ""})
+  }
+}
+
+fn (a: Asm) peek_kind() -> Int {
+  if a.pos >= a.toks.len() {
+    return -1
+  }
+  a.toks[a.pos].kind
+}
+
+fn (a: Asm) peek_text() -> Str {
+  if a.pos >= a.toks.len() {
+    return ""
+  }
+  a.toks[a.pos].text
+}
+
+/// Whether the tokens at pos are `(` and the atom kw.
+fn (a: Asm) at_field(kw: Str) -> Bool {
+  a.pos + 1 < a.toks.len() && a.toks[a.pos].kind == T_OPEN && a.toks[a.pos + 1].kind == T_ATOM && a.toks[a.pos + 1].text == kw
+}
+
+fn (var a: Asm) expect(kind: Int) {
+  if a.peek_kind() != kind {
+    a.fail("unexpected token")
+    a.pos = a.toks.len()
+    return
+  }
+  a.pos += 1
+}
+
+fn (var a: Asm) atom() -> Str {
+  if a.peek_kind() != T_ATOM {
+    a.fail("want an atom")
+    a.pos = a.toks.len()
+    return ""
+  }
+  a.pos += 1
+  a.toks[a.pos - 1].text
+}
+
+fn (var a: Asm) string() -> List[Int] {
+  if a.peek_kind() != T_STR {
+    a.fail("want a string")
+    a.pos = a.toks.len()
+    return []
+  }
+  a.pos += 1
+  a.toks[a.pos - 1].data
+}
+
+fn (var a: Asm) str_text() -> Str {
+  let d = a.string()
+  var bb = BytesBuilder.new()
+  for x in d {
+    bb.write_byte(UInt8(x & 255))
+  }
+  bb.freeze().to_str() ?? ""
+}
+
+/// Skips to after the `)` that closes the field the cursor is in.
+fn (var a: Asm) skip_to_close() {
+  var depth = 0
+  while a.pos < a.toks.len() {
+    let k = a.toks[a.pos].kind
+    a.pos += 1
+    if k == T_OPEN {
+      depth += 1
+    } else if k == T_CLOSE {
+      if depth == 0 {
+        return
+      }
+      depth -= 1
+    }
+  }
+}
+
+/// An integer literal: decimal or 0x hexadecimal, an optional sign,
+/// underscores ignored. Values past the signed 64-bit range wrap.
+fn parse_int(s: Str) -> Int? {
+  var t = s
+  var neg = false
+  if t.starts_with("-") {
+    neg = true
+    t = t.trim_prefix("-")
+  } else if t.starts_with("+") {
+    t = t.trim_prefix("+")
+  }
+  var base = 10
+  if t.starts_with("0x") {
+    base = 16
+    t = t.trim_prefix("0x")
+  }
+  if t.is_empty() {
+    return None
+  }
+  var v = 0
+  for c in t.bytes() {
+    let d = Int(c)
+    if d == 95 {
+      continue
+    }
+    let x = if base == 16 { hex_val(d) } else if d >= 48 && d <= 57 { d - 48 } else { -1 }
+    if x < 0 {
+      return None
+    }
+    v = v.wrapping_mul(base).wrapping_add(x)
+  }
+  if neg {
+    return Some(0.wrapping_sub(v))
+  }
+  Some(v)
+}
+
+fn valtype(s: Str) -> Int {
+  match s {
+    "i32" => 0x7F
+    "i64" => 0x7E
+    "f32" => 0x7D
+    "f64" => 0x7C
+    _ => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module fields
+
+fn sig_key(s: Sig) -> Str {
+  var ps: List[Str] = []
+  for p in s.params {
+    ps.push("${p}")
+  }
+  var rs: List[Str] = []
+  for r in s.results {
+    rs.push("${r}")
+  }
+  "${ps.join(",")}>${rs.join(",")}"
+}
+
+fn (var a: Asm) sig_index(s: Sig) -> Int {
+  let k = sig_key(s)
+  if let Some(i) = a.sig_at.get(k) {
+    return i
+  }
+  let i = a.sigs.len()
+  a.sigs.push(s)
+  a.sig_at[k] = i
+  i
+}
+
+/// Parses `(param ...)*` and `(result ...)*` at the cursor into a
+/// signature; names of params go to names (by index).
+fn (var a: Asm) parse_sig(var names: Map[Str, Int]) -> Sig {
+  var s = Sig{}
+  while a.at_field("param") {
+    a.pos += 2
+    if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+      let n = a.atom()
+      names[n] = s.params.len()
+      s.params.push(valtype(a.atom()))
+    } else {
+      while a.peek_kind() == T_ATOM {
+        s.params.push(valtype(a.atom()))
+      }
+    }
+    a.expect(T_CLOSE)
+  }
+  while a.at_field("result") {
+    a.pos += 2
+    while a.peek_kind() == T_ATOM {
+      s.results.push(valtype(a.atom()))
+    }
+    a.expect(T_CLOSE)
+  }
+  for p in s.params {
+    if p < 0 {
+      a.fail("bad value type")
+    }
+  }
+  for r in s.results {
+    if r < 0 {
+      a.fail("bad value type")
+    }
+  }
+  s
+}
+
+fn (var a: Asm) parse_module() {
+  a.expect(T_OPEN)
+  if a.atom() != "module" {
+    a.fail("want (module")
+    return
+  }
+  while a.err.is_empty() && a.peek_kind() == T_OPEN {
+    a.pos += 1
+    let kw = a.atom()
+    match kw {
+      "type" => a.parse_type()
+      "import" => a.parse_import()
+      "func" => a.parse_func()
+      "memory" => a.parse_memory()
+      "global" => a.parse_global()
+      "data" => a.parse_data()
+      "export" => a.parse_export()
+      "table" => a.parse_table()
+      "elem" => a.parse_elem()
+      _ => {
+        a.fail("unknown module field `${kw}`")
+        return
+      }
+    }
+  }
+  a.expect(T_CLOSE)
+  // exports of functions named before they were defined
+  for (en, fname) in a.export_names {
+    match a.func_at.get(fname) {
+      Some(fi) => a.exports.push(AExport{name: en, kind: 0, index: fi})
+      None => a.fail("export of unknown function ${fname}")
+    }
+  }
+}
+
+fn (var a: Asm) parse_type() {
+  let name = a.atom()
+  a.expect(T_OPEN)
+  if a.atom() != "func" {
+    a.fail("want (func in a type")
+    return
+  }
+  var names: Map[Str, Int] = {}
+  let s = a.parse_sig(names)
+  a.expect(T_CLOSE)
+  a.expect(T_CLOSE)
+  a.type_names[name] = a.sig_index(s)
+}
+
+fn (var a: Asm) parse_import() {
+  let module = a.str_text()
+  let field = a.str_text()
+  a.expect(T_OPEN)
+  if a.atom() != "func" {
+    a.fail("only functions are imported")
+    return
+  }
+  let name = a.atom()
+  var names: Map[Str, Int] = {}
+  let s = a.parse_sig(names)
+  a.expect(T_CLOSE)
+  a.expect(T_CLOSE)
+  let fi = a.funcs.len()
+  a.funcs.push(AFunc{name: name, ty: a.sig_index(s), imported: true, module: module, field: field})
+  a.func_at[name] = fi
+}
+
+fn (var a: Asm) parse_func() {
+  var name = ""
+  if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+    name = a.atom()
+  }
+  let fi = a.funcs.len()
+  while a.at_field("export") {
+    a.pos += 2
+    let en = a.str_text()
+    a.expect(T_CLOSE)
+    a.exports.push(AExport{name: en, kind: 0, index: fi})
+  }
+  var names: Map[Str, Int] = {}
+  let s = a.parse_sig(names)
+  var locals: List[Int] = []
+  while a.at_field("local") {
+    a.pos += 2
+    if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+      let n = a.atom()
+      names[n] = s.params.len() + locals.len()
+      locals.push(valtype(a.atom()))
+    } else {
+      while a.peek_kind() == T_ATOM {
+        locals.push(valtype(a.atom()))
+      }
+    }
+    a.expect(T_CLOSE)
+  }
+  let body = a.pos
+  a.skip_to_close()
+  a.funcs.push(AFunc{name: name, ty: a.sig_index(s), body: body, local_names: names, locals: locals})
+  if !name.is_empty() {
+    a.func_at[name] = fi
+  }
+}
+
+fn (var a: Asm) parse_memory() {
+  if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+    a.atom()
+  }
+  while a.at_field("export") {
+    a.pos += 2
+    let en = a.str_text()
+    a.expect(T_CLOSE)
+    a.exports.push(AExport{name: en, kind: 2, index: 0})
+  }
+  a.mem_pages = parse_int(a.atom()) ?? 1
+  a.expect(T_CLOSE)
+}
+
+fn (var a: Asm) parse_table() {
+  if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+    a.atom()
+  }
+  a.table_size = parse_int(a.atom()) ?? 0
+  a.atom() // funcref
+  a.expect(T_CLOSE)
+}
+
+fn (var a: Asm) parse_elem() {
+  // (elem (i32.const 0) $f ...)
+  a.expect(T_OPEN)
+  a.atom()
+  let off = parse_int(a.atom()) ?? 0
+  a.expect(T_CLOSE)
+  if off != 0 {
+    a.fail("elem offset must be 0")
+  }
+  if a.peek_kind() == T_ATOM && a.peek_text() == "func" {
+    a.atom()
+  }
+  while a.peek_kind() == T_ATOM {
+    a.elems.push(a.atom())
+  }
+  a.expect(T_CLOSE)
+}
+
+/// A constant expression `(i32.const N)` or `(i64.const N)`.
+fn (var a: Asm) const_expr() -> Int {
+  a.expect(T_OPEN)
+  let op = a.atom()
+  if !(op is "i32.const" | "i64.const") {
+    a.fail("want a constant expression")
+  }
+  let v = parse_int(a.atom()) ?? 0
+  a.expect(T_CLOSE)
+  v
+}
+
+fn (var a: Asm) parse_global() {
+  let name = a.atom()
+  var mutable = false
+  var ty = -1
+  if a.at_field("mut") {
+    a.pos += 2
+    ty = valtype(a.atom())
+    a.expect(T_CLOSE)
+    mutable = true
+  } else {
+    ty = valtype(a.atom())
+  }
+  let init = a.const_expr()
+  a.expect(T_CLOSE)
+  a.global_at[name] = a.globals.len()
+  a.globals.push(AGlobal{name: name, ty: ty, mutable: mutable, init: init})
+}
+
+fn (var a: Asm) parse_data() {
+  let off = a.const_expr()
+  var bytes: List[Int] = []
+  while a.peek_kind() == T_STR {
+    bytes = bytes + a.string()
+  }
+  a.expect(T_CLOSE)
+  a.datas.push(AData{offset: off, bytes: bytes})
+}
+
+fn (var a: Asm) parse_export() {
+  let en = a.str_text()
+  a.expect(T_OPEN)
+  let kind = a.atom()
+  let target = a.atom()
+  a.expect(T_CLOSE)
+  a.expect(T_CLOSE)
+  match kind {
+    "func" => a.export_names.push((en, target))
+    "memory" => a.exports.push(AExport{name: en, kind: 2, index: 0})
+    _ => a.fail("unsupported export kind ${kind}")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+
+fn uleb(var out: List[Int], v: Int) {
+  var x = v
+  while true {
+    let b = x & 0x7F
+    x = x >> 7
+    if x == 0 {
+      out.push(b)
+      return
+    }
+    out.push(b | 0x80)
+  }
+}
+
+fn sleb(var out: List[Int], v: Int) {
+  var x = v
+  while true {
+    let b = x & 0x7F
+    x = x >> 7
+    if (x == 0 && (b & 0x40) == 0) || (x == -1 && (b & 0x40) != 0) {
+      out.push(b)
+      return
+    }
+    out.push(b | 0x80)
+  }
+}
+
+fn name_bytes(var out: List[Int], s: Str) {
+  let b = s.bytes()
+  uleb(out, b.len())
+  for c in b {
+    out.push(Int(c))
+  }
+}
+
+/// Appends xs to out.
+fn extend(var out: List[Int], xs: List[Int]) {
+  for x in xs {
+    out.push(x)
+  }
+}
+
+fn section(var out: List[Int], id: Int, body: List[Int]) {
+  out.push(id)
+  uleb(out, body.len())
+  extend(out, body)
+}
+
+fn (var a: Asm) encode() -> List[Int] {
+  var out: List[Int] = [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]
+  // the bodies first: call_indirect may add signatures
+  var codes: List[List[Int]] = []
+  var ndef = 0
+  for fi in 0..a.funcs.len() {
+    if a.funcs[fi].imported {
+      continue
+    }
+    codes.push(a.encode_body(fi))
+    ndef += 1
+    if !a.err.is_empty() {
+      return []
+    }
+  }
+  // types
+  var s: List[Int] = []
+  uleb(s, a.sigs.len())
+  for sg in a.sigs {
+    s.push(0x60)
+    uleb(s, sg.params.len())
+    for p in sg.params {
+      s.push(p)
+    }
+    uleb(s, sg.results.len())
+    for r in sg.results {
+      s.push(r)
+    }
+  }
+  section(out, 1, s)
+  // imports
+  var nimp = 0
+  for f in a.funcs {
+    if f.imported {
+      nimp += 1
+    }
+  }
+  if nimp > 0 {
+    s = []
+    uleb(s, nimp)
+    for f in a.funcs {
+      if f.imported {
+        name_bytes(s, f.module)
+        name_bytes(s, f.field)
+        s.push(0x00)
+        uleb(s, f.ty)
+      }
+    }
+    section(out, 2, s)
+  }
+  // functions
+  s = []
+  uleb(s, ndef)
+  for f in a.funcs {
+    if !f.imported {
+      uleb(s, f.ty)
+    }
+  }
+  section(out, 3, s)
+  // table
+  if a.table_size >= 0 {
+    s = []
+    uleb(s, 1)
+    s.push(0x70)
+    s.push(0x00)
+    uleb(s, a.table_size)
+    section(out, 4, s)
+  }
+  // memory
+  if a.mem_pages >= 0 {
+    s = []
+    uleb(s, 1)
+    s.push(0x00)
+    uleb(s, a.mem_pages)
+    section(out, 5, s)
+  }
+  // globals
+  if !a.globals.is_empty() {
+    s = []
+    uleb(s, a.globals.len())
+    for g in a.globals {
+      s.push(g.ty)
+      s.push(if g.mutable { 1 } else { 0 })
+      if g.ty == 0x7E {
+        s.push(0x42)
+      } else {
+        s.push(0x41)
+      }
+      sleb(s, g.init)
+      s.push(0x0B)
+    }
+    section(out, 6, s)
+  }
+  // exports
+  s = []
+  uleb(s, a.exports.len())
+  for e in a.exports {
+    name_bytes(s, e.name)
+    s.push(e.kind)
+    uleb(s, e.index)
+  }
+  section(out, 7, s)
+  // elements
+  if !a.elems.is_empty() {
+    s = []
+    uleb(s, 1)
+    s.push(0x00)
+    s.push(0x41)
+    s.push(0x00)
+    s.push(0x0B)
+    uleb(s, a.elems.len())
+    for n in a.elems {
+      match a.func_at.get(n) {
+        Some(fi) => uleb(s, fi)
+        None => {
+          a.fail("elem names unknown function ${n}")
+          return []
+        }
+      }
+    }
+    section(out, 9, s)
+  }
+  // code
+  s = []
+  uleb(s, codes.len())
+  for c in codes {
+    uleb(s, c.len())
+    extend(s, c)
+  }
+  section(out, 10, s)
+  // data
+  if !a.datas.is_empty() {
+    s = []
+    uleb(s, a.datas.len())
+    for d in a.datas {
+      s.push(0x00)
+      s.push(0x41)
+      sleb(s, d.offset)
+      s.push(0x0B)
+      uleb(s, d.bytes.len())
+      extend(s, d.bytes)
+    }
+    section(out, 11, s)
+  }
+  // names (custom section "name", function names) for traces
+  s = []
+  name_bytes(s, "name")
+  var sub: List[Int] = []
+  var named = 0
+  for f in a.funcs {
+    if !f.name.is_empty() {
+      named += 1
+    }
+  }
+  uleb(sub, named)
+  for (i, f) in a.funcs.indexed() {
+    if !f.name.is_empty() {
+      uleb(sub, i)
+      name_bytes(sub, f.name.trim_prefix("$"))
+    }
+  }
+  s.push(1)
+  uleb(s, sub.len())
+  extend(s, sub)
+  section(out, 0, s)
+  out
+}
+
+/// The opcode of an instruction without immediates, or -1.
+fn simple_op(op: Str) -> Int {
+  match op {
+    "unreachable" => 0x00
+    "nop" => 0x01
+    "else" => 0x05
+    "end" => 0x0B
+    "return" => 0x0F
+    "drop" => 0x1A
+    "select" => 0x1B
+    "i32.eqz" => 0x45
+    "i32.eq" => 0x46
+    "i32.ne" => 0x47
+    "i32.lt_s" => 0x48
+    "i32.lt_u" => 0x49
+    "i32.gt_s" => 0x4A
+    "i32.gt_u" => 0x4B
+    "i32.le_s" => 0x4C
+    "i32.le_u" => 0x4D
+    "i32.ge_s" => 0x4E
+    "i32.ge_u" => 0x4F
+    "i64.eqz" => 0x50
+    "i64.eq" => 0x51
+    "i64.ne" => 0x52
+    "i64.lt_s" => 0x53
+    "i64.lt_u" => 0x54
+    "i64.gt_s" => 0x55
+    "i64.gt_u" => 0x56
+    "i64.le_s" => 0x57
+    "i64.le_u" => 0x58
+    "i64.ge_s" => 0x59
+    "i64.ge_u" => 0x5A
+    "f64.eq" => 0x61
+    "f64.ne" => 0x62
+    "f64.lt" => 0x63
+    "f64.gt" => 0x64
+    "f64.le" => 0x65
+    "f64.ge" => 0x66
+    "i32.clz" => 0x67
+    "i32.ctz" => 0x68
+    "i32.add" => 0x6A
+    "i32.sub" => 0x6B
+    "i32.mul" => 0x6C
+    "i32.div_s" => 0x6D
+    "i32.div_u" => 0x6E
+    "i32.rem_s" => 0x6F
+    "i32.rem_u" => 0x70
+    "i32.and" => 0x71
+    "i32.or" => 0x72
+    "i32.xor" => 0x73
+    "i32.shl" => 0x74
+    "i32.shr_s" => 0x75
+    "i32.shr_u" => 0x76
+    "i64.clz" => 0x79
+    "i64.ctz" => 0x7A
+    "i64.add" => 0x7C
+    "i64.sub" => 0x7D
+    "i64.mul" => 0x7E
+    "i64.div_s" => 0x7F
+    "i64.div_u" => 0x80
+    "i64.rem_s" => 0x81
+    "i64.rem_u" => 0x82
+    "i64.and" => 0x83
+    "i64.or" => 0x84
+    "i64.xor" => 0x85
+    "i64.shl" => 0x86
+    "i64.shr_s" => 0x87
+    "i64.shr_u" => 0x88
+    "f64.abs" => 0x99
+    "f64.neg" => 0x9A
+    "f64.ceil" => 0x9B
+    "f64.floor" => 0x9C
+    "f64.trunc" => 0x9D
+    "f64.nearest" => 0x9E
+    "f64.sqrt" => 0x9F
+    "f64.add" => 0xA0
+    "f64.sub" => 0xA1
+    "f64.mul" => 0xA2
+    "f64.div" => 0xA3
+    "f64.min" => 0xA4
+    "f64.max" => 0xA5
+    "f64.copysign" => 0xA6
+    "i32.wrap_i64" => 0xA7
+    "i64.extend_i32_s" => 0xAC
+    "i64.extend_i32_u" => 0xAD
+    "i64.trunc_f64_s" => 0xB0
+    "i32.trunc_f64_s" => 0xAA
+    "f32.convert_i64_s" => 0xB4
+    "f32.demote_f64" => 0xB6
+    "f64.convert_i32_s" => 0xB7
+    "f64.convert_i64_s" => 0xB9
+    "f64.convert_i64_u" => 0xBA
+    "i64.reinterpret_f64" => 0xBD
+    "f64.reinterpret_i64" => 0xBF
+    "f64.promote_f32" => 0xBB
+    "i64.extend8_s" => 0xC2
+    "i64.extend16_s" => 0xC3
+    "i64.extend32_s" => 0xC4
+    _ => -1
+  }
+}
+
+/// The opcode and natural alignment (log2) of a load or store, or -1.
+fn mem_op(op: Str) -> (Int, Int) {
+  match op {
+    "i32.load" => (0x28, 2)
+    "i64.load" => (0x29, 3)
+    "f64.load" => (0x2B, 3)
+    "i32.load8_u" => (0x2D, 0)
+    "i32.load8_s" => (0x2C, 0)
+    "i32.load16_u" => (0x2F, 1)
+    "i64.load8_u" => (0x31, 0)
+    "i64.load32_u" => (0x35, 2)
+    "i32.store" => (0x36, 2)
+    "i64.store" => (0x37, 3)
+    "f64.store" => (0x39, 3)
+    "i32.store8" => (0x3A, 0)
+    "i32.store16" => (0x3B, 1)
+    "i64.store8" => (0x3C, 0)
+    "i64.store32" => (0x3E, 2)
+    _ => (-1, 0)
+  }
+}
+
+/// The 0xFC prefixed operation's code, or -1.
+fn fc_op(op: Str) -> Int {
+  match op {
+    "i64.trunc_sat_f64_s" => 6
+    "memory.copy" => 10
+    "memory.fill" => 11
+    _ => -1
+  }
+}
+
+fn (var a: Asm) encode_body(fi: Int) -> List[Int] {
+  let f = a.funcs[fi]
+  var out: List[Int] = []
+  // locals, run length encoded
+  var groups: List[(Int, Int)] = []
+  for t in f.locals {
+    if !groups.is_empty() && groups[groups.len() - 1].1 == t {
+      let (n, _) = groups[groups.len() - 1]
+      groups[groups.len() - 1] = (n + 1, t)
+    } else {
+      groups.push((1, t))
+    }
+  }
+  uleb(out, groups.len())
+  for (n, t) in groups {
+    uleb(out, n)
+    out.push(t)
+  }
+  a.pos = f.body
+  // the label stack: names, innermost last
+  var labels: List[Str] = []
+  while a.err.is_empty() && a.pos < a.toks.len() && a.peek_kind() != T_CLOSE {
+    let op = a.atom()
+    let so = simple_op(op)
+    if so >= 0 {
+      out.push(so)
+      if op == "end" {
+        if labels.is_empty() {
+          a.fail("end without a block")
+          return []
+        }
+        labels.pop()
+      }
+      continue
+    }
+    let (mo, align) = mem_op(op)
+    if mo >= 0 {
+      var offset = 0
+      var al = align
+      while a.peek_kind() == T_ATOM && (a.peek_text().starts_with("offset=") || a.peek_text().starts_with("align=")) {
+        let t = a.atom()
+        if t.starts_with("offset=") {
+          offset = parse_int(t.trim_prefix("offset=")) ?? 0
+        } else {
+          let n = parse_int(t.trim_prefix("align=")) ?? 1
+          al = 0
+          var x = n
+          while x > 1 {
+            x = x >> 1
+            al += 1
+          }
+        }
+      }
+      out.push(mo)
+      uleb(out, al)
+      uleb(out, offset)
+      continue
+    }
+    let fc = fc_op(op)
+    if fc >= 0 {
+      out.push(0xFC)
+      uleb(out, fc)
+      if fc == 10 {
+        out.push(0)
+        out.push(0)
+      } else if fc == 11 {
+        out.push(0)
+      }
+      continue
+    }
+    match op {
+      "block" | "loop" | "if" => {
+        out.push(if op == "block" { 0x02 } else if op == "loop" { 0x03 } else { 0x04 })
+        var name = ""
+        if a.peek_kind() == T_ATOM && a.peek_text().starts_with("$") {
+          name = a.atom()
+        }
+        labels.push(name)
+        if a.at_field("result") {
+          a.pos += 2
+          let t = valtype(a.atom())
+          a.expect(T_CLOSE)
+          out.push(t)
+        } else {
+          out.push(0x40)
+        }
+      }
+      "br" | "br_if" => {
+        out.push(if op == "br" { 0x0C } else { 0x0D })
+        uleb(out, a.label_depth(labels, a.atom()))
+      }
+      "br_table" => {
+        out.push(0x0E)
+        var ds: List[Int] = []
+        while a.peek_kind() == T_ATOM && (a.peek_text().starts_with("$") || (parse_int(a.peek_text()) ?? -1) >= 0) && simple_op(a.peek_text()) < 0 {
+          ds.push(a.label_depth(labels, a.atom()))
+        }
+        if ds.is_empty() {
+          a.fail("br_table without labels")
+          return []
+        }
+        uleb(out, ds.len() - 1)
+        for d in ds {
+          uleb(out, d)
+        }
+      }
+      "call" => {
+        out.push(0x10)
+        let n = a.atom()
+        match a.func_at.get(n) {
+          Some(i) => uleb(out, i)
+          None => {
+            a.fail("call of unknown function ${n}")
+            return []
+          }
+        }
+      }
+      "call_indirect" => {
+        out.push(0x11)
+        a.expect(T_OPEN)
+        a.atom() // type
+        let tn = a.atom()
+        a.expect(T_CLOSE)
+        match a.type_names.get(tn) {
+          Some(i) => uleb(out, i)
+          None => {
+            a.fail("unknown type ${tn}")
+            return []
+          }
+        }
+        out.push(0x00)
+      }
+      "local.get" | "local.set" | "local.tee" => {
+        out.push(if op == "local.get" { 0x20 } else if op == "local.set" { 0x21 } else { 0x22 })
+        let n = a.atom()
+        if n.starts_with("$") {
+          match f.local_names.get(n) {
+            Some(i) => uleb(out, i)
+            None => {
+              a.fail("unknown local ${n}")
+              return []
+            }
+          }
+        } else {
+          uleb(out, parse_int(n) ?? 0)
+        }
+      }
+      "global.get" | "global.set" => {
+        out.push(if op == "global.get" { 0x23 } else { 0x24 })
+        let n = a.atom()
+        match a.global_at.get(n) {
+          Some(i) => uleb(out, i)
+          None => {
+            a.fail("unknown global ${n}")
+            return []
+          }
+        }
+      }
+      "i32.const" => {
+        out.push(0x41)
+        var v = parse_int(a.atom()) ?? 0
+        v = v & 0xFFFFFFFF
+        if v >= 0x80000000 {
+          v = v - 0x100000000
+        }
+        sleb(out, v)
+      }
+      "i64.const" => {
+        out.push(0x42)
+        let t = a.atom()
+        match parse_int(t) {
+          Some(v) => sleb(out, v)
+          None => {
+            a.fail("bad i64 constant")
+            return []
+          }
+        }
+      }
+      "memory.size" => {
+        out.push(0x3F)
+        out.push(0)
+      }
+      "memory.grow" => {
+        out.push(0x40)
+        out.push(0)
+      }
+      _ => {
+        a.fail("unknown instruction `${op}`")
+        return []
+      }
+    }
+  }
+  if !labels.is_empty() {
+    a.fail("unclosed block in ${f.name}")
+  }
+  out.push(0x0B)
+  out
+}
+
+fn (var a: Asm) label_depth(labels: List[Str], l: Str) -> Int {
+  if !l.starts_with("$") {
+    return parse_int(l) ?? 0
+  }
+  var i = labels.len() - 1
+  while i >= 0 {
+    if labels[i] == l {
+      return labels.len() - 1 - i
+    }
+    i -= 1
+  }
+  a.fail("unknown label ${l}")
+  0
+}
