@@ -24,7 +24,8 @@
 // prints the IR, --asm names the .ll file (default OUT.ll).
 //
 // --as=macho (decision 0182): assemble with selfhost/macho, cc links;
-// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo)
+// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo); with
+// --target=linux/arm64 an ELF executable for glibc, from any host
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -256,7 +257,10 @@ fn main(os: Os) ! {
   }
   os.fs.write(asm_path, code.bytes())?
   t = lap(os, phases, "write", t)
-  if tgoos != goos {
+  // --ld=macho links linux/arm64 programs without cc, from any host
+  // (decision 0182 stage 3)
+  let no_cc = linker == "macho" && backend == "arm64"
+  if tgoos != goos && !(no_cc && tgoos == "linux") {
     // another target: its assembly only (internal/build buildArm64)
     os.stdio.println("${target}: ${asm_path}")
     return
@@ -269,8 +273,6 @@ fn main(os: Os) ! {
       os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
     }
   }
-  // --ld=macho links arm64 programs without cc (decision 0182)
-  let no_cc = linker == "macho" && backend == "arm64"
   if cc.is_empty() && !no_cc {
     cc = find_cc(os)
     if cc.is_empty() {
@@ -283,7 +285,7 @@ fn main(os: Os) ! {
   if assembler == "macho" && backend == "arm64" {
     // the object from selfhost/macho; cc links it (decision 0182)
     prog = "${out}.o"
-    match macho.assemble(code.bytes()) {
+    match if tgoos == "linux" { macho.assemble_elf(code.bytes()) } else { macho.assemble(code.bytes()) } {
       Ok(obj) => os.fs.write(prog, obj)?
       Err(e) => fail(os, "assembler: ${e}")
     }
@@ -302,7 +304,7 @@ fn main(os: Os) ! {
       fail(os, sel.err)
     }
     flags.push("-DXO_TIME")
-    srcs.push(if no_cc { tz_object(os, rtdir, sel)? } else { tz_source(os, rtdir, sel)? })
+    srcs.push(if no_cc { tz_object(os, rtdir, sel, tgoos)? } else { tz_source(os, rtdir, sel)? })
     for n in sel.notes {
       os.stdio.eprintln(n)
     }
@@ -316,7 +318,7 @@ fn main(os: Os) ! {
   flags = flags + ci.flags
   srcs = srcs + ci.srcs
   if no_cc {
-    let why = macho_link(os, ctx, flags, srcs, out, needs_tls(code))
+    let why = macho_link(os, ctx, tgoos, flags, srcs, out, needs_tls(code))
     t = lap(os, phases, "link", t)
     if !why.is_empty() {
       fail(os, why)

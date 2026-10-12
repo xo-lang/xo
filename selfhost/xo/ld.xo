@@ -1,14 +1,19 @@
 // --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
 // links the program's object (assembled by selfhost/macho) with the
 // prebuilt runtime of a pack (decision 0157), and for std/http the pack's
-// TLS library and the frameworks it uses, into a signed executable.
+// TLS library and the frameworks it uses, into a signed executable; for
+// linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/selfhost/macho
 
-/// Links prog (an object) into out; "" on success, else why not.
-fn macho_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+/// Links prog (an object) into out for tgoos; "" on success, else why
+/// not.
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+  if tgoos == "linux" {
+    return elf_link(os, ctx, flags, srcs, out, tls)
+  }
   if ctx.goos != "darwin" {
-    return "--ld=macho links darwin/arm64 executables only"
+    return "--ld=macho links darwin/arm64 executables on darwin only"
   }
   // srcs: the program, the runtime's source, then objects (the zone
   // data) and C sources to compile
@@ -63,10 +68,63 @@ fn macho_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls
   }
 }
 
+/// The ELF link of stage 3: the program's object (and the zone data's)
+/// with the linux/arm64 pack's runtime (and TLS library) into out; "" on
+/// success, else why not.
+fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+  var objs = [srcs[0]]
+  for src in srcs[2..] {
+    if !src.ends_with(".o") {
+      return "--ld=macho links no C sources (${src}): link with cc"
+    }
+    objs.push(src)
+  }
+  var lctx = ctx
+  lctx.goos = "linux"
+  let (obj, lib) = shipped_runtime(os, lctx, ctx.std, flags, tls)
+  if obj.is_empty() {
+    return "--ld=macho needs a prebuilt linux/arm64 runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status(os, lctx, ctx.std)}"
+  }
+  var ins: List[macho.LinkInput] = []
+  var paths = objs + [obj]
+  if tls {
+    paths.push(lib)
+  }
+  for p in paths {
+    match os.fs.read(p) {
+      Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
+      Err(e) => return "${p}: ${e}"
+    }
+  }
+  match macho.link_elf(ins, macho.ElfLinkOpts{}) {
+    Ok(b) => {
+      let tmp = "${out}.tmp"
+      match os.fs.write(tmp, b) {
+        Ok(_) => {}
+        Err(e) => return "${tmp}: ${e}"
+      }
+      match os.fs.set_mode(tmp, 0o755) {
+        Ok(_) => {}
+        Err(e) => return "${tmp}: ${e}"
+      }
+      match os.fs.rename(tmp, out) {
+        Ok(_) => {}
+        Err(e) => return "${out}: ${e}"
+      }
+      ""
+    }
+    Err(e) => "link: ${e}"
+  }
+}
+
 /// tzSource as an object: the zone data std/time reads (xo_tz_mode,
 /// xo_tz_zip_len, xo_tz_zip, xo_tz_blobs of std/llrt/xo_time.c), as
-/// assembly for selfhost/macho; the path of the object.
-fn tz_object(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
+/// assembly for selfhost/macho (Mach-O, or ELF for goos linux); the path
+/// of the object.
+fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str) -> Str ! FsErr {
+  if goos == "linux" {
+    return tz_object_elf(os, dir, sel)
+  }
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
   b.write_str("\t.section __TEXT,__const\n\t.globl _xo_tz_mode\n\t.p2align 3\n_xo_tz_mode:\n\t.quad ${sel.mode}\n")
@@ -99,6 +157,49 @@ fn tz_object(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
   }
   b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
   let obj = match macho.assemble(b.freeze()) {
+    Ok(o) => o
+    Err(e) => fault("the zone data does not assemble: ${e}")
+  }
+  let path = "${dir}/xo_tzdata.o"
+  os.fs.write(path, obj)?
+  Ok(path)
+}
+
+/// tz_object's ELF assembly: the same symbols without the underscore,
+/// `.L` labels, the names in .rodata and the table of pointers in
+/// .data.rel.ro.
+fn tz_object_elf(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
+  var b = BytesBuilder.new()
+  b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
+  b.write_str("\t.section .rodata\n\t.globl xo_tz_mode\n\t.p2align 3\nxo_tz_mode:\n\t.quad ${sel.mode}\n")
+  let zip = if sel.mode == 1 { sel.zip } else { "".bytes() }
+  b.write_str("\t.globl xo_tz_zip_len\n\t.p2align 3\nxo_tz_zip_len:\n\t.quad ${zip.len()}\n")
+  b.write_str("\t.globl xo_tz_zip\nxo_tz_zip:\n")
+  if zip.is_empty() {
+    b.write_str("\t.byte 0\n")
+  } else {
+    asm_bytes(b, zip)
+  }
+  let n = if sel.mode == 0 { sel.names.len() } else { 0 }
+  for i in 0..n {
+    b.write_str(".Lxo_tzd${i}:\n")
+    if sel.data[i].is_empty() {
+      b.write_str("\t.byte 0\n")
+    } else {
+      asm_bytes(b, sel.data[i])
+    }
+  }
+  for i in 0..n {
+    b.write_str(".Lxo_tzn${i}:\n")
+    asm_bytes(b, sel.names[i].bytes())
+    b.write_str("\t.byte 0\n")
+  }
+  b.write_str("\t.section .data.rel.ro,\"aw\",@progbits\n\t.globl xo_tz_blobs\n\t.p2align 3\nxo_tz_blobs:\n")
+  for i in 0..n {
+    b.write_str("\t.quad .Lxo_tzn${i}\n\t.quad .Lxo_tzd${i}\n\t.quad ${sel.data[i].len()}\n")
+  }
+  b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
+  let obj = match macho.assemble_elf(b.freeze()) {
     Ok(o) => o
     Err(e) => fault("the zone data does not assemble: ${e}")
   }
