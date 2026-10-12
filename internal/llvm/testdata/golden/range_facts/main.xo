@@ -1,0 +1,110 @@
+// Decision 0192: the LLVM backend drops the overflow checks that value
+// ranges prove (loop parameters, binary search midpoints, the branches
+// and indexes that dominate an operation), tells LLVM the ranges of loop
+// parameters and midpoints, and inlines the functions arm64 inlines. The
+// cases near the edges must still compute and fault like the Go backend.
+
+const TABLE: Bytes = b"\x00\x00\x10\x00\x00\x20\x00\x00\x30\x00\x01\x00\x00\x02\x00\x01\x00\x00\x01\x00\x01\x02\x00\x00"
+
+/// The 24 bit value at byte i of t.
+fn u24(t: Bytes, i: Int) -> Int {
+  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+}
+
+/// The index of the largest entry at most x (a binary search: the
+/// midpoint is between the ends).
+fn search(x: Int) -> Int {
+  var lo = 0
+  var hi = TABLE.len() / 3
+  while lo < hi {
+    let m = lo + (hi - lo) / 2
+    if u24(TABLE, m * 3) <= x {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  lo - 1
+}
+
+/// A loop parameter bounded by a remainder and a counter bounded by its
+/// loop condition.
+fn mix(n: Int) -> Int {
+  var h = 7
+  var i = 0
+  while i < n {
+    h = (h * 31 + i) % 1000003
+    i += 1
+  }
+  h
+}
+
+/// Reads after an index took b[i]: i + 3 cannot overflow.
+fn quad(b: Bytes, i: Int) -> Int {
+  let c = Int(b[i])
+  if i + 3 < b.len() {
+    return c + Int(b[i + 1]) + Int(b[i + 2]) + Int(b[i + 3])
+  }
+  c
+}
+
+/// A counter bounded by another value through `<=`.
+fn steps(k: Int) -> Int {
+  var j = 2
+  var s = 0
+  while j <= k {
+    s += j
+    j += 1
+  }
+  s
+}
+
+/// Facts with negative bounds: x in (-10, 0) here.
+fn negs(x: Int) -> Int {
+  if x < 0 && x > -10 {
+    return x * x - x
+  }
+  if x == -100 {
+    return x - 1
+  }
+  0
+}
+
+/// Two loop parameters swapped each step: their ranges join.
+fn swap_loop(n: Int) -> Int {
+  var a = 1
+  var b = -1
+  var i = 0
+  while i < n {
+    let t = a
+    a = b * 2
+    b = t
+    i += 1
+  }
+  a + b
+}
+
+/// An add under a fact that does not bound its other operand: the check
+/// stays.
+fn bump(x: Int, k: Int) -> Int {
+  if x > 0 {
+    return x + k
+  }
+  0
+}
+
+fn main(os: Os) {
+  var found = ""
+  for x in [-1, 0, 4095, 4096, 65536, 65537, 1048576, 2000000] {
+    found = "${found} ${search(x)}"
+  }
+  os.stdio.println(found)
+  os.stdio.println("${mix(100000)} ${mix(0)}")
+  let b = b"\x01\x02\x03\x04\x05"
+  os.stdio.println("${quad(b, 0)} ${quad(b, 1)} ${quad(b, 2)} ${quad(b, 4)}")
+  os.stdio.println("${steps(10)} ${steps(1)} ${negs(-3)} ${negs(-100)} ${negs(5)}")
+  os.stdio.println("${swap_loop(10)} ${swap_loop(61)}")
+  os.stdio.println("${bump(5, 6)}")
+  let big = 9223372036854775807 - 1
+  os.stdio.println("${bump(big, 2)}")
+}

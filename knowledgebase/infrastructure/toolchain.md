@@ -218,7 +218,7 @@ go run ./cmd/xo run selfhost/wasm -- [--std=DIR] [--wd=DIR] [--each] [--why] [--
 go run ./cmd/xo build -o xo1 selfhost/xo && ./xo1 build --backend=wasm [-o OUT.wasm] <dir>   # the Xo driver with the WebAssembly backend: OUT (default <name>.wasm) and OUT's .wat beside it; imports only WASI preview1 (decision 0179; last verified: 2026-10-12)
 node --no-warnings selfhost/wasm/run.mjs PROG.wasm [args...]   # runs a module of the wasm backend under Node's WASI preview1 in a worker, the working directory preopened as fd 3 and / as fd 4 (1 GiB stack, single threaded GC: gotchas/node-wasm-concurrent-gc-crash.md; no incremental marking and no lazy wasm compilation: gotchas/wasm-busy-loop-crashes-node.md, wasm-lazy-compile-worker-crash.md); a trap prints `wasm trap:` and exits 134; XO_LEAKCHECK=1 prints the leak check line; Node 22.22.1 (/opt/homebrew/bin/node; no wat2wasm, wasmtime, or wasmer installed; last verified: 2026-10-12)
 go test ./internal/selfhost -run TestSelfhostWasm      # the wasm backend on every LLVM golden (merge and full tiers, not -short; skips without node): each supported golden must match want.txt and free every allocation, unsupported ones are counted, at least wasmMinPass (116 of 134 since stage 2) must pass; task programs run under the single threaded scheduler of selfhost/wasm/rt3.xo (decision 0179; last verified: 2026-10-12)
-go test ./internal/selfhost -run 'TestSelfhostLLVM'     # Xo LLVM emitter vs internal/llvm on every repository run and the test binaries (functions by name with string literals and fault locations by contents, helpers, whole modules byte for byte counted), and mutations (TestSelfhostLLVMMutations); tiers: -short every 25th run and no mutations, merge every third run but the mergeHeavy ones and 30 mutations (73 s plus 115 s for the go subtest in the 1,329 s merge tier of 2026-10-12, which still lowered selfhost/arm64, selfhost/llvm, and selfhost/xo; not remeasured since), full every run, every backend, 400 mutations; XO_SELFHOST_BACKEND, XO_SELFHOST_LLVM_STAGE=N, XO_SELFHOST_LLVM_FUZZ=N, XO_SELFHOST_KEEP=<dir> (llvm-<backend>.txt: counts and why functions were skipped) (decision 0166; last verified: 2026-10-12)
+go test ./internal/selfhost -run 'TestSelfhostLLVM'     # Xo LLVM emitter vs internal/llvm on every repository run and the test binaries (functions by name with string literals and fault locations by contents, helpers, whole modules byte for byte counted), and mutations (TestSelfhostLLVMMutations); tiers: -short every 25th run and no mutations, merge every third run but the mergeHeavy ones and 30 mutations (73 s plus 115 s for the go subtest in the 1,329 s merge tier of 2026-10-12, which still lowered selfhost/arm64, selfhost/llvm, and selfhost/xo; not remeasured since), full every run, every backend, 400 mutations; XO_SELFHOST_BACKEND, XO_SELFHOST_LLVM_STAGE=N, XO_SELFHOST_LLVM_FUZZ=N, XO_SELFHOST_KEEP=<dir> (llvm-<backend>.txt: counts and why functions were skipped), XO_SELFHOST_DIRS=text,text (the runs whose directory contains one of the texts instead of the tier's, as TestSelfhostArm64; added 2026-10-12, decision 0192) (decision 0166; last verified: 2026-10-12)
 XO_SELFHOST_E2E=lexer|parser|check|ssa|llvm go test ./internal/selfhost -run TestSelfhostLLVMEndToEnd -v   # decision 0166 stage 4: the self hosted pipeline (the selfhost/llvm binary, go build or XO_SELFHOST_BACKEND) lowers selfhost/<component>, the IR must be byte identical to internal/llvm's, clang builds a binary from that IR (build.Options.LLVMIR, XO_BIN_CACHE=off) and its output on a fixed input must equal the go build's; runs in the full tier with lexer (about 3 s); ssa: 27 s to lower, 34 minutes of clang (-O2 -flto on 399 MB of IR) (last verified: 2026-10-11)
 go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm in the full tier; go otherwise, and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), then every pass stage (the merge tier compares only the build stage of the mergeHeavy runs, tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser; 115 s plus 492 s for its go subtest in the 1,329 s merge tier of 2026-10-12, before selfhost/arm64, selfhost/llvm, and selfhost/xo were build only), and 400 code mutations (TestSelfhostSSAMutations: the first 300 in the merge tier, none under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_DIRS=text,text limits it to the runs whose directory contains one of the texts (about 7 s for six runs, 2026-10-11); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
@@ -979,7 +979,8 @@ selfhost/ssa/           the SSA builder in Xo, stages 1 to 8 of decision 0150: i
 selfhost/llvm/          the LLVM emitter in Xo (decision 0166): gen.xo (types and layout, globals, the reference
                         counting, equality, environment, and box helpers), func.xo (functions, instructions,
                         landing pads), call.xo (calls, inline operations, the task runtime), held.xo (the
-                        memory of `var` parameters by reference), text.xo (IR strings, Float bits), main.xo (CLI)
+                        memory of `var` parameters by reference), text.xo (IR strings, Float bits), ranges.xo
+                        (value ranges, facts, assumes, the inlinable set: decision 0192), main.xo (CLI)
 selfhost/arm64/         the arm64 emitter in Xo (decision 0158): state.xo (the emitter's state, SSA access),
                         gen.xo (the program: symbols, sections, literals, xo_entry, value layout), mir.xo,
                         isel.xo and calls.xo (instruction selection: arithmetic, compares, lists, strings,
@@ -1428,6 +1429,17 @@ first, AST based prototype, since deleted) and
   helpers. A construct outside the SSA builder's subset is a build error
   naming it and its position ("the SSA builder does not support ...").
   The AST path (bump allocator, never freed) was deleted on 2026-10-08.
+- Value ranges and inlining (decision 0192; last verified: 2026-10-12):
+  `internal/llvm/ranges.go` computes per function the intervals of Int
+  values (decision 0184's analysis) narrowed by dominating branch
+  comparisons, `&&` joins, and indexes taken; a checked add, subtract,
+  or multiply they prove is emitted `nsw` without its check, and each
+  binary search midpoint gets an `llvm.assume` of its interval (only
+  midpoints: loop parameter assumes slowed the sieve 1.6 times,
+  gotchas/llvm-loop-phi-ranges.md). `internal/llvm/inline.go` is
+  arm64's cost model; calls of the functions it finds inlinable carry
+  `#6` (`attributes #6 = { alwaysinline }`). Twin: selfhost/llvm
+  ranges.xo.
 - Split builds (decision 0168; last verified: 2026-10-12):
   `XO_LLVM_SPLIT=n` (or `build.Options.LLVMSplit`) cuts the IR into n
   modules by size (`llvm.Split`, internal/llvm/modules.go), writes
