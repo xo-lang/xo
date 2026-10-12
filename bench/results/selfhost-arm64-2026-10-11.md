@@ -346,3 +346,17 @@ assembly of arith, closures, and http_tls is byte identical to the Go
 driver's prog-linux.s. Linking for Linux from a Mac (the linux pack
 with `zig cc`) is not something internal/build does yet; no zig is
 installed here.
+
+## Step 6: test binaries
+
+`xo1 test [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>` builds
+the test binary (selfhost/ssa's test mode) and runs each test in its own
+process (XO_TEST, XO_TEST_SEED), property tests case by case with
+shrinking (XO_PROP_SEED, XO_PROP_REPLAY, XO_PROP_BEST), and prints what
+`xo test --no-gc` prints. Checked on cmd/xo/testdata/nogc: same, prop,
+and real print the same as `xo test --no-gc --backend=arm64 -v` with the
+same exit status; native differs in one line, the contract fuzz test the
+Go driver lists as skipped, which xo1 does not list (so 0 skipped
+against 1). Not done: `--real` (the Xo SSA builder leaves tests with
+`uses` out, so they are skipped), contract fuzz listing, and a time
+limit (the native Proc has none).
