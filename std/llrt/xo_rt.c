@@ -1651,6 +1651,7 @@ typedef struct xo_ctx {
 	struct xo_budget *bud;
 	int64_t bud_left, bud_q, bud_run, bud_amark;
 	struct xo_heap *bud_heap;
+	int bud_paused; // bud_pause depth
 } xo_ctx;
 
 static __thread xo_ctx *cur;
@@ -2168,15 +2169,16 @@ void xo_tick(void) {
 
 // bud_pause and bud_resume bracket a stretch in which c does not run (a
 // wait, a task run inline on its thread): its time and that task's
-// allocations are not c's.
+// allocations are not c's. They nest (a waiting root thread runs tasks
+// inline): only the outermost pair charges and marks.
 static void bud_pause(xo_ctx *c) {
-	if (c && c->bud) {
+	if (c && c->bud && c->bud_paused++ == 0) {
 		bud_charge(c, 0);
 	}
 }
 
 static void bud_resume(xo_ctx *c) {
-	if (c && c->bud) {
+	if (c && c->bud && --c->bud_paused == 0) {
 		bud_mark(c);
 	}
 }
