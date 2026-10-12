@@ -7,8 +7,14 @@
 # Usage: scripts/remote-full.sh [--dry-run] [--on-demand] [--cmd CMD] [--hold] [COMMIT]
 #   COMMIT defaults to HEAD. The log lands in
 #   $XO_REMOTE_OUT (default bench/results/remote/<commit>.log, not
-#   committed by this script). The log ends with per-package durations,
-#   slowest first.
+#   committed by this script). The log ends with the peak memory in use
+#   (free -m, sampled every 10 s) and per-package durations, slowest
+#   first.
+#   XO_REMOTE_PKGS: the packages of the full suite (default every
+#   package but runs/), e.g. ./internal/selfhost; XO_REMOTE_TESTFLAGS:
+#   more go test flags (e.g. -v for per-test times). XO_SELFHOST_JOBS is
+#   the instance's core count (internal/selfhost/jobs_test.go), unless
+#   set here; XO_SELFHOST_HEAVY_JOBS passes through when set.
 #   --cmd CMD  runs CMD (a shell command, in the checkout, with go on
 #              PATH) instead of the full suite, e.g.
 #              --cmd 'go test -count=1 -run TestGoldenThreads ./internal/llvm'
@@ -24,14 +30,15 @@
 # (default 300) even if this script dies; this script also terminates it
 # on exit. It only ever terminates the instance it launched (by the id
 # run-instances returned). Spot by default (about $0.70 to $0.80 an hour
-# for c8g.16xlarge in us-east-1 on 2026-10-12; $2.55 on demand).
+# for c8g.16xlarge in us-east-1 on 2026-10-12; $2.55 on demand; the
+# default r8g.8xlarge was $0.47 to $0.52 spot, about c8g.8xlarge's).
 #
 # Setup made on first use, all named xo-ci: an EC2 key pair (private key
 # at ~/.ssh/xo-ci.pem) and a security group allowing SSH from this host's
 # current public IP only.
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # spot quota raised to 128 vCPUs on 2026-10-12
+TYPE=${XO_REMOTE_TYPE:-r8g.8xlarge}  # 32 vCPUs, 256 GiB: the full tier needs about 13 GB per heavy run (c8g.8xlarge, 64 GiB, ran out, 2026-10-12); spot quota raised to 128 vCPUs on 2026-10-12
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-300}
 GOVER=${XO_REMOTE_GO:-1.26.1}
@@ -138,12 +145,16 @@ if [ -n "$CMD" ]; then
   run="$CMD"
 else
   log "running the full suite (XO_SELFHOST_TIER=full) on $commit"
-  run='XO_SELFHOST_TIER=full go test -count=1 -timeout 240m $(go list ./... 2>/dev/null | grep -v /runs/)'
+  pkgs=${XO_REMOTE_PKGS:-'$(go list ./... 2>/dev/null | grep -v /runs/)'}
+  jobs=${XO_SELFHOST_JOBS:-'$(nproc)'}
+  heavy=""; [ -n "${XO_SELFHOST_HEAVY_JOBS:-}" ] && heavy="XO_SELFHOST_HEAVY_JOBS=$XO_SELFHOST_HEAVY_JOBS"
+  run="echo XO_SELFHOST_JOBS=$jobs $heavy; XO_SELFHOST_TIER=full XO_SELFHOST_JOBS=$jobs $heavy go test -count=1 -timeout 240m ${XO_REMOTE_TESTFLAGS:-} $pkgs"
 fi
 qrun=$(printf '%q' "$run")
 ssh_ "set -o pipefail; export PATH=/usr/local/go/bin:\$PATH; git clone -q xo.bundle xo && cd xo && git checkout -q $commit && \
   { uname -a; nproc; free -g; go version; clang --version | head -1; } && \
-  bash -c $qrun 2>&1" > "$out" || true
+  { while sleep 10; do free -m | awk '/^Mem:/ {print \$3}'; done > ../mem.txt 2>/dev/null </dev/null & sampler=\$!; } && \
+  { bash -c $qrun 2>&1; kill \$sampler; echo \"remote-full: peak memory in use \$(sort -n ../mem.txt | tail -1) MB\"; }" > "$out" || true
 # per-package durations, slowest first (go test prints one on each ok and
 # FAIL package line)
 { echo; echo "per-package durations (slowest first):"

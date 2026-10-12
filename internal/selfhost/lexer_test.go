@@ -2,6 +2,7 @@ package selfhost
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io/fs"
 	"math/rand"
@@ -10,9 +11,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
@@ -29,17 +33,41 @@ func repoRoot(t testing.TB) string {
 }
 
 // binaries holds the self hosted components (selfhost/lexer,
-// selfhost/parser) built once per component and backend.
+// selfhost/parser, ...) built once per component and backend.
 var (
-	binMu    sync.Mutex
-	binaries = map[string]*binEntry{}
+	selfhostDir = filepath.Join("..", "..", "selfhost") // absolute after TestMain
+	binMu       sync.Mutex
+	binaries    = map[string]*binEntry{}
 )
 
-// TestMain turns on the binary cache: a component is rebuilt only when
-// its generated code or the toolchain changes.
+// TestMain turns on the binary cache (a component is rebuilt only when
+// its generated code or the toolchain changes), checks XO_SELFHOST_JOBS,
+// and in a whole full tier run starts the native builds (prebuildFull).
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
+	flag.Parse()
+	if d, err := filepath.Abs(filepath.Join("..", "..", "selfhost")); err == nil {
+		selfhostDir = d
+	}
+	selfhostJobs()
+	if jobsErr != nil {
+		fmt.Fprintln(os.Stderr, jobsErr)
+		os.Exit(2)
+	}
+	// the clang compiles of every LLVM build of the process share
+	// XO_LLVM_JOBS slots (internal/build/llvmsplit.go): EnableTestLLVMSplit's
+	// 4 held a 32 core run to a load of 4 for its first 18 minutes
+	// (2026-10-12), so scale them with the pool, at most one per 2 GiB
+	// (a clang on a part of selfhost/ssa holds about 1.1 GB)
+	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
+		n := max(4, selfhostJobs())
+		if mem := totalMemory(); mem > 0 {
+			n = min(n, max(4, int(mem>>31)))
+		}
+		os.Setenv("XO_LLVM_JOBS", strconv.Itoa(n))
+	}
 	build.EnableTestLLVMSplit()
+	prebuildFull()
 	code := m.Run()
 	if err := flushGoldens(); err != nil {
 		fmt.Fprintln(os.Stderr, "gogoldens:", err)
@@ -56,23 +84,45 @@ func TestMain(m *testing.M) {
 // "llvm"; decision 0081) once.
 func lexerBinary(backend string) (string, error) { return selfhostBinary("lexer", backend) }
 
-// selfhostBinary builds selfhost/<component> with backend once. Builds
-// of different components or backends run at the same time (each has
-// its own build directory); one of the same key waits for the first.
+// selfhostBinary builds selfhost/<component> with backend once, in a
+// slot of the pool (jobs_test.go). Builds of different components or
+// backends run at the same time (each has its own build directory); one
+// of the same key waits for the first.
 func selfhostBinary(component, backend string) (string, error) {
+	e := binEntryFor(component, backend)
+	buildBinary(e, component, backend, true)
+	return e.bin, e.err
+}
+
+// binEntryFor is the entry of component and backend.
+func binEntryFor(component, backend string) *binEntry {
 	key := component + "/" + backend
 	binMu.Lock()
+	defer binMu.Unlock()
 	e, ok := binaries[key]
 	if !ok {
 		e = &binEntry{}
 		binaries[key] = e
 	}
-	binMu.Unlock()
+	return e
+}
+
+// buildBinary builds e once; slot says to take a slot of the pool for
+// it (prebuildFull holds one already).
+func buildBinary(e *binEntry, component, backend string, slot bool) {
 	e.once.Do(func() {
+		e.started.Store(true)
 		if goldensRecording() {
 			return // the Xo side is not run
 		}
-		dir := filepath.Join("..", "..", "selfhost", component)
+		if slot {
+			defer acquireJob(true)()
+		}
+		// absolute: the tests change the working directory while
+		// prebuildFull's builds start
+		dir := filepath.Join(selfhostDir, component)
+		t0 := time.Now()
+		defer func() { e.took = time.Since(t0) }()
 		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
 		switch {
 		case err != nil:
@@ -83,13 +133,14 @@ func selfhostBinary(component, backend string) (string, error) {
 			e.bin = res.Binaries[build.Host()]
 		}
 	})
-	return e.bin, e.err
 }
 
 type binEntry struct {
-	once sync.Once
-	bin  string
-	err  error
+	once    sync.Once
+	started atomic.Bool
+	bin     string
+	err     error
+	took    time.Duration // the build (from the binary cache when short)
 }
 
 // selfhostBinaries builds component with every backend that builds on
@@ -124,54 +175,11 @@ func selfhostBinaries(t *testing.T, component string, backends []string) map[str
 		if err := errs[b]; err != nil {
 			t.Fatalf("%s: %v", b, err)
 		}
+		if _, ok := bins[b]; ok {
+			t.Logf("selfhost/%s with %s: built in %.1f s", component, b, binEntryFor(component, b).took.Seconds())
+		}
 	}
 	return bins
-}
-
-// parallel runs f(0..n-1) on up to min(GOMAXPROCS, 4) goroutines: the
-// runs of the Go checker and SSA builder, and the batches of a self
-// hosted binary, are independent.
-func parallel(n int, f func(i int)) {
-	sem := make(chan struct{}, max(1, min(runtime.GOMAXPROCS(0), 4)))
-	var wg sync.WaitGroup
-	for i := range n {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			f(i)
-		}()
-	}
-	wg.Wait()
-}
-
-// runXoBatches runs bin with prefix and each batch of paths at the same
-// time and returns the outputs in order (the first failure fails t).
-func runXoBatches(t testing.TB, bin, root string, prefix, paths []string, size int) []string {
-	t.Helper()
-	var chunks [][]string
-	for i := 0; i < len(paths); i += size {
-		chunks = append(chunks, paths[i:min(i+size, len(paths))])
-	}
-	outs := make([]string, len(chunks))
-	errs := make([]error, len(chunks))
-	parallel(len(chunks), func(i int) {
-		cmd := exec.Command(bin, append(append([]string(nil), prefix...), chunks[i]...)...)
-		cmd.Dir = root
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		if err := cmd.Run(); err != nil {
-			errs[i] = fmt.Errorf("%s on %d paths: %v\n%s", filepath.Base(bin), len(chunks[i]), err, stderr.String())
-		}
-		outs[i] = stdout.String()
-	})
-	for _, err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	return outs
 }
 
 // nativeSkip is why a native backend cannot build on this host, or "".

@@ -45,23 +45,26 @@ func TestSelfhostChecker(t *testing.T) {
 	backends := tierBackends(t)
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	bins := selfhostBinaries(t, "check", backends)
 	// The Go checker prints paths relative to the working directory, as
 	// the Xo checker run from root does.
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]*goRun, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goCheck(dirs[i]) })
-	want := map[string]*goRun{}
-	for i, d := range dirs {
-		want[d] = wants[i]
-	}
 	// the `use c` runs again, checked as a native build checks them
 	cDirs := useCDirs(t, root, dirs)
+	want := map[string]*goRun{}
 	wantNative := map[string]*goRun{}
-	for _, d := range cDirs {
-		wantNative[d] = goCheckOpts(d, check.Options{Native: true})
-	}
+	// the Go checker's results, while the subtests run the Xo checker
+	wait := background(t, func() {
+		wants := make([]*goRun, len(dirs))
+		parallel(t, "Go checker", dirs, func(i int) { wants[i] = goCheck(dirs[i]) })
+		for i, d := range dirs {
+			want[d] = wants[i]
+		}
+		for _, d := range cDirs {
+			wantNative[d] = goCheckOpts(d, check.Options{Native: true})
+		}
+	})
+	bins := selfhostBinaries(t, "check", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -70,6 +73,7 @@ func TestSelfhostChecker(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runChecker(t, bin, root, dirs)
+			wait()
 			var st checkStats
 			var fails []string
 			var report strings.Builder
@@ -262,11 +266,9 @@ func runChecker(t *testing.T, bin, root string, dirs []string) map[string]string
 func runCheckerOpts(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 100
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, flags...), dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := strings.Split(text, "=== check ")
+	for _, xb := range runXoBatches(t, bin, root, append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, flags...), dirs, batch) {
+		chunk := xb.paths
+		parts := strings.Split(xb.out, "=== check ")
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo checker printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}

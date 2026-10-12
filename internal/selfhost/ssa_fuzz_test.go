@@ -86,23 +86,31 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
+	wd := workDir(t)
+	// the Go builder's results, while the Xo builder runs
+	tdirs := testDirs(t, tmp, dirs)
+	wants := make([]goSSA, len(dirs))
+	twants := make([]goSSA, len(tdirs))
+	wait := background(t, func() {
+		all := append(append([]string(nil), dirs...), tdirs...)
+		parallel(t, "Go SSA builder", all, func(i int) {
+			if i < len(dirs) {
+				wants[i] = goSSABuild(wd, dirs[i])
+			} else {
+				i -= len(dirs)
+				twants[i] = goSSABuildOpts(wd, tdirs[i], true, true)
+			}
+		})
+	})
 	if goldensRecording() {
-		wd := workDir(t)
-		for _, d := range dirs {
-			goSSABuild(wd, d)
-		}
-		for _, d := range testDirs(t, tmp, dirs) {
-			goSSABuildOpts(wd, d, true, true)
-		}
+		wait()
 		skipRecording(t)
 	}
 	got := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := runHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch) {
+		chunk := xb.paths
+		parts := runHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo builder printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}
@@ -110,11 +118,10 @@ func TestSelfhostSSAMutations(t *testing.T) {
 			got[d] = strings.TrimPrefix(parts[j+1], d+"\n")
 		}
 	}
+	tgot := runSSA(t, bin, tmp, tdirs, "--stages", "--std="+stdDir, "--test")
+	wait()
 	var st ssaStats
 	var fails []string
-	wd := workDir(t)
-	wants := make([]goSSA, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goSSABuild(wd, dirs[i]) })
 	for i, d := range dirs {
 		want := wants[i]
 		for _, msg := range compareSSA(d, want, got[d], &st) {
@@ -124,10 +131,6 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	}
 	t.Logf("%d mutations: %s", n, st)
 	// the test binaries of the mutations with test blocks (stage 7)
-	tdirs := testDirs(t, tmp, dirs)
-	tgot := runSSA(t, bin, tmp, tdirs, "--stages", "--std="+stdDir, "--test")
-	twants := make([]goSSA, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(wd, tdirs[i], true, true) })
 	var tst ssaStats
 	for i, d := range tdirs {
 		for _, msg := range compareSSA("test "+d, twants[i], tgot[d], &tst) {
