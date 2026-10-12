@@ -2,7 +2,9 @@
 
 Status: Accepted, implemented (2026-10-11). All six items built and
 tested; the attack replication measured 10 of 15 classes blocked
-(`bench/results/supply-chain-2026-10-11.md`). Scope set by the owner on
+(`bench/results/supply-chain-2026-10-11.md`). Native attenuation:
+`Proc.only` and `Env.only` by decision 0172, `Net.only` by decision 0175
+(section 3's native XO1201 no longer holds). Scope set by the owner on
 2026-10-11:
 only the consumer's vouches count for `use c ... uses none`; an effect
 lock in xo.lock by default (`--accept-effects` to widen); capability

@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: task.with_budget: a negative ceiling (cpu -5ms, alloc 0, steps 0) at main.xo:6

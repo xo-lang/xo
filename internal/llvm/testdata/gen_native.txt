@@ -88,3 +88,5 @@ error_frames_closures
 os_tasks
 arena_escape
 formats_toml
+budget
+cap_attenuation

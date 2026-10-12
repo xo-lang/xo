@@ -232,11 +232,11 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   b.m.funcs[fi].captures = cap_ts
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false, polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 
-fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool) {
+fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool, polls: Bool) {
   let saved = b.begin(fi, file)
   b.s.res = result
   b.s.err_t = err_t
@@ -265,6 +265,8 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
       }
     }
   }
+  b.s.polls = polls
+  b.poll()
   let v = b.block(lit.body)
   b.ret_at(v, Some(Expr.Block(b: lit.body)))
   b.finish_fn()
@@ -1175,17 +1177,18 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let c = b.value_as(es[1] ?? fault("arg"), b.m.types[t].fields[1].ty)
     return b.add(Op.Struct, t, Aux.None, [a, c])
   }
-  if name is "proc_lists" | "env_lists" {
-    // the attenuation lists of a Proc or Env (decision 0172)
+  if name is "proc_lists" | "env_lists" | "net_lists" {
+    // the attenuation lists of a Proc, Env, or Net (decisions 0172 and
+    // 0175)
     let v = b.expr(es[0] ?? fault("arg"))
     if !b.is_lists(b.vty(v)) {
-      b.unsupported("`${name}` of a value that is not a Proc or Env")
+      b.unsupported("`${name}` of a value that is not a Proc, Env, or Net")
       return b.undef(nt)
     }
     return b.add(Op.Field, b.m.types[b.vty(v)].fields[0].ty, Aux.I(n: 0), [v])
   }
-  if name is "proc_new" | "env_new" {
-    let t = b.lists_type(if name == "env_new" { "Env" } else { "Proc" })
+  if name is "proc_new" | "env_new" | "net_new" {
+    let t = b.lists_type(if name == "env_new" { "Env" } else if name == "net_new" { "Net" } else { "Proc" })
     let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
     return b.add(Op.Struct, t, Aux.None, [a])
   }
@@ -1783,6 +1786,7 @@ fn cap_impl(key: Str) -> Str {
     "Env.home" => "env_home"
     "Env.only" => "env_only"
     "Proc.only" => "proc_only"
+    "Net.only" => "net_only"
     "Proc.cmd" => "proc_cmd"
     "Proc.pipeline" => "proc_pipeline"
     _ => ""

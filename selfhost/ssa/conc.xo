@@ -629,6 +629,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   match key {
     "task.is_canceled" => return b.rt("is_canceled", bt, [])
     "task.with_timeout" => return b.with_timeout(x, fo)
+    "task.with_budget" => return b.with_budget(x, fo)
     "task.stop_requested" => return b.rt("stop_requested", bt, [])
     "task.stopping" => {
       let dl = b.drop_list(b.m.types[nt].elems[0])
@@ -1135,6 +1136,7 @@ fn status_tag(name: Str) -> Int {
     "Timeout" => 3
     "Io" => 4
     "Canceled" => 5
+    "Denied" => 6
     _ => 0
   }
 }
@@ -1225,11 +1227,14 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       return Some(res)
     }
     "Net.listen" => {
-      let h = b.rt("net_listen", b.m.handle("Listener", []), [b.io_arg(fo, es, 0, st)])
+      // the Net's attenuation lists first (Net.only, decision 0175)
+      let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
+      let h = b.rt("net_listen", b.m.handle("Listener", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Net.dial" => {
-      let h = b.rt("net_dial", b.m.handle("Conn", []), [b.io_arg(fo, es, 0, st)])
+      let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
+      let h = b.rt("net_dial", b.m.handle("Conn", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Listener.addr" => {

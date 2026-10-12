@@ -766,7 +766,7 @@ fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> In
   // a fault in it hands back the value it was given, like cancellation
   // (the caller goes on unwinding, decision 0085)
   b.m.funcs[fi].catches = true
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true, polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 

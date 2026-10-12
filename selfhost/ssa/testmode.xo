@@ -145,6 +145,8 @@ fn (var b: Builder) test_body(fi: Int, file: Int, td: parser.TestDecl) {
   for (k, vo) in b.c.test_params_of(file, td).indexed() {
     b.write_var(vo, b.param(1 + k))
   }
+  b.s.polls = true
+  b.poll()
   if let Some(body) = td.body {
     let v = b.block(body)
     b.ret_at(v, Some(Expr.Block(b: body)))

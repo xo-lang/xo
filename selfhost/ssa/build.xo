@@ -42,6 +42,9 @@ struct S {
   /// The checker file of the code being lowered (expressions are keyed by
   /// file, span, and kind).
   file: Int = -1
+  /// The code is of the program's own modules and polls the budget in a
+  /// program that uses one (build_budget.go).
+  polls: Bool = false
   /// Braun et al.: the definition of each variable per block, keyed by
   /// def_key; variables are checker locals or (negative) made up ones.
   defs: Map[Int, Int] = {}
@@ -126,7 +129,7 @@ enum Job {
   Inner(fo: Int, fi: Int, sub: Map[Int, Int])
   /// The function of a test block (testBody).
   Test(fi: Int, file: Int, td: parser.TestDecl)
-  Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
+  Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool, polls: Bool)
 }
 
 /// A check after an operation (build_conc.go unwindCheck): the function,
@@ -169,6 +172,12 @@ pub struct Builder {
   /// A test binary (Options.Tests, testmode.xo).
   pub tests: Bool = false
   pub conc: Bool = false
+  /// The program calls task.with_budget: the code of its own modules
+  /// polls the budget (build_budget.go).
+  budgets: Bool = false
+  /// The walk of uses_os_tasks looks for task.with_budget calls instead
+  /// (uses_budgets).
+  scan_budget: Bool = false
   /// Why the run cannot be built here (no main, concurrency), or "".
   pub why: Str = ""
   /// While declaring a function: what was unsupported in its signature.
@@ -225,6 +234,7 @@ pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
 /// Builds the program: main and every function reachable from it, in the
 /// Go builder's order (buildModule, before the passes).
 pub fn (var b: Builder) build() {
+  b.budgets = b.uses_budgets()
   if b.tests {
     // a test binary (testmode.xo): its main runs one test
     b.build_tests()
@@ -280,7 +290,7 @@ fn (var b: Builder) run_job(j: Job) {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
     Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
     Test(fi, file, td) => b.test_body(fi, file, td)
-    Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack)
+    Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack, polls) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack, polls)
   }
 }
 
@@ -525,8 +535,8 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       "Duration" | "Time" => return b.int_t()
       "Never" => return b.unit_t()
       "Fs" => return b.fs_type()
-      "Proc" | "Env" => return b.lists_type(oname)
-      "Os" | "Stdio" | "Clock" | "Net" | "Rand" => {
+      "Proc" | "Env" | "Net" => return b.lists_type(oname)
+      "Os" | "Stdio" | "Clock" | "Rand" => {
         let (ct, _) = b.m.named(oname, Kind.Cap)
         return ct
       }
@@ -557,7 +567,7 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       if cap == "Fs" {
         return b.fs_type()
       }
-      if cap is "Proc" | "Env" {
+      if cap is "Proc" | "Env" | "Net" {
         return b.lists_type(cap)
       }
       let (ct, _) = b.m.named(cap, Kind.Cap)
@@ -743,8 +753,8 @@ fn (var b: Builder) is_fs(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.Fs"
 }
 
-/// The lowered Proc or Env (build_io.go listsType): the lists of its
-/// attenuations in one Str.
+/// The lowered Proc, Env, or Net (build_io.go listsType): the lists of
+/// its attenuations in one Str.
 fn (var b: Builder) lists_type(name: Str) -> Int {
   let (t, created) = b.m.named("xo.${name}", Kind.Struct)
   if created {
@@ -755,7 +765,7 @@ fn (var b: Builder) lists_type(name: Str) -> Int {
 }
 
 fn (var b: Builder) is_lists(t: Int) -> Bool {
-  b.m.types[t].kind == Kind.Struct && (b.m.types[t].name == "xo.Proc" || b.m.types[t].name == "xo.Env")
+  b.m.types[t].kind == Kind.Struct && (b.m.types[t].name == "xo.Proc" || b.m.types[t].name == "xo.Env" || b.m.types[t].name == "xo.Net")
 }
 
 /// The value of an interface type Error, Display, or Debug (build_show.go
@@ -1400,7 +1410,7 @@ fn (var b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
 fn (var b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
   match e {
     SelectorExpr(x: x, sel: sel, ..) => {
-      if sel.name == b"tasks" {
+      if !b.scan_budget && sel.name == b"tasks" {
         var t = b.c.nat_in(f, x)
         if t < 0 {
           t = b.c.type_in(f, x)
@@ -1449,6 +1459,13 @@ fn (var b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
     IsExpr(x: x, ..) => b.tasks_expr(f, x)
     RangeExpr(lo: lo, hi: hi, ..) => b.tasks_opt(f, lo) || b.tasks_opt(f, hi)
     CallExpr(fun: fun, args: args, ..) => {
+      if b.scan_budget {
+        if let Some(ci) = b.c.call_in(f, e) {
+          if b.is_with_budget(ci.fn_obj) {
+            return true
+          }
+        }
+      }
       if b.tasks_expr(f, fun) {
         return true
       }

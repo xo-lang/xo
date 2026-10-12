@@ -299,7 +299,7 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""), s.cint(0))
 		}
 		if isLists(t) {
-			// os.proc, os.env: no attenuation (decision 0172)
+			// os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
 			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""))
 		}
 		return s.add(OpCap, t, x.Sel.Name, v)

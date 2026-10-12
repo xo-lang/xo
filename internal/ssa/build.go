@@ -60,6 +60,9 @@ type builder struct {
 	conc     bool
 	needConc bool
 	checks   []unwindCheck
+	// budgets: the program calls task.with_budget, so the code of its
+	// own modules polls the budget (build_budget.go)
+	budgets bool
 	// faultUnwind: faults unwind to landings (decision 0085, landing.go)
 	faultUnwind bool
 	sites       map[*ast.CallExpr]int           // spawns that can fail a scope
@@ -193,6 +196,7 @@ func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder
 	}
 	b.mod.FaultUnwind = b.faultUnwind
 	b.ambiguous = ambiguousTypeNames(info.AllModules())
+	b.budgets = b.usesBudgets()
 	if opts.Tests {
 		// a test binary (build_testmode.go): its main runs one test
 		b.buildTests(res)
@@ -369,10 +373,11 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			case "Fs":
 				// its root and mode (decision 0102, build_io.go fsCall)
 				return b.fsType()
-			case "Proc", "Env":
-				// its attenuation lists (decision 0172, build_io.go listsType)
+			case "Proc", "Env", "Net":
+				// its attenuation lists (decisions 0172 and 0175,
+				// build_io.go listsType)
 				return b.listsType(obj.Name)
-			case "Os", "Stdio", "Clock", "Net", "Rand":
+			case "Os", "Stdio", "Clock", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
@@ -403,7 +408,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				if c == "Fs" {
 					return b.fsType()
 				}
-				if c == "Proc" || c == "Env" {
+				if c == "Proc" || c == "Env" || c == "Net" {
 					return b.listsType(c)
 				}
 				x, _ := m.Named(c, KCap)
@@ -771,6 +776,9 @@ type fn struct {
 	// shield counts the deferred code being lowered around the current
 	// code: it is shielded from cancellation, so it never unwinds
 	shield int
+	// polls: the code is of the program's own modules and polls the
+	// budget in a program that uses one (build_budget.go)
+	polls bool
 
 	// res is the success type, errT the error type of a function that
 	// can fail (nil otherwise); its SSA result is then Result[res, errT].
@@ -847,6 +855,8 @@ func (b *builder) bodyOf(fo *check.FuncObj, f *Func, sub *check.Subst, requires 
 		b.unsupported(fo.Decl, "a function without a body")
 		return
 	}
+	s.polls = fo.Module != nil && !fo.Module.IsStd && !fo.Module.Native
+	s.poll()
 	for _, cl := range fo.Decl.Clauses {
 		if c, ok := cl.(*ast.RequiresClause); ok && requires && b.contractOn(c.Debug) {
 			s.requires(c)

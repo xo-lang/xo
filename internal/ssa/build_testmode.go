@@ -166,6 +166,8 @@ func (b *builder) testBody(td *ast.TestDecl, f *Func, errT check.Type) {
 	for k, vo := range b.info.TestParams(td) {
 		s.writeVar(vo, f.Params()[1+k])
 	}
+	s.polls = true
+	s.poll()
 	v := s.block(td.Body)
 	s.ret(v, td.Body)
 	s.finishFn()

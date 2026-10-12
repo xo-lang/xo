@@ -186,18 +186,22 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 	case "fs_new":
 		t := b.fsType()
 		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type), s.valueAs(es[1], t.Fields[1].Type))
-	case "proc_lists", "env_lists":
-		// the attenuation lists of a Proc or Env (decision 0172)
+	case "proc_lists", "env_lists", "net_lists":
+		// the attenuation lists of a Proc, Env, or Net (decisions 0172
+		// and 0175)
 		v := s.expr(es[0])
 		if !isLists(v.Type) {
-			b.unsupported(x, "`"+fo.Name+"` of a value that is not a Proc or Env")
+			b.unsupported(x, "`"+fo.Name+"` of a value that is not a Proc, Env, or Net")
 			return s.undef(nt)
 		}
 		return s.add(OpField, v.Type.Fields[0].Type, 0, v)
-	case "proc_new", "env_new":
+	case "proc_new", "env_new", "net_new":
 		name := "Proc"
-		if fo.Name == "env_new" {
+		switch fo.Name {
+		case "env_new":
 			name = "Env"
+		case "net_new":
+			name = "Net"
 		}
 		t := b.listsType(name)
 		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type))

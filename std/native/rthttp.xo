@@ -74,8 +74,10 @@ fn go_quote(s: Str) -> Str
 
 /// Client: a request to url (absolute, http or https) with a header of
 /// names and values, a body, a timeout in ns, and the roots https
-/// verifies against, following redirects as net/http's Client does.
-fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots) -> CResp
+/// verifies against, following redirects as net/http's Client does; a
+/// redirect to an address the attenuation lists of the client's Net do
+/// not admit fails (decision 0175).
+fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots, lists: Str) -> CResp
 /// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
 /// 3 Timeout, 4 Protocol, 5 Canceled).
 fn cr_err(r: CResp) -> Int

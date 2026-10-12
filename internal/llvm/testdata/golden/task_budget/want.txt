@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+exceeded steps
+exceeded cpu
+exceeded steps
+exceeded alloc
+exceeded steps
+ok 499500
+failed bad input
+outer ok, inner exceeded steps
+ok 4950
+deadline: TimedOut
+exceeded steps
+sum 45
+--- stderr
