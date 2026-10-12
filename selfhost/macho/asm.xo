@@ -63,6 +63,14 @@ struct Sym {
   index: Int = -1
   /// in Asm.reg_order
   registered: Bool = false
+  /// ELF (elf.xo): the symbol type (STT_*), weak binding, hidden
+  /// visibility, .size, a mapping symbol ($x, $d) or section symbol
+  kind: Int = 0
+  weak: Bool = false
+  hidden: Bool = false
+  size: Int = 0
+  mapsym: Bool = false
+  secsym: Bool = false
 }
 
 /// A data item of a section other than __text.
@@ -88,6 +96,8 @@ struct Reloc {
   /// a symbol index (extern), or with sect true the section ordinal
   sym: Int
   sect: Bool = false
+  /// ELF: the addend of the RELA entry
+  addend: Int = 0
 }
 
 struct Sect {
@@ -111,6 +121,13 @@ struct Sect {
   bytes: Bytes = "".bytes()
   /// filled directly (the unwind sections), not from items
   raw: Bool = false
+  /// ELF (elf.xo): sh_type, sh_flags, sh_entsize, the group signature
+  /// symbol (-1 for none), the mapping state (0 none, 1 code, 2 data)
+  etype: Int = 1
+  eflags: Int = 0
+  entsize: Int = 0
+  group: Int = -1
+  mapstate: Int = 0
 }
 
 /// A label reference of a text word.
@@ -172,6 +189,13 @@ pub struct Asm {
   /// the unwind sections, -1 when absent
   cu_sect: Int = -1
   eh_sect: Int = -1
+  /// an ELF object (elf.xo) instead of Mach-O
+  elf: Bool = false
+  /// numeric local labels (`1:`, `1b`, `1f`): the last definition of
+  /// each, and a forward reference not yet defined
+  num_back: Map[Bytes, Int] = {}
+  num_fwd: Map[Bytes, Int] = {}
+  num_count: Int = 0
 }
 
 /// assemble: the Mach-O object of src, or the first error as
@@ -208,10 +232,19 @@ fn bstr(b: Bytes) -> Str {
   b.to_str() ?? "<bytes>"
 }
 
+/// Switches to the text section (__TEXT,__text, or .text for ELF).
+fn (var a: Asm) text() {
+  if a.elf {
+    a.elf_section(".text", SHT_PROGBITS, SHF_ALLOC + SHF_EXECINSTR, 0, -1)
+  } else {
+    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+  }
+}
+
 fn (var a: Asm) parse(src: Bytes) {
   // the assembler starts in __TEXT,__text, which is always the first
-  // section
-  a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+  // section (.text for ELF)
+  a.text()
   var i = 0
   let n = src.len()
   while i < n && a.err.is_empty() {
@@ -244,6 +277,10 @@ fn (var a: Asm) parse_line(l0: Bytes) {
   if l.len() >= 2 && l[0] == '/' && l[1] == '/' {
     return
   }
+  if l[l.len() - 1] == ':' && l[0] >= '0' && l[0] <= '9' {
+    a.define_numeric(l[0..l.len() - 1])
+    return
+  }
   if s == 0 && l[l.len() - 1] == ':' {
     a.define(l[0..l.len() - 1])
     return
@@ -253,11 +290,14 @@ fn (var a: Asm) parse_line(l0: Bytes) {
     return
   }
   if a.cur < 0 {
-    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+    a.text()
   }
   if !a.sects[a.cur].code {
     a.fail("an instruction outside __text")
     return
+  }
+  if a.elf {
+    a.map_code()
   }
   // the mnemonic, then the operands split at top level commas
   var k = 0
@@ -310,7 +350,8 @@ fn (var a: Asm) sym(name: Bytes) -> Int {
     Some(i) => i
     None => {
       let i = a.syms.len()
-      a.syms.push(Sym{name: name, temp: name.len() > 0 && name[0] == 'L'})
+      let temp = if a.elf { name.len() > 1 && name[0] == '.' && name[1] == 'L' } else { name.len() > 0 && name[0] == 'L' }
+      a.syms.push(Sym{name: name, temp: temp})
       a.names.put(name, i)
       i
     }
@@ -325,9 +366,65 @@ fn (a: Asm) here() -> Int {
 
 fn (var a: Asm) define(name: Bytes) {
   if a.cur < 0 {
-    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+    a.text()
   }
   let i = a.sym(name)
+  a.define_sym(i, name)
+}
+
+/// A numeric local label `N:`: a new temporary symbol each time, which
+/// `Nb` names until the next `N:`, and which a pending `Nf` becomes.
+fn (var a: Asm) define_numeric(n: Bytes) {
+  if a.cur < 0 {
+    a.text()
+  }
+  var i = -1
+  match a.num_fwd.get(n) {
+    Some(f) => {
+      i = f
+      a.num_fwd.remove(n)
+    }
+    None => i = a.new_numeric(n)
+  }
+  a.num_back.put(n, i)
+  a.define_sym(i, n)
+}
+
+fn (var a: Asm) new_numeric(n: Bytes) -> Int {
+  let i = a.syms.len()
+  a.num_count += 1
+  a.syms.push(Sym{name: "${bstr(n)}@num${a.num_count}".bytes(), temp: true})
+  i
+}
+
+/// The symbol of a label operand: a name, or `Nb`/`Nf` for a numeric
+/// label.
+fn (var a: Asm) label_sym(name: Bytes) -> Int {
+  let k = name.len()
+  if k >= 2 && name[0] >= '0' && name[0] <= '9' && (name[k - 1] == 'b' || name[k - 1] == 'f') {
+    let n = name[0..k - 1]
+    if name[k - 1] == 'b' {
+      match a.num_back.get(n) {
+        Some(i) => return i
+        None => {
+          a.fail("${bstr(name)}: no earlier label ${bstr(n)}")
+          return a.sym(name)
+        }
+      }
+    }
+    match a.num_fwd.get(n) {
+      Some(i) => return i
+      None => {
+        let i = a.new_numeric(n)
+        a.num_fwd.put(n, i)
+        return i
+      }
+    }
+  }
+  a.sym(name)
+}
+
+fn (var a: Asm) define_sym(i: Int, name: Bytes) {
   if a.syms[i].sect >= 0 {
     a.fail("${bstr(name)} is defined twice")
     return
@@ -394,6 +491,9 @@ fn (var a: Asm) directive(l: Bytes) {
   }
   let d = bstr(l[0..k])
   let rest = trim(l[k..])
+  if a.elf && a.elf_directive(d, rest) {
+    return
+  }
   if d == ".section" {
     let parts = split_operands(rest)
     if parts.len() < 2 {
@@ -442,7 +542,7 @@ fn (var a: Asm) directive(l: Bytes) {
     return
   }
   if a.cur < 0 {
-    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+    a.text()
   }
   if d == ".p2align" {
     let p = parse_int(rest) ?? -1
@@ -463,6 +563,9 @@ fn (var a: Asm) directive(l: Bytes) {
     return
   }
   if d == ".long" && a.sects[a.cur].code {
+    if a.elf {
+      a.map_data()
+    }
     let (x, y, k) = a.expr(rest)
     a.register_expr(x, y)
     if x < 0 && y < 0 {
@@ -481,7 +584,10 @@ fn (var a: Asm) directive(l: Bytes) {
     a.fail("${d} in __text")
     return
   }
-  if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" {
+  if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" || (a.elf && d == ".xword") {
+    if a.elf {
+      a.map_data()
+    }
     let n = if d == ".byte" { 1 } else if d == ".short" { 2 } else if d == ".long" { 4 } else { 8 }
     for part in split_operands(rest) {
       let (x, y, k) = a.expr(part)
@@ -497,6 +603,9 @@ fn (var a: Asm) directive(l: Bytes) {
     return
   }
   if d == ".ascii" || d == ".asciz" {
+    if a.elf {
+      a.map_data()
+    }
     match unquote(rest) {
       Some(b) => {
         a.sects[a.cur].items.push(Item.Raw(b))
@@ -707,8 +816,12 @@ fn (var a: Asm) finish() {
   if !a.err.is_empty() {
     return
   }
-  // the unwind sections come from the frames (cfi.xo)
-  a.unwind_sections()
+  // the unwind sections come from the frames (cfi.xo, elf.xo)
+  if a.elf {
+    a.elf_eh_frame()
+  } else {
+    a.unwind_sections()
+  }
   if !a.err.is_empty() {
     return
   }
@@ -717,10 +830,15 @@ fn (var a: Asm) finish() {
   for i in 0..a.sects.len() {
     let al = pow2(a.sects[i].align)
     addr = (addr + al - 1) / al * al
-    a.sects[i].addr = addr
+    // ELF sections are each at 0
+    a.sects[i].addr = if a.elf { 0 } else { addr }
     addr += a.sects[i].size
   }
-  a.apply_fixes()
+  if a.elf {
+    a.elf_apply_fixes()
+  } else {
+    a.apply_fixes()
+  }
   if !a.err.is_empty() {
     return
   }
@@ -729,7 +847,9 @@ fn (var a: Asm) finish() {
       a.emit_data(i)
     }
   }
-  a.unwind_relocs()
+  if !a.elf {
+    a.unwind_relocs()
+  }
 }
 
 /// The value of a - b + k when both symbols are defined in sections whose
@@ -864,7 +984,13 @@ fn (var a: Asm) emit_data(si: Int) {
             a.fail("a ${n} byte pointer to ${bstr(a.syms[x].name)}")
             return
           }
-          v = k + a.pointer_reloc(si, off, x)
+          if a.elf {
+            // R_AARCH64_ABS64, the addend in the relocation
+            a.elf_reloc(si, off, R_AARCH64_ABS64, x, k)
+            v = 0
+          } else {
+            v = k + a.pointer_reloc(si, off, x)
+          }
         } else {
           match a.rel_value(x, y, k) {
             Some(r) => v = r
