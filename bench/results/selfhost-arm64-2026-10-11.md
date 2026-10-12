@@ -336,3 +336,13 @@ built by both drivers are byte identical binaries (stage6c's output is
 the same; realtime-control prints timings). As decision 0152 says, the
 binding must be in the cache: a first build by xo1 alone reports the
 program unsupported until a Go build or `xo bind --c` writes it.
+
+## Step 5: the linux/arm64 target
+
+internal/build links only the host target with the arm64 backend; for
+linux/arm64 on a Mac it writes the assembly (prog-linux.s) and stops.
+xo1 does the same with `--target=linux/arm64`. Checked: the linux
+assembly of arith, closures, and http_tls is byte identical to the Go
+driver's prog-linux.s. Linking for Linux from a Mac (the linux pack
+with `zig cc`) is not something internal/build does yet; no zig is
+installed here.
