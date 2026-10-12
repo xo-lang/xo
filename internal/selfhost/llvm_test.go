@@ -35,8 +35,8 @@ import (
 // compared (its comparison is TestSelfhostSSA); so are functions the
 // emitter leaves to a later stage (`== skipped`). The test binaries of
 // the runs with test blocks are compared the same way. The full tier
-// takes every run; the merge tier every third run but those of
-// buildOnlyMerge (their passes take minutes), and -short every 25th.
+// takes every run; the merge tier every third run but the mergeHeavy
+// ones (each takes about a minute), and -short every 25th.
 // XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover.
 func TestSelfhostLLVM(t *testing.T) {
@@ -56,14 +56,10 @@ func TestSelfhostLLVM(t *testing.T) {
 		}
 		dirs = some
 	case tierMerge:
-		// every third run, not those of buildOnlyMerge: about 15 s
-		heavy := map[string]bool{}
-		for _, d := range buildOnlyMerge {
-			heavy[d] = true
-		}
+		// every third run, not the mergeHeavy ones
 		var some []string
 		for i, d := range dirs {
-			if !heavy[d] && i%3 == 0 {
+			if !mergeHeavy(d) && i%3 == 0 {
 				some = append(some, d)
 			}
 		}
