@@ -195,5 +195,29 @@ sites inlining rule (decode and to_case inlined into case_append; an
 experiment with only that rule added measured lower_u 4,491,794,218,
 eqlower 11,908,724,042), logical immediates, `liveDCE`.
 
-Bench programs (bench/perf/llvm/xo, arm64; minimum of 5 runs, cycles
-noisy): see the final section's table below.
+Bench programs (bench/perf/llvm/xo, arm64): each binary built by the
+before and the after compiler, run 5 times for the minimum, and the
+pair measured twice in one heavy run (before, after, before, after),
+millions:
+
+| Program | instructions before | after | cycles before (two runs) | after (two runs) | binary bytes before / after |
+|---|---|---|---|---|---|
+| fib | 4,490.9 / 4,489.8 | 4,489.0 / 4,491.1 | 901.2 / 880.3 | 888.6 / 900.1 | 364,296 / 364,296 |
+| sieve | 1,888.4 / 1,891.7 | 1,892.2 / 1,888.8 | 432.9 / 429.2 | 437.5 / 426.8 | 364,360 / 364,360 |
+| nbody | 3,618.8 / 3,621.1 | 3,615.5 / 3,618.4 | 695.7 / 700.7 | 700.2 / 718.0 | 364,568 / 364,584 |
+| sort | 1,465.9 / 1,470.4 | 1,448.8 / 1,445.0 | 923.7 / 936.7 | 920.0 / 913.2 | 364,440 / 364,440 |
+| interp | 1,409.3 / 1,410.9 | 1,406.1 / 1,406.5 | 177.6 / 187.8 | 174.3 / 187.0 | 364,408 / 364,408 |
+| collatz | 3,628.3 / 3,634.2 | 3,625.7 / 3,629.5 | 1,917.7 / 1,928.0 | 1,919.4 / 1,925.9 | 364,312 / 364,312 |
+| strings | 987.6 / 989.8 | 986.7 / 986.9 | 148.7 / 155.1 | 145.5 / 151.5 | 364,328 / 364,328 |
+
+The same binary's instruction count moves by up to 0.3 percent between
+runs (kernel work under load) and its cycles by up to 3 percent, so
+only sort's 1.4 percent fewer instructions is a measured change. nbody,
+the program whose loop bounds checks decisions 0054, 0060, and 0075
+kept, now has 9 bounds checks instead of 11 (and `bodies` and `energy`,
+with one and two call sites, are inlined into main; `advance`, the hot
+loop, is not): its
+cycles are within the noise of these runs
+(best 695.7 million before, 700.2 after, 0.6 percent; decision 0075's
+placement sweep would be needed to tell a 1 percent shape effect from
+placement).
