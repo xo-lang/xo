@@ -41,7 +41,9 @@ episode of gotchas/go-vet-recompiles-rt-per-build-dir.md.
    (`scripts/go-version-check.sh rt-min`, PASS with go1.26.1 on
    2026-10-12). The generated Go of the golden programs is held to the
    same line by `XO_GO_LINE=1.24` with TestGeneratedGoVets
-   (`go-version-check.sh gen-min`).
+   (`go-version-check.sh gen-min`); that run has not been made yet
+   (Next steps 0), so 1.24 is established for rt and assumed for the
+   generated main packages.
 2. **Check once per process.** `gotool.Version` runs `go env GOVERSION`
    once per go command path per process (in the temporary directory, so
    a go.mod in the working directory cannot switch toolchains;
@@ -157,6 +159,11 @@ episode of gotchas/go-vet-recompiles-rt-per-build-dir.md.
 
 ## Next steps
 
+0. Confirm the minimum for generated code:
+   `scripts/go-version-check.sh gen-min` (heavy: TestGeneratedGoVets
+   with `XO_GO_LINE=1.24`). If vet reports a newer std symbol or
+   language feature in generated code, raise MinGo or change the
+   lowering.
 1. Run the procedure on the Go already in the module cache:
    `GOTOOLCHAIN=go1.27.2 scripts/go-version-check.sh` (no download;
    toolchain@v0.0.1-go1.27.2 is present), then raise TestedGo if it
