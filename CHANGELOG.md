@@ -14,9 +14,40 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with a prebuilt runtime pack into a signed executable, so `xo1 build
   --ld=macho` needs no C compiler at all for programs without `use c`
   sources (decision 0182).
+- A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
+  0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
+  assembles it with an assembler written in Xo, and links a runtime of
+  its own over WASI preview1; no C compiler, linker, or Go toolchain.
+  71 of the 133 LLVM goldens run under Node with the output of the
+  native backends; the rest (tasks, network, files, time, strconv
+  quoting, more of the std runtime) fail the build with a clear reason.
+- The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
+  builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
+  (`xo1 test --backend=go`), and builds `use go` programs on the Go
+  backend; every golden suite passes through it (decision 0178, which
+  proposes the plan for retiring the Go implementation). The Go code
+  generator no longer imports a module's package that the generated
+  text does not name (go build failed with "imported and not used" on
+  selfhost/xo).
+- Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
+  runtime are written in Xo (decision 0180, the runtime pilot):
+  `std/native/llrt/unicode.xo` with generated tables
+  (`unicode_tables.xo`) does Str and Rune case mapping, `is_letter`,
+  `is_digit`, `is_print`, strconv quoting, and std/regexp's `\pL` and
+  `\p{Nd}` ranges; the C runtime keeps two bulk byte primitives. Output
+  is unchanged on every backend. ASCII case mapping and quoting are
+  faster than before; per rune work on arm64 is 1.45 to 1.8 times the
+  C's instructions, so `XO_UNICODE=c` at build time still selects the C
+  implementation (compiled only then, never in the prebuilt packs).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).
+- `xo1 --phase-times` and `XO_PHASE_TIMES=1 xo asmdump` print the wall
+  clock of each compiler phase. The self-hosted arm64 emitter's dead code
+  elimination and register allocation liveness no longer copy every MIR
+  instruction and bit set per pass: xo1 compiles selfhost/xo with 32
+  percent fewer instructions and 45 percent fewer cycles, output byte
+  identical (bench/results/xo1-perf-2026-10-12.md).
 - The self hosted checker (`selfhost/check`) checks `use go` programs
   from the binding the Go toolchain cached, and reports what the Go
   checker reports for escaping scope handles and task groups (XO0802),

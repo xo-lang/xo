@@ -1,0 +1,648 @@
+// Functions (decision 0179): one wasm function per SSA function, its
+// parameters the leaves of the entry block's, its results the leaves of
+// every result (multiple results for `var` parameters). The control flow
+// graph is a dispatch loop: a `loop` around one `block` per SSA block,
+// innermost first, entered through a `br_table` on the block number; a
+// block's code follows the end of its wasm block, so a jump to the next
+// block falls through and any other sets the number and branches to the
+// loop. Block parameters are locals the edges assign (all arguments are
+// pushed before any is stored, a parallel copy).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+fn (var g: Gen) func(fi: Int) {
+  let f = g.m.funcs[fi]
+  if !f.skip.is_empty() {
+    g.fail("the SSA builder skipped ${f.name}: ${f.skip}")
+    return
+  }
+  g.f = f
+  g.fi = fi
+  g.vbase = []
+  g.blk = []
+  for _ in 0..f.values.len() {
+    g.vbase.push(-1)
+    g.blk.push(-1)
+  }
+  for (bi, b) in f.blocks.indexed() {
+    for p in b.params {
+      g.blk[p] = bi
+    }
+    for v in b.instrs {
+      g.blk[v] = bi
+    }
+  }
+  var ps: List[Str] = []
+  for p in f.blocks[0].params {
+    g.vbase[p] = ps.len()
+    for l in g.leaves(f.values[p].ty) {
+      ps.push(l)
+    }
+  }
+  var rs: List[Str] = []
+  for r in f.results {
+    for l in g.leaves(r) {
+      rs.push(l)
+    }
+  }
+  g.cur = FnText{nparams: ps.len()}
+  g.pc_local = g.tmp("i32")
+  let nb = f.blocks.len()
+  g.e("loop $L")
+  var k = nb - 1
+  while k >= 0 {
+    g.e("block $B${k}")
+    k -= 1
+  }
+  g.get(g.pc_local)
+  var labels: List[Str] = []
+  for bi in 0..nb {
+    labels.push("$B${bi}")
+  }
+  g.e("br_table ${labels.join(" ")} $B0")
+  for (bi, b) in f.blocks.indexed() {
+    g.e("end")
+    for v in b.instrs {
+      g.instr(v, bi)
+      if !g.err.is_empty() {
+        return
+      }
+    }
+  }
+  g.e("end")
+  g.e("unreachable")
+  var head = "(func $f${fi}"
+  if !ps.is_empty() {
+    head = "${head} (param ${ps.join(" ")})"
+  }
+  if !rs.is_empty() {
+    head = "${head} (result ${rs.join(" ")})"
+  }
+  if !g.cur.locals.is_empty() {
+    head = "${head} (local ${g.cur.locals.join(" ")})"
+  }
+  var b = StrBuilder.new()
+  b.write("  ;; ${comment_text(f.name)}\n  ${head}\n")
+  for l in g.cur.lines {
+    b.write("    ")
+    b.write(l)
+    b.write("\n")
+  }
+  b.write("  )\n")
+  g.funcs.push(b.freeze())
+}
+
+/// A name in a WAT line comment (no line breaks).
+fn comment_text(s: Str) -> Str {
+  s.replace("\n", " ")
+}
+
+/// The first local of value v (allocated at its first use).
+fn (var g: Gen) loc(v: Int) -> Int {
+  if g.vbase[v] < 0 {
+    g.vbase[v] = g.tmps(g.leaves(g.f.values[v].ty))
+  }
+  g.vbase[v]
+}
+
+fn (var g: Gen) vty(v: Int) -> Int {
+  g.f.values[v].ty
+}
+
+/// Pushes the leaves of value v.
+fn (var g: Gen) push(v: Int) {
+  let n = g.nleaves(g.vty(v))
+  if n > 0 {
+    g.push_range(g.loc(v), n)
+  }
+}
+
+/// Pushes leaves k0 to k1 of value v.
+fn (var g: Gen) push_part(v: Int, k0: Int, k1: Int) {
+  let b = g.loc(v)
+  for k in k0..k1 {
+    g.get(b + k)
+  }
+}
+
+/// Defines value v from the leaves on the stack.
+fn (var g: Gen) def(v: Int) {
+  let n = g.nleaves(g.vty(v))
+  if n > 0 {
+    g.set_range(g.loc(v), n)
+  }
+}
+
+fn (var g: Gen) arg(v: Int, i: Int) -> Int {
+  g.f.values[v].args[i]
+}
+
+/// `i32.const addr i32.const len` of the fault position of v.
+fn (var g: Gen) locp(v: Int) -> Str {
+  g.litp(g.f.values[v].pos)
+}
+
+fn (var g: Gen) goto(b: Int) {
+  g.e("i32.const ${b}")
+  g.set(g.pc_local)
+  g.e("br $L")
+}
+
+/// Leaves the code of v after a fault: to its landing block when it has
+/// one (decision 0085), else back to the caller (the results are never
+/// read: the caller tests the flag).
+fn (var g: Gen) fault_exit(v: Int) {
+  let pad = g.f.values[v].pad
+  if pad >= 0 {
+    let t = g.f.term(g.blk[pad])
+    let e = g.f.values[t].succs[0]
+    g.goto(g.f.edges[e].to)
+    return
+  }
+  for r in g.f.results {
+    g.push_zeros(g.leaves(r))
+  }
+  g.e("return")
+}
+
+/// Tests the fault flag after v.
+fn (var g: Gen) check_fault(v: Int) {
+  g.e("global.get $faulting")
+  g.e("if")
+  g.fault_exit(v)
+  g.e("end")
+}
+
+/// The assignments and the jump of edge e from block bi.
+fn (var g: Gen) edge(e: Int, bi: Int) {
+  let ed = g.f.edges[e]
+  let ps = g.f.blocks[ed.to].params
+  for a in ed.args {
+    if a >= 0 {
+      g.push(a)
+    }
+  }
+  var k = ps.len() - 1
+  while k >= 0 {
+    if ed.args[k] >= 0 {
+      g.def(ps[k])
+    }
+    k -= 1
+  }
+  if ed.to != bi + 1 {
+    g.goto(ed.to)
+  }
+}
+
+fn (var g: Gen) binop(v: Int, ins: Str) {
+  g.push(g.arg(v, 0))
+  g.push(g.arg(v, 1))
+  g.e(ins)
+  g.def(v)
+}
+
+/// A checked operation: the runtime function fn on the operands and the
+/// position, then the fault test.
+fn (var g: Gen) checked(v: Int, fname: Str, nargs: Int) {
+  for i in 0..nargs {
+    g.push(g.arg(v, i))
+  }
+  g.e(g.locp(v))
+  g.e("call ${fname}")
+  g.def(v)
+  g.check_fault(v)
+}
+
+fn (var g: Gen) instr(v: Int, bi: Int) {
+  let x = g.f.values[v]
+  let t = x.ty
+  match x.op {
+    Param | Cap | Undef | Share => {}
+    Const => g.constant(v)
+    Add | Sub | Mul => {
+      let opn = if x.op == ssa.Op.Add { "add" } else if x.op == ssa.Op.Sub { "sub" } else { "mul" }
+      if g.kind(t) == ssa.Kind.Float {
+        g.binop(v, "f64.${opn}")
+      } else if !x.pos.is_empty() {
+        g.checked(v, "$${opn}_chk", 2)
+      } else {
+        g.binop(v, "i64.${opn}")
+      }
+    }
+    Div | Rem => {
+      let opn = if x.op == ssa.Op.Div { "div" } else { "rem" }
+      if g.kind(t) == ssa.Kind.Float {
+        g.binop(v, if x.op == ssa.Op.Rem { "call $fmod" } else { "f64.div" })
+      } else if !x.pos.is_empty() {
+        g.checked(v, "$${opn}_chk", 2)
+      } else {
+        g.binop(v, "i64.${opn}_s")
+      }
+    }
+    Neg => {
+      if g.kind(t) == ssa.Kind.Float {
+        g.push(g.arg(v, 0))
+        g.e("f64.neg")
+        g.def(v)
+      } else if !x.pos.is_empty() {
+        g.checked(v, "$neg_chk", 1)
+      } else {
+        g.e("i64.const 0")
+        g.push(g.arg(v, 0))
+        g.e("i64.sub")
+        g.def(v)
+      }
+    }
+    And | Or | Xor => {
+      let opn = if x.op == ssa.Op.And { "and" } else if x.op == ssa.Op.Or { "or" } else { "xor" }
+      let w = if g.kind(t) == ssa.Kind.Bool { "i32" } else { "i64" }
+      g.binop(v, "${w}.${opn}")
+    }
+    Not => {
+      g.push(g.arg(v, 0))
+      if g.kind(t) == ssa.Kind.Bool {
+        g.e("i32.eqz")
+      } else {
+        g.e("i64.const -1")
+        g.e("i64.xor")
+      }
+      g.def(v)
+    }
+    Shl | Shr => {
+      let opn = if x.op == ssa.Op.Shl { "shl" } else { "shr" }
+      if !x.pos.is_empty() {
+        g.checked(v, "$${opn}_chk", 2)
+      } else {
+        g.binop(v, if x.op == ssa.Op.Shl { "i64.shl" } else { "i64.shr_s" })
+      }
+    }
+    Eq | Ne | Lt | Le | Gt | Ge => g.compare(v)
+    IntToFloat => {
+      g.push(g.arg(v, 0))
+      g.e("f64.convert_i64_s")
+      g.def(v)
+    }
+    FloatToInt => {
+      if !x.pos.is_empty() {
+        g.checked(v, "$ftoi_chk", 1)
+        return
+      }
+      g.push(g.arg(v, 0))
+      g.e("i64.trunc_sat_f64_s")
+      g.def(v)
+    }
+    IntConv => {
+      g.push(g.arg(v, 0))
+      g.def(v)
+    }
+    Struct | Tuple => {
+      for a in x.args {
+        g.push(a)
+      }
+      g.def(v)
+    }
+    Field => {
+      let a = x.args[0]
+      let i = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      let off = g.field_off(g.vty(a), i)
+      g.push_part(a, off, off + g.nleaves(t))
+      g.def(v)
+    }
+    SetField => {
+      let a = x.args[0]
+      let at = g.vty(a)
+      let i = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      let off = g.field_off(at, i)
+      let n = g.nleaves(g.field_ty(at, i))
+      g.push_part(a, 0, off)
+      g.push(x.args[1])
+      g.push_part(a, off + n, g.nleaves(at))
+      g.def(v)
+    }
+    Variant => {
+      let tag = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      g.e("i64.const ${tag}")
+      var used = 0
+      for a in x.args {
+        let ls = g.leaves(g.vty(a))
+        let b = g.loc(a)
+        for (k, l) in ls.indexed() {
+          g.get(b + k)
+          g.to_word(l)
+        }
+        used += ls.len()
+      }
+      for _ in used..g.words(t) {
+        g.e("i64.const 0")
+      }
+      g.def(v)
+    }
+    Tag => {
+      g.push_part(x.args[0], 0, 1)
+      g.def(v)
+    }
+    Payload => {
+      let (tag, fi) = match x.aux {
+        P(a, b) => (a, b)
+        _ => (0, 0)
+      }
+      let a = x.args[0]
+      let off = 1 + g.payload_off(g.vty(a), tag, fi)
+      let b = g.loc(a)
+      for (k, l) in g.leaves(t).indexed() {
+        g.get(b + off + k)
+        g.from_word(l)
+      }
+      g.def(v)
+    }
+    Box => {
+      let a = x.args[0]
+      let ls = g.leaves(g.vty(a))
+      let p = g.loc(v)
+      g.e("i32.const ${8 + 8 * ls.len()}")
+      g.e("call $alloc")
+      g.set(p)
+      g.get(p)
+      g.e("i32.const 1")
+      g.e("i32.store")
+      g.store_leaves(p, 8, g.loc(a), ls)
+    }
+    Unbox => {
+      let a = x.args[0]
+      g.load_leaves(g.loc(a), 8, g.loc(v), g.leaves(t))
+    }
+    Closure => g.closure(v)
+    Capture => {
+      let i = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      var off = 0
+      for k in 0..i {
+        off += g.nleaves(g.f.captures[k])
+      }
+      let env = g.loc(x.args[0]) + 1
+      g.load_leaves(env, 8 + 8 * off, g.loc(v), g.leaves(t))
+    }
+    CallValue => {
+      var ps: List[Str] = []
+      for a in x.args {
+        for l in g.leaves(g.vty(a)) {
+          ps.push(l)
+        }
+        g.push(a)
+      }
+      let s = g.sig(ps, g.leaves(t))
+      g.get(g.loc(x.args[0]))
+      g.e("call_indirect (type ${s})")
+      g.def(v)
+      g.check_fault(v)
+    }
+    Call => g.call(v)
+    Fault => {
+      g.push(x.args[0])
+      g.e(g.locp(v))
+      g.e("call $fault_str")
+      g.fault_exit(v)
+    }
+    Retain | Release => {
+      let a = x.args[0]
+      let at = g.vty(a)
+      if g.f.values[a].op == ssa.Op.Const || !g.heap(at) {
+        return
+      }
+      g.push(a)
+      let fname = g.rc_fn(if x.op == ssa.Op.Retain { "dup" } else { "drop" }, at)
+      g.e("call ${fname}")
+    }
+    Reuse => {
+      let a = x.args[0]
+      let at = g.vty(a)
+      if g.kind(at) != ssa.Kind.List {
+        g.fail("the wasm backend does not reuse `${g.m.types[at].name}`")
+        return
+      }
+      let cp = g.lcopy_fn(at)
+      g.push(a)
+      g.e("i32.load")
+      g.e("i32.const 1")
+      g.e("i32.ne")
+      g.e("if (result i32)")
+      g.push(a)
+      g.e("call ${cp}")
+      g.e("else")
+      g.push(a)
+      g.e("end")
+      g.def(v)
+    }
+    Jump => g.edge(x.succs[0], bi)
+    Branch => {
+      let yes = x.succs[0]
+      let no = x.succs[1]
+      g.push(x.args[0])
+      g.e("if")
+      g.edge(yes, bi)
+      g.e("else")
+      g.edge(no, bi)
+      g.e("end")
+    }
+    Return => {
+      for a in x.args {
+        g.push(a)
+      }
+      g.e("return")
+    }
+    Unreachable => g.e("unreachable")
+    Rebind => {
+      // the function value of another code with the same environment
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      let ci = g.by_name.get(name) ?? -1
+      if ci < 0 {
+        g.fail("the wasm backend does not rebind to `${name}`")
+        return
+      }
+      g.e("i32.const ${g.table_index("$f${ci}")}")
+      g.push_part(x.args[0], 1, 2)
+      g.def(v)
+    }
+    FuncAddr | Drop => g.fail("the wasm backend does not support `${ssa.op_name(x.op)}` (stage 1)")
+  }
+}
+
+fn (var g: Gen) constant(v: Int) {
+  let x = g.f.values[v]
+  match x.aux {
+    I(n) => {
+      if g.kind(x.ty) == ssa.Kind.Float {
+        g.e("i64.const ${float_bits(Float(n))}")
+        g.e("f64.reinterpret_i64")
+      } else {
+        g.e("i64.const ${n}")
+      }
+    }
+    F(f) => {
+      g.e("i64.const ${float_bits(f)}")
+      g.e("f64.reinterpret_i64")
+    }
+    B(b) => g.e(if b { "i32.const 1" } else { "i32.const 0" })
+    S(s) => {
+      g.e("i32.const ${g.str_obj(s.bytes())}")
+      g.e("i32.const ${s.len()}")
+    }
+    Bs(b) => {
+      g.e("i32.const ${g.str_obj(b)}")
+      g.e("i32.const ${b.len()}")
+    }
+    None | P(..) => {
+      if g.nleaves(x.ty) > 0 {
+        g.fail("the wasm backend does not support a constant of `${g.m.types[x.ty].name}`")
+      }
+      return
+    }
+  }
+  g.def(v)
+}
+
+fn (var g: Gen) compare(v: Int) {
+  let x = g.f.values[v]
+  let a = x.args[0]
+  let at = g.vty(a)
+  let opn = ssa.op_name(x.op)
+  match g.kind(at) {
+    Int => {
+      let ins = if opn is "eq" | "ne" { opn } else { "${opn}_s" }
+      g.binop(v, "i64.${ins}")
+    }
+    Bool => {
+      let ins = if opn is "eq" | "ne" { opn } else { "${opn}_u" }
+      g.binop(v, "i32.${ins}")
+    }
+    Float => {
+      if opn is "eq" | "ne" {
+        g.binop(v, "f64.${opn}")
+      } else {
+        // the total order (decision 0053): runtime helpers
+        g.binop(v, "call $f${opn}")
+      }
+    }
+    Unit => {
+      g.e(if opn is "eq" | "le" | "ge" { "i32.const 1" } else { "i32.const 0" })
+      g.def(v)
+    }
+    Str | Struct | Tuple | Enum | List => {
+      if !(opn is "eq" | "ne") {
+        g.fail("the wasm backend does not order `${g.m.types[at].name}`")
+        return
+      }
+      let fname = g.eq_fn(at)
+      g.push(a)
+      g.push(x.args[1])
+      g.e("call ${fname}")
+      if opn == "ne" {
+        g.e("i32.eqz")
+      }
+      g.def(v)
+    }
+    _ => g.fail("the wasm backend does not compare `${g.m.types[at].name}`")
+  }
+}
+
+fn (var g: Gen) closure(v: Int) {
+  let x = g.f.values[v]
+  let name = match x.aux {
+    S(s) => s
+    _ => ""
+  }
+  let ci = g.by_name.get(name) ?? -1
+  if ci < 0 || !g.m.funcs[ci].indirect {
+    g.fail("the wasm backend does not support a closure of `${name}`")
+    return
+  }
+  let idx = g.table_index("$f${ci}")
+  let b = g.loc(v)
+  g.e("i32.const ${idx}")
+  g.set(b)
+  if x.args.is_empty() {
+    g.e("i32.const 0")
+    g.set(b + 1)
+    return
+  }
+  var n = 0
+  for a in x.args {
+    n += g.nleaves(g.vty(a))
+  }
+  let drop = g.envdrop_fn(ci)
+  let env = b + 1
+  g.e("i32.const ${8 + 8 * n}")
+  g.e("call $alloc")
+  g.set(env)
+  g.get(env)
+  g.e("i32.const 1")
+  g.e("i32.store")
+  g.get(env)
+  g.e("i32.const ${g.table_index(drop)}")
+  g.e("i32.store offset=4")
+  var off = 0
+  for a in x.args {
+    let ls = g.leaves(g.vty(a))
+    if !ls.is_empty() {
+      g.store_leaves(env, 8 + 8 * off, g.loc(a), ls)
+    }
+    off += ls.len()
+  }
+}
+
+/// The smallest Int (math.MinInt64).
+const MIN_INT = -9223372036854775807 - 1
+
+/// The IEEE 754 bits of x (math.Float64bits; selfhost/llvm text.xo):
+/// halving and doubling are exact, so the exponent and the mantissa are
+/// found by scaling. A NaN has the bits of Go's math.NaN().
+fn float_bits(x: Float) -> Int {
+  if x != x {
+    return 0x7FF8000000000001
+  }
+  var a = x
+  var neg = false
+  if x < 0.0 || (x == 0.0 && "${x}".starts_with("-")) {
+    neg = true
+    a = -x
+  }
+  var bits = 0
+  if a == 0.0 {
+    bits = 0
+  } else if a > 1.7976931348623157e308 {
+    bits = 2047 << 52
+  } else {
+    var e = 0
+    while a >= 2.0 {
+      a = a / 2.0
+      e += 1
+    }
+    while a < 1.0 && e > -1022 {
+      a = a * 2.0
+      e -= 1
+    }
+    if a < 1.0 {
+      bits = Int(a * 4503599627370496.0)
+    } else {
+      bits = ((e + 1023) << 52) | Int((a - 1.0) * 4503599627370496.0)
+    }
+  }
+  if neg {
+    return bits | MIN_INT
+  }
+  bits
+}

@@ -632,7 +632,7 @@ struct RcFunc {
 
 /// Inserts reference counting into every function of the module
 /// (InsertRC).
-fn (var b: Builder) insert_rc() {
+pub fn (var b: Builder) insert_rc() {
   var r = Rc{types: b.m.types}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i

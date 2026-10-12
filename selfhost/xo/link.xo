@@ -207,7 +207,10 @@ fn io_flags(code: Str) -> List[Str] {
   var out: List[Str] = []
   for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all",
     "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
-    "xo_time_of", "xo_time_ns"] {
+    "xo_time_of", "xo_time_ns",
+    // handles, copies, modes, links, locks (decision 0172)
+    "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link",
+    "xo_fs_lock", "xo_fs_unlock"] {
     if code.contains(sym) {
       out.push("-DXO_FS")
       break
@@ -221,6 +224,15 @@ fn io_flags(code: Str) -> List[Str] {
   }
   if code.contains("xo_proc_") {
     out.push("-DXO_PROC")
+  }
+  // the C path of the Unicode operations (decision 0180), which only
+  // XO_UNICODE=c builds call
+  for sym in ["xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit",
+    "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"] {
+    if code.contains(sym) {
+      out.push("-DXO_UNICODE_C")
+      break
+    }
   }
   out
 }

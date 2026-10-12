@@ -8,6 +8,7 @@
 // (ErrLarge), and Unicode classes other than \pL, \p{Nd}, \p{Any}, and
 // \p{ASCII} (an error that says so).
 use std/regexp
+use native/llrt/unicode
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -463,8 +464,8 @@ fn unicode_table(name: Str) -> (Int, List[Int], List[Int]) {
   match canonical_name(name) {
     "Any" => (1, [0, MAX_RUNE], [0, MAX_RUNE])
     "Ascii" => (1, [0, 0x7f], [0, 0x7f, 0x17f, 0x17f, 0x212a, 0x212a])
-    "L" | "Letter" => (1, rt.unicode_ranges(0), [0x345, 0x345])
-    "Nd" | "Decimalnumber" | "Digit" => (1, rt.unicode_ranges(1), [])
+    "L" | "Letter" => (1, unicode.ranges(0), [0x345, 0x345])
+    "Nd" | "Decimalnumber" | "Digit" => (1, unicode.ranges(1), [])
     _ => (0, [], [])
   }
 }
