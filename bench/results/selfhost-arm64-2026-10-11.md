@@ -240,3 +240,15 @@ Not done in xo1 (what internal/build adds beyond the runtime): the TLS
 library of std/http, time zone data for std/time (a program loading
 native/time is refused), `use c` sources, the runtime object cache and
 prebuilt runtime packs, cross targets (darwin only), test binaries.
+
+# Known failure at merge, 2026-10-11
+
+The full tier of internal/selfhost (XO_SELFHOST_TIER=full) found one
+failure: TestSelfhostArm64/llvm. In 33 runs the Xo emitter built with the
+LLVM backend writes frames 256 bytes smaller than the Go emitter (`sub sp,
+sp, #256` against `#512`); the go and arm64 builds of the same Xo code
+agree with the Go emitter (308 of 308 runs byte identical, 15,043
+functions), so it points at an LLVM backend miscompile of the Xo
+emitter, not at the port. TestSelfhostArm64Mutations (300) and the
+checker mutation tests passed in the same run. Root cause under
+investigation (the frame area computation, selfhost/arm64/byref.xo).
