@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/mcp"
 	"github.com/xo-lang/xo/internal/serve"
 )
 
@@ -47,6 +48,20 @@ func xoCLI(t *testing.T) string {
 func xoCLIEnv() []string {
 	std, _ := filepath.Abs(filepath.Join("..", "..", "std"))
 	return append(os.Environ(), "XO_STD="+std, serve.DisableEnv+"=1")
+}
+
+// goMCP is `xo mcp` of the Go implementation whose tools run the Go
+// commands in process (runMCP's run would exec $XO_CLI).
+func goMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		return runMCP(args, stdin, stdout, stderr)
+	}
+	s := &mcp.Server{Exec: runXo, Version: "p1"}
+	if err := s.Serve(stdin, stdout); err != nil {
+		fmt.Fprintf(stderr, "xo mcp: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // TestXo1ServersVersion: the version the Xo lsp reports is cmd/xo's.
@@ -129,8 +144,8 @@ func compareLines(t *testing.T, what string, goOut, xoOut string) (same, total i
 	return same, total
 }
 
-// runXo runs the self hosted binary with stdin and returns its output.
-func runXo(t *testing.T, bin, dir string, stdin string, args ...string) (string, string, int) {
+// execXo runs the self hosted binary with stdin and returns its output.
+func execXo(t *testing.T, bin, dir string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
@@ -151,8 +166,8 @@ func runXo(t *testing.T, bin, dir string, stdin string, args ...string) (string,
 func TestXoMCPProtocol(t *testing.T) {
 	bin := xoCLI(t)
 	var goOut, goErr bytes.Buffer
-	gcode := runMCP(nil, strings.NewReader(mcpProtocolTranscript), &goOut, &goErr)
-	xoOut, xoErr, xcode := runXo(t, bin, t.TempDir(), mcpProtocolTranscript, "mcp")
+	gcode := goMCP(nil, strings.NewReader(mcpProtocolTranscript), &goOut, &goErr)
+	xoOut, xoErr, xcode := execXo(t, bin, t.TempDir(), mcpProtocolTranscript, "mcp")
 	if gcode != xcode {
 		t.Errorf("exit %d (go) vs %d (xo); stderr %q vs %q", gcode, xcode, goErr.String(), xoErr)
 	}
@@ -160,8 +175,8 @@ func TestXoMCPProtocol(t *testing.T) {
 	t.Logf("mcp protocol transcript: %d of %d responses identical", same, total)
 	// flags: an unknown one is a usage error with the same text
 	var e bytes.Buffer
-	gc := runMCP([]string{"--nope"}, strings.NewReader(""), io.Discard, &e)
-	_, xe, xc := runXo(t, bin, t.TempDir(), "", "mcp", "--nope")
+	gc := goMCP([]string{"--nope"}, strings.NewReader(""), io.Discard, &e)
+	_, xe, xc := execXo(t, bin, t.TempDir(), "", "mcp", "--nope")
 	if gc != xc || e.String() != xe {
 		t.Errorf("mcp --nope: %d %q (go) vs %d %q (xo)", gc, e.String(), xc, xe)
 	}
@@ -201,8 +216,8 @@ func TestXoMCPTools(t *testing.T) {
 		fmt.Fprintf(&in, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":%s}`+"\n", i+1, c)
 	}
 	var goOut bytes.Buffer
-	runMCP(nil, strings.NewReader(in.String()), &goOut, io.Discard)
-	xoOut, _, _ := runXo(t, bin, dir, in.String(), "mcp")
+	goMCP(nil, strings.NewReader(in.String()), &goOut, io.Discard)
+	xoOut, _, _ := execXo(t, bin, dir, in.String(), "mcp")
 	same, total := compareLines(t, "mcp tools", goOut.String(), xoOut)
 	t.Logf("mcp tool calls: %d of %d responses identical", same, total)
 }
@@ -214,7 +229,7 @@ func TestXoDump(t *testing.T) {
 	}
 	dir := writeFiles(t, map[string]string{"s/main.xo": "fn main(os: Os) {\n  scope s {\n    s.spawn(fn() { os.clock.sleep(30s) })\n    os.clock.sleep(30s)\n  }\n}\n"})
 	exe := filepath.Join(dir, "sleeper")
-	if code := run([]string{"build", "-o", exe, filepath.Join(dir, "s")}, io.Discard, os.Stderr); code != 0 {
+	if code := runXo([]string{"build", "-o", exe, filepath.Join(dir, "s")}, io.Discard, os.Stderr); code != 0 {
 		t.Fatalf("build: %d", code)
 	}
 	p := exec.Command(exe)
@@ -231,8 +246,8 @@ func TestXoDump(t *testing.T) {
 	same := 0
 	for _, args := range cases {
 		var gout, gerr bytes.Buffer
-		gc := run(append([]string{"dump"}, args...), &gout, &gerr)
-		xout, xerr, xc := runXo(t, bin, dir, "", append([]string{"dump"}, args...)...)
+		gc := runXo(append([]string{"dump"}, args...), &gout, &gerr)
+		xout, xerr, xc := execXo(t, bin, dir, "", append([]string{"dump"}, args...)...)
 		if gc != xc || gout.String() != xout || gerr.String() != xerr {
 			t.Errorf("dump %v:\n go %d %q %q\n xo %d %q %q", args, gc, gout.String(), gerr.String(), xc, xout, xerr)
 			continue
@@ -331,14 +346,14 @@ func TestXoServeProtocol(t *testing.T) {
 	t.Logf("serve protocol: %d of %d responses identical", same, len(reqs))
 	// each CLI's status and stop against the other's server
 	var out, errOut bytes.Buffer
-	if code := run([]string{"serve", "--socket=" + xoSock, "status"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"hits": 0`) {
+	if code := runXo([]string{"serve", "--socket=" + xoSock, "status"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"hits": 0`) {
 		t.Errorf("go status of the xo server: %d %s %s", code, out.String(), errOut.String())
 	}
-	xout, xerr, xc := runXo(t, bin, sockDir, "", "serve", "--socket="+goSock, "status")
+	xout, xerr, xc := execXo(t, bin, sockDir, "", "serve", "--socket="+goSock, "status")
 	if xc != 0 || xout != out.String() {
 		t.Errorf("xo status of the go server: %d %q %q, want %q", xc, xout, xerr, out.String())
 	}
-	if _, _, xc := runXo(t, bin, sockDir, "", "serve", "--socket="+goSock, "stop"); xc != 0 {
+	if _, _, xc := execXo(t, bin, sockDir, "", "serve", "--socket="+goSock, "stop"); xc != 0 {
 		t.Errorf("xo stop of the go server: %d", xc)
 	}
 	select {
@@ -349,7 +364,7 @@ func TestXoServeProtocol(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Error("the go server did not stop")
 	}
-	if code := run([]string{"serve", "--socket=" + xoSock, "stop"}, io.Discard, io.Discard); code != 0 {
+	if code := runXo([]string{"serve", "--socket=" + xoSock, "stop"}, io.Discard, io.Discard); code != 0 {
 		t.Errorf("go stop of the xo server: %d", code)
 	}
 	done := make(chan error, 1)
@@ -367,14 +382,14 @@ func TestXoServeProtocol(t *testing.T) {
 	}
 	// no server: both CLIs say so the same way
 	var e1 bytes.Buffer
-	g1 := run([]string{"serve", "--socket=" + xoSock, "status"}, io.Discard, &e1)
-	_, xe1, x1 := runXo(t, bin, sockDir, "", "serve", "--socket="+xoSock, "status")
+	g1 := runXo([]string{"serve", "--socket=" + xoSock, "status"}, io.Discard, &e1)
+	_, xe1, x1 := execXo(t, bin, sockDir, "", "serve", "--socket="+xoSock, "status")
 	if g1 != x1 || e1.String() != xe1 {
 		t.Errorf("status without a server: %d %q (go) vs %d %q (xo)", g1, e1.String(), x1, xe1)
 	}
 	var e2 bytes.Buffer
-	g2 := run([]string{"serve", "bogus"}, io.Discard, &e2)
-	_, xe2, x2 := runXo(t, bin, sockDir, "", "serve", "--socket="+xoSock, "bogus")
+	g2 := runXo([]string{"serve", "bogus"}, io.Discard, &e2)
+	_, xe2, x2 := execXo(t, bin, sockDir, "", "serve", "--socket="+xoSock, "bogus")
 	if g2 != x2 || e2.String() != xe2 {
 		t.Errorf("serve bogus: %d %q (go) vs %d %q (xo)", g2, e2.String(), x2, xe2)
 	}
@@ -587,12 +602,12 @@ func TestXoReplay(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "main.xo"), []byte(prog), 0o644)
 	trace := filepath.Join(dir, "run.xotrace")
 	var out bytes.Buffer
-	if code := run([]string{"run", "--record=" + trace, src, "--", "a", "b"}, &out, io.Discard); code != 0 {
+	if code := runXo([]string{"run", "--record=" + trace, src, "--", "a", "b"}, &out, io.Discard); code != 0 {
 		t.Fatalf("run --record: %d", code)
 	}
 	var gout, gerr bytes.Buffer
-	gc := run([]string{"replay", trace}, &gout, &gerr)
-	xout, xerr, xc := runXo(t, bin, dir, "", "replay", trace)
+	gc := runXo([]string{"replay", trace}, &gout, &gerr)
+	xout, xerr, xc := execXo(t, bin, dir, "", "replay", trace)
 	if gc != xc || gout.String() != xout {
 		t.Errorf("replay:\n go %d %q %q\n xo %d %q %q", gc, gout.String(), gerr.String(), xc, xout, xerr)
 	}
@@ -602,8 +617,8 @@ func TestXoReplay(t *testing.T) {
 	// not a trace, and a usage error
 	for _, args := range [][]string{{"replay", filepath.Join(src, "main.xo")}, {"replay"}, {"replay", "a", "b"}, {"replay", "--nope"}} {
 		var e bytes.Buffer
-		g := run(args, io.Discard, &e)
-		_, xe, x := runXo(t, bin, dir, "", args...)
+		g := runXo(args, io.Discard, &e)
+		_, xe, x := execXo(t, bin, dir, "", args...)
 		if g != x || e.String() != xe {
 			t.Errorf("%v: %d %q (go) vs %d %q (xo)", args, g, e.String(), x, xe)
 		}
