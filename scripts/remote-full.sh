@@ -21,7 +21,7 @@
 # current public IP only.
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-c8g.16xlarge}
+TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # the account quota is 32 vCPUs (2026-10-12)
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-300}
 GOVER=${XO_REMOTE_GO:-1.26.1}

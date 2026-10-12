@@ -2692,8 +2692,10 @@ path by `go test` (31 of the 46 files over 20 MB written after
 
 `scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
 full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
-Graviton instance (default c8g.16xlarge, 64 vCPU, 128 GiB, spot, us-east-1;
-about $0.70 to $0.80 an hour spot, $2.55 on demand on 2026-10-12), copies
+Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
+the account's EC2 quota is 32 vCPUs for spot and for on demand, so
+c8g.16xlarge (64 vCPU, about $0.70 to $0.80 an hour spot) is refused
+with MaxSpotInstanceCountExceeded until a quota increase), copies
 the log to bench/results/remote/<commit>.log (git ignored) and terminates
 the instance. The instance also shuts itself down (terminating it) after
 XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
