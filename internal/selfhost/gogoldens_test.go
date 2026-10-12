@@ -373,6 +373,7 @@ func treeSum(dir string) string {
 			return v.(string)
 		}
 	}
+	key := dir // "!" kept: a flat and a whole tree sum of one directory differ
 	flat := strings.HasSuffix(dir, "!")
 	dir = strings.TrimSuffix(dir, "!")
 	h := sha256.New()
@@ -400,7 +401,7 @@ func treeSum(dir string) string {
 	})
 	s := hex.EncodeToString(h.Sum(nil))
 	if goldensMode() == goldensRecord {
-		treeSums.Store(dir, s)
+		treeSums.Store(key, s)
 	}
 	return s
 }

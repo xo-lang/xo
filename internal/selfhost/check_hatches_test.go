@@ -26,6 +26,14 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("binds Go packages with go list")
 	}
+	if goldensMode() == goldensReplay {
+		// The Xo checker loads the binding the Go checker writes to the
+		// gobind cache as a side effect; a replayed Go side writes none,
+		// so both runs come out unsupported (2026-10-12). Without the Go
+		// checker the binding has to come from xo-gobind (decision 0178
+		// stage 6), which this test does not run yet.
+		t.Skip("XO_SELFHOST_GOLDENS=replay: needs the Go checker's gobind side effect")
+	}
 	root := repoRoot(t)
 	bin, err := selfhostBinary("check", "go")
 	if err != nil {
