@@ -1,6 +1,6 @@
 # 0075: Native arm64 code placement: no alignment by default, a layout knob for measurement
 
-Status: Accepted (2026-10-08). Extends decisions 0049, 0054, 0060.
+Status: Accepted (2026-10-08). Extends decisions 0049, 0054, 0060. The "bounds check removal stays off" part superseded by 0184 (2026-10-12).
 Implemented in `internal/arm64/align.go` (`Layout`, `ParseLayout`,
 `alignLoops`, `innerLoops`), `funcHeader` in `internal/arm64/arm64.go`,
 and `$XO_ARM64_LAYOUT` read in `internal/build/arm64.go`. Evidence:

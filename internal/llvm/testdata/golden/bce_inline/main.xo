@@ -1,0 +1,144 @@
+// Decision 0184: the arm64 backend inlines small functions that call
+// others (forwarders, chains, never a cycle) and drops the checks the
+// bounds and the loop conditions prove; every check it cannot prove
+// stays, so the near misses below still fault like the Go backend.
+
+const TABLE: Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17"
+
+// a chain of small functions: each calls the next
+fn twice(x: Int) -> Int { x * 2 }
+
+fn twice_plus(x: Int) -> Int { twice(x) + 1 }
+
+fn forward(x: Int) -> Int { twice_plus(x) }
+
+// small and mutually recursive: inlining must stop at the cycle
+fn even(n: Int) -> Bool {
+  if n == 0 {
+    return true
+  }
+  odd(n - 1)
+}
+
+fn odd(n: Int) -> Bool {
+  if n == 0 {
+    return false
+  }
+  even(n - 1)
+}
+
+fn fact(n: Int) -> Int {
+  if n <= 1 {
+    return 1
+  }
+  n * fact(n - 1)
+}
+
+/// The 24 bit value at byte i of t.
+fn u24(t: Bytes, i: Int) -> Int {
+  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+}
+
+/// A table entry under a branch that bounds r: no check needed.
+fn entry(r: Int) -> Int {
+  if r >= 0 && r < 8 {
+    return u24(TABLE, r * 3)
+  }
+  -1
+}
+
+/// Entries past the table: the check stays and faults.
+fn entry_unchecked(r: Int) -> Int {
+  if r >= 0 && r < 9 {
+    return u24(TABLE, r * 3)
+  }
+  -1
+}
+
+fn sum_list(xs: List[Int]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    s += xs[i]
+  }
+  var j = 0
+  while j < xs.len() {
+    s += xs[j] * 2
+    j += 1
+  }
+  for x in xs {
+    s += x
+  }
+  s
+}
+
+/// Pairs b[i], b[i + 1] under i + 1 < n; b[i + k] under i + k < n.
+fn pairs(b: Bytes) -> Int {
+  let n = b.len()
+  var s = 0
+  var i = 0
+  while i + 1 < n {
+    s += Int(b[i]) * Int(b[i + 1])
+    i += 2
+  }
+  var k = 0
+  while k < n {
+    let step = (k & 3) + 1
+    if k + step < n {
+      s += Int(b[k + 1]) + Int(b[k + step])
+    }
+    k += step
+  }
+  s
+}
+
+/// Shifts whose amounts and operands are bounded, and one that is not.
+fn shifts(b: Bytes, x: Int) -> Int {
+  var s = 0
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    s += (c << 40) >> 30
+    s += (c >> (i & 7)) << (x & 15)
+  }
+  s
+}
+
+/// The length of the common prefix: both indexes proved by `&&`.
+fn common(a: Bytes, b: Bytes) -> Int {
+  var i = 0
+  while i < a.len() && i < b.len() {
+    if a[i] != b[i] {
+      break
+    }
+    i += 1
+  }
+  i
+}
+
+/// `||`: the index is proved on the path where both tests failed.
+fn skip_spaces(a: Bytes) -> Int {
+  var i = 0
+  while true {
+    if i >= a.len() || a[i] != 32 {
+      break
+    }
+    i += 1
+  }
+  i
+}
+
+fn main(os: Os) {
+  os.stdio.println("${forward(20)} ${twice_plus(3)}")
+  os.stdio.println("${even(10)} ${odd(7)} ${even(3)} ${fact(10)}")
+  var t = 0
+  for r in 0..8 {
+    t += entry(r)
+  }
+  os.stdio.println("${t} ${entry(9)} ${entry(-1)}")
+  os.stdio.println("${sum_list([1, 2, 3, 4, 5])} ${sum_list([])}")
+  let text = b"The quick brown fox jumps over the lazy dog"
+  os.stdio.println("${pairs(text)} ${pairs(b"")} ${pairs(b"a")}")
+  os.stdio.println("${shifts(text, 3)} ${shifts(text, 255)}")
+  os.stdio.println("${common(text, b"The quack")} ${common(b"", text)} ${common(text, text)} ${skip_spaces(b"   x")} ${skip_spaces(b"  ")}")
+  // past the end: u24 reads bytes 24 to 26 of a 24 byte table
+  os.stdio.println("${entry_unchecked(8)}")
+}
