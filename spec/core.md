@@ -1540,7 +1540,10 @@ Because values never alias mutably, data races are impossible except through
 - An assignment evaluates the indexes of its target, then the value, then
   stores into the target (decision 0140): changes the value makes to the
   target's binding are kept, so `t.objs[o].kids = t.add_kids()` keeps the
-  objects `add_kids` pushed onto `t.objs`.
+  objects `add_kids` pushed onto `t.objs`. A compound assignment
+  (`+=`, `-=`, ...) reads the target's old value after the value, so
+  `t.n += t.bump()` keeps what `bump` changed in `t`, `n` included
+  (decision 0159).
 - A call evaluates the place of a `var` receiver or `var` argument, then
   every argument in order, then reads those places (decision 0142):
   `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and

@@ -408,12 +408,16 @@ func (s *fn) assign(x *ast.AssignStmt) {
 		s.b.unsupported(x, "this assignment operator")
 		return
 	}
-	old := p.get()
+	// the value first, then the target's old value (decision 0159): the
+	// changes the value makes to the target's binding (a `var` call of
+	// it) are kept, as with `=` (decision 0140); reading the old value
+	// first cached the binding before the call and stored that copy back
 	var r *Value
 	if op == token.Shl || op == token.Shr {
 		r = s.shiftCount(x.Value, p.t)
 	} else {
 		r = s.valueAs(x.Value, p.t)
 	}
+	old := p.get()
 	p.set(s.arith(op, old, r, x))
 }

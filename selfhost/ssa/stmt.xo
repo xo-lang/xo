@@ -487,13 +487,16 @@ fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr
     return
   }
   let o = cop ?? lexer.Kind.Plus
-  let old = b.place_get(p)
+  // the value first, then the target's old value (decision 0159): the
+  // changes the value makes to the target's binding are kept, as with
+  // `=` (decision 0140)
   var r = -1
   if o == lexer.Kind.Shl || o == lexer.Kind.Shr {
     r = b.shift_count(value, p.t())
   } else {
     r = b.value_as(value, p.t())
   }
+  let old = b.place_get(p)
   let nv = b.arith(o, old, r, span)
   b.place_set(p, nv)
 }

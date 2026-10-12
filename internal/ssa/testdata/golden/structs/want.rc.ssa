@@ -70,13 +70,13 @@ b5:  ; preds b2
 func bump(v0: List[P], v1: Int) -> ((), List[P]) {
 b0(v0: List[P], v1: Int):
   v2: List[P] = reuse v0
-  v3: P = call list.index, v2, v1 @ main.xo:9:3 lands v4
-  v4: Bool = call rt.landing
-  br v4, b2(), b1()
+  v3: Int = const 1
+  v4: P = call list.index, v2, v1 @ main.xo:9:3 lands v5
+  v5: Bool = call rt.landing
+  br v5, b2(), b1()
 b1:  ; preds b0
-  v6: Int = field 0, v3
-  v7: Int = const 1
-  v8: Int = add v6, v7 @ main.xo:9:3 lands v9
+  v7: Int = field 0, v4
+  v8: Int = add v7, v3 @ main.xo:9:3 lands v9
   v9: Bool = call rt.landing
   br v9, b5(), b4()
 b2:  ; preds b0
@@ -88,7 +88,7 @@ b3:  ; preds b2, b5, b7
   v15: List[P] = call rt.rl_empty
   ret v14, v15
 b4:  ; preds b1
-  v17: P = setfield 0, v3, v8
+  v17: P = setfield 0, v4, v8
   v18: List[P] = call list.set, v2, v1, v17 @ main.xo:9:3 lands v19
   v19: Bool = call rt.landing
   br v19, b7(), b6()

@@ -1,0 +1,66 @@
+// A compound assignment whose value calls a `var` method of the target's
+// binding (decision 0159): the call's changes to the binding are kept,
+// as on the Go backend. The native backends read the old field first and
+// stored the binding as it was before the call (and the LLVM backend,
+// whose home of a large `var` parameter the call had updated in place,
+// then released fields still in use).
+
+struct St {
+  names: List[Str] = []
+  n: Int = 0
+  a0: List[Int] = []
+  a1: List[Int] = []
+  a2: List[Int] = []
+  a3: List[Int] = []
+  a4: List[Int] = []
+  a5: List[Int] = []
+  a6: List[Int] = []
+  a7: List[Int] = []
+  a8: List[Int] = []
+  a9: List[Int] = []
+  b0: List[Int] = []
+  b1: List[Int] = []
+  b2: List[Int] = []
+  b3: List[Int] = []
+  b4: List[Int] = []
+  b5: List[Int] = []
+  b6: List[Int] = []
+  b7: List[Int] = []
+  b8: List[Int] = []
+  b9: List[Int] = []
+  c0: List[Int] = []
+  c1: List[Int] = []
+  c2: List[Int] = []
+  c3: List[Int] = []
+  c4: List[Int] = []
+  c5: List[Int] = []
+  c6: List[Int] = []
+  c7: List[Int] = []
+}
+
+fn (var g: St) bump(s: Str) -> Int {
+  g.names = g.names + [s]
+  g.names.len()
+}
+
+fn (var g: St) keep_old(s: Str) -> Int {
+  let old = g
+  let k = g.bump(s)
+  old.names.len() * 100 + k
+}
+
+fn (var g: St) compound(s: Str) {
+  g.n += g.bump(s)
+}
+
+fn main(os: Os) {
+  var g = St{}
+  for i in 0..5 {
+    let r = g.keep_old("k${i}")
+    os.stdio.println("keep ${r} ${g.names.len()}")
+  }
+  for i in 0..5 {
+    g.compound("c${i}")
+    os.stdio.println("compound ${g.n} ${g.names.len()} ${g.names[g.names.len() - 1]}")
+  }
+}
