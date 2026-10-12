@@ -1,4 +1,4 @@
-exit 70
+exit 0
 --- stdout
 exceeded steps
 exceeded cpu
@@ -13,4 +13,3 @@ deadline: TimedOut
 exceeded steps
 sum 45
 --- stderr
-fault: task.with_budget: a negative ceiling (cpu 0s, alloc 0, steps -1) at main.xo:92

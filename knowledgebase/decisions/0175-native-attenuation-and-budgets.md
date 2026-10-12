@@ -104,9 +104,11 @@ runtime edits go into the existing files (decision 0157's packs).
   on Go, LLVM, and arm64.
 - internal/llvm golden `task_budget`: internal/gen's `budget` golden
   plus a budget without ceilings, a deadline around a budgeted loop
-  (`TimedOut`), recursion through a function value, and a negative
-  ceiling (the fault); identical on the three backends, no allocation
-  live at exit without the fault line.
+  (`TimedOut`), and recursion through a function value; identical on the
+  three backends, no allocation live at exit (and run under
+  ThreadSanitizer by TestGoldenThreads, which takes every golden that
+  exits 0); `task_budget_fault`: a negative ceiling faults with std/rt's
+  text at the call.
 - internal/gen golden `test_net_only` (cmd/xo TestNoGCTests): FakeNet,
   FakeEnv, and FakeProc attenuated in tests; cmd/xo TestAttenuationFakes
   now passes natively too.

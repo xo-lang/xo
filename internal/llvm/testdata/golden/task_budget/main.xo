@@ -2,8 +2,9 @@
 // task.with_budget bounds pure loops, recursion, allocation, and the
 // tasks a budgeted call starts; a call within its budget returns its
 // value, and a failure stays a failure. internal/gen's golden `budget`,
-// plus a budget without ceilings, a deadline around a budget, a
-// recursion through a function value, and a negative ceiling.
+// plus a budget without ceilings, a deadline around a budget, and a
+// recursion through a function value (task_budget_fault: a negative
+// ceiling).
 use std/task
 
 fn spin() -> Int {
@@ -88,6 +89,4 @@ fn main(os: Os) {
   os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 50000), fn() -> Int { f(70) })))
   // after a budget, the program goes on unbudgeted
   os.stdio.println("sum ${sum(10)}")
-  // a negative ceiling faults
-  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: -1), fn() -> Int { 1 })))
 }
