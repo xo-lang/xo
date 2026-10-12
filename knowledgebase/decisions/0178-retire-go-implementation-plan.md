@@ -1,9 +1,13 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
 Status: Proposed (2026-10-12; the owner decides every switch-over point
-below). The inventory and the measurements are from main fdda92f plus
-the two xo1 commits of this decision (`xo1 --backend=llvm`, and the
-decision 0172 file symbols in xo1's runtime flags). Evidence:
+below). The inventory is from main dbb8b05 with this decision's
+commits; the measurements are on the same tree (runs 1 to 4 of the
+results file). Gaps closed on the way, each its own commit: `xo1
+--backend=llvm`; the decision 0172 file symbols in xo1's runtime flags
+(with TestXo1IOFlagsSymbols); `xo1 test --backend=go`; `use go` in the
+Go backend path (selfhost/gen's `Go_<path>_` names, the binding
+adapters, go.mod requirements and go.sum, the Go timers tag). Evidence:
 `bench/results/retire-go-2026-10-12.md`. The released `xo` is
 unchanged (decision 0150).
 
@@ -30,15 +34,15 @@ Lines of Go excluding `_test.go` and testdata (`wc -l`, 2026-10-12).
 |---|---:|---|---|---|
 | internal/token, lexer | 301 + 1,176 | tokens and positions | selfhost/lexer (1,873) | nothing known |
 | internal/ast, parser | 1,164 + 6,041 | syntax tree, habits, recovery | selfhost/parser (7,946) | nothing known |
-| internal/check | 14,968 | names, types, effects, diagnostics with fixes | selfhost/check (18,366) | XO0900 holes (not reported); binding `use go` and `use c` itself (reads the caches the Go binders write, decisions 0152, 0177) |
-| internal/ssa | 15,172 | SSA builder, passes, verifier | selfhost/ssa (17,554) | tests with `uses` (`--real`); `ShareProbes` |
+| internal/check | 14,968 | names, types, effects, diagnostics with fixes | selfhost/check (18,408) | XO0900 holes (not reported); binding `use go` and `use c` itself (reads the caches the Go binders write, decisions 0152, 0177) |
+| internal/ssa | 15,149 | SSA builder, passes, verifier | selfhost/ssa (17,530) | tests with `uses` (`--real`); `ShareProbes` |
 | internal/arm64 | 9,935 | arm64 assembly | selfhost/arm64 (9,512) | none (fixed point, 147 of 147 goldens) |
 | internal/llvm | 3,198 | LLVM IR | selfhost/llvm (3,792) | `llvm.Split` (XO_LLVM_SPLIT, decision 0168) |
-| internal/gen | 11,522 | Go source | selfhost/gen (13,798) | gofmt is run as a program; `--race`, `--holes` |
-| internal/build | 4,213 | the build driver: caches, runtime, TLS, zone data, link | selfhost/xo (2,681 + 125 clang.xo) | see "xo1 against `xo build`" |
+| internal/gen | 11,551 | Go source | selfhost/gen (13,878) | gofmt is run as a program; `--race`, `--holes` |
+| internal/build | 4,217 | the build driver: caches, runtime, TLS, zone data, link | selfhost/xo (2,893) | see "xo1 against `xo build`" |
 
-Sum of the compiler packages: 63,477 lines of Go; their twins are
-75,522 lines of Xo with the driver.
+Sum of the compiler packages (build excluded): 63,483 lines of Go;
+their twins are 75,832 lines of Xo with the driver.
 
 ### The rest of the toolchain (no Xo twin)
 
