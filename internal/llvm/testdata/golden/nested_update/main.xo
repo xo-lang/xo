@@ -1,0 +1,204 @@
+// Updates of a collection inside a list element (decision 0169): the
+// element moves out of the list (`list.take`) and back, so the inner
+// collection updates in place when the outer list is unique, and a
+// shared outer list still copies (value semantics). Faults between the
+// take and the store (task.isolate) release the list with its
+// placeholder; the leak check counts every allocation.
+use std/task
+
+struct Leaf {
+  n: Int
+}
+
+enum Node {
+  Tip(v: Int)
+  Pair(l: Node, r: Node)
+}
+
+enum Shape {
+  Dot
+  Named(name: Str, tags: List[Str])
+}
+
+struct Block {
+  id: Int
+  insts: List[Int]
+  name: Str
+  shape: Shape
+  label: Str?
+  tree: Node
+  score: Float
+  on: Bool
+  hook: fn(Int) -> Int
+}
+
+struct Row {
+  cells: List[Leaf]
+  m: Map[Str, Int]
+  text: Str
+}
+
+struct G {
+  blocks: List[Block]
+  cur: Int
+}
+
+fn (var g: G) emit(x: Int) {
+  g.blocks[g.cur].insts.push(x)
+}
+
+fn (g: G) show() -> Str {
+  var parts: List[Str] = []
+  for b in g.blocks {
+    parts.push("${b.id}:${b.name}:${b.insts.len()}")
+  }
+  parts.join(" ")
+}
+
+fn new_block(id: Int, name: Str) -> Block {
+  let k = id * 10
+  Block{id: id, insts: [], name: name, shape: Shape.Named(name: name, tags: [name]), label: Some(name),
+    tree: Node.Pair(l: Node.Tip(v: id), r: Node.Tip(v: id + 1)), score: 1.5, on: true, hook: fn(x) { x + k }}
+}
+
+fn new_g() -> G {
+  G{blocks: [new_block(0, "entry"), new_block(1, "exit")], cur: 0}
+}
+
+fn sum(n: Node) -> Int {
+  match n {
+    Tip(v) => v
+    Pair(l, r) => sum(l) + sum(r)
+  }
+}
+
+fn ints(xs: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for x in xs {
+    parts.push("${x}")
+  }
+  "[" + parts.join(",") + "]"
+}
+
+fn suffix(s: Str) -> Str {
+  s + "!"
+}
+
+fn check_ok(fail: Bool) -> Int ! Str {
+  if fail {
+    return Err("refused")
+  }
+  1
+}
+
+/// A compound assignment whose operand can return keeps the element in
+/// place; on an error the `var` list comes back unchanged.
+fn bump(var rows: List[Row], fail: Bool) -> Int ! Str {
+  rows[0].text += "${check_ok(fail)?}"
+  rows[0].cells[0].n += 1
+  rows[0].cells[0].n
+}
+
+fn faults(io: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => io.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("${label}: fault ${info.msg}")
+    Err(_) => io.println("${label}: failed")
+  }
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+
+  // unique: pushes through a `var` receiver
+  var g = new_g()
+  for i in 0..1000 {
+    g.emit(i)
+  }
+  g.cur = 1
+  g.emit(7)
+  io.println(g.show())
+
+  // shared: a copy taken before each update keeps its value
+  let before = g.blocks
+  g.cur = 0
+  g.emit(-1)
+  io.println("before ${before[0].insts.len()} after ${g.blocks[0].insts.len()} last ${g.blocks[0].insts[1000]}")
+
+  // a field of an element, the other fields kept
+  g.blocks[1].name = "end"
+  g.blocks[1].label = None
+  g.blocks[0].name += "+"
+  g.blocks[0].name += suffix("x")
+  let b0 = g.blocks[0]
+  io.println("${b0.name} ${b0.label ?? "-"} ${sum(b0.tree)} ${b0.score} ${b0.on} ${b0.hook(5)} ${g.blocks[1].label ?? "none"}")
+  match b0.shape {
+    Named(name, tags) => io.println("shape ${name} ${tags.len()}")
+    Dot => io.println("dot")
+  }
+
+  // xs[i][j] = v on a list of lists, unique and shared
+  var grid: List[List[Int]] = [[1, 2, 3], [4, 5, 6]]
+  grid[1][2] = 60
+  let snap = grid
+  grid[0][0] = 10
+  grid[0].push(4)
+  io.println("grid ${ints(grid[0])} ${ints(grid[1])} snap ${ints(snap[0])} ${ints(snap[1])}")
+
+  // three levels: xs[i][j][k] = v
+  var cube: List[List[List[Str]]] = [[["a", "b"], ["c"]], [["d"]]]
+  cube[0][1][0] = "C"
+  cube[1][0].push("e")
+  io.println("cube ${cube[0][0].join(",")} ${cube[0][1].join(",")} ${cube[1][0].join(",")}")
+
+  // xs[i].f[j].g = v, a map in an element, a string in an element
+  var rows: List[Row] = [Row{cells: [Leaf{n: 1}, Leaf{n: 2}], m: {}, text: "t"}]
+  rows[0].cells[1].n = 20
+  rows[0].m["a"] = 1
+  rows[0].m.put("b", 2)
+  let rsnap = rows
+  rows[0].m["a"] = 100
+  rows[0].text += "u"
+  io.println("rows ${rows[0].cells[1].n} ${rows[0].m.get("a") ?? 0} ${rows[0].m.len()} ${rows[0].text} snap ${rsnap[0].m.get("a") ?? 0} ${rsnap[0].text}")
+  rows[0].m.update("a", 0, fn(var v) { v += 1 })
+  io.println("update ${rows[0].m.get("a") ?? 0}")
+
+  // a compound assignment whose operand can fail
+  match bump(rows, false) {
+    Ok(n) => io.println("bump ok ${n} ${rows[0].text}")
+    Err(e) => io.println("bump ${e}")
+  }
+  match bump(rows, true) {
+    Ok(n) => io.println("bump ok ${n}")
+    Err(e) => io.println("bump ${e} ${rows[0].text} ${rows[0].cells[0].n}")
+  }
+
+  // pop and set through an element
+  var stacks: List[List[Int]] = [[1, 2, 3], []]
+  let top = stacks[0].pop()
+  stacks[0].set(0, 9)
+  stacks[1].push(top ?? 0)
+  io.println("stacks ${ints(stacks[0])} ${ints(stacks[1])}")
+
+  // faults between the move out and the store back
+  faults(io, "inner index", task.isolate(fn() -> Int ! () {
+    var gg = new_g()
+    gg.emit(1)
+    let i = gg.blocks[0].insts.len() + 5
+    gg.blocks[0].insts[i] = 3
+    gg.blocks[0].insts.len()
+  }))
+  faults(io, "overflow", task.isolate(fn() -> Int ! () {
+    var cs: List[Row] = [Row{cells: [Leaf{n: 9223372036854775807}], m: {}, text: "x"}]
+    let one = cs.len()
+    cs[0].cells[0].n += one
+    cs[0].cells[0].n
+  }))
+  faults(io, "outer index", task.isolate(fn() -> Int ! () {
+    var gg = new_g()
+    let i = gg.blocks.len() + 1
+    gg.blocks[i].insts.push(1)
+    0
+  }))
+  io.println("done ${g.blocks[0].insts.len()} ${before[0].insts.len()}")
+}

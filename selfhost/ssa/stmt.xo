@@ -328,12 +328,16 @@ enum Step {
 
 /// An assignable location: its levels from the root, the type of each,
 /// and per level the value of the level below once read (the Go place's
-/// cur() cache), -1 until then.
+/// cur() cache), -1 until then. A list element read on the way to a
+/// store moves out (`list.take`, decision 0169) unless keep is set:
+/// taken holds the element per level, -1 until then.
 struct Place {
   ok: Bool
   steps: List[Step] = []
   types: List[Int] = []
   cache: List[Int] = []
+  taken: List[Int] = []
+  keep: Bool = false
 }
 
 fn (p: Place) t() -> Int {
@@ -350,7 +354,7 @@ fn (var b: Builder) place(e: Expr) -> Place {
     Ident(id) => {
       let vo = b.c.var_of(b.s.file, id)
       if vo >= 0 {
-        return Place{ok: true, steps: [Step.Var(vo: vo)], types: [b.type_of(e)], cache: [-1]}
+        return Place{ok: true, steps: [Step.Var(vo: vo)], types: [b.type_of(e)], cache: [-1], taken: [-1]}
       }
     }
     SelectorExpr(x: x, sel: sel, ..) => {
@@ -365,6 +369,7 @@ fn (var b: Builder) place(e: Expr) -> Place {
           base.steps.push(Step.Field(idx: idx, ft: ft))
           base.types.push(pt)
           base.cache.push(-1)
+          base.taken.push(-1)
           return base
         }
       }
@@ -379,6 +384,7 @@ fn (var b: Builder) place(e: Expr) -> Place {
         base.steps.push(Step.MapKey(k: k, t: t))
         base.types.push(map_val(b.m, t))
         base.cache.push(-1)
+        base.taken.push(-1)
         return base
       }
       if base.ok && b.tkind(base.t()) == Kind.List {
@@ -387,6 +393,7 @@ fn (var b: Builder) place(e: Expr) -> Place {
         base.steps.push(Step.Index(i: i, pos: b.pos(span)))
         base.types.push(et)
         base.cache.push(-1)
+        base.taken.push(-1)
         return base
       }
     }
@@ -413,8 +420,23 @@ fn (var b: Builder) place_get_at(var p: Place, k: Int) -> Int {
       b.unbox(b.add(Op.Field, ft, Aux.I(n: idx), [c]))
     }
     Index(i, pos) => {
+      if p.taken[k] >= 0 {
+        // read again before the store: the element moved out
+        return p.taken[k]
+      }
+      let et = p.types[k]
+      if p.keep || !b.m.heap(et) {
+        let c = b.place_cur(p, k)
+        return b.call("list.index", et, pos, [c, i])
+      }
+      // moved out until the store puts it back (decision 0169)
+      let tt = b.m.tuple([p.types[k - 1], et])
       let c = b.place_cur(p, k)
-      b.call("list.index", p.types[k], pos, [c, i])
+      let tk = b.call("list.take", tt, pos, [c, i])
+      p.cache[k] = b.add(Op.Field, p.types[k - 1], Aux.I(n: 0), [tk])
+      let e = b.add(Op.Field, et, Aux.I(n: 1), [tk])
+      p.taken[k] = e
+      e
     }
     MapKey(..) => {
       b.unsupported("reading `m[k]`")
@@ -434,7 +456,9 @@ fn (var b: Builder) place_set_at(var p: Place, k: Int, v: Int) {
     }
     Index(i, pos) => {
       let c = b.place_cur(p, k)
-      let w = b.call("list.set", p.types[k - 1], pos, [c, i, v])
+      // after a take, the take checked the index of the same list
+      let sp = if p.taken[k] >= 0 { "" } else { pos }
+      let w = b.call("list.set", p.types[k - 1], sp, [c, i, v])
       b.place_set_at(p, k - 1, w)
     }
     MapKey(key, t) => {
@@ -489,7 +513,8 @@ fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr
   let o = cop ?? lexer.Kind.Plus
   // the value first, then the target's old value (decision 0159): the
   // changes the value makes to the target's binding are kept, as with
-  // `=` (decision 0140)
+  // `=` (decision 0140); only the operation runs between the read and
+  // the store, so an element may move out (decision 0169)
   var r = -1
   if o == lexer.Kind.Shl || o == lexer.Kind.Shr {
     r = b.shift_count(value, p.t())

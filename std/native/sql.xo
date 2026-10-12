@@ -74,6 +74,11 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
+  if !rt.net_lists(net).is_empty() {
+    // the driver dials by itself, so an allowlist cannot be enforced:
+    // fail closed (decisions 0156 and 0175)
+    return Err(sql.SqlErr.Conn(msg: "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net"))
+  }
   if max_open < 1 {
     return Err(sql.SqlErr.Param(msg: "max_open must be at least 1"))
   }

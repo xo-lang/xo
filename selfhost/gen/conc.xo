@@ -1,0 +1,270 @@
+// Concurrency (internal/gen conc.go): spawning, `fault`, `dbg`, scopes,
+// and `select`.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Whether fo is the method name of type typ of std module mod
+/// ("prelude" for the prelude) (isStdMethod).
+fn (g: Gen) is_std_method(fo: Int, mod: Str, typ: Str, name: Str) -> Bool {
+  if fo < 0 {
+    return false
+  }
+  let r = g.c.objs[fo].recv
+  if r < 0 || g.oname(fo) != name || g.oname(r) != typ {
+    return false
+  }
+  let m = g.omod(r)
+  if mod == "prelude" {
+    return g.is_prelude_mod(m)
+  }
+  g.is_std_mod(m) && g.c.mods[m].path == "std/" + mod
+}
+
+/// std calls that need more than the calling convention: spawning,
+/// `fault`, and `dbg` (specialStd).
+fn (var g: Gen) special_std(x: Expr, ci: check.CallInfo) -> (Str, Int, Bool) {
+  let (span, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let o = g.c.objs[fo]
+  let r = g.rt()
+  let name = g.oname(fo)
+  if o.recv < 0 && g.oprelude(fo) && name == "fault" {
+    let v = g.val(args[0].value)
+    return ("${r}Fault(tk, ${v}, ${g.loc(span).quote()})", CK_CALL, true)
+  }
+  if o.recv < 0 && g.oprelude(fo) && name == "dbg" {
+    let a = args[0].value
+    let v = g.val(a)
+    return ("${r}Dbg(tk, ${v}, ${g.source(parser.expr_span(a)).quote()}, ${g.loc(span).quote()})", CK_CALL, true)
+  }
+  let spawn = g.is_std_method(fo, "prelude", "Scope", "spawn") || g.is_std_method(fo, "prelude", "Scope", "spawn_background")
+  let gspawn = g.is_std_method(fo, "task", "Group", "spawn")
+  let gbg = g.is_std_method(fo, "task", "Group", "spawn_background")
+  if spawn || gspawn || gbg {
+    let codes = g.recv_and_arg(ci, args[0].value)
+    if spawn {
+      let bg = name == "spawn_background"
+      return ("${r}Spawn(tk, ${codes[0]}, ${codes[1]}, ${bg}, ${g.consumed(x)})", CK_CALL, true)
+    }
+    if gspawn {
+      return ("${r}GroupSpawn(tk, ${codes[0]}, ${codes[1]}, ${g.consumed(x)})", CK_CALL, true)
+    }
+    return ("${r}GroupSpawnBackground(tk, ${codes[0]}, ${codes[1]})", CK_VOID, true)
+  }
+  ("", CK_VALUE, false)
+}
+
+/// The operands val(receiver), val(arg).
+fn (var g: Gen) recv_and_arg(ci: check.CallInfo, arg: Expr) -> List[Str] {
+  var ops = Ops{}
+  for i in 0..2 {
+    let sv = g.cap_begin()
+    let code = if i == 0 { g.val(ci.recv[0]) } else { g.val(arg) }
+    g.op_end(ops, sv, code, false)
+  }
+  ops.codes
+}
+
+/// Whether the task started by call x has its handle bound with let and
+/// awaited (consumed).
+fn (g: Gen) consumed(x: Expr) -> Bool {
+  let v = g.f.bound_to.get(g.ek(x)) ?? -1
+  v >= 0 && g.c.objs[v].awaited
+}
+
+/// Records the binding a spawn call's handle is stored in (noteBinding).
+fn (var g: Gen) note_binding(e: Expr, v: Int) {
+  if let CallExpr(..) = e {
+    if v >= 0 {
+      g.f.bound_to[g.ek(e)] = v
+    }
+  }
+}
+
+/// `scope s { body }` (scopeExpr).
+fn (var g: Gen) scope_expr(e: Expr, d: Dest) {
+  let (span, name, body) = match e {
+    ScopeExpr(span: span, name: name, body: body) => (span, name, body)
+    _ => fault("scope")
+  }
+  let r = g.rt()
+  let sv = g.tmp("scope")
+  g.line("${sv} := ${r}NewScope(tk)")
+  let hv = g.var_of(name)
+  if hv >= 0 {
+    g.f.names[hv] = sv
+  }
+  let ctl = g.tmp("ctl")
+  let done = g.tmp("done")
+  let fi = g.f.fr
+  g.f.frames[fi].iife += 1
+  g.f.frames[fi].ctl.push({})
+  let saved = g.cap_begin()
+  g.f.ind += 1
+  g.line("tk := ${sv}.Body()")
+  g.line("_ = tk")
+  g.line("${done} := false")
+  g.line("defer func() { ${ctl}r = ${sv}.Close(recover(), ${done}, ${ctl}r) }()")
+  var dd = d
+  dd.pre = done + " = true"
+  g.stmts(body, dd, true)
+  if !ends_terminating(g.f.out.join(""), g.f.ind) {
+    g.line("${done} = true")
+    g.line("return 0")
+  }
+  g.f.ind -= 1
+  let text = g.cap_end(saved)
+  let set = g.f.frames[fi].ctl.pop() ?? {}
+  g.f.frames[fi].iife -= 1
+  g.line("${ctl} := func() (${ctl}r int) {")
+  g.write(text)
+  g.line("}()")
+  g.line("if ${ctl} == ${r}CtlScopeFail {")
+  g.f.ind += 1
+  g.scope_failure(sv, e, span, body)
+  g.f.ind -= 1
+  g.line("}")
+  g.after_iife(ctl, set)
+}
+
+/// Propagates the error of a failed child task out of the scope
+/// (scopeFailure).
+fn (var g: Gen) scope_failure(sv: Str, e: Expr, span: Span, body: parser.Block) {
+  let r = g.rt()
+  let fe = g.tmp("fe")
+  let ftr = g.tmp("ftr")
+  if g.fr().err_t < 0 || !g.fr().is_result {
+    // the trace is unused: the failure becomes a fault
+    g.line("${fe}, _ := ${sv}.Failure()")
+    g.line("panic(${r}AsFault(${r}Display(tk, ${fe})))")
+    return
+  }
+  // error types of the tasks started in this scope
+  var types: Map[Str, Int] = {}
+  for ne in flatten(Node.E(Expr.Block(body))) {
+    if let E(x) = ne.node {
+      if let CallExpr(args: args, ..) = x {
+        if let Some(ci) = g.call_of(x) {
+          let fo = ci.fn_obj
+          if fo >= 0 && (g.is_std_method(fo, "prelude", "Scope", "spawn") || g.is_std_method(fo, "prelude", "Scope", "spawn_background") || g.is_std_method(fo, "task", "Group", "spawn") || g.is_std_method(fo, "task", "Group", "spawn_background")) {
+            let ft = g.type_of(args[0].value)
+            if g.is_func_t(ft) {
+              let fe2 = g.ferr(ft)
+              if fe2 >= 0 && !g.is_never(fe2) {
+                types[g.go_type(fe2)] = fe2
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  var keys = types.keys()
+  // interfaces last, then by text
+  var ifaces: List[Str] = []
+  var plain: List[Str] = []
+  for k in keys.sort() {
+    if g.is_interface(types.get(k) ?? -1) {
+      ifaces.push(k)
+    } else {
+      plain.push(k)
+    }
+  }
+  keys = plain + ifaces
+  let err_t = g.fr().err_t
+  if keys.is_empty() && !g.is_prelude(err_t, "Error") {
+    // no task of the scope fails with an error: the trace is unused
+    g.line("${fe}, _ := ${sv}.Failure()")
+    g.line("panic(${r}AsFault(${r}Display(tk, ${fe})))")
+    return
+  }
+  g.line("${fe}, ${ftr} := ${sv}.Failure()")
+  let ev = g.tmp("e")
+  let loc = "${g.line_path(g.file_path(g.f.file))}:${span.start.line}"
+  let tr = g.frame_code(ftr, loc)
+  g.line("switch ${ev} := ${fe}.(type) {")
+  for k in keys {
+    g.line("case ${k}:")
+    g.f.ind += 1
+    let conv = g.coerce_err(ev, types.get(k) ?? -1, g.fr().err_t)
+    let rt = g.go_type(g.fr().res_t)
+    g.emit_return_value("${r}ErrTr[${rt}](${conv}, ${tr})")
+    g.f.ind -= 1
+  }
+  g.line("default:")
+  g.f.ind += 1
+  g.line("_ = ${ev}")
+  if g.is_prelude(err_t, "Error") {
+    let rt = g.go_type(g.fr().res_t)
+    g.emit_return_value("${r}ErrTr[${rt}](${r}Iface[${r}IError](${fe}), ${tr})")
+  } else {
+    g.line("panic(${r}AsFault(${r}Display(tk, ${fe})))")
+  }
+  g.f.ind -= 1
+  g.line("}")
+}
+
+/// `select { arms }` (selectExpr).
+fn (var g: Gen) select_expr(e: Expr, d: Dest) {
+  let arms = match e {
+    SelectExpr(arms: arms, ..) => arms
+    _ => []
+  }
+  let r = g.rt()
+  let sel = g.tmp("sel")
+  g.line("${sel} := ${r}NewSelect(tk)")
+  var slots: List[Str] = []
+  for _ in arms {
+    slots.push("")
+  }
+  for (i, arm) in arms.indexed() {
+    if let Some(after) = arm.after {
+      g.line("${r}SelAfter(${sel}, ${g.val(after)})")
+      continue
+    }
+    let op = arm.op ?? Expr.UnitExpr(arm.span)
+    var ok = false
+    if let CallExpr(fun: fun, args: args, ..) = op {
+      if let SelectorExpr(x: chx, sel: sname, ..) = fun {
+        ok = true
+        let ch = g.val(chx)
+        let nm = check.text(sname.name)
+        if nm == "recv" {
+          if arm.bind == None {
+            g.line("${r}SelRecv(${sel}, ${ch})")
+          } else {
+            slots[i] = g.tmp("rv")
+            g.line("${slots[i]} := ${r}SelRecv(${sel}, ${ch})")
+          }
+        } else if nm == "send" {
+          let v = g.val(args[0].value)
+          g.line("${r}SelSend(${sel}, ${ch}, ${v})")
+        } else {
+          g.errorf(parser.expr_span(op), "a select arm must be `ch.recv()`, `ch.send(x)`, or `after d`")
+        }
+      }
+    }
+    if !ok {
+      g.errorf(parser.expr_span(op), "a select arm must be `ch.recv()`, `ch.send(x)`, or `after d`")
+    }
+  }
+  g.line("switch ${sel}.Wait() {")
+  for (i, arm) in arms.indexed() {
+    g.line("case ${i}:")
+    g.f.ind += 1
+    if let Some(b) = arm.bind {
+      if !slots[i].is_empty() {
+        let v = g.var_of(b)
+        if v >= 0 {
+          let name = g.decl_name(v)
+          g.line("${name} := *${slots[i]}")
+          g.line("_ = ${name}")
+        }
+      }
+    }
+    g.arm_body(arm.body, d)
+    g.f.ind -= 1
+  }
+  g.line("}")
+}

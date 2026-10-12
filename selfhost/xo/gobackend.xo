@@ -1,0 +1,324 @@
+// `xo1 build --backend=go` (decision 0167): the checker and the Go code
+// generator in Xo (selfhost/gen), then the Go toolchain, as internal/build
+// does for `xo build --backend=go`: the generated packages after
+// internal/gen's last step (selfhost/gen format_prep, then gofmt), the
+// runtime package copied from DIR/rt (DIR the std directory), the build
+// information, the zone data (internal/build tzFiles, embedded from the
+// Go toolchain's zoneinfo.zip), and `go build`.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/gen
+use std/crypto
+
+/// Builds dir with the Go backend into out; the build tree goes to tree
+/// ("" for out + ".go.d").
+fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, dir: Str) ! {
+  var c = check.new_checker(os.fs, std_dir)
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
+  match c.check_dirs([dir]) {
+    Ok(_) => {}
+    Err(e) => fail(os, "check: ${e}")
+  }
+  if !c.unsupported.is_empty() {
+    fail(os, "unsupported: ${c.unsupported}")
+  }
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      fail(os, "the program does not check (run xo check)")
+    }
+  }
+  let root = abs_line_root(os, wd, dir)
+  var opts = gen.Opts{arenas: true, line_root: root, wd: wd}
+  opts.gc = gc_line(os, root)
+  let prog = gen.generate(c, opts)
+  if !prog.err.is_empty() {
+    fail(os, prog.err)
+  }
+  if !prog.skipped.is_empty() {
+    fail(os, "the generator skipped ${prog.skipped[0]}")
+  }
+  var out = out0
+  if out.is_empty() {
+    let parts = dir.trim_suffix("/").split("/")
+    out = parts[parts.len() - 1]
+  }
+  if !out.starts_with("/") {
+    out = "${wd}/${out}"
+  }
+  var tree = tree0
+  if tree.is_empty() {
+    tree = out + ".go.d"
+  }
+  if !tree.starts_with("/") {
+    tree = "${wd}/${tree}"
+  }
+  // the generated files
+  var written: List[Str] = []
+  for f in prog.files {
+    var text = f.text
+    if f.path.starts_with("m/") && f.path.ends_with("/xo.go") {
+      text = gen.format_prep(text)
+    }
+    write_file(os, "${tree}/${f.path}", text)?
+    if f.path.ends_with(".go") {
+      written.push("${tree}/${f.path}")
+    }
+  }
+  write_file(os, "${tree}/xo_buildinfo.go", build_info_file(os, c, root, dir, wd, std_dir))?
+  tz_files(os, prog.tz_names, prog.tz_dynamic, tree, tzdata)?
+  // the runtime
+  os.fs.create_dir_all("${tree}/rt")?
+  for fi in os.fs.read_dir("${std_dir}/rt")? {
+    if (fi.name.ends_with(".go") || fi.name.ends_with(".s")) && !fi.name.ends_with("_test.go") {
+      os.fs.write("${tree}/rt/${fi.name}", os.fs.read("${std_dir}/rt/${fi.name}")?)?
+    }
+  }
+  // gofmt, as internal/gen's file step ends
+  let goroot = match os.proc.run("go", ["env", "GOROOT"]) {
+    Ok(r) => (r.stdout.to_str() ?? "").trim()
+    Err(e) => fail(os, "go env GOROOT: ${e}")
+  }
+  let fr = os.proc.run("${goroot}/bin/gofmt", ["-w"] + written)?
+  if fr.code != 0 {
+    os.stdio.eprint((fr.stderr.to_str() ?? ""))
+    fail(os, "gofmt failed on the generated Go (a code generator bug)")
+  }
+  // go build
+  var args = ["GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "go", "-C", tree, "build", "-trimpath"]
+  if !prog.tags.is_empty() {
+    args.push("-tags=" + prog.tags.join(","))
+  }
+  args = args + ["-gcflags=all=-dwarf=false", "-ldflags=-s -w", "-o", out, "."]
+  let br = os.proc.run("env", args)?
+  if br.code != 0 {
+    os.stdio.eprint(((br.stdout + br.stderr).to_str() ?? ""))
+    fail(os, "go build failed (a code generator bug)")
+  }
+}
+
+fn write_file(os: Os, path: Str, text: Str) -> () ! Str {
+  let i = last_slash(path)
+  if i > 0 {
+    match os.fs.create_dir_all(path.bytes()[0..i].to_str() ?? "") {
+      Ok(_) => {}
+      Err(e) => return Err("${e}")
+    }
+  }
+  match os.fs.write(path, text.bytes()) {
+    Ok(_) => Ok(())
+    Err(e) => Err("${e}")
+  }
+}
+
+fn last_slash(s: Str) -> Int {
+  let bs = s.bytes()
+  var i = bs.len() - 1
+  while i >= 0 {
+    if bs[i] == '/' {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// The directory //line paths are relative to (internal/build lineRoot),
+/// absolute.
+fn abs_line_root(os: Os, wd: Str, dir: Str) -> Str {
+  let rel = line_root(os, wd, dir)
+  if rel.starts_with("/") {
+    return rel
+  }
+  if rel == "." || rel.is_empty() {
+    return wd
+  }
+  "${wd}/${rel.trim_prefix("./")}"
+}
+
+/// The `gc` lines of the xo.mod at root as the statement main runs
+/// (decision 0065), "" for none.
+fn gc_line(os: Os, root: Str) -> Str {
+  let text = match os.fs.read_text("${root}/xo.mod") {
+    Ok(t) => t
+    Err(_) => return ""
+  }
+  var percent = -1
+  var min_heap = -1
+  var limit = -1
+  for l in text.lines() {
+    var fs: List[Str] = []
+    for p in l.replace("\t", " ").split(" ") {
+      if !p.is_empty() {
+        fs.push(p)
+      }
+    }
+    if fs.len() != 3 || fs[0] != "gc" {
+      continue
+    }
+    if fs[1] == "percent" {
+      percent = if fs[2] == "off" { -2 } else { Int.parse(fs[2]) ?? -1 }
+    } else if fs[1] == "min_heap" {
+      min_heap = byte_size(fs[2])
+    } else if fs[1] == "memory_limit" {
+      limit = byte_size(fs[2])
+    }
+  }
+  if percent == -1 && min_heap == -1 && limit == -1 {
+    return ""
+  }
+  "rt.GCConfig(${percent}, ${min_heap}, ${limit}); "
+}
+
+fn byte_size(s: Str) -> Int {
+  for (suf, n) in [("KiB", 1024), ("MiB", 1048576), ("GiB", 1073741824), ("TiB", 1099511627776), ("KB", 1000), ("MB", 1000000), ("GB", 1000000000), ("TB", 1000000000000), ("B", 1)] {
+    if s.ends_with(suf) {
+      return (Int.parse(s.trim_suffix(suf)) ?? -1) * n
+    }
+  }
+  Int.parse(s) ?? -1
+}
+
+/// The Go file of package main that hands the build information to the
+/// runtime (internal/build buildInfo, buildInfoFile): the program's
+/// directory, the sha256 of each source relative to the line root, and an
+/// ID over them, the options, and the runtime's files.
+fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_dir: Str) -> Str {
+  var sources: Map[Str, Str] = {}
+  for f in c.files {
+    let m = f.module
+    if m < 0 || c.mods[m].is_std {
+      continue
+    }
+    var p = f.path
+    var abs = p
+    if !abs.starts_with("/") {
+      abs = "${wd}/${abs}"
+    }
+    if abs.starts_with("${root}/") {
+      p = abs.trim_prefix("${root}/")
+    }
+    sources[p] = crypto.sha256(f.src).to_hex()
+  }
+  let paths = sources.keys().sort()
+  var h = StrBuilder.new()
+  for p in paths {
+    h.write("${p} ${sources.get(p) ?? ""}\n")
+  }
+  h.write("holes=false mono=true arenas=true race=false\n")
+  // the runtime's files, as embedded (rt/*.go, rt/*.s), in lexical order
+  var rt: List[Str] = []
+  match os.fs.read_dir("${std_dir}/rt") {
+    Ok(fis) => {
+      for fi in fis {
+        if fi.name.ends_with(".go") || fi.name.ends_with(".s") {
+          rt.push(fi.name)
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  for name in rt.sort() {
+    let data = os.fs.read("${std_dir}/rt/${name}").ok() ?? b""
+    h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
+  }
+  let id = crypto.sha256(h.freeze().bytes()).to_hex().bytes()[0..24].to_str() ?? ""
+  var abs_dir = dir.trim_suffix("/")
+  if !abs_dir.starts_with("/") {
+    abs_dir = "${wd}/${abs_dir}"
+  }
+  var j = "{\"id\":${json_str(id)},\"dir\":${json_str(abs_dir)},\"sources\":{"
+  for (i, p) in paths.indexed() {
+    if i > 0 {
+      j = j + ","
+    }
+    j = j + "${json_str(p)}:${json_str(sources.get(p) ?? "")}"
+  }
+  j = j + "}}"
+  "// Code generated by xo. DO NOT EDIT.\n\npackage main\n\nimport rt \"xoprog/rt\"\n\nfunc init() { rt.SetBuildInfo(${j.quote()}) }\n"
+}
+
+
+/// package main's xo_tzdata.go (internal/build tzFiles): with
+/// --tzdata=embedded (the default) the TZif data of each constant zone
+/// name, or the whole zoneinfo.zip when a name is known only at run time;
+/// with --tzdata=system the host's database; nothing when no zone is
+/// asked for.
+fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str) -> () ! Str {
+  if !(mode is "" | "embedded" | "system") {
+    return Err("unknown --tzdata=${mode} (want embedded or system)")
+  }
+  if mode == "system" {
+    if names0.is_empty() && dynamic.is_empty() {
+      return Ok(())
+    }
+    return write_file(os, "${tree}/xo_tzdata.go", "// Code generated by xo build. DO NOT EDIT.\n\npackage main\n\nimport \"xoprog/rt\"\n\nfunc init() { rt.TZUseSystem() }\n")
+  }
+  var names: List[Str] = []
+  for n in names0 {
+    if n != "UTC" && !n.is_empty() && n != "Local" {
+      names.push(n)
+    }
+  }
+  if names.is_empty() && dynamic.is_empty() {
+    return Ok(())
+  }
+  var path = os.env.get("XO_ZONEINFO") ?? ""
+  if path.is_empty() {
+    let goroot = match os.proc.run("go", ["env", "GOROOT"]) {
+      Ok(r) => (r.stdout.to_str() ?? "").trim()
+      Err(e) => return Err("zone data: cannot find GOROOT: ${e}")
+    }
+    path = "${goroot}/lib/time/zoneinfo.zip"
+  }
+  let zip = match os.fs.read(path) {
+    Ok(z) => z
+    Err(e) => return Err("zone data: ${e} (set XO_ZONEINFO to a zoneinfo.zip)")
+  }
+  var b = "// Code generated by xo build. DO NOT EDIT.\n\npackage main\n\n"
+  if !dynamic.is_empty() {
+    for at in dynamic {
+      os.stdio.eprintln("${at}: note: time.zone with a name known only at run time embeds the whole zone database (${(zip.len() + 512) / 1024} KB); pass a constant name to embed only that zone, or build with --tzdata=system to read the host's database")
+    }
+    b = b + "import (\n\t_ \"embed\"\n\n\t\"xoprog/rt\"\n)\n\n"
+    b = b + "//go:embed xo_zoneinfo.zip\nvar xoZoneinfo string\n\n"
+    match os.fs.write("${tree}/xo_zoneinfo.zip", zip) {
+      Ok(_) => {}
+      Err(e) => return Err("${e}")
+    }
+    b = b + "func init() {\n\trt.TZFull(xoZoneinfo)\n}\n"
+  } else {
+    let data = zip_entries(zip)
+    b = b + "import \"xoprog/rt\"\n\nfunc init() {\n"
+    for n in names.sort() {
+      match data.get(n) {
+        Some(d) => b = b + "\trt.TZEmbed(${n.quote()}, ${d.quote()})\n"
+        None => os.stdio.eprintln("note: zone ${n.quote()} is not in the zone database; time.zone returns ZoneErr.Unknown for it")
+      }
+    }
+    b = b + "}\n"
+  }
+  write_file(os, "${tree}/xo_tzdata.go", b)
+}
+
+/// The stored (uncompressed) entries of a zip archive, as Go's
+/// zoneinfo.zip has them, by name.
+fn zip_entries(z: Bytes) -> Map[Str, Bytes] {
+  var out: Map[Str, Bytes] = {}
+  var i = 0
+  while i + 30 <= z.len() && le32(z, i) == 67324752 {
+    let method = le16(z, i + 8)
+    let csize = le32(z, i + 18)
+    let nlen = le16(z, i + 26)
+    let xlen = le16(z, i + 28)
+    let name = z[i + 30..i + 30 + nlen].to_str() ?? ""
+    let start = i + 30 + nlen + xlen
+    if method == 0 && start + csize <= z.len() {
+      out[name] = z[start..start + csize]
+    }
+    i = start + csize
+  }
+  out
+}
+

@@ -1,0 +1,141 @@
+// Resource budgets and log attribution (internal/gen budget.go,
+// logfrom.go, decision 0173): generated code polls the task's budget with
+// `tk.Tick()` at the start of every loop iteration and at the entry of
+// every function or closure that may recurse, when the program calls
+// task.with_budget anywhere; a log record written by a dependency's code
+// carries the dependency.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Whether the program calls task.with_budget anywhere (usesBudgets),
+/// cached.
+fn (var g: Gen) uses_budgets() -> Bool {
+  if g.budgets != 0 {
+    return g.budgets > 0
+  }
+  g.budgets = -1
+  for (fi, file) in g.c.files.indexed() {
+    let m = file.module
+    if m < 0 || g.c.mods[m].is_std {
+      continue
+    }
+    for n in decl_nodes(file.ast) {
+      for ne in flatten(n) {
+        if let E(e) = ne.node {
+          if let CallExpr(..) = e {
+            if let Some(ci) = g.c.call_in(fi, e) {
+              let fo = ci.fn_obj
+              if fo >= 0 && g.omod(fo) >= 0 && g.c.mods[g.omod(fo)].path == "std/task" && g.oname(fo) == "with_budget" {
+                g.budgets = 1
+                return true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+/// The expressions and bodies of a file's declarations (check.Inspect).
+fn decl_nodes(f: parser.File) -> List[Node] {
+  var out: List[Node] = []
+  for d in f.decls {
+    match d {
+      FnDecl(fd) => {
+        for p in fd.params {
+          if let Some(x) = p.default {
+            out.push(Node.E(x))
+          }
+        }
+        for cl in fd.clauses {
+          match cl {
+            RequiresClause(cond: cond, els: els, ..) => {
+              out.push(Node.E(cond))
+              if let Some(x) = els {
+                out.push(Node.E(x))
+              }
+            }
+            EnsuresClause(cond: cond, ..) => out.push(Node.E(cond))
+            UsesClause(..) => {}
+          }
+        }
+        if let Some(b) = fd.body {
+          out.push(Node.E(Expr.Block(b)))
+        }
+      }
+      StructDecl(sd) => {
+        for f in sd.fields {
+          if let Some(x) = f.default {
+            out.push(Node.E(x))
+          }
+        }
+        if let Some(x) = sd.inv {
+          out.push(Node.E(x))
+        }
+      }
+      ConstDecl(cd) => out.push(Node.E(cd.value))
+      TestDecl(td) => {
+        if let Some(b) = td.body {
+          out.push(Node.E(Expr.Block(b)))
+        }
+      }
+      EnumDecl(..) | InterfaceDecl(..) | TypeDecl(..) | BadDecl(..) => {}
+    }
+  }
+  out
+}
+
+/// Whether body calls user code: a function or method of a user module,
+/// a function value, or an interface method; false when the program uses
+/// no budget (mayRecurse).
+fn (var g: Gen) may_recurse(body: Node) -> Bool {
+  if !g.uses_budgets() {
+    return false
+  }
+  for ne in flatten(body) {
+    if let E(e) = ne.node {
+      if let CallExpr(fun: fun, ..) = e {
+        match g.call_of(e) {
+          None => {
+            // a variant constructor or a conversion, unless the callee
+            // is a function value
+            let t = g.info_type(fun)
+            if t >= 0 && g.is_func_t(t) {
+              return true
+            }
+          }
+          Some(ci) => {
+            let fo = ci.fn_obj
+            if fo < 0 || g.omod(fo) < 0 || !g.ostd(fo) || g.c.objs[fo].iface {
+              return true
+            }
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+/// The attribution of a log record written by a std/log call of the
+/// current file (logFrom): "<module path>@<version>" when the file is in
+/// a required module version, else "".
+fn (g: Gen) log_from(fo: Int) -> Str {
+  let o = g.c.objs[fo]
+  if o.recv >= 0 || !g.ostd(fo) || g.c.mods[o.module].path != "std/log" {
+    return ""
+  }
+  if !(g.oname(fo) is "debug" | "info" | "warn" | "error") {
+    return ""
+  }
+  if g.f.file < 0 {
+    return ""
+  }
+  let m = g.c.files[g.f.file].module
+  if m < 0 || g.c.mods[m].is_std {
+    return ""
+  }
+  g.c.mods[m].dependency
+}

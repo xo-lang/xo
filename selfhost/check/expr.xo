@@ -954,6 +954,7 @@ fn (var c: Checker) scope_expr(span: Span, name: Ident, body: Block, w: Want) ->
     c.propagate(sp.err, sp.span, "XO0801", "this task")
   }
   c.ctx = saved
+  c.scope_escapes(span, name, body, h, t)
   t
 }
 

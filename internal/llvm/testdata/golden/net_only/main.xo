@@ -1,0 +1,131 @@
+// Capability attenuation on the native backends (decisions 0156, 0172,
+// 0175): `Net.only`, `Env.only`, and `Proc.only` return capabilities
+// whose operations outside the listed hosts, variables, and commands fail
+// before any effect is performed. No packet leaves the machine: every
+// denied address is refused before a name lookup, and the allowed ones
+// are loopback.
+use std/http
+use std/sql
+
+fn dial_result(n: Net, addr: Str) -> Str uses net.dial {
+  match n.dial(addr) {
+    Ok(c) => {
+      c.close()
+      "connected"
+    }
+    Err(e) => "${e}"
+  }
+}
+
+fn show(r: Result[http.Response, http.ClientErr]) -> Str {
+  match r {
+    Ok(resp) => "${resp.status} ${resp.text() ?? "?"}"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let local = os.net.only(["127.0.0.1"])
+  let l = local.listen("127.0.0.1:0")?
+  os.stdio.println("dial allowed host: ${dial_result(local, l.addr())}")
+  os.stdio.println("dial other host: ${dial_result(local, "203.0.113.7:443")}")
+  os.stdio.println("dial name: ${dial_result(local, "evil.example:80")}")
+  os.stdio.println("dial without a port: ${dial_result(local, "127.0.0.1")}")
+  os.stdio.println("dial too many colons: ${dial_result(local, "127.0.0.1:1:2")}")
+  os.stdio.println("dial ipv6: ${dial_result(local, "[::1]:9")}")
+  match local.listen(":0") {
+    Ok(_) => os.stdio.println("listen on every interface: allowed")
+    Err(e) => os.stdio.println("listen on every interface: ${e}")
+  }
+  match local.listen("10.0.0.1:0") {
+    Ok(_) => os.stdio.println("listen other host: allowed")
+    Err(e) => os.stdio.println("listen other host: ${e}")
+  }
+  let sub = os.net.only(["*.example.com", "127.0.0.1:9"])
+  os.stdio.println("subdomain entry, bare domain: ${dial_result(sub, "example.com:80")}")
+  os.stdio.println("subdomain entry, suffix only: ${dial_result(sub, "badexample.com:80")}")
+  os.stdio.println("host:port entry, other port: ${dial_result(sub, "127.0.0.1:10")}")
+  // attenuating again intersects the lists
+  let both = os.net.only(["a.test", "127.0.0.1"]).only(["127.0.0.1"])
+  os.stdio.println("intersection: ${dial_result(both, "a.test:1")}")
+  let none = os.net.only([])
+  os.stdio.println("empty list: ${dial_result(none, "127.0.0.1:1")}")
+  // entries are trimmed and compared without case
+  let spaced = os.net.only(["  127.0.0.1  ", "API.Example.COM"])
+  os.stdio.println("trimmed entry: ${dial_result(spaced, l.addr())}")
+  l.close()
+
+  // an HTTP client made from an attenuated Net checks each request
+  let client = http.client(local)
+  os.stdio.println("http other host: ${show(client.get("http://evil.example/collect?k=v"))}")
+  os.stdio.println("http ipv6: ${show(client.get("http://[::1]:9/"))}")
+  let api = http.client(os.net.only(["api.test:8443"]))
+  os.stdio.println("https default port: ${show(api.get("https://api.test/v1"))}")
+  os.stdio.println("http default port: ${show(api.get("http://api.test/v1"))}")
+  os.stdio.println("http case: ${show(http.client(sub).get("http://WWW.Example.COM.evil/"))}")
+
+  // and each redirect
+  let l2 = local.listen("127.0.0.1:0")?
+  var r = http.router()
+  r.handle("GET /ok", fn(_req) { http.text(200, "fine") })
+  r.handle("GET /moved", fn(_req) { http.empty(302).with_header("Location", "/ok") })
+  r.handle("GET /away", fn(_req) { http.empty(302).with_header("Location", "http://evil.example/x?k=v") })
+  r.handle("GET /away-port", fn(_req) { http.empty(307).with_header("Location", "https://Evil.Example:8443/x") })
+  let srv = http.server(l2, r)
+  let base = "http://${srv.addr()}"
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    os.stdio.println("redirect within: ${show(client.get(base + "/moved"))}")
+    os.stdio.println("redirect away: ${show(client.get(base + "/away"))}")
+    os.stdio.println("redirect away with a port: ${show(client.get(base + "/away-port"))}")
+  }
+
+  // a database driver dials by itself: an attenuated Net cannot open one
+  match sql.open(local, "postgres", "postgres://127.0.0.1/db") {
+    Ok(_) => os.stdio.println("sql: opened")
+    Err(e) => os.stdio.println("sql: ${e}")
+  }
+
+  let env = os.env.only(["XO_ATTENUATION_NOT_SET"])
+  os.stdio.println("env get unlisted: ${env.get("PATH").is_some()}")
+  os.stdio.println("env vars unlisted: ${env.vars().contains("PATH")}")
+  match env.home() {
+    Ok(_) => os.stdio.println("env home: allowed")
+    Err(e) => os.stdio.println("env home: ${e}")
+  }
+  os.stdio.println("env args still readable: ${env.args().len()}")
+  let env2 = os.env.only(["PATH", "HOME"]).only(["PATH"])
+  os.stdio.println("env intersection: ${env2.get("PATH").is_some()} ${env2.get("HOME").is_some()}")
+
+  let proc = os.proc.only(["xo-attenuation-allowed"])
+  match proc.run("sh", ["-c", "echo pwned"]) {
+    Ok(_) => os.stdio.println("proc run: ran")
+    Err(e) => os.stdio.println("proc run: ${e}")
+  }
+  match proc.cmd("sh", ["-c", "echo pwned"]).output() {
+    Ok(_) => os.stdio.println("proc cmd output: ran")
+    Err(e) => os.stdio.println("proc cmd output: ${e}")
+  }
+  match proc.cmd("sh", ["-c", "echo pwned"]).spawn() {
+    Ok(_) => os.stdio.println("proc cmd spawn: ran")
+    Err(e) => os.stdio.println("proc cmd spawn: ${e}")
+  }
+  match proc.pipeline([proc.cmd("sh", ["-c", "echo pwned"])]) {
+    Ok(_) => os.stdio.println("proc pipeline: ran")
+    Err(e) => os.stdio.println("proc pipeline: ${e}")
+  }
+  let sh = os.proc.only(["sh", "echo"]).only(["sh"])
+  match sh.run("echo", ["hi"]) {
+    Ok(_) => os.stdio.println("proc intersection: ran")
+    Err(e) => os.stdio.println("proc intersection: ${e}")
+  }
+  match sh.run("sh", ["-c", "echo allowed"]) {
+    Ok(out) => os.stdio.println("proc allowed: ${out.stdout.to_str() ?? "?"}")
+    Err(e) => os.stdio.println("proc allowed: ${e}")
+  }
+}

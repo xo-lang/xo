@@ -189,7 +189,7 @@ func NewScope(tk *Task) *Scope {
 	s := &Scope{parent: tk, idle: newEvent()}
 	// the body runs on the opening task's goroutine (thread), so it may
 	// share its arena (see Arena)
-	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th}
+	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th, bud: tk.bud}
 	bn := &cnode{parent: tk.node, done: make(chan struct{}), w: tk.w, seq: nodeSeq.Add(1), kind: nodeBody, tk: s.body}
 	runtime.Callers(2, bn.site[:])
 	s.bodyNode = bn.link()
@@ -336,6 +336,12 @@ func (h *Handle[T, E]) XoDebug(b *strings.Builder) { b.WriteString("<task>") }
 // consumed is true when the handle is bound and awaited, so the task's
 // error does not fail the scope (core 7.1).
 func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background, consumed bool) *Handle[T, E] {
+	return spawnWith(tk, s, f, background, consumed, nil)
+}
+
+// spawnWith is Spawn whose task runs under the budget bud when it is set
+// (Task_with_budget), else under the spawning task's.
+func spawnWith[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background, consumed bool, bud *budget) *Handle[T, E] {
 	h := &Handle[T, E]{done: newEvent()}
 	s.mu.Lock()
 	if s.closed {
@@ -343,6 +349,9 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 		FaultHere("a task was started on a scope that has ended")
 	}
 	child := tk.child(s.tasksNode, "task")
+	if bud != nil {
+		bud.start(child)
+	}
 	node := child.node
 	th := child.th
 	runtime.Callers(2, th.site[:])

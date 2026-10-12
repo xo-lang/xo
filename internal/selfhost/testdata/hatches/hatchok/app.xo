@@ -1,0 +1,8 @@
+// A dependency's escape hatch with the consumer's vouch and a matching
+// effect lock: accepted.
+
+use example.com/gox
+
+pub fn shout(s: Str) -> Str uses go {
+  gox.upper(s)
+}

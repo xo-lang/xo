@@ -1,0 +1,1662 @@
+// Range analysis for checked Int arithmetic (internal/gen ranges.go):
+// before a body is generated, an abstract interpretation over its syntax
+// computes an interval for every Int value and binding and marks each
+// operation it proves cannot fault; the generator emits plain Go
+// arithmetic for those. An operation is marked only when every visit of
+// it proves it (loops iterate to a fixed point), and one the analysis
+// never visits is never marked.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+const MIN_INT = -9223372036854775807 - 1
+const MAX_INT = 9223372036854775807
+
+/// The bound `value <= m * len(L) + off` where L is the List at path
+/// below the binding root (symb).
+struct Symb {
+  root: Int
+  path: Str
+  m: Int
+  off: Int
+}
+
+/// A closed interval of Int values with an optional symbolic upper bound
+/// (ival).
+struct Ival {
+  lo: Int
+  hi: Int
+  sym: Symb? = None
+}
+
+fn iv(lo: Int, hi: Int) -> Ival {
+  Ival{lo: lo, hi: hi}
+}
+
+fn full_range() -> Ival {
+  iv(MIN_INT, MAX_INT)
+}
+
+fn point_ival(k: Int) -> Ival {
+  iv(k, k)
+}
+
+/// The largest offset kept.
+const MAX_SYM_OFF = 1099511627776
+
+/// The length bound of a collection whose elements are not zero sized.
+const MAX_LEN = 72057594037927936
+
+fn sym_same(s: Symb?, t: Symb?) -> Bool {
+  match s {
+    None => false
+    Some(a) => {
+      match t {
+        None => false
+        Some(b) => a.root == b.root && a.path == b.path && a.m == b.m
+      }
+    }
+  }
+}
+
+fn mk_sym(base: Symb?, m: Int, off: Int) -> Symb? {
+  match base {
+    None => None
+    Some(b) => {
+      if m < 1 || m > 8 || off > MAX_SYM_OFF || off < -MAX_SYM_OFF {
+        return None
+      }
+      Some(Symb{root: b.root, path: b.path, m: m, off: off})
+    }
+  }
+}
+
+/// The symbolic bound of a, or the one its interval implies for the list
+/// of like (symOf).
+fn sym_of(a: Ival, like: Symb?) -> Symb? {
+  if a.sym != None {
+    return a.sym
+  }
+  match like {
+    None => None
+    Some(l) => {
+      if a.hi > MAX_SYM_OFF {
+        return None
+      }
+      mk_sym(like, l.m, a.hi)
+    }
+  }
+}
+
+fn ival_join(a: Ival, b: Ival) -> Ival {
+  var r = iv(min_i(a.lo, b.lo), max_i(a.hi, b.hi))
+  let sa = sym_of(a, b.sym)
+  let sb = sym_of(b, a.sym)
+  if sym_same(sa, sb) {
+    let x = sa ?? fault("sym")
+    let y = sb ?? fault("sym")
+    r.sym = mk_sym(sa, x.m, max_i(x.off, y.off))
+  }
+  r
+}
+
+fn min_i(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+fn max_i(a: Int, b: Int) -> Int {
+  if a > b { a } else { b }
+}
+
+/// Whether every value a allows is allowed by b (within).
+fn ival_within(a: Ival, b: Ival) -> Bool {
+  if a.lo < b.lo || a.hi > b.hi {
+    return false
+  }
+  match b.sym {
+    None => true
+    Some(bs) => {
+      if sym_same(b.sym, a.sym) {
+        let asy = a.sym ?? fault("sym")
+        if asy.off <= bs.off {
+          return true
+        }
+      }
+      a.hi <= bs.off
+    }
+  }
+}
+
+fn sat_lo(v: Int?) -> Int {
+  v ?? MIN_INT
+}
+
+fn sat_hi(v: Int?) -> Int {
+  v ?? MAX_INT
+}
+
+/// The interval of `a op b` and whether the operation cannot fault, with
+/// the symbolic bound of the result (arith).
+fn arith(op: Str, a: Ival, b: Ival) -> (Ival, Bool) {
+  let (r0, ok) = arith1(op, a, b)
+  var r = r0
+  r.sym = sym_arith(op, a, b)
+  (r, ok)
+}
+
+fn sym_arith(op: Str, a: Ival, b: Ival) -> Symb? {
+  if op == "+" {
+    match a.sym {
+      Some(sa) => {
+        match b.sym {
+          Some(sb) => {
+            if sa.root == sb.root && sa.path == sb.path {
+              return mk_sym(a.sym, sa.m + sb.m, sa.off + sb.off)
+            }
+            return None
+          }
+          None => {
+            if b.hi <= MAX_SYM_OFF {
+              return mk_sym(a.sym, sa.m, sa.off + b.hi)
+            }
+            return None
+          }
+        }
+      }
+      None => {
+        if let Some(sb) = b.sym {
+          if a.hi <= MAX_SYM_OFF {
+            return mk_sym(b.sym, sb.m, sb.off + a.hi)
+          }
+        }
+        return None
+      }
+    }
+  }
+  if op == "-" {
+    if let Some(sa) = a.sym {
+      if b.lo >= -MAX_SYM_OFF {
+        return mk_sym(a.sym, sa.m, sa.off - b.lo)
+      }
+    }
+    return None
+  }
+  if op == "/" {
+    if let Some(sa) = a.sym {
+      if a.lo >= 0 && b.lo == b.hi && b.lo >= 1 {
+        let k = b.lo
+        if sa.m % k == 0 {
+          var off = sa.off / k
+          if sa.off % k != 0 && sa.off < 0 {
+            off -= 1
+          }
+          return mk_sym(a.sym, sa.m / k, off)
+        }
+        return a.sym
+      }
+    }
+  }
+  None
+}
+
+fn arith1(op: Str, a: Ival, b: Ival) -> (Ival, Bool) {
+  if op == "+" {
+    let lo = a.lo.checked_add(b.lo)
+    let hi = a.hi.checked_add(b.hi)
+    return (iv(sat_lo(lo), sat_hi(hi)), lo != None && hi != None)
+  }
+  if op == "-" {
+    let lo = a.lo.checked_sub(b.hi)
+    let hi = a.hi.checked_sub(b.lo)
+    return (iv(sat_lo(lo), sat_hi(hi)), lo != None && hi != None)
+  }
+  if op == "*" {
+    var r = iv(MAX_INT, MIN_INT)
+    for x in [a.lo, a.hi] {
+      for y in [b.lo, b.hi] {
+        match x.checked_mul(y) {
+          None => return (full_range(), false)
+          Some(p) => {
+            r.lo = min_i(r.lo, p)
+            r.hi = max_i(r.hi, p)
+          }
+        }
+      }
+    }
+    return (r, true)
+  }
+  if op == "/" {
+    if b.lo <= 0 && b.hi >= 0 {
+      return (full_range(), false)
+    }
+    if a.lo == MIN_INT && b.lo <= -1 && b.hi >= -1 {
+      return (full_range(), false)
+    }
+    var r = iv(MAX_INT, MIN_INT)
+    for x in [a.lo, a.hi] {
+      for y in [b.lo, b.hi] {
+        let q = x / y
+        r.lo = min_i(r.lo, q)
+        r.hi = max_i(r.hi, q)
+      }
+    }
+    return (r, true)
+  }
+  if op == "%" {
+    var m = max_i(abs_sat(b.lo), abs_sat(b.hi)) - 1
+    if m < 0 {
+      m = 0
+    }
+    var r = iv(max_i(a.lo, -m), min_i(a.hi, m))
+    if a.lo >= 0 {
+      r.lo = 0
+    }
+    if a.hi <= 0 {
+      r.hi = 0
+    }
+    return (r, b.lo > 0 || b.hi < 0)
+  }
+  if op == "&" {
+    if a.lo >= 0 && b.lo >= 0 {
+      return (iv(0, min_i(a.hi, b.hi)), true)
+    }
+    if a.lo >= 0 {
+      return (iv(0, a.hi), true)
+    }
+    if b.lo >= 0 {
+      return (iv(0, b.hi), true)
+    }
+    return (full_range(), true)
+  }
+  if op == "|" || op == "^" {
+    if a.lo >= 0 && b.lo >= 0 {
+      let n = bit_len(max_i(a.hi, b.hi))
+      if n >= 63 {
+        return (iv(0, MAX_INT), true)
+      }
+      return (iv(0, (1 << n) - 1), true)
+    }
+    return (full_range(), true)
+  }
+  if op == ">>" {
+    let ok = b.lo >= 0 && b.hi <= 63
+    if ok && a.lo >= 0 {
+      return (iv(a.lo >> b.hi, a.hi >> b.lo), true)
+    }
+    return (full_range(), ok)
+  }
+  (full_range(), false)
+}
+
+/// bits.Len64 of a non negative value.
+fn bit_len(x: Int) -> Int {
+  var n = 0
+  var v = x
+  while v > 0 {
+    n += 1
+    v = v >> 1
+  }
+  n
+}
+
+fn abs_sat(x: Int) -> Int {
+  if x == MIN_INT {
+    return MAX_INT
+  }
+  if x < 0 {
+    return -x
+  }
+  x
+}
+
+/// The bounds widening jumps to (thresholds).
+fn thresholds() -> List[Int] {
+  let pos = [0, 1, 256, 65536, 2147483648, 4294967296, 281474976710656, MAX_LEN, 144115188075855872, 4611686018427387904, MAX_INT]
+  var out: List[Int] = []
+  var i = pos.len() - 1
+  while i > 0 {
+    if pos[i] == MAX_INT {
+      out.push(MIN_INT)
+    } else {
+      out.push(-pos[i])
+    }
+    i -= 1
+  }
+  out + pos
+}
+
+fn widen_up(x: Int) -> Int {
+  for t in thresholds() {
+    if t >= x {
+      return t
+    }
+  }
+  MAX_INT
+}
+
+fn widen_down(x: Int) -> Int {
+  let ts = thresholds()
+  var i = ts.len() - 1
+  while i >= 0 {
+    if ts[i] <= x {
+      return ts[i]
+    }
+    i -= 1
+  }
+  MIN_INT
+}
+
+/// The intervals of the tracked bindings at a program point; dead marks
+/// an unreachable one (renv).
+struct REnv {
+  m: Map[Int, Ival] = {}
+  dead: Bool = false
+}
+
+fn dead_env() -> REnv {
+  REnv{dead: true}
+}
+
+fn join_env(a: REnv, b: REnv) -> REnv {
+  if a.dead {
+    return b
+  }
+  if b.dead {
+    return a
+  }
+  var m: Map[Int, Ival] = {}
+  for (k, x) in a.m.entries() {
+    if let Some(y) = b.m.get(k) {
+      m[k] = ival_join(x, y)
+    }
+  }
+  REnv{m: m}
+}
+
+fn leq_env(a: REnv, b: REnv) -> Bool {
+  if a.dead {
+    return true
+  }
+  if b.dead {
+    return false
+  }
+  for (k, y) in b.m.entries() {
+    match a.m.get(k) {
+      None => return false
+      Some(x) => {
+        if !ival_within(x, y) {
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+fn widen_env(old: REnv, cur: REnv) -> REnv {
+  if old.dead || cur.dead {
+    return cur
+  }
+  var m: Map[Int, Ival] = {}
+  for (k, y0) in cur.m.entries() {
+    let x = match old.m.get(k) {
+      Some(x) => x
+      None => continue
+    }
+    var y = y0
+    if y.lo < x.lo {
+      y.lo = widen_down(y.lo)
+    }
+    if y.hi > x.hi {
+      y.hi = widen_up(y.hi)
+    }
+    if let Some(ys) = y.sym {
+      var keep = false
+      if sym_same(x.sym, y.sym) {
+        let xs = x.sym ?? fault("sym")
+        keep = ys.off <= xs.off
+      }
+      if !keep {
+        y.sym = None
+      }
+    }
+    m[k] = y
+  }
+  REnv{m: m}
+}
+
+/// The states at `break` and `continue` of one loop (rloop).
+struct RLoop {
+  label: Str
+  breaks: List[REnv] = []
+  cont: List[REnv] = []
+}
+
+/// The analysis of one body (rangeAn).
+struct RA {
+  env: REnv = REnv{}
+  volatile: Map[Int, Bool] = {}
+  stable: Map[Int, Bool] = {}
+  safe: Map[Int, Bool] = {}
+  points: Map[Int, PointRec] = {}
+  loops: List[RLoop] = []
+  busy: Map[Int, Bool] = {}
+}
+
+const MAX_LOOP_ROUNDS = 24
+
+/// Runs the analysis on a body (analyzeRanges): params are the bindings
+/// of the parameters and receiver that are not `var`, by_ref the `var`
+/// ones.
+fn (var g: Gen) analyze_ranges(body: parser.Block, fixed: List[Int], by_ref: List[Int]) {
+  if g.opts.no_ranges {
+    return
+  }
+  g.ra = RA{}
+  for v in fixed {
+    if v >= 0 && !g.c.objs[v].mutable {
+      g.ra.stable[v] = true
+    }
+  }
+  for v in by_ref {
+    if v >= 0 {
+      g.ra.volatile[v] = true
+    }
+  }
+  let root = Node.E(Expr.Block(body))
+  for ne in flatten(root) {
+    if let S(s) = ne.node {
+      var p: Pattern? = None
+      match s {
+        LetStmt(pattern: pat, ..) => p = Some(pat)
+        ForStmt(pattern: pat, ..) => p = Some(pat)
+        _ => {}
+      }
+      if let Some(pat) = p {
+        if let BindPat(name: name, ..) = pat {
+          let v = g.var_of(name)
+          if v >= 0 && !g.c.objs[v].mutable {
+            g.ra.stable[v] = true
+          }
+        }
+      }
+    }
+  }
+  g.ra_find_volatile(body)
+  g.ra_block(body)
+  g.f.rng_on = true
+  g.f.safe = g.ra.safe
+  g.f.points = g.ra.points
+}
+
+/// Whether the analysis proved that the operation with key k cannot fault
+/// (safeOp).
+fn (g: Gen) safe_op(k: Int) -> Bool {
+  g.f.rng_on && (g.f.safe.get(k) ?? false)
+}
+
+/// The value of an operand (zero or one expression) when it was the same
+/// single value at every visit (constOperand).
+fn (g: Gen) const_operand(es: List[Expr]) -> Int? {
+  if !g.f.rng_on || es.is_empty() {
+    return None
+  }
+  match g.f.points.get(g.ek(es[0])) {
+    Some(p) => if p.ok { Some(p.v) } else { None }
+    None => None
+  }
+}
+
+fn (var g: Gen) ra_mark(k: Int, ok0: Bool) {
+  if g.ra.env.dead {
+    return
+  }
+  var ok = ok0
+  if let Some(prev) = g.ra.safe.get(k) {
+    ok = ok && prev
+  }
+  g.ra.safe[k] = ok
+}
+
+fn (var g: Gen) ra_note_point(e: Expr, r: Ival) {
+  if g.ra.env.dead {
+    return
+  }
+  let k = g.ek(e)
+  let single = r.lo == r.hi
+  match g.ra.points.get(k) {
+    Some(prev) => g.ra.points[k] = PointRec{v: prev.v, ok: prev.ok && single && prev.v == r.lo}
+    None => g.ra.points[k] = PointRec{v: r.lo, ok: single}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+/// Whether values of t are Go int64 integers (isInt).
+fn (var g: Gen) ra_is_int(t0: Int) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.mono_type(t0)
+  if g.is_param_t(t) {
+    return false
+  }
+  g.go_type(t) == "int64" && !g.is_float(t)
+}
+
+/// The range of every value of type t (typeRange).
+fn (var g: Gen) type_range(t0: Int) -> Ival {
+  if t0 < 0 {
+    return full_range()
+  }
+  let t = g.mono_type(t0)
+  if g.is_param_t(t) {
+    return full_range()
+  }
+  match g.go_type(t) {
+    "int8" => iv(-128, 127)
+    "int16" => iv(-32768, 32767)
+    "int32" => iv(-2147483648, 2147483647)
+    "uint8" => iv(0, 255)
+    "uint16" => iv(0, 65535)
+    "uint32" => iv(0, 4294967295)
+    "uint64" => iv(0, MAX_INT)
+    _ => full_range()
+  }
+}
+
+/// Whether values of t certainly occupy memory (nonZeroSize).
+fn (var g: Gen) non_zero_size(t0: Int, depth: Int) -> Bool {
+  if t0 < 0 || depth > 8 {
+    return false
+  }
+  let mt = g.mono_type(t0)
+  let t = g.c.resolve(mt)
+  let x = g.c.tys[t]
+  match x.kind {
+    Func => true
+    Tuple => {
+      for e in x.args {
+        if g.non_zero_size(e, depth + 1) {
+          return true
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if g.oprelude(o) {
+        return g.oname(o) != "Never"
+      }
+      let k = g.tkind(o)
+      if k == "struct" {
+        for fd in g.c.objs[o].fields {
+          var ft = fd.ty
+          if !x.args.is_empty() {
+            ft = g.sub_apply(ft, g.subst_of(o, t))
+          }
+          if g.non_zero_size(ft, depth + 1) {
+            return true
+          }
+        }
+        return false
+      }
+      if k == "newtype" {
+        return g.non_zero_size(g.c.objs[o].target, depth + 1)
+      }
+      k == "enum" || k == "interface"
+    }
+    _ => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bindings
+
+fn (var g: Gen) ra_lookup(v: Int) -> Ival {
+  if g.ra.volatile.contains(v) || g.ra.env.dead {
+    return g.type_range(g.vtype(v))
+  }
+  match g.ra.env.m.get(v) {
+    Some(r) => r
+    None => g.type_range(g.vtype(v))
+  }
+}
+
+/// Drops the symbolic bounds on lists under v (rebind).
+fn (var g: Gen) ra_rebind(v: Int) {
+  if v < 0 || g.ra.env.dead {
+    return
+  }
+  for k in g.ra.env.m.keys() {
+    let r = g.ra.env.m.get(k) ?? full_range()
+    if let Some(s) = r.sym {
+      if s.root == v {
+        var r2 = r
+        r2.sym = None
+        g.ra.env.m[k] = r2
+      }
+    }
+  }
+}
+
+/// The binding and field path of a list expression that cannot change
+/// while the binding is in scope (stableKey).
+fn (g: Gen) ra_stable_key(e0: Expr) -> (Int, Str, Bool) {
+  var path = ""
+  var e = e0
+  while true {
+    match unparen(e) {
+      Ident(id) => {
+        let v = g.var_of(id)
+        if v < 0 || !g.ra.stable.contains(v) || g.c.objs[v].mutable || g.ra.volatile.contains(v) {
+          return (-1, "", false)
+        }
+        return (v, path, true)
+      }
+      SelectorExpr(x: x, sel: sel, ..) => {
+        let x0 = unparen(e)
+        if g.ref_of(sel) >= 0 || g.ctor(x0) != None || g.var_of(sel) >= 0 {
+          return (-1, "", false)
+        }
+        path = "." + check.text(sel.name) + path
+        e = x
+      }
+      _ => return (-1, "", false)
+    }
+  }
+  (-1, "", false)
+}
+
+fn (var g: Gen) ra_bind(v: Int, r: Ival) {
+  if v < 0 || g.ra.env.dead || g.ra.volatile.contains(v) || !g.ra_is_int(g.vtype(v)) {
+    return
+  }
+  g.ra.env.m[v] = r
+}
+
+/// The binding an identifier expression names when it is tracked
+/// (tracked), or -1.
+fn (var g: Gen) ra_tracked(e: Expr) -> Int {
+  if let Ident(id) = unparen(e) {
+    let v = g.var_of(id)
+    if v < 0 || g.ra.volatile.contains(v) || !g.ra_is_int(g.vtype(v)) {
+      return -1
+    }
+    return v
+  }
+  -1
+}
+
+/// The binding at the root of a place (rootVar).
+fn (g: Gen) ra_root_var(e0: Expr) -> Int {
+  var e = e0
+  while true {
+    match e {
+      ParenExpr(x: x, ..) => e = x
+      SelectorExpr(x: x, ..) => e = x
+      IndexExpr(x: x, ..) => e = x
+      Ident(id) => return g.var_of(id)
+      _ => return -1
+    }
+  }
+  -1
+}
+
+/// Whether local v is declared outside the node at sp.
+fn (g: Gen) outside(sp: Span, v: Int) -> Bool {
+  !g.declared_inside(v, sp)
+}
+
+/// Marks the bindings the analysis cannot follow (findVolatile).
+fn (var g: Gen) ra_find_volatile(body: parser.Block) {
+  for ne in flatten(Node.E(Expr.Block(body))) {
+    match ne.node {
+      E(e) => {
+        match e {
+          FnLit(lit) => {
+            g.ra_deferred(Node.E(e), lit.span)
+            // `var` parameters of a closure may alias
+            let vs = g.closure_params(lit)
+            for (i, p) in lit.params.indexed() {
+              if p.is_var && i < vs.len() && vs[i] >= 0 {
+                g.ra.volatile[vs[i]] = true
+              }
+            }
+          }
+          CallExpr(..) => g.ra_var_args(e)
+          _ => {}
+        }
+      }
+      S(s) => {
+        if let DeferStmt(span: span, ..) = s {
+          g.ra_deferred(Node.S(s), span)
+        }
+      }
+      N => {}
+    }
+  }
+}
+
+fn (var g: Gen) ra_deferred(n: Node, sp: Span) {
+  for ne in flatten(n) {
+    if let S(s) = ne.node {
+      if let AssignStmt(target: target, ..) = s {
+        let v = g.ra_root_var(target)
+        if v >= 0 && g.outside(sp, v) {
+          g.ra.volatile[v] = true
+        }
+      }
+    }
+  }
+}
+
+fn (var g: Gen) ra_vol(e: Expr) {
+  let v = g.ra_root_var(e)
+  if v >= 0 {
+    g.ra.volatile[v] = true
+  }
+}
+
+fn (var g: Gen) ra_var_args(x: Expr) {
+  let (_, fun, args) = call_parts(x)
+  if let Some(ci) = g.call_of(x) {
+    if ci.fn_obj >= 0 {
+      let fo = ci.fn_obj
+      let params = g.c.objs[fo].params
+      for (i, ai) in g.arg_index(fo, args).indexed() {
+        if ai >= 0 && params[i].is_var {
+          g.ra_vol(args[ai].value)
+        }
+      }
+      if g.c.objs[fo].recv_var && !ci.recv.is_empty() {
+        g.ra_vol(ci.recv[0])
+      }
+      return
+    }
+  }
+  let ft = g.type_of(fun)
+  if g.is_func_t(ft) {
+    for (i, isv) in g.fvars(ft).indexed() {
+      if isv && i < args.len() {
+        g.ra_vol(args[i].value)
+      }
+    }
+    return
+  }
+  // a call the analysis cannot resolve: any binding passed may change
+  for a in args {
+    g.ra_vol(a.value)
+  }
+}
+
+/// Steps over a construct the analysis does not model (havoc).
+fn (var g: Gen) ra_havoc(n: Node) {
+  if g.ra.env.dead {
+    return
+  }
+  var jumps = false
+  for ne in flatten(n) {
+    if let S(s) = ne.node {
+      match s {
+        AssignStmt(target: target, ..) => {
+          let v = g.ra_root_var(target)
+          if v >= 0 {
+            g.ra.env.m.remove(v)
+          }
+        }
+        BreakStmt(..) | ContinueStmt(..) => jumps = true
+        _ => {}
+      }
+    }
+  }
+  if jumps {
+    for i in 0..g.ra.loops.len() {
+      g.ra.loops[i].breaks.push(g.ra.env)
+      g.ra.loops[i].cont.push(g.ra.env)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+/// Evaluates e: records the operations it performs and returns the
+/// interval of its value (expr).
+fn (var g: Gen) ra_expr(e: Expr) -> Ival {
+  let r = g.ra_expr1(e)
+  let ne = g.nat(e)
+  if !g.ra_is_int(ne) {
+    return g.type_range(ne)
+  }
+  r
+}
+
+fn (var g: Gen) ra_opt(e: Expr?) -> Ival {
+  match e {
+    None => full_range()
+    Some(x) => g.ra_expr(x)
+  }
+}
+
+fn (var g: Gen) ra_expr1(e: Expr) -> Ival {
+  match e {
+    IntLit(value: value, ..) => {
+      match Int.parse(check.text(value)) {
+        Some(v) => return point_ival(v)
+        None => return full_range()
+      }
+    }
+    ParenExpr(x: x, ..) => return g.ra_expr(x)
+    Ident(id) => {
+      let v = g.var_of(id)
+      if v >= 0 {
+        return g.ra_lookup(v)
+      }
+      let r = g.ref_of(id)
+      if r >= 0 && g.c.objs[r].kind == check.ObjKind.Const {
+        return g.ra_const_range(r)
+      }
+      return full_range()
+    }
+    UnaryExpr(op: op, x: x, ..) => {
+      let r = g.ra_expr(x)
+      if op == Kind.Minus && g.ra_is_int(g.nat(e)) {
+        let (res, ok) = arith("-", point_ival(0), r)
+        if let IntLit(..) = x {
+        } else {
+          g.ra_mark(g.ek(e), ok)
+        }
+        return res
+      }
+      return full_range()
+    }
+    BinaryExpr(..) => return g.ra_binary(e)
+    CallExpr(..) => return g.ra_call(e)
+    IfExpr(x) => return g.ra_if(x)
+    Block(b) => return g.ra_block(b)
+    MatchExpr(..) => return g.ra_match(e)
+    WhileExpr(body: body, ..) => {
+      g.ra_loop("", None, body, false, -1, full_range())
+      return full_range()
+    }
+    ScopeExpr(body: body, ..) => return g.ra_block(body)
+    FnLit(lit) => {
+      g.ra_closure(Node.E(Expr.Block(lit.body)))
+      return full_range()
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      let r = g.ref_of(sel)
+      if r >= 0 && g.c.objs[r].kind == check.ObjKind.Const {
+        return g.ra_const_range(r)
+      }
+      var root_var = false
+      match root_ident(e) {
+        Some(id) => root_var = g.var_of(id) >= 0
+        None => {}
+      }
+      if root_var || root_ident(e) == None {
+        g.ra_expr(x)
+      }
+      return full_range()
+    }
+    TryExpr(x: x, ..) => {
+      g.ra_expr(x)
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      g.ra_expr(x)
+      let idx = g.ra_expr(index)
+      if g.is_prelude(g.type_of(x), "List") && !is_range_expr(index) {
+        let (root, path, ok) = g.ra_stable_key(x)
+        var proved = false
+        if ok && idx.lo >= 0 {
+          if let Some(s) = idx.sym {
+            proved = s.root == root && s.path == path && s.m == 1 && s.off <= -1
+          }
+        }
+        g.ra_mark(g.ek(e), proved)
+      }
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      g.ra_opt(lo)
+      g.ra_opt(hi)
+    }
+    TupleExpr(elems: elems, ..) | ListLit(elems: elems, ..) | SetLit(elems: elems, ..) => {
+      for el in elems {
+        g.ra_expr(el)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        g.ra_expr(en.key)
+        g.ra_expr(en.value)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for fi in fields {
+        g.ra_expr(fi.value)
+      }
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      g.ra_expr(x)
+      for fi in fields {
+        g.ra_expr(fi.value)
+      }
+    }
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(pe) = p.expr {
+          g.ra_expr(pe)
+        }
+      }
+    }
+    IsExpr(x: x, ..) => {
+      g.ra_expr(x)
+    }
+    TypeArgsExpr(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | UnitExpr(..) | HoleExpr(..) => {}
+    _ => g.ra_havoc(Node.E(e))
+  }
+  full_range()
+}
+
+/// The identifier at the left end of a selector chain (rootIdent).
+fn root_ident(e0: Expr) -> Ident? {
+  var e = e0
+  while true {
+    match e {
+      SelectorExpr(x: x, ..) => e = x
+      Ident(id) => return Some(id)
+      _ => return None
+    }
+  }
+  None
+}
+
+fn (var g: Gen) ra_const_range(co: Int) -> Ival {
+  let o = g.c.objs[co]
+  if o.decl_file < 0 || g.ra.busy.contains(co) || !g.ra_is_int(o.ty) {
+    return g.type_range(o.ty)
+  }
+  let value = match g.c.files[o.decl_file].ast.decls[o.decl_idx] {
+    ConstDecl(d) => d.value
+    _ => return g.type_range(o.ty)
+  }
+  g.ra.busy[co] = true
+  // a constant initializer is a pure constant expression: evaluate it
+  // without recording operations of this function
+  let saved_env = g.ra.env
+  let saved_safe = g.ra.safe
+  let saved_points = g.ra.points
+  g.ra.env = REnv{}
+  g.ra.safe = {}
+  g.ra.points = {}
+  let saved_file = g.f.file
+  g.f.file = o.decl_file
+  let r = g.ra_expr(value)
+  g.f.file = saved_file
+  g.ra.env = saved_env
+  g.ra.safe = saved_safe
+  g.ra.points = saved_points
+  g.ra.busy.remove(co)
+  r
+}
+
+fn arith_op(k: Kind) -> Str {
+  match k {
+    Plus => "+"
+    Minus => "-"
+    Star => "*"
+    Slash => "/"
+    Percent => "%"
+    Amp => "&"
+    Pipe => "|"
+    Caret => "^"
+    Shr => ">>"
+    Shl => "<<"
+    _ => ""
+  }
+}
+
+fn (var g: Gen) ra_binary(e: Expr) -> Ival {
+  let (op, x, y) = match e {
+    BinaryExpr(op: op, x: x, y: y, ..) => (op, x, y)
+    _ => fault("binary")
+  }
+  if op == Kind.AndAnd || op == Kind.OrOr {
+    g.ra_expr(x)
+    let (t, fl) = g.ra_refine(g.ra.env, x)
+    if op == Kind.AndAnd {
+      g.ra.env = t
+      g.ra_expr(y)
+      g.ra.env = join_env(g.ra.env, fl)
+    } else {
+      g.ra.env = fl
+      g.ra_expr(y)
+      g.ra.env = join_env(g.ra.env, t)
+    }
+    return full_range()
+  }
+  if op == Kind.Coalesce {
+    g.ra_expr(x)
+    let before = g.ra.env
+    let r = g.ra_expr(y)
+    g.ra.env = join_env(g.ra.env, before)
+    return ival_join(r, g.type_range(g.nat(e)))
+  }
+  let ra = g.ra_expr(x)
+  let rb = g.ra_expr(y)
+  let o = arith_op(op)
+  if o.is_empty() {
+    return full_range()
+  }
+  if !g.ra_is_int(g.nat(e)) || !g.ra_is_int(g.nat(x)) || !g.ra_is_int(g.nat(y)) {
+    return full_range()
+  }
+  let (res, safe) = arith(o, ra, rb)
+  g.ra_mark(g.ek(e), safe)
+  g.ra_note_point(x, ra)
+  g.ra_note_point(y, rb)
+  res
+}
+
+fn (var g: Gen) ra_call(e: Expr) -> Ival {
+  let (_, fun, args) = call_parts(e)
+  let ci = g.call_of(e)
+  if g.type_call(e) >= 0 {
+    var r = full_range()
+    for (i, a) in args.indexed() {
+      let v = g.ra_expr(a.value)
+      if i == 0 && args.len() == 1 {
+        r = v
+      }
+    }
+    if args.len() == 1 && g.ra_is_int(g.nat(e)) && g.is_integer_type(g.nat(args[0].value)) {
+      // a conversion between integer types keeps the value or faults
+      return r
+    }
+    return g.type_range(g.nat(e))
+  }
+  var has_recv = false
+  if let Some(c) = ci {
+    if !c.recv.is_empty() {
+      has_recv = true
+      g.ra_expr(c.recv[0])
+    }
+  }
+  if !has_recv {
+    match fun {
+      SelectorExpr(x: sx, ..) => {
+        if root_ident(fun) == None {
+          g.ra_expr(sx)
+        }
+      }
+      Ident(..) => {}
+      _ => {
+        g.ra_expr(fun)
+      }
+    }
+  }
+  for a in args {
+    g.ra_expr(a.value)
+  }
+  if let Some(c) = ci {
+    let fo = c.fn_obj
+    if fo >= 0 && !c.recv.is_empty() && g.oname(fo) == "len" && args.is_empty() {
+      let r0 = g.c.objs[fo].recv
+      if g.ostd(fo) && r0 >= 0 && g.oprelude(r0) {
+        let rn = g.oname(r0)
+        if rn is "Str" | "Bytes" | "Map" | "Set" {
+          return iv(0, MAX_LEN)
+        }
+        if rn == "List" {
+          var r = iv(0, MAX_INT)
+          let lt = g.type_of(c.recv[0])
+          if g.nobj(lt) >= 0 && !g.targs(lt).is_empty() && g.non_zero_size(g.targs(lt)[0], 0) {
+            r = iv(0, MAX_LEN)
+          }
+          let (root, path, ok) = g.ra_stable_key(c.recv[0])
+          if ok {
+            r.sym = Some(Symb{root: root, path: path, m: 1, off: 0})
+          }
+          return r
+        }
+      }
+    }
+  }
+  g.type_range(g.nat(e))
+}
+
+/// Whether t is an integer type, sized or not (isIntegerType).
+fn (var g: Gen) is_integer_type(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let gt = g.go_type(g.mono_type(t))
+  if gt is "int64" | "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64" {
+    return !g.is_float(t)
+  }
+  false
+}
+
+fn (var g: Gen) ra_if(x: parser.IfExpr) -> Ival {
+  var t = REnv{}
+  var fl = REnv{}
+  match x.cond {
+    Some(c) => {
+      g.ra_expr(c)
+      let (a, b) = g.ra_refine(g.ra.env, c)
+      t = a
+      fl = b
+    }
+    None => {
+      g.ra_opt(x.value)
+      t = g.ra.env
+      fl = g.ra.env
+    }
+  }
+  g.ra.env = t
+  let r1 = g.ra_block(x.then)
+  let e1 = g.ra.env
+  g.ra.env = fl
+  var r2 = full_range()
+  if let Some(els) = x.els {
+    r2 = g.ra_expr(els)
+  }
+  if e1.dead {
+  } else if g.ra.env.dead {
+    r2 = r1
+  } else {
+    r2 = ival_join(r2, r1)
+  }
+  g.ra.env = join_env(e1, g.ra.env)
+  r2
+}
+
+fn (var g: Gen) ra_match(e: Expr) -> Ival {
+  let (subject, arms) = match e {
+    MatchExpr(subject: subject, arms: arms, ..) => (subject, arms)
+    _ => fault("match")
+  }
+  g.ra_expr(subject)
+  for arm in arms {
+    if let Some(gd) = arm.guard {
+      if !simple_expr(gd) {
+        g.ra_havoc(Node.E(e))
+        return full_range()
+      }
+    }
+  }
+  let base = g.ra.env
+  var acc = dead_env()
+  var r = full_range()
+  var have = false
+  for arm in arms {
+    g.ra.env = base
+    if let Some(gd) = arm.guard {
+      g.ra_expr(gd)
+      let (t, _) = g.ra_refine(g.ra.env, gd)
+      g.ra.env = t
+    }
+    let (v, _) = g.ra_stmt_opt(arm.body)
+    if !g.ra.env.dead {
+      if have {
+        r = ival_join(r, v)
+      } else {
+        r = v
+        have = true
+      }
+    }
+    acc = join_env(acc, g.ra.env)
+  }
+  g.ra.env = acc
+  if !have {
+    return full_range()
+  }
+  r
+}
+
+/// Whether evaluating e cannot change a binding (simpleExpr).
+fn simple_expr(e: Expr) -> Bool {
+  for ne in flatten(Node.E(e)) {
+    match ne.node {
+      E(x) => {
+        match x {
+          Block(..) | IfExpr(..) | MatchExpr(..) | WhileExpr(..) | FnLit(..) | ScopeExpr(..) | SelectExpr(..) => return false
+          _ => {}
+        }
+      }
+      S(s) => {
+        if let AssignStmt(..) = s {
+          return false
+        }
+      }
+      N => {}
+    }
+  }
+  true
+}
+
+/// The states of e where condition c holds and where it does not
+/// (refine).
+fn (var g: Gen) ra_refine(e: REnv, c: Expr) -> (REnv, REnv) {
+  if e.dead || !simple_expr(c) {
+    return (e, e)
+  }
+  match unparen(c) {
+    UnaryExpr(op: op, x: x, ..) => {
+      if op == Kind.Bang {
+        let (t, fl) = g.ra_refine(e, x)
+        return (fl, t)
+      }
+    }
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      if op == Kind.AndAnd {
+        let (t1, f1) = g.ra_refine(e, x)
+        let (t2, f2) = g.ra_refine(t1, y)
+        return (t2, join_env(f1, f2))
+      }
+      if op == Kind.OrOr {
+        let (t1, f1) = g.ra_refine(e, x)
+        let (t2, f2) = g.ra_refine(f1, y)
+        return (join_env(t1, t2), f2)
+      }
+      if op is Kind.Lt | Kind.LtEq | Kind.Gt | Kind.GtEq | Kind.Eq | Kind.NotEq {
+        if g.ra_is_int(g.nat(x)) && g.ra_is_int(g.nat(y)) {
+          return g.ra_refine_cmp(e, op, x, y)
+        }
+      }
+    }
+    _ => {}
+  }
+  (e, e)
+}
+
+/// env with v narrowed to [lo, hi] and the symbolic bound up (set of
+/// refineCmp).
+fn ra_set(env: REnv, v: Int, base: Ival, lo: Int, hi: Int, up: Symb?) -> REnv {
+  if v < 0 || env.dead {
+    return env
+  }
+  if lo > hi {
+    return dead_env()
+  }
+  var r = base
+  r.lo = lo
+  r.hi = hi
+  if let Some(u) = up {
+    var tighter = false
+    if sym_same(r.sym, up) {
+      let rs = r.sym ?? fault("sym")
+      tighter = rs.off <= u.off
+    }
+    if !tighter {
+      r.sym = up
+    }
+  }
+  var e2 = env
+  e2.m[v] = r
+  e2
+}
+
+fn shift_sym(s: Symb?, d: Int) -> Symb? {
+  match s {
+    None => None
+    Some(x) => mk_sym(s, x.m, x.off + d)
+  }
+}
+
+/// Narrows the tracked bindings compared by `l op r` (refineCmp).
+fn (var g: Gen) ra_refine_cmp(e: REnv, op0: Kind, x: Expr, y: Expr) -> (REnv, REnv) {
+  var l = x
+  var r = y
+  var op = op0
+  if op == Kind.Gt {
+    l = y
+    r = x
+    op = Kind.Lt
+  } else if op == Kind.GtEq {
+    l = y
+    r = x
+    op = Kind.LtEq
+  }
+  let lr = g.ra_peek(e, l)
+  let rr = g.ra_peek(e, r)
+  let lv = g.ra_tracked(l)
+  let rv = g.ra_tracked(r)
+  var t = e
+  var fl = e
+  if op == Kind.Lt {
+    if rr.hi == MIN_INT || lr.lo == MAX_INT {
+      t = dead_env()
+    } else {
+      t = ra_set(t, lv, lr, lr.lo, min_i(lr.hi, rr.hi - 1), shift_sym(rr.sym, -1))
+      t = ra_set(t, rv, rr, max_i(rr.lo, lr.lo + 1), rr.hi, None)
+    }
+    fl = ra_set(fl, lv, lr, max_i(lr.lo, rr.lo), lr.hi, None)
+    fl = ra_set(fl, rv, rr, rr.lo, min_i(rr.hi, lr.hi), lr.sym)
+  } else if op == Kind.LtEq {
+    t = ra_set(t, lv, lr, lr.lo, min_i(lr.hi, rr.hi), rr.sym)
+    t = ra_set(t, rv, rr, max_i(rr.lo, lr.lo), rr.hi, None)
+    if rr.lo == MAX_INT || lr.hi == MIN_INT {
+      fl = dead_env()
+    } else {
+      fl = ra_set(fl, lv, lr, max_i(lr.lo, rr.lo + 1), lr.hi, None)
+      fl = ra_set(fl, rv, rr, rr.lo, min_i(rr.hi, lr.hi - 1), shift_sym(lr.sym, -1))
+    }
+  } else if op == Kind.Eq {
+    let lo = max_i(lr.lo, rr.lo)
+    let hi = min_i(lr.hi, rr.hi)
+    t = ra_set(t, lv, lr, lo, hi, rr.sym)
+    t = ra_set(t, rv, rr, lo, hi, lr.sym)
+  } else if op == Kind.NotEq {
+    let lo = max_i(lr.lo, rr.lo)
+    let hi = min_i(lr.hi, rr.hi)
+    fl = ra_set(fl, lv, lr, lo, hi, rr.sym)
+    fl = ra_set(fl, rv, rr, lo, hi, lr.sym)
+  }
+  (t, fl)
+}
+
+/// The interval of a condition operand in state e, recording nothing
+/// (peek).
+fn (var g: Gen) ra_peek(e: REnv, x: Expr) -> Ival {
+  let saved_env = g.ra.env
+  let saved_safe = g.ra.safe
+  let saved_points = g.ra.points
+  let saved_loops = g.ra.loops
+  g.ra.env = e
+  g.ra.safe = {}
+  g.ra.points = {}
+  g.ra.loops = []
+  let r = g.ra_expr(x)
+  g.ra.env = saved_env
+  g.ra.safe = saved_safe
+  g.ra.points = saved_points
+  g.ra.loops = saved_loops
+  r
+}
+
+/// The body of a closure or a `defer` (closure): `let` bindings keep
+/// their intervals, every `var` has its full range.
+fn (var g: Gen) ra_closure(body: Node) {
+  if g.ra.env.dead {
+    return
+  }
+  let saved_env = g.ra.env
+  let saved_loops = g.ra.loops
+  var m: Map[Int, Ival] = {}
+  for (v, r) in g.ra.env.m.entries() {
+    if !g.c.objs[v].mutable {
+      m[v] = r
+    }
+  }
+  g.ra.env = REnv{m: m}
+  g.ra.loops = []
+  match body {
+    E(e) => {
+      if let Block(b) = e {
+        g.ra_block(b)
+      }
+    }
+    S(s) => {
+      g.ra_stmt(s)
+    }
+    N => {}
+  }
+  g.ra.env = saved_env
+  g.ra.loops = saved_loops
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn (var g: Gen) ra_block(b: parser.Block) -> Ival {
+  var r = full_range()
+  for (i, s) in b.stmts.indexed() {
+    let (v, is_val) = g.ra_stmt(s)
+    if i == b.stmts.len() - 1 && is_val {
+      r = v
+    }
+  }
+  r
+}
+
+fn (var g: Gen) ra_stmt_opt(s: Stmt?) -> (Ival, Bool) {
+  match s {
+    None => {
+      // a nil statement: havoc of nothing
+      (full_range(), false)
+    }
+    Some(st) => g.ra_stmt(st)
+  }
+}
+
+fn (var g: Gen) ra_stmt(s: Stmt) -> (Ival, Bool) {
+  match s {
+    ExprStmt(x: x, ..) => return (g.ra_expr(x), true)
+    LetStmt(pattern: pattern, value: value, ..) => {
+      let r = g.ra_expr(value)
+      if let BindPat(name: name, ..) = pattern {
+        let v = g.var_of(name)
+        g.ra_rebind(v)
+        g.ra_bind(v, r)
+      }
+    }
+    VarStmt(name: name, value: value, ..) => {
+      let r = g.ra_expr(value)
+      g.ra_bind(g.var_of(name), r)
+    }
+    ConstDecl(d) => {
+      let r = g.ra_expr(d.value)
+      g.ra_bind(g.var_of(d.name), r)
+    }
+    AssignStmt(..) => g.ra_assign(s)
+    ReturnStmt(value: value, ..) => {
+      g.ra_opt(value)
+      g.ra.env = dead_env()
+    }
+    BreakStmt(label: label, ..) => {
+      let li = g.ra_loop_for(label)
+      if li >= 0 && !g.ra.env.dead {
+        g.ra.loops[li].breaks.push(g.ra.env)
+      }
+      g.ra.env = dead_env()
+    }
+    ContinueStmt(label: label, ..) => {
+      let li = g.ra_loop_for(label)
+      if li >= 0 && !g.ra.env.dead {
+        g.ra.loops[li].cont.push(g.ra.env)
+      }
+      g.ra.env = dead_env()
+    }
+    WhileStmt(label: label, cond: cond, pattern: pattern, body: body, ..) => {
+      if !pattern.is_empty() {
+        // `while let` (decision 0137): not analyzed
+        g.ra_havoc(Node.S(s))
+        return (full_range(), false)
+      }
+      g.ra_loop(label_name(label), cond, body, false, -1, full_range())
+    }
+    ForStmt(..) => g.ra_for(s)
+    DeferStmt(body: body, ..) => g.ra_closure(Node.S(body))
+    _ => g.ra_havoc(Node.S(s))
+  }
+  (full_range(), false)
+}
+
+fn label_name(id: Ident?) -> Str {
+  match id {
+    None => ""
+    Some(x) => check.text(x.name)
+  }
+}
+
+fn (g: Gen) ra_loop_for(label: Ident?) -> Int {
+  var i = g.ra.loops.len() - 1
+  while i >= 0 {
+    match label {
+      None => return i
+      Some(l) => {
+        if g.ra.loops[i].label == check.text(l.name) {
+          return i
+        }
+      }
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn (var g: Gen) ra_assign(s: Stmt) {
+  let (op, target, value) = match s {
+    AssignStmt(op: op, target: target, value: value, ..) => (op, target, value)
+    _ => fault("assign")
+  }
+  let rb = g.ra_expr(value)
+  let v = g.ra_tracked(target)
+  if op == Kind.Assign {
+    if v >= 0 {
+      g.ra_bind(v, rb)
+      return
+    }
+    // an untracked binding needs no update
+    g.ra_place_expr(target)
+    return
+  }
+  if v < 0 {
+    if let Ident(..) = unparen(target) {
+    } else {
+      g.ra_place_expr(target)
+    }
+    return
+  }
+  let o = compound_op(op)
+  let cur = g.ra_lookup(v)
+  if !g.ra_is_int(g.nat(value)) {
+    return
+  }
+  let (res, safe) = arith(o, cur, rb)
+  g.ra_mark(g.stmt_key(s), safe)
+  g.ra_note_point(value, rb)
+  g.ra_bind(v, res)
+}
+
+/// The operands of an assignment target (placeExpr).
+fn (var g: Gen) ra_place_expr(e: Expr) {
+  match e {
+    ParenExpr(x: x, ..) => g.ra_place_expr(x)
+    SelectorExpr(x: x, ..) => g.ra_place_expr(x)
+    IndexExpr(x: x, index: index, ..) => {
+      g.ra_place_expr(x)
+      g.ra_expr(index)
+    }
+    Ident(..) => {}
+    _ => {
+      g.ra_expr(e)
+    }
+  }
+}
+
+fn (var g: Gen) ra_for(s: Stmt) {
+  let (label, pattern, iter, body) = match s {
+    ForStmt(label: label, pattern: pattern, iter: iter, body: body, ..) => (label, pattern, iter, body)
+    _ => fault("for")
+  }
+  var bv = -1
+  var br = full_range()
+  if let BindPat(name: name, ..) = pattern {
+    bv = g.var_of(name)
+  }
+  var counted = false
+  if let RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) = unparen(iter) {
+    if lo != None && hi != None {
+      let loe = lo ?? fault("lo")
+      let hie = hi ?? fault("hi")
+      if g.ra_is_int(g.nat(loe)) && g.ra_is_int(g.nat(hie)) {
+        counted = true
+        let lor = g.ra_expr(loe)
+        let hir = g.ra_expr(hie)
+        br = iv(lor.lo, hir.hi)
+        br.sym = hir.sym
+        if !inclusive {
+          if let Some(hs) = hir.sym {
+            br.sym = mk_sym(hir.sym, hs.m, hs.off - 1)
+          }
+        }
+        if !inclusive {
+          if hir.hi == MIN_INT {
+            // empty: never runs
+            br.hi = MIN_INT
+            br.lo = MIN_INT
+          } else {
+            br.hi = hir.hi - 1
+          }
+        }
+        if br.lo > br.hi {
+          // the loop body never runs
+          return
+        }
+      }
+    }
+  }
+  if !counted {
+    g.ra_expr(iter)
+    if bv >= 0 {
+      br = g.type_range(g.vtype(bv))
+    }
+  }
+  g.ra_loop(label_name(label), None, body, true, bv, br)
+}
+
+/// Iterates a loop body to a fixed point (loop).
+fn (var g: Gen) ra_loop(label: Str, cond: Expr?, body: parser.Block, is_for: Bool, bv: Int, br: Ival) {
+  if g.ra.env.dead {
+    return
+  }
+  var head = g.ra.env
+  var round = 0
+  while true {
+    g.ra.env = head
+    var exit = dead_env()
+    match cond {
+      Some(c) => {
+        g.ra_expr(c)
+        let (t, x) = g.ra_refine(g.ra.env, c)
+        exit = x
+        g.ra.env = t
+      }
+      None => {
+        if is_for {
+          exit = g.ra.env
+          g.ra_rebind(bv)
+          g.ra_bind(bv, br)
+        }
+      }
+    }
+    g.ra.loops.push(RLoop{label: label})
+    g.ra_block(body)
+    let l = g.ra.loops.pop() ?? RLoop{label: label}
+    var back = g.ra.env
+    for c in l.cont {
+      back = join_env(back, c)
+    }
+    var next = join_env(head, back)
+    if round >= 2 {
+      next = widen_env(head, next)
+    }
+    if round >= MAX_LOOP_ROUNDS {
+      next = REnv{}
+    }
+    if leq_env(next, head) {
+      var out = exit
+      for b in l.breaks {
+        out = join_env(out, b)
+      }
+      g.ra.env = out
+      return
+    }
+    head = next
+    round += 1
+  }
+}

@@ -13,10 +13,13 @@ fn test_fake(real: Int) -> Bool
 
 /// Keeps a log record for testing.logs() and echoes its text line (not
 /// when line is empty).
-fn test_log(level: Int, msg: Str, keys: List[Str], vals: List[Str], line: Str)
+fn test_log(level: Int, msg: Str, module: Str, keys: List[Str], vals: List[Str], line: Str)
 fn test_log_count() -> Int
 fn test_log_level(i: Int) -> Int
 fn test_log_msg(i: Int) -> Str
+/// The dependency that wrote record i (decision 0173), "" for the main
+/// module.
+fn test_log_module(i: Int) -> Str
 fn test_log_nfields(i: Int) -> Int
 fn test_log_key(i: Int, j: Int) -> Str
 fn test_log_val(i: Int, j: Int) -> Str

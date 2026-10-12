@@ -28,6 +28,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // Mode selects what is generated.
@@ -75,6 +76,9 @@ type Options struct {
 	// decision 0092) records error frames without parameter values.
 	// Release builds only.
 	NoErrorArgs bool
+	// GoLine is the `go` line of the generated go.mod (internal/build sets
+	// gotool.GoLine(), decision 0176); empty means gotool.TestedGo.
+	GoLine string
 }
 
 // noErrorArgs reports whether error frames leave out parameter values.
@@ -197,6 +201,11 @@ type gen struct {
 	boxed   map[*check.FieldObj]bool
 	ad      adaptState // interface adapters for generic code (adapt.go)
 	tz      tzState    // zones time.zone is asked for (timezone.go)
+	// fileMods maps a source file to its module (logfrom.go)
+	fileMods map[string]*check.Module
+	// budgets: 0 unknown, 1 the program calls task.with_budget, -1 not
+	// (budget.go)
+	budgets int
 }
 
 // Generate lowers the modules of a check result. roots are the modules
@@ -352,8 +361,12 @@ func (g *gen) goBindings(prog *Program) ([]byte, []byte) {
 			}
 		}
 	}
+	line := g.opts.GoLine
+	if line == "" {
+		line = gotool.TestedGo
+	}
 	var b strings.Builder
-	b.WriteString("module " + ModulePath + "\n\ngo 1.26\n")
+	b.WriteString("module " + ModulePath + "\n\ngo " + line + "\n")
 	if len(reqs) > 0 {
 		b.WriteString("\nrequire (\n")
 		for _, r := range sortedSet(reqs) {
@@ -498,6 +511,14 @@ func (pg *pkgGen) file() ([]byte, error) {
 		return b.Bytes(), fmt.Errorf("gen: generated Go for module %s does not parse: %v", pg.m.Path, err)
 	}
 	return src, nil
+}
+
+// FormatFile is what file does to the text of a package after generating
+// it: the blank uses Go does not need and repeated //line directives
+// dropped, then gofmt. The self hosted generator (selfhost/gen, decision
+// 0167) writes the text before this step; its comparison applies it.
+func FormatFile(raw []byte) ([]byte, error) {
+	return format.Source(dropRepeatedLineDirectives(dropBlankUses(raw)))
 }
 
 // dropRepeatedLineDirectives removes a //line directive that repeats the

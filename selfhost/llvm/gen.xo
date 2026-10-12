@@ -1,0 +1,1245 @@
+// The LLVM emitter (internal/llvm fromssa.go, decision 0040) in Xo,
+// decision 0166: it lowers the self hosted SSA module (selfhost/ssa,
+// after the passes and InsertRC) to the textual LLVM IR internal/llvm
+// prints for the same module, byte for byte. This file holds the module
+// wide state (sgen): types and their layout, globals, and the generated
+// helpers (reference counting, equality, environments, boxes); func.xo
+// lowers functions, call.xo calls, held.xo the memory of `var`
+// parameters passed by reference.
+//
+// The IR's parts are kept as lists of text, appended in the order the Go
+// emitter writes them, so every global, helper, and type definition is
+// numbered and placed as there.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The state of one program lowered (sgen), and of the function being
+/// lowered (sfn).
+pub struct Gen {
+  pub m: ssa.Module
+  types: List[Str] = []
+  globals: List[Str] = []
+  helpers: List[Str] = []
+  funcs: List[Str] = []
+  rt_decls: List[Str] = []
+  /// The text of runtime_decls (the runtime calls declared there are not
+  /// declared again).
+  decls: Str = ""
+  /// Per type: the struct or enum definition was written.
+  named: List[Bool] = []
+  /// Per type: its LLVM type text, "" before the first use.
+  ll_memo: List[Str] = []
+  /// Per type: its size and alignment, -1 before the first use.
+  sizes: List[Int] = []
+  aligns: List[Int] = []
+  /// Per type: whether it holds heap memory (1, 0; -1 before the first
+  /// use).
+  heaps: List[Int] = []
+  /// String literals by the text of their bytes (irBytes), and fault
+  /// locations by position.
+  strs: Map[Str, Str] = {}
+  locs: Map[Str, Str] = {}
+  /// The helpers and runtime declarations written.
+  emitted: Map[Str, Bool] = {}
+  /// The functions by name (the last of each name, as byName).
+  by_name: Map[Str, Int] = {}
+  /// Per function: which parameters are passed by reference (empty for
+  /// none), once computed (decision 0145).
+  by_ref: List[List[Bool]] = []
+  by_ref_done: List[Bool] = []
+  /// The functions used as values (they keep the plain convention).
+  addr_taken: Map[Str, Bool] = {}
+  /// The first construct the lowering does not support (fail): the
+  /// program fails, as GenerateSSA returns an error.
+  pub err: Str = ""
+  /// The functions not lowered: `<name>: <why>` (a construct of a later
+  /// stage of decision 0166), not compared.
+  pub skipped: List[Str] = []
+  /// The stages of decision 0166 this emitter does (1 to 3).
+  pub stage: Int = 3
+
+  // The function being lowered (sfn).
+  f: ssa.Func = ssa.Func{name: ""}
+  fi: Int = -1
+  /// Per value: the block that holds it (Value.block is not kept up to
+  /// date by the passes), -1 for none.
+  blk: List[Int] = []
+  allocas: List[Str] = []
+  body: List[Str] = []
+  label: Str = ""
+  /// The SSA block the current LLVM block belongs to.
+  label0: Str = ""
+  /// Per value: its operand text when it is an alias, else "".
+  names: List[Str] = []
+  n: Int = 0
+  nlabel: Int = 0
+  /// Per block: the LLVM block its terminator is in, and its text.
+  ends: List[Str] = []
+  texts: List[Str] = []
+  /// Per value: a release whose retain was cancelled.
+  cancel: List[Bool] = []
+  /// The landing pads (decision 0085): the value being lowered lands on
+  /// block pad_to when it faults; its calls that can raise are invokes
+  /// unwinding to pad (made at the first one).
+  pad_to: Int = -1
+  pad: Str = ""
+  pads: List[Str] = []
+  npad: Int = 0
+  /// Per LLVM struct type, the memory that carries a value of it passed
+  /// by reference, and more for a call that passes several (decision
+  /// 0145).
+  home: Map[Str, Str] = {}
+  spare: Map[Str, List[Str]] = {}
+  /// Per value: the memory nothing writes while the function runs that
+  /// holds it (decision 0147), or "".
+  addr: List[Str] = []
+  /// The memory of `var` parameters passed by reference (held.xo,
+  /// decision 0148).
+  held: Held = Held{}
+  has_held: Bool = false
+  /// Per value: stable computed (0 no, 1 yes, -1 not yet).
+  stable_memo: List[Int] = []
+  /// Per value: the memory it is read from at every use, or -1.
+  lazy: List[Int] = []
+  /// Per value: the instructions that use it (users), once computed.
+  users_of: List[List[Int]] = []
+  users_done: Bool = false
+  /// Why the current function is not lowered (a later stage), or "".
+  skip: Str = ""
+}
+
+/// The emitter for module m.
+pub fn new_gen(m: ssa.Module) -> Gen {
+  var g = Gen{m: m, decls: runtime_decls()}
+  let nt = m.types.len()
+  for _ in 0..nt {
+    g.named.push(false)
+    g.ll_memo.push("")
+    g.sizes.push(-1)
+    g.aligns.push(-1)
+    g.heaps.push(-1)
+  }
+  for _ in 0..m.funcs.len() {
+    g.by_ref.push([])
+    g.by_ref_done.push(false)
+  }
+  g
+}
+
+/// Records the first construct the lowering does not support (fail).
+fn (var g: Gen) fail(msg: Str) {
+  if g.err.is_empty() {
+    g.err = msg
+  }
+}
+
+/// Leaves the current function unlowered: a construct of a later stage.
+fn (var g: Gen) unsupported(why: Str) {
+  if g.skip.is_empty() {
+    g.skip = why
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The runtime declarations (ssaRuntimeDecls)
+
+/// The declarations of the RC runtime of std/llrt/xo_rt.c, the attribute
+/// groups, and the metadata every module starts with (ssaRuntimeDecls).
+fn runtime_decls() -> Str {
+  let lines = [
+    "%xo.str = type { ptr, i64 }",
+    "%xo.rlist = type { i64, i64, i64 }",
+    "",
+    "declare ptr @xo_rc_alloc(i64) #2",
+    "declare void @xo_rc_free(ptr) #2",
+    "declare void @xo_rc_defer(ptr, ptr) #2",
+    "declare ptr @xo_rs_concat(ptr, i64, ptr, i64) #2",
+    "declare ptr @xo_rs_concat_int(ptr, i64, i64, ptr) #2",
+    "declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2",
+    "declare ptr @xo_rs_of_int(i64, ptr) #2",
+    "declare ptr @xo_rs_of_float(double, ptr) #2",
+    "declare ptr @xo_rl_new(i64, i64) #2",
+    "declare ptr @xo_rl_new_n(i64, i64) #2",
+    "declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3",
+    "declare void @xo_rl_share(ptr, i64, ptr) #2",
+    "declare ptr @xo_rl_grow(ptr, i64) #3",
+    "declare void @xo_rl_free(ptr, i64, ptr) #2",
+    "declare void @xo_print(ptr, i64) #2",
+    "declare void @xo_println(ptr, i64) #2",
+    "declare void @xo_eprint(ptr, i64) #2",
+    "declare void @xo_eprintln(ptr, i64) #2",
+    "declare void @xo_fault(ptr, i64, ptr) #0",
+    "declare void @xo_fault_overflow(i64, i64, i64, ptr) #0",
+    "declare void @xo_fault_shl(i64, i64, ptr) #0",
+    "declare void @xo_fault_shift(i64, ptr) #0",
+    "declare void @xo_fault_divzero(i64, i64, ptr) #0",
+    "declare void @xo_fault_neg(i64, ptr) #0",
+    "declare void @xo_fault_index(i64, i64, ptr) #0",
+    "declare void @xo_fault_bytes_index(i64, i64, ptr) #0",
+    "declare void @xo_fault_abs(i64, ptr) #0",
+    "declare void @xo_fault_float_int(double, ptr) #0",
+    "declare i32 @xo_str_eq(ptr, i64, ptr, i64) #2",
+    "declare i64 @xo_str_cmp(ptr, i64, ptr, i64) #2",
+    "declare void @xo_h_free(ptr) #2",
+    "declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)",
+    "declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)",
+    "declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)",
+    "declare double @llvm.sqrt.f64(double)",
+    "declare double @llvm.floor.f64(double)",
+    "declare double @llvm.ceil.f64(double)",
+    "declare double @llvm.trunc.f64(double)",
+    "declare double @llvm.round.f64(double)",
+    "declare double @llvm.fabs.f64(double)",
+    "",
+    "declare i32 @xo_personality(...)",
+    "",
+    "; faults unwind (decision 0085): the fault functions and generated code",
+    "; may unwind, and every generated function has unwind tables",
+    "attributes #0 = { noreturn cold }",
+    "attributes #1 = { uwtable }",
+    "attributes #2 = { nounwind }",
+    "attributes #3 = { nounwind cold noinline }",
+    "attributes #4 = { nounwind alwaysinline }",
+    "attributes #5 = { \"xo-raises\" }",
+    "",
+    "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
+    "; TBAA: list headers, list elements, and reference counts never overlap",
+    "!1 = !{!\"xo tbaa\"}",
+    "!2 = !{!\"xo.list.header\", !1, i64 0}",
+    "!3 = !{!2, !2, i64 0}",
+    "!4 = !{!\"xo.list.element\", !1, i64 0}",
+    "!5 = !{!4, !4, i64 0}",
+    "!6 = !{!\"xo.rc\", !1, i64 0}",
+    "!7 = !{!6, !6, i64 0}",
+    "",
+    "",
+  ]
+  lines.join("\n")
+}
+
+const TBAA_HDR = ", !tbaa !3"
+const TBAA_ELEM = ", !tbaa !5"
+const TBAA_RC = ", !tbaa !7"
+/// The count of literals, never written (decision 0058), as text.
+const IMMORTAL = "-9223372036854775808"
+/// Bit 62, set in every shared (negative, not immortal) count.
+const SHARED_BIT = "4611686018427387904"
+/// The header fields of an environment (rc, drop, share) before the
+/// captures.
+const ENV_FIELDS = 3
+/// The size from which a struct or enum parameter of a direct call is
+/// passed by reference (decision 0145).
+const BY_REF_MIN = 256
+
+// ---------------------------------------------------------------------------
+// The program
+
+/// Lowers the module (GenerateSSA): the IR text, or "" with err set.
+pub fn (var g: Gen) generate() -> Str {
+  let nf = g.m.funcs.len()
+  for fi in 0..nf {
+    let name = g.m.funcs[fi].name
+    g.by_name[name] = fi
+    for bl in g.m.funcs[fi].blocks {
+      for v in bl.instrs {
+        let op = g.m.funcs[fi].values[v].op
+        if op is ssa.Op.Closure | ssa.Op.FuncAddr | ssa.Op.Rebind {
+          if let S(s) = g.m.funcs[fi].values[v].aux {
+            g.addr_taken[s] = true
+          }
+        }
+      }
+    }
+  }
+  for fi in 0..nf {
+    for p in g.m.funcs[fi].blocks[0].params {
+      g.check_type(g.m.funcs[fi].values[p].ty)
+    }
+  }
+  for fi in 0..nf {
+    g.lower_func(fi)
+    if !g.err.is_empty() {
+      return ""
+    }
+  }
+  let mi = g.by_name.get("main") ?? -1
+  if mi < 0 {
+    g.fail("no main")
+    return ""
+  }
+  var args: List[Str] = []
+  for p in g.m.funcs[mi].blocks[0].params {
+    args.push("${g.ll(g.m.funcs[mi].values[p].ty)} zeroinitializer")
+  }
+  let rl = g.res_ll(mi)
+  g.funcs.push("define void @xo_entry() #1 {\n  call ${rl} ${fname(g.m.funcs[mi].name)}(${args.join(", ")})\n  ret void\n}\n")
+  if !g.err.is_empty() {
+    return ""
+  }
+  var out: List[Str] = []
+  out.push("; generated by xo build --backend=llvm (internal/llvm, from internal/ssa with reference counting)\n\n")
+  out.push(g.decls)
+  out.push(g.rt_decls.join(""))
+  out.push(g.types.join(""))
+  out.push("\n")
+  out.push(g.globals.join(""))
+  out.push("\n")
+  out.push(g.helpers.join(""))
+  out.push(g.funcs.join(""))
+  out.join("")
+}
+
+/// Rejects types that contain themselves by value (checkType; the SSA
+/// builder boxes recursive fields, so none should reach here).
+fn (var g: Gen) check_type(t: Int) {
+  g.check_type_in(t, [])
+}
+
+fn (var g: Gen) check_type_in(t: Int, path: List[Int]) {
+  if path.contains(t) {
+    g.fail("the SSA lowering does not support the recursive type `${g.m.types[t].name}`")
+    return
+  }
+  var p2 = path
+  p2.push(t)
+  let k = g.m.types[t].kind
+  match k {
+    Struct => {
+      for f in g.m.types[t].fields {
+        g.check_type_in(f.ty, p2)
+      }
+    }
+    Enum => {
+      for v in g.m.types[t].variants {
+        for f in v.fields {
+          g.check_type_in(f.ty, p2)
+        }
+      }
+    }
+    Tuple => {
+      for e in g.m.types[t].elems {
+        g.check_type_in(e, p2)
+      }
+    }
+    _ => {}
+  }
+}
+
+/// The LLVM name of function n.
+fn fname(n: Str) -> Str {
+  "@${"x.${n}".quote()}"
+}
+
+/// The LLVM type of t (ll); a struct or enum is defined at its first use.
+fn (var g: Gen) ll(t: Int) -> Str {
+  let memo = g.ll_memo[t]
+  if !memo.is_empty() {
+    return memo
+  }
+  let r = g.ll_new(t)
+  g.ll_memo[t] = r
+  r
+}
+
+fn (var g: Gen) ll_new(t: Int) -> Str {
+  let k = g.m.types[t].kind
+  match k {
+    Unit | Cap => return "{}"
+    Int => return "i64"
+    Float => return "double"
+    Bool => return "i1"
+    Str => return "%xo.str"
+    List => {
+      g.check_type(t)
+      return "ptr"
+    }
+    Func => return "{ ptr, ptr }"
+    Box | Handle => return "ptr"
+    Tuple => {
+      var es: List[Str] = []
+      for e in g.m.types[t].elems {
+        es.push(g.ll(e))
+      }
+      return "{ ${es.join(", ")} }"
+    }
+    Struct => {
+      let name = "%${"s.${g.m.types[t].name}".quote()}"
+      if !g.named[t] {
+        g.named[t] = true
+        g.check_type(t)
+        var fs: List[Str] = []
+        for f in g.m.types[t].fields {
+          fs.push(g.ll(f.ty))
+        }
+        if fs.is_empty() {
+          g.types.push("${name} = type {}\n")
+        } else {
+          g.types.push("${name} = type { ${fs.join(", ")} }\n")
+        }
+      }
+      return name
+    }
+    Enum => {
+      let name = "%${"e.${g.m.types[t].name}".quote()}"
+      if !g.named[t] {
+        g.named[t] = true
+        g.check_type(t)
+        g.types.push("${name} = type { i64, [${g.words(t)} x i64] }\n")
+      }
+      return name
+    }
+    Bad => {}
+  }
+  g.fail("the SSA lowering does not support the type `${g.m.types[t].name}`")
+  "?"
+}
+
+/// The literal struct of the fields of variant i of enum t (variantLL).
+fn (var g: Gen) variant_ll(t: Int, i: Int) -> Str {
+  var fs: List[Str] = []
+  for f in g.m.types[t].variants[i].fields {
+    fs.push(g.ll(f.ty))
+  }
+  "{ ${fs.join(", ")} }"
+}
+
+/// The size and alignment of t (the LLVM data layout of arm64 and
+/// x86-64).
+fn (var g: Gen) layout(t: Int) -> (Int, Int) {
+  if g.sizes[t] >= 0 {
+    return (g.sizes[t], g.aligns[t])
+  }
+  let k = g.m.types[t].kind
+  let (s, a) = match k {
+    Unit | Cap => (0, 1)
+    Int | Float | List | Box | Handle => (8, 8)
+    Bool => (1, 1)
+    Str | Func => (16, 8)
+    Enum => (8 + 8 * g.words(t), 8)
+    Struct => {
+      var ts: List[Int] = []
+      for f in g.m.types[t].fields {
+        ts.push(f.ty)
+      }
+      g.struct_layout(ts)
+    }
+    Tuple => g.struct_layout(g.m.types[t].elems)
+    Bad => (8, 8)
+  }
+  g.sizes[t] = s
+  g.aligns[t] = a
+  (s, a)
+}
+
+fn align_up(n: Int, a: Int) -> Int {
+  if a <= 1 {
+    return n
+  }
+  (n + a - 1) / a * a
+}
+
+fn (var g: Gen) struct_layout(ts: List[Int]) -> (Int, Int) {
+  var size = 0
+  var align = 1
+  for t in ts {
+    let (s, a) = g.layout(t)
+    size = align_up(size, a) + s
+    if a > align {
+      align = a
+    }
+  }
+  (align_up(size, align), align)
+}
+
+/// The payload size of enum t in 8 byte words.
+fn (var g: Gen) words(t: Int) -> Int {
+  var mx = 0
+  for v in g.m.types[t].variants {
+    var ts: List[Int] = []
+    for f in v.fields {
+      ts.push(f.ty)
+    }
+    let (s, _) = g.struct_layout(ts)
+    if s > mx {
+      mx = s
+    }
+  }
+  (mx + 7) / 8
+}
+
+fn (var g: Gen) size(t: Int) -> Int {
+  let (s, _) = g.layout(t)
+  s
+}
+
+fn (var g: Gen) kind(t: Int) -> ssa.Kind {
+  g.m.types[t].kind
+}
+
+/// Whether values of t hold heap memory (Type.Heap).
+fn (var g: Gen) heap(t: Int) -> Bool {
+  let k = g.heaps[t]
+  if k >= 0 {
+    return k == 1
+  }
+  let r = g.m.heap(t)
+  g.heaps[t] = if r { 1 } else { 0 }
+  r
+}
+
+/// Whether t holds a Float (Type.HasFloat).
+fn (var g: Gen) has_float(t: Int) -> Bool {
+  g.has_float_in(t, [])
+}
+
+fn (var g: Gen) has_float_in(t: Int, seen: List[Int]) -> Bool {
+  if seen.contains(t) {
+    return false
+  }
+  var s2 = seen
+  s2.push(t)
+  let x = g.m.types[t]
+  match x.kind {
+    Float => return true
+    Struct => {
+      for f in x.fields {
+        if g.has_float_in(f.ty, s2) {
+          return true
+        }
+      }
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          if g.has_float_in(f.ty, s2) {
+            return true
+          }
+        }
+      }
+    }
+    Tuple | List | Box => {
+      for e in x.elems {
+        if g.has_float_in(e, s2) {
+          return true
+        }
+      }
+    }
+    _ => {}
+  }
+  false
+}
+
+/// A unit or capability type: no value at run time.
+fn (var g: Gen) is_void(t: Int) -> Bool {
+  g.m.types[t].kind is ssa.Kind.Unit | ssa.Kind.Cap
+}
+
+/// A struct, enum, or tuple type (isAgg).
+fn (var g: Gen) is_agg(t: Int) -> Bool {
+  g.m.types[t].kind is ssa.Kind.Struct | ssa.Kind.Enum | ssa.Kind.Tuple
+}
+
+/// The LLVM return type of function fi: its kept results (resLL).
+fn (var g: Gen) res_ll(fi: Int) -> Str {
+  let kept = g.kept_results(fi)
+  let rs = g.m.funcs[fi].results
+  if kept.len() == 1 {
+    return g.ll(rs[kept[0]])
+  }
+  var es: List[Str] = []
+  for k in kept {
+    es.push(g.ll(rs[k]))
+  }
+  "{ ${es.join(", ")} }"
+}
+
+/// The type of all the results of fi, as the SSA call has (fullResLL).
+fn (var g: Gen) full_res_ll(fi: Int) -> Str {
+  let rs = g.m.funcs[fi].results
+  if rs.len() == 1 {
+    return g.ll(rs[0])
+  }
+  var es: List[Str] = []
+  for r in rs {
+    es.push(g.ll(r))
+  }
+  "{ ${es.join(", ")} }"
+}
+
+/// Which parameters of fi are passed by reference, or empty (byRefOf):
+/// structs and enums of BY_REF_MIN bytes or more of a function called
+/// directly.
+fn (var g: Gen) by_ref_of(fi: Int) -> List[Bool] {
+  if g.by_ref_done[fi] {
+    return g.by_ref[fi]
+  }
+  var br: List[Bool] = []
+  let f = g.m.funcs[fi]
+  if !f.indirect && !f.entry && !g.addr_taken.contains(f.name) && f.name != "main" {
+    let ps = f.blocks[0].params
+    for (i, p) in ps.indexed() {
+      let t = f.values[p].ty
+      if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Enum) && g.size(t) >= BY_REF_MIN {
+        if br.is_empty() {
+          for _ in 0..ps.len() {
+            br.push(false)
+          }
+        }
+        br[i] = true
+      }
+    }
+  }
+  g.by_ref[fi] = br
+  g.by_ref_done[fi] = true
+  br
+}
+
+/// Whether parameter i of fi is `var`.
+fn (var g: Gen) is_var_param(fi: Int, i: Int) -> Bool {
+  g.m.funcs[fi].var_params.contains(i)
+}
+
+/// The indexes of the results of fi its LLVM function returns: all but
+/// those of `var` parameters passed by reference (keptResults).
+fn (var g: Gen) kept_results(fi: Int) -> List[Int] {
+  let br = g.by_ref_of(fi)
+  var out: List[Int] = []
+  let n = g.m.funcs[fi].results.len()
+  for k in 0..n {
+    if k > 0 && !br.is_empty() && br[g.m.funcs[fi].var_params[k - 1]] {
+      continue
+    }
+    out.push(k)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Globals
+
+/// The global object of a string literal of bytes b (strObj).
+fn (var g: Gen) str_obj(b: Bytes) -> Str {
+  let enc = ir_bytes(b)
+  if let Some(name) = g.strs.get(enc) {
+    return name
+  }
+  let name = "@.rs.${g.strs.len()}"
+  g.strs[enc] = name
+  let n = b.len()
+  g.globals.push("${name} = private constant { i64, i64, [${n} x i8] } { i64 ${IMMORTAL}, i64 ${n}, [${n} x i8] c\"${enc}\" }, align 8\n")
+  name
+}
+
+fn (var g: Gen) str_const_bytes(b: Bytes) -> Str {
+  let o = g.str_obj(b)
+  "{ ptr ${o}, i64 ${b.len()} }"
+}
+
+fn (var g: Gen) str_const(s: Str) -> Str {
+  g.str_const_bytes(s.bytes())
+}
+
+/// The constant list.take leaves in a slot (decision 0169; hole): its
+/// Str, List, Box, and handle leaves point to an immortal object (the
+/// empty string's), a function value has no environment, and an enum's
+/// tag is past its variants, so retain, release, and share of it do
+/// nothing.
+fn (var g: Gen) hole(t: Int) -> Str {
+  if !g.heap(t) {
+    return "zeroinitializer"
+  }
+  let x = g.m.types[t]
+  match x.kind {
+    Str => {
+      let o = g.str_obj("".bytes())
+      return "{ ptr ${o}, i64 0 }"
+    }
+    List | Box | Handle => return g.str_obj("".bytes())
+    Enum => return "{ i64 ${x.variants.len()}, [${g.words(t)} x i64] zeroinitializer }"
+    Struct | Tuple => {
+      var fts: List[Int] = []
+      if x.kind == ssa.Kind.Struct {
+        for f in x.fields {
+          fts.push(f.ty)
+        }
+      } else {
+        fts = x.elems
+      }
+      var fs: List[Str] = []
+      for ft in fts {
+        let l = g.ll(ft)
+        let h = g.hole(ft)
+        fs.push("${l} ${h}")
+      }
+      return "{ " + fs.join(", ") + " }"
+    }
+    _ => {}
+  }
+  "zeroinitializer"
+}
+
+/// A NUL terminated global for a fault location (cstr).
+fn (var g: Gen) cstr(s: Str) -> Str {
+  if let Some(name) = g.locs.get(s) {
+    return name
+  }
+  let name = "@.loc.${g.locs.len() + 1}"
+  g.locs[s] = name
+  g.globals.push("${name} = private unnamed_addr constant [${s.len() + 1} x i8] c\"${ir_bytes(s.bytes())}\\00\"\n")
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Reference counting helpers
+
+/// The text of a helper being written: its lines and its temporaries.
+struct H {
+  lines: List[Str] = []
+  n: Int = 0
+}
+
+fn (var h: H) tmp() -> Str {
+  h.n += 1
+  "%t${h.n}"
+}
+
+fn (var h: H) w(s: Str) {
+  h.lines.push(s)
+}
+
+/// The helper that retains ("dup"), releases ("drop"), or marks shared
+/// ("share") a value of type t, written at its first use (rcFn).
+fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
+  let tname = g.m.types[t].name
+  let name = "@${"xo.${kind}.${tname}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  var b = H{}
+  let lt = g.ll(t)
+  let k = g.kind(t)
+  var attr = "#1"
+  if k is ssa.Kind.Str | ssa.Kind.List | ssa.Kind.Func | ssa.Kind.Box | ssa.Kind.Handle {
+    if kind != "share" {
+      attr = "#4"
+    }
+  }
+  b.w("define internal void ${name}(${lt} %x) ${attr} {\n")
+  match k {
+    Str | List => {
+      var obj = "%x"
+      if k == ssa.Kind.Str {
+        obj = b.tmp()
+        b.w("  ${obj} = extractvalue %xo.str %x, 0\n")
+      }
+      if kind == "dup" {
+        rc_inc(b, obj)
+      } else if kind == "drop" {
+        rc_dec(b, obj)
+        if k == ssa.Kind.Str {
+          b.w("free:\n  call void @xo_rc_free(ptr ${obj})\n  br label %done\n")
+        } else {
+          let et = g.m.types[t].elems[0]
+          let sz = g.size(et)
+          let ef = g.elem_fn("drop", et)
+          b.w("free:\n  call void @xo_rl_free(ptr ${obj}, i64 ${sz}, ptr ${ef})\n  br label %done\n")
+        }
+      } else {
+        rc_mark(b, obj)
+        if k == ssa.Kind.List && g.heap(g.m.types[t].elems[0]) {
+          let et = g.m.types[t].elems[0]
+          let sz = g.size(et)
+          let ef = g.elem_fn("share", et)
+          b.w("  call void @xo_rl_share(ptr ${obj}, i64 ${sz}, ptr ${ef})\n")
+        }
+        b.w("  br label %done\n")
+      }
+      b.w("done:\n  ret void\n")
+    }
+    Handle => {
+      // a runtime object (decision 0068): shared from its creation, so
+      // marking it does nothing; at zero the runtime frees it
+      if kind == "dup" {
+        rc_inc(b, "%x")
+      } else if kind == "drop" {
+        rc_dec(b, "%x")
+        b.w("free:\n  call void @xo_h_free(ptr %x)\n  br label %done\n")
+      } else {
+        b.w("  br label %done\n")
+      }
+      b.w("done:\n  ret void\n")
+    }
+    Box => {
+      if kind == "dup" {
+        rc_inc(b, "%x")
+      } else if kind == "drop" {
+        rc_dec(b, "%x")
+        // deferred: a long chain of boxes is freed with a worklist
+        let df = g.box_drop_fn(t)
+        b.w("free:\n  call void @xo_rc_defer(ptr %x, ptr ${df})\n  br label %done\n")
+      } else {
+        rc_mark(b, "%x")
+        if g.heap(g.m.types[t].elems[0]) {
+          // the contents through the worklist too
+          let sf = g.box_share_fn(t)
+          b.w("  call void @xo_rc_defer(ptr %x, ptr ${sf})\n")
+        }
+        b.w("  br label %done\n")
+      }
+      b.w("done:\n  ret void\n")
+    }
+    Func => {
+      // the environment: null for a closure without captures
+      let env = b.tmp()
+      b.w("  ${env} = extractvalue { ptr, ptr } %x, 1\n")
+      let is_null = b.tmp()
+      b.w("  ${is_null} = icmp eq ptr ${env}, null\n  br i1 ${is_null}, label %done, label %live\nlive:\n")
+      if kind == "dup" {
+        rc_inc(b, env)
+      } else if kind == "drop" {
+        rc_dec(b, env)
+        let dp = b.tmp()
+        let dfn = b.tmp()
+        // the drop function frees the environment; deferred so long
+        // chains do not recurse on the C stack
+        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load ptr, ptr ${dp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${dfn})\n  br label %done\n")
+      } else {
+        rc_mark(b, env)
+        let sp = b.tmp()
+        let sfn = b.tmp()
+        b.w("  ${sp} = getelementptr i8, ptr ${env}, i64 16\n  ${sfn} = load ptr, ptr ${sp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${sfn})\n  br label %done\n")
+      }
+      b.w("done:\n  ret void\n")
+    }
+    Struct | Tuple => {
+      var fts: List[Int] = []
+      if k == ssa.Kind.Struct {
+        for f in g.m.types[t].fields {
+          fts.push(f.ty)
+        }
+      } else {
+        fts = g.m.types[t].elems
+      }
+      for (i, ft) in fts.indexed() {
+        if !g.heap(ft) {
+          continue
+        }
+        let fv = b.tmp()
+        b.w("  ${fv} = extractvalue ${lt} %x, ${i}\n")
+        let hf = g.rc_fn(kind, ft)
+        let fl = g.ll(ft)
+        b.w("  call void ${hf}(${fl} ${fv})\n")
+      }
+      b.w("  ret void\n")
+    }
+    Enum => {
+      let p = b.tmp()
+      b.w("  ${p} = alloca ${lt}\n  store ${lt} %x, ptr ${p}\n")
+      let tag = b.tmp()
+      b.w("  ${tag} = extractvalue ${lt} %x, 0\n")
+      var cases: List[Str] = []
+      var bodies: List[Str] = []
+      let nv = g.m.types[t].variants.len()
+      for vi in 0..nv {
+        let fields = g.m.types[t].variants[vi].fields
+        var heap = false
+        for f in fields {
+          heap = heap || g.heap(f.ty)
+        }
+        if !heap {
+          continue
+        }
+        cases.push("i64 ${vi}, label %v${vi}")
+        bodies.push("v${vi}:\n")
+        let pay = b.tmp()
+        bodies.push("  ${pay} = getelementptr ${lt}, ptr ${p}, i32 0, i32 1\n")
+        let vl = g.variant_ll(t, vi)
+        for (fi, f) in fields.indexed() {
+          if !g.heap(f.ty) {
+            continue
+          }
+          let fp = b.tmp()
+          let fv = b.tmp()
+          let fl = g.ll(f.ty)
+          bodies.push("  ${fp} = getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${fi}\n")
+          bodies.push("  ${fv} = load ${fl}, ptr ${fp}\n")
+          let hf = g.rc_fn(kind, f.ty)
+          let fl2 = g.ll(f.ty)
+          bodies.push("  call void ${hf}(${fl2} ${fv})\n")
+        }
+        bodies.push("  br label %done\n")
+      }
+      b.w("  switch i64 ${tag}, label %done [ ${cases.join(" ")} ]\n")
+      b.w(bodies.join(""))
+      b.w("done:\n  ret void\n")
+    }
+    _ => b.w("  ret void\n")
+  }
+  b.w("}\n\n")
+  g.helpers.push(b.lines.join(""))
+  name
+}
+
+// The count tests of decision 0058 (std/llrt/xo_rt.c, "Reference
+// counts"): a positive count is thread local, a negative count -n is
+// shared (atomic), and the immortal count of literals has bit 62 clear
+// where every shared count has it set. Each writes the code of one
+// helper from its entry, ending in `br label %done` (and rc_dec in
+// branches to %free, which the caller writes).
+
+/// The increment of the count at obj (rcInc).
+fn rc_inc(var b: H, obj: Str) {
+  let c = b.tmp()
+  let slow = b.tmp()
+  let c1 = b.tmp()
+  let sb = b.tmp()
+  let sh = b.tmp()
+  b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
+  b.w("  ${slow} = icmp slt i64 ${c}, 1\n  br i1 ${slow}, label %shared, label %inc, !prof !0\n")
+  b.w("inc:\n  ${c1} = add i64 ${c}, 1\n  store i64 ${c1}, ptr ${obj}${TBAA_RC}\n  br label %done\n")
+  b.w("shared:\n  ${sb} = and i64 ${c}, ${SHARED_BIT}\n  ${sh} = icmp ne i64 ${sb}, 0\n  br i1 ${sh}, label %atomic, label %done\n")
+  b.w("atomic:\n  atomicrmw add ptr ${obj}, i64 -1 monotonic, align 8\n  br label %done\n")
+}
+
+/// The decrement of the count at obj, branching to %free when it was the
+/// last reference (rcDec).
+fn rc_dec(var b: H, obj: Str) {
+  let c = b.tmp()
+  let slow = b.tmp()
+  let c1 = b.tmp()
+  let one = b.tmp()
+  let sb = b.tmp()
+  let sh = b.tmp()
+  let old = b.tmp()
+  let last = b.tmp()
+  b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
+  b.w("  ${slow} = icmp slt i64 ${c}, 2\n  br i1 ${slow}, label %slow, label %dec, !prof !0\n")
+  b.w("dec:\n  ${c1} = sub i64 ${c}, 1\n  store i64 ${c1}, ptr ${obj}${TBAA_RC}\n  br label %done\n")
+  b.w("slow:\n  ${one} = icmp eq i64 ${c}, 1\n  br i1 ${one}, label %free, label %shared\n")
+  b.w("shared:\n  ${sb} = and i64 ${c}, ${SHARED_BIT}\n  ${sh} = icmp ne i64 ${sb}, 0\n  br i1 ${sh}, label %atomic, label %done\n")
+  b.w("atomic:\n  ${old} = atomicrmw add ptr ${obj}, i64 1 acq_rel, align 8\n  ${last} = icmp eq i64 ${old}, -1\n  br i1 ${last}, label %free, label %done\n")
+}
+
+/// The marking of the count at obj as shared (rcMark); the code after it
+/// (in block %mark) runs when the count was thread local.
+fn rc_mark(var b: H, obj: Str) {
+  let c = b.tmp()
+  let loc = b.tmp()
+  let n = b.tmp()
+  b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
+  b.w("  ${loc} = icmp sgt i64 ${c}, 0\n  br i1 ${loc}, label %mark, label %done\n")
+  b.w("mark:\n  ${n} = sub i64 0, ${c}\n  store i64 ${n}, ptr ${obj}${TBAA_RC}\n")
+}
+
+/// The runtime callback that retains or releases a list element through
+/// a pointer, or null when elements are not on the heap (elemFn).
+fn (var g: Gen) elem_fn(kind: Str, t: Int) -> Str {
+  if !g.heap(t) {
+    return "null"
+  }
+  let name = "@${"xo.${kind}p.${g.m.types[t].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let inner = g.rc_fn(kind, t)
+  let lt = g.ll(t)
+  g.helpers.push("define internal void ${name}(ptr %p) #1 {\n  %x = load ${lt}, ptr %p\n  call void ${inner}(${lt} %x)\n  ret void\n}\n\n")
+  name
+}
+
+/// The LLVM type of the cell of a Box[T]: {i64 rc, T}.
+fn (var g: Gen) box_ll(t: Int) -> Str {
+  "{ i64, ${g.ll(g.m.types[t].elems[0])} }"
+}
+
+/// The function that releases the contents of a box whose count reached
+/// zero and frees it (boxDropFn).
+fn (var g: Gen) box_drop_fn(t: Int) -> Str {
+  let name = "@${"xo.boxdrop.${g.m.types[t].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let et = g.m.types[t].elems[0]
+  var b: List[Str] = []
+  b.push("define internal void ${name}(ptr %p) #1 {\n")
+  if g.heap(et) {
+    b.push("  %vp = getelementptr ${g.box_ll(t)}, ptr %p, i32 0, i32 1\n")
+    b.push("  %v = load ${g.ll(et)}, ptr %vp\n")
+    let df = g.rc_fn("drop", et)
+    b.push("  call void ${df}(${g.ll(et)} %v)\n")
+  }
+  b.push("  call void @xo_rc_free(ptr %p)\n  ret void\n}\n\n")
+  g.helpers.push(b.join(""))
+  name
+}
+
+/// The LLVM type of the environment of an indirect function fi: {i64 rc,
+/// ptr drop, ptr share, captures...} (envLL).
+fn (var g: Gen) env_ll(fi: Int) -> Str {
+  var parts = ["i64", "ptr", "ptr"]
+  for c in g.m.funcs[fi].captures {
+    parts.push(g.ll(c))
+  }
+  "{ ${parts.join(", ")} }"
+}
+
+/// The function that releases the captures of an environment of fi and
+/// frees it (envDropFn).
+fn (var g: Gen) env_drop_fn(fi: Int) -> Str {
+  let name = "@${"xo.envdrop.${g.m.funcs[fi].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  var b: List[Str] = []
+  let el = g.env_ll(fi)
+  b.push("define internal void ${name}(ptr %e) #1 {\n")
+  for (i, c) in g.m.funcs[fi].captures.indexed() {
+    if !g.heap(c) {
+      continue
+    }
+    b.push("  %p${i} = getelementptr ${el}, ptr %e, i32 0, i32 ${i + ENV_FIELDS}\n")
+    b.push("  %c${i} = load ${g.ll(c)}, ptr %p${i}\n")
+    let df = g.rc_fn("drop", c)
+    b.push("  call void ${df}(${g.ll(c)} %c${i})\n")
+  }
+  b.push("  call void @xo_rc_free(ptr %e)\n  ret void\n}\n\n")
+  g.helpers.push(b.join(""))
+  name
+}
+
+/// The function that marks the captures of an environment of fi shared
+/// (envShareFn; the environment itself was just marked).
+fn (var g: Gen) env_share_fn(fi: Int) -> Str {
+  let name = "@${"xo.envshare.${g.m.funcs[fi].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  var b: List[Str] = []
+  let el = g.env_ll(fi)
+  b.push("define internal void ${name}(ptr %e) #1 {\n")
+  for (i, c) in g.m.funcs[fi].captures.indexed() {
+    if !g.heap(c) {
+      continue
+    }
+    b.push("  %p${i} = getelementptr ${el}, ptr %e, i32 0, i32 ${i + ENV_FIELDS}\n")
+    b.push("  %c${i} = load ${g.ll(c)}, ptr %p${i}\n")
+    let sf = g.rc_fn("share", c)
+    b.push("  call void ${sf}(${g.ll(c)} %c${i})\n")
+  }
+  b.push("  ret void\n}\n\n")
+  g.helpers.push(b.join(""))
+  name
+}
+
+/// The function that marks the contents of a box of type t shared
+/// (boxShareFn; the box itself was just marked).
+fn (var g: Gen) box_share_fn(t: Int) -> Str {
+  let name = "@${"xo.boxshare.${g.m.types[t].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let et = g.m.types[t].elems[0]
+  var b: List[Str] = []
+  b.push("define internal void ${name}(ptr %p) #1 {\n")
+  b.push("  %vp = getelementptr ${g.box_ll(t)}, ptr %p, i32 0, i32 1\n")
+  b.push("  %v = load ${g.ll(et)}, ptr %vp\n")
+  let sf = g.rc_fn("share", et)
+  b.push("  call void ${sf}(${g.ll(et)} %v)\n")
+  b.push("  ret void\n}\n\n")
+  g.helpers.push(b.join(""))
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Equality
+
+/// The text of an equality helper being written: the current block's
+/// lines and the temporaries (eqFn's w, tmp, def, emit).
+struct E {
+  w: List[Str] = []
+  n: Int = 0
+}
+
+fn (var e: E) tmp() -> Str {
+  e.n += 1
+  "%t${e.n}"
+}
+
+fn (var e: E) emit(s: Str) {
+  e.w.push("  ${s}\n")
+}
+
+fn (var e: E) def(s: Str) -> Str {
+  let r = e.tmp()
+  e.emit("${r} = ${s}")
+  r
+}
+
+/// The comparison of x and y of type ft in an equality helper (eqFn's
+/// eq).
+fn (var g: Gen) eq_of(var e: E, ft: Int, x: Str, y: Str) -> Str {
+  match g.kind(ft) {
+    Unit | Cap => return "true"
+    Int => return e.def("icmp eq i64 ${x}, ${y}")
+    Bool => return e.def("icmp eq i1 ${x}, ${y}")
+    Float => return e.def("fcmp oeq double ${x}, ${y}")
+    _ => {}
+  }
+  let f = g.eq_fn(ft)
+  let l1 = g.ll(ft)
+  let l2 = g.ll(ft)
+  e.def("call i1 ${f}(${l1} ${x}, ${l2} ${y})")
+}
+
+/// The helper that compares two values of type t structurally (`==` on
+/// strings, structs, tuples, enums, and lists), written at its first use
+/// (eqFn).
+fn (var g: Gen) eq_fn(t: Int) -> Str {
+  let name = "@${"xo.eq.${g.m.types[t].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  var e = E{}
+  let lt = g.ll(t)
+  var allocas = ""
+  let k = g.kind(t)
+  match k {
+    Box => {
+      // the same cell, or equal contents; a cell holding a Float is
+      // always compared (NaN is not equal to itself, decisions/0053)
+      let et = g.m.types[t].elems[0]
+      if g.has_float(et) {
+        e.emit("br label %cmp")
+      } else {
+        let same = e.def("icmp eq ptr %a, %b")
+        e.emit("br i1 ${same}, label %yes, label %cmp")
+      }
+      e.w.push("cmp:\n")
+      let bl1 = g.box_ll(t)
+      let pa = e.def("getelementptr ${bl1}, ptr %a, i32 0, i32 1")
+      let bl2 = g.box_ll(t)
+      let pb = e.def("getelementptr ${bl2}, ptr %b, i32 0, i32 1")
+      let x = e.def("load ${g.ll(et)}, ptr ${pa}")
+      let y = e.def("load ${g.ll(et)}, ptr ${pb}")
+      let r = g.eq_of(e, et, x, y)
+      e.emit("ret i1 ${r}")
+      e.w.push("yes:\n  ret i1 true\n")
+    }
+    Str => {
+      let oa = e.def("extractvalue %xo.str %a, 0")
+      let da = e.def("getelementptr i8, ptr ${oa}, i64 16")
+      let na = e.def("extractvalue %xo.str %a, 1")
+      let ob = e.def("extractvalue %xo.str %b, 0")
+      let db = e.def("getelementptr i8, ptr ${ob}, i64 16")
+      let nb = e.def("extractvalue %xo.str %b, 1")
+      let r = e.def("call i32 @xo_str_eq(ptr ${da}, i64 ${na}, ptr ${db}, i64 ${nb})")
+      let c = e.def("icmp ne i32 ${r}, 0")
+      e.emit("ret i1 ${c}")
+    }
+    Struct | Tuple => {
+      var fts: List[Int] = []
+      if k == ssa.Kind.Struct {
+        for f in g.m.types[t].fields {
+          fts.push(f.ty)
+        }
+      } else {
+        fts = g.m.types[t].elems
+      }
+      var acc = "true"
+      for (i, ft) in fts.indexed() {
+        if g.is_void(ft) {
+          continue
+        }
+        let x = e.def("extractvalue ${lt} %a, ${i}")
+        let y = e.def("extractvalue ${lt} %b, ${i}")
+        let r = g.eq_of(e, ft, x, y)
+        acc = e.def("and i1 ${acc}, ${r}")
+      }
+      e.emit("ret i1 ${acc}")
+    }
+    Enum => {
+      let ta = e.def("extractvalue ${lt} %a, 0")
+      let tb = e.def("extractvalue ${lt} %b, 0")
+      let same = e.def("icmp eq i64 ${ta}, ${tb}")
+      e.emit("br i1 ${same}, label %tags, label %no")
+      e.w.push("tags:\n")
+      let pa = e.tmp()
+      let pb = e.tmp()
+      allocas = "  ${pa} = alloca ${lt}\n  ${pb} = alloca ${lt}\n"
+      e.emit("store ${lt} %a, ptr ${pa}")
+      e.emit("store ${lt} %b, ptr ${pb}")
+      let head = e.w
+      e.w = []
+      var cases: List[Str] = []
+      let nv = g.m.types[t].variants.len()
+      for vi in 0..nv {
+        let fields = g.m.types[t].variants[vi].fields
+        if fields.is_empty() {
+          continue
+        }
+        cases.push("i64 ${vi}, label %v${vi}")
+        e.w.push("v${vi}:\n")
+        let vl = g.variant_ll(t, vi)
+        let pay_a = e.def("getelementptr ${lt}, ptr ${pa}, i32 0, i32 1")
+        let pay_b = e.def("getelementptr ${lt}, ptr ${pb}, i32 0, i32 1")
+        var acc = "true"
+        for (fi, f) in fields.indexed() {
+          if g.is_void(f.ty) {
+            continue
+          }
+          let fa = e.def("getelementptr ${vl}, ptr ${pay_a}, i32 0, i32 ${fi}")
+          let fb = e.def("getelementptr ${vl}, ptr ${pay_b}, i32 0, i32 ${fi}")
+          let x = e.def("load ${g.ll(f.ty)}, ptr ${fa}")
+          let y = e.def("load ${g.ll(f.ty)}, ptr ${fb}")
+          let r = g.eq_of(e, f.ty, x, y)
+          acc = e.def("and i1 ${acc}, ${r}")
+        }
+        e.emit("ret i1 ${acc}")
+      }
+      let arms = e.w
+      e.w = head
+      e.emit("switch i64 ${ta}, label %yes [ ${cases.join(" ")} ]")
+      e.w.push(arms.join(""))
+      e.w.push("yes:\n  ret i1 true\nno:\n  ret i1 false\n")
+    }
+    List => {
+      let et = g.m.types[t].elems[0]
+      let p0 = e.def("getelementptr %xo.rlist, ptr %a, i32 0, i32 1")
+      let l0 = e.def("load i64, ptr ${p0}${TBAA_HDR}")
+      let p1 = e.def("getelementptr %xo.rlist, ptr %b, i32 0, i32 1")
+      let l1 = e.def("load i64, ptr ${p1}${TBAA_HDR}")
+      let same = e.def("icmp eq i64 ${l0}, ${l1}")
+      e.emit("br i1 ${same}, label %loop, label %no")
+      e.w.push("loop:\n")
+      e.emit("%i = phi i64 [ 0, %entry ], [ %i1, %next ]")
+      let done = e.def("icmp eq i64 %i, ${l0}")
+      e.emit("br i1 ${done}, label %yes, label %body")
+      e.w.push("body:\n")
+      var r = "true"
+      if !g.is_void(et) {
+        let da = e.def("getelementptr %xo.rlist, ptr %a, i64 1")
+        let db = e.def("getelementptr %xo.rlist, ptr %b, i64 1")
+        let xa = e.def("getelementptr ${g.ll(et)}, ptr ${da}, i64 %i")
+        let xb = e.def("getelementptr ${g.ll(et)}, ptr ${db}, i64 %i")
+        let x = e.def("load ${g.ll(et)}, ptr ${xa}${TBAA_ELEM}")
+        let y = e.def("load ${g.ll(et)}, ptr ${xb}${TBAA_ELEM}")
+        r = g.eq_of(e, et, x, y)
+      }
+      e.emit("br i1 ${r}, label %next, label %no")
+      e.w.push("next:\n")
+      e.emit("%i1 = add i64 %i, 1")
+      e.emit("br label %loop")
+      e.w.push("yes:\n  ret i1 true\nno:\n  ret i1 false\n")
+    }
+    _ => g.fail("the SSA lowering does not compare `${g.m.types[t].name}`")
+  }
+  g.helpers.push("define internal i1 ${name}(${lt} %a, ${lt} %b) #1 {\nentry:\n${allocas}${e.w.join("")}}\n\n")
+  name
+}

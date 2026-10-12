@@ -2,8 +2,9 @@
 
 Status: Accepted, implemented on the Go backend and MemFs (2026-10-11).
 `Env.config_dir` and `cache_dir` build natively too (native prelude,
-golden `env_dirs`); native builds report the `Fs` methods as XO1201
-(planned). Spec: std.md 3.1, 3.5, 8.3.
+golden `env_dirs`); the `Fs` methods build natively on the real
+filesystem by decision 0172 (a native test binary's MemFs still reports
+them as XO1201). Spec: std.md 3.1, 3.5, 8.3.
 
 ## Context
 

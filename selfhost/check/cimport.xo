@@ -20,7 +20,7 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
     c.note(d, "check and build with `--no-gc` (a native backend: arm64 or LLVM); the Go backend reaches Go packages with `use go` (decision 0116)")
   }
   var eff_names: List[Str] = []
-  let has_uses = u.effects != None
+  var has_uses = u.effects != None
   if let Some(es) = u.effects {
     for e in es {
       var n = text(e.name.name)
@@ -35,10 +35,25 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
       eff_names.push(n)
     }
   }
+  // a dependency's C code counts with the effects the consuming module
+  // vouches for, never with its own claim (decision 0156)
+  let claim: List[Str]? = if has_uses { Some(eff_names) } else { None }
+  let (vouch, is_dep) = c.escape_hatch(m, f, u, "c", header, claim)
+  if is_dep {
+    // unvouched: the worst case, ffi
+    has_uses = false
+    eff_names = []
+    if let Some(v) = vouch {
+      if let Some(cl) = v.effects {
+        has_uses = true
+        eff_names = cl.effects
+      }
+    }
+  }
   let mdir = c.mods[m].dir
   var root = mdir
   if let Some(r) = c.find_mod_root(mdir) {
-    root = r.dir
+    root = c.abs(c.go_bind_root(r.dir))
   }
   // the binding's key and prefix (cbind locate)
   var local = join(mdir, header)

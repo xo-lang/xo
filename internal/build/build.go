@@ -24,6 +24,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/gotool"
 	"github.com/xo-lang/xo/std"
 )
 
@@ -108,6 +109,14 @@ type Options struct {
 	// update takes the atomic path (ssa.InsertShareProbes, decision
 	// 0058).
 	ShareProbes bool
+	// LLVMSplit (LLVM backend) divides the IR into modules compiled in
+	// parallel (decision 0168); nil reads XO_LLVM_SPLIT and its
+	// companions (LLVMSplitConfig).
+	LLVMSplit *SplitConfig
+	// LLVMIR (LLVM backend; tests) is the IR to compile in place of the
+	// one internal/llvm generates (llvm.Options.IR): the self hosted
+	// emitter's output, decision 0166.
+	LLVMIR []byte
 	// Hybrid (`--hybrid`, decision 0084, Go backend programs) compiles
 	// the hot leaf functions of the main module to Go assembler with the
 	// arm64 backend (hybrid.go); HybridAll takes every eligible function
@@ -124,6 +133,9 @@ type Options struct {
 	TZData string
 	// tags are the program's Go build tags (gen.Program.Tags).
 	tags []string
+	// goLine is the generated go.mod's `go` line (gotool.GoLine, decision
+	// 0176); empty means gotool.TestedGo.
+	goLine string
 	// Release (`xo build --release`, core 8) is a release build: the
 	// contract clauses marked `requires(debug)` and `ensures(debug)` are
 	// compiled out. It applies to Build mode only; tests are debug builds.
@@ -327,11 +339,24 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		}
 	}
 	native := opts.Backend == BackendLLVM || opts.Backend == BackendArm64
+	// the Go backend's go command must be at least gotool.MinGo (XO1502,
+	// decision 0176); checked before the check so a binding failure of an
+	// old go command comes with the reason
+	var tooOld error
+	if opts.Backend == "" || opts.Backend == BackendGo {
+		tooOld = gotool.Check()
+	}
 	res, ok, err := checkOpts(dirs, opts.Holes, native)
 	if err != nil {
 		return nil, err
 	}
 	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}}
+	if tooOld != nil {
+		out.Diagnostics = append(out.Diagnostics, goVersionDiag(tooOld))
+		diag.Sort(out.Diagnostics)
+		out.Failed = true
+		return out, nil
+	}
 	if !ok {
 		out.Failed = true
 		return out, nil
@@ -364,6 +389,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("unknown backend %q (want go, llvm, or arm64)", opts.Backend)
 	}
+	opts.goLine = gotool.GoLine()
 	prog, hyb, err := generate(dirs, res, out, &opts)
 	if err != nil {
 		return nil, err
@@ -446,7 +472,7 @@ func generate(dirs []string, res *check.Result, out *Result, opts *Options) (*ge
 	if opts.Hybrid && opts.Mode == gen.Build {
 		hyb, out.Hybrid = hybridAsm(dirs, root, *opts)
 	}
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs, GoLine: opts.goLine})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -464,6 +490,9 @@ func generate(dirs []string, res *check.Result, out *Result, opts *Options) (*ge
 	}
 	return prog, hyb, nil
 }
+
+// LineRoot is lineRoot for `xo gendump` (decision 0167).
+func LineRoot(dirs []string) string { return lineRoot(dirs) }
 
 // lineRoot is the directory //line paths are relative to: the xo.mod root
 // of the first directory, or the directory itself.
@@ -762,12 +791,13 @@ func goBuildRun(dir string, t Target, opts Options, args []string) error {
 func GoDWARF() bool { return os.Getenv("XO_GO_DWARF") == "1" }
 
 // goTool finds the go command: $XO_GO, then PATH.
-func goTool() string {
-	if g := os.Getenv("XO_GO"); g != "" {
-		return g
+func goTool() string { return gotool.Path() }
+
+// goVersionDiag is XO1502 for a go command older than gotool.MinGo.
+func goVersionDiag(err error) diag.Diagnostic {
+	code := diag.GoTooOld
+	if _, ok := err.(*gotool.NotFoundError); ok {
+		code = diag.GoNotFound
 	}
-	if p, err := exec.LookPath("go"); err == nil {
-		return p
-	}
-	return "go"
+	return diag.Diagnostic{Code: string(code), Severity: diag.Error, Message: err.Error()}
 }

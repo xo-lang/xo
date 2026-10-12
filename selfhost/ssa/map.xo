@@ -666,6 +666,9 @@ fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int 
   }
   let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
   let init = b.value_as(args[1] ?? fault("arg"), vt)
+  // the store happens only when f succeeds: a list element on the way
+  // stays where it is (decision 0169)
+  p.keep = true
   let mp = b.place_get(p)
   let idx = b.map_index(t, mp, k)
   let cur = b.local()
@@ -763,7 +766,7 @@ fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> In
   // a fault in it hands back the value it was given, like cancellation
   // (the caller goes on unwinding, decision 0085)
   b.m.funcs[fi].catches = true
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true, polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 

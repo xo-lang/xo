@@ -230,6 +230,37 @@ func TestFixEditionAlias(t *testing.T) {
 	}
 }
 
+// TestFixWorkEditionAlias checks that xo fix rewrites `xo 2026` in the
+// xo.work that applies to the module to `xo preview` (XO1315), once.
+func TestFixWorkEditionAlias(t *testing.T) {
+	t.Setenv("XO_WORK", "")
+	ws := writeModule(t, map[string]string{
+		"xo.work":     "// the workspace\nxo   2026 // old name\nuse ./a\n",
+		"a/xo.mod":    "module x.com/a\nedition preview\n",
+		"a/main.xo":   "fn main() {\n}\n",
+		"a/pkg/p.xo":  "pub fn f() {\n}\n",
+		"b/README.md": "not a module\n",
+	})
+	res, err := Run([]string{filepath.Join(ws, "a")}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(ws, "xo.work"))
+	if want := "// the workspace\nxo   preview // old name\nuse ./a\n"; string(b) != want {
+		t.Errorf("xo.work = %q, want %q", b, want)
+	}
+	if len(res.Changes) != 1 || res.Changes[0].Rule != "XO1315" || res.Changes[0].Line != 2 {
+		t.Errorf("changes %+v", res.Changes)
+	}
+	again, err := Run([]string{filepath.Join(ws, "a")}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Changes) != 0 {
+		t.Errorf("second run changes %+v", again.Changes)
+	}
+}
+
 func TestOverlaps(t *testing.T) {
 	cases := []struct {
 		a1, a2, b1, b2 int

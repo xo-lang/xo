@@ -33,6 +33,7 @@
 typedef struct {
 	int64_t level;
 	char *msg;
+	char *module; // the dependency that wrote it (decision 0173), "" for the main module
 	int nf;
 	char **keys, **vals;
 } tw_rec;
@@ -682,6 +683,22 @@ __attribute__((unused)) static xo_rlist *tw_env_get(const char *p, int64_t n) {
 	return l;
 }
 
+// tw_env_vars is FakeEnv.vars(): NAME=VALUE in the order set.
+__attribute__((unused)) static xo_rlist *tw_env_vars(void) {
+	lk(&tws.mu);
+	xo_rlist *l = n_str_list_new(tws.en);
+	for (int i = 0; i < tws.en; i++) {
+		nbuf b = {0};
+		nbuf_str(&b, tws.ekeys[i]);
+		nbuf_byte(&b, '=');
+		nbuf_str(&b, tws.evals[i]);
+		l = n_str_list_add(l, b.p, b.n);
+		free(b.p);
+	}
+	unlk(&tws.mu);
+	return l;
+}
+
 // xo_test_env_set is FakeEnv.set(name, value).
 void xo_test_env_set(const char *k, int64_t kn, const char *v, int64_t vn) {
 	lk(&tws.mu);
@@ -748,8 +765,8 @@ xo_rlist *xo_test_exit_code(void) {
 
 // xo_test_log keeps a record and echoes its text line to the harness (an
 // empty line is not echoed: a configured log output got the record).
-void xo_test_log(int64_t level, const char *m, int64_t mn, xo_rlist *keys, xo_rlist *vals, const char *line, int64_t ln) {
-	tw_rec r = {.level = level, .msg = tw_strdup(m, mn), .nf = (int)keys->len};
+void xo_test_log(int64_t level, const char *m, int64_t mn, const char *from, int64_t fn, xo_rlist *keys, xo_rlist *vals, const char *line, int64_t ln) {
+	tw_rec r = {.level = level, .msg = tw_strdup(m, mn), .module = tw_strdup(from, fn), .nf = (int)keys->len};
 	r.keys = calloc((size_t)r.nf + 1, sizeof(char *));
 	r.vals = calloc((size_t)r.nf + 1, sizeof(char *));
 	if (!r.keys || !r.vals) {
@@ -803,6 +820,12 @@ int64_t xo_test_log_nfields(int64_t i) {
 xo_rstr *xo_test_log_key(int64_t i, int64_t j, int64_t *len) {
 	tw_rec *r = tw_rec_at(i);
 	const char *s = r && j >= 0 && j < r->nf ? r->keys[j] : "";
+	return nstr(s, (int64_t)strlen(s), len);
+}
+
+xo_rstr *xo_test_log_module(int64_t i, int64_t *len) {
+	tw_rec *r = tw_rec_at(i);
+	const char *s = r ? r->module : "";
 	return nstr(s, (int64_t)strlen(s), len);
 }
 

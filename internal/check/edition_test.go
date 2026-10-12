@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/token"
 )
 
@@ -124,9 +125,9 @@ func TestResolveEdition(t *testing.T) {
 // it applies to modules on that edition only, which is how a later edition
 // changes checker behavior without changing the meaning of older code.
 func TestEditionRuleHook(t *testing.T) {
-	oldEds, oldRules := Editions, editionRules
-	defer func() { Editions, editionRules = oldEds, oldRules }()
-	Editions = append(append([]string{}, Editions...), "next")
+	oldEds, oldRules := mod.Editions, editionRules
+	defer func() { mod.Editions, editionRules = oldEds, oldRules }()
+	mod.Editions = append(append([]string{}, mod.Editions...), "next")
 	editionRules = append(append([]editionRule{}, editionRules...), editionRule{
 		Since: "next",
 		Name:  "test-rule",

@@ -10,9 +10,9 @@ import (
 
 // TestAttenuationFakes checks `only` on the test fakes (decision 0156,
 // std.md 8): an attenuated FakeNet, FakeEnv, and FakeProc deny what is
-// not listed and pass the rest to the fake; native test builds report
-// `only` as XO1201 (planned). internal/gen's cap_attenuation golden
-// covers the real capabilities.
+// not listed and pass the rest to the fake, on the Go backend and in
+// native test builds (decision 0175). internal/gen's cap_attenuation
+// golden and internal/llvm's net_only cover the real capabilities.
 func TestAttenuationFakes(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, ".build"))
@@ -50,8 +50,9 @@ test "an attenuated fake env and proc" {
 	if !strings.Contains(r.out, "2 passed") {
 		t.Errorf("xo test: %s %s", r.out, r.err)
 	}
-	r = xo(t, "test", "--no-gc", dir).want(1)
-	if out := r.out + r.err; !strings.Contains(out, "XO1201") || !strings.Contains(out, "FakeNet.only") {
-		t.Errorf("native test build of only: %s %s", r.out, r.err)
+	// natively too (decision 0175)
+	r = xo(t, "test", "--no-gc", dir).want(0)
+	if !strings.Contains(r.out, "2 passed") {
+		t.Errorf("xo test --no-gc: %s %s", r.out, r.err)
 	}
 }

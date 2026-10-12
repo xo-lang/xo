@@ -1,0 +1,733 @@
+// Terminating statements of generated Go (internal/gen terminate.go): the
+// Go generator parses the Go text of a function body with go/parser to
+// tell whether it ends in a terminating statement. This is a parser of
+// the statement structure of Go (go/scanner's semicolon insertion,
+// blocks, if, for, switch, select, labels, jumps, panic calls), enough
+// for the generated code; expressions and function literals are skipped
+// as balanced tokens.
+
+/// A Go token: an identifier or keyword (0), a literal (1), an operator
+/// (2), or a semicolon (3).
+struct GTok {
+  k: Int
+  s: Str
+  /// the byte offsets of the token in the source
+  from: Int = 0
+  to: Int = 0
+}
+
+const GT_IDENT = 0
+const GT_LIT = 1
+const GT_OP = 2
+const GT_SEMI = 3
+
+/// The tokens of Go source, with semicolons inserted (go/scanner), or
+/// None when it does not scan.
+fn go_lex(src: Bytes) -> List[GTok]? {
+  var out: List[GTok] = []
+  var i = 0
+  let n = src.len()
+  var semi = false
+  while i < n {
+    let c = src[i]
+    if c == '\n' {
+      if semi {
+        out.push(GTok{k: GT_SEMI, s: "\n", from: i, to: i})
+        semi = false
+      }
+      i += 1
+      continue
+    }
+    if c == ' ' || c == '\t' || c == '\r' {
+      i += 1
+      continue
+    }
+    if c == '/' && i + 1 < n && src[i + 1] == '/' {
+      while i < n && src[i] != '\n' {
+        i += 1
+      }
+      continue
+    }
+    if c == '/' && i + 1 < n && src[i + 1] == '*' {
+      var j = i + 2
+      var nl = false
+      while j + 1 < n && !(src[j] == '*' && src[j + 1] == '/') {
+        if src[j] == '\n' {
+          nl = true
+        }
+        j += 1
+      }
+      if j + 1 >= n {
+        return None
+      }
+      i = j + 2
+      if nl && semi {
+        out.push(GTok{k: GT_SEMI, s: "\n", from: i, to: i})
+        semi = false
+      }
+      continue
+    }
+    if c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80 {
+      var j = i
+      while j < n && (src[j] == '_' || (src[j] >= 'a' && src[j] <= 'z') || (src[j] >= 'A' && src[j] <= 'Z') || (src[j] >= '0' && src[j] <= '9') || src[j] >= 0x80) {
+        j += 1
+      }
+      let w = src[i..j].to_str() ?? ""
+      out.push(GTok{k: GT_IDENT, s: w, from: i, to: j})
+      semi = !(w is "if" | "else" | "for" | "switch" | "select" | "case" | "default" | "func" | "go" | "defer" | "var" | "const" | "type" | "package" | "import" | "range" | "struct" | "interface" | "map" | "chan" | "goto")
+      i = j
+      continue
+    }
+    if (c >= '0' && c <= '9') || (c == '.' && i + 1 < n && src[i + 1] >= '0' && src[i + 1] <= '9') {
+      var j = i
+      while j < n {
+        let d = src[j]
+        if (d == 'e' || d == 'E' || d == 'p' || d == 'P') && j + 1 < n && (src[j + 1] == '+' || src[j + 1] == '-') {
+          j += 2
+          continue
+        }
+        if d == '_' || d == '.' || (d >= '0' && d <= '9') || (d >= 'a' && d <= 'z') || (d >= 'A' && d <= 'Z') {
+          j += 1
+          continue
+        }
+        break
+      }
+      out.push(GTok{k: GT_LIT, s: src[i..j].to_str() ?? "", from: i, to: j})
+      semi = true
+      i = j
+      continue
+    }
+    if c == '"' || c == '\'' {
+      var j = i + 1
+      while j < n && src[j] != c {
+        if src[j] == '\\' {
+          j += 1
+        }
+        if j < n && src[j] == '\n' {
+          return None
+        }
+        j += 1
+      }
+      if j >= n {
+        return None
+      }
+      out.push(GTok{k: GT_LIT, s: "\"", from: i, to: j + 1})
+      semi = true
+      i = j + 1
+      continue
+    }
+    if c == '`' {
+      var j = i + 1
+      while j < n && src[j] != '`' {
+        j += 1
+      }
+      if j >= n {
+        return None
+      }
+      out.push(GTok{k: GT_LIT, s: "`", from: i, to: j + 1})
+      semi = true
+      i = j + 1
+      continue
+    }
+    // operators: the ones the structure needs as their own tokens
+    var op = ""
+    if i + 2 < n {
+      let three = src[i..i + 3].to_str() ?? ""
+      if three is "<<=" | ">>=" | "&^=" | "..." {
+        op = three
+      }
+    }
+    if op.is_empty() && i + 1 < n {
+      let two = src[i..i + 2].to_str() ?? ""
+      if two is "++" | "--" | ":=" | "<-" | "&&" | "||" | "==" | "!=" | "<=" | ">=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<" | ">>" | "&^" {
+        op = two
+      }
+    }
+    if op.is_empty() {
+      op = src[i..i + 1].to_str() ?? "?"
+    }
+    if op == ";" {
+      out.push(GTok{k: GT_SEMI, s: ";", from: i, to: i + 1})
+    } else {
+      out.push(GTok{k: GT_OP, s: op, from: i, to: i + op.len()})
+    }
+    semi = op is "++" | "--" | ")" | "]" | "}"
+    i += op.len()
+  }
+  if semi {
+    out.push(GTok{k: GT_SEMI, s: "\n", from: n, to: n})
+  }
+  Some(out)
+}
+
+/// A Go statement as the terminating rules see it.
+struct GS {
+  /// what it is: GS_* below
+  kind: Int
+  /// a jump: break, continue, goto, fallthrough
+  tok: Str = ""
+  /// a jump's label, or a labeled statement's
+  label: Str = ""
+  /// a block's statements, if's then, a loop's body, a labeled
+  /// statement's statement (one)
+  body: List[GS] = []
+  /// if: the else (one statement: an if or a block)
+  els: List[GS] = []
+  /// for: no condition
+  cond_nil: Bool = false
+  clauses: List[GClause] = []
+}
+
+/// A switch or select clause.
+struct GClause {
+  /// default (a case clause with no list)
+  dflt: Bool = false
+  /// a select clause
+  comm: Bool = false
+  body: List[GS] = []
+}
+
+const GS_OTHER = 0
+const GS_RETURN = 1
+const GS_BRANCH = 2
+const GS_PANIC = 3
+const GS_BLOCK = 4
+const GS_IF = 5
+const GS_LABELED = 6
+const GS_FOR = 7
+const GS_RANGE = 8
+const GS_SWITCH = 9
+const GS_SELECT = 10
+const GS_EMPTY = 11
+
+/// The parser of the statement structure.
+struct GP {
+  toks: List[GTok]
+  i: Int = 0
+  err: Bool = false
+}
+
+fn (p: GP) tok() -> GTok {
+  if p.i < p.toks.len() {
+    return p.toks[p.i]
+  }
+  GTok{k: GT_SEMI, s: "EOF"}
+}
+
+fn (p: GP) at_op(s: Str) -> Bool {
+  let t = p.tok()
+  t.k == GT_OP && t.s == s
+}
+
+fn (p: GP) at_kw(s: Str) -> Bool {
+  let t = p.tok()
+  t.k == GT_IDENT && t.s == s
+}
+
+fn (p: GP) at_eof() -> Bool {
+  p.i >= p.toks.len()
+}
+
+fn (var p: GP) expect_op(s: Str) {
+  if !p.at_op(s) {
+    p.err = true
+    return
+  }
+  p.i += 1
+}
+
+/// go/parser expectSemi: a semicolon, or nothing before `)` or `}`.
+fn (var p: GP) expect_semi() {
+  if p.at_op(")") || p.at_op("}") {
+    return
+  }
+  if p.tok().k == GT_SEMI {
+    p.i += 1
+    return
+  }
+  p.err = true
+}
+
+/// The statements up to `}`, `case`, or `default` (parseStmtList).
+fn (var p: GP) stmt_list() -> List[GS] {
+  var out: List[GS] = []
+  while !p.err && !p.at_eof() && !p.at_op("}") && !p.at_kw("case") && !p.at_kw("default") {
+    out.push(p.stmt())
+  }
+  out
+}
+
+/// `{ stmts }` (parseBlockStmt).
+fn (var p: GP) block() -> List[GS] {
+  p.expect_op("{")
+  let l = p.stmt_list()
+  p.expect_op("}")
+  l
+}
+
+fn (var p: GP) stmt() -> GS {
+  let t = p.tok()
+  if t.k == GT_SEMI {
+    p.i += 1
+    return GS{kind: GS_EMPTY}
+  }
+  if t.k == GT_OP && t.s == "{" {
+    let b = p.block()
+    p.expect_semi()
+    return GS{kind: GS_BLOCK, body: b}
+  }
+  if t.k == GT_IDENT {
+    let w = t.s
+    if w == "return" {
+      p.i += 1
+      p.skip_simple()
+      p.expect_semi()
+      return GS{kind: GS_RETURN}
+    }
+    if w is "break" | "continue" | "goto" | "fallthrough" {
+      p.i += 1
+      var label = ""
+      if w != "fallthrough" && p.tok().k == GT_IDENT {
+        label = p.tok().s
+        p.i += 1
+      }
+      p.expect_semi()
+      return GS{kind: GS_BRANCH, tok: w, label: label}
+    }
+    if w == "if" {
+      return p.if_stmt()
+    }
+    if w == "for" {
+      return p.for_stmt()
+    }
+    if w == "switch" {
+      p.i += 1
+      p.skip_header()
+      let cl = p.clauses(false)
+      p.expect_semi()
+      return GS{kind: GS_SWITCH, clauses: cl}
+    }
+    if w == "select" {
+      p.i += 1
+      let cl = p.clauses(true)
+      p.expect_semi()
+      return GS{kind: GS_SELECT, clauses: cl}
+    }
+    // a label
+    if p.i + 1 < p.toks.len() && p.toks[p.i + 1].k == GT_OP && p.toks[p.i + 1].s == ":" && !(w is "case" | "default") {
+      p.i += 2
+      let s = p.stmt()
+      return GS{kind: GS_LABELED, label: w, body: [s]}
+    }
+    if w == "panic" && p.i + 1 < p.toks.len() && p.toks[p.i + 1].k == GT_OP && p.toks[p.i + 1].s == "(" {
+      let start = p.i
+      p.skip_simple()
+      // a call of panic as the whole statement: `panic(...)` with the
+      // closing parenthesis last
+      let whole = p.matching_close(start + 1) == p.i - 1
+      p.expect_semi()
+      return GS{kind: if whole { GS_PANIC } else { GS_OTHER }}
+    }
+  }
+  p.skip_simple()
+  p.expect_semi()
+  GS{kind: GS_OTHER}
+}
+
+/// The index of the token that closes the bracket at index open.
+fn (p: GP) matching_close(open: Int) -> Int {
+  var depth = 0
+  var j = open
+  while j < p.toks.len() {
+    let t = p.toks[j]
+    if t.k == GT_OP {
+      if t.s is "(" | "[" | "{" {
+        depth += 1
+      } else if t.s is ")" | "]" | "}" {
+        depth -= 1
+        if depth == 0 {
+          return j
+        }
+      }
+    }
+    j += 1
+  }
+  -1
+}
+
+/// Skips a simple statement or an expression list: to a semicolon or a
+/// closing bracket at depth 0.
+fn (var p: GP) skip_simple() {
+  var depth = 0
+  while !p.at_eof() {
+    let t = p.tok()
+    if t.k == GT_SEMI && depth == 0 {
+      return
+    }
+    if t.k == GT_OP {
+      if t.s is "(" | "[" | "{" {
+        depth += 1
+      } else if t.s is ")" | "]" | "}" {
+        if depth == 0 {
+          return
+        }
+        depth -= 1
+      }
+    }
+    p.i += 1
+  }
+}
+
+/// Skips a statement header up to the `{` of its block (function
+/// literals in it skipped whole); returns the tokens of the header.
+fn (var p: GP) skip_header() -> List[GTok] {
+  var out: List[GTok] = []
+  var depth = 0
+  while !p.at_eof() {
+    let t = p.tok()
+    if t.k == GT_OP && t.s == "{" && depth == 0 {
+      return out
+    }
+    if t.k == GT_IDENT && t.s == "func" && depth == 0 {
+      // a function literal: its signature, then its body
+      p.i += 1
+      out.push(t)
+      var d2 = 0
+      while !p.at_eof() {
+        let u = p.tok()
+        if u.k == GT_OP && u.s == "{" && d2 == 0 {
+          break
+        }
+        if u.k == GT_OP && (u.s is "(" | "[") {
+          d2 += 1
+        } else if u.k == GT_OP && (u.s is ")" | "]") {
+          d2 -= 1
+        }
+        p.i += 1
+      }
+      let close = p.matching_close(p.i)
+      if close < 0 {
+        p.err = true
+        return out
+      }
+      p.i = close + 1
+      continue
+    }
+    if t.k == GT_OP {
+      if t.s is "(" | "[" {
+        depth += 1
+      } else if t.s is ")" | "]" {
+        depth -= 1
+      }
+    }
+    out.push(t)
+    p.i += 1
+  }
+  p.err = true
+  out
+}
+
+fn (var p: GP) if_stmt() -> GS {
+  p.i += 1
+  p.skip_header()
+  let then = p.block()
+  if p.at_kw("else") {
+    p.i += 1
+    if p.at_kw("if") {
+      let e = p.if_stmt()
+      return GS{kind: GS_IF, body: then, els: [e]}
+    }
+    if p.at_op("{") {
+      let b = p.block()
+      p.expect_semi()
+      return GS{kind: GS_IF, body: then, els: [GS{kind: GS_BLOCK, body: b}]}
+    }
+    p.err = true
+    return GS{kind: GS_IF, body: then}
+  }
+  p.expect_semi()
+  GS{kind: GS_IF, body: then}
+}
+
+fn (var p: GP) for_stmt() -> GS {
+  p.i += 1
+  let h = p.skip_header()
+  var range = false
+  var semis = 0
+  var middle_empty = true
+  var seen_semi = 0
+  for t in h {
+    if t.k == GT_IDENT && t.s == "range" {
+      range = true
+    }
+  }
+  // the parts of `init; cond; post` at depth 0
+  var depth = 0
+  for t in h {
+    if t.k == GT_OP && (t.s is "(" | "[") {
+      depth += 1
+    } else if t.k == GT_OP && (t.s is ")" | "]") {
+      depth -= 1
+    }
+    if t.k == GT_SEMI && depth == 0 {
+      semis += 1
+      seen_semi += 1
+      continue
+    }
+    if seen_semi == 1 {
+      middle_empty = false
+    }
+  }
+  let body = p.block()
+  p.expect_semi()
+  if range {
+    return GS{kind: GS_RANGE, body: body}
+  }
+  var cond_nil = h.is_empty()
+  if semis == 2 {
+    cond_nil = middle_empty
+  }
+  GS{kind: GS_FOR, body: body, cond_nil: cond_nil}
+}
+
+/// The clauses of a switch or select body.
+fn (var p: GP) clauses(comm: Bool) -> List[GClause] {
+  var out: List[GClause] = []
+  p.expect_op("{")
+  while !p.err && !p.at_eof() && !p.at_op("}") {
+    var dflt = false
+    if p.at_kw("default") {
+      dflt = true
+      p.i += 1
+    } else if p.at_kw("case") {
+      p.i += 1
+      // the case list or communication, to its `:` at depth 0
+      var depth = 0
+      while !p.at_eof() {
+        let t = p.tok()
+        if t.k == GT_OP && t.s == ":" && depth == 0 {
+          break
+        }
+        if t.k == GT_OP {
+          if t.s is "(" | "[" | "{" {
+            depth += 1
+          } else if t.s is ")" | "]" | "}" {
+            depth -= 1
+          }
+        }
+        p.i += 1
+      }
+    } else {
+      p.err = true
+      return out
+    }
+    p.expect_op(":")
+    let body = p.stmt_list()
+    out.push(GClause{dflt: dflt, comm: comm, body: body})
+  }
+  p.expect_op("}")
+  out
+}
+
+/// Whether body, the Go statements of a function body, ends in a
+/// terminating statement (terminates).
+fn terminates(body: Str) -> Bool {
+  ends_in(body, false)
+}
+
+/// Whether control never runs off the end of body (neverFallsThrough).
+fn never_falls_through(body: Str) -> Bool {
+  ends_in(body, true)
+}
+
+fn ends_in(body: Str, jumps: Bool) -> Bool {
+  let src = "package p\nfunc _() {\n" + body + "\n}\n"
+  let toks = match go_lex(src.bytes()) {
+    Some(t) => t
+    None => return false
+  }
+  var p = GP{toks: toks}
+  // package p ; func _ ( ) {
+  if toks.len() < 8 {
+    return false
+  }
+  p.i = 8
+  let l = p.stmt_list()
+  p.expect_op("}")
+  if p.err {
+    return false
+  }
+  p.expect_semi()
+  if p.err || !p.at_eof() {
+    return false
+  }
+  terminating_list(l, jumps)
+}
+
+fn terminating_list(l0: List[GS], jumps: Bool) -> Bool {
+  var n = l0.len()
+  // trailing empty statements do not count
+  while n > 0 && l0[n - 1].kind == GS_EMPTY {
+    n -= 1
+  }
+  n > 0 && terminating(l0[n - 1], "", jumps)
+}
+
+fn terminating(s: GS, label: Str, jumps: Bool) -> Bool {
+  if s.kind == GS_RETURN {
+    return true
+  }
+  if s.kind == GS_BRANCH {
+    return s.tok == "goto" || (jumps && s.tok != "fallthrough")
+  }
+  if s.kind == GS_PANIC {
+    return true
+  }
+  if s.kind == GS_BLOCK {
+    return terminating_list(s.body, jumps)
+  }
+  if s.kind == GS_IF {
+    return !s.els.is_empty() && terminating_list(s.body, jumps) && terminating(s.els[0], "", jumps)
+  }
+  if s.kind == GS_LABELED {
+    return terminating(s.body[0], s.label, jumps)
+  }
+  if s.kind == GS_FOR {
+    return s.cond_nil && !breaks_list(s.body, label, false)
+  }
+  if s.kind == GS_SWITCH || s.kind == GS_SELECT {
+    return clauses_terminate(s.clauses, label, jumps)
+  }
+  false
+}
+
+fn clauses_terminate(cls: List[GClause], label: Str, jumps: Bool) -> Bool {
+  for c in cls {
+    if breaks_list(c.body, label, false) {
+      return false
+    }
+  }
+  var dflt = false
+  for c in cls {
+    dflt = dflt || c.dflt || c.comm
+    let n = c.body.len()
+    if n > 0 {
+      let last = c.body[n - 1]
+      if last.kind == GS_BRANCH && last.tok == "fallthrough" {
+        continue
+      }
+    }
+    if !terminating_list(c.body, jumps) {
+      return false
+    }
+  }
+  dflt
+}
+
+/// Whether the statements hold a break out of the statement whose body
+/// they are (breaks): an unlabeled break outside nested loops, switches,
+/// and selects, or a break naming label.
+fn breaks_list(l: List[GS], label: Str, nested: Bool) -> Bool {
+  for s in l {
+    if breaks_stmt(s, label, nested) {
+      return true
+    }
+  }
+  false
+}
+
+fn breaks_stmt(s: GS, label: Str, nested: Bool) -> Bool {
+  if s.kind == GS_BRANCH {
+    return s.tok == "break" && ((s.label.is_empty() && !nested) || (!s.label.is_empty() && s.label == label))
+  }
+  if s.kind == GS_FOR || s.kind == GS_RANGE {
+    return breaks_list(s.body, label, true)
+  }
+  if s.kind == GS_SWITCH || s.kind == GS_SELECT {
+    for c in s.clauses {
+      if breaks_list(c.body, label, true) {
+        return true
+      }
+    }
+    return false
+  }
+  if s.kind == GS_IF {
+    return breaks_list(s.body, label, nested) || breaks_list(s.els, label, nested)
+  }
+  if s.kind == GS_BLOCK || s.kind == GS_LABELED {
+    return breaks_list(s.body, label, nested)
+  }
+  false
+}
+
+/// strconv.ParseFloat(s, 64) succeeds on s: a decimal or hexadecimal
+/// float or integer, or inf, infinity, nan, with an optional sign.
+fn parse_go_float(s: Str) -> Int? {
+  let bs = s.bytes()
+  var i = 0
+  if i < bs.len() && (bs[i] == '+' || bs[i] == '-') {
+    i += 1
+  }
+  let rest = (bs[i..bs.len()].to_str() ?? "").to_lower()
+  if rest is "inf" | "infinity" | "nan" {
+    return Some(0)
+  }
+  if i >= bs.len() {
+    return None
+  }
+  var hex = false
+  if i + 1 < bs.len() && bs[i] == '0' && (bs[i + 1] == 'x' || bs[i + 1] == 'X') {
+    hex = true
+    i += 2
+  }
+  var digits = 0
+  var dot = false
+  while i < bs.len() {
+    let c = bs[i]
+    let is_d = (c >= '0' && c <= '9') || (hex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+    if is_d {
+      digits += 1
+      i += 1
+      continue
+    }
+    if c == '.' && !dot {
+      dot = true
+      i += 1
+      continue
+    }
+    if c == '_' {
+      i += 1
+      continue
+    }
+    break
+  }
+  if digits == 0 {
+    return None
+  }
+  if i < bs.len() {
+    let c = bs[i]
+    if (!hex && (c == 'e' || c == 'E')) || (hex && (c == 'p' || c == 'P')) {
+      i += 1
+      if i < bs.len() && (bs[i] == '+' || bs[i] == '-') {
+        i += 1
+      }
+      var ed = 0
+      while i < bs.len() && bs[i] >= '0' && bs[i] <= '9' {
+        ed += 1
+        i += 1
+      }
+      if ed == 0 {
+        return None
+      }
+    } else {
+      return None
+    }
+  }
+  if hex && dot {
+    // a hexadecimal mantissa with a point needs an exponent
+  }
+  if i != bs.len() {
+    return None
+  }
+  Some(0)
+}

@@ -1,0 +1,458 @@
+// The C runtime of a link (internal/build rtobj.go and rtpack.go,
+// decision 0157): a release's prebuilt object when a pack matches, else
+// the object compiled once per compiler, flags, SDK, and sources into the
+// runtime object cache, else the source compiled in the link. The keys are
+// the Go driver's, so both drivers share the cache and accept the same
+// packs.
+
+use std/crypto
+
+// ---------------------------------------------------------------------------
+// The runtime object cache (rtobj.go)
+
+/// rtObjDir: $XO_RTOBJ_CACHE ("off": none), else <user cache>/xo/rtobj.
+fn rtobj_dir(os: Os, ctx: Ctx) -> Str {
+  let d = os.env.get("XO_RTOBJ_CACHE") ?? ""
+  if d == "off" {
+    return ""
+  }
+  if d.is_empty() {
+    if ctx.cache.is_empty() {
+      return ""
+    }
+    return "${ctx.cache}/xo/rtobj"
+  }
+  d
+}
+
+/// runtimeIndex: the index in srcs of the runtime (xo_rt.c), or -1 for
+/// flags that could read files a key does not cover (-I, -include, ...)
+/// or a compile only call.
+fn runtime_index(srcs: List[Str], flags: List[Str]) -> Int {
+  for f in flags {
+    if f == "-c" || f == "-S" || f == "-E" || f.starts_with("-I") || f.starts_with("-include") || f.starts_with("-iquote") ||
+      f.starts_with("-isystem") || f.starts_with("-o") {
+      return -1
+    }
+  }
+  for i in 0..srcs.len() {
+    if base_name(srcs[i]) == "xo_rt.c" {
+      return i
+    }
+  }
+  -1
+}
+
+/// The result of runtime_object: the object ("" to compile the source in
+/// the link), and on a failed compile the compiler's output.
+struct RTObj {
+  obj: Str = ""
+  out: Str = ""
+  failed: Bool = false
+}
+
+/// runtimeObject: the object of src (the runtime) compiled with cc,
+/// flags, the SDK root, and the extra compile arguments (TLS), compiled
+/// when the cache has none. The key covers every .c and .h file of src's
+/// directory except the program's zone data.
+fn runtime_object(os: Os, ctx: Ctx, cc: Str, flags: List[Str], root: Str, extra: List[Str], src: Str) -> RTObj {
+  let cache = rtobj_dir(os, ctx)
+  var k = new_key("rtobj")
+  k.str(tool_id(os, ctx.goos, cc, ["--version"]))
+  k.strs(flags)
+  k.str("sysroot ${root}")
+  k.strs(extra)
+  if extra.contains("-DXO_TLS") {
+    match tls_source_hash(os, ctx.xo) {
+      Ok(h) => k.str("tls ${h}")
+      Err(_) => return RTObj{}
+    }
+  }
+  let dir = dir_name(src)
+  let ents = match os.fs.read_dir(dir) {
+    Ok(e) => e
+    Err(_) => return RTObj{}
+  }
+  var names: List[Str] = []
+  for e in ents {
+    let n = e.name
+    // the zone data is a source of its own, not part of the runtime
+    if e.is_dir || !(n.ends_with(".c") || n.ends_with(".h")) || n.starts_with("xo_tzdata.") {
+      continue
+    }
+    names.push(n)
+  }
+  for n in names.sort() {
+    match os.fs.read("${dir}/${n}") {
+      Ok(data) => {
+        k.str(n)
+        k.data(data)
+      }
+      Err(_) => return RTObj{}
+    }
+  }
+  k.str("main ${base_name(src)}")
+  let key = k.sum()
+  let obj = "${cache}/${key[0..2]}/${key}.o"
+  match os.fs.stat(obj) {
+    Ok(Some(fi)) => {
+      if !fi.is_dir {
+        os.fs.set_modified(obj, os.clock.now()).ignore_err("only the trim order")
+        return RTObj{obj: obj}
+      }
+    }
+    _ => {}
+  }
+  match os.fs.create_dir_all(dir_name(obj)) {
+    Ok(_) => {}
+    Err(_) => return RTObj{}
+  }
+  let tmp = "${obj}.tmp-xo1-${os.rand.bytes(6).to_hex()}"
+  var args = flags + ["-fexceptions", "-funwind-tables", "-c", "-o", tmp]
+  if !root.is_empty() {
+    args = args + ["-isysroot", root]
+  }
+  args = args + extra + [src]
+  let (out, err) = combined(os, cc, args)
+  if !err.is_empty() {
+    os.fs.remove(tmp).ignore_err("a failed compile")
+    return RTObj{out: out, failed: true}
+  }
+  match os.fs.rename(tmp, obj) {
+    Ok(_) => {}
+    Err(_) => {
+      os.fs.remove(tmp).ignore_err("another process stored it")
+      return RTObj{}
+    }
+  }
+  trim_cache_dir(os, cache, 512 * 1024 * 1024)
+  RTObj{obj: obj}
+}
+
+/// trimCacheDir: once a minute (a stamp file), the least recently used
+/// files are removed once the directory holds more than limit bytes,
+/// down to three quarters of it; leftover temporary files over an hour
+/// old go too.
+fn trim_cache_dir(os: Os, dir: Str, limit: Int) {
+  let stamp = "${dir}/trim-stamp"
+  match os.fs.stat(stamp) {
+    Ok(Some(fi)) => {
+      if os.clock.since(fi.modified) < 1m {
+        return
+      }
+    }
+    _ => {}
+  }
+  os.fs.write(stamp, b"").ignore_err("the stamp only limits trims")
+  let all = match os.fs.walk(dir) {
+    Ok(fs) => fs
+    Err(_) => return
+  }
+  var files: List[FileInfo] = []
+  var total = 0
+  for fi in all {
+    if fi.is_dir || fi.path == stamp || fi.name == "trim-stamp" {
+      continue
+    }
+    if fi.name.contains(".tmp") || fi.name.contains(".copy") {
+      if os.clock.since(fi.modified) > 1h {
+        os.fs.remove(fi.path).ignore_err("another process may own it")
+      }
+      continue
+    }
+    files.push(fi)
+    total += fi.size
+  }
+  if total <= limit {
+    return
+  }
+  for fi in files.sort_by(fn(f) { f.modified.unix_millis() }) {
+    if total <= limit / 4 * 3 {
+      break
+    }
+    match os.fs.remove(fi.path) {
+      Ok(_) => total -= fi.size
+      Err(_) => {}
+    }
+  }
+}
+
+/// mentionsRuntime: compiler output naming a file of the C runtime.
+fn mentions_runtime(out: Str) -> Bool {
+  out.contains("xo_rt.c") || out.contains("xo_std.c")
+}
+
+// ---------------------------------------------------------------------------
+// Prebuilt runtime packs (rtpack.go)
+
+/// rtPackFlags: the compile flags of every object of a pack for goos.
+fn rtpack_flags(goos: Str) -> List[Str] {
+  let f = ["-O2", "-g0", "-fexceptions", "-funwind-tables"]
+  if goos == "darwin" {
+    return f + ["-mmacosx-version-min=11.0"]
+  }
+  if goos == "linux" {
+    return f + ["-fPIC", "-moutline-atomics"]
+  }
+  f
+}
+
+/// A variant of the runtime: XO_TIME, XO_FS, XO_STDIN, XO_PROC, TLS as
+/// the bits 1, 2, 4, 8, 16 of i (RTVariants' order).
+fn variant_defines(i: Int) -> List[Str] {
+  var out: List[Str] = []
+  if i % 2 == 1 {
+    out.push("-DXO_TIME")
+  }
+  if i / 2 % 2 == 1 {
+    out.push("-DXO_FS")
+  }
+  if i / 4 % 2 == 1 {
+    out.push("-DXO_STDIN")
+  }
+  if i / 8 % 2 == 1 {
+    out.push("-DXO_PROC")
+  }
+  out
+}
+
+/// RTVariant.File: rt-time-fs-stdin-proc-tls.o with the parts it has.
+fn variant_file(i: Int) -> Str {
+  var n = "rt"
+  let parts = ["time", "fs", "stdin", "proc", "tls"]
+  var bit = 1
+  for p in parts {
+    if i / bit % 2 == 1 {
+      n = "${n}-${p}"
+    }
+    bit *= 2
+  }
+  "${n}.o"
+}
+
+/// RTPackKey for the target goos/arm64: the pack format, target, flags,
+/// variants, the runtime sources (std/llrt *.c and *.h), and the TLS
+/// library's sources and configuration.
+fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
+  var b = BytesBuilder.new()
+  b.write_str("xo rtpack 1\ntarget ${goos}/arm64\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
+  for i in 0..32 {
+    b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))} ${i >= 16}\n")
+  }
+  var names: List[Str] = []
+  for fi in os.fs.read_dir("${std_dir}/llrt")? {
+    if !fi.is_dir && (fi.name.ends_with(".c") || fi.name.ends_with(".h")) {
+      names.push("llrt/${fi.name}")
+    }
+  }
+  for n in names.sort() {
+    let data = os.fs.read("${std_dir}/${n}")?
+    b.write_str("file ${n} ${data.len()}\n")
+    b.write(data)
+  }
+  let src = tls_source_hash(os, ctx.xo)?
+  b.write_str("tls ${tls_version()} ${src} ${go_q(tls_defines())} ${go_q(tls_include_dirs())} ${tls_file_defines_v()}\n")
+  Ok(crypto.sha256(b.freeze()).to_hex())
+}
+
+/// RTPackRoot: $XO_RTPACK ("off": none), else lib/xo/rtpack beside the
+/// directory of the running binary (bin/xo of a release archive), as $_
+/// names it ("" when it is not set).
+fn rtpack_root(os: Os) -> Str {
+  let d = os.env.get("XO_RTPACK") ?? ""
+  if d == "off" {
+    return ""
+  }
+  if !d.is_empty() {
+    return d
+  }
+  // the running binary: Env.program is not native yet (XO1201), so the
+  // path the shell exported in $_ when it started this program
+  var exe = os.env.get("_") ?? ""
+  if !exe.contains("/") {
+    exe = look_path(os, exe)
+  } else if !exe.starts_with("/") {
+    exe = "${os.env.get("PWD") ?? "."}/${exe}"
+  }
+  if exe.is_empty() {
+    return ""
+  }
+  // filepath.EvalSymlinks
+  let (real, err) = combined(os, "realpath", [exe])
+  if err.is_empty() && !real.trim().is_empty() {
+    exe = real.trim()
+  }
+  "${dir_name(dir_name(exe))}/lib/xo/rtpack"
+}
+
+/// A pack directory as loaded: why it is not used ("" when it is), and
+/// its manifest's files with their SHA-256.
+struct Pack {
+  dir: Str = ""
+  why: Str = ""
+  files: Map[Str, Str] = {}
+}
+
+/// loadRTPack for the host; None when there is no pack root.
+fn load_rtpack(os: Os, ctx: Ctx, std_dir: Str) -> Pack? {
+  let root = rtpack_root(os)
+  if root.is_empty() {
+    return None
+  }
+  let target = "${ctx.goos}/arm64"
+  let dir = "${root}/${ctx.goos}-arm64"
+  let text = match os.fs.read_text("${dir}/rtpack.json") {
+    Ok(t) => t
+    Err(FsErr.NotFound(..)) => return Some(Pack{dir: dir, why: "no prebuilt runtime for ${target} in ${root}"})
+    Err(e) => return Some(Pack{dir: dir, why: "${e}"})
+  }
+  let m = parse_manifest(text)
+  let key = match rtpack_key(os, ctx, std_dir, ctx.goos) {
+    Ok(k) => k
+    Err(e) => return Some(Pack{dir: dir, why: "${e}"})
+  }
+  var p = Pack{dir: dir, files: m.files}
+  if m.format != "1" {
+    p.why = "the prebuilt runtime in ${dir} has format ${m.format}, this xo reads 1"
+  } else if m.target != target {
+    p.why = "the prebuilt runtime in ${dir} is for ${m.target}, not ${target}"
+  } else if m.key != key {
+    p.why = "the prebuilt runtime in ${dir} was built from other runtime sources or flags (key ${m.key[0..min(12, m.key.len())]}, this xo's ${key[0..12]})"
+  }
+  Some(p)
+}
+
+fn min(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+/// The fields of rtpack.json xo1 reads (the indented JSON BuildRTPack
+/// writes): format, target, key, and files.
+struct Manifest {
+  format: Str = ""
+  target: Str = ""
+  key: Str = ""
+  files: Map[Str, Str] = {}
+}
+
+fn parse_manifest(text: Str) -> Manifest {
+  var m = Manifest{}
+  var in_files = false
+  for line0 in text.lines() {
+    let line = line0.trim().trim_suffix(",")
+    if in_files {
+      if line.starts_with("}") {
+        in_files = false
+        continue
+      }
+      let (k, v) = json_pair(line)
+      if !k.is_empty() {
+        m.files[k] = v
+      }
+      continue
+    }
+    if line.starts_with("\"files\"") {
+      in_files = !line.ends_with("}")
+      continue
+    }
+    let (k, v) = json_pair(line)
+    if k == "format" {
+      m.format = v
+    } else if k == "target" {
+      m.target = v
+    } else if k == "key" {
+      m.key = v
+    }
+  }
+  m
+}
+
+/// "k": "v" or "k": 1 as (k, v); ("", "") otherwise. The values xo1
+/// reads hold no escapes.
+fn json_pair(line: Str) -> (Str, Str) {
+  if !line.starts_with("\"") {
+    return ("", "")
+  }
+  let parts = line.split("\": ")
+  if parts.len() != 2 {
+    return ("", "")
+  }
+  let k = parts[0].trim_prefix("\"")
+  let v = parts[1].trim_prefix("\"").trim_suffix("\"")
+  (k, v)
+}
+
+/// rtPack.file: the path of a file of the pack when its SHA-256 is the
+/// manifest's.
+fn pack_file(os: Os, p: Pack, name: Str) -> Str {
+  if !p.why.is_empty() {
+    return ""
+  }
+  let want = p.files.get(name) ?? ""
+  if want.is_empty() {
+    return ""
+  }
+  let path = "${p.dir}/${name}"
+  match os.fs.read(path) {
+    Ok(data) => if crypto.sha256(data).to_hex() == want { path } else { "" }
+    Err(_) => ""
+  }
+}
+
+/// shippedRuntime: the pack's object of a link with flags (exactly -O2
+/// and a variant's defines) and, with tls, its TLS library; ("", "")
+/// when no usable pack has them.
+fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str], tls: Bool) -> (Str, Str) {
+  var v = if tls { 16 } else { 0 }
+  var opt = 0
+  for f in flags {
+    if f == "-O2" {
+      opt += 1
+    } else if f == "-DXO_TIME" {
+      v = v + if v % 2 == 1 { 0 } else { 1 }
+    } else if f == "-DXO_FS" {
+      v = v + if v / 2 % 2 == 1 { 0 } else { 2 }
+    } else if f == "-DXO_STDIN" {
+      v = v + if v / 4 % 2 == 1 { 0 } else { 4 }
+    } else if f == "-DXO_PROC" {
+      v = v + if v / 8 % 2 == 1 { 0 } else { 8 }
+    } else {
+      return ("", "")
+    }
+  }
+  if opt != 1 {
+    return ("", "")
+  }
+  let p = match load_rtpack(os, ctx, std_dir) {
+    Some(p) => p
+    None => return ("", "")
+  }
+  let obj = pack_file(os, p, variant_file(v))
+  if obj.is_empty() {
+    return ("", "")
+  }
+  if !tls {
+    return (obj, "")
+  }
+  let lib = pack_file(os, p, "libxotls.a")
+  if lib.is_empty() {
+    return ("", "")
+  }
+  (obj, lib)
+}
+
+/// RTPackStatus: the pack xo1 uses for the host, or why none is used.
+fn rtpack_status(os: Os, ctx: Ctx, std_dir: Str) -> Str {
+  if (os.env.get("XO_RTPACK") ?? "") == "off" {
+    return "prebuilt runtime: off (XO_RTPACK=off); the runtime is compiled locally"
+  }
+  match load_rtpack(os, ctx, std_dir) {
+    None => "prebuilt runtime: none; the runtime is compiled locally"
+    Some(p) => {
+      if !p.why.is_empty() {
+        return "prebuilt runtime: not used (${p.why}); the runtime is compiled locally"
+      }
+      "prebuilt runtime: ${p.dir}"
+    }
+  }
+}

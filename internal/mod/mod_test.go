@@ -444,6 +444,35 @@ func TestWorkspace(t *testing.T) {
 	}
 }
 
+// TestWorkEdition: the `xo <edition>` line of xo.work is resolved as
+// xo.mod's `edition` line is (decision 0155): `preview`, the alias `2026`,
+// and anything else is XO1301.
+func TestWorkEdition(t *testing.T) {
+	for _, c := range []struct{ line, want, code string }{
+		{"xo preview", "preview", ""},
+		{"xo 2026", "preview", ""},
+		{"xo 2027", "", "XO1301"},
+		{"xo Preview", "", "XO1301"},
+		{"xo", "", "XO1301"},
+	} {
+		ws := t.TempDir()
+		modtest.WriteFiles(t, ws, map[string]string{
+			"a/xo.mod": "module example.com/a\nedition preview\n",
+			"xo.work":  c.line + "\nuse ./a\n",
+		})
+		w, probs := mod.ReadWork(filepath.Join(ws, "xo.work"))
+		if got := strings.Join(codes(probs), ","); got != c.code {
+			t.Errorf("%q: problems %v, want %s", c.line, probs, c.code)
+		}
+		if w == nil || w.Edition != c.want || len(w.Modules) != 1 {
+			t.Errorf("%q: work %+v, want edition %q", c.line, w, c.want)
+		}
+		if c.code != "" && len(probs) == 1 && probs[0].Line != 1 {
+			t.Errorf("%q: problem on line %d", c.line, probs[0].Line)
+		}
+	}
+}
+
 func TestRepoURL(t *testing.T) {
 	t.Setenv("XO_GIT_BASE", "")
 	t.Setenv("XO_GIT_REWRITE", "")

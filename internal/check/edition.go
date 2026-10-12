@@ -6,46 +6,19 @@ import (
 	"strings"
 
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/token"
 )
 
-// CurrentEdition is the newest edition this toolchain knows (core 13). A
-// module whose xo.mod has no `edition` line is on this edition. Until 1.0
-// the only edition is `preview` (decision 0155); the owner names the first
-// frozen edition at 1.0.
-const CurrentEdition = "preview"
+// CurrentEdition is the newest edition this toolchain knows (core 13,
+// mod.CurrentEdition): a module whose xo.mod has no `edition` line is on
+// it. The edition names live in internal/mod, which reads xo.work.
+const CurrentEdition = mod.CurrentEdition
 
-// Editions lists every released edition, oldest first. The compiler supports
-// all of them (core 13). Tests may append a future edition temporarily.
-var Editions = []string{"preview"}
+// ResolveEdition returns the edition that s names (mod.ResolveEdition).
+func ResolveEdition(s string) (string, bool) { return mod.ResolveEdition(s) }
 
-// EditionAliases maps an old edition name to the edition it stands for.
-// `edition 2026` was the name of `preview` before decision 0155; it keeps
-// building during the 0.x releases, and `xo check` gives the fixable note
-// XO1315 on it.
-var EditionAliases = map[string]string{"2026": "preview"}
-
-// ResolveEdition returns the edition that s names: a released edition, or
-// the edition an alias stands for. ok is false for an unknown name.
-func ResolveEdition(s string) (string, bool) {
-	if a, ok := EditionAliases[s]; ok {
-		s = a
-	}
-	if editionIndex(s) < 0 {
-		return "", false
-	}
-	return s, true
-}
-
-// editionIndex is the position of e in Editions, or -1.
-func editionIndex(e string) int {
-	for i, x := range Editions {
-		if x == e {
-			return i
-		}
-	}
-	return -1
-}
+func editionIndex(e string) int { return mod.EditionIndex(e) }
 
 // parseEdition validates the argument of an `edition` line in xo.mod. alias
 // is true when s is an old name of the edition (EditionAliases).
@@ -55,7 +28,7 @@ func parseEdition(s string) (ed string, alias bool, err error) {
 	}
 	e, ok := ResolveEdition(s)
 	if !ok {
-		return "", false, fmt.Errorf("edition %q is not supported by this toolchain (known editions: %s)", s, strings.Join(Editions, ", "))
+		return "", false, fmt.Errorf("edition %q is not supported by this toolchain (known editions: %s)", s, strings.Join(mod.Editions, ", "))
 	}
 	return e, e != s, nil
 }
@@ -102,13 +75,46 @@ func (c *checker) runEditionRules(m *Module) {
 	}
 }
 
-// editionAlias is an `edition` line of an xo.mod that names an alias
-// (`edition 2026`), reported once per xo.mod by reportEditionAliases.
+// editionAlias is an `edition` line of an xo.mod, or the `xo` line of an
+// xo.work, that names an alias (`edition 2026`, `xo 2026`), reported once
+// per file by reportEditionAliases.
 type editionAlias struct {
-	file      string // the xo.mod, as diagnostics name it
+	file      string // the xo.mod or xo.work, as diagnostics name it
 	line, col int    // the alias argument, 1 based, col in bytes
 	alias     string
 	edition   string
+	keyword   string // "edition" (xo.mod) or "xo" (xo.work); "" is "edition"
+}
+
+// workEditionAlias finds the `xo <alias>` line of the xo.work at name,
+// read through the overlay (so the fix loop of `xo fix` sees its own
+// rewrite), and registers it for reportEditionAliases. mod.ReadWork
+// rejects an unknown edition (XO1301).
+func (c *checker) workEditionAlias(name string) {
+	data, err := c.readSource(name)
+	if err != nil {
+		return
+	}
+	for i, text := range strings.Split(string(data), "\n") {
+		if j := strings.Index(text, "//"); j >= 0 {
+			text = text[:j]
+		}
+		f := strings.Fields(text)
+		if len(f) != 2 || f[0] != "xo" {
+			continue
+		}
+		e, ok := mod.ResolveEdition(f[1])
+		if !ok || e == f[1] {
+			continue
+		}
+		file := relDir(name)
+		k := strings.Index(text, "xo") + len("xo")
+		col := k + strings.Index(text[k:], f[1]) + 1
+		if c.editionAliases == nil {
+			c.editionAliases = map[string]editionAlias{}
+		}
+		c.editionAliases[file] = editionAlias{file: file, line: i + 1, col: col, alias: f[1], edition: e, keyword: "xo"}
+	}
 }
 
 // reportEditionAliases gives the fixable note XO1315 on every `edition`
@@ -122,9 +128,13 @@ func (c *checker) reportEditionAliases() {
 	sort.Strings(files)
 	for _, f := range files {
 		a := c.editionAliases[f]
+		kw := a.keyword
+		if kw == "" {
+			kw = "edition"
+		}
 		sp := token.Span{File: a.file, Start: token.Pos{Line: a.line, Col: a.col}, End: token.Pos{Line: a.line, Col: a.col + len(a.alias)}}
-		d := c.report(diag.Note, diag.EditionAlias, sp, "`edition %s` is the old name of `edition %s`", a.alias, a.edition)
+		d := c.report(diag.Note, diag.EditionAlias, sp, "`%s %s` is the old name of `%s %s`", kw, a.alias, kw, a.edition)
 		note(d, token.Span{}, "before 1.0 the only edition is `%s` (decision 0155); the alias keeps building during the 0.x releases", a.edition)
-		fix(d, fmt.Sprintf("rewrite `edition %s` to `edition %s`", a.alias, a.edition), replaceEdit(sp, a.edition))
+		fix(d, fmt.Sprintf("rewrite `%s %s` to `%s %s`", kw, a.alias, kw, a.edition), replaceEdit(sp, a.edition))
 	}
 }

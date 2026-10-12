@@ -23,6 +23,9 @@ type Work struct {
 	// calls from the other workspace modules, and the line number.
 	Ceilings []*Ceiling
 	Lines    []int
+	// Edition is the edition of the `xo <edition>` line, resolved
+	// (ResolveEdition: `2026` is `preview`); "" without a valid one.
+	Edition string
 }
 
 // NearestWork is the xo.work file that would be consulted for the module
@@ -112,6 +115,14 @@ func ReadWork(name string) (*Work, []*Problem) {
 		}
 		switch {
 		case f[0] == "xo" && len(f) == 2:
+			// the edition, resolved as xo.mod's `edition` line is: the
+			// alias `xo 2026` is accepted (internal/check gives the
+			// fixable note XO1315 on it)
+			if e, ok := ResolveEdition(f[1]); ok {
+				w.Edition = e
+			} else {
+				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("xo.work: edition %q is not supported by this toolchain (known editions: %s)", f[1], strings.Join(Editions, ", ")), Notes: []string{fmt.Sprintf("write `xo %s` (decision 0155)", CurrentEdition)}})
+			}
 		case f[0] == "use" && len(f) >= 2:
 			var ceiling *Ceiling
 			if len(f) > 2 {

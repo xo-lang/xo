@@ -1,0 +1,144 @@
+// Commands, children, and pipelines natively (decisions 0161 and 0172)
+// against the Go backend: Cmd.output with a directory, an environment
+// (attenuated), set_env, standard input data, merged streams; exit
+// statuses and signals; NotFound and Denied (Proc.only, attenuated again,
+// a Cmd keeping its Proc's lists, a pipeline checked before it starts);
+// Cmd.run on the terminal after the program's own output; Child
+// streaming (write, close_stdin, read_line, read, read_err, wait, kill);
+// pipelines with pipefail; Env.only.
+
+fn text(b: Bytes) -> Str { b.to_str() ?? "<binary>" }
+
+fn show(r: Result[ProcOutput, ProcErr]) -> Str {
+  match r {
+    Ok(o) => "code ${o.code} out ${text(o.stdout).quote()} err ${text(o.stderr).quote()}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let p = os.proc
+  let out = os.stdio
+  // output, arguments, standard input, merged streams
+  out.println(show(p.cmd("echo", ["hello", "world"]).output()))
+  out.println(show(p.cmd("sh", ["-c", "echo out; echo err >&2; exit 3"]).output()))
+  out.println(show(p.cmd("sh", ["-c", "echo out; echo err >&2"]).merge_stderr().output()))
+  out.println(show(p.cmd("tr", ["a-z", "A-Z"]).stdin(b"shout\n").output()))
+  out.println(show(p.cmd("cat").output()))
+  let big = "x".repeat(200000)
+  match p.cmd("wc", ["-c"]).stdin(big.bytes()).output() {
+    Ok(o) => out.println("wc ${text(o.stdout).trim()}")
+    Err(e) => out.println("wc ${e}")
+  }
+  out.println(show(p.cmd("sh", ["-c", "kill -9 $$"]).output()))
+  // the working directory
+  let tmp = os.env.get("TMPDIR") ?? "/tmp"
+  let base = os.fs.sub(tmp)
+  let name = "xo-proc-cmd-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/sub")?
+  base.write("${name}/sub/f.txt", b"in the dir\n")?
+  let dir = "${tmp.trim_suffix("/")}/${name}/sub"
+  out.println(show(p.cmd("cat", ["f.txt"]).dir(dir).output()))
+  out.println(show(p.cmd("sh", ["-c", "test \"$PWD\" = \"$(pwd -P)\" -o \"$(cd \"$PWD\" && pwd -P)\" = \"$(pwd -P)\" && echo pwd ok"]).dir(dir).output()))
+  out.println(show(p.cmd("cat", ["f.txt"]).dir("${dir}/missing").output()))
+  // the environment: inherited, replaced, narrowed, added to
+  out.println(show(p.cmd("sh", ["-c", r"echo ${HOME:+home set}"]).output()))
+  let narrow = os.env.only(["PATH", "XO_GOLDEN_A"])
+  out.println(show(p.cmd("sh", ["-c", r#"echo "[${HOME:-}] [${XO_GOLDEN_A:-}] [${XO_GOLDEN_B:-}]""#]).env(narrow).set_env("XO_GOLDEN_B", "b2").output()))
+  out.println(show(p.cmd("sh", ["-c", r#"echo "[${XO_GOLDEN_B:-}]""#]).set_env("XO_GOLDEN_B", "one").set_env("XO_GOLDEN_B", "two").output()))
+  out.println("only get ${narrow.get("HOME").is_none()} ${narrow.get("PATH").is_some()} vars ${narrow.vars().keys().filter(fn(k) { k.starts_with("XO_GOLDEN") || k == "HOME" }).join(",")}")
+  match narrow.home() {
+    Ok(_) => out.println("home ok?")
+    Err(e) => out.println("home ${e}")
+  }
+  let twice = narrow.only(["XO_GOLDEN_A", "HOME"])
+  out.println("twice ${twice.get("PATH").is_none()} ${twice.get("XO_GOLDEN_A") ?? "-"}")
+  // not found and denied
+  out.println(show(p.cmd("xo-no-such-command-anywhere").output()))
+  out.println(show(p.cmd("./xo-no-such-command").output()))
+  let lim = p.only(["echo", "sh", "sort", "cat"])
+  out.println(show(lim.cmd("ls").output()))
+  out.println(show(lim.cmd("echo", ["allowed"]).output()))
+  let lim2 = lim.only(["sh", "ls"])
+  out.println(show(lim2.cmd("echo", ["x"]).output()))
+  out.println(show(lim2.cmd("sh", ["-c", "echo both"]).output()))
+  match lim.run("ls", []) {
+    Ok(_) => out.println("run ls ok?")
+    Err(e) => out.println("run ${e}")
+  }
+  let made = lim2.cmd("echo", ["kept"])
+  out.println(show(p.pipeline([made])))
+  out.println(show(lim.pipeline([p.cmd("echo", ["a"]), p.cmd("tr", ["a", "b"])])))
+  // on the terminal, after this program's own output
+  out.print("before run\n")
+  match p.cmd("sh", ["-c", "echo from the child; exit 4"]).run() {
+    Ok(c) => out.println("run code ${c}")
+    Err(e) => out.println("run ${e}")
+  }
+  match p.cmd("sh", ["-c", "echo merged >&2"]).merge_stderr().run() {
+    Ok(c) => out.println("run code ${c}")
+    Err(e) => out.println("run ${e}")
+  }
+  match p.cmd("cat").stdin(b"fed to run\n").run() {
+    Ok(c) => out.println("run code ${c}")
+    Err(e) => out.println("run ${e}")
+  }
+  // a child
+  let ch = p.cmd("sh", ["-c", "while read l; do echo \"got $l\"; echo \"e:$l\" >&2; done; echo done; exit 5"]).spawn()?
+  out.println("pid ${ch.pid() > 0}")
+  ch.write(b"one\ntwo\n")?
+  ch.write(b"three\n")?
+  ch.close_stdin()
+  while let Some(line) = ch.read_line()? {
+    out.println("line ${line}")
+  }
+  var errs = BytesBuilder.new()
+  while let Some(b) = ch.read_err(3)? {
+    errs.write(b)
+  }
+  out.println("errs ${text(errs.freeze()).quote()}")
+  out.println("wait ${ch.wait()?} again ${ch.wait()?}")
+  match ch.write(b"late") {
+    Ok(_) => out.println("late ok?")
+    Err(e) => out.println("late ${e}")
+  }
+  let ch2 = p.cmd("printf", ["a\r\nb\nrest"]).spawn()?
+  out.println("crlf ${ch2.read_line()? ?? "-"} then ${text(ch2.read(100)? ?? b"").quote()}")
+  var rest = BytesBuilder.new()
+  while let Some(b) = ch2.read(2)? {
+    rest.write(b)
+  }
+  out.println("rest ${text(rest.freeze()).quote()} wait ${ch2.wait()?}")
+  let ch3 = p.cmd("sh", ["-c", "echo x; echo y >&2"]).merge_stderr().spawn()?
+  match ch3.read_err(10) {
+    Ok(_) => out.println("read_err ok?")
+    Err(e) => out.println("read_err ${e}")
+  }
+  var both: List[Str] = []
+  while let Some(l) = ch3.read_line()? {
+    both.push(l)
+  }
+  out.println("merged ${both.sort().join(",")} ${ch3.wait()?}")
+  let ch4 = p.cmd("sleep", ["30"]).spawn()?
+  ch4.kill()
+  out.println("killed ${ch4.wait()?}")
+  let ch5 = p.cmd("cat").stdin(b"data in\n").spawn()?
+  match ch5.write(b"x") {
+    Ok(_) => out.println("write ok?")
+    Err(e) => out.println("write ${e}")
+  }
+  out.println("cat ${ch5.read_line()? ?? "-"} ${ch5.wait()?}")
+  match p.cmd("xo-no-such-command-anywhere").spawn() {
+    Ok(_) => out.println("spawn ok?")
+    Err(e) => out.println("spawn ${e}")
+  }
+  // pipelines
+  out.println(show(p.pipeline([p.cmd("printf", ["b\na\nb\nc\n"]), p.cmd("sort"), p.cmd("uniq")])))
+  out.println(show(p.pipeline([p.cmd("sh", ["-c", "echo one >&2; exit 3"]), p.cmd("sh", ["-c", "cat; echo two >&2"]), p.cmd("cat")])))
+  out.println(show(p.pipeline([p.cmd("sh", ["-c", "exit 2"]), p.cmd("sh", ["-c", "exit 6"]), p.cmd("true")])))
+  out.println(show(p.pipeline([p.cmd("cat").stdin(b"z\ny\n"), p.cmd("sort")])))
+  out.println(show(p.pipeline([p.cmd("sh", ["-c", "echo to-pipe >&2"]).merge_stderr(), p.cmd("tr", ["a-z", "A-Z"])])))
+  out.println(show(p.pipeline([p.cmd("echo", ["x"]), p.cmd("xo-no-such-command-anywhere")])))
+  out.println(show(p.pipeline([])))
+  base.remove_all(name)?
+}

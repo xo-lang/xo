@@ -59,6 +59,11 @@ would look a year old on launch day. Before 1.0 nothing is frozen
   dependency on the alias builds without a note), and dated records
   (older ADRs, bench results and notes, CHANGELOG entries).
 - The `xo <edition>` line of xo.work is still not validated (any word).
+  Done 2026-10-11: `mod.ReadWork` resolves it with the resolver of
+  xo.mod (the edition names moved to internal/mod): an unknown name is
+  XO1301, `xo 2026` gets XO1315 (`` `xo 2026` is the old name of `xo
+  preview` ``) and `xo fix` rewrites it; selfhost/check gives the same
+  XO1301.
 - The self hosted checker (selfhost/check) does not read `edition`
   lines, so nothing was ported; XO1315 is not one of the staged codes
   TestSelfhostChecker compares.

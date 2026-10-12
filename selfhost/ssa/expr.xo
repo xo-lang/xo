@@ -639,6 +639,11 @@ fn (var b: Builder) selector(e: Expr) -> Int {
       let root = b.const_str("")
       return b.add(Op.Struct, t, Aux.None, [root, b.cint(0)])
     }
+    if b.is_lists(t) {
+      // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
+      let lists = b.const_str("")
+      return b.add(Op.Struct, t, Aux.None, [lists])
+    }
     return b.add(Op.Cap, t, Aux.S(s: check.text(sel.name)), [v])
   }
   let (i, ft) = b.field_index(vt, check.text(sel.name))

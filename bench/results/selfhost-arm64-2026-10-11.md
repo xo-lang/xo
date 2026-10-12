@@ -271,3 +271,141 @@ compared, 320 byte identical; 15,700 of 15,700 functions and 13,505
 helpers identical; PASS (6,800 s under the machine-wide lock). The LLVM
 and arm64 golden tests (TestGolden, TestGoldenShared, TestGoldenRun,
 TestRun, TestGoldenAsm) pass with the new golden.
+
+# xo1 takes over internal/build's native steps, 2026-10-11
+
+Decision 0174: the steps internal/build adds beyond the C runtime,
+ported to xo1 (`selfhost/xo`) in order, each measured with
+`scripts/selfhost-goldens.py` on A (selfhost/xo built by the Go compiler
+with `--backend=arm64`; its assembly is B's and C's, decision 0158). The
+golden set has grown since the switch-over above: 123 programs of
+internal/llvm/testdata/golden and 24 of internal/arm64/testdata/run, 147
+in all. `selfhost-goldens.py` now passes each golden's args.txt, env.txt,
+and stdin.txt as TestGoldenRun does (before the fix the 4 programs that
+have them, cli_parse, cli_usage_exit, env_dirs, term_stdio, failed with
+both drivers' binaries for want of their inputs).
+
+## Step 1: the TLS library of std/http
+
+xo1 computes internal/build's key of the TLS library (tlsSourceHash over
+mbedtls.tgz, xo/, and fiat-crypto's sources read from the repository;
+the C compiler's path and `--version`; the SDK; the target; the
+sanitizer flavor; mbedtls.FileDefines) and links
+`<user cache>/xo/mbedtls/4.1.1-<key>/libxotls.a`, building it when it is
+missing (the tree extracted with tar, the compiles run by `xargs -P`,
+`ar rcs` with ZERO_AR_DATE=1). Checked: with an empty XO_TLS_CACHE, xo1
+and the Go driver choose the same directory (4.1.1-05cf46eeba0fd423aba7
+with /usr/bin/cc and the Xcode SDK) and the archives they build are byte
+identical.
+
+| step | goldens with A |
+|---|---|
+| before (the switch-over, 138 programs) | 132 of 138 |
+| 1: TLS | **147 of 147** |
+
+## Step 2: zone data of std/time
+
+xo1 writes xo_tzdata.c beside the runtime and compiles with -DXO_TIME,
+as timeFlags does (decision 0157's split): the constant zone names
+`time.zone` is called with (from the calls in the module xo1 built,
+each confirmed as a string literal in the source, since the SSA builder
+folds `let n = "X"` into a constant the Go builder counts as dynamic),
+or the whole zoneinfo.zip when a name is known only at run time, or
+mode 2 with --tzdata=system; the zone data comes from Go's zoneinfo.zip
+($XO_ZONEINFO, else `go env GOROOT`), read as a stored zip. Checked: the
+xo_tzdata.c of time_zones (two zones) and of time_dynamic_zone (the
+whole database) are byte identical to the Go driver's, and the five
+std/time programs of internal/gen/testdata/golden (time_zones,
+time_dynamic_zone, time_civil, time_format, duration_time) built by
+both drivers are byte identical binaries with the same output. The
+arm64 goldens use no std/time, so their count does not move: 147 of 147
+(measured on the build with steps 1 to 6).
+
+## Step 3: prebuilt runtime packs and the runtime object cache
+
+xo1 takes the runtime from a pack ($XO_RTPACK, else lib/xo/rtpack beside
+the binary as $_ names it, since Env.program is not native yet) when its
+key (RTPackKey) and checksums match and the flags are a pack variant's,
+else from <user cache>/xo/rtobj (the rtobj key: toolID of cc with its
+path, size, and modification time in nanoseconds from stat(1), the
+flags, the SDK, the TLS flags and source hash, every .c and .h of the
+runtime directory but xo_tzdata.*), compiling it on a miss, and trims
+the cache as trimCacheDir does. `xo1 keys` prints its keys. Checked:
+`xo1 keys` gives the same pack keys as `xo rtpack --key` for
+darwin/arm64 (2885da3c...dfc6) and linux/arm64 (410e9133...086b) and the
+same TLS directory; a plain program's runtime object lands under the
+same name (0df88719...6a89.o) from both drivers; with a pack built by
+`xo rtpack` both drivers link arith and http_tls (the TLS library from
+the pack, the TLS cache untouched) into identical binaries.
+
+Both drivers link the same binary: `scripts/selfhost-samebin.py` builds
+every arm64 golden with xo1 and with `xo build --backend=arm64` under the
+same file name and compares: **147 of 147 byte identical** (not just
+the code: LC_UUID and the ad hoc signature match too, since the inputs
+and names are the same). Goldens with A: 147 of 147.
+
+## Step 4: `use c` sources
+
+xo1 writes each binding's adapter (read from cbind's cache beside the
+declaration file, `<prefix>.c`) into OUT.rt/cffi/xo_<prefix>.c, adds the
+`link` files (read back from the binding's key) and the libraries as
+sorted -l flags after the objects, as cInputs does. Checked:
+internal/selfhost/testdata/ssa/stage6c and examples/realtime-control
+built by both drivers are byte identical binaries (stage6c's output is
+the same; realtime-control prints timings). As decision 0152 says, the
+binding must be in the cache: a first build by xo1 alone reports the
+program unsupported until a Go build or `xo bind --c` writes it.
+
+## Step 5: the linux/arm64 target
+
+internal/build links only the host target with the arm64 backend; for
+linux/arm64 on a Mac it writes the assembly (prog-linux.s) and stops.
+xo1 does the same with `--target=linux/arm64`. Checked: the linux
+assembly of arith, closures, and http_tls is byte identical to the Go
+driver's prog-linux.s. Linking for Linux from a Mac (the linux pack
+with `zig cc`) is not something internal/build does yet; no zig is
+installed here.
+
+## Step 6: test binaries
+
+`xo1 test [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>` builds
+the test binary (selfhost/ssa's test mode) and runs each test in its own
+process (XO_TEST, XO_TEST_SEED), property tests case by case with
+shrinking (XO_PROP_SEED, XO_PROP_REPLAY, XO_PROP_BEST), and prints what
+`xo test --no-gc` prints. Checked on cmd/xo/testdata/nogc: same, prop,
+and real print the same as `xo test --no-gc --backend=arm64 -v` with the
+same exit status; native differs in one line, the contract fuzz test the
+Go driver lists as skipped, which xo1 does not list (so 0 skipped
+against 1). Not done: `--real` (the Xo SSA builder leaves tests with
+`uses` out, so they are skipped), contract fuzz listing, and a time
+limit (the native Proc has none).
+
+## The fixed point with steps 1 to 6, 2026-10-12
+
+`scripts/selfhost-switchover.sh` on the tree with every step (commit
+58d294f), through the shared heavy lock, other agents' work on the
+machine:
+
+| step | wall clock |
+|---|---|
+| A: the Go compiler, `xo build --backend=arm64 selfhost/xo` | 142.4 s |
+| the Go emitter's assembly of selfhost/xo (`xo asmdump`) | 119.6 s |
+| B: A compiles selfhost/xo | 313.0 s |
+| C: B compiles selfhost/xo | 303.7 s |
+
+**The fixed point holds**: the assembly B wrote, the assembly C wrote,
+and the Go emitter's are byte identical (9,011,385 lines, sha256
+f5f8d55b...bb03). B and C differ in 49 bytes, as before (LC_UUID and the
+ad hoc signature, which names the output file). B passes **147 of 147**
+arm64 goldens.
+
+| step | goldens | other checks |
+|---|---|---|
+| before (2026-10-11) | 132 of 138 | |
+| 1: TLS | 147 of 147 (A) | TLS key and archive identical to the Go driver's |
+| 2: zone data | 147 of 147 (A, all steps) | 5 std/time programs: identical binaries |
+| 3: packs, object cache | 147 of 147 (A, all steps) | 147 of 147 binaries identical (selfhost-samebin.py) |
+| 4: `use c` | 147 of 147 (A, all steps) | stage6c, realtime-control: identical binaries |
+| 5: linux/arm64 | 147 of 147 (A, all steps) | 3 programs: identical linux assembly |
+| 6: tests | 147 of 147 (A, all steps) | 4 nogc test dirs: 3 same output, 1 differs by the unlisted contract fuzz test |
+| fixed point (B) | 147 of 147 | G.s = B.s = C.s |

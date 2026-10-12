@@ -39,6 +39,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // Version is the format version of generated bindings. Cached bindings
@@ -259,6 +261,12 @@ func Load(goPath string, opts Options) (*Binding, error) {
 			rerun = strings.TrimPrefix(l, "replay-rerun: ")
 		case strings.HasPrefix(l, "skip: "):
 			name, reason, _ := strings.Cut(strings.TrimPrefix(l, "skip: "), ": ")
+			// the line ends with the Go name, " (strconv.FormatComplex)",
+			// which Bind's Skipped leaves out: XO1102 reads the same
+			// whether the binding was made or loaded
+			if i := strings.LastIndex(reason, " ("); i >= 0 && strings.HasSuffix(reason, ")") {
+				reason = reason[:i]
+			}
 			b.Skipped[name] = reason
 		}
 	}
@@ -328,33 +336,12 @@ type Error struct {
 func (e *Error) Error() string { return fmt.Sprintf("cannot bind Go package %q: %s", e.GoPath, e.Msg) }
 
 // goTool finds the go command: $XO_GO, then PATH.
-func goTool() string {
-	if g := os.Getenv("XO_GO"); g != "" {
-		return g
-	}
-	if p, err := exec.LookPath("go"); err == nil {
-		return p
-	}
-	return "go"
-}
-
-// goCacheDir matches build.GoCacheDir (gobind cannot import build): Xo's own
-// capped Go cache, so bindings do not grow the user's default cache.
-func goCacheDir() string {
-	if d := os.Getenv("XO_GOCACHE"); d != "" {
-		return d
-	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		base = os.TempDir()
-	}
-	return filepath.Join(base, "xo", "gocache")
-}
+func goTool() string { return gotool.Path() }
 
 func runGo(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command(goTool(), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod", "GOCACHE="+goCacheDir())
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod", gotool.CacheEnv())
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -377,7 +364,17 @@ func ensureWorkspace(dir string) error {
 	if _, err := os.Stat(gm); err == nil {
 		return nil
 	}
-	return os.WriteFile(gm, []byte("// Binding workspace of xo bind (internal/gobind). Generated; do not edit.\nmodule xogobind\n\ngo 1.26\n"), 0o644)
+	return os.WriteFile(gm, []byte(workspaceMod(gotool.GoLine())), 0o644)
+}
+
+// workspaceMod is the binding workspace's go.mod for a `go` line: the
+// installed go command's language version, at most gotool.TestedGo
+// (decision 0176). A fixed line newer than the installed Go would make
+// the go command download that Go (GOTOOLCHAIN=auto) or fail
+// (GOTOOLCHAIN=local); `go get` raises the line itself when a bound
+// module needs a newer one.
+func workspaceMod(line string) string {
+	return "// Binding workspace of xo bind (internal/gobind). Generated; do not edit.\nmodule xogobind\n\ngo " + line + "\n"
 }
 
 func decodeList(data []byte) ([]listed, error) {

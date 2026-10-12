@@ -1,0 +1,144 @@
+// Resource budgets (internal/ssa build_budget.go; std.md 7, decisions
+// 0173 and 0175): in a program that calls task.with_budget, the code of
+// the program's own modules polls the budget (`rt.tick`, then an
+// unwinding check) at the start of every loop iteration (loop_tick) and
+// at the entry of every function, closure, and test body.
+use github.com/xo-lang/xo/selfhost/check
+
+/// Whether a user module calls task.with_budget (usesBudgets): the walk
+/// of uses_os_tasks, looking for those calls.
+fn (var b: Builder) uses_budgets() -> Bool {
+  b.scan_budget = true
+  let found = b.uses_os_tasks()
+  b.scan_budget = false
+  found
+}
+
+/// Whether fo is std/task's with_budget (isWithBudget).
+fn (var b: Builder) is_with_budget(fo: Int) -> Bool {
+  if fo < 0 || b.c.objs[fo].recv >= 0 {
+    return false
+  }
+  let m = b.obj_mod(fo)
+  m >= 0 && b.c.mods[m].path == "std/task" && b.obj_name(fo) == "with_budget"
+}
+
+/// The budget poll, when the program uses budgets and the code being
+/// built is the program's own (poll).
+fn (var b: Builder) poll() {
+  if !b.s.polls || !b.budgets || b.is_dead() {
+    return
+  }
+  b.rt("tick", -1, [])
+  b.check("")
+}
+
+/// `task.with_budget(clock, b, f)` (withBudget, std.md 7): f runs as the
+/// body of a scope with the budget b (rt.budget_open); rt.budget_end,
+/// once the scope closed, tells the resource whose ceiling was passed
+/// (Err(Exceeded(resource)), an unwinding stops), else f's own outcome
+/// stands.
+fn (var b: Builder) with_budget(x: Expr, fo: Int) -> Int {
+  let (span, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  if es.len() < 3 || es[0] == None || es[1] == None || es[2] == None {
+    b.unsupported("a call with a missing argument")
+    return b.undef(nt)
+  }
+  let e0 = es[0] ?? fault("missing")
+  let e1 = es[1] ?? fault("missing")
+  let e2 = es[2] ?? fault("missing")
+  b.expr(e0)
+  let bv = b.expr(e1)
+  var lim: List[Int] = []
+  for name in ["cpu", "alloc", "steps"] {
+    let (k, ft) = b.field_index(b.vty(bv), name)
+    if k < 0 {
+      b.unsupported("this budget")
+      return b.undef(nt)
+    }
+    lim.push(b.add(Op.Field, ft, Aux.I(n: k), [bv]))
+  }
+  let nct = b.nat_check(e2)
+  if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func {
+    b.unsupported("this closure")
+    return b.undef(nt)
+  }
+  let ct = b.c.tys[b.c.resolve(nct)]
+  let err_t = b.fail_err(b.apply(ct.err))
+  let rt = b.typ(b.result_of(b.apply(ct.result), err_t))
+  let fv = b.value_as(e2, b.m.func_type([], rt))
+  let h = b.rt("scope_open", b.m.handle("Scope", []), [])
+  b.rt("budget_open", -1, [h, lim[0], lim[1], lim[2], b.loc(span)])
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
+  let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [fv])
+  let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
+  // a fault in f closes the scope and goes on (decision 0085)
+  b.s.f.values[r].pad = u
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let ei = b.m.variant_index(nt, "Err")
+  let bud_t = b.m.types[nt].variants[ei].fields[0].ty
+  let (unw, done) = b.branch(u)
+  b.checks.push(UCheck{fi: b.s.fi, u: u, callee: "", w: r})
+  // unwinding: a ceiling passed, or a cancellation from outside
+  b.s.cur = unw
+  b.rt("scope_close", it, [h, b.cint(2)])
+  let k = b.rt("budget_end", it, [h])
+  let (over, out) = b.branch(b.add(Op.Gt, bt, Aux.None, [k, b.cint(0)]))
+  b.s.cur = over
+  b.budget_exceeded(k, nt, ei, bud_t, join)
+  b.s.cur = out
+  b.unwind()
+  // f returned
+  b.s.cur = done
+  b.rt("scope_close", it, [h, b.cint(0)])
+  let k2 = b.rt("budget_end", it, [h])
+  b.check("")
+  let (late, intime) = b.branch(b.add(Op.Gt, bt, Aux.None, [k2, b.cint(0)]))
+  b.s.cur = late
+  b.budget_exceeded(k2, nt, ei, bud_t, join)
+  b.s.cur = intime
+  let ok_i = b.m.variant_index(nt, "Ok")
+  if err_t < 0 {
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [r])])
+  } else {
+    let r_ok = b.m.variant_index(rt, "Ok")
+    let tag = b.add(Op.Tag, it, Aux.None, [r])
+    let (fok, ferr) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(r_ok)]))
+    b.s.cur = fok
+    let v = b.add(Op.Payload, b.m.types[rt].variants[r_ok].fields[0].ty, Aux.P(tag: r_ok, field: 0), [r])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [v])])
+    b.s.cur = ferr
+    let rei = b.m.variant_index(rt, "Err")
+    let ev = b.add(Op.Payload, b.m.types[rt].variants[rei].fields[0].ty, Aux.P(tag: rei, field: 0), [r])
+    let fv2 = b.variant(bud_t, "Failed", [ev])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [fv2])])
+  }
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// Jumps to join with Err(Exceeded(the name of resource k)): k 1 cpu,
+/// 2 alloc, 3 steps (withBudget's exceeded).
+fn (var b: Builder) budget_exceeded(k: Int, nt: Int, ei: Int, bud_t: Int, join: Int) {
+  let bt = b.bool_t()
+  let (is_cpu, other) = b.branch(b.add(Op.Eq, bt, Aux.None, [k, b.cint(1)]))
+  b.s.cur = is_cpu
+  let c = b.variant(bud_t, "Exceeded", [b.const_str("cpu")])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [c])])
+  b.s.cur = other
+  let (is_alloc, steps) = b.branch(b.add(Op.Eq, bt, Aux.None, [k, b.cint(2)]))
+  b.s.cur = is_alloc
+  let a = b.variant(bud_t, "Exceeded", [b.const_str("alloc")])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [a])])
+  b.s.cur = steps
+  let st = b.variant(bud_t, "Exceeded", [b.const_str("steps")])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [st])])
+}

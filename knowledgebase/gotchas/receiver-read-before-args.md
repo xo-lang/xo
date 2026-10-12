@@ -28,3 +28,11 @@ Observed again 2026-10-11 (SSA stage 2): `b.c.show(b.impl_named(ct))`,
 the text of an interface value's concrete type, faulted the same way
 (`show` is a by value method of the checker, `impl_named` adds to its
 type table). selfhost/ssa iface.xo binds it first (`impl_text`).
+
+Observed again 2026-10-11 (the Go code generator port, decision 0167):
+`g.c.resolve(g.mono_type(t))` in selfhost/gen ranges.xo faulted the same
+way on bench/xo/v0.4/02-worker-pool (`mono_type` adds the substituted
+type to the checker's table). A scan for the pattern (calls of by value
+methods of `g` or `g.c` whose arguments call `var` methods of `g`) found
+two more in the port before they faulted; all three bind the argument
+first.

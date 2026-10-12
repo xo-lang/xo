@@ -124,7 +124,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, RealTests: opts.RealTests, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang)})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, RealTests: opts.RealTests, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang), IR: opts.LLVMIR})
 	if err != nil {
 		return nil, err
 	}
@@ -136,13 +136,31 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.ShareProbes {
 		dir += "-share"
 	}
+	split := LLVMSplitConfig()
+	if opts.LLVMSplit != nil {
+		split = *opts.LLVMSplit
+	}
+	parts := llvm.Split(prog.IR, split.Modules)
+	if len(parts) > 1 {
+		// a split build has its own directory: a single module build of
+		// the same program may run at the same time
+		dir += fmt.Sprintf("-split%d-%s", len(parts), split.LTO)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	out.Dir = dir
-	ll := filepath.Join(dir, "prog.ll")
-	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
-		return nil, err
+	var lls []string
+	for i, part := range parts {
+		name := "prog.ll"
+		if len(parts) > 1 {
+			name = fmt.Sprintf("prog.%d.ll", i)
+		}
+		ll := filepath.Join(dir, name)
+		if err := os.WriteFile(ll, part, 0o644); err != nil {
+			return nil, err
+		}
+		lls = append(lls, ll)
 	}
 	rt, err := writeRuntime(dir)
 	if err != nil {
@@ -163,15 +181,23 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
-	srcs := append([]string{ll, rt}, tzsrcs...)
+	srcs := append(append(lls, rt), tzsrcs...)
 	csrcs, cflags, err := cInputs(res, dir)
 	if err != nil {
 		return nil, err
 	}
 	srcs = append(srcs, csrcs...)
 	flags = append(flags, cflags...)
-	key := nativeBinKey(dir, clang, append([]string{"llvm", LLVMOptLevel}, flags...), srcs)
-	if err := withBinCache(key, bin, func() error { return clangBuild(clang, srcs, bin, flags...) }); err != nil {
+	mode := []string{"llvm", LLVMOptLevel}
+	if len(lls) > 1 {
+		mode = append(mode, "split", split.LTO)
+	}
+	key := nativeBinKey(dir, clang, append(mode, flags...), srcs)
+	link := func() error { return clangBuild(clang, srcs, bin, flags...) }
+	if len(lls) > 1 {
+		link = func() error { return splitBuild(clang, lls, srcs[len(lls):], bin, split, flags) }
+	}
+	if err := withBinCache(key, bin, link); err != nil {
 		return nil, err
 	}
 	out.Binaries[Host()] = bin

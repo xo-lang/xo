@@ -210,7 +210,7 @@ func errorResponse(tk *Task, e any, tr *Trace) Http_Response {
 	for i, l := range tr.Lines() {
 		fields = append(fields, logField{k: "frame" + strconv.Itoa(i), v: strings.TrimSpace(l)})
 	}
-	logRecord(tk, levelError, "handler failed", fields)
+	logRecord(tk, levelError, "handler failed", fields, "")
 	return jsonError(tk, 500, "internal error")
 }
 
@@ -349,7 +349,7 @@ func isolateHandler(tk *Task, f func(*Task) Http_Response) (resp Http_Response) 
 			panic(r)
 		}
 		fault := AsFault(r)
-		logRecord(tk, levelError, "handler fault", []logField{{k: "fault", v: fault.Error()}})
+		logRecord(tk, levelError, "handler fault", []logField{{k: "fault", v: fault.Error()}}, "")
 		isolatedCrash(tk, fault)
 		resp = jsonError(tk, 500, "internal error")
 	}()

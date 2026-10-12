@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+0:entry:1000 1:exit:1
+before 1000 after 1001 last -1
+entry+x! entry 1 1.5 true 5 none
+shape entry 1
+grid [10,2,3,4] [4,5,60] snap [1,2,3] [4,5,60]
+cube a,b C d,e
+rows 20 100 2 tu snap 1 t
+update 101
+bump ok 2 tu1
+bump refused tu1 2
+stacks [9,2] [3]
+inner index: fault index 6 out of range for List of length 1
+overflow: fault integer overflow: 9223372036854775807 + 1 does not fit Int
+outer index: fault index 3 out of range for List of length 2
+done 1001 1000
+--- stderr

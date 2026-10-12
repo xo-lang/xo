@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+empty 0 true []
+grown [7, 1, 2, 3, 4, 9] copy [0, 1, 2, 3, 4]
+negative ["a", "b1"] a,b1
+points 2 three two
+squares [0, 1, 4, 9, 16, 25] 0
+nested 2 6 0
+--- stderr

@@ -121,17 +121,17 @@ func (s *fn) stmt(st ast.Stmt) {
 
 // loopBound starts the iteration counter of a loop with `bound N` (core
 // 3.5, decision 0133); the function it returns, called at the start of
-// each iteration, counts and faults with XO-F006 past N. Without a bound
-// both do nothing.
+// each iteration, counts and faults with XO-F006 past N, then polls the
+// budget (build_budget.go). Without a bound it only polls.
 func (s *fn) loopBound(bound ast.Expr) func() {
 	if bound == nil {
-		return func() {}
+		return s.poll
 	}
 	b := s.b
 	n, ok := b.info.LoopBound(bound)
 	if !ok {
 		b.unsupported(bound, "this loop bound")
-		return func() {}
+		return s.poll
 	}
 	intT, boolT := b.mod.Builtin(KInt), b.mod.Builtin(KBool)
 	cnt := &check.VarObj{Name: "$bound"}
@@ -146,6 +146,7 @@ func (s *fn) loopBound(bound ast.Expr) func() {
 		s.cur = over
 		s.fault(s.add(OpConst, b.mod.Builtin(KStr), msg), pos)
 		s.cur = ok
+		s.poll()
 	}
 }
 
@@ -291,10 +292,23 @@ func (s *fn) indexedRecv(e ast.Expr) ast.Expr {
 // place is an assignable location: its current value and how to store a
 // new one. Storing into a field or element rebuilds the enclosing values
 // (setfield, list.set) up to the local.
+//
+// Reading a list element on the way to a store moves it out of the list
+// (`list.take`, decision 0169): the list is made unique and its slot
+// holds a placeholder until the store puts the element back, so the
+// element's own collections are unique too and update in place
+// (`xs[i].f.push(x)`, `xs[i][j] = v`). Value semantics hold on every
+// path: a list still used afterwards (shared, or read on a path where
+// the store does not happen) is copied by `reuse` before the take.
+// keep turns this off for a place whose store may not follow (Map.update
+// stores only on success): the element stays a projection (`list.index`).
+// A compound assignment reads the target after its operand (decision
+// 0159), so only the operation runs between the take and the store.
 type place struct {
-	t   *Type
-	get func() *Value
-	set func(*Value)
+	t    *Type
+	get  func() *Value
+	set  func(*Value)
+	keep *bool
 }
 
 func (s *fn) place(e ast.Expr) (place, bool) {
@@ -307,7 +321,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		if vo == nil {
 			break
 		}
-		return place{s.typeOf(x), func() *Value { return s.read(vo) }, func(v *Value) { s.writeVar(vo, v) }}, true
+		return place{s.typeOf(x), func() *Value { return s.read(vo) }, func(v *Value) { s.writeVar(vo, v) }, new(bool)}, true
 	case *ast.SelectorExpr:
 		base, ok := s.place(x.X)
 		if !ok {
@@ -331,7 +345,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		}
 		return place{pt,
 			func() *Value { return s.unbox(s.add(OpField, ft, idx, cur())) },
-			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }}, true
+			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }, base.keep}, true
 	case *ast.IndexExpr:
 		base, ok := s.place(x.X)
 		if ok && base.t.Coll {
@@ -344,7 +358,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 					b.unsupported(x, "reading `m[k]`")
 					return s.undef(mapVal(t))
 				},
-				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }}, true
+				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }, base.keep}, true
 		}
 		if !ok || base.t.Kind != KList {
 			break
@@ -355,16 +369,36 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		// the list is read when first used, as a field's base is: in
 		// `xs[i] = f()` after f, which may change xs (as the Go backend
 		// does; the value stored into xs[i] must not drop f's changes)
-		var l *Value
+		var l, taken *Value
 		cur := func() *Value {
 			if l == nil {
 				l = base.get()
 			}
 			return l
 		}
-		return place{et,
-			func() *Value { return s.call("list.index", et, pos, cur(), i) },
-			func(v *Value) { base.set(s.call("list.set", base.t, pos, cur(), i, v)) }}, true
+		keep := base.keep
+		get := func() *Value {
+			if taken != nil {
+				// read again before the store: the element moved out
+				return taken
+			}
+			if *keep || !et.Heap() {
+				return s.call("list.index", et, pos, cur(), i)
+			}
+			// moved out until the store puts it back (decision 0169)
+			tk := s.call("list.take", b.mod.Tuple(base.t, et), pos, cur(), i)
+			l = s.add(OpField, base.t, 0, tk)
+			taken = s.add(OpField, et, 1, tk)
+			return taken
+		}
+		set := func(v *Value) {
+			p := pos
+			if taken != nil {
+				p = "" // the take checked the index of the same list
+			}
+			base.set(s.call("list.set", base.t, p, cur(), i, v))
+		}
+		return place{et, get, set, keep}, true
 	}
 	b.unsupported(e, "assigning to this expression")
 	return place{}, false
@@ -411,7 +445,9 @@ func (s *fn) assign(x *ast.AssignStmt) {
 	// the value first, then the target's old value (decision 0159): the
 	// changes the value makes to the target's binding (a `var` call of
 	// it) are kept, as with `=` (decision 0140); reading the old value
-	// first cached the binding before the call and stored that copy back
+	// first cached the binding before the call and stored that copy back.
+	// Only the operation runs between the read and the store, so an
+	// element may move out (decision 0169)
 	var r *Value
 	if op == token.Shl || op == token.Shr {
 		r = s.shiftCount(x.Value, p.t)

@@ -74,8 +74,10 @@ fn go_quote(s: Str) -> Str
 
 /// Client: a request to url (absolute, http or https) with a header of
 /// names and values, a body, a timeout in ns, and the roots https
-/// verifies against, following redirects as net/http's Client does.
-fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots) -> CResp
+/// verifies against, following redirects as net/http's Client does; a
+/// redirect to an address the attenuation lists of the client's Net do
+/// not admit fails (decision 0175).
+fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots, lists: Str) -> CResp
 /// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
 /// 3 Timeout, 4 Protocol, 5 Canceled).
 fn cr_err(r: CResp) -> Int
@@ -110,6 +112,11 @@ fn log_json() -> Bool
 /// in a test, as std/rt's configured logSink.out).
 fn log_configured() -> Bool
 fn log_configure(level: Int, json: Bool)
+/// The dependency that writes the next record (decision 0173): set by
+/// the code generator before a dependency's log call, taken (and
+/// cleared) by the log function at entry; "" for the main module.
+fn log_from(from: Str)
+fn log_from_take() -> Str
 /// The time now as RFC 3339 (nano: with nanoseconds) in UTC.
 fn log_now(nano: Bool) -> Str
 

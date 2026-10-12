@@ -64,6 +64,9 @@ struct Client {
   timeout: Duration
   /// the roots https verifies against (std.md 4.6)
   roots: rthttp.Roots
+  /// the attenuation lists of the Net it was made from (Net.only,
+  /// decision 0175): "" for none
+  lists: Str = ""
 }
 
 /// http.TlsCert (std.md 4.6).
@@ -664,7 +667,7 @@ fn conn_request(hc: rthttp.HConn) -> Request {
 // ---------------------------------------------------------------------------
 // Client (std.md 4.5)
 
-fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: rthttp.tls_roots_system()} }
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: rthttp.tls_roots_system(), lists: rt.net_lists(net)} }
 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   let r = rthttp.tls_roots(pem)
@@ -672,7 +675,7 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
-  Client{timeout: c.timeout, roots: r}
+  Client{timeout: c.timeout, roots: r, lists: c.lists}
 }
 
 fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
@@ -714,6 +717,17 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
   }
+  if !c.lists.is_empty() {
+    // an attenuated Net (Net.only, decision 0175): std/rt's httpDenied
+    let port = match req.url.port {
+      Some(p) => "${p}"
+      None => if req.url.scheme.to_lower() == "https" { "443" } else { "80" }
+    }
+    if !rt.net_admits(c.lists, req.url.host, port) {
+      let hp = if req.url.host.contains(":") { "[${req.url.host}]:${port}" } else { "${req.url.host}:${port}" }
+      return Err(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
+    }
+  }
   if rttest.test_fake(4) {
     // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(req, raw)
@@ -724,7 +738,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     names.push(k)
     values.push(v)
   }
-  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots)
+  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots, c.lists)
   match rthttp.cr_err(r) {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: rthttp.cr_msg(r)))

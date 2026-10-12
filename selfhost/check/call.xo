@@ -393,7 +393,7 @@ fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Iden
   let name = sel.name
   let o = c.mods[m].members.get(name) ?? -1
   if o < 0 {
-    if c.c_skipped(m, text(name), sel.span) {
+    if c.go_skipped(m, text(name), sel.span) || c.c_skipped(m, text(name), sel.span) {
       return c.bad_ty
     }
     c.unresolved(sel.span, "member of module `${text(imp_name)}`", text(name), sorted_names(c.mods[m].members))
@@ -676,6 +676,12 @@ fn (var c: Checker) no_member(t: Int, sel: Ident, place: Bool) {
   let r = c.resolve(t)
   if c.tys[r].kind == TyKind.Named {
     let o = c.tys[r].obj
+    if c.go_skipped(c.objs[o].module, "${text(c.objs[o].name)}.${text(sel.name)}", sel.span) {
+      return
+    }
+  }
+  if c.tys[r].kind == TyKind.Named {
+    let o = c.tys[r].obj
     if c.objs[o].tkind == "struct" && !c.objs[o].opaque {
       for f in c.objs[o].fields {
         cands.push(text(f.name))
@@ -914,7 +920,7 @@ fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, 
         c.record(id, c.mods[m].obj)
         let o = c.mods[m].members.get(sel.name) ?? -1
         if o < 0 {
-          if c.c_skipped(m, text(sel.name), sel.span) {
+          if c.go_skipped(m, text(sel.name), sel.span) || c.c_skipped(m, text(sel.name), sel.span) {
             c.infer_args(args)
             return c.bad_ty
           }

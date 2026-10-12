@@ -1293,6 +1293,32 @@ const VERSION = 14`,
 		Fix: `// xo build --stamp VERSION=1.4.0
 const VERSION: Str = "dev"`,
 	},
+	GoTooOld: {
+		Title: "the installed Go is older than the Go backend supports",
+		Detail: "The Go backend (the default for `xo build`, `xo run`, and `xo test`) writes Go source and compiles it with the go command: `$XO_GO`, else `go` on PATH. " +
+			"Generated programs and the runtime use standard library APIs of Go 1.24 (`crypto/pbkdf2`, `maphash.Comparable`, `http.Protocols`), so an older go command cannot build them. " +
+			"The build reads `go env GOVERSION` once per process and stops before generating code. Xo writes the installed Go's language version into the build's go.mod (at most the newest Go the suite has passed on), so it never asks the go command to download another Go. See decision 0176.",
+		Example: `$ go version
+go version go1.22.5 darwin/arm64
+$ xo build .
+XO1502: the Go backend needs Go 1.24 or newer, but /usr/local/go/bin/go is go1.22.5`,
+		Fix: `# install Go 1.24 or newer from https://go.dev/dl, or point Xo at one:
+XO_GO=$HOME/sdk/go1.26.1/bin/go xo build .
+# or use a native backend, which does not run Go:
+xo build --backend=arm64 .`,
+	},
+	GoNotFound: {
+		Title: "the Go backend finds no go command",
+		Detail: "The Go backend (the default for `xo build`, `xo run`, and `xo test`) writes Go source and compiles it with the go command: `$XO_GO`, else `go` on PATH. " +
+			"When `$XO_GO` is not an executable file, or PATH has no go, the build stops before generating code with this diagnostic instead of failing inside the go build. " +
+			"The native backends (arm64, LLVM) do not run Go and build without it. See decision 0176.",
+		Example: `$ xo run .
+XO1503: the Go backend runs the go command, but there is no go on PATH; install Go 1.24 or newer (https://go.dev/dl), set XO_GO to its go command, or build with --backend=arm64 or llvm, which need no Go`,
+		Fix: `# install Go 1.24 or newer from https://go.dev/dl, or point Xo at one:
+XO_GO=$HOME/sdk/go1.26.1/bin/go xo run .
+# or use a native backend, which does not run Go:
+xo run --backend=arm64 .`,
+	},
 
 	// ---------------------------------------------------------------
 	// 13xx: modules and dependencies (decision 0086)

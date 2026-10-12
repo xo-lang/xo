@@ -1,0 +1,7 @@
+use std/task
+
+fn f(ch: Chan[task.Group]) {
+  scope s {
+    ch.send(s.group())
+  }
+}

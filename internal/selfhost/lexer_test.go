@@ -39,6 +39,7 @@ var (
 // its generated code or the toolchain changes.
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
+	build.EnableTestLLVMSplit()
 	os.Exit(m.Run())
 }
 

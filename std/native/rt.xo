@@ -63,6 +63,9 @@ fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
 fn bytes_quote(b: Bytes) -> Str
+/// The ranges of a Unicode class (lo, hi pairs, sorted): 0 the letters
+/// (unicode.L), 1 the decimal digits (unicode.Nd); std/regexp's \pL.
+fn unicode_ranges(which: Int) -> List[Int]
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
 /// utf8.RuneCount.
@@ -157,6 +160,32 @@ fn fs_cwd() -> Str
 fn fs_case_sensitive() -> Bool
 /// Whether an Fs operation reports Canceled (not in deferred code).
 fn fs_canceled() -> Bool
+/// File handles, copies, modes, links, and locks (decisions 0163, 0172):
+/// a handle of the C runtime; the status as for the other operations.
+struct FsFile {}
+/// Opens p: mode 0 for reading, 1 created or truncated, 2 appended to.
+fn fs_open(p: Str, mode: Int, x: Str) -> FsFile
+fn fs_file_closed(f: FsFile) -> Bool
+/// At most max bytes in a list of one, or the empty list at the end.
+fn fs_file_read(f: FsFile, max: Int, x: Str) -> List[Bytes]
+/// A line without \n or \r\n in a list of one, or the empty list.
+fn fs_file_read_line(f: FsFile, x: Str) -> List[Str]
+fn fs_file_write(f: FsFile, data: Bytes, x: Str) -> Int
+fn fs_file_close(f: FsFile, x: Str) -> Int
+/// a into b with a's permission bits; errors name xa or xb (fs_msg).
+fn fs_copy(a: Str, b: Str, xa: Str, xb: Str) -> Int
+/// The permission bits of p, or -1.
+fn fs_perm(p: Str, x: Str) -> Int
+fn fs_chmod(p: Str, mode: Int, x: Str) -> Int
+fn fs_symlink(target: Str, p: Str, x: Str) -> Int
+/// The target of the link p in a list of one; empty when p is not a link.
+fn fs_read_link(p: Str, x: Str) -> List[Str]
+/// A held flock(2) lock of p (created if missing), waiting when wait (a
+/// cancellation point: status 8); fs_lock_held tells whether it holds.
+struct FsLock {}
+fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
+fn fs_lock_held(l: FsLock) -> Bool
+fn fs_unlock(l: FsLock)
 /// A Time of Unix nanoseconds, and back (both lowered as Int).
 fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int
@@ -170,6 +199,55 @@ fn time_ns(t: Time) -> Int
 fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
 /// FakeProc.on_run: a later run of cmd in the test gives these outputs.
 fn proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes)
+
+// Commands, children, and pipelines (decisions 0161 and 0172). A command
+// is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
+// 2 inherit, 4 merge_stderr), the count of args and the args, the count
+// of env entries and the entries, the count of set_env entries and the
+// entries. An outcome is a list whose first element is the status: "0"
+// done (then the values), "e" the end of a stream, "1" not found (the
+// command), "2" an error (the message), "3" canceled.
+
+/// A started command (Child): a handle of the C runtime.
+struct ProcChild {}
+/// Runs the specs (mode 0 output, 1 on the terminal, 2 a pipeline of all
+/// of them) with input as the first one's standard input when has_input:
+/// "0", the status, standard output, standard error.
+fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
+/// Starts the command; proc_child_start tells how that went.
+fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
+fn proc_child_start(c: ProcChild) -> List[Str]
+fn proc_child_pid(c: ProcChild) -> Int
+fn proc_child_write(c: ProcChild, data: Bytes) -> List[Str]
+fn proc_child_close_stdin(c: ProcChild)
+/// At most max bytes of the output (or the error stream): "0" and the
+/// bytes, or "e" at the end.
+fn proc_child_read(c: ProcChild, err: Bool, max: Int) -> List[Str]
+fn proc_child_read_line(c: ProcChild) -> List[Str]
+/// "0" and the exit status.
+fn proc_child_wait(c: ProcChild) -> List[Str]
+fn proc_child_kill(c: ProcChild)
+
+// ---------------------------------------------------------------------------
+// The environment (decision 0172)
+
+/// The attenuation lists of a Proc or Env, and the Proc or Env of lists
+/// (lowered by internal/ssa).
+fn proc_lists(p: Proc) -> Str
+fn proc_new(lists: Str) -> Proc
+/// The attenuation lists of a Net, and the Net of lists (decision 0175).
+fn net_lists(n: Net) -> Str
+fn net_new(lists: Str) -> Net
+/// Whether the attenuation lists of a Net admit host and port (std/rt
+/// attenuate.go onlyNet.admits; the C runtime's net_admits).
+fn net_admits(lists: Str, host: Str, port: Str) -> Bool
+fn env_lists(e: Env) -> Str
+fn env_new(lists: Str) -> Env
+/// The value of the variable in a list of one, or the empty list.
+fn env_get(name: Str) -> List[Str]
+/// The NAME=VALUE entries of the environment: os.Environ() sorted, or a
+/// test's FakeEnv in the order of its variables.
+fn env_vars() -> List[Str]
 
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)

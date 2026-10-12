@@ -18,6 +18,29 @@ struct Fault {
   frames: List[Str]
 } derive Display
 
+/// The outcome of task.with_budget (decision 0173): a ceiling was passed
+/// (resource is "cpu", "alloc", or "steps"), or f failed.
+enum Budgeted[E] {
+  Exceeded(resource: Str)
+  Failed(from E)
+} derive Display
+
+/// Ceilings on the work of a call run by task.with_budget (decision
+/// 0173): running time, bytes allocated, and steps (loop iterations and
+/// calls). Zero means no ceiling.
+struct Budget {
+  cpu: Duration
+  alloc: Int
+  steps: Int
+}
+
+fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> Budget
+
+/// Runs f in a child scope under the budget b: when a ceiling is passed
+/// the scope is canceled, its tasks unwind at their next loop iteration or
+/// call, and the result is Err(Exceeded(resource)).
+fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T ! Budgeted[E] uses (clock, fx)
+
 fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T ! E uses fx) -> T ! Timed[E] uses (clock, fx)
 fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
 fn is_canceled() -> Bool

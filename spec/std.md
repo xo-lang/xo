@@ -164,6 +164,7 @@ Slicing (`s[a..b]`) is in core 3.6.
 ### 2.3 List[T]
 
 ```
+List[T].with_capacity(n: Int) -> List[T]     // empty, room for n elements
 fn (xs: List[T]) len() -> Int
 fn (xs: List[T]) is_empty() -> Bool
 fn (xs: List[T]) get(i: Int) -> T?
@@ -194,6 +195,11 @@ fn ([var] xs: List[T]) set(i: Int, x: T)     // also xs[i] = x on a var list
 Higher order methods (`map`, `filter`, ...) pass through the callback's effects
 and errors through effect variables (core 6.2); `map` with a failing callback
 returns `List[U] ! E`.
+
+`List[T].with_capacity(n)` (also `List.with_capacity(n)` where the type is
+known) is an empty list, equal to `[]`, whose first `n` pushes append
+without growing it; `n` below 0 counts as 0. Capacity is not observable
+(decision 0170).
 
 ### 2.4 Map[K, V] and Set[T]
 
@@ -434,7 +440,8 @@ fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
-MemFs, native builds report them as XO1201, planned):
+MemFs, and native builds on the real filesystem, decision 0172; a native
+test binary's MemFs reports them as XO1201, planned):
 
 ```
 fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
@@ -554,8 +561,9 @@ an attenuated `Net` fails with `SqlErr.Conn` (the driver dials by
 itself, so the list cannot be enforced). `only` on an attenuated `Net`
 keeps both lists: an address must pass each. Names are checked as
 written, not as resolved: an allowed name that resolves to another
-address is allowed. Native builds (`--no-gc`) do not have `only` yet
-(XO1201, planned).
+address is allowed. Native builds (`--no-gc`) have it too (decision
+0175): a `Net` there is the lists of its attenuations; hosts in dial and
+listen addresses and in redirects are lowered ASCII only.
 
 ```
 let api = os.net.only(["api.example.com"])
@@ -634,7 +642,7 @@ native ones read `HOME` for the home directory).
 variables: `get` of another name is `None`, `vars` holds only listed
 names, and `home` is `Err(Missing("HOME"))` unless `HOME` is listed;
 `args` and `program` are unchanged. Attenuating again keeps both lists.
-Native builds do not have `only` yet (XO1201, planned).
+Native builds have it too (decision 0172).
 
 ### 3.6 Stdio (`uses stdio`)
 
@@ -703,7 +711,7 @@ fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
 `Denied(cmd)` for a command not listed (compared as written: `git` and
 `/usr/bin/git` are different entries); `exit` and `set_grace` are
 unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
-Native builds do not have `only` yet (XO1201, planned).
+Native builds have it too (decision 0172).
 
 The native backends run commands with `posix_spawn`, reading the output
 on the event loop; cancelling the task kills the command (decision 0107).
@@ -714,7 +722,9 @@ and exits with status 1. Prefer that over `exit` for failures.
 ### 3.8 Commands, children, and pipelines
 
 Status: implemented on the Go backend and its fakes (decision 0161,
-2026-10-11); native builds report these methods as XO1201 (planned).
+2026-10-11) and natively (decision 0172, 2026-10-11: `posix_spawn` in
+the C runtime, pipes on the event loop; FakeProc in native test
+binaries).
 
 ```
 struct Cmd {}                                 // a command that has not run; a value
@@ -801,6 +811,12 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
   `on_run` is `NotFound`.
 - Record and replay (core 11.3) record `output`, `run`, and `pipeline`;
   a `Child`'s reads are not recorded yet.
+- Native builds (decision 0172) differ in what cancellation does to a
+  running command: the command is killed when the cancelled task waits
+  on it (`output`, `run`, `pipeline`, `Child.wait`, `Child.read`), and
+  that call is `Canceled` (the Go backend kills it at once and its
+  `wait` gives the status 137). An attenuated `Proc` or `Env` debugs as
+  `<proc>` or `<env>`, without its lists.
 
 ---
 
@@ -1139,14 +1155,29 @@ pub fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log   // also info, wa
 pub fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 enum Level { Debug, Info, Warn, Error }
 enum Format { Text, Json }
-struct Record { level: Level, msg: Str, fields: Map[Str, Str] }   // as captured in tests (8.6)
+struct Record { level: Level, msg: Str, fields: Map[Str, Str], module: Str }   // as captured in tests (8.6)
 ```
 
 ```
 log.info("listening", {"addr": addr, "port": port})
 ```
 
-Every record includes the time. **[later]** The current span and the
+Every record includes the time. A record written by the code of a
+dependency (a required module version, not the main module or a
+workspace module) names it, `<module path>@<version>` (decision 0173):
+text records put it in brackets after the level
+(`2026-10-11T09:00:00Z WARN [github.com/acme/billing@v1.2.0] retrying`),
+JSON records as the key `"module"`, which replaces a field of the same
+name (a dependency cannot attribute its record to another module), and
+`Record.module` holds it in tests (`""` for the main module's records).
+The call's source file decides: a closure of the main module run by a
+dependency logs as the main module. Records of the main module carry no
+attribution, on every backend (cmd/xo TestLogAttribution checks the
+text and JSON records and `Record.module` on Go, arm64, and LLVM).
+`xo audit` lists each dependency's log
+call sites with the attribution its records carry.
+
+**[later]** The current span and the
 request id (core 11.6) are not attached yet. Without `configure`, logs go
 to standard error as text at `Info`.
 
@@ -1164,6 +1195,32 @@ logged in a test reaches the real standard error.
 
 ## 7. std/task
 
+**Resource budgets** (decision 0173). `task.with_budget` bounds the work
+of a call, typically a dependency's, against compute and memory denial of
+service: `cpu` is running time (time its tasks spend outside blocking
+waits, measured on the real monotonic clock, also under a `FakeClock`),
+`alloc` is bytes allocated, and `steps` counts loop iterations and calls,
+a deterministic unit. The budget covers every task started inside the
+call, wherever it is started, and nested budgets all apply. Code polls
+the budget at the start of every loop iteration and at the entry of
+every function that calls user code, so under a budget a pure loop or a
+recursion is a cancellation point. The polls are compiled only into a
+program that calls `with_budget` somewhere (one without a budget is
+unchanged); there they cost a nil check outside a budget. Ceilings are checked every 1024 steps of a thread (the last
+quantum before a `steps` ceiling is shortened to hit it exactly).
+Deferred code runs shielded and is not unwound; budgeted shielded code
+that goes past twice a ceiling faults (`XO-F008`). Limits: on the Go
+backend `alloc` is the process wide allocation since the budget started
+(Go keeps no count per goroutine), an upper bound that also counts other
+tasks running at the same time; one std operation (a large `repeat`, a
+sort) is not interrupted; functions compiled to assembly by `--hybrid`
+do not poll. The native backends (`--no-gc`, decision 0175) poll at
+every loop iteration and at the entry of every function of the
+program's own modules (leaf functions too, so a step count runs a little
+higher than on the Go backend) and count `alloc` exactly per task (the
+bytes each task allocated); `XO-F008` there names the `with_budget` call
+as its location.
+
 ```
 enum Timed[E] { TimedOut, Failed(from E) } derive Display
 enum Isolated[E] { Faulted(info: Fault), Failed(from E) } derive Display
@@ -1174,6 +1231,14 @@ pub fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T !
     // runs f in a child scope; on expiry cancels it, waits for it to unwind, returns Err(TimedOut)
 
 pub fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
+
+enum Budgeted[E] { Exceeded(resource: Str), Failed(from E) } derive Display
+struct Budget { cpu: Duration, alloc: Int, steps: Int }    // 0: no ceiling
+pub fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> Budget
+pub fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T ! Budgeted[E]
+    uses (clock, fx)
+    // runs f in a child scope under the budget; when a ceiling is passed cancels
+    // the scope, waits for it to unwind, returns Err(Exceeded("cpu" | "alloc" | "steps"))
 
 pub fn is_canceled() -> Bool
 pub fn stop_requested() -> Bool          // the first shutdown signal arrived (core 7.5)
@@ -2182,8 +2247,12 @@ pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
 
 ## 17. std/regexp
 
-Status: implemented on the Go backend (decision 0164, Go's `regexp`);
-native builds report it as XO1201 (planned).
+Status: implemented on the Go backend (decision 0164, Go's `regexp`)
+and natively (decision 0172: Go's regexp/syntax parser, compiler, and
+Pike VM ported to Xo, the same matches and errors). Native builds have
+the Unicode classes `\pL` (`\p{Letter}`), `\p{Nd}`, `\p{Any}`, and
+`\p{ASCII}` so far; another class Go knows is a `RegexErr` saying it is
+not supported by native builds yet.
 
 ```
 struct Regex {}                          // handle
@@ -2215,8 +2284,9 @@ In `replace_all`, `$name` takes the longest name it can (`$1x` is group
 ## 18. std/archive
 
 Status: implemented on the Go backend (decision 0164, Go's
-`compress/gzip`, `archive/tar`, `archive/zip`); native builds report it
-as XO1201 (planned).
+`compress/gzip`, `archive/tar`, `archive/zip`) and natively (decision
+0172: those packages ported to Xo, the same bytes and errors; zip64
+archives are an error natively).
 
 ```
 struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }

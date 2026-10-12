@@ -1519,6 +1519,35 @@ func (s *fstate) storeElem(base vreg, et *ssa.Type, ws []vreg) {
 	}
 }
 
+// storeHole writes the placeholder list.take leaves in the element at
+// base (decision 0169): the words reference counting reads, so that
+// retain, release, and share of it do nothing. A Str, List, Box, or
+// handle points to the empty string's object (immortal), a function
+// value's environment is null, and an enum's tag is past its variants.
+func (s *fstate) storeHole(base vreg, et *ssa.Type) {
+	g := s.g
+	listHdr := s.hdr()
+	var ls []leaf
+	g.heapLeaves(et, 0, &ls)
+	var obj vreg
+	for _, l := range ls {
+		var w vreg
+		off := l.off
+		switch l.t.Kind {
+		case ssa.KFunc:
+			off++ // the environment
+		case ssa.KEnum:
+			w = s.cimm(int64(len(l.t.Variants)))
+		default:
+			if obj == 0 {
+				obj = s.symAddr(g.strObj(""))
+			}
+			w = obj
+		}
+		s.store(fmt.Sprintf("str $u0, [$u1, #%d]", listHdr+8*off), w, base)
+	}
+}
+
 func (s *fstate) listLen(l vreg) vreg {
 	m := s.m()
 	if n, ok := m.lens[l]; ok {
@@ -1651,6 +1680,16 @@ func (s *fstate) callOp(v *ssa.Value) {
 		et := v.Type
 		base := s.elemBase(l, i, g.esize(et))
 		s.set(v, s.loadElem(base, et, false)...)
+	case "list.take":
+		// element i moves out (decision 0169); its slot gets a
+		// placeholder that releasing ignores until list.set stores back
+		l, i := s.word(v.Args[0]), s.word(v.Args[1])
+		s.boundsCheck(v, l, i)
+		et := v.Type.Elems[1]
+		base := s.elemBase(l, i, g.esize(et))
+		e := s.loadElem(base, et, false)
+		s.storeHole(base, et)
+		s.set(v, append([]vreg{l}, e...)...)
 	case "list.get":
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		et := v.Args[0].Type.Elems[0]

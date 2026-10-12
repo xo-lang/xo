@@ -24,6 +24,9 @@ type Task struct {
 	// th is the goroutine the task runs on (sched.go): what it is blocked
 	// on, and its turn under the deterministic scheduler.
 	th *thread
+	// bud is the resource budget the task works under (budget.go,
+	// decision 0173), nil when none.
+	bud *budget
 }
 
 // cnode is a node of the cancellation tree. Canceling a node cancels every
@@ -187,6 +190,13 @@ var InitTask = NewRootTask()
 func (tk *Task) child(parent *cnode, kind string) *Task {
 	c := &Task{w: tk.w, stop: tk.stop, th: tk.th.newChild(kind)}
 	c.node = newNodeOf(parent, tk.w, nodeTask, c)
+	if tk.bud != nil {
+		// a task started under a budget works under it too (decision
+		// 0173), wherever it is started
+		c.bud = tk.bud
+		c.th.budRun = monoNow()
+		c.th.budQ, c.th.budLeft = budgetQuantum, budgetQuantum
+	}
 	return c
 }
 
@@ -259,6 +269,9 @@ func (tk *Task) Shielded(at string, f func()) {
 // cancelable tells whether cancellation ends the wait (it does not while
 // shielded).
 func (tk *Task) blockOn(k waitKind, obj any, cancelable bool) {
+	if tk.bud != nil {
+		tk.budgetBlock()
+	}
 	th := tk.th
 	th.setWait(tk, k, obj)
 	if s := th.sch; s != nil {
@@ -275,6 +288,9 @@ func (tk *Task) unblock() {
 		s.unblock(th)
 	} else if tk.w != nil {
 		tk.w.unblock(tk)
+	}
+	if tk.bud != nil {
+		tk.budgetUnblock()
 	}
 }
 

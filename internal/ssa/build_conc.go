@@ -753,6 +753,8 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.rt("is_canceled", boolT), true
 	case "task.with_timeout":
 		return s.withTimeout(x, fo), true
+	case "task.with_budget":
+		return s.withBudget(x, fo), true
 	case "task.stop_requested":
 		return s.rt("stop_requested", boolT), true
 	case "task.stopping":
@@ -1089,6 +1091,8 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 			c.writeVar(ps[0], f.Params()[1])
 			c.varParams = []*check.VarObj{ps[0]}
 		}
+		c.polls = s.polls
+		c.poll()
 		v := c.block(x.Body)
 		c.ret(v, x.Body)
 		c.finishFn()

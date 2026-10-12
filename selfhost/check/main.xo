@@ -60,6 +60,7 @@ fn main(os: Os) ! {
   let offline = os.env.get("XO_OFFLINE") ?? ""
   let work = os.env.get("XO_WORK") ?? ""
   let cbind = os.env.get("XO_CBIND_DIR") ?? ""
+  let gobind = os.env.get("XO_GOBIND_DIR") ?? ""
   var runs: List[List[Str]] = [dirs]
   if each {
     runs = []
@@ -76,6 +77,7 @@ fn main(os: Os) ! {
         c.native = native
         c.set_mod_env(wd, modcache, home, xdg, offline, work)
         c.cbind_dir = cbind
+        c.gobind_dir = gobind
         match c.check_dirs(r) {
           Ok(_) => mods += c.root_mods.len()
           Err(e) => fault("check: ${e}")
@@ -95,6 +97,7 @@ fn main(os: Os) ! {
     c.native = native
     c.set_mod_env(wd, modcache, home, xdg, offline, work)
     c.cbind_dir = cbind
+    c.gobind_dir = gobind
     match c.check_dirs(r) {
       Ok(_) => {
         if c.unsupported.is_empty() {

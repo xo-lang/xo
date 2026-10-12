@@ -674,3 +674,81 @@ only): a std change with its own decision, not done here.
    checked as std/rt's JsonDec does, in build_json.go and json.xo.
 5. **A `main ! E` with its own error type given to testing.run_main**
    (stage 7 finding): the native Debug text of `Error` values.
+
+# The verifier's reference counts by leaf number, 2026-10-12
+
+Stage 8's next experiment 3 (integer leaf keys) in selfhost/ssa
+verify.xo (rc.xo only gains fields; internal/ssa's verifier is
+unchanged, the verdicts are the same). Measured with the go build of
+the Xo builder, `--stages` on selfhost/check and selfhost/ssa of a
+snapshot of commit 2cdbb29 (so every build reads the same input), under
+the machine wide lock with about ten agents at work: wall clock is
+noisy, the instruction counts (`/usr/bin/time -l`) and profile samples
+are steadier. Every variant printed byte identical output to the
+build before it on both inputs.
+
+| variant | verify_rc samples, check | verify_rc samples, ssa | wall, check | wall, ssa |
+|---|---|---|---|---|
+| before (ordered `Map[Str, Int]` per state, cloned per block and edge) | 9.3 to 9.7 s | 29.4 to 35.6 s | 23.8 to 24.6 s | 66 to 75 s |
+| v1: a dense `List[Int]` of counts per state (run on the working tree, not the snapshot) | 23.1 s | (not profiled) | 40.5 s | 258.7 s |
+| v2: sparse sorted (number, count) lists, zeros removed | 10.8 s | (not profiled) | 24.4 s | 81.1 s |
+| v3: v2 keeping zero entries, numbers found by root | 17.5 s | (not profiled) | 32.6 s | 134.5 s |
+| v4: counts of the block being checked in one reused dense list, states copied out at the terminator | 7.8 s | 26.5 s | 20.7 s | 63.5 s |
+| v5 (landed): v4, with each edge's changes made in the reused list and undone, and the leaf numbers and uses of each value kept across a function's mutants | 4.4 s | 13.2 s | 18.0 s | 47.9 s |
+
+Against the same before run (instructions retired, whole run): selfhost/check
+455.4 to 312.8 billion (-31%), selfhost/ssa 1,345.7 to 890.7 billion
+(-34%); profile samples of the whole run 27.2 to 19.9 s and 90.3 to
+56.7 s. The verifier (verify_rc) is now below the passes' own insert_rc
+(6.1 s and 17.2 s).
+
+Findings:
+
+- The Map's insertion log was not the whole story: what costs is
+  copying a state per block and per edge. A dense list per state copies
+  every leaf of the function per edge (v1, 1.6 and 3.0 times the wall clock of its own before run, 26.1 and 87.3 s); a sparse
+  list copies what is held, but every change after a copy shifts it
+  (v2: no gain; v3, keeping zeros to avoid shifts, grows the lists and
+  is slower again).
+- v4/v5 count in place: one dense list by leaf number (Rc.cur) reused
+  for every block, reset through the list of numbers it touched; a
+  canonical sparse state (sorted numbers, nonzero counts) is copied out
+  once per edge, so states compare with `==`. The landing cleanup edge
+  (rare) still edits a sparse copy.
+- The leaf numbers stay valid across the 3,900 mutants of selfhost/check
+  (a mutant removes one instruction, not values), so v5 numbers each
+  value's leaves and uses once per function instead of building leaf
+  key text at every count change.
+
+Next: the passes' insert_rc (liveness and walk, `Map[Str, Leaf]` live
+sets) is the larger cost now (6.1 s and 17.2 s of samples): the same
+numbering would apply to `live` in rc.xo's walk, with internal/ssa's
+iteration order kept for the placements (they are compared with the Go
+builder's, so the order of the live set matters there, unlike in the
+verifier).
+
+# List.with_capacity in Module.new_func, 2026-10-12
+
+Stage 8's next experiment 2: `List[T].with_capacity(n)` (decision 0170)
+landed in the prelude, and selfhost/ssa's `Module.new_func` was tried
+with room up front for each function's lists. Sizes from the build
+stage of selfhost/ssa (`xo ssadump`, 1,658 functions): values per
+function mean 343, median 180, 90th percentile 766; blocks mean 48,
+median 21, 90th percentile 120. Builder alone (`--bench=10`, go build,
+the snapshot of commit 2cdbb29, after the verifier change above), three
+runs each, alternating, under load (instructions retired by the whole
+process, billions; ms as printed):
+
+| `new_func` lists | selfhost/check | selfhost/ssa |
+|---|---|---|
+| no capacity (as before) | 24.16, 24.05, 23.97 (1,301, 1,314, 1,270 ms) | 44.26, 44.33, 44.44 (2,441, 2,529, 2,488 ms) |
+| 256 values, 32 blocks, 32 edges | 25.29, 25.20, 25.26 (1,331, 1,351, 1,331 ms) | 45.84, 45.78, 46.00 (2,491, 2,622, 2,516 ms) |
+| 128 values, 16 blocks, 16 edges | 24.52, 24.58, 24.46 (1,316, 1,283, 1,328 ms) | 44.89, 45.04, 44.65 (2,484, 2,391, 2,497 ms) |
+
+No gain: more instructions with either size (zeroing room most small
+functions never use outweighs the copies of doubling) and wall clock
+within noise. `new_func` stays without capacities. The earlier profile
+item (memmove and growth about 10%) was not growth of these lists;
+next, find which lists it was with the temporary counter in std/rt
+List_copyOut that found `Builder.comparable` (2026-10-11 section above),
+split by element type.

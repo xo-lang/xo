@@ -45,7 +45,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 - **Capability attenuation** (6.3, std.md 3.2, 3.5, 3.7, decision 0156):
   `os.net.only(hosts)`, `os.env.only(names)`, and `os.proc.only(cmds)`
   return narrowed capabilities; `NetErr` and `ProcErr` gain `Denied`.
-  Native builds report `only` as XO1201 (planned).
+  Native builds have `only` too (decisions 0172 and 0175).
 - **Effect lock** (4.3, decision 0156): xo.lock records each
   dependency's effects (`<path> effects <labels|none>`); an update that
   widens them fails every load with `XO1317` until `xo mod
@@ -1186,6 +1186,10 @@ use ./api
 use ./billing
 ```
 
+- `xo <edition>` names an edition as xo.mod's `edition` line does:
+  `preview`, or its old name `2026`, which builds and gets the fixable
+  note `XO1315` (`xo fix` writes `xo preview`); any other name is
+  `XO1301` (decision 0155).
 - A listed module overrides every `require` of it; minimal version
   selection runs over the requirements of all listed modules.
 - The workspace applies when it lists the main module; `--workspace=off`
@@ -1950,6 +1954,10 @@ let page = scope s {
   arrives later goes to the next read).
 - `task.is_canceled() -> Bool` reports the current task's state without
   blocking.
+- Under a resource budget (`task.with_budget`, std.md 7, decision 0173)
+  every loop iteration and every call into user code is a cancellation
+  point too: a passed ceiling cancels the budgeted scope, and its tasks
+  unwind at their next one.
 - `defer` blocks run shielded (3.5).
 
 ### 7.3 Channels
@@ -2175,7 +2183,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
@@ -2184,7 +2192,7 @@ test "retries after 503" {
 | `xo lsp` | Language Server Protocol server over stdio for editors: diagnostics with quick fixes, hover, definition, references, rename, document symbols, semantic tokens, formatting |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
-| `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod lines included (`edition 2026` becomes `edition preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
+| `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2491,7 +2499,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
-| `XO1315` | note | checker | `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
+| `XO1315` | note | checker | `edition 2026` in xo.mod (or `xo 2026` in xo.work) is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
 | `XO1316` | error | checker, xo get | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
 | `XO1317` | error | modules | a dependency's effects are wider than its `effects` line in xo.lock (4.3, decision 0156) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
@@ -2500,6 +2508,8 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1404` | error | checker | recursion among real-time functions |
 | `XO1405` | error | checker | blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function |
 | `XO1501` | error | build | `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module (decision 0165) |
+| `XO1502` | error | build | the go command the Go backend runs (`$XO_GO`, else `go` on PATH) is older than Go 1.24, the oldest Go that builds generated programs and the runtime (decision 0176) |
+| `XO1503` | error | build | the Go backend finds no go command: `$XO_GO` is not an executable file, or there is no `go` on PATH; the native backends need none (decision 0176) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -2513,6 +2523,7 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F005` | a shielded `defer` ran longer than 5 seconds (3.5) |
 | `XO-F006` | a loop started more iterations than its `bound N` (3.5) |
 | `XO-F007` | a real-time section allocated (6.5, native builds) |
+| `XO-F008` | shielded code under a resource budget ran past twice a ceiling (std.md 7, decision 0173) |
 
 ---
 
@@ -2728,7 +2739,7 @@ specified in `spec/std.md`. Modules:
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
 | `std/log` | Structured logging; performs the `log` effect (6.1) |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
-| `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13). Go backend only so far |
+| `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13) |
 | `std/testing` | Fake capability types, generators, captured logs |
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
@@ -2736,8 +2747,8 @@ specified in `spec/std.md`. Modules:
 | `std/cli` | Command line parsing: flags, arguments, subcommands, help, usage errors (std.md 14) |
 | `std/term` | Terminal colors that follow NO_COLOR and FORCE_COLOR (std.md 15) |
 | `std/csv` | CSV and TSV parsing and formatting (std.md 16) |
-| `std/regexp` | RE2 regular expressions (std.md 17). Go backend only so far |
-| `std/archive` | gzip, tar, and zip in memory (std.md 18). Go backend only so far |
+| `std/regexp` | RE2 regular expressions (std.md 17), on every backend (natively in Xo, decision 0172) |
+| `std/archive` | gzip, tar, and zip in memory (std.md 18), on every backend (natively in Xo, decision 0172; zip64 archives are an error natively) |
 | `std/toml` | TOML 1.0 documents decoded with the JSON rules (std.md 19) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |

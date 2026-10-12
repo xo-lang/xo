@@ -323,6 +323,32 @@ int64_t xo_rune_is_digit(int64_t r) {
 
 int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
 
+// xo_unicode_ranges is the ranges of a Unicode class as a List[Int] of
+// lo, hi pairs, sorted (std/regexp natively, decision 0172): 0 the
+// letters (unicode.L), 1 the decimal digits (unicode.Nd).
+xo_rlist *xo_unicode_ranges(int64_t which) {
+	const int32_t(*t)[2] = which == 0 ? xo_letter_ranges : xo_digit_ranges;
+	int n = which == 0 ? N_RANGES(xo_letter_ranges) : N_RANGES(xo_digit_ranges);
+	xo_rlist *l = xo_rl_new(2 * (int64_t)n + 4, 8);
+	int64_t *d = (int64_t *)rl_data(l);
+	int64_t k = 0;
+	if (which == 0) {
+		d[k++] = 'A';
+		d[k++] = 'Z';
+		d[k++] = 'a';
+		d[k++] = 'z';
+	} else {
+		d[k++] = '0';
+		d[k++] = '9';
+	}
+	for (int i = 0; i < n; i++) {
+		d[k++] = t[i][0];
+		d[k++] = t[i][1];
+	}
+	l->len = k;
+	return l;
+}
+
 static int n_is_print(int64_t r) {
 	if (r < 0x80) {
 		return r >= 0x20 && r < 0x7F;

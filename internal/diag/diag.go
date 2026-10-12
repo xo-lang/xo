@@ -157,9 +157,19 @@ func Sort(ds []Diagnostic) {
 //	file:line:col: error XO0160: message
 //	  note: ...
 //	  fix: title
+//
+// A diagnostic of the whole build (no file, such as XO1502) starts at
+// the severity, and one of a file with no position at the file name.
 func Human(d Diagnostic) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s:%d:%d: %s %s: %s", d.Span.File, d.Span.Line, d.Span.Col, d.Severity, d.Code, d.Message)
+	switch {
+	case d.Span.File == "":
+	case d.Span.Line == 0:
+		fmt.Fprintf(&b, "%s: ", d.Span.File)
+	default:
+		fmt.Fprintf(&b, "%s:%d:%d: ", d.Span.File, d.Span.Line, d.Span.Col)
+	}
+	fmt.Fprintf(&b, "%s %s: %s", d.Severity, d.Code, d.Message)
 	for _, n := range d.Notes {
 		if n.Span != nil {
 			fmt.Fprintf(&b, "\n  note: %s:%d:%d: %s", n.Span.File, n.Span.Line, n.Span.Col, n.Message)

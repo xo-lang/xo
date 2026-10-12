@@ -47,6 +47,36 @@ func (b *builder) nativeMod(path string) *check.Module {
 	return b.natives[path]
 }
 
+// logFrom is the attribution of the record written by the call at of
+// the std/log function fo (decision 0173, as internal/gen's logFrom):
+// "<module path>@<version>" when the call is in a dependency's source,
+// else "".
+func (b *builder) logFrom(fo *check.FuncObj, at ast.Node) string {
+	if at == nil || fo == nil || fo.Recv != nil || fo.Module == nil || fo.Module.Path != "std/log" {
+		return ""
+	}
+	switch fo.Name {
+	case "debug", "info", "warn", "error":
+	default:
+		return ""
+	}
+	if b.fileMods == nil {
+		b.fileMods = map[string]*check.Module{}
+		for _, m := range b.info.AllModules() {
+			if m.IsStd {
+				continue
+			}
+			for _, f := range m.Files {
+				b.fileMods[f.Path] = m
+			}
+		}
+	}
+	if m := b.fileMods[at.Span().File]; m != nil {
+		return m.Dependency
+	}
+	return ""
+}
+
 // implOf returns the implementation of the std function fo, or nil.
 func (b *builder) implOf(fo *check.FuncObj) *check.FuncObj {
 	if fo.Module == nil || !fo.Module.IsStd || fo.Iface {
@@ -156,6 +186,25 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 	case "fs_new":
 		t := b.fsType()
 		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type), s.valueAs(es[1], t.Fields[1].Type))
+	case "proc_lists", "env_lists", "net_lists":
+		// the attenuation lists of a Proc, Env, or Net (decisions 0172
+		// and 0175)
+		v := s.expr(es[0])
+		if !isLists(v.Type) {
+			b.unsupported(x, "`"+fo.Name+"` of a value that is not a Proc, Env, or Net")
+			return s.undef(nt)
+		}
+		return s.add(OpField, v.Type.Fields[0].Type, 0, v)
+	case "proc_new", "env_new", "net_new":
+		name := "Proc"
+		switch fo.Name {
+		case "env_new":
+			name = "Env"
+		case "net_new":
+			name = "Net"
+		}
+		t := b.listsType(name)
+		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type))
 	case "dyn_text", "dyn_raw":
 		v := s.expr(es[0])
 		if !isDyn(v.Type) {

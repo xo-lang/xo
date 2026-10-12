@@ -1,0 +1,38 @@
+exit 0
+--- stdout
+dial allowed host: connected
+dial other host: Denied(addr: "203.0.113.7:443")
+dial name: Denied(addr: "evil.example:80")
+dial without a port: Denied(addr: "127.0.0.1")
+dial too many colons: Denied(addr: "127.0.0.1:1:2")
+dial ipv6: Denied(addr: "[::1]:9")
+listen on every interface: Denied(addr: ":0")
+listen other host: Denied(addr: "10.0.0.1:0")
+subdomain entry, bare domain: Denied(addr: "example.com:80")
+subdomain entry, suffix only: Denied(addr: "badexample.com:80")
+host:port entry, other port: Denied(addr: "127.0.0.1:10")
+intersection: Denied(addr: "a.test:1")
+empty list: Denied(addr: "127.0.0.1:1")
+trimmed entry: connected
+http other host: Connect(msg: "denied by Net.only: evil.example:80")
+http ipv6: Connect(msg: "denied by Net.only: [::1]:9")
+https default port: Connect(msg: "denied by Net.only: api.test:443")
+http default port: Connect(msg: "denied by Net.only: api.test:80")
+http case: Connect(msg: "denied by Net.only: WWW.Example.COM.evil:80")
+redirect within: 200 fine
+redirect away: Protocol(msg: "Get \"http://evil.example/x?k=v\": denied by Net.only: redirect to evil.example:80")
+redirect away with a port: Protocol(msg: "Get \"https://Evil.Example:8443/x\": denied by Net.only: redirect to Evil.Example:8443")
+sql: Conn(msg: "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net")
+env get unlisted: false
+env vars unlisted: false
+env home: Missing(name: "HOME")
+env args still readable: 0
+env intersection: true false
+proc run: Denied(cmd: "sh")
+proc cmd output: Denied(cmd: "sh")
+proc cmd spawn: Denied(cmd: "sh")
+proc pipeline: Denied(cmd: "sh")
+proc intersection: Denied(cmd: "echo")
+proc allowed: allowed
+
+--- stderr

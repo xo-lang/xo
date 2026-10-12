@@ -10,6 +10,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/fix"
+	"github.com/xo-lang/xo/internal/mod"
 )
 
 // runFix implements `xo fix [--dry-run] [--json] [--from=draft-0.N]
@@ -26,7 +27,7 @@ func runFix(args []string, stdout, stderr io.Writer) int {
 	}
 	if *edition != "" {
 		if !check.SupportedEdition(*edition) {
-			fmt.Fprintf(stderr, "xo fix: unknown edition %q (known: %s)\n", *edition, strings.Join(check.Editions, ", "))
+			fmt.Fprintf(stderr, "xo fix: unknown edition %q (known: %s)\n", *edition, strings.Join(mod.Editions, ", "))
 			return 2
 		}
 	}

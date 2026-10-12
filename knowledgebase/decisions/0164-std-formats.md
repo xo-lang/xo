@@ -1,8 +1,10 @@
 # 0164: Formats: CSV, TOML, gzip/tar/zip, regexp
 
 Status: Accepted, implemented (2026-10-11). `std/csv` and `std/toml` on
-every backend; `std/regexp` and `std/archive` on the Go backend, XO1201
-(planned) on native builds. Spec: std.md 16 to 19.
+every backend; `std/regexp` on every backend (natively by decision
+0172); `std/archive` on every backend (natively by decision 0172, Go's
+compress/flate, gzip, tar, and zip ported to Xo rather than a vendored
+zlib). Spec: std.md 16 to 19.
 
 ## Context
 
