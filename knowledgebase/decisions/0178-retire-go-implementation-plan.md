@@ -350,6 +350,44 @@ overlay; holes (XO0900) and the workspace directories came from stage 2.
   (stdout, stderr, exit status, and the files after an edit):
   **37 of 37 byte identical** (bench/results/retire-go-2026-10-12.md).
 
+## Stage 5, the servers (2026-10-12)
+
+`mcp`, `lsp`, `serve`, `dump`, and `replay` are selfhost/cli/servers,
+dispatched by xo1 (after the module and semantic commands, before stage
+2's). Native std first (decision 0190): `unix:PATH` addresses for
+`Net.listen`/`dial` (serve) and `Proc.kill(pid, signal)` (dump), both
+gated by attenuation; `Env.program` natively (the servers run their own
+binary again). How each command maps to Go's:
+
+- **mcp**: internal/mcp's server, with a JSON reader and writer in Xo
+  that reproduces encoding/json (scanner error texts, struct versus map
+  key matching, RawMessage kept as written and compacted, sorted map
+  keys, HTML escaping, numbers through float64). The tools run the
+  binary itself with `XO_NO_SERVE=1` where Go calls `run` in process.
+- **serve**: the same socket protocol, so Go and Xo clients and servers
+  interoperate; xo1's `check` and `query` forward to a running server
+  as cmd/xo does. The cache keeps whole command responses per working
+  directory and checked directories (the Go server keeps checked
+  sessions), with the same hit and miss counts.
+- **lsp**: framing, initialize, document sync with the 150 ms debounce,
+  publishDiagnostics from the self hosted checker with the open texts as
+  its overlay, codeAction, documentSymbol. Not yet: hover, definition,
+  references, rename, formatting, semantic tokens (they need
+  internal/lsp resolve.go over the checker's records, query's
+  declaration surfaces, and the formatter in process).
+- **dump**: SIGQUIT through `Proc.kill`, then the same polling of the
+  dump file.
+- **replay**: rebuilds with `xo build --backend=go` as a child and reads
+  the new build information from the binary (the string passed to
+  rt.SetBuildInfo) to report changed sources.
+
+Gate figures (results file, "Stage 5"): byte identical with the Go
+servers on the MCP protocol transcript (36 of 36) and tool calls (10 of
+10), dump (9 of 9), the serve protocol (10 of 10) and cache, the LSP
+transcript (14 of 14 steps), and replay; cmd/xo's own tests of these
+commands against xo1: 4 of 7 (the three others build or `run --record`
+through xo1, whose default backend is arm64, not Go).
+
 ## Consequences
 
 - Until switch point B every language change is still made twice

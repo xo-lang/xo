@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
+  xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
+  quick fixes, symbols) with the Go servers' responses byte for byte,
+  and forwards `check` and `query` to a running `xo serve`. Natively,
+  `os.env.program()` builds, and removing from both a `Map[Str, Str]`
+  and a `Map[Str, Bytes]` in one program no longer fails the SSA
+  verifier.
 - `os.proc.kill(pid, signal)` sends a signal (by name: `TERM`, `QUIT`,
   ...) to another process, and `os.net.listen` and `dial` take
   `unix:PATH` addresses for Unix domain sockets, on every backend; an
