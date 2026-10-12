@@ -1831,10 +1831,8 @@ fn (var b: Builder) llrt(name: Str, t: Int, args: List[Int]) -> Int {
     return b.undef(t)
   }
   let f = b.declare(impl, [])
-  let fname = b.m.funcs[f].name
-  let r = b.call(fname, b.m.funcs[f].results[0], "", args)
-  b.check(fname)
-  r
+  // unchecked, like the C it replaces (fn.llrt)
+  b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
 }
 
 fn (var b: Builder) jump(to: Int, args: List[Int]) {

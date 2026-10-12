@@ -1,6 +1,7 @@
 // A call that passes a struct of 600 words by value puts about 4.7 KiB
 // of stack arguments below the frame, so the $OUT slot of the runtime
-// calls returning a Str (str_replace) is past the 4095 byte immediate of
+// calls returning a Str (str_repeat; str_replace until it moved to Xo,
+// decision 0193) is past the 4095 byte immediate of
 // `add`; the arm64 backend materializes its address with a shifted add
 // (gotchas/arm64-add-immediate-range.md). Found by the self hosted SSA
 // builder (decision 0150), whose Builder is that large. Since decision
@@ -622,7 +623,7 @@ fn show(b: Big, s: Str) -> Str {
   // reference (decision 0151), calls of function values pass its words
   let f = total
   let n = f(b, 1)
-  "${n}".replace("0", "zero") + s
+  "${n}".repeat(2) + s
 }
 
 fn main(os: Os) {

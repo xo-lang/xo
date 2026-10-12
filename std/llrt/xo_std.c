@@ -328,6 +328,20 @@ int64_t xo_str_find(const char *p, int64_t n, const char *q, int64_t m, int64_t 
 	return i < 0 ? -1 : i + from;
 }
 
+// xo_str_index_byte is the index of the first byte c of s at or after
+// from, or -1 (memchr): the line and one byte separator searches of
+// std/native/llrt/strings.xo (decision 0193).
+int64_t xo_str_index_byte(const char *p, int64_t n, int64_t c, int64_t from) {
+	if (from < 0) {
+		from = 0;
+	}
+	if (from >= n) {
+		return -1;
+	}
+	const char *r = memchr(p + from, (int)c, (size_t)(n - from));
+	return r ? r - p : -1;
+}
+
 xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t *len) {
 	if (lo < 0) {
 		lo = 0;

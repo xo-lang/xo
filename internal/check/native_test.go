@@ -113,8 +113,9 @@ func TestUnicodeCPath(t *testing.T) {
 
 // TestLLRTCPath checks that XO_LLRT_C=text loads the C path of the number
 // and time text (std/native/llrt/text_c.xo, decision 0193) in place of
-// text.xo with no diagnostic, that the default is text.xo, that `all`
-// selects every C path, and that an unknown name is ignored.
+// text.xo, and XO_LLRT_C=strings strings_c.xo, with no diagnostic, that
+// the default is the Xo path, that `all` selects every C path, and that
+// an unknown name is ignored.
 func TestLLRTCPath(t *testing.T) {
 	dir := t.TempDir()
 	src := "fn main(os: Os) {\n  os.stdio.println(\"${Int.parse(\"7\") ?? 0} ${5s} ${'a'.is_letter()} ${\"q\".debug()}\")\n}\n"
@@ -122,12 +123,13 @@ func TestLLRTCPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		env, text, unicode string
+		env, text, unicode, strings string
 	}{
-		{"", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo"},
-		{"text", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo"},
-		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode_c.xo"},
-		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode_c.xo"},
+		{"", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo"},
+		{"text", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo"},
+		{"strings", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings_c.xo"},
+		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings_c.xo"},
+		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings.xo"},
 	} {
 		t.Setenv("XO_LLRT_C", c.env)
 		res, err := CheckOpts([]string{dir}, Options{Native: true})
@@ -143,8 +145,8 @@ func TestLLRTCPath(t *testing.T) {
 				files[m.Path] = m.Files[0].Path
 			}
 		}
-		if files["native/llrt/text"] != c.text || files["native/llrt/unicode"] != c.unicode {
-			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q; want %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], c.text, c.unicode)
+		if files["native/llrt/text"] != c.text || files["native/llrt/unicode"] != c.unicode || files["native/llrt/strings"] != c.strings {
+			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q, strings from %q; want %q, %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], files["native/llrt/strings"], c.text, c.unicode, c.strings)
 		}
 	}
 }

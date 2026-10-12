@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 "": split","=[""] split""=[] split"--"=[""] split"-"=[""] split"a"=[""] split"日"=[""] split"\n"=[""] split"xyz"=[""]
   lines=[] trim="" start="" end="" runes=0
    ","->"" ""->"<>" "--"->"" "-"->"" "a"->"" "日"->"" "\n"->"" "xyz"->""

@@ -38,6 +38,20 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
     return out
   }
   var start = 0
+  if m == 1 {
+    // one byte: memchr alone
+    let c = Int(sep.bytes()[0])
+    while true {
+      let i = rt.str_index_byte(s, c, start)
+      if i < 0 {
+        break
+      }
+      out.push(rt.str_slice(s, start, i))
+      start = i + 1
+    }
+    out.push(rt.str_slice(s, start, n))
+    return out
+  }
   while true {
     let i = rt.str_find(s, sep, start)
     if i < 0 {
@@ -58,7 +72,7 @@ pub fn lines(s: Str) -> List[Str] {
   let b = s.bytes()
   var start = 0
   while start < n {
-    var end = rt.str_find(s, "\n", start)
+    var end = rt.str_index_byte(s, 10, start)
     if end < 0 {
       end = n
     }
@@ -180,21 +194,18 @@ pub fn trim(s: Str, mode: Int) -> Str {
   rt.str_slice(s, lo, hi)
 }
 
-/// utf8.RuneCountInString: runs of ASCII are counted at once.
+/// utf8.RuneCountInString: a Str is valid UTF-8 (core 2.2; slicing
+/// inside a sequence faults), so its runes are its bytes other than
+/// continuation bytes (0x80 to 0xBF), counted without a branch.
 pub fn rune_count(s: Str) -> Int {
   let b = s.bytes()
   let n = b.len()
-  var c = 0
+  var c = n
   var i = 0
   while i < n {
-    if b[i] < 0x80 {
-      let j = rt.bytes_span(b, i, 0)
-      c += j - i
-      i = j
-    } else {
-      i += unicode.decode(b, i) & 7
-      c += 1
-    }
+    // 1 for a continuation byte: (x ^ 0x80) < 0x40
+    c -= (((Int(b[i]) ^ 0x80) - 0x40) >> 8) & 1
+    i += 1
   }
   c
 }

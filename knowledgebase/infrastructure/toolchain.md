@@ -701,6 +701,13 @@ Last verified: 2026-10-07
   darwin); `XO_UNICODE=c` in the environment builds the C path. Run it
   through the heavy lock. Results in
   `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
+- `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
+  decision 0193): the same for bench/perf/text (Int parse, Duration and
+  Time text, Debug quoting, split, lines, replace, trims, rune_count;
+  `none` is the input setup alone); `XO_LLRT_C=text,strings` builds the
+  C paths, `WORKLOADS` picks workloads. Run it through the heavy lock.
+  Results in `bench/results/runtime-port-2026-10-12.md`. Last verified:
+  2026-10-12.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1036,7 +1043,12 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
                         `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
                         (XO_UNICODE=c at build time: the Go checker loads it instead, the build
-                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it)
+                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
+                        text.xo (Int parse, Duration and Time text, Debug quoting) and
+                        strings.xo (split, lines, replace, trims, rune_count), decision 0193,
+                        with C paths text_c.xo and strings_c.xo. `XO_LLRT_C=<name>[,<name>]`
+                        (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
+                        -DXO_STRINGS_C, likewise never in a pack); XO_UNICODE=c still works
                         (Last verified: 2026-10-12)
 ```
 

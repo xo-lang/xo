@@ -9,9 +9,10 @@
 //
 // Results are built in a Str through the runtime's rs_* intrinsics, as in
 // unicode.xo (decision 0180): runs of bytes that stay as they are go over
-// at once (rt.rs_append_bytes), and short text is assembled in an Int and
+// at once (rt.rs_append_bytes), and short text is assembled in Ints and
 // appended with one call (rt.rs_push_word: up to 8 bytes, the first in
-// the low byte), since an append is a C call.
+// the low byte; rt.rs_push_words: four such pieces), since an append is
+// a C call.
 use native/llrt/strings
 use native/llrt/unicode
 use native/rt
@@ -62,46 +63,45 @@ fn push_num(out: Str, v: Int, sw: Int, sk: Int) -> Str {
   rt.rs_push_word(rt.rs_push_word(out, w, k), sw, sk)
 }
 
-/// out + the decimal text of v (0 <= v).
-fn push_uint(out: Str, v: Int) -> Str {
-  if v < 100000000 {
-    return push_num(out, v, 0, 0)
+/// The word of the k (0 to 8) bytes x followed by the sk bytes of sw
+/// (k + sk at most 8).
+fn cat(x: Int, k: Int, sw: Int) -> Int { x | (sw << (8 * k)) }
+
+/// 10^k (0 <= k <= 9).
+fn pow10(k: Int) -> Int {
+  var p = 1
+  var i = 0
+  while i < k {
+    p *= 10
+    i += 1
   }
-  let lo = v % 100000000
-  let hi = v / 100000000
-  var o = out
-  if hi < 100000000 {
-    o = push_num(o, hi, 0, 0)
-  } else {
-    o = push_num(o, hi / 100000000, 0, 0)
-    o = rt.rs_push_word(o, digits_word(hi % 100000000, 8), 8)
-  }
-  rt.rs_push_word(o, digits_word(lo, 8), 8)
+  p
 }
 
-/// out + a fraction f / 10^prec (0 < f < 10^prec, prec 1 to 9) as `.`
-/// and its digits without trailing zeros, then the sk bytes of sw (sk 0
-/// to 3).
-fn push_frac(out: Str, f: Int, prec: Int, sw: Int, sk: Int) -> Str {
+/// out + the pieces a (ak bytes) and b (bk bytes), then iv (0 <= iv <
+/// 1000) and a fraction f / 10^prec (0 < f < 10^prec, prec 1 to 9) as
+/// `.` and its digits without trailing zeros, then the sk bytes of sw (sk
+/// 0 to 3): one rt.rs_push_words, the number and the fraction in two
+/// pieces of at most 8 bytes.
+fn frac_words(out: Str, a: Int, ak: Int, b: Int, bk: Int, iv: Int, f: Int, prec: Int, sw: Int, sk: Int) -> Str {
   var x = f
   var k = prec
   while x % 10 == 0 {
     x = x / 10
     k -= 1
   }
-  if k + 1 + sk <= 8 {
-    // `.`, the digits, and the suffix in one word
-    let w = 46 | (digits_word(x, k) << 8) | (sw << (8 * (k + 1)))
-    return rt.rs_push_word(out, w, k + 1 + sk)
+  let ki = ndigits(iv)
+  // the integer, `.`, and the first j digits; then the rest (r of at most
+  // 5) and the suffix
+  var j = 7 - ki
+  if k < j {
+    j = k
   }
-  if k <= 7 {
-    let o = rt.rs_push_word(out, 46 | (digits_word(x, k) << 8), k + 1)
-    return rt.rs_push_word(o, sw, sk)
-  }
-  // `.` and the first 7 digits, then the rest (1 or 2) and the suffix
-  let p = if k == 8 { 10 } else { 100 }
-  let o = rt.rs_push_word(out, 46 | (digits_word(x / p, 7) << 8), 8)
-  rt.rs_push_word(o, digits_word(x % p, k - 7) | (sw << (8 * (k - 7))), k - 7 + sk)
+  let r = k - j
+  let q = pow10(r)
+  let c = digits_word(iv, ki) | (46 << (8 * ki)) | (digits_word(x / q, j) << (8 * (ki + 1)))
+  let d = cat(digits_word(x % q, r), r, sw)
+  rt.rs_push_words(out, a, b, c, d, ak | (bk << 4) | ((ki + 1 + j) << 8) | ((r + sk) << 12))
 }
 
 // ---------------------------------------------------------------------------
@@ -191,28 +191,35 @@ pub fn append_duration(out: Str, d: Int) -> Str {
     if f == 0 {
       return push_num(o, u / p, sw, sk)
     }
-    o = push_num(o, u / p, 0, 0)
-    return push_frac(o, f, prec, sw, sk)
+    return frac_words(o, 0, 0, 0, 0, u / p, f, prec, sw, sk)
   }
   let f = u % 1000000000
   let secs = u / 1000000000
   let s = secs % 60
   let mins = secs / 60
+  // "<h>h" (at most 2562047 hours) and "<m>m", then the seconds
+  var a = 0
+  var ak = 0
+  var b = 0
+  var bk = 0
   if mins > 0 {
     let h = mins / 60
     if h > 0 {
-      // "h" (at most 2562047 hours)
-      o = push_num(o, h, 0x68, 1)
+      ak = ndigits(h)
+      a = cat(digits_word(h, ak), ak, 0x68)
+      ak += 1
     }
-    // "m"
-    o = push_num(o, mins % 60, 0x6D, 1)
+    let m = mins % 60
+    bk = ndigits(m)
+    b = cat(digits_word(m, bk), bk, 0x6D)
+    bk += 1
   }
   if f == 0 {
-    // "s"
-    return push_num(o, s, 0x73, 1)
+    // "<s>s"
+    let ck = ndigits(s)
+    return rt.rs_push_words(o, a, b, cat(digits_word(s, ck), ck, 0x73), 0, ak | (bk << 4) | ((ck + 1) << 8))
   }
-  o = push_num(o, s, 0, 0)
-  push_frac(o, f, 9, 0x73, 1)
+  frac_words(o, a, ak, b, bk, s, f, 9, 0x73, 1)
 }
 
 /// The value of a unit of a duration's text (b from i to j): its
@@ -412,17 +419,30 @@ pub fn append_time(out: Str, t: Int) -> Str {
     y += 1
   }
   // "YYYY-MM-", "DDThh:mm", ":ss" (a Time's year is 1677 to 2262)
-  var o = rt.rs_push_word(out, digits_word(y, 4) | (45 << 32) | (digits_word(m, 2) << 40) | (45 << 56), 8)
+  let w0 = digits_word(y, 4) | (45 << 32) | (digits_word(m, 2) << 40) | (45 << 56)
   let hh = rem / 3600
   let mm = rem / 60 % 60
-  o = rt.rs_push_word(o, digits_word(d, 2) | (84 << 16) | (digits_word(hh, 2) << 24) | (58 << 40) | (digits_word(mm, 2) << 48), 8)
+  let w1 = digits_word(d, 2) | (84 << 16) | (digits_word(hh, 2) << 24) | (58 << 40) | (digits_word(mm, 2) << 48)
   let ss = 58 | (digits_word(rem % 60, 2) << 8)
   if ns == 0 {
     // ":ssZ"
-    return rt.rs_push_word(o, ss | (90 << 24), 4)
+    return rt.rs_push_words(out, w0, w1, ss | (90 << 24), 0, 8 | (8 << 4) | (4 << 8))
   }
-  o = rt.rs_push_word(o, ss, 3)
-  push_frac(o, ns, 9, 90, 1)
+  // ":ss.", the first 4 digits, the rest (at most 5), and "Z"
+  var x = ns
+  var k = 9
+  while x % 10 == 0 {
+    x = x / 10
+    k -= 1
+  }
+  var j = 4
+  if k < j {
+    j = k
+  }
+  let r = k - j
+  let q = pow10(r)
+  let c = ss | (46 << 24) | (digits_word(x / q, j) << 32)
+  rt.rs_push_words(out, w0, w1, c, cat(digits_word(x % q, r), r, 90), 8 | (8 << 4) | ((4 + j) << 8) | ((r + 1) << 12))
 }
 
 /// The value of the k decimal digits of b from at, or -1 when one is not

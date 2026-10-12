@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 int "0" = 0
 int "-0" = 0
 int "+0" = 0

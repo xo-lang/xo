@@ -3414,6 +3414,86 @@ fn rt_text(var g: Gen) -> Str {
       i32.wrap_i64
       call $sapp)
 
+    ;; s + four words of up to 8 bytes, their lengths in the nibbles of
+    ;; lens (xo_rs_push_words, decision 0193)
+    (func $rs_push_words (param $a i32) (param $an i32) (param $w0 i64) (param $w1 i64) (param $w2 i64) (param $w3 i64) (param $lens i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $w0
+      local.get $lens
+      i64.const 15
+      i64.and
+      call $rs_push_word
+      local.get $w1
+      local.get $lens
+      i64.const 4
+      i64.shr_u
+      i64.const 15
+      i64.and
+      call $rs_push_word
+      local.get $w2
+      local.get $lens
+      i64.const 8
+      i64.shr_u
+      i64.const 15
+      i64.and
+      call $rs_push_word
+      local.get $w3
+      local.get $lens
+      i64.const 12
+      i64.shr_u
+      i64.const 15
+      i64.and
+      call $rs_push_word)
+
+    ;; the index of the first byte c of s at or after from, or -1
+    ;; (xo_str_index_byte, decision 0193)
+    (func $str_index_byte (param $o i32) (param $n i32) (param $c i64) (param $from i64) (result i64) (local $i i32)
+      local.get $from
+      i64.const 0
+      i64.lt_s
+      if
+        i64.const 0
+        local.set $from
+      end
+      local.get $from
+      local.get $n
+      i64.extend_i32_u
+      i64.ge_s
+      if
+        i64.const -1
+        return
+      end
+      local.get $from
+      i32.wrap_i64
+      local.set $i
+      block $done
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $done
+          local.get $o
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.get $c
+          i32.wrap_i64
+          i32.eq
+          if
+            local.get $i
+            i64.extend_i32_u
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i64.const -1)
+
     (func $rs_with_cap (param $n i64) (result i32 i32)
       local.get $n
       i64.const 16

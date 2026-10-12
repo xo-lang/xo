@@ -267,6 +267,24 @@ xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *
 	return rs_append(a, an, (const char *)t, n);
 }
 
+// xo_rs_push_words is s + four pieces of up to 8 bytes each, w0 to w3
+// (the lowest byte of each first), their lengths in the nibbles of lens
+// (w0's the lowest): a Duration's or Time's text assembled by
+// std/native/llrt/text.xo in one call (decision 0193).
+xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_t w2, int64_t w3, int64_t lens, int64_t *len) {
+	uint64_t w[4] = {(uint64_t)w0, (uint64_t)w1, (uint64_t)w2, (uint64_t)w3};
+	unsigned char t[32];
+	int k = 0;
+	for (int i = 0; i < 4; i++) {
+		int n = (int)((lens >> (4 * i)) & 15);
+		for (int j = 0; j < n; j++) {
+			t[k++] = (unsigned char)(w[i] >> (8 * j));
+		}
+	}
+	*len = an + k;
+	return rs_append(a, an, (const char *)t, k);
+}
+
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 

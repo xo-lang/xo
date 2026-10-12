@@ -16,6 +16,9 @@ fn str_starts_with(s: Str, p: Str) -> Bool
 fn str_ends_with(s: Str, p: Str) -> Bool
 /// The byte index of the first sub at or after from, or -1.
 fn str_find(s: Str, sub: Str, from: Int) -> Int
+/// The byte index of the first byte c (0 to 255) at or after from, or -1
+/// (memchr; decision 0193).
+fn str_index_byte(s: Str, c: Int, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 /// The byte at i (0 to 255), or -1 out of range.
@@ -52,6 +55,9 @@ fn rs_push_byte(s: Str, x: Int) -> Str
 /// assembled in Xo appended with one call (std/native/llrt/text.xo,
 /// decision 0193).
 fn rs_push_word(s: Str, w: Int, n: Int) -> Str
+/// s + four such words, their lengths (0 to 8) in the nibbles of lens,
+/// w0's the lowest (decision 0193).
+fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
 /// (BytesBuilder.write_rune).
 fn rs_push_rune(s: Str, r: Int) -> Str
