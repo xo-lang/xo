@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The native backends no longer count the element of `for x in <place>`
+  or an inner list read through an outer one (`a[i][j]`) when nothing
+  changes the container while it is in use (decision 0186): on
+  bench/perf/nested the read workloads went from 600,041 retains to 1
+  (walk) and from 201,001 to 1 (index2) on arm64, allocations unchanged.
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on
