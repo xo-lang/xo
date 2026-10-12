@@ -6,10 +6,11 @@ import "embed"
 
 // NativeFiles holds the implementation modules of the native backends
 // (native/<name>.xo implements std/<name>, native/prelude.xo the prelude)
-// and the declarations of their intrinsics (native/rt.xo), decision 0074.
-// internal/check loads them only for the native backends.
+// and the declarations of their intrinsics (native/rt.xo), decision 0074,
+// and the runtime modules written in Xo (native/llrt/<name>.xo, decision
+// 0180). internal/check loads them only for the native backends.
 //
-//go:embed native/*.xo
+//go:embed native/*.xo native/llrt/*.xo
 var NativeFiles embed.FS
 
 // Runtime holds the source of package rt: std/rt/*.go and the assembly

@@ -8,8 +8,6 @@
 // Semantics follow std/rt (Go's strings, strconv, and time packages), so
 // the native backends print what the Go backend prints.
 
-#include "xo_unicode.c"
-
 // ---------------------------------------------------------------------------
 // Helpers
 
@@ -169,36 +167,6 @@ static int n_is_space(int32_t r) {
 	return r >= 0x2000 && r <= 0x200A;
 }
 
-// to_case maps r like Go's unicode.ToLower (lower) or unicode.ToUpper.
-static int32_t n_to_case(int32_t r, int lower) {
-	if (r < 0x80) {
-		if (lower && r >= 'A' && r <= 'Z') {
-			return r + 32;
-		}
-		if (!lower && r >= 'a' && r <= 'z') {
-			return r - 32;
-		}
-		return r;
-	}
-	int lo = 0, hi = (int)(sizeof xo_case_ranges / sizeof xo_case_ranges[0]);
-	while (lo < hi) {
-		int m = lo + (hi - lo) / 2;
-		const xo_case_range *c = &xo_case_ranges[m];
-		if (r < c->lo) {
-			hi = m;
-		} else if (r > c->hi) {
-			lo = m + 1;
-		} else {
-			int32_t d = lower ? c->low : c->up;
-			if (d == XO_UPPER_LOWER) {
-				return c->lo + (((r - c->lo) & ~1) | (lower ? 1 : 0));
-			}
-			return r + d;
-		}
-	}
-	return r;
-}
-
 // ---------------------------------------------------------------------------
 // Strings (std.md 2.2)
 
@@ -305,82 +273,6 @@ xo_rstr *xo_str_trim(const char *p, int64_t n, int64_t mode, int64_t *len) {
 	return nstr(p + lo, hi - lo, len);
 }
 
-// n_case_into appends strings.ToLower (lower) or ToUpper of the n bytes
-// at p to b (strings.Map: an invalid byte becomes U+FFFD).
-static void n_case_into(nbuf *b, const char *p, int64_t n, int lower) {
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n;) {
-		int size;
-		int32_t r = n_utf8_decode(s + i, n - i, &size);
-		char t[4];
-		int k = n_utf8_encode(t, n_to_case(r, lower));
-		nbuf_put(b, t, k);
-		i += size;
-	}
-}
-
-// map_case is strings.ToLower or strings.ToUpper.
-static xo_rstr *n_map_case(const char *p, int64_t n, int lower, int64_t *len) {
-	int ascii = 1;
-	for (int64_t i = 0; i < n; i++) {
-		if ((unsigned char)p[i] >= 0x80) {
-			ascii = 0;
-			break;
-		}
-	}
-	if (ascii) {
-		xo_rstr *s = nstr(p, n, len);
-		for (int64_t i = 0; i < n; i++) {
-			char c = s->data[i];
-			if (lower && c >= 'A' && c <= 'Z') {
-				s->data[i] = (char)(c + 32);
-			} else if (!lower && c >= 'a' && c <= 'z') {
-				s->data[i] = (char)(c - 32);
-			}
-		}
-		return s;
-	}
-	nbuf b = {0};
-	n_case_into(&b, p, n, lower);
-	return nbuf_take(&b, len);
-}
-
-// xo_str_eq_lower is `a.to_lower() == b.to_lower()` without making the
-// lowered strings: ASCII bytes compare lowered in place; from the first
-// non-ASCII byte of either (a rune boundary of both, since everything
-// before is ASCII) the rests are lowered and compared (std/rt's
-// Str_eq_lower on the Go backend).
-int64_t xo_str_eq_lower(const char *p, int64_t n, const char *q, int64_t m) {
-	int64_t i = 0;
-	for (; i < n && i < m; i++) {
-		unsigned a = (unsigned char)p[i], c = (unsigned char)q[i];
-		if (a >= 0x80 || c >= 0x80) {
-			break;
-		}
-		a += (a >= 'A' && a <= 'Z') ? 32 : 0;
-		c += (c >= 'A' && c <= 'Z') ? 32 : 0;
-		if (a != c) {
-			return 0;
-		}
-	}
-	if (i == n && i == m) {
-		return 1;
-	}
-	if (i == n || i == m) {
-		return 0; // a nonempty rest never lowers to nothing
-	}
-	nbuf x = {0}, y = {0};
-	n_case_into(&x, p + i, n - i, 1);
-	n_case_into(&y, q + i, m - i, 1);
-	int64_t eq = x.n == y.n && (x.n == 0 || memcmp(x.p, y.p, (size_t)x.n) == 0);
-	free(x.p);
-	free(y.p);
-	return eq;
-}
-
-xo_rstr *xo_str_lower(const char *p, int64_t n, int64_t *len) { return n_map_case(p, n, 1, len); }
-
-xo_rstr *xo_str_upper(const char *p, int64_t n, int64_t *len) { return n_map_case(p, n, 0, len); }
 
 int64_t xo_str_rune_count(const char *p, int64_t n) {
 	const unsigned char *s = (const unsigned char *)p;

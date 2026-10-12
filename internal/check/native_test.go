@@ -21,6 +21,10 @@ func TestNativeModules(t *testing.T) {
 	}
 	var uses []string
 	for _, e := range entries {
+		if e.IsDir() {
+			// native/llrt: the runtime modules (decision 0180)
+			continue
+		}
 		name := strings.TrimSuffix(e.Name(), ".xo")
 		if name == "prelude" || strings.HasPrefix(name, "rt") {
 			continue
@@ -63,5 +67,18 @@ func TestNativeModules(t *testing.T) {
 	ds := checkSrc(t, "use native/rt\n\nfn main(os: Os) {\n  os.stdio.println(\"${rt.str_byte(\"a\", 0)}\")\n}\n")
 	if len(ds) == 0 || !strings.Contains(humanAll(ds), "not found") {
 		t.Errorf("user import of native/rt: want module not found, got:\n%s", humanAll(ds))
+	}
+	// nor are the runtime modules written in Xo (decision 0180), which the
+	// prelude and std/regexp load
+	ds = checkSrc(t, "use native/llrt/unicode\n\nfn main(os: Os) {\n  os.stdio.println(\"${unicode.is_letter(97)}\")\n}\n")
+	if len(ds) == 0 || !strings.Contains(humanAll(ds), "not found") {
+		t.Errorf("user import of native/llrt/unicode: want module not found, got:\n%s", humanAll(ds))
+	}
+	llrt := false
+	for _, m := range res.Info().AllModules() {
+		llrt = llrt || (m.Path == "native/llrt/unicode" && m.Native)
+	}
+	if !llrt {
+		t.Errorf("native/llrt/unicode not loaded")
 	}
 }

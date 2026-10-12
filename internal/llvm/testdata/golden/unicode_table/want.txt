@@ -1,0 +1,64 @@
+plane 0: letters=48965 digits=370 spaces=25 prints=55508 case=517314775
+plane 1: letters=17135 digits=310 spaces=0 prints=23246 case=603224227
+plane 2: letters=60873 digits=0 spaces=0 prints=60873 case=0
+plane 3: letters=9131 digits=0 spaces=0 prints=9131 case=0
+plane 4: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 5: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 6: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 7: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 8: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 9: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 10: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 11: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 12: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 13: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 14: letters=0 digits=0 spaces=0 prints=240 case=0
+plane 15: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 16: letters=0 digits=0 spaces=0 prints=0 case=0
+"" lower="" upper="" eq=true ne=true
+"abc" lower="abc" upper="ABC" eq=true ne=false
+"ABC" lower="abc" upper="ABC" eq=true ne=false
+"Hello, World! 123" lower="hello, world! 123" upper="HELLO, WORLD! 123" eq=true ne=true
+"straße" lower="straße" upper="STRAßE" eq=true ne=true
+"İstanbul" lower="istanbul" upper="İSTANBUL" eq=true ne=true
+"ıi" lower="ıi" upper="II" eq=false ne=true
+"ǅǄǆ" lower="ǆǆǆ" upper="ǄǄǄ" eq=true ne=true
+"ΣΑΣ σας" lower="σασ σας" upper="ΣΑΣ ΣΑΣ" eq=false ne=true
+"ﬁne" lower="ﬁne" upper="ﬁNE" eq=true ne=true
+"K Ω Å" lower="k ω å" upper="K Ω Å" eq=true ne=true
+"Ünïcödé ÀÉÎÕÜ" lower="ünïcödé àéîõü" upper="ÜNÏCÖDÉ ÀÉÎÕÜ" eq=true ne=true
+"Кириллица ТЕКСТ" lower="кириллица текст" upper="КИРИЛЛИЦА ТЕКСТ" eq=true ne=true
+"𐐀𐐨 𞤀𞤢" lower="𐐨𐐨 𞤢𞤢" upper="𐐀𐐀 𞤀𞤀" eq=true ne=true
+"ⓐⓑⒶⒷ" lower="ⓐⓑⓐⓑ" upper="ⒶⒷⒶⒷ" eq=true ne=true
+"ꙁꙀ ꞔ Ɐ" lower="ꙁꙁ ꞔ ɐ" upper="ꙀꙀ Ꞔ Ɐ" eq=true ne=true
+"日本語 ﾃｷｽﾄ" lower="日本語 ﾃｷｽﾄ" upper="日本語 ﾃｷｽﾄ" eq=true ne=true
+"ǰ ẞ ſ ͅ" lower="ǰ ß ſ ͅ" upper="ǰ ẞ S Ι" eq=false ne=true
+"ascii only" lower="ascii only" upper="ASCII ONLY" eq=true ne=true
+ABC ~ abc: true
+ÀB ~ àb: true
+Straße ~ STRASSE: false
+Ⅻ ~ ⅻ: true
+a ~ ab: false
+ab ~ a: false
+ ~ : true
+KELVIN ~ kelvin: true
+"plain"
+"tab\tnl\ncr\r"
+"quote\" back\\"
+"bell\a nul\x00 del\x7f"
+"é\u00a0\u00ad\u200b\ufeff"
+"\ue000\U0010ffff😀"
+"\u0085\u2028"
+'a' true true
+'\'' false true
+'\\' false true
+'\n' false false
+'\a' false false
+'\x00' false false
+'é' true true
+'\u00ad' false false
+'😀' false true
+'\U000e0001' false false
+'�' false true
+"ok\xff\xc3(₡\xf0\x9f"
+abc|ÀÉ|123|٣٤|日本|x|1

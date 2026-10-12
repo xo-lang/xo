@@ -148,6 +148,31 @@ func (c *checker) loadNative() error {
 	}
 }
 
+// loadRuntimeModule loads the runtime module std/native/llrt/<name>.xo
+// (decision 0180): part of the native runtime written in Xo, checked and
+// compiled with the program like an implementation module (it implements
+// no std module).
+func (c *checker) loadRuntimeModule(path string) (*Module, error) {
+	if m, ok := c.modules[path]; ok {
+		return m, nil
+	}
+	src, err := fs.ReadFile(std.NativeFiles, path+".xo")
+	if err != nil {
+		return nil, nil
+	}
+	name := strings.TrimPrefix(path, "native/llrt/")
+	m := &Module{Path: path, Name: name, Dir: "std/native/llrt", Native: true, Scope: map[string]Object{}, Edition: CurrentEdition}
+	c.modules[path] = m
+	m.Files = append(m.Files, c.parseFile(m, "std/"+path+".xo", src, 0))
+	m.state = 1
+	if err := c.loadImports(m); err != nil {
+		return nil, err
+	}
+	m.state = 2
+	c.order = append(c.order, m)
+	return m, nil
+}
+
 // loadNativeRT loads the intrinsics module of the native backends,
 // std/native/rt.xo: bodiless declarations that internal/ssa lowers to
 // calls of the C runtime.
@@ -415,7 +440,13 @@ func (c *checker) loadImports(m *Module) error {
 				// implementation modules see them (decision 0074), and
 				// other intrinsics modules (an Any of native/rt)
 				dep, err = nil, nil
-				if m.Native || (m.IsStd && strings.HasPrefix(m.Path, "native/")) {
+				if strings.HasPrefix(p, "native/llrt/") {
+					// a runtime module written in Xo (decision 0180):
+					// implementation and runtime modules see it
+					if m.Native {
+						dep, err = c.loadRuntimeModule(p)
+					}
+				} else if m.Native || (m.IsStd && strings.HasPrefix(m.Path, "native/")) {
 					dep, err = c.loadNativeRT(p)
 				}
 			}

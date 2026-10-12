@@ -22,8 +22,6 @@ fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 fn str_byte(s: Str, i: Int) -> Int
 /// Unicode white space removed: mode 0 both ends, 1 the start, 2 the end.
 fn str_trim(s: Str, mode: Int) -> Str
-fn str_lower(s: Str) -> Str
-fn str_upper(s: Str) -> Str
 fn str_rune_count(s: Str) -> Int
 fn str_split(s: Str, sep: Str) -> List[Str]
 fn str_lines(s: Str) -> List[Str]
@@ -47,25 +45,11 @@ fn eprintln(s: Str)
 // ---------------------------------------------------------------------------
 // Runes and Bytes (decisions 0079, 0081; std/llrt/xo_bytes.c)
 
-fn rune_is_letter(r: Rune) -> Bool
-fn rune_is_digit(r: Rune) -> Bool
 fn rune_is_space(r: Rune) -> Bool
-/// strconv.IsPrint.
-fn rune_is_print(r: Rune) -> Bool
-/// unicode.ToLower (lower) or unicode.ToUpper.
-fn rune_to_case(r: Rune, lower: Bool) -> Rune
-/// strconv.QuoteRune.
-fn rune_quote(r: Rune) -> Str
-/// strconv.Quote.
-fn strconv_quote(s: Str) -> Str
 /// Whether the text is a duration (std/rt's parseDuration).
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
-fn bytes_quote(b: Bytes) -> Str
-/// The ranges of a Unicode class (lo, hi pairs, sorted): 0 the letters
-/// (unicode.L), 1 the decimal digits (unicode.Nd); std/regexp's \pL.
-fn unicode_ranges(which: Int) -> List[Int]
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
 /// utf8.RuneCount.

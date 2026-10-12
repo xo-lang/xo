@@ -1,0 +1,107 @@
+// Str and Rune Unicode workloads for the runtime pilot (decision 0180).
+// Usage: unicodeperf <workload>. Each workload prints "<workload>
+// <checksum> <elapsed microseconds>"; the checksum must be the same on
+// every backend (the Go backend is the reference).
+
+const ASCII = "The Quick Brown Fox Jumps Over The Lazy Dog; HTTP/1.1 200 OK, Content-Type: text/plain. 0123456789 mixed CASE words\n"
+const MIXED = "Ελληνικά ΚΕΙΜΕΝΟ Кириллица ТЕКСТ Ünïcödé ÀÉÎÕÜ straße İstanbul ǅemal ﬁne 日本語 ﾃｷｽﾄ Ⅻ ⓐⓑ 𐐀𐐨 ascii Words\n"
+const REPS = 200
+
+// sample is a checksum of s: its length and every 61st byte.
+fn sample(s: Str) -> Int {
+  let b = s.bytes()
+  var h = b.len()
+  var i = 0
+  while i < b.len() {
+    h = (h * 31 + Int(b[i])) % 1000000007
+    i += 61
+  }
+  h
+}
+
+fn lower(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    sum = (sum + sample(s.to_lower())) % 1000000007
+  }
+  sum
+}
+
+fn upper(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    sum = (sum + sample(s.to_upper())) % 1000000007
+  }
+  sum
+}
+
+fn eq_lower(a: Str, b: Str) -> Int {
+  var n = 0
+  for i in 0..REPS {
+    if a.to_lower() == b.to_lower() {
+      n += i
+    }
+  }
+  n
+}
+
+fn classify(rs: List[Rune]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    for r in rs {
+      if r.is_letter() {
+        sum += 1
+      }
+      if r.is_digit() {
+        sum += 3
+      }
+      if r.is_space() {
+        sum += 7
+      }
+      if r.is_print() {
+        sum += 11
+      }
+    }
+  }
+  sum
+}
+
+fn rune_case(rs: List[Rune]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    for r in rs {
+      sum = (sum + Int(r.to_lower()) + 3 * Int(r.to_upper())) % 1000000007
+    }
+  }
+  sum
+}
+
+fn quote(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..20 {
+    sum = (sum + sample(s.quote())) % 1000000007
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "lower"
+  let a = ASCII.repeat(4000)
+  let u = MIXED.repeat(2000)
+  let rs = (ASCII + MIXED).repeat(1000).runes()
+  let t = os.clock.now()
+  let sum = match w {
+    "lower" => lower(a)
+    "upper" => upper(a)
+    "lower_u" => lower(u)
+    "upper_u" => upper(u)
+    "eqlower" => eq_lower(a, a.to_upper()) + eq_lower(u, u.to_upper())
+    "classify" => classify(rs)
+    "runecase" => rune_case(rs)
+    "quote" => quote((ASCII + MIXED + "\t\u{7}\u{0}").repeat(400))
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

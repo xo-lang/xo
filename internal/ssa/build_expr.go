@@ -521,10 +521,17 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 	if x.Op == token.Eq || x.Op == token.NotEq {
 		if lr, rr := s.toLowerRecv(x.X), s.toLowerRecv(x.Y); lr != nil && rr != nil {
 			// `a.to_lower() == b.to_lower()` compares without making the
-			// lowered strings (xo_str_eq_lower; the Go backend's
-			// rt.Str_eq_lower)
+			// lowered strings (the native prelude's str_eq_lower, in Xo
+			// since decision 0180; the Go backend's rt.Str_eq_lower)
 			strT := m.Builtin(KStr)
-			eq := s.rt("str_eq_lower", boolT, s.valueAs(lr, strT), s.valueAs(rr, strT))
+			var eq *Value
+			if impl := b.preludeImpl("str_eq_lower"); impl != nil {
+				f := b.declare(impl, nil, x)
+				eq = s.call(f.Name, f.Results[0], "", s.valueAs(lr, strT), s.valueAs(rr, strT))
+			} else {
+				b.unsupported(x, "`to_lower` compared without the native prelude")
+				return s.undef(boolT)
+			}
 			if x.Op == token.NotEq {
 				return s.add(OpNot, boolT, nil, eq)
 			}
