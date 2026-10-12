@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
+  emitter's assembly into the same object `cc -c` writes (every section,
+  function, and relocation identical on the 158 arm64 goldens and on
+  xo1's own assembly; all 158 golden objects byte identical), 6.8 times
+  faster; `xo1 build --as=macho` uses it. Its linker links the objects
+  with a prebuilt runtime pack into a signed executable, so `xo1 build
+  --ld=macho` needs no C compiler at all for programs without `use c`
+  sources (decision 0182).
 - A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of

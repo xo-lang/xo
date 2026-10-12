@@ -1,0 +1,234 @@
+// The Mach-O MH_OBJECT file: header, one unnamed LC_SEGMENT_64 with the
+// sections, LC_BUILD_VERSION, LC_SYMTAB, LC_DYSYMTAB; then the section
+// contents, the relocations, the symbols, and their names.
+
+const MH_MAGIC_64 = 0xfeedfacf
+const CPU_TYPE_ARM64 = 0x0100000c
+const MH_OBJECT = 1
+const LC_SEGMENT_64 = 0x19
+const LC_SYMTAB = 0x2
+const LC_DYSYMTAB = 0xb
+const LC_BUILD_VERSION = 0x32
+const N_EXT = 0x1
+const N_SECT = 0xe
+
+fn align_up(n: Int, al: Int) -> Int {
+  (n + al - 1) / al * al
+}
+
+fn (var a: Asm) write_object() -> Bytes {
+  // the symbol table: locals (labels, section starts, temporary labels a
+  // relocation names), then the defined externals and the undefined
+  // symbols, each sorted by name
+  var locals: List[Int] = []
+  var extdefs: List[Int] = []
+  var undefs: List[Int] = []
+  for (i, s) in a.syms.indexed() {
+    if s.sect < 0 {
+      if s.used || s.global {
+        undefs.push(i)
+      }
+    } else if s.global {
+      extdefs.push(i)
+    }
+  }
+  for i in a.reg_order {
+    let s = a.syms[i]
+    if s.sect >= 0 && !s.global && (!s.temp || s.used) {
+      locals.push(i)
+    }
+  }
+  let syms = a.syms
+  extdefs = extdefs.sort_by(fn(i: Int) -> Str { bstr(syms[i].name) })
+  undefs = undefs.sort_by(fn(i: Int) -> Str { bstr(syms[i].name) })
+  let order = locals + extdefs + undefs
+  // the names, as LLVM's StringTableBuilder lays them out: sorted by
+  // their reversed bytes, last first, a name that ends the previous one
+  // sharing its bytes
+  var keyed: List[(Str, Int)] = []
+  for (k, i) in order.indexed() {
+    a.syms[i].index = k
+    keyed.push((reversed(a.syms[i].name), k))
+  }
+  let sorted = keyed.sort_by(fn(p: (Str, Int)) -> Str { p.0 }).reverse()
+  var strx: List[Int] = []
+  for _ in order {
+    strx.push(0)
+  }
+  var strtab = new_out(16 * order.len())
+  strtab.u8(0)
+  var prev = ""
+  for (rk, k) in sorted {
+    if prev.starts_with(rk) && !prev.is_empty() {
+      // the name is a suffix of the previous one
+      strx[k] = strtab.n - rk.len() - 1
+      continue
+    }
+    strx[k] = strtab.n
+    strtab.bytes(a.syms[order[k]].name)
+    strtab.u8(0)
+    prev = rk
+  }
+  strtab.pad(8)
+  let strs = strtab.done()
+
+  let ns = a.sects.len()
+  let cmds_size = (72 + 80 * ns) + 24 + 24 + 80
+  let data_off = 32 + cmds_size
+  var vmsize = 0
+  for s in a.sects {
+    vmsize = vmsize.max(s.addr + s.size)
+  }
+  // relocations after the contents, then the symbols
+  var reloff: List[Int] = []
+  var off = align_up(data_off + vmsize, 8)
+  for s in a.sects {
+    reloff.push(if s.relocs.is_empty() { 0 } else { off })
+    off += 8 * s.relocs.len()
+  }
+  let symoff = align_up(off, 8)
+  let stroff = symoff + 16 * order.len()
+
+  var o = new_out(stroff + strs.len())
+  // mach_header_64
+  o.u32(MH_MAGIC_64)
+  o.u32(CPU_TYPE_ARM64)
+  o.u32(0)
+  o.u32(MH_OBJECT)
+  o.u32(4)
+  o.u32(cmds_size)
+  o.u32(0)
+  o.u32(0)
+  // LC_SEGMENT_64
+  o.u32(LC_SEGMENT_64)
+  o.u32(72 + 80 * ns)
+  o.name("", 16)
+  o.u64(0)
+  o.u64(vmsize)
+  o.u64(data_off)
+  o.u64(vmsize)
+  o.u32(7)
+  o.u32(7)
+  o.u32(ns)
+  o.u32(0)
+  for (i, s) in a.sects.indexed() {
+    o.name(s.name, 16)
+    o.name(s.seg, 16)
+    o.u64(s.addr)
+    o.u64(s.size)
+    o.u32(data_off + s.addr)
+    o.u32(s.align)
+    o.u32(reloff[i])
+    o.u32(s.relocs.len())
+    // S_ATTR_SOME_INSTRUCTIONS only when it holds some
+    o.u32(if s.code && s.words.is_empty() { s.flags & ~S_ATTR_SOME_INSTRUCTIONS } else { s.flags })
+    o.u32(0)
+    o.u32(0)
+    o.u32(0)
+  }
+  // LC_BUILD_VERSION: macOS, the minimum version, no SDK, no tools
+  o.u32(LC_BUILD_VERSION)
+  o.u32(24)
+  o.u32(1)
+  let (maj, min) = a.minos
+  o.u32(maj * 65536 + min * 256)
+  o.u32(0)
+  o.u32(0)
+  // LC_SYMTAB
+  o.u32(LC_SYMTAB)
+  o.u32(24)
+  o.u32(symoff)
+  o.u32(order.len())
+  o.u32(stroff)
+  o.u32(strs.len())
+  // LC_DYSYMTAB
+  o.u32(LC_DYSYMTAB)
+  o.u32(80)
+  o.u32(0)
+  o.u32(locals.len())
+  o.u32(locals.len())
+  o.u32(extdefs.len())
+  o.u32(locals.len() + extdefs.len())
+  o.u32(undefs.len())
+  o.zeros(48)
+  // the contents
+  for s in a.sects {
+    while o.n < data_off + s.addr {
+      o.u8(0)
+    }
+    if s.code {
+      for w in s.words {
+        o.u32(w)
+      }
+    } else {
+      o.bytes(s.bytes)
+    }
+  }
+  while o.n < data_off + vmsize {
+    o.u8(0)
+  }
+  // the relocations, last address first, each ADDEND or SUBTRACTOR just
+  // before the relocation it qualifies (as LLVM writes them)
+  o.pad(8)
+  for s in a.sects {
+    let rs = s.relocs
+    var groups: List[(Int, Int)] = []
+    var g0 = 0
+    for (k, r) in rs.indexed() {
+      if r.typ != R_ADDEND && r.typ != R_SUBTRACTOR {
+        groups.push((g0, k + 1))
+        g0 = k + 1
+      }
+    }
+    var gi = groups.len() - 1
+    while gi >= 0 {
+      let (from, to) = groups[gi]
+      for k in from..to {
+        let r = rs[k]
+        o.u32(r.addr)
+        var symnum = r.sym
+        var ext = 0
+        if r.typ == R_ADDEND || r.sect {
+          symnum = r.sym & 0xffffff
+        } else {
+          symnum = a.syms[r.sym].index
+          ext = 1
+        }
+        o.u32(symnum | (if r.pcrel { 0x1000000 } else { 0 }) | (r.len * 0x2000000) | (ext * 0x8000000) | (r.typ * 0x10000000))
+      }
+      gi -= 1
+    }
+  }
+  while o.n < symoff {
+    o.u8(0)
+  }
+  // nlist_64
+  for (k, i) in order.indexed() {
+    let s = a.syms[i]
+    o.u32(strx[k])
+    if s.sect < 0 {
+      o.u8(N_EXT)
+      o.u8(0)
+      o.u16(0)
+      o.u64(0)
+    } else {
+      o.u8(N_SECT | (if s.global { N_EXT } else { 0 }))
+      o.u8(s.sect + 1)
+      o.u16(0)
+      o.u64(a.sects[s.sect].addr + s.off)
+    }
+  }
+  o.bytes(strs)
+  o.done()
+}
+
+/// The bytes of b in reverse order, as a Str (names are ASCII).
+fn reversed(b: Bytes) -> Str {
+  var o = new_out(b.len())
+  var i = b.len() - 1
+  while i >= 0 {
+    o.u8(Int(b[i]))
+    i -= 1
+  }
+  bstr(o.done())
+}

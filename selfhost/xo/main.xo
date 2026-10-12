@@ -23,6 +23,9 @@
 // internal/build buildLLVM does with one module (no XO_LLVM_SPLIT); asm
 // prints the IR, --asm names the .ll file (default OUT.ll).
 //
+// --as=macho (decision 0182): assemble with selfhost/macho, cc links;
+// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo)
+//
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
 // (generated packages, runtime, build information) goes to --go-tree,
@@ -40,12 +43,13 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
 
 fn main(os: Os) ! {
   let args = os.env.args()
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [--as=cc|macho] [--ld=cc|macho] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -59,6 +63,8 @@ fn main(os: Os) ! {
   var topts = TestOpts{}
   var backend = "arm64"
   var go_tree = ""
+  var assembler = "cc"
+  var linker = "cc"
   var phases = false
   var dirs: List[Str] = []
   var i = 1
@@ -76,6 +82,13 @@ fn main(os: Os) ! {
       asm_path = a.trim_prefix("--asm=")
     } else if a.starts_with("--backend=") {
       backend = a.trim_prefix("--backend=")
+    } else if a.starts_with("--as=") {
+      assembler = a.trim_prefix("--as=")
+    } else if a.starts_with("--ld=") {
+      linker = a.trim_prefix("--ld=")
+      if linker == "macho" {
+        assembler = "macho"
+      }
     } else if a.starts_with("--go-tree=") {
       go_tree = a.trim_prefix("--go-tree=")
     } else if a.starts_with("--target=") || a.starts_with("--targets=") {
@@ -256,7 +269,9 @@ fn main(os: Os) ! {
       os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
     }
   }
-  if cc.is_empty() {
+  // --ld=macho links arm64 programs without cc (decision 0182)
+  let no_cc = linker == "macho" && backend == "arm64"
+  if cc.is_empty() && !no_cc {
     cc = find_cc(os)
     if cc.is_empty() {
       fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
@@ -264,7 +279,18 @@ fn main(os: Os) ! {
   }
   // clangBuild's flags come before the program's for LLVM IR
   var flags = if backend == "llvm" { ["-O2", "-flto", "-Wno-override-module"] } else { ["-O2"] }
-  var srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  var prog = asm_path
+  if assembler == "macho" && backend == "arm64" {
+    // the object from selfhost/macho; cc links it (decision 0182)
+    prog = "${out}.o"
+    match macho.assemble(code.bytes()) {
+      Ok(obj) => os.fs.write(prog, obj)?
+      Err(e) => fail(os, "assembler: ${e}")
+    }
+  } else if assembler != "cc" && assembler != "macho" {
+    fail(os, "--as=${assembler}: want cc or macho")
+  }
+  var srcs = [prog, "${rtdir}/xo_rt.c"]
   // std/time: XO_TIME and the program's zone data beside the runtime
   // (timeFlags)
   if uses_time {
@@ -276,7 +302,7 @@ fn main(os: Os) ! {
       fail(os, sel.err)
     }
     flags.push("-DXO_TIME")
-    srcs.push(tz_source(os, rtdir, sel)?)
+    srcs.push(if no_cc { tz_object(os, rtdir, sel)? } else { tz_source(os, rtdir, sel)? })
     for n in sel.notes {
       os.stdio.eprintln(n)
     }
@@ -289,11 +315,21 @@ fn main(os: Os) ! {
   }
   flags = flags + ci.flags
   srcs = srcs + ci.srcs
-  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(code))
-  t = lap(os, phases, "cc", t)
-  if !msg.is_empty() {
-    os.stdio.eprint(msg)
-    fail(os, "${cc} failed")
+  if no_cc {
+    let why = macho_link(os, ctx, flags, srcs, out, needs_tls(code))
+    t = lap(os, phases, "link", t)
+    if !why.is_empty() {
+      fail(os, why)
+    }
+  } else if linker != "cc" && linker != "macho" {
+    fail(os, "--ld=${linker}: want cc or macho")
+  } else {
+    let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(code))
+    t = lap(os, phases, "cc", t)
+    if !msg.is_empty() {
+      os.stdio.eprint(msg)
+      fail(os, "${cc} failed")
+    }
   }
   if tests {
     var bin = out
