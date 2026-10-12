@@ -123,10 +123,7 @@ fn (var a: Asm) word(w: Int) {
 /// A word with a label fixup.
 fn (var a: Asm) word_fix(w: Int, kind: Int, name: Bytes) {
   let s = a.sym(name)
-  if !a.syms[s].registered && !a.syms[s].queued {
-    a.syms[s].queued = true
-    a.pending.push(s)
-  }
+  a.register(s)
   a.fixes.push(Fix{sect: a.cur, at: a.sects[a.cur].words.len(), kind: kind, sym: s, line: a.line})
   a.sects[a.cur].words.push(w)
 }

@@ -120,7 +120,8 @@ fn (var a: Asm) write_object() -> Bytes {
     o.u32(s.align)
     o.u32(reloff[i])
     o.u32(s.relocs.len())
-    o.u32(s.flags)
+    // S_ATTR_SOME_INSTRUCTIONS only when it holds some
+    o.u32(if s.code && s.words.is_empty() { s.flags & ~S_ATTR_SOME_INSTRUCTIONS } else { s.flags })
     o.u32(0)
     o.u32(0)
     o.u32(0)
