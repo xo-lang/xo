@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The core commands of `xo` are written in Xo too (decision 0178 stage
+  2): `check`, `parse`, `explain`, `version`, `init`, `fmt`, `fix`,
+  `vet`, and `doc` run in the self hosted driver xo1 with the same flags,
+  exit codes, and output; the Xo formatter writes the same bytes as the
+  Go one on every file of the repository. The self hosted checker now
+  reports holes (XO0900). Two types of one name in different modules no
+  longer share a generated SSA helper (the native build of such a
+  program failed).
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's

@@ -320,6 +320,36 @@ command through xo1: 11 of 18 before the fixes above (the failures were
   regression the live cross-check would have caught, and every output
   users or tests depend on produced by Xo.
 
+## Stage 2 results (2026-10-12)
+
+The CLI core is in Xo in selfhost/cli/core (5,765 lines with the
+generated explain texts): `check`, `parse`, `explain`, `version`,
+`init`, `fmt`, `fix`, `vet`, `doc` (with `--json`), each with cmd/xo's
+flags (a port of Go's flag package: `-x` and `--x`, the same errors and
+usage text), exit codes, and output (JSON indented as Go's encoder,
+diagnostics escaped as json.Marshal escapes them). xo1 dispatches them
+(`core.is_command`). The formatter is selfhost/cli/core/format, a
+package of its own with a command line for the comparison test; the
+explain texts are generated from internal/diag
+(TestSelfhostExplainData keeps them in sync) and the version is checked
+against cmd/xo's (TestSelfhostVersion). cmd/xo's tests run against
+another binary with `XO_CLI` (cmd/xo/cli_test.go).
+
+- The formatter: **1121 of 1121 repository files** and **1121 of 1121
+  copies with changed blanks byte identical** to internal/format
+  (TestSelfhostFormat).
+- cmd/xo's tests of these commands against xo1 (`XO_CLI=xo1
+  XO_STD=<repo>/std`, `-short`): **19 of 19 pass**.
+- `scripts/selfhost-cli.py`: fmt and parse **715 of 715** directories
+  byte identical; check, check (human), vet, doc **706 of 715**; the 9
+  others need a module version the Xo checker would have to fetch.
+
+Not done in stage 2: `check --no-gc` reports no XO1201 (the SSA
+builder's no GC diagnostics are not ported; the native check runs);
+std is found through `--std`, XO_STD, or lib/xo/std beside `$_` until
+Env.program is native (cli-servers' branch); fetching a missing module
+during a check (the Xo checker reads the module cache only).
+
 ## Stage 3 results (2026-10-12)
 
 The semantic tools are in Xo in selfhost/cli/semantic (4,852 lines):
