@@ -636,6 +636,15 @@ func (realNet) listen(tk *Task, addr string) Result[Listener, NetErr] {
 	if tk.Canceled() {
 		return Err[Listener](netErr(5, ""))
 	}
+	if path, ok := unixPath(addr); ok {
+		// a Unix domain socket (decision 0190); closing the listener
+		// removes the socket file
+		l, err := net.Listen("unix", path)
+		if err != nil {
+			return Err[Listener](netErr(4, err.Error()))
+		}
+		return Ok[Listener, NetErr](Listener{l: l, id: fxListenerSeq.Add(1), addr: addr})
+	}
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return Err[Listener](netErr(4, err.Error()))
@@ -651,7 +660,11 @@ func (realNet) dial(tk *Task, addr string) Result[Conn, NetErr] {
 	if tk.Canceled() {
 		return Err[Conn](netErr(5, ""))
 	}
-	c, err := net.DialTimeout("tcp", addr, 30*time.Second)
+	network := "tcp"
+	if path, ok := unixPath(addr); ok {
+		network, addr = "unix", path
+	}
+	c, err := net.DialTimeout(network, addr, 30*time.Second)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			return Err[Conn](netErr(2, ""))

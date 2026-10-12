@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `os.proc.kill(pid, signal)` sends a signal (by name: `TERM`, `QUIT`,
+  ...) to another process, and `os.net.listen` and `dial` take
+  `unix:PATH` addresses for Unix domain sockets, on every backend; an
+  attenuated `Proc` must list `"kill"`, an attenuated `Net` lists the
+  socket as `unix:PATH`; `FakeProc` records signals (`killed()`) and
+  `FakeNet` listens on sockets in memory (decision 0190).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on

@@ -1,0 +1,131 @@
+// Unix domain sockets and signals to other processes (decision 0190):
+// `Net.listen` and `dial` with `unix:PATH` (an echo over a socket file,
+// the file removed on close, errors of a missing or busy path, `only`
+// with `unix:` entries), and `Proc.kill` (a child stopped by TERM and by
+// KILL, unknown names, process ids that are not one process, a process
+// that does not exist, and an attenuated Proc that must list "kill").
+
+fn describe(e: NetErr) -> Str {
+  match e {
+    NetErr.InvalidAddr(_) => "InvalidAddr"
+    NetErr.Refused => "Refused"
+    NetErr.Timeout => "Timeout"
+    NetErr.Io(m) => "Io ${m.contains("no such file or directory")} ${m.contains("address already in use")}"
+    NetErr.Canceled => "Canceled"
+    NetErr.Denied(a) => "Denied ${a.starts_with("unix:")}"
+  }
+}
+
+fn echo_once(l: Listener) -> () ! NetErr {
+  let c = l.accept()?
+  while {
+    match c.read(3)? {
+      Some(data) => c.write(data)?
+      None => break
+    }
+  }
+  c.close()
+}
+
+fn round_trip(n: Net, addr: Str, msg: Str) -> Str ! NetErr {
+  let c = n.dial(addr)?
+  c.write(msg.bytes())?
+  var got = ""
+  while got.len() < msg.len() {
+    match c.read(64)? {
+      Some(b) => got = got + (b.to_str() ?? "?")
+      None => break
+    }
+  }
+  c.close()
+  got
+}
+
+fn sockets(os: Os, dir: Str) ! {
+  let out = os.stdio
+  let addr = "unix:${dir}/s.sock"
+  let l = os.net.listen(addr)?
+  out.println("addr is the address: ${l.addr() == addr}")
+  out.println("socket file exists: ${os.fs.exists("${dir}/s.sock").ok() ?? false}")
+  match os.net.listen(addr) {
+    Ok(_) => out.println("second listen: ok?")
+    Err(e) => out.println("second listen: ${describe(e)}")
+  }
+  scope s {
+    s.spawn(fn() {
+      match echo_once(l) {
+        Ok(_) => ()
+        Err(e) => out.println("echo failed: ${describe(e)}")
+      }
+    })
+    match round_trip(os.net, addr, "over a socket file") {
+      Ok(r) => out.println("echoed: ${r}")
+      Err(e) => out.println("client failed: ${describe(e)}")
+    }
+  }
+  l.close()
+  out.println("socket file after close: ${os.fs.exists("${dir}/s.sock").ok() ?? false}")
+  match os.net.dial(addr) {
+    Ok(_) => out.println("dial after close: connected")
+    Err(e) => out.println("dial after close: ${describe(e)}")
+  }
+  // attenuation: a unix: entry admits that socket only, exactly
+  let only = os.net.only(["unix:${dir}/t.sock", "127.0.0.1"])
+  let t = only.listen("unix:${dir}/t.sock")?
+  out.println("listed socket: ${t.addr().ends_with("/t.sock")}")
+  t.close()
+  match only.listen("unix:${dir}/other.sock") {
+    Ok(_) => out.println("unlisted socket: allowed")
+    Err(e) => out.println("unlisted socket: ${describe(e)}")
+  }
+  match os.net.only(["127.0.0.1", "localhost"]).dial(addr) {
+    Ok(_) => out.println("hosts only, socket: allowed")
+    Err(e) => out.println("hosts only, socket: ${describe(e)}")
+  }
+  match os.net.only(["unix:${dir}/S.SOCK"]).listen("unix:${dir}/s.sock") {
+    Ok(_) => out.println("other case: allowed")
+    Err(e) => out.println("other case: ${describe(e)}")
+  }
+  match os.net.only(["unix:${dir}/t.sock"]).dial("127.0.0.1:9") {
+    Ok(_) => out.println("socket only, tcp: allowed")
+    Err(e) => out.println("socket only, tcp: ${e}")
+  }
+}
+
+fn show(r: Result[(), ProcErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn signals(os: Os) ! {
+  let out = os.stdio
+  let c = os.proc.cmd("sleep", ["30"]).spawn()?
+  out.println("term: ${show(os.proc.kill(c.pid()))}")
+  out.println("status after TERM: ${c.wait()?}")
+  let k = os.proc.cmd("sleep", ["30"]).spawn()?
+  out.println("kill: ${show(os.proc.kill(k.pid(), "KILL"))}")
+  out.println("status after KILL: ${k.wait()?}")
+  out.println("unknown name: ${show(os.proc.kill(k.pid(), "SIGTERM"))}")
+  out.println("pid 0: ${show(os.proc.kill(0, "TERM"))}")
+  out.println("pid -1: ${show(os.proc.kill(-1, "CONT"))}")
+  out.println("no such process: ${show(os.proc.kill(2147483000, "CONT"))}")
+  let sleeps = os.proc.only(["sleep"])
+  let q = sleeps.cmd("sleep", ["30"]).spawn()?
+  out.println("not listed: ${show(sleeps.kill(q.pid()))}")
+  let both = os.proc.only(["sleep", "kill"])
+  out.println("listed: ${show(both.kill(q.pid(), "QUIT"))}")
+  out.println("status after QUIT: ${q.wait()?}")
+  out.println("intersection: ${show(both.only(["sleep"]).kill(q.pid()))}")
+}
+
+fn main(os: Os) ! {
+  let tmp = os.env.get("TMPDIR") ?? "/tmp"
+  let name = "xo-unix-${os.rand.int(0, 1000000000)}"
+  let dir = "${tmp.trim_suffix("/")}/${name}"
+  os.fs.create_dir_all(dir)?
+  sockets(os, dir)?
+  signals(os)?
+  os.fs.remove_all(dir)?
+}

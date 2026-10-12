@@ -291,6 +291,7 @@ var capImpls = map[string]string{
 	"Net.only":       "net_only", // decision 0175
 	"Proc.cmd":       "proc_cmd", // decision 0161
 	"Proc.pipeline":  "proc_pipeline",
+	"Proc.kill":      "proc_kill", // decision 0190
 }
 
 // nativeWaits reports whether fo is a prelude method that the native

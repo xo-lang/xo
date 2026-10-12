@@ -1789,6 +1789,7 @@ fn cap_impl(key: Str) -> Str {
     "Net.only" => "net_only"
     "Proc.cmd" => "proc_cmd"
     "Proc.pipeline" => "proc_pipeline"
+    "Proc.kill" => "proc_kill"
     _ => ""
   }
 }

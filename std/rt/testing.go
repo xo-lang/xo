@@ -781,6 +781,7 @@ type fakeProc struct {
 	signals []Duration       // signals for the next run_main, from its start
 	grace   Option[Duration] // grace period for the next run_main
 	stdio   *fakeStdio       // the test's, where Cmd.run writes (decision 0161)
+	killed  []string         // Proc.kill's signals, "NAME PID" (decision 0190)
 }
 
 // Testing_FakeProc is the fake process control of a test.
@@ -956,6 +957,12 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 	}
 	f.n.mu.Lock()
 	defer f.n.mu.Unlock()
+	if _, ok := unixPath(addr); ok {
+		// an in memory Unix domain socket (decision 0190)
+		l := &memListener{n: f.n, addr: addr, served: newEvent()}
+		f.n.listeners[addr] = l
+		return Ok[Listener, NetErr](Listener{mem: l})
+	}
 	host, port := "127.0.0.1", strings.TrimPrefix(addr[strings.LastIndexByte(addr, ':')+1:], ":")
 	if i := strings.LastIndexByte(addr, ':'); i > 0 {
 		host = addr[:i]

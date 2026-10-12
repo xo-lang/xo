@@ -1668,6 +1668,7 @@ type Proc interface {
 	M_only(tk *Task, p0 List[string]) Proc
 	M_cmd(tk *Task, p0 string, p1 List[string]) Cmd
 	M_pipeline(tk *Task, p0 List[Cmd]) Result[ProcOutput, ProcErr]
+	M_kill(tk *Task, p0 int64, p1 string) Result[Unit, ProcErr]
 }
 
 type Regexp_RegexErr struct {
