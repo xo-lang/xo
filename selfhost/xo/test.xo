@@ -12,7 +12,7 @@
 // timeout yet).
 
 use github.com/xo-lang/xo/selfhost/check
-
+use github.com/xo-lang/xo/selfhost/gen
 
 /// A test of the binary (internal/build TestInfo).
 struct TestInfo {
@@ -24,6 +24,8 @@ struct TestInfo {
   seed: Int = 0
   effects: List[Str] = []
   prop: Bool = false
+  /// Why the test does not run natively (a contract fuzz test), or "".
+  skip: Str = ""
 }
 
 /// testInfos: the test blocks of the root modules in the order the test
@@ -31,19 +33,36 @@ struct TestInfo {
 fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
   var out: List[TestInfo] = []
   var i = 0
+  // the contract fuzz tests the Go backend runs (core 9.1) are listed
+  // where it lists them, before the test blocks of their file that follow
+  // them, as skipped
+  var fuzz_at: Map[Int, List[TestInfo]] = {}
+  for ft in gen.contract_fuzz_targets(c) {
+    let o = c.objs[ft.fo]
+    let ti = TestInfo{index: -1, name: ft.name, module: c.mods[o.module].path, dir: abs_path(wd, c.mods[o.module].dir), loc: "${o.file.trim_prefix(root + "/")}:${o.fn_decl[0].span.start.line}:${o.fn_decl[0].span.start.col}", skip: "contract fuzzing is not available without a garbage collector (`--no-gc`) yet (support is planned)"}
+    var l = fuzz_at.get(ft.fo) ?? []
+    l.push(ti)
+    fuzz_at[ft.fo] = l
+  }
+  var held: List[TestInfo] = []
   for m in c.root_mods {
     for f in c.mods[m].files {
-      for d in c.files[f].ast.decls {
+      let file = c.files[f]
+      for (di, d) in file.ast.decls.indexed() {
+        if let FnDecl(..) = d {
+          let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+          held = held + (fuzz_at.get(o) ?? [])
+        }
         if let TestDecl(d: td) = d {
+          out = out + held
+          held = []
           var name = StrBuilder.new()
           if let Some(n) = td.name {
             for p in n.parts {
               name.write(p.text.to_str() ?? "")
             }
           }
-          var ti = TestInfo{index: i, name: name.freeze(), module: c.mods[m].path, dir: abs_path(wd, c.mods[m].dir),
-            loc: "${c.files[f].path.trim_prefix(root + "/")}:${td.span.start.line}:${td.span.start.col}",
-            prop: !td.params.is_empty()}
+          var ti = TestInfo{index: i, name: name.freeze(), module: c.mods[m].path, dir: abs_path(wd, c.mods[m].dir), loc: "${c.files[f].path.trim_prefix(root + "/")}:${td.span.start.line}:${td.span.start.col}", prop: !td.params.is_empty()}
           if let Some(IntLit(value: v, ..)) = td.seed {
             ti.seed = Int.parse(v.to_str() ?? "") ?? 0
           }
@@ -60,7 +79,7 @@ fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
       }
     }
   }
-  out
+  out + held
 }
 
 fn abs_path(wd: Str, p: Str) -> Str {
@@ -116,7 +135,9 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       s = 1
     }
     var out = Outcome{status: "pass"}
-    if !t.effects.is_empty() {
+    if !t.skip.is_empty() {
+      out = Outcome{status: "skip", msg: t.skip}
+    } else if !t.effects.is_empty() {
       out = Outcome{status: "skip", msg: "uses ${t.effects.join(", ")}: run with `xo test --real` for real capabilities"}
     } else if t.prop {
       out = run_property(os, bin, t, s, if o.cases <= 0 { 100 } else { o.cases })

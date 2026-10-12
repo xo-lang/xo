@@ -171,7 +171,7 @@ pub fn (c: Checker) named_obj(t: Int) -> Int {
 }
 
 /// Whether t is the prelude type name.
-fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
+pub fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
   let o = c.named_obj(t)
   o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == name.bytes()
 }

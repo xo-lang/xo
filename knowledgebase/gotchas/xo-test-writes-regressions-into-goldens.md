@@ -12,3 +12,8 @@ directory is a golden.
 
 Fix: delete the generated file (`git status` shows it untracked); to try
 a golden by hand, copy it to a scratch directory first.
+
+Observed again 2026-10-12 (decision 0178 stage 1): once `xo1 test`
+wrote regressions as `xo test` does, `scripts/selfhost-gogoldens.py`
+left regressions_test.xo in test_contracts and test_loop_bound. The
+script now removes a regressions_test.xo it created.

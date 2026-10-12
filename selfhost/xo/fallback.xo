@@ -1,0 +1,20 @@
+// The hand back to the Go driver (decision 0178 switch point A): the Go
+// `xo` runs xo1 for native builds with XO1_FALLBACK naming a file, and a
+// program the self hosted pipeline does not support yet is built by the
+// Go driver instead, which reports its XO1201 diagnostics or builds it.
+
+/// fail for a program the self hosted pipeline does not support yet (the
+/// checker's unsupported list, a construct the SSA builder or an emitter
+/// skipped). With XO1_FALLBACK set it writes why to that file, prints
+/// nothing, and exits 125 (the file tells `xo` that it was not the
+/// program's own status).
+fn fail_unsupported(os: Os, msg: Str) -> Never {
+  let marker = os.env.get("XO1_FALLBACK") ?? ""
+  if !marker.is_empty() {
+    match os.fs.write(marker, msg.bytes()) {
+      Ok(_) => os.proc.exit(125)
+      Err(_) => {}
+    }
+  }
+  fail(os, msg)
+}
