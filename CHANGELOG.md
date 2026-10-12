@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The Go code generator in Xo (`selfhost/gen`, decision 0167), compared
+  with internal/gen through the new hidden `xo gendump`
+  (TestSelfhostGen, TestSelfhostGenMutations): every declaration and
+  every whole file identical on the repository runs the Xo checker
+  checks. The Xo driver `selfhost/xo` gains `--backend=go`: it compiles
+  selfhost/check to the same Go as `xo build` and compiles itself to a
+  fixed point. The released `xo` is unchanged.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

@@ -1,0 +1,1386 @@
+// Expressions (internal/gen expr.go): conversions, literals, names,
+// operators, indexing, `?`, and closures.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Where an operation is, for its fault position and the range analysis:
+/// a binary or unary expression, an index, or a compound assignment (xe
+/// and ye its operands, zero or one each).
+struct OpAt {
+  span: Span
+  key: Int
+  xe: List[Expr] = []
+  ye: List[Expr] = []
+}
+
+/// The Go code of e converted to its type in context (val).
+fn (var g: Gen) val(e: Expr) -> Str {
+  let code = g.expr(e)
+  let ne = g.nat(e)
+  let want = g.info_type(e)
+  if want < 0 {
+    return code
+  }
+  g.coerce(code, ne, want)
+}
+
+/// The Go code of e converted to type want (valAs).
+fn (var g: Gen) val_as(e: Expr, want: Int) -> Str {
+  let code = g.expr(e)
+  g.coerce(code, g.nat(e), want)
+}
+
+/// Whether Go code is a value with no effects that needs no temporary
+/// (trivialCode).
+fn trivial_code(s: Str) -> Bool {
+  if s.is_empty() || s == "tk" || s == "true" || s == "false" {
+    return true
+  }
+  if s.ends_with("Unit{}") && !s.contains("(") && !s.contains(")") {
+    return true
+  }
+  if is_go_float(s) {
+    return true
+  }
+  let bs = s.bytes()
+  if bs.len() >= 2 && bs[0] == '"' && bs[bs.len() - 1] == '"' && !(bs[1..bs.len() - 1].to_str() ?? "\"").contains("\"") {
+    return true
+  }
+  false
+}
+
+/// Whether s parses as a Go float64 (strconv.ParseFloat succeeds; a value
+/// out of range is an error there too).
+fn is_go_float(s: Str) -> Bool {
+  match parse_go_float(s) {
+    Some(_) => true
+    None => false
+  }
+}
+
+/// The operands of an expression being generated in evaluation order
+/// (operands): when one needs statements, the operands before it are
+/// spilled into temporaries first.
+struct Ops {
+  codes: List[Str] = []
+  keep: List[Bool] = []
+}
+
+/// Ends operand i: saved is what op begin (cap_begin) returned, code the
+/// operand's code, keep that it must not be spilled (a place).
+fn (var g: Gen) op_end(var ops: Ops, saved: List[Str], code: Str, keep: Bool) {
+  let stmts = g.cap_end(saved)
+  if !stmts.is_empty() {
+    for j in 0..ops.codes.len() {
+      if ops.keep[j] {
+        continue
+      }
+      if !trivial_code(ops.codes[j]) {
+        let t = g.tmp("a")
+        g.line("${t} := ${ops.codes[j]}")
+        ops.codes[j] = t
+      }
+    }
+    g.write(stmts)
+  }
+  ops.codes.push(code)
+  ops.keep.push(keep)
+}
+
+/// The operands val(es[i]) (operands of plain values).
+fn (var g: Gen) vals(es: List[Expr]) -> List[Str] {
+  var ops = Ops{}
+  for e in es {
+    let sv = g.cap_begin()
+    let code = g.val(e)
+    g.op_end(ops, sv, code, false)
+  }
+  ops.codes
+}
+
+/// The operands valAs(es[i], ts[i]).
+fn (var g: Gen) vals_as(es: List[Expr], ts: List[Int]) -> List[Str] {
+  var ops = Ops{}
+  for (i, e) in es.indexed() {
+    let sv = g.cap_begin()
+    let code = g.val_as(e, ts[i])
+    g.op_end(ops, sv, code, false)
+  }
+  ops.codes
+}
+
+/// Stores code in a temporary unless it is trivial (spill).
+fn (var g: Gen) spill(code: Str) -> Str {
+  if trivial_code(code) || (code.starts_with("x_") && !code.contains(".") && !code.contains("(") && !code.contains(")") && !code.contains("[")) {
+    return code
+  }
+  let t = g.tmp("t")
+  g.line("${t} := ${code}")
+  t
+}
+
+// ---------------------------------------------------------------------------
+// Conversions (core 2.10)
+
+/// Converts code from type from to type to (coerce).
+fn (var g: Gen) coerce(code: Str, from: Int, to: Int) -> Str {
+  if from < 0 || to < 0 {
+    return code
+  }
+  let ft = g.go_type(from)
+  let tt = g.go_type(to)
+  if g.is_never(from) && !g.is_never(to) {
+    return "${g.rt()}Absurd[${tt}](${code})"
+  }
+  if ft == tt {
+    return code
+  }
+  let el = g.option_elem(to)
+  if el >= 0 && g.option_elem(from) < 0 {
+    let r = g.rt()
+    let et = g.go_type(el)
+    return "${r}Some[${et}](${g.coerce(code, from, el)})"
+  }
+  if g.is_interface(to) || tt == "any" {
+    return g.to_iface(code, from, to)
+  }
+  if g.is_func_t(from) && g.is_func_t(to) {
+    return g.adapt_func(code, from, to)
+  }
+  if g.is_result_t(from) && g.is_result_t(to) {
+    return g.coerce_result(code, from, g.result_t(to), g.result_e(to))
+  }
+  code
+}
+
+/// Converts a value to an interface type (toIface).
+fn (var g: Gen) to_iface(code0: Str, from0: Int, to0: Int) -> Str {
+  // inside a specialized copy the concrete types are known
+  let from = g.mono_type(from0)
+  let to = g.mono_type(to0)
+  // an interface value's type no longer says it holds lists (own.xo)
+  let code = g.own_code(code0, from)
+  let tt = g.go_type(to)
+  if tt == "any" {
+    return "any(${code})"
+  }
+  let n = g.nobj(to)
+  if n >= 0 && g.oprelude(n) {
+    return "${g.rt()}Iface[${tt}](${code})"
+  }
+  if g.is_interface(from) && g.go_type(from) != tt {
+    let adapter = g.iface_adapter(from, to)
+    if !adapter.is_empty() {
+      return adapter + "{V: " + code + "}"
+    }
+    return "${g.rt()}Iface[${tt}](${code})"
+  }
+  if g.is_param_t(from) {
+    // the concrete type is known only at run time: rt.Iface consults the
+    // adapters registered for this interface (adapt.xo)
+    g.note_target(to)
+    return "${g.rt()}Iface[${tt}](${code})"
+  }
+  if g.is_never(from) {
+    return "${g.rt()}Absurd[${tt}](${code})"
+  }
+  let adapter = g.iface_adapter(from, to)
+  if !adapter.is_empty() {
+    return adapter + "{V: " + code + "}"
+  }
+  tt + "(" + code + ")"
+}
+
+/// Converts an error value at a `?` site (coerceErr).
+fn (var g: Gen) coerce_err(code: Str, from: Int, to: Int) -> Str {
+  if to < 0 || from < 0 {
+    return code
+  }
+  let ft = g.go_type(from)
+  let tt = g.go_type(to)
+  if ft == tt {
+    return code
+  }
+  if g.is_never(from) {
+    return "${g.rt()}Absurd[${tt}](${code})"
+  }
+  if g.is_prelude(to, "Error") || g.is_prelude(to, "Display") {
+    return "${g.rt()}Iface[${tt}](${code})"
+  }
+  let vi = g.c.from_variant(to, from)
+  if vi >= 0 {
+    return g.variant_value(check.VRef{en: g.nobj(to), variant: vi}, to, [code])
+  }
+  g.coerce(code, from, to)
+}
+
+/// Converts a Result to Result[to_t, to_e] (coerceResult).
+fn (var g: Gen) coerce_result(code: Str, from: Int, to_t: Int, to_e0: Int) -> Str {
+  let ft = g.result_t(from)
+  let fe = g.result_e(from)
+  var to_e = to_e0
+  if to_e < 0 {
+    to_e = g.never_type()
+  }
+  if g.go_type(ft) == g.go_type(to_t) && g.go_type(fe) == g.go_type(to_e) {
+    return code
+  }
+  let r = g.spill(code)
+  let a1 = g.result_of(to_t, to_e)
+  let a3 = g.rt()
+  let a4 = g.go_type(to_t)
+  let a5 = g.go_type(to_e)
+  let a6 = g.coerce(r + ".V", ft, to_t)
+  let a7 = g.rt()
+  let a8 = g.go_type(to_t)
+  let a9 = g.coerce_err(r + ".E", fe, to_e)
+  "func() ${a1} { if ${r}.Ok { return ${a3}Ok[${a4}, ${a5}](${a6}) }; return ${a7}ErrTr[${a8}](${a9}, ${r}.Tr) }()"
+}
+
+/// Wraps a function value so it has the Go form of type to (adaptFunc).
+fn (var g: Gen) adapt_func(code: Str, from: Int, to: Int) -> Str {
+  let fv = g.spill(code)
+  var ps: List[Str] = []
+  var args: List[Str] = []
+  let tx = g.c.tys[g.c.resolve(to)]
+  for (i, p) in tx.args.indexed() {
+    var pt = g.go_type(p)
+    if tx.vars[i] {
+      pt = "*" + pt
+    }
+    ps.push("a${i} ${pt}")
+    args.push("a${i}")
+  }
+  var from_e = g.ferr(from)
+  if from_e < 0 {
+    from_e = g.never_type()
+  }
+  var to_e = g.ferr(to)
+  if to_e < 0 {
+    to_e = g.never_type()
+  }
+  let res = g.result_of(tx.result, g.ferr(to))
+  let call = "${fv}(tk${prefix_comma(args)})"
+  let a1 = g.rt()
+  let a4 = g.rt()
+  let a5 = g.go_type(tx.result)
+  let a6 = g.go_type(to_e)
+  let a7 = g.coerce("r.V", g.fresult(from), tx.result)
+  let a8 = g.rt()
+  let a9 = g.go_type(tx.result)
+  let a10 = g.coerce_err("r.E", from_e, to_e)
+  "func(tk *${a1}Task${prefix_comma(ps)}) ${res} { r := ${call}; if r.Ok { return ${a4}Ok[${a5}, ${a6}](${a7}) }; return ${a8}ErrTr[${a9}](${a10}, r.Tr) }"
+}
+
+fn prefix_comma(xs: List[Str]) -> Str {
+  if xs.is_empty() {
+    return ""
+  }
+  ", " + xs.join(", ")
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+/// The Go code of e of its natural type; it may emit statements first
+/// (expr).
+fn (var g: Gen) expr(e: Expr) -> Str {
+  match e {
+    ParenExpr(x: x, ..) => g.expr(x)
+    IntLit(value: value, ..) => g.int_lit(check.text(value), g.nat(e))
+    FloatLit(raw: raw, ..) => {
+      var t = g.go_type(g.nat(e))
+      if t != "float32" {
+        t = "float64"
+      }
+      "${t}(${check.text(raw)})"
+    }
+    DurationLit(nanos: nanos, ..) => "${g.rt()}Duration(${check.text(nanos)})"
+    RuneLit(value: value, ..) => {
+      let t = g.nat(e)
+      if g.is_int_type(t) {
+        // a character as its code point (decision 0079)
+        return g.int_lit("${value}", t)
+      }
+      "${g.rt()}Rune(${value})"
+    }
+    BytesLit(value: value, ..) => "${g.rt()}Bytes(${value.quote()})"
+    StringLit(s) => g.string_lit(s)
+    UnitExpr(..) => g.rt() + "Unit{}"
+    HoleExpr(span: span) => {
+      let r = g.rt()
+      "${r}Hole[${g.go_type(g.type_of(e))}](${g.loc(span).quote()})"
+    }
+    Ident(id) => {
+      let code = g.ident(e, id)
+      g.own_read(e, code)
+    }
+    TupleExpr(elems: elems, ..) => {
+      let t = g.nat(e)
+      let codes = g.vals_as(elems, g.targs(t))
+      var fs: List[Str] = []
+      for (i, c) in codes.indexed() {
+        fs.push("F${i}: ${c}")
+      }
+      "${g.go_type(t)}{${fs.join(", ")}}"
+    }
+    ListLit(elems: elems, ..) => g.coll_lit("List", elems, g.nat(e))
+    SetLit(elems: elems, ..) => g.coll_lit("Set", elems, g.nat(e))
+    MapLit(..) => g.map_lit(e)
+    StructLit(..) => g.struct_lit(e)
+    WithExpr(..) => g.with_expr(e)
+    UnaryExpr(..) => g.unary(e)
+    BinaryExpr(..) => g.binary(e)
+    IsExpr(x: x, pattern: pattern, ..) => {
+      let v = g.spill(g.val(x))
+      var t = g.pat_type(pattern)
+      if t < 0 {
+        t = g.type_of(x)
+      }
+      let m = g.pattern(pattern, v, t)
+      m.condition()
+    }
+    RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) => {
+      let t = g.nat(e)
+      let et = g.go_type(g.targs(t)[0])
+      var ops = Ops{}
+      for i in 0..2 {
+        let sv = g.cap_begin()
+        let side = if i == 0 { lo } else { hi }
+        let code = match side {
+          Some(x) => g.val(x)
+          None => "nil"
+        }
+        g.op_end(ops, sv, code, false)
+      }
+      "${g.rt()}Range[${et}]{Lo: ${ops.codes[0]}, Hi: ${ops.codes[1]}, Incl: ${inclusive}}"
+    }
+    SelectorExpr(..) => {
+      let code = g.selector(e)
+      g.own_read(e, code)
+    }
+    CallExpr(..) => g.call(e)
+    TypeArgsExpr(..) => g.type_args_value(e)
+    IndexExpr(..) => {
+      let code = g.index(e)
+      g.own_read(e, code)
+    }
+    TryExpr(..) => g.try_expr(e)
+    FnLit(lit) => g.fn_lit(lit)
+    IfExpr(..) | MatchExpr(..) | Block(..) | ScopeExpr(..) | SelectExpr(..) => {
+      let t = g.type_of(e)
+      let v = g.tmp("v")
+      g.line("var ${v} ${g.go_type(t)}")
+      g.into(e, Dest{kind: D_ASSIGN, name: v, typ: t})
+      v
+    }
+    WhileExpr(body: body, ..) => {
+      g.loop_while("", None, body, None)
+      g.rt() + "Unit{}"
+    }
+    BadExpr(span: span) => {
+      g.errorf(span, "bad expression")
+      "nil"
+    }
+  }
+}
+
+fn (var g: Gen) int_lit(v: Str, t: Int) -> Str {
+  let gt = g.go_type(t)
+  if gt is "int64" | "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64" | "float64" | "float32" {
+    return "${gt}(${v})"
+  }
+  "int64(${v})"
+}
+
+fn (var g: Gen) string_lit(x: parser.StringLit) -> Str {
+  let parts = x.parts
+  if parts.is_empty() {
+    return "\"\""
+  }
+  var ops = Ops{}
+  for (i, p) in parts.indexed() {
+    let sv = g.cap_begin()
+    var code = ""
+    match p.expr {
+      None => code = p.text.quote()
+      Some(pe) => {
+        var others: List[Node] = []
+        for (j, q) in parts.indexed() {
+          if j != i {
+            if let Some(qe) = q.expr {
+              others.push(Node.E(qe))
+            }
+          }
+        }
+        if g.borrow_ok(pe, others) {
+          // only formatted: a borrow (own.xo)
+          let b = g.borrow(pe)
+          code = g.display(b, g.type_of(pe))
+        } else {
+          let v = g.val(pe)
+          code = g.display(v, g.type_of(pe))
+        }
+      }
+    }
+    g.op_end(ops, sv, code, false)
+  }
+  if ops.codes.len() == 1 {
+    return ops.codes[0]
+  }
+  "(" + ops.codes.join(" + ") + ")"
+}
+
+/// The Display text of a value (display).
+fn (var g: Gen) display(code: Str, t0: Int) -> Str {
+  let t = g.mono_type(t0)
+  if g.is_prelude(t, "Str") {
+    return code
+  }
+  if g.is_prelude(t, "Int") {
+    return g.rt() + "IntStr(" + code + ")"
+  }
+  "${g.rt()}Display(tk, ${code})"
+}
+
+fn (var g: Gen) coll_lit(kind: Str, elems: List[Expr], t: Int) -> Str {
+  let et = g.targs(t)[0]
+  if elems.is_empty() {
+    let r = g.rt()
+    return "${r}${kind}[${g.go_type(et)}]{}"
+  }
+  var ts: List[Int] = []
+  for _ in elems {
+    ts.push(et)
+  }
+  let codes = g.vals_as(elems, ts)
+  let r = g.rt()
+  "${r}${kind}Of[${g.go_type(et)}](${codes.join(", ")})"
+}
+
+fn (var g: Gen) map_lit(e: Expr) -> Str {
+  let entries = match e {
+    MapLit(entries: entries, ..) => entries
+    _ => []
+  }
+  let t = g.nat(e)
+  let kt = g.targs(t)[0]
+  let vt = g.targs(t)[1]
+  if entries.is_empty() {
+    let r = g.rt()
+    return "${r}Map[${g.go_type(kt)}, ${g.go_type(vt)}]{}"
+  }
+  var ops = Ops{}
+  for i in 0..2 * entries.len() {
+    let sv = g.cap_begin()
+    let en = entries[i / 2]
+    let code = if i % 2 == 0 { g.val_as(en.key, kt) } else { g.val_as(en.value, vt) }
+    g.op_end(ops, sv, code, false)
+  }
+  let codes = ops.codes
+  let r = g.rt()
+  let tup = "${r}Tuple2[${g.go_type(kt)}, ${g.go_type(vt)}]"
+  var es: List[Str] = []
+  var i = 0
+  while i < codes.len() {
+    es.push("${tup}{F0: ${codes[i]}, F1: ${codes[i + 1]}}")
+    i += 2
+  }
+  let r2 = g.rt()
+  "${r2}MapOf[${g.go_type(kt)}, ${g.go_type(vt)}](${es.join(", ")})"
+}
+
+fn (var g: Gen) struct_lit(e: Expr) -> Str {
+  let (span, fields) = match e {
+    StructLit(span: span, fields: fields, ..) => (span, fields)
+    _ => fault("struct literal")
+  }
+  let t = g.nat(e)
+  let obj = g.nobj(t)
+  if obj < 0 {
+    g.errorf(span, "struct literal of unknown type")
+    return "nil"
+  }
+  let s = g.subst_of(obj, t)
+  var ops = Ops{}
+  for fi in fields {
+    let sv = g.cap_begin()
+    var ft = -1
+    for fo in g.c.objs[obj].fields {
+      if fo.name == fi.name.name {
+        ft = g.sub_apply(fo.ty, s)
+      }
+    }
+    let code = g.val_as(fi.value, ft)
+    g.op_end(ops, sv, code, false)
+  }
+  var given: Map[Bytes, Str] = {}
+  for (i, fi) in fields.indexed() {
+    given[fi.name.name] = ops.codes[i]
+  }
+  let gt = g.go_type(t)
+  var parts: List[Str] = []
+  for (i, fo) in g.c.objs[obj].fields.indexed() {
+    let boxed = g.is_boxed_field(obj, i)
+    if let Some(c) = given.get(fo.name) {
+      parts.push("${go_field(check.text(fo.name))}: ${g.box_if(boxed, c)}")
+      continue
+    }
+    if !fo.default.is_empty() {
+      let d = g.field_default(obj, i, t)
+      parts.push("${go_field(check.text(fo.name))}: ${g.box_if(boxed, d)}")
+    }
+  }
+  let lit = "${gt}{${parts.join(", ")}}"
+  if g.invariant_of(obj) != None {
+    let v = g.tmp("s")
+    g.line("${v} := ${lit}")
+    g.line("${v}.XoInvariant(tk, ${g.loc(span).quote()})")
+    return v
+  }
+  lit
+}
+
+fn (var g: Gen) box_if(boxed: Bool, c: Str) -> Str {
+  if boxed {
+    return g.rt() + "BoxOf(" + c + ")"
+  }
+  c
+}
+
+/// The default value of field fi of struct obj (fieldDefault).
+fn (var g: Gen) field_default(obj: Int, fi: Int, n: Int) -> Str {
+  let fo = g.c.objs[obj].fields[fi]
+  if g.ostd(obj) {
+    return g.std_default(fo.default[0], fo.ty)
+  }
+  var targs = ""
+  let args = g.type_args(n)
+  if !args.is_empty() {
+    targs = "[" + g.type_list(args) + "]"
+  }
+  let pr = g.pkg_ref(g.omod(obj))
+  "${pr}${g.oname(obj)}_D_${check.text(fo.name)}${targs}(tk)"
+}
+
+fn (var g: Gen) with_expr(e: Expr) -> Str {
+  let (span, x, fields) = match e {
+    WithExpr(span: span, x: x, fields: fields) => (span, x, fields)
+    _ => fault("with")
+  }
+  let t = g.nat(e)
+  let o = g.nobj(t)
+  let base = g.val(x)
+  let v = g.tmp("w")
+  g.line("${v} := ${base}")
+  let s = g.subst_of(o, t)
+  for fi in fields {
+    var ft = -1
+    for fo in g.c.objs[o].fields {
+      if fo.name == fi.name.name {
+        ft = g.sub_apply(fo.ty, s)
+      }
+    }
+    var c = g.val_as(fi.value, ft)
+    let name = check.text(fi.name.name)
+    if g.boxed_field_named(t, name) {
+      c = g.rt() + "BoxOf(" + c + ")"
+    }
+    g.line("${v}.${go_field(name)} = ${c}")
+  }
+  if g.invariant_of(o) != None {
+    g.line("${v}.XoInvariant(tk, ${g.loc(span).quote()})")
+  }
+  v
+}
+
+// ---------------------------------------------------------------------------
+// Identifiers and selectors
+
+fn (var g: Gen) ident(e: Expr, x: Ident) -> Str {
+  let v = g.var_of(x)
+  if v >= 0 {
+    return g.var_name(v)
+  }
+  if let Some(vo) = g.ctor(e) {
+    return g.ctor_value(vo, g.nat(e))
+  }
+  let r = g.ref_of(x)
+  if r >= 0 && g.c.objs[r].kind == check.ObjKind.Func {
+    return g.func_value(r, g.nat(e), None)
+  }
+  if r >= 0 && g.c.objs[r].kind == check.ObjKind.Const {
+    return g.const_ref(r)
+  }
+  let name = check.text(x.name)
+  if name is "true" | "false" {
+    return name
+  }
+  if name == "target" {
+    return g.rt() + "CurrentTarget()"
+  }
+  if name == "None" {
+    let r2 = g.rt()
+    return "${r2}None[${g.go_type(g.option_elem(g.nat(e)))}]()"
+  }
+  g.errorf(x.span, "unresolved name `${name}` in code generation")
+  "nil"
+}
+
+fn (var g: Gen) const_ref(o: Int) -> Str {
+  if g.ostd(o) {
+    return g.rt() + g.std_prefix(g.omod(o)) + g.oname(o)
+  }
+  g.pkg_ref(g.omod(o)) + "C_" + g.oname(o)
+}
+
+fn (var g: Gen) selector(e: Expr) -> Str {
+  let (span, x, sel) = match e {
+    SelectorExpr(span: span, x: x, sel: sel) => (span, x, sel)
+    _ => fault("selector")
+  }
+  if let Some(vo) = g.ctor(e) {
+    return g.ctor_value(vo, g.nat(e))
+  }
+  let ref = g.ref_of(sel)
+  if ref >= 0 {
+    if g.c.objs[ref].kind == check.ObjKind.Const {
+      return g.const_ref(ref)
+    }
+    if g.c.objs[ref].kind == check.ObjKind.Func {
+      if g.c.objs[ref].static_const {
+        return g.std_call(ref, {}, "", [])
+      }
+      if g.c.objs[ref].recv >= 0 && !g.c.objs[ref].is_static && g.info_type(x) >= 0 {
+        return g.method_value(e, x, ref)
+      }
+      g.note_zone_value(ref, span)
+      return g.func_value(ref, g.nat(e), None)
+    }
+  }
+  let bt = g.type_of(x)
+  let name = check.text(sel.name)
+  if bt < 0 {
+    g.errorf(span, "cannot generate selector `${name}`")
+    return "nil"
+  }
+  if g.is_prelude(bt, "Task") && name == "await" {
+    let h = g.val(x)
+    let code = "${g.rt()}Await(tk, ${h})"
+    if g.is_never(g.targs(bt)[1]) {
+      return code + ".V"
+    }
+    return code
+  }
+  // the base is only read for the field: a borrow; a List element is
+  // read in place (rt.List_RefM)
+  var base = ""
+  if let IndexExpr(x: ixx, index: ixi, ..) = unparen(x) {
+    if g.mono_on() && g.is_prelude(g.type_of(ixx), "List") && g.f.unit != Node.N && !g.mutates(g.f.unit, g.root_var(ixx)) {
+      if !is_range_expr(ixi) {
+        base = g.index_ref(unparen(x))
+      }
+    }
+  }
+  if base.is_empty() {
+    base = g.borrow(x)
+  }
+  if is_digits(name) {
+    return base + ".F" + name
+  }
+  if g.boxed_field_named(bt, name) {
+    return base + "." + go_field(name) + ".Get()"
+  }
+  base + "." + go_field(name)
+}
+
+fn is_range_expr(e: Expr) -> Bool {
+  match e {
+    RangeExpr(..) => true
+    _ => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Operators
+
+fn (var g: Gen) unary(e: Expr) -> Str {
+  let (span, op, x) = match e {
+    UnaryExpr(span: span, op: op, x: x) => (span, op, x)
+    _ => fault("unary")
+  }
+  let t = g.nat(e)
+  match op {
+    Bang => return "!(" + g.val(x) + ")"
+    Tilde => return "^(" + g.val(x) + ")"
+    Minus => {
+      if let IntLit(value: value, ..) = x {
+        return g.int_lit("-" + check.text(value), t)
+      }
+      let v = g.val(x)
+      if g.is_float(t) {
+        // a call: `-0.0` must be negative zero (core 2.1)
+        return "${g.rt()}FNeg(${v})"
+      }
+      if g.is_unsigned(t) {
+        return "${g.rt()}NegU(${v}, ${g.loc(span).quote()})"
+      }
+      if g.go_type(t) == "int64" && g.safe_op(g.ek(e)) {
+        return "(-" + v + ")"
+      }
+      return "${g.rt()}NegS(${v}, ${g.loc(span).quote()})"
+    }
+    _ => {}
+  }
+  g.errorf(span, "unsupported unary operator")
+  "nil"
+}
+
+fn op_text(k: Kind) -> Str {
+  match k {
+    Plus => "+"
+    Minus => "-"
+    Star => "*"
+    Slash => "/"
+    Percent => "%"
+    Amp => "&"
+    Pipe => "|"
+    Caret => "^"
+    Shl => "<<"
+    Shr => ">>"
+    Eq => "=="
+    NotEq => "!="
+    Lt => "<"
+    LtEq => "<="
+    Gt => ">"
+    GtEq => ">="
+    AndAnd => "&&"
+    OrOr => "||"
+    _ => "?"
+  }
+}
+
+fn (var g: Gen) binary(e: Expr) -> Str {
+  let (span, op, x, y) = match e {
+    BinaryExpr(span: span, op: op, x: x, y: y) => (span, op, x, y)
+    _ => fault("binary")
+  }
+  if g.is_expect_compare(e) {
+    return g.expect_compare(e)
+  }
+  if op == Kind.AndAnd || op == Kind.OrOr {
+    let l = g.val(x)
+    let sv = g.cap_begin()
+    let r = g.val(y)
+    let stmts = g.cap_end(sv)
+    if stmts.is_empty() {
+      return "(" + l + " " + op_text(op) + " " + r + ")"
+    }
+    let v = g.tmp("b")
+    g.line("${v} := ${l}")
+    if op == Kind.AndAnd {
+      g.line("if ${v} {")
+    } else {
+      g.line("if !${v} {")
+    }
+    g.f.ind += 1
+    g.write(indent(stmts, 1))
+    g.line("${v} = ${r}")
+    g.f.ind -= 1
+    g.line("}")
+    return v
+  }
+  if op == Kind.Coalesce {
+    return g.coalesce(e)
+  }
+  if op == Kind.Eq || op == Kind.NotEq {
+    let a = g.to_lower_recv(x)
+    let b = g.to_lower_recv(y)
+    if a != None && b != None {
+      // `a.to_lower() == b.to_lower()`: compared without building the
+      // two lowered strings (rt.Str_eq_lower, same result)
+      let codes = g.vals([a ?? x, b ?? y])
+      let eq = "${g.rt()}Str_eq_lower(${codes[0]}, ${codes[1]})"
+      if op == Kind.NotEq {
+        return "!" + eq
+      }
+      return eq
+    }
+  }
+  let xt = g.nat(x)
+  let yt = g.nat(y)
+  let rt = g.nat(e)
+  let o = op_text(op)
+  if op is Kind.Eq | Kind.NotEq | Kind.Lt | Kind.LtEq | Kind.Gt | Kind.GtEq {
+    var common = xt
+    if g.go_type(xt) != g.go_type(yt) {
+      if (g.option_elem(yt) >= 0 && g.option_elem(xt) < 0) || g.is_interface(yt) {
+        common = yt
+      }
+    }
+    // the operands are only read: borrows (own.xo)
+    let bx = g.borrow_ok(x, [Node.E(y)])
+    let by = g.borrow_ok(y, [Node.E(x)])
+    var ops = Ops{}
+    for i in 0..2 {
+      let sv = g.cap_begin()
+      var code = ""
+      if i == 0 {
+        code = if bx { g.borrow_as(x, common) } else { g.val_as(x, common) }
+      } else {
+        code = if by { g.borrow_as(y, common) } else { g.val_as(y, common) }
+      }
+      g.op_end(ops, sv, code, false)
+    }
+    return g.compare(o, ops.codes[0], ops.codes[1], common)
+  }
+  // List `+` marks the arrays its result shares, so its operands are
+  // borrows too
+  let bx = g.borrow_ok(x, [Node.E(y)])
+  let by = g.borrow_ok(y, [Node.E(x)])
+  var ops = Ops{}
+  for i in 0..2 {
+    let sv = g.cap_begin()
+    var code = ""
+    if i == 0 {
+      code = if bx { g.borrow(x) } else { g.val(x) }
+    } else {
+      code = if by { g.borrow(y) } else { g.val(y) }
+    }
+    g.op_end(ops, sv, code, false)
+  }
+  g.binop(o, ops.codes[0], ops.codes[1], xt, yt, rt, OpAt{span: span, key: g.ek(e), xe: [x], ye: [y]})
+}
+
+/// Whether Go code may be a constant expression of float literals
+/// (goFloatConst).
+fn go_float_const(code0: Str) -> Bool {
+  let code = code0.replace("float64(", "(").replace("float32(", "(")
+  for c in code.bytes() {
+    let ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '.' || c == '+' || c == '-' || c == '*' || c == '(' || c == ')' || c == ' ' || c == 'x' || c == 'X' || c == 'p' || c == 'P' || c == '_'
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// Adds n tabs before every line of s but //line directives (indent).
+fn indent(s: Str, n: Int) -> Str {
+  if s.is_empty() {
+    return s
+  }
+  let pre = "\t".repeat(n)
+  var lines = s.trim_suffix("\n").split("\n")
+  for i in 0..lines.len() {
+    if lines[i].starts_with("//line ") {
+      continue
+    }
+    lines[i] = pre + lines[i]
+  }
+  lines.join("\n") + "\n"
+}
+
+/// A comparison of two values of type t (compare).
+fn (var g: Gen) compare(op: Str, a: Str, b: Str, t0: Int) -> Str {
+  // inside a specialized copy a type parameter compares as its concrete
+  // type (mono.xo)
+  let t = g.mono_type(t0)
+  let eq = op == "==" || op == "!="
+  if g.mono_on() {
+    if g.is_float(t) && !eq {
+      return "(${g.rt()}FloatCmp(float64(${a}), float64(${b})) ${op} 0)"
+    }
+    if eq && g.has_typed_eq(t, false) {
+      if op == "!=" {
+        return "!(" + a + ").XoEqT(" + b + ")"
+      }
+      return "(" + a + ").XoEqT(" + b + ")"
+    }
+    if !eq && g.has_typed_eq(t, true) {
+      return "((" + a + ").XoCmpT(" + b + ") " + op + " 0)"
+    }
+  }
+  if g.is_scalar(t) && !g.is_prelude(t, "Bool") && !g.is_float(t) {
+    return "(" + a + " " + op + " " + b + ")"
+  }
+  if g.is_prelude(t, "Bool") && eq {
+    return "(" + a + " " + op + " " + b + ")"
+  }
+  if g.is_float(t) && eq {
+    return "(" + a + " " + op + " " + b + ")"
+  }
+  if eq && g.is_unit_enum(t) {
+    return "((" + a + ").Tag " + op + " (" + b + ").Tag)"
+  }
+  if op == "==" {
+    return "${g.rt()}Eq(${a}, ${b})"
+  }
+  if op == "!=" {
+    return "!${g.rt()}Eq(${a}, ${b})"
+  }
+  "(${g.rt()}Cmp(${a}, ${b}) ${op} 0)"
+}
+
+/// An arithmetic or bitwise operation (binop).
+fn (var g: Gen) binop(op: Str, a0: Str, b: Str, xt: Int, yt: Int, rt: Int, at: OpAt) -> Str {
+  var a = a0
+  let r = g.rt()
+  let loc = g.loc(at.span).quote()
+  let xd = g.is_prelude(xt, "Duration")
+  let yd = g.is_prelude(yt, "Duration")
+  let xtime = g.is_prelude(xt, "Time")
+  let ytime = g.is_prelude(yt, "Time")
+  if xtime && yd {
+    if op == "+" {
+      return "${r}TimeAdd(${a}, ${b}, ${loc})"
+    }
+    return "${r}TimeSub(${a}, ${b}, ${loc})"
+  }
+  if xtime && ytime {
+    return "${r}TimeDiff(${a}, ${b}, ${loc})"
+  }
+  if xd && g.is_prelude(yt, "Int") {
+    if op == "*" {
+      return "${r}DurMulInt(${a}, ${b}, ${loc})"
+    }
+    return "${r}DurDivInt(${a}, ${b}, ${loc})"
+  }
+  if yd && g.is_prelude(xt, "Int") {
+    return "${r}IntMulDur(${a}, ${b}, ${loc})"
+  }
+  if xd && yd && op == "/" {
+    return "${r}DurDivDur(${a}, ${b}, ${loc})"
+  }
+  if g.is_prelude(xt, "Str") || g.is_prelude(xt, "Bytes") {
+    return "(" + a + " + " + b + ")"
+  }
+  if g.is_prelude(xt, "List") {
+    return g.rt() + "List_Concat(" + a + ", " + b + ")"
+  }
+  if g.is_float(xt) {
+    if op == "%" {
+      return "${r}FMod(${a}, ${b})"
+    }
+    if op == "/" {
+      return "${r}FDiv(${a}, ${b})"
+    }
+    if go_float_const(a) && go_float_const(b) {
+      a = "${r}FVal(${a})"
+    }
+    return "(" + a + " " + op + " " + b + ")"
+  }
+  let signed = g.is_signed(xt)
+  let suffix = if signed { "S" } else { "U" }
+  if signed && g.go_type(xt) == "int64" && g.go_type(yt) == "int64" {
+    let (code, ok) = g.int_op(op, a, b, at, loc)
+    if ok {
+      return code
+    }
+  }
+  match op {
+    "+" => "${r}Add${suffix}(${a}, ${b}, ${loc})"
+    "-" => "${r}Sub${suffix}(${a}, ${b}, ${loc})"
+    "*" => "${r}Mul${suffix}(${a}, ${b}, ${loc})"
+    "/" => "${r}Div${suffix}(${a}, ${b}, ${loc})"
+    "%" => "${r}Rem${suffix}(${a}, ${b}, ${loc})"
+    "<<" => "${r}Shl(${a}, ${b}, ${loc})"
+    ">>" => "${r}Shr(${a}, ${b}, ${loc})"
+    "&" | "|" | "^" => "(" + a + " " + op + " " + b + ")"
+    _ => {
+      g.errorf(at.span, "unsupported operator ${op}")
+      "nil"
+    }
+  }
+}
+
+/// An Int operation: plain Go when the range analysis proved it cannot
+/// fault, a cheaper checked form when an operand is a constant, else the
+/// typed checked helpers (intOp).
+fn (var g: Gen) int_op(op: Str, a: Str, b: Str, at: OpAt, loc: Str) -> (Str, Bool) {
+  if !(op is "+" | "-" | "*" | "/" | "%" | ">>") {
+    return ("", false)
+  }
+  if g.safe_op(at.key) {
+    return ("(" + a + " " + op + " " + b + ")", true)
+  }
+  if op == ">>" {
+    return ("", false)
+  }
+  let r = g.rt()
+  if let Some(k) = g.const_operand(at.ye) {
+    if (op == "/" && k != 0 && k != -1) || (op == "%" && k != 0) {
+      return ("(" + a + " " + op + " " + b + ")", true)
+    }
+    if (op == "+" || op == "-") && k == 0 {
+      return ("(" + a + " " + op + " " + b + ")", true)
+    }
+    if (op == "+" && k > 0) || (op == "-" && k < 0) {
+      let nm = if op == "+" { "Add" } else { "Sub" }
+      return ("${r}${nm}IUp(${a}, ${b}, ${loc})", true)
+    }
+    if (op == "+" && k < 0) || (op == "-" && k > 0) {
+      let nm = if op == "+" { "Add" } else { "Sub" }
+      return ("${r}${nm}IDown(${a}, ${b}, ${loc})", true)
+    }
+    if op == "*" && (k == 0 || k == 1) {
+      return ("(" + a + " * " + b + ")", true)
+    }
+    if op == "*" && k != -1 {
+      let (lo, hi) = mul_bounds(k)
+      return ("${r}MulIK(${a}, ${b}, ${lo}, ${hi}, ${loc})", true)
+    }
+  }
+  if let Some(k) = g.const_operand(at.xe) {
+    if op == "*" && k != -1 {
+      if k == 0 || k == 1 {
+        return ("(" + a + " * " + b + ")", true)
+      }
+      let (lo, hi) = mul_bounds(k)
+      return ("${r}MulKI(${a}, ${b}, ${lo}, ${hi}, ${loc})", true)
+    }
+  }
+  if !g.mono_on() {
+    return ("", false)
+  }
+  let name = match op {
+    "+" => "Add"
+    "-" => "Sub"
+    "*" => "Mul"
+    "/" => "Div"
+    _ => "Rem"
+  }
+  ("${r}${name}I(${a}, ${b}, ${loc})", true)
+}
+
+/// The range of x for which x * k fits Int, |k| >= 2 (mulBounds).
+fn mul_bounds(k: Int) -> (Int, Int) {
+  let a = 9223372036854775807 / k
+  let b = (-9223372036854775807 - 1) / k
+  if a < b {
+    return (a, b)
+  }
+  (b, a)
+}
+
+/// `opt ?? default` (coalesce).
+fn (var g: Gen) coalesce(e: Expr) -> Str {
+  let (x, y) = match e {
+    BinaryExpr(x: x, y: y, ..) => (x, y)
+    _ => fault("coalesce")
+  }
+  let lt = g.nat(x)
+  let l = g.spill(g.val_as(x, lt))
+  let rt = g.nat(e)
+  let sv = g.cap_begin()
+  let r = g.val_as(y, rt)
+  let stmts = g.cap_end(sv)
+  let v = g.tmp("c")
+  g.line("var ${v} ${g.go_type(rt)}")
+  g.line("if ${l}.Some {")
+  if g.go_type(lt) == g.go_type(rt) {
+    g.line("\t${v} = ${l}")
+  } else {
+    g.line("\t${v} = ${l}.V")
+  }
+  g.line("} else {")
+  g.f.ind += 1
+  g.write(indent(stmts, 0))
+  g.line("${v} = ${r}")
+  g.f.ind -= 1
+  g.line("}")
+  v
+}
+
+// ---------------------------------------------------------------------------
+// Indexing (core 3.6)
+
+fn (var g: Gen) index(e: Expr) -> Str {
+  let (span, x, index) = match e {
+    IndexExpr(span: span, x: x, index: index) => (span, x, index)
+    _ => fault("index")
+  }
+  let bt = g.type_of(x)
+  let n = g.nobj(bt)
+  if n < 0 {
+    g.errorf(span, "cannot index")
+    return "nil"
+  }
+  let loc = g.loc(span).quote()
+  if let RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) = index {
+    var others: List[Node] = []
+    if let Some(l) = lo {
+      others.push(Node.E(l))
+    }
+    if let Some(h) = hi {
+      others.push(Node.E(h))
+    }
+    let base_ok = g.borrow_ok(x, others)
+    var ops = Ops{}
+    for i in 0..3 {
+      let sv = g.cap_begin()
+      var code = ""
+      if i == 0 {
+        // SliceRange marks the array it shares
+        code = if base_ok { g.borrow(x) } else { g.val(x) }
+      } else if i == 1 {
+        code = match lo {
+          None => "0"
+          Some(l) => g.val(l)
+        }
+      } else {
+        code = match hi {
+          None => "0"
+          Some(h) => {
+            let hv = g.val(h)
+            if inclusive { "${g.rt()}AddS(${hv}, 1, ${loc})" } else { hv }
+          }
+        }
+      }
+      g.op_end(ops, sv, code, false)
+    }
+    let args = "${ops.codes[1]}, ${ops.codes[2]}, ${lo != None}, ${hi != None}, ${loc}"
+    let name = g.oname(n)
+    if name == "Str" {
+      return "${g.rt()}StrSlice(${ops.codes[0]}, ${args})"
+    }
+    if name == "Bytes" {
+      return "${g.rt()}BytesSlice(${ops.codes[0]}, ${args})"
+    }
+    return "${g.rt()}List_SliceRange(${ops.codes[0]}, ${args})"
+  }
+  let base_ok = g.borrow_ok(x, [Node.E(index)])
+  var ops = Ops{}
+  for i in 0..2 {
+    let sv = g.cap_begin()
+    var code = ""
+    if i == 0 {
+      // only element i is copied out (and marked by own_read)
+      code = if base_ok { g.borrow(x) } else { g.val(x) }
+    } else {
+      code = g.val(index)
+    }
+    g.op_end(ops, sv, code, false)
+  }
+  let name = g.oname(n)
+  if name == "Bytes" {
+    return "${g.rt()}BytesAt(${ops.codes[0]}, ${ops.codes[1]}, ${loc})"
+  }
+  if name == "List" {
+    if g.safe_op(g.ek(e)) {
+      // the range analysis proved 0 <= i < len (ranges.xo)
+      return "${g.rt()}List_AtU(${ops.codes[0]}, ${ops.codes[1]})"
+    }
+    if g.mono_on() {
+      return "${g.rt()}List_AtM(${ops.codes[0]}, ${ops.codes[1]}, ${loc})"
+    }
+  }
+  "${g.rt()}${name}_At(${ops.codes[0]}, ${ops.codes[1]}, ${loc})"
+}
+
+/// The address of List element e, for reading a field of it in place
+/// (indexRef).
+fn (var g: Gen) index_ref(e: Expr) -> Str {
+  let (span, x, index) = match e {
+    IndexExpr(span: span, x: x, index: index) => (span, x, index)
+    _ => fault("index ref")
+  }
+  let loc = g.loc(span).quote()
+  let base_ok = g.borrow_ok(x, [Node.E(index)])
+  var ops = Ops{}
+  for i in 0..2 {
+    let sv = g.cap_begin()
+    var code = ""
+    if i == 0 {
+      code = if base_ok { g.borrow(x) } else { g.val(x) }
+    } else {
+      code = g.val(index)
+    }
+    g.op_end(ops, sv, code, false)
+  }
+  if g.safe_op(g.ek(e)) {
+    return "${g.rt()}List_RefU(${ops.codes[0]}, ${ops.codes[1]})"
+  }
+  "${g.rt()}List_RefM(${ops.codes[0]}, ${ops.codes[1]}, ${loc})"
+}
+
+// ---------------------------------------------------------------------------
+// `?` (core 2.5, 2.6, 11.1)
+
+fn (var g: Gen) try_expr(e: Expr) -> Str {
+  let (span, x) = match e {
+    TryExpr(span: span, x: x) => (span, x)
+    _ => fault("try")
+  }
+  let xt = g.nat(x)
+  let v = g.tmp("r")
+  g.line("${v} := ${g.val(x)}")
+  if g.is_result_t(xt) {
+    let et = g.result_e(xt)
+    g.line("if !${v}.Ok {")
+    g.f.ind += 1
+    g.propagate(v + ".E", v + ".Tr", et, span)
+    g.f.ind -= 1
+    g.line("}")
+    return v + ".V"
+  }
+  g.line("if !${v}.Some {")
+  g.f.ind += 1
+  let r = g.rt()
+  let none = "${r}None[${g.go_type(g.option_elem(g.fr().res_t))}]()"
+  g.emit_return_value(g.ok_value(none))
+  g.f.ind -= 1
+  g.line("}")
+  v + ".V"
+}
+
+/// Returns an error from the current frame, converted to its error type,
+/// with a frame appended (propagate).
+fn (var g: Gen) propagate(err_code: Str, tr_code: Str, et: Int, at: Span) {
+  let conv = g.coerce_err(err_code, et, g.fr().err_t)
+  let loc = "${g.line_path(g.file_path(g.f.file))}:${at.start.line}"
+  if !g.fr().is_result {
+    g.line("panic(${g.rt()}AsFault(${"error propagated out of a function that cannot fail".quote()}))")
+    return
+  }
+  let r = g.rt()
+  let rt = g.go_type(g.fr().res_t)
+  g.emit_return_value("${r}ErrTr[${rt}](${conv}, ${g.frame_code(tr_code, loc)})")
+}
+
+/// The code of a new error frame on the trace tr_code at loc (frameCode).
+fn (var g: Gen) frame_code(tr_code: Str, loc: Str) -> Str {
+  var names: List[Str] = []
+  var vals: List[Str] = []
+  for p in g.fr().params {
+    if g.is_capability(p.t) {
+      continue
+    }
+    names.push(p.xo)
+    vals.push(g.frame_value(p))
+  }
+  let head = "${tr_code}, ${g.fr().name.quote()}, ${loc.quote()}, ${names.join(" ").quote()}"
+  if vals.is_empty() || g.no_error_args() {
+    return "${g.rt()}Frame0(${head})"
+  }
+  if vals.len() <= 6 {
+    return "${g.rt()}Frame${vals.len()}(${head}, ${vals.join(", ")})"
+  }
+  "${g.rt()}FrameN(${head}, ${vals.join(", ")})"
+}
+
+/// The code of parameter p's value as a frame keeps it (frameValue).
+fn (var g: Gen) frame_value(p: ParamRef) -> Str {
+  if g.frame_eager(g.mono_type(p.t)) {
+    return "${g.rt()}FrameTextOf(${p.code})"
+  }
+  g.own_code(p.code, p.t)
+}
+
+// ---------------------------------------------------------------------------
+// Closures (core 3.3)
+
+fn (var g: Gen) fn_lit(x: parser.FnLit) -> Str {
+  let lit_e = Expr.FnLit(x)
+  let ft = g.nat(lit_e)
+  if !g.is_func_t(ft) {
+    g.errorf(x.span, "closure without a function type")
+    return "nil"
+  }
+  // captured mutable bindings are copied: closures capture by value;
+  // every captured binding's lists are marked shared (own.xo)
+  var saved: Map[Int, Str] = {}
+  for v in g.free_vars(x) {
+    let cur = g.var_name(v)
+    if !g.c.objs[v].mutable {
+      for l in g.mark_stmts(cur, g.vtype(v)) {
+        g.line(l)
+      }
+      continue
+    }
+    let c = g.tmp("cap")
+    g.line("${c} := ${g.own_code(cur, g.vtype(v))}")
+    saved[v] = cur
+    g.f.names[v] = c
+  }
+  let params = g.closure_params(x)
+  var ps: List[Str] = []
+  let outer = g.fr()
+  let fx = g.c.tys[g.c.resolve(ft)]
+  let err_t = g.ferr(ft)
+  var fr = Frame{name: outer.name + ".closure", res_t: fx.result, err_t: err_t, is_result: true, is_test: outer.is_test, params: outer.params}
+  fr.go_res = g.result_of(fx.result, err_t)
+  for (i, pv) in params.indexed() {
+    let name = g.decl_name(pv)
+    var pt = g.go_type(fx.args[i])
+    if fx.vars[i] {
+      pt = "*" + pt
+      g.f.names[pv] = "(*" + name + ")"
+    }
+    ps.push(name + " " + pt)
+  }
+  let go_res = fr.go_res
+  let saved_fr = g.push_frame(fr)
+  let saved_line = g.f.last_line
+  let sv = g.cap_begin()
+  g.f.ind += 1
+  g.at(x.body.span)
+  for pv in params {
+    g.line("_ = ${g.var_name(pv)}")
+  }
+  g.top_block(x.body)
+  g.f.ind -= 1
+  let body = g.cap_end(sv)
+  g.pop_frame(saved_fr)
+  g.f.last_line = saved_line
+  for (v, n) in saved.entries() {
+    g.f.names[v] = n
+  }
+  var b = "func(tk *${g.rt()}Task"
+  for p in ps {
+    b = b + ", " + p
+  }
+  b = b + ") ${go_res} {\n${body}"
+  b + "\t".repeat(g.f.ind) + "}"
+}
+
+/// The bindings declared outside closure x and used inside it, in order
+/// of first use (freeVars).
+fn (g: Gen) free_vars(x: parser.FnLit) -> List[Int] {
+  var declared: Map[Int, Bool] = {}
+  for v in g.closure_params(x) {
+    declared[v] = true
+  }
+  var out: List[Int] = []
+  var seen: Map[Int, Bool] = {}
+  for ne in flatten(Node.E(Expr.Block(x.body))) {
+    if let E(e) = ne.node {
+      if let Ident(id) = e {
+        let v = g.var_of(id)
+        if v < 0 || seen.contains(v) {
+          continue
+        }
+        if !g.f.names.contains(v) {
+          continue
+        }
+        seen[v] = true
+        if !declared.contains(v) {
+          out.push(v)
+        }
+      }
+    }
+  }
+  out
+}
+
+fn unparen(e: Expr) -> Expr {
+  var x = e
+  while true {
+    match x {
+      ParenExpr(x: inner, ..) => x = inner
+      _ => return x
+    }
+  }
+  x
+}

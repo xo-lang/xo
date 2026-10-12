@@ -1,0 +1,999 @@
+// Calls (internal/gen call.go): calls of declared functions, methods, and
+// function values, std calls, function values of declared functions,
+// constructors, conversions, and `expect`.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// How a generated call can be used (callKind).
+const CK_VALUE = 0
+const CK_CALL = 1
+const CK_VOID = 2
+
+/// A call in value position (call).
+fn (var g: Gen) call(x: Expr) -> Str {
+  let (code, kind) = g.call_core(x)
+  if kind == CK_VOID {
+    g.line(code)
+    return g.rt() + "Unit{}"
+  }
+  code
+}
+
+/// A call in statement position: whether code is a valid Go statement
+/// (callStmt).
+fn (var g: Gen) call_stmt(x: Expr) -> (Str, Bool) {
+  let (code, kind) = g.call_core(x)
+  (code, kind != CK_VALUE)
+}
+
+fn call_parts(x: Expr) -> (Span, Expr, List[parser.Arg]) {
+  match x {
+    CallExpr(span: span, fun: fun, args: args) => (span, fun, args)
+    _ => fault("not a call")
+  }
+}
+
+fn (var g: Gen) call_core(x: Expr) -> (Str, Int) {
+  let (span, fun, args) = call_parts(x)
+  // expect(cond) in tests
+  if let Ident(id) = fun {
+    if id.name == b"expect" && g.var_of(id) < 0 && g.ref_of(id) < 0 && g.call_of(x) == None {
+      let cond = g.val(args[0].value)
+      let r = g.rt()
+      return ("${r}Expect(tk, ${cond}, ${g.source(parser.expr_span(args[0].value)).quote()}, ${g.loc(span).quote()})", CK_VOID)
+    }
+    if id.name == b"old" && g.f.olds_on {
+      if let Some(v) = g.f.old_vals.get(g.ek(x)) {
+        return (v, CK_VALUE)
+      }
+    }
+  }
+  if let Some(vo) = g.ctor(x) {
+    return (g.ctor_call(vo, x), CK_VALUE)
+  }
+  if let Some(vo) = g.ctor(fun) {
+    return (g.ctor_call(vo, x), CK_VALUE)
+  }
+  if g.is_ret_ctor(x) {
+    // Ok(x)/Err(x) outside return position use the call's type
+    return (g.ret_ctor_value(x), CK_VALUE)
+  }
+  let obj = g.type_call(x)
+  if obj >= 0 {
+    return (g.type_call_code(obj, x), CK_VALUE)
+  }
+  match g.call_of(x) {
+    None => {
+      if let SelectorExpr(x: sx, sel: sel, ..) = fun {
+        let name = check.text(sel.name)
+        if name is "min" | "max" | "clamp" {
+          return (g.ord_call(sx, name, x), CK_VALUE)
+        }
+        if name == "display" {
+          // a derived or built in Display (std.md 1)
+          let v = g.val(sx)
+          return (g.display(v, g.type_of(sx)), CK_VALUE)
+        }
+        if name == "debug" {
+          // Debug is implemented for every type (std.md 1)
+          let r = g.rt()
+          return (r + "Debug(" + g.val(sx) + ")", CK_VALUE)
+        }
+      }
+      g.errorf(span, "unresolved call in code generation")
+      ("nil", CK_VALUE)
+    }
+    Some(ci) => {
+      if ci.fn_obj < 0 {
+        return g.value_call(x)
+      }
+      g.decl_call(x, ci)
+    }
+  }
+}
+
+/// `Ok(x)` or `Err(x)` typed by the checker as the Result of the
+/// enclosing function (retCtorValue).
+fn (var g: Gen) ret_ctor_value(x: Expr) -> Str {
+  let (_, fun, args) = call_parts(x)
+  let name = match fun {
+    Ident(id) => check.text(id.name)
+    _ => ""
+  }
+  let t = g.type_of(x)
+  var rt = g.fr().res_t
+  var et = g.fr().err_t
+  if g.is_result_t(t) {
+    rt = g.result_t(t)
+    et = g.result_e(t)
+  }
+  let arg = args[0].value
+  let r = g.rt()
+  let a = g.go_type(rt)
+  let b = g.err_go(et)
+  if name == "Err" {
+    return "${r}Err[${a}, ${b}](${g.val_as(arg, et)})"
+  }
+  "${r}Ok[${a}, ${b}](${g.val_as(arg, rt)})"
+}
+
+// ---------------------------------------------------------------------------
+// Calls of function values
+
+fn (var g: Gen) value_call(x: Expr) -> (Str, Int) {
+  let saved = g.f.writebacks
+  g.f.writebacks = []
+  let (code, kind) = g.value_call1(x)
+  let wbs = g.f.writebacks
+  g.f.writebacks = saved
+  g.with_writebacks(code, kind, wbs)
+}
+
+fn (var g: Gen) value_call1(x: Expr) -> (Str, Int) {
+  let (span, fun, args) = call_parts(x)
+  let (lc, lok) = g.lit_call(x)
+  if lok {
+    if lc.starts_with(g.rt() + "Ok[") {
+      return (lc, CK_CALL)
+    }
+    return (lc, CK_VALUE)
+  }
+  let ft = g.expr_type(fun)
+  if !g.is_func_t(ft) {
+    g.errorf(span, "call of a non function value")
+    return ("nil", CK_VALUE)
+  }
+  let fx = g.c.tys[g.c.resolve(ft)]
+  var ops = Ops{}
+  for i in 0..args.len() + 1 {
+    let sv = g.cap_begin()
+    var code = ""
+    var keep = false
+    if i == 0 {
+      code = g.val(fun)
+    } else if fx.vars[i - 1] {
+      code = "&" + g.place(args[i - 1].value)
+      keep = true
+    } else {
+      code = g.val_as(args[i - 1].value, fx.args[i - 1])
+    }
+    g.op_end(ops, sv, code, keep)
+  }
+  let call = "${ops.codes[0]}(tk${prefix_comma(ops.codes[1..ops.codes.len()])})"
+  // the callee may be a std function wrapped as a value, whose result can
+  // still be held elsewhere (own.xo)
+  let fe = g.ferr(ft)
+  if fe < 0 {
+    return (g.own_code(call + ".V", fx.result), CK_VALUE)
+  }
+  if g.type_holds_list(fx.result) || g.type_holds_list(fe) {
+    return (g.own_result(call, fx.result, fe), CK_CALL)
+  }
+  (call, CK_CALL)
+}
+
+/// The type of e, falling back to what the checker did not record
+/// (exprType).
+fn (var g: Gen) expr_type(e: Expr) -> Int {
+  let t = g.type_of(e)
+  if t >= 0 {
+    return t
+  }
+  match e {
+    ParenExpr(x: x, ..) => g.expr_type(x)
+    Ident(id) => {
+      let v = g.var_of(id)
+      if v >= 0 {
+        return g.vtype(v)
+      }
+      -1
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      let bt = g.expr_type(x)
+      let name = check.text(sel.name)
+      if bt >= 0 && g.tk(bt) == check.TyKind.Tuple && is_digits(name) {
+        let i = Int.parse(name) ?? 0
+        let els = g.targs(bt)
+        if i < els.len() {
+          return els[i]
+        }
+      }
+      let o = g.nobj(bt)
+      if o >= 0 {
+        for f in g.c.objs[o].fields {
+          if f.name == sel.name {
+            return g.sub_apply(f.ty, g.subst_of(o, bt))
+          }
+        }
+      }
+      -1
+    }
+    _ => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calls of declared functions and methods
+
+/// The argument of each parameter, by index into args: positional first,
+/// then named; -1 when missing (its default is used) (argExprs).
+fn (g: Gen) arg_index(fo: Int, args: List[parser.Arg]) -> List[Int] {
+  let params = g.c.objs[fo].params
+  var out: List[Int] = []
+  for _ in params {
+    out.push(-1)
+  }
+  var pos = 0
+  for (j, a) in args.indexed() {
+    match a.name {
+      None => {
+        if pos < out.len() {
+          out[pos] = j
+        }
+        pos += 1
+      }
+      Some(n) => {
+        for (i, p) in params.indexed() {
+          if p.name == n.name {
+            out[i] = j
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+fn (var g: Gen) decl_call(x: Expr, ci: check.CallInfo) -> (Str, Int) {
+  let saved = g.f.writebacks
+  g.f.writebacks = []
+  let (code, kind) = g.decl_call1(x, ci)
+  let wbs = g.f.writebacks
+  g.f.writebacks = saved
+  g.with_writebacks(code, kind, wbs)
+}
+
+/// Runs a call that mutated copies of places, then stores the copies
+/// back (withWritebacks).
+fn (var g: Gen) with_writebacks(code: Str, kind: Int, wbs: List[WriteBack]) -> (Str, Int) {
+  if wbs.is_empty() {
+    return (code, kind)
+  }
+  var res = ""
+  if kind == CK_VOID {
+    g.line(code)
+  } else {
+    res = g.tmp("res")
+    g.line("${res} := ${code}")
+  }
+  for wb in wbs {
+    g.write_place(wb.place, wb.tmp, true)
+  }
+  if kind == CK_VOID {
+    return (g.rt() + "Unit{}", CK_VALUE)
+  }
+  (res, CK_VALUE)
+}
+
+fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
+  let (_, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let sub = ci.subst
+  let recv_e = ci.recv
+  if g.ostd(fo) {
+    g.note_zone_call(x, fo)
+    if g.arenas_on() {
+      let (ac, aok) = g.arena_producer(x, ci)
+      if aok {
+        return (ac, CK_VALUE)
+      }
+      g.note_arena_call(x, ci)
+    }
+    let (sc, skind, sok) = g.special_std(x, ci)
+    if sok {
+      return g.own_std_result(fo, sub, sc, skind)
+    }
+    let (hc, hok) = g.hof_inline(x, ci)
+    if hok {
+      return g.own_std_result(fo, sub, hc, CK_VALUE)
+    }
+    let (pc, pok) = g.inline_push(x, ci)
+    if pok {
+      return (pc, CK_VALUE)
+    }
+  }
+  // a constraint method on a type parameter inside a specialized copy
+  // calls the concrete method (mono.xo)
+  var callee = fo
+  var callee_sub = sub
+  let (dm, dms) = g.devirt(fo, recv_e)
+  if dm >= 0 {
+    callee = dm
+    callee_sub = dms
+  }
+  let params = g.c.objs[fo].params
+  let aidx = g.arg_index(fo, args)
+  // evaluation order: receiver, then arguments as written
+  var order: List[Int] = []
+  if !recv_e.is_empty() {
+    order.push(-1)
+  }
+  for j in 0..args.len() {
+    var pi = -1
+    for (i, a) in aidx.indexed() {
+      if a == j {
+        pi = i
+      }
+    }
+    if pi >= 0 {
+      order.push(pi)
+    }
+  }
+  var recv_code = ""
+  var arg_codes: List[Str] = []
+  for _ in params {
+    arg_codes.push("")
+  }
+  // by value arguments of a user function and the receiver of a read
+  // only List method are borrowed (own.xo)
+  var any_var = g.c.objs[fo].recv_var
+  for p in params {
+    any_var = any_var || p.is_var
+  }
+  let fd = g.c.objs[fo].fn_decl
+  let user_fn = !g.ostd(fo) && !fd.is_empty() && fd[0].body != None
+  var ops = Ops{}
+  for i in order {
+    let sv = g.cap_begin()
+    var code = ""
+    var keep = false
+    if i < 0 {
+      keep = g.c.objs[fo].recv_var
+      let re = recv_e[0]
+      let fr0 = g.c.objs[fo].recv
+      let list_read = g.ostd(fo) && fr0 >= 0 && g.oprelude(fr0) && g.oname(fr0) == "List" && borrow_recv(g.oname(fo))
+      let calm = g.borrow_ok(re, g.call_others(recv_e, args, aidx, -1))
+      var done = false
+      if g.c.objs[fo].recv_var && g.ostd(fo) && calm {
+        // a std method writes only its receiver: an element place is
+        // passed by address
+        if let Some(r) = g.resolve_addr_place(re) {
+          code = g.place_addr(r)
+          done = true
+        }
+      }
+      if !done {
+        let b = !any_var && (user_fn || list_read) && calm
+        code = g.recv_code(re, callee, b)
+      }
+    } else {
+      let p = params[i]
+      let ae = args[aidx[i]].value
+      keep = p.is_var
+      if p.is_var {
+        code = "&" + g.place(ae)
+      } else {
+        var pt = p.ty
+        if !sub.is_empty() {
+          pt = g.sub_apply(pt, sub)
+        }
+        if user_fn && !any_var && g.borrow_ok(ae, g.call_others(recv_e, args, aidx, i)) {
+          code = g.borrow_as(ae, pt)
+        } else {
+          code = g.val_as(ae, pt)
+        }
+      }
+    }
+    g.op_end(ops, sv, code, keep)
+  }
+  for (k, i) in order.indexed() {
+    if i < 0 {
+      recv_code = ops.codes[k]
+    } else {
+      arg_codes[i] = ops.codes[k]
+    }
+  }
+  for i in 0..params.len() {
+    if aidx[i] < 0 {
+      arg_codes[i] = g.param_default(fo, i, sub)
+    }
+  }
+  let lits = g.lit_args(callee, callee_sub, x)
+  if !lits.is_empty() {
+    let (name, ok) = g.spec_for_lits(callee, callee_sub, lits)
+    if ok {
+      return g.emit_spec_call(callee, callee_sub, name, recv_code, arg_codes)
+    }
+  }
+  let (code0, kind0) = g.emit_call(callee, callee_sub, recv_code, arg_codes)
+  var code = code0
+  var kind = kind0
+  if g.ostd(fo) {
+    let (c2, k2) = g.own_std_result(fo, sub, code, kind)
+    code = c2
+    kind = k2
+  }
+  if g.arenas_on() && g.ostd(fo) {
+    code = g.arena_resp_code(x, code)
+    if kind == CK_VOID && g.handler_lit(x, ci) != None {
+      g.line(code)
+      g.arena_route(x, ci, recv_code)
+      return (g.rt() + "Unit{}", CK_VALUE)
+    }
+  }
+  (code, kind)
+}
+
+/// The other operands of a call while operand skip (-1: the receiver,
+/// else a parameter index) is borrowed (others).
+fn (g: Gen) call_others(recv_e: List[Expr], args: List[parser.Arg], aidx: List[Int], skip: Int) -> List[Node] {
+  var ns: List[Node] = []
+  if !recv_e.is_empty() && skip != -1 {
+    ns.push(Node.E(recv_e[0]))
+  }
+  for (i, a) in aidx.indexed() {
+    if a >= 0 && i != skip {
+      ns.push(Node.E(args[a].value))
+    }
+  }
+  ns
+}
+
+/// Calls the specialized copy name of fo (emitSpecCall).
+fn (var g: Gen) emit_spec_call(fo: Int, sub: Map[Int, Int], name: Str, recv0: Str, args: List[Str]) -> (Str, Int) {
+  var call = ""
+  if g.c.objs[fo].recv < 0 {
+    call = "${name}(tk${prefix_comma(args)})"
+  } else {
+    var recv = recv0
+    if g.c.objs[fo].recv_var {
+      recv = "&" + recv
+    }
+    call = "${name}(tk, ${recv}${prefix_comma(args)})"
+  }
+  g.call_result(fo, sub, call)
+}
+
+/// The receiver of a method call: an addressable place for a `var`
+/// receiver (recvCode).
+fn (var g: Gen) recv_code(e: Expr, fo: Int, borrow: Bool) -> Str {
+  if g.c.objs[fo].recv_var {
+    return g.place(e)
+  }
+  let t = g.type_of(e)
+  var code = ""
+  if borrow {
+    code = g.borrow(e)
+  } else {
+    code = g.val(e)
+  }
+  if g.is_param_t(t) && g.c.objs[fo].iface {
+    let p = g.c.tys[g.c.resolve(t)].obj
+    let c = g.c.objs[p].constraint
+    if c >= 0 {
+      // toIface: an adapter in a specialized copy, the adapter registry
+      // in generic code
+      return g.to_iface(code, t, c)
+    }
+  }
+  code
+}
+
+/// The default value of parameter i of fo (paramDefault).
+fn (var g: Gen) param_default(fo: Int, i: Int, sub: Map[Int, Int]) -> Str {
+  let p = g.c.objs[fo].params[i]
+  if p.default.is_empty() {
+    return "MISSING_ARG"
+  }
+  var pt = p.ty
+  if !sub.is_empty() {
+    pt = g.sub_apply(pt, sub)
+  }
+  if g.ostd(fo) {
+    return g.std_default(p.default[0], pt)
+  }
+  let targs = g.targs_code(g.c.objs[fo].tparams, sub)
+  let pr = g.pkg_ref(g.omod(fo))
+  "${pr}${g.func_go_name(fo)}_D_${i}${targs}(tk)"
+}
+
+/// `[T1, T2]` for the non effect parameters under sub (targs).
+fn (var g: Gen) targs_code(ps0: List[Int], sub: Map[Int, Int]) -> Str {
+  let ps = g.type_params(ps0)
+  if ps.is_empty() {
+    return ""
+  }
+  var parts: List[Str] = []
+  for p in ps {
+    match sub.get(p) {
+      None => parts.push(g.rt() + "Unit")
+      Some(t) => parts.push(g.go_type(t))
+    }
+  }
+  "[" + parts.join(", ") + "]"
+}
+
+/// The Go call of a declared function or method with the receiver and
+/// arguments already generated (emitCall).
+fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str]) -> (Str, Int) {
+  let (spec, sok) = g.spec_for(fo, sub)
+  if sok {
+    return g.emit_spec_call(fo, sub, spec, recv0, args)
+  }
+  let o = g.c.objs[fo]
+  var call = ""
+  var recv = recv0
+  if o.iface && g.method_is_go_method(fo) {
+    call = "${recv}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+  } else if g.ostd(fo) {
+    call = g.std_call(fo, sub, recv, args)
+  } else if o.recv < 0 {
+    let pr = g.pkg_ref(o.module)
+    call = "${pr}F_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
+  } else if g.method_is_go_method(fo) {
+    call = "${recv}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+  } else {
+    if o.recv_var {
+      recv = "&" + recv
+    }
+    let pr = g.pkg_ref(o.module)
+    call = "${pr}${g.func_go_name(fo)}${g.targs_code(o.tparams, sub)}(tk, ${recv}${prefix_comma(args)})"
+  }
+  g.call_result(fo, sub, call)
+}
+
+/// Classifies a generated call of fo (callResult).
+fn (var g: Gen) call_result(fo: Int, sub: Map[Int, Int], call: Str) -> (Str, Int) {
+  if g.returns_void(fo) {
+    return (call, CK_VOID)
+  }
+  if g.returns_result(fo) {
+    var et = g.c.objs[fo].err
+    if !sub.is_empty() {
+      et = g.sub_apply(et, sub)
+    }
+    if g.is_never(et) {
+      return (call + ".V", CK_VALUE)
+    }
+  }
+  (call, CK_CALL)
+}
+
+/// Names a std function or method in the runtime (stdCall).
+fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str]) -> Str {
+  let r = g.rt()
+  let o = g.c.objs[fo]
+  let prefix = g.std_prefix(o.module)
+  if o.recv < 0 {
+    return "${r}${prefix}${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
+  }
+  let rm = g.omod(o.recv)
+  if o.is_static {
+    return "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
+  }
+  if g.method_is_go_method(fo) {
+    return "${recv0}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+  }
+  var recv = recv0
+  if o.recv_var {
+    recv = "&" + recv
+  }
+  var tps = o.tparams
+  if o.iface {
+    tps = g.c.objs[o.recv].tparams + o.tparams
+  }
+  "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(tps, sub)}(tk, ${recv}${prefix_comma(args)})"
+}
+
+// ---------------------------------------------------------------------------
+// Function values of declared functions (core 3.3, 6.2)
+
+/// A declared function as a function value of type t (funcValue).
+fn (var g: Gen) func_value(fo: Int, t: Int, recv: Str?) -> Str {
+  if !g.is_func_t(t) {
+    g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, "function value `${g.oname(fo)}` without a function type")
+    return "nil"
+  }
+  let sub = g.inst_subst(fo, t)
+  let fx = g.c.tys[g.c.resolve(t)]
+  var ps: List[Str] = []
+  var args: List[Str] = []
+  for (i, p) in fx.args.indexed() {
+    var pt = g.go_type(p)
+    if fx.vars[i] {
+      pt = "*" + pt
+    }
+    ps.push("a${i} ${pt}")
+    args.push("a${i}")
+  }
+  let rv = recv ?? ""
+  let saved = g.f.out
+  g.f.out = []
+  let (call, kind) = g.emit_call(fo, sub, rv, args)
+  g.f.out = saved
+  let fe = g.ferr(t)
+  let res = g.result_of(fx.result, fe)
+  var body = ""
+  if kind == CK_VOID {
+    let r = g.rt()
+    body = "${call}; return ${r}Ok[${r}Unit, ${g.err_go(fe)}](${r}Unit{})"
+  } else if g.returns_result(fo) && !call.ends_with(".V") {
+    body = "return " + call
+  } else {
+    let r = g.rt()
+    body = "return ${r}Ok[${g.go_type(fx.result)}, ${g.err_go(fe)}](${call})"
+  }
+  "func(tk *${g.rt()}Task${prefix_comma(ps)}) ${res} { ${body} }"
+}
+
+/// `x.method` used as a value: the receiver is evaluated now and captured
+/// (methodValue).
+fn (var g: Gen) method_value(e: Expr, x: Expr, fo: Int) -> Str {
+  let rv = g.spill(g.recv_code(x, fo, false))
+  g.func_value(fo, g.type_of(e), Some(rv))
+}
+
+/// The type arguments of a generic function recovered from its
+/// instantiated type (instSubst).
+fn (var g: Gen) inst_subst(fo: Int, ft: Int) -> Map[Int, Int] {
+  let o = g.c.objs[fo]
+  if o.tparams.is_empty() {
+    return {}
+  }
+  var m: Map[Int, Int] = {}
+  let fx = g.c.tys[g.c.resolve(ft)]
+  for (i, p) in o.params.indexed() {
+    if i < fx.args.len() {
+      g.match_types(p.ty, fx.args[i], m)
+    }
+  }
+  g.match_types(o.result, fx.result, m)
+  let fe = g.ferr(ft)
+  if o.err >= 0 && fe >= 0 {
+    g.match_types(o.err, fe, m)
+  }
+  var args: List[Int] = []
+  for p in o.tparams {
+    var t = m.get(p) ?? -1
+    if t < 0 && o.err >= 0 {
+      let ex = g.c.tys[o.err]
+      if ex.kind == check.TyKind.Param && ex.obj == p {
+        t = g.never_type()
+      }
+    }
+    if t < 0 {
+      t = g.c.mk_tuple([])
+    }
+    args.push(t)
+  }
+  g.c.args_subst(o.tparams, args)
+}
+
+/// Binds the type parameters in pat to the parts of conc (matchTypes).
+fn (g: Gen) match_types(pat: Int, conc0: Int, var m: Map[Int, Int]) {
+  if pat < 0 {
+    return
+  }
+  let conc = if conc0 < 0 { -1 } else { g.c.resolve(conc0) }
+  let p = g.c.tys[pat]
+  match p.kind {
+    Param => {
+      if !m.contains(p.obj) && conc >= 0 {
+        m[p.obj] = conc
+      }
+    }
+    Named => {
+      if conc < 0 {
+        return
+      }
+      let c = g.c.tys[conc]
+      if c.kind != check.TyKind.Named || c.obj != p.obj {
+        return
+      }
+      for (i, a) in p.args.indexed() {
+        if i < c.args.len() {
+          g.match_types(a, c.args[i], m)
+        }
+      }
+    }
+    Tuple => {
+      if conc < 0 {
+        return
+      }
+      let c = g.c.tys[conc]
+      if c.kind != check.TyKind.Tuple {
+        return
+      }
+      for (i, a) in p.args.indexed() {
+        if i < c.args.len() {
+          g.match_types(a, c.args[i], m)
+        }
+      }
+    }
+    Func => {
+      if conc < 0 {
+        return
+      }
+      let c = g.c.tys[conc]
+      if c.kind != check.TyKind.Func {
+        return
+      }
+      for (i, a) in p.args.indexed() {
+        if i < c.args.len() {
+          g.match_types(a, c.args[i], m)
+        }
+      }
+      g.match_types(p.result, c.result, m)
+      let ce = g.ferr(conc)
+      if p.err >= 0 && ce >= 0 {
+        g.match_types(p.err, ce, m)
+      }
+    }
+    Var => {
+      if p.ref >= 0 {
+        g.match_types(p.ref, conc0, m)
+      }
+    }
+    _ => {}
+  }
+}
+
+/// `f[T]` used as a value (typeArgsValue).
+fn (var g: Gen) type_args_value(e: Expr) -> Str {
+  let (span, x) = match e {
+    TypeArgsExpr(span: span, x: x, ..) => (span, x)
+    _ => fault("type args")
+  }
+  var fo = -1
+  match x {
+    Ident(id) => fo = g.ref_of(id)
+    SelectorExpr(sel: sel, ..) => fo = g.ref_of(sel)
+    _ => {}
+  }
+  if fo >= 0 && g.c.objs[fo].kind != check.ObjKind.Func {
+    fo = -1
+  }
+  if fo < 0 {
+    g.errorf(span, "unsupported generic function value")
+    return "nil"
+  }
+  g.func_value(fo, g.nat(e), None)
+}
+
+// ---------------------------------------------------------------------------
+// Constructors
+
+/// The Named type a constructor of variant vr builds at type t: t, or
+/// the element of an optional t.
+fn (g: Gen) ctor_named(vr: check.VRef, t: Int) -> Int {
+  let o = g.nobj(t)
+  if o < 0 || o != vr.en {
+    let el = g.option_elem(t)
+    if el >= 0 {
+      return el
+    }
+  }
+  t
+}
+
+/// Constructs a variant with arguments (ctorCall).
+fn (var g: Gen) ctor_call(vr: check.VRef, x: Expr) -> Str {
+  let (_, _, args) = call_parts(x)
+  let t = g.nat(x)
+  var n = t
+  let no = g.nobj(t)
+  if no < 0 || no != vr.en {
+    let el = g.option_elem(t)
+    if el >= 0 {
+      n = el
+    }
+  }
+  let has_n = g.nobj(n) >= 0
+  var s: Map[Int, Int] = {}
+  if has_n {
+    s = g.c.args_subst(g.c.objs[vr.en].tparams, g.targs(n))
+  }
+  let vfields = g.c.objs[vr.en].variants[vr.variant].fields
+  var fields: List[Int] = []
+  for _ in vfields {
+    fields.push(-1)
+  }
+  var pos = 0
+  for (j, a) in args.indexed() {
+    match a.name {
+      None => {
+        if pos < fields.len() {
+          fields[pos] = j
+        }
+        pos += 1
+      }
+      Some(nm) => {
+        for (i, vf) in vfields.indexed() {
+          if vf.name == nm.name {
+            fields[i] = j
+          }
+        }
+      }
+    }
+  }
+  var ops = Ops{}
+  for i in 0..fields.len() {
+    let sv = g.cap_begin()
+    var code = "MISSING_FIELD"
+    if fields[i] >= 0 {
+      var ft = vfields[i].ty
+      if has_n {
+        ft = g.sub_apply(ft, s)
+      }
+      code = g.val_as(args[fields[i]].value, ft)
+    }
+    g.op_end(ops, sv, code, false)
+  }
+  g.variant_value(vr, if has_n { n } else { -1 }, ops.codes)
+}
+
+/// A unit variant used as a value (ctorValue).
+fn (var g: Gen) ctor_value(vr: check.VRef, t: Int) -> Str {
+  var n = t
+  let o = g.nobj(t)
+  if o >= 0 && o != vr.en {
+    let el = g.option_elem(t)
+    if el >= 0 {
+      n = el
+    }
+  }
+  if g.nobj(n) < 0 {
+    n = -1
+  }
+  g.variant_value(vr, n, [])
+}
+
+/// The Go field of a variant field: F_<name>, or F<i> for a `from` field
+/// (vfieldName).
+fn (g: Gen) vfield_name(f: check.VFieldInfo, i: Int) -> Str {
+  if f.from || f.name.is_empty() {
+    return "F${i}"
+  }
+  go_field(check.text(f.name))
+}
+
+/// An enum value from field codes (variantValue): n is the enum's Named
+/// type at its instantiation, -1 when unknown.
+fn (var g: Gen) variant_value(vr: check.VRef, n: Int, codes: List[Str]) -> Str {
+  let r = g.rt()
+  let en = vr.en
+  let v = g.c.objs[en].variants[vr.variant]
+  let vname = check.text(v.name)
+  if g.oprelude(en) {
+    let ename = g.oname(en)
+    if ename == "Option" {
+      let a = g.go_type(g.targs(n)[0])
+      if vname == "None" {
+        return "${r}None[${a}]()"
+      }
+      return "${r}Some[${a}](${codes[0]})"
+    }
+    if ename == "Result" {
+      let a = g.go_type(g.targs(n)[0])
+      let b = g.go_type(g.targs(n)[1])
+      if vname == "Ok" {
+        return "${r}Ok[${a}, ${b}](${codes[0]})"
+      }
+      return "${r}Err[${a}, ${b}](${codes[0]})"
+    }
+  }
+  let et = if n < 0 { g.rt() + "Unit" } else { g.go_type(n) }
+  if v.fields.is_empty() {
+    return "${et}{Tag: ${v.index + 1}}"
+  }
+  var fs: List[Str] = []
+  for (i, c) in codes.indexed() {
+    fs.push("${g.vfield_name(v.fields[i], i)}: ${c}")
+  }
+  "${et}{Tag: ${v.index + 1}, P: ${g.payload_type(vr, n)}{${fs.join(", ")}}}"
+}
+
+/// A numeric conversion `Int32(x)` or a newtype construction `Email(s)`
+/// (typeCall).
+fn (var g: Gen) type_call_code(obj: Int, x: Expr) -> Str {
+  let (span, _, args) = call_parts(x)
+  let arg = args[0].value
+  if g.tkind(obj) == "newtype" {
+    let t = g.nat(x)
+    let s = g.subst_of(obj, t)
+    let gt = g.go_type(t)
+    let tt = g.sub_apply(g.c.objs[obj].target, s)
+    return "${gt}{F0: ${g.val_as(arg, tt)}}"
+  }
+  let to = g.go_type(g.nat(x))
+  let at = g.nat(arg)
+  let from = g.go_type(at)
+  let v = g.val(arg)
+  if from == to {
+    return v
+  }
+  let loc = g.loc(span).quote()
+  if g.oprelude(obj) && g.oname(obj) == "Rune" {
+    // `Rune(n)` faults unless n is a Unicode scalar value (decision 0079)
+    return "${g.rt()}RuneOf(${v}, ${loc})"
+  }
+  let to_float = to == "float64" || to == "float32"
+  let from_float = from == "float64" || from == "float32"
+  if to_float {
+    return "${to}(${v})"
+  }
+  if from_float {
+    return "${g.rt()}FloatToInt[${to}](${v}, ${loc})"
+  }
+  "${g.rt()}Conv[${to}, ${from}](${v}, ${loc})"
+}
+
+/// `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)` on an Ord type (ordCall).
+fn (var g: Gen) ord_call(sx: Expr, name: Str, x: Expr) -> Str {
+  let (_, _, args) = call_parts(x)
+  let t = g.type_of(x)
+  var ops = Ops{}
+  for i in 0..args.len() + 1 {
+    let sv = g.cap_begin()
+    let code = if i == 0 { g.val_as(sx, t) } else { g.val_as(args[i - 1].value, t) }
+    g.op_end(ops, sv, code, false)
+  }
+  let c = ops.codes
+  if name == "min" {
+    return "${g.rt()}Min(${c[0]}, ${c[1]})"
+  }
+  if name == "max" {
+    return "${g.rt()}Max(${c[0]}, ${c[1]})"
+  }
+  "${g.rt()}Clamp(${c[0]}, ${c[1]}, ${c[2]})"
+}
+
+// ---------------------------------------------------------------------------
+// expect (core 9.2)
+
+fn (g: Gen) is_expect_compare(e: Expr) -> Bool {
+  match e {
+    BinaryExpr(x: x, ..) => {
+      match x {
+        CallExpr(fun: fun, args: args, ..) => {
+          match fun {
+            Ident(id) => id.name == b"expect" && g.var_of(id) < 0 && g.ref_of(id) < 0 && g.call_of(x) == None && args.len() == 1
+            _ => false
+          }
+        }
+        _ => false
+      }
+    }
+    _ => false
+  }
+}
+
+/// `expect(a) op b`: the comparison, and both values in the failure
+/// message (expectCompare).
+fn (var g: Gen) expect_compare(e: Expr) -> Str {
+  let (span, op, x, y) = match e {
+    BinaryExpr(span: span, op: op, x: x, y: y) => (span, op, x, y)
+    _ => fault("expect")
+  }
+  let (_, _, cargs) = call_parts(x)
+  let a = cargs[0].value
+  let at = g.nat(a)
+  let bt = g.nat(y)
+  var common = at
+  if g.go_type(at) != g.go_type(bt) {
+    if (g.option_elem(bt) >= 0 && g.option_elem(at) < 0) || g.is_interface(bt) {
+      common = bt
+    }
+  }
+  var ops = Ops{}
+  for i in 0..2 {
+    let sv = g.cap_begin()
+    let code = if i == 0 { g.spill(g.val_as(a, common)) } else { g.spill(g.val_as(y, common)) }
+    g.op_end(ops, sv, code, false)
+  }
+  let o = op_text(op)
+  let cmp = g.compare(o, ops.codes[0], ops.codes[1], common)
+  let src = g.source(span)
+  "${g.rt()}ExpectCmp(tk, ${cmp}, ${ops.codes[0]}, ${ops.codes[1]}, ${o.quote()}, ${src.quote()}, ${g.loc(span).quote()})"
+}

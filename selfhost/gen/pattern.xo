@@ -1,0 +1,565 @@
+// Patterns, match, and if (internal/gen pattern.go).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A compiled pattern: conditions joined with &&, the bindings to make
+/// once they hold, and the declarations of or patterns' bindings (match).
+struct Match {
+  conds: List[Str] = []
+  binds: List[Bind] = []
+  pre: List[Str] = []
+}
+
+struct Bind {
+  v: Int
+  code: Str = ""
+  t: Int = -1
+  /// already declared (or pattern)
+  done: Bool = false
+}
+
+fn (m: Match) condition() -> Str {
+  if m.conds.is_empty() {
+    return "true"
+  }
+  m.conds.join(" && ")
+}
+
+/// Compiles p against the Go expression subj of type t (pattern).
+fn (var g: Gen) pattern(p: Pattern, subj: Str, t: Int) -> Match {
+  var m = Match{}
+  g.pat(p, subj, t, m)
+  for l in m.pre {
+    g.line(l)
+  }
+  m
+}
+
+/// Declares the bindings of a matched pattern (declareBinds).
+fn (var g: Gen) declare_binds(m: Match) {
+  for b in m.binds {
+    if b.done || b.v < 0 {
+      continue
+    }
+    let name = g.decl_name(b.v)
+    g.line("var ${name} ${g.go_type(g.vtype(b.v))} = ${b.code}")
+    g.line("_ = ${name}")
+  }
+}
+
+fn (var g: Gen) pat(p: Pattern, subj: Str, t0: Int, var m: Match) {
+  var t = t0
+  let pt = g.pat_type(p)
+  if pt >= 0 {
+    t = pt
+  }
+  match p {
+    WildcardPat(..) | BadPat(..) => {}
+    BindPat(name: name, ..) => m.binds.push(Bind{v: g.var_of(name), code: subj, t: t})
+    LitPat(value: value, ..) => {
+      if let Ident(id) = value {
+        if id.name == b"true" || id.name == b"false" {
+          if id.name == b"true" {
+            m.conds.push(subj)
+          } else {
+            m.conds.push("!" + subj)
+          }
+          return
+        }
+      }
+      let lit = g.lit_pat_value(value, t)
+      if g.is_scalar(t) {
+        m.conds.push("${subj} == ${lit}")
+      } else {
+        m.conds.push("${g.rt()}Eq(${subj}, ${lit})")
+      }
+    }
+    RangePat(lo: lo, hi: hi, inclusive: inclusive, ..) => {
+      let l = g.lit_pat_value(lo, t)
+      let h = g.lit_pat_value(hi, t)
+      let op = if inclusive { "<=" } else { "<" }
+      m.conds.push("(${subj} >= ${l} && ${subj} ${op} ${h})")
+    }
+    OrPat(..) => g.or_pat(p, subj, t, m)
+    TuplePat(span: span, elems: elems) => {
+      if g.tk(t) != check.TyKind.Tuple {
+        g.errorf(span, "tuple pattern on a non tuple")
+        return
+      }
+      let els = g.targs(t)
+      for (i, e) in elems.indexed() {
+        g.pat(e, "${subj}.F${i}", els[i], m)
+      }
+    }
+    VariantPat(..) => g.variant_pat(p, subj, t, m)
+    StructPat(span: span, fields: fields, ..) => {
+      let o = g.nobj(t)
+      if o < 0 {
+        g.errorf(span, "struct pattern on a non struct")
+        return
+      }
+      let s = g.subst_of(o, t)
+      for fp in fields {
+        var name = ""
+        match fp.name {
+          Some(id) => name = check.text(id.name)
+          None => {
+            if let BindPat(name: bn, ..) = fp.pattern {
+              name = check.text(bn.name)
+            }
+          }
+        }
+        for (i, fo) in g.c.objs[o].fields.indexed() {
+          if check.text(fo.name) == name {
+            var fs = subj + "." + go_field(name)
+            if g.is_boxed_field(o, i) {
+              fs = fs + ".Get()"
+            }
+            g.pat(fp.pattern, fs, g.sub_apply(fo.ty, s), m)
+          }
+        }
+      }
+    }
+    ListPat(elems: elems, rest: rest, ..) => {
+      let et = g.targs(t)[0]
+      let k = elems.len()
+      let r = g.rt()
+      if rest < 0 {
+        m.conds.push("${r}List_len(tk, ${subj}) == ${k}")
+      } else {
+        m.conds.push("${r}List_len(tk, ${subj}) >= ${k}")
+      }
+      for (i, e) in elems.indexed() {
+        var es = ""
+        if rest < 0 || i < rest {
+          es = "${g.rt()}List_Items(${subj})[${i}]"
+        } else {
+          let back = k - i
+          let r1 = g.rt()
+          let r2 = g.rt()
+          es = "${r1}List_Items(${subj})[len(${r2}List_Items(${subj}))-${back}]"
+        }
+        g.pat(e, es, et, m)
+      }
+    }
+  }
+}
+
+/// The Go value of a literal in a pattern (litPatValue).
+fn (var g: Gen) lit_pat_value(e: Expr, t: Int) -> Str {
+  match e {
+    IntLit(value: value, ..) => return g.int_lit(check.text(value), t)
+    UnaryExpr(op: op, x: x, ..) => {
+      if op == Kind.Minus {
+        if let IntLit(value: value, ..) = x {
+          return g.int_lit("-" + check.text(value), t)
+        }
+        if let FloatLit(raw: raw, ..) = x {
+          return "${g.go_type(t)}(-${check.text(raw)})"
+        }
+      }
+    }
+    FloatLit(raw: raw, ..) => return "${g.go_type(t)}(${check.text(raw)})"
+    RuneLit(value: value, ..) => {
+      if g.is_int_type(t) {
+        return g.int_lit("${value}", t)
+      }
+      return "${g.rt()}Rune(${value})"
+    }
+    StringLit(s) => {
+      var b = BytesBuilder.new()
+      for p in s.parts {
+        b.write(p.text)
+      }
+      return b.freeze().quote()
+    }
+    BytesLit(value: value, ..) => return "${g.rt()}Bytes(${value.quote()})"
+    DurationLit(nanos: nanos, ..) => return "${g.rt()}Duration(${check.text(nanos)})"
+    _ => {}
+  }
+  g.val(e)
+}
+
+fn (var g: Gen) or_pat(p: Pattern, subj: Str, t: Int, var m: Match) {
+  let alts0 = match p {
+    OrPat(alts: alts, ..) => alts
+    _ => []
+  }
+  var alts: List[Match] = []
+  var has_binds = false
+  for a in alts0 {
+    var am = Match{}
+    g.pat(a, subj, t, am)
+    if !am.binds.is_empty() {
+      has_binds = true
+    }
+    for l in am.pre {
+      m.pre.push(l)
+    }
+    alts.push(am)
+  }
+  if !has_binds {
+    var cs: List[Str] = []
+    for a in alts {
+      cs.push("(" + a.condition() + ")")
+    }
+    m.conds.push("(" + cs.join(" || ") + ")")
+    return
+  }
+  // bindings of the first alternative are declared up front and set by
+  // whichever alternative matches
+  var by_name: Map[Str, Str] = {}
+  for b in alts[0].binds {
+    if b.v < 0 {
+      continue
+    }
+    let name = g.decl_name(b.v)
+    m.pre.push("var ${name} ${g.go_type(g.vtype(b.v))}")
+    m.pre.push("_ = " + name)
+    by_name[g.oname(b.v)] = name
+    m.binds.push(Bind{v: b.v, done: true})
+  }
+  var s = "func() bool {"
+  for a in alts {
+    s = s + " if ${a.condition()} {"
+    for bd in a.binds {
+      if bd.v < 0 {
+        continue
+      }
+      s = s + " ${by_name.get(g.oname(bd.v)) ?? ""} = ${bd.code};"
+    }
+    s = s + " return true };"
+  }
+  s = s + " return false }()"
+  m.conds.push(s)
+}
+
+fn (var g: Gen) variant_pat(p: Pattern, subj: Str, t: Int, var m: Match) {
+  let (span, parens, fields) = match p {
+    VariantPat(span: span, parens: parens, fields: fields, ..) => (span, parens, fields)
+    _ => fault("variant pattern")
+  }
+  let nt = g.c.pat_newtype_in(g.f.file, p)
+  if nt >= 0 {
+    // `Email(p)`: p against the underlying value (decision 0097)
+    if fields.len() == 1 {
+      var inner = g.c.objs[nt].target
+      if g.nobj(t) >= 0 {
+        inner = g.sub_apply(g.c.objs[nt].target, g.c.args_subst(g.c.objs[nt].tparams, g.targs(t)))
+      }
+      g.pat(fields[0].pattern, subj + ".F0", inner, m)
+    }
+    return
+  }
+  let vr = match g.c.pat_variant_in(g.f.file, p) {
+    Some(v) => v
+    None => {
+      g.errorf(span, "unresolved variant pattern")
+      return
+    }
+  }
+  let n = if g.nobj(t) >= 0 { t } else { -1 }
+  let en = vr.en
+  let vname = check.text(g.c.objs[en].variants[vr.variant].name)
+  if g.oprelude(en) {
+    let ename = g.oname(en)
+    if ename == "Option" {
+      if vname == "None" {
+        m.conds.push("!" + subj + ".Some")
+        return
+      }
+      m.conds.push(subj + ".Some")
+      g.variant_fields(fields, vr, n, subj + ".V", true, m)
+      return
+    }
+    if ename == "Result" {
+      if vname == "Ok" {
+        m.conds.push(subj + ".Ok")
+        g.variant_fields(fields, vr, n, subj + ".V", true, m)
+        return
+      }
+      m.conds.push("!" + subj + ".Ok")
+      g.variant_fields(fields, vr, n, subj + ".E", true, m)
+      return
+    }
+  }
+  let v = g.c.objs[en].variants[vr.variant]
+  m.conds.push("${subj}.Tag == ${v.index + 1}")
+  if v.fields.is_empty() || !parens {
+    return
+  }
+  let payload = "${subj}.P.(${g.payload_type(vr, n)})"
+  g.variant_fields(fields, vr, n, payload, false, m)
+}
+
+/// The Go payload struct of a variant at an instantiation (payloadType).
+fn (var g: Gen) payload_type(vr: check.VRef, n: Int) -> Str {
+  let en = vr.en
+  let vt = g.oname(en) + "_" + check.text(g.c.objs[en].variants[vr.variant].name)
+  var name = ""
+  if g.ostd(en) {
+    name = g.rt() + g.std_prefix(g.omod(en)) + vt
+  } else {
+    name = g.pkg_ref(g.omod(en)) + vt
+  }
+  if n >= 0 {
+    let args = g.type_args(n)
+    if !args.is_empty() {
+      name = name + "[" + g.type_list(args) + "]"
+    }
+  }
+  name
+}
+
+/// Matches the field patterns of a variant pattern (variantFields): the
+/// value of field i is base (whole, for Option and Result) or
+/// base.<field>.
+fn (var g: Gen) variant_fields(fields: List[parser.PatField], vr: check.VRef, n: Int, base: Str, whole: Bool, var m: Match) {
+  var s: Map[Int, Int] = {}
+  let has_s = n >= 0
+  if has_s {
+    s = g.c.args_subst(g.c.objs[vr.en].tparams, g.targs(n))
+  }
+  let vfields = g.c.objs[vr.en].variants[vr.variant].fields
+  var used: List[Bool] = []
+  for _ in vfields {
+    used.push(false)
+  }
+  var pos = 0
+  for fp in fields {
+    var idx = -1
+    match fp.name {
+      None => {
+        while pos < vfields.len() && used[pos] {
+          pos += 1
+        }
+        idx = pos
+        pos += 1
+      }
+      Some(nm) => {
+        for (i, vf) in vfields.indexed() {
+          if vf.name == nm.name {
+            idx = i
+          }
+        }
+      }
+    }
+    if idx < 0 || idx >= vfields.len() {
+      continue
+    }
+    used[idx] = true
+    var ft = vfields[idx].ty
+    if has_s {
+      ft = g.sub_apply(ft, s)
+    }
+    let field = if whole { base } else { base + "." + g.vfield_name(vfields[idx], idx) }
+    g.pat(fp.pattern, field, ft, m)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// match and if
+
+/// Whether s is a plain Go identifier (goIdent).
+fn is_go_ident(s: Str) -> Bool {
+  let bs = s.bytes()
+  if bs.is_empty() {
+    return false
+  }
+  for i in 0..bs.len() {
+    let c = bs[i]
+    let letter = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    let digit = c >= '0' && c <= '9'
+    if !(letter || (i > 0 && digit)) {
+      return false
+    }
+  }
+  true
+}
+
+fn (var g: Gen) match_expr(e: Expr, d: Dest) {
+  let (span, subject, arms) = match e {
+    MatchExpr(span: span, subject: subject, arms: arms) => (span, subject, arms)
+    _ => fault("match")
+  }
+  let st = g.type_of(subject)
+  let su = g.f.unit
+  g.f.unit = Node.E(subject)
+  var subj = g.val(subject)
+  g.f.unit = su
+  // an immutable binding read as a plain Go name is matched in place;
+  // anything else is evaluated once into a temporary
+  var in_place = false
+  if let Ident(id) = subject {
+    let v = g.var_of(id)
+    in_place = v >= 0 && !g.c.objs[v].mutable && is_go_ident(subj)
+  }
+  if !in_place {
+    let val = subj
+    subj = g.tmp("m")
+    g.line("${subj} := ${val}")
+    g.line("_ = ${subj}")
+  }
+  if arms.is_empty() {
+    g.line("panic(${g.rt()}Unreachable(${g.loc(span).quote()}))")
+    return
+  }
+  let label = g.tmp("M")
+  // the arms are generated first: the label is declared only if an arm
+  // breaks to it, and an arm that ends in return or panic gets no break
+  var broke = false
+  g.f.ind += 1
+  let sv = g.cap_begin()
+  var total_hit = false
+  for arm in arms {
+    g.at(arm.span)
+    let m = g.pattern(arm.pattern, subj, st)
+    // an arm that always matches is a plain block, and the arms after it
+    // are dead
+    let total = m.condition() == "true" && arm.guard == None
+    if total {
+      g.line("{")
+    } else {
+      g.line("if ${m.condition()} {")
+    }
+    g.f.ind += 1
+    g.declare_binds(m)
+    if let Some(gd) = arm.guard {
+      let gv = g.val(gd)
+      g.line("if ${gv} {")
+      g.f.ind += 1
+    }
+    let start = g.f.out.len()
+    g.arm_body(arm.body, d)
+    if total {
+      g.f.ind -= 1
+      g.line("}")
+      total_hit = true
+      break
+    }
+    if !ends_terminating(g.out_since(start), g.f.ind) {
+      g.line("break ${label}")
+      broke = true
+    }
+    if arm.guard != None {
+      g.f.ind -= 1
+      g.line("}")
+    }
+    g.f.ind -= 1
+    g.line("}")
+  }
+  if !total_hit {
+    g.line("panic(${g.rt()}Unreachable(${g.loc(span).quote()}))")
+  }
+  let body = g.cap_end(sv)
+  g.f.ind -= 1
+  if broke {
+    g.line("${label}:")
+  }
+  g.line("switch {")
+  g.line("default:")
+  g.write(body)
+  g.line("}")
+}
+
+/// A match or select arm body: an expression, a block, or a statement
+/// (armBody).
+fn (var g: Gen) arm_body(s: Stmt?, d: Dest) {
+  match s {
+    None => {
+      // a nil statement in Go: stmt(nil) does nothing but its position
+      g.deliver_unit(d)
+    }
+    Some(st) => {
+      if let ExprStmt(span: span, x: x) = st {
+        g.at(span)
+        g.into(x, d)
+        return
+      }
+      g.stmt(st)
+      if !g.stmt_never(st) {
+        g.deliver_unit(d)
+      }
+    }
+  }
+}
+
+/// The pattern of an `if let` or `while let` against v of type vt; a bare
+/// name against an Option is `Some(name)` (letPattern).
+fn (var g: Gen) let_pattern(p: Pattern, v: Str, vt: Int) -> Match {
+  if let BindPat(name: name, ..) = p {
+    if g.option_elem(vt) >= 0 {
+      let pt = g.pat_type(p)
+      if pt >= 0 && g.go_type(pt) != g.go_type(vt) {
+        return Match{conds: [v + ".Some"], binds: [Bind{v: g.var_of(name), code: v + ".V", t: pt}]}
+      }
+    }
+  }
+  g.pattern(p, v, vt)
+}
+
+fn (var g: Gen) if_expr(x: parser.IfExpr, d: Dest) {
+  match x.cond {
+    Some(c) => {
+      let su = g.f.unit
+      g.f.unit = Node.E(c)
+      let cv = g.val(c)
+      g.f.unit = su
+      g.line("if ${cv} {")
+      g.f.ind += 1
+      g.block_inline(x.then, d)
+      g.f.ind -= 1
+    }
+    None => {
+      let value = x.value ?? Expr.UnitExpr(x.span)
+      let vt = g.nat(value)
+      let v = g.tmp("l")
+      let su = g.f.unit
+      g.f.unit = Node.E(value)
+      g.line("${v} := ${g.val_as(value, vt)}")
+      g.f.unit = su
+      let pat = x.pattern ?? Pattern.WildcardPat(x.span)
+      let m = g.let_pattern(pat, v, vt)
+      g.line("if ${m.condition()} {")
+      g.f.ind += 1
+      g.declare_binds(m)
+      g.block_inline(x.then, d)
+      g.f.ind -= 1
+    }
+  }
+  match x.els {
+    None => {
+      g.line("}")
+      if d.kind == D_ASSIGN || d.kind == D_RETURN {
+        g.line("{")
+        g.f.ind += 1
+        g.deliver_unit(d)
+        g.f.ind -= 1
+        g.line("}")
+      }
+      return
+    }
+    Some(els) => {
+      g.line("} else {")
+      g.f.ind += 1
+      match els {
+        Block(b) => g.block_inline(b, d)
+        _ => g.into(els, d)
+      }
+      g.f.ind -= 1
+      g.line("}")
+    }
+  }
+}
+
+/// A block whose braces are already open (blockInline).
+fn (var g: Gen) block_inline(b: parser.Block, d: Dest) {
+  if has_defer(b) {
+    let st = g.iife_begin()
+    g.stmts(b, d, true)
+    g.iife_end(st)
+    return
+  }
+  g.stmts(b, d, false)
+}

@@ -1,0 +1,412 @@
+// List ownership (internal/gen own.go): the generated code marks the
+// blocks a value holds wherever it copies the value out of a place into
+// something that outlives the read, unless the read is a borrow.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// Whether values of t may hold a List inline (holdsList).
+fn (var g: Gen) holds_list(t: Int) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  g.holds_list1(t, seen)
+}
+
+fn (var g: Gen) holds_list1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Param => true
+    Tuple => {
+      for e in x.args {
+        if g.holds_list1(e, seen) {
+          return true
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if g.oprelude(o) {
+        let n = g.oname(o)
+        if n == "List" {
+          return true
+        }
+        if n == "Option" || n == "Result" {
+          for a in x.args {
+            if g.holds_list1(a, seen) {
+              return true
+            }
+          }
+          return false
+        }
+      }
+      if seen.contains(o) {
+        return false
+      }
+      let k = g.tkind(o)
+      if k == "struct" {
+        seen[o] = true
+        let s = g.subst_of(o, t)
+        var hit = false
+        for (i, f) in g.c.objs[o].fields.indexed() {
+          if g.is_boxed_field(o, i) {
+            continue
+          }
+          if g.holds_list1(g.sub_apply(f.ty, s), seen) {
+            hit = true
+            break
+          }
+        }
+        seen.remove(o)
+        return hit
+      }
+      if k == "newtype" {
+        seen[o] = true
+        let s = g.subst_of(o, t)
+        let hit = g.holds_list1(g.sub_apply(g.c.objs[o].target, s), seen)
+        seen.remove(o)
+        return hit
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// holdsList for a type as seen from the code being generated
+/// (typeHoldsList).
+fn (var g: Gen) type_holds_list(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  g.holds_list(g.mono_type(t))
+}
+
+/// Statements that mark the lists held by the addressable Go expression
+/// addr of type t (markStmts).
+fn (var g: Gen) mark_stmts(addr: Str, t0: Int) -> List[Str] {
+  let t = g.mono_type(t0)
+  if !g.holds_list(t) {
+    return []
+  }
+  let r = g.c.resolve(t)
+  let x = g.c.tys[r]
+  match x.kind {
+    Param => ["${g.rt()}MarkP(&${addr})"]
+    Tuple => {
+      var out: List[Str] = []
+      for (i, e) in x.args.indexed() {
+        out = out + g.mark_stmts("${addr}.F${i}", e)
+      }
+      out
+    }
+    Named => {
+      if g.oprelude(x.obj) {
+        let n = g.oname(x.obj)
+        if n == "List" {
+          return [addr + ".XoMark()"]
+        }
+        if n == "Option" {
+          let inner = g.mark_stmts(addr + ".V", x.args[0])
+          return wrap_if(addr + ".Some", inner, [])
+        }
+        if n == "Result" {
+          let a = g.mark_stmts(addr + ".V", x.args[0])
+          let b = g.mark_stmts(addr + ".E", x.args[1])
+          return wrap_if(addr + ".Ok", a, b)
+        }
+      }
+      // a struct or newtype: its generated XoMark (markMethod)
+      [addr + ".XoMark()"]
+    }
+    _ => []
+  }
+}
+
+fn wrap_if(cond: Str, then: List[Str], els: List[Str]) -> List[Str] {
+  if then.is_empty() && els.is_empty() {
+    return []
+  }
+  var out = ["if " + cond + " {"]
+  out = out + then
+  if !els.is_empty() {
+    out.push("} else {")
+    out = out + els
+  }
+  out.push("}")
+  out
+}
+
+/// code wrapped so that it marks the lists the value holds and evaluates
+/// to the value (ownCode).
+fn (var g: Gen) own_code(code: Str, t0: Int) -> Str {
+  if !g.type_holds_list(t0) {
+    return code
+  }
+  let t = g.mono_type(t0)
+  if g.is_prelude(t, "List") {
+    return g.rt() + "List_Own(" + code + ")"
+  }
+  if g.contains_param(t) {
+    return "${g.rt()}Own(${code})"
+  }
+  let gt = g.go_type(t)
+  let stmts = g.mark_stmts("v", t)
+  "func(v ${gt}) ${gt} { ${stmts.join("; ")}; return v }(${code})"
+}
+
+/// `func (v *T) XoMark()` for a struct or newtype whose fields hold
+/// lists (markMethod).
+fn (var g: Gen) mark_method(self: Str, fields: List[FieldRef], types: List[Int]) {
+  var body: List[Str] = []
+  for (i, fr) in fields.indexed() {
+    if types[i] < 0 {
+      continue
+    }
+    body = body + g.mark_stmts(fr.code, types[i])
+  }
+  if body.is_empty() {
+    return
+  }
+  g.pl("// XoMark marks the lists held by the fields (see rt.List).")
+  g.pl("func (v *${self}) XoMark() {")
+  for l in body {
+    g.pl("\t${l}")
+  }
+  g.pl("}\n")
+}
+
+// ---------------------------------------------------------------------------
+// Borrows
+
+/// val(e) without an own mark on e itself (borrow).
+fn (var g: Gen) borrow(e: Expr) -> Str {
+  g.note_borrow(e)
+  g.val(e)
+}
+
+/// valAs(e, want) as a borrow (borrowAs).
+fn (var g: Gen) borrow_as(e: Expr, want: Int) -> Str {
+  g.note_borrow(e)
+  g.val_as(e, want)
+}
+
+fn (var g: Gen) note_borrow(e0: Expr) {
+  let e = unparen(e0)
+  match e {
+    Ident(..) | SelectorExpr(..) | IndexExpr(..) => g.f.borrowed[g.ek(e)] = true
+    _ => {}
+  }
+}
+
+/// Finishes the read of a place: code unchanged for a borrow, else
+/// wrapped in an own mark (ownRead).
+fn (var g: Gen) own_read(e: Expr, code: Str) -> Str {
+  let k = g.ek(e)
+  if g.f.borrowed.contains(k) {
+    g.f.borrowed.remove(k)
+    return code
+  }
+  g.own_code(code, g.nat(e))
+}
+
+/// Whether e may be borrowed while the nodes in others are evaluated
+/// (borrowOK).
+fn (g: Gen) borrow_ok(e: Expr, others: List[Node]) -> Bool {
+  let root = g.root_var(e)
+  if root < 0 {
+    return true
+  }
+  for n in others {
+    if !is_none_node(n) && g.mutates(n, root) {
+      return false
+    }
+  }
+  true
+}
+
+/// The binding a place expression is rooted at, or -1 (rootVar).
+fn (g: Gen) root_var(e: Expr) -> Int {
+  match unparen(e) {
+    Ident(id) => g.var_of(id)
+    SelectorExpr(x: x, ..) => g.root_var(x)
+    IndexExpr(x: x, ..) => g.root_var(x)
+    _ => -1
+  }
+}
+
+/// A `var` parameter or receiver: it may be the same caller binding as
+/// another one (varAlias).
+fn (g: Gen) var_alias(v: Int) -> Bool {
+  v >= 0 && g.c.objs[v].mutable && g.is_param_or_recv(v)
+}
+
+/// Whether evaluating n may write binding v (mutates).
+fn (g: Gen) mutates(n: Node, v: Int) -> Bool {
+  let ns = flatten(n)
+  var i = 0
+  while i < ns.len() {
+    match ns[i].node {
+      S(s) => {
+        if let AssignStmt(target: target, ..) = s {
+          if g.hit(target, v) {
+            return true
+          }
+        }
+      }
+      E(e) => {
+        if let CallExpr(args: args, ..) = e {
+          match g.call_of(e) {
+            None => {
+              for a in args {
+                if g.hit(a.value, v) {
+                  return true
+                }
+              }
+            }
+            Some(ci) => {
+              if ci.fn_obj < 0 {
+                for a in args {
+                  if g.hit(a.value, v) {
+                    return true
+                  }
+                }
+              } else {
+                let fo = ci.fn_obj
+                if g.c.objs[fo].recv_var && !ci.recv.is_empty() && g.hit(ci.recv[0], v) {
+                  return true
+                }
+                let params = g.c.objs[fo].params
+                for (pi, ai) in g.arg_index(fo, args).indexed() {
+                  if ai >= 0 && params[pi].is_var && g.hit(args[ai].value, v) {
+                    return true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      N => {}
+    }
+    i += 1
+  }
+  false
+}
+
+fn (g: Gen) hit(e: Expr, v: Int) -> Bool {
+  let r = g.root_var(e)
+  r >= 0 && (r == v || (g.var_alias(v) && g.var_alias(r)))
+}
+
+/// The read only List methods whose receiver is borrowed (borrowRecv).
+fn borrow_recv(name: Str) -> Bool {
+  name is "len" | "is_empty" | "get" | "first" | "last" | "contains" | "index_of" | "indexed" | "map" | "filter" | "fold" | "find" | "any" | "all" | "sort" | "sort_by" | "reverse" | "to_set" | "join"
+}
+
+/// Whether the std method recv.name returns only fresh lists (freshStd).
+fn fresh_std(recv: Str, name: Str) -> Bool {
+  match recv {
+    "List" => name is "map" | "filter" | "sort" | "sort_by" | "reverse" | "indexed"
+    "Map" => name is "keys" | "values" | "entries"
+    "Set" => name == "to_list"
+    "Range" => name == "to_list"
+    "Str" => name is "split" | "lines" | "runes"
+    "Buf" => name == "freeze"
+    _ => false
+  }
+}
+
+/// Whether the result of std function fo needs no own mark
+/// (stdResultFresh).
+fn (g: Gen) std_result_fresh(fo: Int) -> Bool {
+  let r = g.c.objs[fo].recv
+  if r < 0 || !g.oprelude(r) {
+    return false
+  }
+  fresh_std(g.oname(r), g.oname(fo))
+}
+
+/// Marks the lists held by the result of a std call (ownStdResult).
+fn (var g: Gen) own_std_result(fo: Int, sub: Map[Int, Int], code: Str, kind: Int) -> (Str, Int) {
+  if kind == CK_VOID || g.std_result_fresh(fo) {
+    return (code, kind)
+  }
+  var rt = g.c.objs[fo].result
+  if !sub.is_empty() {
+    rt = g.sub_apply(rt, sub)
+  }
+  if g.returns_result(fo) {
+    var et = g.c.objs[fo].err
+    if !sub.is_empty() {
+      et = g.sub_apply(et, sub)
+    }
+    if !g.is_never(et) {
+      // the Go value is rt.Result[T, E]
+      if !g.type_holds_list(rt) && !g.type_holds_list(et) {
+        return (code, kind)
+      }
+      return (g.own_result(code, rt, et), kind)
+    }
+  }
+  (g.own_code(code, rt), kind)
+}
+
+/// ownCode for a Go rt.Result[T, E] value (ownResult).
+fn (var g: Gen) own_result(code: Str, t0: Int, e0: Int) -> Str {
+  let t = g.mono_type(t0)
+  let e = g.mono_type(e0)
+  if g.contains_param(t) || g.contains_param(e) {
+    return "${g.rt()}Own(${code})"
+  }
+  let r = g.rt()
+  let gt = "${r}Result[${g.go_type(t)}, ${g.go_type(e)}]"
+  let stmts = wrap_if("v.Ok", g.mark_stmts("v.V", t), g.mark_stmts("v.E", e))
+  "func(v ${gt}) ${gt} { ${stmts.join("; ")}; return v }(${code})"
+}
+
+/// `p.push(x)` on a List place that is a binding or a field path, as
+/// the inline push form (inlinePush).
+fn (var g: Gen) inline_push(x: Expr, ci: check.CallInfo) -> (Str, Bool) {
+  let (_, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let r0 = g.c.objs[fo].recv
+  if g.oname(fo) != "push" || r0 < 0 || !g.oprelude(r0) || g.oname(r0) != "List" || ci.recv.is_empty() || args.len() != 1 || args[0].name != None {
+    return ("", false)
+  }
+  let recv = ci.recv[0]
+  let lt = g.type_of(recv)
+  if g.nobj(lt) < 0 || g.targs(lt).len() != 1 {
+    return ("", false)
+  }
+  if !g.field_path(recv) {
+    // an element or a box on the path: the general call with its write
+    // back
+    return ("", false)
+  }
+  let rp = g.read_place(g.resolve_place(recv))
+  var v = g.val_as(args[0].value, g.targs(lt)[0])
+  if !trivial_code(v) {
+    let t = g.tmp("pv")
+    g.line("${t} := ${v}")
+    v = t
+  }
+  g.line("if ${g.rt()}List_CanPush(${rp}) {")
+  g.line("\t${rp} = ${g.rt()}List_PushFast(${rp}, ${v})")
+  g.line("} else {")
+  g.line("\t${rp} = ${g.rt()}List_PushSlow(${rp}, ${v})")
+  g.line("}")
+  (g.rt() + "Unit{}", true)
+}
+
+/// A place made of a binding and struct or tuple fields only
+/// (fieldPath).
+fn (var g: Gen) field_path(e: Expr) -> Bool {
+  match unparen(e) {
+    Ident(id) => g.var_of(id) >= 0
+    SelectorExpr(x: x, sel: sel, ..) => !g.boxed_field_named(g.type_of(x), check.text(sel.name)) && g.field_path(x)
+    _ => false
+  }
+}

@@ -500,6 +500,14 @@ func (pg *pkgGen) file() ([]byte, error) {
 	return src, nil
 }
 
+// FormatFile is what file does to the text of a package after generating
+// it: the blank uses Go does not need and repeated //line directives
+// dropped, then gofmt. The self hosted generator (selfhost/gen, decision
+// 0167) writes the text before this step; its comparison applies it.
+func FormatFile(raw []byte) ([]byte, error) {
+	return format.Source(dropRepeatedLineDirectives(dropBlankUses(raw)))
+}
+
 // dropRepeatedLineDirectives removes a //line directive that repeats the
 // line before it. Code generated into a separate buffer (capture) starts
 // with its statement's directive, which the buffer it is spliced into may

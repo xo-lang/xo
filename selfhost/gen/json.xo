@@ -1,0 +1,341 @@
+// `derive Json`, `derive SqlRow`, and the value generators of property
+// tests (internal/gen json.go, sqlrow.go).
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// Whether t is json.Patch[T] (isPatch).
+fn (g: Gen) is_patch(t: Int) -> Bool {
+  let o = g.nobj(t)
+  o >= 0 && g.ostd(o) && g.c.mods[g.omod(o)].path == "std/json" && g.oname(o) == "Patch"
+}
+
+/// XoJsonEnc, XoJsonDec, and XoJsonRead for a struct with `derive Json`
+/// (genJSONStruct).
+fn (var g: Gen) gen_json_struct(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  let fields = g.c.objs[t].fields
+  var has_patch = false
+  for f in fields {
+    if g.is_patch(f.ty) {
+      has_patch = true
+    }
+  }
+  g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) {")
+  if has_patch {
+    g.pl("\tw.ObjStart()")
+    for (i, f) in fields.indexed() {
+      let n = check.text(f.name)
+      if g.is_patch(f.ty) {
+        g.pl("\tif !${rt}Json_Patch_PatchAbsent(v.${go_field(n)}) {")
+        g.pl("\t\tw.Field(${n.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
+        continue
+      }
+      g.pl("\tw.Field(${n.quote()})")
+      g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
+    }
+    g.pl("\tw.ObjEnd()\n}\n")
+  } else {
+    if fields.is_empty() {
+      g.pl("\tw.Raw(${"{}".quote()})")
+    }
+    for (i, f) in fields.indexed() {
+      let key = if i == 0 { "{" } else { "," }
+      let n = check.text(f.name)
+      g.pl("\tw.Raw(${(key + json_key_text(n) + ":").quote()})")
+      g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
+    }
+    if !fields.is_empty() {
+      g.pl("\tw.Raw(${"}".quote()})")
+    }
+    g.pl("}\n")
+  }
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("\tobj, err := ${rt}JsonObject(x, path)")
+  g.pl("\tif err != nil {\n\t\treturn err\n\t}")
+  for (i, f) in fields.indexed() {
+    let n = check.text(f.name)
+    let d = g.json_default(t, i)
+    g.json_field(n, go_field(n), f.ty, d)
+  }
+  g.pl("\treturn nil\n}\n")
+  g.gen_json_read(t)
+}
+
+/// The statement that sets a missing field to its default, or ""
+/// (jsonDefault).
+fn (var g: Gen) json_default(t: Int, fi: Int) -> Str {
+  let f = g.c.objs[t].fields[fi]
+  let boxed = g.is_boxed_field(t, fi)
+  let n = check.text(f.name)
+  if !f.default.is_empty() && !g.ostd(t) {
+    var d = "${g.local_type_name(t)}_D_${n}${g.tparam_use(g.c.objs[t].tparams)}(tk)"
+    if boxed {
+      d = g.rt() + "BoxOf(" + d + ")"
+    }
+    return "v.${go_field(n)} = ${d}"
+  }
+  if boxed {
+    let r = g.rt()
+    return "v.${go_field(n)} = ${r}Box[${g.go_type(f.ty)}]{}"
+  }
+  ""
+}
+
+fn json_key_text(name: Str) -> Str {
+  "\"" + name + "\""
+}
+
+/// The statement that writes field fi held in expr (jsonEncValue).
+fn (var g: Gen) json_enc_value(t: Int, fi: Int, expr: Str) -> Str {
+  if g.is_boxed_field(t, fi) {
+    return "${g.rt()}JsonEnc(tk, w, ${expr})"
+  }
+  g.json_enc_of(g.c.objs[t].fields[fi].ty, expr)
+}
+
+/// The statement that writes expr of type ft (jsonEncOf).
+fn (var g: Gen) json_enc_of(ft: Int, expr: Str) -> Str {
+  let gt = g.go_type(ft)
+  if gt == "string" {
+    return "w.Str(${expr})"
+  }
+  if gt == "int64" {
+    return "w.Int(${expr})"
+  }
+  if gt == "bool" {
+    return "w.Bool(${expr})"
+  }
+  let mt = g.mono_type(ft)
+  if g.has_json_enc_method(mt) {
+    return "${expr}.XoJsonEnc(tk, w)"
+  }
+  "${g.rt()}JsonEnc(tk, w, ${expr})"
+}
+
+/// Whether the Go type of t has a value receiver XoJsonEnc method
+/// (hasJSONEncMethod).
+fn (g: Gen) has_json_enc_method(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || g.omod(o) < 0 {
+    return false
+  }
+  if g.oprelude(o) {
+    return g.oname(o) is "Option" | "List" | "Set" | "Map"
+  }
+  if g.is_patch(t) {
+    return true
+  }
+  !g.ostd(o) && g.derives(o, "Json")
+}
+
+/// XoJsonRead: the direct decoder (genJSONRead).
+fn (var g: Gen) gen_json_read(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  let fields = g.c.objs[t].fields
+  g.pl("func (v *${self}) XoJsonRead(tk *${rt}Task, r *${rt}JsonR) bool {")
+  g.pl("\tif !r.ObjStart() {\n\t\treturn false\n\t}")
+  if !fields.is_empty() {
+    g.pl("\tvar seen [${fields.len()}]bool")
+  }
+  g.pl("\tfor {")
+  g.pl("\t\tk, more, ok := r.Key()")
+  g.pl("\t\tif !ok {\n\t\t\treturn false\n\t\t}")
+  g.pl("\t\tif !more {\n\t\t\tbreak\n\t\t}")
+  if fields.is_empty() {
+    g.pl("\t\t_ = k\n\t\tr.Skip()")
+  } else {
+    g.pl("\t\tswitch string(k) {")
+    for (i, f) in fields.indexed() {
+      let n = check.text(f.name)
+      g.pl("\t\tcase ${n.quote()}:")
+      g.pl("\t\t\tif !${rt}JsonRead(tk, r, &v.${go_field(n)}) {\n\t\t\t\treturn false\n\t\t\t}")
+      g.pl("\t\t\tseen[${i}] = true")
+    }
+    g.pl("\t\tdefault:\n\t\t\tr.Skip()\n\t\t}")
+  }
+  g.pl("\t}")
+  for (i, f) in fields.indexed() {
+    let n = check.text(f.name)
+    var set = ""
+    let d = g.json_default(t, i)
+    if !d.is_empty() {
+      set = g.json_default(t, i)
+    } else if g.option_elem(f.ty) >= 0 {
+      set = "v.${go_field(n)} = ${g.go_type(f.ty)}{}"
+    } else if g.is_patch(f.ty) {
+      set = "v.${go_field(n)} = ${g.go_type(f.ty)}{Tag: 1}"
+    } else {
+      set = "return false"
+    }
+    g.pl("\tif !seen[${i}] {\n\t\t${set}\n\t}")
+  }
+  g.pl("\treturn true\n}\n")
+}
+
+/// The decoding of one object field into v.<go_name> (jsonField); dflt
+/// is the default statement ("" for none).
+fn (var g: Gen) json_field(name: Str, go_name: Str, t: Int, dflt: Str) {
+  let rt = g.rt()
+  g.pl("\tif e, ok := obj[${name.quote()}]; ok {")
+  g.pl("\t\tif err := ${rt}JsonDec(tk, &v.${go_name}, e, path+${("." + name).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+  g.pl("\t} else {")
+  if !dflt.is_empty() {
+    g.pl("\t\t${dflt}")
+  } else if g.option_elem(t) >= 0 {
+    g.pl("\t\tv.${go_name} = ${g.go_type(t)}{}")
+  } else if g.is_patch(t) {
+    g.pl("\t\tv.${go_name} = ${g.go_type(t)}{Tag: 1}")
+  } else {
+    g.pl("\t\treturn ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()})")
+  }
+  g.pl("\t}")
+}
+
+/// The codec of an enum with `derive Json` (genJSONEnum).
+fn (var g: Gen) gen_json_enum(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  let tuse = g.tparam_use(g.c.objs[t].tparams)
+  let variants = g.c.objs[t].variants
+  g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) {")
+  g.pl("\tswitch v.Tag {")
+  for (vi, v) in variants.indexed() {
+    g.pl("\tcase ${v.index + 1}:")
+    let vname = check.text(v.name)
+    if v.fields.is_empty() {
+      g.pl("\t\tw.Str(${vname.quote()})")
+      continue
+    }
+    g.pl("\t\ta := v.P.(${g.local_variant_type(t, vi)}${tuse})")
+    g.pl("\t\tw.ObjStart()\n\t\tw.Field(${vname.quote()})")
+    if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
+      g.pl("\t\t${g.json_enc_of(v.fields[0].ty, "a." + g.vfield_name(v.fields[0], 0))}")
+    } else {
+      g.pl("\t\tw.ObjStart()")
+      for (i, f) in v.fields.indexed() {
+        g.pl("\t\tw.Field(${check.text(f.name).quote()})\n\t\t${g.json_enc_of(f.ty, "a." + g.vfield_name(f, i))}")
+      }
+      g.pl("\t\tw.ObjEnd()")
+    }
+    g.pl("\t\tw.ObjEnd()")
+  }
+  g.pl("\t}\n}\n")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("\tname, payload, hasPayload, err := ${rt}JsonVariant(x, path)")
+  g.pl("\tif err != nil {\n\t\treturn err\n\t}")
+  g.pl("\t_, _ = payload, hasPayload")
+  g.pl("\tswitch name {")
+  for (vi, v) in variants.indexed() {
+    let vname = check.text(v.name)
+    g.pl("\tcase ${vname.quote()}:")
+    if v.fields.is_empty() {
+      g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}}\n\t\treturn nil")
+      continue
+    }
+    let pt = g.local_variant_type(t, vi) + tuse
+    g.pl("\t\tif !hasPayload {\n\t\t\treturn ${rt}JsonErr(path, ${("variant `" + vname + "` needs fields").quote()})\n\t\t}")
+    g.pl("\t\tvar p ${pt}")
+    if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
+      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, payload, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+    } else {
+      g.pl("\t\tobj, err := ${rt}JsonObject(payload, path+${("." + vname).quote()})")
+      g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
+      for (i, f) in v.fields.indexed() {
+        g.json_field(check.text(f.name), g.vfield_name(f, i), f.ty, "")
+      }
+      g.pl("\t\t\treturn nil\n\t\t}(&p, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+    }
+    g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
+  }
+  g.pl("\t}")
+  g.pl("\treturn ${rt}JsonErr(path, \"unknown variant `\"+name+\"`\")")
+  g.pl("}\n")
+}
+
+/// A newtype encoded as its underlying value (genJSONNewtype).
+fn (var g: Gen) gen_json_newtype(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, v.F0) }\n")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr { return ${rt}JsonDec(tk, &v.F0, x, path) }\n")
+}
+
+/// XoSqlRowDec for a struct with `derive SqlRow` (genSqlRowStruct).
+fn (var g: Gen) gen_sql_row_struct(t: Int) {
+  let rt = g.rt()
+  g.pl("func (v *${g.self_type(t)}) XoSqlRowDec(tk *${rt}Task, r ${rt}Sql_Row) *${rt}Sql_SqlErr {")
+  for f in g.c.objs[t].fields {
+    let n = check.text(f.name)
+    g.pl("\tif e := ${rt}SqlRowField(r, ${n.quote()}, &v.${go_field(n)}); e != nil {\n\t\treturn e\n\t}")
+  }
+  g.pl("\treturn nil\n}\n")
+}
+
+// ---------------------------------------------------------------------------
+// Value generators for property tests (core 9.2, std.md 8.5)
+
+/// XoGenAny for a struct (genGenStruct).
+fn (var g: Gen) gen_gen_struct(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  g.pl("func (${self}) XoGenAny(g *${rt}GenRand) any {")
+  g.pl("\tg.Enter()\n\tdefer g.Leave()")
+  g.pl("\tfor try := 0; ; try++ {")
+  var fs: List[Str] = []
+  for (i, f) in g.c.objs[t].fields.indexed() {
+    var v = "${rt}Gen[${g.go_type(f.ty)}](g)"
+    if g.is_boxed_field(t, i) {
+      v = rt + "BoxOf(" + v + ")"
+    }
+    fs.push("${go_field(check.text(f.name))}: ${v}")
+  }
+  g.pl("\t\tv := ${self}{${fs.join(", ")}}")
+  if g.invariant_of(t) != None {
+    g.pl("\t\tif !v.xoInvariantHolds(${rt}InitTask) && try < 1000 {\n\t\t\tcontinue\n\t\t}")
+  }
+  g.pl("\t\treturn v\n\t}\n}\n")
+}
+
+/// XoGenAny for an enum (genGenEnum).
+fn (var g: Gen) gen_gen_enum(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  let variants = g.c.objs[t].variants
+  var unit: List[Str] = []
+  for v in variants {
+    if v.fields.is_empty() {
+      unit.push("${v.index}")
+    }
+  }
+  g.pl("func (${self}) XoGenAny(g *${rt}GenRand) any {")
+  g.pl("\tg.Enter()\n\tdefer g.Leave()")
+  g.pl("\ti := g.Intn(${variants.len()})")
+  if !unit.is_empty() {
+    g.pl("\tif g.Deep() {\n\t\ti = []int{${unit.join(", ")}}[g.Intn(${unit.len()})]\n\t}")
+  }
+  g.pl("\tswitch i {")
+  let tuse = g.tparam_use(g.c.objs[t].tparams)
+  for (vi, v) in variants.indexed() {
+    g.pl("\tcase ${v.index}:")
+    if v.fields.is_empty() {
+      g.pl("\t\treturn ${self}{Tag: ${v.index + 1}}")
+      continue
+    }
+    var fs: List[Str] = []
+    for (i, f) in v.fields.indexed() {
+      fs.push("${g.vfield_name(f, i)}: ${rt}Gen[${g.go_type(f.ty)}](g)")
+    }
+    g.pl("\t\treturn ${self}{Tag: ${v.index + 1}, P: ${g.local_variant_type(t, vi)}${tuse}{${fs.join(", ")}}}")
+  }
+  g.pl("\t}\n\treturn ${self}{Tag: 1}\n}\n")
+}
+
+/// XoGenAny for a newtype (genGenNewtype).
+fn (var g: Gen) gen_gen_newtype(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  g.pl("func (${self}) XoGenAny(g *${rt}GenRand) any { return ${self}{F0: ${rt}Gen[${g.go_type(g.c.objs[t].target)}](g)} }\n")
+}

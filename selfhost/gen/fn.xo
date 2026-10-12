@@ -1,0 +1,1947 @@
+// Function bodies (internal/gen fn.go): emission with //line directives,
+// destinations, returns through block closures, statements, loops, and
+// places.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A loop being generated (loopInfo).
+struct LoopInfo {
+  label: Str = ""
+  go_label: Str
+  used: Bool = false
+  /// frame.iife at the loop
+  depth: Int
+  brk: Int = 0
+  cont: Int = 0
+}
+
+/// A parameter as error frames show it (paramRef).
+struct ParamRef {
+  xo: Str
+  code: Str
+  t: Int
+}
+
+/// An Xo function being generated: a declared function, a closure, a
+/// test, or an initializer (frame).
+struct Frame {
+  fo: Int = -1
+  name: Str = ""
+  params: List[ParamRef] = []
+  res_t: Int = -1
+  /// -1: cannot fail
+  err_t: Int = -1
+  go_res: Str = ""
+  is_result: Bool = false
+  loops: List[LoopInfo] = []
+  /// nesting depth of block closures (defer, scope)
+  iife: Int = 0
+  /// the control codes used inside each open block closure
+  ctl: List[Map[Int, Bool]] = []
+  ret_var: Str = ""
+  next_code: Int = 0
+  is_test: Bool = false
+}
+
+/// A node the walks visit: an expression or a statement (None for nil).
+enum Node {
+  E(e: Expr)
+  S(s: Stmt)
+  N
+}
+
+/// One step of a place below its root binding (pstep).
+struct PStep {
+  kind: Int
+  name: Str = ""
+  idx: Str = ""
+  loc: Str = ""
+  t: Int = -1
+}
+
+const PS_FIELD = 0
+const PS_BOXED = 1
+const PS_LIST = 2
+const PS_MAP = 3
+
+/// A resolved place: a root binding and steps (placeRef).
+struct PlaceRef {
+  root: Str
+  steps: List[PStep] = []
+}
+
+/// A place copied for a call, written back after it (writebacks).
+struct WriteBack {
+  place: PlaceRef
+  tmp: Str
+}
+
+/// Where the value of a block, if, or match goes (dest).
+struct Dest {
+  kind: Int
+  name: Str = ""
+  typ: Int = -1
+  pre: Str = ""
+}
+
+const D_DISCARD = 0
+const D_ASSIGN = 1
+const D_RETURN = 2
+
+const CTL_RETURN = 1
+
+/// The interval analysis results of the body being generated (ranges.xo).
+struct PointRec {
+  v: Int
+  ok: Bool
+}
+
+/// The state of one Go function body (fnGen).
+struct F {
+  /// the checker file of the code being generated
+  file: Int = -1
+  out: List[Str] = []
+  ind: Int = 1
+  names: Map[Int, Str] = {}
+  used: Map[Str, Int] = {}
+  frames: List[Frame] = []
+  fr: Int = -1
+  last_line: Str = ""
+  since_line: Int = 0
+  /// the `old(...)` values of an ens_l clause, by the key of the call
+  olds_on: Bool = false
+  old_vals: Map[Int, Str] = {}
+  /// spawn calls to the binding their handle is stored in
+  bound_to: Map[Int, Int] = {}
+  writebacks: List[WriteBack] = []
+  /// parameters of a specialized copy bound to closure literals
+  lit_params: Map[Int, LitRef] = {}
+  /// the range analysis: the Int operations proved not to fault and
+  /// operands that were one value
+  rng_on: Bool = false
+  safe: Map[Int, Bool] = {}
+  points: Map[Int, PointRec] = {}
+  /// arena temporaries and response calls (arena.xo)
+  arena_temps: Map[Int, Bool] = {}
+  arena_resp: Map[Int, Bool] = {}
+  /// place reads that skip their own mark (own.xo)
+  borrowed: Map[Int, Bool] = {}
+  /// the expression generated as one statement or condition
+  unit: Node = Node.N
+}
+
+/// A fresh function state for the current package (newFn).
+fn (g: Gen) new_fn(fo: Int) -> F {
+  F{file: g.pkgs[g.p].cur, frames: [Frame{fo: fo}], fr: 0}
+}
+
+// ---------------------------------------------------------------------------
+// Frames
+
+fn (g: Gen) fr() -> Frame {
+  g.f.frames[g.f.fr]
+}
+
+/// Makes fr the current frame; returns the frame to go back to.
+fn (var g: Gen) push_frame(fr: Frame) -> Int {
+  let saved = g.f.fr
+  g.f.frames.push(fr)
+  g.f.fr = g.f.frames.len() - 1
+  saved
+}
+
+fn (var g: Gen) pop_frame(saved: Int) {
+  g.f.frames.pop()
+  g.f.fr = saved
+}
+
+// ---------------------------------------------------------------------------
+// Emission
+
+/// A //line directive for the node at sp of the current file
+/// (lineDirective).
+fn (g: Gen) line_directive(sp: Span) -> Str {
+  "//line ${g.line_path(g.file_path(g.f.file))}:${sp.start.line}:${sp.start.col}"
+}
+
+/// A //line directive for a node of file f.
+fn (g: Gen) line_directive_in(f: Int, sp: Span) -> Str {
+  "//line ${g.line_path(g.file_path(f))}:${sp.start.line}:${sp.start.col}"
+}
+
+/// The `file:line:col` text of a node of the current file (loc).
+fn (g: Gen) loc(sp: Span) -> Str {
+  "${g.line_path(g.file_path(g.f.file))}:${sp.start.line}:${sp.start.col}"
+}
+
+fn (g: Gen) loc_in(f: Int, sp: Span) -> Str {
+  "${g.line_path(g.file_path(f))}:${sp.start.line}:${sp.start.col}"
+}
+
+/// Writes the lines of text at the current indentation, each carrying
+/// the statement's //line position (line).
+fn (var g: Gen) line(text: Str) {
+  var cur = g.f.last_line
+  for (i, l) in text.split("\n").indexed() {
+    if l.starts_with("//line ") {
+      cur = l
+      g.directive(l)
+      g.f.since_line = 0
+      continue
+    }
+    if !cur.is_empty() && g.f.since_line > 0 {
+      g.directive(cur)
+    }
+    g.f.since_line += 1
+    if i == 0 {
+      g.f.out.push("${"\t".repeat(g.f.ind)}${l}\n")
+    } else {
+      g.f.out.push(l + "\n")
+    }
+  }
+  if cur != g.f.last_line {
+    g.f.since_line = 1
+  }
+}
+
+/// Emits a //line directive for the node at sp before the next statement
+/// (at).
+fn (var g: Gen) at(sp: Span) {
+  let d = g.line_directive(sp)
+  if d == g.f.last_line {
+    return
+  }
+  g.f.last_line = d
+  g.f.since_line = 0
+  g.directive(d)
+}
+
+/// Writes a //line directive unless the output already ends with it.
+fn (var g: Gen) directive(d: Str) {
+  if g.out_ends_with_line(d) {
+    return
+  }
+  g.f.out.push(d + "\n")
+}
+
+/// Whether the function output ends with the line d (after a newline or
+/// at its start).
+fn (g: Gen) out_ends_with_line(d: Str) -> Bool {
+  let want = d + "\n"
+  var acc = ""
+  var i = g.f.out.len()
+  while i > 0 && acc.len() <= want.len() {
+    i -= 1
+    acc = g.f.out[i] + acc
+  }
+  if !acc.ends_with(want) {
+    return false
+  }
+  let rest = acc.len() - want.len()
+  if rest == 0 {
+    return i == 0
+  }
+  acc.bytes()[rest - 1] == '\n'
+}
+
+/// Writes text as it is.
+fn (var g: Gen) write(text: Str) {
+  if !text.is_empty() {
+    g.f.out.push(text)
+  }
+}
+
+/// Starts capturing the output (capture): returns what to restore.
+fn (var g: Gen) cap_begin() -> List[Str] {
+  let saved = g.f.out
+  g.f.out = []
+  // the text may be written after other lines: it starts with the
+  // statement's //line directive
+  g.f.since_line = 1
+  saved
+}
+
+/// Ends a capture: returns what was written.
+fn (var g: Gen) cap_end(saved: List[Str]) -> Str {
+  let text = g.f.out.join("")
+  g.f.out = saved
+  text
+}
+
+/// The output written since chunk start.
+fn (g: Gen) out_since(start: Int) -> Str {
+  g.f.out[start..g.f.out.len()].join("")
+}
+
+fn (var g: Gen) tmp(prefix: Str) -> Str {
+  g.pkgs[g.p].tmp += 1
+  "x_${prefix}${g.pkgs[g.p].tmp}"
+}
+
+/// Assigns a fresh Go name to a local binding (declName).
+fn (var g: Gen) decl_name(v: Int) -> Str {
+  let vn = g.oname(v)
+  var base = "v_" + vn
+  if vn == "_" {
+    base = "v__"
+  }
+  let n = g.f.used.get(base) ?? 0
+  g.f.used[base] = n + 1
+  var name = base
+  if n > 0 {
+    name = "${base}_${n}"
+  }
+  g.f.names[v] = name
+  name
+}
+
+/// The Go expression of a local binding (varName).
+fn (g: Gen) var_name(v: Int) -> Str {
+  g.f.names.get(v) ?? "MISSING_VAR_${g.oname(v)}"
+}
+
+// ---------------------------------------------------------------------------
+// What the checker recorded, in the current file
+
+fn (g: Gen) ek(e: Expr) -> Int {
+  g.c.expr_key_in(g.f.file, e)
+}
+
+fn (g: Gen) pk(p: Pattern) -> Int {
+  g.c.pat_key_in(g.f.file, p)
+}
+
+/// The type of e after implicit conversion (Info.TypeOf), or -1.
+fn (g: Gen) info_type(e: Expr) -> Int {
+  g.c.type_in(g.f.file, e)
+}
+
+/// The type of e before implicit conversion (Info.NaturalType), or -1.
+fn (g: Gen) info_nat(e: Expr) -> Int {
+  g.c.nat_in(g.f.file, e)
+}
+
+/// The type of e in context (typeOf).
+fn (g: Gen) type_of(e: Expr) -> Int {
+  let t = g.info_type(e)
+  if t >= 0 {
+    return t
+  }
+  g.info_nat(e)
+}
+
+/// The type of e before implicit conversion (nat).
+fn (g: Gen) nat(e: Expr) -> Int {
+  let t = g.info_nat(e)
+  if t >= 0 {
+    return t
+  }
+  g.info_type(e)
+}
+
+fn (g: Gen) var_of(id: Ident) -> Int {
+  g.c.var_of(g.f.file, id)
+}
+
+fn (g: Gen) ref_of(id: Ident) -> Int {
+  g.c.ref_of(g.f.file, id)
+}
+
+fn (g: Gen) ctor(e: Expr) -> check.VRef? {
+  g.c.ctor_in(g.f.file, e)
+}
+
+fn (g: Gen) call_of(e: Expr) -> check.CallInfo? {
+  g.c.call_in(g.f.file, e)
+}
+
+fn (g: Gen) type_call(e: Expr) -> Int {
+  g.c.type_call_in(g.f.file, e)
+}
+
+fn (g: Gen) pat_type(p: Pattern) -> Int {
+  g.c.pat_type_in(g.f.file, p)
+}
+
+/// The receiver binding of a method body (Info.RecvVar), or -1.
+fn (g: Gen) recv_var(fo: Int) -> Int {
+  g.c.recv_var.get(fo) ?? -1
+}
+
+/// The parameter bindings of a function body (Info.ParamVars).
+fn (g: Gen) param_vars(fo: Int) -> List[Int] {
+  g.c.param_vars.get(fo) ?? []
+}
+
+/// The parameter bindings of a closure (Info.ClosureParams).
+fn (g: Gen) closure_params(lit: parser.FnLit) -> List[Int] {
+  g.c.closure_params(g.f.file, lit)
+}
+
+/// A local's type.
+fn (g: Gen) vtype(v: Int) -> Int {
+  g.c.objs[v].ty
+}
+
+// ---------------------------------------------------------------------------
+// Function bodies
+
+/// A declared function's body, with contracts (funcBody).
+fn (var g: Gen) func_body(fd: parser.FnDecl) -> Str {
+  let sv = g.cap_begin()
+  let fo = g.fr().fo
+  var ens_l: List[parser.Clause] = []
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(debug: debug, ..) => {
+        if g.contract_on(debug) {
+          g.gen_requires(cl)
+        }
+      }
+      EnsuresClause(debug: debug, ..) => {
+        if g.contract_on(debug) {
+          ens_l.push(cl)
+        }
+      }
+      UsesClause(..) => {}
+    }
+  }
+  let body = fd.body ?? parser.Block{span: fd.span}
+  // a var method of a type with an invariant checks it afterwards
+  let inv = fo >= 0 && g.c.objs[fo].recv_var && g.c.objs[fo].recv >= 0 && g.invariant_of(g.c.objs[fo].recv) != None && !g.ostd(g.c.objs[fo].recv)
+  if !ens_l.is_empty() || inv {
+    g.with_ensures(fo, fd, body, ens_l, inv)
+  } else {
+    g.top_block(body)
+  }
+  g.cap_end(sv)
+}
+
+/// The body block of the current frame in return position (topBlock).
+fn (var g: Gen) top_block(b: parser.Block) {
+  let sv = g.cap_begin()
+  g.stmts(b, Dest{kind: D_RETURN}, true)
+  let body = g.cap_end(sv)
+  if !g.fr().ret_var.is_empty() {
+    g.line("var ${g.fr().ret_var} ${g.fr().go_res}")
+  }
+  g.write(body)
+  if !g.fr().go_res.is_empty() && !ends_in_return(body, g.f.ind) && !terminates(body) {
+    g.line("panic(${"unreachable: missing return".quote()})")
+  }
+}
+
+/// Whether the statements in text, generated at indentation ind, end in
+/// a jump or a panic call at that indentation (endsTerminating).
+fn ends_terminating(text: Str, ind: Int) -> Bool {
+  let lines = trim_right_nl(text).split("\n")
+  let pre = "\t".repeat(ind)
+  var i = lines.len() - 1
+  while i >= 0 {
+    let l0 = lines[i]
+    if l0.starts_with("//line ") {
+      i -= 1
+      continue
+    }
+    if !l0.starts_with(pre) || l0.starts_with(pre + "\t") {
+      return false
+    }
+    let l = l0.trim_prefix(pre)
+    if l == "}" {
+      return never_falls_through(text)
+    }
+    for kw in ["return", "break", "continue", "goto"] {
+      if l == kw || l.starts_with(kw + " ") {
+        return true
+      }
+    }
+    return l.starts_with("panic(")
+  }
+  false
+}
+
+/// Whether the last statement of body is a `return` at indentation ind
+/// (endsInReturn).
+fn ends_in_return(body: Str, ind: Int) -> Bool {
+  let lines = trim_right_nl(body).split("\n")
+  let last = lines[lines.len() - 1]
+  let pre = "\t".repeat(ind)
+  if !last.starts_with(pre + "return") || last.starts_with(pre + "\t") {
+    return false
+  }
+  let n = pre.len() + 6
+  last.len() == n || last.bytes()[n] == ' '
+}
+
+fn (var g: Gen) gen_requires(cl: parser.Clause) {
+  let (span, cond, els) = match cl {
+    RequiresClause(span: span, cond: cond, els: els, ..) => (span, cond, els)
+    _ => fault("requires")
+  }
+  g.at(span)
+  let c = g.val(cond)
+  match els {
+    None => {
+      let r = g.rt()
+      g.line("${r}Require(${c}, ${g.source(parser.expr_span(cond)).quote()}, ${g.loc(parser.expr_span(cond)).quote()}${g.contract_vals(cond)})")
+    }
+    Some(e) => {
+      g.line("if !(${c}) {")
+      g.f.ind += 1
+      var ev = g.val(e)
+      ev = g.coerce_err(ev, g.type_of(e), g.fr().err_t)
+      let r = g.rt()
+      g.emit_return_value("${r}Err[${g.go_type(g.fr().res_t)}](${ev})")
+      g.f.ind -= 1
+      g.line("}")
+    }
+  }
+}
+
+/// The values of the identifiers in a contract expression, printed when
+/// it fails (contractVals).
+fn (var g: Gen) contract_vals(e: Expr) -> Str {
+  var parts: List[Str] = []
+  var seen: Map[Str, Bool] = {}
+  let ns = flatten(Node.E(e))
+  var i = 0
+  while i < ns.len() {
+    match ns[i].node {
+      E(x) => {
+        match x {
+          Ident(id) => {
+            let v = g.var_of(id)
+            if v >= 0 {
+              let src = check.text(id.name)
+              if !seen.contains(src) {
+                seen[src] = true
+                parts.push("${src.quote()}, ${g.var_name(v)}")
+              }
+            }
+          }
+          CallExpr(..) => {
+            i = ns[i].end
+            continue
+          }
+          _ => {}
+        }
+      }
+      S(..) | N => {}
+    }
+    i += 1
+  }
+  if parts.is_empty() {
+    return ""
+  }
+  ", " + parts.join(", ")
+}
+
+/// Runs the body in a closure, then checks the ens_l clauses against
+/// `result` and the `old(...)` values captured on entry (withEnsures).
+fn (var g: Gen) with_ensures(fo: Int, fd: parser.FnDecl, body: parser.Block, ens: List[parser.Clause], inv: Bool) {
+  var olds: Map[Int, Str] = {}
+  for cl in ens {
+    let cond = match cl {
+      EnsuresClause(cond: cond, ..) => cond
+      _ => continue
+    }
+    let ns = flatten(Node.E(cond))
+    var i = 0
+    while i < ns.len() {
+      if let E(x) = ns[i].node {
+        if let CallExpr(fun: fun, args: args, ..) = x {
+          if let Ident(id) = fun {
+            if id.name == b"old" && args.len() == 1 && g.var_of(id) < 0 {
+              let name = g.tmp("old")
+              g.line("${name} := ${g.val(args[0].value)}")
+              g.line("_ = ${name}")
+              olds[g.ek(x)] = name
+              i = ns[i].end
+              continue
+            }
+          }
+        }
+      }
+      i += 1
+    }
+  }
+  g.f.old_vals = olds
+  g.f.olds_on = true
+  let res = g.tmp("res")
+  let go_res = g.fr().go_res
+  let sv = g.cap_begin()
+  g.f.ind += 1
+  var copy = g.fr()
+  copy.ret_var = ""
+  let saved = g.push_frame(copy)
+  g.top_block(body)
+  g.pop_frame(saved)
+  g.f.ind -= 1
+  let inner = g.cap_end(sv)
+  if go_res.is_empty() {
+    g.line("func() {")
+    g.write(inner)
+    g.line("}()")
+  } else {
+    g.line("${res} := func() ${go_res} {")
+    g.write(inner)
+    g.line("}()")
+  }
+  for cl in ens {
+    let (span, cond) = match cl {
+      EnsuresClause(span: span, cond: cond, ..) => (span, cond)
+      _ => continue
+    }
+    let rv = g.c.result_vars.get(g.f.file * 268435456 + span.start.offset) ?? -1
+    if rv >= 0 {
+      if go_res.is_empty() {
+        g.f.names[rv] = g.rt() + "Unit{}"
+      } else if g.fr().is_result {
+        g.f.names[rv] = res + ".V"
+      } else {
+        g.f.names[rv] = res
+      }
+    }
+    if g.fr().is_result {
+      g.line("if ${res}.Ok {")
+      g.f.ind += 1
+      g.ensure_check(span, cond)
+      g.f.ind -= 1
+      g.line("}")
+    } else {
+      g.ensure_check(span, cond)
+    }
+  }
+  if inv {
+    let recv = g.f.names.get(g.recv_var(fo)) ?? ""
+    let chk = "${recv}.XoInvariant(tk, ${g.loc(fd.name.span).quote()})"
+    if g.fr().is_result {
+      g.line("if ${res}.Ok {")
+      g.line("\t${chk}")
+      g.line("}")
+    } else {
+      g.line(chk)
+    }
+  }
+  g.f.olds_on = false
+  g.f.old_vals = {}
+  if !go_res.is_empty() {
+    g.line("return ${res}")
+  }
+}
+
+fn (var g: Gen) ensure_check(span: Span, cond: Expr) {
+  g.at(span)
+  let c = g.val(cond)
+  let r = g.rt()
+  g.line("${r}Ensure(${c}, ${g.source(parser.expr_span(cond)).quote()}, ${g.loc(parser.expr_span(cond)).quote()}${g.contract_vals(cond)})")
+}
+
+// ---------------------------------------------------------------------------
+// Destinations
+
+/// Generates e with its value delivered to d (into).
+fn (var g: Gen) into(e: Expr, d: Dest) {
+  match e {
+    ParenExpr(x: x, ..) => {
+      g.into(x, d)
+      return
+    }
+    Block(b) => {
+      g.block(b, d)
+      return
+    }
+    IfExpr(x) => {
+      g.if_expr(x, d)
+      return
+    }
+    MatchExpr(..) => {
+      g.match_expr(e, d)
+      return
+    }
+    ScopeExpr(..) => {
+      g.scope_expr(e, d)
+      return
+    }
+    SelectExpr(..) => {
+      g.select_expr(e, d)
+      return
+    }
+    WhileExpr(body: body, ..) => {
+      g.loop_while("", None, body, None)
+      g.deliver_unit(d)
+      return
+    }
+    _ => {}
+  }
+  if d.kind == D_DISCARD {
+    g.discard(e)
+  } else if d.kind == D_ASSIGN {
+    let ne = g.nat(e)
+    if g.is_unit(d.typ) && !g.is_unit(ne) && !g.is_never(ne) {
+      g.discard(e)
+      g.line("${d.name} = ${g.rt()}Unit{}")
+      return
+    }
+    let code = g.expr(e)
+    g.line("${d.name} = ${g.coerce(code, g.nat(e), d.typ)}")
+  } else {
+    if !d.pre.is_empty() {
+      g.line(d.pre)
+      // the pre statement took the line of e's //line directive
+      g.f.last_line = ""
+      g.at(parser.expr_span(e))
+    }
+    g.ret(e)
+  }
+}
+
+/// Delivers `()` to d (deliverUnit).
+fn (var g: Gen) deliver_unit(d: Dest) {
+  if d.kind == D_ASSIGN {
+    if g.is_unit(d.typ) {
+      g.line("${d.name} = ${g.rt()}Unit{}")
+    }
+  } else if d.kind == D_RETURN {
+    if !d.pre.is_empty() {
+      g.line(d.pre)
+    }
+    g.ret_unit()
+  }
+}
+
+/// Evaluates e for its effects (discard).
+fn (var g: Gen) discard(e: Expr) {
+  match e {
+    ParenExpr(x: x, ..) => {
+      g.discard(x)
+      return
+    }
+    Ident(..) | IntLit(..) | FloatLit(..) | UnitExpr(..) | BytesLit(..) | RuneLit(..) | DurationLit(..) | FnLit(..) => return
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(pe) = p.expr {
+          g.discard(pe)
+        }
+      }
+      return
+    }
+    CallExpr(..) => {
+      let (code, st) = g.call_stmt(e)
+      if st {
+        g.line(code)
+      } else if !code.is_empty() {
+        g.line("_ = ${code}")
+      }
+      return
+    }
+    BinaryExpr(..) => {
+      if g.is_expect_compare(e) {
+        g.line(g.expr(e))
+        return
+      }
+    }
+    _ => {}
+  }
+  let code = g.expr(e)
+  if !code.is_empty() && !code.starts_with(g.rt() + "Unit{}") {
+    g.line("_ = ${code}")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Returning
+
+/// Returns the value of e from the current frame (ret).
+fn (var g: Gen) ret(e: Expr) {
+  if g.is_ret_ctor(e) {
+    let (fun, args) = match e {
+      CallExpr(fun: fun, args: args, ..) => (fun, args)
+      _ => fault("ret")
+    }
+    let name = match fun {
+      Ident(id) => check.text(id.name)
+      _ => ""
+    }
+    let arg = args[0].value
+    if name == "Err" {
+      let v = g.coerce_err(g.val(arg), g.type_of(arg), g.fr().err_t)
+      let r = g.rt()
+      g.emit_return_value("${r}Err[${g.go_type(g.fr().res_t)}](${v})")
+      return
+    }
+    let v = g.coerce(g.expr(arg), g.nat(arg), g.fr().res_t)
+    g.emit_return_value(g.ok_value(v))
+    return
+  }
+  let ne = g.nat(e)
+  if g.is_never(ne) {
+    g.discard(e)
+    return
+  }
+  let res_t = g.fr().res_t
+  if g.is_unit(ne) && g.is_unit(res_t) {
+    g.discard(e)
+    g.ret_unit()
+    return
+  }
+  if g.fr().is_result {
+    if g.is_result_t(ne) && !g.is_result_t(res_t) {
+      let code = g.expr(e)
+      g.emit_return_value(g.coerce_result(code, ne, res_t, g.fr().err_t))
+      return
+    }
+  }
+  if g.fr().go_res.is_empty() {
+    g.discard(e)
+    g.emit_return_value("")
+    return
+  }
+  if g.is_unit(res_t) && !g.is_unit(ne) {
+    // a `-> ()` body may end in a value that is discarded (core 3.2)
+    g.discard(e)
+    g.ret_unit()
+    return
+  }
+  var v = g.coerce(g.expr(e), ne, res_t)
+  if g.fr().is_result {
+    v = g.ok_value(v)
+  }
+  g.emit_return_value(v)
+}
+
+/// A bare `Err(x)` or `Ok(x)` the checker typed without recording a
+/// constructor (isRetCtor).
+fn (g: Gen) is_ret_ctor(e: Expr) -> Bool {
+  match e {
+    CallExpr(fun: fun, args: args, ..) => {
+      match fun {
+        Ident(id) => {
+          if !(id.name == b"Err" || id.name == b"Ok") || args.len() != 1 {
+            return false
+          }
+          g.var_of(id) < 0 && g.ref_of(id) < 0 && g.ctor(e) == None && g.call_of(e) == None
+        }
+        _ => false
+      }
+    }
+    _ => false
+  }
+}
+
+fn (var g: Gen) ok_value(v: Str) -> Str {
+  if !g.fr().is_result {
+    return v
+  }
+  let r = g.rt()
+  "${r}Ok[${g.go_type(g.fr().res_t)}, ${g.err_go(g.fr().err_t)}](${v})"
+}
+
+fn (var g: Gen) err_go(e: Int) -> Str {
+  if e < 0 {
+    return g.rt() + "Never"
+  }
+  g.go_type(e)
+}
+
+/// Returns `()` from the current frame (retUnit).
+fn (var g: Gen) ret_unit() {
+  if g.fr().go_res.is_empty() {
+    g.emit_return_value("")
+  } else if g.fr().is_result {
+    g.emit_return_value(g.ok_value(g.rt() + "Unit{}"))
+  } else {
+    g.emit_return_value(g.rt() + "Unit{}")
+  }
+}
+
+/// Returns a Go value from the current frame, through any open block
+/// closures (emitReturnValue).
+fn (var g: Gen) emit_return_value(v: Str) {
+  if g.fr().iife == 0 {
+    if v.is_empty() {
+      g.line("return")
+    } else {
+      g.line("return ${v}")
+    }
+    return
+  }
+  if !v.is_empty() {
+    if g.fr().ret_var.is_empty() {
+      let t = g.tmp("ret")
+      g.f.frames[g.f.fr].ret_var = t
+    }
+    g.line("${g.fr().ret_var} = ${v}")
+  }
+  g.jump(CTL_RETURN)
+}
+
+/// Returns control code c from the innermost block closure (jump).
+fn (var g: Gen) jump(c: Int) {
+  let fi = g.f.fr
+  let n = g.f.frames[fi].ctl.len()
+  g.f.frames[fi].ctl[n - 1][c] = true
+  g.line("return ${c}")
+}
+
+/// Dispatches the control codes returned by a block closure that just
+/// ran (afterIIFE).
+fn (var g: Gen) after_iife(ctl: Str, set: Map[Int, Bool]) {
+  if set.is_empty() {
+    return
+  }
+  let codes = set.keys().sort()
+  g.line("switch ${ctl} {")
+  for c in codes {
+    g.line("case ${c}:")
+    g.f.ind += 1
+    g.dispatch(c)
+    g.f.ind -= 1
+  }
+  g.line("}")
+}
+
+/// Performs the jump for control code c at the current depth (dispatch).
+fn (var g: Gen) dispatch(c: Int) {
+  if c == CTL_RETURN {
+    if g.fr().iife > 0 {
+      g.jump(CTL_RETURN)
+      return
+    }
+    if g.fr().go_res.is_empty() {
+      g.line("return")
+    } else {
+      if g.fr().ret_var.is_empty() {
+        let t = g.tmp("ret")
+        g.f.frames[g.f.fr].ret_var = t
+      }
+      g.line("return ${g.fr().ret_var}")
+    }
+    return
+  }
+  for (i, l) in g.fr().loops.indexed() {
+    if l.brk == c {
+      g.break_loop(i)
+      return
+    }
+    if l.cont == c {
+      g.continue_loop(i)
+      return
+    }
+  }
+  g.line("panic(${"bad control code".quote()})")
+}
+
+fn (var g: Gen) break_loop(li: Int) {
+  let fi = g.f.fr
+  let l = g.f.frames[fi].loops[li]
+  if l.depth == g.f.frames[fi].iife {
+    g.f.frames[fi].loops[li].used = true
+    g.line("break ${l.go_label}")
+    return
+  }
+  if l.brk == 0 {
+    g.f.frames[fi].next_code += 1
+    g.f.frames[fi].loops[li].brk = g.f.frames[fi].next_code + 1
+  }
+  g.jump(g.f.frames[fi].loops[li].brk)
+}
+
+fn (var g: Gen) continue_loop(li: Int) {
+  let fi = g.f.fr
+  let l = g.f.frames[fi].loops[li]
+  if l.depth == g.f.frames[fi].iife {
+    g.f.frames[fi].loops[li].used = true
+    g.line("continue ${l.go_label}")
+    return
+  }
+  if l.cont == 0 {
+    g.f.frames[fi].next_code += 1
+    g.f.frames[fi].loops[li].cont = g.f.frames[fi].next_code + 1
+  }
+  g.jump(g.f.frames[fi].loops[li].cont)
+}
+
+/// The state of a block closure being generated (iife).
+struct IifeState {
+  ctl: Str
+  saved: List[Str]
+}
+
+/// Starts a block closure `func() int { ... }()` whose control codes are
+/// dispatched afterwards (iife): the body is generated between this and
+/// iife_end.
+fn (var g: Gen) iife_begin() -> IifeState {
+  let ctl = g.tmp("ctl")
+  let fi = g.f.fr
+  g.f.frames[fi].iife += 1
+  g.f.frames[fi].ctl.push({})
+  let saved = g.cap_begin()
+  g.f.ind += 1
+  IifeState{ctl: ctl, saved: saved}
+}
+
+fn (var g: Gen) iife_end(st: IifeState) {
+  g.line("return 0")
+  g.f.ind -= 1
+  let body = g.cap_end(st.saved)
+  let fi = g.f.fr
+  let set = g.f.frames[fi].ctl.pop() ?? {}
+  g.f.frames[fi].iife -= 1
+  g.line("${st.ctl} := func() int {")
+  g.write(body)
+  g.line("}()")
+  g.line("_ = ${st.ctl}")
+  g.after_iife(st.ctl, set)
+}
+
+// ---------------------------------------------------------------------------
+// Blocks and statements
+
+fn has_defer(b: parser.Block) -> Bool {
+  for s in b.stmts {
+    if let DeferStmt(..) = s {
+      return true
+    }
+  }
+  false
+}
+
+/// A nested block with its value delivered to d (block).
+fn (var g: Gen) block(b: parser.Block, d: Dest) {
+  if has_defer(b) {
+    let st = g.iife_begin()
+    g.stmts(b, d, true)
+    g.iife_end(st)
+    return
+  }
+  g.line("{")
+  g.f.ind += 1
+  g.stmts(b, d, false)
+  g.f.ind -= 1
+  g.line("}")
+}
+
+/// The statements of b; the tail expression goes to d (stmts).
+fn (var g: Gen) stmts(b: parser.Block, d: Dest, direct_defer: Bool) {
+  let n = b.stmts.len()
+  for (i, s) in b.stmts.indexed() {
+    if i == n - 1 {
+      if let ExprStmt(span: span, x: x) = s {
+        g.at(span)
+        g.into(x, d)
+        return
+      }
+    }
+    let start = g.f.out.len()
+    g.stmt(s)
+    if i < n - 1 && may_terminate(s) && ends_terminating(g.out_since(start), g.f.ind) {
+      // the Go statement never completes: what follows is dead, and go
+      // vet reports it as unreachable
+      return
+    }
+  }
+  if n > 0 && g.stmt_never(b.stmts[n - 1]) {
+    return
+  }
+  g.deliver_unit(d)
+}
+
+/// Whether s can lower to a Go statement that never completes, other than
+/// the jumps stmt_never sees (mayTerminate).
+fn may_terminate(s: Stmt) -> Bool {
+  match s {
+    WhileStmt(cond: cond, pattern: pattern, ..) => cond == None && pattern.is_empty()
+    ExprStmt(x: x, ..) => {
+      match x {
+        MatchExpr(..) | IfExpr(..) | WhileExpr(..) => true
+        _ => false
+      }
+    }
+    _ => false
+  }
+}
+
+/// Whether a statement never completes (stmtNever).
+fn (g: Gen) stmt_never(s: Stmt) -> Bool {
+  match s {
+    ReturnStmt(..) | BreakStmt(..) | ContinueStmt(..) => true
+    ExprStmt(x: x, ..) => {
+      let t = g.info_type(x)
+      if t >= 0 && g.is_never(t) {
+        return true
+      }
+      if let WhileExpr(body: body, ..) = x {
+        return !loop_has_break(Node.E(Expr.Block(body)), "", 0)
+      }
+      false
+    }
+    WhileStmt(label: label, cond: cond, pattern: pattern, body: body, ..) => {
+      if cond == None && pattern.is_empty() {
+        let l = match label {
+          Some(id) => check.text(id.name)
+          None => ""
+        }
+        return !loop_has_break(Node.E(Expr.Block(body)), l, 0)
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// Whether a loop body holds a break that leaves the loop (loopHasBreak).
+fn loop_has_break(body: Node, label: Str, depth: Int) -> Bool {
+  let ns = flatten(body)
+  var i = 0
+  while i < ns.len() {
+    let n = ns[i].node
+    var skip = false
+    match n {
+      S(s) => {
+        match s {
+          BreakStmt(label: l, ..) => {
+            match l {
+              None => {
+                if depth == 0 {
+                  return true
+                }
+              }
+              Some(id) => {
+                if check.text(id.name) == label && !label.is_empty() {
+                  return true
+                }
+              }
+            }
+          }
+          ForStmt(body: b, ..) => {
+            if i > 0 {
+              if loop_has_break(Node.E(Expr.Block(b)), label, depth + 1) {
+                return true
+              }
+              skip = true
+            }
+          }
+          WhileStmt(body: b, ..) => {
+            if i > 0 {
+              if loop_has_break(Node.E(Expr.Block(b)), label, depth + 1) {
+                return true
+              }
+              skip = true
+            }
+          }
+          _ => {}
+        }
+      }
+      E(e) => {
+        match e {
+          WhileExpr(body: b, ..) => {
+            if i > 0 {
+              if loop_has_break(Node.E(Expr.Block(b)), label, depth + 1) {
+                return true
+              }
+              skip = true
+            }
+          }
+          FnLit(..) => skip = true
+          _ => {}
+        }
+      }
+      N => {}
+    }
+    if skip {
+      i = ns[i].end
+    } else {
+      i += 1
+    }
+  }
+  false
+}
+
+/// The span of a statement.
+fn stmt_span(s: Stmt) -> Span {
+  match s {
+    LetStmt(span: span, ..) => span
+    VarStmt(span: span, ..) => span
+    AssignStmt(span: span, ..) => span
+    DeferStmt(span: span, ..) => span
+    ReturnStmt(span: span, ..) => span
+    BreakStmt(span: span, ..) => span
+    ContinueStmt(span: span, ..) => span
+    ForStmt(span: span, ..) => span
+    WhileStmt(span: span, ..) => span
+    ExprStmt(span: span, ..) => span
+    BadStmt(span: span) => span
+    ConstDecl(d) => d.span
+  }
+}
+
+fn (var g: Gen) stmt(s: Stmt) {
+  g.at(stmt_span(s))
+  let saved_unit = g.f.unit
+  match s {
+    ExprStmt(x: x, ..) => {
+      match x {
+        IfExpr(..) | MatchExpr(..) | WhileExpr(..) | Block(..) | ScopeExpr(..) | SelectExpr(..) | ParenExpr(..) => g.f.unit = Node.N
+        _ => g.f.unit = Node.E(x)
+      }
+      g.into(x, Dest{kind: D_DISCARD})
+    }
+    LetStmt(..) => {
+      g.f.unit = node_of(s, 0)
+      g.let_stmt(s)
+    }
+    VarStmt(name: name, value: value, ..) => {
+      g.f.unit = Node.E(value)
+      let v = g.var_of(name)
+      g.note_binding(value, v)
+      let code = g.val(value)
+      if v < 0 {
+        g.line("_ = ${code}")
+      } else {
+        let n = g.decl_name(v)
+        g.line("var ${n} ${g.go_type(g.vtype(v))} = ${code}")
+        g.line("_ = ${n}")
+      }
+    }
+    ConstDecl(d) => {
+      g.f.unit = Node.E(d.value)
+      let v = g.var_of(d.name)
+      let code = g.val(d.value)
+      if v < 0 {
+        g.line("_ = ${code}")
+      } else {
+        let n = g.decl_name(v)
+        g.line("${n} := ${code}")
+        g.line("_ = ${n}")
+      }
+    }
+    AssignStmt(value: value, ..) => {
+      // the target is written after the value is computed
+      g.f.unit = Node.E(value)
+      g.assign(s)
+    }
+    DeferStmt(..) => {
+      g.defer_stmt(s)
+      return
+    }
+    ReturnStmt(value: value, ..) => {
+      match value {
+        None => {
+          g.f.unit = Node.N
+          g.ret_unit()
+        }
+        Some(v) => {
+          g.f.unit = Node.E(v)
+          g.ret(v)
+        }
+      }
+    }
+    BreakStmt(label: label, ..) => {
+      let li = g.find_loop(label)
+      if li >= 0 {
+        g.break_loop(li)
+      }
+      return
+    }
+    ContinueStmt(label: label, ..) => {
+      let li = g.find_loop(label)
+      if li >= 0 {
+        g.continue_loop(li)
+      }
+      return
+    }
+    ForStmt(..) => {
+      g.f.unit = Node.N
+      g.for_stmt(s)
+    }
+    WhileStmt(label: label, cond: cond, body: body, ..) => {
+      g.f.unit = Node.N
+      let l = match label {
+        Some(id) => check.text(id.name)
+        None => ""
+      }
+      g.loop_while(l, cond, body, Some(s))
+    }
+    BadStmt(span: span) => {
+      g.errorf(span, "bad statement")
+      return
+    }
+  }
+  g.f.unit = saved_unit
+}
+
+/// The node of a let statement's value (unit).
+fn node_of(s: Stmt, _which: Int) -> Node {
+  match s {
+    LetStmt(value: value, ..) => Node.E(value)
+    _ => Node.N
+  }
+}
+
+/// The index of the loop a break or continue names, or -1 (findLoop).
+fn (g: Gen) find_loop(label: Ident?) -> Int {
+  let ls = g.fr().loops
+  if ls.is_empty() {
+    return -1
+  }
+  match label {
+    None => ls.len() - 1
+    Some(id) => {
+      var i = ls.len() - 1
+      while i >= 0 {
+        if ls[i].label == check.text(id.name) {
+          return i
+        }
+        i -= 1
+      }
+      -1
+    }
+  }
+}
+
+fn (var g: Gen) let_stmt(s: Stmt) {
+  let (pattern, value) = match s {
+    LetStmt(pattern: pattern, value: value, ..) => (pattern, value)
+    _ => fault("let")
+  }
+  match pattern {
+    BindPat(name: name, ..) => {
+      let v = g.var_of(name)
+      g.note_binding(value, v)
+      let code = g.val(value)
+      if v < 0 {
+        g.line("_ = ${code}")
+        return
+      }
+      let n = g.decl_name(v)
+      g.line("var ${n} ${g.go_type(g.vtype(v))} = ${code}")
+      g.line("_ = ${n}")
+      return
+    }
+    WildcardPat(..) => {
+      g.discard(value)
+      return
+    }
+    _ => {}
+  }
+  let code = g.val(value)
+  let subj = g.tmp("let")
+  g.line("${subj} := ${code}")
+  g.line("_ = ${subj}")
+  var t = g.pat_type(pattern)
+  if t < 0 {
+    t = g.type_of(value)
+  }
+  let m = g.pattern(pattern, subj, t)
+  g.declare_binds(m)
+}
+
+/// Registers deferred code: a Go defer of a shielded closure (deferStmt).
+fn (var g: Gen) defer_stmt(s: Stmt) {
+  let (span, body) = match s {
+    DeferStmt(span: span, body: body) => (span, body)
+    _ => fault("defer")
+  }
+  let loc = g.loc(span)
+  let cur = g.fr()
+  // deferred code is its own frame for control flow
+  let saved = g.push_frame(Frame{name: cur.name, params: cur.params, is_test: cur.is_test})
+  let sv = g.cap_begin()
+  g.f.ind += 1
+  g.stmt(body)
+  g.f.ind -= 1
+  let text = g.cap_end(sv)
+  g.pop_frame(saved)
+  g.line("defer tk.Shielded(${loc.quote()}, func() {")
+  g.write(text)
+  g.line("})")
+}
+
+// ---------------------------------------------------------------------------
+// Loops
+
+fn (var g: Gen) push_loop(label: Str) -> Int {
+  let gl = g.tmp("L")
+  let fi = g.f.fr
+  g.f.frames[fi].loops.push(LoopInfo{label: label, go_label: gl, depth: g.f.frames[fi].iife})
+  g.f.frames[fi].loops.len() - 1
+}
+
+fn (var g: Gen) pop_loop() -> LoopInfo {
+  let fi = g.f.fr
+  g.f.frames[fi].loops.pop() ?? LoopInfo{go_label: "", depth: 0}
+}
+
+/// Writes `label: for header {` body `}`, with the label only when a
+/// break or continue uses it (emitLoop).
+fn (var g: Gen) emit_loop(l: LoopInfo, header: Str, body: Str) {
+  if l.used {
+    g.f.out.push(l.go_label + ":\n")
+  }
+  if header.is_empty() {
+    g.line("for {")
+  } else {
+    g.line("for ${header} {")
+  }
+  g.write(body)
+  g.line("}")
+}
+
+/// The iteration counter of a loop with `bound N` (loopBound).
+struct Tick {
+  on: Bool = false
+  cnt: Str = ""
+  n: Int = 0
+  loc: Str = ""
+}
+
+fn (var g: Gen) loop_bound(bound: List[Expr]) -> Tick {
+  if bound.is_empty() {
+    return Tick{}
+  }
+  let n = match g.c.const_int(g.f.file, bound[0], 0) {
+    Some(n) => n
+    None => {
+      g.errorf(parser.expr_span(bound[0]), "loop bound is not a constant")
+      return Tick{}
+    }
+  }
+  let cnt = g.tmp("bound")
+  g.line("var ${cnt} int64")
+  Tick{on: true, cnt: cnt, n: n, loc: g.loc(parser.expr_span(bound[0]))}
+}
+
+fn (var g: Gen) tick(t: Tick) {
+  if !t.on {
+    return
+  }
+  g.line("${t.cnt}++")
+  g.line("if ${t.cnt} > ${t.n} {")
+  g.line("\t${g.rt()}LoopBound(${t.n}, ${t.loc.quote()})")
+  g.line("}")
+}
+
+/// `while`, `while let`, and `while { }` (loopWhile): ws is the while
+/// statement, None for a while expression.
+fn (var g: Gen) loop_while(label: Str, cond: Expr?, body: parser.Block, ws: Stmt?) {
+  var bound: List[Expr] = []
+  var pat: List[Pattern] = []
+  var pval: List[Expr] = []
+  if let Some(s) = ws {
+    if let WhileStmt(bound: b, pattern: p, value: v, ..) = s {
+      bound = b
+      pat = p
+      pval = v
+    }
+  }
+  let t = g.loop_bound(bound)
+  g.push_loop(label)
+  let sv = g.cap_begin()
+  g.f.ind += 1
+  if let Some(c) = cond {
+    let su = g.f.unit
+    g.f.unit = Node.E(c)
+    let cv = g.val(c)
+    g.f.unit = su
+    g.line("if !(${cv}) {")
+    g.line("\tbreak")
+    g.line("}")
+  }
+  var m = Match{}
+  var has_m = false
+  if !pat.is_empty() {
+    // `while let p = v` (decision 0137)
+    let vt = g.nat(pval[0])
+    let v = g.tmp("l")
+    let su = g.f.unit
+    g.f.unit = Node.E(pval[0])
+    g.line("${v} := ${g.val_as(pval[0], vt)}")
+    g.f.unit = su
+    g.line("_ = ${v}")
+    m = g.let_pattern(pat[0], v, vt)
+    has_m = true
+    g.line("if !(${m.condition()}) {")
+    g.line("\tbreak")
+    g.line("}")
+  }
+  g.tick(t)
+  if has_m {
+    g.declare_binds(m)
+  }
+  g.block(body, Dest{kind: D_DISCARD})
+  g.f.ind -= 1
+  let text = g.cap_end(sv)
+  let l = g.pop_loop()
+  g.emit_loop(l, "", text)
+}
+
+fn (var g: Gen) for_stmt(s: Stmt) {
+  let (label, pattern, iter, bound, body) = match s {
+    ForStmt(label: label, pattern: pattern, iter: iter, bound: bound, body: body, ..) => (label, pattern, iter, bound, body)
+    _ => fault("for")
+  }
+  if g.arenas_on() {
+    g.note_arena_temp(iter)
+  }
+  // `for x in m.values()` (or `m.keys()`) walks the map in place
+  var subj = iter
+  let (map_e, seq) = g.map_view(iter)
+  if let Some(me) = map_e {
+    subj = me
+  }
+  let su = g.f.unit
+  g.f.unit = Node.E(iter)
+  var it = ""
+  if g.borrow_ok(subj, [Node.E(Expr.Block(body))]) {
+    it = g.borrow(subj)
+  } else {
+    it = g.val(subj)
+  }
+  g.f.unit = su
+  let it_t = g.type_of(iter)
+  let itv = g.tmp("it")
+  g.line("${itv} := ${it}")
+  let t = g.loop_bound(bound)
+  let lab = match label {
+    Some(id) => check.text(id.name)
+    None => ""
+  }
+  g.push_loop(lab)
+  let n = g.nobj(it_t)
+  var kind = ""
+  if n >= 0 && g.oprelude(n) {
+    kind = g.oname(n)
+  }
+  if map_e != None {
+    kind = "MapView"
+  }
+  let elem_t = g.pat_type(pattern)
+  var header = ""
+  var elem = ""
+  let r = g.rt()
+  if kind == "MapView" {
+    elem = g.tmp("e")
+    header = "${elem} := range ${r}${seq}(${itv})"
+  } else if kind == "List" {
+    elem = g.tmp("e")
+    header = "_, ${elem} := range ${r}List_Items(${itv})"
+  } else if kind == "Buf" {
+    elem = g.tmp("e")
+    header = "_, ${elem} := range ${itv}.Items()"
+  } else if kind == "Bytes" {
+    let bi = g.tmp("bi")
+    elem = "${itv}[${bi}]"
+    header = "${bi} := 0; ${bi} < len(${itv}); ${bi}++"
+  } else if kind == "Set" {
+    elem = g.tmp("e")
+    header = "${elem} := range ${r}Set_All(${itv})"
+  } else if kind == "Map" {
+    let k = g.tmp("k")
+    let v = g.tmp("v")
+    let args = g.targs(it_t)
+    header = "${k}, ${v} := range ${r}Map_All(${itv})"
+    elem = "${r}Tuple2[${g.go_type(args[0])}, ${g.go_type(args[1])}]{F0: ${k}, F1: ${v}}"
+    if let TuplePat(elems: elems, ..) = pattern {
+      if elems.len() == 2 {
+        let sv = g.cap_begin()
+        g.f.ind += 1
+        g.tick(t)
+        g.line("_, _ = ${k}, ${v}")
+        let m1 = g.pattern(elems[0], k, args[0])
+        let m2 = g.pattern(elems[1], v, args[1])
+        g.declare_binds(m1)
+        g.declare_binds(m2)
+        g.block(body, Dest{kind: D_DISCARD})
+        g.f.ind -= 1
+        let text = g.cap_end(sv)
+        let l = g.pop_loop()
+        g.emit_loop(l, header, text)
+        return
+      }
+    }
+  } else if kind == "Chan" {
+    // receive until closed and drained (core 3.5, 7.3)
+    let rv = g.tmp("rv")
+    elem = rv + ".V"
+    let sv = g.cap_begin()
+    g.f.ind += 1
+    g.line("${rv} := ${g.rt()}Chan_recv(tk, ${itv})")
+    g.line("if !${rv}.Some {")
+    g.line("\tbreak")
+    g.line("}")
+    g.tick(t)
+    let ev = g.tmp("el")
+    g.line("${ev} := ${elem}")
+    g.line("_ = ${ev}")
+    let m = g.pattern(pattern, ev, elem_t)
+    g.declare_binds(m)
+    g.block(body, Dest{kind: D_DISCARD})
+    g.f.ind -= 1
+    let text = g.cap_end(sv)
+    let l = g.pop_loop()
+    g.emit_loop(l, "", text)
+    return
+  } else if kind == "Range" {
+    elem = g.tmp("i")
+    header = "${elem} := range ${itv}.All()"
+    if let RangeExpr(inclusive: inclusive, ..) = unparen(iter) {
+      // a range literal: a counted loop, bounds evaluated once
+      if inclusive {
+        let more = g.tmp("more")
+        header = "${elem}, ${more} := ${itv}.Lo, ${itv}.Lo <= ${itv}.Hi; ${more}; ${elem}, ${more} = ${elem}+1, ${elem} < ${itv}.Hi"
+      } else {
+        header = "${elem} := ${itv}.Lo; ${elem} < ${itv}.Hi; ${elem}++"
+      }
+    }
+  } else {
+    g.errorf(parser.expr_span(iter), "cannot iterate over ${g.c.show(it_t)}")
+    g.pop_loop()
+    return
+  }
+  let sv = g.cap_begin()
+  g.f.ind += 1
+  g.tick(t)
+  let ev = g.tmp("el")
+  g.line("${ev} := ${elem}")
+  g.line("_ = ${ev}")
+  let m = g.pattern(pattern, ev, elem_t)
+  g.declare_binds(m)
+  g.block(body, Dest{kind: D_DISCARD})
+  g.f.ind -= 1
+  let text = g.cap_end(sv)
+  let l = g.pop_loop()
+  g.emit_loop(l, header, text)
+}
+
+// ---------------------------------------------------------------------------
+// Assignment (core 5.2)
+
+/// Whether writing the place needs read, modify, write (rmw).
+fn (p: PlaceRef) rmw() -> Bool {
+  for s in p.steps {
+    if s.kind != PS_FIELD {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether the place's steps are fields and List elements only
+/// (listPath).
+fn (p: PlaceRef) list_path() -> Bool {
+  for s in p.steps {
+    if s.kind != PS_FIELD && s.kind != PS_LIST {
+      return false
+    }
+  }
+  true
+}
+
+/// Resolves an assignable place (resolvePlace).
+fn (var g: Gen) resolve_place(e: Expr) -> PlaceRef {
+  match e {
+    Ident(id) => {
+      let v = g.var_of(id)
+      if v >= 0 {
+        return PlaceRef{root: g.var_name(v)}
+      }
+    }
+    ParenExpr(x: x, ..) => return g.resolve_place(x)
+    SelectorExpr(x: x, sel: sel, ..) => {
+      var base = g.resolve_place(x)
+      let bt = g.type_of(x)
+      let name = check.text(sel.name)
+      var st = PStep{kind: PS_FIELD}
+      let bo = g.nobj(bt)
+      if is_digits(name) {
+        st = PStep{kind: PS_FIELD, name: "F" + name}
+      } else if bo >= 0 && g.tkind(bo) == "newtype" {
+        st = PStep{kind: PS_FIELD, name: "F0"}
+      } else if g.boxed_field_named(bt, name) {
+        st = PStep{kind: PS_BOXED, name: go_field(name)}
+      } else {
+        st = PStep{kind: PS_FIELD, name: go_field(name)}
+      }
+      st.t = g.type_of(e)
+      base.steps.push(st)
+      return base
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      var base = g.resolve_place(x)
+      var kind = PS_LIST
+      if g.is_prelude(g.type_of(x), "Map") {
+        kind = PS_MAP
+      }
+      let iv = g.tmp("ix")
+      g.line("${iv} := ${g.val(index)}")
+      base.steps.push(PStep{kind: kind, idx: iv, loc: g.loc(parser.expr_span(e)), t: g.type_of(e)})
+      return base
+    }
+    _ => {}
+  }
+  g.errorf(parser.expr_span(e), "not an assignable place")
+  PlaceRef{root: "_"}
+}
+
+/// The current value of a place (readPlace).
+fn (var g: Gen) read_place(p: PlaceRef) -> Str {
+  var code = p.root
+  for st in p.steps {
+    if st.kind == PS_FIELD {
+      code = code + "." + st.name
+    } else if st.kind == PS_BOXED {
+      code = code + "." + st.name + ".Get()"
+    } else if st.kind == PS_LIST {
+      let r = g.rt()
+      if g.mono_on() {
+        code = "${r}List_AtM(${code}, ${st.idx}, ${st.loc.quote()})"
+      } else {
+        code = "${r}List_At(${code}, ${st.idx}, ${st.loc.quote()})"
+      }
+    } else {
+      let r = g.rt()
+      code = "${r}Map_At(${code}, ${st.idx}, ${st.loc.quote()})"
+    }
+  }
+  code
+}
+
+/// Resolves e when it is a place through at least one List element and
+/// otherwise only fields, else returns None without emitting anything
+/// (resolveAddrPlace).
+fn (var g: Gen) resolve_addr_place(e: Expr) -> PlaceRef? {
+  var elem = false
+  var x = unparen(e)
+  while true {
+    match x {
+      Ident(id) => {
+        if !elem || g.var_of(id) < 0 {
+          return None
+        }
+        return Some(g.resolve_place(e))
+      }
+      SelectorExpr(x: y, sel: sel, ..) => {
+        if g.boxed_field_named(g.type_of(y), check.text(sel.name)) {
+          return None
+        }
+        x = unparen(y)
+      }
+      IndexExpr(x: y, index: index, ..) => {
+        if !g.is_prelude(g.type_of(y), "List") {
+          return None
+        }
+        if let RangeExpr(..) = index {
+          return None
+        }
+        elem = true
+        x = unparen(y)
+      }
+      _ => return None
+    }
+  }
+  None
+}
+
+/// The steps of a listPath place and an addressable Go expression for it
+/// (placeAddr).
+fn (var g: Gen) place_addr(p: PlaceRef) -> Str {
+  var cur = p.root
+  for st in p.steps {
+    if st.kind == PS_FIELD {
+      cur = cur + "." + st.name
+      continue
+    }
+    g.unique_list(cur)
+    let pt = g.tmp("ep")
+    let r = g.rt()
+    g.line("${pt} := ${r}List_PtrM(${cur}, ${st.idx}, ${st.loc.quote()})")
+    cur = "(*" + pt + ")"
+  }
+  cur
+}
+
+/// Makes the List at cur the unique owner of its array (uniqueList).
+fn (var g: Gen) unique_list(cur: Str) {
+  let r = g.rt()
+  g.line("if !${r}List_Mine(${cur}) {")
+  g.line("\t${cur} = ${g.rt()}List_Unshared(${cur})")
+  g.line("}")
+}
+
+/// Stores v into a place (writePlace).
+fn (var g: Gen) write_place(p: PlaceRef, v0: Str, keep: Bool) {
+  if !p.rmw() {
+    g.line("${g.read_place(p)} = ${v0}")
+    return
+  }
+  var v = v0
+  if !keep && !trivial_code(v) {
+    let t = g.tmp("wv")
+    g.line("${t} := ${v}")
+    v = t
+  }
+  g.write_steps(p.root, p.steps, v)
+}
+
+/// Writes v at cur followed by steps (writeSteps).
+fn (var g: Gen) write_steps(cur0: Str, steps: List[PStep], v: Str) {
+  var cur = cur0
+  for (i, st) in steps.indexed() {
+    let last = i == steps.len() - 1
+    if st.kind == PS_FIELD {
+      cur = cur + "." + st.name
+      if last {
+        g.line("${cur} = ${v}")
+      }
+    } else if st.kind == PS_LIST {
+      g.unique_list(cur)
+      if last {
+        let r = g.rt()
+        g.line("${r}List_PutM(${cur}, ${st.idx}, ${v}, ${st.loc.quote()})")
+        return
+      }
+      let pt = g.tmp("ep")
+      let r = g.rt()
+      g.line("${pt} := ${r}List_PtrM(${cur}, ${st.idx}, ${st.loc.quote()})")
+      cur = "(*" + pt + ")"
+    } else {
+      if last && st.kind == PS_MAP {
+        let r = g.rt()
+        g.line("${r}Map_put(tk, &${cur}, ${st.idx}, ${v})")
+        return
+      }
+      if last {
+        let r = g.rt()
+        g.line("${cur}.${st.name} = ${r}BoxOf(${v})")
+        return
+      }
+      let tmp = g.tmp("rw")
+      if st.kind == PS_MAP {
+        let r = g.rt()
+        g.line("${tmp} := ${r}Map_At(${cur}, ${st.idx}, ${st.loc.quote()})")
+      } else {
+        g.line("${tmp} := ${cur}.${st.name}.Get()")
+      }
+      // the Map's or box's own copy still holds tmp's lists
+      for l in g.mark_stmts(tmp, st.t) {
+        g.line(l)
+      }
+      g.write_steps(tmp, steps[i + 1..steps.len()], v)
+      if st.kind == PS_MAP {
+        let r = g.rt()
+        g.line("${r}Map_put(tk, &${cur}, ${st.idx}, ${tmp})")
+      } else {
+        let r = g.rt()
+        g.line("${cur}.${st.name} = ${r}BoxOf(${tmp})")
+      }
+      return
+    }
+  }
+}
+
+fn compound_op(k: Kind) -> Str {
+  match k {
+    PlusAssign => "+"
+    MinusAssign => "-"
+    StarAssign => "*"
+    SlashAssign => "/"
+    PercentAssign => "%"
+    _ => "?"
+  }
+}
+
+fn (var g: Gen) assign(s: Stmt) {
+  let (span, op, target, value) = match s {
+    AssignStmt(span: span, op: op, target: target, value: value) => (span, op, target, value)
+    _ => fault("assign")
+  }
+  if op == Kind.Assign {
+    // `x = x` does nothing (go vet: self-assignment)
+    if let Ident(t) = target {
+      if let Ident(v) = value {
+        let tv = g.var_of(t)
+        if tv >= 0 && tv == g.var_of(v) {
+          return
+        }
+      }
+    }
+  }
+  let tt = g.type_of(target)
+  let place = g.resolve_place(target)
+  let root = g.root_var(target)
+  let keep = root >= 0 && !g.mutates(Node.E(value), root)
+  if op == Kind.Assign {
+    g.write_place(place, g.val(value), keep)
+    return
+  }
+  let o = compound_op(op)
+  let yt = g.nat(value)
+  let yv = g.coerce(g.expr(value), yt, yt)
+  let at = OpAt{span: span, key: g.stmt_key(s), xe: [], ye: [value]}
+  if place.rmw() && place.list_path() && keep {
+    // `xs[i].f += y`: one address for the read and the write
+    let addr = g.place_addr(place)
+    g.line("${addr} = ${g.binop(o, addr, yv, tt, yt, tt, at)}")
+    return
+  }
+  let cur = g.read_place(place)
+  g.write_place(place, g.binop(o, cur, yv, tt, yt, tt, at), keep)
+}
+
+/// The key of a statement in the maps of the analyses: its span and a
+/// kind after those of expressions and patterns.
+fn (g: Gen) stmt_key(s: Stmt) -> Int {
+  g.c.key_in(g.f.file, stmt_span(s), 60)
+}
+
+/// The addressable Go expression of a place, for `var` receivers and
+/// `&` arguments (place).
+fn (var g: Gen) place(e: Expr) -> Str {
+  let r = g.resolve_place(e)
+  if !r.rmw() {
+    return g.read_place(r)
+  }
+  let tmp = g.tmp("pl")
+  g.line("${tmp} := ${g.read_place(r)}")
+  for l in g.mark_stmts(tmp, g.type_of(e)) {
+    g.line(l)
+  }
+  g.f.writebacks.push(WriteBack{place: r, tmp: tmp})
+  tmp
+}
+
+fn is_digits(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for c in s.bytes() {
+    if c < '0' || c > '9' {
+      return false
+    }
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// Source text
+
+/// The source text of the node at sp of the current file, for contract
+/// and expect messages (source).
+fn (g: Gen) source(sp: Span) -> Str {
+  let src = if g.f.file >= 0 { g.c.files[g.f.file].src } else { b"" }
+  if sp.start.offset < 0 || sp.end.offset > src.len() || sp.start.offset > sp.end.offset {
+    return ""
+  }
+  src[sp.start.offset..sp.end.offset].to_str() ?? ""
+}
+
+/// s without trailing newlines (strings.TrimRight(s, "\n")).
+fn trim_right_nl(s: Str) -> Str {
+  var t = s
+  while t.ends_with("\n") {
+    t = t.trim_suffix("\n")
+  }
+  t
+}

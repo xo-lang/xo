@@ -465,6 +465,9 @@ func generate(dirs []string, res *check.Result, out *Result, opts *Options) (*ge
 	return prog, hyb, nil
 }
 
+// LineRoot is lineRoot for `xo gendump` (decision 0167).
+func LineRoot(dirs []string) string { return lineRoot(dirs) }
+
 // lineRoot is the directory //line paths are relative to: the xo.mod root
 // of the first directory, or the directory itself.
 func lineRoot(dirs []string) string {
