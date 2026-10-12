@@ -80,6 +80,10 @@ fn main(os: Os) ! {
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }
+  if !args.is_empty() && args[0] == "rtpack" {
+    // hidden: the release's prebuilt runtime (rtpack.xo)
+    os.proc.exit(rtpack_cmd(os, args[1..]))
+  }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
     usage(os, "")
   }
