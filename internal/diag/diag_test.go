@@ -71,3 +71,16 @@ func TestJSONShape(t *testing.T) {
 		t.Errorf("Human = %q", got)
 	}
 }
+
+// TestHumanNoPosition checks that a build-level diagnostic (no file)
+// and one of a file without a position print no ":0:0:".
+func TestHumanNoPosition(t *testing.T) {
+	d := Diagnostic{Code: "XO1503", Severity: Error, Message: "no go"}
+	if got := Human(d); got != "error XO1503: no go" {
+		t.Errorf("no file: %q", got)
+	}
+	d.Span.File = "xo.mod"
+	if got := Human(d); got != "xo.mod: error XO1503: no go" {
+		t.Errorf("file only: %q", got)
+	}
+}

@@ -66,6 +66,10 @@ first arm64 build of selfhost/xo without them ran over 20 minutes.
   statement or read a list element (`plainOperand`: literals, names,
   fields, and operators over them move; calls, `?`, blocks, and index
   reads keep).
+  Amended 2026-10-12 (decision 0159): a compound assignment now
+  evaluates its operand before it reads the target, so only the
+  operation runs between the take and the store; `plainOperand` is
+  removed and every compound assignment's element moves out.
 
 ## Consequences
 

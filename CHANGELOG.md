@@ -13,6 +13,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   70 of the 132 LLVM goldens run under Node with the output of the
   native backends; the rest (tasks, network, files, maps of handles,
   more of the std runtime) fail the build with a clear reason.
+- A Go backend build with no go command (`$XO_GO` not executable, or no
+  `go` on PATH) now fails with XO1503 naming the fix, instead of a
+  "code generator bug" message with no detail (decision 0176).
 - The self hosted checker (`selfhost/check`) checks `use go` programs
   from the binding the Go toolchain cached, and reports what the Go
   checker reports for escaping scope handles and task groups (XO0802),

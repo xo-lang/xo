@@ -1307,6 +1307,18 @@ XO_GO=$HOME/sdk/go1.26.1/bin/go xo build .
 # or use a native backend, which does not run Go:
 xo build --backend=arm64 .`,
 	},
+	GoNotFound: {
+		Title: "the Go backend finds no go command",
+		Detail: "The Go backend (the default for `xo build`, `xo run`, and `xo test`) writes Go source and compiles it with the go command: `$XO_GO`, else `go` on PATH. " +
+			"When `$XO_GO` is not an executable file, or PATH has no go, the build stops before generating code with this diagnostic instead of failing inside the go build. " +
+			"The native backends (arm64, LLVM) do not run Go and build without it. See decision 0176.",
+		Example: `$ xo run .
+XO1503: the Go backend runs the go command, but there is no go on PATH; install Go 1.24 or newer (https://go.dev/dl), set XO_GO to its go command, or build with --backend=arm64 or llvm, which need no Go`,
+		Fix: `# install Go 1.24 or newer from https://go.dev/dl, or point Xo at one:
+XO_GO=$HOME/sdk/go1.26.1/bin/go xo run .
+# or use a native backend, which does not run Go:
+xo run --backend=arm64 .`,
+	},
 
 	// ---------------------------------------------------------------
 	// 13xx: modules and dependencies (decision 0086)

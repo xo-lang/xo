@@ -137,3 +137,19 @@ func TestCacheDir(t *testing.T) {
 		t.Errorf("default CacheDir() = %q", CacheDir())
 	}
 }
+
+// TestCheckNotFound checks XO1503's error: a go command that does not
+// exist ($XO_GO naming no file, or no go on PATH) is a *NotFoundError,
+// not a build failure blamed on the code generator.
+func TestCheckNotFound(t *testing.T) {
+	t.Setenv("XO_GO", filepath.Join(t.TempDir(), "no-such-go"))
+	if _, ok := Check().(*NotFoundError); !ok {
+		t.Errorf("XO_GO naming no file: Check() = %v, want *NotFoundError", Check())
+	}
+	t.Setenv("XO_GO", "")
+	t.Setenv("PATH", t.TempDir())
+	err := Check()
+	if _, ok := err.(*NotFoundError); !ok || !strings.Contains(err.Error(), "no go on PATH") {
+		t.Errorf("no go on PATH: Check() = %v, want *NotFoundError", err)
+	}
+}

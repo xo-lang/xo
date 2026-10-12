@@ -368,9 +368,9 @@ b0(v0: Bag, v1: Str):
   v3: List[Str] = call list.push, v2, v1
   v4: Bag = setfield 1, v0, v3
   v5: () = tuple
-  v6: Int = field 2, v4
-  v7: Int = const 1
-  v8: Int = add v6, v7 @ main.xo:27:3 lands v9
+  v6: Int = const 1
+  v7: Int = field 2, v4
+  v8: Int = add v7, v6 @ main.xo:27:3 lands v9
   v9: Bool = call rt.landing
   br v9, b2(), b1()
 b1:  ; preds b0
