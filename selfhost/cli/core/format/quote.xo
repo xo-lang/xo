@@ -1,0 +1,54 @@
+// Go's quoting of strings (strconv.Quote), as cmd/xo prints them with %q.
+
+/// s quoted as Go's %q quotes it (strconv.Quote): printable characters as
+/// they are, the others escaped.
+pub fn go_quote(s: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("\"")
+  for r in s.runes() {
+    let n = Int(r)
+    if r == '"' {
+      b.write("\\\"")
+    } else if r == '\\' {
+      b.write("\\\\")
+    } else if n == 7 {
+      b.write("\\a")
+    } else if n == 8 {
+      b.write("\\b")
+    } else if n == 12 {
+      b.write("\\f")
+    } else if r == '\n' {
+      b.write("\\n")
+    } else if r == '\r' {
+      b.write("\\r")
+    } else if r == '\t' {
+      b.write("\\t")
+    } else if n == 11 {
+      b.write("\\v")
+    } else if n < 0x20 || n == 0x7f {
+      b.write("\\x${hex2(n)}")
+    } else if n == 0xfffd || (n >= 0x80 && !r.is_print()) {
+      if n < 0x10000 {
+        b.write("\\u${hex4(n)}")
+      } else {
+        b.write("\\U${hex4(n / 65536)}${hex4(n % 65536)}")
+      }
+    } else {
+      b.write("${r}")
+    }
+  }
+  b.write("\"")
+  b.freeze()
+}
+
+pub fn hex2(n: Int) -> Str {
+  let digits = "0123456789abcdef".bytes()
+  var b = BytesBuilder.new()
+  b.write_byte(digits[(n / 16) % 16])
+  b.write_byte(digits[n % 16])
+  b.freeze().to_str() ?? ""
+}
+
+pub fn hex4(n: Int) -> Str {
+  hex2(n / 256) + hex2(n % 256)
+}

@@ -1,0 +1,156 @@
+// JSON output as cmd/xo writes it: values are built compact (each field in
+// the order of the Go struct), then indented as encoding/json's Encoder
+// with SetIndent("", "  ") does, followed by a newline (writeJSON).
+
+/// s as a JSON string as encoding/json writes it with SetEscapeHTML(false)
+/// (paths, titles, the explain texts).
+pub fn jstr(s: Str) -> Str {
+  json_quote(s, false)
+}
+
+/// s as json.Marshal writes it: also `<`, `>`, and `&` escaped (the
+/// strings of a diag.Diagnostic, which marshals itself).
+pub fn jstr_html(s: Str) -> Str {
+  json_quote(s, true)
+}
+
+/// An object of key and compact value pairs, in order.
+pub fn jobj(fields: List[(Str, Str)]) -> Str {
+  var b = StrBuilder.new()
+  b.write("{")
+  for (i, kv) in fields.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    let (k, v) = kv
+    b.write(jstr(k))
+    b.write(":")
+    b.write(v)
+  }
+  b.write("}")
+  b.freeze()
+}
+
+/// An array of compact values.
+pub fn jarr(items: List[Str]) -> Str {
+  "[" + items.join(",") + "]"
+}
+
+/// An array of strings.
+pub fn jstrs(items: List[Str]) -> Str {
+  jarr(items.map(fn(s: Str) -> Str { jstr(s) }))
+}
+
+pub fn jbool(b: Bool) -> Str {
+  if b { "true" } else { "false" }
+}
+
+/// Compact JSON indented two spaces per level and ended by a newline
+/// (json.Encoder with SetIndent("", "  ")).
+pub fn indent_json(src: Str) -> Str {
+  let b = src.bytes()
+  var out = BytesBuilder.with_capacity(b.len() * 2)
+  var depth = 0
+  var need = false
+  var in_str = false
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if in_str {
+      out.write_byte(c)
+      if c == '\\' && i + 1 < b.len() {
+        out.write_byte(b[i + 1])
+        i += 2
+        continue
+      }
+      if c == '"' {
+        in_str = false
+      }
+      i += 1
+      continue
+    }
+    if need && c != ']' && c != '}' {
+      need = false
+      depth += 1
+      newline(out, depth)
+    }
+    if c == '"' {
+      in_str = true
+      out.write_byte(c)
+    } else if c == '{' || c == '[' {
+      need = true
+      out.write_byte(c)
+    } else if c == ',' {
+      out.write_byte(c)
+      newline(out, depth)
+    } else if c == ':' {
+      out.write_byte(c)
+      out.write_byte(' ')
+    } else if c == '}' || c == ']' {
+      if need {
+        need = false
+      } else {
+        depth -= 1
+        newline(out, depth)
+      }
+      out.write_byte(c)
+    } else {
+      out.write_byte(c)
+    }
+    i += 1
+  }
+  out.write_byte('\n')
+  out.freeze().to_str() ?? ""
+}
+
+fn newline(var out: BytesBuilder, depth: Int) {
+  out.write_byte('\n')
+  for _ in 0..depth {
+    out.write_byte(' ')
+    out.write_byte(' ')
+  }
+}
+
+fn json_quote(s: Str, html: Bool) -> Str {
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  out.write("\"")
+  var run = 0
+  var i = 0
+  while i < b.len() {
+    let ch = b[i]
+    var esc = ""
+    var width = 1
+    if ch == '"' {
+      esc = "\\\""
+    } else if ch == '\\' {
+      esc = "\\\\"
+    } else if ch == '\n' {
+      esc = "\\n"
+    } else if ch == '\r' {
+      esc = "\\r"
+    } else if ch == '\t' {
+      esc = "\\t"
+    } else if ch < 0x20 || (html && (ch == '<' || ch == '>' || ch == '&')) {
+      esc = "\\u00${b[i..i + 1].to_hex()}"
+    } else if ch == 0xe2 && i + 2 < b.len() && b[i + 1] == 0x80 && (b[i + 2] == 0xa8 || b[i + 2] == 0xa9) {
+      esc = if b[i + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }
+      width = 3
+    }
+    if esc.is_empty() {
+      i += 1
+      continue
+    }
+    if run < i {
+      out.write(b[run..i].to_str() ?? "")
+    }
+    out.write(esc)
+    i += width
+    run = i
+  }
+  if run < b.len() {
+    out.write(b[run..].to_str() ?? "")
+  }
+  out.write("\"")
+  out.freeze()
+}

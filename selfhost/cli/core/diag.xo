@@ -1,0 +1,105 @@
+// Diagnostics as cmd/xo prints them: the human form (diag.Human), the
+// JSON form (diag.Diagnostic's MarshalJSON), and the order (diag.Sort).
+
+use github.com/xo-lang/xo/selfhost/check
+
+pub type Diag = check.Diag
+
+/// "error", "warning", or "note".
+pub fn severity(d: Diag) -> Str {
+  if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+}
+
+pub fn is_error(d: Diag) -> Bool {
+  !d.warning
+}
+
+/// d in the compact, grep friendly form (diag.Human):
+///
+///   file:line:col: error XO0160: message
+///     note: ...
+///     fix: title
+///
+/// A diagnostic of the whole build (no file) starts at the severity, and
+/// one of a file with no position at the file name.
+pub fn human(d: Diag) -> Str {
+  var b = StrBuilder.new()
+  if d.file.is_empty() {
+  } else if d.line == 0 {
+    b.write("${d.file}: ")
+  } else {
+    b.write("${d.file}:${d.line}:${d.col}: ")
+  }
+  b.write("${severity(d)} ${d.code}: ${d.message}")
+  for n in d.notes {
+    match n.span {
+      Some(s) => b.write("\n  note: ${s.file}:${s.line}:${s.col}: ${n.message}")
+      None => b.write("\n  note: ${n.message}")
+    }
+  }
+  for f in d.fixes {
+    b.write("\n  fix: ${f.title}")
+  }
+  b.freeze()
+}
+
+fn span_json(s: check.JSpan) -> Str {
+  var fields = [("file", jstr_html(s.file)), ("line", "${s.line}"), ("col", "${s.col}")]
+  if s.end_line != 0 {
+    fields.push(("end_line", "${s.end_line}"))
+  }
+  if s.end_col != 0 {
+    fields.push(("end_col", "${s.end_col}"))
+  }
+  jobj(fields)
+}
+
+/// d as compact JSON (diag.Diagnostic.MarshalJSON: json.Marshal, so `<`,
+/// `>`, and `&` are escaped; notes and fixes are always arrays).
+pub fn diag_json(d: Diag) -> Str {
+  var notes: List[Str] = []
+  for n in d.notes {
+    var fields = [("message", jstr_html(n.message))]
+    if let Some(s) = n.span {
+      fields.push(("span", span_json(s)))
+    }
+    notes.push(jobj(fields))
+  }
+  var fixes: List[Str] = []
+  for f in d.fixes {
+    var edits: List[Str] = []
+    for e in f.edits {
+      edits.push(jobj([("span", span_json(e.span)), ("replace", jstr_html(e.replace))]))
+    }
+    fixes.push(jobj([("title", jstr_html(f.title)), ("edits", jarr(edits))]))
+  }
+  let span = check.JSpan{file: d.file, line: d.line, col: d.col, end_line: d.end_line, end_col: d.end_col}
+  jobj([("code", jstr_html(d.code)), ("severity", jstr_html(severity(d))), ("message", jstr_html(d.message)), ("span", span_json(span)), ("notes", jarr(notes)), ("fixes", jarr(fixes))])
+}
+
+/// A JSON array of diagnostics.
+pub fn diags_json(ds: List[Diag]) -> Str {
+  jarr(ds.map(fn(d: Diag) -> Str { diag_json(d) }))
+}
+
+/// ds ordered by file, line, and column, equal ones in their order
+/// (diag.Sort, a stable sort).
+pub fn sort_diags(ds: List[Diag]) -> List[Diag] {
+  var keyed: List[Str] = []
+  for (i, d) in ds.indexed() {
+    keyed.push("${d.file}\x00${pad(d.line)}${pad(d.col)}${pad(i)}")
+  }
+  var out: List[Diag] = []
+  for k in keyed.sort() {
+    let parts = k.split("\x00")
+    let tail = parts[parts.len() - 1]
+    out.push(ds[Int.parse(slice_from(tail, 40)) ?? 0])
+  }
+  out
+}
+
+/// n with leading zeros to 20 digits, for sorting.
+fn pad(n: Int) -> Str {
+  let s = "${n}"
+  "0".repeat(20 - s.len()) + s
+}

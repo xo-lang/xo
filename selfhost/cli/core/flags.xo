@@ -1,0 +1,260 @@
+// Command line flags as Go's flag package parses them (a FlagSet with
+// ContinueOnError and its output on standard error), so the commands take
+// the same flags and print the same errors as cmd/xo: `-name` or
+// `--name`, `=value` or the next argument for a non boolean flag, parsing
+// stops at the first argument that is not a flag or after `--`.
+
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// The kind of a flag's value.
+enum FlagKind {
+  BoolFlag
+  StrFlag
+  IntFlag
+}
+
+/// One defined flag.
+struct FlagDef {
+  name: Str
+  kind: FlagKind
+  usage: Str
+  /// The default as flag prints it (DefValue).
+  def: Str
+}
+
+/// A set of flags of one command (flag.FlagSet).
+pub struct Flags {
+  name: Str
+  defs: List[FlagDef] = []
+  vals: Map[Str, Str] = {}
+  /// The arguments after the flags.
+  pub args: List[Str] = []
+}
+
+pub fn new_flags(name: Str) -> Flags {
+  Flags{name: name}
+}
+
+pub fn (var f: Flags) bool_flag(name: Str, usage: Str) {
+  f.defs.push(FlagDef{name: name, kind: FlagKind.BoolFlag, usage: usage, def: "false"})
+  f.vals[name] = "false"
+}
+
+pub fn (var f: Flags) str_flag(name: Str, def: Str, usage: Str) {
+  f.defs.push(FlagDef{name: name, kind: FlagKind.StrFlag, usage: usage, def: def})
+  f.vals[name] = def
+}
+
+pub fn (var f: Flags) int_flag(name: Str, def: Int, usage: Str) {
+  f.defs.push(FlagDef{name: name, kind: FlagKind.IntFlag, usage: usage, def: "${def}"})
+  f.vals[name] = "${def}"
+}
+
+pub fn (f: Flags) get_bool(name: Str) -> Bool {
+  (f.vals.get(name) ?? "") == "true"
+}
+
+pub fn (f: Flags) get_str(name: Str) -> Str {
+  f.vals.get(name) ?? ""
+}
+
+pub fn (f: Flags) get_int(name: Str) -> Int {
+  Int.parse(f.vals.get(name) ?? "") ?? 0
+}
+
+fn (f: Flags) find(name: Str) -> FlagDef? {
+  for d in f.defs {
+    if d.name == name {
+      return Some(d)
+    }
+  }
+  None
+}
+
+/// Parses args (flag.FlagSet.Parse). On an error it writes the message
+/// and the usage to standard error, as Go does, and returns false: the
+/// command then exits 2.
+pub fn (var f: Flags) parse(os: Os, args: List[Str]) -> Bool uses stdio {
+  var i = 0
+  while i < args.len() {
+    let s = args[i]
+    if s.len() < 2 || !s.starts_with("-") {
+      break
+    }
+    var minuses = 1
+    if s.starts_with("--") {
+      minuses = 2
+      if s.len() == 2 {
+        i += 1
+        break
+      }
+    }
+    var name = slice_from(s, minuses)
+    if name.is_empty() || name.starts_with("-") || name.starts_with("=") {
+      return f.fail(os, "bad flag syntax: ${s}")
+    }
+    i += 1
+    var has_value = false
+    var value = ""
+    if let Some(eq) = name.find("=") {
+      if eq >= 1 {
+        value = slice_from(name, eq + 1)
+        name = slice_to(name, eq)
+        has_value = true
+      }
+    }
+    let def = match f.find(name) {
+      Some(d) => d
+      None => {
+        if name == "help" || name == "h" {
+          f.usage(os)
+          return false
+        }
+        return f.fail(os, "flag provided but not defined: -${name}")
+      }
+    }
+    match def.kind {
+      BoolFlag => {
+        if has_value {
+          match parse_bool(value) {
+            Some(b) => f.vals[name] = if b { "true" } else { "false" }
+            None => return f.fail(os, "invalid boolean value ${go_quote(value)} for -${name}: parse error")
+          }
+        } else {
+          f.vals[name] = "true"
+        }
+      }
+      StrFlag => {
+        if !has_value && i < args.len() {
+          has_value = true
+          value = args[i]
+          i += 1
+        }
+        if !has_value {
+          return f.fail(os, "flag needs an argument: -${name}")
+        }
+        f.vals[name] = value
+      }
+      IntFlag => {
+        if !has_value && i < args.len() {
+          has_value = true
+          value = args[i]
+          i += 1
+        }
+        if !has_value {
+          return f.fail(os, "flag needs an argument: -${name}")
+        }
+        match Int.parse(value) {
+          Some(n) => f.vals[name] = "${n}"
+          None => return f.fail(os, "invalid value ${go_quote(value)} for flag -${name}: parse error")
+        }
+      }
+    }
+  }
+  var rest: List[Str] = []
+  while i < args.len() {
+    rest.push(args[i])
+    i += 1
+  }
+  f.args = rest
+  true
+}
+
+fn (f: Flags) fail(os: Os, msg: Str) -> Bool {
+  os.stdio.eprintln(msg)
+  f.usage(os)
+  false
+}
+
+/// `Usage of NAME:` and the flags with their usage (flag.PrintDefaults).
+fn (f: Flags) usage(os: Os) {
+  var b = StrBuilder.new()
+  b.write("Usage of ${f.name}:\n")
+  for d in f.defs.sort_by(fn(d: FlagDef) -> Str { d.name }) {
+    var line = "  -${d.name}"
+    let (arg, usage) = unquote_usage(d)
+    if !arg.is_empty() {
+      line = "${line} ${arg}"
+    }
+    if line.len() <= 4 {
+      line = "${line}\t"
+    } else {
+      line = "${line}\n    \t"
+    }
+    line = line + usage.replace("\n", "\n    \t")
+    let zero = match d.kind {
+      BoolFlag => d.def == "false"
+      StrFlag => d.def.is_empty()
+      IntFlag => d.def == "0"
+    }
+    if !zero {
+      line = match d.kind {
+        StrFlag => "${line} (default ${go_quote(d.def)})"
+        BoolFlag | IntFlag => "${line} (default ${d.def})"
+      }
+    }
+    b.write(line)
+    b.write("\n")
+  }
+  os.stdio.eprint(b.freeze())
+}
+
+/// The argument name and the usage text of a flag (flag.UnquoteUsage): a
+/// back quoted word in the usage names the argument and loses its quotes;
+/// otherwise the name of the value's type ("" for a boolean).
+fn unquote_usage(d: FlagDef) -> (Str, Str) {
+  let parts = d.usage.split("`")
+  if parts.len() >= 3 {
+    var rest: List[Str] = []
+    for (i, p) in parts.indexed() {
+      if i > 0 && i < 3 {
+        rest.push(p)
+      } else if i == 0 {
+        rest.push(p)
+      } else {
+        rest.push("`" + p)
+      }
+    }
+    return (parts[1], rest.join(""))
+  }
+  let name = match d.kind {
+    BoolFlag => ""
+    StrFlag => "string"
+    IntFlag => "int"
+  }
+  (name, d.usage)
+}
+
+/// strconv.ParseBool.
+fn parse_bool(s: Str) -> Bool? {
+  if s is "1" | "t" | "T" | "TRUE" | "true" | "True" {
+    return Some(true)
+  }
+  if s is "0" | "f" | "F" | "FALSE" | "false" | "False" {
+    return Some(false)
+  }
+  None
+}
+
+/// s from byte i on.
+pub fn slice_from(s: Str, i: Int) -> Str {
+  let b = s.bytes()
+  if i >= b.len() {
+    return ""
+  }
+  b[i..].to_str() ?? ""
+}
+
+/// The first i bytes of s.
+pub fn slice_to(s: Str, i: Int) -> Str {
+  let b = s.bytes()
+  if i >= b.len() {
+    return s
+  }
+  b[0..i].to_str() ?? ""
+}
+
+/// s quoted as Go's %q quotes it (strconv.Quote).
+pub fn go_quote(s: Str) -> Str {
+  format.go_quote(s)
+}
