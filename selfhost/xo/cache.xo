@@ -1,0 +1,302 @@
+// The build directory and the binary cache of internal/build (build.go
+// buildDir, binPath; bincache.go), computed as the Go driver computes
+// them, so both drivers write a program's build to the same directory
+// and find each other's linked binaries in the same cache (XO_BIN_CACHE,
+// off by default; decision 0178 stage 1).
+
+use std/crypto
+
+/// filepath.Clean of a slash separated path.
+fn clean_path(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for e in p.split("/") {
+    if e.is_empty() || e == "." {
+      continue
+    }
+    if e == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(e)
+  }
+  let s = out.join("/")
+  if rooted {
+    return "/" + s
+  }
+  if s.is_empty() { "." } else { s }
+}
+
+/// filepath.Abs: p joined to the working directory wd when relative,
+/// cleaned.
+fn abs_of(wd: Str, p: Str) -> Str {
+  if p.starts_with("/") {
+    return clean_path(p)
+  }
+  clean_path("${wd}/${p}")
+}
+
+/// internal/build progName: the base name of the first directory.
+fn prog_name(wd: Str, dirs: List[Str]) -> Str {
+  if dirs.is_empty() {
+    return "xoprog"
+  }
+  let name = base_name(abs_of(wd, dirs[0]))
+  if name.is_empty() || name == "." || name == "/" { "xoprog" } else { name }
+}
+
+/// buildDir: a stable directory per program and mode under the user
+/// cache ($XO_BUILD_DIR, else <user cache>/xo/build), named by the hash
+/// of the absolute directories, the mode (0 build, 1 test), and the
+/// variants; it is created and its modification time set (trimming
+/// is left to the Go driver).
+fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, no_ranges: Bool, arenas: Bool, variants: List[Str]) -> Str ! FsErr {
+  var base = os.env.get("XO_BUILD_DIR") ?? ""
+  if base.is_empty() {
+    base = "${ctx.cache}/xo/build"
+  }
+  var h = BytesBuilder.new()
+  for d in dirs {
+    h.write_str(abs_of(wd, d) + "\x00")
+  }
+  h.write_str("mode=${mode}")
+  if mono {
+    h.write_str(" mono")
+  }
+  if no_ranges {
+    h.write_str(" noranges")
+  }
+  if arenas {
+    h.write_str(" arenas")
+  }
+  for v in variants {
+    if !v.is_empty() {
+      h.write_str(" ${v}")
+    }
+  }
+  h.write_str(" layout=2")
+  let dir = "${base}/${crypto.sha256(h.freeze()).to_hex()[0..16]}"
+  os.fs.create_dir_all(dir)?
+  os.fs.set_modified(dir, os.clock.now()).ignore_err("only the trim order")
+  Ok(dir)
+}
+
+/// binPath: the binary of target t ("os/arch"): out, else dir/bin/name;
+/// with several targets name-os-arch in out (a directory) or dir/bin.
+fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
+  let parts = t.split("/")
+  var exe = ""
+  if parts[0] == "windows" {
+    exe = ".exe"
+  } else if parts[0] == "wasip1" {
+    exe = ".wasm"
+  }
+  if many {
+    let base = "${name}-${parts[0]}-${parts[1]}${exe}"
+    if !out.is_empty() {
+      return "${out}/${base}"
+    }
+    return "${dir}/bin/${base}"
+  }
+  if !out.is_empty() {
+    return out
+  }
+  "${dir}/bin/${name}${exe}"
+}
+
+/// BinCacheDir: $XO_BIN_CACHE, "" (off) when unset or "off".
+fn bin_cache_dir(os: Os) -> Str {
+  let d = os.env.get("XO_BIN_CACHE") ?? ""
+  if d == "off" { "" } else { d }
+}
+
+/// binKey.tree: every regular file under dir, path relative to dir and
+/// contents, sorted by path, skipping the top level directories skip
+/// names (a name ending in * is a prefix). false when a file cannot be
+/// read.
+fn key_tree(os: Os, var k: Key, dir: Str, skip: List[Str]) -> Bool {
+  let all = match os.fs.walk(dir) {
+    Ok(fs) => fs
+    Err(_) => return false
+  }
+  var files: List[Str] = []
+  for fi in all {
+    if fi.is_dir {
+      continue
+    }
+    let rel = fi.path.trim_prefix("${dir}/")
+    let top = rel.split("/")[0]
+    var skipped = false
+    if rel.contains("/") {
+      for s in skip {
+        if (s.ends_with("*") && top.starts_with(s.trim_suffix("*"))) || top == s {
+          skipped = true
+        }
+      }
+    }
+    if !skipped {
+      files.push(rel)
+    }
+  }
+  for rel in files.sort() {
+    match os.fs.read("${dir}/${rel}") {
+      Ok(data) => {
+        k.str(rel)
+        k.data(data)
+      }
+      Err(_) => return false
+    }
+  }
+  true
+}
+
+/// rtPackID: the pack directory and key a link may use, "local" for
+/// none.
+fn rtpack_id(os: Os, ctx: Ctx) -> Str {
+  match load_rtpack(os, ctx, ctx.std) {
+    None => "local"
+    Some(p) => {
+      if !p.why.is_empty() {
+        return "local"
+      }
+      match rtpack_key(os, ctx, ctx.std, ctx.goos) {
+        Ok(key) => "${p.dir} ${key}"
+        Err(_) => "local"
+      }
+    }
+  }
+}
+
+/// nativeBinKey: the cache key of a native link of srcs (all in dir)
+/// with cc and flags: the C compiler's identity, the flags, the sources'
+/// paths, the macOS SDK, the prebuilt runtime, the TLS sources when the
+/// program uses TLS, and every file of dir but its bin directory. "" when
+/// the cache is off or an input cannot be read.
+fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: List[Str], tls: Bool) -> Str {
+  if bin_cache_dir(os).is_empty() {
+    return ""
+  }
+  var k = new_key("native")
+  k.str(tool_id(os, ctx.goos, cc, ["--version"]))
+  k.strs(flags)
+  for s in srcs {
+    if !s.starts_with("${dir}/") {
+      return ""
+    }
+    k.str(s.trim_prefix("${dir}/"))
+  }
+  var root = ""
+  let memo = sysroot_memo(os, ctx)
+  if !memo.is_empty() {
+    root = (os.fs.read_text(memo).ok() ?? "").trim()
+  }
+  k.str("sysroot ${root} ${os.env.get("XO_SYSROOT") ?? ""}")
+  k.str("rtpack ${rtpack_id(os, ctx)}")
+  if tls {
+    match tls_source_hash(os, ctx.xo) {
+      Ok(h) => k.str("tls ${h}")
+      Err(_) => return ""
+    }
+  }
+  if !key_tree(os, k, dir, ["bin"]) {
+    return ""
+  }
+  k.sum()
+}
+
+/// goBinKey: the cache key of a go build in dir with args (without the
+/// output) for target t: the go command's identity, the arguments, the
+/// target, the race detector's C toolchain, and every file of dir but the
+/// binaries and the native backends' directories.
+fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, race: Bool) -> Str {
+  if bin_cache_dir(os).is_empty() {
+    return ""
+  }
+  var k = new_key("go")
+  k.str(tool_id(os, ctx.goos, gocmd, ["env", "GOVERSION", "GOROOT", "GOEXPERIMENT", "GOARM64", "GOAMD64", "GOARM", "GODEBUG", "GOTOOLCHAIN"]))
+  k.strs(args)
+  k.str(t)
+  if race {
+    k.str("race")
+    for v in ["CC", "CGO_CFLAGS", "CGO_LDFLAGS", "CGO_CPPFLAGS"] {
+      k.str("${v}=${os.env.get(v) ?? ""}")
+    }
+    k.str(tool_id(os, ctx.goos, "cc", ["--version"]))
+  }
+  if !key_tree(os, k, dir, ["bin", "llvm*", "arm64*"]) {
+    return ""
+  }
+  k.sum()
+}
+
+/// withBinCache, first half: when the cache holds the binary of key, bin
+/// becomes a copy of it and the result is true. The entry path of key
+/// for bin is returned for store_bin ("" when the cache is off).
+fn fetch_bin(os: Os, key: Str, bin: Str) -> (Bool, Str) {
+  let dir = bin_cache_dir(os)
+  if dir.is_empty() || key.is_empty() {
+    return (false, "")
+  }
+  // the linkers name the ad hoc code signature of a macOS binary after
+  // its file: the same inputs give the same bytes only under the same name
+  let sum = crypto.sha256("${key}\x00${base_name(bin)}".bytes()).to_hex()
+  let entry = "${dir}/${sum[0..2]}/${sum}"
+  match os.fs.stat(entry) {
+    Ok(Some(fi)) => {
+      if !fi.is_dir {
+        os.fs.set_modified(entry, os.clock.now()).ignore_err("only the trim order")
+        os.fs.create_dir_all(dir_name(bin)).ignore_err("the copy reports it")
+        let tmp = "${bin}.tmp-xo1-${os.rand.bytes(6).to_hex()}"
+        match os.fs.copy(entry, tmp) {
+          Ok(_) => {
+            match os.fs.rename(tmp, bin) {
+              Ok(_) => return (true, entry)
+              Err(_) => os.fs.remove(tmp).ignore_err("a failed fetch")
+            }
+          }
+          Err(_) => os.fs.remove(tmp).ignore_err("a failed fetch")
+        }
+      }
+    }
+    _ => {}
+  }
+  // bin may be a link to an entry: never write through it
+  os.fs.remove(bin).ignore_err("it may not exist")
+  (false, entry)
+}
+
+/// withBinCache, second half: the linked bin is added to the cache as
+/// entry (a copy under a temporary name, renamed into place), and the
+/// cache trimmed to XO_BIN_CACHE_MAX bytes (default 6 GiB).
+fn store_bin(os: Os, entry: Str, bin: Str) {
+  if entry.is_empty() {
+    return
+  }
+  match os.fs.create_dir_all(dir_name(entry)) {
+    Ok(_) => {}
+    Err(_) => return
+  }
+  let tmp = "${entry}.tmp-xo1-${os.rand.bytes(6).to_hex()}"
+  match os.fs.copy(bin, tmp) {
+    Ok(_) => {
+      match os.fs.rename(tmp, entry) {
+        Ok(_) => {}
+        Err(_) => os.fs.remove(tmp).ignore_err("another process stored it")
+      }
+    }
+    Err(_) => {
+      os.fs.remove(tmp).ignore_err("a failed store")
+      return
+    }
+  }
+  let max = Int.parse(os.env.get("XO_BIN_CACHE_MAX") ?? "") ?? 0
+  trim_cache_dir(os, bin_cache_dir(os), if max > 0 { max } else { 6 * 1024 * 1024 * 1024 })
+}

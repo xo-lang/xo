@@ -2,15 +2,17 @@
 
 Status: Accepted (owner, 2026-10-12): switch points A and B approved;
 B takes effect when its gate passes; deleting the Go compiler packages is
-delegated to the lead under the criteria in "Owner approvals". The inventory is from main dbb8b05 with this decision's
+delegated to the lead under the criteria in "Owner approvals". Stage 1
+done (2026-10-12, runs 5 and 6 of the results file); switch point A
+implemented (internal/selfdriver; section "Switch point A, as
+implemented"). The inventory is from main dbb8b05 with this decision's
 commits; the measurements are on the same tree (runs 1 to 4 of the
 results file). Gaps closed on the way, each its own commit: `xo1
 --backend=llvm`; the decision 0172 file symbols in xo1's runtime flags
 (with TestXo1IOFlagsSymbols); `xo1 test --backend=go`; `use go` in the
 Go backend path (selfhost/gen's `Go_<path>_` names, the binding
 adapters, go.mod requirements and go.sum, the Go timers tag). Evidence:
-`bench/results/retire-go-2026-10-12.md`. The released `xo` is
-unchanged (decision 0150).
+`bench/results/retire-go-2026-10-12.md`.
 
 ## Context
 
@@ -203,11 +205,83 @@ call, decision 0150), keeping std/rt, gobind, and the test helpers;
 on a new host is built by the previous release's binary, never by Go
 again (a bootstrap chain, recorded in toolchain.md).
 
+## Stage 1, as done (2026-10-12)
+
+xo1's command line is `xo build|run|test`'s (selfhost/xo opts.xo: Go's
+flag rules, the same flags, several directories as one program); `run`
+execs the program with its arguments and passes its status through
+(run.xo); a failed check prints the diagnostics as `xo` does, human or
+`--json` (diag.xo; byte identical on the programs compared); builds go
+to the Go driver's build directory and binary cache under the same keys
+(cache.xo: an `xo` link and an `xo1` link of the same program share one
+entry); `XO_LLVM_SPLIT`, `XO_LLVM_JOBS`, `XO_LLVM_LTO` split LLVM builds
+(split.xo, llvm.Split ported); `--release` (selfhost/ssa compiles out
+debug contracts), `--stamp` (stamp.xo), `--targets` (cross targets on
+the Go backend), `--race`, `--holes`, `--no-mono`, `--no-arenas`,
+`--seed`, `--explore`, `--record`; the Go backend's tests write
+regressions_test.xo (regress.xo); native test binaries list contract
+fuzz tests as skipped; selfhost/ssa attributes a dependency's log
+records (decision 0173's `log_from`). Not in xo1 yet: `--ci` (needs `xo
+fmt` and `xo vet`: stage 2), `--hybrid`, `--real` on native tests (the
+real capability wrappers of the SSA builder), XO1201 diagnostics (the
+self hosted SSA builder records no spans for what it skips), workspace
+tests (mod.WorkspaceDirs), the native test time limit.
+
+Gate figures (results file, runs 5 and 6): arm64 goldens 159 of 159,
+LLVM 159 of 159, Go backend 134 of 134, the same through `xo1 run`;
+cmd/xo's 18 tests that call `build`, `run`, or `test` with every such
+command through xo1: 11 of 18 before the fixes above (the failures were
+`--ci`, XO1201, the fuzz listing, `--real`, and log attribution).
+
+## Switch point A, as implemented (2026-10-12)
+
+- **Which commands**: `xo build|run|test` whose backend is native
+  (`--backend=arm64|llvm`, or `--no-gc` without a backend) on a
+  darwin/arm64 or linux/arm64 host. The Go backend, every other
+  command, and the flags xo1 lacks (`--ci`, `--hybrid`, `--real`) and
+  a test of a workspace stay with the Go driver
+  (internal/selfdriver.Wants, TestWants).
+- **Where xo1 comes from**: package selfhost embeds the selfhost/
+  sources (selfhost/embed.go); `xo` writes them with its embedded std
+  and third_party trees to `<user cache>/xo/xo1/<key>` (key: the
+  SHA-256 of every embedded file; `XO1_CACHE` moves it) and builds
+  selfhost/xo there once with its own arm64 backend under a file lock,
+  so xo1 is a function of the sources compiled into `xo` and needs no
+  repository or network. `XO1=<path>` uses a prebuilt binary instead
+  (`XO1_ROOT` names its std and third_party). The first native build
+  after a change of those sources builds xo1 (290 s on the busy
+  machine of run 6, 694 s on a busier one) and says so on standard
+  error; a release would ship the cache entry prebuilt (not done: the
+  release script is unchanged).
+- **Fallback**: a program xo1 does not support yet (a construct its SSA
+  builder or an emitter skips, the checker's unsupported list) is handed
+  back: xo1 writes why to the file `XO1_FALLBACK` names and exits 125,
+  and `xo` runs the Go driver, which prints the XO1201 diagnostics or
+  builds it. The prebuilt runtime is the one beside `xo` (`XO_RTPACK`
+  passed to xo1).
+- **Rollback**: `XO_SELF_DRIVER=0` (or `off`) runs the Go driver for
+  everything, as before. A failure to build xo1 is an error naming that
+  variable.
+- **Tests**: cmd/xo's tests run with the switch on by default;
+  `XO_SELF_DRIVER_ALL=1` (cmd/xo/selfdriver_test.go) routes every
+  `build|run|test` of them, Go backend included, through `$XO1` to
+  measure stage 1. Scripts that compare xo1 with the Go driver run the
+  reference with `XO_SELF_DRIVER=0` (selfhost-samebin.py,
+  selfhost-switchover.sh's A).
+- **Gate (run 6 of the results file)**: cmd/xo's full suite and
+  internal/build's full suite pass with the switch on; selfhost-samebin
+  159 of 159 identical binaries; the fixed point holds (the Go emitter's
+  assembly of selfhost/xo equals B's and C's); B runs the arm64 goldens
+  159 of 159. With every command of cmd/xo's 18 build, run, and test
+  cases forced through xo1 alone (no fallback): 12 of 18, the rest being
+  `--ci`, XO1201, and native `--real`, which the switch keeps on the Go
+  driver.
+
 ## Owner approvals (2026-10-12)
 
-- Switch point A: approved by the owner on 2026-10-12 (implementation in
-  progress: the Go `xo` execs xo1 for native `build|run|test`, with a
-  rollback environment variable).
+- Switch point A: approved by the owner on 2026-10-12; implemented the
+  same day (section "Switch point A, as implemented"; gate: run 6 of the
+  results file).
 - Switch point B: approved by the owner on 2026-10-12, to take effect
   when its gate passes (stages 2 to 6 done, the full suite with every
   process-driving test run against the Xo binary). The approval does not
