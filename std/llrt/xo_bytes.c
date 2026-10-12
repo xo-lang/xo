@@ -252,6 +252,28 @@ xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 
+// xo_rs_append_bytes is s + the bytes lo..hi of b (0 <= lo <= hi <= the
+// length of b), their ASCII letters lowered (mode 1) or raised (mode 2):
+// the bulk byte moves of the Unicode operations written in Xo
+// (std/native/llrt/unicode.xo, decision 0180).
+xo_rstr *xo_rs_append_bytes(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t lo, int64_t hi, int64_t mode, int64_t *len) {
+	(void)bn;
+	int64_t n = hi - lo;
+	*len = an + n;
+	a = rs_append(a, an, b->data + lo, n);
+	unsigned char *d = (unsigned char *)a->data + an;
+	if (mode == 1) {
+		for (int64_t i = 0; i < n; i++) {
+			d[i] += (unsigned char)(d[i] - 'A' < 26u ? 32 : 0);
+		}
+	} else if (mode == 2) {
+		for (int64_t i = 0; i < n; i++) {
+			d[i] -= (unsigned char)(d[i] - 'a' < 26u ? 32 : 0);
+		}
+	}
+	return a;
+}
+
 // xo_rs_with_cap is an empty string with room for n bytes
 // (BytesBuilder.with_capacity).
 xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) {

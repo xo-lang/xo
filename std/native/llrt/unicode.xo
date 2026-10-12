@@ -167,53 +167,58 @@ pub fn decode(b: Bytes, i: Int) -> Int {
   (r << 3) | (k + 1)
 }
 
-/// Appends the UTF-8 encoding of the scalar value r to out.
-pub fn encode(var out: BytesBuilder, r: Int) {
-  if r < 0x80 {
-    out.write_byte(BYTE[r])
-  } else if r < 0x800 {
-    out.write_byte(BYTE[0xC0 | (r >> 6)])
-    out.write_byte(BYTE[0x80 | (r & 0x3F)])
-  } else if r < 0x10000 {
-    out.write_byte(BYTE[0xE0 | (r >> 12)])
-    out.write_byte(BYTE[0x80 | ((r >> 6) & 0x3F)])
-    out.write_byte(BYTE[0x80 | (r & 0x3F)])
-  } else {
-    out.write_byte(BYTE[0xF0 | (r >> 18)])
-    out.write_byte(BYTE[0x80 | ((r >> 12) & 0x3F)])
-    out.write_byte(BYTE[0x80 | ((r >> 6) & 0x3F)])
-    out.write_byte(BYTE[0x80 | (r & 0x3F)])
+// The text operations build their result in a Str, appended in place
+// through the runtime's rs_* intrinsics (the result is unique): the bytes
+// that stay as they are go over in runs (rt.rs_append_bytes, which also
+// maps ASCII letters), so the C runtime keeps only the bulk byte moves.
+
+/// The mode of rt.rs_append_bytes that maps ASCII letters like to_case.
+fn ascii_mode(lower: Bool) -> Int {
+  if lower {
+    return 1
   }
+  2
+}
+
+/// strings.ToLower (lower) or strings.ToUpper of the bytes from i of b
+/// appended to out (strings.Map: an invalid byte becomes U+FFFD). Runs of
+/// ASCII bytes and of runes that do not change are appended at once.
+fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
+  let n = b.len()
+  let mode = ascii_mode(lower)
+  var o = out
+  var run = from
+  var i = from
+  while i < n {
+    if b[i] < 0x80 {
+      i += 1
+      continue
+    }
+    let p = decode(b, i)
+    let r = p >> 3
+    let size = p & 7
+    let x = to_case(r, lower)
+    if x != r || (r == 0xFFFD && size == 1) {
+      if run < i {
+        o = rt.rs_append_bytes(o, b, run, i, mode)
+      }
+      o = rt.rs_push_rune(o, x)
+      run = i + size
+    }
+    i += size
+  }
+  if run < n {
+    o = rt.rs_append_bytes(o, b, run, n, mode)
+  }
+  o
 }
 
 /// Whether lowering (lower) or raising the ASCII byte c changes it.
-fn ascii_changes(c: Int, lower: Bool) -> Bool {
+fn ascii_changes(c: UInt8, lower: Bool) -> Bool {
   if lower {
     return c >= 65 && c <= 90
   }
   c >= 97 && c <= 122
-}
-
-/// strings.ToLower (lower) or strings.ToUpper of the bytes from i of b
-/// appended to out (strings.Map: an invalid byte becomes U+FFFD).
-fn case_into(var out: BytesBuilder, b: Bytes, from: Int, lower: Bool) {
-  let n = b.len()
-  var i = from
-  while i < n {
-    let c = Int(b[i])
-    if c < 0x80 {
-      if ascii_changes(c, lower) {
-        out.write_byte(BYTE[if lower { c + 32 } else { c - 32 }])
-      } else {
-        out.write_byte(b[i])
-      }
-      i += 1
-    } else {
-      let p = decode(b, i)
-      encode(out, to_case(p >> 3, lower))
-      i += p & 7
-    }
-  }
 }
 
 /// strings.ToLower (lower) or strings.ToUpper.
@@ -224,7 +229,7 @@ pub fn map_case(s: Str, lower: Bool) -> Str {
   var i = 0
   var changes = false
   while i < n {
-    let c = Int(b[i])
+    let c = b[i]
     if c >= 0x80 {
       break
     }
@@ -236,9 +241,7 @@ pub fn map_case(s: Str, lower: Bool) -> Str {
   if i == n && !changes {
     return s
   }
-  var out = BytesBuilder.with_capacity(n)
-  case_into(out, b, 0, lower)
-  rt.cast[Bytes, Str](out.freeze())
+  case_append(rt.rs_with_cap(n), b, 0, lower)
 }
 
 /// `a.to_lower() == b.to_lower()` without making the lowered strings:
@@ -276,28 +279,15 @@ pub fn eq_lower(a: Str, b: Str) -> Bool {
     // a nonempty rest never lowers to nothing
     return false
   }
-  var u = BytesBuilder.with_capacity(n - i)
-  case_into(u, x, i, true)
-  var v = BytesBuilder.with_capacity(m - i)
-  case_into(v, y, i, true)
-  u.freeze() == v.freeze()
+  case_append(rt.rs_with_cap(n - i), x, i, true) == case_append(rt.rs_with_cap(m - i), y, i, true)
 }
 
 const HEX: Bytes = b"0123456789abcdef"
 
-/// Appends r (a scalar value) to out as Go's strconv quotes it inside the
-/// quote character quote.
-fn quote_rune_into(var out: BytesBuilder, r: Int, quote: Int) {
-  if r == quote || r == 92 {
-    out.write_byte(92)
-    out.write_byte(BYTE[r])
-    return
-  }
-  if is_print(r) {
-    encode(out, r)
-    return
-  }
-  let e = match r {
+/// The letter of the escape \<letter> of strconv for the control rune r,
+/// or 0.
+fn escape_letter(r: Int) -> Int {
+  match r {
     7 => 97
     8 => 98
     12 => 102
@@ -307,61 +297,88 @@ fn quote_rune_into(var out: BytesBuilder, r: Int, quote: Int) {
     11 => 118
     _ => 0
   }
-  if e != 0 {
-    out.write_byte(92)
-    out.write_byte(BYTE[e])
-    return
+}
+
+/// out + r (a scalar value) as Go's strconv quotes it inside the quote
+/// character quote.
+fn quote_rune_append(out: Str, r: Int, quote: Int) -> Str {
+  var o = out
+  if r == quote || r == 92 {
+    o = rt.rs_push_byte(o, 92)
+    return rt.rs_push_byte(o, r)
   }
-  out.write_byte(92)
+  if is_print(r) {
+    return rt.rs_push_rune(o, r)
+  }
+  o = rt.rs_push_byte(o, 92)
+  let e = escape_letter(r)
+  if e != 0 {
+    return rt.rs_push_byte(o, e)
+  }
   var digits = 8
   if r < 32 || r == 0x7F {
     digits = 2
-    out.write_byte(120)
+    o = rt.rs_push_byte(o, 120)
   } else if r < 0x10000 {
     digits = 4
-    out.write_byte(117)
+    o = rt.rs_push_byte(o, 117)
   } else {
-    out.write_byte(85)
+    o = rt.rs_push_byte(o, 85)
   }
   var i = 0
   while i < digits {
-    out.write_byte(HEX[(r >> (4 * (digits - 1 - i))) & 15])
+    o = rt.rs_push_byte(o, Int(HEX[(r >> (4 * (digits - 1 - i))) & 15]))
     i += 1
   }
+  o
 }
 
 /// strconv.QuoteRune of the scalar value r.
 pub fn quote_rune(r: Int) -> Str {
-  var out = BytesBuilder.with_capacity(8)
-  out.write_byte(39)
-  quote_rune_into(out, r, 39)
-  out.write_byte(39)
-  rt.cast[Bytes, Str](out.freeze())
+  var o = rt.rs_push_byte(rt.rs_with_cap(8), 39)
+  o = quote_rune_append(o, r, 39)
+  rt.rs_push_byte(o, 39)
 }
 
 /// strconv.Quote of the bytes of a Str or Bytes: a byte of an invalid
-/// sequence is \x of the byte.
+/// sequence is \x of the byte. Runs of printable runes other than `"`
+/// and `\` are appended at once.
 pub fn quote(b: Bytes) -> Str {
   let n = b.len()
-  var out = BytesBuilder.with_capacity(n + 2)
-  out.write_byte(34)
+  var o = rt.rs_push_byte(rt.rs_with_cap(n + 2), 34)
+  var run = 0
   var i = 0
   while i < n {
+    let c = b[i]
+    if c >= 0x20 && c < 0x7F && c != 34 && c != 92 {
+      i += 1
+      continue
+    }
     let p = decode(b, i)
     let r = p >> 3
-    if r == 0xFFFD && (p & 7) == 1 {
-      let c = Int(b[i])
-      out.write_byte(92)
-      out.write_byte(120)
-      out.write_byte(HEX[c >> 4])
-      out.write_byte(HEX[c & 15])
-    } else {
-      quote_rune_into(out, r, 34)
+    let size = p & 7
+    if r != 0xFFFD && is_print(r) && c >= 0x80 {
+      i += size
+      continue
     }
-    i += p & 7
+    if run < i {
+      o = rt.rs_append_bytes(o, b, run, i, 0)
+    }
+    if r == 0xFFFD && size == 1 {
+      o = rt.rs_push_byte(o, 92)
+      o = rt.rs_push_byte(o, 120)
+      o = rt.rs_push_byte(o, Int(HEX[Int(c) >> 4]))
+      o = rt.rs_push_byte(o, Int(HEX[Int(c) & 15]))
+    } else {
+      o = quote_rune_append(o, r, 34)
+    }
+    i += size
+    run = i
   }
-  out.write_byte(34)
-  rt.cast[Bytes, Str](out.freeze())
+  if run < n {
+    o = rt.rs_append_bytes(o, b, run, n, 0)
+  }
+  rt.rs_push_byte(o, 34)
 }
 
 /// The ranges of a Unicode class as lo, hi pairs, sorted (std/regexp's

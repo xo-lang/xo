@@ -39,6 +39,17 @@ fn float_parse(s: Str) -> Float
 fn rs_append(s: Str, t: Str) -> Str
 /// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
 fn rs_append_duration(s: Str, d: Int) -> Str
+/// s + the bytes lo..hi of b (a range of b), their ASCII letters lowered
+/// (mode 1) or raised (mode 2); mode 0 copies (std/native/llrt/unicode.xo,
+/// decision 0180).
+fn rs_append_bytes(s: Str, b: Bytes, lo: Int, hi: Int, mode: Int) -> Str
+/// s + the byte x (0 to 255; BytesBuilder.write_byte).
+fn rs_push_byte(s: Str, x: Int) -> Str
+/// s + the UTF-8 of r, U+FFFD when r is not a scalar value
+/// (BytesBuilder.write_rune).
+fn rs_push_rune(s: Str, r: Int) -> Str
+/// An empty string with room for n bytes (BytesBuilder.with_capacity).
+fn rs_with_cap(n: Int) -> Str
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
