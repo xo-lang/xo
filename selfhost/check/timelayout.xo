@@ -22,7 +22,7 @@ fn (c: Checker) const_obj_at(f: Int, id: Ident) -> Int {
 /// The value of e of file f when it is a compile time string: a literal
 /// without interpolation, a module constant, or a `+` of them
 /// (timelayout.go constStr).
-fn (c: Checker) const_str(f: Int, e: Expr, depth: Int) -> Str? {
+pub fn (c: Checker) const_str(f: Int, e: Expr, depth: Int) -> Str? {
   if depth > 32 {
     return None
   }

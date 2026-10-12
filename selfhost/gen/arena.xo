@@ -1,0 +1,298 @@
+// Request scoped arenas (internal/gen arena.go, decision 0066): the escape
+// analysis that decides what may live in an arena.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Whether arena lowering is on for this package (arenasOn).
+fn (g: Gen) arenas_on() -> Bool {
+  g.opts.arenas && !g.pkgs[g.p].in_rt
+}
+
+fn req_method(n: Str) -> Bool {
+  n is "json" | "param" | "param_int" | "query" | "header"
+}
+
+fn req_field(n: Str) -> Bool {
+  n is "method" | "path" | "remote_ip"
+}
+
+fn req_url_field(n: Str) -> Bool {
+  n is "scheme" | "host" | "port" | "path"
+}
+
+/// The identifier e is when it names the request binding req, else None.
+fn (g: Gen) req_ident(e: Expr, req: Int) -> Ident? {
+  if let Ident(id) = unparen(e) {
+    if g.var_of(id) == req {
+      return Some(id)
+    }
+  }
+  None
+}
+
+/// Whether handler literal lit uses its request parameter only in forms
+/// that cannot let the request escape (confinesReq).
+fn (g: Gen) confines_req(lit: parser.FnLit) -> Bool {
+  let ps = g.closure_params(lit)
+  if ps.len() != 1 {
+    return false
+  }
+  let req = ps[0]
+  var allowed: Map[Int, Bool] = {}
+  let ns = flatten(Node.E(Expr.Block(lit.body)))
+  for ne in ns {
+    if let E(e) = ne.node {
+      match e {
+        CallExpr(..) => {
+          if let Some(ci) = g.call_of(e) {
+            if ci.fn_obj >= 0 && !ci.recv.is_empty() && req_method(g.oname(ci.fn_obj)) && g.is_std_method(ci.fn_obj, "http", "Request", g.oname(ci.fn_obj)) {
+              if let Some(id) = g.req_ident(ci.recv[0], req) {
+                allowed[id.span.start.offset] = true
+              }
+            }
+          }
+        }
+        SelectorExpr(x: x, sel: sel, ..) => {
+          if let Some(id) = g.req_ident(x, req) {
+            if req_field(check.text(sel.name)) {
+              allowed[id.span.start.offset] = true
+            }
+          }
+          if let SelectorExpr(x: inx, sel: insel, ..) = unparen(x) {
+            if insel.name == b"url" && req_url_field(check.text(sel.name)) {
+              if let Some(id) = g.req_ident(inx, req) {
+                allowed[id.span.start.offset] = true
+              }
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  var i = 0
+  while i < ns.len() {
+    if let E(e) = ns[i].node {
+      match e {
+        FnLit(inner) => {
+          // a nested closure may outlive the request: it must not mention
+          // the request at all
+          for m in flatten(Node.E(Expr.Block(inner.body))) {
+            if let E(me) = m.node {
+              if let Ident(id) = me {
+                if g.var_of(id) == req {
+                  return false
+                }
+              }
+            }
+          }
+          i = ns[i].end
+          continue
+        }
+        Ident(id) => {
+          if g.var_of(id) == req && !allowed.contains(id.span.start.offset) {
+            return false
+          }
+        }
+        _ => {}
+      }
+    }
+    i += 1
+  }
+  true
+}
+
+/// Whether ci calls `http.json` or `http.text` (isRespCall).
+fn (g: Gen) is_resp_call(ci: check.CallInfo?) -> Bool {
+  match ci {
+    None => false
+    Some(c) => {
+      let fo = c.fn_obj
+      if fo < 0 || g.c.objs[fo].recv >= 0 || !g.ostd(fo) || g.c.mods[g.omod(fo)].path != "std/http" {
+        return false
+      }
+      g.oname(fo) == "json" || g.oname(fo) == "text"
+    }
+  }
+}
+
+/// Records the response calls whose value is the result of handler
+/// literal lit (markRespCalls).
+fn (var g: Gen) mark_resp_calls(lit: parser.FnLit) {
+  g.resp_tail_block(lit.body)
+  let ns = flatten(Node.E(Expr.Block(lit.body)))
+  var i = 0
+  while i < ns.len() {
+    match ns[i].node {
+      E(e) => {
+        if let FnLit(..) = e {
+          // its own result
+          i = ns[i].end
+          continue
+        }
+      }
+      S(s) => {
+        if let ReturnStmt(value: value, ..) = s {
+          if let Some(v) = value {
+            g.resp_tail(v)
+          }
+        }
+      }
+      N => {}
+    }
+    i += 1
+  }
+}
+
+fn (var g: Gen) resp_tail_block(b: parser.Block) {
+  if b.stmts.is_empty() {
+    return
+  }
+  if let ExprStmt(x: x, ..) = b.stmts[b.stmts.len() - 1] {
+    g.resp_tail(x)
+  }
+}
+
+fn (var g: Gen) resp_tail(e: Expr) {
+  let x = unparen(e)
+  match x {
+    CallExpr(..) => {
+      if g.is_resp_call(g.call_of(x)) {
+        g.f.arena_resp[g.ek(x)] = true
+      }
+    }
+    Block(b) => g.resp_tail_block(b)
+    IfExpr(ie) => {
+      g.resp_tail_block(ie.then)
+      if let Some(els) = ie.els {
+        g.resp_tail(els)
+      }
+    }
+    MatchExpr(arms: arms, ..) => {
+      for arm in arms {
+        if let Some(b) = arm.body {
+          if let ExprStmt(x: ax, ..) = b {
+            g.resp_tail(ax)
+          }
+        }
+      }
+    }
+    _ => {}
+  }
+}
+
+/// The closure literal passed as the handler of `r.handle(pattern, h)` on
+/// a local router, or None (handlerLit).
+fn (g: Gen) handler_lit(x: Expr, ci: check.CallInfo) -> parser.FnLit? {
+  if !g.is_std_method(ci.fn_obj, "http", "Router", "handle") || ci.recv.is_empty() {
+    return None
+  }
+  if let Ident(..) = unparen(ci.recv[0]) {
+  } else {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  let aidx = g.arg_index(ci.fn_obj, args)
+  if aidx.len() != 2 || aidx[1] < 0 {
+    return None
+  }
+  if let FnLit(lit) = unparen(args[aidx[1]].value) {
+    return Some(lit)
+  }
+  None
+}
+
+fn arena_consumer(n: Str) -> Bool {
+  n is "any" | "all" | "find" | "fold" | "map" | "filter" | "sort_by" | "sort" | "len" | "is_empty" | "contains" | "index_of" | "first" | "last" | "get" | "join" | "reverse" | "to_set" | "indexed"
+}
+
+/// The runtime function that builds the temporary List of producer fo in
+/// the arena, or "" (arenaProducerFunc).
+fn (g: Gen) arena_producer_func(fo: Int) -> Str {
+  if g.is_std_method(fo, "prelude", "Map", "values") {
+    return "Map_values_arena"
+  }
+  if g.is_std_method(fo, "prelude", "Map", "keys") {
+    return "Map_keys_arena"
+  }
+  if g.is_std_method(fo, "prelude", "Map", "entries") {
+    return "Map_entries_arena"
+  }
+  if g.is_std_method(fo, "prelude", "Set", "to_list") {
+    return "Set_to_list_arena"
+  }
+  ""
+}
+
+/// Marks e as an arena temporary if it is a producer call
+/// (noteArenaTemp).
+fn (var g: Gen) note_arena_temp(e: Expr) {
+  let c = unparen(e)
+  if let CallExpr(..) = c {
+    if let Some(pci) = g.call_of(c) {
+      if pci.fn_obj >= 0 && !g.arena_producer_func(pci.fn_obj).is_empty() {
+        g.f.arena_temps[g.ek(c)] = true
+      }
+    }
+  }
+}
+
+/// Runs before a std call is generated: marks a producer receiver of a
+/// consumer, and the response calls of a handler literal (noteArenaCall).
+fn (var g: Gen) note_arena_call(x: Expr, ci: check.CallInfo) {
+  let fo = ci.fn_obj
+  let r = g.c.objs[fo].recv
+  if !ci.recv.is_empty() && r >= 0 && g.oprelude(r) && g.oname(r) == "List" && arena_consumer(g.oname(fo)) {
+    g.note_arena_temp(ci.recv[0])
+  }
+  if let Some(lit) = g.handler_lit(x, ci) {
+    g.mark_resp_calls(lit)
+  }
+}
+
+/// A producer call marked as an arena temporary (arenaProducer).
+fn (var g: Gen) arena_producer(x: Expr, ci: check.CallInfo) -> (Str, Bool) {
+  if !g.f.arena_temps.contains(g.ek(x)) || ci.recv.is_empty() {
+    return ("", false)
+  }
+  let name = g.arena_producer_func(ci.fn_obj)
+  let rt = g.type_of(ci.recv[0])
+  if name.is_empty() || g.nobj(rt) < 0 || g.targs(rt).is_empty() {
+    return ("", false)
+  }
+  var ts: List[Str] = []
+  for a in g.targs(rt) {
+    ts.push(g.go_type(a))
+  }
+  let r = g.rt()
+  ("${r}${name}[${ts.join(", ")}](tk, ${g.val(ci.recv[0])})", true)
+}
+
+/// A generated `http.json`/`http.text` call renamed to its arena form
+/// when x is a marked response call (arenaRespCode).
+fn (var g: Gen) arena_resp_code(x: Expr, code: Str) -> Str {
+  if !g.f.arena_resp.contains(g.ek(x)) {
+    return code
+  }
+  let r = g.rt()
+  for name in ["Http_json", "Http_text"] {
+    let p = r + name
+    if code.starts_with(p + "[") || code.starts_with(p + "(") {
+      return r + name + "_arena" + code.trim_prefix(p)
+    }
+  }
+  code
+}
+
+/// The mark of a confined handler after an `r.handle` call (arenaRoute).
+fn (var g: Gen) arena_route(x: Expr, ci: check.CallInfo, recv: Str) {
+  match g.handler_lit(x, ci) {
+    None => {}
+    Some(lit) => {
+      if g.confines_req(lit) {
+        g.line("${g.rt()}Http_Router_arenaLast(&${recv})")
+      }
+    }
+  }
+}

@@ -1,0 +1,852 @@
+// Declarations (internal/gen decl.go): types and their derived methods,
+// functions and methods, constants, and invariants.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+fn (g: Gen) include_file(f: Int) -> Bool {
+  if g.c.files[f].is_test {
+    return g.opts.test_mode && g.c.mods[g.c.files[f].module].root
+  }
+  true
+}
+
+/// Every declaration of the current package's module (genModule).
+fn (var g: Gen) gen_module() {
+  let m = g.pkgs[g.p].m
+  let root = g.c.mods[m].root
+  for fi in g.c.mods[m].files {
+    if !g.include_file(fi) {
+      continue
+    }
+    g.pkgs[g.p].cur = fi
+    let file = g.c.files[fi]
+    for (di, d) in file.ast.decls.indexed() {
+      let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+      match d {
+        StructDecl(sd) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Type {
+            g.gen_struct(o, sd)
+          }
+        }
+        EnumDecl(ed) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Type {
+            g.gen_enum(o, ed.span)
+          }
+        }
+        InterfaceDecl(..) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Type {
+            g.gen_interface(o)
+          }
+        }
+        TypeDecl(td) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Type && g.tkind(o) == "newtype" {
+            g.gen_newtype(o, td.span)
+          }
+        }
+        FnDecl(fd) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Func && fd.body != None {
+            g.gen_func(o)
+            if g.opts.test_mode && root && !file.is_test {
+              g.gen_fuzz(o)
+            }
+          }
+        }
+        ConstDecl(..) => {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Const {
+            g.gen_const(o)
+          }
+        }
+        TestDecl(td) => {
+          if g.opts.test_mode && root {
+            let mark = g.begin_decl()
+            let key = "T_${g.pkgs[g.p].tests.len()}"
+            g.gen_test(td)
+            g.end_decl(mark, [key])
+          }
+        }
+        BadDecl(..) => {}
+      }
+    }
+  }
+  if g.opts.test_mode && root {
+    g.gen_test_table()
+  }
+}
+
+/// `[tp_T any, tp_U any]` for the non effect parameters (tparamDecl).
+fn (g: Gen) tparam_decl(ps0: List[Int]) -> Str {
+  let ps = g.type_params(ps0)
+  if ps.is_empty() {
+    return ""
+  }
+  var parts: List[Str] = []
+  for p in ps {
+    parts.push(g.go_tparam(p) + " any")
+  }
+  "[" + parts.join(", ") + "]"
+}
+
+/// `[tp_T, tp_U]` (tparamUse).
+fn (g: Gen) tparam_use(ps0: List[Int]) -> Str {
+  let ps = g.type_params(ps0)
+  if ps.is_empty() {
+    return ""
+  }
+  var parts: List[Str] = []
+  for p in ps {
+    parts.push(g.go_tparam(p))
+  }
+  "[" + parts.join(", ") + "]"
+}
+
+/// The Go type of a declared type inside its own package (selfType).
+fn (g: Gen) self_type(t: Int) -> Str {
+  g.local_type_name(t) + g.tparam_use(g.c.objs[t].tparams)
+}
+
+/// The Go name of a type in its own package (localTypeName).
+fn (g: Gen) local_type_name(t: Int) -> Str {
+  if g.ostd(t) {
+    return g.std_prefix(g.omod(t)) + g.oname(t)
+  }
+  g.oname(t)
+}
+
+/// A field as derived methods read it: its name and its Go code.
+struct FieldRef {
+  name: Str
+  code: Str
+}
+
+/// The fields of a struct read through recv.
+fn (g: Gen) struct_fields(t: Int, recv: Str) -> List[FieldRef] {
+  var fs: List[FieldRef] = []
+  for f in g.c.objs[t].fields {
+    let n = check.text(f.name)
+    fs.push(FieldRef{name: n, code: recv + "." + go_field(n)})
+  }
+  fs
+}
+
+fn (var g: Gen) gen_struct(t: Int, d: parser.StructDecl) {
+  let o = g.c.objs[t]
+  let ltn = g.local_type_name(t)
+  g.pl(g.line_directive_in(g.pkgs[g.p].cur, d.span))
+  g.pl("type ${ltn}${g.tparam_decl(o.tparams)} struct {")
+  for (i, f) in o.fields.indexed() {
+    if g.is_boxed_field(t, i) {
+      let r = g.rt()
+      g.pl("\t${go_field(check.text(f.name))} ${r}Box[${g.go_type(f.ty)}]")
+      continue
+    }
+    g.pl("\t${go_field(check.text(f.name))} ${g.go_type(f.ty)}")
+  }
+  g.pl("}\n")
+  let self = g.self_type(t)
+  // field defaults
+  for f in o.fields {
+    if f.default.is_empty() {
+      continue
+    }
+    let fname = check.text(f.name)
+    let mark = g.begin_decl()
+    let saved_f = g.f
+    g.f = g.new_fn(-1)
+    g.f.frames = [Frame{name: g.oname(t), res_t: f.ty}]
+    let code = g.val(f.default[0])
+    let body = g.f.out.join("")
+    g.f = saved_f
+    let r = g.rt()
+    g.pl("func ${ltn}_D_${fname}${g.tparam_decl(o.tparams)}(tk *${r}Task) ${g.go_type(f.ty)} {")
+    g.pout(body)
+    g.pl("\treturn ${code}\n}\n")
+    g.end_decl(mark, ["${ltn}_D_${fname}"])
+  }
+  g.gen_derived(t, self, g.struct_fields(t, "v"), g.struct_fields(t, "o"))
+  if g.invariant_of(t) != None {
+    g.gen_invariant(t)
+  }
+  var mfs: List[FieldRef] = []
+  var mts: List[Int] = []
+  for (i, f) in o.fields.indexed() {
+    if g.is_boxed_field(t, i) {
+      continue
+    }
+    let n = check.text(f.name)
+    mfs.push(FieldRef{name: n, code: "v." + go_field(n)})
+    mts.push(f.ty)
+  }
+  g.mark_method(self, mfs, mts)
+  if g.derives(t, "Json") {
+    g.gen_json_struct(t)
+  }
+  if g.derives(t, "SqlRow") {
+    g.gen_sql_row_struct(t)
+  }
+  if g.opts.test_mode && !g.pkgs[g.p].in_rt {
+    g.gen_gen_struct(t)
+  }
+}
+
+/// XoEq, XoHash, XoCmp, XoDebug, M_debug, and M_display for a struct or
+/// newtype (genDerived).
+fn (var g: Gen) gen_derived(t: Int, self: Str, fs: List[FieldRef], os: List[FieldRef]) {
+  let rt = g.rt()
+  g.import_std("strings")
+  let tname = g.oname(t)
+  g.pl("func (v ${self}) XoEq(x any) bool {")
+  g.pl("\to, ok := x.(${self})")
+  g.pl("\tif !ok {\n\t\treturn false\n\t}")
+  for i in 0..fs.len() {
+    g.pl("\tif !${rt}Eq(${fs[i].code}, ${os[i].code}) {\n\t\treturn false\n\t}")
+  }
+  g.pl("\t_ = o\n\treturn true\n}\n")
+  g.pl("func (v ${self}) XoHash() uint64 {")
+  g.pl("\th := uint64(${hash_seed_of(tname)})")
+  for f in fs {
+    g.pl("\th = ${rt}MixHash(h, ${rt}Hash(${f.code}))")
+  }
+  g.pl("\treturn h\n}\n")
+  if g.derives(t, "Ord") {
+    g.pl("func (v ${self}) XoCmp(x any) int {")
+    g.pl("\to := x.(${self})")
+    for i in 0..fs.len() {
+      g.pl("\tif c := ${rt}Cmp(${fs[i].code}, ${os[i].code}); c != 0 {\n\t\treturn c\n\t}")
+    }
+    g.pl("\t_ = o\n\treturn 0\n}\n")
+  }
+  g.pl("func (v ${self}) XoDebug(b *strings.Builder) {")
+  if g.tkind(t) == "newtype" {
+    g.pl("\tb.WriteString(${(tname + "(").quote()})")
+    g.pl("\t${rt}DebugTo(b, v.F0)")
+    g.pl("\tb.WriteString(\")\")")
+  } else {
+    g.pl("\tb.WriteString(${(tname + "{").quote()})")
+    for (i, f) in fs.indexed() {
+      let sep = if i > 0 { ", " } else { "" }
+      g.pl("\tb.WriteString(${(sep + f.name + ": ").quote()})")
+      g.pl("\t${rt}DebugTo(b, ${f.code})")
+    }
+    g.pl("\tb.WriteString(\"}\")")
+  }
+  g.pl("}\n")
+  g.gen_iface_methods(t, self)
+  g.gen_typed_eq(t, self, fs, os)
+}
+
+/// M_debug unless declared, and M_display for `derive Display`
+/// (genIfaceMethods).
+fn (var g: Gen) gen_iface_methods(t: Int, self: Str) {
+  let rt = g.rt()
+  if g.method_named(t, "debug") < 0 {
+    g.pl("func (v ${self}) M_debug(*${rt}Task) string { return ${rt}Debug(v) }\n")
+  }
+  if g.derives(t, "Display") && g.method_named(t, "display") < 0 && !rt_hand_written(g.local_type_name(t) + ".M_display") {
+    g.pl("func (v ${self}) M_display(*${rt}Task) string { return ${rt}Debug(v) }\n")
+  }
+}
+
+/// The methods of std types the runtime writes by hand (rtHandWritten).
+fn rt_hand_written(key: Str) -> Bool {
+  key == "Json_DecodeErr.M_display" || key == "Json_Patch.json"
+}
+
+/// FNV-1a of the type name, shifted right once (hashSeedOf).
+fn hash_seed_of(name: Str) -> Str {
+  var h = 1469598103934665603
+  for c in name.bytes() {
+    h = h ^ Int(c)
+    h = h.wrapping_mul(1099511628211)
+  }
+  "${(h >> 1) & 9223372036854775807}"
+}
+
+fn (var g: Gen) gen_newtype(t: Int, sp: Span) {
+  let o = g.c.objs[t]
+  g.pl(g.line_directive_in(g.pkgs[g.p].cur, sp))
+  g.pl("type ${g.local_type_name(t)}${g.tparam_decl(o.tparams)} struct {\n\tF0 ${g.go_type(o.target)}\n}\n")
+  let self = g.self_type(t)
+  g.gen_derived(t, self, [FieldRef{name: "0", code: "v.F0"}], [FieldRef{name: "0", code: "o.F0"}])
+  g.mark_method(self, [FieldRef{name: "0", code: "v.F0"}], [o.target])
+  if g.derives(t, "Json") {
+    g.gen_json_newtype(t)
+  }
+  if g.opts.test_mode && !g.pkgs[g.p].in_rt {
+    g.gen_gen_newtype(t)
+  }
+}
+
+/// The payload type name of a variant in the enum's own package
+/// (localVariantType).
+fn (g: Gen) local_variant_type(t: Int, v: Int) -> Str {
+  g.local_type_name(t) + "_" + check.text(g.c.objs[t].variants[v].name)
+}
+
+fn (var g: Gen) gen_enum(t: Int, sp: Span) {
+  let o = g.c.objs[t]
+  let rt = g.rt()
+  g.import_std("strings")
+  g.pl(g.line_directive_in(g.pkgs[g.p].cur, sp))
+  g.pl("type ${g.local_type_name(t)}${g.tparam_decl(o.tparams)} struct {\n\tTag int\n\tP any\n}\n")
+  let self = g.self_type(t)
+  let tuse = g.tparam_use(o.tparams)
+  for (vi, v) in o.variants.indexed() {
+    if v.fields.is_empty() {
+      continue
+    }
+    g.pl("type ${g.local_variant_type(t, vi)}${g.tparam_decl(o.tparams)} struct {")
+    for (i, f) in v.fields.indexed() {
+      g.pl("\t${g.vfield_name(f, i)} ${g.go_type(f.ty)}")
+    }
+    g.pl("}\n")
+  }
+  // Eq
+  g.pl("func (v ${self}) XoEq(x any) bool {")
+  g.pl("\to, ok := x.(${self})")
+  g.pl("\tif !ok || o.Tag != v.Tag {\n\t\treturn false\n\t}")
+  g.pl("\tswitch v.Tag {")
+  for (vi, v) in o.variants.indexed() {
+    if v.fields.is_empty() {
+      continue
+    }
+    let pt = g.local_variant_type(t, vi) + tuse
+    g.pl("\tcase ${v.index + 1}:")
+    g.pl("\t\ta, b := v.P.(${pt}), o.P.(${pt})")
+    var conds: List[Str] = []
+    for (i, f) in v.fields.indexed() {
+      let fname = g.vfield_name(f, i)
+      conds.push("${rt}Eq(a.${fname}, b.${fname})")
+    }
+    g.pl("\t\treturn ${conds.join(" && ")}")
+  }
+  g.pl("\t}\n\treturn true\n}\n")
+  // Hash
+  g.pl("func (v ${self}) XoHash() uint64 {")
+  g.pl("\th := ${rt}MixHash(uint64(${hash_seed_of(g.oname(t))}), uint64(v.Tag))")
+  g.pl("\tswitch v.Tag {")
+  for (vi, v) in o.variants.indexed() {
+    if v.fields.is_empty() {
+      continue
+    }
+    g.pl("\tcase ${v.index + 1}:")
+    g.pl("\t\ta := v.P.(${g.local_variant_type(t, vi)}${tuse})")
+    for (i, f) in v.fields.indexed() {
+      g.pl("\t\th = ${rt}MixHash(h, ${rt}Hash(a.${g.vfield_name(f, i)}))")
+    }
+  }
+  g.pl("\t}\n\treturn h\n}\n")
+  // Ord: variant order, then fields
+  if g.derives(t, "Ord") {
+    g.pl("func (v ${self}) XoCmp(x any) int {")
+    g.pl("\to := x.(${self})")
+    g.pl("\tif v.Tag != o.Tag {\n\t\tif v.Tag < o.Tag {\n\t\t\treturn -1\n\t\t}\n\t\treturn 1\n\t}")
+    g.pl("\tswitch v.Tag {")
+    for (vi, v) in o.variants.indexed() {
+      if v.fields.is_empty() {
+        continue
+      }
+      let pt = g.local_variant_type(t, vi) + tuse
+      g.pl("\tcase ${v.index + 1}:")
+      g.pl("\t\ta, b := v.P.(${pt}), o.P.(${pt})")
+      for (i, f) in v.fields.indexed() {
+        let fname = g.vfield_name(f, i)
+        g.pl("\t\tif c := ${rt}Cmp(a.${fname}, b.${fname}); c != 0 {\n\t\t\treturn c\n\t\t}")
+      }
+    }
+    g.pl("\t}\n\treturn 0\n}\n")
+  }
+  // Debug
+  g.pl("func (v ${self}) XoDebug(b *strings.Builder) {")
+  g.pl("\tswitch v.Tag {")
+  for (vi, v) in o.variants.indexed() {
+    g.pl("\tcase ${v.index + 1}:")
+    let vname = check.text(v.name)
+    if v.fields.is_empty() {
+      g.pl("\t\tb.WriteString(${vname.quote()})")
+      continue
+    }
+    g.pl("\t\ta := v.P.(${g.local_variant_type(t, vi)}${tuse})")
+    g.pl("\t\tb.WriteString(${(vname + "(").quote()})")
+    for (i, f) in v.fields.indexed() {
+      var sep = if i > 0 { ", " } else { "" }
+      if !f.from && !f.name.is_empty() {
+        sep = sep + check.text(f.name) + ": "
+      }
+      if !sep.is_empty() {
+        g.pl("\t\tb.WriteString(${sep.quote()})")
+      }
+      g.pl("\t\t${rt}DebugTo(b, a.${g.vfield_name(f, i)})")
+    }
+    g.pl("\t\tb.WriteString(\")\")")
+  }
+  g.pl("\t}\n}\n")
+  g.gen_iface_methods(t, self)
+  if g.derives(t, "Json") && !rt_hand_written(g.local_type_name(t) + ".json") {
+    g.gen_json_enum(t)
+  }
+  if g.opts.test_mode && !g.pkgs[g.p].in_rt {
+    g.gen_gen_enum(t)
+  }
+}
+
+fn (var g: Gen) gen_interface(t: Int) {
+  if let Some(d) = g.type_decl(t) {
+    g.pl(g.line_directive_in(g.c.objs[t].decl_file, decl_span(d)))
+  }
+  g.pl("type ${g.local_type_name(t)}${g.tparam_decl(g.c.objs[t].tparams)} interface {")
+  for m in g.c.objs[t].iface_meths {
+    if !g.type_params(g.own_tparams(m)).is_empty() {
+      // generic interface methods are not Go interface methods
+      continue
+    }
+    g.pl("\t${go_method(g.oname(m))}${g.sig_tail(m)}")
+  }
+  g.pl("}\n")
+}
+
+/// Whether the Go form of a declared function returns rt.Result
+/// (returnsResult).
+fn (g: Gen) returns_result(fo: Int) -> Bool {
+  let e = g.c.objs[fo].err
+  e >= 0 && !g.c.is_never(e)
+}
+
+/// Whether the Go form returns nothing: `-> ()` that cannot fail
+/// (returnsVoid).
+fn (g: Gen) returns_void(fo: Int) -> Bool {
+  !g.returns_result(fo) && g.is_unit(g.c.objs[fo].result)
+}
+
+/// The Go result type of a declared function, "" for void (goResult).
+fn (var g: Gen) go_result(fo: Int) -> Str {
+  if g.returns_result(fo) {
+    return g.result_of(g.c.objs[fo].result, g.c.objs[fo].err)
+  }
+  if g.returns_void(fo) {
+    return ""
+  }
+  g.go_type(g.c.objs[fo].result)
+}
+
+/// `(tk *rt.Task, p0 T0, ...) R` for a declared function (sigTail).
+fn (var g: Gen) sig_tail(fo: Int) -> Str {
+  var b = "(tk *${g.rt()}Task"
+  for (i, p) in g.c.objs[fo].params.indexed() {
+    b = b + ", p${i} "
+    if p.is_var {
+      b = b + "*"
+    }
+    b = b + g.go_type(p.ty)
+  }
+  b = b + ")"
+  let r = g.go_result(fo)
+  if !r.is_empty() {
+    b = b + " " + r
+  }
+  b
+}
+
+/// Whether the std generic type o keeps its methods as package level
+/// functions in the runtime (rtFuncMethods).
+fn (g: Gen) rt_func_methods(o: Int) -> Bool {
+  if o < 0 || g.omod(o) < 0 || !g.ostd(o) {
+    return false
+  }
+  if g.oprelude(o) {
+    return g.oname(o) is "List" | "Map" | "Set" | "Option" | "Result" | "Chan" | "Secret"
+  }
+  g.c.mods[g.omod(o)].path == "std/json" && g.oname(o) == "Patch"
+}
+
+fn (g: Gen) method_is_go_method(fo: Int) -> Bool {
+  let o = g.c.objs[fo]
+  if o.iface {
+    return g.type_params(g.own_tparams(fo)).is_empty()
+  }
+  if o.is_static || o.recv < 0 {
+    return false
+  }
+  if !g.type_params(g.own_tparams(fo)).is_empty() {
+    return false
+  }
+  let name = g.oname(fo)
+  if g.ostd(fo) && g.rt_func_methods(o.recv) && name != "display" && name != "debug" {
+    return false
+  }
+  if g.ostd(fo) && g.oprelude(o.recv) {
+    let rn = g.oname(o.recv)
+    if !scalar_go(rn).is_empty() {
+      return false
+    }
+    if rn is "Rune" | "Bytes" | "Duration" | "Time" {
+      return false
+    }
+  }
+  if g.grows_self(fo) {
+    return false
+  }
+  // the receiver's type arguments must be exactly its parameters
+  let rt = o.recv_ty
+  if rt < 0 || g.c.tys[rt].kind != check.TyKind.Named {
+    return true
+  }
+  var seen: Map[Int, Bool] = {}
+  for a in g.type_args(rt) {
+    let ax = g.c.tys[a]
+    if ax.kind != check.TyKind.Param || seen.contains(ax.obj) {
+      return false
+    }
+    seen[ax.obj] = true
+  }
+  true
+}
+
+/// Whether a method's signature instantiates its own receiver type (or
+/// List) with arguments other than the receiver's parameters (growsSelf).
+fn (g: Gen) grows_self(fo: Int) -> Bool {
+  let o = g.c.objs[fo]
+  let rt = o.recv_ty
+  if rt < 0 || g.c.tys[rt].kind != check.TyKind.Named {
+    return false
+  }
+  let recv_args = g.type_args(rt)
+  for p in o.params {
+    if g.grows(fo, recv_args, p.ty) {
+      return true
+    }
+  }
+  if g.grows(fo, recv_args, o.result) {
+    return true
+  }
+  if g.ostd(fo) && g.oprelude(o.recv) && g.oname(o.recv) == "Map" && g.oname(fo) == "entries" {
+    return true
+  }
+  o.err >= 0 && g.grows(fo, recv_args, o.err)
+}
+
+fn (g: Gen) grows(fo: Int, recv_args: List[Int], t0: Int) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Named => {
+      if x.obj == g.c.objs[fo].recv {
+        let args = g.type_args(t)
+        if args.len() != recv_args.len() {
+          return true
+        }
+        for i in 0..args.len() {
+          let a = g.c.tys[g.c.resolve(args[i])]
+          let b = g.c.tys[g.c.resolve(recv_args[i])]
+          if a.kind != check.TyKind.Param || b.kind != check.TyKind.Param || a.obj != b.obj {
+            return true
+          }
+        }
+      }
+      for a in x.args {
+        if g.grows(fo, recv_args, a) {
+          return true
+        }
+      }
+      false
+    }
+    Tuple => {
+      for e in x.args {
+        if g.grows(fo, recv_args, e) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for p in x.args {
+        if g.grows(fo, recv_args, p) {
+          return true
+        }
+      }
+      g.grows(fo, recv_args, x.result) || (x.err >= 0 && g.grows(fo, recv_args, x.err))
+    }
+    _ => false
+  }
+}
+
+/// The type parameters bound by a method receiver (recvTParams).
+fn (g: Gen) recv_tparams(fo: Int) -> List[Int] {
+  let rt = g.c.objs[fo].recv_ty
+  if rt < 0 || g.c.tys[rt].kind != check.TyKind.Named {
+    return []
+  }
+  var out: List[Int] = []
+  for a in g.type_args(rt) {
+    if g.c.tys[a].kind == check.TyKind.Param {
+      out.push(g.c.tys[a].obj)
+    }
+  }
+  out
+}
+
+/// The Go name of a declared user function or method (funcGoName).
+fn (g: Gen) func_go_name(fo: Int) -> Str {
+  let o = g.c.objs[fo]
+  if o.recv < 0 {
+    return "F_" + g.oname(fo)
+  }
+  if g.method_is_go_method(fo) {
+    return go_method(g.oname(fo))
+  }
+  g.oname(o.recv) + "_M_" + g.oname(fo)
+}
+
+/// A declared function or method (genFunc).
+fn (var g: Gen) gen_func(fo: Int) {
+  g.gen_func_with(fo, None)
+}
+
+fn replace_first(s: Str, old: Str, new: Str) -> Str {
+  match s.find(old) {
+    None => s
+    Some(i) => {
+      let bs = s.bytes()
+      (bs[0..i].to_str() ?? "") + new + (bs[i + old.len()..bs.len()].to_str() ?? "")
+    }
+  }
+}
+
+/// A declared function or method, or with sp a specialized copy of a
+/// generic one (genFuncWith).
+fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
+  let o = g.c.objs[fo]
+  let saved_on = g.pkgs[g.p].ms.on
+  let saved_sub = g.pkgs[g.p].ms.sub
+  let saved_depth = g.pkgs[g.p].ms.depth
+  if let Some(r) = sp {
+    g.pkgs[g.p].ms.on = true
+    g.pkgs[g.p].ms.sub = r.sub
+    g.pkgs[g.p].ms.depth = r.depth
+  }
+  let fd = o.fn_decl[0]
+  let saved_file = g.pkgs[g.p].cur
+  let mark = g.begin_decl()
+  let saved_f = g.f
+  g.f = g.new_fn(fo)
+  g.f.file = o.decl_file
+  var fr = Frame{fo: fo, name: g.frame_name(fo), res_t: o.result, err_t: o.err}
+  if o.err >= 0 && g.c.is_never(o.err) {
+    fr.err_t = -1
+  }
+  fr.go_res = g.go_result(fo)
+  fr.is_result = g.returns_result(fo)
+  g.f.frames = [fr]
+  g.f.fr = 0
+  var params: List[Str] = []
+  // receiver
+  var recv = ""
+  let rv = g.recv_var(fo)
+  let is_spec = sp != None
+  if rv >= 0 {
+    let name = g.decl_name(rv)
+    var rtype = g.go_type(o.recv_ty)
+    if o.recv_var {
+      g.f.names[rv] = "(*" + name + ")"
+      rtype = "*" + rtype
+    }
+    g.f.frames[0].params.push(ParamRef{xo: g.oname(rv), code: g.f.names.get(rv) ?? "", t: o.recv_ty})
+    if g.method_is_go_method(fo) && !is_spec {
+      recv = "(${name} ${rtype}) "
+    } else {
+      params.push(name + " " + rtype)
+    }
+  }
+  for (i, pv) in g.param_vars(fo).indexed() {
+    if let Some(r) = sp {
+      if let Some(lit) = r.lits.get(i) {
+        g.f.lit_params[pv] = lit
+      }
+    }
+    let name = g.decl_name(pv)
+    var pt = g.go_type(o.params[i].ty)
+    if o.params[i].is_var {
+      g.f.names[pv] = "(*" + name + ")"
+      pt = "*" + pt
+    }
+    params.push(name + " " + pt)
+    g.f.frames[0].params.push(ParamRef{xo: g.oname(pv), code: g.f.names.get(pv) ?? "", t: o.params[i].ty})
+  }
+  var tps = o.tparams
+  if !recv.is_empty() || is_spec {
+    // a Go method gets its type parameters from the receiver; a copy has
+    // none
+    tps = []
+  }
+  var name = g.func_go_name(fo)
+  if let Some(r) = sp {
+    name = r.name
+  }
+  // receiver type parameter names come from the receiver type pattern
+  var recv_text = recv
+  if !recv.is_empty() {
+    let rtps = g.recv_tparams(fo)
+    recv_text = replace_first(recv, g.go_type(o.recv_ty), g.oname(o.recv) + g.tparam_use(rtps))
+  }
+  var fixed: List[Int] = []
+  var by_ref: List[Int] = []
+  if rv >= 0 {
+    if o.recv_var {
+      by_ref.push(rv)
+    } else {
+      fixed.push(rv)
+    }
+  }
+  for (i, pv) in g.param_vars(fo).indexed() {
+    if o.params[i].is_var {
+      by_ref.push(pv)
+    } else {
+      fixed.push(pv)
+    }
+  }
+  let body_b = fd.body ?? parser.Block{span: fd.span}
+  g.analyze_ranges(body_b, fixed, by_ref)
+  let body = g.func_body(fd)
+  var sig = "func ${recv_text}${name}${g.tparam_decl(tps)}(tk *${g.rt()}Task"
+  for p in params {
+    sig = sig + ", " + p
+  }
+  sig = sig + ")"
+  let go_res = g.fr().go_res
+  if !go_res.is_empty() {
+    sig = sig + " " + go_res
+  }
+  let ld = g.line_directive(fd.span)
+  g.f = saved_f
+  g.pl(ld)
+  g.pl(sig + " {")
+  g.pout(body)
+  g.pl("}\n")
+  var key = name
+  if !recv.is_empty() {
+    key = "${g.oname(o.recv)}.${name}"
+  }
+  g.end_decl(mark, [key])
+  g.pkgs[g.p].cur = saved_file
+  if sp != None {
+    g.pkgs[g.p].ms.on = saved_on
+    g.pkgs[g.p].ms.sub = saved_sub
+    g.pkgs[g.p].ms.depth = saved_depth
+    // a copy calls the generic default functions
+    return
+  }
+  // parameter defaults
+  for (i, p) in o.params.indexed() {
+    if p.default.is_empty() {
+      continue
+    }
+    let dmark = g.begin_decl()
+    let saved_f2 = g.f
+    g.f = g.new_fn(-1)
+    g.f.file = o.decl_file
+    g.f.frames = [Frame{name: g.oname(fo), res_t: p.ty}]
+    let code = g.val(p.default[0])
+    let dbody = g.f.out.join("")
+    g.f = saved_f2
+    let r = g.rt()
+    g.pl("func ${name}_D_${i}${g.tparam_decl(o.tparams)}(tk *${r}Task) ${g.go_type(p.ty)} {")
+    g.pout(dbody)
+    g.pl("\treturn ${code}\n}\n")
+    g.end_decl(dmark, ["${name}_D_${i}"])
+  }
+}
+
+/// The function name in error frames: `module.fn` or `module.Type.fn`
+/// (frameName).
+fn (g: Gen) frame_name(fo: Int) -> Str {
+  let o = g.c.objs[fo]
+  let mname = g.c.mods[o.module].name
+  if o.recv >= 0 {
+    return "${mname}.${g.oname(o.recv)}.${g.oname(fo)}"
+  }
+  "${mname}.${g.oname(fo)}"
+}
+
+/// Whether Go code refers to the task variable tk (usesTask).
+fn uses_task(code: Str) -> Bool {
+  let bs = code.bytes()
+  var i = 0
+  while i + 1 < bs.len() {
+    if bs[i] == 't' && bs[i + 1] == 'k' {
+      let before = i == 0 || !is_word_byte(bs[i - 1])
+      let after = i + 2 >= bs.len() || !is_word_byte(bs[i + 2])
+      if before && after {
+        return true
+      }
+    }
+    i += 1
+  }
+  false
+}
+
+fn is_word_byte(c: UInt8) -> Bool {
+  c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+fn (var g: Gen) gen_const(co: Int) {
+  let o = g.c.objs[co]
+  let d = match g.c.files[o.decl_file].ast.decls[o.decl_idx] {
+    ConstDecl(d) => d
+    _ => fault("const")
+  }
+  let mark = g.begin_decl()
+  let saved_f = g.f
+  g.f = g.new_fn(-1)
+  g.f.file = o.decl_file
+  g.f.frames = [Frame{name: g.oname(co), res_t: o.ty}]
+  let code = g.val(d.value)
+  let body = g.f.out.join("")
+  let ld = g.line_directive(d.span)
+  g.f = saved_f
+  g.pl(ld)
+  g.pl("var C_${g.oname(co)} = func() ${g.go_type(o.ty)} {")
+  if uses_task(body + code) {
+    g.pl("\ttk := ${g.rt()}InitTask")
+    g.pl("\t_ = tk")
+  }
+  g.pout(body)
+  g.pl("\treturn ${code}\n}()\n")
+  g.end_decl(mark, ["C_${g.oname(co)}"])
+}
+
+/// `xoInvariant` for a struct with an invariant (genInvariant).
+fn (var g: Gen) gen_invariant(t: Int) {
+  let o = g.c.objs[t]
+  let inv = g.invariant_of(t) ?? Expr.UnitExpr(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}})
+  let mark = g.begin_decl()
+  let saved_f = g.f
+  g.f = g.new_fn(-1)
+  g.f.file = o.decl_file
+  g.f.frames = [Frame{name: g.oname(t)}]
+  let vars = g.c.inv_vars.get(t) ?? []
+  for (i, v) in vars.indexed() {
+    var n = "v." + go_field(check.text(o.fields[i].name))
+    if g.is_boxed_field(t, i) {
+      n = n + ".Get()"
+    }
+    g.f.names[v] = n
+  }
+  let code = g.val(inv)
+  let body = g.f.out.join("")
+  let src = g.source(parser.expr_span(inv))
+  g.f = saved_f
+  let self = g.self_type(t)
+  let rt = g.rt()
+  g.pl("func (v ${self}) XoInvariant(tk *${rt}Task, at string) {")
+  g.pout(body)
+  g.pl("\t${g.rt()}Invariant(${code}, ${g.oname(t).quote()}, ${src.quote()}, at)")
+  g.pl("}\n")
+  g.pl("func (v ${self}) xoInvariantHolds(tk *${g.rt()}Task) bool {")
+  g.pout(body)
+  g.pl("\treturn ${code}\n}\n")
+  let ltn = g.local_type_name(t)
+  g.end_decl(mark, ["${ltn}.XoInvariant", "${ltn}.xoInvariantHolds"])
+}

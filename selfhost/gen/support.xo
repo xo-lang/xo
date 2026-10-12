@@ -1,0 +1,587 @@
+// Walks, std defaults, interface adapters, and the entry points
+// (internal/gen support.go).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+// ---------------------------------------------------------------------------
+// Walks
+
+/// A node of a walk in preorder; end is the index after its subtree.
+struct NE {
+  node: Node
+  end: Int
+}
+
+/// The nodes under n in preorder (inspectNode): expressions, statements,
+/// and blocks, closures included. A visitor skips a subtree by going on
+/// at its end.
+fn flatten(n: Node) -> List[NE] {
+  var out: List[NE] = []
+  walk_into(out, n)
+  out
+}
+
+fn walk_into(var out: List[NE], n: Node) {
+  let i = out.len()
+  out.push(NE{node: n, end: 0})
+  match n {
+    E(e) => walk_expr_kids(out, e)
+    S(s) => walk_stmt_kids(out, s)
+    N => {}
+  }
+  out[i] = NE{node: n, end: out.len()}
+}
+
+fn walk_opt(var out: List[NE], e: Expr?) {
+  if let Some(x) = e {
+    walk_into(out, Node.E(x))
+  }
+}
+
+fn walk_expr_kids(var out: List[NE], e: Expr) {
+  match e {
+    Block(b) => {
+      for s in b.stmts {
+        walk_into(out, Node.S(s))
+      }
+    }
+    ParenExpr(x: x, ..) => walk_into(out, Node.E(x))
+    TupleExpr(elems: elems, ..) | ListLit(elems: elems, ..) | SetLit(elems: elems, ..) => {
+      for x in elems {
+        walk_into(out, Node.E(x))
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        walk_into(out, Node.E(en.key))
+        walk_into(out, Node.E(en.value))
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for fi in fields {
+        walk_into(out, Node.E(fi.value))
+      }
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      walk_into(out, Node.E(x))
+      for fi in fields {
+        walk_into(out, Node.E(fi.value))
+      }
+    }
+    StringLit(s) => {
+      for p in s.parts {
+        walk_opt(out, p.expr)
+      }
+    }
+    UnaryExpr(x: x, ..) => walk_into(out, Node.E(x))
+    BinaryExpr(x: x, y: y, ..) => {
+      walk_into(out, Node.E(x))
+      walk_into(out, Node.E(y))
+    }
+    IsExpr(x: x, ..) => walk_into(out, Node.E(x))
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      walk_opt(out, lo)
+      walk_opt(out, hi)
+    }
+    SelectorExpr(x: x, ..) => walk_into(out, Node.E(x))
+    CallExpr(fun: fun, args: args, ..) => {
+      walk_into(out, Node.E(fun))
+      for a in args {
+        walk_into(out, Node.E(a.value))
+      }
+    }
+    TypeArgsExpr(x: x, ..) => walk_into(out, Node.E(x))
+    IndexExpr(x: x, index: index, ..) => {
+      walk_into(out, Node.E(x))
+      walk_into(out, Node.E(index))
+    }
+    TryExpr(x: x, ..) => walk_into(out, Node.E(x))
+    IfExpr(x) => {
+      walk_opt(out, x.cond)
+      walk_opt(out, x.value)
+      walk_into(out, Node.E(Expr.Block(x.then)))
+      walk_opt(out, x.els)
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      walk_into(out, Node.E(subject))
+      for arm in arms {
+        walk_opt(out, arm.guard)
+        if let Some(b) = arm.body {
+          walk_into(out, Node.S(b))
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) => walk_into(out, Node.E(Expr.Block(body)))
+    SelectExpr(arms: arms, ..) => {
+      for arm in arms {
+        walk_opt(out, arm.op)
+        walk_opt(out, arm.after)
+        if let Some(b) = arm.body {
+          walk_into(out, Node.S(b))
+        }
+      }
+    }
+    FnLit(f) => walk_into(out, Node.E(Expr.Block(f.body)))
+    WhileExpr(body: body, ..) => walk_into(out, Node.E(Expr.Block(body)))
+    _ => {}
+  }
+}
+
+fn walk_stmt_kids(var out: List[NE], s: Stmt) {
+  match s {
+    ExprStmt(x: x, ..) => walk_into(out, Node.E(x))
+    LetStmt(value: value, ..) => walk_into(out, Node.E(value))
+    VarStmt(value: value, ..) => walk_into(out, Node.E(value))
+    ConstDecl(d) => walk_into(out, Node.E(d.value))
+    AssignStmt(target: target, value: value, ..) => {
+      walk_into(out, Node.E(target))
+      walk_into(out, Node.E(value))
+    }
+    DeferStmt(body: body, ..) => walk_into(out, Node.S(body))
+    ReturnStmt(value: value, ..) => walk_opt(out, value)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      walk_into(out, Node.E(iter))
+      for b in bound {
+        walk_into(out, Node.E(b))
+      }
+      walk_into(out, Node.E(Expr.Block(body)))
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      walk_opt(out, cond)
+      for v in value {
+        walk_into(out, Node.E(v))
+      }
+      for b in bound {
+        walk_into(out, Node.E(b))
+      }
+      walk_into(out, Node.E(Expr.Block(body)))
+    }
+    _ => {}
+  }
+}
+
+fn is_none_node(n: Node) -> Bool {
+  match n {
+    N => true
+    E(..) | S(..) => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Std defaults
+
+/// The default value of a std parameter or field: literal forms
+/// (stdDefault).
+fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
+  let r = g.rt()
+  match e {
+    IntLit(value: value, ..) => return g.int_lit(check.text(value), t)
+    DurationLit(nanos: nanos, ..) => return "${r}Duration(${check.text(nanos)})"
+    RuneLit(value: value, ..) => return "${r}Rune(${value})"
+    BytesLit(value: value, ..) => return "${r}Bytes(${value.quote()})"
+    StringLit(s) => {
+      var b = BytesBuilder.new()
+      for p in s.parts {
+        b.write(p.text)
+      }
+      return b.freeze().quote()
+    }
+    MapLit(..) | ListLit(..) | SetLit(..) => return g.go_type(t) + "{}"
+    SelectorExpr(sel: sel, ..) => {
+      let o = g.nobj(t)
+      if o >= 0 && g.tkind(o) == "enum" {
+        for (i, v) in g.c.objs[o].variants.indexed() {
+          if v.name == sel.name {
+            return g.variant_value(check.VRef{en: o, variant: i}, t, [])
+          }
+        }
+      }
+    }
+    Ident(id) => {
+      if id.name == b"true" || id.name == b"false" {
+        return check.text(id.name)
+      }
+    }
+    _ => {}
+  }
+  g.errorf(parser.expr_span(e), "unsupported std default value")
+  "nil"
+}
+
+// ---------------------------------------------------------------------------
+// Interface adapters (core 2.4, 2.10)
+
+/// The Go signature tail of a method under a substitution (methodSig).
+fn (var g: Gen) method_sig(fo: Int, sub: Map[Int, Int]) -> Str {
+  let o = g.c.objs[fo]
+  var parts: List[Str] = []
+  for p in o.params {
+    var t = p.ty
+    if !sub.is_empty() {
+      t = g.sub_apply(t, sub)
+    }
+    var s = g.go_type(t)
+    if p.is_var {
+      s = "*" + s
+    }
+    parts.push(s)
+  }
+  var res = ""
+  if g.returns_result(fo) {
+    var r = o.result
+    var e = o.err
+    if !sub.is_empty() {
+      r = g.sub_apply(r, sub)
+      e = g.sub_apply(e, sub)
+    }
+    res = g.result_of(r, e)
+  } else if g.returns_void(fo) {
+  } else {
+    var r = o.result
+    if !sub.is_empty() {
+      r = g.sub_apply(r, sub)
+    }
+    res = g.go_type(r)
+  }
+  "(" + parts.join(", ") + ") " + res
+}
+
+/// The method name on t and the substitution of its receiver type
+/// parameters (Info.FindMethod).
+fn (var g: Gen) find_method(t: Int, name: Str) -> (Int, Map[Int, Int]) {
+  g.c.find_method(t, name)
+}
+
+/// The name of a generated adapter type that makes a value of type from
+/// satisfy interface to when its Go methods differ, or ""
+/// (ifaceAdapter).
+fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
+  let tn = g.nobj(to)
+  if tn < 0 || g.contains_param(from) || g.contains_param(to) {
+    return ""
+  }
+  let isub = g.subst_of(tn, to)
+  var ims: List[Int] = []
+  var ms: List[Int] = []
+  var msubs: List[Map[Int, Int]] = []
+  var differ = false
+  for im in g.c.objs[tn].iface_meths {
+    if !g.type_params(g.own_tparams(im)).is_empty() {
+      continue
+    }
+    let (m, msub) = g.find_method(from, g.oname(im))
+    if m < 0 {
+      return ""
+    }
+    if g.c.objs[m].iface && !g.is_interface(from) {
+      return ""
+    }
+    if g.method_sig(m, msub) != g.method_sig(im, isub) || !g.method_is_go_method(m) {
+      differ = true
+    }
+    ims.push(im)
+    ms.push(m)
+    msubs.push(msub)
+  }
+  if !differ {
+    return ""
+  }
+  let key = g.go_type(from) + "|" + g.go_type(to)
+  let name = "xoAdapt_${g.pkgs[g.p].adapt.len()}"
+  if let Some(n) = g.pkgs[g.p].adapt.get(key) {
+    return n
+  }
+  g.pkgs[g.p].adapt[key] = name
+  let rt = g.rt()
+  g.import_std("strings")
+  var b = StrBuilder.new()
+  b.write("type ${name} struct{ V ${g.go_type(from)} }\n\n")
+  b.write("func (a ${name}) XoDebug(b *strings.Builder) { ${rt}DebugTo(b, a.V) }\n")
+  b.write("func (a ${name}) XoEq(o any) bool { if p, ok := o.(${name}); ok { return ${rt}EqAny(a.V, p.V) }; return false }\n")
+  b.write("func (a ${name}) XoHash() uint64 { return ${rt}HashAny(a.V) }\n\n")
+  for (k, im) in ims.indexed() {
+    let m = ms[k]
+    let msub = msubs[k]
+    let saved_f = g.f
+    g.f = g.new_fn(-1)
+    var ps: List[Str] = []
+    var args: List[Str] = []
+    for (i, prm) in g.c.objs[im].params.indexed() {
+      let t = g.sub_apply(prm.ty, isub)
+      var s = g.go_type(t)
+      if prm.is_var {
+        s = "*" + s
+      }
+      ps.push("p${i} ${s}")
+      args.push("p${i}")
+    }
+    let (call, kind) = g.emit_call(m, msub, "a.V", args, false)
+    var ires = ""
+    var body = ""
+    var mr = g.c.objs[m].result
+    if !msub.is_empty() {
+      mr = g.sub_apply(mr, msub)
+    }
+    if g.returns_result(im) {
+      let ir = g.sub_apply(g.c.objs[im].result, isub)
+      let ie = g.sub_apply(g.c.objs[im].err, isub)
+      ires = g.result_of(ir, ie)
+      if kind == CK_VOID {
+        body = "${call}; return ${rt}Ok[${g.go_type(ir)}, ${g.go_type(ie)}](${rt}Unit{})"
+      } else if g.returns_result(m) && !call.ends_with(".V") {
+        var me = g.c.objs[m].err
+        if !msub.is_empty() {
+          me = g.sub_apply(me, msub)
+        }
+        let a1 = g.go_type(ir)
+        let a2 = g.go_type(ie)
+        let a3 = g.go_type(ir)
+        let a4 = g.coerce_err("r.E", me, ie)
+        body = "r := ${call}; if r.Ok { return ${rt}Ok[${a1}, ${a2}](r.V) }; return ${rt}ErrTr[${a3}](${a4}, r.Tr)"
+      } else {
+        let a1 = g.go_type(ir)
+        let a2 = g.go_type(ie)
+        let a3 = g.coerce(call, mr, ir)
+        body = "return ${rt}Ok[${a1}, ${a2}](${a3})"
+      }
+    } else if g.returns_void(im) {
+      body = call
+    } else {
+      let ir = g.sub_apply(g.c.objs[im].result, isub)
+      ires = g.go_type(ir)
+      if kind == CK_VOID {
+        body = call + "; return " + rt + "Unit{}"
+      } else {
+        body = "return " + g.coerce(call, mr, ir)
+      }
+    }
+    g.f = saved_f
+    b.write("func (a ${name}) ${go_method(g.oname(im))}(tk *${rt}Task${prefix_comma(ps)}) ${ires} { ${body} }\n")
+  }
+  g.pkgs[g.p].keep[g.pkgs[g.p].out.len()] = true
+  g.pout(b.freeze())
+  g.pkgs[g.p].keep[g.pkgs[g.p].out.len()] = true
+  g.pout("\n")
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Entry points
+
+/// The program's package main (mainFile): it runs the Xo `main` of mod
+/// through XoMain.
+fn (var g: Gen) main_file(mod: Int) -> (Str, Str) {
+  let pi = g.pkg_of.get(mod) ?? 0
+  let fo = g.c.mods[mod].members.get(b"main") ?? -1
+  if g.c.objs[fo].params.len() > 1 {
+    return ("", "`main` takes at most one parameter, `os: Os`")
+  }
+  var b = "// Code generated by xo. DO NOT EDIT.\n\npackage main\n\nimport (\n\t\"os\"\n"
+  let pre = g.enable_arenas("rt.") + g.gc_config("rt.", mod)
+  if !pre.is_empty() {
+    b = b + "\trt ${"xoprog/rt".quote()}\n"
+  }
+  b = b + "\t${g.pkgs[pi].name} ${"xoprog/${g.pkgs[pi].dir}".quote()}\n)\n\n"
+  b = b + "func main() {\n\t${pre}os.Exit(${g.pkgs[pi].name}.XoMain())\n}\n"
+  (b, "")
+}
+
+/// The file of mod's package that defines XoMain (mainEntryFile).
+fn (var g: Gen) main_entry_file(mod: Int) -> Str {
+  let pi = g.pkg_of.get(mod) ?? 0
+  let fo = g.c.mods[mod].members.get(b"main") ?? -1
+  let rt = "rt."
+  var call = ""
+  var args = ""
+  var os_name = "_"
+  if g.c.objs[fo].params.len() == 1 {
+    args = ", osv"
+    os_name = "osv"
+  }
+  if g.returns_result(fo) {
+    call = "r := F_main(tk${args}); if !r.Ok { return ${rt}ErrTr[${rt}Unit](${rt}Iface[${rt}IError](r.E), r.Tr) }; return ${rt}Ok[${rt}Unit, ${rt}IError](${rt}Unit{})"
+  } else if g.returns_void(fo) {
+    call = "F_main(tk${args}); return ${rt}Ok[${rt}Unit, ${rt}IError](${rt}Unit{})"
+  } else {
+    call = "_ = F_main(tk${args}); return ${rt}Ok[${rt}Unit, ${rt}IError](${rt}Unit{})"
+  }
+  var b = "// Code generated by xo. DO NOT EDIT.\n\npackage ${g.pkgs[pi].name}\n\nimport rt ${"xoprog/rt".quote()}\n\n"
+  b = b + "// XoMain runs the program's main; package main calls it. Not inlined, so\n// package main does not compile the closure and the runtime types it names.\n//\n//go:noinline\n"
+  b = b + "func XoMain() int {\n\treturn ${rt}RunMain(func(tk *${rt}Task, ${os_name} ${rt}Os) ${rt}Result[${rt}Unit, ${rt}IError] { ${call} })\n}\n"
+  b
+}
+
+/// The statement that turns request scoped arenas on at the start of
+/// main, or "" (enableArenas).
+fn (g: Gen) enable_arenas(rt: Str) -> Str {
+  if !g.opts.arenas {
+    return ""
+  }
+  rt + "EnableArenas(); "
+}
+
+/// The statement that passes the `gc` lines of the main module's xo.mod
+/// to the runtime, or "" (gcConfig): the driver reads them (Opts.gc).
+fn (g: Gen) gc_config(rt: Str, mod: Int) -> Str {
+  g.opts.gc
+}
+
+/// The test tables of the root modules (testMainFile).
+fn (var g: Gen) test_main_file() -> Str {
+  var b = "// Code generated by xo. DO NOT EDIT.\n\npackage main\n\nimport (\n\t\"os\"\n\trt \"xoprog/rt\"\n"
+  var refs: List[Str] = []
+  for m in g.c.order {
+    let pi = g.pkg_of.get(m) ?? -1
+    if pi < 0 || !g.c.mods[m].root {
+      continue
+    }
+    b = b + "\t${g.pkgs[pi].name} ${"xoprog/${g.pkgs[pi].dir}".quote()}\n"
+    refs.push(g.pkgs[pi].name + ".XoTests()")
+  }
+  b = b + ")\n\n"
+  b = b + "func main() {\n\t${g.enable_arenas("rt.")}os.Exit(rt.RunTestTables(os.Args[1:], ${refs.join(", ")}))\n}\n"
+  if refs.is_empty() {
+    b = "package main\n\nimport (\n\t\"os\"\n\trt \"xoprog/rt\"\n)\n\nfunc main() { " + g.enable_arenas("rt.") + "os.Exit(rt.RunTestTables(os.Args[1:])) }\n"
+  }
+  b
+}
+
+/// A test block as a function of the test's `os` (genTest).
+fn (var g: Gen) gen_test(td: parser.TestDecl) {
+  let saved_f = g.f
+  g.f = g.new_fn(-1)
+  let err_t = g.c.mk_named(g.c.prelude_obj("Error"), [])
+  let unit = g.c.mk_tuple([])
+  var fr = Frame{name: g.c.mods[g.pkgs[g.p].m].name + ".test", res_t: unit, err_t: err_t, is_result: true, is_test: true}
+  fr.go_res = g.result_of(unit, err_t)
+  g.f.frames = [fr]
+  g.f.fr = 0
+  let osv = g.c.test_os_of(g.f.file, td)
+  if osv >= 0 {
+    g.f.names[osv] = "v_os"
+  }
+  let params = g.c.test_params_of(g.f.file, td)
+  var ps: List[Str] = []
+  for p in params {
+    let name = g.decl_name(p)
+    ps.push(name + " " + g.go_type(g.vtype(p)))
+  }
+  let body_b = td.body ?? parser.Block{span: td.span}
+  g.analyze_ranges(body_b, [], [])
+  let sv = g.cap_begin()
+  g.top_block(body_b)
+  let body = g.cap_end(sv)
+  let idx = g.pkgs[g.p].tests.len()
+  let name = "T_${idx}"
+  var text = BytesBuilder.new()
+  if let Some(n) = td.name {
+    for p in n.parts {
+      text.write(p.text)
+    }
+  }
+  var seed = 0
+  if let Some(se) = td.seed {
+    if let IntLit(value: value, ..) = se {
+      seed = Int.parse(check.text(value)) ?? 0
+    }
+  }
+  var uses_l: List[Str] = []
+  for e in td.effects {
+    var u = check.text(e.name.name)
+    if let Some(s) = e.sub {
+      u = u + "." + check.text(s.name)
+    }
+    uses_l.push(u)
+  }
+  var tr = TestRef{name: text.freeze().to_str() ?? "", fn_name: name, loc: g.loc(td.span), seed: seed, params: params.len(), uses_l: uses_l}
+  for p in params {
+    tr.param_names.push(g.oname(p))
+    tr.param_types.push(g.go_type(g.vtype(p)))
+  }
+  g.pkgs[g.p].tests.push(tr)
+  let go_res = g.fr().go_res
+  let ld = g.line_directive(td.span)
+  g.f = saved_f
+  g.pl(ld)
+  let rt = g.rt()
+  g.pl("func ${name}(tk *${rt}Task, v_os ${rt}Testing_TestOs${prefix_comma(ps)}) ${go_res} {")
+  g.pl("\t_ = v_os")
+  g.pout(body)
+  g.pl("}\n")
+}
+
+/// The module's directory, absolute: where its tests run (absDir).
+fn (g: Gen) abs_dir() -> Str {
+  let d = g.c.mods[g.pkgs[g.p].m].dir
+  if d.starts_with("/") {
+    return clean_path(d)
+  }
+  clean_path("${g.opts.wd}/${d}")
+}
+
+fn (var g: Gen) gen_test_table() {
+  let rt = g.rt()
+  g.pl("// XoTests is Tests as an any, for package main (testMainFile).")
+  g.pl("//go:noinline")
+  g.pl("func XoTests() any { return Tests }")
+  g.pl("")
+  g.pl("var Tests = []${rt}TestCase{")
+  let mpath = g.c.mods[g.pkgs[g.p].m].path
+  let dir = g.abs_dir()
+  for t in g.pkgs[g.p].tests {
+    if t.params > 0 {
+      var gens: List[Str] = []
+      var args: List[Str] = []
+      var pairs: List[Str] = []
+      if t.fuzz {
+        gens.push("g.Small = true")
+      }
+      for (i, n) in t.param_names.indexed() {
+        var c = ""
+        if i < t.param_caps.len() {
+          c = t.param_caps[i]
+        }
+        if c == "os" {
+          args.push(rt + "TestOsAsOs(os)")
+        } else if !c.is_empty() {
+          args.push("os." + c)
+        } else {
+          gens.push("a${i} := ${rt}Gen[${t.param_types[i]}](g)")
+          args.push("a${i}")
+          pairs.push(n.quote())
+          pairs.push("a${i}")
+        }
+      }
+      g.pl("\t{Name: ${t.name.quote()}, Module: ${mpath.quote()}, Dir: ${dir.quote()}, Loc: ${t.loc.quote()}, Seed: ${t.seed}, Prop: func(g *${rt}GenRand) (string, func(*${rt}Task, ${rt}Testing_TestOs) ${rt}Result[${rt}Unit, ${rt}IError]) {")
+      for gl in gens {
+        g.pl("\t\t${gl}")
+      }
+      g.pl("\t\treturn ${rt}PropInput(${pairs.join(", ")}), func(tk *${rt}Task, os ${rt}Testing_TestOs) ${rt}Result[${rt}Unit, ${rt}IError] { return ${t.fn_name}(tk, os, ${args.join(", ")}) }")
+      if !t.reg_call.is_empty() {
+        var names: List[Str] = []
+        var caps: List[Str] = []
+        var vars: List[Str] = []
+        for (i, n) in t.param_names.indexed() {
+          names.push(n.quote())
+          caps.push(t.param_caps[i].quote())
+          vars.push("${i < t.reg_vars.len() && t.reg_vars[i]}")
+        }
+        g.pl("\t}, Regress: &${rt}RegressInfo{Call: ${t.reg_call.quote()}, Result: ${t.reg_result.quote()}, Names: []string{${names.join(", ")}}, Caps: []string{${caps.join(", ")}}, Vars: []bool{${vars.join(", ")}}}},")
+        continue
+      }
+      g.pl("\t}},")
+      continue
+    }
+    var uses_s = ""
+    if !t.uses_l.is_empty() {
+      var qs: List[Str] = []
+      for u in t.uses_l {
+        qs.push(u.quote())
+      }
+      uses_s = ", Uses: []string{" + qs.join(", ") + "}"
+    }
+    g.pl("\t{Name: ${t.name.quote()}, Module: ${mpath.quote()}, Dir: ${dir.quote()}, Loc: ${t.loc.quote()}, Seed: ${t.seed}, Fn: ${t.fn_name}${uses_s}},")
+  }
+  g.pl("}\n")
+}

@@ -1,0 +1,298 @@
+// Contract fuzzing (internal/gen fuzz.go): `xo test` runs every function
+// with contracts on generated inputs that satisfy its `requires` clauses.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// The TestOs field that provides a capability parameter, "" for none,
+/// "os" for Os (capField).
+fn (g: Gen) cap_field(t: Int) -> Str {
+  let o = g.nobj(t)
+  if o < 0 || !g.oprelude(o) {
+    return ""
+  }
+  let n = g.oname(o)
+  if n is "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" {
+    return "F_" + lower_first(n)
+  }
+  if n == "Os" {
+    return "os"
+  }
+  ""
+}
+
+fn lower_first(s: Str) -> Str {
+  let bs = s.bytes()
+  if bs.is_empty() {
+    return s
+  }
+  var b = BytesBuilder.new()
+  b.write_byte(bs[0] + 32)
+  b.write(bs[1..bs.len()])
+  b.freeze().to_str() ?? s
+}
+
+/// Whether rt.Gen can make values of type t (generatable).
+fn (var g: Gen) generatable(t0: Int, var seen: Map[Int, Bool]) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Tuple => {
+      if x.args.len() > 4 {
+        return false
+      }
+      for e in x.args {
+        if !g.generatable(e, seen) {
+          return false
+        }
+      }
+      true
+    }
+    Named => {
+      let o = x.obj
+      let args = g.type_args(t)
+      if g.oprelude(o) {
+        let n = g.oname(o)
+        if n is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Bool" | "Str" | "Bytes" | "Rune" | "Duration" | "Time" {
+          return true
+        }
+        if n is "List" | "Set" | "Option" | "Secret" | "Map" | "Result" {
+          for a in args {
+            if !g.generatable(a, seen) {
+              return false
+            }
+          }
+          return true
+        }
+        return false
+      }
+      if g.ostd(o) {
+        return false
+      }
+      if seen.contains(o) {
+        return true
+      }
+      seen[o] = true
+      let s = g.subst_of(o, t)
+      let k = g.tkind(o)
+      if k == "struct" {
+        for f in g.c.objs[o].fields {
+          if !g.generatable(g.sub_apply(f.ty, s), seen) {
+            return false
+          }
+        }
+        return true
+      }
+      if k == "enum" {
+        for v in g.c.objs[o].variants {
+          for f in v.fields {
+            if !g.generatable(g.sub_apply(f.ty, s), seen) {
+              return false
+            }
+          }
+        }
+        return true
+      }
+      if k == "newtype" {
+        return g.generatable(g.sub_apply(g.c.objs[o].target, s), seen)
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// Whether fo gets a contract fuzz test (fuzzable).
+fn (var g: Gen) fuzzable(fo: Int) -> Bool {
+  let o = g.c.objs[fo]
+  let fd = o.fn_decl[0]
+  var has_contract = false
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(..) | EnsuresClause(..) => has_contract = true
+      _ => {}
+    }
+  }
+  if !has_contract {
+    if let Some(body) = fd.body {
+      // a loop bound is a contract too (core 3.5, decision 0133)
+      let ns = flatten(Node.E(Expr.Block(body)))
+      var i = 0
+      while i < ns.len() && !has_contract {
+        match ns[i].node {
+          S(s) => {
+            match s {
+              ForStmt(bound: bound, ..) => has_contract = has_contract || !bound.is_empty()
+              WhileStmt(bound: bound, ..) => has_contract = has_contract || !bound.is_empty()
+              _ => {}
+            }
+          }
+          E(e) => {
+            if let FnLit(..) = e {
+              i = ns[i].end
+              continue
+            }
+          }
+          N => {}
+        }
+        i += 1
+      }
+    }
+  }
+  if !has_contract || !g.type_params(o.tparams).is_empty() || o.is_static {
+    return false
+  }
+  var ts: List[Int] = []
+  if g.recv_var(fo) >= 0 {
+    ts.push(o.recv_ty)
+  }
+  for i in 0..g.param_vars(fo).len() {
+    ts.push(o.params[i].ty)
+  }
+  for t in ts {
+    var seen: Map[Int, Bool] = {}
+    if g.cap_field(t).is_empty() && !g.generatable(t, seen) {
+      return false
+    }
+  }
+  true
+}
+
+/// A fuzz parameter: the binding, its type, whether it is `var`, and the
+/// capability field it comes from.
+struct FParam {
+  v: Int
+  t: Int
+  is_var: Bool
+  cap: Str = ""
+}
+
+/// A contract fuzz test for fo (genFuzz).
+fn (var g: Gen) gen_fuzz(fo: Int) {
+  if !g.fuzzable(fo) {
+    return
+  }
+  let o = g.c.objs[fo]
+  let fd = o.fn_decl[0]
+  var reqs: List[Expr] = []
+  for cl in fd.clauses {
+    if let RequiresClause(cond: cond, ..) = cl {
+      reqs.push(cond)
+    }
+  }
+  var ps: List[FParam] = []
+  let rv = g.recv_var(fo)
+  if rv >= 0 {
+    ps.push(FParam{v: rv, t: o.recv_ty, is_var: o.recv_var})
+  }
+  for (i, pv) in g.param_vars(fo).indexed() {
+    ps.push(FParam{v: pv, t: o.params[i].ty, is_var: o.params[i].is_var})
+  }
+  for i in 0..ps.len() {
+    ps[i].cap = g.cap_field(ps[i].t)
+    var seen: Map[Int, Bool] = {}
+    if ps[i].cap.is_empty() && !g.generatable(ps[i].t, seen) {
+      return
+    }
+  }
+  let idx = g.pkgs[g.p].tests.len()
+  let name = "FZ_${idx}"
+  let rt = g.rt()
+  let mark = g.begin_decl()
+  // the precondition: every requires clause
+  let saved_f = g.f
+  g.f = g.new_fn(-1)
+  g.f.file = o.decl_file
+  g.f.frames = [Frame{name: g.oname(fo), res_t: g.c.mk_tuple([])}]
+  var sig: List[Str] = []
+  for (i, p) in ps.indexed() {
+    let gn = "a${i}"
+    let gt = g.go_type(p.t)
+    g.f.names[p.v] = gn
+    sig.push(gn + " " + gt)
+  }
+  let sv = g.cap_begin()
+  for r in reqs {
+    g.line("if !(${g.val(r)}) {")
+    g.line("\treturn false")
+    g.line("}")
+  }
+  g.line("return true")
+  let pre = g.cap_end(sv)
+  g.f = saved_f
+  g.pl("func ${name}_pre(tk *${rt}Task${prefix_comma(sig)}) bool {")
+  g.pout(pre)
+  g.pl("}\n")
+  g.end_decl(mark, ["${name}_pre"])
+  // the case: skip inputs that do not satisfy requires, then call
+  var args: List[Str] = []
+  var recv = ""
+  for (i, p) in ps.indexed() {
+    var a = "a${i}"
+    if i == 0 && rv >= 0 {
+      recv = a
+      continue
+    }
+    if p.is_var {
+      a = "&" + a
+    }
+    args.push(a)
+  }
+  let mark2 = g.begin_decl()
+  let saved_f2 = g.f
+  g.f = g.new_fn(-1)
+  g.f.file = o.decl_file
+  g.f.frames = [Frame{name: g.oname(fo), res_t: g.c.mk_tuple([])}]
+  let (call, kind) = g.emit_call(fo, {}, recv, args, false)
+  g.f = saved_f2
+  var plain: List[Str] = []
+  for i in 0..ps.len() {
+    plain.push("a${i}")
+  }
+  g.pl("func ${name}(tk *${rt}Task, os ${rt}Testing_TestOs${prefix_comma(sig)}) ${rt}Result[${rt}Unit, ${rt}IError] {")
+  g.pl("\t_ = os")
+  g.pl("\tif !${name}_pre(tk${prefix_comma(plain)}) {\n\t\treturn ${rt}Ok[${rt}Unit, ${rt}IError](${rt}Unit{})\n\t}")
+  if kind == CK_VOID {
+    g.pl("\t${call}")
+  } else {
+    g.pl("\t_ = ${call}")
+  }
+  g.pl("\treturn ${rt}Ok[${rt}Unit, ${rt}IError](${rt}Unit{})\n}\n")
+  g.end_decl(mark2, [name])
+  var tr = TestRef{name: "contract fuzz: " + g.frame_name(fo), fn_name: name, loc: g.loc_in(o.decl_file, fd.span), params: ps.len(), fuzz: true}
+  // the Xo source of the call, for a regression test (core 9.2)
+  var xargs: List[Str] = []
+  var first = 0
+  var callee = g.oname(fo)
+  if rv >= 0 {
+    callee = "{0}." + g.oname(fo)
+    first = 1
+  }
+  for i in first..ps.len() {
+    xargs.push("{${i}}")
+  }
+  tr.reg_call = callee + "(" + xargs.join(", ") + ")"
+  if o.err >= 0 {
+    tr.reg_result = "result"
+  } else if o.result < 0 || g.is_unit_raw(o.result) {
+    tr.reg_result = "unit"
+  } else {
+    tr.reg_result = "value"
+  }
+  for p in ps {
+    tr.reg_vars.push(p.is_var)
+  }
+  for p in ps {
+    tr.param_names.push(g.oname(p.v))
+    tr.param_types.push(g.go_type(p.t))
+    tr.param_caps.push(p.cap)
+  }
+  g.pkgs[g.p].tests.push(tr)
+}
+
+/// Whether t is `()` as written (isUnitType: no resolving).
+fn (g: Gen) is_unit_raw(t: Int) -> Bool {
+  g.c.tys[t].kind == check.TyKind.Tuple && g.c.tys[t].args.is_empty()
+}

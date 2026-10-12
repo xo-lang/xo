@@ -1,0 +1,714 @@
+// Monomorphization (internal/gen mono.go): specialized copies of generic
+// functions, typed comparisons, devirtualized constraint methods, lambda
+// specialization, and List higher order methods with closure literals
+// lowered to loops.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+use std/crypto
+
+/// Chains of copies requested from copies are cut at this depth.
+const MAX_SPEC_DEPTH = 8
+/// The copies of one function per package.
+const MAX_SPECS_PER_FUNC = 64
+/// The longest type suffix kept readable.
+const MAX_MANGLE = 60
+
+fn (g: Gen) mono_on() -> Bool {
+  !g.opts.no_mono && !g.pkgs[g.p].in_rt && !g.pkgs[g.p].no_mono
+}
+
+/// Applies the substitution of the copy being generated (monoType).
+fn (var g: Gen) mono_type(t: Int) -> Int {
+  if !g.pkgs[g.p].ms.on || t < 0 {
+    return t
+  }
+  g.sub_apply(t, g.pkgs[g.p].ms.sub)
+}
+
+/// Whether calls of fo can be specialized (isGenericUserFunc).
+fn (g: Gen) is_generic_user_func(fo: Int) -> Bool {
+  if fo < 0 {
+    return false
+  }
+  let o = g.c.objs[fo]
+  fo >= 0 && !g.ostd(fo) && !o.iface && !o.fn_decl.is_empty() && o.fn_decl[0].body != None && !g.type_params(o.tparams).is_empty()
+}
+
+/// The Go name of the copy of fo for the type arguments in sub, requesting
+/// it if needed (specFor).
+fn (var g: Gen) spec_for(fo: Int, sub: Map[Int, Int]) -> (Str, Bool) {
+  g.spec_for_lits(fo, sub, {})
+}
+
+fn (var g: Gen) spec_for_lits(fo: Int, sub: Map[Int, Int], lits: Map[Int, LitRef]) -> (Str, Bool) {
+  if !g.mono_on() || !g.is_generic_user_func(fo) || sub.is_empty() {
+    return ("", false)
+  }
+  let pi = g.p
+  if g.pkgs[pi].ms.depth + 1 > MAX_SPEC_DEPTH {
+    return ("", false)
+  }
+  let o = g.c.objs[fo]
+  var args: List[Int] = []
+  var texts: List[Str] = []
+  for p in o.tparams {
+    let t0 = sub.get(p) ?? -1
+    if g.c.objs[p].effect {
+      args.push(t0)
+      continue
+    }
+    if t0 < 0 {
+      return ("", false)
+    }
+    let t = g.mono_type(t0)
+    if g.contains_param(t) {
+      return ("", false)
+    }
+    args.push(t)
+    texts.push(g.go_type(t))
+  }
+  var key = "${fo}|${texts.join(",")}"
+  var lit_tag = ""
+  if !lits.is_empty() {
+    for i in 0..o.params.len() {
+      if let Some(l) = lits.get(i) {
+        key = key + "|${i}=${l.file}:${l.lit.span.start.offset}"
+      }
+    }
+    lit_tag = "_lit"
+  }
+  if let Some(name) = g.pkgs[pi].ms.by_key.get(key) {
+    return (name, true)
+  }
+  if (g.pkgs[pi].ms.per_func.get(fo) ?? 0) >= MAX_SPECS_PER_FUNC {
+    return ("", false)
+  }
+  var base = g.func_go_name(fo)
+  if o.recv >= 0 {
+    base = g.oname(o.recv) + "_M_" + g.oname(fo)
+  }
+  if o.module != g.pkgs[pi].m {
+    base = pkg_ident(g.c.mods[o.module].path) + "_" + base
+  }
+  let mg = mangle(texts)
+  var name = base + "__" + mg + lit_tag
+  var i = 2
+  while g.pkgs[pi].ms.names.contains(name) {
+    name = "${base}__${mg}${lit_tag}${i}"
+    i += 1
+  }
+  g.pkgs[pi].ms.names[name] = true
+  g.pkgs[pi].ms.by_key[key] = name
+  g.pkgs[pi].ms.per_func[fo] = (g.pkgs[pi].ms.per_func.get(fo) ?? 0) + 1
+  let s = g.c.args_subst(o.tparams, args)
+  g.pkgs[pi].ms.pending.push(SpecReq{fo: fo, sub: s, name: name, depth: g.pkgs[pi].ms.depth + 1, lits: lits})
+  (name, true)
+}
+
+/// The closure literals of a call of a user generic function that its
+/// copy can inline (litArgs).
+fn (var g: Gen) lit_args(fo: Int, sub: Map[Int, Int], x: Expr) -> Map[Int, LitRef] {
+  var out: Map[Int, LitRef] = {}
+  if !g.mono_on() || !g.is_generic_user_func(fo) || sub.is_empty() {
+    return out
+  }
+  let (_, _, args) = call_parts(x)
+  let params = g.c.objs[fo].params
+  for (i, ai) in g.arg_index(fo, args).indexed() {
+    if ai < 0 || params[i].is_var {
+      continue
+    }
+    let (lit, ft) = g.inlinable_lit(args[ai].value)
+    match lit {
+      None => continue
+      Some(l) => {
+        if g.captures(l) || g.contains_param(ft) || !g.lit_concrete(l) {
+          continue
+        }
+        let want = g.sub_apply(params[i].ty, sub)
+        if !g.is_func_t(want) || g.func_type(want) != g.func_type(ft) {
+          continue
+        }
+        out[i] = LitRef{file: g.f.file, lit: l}
+      }
+    }
+  }
+  out
+}
+
+/// Whether no expression or binding inside lit has a type that mentions a
+/// type parameter (litConcrete).
+fn (g: Gen) lit_concrete(lit: parser.FnLit) -> Bool {
+  for ne in flatten(Node.E(Expr.Block(lit.body))) {
+    if let E(e) = ne.node {
+      if let Ident(id) = e {
+        let v = g.var_of(id)
+        if v >= 0 && g.contains_param(g.vtype(v)) {
+          return false
+        }
+      }
+      if g.contains_param(g.info_type(e)) || g.contains_param(g.info_nat(e)) {
+        return false
+      }
+    }
+  }
+  for v in g.closure_params(lit) {
+    if g.contains_param(g.vtype(v)) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether closure lit uses a local binding declared outside it
+/// (captures).
+fn (g: Gen) captures(lit: parser.FnLit) -> Bool {
+  let sp = lit.span
+  for ne in flatten(Node.E(Expr.Block(lit.body))) {
+    if let E(e) = ne.node {
+      if let Ident(id) = e {
+        let v = g.var_of(id)
+        if v < 0 {
+          continue
+        }
+        if !g.declared_inside(v, sp) {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+/// Whether local v is declared inside the span sp of the current file.
+fn (g: Gen) declared_inside(v: Int, sp: Span) -> Bool {
+  let o = g.c.objs[v]
+  if o.file != g.file_path(g.f.file) {
+    return false
+  }
+  let after_start = o.line > sp.start.line || (o.line == sp.start.line && o.col >= sp.start.col)
+  let before_end = o.line < sp.end.line || (o.line == sp.end.line && o.col < sp.end.col)
+  after_start && before_end
+}
+
+/// Inlines the body of the closure literal bound to a parameter of a copy
+/// at a call of that parameter (litCall).
+fn (var g: Gen) lit_call(x: Expr) -> (Str, Bool) {
+  let (_, fun, args) = call_parts(x)
+  if g.f.lit_params.is_empty() {
+    return ("", false)
+  }
+  let id = match fun {
+    Ident(id) => id
+    _ => return ("", false)
+  }
+  let v = g.var_of(id)
+  let lr = match g.f.lit_params.get(v) {
+    Some(l) => l
+    None => return ("", false)
+  }
+  let saved_file = g.f.file
+  g.f.file = lr.file
+  let ft = g.nat(Expr.FnLit(lr.lit))
+  g.f.file = saved_file
+  if !g.is_func_t(ft) || args.len() != g.targs(ft).len() {
+    return ("", false)
+  }
+  for a in args {
+    if a.name != None {
+      return ("", false)
+    }
+  }
+  var es: List[Expr] = []
+  for a in args {
+    es.push(a.value)
+  }
+  var codes = g.vals_as(es, g.targs(ft))
+  for i in 0..codes.len() {
+    codes[i] = g.spill(codes[i])
+  }
+  let r = g.tmp("r")
+  let res = g.fresult(ft)
+  g.line("var ${r} ${g.go_type(res)}")
+  g.inline_lit(lr, ft, codes, Dest{kind: D_ASSIGN, name: r, typ: res})
+  // the copy's body sees the parameter's declared type: a call of
+  // `fn(T) -> U ! E` is a Result even when E is Never here
+  let pt = g.expr_type(fun)
+  if g.is_func_t(pt) && g.ferr(pt) >= 0 {
+    let rt = g.rt()
+    return ("${rt}Ok[${g.go_type(g.fresult(pt))}, ${g.err_go(g.ferr(pt))}](${r})", true)
+  }
+  (r, true)
+}
+
+/// Go type texts as an identifier suffix (mangle).
+fn mangle(texts: List[Str]) -> Str {
+  let s = texts.join("_")
+  var b = BytesBuilder.new()
+  var under = false
+  for r in s.runes() {
+    let n = Int(r)
+    let ok = (n >= 97 && n <= 122) || (n >= 65 && n <= 90) || (n >= 48 && n <= 57)
+    if ok {
+      b.write_rune(r)
+      under = false
+      continue
+    }
+    if !under {
+      b.write_byte(95)
+      under = true
+    }
+  }
+  var out = trim_underscores(b.freeze().to_str() ?? "")
+  if out.len() > MAX_MANGLE {
+    let h = crypto.sha256(s.bytes())
+    let bs = out.bytes()
+    out = (bs[0..MAX_MANGLE / 2].to_str() ?? "") + "_" + h[0..6].to_hex()
+  }
+  if out.is_empty() {
+    out = "unit"
+  }
+  out
+}
+
+/// Generates the requested copies of every package until no request is
+/// left (drainSpecs).
+fn (var g: Gen) drain_specs() {
+  while true {
+    var progress = false
+    for m in g.c.order {
+      let pi = g.pkg_of.get(m) ?? -1
+      if pi < 0 {
+        continue
+      }
+      g.p = pi
+      while !g.pkgs[pi].ms.pending.is_empty() {
+        let req = g.pkgs[pi].ms.pending[0]
+        g.pkgs[pi].ms.pending = g.pkgs[pi].ms.pending[1..g.pkgs[pi].ms.pending.len()]
+        g.gen_func_with(req.fo, Some(req))
+        g.pkgs[pi].ms.generated += 1
+        progress = true
+      }
+    }
+    if !progress {
+      return
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Constraint methods
+
+/// The concrete method a constraint interface method call on a type
+/// parameter resolves to inside a copy, or -1 (devirt).
+fn (var g: Gen) devirt(fo: Int, recv: List[Expr]) -> (Int, Map[Int, Int]) {
+  if !g.pkgs[g.p].ms.on || !g.c.objs[fo].iface || recv.is_empty() || !g.method_is_go_method(fo) {
+    return (-1, {})
+  }
+  let pt = g.type_of(recv[0])
+  if !g.is_param_t(pt) {
+    return (-1, {})
+  }
+  let ct = g.mono_type(pt)
+  let n = g.nobj(ct)
+  if n < 0 || g.ostd(n) || g.tkind(n) == "interface" {
+    return (-1, {})
+  }
+  let (m, ms) = g.find_method(ct, g.oname(fo))
+  if m < 0 {
+    return (-1, {})
+  }
+  let mo = g.c.objs[m]
+  if mo.iface || mo.recv_var || g.ostd(m) || !g.type_params(g.own_tparams(m)).is_empty() {
+    return (-1, {})
+  }
+  let p = g.c.tys[g.c.resolve(pt)].obj
+  let cons = g.c.objs[p].constraint
+  var isub: Map[Int, Int] = {}
+  let ic = g.mono_type(cons)
+  let io = g.nobj(ic)
+  if io >= 0 {
+    isub = g.subst_of(io, ic)
+  }
+  if g.method_sig(m, ms) != g.method_sig(fo, isub) {
+    return (-1, {})
+  }
+  (m, ms)
+}
+
+// ---------------------------------------------------------------------------
+// Typed comparison (XoEqT, XoCmpT)
+
+/// Whether values of t have generated XoEqT and, with ord, XoCmpT methods
+/// (hasTypedEq).
+fn (g: Gen) has_typed_eq(t: Int, ord: Bool) -> Bool {
+  if !g.mono_on() {
+    return false
+  }
+  let o = g.nobj(t)
+  if o < 0 || g.ostd(o) || !g.c.objs[o].tparams.is_empty() {
+    return false
+  }
+  let k = g.tkind(o)
+  if k != "struct" && k != "newtype" {
+    return false
+  }
+  !ord || g.derives(o, "Ord")
+}
+
+/// A typed equality of two field values of type t (fieldEq).
+fn (var g: Gen) field_eq(a: Str, b: Str, t: Int) -> Str {
+  if g.is_scalar(t) {
+    return "(" + a + " == " + b + ")"
+  }
+  if g.has_typed_eq(t, false) {
+    return a + ".XoEqT(" + b + ")"
+  }
+  if g.is_unit_enum(t) {
+    return "(" + a + ".Tag == " + b + ".Tag)"
+  }
+  "${g.rt()}Eq(${a}, ${b})"
+}
+
+/// A typed three way comparison of two field values of type t
+/// (fieldCmp).
+fn (var g: Gen) field_cmp(a: Str, b: Str, t: Int) -> Str {
+  let r = g.rt()
+  if g.is_float(t) {
+    return "${r}FloatCmp(float64(${a}), float64(${b}))"
+  }
+  if g.is_prelude(t, "Bool") {
+    return "${r}Cmp(${a}, ${b})"
+  }
+  if g.is_scalar(t) {
+    return "${r}CmpO(${a}, ${b})"
+  }
+  if g.has_typed_eq(t, true) {
+    return a + ".XoCmpT(" + b + ")"
+  }
+  "${r}Cmp(${a}, ${b})"
+}
+
+/// XoEqT and, for `derive Ord`, XoCmpT on a non generic struct or newtype
+/// (genTypedEq).
+fn (var g: Gen) gen_typed_eq(t: Int, self: Str, fs: List[FieldRef], os: List[FieldRef]) {
+  if !g.mono_on() || !g.c.objs[t].tparams.is_empty() {
+    return
+  }
+  let types = g.field_types(t)
+  g.pl("func (v ${self}) XoEqT(o ${self}) bool {")
+  for i in 0..fs.len() {
+    g.pl("\tif !${g.field_eq(fs[i].code, os[i].code, types[i])} {\n\t\treturn false\n\t}")
+  }
+  g.pl("\treturn true\n}\n")
+  if !g.derives(t, "Ord") {
+    return
+  }
+  g.pl("func (v ${self}) XoCmpT(o ${self}) int {")
+  for i in 0..fs.len() {
+    g.pl("\tif c := ${g.field_cmp(fs[i].code, os[i].code, types[i])}; c != 0 {\n\t\treturn c\n\t}")
+  }
+  g.pl("\treturn 0\n}\n")
+}
+
+/// The field types of a struct, or the target of a newtype (fieldTypes).
+fn (g: Gen) field_types(t: Int) -> List[Int] {
+  if g.tkind(t) == "newtype" {
+    return [g.c.objs[t].target]
+  }
+  var out: List[Int] = []
+  for f in g.c.objs[t].fields {
+    out.push(f.ty)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Higher order prelude methods with closure literals
+
+/// The closure literal e if its body can be inlined where it is called,
+/// with its function type (inlinableLit).
+fn (g: Gen) inlinable_lit(e0: Expr) -> (parser.FnLit?, Int) {
+  let e = unparen(e0)
+  let lit = match e {
+    FnLit(l) => l
+    _ => return (None, -1)
+  }
+  let ft = g.nat(e)
+  if !g.is_func_t(ft) || g.ferr(ft) >= 0 {
+    return (None, -1)
+  }
+  for v in g.fvars(ft) {
+    if v {
+      return (None, -1)
+    }
+  }
+  if g.closure_params(lit).len() != g.targs(ft).len() {
+    return (None, -1)
+  }
+  let ns = flatten(Node.E(Expr.Block(lit.body)))
+  var i = 0
+  while i < ns.len() {
+    match ns[i].node {
+      S(s) => {
+        if let ReturnStmt(..) = s {
+          return (None, -1)
+        }
+      }
+      E(x) => {
+        match x {
+          TryExpr(..) => return (None, -1)
+          FnLit(..) => {
+            if i > 0 {
+              // its own frame
+              i = ns[i].end
+              continue
+            }
+          }
+          _ => {}
+        }
+      }
+      N => {}
+    }
+    i += 1
+  }
+  (Some(lit), ft)
+}
+
+/// The body of lit with its parameters bound to the Go values args,
+/// delivering the value to d (inlineLit).
+fn (var g: Gen) inline_lit(lr: LitRef, ft: Int, args: List[Str], d: Dest) {
+  let saved_file = g.f.file
+  g.f.file = lr.file
+  g.line("{")
+  g.f.ind += 1
+  let pts = g.targs(ft)
+  for (i, pv) in g.closure_params(lr.lit).indexed() {
+    let name = g.decl_name(pv)
+    g.line("var ${name} ${g.go_type(pts[i])} = ${args[i]}")
+    g.line("_ = ${name}")
+  }
+  g.at(lr.lit.body.span)
+  g.block(lr.lit.body, d)
+  g.f.ind -= 1
+  g.line("}")
+  g.f.file = saved_file
+}
+
+/// A call `m.values()` or `m.keys()` on a Map: the map expression and the
+/// runtime function that iterates that view in place (mapView).
+fn (g: Gen) map_view(e: Expr) -> (Expr?, Str) {
+  let c = unparen(e)
+  if let CallExpr(args: args, ..) = c {
+    if !args.is_empty() {
+      return (None, "")
+    }
+    if let Some(ci) = g.call_of(c) {
+      if ci.recv.is_empty() {
+        return (None, "")
+      }
+      if g.is_std_method(ci.fn_obj, "prelude", "Map", "values") {
+        return (Some(ci.recv[0]), "Map_values_seq")
+      }
+      if g.is_std_method(ci.fn_obj, "prelude", "Map", "keys") {
+        return (Some(ci.recv[0]), "Map_keys_seq")
+      }
+    }
+  }
+  (None, "")
+}
+
+/// The receiver of a call `s.to_lower()` on a Str, or None (toLowerRecv).
+fn (g: Gen) to_lower_recv(e: Expr) -> Expr? {
+  let c = unparen(e)
+  if let CallExpr(args: args, ..) = c {
+    if !args.is_empty() {
+      return None
+    }
+    if let Some(ci) = g.call_of(c) {
+      if !ci.recv.is_empty() && g.is_std_method(ci.fn_obj, "prelude", "Str", "to_lower") {
+        return Some(ci.recv[0])
+      }
+    }
+  }
+  None
+}
+
+/// `xs.map/filter/fold/any/all/find(<closure literal>)` lowered to a loop
+/// with the closure body inlined (hofInline).
+fn (var g: Gen) hof_inline(x: Expr, ci: check.CallInfo) -> (Str, Bool) {
+  let fo = ci.fn_obj
+  if !g.mono_on() || fo < 0 || ci.recv.is_empty() || !g.ostd(fo) {
+    return ("", false)
+  }
+  let fr0 = g.c.objs[fo].recv
+  if fr0 < 0 || !g.oprelude(fr0) || g.oname(fr0) != "List" {
+    return ("", false)
+  }
+  let name = g.oname(fo)
+  if !(name is "map" | "filter" | "fold" | "any" | "all" | "find") {
+    return ("", false)
+  }
+  let sub = ci.subst
+  let fe = g.c.objs[fo].err
+  if fe < 0 || sub.is_empty() {
+    return ("", false)
+  }
+  let fes = g.sub_apply(fe, sub)
+  if !g.is_never(fes) {
+    return ("", false)
+  }
+  let (_, _, args) = call_parts(x)
+  let aidx = g.arg_index(fo, args)
+  for a in aidx {
+    if a < 0 {
+      return ("", false)
+    }
+  }
+  let fi = aidx.len() - 1
+  let (lito, ft) = g.inlinable_lit(args[aidx[fi]].value)
+  let lit = match lito {
+    Some(l) => l
+    None => return ("", false)
+  }
+  let want = g.sub_apply(g.c.objs[fo].params[fi].ty, sub)
+  if !g.is_func_t(want) || g.func_type(want) != g.func_type(ft) {
+    return ("", false)
+  }
+  let lt = g.type_of(ci.recv[0])
+  if g.nobj(lt) < 0 || g.targs(lt).is_empty() {
+    return ("", false)
+  }
+  let elem_t = g.targs(lt)[0]
+  let et = g.go_type(elem_t)
+  let r = g.rt()
+  let lr = LitRef{file: g.f.file, lit: lit}
+  // `m.values()` or `m.keys()` as the receiver: the loop walks the map in
+  // place
+  var recv_e = ci.recv[0]
+  let (map_e, seq) = g.map_view(ci.recv[0])
+  if let Some(me) = map_e {
+    recv_e = me
+  }
+  var src = ""
+  var init = ""
+  if name == "fold" {
+    var ops = Ops{}
+    for i in 0..2 {
+      let sv = g.cap_begin()
+      var code = ""
+      if i == 0 {
+        code = g.hof_recv(recv_e, x)
+      } else {
+        code = g.val_as(args[aidx[0]].value, g.sub_apply(g.c.objs[fo].params[0].ty, sub))
+      }
+      g.op_end(ops, sv, code, false)
+    }
+    src = ops.codes[0]
+    init = ops.codes[1]
+  } else {
+    src = g.hof_recv(recv_e, x)
+  }
+  let sv = g.tmp("src")
+  g.line("${sv} := ${src}")
+  let e = g.tmp("e")
+  var header = "_, ${e} := range ${g.rt()}List_Items(${sv})"
+  var length = "len(${g.rt()}List_Items(${sv}))"
+  if map_e != None {
+    header = "${e} := range ${r}${seq}(${sv})"
+    length = "${g.rt()}Map_Len(${sv})"
+  }
+  let wres = g.fresult(want)
+  if name == "map" {
+    let ut = g.go_type(wres)
+    let out = g.tmp("out")
+    g.line("${out} := make([]${ut}, 0, ${length})")
+    g.line("for ${header} {")
+    g.f.ind += 1
+    let v = g.tmp("r")
+    g.line("var ${v} ${ut}")
+    g.inline_lit(lr, ft, [e], Dest{kind: D_ASSIGN, name: v, typ: wres})
+    g.line("${out} = append(${out}, ${v})")
+    g.f.ind -= 1
+    g.line("}")
+    return ("${r}ListFromSlice(${out})", true)
+  }
+  if name == "filter" {
+    let out = g.tmp("out")
+    g.line("var ${out} []${et}")
+    g.line("for ${header} {")
+    g.f.ind += 1
+    let v = g.tmp("r")
+    g.line("var ${v} bool")
+    g.inline_lit(lr, ft, [e], Dest{kind: D_ASSIGN, name: v, typ: wres})
+    g.line("if ${v} {")
+    // the element stays in the source list too
+    for l in g.mark_stmts(e, elem_t) {
+      g.line("\t${l}")
+    }
+    g.line("\t${out} = append(${out}, ${e})")
+    g.line("}")
+    g.f.ind -= 1
+    g.line("}")
+    return ("${r}ListFromSlice(${out})", true)
+  }
+  if name == "fold" {
+    let acc = g.tmp("acc")
+    g.line("var ${acc} ${g.go_type(wres)} = ${init}")
+    g.line("for ${header} {")
+    g.f.ind += 1
+    g.inline_lit(lr, ft, [acc, e], Dest{kind: D_ASSIGN, name: acc, typ: wres})
+    g.f.ind -= 1
+    g.line("}")
+    return (acc, true)
+  }
+  if name == "any" || name == "all" {
+    let res = g.tmp("res")
+    var hit = "true"
+    var start = "false"
+    var neg = ""
+    if name == "all" {
+      hit = "false"
+      start = "true"
+      neg = "!"
+    }
+    g.line("${res} := ${start}")
+    g.line("for ${header} {")
+    g.f.ind += 1
+    let v = g.tmp("r")
+    g.line("var ${v} bool")
+    g.inline_lit(lr, ft, [e], Dest{kind: D_ASSIGN, name: v, typ: wres})
+    g.line("if ${neg}${v} {")
+    g.line("\t${res} = ${hit}")
+    g.line("\tbreak")
+    g.line("}")
+    g.f.ind -= 1
+    g.line("}")
+    return (res, true)
+  }
+  // find
+  let res = g.tmp("res")
+  g.line("${res} := ${r}None[${et}]()")
+  g.line("for ${header} {")
+  g.f.ind += 1
+  let v = g.tmp("r")
+  g.line("var ${v} bool")
+  g.inline_lit(lr, ft, [e], Dest{kind: D_ASSIGN, name: v, typ: wres})
+  g.line("if ${v} {")
+  g.line("\t${res} = ${r}Some[${et}](${e})")
+  g.line("\tbreak")
+  g.line("}")
+  g.f.ind -= 1
+  g.line("}")
+  (res, true)
+}
+
+/// The receiver of an inlined higher order call, borrowed when the call
+/// cannot write it.
+fn (var g: Gen) hof_recv(recv_e: Expr, x: Expr) -> Str {
+  if g.borrow_ok(recv_e, [Node.E(x)]) {
+    return g.borrow(recv_e)
+  }
+  g.val(recv_e)
+}

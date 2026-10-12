@@ -24,6 +24,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   list is unique, instead of copying the inner collection every time
   (decision 0169, `list.take`): 20,000 pushes 63.6 ms to 0.1 ms on
   arm64. A shared outer list still copies (value semantics).
+- The Go code generator in Xo (`selfhost/gen`, decision 0167), compared
+  with internal/gen through the new hidden `xo gendump`
+  (TestSelfhostGen, TestSelfhostGenMutations): every declaration and
+  every whole file identical on the repository runs the Xo checker
+  checks. The Xo driver `selfhost/xo` gains `--backend=go`: it compiles
+  selfhost/check to the same Go as `xo build` and compiles itself to a
+  fixed point. The released `xo` is unchanged.
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by

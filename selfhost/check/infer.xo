@@ -272,7 +272,7 @@ fn (c: Checker) derives(o: Int, name: Str) -> Bool {
 }
 
 /// Whether t satisfies interface iface (a Named interface type).
-fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
+pub fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
   let t = c.resolve(t0)
   if c.is_bad(t) || c.is_never(t) {
     return true
@@ -393,7 +393,7 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
 
 /// Method name on t (any visibility) and the substitution of its
 /// receiver type parameters; -1 when there is none.
-fn (var c: Checker) find_method(t0: Int, name: Str) -> (Int, Subst) {
+pub fn (var c: Checker) find_method(t0: Int, name: Str) -> (Int, Subst) {
   let t = c.resolve(t0)
   let x = c.tys[t]
   match x.kind {

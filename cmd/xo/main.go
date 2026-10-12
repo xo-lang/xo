@@ -301,6 +301,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSSADump(args[1:], stdout, stderr)
 	case "asmdump": // hidden: arm64 assembly, compared with selfhost/arm64 (decision 0158)
 		return runAsmDump(args[1:], stdout, stderr)
+	case "gendump": // hidden: generated Go, compared with selfhost/gen (decision 0167)
+		return runGenDump(args[1:], stdout, stderr)
 	case "rtpack": // hidden: build a prebuilt runtime for a release (decision 0157)
 		return runRTPack(args[1:], stdout, stderr)
 	case "llvmdump": // hidden: LLVM IR dump, compared with selfhost/llvm

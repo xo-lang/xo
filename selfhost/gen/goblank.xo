@@ -1,0 +1,977 @@
+// internal/gen's last step on the text of a package (FormatFile) before
+// gofmt: the `_ = x` statements Go does not need dropped (blank.go
+// dropBlankUses) and repeated //line directives dropped
+// (dropRepeatedLineDirectives). dropBlankUses resolves the identifiers
+// of the file with go/parser's scopes; this resolves the locals of the
+// function bodies the same way over the tokens of goparse.xo: a `_ = x`
+// stays when x is a local (bound by `:=`, a `var` statement of a block,
+// a `range`, or a type switch) that nothing else reads, or the symbol of
+// a type switch; every other one alone on its line goes.
+
+/// The file's text with blank uses and repeated //line directives
+/// dropped (FormatFile before gofmt).
+pub fn format_prep(raw: Str) -> Str {
+  drop_repeated_line_directives(drop_blank_uses(raw))
+}
+
+/// Removes a //line directive that repeats the line before it
+/// (dropRepeatedLineDirectives).
+pub fn drop_repeated_line_directives(src: Str) -> Str {
+  var b = StrBuilder.new()
+  var prev = ""
+  var first = true
+  let lines = src.split("\n")
+  for (i, l0) in lines.indexed() {
+    let last = i == lines.len() - 1
+    if last && l0.is_empty() {
+      break
+    }
+    let l = if last { l0 } else { l0 + "\n" }
+    if !first && l.starts_with("//line ") && l == prev {
+      continue
+    }
+    b.write(l)
+    prev = l
+    first = false
+  }
+  b.freeze()
+}
+
+/// A local object of the resolution: a declaration of a variable.
+struct BObj {
+  local: Bool = false
+  n_uses: Int = 0
+  tswitch: Bool = false
+}
+
+/// A `_ = x` statement: the object x names (-1 for none) and its bytes.
+struct BBlank {
+  obj: Int
+  from: Int
+  to: Int
+}
+
+/// The resolver of the identifiers of function bodies.
+struct BR {
+  t: List[GTok]
+  i: Int = 0
+  scopes: List[Map[Str, Int]] = []
+  objs: List[BObj] = []
+  blanks: List[BBlank] = []
+  err: Bool = false
+  /// the token where the parse failed first
+  err_at: Int = -1
+}
+
+fn (var r: BR) fail() {
+  if !r.err {
+    r.err_at = r.i
+  }
+  r.err = true
+}
+
+/// Where drop_blank_uses fails to parse src: "" when it parses, else the
+/// byte offset and the tokens around (for debugging).
+pub fn blank_parse_error(src: Str) -> Str {
+  let toks = match go_lex(src.bytes()) {
+    Some(t) => t
+    None => return "does not scan"
+  }
+  var r = BR{t: toks}
+  r.file()
+  if !r.err {
+    return ""
+  }
+  var b = "at token ${r.err_at}"
+  if r.err_at >= 0 && r.err_at < toks.len() {
+    let off = toks[r.err_at].from
+    var lo = off - 80
+    if lo < 0 {
+      lo = 0
+    }
+    var hi = off + 40
+    if hi > src.len() {
+      hi = src.len()
+    }
+    b = b + " (byte ${off}): " + (src.bytes()[lo..hi].to_str() ?? "")
+  }
+  b
+}
+
+/// The `_ = x` statements Go does not need dropped (dropBlankUses); src
+/// unchanged when it does not scan or parse.
+pub fn drop_blank_uses(src: Str) -> Str {
+  let toks = match go_lex(src.bytes()) {
+    Some(t) => t
+    None => return src
+  }
+  var r = BR{t: toks}
+  r.file()
+  if r.err {
+    return src
+  }
+  let bs = src.bytes()
+  var drops: List[(Int, Int)] = []
+  for b in r.blanks {
+    let keep = b.obj >= 0 && r.objs[b.obj].local && (r.objs[b.obj].n_uses == 0 || r.objs[b.obj].tswitch)
+    if keep {
+      continue
+    }
+    // only a statement alone on its line
+    var ls = b.from
+    while ls > 0 && bs[ls - 1] != '\n' {
+      ls -= 1
+    }
+    var le = b.to
+    while le < bs.len() && bs[le] != '\n' {
+      le += 1
+    }
+    if le >= bs.len() || !blank_bytes(bs, ls, b.from) || !blank_bytes(bs, b.to, le) {
+      continue
+    }
+    drops.push((ls, le + 1))
+  }
+  if drops.is_empty() {
+    return src
+  }
+  var out = BytesBuilder.new()
+  var at = 0
+  for (from, to) in drops {
+    if from < at {
+      continue
+    }
+    out.write(bs[at..from])
+    at = to
+  }
+  out.write(bs[at..bs.len()])
+  out.freeze().to_str() ?? src
+}
+
+fn blank_bytes(bs: Bytes, from: Int, to: Int) -> Bool {
+  for i in from..to {
+    let c = bs[i]
+    if !(c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      return false
+    }
+  }
+  true
+}
+
+fn (r: BR) tok() -> GTok {
+  if r.i < r.t.len() {
+    return r.t[r.i]
+  }
+  GTok{k: GT_SEMI, s: "EOF"}
+}
+
+fn (r: BR) at_op(s: Str) -> Bool {
+  r.i < r.t.len() && r.t[r.i].k == GT_OP && r.t[r.i].s == s
+}
+
+fn (r: BR) at_kw(s: Str) -> Bool {
+  r.i < r.t.len() && r.t[r.i].k == GT_IDENT && r.t[r.i].s == s
+}
+
+fn (r: BR) at_end() -> Bool {
+  r.i >= r.t.len()
+}
+
+fn (var r: BR) open() {
+  r.scopes.push({})
+}
+
+fn (var r: BR) close() {
+  r.scopes.pop()
+}
+
+/// Declares name in the innermost scope (`_` is never declared).
+fn (var r: BR) declare(name: Str, local: Bool) -> Int {
+  if name == "_" || r.scopes.is_empty() {
+    return -1
+  }
+  let o = r.objs.len()
+  r.objs.push(BObj{local: local})
+  let n = r.scopes.len() - 1
+  r.scopes[n][name] = o
+  o
+}
+
+fn (r: BR) lookup(name: Str) -> Int {
+  var i = r.scopes.len() - 1
+  while i >= 0 {
+    if let Some(o) = r.scopes[i].get(name) {
+      return o
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn (var r: BR) use_name(name: Str) {
+  let o = r.lookup(name)
+  if o >= 0 {
+    r.objs[o].n_uses += 1
+  }
+}
+
+/// The index of the token closing the bracket at open, or -1.
+fn (r: BR) close_of(open: Int) -> Int {
+  var depth = 0
+  var j = open
+  while j < r.t.len() {
+    let t = r.t[j]
+    if t.k == GT_OP {
+      if t.s is "(" | "[" | "{" {
+        depth += 1
+      } else if t.s is ")" | "]" | "}" {
+        depth -= 1
+        if depth == 0 {
+          return j
+        }
+      }
+    }
+    j += 1
+  }
+  -1
+}
+
+/// The file: function declarations and the function literals of the
+/// other declarations.
+fn (var r: BR) file() {
+  while !r.at_end() && !r.err {
+    if r.at_kw("func") {
+      r.func_decl()
+      continue
+    }
+    if r.at_kw("import") || r.at_kw("package") {
+      // to the end of the declaration
+      r.i += 1
+      if r.at_op("(") {
+        let c = r.close_of(r.i)
+        if c < 0 {
+          r.fail()
+          return
+        }
+        r.i = c + 1
+      }
+      while !r.at_end() && r.tok().k != GT_SEMI {
+        r.i += 1
+      }
+      r.i += 1
+      continue
+    }
+    // var, const, type: their function literals
+    let start = r.i
+    var depth = 0
+    var end = r.i
+    while end < r.t.len() {
+      let t = r.t[end]
+      if t.k == GT_SEMI && depth == 0 {
+        break
+      }
+      if t.k == GT_OP {
+        if t.s is "(" | "[" | "{" {
+          depth += 1
+        } else if t.s is ")" | "]" | "}" {
+          depth -= 1
+        }
+      }
+      end += 1
+    }
+    r.open()
+    r.expr_range(start, end)
+    r.close()
+    r.i = end + 1
+  }
+}
+
+/// `func [recv] name(params) results { body }`.
+fn (var r: BR) func_decl() {
+  r.i += 1
+  r.open()
+  if r.at_op("(") {
+    // the receiver
+    let c = r.close_of(r.i)
+    if c < 0 {
+      r.fail()
+      return
+    }
+    r.params(r.i + 1, c)
+    r.i = c + 1
+  }
+  // the name
+  r.i += 1
+  if r.at_op("[") {
+    let c = r.close_of(r.i)
+    if c < 0 {
+      r.fail()
+      return
+    }
+    r.i = c + 1
+  }
+  r.signature_and_body()
+  r.close()
+  if r.tok().k == GT_SEMI {
+    r.i += 1
+  }
+}
+
+/// `(params) results { body }` at r.i, in the function's scope.
+fn (var r: BR) signature_and_body() {
+  if !r.at_op("(") {
+    r.fail()
+    return
+  }
+  let c = r.close_of(r.i)
+  if c < 0 {
+    r.fail()
+    return
+  }
+  r.params(r.i + 1, c)
+  r.i = c + 1
+  // results: a parenthesized list (maybe named) or a type, to `{`
+  if r.at_op("(") {
+    let c2 = r.close_of(r.i)
+    if c2 < 0 {
+      r.fail()
+      return
+    }
+    r.params(r.i + 1, c2)
+    r.i = c2 + 1
+  } else {
+    var depth = 0
+    while !r.at_end() {
+      let t = r.tok()
+      if t.k == GT_OP && t.s == "{" && depth == 0 {
+        break
+      }
+      if t.k == GT_OP && (t.s is "(" | "[") {
+        depth += 1
+      } else if t.k == GT_OP && (t.s is ")" | "]") {
+        depth -= 1
+      }
+      if t.k == GT_SEMI && depth == 0 {
+        // no body (a declaration without one)
+        return
+      }
+      r.i += 1
+    }
+  }
+  if r.at_op("{") {
+    r.block()
+  }
+}
+
+/// Declares the named parameters of a parameter list (tokens from..to):
+/// `name Type` parts; a part that is only a type declares nothing.
+fn (var r: BR) params(from: Int, to: Int) {
+  var j = from
+  while j < to {
+    // one part, to a comma at depth 0
+    var k = j
+    var depth = 0
+    while k < to {
+      let t = r.t[k]
+      if t.k == GT_OP && t.s == "," && depth == 0 {
+        break
+      }
+      if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+        depth += 1
+      } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+        depth -= 1
+      }
+      k += 1
+    }
+    if k - j >= 2 && r.t[j].k == GT_IDENT && !(r.t[j + 1].k == GT_OP && r.t[j + 1].s == ".") && !(r.t[j].s is "func" | "map" | "chan" | "struct" | "interface") {
+      r.declare(r.t[j].s, false)
+    }
+    j = k + 1
+  }
+}
+
+/// `{ stmts }`: a block statement.
+fn (var r: BR) block() {
+  if !r.at_op("{") {
+    r.fail()
+    return
+  }
+  r.i += 1
+  r.open()
+  r.stmt_list(true)
+  r.close()
+  if !r.at_op("}") {
+    r.fail()
+    return
+  }
+  r.i += 1
+}
+
+/// Statements up to `}`, `case`, or `default`; in_block tells that they
+/// are the list of a block statement (go/ast BlockStmt), whose `var`
+/// statements dropBlankUses sees.
+fn (var r: BR) stmt_list(in_block: Bool) {
+  while !r.err && !r.at_end() && !r.at_op("}") && !r.at_kw("case") && !r.at_kw("default") {
+    r.stmt(in_block)
+  }
+}
+
+fn (var r: BR) semi() {
+  if r.at_op(")") || r.at_op("}") {
+    return
+  }
+  if r.tok().k == GT_SEMI {
+    r.i += 1
+    return
+  }
+  r.fail()
+}
+
+/// The end of a simple statement at r.i: a semicolon or a closing bracket
+/// at depth 0, or `{` at depth 0 when stop_brace (a header).
+fn (r: BR) simple_end(stop_brace: Bool) -> Int {
+  var depth = 0
+  var j = r.i
+  while j < r.t.len() {
+    let t = r.t[j]
+    if t.k == GT_SEMI && depth == 0 {
+      return j
+    }
+    if t.k == GT_OP {
+      if t.s == "{" && depth == 0 && stop_brace {
+        return j
+      }
+      if t.k == GT_OP && t.s == ":" && depth == 0 && stop_brace {
+        return j
+      }
+      if t.s is "(" | "[" | "{" {
+        depth += 1
+      } else if t.s is ")" | "]" | "}" {
+        if depth == 0 {
+          return j
+        }
+        depth -= 1
+      }
+    }
+    if t.k == GT_IDENT && t.s == "func" && depth == 0 && stop_brace {
+      // a function literal in a header: skip its signature and body
+      var k = j + 1
+      var d2 = 0
+      while k < r.t.len() {
+        let u = r.t[k]
+        if u.k == GT_OP && u.s == "{" && d2 == 0 {
+          break
+        }
+        if u.k == GT_OP && (u.s is "(" | "[") {
+          d2 += 1
+        } else if u.k == GT_OP && (u.s is ")" | "]") {
+          d2 -= 1
+        }
+        k += 1
+      }
+      let c = r.close_of(k)
+      if c < 0 {
+        return r.t.len()
+      }
+      j = c + 1
+      continue
+    }
+    j += 1
+  }
+  j
+}
+
+fn (var r: BR) stmt(in_block: Bool) {
+  let t = r.tok()
+  if t.k == GT_SEMI {
+    r.i += 1
+    return
+  }
+  if t.k == GT_OP && t.s == "{" {
+    r.block()
+    r.semi()
+    return
+  }
+  if t.k == GT_IDENT {
+    let w = t.s
+    if w == "var" {
+      r.var_stmt(in_block)
+      r.semi()
+      return
+    }
+    if w == "return" || w == "defer" || w == "go" {
+      r.i += 1
+      let e = r.simple_end(false)
+      r.expr_range(r.i, e)
+      r.i = e
+      r.semi()
+      return
+    }
+    if w is "break" | "continue" | "goto" | "fallthrough" {
+      r.i += 1
+      if w != "fallthrough" && r.tok().k == GT_IDENT {
+        r.i += 1
+      }
+      r.semi()
+      return
+    }
+    if w == "if" {
+      r.if_stmt()
+      return
+    }
+    if w == "for" {
+      r.for_stmt()
+      return
+    }
+    if w == "switch" {
+      r.switch_stmt()
+      return
+    }
+    if w == "select" {
+      r.select_stmt()
+      return
+    }
+    if r.i + 1 < r.t.len() && r.t[r.i + 1].k == GT_OP && r.t[r.i + 1].s == ":" {
+      // a label
+      r.i += 2
+      if r.at_op("}") {
+        return
+      }
+      r.stmt(in_block)
+      return
+    }
+  }
+  let e = r.simple_end(false)
+  r.simple(r.i, e)
+  r.i = e
+  r.semi()
+}
+
+/// `var a, b T = x, y` as a statement: values (and types) first, then the
+/// names.
+fn (var r: BR) var_stmt(in_block: Bool) {
+  r.i += 1
+  let e = r.simple_end(false)
+  // the names, to the first token that is not a name or a comma
+  var names: List[Str] = []
+  var j = r.i
+  while j < e && r.t[j].k == GT_IDENT {
+    names.push(r.t[j].s)
+    j += 1
+    if j < e && r.t[j].k == GT_OP && r.t[j].s == "," {
+      j += 1
+      continue
+    }
+    break
+  }
+  r.expr_range(j, e)
+  for n in names {
+    let o = r.declare(n, in_block)
+    if !in_block && o >= 0 {
+      // the declaring identifier counts as a use outside a block
+      r.objs[o].n_uses += 1
+    }
+  }
+  r.i = e
+}
+
+/// The index of the assignment operator of a simple statement (from..to)
+/// at depth 0, or -1.
+fn (r: BR) assign_op(from: Int, to: Int) -> Int {
+  var depth = 0
+  for j in from..to {
+    let t = r.t[j]
+    if t.k != GT_OP {
+      continue
+    }
+    if t.s is "(" | "[" | "{" {
+      depth += 1
+    } else if t.s is ")" | "]" | "}" {
+      depth -= 1
+    } else if depth == 0 && (t.s is "=" | ":=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" | "&^=") {
+      return j
+    }
+  }
+  -1
+}
+
+/// A simple statement (tokens from..to): an assignment, a short variable
+/// declaration, an increment, a send, or an expression.
+fn (var r: BR) simple(from: Int, to: Int) {
+  let a = r.assign_op(from, to)
+  if a < 0 {
+    // x++ / x--
+    if to - from == 2 && r.t[from].k == GT_IDENT && r.t[from + 1].k == GT_OP && (r.t[from + 1].s is "++" | "--") {
+      return
+    }
+    r.expr_range(from, to)
+    return
+  }
+  let op = r.t[a].s
+  // `_ = x`
+  if op == "=" && a == from + 1 && r.t[from].k == GT_IDENT && r.t[from].s == "_" && to == a + 2 && r.t[a + 1].k == GT_IDENT {
+    let o = r.lookup(r.t[a + 1].s)
+    r.blanks.push(BBlank{obj: o, from: r.t[from].from, to: r.t[a + 1].to})
+    return
+  }
+  // the values first
+  r.expr_range(a + 1, to)
+  r.lhs(from, a, op == ":=")
+}
+
+/// The left side of an assignment: names are not n_uses; with define they
+/// are declared (or reused in the same scope) and local.
+fn (var r: BR) lhs(from: Int, to: Int, define: Bool) {
+  var j = from
+  while j < to {
+    var k = j
+    var depth = 0
+    while k < to {
+      let t = r.t[k]
+      if t.k == GT_OP && t.s == "," && depth == 0 {
+        break
+      }
+      if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+        depth += 1
+      } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+        depth -= 1
+      }
+      k += 1
+    }
+    if k == j + 1 && r.t[j].k == GT_IDENT {
+      let n = r.t[j].s
+      if define && n != "_" {
+        let cur = r.scopes.len() - 1
+        match r.scopes[cur].get(n) {
+          Some(o) => r.objs[o].local = true
+          None => {
+            r.declare(n, true)
+          }
+        }
+      }
+    } else {
+      r.expr_range(j, k)
+    }
+    j = k + 1
+  }
+}
+
+fn (var r: BR) if_stmt() {
+  r.i += 1
+  r.open()
+  r.header()
+  r.block()
+  if r.at_kw("else") {
+    r.i += 1
+    if r.at_kw("if") {
+      r.if_stmt()
+      r.close()
+      return
+    }
+    r.block()
+  }
+  r.close()
+  r.semi()
+}
+
+/// An if or switch header: [init ;] [expr], to `{`.
+fn (var r: BR) header() {
+  let e = r.simple_end(true)
+  if e < r.t.len() && r.t[e].k == GT_SEMI {
+    r.simple(r.i, e)
+    r.i = e + 1
+    let e2 = r.simple_end(true)
+    r.simple(r.i, e2)
+    r.i = e2
+    return
+  }
+  r.simple(r.i, e)
+  r.i = e
+}
+
+fn (var r: BR) for_stmt() {
+  r.i += 1
+  r.open()
+  let e = r.header_end()
+  // range?
+  var range_at = -1
+  var depth = 0
+  for j in r.i..e {
+    let t = r.t[j]
+    if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+      depth += 1
+    } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+      depth -= 1
+    }
+    if depth == 0 && t.k == GT_IDENT && t.s == "range" {
+      range_at = j
+      break
+    }
+  }
+  if range_at >= 0 {
+    r.expr_range(range_at + 1, e)
+    if range_at > r.i {
+      let a = r.assign_op(r.i, range_at)
+      if a >= 0 {
+        r.lhs(r.i, a, r.t[a].s == ":=")
+      }
+    }
+    r.i = e
+  } else {
+    // init; cond; post or cond
+    var parts: List[Int] = [r.i]
+    depth = 0
+    for j in r.i..e {
+      let t = r.t[j]
+      if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+        depth += 1
+      } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+        depth -= 1
+      }
+      if depth == 0 && t.k == GT_SEMI {
+        parts.push(j + 1)
+      }
+    }
+    parts.push(e + 1)
+    for p in 0..parts.len() - 1 {
+      r.simple(parts[p], parts[p + 1] - 1)
+    }
+    r.i = e
+  }
+  r.block()
+  r.close()
+  r.semi()
+}
+
+/// The `{` ending a for header (function literals skipped).
+fn (var r: BR) header_end() -> Int {
+  var j = r.i
+  var depth = 0
+  while j < r.t.len() {
+    let t = r.t[j]
+    if t.k == GT_OP && t.s == "{" && depth == 0 {
+      return j
+    }
+    if t.k == GT_IDENT && t.s == "func" && depth == 0 {
+      var k = j + 1
+      var d2 = 0
+      while k < r.t.len() {
+        let u = r.t[k]
+        if u.k == GT_OP && u.s == "{" && d2 == 0 {
+          break
+        }
+        if u.k == GT_OP && (u.s is "(" | "[") {
+          d2 += 1
+        } else if u.k == GT_OP && (u.s is ")" | "]") {
+          d2 -= 1
+        }
+        k += 1
+      }
+      let c = r.close_of(k)
+      if c < 0 {
+        r.fail()
+        return r.t.len()
+      }
+      j = c + 1
+      continue
+    }
+    if t.k == GT_OP && (t.s is "(" | "[") {
+      depth += 1
+    } else if t.k == GT_OP && (t.s is ")" | "]") {
+      depth -= 1
+    }
+    j += 1
+  }
+  r.fail()
+  j
+}
+
+fn (var r: BR) switch_stmt() {
+  r.i += 1
+  r.open()
+  let e = r.header_end()
+  // init ; ?
+  var semi_at = -1
+  var depth = 0
+  for j in r.i..e {
+    let t = r.t[j]
+    if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+      depth += 1
+    } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+      depth -= 1
+    }
+    if depth == 0 && t.k == GT_SEMI {
+      semi_at = j
+    }
+  }
+  var start = r.i
+  if semi_at >= 0 {
+    r.simple(r.i, semi_at)
+    start = semi_at + 1
+  }
+  // a type switch: `[v :=] x.(type)`
+  var tswitch = false
+  for j in start..e {
+    if r.t[j].k == GT_IDENT && r.t[j].s == "type" && j > 0 && r.t[j - 1].k == GT_OP && r.t[j - 1].s == "(" {
+      tswitch = true
+    }
+  }
+  if tswitch {
+    r.open()
+    let a = r.assign_op(start, e)
+    if a >= 0 {
+      r.expr_range(a + 1, e)
+      if a == start + 1 && r.t[start].k == GT_IDENT {
+        let o = r.declare(r.t[start].s, true)
+        if o >= 0 {
+          r.objs[o].tswitch = true
+        }
+      }
+    } else {
+      r.expr_range(start, e)
+    }
+  } else {
+    r.simple(start, e)
+  }
+  r.i = e
+  r.clauses()
+  if tswitch {
+    r.close()
+  }
+  r.close()
+  r.semi()
+}
+
+fn (var r: BR) select_stmt() {
+  r.i += 1
+  r.clauses()
+  r.semi()
+}
+
+/// The clauses of a switch or select body: each its own scope.
+fn (var r: BR) clauses() {
+  if !r.at_op("{") {
+    r.fail()
+    return
+  }
+  r.i += 1
+  while !r.err && !r.at_end() && !r.at_op("}") {
+    if r.at_kw("default") {
+      r.i += 1
+      r.open()
+    } else if r.at_kw("case") {
+      r.i += 1
+      // to the clause's `:` at depth 0
+      var depth = 0
+      var j = r.i
+      while j < r.t.len() {
+        let t = r.t[j]
+        if t.k == GT_OP && t.s == ":" && depth == 0 {
+          break
+        }
+        if t.k == GT_OP && (t.s is "(" | "[" | "{") {
+          depth += 1
+        } else if t.k == GT_OP && (t.s is ")" | "]" | "}") {
+          depth -= 1
+        }
+        j += 1
+      }
+      r.open()
+      // a case list, or a communication of select (`v := <-ch`)
+      r.simple(r.i, j)
+      r.i = j
+    } else {
+      r.fail()
+      return
+    }
+    if !r.at_op(":") {
+      r.fail()
+      return
+    }
+    r.i += 1
+    r.stmt_list(false)
+    r.close()
+  }
+  if !r.at_op("}") {
+    r.fail()
+    return
+  }
+  r.i += 1
+}
+
+/// Resolves the identifiers of an expression (tokens from..to): every
+/// name that is not a selector's is a use; function literals get scopes
+/// of their own.
+fn (var r: BR) expr_range(from: Int, to: Int) {
+  var j = from
+  while j < to && !r.err {
+    let t = r.t[j]
+    if t.k == GT_IDENT {
+      if t.s == "func" {
+        // a function type or literal
+        var k = j + 1
+        if k < to && r.t[k].k == GT_OP && r.t[k].s == "(" {
+          let c = r.close_of(k)
+          if c < 0 {
+            r.fail()
+            return
+          }
+          // results to `{` (a literal) or the end of the type
+          var m = c + 1
+          var d2 = 0
+          var lit = false
+          while m < to {
+            let u = r.t[m]
+            if u.k == GT_OP && u.s == "{" && d2 == 0 {
+              lit = true
+              break
+            }
+            if u.k == GT_OP && (u.s is "(" | "[") {
+              d2 += 1
+            } else if u.k == GT_OP && (u.s is ")" | "]") {
+              if d2 == 0 {
+                break
+              }
+              d2 -= 1
+            } else if u.k == GT_OP && u.s == "," && d2 == 0 {
+              break
+            } else if u.k == GT_SEMI {
+              break
+            }
+            m += 1
+          }
+          if lit {
+            let saved = r.i
+            r.i = k
+            r.open()
+            r.signature_and_body()
+            r.close()
+            j = r.i
+            r.i = saved
+            continue
+          }
+          j = c + 1
+          continue
+        }
+        j += 1
+        continue
+      }
+      if t.s == "struct" || t.s == "interface" {
+        // a type literal: its field names are not n_uses
+        if j + 1 < to && r.t[j + 1].k == GT_OP && r.t[j + 1].s == "{" {
+          let c = r.close_of(j + 1)
+          if c < 0 {
+            r.fail()
+            return
+          }
+          j = c + 1
+          continue
+        }
+      }
+      let after_dot = j > from && r.t[j - 1].k == GT_OP && r.t[j - 1].s == "."
+      if !after_dot {
+        r.use_name(t.s)
+      }
+    }
+    j += 1
+  }
+}

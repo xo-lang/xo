@@ -1,0 +1,1201 @@
+// The Go code generator in Xo (internal/gen, decision 0167): it lowers
+// the modules selfhost/check checked to the Go source internal/gen
+// writes, file by file and declaration by declaration, `//line`
+// directives included. Each Xo module becomes one Go package under the
+// build module `xoprog` (`xoprog/m/<name>`), std modules map onto the
+// runtime package `xoprog/rt`, and a `package main` calls the program's
+// `main` or runs the test blocks (gen.go).
+//
+// The text of a package is written before internal/gen's last step (its
+// file: blank uses dropped, repeated //line directives dropped, gofmt);
+// the comparison (internal/selfhost gen_test.go) and the driver apply
+// that step. A construct outside the stages ported marks the declaration
+// it is in as skipped (Gen.skip): the declaration is left out and listed,
+// never written wrong.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type Pattern = parser.Pattern
+type Ident = parser.Ident
+type Span = parser.Span
+type Kind = parser.Kind
+
+/// What is generated and how (gen.go Options).
+pub struct Opts {
+  /// A test binary (Mode Test) instead of a program.
+  pub test_mode: Bool = false
+  pub holes: Bool = false
+  /// The directory //line paths are relative to (absolute), "" for none.
+  pub line_root: Str = ""
+  /// The working directory, absolute: relative file paths are relative
+  /// to it.
+  pub wd: Str = ""
+  pub no_mono: Bool = false
+  pub no_ranges: Bool = false
+  pub arenas: Bool = false
+  pub release: Bool = false
+  pub no_error_args: Bool = false
+  /// The statement that passes the main module's `gc` lines to the
+  /// runtime (decision 0065), "rt.GCConfig(...); " or "".
+  pub gc: Str = ""
+}
+
+/// One generated file.
+pub struct GFile {
+  pub path: Str
+  pub text: Str
+}
+
+/// The generated program (gen.go Program): the files, or err.
+pub struct Program {
+  pub files: List[GFile] = []
+  pub main_module: Str = ""
+  pub specs: Int = 0
+  pub tz_names: List[Str] = []
+  pub tz_dynamic: List[Str] = []
+  pub tags: List[Str] = []
+  /// The generator's errors (gen.go Error), "" for none.
+  pub err: Str = ""
+  /// The declarations left out: `<file> <declaration>: <why>`.
+  pub skipped: List[Str] = []
+}
+
+/// A reference to one test of the test table (support.go testRef).
+struct TestRef {
+  name: Str
+  fn_name: Str
+  loc: Str
+  seed: Int = 0
+  params: Int = 0
+  uses_l: List[Str] = []
+  param_names: List[Str] = []
+  param_types: List[Str] = []
+  param_caps: List[Str] = []
+  fuzz: Bool = false
+  reg_call: Str = ""
+  reg_result: Str = ""
+  reg_vars: List[Bool] = []
+}
+
+/// A request for a specialized copy of a generic function (mono.go
+/// specReq).
+struct SpecReq {
+  fo: Int
+  sub: Map[Int, Int]
+  name: Str
+  depth: Int
+  /// closure literals by parameter index, with their files
+  lits: Map[Int, LitRef] = {}
+}
+
+/// A closure literal and the file it is in.
+struct LitRef {
+  file: Int
+  lit: parser.FnLit
+}
+
+/// The specialization state of one package (mono.go monoState).
+struct MonoState {
+  by_key: Map[Str, Str] = {}
+  names: Map[Str, Bool] = {}
+  per_func: Map[Int, Int] = {}
+  pending: List[SpecReq] = []
+  /// the substitution of the copy being generated (on: sub is set)
+  on: Bool = false
+  sub: Map[Int, Int] = {}
+  depth: Int = 0
+  generated: Int = 0
+}
+
+/// One Go package being generated (gen.go pkgGen).
+struct Pkg {
+  /// the Xo module, -1 for package main and the key package
+  m: Int = -1
+  dir: Str = ""
+  name: Str = ""
+  imports: Map[Str, Str] = {}
+  out: List[Str] = []
+  /// chunks of out that are declarations of their own written while
+  /// another is generated (interface adapters): kept when that one is
+  /// skipped
+  keep: Map[Int, Bool] = {}
+  /// the file being generated
+  cur: Int = -1
+  tmp: Int = 0
+  /// interface adapters made: `<from>|<to>` to the adapter's name
+  adapt: Map[Str, Str] = {}
+  tests: List[TestRef] = []
+  in_rt: Bool = false
+  ms: MonoState = MonoState{}
+  no_mono: Bool = false
+  no_adapt: Bool = false
+}
+
+/// The program wide record of what the adapter registry may need
+/// (adapt.go adaptState).
+struct AdaptState {
+  /// the package keying types (Go type text as seen from package main)
+  kp: Int = -1
+  seen: Map[Int, Bool] = {}
+  types: Map[Str, Int] = {}
+  targets: Map[Str, Int] = {}
+  objs: Map[Int, Bool] = {}
+}
+
+/// The generator (gen.go gen), with the function being generated (f).
+pub struct Gen {
+  pub c: check.Checker
+  opts: Opts
+  pkgs: List[Pkg] = []
+  /// the package of each user module
+  pkg_of: Map[Int, Int] = {}
+  errs: List[Str] = []
+  prelude: Int = -1
+  boxed: Map[(Int, Int), Bool] = {}
+  ad: AdaptState = AdaptState{}
+  tz_names: Map[Str, Bool] = {}
+  tz_dynamic: Map[Str, Bool] = {}
+  /// the package being generated
+  p: Int = -1
+  /// the function being generated
+  f: F = F{}
+  /// why the declaration being generated is skipped, "" while it is not
+  skip: Str = ""
+  skipped: List[Str] = []
+  /// the range analysis of the body being generated (ranges.xo)
+  ra: RA = RA{}
+  /// the program calls task.with_budget: 0 unknown, 1 yes, -1 no
+  /// (budget.xo)
+  budgets: Int = 0
+}
+
+// ---------------------------------------------------------------------------
+// The program
+
+/// Generates the program c checked (gen.go Generate).
+pub fn generate(c: check.Checker, opts: Opts) -> Program {
+  var g = Gen{c: c, opts: opts}
+  g.prelude = c.prelude
+  g.run()
+}
+
+fn (var g: Gen) run() -> Program {
+  var prog = Program{}
+  if !g.opts.test_mode && !g.reaches_std("std/http") {
+    prog.tags.push("xo_nohttp")
+  }
+  g.init_adapt()
+  var main_mod = -1
+  for m in g.c.order {
+    if g.c.mods[m].is_std {
+      continue
+    }
+    g.pkg_of[m] = g.pkgs.len()
+    g.pkgs.push(g.new_pkg(m))
+  }
+  for m in g.c.order {
+    let pi = g.pkg_of.get(m) ?? -1
+    if pi < 0 {
+      continue
+    }
+    g.p = pi
+    g.gen_module()
+    let mo = g.c.mods[m].members.get(b"main") ?? -1
+    if mo >= 0 && g.c.objs[mo].kind == check.ObjKind.Func && g.c.objs[mo].recv < 0 && g.c.mods[m].root {
+      if main_mod < 0 {
+        main_mod = m
+      }
+    }
+  }
+  if !g.opts.no_mono {
+    g.drain_specs()
+  }
+  if !g.errs.is_empty() {
+    prog.err = g.errs.join("\n")
+    return prog
+  }
+  var files: List[GFile] = []
+  for m in g.c.order {
+    let pi = g.pkg_of.get(m) ?? -1
+    if pi < 0 {
+      continue
+    }
+    prog.specs += g.pkgs[pi].ms.generated
+    files.push(GFile{path: "${g.pkgs[pi].dir}/xo.go", text: g.pkg_file(pi)})
+  }
+  if !g.opts.test_mode {
+    if main_mod < 0 {
+      prog.err = "no `fn main` found in the modules given"
+      return prog
+    }
+    prog.main_module = g.c.mods[main_mod].path
+    let (src, err) = g.main_file(main_mod)
+    if !err.is_empty() {
+      prog.err = err
+      return prog
+    }
+    files.push(GFile{path: "main.go", text: src})
+    files.push(GFile{path: "${g.pkgs[g.pkg_of.get(main_mod) ?? 0].dir}/xo_main.go", text: g.main_entry_file(main_mod)})
+  } else {
+    files.push(GFile{path: "main.go", text: g.test_main_file()})
+  }
+  let (tn, td) = g.tz_use()
+  prog.tz_names = tn
+  prog.tz_dynamic = td
+  files.push(GFile{path: "xo_adapt.go", text: g.adapt_file()})
+  files.push(GFile{path: "go.mod", text: "module xoprog\n\ngo 1.26\n"})
+  prog.files = files
+  prog.skipped = g.skipped
+  prog
+}
+
+/// Whether the program's modules or the prelude import the std module
+/// path, directly or through other modules (reachesStd).
+fn (g: Gen) reaches_std(path: Str) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  var stack: List[Int] = []
+  for m in g.c.order {
+    if !g.c.mods[m].is_std || g.c.mods[m].is_prelude {
+      stack.push(m)
+    }
+  }
+  while !stack.is_empty() {
+    let m = stack.pop() ?? -1
+    if seen.contains(m) {
+      continue
+    }
+    seen[m] = true
+    if g.c.mods[m].path == path {
+      return true
+    }
+    for fi in g.c.mods[m].files {
+      for (_, imp) in g.c.files[fi].imports.entries() {
+        if imp.module >= 0 && !seen.contains(imp.module) {
+          stack.push(imp.module)
+        }
+      }
+    }
+  }
+  false
+}
+
+/// Records a generation failure at the node of span sp in the current
+/// file (errorf).
+fn (var g: Gen) errorf(sp: Span, msg: Str) {
+  if sp.start.line == 0 && sp.end.offset == 0 {
+    g.errs.push(msg)
+    return
+  }
+  g.errs.push("${g.file_path(g.f.file)}:${sp.start.line}:${sp.start.col}: ${msg}")
+}
+
+/// Marks the declaration being generated as skipped: a construct of a
+/// later stage of decision 0167.
+fn (var g: Gen) unsupported(why: Str) {
+  if g.skip.is_empty() {
+    g.skip = why
+  }
+}
+
+/// The path of file f as the checker has it.
+fn (g: Gen) file_path(f: Int) -> Str {
+  if f < 0 {
+    return ""
+  }
+  g.c.files[f].path
+}
+
+// ---------------------------------------------------------------------------
+// Declarations as units of comparison
+
+/// Starts a declaration of the current package: what it writes from here
+/// is dropped when it is skipped (end_decl). Returns the mark to end it
+/// with.
+fn (var g: Gen) begin_decl() -> DeclMark {
+  let m = DeclMark{at: g.pkgs[g.p].out.len(), skip: g.skip}
+  g.skip = ""
+  m
+}
+
+struct DeclMark {
+  at: Int
+  skip: Str
+}
+
+/// Ends the declarations named keys (their Go names, `Recv.Name` for a
+/// method) begun at mark: when they were skipped their text is dropped
+/// (but not the declarations of their own written meanwhile) and they are
+/// listed.
+fn (var g: Gen) end_decl(mark: DeclMark, keys: List[Str]) {
+  if !g.skip.is_empty() {
+    let pi = g.p
+    var kept: List[Str] = []
+    for i in mark.at..g.pkgs[pi].out.len() {
+      if g.pkgs[pi].keep.contains(i) {
+        kept.push(g.pkgs[pi].out[i])
+      }
+    }
+    g.pkgs[pi].out = g.pkgs[pi].out[0..mark.at]
+    for k in kept {
+      g.pkgs[pi].keep[g.pkgs[pi].out.len()] = true
+      g.pkgs[pi].out.push(k)
+    }
+    for key in keys {
+      g.skipped.push("${g.pkgs[pi].dir}/xo.go ${key}: ${g.skip}")
+    }
+  }
+  g.skip = mark.skip
+}
+
+// ---------------------------------------------------------------------------
+// Packages
+
+/// The Go package name of a module path (pkgIdent).
+fn pkg_ident(path: Str) -> Str {
+  var b = BytesBuilder.new()
+  for r in path.runes() {
+    let n = Int(r)
+    if (n >= 97 && n <= 122) || (n >= 48 && n <= 57) {
+      b.write_rune(r)
+    } else if n >= 65 && n <= 90 {
+      b.write_rune(r.to_lower())
+    } else {
+      b.write_byte(95)
+    }
+  }
+  var s = trim_underscores(b.freeze().to_str() ?? "")
+  if s.is_empty() || (s.bytes()[0] >= '0' && s.bytes()[0] <= '9') {
+    s = "m_" + s
+  }
+  "x_" + s
+}
+
+fn trim_underscores(s: Str) -> Str {
+  let bs = s.bytes()
+  var i = 0
+  var j = bs.len()
+  while i < j && bs[i] == '_' {
+    i += 1
+  }
+  while j > i && bs[j - 1] == '_' {
+    j -= 1
+  }
+  bs[i..j].to_str() ?? ""
+}
+
+fn (g: Gen) new_pkg(m: Int) -> Pkg {
+  let name = pkg_ident(g.c.mods[m].path)
+  Pkg{m: m, dir: "m/${name}", name: name}
+}
+
+/// The qualifier of module m as seen from the current package ("" for
+/// its own module), importing it (pkgRef).
+fn (var g: Gen) pkg_ref(m: Int) -> Str {
+  if m < 0 || g.c.mods[m].is_std {
+    return g.rt()
+  }
+  if m == g.pkgs[g.p].m {
+    return ""
+  }
+  let oi = g.pkg_of.get(m) ?? -1
+  if oi < 0 {
+    return "MISSING_PKG_" + pkg_ident(g.c.mods[m].path)
+  }
+  let path = "xoprog/${g.pkgs[oi].dir}"
+  g.pkgs[g.p].imports[path] = g.pkgs[oi].name
+  g.pkgs[oi].name + "."
+}
+
+/// The runtime qualifier "rt.", importing the runtime.
+fn (var g: Gen) rt() -> Str {
+  if g.pkgs[g.p].in_rt {
+    return ""
+  }
+  g.pkgs[g.p].imports["xoprog/rt"] = "rt"
+  "rt."
+}
+
+/// Imports a package of the Go standard library by its own name.
+fn (var g: Gen) import_std(path: Str) {
+  g.pkgs[g.p].imports[path] = path
+}
+
+/// Writes a line of the current package (pkgGen.p).
+fn (var g: Gen) pl(s: Str) {
+  g.pkgs[g.p].out.push(s + "\n")
+}
+
+/// Writes text to the current package.
+fn (var g: Gen) pout(s: Str) {
+  g.pkgs[g.p].out.push(s)
+}
+
+/// The text of package pi before internal/gen's file step: the header,
+/// the imports sorted by path, and the declarations.
+fn (g: Gen) pkg_file(pi: Int) -> Str {
+  let pg = g.pkgs[pi]
+  var b = StrBuilder.new()
+  b.write("// Code generated by xo from module ${g.c.mods[pg.m].path}. DO NOT EDIT.\n\n")
+  b.write("package ${pg.name}\n\n")
+  if !pg.imports.is_empty() {
+    let paths = pg.imports.keys().sort()
+    b.write("import (\n")
+    for p in paths {
+      b.write("\t${pg.imports.get(p) ?? ""} ${p.quote()}\n")
+    }
+    b.write(")\n\n")
+  }
+  for s in pg.out {
+    b.write(s)
+  }
+  b.freeze()
+}
+
+/// The path written in //line directives for a source file: relative to
+/// the line root when the file is below it (linePath).
+fn (g: Gen) line_path(file: Str) -> Str {
+  if !g.opts.line_root.is_empty() {
+    var abs = file
+    if !abs.starts_with("/") {
+      abs = "${g.opts.wd}/${abs}"
+    }
+    abs = clean_path(abs)
+    let root = clean_path(g.opts.line_root)
+    if abs == root {
+      return "."
+    }
+    if root == "/" && abs.starts_with("/") {
+      return abs.trim_prefix("/")
+    }
+    if abs.starts_with("${root}/") {
+      return abs.trim_prefix("${root}/")
+    }
+  }
+  clean_path(file)
+}
+
+/// filepath.Clean for slash separated paths.
+fn clean_path(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for part in p.split("/") {
+    if part.is_empty() || part == "." {
+      continue
+    }
+    if part == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(part)
+  }
+  let s = out.join("/")
+  if rooted {
+    return "/" + s
+  }
+  if s.is_empty() {
+    return "."
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Names
+
+fn go_field(name: Str) -> Str {
+  "F_" + name
+}
+
+fn go_method(name: Str) -> Str {
+  "M_" + name
+}
+
+/// The Go name of a type parameter (goTParam).
+fn (g: Gen) go_tparam(p: Int) -> Str {
+  "tp_" + g.oname(p)
+}
+
+/// The Go name prefix of std module m's declarations in the runtime: ""
+/// for the prelude, "Http_" for std/http (stdPrefix).
+fn (g: Gen) std_prefix(m: Int) -> Str {
+  if m < 0 || g.c.mods[m].is_prelude {
+    return ""
+  }
+  let n = g.c.mods[m].name
+  let bs = n.bytes()
+  if bs.is_empty() {
+    return "_"
+  }
+  var first = bs[0]
+  if first >= 'a' && first <= 'z' {
+    first = first - 32
+  }
+  var b = BytesBuilder.new()
+  b.write_byte(first)
+  b.write(bs[1..bs.len()])
+  (b.freeze().to_str() ?? "") + "_"
+}
+
+/// The Go name of a declared type, qualified for the current package
+/// (typeObjName).
+fn (var g: Gen) type_obj_name(o: Int) -> Str {
+  let m = g.omod(o)
+  if g.is_std_mod(m) {
+    return g.rt() + g.std_prefix(m) + g.oname(o)
+  }
+  g.pkg_ref(m) + g.oname(o)
+}
+
+// ---------------------------------------------------------------------------
+// Objects and modules
+
+fn (g: Gen) oname(o: Int) -> Str {
+  check.text(g.c.objs[o].name)
+}
+
+fn (g: Gen) omod(o: Int) -> Int {
+  g.c.objs[o].module
+}
+
+fn (g: Gen) is_std_mod(m: Int) -> Bool {
+  m >= 0 && g.c.mods[m].is_std
+}
+
+fn (g: Gen) is_prelude_mod(m: Int) -> Bool {
+  m >= 0 && g.c.mods[m].is_prelude
+}
+
+/// Whether object o is declared in a std module.
+fn (g: Gen) ostd(o: Int) -> Bool {
+  g.is_std_mod(g.omod(o))
+}
+
+/// Whether object o is declared in the prelude.
+fn (g: Gen) oprelude(o: Int) -> Bool {
+  g.is_prelude_mod(g.omod(o))
+}
+
+/// The type kind of a Type object: struct, enum, interface, alias, or
+/// newtype.
+fn (g: Gen) tkind(o: Int) -> Str {
+  g.c.objs[o].tkind
+}
+
+/// The non effect type parameters of a list of TParam objects
+/// (typeParams).
+fn (g: Gen) type_params(ps: List[Int]) -> List[Int] {
+  var out: List[Int] = []
+  for p in ps {
+    if !g.c.objs[p].effect {
+      out.push(p)
+    }
+  }
+  out
+}
+
+/// The declared (not implicit) type parameters of a function
+/// (ownTParams).
+fn (g: Gen) own_tparams(fo: Int) -> List[Int] {
+  var out: List[Int] = []
+  for p in g.c.objs[fo].tparams {
+    if !g.c.objs[p].implicit {
+      out.push(p)
+    }
+  }
+  out
+}
+
+/// The declaration of Type object o (StructDecl, EnumDecl, ...), or
+/// None.
+fn (g: Gen) type_decl(o: Int) -> parser.Decl? {
+  let x = g.c.objs[o]
+  if x.decl_file < 0 || x.decl_idx < 0 {
+    return None
+  }
+  Some(g.c.files[x.decl_file].ast.decls[x.decl_idx])
+}
+
+/// The span of a declaration.
+fn decl_span(d: parser.Decl) -> Span {
+  match d {
+    FnDecl(d) => d.span
+    StructDecl(d) => d.span
+    EnumDecl(d) => d.span
+    InterfaceDecl(d) => d.span
+    TypeDecl(d) => d.span
+    ConstDecl(d) => d.span
+    TestDecl(d) => d.span
+    BadDecl(span) => span
+  }
+}
+
+/// The invariant of a struct type object, if it has one.
+fn (g: Gen) invariant_of(o: Int) -> Expr? {
+  if let Some(d) = g.type_decl(o) {
+    if let StructDecl(sd) = d {
+      return sd.inv
+    }
+  }
+  None
+}
+
+/// The invariant's file.
+fn (g: Gen) decl_file_of(o: Int) -> Int {
+  g.c.objs[o].decl_file
+}
+
+/// Whether type object o derives name.
+fn (g: Gen) derives(o: Int, name: Str) -> Bool {
+  g.c.objs[o].derives.contains(name)
+}
+
+/// The method name of type object o, or -1.
+fn (g: Gen) method_named(o: Int, name: Str) -> Int {
+  g.c.objs[o].methods.get(name.bytes()) ?? -1
+}
+
+/// A Local object's kind: a parameter or receiver (VParam, VRecv).
+fn (g: Gen) is_param_or_recv(v: Int) -> Bool {
+  g.c.objs[v].local is "param" | "var-param" | "recv" | "var-recv"
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+/// The kind of type t after resolving (-1 is the unit type).
+fn (g: Gen) tk(t: Int) -> check.TyKind {
+  if t < 0 {
+    return check.TyKind.Tuple
+  }
+  g.c.tys[g.c.resolve(t)].kind
+}
+
+/// The Type object of a Named type, or -1 (named).
+fn (g: Gen) nobj(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
+  let r = g.c.resolve(t)
+  if g.c.tys[r].kind == check.TyKind.Named {
+    return g.c.tys[r].obj
+  }
+  -1
+}
+
+/// The arguments (Named), elements (Tuple), or parameters (Func) of t.
+fn (g: Gen) targs(t: Int) -> List[Int] {
+  if t < 0 {
+    return []
+  }
+  g.c.tys[g.c.resolve(t)].args
+}
+
+/// Whether t is the prelude type name (isPrelude).
+fn (g: Gen) is_prelude(t: Int, name: Str) -> Bool {
+  let o = g.nobj(t)
+  o >= 0 && g.oprelude(o) && g.oname(o) == name
+}
+
+/// T for T?, else -1 (optionElem).
+fn (g: Gen) option_elem(t: Int) -> Int {
+  if g.is_prelude(t, "Option") {
+    let a = g.targs(t)
+    if !a.is_empty() {
+      return a[0]
+    }
+  }
+  -1
+}
+
+/// Whether t is Result[T, E] (resultParts).
+fn (g: Gen) is_result_t(t: Int) -> Bool {
+  g.is_prelude(t, "Result")
+}
+
+fn (g: Gen) result_t(t: Int) -> Int {
+  g.targs(t)[0]
+}
+
+fn (g: Gen) result_e(t: Int) -> Int {
+  g.targs(t)[1]
+}
+
+fn (g: Gen) is_interface(t: Int) -> Bool {
+  let o = g.nobj(t)
+  o >= 0 && g.tkind(o) == "interface"
+}
+
+fn (g: Gen) is_never(t: Int) -> Bool {
+  t >= 0 && g.c.is_never(t)
+}
+
+fn (g: Gen) is_unit(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let r = g.c.resolve(t)
+  g.c.tys[r].kind == check.TyKind.Tuple && g.c.tys[r].args.is_empty()
+}
+
+fn (g: Gen) is_param_t(t: Int) -> Bool {
+  t >= 0 && g.tk(t) == check.TyKind.Param
+}
+
+fn (g: Gen) is_func_t(t: Int) -> Bool {
+  t >= 0 && g.tk(t) == check.TyKind.Func
+}
+
+/// The result type of a function type.
+fn (g: Gen) fresult(t: Int) -> Int {
+  g.c.tys[g.c.resolve(t)].result
+}
+
+/// The error type of a function type as Deep leaves it: -1 when it
+/// cannot fail or fails with Never.
+fn (g: Gen) ferr(t: Int) -> Int {
+  let e = g.c.tys[g.c.resolve(t)].err
+  if e >= 0 && g.c.is_never(e) {
+    return -1
+  }
+  e
+}
+
+/// The error type of a function type as written (Never kept).
+fn (g: Gen) ferr_raw(t: Int) -> Int {
+  g.c.tys[g.c.resolve(t)].err
+}
+
+/// The `var` flags of a function type's parameters.
+fn (g: Gen) fvars(t: Int) -> List[Bool] {
+  g.c.tys[g.c.resolve(t)].vars
+}
+
+/// The non effect type arguments of a Named type (typeArgs).
+fn (g: Gen) type_args(t: Int) -> List[Int] {
+  let r = g.c.resolve(t)
+  let x = g.c.tys[r]
+  let tps = g.c.objs[x.obj].tparams
+  var out: List[Int] = []
+  for (i, a) in x.args.indexed() {
+    if g.c.tys[g.c.resolve(a)].kind == check.TyKind.EffArg {
+      continue
+    }
+    if i < tps.len() && g.c.objs[tps[i]].effect {
+      continue
+    }
+    out.push(a)
+  }
+  out
+}
+
+/// t with the type parameters of s replaced (Subst.Apply).
+fn (var g: Gen) sub_apply(t: Int, s: Map[Int, Int]) -> Int {
+  if t < 0 {
+    return t
+  }
+  g.c.subst(t, s)
+}
+
+/// The substitution of a type object's parameters by the arguments of
+/// Named type n (NewSubst).
+fn (g: Gen) subst_of(o: Int, n: Int) -> Map[Int, Int] {
+  g.c.args_subst(g.c.objs[o].tparams, g.targs(n))
+}
+
+fn (var g: Gen) type_list(ts: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for t in ts {
+    parts.push(g.go_type(t))
+  }
+  parts.join(", ")
+}
+
+/// The Go type of an Xo type (goType).
+fn (var g: Gen) go_type(t0: Int) -> Str {
+  if t0 < 0 {
+    return g.rt() + "Unit"
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Var => g.rt() + "Unit"
+    Bad => "any"
+    EffArg => "any"
+    Param => {
+      if g.pkgs[g.p].ms.on {
+        if let Some(c) = g.pkgs[g.p].ms.sub.get(x.obj) {
+          return g.go_type(c)
+        }
+      }
+      g.go_tparam(x.obj)
+    }
+    Tuple => {
+      if x.args.is_empty() {
+        return g.rt() + "Unit"
+      }
+      let r = g.rt()
+      "${r}Tuple${x.args.len()}[${g.type_list(x.args)}]"
+    }
+    Func => g.func_type(t)
+    Named => {
+      g.note_type(t)
+      g.named_type(t)
+    }
+  }
+}
+
+/// The Go type of a function value: func(*rt.Task, params) rt.Result[R,
+/// E] (funcType).
+fn (var g: Gen) func_type(t: Int) -> Str {
+  let x = g.c.tys[g.c.resolve(t)]
+  var b = "func(*${g.rt()}Task"
+  for (i, p) in x.args.indexed() {
+    b = b + ", "
+    if x.vars[i] {
+      b = b + "*"
+    }
+    b = b + g.go_type(p)
+  }
+  b = b + ") "
+  b + g.result_of(x.result, x.err)
+}
+
+/// rt.Result[goType(r), goType(e) or rt.Never] (resultOf).
+fn (var g: Gen) result_of(r: Int, e: Int) -> Str {
+  let rt = g.rt()
+  var et = rt + "Never"
+  if e >= 0 {
+    et = g.go_type(e)
+  }
+  "${rt}Result[${g.go_type(r)}, ${et}]"
+}
+
+fn scalar_go(name: Str) -> Str {
+  match name {
+    "Bool" => "bool"
+    "Int" => "int64"
+    "Int8" => "int8"
+    "Int16" => "int16"
+    "Int32" => "int32"
+    "Int64" => "int64"
+    "UInt8" => "uint8"
+    "UInt16" => "uint16"
+    "UInt32" => "uint32"
+    "UInt64" => "uint64"
+    "Float" => "float64"
+    "Float32" => "float32"
+    "Str" => "string"
+    _ => ""
+  }
+}
+
+fn (var g: Gen) named_type(t: Int) -> Str {
+  let o = g.nobj(t)
+  let args = g.type_args(t)
+  if g.oprelude(o) {
+    let n = g.oname(o)
+    let s = scalar_go(n)
+    if !s.is_empty() {
+      return s
+    }
+    let r = g.rt()
+    if n is "Rune" | "Bytes" | "Duration" | "Time" | "Never" | "StrBuilder" | "BytesBuilder" | "Listener" | "Conn" {
+      return r + n
+    }
+    if n is "List" | "Map" | "Set" | "Buf" | "Secret" | "Range" | "Option" | "Result" {
+      return "${r}${n}[${g.type_list(args)}]"
+    }
+    if n is "Chan" | "Mutex" | "Atomic" {
+      return "*${r}${n}[${g.type_list(args)}]"
+    }
+    if n == "Scope" {
+      return "*${r}Scope"
+    }
+    if n == "Task" {
+      return "*${r}Handle[${g.type_list(args)}]"
+    }
+    if n == "Display" {
+      return r + "IDisplay"
+    }
+    if n == "Error" {
+      return r + "IError"
+    }
+    if n == "Debug" {
+      return r + "IDebug"
+    }
+    if n is "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" {
+      return "any"
+    }
+  }
+  let name = g.type_obj_name(o)
+  if args.is_empty() {
+    return name
+  }
+  "${name}[${g.type_list(args)}]"
+}
+
+/// Whether t is an enum of a user module, not generic, whose variants all
+/// have no fields (isUnitEnum).
+fn (g: Gen) is_unit_enum(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || g.tkind(o) != "enum" || g.omod(o) < 0 || g.ostd(o) || !g.c.objs[o].tparams.is_empty() {
+    return false
+  }
+  for v in g.c.objs[o].variants {
+    if !v.fields.is_empty() {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether values of t are compared with Go's == and < (isScalar).
+fn (g: Gen) is_scalar(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || !g.oprelude(o) {
+    return false
+  }
+  g.oname(o) is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Str" | "Rune" | "Bytes" | "Duration" | "Time" | "Bool"
+}
+
+fn (g: Gen) is_int_type(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || !g.oprelude(o) {
+    return false
+  }
+  g.oname(o) is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
+}
+
+fn (g: Gen) is_signed(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || !g.oprelude(o) {
+    return false
+  }
+  g.oname(o) is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "Duration"
+}
+
+fn (g: Gen) is_unsigned(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || !g.oprelude(o) {
+    return false
+  }
+  g.oname(o) is "UInt8" | "UInt16" | "UInt32" | "UInt64"
+}
+
+fn (g: Gen) is_float(t: Int) -> Bool {
+  g.is_prelude(t, "Float") || g.is_prelude(t, "Float32")
+}
+
+/// Whether t is a capability or a test fake (isCapability).
+fn (g: Gen) is_capability(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || !g.ostd(o) {
+    return false
+  }
+  g.oname(o) is "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" | "TestOs" | "FakeNet" | "MemFs" | "FakeClock" | "FakeEnv" | "FakeStdio" | "FakeProc"
+}
+
+/// Whether field fi of struct obj is stored in an rt.Box
+/// (isBoxedField).
+fn (var g: Gen) is_boxed_field(obj: Int, fi: Int) -> Bool {
+  if let Some(b) = g.boxed.get((obj, fi)) {
+    return b
+  }
+  var seen: Map[Int, Bool] = {}
+  let b = g.contains_by_value(g.c.objs[obj].fields[fi].ty, obj, seen)
+  g.boxed[(obj, fi)] = b
+  b
+}
+
+/// isBoxedField by field name.
+fn (var g: Gen) boxed_field_named(t: Int, name: Str) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 || g.tkind(o) != "struct" {
+    return false
+  }
+  for (i, f) in g.c.objs[o].fields.indexed() {
+    if f.name == name.bytes() {
+      return g.is_boxed_field(o, i)
+    }
+  }
+  false
+}
+
+/// Whether a value of type t holds a value of the struct target inline
+/// (containsByValue).
+fn (var g: Gen) contains_by_value(t0: Int, target: Int, var seen: Map[Int, Bool]) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Tuple => {
+      for e in x.args {
+        if g.contains_by_value(e, target, seen) {
+          return true
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if o == target {
+        return true
+      }
+      if g.oprelude(o) {
+        if g.oname(o) is "Option" | "Result" | "Secret" {
+          for a in g.type_args(t) {
+            if g.contains_by_value(a, target, seen) {
+              return true
+            }
+          }
+        }
+        return false
+      }
+      if seen.contains(o) {
+        return false
+      }
+      seen[o] = true
+      let s = g.subst_of(o, t)
+      if g.tkind(o) == "struct" {
+        for f in g.c.objs[o].fields {
+          let ft = g.sub_apply(f.ty, s)
+          if g.contains_by_value(ft, target, seen) {
+            return true
+          }
+        }
+      } else if g.tkind(o) == "newtype" {
+        let tt = g.sub_apply(g.c.objs[o].target, s)
+        return g.contains_by_value(tt, target, seen)
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// The prelude type Never.
+fn (var g: Gen) never_type() -> Int {
+  g.c.mk_named(g.c.prelude_obj("Never"), [])
+}
+
+/// Whether t (resolved) mentions a type parameter (containsParam).
+fn (g: Gen) contains_param(t0: Int) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Param => true
+    Named | Tuple => {
+      for a in x.args {
+        if g.contains_param(a) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for a in x.args {
+        if g.contains_param(a) {
+          return true
+        }
+      }
+      g.contains_param(x.result) || (x.err >= 0 && g.contains_param(x.err))
+    }
+    _ => false
+  }
+}
+
+/// Whether frame values of type t are formatted when captured
+/// (frameEager).
+fn (var g: Gen) frame_eager(t: Int) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  g.frame_eager1(t, seen)
+}
+
+fn (var g: Gen) frame_eager1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  match x.kind {
+    Param => true
+    Tuple => {
+      for e in x.args {
+        if g.frame_eager1(e, seen) {
+          return true
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if g.oprelude(o) && (g.oname(o) == "Buf" || g.oname(o) == "Atomic") {
+        return true
+      }
+      if seen.contains(o) {
+        return false
+      }
+      seen[o] = true
+      var hit = false
+      if g.ostd(o) {
+        for a in x.args {
+          if g.frame_eager1(a, seen) {
+            hit = true
+            break
+          }
+        }
+        seen.remove(o)
+        return hit
+      }
+      let s = g.subst_of(o, t)
+      let k = g.tkind(o)
+      if k == "struct" {
+        for f in g.c.objs[o].fields {
+          if g.frame_eager1(g.sub_apply(f.ty, s), seen) {
+            hit = true
+            break
+          }
+        }
+      } else if k == "newtype" {
+        hit = g.frame_eager1(g.sub_apply(g.c.objs[o].target, s), seen)
+      } else if k == "enum" {
+        for v in g.c.objs[o].variants {
+          for f in v.fields {
+            if !hit && g.frame_eager1(g.sub_apply(f.ty, s), seen) {
+              hit = true
+            }
+          }
+        }
+      }
+      seen.remove(o)
+      hit
+    }
+    _ => false
+  }
+}
+
+/// Whether a contract clause marked debug (or not) is checked
+/// (contractOn).
+fn (g: Gen) contract_on(debug: Bool) -> Bool {
+  !debug || !g.opts.release || g.opts.test_mode
+}
+
+/// Whether error frames leave out parameter values (noErrorArgs).
+fn (g: Gen) no_error_args() -> Bool {
+  g.opts.no_error_args && g.opts.release && !g.opts.test_mode
+}
