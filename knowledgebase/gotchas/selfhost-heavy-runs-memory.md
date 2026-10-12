@@ -1,0 +1,34 @@
+# One self hosted run can take 5 GB, and -short sampled one
+
+Status: Observed (2026-10-12)
+
+Symptom: `go test -short ./internal/selfhost` took 175 to 208 s on the
+development Mac (the repository's `-short` budget is about 10 s per
+package). Logging each Xo process's peak resident size
+(runXoBatches, jobs_test.go) showed one process of the Xo SSA builder at
+57.8 s and 4,738 MB and one of the Xo LLVM emitter at 28.7 s and
+5,853 MB, both on the single run selfhost/llvm.
+
+Cause: the short tier took every 25th run of moduleDirs, and
+selfhost/llvm is one of them; it uses most of the other components
+(selfhost/check, selfhost/ssa), so the binaries load and lower all of
+them. The old batches of 60 runs hid it: the process holding
+selfhost/llvm was just the slow one. The same runs make the job count a
+poor bound on memory: four heavy processes at once are about 20 GB.
+
+Full tier (2026-10-12, c8g.8xlarge, 32 vCPU, 63 GB): with seven heavy
+slots (one per 8 GiB) TestSelfhostArm64 ran seven Xo arm64 emitter
+processes on self hosted components at once, 5.0 to 13.2 GB each, next
+to a 10 GB test process; memory in use reached 59 of 63 GB, SSH timed
+out, and the kernel killed the process on selfhost/xo (`signal:
+killed`). Each such run also takes 15 to 19 minutes.
+
+Fix: the short tier of TestSelfhostSSA and TestSelfhostLLVM skips the
+mergeHeavy runs (`-short` fell to 33 s). Every run of the package now
+draws from two pools (internal/selfhost/jobs_test.go): XO_SELFHOST_JOBS
+for every unit and XO_SELFHOST_HEAVY_JOBS (default one per 8 GiB of
+memory, one per 16 GiB in the full tier) for builds and mergeHeavy
+runs, which run one per process; scripts/remote-full.sh defaults to
+r8g.8xlarge (32 vCPU, 256 GiB, the same spot price). When
+a new component lands under selfhost/, mergeHeavy already counts it;
+check the peak RSS lines (`go test -v`) before raising the heavy count.

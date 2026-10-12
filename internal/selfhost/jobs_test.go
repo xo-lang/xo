@@ -28,8 +28,8 @@ import (
 // drawing from the pool. A heavy unit (a build, or a mergeHeavy run:
 // the self hosted compiler's components, from 1 to about 6 GB each)
 // also takes a slot of a second pool of selfhostHeavyJobs
-// (XO_SELFHOST_HEAVY_JOBS; default one per 8 GiB of memory, at most
-// selfhostJobs), which bounds the peak memory where the job count alone
+// (XO_SELFHOST_HEAVY_JOBS; default one per 8 GiB of memory, 16 GiB in
+// the full tier, at most selfhostJobs), which bounds the peak memory where the job count alone
 // would not (knowledgebase/infrastructure/toolchain.md, the
 // XO_SELFHOST_JOBS line). A unit takes its heavy slot before its job
 // slot and never waits for another slot while it holds a job slot.
@@ -68,7 +68,15 @@ func initJobs() {
 	n := count("XO_SELFHOST_JOBS", max(1, min(runtime.GOMAXPROCS(0), 4)))
 	h := n
 	if mem := totalMemory(); mem > 0 {
-		h = max(1, min(n, int(mem>>33)))
+		// 8 GiB per heavy unit, 16 GiB in the full tier: there the
+		// Xo arm64 emitter on a self hosted component holds 5 to 13 GB
+		// (seven at once filled 59 of 63 GB on c8g.8xlarge and the
+		// kernel killed one, 2026-10-12)
+		shift := 33
+		if !testing.Short() && os.Getenv("XO_SELFHOST_TIER") == tierFull {
+			shift = 34
+		}
+		h = max(1, min(n, int(mem>>shift)))
 	}
 	h = count("XO_SELFHOST_HEAVY_JOBS", h)
 	jobsSem = make(chan struct{}, n)

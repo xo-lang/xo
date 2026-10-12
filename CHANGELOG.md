@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- internal/selfhost scales with cores: every native build, Xo process,
+  and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
+  slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
+  core count), builds and the heavy runs also from
+  `XO_SELFHOST_HEAVY_JOBS` (default one per 8 GiB of memory); heavy runs
+  get a process each, backends run at once, and the full tier prebuilds
+  every component. `-short` no longer samples the heavy runs (175 s to
+  33 s on the development Mac).
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's

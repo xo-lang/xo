@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
@@ -102,6 +103,8 @@ func buildBinary(e *binEntry, component, backend string, slot bool) {
 			defer acquireJob(true)()
 		}
 		dir := filepath.Join("..", "..", "selfhost", component)
+		t0 := time.Now()
+		defer func() { e.took = time.Since(t0) }()
 		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
 		switch {
 		case err != nil:
@@ -119,6 +122,7 @@ type binEntry struct {
 	started atomic.Bool
 	bin     string
 	err     error
+	took    time.Duration // the build (from the binary cache when short)
 }
 
 // selfhostBinaries builds component with every backend that builds on
@@ -149,6 +153,9 @@ func selfhostBinaries(t *testing.T, component string, backends []string) map[str
 	for _, b := range backends {
 		if err := errs[b]; err != nil {
 			t.Fatalf("%s: %v", b, err)
+		}
+		if _, ok := bins[b]; ok {
+			t.Logf("selfhost/%s with %s: built in %.1f s", component, b, binEntryFor(component, b).took.Seconds())
 		}
 	}
 	return bins

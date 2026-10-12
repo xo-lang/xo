@@ -20,14 +20,15 @@
 # (default 300) even if this script dies; this script also terminates it
 # on exit. It only ever terminates the instance it launched (by the id
 # run-instances returned). Spot by default (about $0.70 to $0.80 an hour
-# for c8g.16xlarge in us-east-1 on 2026-10-12; $2.55 on demand).
+# for c8g.16xlarge in us-east-1 on 2026-10-12; $2.55 on demand; the
+# default r8g.8xlarge was $0.47 to $0.52 spot, about c8g.8xlarge's).
 #
 # Setup made on first use, all named xo-ci: an EC2 key pair (private key
 # at ~/.ssh/xo-ci.pem) and a security group allowing SSH from this host's
 # current public IP only.
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # the account quota is 32 vCPUs (2026-10-12)
+TYPE=${XO_REMOTE_TYPE:-r8g.8xlarge}  # 32 vCPUs (the account quota, 2026-10-12) and 256 GiB: the full tier needs about 13 GB per heavy run (c8g.8xlarge, 64 GiB, ran out)
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-300}
 GOVER=${XO_REMOTE_GO:-1.26.1}
