@@ -1,7 +1,7 @@
 # 0179: A WebAssembly backend written only in Xo, from the self hosted SSA to WAT assembled in Xo, with a runtime of its own over WASI
 
 Status: Accepted (2026-10-12), stages 1 and 2 implemented in `selfhost/wasm/`
-(gen.xo, func.xo, call.xo, rt.xo, rt2.xo, rt3.xo, asm.xo, main.xo, run.mjs), the driver
+(gen.xo, func.xo, call.xo, rt.xo, rt2.xo, rt3.xo, rt4.xo, asm.xo, main.xo, run.mjs), the driver
 path `xo1 build --backend=wasm` (`selfhost/xo/wasm.xo`), and
 `internal/selfhost/wasm_test.go` (`TestSelfhostWasm`). Figures:
 `bench/results/wasm-2026-10-12.md`. Item (5) of decision 0150's amended
@@ -228,6 +228,22 @@ worker pool:
   `task.stopping()`, `task.stop_requested()`, and the network stay
   unsupported (WASI preview1 has no sockets: the build fails with
   `the wasm backend does not support the network`).
+
+**Toward the playground: the front end as wasm.** Reading files goes
+through WASI preview1 (`selfhost/wasm/rt4.xo`: `path_open`, `fd_read`,
+`path_filestat_get`, `fd_readdir`; a relative path resolves against
+the first preopened directory, an absolute one against the second, as
+run.mjs preopens the working directory and `/`; the playground will
+preopen its virtual tree the same way), with `const_once`, Time, and
+SHA-256. The self hosted lexer and parser built by this backend print
+what their go backend builds print. Two build changes for large
+programs: only the runtime functions a program reaches are assembled
+(a call graph walk over the runtime text from the program's calls, the
+table, and the exports), and the assembler's tokens are offsets into
+the text (memory, not output, limited the first builds of
+selfhost/check). `selfhost/wasm --why` lists every unsupported
+construct; `--lax` makes an unsupported runtime call fault where it
+runs, for experiments only (a shipped module never has one).
 
 ## Consequences
 

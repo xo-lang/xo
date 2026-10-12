@@ -47,7 +47,10 @@ if (isMainThread) {
       throw new Error(`import ${imp.module}.${imp.name} is not WASI preview1`);
     }
   }
-  const wasi = new WASI({ version: 'preview1', args: [file, ...args], env: process.env, returnOnExit: true });
+  // the file system a native program sees: fd 3 the working directory
+  // (relative paths), fd 4 the root (absolute paths; rt4.xo $wpath)
+  const preopens = { '.': process.cwd(), '/': '/' };
+  const wasi = new WASI({ version: 'preview1', args: [file, ...args], env: process.env, preopens, returnOnExit: true });
   const inst = new WebAssembly.Instance(mod, { wasi_snapshot_preview1: wasi.wasiImport });
   let code;
   try {

@@ -10,11 +10,13 @@
 // stores. f32.const and f64.const are not taken (the emitter writes a
 // Float constant as its bits and f64.reinterpret_i64).
 
-/// A token: `(`, `)`, an atom, or a string (its bytes decoded).
+/// A token: `(`, `)`, an atom (the source bytes a to b), or a string
+/// (a: its decoded bytes in Asm.sdata). Three Ints: a module of the
+/// self hosted checker is millions of tokens.
 struct Tok {
   kind: Int
-  text: Str = ""
-  data: List[Int] = []
+  a: Int = 0
+  b: Int = 0
 }
 
 const T_OPEN = 0
@@ -63,7 +65,9 @@ struct AExport {
 
 /// The assembler's state.
 pub struct Asm {
+  src: Bytes = b""
   toks: List[Tok] = []
+  sdata: List[List[Int]] = []
   pos: Int = 0
   sigs: List[Sig] = []
   sig_at: Map[Str, Int] = {}
@@ -107,7 +111,7 @@ fn (var a: Asm) fail(msg: Str) {
   if a.err.is_empty() {
     var near = ""
     if a.pos < a.toks.len() {
-      near = " near `${a.toks[a.pos].text}` (token ${a.pos})"
+      near = " near `${a.tok_text(a.pos)}` (token ${a.pos})"
     }
     a.err = "wat: ${msg}${near}"
   }
@@ -134,6 +138,9 @@ fn hex_val(c: Int) -> Int {
 }
 
 fn (var a: Asm) tokenize(src: Bytes) {
+  a.src = src
+  // about one token in 9 bytes of the text this backend writes
+  a.toks = List.with_capacity(src.len() / 8)
   let n = src.len()
   var i = 0
   while i < n {
@@ -159,12 +166,12 @@ fn (var a: Asm) tokenize(src: Bytes) {
       continue
     }
     if c == 40 {
-      a.toks.push(Tok{kind: T_OPEN, text: "("})
+      a.toks.push(Tok{kind: T_OPEN, a: i, b: i + 1})
       i += 1
       continue
     }
     if c == 41 {
-      a.toks.push(Tok{kind: T_CLOSE, text: ")"})
+      a.toks.push(Tok{kind: T_CLOSE, a: i, b: i + 1})
       i += 1
       continue
     }
@@ -200,7 +207,8 @@ fn (var a: Asm) tokenize(src: Bytes) {
         i += 1
       }
       i += 1
-      a.toks.push(Tok{kind: T_STR, text: "\"...\"", data: data})
+      a.sdata.push(data)
+      a.toks.push(Tok{kind: T_STR, a: a.sdata.len() - 1})
       continue
     }
     let start = i
@@ -211,7 +219,7 @@ fn (var a: Asm) tokenize(src: Bytes) {
       }
       i += 1
     }
-    a.toks.push(Tok{kind: T_ATOM, text: src[start..i].to_str() ?? ""})
+    a.toks.push(Tok{kind: T_ATOM, a: start, b: i})
   }
 }
 
@@ -226,12 +234,21 @@ fn (a: Asm) peek_text() -> Str {
   if a.pos >= a.toks.len() {
     return ""
   }
-  a.toks[a.pos].text
+  a.tok_text(a.pos)
+}
+
+/// The text of token i.
+fn (a: Asm) tok_text(i: Int) -> Str {
+  let t = a.toks[i]
+  if t.kind == T_STR {
+    return "\"...\""
+  }
+  a.src[t.a..t.b].to_str() ?? ""
 }
 
 /// Whether the tokens at pos are `(` and the atom kw.
 fn (a: Asm) at_field(kw: Str) -> Bool {
-  a.pos + 1 < a.toks.len() && a.toks[a.pos].kind == T_OPEN && a.toks[a.pos + 1].kind == T_ATOM && a.toks[a.pos + 1].text == kw
+  a.pos + 1 < a.toks.len() && a.toks[a.pos].kind == T_OPEN && a.toks[a.pos + 1].kind == T_ATOM && a.tok_text(a.pos + 1) == kw
 }
 
 fn (var a: Asm) expect(kind: Int) {
@@ -250,7 +267,7 @@ fn (var a: Asm) atom() -> Str {
     return ""
   }
   a.pos += 1
-  a.toks[a.pos - 1].text
+  a.tok_text(a.pos - 1)
 }
 
 fn (var a: Asm) string() -> List[Int] {
@@ -260,7 +277,7 @@ fn (var a: Asm) string() -> List[Int] {
     return []
   }
   a.pos += 1
-  a.toks[a.pos - 1].data
+  a.sdata[a.toks[a.pos - 1].a]
 }
 
 fn (var a: Asm) str_text() -> Str {
@@ -868,6 +885,8 @@ fn simple_op(op: Str) -> Int {
     "i32.shl" => 0x74
     "i32.shr_s" => 0x75
     "i32.shr_u" => 0x76
+    "i32.rotl" => 0x77
+    "i32.rotr" => 0x78
     "i64.clz" => 0x79
     "i64.ctz" => 0x7A
     "i64.add" => 0x7C

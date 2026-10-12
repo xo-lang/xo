@@ -27,8 +27,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   duration parsing, and base64; tasks, scopes, channels, select, Mutex,
   Atomic, timers, and budgets run on one thread under a deterministic
   cooperative scheduler (a waiting task's wasm stack is unwound and
-  rewound); `rand` uses WASI `random_get`: 113 of the 134 LLVM goldens
-  pass, and the network fails the build with a clear error.
+  rewound); `rand` uses WASI `random_get`; files are read through WASI
+  (`path_open`, `fd_read`, `fd_readdir`): 114 of the 134 LLVM goldens
+  pass, and the network fails the build with a clear error. A module
+  carries only the runtime functions it reaches (recursion: 7.5 KB, 16.7
+  KB before). The self hosted lexer and parser run as wasm under Node
+  with the output of their native builds; `selfhost/wasm --why` lists
+  every construct a program needs that the backend lacks.
 - The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
   builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
   (`xo1 test --backend=go`), and builds `use go` programs on the Go

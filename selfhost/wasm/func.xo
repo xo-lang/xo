@@ -56,7 +56,7 @@ fn (var g: Gen) func(fi: Int) {
     g.segs.push("$B${bi}")
     for v in b.instrs {
       g.instr(v, bi)
-      if !g.err.is_empty() {
+      if !g.err.is_empty() && !g.all {
         return
       }
     }

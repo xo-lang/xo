@@ -66,6 +66,9 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "rt.exit" => {
+      if g.files {
+        g.e("call $consts_free")
+      }
       g.push(x.args[0])
       g.e("i32.wrap_i64")
       g.e("call $exit")
@@ -323,6 +326,26 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       let op = name.trim_prefix("rt.")
+      if name.starts_with("rt.") && g.files && rt4_direct(op) {
+        g.rt_call(v, "$${op}")
+        return
+      }
+      if name == "rt.fs_canceled" {
+        // a canceled task's Fs operations report Canceled (xo_fs_canceled)
+        g.e(if g.conc { "call $ctx_canceled" } else { "i32.const 0" })
+        g.def(v)
+        return
+      }
+      if g.lax {
+        // --lax: the call faults when it runs
+        let msg = "the wasm backend does not support the call `${name}`"
+        g.e("i32.const ${g.str_obj(msg.bytes())}")
+        g.e("i32.const ${msg.len()}")
+        g.e(g.litp(comment_text(g.f.name)))
+        g.e("call $fault_str")
+        g.fault_exit(v)
+        return
+      }
       if op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_") {
         // no sockets in WASI preview1, the targets of decision 0144
         g.fail("the wasm backend does not support the network (`${name}`): WASI preview1 has no sockets")
