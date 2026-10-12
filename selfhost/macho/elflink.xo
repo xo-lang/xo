@@ -1399,19 +1399,30 @@ fn (var l: ELinker) write() -> Bytes {
       shstr.u8(0)
     }
   }
+  let symtab_name = shstr.n
+  shstr.bytes(".symtab".bytes())
+  shstr.u8(0)
+  let strtab_name = shstr.n
+  shstr.bytes(".strtab".bytes())
+  shstr.u8(0)
   let shstr_name = shstr.n
   shstr.bytes(".shstrtab".bytes())
   shstr.u8(0)
   let shstrtab = shstr.done()
+  let (symtab, strtab, nlocal) = l.symtab(shown)
   var fend = 0
   for i in 0..O_COUNT {
     if l.osects[i].typ != SHT_NOBITS {
       fend = fend.max(l.osects[i].off + l.osects[i].size)
     }
   }
-  let shstr_off = fend
+  // .symtab, .strtab, .shstrtab after the loaded contents, then the
+  // section headers
+  let symtab_off = align_up(fend, 8)
+  let strtab_off = symtab_off + symtab.len()
+  let shstr_off = strtab_off + strtab.len()
   let shoff = align_up(shstr_off + shstrtab.len(), 8)
-  let shnum = shown.len() + 2
+  let shnum = shown.len() + 4
 
   // the file: headers, the sections at their offsets
   var o = new_out(shoff + 64 * shnum)
@@ -1458,7 +1469,9 @@ fn (var l: ELinker) write() -> Bytes {
     }
     o.bytes(body[i])
   }
-  o.zeros(shstr_off - o.n)
+  o.zeros(symtab_off - o.n)
+  o.bytes(symtab)
+  o.bytes(strtab)
   o.bytes(shstrtab)
   o.zeros(shoff - o.n)
   o.zeros(64)
@@ -1495,17 +1508,97 @@ fn (var l: ELinker) write() -> Bytes {
     }
     o.u64(ent)
   }
-  o.u32(shstr_name)
-  o.u32(SHT_STRTAB)
-  o.u64(0)
-  o.u64(0)
-  o.u64(shstr_off)
-  o.u64(shstrtab.len())
-  o.u32(0)
-  o.u32(0)
-  o.u64(1)
-  o.u64(0)
+  let strtab_index = shown.len() + 2
+  shdr(o, symtab_name, SHT_SYMTAB, symtab_off, symtab.len(), strtab_index, nlocal, 8, 24)
+  shdr(o, strtab_name, SHT_STRTAB, strtab_off, strtab.len(), 0, 0, 1, 0)
+  shdr(o, shstr_name, SHT_STRTAB, shstr_off, shstrtab.len(), 0, 0, 1, 0)
   o.done()
+}
+
+/// A section header of a section not loaded.
+fn shdr(var o: Out, name: Int, typ: Int, off: Int, size: Int, link: Int, info: Int, align: Int, ent: Int) {
+  o.u32(name)
+  o.u32(typ)
+  o.u64(0)
+  o.u64(0)
+  o.u64(off)
+  o.u64(size)
+  o.u32(link)
+  o.u32(info)
+  o.u64(align)
+  o.u64(ent)
+}
+
+/// The static symbol table, for profilers, debuggers, and `nm`: the
+/// named functions and objects of the placed sections (not labels,
+/// mapping or section symbols), locals first, then each global's chosen
+/// definition; its names; the count of locals plus the null symbol.
+fn (l: ELinker) symtab(shown: List[Int]) -> (Bytes, Bytes, Int) {
+  var locals = new_out(4096)
+  var globals = new_out(4096)
+  var names = new_out(4096)
+  names.u8(0)
+  locals.zeros(24)
+  var nlocal = 1
+  var done: Map[Bytes, Int] = {}
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for i in 1..l.objs[o].syms.len() {
+      let s = l.objs[o].syms[i]
+      let typ = sym_type(s)
+      let bind = sym_bind(s)
+      if s.name.is_empty() || s.name[0] == '$' || s.name[0] == '.' || !(typ == STT_FUNC || typ == STT_OBJECT || typ == STT_TLS || (typ == STT_NOTYPE && bind != STB_LOCAL)) {
+        continue
+      }
+      if s.shndx == SHN_UNDEF || s.shndx == SHN_ABS || s.shndx >= SHN_LORESERVE && s.shndx != SHN_COMMON {
+        continue
+      }
+      var out = O_BSS
+      if s.shndx != SHN_COMMON {
+        let sect = l.objs[o].sects[s.shndx]
+        if sect.out < 0 {
+          continue
+        }
+        out = sect.out
+      }
+      if bind != STB_LOCAL {
+        match l.globals.get(s.name) {
+          Some((d, j)) => {
+            if d != o || j != i || done.contains(s.name) {
+              continue
+            }
+          }
+          None => continue
+        }
+        done.put(s.name, 0)
+      }
+      // a TLS symbol's value is its offset in the TLS segment
+      let a = l.sym_addr(o, i)
+      let v = if typ == STT_TLS { a - l.tls_start } else { a }
+      let shx = l.shindex(shown, out)
+      if bind == STB_LOCAL {
+        sym_entry(locals, names.n, s, shx, v)
+        nlocal += 1
+      } else {
+        sym_entry(globals, names.n, s, shx, v)
+      }
+      names.bytes(s.name)
+      names.u8(0)
+    }
+  }
+  locals.bytes(globals.done())
+  (locals.done(), names.done(), nlocal)
+}
+
+fn sym_entry(var e: Out, name: Int, s: ESym, shx: Int, value: Int) {
+  e.u32(name)
+  e.u8(s.info)
+  e.u8(s.other)
+  e.u16(shx)
+  e.u64(value)
+  e.u64(s.size)
 }
 
 /// The section header index of output section i.

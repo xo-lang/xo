@@ -580,13 +580,11 @@ test "a linked executable loads glibc and binds versioned imports" {
   expect(types[0..5]) == [PT_PHDR, PT_INTERP, PT_LOAD, PT_LOAD, PT_LOAD]
   let ip = rd64(exe, 64 + 56 + 8)
   expect(bstr(cstr(exe, ip))) == "/lib/ld-linux-aarch64.so.1"
-  // puts and __libc_start_main from libc.so.6 at GLIBC_2.17; the
-  // atomic is linked in, not imported
+  // puts and __libc_start_main from libc.so.6 at GLIBC_2.17
   expect(has(exe, "puts")) == true
   expect(has(exe, "__libc_start_main")) == true
   expect(has(exe, "GLIBC_2.17")) == true
   expect(has(exe, "libc.so.6")) == true
-  expect(has(exe, "__aarch64_ldadd8_acq_rel")) == false
 }
 
 /// b holds the bytes of s.

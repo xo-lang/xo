@@ -193,21 +193,18 @@ Stage 3 results (bench/results/macho-2026-10-12.md, "Stage 3"):
   pass in debian:bullseye (glibc 2.31) and debian:trixie-slim (glibc
   2.41) containers with no C compiler, assembler, or linker.
   XO1_RESULTS_PLACEHOLDER
-- The binaries are 18 and 16 percent smaller than gcc 14's for the same
-  objects (no `.symtab`, not PIE).
+- The binaries are 11 and 6 percent smaller than gcc 14's for the same
+  objects (not PIE); a `.symtab` names the functions and objects.
 
 Stage 3 next steps, ranked by likelihood of working:
 
-1. A `.symtab` of the functions (the objects' STT_FUNC symbols) so perf,
-   gdb, and crash reports see names: `elflink.xo` `write`, one more
-   section and its string table.
-2. PIE: `ET_DYN` with `R_AARCH64_RELATIVE` for the program's absolute
+1. PIE: `ET_DYN` with `R_AARCH64_RELATIVE` for the program's absolute
    pointers (the `.data.rel.ro` and `.rodata` ABS64s), matching cc's
    default on Debian and Ubuntu, then the goldens in both containers.
-3. Have `BuildRTPack` refuse an archive with fewer members than it
+2. Have `BuildRTPack` refuse an archive with fewer members than it
    archived (gotchas/apple-ar-drops-elf-members.md), or write the TLS
    archive in Go, so the clang fallback of decision 0157 needs no GNU ar.
-4. `.init_array` and `.fini_array` (`DT_INIT_ARRAY`), for `use c`
+3. `.init_array` and `.fini_array` (`DT_INIT_ARRAY`), for `use c`
    objects that have constructors, then `use c` objects compiled by a
    cross compiler into the ELF link.
 
