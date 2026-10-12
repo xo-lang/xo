@@ -111,7 +111,7 @@ func TestXoLSPFeatures(t *testing.T) {
 		"app/main.xo": lspFeatureProg,
 	})
 	corpus := [][]string{{filepath.Join(dir, "app", "main.xo")}}
-	for _, d := range []string{filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "selfhost", "lexer")} {
+	for _, d := range []string{filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "selfhost", "lexer"), filepath.Join("..", "..", "selfhost", "cli", "core", "format")} {
 		files, _ := filepath.Glob(filepath.Join(d, "*.xo"))
 		var abs []string
 		for _, f := range files {
@@ -143,10 +143,13 @@ func TestXoLSPFeatures(t *testing.T) {
 		ask := func(method, params string) {
 			id++
 			body := `{"jsonrpc":"2.0","id":` + strconv.Itoa(id) + `,"method":"` + method + `","params":` + params + `}`
-			g.send(body)
-			x.send(body)
+			// one server at a time: both copy std files into the same
+			// lsp-std directory, and a copy being rewritten by one is
+			// missing for the other
 			want := `"id":` + strconv.Itoa(id) + `,`
+			g.send(body)
 			gm := g.until(t, want)
+			x.send(body)
 			xm := x.until(t, want)
 			total++
 			n := byMethod[method]

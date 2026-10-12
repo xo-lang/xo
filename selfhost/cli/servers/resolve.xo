@@ -65,6 +65,10 @@ struct Site {
   field: Str
   index: Int
   ctx: SiteCtx
+  /// The name of a property test's input (`test "x" for n: Int`): the Go
+  /// checker records no binding for it (Info.VarOf is nil there; its
+  /// uses have one).
+  no_var: Bool = false
 }
 
 /// What an identifier names (resolve.go target): its semantic token type
@@ -214,7 +218,15 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
       if let Some(n) = x.name {
         w.string_lit(n)
       }
-      w.params(x.params, [])
+      for tp in x.params {
+        w.out.push(Site{id: tp.name, field: "Name", index: -1, ctx: SiteCtx.Param(vars: []), no_var: true})
+        if let Some(t) = tp.typ {
+          w.typ(t)
+        }
+        if let Some(e) = tp.default {
+          w.expr(e, "Default", -1, SiteCtx.Param(vars: []), [])
+        }
+      }
       if let Some(e) = x.seed {
         w.expr(e, "Seed", -1, SiteCtx.Other, [])
       }
@@ -879,7 +891,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> LspTarget {
   let id = site.id
   let path = r.c.files[f].path
   let decl = fn(t: LspTarget) -> LspTarget { with_def(t, path, id.span) }
-  let v = r.c.var_of(f, id)
+  let v = if site.no_var { -1 } else { r.c.var_of(f, id) }
   if v >= 0 {
     return r.var_target(v, id, path)
   }
