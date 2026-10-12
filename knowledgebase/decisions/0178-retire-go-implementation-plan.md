@@ -1,7 +1,8 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
-Status: Proposed (2026-10-12; the owner decides every switch-over point
-below). The inventory is from main dbb8b05 with this decision's
+Status: Accepted (owner, 2026-10-12): switch points A and B approved;
+B takes effect when its gate passes; deleting the Go compiler packages is
+delegated to the lead under the criteria in "Owner approvals". The inventory is from main dbb8b05 with this decision's
 commits; the measurements are on the same tree (runs 1 to 4 of the
 results file). Gaps closed on the way, each its own commit: `xo1
 --backend=llvm`; the decision 0172 file symbols in xo1's runtime flags
@@ -201,6 +202,26 @@ call, decision 0150), keeping std/rt, gobind, and the test helpers;
 (4) the build tag of the Go `xo` for bootstrapping: the first Xo `xo`
 on a new host is built by the previous release's binary, never by Go
 again (a bootstrap chain, recorded in toolchain.md).
+
+## Owner approvals (2026-10-12)
+
+- Switch point A: approved by the owner on 2026-10-12 (implementation in
+  progress: the Go `xo` execs xo1 for native `build|run|test`, with a
+  rollback environment variable).
+- Switch point B: approved by the owner on 2026-10-12, to take effect
+  when its gate passes (stages 2 to 6 done, the full suite with every
+  process-driving test run against the Xo binary). The approval does not
+  skip the gate. Stage 7's deletion of the Go compiler packages remains a
+  separate owner call (decision 0150).
+- Order after B (owner, 2026-10-12): freeze the Go implementation right
+  after switch point B (stage 7 step 1: no language change lands in Go),
+  then the runtime port (decision 0180's bar first), then deleting the Go
+  compiler packages, which the owner delegated to the lead once these
+  hold: B live with the full suite passing against the Xo binary, stage 7
+  steps 1 to 3 done (frozen, Go outputs recorded as goldens, bootstrap
+  chain tested), two combined full-suite batches after B with no
+  regression the live cross-check would have caught, and every output
+  users or tests depend on produced by Xo.
 
 ## Consequences
 

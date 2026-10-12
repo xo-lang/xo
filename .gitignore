@@ -38,3 +38,4 @@ infra/ci-aws/.terraform*
 infra/ci-aws/*.tfstate*
 infra/ci-aws/xo-ci-key.pem
 infra/ci-aws/logs/
+bench/results/remote/
