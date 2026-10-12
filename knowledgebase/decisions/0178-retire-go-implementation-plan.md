@@ -203,6 +203,25 @@ call, decision 0150), keeping std/rt, gobind, and the test helpers;
 on a new host is built by the previous release's binary, never by Go
 again (a bootstrap chain, recorded in toolchain.md).
 
+## Stage 4 status (2026-10-12)
+
+`selfhost/cli/modules` ports `get`, `mod tidy`, `mod accept-effects`,
+`mod clean`, `mod proxy serve`, `vendor`, and the fetching underneath
+(git, the module proxy client, the checksum log client) from cmd/xo
+mod.go, internal/mod, and internal/sumdb. xo.mod, xo.work, and xo.lock
+are read by selfhost/check's modfile.xo (its functions made `pub`); the
+Ed25519 it needed is decision 0189. xo1 dispatches the module commands
+to the package. Evidence (`bench/results/retire-go-2026-10-12.md`,
+"Stage 4"): 7 of 9 module tests of cmd/xo pass with `XO_CLI=xomod`, and
+TestModulesXoSame finds xo.mod, xo.lock, vendor/, the cache trees, and
+the output byte identical to internal/mod's over 37 steps. Found on the
+way: the native SSA builder named per type generated functions by the
+unqualified type (gotchas/ambiguous-type-generated-function-names.md),
+and `archive.untar` refused `git archive`'s PAX global header (now
+skipped, std.md 18). Pending: `publish` and the API changes `get` prints
+need internal/release in Xo (stage 3); `audit`; counting the tests
+against xo1 itself once stage 2's commands are merged.
+
 ## Owner approvals (2026-10-12)
 
 - Switch point A: approved by the owner on 2026-10-12 (implementation in
