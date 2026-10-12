@@ -171,10 +171,27 @@ func (e *TooOldError) Error() string {
 	return fmt.Sprintf("the Go backend needs Go %s or newer, but %s is %s; install a newer Go (https://go.dev/dl), set XO_GO to its go command, or build with --backend=arm64 or llvm", MinGo, e.Path, e.Version)
 }
 
-// Check returns a *TooOldError when the go command is older than MinGo.
-// A version that cannot be read is not an error here: the build then
+// NotFoundError is a Go backend build with no go command (diagnostic
+// XO1503): $XO_GO names nothing runnable, or PATH has no go.
+type NotFoundError struct {
+	Path string
+}
+
+func (e *NotFoundError) Error() string {
+	if os.Getenv("XO_GO") != "" {
+		return fmt.Sprintf("the Go backend runs the go command, but XO_GO=%s is not an executable file; point XO_GO at a go command (Go %s or newer), unset it to use go on PATH, or build with --backend=arm64 or llvm", e.Path, MinGo)
+	}
+	return fmt.Sprintf("the Go backend runs the go command, but there is no go on PATH; install Go %s or newer (https://go.dev/dl), set XO_GO to its go command, or build with --backend=arm64 or llvm, which need no Go", MinGo)
+}
+
+// Check returns a *NotFoundError when there is no go command, and a
+// *TooOldError when it is older than MinGo. A version that cannot be read
+// from a go command that exists is not an error here: the build then
 // reports the go command's own failure.
 func Check() error {
+	if _, err := exec.LookPath(Path()); err != nil {
+		return &NotFoundError{Path: Path()}
+	}
 	v, err := Version()
 	if err != nil {
 		return nil
