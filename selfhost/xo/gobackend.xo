@@ -114,7 +114,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     os.stdio.eprint((fr.stderr.to_str() ?? ""))
     fail(os, "gofmt failed on the generated Go (a code generator bug)")
   }
-  let host = "${ctx.goos}/arm64"
+  let host = "${ctx.goos}/${host_arch()}"
   let targets = parse_targets(os, o.targets, host)
   if targets.len() > 1 && !out.is_empty() {
     os.fs.create_dir_all(out)?

@@ -115,6 +115,9 @@ if command -v go >/dev/null 2>&1; then
   p=$(grep -c '^--- PASS' "$out/cmdxo.txt"); f=$(grep -c '^--- FAIL' "$out/cmdxo.txt"); s=$(grep -c '^--- SKIP' "$out/cmdxo.txt")
   echo "cmd/xo against the archive's xo: pass $p fail $f skip $s"
   grep -E '^--- (FAIL|SKIP)' "$out/cmdxo.txt" | sed 's/^/  /'
+  # the first failure messages (file:line: text), for a remote run whose
+  # full log stays on the instance
+  grep -E '^[[:space:]]+[a-z_0-9]+_test\.go:[0-9]+:' "$out/cmdxo.log" | head -80 | cut -c1-400 | sed 's/^[[:space:]]*/    /'
   if [ "$f" = 0 ] && grep -q '^ok' "$out/cmdxo.txt"; then pass cmdxo-gate; else fail cmdxo-gate; fi
   if [ "${BASELINE:-}" = 1 ]; then
     ( cd "$root" && go test -count=1 -p 1 -parallel 2 -timeout 120m ./cmd/xo -v ) > "$out/cmdxo-go.log" 2>&1
