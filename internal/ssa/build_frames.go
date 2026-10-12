@@ -168,8 +168,8 @@ func (b *builder) frameArgsFunc(names []string, cts []check.Type, vals []*Value,
 		}
 		capTs = append(capTs, vals[i].Type)
 	}
-	name := "xo.frameargs(" + strings.Join(key, ", ") + ")"
-	if m.Func(name) != nil {
+	name, ok := b.helperName("xo.frameargs("+strings.Join(key, ", ")+")", func(f *Func) bool { return sameTypes(f.Captures, capTs) })
+	if ok {
 		return name
 	}
 	ft := m.FuncType(nil, st)

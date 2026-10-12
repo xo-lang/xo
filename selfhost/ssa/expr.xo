@@ -462,7 +462,6 @@ fn (var b: Builder) slice(span: Span, x: Expr, lo0: Expr?, hi0: Expr?, inclusive
 fn (var b: Builder) list_concat(t: Int) -> Str {
   let name = "xo.listcat[${b.m.types[t].name}]"
   b.gen_func(name, [t, t], [t], Gen.Concat(t: t))
-  name
 }
 
 fn (var b: Builder) concat_body(t: Int) {
@@ -487,7 +486,6 @@ fn (var b: Builder) list_slice(lt: Int) -> Str {
   let st = b.str_t()
   let name = "xo.slice[${b.m.types[lt].name}]"
   b.gen_func(name, [lt, it, it, st], [lt], Gen.Slice(lt: lt))
-  name
 }
 
 fn (var b: Builder) slice_body(lt: Int) {
