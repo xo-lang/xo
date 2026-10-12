@@ -190,9 +190,20 @@ fn dir_name(p: Str) -> Str {
 /// Every file under dir (path relative to dir, slash separated), sorted.
 fn files_under(os: Os, dir: Str) -> List[Str] ! FsErr {
   var out: List[Str] = []
+  // the walk joins paths as Go's filepath.Join does, which drops a
+  // leading "./" (the root "." when --std is the relative "std"; the
+  // TLS tree then read third_party/mbedtls/xo/third_party/...)
+  var base = dir
+  while base.starts_with("./") {
+    base = base.trim_prefix("./")
+  }
   for fi in os.fs.walk(dir)? {
     if !fi.is_dir {
-      out.push(fi.path.trim_prefix("${dir}/"))
+      if fi.path.starts_with("${dir}/") {
+        out.push(fi.path.trim_prefix("${dir}/"))
+      } else {
+        out.push(fi.path.trim_prefix("${base}/"))
+      }
     }
   }
   out.sort()
