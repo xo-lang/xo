@@ -1,0 +1,1689 @@
+// The ELF linker of decision 0182, stage 3: the program's object and the
+// linux/arm64 runtime pack's (decision 0157) into a dynamically linked
+// ET_EXEC for glibc, as `cc` links them on Linux, with no C toolchain:
+//
+//   - inputs: ELF64 relocatable objects and archives of them (GNU or BSD
+//     ar); archive members are taken when they define a symbol the link
+//     needs; COMDAT groups kept once;
+//   - synthesized: `_start` (glibc's crt1 entry, calling
+//     __libc_start_main with main) and the outline atomics helpers
+//     (`__aarch64_ldadd8_acq_rel`, ... from libgcc.a, which the pack's
+//     -moutline-atomics objects call), assembled by assemble_elf;
+//   - undefined symbols become imports, versioned as glibc 2.31 defines
+//     them (glibc.xo), from libm.so.6, libpthread.so.0, libgcc_s.so.1,
+//     and libc.so.6: calls through 16 byte stubs that load a GOT slot,
+//     data through the GOT (R_AARCH64_GLOB_DAT, bound at load time);
+//   - TLS descriptor and initial exec sequences relaxed to local exec;
+//   - .eh_frame concatenated, with an .eh_frame_hdr and PT_GNU_EH_FRAME
+//     so libgcc's unwinder finds the program's frames.
+//
+// Layout: ET_EXEC at 0x400000, three PT_LOAD segments (read only, code,
+// data) whose addresses are congruent to their file offsets modulo 64 KiB
+// (any arm64 page size).
+
+const ET_EXEC = 2
+const PT_LOAD = 1
+const PT_DYNAMIC = 2
+const PT_INTERP = 3
+const PT_PHDR = 6
+const PT_TLS = 7
+const PT_GNU_EH_FRAME = 0x6474e550
+const PT_GNU_STACK = 0x6474e551
+const PF_X = 1
+const PF_W = 2
+const PF_R = 4
+const DT_NULL = 0
+const DT_NEEDED = 1
+const DT_HASH = 4
+const DT_STRTAB = 5
+const DT_SYMTAB = 6
+const DT_RELA = 7
+const DT_RELASZ = 8
+const DT_RELAENT = 9
+const DT_STRSZ = 10
+const DT_SYMENT = 11
+const DT_DEBUG = 21
+const DT_FLAGS = 30
+const DF_BIND_NOW = 8
+const DT_FLAGS_1 = 0x6ffffffb
+const DF_1_NOW = 1
+const DT_VERSYM = 0x6ffffff0
+const DT_VERNEED = 0x6ffffffe
+const DT_VERNEEDNUM = 0x6fffffff
+const SHT_HASH = 5
+const SHT_DYNAMIC = 6
+const SHT_DYNSYM = 11
+const SHT_GNU_VERSYM = 0x6fffffff
+const SHT_GNU_VERNEED = 0x6ffffffe
+const SHN_UNDEF = 0
+const SHN_LORESERVE = 0xff00
+const SHN_ABS = 0xfff1
+const SHN_COMMON = 0xfff2
+const R_AARCH64_NONE = 0
+const R_AARCH64_PREL64 = 260
+const R_AARCH64_ADR_PREL_PG_HI21_NC = 276
+const R_AARCH64_TSTBR14 = 279
+const R_AARCH64_CONDBR19 = 280
+const R_AARCH64_GLOB_DAT = 1025
+const ELF_BASE = 0x400000
+const ELF_PAGE = 0x10000
+
+/// Output sections, in file order.
+const O_INTERP = 0
+const O_HASH = 1
+const O_DYNSYM = 2
+const O_DYNSTR = 3
+const O_VERSYM = 4
+const O_VERNEED = 5
+const O_RELADYN = 6
+const O_RODATA = 7
+const O_EXCEPT = 8
+const O_EHHDR = 9
+const O_EH = 10
+const O_TEXT = 11
+const O_PLT = 12
+const O_TDATA = 13
+const O_TBSS = 14
+const O_RELRO = 15
+const O_GOT = 16
+const O_DYNAMIC = 17
+const O_DATA = 18
+const O_BSS = 19
+const O_COUNT = 20
+
+/// What the ELF linker writes: the dynamic loader and the entry symbol.
+pub struct ElfLinkOpts {
+  pub interp: Str = "/lib/ld-linux-aarch64.so.1"
+  pub entry: Str = "_start"
+}
+
+/// An input section, by its header index.
+struct ESect {
+  name: Str
+  typ: Int
+  flags: Int
+  align: Int
+  info: Int = 0
+  data: Bytes
+  size: Int
+  relocs: List[ERel] = []
+  /// the output section, -1 when not placed
+  out: Int = -1
+  off: Int = 0
+  /// a member of a COMDAT group kept from another object
+  dead: Bool = false
+}
+
+struct ERel {
+  off: Int
+  typ: Int
+  sym: Int
+  addend: Int
+}
+
+struct ESym {
+  name: Bytes
+  info: Int
+  other: Int
+  shndx: Int
+  value: Int
+  size: Int
+}
+
+struct EObj {
+  path: Str
+  sects: List[ESect] = []
+  syms: List[ESym] = []
+  live: Bool = true
+}
+
+struct EOSect {
+  name: Str
+  typ: Int
+  flags: Int
+  align: Int = 1
+  size: Int = 0
+  addr: Int = 0
+  off: Int = 0
+  /// placed input sections: (object, section)
+  chunks: List[(Int, Int)] = []
+  bytes: Bytes = "".bytes()
+}
+
+/// An import: its name, library and version, and whether it is called.
+struct EImport {
+  name: Bytes
+  lib: Str
+  ver: Str
+  weak: Bool = false
+  func: Bool = false
+  /// its GOT slot, -1 for none
+  got: Int = -1
+  /// its stub, -1 for none
+  plt: Int = -1
+}
+
+/// A dynamic relocation: at a virtual address, a type, a dynamic symbol
+/// (an import index + 1), an addend.
+struct EDynRel {
+  addr: Int
+  typ: Int
+  sym: Int
+  addend: Int
+}
+
+struct ELinker {
+  opts: ElfLinkOpts
+  objs: List[EObj] = []
+  globals: Map[Bytes, (Int, Int)] = {}
+  comdats: Map[Bytes, Int] = {}
+  imports: List[EImport] = []
+  import_ix: Map[Bytes, Int] = {}
+  /// GOT slots: (import, object, symbol) with -1 for the absent parts
+  got: List[(Int, Int, Int)] = []
+  got_def: Map[(Int, Int), Int] = {}
+  plt: List[Int] = []
+  dynrels: List[EDynRel] = []
+  osects: List[EOSect] = []
+  patches: List[Patch] = []
+  needed: List[Str] = []
+  tls_start: Int = 0
+  tls_size: Int = 0
+  tls_align: Int = 1
+  phnum: Int = 0
+  /// common symbols allocated in .bss: (object, symbol) to offset
+  commons: Map[(Int, Int), Int] = {}
+  err: Str = ""
+}
+
+/// link_elf: the linux/arm64 executable of the inputs (objects and
+/// archives), or the first error.
+pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str] {
+  var l = ELinker{opts: opts}
+  for inp in inputs {
+    if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
+      match parse_elf_archive(inp.path, inp.data) {
+        Ok(ms) => l.objs = l.objs + ms
+        Err(e) => return Err(e)
+      }
+    } else {
+      match parse_elf_object(inp.path, inp.data) {
+        Ok(o) => l.objs.push(o)
+        Err(e) => return Err(e)
+      }
+    }
+  }
+  l.resolve()
+  if l.err.is_empty() {
+    l.synthesize_start()
+  }
+  if l.err.is_empty() {
+    l.collect_imports()
+  }
+  if l.err.is_empty() {
+    l.place()
+  }
+  if l.err.is_empty() {
+    l.scan()
+  }
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  l.layout()
+  l.relocate()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  let out = l.write()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  Ok(out)
+}
+
+fn (var l: ELinker) fail(why: Str) {
+  if l.err.is_empty() {
+    l.err = why
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inputs
+
+/// parse_elf_object: an arm64 ELF64 relocatable object.
+fn parse_elf_object(path: Str, b: Bytes) -> Result[EObj, Str] {
+  if b.len() < 64 || b[0] != 0x7f || bstr(b[1..4]) != "ELF" || b[4] != 2 || b[5] != 1 {
+    return Err("${path}: not a 64 bit little endian ELF file")
+  }
+  if rd16(b, 16) != 1 || rd16(b, 18) != 183 {
+    return Err("${path}: not an arm64 relocatable object")
+  }
+  let shoff = rd64(b, 40)
+  let shnum = rd16(b, 60)
+  let shstrndx = rd16(b, 62)
+  if shoff + 64 * shnum > b.len() {
+    return Err("${path}: truncated section headers")
+  }
+  let stro = rd64(b, shoff + 64 * shstrndx + 24)
+  var obj = EObj{path: path}
+  var symtab = -1
+  for i in 0..shnum {
+    let h = shoff + 64 * i
+    let typ = rd32(b, h + 4)
+    let off = rd64(b, h + 24)
+    let size = rd64(b, h + 32)
+    let data = if typ == SHT_NOBITS || typ == 0 { "".bytes() } else { b[off..off + size] }
+    obj.sects.push(ESect{name: bstr(cstr(b, stro + rd32(b, h))), typ: typ, flags: rd64(b, h + 8), align: rd64(b, h + 48), info: rd32(b, h + 44), data: data, size: size})
+    if typ == SHT_SYMTAB {
+      symtab = i
+    }
+  }
+  if symtab >= 0 {
+    let h = shoff + 64 * symtab
+    let off = rd64(b, h + 24)
+    let n = rd64(b, h + 32) / 24
+    let link = rd32(b, h + 40)
+    let stroff = rd64(b, shoff + 64 * link + 24)
+    for k in 0..n {
+      let s = off + 24 * k
+      obj.syms.push(ESym{name: cstr(b, stroff + rd32(b, s)), info: rd8(b, s + 4), other: rd8(b, s + 5), shndx: rd16(b, s + 6), value: rd64(b, s + 8), size: rd64(b, s + 16)})
+    }
+  }
+  for i in 0..shnum {
+    let s = obj.sects[i]
+    if s.typ != SHT_RELA {
+      continue
+    }
+    if s.info <= 0 || s.info >= shnum {
+      return Err("${path}: ${s.name} relocates no section")
+    }
+    var rs: List[ERel] = []
+    for k in 0..s.data.len() / 24 {
+      let r = 24 * k
+      let info = rd64(s.data, r + 8)
+      rs.push(ERel{off: rd64(s.data, r), typ: info & 0xffffffff, sym: lsr(info, 32), addend: rd64(s.data, r + 16)})
+    }
+    obj.sects[s.info].relocs = obj.sects[s.info].relocs + rs
+  }
+  Ok(obj)
+}
+
+/// parse_elf_archive: the ELF objects of an archive (GNU `//` long names
+/// or BSD `#1/N`), none of them live yet.
+fn parse_elf_archive(path: Str, b: Bytes) -> Result[List[EObj], Str] {
+  var out: List[EObj] = []
+  var longnames = "".bytes()
+  var off = 8
+  while off + 60 <= b.len() {
+    let name0 = bstr(b[off..off + 16]).trim()
+    let size = Int.parse(bstr(b[off + 48..off + 58]).trim()) ?? -1
+    if size < 0 || off + 60 + size > b.len() {
+      return Err("${path}: bad member header at ${off}")
+    }
+    var data = b[off + 60..off + 60 + size]
+    var name = name0
+    if name0 == "//" {
+      longnames = data
+    } else if name0.starts_with("#1/") {
+      let n = Int.parse(name0.trim_prefix("#1/")) ?? 0
+      name = bstr(cstr(data[0..n], 0))
+      data = data[n..]
+    } else if name0.len() > 1 && name0.starts_with("/") {
+      let k = Int.parse(name0.trim_prefix("/")) ?? 0
+      var e = k
+      while e < longnames.len() && longnames[e] != '/' && longnames[e] != '\n' {
+        e += 1
+      }
+      name = bstr(longnames[k..e])
+    } else {
+      name = name0.trim_suffix("/")
+    }
+    if data.len() >= 4 && data[0] == 0x7f && bstr(data[1..4]) == "ELF" {
+      match parse_elf_object("${path}(${name})", data) {
+        Ok(o) => {
+          var m = o
+          m.live = false
+          out.push(m)
+        }
+        Err(e) => return Err(e)
+      }
+    }
+    off += 60 + size
+    if off % 2 == 1 {
+      off += 1
+    }
+  }
+  Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Symbols
+
+fn sym_bind(s: ESym) -> Int {
+  s.info >> 4
+}
+
+fn sym_type(s: ESym) -> Int {
+  s.info & 15
+}
+
+/// A symbol defined by its object (not undefined, not in a dropped
+/// COMDAT member).
+fn (l: ELinker) defines(o: Int, s: ESym) -> Bool {
+  if s.shndx == SHN_UNDEF {
+    return false
+  }
+  if s.shndx < SHN_LORESERVE && l.objs[o].sects[s.shndx].dead {
+    return false
+  }
+  true
+}
+
+/// Takes object o into the link: its COMDAT groups (the first of each
+/// signature wins), then its global definitions (a global one replaces a
+/// weak one).
+fn (var l: ELinker) add_globals(o: Int) {
+  l.objs[o].live = true
+  for k in 0..l.objs[o].sects.len() {
+    let s = l.objs[o].sects[k]
+    if s.typ != SHT_GROUP || s.data.len() < 4 || (rd32(s.data, 0) & GRP_COMDAT) == 0 {
+      continue
+    }
+    let sig = l.objs[o].syms[s.info].name
+    if l.comdats.contains(sig) {
+      var m = 4
+      while m + 4 <= s.data.len() {
+        l.objs[o].sects[rd32(s.data, m)].dead = true
+        m += 4
+      }
+    } else {
+      l.comdats.put(sig, o)
+    }
+  }
+  for i in 1..l.objs[o].syms.len() {
+    let s = l.objs[o].syms[i]
+    let bind = sym_bind(s)
+    if bind == STB_LOCAL || !l.defines(o, s) {
+      continue
+    }
+    match l.globals.get(s.name) {
+      Some((d, j)) => {
+        // a global definition replaces a weak one or a common symbol; a
+        // larger common symbol replaces a smaller one
+        let old = l.objs[d].syms[j]
+        let common = s.shndx == SHN_COMMON
+        let old_common = old.shndx == SHN_COMMON
+        if (!common && bind == STB_GLOBAL && (sym_bind(old) == STB_WEAK || old_common)) || (common && old_common && s.size > old.size) {
+          l.globals.put(s.name, (o, i))
+        } else if !common && !old_common && bind == STB_GLOBAL && sym_bind(old) == STB_GLOBAL {
+          l.fail("${bstr(s.name)} is defined in ${l.objs[d].path} and in ${l.objs[o].path}")
+        }
+      }
+      None => l.globals.put(s.name, (o, i))
+    }
+  }
+}
+
+/// Takes the objects, then the archive members that define a symbol a
+/// taken object needs, until none is missing that an archive defines.
+fn (var l: ELinker) resolve() {
+  var members: Map[Bytes, Int] = {}
+  var queue: List[Int] = []
+  for o in 0..l.objs.len() {
+    if l.objs[o].live {
+      l.add_globals(o)
+      queue.push(o)
+    } else {
+      for s in l.objs[o].syms {
+        if sym_bind(s) != STB_LOCAL && s.shndx != SHN_UNDEF && !members.contains(s.name) {
+          members.put(s.name, o)
+        }
+      }
+    }
+  }
+  var qi = 0
+  while qi < queue.len() {
+    let o = queue[qi]
+    qi += 1
+    for s in l.objs[o].syms {
+      if sym_bind(s) == STB_LOCAL || s.shndx != SHN_UNDEF || l.globals.contains(s.name) {
+        continue
+      }
+      match members.get(s.name) {
+        Some(m) => {
+          if !l.objs[m].live {
+            l.add_globals(m)
+            queue.push(m)
+          }
+        }
+        None => {}
+      }
+    }
+  }
+}
+
+/// The undefined names the taken objects use, in order of first use.
+fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
+  var seen: Map[Bytes, Int] = {}
+  var out: List[(Bytes, Bool)] = []
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for s in l.objs[o].syms {
+      if sym_bind(s) == STB_LOCAL || s.shndx != SHN_UNDEF || s.name.is_empty() || l.globals.contains(s.name) || seen.contains(s.name) {
+        continue
+      }
+      seen.put(s.name, 0)
+      out.push((s.name, sym_bind(s) == STB_WEAK))
+    }
+  }
+  out
+}
+
+/// `_start` and the outline atomics helpers the objects call, assembled
+/// and taken into the link.
+fn (var l: ELinker) synthesize_start() {
+  var src = BytesBuilder.new()
+  src.write_str("// _start and the outline atomics of the link (decision 0182)\n\t.text\n")
+  if !l.globals.contains(l.opts.entry.bytes()) {
+    // glibc's crt1: x0 the loader's fini, the stack holds argc and argv
+    src.write_str("\t.globl _start\n\t.p2align 2\n\t.type _start, %function\n_start:\n")
+    src.write_str("\tmov x29, #0\n\tmov x30, #0\n\tmov x5, x0\n\tldr x1, [sp]\n\tadd x2, sp, #8\n\tmov x6, sp\n")
+    src.write_str("\tadrp x0, main\n\tadd x0, x0, :lo12:main\n\tmov x3, #0\n\tmov x4, #0\n")
+    src.write_str("\tbl __libc_start_main\n\tbrk #1\n")
+  }
+  for (name, _) in l.undefined() {
+    let n = bstr(name)
+    if n.starts_with("__aarch64_") {
+      match outline_atomic(n) {
+        Some(body) => src.write_str(body)
+        None => {
+          l.fail("no outline atomic ${n}")
+          return
+        }
+      }
+    }
+  }
+  match assemble_elf(src.freeze()) {
+    Ok(obj) => {
+      match parse_elf_object("<start>", obj) {
+        Ok(o) => {
+          l.objs.push(o)
+          l.add_globals(l.objs.len() - 1)
+        }
+        Err(e) => l.fail(e)
+      }
+    }
+    Err(e) => l.fail("internal: the start code does not assemble: ${e}")
+  }
+}
+
+/// libgcc's lse.S helper `__aarch64_OPSIZE_MODEL` with load and store
+/// exclusive loops: cas (x0 expected, x1 desired, x2 address), swp and
+/// ldadd, ldclr, ldeor, ldset (x0 operand, x1 address); the old value in
+/// x0. Sizes 4 and 8; models relax, acq, rel, acq_rel.
+fn outline_atomic(name: Str) -> Str? {
+  let rest = name.trim_prefix("__aarch64_")
+  var op = ""
+  for o in ["cas", "swp", "ldadd", "ldclr", "ldeor", "ldset"] {
+    if rest.starts_with(o) {
+      op = o
+    }
+  }
+  if op.is_empty() {
+    return None
+  }
+  let parts = rest.trim_prefix(op).split("_")
+  if parts.len() < 2 {
+    return None
+  }
+  let size = parts[0]
+  let model = parts[1..].join("_")
+  if !(size == "4" || size == "8") {
+    return None
+  }
+  let r = if size == "8" { "x" } else { "w" }
+  let ld = if model == "acq" || model == "acq_rel" { "ldaxr" } else if model == "relax" || model == "rel" { "ldxr" } else { "" }
+  let st = if model == "rel" || model == "acq_rel" { "stlxr" } else { "stxr" }
+  if ld.is_empty() {
+    return None
+  }
+  var b = StrBuilder.new()
+  b.write("\t.globl ${name}\n\t.p2align 2\n\t.type ${name}, %function\n${name}:\n")
+  if op == "cas" {
+    b.write("\tmov ${r}16, ${r}0\n1:\n\t${ld} ${r}0, [x2]\n\tcmp ${r}0, ${r}16\n\tb.ne 2f\n")
+    b.write("\t${st} w17, ${r}1, [x2]\n\tcbnz w17, 1b\n2:\n\tret\n")
+  } else if op == "swp" {
+    b.write("\tmov ${r}16, ${r}0\n1:\n\t${ld} ${r}0, [x1]\n\t${st} w17, ${r}16, [x1]\n\tcbnz w17, 1b\n\tret\n")
+  } else {
+    let alu = match op {
+      "ldadd" => "add"
+      "ldclr" => "bic"
+      "ldeor" => "eor"
+      _ => "orr"
+    }
+    b.write("\tmov ${r}16, ${r}0\n1:\n\t${ld} ${r}0, [x1]\n\t${alu} ${r}17, ${r}0, ${r}16\n")
+    b.write("\t${st} w15, ${r}17, [x1]\n\tcbnz w15, 1b\n\tret\n")
+  }
+  Some(b.freeze())
+}
+
+/// The symbol versions of glibc.xo: name to (library, version).
+fn glibc_versions() -> Map[Bytes, (Str, Str)] {
+  var m: Map[Bytes, (Str, Str)] = {}
+  var rank: Map[Bytes, Int] = {}
+  for line in GLIBC_VERSIONS.split("\n") {
+    let parts = line.split(" ")
+    if parts.len() < 3 {
+      continue
+    }
+    let lib = parts[0]
+    let r = lib_rank(lib)
+    for n in parts[2..] {
+      let k = n.bytes()
+      // the first library of the link order that defines it
+      if (rank.get(k) ?? 99) > r {
+        m.put(k, (lib, parts[1]))
+        rank.put(k, r)
+      }
+    }
+  }
+  m
+}
+
+/// The link order of cc's libraries: -lm -lpthread, libgcc_s, libc.
+fn lib_rank(lib: Str) -> Int {
+  match lib {
+    "libm.so.6" => 0
+    "libpthread.so.0" => 1
+    "libgcc_s.so.1" => 2
+    _ => 3
+  }
+}
+
+/// The imports: every name still undefined, versioned.
+fn (var l: ELinker) collect_imports() {
+  let vers = glibc_versions()
+  var gcc = false
+  for (name, weak) in l.undefined() {
+    let (lib, ver) = vers.get(name) ?? ("libc.so.6", "GLIBC_2.17")
+    gcc = gcc || lib == "libgcc_s.so.1"
+    l.import_ix.put(name, l.imports.len())
+    l.imports.push(EImport{name: name, lib: lib, ver: ver, weak: weak})
+  }
+  l.needed = ["libm.so.6", "libpthread.so.0"]
+  if gcc {
+    l.needed.push("libgcc_s.so.1")
+  }
+  l.needed.push("libc.so.6")
+}
+
+/// The definition of symbol i of object o: (object, symbol), or (-1,
+/// import) for an import.
+fn (l: ELinker) def_of(o: Int, i: Int) -> (Int, Int) {
+  let s = l.objs[o].syms[i]
+  if sym_bind(s) == STB_LOCAL {
+    return (o, i)
+  }
+  match l.globals.get(s.name) {
+    Some(d) => d
+    None => (-1, l.import_ix.get(s.name) ?? -1)
+  }
+}
+
+/// The address of a defined symbol.
+fn (l: ELinker) sym_addr(o: Int, i: Int) -> Int {
+  let s = l.objs[o].syms[i]
+  if s.shndx == SHN_ABS {
+    return s.value
+  }
+  if s.shndx == SHN_COMMON {
+    return l.osects[O_BSS].addr + (l.commons.get((o, i)) ?? 0)
+  }
+  if s.shndx >= SHN_LORESERVE {
+    return 0
+  }
+  let sect = l.objs[o].sects[s.shndx]
+  if sect.out < 0 {
+    return 0
+  }
+  l.osects[sect.out].addr + sect.off + s.value
+}
+
+// ---------------------------------------------------------------------------
+// Placement
+
+/// The output section of an input section, -1 for none.
+fn classify(s: ESect) -> Int {
+  if (s.flags & SHF_ALLOC) == 0 || s.dead || s.typ == SHT_GROUP || s.typ == SHT_RELA || s.typ == SHT_SYMTAB || s.typ == SHT_STRTAB {
+    return -1
+  }
+  if (s.flags & SHF_TLS) != 0 {
+    return if s.typ == SHT_NOBITS { O_TBSS } else { O_TDATA }
+  }
+  if (s.flags & SHF_EXECINSTR) != 0 {
+    return O_TEXT
+  }
+  if (s.flags & SHF_WRITE) != 0 {
+    if s.typ == SHT_NOBITS {
+      return O_BSS
+    }
+    if s.name == ".data.rel.ro" || s.name.starts_with(".data.rel.ro.") {
+      return O_RELRO
+    }
+    return O_DATA
+  }
+  if s.name == ".eh_frame" {
+    return O_EH
+  }
+  if s.name == ".gcc_except_table" || s.name.starts_with(".gcc_except_table.") {
+    return O_EXCEPT
+  }
+  O_RODATA
+}
+
+fn (var l: ELinker) place() {
+  let names = [".interp", ".hash", ".dynsym", ".dynstr", ".gnu.version", ".gnu.version_r", ".rela.dyn", ".rodata", ".gcc_except_table", ".eh_frame_hdr", ".eh_frame", ".text", ".plt", ".tdata", ".tbss", ".data.rel.ro", ".got", ".dynamic", ".data", ".bss"]
+  for (i, n) in names.indexed() {
+    var typ = SHT_PROGBITS
+    if i == O_HASH {
+      typ = SHT_HASH
+    } else if i == O_DYNSYM {
+      typ = SHT_DYNSYM
+    } else if i == O_DYNSTR {
+      typ = SHT_STRTAB
+    } else if i == O_VERSYM {
+      typ = SHT_GNU_VERSYM
+    } else if i == O_VERNEED {
+      typ = SHT_GNU_VERNEED
+    } else if i == O_RELADYN {
+      typ = SHT_RELA
+    } else if i == O_DYNAMIC {
+      typ = SHT_DYNAMIC
+    } else if i == O_TBSS || i == O_BSS {
+      typ = SHT_NOBITS
+    }
+    var flags = SHF_ALLOC
+    if i == O_TEXT || i == O_PLT {
+      flags = SHF_ALLOC + SHF_EXECINSTR
+    } else if i == O_TDATA || i == O_TBSS {
+      flags = SHF_ALLOC + SHF_WRITE + SHF_TLS
+    } else if i >= O_RELRO {
+      flags = SHF_ALLOC + SHF_WRITE
+    }
+    l.osects.push(EOSect{name: n, typ: typ, flags: flags})
+  }
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      let out = classify(s)
+      if out < 0 {
+        continue
+      }
+      if s.typ != SHT_NOBITS && s.typ != SHT_PROGBITS && s.typ != SHT_NOTE && s.typ != 14 && s.typ != 15 {
+        l.fail("${l.objs[o].path}: section ${s.name} of type ${s.typ}")
+        return
+      }
+      if s.name == ".init_array" || s.name == ".fini_array" || s.name.starts_with(".init_array.") || s.name.starts_with(".fini_array.") || s.name == ".ctors" || s.name == ".dtors" {
+        l.fail("${l.objs[o].path}: ${s.name}: constructors are not supported")
+        return
+      }
+      // .eh_frame pieces only need 4 byte alignment: no gap may hold a
+      // zero length terminator
+      let al = if out == O_EH { 4 } else { s.align.max(1) }
+      let off = align_up(l.osects[out].size, al)
+      l.objs[o].sects[k].out = out
+      l.objs[o].sects[k].off = off
+      l.osects[out].size = off + s.size
+      l.osects[out].align = l.osects[out].align.max(al)
+      l.osects[out].chunks.push((o, k))
+    }
+  }
+  // the common symbols each name's definition chose, after the .bss
+  // sections: aligned to their value (ELF's alignment of a common
+  // symbol)
+  for (_, (d, i)) in l.globals.entries() {
+    let s = l.objs[d].syms[i]
+    if s.shndx != SHN_COMMON {
+      continue
+    }
+    let al = s.value.max(1)
+    let off = align_up(l.osects[O_BSS].size, al)
+    l.commons.put((d, i), off)
+    l.osects[O_BSS].size = off + s.size
+    l.osects[O_BSS].align = l.osects[O_BSS].align.max(al)
+  }
+}
+
+/// The relocations that need GOT slots, stubs, and dynamic relocations.
+fn (var l: ELinker) scan() {
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.out < 0 {
+        continue
+      }
+      for r in s.relocs {
+        if r.typ == R_AARCH64_NONE {
+          continue
+        }
+        let (d, i) = l.def_of(o, r.sym)
+        if d < 0 && i < 0 {
+          l.fail("${l.objs[o].path}: ${bstr(l.objs[o].syms[r.sym].name)} is not defined")
+          return
+        }
+        if r.typ == R_AARCH64_ADR_GOT_PAGE || r.typ == R_AARCH64_LD64_GOT_LO12_NC {
+          l.need_got(d, i)
+        } else if d < 0 {
+          // an import
+          if r.typ == R_AARCH64_CALL26 || r.typ == R_AARCH64_JUMP26 {
+            l.imports[i].func = true
+            if l.imports[i].plt < 0 {
+              l.need_got(d, i)
+              l.imports[i].plt = l.plt.len()
+              l.plt.push(i)
+            }
+          } else if r.typ != R_AARCH64_ABS64 {
+            l.fail("${l.objs[o].path}: ${bstr(l.imports[i].name)} (from ${l.imports[i].lib}) is used by relocation ${r.typ}, which needs a copy relocation")
+            return
+          }
+        }
+      }
+    }
+  }
+}
+
+fn (var l: ELinker) need_got(d: Int, i: Int) {
+  if d < 0 {
+    if l.imports[i].got < 0 {
+      l.imports[i].got = l.got.len()
+      l.got.push((i, -1, -1))
+    }
+    return
+  }
+  if !l.got_def.contains((d, i)) {
+    l.got_def.put((d, i), l.got.len())
+    l.got.push((-1, d, i))
+  }
+}
+
+/// The GOT slot address of a symbol.
+fn (l: ELinker) got_addr(d: Int, i: Int) -> Int {
+  let slot = if d < 0 { l.imports[i].got } else { l.got_def.get((d, i)) ?? 0 }
+  l.osects[O_GOT].addr + 8 * slot
+}
+
+// ---------------------------------------------------------------------------
+// Layout
+
+/// The dynamic tables: .dynstr names (libraries, imports, versions) and
+/// their offsets.
+struct DynStr {
+  tab: Bytes
+  off: Map[Str, Int]
+}
+
+fn (l: ELinker) dynstr() -> DynStr {
+  var o = new_out(1024)
+  var off: Map[Str, Int] = {}
+  o.u8(0)
+  var names: List[Str] = []
+  for n in l.needed {
+    names.push(n)
+  }
+  for imp in l.imports {
+    names.push(bstr(imp.name))
+  }
+  for (_, ver) in l.version_list() {
+    names.push(ver)
+  }
+  for n in names {
+    if !off.contains(n) {
+      off.put(n, o.n)
+      o.bytes(n.bytes())
+      o.u8(0)
+    }
+  }
+  DynStr{tab: o.done(), off: off}
+}
+
+/// The (library, version) pairs of the imports, in the order of the
+/// needed libraries; a pair's version index is its position plus 2.
+fn (l: ELinker) version_list() -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  for lib in l.needed {
+    for imp in l.imports {
+      if imp.lib == lib && !out.contains((lib, imp.ver)) {
+        out.push((lib, imp.ver))
+      }
+    }
+  }
+  out
+}
+
+/// The SysV ELF hash of a name.
+fn elf_hash(name: Bytes) -> Int {
+  var h = 0
+  for c in name {
+    h = (h * 16 + Int(c)) & 0xffffffff
+    let g = h & 0xf0000000
+    if g != 0 {
+      h = h ^ (g >> 24)
+    }
+    h = h & (~g & 0xffffffff)
+  }
+  h
+}
+
+fn (var l: ELinker) layout() {
+  let ni = l.imports.len()
+  let ds = l.dynstr()
+  // sizes of the synthetic sections
+  let interp = l.opts.interp.bytes()
+  l.osects[O_INTERP].size = interp.len() + 1
+  let nbucket = if ni < 8 { 1 } else { ni / 2 + 1 }
+  l.osects[O_HASH].size = 4 * (2 + nbucket + ni + 1)
+  l.osects[O_HASH].align = 8
+  l.osects[O_DYNSYM].size = 24 * (ni + 1)
+  l.osects[O_DYNSYM].align = 8
+  l.osects[O_DYNSTR].size = ds.tab.len()
+  l.osects[O_VERSYM].size = 2 * (ni + 1)
+  l.osects[O_VERSYM].align = 2
+  let vl = l.version_list()
+  var files = 0
+  for lib in l.needed {
+    for (lb, _) in vl {
+      if lb == lib {
+        files += 1
+        break
+      }
+    }
+  }
+  l.osects[O_VERNEED].size = 16 * files + 16 * vl.len()
+  l.osects[O_VERNEED].align = 4
+  // dynamic relocations: a GLOB_DAT per imported GOT slot, an ABS64 per
+  // pointer to an import (counted now, made in relocate)
+  var ndyn = 0
+  for imp in l.imports {
+    if imp.got >= 0 {
+      ndyn += 1
+    }
+  }
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for s in l.objs[o].sects {
+      if s.out < 0 {
+        continue
+      }
+      for r in s.relocs {
+        if r.typ == R_AARCH64_ABS64 {
+          let (d, _) = l.def_of(o, r.sym)
+          if d < 0 {
+            ndyn += 1
+          }
+        }
+      }
+    }
+  }
+  l.osects[O_RELADYN].size = 24 * ndyn
+  l.osects[O_RELADYN].align = 8
+  l.osects[O_EHHDR].size = if l.osects[O_EH].size > 0 { 12 + 8 * l.count_fdes() } else { 0 }
+  l.osects[O_EHHDR].align = 4
+  if l.osects[O_EH].size > 0 {
+    // the zero terminator
+    l.osects[O_EH].size += 4
+  }
+  l.osects[O_PLT].size = 16 * l.plt.len()
+  l.osects[O_PLT].align = 16
+  l.osects[O_GOT].size = 8 * l.got.len()
+  l.osects[O_GOT].align = 8
+  l.osects[O_DYNAMIC].size = 16 * (l.needed.len() + 16)
+  l.osects[O_DYNAMIC].align = 8
+
+  let has_tls = l.osects[O_TDATA].size > 0 || l.osects[O_TBSS].size > 0
+  let has_eh = l.osects[O_EHHDR].size > 0
+  l.phnum = 7 + (if has_tls { 1 } else { 0 }) + (if has_eh { 1 } else { 0 })
+  // segment 0: headers and read only data; 1: code; 2: data
+  var off = 64 + 56 * l.phnum
+  var vbase = ELF_BASE
+  for i in 0..O_COUNT {
+    if i == O_TEXT || i == O_TDATA {
+      // a new segment: the next page past the last one, congruent with
+      // the file offset
+      off = align_up(off, 16)
+      var vend = 0
+      for k in 0..i {
+        if l.osects[k].size > 0 && l.osects[k].typ != SHT_NOBITS {
+          vend = vend.max(l.osects[k].addr + l.osects[k].size)
+        }
+      }
+      vbase = align_up(vend.max(ELF_BASE), ELF_PAGE) + off % ELF_PAGE - off
+    }
+    let s = l.osects[i]
+    if i == O_TBSS {
+      // TLS zero fill: after .tdata in the TLS image, taking no space in
+      // the segment
+      let tstart = l.osects[O_TDATA].addr
+      let tend = align_up(tstart + l.osects[O_TDATA].size, s.align)
+      l.osects[i].addr = tend
+      l.osects[i].off = off
+      continue
+    }
+    off = align_up(off, s.align)
+    if i == O_TDATA {
+      // the TLS segment starts aligned to the larger of both alignments
+      off = align_up(off, s.align.max(l.osects[O_TBSS].align))
+    }
+    l.osects[i].off = off
+    l.osects[i].addr = vbase + off
+    if s.typ != SHT_NOBITS {
+      off += s.size
+    }
+  }
+  // .bss after the end of the file's data, in the data segment
+  if has_tls {
+    l.tls_align = l.osects[O_TDATA].align.max(l.osects[O_TBSS].align)
+    l.tls_start = l.osects[O_TDATA].addr
+    l.tls_size = if l.osects[O_TBSS].size > 0 { l.osects[O_TBSS].addr + l.osects[O_TBSS].size - l.tls_start } else { l.osects[O_TDATA].size }
+  }
+}
+
+/// The FDEs of the input .eh_frame sections.
+fn (l: ELinker) count_fdes() -> Int {
+  var n = 0
+  for (o, k) in l.osects[O_EH].chunks {
+    let d = l.objs[o].sects[k].data
+    var p = 0
+    while p + 8 <= d.len() {
+      let len = rd32(d, p)
+      if len == 0 {
+        break
+      }
+      if rd32(d, p + 4) != 0 {
+        n += 1
+      }
+      p += 4 + len
+    }
+  }
+  n
+}
+
+// ---------------------------------------------------------------------------
+// Relocations
+
+fn page(x: Int) -> Int {
+  x & ~0xfff
+}
+
+/// The offset from the thread pointer of a TLS address: the TCB's 16
+/// bytes, aligned to the TLS segment's alignment, then the TLS block.
+fn (l: ELinker) tp_off(addr: Int) -> Int {
+  align_up(16, l.tls_align) + addr - l.tls_start
+}
+
+fn (var l: ELinker) relocate() {
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.out < 0 || s.relocs.is_empty() {
+        continue
+      }
+      let base = l.osects[s.out].addr + s.off
+      for r in s.relocs {
+        if r.typ == R_AARCH64_NONE {
+          continue
+        }
+        l.reloc(o, s, base, r)
+        if !l.err.is_empty() {
+          return
+        }
+      }
+    }
+  }
+  // the GOT: defined symbols' addresses, imports bound by the loader
+  for (slot, (imp, d, i)) in l.got.indexed() {
+    let at = l.osects[O_GOT].addr + 8 * slot
+    if imp >= 0 {
+      l.dynrels.push(EDynRel{addr: at, typ: R_AARCH64_GLOB_DAT, sym: imp + 1, addend: 0})
+    } else {
+      l.patches.push(Patch{addr: at, size: 8, value: l.sym_addr(d, i)})
+    }
+  }
+}
+
+fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
+  let p = base + r.off
+  let (d, i) = l.def_of(o, r.sym)
+  let imp = d < 0
+  let sv = if imp { 0 } else { l.sym_addr(d, i) }
+  let v = sv + r.addend
+  let ins = if r.off + 4 <= s.data.len() { rd32(s.data, r.off) } else { 0 }
+  let t = r.typ
+  if t == R_AARCH64_ABS64 {
+    if imp {
+      l.dynrels.push(EDynRel{addr: p, typ: R_AARCH64_ABS64, sym: i + 1, addend: r.addend})
+      l.patches.push(Patch{addr: p, size: 8, value: 0})
+    } else {
+      l.patches.push(Patch{addr: p, size: 8, value: v})
+    }
+  } else if t == R_AARCH64_ABS32 {
+    if v < 0 || v >= 4294967296 {
+      return l.fail("${l.objs[o].path}: R_AARCH64_ABS32 out of range")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: v})
+  } else if t == R_AARCH64_PREL32 {
+    let x = v - p
+    if x < -2147483648 || x >= 2147483648 {
+      return l.fail("${l.objs[o].path}: R_AARCH64_PREL32 out of range in ${s.name}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: x & 0xffffffff})
+  } else if t == R_AARCH64_PREL64 {
+    l.patches.push(Patch{addr: p, size: 8, value: v - p})
+  } else if t == R_AARCH64_ADR_PREL_PG_HI21 || t == R_AARCH64_ADR_PREL_PG_HI21_NC || t == R_AARCH64_ADR_GOT_PAGE {
+    let target = if t == R_AARCH64_ADR_GOT_PAGE { l.got_addr(d, i) } else { v }
+    let x = (page(target) - page(p)) >> 12
+    if x < -1048576 || x >= 1048576 {
+      return l.fail("${l.objs[o].path}: adrp out of range")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0x9f00001f) | ((x & 3) * 0x20000000) | (((x >> 2) & 0x7ffff) * 32)})
+  } else if t == R_AARCH64_ADD_ABS_LO12_NC || t == R_AARCH64_LDST8_ABS_LO12_NC || t == R_AARCH64_LDST16_ABS_LO12_NC || t == R_AARCH64_LDST32_ABS_LO12_NC || t == R_AARCH64_LDST64_ABS_LO12_NC || t == R_AARCH64_LDST128_ABS_LO12_NC || t == R_AARCH64_LD64_GOT_LO12_NC {
+    var sh = 0
+    if t == R_AARCH64_LDST16_ABS_LO12_NC {
+      sh = 1
+    } else if t == R_AARCH64_LDST32_ABS_LO12_NC {
+      sh = 2
+    } else if t == R_AARCH64_LDST64_ABS_LO12_NC || t == R_AARCH64_LD64_GOT_LO12_NC {
+      sh = 3
+    } else if t == R_AARCH64_LDST128_ABS_LO12_NC {
+      sh = 4
+    }
+    let target = if t == R_AARCH64_LD64_GOT_LO12_NC { l.got_addr(d, i) } else { v }
+    let lo = target & 0xfff
+    if lo % pow2(sh) != 0 {
+      return l.fail("${l.objs[o].path}: misaligned :lo12: offset for relocation ${t}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & ~0x3ffc00) | ((lo >> sh) * 1024)})
+  } else if t == R_AARCH64_CALL26 || t == R_AARCH64_JUMP26 {
+    let target = if imp { l.osects[O_PLT].addr + 16 * l.imports[i].plt } else { v }
+    let x = target - p
+    if x < -134217728 || x >= 134217728 {
+      return l.fail("${l.objs[o].path}: branch out of range")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfc000000) | ((x >> 2) & 0x3ffffff)})
+  } else if t == R_AARCH64_CONDBR19 {
+    let x = v - p
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xff00001f) | (((x >> 2) & 0x7ffff) * 32)})
+  } else if t == R_AARCH64_TSTBR14 {
+    let x = v - p
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfff8001f) | (((x >> 2) & 0x3fff) * 32)})
+  } else if t == R_AARCH64_TLSDESC_ADR_PAGE21 || t == R_AARCH64_TLSDESC_LD64_LO12 || t == R_AARCH64_TLSDESC_ADD_LO12 || t == R_AARCH64_TLSDESC_CALL || t == R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 || t == R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC {
+    // relaxed to local exec: the offset from the thread pointer in x0 (a
+    // TLS descriptor's result) or the initial exec load's register
+    if imp {
+      return l.fail("${l.objs[o].path}: thread local ${bstr(l.imports[i].name)} is imported")
+    }
+    let x = l.tp_off(sv) + r.addend
+    if x < 0 || x >= 4294967296 {
+      return l.fail("${l.objs[o].path}: TLS offset out of range")
+    }
+    var w = NOP
+    if t == R_AARCH64_TLSDESC_ADR_PAGE21 {
+      // movz x0, #hi, lsl #16
+      w = 0xd2a00000 | (((x >> 16) & 0xffff) * 32)
+    } else if t == R_AARCH64_TLSDESC_LD64_LO12 {
+      // movk x0, #lo
+      w = 0xf2800000 | ((x & 0xffff) * 32)
+    } else if t == R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 {
+      w = 0xd2a00000 | (((x >> 16) & 0xffff) * 32) | (ins & 31)
+    } else if t == R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC {
+      w = 0xf2800000 | ((x & 0xffff) * 32) | (ins & 31)
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: w})
+  } else if t == R_AARCH64_TLSLE_ADD_TPREL_HI12 || t == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC {
+    let x = l.tp_off(sv) + r.addend
+    let imm = if t == R_AARCH64_TLSLE_ADD_TPREL_HI12 { (x >> 12) & 0xfff } else { x & 0xfff }
+    l.patches.push(Patch{addr: p, size: 4, value: (ins & ~0x3ffc00) | (imm * 1024)})
+  } else {
+    l.fail("${l.objs[o].path}: relocation type ${t} in ${s.name} is not supported")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Contents
+
+/// The bytes of an output section of input sections, with the patches.
+fn (var l: ELinker) contents(i: Int, ps: List[Patch]) -> Bytes {
+  let s = l.osects[i]
+  var o = new_out(s.size)
+  var pi = 0
+  while pi < ps.len() && ps[pi].addr < s.addr {
+    pi += 1
+  }
+  for (ob, k) in s.chunks {
+    let c = l.objs[ob].sects[k]
+    o.zeros(c.off - o.n)
+    let base = s.addr + c.off
+    var at = 0
+    while pi < ps.len() && ps[pi].addr < base + c.data.len() {
+      let p = ps[pi]
+      let rel = p.addr - base
+      if rel < at {
+        l.fail("overlapping relocations at ${p.addr}")
+        return o.done()
+      }
+      o.bytes(c.data[at..rel])
+      o.le(p.value, p.size)
+      at = rel + p.size
+      pi += 1
+    }
+    o.bytes(c.data[at..])
+  }
+  o.zeros(s.size - o.n)
+  o.done()
+}
+
+/// The .eh_frame_hdr of the final .eh_frame: its address, the FDE count,
+/// and the table of (pc begin, FDE) sorted by pc, all relative to the
+/// header.
+fn (var l: ELinker) eh_frame_hdr(eh: Bytes) -> Bytes {
+  let ea = l.osects[O_EH].addr
+  let ha = l.osects[O_EHHDR].addr
+  var encs: Map[Int, Int] = {}
+  var table: List[(Int, Int)] = []
+  var p = 0
+  while p + 8 <= eh.len() {
+    let len = rd32(eh, p)
+    if len == 0 {
+      break
+    }
+    let id = rd32(eh, p + 4)
+    if id == 0 {
+      encs.put(p, cie_fde_encoding(eh, p + 8))
+    } else {
+      let cie = p + 4 - id
+      let enc = encs.get(cie) ?? 0
+      let field = p + 8
+      var pc = 0
+      let fmt = enc & 0x0f
+      if fmt == 0x0b {
+        pc = sext32(rd32(eh, field))
+      } else if fmt == 0x03 {
+        pc = rd32(eh, field)
+      } else {
+        pc = rd64(eh, field)
+      }
+      if (enc & 0x70) == 0x10 {
+        pc += ea + field
+      }
+      table.push((pc, ea + p))
+    }
+    p += 4 + len
+  }
+  let sorted = table.sort_by(fn(e: (Int, Int)) -> Int { e.0 })
+  var o = new_out(12 + 8 * sorted.len())
+  o.u8(1)
+  // eh_frame_ptr pc relative sdata4, count udata4, table datarel sdata4
+  o.u8(0x1b)
+  o.u8(0x03)
+  o.u8(0x3b)
+  o.u32((ea - (ha + 4)) & 0xffffffff)
+  o.u32(sorted.len())
+  for (pc, fde) in sorted {
+    o.u32((pc - ha) & 0xffffffff)
+    o.u32((fde - ha) & 0xffffffff)
+  }
+  if o.n != l.osects[O_EHHDR].size {
+    l.fail("internal: .eh_frame_hdr is ${o.n} bytes, laid out as ${l.osects[O_EHHDR].size}")
+  }
+  o.done()
+}
+
+fn (var l: ELinker) write() -> Bytes {
+  let ps = l.patches.sort_by(fn(p: Patch) -> Int { p.addr })
+  let ni = l.imports.len()
+  let ds = l.dynstr()
+  var body: List[Bytes] = []
+  for _ in 0..O_COUNT {
+    body.push("".bytes())
+  }
+  // the program's sections
+  for i in [O_RODATA, O_EXCEPT, O_EH, O_TEXT, O_TDATA, O_RELRO, O_DATA] {
+    body[i] = l.contents(i, ps)
+    if !l.err.is_empty() {
+      return "".bytes()
+    }
+  }
+  if l.osects[O_EH].size > 0 {
+    body[O_EHHDR] = l.eh_frame_hdr(body[O_EH])
+  }
+  var b = new_out(64)
+  b.bytes(l.opts.interp.bytes())
+  b.u8(0)
+  body[O_INTERP] = b.done()
+  // .hash, .dynsym, .gnu.version, .gnu.version_r
+  let nbucket = if ni < 8 { 1 } else { ni / 2 + 1 }
+  var buckets: List[Int] = []
+  for _ in 0..nbucket {
+    buckets.push(0)
+  }
+  var chains: List[Int] = [0]
+  for (k, imp) in l.imports.indexed() {
+    let h = elf_hash(imp.name) % nbucket
+    chains.push(buckets[h])
+    buckets[h] = k + 1
+  }
+  b = new_out(l.osects[O_HASH].size)
+  b.u32(nbucket)
+  b.u32(ni + 1)
+  for x in buckets {
+    b.u32(x)
+  }
+  for x in chains {
+    b.u32(x)
+  }
+  body[O_HASH] = b.done()
+  let vl = l.version_list()
+  b = new_out(24 * (ni + 1))
+  b.zeros(24)
+  var versym = new_out(2 * (ni + 1))
+  versym.u16(0)
+  for imp in l.imports {
+    b.u32(ds.off.get(bstr(imp.name)) ?? 0)
+    let typ = if imp.func { STT_FUNC } else { STT_NOTYPE }
+    b.u8((if imp.weak { STB_WEAK } else { STB_GLOBAL }) * 16 + typ)
+    b.u8(0)
+    b.u16(0)
+    b.u64(0)
+    b.u64(0)
+    versym.u16(2 + (vl.index_of((imp.lib, imp.ver)) ?? 0))
+  }
+  body[O_DYNSYM] = b.done()
+  body[O_VERSYM] = versym.done()
+  body[O_DYNSTR] = ds.tab
+  b = new_out(l.osects[O_VERNEED].size)
+  var libs: List[Str] = []
+  for lib in l.needed {
+    for (lb, _) in vl {
+      if lb == lib && !libs.contains(lib) {
+        libs.push(lib)
+      }
+    }
+  }
+  for (li, lib) in libs.indexed() {
+    var vers: List[(Int, Str)] = []
+    for (vi, (lb, ver)) in vl.indexed() {
+      if lb == lib {
+        vers.push((vi + 2, ver))
+      }
+    }
+    b.u16(1)
+    b.u16(vers.len())
+    b.u32(ds.off.get(lib) ?? 0)
+    b.u32(16)
+    b.u32(if li == libs.len() - 1 { 0 } else { 16 + 16 * vers.len() })
+    for (k, (idx, ver)) in vers.indexed() {
+      b.u32(elf_hash(ver.bytes()))
+      b.u16(0)
+      b.u16(idx)
+      b.u32(ds.off.get(ver) ?? 0)
+      b.u32(if k == vers.len() - 1 { 0 } else { 16 })
+    }
+  }
+  body[O_VERNEED] = b.done()
+  // .rela.dyn, sorted by address
+  b = new_out(l.osects[O_RELADYN].size)
+  for r in l.dynrels.sort_by(fn(r: EDynRel) -> Int { r.addr }) {
+    b.u64(r.addr)
+    b.u32(r.typ)
+    b.u32(r.sym)
+    b.u64(r.addend)
+  }
+  body[O_RELADYN] = b.done()
+  if body[O_RELADYN].len() != l.osects[O_RELADYN].size {
+    l.fail("internal: .rela.dyn is ${body[O_RELADYN].len()} bytes, laid out as ${l.osects[O_RELADYN].size}")
+    return "".bytes()
+  }
+  // the stubs: adrp x16, slot; ldr x17, [x16, slot lo12]; br x17; nop
+  b = new_out(16 * l.plt.len())
+  for (k, imp) in l.plt.indexed() {
+    let at = l.osects[O_PLT].addr + 16 * k
+    let slot = l.osects[O_GOT].addr + 8 * l.imports[imp].got
+    let x = (page(slot) - page(at)) >> 12
+    b.u32(0x90000010 | ((x & 3) * 0x20000000) | (((x >> 2) & 0x7ffff) * 32))
+    b.u32(0xf9400000 | (((slot & 0xfff) / 8) * 1024) | (16 * 32) | 17)
+    b.u32(0xd61f0220)
+    b.u32(NOP)
+  }
+  body[O_PLT] = b.done()
+  // the GOT: zeros and the patches of its slots
+  var gz = new_out(8 * l.got.len())
+  gz.zeros(8 * l.got.len())
+  l.osects[O_GOT].chunks = []
+  body[O_GOT] = patch_bytes(gz.done(), l.osects[O_GOT].addr, ps)
+  // .dynamic
+  b = new_out(l.osects[O_DYNAMIC].size)
+  for n in l.needed {
+    b.u64(DT_NEEDED)
+    b.u64(ds.off.get(n) ?? 0)
+  }
+  let dyn = [(DT_HASH, l.osects[O_HASH].addr), (DT_STRTAB, l.osects[O_DYNSTR].addr), (DT_SYMTAB, l.osects[O_DYNSYM].addr), (DT_STRSZ, ds.tab.len()), (DT_SYMENT, 24), (DT_DEBUG, 0), (DT_RELA, l.osects[O_RELADYN].addr), (DT_RELASZ, l.osects[O_RELADYN].size), (DT_RELAENT, 24), (DT_FLAGS, DF_BIND_NOW), (DT_FLAGS_1, DF_1_NOW), (DT_VERSYM, l.osects[O_VERSYM].addr), (DT_VERNEED, l.osects[O_VERNEED].addr), (DT_VERNEEDNUM, libs.len())]
+  for (tag, val) in dyn {
+    b.u64(tag)
+    b.u64(val)
+  }
+  b.zeros(l.osects[O_DYNAMIC].size - b.n)
+  body[O_DYNAMIC] = b.done()
+
+  // the section headers and their names
+  var shstr = new_out(256)
+  shstr.u8(0)
+  var shown: List[Int] = []
+  var shname: List[Int] = []
+  for i in 0..O_COUNT {
+    if l.osects[i].size > 0 {
+      shown.push(i)
+      shname.push(shstr.n)
+      shstr.bytes(l.osects[i].name.bytes())
+      shstr.u8(0)
+    }
+  }
+  let symtab_name = shstr.n
+  shstr.bytes(".symtab".bytes())
+  shstr.u8(0)
+  let strtab_name = shstr.n
+  shstr.bytes(".strtab".bytes())
+  shstr.u8(0)
+  let shstr_name = shstr.n
+  shstr.bytes(".shstrtab".bytes())
+  shstr.u8(0)
+  let shstrtab = shstr.done()
+  let (symtab, strtab, nlocal) = l.symtab(shown)
+  var fend = 0
+  for i in 0..O_COUNT {
+    if l.osects[i].typ != SHT_NOBITS {
+      fend = fend.max(l.osects[i].off + l.osects[i].size)
+    }
+  }
+  // .symtab, .strtab, .shstrtab after the loaded contents, then the
+  // section headers
+  let symtab_off = align_up(fend, 8)
+  let strtab_off = symtab_off + symtab.len()
+  let shstr_off = strtab_off + strtab.len()
+  let shoff = align_up(shstr_off + shstrtab.len(), 8)
+  let shnum = shown.len() + 4
+
+  // the file: headers, the sections at their offsets
+  var o = new_out(shoff + 64 * shnum)
+  o.u8(0x7f)
+  o.bytes("ELF".bytes())
+  o.u8(2)
+  o.u8(1)
+  o.u8(1)
+  o.zeros(9)
+  o.u16(ET_EXEC)
+  o.u16(183)
+  o.u32(1)
+  let entry = match l.globals.get(l.opts.entry.bytes()) {
+    Some((d, i)) => l.sym_addr(d, i)
+    None => {
+      l.fail("no entry symbol ${l.opts.entry}")
+      return "".bytes()
+    }
+  }
+  o.u64(entry)
+  o.u64(64)
+  o.u64(shoff)
+  o.u32(0)
+  o.u16(64)
+  o.u16(56)
+  o.u16(l.phnum)
+  o.u16(64)
+  o.u16(shnum)
+  o.u16(shnum - 1)
+  l.phdrs(o)
+  for i in 0..O_COUNT {
+    let s = l.osects[i]
+    if s.size == 0 || s.typ == SHT_NOBITS {
+      continue
+    }
+    if s.off < o.n {
+      l.fail("internal: ${s.name} at ${s.off} overlaps ${o.n}")
+      return "".bytes()
+    }
+    o.zeros(s.off - o.n)
+    if body[i].len() != s.size {
+      l.fail("internal: ${s.name} is ${body[i].len()} bytes, laid out as ${s.size}")
+      return "".bytes()
+    }
+    o.bytes(body[i])
+  }
+  o.zeros(symtab_off - o.n)
+  o.bytes(symtab)
+  o.bytes(strtab)
+  o.bytes(shstrtab)
+  o.zeros(shoff - o.n)
+  o.zeros(64)
+  for (k, i) in shown.indexed() {
+    let s = l.osects[i]
+    o.u32(shname[k])
+    o.u32(s.typ)
+    o.u64(s.flags)
+    o.u64(s.addr)
+    o.u64(s.off)
+    o.u64(s.size)
+    // .dynsym, .gnu.version_r, .dynamic name .dynstr; .hash,
+    // .gnu.version, .rela.dyn name .dynsym
+    var link = 0
+    if i == O_DYNSYM || i == O_VERNEED || i == O_DYNAMIC {
+      link = l.shindex(shown, O_DYNSTR)
+    } else if i == O_HASH || i == O_VERSYM || i == O_RELADYN {
+      link = l.shindex(shown, O_DYNSYM)
+    }
+    o.u32(link)
+    o.u32(if i == O_DYNSYM { 1 } else if i == O_VERNEED { libs.len() } else { 0 })
+    o.u64(s.align)
+    var ent = 0
+    if i == O_DYNSYM || i == O_RELADYN {
+      ent = 24
+    } else if i == O_DYNAMIC {
+      ent = 16
+    } else if i == O_HASH {
+      ent = 4
+    } else if i == O_VERSYM {
+      ent = 2
+    } else if i == O_GOT {
+      ent = 8
+    }
+    o.u64(ent)
+  }
+  let strtab_index = shown.len() + 2
+  shdr(o, symtab_name, SHT_SYMTAB, symtab_off, symtab.len(), strtab_index, nlocal, 8, 24)
+  shdr(o, strtab_name, SHT_STRTAB, strtab_off, strtab.len(), 0, 0, 1, 0)
+  shdr(o, shstr_name, SHT_STRTAB, shstr_off, shstrtab.len(), 0, 0, 1, 0)
+  o.done()
+}
+
+/// A section header of a section not loaded.
+fn shdr(var o: Out, name: Int, typ: Int, off: Int, size: Int, link: Int, info: Int, align: Int, ent: Int) {
+  o.u32(name)
+  o.u32(typ)
+  o.u64(0)
+  o.u64(0)
+  o.u64(off)
+  o.u64(size)
+  o.u32(link)
+  o.u32(info)
+  o.u64(align)
+  o.u64(ent)
+}
+
+/// The static symbol table, for profilers, debuggers, and `nm`: the
+/// named functions and objects of the placed sections (not labels,
+/// mapping or section symbols), locals first, then each global's chosen
+/// definition; its names; the count of locals plus the null symbol.
+fn (l: ELinker) symtab(shown: List[Int]) -> (Bytes, Bytes, Int) {
+  var locals = new_out(4096)
+  var globals = new_out(4096)
+  var names = new_out(4096)
+  names.u8(0)
+  locals.zeros(24)
+  var nlocal = 1
+  var done: Map[Bytes, Int] = {}
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for i in 1..l.objs[o].syms.len() {
+      let s = l.objs[o].syms[i]
+      let typ = sym_type(s)
+      let bind = sym_bind(s)
+      if s.name.is_empty() || s.name[0] == '$' || s.name[0] == '.' || !(typ == STT_FUNC || typ == STT_OBJECT || typ == STT_TLS || (typ == STT_NOTYPE && bind != STB_LOCAL)) {
+        continue
+      }
+      if s.shndx == SHN_UNDEF || s.shndx == SHN_ABS || s.shndx >= SHN_LORESERVE && s.shndx != SHN_COMMON {
+        continue
+      }
+      var out = O_BSS
+      if s.shndx != SHN_COMMON {
+        let sect = l.objs[o].sects[s.shndx]
+        if sect.out < 0 {
+          continue
+        }
+        out = sect.out
+      }
+      if bind != STB_LOCAL {
+        match l.globals.get(s.name) {
+          Some((d, j)) => {
+            if d != o || j != i || done.contains(s.name) {
+              continue
+            }
+          }
+          None => continue
+        }
+        done.put(s.name, 0)
+      }
+      // a TLS symbol's value is its offset in the TLS segment
+      let a = l.sym_addr(o, i)
+      let v = if typ == STT_TLS { a - l.tls_start } else { a }
+      let shx = l.shindex(shown, out)
+      if bind == STB_LOCAL {
+        sym_entry(locals, names.n, s, shx, v)
+        nlocal += 1
+      } else {
+        sym_entry(globals, names.n, s, shx, v)
+      }
+      names.bytes(s.name)
+      names.u8(0)
+    }
+  }
+  locals.bytes(globals.done())
+  (locals.done(), names.done(), nlocal)
+}
+
+fn sym_entry(var e: Out, name: Int, s: ESym, shx: Int, value: Int) {
+  e.u32(name)
+  e.u8(s.info)
+  e.u8(s.other)
+  e.u16(shx)
+  e.u64(value)
+  e.u64(s.size)
+}
+
+/// The section header index of output section i.
+fn (l: ELinker) shindex(shown: List[Int], i: Int) -> Int {
+  (shown.index_of(i) ?? -1) + 1
+}
+
+/// data at addr with the patches that fall in it.
+fn patch_bytes(data: Bytes, addr: Int, ps: List[Patch]) -> Bytes {
+  var o = new_out(data.len())
+  var at = 0
+  for p in ps {
+    if p.addr < addr || p.addr >= addr + data.len() {
+      continue
+    }
+    let rel = p.addr - addr
+    o.bytes(data[at..rel])
+    o.le(p.value, p.size)
+    at = rel + p.size
+  }
+  o.bytes(data[at..])
+  o.done()
+}
+
+/// The program headers.
+fn (l: ELinker) phdrs(var o: Out) {
+  let s = l.osects
+  // the extent of each load segment: [first, last] output sections
+  let segs = [(O_INTERP, O_EH, PF_R), (O_TEXT, O_PLT, PF_R + PF_X), (O_TDATA, O_BSS, PF_R + PF_W)]
+  let hdr = 64 + 56 * l.phnum
+  // PT_PHDR
+  ph(o, PT_PHDR, PF_R, 64, ELF_BASE + 64, 56 * l.phnum, 56 * l.phnum, 8)
+  ph(o, PT_INTERP, PF_R, s[O_INTERP].off, s[O_INTERP].addr, s[O_INTERP].size, s[O_INTERP].size, 1)
+  for (k, (first, last, flags)) in segs.indexed() {
+    var off = -1
+    var addr = 0
+    var fend = 0
+    var vend = 0
+    for i in first..last + 1 {
+      let x = s[i]
+      if x.size == 0 || i == O_TBSS {
+        continue
+      }
+      if off < 0 {
+        off = x.off
+        addr = x.addr
+      }
+      if x.typ != SHT_NOBITS {
+        fend = x.off + x.size
+      }
+      vend = vend.max(x.addr + x.size)
+    }
+    if k == 0 {
+      off = 0
+      addr = ELF_BASE
+      fend = fend.max(hdr)
+      vend = vend.max(ELF_BASE + hdr)
+    }
+    if off < 0 {
+      // an empty segment: one byte past the previous ones keeps the
+      // count of program headers fixed
+      off = 0
+      addr = ELF_BASE
+      fend = 0
+      vend = ELF_BASE
+    }
+    ph(o, PT_LOAD, flags, off, addr, fend - off, vend - addr, ELF_PAGE)
+  }
+  ph(o, PT_DYNAMIC, PF_R + PF_W, s[O_DYNAMIC].off, s[O_DYNAMIC].addr, s[O_DYNAMIC].size, s[O_DYNAMIC].size, 8)
+  if l.tls_size > 0 || s[O_TDATA].size > 0 || s[O_TBSS].size > 0 {
+    ph(o, PT_TLS, PF_R, s[O_TDATA].off, l.tls_start, s[O_TDATA].size, l.tls_size, l.tls_align)
+  }
+  if s[O_EHHDR].size > 0 {
+    ph(o, PT_GNU_EH_FRAME, PF_R, s[O_EHHDR].off, s[O_EHHDR].addr, s[O_EHHDR].size, s[O_EHHDR].size, 4)
+  }
+  ph(o, PT_GNU_STACK, PF_R + PF_W, 0, 0, 0, 0, 16)
+}
+
+fn ph(var o: Out, typ: Int, flags: Int, off: Int, addr: Int, filesz: Int, memsz: Int, align: Int) {
+  o.u32(typ)
+  o.u32(flags)
+  o.u64(off)
+  o.u64(addr)
+  o.u64(addr)
+  o.u64(filesz)
+  o.u64(memsz)
+  o.u64(align)
+}
