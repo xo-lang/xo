@@ -14,7 +14,8 @@
 # arm64 backend (the Go driver, XO_SELF_DRIVER=0). Phase 2 deletes the Go
 # toolchain from the machine (/usr/local/go, the Go caches, the Go built
 # xo) and runs scripts/bootstrap-xo.sh with the seed: s1, s2, s3 and the
-# fixed point, with clang the only compiler installed.
+# fixed point, with clang and gcc (`cc`, the arm64 backend's assembler and
+# linker driver) the only compilers installed.
 #
 # Safety as remote-full.sh: the instance powers itself off (and so
 # terminates) after XO_REMOTE_MAX_MIN minutes (default 120), a local
@@ -43,12 +44,16 @@ sg=$(aws ec2 describe-security-groups --filters Name=group-name,Values=xo-ci-ssh
 myip=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
 [ -z "$DRY" ] && { aws ec2 authorize-security-group-ingress --group-id "$sg" --protocol tcp --port 22 --cidr "$myip/32" >/dev/null 2>&1 || true; }
 
-ami=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 --query Parameter.Value --output text)
+# the SSM alias, else (the agent sandbox cannot resolve ssm.*) the newest
+# AL2023 kernel 6.18 arm64 image by name, as remote-full.sh
+ami=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 --query Parameter.Value --output text 2>/dev/null) ||
+  ami=$(aws ec2 describe-images --owners amazon --filters 'Name=name,Values=al2023-ami-2023.*-kernel-6.18-arm64' Name=state,Values=available \
+    --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)
 userdata=$(cat <<EOF
 #!/bin/bash
 systemd-run --on-active=${MAXMIN}m /usr/sbin/poweroff
 shutdown -h +$MAXMIN
-dnf install -y git clang llvm tar gzip >/var/log/xo-setup.log 2>&1
+dnf install -y git clang llvm gcc tar gzip >/var/log/xo-setup.log 2>&1
 curl -fsSL https://go.dev/dl/go$GOVER.linux-arm64.tar.gz | tar -C /usr/local -xz
 touch /var/run/xo-ready
 EOF
