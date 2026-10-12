@@ -153,19 +153,12 @@ fn (var g: G) regalloc() {
       var out = live_out[k]
       live_out[k] = []
       for t in g.blocks[b].succs {
-        let ti = idx[t]
-        for w in 0..nw {
-          out[w] = out[w] | live_in[ti][w]
-        }
+        or_into(out, live_in[idx[t]], nw)
       }
       var li = live_in[k]
       live_in[k] = []
-      for w in 0..nw {
-        let nv = gen[k][w] | (out[w] & ~kill[k][w])
-        if nv != li[w] {
-          li[w] = nv
-          changed = true
-        }
+      if transfer(li, gen[k], out, kill[k], nw) {
+        changed = true
       }
       live_in[k] = li
       live_out[k] = out
@@ -501,6 +494,30 @@ fn (var g: G) regalloc() {
       g.saved.push(r)
     }
   }
+}
+
+/// out |= src over the first nw words. The bit sets are parameters, so
+/// they are borrowed: `out[w] | live_in[ti][w]` in regalloc's loop
+/// copied (a dup and a drop of) the inner list per word
+/// (bench/results/xo1-perf).
+fn or_into(var out: List[Int], src: List[Int], nw: Int) {
+  for w in 0..nw {
+    out[w] = out[w] | src[w]
+  }
+}
+
+/// li = gen | (out &^ kill) over the first nw words; reports whether li
+/// changed.
+fn transfer(var li: List[Int], gen: List[Int], out: List[Int], kill: List[Int], nw: Int) -> Bool {
+  var changed = false
+  for w in 0..nw {
+    let nv = gen[w] | (out[w] & ~kill[w])
+    if nv != li[w] {
+      li[w] = nv
+      changed = true
+    }
+  }
+  changed
 }
 
 /// The leader of v's coalesced group (with path halving, as the Go

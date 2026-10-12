@@ -139,6 +139,12 @@ fn removable(inst: Inst) -> Bool {
 
 /// Deletes instructions without side effects whose definitions nothing
 /// live uses, and the parts of parallel moves into dead registers.
+///
+/// The instruction lists go to dce_mark and dce_dead as parameters, so
+/// their elements are borrowed: iterating `g.blocks[b].insts` here
+/// copied every Inst (a dup and a drop of each of its heap fields per
+/// instruction and pass), and building the kept list of every block
+/// copied it again even when nothing was deleted (bench/results/xo1-perf).
 fn (var g: G) dce() {
   let blocks = g.all_blocks()
   var live: List[Bool] = []
@@ -149,81 +155,117 @@ fn (var g: G) dce() {
   while changed {
     changed = false
     for b in blocks {
-      for inst in g.blocks[b].insts {
-        if inst.kind == K_PMOVE {
-          for (k, d) in inst.defs.indexed() {
-            let a = inst.srcs[k]
-            if live[d] && a.kind == S_REG && !live[a.v] {
-              live[a.v] = true
-              changed = true
-            }
-          }
-          continue
-        }
-        var keep = !removable(inst)
-        for d in inst.defs {
-          keep = keep || live[d]
-        }
-        if !keep {
-          continue
-        }
-        for u in inst.us {
-          if !live[u] {
-            live[u] = true
-            changed = true
-          }
-        }
-      }
+      changed = dce_mark(g.blocks[b].insts, live) || changed
     }
   }
   for b in blocks {
-    var out: List[Inst] = []
-    var any = false
-    for inst in g.blocks[b].insts {
-      if inst.kind == K_PMOVE {
-        var defs: List[Int] = []
-        var srcs: List[Src] = []
-        for (i, d) in inst.defs.indexed() {
-          if live[d] {
-            defs.push(d)
-            srcs.push(inst.srcs[i])
-          }
-        }
-        if defs.len() != inst.defs.len() {
-          any = true
-        }
-        if defs.is_empty() {
-          continue
-        }
-        var us: List[Int] = []
-        for a in srcs {
-          if a.kind == S_REG && a.v != 0 {
-            us.push(a.v)
-          }
-        }
-        var x = inst
-        x.defs = defs
-        x.srcs = srcs
-        x.us = us
-        out.push(x)
-        continue
-      }
-      if removable(inst) {
-        var dead = true
-        for d in inst.defs {
-          dead = dead && !live[d]
-        }
-        if dead {
-          any = true
-          continue
-        }
-      }
-      out.push(inst)
-    }
-    if any {
+    if dce_dead(g.blocks[b].insts, live) {
+      let out = dce_keep(g.blocks[b].insts, live)
       g.blocks[b].insts = out
     }
   }
+}
+
+/// One pass of dce's liveness over insts: marks the uses of what is kept
+/// and the sources of live parallel moves; reports whether it marked
+/// anything new.
+fn dce_mark(insts: List[Inst], var live: List[Bool]) -> Bool {
+  var changed = false
+  for inst in insts {
+    if inst.kind == K_PMOVE {
+      for (k, d) in inst.defs.indexed() {
+        let a = inst.srcs[k]
+        if live[d] && a.kind == S_REG && !live[a.v] {
+          live[a.v] = true
+          changed = true
+        }
+      }
+      continue
+    }
+    var keep = !removable(inst)
+    for d in inst.defs {
+      keep = keep || live[d]
+    }
+    if !keep {
+      continue
+    }
+    for u in inst.us {
+      if !live[u] {
+        live[u] = true
+        changed = true
+      }
+    }
+  }
+  changed
+}
+
+/// Whether dce_keep would change insts: a removable instruction with
+/// every definition dead, or a parallel move with a dead destination.
+fn dce_dead(insts: List[Inst], live: List[Bool]) -> Bool {
+  for inst in insts {
+    if inst.kind == K_PMOVE {
+      for d in inst.defs {
+        if !live[d] {
+          return true
+        }
+      }
+      continue
+    }
+    if removable(inst) {
+      var dead = true
+      for d in inst.defs {
+        dead = dead && !live[d]
+      }
+      if dead {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// insts without its dead instructions, and its parallel moves without
+/// their dead destinations.
+fn dce_keep(insts: List[Inst], live: List[Bool]) -> List[Inst] {
+  var out: List[Inst] = []
+  for inst in insts {
+    if inst.kind == K_PMOVE {
+      var defs: List[Int] = []
+      var srcs: List[Src] = []
+      for (i, d) in inst.defs.indexed() {
+        if live[d] {
+          defs.push(d)
+          srcs.push(inst.srcs[i])
+        }
+      }
+      if defs.is_empty() {
+        continue
+      }
+      var us: List[Int] = []
+      for a in srcs {
+        if a.kind == S_REG && a.v != 0 {
+          us.push(a.v)
+        }
+      }
+      var x = inst
+      x.defs = defs
+      x.srcs = srcs
+      x.us = us
+      out.push(x)
+      continue
+    }
+    if removable(inst) {
+      var dead = true
+      for d in inst.defs {
+        dead = dead && !live[d]
+      }
+      if dead {
+        continue
+      }
+    }
+    out.push(inst)
+  }
+  out
 }
 
 /// Starts the memo of the current block from memo from, of a block that
