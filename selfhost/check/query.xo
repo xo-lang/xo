@@ -200,6 +200,40 @@ pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
   out
 }
 
+/// mod.ReadFile of the xo.mod in dir: the parsed file (None when it
+/// cannot be read) and its problems, for `xo publish` (internal/release).
+pub fn (c: Checker) mod_file(dir: Str) -> (ModFile?, List[Problem]) uses fs.read {
+  c.read_mod_file(dir)
+}
+
+/// mod.ValidVersion.
+pub fn version_valid(v: Str) -> Bool {
+  valid_version(v)
+}
+
+/// mod.Compare: -1, 0, or 1.
+pub fn version_compare(a: Str, b: Str) -> Int {
+  compare_versions(a, b)
+}
+
+/// mod.Major: the major version of a valid version, -1 otherwise.
+pub fn version_major(v: Str) -> Int {
+  match version_parts(v) {
+    Some(p) => Int.parse(p[0]) ?? -1
+    None => -1
+  }
+}
+
+/// mod.MajorSuffix: path without its /vN suffix, and N (0 for none).
+pub fn path_major_suffix(path: Str) -> (Str, Int) {
+  (major_suffix(path), major_suffix_n(path))
+}
+
+/// mod.MajorMismatch.
+pub fn version_major_mismatch(path: Str, v: Str) -> Str {
+  major_mismatch(path, v)
+}
+
 /// The text of an object as the names section prints it.
 pub fn (c: Checker) object_text(o: Int) -> Str {
   c.obj_text(o)

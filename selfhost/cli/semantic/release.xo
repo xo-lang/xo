@@ -1,0 +1,729 @@
+// The exported API and effects of a module version, and the release
+// check of `xo publish` (decision 0086 step 4): a port of
+// internal/release. ModuleAPI and the comparison are syntactic, so an old
+// tag can be compared as extracted; definitions are compared by content
+// hash too (decision 0125, defhash.xo).
+
+use std/archive
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// One export of a module version: a pub declaration of one of its
+/// packages, as `xo query api` lists it (release.Item).
+pub struct ApiItem {
+  pub package: Str
+  pub kind: Str
+  pub name: Str
+  pub signature: Str
+  /// a function's `uses` clause, sorted
+  pub effects: List[Str] = []
+  pub file: Str
+  pub line: Int
+  /// the signature without the `uses` clause
+  pub shape: Str
+}
+
+fn item_key(it: ApiItem) -> Str {
+  "${it.package}.${it.name}"
+}
+
+pub fn api_item_json(it: ApiItem) -> JVal {
+  var ms: List[(Str, JVal)] = [("package", JVal.Text(it.package)), ("kind", JVal.Text(it.kind)), ("name", JVal.Text(it.name)), ("signature", JVal.Text(it.signature))]
+  if !it.effects.is_empty() {
+    ms.push(("effects", strs(it.effects)))
+  }
+  ms.push(("file", JVal.Text(it.file)))
+  ms.push(("line", JVal.Num(it.line)))
+  JVal.Obj(ms)
+}
+
+/// The exports of the module in dir (module path mod_path): the pub
+/// declarations of every package under dir, outside test files, from the
+/// syntax tree. Nested modules, vendor/, testdata/, and dot directories
+/// are skipped (release.ModuleAPI).
+pub fn module_api(fs: Fs, dir: Str, mod_path: Str) -> List[ApiItem] ! Str uses fs.read {
+  var out: List[ApiItem] = []
+  var seen: Set[Str] = #{}
+  api_walk(fs, dir, dir, mod_path, out, seen)?
+  // sort.SliceStable by key: keys are unique (seen), so any sort does
+  Ok(out.sort_by(fn(it) { item_key(it) }))
+}
+
+fn api_walk(fs: Fs, root: Str, dir: Str, mod_path: Str, var out: List[ApiItem], var seen: Set[Str]) -> () ! Str uses fs.read {
+  let entries = match fs.read_dir(dir) {
+    Ok(es) => es
+    Err(e) => return Err("${e}")
+  }
+  for e in entries {
+    let p = "${dir}/${e.name}"
+    if e.is_dir {
+      let n = e.name
+      if n == "vendor" || n == "testdata" || n.starts_with(".") {
+        continue
+      }
+      if fs.exists("${p}/xo.mod").ok() ?? false {
+        continue
+      }
+      api_walk(fs, root, p, mod_path, out, seen)?
+      continue
+    }
+    if !p.ends_with(".xo") || p.ends_with("_test.xo") {
+      continue
+    }
+    let src = match fs.read(p) {
+      Ok(b) => b
+      Err(e) => return Err("${e}")
+    }
+    let f = parser.parse_file(p.bytes(), src, false).file
+    var pkg = mod_path
+    if dir != root {
+      pkg = "${mod_path}/${dir.trim_prefix("${root}/")}"
+    }
+    for decl in f.decls {
+      let def = match decl_surface(pkg, p, src, decl, false) {
+        Some(d) => d
+        None => continue
+      }
+      var it = ApiItem{package: pkg, kind: def.kind, name: def.name, signature: def.signature, file: p, line: def.pos.line, shape: def.signature}
+      if let FnDecl(fd) = decl {
+        let (effs, shape) = fn_effects(fd, src)
+        it.effects = effs
+        it.shape = shape
+      }
+      // a declaration repeated in platform files counts once
+      if seen.contains(item_key(it)) {
+        continue
+      }
+      seen.add(item_key(it))
+      out.push(it)
+    }
+  }
+  Ok(())
+}
+
+/// The effects of a function's `uses` clause, sorted, and its signature
+/// without the clause.
+fn fn_effects(fd: parser.FnDecl, src: Bytes) -> (List[Str], Str) {
+  var clauses: List[parser.Clause] = []
+  var effs: List[Str] = []
+  for cl in fd.clauses {
+    match cl {
+      UsesClause(_, effects, _) => {
+        for e in effects {
+          var name = txt(e.name.name)
+          if let Some(s) = e.sub {
+            name = "${name}.${txt(s.name)}"
+          }
+          effs.push(name)
+        }
+      }
+      _ => clauses.push(cl)
+    }
+  }
+  (effs.sort(), fmt_decl(Decl.FnDecl(fd with {clauses: clauses}), src, true))
+}
+
+/// One difference between the exports of two versions (release.Change).
+pub struct ApiChange {
+  /// removed, added, changed, effects_added, or effects_removed
+  pub kind: Str
+  pub package: Str
+  pub name: Str
+  pub item_kind: Str
+  pub old: Str = ""
+  pub new: Str = ""
+  pub effects: List[Str] = []
+  pub breaking: Bool = false
+  pub file: Str = ""
+  pub line: Int = 0
+}
+
+pub fn api_change_json(c: ApiChange) -> JVal {
+  var ms: List[(Str, JVal)] = [("kind", JVal.Text(c.kind)), ("package", JVal.Text(c.package)), ("name", JVal.Text(c.name)), ("item_kind", JVal.Text(c.item_kind))]
+  if !c.old.is_empty() {
+    ms.push(("old", JVal.Text(c.old)))
+  }
+  if !c.new.is_empty() {
+    ms.push(("new", JVal.Text(c.new)))
+  }
+  if !c.effects.is_empty() {
+    ms.push(("effects", strs(c.effects)))
+  }
+  ms.push(("breaking", JVal.Bool(c.breaking)))
+  if !c.file.is_empty() {
+    ms.push(("file", JVal.Text(c.file)))
+  }
+  if c.line != 0 {
+    ms.push(("line", JVal.Num(c.line)))
+  }
+  JVal.Obj(ms)
+}
+
+/// Compares the exports of an old and a new version: a removed export, a
+/// changed signature, and an added effect break; an added export and a
+/// removed effect do not (release.Diff).
+pub fn api_diff(old: List[ApiItem], new: List[ApiItem]) -> List[ApiChange] {
+  var old_by: Map[Str, ApiItem] = {}
+  for it in old {
+    old_by[item_key(it)] = it
+  }
+  var new_by: Map[Str, ApiItem] = {}
+  for it in new {
+    new_by[item_key(it)] = it
+  }
+  var out: List[ApiChange] = []
+  for o in old {
+    let n = match new_by.get(item_key(o)) {
+      Some(x) => x
+      None => {
+        out.push(ApiChange{kind: "removed", package: o.package, name: o.name, item_kind: o.kind, old: o.signature, breaking: true})
+        continue
+      }
+    }
+    var ch = ApiChange{kind: "", package: n.package, name: n.name, item_kind: n.kind, old: o.signature, new: n.signature, file: n.file, line: n.line}
+    if n.kind != o.kind || n.shape != o.shape {
+      ch.kind = "changed"
+      ch.breaking = true
+      ch.effects = minus(n.effects, o.effects)
+      out.push(ch)
+      continue
+    }
+    let added = minus(n.effects, o.effects)
+    if !added.is_empty() {
+      ch.kind = "effects_added"
+      ch.breaking = true
+      ch.effects = added
+      out.push(ch)
+      continue
+    }
+    let removed = minus(o.effects, n.effects)
+    if !removed.is_empty() {
+      ch.kind = "effects_removed"
+      ch.effects = removed
+      out.push(ch)
+    }
+  }
+  for n in new {
+    if !old_by.contains(item_key(n)) {
+      out.push(ApiChange{kind: "added", package: n.package, name: n.name, item_kind: n.kind, new: n.signature, file: n.file, line: n.line})
+    }
+  }
+  stable_sort_changes(out)
+}
+
+/// sort.SliceStable by package, then name.
+fn stable_sort_changes(xs: List[ApiChange]) -> List[ApiChange] {
+  var keyed: List[(Str, Str, Int)] = []
+  for (i, c) in xs.indexed() {
+    keyed.push((c.package, c.name, i))
+  }
+  var out: List[ApiChange] = []
+  for k in keyed.sort() {
+    out.push(xs[k.2])
+  }
+  out
+}
+
+/// The effects of a not admitted by b (`fs` admits `fs.read`).
+fn minus(a: List[Str], b: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for e in a {
+    var ok = false
+    for x in b {
+      if x == e || e.starts_with("${x}.") {
+        ok = true
+      }
+    }
+    if !ok {
+      out.push(e)
+    }
+  }
+  out
+}
+
+/// The smallest version bump the changes need.
+pub fn api_bump(changes: List[ApiChange]) -> Str {
+  var bump = "patch"
+  for c in changes {
+    if c.breaking {
+      return "major"
+    }
+    bump = "minor"
+  }
+  bump
+}
+
+/// A one line description of a change for text output.
+pub fn describe_api_change(c: ApiChange) -> Str {
+  let name = "${c.package}.${c.name}"
+  match c.kind {
+    "removed" => return "removed ${c.item_kind} ${name}"
+    "added" => return "added ${c.item_kind} ${name}"
+    "effects_added" => return "${c.item_kind} ${name} now uses ${c.effects.join(", ")}"
+    "effects_removed" => return "${c.item_kind} ${name} no longer uses ${c.effects.join(", ")}"
+    _ => {}
+  }
+  var s = "changed ${c.item_kind} ${name}"
+  if !c.effects.is_empty() {
+    s = "${s} (now also uses ${c.effects.join(", ")})"
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Publish (release publish.go)
+
+/// The outcome of `xo publish` (release.Result).
+pub struct PublishResult {
+  pub ok: Bool = false
+  pub module: Str = ""
+  pub previous: Str = ""
+  pub version: Str = ""
+  pub bump: Str = ""
+  pub suggested: Str = ""
+  pub changes: List[ApiChange] = []
+  pub breaking: List[ApiChange] = []
+  pub definitions: List[Change] = []
+  pub tag: Str = ""
+  pub diags: List[check.Diag] = []
+}
+
+pub fn publish_json(r: PublishResult) -> JVal {
+  var ms: List[(Str, JVal)] = [("ok", JVal.Bool(r.ok)), ("module", JVal.Text(r.module))]
+  if !r.previous.is_empty() {
+    ms.push(("previous", JVal.Text(r.previous)))
+  }
+  ms.push(("version", JVal.Text(r.version)))
+  ms.push(("bump", JVal.Text(r.bump)))
+  ms.push(("suggested", JVal.Text(r.suggested)))
+  var cs: List[JVal] = []
+  for c in r.changes {
+    cs.push(api_change_json(c))
+  }
+  ms.push(("changes", JVal.Arr(cs)))
+  var bs: List[JVal] = []
+  for c in r.breaking {
+    bs.push(api_change_json(c))
+  }
+  ms.push(("breaking", JVal.Arr(bs)))
+  var ds: List[JVal] = []
+  for c in r.definitions {
+    ds.push(change_json(c))
+  }
+  ms.push(("definitions", JVal.Arr(ds)))
+  if !r.tag.is_empty() {
+    ms.push(("tag", JVal.Text(r.tag)))
+  }
+  var gs: List[JVal] = []
+  for d in r.diags {
+    gs.push(diag_json(d))
+  }
+  ms.push(("diagnostics", JVal.Arr(gs)))
+  JVal.Obj(ms)
+}
+
+fn (var r: PublishResult) fail(code: Str, file: Str, line0: Int, msg: Str, notes: List[Str]) {
+  let line = if line0 < 1 { 1 } else { line0 }
+  var ns: List[check.DNote] = []
+  for n in notes {
+    ns.push(check.DNote{message: n})
+  }
+  r.diags.push(check.Diag{code: code, file: file, line: line, col: 1, end_line: 0, end_col: 0, message: msg, notes: ns})
+}
+
+/// v with the given part bumped.
+fn next_version(v: Str, part: Str) -> Str {
+  if v.is_empty() {
+    return "v0.1.0"
+  }
+  let core = v.trim_prefix("v").split("-")[0]
+  let parts = core.split(".")
+  var n = [0, 0, 0]
+  for i in 0..3 {
+    n[i] = Int.parse(parts.get(i) ?? "0") ?? 0
+  }
+  let pre = v.contains("-")
+  match part {
+    "major" => n = [n[0] + 1, 0, 0]
+    "minor" => n = [n[0], n[1] + 1, 0]
+    _ => {
+      if !pre {
+        n[2] = n[2] + 1
+      }
+    }
+  }
+  "v${n[0]}.${n[1]}.${n[2]}"
+}
+
+fn minor_of(v: Str) -> Int {
+  let core = v.trim_prefix("v").split("-")[0]
+  let parts = core.split(".")
+  if parts.len() < 2 {
+    return 0
+  }
+  Int.parse(parts[1]) ?? 0
+}
+
+/// Whether going from prev to v may break: a new major version, or a new
+/// minor version before v1.0.0.
+fn allows_breaking(prev: Str, v: Str) -> Bool {
+  let pm = check.version_major(prev)
+  let vm = check.version_major(v)
+  if vm > pm {
+    return true
+  }
+  vm == 0 && pm == 0 && minor_of(v) > minor_of(prev)
+}
+
+fn kind_of(prev: Str, v: Str) -> Str {
+  if check.version_major(v) > check.version_major(prev) {
+    return "major"
+  }
+  if minor_of(v) > minor_of(prev) {
+    return "minor"
+  }
+  "patch"
+}
+
+fn first_line(s: Str) -> Str {
+  s.split("\n")[0]
+}
+
+/// git with the settings internal/mod runs it with, in dir: its standard
+/// output, or the error (its standard error, trimmed).
+fn git(os: Os, dir: Str, args: List[Str]) -> Bytes ! Str uses proc {
+  var full = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"]
+  for a in args {
+    full.push(a)
+  }
+  let cmd = os.proc.cmd("git", full).dir(dir).set_env("GIT_TERMINAL_PROMPT", "0").set_env("GIT_ASKPASS", "").set_env("SSH_ASKPASS", "").set_env("GIT_CONFIG_NOSYSTEM", "1")
+  match cmd.output() {
+    Ok(r) => {
+      if r.code != 0 {
+        let msg = (r.stderr.to_str() ?? "").trim()
+        return Err(if msg.is_empty() { "exit status ${r.code}" } else { msg })
+      }
+      Ok(r.stdout)
+    }
+    Err(e) => Err("${e}")
+  }
+}
+
+/// The versions tagged prefix+vX.Y.Z in the repository at dir, lowest
+/// first, without the prefix (mod.LocalTags).
+fn local_tags(os: Os, dir: Str, prefix: Str) -> List[Str] ! Str uses proc {
+  let out = git(os, dir, ["tag", "--list", "${prefix}v*"])?
+  var vs: List[Str] = []
+  for t0 in (out.to_str() ?? "").split("\n") {
+    for t in t0.split(" ") {
+      let tt = t.trim()
+      if tt.is_empty() || !tt.starts_with(prefix) {
+        continue
+      }
+      let v = tt.trim_prefix(prefix)
+      if check.version_valid(v) {
+        vs.push(v)
+      }
+    }
+  }
+  Ok(sort_versions(vs))
+}
+
+/// Versions in mod.Compare order (an insertion sort: few tags).
+fn sort_versions(vs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for v in vs {
+    var i = out.len()
+    while i > 0 && check.version_compare(out[i - 1], v) > 0 {
+      i -= 1
+    }
+    out.insert(i, v)
+  }
+  out
+}
+
+/// The tree of directory subdir ("" for the root) at tag of the
+/// repository at dir, written into dst without nested modules
+/// (mod.ExtractTag: `git archive`).
+fn extract_tag(os: Os, dir: Str, tag: Str, subdir: Str, dst: Str) -> () ! Str uses proc, fs {
+  var treeish = "refs/tags/${tag}"
+  if !subdir.is_empty() {
+    treeish = "${treeish}:${subdir}"
+  }
+  let data = git(os, dir, ["archive", "--format=tar", treeish])?
+  let entries = match archive.untar(data) {
+    Ok(es) => es
+    Err(e) => return Err("${e}")
+  }
+  for en in entries {
+    let name = en.path
+    if name.starts_with("/") || name == ".." || name.starts_with("../") || name.contains("/../") {
+      return Err("archive entry ${name.quote()} leaves the module")
+    }
+    let target = "${dst}/${name}".trim_suffix("/")
+    if en.is_dir {
+      os.fs.create_dir_all(target).ok()
+      continue
+    }
+    os.fs.create_dir_all(dir_of(target)).ok()
+    match os.fs.write(target, en.data) {
+      Ok(_) => {}
+      Err(e) => return Err("${e}")
+    }
+  }
+  prune_nested(os.fs, dst, dst)
+  Ok(())
+}
+
+/// Removes the directories below top that hold their own xo.mod.
+fn prune_nested(fs: Fs, top: Str, dir: Str) uses fs {
+  for e in fs.read_dir(dir).ok() ?? [] {
+    if !e.is_dir {
+      continue
+    }
+    let p = "${dir}/${e.name}"
+    if fs.exists("${p}/xo.mod").ok() ?? false {
+      fs.remove_all(p).ok()
+      continue
+    }
+    prune_nested(fs, top, p)
+  }
+}
+
+/// The slash path of dir below the repository root top, "" when it is
+/// the root (or not below it).
+fn subdir_of(top: Str, dir: Str) -> Str {
+  let a = clean(top)
+  let b = clean(dir)
+  if a == b || !b.starts_with("${a}/") {
+    return ""
+  }
+  b.trim_prefix("${a}/")
+}
+
+/// Checks a release of the module in dir (release.Publish): compares the
+/// exports and effects with the previous vX.Y.Z tag of the repository and
+/// rejects a minor or patch release that breaks them (XO1310). Without
+/// check it also requires a clean working tree. It never tags or pushes.
+pub fn publish(os: Os, dir: Str, version: Str, only_check: Bool) -> PublishResult uses env, fs, proc {
+  var r = PublishResult{}
+  let wd = wd_of(os)
+  let root = mod_root(os.fs, wd, dir)
+  if root.is_empty() {
+    r.fail("XO1311", dir, 0, "no xo.mod in ${dir} or above", [])
+    return r
+  }
+  let mod_file = "${root}/xo.mod"
+  var c = check.new_checker(os.fs, std_dir_of(os))
+  c.set_mod_env(wd, "", os.env.get("HOME") ?? "", "", "", "off")
+  let (mf0, probs) = c.mod_file(root)
+  for p in probs {
+    r.fail(p.code, p.file, p.line, p.msg, p.notes)
+  }
+  let mpath = match mf0 {
+    Some(mf) => mf.path
+    None => ""
+  }
+  if mpath.is_empty() {
+    return r
+  }
+  r.module = mpath
+  let top = match git(os, root, ["rev-parse", "--show-toplevel"]) {
+    Ok(b) => (b.to_str() ?? "").trim()
+    Err(_) => {
+      r.fail("XO1311", mod_file, 0, "module ${mpath} is not in a git repository: a version is a tag of the repository holding the module", [])
+      return r
+    }
+  }
+  // a module in a subdirectory of its repository (decision 0086): its
+  // path ends with the directory and its tags carry it as a prefix
+  let sub = subdir_of(top, root)
+  if !sub.is_empty() {
+    let (base, _) = check.path_major_suffix(mpath)
+    if !base.ends_with("/${sub}") {
+      r.fail("XO1311", mod_file, 0, "module ${mpath} is in the directory ${sub}/ of its git repository, so its path must end in /${sub}", ["a module in a subdirectory is the repository's path plus the directory (github.com/acme/tools/cli in cli/), and its versions are tags ${sub}/vX.Y.Z"])
+      return r
+    }
+  }
+  let prefix = if sub.is_empty() { "" } else { "${sub}/" }
+  let tags = match local_tags(os, top, prefix) {
+    Ok(t) => t
+    Err(e) => {
+      r.fail("XO1311", mod_file, 0, "cannot list the git tags: ${e}", [])
+      return r
+    }
+  }
+  if !version.is_empty() && !check.version_valid(version) {
+    r.fail("XO1311", mod_file, 0, "invalid version ${version.quote()}: want vX.Y.Z", [])
+    return r
+  }
+  // the previous release: the highest tag below the version
+  let (_, path_major) = check.path_major_suffix(mpath)
+  let cap = if path_major > 1 { path_major } else { 1 }
+  for t in tags {
+    if check.version_major(t) > cap {
+      continue
+    }
+    if version.is_empty() || check.version_compare(t, version) < 0 {
+      r.previous = t
+    }
+  }
+  if !r.previous.is_empty() {
+    let tmp = match os.fs.create_temp("/tmp", "xo-publish-") {
+      Ok(t) => t
+      Err(e) => {
+        r.fail("XO1311", mod_file, 0, "${e}", [])
+        return r
+      }
+    }
+    // create_temp makes a file: a directory of that name instead
+    os.fs.remove(tmp).ok()
+    os.fs.create_dir_all(tmp).ok()
+    match extract_tag(os, top, "${prefix}${r.previous}", sub, tmp) {
+      Ok(_) => {}
+      Err(e) => {
+        os.fs.remove_all(tmp).ok()
+        r.fail("XO1311", mod_file, 0, "cannot read ${prefix}${r.previous}: ${e}", [])
+        return r
+      }
+    }
+    var old_path = mpath
+    let (of, _) = c.mod_file(tmp)
+    if let Some(o) = of {
+      if !o.path.is_empty() {
+        old_path = o.path
+      }
+    }
+    let old_api0 = match module_api(os.fs, tmp, old_path) {
+      Ok(a) => a
+      Err(e) => {
+        os.fs.remove_all(tmp).ok()
+        r.fail("XO1311", mod_file, 0, "cannot read the API of ${r.previous}: ${e}", [])
+        return r
+      }
+    }
+    let new_api = match module_api(os.fs, root, mpath) {
+      Ok(a) => a
+      Err(e) => {
+        os.fs.remove_all(tmp).ok()
+        r.fail("XO1311", mod_file, 0, "cannot read the API: ${e}", [])
+        return r
+      }
+    }
+    var old_api: List[ApiItem] = []
+    for it in old_api0 {
+      if old_path != mpath {
+        // a new major version path: compare packages by their path
+        // inside the module
+        old_api.push(it with {package: mpath + it.package.trim_prefix(old_path)})
+      } else {
+        old_api.push(it)
+      }
+    }
+    r.changes = api_diff(old_api, new_api)
+    // every definition, private ones too, by content hash (decision 0125)
+    match (module_defs(os.fs, tmp, old_path), module_defs(os.fs, root, mpath)) {
+      (Ok(od), Ok(nd)) => r.definitions = diff_defs(od, nd)
+      _ => {}
+    }
+    os.fs.remove_all(tmp).ok()
+  }
+  r.bump = api_bump(r.changes)
+  let base = if r.previous.is_empty() || check.version_major(r.previous) == 0 { "patch" } else { "minor" }
+  if r.previous.is_empty() {
+    let (_, n) = check.path_major_suffix(mpath)
+    r.suggested = if n >= 2 { "v${n}.0.0" } else { "v0.1.0" }
+  } else if r.bump == "major" && check.version_major(r.previous) == 0 {
+    r.suggested = next_version(r.previous, "minor")
+  } else if r.bump == "major" {
+    r.suggested = next_version(r.previous, "major")
+  } else if r.bump == "minor" {
+    r.suggested = next_version(r.previous, "minor")
+  } else {
+    r.suggested = next_version(r.previous, "patch")
+  }
+  r.version = version
+  if r.version.is_empty() {
+    r.version = r.suggested
+    if r.bump == "major" {
+      // assume a compatible release: breaking changes fail
+      r.version = next_version(r.previous, base)
+    }
+  }
+  for t in tags {
+    if t == r.version {
+      r.fail("XO1311", mod_file, 0, "${prefix}${r.version} is already a tag of ${mpath}", ["a published version never changes; release ${r.suggested} instead"])
+    }
+  }
+  if !r.previous.is_empty() && check.version_compare(r.version, r.previous) <= 0 {
+    r.fail("XO1311", mod_file, 0, "${r.version} is not above the last release ${r.previous}", [])
+  }
+  let mm = check.version_major_mismatch(mpath, r.version)
+  if !mm.is_empty() {
+    let (b, _) = check.path_major_suffix(mpath)
+    r.fail("XO1311", mod_file, 0, mm, ["change the module line of xo.mod to `module ${b}/v${check.version_major(r.version)}` (and the imports of its own packages) for a major version"])
+  }
+  // breaking changes
+  let break_ok = r.previous.is_empty() || allows_breaking(r.previous, r.version)
+  for ch in r.changes {
+    if !ch.breaking {
+      continue
+    }
+    r.breaking.push(ch)
+    if break_ok {
+      continue
+    }
+    var file = ch.file
+    var line = ch.line
+    if file.is_empty() {
+      file = mod_file
+      line = 0
+    }
+    var notes: List[Str] = []
+    if !ch.old.is_empty() {
+      notes.push("${r.previous}: ${first_line(ch.old)}")
+    }
+    if !ch.new.is_empty() {
+      notes.push("now: ${first_line(ch.new)}")
+    }
+    notes.push("${describe_api_change(ch)} breaks callers of ${r.previous}; release ${r.suggested} (a new major version) or keep the export compatible")
+    r.fail("XO1310", rel_to(wd, file), line, "${describe_api_change(ch)} in ${r.version}, a ${kind_of(r.previous, r.version)} release after ${r.previous}", notes)
+  }
+  if !only_check {
+    match git(os, root, ["status", "--porcelain", "--", "."]) {
+      Err(e) => r.fail("XO1311", mod_file, 0, "git status: ${e}", [])
+      Ok(out) => {
+        if !(out.to_str() ?? "").trim().is_empty() {
+          r.fail("XO1311", mod_file, 0, "the working tree has uncommitted changes; a tag publishes the last commit", ["commit or stash them first (`git status`), or use --check to compare the working tree"])
+        }
+      }
+    }
+    // the version must build for its users: its own requirements, without
+    // any workspace, and a clean check
+    match load_session(os, [root], true, {}) {
+      Ok(s) => {
+        for d in s.c.diags {
+          if !d.warning {
+            r.diags.push(d)
+          }
+        }
+      }
+      Err(e) => r.fail("XO1311", mod_file, 0, e, [])
+    }
+  }
+  r.ok = r.diags.is_empty()
+  if r.ok {
+    r.tag = "git tag ${prefix}${r.version} && git push origin ${prefix}${r.version}"
+  }
+  r
+}
+
+/// file relative to wd when it lies below it (diagnostic paths).
+fn rel_to(wd: Str, file: Str) -> Str {
+  let w = clean(wd)
+  let f = clean(file)
+  if f.starts_with("${w}/") {
+    return f.trim_prefix("${w}/")
+  }
+  file
+}

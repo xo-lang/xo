@@ -31,15 +31,18 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
 }
 
 /// The std declaration files: $XO_STD, else lib/xo/std beside the
-/// program, else std below the working directory's repository.
+/// program (named by $_, as xo1 finds its runtime pack: Env.program is
+/// not native yet), else the std directory of the repository holding the
+/// working directory, else ./std.
 fn std_dir_of(os: Os) -> Str uses env, fs.read {
   if let Some(s) = os.env.get("XO_STD") {
     if !s.is_empty() {
       return s
     }
   }
-  let prog = os.env.program()
+  let prog = os.env.get("_") ?? ""
   if !prog.is_empty() {
+
     let d = "${dir_of(dir_of(abs_path(wd_of(os), prog)))}/lib/xo/std"
     if os.fs.exists("${d}/prelude.xo").ok() ?? false {
       return d
@@ -1030,16 +1033,21 @@ fn prefix_lines(s: Str, prefix: Str) -> Str {
 pub fn diag_human(d: check.Diag) -> Str {
   let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
   var b = StrBuilder.new()
-  b.write("${d.file}:${d.line}:${d.col}: ${sev} ${d.code}: ${d.message}")
-  for n in d.notes {
-    b.write("\n  note: ")
-    if let Some(sp) = n.span {
-      if !sp.file.is_empty() {
-        b.write("${sp.file}:${sp.line}:${sp.col}: ")
-      }
+  if !d.file.is_empty() {
+    if d.line == 0 {
+      b.write("${d.file}: ")
+    } else {
+      b.write("${d.file}:${d.line}:${d.col}: ")
     }
-    b.write(n.message)
   }
+  b.write("${sev} ${d.code}: ${d.message}")
+  for n in d.notes {
+    match n.span {
+      Some(sp) => b.write("\n  note: ${sp.file}:${sp.line}:${sp.col}: ${n.message}")
+      None => b.write("\n  note: ${n.message}")
+    }
+  }
+
   for f in d.fixes {
     b.write("\n  fix: ${f.title}")
   }
