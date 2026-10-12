@@ -951,11 +951,18 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     let lr = b.to_lower_recv(x)
     let rr = b.to_lower_recv(y)
     if lr != None && rr != None {
-      // compares without making the lowered strings (xo_str_eq_lower)
+      // compares without making the lowered strings (the native
+      // prelude's str_eq_lower, in Xo since decision 0180)
       let st = b.str_t()
+      let impl = b.prelude_impl("str_eq_lower")
+      if impl < 0 {
+        b.unsupported("`to_lower` compared without the native prelude")
+        return b.undef(bt)
+      }
       let lv = b.value_as(lr ?? fault("recv"), st)
       let rv = b.value_as(rr ?? fault("recv"), st)
-      let eq = b.rt("str_eq_lower", bt, [lv, rv])
+      let f = b.declare(impl, [])
+      let eq = b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", [lv, rv])
       if op == lexer.Kind.NotEq {
         return b.add(Op.Not, bt, Aux.None, [eq])
       }

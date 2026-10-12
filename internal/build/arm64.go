@@ -209,17 +209,22 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 // arm64.Generate (the emitter alone) is returned too.
 func Arm64AsmDump(res *check.Result, opts ssa.Options, goos string, noInline bool) ([]byte, time.Duration, error) {
 	build := func() (*ssa.Module, error) {
+		t := time.Now()
 		m, err := ssa.BuildOpts(res, opts)
 		if err != nil {
 			return nil, err
 		}
+		t = PhaseLap("ssa", t)
 		if err := m.Verify(); err != nil {
 			return nil, err
 		}
+		t = PhaseLap("verify", t)
 		m.InsertRC()
+		t = PhaseLap("insert_rc", t)
 		if err := m.Verify(); err != nil {
 			return nil, err
 		}
+		PhaseLap("verify", t)
 		return m, nil
 	}
 	m, err := build()
@@ -227,6 +232,12 @@ func Arm64AsmDump(res *check.Result, opts ssa.Options, goos string, noInline boo
 		return nil, 0, err
 	}
 	t0 := time.Now()
+	if PhaseTimes {
+		// generate splits into inline (and its verification) and emit
+		tp := t0
+		arm64.InlineDone = func() { tp = PhaseLap("inline", tp) }
+		defer func() { arm64.InlineDone = nil; PhaseLap("emit", tp) }()
+	}
 	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline})
 	took := time.Since(t0)
 	var ie *arm64.InlineError
@@ -242,4 +253,18 @@ func Arm64AsmDump(res *check.Result, opts ssa.Options, goos string, noInline boo
 		return nil, took, err
 	}
 	return prog.Asm, took, nil
+}
+
+// PhaseTimes is set by XO_PHASE_TIMES=1: PhaseLap then prints the wall
+// clock of each phase of `xo asmdump` to standard error as `phase NAME
+// MS ms`, the lines xo1 --phase-times prints (bench/results/xo1-perf).
+var PhaseTimes = os.Getenv("XO_PHASE_TIMES") == "1"
+
+// PhaseLap prints the time since t as phase name when PhaseTimes and
+// returns the time now.
+func PhaseLap(name string, t time.Time) time.Time {
+	if PhaseTimes {
+		fmt.Fprintf(os.Stderr, "phase %s %d ms\n", name, time.Since(t).Milliseconds())
+	}
+	return time.Now()
 }

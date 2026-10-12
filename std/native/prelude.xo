@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/unicode
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -48,9 +49,13 @@ fn str_trim_suffix(s: Str, p: Str) -> Str {
   s
 }
 
-fn str_to_lower(s: Str) -> Str { rt.str_lower(s) }
+fn str_to_lower(s: Str) -> Str { unicode.map_case(s, true) }
 
-fn str_to_upper(s: Str) -> Str { rt.str_upper(s) }
+fn str_to_upper(s: Str) -> Str { unicode.map_case(s, false) }
+
+/// `a.to_lower() == b.to_lower()` (internal/ssa lowers that comparison to
+/// a call of this).
+fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 
 fn str_replace(s: Str, old: Str, new: Str) -> Str { rt.str_replace(s, old, new) }
 
@@ -58,24 +63,38 @@ fn str_repeat(s: Str, n: Int) -> Str { rt.str_repeat(s, n) }
 
 fn list_join(xs: List[Str], sep: Str) -> Str { rt.str_join(xs, sep) }
 
-fn str_quote(s: Str) -> Str { rt.strconv_quote(s) }
+fn str_quote(s: Str) -> Str { unicode.quote(s.bytes()) }
 
 // ---------------------------------------------------------------------------
 // Rune and Bytes (std.md 2.2, decisions 0079 and 0081)
 
-fn rune_is_letter(r: Rune) -> Bool { rt.rune_is_letter(r) }
+fn rune_is_letter(r: Rune) -> Bool { unicode.is_letter(Int(r)) }
 
-fn rune_is_digit(r: Rune) -> Bool { rt.rune_is_digit(r) }
+fn rune_is_digit(r: Rune) -> Bool { unicode.is_digit(Int(r)) }
 
 fn rune_is_space(r: Rune) -> Bool { rt.rune_is_space(r) }
 
-fn rune_is_print(r: Rune) -> Bool { rt.rune_is_print(r) }
+fn rune_is_print(r: Rune) -> Bool { unicode.is_print(Int(r)) }
 
-fn rune_to_lower(r: Rune) -> Rune { rt.rune_to_case(r, true) }
+fn rune_to_lower(r: Rune) -> Rune { rune_case(r, true) }
 
-fn rune_to_upper(r: Rune) -> Rune { rt.rune_to_case(r, false) }
+fn rune_to_upper(r: Rune) -> Rune { rune_case(r, false) }
 
-fn rune_quote(r: Rune) -> Str { rt.rune_quote(r) }
+/// unicode.ToLower (lower) or unicode.ToUpper: an unchanged or ASCII
+/// result needs no checked conversion.
+fn rune_case(r: Rune, lower: Bool) -> Rune {
+  let x = Int(r)
+  let y = unicode.to_case(x, lower)
+  if y == x {
+    return r
+  }
+  if y < 0x80 {
+    return Rune(unicode.byte(y))
+  }
+  Rune(y)
+}
+
+fn rune_quote(r: Rune) -> Str { unicode.quote_rune(Int(r)) }
 
 fn rune_try(x: Int) -> Rune? {
   if x < 0 || x > 0x10ffff || (x >= 0xd800 && x <= 0xdfff) {
@@ -84,7 +103,7 @@ fn rune_try(x: Int) -> Rune? {
   Some(Rune(x))
 }
 
-fn bytes_quote(b: Bytes) -> Str { rt.bytes_quote(b) }
+fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
 fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
@@ -512,7 +531,7 @@ fn duration_parse(s: Str) -> Duration ! DurationErr {
 }
 
 fn durationerr_display(e: DurationErr) -> Str {
-  "invalid duration ${rt.strconv_quote(e.input)}: expected numbers with units ns, us, ms, s, m, h, such as \"1.5s\" or \"1h30m\""
+  "invalid duration ${unicode.quote(e.input.bytes())}: expected numbers with units ns, us, ms, s, m, h, such as \"1.5s\" or \"1h30m\""
 }
 
 // ---------------------------------------------------------------------------

@@ -167,6 +167,7 @@ XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # p
 go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc,verify,mutants|all] [--each] [--test] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times; --test builds the test binary of `xo test --no-gc` (ssa.Options.Tests); verify prints the verifier's verdict after rc and mutants its verdicts with one retain or release removed (ssa.VerifyMutants), neither part of all (decision 0150; last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--test] [--stages] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder: the build stage of xo ssadump for the functions it completes, then (--stages, when it skipped nothing) the stages unwind, landings, cleanup, rc, verify, and mutants, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
 go run ./cmd/xo asmdump [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # hidden: the arm64 assembly of internal/arm64 (build.Arm64AsmDump: the SSA as xo ssadump builds it, verified, InsertRC, generated, again without inlining when the inlined module does not verify); --each prints === asm <dir> before each run; --bench=N times arm64.Generate alone (decision 0158; last verified: 2026-10-11)
+XO_PHASE_TIMES=1 xo asmdump <dir>  /  xo1 asm|build|test --phase-times <dir>   # per phase wall clock on stderr as `phase NAME MS ms` (Go: check, ssa, verify, insert_rc, verify, inline, emit, print; xo1: check, ssa, tz, prune_unwind, add_landings, cleanup, insert_rc, inline, emit, print or write, cc); bench/results/xo1-perf-2026-10-12.md (last verified: 2026-10-12)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>   # xo1, the self hosted compiler driver of decision 0158's switch-over experiment: selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) assembles and links with std/llrt (copied next to OUT as OUT.rt), trying the macOS SDKs internal/build tries ($XO_SYSROOT, the remembered one, none, xcrun's, Xcode's); fault positions relative to the program's line root (the nearest xo.mod); refuses programs that need time zone data (std/time), TLS (std/http), or `use c` sources; not the released xo (last verified: 2026-10-11)
 go run ./cmd/xo gendump [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--each] <dirs...>   # hidden: the files gen.Generate makes for the Go backend (build.GoGenDump), == file <path> before each; --fmt reads the Xo generator's output and puts its Go files through gen.FormatFile (only gofmt after == prepped) (decision 0167; last verified: 2026-10-11)
@@ -971,7 +972,7 @@ std/                    std declaration files (prelude.xo, archive.xo, cli.xo, c
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_unicode.c, xo_bytes.c, xo_json.c,
+                        and the files it includes: xo_std.c, xo_unicode.c (XO_UNICODE_C only), xo_bytes.c, xo_json.c,
                         xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
@@ -987,6 +988,14 @@ scripts/disttar/        writes a reproducible .tar.gz of a directory (release.sh
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
+std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
+                        Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
+                        and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
+                        -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
+                        `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
+                        (XO_UNICODE=c at build time: the Go checker loads it instead, the build
+                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it)
+                        (Last verified: 2026-10-12)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
@@ -1558,10 +1567,7 @@ first, AST based prototype, since deleted) and
   pointer argument), and `rt.rs_*` calls take their Str operands as
   string objects and consume the first (appending in place). xo_rt.c
   ends by including `xo_std.c` (the native std intrinsics: strings,
-  numbers, durations, times, base64), which includes `xo_unicode.c`
-  (Go's case ranges and the letter, digit, and `strconv.IsPrint` rune
-  ranges, generated: `go test ./internal/llvm -run TestUnicodeTables
-  -golden-update`), `xo_bytes.c` (decision 0081: checked arithmetic and
+  numbers, durations, times, base64), `xo_bytes.c` (decision 0081: checked arithmetic and
   conversions of sized integers, Rune text and quoting, Bytes slicing and
   decoding, the builders' appends, `fs.read`, `env.args`, and the slots
   of constants of collection types), `xo_json.c`, and `xo_http.c`;

@@ -110,7 +110,7 @@ fn raises(m: Module, f: Func, x: Value, faults: List[Bool]) -> Bool {
 /// Removes the checks nothing can take: after calls of functions that can
 /// neither be canceled nor fault (pruneUnwind); a check only a fault takes
 /// becomes `rt.landing`.
-fn (var b: Builder) prune_unwind() {
+pub fn (var b: Builder) prune_unwind() {
   let n = b.m.funcs.len()
   var may: List[Bool] = []
   for _ in 0..n {
@@ -185,7 +185,7 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
 
 /// Gives every operation that can fault and has no landing yet a check
 /// whose cleanup goes to the function's unwind exit (addLandings).
-fn (var b: Builder) add_landings() {
+pub fn (var b: Builder) add_landings() {
   let faults = b.m.may_fault()
   let n = b.m.funcs.len()
   for fi in 0..n {
@@ -472,7 +472,7 @@ fn renumber(var f: Func) {
 }
 
 /// Runs cleanup on every function (the cleanup stage).
-fn (var b: Builder) cleanup_all() {
+pub fn (var b: Builder) cleanup_all() {
   for fi in 0..b.m.funcs.len() {
     var f = b.m.funcs[fi]
     b.m.funcs[fi] = Func{name: ""}

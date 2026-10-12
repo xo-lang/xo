@@ -307,5 +307,14 @@ func IOFlags(code []byte) []string {
 		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
 		out = append(out, "-DXO_PROC")
 	}
+	// the C path of the Unicode operations (decision 0180), which only
+	// XO_UNICODE=c builds call: no pack has it, so the runtime is compiled
+	// locally
+	for _, sym := range []string{"xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit", "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"} {
+		if bytes.Contains(code, []byte(sym)) {
+			out = append(out, "-DXO_UNICODE_C")
+			break
+		}
+	}
 	return out
 }
