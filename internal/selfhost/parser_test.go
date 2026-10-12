@@ -12,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
+
 	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/lexer"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/progen"
+	"github.com/xo-lang/xo/internal/selfhost/mutlex"
 )
 
 // TestSelfhostParserDifferential runs the Xo parser (selfhost/parser),
@@ -181,8 +181,9 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		mode = parser.SignatureMode
 	}
 	var fails []string
-	// goParse is the Go parser's dump of p (recorded, gogoldens_test.go)
-	goParse := func(p string) string {
+	// goParse is the Go parser's dump of p (recorded as the astdump
+	// kind, gogoldens_test.go: the whole dump is piece "-")
+	goParse := func(p string) *goldPieces {
 		full := p
 		if !filepath.IsAbs(p) {
 			full = filepath.Join(root, p)
@@ -192,7 +193,16 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 			t.Fatal(err)
 		}
 		cx := newGoldenCtx(full)
-		return recorded("astdump", p, []string{fmt.Sprint(sig), cx.fileKey(p, src)}, cx, func() string { return parser.Dump(p, src, mode) })
+		args := p
+		if sig {
+			args = "--sig " + p
+		}
+		hint := goldHint("TestSelfhostParserDifferential", "astdump "+args, "parser", args, root)
+		return recordedPieces("astdump", p, hint, []string{fmt.Sprint(sig), cx.fileKey(p, src)}, cx, func() *goldPieces {
+			g := newPieces()
+			g.add("-", parser.Dump(p, src, mode))
+			return g
+		})
 	}
 	if goldensRecording() {
 		for _, p := range paths {
@@ -209,11 +219,23 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		}
 		got := splitDumps(t, runXo(t, bin, root, args), chunk)
 		for j, p := range chunk {
-			want := goParse(p)
+			g := goParse(p)
+			if g.missing {
+				fails = append(fails, p+": "+g.missingText())
+				continue
+			}
+			want, live := g.text("-")
+			if !live {
+				// replayed: the hash says whether the dumps are the same;
+				// the rest of the verdict reads the Xo side's dump
+				if !g.eq("-", got[j]) {
+					fails = append(fails, fmt.Sprintf("%s: Xo and Go parsers differ: %s", p, g.diff("-", got[j])))
+					continue
+				}
+				want = got[j]
+			}
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
 			switch {
-			case strings.HasPrefix(want, missingGolden):
-				fails = append(fails, p+": "+want)
 			case goRejects && !xoRejects:
 				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
 			case xoRejects && !goRejects:
@@ -352,8 +374,8 @@ func tokenFuzzCorpus(t *testing.T, root, dir string, files []string, n int) []st
 
 // mutateTokens applies one token level edit to src.
 func mutateTokens(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
 	if len(toks) < 2 {
 		return append(src, parserFragments[rng.Intn(len(parserFragments))]...)
 	}

@@ -62,8 +62,11 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	t.Chdir(root)
 	setModEnv(t, root)
 	want := goLLVM(root, dir, false)
-	if want.none != "" {
-		t.Fatalf("the Go emitter: %s", want.none)
+	if want.missing {
+		t.Fatal(want.missingText())
+	}
+	if n := want.m("none") + want.m("split"); n != "" {
+		t.Fatalf("the Go emitter: %s", n)
 	}
 	t0 := time.Now()
 	cmd := exec.Command(emitter, "--std=std", "--wd="+workDir(t), dir)
@@ -81,8 +84,8 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	if skipped != "" {
 		t.Fatalf("the Xo emitter skipped functions:\n%s", skipped)
 	}
-	if got != want.ir {
-		t.Fatalf("the IR differs from internal/llvm's: %s", firstDiff(got, want.ir))
+	if !want.eq("module", got) {
+		t.Fatalf("the IR differs from internal/llvm's: %s", want.diff("module", got))
 	}
 	t.Logf("the IR of %s: %d bytes, %d lines, byte identical to internal/llvm's", dir, len(got), strings.Count(got, "\n"))
 	t.Setenv("XO_BIN_CACHE", "off")

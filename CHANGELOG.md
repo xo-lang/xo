@@ -26,7 +26,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   build the TLS library on an empty cache. The selfhost differential
   tests can record their Go side and replay it
   (`XO_SELFHOST_GOLDENS=record|replay`); internal/progen now gives one
-  program per seed.
+  program per seed. The recording is committed as hashes (6 MB:
+  internal/selfhost/testdata/gogoldens), per unit, and per function for
+  the SSA, LLVM, arm64, and Go generator comparisons, so a replayed
+  mismatch names the function; the mutation generators no longer need
+  internal/lexer.
 
 - The self hosted `xo` has `xo rtpack` (decision 0178): the prebuilt
   runtime packs scripts/release.sh ships, byte identical to the Go

@@ -73,9 +73,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "gogoldens:", err)
 		code = 1
 	}
-	if miss := recordedMissing(); len(miss) > 0 {
-		fmt.Fprintf(os.Stderr, "XO_SELFHOST_GOLDENS=replay: %d units have no recorded Go output (record them with scripts/selfhost-record-goldens.sh), the first: %s\n", len(miss), strings.Join(miss[:min(10, len(miss))], "; "))
-		code = 1
+	if report, fail := goldensReport(); report != "" {
+		fmt.Fprint(os.Stderr, report)
+		if fail {
+			code = 1
+		}
 	}
 	os.Exit(code)
 }
@@ -387,10 +389,11 @@ func runXo(t testing.TB, bin, root string, paths []string) string {
 	return stdout.String()
 }
 
-// goDump is the Go lexer's dump of the same paths.
-func goDump(t testing.TB, root string, paths []string) string {
-	var b strings.Builder
-	for _, p := range paths {
+// goDump is the Go lexer's dump of each of paths (recorded as the
+// lexdump kind, gogoldens_test.go: the whole dump is piece "-").
+func goDump(t testing.TB, root string, paths []string) []*goldPieces {
+	out := make([]*goldPieces, len(paths))
+	for i, p := range paths {
 		full := p
 		if !filepath.IsAbs(p) {
 			full = filepath.Join(root, p)
@@ -400,9 +403,14 @@ func goDump(t testing.TB, root string, paths []string) string {
 			t.Fatal(err)
 		}
 		cx := newGoldenCtx(full)
-		b.WriteString(recorded("lexdump", p, []string{cx.fileKey(p, src)}, cx, func() string { return lexer.Dump(p, src) }))
+		hint := goldHint("TestSelfhostDifferential", "lexdump "+p, "lexer", p, root)
+		out[i] = recordedPieces("lexdump", p, hint, []string{cx.fileKey(p, src)}, cx, func() *goldPieces {
+			g := newPieces()
+			g.add("-", lexer.Dump(p, src))
+			return g
+		})
 	}
-	return b.String()
+	return out
 }
 
 // firstDiff describes the first differing line of two outputs.
@@ -437,9 +445,14 @@ func compare(t *testing.T, bin, root string, paths []string) {
 	}
 	for i := 0; i < len(paths); i += batch {
 		chunk := paths[i:min(i+batch, len(paths))]
-		got, want := runXo(t, bin, root, chunk), goDump(t, root, chunk)
-		if got != want {
-			t.Fatalf("Xo and Go lexers differ: %s", firstDiff(got, want))
+		got := splitDumps(t, runXo(t, bin, root, chunk), chunk)
+		for j, want := range goDump(t, root, chunk) {
+			switch {
+			case want.missing:
+				t.Fatal(want.missingText())
+			case !want.eq("-", got[j]):
+				t.Fatalf("Xo and Go lexers differ: %s", want.diff("-", got[j]))
+			}
 		}
 	}
 }

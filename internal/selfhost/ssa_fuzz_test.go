@@ -10,9 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/lexer"
-	"github.com/xo-lang/xo/internal/token"
+	"github.com/xo-lang/xo/internal/selfhost/mutlex"
 )
 
 // TestSelfhostSSAMutations compares the Xo and Go SSA builders (decision
@@ -151,27 +149,27 @@ func TestSelfhostSSAMutations(t *testing.T) {
 // another of its kind, an integer or Bool literal changed, a statement
 // line dropped or doubled, or a `?` removed.
 func mutateCode(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
-	swaps := map[token.Kind][]string{
-		token.Plus: {"-", "*"}, token.Minus: {"+", "*"}, token.Star: {"+", "-"}, token.Slash: {"%", "*"}, token.Percent: {"/"},
-		token.Lt: {"<=", ">", "=="}, token.LtEq: {"<", ">="}, token.Gt: {">=", "<"}, token.GtEq: {">", "<="},
-		token.Eq: {"!="}, token.NotEq: {"=="}, token.AndAnd: {"||"}, token.OrOr: {"&&"},
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
+	swaps := map[mutlex.Kind][]string{
+		mutlex.Plus: {"-", "*"}, mutlex.Minus: {"+", "*"}, mutlex.Star: {"+", "-"}, mutlex.Slash: {"%", "*"}, mutlex.Percent: {"/"},
+		mutlex.Lt: {"<=", ">", "=="}, mutlex.LtEq: {"<", ">="}, mutlex.Gt: {">=", "<"}, mutlex.GtEq: {">", "<="},
+		mutlex.Eq: {"!="}, mutlex.NotEq: {"=="}, mutlex.AndAnd: {"||"}, mutlex.OrOr: {"&&"},
 	}
-	var ops, ints, bools, quests []token.Token
+	var ops, ints, bools, quests []mutlex.Token
 	for i, tk := range toks {
 		switch {
 		case swaps[tk.Kind] != nil:
 			ops = append(ops, tk)
-		case tk.Kind == token.Int:
+		case tk.Kind == mutlex.Int:
 			ints = append(ints, tk)
-		case tk.Kind == token.Ident && (tk.Text == "true" || tk.Text == "false"):
+		case tk.Kind == mutlex.Ident && (tk.Text == "true" || tk.Text == "false"):
 			bools = append(bools, tk)
-		case tk.Kind == token.Question && i > 0 && toks[i-1].Span.End.Offset == tk.Span.Start.Offset:
+		case tk.Kind == mutlex.Question && i > 0 && toks[i-1].Span.End.Offset == tk.Span.Start.Offset:
 			quests = append(quests, tk)
 		}
 	}
-	replace := func(tk token.Token, with string) []byte {
+	replace := func(tk mutlex.Token, with string) []byte {
 		var b bytes.Buffer
 		b.Write(src[:tk.Span.Start.Offset])
 		b.WriteString(with)
