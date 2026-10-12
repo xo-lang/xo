@@ -907,12 +907,20 @@ func (cx goldenCtx) dirKey(wd, dir string, native bool) string {
 	if !filepath.IsAbs(dir) {
 		full = filepath.Join(wd, dir)
 	}
-	k := cx.norm(wd) + "\x00" + cx.norm(dir) + "\x00" + treeSum(goldenTree(cx, wd, full))
+	k := cx.norm(wd) + "\x00" + cx.norm(dir) + "\x00" + treeSum(goldenTree(cx, wd, full)) + "\x00std:" + stdSum()
 	if native {
 		k += "\x00" + runtime.GOOS + "/" + runtime.GOARCH
 	}
 	return k
 }
+
+// stdSum fingerprints the repository's std tree (every file), once per
+// test binary: every run reads it, so a change there (2026-10-12: the
+// runtime port rewrote std text code) makes the runs' units missing,
+// to record again, rather than differing.
+var stdSum = sync.OnceValue(func() string {
+	return treeSum(filepath.Join(filepath.Dir(filepath.Dir(pkgDir)), "std"))
+})
 
 // goldenTree is the directory whose files key a run in full: under a
 // temporary working directory the mutation's top level directory; else

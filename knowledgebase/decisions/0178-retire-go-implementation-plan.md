@@ -582,7 +582,10 @@ regenerates full dumps on demand. As built (results file, section
   otherwise each Xo member whose hash is not in the pool is named as
   differing, and the members the Xo side skips stand for the Go side's
   missing ones. Recording of main d9a9c2c: 19,647 units, 5,960,213 bytes
-  in 208 files (2,359,539 gzip -9), 1,999 s, max RSS 12.3 GB.
+  in 208 files (2,359,539 gzip -9), 1,999 s, max RSS 12.3 GB. Recorded
+  again on main f786e42 (the runtime port changed std, which the run
+  kinds now also key on): 19,681 units, 6,009,535 bytes (2,387,755 gzip
+  -9); -short replay identical to live there.
 - **Mismatch report**: a differing piece fails its test with the unit,
   the piece (the function), and how to see both dumps: the hidden `go run
   ./cmd/xo <kind>dump` command or the test in live mode while the Go
