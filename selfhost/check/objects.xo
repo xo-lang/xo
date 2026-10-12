@@ -272,8 +272,11 @@ pub struct Diag {
   pub end_line: Int
   pub end_col: Int
   pub message: Str
+  /// Not an error: a warning, or a note (note_sev); every `rejected`
+  /// test of the tools reads this field.
   pub warning: Bool = false
-  /// Severity note (diag.Note: XO1315).
+  /// Severity note (diag.Note: XO1315); warning is set too, since a note
+  /// does not fail a check (diag.HasErrors).
   pub note_sev: Bool = false
   pub notes: List[DNote] = []
   pub fixes: List[DFix] = []
