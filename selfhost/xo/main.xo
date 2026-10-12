@@ -6,6 +6,7 @@
 //
 //   xo1 build [flags] [-o OUT] [--asm=PATH] [--target=OS/arm64] <dir>
 //   xo1 build --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
+//   xo1 build --backend=wasm [flags] [-o OUT.wasm] <dir>   (wasm.xo)
 //   xo1 test [flags] [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>
 //   xo1 asm [--std=DIR] [--wd=DIR] [--target=OS/arm64] <dir>
 //   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
@@ -33,7 +34,7 @@ use github.com/xo-lang/xo/selfhost/arm64
 fn main(os: Os) ! {
   let args = os.env.args()
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go|wasm] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -110,8 +111,8 @@ fn main(os: Os) ! {
     build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0])?
     return
   }
-  if backend != "arm64" {
-    fail(os, "--backend=${backend}: want arm64, or go for build")
+  if backend != "arm64" && !(backend == "wasm" && cmd == "build") {
+    fail(os, "--backend=${backend}: want arm64, or go or wasm for build")
   }
   var c = check.new_checker(os.fs, std_dir)
   c.native = true
@@ -148,6 +149,10 @@ fn main(os: Os) ! {
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
   b.run_passes()
+  if backend == "wasm" {
+    build_wasm(os, b.m, out, wd, dirs[0])?
+    return
+  }
   let p = arm64.generate_module(b.m, tgoos, false)
   if !p.err.is_empty() {
     fail(os, p.err)

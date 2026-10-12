@@ -1,0 +1,162 @@
+// xowasm: the WebAssembly backend's command line (decision 0179).
+//
+//   wasm [--std=DIR] [--wd=DIR] [--each] [--out=DIR] <dirs...>   build
+//   wasm --asm=IN.wat -o OUT.wasm                                  assemble
+//
+// A build checks the directories as `xo1 build` does (selfhost/check in
+// native mode), builds the SSA module with selfhost/ssa and its passes,
+// lowers it with this backend, and prints `== ok <bytes>` with the module
+// written to DIR/<name>.wasm and its text to DIR/<name>.wat (--out; the
+// name is the directory's), or `== unsupported <why>` (no module: a
+// construct of a later stage), `== rejected`, or `== error <message>`.
+// --each builds every directory as a run of its own, each preceded by
+// `=== wasm <dir>`. Fault positions are relative to the directory's
+// module root (the nearest xo.mod, else the directory), as `xo build`
+// prints them.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
+
+fn main(os: Os) ! {
+  var asm_in = ""
+  var out = ""
+  var out_dir = ""
+  var each = false
+  var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
+  var dirs: List[Str] = []
+  let args = os.env.args()
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    if a.starts_with("--asm=") {
+      asm_in = a.trim_prefix("--asm=")
+    } else if a == "-o" && i + 1 < args.len() {
+      out = args[i + 1]
+      i += 1
+    } else if a.starts_with("--out=") {
+      out_dir = a.trim_prefix("--out=")
+    } else if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
+    } else if a == "--each" {
+      each = true
+    } else {
+      dirs.push(a)
+    }
+    i += 1
+  }
+  if !asm_in.is_empty() {
+    let (bin, err) = assemble(os.fs.read_text(asm_in)?)
+    if !err.is_empty() {
+      os.stdio.eprintln(err)
+      os.proc.exit(1)
+    }
+    os.fs.write(out, bin)?
+    return
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: wasm [--std=DIR] [--wd=DIR] [--each] [--out=DIR] <dirs...> | --asm=IN.wat -o OUT.wasm")
+    os.proc.exit(2)
+  }
+  var runs: List[List[Str]] = [dirs]
+  if each {
+    runs = []
+    for d in dirs {
+      runs.push([d])
+    }
+  }
+  for r in runs {
+    if each {
+      os.stdio.println("=== wasm ${r[0]}")
+    }
+    let line = build_one(os, std_dir, wd, r, out_dir)
+    os.stdio.println(line)
+  }
+}
+
+/// Builds one run and returns its result line.
+fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str) -> Str {
+  var c = check.new_checker(os.fs, std_dir)
+  c.native = true
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
+  match c.check_dirs(dirs) {
+    Ok(_) => {}
+    Err(e) => return "== error ${e}"
+  }
+  if !c.unsupported.is_empty() {
+    return "== unsupported ${c.unsupported}"
+  }
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return "== rejected"
+    }
+  }
+  let root = line_root(os, wd, dirs[0])
+  var b = ssa.build_program(c, root, false)
+  if !b.why.is_empty() {
+    return "== unsupported ${b.why}"
+  }
+  for f in b.m.funcs {
+    if !f.skip.is_empty() {
+      return "== unsupported the SSA builder skipped ${f.name}: ${f.skip}"
+    }
+  }
+  b.run_passes()
+  let p = generate(b.m)
+  if !p.err.is_empty() {
+    return "== unsupported ${p.err}"
+  }
+  if !out_dir.is_empty() {
+    let name = base_name(dirs[0].trim_suffix("/"))
+    match os.fs.write("${out_dir}/${name}.wasm", p.wasm) {
+      Ok(_) => {}
+      Err(e) => return "== error ${e}"
+    }
+    match os.fs.write("${out_dir}/${name}.wat", p.wat.bytes()) {
+      Ok(_) => {}
+      Err(e) => return "== error ${e}"
+    }
+  }
+  "== ok ${p.wasm.len()}"
+}
+
+fn base_name(p: Str) -> Str {
+  let parts = p.split("/")
+  parts[parts.len() - 1]
+}
+
+/// The directory fault positions are relative to (selfhost/xo
+/// line_root, internal/build lineRoot): the nearest directory holding
+/// xo.mod at or above dir, else dir itself, relative to wd when below it.
+fn line_root(os: Os, wd: Str, dir: Str) -> Str {
+  var abs = dir.trim_suffix("/")
+  if abs.starts_with("./") {
+    abs = abs.trim_prefix("./")
+  }
+  if !abs.starts_with("/") {
+    abs = if abs == "." { wd } else { "${wd}/${abs}" }
+  }
+  var d = abs
+  while !d.is_empty() {
+    if os.fs.exists("${d}/xo.mod").ok() ?? false {
+      return rel_to(wd, d)
+    }
+    let parts = d.split("/")
+    if parts.len() <= 1 {
+      break
+    }
+    d = parts[0..parts.len() - 1].join("/")
+  }
+  rel_to(wd, abs)
+}
+
+fn rel_to(wd: Str, p: Str) -> Str {
+  if p.starts_with("${wd}/") {
+    return p.trim_prefix("${wd}/")
+  }
+  p
+}

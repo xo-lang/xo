@@ -1,0 +1,25 @@
+// `xo1 build --backend=wasm` (decision 0179): the SSA module after the
+// passes lowered by selfhost/wasm to a WebAssembly module whose only
+// imports are WASI preview1's (no C compiler, no linker), written to OUT
+// (default <name>.wasm) with its WAT text beside it (OUT with .wat). A
+// program the backend does not support yet fails with its reason; no
+// module is written.
+
+use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/selfhost/wasm
+
+fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) -> () ! FsErr {
+  let p = wasm.generate(m)
+  if !p.err.is_empty() {
+    fail(os, "the wasm backend: ${p.err}")
+  }
+  var out = out0
+  if out.is_empty() {
+    let parts = dir.trim_suffix("/").split("/")
+    let last = parts[parts.len() - 1]
+    let name = if last == "." || last.is_empty() { base_name(wd) } else { last }
+    out = "${name}.wasm"
+  }
+  os.fs.write(out, p.wasm)?
+  os.fs.write("${out.trim_suffix(".wasm")}.wat", p.wat.bytes())?
+}

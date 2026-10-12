@@ -1,0 +1,989 @@
+// The WebAssembly backend (decision 0179), written only in Xo: it lowers
+// the self hosted SSA module (selfhost/ssa, after the passes and
+// InsertRC) to WAT text, which asm.xo assembles to a binary module whose
+// only imports are WASI preview1's. This file holds the module wide
+// state: the value representation, literals, the generated helpers
+// (reference counting, equality, list copies, closure environments), and
+// the module text; func.xo lowers functions and call.xo calls; rt.xo is
+// the runtime (allocator, strings, lists, faults, output), WAT text
+// assembled with the program.
+//
+// Values (decision 0179): every SSA value is a sequence of wasm values,
+// its leaves, held in locals and passed as parameters and multiple
+// results:
+//
+//   - Int (and every sized integer) i64, Float f64, Bool i32, unit and
+//     capabilities nothing;
+//   - Str (and Bytes) two i32: the object {i32 rc, i32 cap, bytes} and
+//     the length; literals are data with an immortal count;
+//   - List, Box: one i32, the object {i32 rc, i32 len, i32 cap, pad,
+//     elements} or {i32 rc, pad, value};
+//   - a function value two i32: its table index and its environment
+//     {i32 rc, i32 drop (table index), captures} or 0;
+//   - structs and tuples the leaves of their fields, enums an i64 tag
+//     and as many i64 words as the largest variant has leaves (an i32
+//     leaf zero extended, an f64 by its bits).
+//
+// In memory (list elements, box contents, captures) every leaf takes an
+// 8 byte slot. Faults set a flag (no exception handling): the code after
+// every call that can fault tests it and goes to the landing block of
+// the value (decision 0085's landing pads) or returns to its caller.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The lowered program: the WAT text and the binary module, or why the
+/// backend does not support the program.
+pub struct Program {
+  pub wat: Str = ""
+  pub wasm: Bytes = b""
+  pub err: Str = ""
+}
+
+/// The text of one function under construction.
+struct FnText {
+  lines: List[Str] = []
+  nparams: Int = 0
+  locals: List[Str] = []
+}
+
+/// The emitter's state.
+pub struct Gen {
+  m: ssa.Module
+  /// Per type: its leaves, once computed.
+  leaf_memo: List[List[Str]] = []
+  leaf_done: List[Bool] = []
+  /// The data segments and the next free address.
+  data: List[Str] = []
+  data_end: Int = 1024
+  /// String objects and raw literals by their text.
+  strs: Map[Str, Int] = {}
+  raws: Map[Str, Int] = {}
+  helpers: List[Str] = []
+  emitted: Map[Str, Bool] = {}
+  /// Signatures of call_indirect by their text.
+  sigs: Map[Str, Str] = {}
+  sig_lines: List[Str] = []
+  /// The function table.
+  table: List[Str] = []
+  table_at: Map[Str, Int] = {}
+  funcs: List[Str] = []
+  /// Function index by name (the last of each name, as the LLVM
+  /// emitter's byName).
+  by_name: Map[Str, Int] = {}
+  pub err: Str = ""
+  /// The immortal empty list.
+  empty_list: Int = 0
+
+  // the function being lowered
+  cur: FnText = FnText{}
+  f: ssa.Func = ssa.Func{name: ""}
+  fi: Int = -1
+  /// Per value: its first local, -1 before it has one.
+  vbase: List[Int] = []
+  /// Per value: its block.
+  blk: List[Int] = []
+  /// Per block: its position in the dispatch (block order).
+  pc_local: Int = 0
+}
+
+/// Lowers module m (after the passes and InsertRC).
+pub fn generate(m: ssa.Module) -> Program {
+  var g = Gen{m: m}
+  for _ in 0..m.types.len() {
+    g.leaf_memo.push([])
+    g.leaf_done.push(false)
+  }
+  for (i, f) in m.funcs.indexed() {
+    g.by_name[f.name] = i
+  }
+  let wat = g.module_text()
+  if !g.err.is_empty() {
+    return Program{err: g.err}
+  }
+  let (bin, aerr) = assemble(wat)
+  if !aerr.is_empty() {
+    return Program{wat: wat, err: "the assembler: ${aerr}"}
+  }
+  Program{wat: wat, wasm: bin}
+}
+
+/// Records the first construct the backend does not support.
+fn (var g: Gen) fail(msg: Str) {
+  if g.err.is_empty() {
+    g.err = msg
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+/// The wasm values of a value of type t.
+fn (var g: Gen) leaves(t: Int) -> List[Str] {
+  if t < 0 {
+    return []
+  }
+  if g.leaf_done[t] {
+    return g.leaf_memo[t]
+  }
+  g.leaf_done[t] = true
+  let x = g.m.types[t]
+  var out: List[Str] = []
+  match x.kind {
+    Unit | Cap => {}
+    Int => out = ["i64"]
+    Float => out = ["f64"]
+    Bool => out = ["i32"]
+    Str => out = ["i32", "i32"]
+    List | Box => out = ["i32"]
+    Func => out = ["i32", "i32"]
+    Handle => g.fail("the wasm backend does not support the type `${x.name}` (stage 1: no handles)")
+    Struct => {
+      for fd in x.fields {
+        for l in g.leaves(fd.ty) {
+          out.push(l)
+        }
+      }
+    }
+    Tuple => {
+      for e in x.elems {
+        for l in g.leaves(e) {
+          out.push(l)
+        }
+      }
+    }
+    Enum => {
+      out = ["i64"]
+      for _ in 0..g.words(t) {
+        out.push("i64")
+      }
+    }
+    Bad => g.fail("the wasm backend does not support the type `${x.name}`")
+  }
+  g.leaf_memo[t] = out
+  out
+}
+
+fn (var g: Gen) nleaves(t: Int) -> Int {
+  g.leaves(t).len()
+}
+
+/// The payload words of enum t: the most leaves of a variant.
+fn (var g: Gen) words(t: Int) -> Int {
+  var max = 0
+  for v in g.m.types[t].variants {
+    var n = 0
+    for fd in v.fields {
+      n += g.nleaves(fd.ty)
+    }
+    if n > max {
+      max = n
+    }
+  }
+  max
+}
+
+/// The size of a value of t in memory: 8 bytes per leaf.
+fn (var g: Gen) size(t: Int) -> Int {
+  8 * g.nleaves(t)
+}
+
+fn (g: Gen) heap(t: Int) -> Bool {
+  t >= 0 && g.m.heap(t)
+}
+
+fn (g: Gen) kind(t: Int) -> ssa.Kind {
+  g.m.types[t].kind
+}
+
+/// The leaf offset of field i of struct or tuple t.
+fn (var g: Gen) field_off(t: Int, i: Int) -> Int {
+  let x = g.m.types[t]
+  var off = 0
+  for k in 0..i {
+    let ft = if x.kind == ssa.Kind.Struct { x.fields[k].ty } else { x.elems[k] }
+    off += g.nleaves(ft)
+  }
+  off
+}
+
+fn (g: Gen) field_ty(t: Int, i: Int) -> Int {
+  let x = g.m.types[t]
+  if x.kind == ssa.Kind.Struct { x.fields[i].ty } else { x.elems[i] }
+}
+
+/// The field types of a struct or tuple.
+fn (g: Gen) field_tys(t: Int) -> List[Int] {
+  let x = g.m.types[t]
+  if x.kind == ssa.Kind.Tuple {
+    return x.elems
+  }
+  var out: List[Int] = []
+  for fd in x.fields {
+    out.push(fd.ty)
+  }
+  out
+}
+
+/// The word offset of field fi of variant tag of enum t.
+fn (var g: Gen) payload_off(t: Int, tag: Int, fi: Int) -> Int {
+  var off = 0
+  let fs = g.m.types[t].variants[tag].fields
+  for k in 0..fi {
+    off += g.nleaves(fs[k].ty)
+  }
+  off
+}
+
+// ---------------------------------------------------------------------------
+// Data
+
+/// The bytes of b as the body of a WAT string.
+fn wat_bytes(b: Bytes) -> Str {
+  var out = BytesBuilder.new()
+  for c in b {
+    let x = Int(c)
+    if x >= 32 && x < 127 && x != 34 && x != 92 {
+      out.write_byte(c)
+    } else {
+      out.write_str("\\${HEXL[x / 16..x / 16 + 1]}${HEXL[x % 16..x % 16 + 1]}")
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+const HEXL = "0123456789abcdef"
+
+/// Places bytes b in the data at an 8 byte aligned address.
+fn (var g: Gen) place(b: Bytes) -> Int {
+  let at = (g.data_end + 7) / 8 * 8
+  g.data.push("(data (i32.const ${at}) \"${wat_bytes(b)}\")")
+  g.data_end = at + b.len()
+  at
+}
+
+/// The 32 bit little endian bytes of n.
+fn le32(n: Int) -> Bytes {
+  var bb = BytesBuilder.new()
+  for k in 0..4 {
+    bb.write_byte(UInt8((n >> (8 * k)) & 255))
+  }
+  bb.freeze()
+}
+
+/// The address of the immortal string object holding b.
+fn (var g: Gen) str_obj(b: Bytes) -> Int {
+  let key = wat_bytes(b)
+  if let Some(a) = g.strs.get(key) {
+    return a
+  }
+  // rc immortal (i32 minimum), cap
+  let a = g.place(le32(0x80000000) + le32(b.len()) + b)
+  g.strs[key] = a
+  a
+}
+
+/// The address of raw bytes b (fault locations, runtime text).
+fn (var g: Gen) raw(b: Bytes) -> Int {
+  let key = wat_bytes(b)
+  if let Some(a) = g.raws.get(key) {
+    return a
+  }
+  let a = g.place(b)
+  g.raws[key] = a
+  a
+}
+
+/// `i32.const addr i32.const len` of raw text s.
+fn (var g: Gen) litp(s: Str) -> Str {
+  "i32.const ${g.raw(s.bytes())} i32.const ${s.len()}"
+}
+
+// ---------------------------------------------------------------------------
+// The function table and indirect signatures
+
+fn (var g: Gen) table_index(name: Str) -> Int {
+  if let Some(i) = g.table_at.get(name) {
+    return i
+  }
+  let i = g.table.len()
+  g.table.push(name)
+  g.table_at[name] = i
+  i
+}
+
+/// The type name of the signature params -> results (call_indirect).
+fn (var g: Gen) sig(params: List[Str], results: List[Str]) -> Str {
+  let key = "${params.join(" ")}>${results.join(" ")}"
+  if let Some(n) = g.sigs.get(key) {
+    return n
+  }
+  let n = "$sig${g.sigs.len()}"
+  g.sigs[key] = n
+  var t = "(type ${n} (func"
+  if !params.is_empty() {
+    t = "${t} (param ${params.join(" ")})"
+  }
+  if !results.is_empty() {
+    t = "${t} (result ${results.join(" ")})"
+  }
+  g.sig_lines.push("${t}))")
+  n
+}
+
+// ---------------------------------------------------------------------------
+// Emission into the current buffer
+
+fn (var g: Gen) e(s: Str) {
+  g.cur.lines.push(s)
+}
+
+/// A new local of wasm type t.
+fn (var g: Gen) tmp(t: Str) -> Int {
+  g.cur.locals.push(t)
+  g.cur.nparams + g.cur.locals.len() - 1
+}
+
+/// New locals for leaves ls; the first one's index.
+fn (var g: Gen) tmps(ls: List[Str]) -> Int {
+  let base = g.cur.nparams + g.cur.locals.len()
+  for l in ls {
+    g.cur.locals.push(l)
+  }
+  base
+}
+
+fn (var g: Gen) get(i: Int) {
+  g.e("local.get ${i}")
+}
+
+fn (var g: Gen) set(i: Int) {
+  g.e("local.set ${i}")
+}
+
+fn (var g: Gen) push_range(base: Int, n: Int) {
+  for k in 0..n {
+    g.e("local.get ${base + k}")
+  }
+}
+
+fn (var g: Gen) set_range(base: Int, n: Int) {
+  var k = n - 1
+  while k >= 0 {
+    g.e("local.set ${base + k}")
+    k -= 1
+  }
+}
+
+/// Converts the leaf on the stack to a payload word.
+fn (var g: Gen) to_word(l: Str) {
+  if l == "i32" {
+    g.e("i64.extend_i32_u")
+  } else if l == "f64" {
+    g.e("i64.reinterpret_f64")
+  }
+}
+
+/// Converts the payload word on the stack to a leaf.
+fn (var g: Gen) from_word(l: Str) {
+  if l == "i32" {
+    g.e("i32.wrap_i64")
+  } else if l == "f64" {
+    g.e("f64.reinterpret_i64")
+  }
+}
+
+/// Stores the leaves ls held in locals from base at address local addr
+/// plus off.
+fn (var g: Gen) store_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
+  for (k, l) in ls.indexed() {
+    g.get(addr)
+    g.get(base + k)
+    g.e("${l}.store offset=${off + 8 * k}")
+  }
+}
+
+/// Loads leaves ls from address local addr plus off into locals from base.
+fn (var g: Gen) load_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
+  for (k, l) in ls.indexed() {
+    g.get(addr)
+    g.e("${l}.load offset=${off + 8 * k}")
+    g.set(base + k)
+  }
+}
+
+/// Pushes the zero of each leaf.
+fn (var g: Gen) push_zeros(ls: List[Str]) {
+  for l in ls {
+    if l == "f64" {
+      g.e("i64.const 0")
+      g.e("f64.reinterpret_i64")
+    } else {
+      g.e("${l}.const 0")
+    }
+  }
+}
+
+/// Pushes the placeholder list.take leaves in a slot (decision 0169):
+/// heap leaves point to an immortal object, an enum's tag is past its
+/// variants, so retain and release of it do nothing.
+fn (var g: Gen) push_hole(t: Int) {
+  let x = g.m.types[t]
+  match x.kind {
+    Str => {
+      let e = g.str_obj(b"")
+      g.e("i32.const ${e}")
+      g.e("i32.const 0")
+    }
+    List | Box => g.e("i32.const ${g.str_obj(b"")}")
+    Func => {
+      g.e("i32.const 0")
+      g.e("i32.const 0")
+    }
+    Enum => {
+      g.e("i64.const ${x.variants.len()}")
+      for _ in 0..g.words(t) {
+        g.e("i64.const 0")
+      }
+    }
+    Struct | Tuple => {
+      for ft in g.field_tys(t) {
+        g.push_hole(ft)
+      }
+    }
+    _ => g.push_zeros(g.leaves(t))
+  }
+}
+
+/// Starts a helper function with params ps (the current buffer is saved
+/// by the caller).
+fn (var g: Gen) begin_helper(ps: List[Str]) {
+  g.cur = FnText{nparams: ps.len()}
+}
+
+/// The text of the helper in the current buffer.
+fn (var g: Gen) end_helper(name: Str, ps: List[Str], rs: List[Str], comment: Str) {
+  var head = "(func ${name}"
+  if !ps.is_empty() {
+    head = "${head} (param ${ps.join(" ")})"
+  }
+  if !rs.is_empty() {
+    head = "${head} (result ${rs.join(" ")})"
+  }
+  if !g.cur.locals.is_empty() {
+    head = "${head} (local ${g.cur.locals.join(" ")})"
+  }
+  var b = StrBuilder.new()
+  b.write("  ;; ${comment}\n  ${head}\n")
+  for l in g.cur.lines {
+    b.write("    ")
+    b.write(l)
+    b.write("\n")
+  }
+  b.write("  )\n")
+  g.helpers.push(b.freeze())
+}
+
+// ---------------------------------------------------------------------------
+// Reference counting helpers
+
+/// The helper that retains ("dup") or releases ("drop") a value of type
+/// t (leaves as parameters), emitted on first use.
+fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
+  let name = "$${kind}${t}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let ls = g.leaves(t)
+  let saved = g.cur
+  g.begin_helper(ls)
+  let x = g.m.types[t]
+  match x.kind {
+    Str | List | Box => {
+      if kind == "dup" {
+        g.get(0)
+        g.e("call $rc_inc")
+      } else {
+        g.get(0)
+        g.e("call $rc_dec")
+        g.e("if")
+        if x.kind == ssa.Kind.List && g.heap(x.elems[0]) {
+          g.drop_elems(0, x.elems[0])
+        }
+        if x.kind == ssa.Kind.Box && g.heap(x.elems[0]) {
+          let et = x.elems[0]
+          let el = g.leaves(et)
+          let b = g.tmps(el)
+          g.load_leaves(0, 8, b, el)
+          g.push_range(b, el.len())
+          g.e("call ${g.rc_fn("drop", et)}")
+        }
+        g.get(0)
+        g.e("call $free")
+        g.e("end")
+      }
+    }
+    Func => {
+      // the environment: 0 for a closure without captures
+      g.get(1)
+      g.e("if")
+      if kind == "dup" {
+        g.get(1)
+        g.e("call $rc_inc")
+      } else {
+        g.get(1)
+        g.e("call $rc_dec")
+        g.e("if")
+        g.get(1)
+        g.get(1)
+        g.e("i32.load offset=4")
+        g.e("call_indirect (type ${g.sig(["i32"], [])})")
+        g.e("end")
+      }
+      g.e("end")
+    }
+    Struct | Tuple => {
+      var off = 0
+      for ft in g.field_tys(t) {
+        let n = g.nleaves(ft)
+        if g.heap(ft) {
+          g.push_range(off, n)
+          g.e("call ${g.rc_fn(kind, ft)}")
+        }
+        off += n
+      }
+    }
+    Enum => {
+      for (vi, v) in x.variants.indexed() {
+        var heap = false
+        for fd in v.fields {
+          heap = heap || g.heap(fd.ty)
+        }
+        if !heap {
+          continue
+        }
+        g.get(0)
+        g.e("i64.const ${vi}")
+        g.e("i64.eq")
+        g.e("if")
+        var off = 1
+        for fd in v.fields {
+          let fl = g.leaves(fd.ty)
+          if g.heap(fd.ty) {
+            for (k, l) in fl.indexed() {
+              g.get(off + k)
+              g.from_word(l)
+            }
+            g.e("call ${g.rc_fn(kind, fd.ty)}")
+          }
+          off += fl.len()
+        }
+        g.e("end")
+      }
+    }
+    _ => {}
+  }
+  g.end_helper(name, ls, [], "${kind} ${x.name}")
+  g.cur = saved
+  name
+}
+
+/// Releases the elements of the list in local l (element type et).
+fn (var g: Gen) drop_elems(l: Int, et: Int) {
+  let el = g.leaves(et)
+  let es = g.size(et)
+  let i = g.tmp("i32")
+  let a = g.tmp("i32")
+  let b = g.tmps(el)
+  g.e("block $x")
+  g.e("loop $l")
+  g.get(i)
+  g.get(l)
+  g.e("i32.load offset=4")
+  g.e("i32.ge_u")
+  g.e("br_if $x")
+  g.get(l)
+  g.e("i32.const 16")
+  g.e("i32.add")
+  g.get(i)
+  g.e("i32.const ${es}")
+  g.e("i32.mul")
+  g.e("i32.add")
+  g.set(a)
+  g.load_leaves(a, 0, b, el)
+  g.push_range(b, el.len())
+  g.e("call ${g.rc_fn("drop", et)}")
+  g.get(i)
+  g.e("i32.const 1")
+  g.e("i32.add")
+  g.set(i)
+  g.e("br $l")
+  g.e("end")
+  g.e("end")
+}
+
+/// The helper that copies a shared list of type t before it is updated
+/// (`reuse`, xo_rl_copy): the copy holds its own references to the
+/// elements, and the list loses the one the caller gave up.
+fn (var g: Gen) lcopy_fn(t: Int) -> Str {
+  let name = "$lcopy${t}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let et = g.m.types[t].elems[0]
+  let es = g.size(et)
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  let n = g.tmp("i32")
+  let r = g.tmp("i32")
+  g.get(0)
+  g.e("i32.load offset=4")
+  g.set(n)
+  g.get(n)
+  g.e("i32.const 4")
+  g.get(n)
+  g.e("i32.const 4")
+  g.e("i32.gt_u")
+  g.e("select")
+  g.e("i32.const ${es}")
+  g.e("call $rl_new")
+  g.set(r)
+  g.get(r)
+  g.get(n)
+  g.e("i32.store offset=4")
+  g.get(r)
+  g.e("i32.const 16")
+  g.e("i32.add")
+  g.get(0)
+  g.e("i32.const 16")
+  g.e("i32.add")
+  g.get(n)
+  g.e("i32.const ${es}")
+  g.e("i32.mul")
+  g.e("memory.copy")
+  if g.heap(et) {
+    let el = g.leaves(et)
+    let i = g.tmp("i32")
+    let a = g.tmp("i32")
+    let b = g.tmps(el)
+    g.e("block $x")
+    g.e("loop $l")
+    g.get(i)
+    g.get(n)
+    g.e("i32.ge_u")
+    g.e("br_if $x")
+    g.get(r)
+    g.e("i32.const 16")
+    g.e("i32.add")
+    g.get(i)
+    g.e("i32.const ${es}")
+    g.e("i32.mul")
+    g.e("i32.add")
+    g.set(a)
+    g.load_leaves(a, 0, b, el)
+    g.push_range(b, el.len())
+    g.e("call ${g.rc_fn("dup", et)}")
+    g.get(i)
+    g.e("i32.const 1")
+    g.e("i32.add")
+    g.set(i)
+    g.e("br $l")
+    g.e("end")
+    g.e("end")
+  }
+  // the reference the caller gave up (the count is above 1, or immortal)
+  g.get(0)
+  g.e("call $rc_dec")
+  g.e("drop")
+  g.get(r)
+  g.end_helper(name, ["i32"], ["i32"], "copy ${g.m.types[t].name}")
+  g.cur = saved
+  name
+}
+
+/// The helper that releases the captures of an environment of closure
+/// function fi and frees it.
+fn (var g: Gen) envdrop_fn(fi: Int) -> Str {
+  let name = "$envdrop${fi}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  let f = g.m.funcs[fi]
+  var off = 0
+  for c in f.captures {
+    let cl = g.leaves(c)
+    if g.heap(c) {
+      let b = g.tmps(cl)
+      g.load_leaves(0, 8 + 8 * off, b, cl)
+      g.push_range(b, cl.len())
+      g.e("call ${g.rc_fn("drop", c)}")
+    }
+    off += cl.len()
+  }
+  g.get(0)
+  g.e("call $free")
+  g.end_helper(name, ["i32"], [], "environment of ${f.name}")
+  g.cur = saved
+  g.table_index(name)
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Equality
+
+/// The helper that compares two values of type t structurally (leaves of
+/// a, then of b), emitted on first use.
+fn (var g: Gen) eq_fn(t: Int) -> Str {
+  let name = "$eq${t}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let ls = g.leaves(t)
+  let n = ls.len()
+  let saved = g.cur
+  var ps: List[Str] = []
+  for l in ls {
+    ps.push(l)
+  }
+  for l in ls {
+    ps.push(l)
+  }
+  g.begin_helper(ps)
+  let x = g.m.types[t]
+  match x.kind {
+    Str => {
+      g.push_range(0, 2)
+      g.push_range(2, 2)
+      g.e("call $str_eq")
+    }
+    Struct | Tuple => {
+      g.e("i32.const 1")
+      var off = 0
+      for ft in g.field_tys(t) {
+        let k = g.nleaves(ft)
+        if k > 0 {
+          g.eq_leaves(ft, off, n + off)
+          g.e("i32.and")
+        }
+        off += k
+      }
+    }
+    Enum => {
+      g.get(0)
+      g.get(n)
+      g.e("i64.ne")
+      g.e("if")
+      g.e("i32.const 0")
+      g.e("return")
+      g.e("end")
+      for (vi, v) in x.variants.indexed() {
+        if v.fields.is_empty() {
+          continue
+        }
+        g.get(0)
+        g.e("i64.const ${vi}")
+        g.e("i64.eq")
+        g.e("if")
+        g.e("i32.const 1")
+        var off = 1
+        for fd in v.fields {
+          let fl = g.leaves(fd.ty)
+          if !fl.is_empty() {
+            let a = g.tmps(fl)
+            let b = g.tmps(fl)
+            for (k, l) in fl.indexed() {
+              g.get(off + k)
+              g.from_word(l)
+              g.set(a + k)
+              g.get(n + off + k)
+              g.from_word(l)
+              g.set(b + k)
+            }
+            g.eq_leaves(fd.ty, a, b)
+            g.e("i32.and")
+          }
+          off += fl.len()
+        }
+        g.e("return")
+        g.e("end")
+      }
+      g.e("i32.const 1")
+    }
+    List => {
+      let et = x.elems[0]
+      let el = g.leaves(et)
+      let es = g.size(et)
+      g.get(0)
+      g.e("i32.load offset=4")
+      g.get(1)
+      g.e("i32.load offset=4")
+      g.e("i32.ne")
+      g.e("if")
+      g.e("i32.const 0")
+      g.e("return")
+      g.e("end")
+      if !el.is_empty() {
+        let i = g.tmp("i32")
+        let pa = g.tmp("i32")
+        let pb = g.tmp("i32")
+        let a = g.tmps(el)
+        let b = g.tmps(el)
+        g.e("block $x")
+        g.e("loop $l")
+        g.get(i)
+        g.get(0)
+        g.e("i32.load offset=4")
+        g.e("i32.ge_u")
+        g.e("br_if $x")
+        for (p, l) in [(pa, 0), (pb, 1)] {
+          g.get(l)
+          g.e("i32.const 16")
+          g.e("i32.add")
+          g.get(i)
+          g.e("i32.const ${es}")
+          g.e("i32.mul")
+          g.e("i32.add")
+          g.set(p)
+        }
+        g.load_leaves(pa, 0, a, el)
+        g.load_leaves(pb, 0, b, el)
+        g.eq_leaves(et, a, b)
+        g.e("i32.eqz")
+        g.e("if")
+        g.e("i32.const 0")
+        g.e("return")
+        g.e("end")
+        g.get(i)
+        g.e("i32.const 1")
+        g.e("i32.add")
+        g.set(i)
+        g.e("br $l")
+        g.e("end")
+        g.e("end")
+      }
+      g.e("i32.const 1")
+    }
+    Box => {
+      // the contents (a cell holding a Float is compared even when it is
+      // the same cell: NaN is not equal to itself)
+      let et = x.elems[0]
+      let el = g.leaves(et)
+      let a = g.tmps(el)
+      let b = g.tmps(el)
+      g.load_leaves(0, 8, a, el)
+      g.load_leaves(1, 8, b, el)
+      g.eq_leaves(et, a, b)
+    }
+    _ => {
+      g.fail("the wasm backend does not compare `${x.name}`")
+      g.e("i32.const 0")
+    }
+  }
+  g.end_helper(name, ps, ["i32"], "eq ${x.name}")
+  g.cur = saved
+  name
+}
+
+/// Pushes whether the values of type t in locals from a and from b are
+/// equal.
+fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
+  let n = g.nleaves(t)
+  match g.kind(t) {
+    Unit | Cap => g.e("i32.const 1")
+    Int => {
+      g.get(a)
+      g.get(b)
+      g.e("i64.eq")
+    }
+    Bool => {
+      g.get(a)
+      g.get(b)
+      g.e("i32.eq")
+    }
+    Float => {
+      g.get(a)
+      g.get(b)
+      g.e("f64.eq")
+    }
+    _ => {
+      g.push_range(a, n)
+      g.push_range(b, n)
+      g.e("call ${g.eq_fn(t)}")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The module
+
+fn (var g: Gen) module_text() -> Str {
+  let main = g.m.func_index("main")
+  if main < 0 {
+    g.fail("no main")
+    return ""
+  }
+  g.empty_list = g.place(le32(0x80000000) + le32(0) + le32(0) + le32(0))
+  // the runtime first: its literals are placed before the program's
+  let rt = rt_text(g)
+  for fi in 0..g.m.funcs.len() {
+    g.func(fi)
+    if !g.err.is_empty() {
+      return ""
+    }
+  }
+  let mf = g.m.funcs[main]
+  var start: List[Str] = []
+  for p in mf.blocks[0].params {
+    let t = mf.values[p].ty
+    if !(g.kind(t) is ssa.Kind.Cap | ssa.Kind.Unit) {
+      g.fail("main takes a `${g.m.types[t].name}`")
+    }
+  }
+  start.push("call $f${main}")
+  for r in mf.results {
+    for _ in g.leaves(r) {
+      start.push("drop")
+    }
+  }
+  if !g.err.is_empty() {
+    return ""
+  }
+  let heap = (g.data_end + 15) / 16 * 16
+  let pages = heap / 65536 + 2
+  var b = StrBuilder.new()
+  b.write(";; generated by the Xo WebAssembly backend (selfhost/wasm, decision 0179)\n(module\n")
+  for s in g.sig_lines {
+    b.write("  ${s}\n")
+  }
+  b.write(rt_imports())
+  b.write("  (memory (export \"memory\") ${pages})\n")
+  b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
+  b.write(rt)
+  for h in g.helpers {
+    b.write(h)
+  }
+  for f in g.funcs {
+    b.write(f)
+  }
+  b.write("  (func $_start (export \"_start\")\n")
+  for s in start {
+    b.write("    ${s}\n")
+  }
+  b.write("    global.get $faulting\n    if\n      call $fault_report\n    end\n    call $flush_exit0)\n")
+  // a table even when empty: the release of a function value calls
+  // through it
+  b.write("  (table ${g.table.len()} funcref)\n")
+  if !g.table.is_empty() {
+    b.write("  (elem (i32.const 0) func ${g.table.join(" ")})\n")
+  }
+  for d in g.data {
+    b.write("  ${d}\n")
+  }
+  b.write(")\n")
+  b.freeze()
+}

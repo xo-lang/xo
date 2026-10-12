@@ -1,0 +1,330 @@
+// Calls (decision 0179): module functions, and the operations the SSA
+// names as calls that the LLVM emitter lowers inline or to the C runtime
+// (internal/llvm fromssa.go call and rtCall), here inline or to rt.xo.
+// A name the backend does not have yet makes the program unsupported:
+// the build reports it and writes no module.
+
+
+fn (var g: Gen) call(v: Int) {
+  let x = g.f.values[v]
+  let name = match x.aux {
+    S(s) => s
+    _ => ""
+  }
+  if let Some(ci) = g.by_name.get(name) {
+    for a in x.args {
+      g.push(a)
+    }
+    g.e("call $f${ci}")
+    g.def(v)
+    g.check_fault(v)
+    return
+  }
+  match name {
+    "rt.landing" => {
+      // a check only a fault takes: the fault tests jump to the landing
+      // block themselves
+      g.e("i32.const 0")
+      g.def(v)
+    }
+    "rt.fault_continue" => {}
+    "rt.fault_raise" => {
+      g.push(x.args[0])
+      g.push(x.args[1])
+      g.e("call $fault_raise")
+      g.fault_exit(v)
+    }
+    "rt.rl_empty" => {
+      g.e("i32.const ${g.empty_list}")
+      g.def(v)
+    }
+    "rt.exit" => {
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.e("call $exit")
+    }
+    "rt.eprintln" => {
+      g.push(x.args[0])
+      g.e("call $eprintln")
+    }
+    "list.new" => {
+      let es = g.size(g.m.types[x.ty].elems[0])
+      if x.args.len() == 1 {
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.e("i32.const ${es}")
+        g.e("call $rl_new_n")
+      } else {
+        g.e("i32.const 4")
+        g.e("i32.const ${es}")
+        g.e("call $rl_new")
+      }
+      g.def(v)
+    }
+    "list.len" => {
+      g.push(x.args[0])
+      g.e("i32.load offset=4")
+      g.e("i64.extend_i32_u")
+      g.def(v)
+    }
+    "list.index" => {
+      let a = g.elem_addr(v, x.args[0], x.args[1], x.ty)
+      g.load_leaves(a, 0, g.loc(v), g.leaves(x.ty))
+    }
+    "list.get" => {
+      let l = x.args[0]
+      let et = g.m.types[g.vty(l)].elems[0]
+      let ot = x.ty
+      g.push(x.args[1])
+      g.push(l)
+      g.e("i32.load offset=4")
+      g.e("i64.extend_i32_u")
+      g.e("i64.lt_u")
+      g.e("if")
+      let el = g.leaves(et)
+      let a = g.tmp("i32")
+      let b = g.tmps(el)
+      g.push(l)
+      g.push(x.args[1])
+      g.e("i32.const ${g.size(et)}")
+      g.e("call $elem")
+      g.set(a)
+      g.load_leaves(a, 0, b, el)
+      g.variant_into(v, ot, g.m.variant_index(ot, "Some"), b, el)
+      g.e("else")
+      g.variant_into(v, ot, g.m.variant_index(ot, "None"), 0, [])
+      g.e("end")
+    }
+    "list.set" => {
+      let et = g.vty(x.args[2])
+      let a = g.elem_addr(v, x.args[0], x.args[1], et)
+      let el = g.leaves(et)
+      if g.heap(et) {
+        let old = g.tmps(el)
+        g.load_leaves(a, 0, old, el)
+        g.push_range(old, el.len())
+        let d = g.rc_fn("drop", et)
+        g.e("call ${d}")
+      }
+      if !el.is_empty() {
+        g.store_leaves(a, 0, g.loc(x.args[2]), el)
+      }
+      g.push(x.args[0])
+      g.def(v)
+    }
+    "list.push" => {
+      let et = g.vty(x.args[1])
+      let el = g.leaves(et)
+      let a = g.tmp("i32")
+      let r = g.loc(v)
+      g.push(x.args[0])
+      g.e("i32.const ${g.size(et)}")
+      g.e("call $rl_slot")
+      g.set(a)
+      g.set(r)
+      if !el.is_empty() {
+        g.store_leaves(a, 0, g.loc(x.args[1]), el)
+      }
+    }
+    "list.pop" => {
+      let l = x.args[0]
+      let et = g.m.types[g.vty(l)].elems[0]
+      let ot = g.m.types[x.ty].elems[1]
+      let el = g.leaves(et)
+      let r = g.loc(v)
+      let n = g.tmp("i32")
+      let a = g.tmp("i32")
+      let b = g.tmps(el)
+      g.push(l)
+      g.set(r)
+      g.push(l)
+      g.e("i32.load offset=4")
+      g.set(n)
+      g.get(n)
+      g.e("if")
+      g.get(n)
+      g.e("i32.const 1")
+      g.e("i32.sub")
+      g.set(n)
+      g.push(l)
+      g.get(n)
+      g.e("i32.store offset=4")
+      g.push(l)
+      g.e("i32.const 16")
+      g.e("i32.add")
+      g.get(n)
+      g.e("i32.const ${g.size(et)}")
+      g.e("i32.mul")
+      g.e("i32.add")
+      g.set(a)
+      g.load_leaves(a, 0, b, el)
+      g.variant_into_at(r + 1, ot, g.m.variant_index(ot, "Some"), b, el)
+      g.e("else")
+      g.variant_into_at(r + 1, ot, g.m.variant_index(ot, "None"), 0, [])
+      g.e("end")
+    }
+    "list.take" => {
+      // element i moves out (decision 0169); its slot gets a placeholder
+      let et = g.m.types[x.ty].elems[1]
+      let el = g.leaves(et)
+      let a = g.elem_addr(v, x.args[0], x.args[1], et)
+      let r = g.loc(v)
+      g.push(x.args[0])
+      g.set(r)
+      g.load_leaves(a, 0, r + 1, el)
+      if !el.is_empty() {
+        let h = g.tmps(el)
+        g.push_hole(et)
+        g.set_range(h, el.len())
+        g.store_leaves(a, 0, h, el)
+      }
+    }
+    "str.concat" => {
+      let b = g.loc(x.args[1])
+      g.push(x.args[0])
+      g.get(b)
+      g.e("i32.const 8")
+      g.e("i32.add")
+      g.get(b + 1)
+      g.e("call $sapp")
+      g.def(v)
+    }
+    "rt.str_slice" | "rt.str_starts_with" | "rt.str_ends_with" | "rt.str_contains" | "rt.str_repeat" | "rt.str_join" | "rt.rs_append_quote" | "rt.str_rune_count" => g.rt_call(v, "$${name.trim_prefix("rt.")}")
+    "str.concat_int" => g.rt_call(v, "$sapp_int")
+    "str.eq" => g.rt_call(v, "$str_eq")
+    "str.cmp" => g.rt_call(v, "$str_cmp")
+    "str.of_int" => g.rt_call(v, "$of_int")
+    "str.of_bool" => {
+      let a = x.args[0]
+      g.e("i32.const ${g.str_obj(b"true")}")
+      g.e("i32.const ${g.str_obj(b"false")}")
+      g.push(a)
+      g.e("select")
+      g.e("i32.const 4")
+      g.e("i32.const 5")
+      g.push(a)
+      g.e("select")
+      g.def(v)
+    }
+    "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
+      g.push(x.args[1])
+      g.e("call $${name.trim_prefix("Stdio.")}")
+    }
+    "Int.min" | "Int.max" => {
+      let a = x.args[0]
+      let b = x.args[1]
+      if name == "Int.min" {
+        g.push(a)
+        g.push(b)
+      } else {
+        g.push(b)
+        g.push(a)
+      }
+      g.push(a)
+      g.push(b)
+      g.e("i64.lt_s")
+      g.e("select")
+      g.def(v)
+    }
+    "Int.abs" => {
+      if !x.pos.is_empty() {
+        g.checked(v, "$abs_chk", 1)
+        return
+      }
+      let a = x.args[0]
+      g.e("i64.const 0")
+      g.push(a)
+      g.e("i64.sub")
+      g.push(a)
+      g.push(a)
+      g.e("i64.const 0")
+      g.e("i64.lt_s")
+      g.e("select")
+      g.def(v)
+    }
+    "Float.min" => g.rt_call(v, "$fmin")
+    "Float.max" => g.rt_call(v, "$fmax")
+    "Float.round" => g.rt_call(v, "$fround")
+    "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.abs" => {
+      g.push(x.args[0])
+      g.e("f64.${name.trim_prefix("Float.")}")
+      g.def(v)
+    }
+    "Float.is_nan" => {
+      g.push(x.args[0])
+      g.push(x.args[0])
+      g.e("f64.ne")
+      g.def(v)
+    }
+    "bytes.index" => {
+      if !x.pos.is_empty() {
+        g.checked(v, "$bidx_chk", 2)
+        return
+      }
+      g.push_part(x.args[0], 0, 1)
+      g.push(x.args[1])
+      g.e("i32.wrap_i64")
+      g.e("i32.add")
+      g.e("i64.load8_u offset=8")
+      g.def(v)
+    }
+    "Str.len" => {
+      g.push_part(x.args[0], 1, 2)
+      g.e("i64.extend_i32_u")
+      g.def(v)
+    }
+    "Str.is_empty" => {
+      g.push_part(x.args[0], 1, 2)
+      g.e("i32.eqz")
+      g.def(v)
+    }
+    _ => g.fail("the wasm backend does not support the call `${name}` (stage 1)")
+  }
+}
+
+/// A runtime function on the operands' leaves, its results v's.
+fn (var g: Gen) rt_call(v: Int, fname: Str) {
+  for a in g.f.values[v].args {
+    g.push(a)
+  }
+  g.e("call ${fname}")
+  g.def(v)
+}
+
+/// The address of element i of list l (element type et) in a new local,
+/// checked against the length when v has a fault position.
+fn (var g: Gen) elem_addr(v: Int, l: Int, i: Int, et: Int) -> Int {
+  let a = g.tmp("i32")
+  g.push(l)
+  g.push(i)
+  g.e("i32.const ${g.size(et)}")
+  if g.f.values[v].pos.is_empty() {
+    g.e("call $elem")
+    g.set(a)
+    return a
+  }
+  g.e(g.locp(v))
+  g.e("call $idx_chk")
+  g.set(a)
+  g.check_fault(v)
+  a
+}
+
+/// Defines enum value v (type t) as variant tag with the fields held in
+/// locals from b (leaves el).
+fn (var g: Gen) variant_into(v: Int, t: Int, tag: Int, b: Int, el: List[Str]) {
+  g.variant_into_at(g.loc(v), t, tag, b, el)
+}
+
+fn (var g: Gen) variant_into_at(dst: Int, t: Int, tag: Int, b: Int, el: List[Str]) {
+  g.e("i64.const ${tag}")
+  for (k, l) in el.indexed() {
+    g.get(b + k)
+    g.to_word(l)
+  }
+  let w = g.words(t)
+  for _ in el.len()..w {
+    g.e("i64.const 0")
+  }
+  g.set_range(dst, w + 1)
+}

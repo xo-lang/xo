@@ -1,0 +1,1823 @@
+// The runtime of the WebAssembly backend (decision 0179): WAT text
+// assembled with every program, written for this backend (not a port of
+// std/llrt's C: no wasm C compiler is assumed, and the subset a stage
+// needs is small). It holds the allocator, reference counts, strings,
+// lists, output through WASI fd_write, and faults with the messages of
+// std/llrt (xo_rt.c "Faults"), reported at the end with status 70.
+//
+// Memory: 0..15 the iovec and the count fd_write writes, 16..47 scratch
+// for formatting integers, 256..383 the free lists (one per size class),
+// literals from 1024, then the heap, which grows with memory.grow. A
+// block is a power of two of at least 16 bytes with an 8 byte header (its
+// size class; the next free block when it is free). A count of the i32
+// minimum is immortal (literals, decision 0058); there are no threads, so
+// no shared counts.
+
+/// The imports and globals of the runtime.
+fn rt_imports() -> Str {
+  """
+    (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
+    (global $faulting (mut i32) (i32.const 0))
+    (global $fmsg (mut i32) (i32.const 0))
+    (global $fmsgn (mut i32) (i32.const 0))
+    (global $floc (mut i32) (i32.const 0))
+    (global $flocn (mut i32) (i32.const 0))
+    (global $live (mut i64) (i64.const 0))
+    (global $total (mut i64) (i64.const 0))
+
+  """
+}
+
+/// The runtime's functions; its literals are placed in g's data.
+fn rt_text(var g: Gen) -> Str {
+  let oom = g.litp("fatal: out of memory\n")
+  let nl = g.litp("\n")
+  let fault = g.litp("fault: ")
+  let at = g.litp(" at ")
+  let ovf = g.litp("integer overflow: ")
+  let dnf = g.litp(" does not fit Int")
+  let shl = g.litp(" << ")
+  let shift = g.litp("shift amount ")
+  let oor = g.litp(" out of range for Int")
+  let divz = g.litp("division by zero: ")
+  let zero = g.litp(" 0")
+  let negp = g.litp("integer overflow: -(")
+  let absp = g.litp("integer overflow: abs(")
+  let close = g.litp(") does not fit Int")
+  let index = g.litp("index ")
+  let fffd = g.litp("\\u{FFFD}")
+  let lofl_s =" out of range for List of length "
+  let lofb_s = " out of range for Bytes of length "
+  let lofl_a = g.raw(lofl_s.bytes())
+  let lofb_a = g.raw(lofb_s.bytes())
+  let lofl_n = lofl_s.len()
+  let lofb_n = lofb_s.len()
+  """
+    (func $xo_live (export "xo_live") (result i64)
+      global.get $live)
+    (func $xo_total (export "xo_total") (result i64)
+      global.get $total)
+
+    ;; allocation: a block of the smallest size class holding n + 8 bytes
+    (func $alloc (param $n i32) (result i32) (local $c i32) (local $p i32) (local $need i32)
+      i32.const 32
+      local.get $n
+      i32.const 7
+      i32.add
+      i32.clz
+      i32.sub
+      local.tee $c
+      i32.const 4
+      i32.lt_u
+      if
+        i32.const 4
+        local.set $c
+      end
+      global.get $live
+      i64.const 1
+      i64.add
+      global.set $live
+      global.get $total
+      i64.const 1
+      i64.add
+      global.set $total
+      local.get $c
+      i32.const 2
+      i32.shl
+      i32.load offset=256
+      local.tee $p
+      if
+        local.get $c
+        i32.const 2
+        i32.shl
+        local.get $p
+        i32.load offset=4
+        i32.store offset=256
+        local.get $p
+        i32.const 8
+        i32.add
+        return
+      end
+      global.get $hp
+      local.tee $p
+      i32.const 1
+      local.get $c
+      i32.shl
+      i32.add
+      local.set $need
+      block $ok
+        loop $grow
+          local.get $need
+          memory.size
+          i32.const 16
+          i32.shl
+          i32.le_u
+          br_if $ok
+          memory.size
+          i32.const 1
+          i32.add
+          memory.grow
+          i32.const -1
+          i32.eq
+          if
+            call $oom
+          end
+          br $grow
+        end
+      end
+      local.get $need
+      global.set $hp
+      local.get $p
+      local.get $c
+      i32.store
+      local.get $p
+      i32.const 8
+      i32.add)
+
+    (func $free (param $p i32) (local $b i32) (local $c i32)
+      local.get $p
+      i32.const 8
+      i32.sub
+      local.tee $b
+      i32.load
+      local.set $c
+      local.get $b
+      local.get $c
+      i32.const 2
+      i32.shl
+      i32.load offset=256
+      i32.store offset=4
+      local.get $c
+      i32.const 2
+      i32.shl
+      local.get $b
+      i32.store offset=256
+      global.get $live
+      i64.const 1
+      i64.sub
+      global.set $live)
+
+    (func $oom
+      i32.const 2
+      ${oom}
+      call $write
+      i32.const 2
+      call $proc_exit)
+
+    ;; reference counts: positive counts, the i32 minimum immortal
+    (func $rc_inc (param $p i32) (local $c i32)
+      local.get $p
+      i32.load
+      local.tee $c
+      i32.const 0
+      i32.gt_s
+      if
+        local.get $p
+        local.get $c
+        i32.const 1
+        i32.add
+        i32.store
+      end)
+
+    ;; 1 when p loses its last reference (the caller frees it)
+    (func $rc_dec (param $p i32) (result i32) (local $c i32)
+      local.get $p
+      i32.load
+      local.tee $c
+      i32.const 1
+      i32.eq
+      if
+        i32.const 1
+        return
+      end
+      local.get $c
+      i32.const 1
+      i32.gt_s
+      if
+        local.get $p
+        local.get $c
+        i32.const 1
+        i32.sub
+        i32.store
+      end
+      i32.const 0)
+
+    ;; strings: an object {rc, cap, bytes}; a Str is the object and a length
+    (func $rs_new (param $n i32) (result i32) (local $s i32)
+      local.get $n
+      i32.const 8
+      i32.add
+      call $alloc
+      local.tee $s
+      i32.const 1
+      i32.store
+      local.get $s
+      local.get $n
+      i32.store offset=4
+      local.get $s)
+
+    ;; appends n bytes at p to a (of length an), consuming a: in place when
+    ;; a is unique (growing it by doubling), else into a new string
+    (func $rs_append (param $a i32) (param $an i32) (param $p i32) (param $n i32) (result i32)
+      (local $need i32) (local $s i32) (local $c i32) (local $cap i32)
+      local.get $an
+      local.get $n
+      i32.add
+      local.set $need
+      local.get $a
+      i32.load
+      i32.const 1
+      i32.eq
+      if
+        local.get $a
+        i32.load offset=4
+        local.get $need
+        i32.lt_u
+        if
+          local.get $a
+          i32.load offset=4
+          i32.const 1
+          i32.shl
+          local.tee $cap
+          local.get $need
+          i32.lt_u
+          if
+            local.get $need
+            local.set $cap
+          end
+          local.get $cap
+          call $rs_new
+          local.set $s
+          local.get $s
+          i32.const 8
+          i32.add
+          local.get $a
+          i32.const 8
+          i32.add
+          local.get $an
+          memory.copy
+          local.get $a
+          call $free
+          local.get $s
+          local.set $a
+        end
+        local.get $a
+        i32.const 8
+        i32.add
+        local.get $an
+        i32.add
+        local.get $p
+        local.get $n
+        memory.copy
+        local.get $a
+        return
+      end
+      local.get $need
+      i32.const 16
+      local.get $need
+      i32.const 16
+      i32.gt_u
+      select
+      call $rs_new
+      local.set $s
+      local.get $s
+      i32.const 8
+      i32.add
+      local.get $a
+      i32.const 8
+      i32.add
+      local.get $an
+      memory.copy
+      local.get $s
+      i32.const 8
+      i32.add
+      local.get $an
+      i32.add
+      local.get $p
+      local.get $n
+      memory.copy
+      ;; a loses the reference the caller gave up (it has others, or it
+      ;; is immortal)
+      local.get $a
+      i32.load
+      local.tee $c
+      i32.const 1
+      i32.gt_s
+      if
+        local.get $a
+        local.get $c
+        i32.const 1
+        i32.sub
+        i32.store
+      end
+      local.get $s)
+
+    ;; a Str and bytes appended: the new Str
+    (func $sapp (param $a i32) (param $an i32) (param $p i32) (param $n i32) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $p
+      local.get $n
+      call $rs_append
+      local.get $an
+      local.get $n
+      i32.add)
+
+    ;; the decimal text of v in the scratch memory: its address and length
+    (func $fmt_int (param $v i64) (result i32 i32) (local $u i64) (local $pos i32)
+      i32.const 48
+      local.set $pos
+      local.get $v
+      local.set $u
+      local.get $v
+      i64.const 0
+      i64.lt_s
+      if
+        i64.const 0
+        local.get $v
+        i64.sub
+        local.set $u
+      end
+      loop $d
+        local.get $pos
+        i32.const 1
+        i32.sub
+        local.tee $pos
+        local.get $u
+        i64.const 10
+        i64.rem_u
+        i32.wrap_i64
+        i32.const 48
+        i32.add
+        i32.store8
+        local.get $u
+        i64.const 10
+        i64.div_u
+        local.tee $u
+        i64.const 0
+        i64.ne
+        br_if $d
+      end
+      local.get $v
+      i64.const 0
+      i64.lt_s
+      if
+        local.get $pos
+        i32.const 1
+        i32.sub
+        local.tee $pos
+        i32.const 45
+        i32.store8
+      end
+      local.get $pos
+      i32.const 48
+      local.get $pos
+      i32.sub)
+
+    (func $sapp_int (param $a i32) (param $an i32) (param $v i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $v
+      call $fmt_int
+      call $sapp)
+
+    (func $sapp_byte (param $a i32) (param $an i32) (param $c i32) (result i32 i32)
+      i32.const 47
+      local.get $c
+      i32.store8
+      local.get $a
+      local.get $an
+      i32.const 47
+      i32.const 1
+      call $sapp)
+
+    (func $of_int (param $v i64) (result i32 i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $v
+      call $sapp_int)
+
+    (func $str_eq (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (result i32) (local $i i32)
+      local.get $an
+      local.get $bn
+      i32.ne
+      if
+        i32.const 0
+        return
+      end
+      local.get $a
+      local.get $b
+      i32.eq
+      if
+        i32.const 1
+        return
+      end
+      block $x
+        loop $l
+          local.get $i
+          local.get $an
+          i32.ge_u
+          br_if $x
+          local.get $a
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.get $b
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          i32.ne
+          if
+            i32.const 0
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const 1)
+
+    (func $str_cmp (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (result i64)
+      (local $i i32) (local $n i32) (local $x i32) (local $y i32)
+      local.get $an
+      local.get $bn
+      local.get $an
+      local.get $bn
+      i32.lt_u
+      select
+      local.set $n
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $a
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.set $x
+          local.get $b
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.set $y
+          local.get $x
+          local.get $y
+          i32.ne
+          if
+            i64.const -1
+            i64.const 1
+            local.get $x
+            local.get $y
+            i32.lt_u
+            select
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $an
+      local.get $bn
+      i32.lt_u
+      if
+        i64.const -1
+        return
+      end
+      local.get $an
+      local.get $bn
+      i32.gt_u
+      i64.extend_i32_u)
+
+    ;; output: every byte, through fd_write
+    (func $write (param $fd i32) (param $p i32) (param $n i32)
+      block $done
+        loop $w
+          local.get $n
+          i32.eqz
+          br_if $done
+          i32.const 0
+          local.get $p
+          i32.store
+          i32.const 4
+          local.get $n
+          i32.store
+          local.get $fd
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_write
+          br_if $done
+          local.get $p
+          i32.const 8
+          i32.load
+          i32.add
+          local.set $p
+          local.get $n
+          i32.const 8
+          i32.load
+          i32.sub
+          local.set $n
+          br $w
+        end
+      end)
+
+    (func $print (param $s i32) (param $n i32)
+      i32.const 1
+      local.get $s
+      i32.const 8
+      i32.add
+      local.get $n
+      call $write)
+
+    (func $println (param $s i32) (param $n i32)
+      local.get $s
+      local.get $n
+      call $print
+      i32.const 1
+      ${nl}
+      call $write)
+
+    (func $eprint (param $s i32) (param $n i32)
+      i32.const 2
+      local.get $s
+      i32.const 8
+      i32.add
+      local.get $n
+      call $write)
+
+    (func $eprintln (param $s i32) (param $n i32)
+      local.get $s
+      local.get $n
+      call $eprint
+      i32.const 2
+      ${nl}
+      call $write)
+
+    (func $exit (param $code i32)
+      local.get $code
+      call $proc_exit)
+
+    (func $flush_exit0
+      i32.const 0
+      call $proc_exit)
+
+    ;; faults: the message (a string object the runtime keeps) and the
+    ;; position, reported when the fault leaves main
+    (func $fault_set (param $m i32) (param $mn i32) (param $lp i32) (param $ln i32)
+      local.get $m
+      global.set $fmsg
+      local.get $mn
+      global.set $fmsgn
+      local.get $lp
+      global.set $floc
+      local.get $ln
+      global.set $flocn
+      i32.const 1
+      global.set $faulting)
+
+    ;; a copy of the Str s, kept with the fault
+    (func $str_copy (param $s i32) (param $n i32) (result i32 i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $s
+      i32.const 8
+      i32.add
+      local.get $n
+      call $sapp)
+
+    ;; `fault(msg)` (OpFault) at the literal position lp
+    (func $fault_str (param $s i32) (param $n i32) (param $lp i32) (param $ln i32)
+      local.get $s
+      local.get $n
+      call $str_copy
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    ;; rt.fault_raise: the message and the position are Strs
+    (func $fault_raise (param $s i32) (param $n i32) (param $l i32) (param $ln i32)
+      local.get $s
+      local.get $n
+      call $str_copy
+      local.get $l
+      local.get $ln
+      call $str_copy
+      drop
+      i32.const 8
+      i32.add
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_report
+      i32.const 2
+      ${fault}
+      call $write
+      i32.const 2
+      global.get $fmsg
+      i32.const 8
+      i32.add
+      global.get $fmsgn
+      call $write
+      i32.const 2
+      ${at}
+      call $write
+      i32.const 2
+      global.get $floc
+      global.get $flocn
+      call $write
+      i32.const 2
+      ${nl}
+      call $write
+      i32.const 70
+      call $proc_exit)
+
+    (func $fault_overflow (param $a i64) (param $op i32) (param $b i64) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${ovf}
+      call $sapp
+      local.get $a
+      call $sapp_int
+      i32.const 32
+      call $sapp_byte
+      local.get $op
+      call $sapp_byte
+      i32.const 32
+      call $sapp_byte
+      local.get $b
+      call $sapp_int
+      ${dnf}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_shl (param $a i64) (param $b i64) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${ovf}
+      call $sapp
+      local.get $a
+      call $sapp_int
+      ${shl}
+      call $sapp
+      local.get $b
+      call $sapp_int
+      ${dnf}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_shift (param $n i64) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${shift}
+      call $sapp
+      local.get $n
+      call $sapp_int
+      ${oor}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_divzero (param $a i64) (param $op i32) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${divz}
+      call $sapp
+      local.get $a
+      call $sapp_int
+      i32.const 32
+      call $sapp_byte
+      local.get $op
+      call $sapp_byte
+      ${zero}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_neg (param $a i64) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${negp}
+      call $sapp
+      local.get $a
+      call $sapp_int
+      ${close}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_abs (param $a i64) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${absp}
+      call $sapp
+      local.get $a
+      call $sapp_int
+      ${close}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    (func $fault_index (param $i i64) (param $n i64) (param $what i32) (param $lp i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${index}
+      call $sapp
+      local.get $i
+      call $sapp_int
+      i32.const ${lofb_a}
+      i32.const ${lofl_a}
+      local.get $what
+      select
+      i32.const ${lofb_n}
+      i32.const ${lofl_n}
+      local.get $what
+      select
+      call $sapp
+      local.get $n
+      call $sapp_int
+      local.get $lp
+      local.get $ln
+      call $fault_set)
+
+    ;; checked arithmetic (Int, with a fault position): the result, or 0
+    ;; after a fault (the caller tests the flag)
+    (func $add_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64) (local $r i64)
+      local.get $a
+      local.get $b
+      i64.add
+      local.set $r
+      local.get $a
+      local.get $r
+      i64.xor
+      local.get $b
+      local.get $r
+      i64.xor
+      i64.and
+      i64.const 0
+      i64.lt_s
+      if
+        local.get $a
+        i32.const 43
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_overflow
+      end
+      local.get $r)
+
+    (func $sub_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64) (local $r i64)
+      local.get $a
+      local.get $b
+      i64.sub
+      local.set $r
+      local.get $a
+      local.get $b
+      i64.xor
+      local.get $a
+      local.get $r
+      i64.xor
+      i64.and
+      i64.const 0
+      i64.lt_s
+      if
+        local.get $a
+        i32.const 45
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_overflow
+      end
+      local.get $r)
+
+    (func $mul_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64) (local $r i64)
+      local.get $a
+      local.get $b
+      i64.mul
+      local.set $r
+      local.get $a
+      i64.eqz
+      if
+        local.get $r
+        return
+      end
+      local.get $a
+      i64.const -1
+      i64.eq
+      if
+        local.get $b
+        i64.const ${MIN_INT}
+        i64.eq
+        if
+          local.get $a
+          i32.const 42
+          local.get $b
+          local.get $lp
+          local.get $ln
+          call $fault_overflow
+        end
+        local.get $r
+        return
+      end
+      local.get $r
+      local.get $a
+      i64.div_s
+      local.get $b
+      i64.ne
+      if
+        local.get $a
+        i32.const 42
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_overflow
+      end
+      local.get $r)
+
+    (func $div_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $b
+      i64.eqz
+      if
+        local.get $a
+        i32.const 47
+        local.get $lp
+        local.get $ln
+        call $fault_divzero
+        i64.const 0
+        return
+      end
+      local.get $b
+      i64.const -1
+      i64.eq
+      local.get $a
+      i64.const ${MIN_INT}
+      i64.eq
+      i32.and
+      if
+        local.get $a
+        i32.const 47
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_overflow
+        i64.const 0
+        return
+      end
+      local.get $a
+      local.get $b
+      i64.div_s)
+
+    (func $rem_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $b
+      i64.eqz
+      if
+        local.get $a
+        i32.const 37
+        local.get $lp
+        local.get $ln
+        call $fault_divzero
+        i64.const 0
+        return
+      end
+      local.get $b
+      i64.const -1
+      i64.eq
+      if
+        i64.const 0
+        return
+      end
+      local.get $a
+      local.get $b
+      i64.rem_s)
+
+    (func $neg_chk (param $a i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $a
+      i64.const ${MIN_INT}
+      i64.eq
+      if
+        local.get $a
+        local.get $lp
+        local.get $ln
+        call $fault_neg
+        i64.const 0
+        return
+      end
+      i64.const 0
+      local.get $a
+      i64.sub)
+
+    (func $abs_chk (param $a i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $a
+      i64.const ${MIN_INT}
+      i64.eq
+      if
+        local.get $a
+        local.get $lp
+        local.get $ln
+        call $fault_abs
+        i64.const 0
+        return
+      end
+      i64.const 0
+      local.get $a
+      i64.sub
+      local.get $a
+      local.get $a
+      i64.const 0
+      i64.lt_s
+      select)
+
+    (func $shl_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64) (local $r i64)
+      local.get $b
+      i64.const 64
+      i64.ge_u
+      if
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_shift
+        i64.const 0
+        return
+      end
+      local.get $a
+      local.get $b
+      i64.shl
+      local.tee $r
+      local.get $b
+      i64.shr_s
+      local.get $a
+      i64.ne
+      if
+        local.get $a
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_shl
+      end
+      local.get $r)
+
+    (func $shr_chk (param $a i64) (param $b i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $b
+      i64.const 64
+      i64.ge_u
+      if
+        local.get $b
+        local.get $lp
+        local.get $ln
+        call $fault_shift
+        i64.const 0
+        return
+      end
+      local.get $a
+      local.get $b
+      i64.shr_s)
+
+    ;; b[i] on Bytes, checked
+    (func $bidx_chk (param $s i32) (param $n i32) (param $i i64) (param $lp i32) (param $ln i32) (result i64)
+      local.get $i
+      local.get $n
+      i64.extend_i32_u
+      i64.ge_u
+      if
+        local.get $i
+        local.get $n
+        i64.extend_i32_u
+        i32.const 1
+        local.get $lp
+        local.get $ln
+        call $fault_index
+        i64.const 0
+        return
+      end
+      local.get $s
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      i64.load8_u offset=8)
+
+    ;; the total order of Floats (decision 0053): NaN after every other
+    ;; value and equal to NaN
+    (func $flt (param $a f64) (param $b f64) (result i32)
+      local.get $a
+      local.get $b
+      f64.ge
+      i32.eqz
+      local.get $a
+      local.get $a
+      f64.eq
+      i32.and)
+
+    (func $fgt (param $a f64) (param $b f64) (result i32)
+      local.get $a
+      local.get $b
+      f64.le
+      i32.eqz
+      local.get $b
+      local.get $b
+      f64.eq
+      i32.and)
+
+    (func $fle (param $a f64) (param $b f64) (result i32)
+      local.get $a
+      local.get $b
+      f64.le
+      local.get $b
+      local.get $b
+      f64.ne
+      i32.or)
+
+    (func $fge (param $a f64) (param $b f64) (result i32)
+      local.get $a
+      local.get $b
+      f64.ge
+      local.get $a
+      local.get $a
+      f64.ne
+      i32.or)
+
+    ;; min is `b < a ? b : a`, max `a < b ? b : a` (the receiver on a tie)
+    (func $fmin (param $a f64) (param $b f64) (result f64)
+      local.get $b
+      local.get $a
+      local.get $b
+      local.get $a
+      call $flt
+      select)
+
+    (func $fmax (param $a f64) (param $b f64) (result f64)
+      local.get $b
+      local.get $a
+      local.get $a
+      local.get $b
+      call $flt
+      select)
+
+    ;; half away from zero
+    (func $fround (param $x f64) (result f64) (local $t f64)
+      local.get $x
+      f64.trunc
+      local.set $t
+      local.get $x
+      local.get $t
+      f64.sub
+      f64.abs
+      i64.const 4602678819172646912
+      f64.reinterpret_i64
+      f64.ge
+      if
+        local.get $t
+        i64.const 4607182418800017408
+        f64.reinterpret_i64
+        local.get $x
+        f64.copysign
+        f64.add
+        return
+      end
+      local.get $t)
+
+    ;; lists: an object {rc, len, cap, pad, elements}
+    (func $rl_new (param $cap i32) (param $es i32) (result i32) (local $p i32)
+      local.get $cap
+      local.get $es
+      i32.mul
+      i32.const 16
+      i32.add
+      call $alloc
+      local.tee $p
+      i32.const 1
+      i32.store
+      local.get $p
+      i32.const 0
+      i32.store offset=4
+      local.get $p
+      local.get $cap
+      i32.store offset=8
+      local.get $p)
+
+    (func $rl_new_n (param $n i32) (param $es i32) (result i32)
+      local.get $n
+      i32.const 4
+      local.get $n
+      i32.const 4
+      i32.gt_s
+      select
+      local.get $es
+      call $rl_new)
+
+    ;; doubles the capacity of a unique full list
+    (func $rl_grow (param $p i32) (param $es i32) (result i32) (local $cap i32) (local $q i32)
+      local.get $p
+      i32.load offset=8
+      i32.const 1
+      i32.shl
+      local.tee $cap
+      i32.const 4
+      local.get $cap
+      i32.const 4
+      i32.gt_u
+      select
+      local.tee $cap
+      local.get $es
+      i32.mul
+      i32.const 16
+      i32.add
+      call $alloc
+      local.tee $q
+      local.get $p
+      local.get $p
+      i32.load offset=4
+      local.get $es
+      i32.mul
+      i32.const 16
+      i32.add
+      memory.copy
+      local.get $q
+      local.get $cap
+      i32.store offset=8
+      local.get $p
+      call $free
+      local.get $q)
+
+    ;; room for one more element of a unique list: the list (grown when
+    ;; full, its length counted) and the address of the new slot
+    (func $rl_slot (param $p i32) (param $es i32) (result i32 i32) (local $n i32)
+      local.get $p
+      i32.load offset=4
+      local.tee $n
+      local.get $p
+      i32.load offset=8
+      i32.eq
+      if
+        local.get $p
+        local.get $es
+        call $rl_grow
+        local.set $p
+      end
+      local.get $p
+      local.get $n
+      i32.const 1
+      i32.add
+      i32.store offset=4
+      local.get $p
+      local.get $p
+      i32.const 16
+      i32.add
+      local.get $n
+      local.get $es
+      i32.mul
+      i32.add)
+
+    ;; the prelude's Str operations (std/llrt xo_std.c): operands are
+    ;; borrowed, a Str result is new
+    (func $str_slice (param $o i32) (param $n i32) (param $lo i64) (param $hi i64) (result i32 i32)
+      local.get $lo
+      i64.const 0
+      i64.lt_s
+      if
+        i64.const 0
+        local.set $lo
+      end
+      local.get $hi
+      local.get $n
+      i64.extend_i32_u
+      i64.gt_s
+      if
+        local.get $n
+        i64.extend_i32_u
+        local.set $hi
+      end
+      local.get $hi
+      local.get $lo
+      i64.lt_s
+      if
+        local.get $lo
+        local.set $hi
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $lo
+      i32.wrap_i64
+      i32.add
+      local.get $hi
+      local.get $lo
+      i64.sub
+      i32.wrap_i64
+      call $sapp)
+
+    ;; whether the m bytes at q are at p
+    (func $mem_at (param $p i32) (param $q i32) (param $m i32) (result i32) (local $i i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $m
+          i32.ge_u
+          br_if $x
+          local.get $p
+          local.get $i
+          i32.add
+          i32.load8_u
+          local.get $q
+          local.get $i
+          i32.add
+          i32.load8_u
+          i32.ne
+          if
+            i32.const 0
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const 1)
+
+    (func $str_starts_with (param $o i32) (param $n i32) (param $q i32) (param $m i32) (result i32)
+      local.get $m
+      local.get $n
+      i32.gt_u
+      if
+        i32.const 0
+        return
+      end
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $q
+      i32.const 8
+      i32.add
+      local.get $m
+      call $mem_at)
+
+    (func $str_ends_with (param $o i32) (param $n i32) (param $q i32) (param $m i32) (result i32)
+      local.get $m
+      local.get $n
+      i32.gt_u
+      if
+        i32.const 0
+        return
+      end
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $n
+      i32.add
+      local.get $m
+      i32.sub
+      local.get $q
+      i32.const 8
+      i32.add
+      local.get $m
+      call $mem_at)
+
+    (func $str_contains (param $o i32) (param $n i32) (param $q i32) (param $m i32) (result i32) (local $i i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $m
+          i32.add
+          local.get $n
+          i32.gt_u
+          br_if $x
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.get $q
+          i32.const 8
+          i32.add
+          local.get $m
+          call $mem_at
+          if
+            i32.const 1
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const 0)
+
+    (func $str_repeat (param $o i32) (param $n i32) (param $k i64) (result i32 i32) (local $s i32) (local $sn i32)
+      i32.const 0
+      call $rs_new
+      local.set $s
+      block $x
+        loop $l
+          local.get $k
+          i64.const 0
+          i64.le_s
+          br_if $x
+          local.get $s
+          local.get $sn
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $n
+          call $sapp
+          local.set $sn
+          local.set $s
+          local.get $k
+          i64.const 1
+          i64.sub
+          local.set $k
+          br $l
+        end
+      end
+      local.get $s
+      local.get $sn)
+
+    ;; the elements of a List[Str] (slots of 8 bytes: object, length)
+    ;; joined with sep
+    (func $str_join (param $l i32) (param $so i32) (param $sn i32) (result i32 i32) (local $s i32) (local $n i32) (local $i i32) (local $e i32)
+      i32.const 0
+      call $rs_new
+      local.set $s
+      block $x
+        loop $lp
+          local.get $i
+          local.get $l
+          i32.load offset=4
+          i32.ge_u
+          br_if $x
+          local.get $i
+          if
+            local.get $s
+            local.get $n
+            local.get $so
+            i32.const 8
+            i32.add
+            local.get $sn
+            call $sapp
+            local.set $n
+            local.set $s
+          end
+          local.get $l
+          i32.const 16
+          i32.add
+          local.get $i
+          i32.const 16
+          i32.mul
+          i32.add
+          local.set $e
+          local.get $s
+          local.get $n
+          local.get $e
+          i32.load
+          i32.const 8
+          i32.add
+          local.get $e
+          i32.load offset=8
+          call $sapp
+          local.set $n
+          local.set $s
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $lp
+        end
+      end
+      local.get $s
+      local.get $n)
+
+    ;; whether the byte at p continues a UTF-8 sequence
+    (func $cont (param $p i32) (result i32)
+      local.get $p
+      i32.load8_u
+      i32.const 192
+      i32.and
+      i32.const 128
+      i32.eq)
+
+    ;; the size of the valid UTF-8 sequence of at least two bytes at p (n
+    ;; bytes left), 0 when invalid (Go's utf8.DecodeRune)
+    (func $utf8_size (param $p i32) (param $n i32) (result i32) (local $b0 i32) (local $b1 i32) (local $lo i32) (local $hi i32)
+      local.get $p
+      i32.load8_u
+      local.set $b0
+      local.get $b0
+      i32.const 194
+      i32.lt_u
+      local.get $b0
+      i32.const 245
+      i32.ge_u
+      i32.or
+      local.get $n
+      i32.const 2
+      i32.lt_u
+      i32.or
+      if
+        i32.const 0
+        return
+      end
+      local.get $p
+      i32.load8_u offset=1
+      local.set $b1
+      local.get $b0
+      i32.const 224
+      i32.lt_u
+      if
+        local.get $p
+        i32.const 1
+        i32.add
+        call $cont
+        i32.const 1
+        i32.shl
+        return
+      end
+      i32.const 128
+      local.set $lo
+      i32.const 191
+      local.set $hi
+      local.get $b0
+      i32.const 224
+      i32.eq
+      if
+        i32.const 160
+        local.set $lo
+      end
+      local.get $b0
+      i32.const 237
+      i32.eq
+      if
+        i32.const 159
+        local.set $hi
+      end
+      local.get $b0
+      i32.const 240
+      i32.eq
+      if
+        i32.const 144
+        local.set $lo
+      end
+      local.get $b0
+      i32.const 244
+      i32.eq
+      if
+        i32.const 143
+        local.set $hi
+      end
+      local.get $b1
+      local.get $lo
+      i32.lt_u
+      local.get $b1
+      local.get $hi
+      i32.gt_u
+      i32.or
+      local.get $n
+      i32.const 3
+      i32.lt_u
+      i32.or
+      if
+        i32.const 0
+        return
+      end
+      local.get $p
+      i32.const 2
+      i32.add
+      call $cont
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $b0
+      i32.const 240
+      i32.lt_u
+      if
+        i32.const 3
+        return
+      end
+      local.get $n
+      i32.const 4
+      i32.lt_u
+      if
+        i32.const 0
+        return
+      end
+      local.get $p
+      i32.const 3
+      i32.add
+      call $cont
+      i32.const 2
+      i32.shl)
+
+    (func $str_rune_count (param $o i32) (param $n i32) (result i64) (local $i i32) (local $c i64) (local $sz i32) (local $p i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          i32.const 1
+          local.set $sz
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.tee $p
+          i32.load8_u
+          i32.const 128
+          i32.ge_u
+          if
+            local.get $p
+            local.get $n
+            local.get $i
+            i32.sub
+            call $utf8_size
+            local.tee $sz
+            i32.eqz
+            if
+              i32.const 1
+              local.set $sz
+            end
+          end
+          local.get $i
+          local.get $sz
+          i32.add
+          local.set $i
+          local.get $c
+          i64.const 1
+          i64.add
+          local.set $c
+          br $l
+        end
+      end
+      local.get $c)
+
+    (func $hexd (param $d i32) (result i32)
+      local.get $d
+      i32.const 48
+      i32.add
+      local.get $d
+      i32.const 87
+      i32.add
+      local.get $d
+      i32.const 10
+      i32.lt_u
+      select)
+
+    ;; a + b in double quotes with the escapes of Debug of a Str
+    ;; (xo_rs_append_quote; consumes a, borrows b)
+    (func $rs_append_quote (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (result i32 i32)
+      (local $i i32) (local $c i32) (local $sz i32) (local $p i32)
+      local.get $a
+      local.get $an
+      i32.const 34
+      call $sapp_byte
+      local.set $an
+      local.set $a
+      block $x
+        loop $l
+          local.get $i
+          local.get $bn
+          i32.ge_u
+          br_if $x
+          local.get $b
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.tee $p
+          i32.load8_u
+          local.set $c
+          i32.const 1
+          local.set $sz
+          block $done
+            local.get $c
+            i32.const 128
+            i32.ge_u
+            if
+              local.get $p
+              local.get $bn
+              local.get $i
+              i32.sub
+              call $utf8_size
+              local.tee $sz
+              i32.eqz
+              local.get $sz
+              i32.const 3
+              i32.eq
+              local.get $c
+              i32.const 239
+              i32.eq
+              i32.and
+              local.get $p
+              i32.load8_u offset=1
+              i32.const 191
+              i32.eq
+              i32.and
+              local.get $p
+              i32.load8_u offset=2
+              i32.const 189
+              i32.eq
+              i32.and
+              i32.or
+              if
+                local.get $sz
+                i32.eqz
+                if
+                  i32.const 1
+                  local.set $sz
+                end
+                local.get $a
+                local.get $an
+                ${fffd}
+                call $sapp
+                local.set $an
+                local.set $a
+                br $done
+              end
+              local.get $a
+              local.get $an
+              local.get $p
+              local.get $sz
+              call $sapp
+              local.set $an
+              local.set $a
+              br $done
+            end
+            local.get $c
+            i32.const 34
+            i32.eq
+            local.get $c
+            i32.const 92
+            i32.eq
+            i32.or
+            if
+              local.get $a
+              local.get $an
+              i32.const 92
+              call $sapp_byte
+              local.get $c
+              call $sapp_byte
+              local.set $an
+              local.set $a
+              br $done
+            end
+            local.get $c
+            i32.const 10
+            i32.eq
+            local.get $c
+            i32.const 9
+            i32.eq
+            i32.or
+            local.get $c
+            i32.const 13
+            i32.eq
+            i32.or
+            local.get $c
+            i32.eqz
+            i32.or
+            if
+              local.get $a
+              local.get $an
+              i32.const 92
+              call $sapp_byte
+              i32.const 110
+              local.set $p
+              local.get $c
+              i32.const 9
+              i32.eq
+              if
+                i32.const 116
+                local.set $p
+              end
+              local.get $c
+              i32.const 13
+              i32.eq
+              if
+                i32.const 114
+                local.set $p
+              end
+              local.get $c
+              i32.eqz
+              if
+                i32.const 48
+                local.set $p
+              end
+              local.get $p
+              call $sapp_byte
+              local.set $an
+              local.set $a
+              br $done
+            end
+            local.get $c
+            i32.const 32
+            i32.lt_u
+            local.get $c
+            i32.const 127
+            i32.eq
+            i32.or
+            if
+              local.get $a
+              local.get $an
+              i32.const 92
+              call $sapp_byte
+              i32.const 120
+              call $sapp_byte
+              local.get $c
+              i32.const 4
+              i32.shr_u
+              call $hexd
+              call $sapp_byte
+              local.get $c
+              i32.const 15
+              i32.and
+              call $hexd
+              call $sapp_byte
+              local.set $an
+              local.set $a
+              br $done
+            end
+            local.get $a
+            local.get $an
+            local.get $c
+            call $sapp_byte
+            local.set $an
+            local.set $a
+          end
+          local.get $i
+          local.get $sz
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $a
+      local.get $an
+      i32.const 34
+      call $sapp_byte)
+
+    (func $elem (param $p i32) (param $i i64) (param $es i32) (result i32)
+      local.get $p
+      i32.const 16
+      i32.add
+      local.get $i
+      i32.wrap_i64
+      local.get $es
+      i32.mul
+      i32.add)
+
+    (func $idx_chk (param $p i32) (param $i i64) (param $es i32) (param $lp i32) (param $ln i32) (result i32)
+      local.get $i
+      local.get $p
+      i32.load offset=4
+      i64.extend_i32_u
+      i64.ge_u
+      if
+        local.get $i
+        local.get $p
+        i32.load offset=4
+        i64.extend_i32_u
+        i32.const 0
+        local.get $lp
+        local.get $ln
+        call $fault_index
+        i32.const 0
+        return
+      end
+      local.get $p
+      local.get $i
+      local.get $es
+      call $elem)
+
+  """
+}
