@@ -243,7 +243,7 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
-  for sym in ["xo_str_trim", "xo_str_split", "xo_str_lines", "xo_str_replace"] {
+  for sym in ["xo_str_trim", "xo_str_replace"] {
     if code.contains(sym) {
       out.push("-DXO_STRINGS_C")
       break

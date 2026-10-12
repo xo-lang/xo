@@ -336,7 +336,7 @@ func IOFlags(code []byte) []string {
 		}
 	}
 	// and of the Str operations (decision 0193, XO_LLRT_C=strings)
-	for _, sym := range []string{"xo_str_trim", "xo_str_split", "xo_str_lines", "xo_str_replace"} {
+	for _, sym := range []string{"xo_str_trim", "xo_str_replace"} {
 		if bytes.Contains(code, []byte(sym)) {
 			out = append(out, "-DXO_STRINGS_C")
 			break

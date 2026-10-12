@@ -57,10 +57,9 @@ func TestIOFlagsStringsC(t *testing.T) {
 		code string
 		want bool
 	}{
-		{"bl _xo_str_split\n", true},
 		{"call ptr @xo_str_trim(ptr %1, i64 %2, i64 0, ptr %3)\n", true},
-		{"bl _xo_str_lines\nbl _xo_str_replace\n", true},
-		{"bl _xo_str_find\nbl _xo_str_slice\nbl _xo_str_repeat\nbl _xo_str_join\nbl _xo_str_rune_count\n", false},
+		{"bl _xo_str_replace\n", true},
+		{"bl _xo_str_find\nbl _xo_str_slice\nbl _xo_str_split\nbl _xo_str_lines\nbl _xo_str_repeat\nbl _xo_str_join\nbl _xo_str_rune_count\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_STRINGS_C")
 		if got != c.want {

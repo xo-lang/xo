@@ -24,16 +24,25 @@ const HEX: Bytes = b"0123456789abcdef"
 // ---------------------------------------------------------------------------
 // Words of text
 
-/// The k (1 to 8) low decimal digits of v (0 <= v) as ASCII in a word,
-/// the first digit in the low byte, zero padded.
+/// The two digit decimal numbers 00 to 99, two bytes each.
+const PAIRS: Bytes = b"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+
+/// The k (0 to 8) low decimal digits of v (0 <= v) as ASCII in a word,
+/// the first digit in the low byte, zero padded: two digits a step (from
+/// PAIRS, the tens in the lower byte), and the odd first digit last.
 fn digits_word(v: Int, k: Int) -> Int {
   var w = 0
   var x = v
-  var i = 0
-  while i < k {
+  var i = k
+  while i >= 2 {
+    let q = x / 100
+    let r = (x - q * 100) * 2
+    w = (w << 16) | Int(PAIRS[r]) | (Int(PAIRS[r + 1]) << 8)
+    x = q
+    i -= 2
+  }
+  if i == 1 {
     w = (w << 8) | (48 + x % 10)
-    x = x / 10
-    i += 1
   }
   w
 }

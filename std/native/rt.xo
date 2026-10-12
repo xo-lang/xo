@@ -16,9 +16,6 @@ fn str_starts_with(s: Str, p: Str) -> Bool
 fn str_ends_with(s: Str, p: Str) -> Bool
 /// The byte index of the first sub at or after from, or -1.
 fn str_find(s: Str, sub: Str, from: Int) -> Int
-/// The byte index of the first byte c (0 to 255) at or after from, or -1
-/// (memchr; decision 0193).
-fn str_index_byte(s: Str, c: Int, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 /// The byte at i (0 to 255), or -1 out of range.

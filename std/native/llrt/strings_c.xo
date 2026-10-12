@@ -8,15 +8,9 @@
 use native/llrt/unicode
 use native/rt
 
-pub fn split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
-
-pub fn lines(s: Str) -> List[Str] { rt.str_lines(s) }
-
 pub fn replace(s: Str, old: Str, new: Str) -> Str { rt.str_replace(s, old, new) }
 
 pub fn trim(s: Str, mode: Int) -> Str { rt.str_trim(s, mode) }
-
-pub fn rune_count(s: Str) -> Int { rt.str_rune_count(s) }
 
 /// Whether the rune r is white space (unicode.IsSpace).
 fn is_space(r: Int) -> Bool {

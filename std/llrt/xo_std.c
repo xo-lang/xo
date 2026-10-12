@@ -328,20 +328,6 @@ int64_t xo_str_find(const char *p, int64_t n, const char *q, int64_t m, int64_t 
 	return i < 0 ? -1 : i + from;
 }
 
-// xo_str_index_byte is the index of the first byte c of s at or after
-// from, or -1 (memchr): the line and one byte separator searches of
-// std/native/llrt/strings.xo (decision 0193).
-int64_t xo_str_index_byte(const char *p, int64_t n, int64_t c, int64_t from) {
-	if (from < 0) {
-		from = 0;
-	}
-	if (from >= n) {
-		return -1;
-	}
-	const char *r = memchr(p + from, (int)c, (size_t)(n - from));
-	return r ? r - p : -1;
-}
-
 xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t *len) {
 	if (lo < 0) {
 		lo = 0;
@@ -443,9 +429,6 @@ static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n) {
 	return l;
 }
 
-#ifdef XO_STRINGS_C
-// the C path of the Str operations (decision 0193): only
-// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
 // xo_str_split is strings.Split: an empty separator splits into UTF-8
 // sequences (an invalid byte alone).
 xo_rlist *xo_str_split(const char *p, int64_t n, const char *q, int64_t m) {
@@ -471,12 +454,8 @@ xo_rlist *xo_str_split(const char *p, int64_t n, const char *q, int64_t m) {
 	}
 	return n_str_list_add(l, p + start, n - start);
 }
-#endif
 
 
-#ifdef XO_STRINGS_C
-// the C path of the Str operations (decision 0193): only
-// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
 // xo_str_lines splits on \n and strips a trailing \r; a final newline
 // gives no empty last line.
 xo_rlist *xo_str_lines(const char *p, int64_t n) {
@@ -494,7 +473,6 @@ xo_rlist *xo_str_lines(const char *p, int64_t n) {
 	}
 	return l;
 }
-#endif
 
 
 #ifdef XO_STRINGS_C

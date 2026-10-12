@@ -11,7 +11,7 @@ use native/rt
 // ---------------------------------------------------------------------------
 // Str (std.md 2.2)
 
-fn str_rune_count(s: Str) -> Int { strings.rune_count(s) }
+fn str_rune_count(s: Str) -> Int { rt.str_rune_count(s) }
 
 fn str_contains(s: Str, sub: Str) -> Bool { rt.str_contains(s, sub) }
 
@@ -27,9 +27,9 @@ fn str_find(s: Str, sub: Str) -> Int? {
   Some(i)
 }
 
-fn str_split(s: Str, sep: Str) -> List[Str] { strings.split(s, sep) }
+fn str_split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
 
-fn str_lines(s: Str) -> List[Str] { strings.lines(s) }
+fn str_lines(s: Str) -> List[Str] { rt.str_lines(s) }
 
 fn str_trim(s: Str) -> Str { strings.trim(s, 0) }
 

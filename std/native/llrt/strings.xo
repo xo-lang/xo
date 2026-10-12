@@ -1,15 +1,17 @@
 // The Str operations of the native runtime that decide something per
-// rune or per match, written in Xo (decision 0193, step 2): Str.split,
-// Str.lines, Str.replace, the trims, and Str.rune_count. They were C
-// (std/llrt/xo_std.c); the semantics are still Go's (strings), so the
-// native backends print what the Go backend prints. The C path stays
-// selectable (`XO_LLRT_C=strings` loads strings_c.xo) until
-// bench/perf/text meets decision 0180's bar on both native backends.
+// rune or per match, written in Xo (decision 0193, step 2): Str.replace
+// and the trims (Unicode white space). They were C (std/llrt/xo_std.c);
+// the semantics are still Go's (strings), so the native backends print
+// what the Go backend prints. The C path stays selectable
+// (`XO_LLRT_C=strings` loads strings_c.xo) until bench/perf/text meets
+// decision 0180's bar on both native backends.
 //
-// The searches, copies, and pure byte moves stay C primitives:
-// rt.str_find (memchr and memcmp), rt.str_slice, rt.rs_append_bytes,
-// rt.bytes_span, and Str.repeat and List[Str].join, which move bytes and
-// decide nothing.
+// The searches, copies, and pure byte scans stay C (decision 0180 item
+// 4): rt.str_find (memchr and memcmp), rt.str_slice, rt.rs_append_bytes,
+// rt.bytes_span, and the operations that are only scans and copies:
+// Str.split, Str.lines, Str.rune_count, Str.repeat, List[Str].join. An Xo
+// split and lines (a C call to find and one to copy per piece) measured
+// 1.02 to 1.32 times the C's instructions (decision 0193).
 use native/llrt/unicode
 use native/rt
 
@@ -19,71 +21,6 @@ fn seq_size(b: Bytes, i: Int) -> Int {
     return 1
   }
   unicode.decode(b, i) & 7
-}
-
-/// strings.Split: an empty separator splits into UTF-8 sequences (an
-/// invalid byte alone).
-pub fn split(s: Str, sep: Str) -> List[Str] {
-  var out: List[Str] = []
-  let n = s.len()
-  let m = sep.len()
-  if m == 0 {
-    let b = s.bytes()
-    var i = 0
-    while i < n {
-      let k = seq_size(b, i)
-      out.push(rt.str_slice(s, i, i + k))
-      i += k
-    }
-    return out
-  }
-  var start = 0
-  if m == 1 {
-    // one byte: memchr alone
-    let c = Int(sep.bytes()[0])
-    while true {
-      let i = rt.str_index_byte(s, c, start)
-      if i < 0 {
-        break
-      }
-      out.push(rt.str_slice(s, start, i))
-      start = i + 1
-    }
-    out.push(rt.str_slice(s, start, n))
-    return out
-  }
-  while true {
-    let i = rt.str_find(s, sep, start)
-    if i < 0 {
-      break
-    }
-    out.push(rt.str_slice(s, start, i))
-    start = i + m
-  }
-  out.push(rt.str_slice(s, start, n))
-  out
-}
-
-/// The lines of s: split on \n, a trailing \r of each removed, and no
-/// empty last line after a final newline.
-pub fn lines(s: Str) -> List[Str] {
-  var out: List[Str] = []
-  let n = s.len()
-  let b = s.bytes()
-  var start = 0
-  while start < n {
-    var end = rt.str_index_byte(s, 10, start)
-    if end < 0 {
-      end = n
-    }
-    var e = end
-    if e > start && b[e - 1] == 13 {
-      e -= 1
-    }
-    out.push(rt.str_slice(s, start, e))
-    start = end + 1
-  }
-  out
 }
 
 /// strings.ReplaceAll: an empty old inserts new before every UTF-8
@@ -192,20 +129,4 @@ pub fn trim(s: Str, mode: Int) -> Str {
     return s
   }
   rt.str_slice(s, lo, hi)
-}
-
-/// utf8.RuneCountInString: a Str is valid UTF-8 (core 2.2; slicing
-/// inside a sequence faults), so its runes are its bytes other than
-/// continuation bytes (0x80 to 0xBF), counted without a branch.
-pub fn rune_count(s: Str) -> Int {
-  let b = s.bytes()
-  let n = b.len()
-  var c = n
-  var i = 0
-  while i < n {
-    // 1 for a continuation byte: (x ^ 0x80) < 0x40
-    c -= (((Int(b[i]) ^ 0x80) - 0x40) >> 8) & 1
-    i += 1
-  }
-  c
 }
