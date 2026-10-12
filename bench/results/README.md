@@ -1,1 +1,2 @@
 - [budget-poll-2026-10-11.md](budget-poll-2026-10-11.md): cost of resource-budget polls outside a budget (fib +45%, sieve +18%); polls now only in programs that call `task.with_budget` (decision 0173).
+- [macho-2026-10-12.md](macho-2026-10-12.md): the self hosted Mach-O assembler (selfhost/macho) against `cc -c` on the 158 arm64 goldens and xo1: every section, function, and relocation identical, 6.8 times faster on xo1's 258 MB assembly; the linker stage (decision 0182).

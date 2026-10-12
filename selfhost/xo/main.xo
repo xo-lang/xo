@@ -11,6 +11,7 @@
 //   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
 //
 // flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
+// --as=macho (decision 0182): assemble with selfhost/macho, cc links
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -29,11 +30,12 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/macho
 
 fn main(os: Os) ! {
   let args = os.env.args()
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [--as=cc|macho] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -47,6 +49,7 @@ fn main(os: Os) ! {
   var topts = TestOpts{}
   var backend = "arm64"
   var go_tree = ""
+  var assembler = "cc"
   var dirs: List[Str] = []
   var i = 1
   while i < args.len() {
@@ -63,6 +66,8 @@ fn main(os: Os) ! {
       asm_path = a.trim_prefix("--asm=")
     } else if a.starts_with("--backend=") {
       backend = a.trim_prefix("--backend=")
+    } else if a.starts_with("--as=") {
+      assembler = a.trim_prefix("--as=")
     } else if a.starts_with("--go-tree=") {
       go_tree = a.trim_prefix("--go-tree=")
     } else if a.starts_with("--target=") || a.starts_with("--targets=") {
@@ -200,7 +205,18 @@ fn main(os: Os) ! {
     }
   }
   var flags = ["-O2"]
-  var srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  var prog = asm_path
+  if assembler == "macho" {
+    // the object from selfhost/macho; cc links it (decision 0182)
+    prog = "${out}.o"
+    match macho.assemble(p.asm.bytes()) {
+      Ok(obj) => os.fs.write(prog, obj)?
+      Err(e) => fail(os, "assembler: ${e}")
+    }
+  } else if assembler != "cc" {
+    fail(os, "--as=${assembler}: want cc or macho")
+  }
+  var srcs = [prog, "${rtdir}/xo_rt.c"]
   // std/time: XO_TIME and the program's zone data beside the runtime
   // (timeFlags)
   if uses_time {

@@ -1,0 +1,394 @@
+// Unwind information from the .cfi_ directives, as LLVM's MC layer
+// writes it for arm64 Mach-O: a __LD,__compact_unwind entry per
+// function, and an __TEXT,__eh_frame CIE and FDE for each function whose
+// compact encoding is DWARF mode.
+
+/// Compact unwind modes and register pairs (mach-o/compact_unwind_encoding.h).
+const UNWIND_ARM64_MODE_FRAMELESS = 0x02000000
+const UNWIND_ARM64_MODE_DWARF = 0x03000000
+const UNWIND_ARM64_MODE_FRAME = 0x04000000
+
+/// The DWARF register number of a .cfi_ register operand: x and w n,
+/// sp 31, d n 64 + n.
+fn dwarf_reg(b: Bytes) -> Int {
+  let (n, k) = reg(b)
+  if k == RX || k == RW {
+    return n
+  }
+  if k == RSP {
+    return 31
+  }
+  if k == RD || k == RS {
+    return 64 + n
+  }
+  -1
+}
+
+fn (var a: Asm) cfi(d: Str, rest: Bytes) {
+  if a.cur < 0 || !a.sects[a.cur].code {
+    a.fail("${d} outside __text")
+    return
+  }
+  let here = a.sects[a.cur].words.len() * 4
+  if d == ".cfi_startproc" {
+    if a.open {
+      a.fail("nested .cfi_startproc")
+      return
+    }
+    a.open = true
+    a.frame = Frame{sect: a.cur, start: here, atom: a.sects[a.cur].last_atom}
+    return
+  }
+  if !a.open {
+    a.fail("${d} outside .cfi_startproc")
+    return
+  }
+  let ops = split_operands(rest)
+  match d {
+    ".cfi_endproc" => {
+      a.frame.end = here
+      a.frames.push(a.frame)
+      a.open = false
+    }
+    ".cfi_def_cfa" | ".cfi_offset" => {
+      if ops.len() != 2 {
+        return a.fail("${d} takes a register and an offset")
+      }
+      let r = dwarf_reg(ops[0])
+      let off = parse_int(ops[1]) ?? MIN_INT
+      if r < 0 || off == MIN_INT {
+        return a.fail("bad ${d} ${bstr(rest)}")
+      }
+      a.frame.insts.push(Cfi{at: here, op: if d == ".cfi_def_cfa" { 0 } else { 1 }, reg: r, off: off})
+    }
+    ".cfi_personality" | ".cfi_lsda" => {
+      if ops.len() != 2 {
+        return a.fail("${d} takes an encoding and a symbol")
+      }
+      let enc = parse_int(ops[0]) ?? -1
+      if enc < 0 || enc > 255 {
+        return a.fail("bad ${d} encoding")
+      }
+      let s = a.sym(ops[1])
+      if d == ".cfi_personality" {
+        a.frame.pers = s
+        a.frame.pers_enc = enc
+      } else {
+        a.frame.lsda = s
+        a.frame.lsda_enc = enc
+      }
+    }
+    _ => a.fail("unsupported directive ${d}")
+  }
+}
+
+/// LLVM's AArch64 generateCompactUnwindEncoding: frame mode when the CFA
+/// is fp with lr and fp saved at its base and callee saved pairs below
+/// them, frameless with no directives, else DWARF mode; always DWARF
+/// with a personality other than ___gxx_personality_v0.
+fn (a: Asm) compact_encoding(f: Frame) -> Int {
+  let ins = f.insts
+  if ins.is_empty() {
+    return UNWIND_ARM64_MODE_FRAMELESS
+  }
+  if f.pers >= 0 && bstr(a.syms[f.pers].name) != "___gxx_personality_v0" {
+    return UNWIND_ARM64_MODE_DWARF
+  }
+  var enc = 0
+  var cur = 0
+  var has_fp = false
+  var i = 0
+  let e = ins.len()
+  while i < e {
+    let c = ins[i]
+    if c.op == 0 {
+      if c.reg != 29 || i + 2 >= e {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      let lr = ins[i + 1]
+      let fp = ins[i + 2]
+      i += 2
+      if lr.op != 1 || fp.op != 1 || fp.off + 8 != lr.off {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      cur = fp.off
+      if lr.reg != 30 || fp.reg != 29 {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      enc = enc | UNWIND_ARM64_MODE_FRAME
+      has_fp = true
+    } else {
+      // a pair of saved registers
+      if i + 1 == e {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      if cur != 0 && c.off != cur - 8 {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      cur = c.off
+      let c2 = ins[i + 1]
+      i += 1
+      if c2.op != 1 || c2.off != cur - 8 {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+      cur = c2.off
+      let r1 = c.reg
+      let r2 = c2.reg
+      if r1 == 19 && r2 == 20 && (enc & 0xf1e) == 0 {
+        enc = enc | 0x1
+      } else if r1 == 21 && r2 == 22 && (enc & 0xf1c) == 0 {
+        enc = enc | 0x2
+      } else if r1 == 23 && r2 == 24 && (enc & 0xf18) == 0 {
+        enc = enc | 0x4
+      } else if r1 == 25 && r2 == 26 && (enc & 0xf10) == 0 {
+        enc = enc | 0x8
+      } else if r1 == 27 && r2 == 28 && (enc & 0xf00) == 0 {
+        enc = enc | 0x10
+      } else if r1 == 72 && r2 == 73 && (enc & 0xe00) == 0 {
+        enc = enc | 0x100
+      } else if r1 == 74 && r2 == 75 && (enc & 0xc00) == 0 {
+        enc = enc | 0x200
+      } else if r1 == 76 && r2 == 77 && (enc & 0x800) == 0 {
+        enc = enc | 0x400
+      } else if r1 == 78 && r2 == 79 {
+        enc = enc | 0x800
+      } else {
+        return UNWIND_ARM64_MODE_DWARF
+      }
+    }
+    i += 1
+  }
+  if !has_fp {
+    // a frameless function with saved registers: not written by the
+    // emitter; LLVM would encode the stack size of .cfi_def_cfa_offset
+    return UNWIND_ARM64_MODE_DWARF
+  }
+  enc
+}
+
+/// Adds a section the unwind information fills (not laid out from items).
+fn (var a: Asm) add_raw_section(seg: Str, name: Str, flags: Int, align: Int) -> Int {
+  a.switch_section(seg, name, flags)
+  let i = a.cur
+  // the start symbol is the section's only label
+  a.sects[i].items = []
+  a.sects[i].align = align
+  a.sects[i].raw = true
+  i
+}
+
+/// The compact unwind and eh_frame sections, sized (the eh_frame filled:
+/// its contents depend only on offsets within it).
+fn (var a: Asm) unwind_sections() {
+  if a.frames.is_empty() {
+    return
+  }
+  for i in 0..a.frames.len() {
+    a.frames[i].enc = a.compact_encoding(a.frames[i])
+  }
+  let cu = a.add_raw_section("__LD", "__compact_unwind", S_ATTR_DEBUG, 3)
+  a.sects[cu].size = 32 * a.frames.len()
+  a.cu_sect = cu
+  var dwarf: List[Frame] = []
+  for f in a.frames {
+    if f.enc == UNWIND_ARM64_MODE_DWARF {
+      dwarf.push(f)
+    }
+  }
+  if dwarf.is_empty() {
+    return
+  }
+  let eh = a.add_raw_section("__TEXT", "__eh_frame", S_COALESCED + S_ATTR_NO_TOC + S_ATTR_STRIP_STATIC_SYMS + S_ATTR_LIVE_SUPPORT, 3)
+  a.eh_sect = eh
+  // FDEs grouped by CIE (LLVM sorts them stably by the CIE key, no
+  // personality first)
+  let sorted = dwarf.sort_by(fn(f: Frame) -> Int { if f.pers < 0 { -1 } else { f.pers } })
+  var o = new_out(64 * sorted.len())
+  var relocs: List[Reloc] = []
+  let ltmp = a.sects[eh].ltmp
+  // the CIE of each (personality, lsda encoding), by offset
+  var cies: Map[(Int, Int, Int), Int] = {}
+  for f in sorted {
+    let key = (f.pers, f.pers_enc, f.lsda_enc)
+    var cie = -1
+    match cies.get(key) {
+      Some(c) => cie = c
+      None => {
+        cie = o.n
+        cies.put(key, cie)
+        a.write_cie(o, relocs, f)
+      }
+    }
+    // the FDE
+    var body = new_out(64)
+    // CIE pointer: from this field back to the CIE
+    let start = o.n
+    body.u32(start + 4 - cie)
+    // pc begin, pc relative: atom - (eh_frame + field) + offset
+    let pc_field = start + 8
+    var atom = f.atom
+    if atom < 0 {
+      atom = a.sects[f.sect].ltmp
+    }
+    let delta = f.start - a.syms[atom].off
+    body.u64(delta - pc_field)
+    relocs.push(Reloc{addr: pc_field, typ: R_SUBTRACTOR, pcrel: false, len: 3, sym: ltmp})
+    relocs.push(Reloc{addr: pc_field, typ: R_UNSIGNED, pcrel: false, len: 3, sym: atom})
+    a.syms[atom].used = true
+    a.syms[ltmp].used = true
+    body.u64(f.end - f.start)
+    if f.lsda >= 0 {
+      body.uleb(8)
+      let lf = start + 4 + body.n
+      body.u64(0 - lf)
+      relocs.push(Reloc{addr: lf, typ: R_SUBTRACTOR, pcrel: false, len: 3, sym: ltmp})
+      relocs.push(Reloc{addr: lf, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.lsda})
+      a.syms[f.lsda].used = true
+    } else {
+      body.uleb(0)
+    }
+    // the instructions, each after an advance to its offset
+    var loc = f.start
+    for c in f.insts {
+      let delta2 = c.at - loc
+      if delta2 > 0 {
+        if delta2 < 64 {
+          body.u8(0x40 | delta2)
+        } else if delta2 < 256 {
+          body.u8(0x02)
+          body.u8(delta2)
+        } else if delta2 < 65536 {
+          body.u8(0x03)
+          body.u16(delta2)
+        } else {
+          body.u8(0x04)
+          body.u32(delta2)
+        }
+        loc = c.at
+      }
+      if c.op == 0 {
+        // DW_CFA_def_cfa
+        body.u8(0x0c)
+        body.uleb(c.reg)
+        body.uleb(c.off)
+      } else {
+        let fo = c.off / -8
+        if fo < 0 {
+          // DW_CFA_offset_extended_sf
+          body.u8(0x11)
+          body.uleb(c.reg)
+          body.sleb(fo)
+        } else if c.reg < 64 {
+          body.u8(0x80 | c.reg)
+          body.uleb(fo)
+        } else {
+          // DW_CFA_offset_extended
+          body.u8(0x05)
+          body.uleb(c.reg)
+          body.uleb(fo)
+        }
+      }
+    }
+    // padded with DW_CFA_nop so the next entry is 8 byte aligned
+    while (start + 4 + body.n) % 8 != 0 {
+      body.u8(0)
+    }
+    o.u32(body.n)
+    o.bytes(body.done())
+  }
+  a.sects[eh].bytes = o.done()
+  a.sects[eh].size = a.sects[eh].bytes.len()
+  a.sects[eh].relocs = relocs
+}
+
+/// A CIE: augmentation "zR", or "zPLR" (and "zPR", "zLR") with a
+/// personality reached through the GOT and a pc relative LSDA.
+fn (var a: Asm) write_cie(var o: Out, var relocs: List[Reloc], f: Frame) {
+  var body = new_out(32)
+  body.u32(0)
+  body.u8(1)
+  var aug = "z"
+  if f.pers >= 0 {
+    aug = aug + "P"
+  }
+  if f.lsda >= 0 {
+    aug = aug + "L"
+  }
+  aug = aug + "R"
+  body.bytes(aug.bytes())
+  body.u8(0)
+  // code alignment 1, data alignment -8, return address x30
+  body.uleb(1)
+  body.sleb(-8)
+  body.uleb(30)
+  var adata = new_out(16)
+  var pers_at = -1
+  if f.pers >= 0 {
+    adata.u8(f.pers_enc)
+    pers_at = adata.n
+    adata.u32(0)
+  }
+  if f.lsda >= 0 {
+    adata.u8(f.lsda_enc)
+  }
+  // the FDE pointers: pc relative, 8 bytes
+  adata.u8(0x10)
+  body.uleb(adata.n)
+  let adata_at = body.n
+  let ad = adata.done()
+  body.bytes(ad)
+  // DW_CFA_def_cfa sp, 0
+  body.u8(0x0c)
+  body.u8(31)
+  body.u8(0)
+  while (body.n + 4) % 4 != 0 {
+    body.u8(0)
+  }
+  let start = o.n
+  var bb = body.done()
+  if pers_at >= 0 {
+    // the personality: ARM64_RELOC_POINTER_TO_GOT, pc relative; the
+    // field holds what LLVM writes (minus its offset, minus 2^30)
+    let field = start + 4 + adata_at + pers_at
+    relocs.push(Reloc{addr: field, typ: R_POINTER_TO_GOT, pcrel: true, len: 2, sym: f.pers})
+    a.syms[f.pers].used = true
+    var patched = new_out(bb.len())
+    let v = (0 - field - 0x40000000) & 0xffffffff
+    let at = adata_at + pers_at
+    patched.bytes(bb[0..at])
+    patched.u32(v)
+    patched.bytes(bb[at + 4..])
+    bb = patched.done()
+  }
+  o.u32(bb.len())
+  o.bytes(bb)
+}
+
+/// The compact unwind entries, once the text address is known: start
+/// (section relative), length, encoding, personality, LSDA.
+fn (var a: Asm) unwind_relocs() {
+  if a.cu_sect < 0 {
+    return
+  }
+  var o = new_out(32 * a.frames.len())
+  var relocs: List[Reloc] = []
+  for f in a.frames {
+    let at = o.n
+    o.u64(a.sects[f.sect].addr + f.start)
+    relocs.push(Reloc{addr: at, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.sect + 1, sect: true})
+    o.u32(f.end - f.start)
+    o.u32(f.enc)
+    if f.enc != UNWIND_ARM64_MODE_DWARF && f.pers >= 0 {
+      relocs.push(Reloc{addr: at + 16, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.pers})
+      a.syms[f.pers].used = true
+    }
+    o.u64(0)
+    if f.enc != UNWIND_ARM64_MODE_DWARF && f.lsda >= 0 {
+      relocs.push(Reloc{addr: at + 24, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.lsda})
+      a.syms[f.lsda].used = true
+    }
+    o.u64(0)
+  }
+  a.sects[a.cu_sect].bytes = o.done()
+  a.sects[a.cu_sect].relocs = relocs
+}

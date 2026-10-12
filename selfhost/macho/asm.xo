@@ -1,0 +1,984 @@
+// The arm64 assembler of decision 0182: the subset of assembly the arm64
+// emitter writes (selfhost/arm64, internal/arm64) into a Mach-O
+// relocatable object, as `cc -c` (clang -cc1as) writes it.
+//
+// One pass over the source fills the sections: __text as 32 bit words
+// with fixups for labels, the other sections as items (bytes, label
+// differences, alignment). Then the text labels are known, the data
+// sections are laid out (ULEB128 sizes iterated until stable), the
+// fixups patched or turned into relocations, and the unwind information
+// built from the .cfi_ directives (cfi.xo). obj.xo writes the file.
+
+/// Section types and attributes (mach-o/loader.h).
+const S_REGULAR = 0
+const S_CSTRING_LITERALS = 2
+const S_COALESCED = 0xb
+const S_ATTR_PURE_INSTRUCTIONS = 0x80000000
+const S_ATTR_SOME_INSTRUCTIONS = 0x400
+const S_ATTR_NO_TOC = 0x40000000
+const S_ATTR_STRIP_STATIC_SYMS = 0x20000000
+const S_ATTR_LIVE_SUPPORT = 0x08000000
+const S_ATTR_DEBUG = 0x02000000
+
+/// Fixup kinds of text words.
+const FX_B26 = 1
+const FX_BL26 = 2
+const FX_COND19 = 3
+const FX_TB14 = 4
+const FX_ADR21 = 5
+const FX_PAGE21 = 6
+const FX_PAGEOFF12 = 7
+const FX_DIFF32 = 8
+
+/// Relocation types (mach-o/arm64/reloc.h).
+const R_UNSIGNED = 0
+const R_SUBTRACTOR = 1
+const R_BRANCH26 = 2
+const R_PAGE21 = 3
+const R_PAGEOFF12 = 4
+const R_GOT_LOAD_PAGE21 = 5
+const R_GOT_LOAD_PAGEOFF12 = 6
+const R_POINTER_TO_GOT = 7
+const R_TLVP_LOAD_PAGE21 = 8
+const R_TLVP_LOAD_PAGEOFF12 = 9
+const R_ADDEND = 10
+
+/// A symbol: a label of a section, or a name used but not defined.
+struct Sym {
+  name: Bytes
+  /// section index, -1 when undefined
+  sect: Int = -1
+  /// byte offset in the section
+  off: Int = 0
+  global: Bool = false
+  /// an assembler local label (`L` prefix): not in the symbol table
+  /// unless a relocation names it (literal sections)
+  temp: Bool = false
+  /// for a temporary label: the non temporary symbol before it in its
+  /// section (its atom), -1 for the section's start
+  atom: Int = -1
+  /// named by a relocation (temporary labels of literal sections)
+  used: Bool = false
+  /// the index in the symbol table (obj.xo), -1 when not in it
+  index: Int = -1
+  /// in Asm.reg_order
+  registered: Bool = false
+  queued: Bool = false
+}
+
+/// A data item of a section other than __text.
+enum Item {
+  Raw(b: Bytes)
+  /// a ULEB128 of sym a - sym b + k (b -1: a alone; a -1: k alone)
+  Uleb(a: Int, b: Int, k: Int)
+  /// a little endian word of n bytes of sym a - sym b + k
+  Word(n: Int, a: Int, b: Int, k: Int)
+  /// pad to 2^p bytes
+  Align(p: Int)
+  /// a label is here
+  Label(s: Int)
+}
+
+/// A relocation of a section, before symbol table indexes are known.
+struct Reloc {
+  addr: Int
+  typ: Int
+  pcrel: Bool
+  /// log2 of the size: 2 for 4 bytes, 3 for 8
+  len: Int
+  /// a symbol index (extern), or with sect true the section ordinal
+  sym: Int
+  sect: Bool = false
+}
+
+struct Sect {
+  seg: Str
+  name: Str
+  /// type and attributes (the flags field)
+  flags: Int
+  /// instructions: words, else items
+  code: Bool
+  /// log2 alignment
+  align: Int = 0
+  words: List[Int] = []
+  items: List[Item] = []
+  size: Int = 0
+  addr: Int = 0
+  /// the last non temporary symbol defined in it, -1 for none
+  last_atom: Int = -1
+  /// its section start symbol (ltmpN), -1 until made
+  ltmp: Int = -1
+  relocs: List[Reloc] = []
+  bytes: Bytes = "".bytes()
+  /// filled directly (the unwind sections), not from items
+  raw: Bool = false
+}
+
+/// A label reference of a text word.
+struct Fix {
+  sect: Int
+  /// word index
+  at: Int
+  kind: Int
+  sym: Int
+  /// FX_DIFF32: the subtracted symbol
+  sym2: Int = -1
+  line: Int
+}
+
+/// A .cfi_ directive: at a byte offset of the function's section.
+struct Cfi {
+  at: Int
+  /// 0 def_cfa, 1 offset
+  op: Int
+  /// DWARF register number
+  reg: Int
+  off: Int
+}
+
+/// The unwind directives of one function (.cfi_startproc to
+/// .cfi_endproc).
+struct Frame {
+  sect: Int
+  start: Int
+  end: Int = 0
+  /// the symbol at or before the start (its atom), -1 the section start
+  atom: Int
+  insts: List[Cfi] = []
+  pers: Int = -1
+  pers_enc: Int = 0xff
+  lsda: Int = -1
+  lsda_enc: Int = 0xff
+  /// the compact unwind encoding (cfi.xo)
+  enc: Int = 0
+}
+
+pub struct Asm {
+  syms: List[Sym] = []
+  names: Map[Bytes, Int] = {}
+  sects: List[Sect] = []
+  cur: Int = -1
+  fixes: List[Fix] = []
+  frames: List[Frame] = []
+  open: Bool = false
+  frame: Frame = Frame{sect: 0, start: 0, atom: -1}
+  err: Str = ""
+  line: Int = 0
+  /// the minimum OS version of LC_BUILD_VERSION (major, minor)
+  minos: (Int, Int) = (11, 0)
+  /// the order LLVM registers symbols in, which orders the local symbols
+  /// of the symbol table: a label when it is defined, a symbol an
+  /// instruction names when the section is switched away from
+  reg_order: List[Int] = []
+  pending: List[Int] = []
+  /// the unwind sections, -1 when absent
+  cu_sect: Int = -1
+  eh_sect: Int = -1
+}
+
+/// assemble: the Mach-O object of src, or the first error as
+/// "line N: why".
+pub fn assemble(src: Bytes) -> Result[Bytes, Str] {
+  assemble_for(src, (11, 0))
+}
+
+/// assemble with the minimum macOS version of LC_BUILD_VERSION.
+pub fn assemble_for(src: Bytes, minos: (Int, Int)) -> Result[Bytes, Str] {
+  var a = Asm{minos: minos}
+  a.parse(src)
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.finish()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  Ok(a.write_object())
+}
+
+fn (var a: Asm) fail(why: Str) {
+  if a.err.is_empty() {
+    a.err = "line ${a.line}: ${why}"
+  }
+}
+
+fn is_space(c: UInt8) -> Bool {
+  c == ' ' || c == '\t' || c == '\r'
+}
+
+fn bstr(b: Bytes) -> Str {
+  b.to_str() ?? "<bytes>"
+}
+
+fn (var a: Asm) parse(src: Bytes) {
+  // the default section, as the assembler starts in __TEXT,__text
+  var i = 0
+  let n = src.len()
+  while i < n && a.err.is_empty() {
+    var j = i
+    while j < n && src[j] != '\n' {
+      j += 1
+    }
+    a.line += 1
+    a.parse_line(src[i..j])
+    i = j + 1
+  }
+  if a.open {
+    a.fail("missing .cfi_endproc")
+  }
+  a.flush_pending()
+}
+
+fn (var a: Asm) parse_line(l0: Bytes) {
+  var s = 0
+  var e = l0.len()
+  while s < e && is_space(l0[s]) {
+    s += 1
+  }
+  while e > s && is_space(l0[e - 1]) {
+    e -= 1
+  }
+  if s == e {
+    return
+  }
+  let l = l0[s..e]
+  if l.len() >= 2 && l[0] == '/' && l[1] == '/' {
+    return
+  }
+  if s == 0 && l[l.len() - 1] == ':' {
+    a.define(l[0..l.len() - 1])
+    return
+  }
+  if l[0] == '.' {
+    a.directive(l)
+    return
+  }
+  if a.cur < 0 {
+    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+  }
+  if !a.sects[a.cur].code {
+    a.fail("an instruction outside __text")
+    return
+  }
+  // the mnemonic, then the operands split at top level commas
+  var k = 0
+  while k < l.len() && !is_space(l[k]) {
+    k += 1
+  }
+  let m = bstr(l[0..k])
+  a.instruction(m, split_operands(l[k..]))
+}
+
+/// The operands of an instruction: split at commas outside brackets,
+/// each trimmed.
+fn split_operands(b: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  var depth = 0
+  var start = 0
+  for i in 0..b.len() {
+    let c = b[i]
+    if c == '[' {
+      depth += 1
+    } else if c == ']' {
+      depth -= 1
+    } else if c == ',' && depth == 0 {
+      out.push(trim(b[start..i]))
+      start = i + 1
+    }
+  }
+  let last = trim(b[start..])
+  if !last.is_empty() || !out.is_empty() {
+    out.push(last)
+  }
+  out
+}
+
+fn trim(b: Bytes) -> Bytes {
+  var s = 0
+  var e = b.len()
+  while s < e && is_space(b[s]) {
+    s += 1
+  }
+  while e > s && is_space(b[e - 1]) {
+    e -= 1
+  }
+  b[s..e]
+}
+
+/// The symbol of name, made undefined when new.
+fn (var a: Asm) sym(name: Bytes) -> Int {
+  match a.names.get(name) {
+    Some(i) => i
+    None => {
+      let i = a.syms.len()
+      a.syms.push(Sym{name: name, temp: name.len() > 0 && name[0] == 'L'})
+      a.names.put(name, i)
+      i
+    }
+  }
+}
+
+/// The current offset of the section.
+fn (a: Asm) here() -> Int {
+  let s = a.sects[a.cur]
+  if s.code { s.words.len() * 4 } else { 0 }
+}
+
+fn (var a: Asm) define(name: Bytes) {
+  if a.cur < 0 {
+    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+  }
+  let i = a.sym(name)
+  if a.syms[i].sect >= 0 {
+    a.fail("${bstr(name)} is defined twice")
+    return
+  }
+  a.syms[i].sect = a.cur
+  a.register(i)
+  if a.syms[i].temp {
+    a.syms[i].atom = a.sects[a.cur].last_atom
+  } else {
+    a.sects[a.cur].last_atom = i
+  }
+  if a.sects[a.cur].code {
+    a.syms[i].off = a.sects[a.cur].words.len() * 4
+  } else {
+    a.sects[a.cur].items.push(Item.Label(i))
+  }
+}
+
+fn (var a: Asm) register(i: Int) {
+  if !a.syms[i].registered {
+    a.syms[i].registered = true
+    a.reg_order.push(i)
+  }
+}
+
+/// Registers the symbols instructions named since the last switch.
+fn (var a: Asm) flush_pending() {
+  for i in a.pending {
+    a.register(i)
+  }
+  a.pending = []
+}
+
+fn (var a: Asm) switch_section(seg: Str, name: Str, flags: Int) {
+  a.flush_pending()
+  for (i, s) in a.sects.indexed() {
+    if s.seg == seg && s.name == name {
+      a.cur = i
+      return
+    }
+  }
+  let code = (flags & S_ATTR_PURE_INSTRUCTIONS) != 0
+  a.sects.push(Sect{seg: seg, name: name, flags: flags, code: code})
+  a.cur = a.sects.len() - 1
+  // the section start symbol LLVM makes for every section (ltmpN), so
+  // relocations never need to be section relative
+  let n = a.sects.len() - 1
+  let t = a.sym("ltmp${n}".bytes())
+  a.syms[t].sect = a.cur
+  a.syms[t].temp = false
+  a.register(t)
+  a.sects[a.cur].ltmp = t
+  if code {
+    a.syms[t].off = 0
+  } else {
+    a.sects[a.cur].items.push(Item.Label(t))
+  }
+}
+
+fn (var a: Asm) directive(l: Bytes) {
+  var k = 0
+  while k < l.len() && !is_space(l[k]) {
+    k += 1
+  }
+  let d = bstr(l[0..k])
+  let rest = trim(l[k..])
+  if d == ".section" {
+    let parts = split_operands(rest)
+    if parts.len() < 2 {
+      a.fail(".section needs a segment and a section")
+      return
+    }
+    var flags = S_REGULAR
+    let seg = bstr(parts[0])
+    let name = bstr(parts[1])
+    if parts.len() >= 3 {
+      let t = bstr(parts[2])
+      if t == "cstring_literals" {
+        flags = S_CSTRING_LITERALS
+      } else if t == "regular" {
+        flags = S_REGULAR
+      } else {
+        a.fail("section type ${t}")
+        return
+      }
+      if parts.len() >= 4 {
+        if bstr(parts[3]) == "pure_instructions" {
+          flags = flags + S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS
+        } else {
+          a.fail("section attributes ${bstr(parts[3])}")
+          return
+        }
+      }
+    }
+    if seg == "__TEXT" && name == "__text" {
+      flags = S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS
+    }
+    a.switch_section(seg, name, flags)
+    return
+  }
+  if d == ".text" {
+    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+    return
+  }
+  if d == ".globl" {
+    let i = a.sym(rest)
+    a.syms[i].global = true
+    return
+  }
+  if d.starts_with(".cfi_") {
+    a.cfi(d, rest)
+    return
+  }
+  if a.cur < 0 {
+    a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+  }
+  if d == ".p2align" {
+    let p = parse_int(rest) ?? -1
+    if p < 0 || p > 15 {
+      a.fail("bad .p2align ${bstr(rest)}")
+      return
+    }
+    if p > a.sects[a.cur].align {
+      a.sects[a.cur].align = p
+    }
+    if a.sects[a.cur].code {
+      while a.sects[a.cur].words.len() * 4 % pow2(p) != 0 {
+        a.sects[a.cur].words.push(NOP)
+      }
+    } else {
+      a.sects[a.cur].items.push(Item.Align(p))
+    }
+    return
+  }
+  if d == ".long" && a.sects[a.cur].code {
+    let (x, y, k) = a.expr(rest)
+    if x < 0 && y < 0 {
+      a.sects[a.cur].words.push(k & 0xffffffff)
+      return
+    }
+    if y < 0 || k != 0 {
+      a.fail(".long in __text takes a label difference")
+      return
+    }
+    a.fixes.push(Fix{sect: a.cur, at: a.sects[a.cur].words.len(), kind: FX_DIFF32, sym: x, sym2: y, line: a.line})
+    a.sects[a.cur].words.push(0)
+    return
+  }
+  if a.sects[a.cur].code {
+    a.fail("${d} in __text")
+    return
+  }
+  if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" {
+    let n = if d == ".byte" { 1 } else if d == ".short" { 2 } else if d == ".long" { 4 } else { 8 }
+    for part in split_operands(rest) {
+      let (x, y, k) = a.expr(part)
+      a.sects[a.cur].items.push(Item.Word(n: n, a: x, b: y, k: k))
+    }
+    return
+  }
+  if d == ".uleb128" {
+    let (x, y, k) = a.expr(rest)
+    a.sects[a.cur].items.push(Item.Uleb(a: x, b: y, k: k))
+    return
+  }
+  if d == ".ascii" || d == ".asciz" {
+    match unquote(rest) {
+      Some(b) => {
+        a.sects[a.cur].items.push(Item.Raw(b))
+        if d == ".asciz" {
+          a.sects[a.cur].items.push(Item.Word(n: 1, a: -1, b: -1, k: 0))
+        }
+      }
+      None => a.fail("bad string ${bstr(rest)}")
+    }
+    return
+  }
+  a.fail("unsupported directive ${d}")
+}
+
+/// An expression: a number, a symbol, or a difference of two symbols:
+/// (a, b, k) for a - b + k with -1 for an absent symbol.
+fn (var a: Asm) expr(b: Bytes) -> (Int, Int, Int) {
+  if b.is_empty() {
+    a.fail("missing expression")
+    return (-1, -1, 0)
+  }
+  if b[0] == '-' || (b[0] >= '0' && b[0] <= '9') {
+    match parse_int(b) {
+      Some(n) => return (-1, -1, n)
+      None => {
+        a.fail("bad number ${bstr(b)}")
+        return (-1, -1, 0)
+      }
+    }
+  }
+  for i in 1..b.len() {
+    if b[i] == '-' {
+      return (a.sym(trim(b[0..i])), a.sym(trim(b[i + 1..])), 0)
+    }
+  }
+  (a.sym(b), -1, 0)
+}
+
+/// A decimal or 0x hex integer, with an optional sign.
+fn parse_int(b: Bytes) -> Int? {
+  if b.is_empty() {
+    return None
+  }
+  var i = 0
+  var neg = false
+  if b[0] == '-' {
+    neg = true
+    i = 1
+  } else if b[0] == '+' {
+    i = 1
+  }
+  if i >= b.len() {
+    return None
+  }
+  var n = 0
+  if i + 1 < b.len() && b[i] == '0' && (b[i + 1] == 'x' || b[i + 1] == 'X') {
+    i += 2
+    if i >= b.len() {
+      return None
+    }
+    // hex digits accumulate as unsigned 64 bit
+    while i < b.len() {
+      let c = b[i]
+      var v = 0
+      if c >= '0' && c <= '9' {
+        v = Int(c - '0')
+      } else if c >= 'a' && c <= 'f' {
+        v = Int(c - 'a') + 10
+      } else if c >= 'A' && c <= 'F' {
+        v = Int(c - 'A') + 10
+      } else {
+        return None
+      }
+      n = shl(n, 4) | v
+      i += 1
+    }
+    return Some(if neg { 0 - n } else { n })
+  }
+  while i < b.len() {
+    let c = b[i]
+    if c < '0' || c > '9' {
+      return None
+    }
+    // accumulate negatively so the minimum Int parses
+    let d = Int(c - '0')
+    if n < (MIN_INT + d) / 10 {
+      return None
+    }
+    n = n * 10 - d
+    i += 1
+  }
+  if neg {
+    return Some(n)
+  }
+  if n == MIN_INT {
+    return None
+  }
+  Some(0 - n)
+}
+
+const MIN_INT = -9223372036854775807 - 1
+
+/// x << k keeping the low 64 bits (no overflow fault).
+fn shl(x: Int, k: Int) -> Int {
+  if k <= 0 {
+    return x
+  }
+  if k >= 64 {
+    return 0
+  }
+  // the bits that stay, below bit 63 - k, then bit 63
+  let keep = x & (pow2(63 - k) - 1)
+  var r = keep * pow2(k)
+  if (x >> (63 - k)) & 1 != 0 {
+    r = r | MIN_INT
+  }
+  r
+}
+
+/// x >> k as an unsigned shift.
+fn lsr(x: Int, k: Int) -> Int {
+  if k <= 0 {
+    return x
+  }
+  if k >= 64 {
+    return 0
+  }
+  (x >> k) & (pow2(64 - k) - 1)
+}
+
+/// 2^k for 0 <= k <= 63 (2^63 as the bit pattern MIN_INT, and
+/// pow2(63) - 1 as the maximum Int).
+fn pow2(k: Int) -> Int {
+  if k == 63 {
+    return MIN_INT
+  }
+  var n = 1
+  var i = 0
+  while i < k {
+    n = n * 2
+    i += 1
+  }
+  n
+}
+
+/// The bytes of a quoted string with the escapes of the emitter
+/// (\\ \" and three octal digits) and the common ones (\n \t \r \0).
+fn unquote(b: Bytes) -> Bytes? {
+  if b.len() < 2 || b[0] != '"' || b[b.len() - 1] != '"' {
+    return None
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 1
+  let e = b.len() - 1
+  while i < e {
+    let c = b[i]
+    if c != '\\' {
+      out.write_byte(c)
+      i += 1
+      continue
+    }
+    if i + 1 >= e {
+      return None
+    }
+    let x = b[i + 1]
+    if x >= '0' && x <= '7' {
+      var v = 0
+      var k = 0
+      while k < 3 && i + 1 + k < e && b[i + 1 + k] >= '0' && b[i + 1 + k] <= '7' {
+        v = v * 8 + Int(b[i + 1 + k] - '0')
+        k += 1
+      }
+      out.write_byte(UInt8(v & 255))
+      i += 1 + k
+      continue
+    }
+    match x {
+      'n' => out.write_byte('\n')
+      't' => out.write_byte('\t')
+      'r' => out.write_byte('\r')
+      'b' => out.write_byte(8)
+      'f' => out.write_byte(12)
+      _ => out.write_byte(x)
+    }
+    i += 2
+  }
+  Some(out.freeze())
+}
+
+// ---------------------------------------------------------------------------
+// After the pass: layout, fixups, unwind information
+
+fn (var a: Asm) finish() {
+  for i in 0..a.syms.len() {
+    let sy = a.syms[i]
+    if sy.temp && sy.sect < 0 {
+      a.err = "${bstr(sy.name)} is used but not defined"
+      return
+    }
+  }
+  for i in 0..a.sects.len() {
+    if a.sects[i].code {
+      a.sects[i].size = a.sects[i].words.len() * 4
+    } else {
+      a.layout(i)
+    }
+  }
+  if !a.err.is_empty() {
+    return
+  }
+  // the unwind sections come from the frames (cfi.xo)
+  a.unwind_sections()
+  if !a.err.is_empty() {
+    return
+  }
+  // section addresses: in order, each aligned
+  var addr = 0
+  for i in 0..a.sects.len() {
+    let al = pow2(a.sects[i].align)
+    addr = (addr + al - 1) / al * al
+    a.sects[i].addr = addr
+    addr += a.sects[i].size
+  }
+  a.apply_fixes()
+  if !a.err.is_empty() {
+    return
+  }
+  for i in 0..a.sects.len() {
+    if !a.sects[i].code && !a.sects[i].raw {
+      a.emit_data(i)
+    }
+  }
+  a.unwind_relocs()
+}
+
+/// The value of a - b + k when both symbols are defined in sections whose
+/// offsets are known (the same section, or both in sections laid out).
+fn (a: Asm) value(x: Int, y: Int, k: Int) -> Int? {
+  var v = k
+  if x >= 0 {
+    let s = a.syms[x]
+    if s.sect < 0 {
+      return None
+    }
+    v += a.sects[s.sect].addr + s.off
+  }
+  if y >= 0 {
+    let s = a.syms[y]
+    if s.sect < 0 {
+      return None
+    }
+    v -= a.sects[s.sect].addr + s.off
+  }
+  Some(v)
+}
+
+fn uleb_size(v: Int) -> Int {
+  var n = 1
+  var x = v
+  while x >= 128 || x < 0 {
+    if x < 0 {
+      // a negative value is written as its 64 bit pattern: 10 bytes
+      return 10
+    }
+    x = x / 128
+    n += 1
+  }
+  n
+}
+
+/// The offsets of a data section's labels and its size, iterating the
+/// sizes of the ULEB128s until they are stable.
+fn (var a: Asm) layout(si: Int) {
+  let items = a.sects[si].items
+  var sizes: List[Int] = []
+  for it in items {
+    sizes.push(match it {
+      Item.Uleb(_, _, _) => 1
+      Item.Raw(_) | Item.Word(_, _, _, _) | Item.Align(_) | Item.Label(_) => 0
+    })
+  }
+  var changed = true
+  var rounds = 0
+  while changed {
+    changed = false
+    rounds += 1
+    if rounds > 50 {
+      a.fail("the ULEB128 sizes of ${a.sects[si].name} do not settle")
+      return
+    }
+    var off = 0
+    for (i, it) in items.indexed() {
+      match it {
+        Item.Raw(b) => off += b.len()
+        Item.Word(n, _, _, _) => off += n
+        Item.Align(p) => {
+          let al = pow2(p)
+          off = (off + al - 1) / al * al
+        }
+        Item.Label(s) => a.syms[s].off = off
+        Item.Uleb(_, _, _) => off += sizes[i]
+      }
+    }
+    a.sects[si].size = off
+    // the differences, within the section or of text labels, are
+    // section relative: addresses cancel
+    for (i, it) in items.indexed() {
+      match it {
+        Item.Uleb(x, y, k) => {
+          match a.rel_value(x, y, k) {
+            Some(v) => {
+              let n = uleb_size(v)
+              if n > sizes[i] {
+                sizes[i] = n
+                changed = true
+              }
+            }
+            None => {
+              a.fail("a .uleb128 of symbols in different sections")
+              return
+            }
+          }
+        }
+        Item.Raw(_) | Item.Word(_, _, _, _) | Item.Align(_) | Item.Label(_) => {}
+      }
+    }
+  }
+}
+
+/// a - b + k for two symbols of one section (or numbers): the offsets
+/// alone, before addresses are assigned.
+fn (a: Asm) rel_value(x: Int, y: Int, k: Int) -> Int? {
+  if x < 0 && y < 0 {
+    return Some(k)
+  }
+  if x < 0 || y < 0 {
+    return None
+  }
+  let sx = a.syms[x]
+  let sy = a.syms[y]
+  if sx.sect < 0 || sx.sect != sy.sect {
+    return None
+  }
+  Some(sx.off - sy.off + k)
+}
+
+/// The bytes of a data section, its label differences computed.
+fn (var a: Asm) emit_data(si: Int) {
+  let items = a.sects[si].items
+  var out = new_out(a.sects[si].size)
+  var off = 0
+  for it in items {
+    match it {
+      Item.Raw(b) => {
+        out.bytes(b)
+        off += b.len()
+      }
+      Item.Word(n, x, y, k) => {
+        var v = 0
+        if x < 0 && y < 0 {
+          v = k
+        } else {
+          match a.rel_value(x, y, k) {
+            Some(r) => v = r
+            None => {
+              a.fail("a data word of symbols in different sections (${a.sects[si].name})")
+              return
+            }
+          }
+        }
+        out.le(v, n)
+        off += n
+      }
+      Item.Align(p) => {
+        let al = pow2(p)
+        while off % al != 0 {
+          out.u8(0)
+          off += 1
+        }
+      }
+      Item.Label(_) => {}
+      Item.Uleb(x, y, k) => {
+        let v = a.rel_value(x, y, k) ?? 0
+        off += out.uleb(v)
+      }
+    }
+  }
+  let b = out.done()
+  if b.len() != a.sects[si].size {
+    a.fail("internal: ${a.sects[si].name} is ${b.len()} bytes, laid out as ${a.sects[si].size}")
+  }
+  a.sects[si].bytes = b
+}
+
+/// Patches the text words whose labels are in the same section, and
+/// turns the others into relocations.
+fn (var a: Asm) apply_fixes() {
+  for f in a.fixes {
+    let s = a.syms[f.sym]
+    let pc = f.at * 4
+    var w = a.sects[f.sect].words[f.at]
+    if f.kind == FX_DIFF32 {
+      match a.rel_value(f.sym, f.sym2, 0) {
+        Some(v) => w = v & 0xffffffff
+        None => {
+          a.err = "line ${f.line}: a .long of symbols in different sections"
+          return
+        }
+      }
+      a.sects[f.sect].words[f.at] = w
+      continue
+    }
+    let local = s.sect == f.sect
+    if f.kind == FX_PAGE21 || f.kind == FX_PAGEOFF12 {
+      // always relocated: pages depend on the final layout
+      let typ = if f.kind == FX_PAGE21 { R_PAGE21 } else { R_PAGEOFF12 }
+      a.reloc_to(f.sect, pc, typ, f.kind == FX_PAGE21, f.sym)
+      continue
+    }
+    if !local {
+      if f.kind == FX_BL26 || f.kind == FX_B26 {
+        a.reloc_to(f.sect, pc, R_BRANCH26, true, f.sym)
+        continue
+      }
+      a.err = "line ${f.line}: ${bstr(s.name)} is not defined in this section"
+      return
+    }
+    let d = s.off - pc
+    if f.kind == FX_B26 || f.kind == FX_BL26 {
+      if d % 4 != 0 || d < -134217728 || d >= 134217728 {
+        a.err = "line ${f.line}: branch out of range"
+        return
+      }
+      w = w | ((d / 4) & 0x3ffffff)
+    } else if f.kind == FX_COND19 {
+      if d % 4 != 0 || d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: conditional branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x7ffff) * 32)
+    } else if f.kind == FX_TB14 {
+      if d % 4 != 0 || d < -32768 || d >= 32768 {
+        a.err = "line ${f.line}: test and branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x3fff) * 32)
+    } else if f.kind == FX_ADR21 {
+      if d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: adr out of range"
+        return
+      }
+      let imm = d & 0x1fffff
+      w = w | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32)
+    }
+    a.sects[f.sect].words[f.at] = w
+  }
+}
+
+/// A relocation of the word at pc to sym: a temporary label becomes its
+/// atom plus an ARM64_RELOC_ADDEND, except in literal sections, where the
+/// label itself is named.
+fn (var a: Asm) reloc_to(si: Int, pc: Int, typ: Int, pcrel: Bool, sym: Int) {
+  let s = a.syms[sym]
+  var target = sym
+  var addend = 0
+  if s.temp {
+    if s.sect < 0 {
+      a.fail("${bstr(s.name)} is not defined")
+      return
+    }
+    if (a.sects[s.sect].flags & 0xff) == S_CSTRING_LITERALS {
+      a.syms[sym].used = true
+    } else {
+      target = if s.atom >= 0 { s.atom } else { a.sects[s.sect].ltmp }
+      addend = s.off - a.syms[target].off
+    }
+  }
+  a.syms[target].used = true
+  if addend != 0 {
+    if addend < -8388608 || addend >= 8388608 {
+      a.fail("addend ${addend} does not fit ARM64_RELOC_ADDEND")
+      return
+    }
+    a.sects[si].relocs.push(Reloc{addr: pc, typ: R_ADDEND, pcrel: false, len: 2, sym: addend & 0xffffff, sect: true})
+  }
+  a.sects[si].relocs.push(Reloc{addr: pc, typ: typ, pcrel: pcrel, len: 2, sym: target})
+}

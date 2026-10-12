@@ -1,0 +1,118 @@
+// Little endian output: the bytes of object files and their parts.
+
+struct Out {
+  b: BytesBuilder
+  n: Int = 0
+}
+
+fn new_out(cap: Int) -> Out {
+  Out{b: BytesBuilder.with_capacity(cap)}
+}
+
+fn (var o: Out) u8(v: Int) {
+  o.b.write_byte(UInt8(v & 255))
+  o.n += 1
+}
+
+/// v as n little endian bytes.
+fn (var o: Out) le(v: Int, n: Int) {
+  for i in 0..n {
+    o.b.write_byte(UInt8((v >> (8 * i)) & 255))
+  }
+  o.n += n
+}
+
+fn (var o: Out) u16(v: Int) {
+  o.le(v, 2)
+}
+
+fn (var o: Out) u32(v: Int) {
+  o.b.write_byte(UInt8(v & 255))
+  o.b.write_byte(UInt8((v >> 8) & 255))
+  o.b.write_byte(UInt8((v >> 16) & 255))
+  o.b.write_byte(UInt8((v >> 24) & 255))
+  o.n += 4
+}
+
+fn (var o: Out) u64(v: Int) {
+  o.le(v, 8)
+}
+
+/// v as a big endian 32 bit word (code signatures).
+fn (var o: Out) be32(v: Int) {
+  o.b.write_byte(UInt8((v >> 24) & 255))
+  o.b.write_byte(UInt8((v >> 16) & 255))
+  o.b.write_byte(UInt8((v >> 8) & 255))
+  o.b.write_byte(UInt8(v & 255))
+  o.n += 4
+}
+
+fn (var o: Out) be64(v: Int) {
+  o.be32((v >> 32) & 0xffffffff)
+  o.be32(v & 0xffffffff)
+}
+
+fn (var o: Out) bytes(d: Bytes) {
+  o.b.write(d)
+  o.n += d.len()
+}
+
+/// s padded with zeros to n bytes (segment and section names).
+fn (var o: Out) name(s: Str, n: Int) {
+  let d = s.bytes()
+  for i in 0..n {
+    o.b.write_byte(if i < d.len() { d[i] } else { 0 })
+  }
+  o.n += n
+}
+
+fn (var o: Out) zeros(n: Int) {
+  for _ in 0..n {
+    o.b.write_byte(0)
+  }
+  o.n += n
+}
+
+/// Zeros up to a multiple of al.
+fn (var o: Out) pad(al: Int) {
+  while o.n % al != 0 {
+    o.b.write_byte(0)
+    o.n += 1
+  }
+}
+
+/// v as a ULEB128; the number of bytes.
+fn (var o: Out) uleb(v: Int) -> Int {
+  var x = v
+  var k = 0
+  while {
+    let byte = x & 127
+    x = lsr(x, 7)
+    k += 1
+    if x == 0 {
+      o.u8(byte)
+      return k
+    }
+    o.u8(byte | 128)
+  }
+}
+
+/// v as a SLEB128; the number of bytes.
+fn (var o: Out) sleb(v: Int) -> Int {
+  var x = v
+  var k = 0
+  while {
+    let byte = x & 127
+    x = x >> 7
+    k += 1
+    if (x == 0 && (byte & 64) == 0) || (x == -1 && (byte & 64) != 0) {
+      o.u8(byte)
+      return k
+    }
+    o.u8(byte | 128)
+  }
+}
+
+fn (var o: Out) done() -> Bytes {
+  o.b.freeze()
+}

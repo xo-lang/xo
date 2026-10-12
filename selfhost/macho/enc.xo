@@ -1,0 +1,1165 @@
+// arm64 instruction encoding: the mnemonics and operand forms the arm64
+// emitter writes, encoded as LLVM's assembler encodes them (aliases such
+// as mov, cmp, cset, lsl resolved to the same instruction).
+
+const NOP = 0xd503201f
+
+/// Register kinds.
+const RX = 0
+const RW = 1
+const RD = 2
+const RS = 3
+const RSP = 4
+
+/// A register operand: its number (31 for xzr, wzr, sp) and kind; kind
+/// -1 when the operand is not a register.
+fn reg(b: Bytes) -> (Int, Int) {
+  if b.len() < 2 {
+    return (0, -1)
+  }
+  if b.len() == 2 && b[0] == 's' && b[1] == 'p' {
+    return (31, RSP)
+  }
+  if b.len() == 3 && b[1] == 'z' && b[2] == 'r' {
+    if b[0] == 'x' {
+      return (31, RX)
+    }
+    if b[0] == 'w' {
+      return (31, RW)
+    }
+    return (0, -1)
+  }
+  let k = match b[0] {
+    'x' => RX
+    'w' => RW
+    'd' => RD
+    's' => RS
+    _ => -1
+  }
+  if k < 0 {
+    return (0, -1)
+  }
+  var n = 0
+  for i in 1..b.len() {
+    let c = b[i]
+    if c < '0' || c > '9' {
+      return (0, -1)
+    }
+    n = n * 10 + Int(c - '0')
+  }
+  if b.len() > 3 || n > 31 || (n == 31 && (k == RX || k == RW)) {
+    return (0, -1)
+  }
+  (n, k)
+}
+
+/// The condition codes.
+fn cond(b: Bytes) -> Int {
+  match bstr(b) {
+    "eq" => 0
+    "ne" => 1
+    "hs" | "cs" => 2
+    "lo" | "cc" => 3
+    "mi" => 4
+    "pl" => 5
+    "vs" => 6
+    "vc" => 7
+    "hi" => 8
+    "ls" => 9
+    "ge" => 10
+    "lt" => 11
+    "gt" => 12
+    "le" => 13
+    "al" => 14
+    "nv" => 15
+    _ => -1
+  }
+}
+
+/// An immediate operand `#N`.
+fn imm(b: Bytes) -> Int? {
+  if b.len() < 2 || b[0] != '#' {
+    return None
+  }
+  parse_int(b[1..])
+}
+
+/// A shift operand `lsl #N` (also lsr, asr): (kind 0 lsl, 1 lsr, 2 asr;
+/// amount), or None.
+fn shift_op(b: Bytes) -> (Int, Int)? {
+  if b.len() < 5 {
+    return None
+  }
+  let k = match bstr(b[0..3]) {
+    "lsl" => 0
+    "lsr" => 1
+    "asr" => 2
+    _ => -1
+  }
+  if k < 0 {
+    return None
+  }
+  match imm(trim(b[3..])) {
+    Some(n) => Some((k, n))
+    None => None
+  }
+}
+
+/// A label operand with an optional relocation operator: (name, op) with
+/// op "" or "PAGE", "PAGEOFF".
+fn label_op(b: Bytes) -> (Bytes, Str) {
+  for i in 0..b.len() {
+    if b[i] == '@' {
+      return (b[0..i], bstr(b[i + 1..]))
+    }
+  }
+  (b, "")
+}
+
+fn (var a: Asm) word(w: Int) {
+  a.sects[a.cur].words.push(w)
+}
+
+/// A word with a label fixup.
+fn (var a: Asm) word_fix(w: Int, kind: Int, name: Bytes) {
+  let s = a.sym(name)
+  if !a.syms[s].registered && !a.syms[s].queued {
+    a.syms[s].queued = true
+    a.pending.push(s)
+  }
+  a.fixes.push(Fix{sect: a.cur, at: a.sects[a.cur].words.len(), kind: kind, sym: s, line: a.line})
+  a.sects[a.cur].words.push(w)
+}
+
+fn (var a: Asm) bad(m: Str, ops: List[Bytes]) {
+  var parts: List[Str] = []
+  for o in ops {
+    parts.push(bstr(o))
+  }
+  a.fail("unsupported instruction: ${m} ${parts.join(", ")}")
+}
+
+/// A general register of a data processing instruction: x (sf 1) or w
+/// (sf 0); sp allowed when sp_ok. Returns (number, sf), or (-1, 0).
+fn gpr(b: Bytes, sp_ok: Bool) -> (Int, Int) {
+  let (n, k) = reg(b)
+  if k == RX {
+    return (n, 1)
+  }
+  if k == RW {
+    return (n, 0)
+  }
+  if k == RSP && sp_ok {
+    return (31, 1)
+  }
+  (-1, 0)
+}
+
+fn is_sp(b: Bytes) -> Bool {
+  b.len() == 2 && b[0] == 's' && b[1] == 'p'
+}
+
+fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  match m {
+    "mov" => a.mov(ops)
+    "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" => a.ldst(m, ops)
+    "ldp" | "stp" => a.ldstp(m, ops)
+    "bl" => {
+      if n != 1 {
+        return a.bad(m, ops)
+      }
+      a.word_fix(0x94000000, FX_BL26, ops[0])
+    }
+    "b" => {
+      if n != 1 {
+        return a.bad(m, ops)
+      }
+      a.word_fix(0x14000000, FX_B26, ops[0])
+    }
+    "add" | "adds" | "sub" | "subs" => a.addsub(m, ops)
+    "cmp" | "cmn" => {
+      if n < 2 {
+        return a.bad(m, ops)
+      }
+      let zr = if ops[0].len() > 0 && ops[0][0] == 'w' { "wzr" } else { "xzr" }
+      a.addsub(if m == "cmp" { "subs" } else { "adds" }, [zr.bytes()] + ops)
+    }
+    "neg" | "negs" => {
+      if n < 2 {
+        return a.bad(m, ops)
+      }
+      let zr = if ops[0].len() > 0 && ops[0][0] == 'w' { "wzr" } else { "xzr" }
+      a.addsub(if m == "neg" { "sub" } else { "subs" }, [ops[0], zr.bytes()] + ops[1..])
+    }
+    "and" | "orr" | "eor" | "ands" | "bic" | "orn" | "eon" | "bics" => a.logical(m, ops)
+    "tst" => {
+      if n < 2 {
+        return a.bad(m, ops)
+      }
+      let zr = if ops[0].len() > 0 && ops[0][0] == 'w' { "wzr" } else { "xzr" }
+      a.logical("ands", [zr.bytes()] + ops)
+    }
+    "mvn" => {
+      if n < 2 {
+        return a.bad(m, ops)
+      }
+      let zr = if ops[0].len() > 0 && ops[0][0] == 'w' { "wzr" } else { "xzr" }
+      a.logical("orn", [ops[0], zr.bytes()] + ops[1..])
+    }
+    "lsl" | "lsr" | "asr" | "ror" => a.shift(m, ops)
+    "mul" | "madd" | "msub" | "smulh" | "umulh" | "sdiv" | "udiv" | "mneg" => a.muldiv(m, ops)
+    "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cneg" => a.csel(m, ops)
+    "ccmp" | "ccmn" => a.ccmp(m, ops)
+    "cbz" | "cbnz" => {
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (r, sf) = gpr(ops[0], false)
+      if r < 0 {
+        return a.bad(m, ops)
+      }
+      let base = if m == "cbz" { 0x34000000 } else { 0x35000000 }
+      a.word_fix(base | (sf * 0x80000000) | r, FX_COND19, ops[1])
+    }
+    "tbz" | "tbnz" => {
+      if n != 3 {
+        return a.bad(m, ops)
+      }
+      let (r, _) = gpr(ops[0], false)
+      let bit = imm(ops[1]) ?? -1
+      if r < 0 || bit < 0 || bit > 63 {
+        return a.bad(m, ops)
+      }
+      let base = if m == "tbz" { 0x36000000 } else { 0x37000000 }
+      a.word_fix(base | ((bit >> 5) * 0x80000000) | ((bit & 31) * 0x80000) | r, FX_TB14, ops[2])
+    }
+    "br" | "blr" | "ret" => {
+      var r = 30
+      if n == 1 {
+        let (x, k) = reg(ops[0])
+        if k != RX {
+          return a.bad(m, ops)
+        }
+        r = x
+      } else if n != 0 || m != "ret" {
+        return a.bad(m, ops)
+      }
+      let base = match m {
+        "br" => 0xd61f0000
+        "blr" => 0xd63f0000
+        _ => 0xd65f0000
+      }
+      a.word(base | (r * 32))
+    }
+    "brk" => {
+      let v = if n == 1 { imm(ops[0]) ?? -1 } else { -1 }
+      if v < 0 || v > 65535 {
+        return a.bad(m, ops)
+      }
+      a.word(0xd4200000 | (v * 32))
+    }
+    "nop" => a.word(NOP)
+    "adr" | "adrp" => {
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (r, k) = reg(ops[0])
+      if k != RX {
+        return a.bad(m, ops)
+      }
+      let (name, op) = label_op(ops[1])
+      if m == "adr" {
+        if op != "" {
+          return a.bad(m, ops)
+        }
+        a.word_fix(0x10000000 | r, FX_ADR21, name)
+      } else {
+        if op != "PAGE" {
+          return a.bad(m, ops)
+        }
+        a.word_fix(0x90000000 | r, FX_PAGE21, name)
+      }
+    }
+    "movz" | "movn" | "movk" => {
+      if n != 2 && n != 3 {
+        return a.bad(m, ops)
+      }
+      let (r, sf) = gpr(ops[0], false)
+      let v = imm(ops[1]) ?? -1
+      var sh = 0
+      if n == 3 {
+        match shift_op(ops[2]) {
+          Some((0, s)) => sh = s
+          _ => return a.bad(m, ops)
+        }
+      }
+      if r < 0 || v < 0 || v > 65535 || sh % 16 != 0 || sh < 0 || sh > (if sf == 1 { 48 } else { 16 }) {
+        return a.bad(m, ops)
+      }
+      let base = match m {
+        "movz" => 0x52800000
+        "movn" => 0x12800000
+        _ => 0x72800000
+      }
+      a.word(base | (sf * 0x80000000) | ((sh / 16) * 0x200000) | (v * 32) | r)
+    }
+    "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" => a.atomic(m, ops)
+    "fmov" => a.fmov(ops)
+    "fadd" | "fsub" | "fmul" | "fdiv" => {
+      let base = match m {
+        "fadd" => 0x1e602800
+        "fsub" => 0x1e603800
+        "fmul" => 0x1e600800
+        _ => 0x1e601800
+      }
+      a.fp3(m, ops, base)
+    }
+    "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" => {
+      let base = match m {
+        "fneg" => 0x1e614000
+        "fabs" => 0x1e60c000
+        "fsqrt" => 0x1e61c000
+        "frintz" => 0x1e65c000
+        "frinta" => 0x1e664000
+        "frintm" => 0x1e654000
+        "frintp" => 0x1e64c000
+        "frintn" => 0x1e644000
+        "frintx" => 0x1e674000
+        _ => 0x1e67c000
+      }
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (d, kd) = reg(ops[0])
+      let (s, ks) = reg(ops[1])
+      if kd != RD || ks != RD {
+        return a.bad(m, ops)
+      }
+      a.word(base | (s * 32) | d)
+    }
+    "scvtf" | "ucvtf" => {
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (d, kd) = reg(ops[0])
+      let (s, sf) = gpr(ops[1], false)
+      if kd != RD || s < 0 {
+        return a.bad(m, ops)
+      }
+      let base = if m == "scvtf" { 0x1e620000 } else { 0x1e630000 }
+      a.word(base | (sf * 0x80000000) | (s * 32) | d)
+    }
+    "fcvtzs" | "fcvtzu" => {
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (d, sf) = gpr(ops[0], false)
+      let (s, ks) = reg(ops[1])
+      if d < 0 || ks != RD {
+        return a.bad(m, ops)
+      }
+      let base = if m == "fcvtzs" { 0x1e780000 } else { 0x1e790000 }
+      a.word(base | (sf * 0x80000000) | (s * 32) | d)
+    }
+    "fcmp" | "fcmpe" => {
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (x, kx) = reg(ops[0])
+      if kx != RD {
+        return a.bad(m, ops)
+      }
+      let e = if m == "fcmpe" { 16 } else { 0 }
+      let (y, ky) = reg(ops[1])
+      if ky == RD {
+        a.word(0x1e602000 | (y * 0x10000) | (x * 32) | e)
+      } else if bstr(ops[1]) == "#0.0" || bstr(ops[1]) == "#0" {
+        a.word(0x1e602008 | (x * 32) | e)
+      } else {
+        a.bad(m, ops)
+      }
+    }
+    "fcsel" => {
+      if n != 4 {
+        return a.bad(m, ops)
+      }
+      let (d, kd) = reg(ops[0])
+      let (x, kx) = reg(ops[1])
+      let (y, ky) = reg(ops[2])
+      let c = cond(ops[3])
+      if kd != RD || kx != RD || ky != RD || c < 0 {
+        return a.bad(m, ops)
+      }
+      a.word(0x1e600c00 | (y * 0x10000) | (c * 0x1000) | (x * 32) | d)
+    }
+    "fccmp" | "fccmpe" => {
+      if n != 4 {
+        return a.bad(m, ops)
+      }
+      let (x, kx) = reg(ops[0])
+      let (y, ky) = reg(ops[1])
+      let nzcv = imm(ops[2]) ?? -1
+      let c = cond(ops[3])
+      if kx != RD || ky != RD || nzcv < 0 || nzcv > 15 || c < 0 {
+        return a.bad(m, ops)
+      }
+      let e = if m == "fccmpe" { 16 } else { 0 }
+      a.word(0x1e600400 | (y * 0x10000) | (c * 0x1000) | (x * 32) | e | nzcv)
+    }
+    _ => {
+      if m.starts_with("b.") && n == 1 {
+        let c = cond(m.bytes()[2..])
+        if c < 0 {
+          return a.bad(m, ops)
+        }
+        a.word_fix(0x54000000 | c, FX_COND19, ops[0])
+        return
+      }
+      a.bad(m, ops)
+    }
+  }
+}
+
+/// mov: a register move (orr, or add #0 with sp), or an immediate (movz,
+/// movn, or orr of a logical immediate, as LLVM picks).
+fn (var a: Asm) mov(ops: List[Bytes]) {
+  if ops.len() != 2 {
+    return a.bad("mov", ops)
+  }
+  let (d, kd) = reg(ops[0])
+  if kd != RX && kd != RW && kd != RSP {
+    return a.bad("mov", ops)
+  }
+  let sf = if kd == RW { 0 } else { 1 }
+  match imm(ops[1]) {
+    Some(v) => {
+      if kd == RSP {
+        return a.bad("mov", ops)
+      }
+      return a.mov_imm(d, sf, v, ops)
+    }
+    None => {}
+  }
+  let (s, ks) = reg(ops[1])
+  if ks < 0 {
+    return a.bad("mov", ops)
+  }
+  if kd == RSP || ks == RSP {
+    // add Rd, Rn, #0
+    a.word(0x11000000 | (sf * 0x80000000) | (s * 32) | d)
+    return
+  }
+  if (ks == RX) != (sf == 1) {
+    return a.bad("mov", ops)
+  }
+  // orr Rd, zr, Rm
+  a.word(0x2a0003e0 | (sf * 0x80000000) | (s * 0x10000) | d)
+}
+
+fn (var a: Asm) mov_imm(d: Int, sf: Int, v0: Int, ops: List[Bytes]) {
+  var v = v0
+  let nchunks = if sf == 1 { 4 } else { 2 }
+  if sf == 0 {
+    if v < -2147483648 || v > 4294967295 {
+      return a.bad("mov", ops)
+    }
+    v = v & 0xffffffff
+  }
+  // movz: at most one chunk not zero
+  var nz = 0
+  var at = 0
+  for k in 0..nchunks {
+    if (lsr(v, 16 * k) & 0xffff) != 0 {
+      nz += 1
+      at = k
+    }
+  }
+  if nz <= 1 {
+    a.word(0x52800000 | (sf * 0x80000000) | (at * 0x200000) | ((lsr(v, 16 * at) & 0xffff) * 32) | d)
+    return
+  }
+  // movn: at most one chunk not all ones
+  let inv = if sf == 1 { ~v } else { (~v) & 0xffffffff }
+  var ni = 0
+  var at2 = 0
+  for k in 0..nchunks {
+    if (lsr(inv, 16 * k) & 0xffff) != 0 {
+      ni += 1
+      at2 = k
+    }
+  }
+  if ni <= 1 {
+    a.word(0x12800000 | (sf * 0x80000000) | (at2 * 0x200000) | ((lsr(inv, 16 * at2) & 0xffff) * 32) | d)
+    return
+  }
+  match logical_imm(v, if sf == 1 { 64 } else { 32 }) {
+    Some(e) => a.word(0x32000000 | (sf * 0x80000000) | (e * 0x400) | (31 * 32) | d)
+    None => a.bad("mov", ops)
+  }
+}
+
+/// The N:immr:imms field (13 bits) of a logical immediate of a register
+/// of size bits, or None when v is not one.
+fn logical_imm(v0: Int, size: Int) -> Int? {
+  var v = v0
+  if size == 32 {
+    v = v & 0xffffffff
+    // the 32 bit pattern repeated, so the element search below sees it
+    v = v | shl(v, 32)
+  }
+  if v == 0 || v == -1 {
+    return None
+  }
+  var bits: List[Int] = []
+  for i in 0..64 {
+    bits.push((v >> i) & 1)
+  }
+  // the smallest element size whose repetition is v
+  var e = 2
+  while e < 64 {
+    var ok = true
+    for i in 0..64 {
+      if bits[i] != bits[i % e] {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      break
+    }
+    e = e * 2
+  }
+  if size == 32 && e == 64 {
+    return None
+  }
+  // the element must be one run of ones, rotated: find where it starts
+  var ones = 0
+  for i in 0..e {
+    ones += bits[i]
+  }
+  if ones == 0 || ones == e {
+    return None
+  }
+  var p = -1
+  for i in 0..e {
+    if bits[i] == 1 && bits[(i + e - 1) % e] == 0 {
+      p = i
+      break
+    }
+  }
+  for k in 0..ones {
+    if bits[(p + k) % e] != 1 {
+      return None
+    }
+  }
+  let immr = (e - p) % e
+  var nbit = 0
+  var imms = 0
+  if e == 64 {
+    nbit = 1
+    imms = ones - 1
+  } else {
+    imms = ((~(e * 2 - 1)) & 0x3f) | (ones - 1)
+  }
+  Some(nbit * 4096 + immr * 64 + imms)
+}
+
+/// add, adds, sub, subs: immediate (with an optional lsl #12, or a
+/// @PAGEOFF label), or shifted register.
+fn (var a: Asm) addsub(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  if n < 3 {
+    return a.bad(m, ops)
+  }
+  var sub = m == "sub" || m == "subs"
+  let flags = m == "adds" || m == "subs"
+  // a flag setting form takes zr, not sp, as its destination
+  let (d, sfd) = gpr(ops[0], !flags)
+  let (s, sfs) = gpr(ops[1], true)
+  if d < 0 || s < 0 || sfd != sfs {
+    return a.bad(m, ops)
+  }
+  let sf = sfd
+  let fl = if flags { 0x20000000 } else { 0 }
+  // an immediate
+  if ops[2].len() > 0 && ops[2][0] == '#' {
+    var v = imm(ops[2]) ?? fault_none()
+    var sh = 0
+    if n == 4 {
+      match shift_op(ops[3]) {
+        Some((0, 12)) => sh = 1
+        Some((0, 0)) => sh = 0
+        _ => return a.bad(m, ops)
+      }
+    } else if n != 3 {
+      return a.bad(m, ops)
+    }
+    if v < 0 && sh == 0 {
+      // add #-n is sub #n
+      v = 0 - v
+      sub = !sub
+    }
+    if sh == 0 && v > 4095 && v % 4096 == 0 && v / 4096 <= 4095 {
+      v = v / 4096
+      sh = 1
+    }
+    if v < 0 || v > 4095 {
+      return a.bad(m, ops)
+    }
+    let base = if sub { 0x51000000 } else { 0x11000000 }
+    a.word(base | (sf * 0x80000000) | fl | (sh * 0x400000) | (v * 0x400) | (s * 32) | d)
+    return
+  }
+  // a page offset
+  let (lab, op) = label_op(ops[2])
+  if op == "PAGEOFF" {
+    if sub || flags || n != 3 {
+      return a.bad(m, ops)
+    }
+    a.word_fix(0x91000000 | (s * 32) | d, FX_PAGEOFF12, lab)
+    return
+  }
+  // a shifted register
+  let (r, sfr) = gpr(ops[2], false)
+  if r < 0 || sfr != sf {
+    return a.bad(m, ops)
+  }
+  var sk = 0
+  var amt = 0
+  if n == 4 {
+    match shift_op(ops[3]) {
+      Some((k, x)) => {
+        sk = k
+        amt = x
+      }
+      None => return a.bad(m, ops)
+    }
+  } else if n != 3 {
+    return a.bad(m, ops)
+  }
+  if amt < 0 || amt > (if sf == 1 { 63 } else { 31 }) {
+    return a.bad(m, ops)
+  }
+  if is_sp(ops[0]) || is_sp(ops[1]) {
+    // the extended register form, uxtx (lsl) #amt
+    if sk != 0 || amt > 4 {
+      return a.bad(m, ops)
+    }
+    let base = if sub { 0x4b200000 } else { 0x0b200000 }
+    a.word(base | (sf * 0x80000000) | fl | (r * 0x10000) | ((2 + sf) * 0x2000) | (amt * 0x400) | (s * 32) | d)
+    return
+  }
+  let base = if sub { 0x4b000000 } else { 0x0b000000 }
+  a.word(base | (sf * 0x80000000) | fl | (sk * 0x400000) | (r * 0x10000) | (amt * 0x400) | (s * 32) | d)
+}
+
+fn fault_none() -> Int {
+  fault("internal: an immediate checked before")
+}
+
+/// and, orr, eor, ands (and the inverted bic, orn, eon, bics): logical
+/// immediate or shifted register.
+fn (var a: Asm) logical(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  if n < 3 {
+    return a.bad(m, ops)
+  }
+  let opc = match m {
+    "and" | "bic" => 0
+    "orr" | "orn" => 1
+    "eor" | "eon" => 2
+    _ => 3
+  }
+  let inv = m == "bic" || m == "orn" || m == "eon" || m == "bics"
+  let (d, sfd) = gpr(ops[0], opc != 3)
+  let (s, sfs) = gpr(ops[1], false)
+  if d < 0 || s < 0 || sfd != sfs {
+    return a.bad(m, ops)
+  }
+  let sf = sfd
+  if ops[2].len() > 0 && ops[2][0] == '#' {
+    if inv || n != 3 {
+      return a.bad(m, ops)
+    }
+    let v = imm(ops[2]) ?? fault_none()
+    match logical_imm(v, if sf == 1 { 64 } else { 32 }) {
+      Some(e) => a.word(0x12000000 | (sf * 0x80000000) | (opc * 0x20000000) | (e * 0x400) | (s * 32) | d)
+      None => a.bad(m, ops)
+    }
+    return
+  }
+  let (r, sfr) = gpr(ops[2], false)
+  if r < 0 || sfr != sf {
+    return a.bad(m, ops)
+  }
+  var sk = 0
+  var amt = 0
+  if n == 4 {
+    match shift_op(ops[3]) {
+      Some((k, x)) => {
+        sk = k
+        amt = x
+      }
+      None => {
+        if bstr(ops[3]).starts_with("ror") {
+          sk = 3
+          amt = imm(trim(ops[3][3..])) ?? -1
+        } else {
+          return a.bad(m, ops)
+        }
+      }
+    }
+  }
+  if amt < 0 || amt > (if sf == 1 { 63 } else { 31 }) {
+    return a.bad(m, ops)
+  }
+  let nb = if inv { 0x200000 } else { 0 }
+  a.word(0x0a000000 | (sf * 0x80000000) | (opc * 0x20000000) | (sk * 0x400000) | nb | (r * 0x10000) | (amt * 0x400) | (s * 32) | d)
+}
+
+/// lsl, lsr, asr, ror: by an immediate (ubfm, sbfm, extr) or a register
+/// (lslv, lsrv, asrv, rorv).
+fn (var a: Asm) shift(m: Str, ops: List[Bytes]) {
+  if ops.len() != 3 {
+    return a.bad(m, ops)
+  }
+  let (d, sfd) = gpr(ops[0], false)
+  let (s, sfs) = gpr(ops[1], false)
+  if d < 0 || s < 0 || sfd != sfs {
+    return a.bad(m, ops)
+  }
+  let sf = sfd
+  let size = if sf == 1 { 64 } else { 32 }
+  let nbit = if sf == 1 { 0x400000 } else { 0 }
+  match imm(ops[2]) {
+    Some(v) => {
+      if v < 0 || v >= size {
+        return a.bad(m, ops)
+      }
+      match m {
+        "lsl" => {
+          let immr = (size - v) % size
+          let imms = size - 1 - v
+          a.word(0x53000000 | (sf * 0x80000000) | nbit | (immr * 0x10000) | (imms * 0x400) | (s * 32) | d)
+        }
+        "lsr" => a.word(0x53000000 | (sf * 0x80000000) | nbit | (v * 0x10000) | ((size - 1) * 0x400) | (s * 32) | d)
+        "asr" => a.word(0x13000000 | (sf * 0x80000000) | nbit | (v * 0x10000) | ((size - 1) * 0x400) | (s * 32) | d)
+        _ => a.word(0x13800000 | (sf * 0x80000000) | nbit | (s * 0x10000) | (v * 0x400) | (s * 32) | d)
+      }
+    }
+    None => {
+      let (r, sfr) = gpr(ops[2], false)
+      if r < 0 || sfr != sf {
+        return a.bad(m, ops)
+      }
+      let op2 = match m {
+        "lsl" => 0x2000
+        "lsr" => 0x2400
+        "asr" => 0x2800
+        _ => 0x2c00
+      }
+      a.word(0x1ac00000 | (sf * 0x80000000) | (r * 0x10000) | op2 | (s * 32) | d)
+    }
+  }
+}
+
+fn (var a: Asm) muldiv(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  var rs: List[Int] = []
+  var sf = -1
+  for o in ops {
+    let (r, f) = gpr(o, false)
+    if r < 0 || (sf >= 0 && f != sf) {
+      return a.bad(m, ops)
+    }
+    sf = f
+    rs.push(r)
+  }
+  let sfb = sf * 0x80000000
+  match m {
+    "mul" | "mneg" => {
+      if n != 3 {
+        return a.bad(m, ops)
+      }
+      let o0 = if m == "mneg" { 0x8000 } else { 0 }
+      a.word(0x1b000000 | sfb | (rs[2] * 0x10000) | o0 | (31 * 0x400) | (rs[1] * 32) | rs[0])
+    }
+    "madd" | "msub" => {
+      if n != 4 {
+        return a.bad(m, ops)
+      }
+      let o0 = if m == "msub" { 0x8000 } else { 0 }
+      a.word(0x1b000000 | sfb | (rs[2] * 0x10000) | o0 | (rs[3] * 0x400) | (rs[1] * 32) | rs[0])
+    }
+    "smulh" | "umulh" => {
+      if n != 3 || sf != 1 {
+        return a.bad(m, ops)
+      }
+      let base = if m == "smulh" { 0x9b407c00 } else { 0x9bc07c00 }
+      a.word(base | (rs[2] * 0x10000) | (rs[1] * 32) | rs[0])
+    }
+    _ => {
+      if n != 3 {
+        return a.bad(m, ops)
+      }
+      let op2 = if m == "sdiv" { 0xc00 } else { 0x800 }
+      a.word(0x1ac00000 | sfb | (rs[2] * 0x10000) | op2 | (rs[1] * 32) | rs[0])
+    }
+  }
+}
+
+/// The conditional selects and their aliases.
+fn (var a: Asm) csel(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  let c = cond(ops[n - 1])
+  if c < 0 || n < 2 {
+    return a.bad(m, ops)
+  }
+  var rs: List[Int] = []
+  var sf = -1
+  for o in ops[0..n - 1] {
+    let (r, f) = gpr(o, false)
+    if r < 0 || (sf >= 0 && f != sf) {
+      return a.bad(m, ops)
+    }
+    sf = f
+    rs.push(r)
+  }
+  // (op, o2): csel 0/0, csinc 0/1, csinv 1/0, csneg 1/1
+  var d = rs[0]
+  var x = 0
+  var y = 0
+  var cc = c
+  var op = 0
+  var o2 = 0
+  match m {
+    "csel" | "csinc" | "csinv" | "csneg" => {
+      if rs.len() != 3 {
+        return a.bad(m, ops)
+      }
+      x = rs[1]
+      y = rs[2]
+      op = if m == "csinv" || m == "csneg" { 1 } else { 0 }
+      o2 = if m == "csinc" || m == "csneg" { 1 } else { 0 }
+    }
+    "cset" | "csetm" => {
+      if rs.len() != 1 {
+        return a.bad(m, ops)
+      }
+      x = 31
+      y = 31
+      cc = c ^ 1
+      op = if m == "csetm" { 1 } else { 0 }
+      o2 = if m == "cset" { 1 } else { 0 }
+    }
+    _ => {
+      // cinc, cneg: Rd, Rn, cond
+      if rs.len() != 2 {
+        return a.bad(m, ops)
+      }
+      x = rs[1]
+      y = rs[1]
+      cc = c ^ 1
+      op = if m == "cneg" { 1 } else { 0 }
+      o2 = 1
+    }
+  }
+  a.word(0x1a800000 | (sf * 0x80000000) | (op * 0x40000000) | (y * 0x10000) | (cc * 0x1000) | (o2 * 0x400) | (x * 32) | d)
+}
+
+/// ccmp, ccmn with an immediate or a register.
+fn (var a: Asm) ccmp(m: Str, ops: List[Bytes]) {
+  if ops.len() != 4 {
+    return a.bad(m, ops)
+  }
+  let (x, sf) = gpr(ops[0], false)
+  let nzcv = imm(ops[2]) ?? -1
+  let c = cond(ops[3])
+  if x < 0 || nzcv < 0 || nzcv > 15 || c < 0 {
+    return a.bad(m, ops)
+  }
+  let base = if m == "ccmp" { 0x7a400000 } else { 0x3a400000 }
+  match imm(ops[1]) {
+    Some(v) => {
+      if v < 0 || v > 31 {
+        return a.bad(m, ops)
+      }
+      a.word(base | (sf * 0x80000000) | (v * 0x10000) | (c * 0x1000) | 0x800 | (x * 32) | nzcv)
+    }
+    None => {
+      let (y, sfy) = gpr(ops[1], false)
+      if y < 0 || sfy != sf {
+        return a.bad(m, ops)
+      }
+      a.word(base | (sf * 0x80000000) | (y * 0x10000) | (c * 0x1000) | (x * 32) | nzcv)
+    }
+  }
+}
+
+/// The LSE atomics: ldadd{a,l,al} Rs, Rt, [Rn] and stadd{l} Rs, [Rn].
+fn (var a: Asm) atomic(m: Str, ops: List[Bytes]) {
+  let st = m.starts_with("st")
+  let n = ops.len()
+  if (st && n != 2) || (!st && n != 3) {
+    return a.bad(m, ops)
+  }
+  let (s, sf) = gpr(ops[0], false)
+  var t = 31
+  var sft = sf
+  if !st {
+    let (r, f) = gpr(ops[1], false)
+    t = r
+    sft = f
+  }
+  let mem = ops[n - 1]
+  if mem.len() < 3 || mem[0] != '[' || mem[mem.len() - 1] != ']' {
+    return a.bad(m, ops)
+  }
+  let (b, kb) = reg(trim(mem[1..mem.len() - 1]))
+  if s < 0 || t < 0 || sft != sf || (kb != RX && kb != RSP) {
+    return a.bad(m, ops)
+  }
+  let acq = m == "ldadda" || m == "ldaddal"
+  let rel = m == "ldaddl" || m == "ldaddal" || m == "staddl"
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  a.word(0x38200000 | size | (if acq { 0x800000 } else { 0 }) | (if rel { 0x400000 } else { 0 }) | (s * 0x10000) | (b * 32) | t)
+}
+
+fn (var a: Asm) fmov(ops: List[Bytes]) {
+  if ops.len() != 2 {
+    return a.bad("fmov", ops)
+  }
+  let (d, kd) = reg(ops[0])
+  let (s, ks) = reg(ops[1])
+  if kd == RD && ks == RD {
+    a.word(0x1e604000 | (s * 32) | d)
+  } else if kd == RD && ks == RX {
+    a.word(0x9e670000 | (s * 32) | d)
+  } else if kd == RX && ks == RD {
+    a.word(0x9e660000 | (s * 32) | d)
+  } else {
+    a.bad("fmov", ops)
+  }
+}
+
+/// A three register floating point instruction on d registers.
+fn (var a: Asm) fp3(m: Str, ops: List[Bytes], base: Int) {
+  if ops.len() != 3 {
+    return a.bad(m, ops)
+  }
+  let (d, kd) = reg(ops[0])
+  let (x, kx) = reg(ops[1])
+  let (y, ky) = reg(ops[2])
+  if kd != RD || kx != RD || ky != RD {
+    return a.bad(m, ops)
+  }
+  a.word(base | (y * 0x10000) | (x * 32) | d)
+}
+
+/// A memory operand: [base], [base, #imm], [base, #imm]! (pre), or
+/// [base, Rm{, lsl #s}]; post indexing is the next operand.
+struct Mem {
+  base: Int
+  /// 0 offset, 1 pre index, 2 post index, 3 register offset
+  mode: Int
+  off: Int
+  rm: Int = 0
+  /// the shift of a register offset, -1 for none
+  sh: Int = -1
+  ok: Bool
+}
+
+fn mem_op(ops: List[Bytes], at: Int) -> Mem {
+  let bad = Mem{base: 0, mode: 0, off: 0, ok: false}
+  if at >= ops.len() {
+    return bad
+  }
+  let b0 = ops[at]
+  var b = b0
+  var pre = false
+  if b.len() > 0 && b[b.len() - 1] == '!' {
+    pre = true
+    b = b[0..b.len() - 1]
+  }
+  if b.len() < 3 || b[0] != '[' || b[b.len() - 1] != ']' {
+    return bad
+  }
+  let parts = split_operands(b[1..b.len() - 1])
+  let (base, kb) = reg(parts[0])
+  if kb != RX && kb != RSP {
+    return bad
+  }
+  if parts.len() == 1 {
+    if pre {
+      return bad
+    }
+    if at + 1 < ops.len() {
+      // post index: [base], #imm
+      match imm(ops[at + 1]) {
+        Some(v) => return Mem{base: base, mode: 2, off: v, ok: at + 2 == ops.len()}
+        None => return bad
+      }
+    }
+    return Mem{base: base, mode: 0, off: 0, ok: true}
+  }
+  if at + 1 != ops.len() {
+    return bad
+  }
+  match imm(parts[1]) {
+    Some(v) => {
+      if parts.len() != 2 {
+        return bad
+      }
+      return Mem{base: base, mode: if pre { 1 } else { 0 }, off: v, ok: true}
+    }
+    None => {}
+  }
+  if pre {
+    return bad
+  }
+  let (rm, km) = reg(parts[1])
+  if km != RX {
+    return bad
+  }
+  var sh = -1
+  if parts.len() == 3 {
+    match shift_op(parts[2]) {
+      Some((0, s)) => sh = s
+      _ => return bad
+    }
+  } else if parts.len() != 2 {
+    return bad
+  }
+  Mem{base: base, mode: 3, off: 0, rm: rm, sh: sh, ok: true}
+}
+
+/// Single register loads and stores: unsigned scaled offsets, the
+/// unscaled (ldur/stur) form for others, pre and post index, and
+/// register offsets.
+fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
+  if ops.len() < 2 {
+    return a.bad(m, ops)
+  }
+  let (t, kt) = reg(ops[0])
+  // size (log2 bytes), V (fp), opc for a load
+  var size = 3
+  var v = 0
+  var load = m.starts_with("ld")
+  var opc = if load { 1 } else { 0 }
+  match m {
+    "ldr" | "str" | "ldur" | "stur" => {
+      if kt == RX {
+        size = 3
+      } else if kt == RW {
+        size = 2
+      } else if kt == RD {
+        size = 3
+        v = 1
+      } else if kt == RS {
+        size = 2
+        v = 1
+      } else {
+        return a.bad(m, ops)
+      }
+    }
+    "ldrb" | "strb" => {
+      if kt != RW {
+        return a.bad(m, ops)
+      }
+      size = 0
+    }
+    "ldrh" | "strh" => {
+      if kt != RW {
+        return a.bad(m, ops)
+      }
+      size = 1
+    }
+    _ => {
+      // ldrsw
+      if kt != RX {
+        return a.bad(m, ops)
+      }
+      size = 2
+      opc = 2
+    }
+  }
+  let mo = mem_op(ops, 1)
+  if !mo.ok {
+    return a.bad(m, ops)
+  }
+  let head = (size * 0x40000000) | 0x38000000 | (v * 0x4000000)
+  let scale = pow2(size)
+  let rn = mo.base * 32
+  if mo.mode == 3 {
+    // register offset, lsl #0 or #size (S)
+    var s = 0
+    if mo.sh >= 0 {
+      if mo.sh == size {
+        s = 1
+      } else if mo.sh != 0 {
+        return a.bad(m, ops)
+      }
+      // ldrb with an explicit lsl #0 sets S
+      if size == 0 && mo.sh == 0 {
+        s = 1
+      }
+    }
+    a.word(head | (opc * 0x400000) | 0x200000 | (mo.rm * 0x10000) | (3 * 0x2000) | (s * 0x1000) | 0x800 | rn | t)
+    return
+  }
+  if mo.mode == 1 || mo.mode == 2 {
+    if mo.off < -256 || mo.off > 255 {
+      return a.bad(m, ops)
+    }
+    let idx = if mo.mode == 1 { 0xc00 } else { 0x400 }
+    a.word(head | (opc * 0x400000) | ((mo.off & 0x1ff) * 0x1000) | idx | rn | t)
+    return
+  }
+  let unscaled = m == "ldur" || m == "stur"
+  if !unscaled && mo.off >= 0 && mo.off % scale == 0 && mo.off / scale <= 4095 {
+    a.word(head | 0x1000000 | (opc * 0x400000) | ((mo.off / scale) * 0x400) | rn | t)
+    return
+  }
+  if mo.off < -256 || mo.off > 255 {
+    return a.bad(m, ops)
+  }
+  a.word(head | (opc * 0x400000) | ((mo.off & 0x1ff) * 0x1000) | rn | t)
+}
+
+/// ldp and stp of x or d registers: signed offset, pre, post index.
+fn (var a: Asm) ldstp(m: Str, ops: List[Bytes]) {
+  if ops.len() < 3 {
+    return a.bad(m, ops)
+  }
+  let (t1, k1) = reg(ops[0])
+  let (t2, k2) = reg(ops[1])
+  if k1 != k2 {
+    return a.bad(m, ops)
+  }
+  // opc and V: x 10/0, w 00/0, d 01/1
+  var opc = 0
+  var v = 0
+  var scale = 8
+  if k1 == RX {
+    opc = 2
+  } else if k1 == RW {
+    scale = 4
+  } else if k1 == RD {
+    opc = 1
+    v = 1
+  } else {
+    return a.bad(m, ops)
+  }
+  let mo = mem_op(ops, 2)
+  if !mo.ok || mo.mode == 3 || mo.off % scale != 0 || mo.off / scale < -64 || mo.off / scale > 63 {
+    return a.bad(m, ops)
+  }
+  let mode = match mo.mode {
+    0 => 0x1000000
+    1 => 0x1800000
+    _ => 0x800000
+  }
+  let l = if m == "ldp" { 0x400000 } else { 0 }
+  a.word((opc * 0x40000000) | 0x28000000 | (v * 0x4000000) | mode | l | (((mo.off / scale) & 0x7f) * 0x8000) | (t2 * 0x400) | (mo.base * 32) | t1)
+}
