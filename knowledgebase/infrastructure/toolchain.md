@@ -2724,10 +2724,18 @@ path by `go test` (31 of the 46 files over 20 MB written after
 
 `scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
 full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
-Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
-the account's EC2 quota is 32 vCPUs for spot and for on demand, so
-c8g.16xlarge (64 vCPU, about $0.70 to $0.80 an hour spot) is refused
-with MaxSpotInstanceCountExceeded until a quota increase), copies
+Graviton instance (default r8g.8xlarge, 32 vCPU, 256 GiB, spot,
+us-east-1, $0.47 to $0.52 an hour spot on 2026-10-12, since 2026-10-12:
+c8g.8xlarge's 64 GiB ran out in the full tier, where one Xo arm64 emitter
+process on a self hosted component holds up to 13 GB,
+gotchas/selfhost-heavy-runs-memory.md; XO_REMOTE_TYPE picks another;
+the spot quota was 32 vCPUs and was raised to 128 on 2026-10-12; a spot
+r8g.8xlarge was reclaimed after 6 minutes on 2026-10-12, so use
+--on-demand for a run that must finish), passes XO_SELFHOST_JOBS=$(nproc)
+(or the caller's XO_SELFHOST_JOBS, and XO_SELFHOST_HEAVY_JOBS when set),
+tests XO_REMOTE_PKGS (default every package but runs/) with
+XO_REMOTE_TESTFLAGS (e.g. -v), appends the peak memory in use (free -m
+every 10 s), copies
 the log to bench/results/remote/<commit>.log (git ignored) and terminates
 the instance. The instance also shuts itself down (terminating it) after
 XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
