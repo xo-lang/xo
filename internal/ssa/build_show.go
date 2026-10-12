@@ -233,7 +233,7 @@ func (s *fn) appendDebug(acc, v *Value, ct check.Type, at ast.Node) *Value {
 func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 	m := b.mod
 	st, intT, boolT := m.Builtin(KStr), m.Builtin(KInt), m.Builtin(KBool)
-	return b.genFunc("xo.debug["+ct.String()+"]", []*Type{st, t}, []*Type{st}, func(s *fn, ps []*Value) {
+	return b.genFunc("xo.debug["+b.typeName(ct)+"]", []*Type{st, t}, []*Type{st}, func(s *fn, ps []*Value) {
 		acc, v := ps[0], ps[1]
 		lit := func(a *Value, text string) *Value {
 			return s.call("str.concat", st, "", a, s.add(OpConst, st, text))

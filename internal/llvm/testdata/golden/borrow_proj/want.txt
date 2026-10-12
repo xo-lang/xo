@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+shared=false count=41 logging=30 grow=20 bump=3069 sum=176 pick=op4'/4 find=8
+  g: n=8 log=15 insts=10 first=3/4
+  keep: n=0 insts=0
+  rows=35 5 0 330
+  shapes=114 0
+  last=op4'11
+shared=true count=41 logging=30 grow=20 bump=3069 sum=176 pick=op4'/4 find=8
+  g: n=8 log=15 insts=10 first=3/4
+  keep: n=0 insts=5
+  rows=35 5 4 330
+  shapes=114 3
+  last=op4'11
+--- stderr

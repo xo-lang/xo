@@ -20,3 +20,9 @@ helper whose name is taken by one of other parameter types (captures,
 for `xo.frameargs`) takes the name with `#2`, `#3`, ... Names without a
 collision are unchanged, so no golden changed.
 TestHelperNamesAcrossModules (internal/ssa) builds the two `Ctx` case.
+
+Note: main fixed the generated functions' names at the source the same
+day (builder.typeName qualifies an ambiguous type by its module,
+ambiguous-type-generated-function-names.md); the `xo.frameargs` key was
+not covered by that, so helperName stays as the guard for it and for
+any helper name built from type text.

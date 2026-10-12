@@ -118,7 +118,7 @@ fn (var b: Builder) lit(a: Int, text: Str) -> Int {
 /// (debugFunc).
 fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   let st = b.str_t()
-  let name = "xo.debug[${b.c.show(ct)}]"
+  let name = "xo.debug[${b.type_name(ct)}]"
   b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
 }
 

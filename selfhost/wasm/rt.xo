@@ -23,7 +23,13 @@ fn rt_imports() -> Str {
     (import "wasi_snapshot_preview1" "args_get" (func $args_get (param i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "environ_sizes_get" (func $environ_sizes_get (param i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "environ_get" (func $environ_get (param i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "random_get" (func $random_get (param i32 i32) (result i32)))
     (global $faulting (mut i32) (i32.const 0))
+    (global $prop (mut i32) (i32.const 0))
+    (global $rtdepth (mut i32) (i32.const 0))
+    (global $rtmark (mut i64) (i64.const 0))
+    (global $rtskip (mut i64) (i64.const 0))
+    (global $abytes (mut i64) (i64.const 0))
     (global $fmsg (mut i32) (i32.const 0))
     (global $fmsgn (mut i32) (i32.const 0))
     (global $floc (mut i32) (i32.const 0))
@@ -102,6 +108,12 @@ fn rt_text(var g: Gen) -> Str {
 
     ;; allocation: a block of the smallest size class holding n + 8 bytes
     (func $alloc (param $n i32) (result i32) (local $c i32) (local $p i32) (local $need i32)
+      ;; the bytes allocated (task budgets)
+      global.get $abytes
+      local.get $n
+      i64.extend_i32_u
+      i64.add
+      global.set $abytes
       i32.const 32
       local.get $n
       i32.const 7
@@ -263,6 +275,11 @@ fn rt_text(var g: Gen) -> Str {
           i32.gt_u
           select
           global.set $dqcap
+          ;; the runtime's own: not an allocation of a real-time section
+          global.get $rtskip
+          i64.const 1
+          i64.add
+          global.set $rtskip
           global.get $dqcap
           i32.const 3
           i32.shl
@@ -730,7 +747,12 @@ fn rt_text(var g: Gen) -> Str {
       local.get $ln
       global.set $flocn
       i32.const 1
-      global.set $faulting)
+      global.set $faulting
+      i32.const 1
+      global.set $prop
+      ;; a fault leaves every real-time section (rt_fault_leave)
+      i32.const 0
+      global.set $rtdepth)
 
     ;; a copy of the Str s, kept with the fault
     (func $str_copy (param $s i32) (param $n i32) (result i32 i32)
@@ -984,6 +1006,8 @@ fn rt_text(var g: Gen) -> Str {
       end
       i32.const 0
       global.set $faulting
+      i32.const 0
+      global.set $prop
       i32.const 1)
 
     (func $fault_msg (result i32 i32)

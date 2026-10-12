@@ -40,6 +40,8 @@ pub struct Checker {
   /// The vouch lines of the consuming modules (vouch.xo), read once.
   vouches: List[Vouch] = []
   vouches_read: Bool = false
+  /// The escape hatches of required module versions met (vouch.xo).
+  pub hatches: List[EscapeHatch] = []
   /// The `os` binding and the `for` parameters of each test block, by
   /// test_key (Info.TestOs, Info.TestParams).
   test_os: Map[Int, Int] = {}

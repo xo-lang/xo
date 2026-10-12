@@ -1,0 +1,1055 @@
+// The semantic queries of `xo query` (core 10.3): a port of
+// internal/query over selfhost/check's records. A Session is a checked
+// program; positions, names, and signatures are those of the Go tool.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A checked program to query.
+pub struct Session {
+  pub c: check.Checker
+  pub wd: Str
+}
+
+/// Checks the modules under dirs (query.Load): with the other modules of
+/// their workspace unless exact (query.LoadExact). overlay replaces the
+/// sources of files by absolute path (check.CheckOverlay).
+pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses env, fs.read {
+  let wd = wd_of(os)
+  var c = check.new_checker(os.fs, std_dir_of(os))
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
+  c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.set_overlay(overlay)
+  let dirs = if exact { dirs0 } else { c.workspace_dirs(dirs0) }
+  c.check_dirs(dirs)?
+  if !c.unsupported.is_empty() {
+    return Err("the self hosted checker cannot check this program: ${c.unsupported}")
+  }
+  Ok(Session{c: c, wd: wd})
+}
+
+/// The std declaration files: $XO_STD, else lib/xo/std beside the
+/// program (named by $_, as xo1 finds its runtime pack: Env.program is
+/// not native yet), else the std directory of the repository holding the
+/// working directory, else ./std.
+fn std_dir_of(os: Os) -> Str uses env, fs.read {
+  if let Some(s) = os.env.get("XO_STD") {
+    if !s.is_empty() {
+      return s
+    }
+  }
+  let prog = os.env.get("_") ?? ""
+  if !prog.is_empty() {
+
+    let d = "${dir_of(dir_of(abs_path(wd_of(os), prog)))}/lib/xo/std"
+    if os.fs.exists("${d}/prelude.xo").ok() ?? false {
+      return d
+    }
+  }
+  // the repository's std: the nearest directory above the working
+  // directory with std/prelude.xo
+  var d = abs_path(wd_of(os), ".")
+  while true {
+    if os.fs.exists("${d}/std/prelude.xo").ok() ?? false {
+      return "${d}/std"
+    }
+    let p = dir_of(d)
+    if p == d {
+      break
+    }
+    d = p
+  }
+  "std"
+}
+
+/// A source position in query results.
+pub struct Pos {
+  pub file: Str
+  pub line: Int
+  pub col: Int
+}
+
+fn pos_json(p: Pos) -> JVal {
+  JVal.Obj([("file", JVal.Text(p.file)), ("line", JVal.Num(p.line)), ("col", JVal.Num(p.col))])
+}
+
+fn pos_text(p: Pos) -> Str {
+  "${p.file}:${p.line}:${p.col}"
+}
+
+fn (s: Session) span_pos(f: Int, sp: parser.Span) -> Pos {
+  Pos{file: s.c.files[f].path, line: sp.start.line, col: sp.start.col}
+}
+
+/// The modules in dependency order (Info.AllModules).
+fn (s: Session) all_modules() -> List[Int] {
+  s.c.order
+}
+
+/// The loaded modules that are not std or Go bindings.
+fn (s: Session) user_modules() -> List[Int] {
+  var out: List[Int] = []
+  for m in s.c.order {
+    if !s.c.mods[m].is_std {
+      out.push(m)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// type
+
+/// The answer of `xo query type file:line:col`.
+pub struct TypeResult {
+  pub pos: Pos
+  pub expr: Str
+  pub kind: Str
+  pub typ: Str
+  pub natural: Str
+  pub span: Pos
+}
+
+/// The type of the innermost expression or binding pattern at line:col
+/// of file.
+pub fn (s: Session) type_at(file: Str, line: Int, col: Int) -> TypeResult ! Str {
+  let f = s.find_file(file)
+  if f < 0 {
+    return Err("${file} is not part of the checked modules")
+  }
+  let src = s.c.files[f].src
+  let target = offset_of(src, line, col)
+  if target < 0 {
+    return Err("${file} has no position ${line}:${col}")
+  }
+  var best_len = -1
+  var best_e: Expr? = None
+  var best_p: Pattern? = None
+  var best_sp = parser.Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  for d in s.c.files[f].ast.decls {
+    for n in decl_nodes(d) {
+      let sp = node_span(n)
+      if target < sp.start.offset || target >= sp.end.offset {
+        continue
+      }
+      if let E(e) = n {
+        if s.c.type_in(f, e) >= 0 {
+          let l = sp.end.offset - sp.start.offset
+          if best_len < 0 || l < best_len {
+            best_len = l
+            best_e = Some(e)
+            best_p = None
+            best_sp = sp
+          }
+        }
+      }
+      for pt in patterns_of(n) {
+        for q in sub_patterns(pt) {
+          if let BindPat(qsp, _) = q {
+            if s.c.pat_type_in(f, q) >= 0 && (qsp.start.offset <= target && target < qsp.end.offset || (qsp.start.offset == target && qsp.end.offset == target)) {
+              let l = qsp.end.offset - qsp.start.offset
+              if best_len < 0 || l < best_len {
+                best_len = l
+                best_e = None
+                best_p = Some(q)
+                best_sp = qsp
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if best_len < 0 {
+    return Err("no typed expression at ${file}:${line}:${col}")
+  }
+  var r = TypeResult{pos: Pos{file: s.c.files[f].path, line: line, col: col}, expr: src[best_sp.start.offset..best_sp.end.offset].to_str() ?? "", kind: "", typ: "", natural: "", span: s.span_pos(f, best_sp)}
+  if let Some(e) = best_e {
+    r.kind = "expr"
+    r.typ = s.c.show(s.c.type_in(f, e))
+    let nt = s.c.nat_in(f, e)
+    if nt >= 0 {
+      let ns = s.c.show(nt)
+      if ns != r.typ {
+        r.natural = ns
+      }
+    }
+  } else if let Some(p) = best_p {
+    r.kind = "binding"
+    r.typ = s.c.show(s.c.pat_type_in(f, p))
+  }
+  Ok(r)
+}
+
+fn type_json(r: TypeResult) -> JVal {
+  var ms: List[(Str, JVal)] = [("pos", pos_json(r.pos)), ("expr", JVal.Text(r.expr)), ("kind", JVal.Text(r.kind)), ("type", JVal.Text(r.typ))]
+  if !r.natural.is_empty() {
+    ms.push(("natural", JVal.Text(r.natural)))
+  }
+  ms.push(("span", pos_json(r.span)))
+  JVal.Obj(ms)
+}
+
+/// The file of the checked modules at path (absolute or as named).
+fn (s: Session) find_file(path: Str) -> Int {
+  let a = abs_path(s.wd, path)
+  for m in s.c.order {
+    for f in s.c.mods[m].files {
+      let fp = s.c.files[f].path
+      if abs_path(s.wd, fp) == a || fp == path {
+        return f
+      }
+    }
+  }
+  -1
+}
+
+/// The offset of a 1 based line and byte column, -1 when there is none.
+pub fn offset_of(src: Bytes, line: Int, col: Int) -> Int {
+  var l = 1
+  var start = 0
+  var i = 0
+  while i < src.len() && l < line {
+    if src[i] == '\n' {
+      l += 1
+      start = i + 1
+    }
+    i += 1
+  }
+  if l != line || col < 1 {
+    return -1
+  }
+  let off = start + col - 1
+  if off > src.len() {
+    return -1
+  }
+  for j in start..off {
+    if src[j] == '\n' {
+      return -1
+    }
+  }
+  off
+}
+
+// ---------------------------------------------------------------------------
+// Names
+
+/// One declaration a name resolves to (query.Def).
+pub struct QDef {
+  /// fn, method, struct, enum, interface, alias, newtype, const, field,
+  /// variant
+  pub kind: Str
+  pub name: Str
+  pub module: Str
+  pub pos: Pos
+  pub signature: Str
+  pub doc: Str = ""
+  /// The function, or the object (function, type, constant), -1 for
+  /// fields and variants.
+  pub fn_obj: Int = -1
+  pub obj: Int = -1
+}
+
+pub fn qdef_json(d: QDef) -> JVal {
+  var ms: List[(Str, JVal)] = [("kind", JVal.Text(d.kind)), ("name", JVal.Text(d.name)), ("module", JVal.Text(d.module)), ("pos", pos_json(d.pos)), ("signature", JVal.Text(d.signature))]
+  if !d.doc.is_empty() {
+    ms.push(("doc", JVal.Text(d.doc)))
+  }
+  JVal.Obj(ms)
+}
+
+/// The declarations name refers to.
+pub fn (s: Session) def(name: Str) -> List[QDef] ! Str {
+  let defs = s.resolve(name)
+  if defs.is_empty() {
+    return Err("${name.quote()} does not name a declaration in the checked modules")
+  }
+  Ok(defs)
+}
+
+/// The objects name refers to (functions, types, constants), resolved as
+/// by def (Session.Objects).
+pub fn (s: Session) objects(name: Str) -> List[Int] {
+  var out: List[Int] = []
+  for d in s.resolve(name) {
+    if d.obj >= 0 {
+      out.push(d.obj)
+    }
+  }
+  out
+}
+
+fn (s: Session) resolve(name: Str) -> List[QDef] {
+  var out: List[QDef] = []
+  var seen: Set[Str] = #{}
+  // module path qualified: std/http.server, example.com/a/b.f
+  if let Some(i) = last_index(name, "/") {
+    let tail = name[i..]
+    if let Some(j) = tail.find(".") {
+      if j > 0 {
+        let m = s.module_by_path(name[0..i + j])
+        if m >= 0 {
+          add_defs(out, seen, s.lookup(m, name[i + j + 1..].split(".")))
+        }
+      }
+    }
+    return out
+  }
+  let parts = name.split(".")
+  if parts.len() > 1 {
+    for m in s.c.order {
+      if s.c.mods[m].name == parts[0] {
+        add_defs(out, seen, s.lookup(m, parts[1..]))
+      }
+    }
+  }
+  for m in s.user_modules() {
+    add_defs(out, seen, s.lookup(m, parts))
+  }
+  if out.is_empty() && s.c.prelude >= 0 {
+    add_defs(out, seen, s.lookup(s.c.prelude, parts))
+  }
+  out
+}
+
+fn add_defs(var out: List[QDef], var seen: Set[Str], ds: List[QDef]) {
+  for d in ds {
+    let k = "${d.kind}|${pos_text(d.pos)}|${d.name}"
+    if !seen.contains(k) {
+      seen.add(k)
+      out.push(d)
+    }
+  }
+}
+
+fn last_index(s: Str, sub: Str) -> Int? {
+  let b = s.bytes()
+  let c = sub.bytes()[0]
+  var i = b.len() - 1
+  while i >= 0 {
+    if b[i] == c {
+      return Some(i)
+    }
+    i -= 1
+  }
+  None
+}
+
+/// A loaded module by import path or directory (Session.ModuleByPath),
+/// -1 when there is none.
+pub fn (s: Session) module_by_path(path: Str) -> Int {
+  for m in s.c.order {
+    if s.c.mods[m].path == path {
+      return m
+    }
+  }
+  let a = abs_path(s.wd, path)
+  for m in s.c.order {
+    if s.c.mods[m].is_std {
+      continue
+    }
+    if abs_path(s.wd, s.c.mods[m].dir) == a || s.c.mods[m].path.ends_with("/${path}") {
+      return m
+    }
+  }
+  -1
+}
+
+fn (s: Session) lookup(m: Int, segs: List[Str]) -> List[QDef] {
+  if m < 0 || segs.is_empty() || segs.len() > 2 {
+    return []
+  }
+  let o = s.c.mods[m].members.get(segs[0].bytes()) ?? -1
+  if o < 0 {
+    return []
+  }
+  let obj = s.c.objs[o]
+  if segs.len() == 1 {
+    return match obj.kind {
+      Func => [s.fn_def(o)]
+      Type => [s.type_def(o)]
+      Const => [s.const_def(o)]
+      _ => []
+    }
+  }
+  if obj.kind != check.ObjKind.Type {
+    return []
+  }
+  let member = segs[1].bytes()
+  if let Some(f) = obj.methods.get(member) {
+    return [s.fn_def(f)]
+  }
+  if let Some(f) = obj.statics.get(member) {
+    return [s.fn_def(f)]
+  }
+  for f in obj.iface_meths {
+    if s.c.objs[f].name == member {
+      return [s.fn_def(f)]
+    }
+  }
+  let tname = txt(obj.name)
+  let mpath = s.c.mods[m].path
+  for f in obj.fields {
+    if f.name == member {
+      var sig = "${txt(f.name)}: ${s.c.show(f.ty)}"
+      if f.is_pub {
+        sig = "pub ${sig}"
+      }
+      return [QDef{kind: "field", name: "${tname}.${txt(f.name)}", module: mpath, pos: Pos{file: obj.file, line: f.line, col: f.col}, signature: sig}]
+    }
+  }
+  for v in obj.variants {
+    if v.name == member {
+      var sig = txt(v.name)
+      if !v.unit {
+        var fs: List[Str] = []
+        for f in v.fields {
+          if f.from {
+            fs.push("from ${s.c.show(f.ty)}")
+          } else {
+            fs.push("${txt(f.name)}: ${s.c.show(f.ty)}")
+          }
+        }
+        sig = "${sig}(${fs.join(", ")})"
+      }
+      return [QDef{kind: "variant", name: "${tname}.${txt(v.name)}", module: mpath, pos: Pos{file: obj.file, line: v.line, col: v.col}, signature: sig}]
+    }
+  }
+  []
+}
+
+fn doc_text(d: parser.Doc?) -> Str {
+  match d {
+    Some(x) => txt(x.text)
+    None => ""
+  }
+}
+
+/// The declaration of an object: its file's index and the declaration.
+fn (s: Session) decl_of(o: Int) -> (Int, Decl)? {
+  let obj = s.c.objs[o]
+  if obj.decl_file < 0 || obj.decl_idx < 0 {
+    return None
+  }
+  let decls = s.c.files[obj.decl_file].ast.decls
+  if obj.decl_idx >= decls.len() {
+    return None
+  }
+  Some((obj.decl_file, decls[obj.decl_idx]))
+}
+
+fn (s: Session) fn_def(f: Int) -> QDef {
+  let obj = s.c.objs[f]
+  let mpath = if obj.module >= 0 { s.c.mods[obj.module].path } else { "" }
+  var d = QDef{kind: if obj.recv >= 0 { "method" } else { "fn" }, name: s.c.display_name(f), module: mpath, pos: Pos{file: obj.file, line: obj.line, col: obj.col}, signature: "", fn_obj: f, obj: f}
+  if let Some(fd) = obj.fn_decl.first() {
+    d.doc = doc_text(fd.doc)
+    if obj.decl_file >= 0 {
+      d.signature = fmt_decl(Decl.FnDecl(fd), s.c.files[obj.decl_file].src, true)
+    }
+  }
+  d
+}
+
+fn (s: Session) type_def(t: Int) -> QDef {
+  let obj = s.c.objs[t]
+  let mpath = if obj.module >= 0 { s.c.mods[obj.module].path } else { "" }
+  var d = QDef{kind: obj.tkind, name: txt(obj.name), module: mpath, pos: Pos{file: obj.file, line: obj.line, col: obj.col}, signature: "", obj: t}
+  if let Some((f, decl)) = s.decl_of(t) {
+    d.signature = fmt_decl(decl, s.c.files[f].src, true)
+    d.doc = decl_doc(decl)
+  }
+  d
+}
+
+fn (s: Session) const_def(o: Int) -> QDef {
+  let obj = s.c.objs[o]
+  let mpath = if obj.module >= 0 { s.c.mods[obj.module].path } else { "" }
+  var d = QDef{kind: "const", name: txt(obj.name), module: mpath, pos: Pos{file: obj.file, line: obj.line, col: obj.col}, signature: "", obj: o}
+  if let Some((f, decl)) = s.decl_of(o) {
+    d.signature = fmt_decl(decl, s.c.files[f].src, true)
+    d.doc = decl_doc(decl)
+  }
+  d
+}
+
+pub fn decl_doc(d: Decl) -> Str {
+  match d {
+    FnDecl(x) => doc_text(x.doc)
+    StructDecl(x) => doc_text(x.doc)
+    EnumDecl(x) => doc_text(x.doc)
+    InterfaceDecl(x) => doc_text(x.doc)
+    TypeDecl(x) => doc_text(x.doc)
+    ConstDecl(x) => doc_text(x.doc)
+    TestDecl(x) => doc_text(x.doc)
+    BadDecl(_) => ""
+  }
+}
+
+/// name resolved to exactly one function or method.
+fn (s: Session) func_target(name: Str) -> Int ! Str {
+  var fns: List[Int] = []
+  for d in s.resolve(name) {
+    if d.fn_obj >= 0 {
+      fns.push(d.fn_obj)
+    }
+  }
+  if fns.is_empty() {
+    return Err("${name.quote()} does not name a function or method in the checked modules")
+  }
+  if fns.len() == 1 {
+    return Ok(fns[0])
+  }
+  var names: List[Str] = []
+  for f in fns {
+    names.push("${s.fn_module(f)}.${s.c.display_name(f)}")
+  }
+  Err("${name.quote()} is ambiguous: ${names.join(", ")}; qualify it with the module")
+}
+
+fn (s: Session) fn_module(f: Int) -> Str {
+  let m = s.c.objs[f].module
+  if m >= 0 { s.c.mods[m].path } else { "" }
+}
+
+// ---------------------------------------------------------------------------
+// callers
+
+/// One reference to a function: a call, or a use as a value.
+pub struct Caller {
+  pub caller: Str
+  pub module: Str
+  /// call or value
+  pub kind: Str
+  pub pos: Pos
+}
+
+/// Every call of function name, and every use of it as a value, in the
+/// user modules; the target's display name.
+pub fn (s: Session) callers(name: Str) -> (Str, List[Caller]) ! Str {
+  let target = s.func_target(name)?
+  var out: List[Caller] = []
+  for m in s.user_modules() {
+    for f in s.c.mods[m].files {
+      for (i, d) in s.c.files[f].ast.decls.indexed() {
+        let encl = s.enclosing(f, i, d)
+        var seen: Set[Int] = #{}
+        for n in decl_nodes(d) {
+          if let E(e) = n {
+            match e {
+              CallExpr(sp, fun, _) => {
+                if let Some(ci) = s.c.call_in(f, e) {
+                  if ci.fn_obj == target {
+                    out.push(Caller{caller: encl, module: s.c.mods[m].path, kind: "call", pos: s.span_pos(f, sp)})
+                    seen.add(s.c.expr_key_in(f, fun))
+                    if let TypeArgsExpr(_, x, _) = fun {
+                      seen.add(s.c.expr_key_in(f, x))
+                    }
+                  }
+                }
+              }
+              Ident(id) => {
+                if !seen.contains(s.c.expr_key_in(f, e)) && s.c.ref_of(f, id) == target {
+                  out.push(Caller{caller: encl, module: s.c.mods[m].path, kind: "value", pos: s.span_pos(f, id.span)})
+                }
+              }
+              SelectorExpr(sp, _, sel) => {
+                if !seen.contains(s.c.expr_key_in(f, e)) && s.c.ref_of(f, sel) == target {
+                  out.push(Caller{caller: encl, module: s.c.mods[m].path, kind: "value", pos: s.span_pos(f, sp)})
+                }
+              }
+              _ => {}
+            }
+          }
+        }
+      }
+    }
+  }
+  Ok(("${s.fn_module(target)}.${s.c.display_name(target)}", out))
+}
+
+/// The enclosing declaration's name: `fn`, `Type.method`, `test "name"`,
+/// `const NAME`, `struct Name`.
+fn (s: Session) enclosing(f: Int, i: Int, d: Decl) -> Str {
+  match d {
+    FnDecl(x) => {
+      let o = s.c.files[f].decl_objs.get(i) ?? -1
+      if o >= 0 {
+        return s.c.display_name(o)
+      }
+      txt(x.name.name)
+    }
+    TestDecl(x) => {
+      if let Some(n) = x.name {
+        if n.parts.len() == 1 {
+          return "test ${txt(n.parts[0].text).quote()}"
+        }
+      }
+      "test"
+    }
+    ConstDecl(x) => "const ${txt(x.name.name)}"
+    StructDecl(x) => "struct ${txt(x.name.name)}"
+    _ => "?"
+  }
+}
+
+fn caller_json(c: Caller) -> JVal {
+  JVal.Obj([("caller", JVal.Text(c.caller)), ("module", JVal.Text(c.module)), ("kind", JVal.Text(c.kind)), ("pos", pos_json(c.pos))])
+}
+
+// ---------------------------------------------------------------------------
+// effects
+
+/// The answer of `xo query effects`.
+pub struct EffectsResult {
+  pub target: Str
+  pub declared: List[Str]
+  pub inferred: Bool
+  pub performed: List[check.EffectUse]
+}
+
+/// The effects function name performs, each with its call chain.
+pub fn (s: Session) effects(name: Str) -> EffectsResult ! Str {
+  let target = s.func_target(name)?
+  var r = EffectsResult{target: "${s.fn_module(target)}.${s.c.display_name(target)}", declared: [], inferred: false, performed: s.c.performed_by(target)}
+  match s.c.declared_text(target) {
+    None => r.inferred = true
+    Some(t) => {
+      if !t.is_empty() {
+        r.declared = t.split(", ")
+      }
+    }
+  }
+  Ok(r)
+}
+
+fn effects_json(r: EffectsResult) -> JVal {
+  var perf: List[JVal] = []
+  for e in r.performed {
+    var chain: List[JVal] = []
+    for st in e.chain {
+      chain.push(JVal.Obj([("message", JVal.Text(st.message)), ("pos", pos_json(Pos{file: st.file, line: st.line, col: st.col}))]))
+    }
+    var ms: List[(Str, JVal)] = [("effect", JVal.Text(e.effect))]
+    if e.param {
+      ms.push(("param", JVal.Bool(true)))
+    }
+    ms.push(("chain", JVal.Arr(chain)))
+    perf.push(JVal.Obj(ms))
+  }
+  JVal.Obj([("target", JVal.Text(r.target)), ("declared", strs(r.declared)), ("inferred", JVal.Bool(r.inferred)), ("performed", JVal.Arr(perf))])
+}
+
+// ---------------------------------------------------------------------------
+// holes
+
+/// The hole reports (XO0900) of the checked modules.
+pub fn (s: Session) holes() -> List[check.Diag] {
+  var out: List[check.Diag] = []
+  for d in s.c.diags {
+    if d.code == "XO0900" {
+      out.push(d)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// api
+
+/// The pub declarations of the module with the given import path or
+/// directory: its path and items.
+pub fn (s: Session) api(path: Str) -> (Str, List[QDef]) ! Str {
+  let m = s.module_by_path(path)
+  if m < 0 {
+    return Err("no module ${path.quote()} among the checked modules")
+  }
+  Ok((s.c.mods[m].path, s.surface(m, false)))
+}
+
+/// The declarations of m, pub ones only unless all; test files and test
+/// blocks left out; files in path order.
+pub fn (s: Session) surface(m: Int, all: Bool) -> List[QDef] {
+  var out: List[QDef] = []
+  var files: List[(Str, Int)] = []
+  for f in s.c.mods[m].files {
+    files.push((s.c.files[f].path, f))
+  }
+  for pf in files.sort() {
+    let f = pf.1
+    if s.c.files[f].is_test {
+      continue
+    }
+    for (i, d) in s.c.files[f].ast.decls.indexed() {
+      if let FnDecl(x) = d {
+        if x.is_pub || all {
+          let o = s.c.files[f].decl_objs.get(i) ?? -1
+          if o >= 0 && s.c.objs[o].kind == check.ObjKind.Func {
+            out.push(s.fn_def(o))
+            continue
+          }
+        }
+      }
+      if let Some(def) = decl_surface(s.c.mods[m].path, s.c.files[f].path, s.c.files[f].src, d, all) {
+        out.push(def)
+      }
+    }
+  }
+  out
+}
+
+/// The `xo query api` entry of one parsed declaration of module path,
+/// from the syntax tree alone (query.DeclSurface): pub ones only unless
+/// all. Methods are named `Type.name`.
+pub fn decl_surface(path: Str, file: Str, src: Bytes, d: Decl, all: Bool) -> QDef? {
+  let pos = fn(id: parser.Ident) -> Pos { Pos{file: file, line: id.span.start.line, col: id.span.start.col} }
+  match d {
+    FnDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      var name = txt(x.name.name)
+      var kind = "fn"
+      if let Some(r) = x.recv {
+        kind = "method"
+        if let NamedType(_, p, _) = r.typ {
+          if !p.is_empty() {
+            name = "${txt(p[p.len() - 1].name)}.${name}"
+          }
+        }
+      }
+      Some(QDef{kind: kind, name: name, module: path, pos: pos(x.name), signature: fmt_decl(d, src, true), doc: doc_text(x.doc)})
+    }
+    ConstDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(QDef{kind: "const", name: txt(x.name.name), module: path, pos: pos(x.name), signature: fmt_decl(d, src, true), doc: doc_text(x.doc)})
+    }
+    StructDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      var c = x
+      if !all {
+        var fs: List[parser.Field] = []
+        for fl in x.fields {
+          if fl.is_pub {
+            fs.push(fl)
+          }
+        }
+        c = x with {fields: fs, inv: None}
+      }
+      Some(QDef{kind: "struct", name: txt(x.name.name), module: path, pos: pos(x.name), signature: fmt_decl(Decl.StructDecl(c), src, true), doc: doc_text(x.doc)})
+    }
+    EnumDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(QDef{kind: "enum", name: txt(x.name.name), module: path, pos: pos(x.name), signature: fmt_decl(d, src, true), doc: doc_text(x.doc)})
+    }
+    InterfaceDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(QDef{kind: "interface", name: txt(x.name.name), module: path, pos: pos(x.name), signature: fmt_decl(d, src, true), doc: doc_text(x.doc)})
+    }
+    TypeDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      let kind = if x.newtype { "newtype" } else { "alias" }
+      Some(QDef{kind: kind, name: txt(x.name.name), module: path, pos: pos(x.name), signature: fmt_decl(d, src, true), doc: doc_text(x.doc)})
+    }
+    _ => None
+  }
+}
+
+// ---------------------------------------------------------------------------
+// imports and deps (decision 0095)
+
+/// One `use` line.
+pub struct ImportEdge {
+  pub from: Str
+  pub path: Str
+  pub pos: Pos
+  pub std: Bool = false
+  pub go: Bool = false
+  pub c: Bool = false
+  pub in_test: Bool = false
+  pub missing: Bool = false
+  pub denied: Str = ""
+}
+
+/// The answer of `xo query imports` and `xo query deps`.
+pub struct ImportsResult {
+  pub package: Str
+  pub transitive: Bool
+  pub imports: List[ImportEdge]
+  pub packages: List[Str]
+}
+
+/// The `use` lines of the package with the given import path or
+/// directory; with transitive, of every package it reaches that is not
+/// std or a Go binding too.
+pub fn (s: Session) imports(path: Str, transitive: Bool) -> ImportsResult ! Str {
+  let m0 = s.module_by_path(path)
+  if m0 < 0 || s.c.mods[m0].is_std {
+    return Err("no package ${path.quote()} among the checked modules")
+  }
+  var denied: Map[Str, Str] = {}
+  for d in s.c.diags {
+    if d.code == "XO1312" {
+      denied["${d.file}:${d.line}:${d.col}"] = d.message
+    }
+  }
+  var res = ImportsResult{package: s.c.mods[m0].path, transitive: transitive, imports: [], packages: []}
+  var seen: Set[Str] = #{s.c.mods[m0].path}
+  var reached: Set[Str] = #{}
+  var queue = [m0]
+  var qi = 0
+  while qi < queue.len() {
+    let cur = queue[qi]
+    qi += 1
+    var files: List[(Str, Int)] = []
+    for f in s.c.mods[cur].files {
+      files.push((s.c.files[f].path, f))
+    }
+    for pf in files.sort() {
+      let f = pf.1
+      for u in s.c.files[f].ast.imports {
+        let up = txt(u.path)
+        if up.is_empty() {
+          continue
+        }
+        var e = ImportEdge{from: s.c.mods[cur].path, path: up, pos: s.span_pos(f, u.span), go: u.go, c: u.c, in_test: s.c.files[f].is_test, std: !u.go && !u.c && up.starts_with("std/")}
+        e.denied = denied.get(pos_text(e.pos)) ?? ""
+        var dep = -1
+        if !u.go && !u.c {
+          for m in s.c.order {
+            if s.c.mods[m].path == up {
+              dep = m
+            }
+          }
+          e.missing = dep < 0
+        }
+        res.imports.push(e)
+        reached.add(up)
+        if transitive && dep >= 0 && !s.c.mods[dep].is_std && !seen.contains(s.c.mods[dep].path) {
+          seen.add(s.c.mods[dep].path)
+          queue.push(dep)
+        }
+      }
+    }
+    if !transitive {
+      break
+    }
+  }
+  res.packages = reached.to_list().sort()
+  Ok(res)
+}
+
+fn imports_json(r: ImportsResult) -> JVal {
+  var items: List[JVal] = []
+  for e in r.imports {
+    var ms: List[(Str, JVal)] = [("from", JVal.Text(e.from)), ("path", JVal.Text(e.path)), ("pos", pos_json(e.pos))]
+    if e.std {
+      ms.push(("std", JVal.Bool(true)))
+    }
+    if e.go {
+      ms.push(("go", JVal.Bool(true)))
+    }
+    if e.c {
+      ms.push(("c", JVal.Bool(true)))
+    }
+    if e.in_test {
+      ms.push(("test", JVal.Bool(true)))
+    }
+    if e.missing {
+      ms.push(("missing", JVal.Bool(true)))
+    }
+    if !e.denied.is_empty() {
+      ms.push(("denied", JVal.Text(e.denied)))
+    }
+    items.push(JVal.Obj(ms))
+  }
+  JVal.Obj([("package", JVal.Text(r.package)), ("transitive", JVal.Bool(r.transitive)), ("imports", JVal.Arr(items)), ("packages", strs(r.packages))])
+}
+
+// ---------------------------------------------------------------------------
+// The command (tools.go runQueryWith after the session is loaded)
+
+fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs.read, stdio {
+  let s = match load_session(os, dirs, false, {}) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo query: ${e}")
+      return 2
+    }
+  }
+  var res = JVal.Null
+  var text = ""
+  var err = ""
+  match kind {
+    "type" => match s.type_at(file, line, col) {
+      Ok(r) => {
+        res = type_json(r)
+        text = "${pos_text(r.pos)}: `${r.expr}`: ${r.typ}"
+        if !r.natural.is_empty() {
+          text = "${text} (converted from ${r.natural})"
+        }
+        text = "${text}\n"
+      }
+      Err(e) => err = e
+    }
+    "def" => match s.def(rest[0]) {
+      Ok(ds) => {
+        var items: List[JVal] = []
+        var b = StrBuilder.new()
+        for d in ds {
+          items.push(qdef_json(d))
+          b.write("${pos_text(d.pos)}: ${d.kind} ${d.name} (module ${d.module})\n")
+          if !d.doc.is_empty() {
+            b.write("${prefix_lines(d.doc, "/// ")}\n")
+          }
+          b.write("${d.signature}\n")
+        }
+        res = JVal.Arr(items)
+        text = b.freeze()
+      }
+      Err(e) => err = e
+    }
+    "callers" => match s.callers(rest[0]) {
+      Ok((target, cs)) => {
+        var items: List[JVal] = []
+        var b = StrBuilder.new()
+        for c in cs {
+          items.push(caller_json(c))
+          b.write("${pos_text(c.pos)}: ${c.kind} in ${c.module}.${c.caller}\n")
+        }
+        b.write("${cs.len()} reference(s) to ${target}\n")
+        res = JVal.Obj([("target", JVal.Text(target)), ("callers", JVal.Arr(items))])
+        text = b.freeze()
+      }
+      Err(e) => err = e
+    }
+    "effects" => match s.effects(rest[0]) {
+      Ok(r) => {
+        res = effects_json(r)
+        var b = StrBuilder.new()
+        if r.inferred {
+          b.write("${r.target}: effects inferred\n")
+        } else if r.declared.is_empty() {
+          b.write("${r.target}: declared pure\n")
+        } else {
+          b.write("${r.target}: declares uses ${r.declared.join(", ")}\n")
+        }
+        if r.performed.is_empty() {
+          b.write("performs no effects\n")
+        }
+        for ef in r.performed {
+          b.write("performs ${ef.effect}\n")
+          for st in ef.chain {
+            b.write("  ${st.file}:${st.line}:${st.col}: ${st.message}\n")
+          }
+        }
+        text = b.freeze()
+      }
+      Err(e) => err = e
+    }
+    "holes" => {
+      let hs = s.holes()
+      var items: List[JVal] = []
+      var b = StrBuilder.new()
+      for d in hs {
+        items.push(diag_json(d))
+        b.write("${diag_human(d)}\n")
+      }
+      b.write("${hs.len()} hole(s)\n")
+      res = JVal.Arr(items)
+      text = b.freeze()
+    }
+    "imports" | "deps" => match s.imports(rest[0], kind == "deps") {
+      Ok(r) => {
+        res = imports_json(r)
+        var b = StrBuilder.new()
+        for e in r.imports {
+          b.write("${pos_text(e.pos)}: ${e.from} uses ${e.path}")
+          if e.missing {
+            b.write(" (not found)")
+          }
+          if !e.denied.is_empty() {
+            b.write(" (denied, XO1312)")
+          }
+          b.write("\n")
+        }
+        b.write("${r.imports.len()} use line(s), ${r.packages.len()} package(s)\n")
+        text = b.freeze()
+      }
+      Err(e) => err = e
+    }
+    "api" => match s.api(rest[0]) {
+      Ok((mpath, items)) => {
+        var js: List[JVal] = []
+        var b = StrBuilder.new()
+        b.write("module ${mpath}\n")
+        for d in items {
+          js.push(qdef_json(d))
+          b.write("\n${d.signature}\n")
+        }
+        res = JVal.Obj([("module", JVal.Text(mpath)), ("items", JVal.Arr(js))])
+        text = b.freeze()
+      }
+      Err(e) => err = e
+    }
+    _ => {}
+  }
+  if !err.is_empty() {
+    os.stdio.eprintln("xo query ${kind}: ${err}")
+    return 1
+  }
+  if as_json {
+    os.stdio.print(encode(res))
+    return 0
+  }
+  os.stdio.print(text)
+  0
+}
+
+/// Each line of s prefixed, trailing spaces trimmed (tools.go
+/// prefixLines).
+fn prefix_lines(s: Str, prefix: Str) -> Str {
+  var out: List[Str] = []
+  for l in s.split("\n") {
+    out.push("${prefix}${l}".trim_end())
+  }
+  out.join("\n")
+}
+
+/// diag.Human: `file:line:col: severity CODE: message`, then each note
+/// and fix on a line of its own.
+pub fn diag_human(d: check.Diag) -> Str {
+  let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+  var b = StrBuilder.new()
+  if !d.file.is_empty() {
+    if d.line == 0 {
+      b.write("${d.file}: ")
+    } else {
+      b.write("${d.file}:${d.line}:${d.col}: ")
+    }
+  }
+  b.write("${sev} ${d.code}: ${d.message}")
+  for n in d.notes {
+    match n.span {
+      Some(sp) => b.write("\n  note: ${sp.file}:${sp.line}:${sp.col}: ${n.message}")
+      None => b.write("\n  note: ${n.message}")
+    }
+  }
+
+  for f in d.fixes {
+    b.write("\n  fix: ${f.title}")
+  }
+  b.freeze()
+}

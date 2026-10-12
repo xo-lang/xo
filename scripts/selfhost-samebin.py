@@ -48,7 +48,9 @@ def one(d):
     r1 = subprocess.run([x1, 'build', '--std=' + os.path.join(root, 'std'), '-o', a, d], capture_output=True, text=True)
     if r1.returncode != 0:
         return d, 'xo1 build failed: ' + r1.stderr.strip()[-200:]
-    r2 = subprocess.run([goxo, 'build', '--backend=arm64', '-o', b, d], capture_output=True, text=True)
+    # the Go driver itself, not xo1 (decision 0178 switch point A)
+    r2 = subprocess.run([goxo, 'build', '--backend=arm64', '-o', b, d], capture_output=True, text=True,
+                        env=dict(os.environ, XO_SELF_DRIVER='0'))
     if r2.returncode != 0:
         return d, 'go build failed: ' + r2.stderr.strip()[-200:]
     if open(a, 'rb').read() == open(b, 'rb').read():

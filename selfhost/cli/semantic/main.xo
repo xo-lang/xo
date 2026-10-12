@@ -1,0 +1,159 @@
+// The semantic tools of the `xo` command line in Xo (decision 0178 stage
+// 3): `query`, `edit`, and the definition hashes of decision 0125.
+// xo1 (selfhost/xo) dispatches these commands to run; this package's own
+// main runs them too, so they can be built and tested without the whole
+// compiler driver:
+//
+//   semantic query|edit|doc <args...>     as `xo query|edit|doc`
+//   semantic defhash <dir>=<module path>...  every definition of each
+//                                            module, as JSON (the
+//                                            comparison with internal/defhash)
+
+fn main(os: Os) ! {
+  os.proc.exit(run(os, os.env.args()))
+}
+
+/// Runs one command line (args[0] is the command) and returns its exit
+/// status.
+pub fn run(os: Os, args: List[Str]) -> Int uses env, fs, stdio, proc {
+  if args.is_empty() {
+    os.stdio.eprintln("usage: semantic query|edit|defhash <args...>")
+    return 2
+  }
+  let rest = args[1..]
+  match args[0] {
+    "query" => run_query(os, rest)
+    "edit" => run_edit(os, rest)
+    "defhash" => run_defhash(os, rest)
+    _ => {
+      os.stdio.eprintln("semantic: unknown command ${args[0]}")
+      2
+    }
+  }
+}
+
+/// The working directory: $PWD.
+fn wd_of(os: Os) -> Str {
+  os.env.get("PWD") ?? "."
+}
+
+/// p cleaned (filepath.Clean of a slash path).
+pub fn clean(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for seg in p.split("/") {
+    if seg.is_empty() || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(seg)
+  }
+  let s = out.join("/")
+  if rooted {
+    return "/${s}"
+  }
+  if s.is_empty() { "." } else { s }
+}
+
+/// filepath.Abs against wd.
+pub fn abs_path(wd: Str, p: Str) -> Str {
+  if p.starts_with("/") {
+    return clean(p)
+  }
+  clean("${wd}/${p}")
+}
+
+/// filepath.Dir.
+pub fn dir_of(p: Str) -> Str {
+  let c = clean(p)
+  let parts = c.split("/")
+  if parts.len() <= 1 {
+    return "."
+  }
+  let d = parts[0..parts.len() - 1].join("/")
+  if d.is_empty() { "/" } else { d }
+}
+
+/// filepath.Base.
+pub fn base_of(p: Str) -> Str {
+  let c = clean(p)
+  if c == "/" {
+    return "/"
+  }
+  let parts = c.split("/")
+  parts[parts.len() - 1]
+}
+
+/// mod.ModRoot: the nearest directory at or above dir holding an xo.mod,
+/// absolute; "" when there is none.
+pub fn mod_root(fs: Fs, wd: Str, dir: Str) -> Str uses fs.read {
+  var d = abs_path(wd, dir)
+  while true {
+    let f = if d == "/" { "/xo.mod" } else { "${d}/xo.mod" }
+    if fs.exists(f).ok() ?? false {
+      return d
+    }
+    let p = dir_of(d)
+    if p == d {
+      return ""
+    }
+    d = p
+  }
+  ""
+}
+
+/// The module path of the xo.mod in dir ("" when it has none).
+pub fn mod_path_of(fs: Fs, dir: Str) -> Str uses fs.read {
+  let data = fs.read("${dir}/xo.mod").ok() ?? b""
+  for line in (data.to_str() ?? "").lines() {
+    var l = line
+    if let Some(i) = l.find("//") {
+      l = l[0..i]
+    }
+    let fs2 = l.trim().split(" ").filter(fn(s) { !s.is_empty() })
+    if fs2.len() >= 2 && fs2[0] == "module" {
+      return fs2[1].trim_prefix("\"").trim_suffix("\"")
+    }
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// defhash: the comparison dump
+
+fn run_defhash(os: Os, args: List[Str]) -> Int {
+  var code = 0
+  for a in args {
+    let parts = a.split("=")
+    if parts.len() != 2 {
+      os.stdio.eprintln("semantic defhash: want <dir>=<module path>, got ${a}")
+      return 2
+    }
+    os.stdio.print("=== ${a}\n")
+    match module_defs(os.fs, parts[0], parts[1]) {
+      Ok(defs) => {
+        var items: List[JVal] = []
+        for d in defs {
+          items.push(def_json(d))
+        }
+        os.stdio.print(encode(JVal.Arr(items)))
+      }
+      Err(e) => {
+        os.stdio.print("error ${e}\n")
+        code = 1
+      }
+    }
+  }
+  code
+}

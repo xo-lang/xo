@@ -6,6 +6,37 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
+  `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
+  `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
+  crypto/ed25519 on every backend (native builds compute them in C).
+- `archive.untar` skips a PAX global header (the one `git archive`
+  writes) instead of failing on it, on every backend.
+- Native builds of a program whose packages declare types of the same
+  name no longer fail in the SSA verifier when both are printed with
+  Debug, encoded as JSON, decoded from SQL, or generated in property
+  tests (gotchas/ambiguous-type-generated-function-names.md).
+- The module commands (`get`, `mod tidy|accept-effects|clean|proxy`,
+  `vendor`, `audit`) are written in Xo too (selfhost/cli/modules,
+  decision 0178 stage 4); xo1 runs them.
+- A native program that asks whether a stream is a terminal
+  (`stdout_is_tty`, `width`) without reading standard input links again
+  (the runtime's terminal functions were left out).
+- `xo query` and `xo edit` are written in Xo too (selfhost/cli/semantic,
+  decision 0178 stage 3): `xo1 query|edit` print what the Go tool
+  prints (37 of 37 command lines byte identical on cmd/xo's test
+  programs; TestQueryCLI and TestEditCLI pass against xo1). The
+  definition hashes of `xo query hash` (decision 0125) are byte identical
+  to the Go ones on 270 of 270 modules (13,662 definitions).
+- Native builds run the self hosted driver (decision 0178 switch point
+  A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
+  `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds
+  once from its embedded sources into the user cache (a few minutes the
+  first time). Output, diagnostics, JSON, exit codes, and paths are the
+  Go driver's; `XO_SELF_DRIVER=0` restores the Go driver. xo1 gained
+  `run`, `xo build`'s flags, several directories, the build directory
+  and binary cache, split LLVM builds, `--release`, `--stamp`, and the
+  check's diagnostics (stage 1).
 - `selfhost/macho` also writes ELF: `macho asm --elf` assembles the
   linux/arm64 emitter's assembly into the object `clang -c` writes (byte
   identical on the 159 arm64 goldens and on xo1), and `macho elflink`
@@ -14,6 +45,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `.eh_frame_hdr`). `xo1 build --target=linux/arm64 --ld=macho` builds a
   Linux program from any host with no C toolchain; every golden runs on
   glibc 2.31 and 2.41 (decision 0182 stage 3).
+- The native backends no longer count the element of `for x in <place>`
+  or an inner list read through an outer one (`a[i][j]`) when nothing
+  changes the container while it is in use (decision 0186): on
+  bench/perf/nested the read workloads went from 600,041 retains to 1
+  (walk) and from 201,001 to 1 (index2) on arm64, allocations unchanged.
 - The arm64 backend (and its Xo twin, byte identical) inlines small
   functions that call others and larger ones with at most two call
   sites, and drops the bounds, overflow, and shift checks that value
@@ -37,6 +73,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   71 of the 133 LLVM goldens run under Node with the output of the
   native backends; the rest (tasks, network, files, time, strconv
   quoting, more of the std runtime) fail the build with a clear reason.
+- The WebAssembly backend, stage 2 (decision 0179): the Unicode code
+  in Xo (decision 0180) compiles to wasm with the program, and the
+  backend's runtime adds the text primitives it calls, number and
+  duration parsing, and base64; tasks, scopes, channels, select, Mutex,
+  Atomic, timers, and budgets run on one thread under a deterministic
+  cooperative scheduler (a waiting task's wasm stack is unwound and
+  rewound); `rand` uses WASI `random_get`; files are read through WASI
+  (`path_open`, `fd_read`, `fd_readdir`): 116 of the 134 LLVM goldens
+  pass, and the network fails the build with a clear error. A module
+  carries only the runtime functions it reaches (recursion: 7.5 KB, 16.7
+  KB before). Values share wasm locals by liveness, so large programs
+  build: the self hosted lexer, parser, and checker run as wasm under
+  Node with the output of their go backend builds (the checker: a
+  40 MB module); `selfhost/wasm --why` lists every construct a program
+  needs that the backend lacks.
 - The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
   builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
   (`xo1 test --backend=go`), and builds `use go` programs on the Go

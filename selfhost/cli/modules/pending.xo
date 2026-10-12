@@ -1,0 +1,15 @@
+// The parts of the module commands that need internal/release in Xo
+// (decision 0178 stage 3: its export API and diff). Until it is ported,
+// xo publish says so and exits 2, and xo get prints no API changes.
+
+/// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
+/// downgraded requirement. Needs release.ModuleAPI and release.Diff
+/// (stage 3); none until then.
+fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[Change]) -> List[ApiChanges] {
+  []
+}
+
+fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses stdio {
+  c.os.stdio.eprintln("xo publish: not ported to Xo yet (needs internal/release, decision 0178 stage 3)")
+  2
+}

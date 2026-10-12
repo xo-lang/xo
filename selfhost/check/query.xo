@@ -1,0 +1,160 @@
+// What the semantic tools read beyond the SSA builder's records (info.xo)
+// and cli.xo: the effects a function performs with their call chains
+// (internal/check query.go Performed), xo.mod and version helpers, for
+// `xo query`, `xo edit`, and `xo publish` in Xo (decision 0178 stage 3).
+
+/// One link of an effect's call chain (check.EffectStep): file "" and
+/// line 0 when the step has no place.
+pub struct EffectStep {
+  pub message: Str
+  pub file: Str
+  pub line: Int
+  pub col: Int
+}
+
+/// One effect a function body performs (check.EffectUse): a label, or an
+/// effect parameter (param), with the call chain to where it happens.
+pub struct EffectUse {
+  pub effect: Str
+  pub param: Bool
+  pub chain: List[EffectStep]
+}
+
+/// The effects the body of function f performs, sorted by name, each
+/// with its call chain (Info.Performed); empty for a function without a
+/// checked body.
+pub fn (c: Checker) performed_by(f: Int) -> List[EffectUse] {
+  var fl = Flat{}
+  if c.objs[f].declared < 0 {
+    fl = match c.inferred.get(f) {
+      Some(x) => x
+      None => return []
+    }
+  } else if c.objs[f].body_eff >= 0 {
+    fl = c.flatten(c.objs[f].body_eff, true)
+  } else {
+    return []
+  }
+  var out: List[EffectUse] = []
+  for (i, l) in fl.labels.indexed() {
+    out.push(EffectUse{effect: l, param: false, chain: c.chain_steps(fl.label_items[i], l)})
+  }
+  for (i, p) in fl.params.indexed() {
+    let name = text(c.objs[p].name)
+    out.push(EffectUse{effect: name, param: true, chain: c.chain_steps(fl.param_items[i], name)})
+  }
+  out.sort_by(fn(u) { u.effect })
+}
+
+/// The call chain that performs effect key from item w (effects.go
+/// chainSteps), as effect_chain notes it.
+fn (c: Checker) chain_steps(w0: EffItem, key: Str) -> List[EffectStep] {
+  var out: List[EffectStep] = []
+  var w = w0
+  var visited: List[Int] = []
+  for _ in 0..20 {
+    if w.fn_obj >= 0 && c.objs[w.fn_obj].declared < 0 {
+      out.push(c.step(w, "calls `${c.display_name(w.fn_obj)}`, which performs `${key}`"))
+      if visited.contains(w.fn_obj) {
+        return out
+      }
+      visited.push(w.fn_obj)
+      let fl = match c.inferred.get(w.fn_obj) {
+        Some(x) => x
+        None => return out
+      }
+      var next = EffItem{}
+      var ok = false
+      if let Some(k) = fl.labels.index_of(key) {
+        next = fl.label_items[k]
+        ok = true
+      } else {
+        for (k, p) in fl.params.indexed() {
+          if text(c.objs[p].name) == key {
+            next = fl.param_items[k]
+            ok = true
+          }
+        }
+      }
+      if !ok {
+        return out
+      }
+      w = next
+      continue
+    }
+    var via = w.via
+    if w.fn_obj >= 0 {
+      via = c.display_name(w.fn_obj)
+    }
+    if via.is_empty() {
+      via = "this"
+    }
+    if !w.file.is_empty() {
+      out.push(c.step(w, "`${via}` uses `${key}` here"))
+    }
+    return out
+  }
+  out
+}
+
+fn (c: Checker) step(w: EffItem, msg: Str) -> EffectStep {
+  if w.file.is_empty() {
+    return EffectStep{message: msg, file: "", line: 0, col: 0}
+  }
+  EffectStep{message: msg, file: w.file, line: w.span.start.line, col: w.span.start.col}
+}
+
+/// The `uses` text of a function with declared effects (EffSet.String),
+/// None when its effects are inferred.
+pub fn (c: Checker) declared_text(f: Int) -> Str? {
+  if c.objs[f].declared < 0 {
+    return None
+  }
+  Some(c.flat_text(c.flatten(c.objs[f].declared, false)))
+}
+
+/// mod.ReadFile of the xo.mod in dir: the parsed file (None when it
+/// cannot be read) and its problems, for `xo publish` (internal/release).
+pub fn (c: Checker) mod_file(dir: Str) -> (ModFile?, List[Problem]) uses fs.read {
+  c.read_mod_file(dir)
+}
+
+/// mod.ValidVersion.
+pub fn version_valid(v: Str) -> Bool {
+  valid_version(v)
+}
+
+/// mod.Compare: -1, 0, or 1.
+pub fn version_compare(a: Str, b: Str) -> Int {
+  compare_versions(a, b)
+}
+
+/// mod.Major: the major version of a valid version, -1 otherwise.
+pub fn version_major(v: Str) -> Int {
+  match version_parts(v) {
+    Some(p) => Int.parse(p[0]) ?? -1
+    None => -1
+  }
+}
+
+/// mod.MajorSuffix: path without its /vN suffix, and N (0 for none).
+pub fn path_major_suffix(path: Str) -> (Str, Int) {
+  (major_suffix(path), major_suffix_n(path))
+}
+
+/// mod.MajorMismatch.
+pub fn version_major_mismatch(path: Str, v: Str) -> Str {
+  major_mismatch(path, v)
+}
+
+/// The text of an object as the names section prints it.
+pub fn (c: Checker) object_text(o: Int) -> Str {
+  c.obj_text(o)
+}
+
+/// Overlay sources: absolute .xo paths whose contents replace the files
+/// on disk (check.Options.Overlay), for `xo edit`'s check of the edited
+/// program. Set before check_dirs.
+pub fn (var c: Checker) set_overlay(files: Map[Str, Bytes]) {
+  c.overlay = files
+}

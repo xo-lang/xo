@@ -1,0 +1,1185 @@
+// The runtime of the WebAssembly backend, stage 2 (decision 0179): what
+// the self hosted checker needs beyond the goldens' runtime. Reading the
+// file system through WASI preview1 (`path_open`, `fd_read`,
+// `path_filestat_get`, `fd_readdir`), the constants of collection types
+// (`const_once`, decision 0081), Time as its Unix nanoseconds, and
+// SHA-256. A relative path resolves against the first preopened
+// directory (fd 3, the working directory), an absolute one against the
+// second (fd 4, `/`), as selfhost/wasm/run.mjs preopens them. Assembled
+// into the programs that call these functions. Semantics are std/llrt's
+// (xo_fs.c, xo_bytes.c, xo_crypto.c).
+
+/// The runtime functions of rt4.xo called with the operands' leaves.
+fn rt4_direct(name: Str) -> Bool {
+  name is "fs_read" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+}
+
+/// The WASI imports of rt4.xo.
+fn rt4_imports() -> Str {
+  """
+    (import "wasi_snapshot_preview1" "path_open" (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "fd_close" (func $fd_close (param i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_filestat_get" (func $path_filestat_get (param i32 i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "fd_readdir" (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))
+
+  """
+}
+
+/// The globals of rt4.xo: the outcome of the last file operation, the
+/// fields of the last stat, and the constants built so far.
+fn rt4_globals() -> Str {
+  """
+    (global $fsst (mut i64) (i64.const 0))
+    (global $fspath (mut i32) (i32.const 0))
+    (global $fspathn (mut i32) (i32.const 0))
+    (global $fsmsg (mut i32) (i32.const 0))
+    (global $fsmsgn (mut i32) (i32.const 0))
+    (global $fsdir (mut i64) (i64.const 0))
+    (global $fssize (mut i64) (i64.const 0))
+    (global $fsmod (mut i64) (i64.const 0))
+    (global $consts (mut i32) (i32.const 0))
+    (global $nconsts (mut i32) (i32.const 0))
+
+  """
+}
+
+/// The functions of rt4.xo.
+fn rt4_text(var g: Gen) -> Str {
+  let dot = g.raw(".".bytes())
+  let empty = g.empty_list
+  let thunk = g.sig([], ["i32"])
+  let dropsig = g.sig(["i32"], [])
+  let e_noent = g.litp("no such file or directory")
+  let e_exist = g.litp("file exists")
+  let e_notempty = g.litp("directory not empty")
+  let e_notdir = g.litp("not a directory")
+  let e_isdir = g.litp("is a directory")
+  let e_acces = g.litp("permission denied")
+  let e_perm = g.litp("operation not permitted")
+  let e_io = g.litp("input/output error")
+  // SHA-256's round constants, little endian words
+  var kb = BytesBuilder.new()
+  for k in SHA_K {
+    kb.write(le32(k))
+  }
+  let ka = g.place(kb.freeze())
+  """
+    ;; the WASI directory and path of the OS path at o (n bytes): fd 3 and
+    ;; the path for a relative one, fd 4 and the rest for an absolute one;
+    ;; "." for the empty path
+    (func $wpath (param $o i32) (param $n i32) (result i32 i32 i32)
+      local.get $n
+      i32.eqz
+      if
+        i32.const 3
+        i32.const ${dot}
+        i32.const 1
+        return
+      end
+      local.get $o
+      i32.load8_u offset=8
+      i32.const 47
+      i32.eq
+      if
+        local.get $n
+        i32.const 1
+        i32.eq
+        if
+          i32.const 4
+          i32.const ${dot}
+          i32.const 1
+          return
+        end
+        i32.const 4
+        local.get $o
+        i32.const 9
+        i32.add
+        local.get $n
+        i32.const 1
+        i32.sub
+        return
+      end
+      i32.const 3
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $n)
+
+    ;; records WASI error e for the path x (a Str): its status (FsErr's
+    ;; tag plus one) and message, as fs_fail
+    (func $fs_fail (param $e i32) (param $x i32) (param $xn i32) (result i64) (local $st i64) (local $m i32) (local $mn i32)
+      i64.const 7
+      local.set $st
+      ${e_io}
+      local.set $mn
+      local.set $m
+      local.get $e
+      i32.const 44
+      i32.eq
+      if
+        i64.const 1
+        local.set $st
+        ${e_noent}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 20
+      i32.eq
+      if
+        i64.const 2
+        local.set $st
+        ${e_exist}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 55
+      i32.eq
+      if
+        i64.const 3
+        local.set $st
+        ${e_notempty}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 54
+      i32.eq
+      if
+        i64.const 4
+        local.set $st
+        ${e_notdir}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 31
+      i32.eq
+      if
+        i64.const 5
+        local.set $st
+        ${e_isdir}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 2
+      i32.eq
+      if
+        i64.const 6
+        local.set $st
+        ${e_acces}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 63
+      i32.eq
+      if
+        i64.const 6
+        local.set $st
+        ${e_perm}
+        local.set $mn
+        local.set $m
+      end
+      local.get $st
+      global.set $fsst
+      global.get $fspath
+      if
+        global.get $fspath
+        call $free
+      end
+      local.get $x
+      local.get $xn
+      call $str_copy
+      global.set $fspathn
+      global.set $fspath
+      local.get $m
+      global.set $fsmsg
+      local.get $mn
+      global.set $fsmsgn
+      local.get $st)
+
+    ;; a list of one Str or Bytes (o, n), consumed
+    (func $str_list1 (param $o i32) (param $n i32) (result i32) (local $l i32) (local $a i32)
+      i32.const 4
+      i32.const 16
+      call $rl_new
+      i32.const 16
+      call $rl_slot
+      local.set $a
+      local.set $l
+      local.get $a
+      local.get $o
+      i32.store
+      local.get $a
+      local.get $n
+      i32.store offset=8
+      local.get $l)
+
+    ;; the contents of the file at the OS path (o, n) in a list of one, or
+    ;; the empty list with the status set (xo_fs_read)
+    (func $fs_read (param $o i32) (param $n i32) (result i32) (local $fd i32) (local $e i32) (local $s i32) (local $len i32) (local $cap i32) (local $k i32) (local $t i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $t
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $t
+      local.get $k
+      i32.const 0
+      ;; fd_read, fd_seek, fd_tell, fd_filestat_get (a broader set is
+      ;; refused with ENOTCAPABLE by Node)
+      i64.const 0x200026
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        local.get $o
+        local.get $n
+        call $fs_fail
+        drop
+        i32.const ${empty}
+        return
+      end
+      i32.const 16
+      i32.load
+      local.set $fd
+      i32.const 4096
+      local.tee $cap
+      call $rs_new
+      local.set $s
+      block $x
+        loop $l
+          local.get $len
+          local.get $cap
+          i32.eq
+          if
+            local.get $cap
+            i32.const 1
+            i32.shl
+            local.tee $cap
+            call $rs_new
+            local.tee $t
+            i32.const 8
+            i32.add
+            local.get $s
+            i32.const 8
+            i32.add
+            local.get $len
+            memory.copy
+            local.get $s
+            call $free
+            local.get $t
+            local.set $s
+          end
+          ;; the iovec at 0
+          i32.const 0
+          local.get $s
+          i32.const 8
+          i32.add
+          local.get $len
+          i32.add
+          i32.store
+          i32.const 4
+          local.get $cap
+          local.get $len
+          i32.sub
+          i32.store
+          local.get $fd
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_read
+          local.tee $e
+          if
+            local.get $fd
+            call $fd_close
+            drop
+            local.get $s
+            call $free
+            local.get $e
+            local.get $o
+            local.get $n
+            call $fs_fail
+            drop
+            i32.const ${empty}
+            return
+          end
+          i32.const 8
+          i32.load
+          local.tee $k
+          i32.eqz
+          br_if $x
+          local.get $len
+          local.get $k
+          i32.add
+          local.set $len
+          br $l
+        end
+      end
+      local.get $fd
+      call $fd_close
+      drop
+      i64.const 0
+      global.set $fsst
+      local.get $s
+      local.get $len
+      call $str_list1)
+
+    (func $fs_status (result i64)
+      global.get $fsst)
+
+    ;; the path and the message of the last error
+    (func $fs_msg (result i32) (local $l i32) (local $a i32) (local $s i32) (local $k i32)
+      i32.const 4
+      i32.const 16
+      call $rl_new
+      local.set $l
+      ;; the path (none before an error)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      global.get $fspath
+      i32.const 8
+      i32.add
+      global.get $fspathn
+      call $sapp
+      local.set $k
+      local.set $s
+      local.get $l
+      i32.const 16
+      call $rl_slot
+      local.set $a
+      local.set $l
+      local.get $a
+      local.get $s
+      i32.store
+      local.get $a
+      local.get $k
+      i32.store offset=8
+      ;; the message
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      global.get $fsmsg
+      global.get $fsmsgn
+      call $sapp
+      local.set $k
+      local.set $s
+      local.get $l
+      i32.const 16
+      call $rl_slot
+      local.set $a
+      local.set $l
+      local.get $a
+      local.get $s
+      i32.store
+      local.get $a
+      local.get $k
+      i32.store offset=8
+      local.get $l)
+
+    (func $fs_stat (param $o i32) (param $n i32) (param $follow i32) (param $x i32) (param $xn i32) (result i64) (local $fd i32) (local $p i32) (local $k i32) (local $e i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      local.get $follow
+      local.get $p
+      local.get $k
+      i32.const 176
+      call $path_filestat_get
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
+      ;; filetype 3: a directory
+      i32.const 192
+      i32.load8_u
+      i32.const 3
+      i32.eq
+      i64.extend_i32_u
+      global.set $fsdir
+      i32.const 208
+      i64.load
+      global.set $fssize
+      i32.const 224
+      i64.load
+      global.set $fsmod
+      i64.const 0
+      global.set $fsst
+      i64.const 0)
+
+    (func $fs_info (param $w i64) (result i64)
+      local.get $w
+      i64.eqz
+      if
+        global.get $fsdir
+        return
+      end
+      local.get $w
+      i64.const 1
+      i64.eq
+      if
+        global.get $fssize
+        return
+      end
+      global.get $fsmod)
+
+    ;; the entries of the OS directory (o, n), not `.` and `..`, in no
+    ;; order; the error names x
+    (func $fs_names (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i32)
+      (local $fd i32) (local $p i32) (local $k i32) (local $e i32) (local $buf i32) (local $used i32) (local $i i32) (local $nl i32)
+      (local $l i32) (local $a i32) (local $cookie i64) (local $s i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $k
+      ;; O_DIRECTORY
+      i32.const 2
+      ;; fd_readdir, fd_filestat_get
+      i64.const 0x204000
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        drop
+        i32.const 4
+        i32.const 16
+        call $rl_new
+        return
+      end
+      i32.const 16
+      i32.load
+      local.set $fd
+      i32.const 4
+      i32.const 16
+      call $rl_new
+      local.set $l
+      i32.const 65536
+      call $alloc
+      local.set $buf
+      block $done
+        loop $more
+          local.get $fd
+          local.get $buf
+          i32.const 65536
+          local.get $cookie
+          i32.const 16
+          call $fd_readdir
+          br_if $done
+          i32.const 16
+          i32.load
+          local.set $used
+          i32.const 0
+          local.set $i
+          block $x
+            loop $ent
+              ;; a whole header (24 bytes) and name
+              local.get $i
+              i32.const 24
+              i32.add
+              local.get $used
+              i32.gt_u
+              br_if $x
+              local.get $buf
+              local.get $i
+              i32.add
+              i32.load offset=16
+              local.set $nl
+              local.get $i
+              i32.const 24
+              i32.add
+              local.get $nl
+              i32.add
+              local.get $used
+              i32.gt_u
+              br_if $x
+              local.get $buf
+              local.get $i
+              i32.add
+              i64.load
+              local.set $cookie
+              ;; skip . and ..
+              local.get $buf
+              local.get $i
+              i32.add
+              i32.const 24
+              i32.add
+              local.set $p
+              local.get $nl
+              i32.const 1
+              i32.eq
+              local.get $p
+              i32.load8_u
+              i32.const 46
+              i32.eq
+              i32.and
+              local.get $nl
+              i32.const 2
+              i32.eq
+              local.get $p
+              i32.load16_u
+              i32.const 11822
+              i32.eq
+              i32.and
+              i32.or
+              i32.eqz
+              if
+                i32.const 0
+                call $rs_new
+                i32.const 0
+                local.get $p
+                local.get $nl
+                call $sapp
+                local.set $k
+                local.set $s
+                local.get $l
+                i32.const 16
+                call $rl_slot
+                local.set $a
+                local.set $l
+                local.get $a
+                local.get $s
+                i32.store
+                local.get $a
+                local.get $k
+                i32.store offset=8
+              end
+              local.get $i
+              i32.const 24
+              i32.add
+              local.get $nl
+              i32.add
+              local.set $i
+              br $ent
+            end
+          end
+          ;; a full buffer: read on from the last whole entry
+          local.get $used
+          i32.const 65536
+          i32.lt_u
+          br_if $done
+          br $more
+        end
+      end
+      local.get $buf
+      call $free
+      local.get $fd
+      call $fd_close
+      drop
+      i64.const 0
+      global.set $fsst
+      local.get $l)
+
+    ;; a Time is its Unix nanoseconds
+    (func $time_of (param $ns i64) (result i64)
+      local.get $ns)
+
+    (func $time_ns (param $t i64) (result i64)
+      local.get $t)
+
+    ;; the constant list id, built once by the entry function f and kept
+    ;; immortal until exit (xo_const_once); entries {list, drop}
+    (func $const_once (param $f i64) (param $d i64) (param $id i64) (result i32) (local $i i32) (local $p i32) (local $n i32) (local $l i32)
+      local.get $id
+      i32.wrap_i64
+      local.tee $i
+      global.get $nconsts
+      i32.ge_u
+      if
+        local.get $i
+        i32.const 1
+        i32.add
+        i32.const 1
+        i32.shl
+        local.tee $n
+        i32.const 3
+        i32.shl
+        call $alloc
+        local.tee $p
+        i32.const 0
+        local.get $n
+        i32.const 3
+        i32.shl
+        memory.fill
+        global.get $consts
+        if
+          local.get $p
+          global.get $consts
+          global.get $nconsts
+          i32.const 3
+          i32.shl
+          memory.copy
+          global.get $consts
+          call $free
+        end
+        local.get $p
+        global.set $consts
+        local.get $n
+        global.set $nconsts
+      end
+      global.get $consts
+      local.get $i
+      i32.const 3
+      i32.shl
+      i32.add
+      local.tee $p
+      i32.load
+      local.tee $l
+      if
+        local.get $l
+        return
+      end
+      local.get $f
+      i32.wrap_i64
+      call_indirect (type ${thunk})
+      local.tee $l
+      i32.const 0x80000000
+      i32.store
+      ;; the table may have moved
+      global.get $consts
+      local.get $i
+      i32.const 3
+      i32.shl
+      i32.add
+      local.tee $p
+      local.get $l
+      i32.store
+      local.get $p
+      local.get $d
+      i32.wrap_i64
+      i32.store offset=4
+      local.get $l)
+
+    ;; releases the constants built during the run (xo_consts_free)
+    (func $consts_free (local $i i32) (local $p i32) (local $l i32)
+      block $x
+        loop $l
+          local.get $i
+          global.get $nconsts
+          i32.ge_u
+          br_if $x
+          global.get $consts
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          local.tee $p
+          i32.load
+          local.tee $l
+          if
+            local.get $p
+            i32.const 0
+            i32.store
+            local.get $l
+            i32.const 1
+            i32.store
+            local.get $l
+            local.get $p
+            i32.load offset=4
+            call_indirect (type ${dropsig})
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      global.get $consts
+      if
+        global.get $consts
+        call $free
+        i32.const 0
+        global.set $consts
+        i32.const 0
+        global.set $nconsts
+      end
+      global.get $fspath
+      if
+        global.get $fspath
+        call $free
+        i32.const 0
+        global.set $fspath
+      end)
+
+    (func $bswap (param $x i32) (result i32)
+      local.get $x
+      i32.const 24
+      i32.shl
+      local.get $x
+      i32.const 0xff00
+      i32.and
+      i32.const 8
+      i32.shl
+      i32.or
+      local.get $x
+      i32.const 8
+      i32.shr_u
+      i32.const 0xff00
+      i32.and
+      i32.or
+      local.get $x
+      i32.const 24
+      i32.shr_u
+      i32.or)
+
+    ;; SHA-256 of the bytes (o, n): 32 bytes
+    (func $crypto_sha256 (param $o i32) (param $n i32) (result i32 i32)
+      (local $m i32) (local $mlen i32) (local $w i32) (local $blk i32) (local $t i32) (local $out i32)
+      (local $a i32) (local $b i32) (local $c i32) (local $d i32) (local $e i32) (local $f i32) (local $g i32) (local $h i32)
+      (local $h0 i32) (local $h1 i32) (local $h2 i32) (local $h3 i32) (local $h4 i32) (local $h5 i32) (local $h6 i32) (local $h7 i32)
+      (local $t1 i32) (local $t2 i32) (local $x i32) (local $y i32)
+      ;; the padded message: the bytes, 0x80, zeros, the bit length
+      local.get $n
+      i32.const 72
+      i32.add
+      i32.const -64
+      i32.and
+      local.tee $mlen
+      call $alloc
+      local.tee $m
+      i32.const 0
+      local.get $mlen
+      memory.fill
+      local.get $m
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $n
+      memory.copy
+      local.get $m
+      local.get $n
+      i32.add
+      i32.const 128
+      i32.store8
+      local.get $m
+      local.get $mlen
+      i32.add
+      i32.const 4
+      i32.sub
+      local.get $n
+      i32.const 3
+      i32.shl
+      call $bswap
+      i32.store
+      local.get $m
+      local.get $mlen
+      i32.add
+      i32.const 8
+      i32.sub
+      local.get $n
+      i32.const 29
+      i32.shr_u
+      call $bswap
+      i32.store
+      i32.const 256
+      call $alloc
+      local.set $w
+      i32.const 0x6a09e667
+      local.set $h0
+      i32.const 0xbb67ae85
+      local.set $h1
+      i32.const 0x3c6ef372
+      local.set $h2
+      i32.const 0xa54ff53a
+      local.set $h3
+      i32.const 0x510e527f
+      local.set $h4
+      i32.const 0x9b05688c
+      local.set $h5
+      i32.const 0x1f83d9ab
+      local.set $h6
+      i32.const 0x5be0cd19
+      local.set $h7
+      block $xb
+        loop $lb
+          local.get $blk
+          local.get $mlen
+          i32.ge_u
+          br_if $xb
+          ;; the schedule
+          i32.const 0
+          local.set $t
+          block $x1
+            loop $l1
+              local.get $t
+              i32.const 16
+              i32.ge_u
+              br_if $x1
+              local.get $w
+              local.get $t
+              i32.const 2
+              i32.shl
+              i32.add
+              local.get $m
+              local.get $blk
+              i32.add
+              local.get $t
+              i32.const 2
+              i32.shl
+              i32.add
+              i32.load
+              call $bswap
+              i32.store
+              local.get $t
+              i32.const 1
+              i32.add
+              local.set $t
+              br $l1
+            end
+          end
+          block $x2
+            loop $l2
+              local.get $t
+              i32.const 64
+              i32.ge_u
+              br_if $x2
+              ;; s1(w[t-2]) + w[t-7] + s0(w[t-15]) + w[t-16]
+              local.get $w
+              local.get $t
+              i32.const 2
+              i32.shl
+              i32.add
+              local.tee $x
+              i32.const 8
+              i32.sub
+              i32.load
+              local.tee $y
+              i32.const 17
+              i32.rotr
+              local.get $y
+              i32.const 19
+              i32.rotr
+              i32.xor
+              local.get $y
+              i32.const 10
+              i32.shr_u
+              i32.xor
+              local.get $x
+              i32.const 28
+              i32.sub
+              i32.load
+              i32.add
+              local.get $x
+              i32.const 60
+              i32.sub
+              i32.load
+              local.tee $y
+              i32.const 7
+              i32.rotr
+              local.get $y
+              i32.const 18
+              i32.rotr
+              i32.xor
+              local.get $y
+              i32.const 3
+              i32.shr_u
+              i32.xor
+              i32.add
+              local.get $x
+              i32.const 64
+              i32.sub
+              i32.load
+              i32.add
+              local.set $y
+              local.get $x
+              local.get $y
+              i32.store
+              local.get $t
+              i32.const 1
+              i32.add
+              local.set $t
+              br $l2
+            end
+          end
+          local.get $h0
+          local.set $a
+          local.get $h1
+          local.set $b
+          local.get $h2
+          local.set $c
+          local.get $h3
+          local.set $d
+          local.get $h4
+          local.set $e
+          local.get $h5
+          local.set $f
+          local.get $h6
+          local.set $g
+          local.get $h7
+          local.set $h
+          i32.const 0
+          local.set $t
+          block $x3
+            loop $l3
+              local.get $t
+              i32.const 64
+              i32.ge_u
+              br_if $x3
+              ;; t1 = h + S1(e) + ch(e, f, g) + k[t] + w[t]
+              local.get $h
+              local.get $e
+              i32.const 6
+              i32.rotr
+              local.get $e
+              i32.const 11
+              i32.rotr
+              i32.xor
+              local.get $e
+              i32.const 25
+              i32.rotr
+              i32.xor
+              i32.add
+              local.get $e
+              local.get $f
+              i32.and
+              local.get $e
+              i32.const -1
+              i32.xor
+              local.get $g
+              i32.and
+              i32.xor
+              i32.add
+              local.get $t
+              i32.const 2
+              i32.shl
+              local.tee $x
+              i32.load offset=${ka}
+              i32.add
+              local.get $w
+              local.get $x
+              i32.add
+              i32.load
+              i32.add
+              local.set $t1
+              ;; t2 = S0(a) + maj(a, b, c)
+              local.get $a
+              i32.const 2
+              i32.rotr
+              local.get $a
+              i32.const 13
+              i32.rotr
+              i32.xor
+              local.get $a
+              i32.const 22
+              i32.rotr
+              i32.xor
+              local.get $a
+              local.get $b
+              i32.and
+              local.get $a
+              local.get $c
+              i32.and
+              i32.xor
+              local.get $b
+              local.get $c
+              i32.and
+              i32.xor
+              i32.add
+              local.set $t2
+              local.get $g
+              local.set $h
+              local.get $f
+              local.set $g
+              local.get $e
+              local.set $f
+              local.get $d
+              local.get $t1
+              i32.add
+              local.set $e
+              local.get $c
+              local.set $d
+              local.get $b
+              local.set $c
+              local.get $a
+              local.set $b
+              local.get $t1
+              local.get $t2
+              i32.add
+              local.set $a
+              local.get $t
+              i32.const 1
+              i32.add
+              local.set $t
+              br $l3
+            end
+          end
+          local.get $h0
+          local.get $a
+          i32.add
+          local.set $h0
+          local.get $h1
+          local.get $b
+          i32.add
+          local.set $h1
+          local.get $h2
+          local.get $c
+          i32.add
+          local.set $h2
+          local.get $h3
+          local.get $d
+          i32.add
+          local.set $h3
+          local.get $h4
+          local.get $e
+          i32.add
+          local.set $h4
+          local.get $h5
+          local.get $f
+          i32.add
+          local.set $h5
+          local.get $h6
+          local.get $g
+          i32.add
+          local.set $h6
+          local.get $h7
+          local.get $h
+          i32.add
+          local.set $h7
+          local.get $blk
+          i32.const 64
+          i32.add
+          local.set $blk
+          br $lb
+        end
+      end
+      local.get $m
+      call $free
+      local.get $w
+      call $free
+      i32.const 32
+      call $rs_new
+      local.tee $out
+      local.get $h0
+      call $bswap
+      i32.store offset=8
+      local.get $out
+      local.get $h1
+      call $bswap
+      i32.store offset=12
+      local.get $out
+      local.get $h2
+      call $bswap
+      i32.store offset=16
+      local.get $out
+      local.get $h3
+      call $bswap
+      i32.store offset=20
+      local.get $out
+      local.get $h4
+      call $bswap
+      i32.store offset=24
+      local.get $out
+      local.get $h5
+      call $bswap
+      i32.store offset=28
+      local.get $out
+      local.get $h6
+      call $bswap
+      i32.store offset=32
+      local.get $out
+      local.get $h7
+      call $bswap
+      i32.store offset=36
+      local.get $out
+      i32.const 32)
+  """
+}
+
+/// SHA-256's round constants (FIPS 180-4).
+const SHA_K: List[Int] = [
+  0x428a2f98,
+  0x71374491,
+  0xb5c0fbcf,
+  0xe9b5dba5,
+  0x3956c25b,
+  0x59f111f1,
+  0x923f82a4,
+  0xab1c5ed5,
+  0xd807aa98,
+  0x12835b01,
+  0x243185be,
+  0x550c7dc3,
+  0x72be5d74,
+  0x80deb1fe,
+  0x9bdc06a7,
+  0xc19bf174,
+  0xe49b69c1,
+  0xefbe4786,
+  0x0fc19dc6,
+  0x240ca1cc,
+  0x2de92c6f,
+  0x4a7484aa,
+  0x5cb0a9dc,
+  0x76f988da,
+  0x983e5152,
+  0xa831c66d,
+  0xb00327c8,
+  0xbf597fc7,
+  0xc6e00bf3,
+  0xd5a79147,
+  0x06ca6351,
+  0x14292967,
+  0x27b70a85,
+  0x2e1b2138,
+  0x4d2c6dfc,
+  0x53380d13,
+  0x650a7354,
+  0x766a0abb,
+  0x81c2c92e,
+  0x92722c85,
+  0xa2bfe8a1,
+  0xa81a664b,
+  0xc24b8b70,
+  0xc76c51a3,
+  0xd192e819,
+  0xd6990624,
+  0xf40e3585,
+  0x106aa070,
+  0x19a4c116,
+  0x1e376c08,
+  0x2748774c,
+  0x34b0bcb5,
+  0x391c0cb3,
+  0x4ed8aa4a,
+  0x5b9cca4f,
+  0x682e6ff3,
+  0x748f82ee,
+  0x78a5636f,
+  0x84c87814,
+  0x8cc70208,
+  0x90befffa,
+  0xa4506ceb,
+  0xbef9a3f7,
+  0xc67178f2,
+]

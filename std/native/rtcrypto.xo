@@ -14,3 +14,7 @@ fn crypto_argon2id(password: Str, salt: Bytes, iterations: Int, memory_kib: Int,
 fn crypto_b64(data: Bytes, url: Bool) -> Str
 /// std/rt's Crypto_verify_password.
 fn crypto_verify_password(password: Str, hash: Str) -> Bool
+/// Ed25519 (decision 0189); the seed is 32 bytes (crypto.xo checks it).
+fn crypto_ed25519_public_key(seed: Bytes) -> Bytes
+fn crypto_ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
+fn crypto_ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool

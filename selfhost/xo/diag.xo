@@ -1,0 +1,156 @@
+// The check's diagnostics as `xo build|run|test` print them (decision
+// 0178 stage 1): the human form of internal/diag Human on standard error,
+// and `xo build --json`'s indented object on standard output, from the
+// diagnostics selfhost/check reports (the JSON text of each one is
+// selfhost/check's full_lines, the form `xo check --json` prints).
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// The diagnostics in diag.Sort's order: by file, line, and column,
+/// equal positions in report order.
+fn sorted_diags(ds: List[check.Diag]) -> List[check.Diag] {
+  var keyed: List[(Str, Int)] = []
+  for (i, d) in ds.indexed() {
+    keyed.push(("${d.file}\x00${pad10(d.line)}${pad10(d.col)}${pad10(i)}", i))
+  }
+  var out: List[check.Diag] = []
+  for (_, i) in keyed.sort_by(fn(k) { k.0 }) {
+    out.push(ds[i])
+  }
+  out
+}
+
+fn pad10(n: Int) -> Str {
+  var s = "${n}"
+  while s.len() < 10 {
+    s = "0" + s
+  }
+  s
+}
+
+/// diag.Human: `file:line:col: severity CODE: message`, its notes and
+/// fixes on indented lines. A diagnostic of the whole build (no file)
+/// starts at the severity, one of a file with no position at the file.
+fn human(d: check.Diag) -> Str {
+  var b = StrBuilder.new()
+  if d.file.is_empty() {
+  } else if d.line == 0 {
+    b.write("${d.file}: ")
+  } else {
+    b.write("${d.file}:${d.line}:${d.col}: ")
+  }
+  let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+  b.write("${sev} ${d.code}: ${d.message}")
+  for n in d.notes {
+    if let Some(sp) = n.span {
+      b.write("\n  note: ${sp.file}:${sp.line}:${sp.col}: ${n.message}")
+    } else {
+      b.write("\n  note: ${n.message}")
+    }
+  }
+  for f in d.fixes {
+    b.write("\n  fix: ${f.title}")
+  }
+  b.freeze()
+}
+
+/// printDiags: every diagnostic in the human form on standard error.
+fn print_diags(os: Os, ds: List[check.Diag]) {
+  for d in sorted_diags(ds) {
+    os.stdio.eprintln(human(d))
+  }
+}
+
+/// Whether the diagnostics block the build: an error, or a hole
+/// (XO0900) without --holes (internal/build checkOpts).
+fn blocks(ds: List[check.Diag], holes: Bool) -> Bool {
+  for d in ds {
+    if !d.warning || (d.code == "XO0900" && !holes) {
+      return true
+    }
+  }
+  false
+}
+
+/// The JSON array of the diagnostics as encoding/json writes
+/// []diag.Diagnostic, compact.
+fn diags_json(ds: List[check.Diag]) -> Str {
+  // full_lines sorts by position, code, and message; diag.Sort keeps
+  // report order at a position, so sort first and take the text of each
+  var parts: List[Str] = []
+  for d in sorted_diags(ds) {
+    parts.push(check.full_lines([d])[0])
+  }
+  "[${parts.join(",")}]"
+}
+
+/// `xo build --json`'s result: {"ok", "binaries" (target -> path, sorted),
+/// "diagnostics"}, indented by two spaces as json.Encoder with SetIndent
+/// writes it, with its newline.
+fn build_json(ok: Bool, bins: List[(Str, Str)], ds: List[check.Diag]) -> Str {
+  var bs: List[Str] = []
+  for (t, p) in bins.sort_by(fn(b) { b.0 }) {
+    bs.push("${json_str(t)}:${json_str(p)}")
+  }
+  indent_json("{\"ok\":${ok},\"binaries\":{${bs.join(",")}},\"diagnostics\":${diags_json(ds)}}") + "\n"
+}
+
+/// json.Indent of compact JSON with prefix "" and indent "  ": a newline
+/// and the indent after `{`, `[`, and `,`, before `}` and `]`, a space
+/// after `:`; empty objects and arrays stay `{}` and `[]`.
+fn indent_json(s: Str) -> Str {
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var depth = 0
+  var i = 0
+  var in_str = false
+  while i < b.len() {
+    let c = b[i]
+    if in_str {
+      out.write_byte(c)
+      if c == '\\' && i + 1 < b.len() {
+        out.write_byte(b[i + 1])
+        i += 1
+      } else if c == '"' {
+        in_str = false
+      }
+      i += 1
+      continue
+    }
+    if c == '"' {
+      in_str = true
+      out.write_byte(c)
+    } else if c == '{' || c == '[' {
+      out.write_byte(c)
+      let close: UInt8 = if c == '{' { '}' } else { ']' }
+      if i + 1 < b.len() && b[i + 1] == close {
+        out.write_byte(close)
+        i += 1
+      } else {
+        depth += 1
+        newline(out, depth)
+      }
+    } else if c == '}' || c == ']' {
+      depth -= 1
+      newline(out, depth)
+      out.write_byte(c)
+    } else if c == ',' {
+      out.write_byte(c)
+      newline(out, depth)
+    } else if c == ':' {
+      out.write_byte(c)
+      out.write_byte(' ')
+    } else {
+      out.write_byte(c)
+    }
+    i += 1
+  }
+  out.freeze().to_str() ?? s
+}
+
+fn newline(var out: BytesBuilder, depth: Int) {
+  out.write_byte('\n')
+  for _ in 0..depth {
+    out.write_str("  ")
+  }
+}

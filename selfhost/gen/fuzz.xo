@@ -296,3 +296,44 @@ fn (var g: Gen) gen_fuzz(fo: Int) {
 fn (g: Gen) is_unit_raw(t: Int) -> Bool {
   g.c.tys[t].kind == check.TyKind.Tuple && g.c.tys[t].args.is_empty()
 }
+
+/// A function `xo test` fuzzes (FuzzTarget): the test's name and the
+/// function's object.
+pub struct FuzzTarget {
+  pub name: Str
+  pub fo: Int
+}
+
+/// ContractFuzzTargets: the contract fuzz tests of the root modules'
+/// functions, in declaration order; native test binaries list them as
+/// skipped (decision 0085).
+pub fn contract_fuzz_targets(c: check.Checker) -> List[FuzzTarget] {
+  var g = Gen{c: c, opts: Opts{test_mode: true}}
+  g.prelude = c.prelude
+  g.init_adapt()
+  var out: List[FuzzTarget] = []
+  for m in c.order {
+    if !c.mods[m].root || c.mods[m].is_std {
+      continue
+    }
+    g.pkg_of[m] = g.pkgs.len()
+    g.p = g.pkgs.len()
+    g.pkgs.push(g.new_pkg(m))
+    for fi in c.mods[m].files {
+      let file = c.files[fi]
+      if file.is_test {
+        continue
+      }
+      g.pkgs[g.p].cur = fi
+      for (di, d) in file.ast.decls.indexed() {
+        let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+        if let FnDecl(fd) = d {
+          if o >= 0 && c.objs[o].kind == check.ObjKind.Func && fd.body != None && g.fuzzable(o) {
+            out.push(FuzzTarget{name: "contract fuzz: " + g.frame_name(o), fo: o})
+          }
+        }
+      }
+    }
+  }
+  out
+}

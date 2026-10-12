@@ -1,0 +1,164 @@
+// JSON output as cmd/xo's encodeJSON writes it (encoding/json with
+// SetEscapeHTML(false) and two space indentation), and the diagnostics
+// of module problems (cmd/xo problemDiags, diag.Human).
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// A JSON value with its object keys in order.
+enum J {
+  S(s: Str)
+  /// A string escaped as json.Marshal escapes it (`<`, `>`, `&` too): the
+  /// fields of a diagnostic, which diag.Diagnostic marshals itself.
+  H(s: Str)
+  I(n: Int)
+  B(b: Bool)
+  Null
+  A(xs: List[J])
+  O(fields: List[(Str, J)])
+}
+
+fn jstrs(xs: List[Str]) -> J {
+  J.A(xs: xs.map(fn(x) { J.S(s: x) }))
+}
+
+/// The JSON text of v as json.Encoder with SetIndent("", "  ") writes it,
+/// with its trailing newline.
+fn encode_json(v: J) -> Str {
+  var b = StrBuilder.new()
+  write_json(b, v, 0)
+  b.write("\n")
+  b.freeze()
+}
+
+fn write_json(var b: StrBuilder, v: J, depth: Int) {
+  match v {
+    J.S(s: s) => b.write(json_quote(s, false))
+    J.H(s: s) => b.write(json_quote(s, true))
+    J.I(n: n) => b.write("${n}")
+    J.B(b: x) => b.write(if x { "true" } else { "false" })
+    J.Null => b.write("null")
+    J.A(xs: xs) => {
+      if xs.is_empty() {
+        b.write("[]")
+        return
+      }
+      b.write("[")
+      for (i, x) in xs.indexed() {
+        if i > 0 {
+          b.write(",")
+        }
+        b.write("\n")
+        b.write("  ".repeat(depth + 1))
+        write_json(b, x, depth + 1)
+      }
+      b.write("\n")
+      b.write("  ".repeat(depth))
+      b.write("]")
+    }
+    J.O(fields: fs) => {
+      if fs.is_empty() {
+        b.write("{}")
+        return
+      }
+      b.write("{")
+      for (i, f) in fs.indexed() {
+        if i > 0 {
+          b.write(",")
+        }
+        b.write("\n")
+        b.write("  ".repeat(depth + 1))
+        b.write(json_quote(f.0, false))
+        b.write(": ")
+        write_json(b, f.1, depth + 1)
+      }
+      b.write("\n")
+      b.write("  ".repeat(depth))
+      b.write("}")
+    }
+  }
+}
+
+const HEX_DIGITS = "0123456789abcdef"
+
+/// A JSON string as encoding/json writes it without HTML escaping:
+/// `"` and `\` escaped, \n \r \t, other control characters and U+2028,
+/// U+2029 as \u escapes.
+fn json_quote(s: Str, html: Bool) -> Str {
+  var b = BytesBuilder.new()
+  b.write_byte('"')
+  let bs = s.bytes()
+  var i = 0
+  while i < bs.len() {
+    let c = bs[i]
+    if c == '"' || c == '\\' {
+      b.write_byte('\\')
+      b.write_byte(c)
+    } else if c == '\n' {
+      b.write("\\n".bytes())
+    } else if c == '\r' {
+      b.write("\\r".bytes())
+    } else if c == '\t' {
+      b.write("\\t".bytes())
+    } else if html && (c == '<' || c == '>' || c == '&') {
+      b.write("\\u00".bytes())
+      b.write((if c == '<' { "3c" } else if c == '>' { "3e" } else { "26" }).bytes())
+    } else if c < 32 {
+      b.write("\\u00".bytes())
+      let hi = Int(c) >> 4
+      let lo = Int(c) & 15
+      b.write(HEX_DIGITS[hi..hi + 1].bytes())
+      b.write(HEX_DIGITS[lo..lo + 1].bytes())
+    } else if c == 0xe2 && i + 2 < bs.len() && bs[i + 1] == 0x80 && (bs[i + 2] == 0xa8 || bs[i + 2] == 0xa9) {
+      b.write((if bs[i + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }).bytes())
+      i += 2
+    } else {
+      b.write_byte(c)
+    }
+    i += 1
+  }
+  b.write_byte('"')
+  b.freeze().to_str() ?? ""
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics of module problems
+
+/// The JSON of a problem as a diagnostic (cmd/xo problemDiags; the
+/// severity of every module code but the XO1315 note is error).
+fn problem_json(p: check.Problem) -> J {
+  let line = if p.line < 1 { 1 } else { p.line }
+  var notes: List[J] = []
+  for n in p.notes {
+    notes.push(J.O(fields: [("message", J.H(s: n))]))
+  }
+  J.O(fields: [
+    ("code", J.H(s: p.code)),
+    ("severity", J.H(s: severity(p.code))),
+    ("message", J.H(s: p.msg)),
+    ("span", J.O(fields: [("file", J.H(s: p.file)), ("line", J.I(n: line)), ("col", J.I(n: 1))])),
+    ("notes", J.A(xs: notes)),
+    ("fixes", J.A(xs: [])),
+  ])
+}
+
+fn problems_json(ps: List[check.Problem]) -> J {
+  J.A(xs: ps.map(problem_json))
+}
+
+fn severity(code: Str) -> Str {
+  if code == "XO1315" { "note" } else { "error" }
+}
+
+/// diag.Human of a problem's diagnostic.
+fn problem_human(p: check.Problem) -> Str {
+  var b = StrBuilder.new()
+  if !p.file.is_empty() {
+    let line = if p.line < 1 { 1 } else { p.line }
+    b.write("${p.file}:${line}:1: ")
+  }
+  b.write("${severity(p.code)} ${p.code}: ${p.msg}")
+  for n in p.notes {
+    b.write("\n  note: ${n}")
+  }
+  b.freeze()
+}
