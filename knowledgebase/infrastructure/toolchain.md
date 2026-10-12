@@ -1318,6 +1318,18 @@ first, AST based prototype, since deleted) and
   helpers. A construct outside the SSA builder's subset is a build error
   naming it and its position ("the SSA builder does not support ...").
   The AST path (bump allocator, never freed) was deleted on 2026-10-08.
+- Split builds (decision 0168; last verified: 2026-10-12):
+  `XO_LLVM_SPLIT=n` (or `build.Options.LLVMSplit`) cuts the IR into n
+  modules by size (`llvm.Split`, internal/llvm/modules.go), writes
+  `prog.<i>.ll` in `<build>/llvm-split<n>-<lto>/`, compiles them with at
+  most `XO_LLVM_JOBS` clang processes per xo process (default min(cores,
+  6); a clang on a twelfth of selfhost/ssa peaks near 2 GB, on a sixth
+  near 4 GB), and links. `XO_LLVM_LTO=thin` (default) or `none`. Unset,
+  `0`, or `1`: one module with full LTO, as before. Test processes of
+  internal/selfhost call `build.EnableTestLLVMSplit` (12 modules, 4
+  jobs, no LTO unless the environment says otherwise; `XO_LLVM_SPLIT=0`
+  for the release configuration). Timings:
+  `bench/results/llvm-build-time-2026-10-12.md`.
 - Target (decision 0119, 2026-10-10): `build.ClangTargetAttrs` reads
   clang's default `-target-cpu` and `-target-feature`s (`clang -### -c
   -x c /dev/null`, once per compiler) and the IR's function attribute

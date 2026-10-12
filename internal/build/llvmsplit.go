@@ -107,22 +107,26 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// Split builds of tests (decision 0168): the module count and job bound
-// EnableTestLLVMSplit sets when the environment names none.
+// Split builds of tests (decision 0168): the module count, job bound,
+// and LTO EnableTestLLVMSplit sets when the environment names none. No
+// LTO: on selfhost/ssa (2026-10-12) it built in 512 s against ThinLTO's
+// 556 s with about half the CPU time (ThinLTO's link runs on every
+// core), for output 2 to 3 percent slower, which tests do not need.
 const (
 	testSplitModules = "12"
 	testSplitJobs    = "4"
+	testSplitLTO     = "none"
 )
 
 // EnableTestLLVMSplit makes the LLVM builds of a test process split
-// (XO_LLVM_SPLIT, XO_LLVM_JOBS) unless the environment already sets
-// them: the self hosted compiler's tests build programs of hundreds of
-// MB of IR whose single module compile takes over half an hour.
+// (XO_LLVM_SPLIT, XO_LLVM_JOBS, XO_LLVM_LTO) unless the environment
+// already sets them: the self hosted compiler's tests build programs of
+// hundreds of MB of IR, whose single module compile takes over half an
+// hour. XO_LLVM_SPLIT=0 keeps a test process on one module.
 func EnableTestLLVMSplit() {
-	if _, ok := os.LookupEnv("XO_LLVM_SPLIT"); !ok {
-		os.Setenv("XO_LLVM_SPLIT", testSplitModules)
-	}
-	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
-		os.Setenv("XO_LLVM_JOBS", testSplitJobs)
+	for _, kv := range [][2]string{{"XO_LLVM_SPLIT", testSplitModules}, {"XO_LLVM_JOBS", testSplitJobs}, {"XO_LLVM_LTO", testSplitLTO}} {
+		if _, ok := os.LookupEnv(kv[0]); !ok {
+			os.Setenv(kv[0], kv[1])
+		}
 	}
 }
