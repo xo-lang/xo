@@ -26,6 +26,20 @@ block the freeze, goldens, or bootstrap steps.
   output (lld-link or our own linker), unwinding, and Windows test hosts.
 - darwin/amd64 needs a runtime pack, the x86-64 task switch (exists), and
   test hosts.
+- darwin/amd64 is met (2026-10-12, bench/results/intel-mac-2026-10-12.md):
+  on the owner's Intel Mac (macOS 26.5.2, Apple clang 17) internal/llvm
+  passes, TestGolden 143 of 143 (Go backend, LLVM, and want.txt agree,
+  leak check clean), TestGoldenSplit 145 of 145, TestGoldenThreads 108
+  of 108, 0 unsupported. It needed no emitter or runtime change: the IR
+  carries no triple (clang supplies the host's), the C runtime already
+  had the x86-64 fiber switch with Mach-O names, `__ulock`, and kqueue,
+  and the LLVM backend needs no runtime pack (it compiles std/llrt with
+  the program). Builds are native on that Mac with the Go driver (xo1 is
+  arm64 only and `xo` falls back by itself there); the development Mac
+  cannot run x86_64 binaries. Test host: `scripts/intel-mac-test.sh`.
+  Gap: ASan and TSan do not start there
+  (gotchas/darwin-amd64-sanitizers-sigill.md), so those tests run
+  without the sanitizer.
 - wasi/wasm32 is not part of this gate; the Xo wasm backend covers wasm.
 
 ## Alternatives

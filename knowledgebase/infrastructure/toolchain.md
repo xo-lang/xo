@@ -2796,6 +2796,34 @@ newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
 and /tmp on a tmpfs apart from the home disk. Last verified: 2026-10-12
 (--hold run on c8g.8xlarge).
 
+## Intel Mac runs (darwin/amd64, decision 0196)
+
+`scripts/intel-mac-test.sh [--clean|--purge] [COMMIT] [-- CMD...]` runs
+CMD (default `go test -count=1 -run 'TestGolden$' ./internal/llvm`) for
+a commit on the owner's Intel Mac, host `$XO_INTEL_HOST` (default
+`user@intel-mac.local`, ssh key auth from the development Mac):
+it bundles the commit (a temporary `refs/xo-intel/<commit>` ref), copies
+the bundle with scp, fetches it into `~/xo-ci/xo`, and runs CMD under
+`caffeinate -i` with go 1.26.1 from `~/xo-ci/go` (unpacked from go.dev
+on first use), GOMAXPROCS=6, XO_SELF_DRIVER=0, and HOME, TMPDIR,
+GOCACHE, GOPATH under `~/xo-ci/state` (so os.UserCacheDir and every xo
+cache stay in ~/xo-ci). The log goes to
+`$XO_INTEL_OUT` (default bench/results/remote/intel-<commit>.log, git
+ignored) and the script exits with CMD's status. It refuses to start on
+battery below `$XO_INTEL_MIN_BATT` percent (default 50). `--clean`
+removes the checkout, state, and logs afterwards (keeps ~/xo-ci/go);
+`--purge` removes ~/xo-ci. CMD runs in the ssh session's foreground, so
+nothing outlives the script. The laptop is the owner's: no sudo, no
+installs outside ~/xo-ci, keep it under 12 GB (the full internal/llvm
+run left 2.9 GB in ~/xo-ci). Host: x86_64 i7-9750H, 12 threads, 16 GB,
+macOS 26.5.2, Apple clang 17.0.0 (clang-1700.3.19.1), about 20 GB free.
+The whole internal/llvm package passes there in 532 s
+(bench/results/intel-mac-2026-10-12.md); ASan and TSan binaries cannot
+start (gotchas/darwin-amd64-sanitizers-sigill.md). The development Mac
+cannot run x86_64 binaries (no Rosetta) and the LLVM backend builds for
+the host only, so darwin/amd64 is built and tested on that Mac.
+Last verified: 2026-10-12.
+
 
 ## Bootstrapping without Go (decision 0178, stage 7)
 
