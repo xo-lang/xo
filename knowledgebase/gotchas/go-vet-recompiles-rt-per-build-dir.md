@@ -22,3 +22,15 @@ Fix: the test helpers run go with `goVetEnv()`
 `TestGeneratedGoVets` write 14 `rt` archives (one per mode and flag set)
 into a 1.1 GB cache. Any test that runs the go command in a build
 directory should use the same environment.
+
+Update (2026-10-12, decision 0176): the default cache was at 19 GB
+again. 235 of its files were this gotcha's 24.8 MB `rt` archives from
+before the fix; two more go commands in tests still used the default
+cache (`go build` in internal/gen reducediff_test.go, and `go tool asm`
+and `go tool objdump` in internal/arm64 gosyntax_test.go; Go 1.25 and
+later build objdump on first use). Both now use `build.GoEnv()` or
+`gotool.CacheEnv()` (`goVetEnv()` is `build.GoEnv()`), and
+`TestGoCommandsUseXoCache` (internal/build) fails on any new
+`exec.Command("go", ...)` that builds without one. What still grows the
+default cache is the repo's own `go test` per worktree path
+(toolchain.md, "Go build cache").

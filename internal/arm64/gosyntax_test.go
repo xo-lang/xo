@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // gnuForms are instruction forms instruction selection and emission
@@ -83,10 +85,16 @@ func TestGoSyntaxEncoding(t *testing.T) {
 	ps, pobj := filepath.Join(dir, "b.s"), filepath.Join(dir, "b.o")
 	os.WriteFile(ps, []byte(gos.String()), 0o644)
 	inc := filepath.Join(runtime.GOROOT(), "pkg", "include")
-	if out, err := exec.Command("go", "tool", "asm", "-p", "main", "-I", inc, "-o", pobj, ps).CombinedOutput(); err != nil {
+	// go tool objdump is built on first use (Go 1.25 ships no binary for
+	// it), so both run on Xo's Go cache (decision 0176)
+	asm := exec.Command("go", "tool", "asm", "-p", "main", "-I", inc, "-o", pobj, ps)
+	asm.Env = append(os.Environ(), "GOWORK=off", gotool.CacheEnv())
+	if out, err := asm.CombinedOutput(); err != nil {
 		t.Fatalf("go tool asm: %v\n%s\n%s", err, out, gos.String())
 	}
-	out, err := exec.Command("go", "tool", "objdump", pobj).CombinedOutput()
+	objdump := exec.Command("go", "tool", "objdump", pobj)
+	objdump.Env = asm.Env
+	out, err := objdump.CombinedOutput()
 	if err != nil {
 		t.Fatalf("objdump: %v\n%s", err, out)
 	}

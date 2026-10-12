@@ -55,6 +55,44 @@ Last verified: 2026-10-09
   `go test ./std/rt -run 'Argon2|Blake2b'` (RFC 9106 and RFC 7693 vectors,
   plus keys recorded from x/crypto in `std/rt/testdata/argon2id_xcrypto.txt`).
 
+## Go versions (decision 0176)
+
+- Oldest Go for the Go backend: **1.24** (`gotool.MinGo`, internal/gotool):
+  std/rt uses `crypto/pbkdf2`, `maphash.Comparable`, and
+  `http.Protocols`. `xo build`, `xo run`, and `xo test` on the Go
+  backend read `go env GOVERSION` of `$XO_GO` (else `go` on PATH) once
+  per process and fail with XO1502 when it is older. Last verified:
+  2026-10-12 (`scripts/go-version-check.sh rt-min` with go1.26.1).
+- Newest Go the suite has passed on: **1.26** (`gotool.TestedGo`). The
+  generated go.mod and a new binding workspace go.mod (`.xo/gobind/_mod`)
+  get `go <min(installed language version, TestedGo)>`, so the go command
+  is never asked for a newer Go than itself (no automatic toolchain
+  download) and a newer Go keeps 1.26 semantics until adopted.
+  `XO_GO_LINE` overrides the line. Last verified: 2026-10-12.
+- Toolchains present on the development host (2026-10-12): go1.26.1 at
+  `/usr/local/go`; go1.26.3, go1.26.6, and go1.27.2 in the module cache
+  (`~/go/pkg/mod/golang.org/toolchain@v0.0.1-goX.Y.Z.darwin-arm64`),
+  usable with `GOTOOLCHAIN=goX.Y.Z` without a download.
+- **New Go release procedure:**
+  `GOTOOLCHAIN=go1.27rc1 scripts/go-version-check.sh [--download] [--keep] [-n] [step...]`.
+  Steps: `version`, `unit` (`go test -short` over the repo), `rt-min`
+  (std/rt vets with `-stdversion` at go MinGo for darwin, linux,
+  windows, wasip1, and each rt build tag), `gen-min`
+  (TestGeneratedGoVets with `XO_GO_LINE=MinGo`), `goldens` (TestGolden,
+  TestGoldenNoMono, TestGeneratedGoVets, the Go timers link tests, at
+  the new release's language version), `usego`
+  (TestGoBindingSignatures, TestReplayGoCalls, TestReplayGoCallback,
+  internal/gobind, cmd/xo TestBind, internal/check TestGoInterop, with
+  bindings regenerated in a fresh `XO_GOBIND_DIR`). Without `--download`
+  it sets `GOPROXY=off`, so only a toolchain already in the module cache
+  runs. Its Go cache, Xo Go cache, and binding cache live in a temporary
+  directory removed at the end (`--keep` keeps it). The goldens,
+  gen-min, and usego steps are heavy (run one at a time on a shared
+  machine). When all pass: raise `TestedGo` in internal/gotool/gotool.go
+  (and the repo go.mod's `go` line if the compiler should move too),
+  update this section, add a CHANGELOG line. Raising `MinGo` needs a
+  decision.
+
 ## Versions and releases
 
 `xo version` prints the toolchain version (`cmd/xo/version.go`), the
@@ -117,6 +155,7 @@ go run ./cmd/xo serve [--socket=path] [stop|status]              # resident chec
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/gen -run TestGoldenRelease [-golden-update]   # testdata/release/*: want.debug.txt, want.release.txt, want.release_noargs.txt (xo build --release [--error-args=false], decisions 0099, 0092); -golden-update rewrites only the files that exist
+scripts/go-version-check.sh [-n] [step...]          # the Go backend's version sensitive tests with GOTOOLCHAIN=goX.Y (see "Go versions"); no download without --download. Last verified: 2026-10-12
 go test ./internal/gen -run TestGeneratedGoVets       # gofmt -l and go vet on the generated Go of every golden program (not rt); skipped with -short (about 1 minute). Last verified: 2026-10-10, clean
 go test ./internal/gen -run TestGeneratedGoSnapshot [-golden-update]   # the generated Go of 11 golden programs vs testdata/gosnap/*.go.golden; review the diff of a lowering change, then update
 go test ./internal/gen -run TestGeneratedGoVetsLarge  # the same on the examples, the LLVM golden programs, the perf benchmarks, and the self hosted compiler (about 3 minutes; not bench/paper, which no longer checks). Last verified: 2026-10-10, clean
@@ -902,6 +941,8 @@ internal/selfhost/testdata/ssa/stage4/  a program of the SSA stage 4 constructs 
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
                         (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
+internal/gotool/        the go command (`$XO_GO`, PATH), its version once per process, MinGo and
+                        TestedGo, the go.mod `go` line, and Xo's Go cache dir (decision 0176)
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 internal/cbind/         `use c` bindings: clang's JSON AST dump of a header -> Xo declaration
@@ -2578,8 +2619,26 @@ before); the runtime itself is about 13 MB per variant (with and without
 `xo_nohttp`). Last verified: 2026-10-09.
 
 Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
-`<user cache>/xo/gocache`), trimmed by least recent use to stay under
+`<user cache>/xo/gocache`, `gotool.CacheDir`), trimmed by least recent use to stay under
 `XO_GOCACHE_MAX` bytes (default 8 GiB). Entries younger than 2 hours are never trimmed, so concurrent builds keep their files. See `gotchas/go-build-cache-growth.md` and `gotchas/go-cache-trim-races-builds.md`.
 
 Per program build directories (`<user cache>/xo/build/<hash>`) are trimmed the same way to `XO_BUILD_DIR_MAX` bytes (default 4 GiB), least recently used first, skipping any used in the last 2 hours; a directory chosen with `XO_BUILD_DIR` is never trimmed (gotchas/build-dir-growth.md). Last verified: 2026-10-10.
 
+Every go command the repo runs (tests, cmd/xo, scripts) uses Xo's cache
+or has a listed reason not to (decision 0176, audit of 2026-10-12): tests
+set `cmd.Env` from `build.GoEnv()` (GOWORK=off, GOFLAGS=-trimpath,
+GOCACHE=Xo's) or `gotool.CacheEnv()`, and `TestGoCommandsUseXoCache`
+(internal/build) fails on an `exec.Command("go", ...)` (or `goTool()`,
+`gotool.Path()`) other than `go env` and `go version` without one; an
+intended exception carries a `//xo:default-gocache` comment with the
+reason. On the default cache by design: the repo's own `go test` and
+`go vet` (bench/nightly.sh, bench/go/strict-check.sh, developers) and
+the scripts that `go build` cmd/xo or one Go comparison program
+(scripts/release.sh, selfhost-switchover.sh, bench/size, bench/perf):
+they hold no Xo cache lock, so on Xo's cache a trim could delete an
+entry they are linking. Go trims the default cache after 5 days unused.
+The default cache held 20,461,608 KiB on 2026-10-12: 235 identical
+24.8 MB `rt` archives from the gen tests' `go vet` before commit bc58195,
+and since then mostly the repo's `std/rt` compiled once per worktree
+path by `go test` (31 of the 46 files over 20 MB written after
+2026-10-11 16:00). Last verified: 2026-10-12.
