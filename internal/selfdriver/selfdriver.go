@@ -181,6 +181,9 @@ func Binary() (bin, root string, err error) {
 		if r := os.Getenv("XO1_ROOT"); r != "" {
 			root = r
 		}
+		if fi, err := os.Stat(b); err != nil || fi.IsDir() {
+			return "", "", fmt.Errorf("XO1=%s is not a file", b)
+		}
 		return b, root, nil
 	}
 	bin = filepath.Join(root, "bin", "xo1")
