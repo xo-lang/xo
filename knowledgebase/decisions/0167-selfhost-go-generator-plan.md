@@ -101,9 +101,11 @@ skipped at the end of the port.
    packages after `format_prep` and gofmt (the `gofmt` of `go env
    GOROOT`), the runtime package copied from DIR/rt (`*.go`, `*.s`, not
    tests), the build information (sources, ID, as internal/build
-   computes them), then runs `go build -trimpath` with internal/build's
-   flags and tags. Zone data (std/time zones by name) is not written
-   yet: such a program is refused.
+   computes them), the zone data of std/time (internal/build tzFiles
+   with the default `--tzdata=embedded`: the TZif data of constant zone
+   names read from the stored entries of the toolchain's zoneinfo.zip,
+   or the whole archive for a name known at run time), then runs `go
+   build -trimpath` with internal/build's flags and tags.
 
 Hybrid builds (`xo build --hybrid`, hybrid.go: Go with arm64 assembly)
 and `gen.StdTypes` (the generator of std/rt/std_gen.go) are not
@@ -119,8 +121,8 @@ ported, as the arm64 emitter's Go mode was not (decision 0158).
   otherwise.
 - With the Go generator ported, the whole compiler exists in Xo; what
   remains of decision 0150's order is the retirement of the Go
-  implementation (with zone data and hybrid builds in the Xo driver, or
-  decided out), the WebAssembly backend, and the runtime port.
+  implementation (with `--tzdata=system`, the other build flags, and hybrid
+  builds in the Xo driver, or decided out), the WebAssembly backend, and the runtime port.
 
 ## Alternatives
 

@@ -57,6 +57,8 @@ against `xo build --backend=go` (XO_BUILD_DIR) for the same program:
 | internal/gen/testdata/golden/closures | 2 and main.go, xo_main.go, xo_adapt.go, go.mod | all | same output |
 | selfhost/check | 4 and the rest | all | same typedump of selfhost/parser (41,400 lines) |
 | selfhost/xo (the driver itself) | 8 and the rest | all | |
+| internal/gen/testdata/golden/time_zones (constant zone names) | 2 and the rest, xo_tzdata.go | all | same output |
+| internal/gen/testdata/golden/time_dynamic_zone (the whole database) | 2 and the rest, xo_tzdata.go, xo_zoneinfo.zip | all | same output |
 
 The fixed point: xo1 compiled by itself with `--backend=go` (B)
 compiles selfhost/xo again to a byte identical build tree and a byte
