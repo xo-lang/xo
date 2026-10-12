@@ -150,7 +150,7 @@ fn main(os: Os) ! {
   let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
   b.run_passes()
   if backend == "wasm" {
-    build_wasm(os, b.m, out, wd, dirs[0])?
+    build_wasm(os, b.m, out, wd, dirs[0])
     return
   }
   let p = arm64.generate_module(b.m, tgoos, false)

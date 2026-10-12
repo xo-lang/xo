@@ -4,11 +4,16 @@
 // (default <name>.wasm) with its WAT text beside it (OUT with .wat). A
 // program the backend does not support yet fails with its reason; no
 // module is written.
+//
+// build_wasm cannot fail with an error: an error result would record its
+// arguments for the error trace (decision 0104), whose Debug text of the
+// Module collides with selfhost/lexer's Kind in the Go SSA builder
+// (gotchas/ssa-debug-helper-unqualified-type-name.md).
 
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/wasm
 
-fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) -> () ! FsErr {
+fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) {
   let p = wasm.generate(m)
   if !p.err.is_empty() {
     fail(os, "the wasm backend: ${p.err}")
@@ -20,6 +25,12 @@ fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) -> () ! FsErr
     let name = if last == "." || last.is_empty() { base_name(wd) } else { last }
     out = "${name}.wasm"
   }
-  os.fs.write(out, p.wasm)?
-  os.fs.write("${out.trim_suffix(".wasm")}.wat", p.wat.bytes())?
+  match os.fs.write(out, p.wasm) {
+    Ok(_) => {}
+    Err(e) => fail(os, "${e}")
+  }
+  match os.fs.write("${out.trim_suffix(".wasm")}.wat", p.wat.bytes()) {
+    Ok(_) => {}
+    Err(e) => fail(os, "${e}")
+  }
 }
