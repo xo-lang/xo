@@ -1,0 +1,168 @@
+// JSON output as cmd/xo writes it: a json.Encoder with SetEscapeHTML(false)
+// and SetIndent("", "  "), so `xo query`, `xo edit`, and `xo doc --json`
+// print the same bytes from either implementation.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// A JSON value. Object members keep their order (Go's struct field
+/// order). Html is a string that json.Marshal escaped on the way (a
+/// diagnostic marshals itself, so `<`, `>`, and `&` come out escaped).
+pub enum JVal {
+  Null
+  Bool(b: Bool)
+  Num(n: Int)
+  Text(s: Str)
+  Html(s: Str)
+  Arr(items: List[JVal])
+  Obj(members: List[(Str, JVal)])
+}
+
+/// The value printed as json.Encoder prints it with a two space indent,
+/// with the trailing newline.
+pub fn encode(v: JVal) -> Str {
+  var out = StrBuilder.new()
+  write_json(out, v, 0)
+  out.write("\n")
+  out.freeze()
+}
+
+fn indent(var out: StrBuilder, depth: Int) {
+  out.write("\n")
+  for _ in 0..depth {
+    out.write("  ")
+  }
+}
+
+fn write_json(var out: StrBuilder, v: JVal, depth: Int) {
+  match v {
+    Null => out.write("null")
+    Bool(b) => out.write(if b { "true" } else { "false" })
+    Num(n) => out.write("${n}")
+    Text(s) => out.write(quote(s, false))
+    Html(s) => out.write(quote(s, true))
+    Arr(items) => {
+      if items.is_empty() {
+        out.write("[]")
+        return
+      }
+      out.write("[")
+      for (i, it) in items.indexed() {
+        if i > 0 {
+          out.write(",")
+        }
+        indent(out, depth + 1)
+        write_json(out, it, depth + 1)
+      }
+      indent(out, depth)
+      out.write("]")
+    }
+    Obj(members) => {
+      if members.is_empty() {
+        out.write("{}")
+        return
+      }
+      out.write("{")
+      for (i, m) in members.indexed() {
+        if i > 0 {
+          out.write(",")
+        }
+        indent(out, depth + 1)
+        out.write(quote(m.0, false))
+        out.write(": ")
+        write_json(out, m.1, depth + 1)
+      }
+      indent(out, depth)
+      out.write("}")
+    }
+  }
+}
+
+/// s as a JSON string as encoding/json writes it; html escapes `<`, `>`,
+/// and `&` too. Invalid UTF-8 becomes U+FFFD, as Go writes it.
+pub fn quote(s: Str, html: Bool) -> Str {
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  out.write("\"")
+  var run = 0
+  var i = 0
+  while i < b.len() {
+    let ch = b[i]
+    var esc = ""
+    var width = 1
+    if ch == '"' {
+      esc = "\\\""
+    } else if ch == '\\' {
+      esc = "\\\\"
+    } else if ch == '\n' {
+      esc = "\\n"
+    } else if ch == '\r' {
+      esc = "\\r"
+    } else if ch == '\t' {
+      esc = "\\t"
+    } else if ch < 0x20 || (html && (ch == '<' || ch == '>' || ch == '&')) {
+      esc = "\\u00${b[i..i + 1].to_hex()}"
+    } else if ch == 0xe2 && i + 2 < b.len() && b[i + 1] == 0x80 && (b[i + 2] == 0xa8 || b[i + 2] == 0xa9) {
+      esc = if b[i + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }
+      width = 3
+    }
+    if esc.is_empty() {
+      i += 1
+      continue
+    }
+    if run < i {
+      out.write(b[run..i].to_str() ?? "\u{fffd}")
+    }
+    out.write(esc)
+    i += width
+    run = i
+  }
+  if run < b.len() {
+    out.write(b[run..].to_str() ?? "\u{fffd}")
+  }
+  out.write("\"")
+  out.freeze()
+}
+
+/// A list of strings as a JSON array.
+pub fn strs(xs: List[Str]) -> JVal {
+  var items: List[JVal] = []
+  for x in xs {
+    items.push(JVal.Text(x))
+  }
+  JVal.Arr(items)
+}
+
+/// A diagnostic as diag.Diagnostic marshals itself (MarshalJSON: notes and
+/// fixes always arrays, strings HTML escaped).
+pub fn diag_json(d: check.Diag) -> JVal {
+  let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+  var notes: List[JVal] = []
+  for n in d.notes {
+    var ms: List[(Str, JVal)] = [("message", JVal.Html(n.message))]
+    if let Some(sp) = n.span {
+      ms.push(("span", jspan_json(sp)))
+    }
+    notes.push(JVal.Obj(ms))
+  }
+  var fixes: List[JVal] = []
+  for f in d.fixes {
+    var edits: List[JVal] = []
+    for e in f.edits {
+      edits.push(JVal.Obj([("span", jspan_json(e.span)), ("replace", JVal.Html(e.replace))]))
+    }
+    fixes.push(JVal.Obj([("title", JVal.Html(f.title)), ("edits", JVal.Arr(edits))]))
+  }
+  let span = check.JSpan{file: d.file, line: d.line, col: d.col, end_line: d.end_line, end_col: d.end_col}
+  JVal.Obj([("code", JVal.Html(d.code)), ("severity", JVal.Html(sev)), ("message", JVal.Html(d.message)), ("span", jspan_json(span)), ("notes", JVal.Arr(notes)), ("fixes", JVal.Arr(fixes))])
+}
+
+fn jspan_json(s: check.JSpan) -> JVal {
+  var ms: List[(Str, JVal)] = [("file", JVal.Html(s.file)), ("line", JVal.Num(s.line)), ("col", JVal.Num(s.col))]
+  if s.end_line != 0 {
+    ms.push(("end_line", JVal.Num(s.end_line)))
+  }
+  if s.end_col != 0 {
+    ms.push(("end_col", JVal.Num(s.end_col)))
+  }
+  JVal.Obj(ms)
+}

@@ -402,12 +402,7 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       }
       c.named("Str")
     }
-    HoleExpr(..) => {
-      if hint >= 0 {
-        return hint
-      }
-      c.new_var()
-    }
+    HoleExpr(span) => c.hole(span, hint)
     UnitExpr(..) => c.unit_ty
     ParenExpr(x: x, ..) => c.infer(x, hint)
     TupleExpr(elems: elems, ..) => {

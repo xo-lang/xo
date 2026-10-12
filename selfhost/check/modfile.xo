@@ -87,6 +87,9 @@ pub struct DepModule {
 
 /// The result of loading a main module's dependencies (mod.BuildList).
 pub struct BuildList {
+  /// The xo.work file of the workspace that applies, or "" (mod.BuildList
+  /// Work.File).
+  pub work_file: Str = ""
   pub modules: List[DepModule] = []
   pub hashes: Map[Str, Str] = {}
   pub problems: List[Problem] = []
@@ -1000,6 +1003,7 @@ fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
   var local: Map[Str, Bool] = {}
   local[main.path] = true
   if let Some(w) = work {
+    b.work_file = w.file
     roots = []
     for m in w.modules {
       if m.dir == main.dir {

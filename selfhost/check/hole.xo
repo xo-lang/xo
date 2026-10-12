@@ -1,0 +1,39 @@
+// Holes (core 11.1): `???` checks against any expected type and is
+// reported as the warning XO0900 (expr.go hole).
+
+/// A hole `???`: the warning XO0900 with its expected type, the values in
+/// scope that fit it, and the effects in scope.
+fn (var c: Checker) hole(span: Span, hint: Int) -> Int {
+  let t = if hint >= 0 { hint } else { c.new_var() }
+  let known = hint >= 0 && !c.is_open_var(hint)
+  let desc = if known { "`${c.show(hint)}`" } else { "unknown" }
+  let d = c.warn("XO0900", span, "hole of type ${desc}")
+  if d >= 0 && known {
+    var fits: List[Str] = []
+    var i = c.scopes.len() - 1
+    while i >= 0 {
+      for (name, v) in c.scopes[i].entries() {
+        let vt = c.objs[v].ty
+        if vt >= 0 && c.identical(vt, hint) && !c.has_open_vars(vt) {
+          fits.push(text(name))
+        }
+      }
+      i -= 1
+    }
+    if !fits.is_empty() {
+      c.note(d, "in scope values that fit: `${fits.join("`, `")}`")
+    }
+  }
+  if d >= 0 && c.ctx >= 0 {
+    let fo = c.ctxs[c.ctx].fn_obj
+    if fo >= 0 && c.objs[fo].declared >= 0 {
+      let s = c.eff_text(c.objs[fo].declared)
+      if s.is_empty() {
+        c.note(d, "no effects in scope (pure)")
+      } else {
+        c.note(d, "effects in scope: `${s}`")
+      }
+    }
+  }
+  t
+}

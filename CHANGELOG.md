@@ -22,6 +22,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A native program that asks whether a stream is a terminal
   (`stdout_is_tty`, `width`) without reading standard input links again
   (the runtime's terminal functions were left out).
+- `xo query` and `xo edit` are written in Xo too (selfhost/cli/semantic,
+  decision 0178 stage 3): `xo1 query|edit` print what the Go tool
+  prints (37 of 37 command lines byte identical on cmd/xo's test
+  programs; TestQueryCLI and TestEditCLI pass against xo1). The
+  definition hashes of `xo query hash` (decision 0125) are byte identical
+  to the Go ones on 270 of 270 modules (13,662 definitions).
 - Native builds run the self hosted driver (decision 0178 switch point
   A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
   `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds

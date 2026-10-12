@@ -1,0 +1,731 @@
+// `xo fix` (cmd/xo fix.go, internal/fix): the migration rewriters, then
+// the machine fixes of check diagnostics applied round after round until
+// none apply, then the changed files reformatted.
+
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// fix.MaxRounds: a fix that keeps producing new diagnostics with fixes
+/// stops here instead of looping forever.
+const MAX_ROUNDS = 25
+
+/// One applied rewrite or fix (fix.Change).
+pub struct Change {
+  pub file: Str
+  pub line: Int
+  /// The rewriter's name, or the diagnostic code of a check fix.
+  pub rule: Str
+  pub title: Str
+}
+
+/// The outcome of fix_run (fix.Result).
+pub struct FixResult {
+  pub changes: List[Change] = []
+  /// The files whose contents changed, sorted.
+  pub files: List[Str] = []
+  pub rounds: Int = 0
+  /// The error diagnostics left after the last round.
+  pub remaining: List[Diag] = []
+}
+
+/// A migration rewriter (fix.Rewriter): a text rewrite, or the codes of
+/// the check fixes that perform the migration.
+struct Rewriter {
+  name: Str
+  draft: Int
+  text: Bool
+  codes: List[Str] = []
+}
+
+/// fix.Registry, oldest change first.
+fn registry() -> List[Rewriter] {
+  [
+    Rewriter{name: "variant-case", draft: 2, text: true},
+    Rewriter{name: "scope-timeout", draft: 2, text: true},
+    Rewriter{name: "interp-dollar", draft: 3, text: true},
+    Rewriter{name: "discard-reason", draft: 4, text: false, codes: ["XO0206"]},
+    Rewriter{name: "map-get-or-fault", draft: 6, text: false, codes: ["XO0410"]},
+  ]
+}
+
+/// The rewriters for code written against draft from (fix.Select): every
+/// one whose change came later. "" selects none.
+fn select_rewriters(from: Str) -> List[Rewriter] ! Str {
+  if from.is_empty() {
+    return Ok([])
+  }
+  let v = from.trim_prefix("draft-").trim_prefix("v")
+  let parts = v.split(".")
+  let n = if parts.len() == 2 && parts[0] == "0" { Int.parse(parts[1]) } else { None }
+  let fv = match n {
+    Some(x) => x
+    None => return Err("unknown draft ${go_quote(from)} (want draft-0.N)")
+  }
+  Ok(registry().filter(fn(r: Rewriter) -> Bool { r.draft > fv }))
+}
+
+fn changes_json(cs: List[Change]) -> Str {
+  jarr(cs.map(fn(c: Change) -> Str {
+    jobj([("file", jstr(c.file)), ("line", "${c.line}"), ("rule", jstr(c.rule)), ("title", jstr(c.title))])
+  }))
+}
+
+fn run_fix(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("fix")
+  fl.bool_flag("dry-run", "report the changes without writing them")
+  fl.bool_flag("json", "print the result as JSON")
+  fl.str_flag("from", "", "the draft the code was written for (draft-0.1 ... draft-0.6); runs the migration rewriters for later drafts")
+  fl.str_flag("edition", "", "the edition to migrate to (default and only one before 1.0: preview; it rewrites the old name 2026)")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  let edition = fl.get_str("edition")
+  if !edition.is_empty() && !(edition is "preview" | "2026") {
+    os.stdio.eprintln("xo fix: unknown edition ${go_quote(edition)} (known: preview)")
+    return 2
+  }
+  let rws = match select_rewriters(fl.get_str("from")) {
+    Ok(r) => r
+    Err(e) => {
+      os.stdio.eprintln("xo fix: ${e}")
+      return 2
+    }
+  }
+  var dirs = fl.args
+  if dirs.is_empty() {
+    dirs = ["."]
+  }
+  let dry = fl.get_bool("dry-run")
+  let res = match fix_run(os, ctx, dirs, rws, dry) {
+    Ok(r) => r
+    Err(e) => {
+      os.stdio.eprintln("xo fix: ${e}")
+      return 2
+    }
+  }
+  if fl.get_bool("json") {
+    os.stdio.print(indent_json(jobj([("dry_run", jbool(dry)), ("changes", changes_json(res.changes)), ("files", jstrs(res.files)), ("rounds", "${res.rounds}"), ("remaining", diags_json(res.remaining))])))
+    return 0
+  }
+  var b = StrBuilder.new()
+  for c in res.changes {
+    b.write("${c.file}:${c.line}: ${c.rule}: ${c.title}\n")
+  }
+  let verb = if dry { "would change" } else { "changed" }
+  b.write("${res.changes.len()} change(s), ${verb} ${res.files.len()} file(s), ${res.rounds} round(s), ${res.remaining.len()} error(s) left\n")
+  os.stdio.print(b.freeze())
+  var e = StrBuilder.new()
+  for d in res.remaining {
+    e.write(human(d))
+    e.write("\n")
+  }
+  os.stdio.eprint(e.freeze())
+  0
+}
+
+/// Migrates and fixes the modules under dirs (fix.Run); without dry the
+/// changed files are written back.
+fn fix_run(os: Os, ctx: Ctx, dirs: List[Str], rws: List[Rewriter], dry: Bool) -> FixResult ! Str {
+  let files = source_files(os, ctx, dirs)?
+  var cur: Map[Str, Bytes] = {}
+  var orig: Map[Str, Bytes] = {}
+  var names: Map[Str, Str] = {}
+  for p in files {
+    let src = match os.fs.read(p) {
+      Ok(b) => b
+      Err(e) => return Err(fs_err(e))
+    }
+    let abs = abs_path(ctx, p)
+    cur[abs] = src
+    orig[abs] = src
+    names[abs] = p
+  }
+  var res = FixResult{}
+  // migration rewriters, in registry order
+  for rw in rws {
+    if !rw.text {
+      continue
+    }
+    for abs in cur.keys().sort() {
+      if !abs.ends_with(".xo") {
+        continue
+      }
+      let name = names.get(abs) ?? abs
+      let (out, chs) = rewrite(rw.name, name, cur.get(abs) ?? b"")
+      if chs.is_empty() {
+        continue
+      }
+      cur[abs] = out
+      res.changes = res.changes + chs
+    }
+  }
+  // the fix loop
+  var by_code: Map[Str, Str] = {}
+  for rw in rws {
+    for code in rw.codes {
+      by_code[code] = rw.name
+    }
+  }
+  var seen: Map[Str, Bool] = {}
+  seen[state_key(cur)] = true
+  while res.rounds < MAX_ROUNDS {
+    res.rounds += 1
+    let s = load(os, ctx, dirs, true, cur)?
+    var remaining: List[Diag] = []
+    for d in s.diags {
+      if is_error(d) {
+        remaining.push(d)
+      }
+    }
+    res.remaining = remaining
+    let (next, chs) = apply_fixes(ctx, cur, s.diags, by_code)
+    if chs.is_empty() {
+      break
+    }
+    let key = state_key(next)
+    if seen.contains(key) {
+      // the fixes undo each other; stop before cycling
+      break
+    }
+    seen[key] = true
+    cur = next
+    res.changes = res.changes + chs
+  }
+  var sources: Map[Str, Bytes] = {}
+  var changed: List[Str] = []
+  for abs in cur.keys().sort() {
+    var src = cur.get(abs) ?? b""
+    if src == (orig.get(abs) ?? b"") {
+      continue
+    }
+    // inserted text may break the canonical layout: reformat a file that
+    // parses; xo.mod keeps its layout
+    if abs.ends_with(".xo") {
+      match format.format_source(names.get(abs) ?? abs, src) {
+        Ok(out) => src = out
+        SyntaxErrors(_) => {}
+      }
+    }
+    changed.push(names.get(abs) ?? abs)
+    sources[abs] = src
+  }
+  res.files = changed.sort()
+  res.changes = sort_changes(res.changes)
+  if !dry {
+    for abs in sources.keys().sort() {
+      match write_keep_mode(os, abs, sources.get(abs) ?? b"") {
+        Ok(_) => {}
+        Err(e) => return Err(fs_err(e))
+      }
+    }
+  }
+  Ok(res)
+}
+
+/// Changes by file, then line, equal ones in their order (a stable sort).
+fn sort_changes(cs: List[Change]) -> List[Change] {
+  var keyed: List[Str] = []
+  for (i, c) in cs.indexed() {
+    keyed.push("${c.file}\x00${pad(c.line)}${pad(i)}")
+  }
+  var out: List[Change] = []
+  for k in keyed.sort() {
+    let parts = k.split("\x00")
+    let tail = parts[parts.len() - 1]
+    out.push(cs[Int.parse(tail[20..]) ?? 0])
+  }
+  out
+}
+
+fn state_key(m: Map[Str, Bytes]) -> Str {
+  var b = BytesBuilder.new()
+  for k in m.keys().sort() {
+    b.write_str(k)
+    b.write_byte(0)
+    b.write(m.get(k) ?? b"")
+    b.write_byte(0)
+  }
+  b.freeze().to_hex()
+}
+
+/// An edit of a fix in byte offsets of its file.
+struct OffEdit {
+  file: Str
+  start: Int
+  end: Int
+  text: Str
+}
+
+/// Applies the first fix of every diagnostic whose edits do not overlap
+/// an edit already taken this round (fix.applyFixes). A fix is applied
+/// whole or not at all; diagnostics outside the files in cur are ignored.
+fn apply_fixes(ctx: Ctx, cur: Map[Str, Bytes], ds: List[Diag], by_code: Map[Str, Str]) -> (Map[Str, Bytes], List[Change]) {
+  var taken: List[OffEdit] = []
+  var chs: List[Change] = []
+  for d in ds {
+    if d.fixes.is_empty() || d.fixes[0].edits.is_empty() {
+      continue
+    }
+    let f = d.fixes[0]
+    var mine: List[OffEdit] = []
+    var ok = true
+    for e in f.edits {
+      let abs = abs_path(ctx, e.span.file)
+      let src = match cur.get(abs) {
+        Some(s) => s
+        None => {
+          ok = false
+          break
+        }
+      }
+      let (s, e2, valid) = span_offsets(src, e.span.line, e.span.col, e.span.end_line, e.span.end_col)
+      if !valid {
+        ok = false
+        break
+      }
+      for t in taken {
+        if t.file == abs && overlaps(s, e2, t.start, t.end) {
+          ok = false
+        }
+      }
+      for m in mine {
+        if m.file == abs && overlaps(s, e2, m.start, m.end) {
+          ok = false
+        }
+      }
+      if !ok {
+        break
+      }
+      mine.push(OffEdit{file: abs, start: s, end: e2, text: e.replace})
+    }
+    if !ok {
+      continue
+    }
+    taken = taken + mine
+    var rule = d.code
+    if let Some(n) = by_code.get(d.code) {
+      rule = "${n} (${d.code})"
+    }
+    chs.push(Change{file: d.file, line: d.line, rule: rule, title: f.title})
+  }
+  if chs.is_empty() {
+    return (cur, [])
+  }
+  var next = cur
+  for file in cur.keys() {
+    let mine = taken.filter(fn(t: OffEdit) -> Bool { t.file == file })
+    if !mine.is_empty() {
+      next[file] = apply_off_edits(cur.get(file) ?? b"", mine)
+    }
+  }
+  (next, chs)
+}
+
+/// Whether [a1,a2) and [b1,b2) conflict: two insertions at one point do
+/// (their order would be arbitrary), an insertion at the boundary of a
+/// replacement does not.
+fn overlaps(a1: Int, a2: Int, b1: Int, b2: Int) -> Bool {
+  if a1 == a2 && b1 == b2 {
+    return a1 == b1
+  }
+  if a1 == a2 {
+    return a1 > b1 && a1 < b2
+  }
+  if b1 == b2 {
+    return b1 > a1 && b1 < a2
+  }
+  a1 < b2 && b1 < a2
+}
+
+/// Applies non overlapping edits to src, by start then end (stable).
+fn apply_off_edits(src: Bytes, es0: List[OffEdit]) -> Bytes {
+  var keyed: List[Str] = []
+  for (i, e) in es0.indexed() {
+    keyed.push("${pad(e.start)}${pad(e.end)}${pad(i)}")
+  }
+  var b = BytesBuilder.new()
+  var pos = 0
+  for k in keyed.sort() {
+    let e = es0[Int.parse(k[40..]) ?? 0]
+    b.write(src[pos..e.start])
+    b.write_str(e.text)
+    pos = e.end
+  }
+  b.write(src[pos..])
+  b.freeze()
+}
+
+/// A diagnostic span (1 based lines, byte columns, end exclusive) as byte
+/// offsets in src (fix.offsets); a point when end_line is 0.
+fn span_offsets(src: Bytes, line: Int, col: Int, end_line: Int, end_col: Int) -> (Int, Int, Bool) {
+  let (s, ok) = offset_of(src, line, col)
+  if !ok {
+    return (0, 0, false)
+  }
+  if end_line == 0 {
+    return (s, s, true)
+  }
+  let (e, ok2) = offset_of(src, end_line, end_col)
+  if !ok2 || e < s {
+    return (0, 0, false)
+  }
+  (s, e, true)
+}
+
+fn offset_of(src: Bytes, line: Int, col: Int) -> (Int, Bool) {
+  if line < 1 || col < 1 {
+    return (0, false)
+  }
+  var off = 0
+  var l = 1
+  while l < line {
+    var found = false
+    while off < src.len() {
+      off += 1
+      if src[off - 1] == '\n' {
+        found = true
+        break
+      }
+    }
+    if !found {
+      return (0, false)
+    }
+    l += 1
+  }
+  off += col - 1
+  if off > src.len() {
+    return (0, false)
+  }
+  (off, true)
+}
+
+/// The .xo and xo.mod files under dirs, skipping testdata and dot
+/// directories below the named ones, plus the xo.mod of the module around
+/// each dir and the xo.work that applies to it, sorted (fix.sourceFiles).
+fn source_files(os: Os, ctx: Ctx, dirs: List[Str]) -> List[Str] ! Str {
+  var out: List[Str] = []
+  var seen: Map[Str, Bool] = {}
+  for d in dirs {
+    let info = match os.fs.stat(d) {
+      Ok(Some(i)) => i
+      Ok(None) => return Err("stat ${d}: no such file or directory")
+      Err(e) => return Err(stat_err(d, e))
+    }
+    if !info.is_dir {
+      return Err("${d} is not a directory")
+    }
+    var around: List[Str] = []
+    let root = mod_root(os, ctx, d)
+    if !root.is_empty() {
+      around.push(join_path(root, "xo.mod"))
+    }
+    let w = nearest_work(os, ctx, d)
+    if !w.is_empty() && (os.fs.exists(w).ok() ?? false) {
+      around.push(w)
+    }
+    for p0 in around {
+      var p = p0
+      if let Some(r) = rel_below(clean_path(ctx.wd), p) {
+        p = r
+      }
+      if !seen.contains(p) {
+        seen[p] = true
+        out.push(p)
+      }
+    }
+    walk_sources(os, d, d, out, seen)?
+  }
+  Ok(out.sort())
+}
+
+fn walk_sources(os: Os, top: Str, dir: Str, var out: List[Str], var seen: Map[Str, Bool]) -> () ! Str {
+  let entries = match os.fs.read_dir(dir) {
+    Ok(es) => es
+    Err(e) => return Err(stat_err(dir, e))
+  }
+  for e in entries {
+    let p = join_path(dir, e.name)
+    if e.is_dir {
+      if e.name == "testdata" || e.name.starts_with(".") {
+        continue
+      }
+      walk_sources(os, top, p, out, seen)?
+    } else if (p.ends_with(".xo") || e.name == "xo.mod") && !seen.contains(p) {
+      seen[p] = true
+      out.push(p)
+    }
+  }
+  Ok(())
+}
+
+/// mod.ModRoot: the directory of the nearest xo.mod at or above dir,
+/// absolute, or "".
+pub fn mod_root(os: Os, ctx: Ctx, dir: Str) -> Str uses fs.read {
+  var d = abs_path(ctx, dir)
+  while true {
+    if os.fs.exists(join_path(d, "xo.mod")).ok() ?? false {
+      return d
+    }
+    if d == "/" {
+      return ""
+    }
+    d = dir_of(d)
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Migration rewriters (internal/fix migrate.go)
+
+fn rewrite(name: Str, file: Str, src: Bytes) -> (Bytes, List[Change]) {
+  match name {
+    "variant-case" => rewrite_variant_case(file, src)
+    "scope-timeout" => rewrite_scope_timeout(file, src)
+    "interp-dollar" => rewrite_interp(file, src)
+    _ => (src, [])
+  }
+}
+
+/// A replacement of src[start:end].
+struct TextEdit {
+  start: Int
+  end: Int
+  text: Str
+}
+
+fn apply_text_edits(src: Bytes, es: List[TextEdit]) -> Bytes {
+  var b = BytesBuilder.new()
+  var pos = 0
+  for e in es {
+    if e.start < pos {
+      continue
+    }
+    b.write(src[pos..e.start])
+    b.write_str(e.text)
+    pos = e.end
+  }
+  b.write(src[pos..])
+  b.freeze()
+}
+
+fn tok_text(t: lexer.Token) -> Str {
+  t.text.to_str() ?? ""
+}
+
+/// Capitalizes the lowercase Result and optional variants of draft 0.1:
+/// `ok(`, `err(`, `some(` unless a method or a declaration, bare `none`
+/// unless declared (fix rewriteVariantCase).
+fn rewrite_variant_case(file: Str, src: Bytes) -> (Bytes, List[Change]) {
+  let toks = lexer.lex(src).tokens
+  var es: List[TextEdit] = []
+  var chs: List[Change] = []
+  for (i, t) in toks.indexed() {
+    if t.kind != lexer.Kind.Ident {
+      continue
+    }
+    let prev = if i > 0 { toks[i - 1].kind } else { lexer.Kind.Illegal }
+    if prev == lexer.Kind.Dot || prev == lexer.Kind.Fn || prev == lexer.Kind.Let || prev == lexer.Kind.Var {
+      continue
+    }
+    let next = if i + 1 < toks.len() { toks[i + 1].kind } else { lexer.Kind.Illegal }
+    let text = tok_text(t)
+    var repl = ""
+    if text is "ok" | "err" | "some" {
+      if next == lexer.Kind.LParen {
+        repl = text[..1].to_upper() + text[1..]
+      }
+    } else if text == "none" {
+      if next != lexer.Kind.Colon {
+        repl = "None"
+      }
+    }
+    if repl.is_empty() {
+      continue
+    }
+    es.push(TextEdit{start: t.span.start.offset, end: t.span.end.offset, text: repl})
+    chs.push(Change{file: file, line: t.span.start.line, rule: "variant-case", title: "`${text}` to `${repl}`"})
+  }
+  (apply_text_edits(src, es), chs)
+}
+
+/// Turns `{expr}` interpolation in plain and triple quoted strings into
+/// `${expr}` (fix rewriteInterp).
+fn rewrite_interp(file: Str, src: Bytes) -> (Bytes, List[Change]) {
+  let toks = lexer.lex(src).tokens
+  var es: List[TextEdit] = []
+  var chs: List[Change] = []
+  for t in toks {
+    if t.kind != lexer.Kind.String {
+      continue
+    }
+    let start = t.span.start.offset
+    let end = t.span.end.offset
+    if end > src.len() || start >= end {
+      continue
+    }
+    let s = src[start..end]
+    var n = 0
+    var i = 0
+    while i < s.len() {
+      let c = s[i]
+      if c == '\\' {
+        i += 2
+        continue
+      }
+      if c == '{' && !(i > 0 && s[i - 1] == '$') {
+        let j = close_brace(s, i)
+        if j >= 0 {
+          let inner = s[i + 1..j]
+          var bad = inner.is_empty()
+          for x in inner {
+            if x == '"' || x == '\\' || x == '\n' {
+              bad = true
+            }
+          }
+          if !bad {
+            let c0 = inner[0]
+            if c0 == '_' || c0 == '(' || (c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') || (c0 >= '0' && c0 <= '9') {
+              es.push(TextEdit{start: start + i, end: start + i, text: "$"})
+              n += 1
+              i = j
+            }
+          }
+        }
+      }
+      i += 1
+    }
+    if n > 0 {
+      chs.push(Change{file: file, line: t.span.start.line, rule: "interp-dollar", title: "${n} interpolation(s) `{x}` to `\${x}`"})
+    }
+  }
+  (apply_text_edits(src, es), chs)
+}
+
+/// The index of the `}` matching the `{` at i, or -1.
+fn close_brace(s: Bytes, i: Int) -> Int {
+  var depth = 0
+  var j = i
+  while j < s.len() {
+    if s[j] == '{' {
+      depth += 1
+    } else if s[j] == '}' {
+      depth -= 1
+      if depth == 0 {
+        return j
+      }
+    }
+    j += 1
+  }
+  -1
+}
+
+/// Replaces draft 0.1 `scope s timeout d { body }` with
+/// `task.with_timeout(clock, d, fn() { scope s { body } })` in files that
+/// name `clock`, adding `use std/task` (fix rewriteScopeTimeout).
+fn rewrite_scope_timeout(file: Str, src: Bytes) -> (Bytes, List[Change]) {
+  let toks = lexer.lex(src).tokens
+  var has_clock = false
+  var has_task_use = false
+  for t in toks {
+    if t.kind == lexer.Kind.Ident && tok_text(t) == "clock" {
+      has_clock = true
+    }
+    if t.kind == lexer.Kind.ImportPath && (t.value.to_str() ?? "") == "std/task" {
+      has_task_use = true
+    }
+  }
+  var es: List[TextEdit] = []
+  var chs: List[Change] = []
+  var i = 0
+  while i + 3 < toks.len() {
+    if toks[i].kind != lexer.Kind.Scope || toks[i + 1].kind != lexer.Kind.Ident || toks[i + 2].kind != lexer.Kind.Ident || tok_text(toks[i + 2]) != "timeout" {
+      i += 1
+      continue
+    }
+    // the duration runs to the `{` at paren depth 0
+    var k = i + 3
+    var depth = 0
+    while k < toks.len() {
+      let kk = toks[k].kind
+      if kk == lexer.Kind.LParen || kk == lexer.Kind.LBrack {
+        depth += 1
+      } else if kk == lexer.Kind.RParen || kk == lexer.Kind.RBrack {
+        depth -= 1
+      }
+      if depth == 0 && kk == lexer.Kind.LBrace {
+        break
+      }
+      k += 1
+    }
+    if k >= toks.len() || k == i + 3 {
+      i += 1
+      continue
+    }
+    // the matching close brace
+    var m = k
+    var d = 0
+    while m < toks.len() {
+      let mk = toks[m].kind
+      if mk == lexer.Kind.LBrace || mk == lexer.Kind.HashLBrace {
+        d += 1
+      } else if mk == lexer.Kind.RBrace {
+        d -= 1
+      }
+      if d == 0 {
+        break
+      }
+      m += 1
+    }
+    if m >= toks.len() {
+      i += 1
+      continue
+    }
+    if !has_clock {
+      chs.push(Change{file: file, line: toks[i].span.start.line, rule: "scope-timeout", title: "skipped: no `clock` in the file; rewrite by hand to task.with_timeout"})
+      i += 1
+      continue
+    }
+    let dur = src[toks[i + 3].span.start.offset..toks[k - 1].span.end.offset].to_str() ?? ""
+    let head = "task.with_timeout(clock, ${dur}, fn() { scope ${tok_text(toks[i + 1])} {"
+    es.push(TextEdit{start: toks[i].span.start.offset, end: toks[k].span.end.offset, text: head})
+    es.push(TextEdit{start: toks[m].span.start.offset, end: toks[m].span.end.offset, text: "} })"})
+    chs.push(Change{file: file, line: toks[i].span.start.line, rule: "scope-timeout", title: "`scope ${tok_text(toks[i + 1])} timeout` to `task.with_timeout`"})
+    i = k + 1
+  }
+  if es.is_empty() {
+    return (src, chs)
+  }
+  var out = apply_text_edits(src, es)
+  if !has_task_use {
+    out = add_use(out, "std/task")
+  }
+  (out, chs)
+}
+
+/// Inserts `use path` after the last `use` line, or at the top.
+fn add_use(src: Bytes, path: Str) -> Bytes {
+  let toks = lexer.lex(src).tokens
+  var at = 0
+  for (i, t) in toks.indexed() {
+    if t.kind == lexer.Kind.Use {
+      var j = i
+      while j < toks.len() {
+        if toks[j].kind == lexer.Kind.Newline {
+          at = toks[j].span.end.offset
+          break
+        }
+        at = toks[j].span.end.offset
+        j += 1
+      }
+    }
+  }
+  var line = "use ${path}\n"
+  if at > 0 && at <= src.len() && src[at - 1] != '\n' {
+    line = "\n" + line
+  }
+  var b = BytesBuilder.new()
+  b.write(src[0..at])
+  b.write_str(line)
+  b.write(src[at..])
+  b.freeze()
+}

@@ -169,6 +169,9 @@ pub struct Checker {
   pub result_vars: Map[Int, Int] = {}
   pub inv_vars: Map[Int, List[Int]] = {}
   seen: Map[Str, Bool] = {}
+  /// Sources that replace the files on disk, by absolute path
+  /// (check.CheckOverlay: `xo fix` checks rewritten sources unwritten).
+  pub overlay: Map[Str, Bytes] = {}
 }
 
 /// A fresh checker reading std declarations from std_dir.
@@ -374,7 +377,17 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 /// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let r = parser.parse_file(path.bytes(), src, sig)
-  for d in r.diags {
+  c.diags = c.diags + parse_diags(path, r.diags)
+  let f = c.files.len()
+  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
+  c.mods[m].files.push(f)
+}
+
+/// The diagnostics of the parse of the file at path, as the checker
+/// reports them.
+pub fn parse_diags(path: Str, ds: List[parser.Diag]) -> List[Diag] {
+  var out: List[Diag] = []
+  for d in ds {
     var notes: List[DNote] = []
     for n in d.notes {
       var nsp: JSpan? = None
@@ -391,11 +404,9 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
       }
       fixes.push(DFix{title: lossy_str(f.title), edits: edits})
     }
-    c.diags.push(Diag{code: d.code, file: path, line: d.span.start.line, col: d.span.start.col, end_line: d.span.end.line, end_col: d.span.end.col, message: lossy_str(d.message), notes: notes, fixes: fixes})
+    out.push(Diag{code: d.code, file: path, line: d.span.start.line, col: d.span.start.col, end_line: d.span.end.line, end_col: d.span.end.col, message: lossy_str(d.message), notes: notes, fixes: fixes})
   }
-  let f = c.files.len()
-  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
-  c.mods[m].files.push(f)
+  out
 }
 
 /// b as text, with U+FFFD for each invalid byte (as Go's JSON encoding of
@@ -419,7 +430,7 @@ fn lossy_str(b: Bytes) -> Str {
 fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
   var d = c.display(dir)
   while {
-    let data = c.fs.read(join(d, "xo.mod")).ok() ?? None
+    let data = c.read_source(join(d, "xo.mod"))
     if let Some(b) = data {
       var path = ""
       var r = ModRoot{path: "", dir: d}
@@ -494,7 +505,7 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   }
   for n in names.sort() {
     let p = join(dir, n)
-    let src = c.fs.read(p).ok() ?? b""
+    let src = c.overlay.get(c.abs(p)) ?? (c.fs.read(p).ok() ?? b"")
     c.parse_into(m, p, src, false)
   }
   c.mods[m].state = 1
@@ -801,12 +812,13 @@ fn (var c: Checker) report_edition_aliases() {
     let r = c.edition_aliases.get(f) ?? ModRoot{path: "", dir: ""}
     let ed = edition_alias_of(r.alias)
     let sp = Span{start: parser.Pos{offset: 0, line: r.alias_line, col: r.alias_col}, end: parser.Pos{offset: 0, line: r.alias_line, col: r.alias_col + r.alias.len()}}
-    let d = c.report(f, "XO1315", sp, "`edition ${r.alias}` is the old name of `edition ${ed}`")
+    let kw = r.keyword
+    let d = c.report(f, "XO1315", sp, "`${kw} ${r.alias}` is the old name of `${kw} ${ed}`")
     if d >= 0 {
       c.diags[d].note_sev = true
       c.diags[d].warning = true
     }
     c.note(d, "before 1.0 the only edition is `${ed}` (decision 0155); the alias keeps building during the 0.x releases")
-    c.fix(d, "rewrite `edition ${r.alias}` to `edition ${ed}`", [DEdit{span: JSpan{file: f, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}, replace: ed}])
+    c.fix(d, "rewrite `${kw} ${r.alias}` to `${kw} ${ed}`", [DEdit{span: JSpan{file: f, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}, replace: ed}])
   }
 }

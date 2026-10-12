@@ -267,6 +267,8 @@ pub struct ModRoot {
   pub alias: Str = ""
   pub alias_line: Int = 0
   pub alias_col: Int = 0
+  /// The keyword of the alias line: "edition" (xo.mod) or "xo" (xo.work).
+  pub keyword: Str = "edition"
 }
 
 /// A diagnostic: code, span, message, severity, notes, and machine fixes

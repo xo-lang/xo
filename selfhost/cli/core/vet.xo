@@ -1,0 +1,616 @@
+// `xo vet` (cmd/xo tools.go runVet, internal/vet): advisory checks over a
+// checked program, never errors: the warnings of check, unused declared
+// effects (XO0703), `x ?? [].f()` (XO0207), every `.ignore_err` reason
+// (XO0208), `use go` per module (XO1103), `dbg(...)` left in code
+// (XO0901).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/parser
+
+fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("vet")
+  fl.bool_flag("json", "print the findings as JSON")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  var dirs = fl.args
+  if dirs.is_empty() {
+    dirs = ["."]
+  }
+  let s = match load(os, ctx, dirs, true, {}) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo vet: ${e}")
+      return 2
+    }
+  }
+  var ds: List[Diag] = []
+  var check_errors = 0
+  for d in s.diags {
+    if is_error(d) {
+      check_errors += 1
+    } else {
+      ds.push(d)
+    }
+  }
+  for m in s.c.root_mods {
+    ds = ds + vet_module(s.c, m)
+  }
+  ds = sort_diags(ds)
+  if fl.get_bool("json") {
+    os.stdio.print(indent_json(jobj([("modules", jstrs(s.mods)), ("diagnostics", diags_json(ds)), ("check_errors", "${check_errors}")])))
+    return 0
+  }
+  var warns = 0
+  var notes = 0
+  var b = StrBuilder.new()
+  for d in ds {
+    b.write(human(d))
+    b.write("\n")
+    if d.note_sev {
+      notes += 1
+    } else {
+      warns += 1
+    }
+  }
+  os.stdio.print(b.freeze())
+  os.stdio.eprintln("${s.mods.len()} module(s), ${warns} warning(s), ${notes} note(s)")
+  if check_errors > 0 {
+    os.stdio.eprintln("xo vet: the program has ${check_errors} check error(s), not repeated here; run `xo check`")
+  }
+  0
+}
+
+fn jspan(file: Str, sp: parser.Span) -> check.JSpan {
+  check.JSpan{file: file, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}
+}
+
+fn point(file: Str, p: parser.Pos) -> check.JSpan {
+  check.JSpan{file: file, line: p.line, col: p.col, end_line: p.line, end_col: p.col}
+}
+
+fn vdiag(code: Str, note: Bool, file: Str, sp: parser.Span, msg: Str) -> Diag {
+  Diag{code: code, file: file, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col, message: msg, warning: true, note_sev: note}
+}
+
+/// The advisory checks of module m (vetter.module).
+fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
+  var out: List[Diag] = []
+  for f in c.mods[m].files {
+    let path = c.files[f].path
+    var nodes: List[parser.Expr] = []
+    for d in c.files[f].ast.decls {
+      walk_decl(d, nodes)
+    }
+    for e in nodes {
+      match e {
+        BinaryExpr(span, op, x, y) => {
+          if op == lexer.Kind.Coalesce {
+            if let Some(d) = coalesce_chain(path, span, x, y) {
+              out.push(d)
+            }
+          }
+        }
+        CallExpr(span, fun, args) => {
+          if let Some(d) = vet_call(c, f, path, e, span, fun, args) {
+            out.push(d)
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  for fo in c.funcs_of(m) {
+    out = out + unused_effects(c, fo)
+  }
+  if let Some(d) = go_report(c, m) {
+    out.push(d)
+  }
+  out
+}
+
+/// XO0703: the effects named in the `uses` clauses of fo that its body
+/// never performs.
+fn unused_effects(c: check.Checker, fo: Int) -> List[Diag] {
+  var out: List[Diag] = []
+  let o = c.objs[fo]
+  if o.fn_decl.is_empty() || c.mods[o.module].is_std {
+    return out
+  }
+  let fd = o.fn_decl[0]
+  if fd.body.is_none() {
+    return out
+  }
+  var labels: List[Str] = []
+  var params: List[Str] = []
+  for (name, is_param) in c.performed_of(fo) {
+    if is_param {
+      params.push(name)
+    } else {
+      labels.push(name)
+    }
+  }
+  var is_param: List[Str] = []
+  for tp in fd.type_params {
+    if tp.effects {
+      is_param.push(text_of(tp.name.name))
+    }
+  }
+  for cl in fd.clauses {
+    match cl {
+      UsesClause(uspan, effects, _) => {
+        for e in effects {
+          var name = text_of(e.name.name)
+          if let Some(sub) = e.sub {
+            name = "${name}.${text_of(sub.name)}"
+          }
+          var used = false
+          if is_param.contains(name) {
+            used = params.contains(name)
+          } else {
+            for l in labels {
+              if l == name || l.starts_with("${name}.") || name.starts_with("${l}.") {
+                used = true
+              }
+            }
+          }
+          if used {
+            continue
+          }
+          var d = vdiag("XO0703", false, o.file, e.span, "`${c.display_name(fo)}` declares `uses ${name}` but never performs it")
+          d.notes.push(check.DNote{message: "declaring more effects than the body performs is allowed (core 6.2); keep it only if callers should already budget for it, such as an interface or a planned change"})
+          if effects.len() == 1 {
+            d.fixes.push(check.DFix{title: "remove the `uses` clause", edits: [check.DEdit{span: jspan(o.file, uspan), replace: ""}]})
+          }
+          out.push(d)
+        }
+      }
+      _ => {}
+    }
+  }
+  out
+}
+
+/// XO0207: `x ?? [].f()`, where `??` binds loosest so the chain applies
+/// to the literal default only.
+fn coalesce_chain(file: Str, span: parser.Span, x: parser.Expr, y: parser.Expr) -> Diag? {
+  let (base, sel) = chain_base(y)
+  if sel.is_empty() || !is_literal(base) {
+    return None
+  }
+  var d = vdiag("XO0207", false, file, parser.expr_span(y), "`.${sel}` applies only to the default `${lit_text(base)}`, not to the result of `??`, because `??` binds loosest")
+  d.notes.push(check.DNote{message: "if the whole value was meant, parenthesize the `??`; if only the default was meant, bind it to a name first"})
+  d.fixes.push(check.DFix{title: "apply the chain to the result of `??`", edits: [
+    check.DEdit{span: point(file, parser.expr_span(x).start), replace: "("},
+    check.DEdit{span: point(file, parser.expr_span(base).end), replace: ")"},
+  ]})
+  Some(d)
+}
+
+/// The innermost operand of a postfix chain and the first selector applied
+/// to it ("" when the chain has none).
+fn chain_base(e0: parser.Expr) -> (parser.Expr, Str) {
+  var sel = ""
+  var e = e0
+  while true {
+    match e {
+      SelectorExpr(_, x, s) => {
+        sel = text_of(s.name)
+        e = x
+      }
+      CallExpr(_, fun, _) => e = fun
+      IndexExpr(_, x, _) => e = x
+      TypeArgsExpr(_, x, _) => e = x
+      TryExpr(_, x) => e = x
+      _ => return (e, sel)
+    }
+  }
+  (e, sel)
+}
+
+fn is_literal(e: parser.Expr) -> Bool {
+  match e {
+    ListLit(..) | MapLit(..) | SetLit(..) | StringLit(..) | IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | StructLit(..) | TupleExpr(..) => true
+    _ => false
+  }
+}
+
+fn lit_text(e: parser.Expr) -> Str {
+  match e {
+    ListLit(_, elems) => if elems.is_empty() { "[]" } else { "[...]" }
+    MapLit(_, entries) => if entries.is_empty() { "{}" } else { "{...}" }
+    SetLit(..) => "#{...}"
+    StringLit(s) => if s.parts.is_empty() { "\"\"" } else { "string literal" }
+    IntLit(_, raw, _) => text_of(raw)
+    FloatLit(_, raw) => text_of(raw)
+    DurationLit(_, raw, _) => text_of(raw)
+    _ => "literal"
+  }
+}
+
+/// XO0208 for `.ignore_err` and XO0901 for `dbg` calls.
+fn vet_call(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser.Span, fun: parser.Expr, args: List[parser.Arg]) -> Diag? {
+  let ci = match c.call_in(f, call) {
+    Some(x) => x
+    None => return None
+  }
+  let fo = ci.fn_obj
+  if fo < 0 || !c.mods[c.objs[fo].module].is_prelude {
+    return None
+  }
+  let name = text_of(c.objs[fo].name)
+  let recv = c.objs[fo].recv >= 0 || c.objs[fo].recv_ty >= 0
+  if name == "ignore_err" && recv {
+    var reason = "(not a literal)"
+    if args.len() == 1 {
+      match args[0].value {
+        StringLit(s) => {
+          if s.parts.len() <= 1 {
+            reason = ""
+            if s.parts.len() == 1 && s.parts[0].expr.is_none() {
+              reason = text_of(s.parts[0].text)
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+    var what = "a Result"
+    match fun {
+      SelectorExpr(_, x, _) => {
+        let t = c.type_text_in(f, x)
+        if !t.is_empty() {
+          what = "`${t}`"
+        }
+      }
+      _ => {}
+    }
+    var d = vdiag("XO0208", true, file, span, "error of ${what} ignored: ${go_quote(reason)}")
+    if reason.trim().is_empty() {
+      d.notes.push(check.DNote{message: "the reason is empty; say why this failure does not matter (core 2.6)"})
+    }
+    return Some(d)
+  }
+  if name == "dbg" && !recv {
+    var d = vdiag("XO0901", false, file, span, "`dbg(...)` left in code; `xo build --ci` rejects it (core 11.4)")
+    if args.len() == 1 {
+      let arg = parser.expr_span(args[0].value)
+      d.fixes.push(check.DFix{title: "remove `dbg`, keep the expression", edits: [
+        check.DEdit{span: check.JSpan{file: file, line: span.start.line, col: span.start.col, end_line: arg.start.line, end_col: arg.start.col}, replace: ""},
+        check.DEdit{span: check.JSpan{file: file, line: arg.end.line, col: arg.end.col, end_line: span.end.line, end_col: span.end.col}, replace: ""},
+      ]})
+    }
+    return Some(d)
+  }
+  None
+}
+
+/// XO1103: the Go packages module m imports with `use go` and the
+/// functions that perform `go`, one note per module.
+fn go_report(c: check.Checker, m: Int) -> Diag? {
+  var gouses: List[(Str, Str, parser.Span)] = []
+  var seen: List[Str] = []
+  for f in c.mods[m].files {
+    for u in c.files[f].ast.imports {
+      let p = text_of(u.path)
+      if u.go && !seen.contains(p) {
+        seen.push(p)
+        gouses.push((p, c.files[f].path, u.span))
+      }
+    }
+  }
+  var fns: List[(Str, Str, parser.Span)] = []
+  for fo in c.funcs_of(m) {
+    for (eff, is_param) in c.performed_of(fo) {
+      if eff == "go" && !is_param && !c.objs[fo].fn_decl.is_empty() {
+        fns.push((c.display_name(fo), c.objs[fo].file, c.objs[fo].fn_decl[0].name.span))
+      }
+    }
+  }
+  if gouses.is_empty() && fns.is_empty() {
+    return None
+  }
+  var pkgs: List[Str] = []
+  for (p, _, _) in gouses {
+    pkgs.push(p)
+  }
+  pkgs = pkgs.sort()
+  let (_, file, sp) = if !gouses.is_empty() { gouses[0] } else { fns[0] }
+  var names: List[Str] = []
+  for (n, _, _) in fns {
+    names.push(n)
+  }
+  var d = vdiag("XO1103", true, file, sp, "module `${c.mods[m].path}` uses Go packages [${pkgs.join(", ")}]; ${fns.len()} function(s) perform `go`: [${names.join(", ")}]")
+  for (p, ufile, usp) in gouses {
+    d.notes.push(check.DNote{message: "use go ${go_quote(p)}", span: Some(jspan(ufile, usp))})
+  }
+  for (n, ffile, fsp) in fns {
+    d.notes.push(check.DNote{message: "`${n}` performs `go`", span: Some(jspan(ffile, fsp))})
+  }
+  Some(d)
+}
+
+fn text_of(b: Bytes) -> Str {
+  b.to_str() ?? ""
+}
+
+// ---------------------------------------------------------------------------
+// Walking the syntax tree: every expression, outer before inner
+// (check.Inspect order for what vet looks at).
+
+fn walk_decl(d: parser.Decl, var out: List[parser.Expr]) {
+  match d {
+    FnDecl(fd) => walk_fn(fd, out)
+    StructDecl(sd) => {
+      for f in sd.fields {
+        if let Some(x) = f.default {
+          walk_expr(x, out)
+        }
+      }
+      if let Some(x) = sd.inv {
+        walk_expr(x, out)
+      }
+    }
+    InterfaceDecl(id) => {
+      for m in id.methods {
+        walk_fn(m, out)
+      }
+    }
+    ConstDecl(cd) => walk_expr(cd.value, out)
+    TestDecl(td) => {
+      for p in td.params {
+        if let Some(x) = p.default {
+          walk_expr(x, out)
+        }
+      }
+      if let Some(b) = td.body {
+        walk_block(b, out)
+      }
+    }
+    _ => {}
+  }
+}
+
+fn walk_fn(fd: parser.FnDecl, var out: List[parser.Expr]) {
+  for p in fd.params {
+    if let Some(x) = p.default {
+      walk_expr(x, out)
+    }
+  }
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(_, _, cond, els) => {
+        walk_expr(cond, out)
+        if let Some(x) = els {
+          walk_expr(x, out)
+        }
+      }
+      EnsuresClause(_, _, cond) => walk_expr(cond, out)
+      _ => {}
+    }
+  }
+  if let Some(b) = fd.body {
+    walk_block(b, out)
+  }
+}
+
+fn walk_block(b: parser.Block, var out: List[parser.Expr]) {
+  for s in b.stmts {
+    walk_stmt(s, out)
+  }
+}
+
+fn walk_stmt(s: parser.Stmt, var out: List[parser.Expr]) {
+  match s {
+    LetStmt(_, pat, _, value) => {
+      walk_pat(pat, out)
+      walk_expr(value, out)
+    }
+    VarStmt(_, _, _, value) => walk_expr(value, out)
+    AssignStmt(_, _, target, value) => {
+      walk_expr(target, out)
+      walk_expr(value, out)
+    }
+    DeferStmt(_, body) => walk_stmt(body, out)
+    ReturnStmt(_, value) => {
+      if let Some(x) = value {
+        walk_expr(x, out)
+      }
+    }
+    ForStmt(_, _, pat, iter, bound, body, _) => {
+      walk_pat(pat, out)
+      walk_expr(iter, out)
+      for x in bound {
+        walk_expr(x, out)
+      }
+      walk_block(body, out)
+    }
+    WhileStmt(_, _, cond, pats, values, bound, body) => {
+      if let Some(x) = cond {
+        walk_expr(x, out)
+      }
+      for p in pats {
+        walk_pat(p, out)
+      }
+      for x in values {
+        walk_expr(x, out)
+      }
+      for x in bound {
+        walk_expr(x, out)
+      }
+      walk_block(body, out)
+    }
+    ExprStmt(_, x) => walk_expr(x, out)
+    ConstDecl(cd) => walk_expr(cd.value, out)
+    _ => {}
+  }
+}
+
+fn walk_pat(p: parser.Pattern, var out: List[parser.Expr]) {
+  match p {
+    LitPat(_, value) => walk_expr(value, out)
+    RangePat(_, lo, hi, _) => {
+      walk_expr(lo, out)
+      walk_expr(hi, out)
+    }
+    OrPat(_, alts) => {
+      for a in alts {
+        walk_pat(a, out)
+      }
+    }
+    TuplePat(_, elems) => {
+      for a in elems {
+        walk_pat(a, out)
+      }
+    }
+    VariantPat(_, _, _, fields, _) => {
+      for f in fields {
+        walk_pat(f.pattern, out)
+      }
+    }
+    StructPat(_, _, fields, _) => {
+      for f in fields {
+        walk_pat(f.pattern, out)
+      }
+    }
+    ListPat(_, elems, _) => {
+      for a in elems {
+        walk_pat(a, out)
+      }
+    }
+    _ => {}
+  }
+}
+
+fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
+  match e {
+    BinaryExpr(_, _, x, y) => {
+      out.push(e)
+      walk_expr(x, out)
+      walk_expr(y, out)
+    }
+    CallExpr(_, fun, args) => {
+      out.push(e)
+      walk_expr(fun, out)
+      for a in args {
+        walk_expr(a.value, out)
+      }
+    }
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          walk_expr(x, out)
+        }
+      }
+    }
+    ParenExpr(_, x) => walk_expr(x, out)
+    TupleExpr(_, elems) => {
+      for x in elems {
+        walk_expr(x, out)
+      }
+    }
+    ListLit(_, elems) => {
+      for x in elems {
+        walk_expr(x, out)
+      }
+    }
+    SetLit(_, elems) => {
+      for x in elems {
+        walk_expr(x, out)
+      }
+    }
+    MapLit(_, entries) => {
+      for en in entries {
+        walk_expr(en.key, out)
+        walk_expr(en.value, out)
+      }
+    }
+    StructLit(_, typ, fields) => {
+      walk_expr(typ, out)
+      for f in fields {
+        walk_expr(f.value, out)
+      }
+    }
+    UnaryExpr(_, _, x) => walk_expr(x, out)
+    IsExpr(_, x, pat) => {
+      walk_expr(x, out)
+      walk_pat(pat, out)
+    }
+    RangeExpr(_, lo, hi, _) => {
+      if let Some(x) = lo {
+        walk_expr(x, out)
+      }
+      if let Some(x) = hi {
+        walk_expr(x, out)
+      }
+    }
+    SelectorExpr(_, x, _) => walk_expr(x, out)
+    TypeArgsExpr(_, x, _) => walk_expr(x, out)
+    IndexExpr(_, x, index) => {
+      walk_expr(x, out)
+      walk_expr(index, out)
+    }
+    TryExpr(_, x) => walk_expr(x, out)
+    WithExpr(_, x, fields) => {
+      walk_expr(x, out)
+      for f in fields {
+        walk_expr(f.value, out)
+      }
+    }
+    IfExpr(ie) => walk_if(ie, out)
+    MatchExpr(_, subject, arms) => {
+      walk_expr(subject, out)
+      for a in arms {
+        walk_pat(a.pattern, out)
+        if let Some(g) = a.guard {
+          walk_expr(g, out)
+        }
+        if let Some(b) = a.body {
+          walk_stmt(b, out)
+        }
+      }
+    }
+    ScopeExpr(_, _, body) => walk_block(body, out)
+    SelectExpr(_, arms) => {
+      for a in arms {
+        if let Some(x) = a.op {
+          walk_expr(x, out)
+        }
+        if let Some(x) = a.after {
+          walk_expr(x, out)
+        }
+        if let Some(b) = a.body {
+          walk_stmt(b, out)
+        }
+      }
+    }
+    Block(b) => walk_block(b, out)
+    FnLit(fl) => {
+      for p in fl.params {
+        if let Some(x) = p.default {
+          walk_expr(x, out)
+        }
+      }
+      walk_block(fl.body, out)
+    }
+    WhileExpr(_, body) => walk_block(body, out)
+    _ => {}
+  }
+}
+
+fn walk_if(ie: parser.IfExpr, var out: List[parser.Expr]) {
+  if let Some(x) = ie.cond {
+    walk_expr(x, out)
+  }
+  if let Some(p) = ie.pattern {
+    walk_pat(p, out)
+  }
+  if let Some(x) = ie.value {
+    walk_expr(x, out)
+  }
+  walk_block(ie.then, out)
+  if let Some(x) = ie.els {
+    walk_expr(x, out)
+  }
+}
