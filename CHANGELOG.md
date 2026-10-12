@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `selfhost/macho` also writes ELF: `macho asm --elf` assembles the
+  linux/arm64 emitter's assembly into the object `clang -c` writes (byte
+  identical on the 159 arm64 goldens and on xo1), and `macho elflink`
+  links it with the linux runtime pack into a dynamically linked glibc
+  executable (versioned imports, stubs, TLS relaxation,
+  `.eh_frame_hdr`). `xo1 build --target=linux/arm64 --ld=macho` builds a
+  Linux program from any host with no C toolchain; every golden runs on
+  glibc 2.31 and 2.41 (decision 0182 stage 3).
+- The arm64 backend (and its Xo twin, byte identical) inlines small
+  functions that call others and larger ones with at most two call
+  sites, and drops the bounds, overflow, and shift checks that value
+  bounds, loop conditions (also through `&&` and `||`), and binary
+  search midpoints prove (decision 0184). The Unicode runtime in Xo is
+  now within 5 percent of the C path on every bench/perf/unicode
+  workload on arm64 (39 percent fewer instructions on mixed script case
+  mapping, 42 on Rune case mapping).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on

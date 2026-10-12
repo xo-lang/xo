@@ -42,13 +42,17 @@ type memo struct {
 	lo, hi map[vreg]int64
 	// lowZero: the number of low bits a branch proved zero
 	lowZero map[vreg]int
+	// less: x < y holds for the registers (x, y), from a branch or a
+	// passed bounds check; the value is x's SSA value (decision 0184)
+	less map[[2]vreg]*ssa.Value
 }
 
 // m returns the memo of the current block.
 func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
+			less: map[[2]vreg]*ssa.Value{}}
 	}
 	return s.mm
 }
@@ -191,7 +195,11 @@ func (s *fstate) dce() {
 // that dominates it.
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
+		less: map[[2]vreg]*ssa.Value{}}
+	for k, v := range from.less {
+		m.less[k] = v
+	}
 	for k, v := range from.lowZero {
 		m.lowZero[k] = v
 	}
@@ -252,12 +260,24 @@ func (s *fstate) forgetLen(l vreg) {
 // is not checked (`n - 1` under `n >= 2`, `i + 1` under `i < n`).
 
 // bounds returns what is known of Int value v.
-func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
+func (s *fstate) bounds(v *ssa.Value) (int64, int64) { return s.boundsAt(v, boundsDepth) }
+
+// boundsDepth is how many operations deep bounds derives an interval
+// from the operands' bounds (decision 0184): the range analysis ignores
+// branches, so `(r - 128) * 3` under `r < 2048` learns its bound here.
+const boundsDepth = 3
+
+func (s *fstate) boundsAt(v *ssa.Value, d int) (int64, int64) {
 	if n, ok := constInt(v); ok {
 		return n, n
 	}
 	r := s.ssaRange(v) // ranges.go
 	lo, hi := r.lo, r.hi
+	if d > 0 {
+		if x, ok := s.derived(v, d-1); ok {
+			lo, hi = max(lo, x.lo), min(hi, x.hi)
+		}
+	}
 	ws, ok := s.vals[v]
 	if !ok || len(ws) != 1 {
 		return lo, hi
@@ -272,6 +292,154 @@ func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
 	return lo, hi
 }
 
+// derived is the interval of the Int operation v from its operands'
+// bounds (derived d more levels deep). Every operation is exact (a
+// checked one faults outside Int, an unchecked one was proved), as in
+// rangeOf; a shift left only counts when it is checked.
+func (s *fstate) derived(v *ssa.Value, d int) (interval, bool) {
+	if v.Type == nil || v.Type.Kind != ssa.KInt {
+		return interval{}, false
+	}
+	arg := func(i int) interval {
+		lo, hi := s.boundsAt(v.Args[i], d)
+		return interval{lo, hi}
+	}
+	switch v.Op {
+	case ssa.OpAdd:
+		a, b := arg(0), arg(1)
+		return interval{satAdd(a.lo, b.lo), satAdd(a.hi, b.hi)}, true
+	case ssa.OpSub:
+		a, b := arg(0), arg(1)
+		if b.lo == math.MinInt64 {
+			return interval{}, false
+		}
+		return interval{satAdd(a.lo, -b.hi), satAdd(a.hi, -b.lo)}, true
+	case ssa.OpMul:
+		a, b := arg(0), arg(1)
+		c0, c1, c2, c3 := satMul(a.lo, b.lo), satMul(a.lo, b.hi), satMul(a.hi, b.lo), satMul(a.hi, b.hi)
+		return interval{min(c0, c1, c2, c3), max(c0, c1, c2, c3)}, true
+	case ssa.OpDiv:
+		k, ok := constInt(v.Args[1])
+		if !ok || k <= 0 {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{a.lo / k, a.hi / k}, true
+	case ssa.OpAnd:
+		a, b := arg(0), arg(1)
+		switch {
+		case a.lo >= 0 && b.lo >= 0:
+			return interval{0, min(a.hi, b.hi)}, true
+		case a.lo >= 0:
+			return interval{0, a.hi}, true
+		case b.lo >= 0:
+			return interval{0, b.hi}, true
+		}
+	case ssa.OpOr:
+		a, b := arg(0), arg(1)
+		if a.lo >= 0 && b.lo >= 0 {
+			return interval{max(a.lo, b.lo), ones(max(a.hi, b.hi))}, true
+		}
+	case ssa.OpShr:
+		k, ok := constInt(v.Args[1])
+		if !ok || k < 0 || k > 63 {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{a.lo >> k, a.hi >> k}, true
+	case ssa.OpShl:
+		k, ok := constInt(v.Args[1])
+		if !ok || k < 0 || k > 62 || v.Pos == "" {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{satMul(a.lo, int64(1)<<k), satMul(a.hi, int64(1)<<k)}, true
+	case ssa.OpIntConv:
+		return arg(0), true
+	case ssa.OpCall:
+		if v.Aux == "Str.len" && v.Args[0].Op == ssa.OpConst {
+			if x, ok := v.Args[0].Aux.(string); ok {
+				return interval{int64(len(x)), int64(len(x))}, true
+			}
+		}
+	}
+	return interval{}, false
+}
+
+// ones is the smallest 2^k - 1 at least x (x >= 0): a bound of x | y
+// for x, y in [0, x].
+func ones(x int64) int64 {
+	r := int64(0)
+	for r < x {
+		r = r<<1 | 1
+	}
+	return r
+}
+
+// provedIndex reports whether 0 <= i < n is known, n a length in a
+// register (decision 0184): from i's bounds and n's constant value k
+// (-1 when not constant), or from a fact x < n of the memo where x and
+// i are one value plus offsets whose bounds put i at or below x
+// (`i + 1` under `i + k < n` with k >= 1).
+func (s *fstate) provedIndex(i *ssa.Value, n vreg, k int64) bool {
+	lo, hi := s.bounds(i)
+	if lo < 0 {
+		return false
+	}
+	if k >= 0 && hi < k {
+		return true
+	}
+	fi := s.addForms(i)
+	for key, x := range s.m().less {
+		if key[1] != n {
+			continue
+		}
+		for _, b := range s.addForms(x) {
+			for _, a := range fi {
+				if a.base == b.base && (a.hi <= b.lo || a.off != nil && a.off == b.off) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// addForm says a value is base plus an offset in [lo, hi] (the value
+// off, when it is one).
+type addForm struct {
+	base   *ssa.Value
+	lo, hi int64
+	off    *ssa.Value
+}
+
+// addForms returns the ways Int value v is a value plus an offset: v
+// plus 0; for v = a + b, a plus b and b plus a; for v = a - c (c
+// constant), a plus -c.
+func (s *fstate) addForms(v *ssa.Value) []addForm {
+	out := []addForm{{v, 0, 0, nil}}
+	switch v.Op {
+	case ssa.OpAdd:
+		alo, ahi := s.bounds(v.Args[0])
+		blo, bhi := s.bounds(v.Args[1])
+		out = append(out, addForm{v.Args[0], blo, bhi, v.Args[1]}, addForm{v.Args[1], alo, ahi, v.Args[0]})
+	case ssa.OpSub:
+		if c, ok := constInt(v.Args[1]); ok && c != math.MinInt64 {
+			out = append(out, addForm{v.Args[0], -c, -c, nil})
+		}
+	}
+	return out
+}
+
+// lessFact records x < y for SSA value x (one register) and register y.
+func (s *fstate) lessFact(x *ssa.Value, y vreg) {
+	ws, ok := s.vals[x]
+	if !ok || len(ws) != 1 || ws[0] == 0 || y == 0 || x.Type.Kind != ssa.KInt {
+		return
+	}
+	s.m().less[[2]vreg{ws[0], y}] = x
+}
+
 var negateCmp = map[ssa.Op]ssa.Op{ssa.OpLt: ssa.OpGe, ssa.OpGe: ssa.OpLt, ssa.OpLe: ssa.OpGt, ssa.OpGt: ssa.OpLe, ssa.OpEq: ssa.OpNe, ssa.OpNe: ssa.OpEq}
 var swapCmp = map[ssa.Op]ssa.Op{ssa.OpLt: ssa.OpGt, ssa.OpGt: ssa.OpLt, ssa.OpLe: ssa.OpGe, ssa.OpGe: ssa.OpLe, ssa.OpEq: ssa.OpEq, ssa.OpNe: ssa.OpNe}
 
@@ -283,12 +451,54 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 		return
 	}
 	yes, no := t.Succs[0].To == b, t.Succs[1].To == b
-	c := t.Args[0]
-	if yes == no || !isCompare(c.Op) || c.Args[0].Type.Kind != ssa.KInt {
+	if yes == no {
+		return
+	}
+	s.condFacts(t.Args[0], yes)
+}
+
+// joinSource matches b entered only from a block J that has one
+// parameter r, holds nothing but a branch on r, and is reached with an
+// r that can take b's edge from one predecessor p only (the others pass
+// the constant that takes the other edge): the join of `x && y` or
+// `x || y`. Then b runs only after p, and c (what p passes) is truth
+// (decision 0184).
+func (s *fstate) joinSource(b *ssa.Block) (p *ssa.Block, c *ssa.Value, truth bool, ok bool) {
+	if len(b.Preds) != 1 {
+		return nil, nil, false, false
+	}
+	j := b.Preds[0].From
+	t := j.Term()
+	if t == nil || t.Op != ssa.OpBranch || len(j.Instrs) != 1 || len(j.Params) != 1 || t.Args[0] != j.Params[0] || j == b {
+		return nil, nil, false, false
+	}
+	yes, no := t.Succs[0].To == b, t.Succs[1].To == b
+	if yes == no {
+		return nil, nil, false, false
+	}
+	for _, e := range j.Preds {
+		a := e.Args[0]
+		if k, isK := a.Aux.(bool); isK && a.Op == ssa.OpConst && k != yes {
+			continue
+		}
+		if p != nil {
+			return nil, nil, false, false
+		}
+		p, c = e.From, a
+	}
+	if p == nil || s.endMemo[p] == nil {
+		return nil, nil, false, false
+	}
+	return p, c, yes, true
+}
+
+// condFacts records what Bool c being truth says (a compare of Ints).
+func (s *fstate) condFacts(c *ssa.Value, truth bool) {
+	if !isCompare(c.Op) || c.Args[0].Type.Kind != ssa.KInt {
 		return
 	}
 	op := c.Op
-	if no {
+	if !truth {
 		op = negateCmp[op]
 	}
 	x, y := c.Args[0], c.Args[1]
@@ -301,6 +511,16 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 					s.m().lowZero[ws[0]] = k
 				}
 			}
+		}
+	}
+	switch op {
+	case ssa.OpLt:
+		if ws, ok := s.vals[y]; ok && len(ws) == 1 {
+			s.lessFact(x, ws[0])
+		}
+	case ssa.OpGt:
+		if ws, ok := s.vals[x]; ok && len(ws) == 1 {
+			s.lessFact(y, ws[0])
 		}
 	}
 	xlo, xhi := s.bounds(x)
@@ -337,6 +557,15 @@ func (s *fstate) narrow(x *ssa.Value, op ssa.Op, ylo, yhi int64) {
 	}
 	m := s.m()
 	m.lo[ws[0]], m.hi[ws[0]] = lo, hi
+	// x = a + c (exact): a op y - c (decision 0184)
+	if x.Op == ssa.OpAdd || x.Op == ssa.OpSub {
+		if c, ok := constInt(x.Args[1]); ok && c != math.MinInt64 {
+			if x.Op == ssa.OpSub {
+				c = -c
+			}
+			s.narrow(x.Args[0], op, satAdd(ylo, -c), satAdd(yhi, -c))
+		}
+	}
 }
 
 // safeAdd reports whether a + n (or a - n) cannot overflow.
@@ -357,7 +586,10 @@ func (s *fstate) safeAdd(a *ssa.Value, n int64, op ssa.Op) bool {
 // threadConst sends a jump to a block that only tests a register
 // straight to the test's outcome when the jumping block set that
 // register to a constant (the tag of an Option a pop or get built,
-// tested at once by `??` or `if let`).
+// tested at once by `??` or `if let`). Blocks that only move registers
+// and jump (the joins an inlined return passes its value through) are
+// followed to the test, and their moves are copied into the jumping
+// block (decision 0184).
 func (s *fstate) threadConst() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	for _, p := range blocks {
@@ -366,6 +598,7 @@ func (s *fstate) threadConst() {
 			continue
 		}
 		j := t.targets[0]
+		chain := moveChain(p, &j)
 		if len(j.insts) != 1 || j.insts[0].kind != iCondBr {
 			continue
 		}
@@ -383,17 +616,27 @@ func (s *fstate) threadConst() {
 				continue
 			}
 		}
-		val, ok := int64(0), false
-		for _, in := range p.insts[:len(p.insts)-1] {
-			for i, d := range in.defs {
+		val, ok, found := int64(0), false, false
+		for c := len(chain) - 1; c >= 0 && !found; c-- {
+			for i, d := range chain[c].defs {
 				if d != r {
 					continue
 				}
-				ok = in.kind == iPmove && in.srcs[i].kind == sImm
-				if ok {
-					val = in.srcs[i].imm
+				switch src := chain[c].srcs[i]; {
+				case src.kind == sImm:
+					val, ok, found = src.imm, true, true
+				case src.kind == sReg && src.v == 0:
+					val, ok, found = 0, true, true
+				case src.kind == sReg:
+					r = src.v
+				default:
+					found = true
 				}
+				break
 			}
+		}
+		if !found {
+			val, ok = constBefore(p, len(p.insts)-1, r)
 		}
 		if !ok {
 			continue
@@ -422,7 +665,91 @@ func (s *fstate) threadConst() {
 		} else {
 			t.targets[0] = br.targets[1]
 		}
+		if len(chain) > 0 {
+			copyMoves(p, chain)
+		}
 	}
+}
+
+// moveChain follows *j, p's jump target, through blocks that only move
+// registers and jump (at most 8), leaving *j at the first other block,
+// and returns their moves in order (decision 0184).
+func moveChain(p *mblock, j **mblock) []*inst {
+	var chain []*inst
+	for steps := 0; steps < 8 && *j != p && len((*j).insts) == 2 && (*j).insts[0].kind == iPmove &&
+		(*j).insts[1].kind == iJump && len((*j).insts[1].targets) == 1; steps++ {
+		chain = append(chain, (*j).insts[0])
+		*j = (*j).insts[1].targets[0]
+	}
+	return chain
+}
+
+// throughMoves returns the register whose value r holds after the moves
+// of chain, read before them: false when one sets r to anything but a
+// register.
+func throughMoves(chain []*inst, r vreg) (vreg, bool) {
+	for c := len(chain) - 1; c >= 0; c-- {
+		for i, d := range chain[c].defs {
+			if d != r {
+				continue
+			}
+			if chain[c].srcs[i].kind != sReg || chain[c].srcs[i].v == 0 {
+				return 0, false
+			}
+			r = chain[c].srcs[i].v
+			break
+		}
+	}
+	return r, true
+}
+
+// copyMoves puts copies of the moves of chain before p's terminator.
+func copyMoves(p *mblock, chain []*inst) {
+	t := p.insts[len(p.insts)-1]
+	var moves []*inst
+	for _, mv := range chain {
+		c := *mv
+		c.defs = append([]vreg(nil), mv.defs...)
+		c.srcs = append([]src(nil), mv.srcs...)
+		c.uses = append([]vreg(nil), mv.uses...)
+		moves = append(moves, &c)
+	}
+	p.insts = append(append(p.insts[:len(p.insts)-1:len(p.insts)-1], moves...), t)
+}
+
+// constBefore returns the constant register r holds before instruction
+// end of p, when the last definition of r there is a parallel move of an
+// immediate, or of a register that holds one (decision 0184: the true of
+// `a || b` is a constant register moved into the join's parameter), or a
+// `mov` of a constant.
+func constBefore(p *mblock, end int, r vreg) (int64, bool) {
+	for k := end - 1; k >= 0; k-- {
+		in := p.insts[k]
+		for i, d := range in.defs {
+			if d != r {
+				continue
+			}
+			if in.kind == iPmove {
+				switch {
+				case in.srcs[i].kind == sImm:
+					return in.srcs[i].imm, true
+				case in.srcs[i].kind == sReg && in.srcs[i].v == 0:
+					return 0, true // xzr
+				case in.srcs[i].kind == sReg:
+					return constBefore(p, k, in.srcs[i].v)
+				}
+				return 0, false
+			}
+			var n int64
+			if in.kind == iPlain && in.konst && len(in.defs) == 1 && strings.HasPrefix(in.text, "mov $d0, #") {
+				if _, err := fmt.Sscanf(in.text, "mov $d0, #%d", &n); err == nil && in.text == fmt.Sprintf("mov $d0, #%d", n) {
+					return n, true
+				}
+			}
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 // threadCset turns `t = cmp ...; cset; r = t; jump J` where J only
@@ -430,16 +757,21 @@ func (s *fstate) threadConst() {
 // predicate returns its Bool through the continuation's parameter).
 func (s *fstate) threadCset() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	nuses := useCounts(blocks)
 	for _, p := range blocks {
 		t := p.term()
 		if t == nil || t.kind != iJump || len(p.insts) < 3 || len(t.targets) > 1 {
 			continue
 		}
 		j := t.targets[0]
+		chain := moveChain(p, &j)
 		if len(j.insts) != 1 || j.insts[0].kind != iCondBr || j.insts[0].cond != "cbnz" || j == p {
 			continue
 		}
-		r := j.insts[0].uses[0]
+		r, traced := throughMoves(chain, j.insts[0].uses[0])
+		if !traced {
+			continue
+		}
 		mv := p.insts[len(p.insts)-2]
 		if mv.kind != iPmove {
 			continue
@@ -467,7 +799,51 @@ func (s *fstate) threadCset() {
 		}
 		p.insts[len(p.insts)-1] = &inst{kind: iCondBr, text: def.text[:i], uses: append([]vreg(nil), def.uses...),
 			cond: cond, targets: append([]*mblock(nil), j.insts[0].targets...)}
+		if len(chain) > 0 {
+			copyMoves(p, chain)
+		} else if nuses[r] == 1 {
+			// only J's branch reads r, and p no longer reaches it: the
+			// move (and then the cset, by dce) is dead (decision 0184)
+			dropMove(p, len(p.insts)-2, r)
+		}
 	}
+}
+
+// useCounts counts the uses of each register in blocks.
+func useCounts(blocks []*mblock) map[vreg]int {
+	n := map[vreg]int{}
+	for _, b := range blocks {
+		for _, in := range b.insts {
+			for _, u := range in.uses {
+				n[u]++
+			}
+		}
+	}
+	return n
+}
+
+// dropMove removes the move into r from the parallel move p.insts[k]
+// (the whole instruction when nothing is left).
+func dropMove(p *mblock, k int, r vreg) {
+	mv := p.insts[k]
+	var defs []vreg
+	var srcs []src
+	var uses []vreg
+	for i, d := range mv.defs {
+		if d == r {
+			continue
+		}
+		defs = append(defs, d)
+		srcs = append(srcs, mv.srcs[i])
+		if mv.srcs[i].kind == sReg && mv.srcs[i].v != 0 {
+			uses = append(uses, mv.srcs[i].v)
+		}
+	}
+	if len(defs) == 0 {
+		p.insts = append(p.insts[:k], p.insts[k+1:]...)
+		return
+	}
+	mv.defs, mv.srcs, mv.uses = defs, srcs, uses
 }
 
 // hoistConsts moves the instructions that make constants out of loops,
@@ -734,5 +1110,161 @@ func (s *fstate) reuseFlags() {
 		if same {
 			in.text, in.uses = "", nil
 		}
+	}
+}
+
+// safeAddRange reports whether a + b (op OpAdd) or a - b (OpSub) cannot
+// overflow for a in [alo, ahi] and b in [blo, bhi] (decision 0184).
+func (s *fstate) safeAddRange(op ssa.Op, alo, ahi, blo, bhi int64) bool {
+	if op == ssa.OpSub {
+		if blo == math.MinInt64 {
+			return false
+		}
+		blo, bhi = -bhi, -blo
+	}
+	if bhi > 0 && ahi > math.MaxInt64-bhi {
+		return false
+	}
+	if blo < 0 && alo < math.MinInt64-blo {
+		return false
+	}
+	return true
+}
+
+// liveDCE deletes the instructions without side effects, and the moves
+// of parallel moves, whose definitions are dead where they are written
+// (decision 0184). Unlike dce, which keeps a register every use of
+// anywhere, it is flow sensitive: a Bool that a threaded join no longer
+// reads on this path (the `mov x0, #1` and `cset` left by threadConst
+// and threadCset) goes. One backward pass over each block from the
+// registers live out of it; a register live into a landing pad counts
+// as live everywhere. It runs before selectCompares and reuseFlags,
+// which rely on compares in other blocks.
+func (s *fstate) liveDCE() {
+	order := append(append([]*mblock(nil), s.hot...), s.cold...)
+	n := len(s.fp)
+	idx := map[*mblock]int{}
+	for k, b := range order {
+		idx[b] = k
+	}
+	succs := make([][]int, len(order))
+	gen := make([]bitset, len(order))
+	kill := make([]bitset, len(order))
+	liveIn := make([]bitset, len(order))
+	var pads []int
+	for k, b := range order {
+		for _, t := range s.succs(b) {
+			if j, ok := idx[t]; ok {
+				succs[k] = append(succs[k], j)
+			}
+		}
+		gen[k], kill[k], liveIn[k] = newBitset(n), newBitset(n), newBitset(n)
+		for _, in := range b.insts {
+			if in.pad != nil {
+				j, ok := idx[s.padOf(in)]
+				if !ok {
+					return
+				}
+				pads = append(pads, j)
+			}
+			for _, u := range in.uses {
+				if u != 0 && !kill[k].has(u) {
+					gen[k].set(u)
+				}
+			}
+			for _, d := range in.defs {
+				if d != 0 {
+					kill[k].set(d)
+				}
+			}
+		}
+	}
+	out := newBitset(n)
+	for changed := true; changed; {
+		changed = false
+		for k := len(order) - 1; k >= 0; k-- {
+			for w := range out {
+				out[w] = 0
+			}
+			for _, j := range succs[k] {
+				for w, x := range liveIn[j] {
+					out[w] |= x
+				}
+			}
+			for w := range out {
+				nv := gen[k][w] | (out[w] &^ kill[k][w])
+				if nv != liveIn[k][w] {
+					liveIn[k][w] = nv
+					changed = true
+				}
+			}
+		}
+	}
+	padLive := newBitset(n)
+	for _, j := range pads {
+		for w, x := range liveIn[j] {
+			padLive[w] |= x
+		}
+	}
+	live := newBitset(n)
+	dead := func(d vreg) bool { return d != 0 && !live.has(d) && !padLive.has(d) }
+	for k, b := range order {
+		for w := range live {
+			live[w] = 0
+		}
+		for _, j := range succs[k] {
+			for w, x := range liveIn[j] {
+				live[w] |= x
+			}
+		}
+		keep := make([]bool, len(b.insts))
+		for i := len(b.insts) - 1; i >= 0; i-- {
+			in := b.insts[i]
+			keep[i] = true
+			switch {
+			case in.kind == iPmove:
+				m := 0
+				for k2, d := range in.defs {
+					if !dead(d) {
+						in.defs[m], in.srcs[m] = d, in.srcs[k2]
+						m++
+					}
+				}
+				in.defs, in.srcs = in.defs[:m], in.srcs[:m]
+				in.uses = in.uses[:0]
+				for _, a := range in.srcs {
+					if a.kind == sReg && a.v != 0 {
+						in.uses = append(in.uses, a.v)
+					}
+				}
+				keep[i] = m > 0
+			case in.kind == iPlain && in.fault == nil && len(in.defs) > 0:
+				all := true
+				for _, d := range in.defs {
+					all = all && dead(d)
+				}
+				keep[i] = !all
+			}
+			if !keep[i] {
+				continue
+			}
+			for _, d := range in.defs {
+				if d != 0 {
+					live.clear(d)
+				}
+			}
+			for _, u := range in.uses {
+				if u != 0 {
+					live.set(u)
+				}
+			}
+		}
+		kept := b.insts[:0]
+		for i, in := range b.insts {
+			if keep[i] {
+				kept = append(kept, in)
+			}
+		}
+		b.insts = kept
 	}
 }
