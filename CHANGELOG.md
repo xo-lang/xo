@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted `xo` can be bootstrapped without Go:
+  `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
+  then with itself twice, with no Go on PATH, and checks the fixed point
+  (identical assembly and binary); it passed on a clean Linux arm64
+  machine with Go deleted (decision 0178 stage 7). Fixed on the way: the
+  self hosted driver run with the default relative `--std` could not
+  build the TLS library on an empty cache. The selfhost differential
+  tests can record their Go side and replay it
+  (`XO_SELFHOST_GOLDENS=record|replay`); internal/progen now gives one
+  program per seed.
+
 - `xo bind --c` is written in Xo (decision 0178 stage 6,
   selfhost/cli/bind): xo1 binds C headers with the same output and
   cache files, byte for byte, as the Go binder. `xo bind` for Go
