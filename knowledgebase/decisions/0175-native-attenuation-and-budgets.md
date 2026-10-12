@@ -113,7 +113,9 @@ runtime edits go into the existing files (decision 0157's packs).
   FakeEnv, and FakeProc attenuated in tests; cmd/xo TestAttenuationFakes
   now passes natively too.
 - cmd/xo TestSupplyChainAttacks runs its three run time rows again with
-  `--no-gc` on each native backend.
+  `--no-gc` on each native backend: 6 of 6 native runs blocked at run
+  time, measured 2026-10-12 (bench/results/supply-chain-2026-10-11.md,
+  "Native backends"); the scenario count stays 12 of 17.
 
 ## Consequences
 
