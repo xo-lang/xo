@@ -120,7 +120,6 @@ fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   let st = b.str_t()
   let name = "xo.debug[${b.type_name(ct)}]"
   b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
-  name
 }
 
 fn (var b: Builder) debug_body(ct: Int, t: Int) {
@@ -523,8 +522,8 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
     }
     cap_ts.push(b.vty(vals[i]))
   }
-  let name = "xo.frameargs(${key.join(", ")})"
-  if b.m.func_index(name) >= 0 {
+  let (name, found) = b.helper_name("xo.frameargs(${key.join(", ")})", cap_ts, true)
+  if found {
     return name
   }
   let ft = b.m.func_type([], st)

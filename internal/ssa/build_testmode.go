@@ -303,6 +303,9 @@ func (s *fn) testCapCall(x *ast.CallExpr, ci *check.Call, key string) (*Value, b
 		return s.unit(), true
 	case "Proc.exit_code":
 		return s.popOne(s.rt("test_exit_code", m.List(intT)), nt), true
+	case "Proc.killed":
+		// the signals FakeProc.kill recorded (decision 0190)
+		return s.rt("proc_killed", m.List(strT)), true
 	case "Proc.on_run":
 		// the outputs a later run of the command gives (std/llrt/xo_proc.c)
 		s.expr(ci.Recv)

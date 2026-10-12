@@ -1,0 +1,925 @@
+// `xo lsp`: the Language Server Protocol server of internal/lsp in Xo
+// (decision 0178 stage 5). JSON-RPC 2.0 over standard input and output
+// with Content-Length framing (LSP 3.17). The server keeps the text of
+// open documents and checks their modules in process with the self hosted
+// checker (selfhost/check), the open texts as its overlay, after each
+// change (debounced, 150 ms) and before each request that reads the
+// check, and publishes the diagnostics as the Go server does.
+//
+// Ported: the protocol and framing, initialize, shutdown, exit, the
+// document notifications, publishDiagnostics (with window/logMessage when
+// the check fails), codeAction (the diagnostics' machine fixes as quick
+// fixes), and documentSymbol. Not yet: hover, definition, references,
+// prepareRename, rename, formatting, and semanticTokens, which need the
+// identifier resolution of internal/lsp resolve.go over the checker's
+// records, query's declaration surfaces, and `xo fmt` in Xo (stages 2 and
+// 3); for a document the server has not checked they answer what the Go
+// server answers (null, or no tokens), else the error
+// RequestFailed "<method> is not available in the self hosted xo yet".
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+const TOKEN_TYPES = ["namespace", "type", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"]
+
+const TOKEN_MODIFIERS = ["declaration", "readonly", "defaultLibrary"]
+
+fn lsp_flags() -> List[Flag] {
+  [Flag{name: "stdio", kind: "bool", def: "true", usage: "serve on stdin/stdout (the only transport; accepted for clients that pass it)"}]
+}
+
+// ---------------------------------------------------------------------------
+// text positions (internal/lsp text.go): the checker's 1 based line and
+// byte column, LSP's 0 based line and UTF-16 character
+
+struct Text {
+  src: Bytes
+  /// byte offset of the start of each line
+  lines: List[Int]
+}
+
+fn new_text(src: Bytes) -> Text {
+  var lines = [0]
+  var i = 0
+  while i < src.len() {
+    if src[i] == '\n' {
+      lines.push(i + 1)
+    }
+    i += 1
+  }
+  Text{src: src, lines: lines}
+}
+
+/// The bytes of line l (0 based) without its `\n` or `\r\n`.
+fn (t: Text) line_bytes(l: Int) -> Bytes {
+  if l < 0 || l >= t.lines.len() {
+    return b""
+  }
+  var end = t.src.len()
+  if l + 1 < t.lines.len() {
+    end = t.lines[l + 1] - 1
+  }
+  var b = t.src[t.lines[l]..end]
+  if b.len() > 0 && b[b.len() - 1] == '\r' {
+    b = b[0..b.len() - 1]
+  }
+  b
+}
+
+fn utf16_len(b: Bytes) -> Int {
+  var n = 0
+  var i = 0
+  while i < b.len() {
+    let (r, size) = b.decode_rune(i)
+    n += if Int(r) >= 0x10000 { 2 } else { 1 }
+    i += if size > 0 { size } else { 1 }
+  }
+  n
+}
+
+/// position: a 1 based line and byte column as (line, character).
+fn (t: Text) position(line: Int, col: Int) -> (Int, Int) {
+  let l = line - 1
+  let b = t.line_bytes(l)
+  var n = col - 1
+  if n > b.len() {
+    n = b.len()
+  }
+  if n < 0 {
+    n = 0
+  }
+  (if l > 0 { l } else { 0 }, utf16_len(b[0..n]))
+}
+
+/// offset: an LSP position as a byte offset.
+fn (t: Text) offset(line: Int, ch: Int) -> Int {
+  if line >= t.lines.len() || line < 0 {
+    return t.src.len()
+  }
+  let b = t.line_bytes(line)
+  var units = 0
+  var i = 0
+  while i < b.len() && units < ch {
+    let (r, size) = b.decode_rune(i)
+    units += if Int(r) >= 0x10000 { 2 } else { 1 }
+    if units > ch {
+      break
+    }
+    i += if size > 0 { size } else { 1 }
+  }
+  t.lines[line] + i
+}
+
+/// offsetPosition: a byte offset as (line, character).
+fn (t: Text) offset_position(off: Int) -> (Int, Int) {
+  var lo = 0
+  var hi = t.lines.len() - 1
+  while lo < hi {
+    let mid = (lo + hi + 1) / 2
+    if t.lines[mid] <= off {
+      lo = mid
+    } else {
+      hi = mid - 1
+    }
+  }
+  t.position(lo + 1, off - t.lines[lo] + 1)
+}
+
+fn pos_json(p: (Int, Int)) -> J {
+  let (l, c) = p
+  jobj(["line", "character"], [jint(l), jint(c)])
+}
+
+fn range_json(a: (Int, Int), b: (Int, Int)) -> J { jobj(["start", "end"], [pos_json(a), pos_json(b)]) }
+
+// ---------------------------------------------------------------------------
+// URIs (url.URL with Scheme "file")
+
+fn hex_digit(n: Int) -> Str { "0123456789ABCDEF"[n..n + 1] }
+
+/// pathToURI: "file://" and the path escaped as url.URL escapes a path.
+fn path_to_uri(path: Str) -> Str {
+  var out = "file://"
+  for c in path.bytes() {
+    let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '$' || c == '&' || c == '+' || c == ',' || c == '/' || c == ':' || c == ';' || c == '=' || c == '@'
+    if ok {
+      out = out + "${Rune.try(Int(c)) ?? '?'}"
+    } else {
+      out = out + "%" + hex_digit(Int(c) >> 4) + hex_digit(Int(c) & 15)
+    }
+  }
+  out
+}
+
+fn unhex(c: UInt8) -> Int {
+  if c >= '0' && c <= '9' {
+    return Int(c - '0')
+  }
+  if (c | 0x20) >= 'a' && (c | 0x20) <= 'f' {
+    return Int((c | 0x20) - 'a') + 10
+  }
+  -1
+}
+
+/// uriToPath: the cleaned path of a file URI, or "".
+fn uri_to_path(uri: Str) -> Str {
+  if !uri.starts_with("file:") {
+    return ""
+  }
+  var rest = uri.trim_prefix("file:")
+  if rest.starts_with("//") {
+    rest = rest[2..]
+    // the authority (empty or localhost) up to the path
+    match rest.find("/") {
+      Some(i) => rest = rest[i..]
+      None => rest = ""
+    }
+  }
+  match rest.find("?") {
+    Some(i) => rest = rest[..i]
+    None => {}
+  }
+  match rest.find("#") {
+    Some(i) => rest = rest[..i]
+    None => {}
+  }
+  let b = rest.bytes()
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    if b[i] == '%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 && unhex(b[i + 1]) >= 0 && unhex(b[i + 2]) >= 0 {
+      out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
+      i += 3
+      continue
+    }
+    out.write_byte(b[i])
+    i += 1
+  }
+  clean_path(out.freeze().to_str() ?? "")
+}
+
+/// filepath.Clean of a slash path.
+fn clean_path(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var parts: List[Str] = []
+  for seg in p.split("/") {
+    if seg.is_empty() || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if !parts.is_empty() && parts[parts.len() - 1] != ".." {
+        parts = parts[0..parts.len() - 1]
+      } else if !rooted {
+        parts.push("..")
+      }
+      continue
+    }
+    parts.push(seg)
+  }
+  let body = parts.join("/")
+  if rooted {
+    return "/" + body
+  }
+  if body.is_empty() { "." } else { body }
+}
+
+// ---------------------------------------------------------------------------
+// framing
+
+/// Reads framed messages from standard input.
+struct Reader {
+  buf: Bytes = b""
+  off: Int = 0
+  eof: Bool = false
+}
+
+fn (var r: Reader) fill(os: Os) -> Bool uses stdio {
+  if r.eof {
+    return false
+  }
+  match os.stdio.read_bytes(65536) {
+    Ok(Some(data)) => {
+      r.buf = r.buf[r.off..] + data
+      r.off = 0
+      true
+    }
+    Ok(None) | Err(_) => {
+      r.eof = true
+      false
+    }
+  }
+}
+
+/// One header line without its line end, or None at the end of input.
+fn (var r: Reader) line(os: Os) -> Str? uses stdio {
+  while {
+    var i = r.off
+    while i < r.buf.len() {
+      if r.buf[i] == '\n' {
+        var end = i
+        if end > r.off && r.buf[end - 1] == '\r' {
+          end -= 1
+        }
+        let l = r.buf[r.off..end].to_str() ?? ""
+        r.off = i + 1
+        return Some(l)
+      }
+      i += 1
+    }
+    if !r.fill(os) {
+      return None
+    }
+  }
+  None
+}
+
+/// readMessage: the body of the next message; Ok(None) at the end of
+/// input, Err with the error that ends the server.
+fn (var r: Reader) message(os: Os) -> Str? ! Str uses stdio {
+  var length = ""
+  var have = false
+  var any = false
+  while {
+    match r.line(os) {
+      None => {
+        if any {
+          return Err("unexpected EOF")
+        }
+        return Ok(None)
+      }
+      Some(l) => {
+        if l.is_empty() {
+          if !any {
+            // textproto skips nothing: an empty first line ends an empty header
+          }
+          break
+        }
+        any = true
+        match l.find(":") {
+          Some(i) => {
+            if l[..i].to_lower() == "content-length" && !have {
+              length = l[i + 1..].trim()
+              have = true
+            }
+          }
+          None => return Err("malformed MIME header line: ${l}")
+        }
+      }
+    }
+  }
+  let n = Int.parse(length) ?? -1
+  if n < 0 {
+    return Err("missing or bad Content-Length header")
+  }
+  while r.buf.len() - r.off < n {
+    if !r.fill(os) {
+      if r.buf.len() - r.off == 0 {
+        return Ok(None)
+      }
+      return Err("unexpected EOF")
+    }
+  }
+  let body = r.buf[r.off..r.off + n]
+  r.off += n
+  Ok(Some(body.to_str() ?? ""))
+}
+
+fn send(os: Os, msg: J) uses stdio {
+  let body = encode(msg, true)
+  let _ = os.stdio.write(("Content-Length: ${body.len()}\r\n\r\n" + body).bytes()).ignore_err("the client may be gone")
+}
+
+fn reply(os: Os, id: Str, result: J) uses stdio {
+  send(os, jobj(["jsonrpc", "id", "result"], [jstr("2.0"), J.Raw(id), result]))
+}
+
+fn reply_error(os: Os, id: Str, code: Int, msg: Str) uses stdio {
+  send(os, jobj(["jsonrpc", "id", "error"], [jstr("2.0"), J.Raw(id), jobj(["code", "message"], [jint(code), jstr(msg)])]))
+}
+
+fn notify(os: Os, method: Str, params: J) uses stdio {
+  send(os, jobj(["jsonrpc", "method", "params"], [jstr("2.0"), jstr(method), params]))
+}
+
+// ---------------------------------------------------------------------------
+// the session
+
+/// A diagnostic of the last check, by absolute path.
+struct LDiag {
+  d: check.Diag
+}
+
+struct Session {
+  version: Str
+  std_dir: Str
+  wd: Str
+  /// open documents: absolute path to text
+  docs: Map[Str, Bytes] = {}
+  dirty: Bool = true
+  checked: Bool = false
+  /// the files of the last check: absolute path to source
+  files: Map[Str, Bytes] = {}
+  diags: Map[Str, List[check.Diag]] = {}
+  published: List[Str] = []
+  err: Str = ""
+  /// the generation of the last change; a debounce wake of an older one
+  /// does nothing
+  gen: Int = 0
+}
+
+fn abs_of(wd: Str, p: Str) -> Str {
+  if p.starts_with("/") { clean_path(p) } else { clean_path(wd + "/" + p) }
+}
+
+fn dir_of(p: Str) -> Str {
+  let parts = p.split("/")
+  if parts.len() <= 1 {
+    return "."
+  }
+  let d = parts[0..parts.len() - 1].join("/")
+  if d.is_empty() { "/" } else { d }
+}
+
+/// The std directory the checker reads: $XO_STD, else lib/xo/std or std
+/// beside the program's directory, else std in the working directory.
+pub fn std_dir(os: Os) -> Str uses (env, fs) {
+  let e = os.env.get("XO_STD") ?? ""
+  if !e.is_empty() {
+    return e
+  }
+  let prog = self_program(os)
+  if prog.contains("/") {
+    let bin = dir_of(prog)
+    for cand in [bin + "/../lib/xo/std", bin + "/std", bin + "/../std"] {
+      if os.fs.exists(cand + "/prelude.xo").ok() ?? false {
+        return cand
+      }
+    }
+  }
+  "std"
+}
+
+/// recheck: checks the modules of the open documents and publishes their
+/// diagnostics.
+fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
+  s.dirty = false
+  s.checked = true
+  s.files = {}
+  s.diags = {}
+  s.err = ""
+  var dirs: List[Str] = []
+  var overlay: Map[Str, Bytes] = {}
+  for (p, src) in s.docs {
+    overlay[p] = src
+    let d = dir_of(p)
+    if !dirs.contains(d) {
+      dirs.push(d)
+    }
+  }
+  dirs = dirs.sort()
+  if dirs.is_empty() {
+    s.publish(os)
+    return
+  }
+  var c = check.new_checker(os.fs, s.std_dir)
+  c.overlay = overlay
+  c.set_mod_env(s.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  match c.check_dirs(dirs) {
+    Ok(_) => {}
+    Err(e) => {
+      s.err = e
+      notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${e}"), jint(2)]))
+      s.publish(os)
+      return
+    }
+  }
+  for f in c.files {
+    let p = abs_of(s.wd, f.path)
+    s.files[p] = overlay.get(p) ?? f.src
+  }
+  for d in c.diags {
+    let p = abs_of(s.wd, d.file)
+    var l = s.diags.get(p) ?? []
+    l.push(d)
+    s.diags[p] = l
+  }
+  s.publish(os)
+}
+
+fn (s: Session) text_of(p: Str) -> Text? {
+  match s.files.get(p) {
+    Some(src) => Some(new_text(src))
+    None => None
+  }
+}
+
+fn diag_range(d: check.Diag, t: Text) -> J {
+  let start = t.position(d.line, d.col)
+  let end = if d.end_line > 0 { t.position(d.end_line, d.end_col) } else { start }
+  range_json(start, end)
+}
+
+/// toLSP.
+fn to_lsp(d: check.Diag, t: Text) -> J {
+  let sev = if d.note_sev { 3 } else if d.warning { 2 } else { 1 }
+  var msg = d.message
+  for n in d.notes {
+    msg = msg + "\nnote: " + n.message
+  }
+  var keys = ["range", "severity"]
+  var vals = [diag_range(d, t), jint(sev)]
+  if !d.code.is_empty() {
+    keys.push("code")
+    vals.push(jstr(d.code))
+  }
+  keys = keys + ["source", "message"]
+  vals = vals + [jstr("xo"), jstr(msg)]
+  jobj(keys, vals)
+}
+
+fn (var s: Session) publish(os: Os) uses (stdio, fs) {
+  var all: List[Str] = []
+  for (p, _) in s.docs {
+    all.push(p)
+  }
+  for (p, _) in s.diags {
+    if !all.contains(p) {
+      all.push(p)
+    }
+  }
+  var now: List[Str] = []
+  for p in all.sort() {
+    let t = match s.text_of(p) {
+      Some(t) => t
+      None => match os.fs.read(p) {
+        Ok(src) => new_text(src)
+        Err(_) => continue
+      }
+    }
+    var out: List[J] = []
+    for d in s.diags.get(p) ?? [] {
+      out.push(to_lsp(d, t))
+    }
+    now.push(p)
+    notify(os, "textDocument/publishDiagnostics", jobj(["uri", "diagnostics"], [jstr(path_to_uri(p)), jarr(out)]))
+  }
+  for p in s.published {
+    if !now.contains(p) {
+      notify(os, "textDocument/publishDiagnostics", jobj(["uri", "diagnostics"], [jstr(path_to_uri(p)), jarr([])]))
+    }
+  }
+  s.published = now
+}
+
+fn (var s: Session) fresh(os: Os) uses (stdio, fs, env) {
+  if s.dirty || !s.checked {
+    s.recheck(os)
+  }
+}
+
+fn int_of(v: J?) -> Int {
+  match v {
+    Some(J.Num(t)) => Int.parse(t) ?? 0
+    _ => 0
+  }
+}
+
+fn pos_of(v: J?) -> (Int, Int) {
+  let p = v ?? J.Null
+  (int_of(get(p, "line")), int_of(get(p, "character")))
+}
+
+fn uri_of(params: J) -> Str {
+  match get(get(params, "textDocument") ?? J.Null, "uri") {
+    Some(J.Str(u)) => u
+    _ => ""
+  }
+}
+
+/// A notification: documents opened, changed, closed, or saved.
+fn (var s: Session) notification(os: Os, method: Str, params: J) -> Bool {
+  if method == "textDocument/didOpen" {
+    let td = get(params, "textDocument") ?? J.Null
+    let path = uri_to_path(jstr_of(td, "uri"))
+    if !path.is_empty() {
+      s.docs[path] = jstr_of(td, "text").bytes()
+      s.dirty = true
+      return true
+    }
+  } else if method == "textDocument/didChange" {
+    let path = uri_to_path(uri_of(params))
+    var src = match s.docs.get(path) {
+      Some(b) => b
+      None => return false
+    }
+    match get(params, "contentChanges") {
+      Some(J.Arr(changes, _)) => {
+        for ch in changes {
+          let text = jstr_of(ch, "text")
+          match get(ch, "range") {
+            Some(J.Obj(_, _, _)) => {
+              let r = get(ch, "range") ?? J.Null
+              let t = new_text(src)
+              let (sl, sc) = pos_of(get(r, "start"))
+              let (el, ec) = pos_of(get(r, "end"))
+              let a = t.offset(sl, sc)
+              let b = t.offset(el, ec)
+              src = src[0..a] + text.bytes() + src[b..src.len()]
+            }
+            _ => src = text.bytes()
+          }
+        }
+      }
+      _ => {}
+    }
+    s.docs[path] = src
+    s.dirty = true
+    s.gen += 1
+    return false
+  } else if method == "textDocument/didClose" {
+    s.docs.remove(uri_to_path(uri_of(params)))
+    s.dirty = true
+    return true
+  } else if method is "textDocument/didSave" | "workspace/didChangeWatchedFiles" {
+    s.dirty = true
+    return true
+  }
+  false
+}
+
+/// The quick fixes of the diagnostics that overlap the range.
+fn (var s: Session) code_actions(os: Os, params: J) -> J uses (stdio, fs, env) {
+  s.fresh(os)
+  let path = uri_to_path(uri_of(params))
+  let t = match s.text_of(path) {
+    Some(t) => t
+    None => return jarr([])
+  }
+  let r = get(params, "range") ?? J.Null
+  let rs = pos_of(get(r, "start"))
+  let re = pos_of(get(r, "end"))
+  var out: List[J] = []
+  for d in s.diags.get(path) ?? [] {
+    let ld = to_lsp(d, t)
+    let start = d.line
+    let ds = t.position(d.line, d.col)
+    let de = if d.end_line > 0 { t.position(d.end_line, d.end_col) } else { ds }
+    if less(de, rs) || less(re, ds) {
+      continue
+    }
+    let _ = start
+    for (i, fx) in d.fixes.indexed() {
+      var uris: List[Str] = []
+      var edits: Map[Str, List[J]] = {}
+      for e in fx.edits {
+        let ep = abs_of(s.wd, e.span.file)
+        let et = if ep == path { Some(t) } else { s.text_of(ep) }
+        match et {
+          Some(tt) => {
+            let a = tt.position(e.span.line, e.span.col)
+            let b = if e.span.end_line > 0 { tt.position(e.span.end_line, e.span.end_col) } else { a }
+            let u = path_to_uri(ep)
+            if !uris.contains(u) {
+              uris.push(u)
+            }
+            var l = edits.get(u) ?? []
+            l.push(jobj(["range", "newText"], [range_json(a, b), jstr(e.replace)]))
+            edits[u] = l
+          }
+          None => {}
+        }
+      }
+      var ck: List[Str] = []
+      var cv: List[J] = []
+      for u in uris.sort() {
+        ck.push(u)
+        cv.push(jarr(edits.get(u) ?? []))
+      }
+      var keys = ["title", "kind", "diagnostics"]
+      var vals = [jstr(fx.title), jstr("quickfix"), jarr([ld])]
+      if i == 0 && d.fixes.len() == 1 {
+        keys.push("isPreferred")
+        vals.push(jbool(true))
+      }
+      keys.push("edit")
+      vals.push(jobj(["changes"], [jobj(ck, cv)]))
+      out.push(jobj(keys, vals))
+    }
+  }
+  jarr(out)
+}
+
+fn less(a: (Int, Int), b: (Int, Int)) -> Bool {
+  let (al, ac) = a
+  let (bl, bc) = b
+  al < bl || (al == bl && ac < bc)
+}
+
+// ---------------------------------------------------------------------------
+// document symbols (internal/lsp features.go symbols)
+
+fn span_range(t: Text, sp: parser.Span) -> J { range_json(t.offset_position(sp.start.offset), t.offset_position(sp.end.offset)) }
+
+fn sym(t: Text, name: Str, sel: parser.Span, whole: parser.Span, kind: Int, detail: Str, children: List[J]) -> J {
+  var keys = ["name"]
+  var vals = [jstr(name)]
+  if !detail.is_empty() {
+    keys.push("detail")
+    vals.push(jstr(detail))
+  }
+  keys = keys + ["kind", "range", "selectionRange"]
+  vals = vals + [jint(kind), span_range(t, whole), span_range(t, sel)]
+  if !children.is_empty() {
+    keys.push("children")
+    vals.push(jarr(children))
+  }
+  jobj(keys, vals)
+}
+
+fn ident_text(id: parser.Ident) -> Str { id.name.to_str() ?? "" }
+
+fn (s: Session) symbols(params: J) -> J {
+  let path = uri_to_path(uri_of(params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
+    None => return jarr([])
+  }
+  let pr = parser.parse_file(path.bytes(), src, false)
+  let t = new_text(src)
+  var out: List[J] = []
+  for d in pr.file.decls {
+    match d {
+      parser.Decl.FnDecl(x) => {
+        let name = ident_text(x.name)
+        if name.is_empty() {
+          continue
+        }
+        var kind = 12
+        var full = name
+        match x.recv {
+          Some(r) => {
+            kind = 6
+            match r.typ {
+              parser.Type.NamedType(_, path, _) => {
+                if !path.is_empty() {
+                  full = ident_text(path[path.len() - 1]) + "." + name
+                }
+              }
+              _ => {}
+            }
+          }
+          None => {}
+        }
+        out.push(sym(t, full, x.name.span, x.span, kind, "", []))
+      }
+      parser.Decl.StructDecl(x) => {
+        var ch: List[J] = []
+        for f in x.fields {
+          ch.push(sym(t, ident_text(f.name), f.name.span, f.span, 7, "", []))
+        }
+        out.push(sym(t, ident_text(x.name), x.name.span, x.span, 23, "", ch))
+      }
+      parser.Decl.EnumDecl(x) => {
+        var ch: List[J] = []
+        for v in x.variants {
+          ch.push(sym(t, ident_text(v.name), v.name.span, v.span, 22, "", []))
+        }
+        out.push(sym(t, ident_text(x.name), x.name.span, x.span, 10, "", ch))
+      }
+      parser.Decl.InterfaceDecl(x) => {
+        var ch: List[J] = []
+        for m in x.methods {
+          ch.push(sym(t, ident_text(m.name), m.name.span, m.span, 6, "", []))
+        }
+        out.push(sym(t, ident_text(x.name), x.name.span, x.span, 11, "", ch))
+      }
+      parser.Decl.TypeDecl(x) => {
+        out.push(sym(t, ident_text(x.name), x.name.span, x.span, 5, if x.newtype { "newtype" } else { "alias" }, []))
+      }
+      parser.Decl.ConstDecl(x) => {
+        out.push(sym(t, ident_text(x.name), x.name.span, x.span, 14, "", []))
+      }
+      parser.Decl.TestDecl(x) => {
+        match x.name {
+          Some(n) => {
+            let raw = src[n.span.start.offset..n.span.end.offset].to_str() ?? ""
+            out.push(sym(t, "test " + raw.trim_prefix("\"").trim_suffix("\""), n.span, x.span, 12, "", []))
+          }
+          None => {}
+        }
+      }
+      parser.Decl.BadDecl(_) => {}
+    }
+  }
+  jarr(out)
+}
+
+// ---------------------------------------------------------------------------
+// requests
+
+fn initialize_result(version: Str) -> J {
+  var tt: List[J] = []
+  for x in TOKEN_TYPES {
+    tt.push(jstr(x))
+  }
+  var tm: List[J] = []
+  for x in TOKEN_MODIFIERS {
+    tm.push(jstr(x))
+  }
+  jobj(["capabilities", "serverInfo"], [
+    jobj(["codeActionProvider", "definitionProvider", "documentFormattingProvider", "documentSymbolProvider", "hoverProvider", "positionEncoding", "referencesProvider", "renameProvider", "semanticTokensProvider", "textDocumentSync"], [
+      jobj(["codeActionKinds"], [jarr([jstr("quickfix")])]),
+      jbool(true),
+      jbool(true),
+      jbool(true),
+      jbool(true),
+      jstr("utf-16"),
+      jbool(true),
+      jobj(["prepareProvider"], [jbool(true)]),
+      jobj(["full", "legend"], [jbool(true), jobj(["tokenModifiers", "tokenTypes"], [jarr(tm), jarr(tt)])]),
+      jobj(["change", "openClose", "save"], [jint(2), jbool(true), jobj(["includeText"], [jbool(false)])]),
+    ]),
+    jobj(["name", "version"], [jstr("xo"), jstr(version)]),
+  ])
+}
+
+/// A request: Ok(result) or Err((code, message)).
+fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) -> J ! (Int, Str) uses (stdio, fs, env) {
+  if method == "initialize" {
+    return Ok(initialize_result(s.version))
+  }
+  if method == "shutdown" {
+    return Ok(J.Null)
+  }
+  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/formatting" | "textDocument/codeAction" | "textDocument/documentSymbol" | "textDocument/semanticTokens/full"
+  if !reads {
+    return Err((-32601, "method not supported: ${method}"))
+  }
+  if !has_params {
+    return Err((-32602, "unexpected end of JSON input"))
+  }
+  if method == "textDocument/codeAction" {
+    return Ok(s.code_actions(os, params))
+  }
+  if method == "textDocument/documentSymbol" {
+    return Ok(s.symbols(params))
+  }
+  let path = uri_to_path(uri_of(params))
+  if method == "textDocument/formatting" {
+    if s.docs.get(path).is_none() {
+      return Ok(J.Null)
+    }
+  } else {
+    s.fresh(os)
+    if s.files.get(path).is_none() {
+      if method == "textDocument/semanticTokens/full" {
+        return Ok(jobj(["data"], [jarr([])]))
+      }
+      if !s.err.is_empty() {
+        return Err((-32803, s.err))
+      }
+      return Ok(J.Null)
+    }
+  }
+  Err((-32803, "${method} is not available in the self hosted xo yet (decision 0178 stage 5)"))
+}
+
+/// The events of the server loop: a message, a debounce wake, or the end
+/// of input.
+enum Ev {
+  Msg(body: Str)
+  Wake(gen: Int)
+  End(err: Str)
+}
+
+pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock) {
+  match parse_flags("lsp", lsp_flags(), args) {
+    Ok(_) => {}
+    Err(text) => {
+      os.stdio.eprint(text)
+      return 2
+    }
+  }
+  let _ = ex
+  var s = Session{version: version, std_dir: std_dir(os), wd: os.env.get("PWD") ?? ""}
+  let events: Chan[Ev] = Chan.new(16)
+  var code = 0
+  scope sc {
+    sc.spawn_background(fn() {
+      var r = Reader{}
+      while {
+        match r.message(os) {
+          Ok(Some(body)) => events.send(Ev.Msg(body))
+          Ok(None) => {
+            events.send(Ev.End(""))
+            break
+          }
+          Err(e) => {
+            events.send(Ev.End(e))
+            break
+          }
+        }
+      }
+    })
+    while {
+      let ev = match events.recv() {
+        Some(e) => e
+        None => break
+      }
+      match ev {
+        Ev.End(e) => {
+          if !e.is_empty() {
+            os.stdio.eprintln("xo lsp: ${e}")
+            code = 1
+          }
+          break
+        }
+        Ev.Wake(g) => {
+          if g == s.gen && s.dirty {
+            s.recheck(os)
+          }
+        }
+        Ev.Msg(body) => {
+          let m = match parse(body) {
+            Ok(m) => m
+            Err(e) => {
+              os.stdio.eprintln("xo lsp: bad message: ${e}")
+              code = 1
+              break
+            }
+          }
+          let method = jstr_of(m, "method")
+          if method == "exit" {
+            break
+          }
+          let id = match get(m, "id") {
+            None | Some(J.Null) => ""
+            Some(_) => get_raw(m, "id") ?? ""
+          }
+          let params = get(m, "params") ?? J.Null
+          if id.is_empty() {
+            if s.notification(os, method, params) {
+              s.recheck(os)
+            } else if method == "textDocument/didChange" {
+              let g = s.gen
+              sc.spawn_background(fn() {
+                os.clock.sleep(150ms)
+                events.send(Ev.Wake(g))
+              })
+            }
+            continue
+          }
+          match s.request(os, method, params, get(m, "params").is_some()) {
+            Ok(res) => reply(os, id, res)
+            Err((c, msg)) => reply_error(os, id, c, msg)
+          }
+        }
+      }
+    }
+  }
+  code
+}

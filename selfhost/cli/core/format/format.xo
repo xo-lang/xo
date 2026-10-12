@@ -427,20 +427,23 @@ fn (var p: Printer) done(end: Int) {
 // ---------------------------------------------------------------------------
 // Lists
 
-/// What an element of a bracketed list or a body prints.
+/// What an element of a bracketed list or a body prints. Each node is
+/// held in a one element List (one word): held by value, a MatchArm made
+/// the enum too wide for the arm64 backend's reference counting helpers
+/// (gotchas/arm64-rc-helper-frame.md).
 enum ItemK {
-  TParam(tp: parser.TypeParam)
-  Param(prm: parser.Param)
-  Field(f: parser.Field)
-  Variant(v: parser.Variant)
-  VField(vf: parser.VariantField)
-  Method(m: parser.FnDecl)
-  XExpr(e: Expr)
-  Entry(en: parser.MapEntry)
-  FInit(fi: parser.FieldInit)
-  CallArg(a: parser.Arg)
-  MArm(ma: parser.MatchArm)
-  SArm(sa: parser.SelectArm)
+  TParam(tp: List[parser.TypeParam])
+  Param(prm: List[parser.Param])
+  Field(f: List[parser.Field])
+  Variant(v: List[parser.Variant])
+  VField(vf: List[parser.VariantField])
+  Method(m: List[parser.FnDecl])
+  XExpr(e: List[Expr])
+  Entry(en: List[parser.MapEntry])
+  FInit(fi: List[parser.FieldInit])
+  CallArg(a: List[parser.Arg])
+  MArm(ma: List[parser.MatchArm])
+  SArm(sa: List[parser.SelectArm])
 }
 
 /// One element of a bracketed list: its source range and what it prints.
@@ -452,7 +455,8 @@ struct Item {
 
 fn (var p: Printer) print_item(it: Item) {
   match it.k {
-    TParam(tp) => {
+    TParam(tps) => {
+      let tp = tps[0]
       p.w(name_of(tp.name))
       if tp.effects {
         p.w(": Effects")
@@ -461,8 +465,9 @@ fn (var p: Printer) print_item(it: Item) {
         p.typ(c)
       }
     }
-    Param(prm) => p.param(prm)
-    Field(f) => {
+    Param(prms) => p.param(prms[0])
+    Field(fs) => {
+      let f = fs[0]
       p.pub_kw(f.is_pub)
       p.w(name_of(f.name) + ": ")
       p.typ(f.typ)
@@ -471,33 +476,37 @@ fn (var p: Printer) print_item(it: Item) {
         p.expr(d)
       }
     }
-    Variant(v) => p.variant(v)
-    VField(vf) => {
+    Variant(vs) => p.variant(vs[0])
+    VField(vfs) => {
+      let vf = vfs[0]
       match vf.name {
         Some(n) if !vf.from => p.w(name_of(n) + ": ")
         _ => p.w("from ")
       }
       p.typ(vf.typ)
     }
-    Method(m) => p.fn_decl(m)
-    XExpr(e) => p.expr(e)
-    Entry(en) => {
+    Method(ms) => p.fn_decl(ms[0])
+    XExpr(es) => p.expr(es[0])
+    Entry(ens) => {
+      let en = ens[0]
       p.expr(en.key)
       p.w(": ")
       p.expr(en.value)
     }
-    FInit(fi) => {
+    FInit(fis) => {
+      let fi = fis[0]
       p.w(name_of(fi.name) + ": ")
       p.expr(fi.value)
     }
-    CallArg(a) => {
+    CallArg(args) => {
+      let a = args[0]
       if let Some(n) = a.name {
         p.w(name_of(n) + ": ")
       }
       p.expr(a.value)
     }
-    MArm(ma) => p.match_arm(ma)
-    SArm(sa) => p.select_arm(sa)
+    MArm(mas) => p.match_arm(mas[0])
+    SArm(sas) => p.select_arm(sas[0])
   }
 }
 
@@ -667,7 +676,7 @@ fn (var p: Printer) type_params(tps: List[parser.TypeParam], name_end: Int) -> I
   let open = p.find(name_end, '[')
   var items: List[Item] = []
   for tp in tps {
-    items.push(Item{start: off(tp.span), end: end_off(tp.span), k: ItemK.TParam(tp)})
+    items.push(Item{start: off(tp.span), end: end_off(tp.span), k: ItemK.TParam([tp])})
   }
   p.list("[", "]", open, items, false)
   p.last_off
@@ -676,7 +685,7 @@ fn (var p: Printer) type_params(tps: List[parser.TypeParam], name_end: Int) -> I
 fn (var p: Printer) params(ps: List[parser.Param], open_off: Int) {
   var items: List[Item] = []
   for prm in ps {
-    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param(prm)})
+    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param([prm])})
   }
   p.list("(", ")", open_off, items, false)
 }
@@ -904,7 +913,7 @@ fn (var p: Printer) struct_decl(s: parser.StructDecl) {
   p.w(" ")
   var items: List[Item] = []
   for f in s.fields {
-    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.Field(f)})
+    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.Field([f])})
   }
   p.members(p.find(end, '{'), items)
   if let Some(inv) = s.inv {
@@ -938,7 +947,7 @@ fn (var p: Printer) variant(v: parser.Variant) {
   }
   var items: List[Item] = []
   for vf in fields {
-    items.push(Item{start: off(vf.span), end: end_off(vf.span), k: ItemK.VField(vf)})
+    items.push(Item{start: off(vf.span), end: end_off(vf.span), k: ItemK.VField([vf])})
   }
   p.list("(", ")", p.find(end_off(v.name.span), '('), items, false)
 }
@@ -951,7 +960,7 @@ fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
   p.w(" ")
   var items: List[Item] = []
   for v in e.variants {
-    items.push(Item{start: off(v.span), end: end_off(v.span), k: ItemK.Variant(v)})
+    items.push(Item{start: off(v.span), end: end_off(v.span), k: ItemK.Variant([v])})
   }
   p.members(p.find(end, '{'), items)
   p.derive(e.derive)
@@ -965,7 +974,7 @@ fn (var p: Printer) iface_decl(d: parser.InterfaceDecl) {
   p.w(" ")
   var items: List[Item] = []
   for m in d.methods {
-    items.push(Item{start: off(m.span), end: end_off(m.span), k: ItemK.Method(m)})
+    items.push(Item{start: off(m.span), end: end_off(m.span), k: ItemK.Method([m])})
   }
   p.members(p.find(end, '{'), items)
 }
@@ -1284,7 +1293,7 @@ fn (var p: Printer) expr(e: Expr) {
     MapLit(span, entries) => {
       var items: List[Item] = []
       for en in entries {
-        items.push(Item{start: off(en.span), end: end_off(en.span), k: ItemK.Entry(en)})
+        items.push(Item{start: off(en.span), end: end_off(en.span), k: ItemK.Entry([en])})
       }
       p.list("{", "}", off(span), items, false)
     }
@@ -1332,7 +1341,7 @@ fn (var p: Printer) expr(e: Expr) {
       p.w(" ")
       var items: List[Item] = []
       for a in arms {
-        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.MArm(a)})
+        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.MArm([a])})
       }
       p.arms(p.find(eend(subject), '{'), end_off(span), items)
     }
@@ -1344,7 +1353,7 @@ fn (var p: Printer) expr(e: Expr) {
       p.w("select ")
       var items: List[Item] = []
       for a in arms {
-        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.SArm(a)})
+        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.SArm([a])})
       }
       p.arms(p.find(off(span) + 6, '{'), end_off(span), items)
     }
@@ -1362,7 +1371,7 @@ fn (var p: Printer) expr(e: Expr) {
 fn expr_items(es: List[Expr]) -> List[Item] {
   var items: List[Item] = []
   for e in es {
-    items.push(Item{start: eoff(e), end: eend(e), k: ItemK.XExpr(e)})
+    items.push(Item{start: eoff(e), end: eend(e), k: ItemK.XExpr([e])})
   }
   items
 }
@@ -1370,7 +1379,7 @@ fn expr_items(es: List[Expr]) -> List[Item] {
 fn (var p: Printer) field_inits(fs: List[parser.FieldInit], open_off: Int) {
   var items: List[Item] = []
   for f in fs {
-    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.FInit(f)})
+    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.FInit([f])})
   }
   p.list("{", "}", open_off, items, false)
 }
@@ -1448,7 +1457,7 @@ fn (var p: Printer) postfix(e: Expr) {
       CallExpr(_, fun, args) => {
         var items: List[Item] = []
         for a in args {
-          items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.CallArg(a)})
+          items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.CallArg([a])})
         }
         p.list("(", ")", p.find(eend(fun), '('), items, false)
       }
@@ -1593,7 +1602,7 @@ fn (var p: Printer) fn_lit(f: parser.FnLit) {
   p.w("fn")
   var items: List[Item] = []
   for prm in f.params {
-    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param(prm)})
+    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param([prm])})
   }
   p.list("(", ")", p.find(off(f.span) + 2, '('), items, false)
   if let Some(r) = f.result {

@@ -50,6 +50,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 #include <netinet/tcp.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -5352,6 +5353,7 @@ typedef struct {
 	xo_pd *pd;
 	char *addr;
 	void *mem; // the test world's in memory listener (xo_testing.c), or NULL
+	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
 } xo_listener;
 
 typedef struct {
@@ -5507,6 +5509,9 @@ static int go_split_hostport(const char *a, size_t n, const char **h, size_t *hl
 // without brackets) and port. Entries are a host (any port), `*.domain`
 // (any subdomain, any port), or `host:port`.
 static int net_entry_admits(const char *e, size_t en, const char *h, size_t hn, const char *p, size_t pn) {
+	if (en >= 5 && memcmp(e, "unix:", 5) == 0) {
+		return 0; // admits only its socket (net_admits_addr)
+	}
 	if (en >= 2 && e[0] == '*' && e[1] == '.') {
 		size_t sn = en - 1;
 		return hn > sn && memcmp(h + hn - sn, e + 1, sn) == 0;
@@ -5585,6 +5590,27 @@ static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n)
 	if (ln == 0) {
 		return 1;
 	}
+	if (n >= 5 && memcmp(a, "unix:", 5) == 0) {
+		// a Unix domain socket: the entry `unix:PATH`, exactly, in every
+		// list (decision 0190)
+		size_t i = 0;
+		while (i < (size_t)ln) {
+			i++; // the list's \1
+			int ok = 0;
+			while (i < (size_t)ln && lp[i] != '\1') {
+				const char *z = memchr(lp + i, 0, (size_t)ln - i);
+				size_t end = z ? (size_t)(z - lp) : (size_t)ln;
+				if (end - i == (size_t)n && memcmp(lp + i, a, (size_t)n) == 0) {
+					ok = 1;
+				}
+				i = end + 1;
+			}
+			if (!ok) {
+				return 0;
+			}
+		}
+		return 1;
+	}
 	const char *h, *p;
 	size_t hl, pl;
 	if (go_split_hostport(a, (size_t)n, &h, &hl, &p, &pl) < 0) {
@@ -5648,11 +5674,133 @@ static const char *err_text(int e) {
 		return "permission denied";
 	case ETIMEDOUT:
 		return "operation timed out";
+	case ENOENT:
+		return "no such file or directory";
+	case EINVAL:
+		return "invalid argument";
+	case ENOTDIR:
+		return "not a directory";
+	case EPROTOTYPE:
+		return "protocol wrong type for socket";
 	}
 	return strerror(e);
 }
 
 static const char closed_text[] = "use of closed network connection";
+
+static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd);
+
+// unix_addr fills a sockaddr_un with the path of a `unix:PATH` address:
+// -1 when it does not fit (Go's "invalid argument").
+static int unix_addr(const char *addr, struct sockaddr_un *sa) {
+	const char *path = addr + 5;
+	memset(sa, 0, sizeof *sa);
+	sa->sun_family = AF_UNIX;
+	if (strlen(path) >= sizeof sa->sun_path) {
+		return -1;
+	}
+	strcpy(sa->sun_path, path);
+	return 0;
+}
+
+// unix_listen is `net.listen("unix:PATH")` (decision 0190): Go's
+// net.Listen("unix", PATH), its messages, and the address as given.
+static xo_listener *unix_listen(xo_ctx *c, char *addr) {
+	const char *path = addr + 5;
+	struct sockaddr_un sa;
+	if (unix_addr(addr, &sa) < 0) {
+		net_fail(c, 4, "listen unix %s: bind: invalid argument", path);
+		free(addr);
+		return xo_h_zero();
+	}
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		net_fail(c, 4, "listen unix %s: socket: %s", path, err_text(x_errno()));
+		free(addr);
+		return xo_h_zero();
+	}
+	if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
+		int e = x_errno();
+		close(fd);
+		net_fail(c, 4, "listen unix %s: bind: %s", path, err_text(e));
+		free(addr);
+		return xo_h_zero();
+	}
+	if (listen(fd, SOMAXCONN) != 0) {
+		int e = x_errno();
+		close(fd);
+		unlink(path);
+		net_fail(c, 4, "listen unix %s: listen: %s", path, err_text(e));
+		free(addr);
+		return xo_h_zero();
+	}
+	set_nonblock(fd);
+	xo_pd *pd = pd_new(fd, 0);
+	if (!pd) {
+		int e = x_errno();
+		close(fd);
+		unlink(path);
+		net_fail(c, 4, "listen unix: %s", err_text(e));
+		free(addr);
+		return xo_h_zero();
+	}
+	xo_listener *l = xo_alloc(sizeof(xo_listener));
+	h_init(l, listener_free);
+	l->pd = pd;
+	l->mem = NULL;
+	l->addr = addr;
+	l->unlink_path = 1;
+	net_ok(c);
+	return l;
+}
+
+// unix_dial is `net.dial("unix:PATH")` (decision 0190): a socket file
+// with no listener is Refused, as in Go.
+static xo_conn *unix_dial(xo_ctx *c, const char *addr, int64_t when) {
+	const char *path = addr + 5;
+	struct sockaddr_un sa;
+	if (unix_addr(addr, &sa) < 0) {
+		net_fail(c, 4, "dial unix %s: connect: invalid argument", path);
+		return xo_h_zero();
+	}
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		net_fail(c, 4, "dial unix %s: socket: %s", path, err_text(x_errno()));
+		return xo_h_zero();
+	}
+	set_nonblock(fd);
+	xo_pd *pd = pd_new(fd, 1);
+	if (!pd) {
+		int e = x_errno();
+		close(fd);
+		net_fail(c, 4, "dial unix %s: %s", path, err_text(e));
+		return xo_h_zero();
+	}
+	pd_begin(pd);
+	int64_t e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
+	while (e == -EINTR) {
+		e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
+	}
+	if (e == -EINPROGRESS || e == -EAGAIN) {
+		int w = pd_wait_until(pd, 1, c, when);
+		e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
+	}
+	pd_end(pd);
+	if (e == 0) {
+		return conn_new(c, fd, pd);
+	}
+	pd_free(pd);
+	if (e == 1) {
+		net_fail(c, 5, "");
+	} else if (e == 2) {
+		net_fail(c, 4, "dial unix %s: i/o timeout", path);
+	} else if (e == -ECONNREFUSED) {
+		net_fail(c, 2, "");
+	} else {
+		net_fail(c, 4, "dial unix %s: connect: %s", path, err_text((int)-e));
+	}
+	return xo_h_zero();
+}
 
 // xo_net_listen is `net.listen(addr)` (std.md 3.2) on a Net of the
 // attenuation lists lp (decision 0175): an address they do not admit is
@@ -5673,6 +5821,9 @@ xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n)
 		xo_listener *ml = tw_listen(c, addr);
 		free(addr);
 		return ml;
+	}
+	if (strncmp(addr, "unix:", 5) == 0) {
+		return unix_listen(c, addr);
 	}
 	char host[256], port[32];
 	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
@@ -5736,6 +5887,7 @@ xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n)
 	l->pd = pd;
 	l->mem = NULL;
 	l->addr = fmt_addr((struct sockaddr *)&ss);
+	l->unlink_path = 0;
 	net_ok(c);
 	return l;
 }
@@ -5749,6 +5901,11 @@ void xo_listener_close(xo_listener *l) {
 		return;
 	}
 	pd_close(l->pd);
+	if (l->unlink_path) {
+		// as Go's UnixListener.Close: the socket file goes, once
+		l->unlink_path = 0;
+		unlink(l->addr + 5);
+	}
 }
 
 // conn_new makes a connection handle of a connected socket.
@@ -5787,7 +5944,7 @@ xo_conn *xo_listener_accept(xo_listener *l) {
 	}
 	xo_pd *pd = l->pd;
 	if (!pd_begin(pd)) {
-		net_fail(c, 4, "accept tcp %s: %s", l->addr, closed_text);
+		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
 		return xo_h_zero();
 	}
 	for (;;) {
@@ -5809,12 +5966,12 @@ xo_conn *xo_listener_accept(xo_listener *l) {
 			if (w == PD_CANCELED) {
 				net_fail(c, 5, "");
 			} else {
-				net_fail(c, 4, "accept tcp %s: %s", l->addr, closed_text);
+				net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
 			}
 			return xo_h_zero();
 		}
 		pd_end(pd);
-		net_fail(c, 4, "accept tcp %s: %s", l->addr, err_text((int)-fd));
+		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, err_text((int)-fd));
 		return xo_h_zero();
 	}
 }
@@ -5848,6 +6005,11 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 		return xo_h_zero();
 	}
 	char *addr = cstr_of(p, n);
+	if (strncmp(addr, "unix:", 5) == 0) {
+		xo_conn *u = unix_dial(c, addr, when);
+		free(addr);
+		return u;
+	}
 	char host[256], port[32];
 	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
 		net_fail(c, 4, "dial tcp %s: address %s: missing port in address", addr, addr);

@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"fmt"
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 )
@@ -221,7 +222,8 @@ func (s *fn) retv(v *Value) {
 // genFunc builds the function name once: params and results, body
 // filling it.
 func (b *builder) genFunc(name string, params, results []*Type, body func(s *fn, ps []*Value)) string {
-	if b.mod.Func(name) != nil {
+	name, ok := b.helperName(name, func(f *Func) bool { return sameTypes(paramTypes(f), params) })
+	if ok {
 		return name
 	}
 	f := b.mod.NewFunc(name, params, results)
@@ -229,6 +231,46 @@ func (b *builder) genFunc(name string, params, results []*Type, body func(s *fn,
 	body(s, f.Params())
 	s.finishFn()
 	return name
+}
+
+// helperName returns the name of the generated helper named name whose
+// signature same accepts, and whether it exists already. Helper names
+// hold checker type names, which do not name the module: two types of
+// one name in different modules (two `Ctx` structs) would share a
+// helper, so a helper of another signature takes the name with `#2`,
+// `#3`, ... (gotchas/ssa-helper-names-unqualified.md).
+func (b *builder) helperName(name string, same func(*Func) bool) (string, bool) {
+	n := name
+	for i := 2; ; i++ {
+		f := b.mod.Func(n)
+		if f == nil {
+			return n, false
+		}
+		if same(f) {
+			return n, true
+		}
+		n = fmt.Sprintf("%s#%d", name, i)
+	}
+}
+
+func paramTypes(f *Func) []*Type {
+	var out []*Type
+	for _, p := range f.Params() {
+		out = append(out, p.Type)
+	}
+	return out
+}
+
+func sameTypes(a, b []*Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +542,13 @@ func (b *builder) mapRemove(t *Type, ot *Type, at ast.Node) string {
 	K, V := mapKey(t), mapVal(t)
 	find := b.mapFind(t, at)
 	rt := m.Tuple(t, ot)
-	return b.genFunc("xo.map.remove["+t.Name+"]", []*Type{t, K}, []*Type{rt}, func(s *fn, ps []*Value) {
+	name := "xo.map.remove[" + t.Name + "]"
+	if f := m.Func(name); f != nil && f.Results[0].Name != rt.Name {
+		// Map[K, Bytes] lowers to the Map[K, Str] of Str values, but its
+		// removed value is a Bytes?: one function per result type
+		name += "[" + ot.Name + "]"
+	}
+	return b.genFunc(name, []*Type{t, K}, []*Type{rt}, func(s *fn, ps []*Value) {
 		mp, k := ps[0], ps[1]
 		idx := s.call(find, intT, "", mp, k, s.call(b.hashFunc(K, at), intT, "", k))
 		s.ifThen(s.add(OpLt, boolT, nil, idx, s.cint(0)), func() {

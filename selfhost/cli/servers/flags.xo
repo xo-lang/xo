@@ -1,0 +1,133 @@
+// Go's flag package as cmd/xo uses it for lsp, mcp, serve, dump, and
+// replay (flag.NewFlagSet(name, ContinueOnError)): the same parse, the
+// same error texts, and the same usage text on standard error, so the
+// commands fail as the Go ones do (exit status 2).
+
+/// A flag: kind is "bool", "string", or "duration"; def is the default
+/// as Go prints it (`5s`, `true`, or a string).
+pub struct Flag {
+  name: Str
+  kind: Str
+  def: Str
+  usage: Str
+}
+
+/// The flags set on the command line (name to value as written, `true`
+/// for a bare bool flag) and the arguments after them.
+pub struct Parsed {
+  pub values: Map[Str, Str] = {}
+  pub args: List[Str] = []
+}
+
+/// The value of a flag: the one given, else its default.
+pub fn (p: Parsed) get(flags: List[Flag], name: Str) -> Str {
+  match p.values.get(name) {
+    Some(v) => v
+    None => {
+      for f in flags {
+        if f.name == name {
+          return f.def
+        }
+      }
+      ""
+    }
+  }
+}
+
+/// flag.FlagSet.PrintDefaults, after "Usage of NAME:".
+fn usage_text(cmd: Str, flags: List[Flag]) -> Str {
+  var out = "Usage of ${cmd}:\n"
+  for f in flags.sort_by(fn(f) { f.name }) {
+    var line = "  -${f.name}"
+    let tname = if f.kind == "bool" { "" } else { f.kind }
+    if !tname.is_empty() {
+      line = line + " " + tname
+    }
+    line = line + (if line.len() <= 4 { "\t" } else { "\n    \t" })
+    line = line + f.usage.replace("\n", "\n    \t")
+    let zero = f.def.is_empty() || f.def == "false" || f.def == "0s"
+    if !zero {
+      line = line + (if f.kind == "string" { " (default ${f.def.quote()})" } else { " (default ${f.def})" })
+    }
+    out = out + line + "\n"
+  }
+  out
+}
+
+/// Parses args as flag.FlagSet.Parse does: Ok with the values, or Err
+/// with the text Go writes to standard error (the error and the usage).
+pub fn parse_flags(cmd: Str, flags: List[Flag], args: List[Str]) -> Parsed ! Str {
+  var p = Parsed{}
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    if a.len() < 2 || !a.starts_with("-") {
+      break
+    }
+    var name = a[1..]
+    if name.starts_with("-") {
+      name = name[1..]
+      if name.is_empty() {
+        // "--" ends the flags
+        i += 1
+        break
+      }
+    }
+    if name.is_empty() || name.starts_with("-") || name.starts_with("=") {
+      return Err("bad flag syntax: ${a}\n" + usage_text(cmd, flags))
+    }
+    var value: Str? = None
+    match name.find("=") {
+      Some(k) => {
+        value = Some(name[k + 1..])
+        name = name[..k]
+      }
+      None => {}
+    }
+    var def: Flag? = None
+    for f in flags {
+      if f.name == name {
+        def = Some(f)
+      }
+    }
+    match def {
+      None => {
+        if name == "help" || name == "h" {
+          return Err(usage_text(cmd, flags))
+        }
+        return Err("flag provided but not defined: -${name}\n" + usage_text(cmd, flags))
+      }
+      Some(f) => {
+        if f.kind == "bool" {
+          let v = value ?? "true"
+          if !(v is "1" | "t" | "T" | "TRUE" | "true" | "True" | "0" | "f" | "F" | "FALSE" | "false" | "False") {
+            return Err("invalid boolean value ${v.quote()} for -${name}: parse error\n" + usage_text(cmd, flags))
+          }
+          p.values[name] = if v is "1" | "t" | "T" | "TRUE" | "true" | "True" { "true" } else { "false" }
+        } else {
+          var v = ""
+          match value {
+            Some(x) => v = x
+            None => {
+              if i + 1 >= args.len() {
+                return Err("flag needs an argument: -${name}\n" + usage_text(cmd, flags))
+              }
+              i += 1
+              v = args[i]
+            }
+          }
+          if f.kind == "duration" && Duration.parse(v).is_err() {
+            return Err("invalid value ${v.quote()} for flag -${name}: parse error\n" + usage_text(cmd, flags))
+          }
+          p.values[name] = v
+        }
+      }
+    }
+    i += 1
+  }
+  while i < args.len() {
+    p.args.push(args[i])
+    i += 1
+  }
+  Ok(p)
+}

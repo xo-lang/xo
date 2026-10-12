@@ -320,6 +320,36 @@ command through xo1: 11 of 18 before the fixes above (the failures were
   regression the live cross-check would have caught, and every output
   users or tests depend on produced by Xo.
 
+## Stage 2 results (2026-10-12)
+
+The CLI core is in Xo in selfhost/cli/core (5,765 lines with the
+generated explain texts): `check`, `parse`, `explain`, `version`,
+`init`, `fmt`, `fix`, `vet`, `doc` (with `--json`), each with cmd/xo's
+flags (a port of Go's flag package: `-x` and `--x`, the same errors and
+usage text), exit codes, and output (JSON indented as Go's encoder,
+diagnostics escaped as json.Marshal escapes them). xo1 dispatches them
+(`core.is_command`). The formatter is selfhost/cli/core/format, a
+package of its own with a command line for the comparison test; the
+explain texts are generated from internal/diag
+(TestSelfhostExplainData keeps them in sync) and the version is checked
+against cmd/xo's (TestSelfhostVersion). cmd/xo's tests run against
+another binary with `XO_CLI` (cmd/xo/cli_test.go).
+
+- The formatter: **1121 of 1121 repository files** and **1121 of 1121
+  copies with changed blanks byte identical** to internal/format
+  (TestSelfhostFormat).
+- cmd/xo's tests of these commands against xo1 (`XO_CLI=xo1
+  XO_STD=<repo>/std`, `-short`): **19 of 19 pass**.
+- `scripts/selfhost-cli.py`: fmt and parse **715 of 715** directories
+  byte identical; check, check (human), vet, doc **706 of 715**; the 9
+  others need a module version the Xo checker would have to fetch.
+
+Not done in stage 2: `check --no-gc` reports no XO1201 (the SSA
+builder's no GC diagnostics are not ported; the native check runs);
+std is found through `--std`, XO_STD, or lib/xo/std beside `$_` until
+Env.program is native (cli-servers' branch); fetching a missing module
+during a check (the Xo checker reads the module cache only).
+
 ## Stage 3 results (2026-10-12)
 
 The semantic tools are in Xo in selfhost/cli/semantic (4,852 lines):
@@ -349,6 +379,44 @@ overlay; holes (XO0900) and the workspace directories came from stage 2.
 - The same commands run by both binaries on the cmd/xo test programs
   (stdout, stderr, exit status, and the files after an edit):
   **37 of 37 byte identical** (bench/results/retire-go-2026-10-12.md).
+
+## Stage 5, the servers (2026-10-12)
+
+`mcp`, `lsp`, `serve`, `dump`, and `replay` are selfhost/cli/servers,
+dispatched by xo1 (after the module and semantic commands, before stage
+2's). Native std first (decision 0190): `unix:PATH` addresses for
+`Net.listen`/`dial` (serve) and `Proc.kill(pid, signal)` (dump), both
+gated by attenuation; `Env.program` natively (the servers run their own
+binary again). How each command maps to Go's:
+
+- **mcp**: internal/mcp's server, with a JSON reader and writer in Xo
+  that reproduces encoding/json (scanner error texts, struct versus map
+  key matching, RawMessage kept as written and compacted, sorted map
+  keys, HTML escaping, numbers through float64). The tools run the
+  binary itself with `XO_NO_SERVE=1` where Go calls `run` in process.
+- **serve**: the same socket protocol, so Go and Xo clients and servers
+  interoperate; xo1's `check` and `query` forward to a running server
+  as cmd/xo does. The cache keeps whole command responses per working
+  directory and checked directories (the Go server keeps checked
+  sessions), with the same hit and miss counts.
+- **lsp**: framing, initialize, document sync with the 150 ms debounce,
+  publishDiagnostics from the self hosted checker with the open texts as
+  its overlay, codeAction, documentSymbol. Not yet: hover, definition,
+  references, rename, formatting, semantic tokens (they need
+  internal/lsp resolve.go over the checker's records, query's
+  declaration surfaces, and the formatter in process).
+- **dump**: SIGQUIT through `Proc.kill`, then the same polling of the
+  dump file.
+- **replay**: rebuilds with `xo build --backend=go` as a child and reads
+  the new build information from the binary (the string passed to
+  rt.SetBuildInfo) to report changed sources.
+
+Gate figures (results file, "Stage 5"): byte identical with the Go
+servers on the MCP protocol transcript (36 of 36) and tool calls (10 of
+10), dump (9 of 9), the serve protocol (10 of 10) and cache, the LSP
+transcript (14 of 14 steps), and replay; cmd/xo's own tests of these
+commands against xo1: 4 of 7 (the three others build or `run --record`
+through xo1, whose default backend is arm64, not Go).
 
 ## Consequences
 
