@@ -719,6 +719,7 @@ var RuntimeCalls = map[string]string{
 	"list.set":         "(List[T], Int, T) -> List[T]: faults when out of range; in place when unique",
 	"list.push":        "(List[T], T) -> List[T]",
 	"list.pop":         "(List[T]) -> (List[T], Option[T])",
+	"list.take":        "(List[T], Int) -> (List[T], T): element i moved out of a unique list, a placeholder in its slot until list.set (decision 0169); faults when out of range (Pos)",
 	"str.concat":       "(Str, Str) -> Str: consumes the left operand (appended in place when unique)",
 	"str.eq":           "(Str, Str) -> Bool",
 	"str.cmp":          "(Str, Str) -> Int: negative, zero, or positive",

@@ -66,7 +66,7 @@ func RuntimeRaises(name string) bool { return faultingRT[name] || name == "rt.fa
 
 // checkedCalls are the inline runtime operations that fault when they
 // carry a position.
-var checkedCalls = map[string]bool{"list.index": true, "list.set": true, "bytes.index": true, "Int.abs": true}
+var checkedCalls = map[string]bool{"list.index": true, "list.set": true, "list.take": true, "bytes.index": true, "Int.abs": true}
 
 // selfFaults reports whether v can raise a fault by itself (not through a
 // user function it calls).
@@ -376,12 +376,12 @@ func landingSite(b *Block) (w, u *Value) {
 }
 
 // keepsOperands reports an inline operation that faults before it
-// consumes its operands (`list.set` checks the index first): a landing
-// releases them. Calls hand theirs to the callee (or the runtime), which
+// consumes its operands (`list.set` and `list.take` check the index
+// first): a landing releases them. Calls hand theirs to the callee (or the runtime), which
 // releases what it holds when it faults.
 func keepsOperands(w *Value) bool {
 	name, _ := w.Aux.(string)
-	return w.Op == OpCall && name == "list.set" && w.Pos != ""
+	return w.Op == OpCall && (name == "list.set" || name == "list.take") && w.Pos != ""
 }
 
 // consumedLeaves lists the leaves w consumes that the function owns.

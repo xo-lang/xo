@@ -709,6 +709,9 @@ func (s *fn) mapUpdate(x *ast.CallExpr, p place, args []ast.Expr) *Value {
 	}
 	k := s.valueAs(args[0], mapKey(t))
 	init := s.valueAs(args[1], V)
+	// the store happens only when f succeeds: a list element on the way
+	// stays where it is (decision 0169)
+	*p.keep = true
 	mp := p.get()
 	idx := s.call(b.mapFind(t, x), intT, "", mp, k, s.call(b.hashFunc(mapKey(t), x), intT, "", k))
 	cur := local("v")

@@ -449,6 +449,39 @@ func (g *sgen) strConst(s string) string {
 	return fmt.Sprintf("{ ptr %s, i64 %d }", g.strObj(s), len(s))
 }
 
+// hole is the constant list.take leaves in a slot (decision 0169): its
+// Str, List, Box, and handle leaves point to an immortal object (the
+// empty string's, whose count retain and release never change), a
+// function value has no environment, and an enum's tag is past its
+// variants, so retain, release, and share of it do nothing.
+func (g *sgen) hole(t *ssa.Type) string {
+	if !t.Heap() {
+		return "zeroinitializer"
+	}
+	switch t.Kind {
+	case ssa.KStr:
+		return fmt.Sprintf("{ ptr %s, i64 0 }", g.strObj(""))
+	case ssa.KList, ssa.KBox, ssa.KHandle:
+		return g.strObj("")
+	case ssa.KEnum:
+		return fmt.Sprintf("{ i64 %d, [%d x i64] zeroinitializer }", len(t.Variants), g.words(t))
+	case ssa.KStruct, ssa.KTuple:
+		fts := t.Elems
+		if t.Kind == ssa.KStruct {
+			fts = nil
+			for _, f := range t.Fields {
+				fts = append(fts, f.Type)
+			}
+		}
+		var fs []string
+		for _, ft := range fts {
+			fs = append(fs, g.ll(ft)+" "+g.hole(ft))
+		}
+		return "{ " + strings.Join(fs, ", ") + " }"
+	}
+	return "zeroinitializer"
+}
+
 // cstr returns a NUL terminated global for a fault location.
 func (g *sgen) cstr(s string) string {
 	name, ok := g.locs[s]
@@ -1878,6 +1911,22 @@ func (s *sfn) call(v *ssa.Value) {
 			s.addr[v] = p
 		}
 		s.set(v, "load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+	case "list.take":
+		// element i moves out (decision 0169); its slot gets a
+		// placeholder that releasing ignores until list.set stores back
+		et := v.Type.Elems[1]
+		l := a(0)
+		if v.Pos != "" {
+			n := s.listLen(l)
+			bad := s.def("icmp uge i64 %s, %s", a(1), n)
+			s.faultIf(bad, "@xo_fault_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
+		}
+		p := s.elemPtr(et, l, a(1))
+		ev := s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+		s.emit("store %s %s, ptr %s%s", g.ll(et), g.hole(et), p, tbaaElem)
+		rt := g.ll(v.Type)
+		t := s.def("insertvalue %s undef, ptr %s, 0", rt, l)
+		s.set(v, "insertvalue %s %s, %s %s, 1", rt, t, g.ll(et), ev)
 	case "list.get":
 		ot := v.Type
 		et := v.Args[0].Type.Elems[0]

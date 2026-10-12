@@ -18,6 +18,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   command the tests run uses Xo's capped Go cache (`build.GoEnv`), held
   by the new TestGoCommandsUseXoCache; `go build` in reducediff_test and
   `go tool objdump` in internal/arm64 used the default cache.
+- Native backends: an update of a collection inside a list element
+  (`g.blocks[i].insts.push(x)`, `m[i][j] = v`, `rows[i].cells[j].g = v`,
+  `rows[i].m[k] = v`, `rows[i].text += "x"`) is in place when the outer
+  list is unique, instead of copying the inner collection every time
+  (decision 0169, `list.take`): 20,000 pushes 63.6 ms to 0.1 ms on
+  arm64. A shared outer list still copies (value semantics).
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by
