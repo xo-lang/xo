@@ -3,10 +3,11 @@
 // TLS library when the program uses std/http, and the system libraries,
 // trying the macOS SDKs internal/build tries until one links.
 
-/// What every step needs: the host, the repository root (std/.. :
-/// third_party), and the user cache directory.
+/// What every step needs: the host, the std directory, the repository
+/// root (std/.. : third_party), and the user cache directory.
 struct Ctx {
   goos: Str
+  std: Str
   xo: Str
   cache: Str
 }
@@ -26,6 +27,13 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
       flags.push(f)
     }
   }
+  // the C runtime from a release's prebuilt objects when one matches
+  // the flags and these sources (decision 0157)
+  let rti = runtime_index(srcs, flags)
+  var shipped = ("", "")
+  if rti >= 0 {
+    shipped = shipped_runtime(os, ctx, ctx.std, flags, tls)
+  }
   var cands: List[Str] = []
   let memo = sysroot_memo(os, ctx)
   if !memo.is_empty() {
@@ -37,13 +45,16 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   cands = cands + sysroot_candidates(os, ctx)
   var first = ""
   for root in cands {
-    let (out, ok) = try_link(os, ctx, cc, flags, libs, srcs, bin, tls, root)
+    let (out, ok, rt_fail) = try_link(os, ctx, cc, flags, libs, srcs, bin, tls, root, rti, shipped)
     if ok {
       if !memo.is_empty() {
         os.fs.create_dir_all(dir_name(memo)).ignore_err("the memo only saves time")
         os.fs.write(memo, "${root}\n".bytes()).ignore_err("the memo only saves time")
       }
       return ""
+    }
+    if rt_fail {
+      return out + "\n" + rtpack_hint(os, ctx)
     }
     // report an SDK independent failure over an SDK mismatch
     if first.is_empty() || (first.contains("tapi error") && !out.contains("tapi error")) {
@@ -57,30 +68,78 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   first
 }
 
-/// One link with the SDK root ("" the compiler's default): its output
-/// and whether it succeeded.
-fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: List[Str], bin: Str, tls: Bool,
-  root: Str) -> (Str, Bool) {
+/// One link with the SDK root ("" the compiler's default): its output,
+/// whether it succeeded, and whether the local compile of the runtime
+/// failed. rti is the index of the runtime in srcs (-1 for none), shipped
+/// the pack's object and TLS library ("" when none is used).
+fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, tls: Bool,
+  root: Str, rti: Int, shipped: (Str, Str)) -> (Str, Bool, Bool) {
   // the C runtime raises faults through the frames of generated code
   // and its own (decision 0085): every frame needs unwind tables
   var args = flags + ["-fexceptions", "-funwind-tables", "-o", bin]
   if !root.is_empty() {
     args = args + ["-isysroot", root]
   }
+  var srcs = srcs0
   var tls_link: List[Str] = []
-  if tls {
-    let t = tls_args(os, ctx, cc, flags, root)
-    if !t.err.is_empty() {
-      return (t.err, false)
+  let (sobj, slib) = shipped
+  if !sobj.is_empty() {
+    srcs[rti] = sobj
+    if tls {
+      tls_link = [slib] + tls_system_libs(ctx.goos)
     }
-    args = args + t.compile
-    tls_link = t.link
+  } else {
+    var tls_compile: List[Str] = []
+    if tls {
+      // std/http's TLS (decision 0105)
+      let t = tls_args(os, ctx, cc, flags, root)
+      if !t.err.is_empty() {
+        return (t.err, false, false)
+      }
+      tls_compile = t.compile
+      tls_link = t.link
+      args = args + t.compile
+    }
+    // the C runtime compiled once per flags and sources (rtobj.go)
+    if rti >= 0 && !rtobj_dir(os, ctx).is_empty() {
+      let r = runtime_object(os, ctx, cc, flags, root, tls_compile, srcs[rti])
+      if r.failed {
+        return (r.out, false, true)
+      }
+      if !r.obj.is_empty() {
+        srcs[rti] = r.obj
+      }
+    }
   }
   args = args + srcs + tls_link + libs + ["-lm", "-lpthread"]
   match os.proc.run(cc, args) {
-    Ok(r) => ((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""), r.code == 0)
-    Err(e) => ("${cc}: ${e}", false)
+    Ok(r) => {
+      let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
+      let ok = r.code == 0
+      // with the object cache off the runtime is compiled in the link
+      (out, ok, !ok && sobj.is_empty() && rti >= 0 && mentions_runtime(out))
+    }
+    Err(e) => ("${cc}: ${e}", false, false)
   }
+}
+
+/// rtPackHint: the hint of a failed local compile of the runtime.
+fn rtpack_hint(os: Os, ctx: Ctx) -> Str {
+  var why = "packs are off (XO_RTPACK=off)"
+  if (os.env.get("XO_RTPACK") ?? "") != "off" {
+    match load_rtpack(os, ctx, ctx.std) {
+      None => why = "no pack root was found"
+      Some(p) => why = p.why
+    }
+  }
+  if why.is_empty() {
+    why = "the link's flags are not those of a prebuilt variant"
+  }
+  var install = "install clang or gcc (Debian or Ubuntu: apt-get install clang)"
+  if ctx.goos == "darwin" {
+    install = "install the Command Line Tools (xcode-select --install)"
+  }
+  "hint: the C runtime (std/llrt) was compiled locally because no prebuilt runtime matched: ${why}; ${install}, or set XO_RTPACK to the lib/xo/rtpack directory of a release of xo built from the same sources (knowledgebase/decisions/0157-prebuilt-runtime-objects.md)"
 }
 
 /// sysrootCandidates: $XO_SYSROOT alone, else (macOS) the default, the

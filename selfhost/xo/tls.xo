@@ -152,19 +152,10 @@ fn tls_system_libs(goos: Str) -> List[Str] {
 /// tlsLibrary: the directory of the extracted tree and libxotls.a for cc,
 /// flavor, and sysroot, and an error text.
 fn tls_library(os: Os, ctx: Ctx, cc: Str, flavor: List[Str], sysroot: Str) -> (Str, Str) {
-  let src = match tls_source_hash(os, ctx.xo) {
-    Ok(h) => h
-    Err(e) => return ("", "the TLS library sources: ${e}")
+  let (root, dir, herr) = tls_dir(os, ctx, cc, flavor, sysroot)
+  if !herr.is_empty() {
+    return ("", herr)
   }
-  let (ver, _) = combined(os, cc, ["--version"])
-  let text = "${src}\n${cc}\n${ver}\n${sysroot}\n${ctx.goos}/arm64\n${flavor.join(" ")}\n${tls_file_defines_v()}\n"
-  let key = crypto.sha256(text.bytes()).to_hex()[0..20]
-  var root = "${ctx.cache}/xo/mbedtls"
-  let env_root = os.env.get("XO_TLS_CACHE") ?? ""
-  if !env_root.is_empty() {
-    root = env_root
-  }
-  let dir = "${root}/${tls_version()}-${key}"
   if os.fs.exists("${dir}/libxotls.a").ok() ?? false {
     return (dir, "")
   }
@@ -184,6 +175,24 @@ fn tls_library(os: Os, ctx: Ctx, cc: Str, flavor: List[Str], sysroot: Str) -> (S
     }
   }
   (dir, "")
+}
+
+/// The cache root and the library's directory for cc, flavor, and
+/// sysroot (tlsLibrary's key), and an error text.
+fn tls_dir(os: Os, ctx: Ctx, cc: Str, flavor: List[Str], sysroot: Str) -> (Str, Str, Str) {
+  let src = match tls_source_hash(os, ctx.xo) {
+    Ok(h) => h
+    Err(e) => return ("", "", "the TLS library sources: ${e}")
+  }
+  let (ver, _) = combined(os, cc, ["--version"])
+  let text = "${src}\n${cc}\n${ver}\n${sysroot}\n${ctx.goos}/arm64\n${flavor.join(" ")}\n${tls_file_defines_v()}\n"
+  let key = crypto.sha256(text.bytes()).to_hex()[0..20]
+  var root = "${ctx.cache}/xo/mbedtls"
+  let env_root = os.env.get("XO_TLS_CACHE") ?? ""
+  if !env_root.is_empty() {
+    root = env_root
+  }
+  (root, "${root}/${tls_version()}-${key}", "")
 }
 
 /// buildTLSLibrary: the tree extracted into dir (writeTLSTree) and

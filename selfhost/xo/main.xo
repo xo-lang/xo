@@ -2,17 +2,21 @@
 // (decision 0158): the lexer, parser, checker, SSA builder and its
 // passes, and the arm64 emitter, all in Xo, then the system C compiler
 // driver to assemble and link with the C runtime (std/llrt), as
-// internal/build does for `xo build --backend=arm64`.
+// internal/build does for `xo build --backend=arm64` (decision 0174).
 //
-//   xo1 build [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [-o OUT] [--asm=PATH] <dir>
-//   xo1 asm [--std=DIR] [--wd=DIR] <dir>       print the assembly
+//   xo1 build [flags] [-o OUT] [--asm=PATH] <dir>
+//   xo1 asm [--std=DIR] [--wd=DIR] <dir>
+//   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
+//
+// flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
-// default std), the TLS library's from DIR/../third_party. Programs that
-// need what internal/build adds beyond the runtime, TLS, and zone data
-// (`use c` sources) are not supported yet: the driver says so and exits
-// 1. It is not the released `xo` (decision 0150: that is the owner's
-// decision after the fixed point).
+// default std), the TLS library's from DIR/../third_party. A link takes
+// the runtime from a prebuilt pack or the runtime object cache, the TLS
+// library of std/http, and the zone data of std/time, keyed as
+// internal/build keys them, so both drivers share the caches. `use c`
+// sources are not linked yet. It is not the released `xo` (decision
+// 0150: that is the owner's decision after the fixed point).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -20,8 +24,8 @@ use github.com/xo-lang/xo/selfhost/arm64
 
 fn main(os: Os) ! {
   let args = os.env.args()
-  if args.is_empty() || !(args[0] is "build" | "asm") {
-    os.stdio.eprintln("usage: xo1 build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>")
+  if args.is_empty() || !(args[0] is "build" | "asm" | "keys") {
+    os.stdio.eprintln("usage: xo1 build|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -52,6 +56,12 @@ fn main(os: Os) ! {
       dirs.push(a)
     }
     i += 1
+  }
+  let goos = host_os(os)
+  let ctx = Ctx{goos: goos, std: std_dir, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  if cmd == "keys" {
+    keys(os, ctx, cc)?
+    return
   }
   if dirs.len() != 1 {
     os.stdio.eprintln("xo1: name one directory")
@@ -102,15 +112,17 @@ fn main(os: Os) ! {
     os.stdio.print(p.asm)
     return
   }
+  let parts = dirs[0].trim_suffix("/").split("/")
+  var name = parts[parts.len() - 1]
+  if name == "." || name.is_empty() {
+    name = base_name(wd)
+  }
   if out.is_empty() {
-    let parts = dirs[0].trim_suffix("/").split("/")
-    out = parts[parts.len() - 1]
+    out = name
   }
   if asm_path.is_empty() {
     asm_path = "${out}.s"
   }
-  let goos = host_os(os)
-  let ctx = Ctx{goos: goos, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
   os.fs.write(asm_path, p.asm.bytes())?
   // the C runtime next to the assembly (writeRuntime)
   let rtdir = "${out}.rt"
@@ -150,6 +162,26 @@ fn main(os: Os) ! {
     os.stdio.eprint(msg)
     fail(os, "${cc} failed")
   }
+}
+
+/// `xo1 keys`: the cache keys and directories this driver computes, to
+/// compare with the Go driver's (`xo rtpack --key`, the directories under
+/// the user cache): the prebuilt runtime keys of both targets, the pack
+/// status, the TLS library directory for the C compiler with the SDK of
+/// the last link, and the runtime object of a plain program.
+fn keys(os: Os, ctx: Ctx, cc0: Str) -> () ! FsErr {
+  let cc = if cc0.is_empty() { find_cc(os) } else { cc0 }
+  os.stdio.println("rtpack darwin/arm64 ${rtpack_key(os, ctx, ctx.std, "darwin")?}")
+  os.stdio.println("rtpack linux/arm64 ${rtpack_key(os, ctx, ctx.std, "linux")?}")
+  os.stdio.println(rtpack_status(os, ctx, ctx.std))
+  os.stdio.println("tls source ${tls_source_hash(os, ctx.xo)?}")
+  var root = ""
+  let memo = sysroot_memo(os, ctx)
+  if !memo.is_empty() {
+    root = (os.fs.read_text(memo).ok() ?? "").trim()
+  }
+  let (_, dir, err) = tls_dir(os, ctx, cc, [], root)
+  os.stdio.println("tls ${dir}${err} (cc ${cc}, sysroot ${root})")
 }
 
 /// The directory fault positions are relative to (internal/build

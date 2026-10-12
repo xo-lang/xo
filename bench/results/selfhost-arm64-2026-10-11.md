@@ -301,3 +301,26 @@ time_dynamic_zone, time_civil, time_format, duration_time) built by
 both drivers are byte identical binaries with the same output. The
 arm64 goldens use no std/time, so their count does not move: 147 of 147
 (measured on the build with steps 1 to 6).
+
+## Step 3: prebuilt runtime packs and the runtime object cache
+
+xo1 takes the runtime from a pack ($XO_RTPACK, else lib/xo/rtpack beside
+the binary as $_ names it, since Env.program is not native yet) when its
+key (RTPackKey) and checksums match and the flags are a pack variant's,
+else from <user cache>/xo/rtobj (the rtobj key: toolID of cc with its
+path, size, and modification time in nanoseconds from stat(1), the
+flags, the SDK, the TLS flags and source hash, every .c and .h of the
+runtime directory but xo_tzdata.*), compiling it on a miss, and trims
+the cache as trimCacheDir does. `xo1 keys` prints its keys. Checked:
+`xo1 keys` gives the same pack keys as `xo rtpack --key` for
+darwin/arm64 (2885da3c...dfc6) and linux/arm64 (410e9133...086b) and the
+same TLS directory; a plain program's runtime object lands under the
+same name (0df88719...6a89.o) from both drivers; with a pack built by
+`xo rtpack` both drivers link arith and http_tls (the TLS library from
+the pack, the TLS cache untouched) into identical binaries.
+
+Both drivers link the same binary: `scripts/selfhost-samebin.py` builds
+every arm64 golden with xo1 and with `xo build --backend=arm64` under the
+same file name and compares: **147 of 147 byte identical** (not just
+the code: LC_UUID and the ad hoc signature match too, since the inputs
+and names are the same). Goldens with A: 147 of 147.
