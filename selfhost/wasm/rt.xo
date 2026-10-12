@@ -63,6 +63,22 @@ fn rt_text(var g: Gen) -> Str {
   let bytes_n = 5
   let str_n = 3
   let dropsig = g.sig(["i32"], [])
+  let int8 = g.litp("Int8")
+  let uint8 = g.litp("UInt8")
+  let int16 = g.litp("Int16")
+  let uint16 = g.litp("UInt16")
+  let int32 = g.litp("Int32")
+  let uint32 = g.litp("UInt32")
+  let intn = g.litp("Int")
+  let uint64 = g.litp("UInt64")
+  let fitp = g.litp(" does not fit ")
+  let shlop = g.litp("<<")
+  let shrop = g.litp(">>")
+  let opchars = g.raw("+-*/%".bytes())
+  let closefit = g.litp(") does not fit ")
+  let oorfor = g.litp(" out of range for ")
+  let isoor = g.litp(" is out of range for ")
+  let notrune = g.litp(" is not a Unicode scalar value, so it is not a Rune")
   let nanmsg = g.litp("cannot convert NaN to Int")
   let oorint = g.litp(" is out of range for Int")
   let fffd = g.litp("\\u{FFFD}")
@@ -2591,6 +2607,937 @@ fn rt_text(var g: Gen) -> Str {
       local.get $ln
       call $fault_set
       i64.const 0)
+
+    ;; sized integers and Rune (std/llrt xo_bytes.c, decision 0079): every
+    ;; value an i64 of its type's range; checked operations fault with
+    ;; std/rt's messages
+    (func $int_name (param $bits i64) (param $uns i64) (result i32 i32)
+      local.get $bits
+      i64.const 8
+      i64.eq
+      if
+        local.get $uns
+        i64.eqz
+        if
+          ${int8}
+          return
+        end
+        ${uint8}
+        return
+      end
+      local.get $bits
+      i64.const 16
+      i64.eq
+      if
+        local.get $uns
+        i64.eqz
+        if
+          ${int16}
+          return
+        end
+        ${uint16}
+        return
+      end
+      local.get $bits
+      i64.const 32
+      i64.eq
+      if
+        local.get $uns
+        i64.eqz
+        if
+          ${int32}
+          return
+        end
+        ${uint32}
+        return
+      end
+      local.get $uns
+      i64.eqz
+      if
+        ${intn}
+        return
+      end
+      ${uint64})
+
+    ;; the decimal text of v as an unsigned 64 bit integer
+    (func $fmt_uint (param $u i64) (result i32 i32) (local $pos i32)
+      i32.const 48
+      local.set $pos
+      loop $d
+        local.get $pos
+        i32.const 1
+        i32.sub
+        local.tee $pos
+        local.get $u
+        i64.const 10
+        i64.rem_u
+        i32.wrap_i64
+        i32.const 48
+        i32.add
+        i32.store8
+        local.get $u
+        i64.const 10
+        i64.div_u
+        local.tee $u
+        i64.const 0
+        i64.ne
+        br_if $d
+      end
+      local.get $pos
+      i32.const 48
+      local.get $pos
+      i32.sub)
+
+    ;; s + v as a value of the type of bits and uns
+    (func $sapp_intx (param $a i32) (param $an i32) (param $v i64) (param $bits i64) (param $uns i64) (result i32 i32)
+      local.get $uns
+      i64.const 0
+      i64.ne
+      local.get $bits
+      i64.const 64
+      i64.eq
+      i32.and
+      if
+        local.get $a
+        local.get $an
+        local.get $v
+        call $fmt_uint
+        call $sapp
+        return
+      end
+      local.get $a
+      local.get $an
+      local.get $v
+      call $sapp_int)
+
+    (func $rs_append_u64 (param $a i32) (param $an i32) (param $v i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $v
+      call $fmt_uint
+      call $sapp)
+
+    ;; whether v is a value of the type of bits (below 64) and uns
+    (func $fits (param $v i64) (param $bits i64) (param $uns i64) (result i32) (local $lim i64)
+      local.get $bits
+      i64.const 64
+      i64.ge_s
+      if
+        i32.const 1
+        return
+      end
+      local.get $uns
+      i64.eqz
+      i32.eqz
+      if
+        local.get $v
+        i64.const 0
+        i64.ge_s
+        local.get $v
+        i64.const 1
+        local.get $bits
+        i64.shl
+        i64.lt_s
+        i32.and
+        return
+      end
+      i64.const 1
+      local.get $bits
+      i64.const 1
+      i64.sub
+      i64.shl
+      local.set $lim
+      local.get $v
+      i64.const 0
+      local.get $lim
+      i64.sub
+      i64.ge_s
+      local.get $v
+      local.get $lim
+      i64.lt_s
+      i32.and)
+
+    (func $int_in_range (param $v i64) (param $bits i64) (param $uns i64) (result i32)
+      local.get $uns
+      i64.const 0
+      i64.ne
+      local.get $bits
+      i64.const 64
+      i64.eq
+      i32.and
+      if
+        local.get $v
+        i64.const 0
+        i64.ge_s
+        return
+      end
+      local.get $v
+      local.get $bits
+      local.get $uns
+      call $fits)
+
+    ;; "integer overflow: A op B does not fit T"
+    (func $int_overflow (param $a i64) (param $op i64) (param $b i64) (param $bits i64) (param $uns i64) (param $l i32) (param $ln i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${ovf}
+      call $sapp
+      local.get $a
+      local.get $bits
+      local.get $uns
+      call $sapp_intx
+      i32.const 32
+      call $sapp_byte
+      local.get $op
+      call $op_text
+      call $sapp
+      i32.const 32
+      call $sapp_byte
+      local.get $b
+      local.get $bits
+      local.get $uns
+      call $sapp_intx
+      ${fitp}
+      call $sapp
+      local.get $bits
+      local.get $uns
+      call $int_name
+      call $sapp
+      local.get $l
+      i32.const 8
+      i32.add
+      local.get $ln
+      call $fault_set)
+
+    ;; the text of operator op of xo_int_op
+    (func $op_text (param $op i64) (result i32 i32)
+      local.get $op
+      i64.const 5
+      i64.eq
+      if
+        ${shlop}
+        return
+      end
+      local.get $op
+      i64.const 6
+      i64.eq
+      if
+        ${shrop}
+        return
+      end
+      local.get $op
+      i32.wrap_i64
+      i32.const ${opchars}
+      i32.add
+      i32.const 1)
+
+    (func $int_op (param $op i64) (param $a i64) (param $b i64) (param $bits i64) (param $uns i64) (param $l i32) (param $ln i32) (result i64)
+      (local $r i64) (local $mask i64) (local $bad i32) (local $u i32)
+      local.get $uns
+      i64.const 0
+      i64.ne
+      local.set $u
+      ;; unary minus
+      local.get $op
+      i64.const 7
+      i64.eq
+      if
+        local.get $u
+        if (result i32)
+          local.get $a
+          i64.const 0
+          i64.ne
+        else
+          local.get $bits
+          i64.const 64
+          i64.eq
+          if (result i32)
+            local.get $a
+            i64.const ${MIN_INT}
+            i64.eq
+          else
+            i64.const 0
+            local.get $a
+            i64.sub
+            local.get $bits
+            i64.const 0
+            call $fits
+            i32.eqz
+          end
+        end
+        if
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          ${negp}
+          call $sapp
+          local.get $a
+          local.get $bits
+          local.get $uns
+          call $sapp_intx
+          ${closefit}
+          call $sapp
+          local.get $bits
+          local.get $uns
+          call $int_name
+          call $sapp
+          local.get $l
+          i32.const 8
+          i32.add
+          local.get $ln
+          call $fault_set
+          i64.const 0
+          return
+        end
+        i64.const 0
+        local.get $a
+        i64.sub
+        return
+      end
+      ;; shifts
+      local.get $op
+      i64.const 5
+      i64.eq
+      local.get $op
+      i64.const 6
+      i64.eq
+      i32.or
+      if
+        local.get $b
+        i64.const 0
+        i64.lt_s
+        local.get $b
+        local.get $bits
+        i64.ge_s
+        i32.or
+        if
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          ${shift}
+          call $sapp
+          local.get $b
+          call $sapp_int
+          ${oorfor}
+          call $sapp
+          local.get $bits
+          local.get $uns
+          call $int_name
+          call $sapp
+          local.get $l
+          i32.const 8
+          i32.add
+          local.get $ln
+          call $fault_set
+          i64.const 0
+          return
+        end
+        local.get $op
+        i64.const 6
+        i64.eq
+        if
+          local.get $u
+          if
+            local.get $a
+            local.get $b
+            i64.shr_u
+            return
+          end
+          local.get $a
+          local.get $b
+          i64.shr_s
+          return
+        end
+        i64.const -1
+        local.set $mask
+        local.get $bits
+        i64.const 64
+        i64.lt_s
+        if
+          i64.const 1
+          local.get $bits
+          i64.shl
+          i64.const 1
+          i64.sub
+          local.set $mask
+        end
+        local.get $a
+        local.get $b
+        i64.shl
+        local.get $mask
+        i64.and
+        local.set $r
+        local.get $u
+        i32.eqz
+        local.get $bits
+        i64.const 64
+        i64.lt_s
+        i32.and
+        if
+          local.get $r
+          local.get $bits
+          i64.const 1
+          i64.sub
+          i64.shr_u
+          i64.const 1
+          i64.and
+          i64.eqz
+          i32.eqz
+          if
+            local.get $r
+            local.get $mask
+            i64.const -1
+            i64.xor
+            i64.or
+            local.set $r
+          end
+        end
+        local.get $u
+        if (result i64)
+          local.get $r
+          local.get $b
+          i64.shr_u
+        else
+          local.get $r
+          local.get $b
+          i64.shr_s
+        end
+        local.get $a
+        i64.ne
+        if
+          local.get $a
+          local.get $op
+          local.get $b
+          local.get $bits
+          local.get $uns
+          local.get $l
+          local.get $ln
+          call $int_overflow
+          i64.const 0
+          return
+        end
+        local.get $r
+        return
+      end
+      ;; division by zero
+      local.get $op
+      i64.const 3
+      i64.eq
+      local.get $op
+      i64.const 4
+      i64.eq
+      i32.or
+      local.get $b
+      i64.eqz
+      i32.and
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${divz}
+        call $sapp
+        local.get $a
+        local.get $bits
+        local.get $uns
+        call $sapp_intx
+        i32.const 32
+        call $sapp_byte
+        local.get $op
+        call $op_text
+        call $sapp
+        ${zero}
+        call $sapp
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i64.const 0
+        return
+      end
+      ;; UInt64
+      local.get $u
+      local.get $bits
+      i64.const 64
+      i64.eq
+      i32.and
+      if
+        local.get $op
+        i64.eqz
+        if
+          local.get $a
+          local.get $b
+          i64.add
+          local.tee $r
+          local.get $a
+          i64.lt_u
+          local.set $bad
+        end
+        local.get $op
+        i64.const 1
+        i64.eq
+        if
+          local.get $a
+          local.get $b
+          i64.sub
+          local.set $r
+          local.get $b
+          local.get $a
+          i64.gt_u
+          local.set $bad
+        end
+        local.get $op
+        i64.const 2
+        i64.eq
+        if
+          local.get $a
+          local.get $b
+          i64.mul
+          local.set $r
+          local.get $a
+          i64.eqz
+          i32.eqz
+          if
+            local.get $r
+            local.get $a
+            i64.div_u
+            local.get $b
+            i64.ne
+            local.set $bad
+          end
+        end
+        local.get $op
+        i64.const 3
+        i64.eq
+        if
+          local.get $a
+          local.get $b
+          i64.div_u
+          return
+        end
+        local.get $op
+        i64.const 4
+        i64.eq
+        if
+          local.get $a
+          local.get $b
+          i64.rem_u
+          return
+        end
+        local.get $bad
+        if
+          local.get $a
+          local.get $op
+          local.get $b
+          local.get $bits
+          local.get $uns
+          local.get $l
+          local.get $ln
+          call $int_overflow
+          i64.const 0
+          return
+        end
+        local.get $r
+        return
+      end
+      ;; narrow types: the exact result fits 64 bits, except an unsigned
+      ;; 32 bit product
+      local.get $op
+      i64.const 4
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.rem_s
+        return
+      end
+      local.get $op
+      i64.eqz
+      if
+        local.get $a
+        local.get $b
+        i64.add
+        local.set $r
+      end
+      local.get $op
+      i64.const 1
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.sub
+        local.set $r
+      end
+      local.get $op
+      i64.const 3
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.div_s
+        local.set $r
+      end
+      local.get $op
+      i64.const 2
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.mul
+        local.set $r
+        local.get $u
+        if
+          local.get $a
+          i64.eqz
+          i32.eqz
+          if
+            local.get $r
+            local.get $a
+            i64.div_u
+            local.get $b
+            i64.ne
+            local.set $bad
+          end
+          local.get $r
+          i64.const 1
+          local.get $bits
+          i64.shl
+          i64.const 1
+          i64.sub
+          i64.gt_u
+          local.get $bad
+          i32.or
+          if
+            local.get $a
+            local.get $op
+            local.get $b
+            local.get $bits
+            local.get $uns
+            local.get $l
+            local.get $ln
+            call $int_overflow
+            i64.const 0
+            return
+          end
+          local.get $r
+          return
+        end
+      end
+      local.get $r
+      local.get $bits
+      local.get $uns
+      call $fits
+      i32.eqz
+      if
+        local.get $a
+        local.get $op
+        local.get $b
+        local.get $bits
+        local.get $uns
+        local.get $l
+        local.get $ln
+        call $int_overflow
+        i64.const 0
+        return
+      end
+      local.get $r)
+
+    (func $int_conv (param $v i64) (param $fbits i64) (param $funs i64) (param $tbits i64) (param $tuns i64) (param $l i32) (param $ln i32) (result i64) (local $ok i32)
+      local.get $funs
+      i64.const 0
+      i64.ne
+      local.get $fbits
+      i64.const 64
+      i64.eq
+      i32.and
+      local.get $v
+      i64.const 0
+      i64.lt_s
+      i32.and
+      if
+        local.get $tuns
+        i64.const 0
+        i64.ne
+        local.get $tbits
+        i64.const 64
+        i64.eq
+        i32.and
+        local.set $ok
+      else
+        local.get $v
+        local.get $tbits
+        local.get $tuns
+        call $int_in_range
+        local.set $ok
+      end
+      local.get $ok
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        local.get $v
+        local.get $fbits
+        local.get $funs
+        call $sapp_intx
+        ${isoor}
+        call $sapp
+        local.get $tbits
+        local.get $tuns
+        call $int_name
+        call $sapp
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i64.const 0
+        return
+      end
+      local.get $v)
+
+    (func $rune_valid (param $r i64) (result i32)
+      local.get $r
+      i64.const 0
+      i64.ge_s
+      local.get $r
+      i64.const 1114111
+      i64.le_s
+      i32.and
+      local.get $r
+      i64.const 55296
+      i64.lt_s
+      local.get $r
+      i64.const 57343
+      i64.gt_s
+      i32.or
+      i32.and)
+
+    (func $rune_of (param $v i64) (param $bits i64) (param $uns i64) (param $l i32) (param $ln i32) (result i64)
+      local.get $uns
+      i64.const 0
+      i64.ne
+      local.get $bits
+      i64.const 64
+      i64.eq
+      i32.and
+      local.get $v
+      i64.const 0
+      i64.lt_s
+      i32.and
+      local.get $v
+      call $rune_valid
+      i32.eqz
+      i32.or
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        local.get $v
+        local.get $bits
+        local.get $uns
+        call $sapp_intx
+        ${notrune}
+        call $sapp
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i64.const 0
+        return
+      end
+      local.get $v)
+
+    (func $u64_to_float (param $v i64) (result f64)
+      local.get $v
+      f64.convert_i64_u)
+
+    (func $f32_round (param $v f64) (result f64)
+      local.get $v
+      f32.demote_f64
+      f64.promote_f32)
+
+    (func $i64_to_f32 (param $v i64) (result f64)
+      local.get $v
+      f32.convert_i64_s
+      f64.promote_f32)
+
+    (func $rs_push_byte (param $a i32) (param $an i32) (param $x i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $x
+      i32.wrap_i64
+      call $sapp_byte)
+
+    (func $rs_with_cap (param $n i64) (result i32 i32)
+      local.get $n
+      i64.const 16
+      local.get $n
+      i64.const 16
+      i64.gt_s
+      select
+      i32.wrap_i64
+      call $rs_new
+      i32.const 0)
+
+    ;; the UTF-8 of r in the scratch memory at 16 (U+FFFD when it is not a
+    ;; scalar value): its length
+    (func $utf8_enc (param $r i64) (result i32) (local $c i32) (local $n i32) (local $k i32)
+      local.get $r
+      call $rune_valid
+      if (result i32)
+        local.get $r
+        i32.wrap_i64
+      else
+        i32.const 65533
+      end
+      local.tee $c
+      i32.const 128
+      i32.lt_u
+      if
+        i32.const 16
+        local.get $c
+        i32.store8
+        i32.const 1
+        return
+      end
+      i32.const 4
+      local.set $n
+      local.get $c
+      i32.const 65536
+      i32.lt_u
+      if
+        i32.const 3
+        local.set $n
+      end
+      local.get $c
+      i32.const 2048
+      i32.lt_u
+      if
+        i32.const 2
+        local.set $n
+      end
+      ;; continuation bytes from the last
+      local.get $n
+      local.set $k
+      block $x
+        loop $l
+          local.get $k
+          i32.const 1
+          i32.le_u
+          br_if $x
+          local.get $k
+          i32.const 1
+          i32.sub
+          local.tee $k
+          local.get $c
+          i32.const 63
+          i32.and
+          i32.const 128
+          i32.or
+          i32.store8 offset=16
+          local.get $c
+          i32.const 6
+          i32.shr_u
+          local.set $c
+          br $l
+        end
+      end
+      i32.const 16
+      local.get $c
+      i32.const 192
+      i32.const 224
+      i32.const 240
+      local.get $n
+      i32.const 3
+      i32.eq
+      select
+      local.get $n
+      i32.const 2
+      i32.eq
+      select
+      i32.or
+      i32.store8
+      local.get $n)
+
+    (func $rs_append_rune (param $a i32) (param $an i32) (param $r i64) (result i32 i32) (local $n i32)
+      local.get $r
+      call $utf8_enc
+      local.set $n
+      local.get $a
+      local.get $an
+      i32.const 16
+      local.get $n
+      call $sapp)
+
+    (func $rs_push_rune (param $a i32) (param $an i32) (param $r i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $r
+      call $rs_append_rune)
+
+    ;; s + the Debug text of r (std/rt quoteRune)
+    (func $rs_append_rune_quote (param $a i32) (param $an i32) (param $r i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      i32.const 39
+      call $sapp_byte
+      local.set $an
+      local.set $a
+      local.get $r
+      i64.const 39
+      i64.eq
+      local.get $r
+      i64.const 92
+      i64.eq
+      i32.or
+      if
+        local.get $a
+        local.get $an
+        i32.const 92
+        call $sapp_byte
+        local.get $r
+        i32.wrap_i64
+        call $sapp_byte
+        local.set $an
+        local.set $a
+      else
+        local.get $r
+        i64.const 10
+        i64.eq
+        local.get $r
+        i64.const 9
+        i64.eq
+        i32.or
+        if
+          local.get $a
+          local.get $an
+          i32.const 92
+          call $sapp_byte
+          i32.const 110
+          i32.const 116
+          local.get $r
+          i64.const 10
+          i64.eq
+          select
+          call $sapp_byte
+          local.set $an
+          local.set $a
+        else
+          local.get $a
+          local.get $an
+          local.get $r
+          call $rs_append_rune
+          local.set $an
+          local.set $a
+        end
+      end
+      local.get $a
+      local.get $an
+      i32.const 39
+      call $sapp_byte)
 
     ;; the prelude's Str operations (std/llrt xo_std.c): operands are
     ;; borrowed, a Str result is new

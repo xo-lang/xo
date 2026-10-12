@@ -13,6 +13,13 @@ import { Worker, isMainThread, workerData, parentPort } from 'node:worker_thread
 import { WASI } from 'node:wasi';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import v8 from 'node:v8';
+
+// V8's concurrent garbage collector crashed (SIGSEGV in
+// InnerPointerToCodeCache::GetCacheEntry) in about one run in three of
+// programs that allocate much (knowledgebase/gotchas/
+// node-wasm-concurrent-gc-crash.md); the single threaded collector does not.
+v8.setFlagsFromString('--single-threaded-gc');
 
 if (isMainThread) {
   const [file, ...args] = process.argv.slice(2);
@@ -22,7 +29,7 @@ if (isMainThread) {
   }
   const w = new Worker(fileURLToPath(import.meta.url), {
     workerData: { file, args },
-    resourceLimits: { stackSizeMb: 1024 },
+    resourceLimits: { stackSizeMb: Number(process.env.XO_WASM_STACK_MB || 1024) },
     stdout: false,
     stderr: false,
   });
