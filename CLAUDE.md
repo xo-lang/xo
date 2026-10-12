@@ -86,10 +86,11 @@ Update the knowledgebase in the same change as the work, not later:
     internal/arm64, cmd/xo, self-hosted builds, benchmarks) goes through
     the lead's machine-wide lock script, one at a time, and each agent
     logs its steps to a file the lead monitors.
-  - batched full runs (owner, 2026-10-11): agents finish on targeted
-    tests and the selfhost merge tier, never the full tier; the lead
-    merges each report (`-short` and vet after each merge) and runs one
-    full tier on the combined main per batch, bisecting over the batch's
+  - batched runs (owner, 2026-10-11, 2026-10-12): agents run no
+    verification before reporting (no merge tier, no package suites),
+    only `-short` and the targeted heavy runs their work depends on; the lead
+    merges each report (`-short` and vet after each merge) and runs the
+    merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 2.5 min), `full` (every backend, about
