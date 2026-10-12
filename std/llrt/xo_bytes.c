@@ -254,11 +254,10 @@ xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
 // (std/native/llrt/text.xo, decision 0193), one call instead of one per
 // byte. A unique string with room takes the bytes in place.
 xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *len) {
+	// a little endian word (every target of the native backends)
 	uint64_t u = (uint64_t)w;
 	unsigned char t[8];
-	for (int i = 0; i < 8; i++) {
-		t[i] = (unsigned char)(u >> (8 * i));
-	}
+	memcpy(t, &u, 8);
 	*len = an + n;
 	if (rc_load(&a->rc) == 1 && a->cap - an >= 8) {
 		memcpy(a->data + an, t, 8);
@@ -272,16 +271,31 @@ xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *
 // (w0's the lowest): a Duration's or Time's text assembled by
 // std/native/llrt/text.xo in one call (decision 0193).
 xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_t w2, int64_t w3, int64_t lens, int64_t *len) {
-	uint64_t w[4] = {(uint64_t)w0, (uint64_t)w1, (uint64_t)w2, (uint64_t)w3};
-	unsigned char t[32];
-	int k = 0;
-	for (int i = 0; i < 4; i++) {
-		int n = (int)((lens >> (4 * i)) & 15);
-		for (int j = 0; j < n; j++) {
-			t[k++] = (unsigned char)(w[i] >> (8 * j));
-		}
-	}
+	int n0 = (int)(lens & 15), n1 = (int)(lens >> 4 & 15), n2 = (int)(lens >> 8 & 15), n3 = (int)(lens >> 12 & 15);
+	int k = n0 + n1 + n2 + n3;
 	*len = an + k;
+	unsigned char t[40];
+	unsigned char *d = t;
+	int direct = rc_load(&a->rc) == 1 && a->cap - an >= 32;
+	if (direct) {
+		// in place: whole words stored, each overwriting the slack of the
+		// one before (the bytes past the text are never read)
+		d = (unsigned char *)a->data + an;
+	}
+	// whole little endian words (every target of the native backends is
+	// little endian)
+	uint64_t u;
+	u = (uint64_t)w0;
+	memcpy(d, &u, 8);
+	u = (uint64_t)w1;
+	memcpy(d + n0, &u, 8);
+	u = (uint64_t)w2;
+	memcpy(d + n0 + n1, &u, 8);
+	u = (uint64_t)w3;
+	memcpy(d + n0 + n1 + n2, &u, 8);
+	if (direct) {
+		return a;
+	}
 	return rs_append(a, an, (const char *)t, k);
 }
 
