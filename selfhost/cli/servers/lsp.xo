@@ -18,6 +18,7 @@
 // RequestFailed "<method> is not available in the self hosted xo yet".
 
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/modules
 use github.com/xo-lang/xo/selfhost/parser
 
 const TOKEN_TYPES = ["namespace", "type", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"]
@@ -391,7 +392,7 @@ pub fn std_dir(os: Os) -> Str uses (env, fs) {
 
 /// recheck: checks the modules of the open documents and publishes their
 /// diagnostics.
-fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
+fn (var s: Session) recheck(os: Os) uses (stdio, fs, env, net, proc, rand) {
   s.dirty = false
   s.checked = true
   s.files = {}
@@ -415,8 +416,8 @@ fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
   c.overlay = overlay
   c.set_mod_env(s.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
     os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
-  match c.check_dirs(dirs) {
-    Ok(_) => {}
+  match modules.check_fetching(os, s.wd, c, dirs) {
+    Ok(k) => c = k
     Err(e) => {
       s.err = e
       notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${e}"), jint(2)]))
@@ -502,7 +503,7 @@ fn (var s: Session) publish(os: Os) uses (stdio, fs) {
   s.published = now
 }
 
-fn (var s: Session) fresh(os: Os) uses (stdio, fs, env) {
+fn (var s: Session) fresh(os: Os) uses (stdio, fs, env, net, proc, rand) {
   if s.dirty || !s.checked {
     s.recheck(os)
   }
@@ -579,7 +580,7 @@ fn (var s: Session) notification(os: Os, method: Str, params: J) -> Bool {
 }
 
 /// The quick fixes of the diagnostics that overlap the range.
-fn (var s: Session) code_actions(os: Os, params: J) -> J uses (stdio, fs, env) {
+fn (var s: Session) code_actions(os: Os, params: J) -> J uses (stdio, fs, env, net, proc, rand) {
   s.fresh(os)
   let path = uri_to_path(uri_of(params))
   let t = match s.text_of(path) {
@@ -775,7 +776,7 @@ fn initialize_result(version: Str) -> J {
 }
 
 /// A request: Ok(result) or Err((code, message)).
-fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) -> J ! (Int, Str) uses (stdio, fs, env) {
+fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) -> J ! (Int, Str) uses (stdio, fs, env, net, proc, rand) {
   if method == "initialize" {
     return Ok(initialize_result(s.version))
   }
@@ -823,7 +824,7 @@ enum Ev {
   End(err: Str)
 }
 
-pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock) {
+pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock, net, rand) {
   match parse_flags("lsp", lsp_flags(), args) {
     Ok(_) => {}
     Err(text) => {

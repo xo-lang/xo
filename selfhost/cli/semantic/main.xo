@@ -15,7 +15,7 @@ fn main(os: Os) ! {
 
 /// Runs one command line (args[0] is the command) and returns its exit
 /// status.
-pub fn run(os: Os, args: List[Str]) -> Int uses env, fs, stdio, proc {
+pub fn run(os: Os, args: List[Str]) -> Int uses (env, fs, stdio, proc, net, rand) {
   if args.is_empty() {
     os.stdio.eprintln("usage: semantic query|edit|defhash <args...>")
     return 2

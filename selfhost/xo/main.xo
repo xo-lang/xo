@@ -204,8 +204,8 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   }
   c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
-  match c.check_dirs(o.dirs) {
-    Ok(_) => {}
+  match modules.check_fetching(os, o.wd, c, o.dirs) {
+    Ok(k) => c = k
     Err(e) => fail(os, "check: ${e}")
   }
   if !c.unsupported.is_empty() {

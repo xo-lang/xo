@@ -505,7 +505,7 @@ fn subdir_of(top: Str, dir: Str) -> Str {
 /// exports and effects with the previous vX.Y.Z tag of the repository and
 /// rejects a minor or patch release that breaks them (XO1310). Without
 /// check it also requires a clean working tree. It never tags or pushes.
-pub fn publish(os: Os, dir: Str, version: Str, only_check: Bool) -> PublishResult uses env, fs, proc {
+pub fn publish(os: Os, dir: Str, version: Str, only_check: Bool) -> PublishResult uses (env, fs, proc, net, rand) {
   var r = PublishResult{}
   let wd = wd_of(os)
   let root = mod_root(os.fs, wd, dir)

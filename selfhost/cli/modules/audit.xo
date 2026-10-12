@@ -119,8 +119,8 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   } else {
     dirs = c.workspace_dirs(dirs)
   }
-  match chk.check_dirs(dirs) {
-    Ok(_) => {}
+  match check_fetching(c.os, c.wd, chk, dirs) {
+    Ok(k) => chk = k
     Err(e) => {
       c.os.stdio.eprintln("xo audit: ${e}")
       return 2
