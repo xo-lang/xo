@@ -228,6 +228,12 @@ commands:
       Print the toolchain version, the source revision, and the host target.
 `
 
+// selfDriver, when set, runs `build`, `run`, and `test` instead of this
+// CLI: cmd/xo's tests set it with XO_SELF_DRIVER=1 to run those commands
+// through the self hosted driver xo1 (decision 0178 stage 1's gate,
+// selfdriver_test.go). It is nil in the released xo.
+var selfDriver func(args []string, stdout, stderr io.Writer) int
+
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
@@ -240,6 +246,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	args = append([]string{args[0]}, rest...)
+	if selfDriver != nil && (args[0] == "build" || args[0] == "run" || args[0] == "test") {
+		return selfDriver(args, stdout, stderr)
+	}
 	switch args[0] {
 	case "get":
 		return runGet(args[1:], stdout, stderr)

@@ -1,0 +1,254 @@
+// The command line of xo1 (decision 0178 stage 1): the flags of `xo
+// build`, `xo run`, and `xo test` (cmd/xo build.go) with Go's flag
+// package rules, so the same command lines work with both drivers:
+// `-name` or `--name`, `--name=value` or `--name value` for a flag with
+// a value, `--name` or `--name=false` for a boolean; parsing stops at the
+// first argument that is not a flag or after `--`. xo1's own flags
+// (--std, --wd, --cc, --asm, --go-tree, --phase-times, --target) are
+// parsed the same way.
+
+/// Everything a command line sets.
+struct Opts {
+  cmd: Str = ""
+  std: Str = "std"
+  wd: Str = ""
+  cc: Str = ""
+  out: Str = ""
+  asm_path: Str = ""
+  /// --tzdata: "embedded" (the default, as cmd/xo's flag) or "system".
+  tzdata: Str = "embedded"
+  /// --targets (comma separated os/arch, or all) or xo1's --target.
+  targets: Str = ""
+  /// --backend as given ("" when not given; xo1's default is arm64).
+  backend: Str = ""
+  go_tree: Str = ""
+  phases: Bool = false
+  json: Bool = false
+  ci: Bool = false
+  release: Bool = false
+  error_args: Bool = true
+  hybrid: Bool = false
+  no_mono: Bool = false
+  no_arenas: Bool = false
+  no_gc: Bool = false
+  holes: Bool = false
+  race: Bool = false
+  real: Bool = false
+  record: Str = ""
+  explore: Int = 0
+  /// --offline: "1" on, "0" off, "" not given (XO_OFFLINE decides).
+  offline: Str = ""
+  /// --workspace: "off", "on", or "" not given (XO_WORK decides).
+  workspace: Str = ""
+  /// --stamp NAME=VALUE, in command line order.
+  stamps: List[(Str, Str)] = []
+  topts: TestOpts = TestOpts{}
+  /// The directories (build, test, asm) or the one directory of run.
+  dirs: List[Str] = []
+  /// run: the program's arguments (after the directory, or after --).
+  prog_args: List[Str] = []
+}
+
+/// The flags that take a value (every other known flag is a boolean).
+fn value_flags() -> List[Str] {
+  ["o", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "std", "wd", "cc", "asm", "go-tree", "workspace"]
+}
+
+/// The boolean flags.
+fn bool_flags() -> List[Str] {
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline"]
+}
+
+fn usage_line() -> Str {
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --seed=N --explore=N --record=FILE --run=SUB --cases=N --real -v --phase-times"
+}
+
+/// usage prints the usage line with why and exits 2 (flag.ErrHelp and a
+/// bad flag both exit 2 in cmd/xo).
+fn usage(os: Os, why: Str) -> Never {
+  if !why.is_empty() {
+    os.stdio.eprintln(why)
+  }
+  os.stdio.eprintln(usage_line())
+  os.proc.exit(2)
+}
+
+/// parse_args reads the command line (args[0] is the command).
+fn parse_args(os: Os, args: List[Str]) -> Opts {
+  var o = Opts{cmd: args[0], wd: os.env.get("PWD") ?? ""}
+  let vals = value_flags()
+  let bools = bool_flags()
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a == "--" {
+      i += 1
+      break
+    }
+    if !a.starts_with("-") || a == "-" {
+      break
+    }
+    var name = a.trim_prefix("-")
+    name = name.trim_prefix("-")
+    var value = ""
+    var has_value = false
+    let eq = name.split("=")
+    if eq.len() > 1 {
+      value = eq[1..eq.len()].join("=")
+      name = eq[0]
+      has_value = true
+    }
+    if name == "h" || name == "help" {
+      usage(os, "")
+    }
+    if vals.contains(name) {
+      if !has_value {
+        if i + 1 >= args.len() {
+          usage(os, "flag needs an argument: -${name}")
+        }
+        value = args[i + 1]
+        i += 1
+      }
+      set_value(os, o, name, value)
+    } else if bools.contains(name) {
+      var on = true
+      if has_value {
+        if value is "true" | "1" | "t" | "T" | "TRUE" | "True" {
+          on = true
+        } else if value is "false" | "0" | "f" | "F" | "FALSE" | "False" {
+          on = false
+        } else {
+          usage(os, "invalid boolean value \"${value}\" for -${name}: parse error")
+        }
+      }
+      set_bool(os, o, name, on)
+    } else {
+      usage(os, "flag provided but not defined: -${name}")
+    }
+    i += 1
+  }
+  var rest: List[Str] = []
+  while i < args.len() {
+    rest.push(args[i])
+    i += 1
+  }
+  if o.cmd == "run" {
+    // cmd/xo runRun: the directory, then the program's arguments after
+    // an optional --
+    var dir = "."
+    var r = rest
+    if !r.is_empty() {
+      if r[0] != "--" {
+        dir = r[0]
+        r = r[1..r.len()]
+      }
+      if !r.is_empty() && r[0] == "--" {
+        r = r[1..r.len()]
+      }
+    }
+    o.dirs = [dir]
+    o.prog_args = r
+    return o
+  }
+  o.dirs = if rest.is_empty() { ["."] } else { rest }
+  o
+}
+
+fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
+  if name == "o" {
+    o.out = v
+  } else if name == "targets" || name == "target" {
+    o.targets = v
+  } else if name == "backend" {
+    o.backend = v
+  } else if name == "tzdata" {
+    o.tzdata = v
+  } else if name == "stamp" {
+    let parts = v.split("=")
+    if parts.len() < 2 || parts[0].is_empty() {
+      usage(os, "invalid value \"${v}\" for flag -stamp: --stamp ${v.quote()}: want NAME=VALUE (NAME is a `const NAME: Str` of the main module)")
+    }
+    var kept: List[(Str, Str)] = []
+    for (n, x) in o.stamps {
+      if n != parts[0] {
+        kept.push((n, x))
+      }
+    }
+    kept.push((parts[0], parts[1..parts.len()].join("=")))
+    o.stamps = kept
+  } else if name == "seed" {
+    o.topts.seed = int_flag(os, name, v)
+  } else if name == "explore" {
+    o.explore = int_flag(os, name, v)
+  } else if name == "cases" {
+    o.topts.cases = int_flag(os, name, v)
+  } else if name == "record" {
+    o.record = v
+  } else if name == "run" {
+    o.topts.run = v
+  } else if name == "std" {
+    o.std = v
+  } else if name == "wd" {
+    o.wd = v
+  } else if name == "cc" {
+    o.cc = look_path(os, v)
+  } else if name == "asm" {
+    o.asm_path = v
+  } else if name == "go-tree" {
+    o.go_tree = v
+  } else if name == "workspace" {
+    // cmd/xo moduleFlags: XO_WORK for this run
+    if v == "off" {
+      o.workspace = "off"
+    } else if v is "on" | "auto" {
+      o.workspace = "on"
+    } else {
+      os.stdio.eprintln("xo ${o.cmd}: --workspace=${v}: want off or on")
+      os.proc.exit(2)
+    }
+  }
+}
+
+fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
+  if name == "json" {
+    o.json = on
+    o.topts.json = on
+  } else if name == "ci" {
+    o.ci = on
+  } else if name == "release" {
+    o.release = on
+  } else if name == "error-args" {
+    o.error_args = on
+  } else if name == "hybrid" {
+    o.hybrid = on
+  } else if name == "mono" {
+    o.no_mono = o.no_mono || !on
+  } else if name == "no-mono" {
+    o.no_mono = on
+  } else if name == "arenas" {
+    o.no_arenas = o.no_arenas || !on
+  } else if name == "no-arenas" {
+    o.no_arenas = on
+  } else if name == "no-gc" {
+    o.no_gc = on
+  } else if name == "holes" {
+    o.holes = on
+  } else if name == "race" {
+    o.race = on
+  } else if name == "v" {
+    o.topts.verbose = on
+  } else if name == "real" {
+    o.real = on
+  } else if name == "phase-times" {
+    o.phases = on
+  } else if name == "offline" {
+    o.offline = if on { "1" } else { "0" }
+  }
+}
+
+fn int_flag(os: Os, name: Str, v: Str) -> Int {
+  match Int.parse(v) {
+    Some(n) => n
+    None => usage(os, "invalid value \"${v}\" for flag -${name}: parse error")
+  }
+}

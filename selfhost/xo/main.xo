@@ -4,29 +4,38 @@
 // driver to assemble and link with the C runtime (std/llrt), as
 // internal/build does for `xo build --backend=arm64` (decision 0174).
 //
-//   xo1 build [flags] [-o OUT] [--asm=PATH] [--target=OS/arm64] <dir>
-//   xo1 build|test --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
-//   xo1 build|test|asm --backend=llvm [flags] [-o OUT] [--asm=PATH] <dir>
-//   xo1 build --backend=wasm [flags] [-o OUT.wasm] <dir>   (wasm.xo)
-//   xo1 test [flags] [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>
-//   xo1 asm [--std=DIR] [--wd=DIR] [--target=OS/arm64] <dir>
-//   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
+//   xo1 build [flags] [dir ...]          the directories are one program
+//   xo1 run [flags] [dir] [--] [args]    build, then run it with args
+//   xo1 test [flags] [dir ...]           build the tests and run them
+//   xo1 asm [flags] [dir ...]            print the assembly or LLVM IR
+//   xo1 keys [--std=DIR] [--cc=CC]       the cache keys, to compare
 //
-// flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
-// --phase-times (build, test, asm): the wall clock of each phase on
-// standard error (check, SSA build, each pass, inline, emit, write,
-// assemble and link), as `phase NAME MS ms` lines.
+// The flags are `xo build|run|test`'s with Go's flag rules (opts.xo):
+// --backend=arm64|llvm|go|wasm (xo1's default is arm64; cmd/xo's is go),
+// --targets, -o, --json, --release, --error-args, --no-mono,
+// --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore,
+// --record, --run, --cases, -v, --real, --offline, --workspace; and
+// xo1's own: --std=DIR --wd=DIR --cc=CC --asm=PATH --go-tree=DIR
+// --phase-times (the wall clock of each phase on standard error as
+// `phase NAME MS ms` lines).
+//
+// A build writes to the Go driver's build directory (buildDir, under
+// <user cache>/xo/build or $XO_BUILD_DIR) and links the binary there
+// (bin/NAME) unless -o names one, printing `os/arch: path` (or the JSON
+// result with --json); a check that fails prints its diagnostics as `xo`
+// does (diag.xo) and exits 1. With XO_BIN_CACHE the link is looked up in
+// and added to the binary cache under the Go driver's key (cache.xo).
 //
 // --backend=llvm (decision 0178) lowers the same SSA module with the
 // LLVM emitter in Xo (selfhost/llvm) and compiles the IR with clang
 // ($XO_CLANG, else clang; --cc names another) and the C runtime, as
-// internal/build buildLLVM does with one module (no XO_LLVM_SPLIT); asm
-// prints the IR, --asm names the .ll file (default OUT.ll).
+// internal/build buildLLVM does, split into XO_LLVM_SPLIT modules when
+// that is set (split.xo, decision 0168); asm prints the IR.
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
-// (generated packages, runtime, build information) goes to --go-tree,
-// default OUT.go.d.
+// (generated packages, runtime, build information) is the build
+// directory, or --go-tree.
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
 // default std), the TLS library's from DIR/../third_party. A link takes
@@ -44,119 +53,180 @@ use github.com/xo-lang/xo/selfhost/llvm
 
 fn main(os: Os) ! {
   let args = os.env.args()
-  if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
-    os.proc.exit(2)
+  if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
+    usage(os, "")
   }
-  let cmd = args[0]
-  var std_dir = "std"
-  var wd = os.env.get("PWD") ?? ""
-  var cc = ""
-  var out = ""
-  var asm_path = ""
-  var tzdata = ""
-  var target = ""
-  var topts = TestOpts{}
-  var backend = "arm64"
-  var go_tree = ""
-  var phases = false
-  var dirs: List[Str] = []
-  var i = 1
-  while i < args.len() {
-    let a = args[i]
-    if a.starts_with("--std=") {
-      std_dir = a.trim_prefix("--std=")
-    } else if a.starts_with("--wd=") {
-      wd = a.trim_prefix("--wd=")
-    } else if a.starts_with("--cc=") {
-      cc = look_path(os, a.trim_prefix("--cc="))
-    } else if a.starts_with("--tzdata=") {
-      tzdata = a.trim_prefix("--tzdata=")
-    } else if a.starts_with("--asm=") {
-      asm_path = a.trim_prefix("--asm=")
-    } else if a.starts_with("--backend=") {
-      backend = a.trim_prefix("--backend=")
-    } else if a.starts_with("--go-tree=") {
-      go_tree = a.trim_prefix("--go-tree=")
-    } else if a.starts_with("--target=") || a.starts_with("--targets=") {
-      target = a.split("=")[1]
-    } else if a.starts_with("--run=") {
-      topts.run = a.trim_prefix("--run=")
-    } else if a.starts_with("--seed=") {
-      topts.seed = Int.parse(a.trim_prefix("--seed=")) ?? 0
-    } else if a.starts_with("--cases=") {
-      topts.cases = Int.parse(a.trim_prefix("--cases=")) ?? 0
-    } else if a == "--phase-times" {
-      phases = true
-    } else if a == "--json" {
-      topts.json = true
-    } else if a == "-v" {
-      topts.verbose = true
-    } else if a == "-o" && i + 1 < args.len() {
-      out = args[i + 1]
-      i += 1
-    } else {
-      dirs.push(a)
-    }
-    i += 1
-  }
+  var o = parse_args(os, args)
   let goos = host_os(os)
-  let ctx = Ctx{goos: goos, std: std_dir, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
-  if cmd == "keys" {
-    keys(os, ctx, cc)?
+  let ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  if o.cmd == "keys" {
+    keys(os, ctx, o.cc)?
     return
   }
-  // the target: the host, or linux/arm64 (assembly only)
-  var tgoos = goos
-  if !target.is_empty() {
-    if !(target is "darwin/arm64" | "linux/arm64") {
-      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${target}")
-    }
-    tgoos = target.split("/")[0]
-  }
-  if dirs.len() != 1 {
-    os.stdio.eprintln("xo1: name one directory")
+  let what = if o.cmd == "asm" { "build" } else { o.cmd }
+  // cmd/xo's checks of the flags, before anything is built
+  if !o.error_args && !o.release {
+    os.stdio.eprintln("xo build: --error-args=false needs --release (debug builds always record parameters)")
     os.proc.exit(2)
   }
-  if backend == "go" && (cmd == "build" || cmd == "test") {
-    if !target.is_empty() {
-      fail(os, "--backend=go builds for the host only here")
+  var backend = o.backend
+  if backend.is_empty() {
+    backend = "arm64"
+  }
+  if o.hybrid {
+    if backend != "go" {
+      os.stdio.eprintln("xo build: --hybrid needs the Go backend")
+      os.proc.exit(2)
     }
-    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0], cmd == "test", topts)?
+    fail(os, "--hybrid is not in xo1 yet (the Go driver's hybrid.go)")
+  }
+  if o.no_gc && backend == "go" {
+    os.stdio.eprintln("xo ${what}: --no-gc needs a native backend (llvm or arm64), not go")
+    os.proc.exit(1)
+  }
+  if o.cmd == "run" && o.topts.seed != 0 && backend != "go" {
+    os.stdio.eprintln("xo run: --seed needs the Go backend (native builds use the real scheduler)")
+    os.proc.exit(2)
+  }
+  if o.ci {
+    fail(os, "--ci is not in xo1 yet (it formats and vets: xo fmt and xo vet are stage 2)")
+  }
+  if backend == "go" && (o.cmd == "build" || o.cmd == "test" || o.cmd == "run") {
+    build_go(os, ctx, o)?
     return
   }
-  if !(backend is "arm64" | "llvm") && !(backend == "wasm" && cmd == "build") {
-    fail(os, "--backend=${backend}: want arm64, llvm, or go for build and test, or wasm for build")
+  if !(backend is "arm64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
+    fail(os, "--backend=${backend}: want arm64, llvm, or go for build, run, and test, or wasm for build")
   }
-  if backend == "llvm" && tgoos != goos {
-    fail(os, "the LLVM backend builds for the host (${goos}/arm64) only, not ${target}")
+  if o.race || o.holes {
+    fail(os, "the ${backend} backend does not support --race or --holes")
   }
-  var t = os.clock.now()
-  var c = check.new_checker(os.fs, std_dir)
-  c.native = true
-  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  let nb = build_native(os, ctx, o, backend)
+  if o.cmd == "test" {
+    if o.explore > 0 {
+      os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
+      os.proc.exit(2)
+    }
+    os.proc.exit(run_tests(os, nb.bin, nb.tests, o.topts))
+  }
+  if o.cmd == "run" {
+    if !o.record.is_empty() {
+      os.stdio.eprintln("xo run: --record needs the Go backend")
+      os.proc.exit(2)
+    }
+    os.proc.exit(exec_binary(os, nb.bin, o.prog_args, []))
+  }
+}
+
+/// What a native build made: the host binary ("" for asm or another
+/// target only) and the tests of a test binary.
+struct Native {
+  bin: Str = ""
+  tests: List[TestInfo] = []
+}
+
+/// The targets of --targets (internal/build ParseTargets): the host when
+/// none is named, `all`, or a comma separated list of os/arch.
+fn parse_targets(os: Os, s: Str, host: Str) -> List[Str] {
+  if s.is_empty() {
+    return [host]
+  }
+  if s == "all" {
+    return ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64", "wasip1/wasm"]
+  }
+  var out: List[Str] = []
+  for p0 in s.split(",") {
+    let p = p0.trim()
+    let parts = p.split("/")
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+      os.stdio.eprintln("xo build: bad target ${p.quote()}: want os/arch")
+      os.proc.exit(2)
+    }
+    let tos = if parts[0] == "wasi" { "wasip1" } else { parts[0] }
+    let arch = if parts[1] == "wasm32" { "wasm" } else { parts[1] }
+    out.push("${tos}/${arch}")
+  }
+  out
+}
+
+/// The checker of a build: the native implementation modules when
+/// native, the module environment, and the check of dirs; a check that
+/// fails prints its diagnostics (or, with --json on build, the JSON
+/// result) and exits 1. Warnings are printed and the build goes on.
+fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
+  var c = check.new_checker(os.fs, o.std)
+  c.native = native
+  var offline = os.env.get("XO_OFFLINE") ?? ""
+  if o.offline == "1" {
+    offline = "1"
+  } else if o.offline == "0" {
+    offline = ""
+  }
+  var work = os.env.get("XO_WORK") ?? ""
+  if o.workspace == "off" {
+    work = "off"
+  } else if o.workspace == "on" {
+    work = ""
+  }
+  c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
-  match c.check_dirs(dirs) {
+  match c.check_dirs(o.dirs) {
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
   }
   if !c.unsupported.is_empty() {
     fail(os, "unsupported: ${c.unsupported}")
   }
-  for d in c.diags {
-    if !d.warning || d.code == "XO0900" {
-      fail(os, "the program does not check (run xo check)")
+  var ds = c.diags
+  var bad = blocks(ds, o.holes)
+  if !bad && o.cmd != "test" {
+    // the stamped constants (applyStamps), after a check that passed
+    let sd = apply_stamps(c, o.stamps)
+    if !sd.is_empty() {
+      ds = ds + sd
+      bad = true
     }
   }
+  if bad {
+    if o.json && o.cmd == "build" {
+      os.stdio.print(build_json(false, [], ds))
+    } else {
+      print_diags(os, ds)
+    }
+    os.proc.exit(1)
+  }
+  if !(o.json && o.cmd == "build") {
+    print_diags(os, c.diags)
+  }
+  c
+}
+
+/// A native build (arm64 or llvm, or wasm): check, SSA, passes, code,
+/// then the link of the host target into the build directory or -o.
+fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
+  let phases = o.phases
+  let goos = ctx.goos
+  let host = "${goos}/arm64"
+  let targets = parse_targets(os, o.targets, host)
+  for tg in targets {
+    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
+      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
+    }
+    if backend == "llvm" && tg != host {
+      fail(os, "the LLVM backend builds for the host (${host}) only, not ${tg}")
+    }
+  }
+  let tests = o.cmd == "test"
+  let release = o.release && !tests
+  var t = os.clock.now()
+  let c = check_program(os, o, true)
   t = lap(os, phases, "check", t)
   var uses_time = false
   for m in c.mods {
     uses_time = uses_time || m.path == "native/time"
   }
-  let root = line_root(os, wd, dirs[0])
-  let tests = cmd == "test"
-  var b = ssa.build_program(c, root, tests)
+  let root = line_root(os, o.wd, o.dirs[0])
+  var b = ssa.build_program_release(c, root, tests, release)
   t = lap(os, phases, "ssa", t)
   if !b.why.is_empty() {
     fail(os, b.why)
@@ -179,11 +249,25 @@ fn main(os: Os) ! {
   b.insert_rc()
   t = lap(os, phases, "insert_rc", t)
   if backend == "wasm" {
-    build_wasm(os, b.m, out, wd, dirs[0])
-    return
+    build_wasm(os, b.m, o.out, o.wd, o.dirs[0])
+    return Native{}
   }
-  // the program's code: arm64 assembly, or LLVM IR (buildLLVM)
-  var code = ""
+  // the build directory (buildDir, then the backend's subdirectory)
+  let mode = if tests { 1 } else { 0 }
+  let variant = if release { "release" } else { "" }
+  let bdir = match build_dir(os, ctx, o.wd, o.dirs, mode, false, false, false, [variant]) {
+    Ok(d) => d
+    Err(e) => fail(os, "${e}")
+  }
+  var cc = o.cc
+  var name = prog_name(o.wd, o.dirs)
+  if tests {
+    name = "${name}.test"
+  }
+  var out = o.out
+  if !out.is_empty() {
+    out = abs_of(o.wd, out)
+  }
   if backend == "llvm" {
     if cc.is_empty() {
       cc = find_clang(os)
@@ -200,12 +284,67 @@ fn main(os: Os) ! {
     if !g.skipped.is_empty() {
       fail(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
-    code = with_target_attrs(ir, clang_target_attrs(os, cc))
-  } else {
+    let code = with_target_attrs(ir, clang_target_attrs(os, cc))
+    if o.cmd == "asm" {
+      os.stdio.print(code)
+      lap(os, phases, "print", t)
+      return Native{}
+    }
+    let split = split_config(os)
+    let parts = split_ir(code, split.modules)
+    var dir = "${bdir}/llvm"
+    if parts.len() > 1 {
+      // a split build has its own directory (a single module build of
+      // the same program may run at the same time)
+      dir = "${dir}-split${parts.len()}-${split.lto}"
+    }
+    write_or_fail(os, dir, "", b"")
+    var lls: List[Str] = []
+    for (i, part) in parts.indexed() {
+      let ll = if parts.len() > 1 { "${dir}/prog.${i}.ll" } else { "${dir}/prog.ll" }
+      write_or_fail(os, dir, ll, part.bytes())
+      lls.push(ll)
+    }
+    if !o.asm_path.is_empty() {
+      write_or_fail(os, dir, o.asm_path, code.bytes())
+    }
+    t = lap(os, phases, "write", t)
+    let bin = bin_path(dir, out, name, host, false)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu)
+    var mode_flags = ["llvm", "-O2"]
+    if lls.len() > 1 {
+      mode_flags = mode_flags + ["split", split.lto]
+    }
+    let srcs = lls + lk.srcs
+    let tls = needs_tls(code)
+    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs, tls)
+    let (hit, entry) = fetch_bin(os, key, bin)
+    if !hit {
+      write_or_fail(os, dir_name(bin), "", b"")
+      let msg = if lls.len() > 1 {
+        split_build(os, ctx, cc, lls, lk.srcs, bin, split, lk.flags, tls)
+      } else {
+        cc_build(os, ctx, cc, ["-O2", "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
+      }
+      if !msg.is_empty() {
+        os.stdio.eprint(msg)
+        fail(os, "${cc} failed")
+      }
+      store_bin(os, entry, bin)
+    }
+    lap(os, phases, "cc", t)
+    return finish(os, o, c, root, [(host, bin)], tests)
+  }
+  // arm64: the assembly of each target; the host's is linked
+  let dir = "${bdir}/arm64"
+  write_or_fail(os, dir, "", b"")
+  var mi = b.m
+  let inl = arm64.inline_step(mi)
+  t = lap(os, phases, "inline", t)
+  var bins: List[(Str, Str)] = []
+  for tg in targets {
+    let tgoos = tg.split("/")[0]
     // arm64.generate_module(b.m, tgoos, false), timed
-    var mi = b.m
-    let inl = arm64.inline_step(mi)
-    t = lap(os, phases, "inline", t)
     let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(b.m, tgoos) }
     t = lap(os, phases, "emit", t)
     if !p.err.is_empty() {
@@ -214,93 +353,152 @@ fn main(os: Os) ! {
     if !p.skipped.is_empty() {
       fail(os, "the emitter skipped ${p.skipped[0]}")
     }
-    code = p.asm
+    let code = p.asm
+    if o.cmd == "asm" {
+      os.stdio.print(code)
+      lap(os, phases, "print", t)
+      continue
+    }
+    let s = "${dir}/prog-${tgoos}.s"
+    write_or_fail(os, dir, s, code.bytes())
+    if !o.asm_path.is_empty() {
+      write_or_fail(os, dir, o.asm_path, code.bytes())
+    }
+    t = lap(os, phases, "write", t)
+    if tg != host {
+      // another target: its assembly only (internal/build buildArm64)
+      if !o.json {
+        os.stdio.println("${tg}: ${s}")
+      }
+      continue
+    }
+    if cc.is_empty() {
+      cc = find_cc(os)
+      if cc.is_empty() {
+        fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
+      }
+    }
+    let bin = bin_path(dir, out, name, tg, false)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu)
+    let flags = ["-O2"] + lk.flags
+    let srcs = [s] + lk.srcs
+    let tls = needs_tls(code)
+    let key = native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls)
+    let (hit, entry) = fetch_bin(os, key, bin)
+    if !hit {
+      write_or_fail(os, dir_name(bin), "", b"")
+      let msg = cc_build(os, ctx, cc, flags, srcs, bin, tls)
+      if !msg.is_empty() {
+        os.stdio.eprint(msg)
+        fail(os, "${cc} failed")
+      }
+      store_bin(os, entry, bin)
+    }
+    t = lap(os, phases, "cc", t)
+    bins.push((tg, bin))
   }
-  if cmd == "asm" {
-    os.stdio.print(code)
-    lap(os, phases, "print", t)
-    return
+  if o.cmd == "asm" {
+    return Native{}
   }
-  let parts = dirs[0].trim_suffix("/").split("/")
-  var name = parts[parts.len() - 1]
-  if name == "." || name.is_empty() {
-    name = base_name(wd)
+  finish(os, o, c, root, bins, tests)
+}
+
+/// The end of a native build: the test list of a test binary, or the
+/// result of `build` (`os/arch: path` lines on standard output, or the
+/// JSON result).
+fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool) -> Native {
+  var host_bin = ""
+  for (_, p) in bins {
+    host_bin = p
   }
   if tests {
-    name = "${name}.test"
+    return Native{bin: host_bin, tests: test_infos(c, root, o.wd)}
   }
-  if out.is_empty() {
-    out = name
-    if tests {
-      // the test binary goes to the cache, as `xo test` builds it
-      let tdir = "${ctx.cache}/xo/xo1-test"
-      os.fs.create_dir_all(tdir)?
-      out = "${tdir}/${name}"
+  if o.cmd == "build" {
+    if o.json {
+      os.stdio.print(build_json(true, bins, c.diags))
+    } else {
+      for (tg, p) in bins.sort_by(fn(x) { x.0 }) {
+        os.stdio.println("${tg}: ${p}")
+      }
     }
   }
-  if asm_path.is_empty() {
-    asm_path = if backend == "llvm" { "${out}.ll" } else { "${out}.s" }
-  }
-  os.fs.write(asm_path, code.bytes())?
-  t = lap(os, phases, "write", t)
-  if tgoos != goos {
-    // another target: its assembly only (internal/build buildArm64)
-    os.stdio.println("${target}: ${asm_path}")
-    return
-  }
-  // the C runtime next to the assembly (writeRuntime)
-  let rtdir = "${out}.rt"
-  os.fs.create_dir_all(rtdir)?
-  for fi in os.fs.read_dir("${std_dir}/llrt")? {
-    if fi.name.ends_with(".c") {
-      os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
+  Native{bin: host_bin}
+}
+
+/// The sources and flags a native link adds to the program's code
+/// (buildArm64 and buildLLVM after the code): the C runtime written into
+/// dir, the zone data of std/time, the runtime's I/O flags, and the
+/// inputs of `use c`.
+struct LinkInputs {
+  srcs: List[Str] = []
+  flags: List[Str] = []
+}
+
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse) -> LinkInputs {
+  // the C runtime (writeRuntime)
+  match os.fs.read_dir("${ctx.std}/llrt") {
+    Ok(fis) => {
+      for fi in fis {
+        if fi.name.ends_with(".c") {
+          match os.fs.read("${ctx.std}/llrt/${fi.name}") {
+            Ok(data) => write_or_fail(os, dir, "${dir}/${fi.name}", data)
+            Err(e) => fail(os, "${e}")
+          }
+        }
+      }
     }
+    Err(e) => fail(os, "${e}")
   }
-  if cc.is_empty() {
-    cc = find_cc(os)
-    if cc.is_empty() {
-      fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
-    }
-  }
-  // clangBuild's flags come before the program's for LLVM IR
-  var flags = if backend == "llvm" { ["-O2", "-flto", "-Wno-override-module"] } else { ["-O2"] }
-  var srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  var lk = LinkInputs{srcs: ["${dir}/xo_rt.c"]}
   // std/time: XO_TIME and the program's zone data beside the runtime
   // (timeFlags)
   if uses_time {
-    if !(tzdata == "" || tzdata == "embedded" || tzdata == "system") {
-      fail(os, "unknown --tzdata=${tzdata} (want embedded or system)")
+    if !(o.tzdata is "" | "embedded" | "system") {
+      fail(os, "unknown --tzdata=${o.tzdata} (want embedded or system)")
     }
-    let sel = tz_select(os, tu, tzdata)
+    let sel = tz_select(os, tu, o.tzdata)
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }
-    flags.push("-DXO_TIME")
-    srcs.push(tz_source(os, rtdir, sel)?)
-    for n in sel.notes {
-      os.stdio.eprintln(n)
+    lk.flags.push("-DXO_TIME")
+    match tz_source(os, dir, sel) {
+      Ok(p) => lk.srcs.push(p)
+      Err(e) => fail(os, "${e}")
+    }
+    if !(o.json && o.cmd == "build") {
+      for n in sel.notes {
+        os.stdio.eprintln(n)
+      }
     }
   }
-  flags = flags + io_flags(code)
+  lk.flags = lk.flags + io_flags(code)
   // the adapters, link files, and libraries of `use c` (cInputs)
-  let ci = c_inputs(os, c, rtdir)
+  let ci = c_inputs(os, c, dir)
   if !ci.err.is_empty() {
     fail(os, ci.err)
   }
-  flags = flags + ci.flags
-  srcs = srcs + ci.srcs
-  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(code))
-  t = lap(os, phases, "cc", t)
-  if !msg.is_empty() {
-    os.stdio.eprint(msg)
-    fail(os, "${cc} failed")
+  lk.flags = lk.flags + ci.flags
+  lk.srcs = lk.srcs + ci.srcs
+  lk
+}
+
+/// Writes data to path (path "" only creates dir), or fails.
+fn write_or_fail(os: Os, dir: Str, path: Str, data: Bytes) {
+  match os.fs.create_dir_all(dir) {
+    Ok(_) => {}
+    Err(e) => fail(os, "${e}")
   }
-  if tests {
-    var bin = out
-    if !bin.starts_with("/") {
-      bin = "${wd}/${bin}"
-    }
-    os.proc.exit(run_tests(os, bin, test_infos(c, root, wd), topts))
+  if path.is_empty() {
+    return
+  }
+  let pd = dir_name(path)
+  if pd != dir && pd != "." {
+    os.fs.create_dir_all(pd).ignore_err("the write reports it")
+  }
+  match os.fs.write(path, data) {
+    Ok(_) => {}
+    Err(e) => fail(os, "${e}")
   }
 }
 

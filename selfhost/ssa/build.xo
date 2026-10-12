@@ -207,21 +207,38 @@ pub struct Builder {
   late_tids: Map[Int, Bool] = {}
   /// The checks made, in order (b.checks).
   checks: List[UCheck] = []
+  /// A release build (`--release`): debug contract clauses are left out.
+  pub release: Bool = false
 }
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
 /// concurrency construct again with unwinding checks.
 pub fn build_program(c: check.Checker, line_root: Str, tests: Bool) -> Builder {
+  build_program_release(c, line_root, tests, false)
+}
+
+/// build_program for a release build when release is set (Options.Release,
+/// `xo build --release`): the contract clauses marked debug are compiled
+/// out (contractOn).
+pub fn build_program_release(c: check.Checker, line_root: Str, tests: Bool, release: Bool) -> Builder {
   var b = new_builder(c, line_root)
   b.tests = tests
+  b.release = release
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
     b.tests = tests
+    b.release = release
     b.conc = true
     b.build()
   }
   b
+}
+
+/// contractOn: whether a contract clause marked debug (or not) is
+/// checked: always, except debug clauses of a release build.
+fn (b: Builder) contract_on(debug: Bool) -> Bool {
+  !debug || !b.release
 }
 
 /// A builder for the program c checked.
@@ -1238,7 +1255,6 @@ fn (var b: Builder) end(saved: S) {
   b.m.funcs[fi] = b.s.f
   b.s = saved
 }
-
 
 /// Whether the struct obj declares an invariant (and is not std).
 fn (var b: Builder) has_invariant(obj: Int) -> Bool {

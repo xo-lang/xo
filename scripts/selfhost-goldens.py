@@ -6,7 +6,10 @@
 # with `<compiler> build`, runs it with XO_LEAKCHECK=1, and compares
 # (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
 # XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
-# a --backend= to pass the compiler, such as llvm, decision 0178).
+# a --backend= to pass the compiler, such as llvm, decision 0178;
+# XO1_CMD=run: `<compiler> run` builds and runs each program in one
+# command, in the program's directory, its output compared the same way,
+# decision 0178 stage 1).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -56,11 +59,43 @@ def run(bin, d):
     return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, so, stable(se)), leak
 
 
+def run_cmd(d, flags):
+    # `<compiler> run` in the program's directory: the build and the run
+    # in one command, the program's output and status passed through
+    args, env, stdin = harness(d)
+    env['XO_LEAKCHECK'] = '1'
+    env['PWD'] = os.path.abspath(d)
+    p = subprocess.run([comp, 'run'] + flags + ['--std=' + os.path.join(root, 'std'), '.', '--'] + args,
+                       cwd=d, capture_output=True, env=env, input=stdin)
+    so = p.stdout.decode('utf-8', 'replace')
+    se = p.stderr.decode('utf-8', 'replace')
+    if p.returncode != 0 and se.startswith('xo1: '):
+        return None, 'build: ' + se.strip().split('\n')[-1][:200]
+    leak = ''
+    if p.returncode == 0:
+        m = leak_re.search(se)
+        if not m:
+            leak = 'no leak check line'
+        elif m.group(1) != '0':
+            leak = '%s allocations live' % m.group(1)
+    return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, so, stable(se)), leak
+
+
 def one(d, want_fn):
     name = d.replace('/', '_')
     bin = os.path.join(out, name)
     be = os.environ.get('XO1_BACKEND', '')
     flags = ['--backend=' + be] if be else []
+    if os.environ.get('XO1_CMD') == 'run':
+        got, leak = run_cmd(d, flags)
+        if got is None:
+            return d, leak
+        want = want_fn(d)
+        if got != want:
+            return d, 'differs:\n--- want\n%s--- got\n%s' % (want[:600], got[:600])
+        if leak:
+            return d, leak
+        return d, ''
     b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True)
     if b.returncode != 0:
         return d, 'build: ' + (b.stderr.strip().split('\n') or [''])[-1][:200]
