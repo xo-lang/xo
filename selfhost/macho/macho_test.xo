@@ -538,6 +538,24 @@ test "an ELF object has LLVM's sections, symbols, and relocations" {
   expect(syms) == ["f", "$x", "$d", "$d", "$d", "$d", "puts", "DW.ref.xo_personality", "xo_personality"]
 }
 
+test "a .file directive is an STT_FILE symbol first in the symbol table" {
+  // the linux emitter's first line (gotcha linux-arm64-file-symbol)
+  let o = elf_obj("\t.file \"prog.s\"\n\t.text\n\t.globl main\nmain:\n\tret\n")
+  var syms: List[(Str, Int, Int)] = []
+  for s in o.syms {
+    if !s.name.is_empty() {
+      syms.push((bstr(s.name), s.info, s.shndx))
+    }
+  }
+  // prog.s: STB_LOCAL STT_FILE in SHN_ABS; main: STB_GLOBAL, in .text
+  expect(syms[0]) == ("prog.s", 4, 0xfff1)
+  expect(syms[syms.len() - 1].0) == "main"
+  match assemble_elf("\t.file prog.s\n".bytes()) {
+    Ok(_) => fault("an unquoted .file assembled")
+    Err(e) => expect(e.contains(".file takes a quoted name")) == true
+  }
+}
+
 test "numeric labels go back to the last definition and forward to the next" {
   let o = elf_obj("\tb 1f\n1:\n\tb 1b\n1:\n\tb 1b\n")
   let t = sect_named(o, ".text").data
