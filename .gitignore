@@ -40,3 +40,7 @@ infra/ci-aws/xo-ci-key.pem
 infra/ci-aws/logs/
 bench/results/remote/
 .metadata_never_index
+
+# Recorded Go outputs of the TestSelfhost* differentials (1.2 GB;
+# scripts/selfhost-record-goldens.sh, decision 0178 stage 7)
+internal/selfhost/testdata/gogoldens/

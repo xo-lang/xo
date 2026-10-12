@@ -3381,6 +3381,15 @@ static void fibers_init(void) {
 	// 64 MiB reserved, like the worker threads before fibers (deep
 	// recursion in a task behaves the same); XO_TASK_STACK_MB overrides
 	size_t mb = 64;
+#if defined(XO_TSAN) && defined(__linux__)
+	// ThreadSanitizer on Linux confines the program to its application
+	// ranges, about 96 GiB of address space on arm64 with 48 bit
+	// addresses (the rest is shadow, reserved PROT_NONE): 64 MiB stacks
+	// ran out after about 880 fibers, and the 2000 parked tasks of
+	// conc_stress and evloop.c faulted "out of memory" (2026-10-12,
+	// gotcha linux-tsan-fiber-stacks). 8 MiB leaves room for thousands.
+	mb = 8;
+#endif
 	const char *e = getenv("XO_TASK_STACK_MB");
 	if (e && atoi(e) > 0) {
 		mb = (size_t)atoi(e);
@@ -4734,7 +4743,41 @@ __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n
 #endif
 }
 
+// Descriptors are close-on-exec from birth on Linux (SOCK_CLOEXEC,
+// accept4, pipe2): with FD_CLOEXEC set just after, a process spawned by
+// another thread in between inherited the socket or pipe and held it open
+// for its life (2026-10-12, gotcha linux-epoll-inherited-socket). macOS has
+// neither accept4 nor pipe2, and kqueue drops a closed descriptor's events
+// anyway.
+#if defined(__linux__)
+#if !defined(_GNU_SOURCE)
+int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags);
+int pipe2(int fds[2], int flags);
+#endif
+#define XO_SOCK_CLOEXEC SOCK_CLOEXEC
+#else
+#define XO_SOCK_CLOEXEC 0
+#endif
+
+// xo_pipe is pipe(2) with both ends close-on-exec.
+static int xo_pipe(int p[2]) {
+#if defined(__linux__)
+	return pipe2(p, O_CLOEXEC);
+#else
+	if (pipe(p) < 0) {
+		return -1;
+	}
+	fcntl(p[0], F_SETFD, FD_CLOEXEC);
+	fcntl(p[1], F_SETFD, FD_CLOEXEC);
+	return 0;
+#endif
+}
+
+#if defined(__linux__)
+__attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept4(fd, NULL, NULL, SOCK_CLOEXEC)); }
+#else
 __attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept(fd, NULL, NULL)); }
+#endif
 
 __attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) { return x_ret(connect(fd, a, n)); }
 
@@ -4765,7 +4808,7 @@ static void ev_poke(void) {
 static void *poller_main(void *arg);
 
 static void ev_init(void) {
-	if (pipe(ev.pfd) < 0) {
+	if (xo_pipe(ev.pfd) < 0) {
 		xo_oom();
 	}
 	set_nonblock(ev.pfd[0]);
@@ -4984,6 +5027,14 @@ static void pd_close(xo_pd *pd) {
 	if (!pd->closed) {
 		pd->closed = 1;
 		if (pd->fd >= 0) {
+#ifndef XO_KQUEUE
+			// unregister now: epoll keys a registration by the open file,
+			// not the descriptor, so close alone leaves it while a child
+			// process still holds the file, and its next event would name
+			// this xo_pd after the poller freed it (2026-10-12, gotcha
+			// linux-epoll-inherited-socket)
+			epoll_ctl(ev.poll, EPOLL_CTL_DEL, pd->fd, NULL);
+#endif
 			shutdown(pd->fd, SHUT_RDWR);
 		}
 		if (pd->rwait) {
@@ -5713,7 +5764,7 @@ static xo_listener *unix_listen(xo_ctx *c, char *addr) {
 		free(addr);
 		return xo_h_zero();
 	}
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	int fd = socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
 	if (fd < 0) {
 		net_fail(c, 4, "listen unix %s: socket: %s", path, err_text(x_errno()));
 		free(addr);
@@ -5763,7 +5814,7 @@ static xo_conn *unix_dial(xo_ctx *c, const char *addr, int64_t when) {
 		net_fail(c, 4, "dial unix %s: connect: invalid argument", path);
 		return xo_h_zero();
 	}
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	int fd = socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
 	if (fd < 0) {
 		net_fail(c, 4, "dial unix %s: socket: %s", path, err_text(x_errno()));
 		return xo_h_zero();
@@ -5847,7 +5898,7 @@ xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n)
 	}
 	int fd = -1, e = 0;
 	for (struct addrinfo *a = res; a; a = a->ai_next) {
-		fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+		fd = socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
 		if (fd < 0) {
 			e = x_errno();
 			continue;
@@ -6032,7 +6083,7 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 	int64_t e = 0;
 	xo_conn *out = NULL;
 	for (struct addrinfo *a = res; a && !out; a = a->ai_next) {
-		int fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+		int fd = socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
 		if (fd < 0) {
 			e = -x_errno();
 			continue;

@@ -106,6 +106,18 @@ pub struct Gen {
   users_done: Bool = false
   /// Why the current function is not lowered (a later stage), or "".
   skip: Str = ""
+  /// The functions whose calls are inlined (ranges.xo inlinable_set).
+  inl: Map[Str, Bool] = {}
+  /// The value ranges of the function (ranges.xo): per value its
+  /// interval, whether it has one, whether its check is proved away, and
+  /// whether it is a midpoint; per block its entry facts (an index into
+  /// facts, -1 for none).
+  rng: List[Interval] = []
+  rng_has: List[Bool] = []
+  rng_safe: List[Bool] = []
+  rng_mid: List[Bool] = []
+  facts: List[Fact] = []
+  fact_at: List[Int] = []
 }
 
 /// The emitter for module m.
@@ -190,6 +202,7 @@ fn runtime_decls() -> Str {
     "declare double @llvm.trunc.f64(double)",
     "declare double @llvm.round.f64(double)",
     "declare double @llvm.fabs.f64(double)",
+    "declare void @llvm.assume(i1)",
     "",
     "declare i32 @xo_personality(...)",
     "",
@@ -201,6 +214,7 @@ fn runtime_decls() -> Str {
     "attributes #3 = { nounwind cold noinline }",
     "attributes #4 = { nounwind alwaysinline }",
     "attributes #5 = { \"xo-raises\" }",
+    "attributes #6 = { alwaysinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -256,6 +270,7 @@ pub fn (var g: Gen) generate() -> Str {
       g.check_type(g.m.funcs[fi].values[p].ty)
     }
   }
+  g.inlinable_set()
   for fi in 0..nf {
     g.lower_func(fi)
     if !g.err.is_empty() {

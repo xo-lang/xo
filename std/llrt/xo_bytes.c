@@ -249,6 +249,56 @@ xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
 	return rs_append(a, an, &c, 1);
 }
 
+// xo_rs_push_word is s + the n (0 to 8) low bytes of w, the lowest
+// first: short text assembled in an Int by Xo runtime code
+// (std/native/llrt/text.xo, decision 0193), one call instead of one per
+// byte. A unique string with room takes the bytes in place.
+xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *len) {
+	// a little endian word (every target of the native backends)
+	uint64_t u = (uint64_t)w;
+	unsigned char t[8];
+	memcpy(t, &u, 8);
+	*len = an + n;
+	if (rc_load(&a->rc) == 1 && a->cap - an >= 8) {
+		memcpy(a->data + an, t, 8);
+		return a;
+	}
+	return rs_append(a, an, (const char *)t, n);
+}
+
+// xo_rs_push_words is s + four pieces of up to 8 bytes each, w0 to w3
+// (the lowest byte of each first), their lengths in the nibbles of lens
+// (w0's the lowest): a Duration's or Time's text assembled by
+// std/native/llrt/text.xo in one call (decision 0193).
+xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_t w2, int64_t w3, int64_t lens, int64_t *len) {
+	int n0 = (int)(lens & 15), n1 = (int)(lens >> 4 & 15), n2 = (int)(lens >> 8 & 15), n3 = (int)(lens >> 12 & 15);
+	int k = n0 + n1 + n2 + n3;
+	*len = an + k;
+	unsigned char t[40];
+	unsigned char *d = t;
+	int direct = rc_load(&a->rc) == 1 && a->cap - an >= 32;
+	if (direct) {
+		// in place: whole words stored, each overwriting the slack of the
+		// one before (the bytes past the text are never read)
+		d = (unsigned char *)a->data + an;
+	}
+	// whole little endian words (every target of the native backends is
+	// little endian)
+	uint64_t u;
+	u = (uint64_t)w0;
+	memcpy(d, &u, 8);
+	u = (uint64_t)w1;
+	memcpy(d + n0, &u, 8);
+	u = (uint64_t)w2;
+	memcpy(d + n0 + n1, &u, 8);
+	u = (uint64_t)w3;
+	memcpy(d + n0 + n1 + n2, &u, 8);
+	if (direct) {
+		return a;
+	}
+	return rs_append(a, an, (const char *)t, k);
+}
+
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 

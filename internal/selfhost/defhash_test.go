@@ -72,6 +72,13 @@ func TestSelfhostDefhash(t *testing.T) {
 	}
 	sort.Strings(args)
 	sort.Strings(mods)
+	if goldensRecording() {
+		for _, m := range mods {
+			dir, path, _ := strings.Cut(m, "=")
+			goDefhash(t, dir, path)
+		}
+		skipRecording(t)
+	}
 	bin, err := selfhostBinary("cli/semantic", "go")
 	if err != nil {
 		t.Fatal(err)
@@ -87,24 +94,8 @@ func TestSelfhostDefhash(t *testing.T) {
 	same, defs := 0, 0
 	for _, m := range mods {
 		dir, path, _ := strings.Cut(m, "=")
-		ds, err := defhash.Module(dir, path)
-		var want string
-		if err != nil {
-			want = "error " + err.Error() + "\n"
-		} else {
-			if ds == nil {
-				ds = []defhash.Def{}
-			}
-			var b bytes.Buffer
-			enc := json.NewEncoder(&b)
-			enc.SetEscapeHTML(false)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(ds); err != nil {
-				t.Fatal(err)
-			}
-			want = b.String()
-			defs += len(ds)
-		}
+		want, n := goDefhash(t, dir, path)
+		defs += n
 		g, ok := got[m]
 		switch {
 		case !ok:
@@ -116,6 +107,36 @@ func TestSelfhostDefhash(t *testing.T) {
 		}
 	}
 	t.Logf("%d of %d modules (%d definitions) byte identical", same, len(mods), defs)
+}
+
+// goDefhash is internal/defhash's dump of module path in dir, as the Xo
+// port prints it, and the number of definitions. Recorded as the defhash
+// kind (gogoldens_test.go): the module's files are the key.
+func goDefhash(t *testing.T, dir, path string) (string, int) {
+	t.Helper()
+	cx := newGoldenCtx(dir)
+	key := []string{path, cx.norm(dir), treeSum(dir)}
+	out := recorded("defhash", dir+" "+path, key, cx, func() string {
+		ds, err := defhash.Module(dir, path)
+		if err != nil {
+			return "error " + err.Error() + "\n"
+		}
+		if ds == nil {
+			ds = []defhash.Def{}
+		}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(ds); err != nil {
+			return "error " + err.Error() + "\n"
+		}
+		return b.String()
+	})
+	if strings.HasPrefix(out, "error ") || strings.HasPrefix(out, missingGolden) {
+		return out, 0
+	}
+	return out, strings.Count(out, "\n  {")
 }
 
 // splitDefhashDumps splits `semantic defhash` output into module path -> dump.

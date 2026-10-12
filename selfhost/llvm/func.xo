@@ -382,7 +382,9 @@ fn (var g: Gen) lower_func(fi: Int) {
     }
   }
   let loads = g.body.join("")
-  for b in g.reverse_postorder() {
+  let rpo = g.reverse_postorder()
+  g.compute_ranges(rpo)
+  for b in rpo {
     g.body = []
     g.label0 = bname(b)
     g.label = bname(b)
@@ -402,6 +404,11 @@ fn (var g: Gen) lower_func(fi: Int) {
     }
     for v in g.f.blocks[b].instrs {
       g.instr(v)
+      if g.rng_mid[v] {
+        // a binary search's midpoint (ranges.xo)
+        let o = g.op(v)
+        g.assume(o, g.range_of_value(v))
+      }
     }
     g.texts[b] = g.body.join("")
   }
@@ -663,7 +670,7 @@ fn (var g: Gen) instr_body(v: Int) {
         g.set(v, "f${ins} double ${a0}, ${a1}")
         return
       }
-      if x.pos.is_empty() {
+      if x.pos.is_empty() || g.rng_safe[v] {
         let a0 = g.op(args[0])
         let a1 = g.op(args[1])
         if aux_str(x.aux) == "wrap" {

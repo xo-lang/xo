@@ -5,6 +5,7 @@
 // the Go driver's, so both drivers share the cache and accept the same
 // packs.
 
+use github.com/xo-lang/xo/selfhost/check
 use std/crypto
 
 // ---------------------------------------------------------------------------
@@ -234,8 +235,13 @@ fn variant_file(i: Int) -> Str {
 /// variants, the runtime sources (std/llrt *.c and *.h), and the TLS
 /// library's sources and configuration.
 fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
+  rtpack_key_for(os, ctx, std_dir, goos, "arm64")
+}
+
+/// RTPackKey for any target goos/goarch (`xo rtpack --key`).
+fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str ! FsErr {
   var b = BytesBuilder.new()
-  b.write_str("xo rtpack 1\ntarget ${goos}/arm64\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
+  b.write_str("xo rtpack 1\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
   for i in 0..32 {
     b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))} ${i >= 16}\n")
   }
@@ -256,8 +262,8 @@ fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
 }
 
 /// RTPackRoot: $XO_RTPACK ("off": none), else lib/xo/rtpack beside the
-/// directory of the running binary (bin/xo of a release archive), as $_
-/// names it ("" when it is not set).
+/// directory of the running binary (bin/xo of a release archive; "" when
+/// it cannot be found).
 fn rtpack_root(os: Os) -> Str {
   let d = os.env.get("XO_RTPACK") ?? ""
   if d == "off" {
@@ -266,31 +272,22 @@ fn rtpack_root(os: Os) -> Str {
   if !d.is_empty() {
     return d
   }
-  // the running binary: Env.program is not native yet (XO1201), so the
-  // path the shell exported in $_ when it started this program
-  var exe = os.env.get("_") ?? ""
-  if !exe.contains("/") {
-    exe = look_path(os, exe)
-  } else if !exe.starts_with("/") {
-    exe = "${os.env.get("PWD") ?? "."}/${exe}"
-  }
+  // the running binary (os.Executable and filepath.EvalSymlinks)
+  let exe = check.executable(os.env, os.fs)
   if exe.is_empty() {
     return ""
-  }
-  // filepath.EvalSymlinks
-  let (real, err) = combined(os, "realpath", [exe])
-  if err.is_empty() && !real.trim().is_empty() {
-    exe = real.trim()
   }
   "${dir_name(dir_name(exe))}/lib/xo/rtpack"
 }
 
 /// A pack directory as loaded: why it is not used ("" when it is), and
-/// its manifest's files with their SHA-256.
+/// its manifest's files with their SHA-256, compiler, and key.
 struct Pack {
   dir: Str = ""
   why: Str = ""
   files: Map[Str, Str] = {}
+  compiler: Str = ""
+  key: Str = ""
 }
 
 /// loadRTPack for the host; None when there is no pack root.
@@ -311,7 +308,7 @@ fn load_rtpack(os: Os, ctx: Ctx, std_dir: Str) -> Pack? {
     Ok(k) => k
     Err(e) => return Some(Pack{dir: dir, why: "${e}"})
   }
-  var p = Pack{dir: dir, files: m.files}
+  var p = Pack{dir: dir, files: m.files, compiler: m.compiler, key: m.key}
   if m.format != "1" {
     p.why = "the prebuilt runtime in ${dir} has format ${m.format}, this xo reads 1"
   } else if m.target != target {
@@ -327,11 +324,12 @@ fn min(a: Int, b: Int) -> Int {
 }
 
 /// The fields of rtpack.json xo1 reads (the indented JSON BuildRTPack
-/// writes): format, target, key, and files.
+/// writes): format, target, key, compiler, and files.
 struct Manifest {
   format: Str = ""
   target: Str = ""
   key: Str = ""
+  compiler: Str = ""
   files: Map[Str, Str] = {}
 }
 
@@ -362,6 +360,8 @@ fn parse_manifest(text: Str) -> Manifest {
       m.target = v
     } else if k == "key" {
       m.key = v
+    } else if k == "compiler" {
+      m.compiler = v
     }
   }
   m
@@ -452,7 +452,7 @@ fn rtpack_status(os: Os, ctx: Ctx, std_dir: Str) -> Str {
       if !p.why.is_empty() {
         return "prebuilt runtime: not used (${p.why}); the runtime is compiled locally"
       }
-      "prebuilt runtime: ${p.dir}"
+      "prebuilt runtime: ${p.dir} (${p.compiler}, key ${p.key[0..min(12, p.key.len())]})"
     }
   }
 }

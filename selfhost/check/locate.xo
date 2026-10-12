@@ -1,0 +1,92 @@
+// Where the running `xo` finds its files (decision 0178 switch point B):
+// the binary through Env.program, as os.Executable and
+// filepath.EvalSymlinks find it for the Go `xo` (internal/build
+// RTPackRoot), and the std sources of a release archive, lib/xo/std
+// beside the binary's bin directory. One place for xo1 and every command
+// of selfhost/cli.
+
+/// The running binary, absolute with its symbolic links followed:
+/// Env.program as the program was started, a name without a slash looked
+/// up in $PATH as exec does, a relative path joined to $PWD. "" when it
+/// cannot be found.
+pub fn executable(env: Env, fs: Fs) -> Str uses (env, fs.read) {
+  var p = env.program()
+  if p.is_empty() {
+    return ""
+  }
+  if !p.contains("/") {
+    p = in_path(env, fs, p)
+    if p.is_empty() {
+      return ""
+    }
+  }
+  if !p.starts_with("/") {
+    let wd = env.get("PWD") ?? ""
+    if wd.is_empty() {
+      return clean(p)
+    }
+    p = join(wd, p)
+  }
+  eval_links(fs, clean(p))
+}
+
+/// The std sources the checker reads: $XO_STD, else lib/xo/std of a
+/// release layout (bin/xo beside lib/), else std beside the binary or in
+/// its parent directory (a binary built into the repository's .tools or
+/// bin), else "std" in the working directory.
+pub fn std_dir(env: Env, fs: Fs) -> Str uses (env, fs.read) {
+  let e = env.get("XO_STD") ?? ""
+  if !e.is_empty() {
+    return e
+  }
+  let exe = executable(env, fs)
+  if !exe.is_empty() {
+    let d = parent_dir(exe)
+    for cand in [join(d, "../lib/xo/std"), join(d, "std"), join(d, "../std")] {
+      if fs.exists(join(cand, "prelude.xo")).ok() ?? false {
+        return cand
+      }
+    }
+  }
+  "std"
+}
+
+/// exec.LookPath for a name without a slash: the first file of that name
+/// in a $PATH directory.
+fn in_path(env: Env, fs: Fs, name: Str) -> Str uses (env, fs.read) {
+  for d in (env.get("PATH") ?? "").split(":") {
+    let p = join(if d.is_empty() { "." } else { d }, name)
+    match fs.stat(p) {
+      Ok(Some(fi)) => {
+        if !fi.is_dir {
+          return p
+        }
+      }
+      _ => {}
+    }
+  }
+  ""
+}
+
+/// The path with the links of its last element followed (a release's
+/// bin/xo linked from a package manager's bin directory), at most 40
+/// times as filepath.EvalSymlinks allows.
+fn eval_links(fs: Fs, path: Str) -> Str uses fs.read {
+  var p = path
+  var n = 0
+  while n < 40 {
+    let target = match fs.read_link(p) {
+      Ok(Some(t)) => t
+      _ => return p
+    }
+    p = if target.starts_with("/") { clean(target) } else { join(parent_dir(p), target) }
+    n += 1
+  }
+  p
+}
+
+/// p made absolute against the checker's working directory
+/// (filepath.Abs), for the commands' messages.
+pub fn (c: Checker) abs_path(p: Str) -> Str {
+  c.abs(p)
+}

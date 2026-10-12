@@ -62,10 +62,10 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
     return b.call("str.concat", st, "", [acc, b.const_str("<redacted>")])
   }
   if b.is_prelude_named(ct, ["Duration"]) {
-    return b.rt("rs_append_duration", st, [acc, v])
+    return b.llrt("append_duration", st, [acc, v])
   }
   if b.is_prelude_named(ct, ["Time"]) {
-    return b.rt("rs_append_time", st, [acc, v])
+    return b.llrt("append_time", st, [acc, v])
   }
   if b.is_prelude_named(ct, ["Bytes"]) {
     return b.append_debug(acc, v, ct)
@@ -164,16 +164,16 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     }
   }
   if b.is_prelude_named(ct, ["Duration"]) {
-    b.retv(b.rt("rs_append_duration", st, [acc, v]))
+    b.retv(b.llrt("append_duration", st, [acc, v]))
     return
   }
   if b.is_prelude_named(ct, ["Time"]) {
-    b.retv(b.rt("rs_append_time", st, [acc, v]))
+    b.retv(b.llrt("append_time", st, [acc, v]))
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {
     let a = b.lit(acc, "b")
-    b.retv(b.rt("rs_append_quote", st, [a, v]))
+    b.retv(b.llrt("append_bytes_quote", st, [a, v]))
     return
   }
   if b.is_prelude_named(ct, ["UInt64"]) {
@@ -186,7 +186,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   }
   match b.tkind(t) {
     Str => {
-      b.retv(b.rt("rs_append_quote", st, [acc, v]))
+      b.retv(b.llrt("append_quote", st, [acc, v]))
       return
     }
     Int | Float => {

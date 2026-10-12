@@ -353,6 +353,9 @@ xo_rstr *xo_str_of_byte(int64_t b, int64_t *len) {
 	return nstr(&c, 1, len);
 }
 
+#ifdef XO_STRINGS_C
+// the C path of the Str operations (decision 0193): only
+// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
 // xo_str_trim is strings.TrimSpace (mode 0), TrimLeftFunc (1), or
 // TrimRightFunc (2) with unicode.IsSpace.
 xo_rstr *xo_str_trim(const char *p, int64_t n, int64_t mode, int64_t *len) {
@@ -389,6 +392,8 @@ xo_rstr *xo_str_trim(const char *p, int64_t n, int64_t mode, int64_t *len) {
 	}
 	return nstr(p + lo, hi - lo, len);
 }
+#endif
+
 
 
 int64_t xo_str_rune_count(const char *p, int64_t n) {
@@ -450,6 +455,7 @@ xo_rlist *xo_str_split(const char *p, int64_t n, const char *q, int64_t m) {
 	return n_str_list_add(l, p + start, n - start);
 }
 
+
 // xo_str_lines splits on \n and strips a trailing \r; a final newline
 // gives no empty last line.
 xo_rlist *xo_str_lines(const char *p, int64_t n) {
@@ -468,6 +474,10 @@ xo_rlist *xo_str_lines(const char *p, int64_t n) {
 	return l;
 }
 
+
+#ifdef XO_STRINGS_C
+// the C path of the Str operations (decision 0193): only
+// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
 // xo_str_replace is strings.ReplaceAll: an empty old inserts new before
 // every UTF-8 sequence and at the end.
 xo_rstr *xo_str_replace(const char *p, int64_t n, const char *o, int64_t on, const char *w, int64_t wn, int64_t *len) {
@@ -498,6 +508,8 @@ xo_rstr *xo_str_replace(const char *p, int64_t n, const char *o, int64_t on, con
 	nbuf_put(&b, p + start, n - start);
 	return nbuf_take(&b, len);
 }
+#endif
+
 
 xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
 	if (k <= 0 || n == 0) {
@@ -575,6 +587,9 @@ static int n_parse_int(const char *p, int64_t n, int64_t *out) {
 	return 1;
 }
 
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
 int64_t xo_int_parse_ok(const char *p, int64_t n) {
 	int64_t v;
 	return n_parse_int(p, n, &v);
@@ -585,6 +600,8 @@ int64_t xo_int_parse(const char *p, int64_t n) {
 	n_parse_int(p, n, &v);
 	return v;
 }
+#endif
+
 
 static int n_lower_eq(const char *p, int64_t n, const char *w) {
 	int64_t m = (int64_t)strlen(w);
@@ -803,6 +820,9 @@ static int n_fmt_duration(char *out, int64_t d) {
 	return k;
 }
 
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
 // xo_rs_append_duration is s + the text of a Duration (time.Duration's
 // String).
 xo_rstr *xo_rs_append_duration(xo_rstr *a, int64_t an, int64_t d, int64_t *len) {
@@ -811,6 +831,8 @@ xo_rstr *xo_rs_append_duration(xo_rstr *a, int64_t an, int64_t d, int64_t *len) 
 	*len = an + k;
 	return rs_append(a, an, t, k);
 }
+#endif
+
 
 // n_fmt_time writes a Time of t nanoseconds since the Unix epoch as RFC
 // 3339 in UTC with the nanoseconds' trailing zeros removed (Go's
@@ -857,6 +879,9 @@ static int n_fmt_time(char *out, int64_t t) {
 	return k;
 }
 
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
 // xo_rs_append_time is s + the text of a Time (n_fmt_time).
 xo_rstr *xo_rs_append_time(xo_rstr *a, int64_t an, int64_t t, int64_t *len) {
 	char b[64];
@@ -864,7 +889,12 @@ xo_rstr *xo_rs_append_time(xo_rstr *a, int64_t an, int64_t t, int64_t *len) {
 	*len = an + k;
 	return rs_append(a, an, b, k);
 }
+#endif
 
+
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
 // xo_rs_append_quote is s + t in double quotes with the escapes of the Go
 // backend's Debug of a Str (std/rt show.go quote): \" \\ \n \t \r \0,
 // \u{FFFD} for U+FFFD and invalid bytes, \xhh for other control bytes.
@@ -914,6 +944,8 @@ xo_rstr *xo_rs_append_quote(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 	free(o.p);
 	return res;
 }
+#endif
+
 
 // xo_exit flushes standard output and exits with status code (main
 // returned an error: status 1, after "error: <text>" on standard error).
@@ -1062,6 +1094,9 @@ xo_rstr *xo_b64_decode(const char *p, int64_t n, int64_t *len) {
 	return nbuf_take(&o, len);
 }
 
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
 // n_parse_duration is std/rt's parseDuration: time.ParseDuration of the
 // text with surrounding white space removed.
 static int n_parse_duration(const char *p0, int64_t n0, int64_t *out) {
@@ -1210,14 +1245,8 @@ int64_t xo_duration_parse(const char *p, int64_t n) {
 	n_parse_duration(p, n, &d);
 	return d;
 }
+#endif
 
-static int n_days_in(int m, int64_t y) {
-	static const int dm[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-	if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) {
-		return 29;
-	}
-	return dm[m - 1];
-}
 
 // n_days_from_civil is the days since 1970-01-01 of a date.
 static int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) {
@@ -1227,6 +1256,17 @@ static int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) {
 	int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
 	int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
 	return era * 146097 + doe - 719468;
+}
+
+#ifdef XO_TEXT_C
+// the C path of the number and time text (decision 0193): only
+// XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
+static int n_days_in(int m, int64_t y) {
+	static const int dm[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) {
+		return 29;
+	}
+	return dm[m - 1];
 }
 
 // n_parse_time is time.Parse(time.RFC3339Nano, s) for the RFC 3339 forms
@@ -1313,6 +1353,8 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 	n_parse_time(p, n, &t);
 	return t;
 }
+#endif
+
 
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"

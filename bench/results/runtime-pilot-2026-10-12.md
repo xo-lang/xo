@@ -266,3 +266,115 @@ functions identical, 0 skipped; its 2 reported differences are two
 vendor directories of internal/check's golden effect_ceiling_vendor
 that the Xo checker rejects and the Go checker does not (not emitter
 output).
+
+## LLVM value ranges and inlining (decision 0192, 2026-10-12)
+
+Decision 0192 (llvm-unicode agent): the LLVM backend runs decision
+0184's range analysis with facts from dominating branches (also through
+`&&` joins) and passed bounds checks, lowers the checked arithmetic it
+proves as `nsw`, tells LLVM the interval of each binary search midpoint
+(`llvm.assume`), and marks the calls of functions arm64's cost model
+inlines `alwaysinline`. Same program and workloads; `bench/perf/unicode/measure.sh`
+(minimum instructions retired of 5 runs) under the heavy lock with
+other agents running. "Before" is the compiler of eb44c9b (the start of
+this work), "after" the final tree; each was measured in its own run
+(11:11 and 11:28), with the C path (`XO_UNICODE=c`) built by the same
+compiler in the same run.
+
+| Workload | LLVM before | C path (before run) | before / C | LLVM after | C path (after run) | after / C | arm64 before | arm64 after |
+|---|---|---|---|---|---|---|---|---|
+| lower | 577,397,763 | 861,883,530 | 0.670x | 560,262,645 | 844,680,328 | 0.663x | 563,990,681 | 564,011,334 |
+| upper | 577,347,993 | 915,496,042 | 0.631x | 560,272,101 | 898,288,918 | 0.624x | 563,965,050 | 563,975,755 |
+| lower_u | 5,077,549,843 | 4,959,172,264 | 1.024x | 4,052,792,153 | 4,946,611,782 | 0.819x | 4,365,382,601 | 4,365,400,404 |
+| upper_u | 5,008,111,657 | 4,908,550,104 | 1.020x | 3,985,292,696 | 4,892,592,371 | 0.815x | 4,316,287,036 | 4,316,420,118 |
+| eqlower | 12,922,283,786 | 11,478,464,233 | 1.126x | 10,885,971,027 | 11,479,936,507 | 0.948x | 11,658,863,567 | 11,658,878,117 |
+| classify | 248,961,316 | 285,713,651 | 0.871x | 244,928,720 | 288,023,244 | 0.850x | 295,488,031 | 295,655,884 |
+| runecase | 257,372,685 | 251,606,263 | 1.023x | 247,534,943 | 255,921,288 | 0.967x | 246,954,865 | 247,026,370 |
+| quote | 141,822,796 | 180,955,176 | 0.784x | 130,472,526 | 180,040,972 | 0.725x | 145,759,862 | 145,806,634 |
+
+**Every workload is now within 5 percent of the C path on both native
+backends**, the bar of decision 0180 item 7(b): on LLVM every workload
+retires fewer instructions than its C path (the closest, Rune case
+mapping, 0.967x); on arm64 (unchanged by this work: its columns differ
+by at most 0.06 percent between the two runs) the lower compare is
+1.015x and the classes 1.023x, as decision 0184 measured. The LLVM
+lower compare went from 1.126x to 0.948x; mixed script case mapping from
+1.02x to 0.82x (20 percent fewer instructions). LLVM now retires fewer
+instructions than arm64 on every workload but Rune case mapping (0.2
+percent more). Checksums are
+identical on both backends and both paths in every run.
+
+Why (the hot loops' assembly against the C path's): the C path and the
+Xo path both pass through clang with full LTO, so inlining across the
+program and runtime boundary was not missing. The Xo binary searches
+kept `b.vs` after `hi - lo`, the midpoint, `m * 12`, and `m + 1`, and
+`b.hs` before every table read; the decoder kept the checks of `i + k`,
+`i + 1`, `j + 1`; and `decode` and `to_case` stayed calls in
+`case_append` (LLVM's inliner, threshold about 225, does not count call
+sites), while C's `n_case_into` has decoding, case mapping, and encoding
+inlined. The ASCII compare loop of `eq_lower` was already free of checks
+on LLVM (19 instructions a byte in C, 21 in Xo: a byte zero extended
+twice).
+
+Experiments on the IR of the before compiler (scratch runs: minimum of
+3, outside the heavy lock; instructions; the rows from "ranges, facts"
+on are an intermediate version that also told LLVM the intervals of
+loop parameters and had no `&&` join facts):
+
+| Variant | lower_u | eqlower | classify | runecase | quote |
+|---|---|---|---|---|---|
+| before | 5,077,870,981 | 12,922,188,103 | 248,965,415 | 257,481,055 | 141,878,645 |
+| every check of the unicode module removed (an unsound bound) | 4,043,621,012 | 10,830,376,394 | 199,459,843 | 218,335,448 | 112,439,504 |
+| only overflow checks removed | 4,822,555,506 | 12,422,736,004 | 227,580,710 | 244,824,738 | 135,563,181 |
+| only bounds checks removed | 4,759,096,104 | 12,282,759,131 | 226,632,650 | 245,320,210 | 132,431,076 |
+| only shift checks removed | 5,077,947,865 | 12,922,678,280 | 249,019,454 | 257,432,821 | 141,899,389 |
+| `alwaysinline` on decode and to_case, no facts | 4,631,818,918 | 12,001,216,753 | 248,982,141 | 264,072,248 | 132,643,381 |
+| assumes on to_case's search by hand | 4,597,998,600 | 11,961,846,578 | 248,914,705 | 224,538,759 | 141,906,879 |
+| ranges, facts, `nsw`, assumes (no inlining) | 4,542,146,789 | 11,885,091,042 | 242,865,060 | 222,214,087 | 139,356,210 |
+| the same with `inlinehint` on decode and to_case | 4,542,740,414 | 11,886,577,653 | 242,579,894 | 188,729,305 | 139,374,833 |
+| the same with call site `alwaysinline` on decode, to_case, rune_case and its forwarders (by hand) | 4,052,772,895 | 10,885,987,299 | 242,434,366 | 188,371,408 | 130,366,826 |
+| final model with a copy budget of 600 instead of 500 | 4,052,904,674 | 10,886,235,950 | 244,856,913 | 188,439,640 | 130,380,357 |
+
+Shift checks cost nothing (LLVM proves them); overflow and bounds checks
+each cost about half of the gap, and only together do they let LLVM
+inline the searches. With the arm64 budget of 500,
+`prelude.rune_case` (264 instructions with `to_case`, 2 call sites) is
+not inlinable, so `to_case` is forced into it and the wrapper stays a
+call in the Rune loop: runecase 247 million (0.967x of C) instead of
+188 million with a budget of 600. The budget is decision 0184's
+constant for both backends and arm64's runecase is the same 247
+million, so changing it is left to a joint measurement (next step).
+
+Loop parameter assumes (an earlier version told LLVM the interval of
+every Int parameter of a loop header) gained nothing on the unicode
+workloads and made `bench/perf/llvm/xo` sieve retire 3,368,086,961
+instructions instead of 2,085,790,420 (cycles 718 million instead of
+432 million): LLVM unrolled the inner loop with a 128 bit trip count
+computed by `__udivti3` (gotchas/llvm-loop-phi-ranges.md). Only
+midpoints are told.
+
+Bench programs (`bench/perf/llvm/xo`, LLVM, the before and after
+compiler, 5 runs each interleaved, minimum; one run of the pair):
+
+| Program | instructions before | after | cycles before | after | binary bytes before / after |
+|---|---|---|---|---|---|
+| fib | 3,822,569,575 | 3,822,519,621 | 886,035,916 | 889,777,294 | 105,608 / 105,608 |
+| sieve | 2,085,337,633 | 2,085,321,687 | 391,165,851 | 403,130,385 | 106,040 / 106,040 |
+| nbody | 2,624,600,571 | 2,624,522,556 | 729,509,809 | 729,853,481 | 106,296 / 106,296 |
+| sort | 1,388,367,834 | 1,324,087,526 | 854,550,570 | 859,419,074 | 106,168 / 106,168 |
+| interp | 1,613,297,160 | 1,613,318,435 | 254,663,036 | 255,759,527 | 106,072 / 106,072 |
+| collatz | 3,617,540,859 | 3,617,645,990 | 1,991,122,960 | 1,934,666,918 | 105,752 / 105,752 |
+| strings | 949,368,382 | 949,370,907 | 134,692,914 | 131,218,753 | 106,168 / 106,168 |
+
+No change beyond noise but sort, 4.6 percent fewer instructions (cycles
+within the run to run spread of these loaded runs, which reach 3
+percent); binaries are the same size.
+
+Tests of this work: `go test -short` over the repository; TestRangeFacts;
+the LLVM goldens range_facts (new), bce_inline, unicode_table,
+native_eq_lower, and 24 others with overflow, index, Str, list, and
+fault cases; arm64 TestGoldenRun range_facts and bce_inline;
+TestSelfhostLLVM (go backend, `XO_SELFHOST_DIRS=bench/,examples/,testdata/golden/,selfhost/lexer,selfhost/parser`):
+297 runs lowered by both, 297 modules byte identical, 10,498 functions
+identical, 0 differing; test binaries 42 runs, 42 modules byte
+identical, 4,232 functions identical.

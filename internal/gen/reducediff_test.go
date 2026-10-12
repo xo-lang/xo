@@ -98,11 +98,16 @@ func TestReduceDiffReal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("about a minute of builds; run without -short")
 	}
-	xo := filepath.Join(t.TempDir(), "xo")
-	gob := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo")
-	gob.Env = goVetEnv()
-	if out, err := gob.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
+	// $XO_CLI names another xo (the self hosted one, decision 0178's
+	// switch point B gate); else this repository's is built
+	xo := os.Getenv("XO_CLI")
+	if xo == "" {
+		xo = filepath.Join(t.TempDir(), "xo")
+		gob := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo")
+		gob.Env = goVetEnv()
+		if out, err := gob.CombinedOutput(); err != nil {
+			t.Fatalf("go build: %v\n%s", err, out)
+		}
 	}
 	min := reduceDiff(t, writeScript(t, "xo-wrap", realXo), "testdata/reduce/p197.xo", "XO_REAL="+xo)
 	if !strings.Contains(min, " ^ ") || strings.Count(min, "\n") > 12 {

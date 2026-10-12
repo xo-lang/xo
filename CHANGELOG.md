@@ -17,6 +17,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   before); scripts/remote-full.sh defaults to r8g.8xlarge (256 GiB).
   `-short` no longer samples the heavy runs (175 s to 31 to 52 s on the
   development Mac).
+- The self hosted `xo` can be bootstrapped without Go:
+  `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
+  then with itself twice, with no Go on PATH, and checks the fixed point
+  (identical assembly and binary); it passed on a clean Linux arm64
+  machine with Go deleted (decision 0178 stage 7). Fixed on the way: the
+  self hosted driver run with the default relative `--std` could not
+  build the TLS library on an empty cache. The selfhost differential
+  tests can record their Go side and replay it
+  (`XO_SELFHOST_GOLDENS=record|replay`); internal/progen now gives one
+  program per seed.
+
+- The self hosted `xo` has `xo rtpack` (decision 0178): the prebuilt
+  runtime packs scripts/release.sh ships, byte identical to the Go
+  command's. Switch point B's gate passes: cmd/xo's whole suite against
+  the self hosted binary laid out as a release, 69 of 71 tests passing
+  and the two hidden comparison dumps (ssadump, llvmdump) exempt.
 - `xo bind --c` is written in Xo (decision 0178 stage 6,
   selfhost/cli/bind): xo1 binds C headers with the same output and
   cache files, byte for byte, as the Go binder. `xo bind` for Go
@@ -27,6 +43,29 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Go checker does; xo1 runs `xo publish` and prints the API changes of
   `xo get`. `xo publish` in a module of a repository subdirectory under
   a symbolic link (macOS's /var) now finds its tags.
+- Linux fixes from the first full suite run on EC2 (Amazon Linux 2023,
+  arm64; bench/results/linux-2026-10-12.md): the native runtime
+  unregisters a socket or pipe from epoll when it closes it (a child
+  process holding the file kept the registration, and the poller then
+  touched freed memory) and makes descriptors close-on-exec at creation
+  (SOCK_CLOEXEC, accept4, pipe2); HTTP/2 responses with no header fields
+  no longer pass NULL to memcpy; Ed25519's constants initialize once
+  (pthread_once) instead of racing; ThreadSanitizer builds on Linux use
+  8 MiB task stacks; the arm64 backend's binaries are reproducible with
+  gcc as `cc` (a fixed `.file`); the bin cache's copy fallback no longer
+  makes a parallel exec fail with "text file busy". scripts/remote-full.sh
+  gains `--cmd`, `--hold`, and per-package durations at the end of its log.
+
+- The self hosted `xo` (xo1) closes the gaps of decision 0178's switch
+  point B outside stage 6: `build`, `run`, and `test` default to the Go
+  backend as `xo` does; std is found beside the binary (lib/xo/std of a
+  release) through `os.env.program()`, without XO_STD; `xo check
+  --no-gc` reports XO1201; `build --ci`, the workspace check of
+  `--release`, and native `test --real` work; `xo lsp` answers hover,
+  definition, references, rename, formatting, and semantic tokens as the
+  Go server does; `xo replay` reads the rebuilt program's build
+  information again. The Go `xo` can build xo1 from its embedded sources
+  again (the nested selfhost/cli packages were missing).
 - The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
   xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
   quick fixes, symbols) with the Go servers' responses byte for byte,
@@ -48,6 +87,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   reports holes (XO0900). Two types of one name in different modules no
   longer share a generated SSA helper (the native build of such a
   program failed).
+- The LLVM backend drops the overflow checks that value ranges prove
+  (loop counters, binary search midpoints, operations under a branch or
+  after an index), tells LLVM the ranges of loop variables, and inlines
+  the functions the arm64 backend inlines (decision 0192): the Unicode
+  operations written in Xo are now within 5 percent of their C versions
+  on LLVM too.
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
@@ -148,6 +193,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   faster than before; per rune work on arm64 is 1.45 to 1.8 times the
   C's instructions, so `XO_UNICODE=c` at build time still selects the C
   implementation (compiled only then, never in the prebuilt packs).
+- More of the native runtime is Xo (decision 0193, which also orders the
+  rest of the port): `std/native/llrt/text.xo` does Int.parse, a
+  Duration's text and Duration.parse, a Time's RFC 3339 text and
+  std/json's Time parse, and the Debug quoting of Str and Bytes;
+  `strings.xo` does Str.replace and the trims. Output is unchanged on
+  every backend, and the wasm backend runs the Xo versions. Int.parse,
+  Duration.parse, Time text, Debug quoting, and replace retire fewer
+  instructions than the C did (Time text about a quarter); Duration text
+  does not yet meet the 5 percent bar, so `XO_LLRT_C=text,strings` at
+  build time selects the C implementations (`XO_UNICODE=c` still works).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

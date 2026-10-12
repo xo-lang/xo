@@ -1,0 +1,33 @@
+// The C path of the number and time text (decision 0193): the API of
+// text.xo over the C runtime's functions (std/llrt/xo_std.c, compiled
+// with -DXO_TEXT_C). Loaded in place of text.xo when XO_LLRT_C names
+// `text`, to compare the two and to fall back while the Xo path misses
+// decision 0180's bar. The self hosted compiler always uses text.xo.
+use native/rt
+
+pub fn parse_int(s: Str) -> Int? {
+  if rt.int_parse_ok(s) {
+    return Some(rt.int_parse(s))
+  }
+  None
+}
+
+pub fn append_duration(out: Str, d: Int) -> Str { rt.rs_append_duration(out, d) }
+
+pub fn parse_duration(s: Str) -> Int? {
+  if rt.duration_parse_ok(s) {
+    return Some(rt.duration_parse(s))
+  }
+  None
+}
+
+pub fn append_time(out: Str, t: Int) -> Str { rt.rs_append_time(out, t) }
+
+pub fn parse_time(s: Str) -> Int? {
+  if rt.time_parse_ok(s) {
+    return Some(rt.time_parse(s))
+  }
+  None
+}
+
+pub fn append_quote(out: Str, b: Bytes) -> Str { rt.rs_append_quote(out, b) }

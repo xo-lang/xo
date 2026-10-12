@@ -193,6 +193,12 @@ func TestSelfhostGenMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
+	if goldensRecording() {
+		for _, d := range dirs {
+			goGen(d, genFlags, false)
+		}
+		skipRecording(t)
+	}
 	wants := make([]string, len(dirs))
 	wait := background(t, func() {
 		parallel(t, "Go generator", dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
@@ -234,8 +240,20 @@ func hasHole(dir string) bool {
 	return false
 }
 
-// goGen is what `xo gendump` prints for dir with flags.
+// goGen is what `xo gendump` prints for dir with flags. Recorded as the
+// gendump kind (gogoldens_test.go).
 func goGen(dir string, flags []string, test bool) string {
+	if goldensMode() == goldensLive {
+		return goGenLive(dir, flags, test)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, dir)
+	o := fmt.Sprintf("flags=%s test=%v", strings.Join(flags, ","), test)
+	return recorded("gendump", dir+" "+o, []string{o, cx.dirKey(wd, dir, false)}, cx, func() string { return goGenLive(dir, flags, test) })
+}
+
+// goGenLive is goGen with internal/gen run.
+func goGenLive(dir string, flags []string, test bool) string {
 	opts := gen.Options{Mode: gen.Build, Arenas: true}
 	if test {
 		opts.Mode = gen.Test

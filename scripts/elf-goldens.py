@@ -49,7 +49,7 @@ def build(d):
         b = os.path.join(bins, name_of(d))
         return d, '' if os.path.exists(b) else 'no binary ' + b
     b = os.path.join(out, name_of(d))
-    r = subprocess.run([comp, 'build', '--target=linux/arm64', '--ld=macho', '--std=' + os.path.join(root, 'std')] +
+    r = subprocess.run([comp, 'build', '--backend=arm64', '--target=linux/arm64', '--ld=macho', '--std=' + os.path.join(root, 'std')] +
                        os.environ.get('XO1_FLAGS', '').split() + ['-o', b, d], capture_output=True, text=True)
     if r.returncode != 0:
         return d, 'build: ' + (r.stderr.strip().split('\n') or [''])[-1][:200]

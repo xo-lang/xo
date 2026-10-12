@@ -157,10 +157,10 @@ func (c *checker) loadRuntimeModule(path string) (*Module, error) {
 		return m, nil
 	}
 	file := path + ".xo"
-	if path == "native/llrt/unicode" && os.Getenv("XO_UNICODE") == "c" {
-		// the C path of the Unicode operations, kept selectable while the
-		// Xo one is slower on arm64 (decision 0180)
-		file = "native/llrt/unicode_c.xo"
+	if LLRTUsesC(strings.TrimPrefix(path, "native/llrt/")) {
+		// the C path of a ported part of the runtime, kept selectable
+		// until the Xo one meets the bar (decisions 0180, 0193)
+		file = path + "_c.xo"
 	}
 	src, err := fs.ReadFile(std.NativeFiles, file)
 	if err != nil {
@@ -177,6 +177,24 @@ func (c *checker) loadRuntimeModule(path string) (*Module, error) {
 	m.state = 2
 	c.order = append(c.order, m)
 	return m, nil
+}
+
+// LLRTUsesC reports whether the runtime module native/llrt/<name> is
+// built from its C path, std/native/llrt/<name>_c.xo (decisions 0180,
+// 0193): XO_LLRT_C is a comma separated list of module names, or `all`;
+// XO_UNICODE=c (decision 0180) still selects unicode's. A module without
+// a C path ignores it.
+func LLRTUsesC(name string) bool {
+	if name == "unicode" && os.Getenv("XO_UNICODE") == "c" {
+		return true
+	}
+	for _, n := range strings.Split(os.Getenv("XO_LLRT_C"), ",") {
+		if n = strings.TrimSpace(n); n == name || n == "all" {
+			_, err := fs.ReadFile(std.NativeFiles, "native/llrt/"+name+"_c.xo")
+			return err == nil
+		}
+	}
+	return false
 }
 
 // loadNativeRT loads the intrinsics module of the native backends,

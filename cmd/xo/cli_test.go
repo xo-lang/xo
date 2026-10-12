@@ -49,3 +49,15 @@ func execCLI(cli, args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "%s %s: %v\n", cliEnv, cli[0], err)
 	return -1
 }
+
+// skipComparisonDump skips a test of a hidden dump command (lexdump,
+// astdump, typedump, ssadump, asmdump, gendump, llvmdump) when $XO_CLI
+// names another binary: those commands print the Go implementation's
+// output for the differential tests against selfhost/, so the self hosted
+// CLI has none (decision 0178, switch point B: "the hidden dumps used by
+// tests are not needed"; stage 7 replaces them with recorded goldens).
+func skipComparisonDump(t interface{ Skipf(string, ...any) }, cmd string) {
+	if strings.TrimSpace(os.Getenv(cliEnv)) != "" {
+		t.Skipf("xo %s is a hidden comparison dump of the Go implementation, exempt from the %s gate (decision 0178 switch point B)", cmd, cliEnv)
+	}
+}

@@ -433,5 +433,5 @@ fn (var g: Gen) variant_into_at(dst: Int, t: Int, tag: Int, b: Int, el: List[Str
 /// The runtime functions of rt.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt_direct(name: Str) -> Bool {
-  name is "int_op" | "int_conv" | "int_in_range" | "rune_valid" | "rune_of" | "u64_to_float" | "f32_round" | "i64_to_f32" | "rs_append_u64" | "rs_append_rune" | "rs_push_rune" | "rs_append_rune_quote" | "rs_push_byte" | "rs_with_cap" | "str_find" | "str_split" | "str_lines" | "str_trim" | "bytes_hex" | "env_args" | "env_get" | "rs_append_duration"
+  name is "int_op" | "int_conv" | "int_in_range" | "rune_valid" | "rune_of" | "u64_to_float" | "f32_round" | "i64_to_f32" | "rs_append_u64" | "rs_append_rune" | "rs_push_rune" | "rs_append_rune_quote" | "rs_push_byte" | "rs_push_word" | "rs_push_words" | "rs_with_cap" | "str_find" | "str_split" | "str_lines" | "str_trim" | "bytes_hex" | "env_args" | "env_get" | "rs_append_duration"
 }

@@ -102,6 +102,10 @@ func TestSelfhostSSAMutations(t *testing.T) {
 			}
 		})
 	})
+	if goldensRecording() {
+		wait()
+		skipRecording(t)
+	}
 	got := map[string]string{}
 	const batch = 60
 	for _, xb := range runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch) {

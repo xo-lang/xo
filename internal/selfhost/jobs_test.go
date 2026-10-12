@@ -176,7 +176,7 @@ func background(t *testing.T, f func()) (wait func()) {
 // tests instead of starting with the test that needs them. Only for a
 // whole full tier run (no -run, no XO_SELFHOST_BACKEND).
 func prebuildFull() {
-	if testing.Short() || os.Getenv("XO_SELFHOST_TIER") != tierFull || os.Getenv("XO_SELFHOST_BACKEND") != "" {
+	if testing.Short() || goldensRecording() || os.Getenv("XO_SELFHOST_TIER") != tierFull || os.Getenv("XO_SELFHOST_BACKEND") != "" {
 		return
 	}
 	if f := flag.Lookup("test.run"); f != nil && f.Value.String() != "" {

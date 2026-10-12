@@ -7,6 +7,8 @@
 // (--std, --wd, --cc, --asm, --go-tree, --phase-times, --target) are
 // parsed the same way.
 
+use github.com/xo-lang/xo/selfhost/check
+
 /// Everything a command line sets.
 struct Opts {
   cmd: Str = ""
@@ -19,7 +21,8 @@ struct Opts {
   tzdata: Str = "embedded"
   /// --targets (comma separated os/arch, or all) or xo1's --target.
   targets: Str = ""
-  /// --backend as given ("" when not given; xo1's default is arm64).
+  /// --backend as given ("" when not given: go, or arm64 with --no-gc and
+  /// for asm; main.xo).
   backend: Str = ""
   go_tree: Str = ""
   /// --as and --ld (decision 0182): cc, or macho (selfhost/macho; --ld=macho
@@ -80,12 +83,10 @@ fn usage(os: Os, why: Str) -> Never {
 /// parse_args reads the command line (args[0] is the command).
 fn parse_args(os: Os, args: List[Str]) -> Opts {
   var o = Opts{cmd: args[0], wd: os.env.get("PWD") ?? ""}
-  // $XO_STD names the std sources as for the stage 2 commands (cli/core
-  // cli.xo); --std overrides it
-  let env_std = os.env.get("XO_STD") ?? ""
-  if !env_std.is_empty() {
-    o.std = env_std
-  }
+  // the std sources: $XO_STD, else lib/xo/std of a release layout beside
+  // the binary (check.std_dir, as every command finds it); --std
+  // overrides it
+  o.std = check.std_dir(os.env, os.fs)
   let vals = value_flags()
   let bools = bool_flags()
   var i = 1
@@ -256,6 +257,7 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.topts.verbose = on
   } else if name == "real" {
     o.real = on
+    o.topts.real = on
   } else if name == "phase-times" {
     o.phases = on
   } else if name == "offline" {

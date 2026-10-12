@@ -179,8 +179,20 @@ fn (var b: Builder) value_as(e: Expr, t: Int) -> Int {
 // ---------------------------------------------------------------------------
 // Expressions
 
-/// Lowers an expression to a value of its natural type (expr).
+/// Lowers an expression to a value of its natural type (expr), with the
+/// expression as the position of what it records as unsupported.
 fn (var b: Builder) expr(e: Expr) -> Int {
+  let pa = b.at
+  let pf = b.at_file
+  b.at = parser.expr_span(e)
+  b.at_file = b.s.file
+  let v = b.expr_at(e)
+  b.at = pa
+  b.at_file = pf
+  v
+}
+
+fn (var b: Builder) expr_at(e: Expr) -> Int {
   match e {
     ParenExpr(x: x, ..) => return b.expr(x)
     IntLit(value: value, ..) => {

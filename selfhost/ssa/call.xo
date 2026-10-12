@@ -84,6 +84,10 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
+  if fm >= 0 && !b.c.mods[fm].go_path.is_empty() {
+    b.impossible("`${b.c.mods[fm].name}.${b.c.display_name(fo)}` of the Go package `${b.c.mods[fm].go_path}` (`use go`)")
+    return b.undef(b.nat_of(x))
+  }
   if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() {
     return b.c_call(x, ci)
   }
@@ -914,6 +918,12 @@ fn same_span(a: Expr, e: Expr?) -> Bool {
 /// Calls the user function or the implementation impl of ci's function
 /// (callAs, declCall).
 fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
+  b.call_as_via(x, ci, impl, -1)
+}
+
+/// call_as calling, when real >= 0, the real Fs wrapper of the declared
+/// implementation and real (callAsVia with realFsWrapper).
+fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: Int) -> Int {
   let log_from = b.pend_log_from
   b.pend_log_from = ""
   let (span, _, args) = call_parts(x)
@@ -1046,7 +1056,10 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
       vargs.push(v)
     }
   }
-  let name = b.m.funcs[callee].name
+  var name = b.m.funcs[callee].name
+  if real >= 0 {
+    name = b.real_fs_wrapper(callee, b.declare(real, []))
+  }
   if !log_from.is_empty() {
     b.rt("log_from", -1, [b.const_str(log_from)])
   }

@@ -1,1 +1,4 @@
+exit 0
+--- stdout
 1 1 x x1 true
+--- stderr

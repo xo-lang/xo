@@ -38,7 +38,9 @@ import (
 // takes every run; the merge tier every third run but the mergeHeavy
 // ones (each takes about a minute), and -short every 25th but those.
 // XO_SELFHOST_BACKEND names one backend,
-// XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover.
+// XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover,
+// XO_SELFHOST_DIRS=<texts> takes the runs whose directory contains one
+// of the comma separated texts instead.
 func TestSelfhostLLVM(t *testing.T) {
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
@@ -61,6 +63,20 @@ func TestSelfhostLLVM(t *testing.T) {
 		for i, d := range dirs {
 			if !mergeHeavy(d) && i%3 == 0 {
 				some = append(some, d)
+			}
+		}
+		dirs = some
+	}
+	if v := os.Getenv("XO_SELFHOST_DIRS"); v != "" {
+		// the runs whose directory contains one of the comma separated
+		// texts (a development loop, as TestSelfhostArm64)
+		var some []string
+		for _, d := range moduleDirs(t, root) {
+			for _, w := range strings.Split(v, ",") {
+				if strings.Contains(d, w) {
+					some = append(some, d)
+					break
+				}
 			}
 		}
 		dirs = some
@@ -186,6 +202,10 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	wait := background(t, func() {
 		parallel(t, "Go LLVM emitter", dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
 	})
+	if goldensRecording() {
+		wait()
+		skipRecording(t)
+	}
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
 	wait()
 	var st llvmStats
@@ -209,7 +229,20 @@ type goIR struct {
 
 // goLLVM checks dir as a native build does and lowers it as `xo
 // llvmdump` does from root (the test binary when tests is set).
+// Recorded as the llvmdump kind (gogoldens_test.go).
 func goLLVM(root, dir string, tests bool) goIR {
+	if goldensMode() == goldensLive {
+		return goLLVMLive(root, dir, tests)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
+	return recordedJSON("llvmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx,
+		func() goIR { return goLLVMLive(root, dir, tests) }, encGoIR, decGoIR)
+}
+
+// goLLVMLive is goLLVM with the Go emitter run.
+func goLLVMLive(root, dir string, tests bool) goIR {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goIR{none: "error " + err.Error()}

@@ -41,9 +41,14 @@ const (
 )
 
 // selfhostTier is the tier of this run: short under -short, else
-// $XO_SELFHOST_TIER (merge when unset).
+// $XO_SELFHOST_TIER (merge when unset); full when the run records the
+// Go side (XO_SELFHOST_GOLDENS=record, gogoldens_test.go), so that one
+// recording holds what every tier compares.
 func selfhostTier(t testing.TB) string {
 	t.Helper()
+	if goldensRecording() {
+		return tierFull
+	}
 	if testing.Short() {
 		return tierShort
 	}
