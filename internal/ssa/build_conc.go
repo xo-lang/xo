@@ -117,6 +117,22 @@ func (s *fn) rt(name string, t *Type, args ...*Value) *Value {
 	return s.add(OpCall, t, "rt."+name, args...)
 }
 
+// llrt calls the native prelude's llrt_<name>: runtime text written in
+// Xo (std/native/llrt/text.xo, decision 0193), or its C path with
+// XO_LLRT_C=text, called where the C runtime's rt.<name> was.
+func (s *fn) llrt(name string, t *Type, at ast.Node, args ...*Value) *Value {
+	b := s.b
+	impl := b.preludeImpl("llrt_" + name)
+	if impl == nil {
+		b.unsupported(at, "the runtime's "+name+" without the native prelude")
+		return s.undef(t)
+	}
+	f := b.declare(impl, nil, at)
+	// unchecked, like the C it replaces: the text functions fault only
+	// on a runtime bug (no landing after every Display of a Duration)
+	return s.call(f.Name, f.Results[0], "", args...)
+}
+
 // loc is the `file:line` of n as a Str constant (for faults the runtime
 // raises, located like the Go backend's).
 func (s *fn) loc(n ast.Node) *Value {

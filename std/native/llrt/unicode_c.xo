@@ -21,6 +21,10 @@ const BYTE: Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x
 /// x (0 to 255) as a UInt8.
 pub fn byte(x: Int) -> UInt8 { BYTE[x] }
 
+/// utf8.DecodeRune of b from i: the rune times 8 plus its size (the C
+/// runtime's, for other runtime modules such as text.xo).
+pub fn decode(b: Bytes, i: Int) -> Int { rt.bytes_decode(b, i) }
+
 pub fn map_case(s: Str, lower: Bool) -> Str {
   if lower {
     return rt.str_lower(s)
