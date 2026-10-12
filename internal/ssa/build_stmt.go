@@ -301,8 +301,9 @@ func (s *fn) indexedRecv(e ast.Expr) ast.Expr {
 // path: a list still used afterwards (shared, or read on a path where
 // the store does not happen) is copied by `reuse` before the take.
 // keep turns this off for a place whose store may not follow (Map.update
-// stores only on success; a compound assignment whose operand can
-// leave the statement): the element stays a projection (`list.index`).
+// stores only on success): the element stays a projection (`list.index`).
+// A compound assignment reads the target after its operand (decision
+// 0159), so only the operation runs between the take and the store.
 type place struct {
 	t    *Type
 	get  func() *Value
@@ -441,42 +442,18 @@ func (s *fn) assign(x *ast.AssignStmt) {
 		s.b.unsupported(x, "this assignment operator")
 		return
 	}
-	// the operand runs between the read and the store: an element moves
-	// out only when the operand cannot leave the statement or read a
-	// list element (decision 0169)
-	*p.keep = !plainOperand(x.Value)
-	old := p.get()
+	// the value first, then the target's old value (decision 0159): the
+	// changes the value makes to the target's binding (a `var` call of
+	// it) are kept, as with `=` (decision 0140); reading the old value
+	// first cached the binding before the call and stored that copy back.
+	// Only the operation runs between the read and the store, so an
+	// element may move out (decision 0169)
 	var r *Value
 	if op == token.Shl || op == token.Shr {
 		r = s.shiftCount(x.Value, p.t)
 	} else {
 		r = s.valueAs(x.Value, p.t)
 	}
+	old := p.get()
 	p.set(s.arith(op, old, r, x))
-}
-
-// plainOperand reports an expression that cannot leave the statement (no
-// call, `?`, block, or match) and reads no list element: literals, names,
-// fields, and operators over them.
-func plainOperand(e ast.Expr) bool {
-	switch x := e.(type) {
-	case *ast.IntLit, *ast.FloatLit, *ast.DurationLit, *ast.RuneLit, *ast.BytesLit, *ast.Ident:
-		return true
-	case *ast.StringLit:
-		for _, p := range x.Parts {
-			if p.Expr != nil && !plainOperand(p.Expr) {
-				return false
-			}
-		}
-		return true
-	case *ast.ParenExpr:
-		return plainOperand(x.X)
-	case *ast.UnaryExpr:
-		return plainOperand(x.X)
-	case *ast.BinaryExpr:
-		return plainOperand(x.X) && plainOperand(x.Y)
-	case *ast.SelectorExpr:
-		return plainOperand(x.X)
-	}
-	return false
 }
