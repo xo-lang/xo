@@ -21,7 +21,25 @@ func xoModulesBinary(t *testing.T) string {
 	if b := os.Getenv("XO_MODULES_BIN"); b != "" {
 		return b
 	}
-	bin := filepath.Join(t.TempDir(), "xomod")
+	// a release layout (bin/xomod, lib/xo/std): xomod finds std beside
+	// itself through Env.program as xo1 does, since the steps run with no
+	// $XO_STD and a check (audit) needs the prelude
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin", "xomod")
+	std, err := filepath.Abs(filepath.Join("..", "..", "std"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(root, "lib", "xo"), 0o755)
+	os.MkdirAll(filepath.Join(root, "bin"), 0o755)
+	if err := os.Symlink(std, filepath.Join(root, "lib", "xo", "std")); err != nil {
+		t.Fatal(err)
+	}
+	// and the Go binder helper in bin/, as a release ships it (`use go`)
+	gb := exec.Command("go", "build", "-o", filepath.Join(root, "bin", "xo-gobind"), "github.com/xo-lang/xo/cmd/xo-gobind")
+	if out, err := gb.CombinedOutput(); err != nil {
+		t.Fatalf("building xo-gobind: %v\n%s", err, out)
+	}
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	var out, errOut bytes.Buffer
 	if code := runXo([]string{"build", "--backend=arm64", "-o", bin, filepath.Join("..", "..", "selfhost", "cli", "modules", "xomod")}, &out, &errOut); code != 0 {
