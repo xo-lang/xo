@@ -1242,6 +1242,10 @@ fn (var g: G) div_rem(v: Int) {
     return
   }
   let (kc, is_const) = g.const_int(x.args[1])
+  if is_const && g.kind(x.ty) == ssa.Kind.Int && kc != 0 && kc != 1 && kc != -1 && kc != MIN_INT {
+    g.div_const(v, kc)
+    return
+  }
   let a = g.word(x.args[0])
   let b = g.word(x.args[1])
   if !x.pos.is_empty() && !(is_const && kc != 0) {
@@ -1261,6 +1265,69 @@ fn (var g: G) div_rem(v: Int) {
   // `x % -1` is 0 as Xo requires
   let q = g.def1(false, "sdiv $d0, $u0, $u1", [a, b])
   g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, b, a])])
+}
+
+/// Lowers v = x / d or x % d for an Int constant d other than 0, 1, -1,
+/// the minimum, and the positive powers of two (decision 0194): neither
+/// can fault. The quotient of x by |d| is a multiply high and shifts
+/// (sdiv_quot); x / d negates it for d < 0, and x % d (whose sign is
+/// x's, so x % d == x % |d|) is x - q * |d|.
+fn (var g: G) div_const(v: Int, d: Int) {
+  let x = g.f.values[v]
+  let a = g.word(x.args[0])
+  let ad = if d < 0 { -d } else { d }
+  var q = g.sdiv_quot(x.args[0], a, ad)
+  if x.op == ssa.Op.Div {
+    if d < 0 {
+      q = g.def1(false, "neg $d0, $u0", [q])
+    }
+    g.set(v, [q])
+    return
+  }
+  g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, g.cimm(ad), a])])
+}
+
+/// A register holding x / d rounded toward zero (x the SSA value in
+/// register a, 2 <= d < 2^63), shared within the block: for a power of
+/// two 2^k the rounding add and a shift (as div_rem), else a multiply
+/// high by sdiv_magic's M, plus x when M is negative as an Int, an
+/// arithmetic shift, and 1 when the result is negative (left out when
+/// x's bounds prove it is not).
+fn (var g: G) sdiv_quot(xv: Int, a: Int, d: Int) -> Int {
+  let _mi = g.m_()
+  if let Some(r) = g.cm.quo.get((a, d)) {
+    return r
+  }
+  let (lo, _) = g.bounds(xv)
+  var q = 0
+  let (k, p2) = pow2c(d)
+  if p2 {
+    if lo >= 0 || (g.cm.low_zero.get(a) ?? 0) >= k {
+      q = g.def1(false, "asr $d0, $u0, #${k}", [a])
+    } else if k == 1 {
+      let t = g.def1(false, "add $d0, $u0, $u0, lsr #63", [a])
+      q = g.def1(false, "asr $d0, $u0, #1", [t])
+    } else {
+      let sg = g.def1(false, "asr $d0, $u0, #63", [a])
+      let t = g.def1(false, "add $d0, $u0, $u1, lsr #${64 - k}", [a, sg])
+      q = g.def1(false, "asr $d0, $u0, #${k}", [t])
+    }
+  } else {
+    let (mg, sh) = sdiv_magic(d)
+    q = g.def1(false, "smulh $d0, $u0, $u1", [a, g.cimm(mg)])
+    if mg < 0 {
+      q = g.def1(false, "add $d0, $u0, $u1", [q, a])
+    }
+    if sh > 0 {
+      q = g.def1(false, "asr $d0, $u0, #${sh}", [q])
+    }
+    if lo < 0 {
+      q = g.def1(false, "add $d0, $u0, $u0, lsr #63", [q])
+    }
+  }
+  let _mj = g.m_()
+  g.cm.quo[(a, d)] = q
+  q
 }
 
 fn (var g: G) shift(v: Int) {

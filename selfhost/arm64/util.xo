@@ -164,6 +164,60 @@ fn align16(n: Int) -> Int {
   (n + 15) & ~15
 }
 
+/// The multiplier M (as an Int's bits) and the shift s of a signed
+/// division by d (3 <= d < 2^63, not a power of two), as internal/arm64
+/// sdivMagic (Hacker's Delight 10-1): the least p >= 64 with e * anc <
+/// 2^p, M = ceil(2^p / d), e = M * d - 2^p, anc the largest Int with anc
+/// mod d == d - 1; s = p - 64. Only M wraps (wrapping_add).
+fn sdiv_magic(d: Int) -> (Int, Int) {
+  let t = (MAX_INT % d + 1) % d // 2^63 mod d
+  let anc = MAX_INT - t // 2^62 <= anc < 2^63
+  // q1, r1: 2^p / anc and 2^p mod anc, from p = 63; big once q1 >= 2^63
+  var q1 = 1
+  var r1 = MAX_INT - anc + 1
+  if anc == 4611686018427387904 {
+    q1 = 2
+    r1 = 0
+  }
+  var big = false
+  // q2, r2: 2^p / d (mod 2^64) and 2^p mod d, from p = 0
+  var q2 = 0
+  var r2 = 1
+  var p = 0
+  while true {
+    p += 1
+    q2 = q2.wrapping_add(q2)
+    if r2 >= d - r2 {
+      r2 -= d - r2
+      q2 = q2 | 1
+    } else {
+      r2 += r2
+    }
+    if p < 64 {
+      continue
+    }
+    if !big {
+      if q1 >= 4611686018427387904 {
+        big = true
+      } else {
+        q1 += q1
+        if r1 >= anc - r1 {
+          r1 -= anc - r1
+          q1 += 1
+        } else {
+          r1 += r1
+        }
+      }
+    }
+    // e * anc < 2^p = q1 * anc + r1
+    let e = d - r2
+    if big || e < q1 || (e == q1 && r1 > 0) {
+      return (q2.wrapping_add(1), p - 64)
+    }
+  }
+  (0, 0)
+}
+
 /// k when n is 2^k, k >= 1 (pow2c).
 fn pow2c(n: Int) -> (Int, Bool) {
   if n < 2 || n & (n - 1) != 0 {

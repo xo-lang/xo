@@ -77,6 +77,9 @@ struct Memo {
   /// x < y holds for the registers (x, y), from a branch or a passed
   /// bounds check; the value is x's SSA value (decision 0184)
   less: Map[(Int, Int), Int] = {}
+  /// the quotient register of (dividend register, constant divisor) of a
+  /// division by a constant (decision 0194), not inherited
+  quo: Map[(Int, Int), Int] = {}
 }
 
 /// A pointer induction variable of a loop (lsr.xo lsrPlan).

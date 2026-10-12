@@ -1239,6 +1239,10 @@ func (s *fstate) divRem(v *ssa.Value) {
 		return
 	}
 	k, isConst := constInt(v.Args[1])
+	if isConst && v.Type.Kind == ssa.KInt && k != 0 && k != 1 && k != -1 && k != math.MinInt64 {
+		s.divConst(v, k)
+		return
+	}
 	a, b := s.word(v.Args[0]), s.word(v.Args[1])
 	if v.Pos != "" && !(isConst && k != 0) {
 		s.check("cmp $u0, #0", []vreg{b}, "eq", "xo_fault_divzero", rsrc(a), isrc(opChar[v.Op]), symsrc(g.loc(v.Pos)))
@@ -1255,6 +1259,124 @@ func (s *fstate) divRem(v *ssa.Value) {
 	// so `x % -1` is 0 as Xo requires
 	q := s.def1(false, "sdiv $d0, $u0, $u1", a, b)
 	s.set(v, s.def1(false, "msub $d0, $u0, $u1, $u2", q, b, a))
+}
+
+// divConst lowers v = x / d or x % d for an Int constant d other than 0,
+// 1, -1, the minimum, and the positive powers of two (decision 0194):
+// neither can fault. The quotient of x by |d| is a multiply high and
+// shifts (sdivQuot); x / d negates it for d < 0, and x % d (whose sign
+// is x's, so x % d == x % |d|) is x - q * |d|.
+func (s *fstate) divConst(v *ssa.Value, d int64) {
+	a := s.word(v.Args[0])
+	ad := d
+	if d < 0 {
+		ad = -d
+	}
+	q := s.sdivQuot(v.Args[0], a, ad)
+	if v.Op == ssa.OpDiv {
+		if d < 0 {
+			q = s.def1(false, "neg $d0, $u0", q)
+		}
+		s.set(v, q)
+		return
+	}
+	s.set(v, s.def1(false, "msub $d0, $u0, $u1, $u2", q, s.cimm(ad), a))
+}
+
+// sdivQuot returns a register holding x / d rounded toward zero (x the
+// SSA value in register a, 2 <= d < 2^63), shared within the block: for
+// a power of two 2^k the rounding add and a shift (as divRem), else
+// Granlund and Montgomery's multiply high by sdivMagic's M, plus x when
+// M is negative as an Int, an arithmetic shift, and 1 when the result
+// is negative (left out when x's bounds prove it is not).
+func (s *fstate) sdivQuot(x *ssa.Value, a vreg, d int64) vreg {
+	m := s.m()
+	key := [2]int64{int64(a), d}
+	if q, ok := m.quo[key]; ok {
+		return q
+	}
+	lo, _ := s.bounds(x)
+	var q vreg
+	if k, ok := pow2c(d); ok {
+		switch {
+		case lo >= 0 || m.lowZero[a] >= k:
+			q = s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), a)
+		case k == 1:
+			t := s.def1(false, "add $d0, $u0, $u0, lsr #63", a)
+			q = s.def1(false, "asr $d0, $u0, #1", t)
+		default:
+			sg := s.def1(false, "asr $d0, $u0, #63", a)
+			t := s.def1(false, fmt.Sprintf("add $d0, $u0, $u1, lsr #%d", 64-k), a, sg)
+			q = s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), t)
+		}
+	} else {
+		mg, sh := sdivMagic(d)
+		q = s.def1(false, "smulh $d0, $u0, $u1", a, s.cimm(mg))
+		if mg < 0 {
+			q = s.def1(false, "add $d0, $u0, $u1", q, a)
+		}
+		if sh > 0 {
+			q = s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", sh), q)
+		}
+		if lo < 0 {
+			q = s.def1(false, "add $d0, $u0, $u0, lsr #63", q)
+		}
+	}
+	m.quo[key] = q
+	return q
+}
+
+// sdivMagic returns the multiplier M (as an Int's bits) and the shift
+// s of a signed division by d (3 <= d < 2^63, not a power of two), by
+// Hacker's Delight 10-1 (Granlund and Montgomery): for the least p >= 64
+// with e * anc < 2^p, where M = ceil(2^p / d), e = M * d - 2^p, and anc
+// is the largest Int with anc mod d == d - 1, floor(x * M / 2^p) is
+// floor(x / d) for every Int x, so x / d rounded toward zero is that
+// plus 1 for a negative x; s = p - 64. M < 2^64. The arithmetic stays
+// in Ints below 2^63 (no 128 bit products) so that selfhost/arm64
+// sdiv_magic, its mirror, computes the same.
+func sdivMagic(d int64) (int64, int) {
+	t := (math.MaxInt64%d + 1) % d // 2^63 mod d
+	anc := math.MaxInt64 - t       // 2^62 <= anc < 2^63
+	// q1, r1: 2^p / anc and 2^p mod anc, from p = 63; big once q1 >=
+	// 2^63, when e < 2^63 <= q1 settles the test
+	q1, r1 := int64(1), math.MaxInt64-anc+1
+	if anc == 1<<62 {
+		q1, r1 = 2, 0
+	}
+	big := false
+	// q2, r2: 2^p / d (mod 2^64) and 2^p mod d, from p = 0
+	var q2 uint64
+	r2 := int64(1)
+	for p := 1; ; p++ {
+		q2 <<= 1
+		if r2 >= d-r2 {
+			r2 -= d - r2
+			q2 |= 1
+		} else {
+			r2 += r2
+		}
+		if p < 64 {
+			continue
+		}
+		if !big {
+			if q1 >= 1<<62 {
+				big = true
+			} else {
+				q1 += q1
+				if r1 >= anc-r1 {
+					r1 -= anc - r1
+					q1++
+				} else {
+					r1 += r1
+				}
+			}
+		}
+		// e * anc < 2^p = q1 * anc + r1
+		if e := d - r2; big || e < q1 || (e == q1 && r1 > 0) {
+			return int64(q2 + 1), p - 64
+		}
+	}
 }
 
 func (s *fstate) shift(v *ssa.Value) {

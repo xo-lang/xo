@@ -1,0 +1,202 @@
+// Division and remainder by constants (decision 0194): the native
+// backends lower them to a multiply high and shifts (powers of two to
+// shifts); every quotient and remainder of edge dividends by edge
+// divisors of both signs must equal the Go backend's. A division by a
+// constant -1 still faults on the minimum (fault goldens).
+
+fn d1(a: Int) -> (Int, Int) { (a / 1, a % 1) }
+fn d1_q(a: Int) -> Int { a / 1 }
+fn d1_r(a: Int) -> Int { a % 1 }
+fn dn1(a: Int) -> (Int, Int) { (a / (-1), a % (-1)) }
+fn dn1_q(a: Int) -> Int { a / (-1) }
+fn dn1_r(a: Int) -> Int { a % (-1) }
+fn d2(a: Int) -> (Int, Int) { (a / 2, a % 2) }
+fn d2_q(a: Int) -> Int { a / 2 }
+fn d2_r(a: Int) -> Int { a % 2 }
+fn dn2(a: Int) -> (Int, Int) { (a / (-2), a % (-2)) }
+fn dn2_q(a: Int) -> Int { a / (-2) }
+fn dn2_r(a: Int) -> Int { a % (-2) }
+fn d3(a: Int) -> (Int, Int) { (a / 3, a % 3) }
+fn d3_q(a: Int) -> Int { a / 3 }
+fn d3_r(a: Int) -> Int { a % 3 }
+fn dn3(a: Int) -> (Int, Int) { (a / (-3), a % (-3)) }
+fn dn3_q(a: Int) -> Int { a / (-3) }
+fn dn3_r(a: Int) -> Int { a % (-3) }
+fn d5(a: Int) -> (Int, Int) { (a / 5, a % 5) }
+fn d5_q(a: Int) -> Int { a / 5 }
+fn d5_r(a: Int) -> Int { a % 5 }
+fn d7(a: Int) -> (Int, Int) { (a / 7, a % 7) }
+fn d7_q(a: Int) -> Int { a / 7 }
+fn d7_r(a: Int) -> Int { a % 7 }
+fn dn7(a: Int) -> (Int, Int) { (a / (-7), a % (-7)) }
+fn dn7_q(a: Int) -> Int { a / (-7) }
+fn dn7_r(a: Int) -> Int { a % (-7) }
+fn d10(a: Int) -> (Int, Int) { (a / 10, a % 10) }
+fn d10_q(a: Int) -> Int { a / 10 }
+fn d10_r(a: Int) -> Int { a % 10 }
+fn dn10(a: Int) -> (Int, Int) { (a / (-10), a % (-10)) }
+fn dn10_q(a: Int) -> Int { a / (-10) }
+fn dn10_r(a: Int) -> Int { a % (-10) }
+fn d60(a: Int) -> (Int, Int) { (a / 60, a % 60) }
+fn d60_q(a: Int) -> Int { a / 60 }
+fn d60_r(a: Int) -> Int { a % 60 }
+fn d100(a: Int) -> (Int, Int) { (a / 100, a % 100) }
+fn d100_q(a: Int) -> Int { a / 100 }
+fn d100_r(a: Int) -> Int { a % 100 }
+fn dn100(a: Int) -> (Int, Int) { (a / (-100), a % (-100)) }
+fn dn100_q(a: Int) -> Int { a / (-100) }
+fn dn100_r(a: Int) -> Int { a % (-100) }
+fn d1000(a: Int) -> (Int, Int) { (a / 1000, a % 1000) }
+fn d1000_q(a: Int) -> Int { a / 1000 }
+fn d1000_r(a: Int) -> Int { a % 1000 }
+fn d3600(a: Int) -> (Int, Int) { (a / 3600, a % 3600) }
+fn d3600_q(a: Int) -> Int { a / 3600 }
+fn d3600_r(a: Int) -> Int { a % 3600 }
+fn d1000000000(a: Int) -> (Int, Int) { (a / 1000000000, a % 1000000000) }
+fn d1000000000_q(a: Int) -> Int { a / 1000000000 }
+fn d1000000000_r(a: Int) -> Int { a % 1000000000 }
+fn dn1000000000(a: Int) -> (Int, Int) { (a / (-1000000000), a % (-1000000000)) }
+fn dn1000000000_q(a: Int) -> Int { a / (-1000000000) }
+fn dn1000000000_r(a: Int) -> Int { a % (-1000000000) }
+fn d1000000000000000000(a: Int) -> (Int, Int) { (a / 1000000000000000000, a % 1000000000000000000) }
+fn d1000000000000000000_q(a: Int) -> Int { a / 1000000000000000000 }
+fn d1000000000000000000_r(a: Int) -> Int { a % 1000000000000000000 }
+fn d4(a: Int) -> (Int, Int) { (a / 4, a % 4) }
+fn d4_q(a: Int) -> Int { a / 4 }
+fn d4_r(a: Int) -> Int { a % 4 }
+fn dn4(a: Int) -> (Int, Int) { (a / (-4), a % (-4)) }
+fn dn4_q(a: Int) -> Int { a / (-4) }
+fn dn4_r(a: Int) -> Int { a % (-4) }
+fn d1024(a: Int) -> (Int, Int) { (a / 1024, a % 1024) }
+fn d1024_q(a: Int) -> Int { a / 1024 }
+fn d1024_r(a: Int) -> Int { a % 1024 }
+fn dn1024(a: Int) -> (Int, Int) { (a / (-1024), a % (-1024)) }
+fn dn1024_q(a: Int) -> Int { a / (-1024) }
+fn dn1024_r(a: Int) -> Int { a % (-1024) }
+fn d4611686018427387904(a: Int) -> (Int, Int) { (a / 4611686018427387904, a % 4611686018427387904) }
+fn d4611686018427387904_q(a: Int) -> Int { a / 4611686018427387904 }
+fn d4611686018427387904_r(a: Int) -> Int { a % 4611686018427387904 }
+fn dn4611686018427387904(a: Int) -> (Int, Int) { (a / (-4611686018427387904), a % (-4611686018427387904)) }
+fn dn4611686018427387904_q(a: Int) -> Int { a / (-4611686018427387904) }
+fn dn4611686018427387904_r(a: Int) -> Int { a % (-4611686018427387904) }
+fn d4611686018427387905(a: Int) -> (Int, Int) { (a / 4611686018427387905, a % 4611686018427387905) }
+fn d4611686018427387905_q(a: Int) -> Int { a / 4611686018427387905 }
+fn d4611686018427387905_r(a: Int) -> Int { a % 4611686018427387905 }
+fn dn4611686018427387905(a: Int) -> (Int, Int) { (a / (-4611686018427387905), a % (-4611686018427387905)) }
+fn dn4611686018427387905_q(a: Int) -> Int { a / (-4611686018427387905) }
+fn dn4611686018427387905_r(a: Int) -> Int { a % (-4611686018427387905) }
+fn d4611686018427387903(a: Int) -> (Int, Int) { (a / 4611686018427387903, a % 4611686018427387903) }
+fn d4611686018427387903_q(a: Int) -> Int { a / 4611686018427387903 }
+fn d4611686018427387903_r(a: Int) -> Int { a % 4611686018427387903 }
+fn d6700417(a: Int) -> (Int, Int) { (a / 6700417, a % 6700417) }
+fn d6700417_q(a: Int) -> Int { a / 6700417 }
+fn d6700417_r(a: Int) -> Int { a % 6700417 }
+fn d9223372036854775807(a: Int) -> (Int, Int) { (a / 9223372036854775807, a % 9223372036854775807) }
+fn d9223372036854775807_q(a: Int) -> Int { a / 9223372036854775807 }
+fn d9223372036854775807_r(a: Int) -> Int { a % 9223372036854775807 }
+fn dn9223372036854775807(a: Int) -> (Int, Int) { (a / (-9223372036854775807), a % (-9223372036854775807)) }
+fn dn9223372036854775807_q(a: Int) -> Int { a / (-9223372036854775807) }
+fn dn9223372036854775807_r(a: Int) -> Int { a % (-9223372036854775807) }
+fn d9223372036854775806(a: Int) -> (Int, Int) { (a / 9223372036854775806, a % 9223372036854775806) }
+fn d9223372036854775806_q(a: Int) -> Int { a / 9223372036854775806 }
+fn d9223372036854775806_r(a: Int) -> Int { a % 9223372036854775806 }
+fn dmin(a: Int) -> (Int, Int) { (a / (-9223372036854775807 - 1), a % (-9223372036854775807 - 1)) }
+fn dmin_q(a: Int) -> Int { a / (-9223372036854775807 - 1) }
+fn dmin_r(a: Int) -> Int { a % (-9223372036854775807 - 1) }
+
+/// Dividends the bounds prove not negative (no sign fixup).
+fn pos(a: Int) -> Int {
+  if a < 0 {
+    return -1
+  }
+  a / 10 + a % 10 + a / 7 * 3 + a % 1000000000 + a / 3600
+}
+
+/// The digit loop of number text: x % 10 and x / 10 in one block.
+fn digits(v: Int) -> Int {
+  var w = 0
+  var x = v
+  while x != 0 {
+    w = w * 3 + x % 10
+    x = x / 10
+  }
+  w
+}
+
+fn main(os: Os) {
+  let mn = -9223372036854775807 - 1
+  let xs = [0, 1, -1, 2, -2, 3, -3, 6, -6, 7, -7, 9, -9, 10, -10, 11, -11, 99, -99, 100, -100, 101, 999999999, 1000000000, -1000000000, 1000000001, 3599, 3600, -3601, 1023, 1024, -1025, 4611686018427387903, 4611686018427387904, 4611686018427387905, -4611686018427387904, -4611686018427387905, 9223372036854775806, 9223372036854775807, -9223372036854775807, mn, 123456789012345678, -987654321987654321, 6700417, 27670116110564327, -27670116110564327]
+  for a in xs {
+    let (q_d1, r_d1) = d1(a)
+    os.stdio.println("${a} 1 ${q_d1} ${r_d1} ${d1_q(a)} ${d1_r(a)}")
+    if a != mn {
+      let (q, r) = dn1(a)
+      os.stdio.println("${a} (-1) ${q} ${r} ${dn1_q(a)} ${dn1_r(a)}")
+    } else {
+      os.stdio.println("${a} (-1) rem ${dn1_r(a)}")
+    }
+    let (q_d2, r_d2) = d2(a)
+    os.stdio.println("${a} 2 ${q_d2} ${r_d2} ${d2_q(a)} ${d2_r(a)}")
+    let (q_dn2, r_dn2) = dn2(a)
+    os.stdio.println("${a} (-2) ${q_dn2} ${r_dn2} ${dn2_q(a)} ${dn2_r(a)}")
+    let (q_d3, r_d3) = d3(a)
+    os.stdio.println("${a} 3 ${q_d3} ${r_d3} ${d3_q(a)} ${d3_r(a)}")
+    let (q_dn3, r_dn3) = dn3(a)
+    os.stdio.println("${a} (-3) ${q_dn3} ${r_dn3} ${dn3_q(a)} ${dn3_r(a)}")
+    let (q_d5, r_d5) = d5(a)
+    os.stdio.println("${a} 5 ${q_d5} ${r_d5} ${d5_q(a)} ${d5_r(a)}")
+    let (q_d7, r_d7) = d7(a)
+    os.stdio.println("${a} 7 ${q_d7} ${r_d7} ${d7_q(a)} ${d7_r(a)}")
+    let (q_dn7, r_dn7) = dn7(a)
+    os.stdio.println("${a} (-7) ${q_dn7} ${r_dn7} ${dn7_q(a)} ${dn7_r(a)}")
+    let (q_d10, r_d10) = d10(a)
+    os.stdio.println("${a} 10 ${q_d10} ${r_d10} ${d10_q(a)} ${d10_r(a)}")
+    let (q_dn10, r_dn10) = dn10(a)
+    os.stdio.println("${a} (-10) ${q_dn10} ${r_dn10} ${dn10_q(a)} ${dn10_r(a)}")
+    let (q_d60, r_d60) = d60(a)
+    os.stdio.println("${a} 60 ${q_d60} ${r_d60} ${d60_q(a)} ${d60_r(a)}")
+    let (q_d100, r_d100) = d100(a)
+    os.stdio.println("${a} 100 ${q_d100} ${r_d100} ${d100_q(a)} ${d100_r(a)}")
+    let (q_dn100, r_dn100) = dn100(a)
+    os.stdio.println("${a} (-100) ${q_dn100} ${r_dn100} ${dn100_q(a)} ${dn100_r(a)}")
+    let (q_d1000, r_d1000) = d1000(a)
+    os.stdio.println("${a} 1000 ${q_d1000} ${r_d1000} ${d1000_q(a)} ${d1000_r(a)}")
+    let (q_d3600, r_d3600) = d3600(a)
+    os.stdio.println("${a} 3600 ${q_d3600} ${r_d3600} ${d3600_q(a)} ${d3600_r(a)}")
+    let (q_d1000000000, r_d1000000000) = d1000000000(a)
+    os.stdio.println("${a} 1000000000 ${q_d1000000000} ${r_d1000000000} ${d1000000000_q(a)} ${d1000000000_r(a)}")
+    let (q_dn1000000000, r_dn1000000000) = dn1000000000(a)
+    os.stdio.println("${a} (-1000000000) ${q_dn1000000000} ${r_dn1000000000} ${dn1000000000_q(a)} ${dn1000000000_r(a)}")
+    let (q_d1000000000000000000, r_d1000000000000000000) = d1000000000000000000(a)
+    os.stdio.println("${a} 1000000000000000000 ${q_d1000000000000000000} ${r_d1000000000000000000} ${d1000000000000000000_q(a)} ${d1000000000000000000_r(a)}")
+    let (q_d4, r_d4) = d4(a)
+    os.stdio.println("${a} 4 ${q_d4} ${r_d4} ${d4_q(a)} ${d4_r(a)}")
+    let (q_dn4, r_dn4) = dn4(a)
+    os.stdio.println("${a} (-4) ${q_dn4} ${r_dn4} ${dn4_q(a)} ${dn4_r(a)}")
+    let (q_d1024, r_d1024) = d1024(a)
+    os.stdio.println("${a} 1024 ${q_d1024} ${r_d1024} ${d1024_q(a)} ${d1024_r(a)}")
+    let (q_dn1024, r_dn1024) = dn1024(a)
+    os.stdio.println("${a} (-1024) ${q_dn1024} ${r_dn1024} ${dn1024_q(a)} ${dn1024_r(a)}")
+    let (q_d4611686018427387904, r_d4611686018427387904) = d4611686018427387904(a)
+    os.stdio.println("${a} 4611686018427387904 ${q_d4611686018427387904} ${r_d4611686018427387904} ${d4611686018427387904_q(a)} ${d4611686018427387904_r(a)}")
+    let (q_dn4611686018427387904, r_dn4611686018427387904) = dn4611686018427387904(a)
+    os.stdio.println("${a} (-4611686018427387904) ${q_dn4611686018427387904} ${r_dn4611686018427387904} ${dn4611686018427387904_q(a)} ${dn4611686018427387904_r(a)}")
+    let (q_d4611686018427387905, r_d4611686018427387905) = d4611686018427387905(a)
+    os.stdio.println("${a} 4611686018427387905 ${q_d4611686018427387905} ${r_d4611686018427387905} ${d4611686018427387905_q(a)} ${d4611686018427387905_r(a)}")
+    let (q_dn4611686018427387905, r_dn4611686018427387905) = dn4611686018427387905(a)
+    os.stdio.println("${a} (-4611686018427387905) ${q_dn4611686018427387905} ${r_dn4611686018427387905} ${dn4611686018427387905_q(a)} ${dn4611686018427387905_r(a)}")
+    let (q_d4611686018427387903, r_d4611686018427387903) = d4611686018427387903(a)
+    os.stdio.println("${a} 4611686018427387903 ${q_d4611686018427387903} ${r_d4611686018427387903} ${d4611686018427387903_q(a)} ${d4611686018427387903_r(a)}")
+    let (q_d6700417, r_d6700417) = d6700417(a)
+    os.stdio.println("${a} 6700417 ${q_d6700417} ${r_d6700417} ${d6700417_q(a)} ${d6700417_r(a)}")
+    let (q_d9223372036854775807, r_d9223372036854775807) = d9223372036854775807(a)
+    os.stdio.println("${a} 9223372036854775807 ${q_d9223372036854775807} ${r_d9223372036854775807} ${d9223372036854775807_q(a)} ${d9223372036854775807_r(a)}")
+    let (q_dn9223372036854775807, r_dn9223372036854775807) = dn9223372036854775807(a)
+    os.stdio.println("${a} (-9223372036854775807) ${q_dn9223372036854775807} ${r_dn9223372036854775807} ${dn9223372036854775807_q(a)} ${dn9223372036854775807_r(a)}")
+    let (q_d9223372036854775806, r_d9223372036854775806) = d9223372036854775806(a)
+    os.stdio.println("${a} 9223372036854775806 ${q_d9223372036854775806} ${r_d9223372036854775806} ${d9223372036854775806_q(a)} ${d9223372036854775806_r(a)}")
+    let (q_dmin, r_dmin) = dmin(a)
+    os.stdio.println("${a} (-9223372036854775807 - 1) ${q_dmin} ${r_dmin} ${dmin_q(a)} ${dmin_r(a)}")
+    os.stdio.println("${a} pos ${pos(a)} digits ${digits(a)}")
+  }
+}
