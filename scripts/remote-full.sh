@@ -126,7 +126,11 @@ if [ -n "$HOLD" ]; then
   ssh_ "git clone -q xo.bundle xo && cd xo && git checkout -q $commit" || true
   echo "ec2-user@$ip" > "$hold"
   log "holding $id at ec2-user@$ip (address in $hold, checkout at ~/xo); stop this script to terminate it"
-  sleep $((MAXMIN * 60))
+  # wait on a background sleep: bash defers a signal until a foreground
+  # child exits, so stopping the script would not reach the EXIT trap
+  trap 'exit 143' TERM INT HUP
+  sleep $((MAXMIN * 60)) &
+  wait $!
   exit 0
 fi
 if [ -n "$CMD" ]; then
