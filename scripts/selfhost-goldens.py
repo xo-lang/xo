@@ -7,6 +7,9 @@
 # (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
 # XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
 # a --backend= to pass the compiler, such as llvm, decision 0178;
+# XO1_FLAGS: more flags for `<compiler> build`, split at spaces, such as
+# --ld=macho; XO1_PATH: the PATH of `<compiler> build` alone, such as
+# /nonexistent to show a build needs no external tool, decision 0182;
 # XO1_CMD=run: `<compiler> run` builds and runs each program in one
 # command, in the program's directory, its output compared the same way,
 # decision 0178 stage 1).
@@ -89,6 +92,7 @@ def one(d, want_fn):
     bin = os.path.join(out, name)
     be = os.environ.get('XO1_BACKEND', '')
     flags = ['--backend=' + be] if be else []
+    flags = flags + os.environ.get('XO1_FLAGS', '').split()
     if os.environ.get('XO1_CMD') == 'run':
         got, leak = run_cmd(d, flags)
         if got is None:
@@ -99,7 +103,10 @@ def one(d, want_fn):
         if leak:
             return d, leak
         return d, ''
-    b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True)
+    benv = dict(os.environ)
+    if 'XO1_PATH' in os.environ:
+        benv['PATH'] = os.environ['XO1_PATH']
+    b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True, env=benv)
     if b.returncode != 0:
         return d, 'build: ' + (b.stderr.strip().split('\n') or [''])[-1][:200]
     got, leak = run(bin, d)

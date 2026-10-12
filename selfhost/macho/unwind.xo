@@ -1,0 +1,291 @@
+// __TEXT,__unwind_info from the objects' __LD,__compact_unwind entries
+// (mach-o/compact_unwind_encoding.h): a header, the personalities (image
+// offsets of their GOT slots), a first level index, the LSDA index, and
+// regular second level pages of (function offset, encoding). libunwind
+// finds a pc's page in the index and its entry in the page; a DWARF mode
+// entry holds the offset of the function's FDE in __eh_frame.
+
+const UNWIND_HAS_LSDA = 0x40000000
+const UNWIND_MODE_MASK = 0x0f000000
+const PAGE_ENTRIES = 511
+
+/// The compact unwind sections of the live objects: (object, section).
+fn (l: Linker) unwind_sects() -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for (o, ob) in l.objs.indexed() {
+    if !ob.live {
+      continue
+    }
+    for (k, s) in ob.sects.indexed() {
+      if s.seg == "__LD" && s.name == "__compact_unwind" {
+        out.push((o, k))
+      }
+    }
+  }
+  out
+}
+
+/// Sizes __unwind_info from the number of entries, personalities, and
+/// LSDAs, so the layout can place it before the addresses are known.
+fn (var l: Linker) count_unwind() {
+  var n = 0
+  var nlsda = 0
+  var pers: Set[(Int, Int)] = #{}
+  for (o, k) in l.unwind_sects() {
+    let s = l.objs[o].sects[k]
+    n += s.size / 32
+    for r in s.relocs {
+      if r.addr % 32 == 16 && r.ext {
+        pers.add(l.def_of(o, r.sym))
+      } else if r.addr % 32 == 24 {
+        nlsda += 1
+      }
+    }
+  }
+  if n == 0 {
+    return
+  }
+  let pages = (n + PAGE_ENTRIES - 1) / PAGE_ENTRIES
+  let size = 28 + 4 * pers.len() + 12 * (pages + 1) + 8 * nlsda + 8 * pages + 8 * n
+  l.s_unwind = l.osect("__TEXT", "__unwind_info", 0)
+  l.osects[l.s_unwind].align = 2
+  l.osects[l.s_unwind].size = size
+}
+
+/// The FDEs of the merged __eh_frame by the address of their function.
+fn (var l: Linker) fde_offsets() -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  if l.s_eh < 0 {
+    return out
+  }
+  let eh = l.osects[l.s_eh]
+  let b = eh.bytes
+  // the pointer encoding of each CIE's FDEs, by CIE offset
+  var encs: Map[Int, Int] = {}
+  var off = 0
+  while off + 8 <= b.len() {
+    let len = rd32(b, off)
+    if len == 0 {
+      break
+    }
+    if len == 0xffffffff {
+      l.fail("64 bit DWARF in __eh_frame")
+      return out
+    }
+    let id = rd32(b, off + 4)
+    if id == 0 {
+      encs.put(off, cie_fde_encoding(b, off + 8))
+    } else {
+      let cie = off + 4 - id
+      let enc = encs.get(cie) ?? 0x10
+      let field = off + 8
+      var pc = 0
+      if enc == 0x10 {
+        pc = eh.addr + field + rd64(b, field)
+      } else if enc == 0x1b {
+        pc = eh.addr + field + sext32(rd32(b, field))
+      } else {
+        l.fail("FDE pointer encoding ${enc}")
+        return out
+      }
+      if !out.contains(pc) {
+        out.put(pc, off)
+      }
+    }
+    off += 4 + len
+  }
+  out
+}
+
+/// The 'R' encoding of a CIE's augmentation (the FDE pointers), from the
+/// byte after its id.
+fn cie_fde_encoding(b: Bytes, at: Int) -> Int {
+  var p = at + 1
+  let aug_start = p
+  while b[p] != 0 {
+    p += 1
+  }
+  let aug = bstr(b[aug_start..p])
+  p += 1
+  // code alignment, data alignment, return address register
+  p = skip_leb(b, p)
+  p = skip_leb(b, p)
+  p = skip_leb(b, p)
+  if !aug.starts_with("z") {
+    return 0
+  }
+  p = skip_leb(b, p)
+  for c in aug.bytes()[1..] {
+    if c == 'P' {
+      let e = Int(b[p])
+      p += 1 + enc_size(e)
+    } else if c == 'L' {
+      p += 1
+    } else if c == 'R' {
+      return Int(b[p])
+    }
+  }
+  0x10
+}
+
+fn skip_leb(b: Bytes, p0: Int) -> Int {
+  var p = p0
+  while (b[p] & 128) != 0 {
+    p += 1
+  }
+  p + 1
+}
+
+/// The size of a DWARF pointer of an encoding.
+fn enc_size(e: Int) -> Int {
+  match e & 0x0f {
+    0x0 => 8
+    0x2 | 0xa => 2
+    0x3 | 0xb => 4
+    0x4 | 0xc => 8
+    _ => 8
+  }
+}
+
+/// The value a compact unwind field resolves to: its relocation's target
+/// plus the stored content, or the content alone.
+fn (var l: Linker) cu_field(o: Int, s: ISect, rs: Map[Int, IReloc], at: Int) -> Int {
+  let content = rd64(s.data, at)
+  match rs.get(at) {
+    Some(r) => {
+      if !r.ext {
+        return l.translate(o, r.sym, content)
+      }
+      let (d, i) = l.def_of(o, r.sym)
+      if d < 0 {
+        return 0
+      }
+      l.sym_addr(d, i) + content
+    }
+    None => content
+  }
+}
+
+fn (var l: Linker) unwind_info() {
+  let fdes = l.fde_offsets()
+  var es: List[UEntry] = []
+  var pers: List[Int] = []
+  for (o, k) in l.unwind_sects() {
+    let s = l.objs[o].sects[k]
+    var rs: Map[Int, IReloc] = {}
+    for r in s.relocs {
+      rs.put(r.addr, r)
+    }
+    var at = 0
+    while at + 32 <= s.size {
+      let func = l.cu_field(o, s, rs, at)
+      let len = rd32(s.data, at + 8)
+      var enc = rd32(s.data, at + 12)
+      var pg = 0
+      match rs.get(at + 16) {
+        Some(r) => {
+          if r.ext {
+            let (d, i) = l.def_of(o, r.sym)
+            pg = l.got_addr(d, i)
+          }
+        }
+        None => {}
+      }
+      var lsda = 0
+      if rs.contains(at + 24) {
+        lsda = l.cu_field(o, s, rs, at + 24)
+      }
+      if (enc & UNWIND_MODE_MASK) == UNWIND_ARM64_MODE_DWARF {
+        match fdes.get(func) {
+          Some(f) => enc = (enc & 0xff000000) | f
+          None => {
+            l.fail("${l.objs[o].path}: no FDE for the DWARF mode function at ${func}")
+            return
+          }
+        }
+      } else if pg != 0 {
+        var pi = pers.index_of(pg) ?? -1
+        if pi < 0 {
+          pers.push(pg)
+          pi = pers.len() - 1
+        }
+        enc = enc | ((pi + 1) * 0x10000000)
+      }
+      if lsda != 0 {
+        enc = enc | UNWIND_HAS_LSDA
+      }
+      es.push(UEntry{func: func, len: len, enc: enc, pers: pg, lsda: lsda})
+      at += 32
+    }
+  }
+  let sorted = es.sort_by(fn(e: UEntry) -> Int { e.func })
+  let n = sorted.len()
+  let pages = (n + PAGE_ENTRIES - 1) / PAGE_ENTRIES
+  var lsdas: List[(Int, Int)] = []
+  for e in sorted {
+    if e.lsda != 0 {
+      lsdas.push((e.func - IMAGE_BASE, e.lsda - IMAGE_BASE))
+    }
+  }
+  // the counts of count_unwind may count personalities the entries
+  // share: the header's arrays use the actual counts, padded to the size
+  let pers_off = 28
+  let index_off = pers_off + 4 * pers.len()
+  let lsda_off = index_off + 12 * (pages + 1)
+  let pages_off = lsda_off + 8 * lsdas.len()
+  var o = new_out(l.osects[l.s_unwind].size)
+  o.u32(1)
+  o.u32(28)
+  o.u32(0)
+  o.u32(pers_off)
+  o.u32(pers.len())
+  o.u32(index_off)
+  o.u32(pages + 1)
+  for p in pers {
+    o.u32(p - IMAGE_BASE)
+  }
+  // the first level index
+  var li = 0
+  for pg in 0..pages {
+    let first = sorted[pg * PAGE_ENTRIES]
+    o.u32(first.func - IMAGE_BASE)
+    o.u32(pages_off + pg * (8 + 8 * PAGE_ENTRIES))
+    while li < lsdas.len() && lsdas[li].0 < first.func - IMAGE_BASE {
+      li += 1
+    }
+    o.u32(lsda_off + 8 * li)
+  }
+  let last = sorted[n - 1]
+  o.u32(last.func + last.len - IMAGE_BASE)
+  o.u32(0)
+  o.u32(lsda_off + 8 * lsdas.len())
+  for (f, d) in lsdas {
+    o.u32(f)
+    o.u32(d)
+  }
+  // the regular second level pages
+  for pg in 0..pages {
+    let from = pg * PAGE_ENTRIES
+    let to = imin(n, from + PAGE_ENTRIES)
+    o.u32(2)
+    o.u16(8)
+    o.u16(to - from)
+    for e in sorted[from..to] {
+      o.u32(e.func - IMAGE_BASE)
+      o.u32(e.enc)
+    }
+    if pg + 1 < pages {
+      // full pages: the offsets above assume PAGE_ENTRIES each
+    }
+  }
+  if o.n > l.osects[l.s_unwind].size {
+    l.fail("internal: __unwind_info is ${o.n} bytes, sized ${l.osects[l.s_unwind].size}")
+    return
+  }
+  o.zeros(l.osects[l.s_unwind].size - o.n)
+  l.osects[l.s_unwind].bytes = o.done()
+}
+
+fn imin(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}

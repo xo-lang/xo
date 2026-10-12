@@ -22,6 +22,10 @@ struct Opts {
   /// --backend as given ("" when not given; xo1's default is arm64).
   backend: Str = ""
   go_tree: Str = ""
+  /// --as and --ld (decision 0182): cc, or macho (selfhost/macho; --ld=macho
+  /// implies --as=macho).
+  assembler: Str = "cc"
+  linker: Str = "cc"
   phases: Bool = false
   json: Bool = false
   ci: Bool = false
@@ -51,7 +55,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "std", "wd", "cc", "asm", "go-tree", "workspace"]
+  ["o", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld"]
 }
 
 /// The boolean flags.
@@ -60,7 +64,7 @@ fn bool_flags() -> List[Str] {
 }
 
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --seed=N --explore=N --record=FILE --run=SUB --cases=N --real -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --seed=N --explore=N --record=FILE --run=SUB --cases=N --real -v --phase-times"
 }
 
 /// usage prints the usage line with why and exits 2 (flag.ErrHelp and a
@@ -194,6 +198,13 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.cc = look_path(os, v)
   } else if name == "asm" {
     o.asm_path = v
+  } else if name == "as" {
+    o.assembler = v
+  } else if name == "ld" {
+    o.linker = v
+    if v == "macho" {
+      o.assembler = "macho"
+    }
   } else if name == "go-tree" {
     o.go_tree = v
   } else if name == "workspace" {

@@ -32,6 +32,10 @@
 // internal/build buildLLVM does, split into XO_LLVM_SPLIT modules when
 // that is set (split.xo, decision 0168); asm prints the IR.
 //
+// --as=macho (decision 0182): assemble with selfhost/macho, cc links;
+// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo); a
+// macho build does not use the binary cache.
+//
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
 // (generated packages, runtime, build information) is the build
@@ -49,6 +53,7 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
 
 fn main(os: Os) ! {
@@ -97,6 +102,12 @@ fn main(os: Os) ! {
   }
   if !(backend is "arm64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
     fail(os, "--backend=${backend}: want arm64, llvm, or go for build, run, and test, or wasm for build")
+  }
+  if !(o.assembler is "cc" | "macho") {
+    fail(os, "--as=${o.assembler}: want cc or macho")
+  }
+  if !(o.linker is "cc" | "macho") {
+    fail(os, "--ld=${o.linker}: want cc or macho")
   }
   if o.race || o.holes {
     fail(os, "the ${backend} backend does not support --race or --holes")
@@ -310,7 +321,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, host, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false)
     var mode_flags = ["llvm", "-O2"]
     if lls.len() > 1 {
       mode_flags = mode_flags + ["split", split.lto]
@@ -372,18 +383,39 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
       continue
     }
-    if cc.is_empty() {
+    // --ld=macho links arm64 programs without cc (decision 0182)
+    let no_cc = o.linker == "macho"
+    if cc.is_empty() && !no_cc {
       cc = find_cc(os)
       if cc.is_empty() {
         fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
       }
     }
     let bin = bin_path(dir, out, name, tg, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, no_cc)
     let flags = ["-O2"] + lk.flags
-    let srcs = [s] + lk.srcs
+    var prog = s
+    if o.assembler == "macho" {
+      // the object from selfhost/macho (decision 0182)
+      prog = "${dir}/prog-${tgoos}.o"
+      match macho.assemble(code.bytes()) {
+        Ok(obj) => write_or_fail(os, dir, prog, obj)
+        Err(e) => fail(os, "assembler: ${e}")
+      }
+    }
+    let srcs = [prog] + lk.srcs
     let tls = needs_tls(code)
-    let key = native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls)
+    if no_cc {
+      write_or_fail(os, dir_name(bin), "", b"")
+      let why = macho_link(os, ctx, flags, srcs, bin, tls)
+      if !why.is_empty() {
+        fail(os, why)
+      }
+      t = lap(os, phases, "link", t)
+      bins.push((tg, bin))
+      continue
+    }
+    let key = if o.assembler == "macho" { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls) }
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -435,7 +467,7 @@ struct LinkInputs {
   flags: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool) -> LinkInputs {
   // the C runtime (writeRuntime)
   match os.fs.read_dir("${ctx.std}/llrt") {
     Ok(fis) => {
@@ -462,7 +494,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
       fail(os, sel.err)
     }
     lk.flags.push("-DXO_TIME")
-    match tz_source(os, dir, sel) {
+    match if no_cc { tz_object(os, dir, sel) } else { tz_source(os, dir, sel) } {
       Ok(p) => lk.srcs.push(p)
       Err(e) => fail(os, "${e}")
     }
