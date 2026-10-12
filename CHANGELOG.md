@@ -10,9 +10,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of
   its own over WASI preview1; no C compiler, linker, or Go toolchain.
-  70 of the 132 LLVM goldens run under Node with the output of the
-  native backends; the rest (tasks, network, files, maps of handles,
-  more of the std runtime) fail the build with a clear reason.
+  71 of the 133 LLVM goldens run under Node with the output of the
+  native backends; the rest (tasks, network, files, time, strconv
+  quoting, more of the std runtime) fail the build with a clear reason.
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

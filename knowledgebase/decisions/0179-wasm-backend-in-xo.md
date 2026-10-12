@@ -104,8 +104,10 @@ and exits with status 70, the messages those of std/llrt. The wasm
 exception handling proposal was not used: Node supports it, but the flag
 works in every runtime, and the SSA already has the checks.
 
-**The runtime: written for this backend, in WAT inside Xo** (`rt.xo`),
-assembled with every program; not a port of xo_rt.c. Decision 0150
+**The runtime: written for this backend, in WAT inside Xo** (`rt.xo`,
+about 5,100 lines), assembled with every program; not a port of
+xo_rt.c (its messages and algorithms are std/llrt's, function by
+function). Decision 0150
 asks to decide the port of xo_rt.c with this backend: **xo_rt.c is not
 ported to wasm.** Compiling it with `clang --target=wasm32-wasi` needs a
 WebAssembly C toolchain and wasi-libc that the self hosted compiler
@@ -118,37 +120,52 @@ covers it (formatting Floats, Unicode, the std implementations), which
 is also the path of decision 0150's item (6), the runtime pilot.
 
 **WASI.** The module's only imports are `wasi_snapshot_preview1`
-`fd_write` and `proc_exit` (stage 1), the playground's sandbox rule
+`fd_write`, `proc_exit`, `args_sizes_get`, `args_get`,
+`environ_sizes_get`, and `environ_get` (stage 1), the playground's sandbox rule
 (decision 0144: only WASI preview1 imports, checked before
 instantiating). `selfhost/wasm/run.mjs` runs a module under Node's WASI
 in a worker with a 1 GiB stack (the goldens recurse a million deep),
-as the playground's worker will.
+as the playground's worker will, with the single threaded garbage
+collector (gotchas/node-wasm-concurrent-gc-crash.md).
 
 **Unsupported means no module.** A construct the stage does not cover
-(a runtime call not ported, handles, Float formatting, `%` on Float, a
-checked Float to Int conversion, task and channel operations) makes the
-build fail with `the wasm backend does not support ...`; no module is
-written, so a program is never run with a construct lowered wrongly.
+(a runtime call not ported, handles, `strconv` quoting, case mapping,
+tasks, channels, scopes, network, files, time) makes the build fail
+with `the wasm backend does not support ...`; no module is written, so a
+program is never run with a construct lowered wrongly.
 
-**Stage 1** (this decision): integers with their checks and fault
-messages, Float arithmetic and comparisons (no formatting), Bool,
-control flow, calls, `var` parameters (multiple results), structs,
-tuples, enums, match, boxes and recursive types, closures, Str
-concatenation, interpolation of Int and Bool, equality and order of
-Str, List (new, len, index, get, set, push, pop, take, reuse,
-equality), Stdio output, `fault`, and the leak check. **Next stages**:
-(2) Float formatting (shortest round trip, `fmt_go_g`) and the Str
-methods of the prelude (slices, split, join, trim, contains, quote and
-Debug text), which most remaining goldens need; (3) Map and Set (the
-SSA's generated map helpers need `rt.str_hash` and the hash runtime);
-(4) a structured control flow lowering instead of the dispatch loop,
-and output buffering; (5) the self hosted compiler built by this
-backend (selfhost/xo as wasm), which needs the file system through WASI
-(`path_open`, `fd_read`), then the playground switch (decision 0144):
-the compiler as wasm emitting wasm, no Go toolchain in the page; (6)
-tasks on one thread (fibers do not exist in wasm: a cooperative
-scheduler over a CPS lowering or the stack switching proposal),
-channels and scopes.
+**Stage 1** (this decision, 2026-10-12): integers with their checks and
+fault messages, the sized integers and Rune (std/llrt's xo_int_op,
+xo_int_conv, xo_rune_of), Float arithmetic, order, `%` (an exact fmod),
+and text (Go's shortest `%v`, by the free-format algorithm of Burger and
+Dybvig on 1,280 bit integers), Float32 rounding, Bool, control flow,
+calls, `var` parameters (multiple results), structs, tuples, enums,
+match, boxes and recursive types (freed through a worklist, as
+xo_rc_defer), closures and method values, interfaces through the SSA's
+generated helpers, Str concatenation, interpolation, equality and order,
+slices, find, split, lines, trim, repeat, join, contains, quote and
+Debug text, Duration text, List (new, len, index, get, set, push, pop,
+take, reuse, equality), Map and Set through the SSA's generated map
+helpers and xo_str_hash, `fault`, contracts, `defer`, the fault records
+of `task.isolate` style catching (fault_take), `env.args` and `env.get`
+(WASI args and environ), Stdio output, and the leak check. Figures:
+71 of the 133 LLVM goldens print the native output and free every
+allocation; 62 fail the build as unsupported; none differs.
+
+**Next stages**, in the order of the goldens they unlock: (2) the std
+runtime the remaining single threaded goldens call (strconv quoting and
+case mapping need Unicode tables: generated into Xo from Go's unicode
+package and compiled by this backend rather than written in WAT; time
+and the clock through WASI clock_time_get; random through random_get;
+base64, JSON text); (3) a structured control flow lowering instead of
+the dispatch loop, and output buffering (figures in the results file);
+(4) the self hosted compiler built by this backend (selfhost/xo as
+wasm), which needs the file system through WASI (`path_open`,
+`fd_read`), then the playground switch (decision 0144): the compiler as
+wasm emitting wasm, no Go toolchain in the page; (5) tasks, channels,
+and scopes on one thread (fibers do not exist in wasm: a cooperative
+scheduler over a CPS lowering, or the stack switching proposal);
+network and std/http stay unsupported in the browser.
 
 ## Consequences
 
@@ -161,7 +178,10 @@ channels and scopes.
 - Node is needed to run the goldens (the test skips without it); the
   modules are standard and run under any WASI preview1 runtime.
 - The dispatch loop costs speed (figures in the results file); it is
-  replaced in stage 4.
+  replaced in stage 3.
+- A module carries its runtime: about 12 KB for the smallest golden,
+  16 KB the median (a native arm64 build of the same golden is about
+  380 KB with its C runtime).
 
 ## Alternatives
 
