@@ -45,5 +45,5 @@ ms to 0.1 ms on arm64). What still copies: the contents of a box (a
 field of a recursive type) under an element, `Map.update` on a map in
 an element, and any update whose outer list is shared (value
 semantics). The hand workarounds in selfhost/arm64 are no longer
-needed for speed (see the results file for the experiment without
-take_insts and put_insts).
+needed for speed (the driver without them compiles selfhost/xo as fast; results file,
+2026-10-12).

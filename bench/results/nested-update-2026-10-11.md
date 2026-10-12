@@ -62,4 +62,40 @@ without decision 0169.
 
 ## The switch-over driver without the hand workaround
 
-See the next section (filled by the experiment run).
+Run 2026-10-12 under the heavy lock. Three builds of the switch-over
+driver selfhost/xo with `--backend=arm64` (each about 140 s):
+
+- A-before: the branch's selfhost sources built by the compiler before
+  decision 0169 (2cdbb29);
+- A-new: the same sources built by the compiler with `list.take`;
+- A-rev: the same sources with selfhost/arm64's take_insts and
+  put_insts rewritten as direct nested updates
+  (`g.blocks[g.cur].insts.push(x)`, `g.blocks[b].insts[i].early = true`;
+  11 sites in isel.xo, opt.xo, closures.xo, jumptab.xo, a scratch copy,
+  not committed), built with `list.take`.
+
+Each compiled selfhost/xo to assembly (`xo1 asm selfhost/xo`, no link;
+`/usr/bin/time -l`, one run each):
+
+| compiler | wall clock | instructions retired | peak RSS |
+|---|---|---|---|
+| A-before | 271.8 s | 2,584.5 billion | 5.78 GB |
+| A-new | 276.4 s | 2,586.5 billion | 5.25 GB |
+| A-rev | 273.1 s | 2,555.3 billion | 5.16 GB |
+
+The three outputs are byte identical (8,707,747 lines), and so are
+their outputs for bench/perf/xo (about 0.06 s each; 686.5, 674.2, and
+673.3 million instructions for A-before, A-new, A-rev, the second and
+third of three runs).
+
+Result: without the hand workaround the compiler is as fast as with it
+(1.2% fewer instructions, wall clock within noise): the workaround is
+no longer needed. Before decision 0169 the same rewrite ran over 20
+minutes on this input (the gotcha). The decision does not make the
+compiler that keeps its workarounds faster (A-new and A-before within
+0.1% in instructions): the remaining factor of about 2 between the
+self compiled compiler and the Go built one (selfhost-arm64-2026-10-11)
+does not come from nested element updates. Next experiment: profile
+A-new on the same input (`sample <pid> 30` during `xo1 asm
+selfhost/xo`) and rank the Xo functions by self time against the Go
+emitter's pprof profile of `xo asmdump selfhost/xo`.

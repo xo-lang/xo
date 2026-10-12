@@ -69,10 +69,17 @@ first arm64 build of selfhost/xo without them ran over 20 minutes.
 
 ## Consequences
 
-- See the results file for the micro benchmark (time and allocation
-  counts before and after on each backend) and the switch-over
-  experiment (the self hosted compiler with take_insts and put_insts
-  rewritten as direct nested updates).
+- Micro benchmark (bench/perf/nested, 20,000 updates): 20,000 pushes
+  through a `var` receiver 63,580 us to 104 us on arm64 (39,993
+  allocations to 18), `rows[0].cells[j].g = v` 1,477,240 us to 292 us;
+  a shared outer list still copies at every update (5,998 allocations
+  before and after).
+- The switch-over driver with selfhost/arm64's take_insts and put_insts
+  rewritten as direct nested updates compiles selfhost/xo as fast as
+  with them (273.1 s against 276.4 s, 1.2% fewer instructions, the
+  same assembly): the workaround is no longer needed. The decision does
+  not speed up the compiler that keeps its workarounds, so the factor
+  of about 2 against the Go built compiler lies elsewhere.
 - The golden program makes 159 allocations on each native backend,
   2,162 before (`XO_LEAKCHECK=1`).
 - selfhost/ssa and selfhost/arm64 lower `list.take` the same way:
