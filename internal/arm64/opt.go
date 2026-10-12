@@ -47,7 +47,8 @@ type memo struct {
 	less map[[2]vreg]*ssa.Value
 	// quo: the quotient register of (dividend register, constant
 	// divisor) for a division by a constant (decision 0194), so `x % c`
-	// and `x / c` in one block multiply once
+	// and `x / c` multiply once (inherited: a division that may fault
+	// ends its SSA block, so the two are often in successive blocks)
 	quo map[[2]int64]vreg
 }
 
@@ -203,6 +204,9 @@ func (s *fstate) inherit(from *memo) {
 		less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}}
 	for k, v := range from.less {
 		m.less[k] = v
+	}
+	for k, v := range from.quo {
+		m.quo[k] = v
 	}
 	for k, v := range from.lowZero {
 		m.lowZero[k] = v

@@ -1307,11 +1307,12 @@ func (s *fstate) divConst(v *ssa.Value, d int64) {
 }
 
 // sdivQuot returns a register holding x / d rounded toward zero (x the
-// SSA value in register a, 2 <= d < 2^63), shared within the block: for
-// a power of two 2^k the rounding add and a shift (as divRem), else
-// Granlund and Montgomery's multiply high by sdivMagic's M, plus x when
-// M is negative as an Int, an arithmetic shift, and 1 when the result
-// is negative (left out when x's bounds prove it is not).
+// SSA value in register a, 2 <= d < 2^63), shared with the blocks the
+// block dominates (memo.quo): for a power of two 2^k the rounding add
+// and a shift (as divRem), else Granlund and Montgomery's multiply high
+// by sdivMagic's M, plus x when M is negative as an Int, an arithmetic
+// shift, and 1 when the result is negative (left out when x's bounds
+// prove it is not).
 func (s *fstate) sdivQuot(x *ssa.Value, a vreg, d int64) vreg {
 	m := s.m()
 	key := [2]int64{int64(a), d}

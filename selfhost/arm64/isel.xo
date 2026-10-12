@@ -1298,11 +1298,11 @@ fn (var g: G) div_const(v: Int, d: Int) {
 }
 
 /// A register holding x / d rounded toward zero (x the SSA value in
-/// register a, 2 <= d < 2^63), shared within the block: for a power of
-/// two 2^k the rounding add and a shift (as div_rem), else a multiply
-/// high by sdiv_magic's M, plus x when M is negative as an Int, an
-/// arithmetic shift, and 1 when the result is negative (left out when
-/// x's bounds prove it is not).
+/// register a, 2 <= d < 2^63), shared with the blocks the block
+/// dominates (Memo.quo): for a power of two 2^k the rounding add and a
+/// shift (as div_rem), else a multiply high by sdiv_magic's M, plus x
+/// when M is negative as an Int, an arithmetic shift, and 1 when the
+/// result is negative (left out when x's bounds prove it is not).
 fn (var g: G) sdiv_quot(xv: Int, a: Int, d: Int) -> Int {
   let _mi = g.m_()
   if let Some(r) = g.cm.quo.get((a, d)) {

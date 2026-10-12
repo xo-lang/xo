@@ -78,7 +78,7 @@ struct Memo {
   /// bounds check; the value is x's SSA value (decision 0184)
   less: Map[(Int, Int), Int] = {}
   /// the quotient register of (dividend register, constant divisor) of a
-  /// division by a constant (decision 0194), not inherited
+  /// division by a constant (decision 0194), inherited like the others
   quo: Map[(Int, Int), Int] = {}
 }
 
