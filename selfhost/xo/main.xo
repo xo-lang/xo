@@ -33,7 +33,8 @@
 // that is set (split.xo, decision 0168); asm prints the IR.
 //
 // --as=macho (decision 0182): assemble with selfhost/macho, cc links;
-// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo); a
+// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo); with
+// --target=linux/arm64 an ELF executable for glibc, from any host; a
 // macho build does not use the binary cache.
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
@@ -321,7 +322,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, host, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, ctx.goos)
     var mode_flags = ["llvm", "-O2"]
     if lls.len() > 1 {
       mode_flags = mode_flags + ["split", split.lto]
@@ -376,15 +377,16 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       write_or_fail(os, dir, o.asm_path, code.bytes())
     }
     t = lap(os, phases, "write", t)
-    if tg != host {
+    // --ld=macho links arm64 programs without cc, linux/arm64 ones from
+    // any host (decision 0182)
+    let no_cc = o.linker == "macho"
+    if tg != host && !(no_cc && tgoos == "linux") {
       // another target: its assembly only (internal/build buildArm64)
       if !o.json {
         os.stdio.println("${tg}: ${s}")
       }
       continue
     }
-    // --ld=macho links arm64 programs without cc (decision 0182)
-    let no_cc = o.linker == "macho"
     if cc.is_empty() && !no_cc {
       cc = find_cc(os)
       if cc.is_empty() {
@@ -392,13 +394,13 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, no_cc)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, no_cc, tgoos)
     let flags = ["-O2"] + lk.flags
     var prog = s
     if o.assembler == "macho" {
       // the object from selfhost/macho (decision 0182)
       prog = "${dir}/prog-${tgoos}.o"
-      match macho.assemble(code.bytes()) {
+      match if tgoos == "linux" { macho.assemble_elf(code.bytes()) } else { macho.assemble(code.bytes()) } {
         Ok(obj) => write_or_fail(os, dir, prog, obj)
         Err(e) => fail(os, "assembler: ${e}")
       }
@@ -407,7 +409,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tls = needs_tls(code)
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, flags, srcs, bin, tls)
+      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, tls)
       if !why.is_empty() {
         fail(os, why)
       }
@@ -467,7 +469,7 @@ struct LinkInputs {
   flags: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str) -> LinkInputs {
   // the C runtime (writeRuntime)
   match os.fs.read_dir("${ctx.std}/llrt") {
     Ok(fis) => {
@@ -494,7 +496,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
       fail(os, sel.err)
     }
     lk.flags.push("-DXO_TIME")
-    match if no_cc { tz_object(os, dir, sel) } else { tz_source(os, dir, sel) } {
+    match if no_cc { tz_object(os, dir, sel, tgoos) } else { tz_source(os, dir, sel) } {
       Ok(p) => lk.srcs.push(p)
       Err(e) => fail(os, "${e}")
     }

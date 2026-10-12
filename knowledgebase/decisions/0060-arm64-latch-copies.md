@@ -1,6 +1,6 @@
 # 0060: Native arm64 latch copies at inner loop guards; loop bounds checks stay
 
-Status: Accepted (2026-10-08). Extends decision 0054. Implemented in
+Status: Accepted (2026-10-08). Extends decision 0054. The "loop bounds checks stay" part superseded by 0184 (2026-10-12). Implemented in
 `internal/arm64/lsr.go` (`copyable`, `dupLatch`, `emitLatch`, marked by
 `placeLatches`) with a hook in the conditional branch emission of
 `internal/arm64/emit.go`. Evidence: `bench/results/arm64-perf-2026-10-08.md`

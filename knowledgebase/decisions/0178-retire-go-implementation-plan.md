@@ -1,12 +1,13 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
-Status: Proposed for the plan as a whole (2026-10-12; the owner decides
-every switch-over point below). Stage 1 done (2026-10-12, runs 5 and 6
-of the results file). **Switch point A: Accepted, approved by the owner
-2026-10-12, implemented** (internal/selfdriver; section "Switch point
-A, as implemented"). The inventory is from main dbb8b05 with this
-decision's commits; the measurements are on the same tree (runs 1 to 4
-of the results file). Gaps closed on the way, each its own commit: `xo1
+Status: Accepted (owner, 2026-10-12): switch points A and B approved;
+B takes effect when its gate passes; deleting the Go compiler packages is
+delegated to the lead under the criteria in "Owner approvals". Stage 1
+done (2026-10-12, runs 5 and 6 of the results file); switch point A
+implemented (internal/selfdriver; section "Switch point A, as
+implemented"). The inventory is from main dbb8b05 with this decision's
+commits; the measurements are on the same tree (runs 1 to 4 of the
+results file). Gaps closed on the way, each its own commit: `xo1
 --backend=llvm`; the decision 0172 file symbols in xo1's runtime flags
 (with TestXo1IOFlagsSymbols); `xo1 test --backend=go`; `use go` in the
 Go backend path (selfhost/gen's `Go_<path>_` names, the binding
@@ -267,6 +268,34 @@ command through xo1: 11 of 18 before the fixes above (the failures were
   measure stage 1. Scripts that compare xo1 with the Go driver run the
   reference with `XO_SELF_DRIVER=0` (selfhost-samebin.py,
   selfhost-switchover.sh's A).
+- **Gate (run 6 of the results file)**: cmd/xo's full suite and
+  internal/build's full suite pass with the switch on; selfhost-samebin
+  159 of 159 identical binaries; the fixed point holds (the Go emitter's
+  assembly of selfhost/xo equals B's and C's); B runs the arm64 goldens
+  159 of 159. With every command of cmd/xo's 18 build, run, and test
+  cases forced through xo1 alone (no fallback): 12 of 18, the rest being
+  `--ci`, XO1201, and native `--real`, which the switch keeps on the Go
+  driver.
+
+## Owner approvals (2026-10-12)
+
+- Switch point A: approved by the owner on 2026-10-12; implemented the
+  same day (section "Switch point A, as implemented"; gate: run 6 of the
+  results file).
+- Switch point B: approved by the owner on 2026-10-12, to take effect
+  when its gate passes (stages 2 to 6 done, the full suite with every
+  process-driving test run against the Xo binary). The approval does not
+  skip the gate. Stage 7's deletion of the Go compiler packages remains a
+  separate owner call (decision 0150).
+- Order after B (owner, 2026-10-12): freeze the Go implementation right
+  after switch point B (stage 7 step 1: no language change lands in Go),
+  then the runtime port (decision 0180's bar first), then deleting the Go
+  compiler packages, which the owner delegated to the lead once these
+  hold: B live with the full suite passing against the Xo binary, stage 7
+  steps 1 to 3 done (frozen, Go outputs recorded as goldens, bootstrap
+  chain tested), two combined full-suite batches after B with no
+  regression the live cross-check would have caught, and every output
+  users or tests depend on produced by Xo.
 
 ## Consequences
 
