@@ -1,0 +1,49 @@
+// xofmt: the self hosted formatter's command line, for the comparison
+// with internal/format (internal/selfhost TestSelfhostFormat).
+//
+//   format <files...>             each file as `== <path>` and its formatted
+//                                 text, or `== <path> syntax errors <n>`
+//   format --bench=N <files...>   format every file N times, print the time
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var files: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? 0
+    } else {
+      files.push(a)
+    }
+  }
+  if files.is_empty() {
+    os.stdio.eprintln("usage: format [--bench=N] <files...>")
+    os.proc.exit(2)
+  }
+  var srcs: List[Bytes] = []
+  for f in files {
+    srcs.push(os.fs.read(f)?)
+  }
+  if repeat > 0 {
+    let t0 = os.clock.now()
+    var bytes = 0
+    for _ in 0..repeat {
+      for (i, f) in files.indexed() {
+        match format_source(f, srcs[i]) {
+          Ok(text) => bytes += text.len()
+          SyntaxErrors(_) => {}
+        }
+      }
+    }
+    os.stdio.println("formatted ${files.len()} files x ${repeat}: ${bytes} bytes in ${os.clock.since(t0).millis()} ms")
+    return
+  }
+  for (i, f) in files.indexed() {
+    match format_source(f, srcs[i]) {
+      Ok(text) => {
+        os.stdio.print("== ${f}\n")
+        os.stdio.write(text)?
+      }
+      SyntaxErrors(ds) => os.stdio.print("== ${f} syntax errors ${ds.len()}\n")
+    }
+  }
+}

@@ -1685,6 +1685,11 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "StrBuilder.len" | "BytesBuilder.len" => return Some(b.call("Str.len", it, "", [recv]))
     "StrBuilder.freeze" | "BytesBuilder.freeze" => return Some(recv)
     "Env.args" => return Some(b.rt("env_args", b.m.list(st), []))
+    "Env.program" => {
+      // argv[0] (decision 0190: the CLI servers run themselves again)
+      let l = b.rt("env_program", b.m.list(st), [])
+      return Some(b.call("list.index", st, "", [l, b.cint(0)]))
+    }
     "Proc.exit" => {
       b.rt("exit", -1, [b.io_arg(fo, es, 0, it)])
       if b.tests {
@@ -1797,6 +1802,7 @@ fn cap_impl(key: Str) -> Str {
     "Net.only" => "net_only"
     "Proc.cmd" => "proc_cmd"
     "Proc.pipeline" => "proc_pipeline"
+    "Proc.kill" => "proc_kill"
     _ => ""
   }
 }

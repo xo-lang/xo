@@ -470,6 +470,9 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0301|XO0303|XO0305)",.*`,
 	// stage 8: naming, habits, time layouts
 	`(XO0101|XO0177|XO0420)",.*`,
+	// holes (XO0900, a warning), for `xo vet` and `xo1 check` (decision 0178
+	// stage 2)
+	`(XO0900)",.*`,
 	// modules: xo.mod, xo.work, xo.lock, the module cache, vendor/,
 	// dependency rules, deny rules, effect ceilings
 	`(XO1301|XO1302|XO1303|XO1304|XO1305|XO1306|XO1307|XO1309|XO1312)",.*`,

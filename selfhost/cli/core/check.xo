@@ -1,0 +1,234 @@
+// `xo parse` and `xo check` (cmd/xo main.go runParse, runCheckWith).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/cli/modules
+
+// ---------------------------------------------------------------------------
+// parse
+
+fn run_parse(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("parse")
+  fl.bool_flag("json", "print diagnostics (and the AST with --ast) as JSON")
+  fl.bool_flag("ast", "dump the syntax tree as JSON")
+  fl.bool_flag("sig", "allow function declarations without bodies")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("xo parse: no files or directories given")
+    return 2
+  }
+  let files = match collect(os, fl.args, false) {
+    Ok(fs) => fs
+    Err(e) => {
+      os.stdio.eprintln("xo parse: ${e}")
+      return 2
+    }
+  }
+  let as_json = fl.get_bool("json")
+  let with_ast = fl.get_bool("ast")
+  let sig = fl.get_bool("sig")
+  var all: List[Diag] = []
+  var results: List[Str] = []
+  for path in files {
+    let src = match os.fs.read(path) {
+      Ok(b) => b
+      Err(e) => {
+        os.stdio.eprintln("xo parse: ${fs_err(e)}")
+        return 2
+      }
+    }
+    let r = parser.parse_file(path.bytes(), src, sig)
+    all = all + check.parse_diags(path, r.diags)
+    var fields = [("path", jstr(path))]
+    if with_ast {
+      fields.push(("ast", ast_json(r.file)))
+    }
+    results.push(jobj(fields))
+  }
+  var has_err = false
+  for d in all {
+    has_err = has_err || is_error(d)
+  }
+  if as_json {
+    let files_json = if results.is_empty() { "null" } else { jarr(results) }
+    os.stdio.print(indent_json(jobj([("files", files_json), ("diagnostics", diags_json(all))])))
+  } else {
+    if with_ast {
+      let files_json = if results.is_empty() { "null" } else { jarr(results) }
+      os.stdio.print(indent_json(files_json))
+    }
+    var b = StrBuilder.new()
+    for d in all {
+      b.write(human(d))
+      b.write("\n")
+    }
+    b.write("${files.len()} file(s), ${all.len()} error(s)\n")
+    os.stdio.eprint(b.freeze())
+  }
+  if has_err { 1 } else { 0 }
+}
+
+/// The .xo files of paths: a file as named, a directory's .xo files at any
+/// depth (dot directories skipped when skip_dot, as `xo fmt` does), all
+/// sorted (cmd/xo collect, collectFmt).
+pub fn collect(os: Os, paths: List[Str], skip_dot: Bool) -> List[Str] ! Str uses fs.read {
+  var out: List[Str] = []
+  for p in paths {
+    let info = match os.fs.stat(p) {
+      Ok(Some(i)) => i
+      Ok(None) => return Err("stat ${p}: no such file or directory")
+      Err(e) => return Err(stat_err(p, e))
+    }
+    if !info.is_dir {
+      out.push(p)
+      continue
+    }
+    walk_xo(os, p, true, skip_dot, out)?
+  }
+  Ok(out.sort())
+}
+
+/// Appends the .xo files under dir in the order filepath.WalkDir visits
+/// them, with paths joined as it joins them.
+fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str]) -> () ! Str {
+  let entries = match os.fs.read_dir(dir) {
+    Ok(es) => es
+    Err(e) => return Err(stat_err(dir, e))
+  }
+  for e in entries {
+    let p = join_path(dir, e.name)
+    if e.is_dir {
+      if skip_dot && e.name.starts_with(".") {
+        continue
+      }
+      walk_xo(os, p, false, skip_dot, out)?
+    } else if p.ends_with(".xo") {
+      out.push(p)
+    }
+  }
+  Ok(())
+}
+
+fn stat_err(p: Str, e: FsErr) -> Str {
+  match e {
+    NotFound(_) => "stat ${p}: no such file or directory"
+    Denied(_) => "stat ${p}: permission denied"
+    _ => fs_err(e)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// check
+
+/// What a check run of some directories found (query.Session).
+pub struct Session {
+  pub c: check.Checker
+  /// The root modules' paths, in order.
+  pub mods: List[Str]
+  /// The diagnostics, sorted (diag.Sort).
+  pub diags: List[Diag]
+}
+
+/// Checks dirs and, unless exact, the other modules of their workspace
+/// (query.Load, LoadExact). The error is what cmd/xo prints after
+/// "xo <command>: ".
+pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses fs, proc, net, rand, env {
+  var c = new_checker(os, ctx)
+  c.overlay = overlay
+  let all = if exact { dirs } else { c.workspace_dirs(dirs) }
+  c.check_dirs_fetching(os, all, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, ctx.wd, p, v) })?
+  if !c.unsupported.is_empty() {
+    return Err("not supported by the self hosted checker: ${c.unsupported}")
+  }
+  var mods: List[Str] = []
+  for m in c.root_mods {
+    mods.push(c.mods[m].path)
+  }
+  let ds = sort_diags(c.diags)
+  Ok(Session{c: c, mods: mods, diags: ds})
+}
+
+fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("check")
+  fl.bool_flag("json", "print diagnostics as JSON")
+  fl.bool_flag("no-gc", "also run the no GC check of native builds (XO1201, decision 0083)")
+  fl.bool_flag("fix", "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("xo check: no directories given")
+    return 2
+  }
+  let do_fix = fl.get_bool("fix")
+  var applied: List[Change] = []
+  if do_fix {
+    match fix_run(os, ctx, fl.args, [], false) {
+      Ok(r) => applied = r.changes
+      Err(e) => {
+        os.stdio.eprintln("xo check: --fix: ${e}")
+        return 2
+      }
+    }
+  }
+  var s = match load_check(os, ctx, fl.args, fl.get_bool("no-gc")) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo check: ${e}")
+      return 2
+    }
+  }
+  var errs = 0
+  var warns = 0
+  for d in s.diags {
+    if is_error(d) {
+      errs += 1
+    } else {
+      warns += 1
+    }
+  }
+  if fl.get_bool("json") {
+    var fields = [("modules", jstrs(s.mods)), ("diagnostics", diags_json(s.diags))]
+    if do_fix {
+      fields.push(("applied", changes_json(applied)))
+    }
+    os.stdio.print(indent_json(jobj(fields)))
+  } else {
+    var b = StrBuilder.new()
+    for ch in applied {
+      b.write("${ch.file}:${ch.line}: fixed ${ch.rule}: ${ch.title}\n")
+    }
+    if do_fix {
+      b.write("${applied.len()} fix(es) applied\n")
+    }
+    for d in s.diags {
+      b.write(human(d))
+      b.write("\n")
+    }
+    b.write("${s.mods.len()} module(s), ${errs} error(s), ${warns} warning(s)\n")
+    os.stdio.eprint(b.freeze())
+  }
+  if errs > 0 { 1 } else { 0 }
+}
+
+/// The check of `xo check`: the workspace's modules, or with no_gc the
+/// native check (build.CheckNoGCDirs; the XO1201 check of the SSA builder
+/// is not ported: the native implementation modules are checked).
+fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+  if !no_gc {
+    return load(os, ctx, dirs, false, {})
+  }
+  var c = new_checker(os, ctx)
+  c.native = true
+  c.check_dirs_fetching(os, dirs, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, ctx.wd, p, v) })?
+  if !c.unsupported.is_empty() {
+    return Err("not supported by the self hosted checker: ${c.unsupported}")
+  }
+  var mods: List[Str] = []
+  for m in c.root_mods {
+    mods.push(c.mods[m].path)
+  }
+  Ok(Session{c: c, mods: mods, diags: sort_diags(c.diags)})
+}

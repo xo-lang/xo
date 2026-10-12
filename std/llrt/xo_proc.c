@@ -1434,3 +1434,57 @@ void xo_proc_child_kill(xo_child *ch) {
 		kill(ch->pid, SIGKILL);
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Proc.kill (std.md 3.7, decision 0190)
+
+// the signals of std/native/prelude.xo proc_kill, by index
+static const int pr_signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGKILL, SIGTERM, SIGUSR1, SIGUSR2, SIGCONT, SIGSTOP};
+static const char *const pr_signal_names[] = {"HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"};
+
+// the signals a test's FakeProc.kill recorded, "NAME PID"
+static struct {
+	xo_lock mu;
+	char **v;
+	int n;
+} pr_killed;
+
+// xo_proc_kill sends signal number sig (an index of pr_signals) to pid,
+// which proc_kill checked is positive: the empty list, or the error's
+// message (Go's errno text) in a list of one. FakeProc records it.
+xo_rlist *xo_proc_kill(int64_t pid, int64_t sig) {
+	if (sig < 0 || sig >= (int64_t)(sizeof pr_signals / sizeof pr_signals[0]) || pid <= 0) {
+		xo_rlist *l = n_str_list_new(1);
+		return n_str_list_add(l, "invalid signal or process id", 28);
+	}
+	if (tw_is_fake(TW_REAL_PROC)) {
+		char t[64];
+		snprintf(t, sizeof t, "%s %lld", pr_signal_names[sig], (long long)pid);
+		lk(&pr_killed.mu);
+		pr_killed.v = tw_grow(pr_killed.v, pr_killed.n, sizeof(char *));
+		pr_killed.v[pr_killed.n++] = strdup(t);
+		unlk(&pr_killed.mu);
+		return n_str_list_new(0);
+	}
+	if (kill((pid_t)pid, pr_signals[sig]) == 0) {
+		return n_str_list_new(0);
+	}
+	char m[128];
+	snprintf(m, sizeof m, "%s", strerror(errno));
+	if (m[0] >= 'A' && m[0] <= 'Z') {
+		m[0] = (char)(m[0] + 32); // Go's errno texts start in lower case
+	}
+	xo_rlist *l = n_str_list_new(1);
+	return n_str_list_add(l, m, (int64_t)strlen(m));
+}
+
+// xo_proc_killed is FakeProc.killed: the recorded signals, oldest first.
+xo_rlist *xo_proc_killed(void) {
+	lk(&pr_killed.mu);
+	xo_rlist *l = n_str_list_new(pr_killed.n);
+	for (int i = 0; i < pr_killed.n; i++) {
+		l = n_str_list_add(l, pr_killed.v[i], (int64_t)strlen(pr_killed.v[i]));
+	}
+	unlk(&pr_killed.mu);
+	return l;
+}

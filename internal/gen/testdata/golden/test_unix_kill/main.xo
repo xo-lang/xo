@@ -1,0 +1,34 @@
+// FakeProc.kill records signals instead of sending them, and FakeNet
+// listens on `unix:` addresses in memory (decision 0190).
+
+fn stop(p: Proc, pid: Int) -> () ! ProcErr uses proc {
+  p.kill(pid, "QUIT")?
+  p.kill(pid)
+}
+
+test "kill records the signal" {
+  expect(stop(os.proc, 4242)) == Ok(())
+  expect(os.proc.killed()) == ["QUIT 4242", "TERM 4242"]
+}
+
+test "kill checks its arguments" {
+  expect(os.proc.kill(1, "BOGUS")) == Err(ProcErr.Io("unknown signal \"BOGUS\""))
+  expect(os.proc.kill(0)) == Err(ProcErr.Io("invalid process id 0"))
+  expect(os.proc.killed()) == []
+}
+
+test "an attenuated fake must list kill" {
+  expect(os.proc.only(["sleep"]).kill(7)) == Err(ProcErr.Denied("kill"))
+  expect(os.proc.only(["kill"]).kill(7, "HUP")) == Ok(())
+  expect(os.proc.killed()) == ["HUP 7"]
+}
+
+test "a unix socket listens in memory" {
+  let l = os.net.listen("unix:/run/app.sock")?
+  expect(l.addr()) == "unix:/run/app.sock"
+  l.close()
+  match os.net.only(["unix:/run/app.sock"]).listen("unix:/run/other.sock") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "Denied(addr: \"unix:/run/other.sock\")"
+  }
+}

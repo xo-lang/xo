@@ -1,0 +1,26 @@
+// xobind: `xo bind` of selfhost/cli/bind as a program of its own, to
+// compare the C binder in Xo with internal/cbind without building xo1
+// (decision 0178 stage 6, cmd/xo TestBindCXoSame): `xobind bind ...` runs
+// the Xo port; any other command is handed to the Go `xo` named by
+// $XOBIND_FALLBACK (same arguments, standard streams, and exit status).
+
+use github.com/xo-lang/xo/selfhost/cli/bind
+
+fn main(os: Os) uses (fs, proc, env, stdio) {
+  let args = os.env.args()
+  if !args.is_empty() && args[0] == "bind" {
+    os.proc.exit(bind.run(os, args))
+  }
+  let go_xo = os.env.get("XOBIND_FALLBACK") ?? ""
+  if go_xo.is_empty() {
+    os.stdio.eprintln("xobind: only bind; set XOBIND_FALLBACK to the Go xo for the other commands")
+    os.proc.exit(2)
+  }
+  match os.proc.cmd(go_xo, args).inherit().run() {
+    Ok(code) => os.proc.exit(code)
+    Err(e) => {
+      os.stdio.eprintln("xobind: ${go_xo}: ${e}")
+      os.proc.exit(2)
+    }
+  }
+}

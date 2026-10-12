@@ -1,0 +1,481 @@
+// The core commands of the `xo` command line in Xo (decision 0178 stage
+// 2): check, parse, explain, version, init, fmt, fix, vet, and doc, each
+// with the flags, exit codes, and output of cmd/xo (the Go side is the
+// reference). selfhost/xo (xo1) dispatches them here.
+//
+// Global flags before the command: --std=DIR names the std declaration
+// files (default $XO_STD, else lib/xo/std beside the binary's directory's
+// parent, else std beside the binary, else ./std); --wd=DIR the working
+// directory (default $PWD). After the command, as in cmd/xo,
+// --offline and --workspace=off|on are taken from anywhere before `--`.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
+/// them equal).
+pub const VERSION = "0.9.0"
+
+/// What every command needs from the environment.
+pub struct Ctx {
+  pub std: Str
+  pub wd: Str
+  /// XO_OFFLINE and XO_WORK after --offline and --workspace.
+  pub offline: Str
+  pub work: Str
+}
+
+/// The commands this package runs.
+pub fn is_command(args: List[Str]) -> Bool {
+  var i = 0
+  while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
+    i += 1
+  }
+  i < args.len() && (args[i] is "check" | "parse" | "explain" | "version" | "--version" | "init" | "fmt" | "fix" | "vet" | "doc" | "help" | "-h" | "--help")
+}
+
+/// Runs the command line args (the command first) and returns the exit
+/// status.
+pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, net, rand {
+  var std_dir = os.env.get("XO_STD") ?? ""
+  var wd = os.env.get("PWD") ?? ""
+  var args = args0
+  while !args.is_empty() && (args[0].starts_with("--std=") || args[0].starts_with("--wd=")) {
+    if args[0].starts_with("--std=") {
+      std_dir = args[0].trim_prefix("--std=")
+    } else {
+      wd = args[0].trim_prefix("--wd=")
+    }
+    args = drop_first(args)
+  }
+  if std_dir.is_empty() {
+    std_dir = find_std(os)
+  }
+  if args.is_empty() {
+    os.stdio.eprint(USAGE)
+    return 2
+  }
+  var ctx = Ctx{std: std_dir, wd: wd, offline: os.env.get("XO_OFFLINE") ?? "", work: os.env.get("XO_WORK") ?? ""}
+  // moduleFlags: --offline and --workspace anywhere before `--`
+  var rest: List[Str] = []
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a == "--" {
+      while i < args.len() {
+        rest.push(args[i])
+        i += 1
+      }
+      break
+    }
+    if a == "--offline" || a == "-offline" || a == "--offline=true" {
+      ctx.offline = "1"
+    } else if a == "--offline=false" {
+      ctx.offline = ""
+    } else if a.starts_with("--workspace=") || a.starts_with("-workspace=") {
+      let v = a.split("=")[1]
+      if v == "off" {
+        ctx.work = "off"
+      } else if v == "on" || v == "auto" {
+        ctx.work = ""
+      } else {
+        os.stdio.eprintln("xo ${args[0]}: --workspace=${v}: want off or on")
+        return 2
+      }
+    } else {
+      rest.push(a)
+    }
+    i += 1
+  }
+  match args[0] {
+    "check" => run_check(os, ctx, rest)
+    "parse" => run_parse(os, ctx, rest)
+    "explain" => run_explain(os, rest)
+    "version" | "--version" => run_version(os, rest)
+    "init" => run_init(os, ctx, rest)
+    "fmt" => run_fmt(os, rest)
+    "fix" => run_fix(os, ctx, rest)
+    "vet" => run_vet(os, ctx, rest)
+    "doc" => run_doc(os, ctx, rest)
+    "help" | "-h" | "--help" => {
+      os.stdio.print(USAGE)
+      0
+    }
+    _ => {
+      os.stdio.eprint("xo: unknown command ${go_quote(args[0])}\n\n${USAGE}")
+      2
+    }
+  }
+}
+
+/// The std directory when neither --std nor XO_STD names one: lib/xo/std
+/// of a release layout (bin/xo beside lib/), std beside the binary, std
+/// in the binary's parent directory, else ./std.
+fn find_std(os: Os) -> Str {
+  // the running binary: Env.program is not native yet (XO1201), so the
+  // path the shell exported in $_ when it started this program (as
+  // selfhost/xo rt.xo finds lib/xo/rtpack)
+  var prog = os.env.get("_") ?? ""
+  if !prog.starts_with("/") {
+    prog = join_path(os.env.get("PWD") ?? ".", prog)
+  }
+  let dir = dir_of(prog)
+  for cand in [join_path(dir, "../lib/xo/std"), join_path(dir, "std"), join_path(dir, "../std")] {
+    if os.fs.exists(join_path(cand, "prelude.xo")).ok() ?? false {
+      return cand
+    }
+  }
+  "std"
+}
+
+/// A checker for dirs with the module environment of ctx (as xo1 and
+/// selfhost/check's command line set it up).
+pub fn new_checker(os: Os, ctx: Ctx) -> check.Checker uses fs.read, env {
+  var c = check.new_checker(os.fs, ctx.std)
+  c.set_mod_env(ctx.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", ctx.offline, ctx.work)
+  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
+  c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c
+}
+
+// ---------------------------------------------------------------------------
+// version and explain
+
+fn run_version(os: Os, args: List[Str]) -> Int {
+  if !args.is_empty() {
+    os.stdio.eprintln("usage: xo version")
+    return 2
+  }
+  let goos = match target.os {
+    Linux => "linux"
+    Darwin => "darwin"
+    Windows => "windows"
+    Wasi => "wasip1"
+  }
+  let arch = match target.arch {
+    Amd64 => "amd64"
+    Arm64 => "arm64"
+    Wasm32 => "wasm"
+  }
+  os.stdio.println("xo ${VERSION} ${goos}/${arch}")
+  0
+}
+
+/// "XO0201", "xo0201", or "0201" as "XO0201" (diag.NormalizeCode).
+fn normalize_code(s: Str) -> Str {
+  let u = s.trim().to_upper()
+  if u.starts_with("XO") { u } else { "XO${u}" }
+}
+
+fn run_explain(os: Os, args: List[Str]) -> Int {
+  var fl = new_flags("explain")
+  fl.bool_flag("json", "print the explanation as JSON")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 {
+    os.stdio.eprintln("usage: xo explain [--json] <code>   (for example XO0201)")
+    return 2
+  }
+  let code = normalize_code(fl.args[0])
+  let e = match explanation(code) {
+    Some(x) => x
+    None => {
+      os.stdio.eprintln("xo explain: unknown diagnostic code ${go_quote(fl.args[0])}")
+      return 1
+    }
+  }
+  if fl.get_bool("json") {
+    // a map[string]string: keys sorted
+    os.stdio.print(indent_json(jobj([("code", jstr(code)), ("detail", jstr(e.detail)), ("example", jstr(e.example)), ("fix", jstr(e.fix)), ("severity", jstr(e.severity)), ("summary", jstr(e.summary)), ("title", jstr(e.title))])))
+    return 0
+  }
+  var b = StrBuilder.new()
+  b.write("${code}: ${e.title}\nseverity: ${e.severity}\n\n${e.detail}\n\nExample:\n")
+  indent_block(b, e.example)
+  b.write("\nFix:\n")
+  indent_block(b, e.fix)
+  os.stdio.print(b.freeze())
+  0
+}
+
+/// s without its trailing newlines (strings.TrimRight(s, "\n")).
+fn trim_newlines(s: Str) -> Str {
+  var t = s
+  while t.ends_with("\n") {
+    t = slice_to(t, t.len() - 1)
+  }
+  t
+}
+
+/// xs without its first element.
+pub fn drop_first(xs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for i in 1..xs.len() {
+    out.push(xs[i])
+  }
+  out
+}
+
+/// s with every non empty line indented by four spaces (diag indent).
+fn indent_block(var b: StrBuilder, s: Str) {
+  for line in trim_newlines(s).split("\n") {
+    if !line.is_empty() {
+      b.write("    ")
+      b.write(line)
+    }
+    b.write("\n")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// init
+
+fn run_init(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("init")
+  fl.str_flag("dir", ".", "the module directory")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 {
+    os.stdio.eprintln("xo init: want one module path (xo init github.com/acme/billing)")
+    return 2
+  }
+  let path = fl.args[0]
+  if !valid_module_path(path) {
+    os.stdio.eprintln("xo init: invalid module path ${go_quote(path)}: a module path is its location, such as github.com/acme/billing (core 4.2)")
+    return 2
+  }
+  let dir = fl.get_str("dir")
+  match os.fs.create_dir_all(dir) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("xo init: ${fs_err(e)}")
+      return 1
+    }
+  }
+  let name = join_path(dir, "xo.mod")
+  if os.fs.exists(name).ok() ?? false {
+    os.stdio.eprintln("xo init: ${name} already exists")
+    return 1
+  }
+  match os.fs.write(name, "module ${path}\nedition preview\n".bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("xo init: ${fs_err(e)}")
+      return 1
+    }
+  }
+  os.stdio.println("wrote ${name}")
+  let w = nearest_work(os, ctx, dir)
+  if !w.is_empty() {
+    os.stdio.println("the workspace ${w} is above it; add `use ${dir}` to it to build the module from here")
+    return 0
+  }
+  let ignore = join_path(dir, ".gitignore")
+  var s = ""
+  if os.fs.exists(ignore).ok() ?? false {
+    match os.fs.read_text(ignore) {
+      Ok(t) => s = t
+      Err(e) => {
+        os.stdio.eprintln("xo init: ${fs_err(e)}")
+        return 1
+      }
+    }
+  }
+  for l in s.split("\n") {
+    let t = l.trim()
+    if t == "xo.work" || t == "/xo.work" {
+      return 0
+    }
+  }
+  if !s.is_empty() && !s.ends_with("\n") {
+    s = s + "\n"
+  }
+  s = s + "# a local xo.work workspace (decision 0086) is not committed in a single module repository\n/xo.work\n"
+  match os.fs.write(ignore, s.bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("xo init: ${fs_err(e)}")
+      return 1
+    }
+  }
+  os.stdio.println("added xo.work to ${ignore}")
+  0
+}
+
+/// mod.ValidPath: a module path is its location, with a dot in the first
+/// element.
+pub fn valid_module_path(p: Str) -> Bool {
+  if p.is_empty() || p.starts_with("/") || p.ends_with("/") {
+    return false
+  }
+  let elems = p.split("/")
+  if !elems[0].contains(".") {
+    return false
+  }
+  for e in elems {
+    if e.is_empty() || e == "." || e == ".." || e.starts_with(".") {
+      return false
+    }
+    for ch in e.bytes() {
+      let ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_' || ch == '~'
+      if !ok {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// mod.NearestWork: the xo.work XO_WORK names, or the nearest at or above
+/// dir, absolute; "" for none or when workspaces are off.
+pub fn nearest_work(os: Os, ctx: Ctx, dir: Str) -> Str uses fs.read {
+  if ctx.work == "off" {
+    return ""
+  }
+  if !ctx.work.is_empty() {
+    return abs_path(ctx, ctx.work)
+  }
+  var d = abs_path(ctx, dir)
+  while true {
+    let name = join_path(d, "xo.work")
+    if os.fs.exists(name).ok() ?? false {
+      return name
+    }
+    if d == "/" {
+      return ""
+    }
+    d = dir_of(d)
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Paths (path/filepath on Unix)
+
+/// filepath.Clean.
+pub fn clean_path(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for s in p.split("/") {
+    if s.is_empty() || s == "." {
+      continue
+    }
+    if s == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(s)
+  }
+  let body = out.join("/")
+  if rooted {
+    return "/${body}"
+  }
+  if body.is_empty() { "." } else { body }
+}
+
+/// filepath.Join of two elements.
+pub fn join_path(a: Str, b: Str) -> Str {
+  if a.is_empty() {
+    return clean_path(b)
+  }
+  if b.is_empty() {
+    return clean_path(a)
+  }
+  clean_path("${a}/${b}")
+}
+
+/// filepath.Dir.
+pub fn dir_of(p: Str) -> Str {
+  match last_slash(p) {
+    Some(i) => clean_path(slice_to(p, i + 1))
+    None => "."
+  }
+}
+
+/// filepath.Base.
+pub fn base_of(p0: Str) -> Str {
+  if p0.is_empty() {
+    return "."
+  }
+  var p = p0
+  while p.len() > 1 && p.ends_with("/") {
+    p = slice_to(p, p.len() - 1)
+  }
+  match last_slash(p) {
+    Some(i) => {
+      let r = slice_from(p, i + 1)
+      if r.is_empty() { "/" } else { r }
+    }
+    None => p
+  }
+}
+
+fn last_slash(p: Str) -> Int? {
+  let b = p.bytes()
+  var i = b.len() - 1
+  while i >= 0 {
+    if b[i] == '/' {
+      return Some(i)
+    }
+    i -= 1
+  }
+  None
+}
+
+/// filepath.Abs against the working directory of ctx.
+pub fn abs_path(ctx: Ctx, p: Str) -> Str {
+  if p.starts_with("/") {
+    return clean_path(p)
+  }
+  join_path(ctx.wd, p)
+}
+
+/// filepath.Rel(base, target) for two absolute clean paths; None when
+/// target is not below base.
+pub fn rel_below(base: Str, target: Str) -> Str? {
+  if target == base {
+    return Some(".")
+  }
+  let pre = if base == "/" { "/" } else { "${base}/" }
+  if target.starts_with(pre) {
+    return Some(target.trim_prefix(pre))
+  }
+  None
+}
+
+/// An Fs error as Go's *PathError prints it, as near as the error kinds
+/// allow.
+pub fn fs_err(e: FsErr) -> Str {
+  match e {
+    NotFound(path) => "open ${path}: no such file or directory"
+    Exists(path) => "${path}: file exists"
+    NotEmpty(path) => "${path}: directory not empty"
+    NotDir(path) => "${path}: not a directory"
+    IsDir(path) => "read ${path}: is a directory"
+    Denied(path) => "open ${path}: permission denied"
+    Io(path, msg) => "${path}: ${msg}"
+    Canceled => "canceled"
+  }
+}
+
+const USAGE = "usage: xo <command> [arguments]\n" +
+  "\n" +
+  "commands (self hosted: check, parse, explain, version, init, fmt, fix, vet, doc):\n" +
+  "  parse [--json] [--ast] [--sig] <files or dirs...>\n" +
+  "  check [--json] [--no-gc] [--fix] <dirs...>\n" +
+  "  fmt [--check] [--json] [files or dirs...]\n" +
+  "  fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]\n" +
+  "  vet [--json] [dirs...]\n" +
+  "  doc [--json] [--all] [--dir=<dir>] [module dir or import path]\n" +
+  "  explain [--json] <code>\n" +
+  "  init [--dir=<dir>] <module path>\n" +
+  "  version\n"

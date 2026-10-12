@@ -1439,6 +1439,33 @@ fn cap_admits(lists: Str, name: Str) -> Bool {
   true
 }
 
+/// Proc.kill (std.md 3.7, decision 0190): std/rt prockill.go. An
+/// attenuated Proc must list "kill"; the C runtime sends the signal, or
+/// records it for a test's FakeProc.
+fn proc_kill(p: Proc, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc {
+  if !cap_admits(rt.proc_lists(p), "kill") {
+    return Err(ProcErr.Denied("kill"))
+  }
+  let names = ["HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"]
+  var sig = -1
+  for (i, n) in names.indexed() {
+    if n == signal {
+      sig = i
+    }
+  }
+  if sig < 0 {
+    return Err(ProcErr.Io("unknown signal ${signal.quote()}"))
+  }
+  if pid <= 0 {
+    // 0 and negative pids name process groups: never sent
+    return Err(ProcErr.Io("invalid process id ${pid}"))
+  }
+  match rt.proc_kill(pid, sig).get(0) {
+    Some(msg) => Err(ProcErr.Io(msg))
+    None => Ok(())
+  }
+}
+
 fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
 
 fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
@@ -1450,7 +1477,13 @@ fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_l
 fn net_only(n: Net, hosts: List[Str]) -> Net {
   var norm: List[Str] = []
   for h in hosts {
-    norm.push(h.trim().to_lower())
+    let t = h.trim()
+    if t.len() >= 5 && t[0..5].to_lower() == "unix:" {
+      // a socket path keeps its case (decision 0190)
+      norm.push("unix:" + t[5..])
+    } else {
+      norm.push(t.to_lower())
+    }
   }
   rt.net_new(cap_lists_add(rt.net_lists(n), norm))
 }

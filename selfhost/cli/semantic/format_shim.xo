@@ -1,0 +1,20 @@
+// The formatter entry points the semantic tools use (format.Decl,
+// format.Source), from stage 2's port of internal/format
+// (selfhost/cli/core/format).
+
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// format.Decl: the canonical text of declaration d of src; with sig a
+/// function is printed without its body.
+fn fmt_decl(d: Decl, src: Bytes, sig: Bool) -> Str {
+  format.format_decl(d, src, sig)
+}
+
+/// format.Source: the canonical text of a file, None when it does not
+/// parse.
+fn fmt_source(name: Str, src: Bytes) -> Bytes? {
+  match format.format_source(name, src) {
+    Ok(text) => Some(text)
+    SyntaxErrors(_) => None
+  }
+}

@@ -545,6 +545,17 @@ host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address
 `127.0.0.1:49152`, `127.0.0.1:49153`, ... for `:0`. Under record and
 replay (core 11.3) the recorded address is returned (decision 0055).
 
+**Unix domain sockets** (decision 0190): an address `unix:PATH` listens
+on or dials the socket file PATH (`os.net.listen("unix:/tmp/app.sock")`).
+`addr` returns the address as given; closing the listener removes the
+socket file (once), as Go's does; a listen on an existing file fails
+with `Io` (`listen unix PATH: bind: address already in use`); a dial of
+a missing file is `Io` (`dial unix PATH: connect: no such file or
+directory`) and of a file nobody listens on is `Refused`. In an
+attenuated `Net` an entry `unix:PATH` admits exactly that address (the
+path keeps its case); host entries never admit a socket and `unix:`
+entries never admit a host. FakeNet listens on them in memory. Used by `xo serve`.
+
 Most code uses `std/http` instead of raw connections.
 
 **Attenuation** (decision 0156): `n.only(hosts)` is a `Net` whose `dial`
@@ -705,7 +716,20 @@ fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
 fn (p: Proc) only(cmds: List[Str]) -> Proc   // attenuation (below)
 fn (p: Proc) cmd(name: Str, args: List[Str] = []) -> Cmd       // a command, not started (3.8)
 fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
+fn (p: Proc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr  // signals another process
 ```
+
+`kill` (decision 0190) sends the named signal to the process `pid`: one
+of `HUP`, `INT`, `QUIT`, `KILL`, `TERM`, `USR1`, `USR2`, `CONT`, `STOP`
+(the names of `kill -l` without `SIG`; another name is
+`Io("unknown signal \"NAME\"")`). A `pid` of 0 or less (a process group
+for kill(2)) is `Io("invalid process id N")` and nothing is sent. A
+failure is `Io` with the system's text (`no such process`, `operation
+not permitted`). An attenuated `Proc` sends signals only when every list
+names `"kill"` (`os.proc.only(["kill"])`), else `Denied("kill")`. Record
+and replay record it (`proc.kill`). Where the system has no signals
+(Windows), only `KILL` is sent. Used by `xo dump` (core 11.4) to ask a
+running program for its task tree.
 
 `p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
 `Denied(cmd)` for a command not listed (compared as written: `git` and
@@ -1385,7 +1409,11 @@ fn (s: FakeStdio) errors() -> Str                     // everything printed to s
 fn (p: FakeProc) exit_code() -> Int?                  // set when exit was called
 fn (p: FakeProc) signal_after(d: Duration)            // next run_main gets SIGTERM after d (virtual time)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)    // also answers Cmd runs (3.8)
+fn (p: FakeProc) killed() -> List[Str]                // the signals kill recorded, "NAME PID" (3.7)
 ```
+
+`FakeProc.kill(pid, signal)` checks its arguments as `Proc.kill` does and
+records the signal instead of sending it (decision 0190).
 
 In a test, `os.proc.exit(code)` records the code and unwinds the code under
 test back to the test block, which continues.

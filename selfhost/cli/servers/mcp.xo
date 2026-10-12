@@ -1,0 +1,731 @@
+// `xo mcp`: the Model Context Protocol server of internal/mcp in Xo
+// (decision 0178 stage 5). JSON-RPC 2.0 over standard input and output,
+// one message per line; the tools run the xo command line (this program,
+// as a child process, where the Go server calls `run` in process) with
+// --json and reshape the result. Every response is the Go server's byte
+// for byte: the same field order for structs, sorted keys for maps, and
+// json.Marshal's escaping (json.xo).
+
+const MCP_PROTOCOL = "2025-06-18"
+
+const MCP_INSTRUCTIONS = "Xo toolchain. Run check after every edit; diagnostics carry stable XOnnnn codes and machine applicable fixes. Use query for types, definitions, callers, effects, holes, and module APIs; explain for a code's long form."
+
+/// How a tool runs an xo command line: the program and the arguments
+/// before the command's own (the program's path, resolved at start).
+pub struct Exec {
+  pub program: Str
+  /// Extra environment for the child (XO_NO_SERVE, so a command does not
+  /// forward itself to a running `xo serve`).
+  pub env: List[(Str, Str)] = []
+}
+
+/// What a command printed and its exit status.
+struct ExecOut {
+  code: Int
+  stdout: Str
+  stderr: Str
+}
+
+fn exec(os: Os, ex: Exec, args: List[Str]) -> ExecOut {
+  var c = os.proc.cmd(ex.program, args)
+  for (k, v) in ex.env {
+    c = c.set_env(k, v)
+  }
+  match c.output() {
+    Ok(out) => ExecOut{code: out.code, stdout: out.stdout.to_str() ?? "", stderr: out.stderr.to_str() ?? ""}
+    Err(e) => ExecOut{code: 2, stdout: "", stderr: "xo: ${e}\n"}
+  }
+}
+
+/// `xo mcp [flags]`: serves until standard input ends; the exit status.
+pub fn run_mcp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (stdio, proc) {
+  match parse_flags("mcp", [], args) {
+    Ok(_) => {}
+    Err(text) => {
+      os.stdio.eprint(text)
+      return 2
+    }
+  }
+  while {
+    match os.stdio.read_line() {
+      Ok(Some(line)) => {
+        let l = line.trim()
+        if l.is_empty() {
+          continue
+        }
+        match mcp_handle(os, ex, version, l) {
+          Some(resp) => {
+            match os.stdio.write((resp + "\n").bytes()) {
+              Ok(_) => {}
+              Err(e) => {
+                os.stdio.eprintln("xo mcp: ${e}")
+                return 1
+              }
+            }
+          }
+          None => {}
+        }
+      }
+      Ok(None) => break
+      Err(e) => {
+        os.stdio.eprintln("xo mcp: ${e}")
+        return 1
+      }
+    }
+  }
+  0
+}
+
+/// One response line, or None for a notification.
+pub fn mcp_handle(os: Os, ex: Exec, version: Str, line: Str) -> Str? uses proc {
+  let v = match parse(line) {
+    Ok(v) => v
+    Err(e) => return Some(rpc_error("null", -32700, "parse error: ${e}"))
+  }
+  // decode into internal/mcp's request struct
+  var jsonrpc = ""
+  var method = ""
+  var id = ""
+  var params = ""
+  match v {
+    J.Null => return None
+    J.Obj(keys, vals, raws) => {
+      for (i, k) in keys.indexed() {
+        let lk = k.to_lower()
+        if lk == "jsonrpc" || lk == "method" {
+          match vals[i] {
+            J.Str(s) => {
+              if lk == "jsonrpc" {
+                jsonrpc = s
+              } else {
+                method = s
+              }
+            }
+            J.Null => {}
+            J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => return Some(rpc_error("null", -32700, "parse error: " + field_type_err(vals[i], "request", lk, "string")))
+          }
+        } else if lk == "id" {
+          id = raws[i]
+        } else if lk == "params" {
+          params = raws[i]
+        }
+      }
+    }
+    J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => return Some(rpc_error("null", -32700, "parse error: " + value_type_err(v, "mcp.request")))
+  }
+  let notification = id.is_empty()
+  if jsonrpc != "2.0" || method.is_empty() {
+    if notification {
+      return None
+    }
+    return Some(rpc_error(id, -32600, "invalid request"))
+  }
+  let r = dispatch(os, ex, version, method, params)
+  if notification {
+    return None
+  }
+  match r {
+    Ok(res) => {
+      match res {
+        Some(x) => Some(encode(jobj(["jsonrpc", "id", "result"], [jstr("2.0"), J.Raw(id), x]), true))
+        None => Some(encode(jobj(["jsonrpc", "id"], [jstr("2.0"), J.Raw(id)]), true))
+      }
+    }
+    Err((code, msg)) => Some(rpc_error(id, code, msg))
+  }
+}
+
+fn rpc_error(id: Str, code: Int, msg: Str) -> Str {
+  encode(jobj(["jsonrpc", "id", "error"], [jstr("2.0"), J.Raw(id), jobj(["code", "message"], [jint(code), jstr(msg)])]), true)
+}
+
+/// A map[string]any of Go: its keys sorted when written.
+fn gmap(keys: List[Str], vals: List[J]) -> J { go_map_shallow(jobj(keys, vals)) }
+
+/// Sorts the keys of an object (one level; the values are written as
+/// they are).
+fn go_map_shallow(v: J) -> J {
+  match v {
+    J.Obj(keys, vals, _) => {
+      var idx: List[Int] = []
+      for (i, _) in keys.indexed() {
+        idx.push(i)
+      }
+      idx = idx.sort_by(fn(i) { keys[i] })
+      var ks: List[Str] = []
+      var vs: List[J] = []
+      for i in idx {
+        ks.push(keys[i])
+        vs.push(vals[i])
+      }
+      jobj(ks, vs)
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => v
+  }
+}
+
+fn dispatch(os: Os, ex: Exec, version: Str, method: Str, params: Str) -> J? ! (Int, Str) {
+  if method == "initialize" {
+    let v = if version.is_empty() { "dev" } else { version }
+    return Ok(Some(gmap(["protocolVersion", "capabilities", "serverInfo", "instructions"], [
+      jstr(MCP_PROTOCOL),
+      gmap(["tools"], [gmap(["listChanged"], [jbool(false)])]),
+      gmap(["name", "version"], [jstr("xo"), jstr(v)]),
+      jstr(MCP_INSTRUCTIONS),
+    ])))
+  }
+  if method == "ping" {
+    return Ok(Some(jobj([], [])))
+  }
+  if method == "tools/list" {
+    var defs: List[J] = []
+    for t in tools() {
+      defs.push(tool_def(t))
+    }
+    return Ok(Some(gmap(["tools"], [jarr(defs)])))
+  }
+  if method == "tools/call" {
+    // struct { Name string; Arguments json.RawMessage }
+    let p = match parse(params) {
+      Ok(p) => p
+      Err(e) => return Err((-32602, e))
+    }
+    var name = ""
+    var arguments = ""
+    match p {
+      J.Obj(keys, vals, raws) => {
+        for (i, k) in keys.indexed() {
+          let lk = k.to_lower()
+          if lk == "name" {
+            match vals[i] {
+              J.Str(s) => name = s
+              J.Null => {}
+              J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => return Err((-32602, field_type_err(vals[i], "", "name", "string")))
+            }
+          } else if lk == "arguments" {
+            arguments = raws[i]
+          }
+        }
+      }
+      J.Null => {}
+      J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => return Err((-32602, value_type_err(p, "struct { Name string \"json:\\\"name\\\"\"; Arguments json.RawMessage \"json:\\\"arguments\\\"\" }")))
+    }
+    var found = false
+    for t in tools() {
+      found = found || t.name == name
+    }
+    if !found {
+      return Err((-32602, "unknown tool ${name.quote()}"))
+    }
+    var args: J = jobj([], [])
+    if !arguments.is_empty() && arguments != "null" {
+      let a = parse(arguments).ok() ?? J.Null
+      match a {
+        J.Obj(_, _, _) => args = go_map(a)
+        J.Null => {}
+        J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => return Err((-32602, "arguments: " + value_type_err(a, "map[string]interface {}")))
+      }
+    }
+    return match run_tool(os, ex, name, args) {
+      Ok(out) => Ok(Some(tool_result(out, false)))
+      Err(msg) => Ok(Some(tool_result(gmap(["error"], [jstr(msg)]), true)))
+    }
+  }
+  if method.starts_with("notifications/") {
+    return Ok(None)
+  }
+  Err((-32601, "method ${method.quote()} not found"))
+}
+
+/// toolResult: v as compact JSON text content (an Encoder without HTML
+/// escaping; an invalid raw value writes nothing).
+fn tool_result(v: J, is_error: Bool) -> J {
+  let text = if raw_valid(v) { encode(v, false) } else { "" }
+  gmap(["content", "isError"], [jarr([gmap(["type", "text"], [jstr("text"), jstr(text)])]), jbool(is_error)])
+}
+
+/// Whether every raw value inside v is valid JSON (Go fails the whole
+/// encoding otherwise).
+fn raw_valid(v: J) -> Bool {
+  match v {
+    J.Raw(t) => parse(t).is_ok()
+    J.Arr(items, _) => {
+      for x in items {
+        if !raw_valid(x) {
+          return false
+        }
+      }
+      true
+    }
+    J.Obj(_, vals, _) => {
+      for x in vals {
+        if !raw_valid(x) {
+          return false
+        }
+      }
+      true
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) => true
+  }
+}
+
+// ---------------------------------------------------------------------------
+// tools
+
+/// A property of a tool's input schema: its keys and values in any order
+/// (written sorted, a Go map).
+struct Prop {
+  name: Str
+  schema: J
+}
+
+struct Tool {
+  name: Str
+  desc: Str
+  props: List[Prop]
+  required: List[Str]
+}
+
+fn prop(name: Str, keys: List[Str], vals: List[J]) -> Prop { Prop{name: name, schema: gmap(keys, vals)} }
+
+fn str_array(desc: Str) -> List[J] { [jstr("array"), gmap(["type"], [jstr("string")]), jstr(desc)] }
+
+fn dirs_prop() -> Prop {
+  prop("dirs", ["type", "items", "description"], str_array("module directories (default [\".\"]); every directory holding .xo files is a module"))
+}
+
+fn no_gc_prop() -> Prop {
+  prop("no_gc", ["type", "description"], [jstr("boolean"), jstr("build without a garbage collector on a native backend (`--no-gc`, decision 0083): XO1201 diagnostics name what it cannot build, planned or impossible")])
+}
+
+fn enum_prop(name: Str, values: List[Str]) -> Prop {
+  var vs: List[J] = []
+  for v in values {
+    vs.push(jstr(v))
+  }
+  prop(name, ["type", "enum"], [jstr("string"), jarr(vs)])
+}
+
+fn simple(name: Str, typ: Str, desc: Str) -> Prop { prop(name, ["type", "description"], [jstr(typ), jstr(desc)]) }
+
+/// The tools in the order internal/mcp registers them.
+fn tools() -> List[Tool] {
+  [
+    Tool{name: "check", desc: "Type check the modules under dirs. Returns {ok, errors, warnings, modules, diagnostics}; each diagnostic has code, severity, message, span, notes, and fixes (machine applicable edits). With fix=true (`xo check --fix`, decision 0096) every unambiguous machine fix is applied and the changed files reformatted first; the result then also has applied: [{file, line, rule, title}].",
+      props: [dirs_prop(), no_gc_prop(), simple("fix", "boolean", "apply the unambiguous machine fixes and reformat before reporting (default false: read only)")], required: []},
+    Tool{name: "query", desc: "Semantic query: type (arg file:line:col), def (arg name, Type.member, module.name), callers (arg module.fn), effects (arg module.fn, with the call chain per effect), holes (no arg), api (arg module import path or directory), imports (arg package: its use lines, with any deny rule that forbids one), deps (arg package: imports, transitively), hash (arg name: the content hash of a definition, local names erased; core 4.3).",
+      props: [enum_prop("kind", ["type", "def", "callers", "effects", "holes", "api", "imports", "deps", "hash"]), simple("arg", "string", "the query argument; omitted for holes"), simple("dir", "string", "directory checked (default .)")], required: ["kind"]},
+    Tool{name: "edit", desc: "Semantic edit through resolved symbols (core 10.4), atomic across the modules: rename (args [name, new name]), add-field (args [Struct, \"name: Type = default\"]), change-sig (args [fn, \"(params) -> Result ! Err\"]). Rejected, with nothing written, unless the program checks clean before and after. Returns {op, target, ok, written, reason, files, edits, diagnostics, sites}.",
+      props: [enum_prop("op", ["rename", "add-field", "change-sig"]), prop("args", ["type", "items", "description"], str_array("the operation's arguments")), simple("dir", "string", "directory checked and edited (default .)"), simple("dry_run", "boolean", "check the edit without writing files")], required: ["op", "args"]},
+    Tool{name: "explain", desc: "Long form explanation of a diagnostic code: title, summary, detail, example, fix.",
+      props: [simple("code", "string", "diagnostic code such as XO0201 (or 0201)")], required: ["code"]},
+    Tool{name: "fmt", desc: "Canonical formatting. By default reports which files are unformatted without changing them; write=true rewrites them. Returns {changed, unchanged, written, diagnostics}.",
+      props: [prop("paths", ["type", "items", "description"], str_array("files or directories (default [\".\"])")), simple("write", "boolean", "rewrite unformatted files (default false)")], required: []},
+    Tool{name: "test", desc: "Build and run the test blocks, property tests, and contract fuzzing. Returns {ok, passed, failed, skipped, failures: [{name, module, loc, message, seed}]}, plus build errors when the tests do not compile.",
+      props: [dirs_prop(), simple("run", "string", "run only tests whose name contains this text"), simple("seed", "integer", "scheduler and generator seed"), simple("holes", "boolean", "allow holes (???), which fault when evaluated"), no_gc_prop()], required: []},
+    Tool{name: "build", desc: "Compile to static binaries. Returns {ok, binaries: {os/arch: path}, diagnostics}.",
+      props: [dirs_prop(), simple("targets", "string", "comma separated os/arch list, or all (default: the host)"), simple("out", "string", "output binary (one target) or directory (several)"), no_gc_prop()], required: []},
+  ]
+}
+
+fn tool_def(t: Tool) -> J {
+  var pk: List[Str] = []
+  var pv: List[J] = []
+  for p in t.props {
+    pk.push(p.name)
+    pv.push(p.schema)
+  }
+  var sk = ["type", "properties", "additionalProperties"]
+  var sv = [jstr("object"), gmap(pk, pv), jbool(false)]
+  if !t.required.is_empty() {
+    var rs: List[J] = []
+    for r in t.required {
+      rs.push(jstr(r))
+    }
+    sk.push("required")
+    sv.push(jarr(rs))
+  }
+  gmap(["name", "description", "inputSchema"], [jstr(t.name), jstr(t.desc), gmap(sk, sv)])
+}
+
+/// The value of key in a decoded map (exact key: a Go map is not a
+/// struct).
+fn mget(m: J, key: Str) -> J? {
+  match m {
+    J.Obj(keys, vals, _) => {
+      var found: J? = None
+      for (i, k) in keys.indexed() {
+        if k == key {
+          found = Some(vals[i])
+        }
+      }
+      found
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => None
+  }
+}
+
+fn str_arg(args: J, name: Str) -> Str ! Str {
+  match mget(args, name) {
+    None | Some(J.Null) => Ok("")
+    Some(J.Str(s)) => Ok(s)
+    Some(_) => Err("${name}: want a string")
+  }
+}
+
+fn strs_arg(args: J, name: Str, def: List[Str]) -> List[Str] ! Str {
+  match mget(args, name) {
+    None | Some(J.Null) => Ok(def)
+    Some(J.Arr(items, _)) => {
+      var out: List[Str] = []
+      for x in items {
+        match x {
+          J.Str(s) => out.push(s)
+          J.Null | J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => return Err("${name}: want an array of strings")
+        }
+      }
+      if out.is_empty() {
+        return Ok(def)
+      }
+      Ok(out)
+    }
+    Some(_) => Err("${name}: want an array of strings")
+  }
+}
+
+fn bool_arg(args: J, name: Str) -> Bool ! Str {
+  match mget(args, name) {
+    None | Some(J.Null) => Ok(false)
+    Some(J.Bool(b)) => Ok(b)
+    Some(_) => Err("${name}: want a boolean")
+  }
+}
+
+fn no_gc_flag(cl: List[Str], args: J) -> List[Str] ! Str {
+  var out = cl
+  if bool_arg(args, "no_gc")? {
+    out.push("--no-gc")
+  }
+  Ok(out)
+}
+
+/// usageErr: exit status 2 is a usage or I/O error.
+fn usage_err(r: ExecOut) -> () ! Str {
+  if r.code == 2 {
+    let msg = r.stderr.trim()
+    return Err(if msg.is_empty() { "xo exited with status 2" } else { msg })
+  }
+  Ok(())
+}
+
+fn strs(xs: List[Str]) -> J {
+  var out: List[J] = []
+  for x in xs {
+    out.push(jstr(x))
+  }
+  jarr(out)
+}
+
+fn run_tool(os: Os, ex: Exec, name: Str, args: J) -> J ! Str {
+  match name {
+    "check" => tool_check(os, ex, args)
+    "query" => tool_query(os, ex, args)
+    "edit" => tool_edit(os, ex, args)
+    "explain" => tool_explain(os, ex, args)
+    "fmt" => tool_fmt(os, ex, args)
+    "test" => tool_test(os, ex, args)
+    _ => tool_build(os, ex, args)
+  }
+}
+
+/// The raw members of a JSON list field, or Go's decode error: missing
+/// and null are nil.
+fn raw_list(v: J, field: Str) -> List[Str]? ! Str {
+  match get(v, field) {
+    None | Some(J.Null) => Ok(None)
+    Some(J.Arr(_, raws)) => Ok(Some(raws))
+    Some(x) => Err(field_type_err(x, "", field, "[]json.RawMessage"))
+  }
+}
+
+fn raws_json(raws: List[Str]?) -> J {
+  match raws {
+    None => J.Null
+    Some(rs) => {
+      var out: List[J] = []
+      for r in rs {
+        out.push(J.Raw(r))
+      }
+      jarr(out)
+    }
+  }
+}
+
+fn tool_check(os: Os, ex: Exec, args: J) -> J ! Str {
+  let dirs = strs_arg(args, "dirs", ["."])?
+  var cl = no_gc_flag(["check", "--json"], args)?
+  let do_fix = bool_arg(args, "fix")?
+  if do_fix {
+    cl.push("--fix")
+  }
+  let r = exec(os, ex, cl + dirs)
+  usage_err(r)?
+  let out = match parse(r.stdout) {
+    Ok(v) => v
+    Err(e) => return Err("check output: ${e}")
+  }
+  var modules = J.Null
+  match get(out, "modules") {
+    None | Some(J.Null) => {}
+    Some(J.Arr(items, _)) => {
+      for x in items {
+        match x {
+          J.Str(_) | J.Null => {}
+          J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => return Err("check output: " + field_type_err(x, "", "modules", "string"))
+        }
+      }
+      modules = jarr(items)
+    }
+    Some(x) => return Err("check output: " + field_type_err(x, "", "modules", "[]string"))
+  }
+  let diags = match raw_list(out, "diagnostics") {
+    Ok(d) => d
+    Err(e) => return Err("check output: ${e}")
+  }
+  let applied = match raw_list(out, "applied") {
+    Ok(a) => a
+    Err(e) => return Err("check output: ${e}")
+  }
+  var errs = 0
+  var warns = 0
+  for d in diags ?? [] {
+    let sev = parse(d).ok() ?? J.Null
+    match get(sev, "severity") {
+      Some(J.Str("error")) => errs += 1
+      _ => warns += 1
+    }
+  }
+  var keys = ["ok", "errors", "warnings", "modules", "diagnostics"]
+  var vals = [jbool(errs == 0), jint(errs), jint(warns), modules, raws_json(diags)]
+  if do_fix {
+    keys.push("applied")
+    vals.push(raws_json(Some(applied ?? [])))
+  }
+  Ok(gmap(keys, vals))
+}
+
+fn tool_query(os: Os, ex: Exec, args: J) -> J ! Str {
+  let kind = str_arg(args, "kind")?
+  let arg = str_arg(args, "arg")?
+  let dir = str_arg(args, "dir")?
+  var cl = ["query", kind, "--json"]
+  if !dir.is_empty() {
+    cl.push("--dir=" + dir)
+  }
+  if !arg.is_empty() {
+    cl.push(arg)
+  }
+  let r = exec(os, ex, cl)
+  if r.code != 0 {
+    return Err(r.stderr.trim())
+  }
+  Ok(J.Raw(r.stdout.trim()))
+}
+
+fn tool_edit(os: Os, ex: Exec, args: J) -> J ! Str {
+  let op = str_arg(args, "op")?
+  let rest = strs_arg(args, "args", [])?
+  let dir = str_arg(args, "dir")?
+  let dry = bool_arg(args, "dry_run")?
+  var cl = ["edit"]
+  if !dir.is_empty() {
+    cl.push("--dir=" + dir)
+  }
+  if dry {
+    cl.push("--dry-run")
+  }
+  cl = cl + [op, "--"] + rest
+  let r = exec(os, ex, cl)
+  if r.code == 2 {
+    usage_err(r)?
+  }
+  Ok(J.Raw(r.stdout.trim()))
+}
+
+fn tool_explain(os: Os, ex: Exec, args: J) -> J ! Str {
+  let c = str_arg(args, "code")?
+  let r = exec(os, ex, ["explain", "--json", c])
+  if r.code != 0 {
+    return Err(r.stderr.trim())
+  }
+  Ok(J.Raw(r.stdout.trim()))
+}
+
+fn tool_fmt(os: Os, ex: Exec, args: J) -> J ! Str {
+  let paths = strs_arg(args, "paths", ["."])?
+  let write = bool_arg(args, "write")?
+  var cl = ["fmt", "--json"]
+  if !write {
+    cl.push("--check")
+  }
+  let r = exec(os, ex, cl + paths)
+  usage_err(r)?
+  let out = match parse(r.stdout) {
+    Ok(v) => v
+    Err(e) => return Err("fmt output: ${e}")
+  }
+  var changed: List[J] = []
+  var unchanged = 0
+  match get(out, "files") {
+    Some(J.Arr(items, _)) => {
+      for f in items {
+        let is_changed = match get(f, "changed") {
+          Some(J.Bool(b)) => b
+          _ => false
+        }
+        if is_changed {
+          let p = match get(f, "path") {
+            Some(J.Str(s)) => s
+            _ => ""
+          }
+          changed.push(jstr(p))
+        } else {
+          unchanged += 1
+        }
+      }
+    }
+    _ => {}
+  }
+  let diags = match raw_list(out, "diagnostics") {
+    Ok(d) => d
+    Err(e) => return Err("fmt output: ${e}")
+  }
+  Ok(gmap(["changed", "unchanged", "written", "diagnostics"], [jarr(changed), jint(unchanged), jbool(write && !changed.is_empty()), raws_json(Some(diags ?? []))]))
+}
+
+fn tool_test(os: Os, ex: Exec, args: J) -> J ! Str {
+  let dirs = strs_arg(args, "dirs", ["."])?
+  let run = str_arg(args, "run")?
+  let holes = bool_arg(args, "holes")?
+  var cl = no_gc_flag(["test", "--json"], args)?
+  if !run.is_empty() {
+    cl.push("--run=" + run)
+  }
+  match mget(args, "seed") {
+    None | Some(J.Null) => {}
+    Some(J.Num(t)) => {
+      // int64(f) of the float64 Go decoded
+      let f = Float.parse(t) ?? 0.0
+      cl.push("--seed=${Int(f.trunc())}")
+    }
+    Some(_) => return Err("seed: want an integer")
+  }
+  if holes {
+    cl.push("--holes")
+  }
+  let r = exec(os, ex, cl + dirs)
+  usage_err(r)?
+  var passed = 0
+  var failed = 0
+  var skipped = 0
+  var failures: List[J] = []
+  var other: List[Str] = []
+  for raw in r.stdout.split("\n") {
+    let line = raw.trim()
+    if line.is_empty() {
+      continue
+    }
+    let ev = if line.starts_with("{") { parse(line).ok() } else { None }
+    let status = match ev {
+      Some(e) => match get(e, "status") {
+        Some(J.Str(s)) => s
+        _ => ""
+      }
+      None => ""
+    }
+    if status.is_empty() {
+      other.push(line)
+      continue
+    }
+    if status == "pass" {
+      passed += 1
+    } else if status == "fail" {
+      failed += 1
+      failures.push(failure_json(ev ?? J.Null))
+    } else {
+      skipped += 1
+    }
+  }
+  var keys = ["ok", "passed", "failed", "skipped", "failures"]
+  var vals = [jbool(r.code == 0), jint(passed), jint(failed), jint(skipped), jarr(failures)]
+  if !other.is_empty() {
+    keys.push("output")
+    vals.push(jstr(other.join("\n")))
+  }
+  if r.code != 0 && failed == 0 {
+    keys.push("errors")
+    vals.push(jstr(r.stderr.trim()))
+  }
+  Ok(gmap(keys, vals))
+}
+
+/// internal/mcp's failure struct: name, module, loc, message, seed (the
+/// empty ones of module, loc, and seed omitted).
+fn failure_json(ev: J) -> J {
+  let s = fn(k: Str) -> Str {
+    match get(ev, k) {
+      Some(J.Str(x)) => x
+      _ => ""
+    }
+  }
+  var keys = ["name"]
+  var vals = [jstr(s("name"))]
+  if !s("module").is_empty() {
+    keys.push("module")
+    vals.push(jstr(s("module")))
+  }
+  if !s("loc").is_empty() {
+    keys.push("loc")
+    vals.push(jstr(s("loc")))
+  }
+  keys.push("message")
+  vals.push(jstr(s("message")))
+  match get(ev, "seed") {
+    Some(J.Num(t)) => {
+      if t != "0" {
+        keys.push("seed")
+        vals.push(J.Num(t))
+      }
+    }
+    _ => {}
+  }
+  jobj(keys, vals)
+}
+
+fn tool_build(os: Os, ex: Exec, args: J) -> J ! Str {
+  let dirs = strs_arg(args, "dirs", ["."])?
+  let targets = str_arg(args, "targets")?
+  let out = str_arg(args, "out")?
+  var cl = no_gc_flag(["build", "--json"], args)?
+  if !targets.is_empty() {
+    cl.push("--targets=" + targets)
+  }
+  if !out.is_empty() {
+    cl.push("-o")
+    cl.push(out)
+  }
+  let r = exec(os, ex, cl + dirs)
+  usage_err(r)?
+  let trimmed = r.stdout.trim()
+  if trimmed.is_empty() {
+    return Err(r.stderr.trim())
+  }
+  let v = match parse(trimmed) {
+    Ok(v) => v
+    Err(e) => return Err("build output: ${e}")
+  }
+  match v {
+    J.Obj(_, _, _) | J.Null => Ok(go_map(v))
+    J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => Err("build output: " + value_type_err(v, "map[string]interface {}"))
+  }
+}

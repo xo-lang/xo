@@ -1,0 +1,87 @@
+// The JSON reader and writer against Go's encoding/json: every expected
+// text below is what Go 1.26 prints for the same input (json.Unmarshal's
+// errors, json.Marshal and an Encoder without HTML escaping, RawMessage
+// compaction, and a decoded map[string]any written back).
+
+fn parse_err(text: Str) -> Str {
+  match parse(text) {
+    Ok(_) => "ok"
+    Err(e) => e
+  }
+}
+
+test "syntax errors are Go's" {
+  let cases = [
+    ("", "unexpected end of JSON input"),
+    ("x", "invalid character 'x' looking for beginning of value"),
+    ("{", "unexpected end of JSON input"),
+    ("{\"a\"", "unexpected end of JSON input"),
+    ("{\"a\":1,}", "invalid character '}' looking for beginning of object key string"),
+    ("[1,]", "invalid character ']' looking for beginning of value"),
+    ("[1 2]", "invalid character '2' after array element"),
+    ("\"abc", "unexpected end of JSON input"),
+    ("\"a\\q\"", "invalid character 'q' in string escape code"),
+    ("\"\\u12g4\"", "invalid character 'g' in \\u hexadecimal character escape"),
+    ("tru", "invalid character ' ' in literal true (expecting 'e')"),
+    ("nul", "invalid character ' ' in literal null (expecting 'l')"),
+    ("-", "invalid character ' ' in numeric literal"),
+    ("1.", "invalid character ' ' after decimal point in numeric literal"),
+    ("1e", "invalid character ' ' in exponent of numeric literal"),
+    ("01", "invalid character '1' after top-level value"),
+    ("{\"a\":1} x", "invalid character 'x' after top-level value"),
+    ("\t", "unexpected end of JSON input"),
+    ("{1:2}", "invalid character '1' looking for beginning of object key string"),
+    ("\"a\u{1}\"", "invalid character '\\x01' in string literal"),
+    ("{\"a\" 1}", "invalid character '1' after object key"),
+    ("[1}", "invalid character '}' after array element"),
+    ("falsy", "invalid character 'y' in literal false (expecting 'e')"),
+    ("1.5e+", "invalid character ' ' in exponent of numeric literal"),
+    ("{\"a\":\"b\"", "unexpected end of JSON input"),
+    ("[", "unexpected end of JSON input"),
+    ("{\"a\":}", "invalid character '}' looking for beginning of value"),
+    ("'", "invalid character '\\'' looking for beginning of value"),
+    (" {\"ok\": [1, -2.5e3, true, false, null, \"s\"]} ", "ok"),
+  ]
+  for (text, want) in cases {
+    expect(parse_err(text)) == want
+  }
+}
+
+test "strings are escaped as Go escapes them" {
+  let cases = [
+    ("plain", "\"plain\"", "\"plain\""),
+    ("<a href=\"x\">&amp;</a>", "\"\\u003ca href=\\\"x\\\"\\u003e\\u0026amp;\\u003c/a\\u003e\"", "\"<a href=\\\"x\\\">&amp;</a>\""),
+    ("tab\there\nnl\rcr\u{8}bs\u{c}feed", "\"tab\\there\\nnl\\rcr\\bbs\\ffeed\"", "\"tab\\there\\nnl\\rcr\\bbs\\ffeed\""),
+    ("\u{1}\u{1f}\u{7f}", "\"\\u0001\\u001f\u{7f}\"", "\"\\u0001\\u001f\u{7f}\""),
+    ("line\u{2028}sep\u{2029}", "\"line\\u2028sep\\u2029\"", "\"line\\u2028sep\\u2029\""),
+    ("é ü 漢字 🎉", "\"é ü 漢字 🎉\"", "\"é ü 漢字 🎉\""),
+    ("back\\slash/", "\"back\\\\slash/\"", "\"back\\\\slash/\""),
+  ]
+  for (s, html, plain) in cases {
+    expect(encode(jstr(s), true)) == html
+    expect(encode(jstr(s), false)) == plain
+  }
+}
+
+test "raw messages are compacted" {
+  let r = " { \"b\" : [1, 2 , \"x y\"], \"a<\": \"<&>\" , \"c\": null } "
+  expect(encode(J.Raw(r), true)) == "{\"b\":[1,2,\"x y\"],\"a\\u003c\":\"\\u003c\\u0026\\u003e\",\"c\":null}"
+  expect(encode(J.Raw(r), false)) == "{\"b\":[1,2,\"x y\"],\"a<\":\"<&>\",\"c\":null}"
+  expect(encode(J.Raw("[ \"\u{2028}\" ]"), true)) == "[\"\\u2028\"]"
+  expect(encode(J.Raw("[ \"\u{2028}\" ]"), false)) == "[\"\u{2028}\"]"
+}
+
+test "a decoded any is written back as Go writes it" {
+  let v = parse("{\"b\":1,\"a\":{\"z\":2.50,\"y\":[1e2,-0,0.1,1E21,123456789012345678]}, \"b\":\"dup\"}")?
+  expect(encode(go_map(v), true)) == "{\"a\":{\"y\":[100,-0,0.1,1e+21,123456789012345680],\"z\":2.5},\"b\":\"dup\"}"
+  let s = parse("\"\\ud83c\\udf89 \\ud800x \\u00e9\"")?
+  expect(encode(s, true)) == "\"🎉 \u{fffd}x é\""
+}
+
+test "members keep their source text" {
+  let v = parse("{\"id\": 7 , \"params\": {\"a\" : [1, 2]}, \"Method\": \"x\"}")?
+  expect(get_raw(v, "id")) == Some("7")
+  expect(get_raw(v, "params")) == Some("{\"a\" : [1, 2]}")
+  expect(get(v, "method")) == Some(jstr("x"))
+  expect(get(v, "missing")) == None
+}

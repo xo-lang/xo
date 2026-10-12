@@ -1,0 +1,530 @@
+// The binder of `use c "<header>"` (decision 0116), a port of
+// internal/cbind (decision 0178 stage 6): it reads the header with clang's
+// JSON AST dump and writes the Xo declaration file and the C adapter to
+// the binding cache, byte for byte as the Go binder writes them (the
+// comparison is cmd/xo TestBindCXoSame).
+//
+// Boundary types (decision 0093): scalars, `Str` (a `const char *`
+// parameter or result, copied), `Str` or `Bytes` from a const byte pointer
+// followed by an integer length parameter (not copied), flat structs of
+// scalars (copied field by field), and opaque handles (a pointer to a
+// struct the header does not define). Everything else is skipped with the
+// reason.
+
+use std/crypto
+use github.com/xo-lang/xo/selfhost/lexer
+
+/// cbind.Version: the format version of generated C bindings.
+const CBIND_VERSION: Int = 1
+
+/// What to bind (cbind.Options).
+pub struct Options {
+  /// The header as written in `use c "<header>"`: a path relative to
+  /// mod_dir when such a file exists, else a header on the C compiler's
+  /// include path.
+  pub header: Str
+  /// The directory of the Xo module that imports the header.
+  pub mod_dir: Str
+  /// The `link` clauses.
+  pub links: List[Str] = []
+  /// The effect labels of the `uses` clause; None means `ffi`, empty
+  /// means none.
+  pub effects: List[Str]? = None
+  /// The cache directory the files are written to ("" writes nothing).
+  pub dir: Str = ""
+  /// The working directory relative paths are resolved against.
+  pub wd: Str = ""
+}
+
+/// One bound header (cbind.Binding).
+pub struct Binding {
+  pub header: Str = ""
+  /// The file clang read.
+  pub header_path: Str = ""
+  /// Found relative to the module directory.
+  pub local: Bool = false
+  /// The default module name.
+  pub name: Str = ""
+  /// Identity: header, links, and effects.
+  pub key: Str = ""
+  /// The adapter symbol prefix: xo_<prefix><name>.
+  pub prefix: Str = ""
+  pub decl_path: Str = ""
+  pub decl: Str = ""
+  pub adapter: Str = ""
+  pub include_dirs: List[Str] = []
+  pub link_files: List[Str] = []
+  pub link_libs: List[Str] = []
+  /// The Xo name of each function that does not bind, and why.
+  pub skipped: Map[Str, Str] = {}
+  pub bound: Int = 0
+  pub total: Int = 0
+}
+
+/// cbind.CacheDir: the binding cache of the Xo project rooted at root:
+/// $XO_CBIND_DIR when set, else <root>/.xo/cbind.
+pub fn cache_dir(os: Os, root: Str) -> Str uses env {
+  let d = os.env.get("XO_CBIND_DIR") ?? ""
+  if !d.is_empty() {
+    return d
+  }
+  join(root, ".xo/cbind")
+}
+
+/// cbind.Bind: binds a header and writes its files to opts.dir. The error
+/// is cbind.Error's Msg (error_text adds the header).
+pub fn bind_c(os: Os, opts: Options) -> Binding ! Str uses (fs, proc, env) {
+  var b = Binder{opts: opts}
+  b.locate(os)?
+  b.bind(os)?
+  Ok(b.bnd)
+}
+
+/// cbind.Error.Error: the message of a header that cannot be bound.
+pub fn error_text(header: Str, msg: Str) -> Str {
+  "cannot bind C header ${go_quote(header)}: ${msg}"
+}
+
+struct Record {
+  name: Str
+  complete: Bool = false
+  is_union: Bool = false
+  /// (name, clang's type spelling)
+  fields: List[(Str, Str)] = []
+}
+
+struct Binder {
+  opts: Options
+  bnd: Binding = Binding{}
+  clang: Str = ""
+  typedefs: Map[Str, Str] = {}
+  records: Map[Str, Record] = {}
+  decls: List[Decl] = []
+  have_decls: Bool = false
+  /// struct tag -> Xo type name: opaque handles, and flat structs
+  /// (copied)
+  handles: Map[Str, Str] = {}
+  structs: Map[Str, Str] = {}
+  /// Xo names in use
+  used: Set[Str] = #{}
+}
+
+/// filepath.Abs against the working directory.
+fn (b: Binder) abs(p: Str) -> Str {
+  if p.starts_with("/") || b.opts.wd.is_empty() {
+    return clean(p)
+  }
+  clean("${b.opts.wd}/${p}")
+}
+
+/// locate finds the header and the link inputs.
+fn (var b: Binder) locate(os: Os) -> () ! Str uses (fs, proc, env) {
+  let o = b.opts
+  b.bnd = Binding{header: o.header}
+  if o.header.is_empty() {
+    return Err("empty header path")
+  }
+  var local = join(o.mod_dir, o.header)
+  if o.header.starts_with("/") {
+    local = o.header
+  }
+  if let Some(st) = os.fs.stat(b.abs(local)).ok() ?? None {
+    if !st.is_dir {
+      let abs = b.abs(local)
+      b.bnd.header_path = abs
+      b.bnd.local = true
+      let md = b.abs(o.mod_dir)
+      b.bnd.include_dirs.push(dir_of(abs))
+      if md != dir_of(abs) {
+        b.bnd.include_dirs.push(md)
+      }
+    }
+  }
+  let hb = base_of(o.header)
+  let base = hb.trim_suffix(ext_of(o.header))
+  b.bnd.name = module_name(base)
+  for l in o.links {
+    if is_lib_name(l) {
+      b.bnd.link_libs.push(l)
+      continue
+    }
+    var p = l
+    if !p.starts_with("/") {
+      p = join(o.mod_dir, l)
+    }
+    let abs = b.abs(p)
+    if (os.fs.stat(abs).ok() ?? None) == None {
+      return Err("`link ${go_quote(l)}`: no such file ${abs} (a name without `/` or an extension links a library: `link \"z\"` is -lz)")
+    }
+    b.bnd.link_files.push(abs)
+  }
+  let effs = match o.effects {
+    Some(us) => us.join(",")
+    None => "ffi"
+  }
+  b.bnd.key = "c:${o.header}|${o.links.join(",")}|${effs}"
+  if b.bnd.local {
+    b.bnd.key = "c:${b.bnd.header_path}|${b.bnd.link_files.join(",")}|${b.bnd.link_libs.join(",")}|${effs}"
+  }
+  let sum = crypto.sha256(b.bnd.key.bytes()).to_hex()
+  b.bnd.prefix = "c_${b.bnd.name}_${sum[0..8]}_"
+  b.clang = find_clang(os)?
+  if !b.bnd.local {
+    // a header on the include path: clang reports where it is
+    let ds = match dump_ast(os, b.clang, "#include <${o.header}>", []) {
+      Ok(d) => d
+      Err(e) => return Err("${e} (a header path relative to the module directory, ${o.mod_dir}, was not found either)")
+    }
+    for d in ds {
+      if !d.file.is_empty() && (d.file.ends_with("/${o.header}") || d.file == o.header) {
+        b.bnd.header_path = d.file
+        break
+      }
+    }
+    if b.bnd.header_path.is_empty() {
+      return Err("clang read ${o.header} but found no declaration in it")
+    }
+    b.decls = ds
+    b.have_decls = true
+  }
+  Ok(())
+}
+
+/// isLibName: a `link` value that names a library (-l): no path
+/// separator and no extension.
+fn is_lib_name(l: Str) -> Bool {
+  !l.contains("/") && !l.contains("\\") && ext_of(l).is_empty()
+}
+
+/// moduleName: a header's base name as a valid Xo module name.
+fn module_name(base: Str) -> Str {
+  var sb = StrBuilder.new()
+  for r in to_lower(snake(base)).runes() {
+    if r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+      sb.write("${r}")
+    } else {
+      sb.write("_")
+    }
+  }
+  var s = sb.freeze()
+  while s.starts_with("_") {
+    s = s.trim_prefix("_")
+  }
+  while s.ends_with("_") {
+    s = s.trim_suffix("_")
+  }
+  if s.is_empty() || (s.bytes()[0] >= '0' && s.bytes()[0] <= '9') {
+    s = "c_${s}"
+  }
+  xo_name(s)
+}
+
+fn type_spelling(n: JN) -> Str {
+  match jobj(n, "type") {
+    Some(t) => {
+      let q = jstr(t, "desugaredQualType")
+      if q.is_empty() { jstr(t, "qualType") } else { q }
+    }
+    None => ""
+  }
+}
+
+fn (var b: Binder) bind(os: Os) -> () ! Str uses (fs, proc, env) {
+  if !b.have_decls {
+    b.decls = dump_ast(os, b.clang, "#include \"${b.bnd.header_path}\"", b.bnd.include_dirs)?
+  }
+  // typedefs and records from every file: the header's types may come
+  // from the headers it includes
+  for d in b.decls {
+    let n = d.n
+    let kind = jstr(n, "kind")
+    if kind == "TypedefDecl" {
+      if let Some(t) = jobj(n, "type") {
+        var q = jstr(t, "desugaredQualType")
+        if q.is_empty() {
+          q = jstr(t, "qualType")
+        }
+        b.typedefs[jstr(n, "name")] = q
+      }
+    } else if kind == "RecordDecl" {
+      let name = jstr(n, "name")
+      if name.is_empty() {
+        continue
+      }
+      var r = b.records.get(name) ?? Record{name: name, is_union: jstr(n, "tagUsed") == "union"}
+      if jflag(n, "completeDefinition") {
+        r.complete = true
+        r.fields = []
+        for f in jlist(n, "inner") {
+          if !is_obj(f) || jstr(f, "kind") != "FieldDecl" {
+            continue
+          }
+          r.fields.push((jstr(f, "name"), type_spelling(f)))
+        }
+      }
+      b.records[name] = r
+    }
+  }
+  var fns: List[CFunc] = []
+  var seen: Set[Str] = #{}
+  for d in b.decls {
+    let n = d.n
+    if jstr(n, "kind") != "FunctionDecl" || !b.in_header(d.file) || jflag(n, "isImplicit") {
+      continue
+    }
+    let name = jstr(n, "name")
+    if seen.contains(name) {
+      continue
+    }
+    seen.add(name)
+    b.bnd.total += 1
+    match b.function(n) {
+      Ok(f) => fns.push(f)
+      Err(e) => b.bnd.skipped[xo_name(snake(name))] = "${e} (${c_signature(n)})"
+    }
+  }
+  fns = fns.sort_by(fn(f: CFunc) -> Str { f.xo })
+  b.bnd.bound = fns.len()
+  b.bnd.decl = b.decl_file(os, fns)
+  b.bnd.adapter = b.adapter_file(fns)
+  let stem = b.bnd.prefix[0..b.bnd.prefix.len() - 1]
+  if !b.opts.dir.is_empty() {
+    b.bnd.decl_path = join(b.opts.dir, "${stem}.xo")
+    match os.fs.create_dir_all(b.opts.dir) {
+      Ok(_) => {}
+      Err(e) => return Err("${e}")
+    }
+    write_if_changed(os, b.bnd.decl_path, b.bnd.decl)?
+    write_if_changed(os, "${b.bnd.decl_path.trim_suffix(".xo")}.c", b.bnd.adapter)?
+  } else {
+    b.bnd.decl_path = "${stem}.xo"
+  }
+  Ok(())
+}
+
+fn write_if_changed(os: Os, path: Str, data: Str) -> () ! Str uses fs {
+  let old = os.fs.read(path).ok() ?? None
+  if let Some(o) = old {
+    if o == data.bytes() {
+      return Ok(())
+    }
+  }
+  match os.fs.write(path, data.bytes()) {
+    Ok(_) => Ok(())
+    Err(e) => Err("${e}")
+  }
+}
+
+/// inHeader: whether a declaration's file is the bound header.
+fn (b: Binder) in_header(file: Str) -> Bool {
+  if file.is_empty() {
+    return false
+  }
+  file == b.bnd.header_path || b.abs(file) == b.bnd.header_path
+}
+
+/// cSignature: the C declaration of a function, for doc comments.
+fn c_signature(n: JN) -> Str {
+  var ret = ""
+  if let Some(t) = jobj(n, "type") {
+    let q = jstr(t, "qualType")
+    if let Some(i) = q.find("(") {
+      ret = q[0..i].trim()
+    }
+  }
+  var ps: List[Str] = []
+  for p in jlist(n, "inner") {
+    if !is_obj(p) || jstr(p, "kind") != "ParmVarDecl" {
+      continue
+    }
+    var q = ""
+    if let Some(t) = jobj(p, "type") {
+      q = jstr(t, "qualType")
+    }
+    let nm = jstr(p, "name")
+    if !nm.is_empty() {
+      if q.ends_with("*") {
+        q = q + nm
+      } else {
+        q = "${q} ${nm}"
+      }
+    }
+    ps.push(q)
+  }
+  if jflag(n, "variadic") {
+    ps.push("...")
+  }
+  if ps.is_empty() {
+    ps = ["void"]
+  }
+  let sep = if ret.ends_with("*") { "" } else { " " }
+  "${ret}${sep}${jstr(n, "name")}(${ps.join(", ")})"
+}
+
+// ---------------------------------------------------------------------------
+// Names
+
+fn is_upper(r: Rune) -> Bool {
+  r.to_lower() != r
+}
+
+fn is_lower(r: Rune) -> Bool {
+  r.to_upper() != r
+}
+
+fn to_lower(s: Str) -> Str {
+  var sb = StrBuilder.new()
+  for r in s.runes() {
+    sb.write("${r.to_lower()}")
+  }
+  sb.freeze()
+}
+
+/// snake converts a C name to snake_case: zlibVersion -> zlib_version.
+fn snake(name: Str) -> Str {
+  let rs = name.runes()
+  var sb = StrBuilder.new()
+  for i in 0..rs.len() {
+    let r = rs[i]
+    if is_upper(r) {
+      if i > 0 {
+        let prev = rs[i - 1]
+        let next_lower = i + 1 < rs.len() && is_lower(rs[i + 1])
+        if is_lower(prev) || prev.is_digit() || (is_upper(prev) && next_lower) {
+          sb.write("_")
+        }
+      }
+      sb.write("${r.to_lower()}")
+      continue
+    }
+    sb.write("${r}")
+  }
+  sb.freeze()
+}
+
+/// upperCamel converts a C tag to UpperCamel: tiny_point -> TinyPoint.
+fn upper_camel(name: Str) -> Str {
+  var sb = StrBuilder.new()
+  var up = true
+  for r in name.runes() {
+    if r == '_' {
+      up = true
+      continue
+    }
+    if up {
+      sb.write("${r.to_upper()}")
+      up = false
+      continue
+    }
+    sb.write("${r}")
+  }
+  var s = sb.freeze()
+  if s.is_empty() {
+    return "C"
+  }
+  let first = Rune.try(Int(s.bytes()[0])) ?? 'x'
+  if !is_upper(first) {
+    s = "C${s}"
+  }
+  s
+}
+
+/// xoName: a snake_case name usable in Xo: keywords get a `_` suffix.
+fn xo_name(s: Str) -> Str {
+  if s.is_empty() || s == "_" {
+    return s
+  }
+  if lexer.lookup(s) != lexer.Kind.Ident || (s is "true" | "false" | "self" | "static" | "go") {
+    return "${s}_"
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Paths (filepath on a slash system)
+
+/// filepath.Clean.
+fn clean(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for s in p.split("/") {
+    if s.is_empty() || s == "." {
+      continue
+    }
+    if s == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(s)
+  }
+  let j = out.join("/")
+  if rooted {
+    return "/${j}"
+  }
+  if j.is_empty() { "." } else { j }
+}
+
+/// filepath.Join.
+fn join(a: Str, b: Str) -> Str {
+  if a.is_empty() {
+    if b.is_empty() {
+      return ""
+    }
+    return clean(b)
+  }
+  if b.is_empty() {
+    return clean(a)
+  }
+  clean("${a}/${b}")
+}
+
+/// filepath.Dir.
+fn dir_of(p: Str) -> Str {
+  var i = p.len()
+  let bs = p.bytes()
+  while i > 0 && bs[i - 1] != '/' {
+    i -= 1
+  }
+  clean(p[0..i])
+}
+
+/// filepath.Base.
+fn base_of(p0: Str) -> Str {
+  if p0.is_empty() {
+    return "."
+  }
+  var p = p0
+  while p.len() > 1 && p.ends_with("/") {
+    p = p.trim_suffix("/")
+  }
+  if p == "/" {
+    return "/"
+  }
+  let bs = p.bytes()
+  var i = p.len()
+  while i > 0 && bs[i - 1] != '/' {
+    i -= 1
+  }
+  p[i..p.len()]
+}
+
+/// filepath.Ext: from the last `.` of the last element on.
+fn ext_of(p: Str) -> Str {
+  let bs = p.bytes()
+  var i = p.len() - 1
+  while i >= 0 && bs[i] != '/' {
+    if bs[i] == '.' {
+      return p[i..p.len()]
+    }
+    i -= 1
+  }
+  ""
+}

@@ -212,6 +212,12 @@ fn time_ns(t: Time) -> Int
 fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
 /// FakeProc.on_run: a later run of cmd in the test gives these outputs.
 fn proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes)
+/// Proc.kill (decision 0190): sends signal number sig of the list HUP,
+/// INT, QUIT, KILL, TERM, USR1, USR2, CONT, STOP to pid; the empty list,
+/// or the error's message. A test's FakeProc records it instead.
+fn proc_kill(pid: Int, sig: Int) -> List[Str]
+/// FakeProc.killed: the signals proc_kill recorded, as "NAME PID".
+fn proc_killed() -> List[Str]
 
 // Commands, children, and pipelines (decisions 0161 and 0172). A command
 // is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,

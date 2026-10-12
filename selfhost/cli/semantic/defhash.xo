@@ -1,0 +1,1396 @@
+// Per definition content hashes (core 4.3, decision 0125): a port of
+// internal/defhash. Every top level definition of a module (function,
+// method, type, constant) is hashed over its syntax tree with positions,
+// comments, and doc comments dropped, local names erased (numbered by
+// first binding), and the definitions of the same module it references
+// replaced by their own hashes.
+//
+// The Go package encodes the tree by reflection over internal/ast: a node
+// is "(" and its Go type name, then its exported fields in declaration
+// order (Base and Doc skipped). The encoder below walks selfhost/parser's
+// tree field by field in that same order, with the same special cases, so
+// the hashes are byte identical (TestSelfhostDefhash compares them on the
+// corpus).
+
+use std/crypto
+use github.com/xo-lang/xo/selfhost/parser
+
+type Ident = parser.Ident
+type Decl = parser.Decl
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type PType = parser.Type
+type Pattern = parser.Pattern
+type Block = parser.Block
+
+/// One top level definition and its hashes (defhash.Def).
+pub struct Def {
+  /// <package path>.<name>
+  pub id: Str
+  pub package: Str
+  /// name, or Type.method
+  pub name: Str
+  /// fn, method, struct, enum, interface, type, const
+  pub kind: Str
+  pub is_pub: Bool
+  /// The definition and, through their hashes, the definitions of the
+  /// module it references.
+  pub hash: Str = ""
+  /// The definition alone: references by name.
+  pub own: Str = ""
+  /// The definitions of the module it references, by ID, sorted.
+  pub ref_ids: List[Str] = []
+  pub file: Str
+  pub line: Int
+  /// package directory relative to the module, ".", name
+  pub key: Str
+  /// the referenced definitions by key
+  pub refs: List[Str] = []
+}
+
+/// The hash scheme; a change to the normalization takes a new one.
+const PREFIX = "d1:"
+
+struct Pkg {
+  path: Str
+  rel: Str
+  /// name or Type.method -> key
+  defs: Map[Str, Str] = {}
+}
+
+struct DeclRef {
+  decl: Decl
+  /// the file's imports: local name -> import path
+  file: Int
+}
+
+struct DefInfo {
+  def: Def
+  pkg: Int
+  decls: List[DeclRef] = []
+}
+
+/// The state of one module's hashing. Definitions and packages are
+/// indexed; deep and scc are by definition index.
+struct Hasher {
+  pkgs: List[Pkg] = []
+  pkg_idx: Map[Str, Int] = {}
+  defs: List[DefInfo] = []
+  def_idx: Map[Str, Int] = {}
+  files: List[Map[Str, Str]] = []
+  deep: List[Str] = []
+  scc: List[Int] = []
+}
+
+/// Hashes every top level definition of the module in dir (module path
+/// mod_path): the packages under dir, outside test files, vendor/,
+/// testdata/, dot directories, and nested modules. Sorted by ID.
+pub fn module_defs(fs: Fs, dir: Str, mod_path: Str) -> List[Def] ! Str uses fs.read {
+  var h = Hasher{}
+  walk(fs, dir, dir, mod_path, h)?
+  h.run()
+  var out: List[Def] = []
+  for di in h.defs {
+    var d = di.def
+    var ids: List[Str] = []
+    for r in d.refs {
+      ids.push(h.defs[h.idx(r)].def.id)
+    }
+    d.ref_ids = ids.sort()
+    out.push(d)
+  }
+  Ok(out.sort_by(fn(d) { d.id }))
+}
+
+fn (h: Hasher) idx(key: Str) -> Int {
+  h.def_idx.get_or_fault(key, "a reference is to a definition of the module")
+}
+
+/// filepath.WalkDir of dir: entries in name order, depth first.
+fn walk(fs: Fs, root: Str, dir: Str, mod_path: Str, var h: Hasher) -> () ! Str uses fs.read {
+  let entries = match fs.read_dir(dir) {
+    Ok(es) => es
+    Err(e) => return Err("${e}")
+  }
+  for e in entries {
+    let p = "${dir}/${e.name}"
+    if e.is_dir {
+      let n = e.name
+      if n == "vendor" || n == "testdata" || n.starts_with(".") {
+        continue
+      }
+      if fs.exists("${p}/xo.mod").ok() ?? false {
+        continue
+      }
+      walk(fs, root, p, mod_path, h)?
+      continue
+    }
+    if !p.ends_with(".xo") || p.ends_with("_test.xo") {
+      continue
+    }
+    let src = match fs.read(p) {
+      Ok(b) => b
+      Err(e) => return Err("${e}")
+    }
+    h.add_file(root, dir, p, src, mod_path)
+  }
+  Ok(())
+}
+
+fn (var h: Hasher) add_file(root: Str, dir: Str, p: Str, src: Bytes, mod_path: Str) {
+  let f = parser.parse_file(p.bytes(), src, false).file
+  var rel = "."
+  if dir != root {
+    rel = dir.trim_prefix("${root}/")
+  }
+  var pkg_path = mod_path
+  if rel != "." {
+    pkg_path = "${mod_path}/${rel}"
+  }
+  var pi = h.pkg_idx.get(pkg_path) ?? -1
+  if pi < 0 {
+    pi = h.pkgs.len()
+    h.pkg_idx[pkg_path] = pi
+    h.pkgs.push(Pkg{path: pkg_path, rel: rel})
+  }
+  var imports: Map[Str, Str] = {}
+  for u in f.imports {
+    if u.c {
+      continue
+    }
+    let upath = txt(u.path)
+    var name = local_name(upath)
+    if let Some(a) = u.alias {
+      name = txt(a.name)
+    }
+    imports[name] = if u.go { "go:${upath}" } else { upath }
+  }
+  let fi = h.files.len()
+  h.files.push(imports)
+  for decl in f.decls {
+    let (name, kind, is_pub) = describe(decl)
+    if name.is_empty() {
+      continue
+    }
+    let line = decl_span(decl).start.line
+    let key = "${rel}.${name}"
+    h.pkgs[pi].defs[name] = key
+    var di = h.def_idx.get(key) ?? -1
+    if di < 0 {
+      di = h.defs.len()
+      h.def_idx[key] = di
+      h.defs.push(DefInfo{def: Def{id: "${pkg_path}.${name}", package: pkg_path, name: name, kind: kind, is_pub: is_pub, file: p, line: line, key: key}, pkg: pi})
+    }
+    h.defs[di].decls.push(DeclRef{decl: decl, file: fi})
+  }
+}
+
+fn txt(b: Bytes) -> Str {
+  b.to_str() ?? ""
+}
+
+/// The name an import is known by without `as`: its last element without
+/// a /vN major suffix, '-' read as '_' (defhash.localName).
+pub fn local_name(path0: Str) -> Str {
+  var path = path0
+  let first = path.split("/")[0]
+  if first.contains(".") {
+    path = major_suffix(path)
+  }
+  let parts = path.split("/")
+  parts[parts.len() - 1].replace("-", "_")
+}
+
+/// mod.MajorSuffix: path without a /vN suffix (N >= 2).
+fn major_suffix(path: Str) -> Str {
+  let parts = path.split("/")
+  if parts.len() < 2 {
+    return path
+  }
+  let last = parts[parts.len() - 1]
+  let lb = last.bytes()
+  if lb.len() < 2 || lb[0] != 'v' || lb[1] == '0' {
+    return path
+  }
+  let digits = last.trim_prefix("v")
+  let n = Int.parse(digits) ?? 0
+  if n < 2 || "${n}" != digits {
+    return path
+  }
+  path.trim_suffix("/${last}")
+}
+
+pub fn decl_span(d: Decl) -> parser.Span {
+  match d {
+    FnDecl(x) => x.span
+    StructDecl(x) => x.span
+    EnumDecl(x) => x.span
+    InterfaceDecl(x) => x.span
+    TypeDecl(x) => x.span
+    ConstDecl(x) => x.span
+    TestDecl(x) => x.span
+    BadDecl(span) => span
+  }
+}
+
+/// Names a top level declaration (defhash.describe); "" for tests and bad
+/// ones.
+pub fn describe(d: Decl) -> (Str, Str, Bool) {
+  match d {
+    FnDecl(x) => {
+      let name = txt(x.name.name)
+      if name.is_empty() {
+        return ("", "", false)
+      }
+      if let Some(r) = x.recv {
+        match r.typ {
+          NamedType(_, path, _) => {
+            if path.is_empty() {
+              return ("", "", false)
+            }
+            return ("${txt(path[path.len() - 1].name)}.${name}", "method", x.is_pub)
+          }
+          _ => return ("", "", false)
+        }
+      }
+      (name, "fn", x.is_pub)
+    }
+    StructDecl(x) => (txt(x.name.name), "struct", x.is_pub)
+    EnumDecl(x) => (txt(x.name.name), "enum", x.is_pub)
+    InterfaceDecl(x) => (txt(x.name.name), "interface", x.is_pub)
+    TypeDecl(x) => (txt(x.name.name), "type", x.is_pub)
+    ConstDecl(x) => (txt(x.name.name), "const", x.is_pub)
+    _ => ("", "", false)
+  }
+}
+
+/// "d1:" and the base64 SHA-256 of the parts, each preceded by its
+/// length and a colon (defhash.sum).
+fn sum(parts: List[Bytes]) -> Str {
+  var b = BytesBuilder.new()
+  for p in parts {
+    b.write_str("${p.len()}:")
+    b.write(p)
+  }
+  "${PREFIX}${crypto.sha256(b.freeze()).to_base64()}"
+}
+
+/// The canonical encoding of a definition (all its declarations, for one
+/// repeated in platform files) and the keys it references. comp is the
+/// component being hashed (-1: own hashes, every reference by name).
+fn (h: Hasher) encode(i: Int, comp: Int) -> (Bytes, List[Str]) {
+  let di = h.defs[i]
+  let key = di.def.key
+  var encs: List[Bytes] = []
+  var refs: Set[Str] = #{}
+  for d in di.decls {
+    var c = Enc{h: h, pkg: h.pkgs[di.pkg], imports: h.files[d.file], self_key: key, comp: comp}
+    var b = BytesBuilder.new()
+    c.decl(b, d.decl)
+    for r in c.refs.to_list() {
+      refs.add(r)
+    }
+    encs.push(b.freeze())
+  }
+  var out = BytesBuilder.new()
+  for e in encs.sort() {
+    out.write(e)
+    out.write_byte('\n')
+  }
+  var rs: List[Str] = []
+  for r in refs.to_list() {
+    if r != key {
+      rs.push(r)
+    }
+  }
+  (out.freeze(), rs.sort())
+}
+
+/// Own hashes, then the strongly connected components of the reference
+/// graph (Tarjan, in key order; they come out callees first).
+fn (var h: Hasher) run() {
+  for i in 0..h.defs.len() {
+    let (enc, refs) = h.encode(i, -1)
+    h.defs[i].def.own = sum([h.defs[i].def.kind.bytes(), enc])
+    h.defs[i].def.refs = refs
+    h.deep.push("")
+    h.scc.push(-1)
+  }
+  var order: List[(Str, Int)] = []
+  for (i, d) in h.defs.indexed() {
+    order.push((d.def.key, i))
+  }
+  var t = Tarjan{}
+  for _ in 0..h.defs.len() {
+    t.index.push(-1)
+    t.low.push(0)
+    t.on_stack.push(false)
+  }
+  for o in order.sort() {
+    if t.index[o.1] < 0 {
+      h.visit(t, o.1)
+    }
+  }
+}
+
+struct Tarjan {
+  index: List[Int] = []
+  low: List[Int] = []
+  on_stack: List[Bool] = []
+  stack: List[Int] = []
+  n: Int = 0
+  comp: Int = 0
+}
+
+fn (var h: Hasher) visit(var t: Tarjan, k: Int) {
+  t.index[k] = t.n
+  t.low[k] = t.n
+  t.n += 1
+  t.stack.push(k)
+  t.on_stack[k] = true
+  for rk in h.defs[k].def.refs {
+    let r = h.idx(rk)
+    if t.index[r] < 0 {
+      h.visit(t, r)
+      t.low[k] = min_int(t.low[k], t.low[r])
+    } else if t.on_stack[r] {
+      t.low[k] = min_int(t.low[k], t.index[r])
+    }
+  }
+  if t.low[k] == t.index[k] {
+    var members: List[Int] = []
+    while true {
+      let top = t.stack.pop() ?? k
+      t.on_stack[top] = false
+      h.scc[top] = t.comp
+      members.push(top)
+      if top == k {
+        break
+      }
+    }
+    t.comp += 1
+    h.hash_component(members)
+  }
+}
+
+fn min_int(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+/// The deep hashes of one component: references inside it stay by name,
+/// references out of it are the (already computed) deep hashes, and every
+/// member covers the encodings of all members.
+fn (var h: Hasher) hash_component(members0: List[Int]) {
+  var keyed: List[(Str, Int)] = []
+  for m in members0 {
+    keyed.push((h.defs[m].def.key, m))
+  }
+  var members: List[Int] = []
+  for k in keyed.sort() {
+    members.push(k.1)
+  }
+  let comp = h.scc[members[0]]
+  var encs: List[Bytes] = []
+  for m in members {
+    let (e, _) = h.encode(m, comp)
+    encs.push(e)
+  }
+  for (j, m) in members.indexed() {
+    var parts: List[Bytes] = [h.defs[m].def.kind.bytes(), encs[j]]
+    if members.len() > 1 {
+      for (k, o) in members.indexed() {
+        parts.push(h.defs[o].def.key.bytes())
+        parts.push(encs[k])
+      }
+    }
+    let s = sum(parts)
+    h.deep[m] = s
+    h.defs[m].def.hash = s
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The encoder of one declaration (defhash.ctx)
+
+struct Enc {
+  /// the module's packages, scc, and deep hashes (read only)
+  h: Hasher
+  pkg: Pkg
+  imports: Map[Str, Str]
+  self_key: Str
+  comp: Int
+  /// local name -> token
+  locals: Map[Str, Str] = {}
+  n: Int = 0
+  refs: Set[Str] = #{}
+  /// set while the parameters of a declared function are bound: they
+  /// keep their names (named arguments see them)
+  named: Bool = false
+}
+
+fn w(var b: BytesBuilder, tag: Str, s: Str) {
+  b.write_str(tag)
+  b.write_str("${s.len()}:")
+  b.write_str(s)
+}
+
+fn wb(var b: BytesBuilder, tag: Str, s: Bytes) {
+  b.write_str(tag)
+  b.write_str("${s.len()}:")
+  b.write(s)
+}
+
+fn open(var b: BytesBuilder, name: Str) {
+  w(b, "(", name)
+}
+
+fn nil(var b: BytesBuilder) {
+  w(b, "0", "")
+}
+
+fn bool(var b: BytesBuilder, v: Bool) {
+  w(b, "b", if v { "1" } else { "0" })
+}
+
+fn int(var b: BytesBuilder, v: Int) {
+  w(b, "i", "${v}")
+}
+
+fn str(var b: BytesBuilder, s: Bytes) {
+  wb(b, "s", s)
+}
+
+fn list_len(var b: BytesBuilder, n: Int) {
+  w(b, "[", "${n}")
+}
+
+/// A *ast.Ident held in a pointer field: its name.
+fn ident_n(var b: BytesBuilder, id: Ident) {
+  wb(b, "N", id.name)
+}
+
+fn opt_ident_n(var b: BytesBuilder, id: Ident?) {
+  match id {
+    Some(x) => ident_n(b, x)
+    None => nil(b)
+  }
+}
+
+fn (c: Enc) tok(key: Str) -> Str {
+  let i = c.h.def_idx.get(key) ?? -1
+  if c.comp < 0 || i < 0 || c.h.scc[i] == c.comp {
+    return "@${key}"
+  }
+  "#${c.h.deep[i]}"
+}
+
+fn (var c: Enc) def(var b: BytesBuilder, key: Str) {
+  c.refs.add(key)
+  if key == c.self_key {
+    w(b, "D", "@self")
+    return
+  }
+  w(b, "D", c.tok(key))
+}
+
+/// Binds a local name: a new token on its first binding.
+fn (var c: Enc) bind(var b: BytesBuilder, id: Ident?) {
+  let x = match id {
+    Some(x) => x
+    None => {
+      w(b, "B", "")
+      return
+    }
+  }
+  let name = txt(x.name)
+  if name == "_" {
+    w(b, "B", "_")
+    return
+  }
+  if c.named {
+    c.locals[name] = "p:${name}"
+    w(b, "B", "p:${name}")
+    return
+  }
+  var t = c.locals.get(name) ?? ""
+  if t.is_empty() || t.starts_with("p:") {
+    t = "$" + "${c.n}"
+    c.n += 1
+    c.locals[name] = t
+  }
+  w(b, "B", t)
+}
+
+/// A name used as a value or a type: a local, a definition of the
+/// package, an imported package, or anything else by name.
+fn (var c: Enc) ref(var b: BytesBuilder, name: Str) {
+  if let Some(t) = c.locals.get(name) {
+    w(b, "L", t)
+    return
+  }
+  if let Some(key) = c.pkg.defs.get(name) {
+    c.def(b, key)
+    return
+  }
+  if let Some(p) = c.imports.get(name) {
+    w(b, "U", p)
+    return
+  }
+  w(b, "G", name)
+}
+
+/// alias.name resolved to a definition of another package of the module.
+fn (c: Enc) imported(alias: Str, name: Str) -> Str? {
+  if c.locals.contains(alias) {
+    return None
+  }
+  let p = c.imports.get(alias)?
+  let pi = c.h.pkg_idx.get(p)?
+  c.h.pkgs[pi].defs.get(name)
+}
+
+/// The names of a type or pattern path.
+fn (var c: Enc) path(var b: BytesBuilder, ids: List[Ident]) {
+  w(b, "P", "${ids.len()}")
+  if ids.is_empty() {
+    return
+  }
+  var start = 1
+  if ids.len() >= 2 {
+    if let Some(key) = c.imported(txt(ids[0].name), txt(ids[1].name)) {
+      c.def(b, key)
+      start = 2
+    } else {
+      c.ref(b, txt(ids[0].name))
+    }
+  } else {
+    c.ref(b, txt(ids[0].name))
+  }
+  for i in start..ids.len() {
+    ident_n(b, ids[i])
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Declarations
+
+fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
+  match d {
+    FnDecl(x) => c.fn_decl(b, x, true)
+    StructDecl(x) => {
+      open(b, "StructDecl")
+      bool(b, x.is_pub)
+      ident_n(b, x.name)
+      c.type_params(b, x.type_params)
+      list_len(b, x.fields.len())
+      for f in x.fields {
+        open(b, "Field")
+        bool(b, f.is_pub)
+        ident_n(b, f.name)
+        c.typ(b, f.typ)
+        c.opt_expr(b, f.default)
+      }
+      c.opt_expr(b, x.inv)
+      list_len(b, x.derive.len())
+      for id in x.derive {
+        ident_n(b, id)
+      }
+    }
+    EnumDecl(x) => {
+      open(b, "EnumDecl")
+      bool(b, x.is_pub)
+      ident_n(b, x.name)
+      c.type_params(b, x.type_params)
+      list_len(b, x.variants.len())
+      for v in x.variants {
+        open(b, "Variant")
+        ident_n(b, v.name)
+        let fs = v.fields ?? []
+        list_len(b, fs.len())
+        for f in fs {
+          open(b, "VariantField")
+          opt_ident_n(b, f.name)
+          bool(b, f.from)
+          c.typ(b, f.typ)
+        }
+      }
+      list_len(b, x.derive.len())
+      for id in x.derive {
+        ident_n(b, id)
+      }
+    }
+    InterfaceDecl(x) => {
+      open(b, "InterfaceDecl")
+      bool(b, x.is_pub)
+      ident_n(b, x.name)
+      c.type_params(b, x.type_params)
+      list_len(b, x.methods.len())
+      for m in x.methods {
+        c.fn_decl(b, m, false)
+      }
+    }
+    TypeDecl(x) => {
+      open(b, "TypeDecl")
+      bool(b, x.is_pub)
+      ident_n(b, x.name)
+      c.type_params(b, x.type_params)
+      bool(b, x.newtype)
+      c.opt_typ(b, x.typ)
+    }
+    ConstDecl(x) => c.const_decl(b, x, true)
+    TestDecl(_) => open(b, "TestDecl")
+    BadDecl(_) => open(b, "BadDecl")
+  }
+}
+
+fn (var c: Enc) fn_decl(var b: BytesBuilder, d: parser.FnDecl, root: Bool) {
+  open(b, "FnDecl")
+  bool(b, d.is_pub)
+  match d.recv {
+    Some(r) => {
+      open(b, "Receiver")
+      bool(b, r.is_var)
+      c.bind(b, Some(r.name))
+      c.typ(b, r.typ)
+    }
+    None => nil(b)
+  }
+  if !root {
+    // a method of an interface
+    ident_n(b, d.name)
+  }
+  c.type_params(b, d.type_params)
+  let saved = c.named
+  c.named = true
+  c.params(b, d.params)
+  c.named = false
+  c.opt_typ(b, d.result)
+  c.opt_err(b, d.err)
+  list_len(b, d.clauses.len())
+  for cl in d.clauses {
+    c.clause(b, cl)
+  }
+  c.opt_block(b, d.body)
+  c.named = saved
+}
+
+fn (var c: Enc) const_decl(var b: BytesBuilder, d: parser.ConstDecl, root: Bool) {
+  open(b, "ConstDecl")
+  bool(b, d.is_pub)
+  if !root {
+    // a local constant
+    c.bind(b, Some(d.name))
+  }
+  c.opt_typ(b, d.typ)
+  c.expr(b, d.value)
+}
+
+fn (var c: Enc) type_params(var b: BytesBuilder, tps: List[parser.TypeParam]) {
+  list_len(b, tps.len())
+  for tp in tps {
+    open(b, "TypeParam")
+    c.bind(b, Some(tp.name))
+    c.opt_typ(b, tp.constraint)
+    bool(b, tp.effects)
+  }
+}
+
+fn (var c: Enc) params(var b: BytesBuilder, ps: List[parser.Param]) {
+  list_len(b, ps.len())
+  for p in ps {
+    open(b, "Param")
+    bool(b, p.is_var)
+    bool(b, p.is_self)
+    c.bind(b, Some(p.name))
+    let saved = c.named
+    c.named = false
+    c.opt_typ(b, p.typ)
+    c.opt_expr(b, p.default)
+    c.named = saved
+  }
+}
+
+fn (var c: Enc) opt_err(var b: BytesBuilder, e: parser.ErrSpec?) {
+  match e {
+    Some(x) => {
+      open(b, "ErrSpec")
+      c.opt_typ(b, x.typ)
+    }
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) clause(var b: BytesBuilder, cl: parser.Clause) {
+  match cl {
+    UsesClause(_, effects, parens) => {
+      open(b, "UsesClause")
+      c.effects(b, effects)
+      bool(b, parens)
+    }
+    RequiresClause(_, debug, cond, els) => {
+      open(b, "RequiresClause")
+      bool(b, debug)
+      c.expr(b, cond)
+      c.opt_expr(b, els)
+    }
+    EnsuresClause(_, debug, cond) => {
+      open(b, "EnsuresClause")
+      bool(b, debug)
+      c.expr(b, cond)
+    }
+  }
+}
+
+fn (var c: Enc) effects(var b: BytesBuilder, es: List[parser.Effect]) {
+  list_len(b, es.len())
+  for e in es {
+    open(b, "Effect")
+    let name = txt(e.name.name)
+    if let Some(t) = c.locals.get(name) {
+      w(b, "L", t)
+    } else {
+      w(b, "N", name)
+    }
+    opt_ident_n(b, e.sub)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+fn (var c: Enc) opt_typ(var b: BytesBuilder, t: PType?) {
+  match t {
+    Some(x) => c.typ(b, x)
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) typ(var b: BytesBuilder, t: PType) {
+  match t {
+    NamedType(_, path, args) => {
+      open(b, "NamedType")
+      c.path(b, path)
+      list_len(b, args.len())
+      for a in args {
+        c.typ(b, a)
+      }
+    }
+    OptionalType(_, elem) => {
+      open(b, "OptionalType")
+      c.typ(b, elem)
+    }
+    TupleType(_, elems) => {
+      open(b, "TupleType")
+      list_len(b, elems.len())
+      for e in elems {
+        c.typ(b, e)
+      }
+    }
+    FnType(f) => {
+      open(b, "FnType")
+      list_len(b, f.params.len())
+      for p in f.params {
+        open(b, "FnTypeParam")
+        bool(b, p.is_var)
+        c.typ(b, p.typ)
+      }
+      c.opt_typ(b, f.result)
+      c.opt_err(b, f.err)
+      c.effects(b, f.effects)
+      bool(b, f.uses_parens)
+    }
+    BadType(_) => open(b, "BadType")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn (var c: Enc) opt_block(var b: BytesBuilder, bl: Block?) {
+  match bl {
+    Some(x) => c.block(b, x)
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) block(var b: BytesBuilder, bl: Block) {
+  open(b, "Block")
+  list_len(b, bl.stmts.len())
+  for s in bl.stmts {
+    c.stmt(b, s)
+  }
+}
+
+fn (var c: Enc) opt_stmt(var b: BytesBuilder, s: Stmt?) {
+  match s {
+    Some(x) => c.stmt(b, x)
+    None => nil(b)
+  }
+}
+
+/// A label that is used, not bound: a local when bound, else its name.
+fn (var c: Enc) use_label(var b: BytesBuilder, l: Ident?) {
+  match l {
+    Some(id) => {
+      let name = txt(id.name)
+      if let Some(t) = c.locals.get(name) {
+        w(b, "L", t)
+      } else {
+        w(b, "N", name)
+      }
+    }
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) stmt(var b: BytesBuilder, s: Stmt) {
+  match s {
+    LetStmt(_, pattern, typ, value) => {
+      open(b, "LetStmt")
+      c.pattern(b, pattern)
+      c.opt_typ(b, typ)
+      c.expr(b, value)
+    }
+    VarStmt(_, name, typ, value) => {
+      open(b, "VarStmt")
+      c.bind(b, Some(name))
+      c.opt_typ(b, typ)
+      c.expr(b, value)
+    }
+    AssignStmt(_, op, target, value) => {
+      open(b, "AssignStmt")
+      w(b, "k", parser.kind_text(op))
+      c.expr(b, target)
+      c.expr(b, value)
+    }
+    DeferStmt(_, body) => {
+      open(b, "DeferStmt")
+      c.stmt(b, body)
+    }
+    ReturnStmt(_, value) => {
+      open(b, "ReturnStmt")
+      c.opt_expr(b, value)
+    }
+    BreakStmt(_, label) => {
+      open(b, "BreakStmt")
+      c.use_label(b, label)
+    }
+    ContinueStmt(_, label) => {
+      open(b, "ContinueStmt")
+      c.use_label(b, label)
+    }
+    ForStmt(_, label, pattern, iter, bound, body, go_range) => {
+      open(b, "ForStmt")
+      c.bind(b, label)
+      c.pattern(b, pattern)
+      c.expr(b, iter)
+      c.opt_expr(b, bound.first())
+      c.block(b, body)
+      bool(b, go_range)
+    }
+    WhileStmt(_, label, cond, pattern, value, bound, body) => {
+      open(b, "WhileStmt")
+      c.bind(b, label)
+      c.opt_expr(b, cond)
+      c.opt_pattern(b, pattern.first())
+      c.opt_expr(b, value.first())
+      c.opt_expr(b, bound.first())
+      c.block(b, body)
+    }
+    ExprStmt(_, x) => {
+      open(b, "ExprStmt")
+      c.expr(b, x)
+    }
+    BadStmt(_) => open(b, "BadStmt")
+    ConstDecl(d) => c.const_decl(b, d, false)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+fn (var c: Enc) opt_expr(var b: BytesBuilder, e: Expr?) {
+  match e {
+    Some(x) => c.expr(b, x)
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) exprs(var b: BytesBuilder, es: List[Expr]) {
+  list_len(b, es.len())
+  for e in es {
+    c.expr(b, e)
+  }
+}
+
+fn (var c: Enc) field_inits(var b: BytesBuilder, fs: List[parser.FieldInit]) {
+  list_len(b, fs.len())
+  for f in fs {
+    open(b, "FieldInit")
+    ident_n(b, f.name)
+    c.expr(b, f.value)
+  }
+}
+
+fn (var c: Enc) expr(var b: BytesBuilder, e: Expr) {
+  match e {
+    Ident(id) => c.ref(b, txt(id.name))
+    IntLit(_, raw, value) => {
+      open(b, "IntLit")
+      str(b, raw)
+      str(b, value)
+    }
+    FloatLit(_, raw) => {
+      open(b, "FloatLit")
+      str(b, raw)
+    }
+    DurationLit(_, raw, nanos) => {
+      open(b, "DurationLit")
+      str(b, raw)
+      str(b, nanos)
+    }
+    RuneLit(_, raw, value) => {
+      open(b, "RuneLit")
+      str(b, raw)
+      int(b, value)
+    }
+    StringLit(s) => c.string_lit(b, s)
+    BytesLit(_, value) => {
+      open(b, "BytesLit")
+      str(b, value)
+    }
+    HoleExpr(_) => open(b, "HoleExpr")
+    UnitExpr(_) => open(b, "UnitExpr")
+    ParenExpr(_, x) => {
+      open(b, "ParenExpr")
+      c.expr(b, x)
+    }
+    TupleExpr(_, elems) => {
+      open(b, "TupleExpr")
+      c.exprs(b, elems)
+    }
+    ListLit(_, elems) => {
+      open(b, "ListLit")
+      c.exprs(b, elems)
+    }
+    MapLit(_, entries) => {
+      open(b, "MapLit")
+      list_len(b, entries.len())
+      for en in entries {
+        open(b, "MapEntry")
+        c.expr(b, en.key)
+        c.expr(b, en.value)
+      }
+    }
+    SetLit(_, elems) => {
+      open(b, "SetLit")
+      c.exprs(b, elems)
+    }
+    StructLit(_, typ, fields) => {
+      open(b, "StructLit")
+      c.expr(b, typ)
+      c.field_inits(b, fields)
+    }
+    UnaryExpr(_, op, x) => {
+      open(b, "UnaryExpr")
+      w(b, "k", parser.kind_text(op))
+      c.expr(b, x)
+    }
+    BinaryExpr(_, op, x, y) => {
+      open(b, "BinaryExpr")
+      w(b, "k", parser.kind_text(op))
+      c.expr(b, x)
+      c.expr(b, y)
+    }
+    IsExpr(_, x, pattern) => {
+      open(b, "IsExpr")
+      c.expr(b, x)
+      c.pattern(b, pattern)
+    }
+    RangeExpr(_, lo, hi, inclusive) => {
+      open(b, "RangeExpr")
+      c.opt_expr(b, lo)
+      c.opt_expr(b, hi)
+      bool(b, inclusive)
+    }
+    SelectorExpr(_, x, sel) => c.selector(b, x, sel)
+    CallExpr(_, fun, args) => {
+      open(b, "CallExpr")
+      c.expr(b, fun)
+      list_len(b, args.len())
+      for a in args {
+        open(b, "Arg")
+        opt_ident_n(b, a.name)
+        c.expr(b, a.value)
+      }
+    }
+    TypeArgsExpr(_, x, types) => {
+      open(b, "TypeArgsExpr")
+      c.expr(b, x)
+      list_len(b, types.len())
+      for t in types {
+        c.typ(b, t)
+      }
+    }
+    IndexExpr(_, x, index) => {
+      open(b, "IndexExpr")
+      c.expr(b, x)
+      c.expr(b, index)
+    }
+    TryExpr(_, x) => {
+      open(b, "TryExpr")
+      c.expr(b, x)
+    }
+    WithExpr(_, x, fields) => {
+      open(b, "WithExpr")
+      c.expr(b, x)
+      c.field_inits(b, fields)
+    }
+    IfExpr(x) => c.if_expr(b, x)
+    MatchExpr(_, subject, arms) => {
+      open(b, "MatchExpr")
+      c.expr(b, subject)
+      list_len(b, arms.len())
+      for a in arms {
+        open(b, "MatchArm")
+        c.pattern(b, a.pattern)
+        c.opt_expr(b, a.guard)
+        c.opt_stmt(b, a.body)
+      }
+    }
+    ScopeExpr(_, name, body) => {
+      open(b, "ScopeExpr")
+      c.bind(b, Some(name))
+      c.block(b, body)
+    }
+    SelectExpr(_, arms) => {
+      open(b, "SelectExpr")
+      list_len(b, arms.len())
+      for a in arms {
+        open(b, "SelectArm")
+        c.bind(b, a.bind)
+        c.opt_expr(b, a.op)
+        c.opt_expr(b, a.after)
+        c.opt_stmt(b, a.body)
+      }
+    }
+    Block(bl) => c.block(b, bl)
+    FnLit(f) => {
+      let saved = c.named
+      c.named = false
+      open(b, "FnLit")
+      c.params(b, f.params)
+      c.opt_typ(b, f.result)
+      c.opt_err(b, f.err)
+      c.effects(b, f.effects)
+      c.block(b, f.body)
+      c.named = saved
+    }
+    WhileExpr(_, body) => {
+      open(b, "WhileExpr")
+      c.block(b, body)
+    }
+    BadExpr(_) => open(b, "BadExpr")
+  }
+}
+
+fn (var c: Enc) string_lit(var b: BytesBuilder, s: parser.StringLit) {
+  open(b, "StringLit")
+  let k = match s.kind {
+    Plain => 0
+    Triple => 1
+    Raw => 2
+  }
+  int(b, k)
+  list_len(b, s.parts.len())
+  for p in s.parts {
+    open(b, "StringPart")
+    str(b, p.text)
+    c.opt_expr(b, p.expr)
+  }
+}
+
+fn (var c: Enc) if_expr(var b: BytesBuilder, x: parser.IfExpr) {
+  open(b, "IfExpr")
+  c.opt_expr(b, x.cond)
+  c.opt_pattern(b, x.pattern)
+  c.opt_expr(b, x.value)
+  c.block(b, x.then)
+  c.opt_expr(b, x.els)
+}
+
+/// Type.method, Type.CONST, or alias.name of a package of this module:
+/// the definition itself; any other selector field by field.
+fn (var c: Enc) selector(var b: BytesBuilder, x: Expr, sel: Ident) {
+  if let Ident(xid) = x {
+    let xname = txt(xid.name)
+    if !c.locals.contains(xname) {
+      if let Some(key) = c.pkg.defs.get("${xname}.${txt(sel.name)}") {
+        open(b, "Sel")
+        c.ref(b, xname)
+        c.def(b, key)
+        return
+      }
+      if let Some(key) = c.imported(xname, txt(sel.name)) {
+        open(b, "Sel")
+        c.def(b, key)
+        return
+      }
+    }
+  }
+  open(b, "SelectorExpr")
+  c.expr(b, x)
+  ident_n(b, sel)
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+fn (var c: Enc) opt_pattern(var b: BytesBuilder, p: Pattern?) {
+  match p {
+    Some(x) => c.pattern(b, x)
+    None => nil(b)
+  }
+}
+
+fn (var c: Enc) pattern(var b: BytesBuilder, p: Pattern) {
+  match p {
+    WildcardPat(_) => open(b, "WildcardPat")
+    BindPat(_, name) => {
+      open(b, "BindPat")
+      c.bind(b, Some(name))
+    }
+    LitPat(_, value) => {
+      open(b, "LitPat")
+      c.expr(b, value)
+    }
+    RangePat(_, lo, hi, inclusive) => {
+      open(b, "RangePat")
+      c.expr(b, lo)
+      c.expr(b, hi)
+      bool(b, inclusive)
+    }
+    OrPat(_, alts) => {
+      open(b, "OrPat")
+      list_len(b, alts.len())
+      for a in alts {
+        c.pattern(b, a)
+      }
+    }
+    TuplePat(_, elems) => {
+      open(b, "TuplePat")
+      list_len(b, elems.len())
+      for e in elems {
+        c.pattern(b, e)
+      }
+    }
+    VariantPat(_, path, parens, fields, rest) => {
+      open(b, "VariantPat")
+      c.path(b, path)
+      bool(b, parens)
+      list_len(b, fields.len())
+      for f in fields {
+        open(b, "PatField")
+        opt_ident_n(b, f.name)
+        c.pattern(b, f.pattern)
+      }
+      bool(b, rest)
+    }
+    StructPat(_, path, fields, rest) => {
+      // `Point{x, y}` binds the fields x and y: name the fields so a
+      // renamed binding (`Point{x: a}`) encodes the same
+      open(b, "StructPat")
+      c.path(b, path)
+      list_len(b, fields.len())
+      for f in fields {
+        var name = ""
+        if let Some(n) = f.name {
+          name = txt(n.name)
+        } else if let BindPat(_, bn) = f.pattern {
+          name = txt(bn.name)
+        }
+        w(b, "N", name)
+        c.pattern(b, f.pattern)
+      }
+      bool(b, rest)
+    }
+    ListPat(_, elems, rest) => {
+      open(b, "ListPat")
+      list_len(b, elems.len())
+      for e in elems {
+        c.pattern(b, e)
+      }
+      int(b, rest)
+    }
+    BadPat(_) => open(b, "BadPat")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Diff, Find, Nearest (defhash diff.go)
+
+/// A definition that differs between two versions of a module.
+pub struct Change {
+  /// added, removed, changed, or changed_via
+  pub kind: Str
+  pub package: Str
+  pub name: Str
+  pub item_kind: Str
+  pub is_pub: Bool
+  pub via: List[Str] = []
+  pub file: Str = ""
+  pub line: Int = 0
+}
+
+/// Compares the definitions of two versions of a module, matched by
+/// package directory and name. Unchanged definitions are left out.
+pub fn diff_defs(old: List[Def], new: List[Def]) -> List[Change] {
+  var old_by: Map[Str, Def] = {}
+  for d in old {
+    old_by[d.key] = d
+  }
+  var new_by: Map[Str, Def] = {}
+  for d in new {
+    new_by[d.key] = d
+  }
+  var out: List[Change] = []
+  for d in new {
+    var ch = Change{kind: "", package: d.package, name: d.name, item_kind: d.kind, is_pub: d.is_pub, file: d.file, line: d.line}
+    match old_by.get(d.key) {
+      None => ch.kind = "added"
+      Some(o) => {
+        if o.hash == d.hash && o.kind == d.kind {
+          continue
+        }
+        for r in d.refs {
+          let ro = old_by.get(r)
+          let rn = new_by.get(r)
+          var differs = true
+          var rname = ""
+          if let Some(n) = rn {
+            rname = "${n.package}.${n.name}"
+            if let Some(oo) = ro {
+              differs = oo.hash != n.hash
+            }
+          } else {
+            rname = "."
+          }
+          if differs {
+            ch.via.push(rname)
+          }
+        }
+        ch.kind = "changed"
+        if o.own == d.own && o.kind == d.kind {
+          ch.kind = "changed_via"
+        }
+      }
+    }
+    out.push(ch)
+  }
+  for o in old {
+    if !new_by.contains(o.key) {
+      out.push(Change{kind: "removed", package: o.package, name: o.name, item_kind: o.kind, is_pub: o.is_pub})
+    }
+  }
+  out.sort_by(fn(c) { (c.package, c.name) })
+}
+
+/// A one line description of a change for text output.
+pub fn describe_change(c: Change) -> Str {
+  let name = "${c.package}.${c.name}"
+  let vis = if c.is_pub { "" } else { "private " }
+  match c.kind {
+    "added" => return "added ${vis}${c.item_kind} ${name}"
+    "removed" => return "removed ${vis}${c.item_kind} ${name}"
+    "changed_via" => return "${vis}${c.item_kind} ${name} changed through ${c.via.join(", ")}"
+    _ => {}
+  }
+  var s = "changed ${vis}${c.item_kind} ${name}"
+  if !c.via.is_empty() {
+    s = "${s} (and through ${c.via.join(", ")})"
+  }
+  s
+}
+
+/// The definitions name refers to: an ID, a name, or a name qualified by
+/// the last element of its package.
+pub fn find_defs(defs: List[Def], name: Str) -> List[Def] {
+  var out: List[Def] = []
+  for d in defs {
+    let parts = d.package.split("/")
+    let last = parts[parts.len() - 1]
+    if d.id == name || d.name == name || "${last}.${d.name}" == name {
+      out.push(d)
+    }
+  }
+  out
+}
+
+/// Up to n definition names closest to name (edit distance).
+pub fn nearest(defs: List[Def], name: Str, n: Int) -> List[Str] {
+  var cs: List[(Int, Str)] = []
+  var seen: Set[Str] = #{}
+  for d in defs {
+    if seen.contains(d.name) {
+      continue
+    }
+    seen.add(d.name)
+    cs.push((distance(name.to_lower(), d.name.to_lower()), d.name))
+  }
+  let lim = if 3 > name.len() / 2 { 3 } else { name.len() / 2 }
+  var out: List[Str] = []
+  for c in cs.sort() {
+    if out.len() == n || c.0 > lim {
+      break
+    }
+    out.push(c.1)
+  }
+  out
+}
+
+pub fn distance(a0: Str, b0: Str) -> Int {
+  let a = a0.bytes()
+  let b = b0.bytes()
+  var prev: List[Int] = []
+  for j in 0..b.len() + 1 {
+    prev.push(j)
+  }
+  for i in 1..a.len() + 1 {
+    var cur: List[Int] = [i]
+    for j in 1..b.len() + 1 {
+      let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 }
+      cur.push(min_int(min_int(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + cost))
+    }
+    prev = cur
+  }
+  prev[b.len()]
+}
+
+// ---------------------------------------------------------------------------
+// JSON
+
+/// A definition as defhash.Def marshals.
+pub fn def_json(d: Def) -> JVal {
+  var ms: List[(Str, JVal)] = [("id", JVal.Text(d.id)), ("package", JVal.Text(d.package)), ("name", JVal.Text(d.name)), ("kind", JVal.Text(d.kind)), ("pub", JVal.Bool(d.is_pub)), ("hash", JVal.Text(d.hash)), ("own", JVal.Text(d.own))]
+  if !d.ref_ids.is_empty() {
+    ms.push(("refs", strs(d.ref_ids)))
+  }
+  ms.push(("file", JVal.Text(d.file)))
+  ms.push(("line", JVal.Num(d.line)))
+  JVal.Obj(ms)
+}
+
+/// A change as defhash.Change marshals.
+pub fn change_json(c: Change) -> JVal {
+  var ms: List[(Str, JVal)] = [("kind", JVal.Text(c.kind)), ("package", JVal.Text(c.package)), ("name", JVal.Text(c.name)), ("item_kind", JVal.Text(c.item_kind)), ("pub", JVal.Bool(c.is_pub))]
+  if !c.via.is_empty() {
+    ms.push(("via", strs(c.via)))
+  }
+  if !c.file.is_empty() {
+    ms.push(("file", JVal.Text(c.file)))
+  }
+  if c.line != 0 {
+    ms.push(("line", JVal.Num(c.line)))
+  }
+  JVal.Obj(ms)
+}

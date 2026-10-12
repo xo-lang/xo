@@ -1,0 +1,1767 @@
+// The canonical layout of Xo source (core 10.5, `xo fmt`): a port of
+// internal/format. The layout is computed from the syntax tree; comments
+// come from the lexer and are placed back between the nodes they sat
+// between. TestSelfhostFormat checks that every .xo file of the
+// repository formats to the same bytes as internal/format formats it.
+//
+// The rules are internal/format's (format.go's package comment): two
+// spaces per level, one item per line, blank line runs collapsed, a
+// bracketed list split one element per line when the source breaks the
+// line after its opening bracket, one line bodies kept when they were on
+// one line with at most one item, line breaks the grammar allows kept,
+// comments kept and trailing ones aligned, literals copied byte for byte.
+
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/parser
+
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type Pattern = parser.Pattern
+type Type = parser.Type
+type Span = parser.Span
+
+/// The result of formatting a file: the text, or the diagnostics of a
+/// file that does not parse (format.ParseError).
+pub enum Formatted {
+  Ok(text: Bytes)
+  SyntaxErrors(diags: List[parser.Diag])
+}
+
+/// Formats one file (format.Source). A file that only parses as a
+/// signature listing (std/*.xo) is formatted in that mode.
+pub fn format_source(name: Str, src: Bytes) -> Formatted {
+  var r = parser.parse_file(name.bytes(), src, false)
+  if !r.diags.is_empty() {
+    let r2 = parser.parse_file(name.bytes(), src, true)
+    if !r2.diags.is_empty() {
+      return Formatted.SyntaxErrors(r.diags)
+    }
+    r = r2
+  }
+  Formatted.Ok(format_file(r.file, src))
+}
+
+/// Prints a parsed file; src is the source it was parsed from
+/// (format.File).
+pub fn format_file(f: parser.File, src: Bytes) -> Bytes {
+  let lx = lexer.lex(src)
+  var p = Printer{src: src, comments: lx.comments}
+  p.file(f)
+  p.render()
+}
+
+/// One declaration in the canonical layout, without comments; with sig
+/// a function's body is left out (format.Decl, for signatures).
+pub fn format_decl(d: parser.Decl, src: Bytes, sig: Bool) -> Str {
+  var p = Printer{src: src, comments: []}
+  match d {
+    FnDecl(fd) => {
+      if sig {
+        p.fn_decl(fd with {body: None})
+      } else {
+        p.fn_decl(fd)
+      }
+    }
+    _ => p.decl(d)
+  }
+  let out = text_of(p.render())
+  trim_right_nl(out)
+}
+
+fn trim_right_nl(s: Str) -> Str {
+  var t = s
+  while t.ends_with("\n") {
+    let b = t.bytes()
+    t = b[0..b.len() - 1].to_str() ?? ""
+  }
+  t
+}
+
+/// One output line.
+struct Line {
+  indent: Int = 0
+  /// A continuation of a multi line string: printed verbatim.
+  raw: Bool = false
+  /// Ends inside a multi line string: keep trailing blanks.
+  no_trim: Bool = false
+  text: Str = ""
+  /// A trailing comment.
+  comment: Str = ""
+}
+
+struct Printer {
+  src: Bytes
+  comments: List[lexer.Comment]
+  /// The next comment to place.
+  ci: Int = 0
+  out: List[Line] = []
+  cur: Line = Line{}
+  indent: Int = 0
+  /// The source offset just past the last code or comment printed.
+  last_off: Int = 0
+}
+
+/// Bytes as text (a source that is not UTF-8 is printed with U+FFFD).
+fn text_of(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write_rune(r)
+    i += n
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn name_of(id: parser.Ident) -> Str {
+  text_of(id.name)
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+fn (var p: Printer) w(s: Str) {
+  if p.cur.text.is_empty() && !p.cur.raw {
+    p.cur.indent = p.indent
+  }
+  if !s.contains("\n") {
+    p.cur.text = p.cur.text + s
+    return
+  }
+  let parts = s.split("\n")
+  for (i, part) in parts.indexed() {
+    p.cur.text = p.cur.text + part
+    if i < parts.len() - 1 {
+      p.cur.no_trim = true
+      p.out.push(p.cur)
+      p.cur = Line{raw: true}
+    }
+  }
+}
+
+/// Ends the current line if it holds anything.
+fn (var p: Printer) nl() {
+  if !p.cur.text.is_empty() || !p.cur.comment.is_empty() || p.cur.raw {
+    p.out.push(p.cur)
+  }
+  p.cur = Line{}
+}
+
+fn is_blank_line(l: Line) -> Bool {
+  l.text.is_empty() && l.comment.is_empty() && !l.raw
+}
+
+/// Adds one empty line unless the output is empty or already ends in one.
+fn (var p: Printer) blank() {
+  p.nl()
+  let n = p.out.len()
+  if n == 0 || is_blank_line(p.out[n - 1]) {
+    return
+  }
+  p.out.push(Line{})
+}
+
+fn trailing(l: Line) -> Bool {
+  !l.comment.is_empty() && !l.text.is_empty()
+}
+
+fn (var p: Printer) render() -> Bytes {
+  p.nl()
+  while !p.out.is_empty() && is_blank_line(p.out[p.out.len() - 1]) {
+    p.out.pop()
+  }
+  // align trailing comments of consecutive lines
+  let n = p.out.len()
+  var width: List[Int] = []
+  for _ in 0..n {
+    width.push(0)
+  }
+  var i = 0
+  while i < n {
+    if !trailing(p.out[i]) {
+      i += 1
+      continue
+    }
+    var j = i
+    var max = 0
+    while j < n && trailing(p.out[j]) && p.out[j].indent == p.out[i].indent && p.out[j].raw == p.out[i].raw {
+      let rc = p.out[j].text.rune_count()
+      if rc > max {
+        max = rc
+      }
+      j += 1
+    }
+    for k in i..j {
+      width[k] = max
+    }
+    i = j
+  }
+  var b = StrBuilder.new()
+  for (li, ln) in p.out.indexed() {
+    if is_blank_line(ln) {
+      b.write("\n")
+      continue
+    }
+    var s = ln.text
+    if !ln.raw {
+      s = "  ".repeat(ln.indent) + s
+    }
+    if !ln.comment.is_empty() {
+      if !ln.text.is_empty() {
+        s = s + " ".repeat(width[li] - ln.text.rune_count() + 1)
+      }
+      s = s + ln.comment
+    }
+    if !ln.no_trim && ln.comment.is_empty() {
+      s = trim_blanks_right(s)
+    }
+    b.write(s)
+    b.write("\n")
+  }
+  b.freeze().bytes()
+}
+
+/// s without trailing spaces and tabs.
+fn trim_blanks_right(s: Str) -> Str {
+  let bs = s.bytes()
+  var e = bs.len()
+  while e > 0 && (bs[e - 1] == ' ' || bs[e - 1] == '\t') {
+    e -= 1
+  }
+  if e == bs.len() {
+    return s
+  }
+  bs[0..e].to_str() ?? s
+}
+
+// ---------------------------------------------------------------------------
+// Source helpers
+
+fn off(sp: Span) -> Int {
+  sp.start.offset
+}
+
+fn end_off(sp: Span) -> Int {
+  sp.end.offset
+}
+
+fn eoff(e: Expr) -> Int {
+  parser.expr_span(e).start.offset
+}
+
+fn eend(e: Expr) -> Int {
+  parser.expr_span(e).end.offset
+}
+
+/// Whether src[a:b] holds a line break.
+fn (p: Printer) has_nl(a: Int, b: Int) -> Bool {
+  if a < 0 || b > p.src.len() || a >= b {
+    return false
+  }
+  for i in a..b {
+    if p.src[i] == '\n' {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether src[a:b] holds an empty line.
+fn (p: Printer) has_blank(a: Int, b: Int) -> Bool {
+  if a < 0 || b > p.src.len() || a >= b {
+    return false
+  }
+  var i = a
+  while i < b {
+    if p.src[i] == '\n' {
+      var j = i + 1
+      while j < b && (p.src[j] == ' ' || p.src[j] == '\t' || p.src[j] == '\r') {
+        j += 1
+      }
+      if j < b && p.src[j] == '\n' {
+        return true
+      }
+    }
+    i += 1
+  }
+  false
+}
+
+/// The offset of the first ch at or after from, skipping comments, or -1.
+fn (p: Printer) find(from: Int, ch: UInt8) -> Int {
+  var i = if from < 0 { 0 } else { from }
+  while i < p.src.len() {
+    let c = p.src[i]
+    if c == '/' && i + 1 < p.src.len() && p.src[i + 1] == '/' {
+      while i < p.src.len() && p.src[i] != '\n' {
+        i += 1
+      }
+      continue
+    }
+    if c == ch {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// The offset of the next significant byte at or after from, skipping
+/// blanks, comments, and commas.
+fn (p: Printer) next(from: Int) -> Int {
+  var i = if from < 0 { 0 } else { from }
+  while i < p.src.len() {
+    let c = p.src[i]
+    if c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ',' {
+      i += 1
+    } else if c == '/' && i + 1 < p.src.len() && p.src[i + 1] == '/' {
+      while i < p.src.len() && p.src[i] != '\n' {
+        i += 1
+      }
+    } else {
+      return i
+    }
+  }
+  p.src.len()
+}
+
+/// Whether a comment starts in [a, b).
+fn (p: Printer) has_comment(a: Int, b: Int) -> Bool {
+  var i = p.ci
+  while i < p.comments.len() {
+    let o = p.comments[i].span.start.offset
+    if o >= b {
+      return false
+    }
+    if o >= a {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+fn (p: Printer) text(sp: Span) -> Str {
+  let a = sp.start.offset
+  let b = sp.end.offset
+  if a < 0 || b > p.src.len() || a > b {
+    return ""
+  }
+  text_of(p.src[a..b])
+}
+
+// ---------------------------------------------------------------------------
+// Comments and line starts
+
+fn (p: Printer) comment_text(c: lexer.Comment) -> Str {
+  let s = p.text(c.span)
+  let bs = s.bytes()
+  var e = bs.len()
+  while e > 0 && (bs[e - 1] == ' ' || bs[e - 1] == '\t' || bs[e - 1] == '\r') {
+    e -= 1
+  }
+  if e == bs.len() {
+    return s
+  }
+  bs[0..e].to_str() ?? s
+}
+
+/// Places every comment that starts before limit. A comment on the line
+/// where the last code ended trails that line; others get their own lines
+/// at the current indentation. first suppresses a blank line before the
+/// first item of a body.
+fn (var p: Printer) flush(limit: Int, first0: Bool) -> Bool {
+  var first = first0
+  while p.ci < p.comments.len() && p.comments[p.ci].span.start.offset < limit {
+    let c = p.comments[p.ci]
+    p.ci += 1
+    let start = c.span.start.offset
+    let txt = p.comment_text(c)
+    if start >= p.last_off && !p.has_nl(p.last_off, start) && p.last_off > 0 {
+      if !p.cur.text.is_empty() && p.cur.comment.is_empty() {
+        p.cur.comment = txt
+        p.nl()
+        p.last_off = c.span.end.offset
+        continue
+      }
+      let n = p.out.len()
+      if p.cur.text.is_empty() && !p.cur.raw && n > 0 && !p.out[n - 1].text.is_empty() && p.out[n - 1].comment.is_empty() {
+        p.out[n - 1].comment = txt
+        p.last_off = c.span.end.offset
+        continue
+      }
+    }
+    p.nl()
+    if !first && start >= p.last_off && p.has_blank(p.last_off, start) {
+      p.blank()
+    }
+    p.cur = Line{indent: p.indent, text: txt}
+    p.nl()
+    first = false
+    p.last_off = c.span.end.offset
+  }
+  first
+}
+
+/// Begins a line for an item that starts at offset start: places the
+/// comments before it, keeps one blank line where the source had one
+/// (unless first), and ends the current line.
+fn (var p: Printer) start_line(start: Int, first0: Bool) {
+  let first = p.flush(start, first0)
+  p.nl()
+  if !first && start >= p.last_off && p.has_blank(p.last_off, start) {
+    p.blank()
+  }
+}
+
+/// Records that code up to offset end has been printed.
+fn (var p: Printer) done(end: Int) {
+  if end > p.last_off {
+    p.last_off = end
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+
+/// What an element of a bracketed list or a body prints. Each node is
+/// held in a one element List (one word): held by value, a MatchArm made
+/// the enum too wide for the arm64 backend's reference counting helpers
+/// (gotchas/arm64-rc-helper-frame.md).
+enum ItemK {
+  TParam(tp: List[parser.TypeParam])
+  Param(prm: List[parser.Param])
+  Field(f: List[parser.Field])
+  Variant(v: List[parser.Variant])
+  VField(vf: List[parser.VariantField])
+  Method(m: List[parser.FnDecl])
+  XExpr(e: List[Expr])
+  Entry(en: List[parser.MapEntry])
+  FInit(fi: List[parser.FieldInit])
+  CallArg(a: List[parser.Arg])
+  MArm(ma: List[parser.MatchArm])
+  SArm(sa: List[parser.SelectArm])
+}
+
+/// One element of a bracketed list: its source range and what it prints.
+struct Item {
+  start: Int
+  end: Int
+  k: ItemK
+}
+
+fn (var p: Printer) print_item(it: Item) {
+  match it.k {
+    TParam(tps) => {
+      let tp = tps[0]
+      p.w(name_of(tp.name))
+      if tp.effects {
+        p.w(": Effects")
+      } else if let Some(c) = tp.constraint {
+        p.w(": ")
+        p.typ(c)
+      }
+    }
+    Param(prms) => p.param(prms[0])
+    Field(fs) => {
+      let f = fs[0]
+      p.pub_kw(f.is_pub)
+      p.w(name_of(f.name) + ": ")
+      p.typ(f.typ)
+      if let Some(d) = f.default {
+        p.w(" = ")
+        p.expr(d)
+      }
+    }
+    Variant(vs) => p.variant(vs[0])
+    VField(vfs) => {
+      let vf = vfs[0]
+      match vf.name {
+        Some(n) if !vf.from => p.w(name_of(n) + ": ")
+        _ => p.w("from ")
+      }
+      p.typ(vf.typ)
+    }
+    Method(ms) => p.fn_decl(ms[0])
+    XExpr(es) => p.expr(es[0])
+    Entry(ens) => {
+      let en = ens[0]
+      p.expr(en.key)
+      p.w(": ")
+      p.expr(en.value)
+    }
+    FInit(fis) => {
+      let fi = fis[0]
+      p.w(name_of(fi.name) + ": ")
+      p.expr(fi.value)
+    }
+    CallArg(args) => {
+      let a = args[0]
+      if let Some(n) = a.name {
+        p.w(name_of(n) + ": ")
+      }
+      p.expr(a.value)
+    }
+    MArm(mas) => p.match_arm(mas[0])
+    SArm(sas) => p.select_arm(sas[0])
+  }
+}
+
+/// Prints open items close. open_off is the offset of the opening bracket
+/// in the source. The list is split one item per line when the source
+/// breaks the line right after the opening bracket (or holds a comment in
+/// an empty list). keep_comma forces a trailing comma on one line (one
+/// element tuples).
+fn (var p: Printer) list(open: Str, close: Str, open_off: Int, items: List[Item], keep_comma: Bool) {
+  var close_off = -1
+  if open_off >= 0 {
+    var from = open_off + open.len()
+    if !items.is_empty() {
+      from = items[items.len() - 1].end
+    }
+    close_off = p.next(from)
+  }
+  var broken = false
+  if open_off >= 0 {
+    if !items.is_empty() {
+      broken = p.has_nl(open_off + open.len(), items[0].start)
+    } else {
+      broken = p.has_comment(open_off, close_off)
+    }
+  }
+  p.w(open)
+  if !broken {
+    for (i, it) in items.indexed() {
+      if i > 0 {
+        p.w(", ")
+      }
+      p.print_item(it)
+      p.done(it.end)
+    }
+    if keep_comma && items.len() == 1 {
+      p.w(",")
+    }
+    p.w(close)
+    if close_off >= 0 {
+      p.done(close_off + 1)
+    }
+    return
+  }
+  p.done(open_off + open.len())
+  p.indent += 1
+  for (i, it) in items.indexed() {
+    p.start_line(it.start, i == 0)
+    p.print_item(it)
+    p.w(",")
+    p.done(it.end)
+  }
+  p.flush(close_off, items.is_empty())
+  p.indent -= 1
+  p.nl()
+  p.w(close)
+  p.done(close_off + 1)
+}
+
+// ---------------------------------------------------------------------------
+// File and declarations
+
+/// A top level node: a `use` or a declaration.
+enum TopNode {
+  UseN(u: parser.UseDecl)
+  DeclN(d: parser.Decl)
+}
+
+fn decl_span(d: parser.Decl) -> Span {
+  match d {
+    FnDecl(x) => x.span
+    StructDecl(x) => x.span
+    EnumDecl(x) => x.span
+    InterfaceDecl(x) => x.span
+    TypeDecl(x) => x.span
+    ConstDecl(x) => x.span
+    TestDecl(x) => x.span
+    BadDecl(sp) => sp
+  }
+}
+
+fn (var p: Printer) file(f: parser.File) {
+  var nodes: List[TopNode] = []
+  for u in f.imports {
+    nodes.push(TopNode.UseN(u))
+  }
+  for d in f.decls {
+    nodes.push(TopNode.DeclN(d))
+  }
+  for (i, n) in nodes.indexed() {
+    let sp = match n {
+      UseN(u) => u.span
+      DeclN(d) => decl_span(d)
+    }
+    p.start_line(off(sp), i == 0)
+    match n {
+      UseN(u) => p.use_decl(u)
+      DeclN(d) => p.decl(d)
+    }
+    p.done(end_off(sp))
+  }
+  p.flush(p.src.len() + 1, nodes.is_empty())
+}
+
+fn (var p: Printer) use_decl(u: parser.UseDecl) {
+  p.w("use ")
+  if u.go {
+    p.w("go ")
+    p.w(go_quote(text_of(u.path)))
+  } else if u.c {
+    p.w("c ")
+    p.w(go_quote(text_of(u.path)))
+    for l in u.links {
+      p.w(" link ${go_quote(text_of(l))}")
+    }
+  } else {
+    p.w(text_of(u.path))
+  }
+  if let Some(a) = u.alias {
+    p.w(" as " + name_of(a))
+  }
+  if u.c {
+    if let Some(es) = u.effects {
+      var names: List[Str] = []
+      for e in es {
+        names.push(effect_name(e))
+      }
+      if names.is_empty() {
+        names = ["none"]
+      }
+      p.w(" uses " + names.join(", "))
+    }
+  }
+}
+
+fn effect_name(e: parser.Effect) -> Str {
+  match e.sub {
+    Some(s) => name_of(e.name) + "." + name_of(s)
+    None => name_of(e.name)
+  }
+}
+
+fn (var p: Printer) decl(d: parser.Decl) {
+  match d {
+    FnDecl(x) => p.fn_decl(x)
+    StructDecl(x) => p.struct_decl(x)
+    EnumDecl(x) => p.enum_decl(x)
+    InterfaceDecl(x) => p.iface_decl(x)
+    TypeDecl(x) => p.type_decl(x)
+    ConstDecl(x) => p.const_decl(x)
+    TestDecl(x) => p.test_decl(x)
+    BadDecl(sp) => p.w(p.text(sp))
+  }
+}
+
+fn (var p: Printer) pub_kw(b: Bool) {
+  if b {
+    p.w("pub ")
+  }
+}
+
+/// Prints `[T, U: Ord, fx: Effects]` after a name ending at name_end and
+/// returns the offset just past the `]`.
+fn (var p: Printer) type_params(tps: List[parser.TypeParam], name_end: Int) -> Int {
+  if tps.is_empty() {
+    return name_end
+  }
+  let open = p.find(name_end, '[')
+  var items: List[Item] = []
+  for tp in tps {
+    items.push(Item{start: off(tp.span), end: end_off(tp.span), k: ItemK.TParam([tp])})
+  }
+  p.list("[", "]", open, items, false)
+  p.last_off
+}
+
+fn (var p: Printer) params(ps: List[parser.Param], open_off: Int) {
+  var items: List[Item] = []
+  for prm in ps {
+    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param([prm])})
+  }
+  p.list("(", ")", open_off, items, false)
+}
+
+fn (var p: Printer) param(prm: parser.Param) {
+  if prm.is_var {
+    p.w("var ")
+  }
+  p.w(name_of(prm.name))
+  if let Some(t) = prm.typ {
+    p.w(": ")
+    p.typ(t)
+  }
+  if let Some(d) = prm.default {
+    p.w(" = ")
+    p.expr(d)
+  }
+}
+
+fn clause_span(cl: parser.Clause) -> Span {
+  match cl {
+    UsesClause(span, ..) => span
+    RequiresClause(span, ..) => span
+    EnsuresClause(span, ..) => span
+  }
+}
+
+fn (var p: Printer) fn_decl(fd: parser.FnDecl) {
+  p.pub_kw(fd.is_pub)
+  p.w("fn ")
+  if let Some(r) = fd.recv {
+    p.w("(")
+    if r.is_var {
+      p.w("var ")
+    }
+    p.w(name_of(r.name) + ": ")
+    p.typ(r.typ)
+    p.w(") ")
+  }
+  p.w(name_of(fd.name))
+  p.done(end_off(fd.name.span))
+  let end = p.type_params(fd.type_params, end_off(fd.name.span))
+  p.params(fd.params, p.find(end, '('))
+  var header_end = p.last_off
+  var split = false
+  let base = p.indent
+  if let Some(res) = fd.result {
+    split = p.cont(header_end, p.find(header_end, '-'), base) || split
+    p.w("-> ")
+    // a function type result takes a following `! E` or `uses`
+    // (gotchas/fn-type-return-takes-uses.md): parenthesize it when the
+    // declaration's own error or uses clause follows
+    var paren = false
+    match res {
+      FnType(ft) => {
+        if ft.effects.is_empty() {
+          var uses_next = !fd.clauses.is_empty() && fd.err.is_none()
+          if uses_next {
+            uses_next = match fd.clauses[0] {
+              UsesClause(..) => true
+              _ => false
+            }
+          }
+          let ft_err = ft.err.is_some()
+          paren = (fd.err.is_some() && !ft_err) || uses_next
+        }
+      }
+      _ => {}
+    }
+    if paren {
+      p.w("(")
+    }
+    p.typ(res)
+    if paren {
+      p.w(")")
+    }
+    header_end = end_off(parser.type_span(res))
+    p.done(header_end)
+  }
+  if let Some(e) = fd.err {
+    p.w(" ")
+    p.err_spec(e)
+    header_end = end_off(e.span)
+    p.done(header_end)
+  }
+  for cl in fd.clauses {
+    let csp = clause_span(cl)
+    split = p.cont(header_end, off(csp), base) || split
+    p.clause(cl)
+    header_end = end_off(csp)
+    p.done(header_end)
+  }
+  p.indent = base
+  let body = match fd.body {
+    Some(b) => b
+    None => return
+  }
+  if split && p.has_nl(header_end, off(body.span)) {
+    p.start_line(off(body.span), true)
+  } else {
+    p.w(" ")
+  }
+  p.block(body)
+}
+
+/// The continuation of a function header before start: a new line one
+/// level deeper where the source breaks the line (true), else a space.
+fn (var p: Printer) cont(header_end: Int, start: Int, base: Int) -> Bool {
+  if p.has_nl(header_end, start) {
+    p.indent = base + 1
+    p.start_line(start, true)
+    return true
+  }
+  p.w(" ")
+  false
+}
+
+fn (var p: Printer) clause(cl: parser.Clause) {
+  match cl {
+    UsesClause(_, effects, parens) => {
+      p.w("uses ")
+      if parens {
+        p.w("(")
+      }
+      p.effects(effects)
+      if parens {
+        p.w(")")
+      }
+    }
+    RequiresClause(_, debug, cond, els) => {
+      p.w("requires")
+      if debug {
+        p.w("(debug)")
+      }
+      p.w(" ")
+      p.expr(cond)
+      if let Some(e) = els {
+        if p.has_nl(eend(cond), eoff(e)) {
+          let saved = p.indent
+          p.indent = saved + 1
+          p.start_line(p.find(eend(cond), 'e'), true)
+          p.w("else ")
+          p.expr(e)
+          p.indent = saved
+          return
+        }
+        p.w(" else ")
+        p.expr(e)
+      }
+    }
+    EnsuresClause(_, debug, cond) => {
+      p.w("ensures")
+      if debug {
+        p.w("(debug)")
+      }
+      p.w(" ")
+      p.expr(cond)
+    }
+  }
+}
+
+fn (var p: Printer) effects(es: List[parser.Effect]) {
+  for (i, e) in es.indexed() {
+    if i > 0 {
+      p.w(", ")
+    }
+    p.w(effect_name(e))
+  }
+}
+
+fn (var p: Printer) err_spec(e: parser.ErrSpec) {
+  p.w("!")
+  if let Some(t) = e.typ {
+    p.w(" ")
+    p.typ(t)
+  }
+}
+
+/// Prints a `{ ... }` body of declarations: struct fields, enum variants,
+/// interface methods. It stays on one line, `{ a: Int, b: Int }`, when
+/// the source body was on one line without comments.
+fn (var p: Printer) members(open_off: Int, items: List[Item]) {
+  var close_off = p.next(open_off + 1)
+  if !items.is_empty() {
+    close_off = p.next(items[items.len() - 1].end)
+  }
+  if items.is_empty() && !p.has_comment(open_off, close_off) {
+    p.w("{}")
+    p.done(close_off + 1)
+    return
+  }
+  if !p.has_nl(open_off, close_off) && !p.has_comment(open_off, close_off) {
+    p.w("{ ")
+    for (i, it) in items.indexed() {
+      if i > 0 {
+        p.w(", ")
+      }
+      p.print_item(it)
+      p.done(it.end)
+    }
+    p.w(" }")
+    p.done(close_off + 1)
+    return
+  }
+  p.w("{")
+  p.done(open_off + 1)
+  p.indent += 1
+  for (i, it) in items.indexed() {
+    p.start_line(it.start, i == 0)
+    p.print_item(it)
+    p.done(it.end)
+  }
+  p.flush(close_off, items.is_empty())
+  p.indent -= 1
+  p.nl()
+  p.w("}")
+  p.done(close_off + 1)
+}
+
+fn (var p: Printer) struct_decl(s: parser.StructDecl) {
+  p.pub_kw(s.is_pub)
+  p.w("struct " + name_of(s.name))
+  p.done(end_off(s.name.span))
+  let end = p.type_params(s.type_params, end_off(s.name.span))
+  p.w(" ")
+  var items: List[Item] = []
+  for f in s.fields {
+    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.Field([f])})
+  }
+  p.members(p.find(end, '{'), items)
+  if let Some(inv) = s.inv {
+    p.w(" invariant ")
+    p.expr(inv)
+    p.done(eend(inv))
+  }
+  p.derive(s.derive)
+}
+
+fn (var p: Printer) derive(ds: List[parser.Ident]) {
+  if ds.is_empty() {
+    return
+  }
+  p.w(" derive ")
+  for (i, d) in ds.indexed() {
+    if i > 0 {
+      p.w(", ")
+    }
+    p.w(name_of(d))
+  }
+  p.done(end_off(ds[ds.len() - 1].span))
+}
+
+fn (var p: Printer) variant(v: parser.Variant) {
+  p.w(name_of(v.name))
+  p.done(end_off(v.name.span))
+  let fields = match v.fields {
+    Some(fs) => fs
+    None => return
+  }
+  var items: List[Item] = []
+  for vf in fields {
+    items.push(Item{start: off(vf.span), end: end_off(vf.span), k: ItemK.VField([vf])})
+  }
+  p.list("(", ")", p.find(end_off(v.name.span), '('), items, false)
+}
+
+fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
+  p.pub_kw(e.is_pub)
+  p.w("enum " + name_of(e.name))
+  p.done(end_off(e.name.span))
+  let end = p.type_params(e.type_params, end_off(e.name.span))
+  p.w(" ")
+  var items: List[Item] = []
+  for v in e.variants {
+    items.push(Item{start: off(v.span), end: end_off(v.span), k: ItemK.Variant([v])})
+  }
+  p.members(p.find(end, '{'), items)
+  p.derive(e.derive)
+}
+
+fn (var p: Printer) iface_decl(d: parser.InterfaceDecl) {
+  p.pub_kw(d.is_pub)
+  p.w("interface " + name_of(d.name))
+  p.done(end_off(d.name.span))
+  let end = p.type_params(d.type_params, end_off(d.name.span))
+  p.w(" ")
+  var items: List[Item] = []
+  for m in d.methods {
+    items.push(Item{start: off(m.span), end: end_off(m.span), k: ItemK.Method([m])})
+  }
+  p.members(p.find(end, '{'), items)
+}
+
+fn (var p: Printer) type_decl(d: parser.TypeDecl) {
+  p.pub_kw(d.is_pub)
+  p.w("type " + name_of(d.name))
+  p.done(end_off(d.name.span))
+  p.type_params(d.type_params, end_off(d.name.span))
+  if d.newtype {
+    p.w(" struct(")
+    if let Some(t) = d.typ {
+      p.typ(t)
+    }
+    p.w(")")
+    return
+  }
+  p.w(" = ")
+  if let Some(t) = d.typ {
+    p.typ(t)
+  }
+}
+
+fn (var p: Printer) const_decl(c: parser.ConstDecl) {
+  p.pub_kw(c.is_pub)
+  p.w("const " + name_of(c.name))
+  if let Some(t) = c.typ {
+    p.w(": ")
+    p.typ(t)
+  }
+  p.w(" = ")
+  p.expr(c.value)
+}
+
+fn (var p: Printer) test_decl(t: parser.TestDecl) {
+  p.w("test")
+  if let Some(n) = t.name {
+    p.w(" " + p.text(n.span))
+  }
+  for (i, prm) in t.params.indexed() {
+    if i == 0 {
+      p.w(" for ")
+    } else {
+      p.w(", ")
+    }
+    p.param(prm)
+  }
+  if let Some(s) = t.seed {
+    match s {
+      IntLit(_, raw, _) => p.w(" seed " + text_of(raw))
+      _ => p.w(" seed " + p.text(parser.expr_span(s)))
+    }
+  }
+  if !t.effects.is_empty() {
+    p.w(" uses ")
+    p.effects(t.effects)
+  }
+  if let Some(b) = t.body {
+    p.w(" ")
+    p.block(b)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+fn (var p: Printer) typ(t: Type) {
+  match t {
+    NamedType(_, path, args) => {
+      for (i, id) in path.indexed() {
+        if i > 0 {
+          p.w(".")
+        }
+        p.w(name_of(id))
+      }
+      if !args.is_empty() {
+        p.w("[")
+        for (i, a) in args.indexed() {
+          if i > 0 {
+            p.w(", ")
+          }
+          p.typ(a)
+        }
+        p.w("]")
+      }
+    }
+    OptionalType(_, elem) => {
+      match elem {
+        FnType(_) => {
+          p.w("(")
+          p.typ(elem)
+          p.w(")")
+        }
+        _ => p.typ(elem)
+      }
+      p.w("?")
+    }
+    TupleType(_, elems) => {
+      p.w("(")
+      for (i, e) in elems.indexed() {
+        if i > 0 {
+          p.w(", ")
+        }
+        p.typ(e)
+      }
+      if elems.len() == 1 {
+        p.w(",")
+      }
+      p.w(")")
+    }
+    FnType(ft) => {
+      p.w("fn(")
+      for (i, fp) in ft.params.indexed() {
+        if i > 0 {
+          p.w(", ")
+        }
+        if fp.is_var {
+          p.w("var ")
+        }
+        p.typ(fp.typ)
+      }
+      p.w(")")
+      if let Some(r) = ft.result {
+        p.w(" -> ")
+        p.typ(r)
+      }
+      if let Some(e) = ft.err {
+        p.w(" ")
+        p.err_spec(e)
+      }
+      if !ft.effects.is_empty() {
+        p.w(" uses ")
+        if ft.uses_parens || ft.effects.len() > 1 {
+          p.w("(")
+          p.effects(ft.effects)
+          p.w(")")
+        } else {
+          p.effects(ft.effects)
+        }
+      }
+    }
+    BadType(sp) => p.w(p.text(sp))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+/// Prints `{ ... }`. A body that was on one line in the source with at
+/// most one statement and no comments stays on one line.
+fn (var p: Printer) block(b: parser.Block) {
+  let start = off(b.span)
+  let end = end_off(b.span)
+  if b.stmts.len() <= 1 && !p.has_nl(start, end) && !p.has_comment(start, end) {
+    if b.stmts.is_empty() {
+      p.w("{}")
+    } else {
+      p.w("{ ")
+      p.stmt(b.stmts[0])
+      p.w(" }")
+    }
+    p.done(end)
+    return
+  }
+  p.w("{")
+  p.done(start + 1)
+  p.indent += 1
+  for (i, s) in b.stmts.indexed() {
+    let sp = stmt_span(s)
+    p.start_line(off(sp), i == 0)
+    p.stmt(s)
+    p.done(end_off(sp))
+  }
+  p.flush(end - 1, b.stmts.is_empty())
+  p.indent -= 1
+  p.nl()
+  p.w("}")
+  p.done(end)
+}
+
+fn stmt_span(s: Stmt) -> Span {
+  match s {
+    LetStmt(span, ..) => span
+    VarStmt(span, ..) => span
+    AssignStmt(span, ..) => span
+    DeferStmt(span, ..) => span
+    ReturnStmt(span, ..) => span
+    BreakStmt(span, ..) => span
+    ContinueStmt(span, ..) => span
+    ForStmt(span, ..) => span
+    WhileStmt(span, ..) => span
+    ExprStmt(span, ..) => span
+    BadStmt(span) => span
+    ConstDecl(d) => d.span
+  }
+}
+
+fn (var p: Printer) label(l: parser.Ident?) {
+  if let Some(id) = l {
+    p.w(name_of(id) + ": ")
+  }
+}
+
+fn (var p: Printer) stmt(s: Stmt) {
+  match s {
+    LetStmt(_, pattern, typ, value) => {
+      p.w("let ")
+      p.pattern(pattern)
+      if let Some(t) = typ {
+        p.w(": ")
+        p.typ(t)
+      }
+      p.w(" = ")
+      p.expr(value)
+    }
+    VarStmt(_, name, typ, value) => {
+      p.w("var " + name_of(name))
+      if let Some(t) = typ {
+        p.w(": ")
+        p.typ(t)
+      }
+      p.w(" = ")
+      p.expr(value)
+    }
+    AssignStmt(_, op, target, value) => {
+      p.expr(target)
+      p.w(" " + op_text(op) + " ")
+      p.expr(value)
+    }
+    DeferStmt(_, body) => {
+      p.w("defer ")
+      p.stmt(body)
+    }
+    ReturnStmt(_, value) => {
+      p.w("return")
+      if let Some(v) = value {
+        p.w(" ")
+        p.expr(v)
+      }
+    }
+    BreakStmt(_, label) => {
+      p.w("break")
+      if let Some(l) = label {
+        p.w(" " + name_of(l))
+      }
+    }
+    ContinueStmt(_, label) => {
+      p.w("continue")
+      if let Some(l) = label {
+        p.w(" " + name_of(l))
+      }
+    }
+    ForStmt(_, label, pattern, iter, bound, body, _) => {
+      p.label(label)
+      p.w("for ")
+      p.pattern(pattern)
+      p.w(" in ")
+      p.expr(iter)
+      for bd in bound {
+        p.w(" bound ")
+        p.expr(bd)
+      }
+      p.w(" ")
+      p.block(body)
+    }
+    WhileStmt(_, label, cond, pattern, value, bound, body) => {
+      p.label(label)
+      p.w("while ")
+      if !pattern.is_empty() {
+        p.w("let ")
+        p.pattern(pattern[0])
+        p.w(" = ")
+        for v in value {
+          p.expr(v)
+        }
+        p.w(" ")
+      } else if let Some(c) = cond {
+        p.expr(c)
+        p.w(" ")
+      }
+      for bd in bound {
+        p.w("bound ")
+        p.expr(bd)
+        p.w(" ")
+      }
+      p.block(body)
+    }
+    ExprStmt(_, x) => p.expr(x)
+    ConstDecl(d) => p.const_decl(d)
+    BadStmt(sp) => p.w(p.text(sp))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+fn (var p: Printer) expr(e: Expr) {
+  match e {
+    Ident(id) => p.w(name_of(id))
+    IntLit(span, ..) => p.w(p.text(span))
+    FloatLit(span, ..) => p.w(p.text(span))
+    DurationLit(span, ..) => p.w(p.text(span))
+    RuneLit(span, ..) => p.w(p.text(span))
+    StringLit(s) => p.w(p.text(s.span))
+    BytesLit(span, ..) => p.w(p.text(span))
+    HoleExpr(_) => p.w("???")
+    UnitExpr(_) => p.w("()")
+    ParenExpr(_, x) => {
+      p.w("(")
+      p.expr(x)
+      p.w(")")
+    }
+    TupleExpr(span, elems) => p.list("(", ")", off(span), expr_items(elems), true)
+    ListLit(span, elems) => p.list("[", "]", off(span), expr_items(elems), false)
+    SetLit(span, elems) => p.list("#{", "}", off(span), expr_items(elems), false)
+    MapLit(span, entries) => {
+      var items: List[Item] = []
+      for en in entries {
+        items.push(Item{start: off(en.span), end: end_off(en.span), k: ItemK.Entry([en])})
+      }
+      p.list("{", "}", off(span), items, false)
+    }
+    StructLit(_, typ, fields) => {
+      p.expr(typ)
+      p.field_inits(fields, p.find(eend(typ), '{'))
+    }
+    UnaryExpr(_, op, x) => {
+      p.w(op_text(op))
+      match x {
+        UnaryExpr(_, op2, _) => {
+          if op2 == op {
+            p.w(" ")
+          }
+        }
+        _ => {}
+      }
+      p.expr(x)
+    }
+    BinaryExpr(_, op, x, y) => p.binary(op, x, y)
+    IsExpr(_, x, pattern) => {
+      p.expr(x)
+      p.w(" is ")
+      p.pattern(pattern)
+    }
+    RangeExpr(_, lo, hi, inclusive) => {
+      if let Some(l) = lo {
+        p.expr(l)
+      }
+      p.w(if inclusive { "..=" } else { ".." })
+      if let Some(h) = hi {
+        p.expr(h)
+      }
+    }
+    SelectorExpr(..) => p.postfix(e)
+    CallExpr(..) => p.postfix(e)
+    TypeArgsExpr(..) => p.postfix(e)
+    IndexExpr(..) => p.postfix(e)
+    TryExpr(..) => p.postfix(e)
+    WithExpr(..) => p.postfix(e)
+    IfExpr(x) => p.if_expr(x)
+    MatchExpr(span, subject, arms) => {
+      p.w("match ")
+      p.expr(subject)
+      p.w(" ")
+      var items: List[Item] = []
+      for a in arms {
+        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.MArm([a])})
+      }
+      p.arms(p.find(eend(subject), '{'), end_off(span), items)
+    }
+    ScopeExpr(_, name, body) => {
+      p.w("scope " + name_of(name) + " ")
+      p.block(body)
+    }
+    SelectExpr(span, arms) => {
+      p.w("select ")
+      var items: List[Item] = []
+      for a in arms {
+        items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.SArm([a])})
+      }
+      p.arms(p.find(off(span) + 6, '{'), end_off(span), items)
+    }
+    Block(b) => p.block(b)
+    FnLit(f) => p.fn_lit(f)
+    WhileExpr(_, body) => {
+      p.w("while ")
+      p.block(body)
+    }
+    BadExpr(span) => p.w(p.text(span))
+  }
+  p.done(eend(e))
+}
+
+fn expr_items(es: List[Expr]) -> List[Item] {
+  var items: List[Item] = []
+  for e in es {
+    items.push(Item{start: eoff(e), end: eend(e), k: ItemK.XExpr([e])})
+  }
+  items
+}
+
+fn (var p: Printer) field_inits(fs: List[parser.FieldInit], open_off: Int) {
+  var items: List[Item] = []
+  for f in fs {
+    items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.FInit([f])})
+  }
+  p.list("{", "}", open_off, items, false)
+}
+
+/// Prints `x op y`, keeping a line break after the operator where the
+/// source has one; the continuation is indented one level.
+fn (var p: Printer) binary(op: lexer.Kind, x: Expr, y: Expr) {
+  p.expr(x)
+  p.w(" " + op_text(op))
+  if p.has_nl(eend(x), eoff(y)) {
+    p.indent += 1
+    p.start_line(eoff(y), true)
+    p.expr(y)
+    p.indent -= 1
+    return
+  }
+  p.w(" ")
+  p.expr(y)
+}
+
+/// Prints a chain of selectors, calls, indexes, type arguments, `?`, and
+/// `with`. A `.name` that starts a line in the source starts a line here
+/// too, one level deeper than the chain's first line.
+fn (var p: Printer) postfix(e: Expr) {
+  var ops: List[Expr] = []
+  var base = e
+  var more = true
+  while more {
+    match base {
+      SelectorExpr(_, x, _) => {
+        ops.push(base)
+        base = x
+      }
+      CallExpr(_, fun, _) => {
+        ops.push(base)
+        base = fun
+      }
+      TypeArgsExpr(_, x, _) => {
+        ops.push(base)
+        base = x
+      }
+      IndexExpr(_, x, _) => {
+        ops.push(base)
+        base = x
+      }
+      TryExpr(_, x) => {
+        ops.push(base)
+        base = x
+      }
+      WithExpr(_, x, _) => {
+        ops.push(base)
+        base = x
+      }
+      _ => more = false
+    }
+  }
+  p.expr(base)
+  let saved = p.indent
+  var broke = false
+  var i = ops.len() - 1
+  while i >= 0 {
+    let op = ops[i]
+    match op {
+      SelectorExpr(_, x, sel) => {
+        if p.has_nl(eend(x), off(sel.span)) {
+          if !broke {
+            p.indent += 1
+            broke = true
+          }
+          p.start_line(off(sel.span), true)
+        }
+        p.w("." + name_of(sel))
+        p.done(end_off(sel.span))
+      }
+      CallExpr(_, fun, args) => {
+        var items: List[Item] = []
+        for a in args {
+          items.push(Item{start: off(a.span), end: end_off(a.span), k: ItemK.CallArg([a])})
+        }
+        p.list("(", ")", p.find(eend(fun), '('), items, false)
+      }
+      TypeArgsExpr(_, _, types) => {
+        p.w("[")
+        for (j, t) in types.indexed() {
+          if j > 0 {
+            p.w(", ")
+          }
+          p.typ(t)
+        }
+        p.w("]")
+      }
+      IndexExpr(_, _, index) => {
+        p.w("[")
+        p.expr(index)
+        p.w("]")
+      }
+      TryExpr(..) => p.w("?")
+      WithExpr(_, x, fields) => {
+        p.w(" with ")
+        p.field_inits(fields, p.find(eend(x), '{'))
+      }
+      _ => {}
+    }
+    p.done(eend(op))
+    i -= 1
+  }
+  p.indent = saved
+}
+
+fn (var p: Printer) if_expr(x: parser.IfExpr) {
+  p.w("if ")
+  if let Some(pat) = x.pattern {
+    p.w("let ")
+    p.pattern(pat)
+    p.w(" = ")
+    if let Some(v) = x.value {
+      p.expr(v)
+    }
+  } else if let Some(c) = x.cond {
+    p.expr(c)
+  }
+  p.w(" ")
+  p.block(x.then)
+  if let Some(e) = x.els {
+    match e {
+      IfExpr(ie) => {
+        p.w(" else ")
+        p.if_expr(ie)
+      }
+      Block(b) => {
+        p.w(" else ")
+        p.block(b)
+      }
+      _ => {}
+    }
+  }
+}
+
+/// Prints the `{ arms }` of a match or select.
+fn (var p: Printer) arms(open_off: Int, end: Int, arms: List[Item]) {
+  let close_off = end - 1
+  if arms.len() <= 1 && !p.has_nl(open_off, end) && !p.has_comment(open_off, end) {
+    if arms.is_empty() {
+      p.w("{}")
+    } else {
+      p.w("{ ")
+      p.print_item(arms[0])
+      p.w(" }")
+    }
+    p.done(end)
+    return
+  }
+  p.w("{")
+  p.done(open_off + 1)
+  p.indent += 1
+  for (i, a) in arms.indexed() {
+    p.start_line(a.start, i == 0)
+    p.print_item(a)
+    p.done(a.end)
+  }
+  p.flush(close_off, arms.is_empty())
+  p.indent -= 1
+  p.nl()
+  p.w("}")
+  p.done(end)
+}
+
+/// Prints ` => body`, keeping a line break after `=>`.
+fn (var p: Printer) arm_body(head_end: Int, body: Stmt) {
+  p.w(" =>")
+  let bo = off(stmt_span(body))
+  if p.has_nl(head_end, bo) {
+    p.indent += 1
+    p.start_line(bo, true)
+    p.stmt(body)
+    p.indent -= 1
+    return
+  }
+  p.w(" ")
+  p.stmt(body)
+}
+
+fn (var p: Printer) match_arm(a: parser.MatchArm) {
+  p.pattern(a.pattern)
+  var head = end_off(parser.pattern_span(a.pattern))
+  if let Some(g) = a.guard {
+    p.w(" if ")
+    p.expr(g)
+    head = eend(g)
+  }
+  p.done(head)
+  if let Some(b) = a.body {
+    p.arm_body(p.find(head, '=') + 2, b)
+  }
+}
+
+fn (var p: Printer) select_arm(a: parser.SelectArm) {
+  var head = 0
+  if let Some(af) = a.after {
+    p.w("after ")
+    p.expr(af)
+    head = eend(af)
+  } else if let Some(bind) = a.bind {
+    p.w(name_of(bind) + " = ")
+    if let Some(op) = a.op {
+      p.expr(op)
+      head = eend(op)
+    }
+  } else if let Some(op) = a.op {
+    p.expr(op)
+    head = eend(op)
+  }
+  p.done(head)
+  if let Some(b) = a.body {
+    p.arm_body(p.find(head, '=') + 2, b)
+  }
+}
+
+fn (var p: Printer) fn_lit(f: parser.FnLit) {
+  p.w("fn")
+  var items: List[Item] = []
+  for prm in f.params {
+    items.push(Item{start: off(prm.span), end: end_off(prm.span), k: ItemK.Param([prm])})
+  }
+  p.list("(", ")", p.find(off(f.span) + 2, '('), items, false)
+  if let Some(r) = f.result {
+    p.w(" -> ")
+    p.typ(r)
+  }
+  if let Some(e) = f.err {
+    p.w(" ")
+    p.err_spec(e)
+  }
+  if !f.effects.is_empty() {
+    p.w(" uses ")
+    p.effects(f.effects)
+  }
+  p.w(" ")
+  p.block(f.body)
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+fn (var p: Printer) pattern(pt: Pattern) {
+  match pt {
+    WildcardPat(_) => p.w("_")
+    BindPat(_, name) => p.w(name_of(name))
+    LitPat(_, value) => p.expr(value)
+    RangePat(_, lo, hi, inclusive) => {
+      p.expr(lo)
+      p.w(if inclusive { "..=" } else { ".." })
+      p.expr(hi)
+    }
+    OrPat(_, alts) => {
+      for (i, a) in alts.indexed() {
+        if i > 0 {
+          p.w(" | ")
+        }
+        p.pattern(a)
+      }
+    }
+    TuplePat(_, elems) => {
+      p.w("(")
+      for (i, e) in elems.indexed() {
+        if i > 0 {
+          p.w(", ")
+        }
+        p.pattern(e)
+      }
+      if elems.len() == 1 {
+        p.w(",")
+      }
+      p.w(")")
+    }
+    VariantPat(_, path, parens, fields, rest) => {
+      p.path(path)
+      if parens {
+        p.w("(")
+        p.pat_fields(fields, rest)
+        p.w(")")
+      }
+    }
+    StructPat(_, path, fields, rest) => {
+      p.path(path)
+      p.w("{")
+      p.pat_fields(fields, rest)
+      p.w("}")
+    }
+    ListPat(_, elems, rest) => {
+      p.w("[")
+      var first = true
+      for (i, e) in elems.indexed() {
+        if i == rest {
+          if !first {
+            p.w(", ")
+          }
+          first = false
+          p.w("..")
+        }
+        if !first {
+          p.w(", ")
+        }
+        first = false
+        p.pattern(e)
+      }
+      if rest == elems.len() {
+        if !first {
+          p.w(", ")
+        }
+        p.w("..")
+      }
+      p.w("]")
+    }
+    BadPat(sp) => p.w(p.text(sp))
+  }
+  p.done(end_off(parser.pattern_span(pt)))
+}
+
+fn (var p: Printer) path(ids: List[parser.Ident]) {
+  for (i, id) in ids.indexed() {
+    if i > 0 {
+      p.w(".")
+    }
+    p.w(name_of(id))
+  }
+}
+
+fn (var p: Printer) pat_fields(fs: List[parser.PatField], rest: Bool) {
+  for (i, f) in fs.indexed() {
+    if i > 0 {
+      p.w(", ")
+    }
+    if let Some(n) = f.name {
+      p.w(name_of(n) + ": ")
+    }
+    p.pattern(f.pattern)
+  }
+  if rest {
+    if !fs.is_empty() {
+      p.w(", ")
+    }
+    p.w("..")
+  }
+}
+
+/// The spelling of an operator token (token.Kind.String).
+pub fn op_text(k: lexer.Kind) -> Str {
+  match k {
+    Plus => "+"
+    Minus => "-"
+    Star => "*"
+    Slash => "/"
+    Percent => "%"
+    Shl => "<<"
+    Shr => ">>"
+    Amp => "&"
+    Pipe => "|"
+    Caret => "^"
+    Tilde => "~"
+    Bang => "!"
+    AndAnd => "&&"
+    OrOr => "||"
+    Coalesce => "??"
+    Question => "?"
+    Eq => "=="
+    NotEq => "!="
+    Lt => "<"
+    LtEq => "<="
+    Gt => ">"
+    GtEq => ">="
+    Assign => "="
+    PlusAssign => "+="
+    MinusAssign => "-="
+    StarAssign => "*="
+    SlashAssign => "/="
+    PercentAssign => "%="
+    AmpAssign => "&="
+    PipeAssign => "|="
+    CaretAssign => "^="
+    ShlAssign => "<<="
+    ShrAssign => ">>="
+    _ => "${k}"
+  }
+}

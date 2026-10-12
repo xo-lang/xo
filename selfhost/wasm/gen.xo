@@ -71,6 +71,8 @@ pub struct Gen {
   /// emitter's byName).
   by_name: Map[Str, Int] = {}
   pub err: Str = ""
+  /// Report every unsupported construct (generate_opts).
+  all: Bool = false
   /// The immortal empty list.
   empty_list: Int = 0
 
@@ -84,11 +86,39 @@ pub struct Gen {
   blk: List[Int] = []
   /// Per block: its position in the dispatch (block order).
   pc_local: Int = 0
+
+  // tasks (rt3.xo, stage 2)
+  /// The program uses the task runtime.
+  conc: Bool = false
+  /// The program uses rt4.xo (files, constants, SHA-256).
+  files: Bool = false
+  /// An unsupported call faults when it runs instead of failing the build
+  /// (`selfhost/wasm --lax`, to see how far a program gets).
+  lax: Bool = false
+  /// Per function: it can suspend (it waits, or calls what can).
+  susp: List[Bool] = []
+  /// The function being lowered can suspend.
+  su: Bool = false
+  /// The dispatch labels of the function being lowered, in text order,
+  /// and how many resume points it has.
+  segs: List[Str] = []
+  nres: Int = 0
+  /// Per value: a field update made in place (plan_locals).
+  inplace: List[Bool] = []
+  /// Per value: a field read that uses its struct's locals (plan_locals).
+  alias: List[Bool] = []
 }
 
 /// Lowers module m (after the passes and InsertRC).
 pub fn generate(m: ssa.Module) -> Program {
-  var g = Gen{m: m}
+  generate_opts(m, false, false)
+}
+
+/// generate, and with all set every construct the backend does not
+/// support is reported, not only the first (`selfhost/wasm --why`); with
+/// lax an unsupported runtime call faults when it runs instead (`--lax`).
+pub fn generate_opts(m: ssa.Module, all: Bool, lax: Bool) -> Program {
+  var g = Gen{m: m, all: all, lax: lax}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
     g.leaf_done.push(false)
@@ -97,6 +127,9 @@ pub fn generate(m: ssa.Module) -> Program {
     g.by_name[f.name] = i
   }
   let wat = g.module_text()
+  // the functions' text is in wat now: the assembler gets their memory
+  g.funcs = []
+  g.helpers = []
   if !g.err.is_empty() {
     return Program{err: g.err}
   }
@@ -111,6 +144,8 @@ pub fn generate(m: ssa.Module) -> Program {
 fn (var g: Gen) fail(msg: Str) {
   if g.err.is_empty() {
     g.err = msg
+  } else if g.all && !g.err.contains(msg) {
+    g.err = "${g.err}; ${msg}"
   }
 }
 
@@ -136,7 +171,7 @@ fn (var g: Gen) leaves(t: Int) -> List[Str] {
     Str => out = ["i32", "i32"]
     List | Box => out = ["i32"]
     Func => out = ["i32", "i32"]
-    Handle => g.fail("the wasm backend does not support the type `${x.name}` (stage 1: no handles)")
+    Handle => out = ["i32"]
     Struct => {
       for fd in x.fields {
         for l in g.leaves(fd.ty) {
@@ -434,7 +469,7 @@ fn (var g: Gen) push_hole(t: Int) {
       g.e("i32.const ${e}")
       g.e("i32.const 0")
     }
-    List | Box => g.e("i32.const ${g.str_obj(b"")}")
+    List | Box | Handle => g.e("i32.const ${g.str_obj(b"")}")
     Func => {
       g.e("i32.const 0")
       g.e("i32.const 0")
@@ -521,6 +556,21 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           g.get(0)
           g.e("call $free")
         }
+        g.e("end")
+      }
+    }
+    Handle => {
+      // a runtime object {rc, drop (a table index), ...}
+      g.get(0)
+      if kind == "dup" {
+        g.e("call $rc_inc")
+      } else {
+        g.e("call $rc_dec")
+        g.e("if")
+        g.get(0)
+        g.get(0)
+        g.e("i32.load offset=4")
+        g.e("call $rc_defer")
         g.e("end")
       }
     }
@@ -948,6 +998,176 @@ fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
 // ---------------------------------------------------------------------------
 // The module
 
+/// Whether the program uses the task runtime (rt3.xo), and which
+/// functions can suspend: those that call a blocking runtime function or
+/// a function value, and their callers.
+fn (var g: Gen) find_susp() {
+  g.susp = []
+  var calls: List[List[Int]] = []
+  for f in g.m.funcs {
+    var s = false
+    var cs: List[Int] = []
+    for x in f.values {
+      if x.op == ssa.Op.CallValue {
+        s = true
+      }
+      if x.op == ssa.Op.Call {
+        let name = match x.aux {
+          S(n) => n
+          _ => ""
+        }
+        if let Some(ci) = g.by_name.get(name) {
+          cs.push(ci)
+        } else if name.starts_with("rt.") && rt4_direct(name.trim_prefix("rt.")) {
+          g.files = true
+        } else if name.starts_with("rt.") && rt3_direct(name.trim_prefix("rt.")) {
+          g.conc = true
+          if rt3_blocking(name) {
+            s = true
+          }
+        }
+      }
+    }
+    g.susp.push(s)
+    calls.push(cs)
+  }
+  if !g.conc {
+    for i in 0..g.susp.len() {
+      g.susp[i] = false
+    }
+    return
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for (fi, cs) in calls.indexed() {
+      if g.susp[fi] {
+        continue
+      }
+      for ci in cs {
+        if g.susp[ci] {
+          g.susp[fi] = true
+          changed = true
+          break
+        }
+      }
+    }
+  }
+}
+
+/// Appends the names of the functions text calls (`call $name`) to out.
+fn called_names(text: Str, var out: List[Str]) {
+  let b = text.bytes()
+  let n = b.len()
+  var i = 0
+  while i + 6 < n {
+    // "call $"
+    if b[i] == 99 && b[i + 1] == 97 && b[i + 2] == 108 && b[i + 3] == 108 && b[i + 4] == 32 && b[i + 5] == 36 {
+      var j = i + 5
+      while j < n && !(b[j] is 32 | 10 | 41 | 9) {
+        j += 1
+      }
+      out.push(text[i + 5..j])
+      i = j
+    } else {
+      i += 1
+    }
+  }
+}
+
+/// The runtime text rt (functions in the flat form, each `(func $name`
+/// at the start of a line, with the comment lines above it) without the
+/// functions that roots and what they call do not reach; a function that
+/// is exported stays. The runtime is assembled with every program, so a
+/// small program carried all of it (stage 2: 16.6 KB for recursion).
+fn strip_runtime(rt: Str, roots: List[Str]) -> Str {
+  // the chunks: [0] the text before the first function, then one per
+  // function
+  var names: List[Str] = [""]
+  var chunks: List[List[Str]] = [[]]
+  var pending: List[Str] = []
+  for line in rt.lines() {
+    let t = line.trim_start()
+    if t.starts_with("(func $") {
+      var e = 6
+      let tb = t.bytes()
+      while e < tb.len() && !(tb[e] is 32 | 41) {
+        e += 1
+      }
+      names.push(t[6..e])
+      chunks.push(pending)
+      pending = []
+    } else if pending_comment(line) {
+      pending.push(line)
+      continue
+    }
+    let k = chunks.len() - 1
+    for p in pending {
+      chunks[k].push(p)
+    }
+    pending = []
+    chunks[k].push(line)
+  }
+  var texts: List[Str] = []
+  for c in chunks {
+    texts.push(c.join("\n") + "\n")
+  }
+  var at: Map[Str, Int] = {}
+  for (i, nm) in names.indexed() {
+    if i > 0 {
+      at[nm] = i
+    }
+  }
+  var keep: List[Bool] = []
+  for _ in names {
+    keep.push(false)
+  }
+  keep[0] = true
+  var work: List[Int] = []
+  for r in roots {
+    if let Some(i) = at.get(r) {
+      if !keep[i] {
+        keep[i] = true
+        work.push(i)
+      }
+    }
+  }
+  for (i, t) in texts.indexed() {
+    if i > 0 && !keep[i] && t.contains("(export ") {
+      keep[i] = true
+      work.push(i)
+    }
+  }
+  while let Some(i) = work.pop() {
+    var cs: List[Str] = []
+    called_names(texts[i], cs)
+    for c in cs {
+      if let Some(j) = at.get(c) {
+        if !keep[j] {
+          keep[j] = true
+          work.push(j)
+        }
+      }
+    }
+  }
+  var b = StrBuilder.new()
+  for (i, t) in texts.indexed() {
+    if keep[i] {
+      b.write(t)
+    }
+  }
+  for p in pending {
+    b.write(p)
+    b.write("\n")
+  }
+  b.freeze()
+}
+
+/// Whether a comment line stands above a function (indented as one).
+fn pending_comment(line: Str) -> Bool {
+  line.starts_with("    ;;") && !line.starts_with("     ")
+}
+
 fn (var g: Gen) module_text() -> Str {
   let main = g.m.func_index("main")
   if main < 0 {
@@ -956,14 +1176,27 @@ fn (var g: Gen) module_text() -> Str {
   }
   g.empty_list = g.place(le32(0x80000000) + le32(0) + le32(0) + le32(0))
   // the runtime first: its literals are placed before the program's
-  let rt = rt_text(g)
+  var rt = rt_text(g) + rt2_text(g)
+  let mf = g.m.funcs[main]
+  var main_res: List[Str] = []
+  for r in mf.results {
+    for l in g.leaves(r) {
+      main_res.push(l)
+    }
+  }
+  g.find_susp()
+  if g.conc {
+    rt = rt + rt3_text(g, main, main_res)
+  }
+  if g.files {
+    rt = rt + rt4_text(g)
+  }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
-    if !g.err.is_empty() {
+    if !g.err.is_empty() && !g.all {
       return ""
     }
   }
-  let mf = g.m.funcs[main]
   var start: List[Str] = []
   for p in mf.blocks[0].params {
     let t = mf.values[p].ty
@@ -971,9 +1204,12 @@ fn (var g: Gen) module_text() -> Str {
       g.fail("main takes a `${g.m.types[t].name}`")
     }
   }
-  start.push("call $f${main}")
-  for r in mf.results {
-    for _ in g.leaves(r) {
+  if g.conc {
+    // main runs as the first task of the scheduler (rt3.xo)
+    start.push("call $sched")
+  } else {
+    start.push("call $f${main}")
+    for _ in main_res {
       start.push("drop")
     }
   }
@@ -987,10 +1223,38 @@ fn (var g: Gen) module_text() -> Str {
   for s in g.sig_lines {
     b.write("  ${s}\n")
   }
+  if g.conc {
+    b.write(rt3_imports())
+  }
+  if g.files {
+    b.write(rt4_imports())
+  }
   b.write(rt_imports())
+  if g.conc {
+    b.write(rt3_globals())
+  }
+  if g.files {
+    b.write(rt4_globals())
+  }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
-  b.write(rt)
+  // only the runtime functions the program reaches: the calls of its
+  // code, the table, and the exports
+  var roots: List[Str] = []
+  for h in g.helpers {
+    called_names(h, roots)
+  }
+  for f in g.funcs {
+    called_names(f, roots)
+  }
+  for s in start {
+    called_names(s, roots)
+  }
+  called_names("call $fault_report call $flush_exit0 call $consts_free", roots)
+  for t in g.table {
+    roots.push(t)
+  }
+  b.write(strip_runtime(rt, roots))
   for h in g.helpers {
     b.write(h)
   }
@@ -1001,7 +1265,11 @@ fn (var g: Gen) module_text() -> Str {
   for s in start {
     b.write("    ${s}\n")
   }
-  b.write("    global.get $faulting\n    if\n      call $fault_report\n    end\n    call $flush_exit0)\n")
+  b.write("    global.get $faulting\n    if\n      call $fault_report\n    end\n")
+  if g.files {
+    b.write("    call $consts_free\n")
+  }
+  b.write("    call $flush_exit0)\n")
   // a table even when empty: the release of a function value calls
   // through it
   b.write("  (table ${g.table.len()} funcref)\n")

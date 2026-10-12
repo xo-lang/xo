@@ -320,6 +320,138 @@ command through xo1: 11 of 18 before the fixes above (the failures were
   regression the live cross-check would have caught, and every output
   users or tests depend on produced by Xo.
 
+## Stage 2 results (2026-10-12)
+
+The CLI core is in Xo in selfhost/cli/core (5,765 lines with the
+generated explain texts): `check`, `parse`, `explain`, `version`,
+`init`, `fmt`, `fix`, `vet`, `doc` (with `--json`), each with cmd/xo's
+flags (a port of Go's flag package: `-x` and `--x`, the same errors and
+usage text), exit codes, and output (JSON indented as Go's encoder,
+diagnostics escaped as json.Marshal escapes them). xo1 dispatches them
+(`core.is_command`). The formatter is selfhost/cli/core/format, a
+package of its own with a command line for the comparison test; the
+explain texts are generated from internal/diag
+(TestSelfhostExplainData keeps them in sync) and the version is checked
+against cmd/xo's (TestSelfhostVersion). cmd/xo's tests run against
+another binary with `XO_CLI` (cmd/xo/cli_test.go).
+
+- The formatter: **1121 of 1121 repository files** and **1121 of 1121
+  copies with changed blanks byte identical** to internal/format
+  (TestSelfhostFormat).
+- cmd/xo's tests of these commands against xo1 (`XO_CLI=xo1
+  XO_STD=<repo>/std`, `-short`): **19 of 19 pass**.
+- `scripts/selfhost-cli.py`: fmt and parse **715 of 715** directories
+  byte identical; check, check (human), vet, doc **706 of 715**; the 9
+  others need a module version the Xo checker would have to fetch.
+
+Not done in stage 2: `check --no-gc` reports no XO1201 (the SSA
+builder's no GC diagnostics are not ported; the native check runs);
+std is found through `--std`, XO_STD, or lib/xo/std beside `$_` until
+Env.program is native (cli-servers' branch); fetching a missing module
+during a check (the Xo checker reads the module cache only).
+
+## Stage 3 results (2026-10-12)
+
+The semantic tools are in Xo in selfhost/cli/semantic (4,852 lines):
+`xo query` (type, def, callers, effects, holes, api, imports, deps,
+hash), `xo edit` (rename, add-field, change-sig, atomic through temporary
+files and renames, rejected unless the edited program checks clean), the
+definition hashes of decision 0125 (defhash.xo), and internal/release
+(release.xo: the API diff and `xo publish`'s comparison, for stage 4's
+`publish` command to call). xo1 hands `query` and `edit` to it; `doc`
+(with `--json`) is stage 2's (selfhost/cli/core/doc.xo), and signatures
+come from stage 2's formatter. selfhost/check gained the effect call
+chains of Info.Performed, the xo.mod and version helpers, and an
+overlay; holes (XO0900) and the workspace directories came from stage 2.
+
+- Definition hashes: TestSelfhostDefhash compares the JSON of every
+  definition (IDs, own and deep hashes, references, files, lines) with
+  internal/defhash on every module of bench/, the check, gen, and arm64
+  testdata, selfhost/, std/, and examples/: **270 of 270 modules (13,662
+  definitions) byte identical**.
+- cmd/xo's tests against xo1 (`XO_CLI=xo1`, `XO_STD=<repo>/std`,
+  `-short`): TestQueryCLI, TestEditCLI (6 of 6 cases), and TestDocCLI
+  pass; **3 of the 5 tests that drive these commands pass**.
+  TestQueryHashAndPublish passes its `query hash` steps and stops at
+  `xo publish` (stage 4's command), TestModules at `check` of a module
+  with requirements before it reaches `query`, `doc`, and `edit` (stage
+  4).
+- The same commands run by both binaries on the cmd/xo test programs
+  (stdout, stderr, exit status, and the files after an edit):
+  **37 of 37 byte identical** (bench/results/retire-go-2026-10-12.md).
+
+## Stage 5, the servers (2026-10-12)
+
+`mcp`, `lsp`, `serve`, `dump`, and `replay` are selfhost/cli/servers,
+dispatched by xo1 (after the module and semantic commands, before stage
+2's). Native std first (decision 0190): `unix:PATH` addresses for
+`Net.listen`/`dial` (serve) and `Proc.kill(pid, signal)` (dump), both
+gated by attenuation; `Env.program` natively (the servers run their own
+binary again). How each command maps to Go's:
+
+- **mcp**: internal/mcp's server, with a JSON reader and writer in Xo
+  that reproduces encoding/json (scanner error texts, struct versus map
+  key matching, RawMessage kept as written and compacted, sorted map
+  keys, HTML escaping, numbers through float64). The tools run the
+  binary itself with `XO_NO_SERVE=1` where Go calls `run` in process.
+- **serve**: the same socket protocol, so Go and Xo clients and servers
+  interoperate; xo1's `check` and `query` forward to a running server
+  as cmd/xo does. The cache keeps whole command responses per working
+  directory and checked directories (the Go server keeps checked
+  sessions), with the same hit and miss counts.
+- **lsp**: framing, initialize, document sync with the 150 ms debounce,
+  publishDiagnostics from the self hosted checker with the open texts as
+  its overlay, codeAction, documentSymbol. Not yet: hover, definition,
+  references, rename, formatting, semantic tokens (they need
+  internal/lsp resolve.go over the checker's records, query's
+  declaration surfaces, and the formatter in process).
+- **dump**: SIGQUIT through `Proc.kill`, then the same polling of the
+  dump file.
+- **replay**: rebuilds with `xo build --backend=go` as a child and reads
+  the new build information from the binary (the string passed to
+  rt.SetBuildInfo) to report changed sources.
+
+Gate figures (results file, "Stage 5"): byte identical with the Go
+servers on the MCP protocol transcript (36 of 36) and tool calls (10 of
+10), dump (9 of 9), the serve protocol (10 of 10) and cache, the LSP
+transcript (14 of 14 steps), and replay; cmd/xo's own tests of these
+commands against xo1: 4 of 7 (the three others build or `run --record`
+through xo1, whose default backend is arm64, not Go).
+
+## Stage 6, the binders (2026-10-12)
+
+- **`xo bind --c` is Xo**: selfhost/cli/bind ports internal/cbind
+  (2,299 lines); xo1 dispatches `bind`. TestBindCXoSame runs both
+  binders over the repository's `use c` headers, zlib.h, a header of
+  edge cases, and the error cases: **17 of 17 byte identical** (output,
+  declaration files, adapters), with xobind and with xo1.
+- **`xo bind` for Go packages stays Go**: the helper `xo-gobind`
+  (cmd/xo-gobind, `gobind.RunCLI`, shared with cmd/xo's runBind). The Xo
+  CLI execs it with the same flags; it is found as $XO_GOBIND, beside
+  the program, in a release layout's bin/, on $PATH, or built from the
+  repository holding std with `go build` into a temporary file. Release
+  archives ship it beside `xo` (switch point B's list above).
+- **Binding and fetching on a miss** (decided here): the Xo checker
+  stays free of process and network effects. It records what a run
+  lacks (a `use go` package without a current binding, every `use c`
+  header, a module version missing from the module cache), and
+  `Checker.check_dirs_bound` and `check_dirs_fetching` bind or fetch it
+  and check again from the state before the run, so a run sees what the
+  Go checker sees after its in line gobind.LoadOrBind, cbind.Bind, and
+  mod.Load. A failed binding or fetch is the Go checker's diagnostic
+  (XO1101, XO1104, the module problem). The fetcher is passed in as a
+  function because selfhost/check cannot import selfhost/cli/modules;
+  `query` and `edit` (selfhost/cli/semantic, which the module commands
+  import) bind but do not fetch.
+- **`xo publish` and `xo get`'s API changes** are in
+  selfhost/cli/modules, with release.Publish's last steps (clean tree,
+  mod.Load without a workspace, a check with workspaces off).
+- Gate figures (bench/results/retire-go-2026-10-12.md, "Stage 6"):
+  against xo1, TestBind and TestBindC pass and the module, publish, and
+  audit tests **12 of 13**, the last being TestModules' `build --ci`
+  (no `--ci` in xo1); against xomod 13 of 13. Not yet: `--ci` in xo1,
+  fetching in `query` and `edit`, binding and fetching in the LSP.
+
 ## Consequences
 
 - Until switch point B every language change is still made twice

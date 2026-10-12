@@ -1,0 +1,283 @@
+// The walk of internal/check walk.go (check.Inspect): every declaration,
+// statement, and expression below a node in source order. Types and
+// patterns are not visited; a block is an expression, as in Go.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A node of the walk.
+pub enum Node {
+  D(d: Decl)
+  S(s: Stmt)
+  E(e: Expr)
+}
+
+/// The nodes of declaration d in source order, d first (check.Inspect).
+pub fn decl_nodes(d: Decl) -> List[Node] {
+  var out: List[Node] = []
+  walk_decl(out, d)
+  out
+}
+
+/// The nodes of expression e in source order, e first.
+pub fn expr_nodes(e: Expr) -> List[Node] {
+  var out: List[Node] = []
+  walk_expr(out, e)
+  out
+}
+
+fn walk_decl(var out: List[Node], d: Decl) {
+  out.push(Node.D(d))
+  match d {
+    FnDecl(x) => {
+      for cl in x.clauses {
+        match cl {
+          RequiresClause(_, _, cond, els) => {
+            walk_expr(out, cond)
+            if let Some(e) = els {
+              walk_expr(out, e)
+            }
+          }
+          EnsuresClause(_, _, cond) => walk_expr(out, cond)
+          _ => {}
+        }
+      }
+      if let Some(b) = x.body {
+        walk_expr(out, Expr.Block(b))
+      }
+    }
+    TestDecl(x) => {
+      if let Some(b) = x.body {
+        walk_expr(out, Expr.Block(b))
+      }
+    }
+    ConstDecl(x) => walk_expr(out, x.value)
+    _ => {}
+  }
+}
+
+fn walk_opt(var out: List[Node], e: Expr?) {
+  if let Some(x) = e {
+    walk_expr(out, x)
+  }
+}
+
+fn walk_stmt(var out: List[Node], s: Stmt) {
+  out.push(Node.S(s))
+  match s {
+    ExprStmt(_, x) => walk_expr(out, x)
+    LetStmt(_, _, _, value) => walk_expr(out, value)
+    VarStmt(_, _, _, value) => walk_expr(out, value)
+    AssignStmt(_, _, target, value) => {
+      walk_expr(out, target)
+      walk_expr(out, value)
+    }
+    DeferStmt(_, body) => walk_stmt(out, body)
+    ReturnStmt(_, value) => walk_opt(out, value)
+    ForStmt(_, _, _, iter, bound, body, _) => {
+      walk_expr(out, iter)
+      walk_opt(out, bound.first())
+      walk_expr(out, Expr.Block(body))
+    }
+    WhileStmt(_, _, cond, _, value, bound, body) => {
+      walk_opt(out, cond)
+      walk_opt(out, value.first())
+      walk_opt(out, bound.first())
+      walk_expr(out, Expr.Block(body))
+    }
+    ConstDecl(d) => walk_expr(out, d.value)
+    _ => {}
+  }
+}
+
+fn walk_expr(var out: List[Node], e: Expr) {
+  out.push(Node.E(e))
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        walk_opt(out, p.expr)
+      }
+    }
+    ParenExpr(_, x) => walk_expr(out, x)
+    TupleExpr(_, elems) => {
+      for x in elems {
+        walk_expr(out, x)
+      }
+    }
+    ListLit(_, elems) => {
+      for x in elems {
+        walk_expr(out, x)
+      }
+    }
+    SetLit(_, elems) => {
+      for x in elems {
+        walk_expr(out, x)
+      }
+    }
+    MapLit(_, entries) => {
+      for en in entries {
+        walk_expr(out, en.key)
+        walk_expr(out, en.value)
+      }
+    }
+    StructLit(_, _, fields) => {
+      for f in fields {
+        walk_expr(out, f.value)
+      }
+    }
+    UnaryExpr(_, _, x) => walk_expr(out, x)
+    BinaryExpr(_, _, x, y) => {
+      walk_expr(out, x)
+      walk_expr(out, y)
+    }
+    IsExpr(_, x, _) => walk_expr(out, x)
+    RangeExpr(_, lo, hi, _) => {
+      walk_opt(out, lo)
+      walk_opt(out, hi)
+    }
+    SelectorExpr(_, x, _) => walk_expr(out, x)
+    CallExpr(_, fun, args) => {
+      walk_expr(out, fun)
+      for a in args {
+        walk_expr(out, a.value)
+      }
+    }
+    TypeArgsExpr(_, x, _) => walk_expr(out, x)
+    IndexExpr(_, x, index) => {
+      walk_expr(out, x)
+      walk_expr(out, index)
+    }
+    TryExpr(_, x) => walk_expr(out, x)
+    WithExpr(_, x, fields) => {
+      walk_expr(out, x)
+      for f in fields {
+        walk_expr(out, f.value)
+      }
+    }
+    IfExpr(x) => {
+      walk_opt(out, x.cond)
+      walk_opt(out, x.value)
+      walk_expr(out, Expr.Block(x.then))
+      walk_opt(out, x.els)
+    }
+    MatchExpr(_, subject, arms) => {
+      walk_expr(out, subject)
+      for a in arms {
+        walk_opt(out, a.guard)
+        if let Some(b) = a.body {
+          walk_stmt(out, b)
+        }
+      }
+    }
+    ScopeExpr(_, _, body) => walk_expr(out, Expr.Block(body))
+    SelectExpr(_, arms) => {
+      for a in arms {
+        walk_opt(out, a.op)
+        walk_opt(out, a.after)
+        if let Some(b) = a.body {
+          walk_stmt(out, b)
+        }
+      }
+    }
+    Block(b) => {
+      for s in b.stmts {
+        walk_stmt(out, s)
+      }
+    }
+    FnLit(f) => walk_expr(out, Expr.Block(f.body))
+    WhileExpr(_, body) => walk_expr(out, Expr.Block(body))
+    _ => {}
+  }
+}
+
+/// The span of a statement.
+pub fn stmt_span(s: Stmt) -> parser.Span {
+  match s {
+    LetStmt(span, ..) => span
+    VarStmt(span, ..) => span
+    AssignStmt(span, ..) => span
+    DeferStmt(span, ..) => span
+    ReturnStmt(span, ..) => span
+    BreakStmt(span, ..) => span
+    ContinueStmt(span, ..) => span
+    ForStmt(span, ..) => span
+    WhileStmt(span, ..) => span
+    ExprStmt(span, ..) => span
+    BadStmt(span) => span
+    ConstDecl(d) => d.span
+  }
+}
+
+/// The span of a node.
+pub fn node_span(n: Node) -> parser.Span {
+  match n {
+    D(d) => decl_span(d)
+    S(s) => stmt_span(s)
+    E(e) => parser.expr_span(e)
+  }
+}
+
+/// The patterns held directly by n (query.go patternsOf).
+pub fn patterns_of(n: Node) -> List[Pattern] {
+  match n {
+    S(s) => match s {
+      LetStmt(_, pattern, ..) => [pattern]
+      ForStmt(_, _, pattern, ..) => [pattern]
+      WhileStmt(_, _, _, pattern, ..) => pattern
+      _ => []
+    }
+    E(e) => match e {
+      IfExpr(x) => match x.pattern {
+        Some(p) => [p]
+        None => []
+      }
+      MatchExpr(_, _, arms) => {
+        var out: List[Pattern] = []
+        for a in arms {
+          out.push(a.pattern)
+        }
+        out
+      }
+      _ => []
+    }
+    D(_) => []
+  }
+}
+
+/// p and every pattern below it, p first (query.go walkPattern).
+pub fn sub_patterns(p: Pattern) -> List[Pattern] {
+  var out: List[Pattern] = []
+  walk_pat(out, p)
+  out
+}
+
+fn walk_pat(var out: List[Pattern], p: Pattern) {
+  out.push(p)
+  match p {
+    OrPat(_, alts) => {
+      for a in alts {
+        walk_pat(out, a)
+      }
+    }
+    TuplePat(_, elems) => {
+      for a in elems {
+        walk_pat(out, a)
+      }
+    }
+    ListPat(_, elems, _) => {
+      for a in elems {
+        walk_pat(out, a)
+      }
+    }
+    VariantPat(_, _, _, fields, _) => {
+      for f in fields {
+        walk_pat(out, f.pattern)
+      }
+    }
+    StructPat(_, _, fields, _) => {
+      for f in fields {
+        walk_pat(out, f.pattern)
+      }
+    }
+    _ => {}
+  }
+}

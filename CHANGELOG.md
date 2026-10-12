@@ -14,6 +14,37 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   get a process each, backends run at once, and the full tier prebuilds
   every component. `-short` no longer samples the heavy runs (175 s to
   33 s on the development Mac).
+- `xo bind --c` is written in Xo (decision 0178 stage 6,
+  selfhost/cli/bind): xo1 binds C headers with the same output and
+  cache files, byte for byte, as the Go binder. `xo bind` for Go
+  packages runs the new Go helper `xo-gobind` (cmd/xo-gobind), which
+  stays Go. The self hosted checker now binds a `use go` package or a
+  `use c` header missing from the binding cache, and fetches a module
+  version missing from the module cache, before checking again, as the
+  Go checker does; xo1 runs `xo publish` and prints the API changes of
+  `xo get`. `xo publish` in a module of a repository subdirectory under
+  a symbolic link (macOS's /var) now finds its tags.
+- The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
+  xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
+  quick fixes, symbols) with the Go servers' responses byte for byte,
+  and forwards `check` and `query` to a running `xo serve`. Natively,
+  `os.env.program()` builds, and removing from both a `Map[Str, Str]`
+  and a `Map[Str, Bytes]` in one program no longer fails the SSA
+  verifier.
+- `os.proc.kill(pid, signal)` sends a signal (by name: `TERM`, `QUIT`,
+  ...) to another process, and `os.net.listen` and `dial` take
+  `unix:PATH` addresses for Unix domain sockets, on every backend; an
+  attenuated `Proc` must list `"kill"`, an attenuated `Net` lists the
+  socket as `unix:PATH`; `FakeProc` records signals (`killed()`) and
+  `FakeNet` listens on sockets in memory (decision 0190).
+- The core commands of `xo` are written in Xo too (decision 0178 stage
+  2): `check`, `parse`, `explain`, `version`, `init`, `fmt`, `fix`,
+  `vet`, and `doc` run in the self hosted driver xo1 with the same flags,
+  exit codes, and output; the Xo formatter writes the same bytes as the
+  Go one on every file of the repository. The self hosted checker now
+  reports holes (XO0900). Two types of one name in different modules no
+  longer share a generated SSA helper (the native build of such a
+  program failed).
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
@@ -30,6 +61,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A native program that asks whether a stream is a terminal
   (`stdout_is_tty`, `width`) without reading standard input links again
   (the runtime's terminal functions were left out).
+- `xo query` and `xo edit` are written in Xo too (selfhost/cli/semantic,
+  decision 0178 stage 3): `xo1 query|edit` print what the Go tool
+  prints (37 of 37 command lines byte identical on cmd/xo's test
+  programs; TestQueryCLI and TestEditCLI pass against xo1). The
+  definition hashes of `xo query hash` (decision 0125) are byte identical
+  to the Go ones on 270 of 270 modules (13,662 definitions).
 - Native builds run the self hosted driver (decision 0178 switch point
   A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
   `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds
@@ -75,6 +112,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   71 of the 133 LLVM goldens run under Node with the output of the
   native backends; the rest (tasks, network, files, time, strconv
   quoting, more of the std runtime) fail the build with a clear reason.
+- The WebAssembly backend, stage 2 (decision 0179): the Unicode code
+  in Xo (decision 0180) compiles to wasm with the program, and the
+  backend's runtime adds the text primitives it calls, number and
+  duration parsing, and base64; tasks, scopes, channels, select, Mutex,
+  Atomic, timers, and budgets run on one thread under a deterministic
+  cooperative scheduler (a waiting task's wasm stack is unwound and
+  rewound); `rand` uses WASI `random_get`; files are read through WASI
+  (`path_open`, `fd_read`, `fd_readdir`): 116 of the 134 LLVM goldens
+  pass, and the network fails the build with a clear error. A module
+  carries only the runtime functions it reaches (recursion: 7.5 KB, 16.7
+  KB before). Values share wasm locals by liveness, so large programs
+  build: the self hosted lexer, parser, and checker run as wasm under
+  Node with the output of their go backend builds (the checker: a
+  40 MB module); `selfhost/wasm --why` lists every construct a program
+  needs that the backend lacks.
 - The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
   builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
   (`xo1 test --backend=go`), and builds `use go` programs on the Go
