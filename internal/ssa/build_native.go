@@ -165,10 +165,11 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 		}
 		return s.add(OpField, v.Type.Fields[0].Type, 0, v)
 	case "proc_new", "env_new":
-		t := b.listsType("Proc")
+		name := "Proc"
 		if fo.Name == "env_new" {
-			t = b.listsType("Env")
+			name = "Env"
 		}
+		t := b.listsType(name)
 		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type))
 	case "dyn_text", "dyn_raw":
 		v := s.expr(es[0])

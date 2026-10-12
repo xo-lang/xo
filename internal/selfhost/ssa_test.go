@@ -444,7 +444,7 @@ func compareStage(dir, stage, want, got string, st *ssaStats) []string {
 	sort.Strings(gTypes)
 	sort.Strings(xTypes)
 	if strings.Join(gTypes, "\n") != strings.Join(xTypes, "\n") {
-		fails = append(fails, fmt.Sprintf("%s: stage %s: the type lines differ", dir, stage))
+		fails = append(fails, fmt.Sprintf("%s: stage %s: the type lines differ: %s", dir, stage, firstDiff(strings.Join(xTypes, "\n"), strings.Join(gTypes, "\n"))))
 	}
 	for name, text := range gFuncs {
 		x, ok := xFuncs[name]
