@@ -10,10 +10,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
   slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
   core count), builds and the heavy runs also from
-  `XO_SELFHOST_HEAVY_JOBS` (default one per 8 GiB of memory); heavy runs
-  get a process each, backends run at once, and the full tier prebuilds
-  every component. `-short` no longer samples the heavy runs (175 s to
-  33 s on the development Mac).
+  `XO_SELFHOST_HEAVY_JOBS` (default one per 8 GiB of memory, 16 GiB in
+  the full tier); heavy runs get a process each, backends and
+  comparisons run at once, and the full tier prebuilds every component.
+  The full tier takes 3,490 s on r8g.8xlarge with 32 jobs (over 3 hours
+  before); scripts/remote-full.sh defaults to r8g.8xlarge (256 GiB).
+  `-short` no longer samples the heavy runs (175 s to 31 to 52 s on the
+  development Mac).
 - `xo bind --c` is written in Xo (decision 0178 stage 6,
   selfhost/cli/bind): xo1 binds C headers with the same output and
   cache files, byte for byte, as the Go binder. `xo bind` for Go

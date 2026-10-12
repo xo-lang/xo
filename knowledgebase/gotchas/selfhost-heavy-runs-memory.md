@@ -24,7 +24,7 @@ out, and the kernel killed the process on selfhost/xo (`signal:
 killed`). Each such run also takes 15 to 19 minutes.
 
 Fix: the short tier of TestSelfhostSSA and TestSelfhostLLVM skips the
-mergeHeavy runs (`-short` fell to 33 s). Every run of the package now
+mergeHeavy runs (`-short` fell to 31 to 52 s). Every run of the package now
 draws from two pools (internal/selfhost/jobs_test.go): XO_SELFHOST_JOBS
 for every unit and XO_SELFHOST_HEAVY_JOBS (default one per 8 GiB of
 memory, one per 16 GiB in the full tier) for builds and mergeHeavy
@@ -32,3 +32,17 @@ runs, which run one per process; scripts/remote-full.sh defaults to
 r8g.8xlarge (32 vCPU, 256 GiB, the same spot price). When
 a new component lands under selfhost/, mergeHeavy already counts it;
 check the peak RSS lines (`go test -v`) before raising the heavy count.
+
+Two more traps found on the way (2026-10-12):
+
+- On linux, a child's ru_maxrss counts the memory it shared with the
+  parent before exec, so every Xo process of a 35 GB test process
+  reported 35 GB. jobs_test.go prints n/a for a child whose value does
+  not exceed the parent's own; use `ps` on the instance for real figures.
+- The comparisons, not the compilers, were the critical path:
+  canonClosures matched one regular expression alternating every closure
+  name, which took 50.8 s on the build stage of selfhost/xo alone and
+  most of TestSelfhostSSA's 1,850 s subtests in the full tier. The
+  renamer in ssa_test.go does the same in 1.4 s (TestRenamer checks it
+  against the expression). Look at the `compare` and `Go ...` lines of
+  `go test -v` before blaming the Xo binaries.
