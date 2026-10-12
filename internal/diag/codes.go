@@ -142,7 +142,7 @@ const (
 	ImportDenied       Code = "XO1312" // `use` of a package that a `deny` rule of xo.mod forbids (decision 0095)
 	ChecksumLog        Code = "XO1313" // a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)
 	FetchSettings      Code = "XO1314" // the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)
-	EditionAlias       Code = "XO1315" // note: `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)
+	EditionAlias       Code = "XO1315" // note: `edition 2026` in xo.mod (or `xo 2026` in xo.work) is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)
 	UnvouchedEscape    Code = "XO1316" // `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (decision 0156)
 	EffectsWidened     Code = "XO1317" // a dependency's effects are wider than its `effects` line in xo.lock (decision 0156)
 )
@@ -238,7 +238,7 @@ var Descriptions = map[Code]string{
 	ImportDenied:       "`use` of a package that a `deny` rule of xo.mod forbids (decision 0095)",
 	ChecksumLog:        "a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)",
 	FetchSettings:      "the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)",
-	EditionAlias:       "note: `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)",
+	EditionAlias:       "note: `edition 2026` in xo.mod (or `xo 2026` in xo.work) is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)",
 	UnvouchedEscape:    "`use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (decision 0156)",
 	EffectsWidened:     "a dependency's effects are wider than its `effects` line in xo.lock (decision 0156)",
 

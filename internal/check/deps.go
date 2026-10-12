@@ -54,6 +54,9 @@ func (c *checker) resolveDeps(root modRoot) {
 	for _, p := range bl.Problems {
 		c.modProblem(p)
 	}
+	if bl.Work != nil {
+		c.workEditionAlias(bl.Work.File)
+	}
 	for _, m := range bl.Modules {
 		d.depDirs[m.Dir] = m
 		c.findModRoot(m.Dir)

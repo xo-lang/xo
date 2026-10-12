@@ -309,6 +309,16 @@ xo.mod through the check overlay, and `fix.Run` loads the xo.mod files
 under its dirs plus the one of the module around each dir into the
 overlay, so the fix loop applies xo.mod fixes (not reformatted, and the
 text rewriters skip them). `xo init` writes `edition preview`.
+The edition names live in internal/mod (`mod.CurrentEdition`,
+`mod.Editions`, `mod.EditionAliases`, `mod.ResolveEdition`; the check
+names wrap them) so that `mod.ReadWork` resolves the `xo <edition>` line
+of xo.work with the same resolver: an unknown name is XO1301 on that
+line, the alias sets `Work.Edition` to `preview`, and the checker
+(`workEditionAlias`, after `mod.Load`) reads the xo.work through the
+overlay and gives XO1315 on `xo 2026`; `fix.Run` loads the xo.work that
+applies to each dir (`mod.NearestWork`) too. The self hosted checker
+(selfhost/check modfile.xo) gives the same XO1301. Last verified:
+2026-10-11.
 Rules that change at an edition boundary are entries of `editionRules`
 (`internal/check/edition.go`, `Since` edition plus a per file check), run
 after `checkModule` for modules with `Module.AtLeast(Since)` (order is

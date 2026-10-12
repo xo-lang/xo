@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The `xo <edition>` line of xo.work is validated as xo.mod's `edition`
+  line is (decision 0155): `xo 2026` gets the fixable note `XO1315` and
+  `xo fix` rewrites it to `xo preview`; any other unknown name is
+  `XO1301`.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every
