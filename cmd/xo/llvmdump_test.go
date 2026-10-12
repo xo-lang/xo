@@ -10,6 +10,7 @@ import (
 // definition with --func, positions relative to the working directory,
 // --each, and a run the checker rejects.
 func TestLLVMDump(t *testing.T) {
+	skipComparisonDump(t, "llvmdump")
 	dir := writeFiles(t, map[string]string{
 		"prog/main.xo": "fn div(a: Int, b: Int) -> Int { a / b }\n\nfn main(os: Os) {\n  os.stdio.println(\"${div(7, 2)}\")\n}\n",
 		"bad/main.xo":  "fn main(os: Os) {\n  let x: Int = \"no\"\n}\n",
