@@ -424,8 +424,11 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
     }
     IntConv => (g.bounds_iv(x.args[0], d), true)
     Call => {
+      if aux_str(x.aux) != "Str.len" || x.args.is_empty() {
+        return none
+      }
       let y = g.f.values[x.args[0]]
-      if aux_str(x.aux) == "Str.len" && y.op == ssa.Op.Const {
+      if y.op == ssa.Op.Const {
         if let Some(bs) = const_bytes(y.aux) {
           return (Interval{lo: bs.len(), hi: bs.len()}, true)
         }
