@@ -1,0 +1,11 @@
+use std/task
+
+struct Cache { tasks: task.Group }
+
+fn f() -> Cache {
+  scope s {
+    let g = s.group()
+    let c = Cache{tasks: g}
+    c
+  }
+}

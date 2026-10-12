@@ -261,6 +261,12 @@ func Load(goPath string, opts Options) (*Binding, error) {
 			rerun = strings.TrimPrefix(l, "replay-rerun: ")
 		case strings.HasPrefix(l, "skip: "):
 			name, reason, _ := strings.Cut(strings.TrimPrefix(l, "skip: "), ": ")
+			// the line ends with the Go name, " (strconv.FormatComplex)",
+			// which Bind's Skipped leaves out: XO1102 reads the same
+			// whether the binding was made or loaded
+			if i := strings.LastIndex(reason, " ("); i >= 0 && strings.HasSuffix(reason, ")") {
+				reason = reason[:i]
+			}
 			b.Skipped[name] = reason
 		}
 	}

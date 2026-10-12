@@ -216,6 +216,12 @@ pub struct Module {
   pub c_header: Str = ""
   pub c_decl: Str = ""
   pub c_skipped: Map[Str, Str] = {}
+  /// A Go package's binding (`use go`, goimport.xo): the Go import path
+  /// ("" for other modules), the declaration file, and the names it
+  /// skipped with why ("name" or "Type.name").
+  pub go_path: Str = ""
+  pub go_decl: Str = ""
+  pub go_skipped: Map[Str, Str] = {}
 }
 
 /// An import of a file: the module it names, -1 when the path did not
@@ -249,6 +255,11 @@ pub struct SrcFile {
 pub struct ModRoot {
   pub path: Str
   pub dir: Str
+  /// An `edition` line naming an old edition name (`edition 2026`), for
+  /// XO1315: its line, column, and the name; "" for none.
+  pub alias: Str = ""
+  pub alias_line: Int = 0
+  pub alias_col: Int = 0
 }
 
 /// A diagnostic: code, span, message, severity, notes, and machine fixes
@@ -262,6 +273,8 @@ pub struct Diag {
   pub end_col: Int
   pub message: Str
   pub warning: Bool = false
+  /// Severity note (diag.Note: XO1315).
+  pub note_sev: Bool = false
   pub notes: List[DNote] = []
   pub fixes: List[DFix] = []
 }

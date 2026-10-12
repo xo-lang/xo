@@ -35,6 +35,8 @@ pub struct ModFile {
   pub path: Str = ""
   pub reqs: List[Require] = []
   pub denies: List[Deny] = []
+  /// The `vouch` lines (decision 0156).
+  pub vouches: List[Vouch] = []
   /// The xo.mod file and its directory.
   pub file: Str
   pub dir: Str
@@ -67,6 +69,10 @@ pub struct Lock {
   pub file: Str
   pub entries: Map[Str, Str] = {}
   pub lines: Map[Str, Int] = {}
+  /// The effect lock (decision 0156): the sorted labels of each module
+  /// path's `effects` line, and the line.
+  pub effects: Map[Str, List[Str]] = {}
+  pub effect_lines: Map[Str, Int] = {}
 }
 
 /// A module of a build list besides the main one (mod.Module).
@@ -656,6 +662,12 @@ fn parse_mod_file(name: Str, dir: Str, data: Bytes) -> (ModFile?, List[Problem])
           Err(p) => probs.push(p)
         }
       }
+      "vouch" => {
+        match parse_vouch(name, line, fs) {
+          Ok(v) => f.vouches.push(v)
+          Err(p) => probs.push(p)
+        }
+      }
       "replace" | "exclude" | "retract" => {
         probs.push(Problem{code: "XO1301", file: name, line: line, msg: "xo.mod has no `${fs[0]}` directive", notes: ["point a dependency at local code with an xo.work workspace (decision 0086)"]})
       }
@@ -812,17 +824,20 @@ fn last_slash(s: Str) -> Int {
   -1
 }
 
-/// mod.parseEffectsText: `none`, or effect labels joined by commas.
-fn lock_effects_ok(s: Str) -> Bool {
+/// mod.parseEffectsText: `none`, or effect labels joined by commas,
+/// sorted; None for an unknown label.
+fn parse_effects_text(s: Str) -> List[Str]? {
   if s == "none" {
-    return true
+    return Some([])
   }
+  var out: List[Str] = []
   for l in s.split(",") {
     if !EFFECT_LABELS.contains(l) {
-      return false
+      return None
     }
+    out.push(l)
   }
-  true
+  Some(out.sort())
 }
 
 /// mod.ReadLock: dir/xo.lock; a missing file is an empty lock.
@@ -842,11 +857,18 @@ fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) {
     }
     let f = fields(text)
     if f.len() == 3 && f[1] == "effects" {
-      // the effect lock (decision 0156): checked by the Go checker only
-      // (XO1317 is not a compared diagnostic); a malformed line is
-      // XO1301 here too
-      if !valid_path(f[0]) || !lock_effects_ok(f[2]) {
-        probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
+      // the effect lock (decision 0156, XO1317 in check_effects)
+      let ls = parse_effects_text(f[2])
+      match ls {
+        Some(x) => {
+          if !valid_path(f[0]) {
+            probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
+            continue
+          }
+          l.effects[f[0]] = x
+          l.effect_lines[f[0]] = line
+        }
+        None => probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
       }
       continue
     }
@@ -1100,6 +1122,7 @@ fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
       add_problem(b, Problem{code: "XO1305", module: path, file: main.file, line: require_line(main, path), msg: "xo.lock has no hash for ${k}", notes: ["run `xo mod tidy` (or `xo get`) to record it in ${c.abs(lf)}"]})
     }
   }
+  c.check_effects(b, locks, roots)
   if !failed.is_empty() {
     var keep: List[DepModule] = []
     for m in b.modules {
@@ -1185,6 +1208,104 @@ fn (var c: Checker) load_vendor(var b: BuildList, main: ModFile) {
     }
     b.modules.push(m)
   }
+  c.check_effects(b, {main.dir: lock}, [main])
+}
+
+/// mod checkEffects: the effect set of every selected module version (not
+/// workspace modules) against the `effects` lines of the roots' locks: an
+/// effect a line does not admit is XO1317 on that line (decision 0156).
+fn (c: Checker) check_effects(var b: BuildList, locks: Map[Str, Lock], roots: List[ModFile]) {
+  for m in b.modules {
+    if m.workspace {
+      continue
+    }
+    let cur = c.module_effects(m.dir)
+    for r in roots {
+      let l = match locks.get(r.dir) {
+        Some(x) => x
+        None => continue
+      }
+      let locked = match l.effects.get(m.path) {
+        Some(x) => x
+        None => continue
+      }
+      let ceiling = Ceiling{effects: locked}
+      var added: List[Str] = []
+      for e in cur {
+        if !ceiling_admits(ceiling, e) {
+          added.push(e)
+        }
+      }
+      if added.is_empty() {
+        continue
+      }
+      add_problem(b, Problem{code: "XO1317", file: l.file, line: l.effect_lines.get(m.path) ?? 0, msg: "${m.path} ${m.version} reaches effects that xo.lock does not record for it: `${added.join("`, `")}` (locked: ${effects_text(locked)}, now: ${effects_text(cur)})", notes: ["the API of the selected version declares effects the version locked before did not; review why it needs them (decision 0156)", "to accept them: `xo mod accept-effects ${m.path}` (or `xo get --accept-effects ${m.path}@${m.version}`); otherwise stay on the previous version"]})
+    }
+  }
+}
+
+/// mod.EffectsText: labels joined with commas, or `none`.
+fn effects_text(ls: List[Str]) -> Str {
+  if ls.is_empty() { "none" } else { ls.join(",") }
+}
+
+/// mod.ModuleEffects: the effect labels in the `uses` clauses of the pub
+/// functions and methods of every package of the module tree at dir
+/// (nested modules, vendor/, testdata/, dot directories, and _test.xo
+/// files left out), sorted, a sub effect dropped when its parent is in
+/// the set. Computed from syntax.
+fn (c: Checker) module_effects(dir: Str) -> List[Str] {
+  var set: List[Str] = []
+  var todo: List[Str] = [dir]
+  while !todo.is_empty() {
+    let d = todo.pop() ?? ""
+    let entries = c.fs.read_dir(d).ok() ?? []
+    for e in entries {
+      let p = join(d, e.name)
+      if e.is_dir {
+        if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || c.exists(join(p, "xo.mod")) {
+          continue
+        }
+        todo.push(p)
+        continue
+      }
+      if !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") {
+        continue
+      }
+      let src = c.fs.read(p).ok() ?? b""
+      let r = parser.parse_file(p.bytes(), src, false)
+      for decl in r.file.decls {
+        if let parser.Decl.FnDecl(d: fd) = decl {
+          if !fd.is_pub {
+            continue
+          }
+          for cl in fd.clauses {
+            if let parser.Clause.UsesClause(effects: effs, ..) = cl {
+              for ef in effs {
+                var n = text(ef.name.name)
+                if let Some(sub) = ef.sub {
+                  n = "${n}.${text(sub.name)}"
+                }
+                if EFFECT_LABELS.contains(n) && !set.contains(n) {
+                  set.push(n)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  var out: List[Str] = []
+  for l in set {
+    if let Some(i) = l.find(".") {
+      if set.contains(l[0..i]) {
+        continue
+      }
+    }
+    out.push(l)
+  }
+  out.sort()
 }
 
 /// mod.Ceilings: the effect ceilings that apply to calls from the module

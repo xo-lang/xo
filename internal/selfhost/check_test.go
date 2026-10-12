@@ -31,10 +31,15 @@ import (
 //     stages done (stageDiag: names, types, Option and Result rules,
 //     generics) gets exactly those diagnostics from the Xo checker.
 //
-// Runs the Xo checker cannot load (`use go`, `use c`) and
-// runs rejected for other reasons are counted, not compared. The coverage
-// (runs matching / runs) is logged. The go backend only, except in the
-// full tier (tier_test.go).
+// `use go` runs load the binding the Go checker wrote to the gobind cache,
+// `use c` runs the one it wrote to the cbind cache (decision 0152); the
+// runs with `use c` are compared a second time checked as a native build
+// checks them (`--native`, check.Options.Native), where C interop is
+// allowed. Runs the Xo checker cannot load (a binding missing from the
+// cache, a module to fetch) and runs rejected for other reasons are
+// counted, not compared; the unsupported ones are logged by reason. The
+// coverage (runs matching / runs) is logged. The go backend only, except
+// in the full tier (tier_test.go).
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
 func TestSelfhostChecker(t *testing.T) {
 	backends := tierBackends(t)
@@ -51,6 +56,12 @@ func TestSelfhostChecker(t *testing.T) {
 	for i, d := range dirs {
 		want[d] = wants[i]
 	}
+	// the `use c` runs again, checked as a native build checks them
+	cDirs := useCDirs(t, root, dirs)
+	wantNative := map[string]*goRun{}
+	for _, d := range cDirs {
+		wantNative[d] = goCheckOpts(d, check.Options{Native: true})
+	}
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -63,11 +74,15 @@ func TestSelfhostChecker(t *testing.T) {
 			var fails []string
 			var report strings.Builder
 			codes := map[string]int{}
+			why := map[string]int{}
 			for _, d := range dirs {
 				before := st
 				msg := compareRun(d, want[d], got[d], &st)
 				if msg != "" {
 					fails = append(fails, msg)
+				}
+				if st.unsupported > before.unsupported {
+					why[unsupportedReason(got[d])]++
 				}
 				if st.stagedOK > before.stagedOK {
 					for _, l := range want[d].staged {
@@ -83,6 +98,16 @@ func TestSelfhostChecker(t *testing.T) {
 			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise (%d with the same staged diagnostics), %d unsupported by the Xo checker, %d not loadable",
 				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.otherSame, st.unsupported, st.errors)
 			t.Logf("diagnostics of the matching rejected runs: %v", codes)
+			t.Logf("unsupported runs by reason: %v", why)
+			gotNative := runCheckerOpts(t, bin, root, cDirs, "--native")
+			var nst checkStats
+			for _, d := range cDirs {
+				if msg := compareRun(d, wantNative[d], gotNative[d], &nst); msg != "" {
+					fails = append(fails, "native: "+msg)
+				}
+			}
+			t.Logf("%d `use c` runs checked as native builds: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported by the Xo checker",
+				len(cDirs), nst.accepted, nst.acceptedOK, nst.staged, nst.stagedOK, nst.otherRejected, nst.unsupported)
 			if len(fails) > 0 {
 				show := 10
 				if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
@@ -132,8 +157,11 @@ type goRun struct {
 }
 
 // goCheck checks dir with the Go checker.
-func goCheck(dir string) *goRun {
-	res, err := check.Check([]string{dir})
+func goCheck(dir string) *goRun { return goCheckOpts(dir, check.Options{}) }
+
+// goCheckOpts checks dir with the Go checker and options (Native).
+func goCheckOpts(dir string, opts check.Options) *goRun {
+	res, err := check.CheckOpts([]string{dir}, opts)
 	if err != nil {
 		return &goRun{err: err}
 	}
@@ -180,8 +208,9 @@ func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
 }
 
 // moduleDirs lists every directory under root that holds .xo files,
-// relative to root, skipping dot directories, runs/, output/, and std/
-// (its files are signature mode declarations).
+// relative to root, skipping dot directories, runs/, output/, std/ (its
+// files are signature mode declarations), and hatchesFixture (checked by
+// TestSelfhostCheckerHatches in a copy).
 func moduleDirs(t testing.TB, root string) []string {
 	seen := map[string]bool{}
 	var dirs []string
@@ -191,7 +220,7 @@ func moduleDirs(t testing.TB, root string) []string {
 		}
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
-		if d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || rel == "std" || rel == "runs" || rel == "output") {
+		if d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || rel == "std" || rel == "runs" || rel == "output" || rel == hatchesFixture) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(p, ".xo") {
@@ -213,9 +242,14 @@ func moduleDirs(t testing.TB, root string) []string {
 // runChecker runs the Xo checker on every dir (--each) from root and
 // splits its output by run.
 func runChecker(t *testing.T, bin, root string, dirs []string) map[string]string {
+	return runCheckerOpts(t, bin, root, dirs)
+}
+
+// runCheckerOpts is runChecker with more flags (--native).
+func runCheckerOpts(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 100
-	texts := runXoBatches(t, bin, root, []string{"--each", "--std=std", "--wd=" + workDir(t)}, dirs, batch)
+	texts := runXoBatches(t, bin, root, append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, flags...), dirs, batch)
 	for k, text := range texts {
 		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]
@@ -257,6 +291,42 @@ func workDir(t testing.TB) string {
 		t.Fatal(err)
 	}
 	return wd
+}
+
+// useCDirs are the dirs with a `use c` line in one of their .xo files.
+func useCDirs(t testing.TB, root string, dirs []string) []string {
+	re := regexp.MustCompile(`(?m)^use c "`)
+	var out []string
+	for _, d := range dirs {
+		ents, err := os.ReadDir(filepath.Join(root, d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".xo") {
+				continue
+			}
+			src, _ := os.ReadFile(filepath.Join(root, d, e.Name()))
+			if re.Match(src) {
+				out = append(out, d)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// unsupportedReason is the kind of an `== unsupported <why>` line: its
+// words up to the first path (`use go without a current binding of`,
+// `use c without the binding of`, `fetching`).
+func unsupportedReason(got string) string {
+	why := strings.TrimPrefix(firstLine(got), "== unsupported ")
+	for _, stop := range []string{" of ", " in ", " "} {
+		if i := strings.Index(why, stop); i >= 0 {
+			return why[:i]
+		}
+	}
+	return why
 }
 
 func firstLine(s string) string {
@@ -387,7 +457,7 @@ func nonEmptyLines(s string) []string {
 // loading (xo.mod, xo.work, xo.lock, the module cache and vendor/: XO1301
 // to XO1307, effect ceilings XO1309, deny rules XO1312).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
-	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
+	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0802|XO0803)",.*`,
 	// stage 3: generics
 	`(XO0402|XO0404)",.*`,
 	// stage 4: effects and real-time functions
@@ -401,6 +471,13 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	// modules: xo.mod, xo.work, xo.lock, the module cache, vendor/,
 	// dependency rules, deny rules, effect ceilings
 	`(XO1301|XO1302|XO1303|XO1304|XO1305|XO1306|XO1307|XO1309|XO1312)",.*`,
+	// interop: names a Go or C binding skipped, a C header that cannot
+	// be bound, `use c` on the Go backend (decisions 0041, 0116, 0152)
+	`(XO1102|XO1104|XO1105|XO1201)",.*`,
+	// supply chain and editions: an old edition name, an unvouched
+	// escape hatch, effects wider than the effect lock (decisions 0155,
+	// 0156)
+	`(XO1315|XO1316|XO1317)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

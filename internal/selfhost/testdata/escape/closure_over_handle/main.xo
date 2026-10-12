@@ -1,0 +1,7 @@
+fn work() {}
+
+fn f() -> fn() {
+  scope s {
+    fn() { s.spawn_background(fn() { work() }) }
+  }
+}

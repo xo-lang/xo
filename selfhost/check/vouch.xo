@@ -1,0 +1,226 @@
+// Escape hatches of required module versions and the consumer's vouches
+// (decision 0156): internal/mod vouch.go (the `vouch` lines of xo.mod)
+// and internal/check vouch.go (XO1316 on a `use c` line, or a `use go` of
+// a package that is not pure, in a module the build gets as a required
+// version without a vouch of the consuming module for that version).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// One `vouch` line of an xo.mod (mod.Vouch).
+pub struct Vouch {
+  pub path: Str
+  pub version: Str
+  /// "c" or "go".
+  pub kind: Str
+  /// The header (c) or the Go import path (go), as the `use` line writes it.
+  pub target: Str
+  /// The `uses` of a c vouch; None without one (the binding performs
+  /// `ffi`). Always None for go.
+  pub effects: Ceiling? = None
+  pub file: Str
+  pub line: Int
+}
+
+const VOUCH_SYNTAX: Str = "want `vouch <module path> <version> c \"<header>\" [uses <effects|none>]` or `vouch <module path> <version> go \"<Go import path>\"` (decision 0156)"
+
+/// mod parseVouch: the vouch of the line's fields, or its XO1301 problem.
+fn parse_vouch(name: Str, line: Int, fs: List[Str]) -> Vouch ! Problem {
+  if fs.len() < 5 {
+    return Err(vouch_problem(name, line, "too few fields"))
+  }
+  var v = Vouch{path: fs[1], version: fs[2], kind: fs[3], target: "", file: name, line: line}
+  if !valid_path(v.path) {
+    return Err(vouch_problem(name, line, "invalid module path ${v.path.quote()}"))
+  }
+  if !valid_version(v.version) {
+    return Err(vouch_problem(name, line, "invalid version ${v.version.quote()}: a vouch names the exact vX.Y.Z it reviewed"))
+  }
+  if v.kind != "c" && v.kind != "go" {
+    return Err(vouch_problem(name, line, "unknown kind ${v.kind.quote()}: want c or go"))
+  }
+  let t = go_unquote(fs[4]) ?? ""
+  if t.is_empty() {
+    return Err(vouch_problem(name, line, "the header or Go package must be a quoted string, not ${fs[4]}"))
+  }
+  v.target = t
+  if fs.len() > 5 {
+    if v.kind == "go" {
+      return Err(vouch_problem(name, line, "a go vouch takes no `uses`: calls into Go always perform `go`"))
+    }
+    var words: List[Str] = []
+    for i in 5..fs.len() {
+      words.push(fs[i])
+    }
+    match parse_ceiling(words) {
+      Ok(cl) => {
+        if cl.effects.contains("go") {
+          return Err(vouch_problem(name, line, "a C binding cannot perform `go`"))
+        }
+        v.effects = Some(cl)
+      }
+      Err(e) => return Err(vouch_problem(name, line, e))
+    }
+  }
+  Ok(v)
+}
+
+fn vouch_problem(name: Str, line: Int, msg: Str) -> Problem {
+  Problem{code: "XO1301", file: name, line: line, msg: "malformed vouch: ${msg}", notes: [VOUCH_SYNTAX]}
+}
+
+/// strconv.Unquote of a double quoted or back quoted Go string (the
+/// escapes a header or import path can hold); None when s is not one.
+fn go_unquote(s: Str) -> Str? {
+  let bs = s.bytes()
+  let n = bs.len()
+  if n < 2 {
+    return None
+  }
+  if bs[0] == '`' {
+    if bs[n - 1] != '`' || s[1..n - 1].contains("`") {
+      return None
+    }
+    return Some(s[1..n - 1])
+  }
+  if bs[0] != '"' || bs[n - 1] != '"' {
+    return None
+  }
+  var out = BytesBuilder.new()
+  var i = 1
+  while i < n - 1 {
+    let b = bs[i]
+    if b == '"' || b == '\n' {
+      return None
+    }
+    if b != '\\' {
+      out.write_byte(b)
+      i += 1
+      continue
+    }
+    if i + 1 >= n - 1 {
+      return None
+    }
+    let e = bs[i + 1]
+    if e == '\\' || e == '"' {
+      out.write_byte(e)
+    } else if e == 'n' {
+      out.write_byte('\n')
+    } else if e == 't' {
+      out.write_byte('\t')
+    } else if e == 'r' {
+      out.write_byte('\r')
+    } else {
+      return None
+    }
+    i += 2
+  }
+  out.freeze().to_str()
+}
+
+/// check vouch.go consumerDirs: the xo.mod directories of the consuming
+/// modules (the main modules checked and their workspaces' modules).
+fn (c: Checker) consumer_dirs() -> List[Str] {
+  var dirs: List[Str] = []
+  for (d, _) in c.deps.resolved.entries() {
+    dirs.push(d)
+  }
+  for (d, m) in c.deps.dep_dirs.entries() {
+    if m.workspace {
+      dirs.push(d)
+    }
+  }
+  dirs.sort()
+}
+
+/// check vouch.go consumerVouches (mod.VouchesOf): the vouch lines of the
+/// consuming modules, read once per check.
+fn (var c: Checker) consumer_vouches() -> List[Vouch] {
+  if !c.vouches_read {
+    c.vouches_read = true
+    var seen: Map[Str, Bool] = {}
+    for d0 in c.consumer_dirs() {
+      let d = c.abs(d0)
+      if seen.contains(d) {
+        continue
+      }
+      seen[d] = true
+      let (f, _) = c.read_mod_file(d)
+      if let Some(x) = f {
+        for v in x.vouches {
+          c.vouches.push(v)
+        }
+      }
+    }
+  }
+  c.vouches
+}
+
+/// mod.SuggestVouch: the vouch line that would cover an escape hatch.
+fn suggest_vouch(path: Str, version: Str, kind: Str, target: Str, claim: List[Str]?) -> Str {
+  var s = "vouch ${path} ${version} ${kind} ${target.quote()}"
+  if kind == "c" {
+    if let Some(cl) = claim {
+      if cl.is_empty() {
+        s = "${s} uses none"
+      } else {
+        s = "${s} uses ${cl.join(", ")}"
+      }
+    }
+  }
+  s
+}
+
+/// check vouch.go escapeHatch: checks the escape hatch u (kind "c" or
+/// "go", target the header or Go path) of module m, in file f. For a
+/// module of a required version (not the main module, not a workspace
+/// module) it needs a vouch of a consuming module for that exact version,
+/// else XO1316. It returns the vouch (None when there is none) and
+/// whether m is such a dependency.
+fn (var c: Checker) escape_hatch(m: Int, f: Int, u: parser.UseDecl, kind: Str, target: Str, claim: List[Str]?) -> (Vouch?, Bool) {
+  if m < 0 || c.mods[m].is_std || c.deps.resolved.is_empty() {
+    return (None, false)
+  }
+  let r = match c.find_mod_root(c.mods[m].dir) {
+    Some(x) => x
+    None => return (None, false)
+  }
+  let dm = match c.deps.dep_dirs.get(r.dir) {
+    Some(x) => x
+    None => return (None, false)
+  }
+  if dm.workspace {
+    return (None, false)
+  }
+  var stale: List[Vouch] = []
+  for v in c.consumer_vouches() {
+    if v.path != dm.path || v.kind != kind || v.target != target {
+      continue
+    }
+    if v.version == dm.version {
+      return (Some(v), true)
+    }
+    stale.push(v)
+  }
+  let consumer = join(c.rel_dir(c.deps.main_dir), "xo.mod")
+  var d = -1
+  if kind == "c" {
+    var what = "its C code"
+    if let Some(cl) = claim {
+      var list = "none"
+      if !cl.is_empty() {
+        list = cl.join(", ")
+      }
+      what = "its claim `uses ${list}`"
+    }
+    d = c.error_at(f, "XO1316", u.span, "`use c \"${target}\"` of ${dm.path} ${dm.version} is not vouched for by the consuming module: ${what} counts only with a vouch, so the binding performs `ffi`")
+  } else {
+    d = c.error_at(f, "XO1316", u.span, "`use go \"${target}\"` of ${dm.path} ${dm.version} is not vouched for by the consuming module: Go code reaches files, the network, and processes without a capability")
+  }
+  for s in stale {
+    let pos = parser.Pos{offset: 0, line: s.line, col: 1}
+    c.note_at(d, c.rel_dir(s.file), Span{start: pos, end: pos}, "this vouch reviewed ${s.path} ${s.version}; the build selects ${dm.version}, whose code is not reviewed")
+  }
+  c.note(d, "after reviewing the code, add to ${consumer}: ${suggest_vouch(dm.path, dm.version, kind, target, claim)}")
+  c.note(d, "only the consuming module vouches for a dependency's escape hatches; a vouch names the exact version it reviewed (decision 0156)")
+  (None, true)
+}

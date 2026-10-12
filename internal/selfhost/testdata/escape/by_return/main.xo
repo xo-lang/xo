@@ -1,0 +1,7 @@
+use std/task
+
+fn f() -> task.Group {
+  scope s {
+    return s.group()
+  }
+}

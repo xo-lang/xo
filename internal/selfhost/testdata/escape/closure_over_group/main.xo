@@ -1,0 +1,8 @@
+fn work() {}
+
+fn f() -> fn() {
+  scope s {
+    let g = s.group()
+    fn() { g.spawn_background(fn() { work() }) }
+  }
+}

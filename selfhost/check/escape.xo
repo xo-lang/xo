@@ -1,0 +1,575 @@
+// XO0802: scope handles and task groups that would outlive their scope
+// (core 7.1): internal/check expr.go containsScope and closureEscapes,
+// groups.go containsGroup and groupEscapes. They run after the body of a
+// `scope` is checked, on the recorded identifiers and types.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The nodes the escape checks act on at or below a node, in source order
+/// (walk.go inspect, filtered): calls, closures, and `let`, `var`,
+/// assignment, and `return` statements. Closure bodies are entered only
+/// with into_fn.
+fn esc_expr(e: Expr, into_fn: Bool, var out: List[Node]) {
+  match e {
+    CallExpr(..) => out.push(Node.NExpr(e))
+    FnLit(f) => {
+      out.push(Node.NExpr(e))
+      if into_fn {
+        esc_block(f.body, into_fn, out)
+      }
+      return
+    }
+    _ => {}
+  }
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          esc_expr(x, into_fn, out)
+        }
+      }
+    }
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => esc_expr(x, into_fn, out)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+      for x in els {
+        esc_expr(x, into_fn, out)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        esc_expr(en.key, into_fn, out)
+        esc_expr(en.value, into_fn, out)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        esc_expr(f.value, into_fn, out)
+      }
+    }
+    BinaryExpr(x: x, y: y, ..) => {
+      esc_expr(x, into_fn, out)
+      esc_expr(y, into_fn, out)
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        esc_expr(x, into_fn, out)
+      }
+      if let Some(x) = hi {
+        esc_expr(x, into_fn, out)
+      }
+    }
+    CallExpr(fun: fun, args: args, ..) => {
+      esc_expr(fun, into_fn, out)
+      for a in args {
+        esc_expr(a.value, into_fn, out)
+      }
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      esc_expr(x, into_fn, out)
+      esc_expr(index, into_fn, out)
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      esc_expr(x, into_fn, out)
+      for f in fields {
+        esc_expr(f.value, into_fn, out)
+      }
+    }
+    IfExpr(e: ie) => {
+      if let Some(x) = ie.cond {
+        esc_expr(x, into_fn, out)
+      }
+      if let Some(x) = ie.value {
+        esc_expr(x, into_fn, out)
+      }
+      esc_block(ie.then, into_fn, out)
+      if let Some(x) = ie.els {
+        esc_expr(x, into_fn, out)
+      }
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      esc_expr(subject, into_fn, out)
+      for a in arms {
+        if let Some(g) = a.guard {
+          esc_expr(g, into_fn, out)
+        }
+        if let Some(b) = a.body {
+          esc_stmt(b, into_fn, out)
+        }
+      }
+    }
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if let Some(x) = a.op {
+          esc_expr(x, into_fn, out)
+        }
+        if let Some(x) = a.after {
+          esc_expr(x, into_fn, out)
+        }
+        if let Some(b) = a.body {
+          esc_stmt(b, into_fn, out)
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) | WhileExpr(body: body, ..) => esc_block(body, into_fn, out)
+    Block(b) => esc_block(b, into_fn, out)
+    _ => {}
+  }
+}
+
+fn esc_stmt(s: Stmt, into_fn: Bool, var out: List[Node]) {
+  match s {
+    AssignStmt(..) | LetStmt(..) | VarStmt(..) | ReturnStmt(..) => out.push(Node.NStmt(s))
+    _ => {}
+  }
+  match s {
+    ExprStmt(x: x, ..) => esc_expr(x, into_fn, out)
+    LetStmt(value: value, ..) | VarStmt(value: value, ..) => esc_expr(value, into_fn, out)
+    AssignStmt(target: target, value: value, ..) => {
+      esc_expr(target, into_fn, out)
+      esc_expr(value, into_fn, out)
+    }
+    DeferStmt(body: body, ..) => esc_stmt(body, into_fn, out)
+    ReturnStmt(value: value, ..) => {
+      if let Some(x) = value {
+        esc_expr(x, into_fn, out)
+      }
+    }
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      esc_expr(iter, into_fn, out)
+      for b in bound {
+        esc_expr(b, into_fn, out)
+      }
+      esc_block(body, into_fn, out)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      if let Some(x) = cond {
+        esc_expr(x, into_fn, out)
+      }
+      for v in value {
+        esc_expr(v, into_fn, out)
+      }
+      for b in bound {
+        esc_expr(b, into_fn, out)
+      }
+      esc_block(body, into_fn, out)
+    }
+    ConstDecl(d: cd) => esc_expr(cd.value, into_fn, out)
+    _ => {}
+  }
+}
+
+fn esc_block(b: Block, into_fn: Bool, var out: List[Node]) {
+  for s in b.stmts {
+    esc_stmt(s, into_fn, out)
+  }
+}
+
+/// The object an identifier of the current file names (any kind), or -1.
+fn (c: Checker) named_by(id: Ident) -> Int {
+  let key = c.name_key(id.span.start.offset)
+  if let Some(o) = c.decl_at.get(key) {
+    return o
+  }
+  if let Some(i) = c.name_at.get(key) {
+    return c.names[i].obj
+  }
+  -1
+}
+
+/// expr.go containsScope: whether a value of type t holds a scope handle.
+fn (c: Checker) contains_scope(t0: Int) -> Bool {
+  if t0 < 0 {
+    return false
+  }
+  let t = c.resolve(t0)
+  match c.tys[t].kind {
+    Named => {
+      let o = c.tys[t].obj
+      if c.objs[o].module == c.prelude && c.objs[o].name == b"Scope" {
+        return true
+      }
+      for a in c.tys[t].args {
+        if c.tys[a].kind != TyKind.EffArg && c.contains_scope(a) {
+          return true
+        }
+      }
+      if c.objs[o].tkind == "struct" && c.objs[o].module != c.prelude {
+        for f in c.objs[o].fields {
+          if c.is_prelude(f.ty, "Scope") {
+            return true
+          }
+        }
+      }
+      false
+    }
+    Tuple => {
+      for a in c.tys[t].args {
+        if c.contains_scope(a) {
+          return true
+        }
+      }
+      false
+    }
+    Func | Param | Var | Bad | EffArg => false
+  }
+}
+
+/// groups.go containsGroup: whether a value of type t can hold a task
+/// group (the type, a type argument, a tuple element, or a field of a
+/// user struct or enum, at any depth).
+fn (c: Checker) contains_group(t: Int, var seen: List[Int]) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let r = c.resolve(t)
+  match c.tys[r].kind {
+    Named => {
+      if c.is_task_group(r) {
+        return true
+      }
+      for a in c.tys[r].args {
+        if c.tys[a].kind != TyKind.EffArg && c.contains_group(a, seen) {
+          return true
+        }
+      }
+      let o = c.tys[r].obj
+      let m = c.objs[o].module
+      if seen.contains(o) || m < 0 || c.mods[m].is_std {
+        return false
+      }
+      seen.push(o)
+      for f in c.objs[o].fields {
+        if c.contains_group(f.ty, seen) {
+          return true
+        }
+      }
+      for v in c.objs[o].variants {
+        for f in v.fields {
+          if c.contains_group(f.ty, seen) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    Tuple => {
+      for a in c.tys[r].args {
+        if c.contains_group(a, seen) {
+          return true
+        }
+      }
+      false
+    }
+    Func | Param | Var | Bad | EffArg => false
+  }
+}
+
+/// The frame of `h.group()` when e is one, from the recorded names
+/// (group_call_frame after the walk), else -1.
+fn (c: Checker) group_call_frame_rec(e: Expr) -> Int {
+  if let CallExpr(fun: fun, args: args, ..) = e {
+    if let SelectorExpr(x: x, sel: sel, ..) = fun {
+      if sel.name == b"group" && args.is_empty() {
+        if let Ident(id) = x {
+          let v = c.ident_obj(id)
+          if v >= 0 {
+            return c.objs[v].frame
+          }
+        }
+      }
+    }
+  }
+  -1
+}
+
+/// The checks of a finished `scope name { body }` at span (scopeExpr's
+/// containsScope, closureEscapes, and groupEscapes); t is its type.
+fn (var c: Checker) scope_escapes(span: Span, name: Ident, body: Block, h: Int, t: Int) {
+  if c.contains_scope(t) {
+    c.error("XO0802", span, "the value of `scope ${text(name.name)}` contains a scope handle, which would outlive its scope (core 7.1)")
+  }
+  c.closure_escapes(span, body, h)
+  c.group_escapes(span, body, h)
+}
+
+/// expr.go closureEscapes: a closure that captures the scope handle h
+/// leaves the scope (as the scope's value, by assignment to a binding
+/// declared outside it, or on a channel).
+fn (var c: Checker) closure_escapes(span: Span, body: Block, h: Int) {
+  var all: List[Node] = []
+  esc_block(body, true, all)
+  var captures: List[Int] = []
+  for n in all {
+    if let NExpr(e) = n {
+      if let FnLit(_) = e {
+        for idn in expr_idents(e) {
+          if let NExpr(Ident(id)) = idn {
+            if c.ident_obj(id) == h {
+              captures.push(c.expr_key(e))
+              break
+            }
+          }
+        }
+      }
+    }
+  }
+  if captures.is_empty() {
+    return
+  }
+  // locals bound to a capturing closure
+  var bound: List[Int] = []
+  for n in all {
+    if let NStmt(LetStmt(pattern: pat, value: value, ..)) = n {
+      if (value is FnLit(_)) && captures.contains(c.expr_key(value)) {
+        if let BindPat(name: bn, ..) = pat {
+          let v = c.ident_obj(bn)
+          if v >= 0 {
+            bound.push(v)
+          }
+        }
+      }
+    }
+  }
+  let w = EscWalk{h: h, captures: captures, bound: bound, span: span}
+  c.esc_tail(w, body)
+  for n in all {
+    match n {
+      NStmt(AssignStmt(target: target, value: value, ..)) => {
+        if c.is_capturing(w, value) {
+          if let Some(id) = place_root(target) {
+            let v = c.ident_obj(id)
+            if v >= 0 && (c.objs[v].file.is_empty() || c.declared_before(v, span)) {
+              c.closure_report(w, value, "is stored in `${text(id.name)}`, which outlives the scope")
+            }
+          }
+        }
+      }
+      NExpr(CallExpr(fun: SelectorExpr(sel: sel, ..), args: args, ..)) => {
+        if sel.name == b"send" {
+          for a in args {
+            if c.is_capturing(w, a.value) {
+              c.closure_report(w, a.value, "is sent on a channel")
+            }
+          }
+        }
+      }
+      NExpr(_) | NStmt(_) | NBlock(_) => {}
+    }
+  }
+}
+
+/// What closure_escapes knows: the handle, the capturing closures (by
+/// expression key), the locals bound to one, and the scope's span.
+struct EscWalk {
+  h: Int
+  captures: List[Int]
+  bound: List[Int]
+  span: Span
+}
+
+fn (c: Checker) is_capturing(w: EscWalk, e: Expr) -> Bool {
+  if (e is FnLit(_)) && w.captures.contains(c.expr_key(e)) {
+    return true
+  }
+  if let Ident(id) = e {
+    let v = c.ident_obj(id)
+    return v >= 0 && w.bound.contains(v)
+  }
+  false
+}
+
+fn (var c: Checker) closure_report(w: EscWalk, e: Expr, how: Str) {
+  let d = c.error("XO0802", parser.expr_span(e), "a closure that captures scope handle `${text(c.objs[w.h].name)}` ${how}, so it could start a task after the scope ends (core 7.1)")
+  c.note_here(d, c.obj_span(w.h), "`${text(c.objs[w.h].name)}` is bound here")
+}
+
+/// The scope's value: value positions only (a call of the closure inside
+/// the scope is fine).
+fn (var c: Checker) esc_tail(w: EscWalk, b: Block) {
+  if b.stmts.is_empty() {
+    return
+  }
+  if let ExprStmt(x: x, ..) = b.stmts[b.stmts.len() - 1] {
+    c.esc_value(w, x)
+  }
+}
+
+fn (var c: Checker) esc_value(w: EscWalk, e: Expr) {
+  if c.is_capturing(w, e) {
+    c.closure_report(w, e, "is the value of the scope")
+    return
+  }
+  match e {
+    ParenExpr(x: x, ..) => c.esc_value(w, x)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) => {
+      for el in els {
+        c.esc_value(w, el)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        c.esc_value(w, f.value)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        c.esc_value(w, en.value)
+      }
+    }
+    Block(b) => c.esc_tail(w, b)
+    IfExpr(e: ie) => {
+      c.esc_tail(w, ie.then)
+      if let Some(x) = ie.els {
+        c.esc_value(w, x)
+      }
+    }
+    MatchExpr(arms: arms, ..) => {
+      for a in arms {
+        if let Some(ExprStmt(x: x, ..)) = a.body {
+          c.esc_value(w, x)
+        }
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Whether local v is declared in the current file before the scope at
+/// span (groups.go outside, closureEscapes' offset test).
+fn (c: Checker) declared_before(v: Int, span: Span) -> Bool {
+  c.objs[v].file == c.path && (c.objs[v].line < span.start.line || (c.objs[v].line == span.start.line && c.objs[v].col < span.start.col))
+}
+
+/// groups.go groupEscapes: values holding a group created by `h.group()`
+/// that leave the scope.
+fn (var c: Checker) group_escapes(span: Span, body: Block, h: Int) {
+  let frame = c.objs[h].frame
+  var tainted: List[Int] = []
+  for n in esc_nodes_no_fn(body) {
+    match n {
+      NStmt(LetStmt(pattern: pat, value: value, ..)) => {
+        if let BindPat(name: bn, ..) = pat {
+          if c.group_mentions(value, frame, tainted) {
+            let v = c.ident_obj(bn)
+            if v >= 0 {
+              tainted.push(v)
+            }
+          }
+        }
+      }
+      NStmt(VarStmt(name: vn, value: value, ..)) => {
+        if c.group_mentions(value, frame, tainted) {
+          let v = c.ident_obj(vn)
+          if v >= 0 {
+            tainted.push(v)
+          }
+        }
+      }
+      NStmt(AssignStmt(target: target, value: value, ..)) => {
+        if let Some(id) = place_root(target) {
+          let v = c.ident_obj(id)
+          if v >= 0 && c.declared_before(v, span) && c.group_escapes_in(value, frame, tainted) {
+            c.group_report(h, value, "is stored in `${text(id.name)}`, which outlives the scope")
+          } else if v >= 0 && c.group_mentions(value, frame, tainted) {
+            tainted.push(v)
+          }
+        }
+      }
+      NStmt(ReturnStmt(value: value, ..)) => {
+        if let Some(x) = value {
+          if c.group_escapes_in(x, frame, tainted) {
+            c.group_report(h, x, "is returned from the function")
+          }
+        }
+      }
+      NExpr(CallExpr(fun: fun, args: args, ..)) => {
+        if let SelectorExpr(x: recv, sel: sel, ..) = fun {
+          if sel.name == b"send" {
+            for a in args {
+              if c.group_escapes_in(a.value, frame, tainted) {
+                c.group_report(h, a.value, "is sent on a channel")
+              }
+            }
+          } else {
+            // a `var` method call on a binding declared outside the scope
+            let m = c.named_by(sel)
+            if m >= 0 && c.objs[m].kind == ObjKind.Func && c.objs[m].recv_var {
+              if let Some(id) = place_root(recv) {
+                let v = c.ident_obj(id)
+                if v >= 0 && c.declared_before(v, span) {
+                  for a in args {
+                    if c.group_escapes_in(a.value, frame, tainted) {
+                      c.group_report(h, a.value, "is stored in `${text(id.name)}`, which outlives the scope")
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      NExpr(_) | NStmt(_) | NBlock(_) => {}
+    }
+  }
+  // the scope's value
+  if !body.stmts.is_empty() {
+    if let ExprStmt(x: x, ..) = body.stmts[body.stmts.len() - 1] {
+      if c.group_escapes_in(x, frame, tainted) {
+        c.group_report(h, x, "is the value of the scope")
+      }
+    }
+  }
+}
+
+fn esc_nodes_no_fn(body: Block) -> List[Node] {
+  var out: List[Node] = []
+  esc_block(body, false, out)
+  out
+}
+
+/// groupEscapes mentions: e names a tainted local, a local holding the
+/// group of this scope, or calls `h.group()`.
+fn (c: Checker) group_mentions(e: Expr, frame: Int, tainted: List[Int]) -> Bool {
+  if frame < 0 {
+    return false
+  }
+  for n in expr_idents(e) {
+    match n {
+      NExpr(Ident(id)) => {
+        let v = c.ident_obj(id)
+        if v >= 0 && (tainted.contains(v) || c.objs[v].group_frame == frame) {
+          return true
+        }
+      }
+      NExpr(x) => {
+        if (x is CallExpr(..)) && c.group_call_frame_rec(x) == frame {
+          return true
+        }
+      }
+      NStmt(_) | NBlock(_) => {}
+    }
+  }
+  false
+}
+
+/// groupEscapes escapes: e carries a group of this scope in a value that
+/// can outlive it (a type holding a group, or a closure).
+fn (c: Checker) group_escapes_in(e: Expr, frame: Int, tainted: List[Int]) -> Bool {
+  if !c.group_mentions(e, frame, tainted) {
+    return false
+  }
+  let t = c.type_of(e)
+  if t < 0 {
+    return false
+  }
+  if c.tys[c.resolve(t)].kind == TyKind.Func {
+    return true
+  }
+  var seen: List[Int] = []
+  c.contains_group(t, seen)
+}
+
+fn (var c: Checker) group_report(h: Int, e: Expr, how: Str) {
+  let d = c.error("XO0802", parser.expr_span(e), "a value holding the task group of `scope ${text(c.objs[h].name)}` ${how}, so it could start tasks after the scope ends (core 7.1)")
+  c.note_here(d, c.obj_span(h), "the group belongs to the scope bound here; store `os.tasks` instead for program lifetime work")
+}

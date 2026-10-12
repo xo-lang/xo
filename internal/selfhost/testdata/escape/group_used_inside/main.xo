@@ -1,0 +1,11 @@
+fn work() {}
+
+fn f() -> Int {
+  scope s {
+    let g = s.group()
+    g.spawn_background(fn() { work() })
+    let run = fn() { g.spawn_background(fn() { work() }) }
+    run()
+    1
+  }
+}

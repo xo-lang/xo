@@ -1,0 +1,17 @@
+// A dependency with escape hatches (decision 0156): a `use go` of an
+// impure Go package needs the consumer's vouch, a pure one does not.
+
+use go "strings"
+use go "os/exec"
+
+pub fn upper(s: Str) -> Str uses go {
+  strings.to_upper(s)
+}
+
+pub fn which(name: Str) -> Str uses go {
+  exec.look_path(name).ok() ?? ""
+}
+
+pub fn stamp(c: Clock) -> Time uses clock {
+  c.now()
+}

@@ -1,0 +1,9 @@
+use std/task
+
+fn f(g0: task.Group) {
+  var keep = g0
+  scope s {
+    keep = s.group()
+  }
+  keep.spawn(fn() { 1 })
+}

@@ -1,0 +1,16 @@
+// Escape hatches of a dependency without a vouch for its version
+// (XO1316, the stale vouch noted), a malformed vouch (XO1301), an effect
+// lock narrower than the API (XO1317), an old edition name (XO1315), and
+// names the Go binding skipped (XO1102).
+
+use example.com/gox
+use go "strconv"
+
+pub fn shout(s: Str) -> Str uses go {
+  gox.upper(s)
+}
+
+fn odd(e: strconv.NumError) -> Str uses go {
+  let x = strconv.format_complex(1.0, 64)
+  e.err
+}
