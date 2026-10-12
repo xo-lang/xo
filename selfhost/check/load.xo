@@ -28,6 +28,9 @@ pub struct Checker {
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
+  /// Sources that replace the files on disk, by absolute path (check.go
+  /// Options.Overlay: `xo lsp`'s open documents, `xo fix`'s rewrites).
+  pub overlay: Map[Str, Bytes] = {}
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
@@ -412,12 +415,27 @@ fn lossy_str(b: Bytes) -> Str {
   out.freeze().to_str() ?? ""
 }
 
+/// readSource: a module source file, from the overlay when it holds the
+/// file.
+fn (c: Checker) read_source(p: Str) -> Bytes uses fs.read {
+  c.read_source_opt(p) ?? b""
+}
+
+fn (c: Checker) read_source_opt(p: Str) -> Bytes? uses fs.read {
+  if !c.overlay.is_empty() {
+    if let Some(src) = c.overlay.get(c.abs(p)) {
+      return Some(src)
+    }
+  }
+  c.fs.read(p).ok()
+}
+
 /// Looks for xo.mod in dir or its parents and registers it (check.go
 /// findModRoot; above the working directory only when it is known).
 fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
   var d = c.display(dir)
   while {
-    let data = c.fs.read(join(d, "xo.mod")).ok() ?? None
+    let data = c.read_source_opt(join(d, "xo.mod"))
     if let Some(b) = data {
       var path = ""
       var r = ModRoot{path: "", dir: d}
@@ -492,7 +510,7 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   }
   for n in names.sort() {
     let p = join(dir, n)
-    let src = c.fs.read(p).ok() ?? b""
+    let src = c.read_source(p)
     c.parse_into(m, p, src, false)
   }
   c.mods[m].state = 1

@@ -1,0 +1,46 @@
+// The server commands of xo in Xo (decision 0178 stage 5): `mcp`,
+// `lsp`, `serve`, `dump`, and `replay`, ported from cmd/xo agent.go,
+// dump.go, and replay.go and the packages internal/mcp, internal/lsp, and
+// internal/serve, with their flags, exit statuses, and output.
+//
+// Commands that run other xo commands (the MCP tools, the commands
+// `xo serve` answers) run this program again as a child process with
+// XO_NO_SERVE=1, where the Go implementation calls its `run` in process.
+
+/// The toolchain version lsp reports in serverInfo: cmd/xo version.go's
+/// `version` (TestXo1ServersVersion compares them).
+pub const XO_VERSION = "0.9.0"
+
+/// The version mcp reports in serverInfo (internal/mcp's Server.Version,
+/// set by cmd/xo).
+const MCP_VERSION = "p1"
+
+/// Whether cmd is one of this package's commands.
+pub fn is_command(cmd: Str) -> Bool {
+  cmd is "mcp" | "lsp" | "serve" | "dump" | "replay"
+}
+
+/// The path of this program for running it again: os.env.program()
+/// made absolute against the working directory when it is relative.
+pub fn self_program(os: Os) -> Str uses env {
+  let p = os.env.program()
+  if p.contains("/") && !p.starts_with("/") {
+    let wd = os.env.get("PWD") ?? ""
+    if !wd.is_empty() {
+      return wd.trim_suffix("/") + "/" + p.trim_prefix("./")
+    }
+  }
+  p
+}
+
+/// Runs the command (is_command) with its arguments: the exit status.
+pub fn run(os: Os, cmd: Str, args: List[Str], version: Str) -> Int uses (stdio, proc, env, fs, net, clock, rand) {
+  let ex = Exec{program: self_program(os), env: [("XO_NO_SERVE", "1")]}
+  match cmd {
+    "mcp" => run_mcp(os, ex, MCP_VERSION, args)
+    "dump" => run_dump(os, args)
+    "serve" => run_serve(os, ex, args)
+    "replay" => run_replay(os, ex, args)
+    _ => run_lsp(os, ex, version, args)
+  }
+}

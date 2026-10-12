@@ -45,9 +45,13 @@ use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
 use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
+use github.com/xo-lang/xo/selfhost/cli/servers
 
 fn main(os: Os) ! {
   let args = os.env.args()
+  if !args.is_empty() && servers.is_command(args[0]) {
+    os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION))
+  }
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
     os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [--as=cc|macho] [--ld=cc|macho] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)

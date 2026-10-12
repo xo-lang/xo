@@ -1,0 +1,3 @@
+non empty: true
+names a file: true
+args: 0

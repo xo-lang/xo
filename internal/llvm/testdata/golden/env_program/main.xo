@@ -1,0 +1,12 @@
+// `os.env.program()` natively (decision 0190; the CLI servers run their
+// own binary again): argv[0], as os.Args[0] on the Go backend. The name
+// differs by how the harness runs the binary, so the program checks it
+// names an existing file rather than printing it.
+
+fn main(os: Os) ! {
+  let p = os.env.program()
+  os.stdio.println("non empty: ${!p.is_empty()}")
+  let path = if p.contains("/") { p } else { "${os.env.get("PWD") ?? "."}/${p}" }
+  os.stdio.println("names a file: ${os.fs.exists(path)?}")
+  os.stdio.println("args: ${os.env.args().len()}")
+}

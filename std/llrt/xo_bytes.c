@@ -678,6 +678,17 @@ xo_rlist *xo_env_args(void) {
 	return l;
 }
 
+// xo_env_program is `env.program()`: the program's name as it was run
+// (argv[0], os.Args[0] on the Go backend), in a list of one.
+xo_rlist *xo_env_program(void) {
+	xo_rlist *l = n_str_list_new(1);
+	if (tw_is_fake(TW_REAL_ENV)) {
+		return n_str_list_add(l, "test", 4);
+	}
+	const char *p = xo_argc > 0 ? xo_argv[0] : "";
+	return n_str_list_add(l, p, (int64_t)strlen(p));
+}
+
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
 XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {
 	char m[160];

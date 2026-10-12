@@ -1,0 +1,621 @@
+// `xo serve`: the resident checker of internal/serve in Xo (decision 0178
+// stage 5), on a Unix domain socket (decision 0190). The protocol is the
+// Go server's: one JSON request line per connection ({"op": "run" |
+// "ping" | "stats" | "shutdown", "args", "cwd"}), one JSON response line
+// ({"code", "stdout", "stderr", "cached", "error", "stats"}), so Go and
+// Xo clients and servers talk to each other.
+//
+// The Go server keeps checked sessions in memory and runs `check` and
+// `query` in process against them. This one runs each command as a child
+// (this program, XO_NO_SERVE=1, in the request's directory) and caches
+// the command's whole response instead, under the same entries: one per
+// working directory and checked directories, valid while no .xo,
+// xo.mod, xo.lock, or xo.work file under the directories (and no xo.mod,
+// xo.lock, or xo.work above them) changed in modification time or size,
+// appeared, or disappeared. The hit and miss counts are the Go server's
+// (one load per check or query); a hit whose exact command line was not
+// run yet runs it (the Go server answers it from the session). Files of
+// modules outside the directories (imports through xo.mod) are not
+// stamped: their changes are seen after a change under the directories.
+
+/// The environment variable that overrides the socket path.
+const SOCKET_ENV = "XO_SERVE_SOCKET"
+
+/// When non empty, the CLI does not forward to a server.
+const DISABLE_ENV = "XO_NO_SERVE"
+
+/// The most entries the cache keeps; the least recently used goes.
+const MAX_ENTRIES = 16
+
+fn serve_flags() -> List[Flag] {
+  [Flag{name: "socket", kind: "string", def: "", usage: "unix socket path (default $XO_SERVE_SOCKET or <user cache dir>/xo/serve.sock)"}]
+}
+
+/// os.UserCacheDir.
+pub fn user_cache_dir(os: Os) -> Str ! Str uses (env, proc) {
+  let home = os.env.get("HOME") ?? ""
+  if host_target(os).starts_with("darwin/") {
+    if home.is_empty() {
+      return Err("$HOME is not defined")
+    }
+    return Ok(home + "/Library/Caches")
+  }
+  let x = os.env.get("XDG_CACHE_HOME") ?? ""
+  if x.is_empty() {
+    if home.is_empty() {
+      return Err("neither $XDG_CACHE_HOME nor $HOME are defined")
+    }
+    return Ok(home + "/.cache")
+  }
+  if !x.starts_with("/") {
+    return Err("path in $XDG_CACHE_HOME is relative")
+  }
+  Ok(x)
+}
+
+/// SocketPath: $XO_SERVE_SOCKET, or <user cache dir>/xo/serve.sock.
+pub fn socket_path(os: Os) -> Str ! Str uses (env, proc) {
+  let p = os.env.get(SOCKET_ENV) ?? ""
+  if !p.is_empty() {
+    return Ok(p)
+  }
+  Ok(join(user_cache_dir(os)?, "xo/serve.sock"))
+}
+
+/// A response of the server.
+struct Resp {
+  code: Int = 0
+  stdout: Str = ""
+  stderr: Str = ""
+  cached: Bool = false
+  error: Str = ""
+  stats: (Int, Int, Int)? = None
+}
+
+fn resp_json(r: Resp) -> Str {
+  var keys = ["code", "stdout", "stderr", "cached"]
+  var vals = [jint(r.code), jstr(r.stdout), jstr(r.stderr), jbool(r.cached)]
+  if !r.error.is_empty() {
+    keys.push("error")
+    vals.push(jstr(r.error))
+  }
+  match r.stats {
+    Some((h, m, e)) => {
+      keys.push("stats")
+      vals.push(jobj(["hits", "misses", "entries"], [jint(h), jint(m), jint(e)]))
+    }
+    None => {}
+  }
+  encode(jobj(keys, vals), true)
+}
+
+fn resp_of(v: J) -> Resp {
+  let num = fn(k: Str) -> Int {
+    match get(v, k) {
+      Some(J.Num(t)) => Int.parse(t) ?? 0
+      _ => 0
+    }
+  }
+  var r = Resp{code: num("code"), stdout: jstr_of(v, "stdout"), stderr: jstr_of(v, "stderr"), cached: jbool_of(v, "cached"), error: jstr_of(v, "error")}
+  match get(v, "stats") {
+    Some(J.Obj(_, _, _)) => {
+      let s = get(v, "stats") ?? J.Null
+      let n = fn(k: Str) -> Int {
+        match get(s, k) {
+          Some(J.Num(t)) => Int.parse(t) ?? 0
+          _ => 0
+        }
+      }
+      r.stats = Some((n("hits"), n("misses"), n("entries")))
+    }
+    _ => {}
+  }
+  r
+}
+
+/// Reads one line (to `\n`, which it includes) from a connection: the
+/// bytes, and whether the stream ended or failed first.
+fn read_line(c: Conn) -> (Bytes, Bool) uses net {
+  var got = b""
+  while {
+    match c.read(65536) {
+      Ok(Some(data)) => {
+        var cut = -1
+        var i = 0
+        while i < data.len() {
+          if data[i] == '\n' {
+            cut = i
+            break
+          }
+          i += 1
+        }
+        if cut >= 0 {
+          return (got + data[0..cut + 1], false)
+        }
+        got = got + data
+      }
+      Ok(None) | Err(_) => return (got, true)
+    }
+  }
+  (got, true)
+}
+
+/// Call: sends a request to the server at path and returns its response.
+fn call(os: Os, path: Str, req: J) -> Resp ! Str uses net {
+  let c = match os.net.dial("unix:" + path) {
+    Ok(c) => c
+    Err(e) => return Err("${e}")
+  }
+  match c.write((encode(req, true) + "\n").bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      c.close()
+      return Err("${e}")
+    }
+  }
+  let (line, _) = read_line(c)
+  c.close()
+  if line.is_empty() {
+    return Err("EOF")
+  }
+  match parse(line.to_str() ?? "") {
+    Ok(v) => Ok(resp_of(v))
+    Err(e) => Err(e)
+  }
+}
+
+/// Forward runs args on the server at the default socket when one
+/// answers: (the exit status, true), or (0, false) when the caller should
+/// run the command itself (no server, XO_NO_SERVE, or module settings of
+/// this process the server may not share). For `xo check` and `xo query`.
+pub fn forward(os: Os, args: List[Str]) -> (Int, Bool) uses (env, proc, net, fs, stdio) {
+  if !(os.env.get(DISABLE_ENV) ?? "").is_empty() {
+    return (0, false)
+  }
+  for k in ["XO_OFFLINE", "XO_WORK", "XO_MODCACHE", "XO_GIT_BASE", "XO_GIT_REWRITE", "XO_PROXY", "XO_NOPROXY", "XO_SUMDB", "XO_NOSUMDB"] {
+    if !(os.env.get(k) ?? "").is_empty() {
+      return (0, false)
+    }
+  }
+  let path = match socket_path(os) {
+    Ok(p) => p
+    Err(_) => return (0, false)
+  }
+  if !(os.fs.exists(path).ok() ?? false) {
+    return (0, false)
+  }
+  let cwd = os.env.get("PWD") ?? ""
+  if cwd.is_empty() {
+    return (0, false)
+  }
+  let r = match call(os, path, jobj(["op", "args", "cwd"], [jstr("run"), strs(args), jstr(cwd)])) {
+    Ok(r) => r
+    Err(_) => return (0, false)
+  }
+  if !r.error.is_empty() {
+    return (0, false)
+  }
+  os.stdio.print(r.stdout)
+  os.stdio.eprint(r.stderr)
+  (r.code, true)
+}
+
+// ---------------------------------------------------------------------------
+// the cache
+
+/// A file's modification time and size.
+struct Stamp {
+  modified: Time
+  size: Int
+}
+
+struct Entry {
+  /// absolute directories walked
+  dirs: List[Str]
+  files: Map[Str, Stamp]
+  /// responses by command line
+  outs: Map[Str, Resp] = {}
+  used: Int = 0
+}
+
+struct State {
+  entries: Map[Str, Entry] = {}
+  hits: Int = 0
+  misses: Int = 0
+  clock: Int = 0
+}
+
+fn is_source(name: Str) -> Bool {
+  name.ends_with(".xo") || name is "xo.mod" | "xo.lock" | "xo.work"
+}
+
+/// The stamps of the source files under the directories (dot directories
+/// skipped, as module loading does) and of xo.mod, xo.lock, and xo.work
+/// in every directory above them.
+fn stamps(os: Os, dirs: List[Str]) -> Map[Str, Stamp] uses fs {
+  var out: Map[Str, Stamp] = {}
+  for root in dirs {
+    match os.fs.walk(root) {
+      Ok(infos) => {
+        for fi in infos {
+          if fi.is_dir {
+            continue
+          }
+          let rel = fi.path.trim_prefix(root).trim_prefix("/")
+          var hidden = false
+          for seg in rel.split("/") {
+            hidden = hidden || seg.starts_with(".")
+          }
+          if hidden || !is_source(fi.name) {
+            continue
+          }
+          out[fi.path] = Stamp{modified: fi.modified, size: fi.size}
+        }
+      }
+      Err(_) => {}
+    }
+    var d = root
+    while d.len() > 1 {
+      for name in ["xo.mod", "xo.lock", "xo.work"] {
+        let p = join(d, name)
+        match os.fs.stat(p) {
+          Ok(Some(fi)) => out[p] = Stamp{modified: fi.modified, size: fi.size}
+          _ => {}
+        }
+      }
+      let i = d.trim_suffix("/").split("/")
+      d = i[0..i.len() - 1].join("/")
+      if d.is_empty() {
+        d = "/"
+      }
+    }
+  }
+  out
+}
+
+/// The directories a check or query command line loads (cmd/xo
+/// runCheckWith and runQueryWith), or None when it loads none.
+fn loads_of(args: List[Str]) -> List[Str]? {
+  if args.is_empty() {
+    return None
+  }
+  if args[0] == "check" {
+    let flags = [Flag{name: "json", kind: "bool", def: "false", usage: ""}, Flag{name: "no-gc", kind: "bool", def: "false", usage: ""}, Flag{name: "fix", kind: "bool", def: "false", usage: ""}]
+    let p = parse_flags("check", flags, args[1..]).ok()?
+    if p.args.is_empty() || p.get(flags, "no-gc") == "true" {
+      return None
+    }
+    return Some(p.args)
+  }
+  if args[0] == "query" {
+    if args.len() < 2 {
+      return None
+    }
+    let kind = args[1]
+    var dir = "."
+    var rest: List[Str] = []
+    for a in args[2..] {
+      if a is "--json" | "-json" | "--text" | "-text" {
+        continue
+      }
+      if a.starts_with("--dir=") {
+        dir = a.trim_prefix("--dir=")
+      } else if a.starts_with("-") && a != "-" {
+        return None
+      } else {
+        rest.push(a)
+      }
+    }
+    let want = if kind == "holes" { 0 } else { 1 }
+    if rest.len() != want || !(kind is "type" | "def" | "callers" | "effects" | "holes" | "api" | "imports" | "deps") {
+      return None
+    }
+    var dirs = [dir]
+    if kind == "type" {
+      // file:line:col; a file outside dir adds its directory
+      let parts = rest[0].split(":")
+      if parts.len() >= 3 {
+        let file = parts[0..parts.len() - 2].join(":")
+        let fdir = if file.contains("/") { file.split("/")[0..file.split("/").len() - 1].join("/") } else { "." }
+        if !(file.starts_with(dir.trim_suffix("/") + "/") || dir == ".") {
+          dirs.push(fdir)
+        }
+      }
+    }
+    return Some(dirs)
+  }
+  None
+}
+
+/// Whether an entry's files are unchanged.
+fn fresh(os: Os, e: Entry) -> Bool uses fs {
+  let now = stamps(os, e.dirs)
+  if now.len() != e.files.len() {
+    return false
+  }
+  for (p, s) in e.files {
+    match now.get(p) {
+      Some(n) => {
+        if n.modified != s.modified || n.size != s.size {
+          return false
+        }
+      }
+      None => return false
+    }
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// the server
+
+struct Server {
+  state: Mutex[State]
+  /// one command at a time: a token in a channel of one
+  runs: Chan[Int]
+  stop: Atomic[Bool]
+}
+
+fn not_served(code: Int, stderr: Str) -> Resp { Resp{code: code, stderr: stderr} }
+
+/// serveRun and Server.run: one request's command line.
+fn run_request(os: Os, ex: Exec, s: Server, args: List[Str], cwd: Str) -> Resp uses (proc, fs, env) {
+  if args.is_empty() {
+    return not_served(2, "xo serve: empty command\n")
+  }
+  if !(args[0] is "check" | "query") {
+    return not_served(2, "xo serve: ${args[0]} is not served\n")
+  }
+  let dir = if cwd.is_empty() { os.env.get("PWD") ?? "" } else { cwd }
+  if !cwd.is_empty() && !(os.fs.exists(cwd).ok() ?? false) {
+    return Resp{code: 2, error: "chdir ${cwd}: no such file or directory"}
+  }
+  s.runs.send(1)
+  let r = run_locked(os, ex, s, args, dir)
+  let _ = s.runs.recv()
+  r
+}
+
+fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp uses (proc, fs) {
+  {
+    let loads = loads_of(args)
+    let line = args.join("\u{0}")
+    let fixes = args[0] == "check" && args.contains("--fix")
+    var key = ""
+    var hit = false
+    match loads {
+      Some(ds) => {
+        var abs: List[Str] = []
+        for d in ds {
+          abs.push(if d.starts_with("/") { d } else if d == "." { dir } else { join(dir, d.trim_prefix("./")) })
+        }
+        key = dir + "\u{0}" + ds.join("\u{0}")
+        let found = s.state.with(fn(var st) {
+          st.clock += 1
+          st.entries.get(key)
+        })
+        hit = match found {
+          Some(e) => fresh(os, e)
+          None => false
+        }
+        if hit {
+          let cached = s.state.with(fn(var st) {
+            st.hits += 1
+            var e = st.entries.get(key) ?? Entry{dirs: abs, files: {}}
+            e.used = st.clock
+            st.entries[key] = e
+            if fixes { None } else { e.outs.get(line) }
+          })
+          match cached {
+            Some(r) => {
+              var rr = r
+              rr.cached = true
+              return rr
+            }
+            None => {}
+          }
+        } else {
+          let files = stamps(os, abs)
+          s.state.with(fn(var st) {
+            st.misses += 1
+            st.entries[key] = Entry{dirs: abs, files: files, used: st.clock}
+            if st.entries.len() > MAX_ENTRIES {
+              var oldest = ""
+              var oldest_at = 0
+              for (k, e) in st.entries {
+                if oldest.is_empty() || e.used < oldest_at {
+                  oldest = k
+                  oldest_at = e.used
+                }
+              }
+              st.entries.remove(oldest)
+            }
+          })
+        }
+      }
+      None => {}
+    }
+    var c = os.proc.cmd(ex.program, args)
+    if !dir.is_empty() {
+      c = c.dir(dir)
+    }
+    for (k, v) in ex.env {
+      c = c.set_env(k, v)
+    }
+    var r = match c.output() {
+      Ok(o) => Resp{code: o.code, stdout: o.stdout.to_str() ?? "", stderr: o.stderr.to_str() ?? ""}
+      Err(e) => Resp{code: 2, error: "${e}"}
+    }
+    r.cached = loads.is_some() && hit
+    if loads.is_some() && !fixes && r.error.is_empty() {
+      s.state.with(fn(var st) {
+        match st.entries.get(key) {
+          Some(e) => {
+            var e2 = e
+            e2.outs[line] = r
+            st.entries[key] = e2
+          }
+          None => {}
+        }
+      })
+    }
+    r
+  }
+}
+
+fn handle(os: Os, ex: Exec, s: Server, l: Listener, c: Conn) uses (net, proc, fs, env) {
+  let (line, ended) = read_line(c)
+  var resp = Resp{}
+  var stop = false
+  let req = if line.is_empty() && ended { Err("EOF") } else { parse(line.to_str() ?? "") }
+  match req {
+    Err(e) => resp = Resp{code: 2, error: "bad request: ${e}"}
+    Ok(v) => {
+      let op = jstr_of(v, "op")
+      if op == "ping" {
+      } else if op == "stats" {
+        resp.stats = Some(s.state.with(fn(var st) { (st.hits, st.misses, st.entries.len()) }))
+      } else if op == "shutdown" {
+        stop = true
+      } else if op == "run" {
+        var args: List[Str] = []
+        match get(v, "args") {
+          Some(J.Arr(items, _)) => {
+            for x in items {
+              match x {
+                J.Str(a) => args.push(a)
+                J.Null | J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => {}
+              }
+            }
+          }
+          _ => {}
+        }
+        resp = run_request(os, ex, s, args, jstr_of(v, "cwd"))
+      } else {
+        resp = Resp{code: 2, error: "unknown op ${op.quote()}"}
+      }
+    }
+  }
+  let _ = c.write((resp_json(resp) + "\n").bytes()).ignore_err("the client may be gone")
+  c.close()
+  if stop {
+    s.stop.set(true)
+    l.close()
+  }
+}
+
+/// The process id of this program: the parent of a shell it starts (Xo
+/// has no call for its own id).
+fn own_pid(os: Os) -> Int uses proc {
+  match os.proc.run("sh", ["-c", "echo $PPID"]) {
+    Ok(o) => Int.parse((o.stdout.to_str() ?? "").trim()) ?? 0
+    Err(_) => 0
+  }
+}
+
+/// writeJSON of internal/serve's Stats: indented by two spaces.
+fn stats_text(h: Int, m: Int, e: Int) -> Str {
+  "{\n  \"hits\": ${h},\n  \"misses\": ${m},\n  \"entries\": ${e}\n}\n"
+}
+
+/// Listen: opens the socket, replacing a stale socket file left by a
+/// server that is no longer running; fails when a server answers.
+fn listen(os: Os, path: Str) -> Listener ! Str uses (fs, net) {
+  let parts = path.split("/")
+  let dir = parts[0..parts.len() - 1].join("/")
+  if !dir.is_empty() {
+    match os.fs.create_dir_all(dir) {
+      Ok(_) => {}
+      Err(e) => return Err("mkdir ${dir}: ${e}")
+    }
+  }
+  if os.fs.exists(path).ok() ?? false {
+    match call(os, path, jobj(["op"], [jstr("ping")])) {
+      Ok(_) => return Err("a server is already listening on ${path}")
+      Err(_) => {
+        let _ = os.fs.remove(path).ignore_err("a stale socket file")
+      }
+    }
+  }
+  match os.net.listen("unix:" + path) {
+    Ok(l) => Ok(l)
+    Err(NetErr.Io(m)) => Err(m)
+    Err(e) => Err("${e}")
+  }
+}
+
+pub fn run_serve(os: Os, ex: Exec, args: List[Str]) -> Int uses (stdio, proc, env, fs, net) {
+  let flags = serve_flags()
+  let p = match parse_flags("serve", flags, args) {
+    Ok(p) => p
+    Err(text) => {
+      os.stdio.eprint(text)
+      return 2
+    }
+  }
+  var path = p.get(flags, "socket")
+  if path.is_empty() {
+    match socket_path(os) {
+      Ok(sp) => path = sp
+      Err(e) => {
+        os.stdio.eprintln("xo serve: ${e}")
+        return 2
+      }
+    }
+  }
+  let sub = p.args.get(0) ?? ""
+  if sub is "stop" | "status" {
+    let op = if sub == "status" { "stats" } else { "shutdown" }
+    match call(os, path, jobj(["op"], [jstr(op)])) {
+      Ok(r) => {
+        match r.stats {
+          Some((h, m, e)) => os.stdio.print(stats_text(h, m, e))
+          None => {}
+        }
+        return 0
+      }
+      Err(_) => {
+        os.stdio.eprintln("xo serve: no server on ${path}")
+        return 1
+      }
+    }
+  }
+  if !sub.is_empty() {
+    os.stdio.eprintln("xo serve: unknown subcommand ${sub.quote()} (want stop or status)")
+    return 2
+  }
+  let l = match listen(os, path) {
+    Ok(l) => l
+    Err(e) => {
+      os.stdio.eprintln("xo serve: ${e}")
+      return 1
+    }
+  }
+  os.stdio.eprintln("xo serve: listening on ${path} (pid ${own_pid(os)}); `xo serve stop` stops it")
+  let s = Server{state: Mutex.new(State{}), runs: Chan.new(1), stop: Atomic.new(false)}
+  var failed = ""
+  scope sc {
+    while {
+      match l.accept() {
+        Ok(c) => {
+          sc.spawn(fn() {
+            handle(os, ex, s, l, c)
+          })
+        }
+        Err(e) => {
+          if !s.stop.get() {
+            failed = "${e}"
+          }
+          break
+        }
+      }
+    }
+  }
+  l.close()
+  let _ = os.fs.remove(path).ignore_err("closing the listener removed it")
+  if !failed.is_empty() {
+    os.stdio.eprintln("xo serve: ${failed}")
+    return 1
+  }
+  0
+}

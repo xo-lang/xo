@@ -171,6 +171,9 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.fsResult(s.popOne(l, optT), ok, nt), true
 	case "Env.args":
 		return s.rt("env_args", m.List(strT)), true
+	case "Env.program":
+		// argv[0] (decision 0190: the CLI servers run themselves again)
+		return s.call("list.index", strT, "", s.rt("env_program", m.List(strT)), s.cint(0)), true
 	case "Proc.exit":
 		s.rt("exit", nil, arg(0, intT))
 		if b.opts.Tests {
