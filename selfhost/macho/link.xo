@@ -113,7 +113,7 @@ struct UEntry {
 }
 
 /// A relocation target: an address, or an import.
-struct Target {
+struct RelocTarget {
   imp: Int = -1
   addr: Int = 0
 }
@@ -647,15 +647,15 @@ fn (var l: Linker) patch(addr: Int, size: Int, value: Int) {
 
 /// The target of a relocation: the symbol's address (or its stub for a
 /// call to an import), with the addend.
-fn (var l: Linker) target(o: Int, r: IReloc, addend: Int) -> Target {
+fn (var l: Linker) target(o: Int, r: IReloc, addend: Int) -> RelocTarget {
   if !r.ext {
-    return Target{addr: l.translate(o, r.sym, addend)}
+    return RelocTarget{addr: l.translate(o, r.sym, addend)}
   }
   let (d, i) = l.def_of(o, r.sym)
   if d < 0 {
-    return Target{imp: i, addr: addend}
+    return RelocTarget{imp: i, addr: addend}
   }
-  Target{addr: l.sym_addr(d, i) + addend}
+  RelocTarget{addr: l.sym_addr(d, i) + addend}
 }
 
 /// Applies the relocations of every placed input section: patches of
@@ -674,7 +674,7 @@ fn (var l: Linker) relocate() {
       let tvars = (s.flags & 0xff) == S_THREAD_LOCAL_VARIABLES
       var addend = 0
       var has_addend = false
-      var sub = Target{}
+      var sub = RelocTarget{}
       var has_sub = false
       for r in s.relocs {
         let p = base + r.addr
