@@ -1,0 +1,15 @@
+// Fetching for the checker (decision 0178 stage 6): selfhost/check reads
+// the module cache only, so the commands that check (xo check, vet, doc,
+// fix, build, audit, publish) pass this to Checker.check_dirs_fetching,
+// which fetches what a run missed and checks again, as the Go checker's
+// mod.Load fetches.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// mod.Download of path at version into the module cache of the
+/// environment, for a command run in wd: the version's directory, or the
+/// problem as mod.Load reports it.
+pub fn fetch(os: Os, wd: Str, path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, net, rand, env) {
+  var c = new_ctx(os, wd)
+  c.download(path, version)
+}

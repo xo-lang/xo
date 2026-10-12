@@ -164,7 +164,9 @@ fn (var c: ModCtx) publish_verify(var r: semantic.PublishResult, dir: Str) uses 
   chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), "off")
   chk.cbind_dir = c.getenv("XO_CBIND_DIR")
   chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
-  match chk.check_dirs_bound(c.os, [root]) {
+  let os = c.os
+  let wd = c.wd
+  match chk.check_dirs_fetching(os, [root], fn(p: Str, v: Str) -> Str ! check.Problem { fetch(os, wd, p, v) }) {
     Err(e) => r.diags.push(check.Diag{code: "XO1311", file: mod_file, line: 1, col: 1, end_line: 0, end_col: 0, message: "xo check: ${e}"})
     Ok(_) => {
       if !chk.unsupported.is_empty() {

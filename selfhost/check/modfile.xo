@@ -956,6 +956,21 @@ fn (var c: Checker) download(path: Str, version: Str) -> Str ! Problem {
   if c.deps.offline {
     return Err(Problem{code: "XO1303", module: path, msg: "${path} ${version} is not in the module cache and the build is offline", notes: ["fetch it once without XO_OFFLINE / --offline (`xo mod tidy` or `xo get ${path}@${version}`), or vendor it with `xo vendor`", "module cache: ${c.deps.cache}"]})
   }
+  // check_dirs_fetching fetches it and checks again; a failed fetch is
+  // the fetcher's problem, as mod.Download reports it
+  let key = "${path}@${version}"
+  if let Some(p) = c.fetch_failed.get(key) {
+    return Err(p)
+  }
+  var seen = false
+  for m in c.fetch_misses {
+    if m == key {
+      seen = true
+    }
+  }
+  if !seen {
+    c.fetch_misses.push(key)
+  }
   if c.unsupported.is_empty() {
     c.unsupported = "fetching ${path} ${version} (the Xo checker reads the module cache, it does not fetch)"
   }

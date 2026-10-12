@@ -205,7 +205,8 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
   // binds a `use go` or `use c` missing from the cache first, as the
   // Go checker does (decision 0178 stage 6)
-  match c.check_dirs_bound(os, o.dirs) {
+  // and fetches a module version missing from the module cache
+  match c.check_dirs_fetching(os, o.dirs, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, o.wd, p, v) }) {
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
   }

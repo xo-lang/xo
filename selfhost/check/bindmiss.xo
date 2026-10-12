@@ -103,3 +103,38 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
   }
   Ok(())
 }
+
+/// check_dirs_bound, fetching first the module versions the run found
+/// missing from the module cache, as the Go checker's mod.Load fetches
+/// them: fetch (selfhost/cli/modules' mod.Download, which this package
+/// cannot import) downloads one version and returns its directory or the
+/// problem, which the next run reports as mod.Load does.
+pub fn (var c: Checker) check_dirs_fetching(os: Os, dirs: List[Str], fetch: fn(Str, Str) -> Str ! Problem uses (fs, proc, net, rand, env)) -> () ! Str uses (fs, proc, net, rand, env) {
+  let fresh = c
+  c.check_dirs_bound(os, dirs)?
+  var failed: Map[Str, Problem] = {}
+  var tried: Set[Str] = #{}
+  for _ in 0..8 {
+    var todo: List[Str] = []
+    for k in c.fetch_misses {
+      if !tried.contains(k) {
+        tried.add(k)
+        todo.push(k)
+      }
+    }
+    if todo.is_empty() {
+      return Ok(())
+    }
+    for k in todo {
+      let at = k.find("@") ?? k.len()
+      match fetch(k[0..at], k[at + 1..k.len()]) {
+        Ok(_) => {}
+        Err(p) => failed[k] = p
+      }
+    }
+    c = fresh
+    c.fetch_failed = failed
+    c.check_dirs_bound(os, dirs)?
+  }
+  Ok(())
+}

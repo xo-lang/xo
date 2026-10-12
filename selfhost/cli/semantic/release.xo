@@ -537,7 +537,15 @@ pub fn publish(os: Os, dir: Str, version: Str, only_check: Bool) -> PublishResul
   }
   // a module in a subdirectory of its repository (decision 0086): its
   // path ends with the directory and its tags carry it as a prefix
-  let sub = subdir_of(top, root)
+  // release subdirOf compares the paths with symbolic links resolved
+  // (filepath.EvalSymlinks: a temporary directory under /var is
+  // /private/var to git on macOS); git names the subdirectory itself
+  var sub = subdir_of(top, root)
+  if sub.is_empty() && top != clean(root) {
+    if let Ok(b) = git(os, root, ["rev-parse", "--show-prefix"]) {
+      sub = (b.to_str() ?? "").trim().trim_suffix("/")
+    }
+  }
   if !sub.is_empty() {
     let (base, _) = check.path_major_suffix(mpath)
     if !base.ends_with("/${sub}") {
