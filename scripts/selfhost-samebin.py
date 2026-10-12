@@ -45,7 +45,7 @@ def one(d):
     b = os.path.join(out, 'go', name, base)
     os.makedirs(os.path.dirname(a), exist_ok=True)
     os.makedirs(os.path.dirname(b), exist_ok=True)
-    r1 = subprocess.run([x1, 'build', '--std=' + os.path.join(root, 'std'), '-o', a, d], capture_output=True, text=True)
+    r1 = subprocess.run([x1, 'build', '--backend=arm64', '--std=' + os.path.join(root, 'std'), '-o', a, d], capture_output=True, text=True)
     if r1.returncode != 0:
         return d, 'xo1 build failed: ' + r1.stderr.strip()[-200:]
     # the Go driver itself, not xo1 (decision 0178 switch point A)

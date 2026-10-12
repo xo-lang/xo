@@ -24,9 +24,9 @@ XO_SELF_DRIVER=0 t "$XO" build --backend=arm64 -o "$DIR/A" selfhost/xo
 echo "== G: the Go emitter's assembly of selfhost/xo (line root selfhost)" >> "$L"
 (cd selfhost && /usr/bin/time -p "../$XO" asmdump xo) > "$DIR/G.s" 2>> "$L"
 echo "== B: A compiles selfhost/xo" >> "$L"
-t "$DIR/A" build -o "$DIR/B" --asm="$DIR/B.s" selfhost/xo
+t "$DIR/A" build --backend=arm64 -o "$DIR/B" --asm="$DIR/B.s" selfhost/xo
 echo "== C: B compiles selfhost/xo" >> "$L"
-t "$DIR/B" build -o "$DIR/C" --asm="$DIR/C.s" selfhost/xo
+t "$DIR/B" build --backend=arm64 -o "$DIR/C" --asm="$DIR/C.s" selfhost/xo
 echo "== compare" >> "$L"
 cmp "$DIR/G.s" "$DIR/B.s" >> "$L" 2>&1 && echo "G.s == B.s" >> "$L"
 cmp "$DIR/B.s" "$DIR/C.s" >> "$L" 2>&1 && echo "B.s == C.s" >> "$L"

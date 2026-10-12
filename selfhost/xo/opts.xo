@@ -19,7 +19,8 @@ struct Opts {
   tzdata: Str = "embedded"
   /// --targets (comma separated os/arch, or all) or xo1's --target.
   targets: Str = ""
-  /// --backend as given ("" when not given; xo1's default is arm64).
+  /// --backend as given ("" when not given: go, or arm64 with --no-gc and
+  /// for asm; main.xo).
   backend: Str = ""
   go_tree: Str = ""
   /// --as and --ld (decision 0182): cc, or macho (selfhost/macho; --ld=macho

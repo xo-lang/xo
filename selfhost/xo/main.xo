@@ -11,7 +11,8 @@
 //   xo1 keys [--std=DIR] [--cc=CC]       the cache keys, to compare
 //
 // The flags are `xo build|run|test`'s with Go's flag rules (opts.xo):
-// --backend=arm64|llvm|go|wasm (xo1's default is arm64; cmd/xo's is go),
+// --backend=arm64|llvm|go|wasm (the default is go as in cmd/xo; arm64
+// with --no-gc and for asm),
 // --targets, -o, --json, --release, --error-args, --no-mono,
 // --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore,
 // --record, --run, --cases, -v, --real, --offline, --workspace; and
@@ -93,9 +94,12 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo build: --error-args=false needs --release (debug builds always record parameters)")
     os.proc.exit(2)
   }
+  // the default backend is `xo`'s (cmd/xo backendFlag): go for build,
+  // run, and test, the host's native backend (arm64: xo1 runs on arm64
+  // hosts only) with --no-gc; asm prints the arm64 assembly
   var backend = o.backend
   if backend.is_empty() {
-    backend = "arm64"
+    backend = if o.no_gc || o.cmd == "asm" { "arm64" } else { "go" }
   }
   if o.hybrid {
     if backend != "go" {
