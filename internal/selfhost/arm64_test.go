@@ -35,7 +35,9 @@ func arm64Heavy(d string) bool { return mergeHeavy(d) || d == "selfhost/parser" 
 // later stage) are counted, not compared; a run with no function skipped
 // must be identical byte for byte as a whole file. The merge tier takes every second run and
 // leaves arm64Heavy to the full tier; -short every 25th; the go backend
-// only except in the full tier. XO_SELFHOST_BACKEND names one backend,
+// only except in the full tier. XO_SELFHOST_DIRS=<texts> takes the runs
+// whose directory contains one of the comma separated texts instead.
+// XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_KEEP=<dir> writes arm64-<backend>.txt (the counts).
 func TestSelfhostArm64(t *testing.T) {
 	backends := tierBackends(t)
@@ -47,6 +49,17 @@ func TestSelfhostArm64(t *testing.T) {
 	var dirs []string
 	step := byTier(t, 25, 2, 1)
 	for i, d := range all {
+		if v := os.Getenv("XO_SELFHOST_DIRS"); v != "" {
+			// the runs whose directory contains one of the comma
+			// separated texts (a development loop, as TestSelfhostSSA)
+			for _, w := range strings.Split(v, ",") {
+				if strings.Contains(d, w) {
+					dirs = append(dirs, d)
+					break
+				}
+			}
+			continue
+		}
 		if i%step != 0 || (selfhostTier(t) != tierFull && arm64Heavy(d)) {
 			continue
 		}

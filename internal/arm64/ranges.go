@@ -82,9 +82,10 @@ func satMul(a, b int64) int64 {
 }
 
 // computeRanges fills s.ranges for f's Int values (blocks in reverse
-// postorder).
-func (s *fstate) computeRanges(blocks []*ssa.Block) {
+// postorder, idom their immediate dominators).
+func (s *fstate) computeRanges(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 	s.ranges = map[*ssa.Value]interval{}
+	mids := midpoints(blocks, idom)
 	// thresholds for widening
 	ups := []int64{0, math.MaxInt64}
 	downs := []int64{0, math.MinInt64}
@@ -186,7 +187,16 @@ func (s *fstate) computeRanges(blocks []*ssa.Block) {
 				if v.Type == nil || v.Type.Kind != ssa.KInt || v.Op == ssa.OpConst {
 					continue
 				}
-				if r, ok := s.rangeOf(v, get); ok {
+				r, ok := s.rangeOf(v, get)
+				if ab, isMid := mids[v]; ok && isMid {
+					// a <= m < b (decision 0184)
+					ra, ok1 := get(ab[0])
+					rb, ok2 := get(ab[1])
+					if ok1 && ok2 && rb.hi > math.MinInt64 {
+						r.lo, r.hi = max(r.lo, ra.lo), min(r.hi, rb.hi-1)
+					}
+				}
+				if ok {
 					set(v, r)
 				}
 			}
@@ -196,6 +206,82 @@ func (s *fstate) computeRanges(blocks []*ssa.Block) {
 		}
 	}
 	s.ranges = map[*ssa.Value]interval{} // did not settle: know nothing
+}
+
+// midpoints finds the values m = a + (b - a) / 2 (or `>> 1`) computed
+// where a < b holds: in a block dominated by one entered only by the
+// edge of a branch that tests a < b (decision 0184). Then a <= m < b,
+// the step of a binary search, which an interval of m alone cannot say
+// (it bounds the search's ends by each other).
+func midpoints(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) map[*ssa.Value][2]*ssa.Value {
+	out := map[*ssa.Value][2]*ssa.Value{}
+	for _, b := range blocks {
+		for _, v := range b.Instrs {
+			lo, hi, ok := midOf(v)
+			if !ok {
+				continue
+			}
+			for d := b; d != nil; d = idom[d] {
+				if lessOnEntry(d, lo, hi) {
+					out[v] = [2]*ssa.Value{lo, hi}
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+// midOf matches v = a + (b - a) / 2 (or `>> 1`, either operand order of
+// the add).
+func midOf(v *ssa.Value) (a, b *ssa.Value, ok bool) {
+	if v.Op != ssa.OpAdd || v.Type == nil || v.Type.Kind != ssa.KInt {
+		return nil, nil, false
+	}
+	for k := 0; k < 2; k++ {
+		x, h := v.Args[k], v.Args[1-k]
+		half := false
+		if len(h.Args) == 2 {
+			if n, isK := constInt(h.Args[1]); isK {
+				half = h.Op == ssa.OpDiv && n == 2 || h.Op == ssa.OpShr && n == 1
+			}
+		}
+		if !half {
+			continue
+		}
+		if d := h.Args[0]; d.Op == ssa.OpSub && d.Args[1] == x {
+			return x, d.Args[0], true
+		}
+	}
+	return nil, nil, false
+}
+
+// lessOnEntry reports whether block d is entered only by the edge of a
+// branch on which a < b holds.
+func lessOnEntry(d *ssa.Block, a, b *ssa.Value) bool {
+	if len(d.Preds) != 1 {
+		return false
+	}
+	t := d.Preds[0].From.Term()
+	if t == nil || t.Op != ssa.OpBranch {
+		return false
+	}
+	yes, no := t.Succs[0].To == d, t.Succs[1].To == d
+	if yes == no {
+		return false
+	}
+	c := t.Args[0]
+	if len(c.Args) != 2 {
+		return false
+	}
+	x, y := c.Args[0], c.Args[1]
+	switch {
+	case yes && c.Op == ssa.OpLt, no && c.Op == ssa.OpGe:
+		return x == a && y == b
+	case yes && c.Op == ssa.OpGt, no && c.Op == ssa.OpLe:
+		return x == b && y == a
+	}
+	return false
 }
 
 // rangeOf computes the interval of v from its operands' (false while an
@@ -286,8 +372,11 @@ func (s *fstate) rangeOf(v *ssa.Value, get func(*ssa.Value) (interval, bool)) (i
 		return interval{-a.hi, -a.lo}, true
 	case ssa.OpCall:
 		switch v.Aux {
-		case "list.len", "Str.len":
+		case "list.len":
 			return interval{0, math.MaxInt64}, true
+		case "Str.len":
+			// bytes in memory (decision 0184): an address space of 2^48
+			return interval{0, maxStrLen}, true
 		case "bytes.index":
 			return interval{0, 255}, true
 		}
@@ -296,6 +385,9 @@ func (s *fstate) rangeOf(v *ssa.Value, get func(*ssa.Value) (interval, bool)) (i
 	}
 	return fullInterval, true
 }
+
+// maxStrLen bounds the length of a Str or Bytes value.
+const maxStrLen = 1 << 48
 
 // ssaRange returns the interval of Int value v.
 func (s *fstate) ssaRange(v *ssa.Value) interval {

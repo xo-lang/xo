@@ -22,6 +22,7 @@ fn (var g: G) function(fi: Int) {
   // a jump table's addresses are data in the text section
   g.jump_tables()
   g.dce()
+  g.live_dce()
   g.select_compares()
   g.hoist_consts()
   g.reuse_flags()
@@ -424,7 +425,7 @@ fn (var g: G) isel() {
   let ptrs = g.plan_held()
   let idom = dominators_of(g.f, blocks)
   g.plan_lsr(blocks, idom)
-  g.compute_ranges(blocks)
+  g.compute_ranges(blocks, idom)
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})
@@ -463,7 +464,13 @@ fn (var g: G) isel() {
       g.drop_memo()
     } else {
       let preds = g.f.blocks[b].preds
-      if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
+      let (jp, jc, jtruth, jok) = g.join_source(b)
+      if jok {
+        // b is reached from jp through a join that only branches on the
+        // Bool jp passes (`a && b`, decision 0184)
+        g.inherit(g.end_memo[jp])
+        g.cond_facts(jc, jtruth)
+      } else if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
         // the only predecessor dominates b: what it computed holds
         g.inherit(g.end_memo[g.f.edges[preds[0]].from])
         g.branch_facts(b)
@@ -783,6 +790,20 @@ fn (var g: G) instr1(v: Int) {
         Or => "orr"
         _ => "eor"
       }
+      var p = x.args[0]
+      var q = x.args[1]
+      let (_, pc) = g.const_int(p)
+      if pc {
+        p = x.args[1]
+        q = x.args[0]
+      }
+      let (n, qc) = g.const_int(q)
+      if qc && ones_run(n) {
+        // a logical immediate (decision 0184)
+        let w = g.word(p)
+        g.set(v, [g.def1(false, "${ins} $d0, $u0, #${n}", [w])])
+        return
+      }
       let a = g.word(x.args[0])
       let b = g.word(x.args[1])
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
@@ -1074,7 +1095,7 @@ fn (var g: G) add_sub(v: Int) {
   if bconst && checked && g.safe_add(a, n0, x.op) {
     checked = false // the bounds of a prove it
   }
-  let flag = if checked { "s" } else { "" }
+  var flag = if checked { "s" } else { "" }
   if bconst && (imm12(n0) || (n0 != MIN_INT && imm12(-n0))) {
     var o = ins
     var n = n0
@@ -1100,6 +1121,14 @@ fn (var g: G) add_sub(v: Int) {
     g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
     g.offset_facts(v, a, n0)
     return
+  }
+  if checked {
+    let (alo, ahi) = g.bounds(a)
+    let (blo, bhi) = g.bounds(b)
+    if safe_add_range(x.op, alo, ahi, blo, bhi) {
+      checked = false
+      flag = ""
+    }
   }
   let av = g.word(a)
   let bv = g.word(b)
@@ -1244,7 +1273,7 @@ fn (var g: G) shift(v: Int) {
       return
     }
     let r = g.def1(false, "lsl $d0, $u0, #${k}", [a])
-    if !x.pos.is_empty() {
+    if !x.pos.is_empty() && !g.safe_shl(x.args[0], k) {
       let back = g.def1(false, "asr $d0, $u0, #${k}", [r])
       let l = g.loc_label(x.pos)
       g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k), symsrc(l)])
@@ -1253,7 +1282,8 @@ fn (var g: G) shift(v: Int) {
     return
   }
   let b = g.word(x.args[1])
-  if !x.pos.is_empty() {
+  let (klo, khi) = g.bounds(x.args[1])
+  if !x.pos.is_empty() && (klo < 0 || khi > 63) {
     let l = g.loc_label(x.pos)
     g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b), symsrc(l)])
   }
@@ -1262,12 +1292,36 @@ fn (var g: G) shift(v: Int) {
     return
   }
   let r = g.def1(false, "lsl $d0, $u0, $u1", [a, b])
-  if !x.pos.is_empty() {
+  if !x.pos.is_empty() && !(klo >= 0 && khi <= 63 && g.safe_shl(x.args[0], khi)) {
     let back = g.def1(false, "asr $d0, $u0, $u1", [r, b])
     let l = g.loc_label(x.pos)
     g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b), symsrc(l)])
   }
   g.set(v, [r])
+}
+
+/// Whether n > 0 is one run of ones, a value every logical instruction
+/// takes as an immediate (isel.go onesRun).
+fn ones_run(n0: Int) -> Bool {
+  if n0 <= 0 {
+    return false
+  }
+  var n = n0
+  while (n & 1) == 0 {
+    n = n >> 1
+  }
+  n == MAX_INT || (n & (n + 1)) == 0
+}
+
+/// Whether a << k cannot overflow for every k in [0, khi] (khi <= 63):
+/// a's bounds fit in 63 - khi bits and a sign (decision 0184).
+fn (var g: G) safe_shl(a: Int, khi: Int) -> Bool {
+  if khi == 0 {
+    return true
+  }
+  let (lo, hi) = g.bounds(a)
+  let lim = 1 << (63 - khi)
+  lo >= -lim && hi <= lim - 1
 }
 
 /// The words of variant tag of enum t.
