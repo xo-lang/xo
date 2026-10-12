@@ -202,6 +202,8 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 				c.writeVar(vo, f.Params()[i+1])
 			}
 		}
+		c.polls = s.polls
+		c.poll()
 		v := c.block(x.Body)
 		c.ret(v, x.Body)
 		c.finishFn()

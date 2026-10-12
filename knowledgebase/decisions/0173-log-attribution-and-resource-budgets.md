@@ -1,7 +1,8 @@
 # 0173: Log attribution and resource budgets
 
 Status: Accepted, implemented (2026-10-11): log attribution on every
-backend; resource budgets on the Go backend (native XO1201 planned).
+backend; resource budgets on the Go backend, and natively since decision
+0175 (2026-10-12).
 Follow-ups of decision 0156 ("left / future" in
 `bench/results/supply-chain-2026-10-11.md`).
 

@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds (arm64, LLVM, `--no-gc`) have `Net.only` and
+  `task.with_budget` (decision 0175): a `Net` carries its attenuation
+  lists, and dial, listen, each HTTP request and redirect of a client
+  made from it are checked (`sql.open` refuses an attenuated `Net`);
+  `with_budget` bounds steps, running time, and allocation (counted
+  exactly per task) through polls at loop iterations and at the entry of
+  the program's functions, in programs that call it. Output is the Go
+  backend's (goldens `net_only`, `task_budget`, `test_net_only`); the
+  supply-chain replication's run time rows also block natively.
+
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by

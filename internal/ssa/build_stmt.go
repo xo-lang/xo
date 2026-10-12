@@ -121,17 +121,17 @@ func (s *fn) stmt(st ast.Stmt) {
 
 // loopBound starts the iteration counter of a loop with `bound N` (core
 // 3.5, decision 0133); the function it returns, called at the start of
-// each iteration, counts and faults with XO-F006 past N. Without a bound
-// both do nothing.
+// each iteration, counts and faults with XO-F006 past N, then polls the
+// budget (build_budget.go). Without a bound it only polls.
 func (s *fn) loopBound(bound ast.Expr) func() {
 	if bound == nil {
-		return func() {}
+		return s.poll
 	}
 	b := s.b
 	n, ok := b.info.LoopBound(bound)
 	if !ok {
 		b.unsupported(bound, "this loop bound")
-		return func() {}
+		return s.poll
 	}
 	intT, boolT := b.mod.Builtin(KInt), b.mod.Builtin(KBool)
 	cnt := &check.VarObj{Name: "$bound"}
@@ -146,6 +146,7 @@ func (s *fn) loopBound(bound ast.Expr) func() {
 		s.cur = over
 		s.fault(s.add(OpConst, b.mod.Builtin(KStr), msg), pos)
 		s.cur = ok
+		s.poll()
 	}
 }
 

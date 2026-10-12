@@ -1,8 +1,8 @@
 // std/task for the native backends (decision 0074): Semaphore, Once,
 // map_concurrent, and map_concurrent_until in Xo over channels, mutexes,
-// and scopes. The rest of std/task (isolate, with_timeout, is_canceled,
-// stop_requested, stopping, Group) is lowered by internal/ssa
-// (build_conc.go). Semantics and fault texts are std/rt's (sync.go,
+// and scopes. The rest of std/task (isolate, with_timeout, with_budget,
+// is_canceled, stop_requested, stopping, Group) is lowered by internal/ssa
+// (build_conc.go, build_budget.go). Semantics and fault texts are std/rt's (sync.go,
 // once.go).
 use std/task
 use native/rt
@@ -129,3 +129,7 @@ fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: 
   }
   out
 }
+
+/// task.budget (decision 0175): the ceilings task.with_budget takes,
+/// lowered by internal/ssa (build_budget.go).
+fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> task.Budget { task.Budget{cpu: cpu, alloc: alloc, steps: steps} }

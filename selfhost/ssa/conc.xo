@@ -629,6 +629,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   match key {
     "task.is_canceled" => return b.rt("is_canceled", bt, [])
     "task.with_timeout" => return b.with_timeout(x, fo)
+    "task.with_budget" => return b.with_budget(x, fo)
     "task.stop_requested" => return b.rt("stop_requested", bt, [])
     "task.stopping" => {
       let dl = b.drop_list(b.m.types[nt].elems[0])

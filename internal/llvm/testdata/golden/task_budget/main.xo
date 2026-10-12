@@ -1,0 +1,93 @@
+// Resource budgets on the native backends (decisions 0173 and 0175):
+// task.with_budget bounds pure loops, recursion, allocation, and the
+// tasks a budgeted call starts; a call within its budget returns its
+// value, and a failure stays a failure. internal/gen's golden `budget`,
+// plus a budget without ceilings, a deadline around a budget, a
+// recursion through a function value, and a negative ceiling.
+use std/task
+
+fn spin() -> Int {
+  var i = 0
+  while true {
+    i += 1
+  }
+  i
+}
+
+fn fib(n: Int) -> Int {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+fn hog() -> Int {
+  var xs: List[Str] = []
+  while true {
+    xs.push("a string that takes some room ${xs.len()}")
+  }
+  xs.len()
+}
+
+fn sum(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += i
+  }
+  s
+}
+
+fn show[E: Display](r: Result[Int, task.Budgeted[E]]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(task.Budgeted.Exceeded(resource)) => "exceeded ${resource}"
+    Err(task.Budgeted.Failed(e)) => "failed ${e}"
+  }
+}
+
+fn main(os: Os) {
+  // a pure infinite loop: steps, then running time
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 100000), fn() -> Int { spin() })))
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(cpu: 50ms), fn() -> Int { spin() })))
+  // exponential recursion without a loop
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 100000), fn() -> Int { fib(60) })))
+  // allocation
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(alloc: 8_000_000), fn() -> Int { hog() })))
+  // tasks started inside share the budget
+  let r = task.with_budget(os.clock, task.budget(steps: 100000), fn() -> Int {
+    scope s {
+      s.spawn(fn() -> Int { spin() })
+      s.spawn(fn() -> Int { spin() })
+    }
+    1
+  })
+  os.stdio.println(show(r))
+  // within the budget: the value
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 1_000_000, cpu: 10s), fn() -> Int { sum(1000) })))
+  // a failure is Failed
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 1000), fn() -> Int ! Str { Err("bad input") })))
+  // nested: the inner, smaller budget passes first
+  let outer = task.with_budget(os.clock, task.budget(steps: 1_000_000), fn() -> Str {
+    show(task.with_budget(os.clock, task.budget(steps: 1000), fn() -> Int { spin() }))
+  })
+  match outer {
+    Ok(inner) => os.stdio.println("outer ok, inner ${inner}")
+    Err(e) => os.stdio.println("outer ${e}")
+  }
+  // no ceiling: f runs to the end
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(), fn() -> Int { sum(100) })))
+  // a deadline around a budget: the budgeted loop is a cancellation point
+  match task.with_timeout(os.clock, 30ms, fn() -> Str {
+    show(task.with_budget(os.clock, task.budget(steps: 1_000_000_000_000), fn() -> Int { spin() }))
+  }) {
+    Ok(s) => os.stdio.println("deadline: ${s}")
+    Err(e) => os.stdio.println("deadline: ${e}")
+  }
+  // recursion through a function value
+  let f: fn(Int) -> Int = fib
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: 50000), fn() -> Int { f(70) })))
+  // after a budget, the program goes on unbudgeted
+  os.stdio.println("sum ${sum(10)}")
+  // a negative ceiling faults
+  os.stdio.println(show(task.with_budget(os.clock, task.budget(steps: -1), fn() -> Int { 1 })))
+}

@@ -232,11 +232,11 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   b.m.funcs[fi].captures = cap_ts
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false, polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 
-fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool) {
+fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool, polls: Bool) {
   let saved = b.begin(fi, file)
   b.s.res = result
   b.s.err_t = err_t
@@ -265,6 +265,8 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
       }
     }
   }
+  b.s.polls = polls
+  b.poll()
   let v = b.block(lit.body)
   b.ret_at(v, Some(Expr.Block(b: lit.body)))
   b.finish_fn()
