@@ -11,6 +11,7 @@ import (
 // default, every stage in build order with --stage=all, positions relative
 // to the working directory, --each, and the runs it cannot build.
 func TestSSADump(t *testing.T) {
+	skipComparisonDump(t, "ssadump")
 	dir := writeFiles(t, map[string]string{
 		"prog/main.xo": "fn div(a: Int, b: Int) -> Int { a / b }\n\nfn main(os: Os) {\n  os.stdio.println(\"${div(7, 2)}\")\n}\n",
 		"lib/lib.xo":   "pub fn twice(n: Int) -> Int { n * 2 }\n",

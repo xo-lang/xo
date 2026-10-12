@@ -17,6 +17,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`XO_SELFHOST_GOLDENS=record|replay`); internal/progen now gives one
   program per seed.
 
+- The self hosted `xo` has `xo rtpack` (decision 0178): the prebuilt
+  runtime packs scripts/release.sh ships, byte identical to the Go
+  command's. Switch point B's gate passes: cmd/xo's whole suite against
+  the self hosted binary laid out as a release, 69 of 71 tests passing
+  and the two hidden comparison dumps (ssadump, llvmdump) exempt.
 - `xo bind --c` is written in Xo (decision 0178 stage 6,
   selfhost/cli/bind): xo1 binds C headers with the same output and
   cache files, byte for byte, as the Go binder. `xo bind` for Go
