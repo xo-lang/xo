@@ -533,7 +533,7 @@ func h2Dial(addr string, p *testPKI) (*h2conn, error) {
 	h.write([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
 	h.frame(4, 0, 0, nil) // SETTINGS
 	// the server's SETTINGS, acknowledged: its streams limit applies
-	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	c.SetReadDeadline(time.Now().Add(h2EventsMax))
 	for {
 		typ, flags, _, _, err := h.read()
 		if err != nil {
@@ -683,15 +683,50 @@ func h2Status(b []byte) string {
 	return fmt.Sprintf("literal 0x%02x", b[0])
 }
 
-// events reads frames until the connection ends or d passes: what the
-// server sent, per stream in the order of their ids (DATA summed), then
-// on the connection (GOAWAY, PING acknowledgments) and how it ended.
-// SETTINGS, WINDOW_UPDATE, and SETTINGS acknowledgments are left out.
-// Frames of different streams may interleave in any order, so only the
-// order within a stream counts.
-func (h *h2conn) events(d time.Duration) string {
+// h2EventsMax bounds how long events waits for the frames a case expects:
+// a server that hangs still fails, a slow one (a loaded machine) does not.
+const h2EventsMax = 30 * time.Second
+
+// events reads frames and reports what the server sent, per stream in
+// the order of their ids (DATA summed), then on the connection (GOAWAY,
+// PING acknowledgments) and how it ended. SETTINGS, WINDOW_UPDATE, and
+// SETTINGS acknowledgments are left out. Frames of different streams may
+// interleave in any order, so only the order within a stream counts.
+//
+// It reads until the connection ends, or until d has passed and the
+// reply is complete: something came, every stream it names has ended
+// (END or RST_STREAM), no GOAWAY came (the connection then closes), and
+// the report holds every string of until (the streams a case needs).
+// When the reply completes after d, it reads d more for the frames that
+// follow it. So the result never depends on how fast the server is
+// (TestH2Diff printed "open" for a RST_STREAM that came late under
+// load). Past h2EventsMax it stops ("open").
+func (h *h2conn) events(d time.Duration, until ...string) string {
 	defer h.c.Close()
-	h.c.SetReadDeadline(time.Now().Add(d))
+	h.c.SetReadDeadline(time.Now().Add(h2EventsMax))
+	type frame struct {
+		typ, flags byte
+		sid        uint32
+		p          []byte
+		err        error
+	}
+	frames := make(chan frame, 64)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			var f frame
+			f.typ, f.flags, f.sid, f.p, f.err = h.read()
+			select {
+			case frames <- f:
+			case <-stop:
+				return
+			}
+			if f.err != nil {
+				return
+			}
+		}
+	}()
 	streams := map[uint32][]string{}
 	data := map[uint32]int{}
 	var conn []string
@@ -704,66 +739,116 @@ func (h *h2conn) events(d time.Duration) string {
 			streams[sid] = append(streams[sid], e)
 		}
 	}
+	report := func(end string) string {
+		ids := map[uint32]bool{}
+		for sid := range streams {
+			ids[sid] = true
+		}
+		for sid := range data {
+			ids[sid] = true
+		}
+		var sorted []int
+		for sid := range ids {
+			sorted = append(sorted, int(sid))
+		}
+		sort.Ints(sorted)
+		var out []string
+		for _, sid := range sorted {
+			evs := streams[uint32(sid)]
+			if n, ok := data[uint32(sid)]; ok {
+				evs = append(evs[:len(evs):len(evs)], fmt.Sprintf("DATA %d", n))
+			}
+			out = append(out, fmt.Sprintf("%d[%s]", sid, strings.Join(evs, " ")))
+		}
+		out = append(out, conn...)
+		out = append(out, end)
+		return strings.Join(out, ", ")
+	}
+	met := func() bool {
+		if len(streams)+len(data)+len(conn) == 0 || len(data) > 0 {
+			return false // nothing yet, or a body without its end
+		}
+		for _, evs := range streams {
+			last := evs[len(evs)-1]
+			if !strings.HasSuffix(last, "END") && !strings.HasPrefix(last, "RST_STREAM") {
+				return false
+			}
+		}
+		for _, e := range conn {
+			if strings.HasPrefix(e, "GOAWAY") {
+				return false
+			}
+		}
+		r := report("")
+		for _, u := range until {
+			if !strings.Contains(r, u) {
+				return false
+			}
+		}
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	waiting := false // d has passed, until is not met yet
 	end := ""
-	for {
-		typ, flags, sid, p, err := h.read()
-		if err != nil {
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
+	for end == "" {
+		select {
+		case <-timer.C:
+			if met() {
 				end = "open"
 			} else {
-				end = "closed"
+				waiting = true
 			}
-			break
+			continue
+		case f := <-frames:
+			if f.err != nil {
+				var ne net.Error
+				if errors.As(f.err, &ne) && ne.Timeout() {
+					end = "open"
+				} else {
+					end = "closed"
+				}
+				continue
+			}
+			switch f.typ {
+			case 0:
+				data[f.sid] += len(f.p)
+				if f.flags&1 != 0 {
+					add(f.sid, "END")
+				}
+			case 1:
+				blk := f.p
+				if f.flags&8 != 0 {
+					blk = blk[1 : len(blk)-int(f.p[0])]
+				}
+				if f.flags&0x20 != 0 {
+					blk = blk[5:]
+				}
+				e := "HEADERS " + h2Status(blk)
+				if f.flags&1 != 0 {
+					e += " END"
+				}
+				add(f.sid, e)
+			case 3:
+				add(f.sid, "RST_STREAM "+h2Code(binary.BigEndian.Uint32(f.p)))
+			case 6:
+				if f.flags&1 != 0 {
+					conn = append(conn, fmt.Sprintf("PING ACK %q", f.p))
+				}
+			case 7:
+				e := fmt.Sprintf("GOAWAY last=%d %s", binary.BigEndian.Uint32(f.p)&0x7fffffff, h2Code(binary.BigEndian.Uint32(f.p[4:])))
+				if len(f.p) > 8 {
+					e += fmt.Sprintf(" %q", f.p[8:])
+				}
+				conn = append(conn, e)
+			}
+			if waiting && met() {
+				waiting = false
+				timer.Reset(d)
+			}
 		}
-		switch typ {
-		case 0:
-			data[sid] += len(p)
-			if flags&1 != 0 {
-				add(sid, "END")
-			}
-		case 1:
-			blk := p
-			if flags&8 != 0 {
-				blk = blk[1 : len(blk)-int(p[0])]
-			}
-			if flags&0x20 != 0 {
-				blk = blk[5:]
-			}
-			e := "HEADERS " + h2Status(blk)
-			if flags&1 != 0 {
-				e += " END"
-			}
-			add(sid, e)
-		case 3:
-			add(sid, "RST_STREAM "+h2Code(binary.BigEndian.Uint32(p)))
-		case 6:
-			if flags&1 != 0 {
-				conn = append(conn, fmt.Sprintf("PING ACK %q", p))
-			}
-		case 7:
-			e := fmt.Sprintf("GOAWAY last=%d %s", binary.BigEndian.Uint32(p)&0x7fffffff, h2Code(binary.BigEndian.Uint32(p[4:])))
-			if len(p) > 8 {
-				e += fmt.Sprintf(" %q", p[8:])
-			}
-			conn = append(conn, e)
-		}
 	}
-	var ids []int
-	for sid := range data {
-		add(sid, "")
-	}
-	for sid := range streams {
-		ids = append(ids, int(sid))
-	}
-	sort.Ints(ids)
-	var out []string
-	for _, sid := range ids {
-		out = append(out, fmt.Sprintf("%d[%s]", sid, strings.Join(streams[uint32(sid)], " ")))
-	}
-	out = append(out, conn...)
-	out = append(out, end)
-	return strings.Join(out, ", ")
+	return report(end)
 }
 
 // probeH2Raw sends raw frames to the program's server and reports what
@@ -894,10 +979,15 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 		{"window update on an idle stream", func(h *h2conn) { h.frame(8, 0, 9, u32(1)) }, 0},
 		{"window update of 3 bytes", func(h *h2conn) { h.frame(8, 0, 0, []byte{0, 0, 1}) }, 0},
 		{"data over the window", func(h *h2conn) {
+			// both servers give received bytes back (as the handler reads
+			// them, or at once) but hold back less than 4 KiB (inflow), so
+			// after 4095 bytes both windows (1 MiB) have 1 MiB - 4095 left
+			// whatever the timing; the next frame is 1 byte over them.
+			// (65 frames of 16 KiB raced the server's handler: the Go
+			// backend reset the stream only when its handler fell behind.)
 			h.headers(1, false, h2Req("POST", "/echo")...)
-			for i := 0; i < 65; i++ {
-				h.frame(0, 0, 1, make([]byte, 16384))
-			}
+			h.frame(0, 0, 1, make([]byte, 4095))
+			h.frame(0, 0, 1, make([]byte, 1<<20-4095+1))
 		}, 0},
 		{"small window", func(h *h2conn) {
 			// the server sends 64 KiB, then waits for WINDOW_UPDATE
@@ -951,8 +1041,13 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 		}, 0},
 	}
 	// the cases run at once, each on a connection of its own; a case
-	// reads for 1.5 s (a connection error closes a second after its
-	// GOAWAY)
+	// reads for 1.5 s and until its reply is complete (events), so a
+	// late frame under load still counts. needs names the streams a
+	// case waits for when they may answer in any order.
+	needs := map[string][]string{
+		"two streams":         {"1[", "3["},
+		"hpack dynamic table": {"1[", "3["},
+	}
 	res := make([]string, len(cases))
 	var wg sync.WaitGroup
 	for i, rc := range cases {
@@ -980,7 +1075,7 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 			if wait == 0 {
 				wait = 1500 * time.Millisecond
 			}
-			res[i] = h.events(wait)
+			res[i] = h.events(wait, needs[rc.name]...)
 		}()
 	}
 	wg.Wait()
