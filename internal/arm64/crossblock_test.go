@@ -99,22 +99,24 @@ func TestThreadCsetAssumptions(t *testing.T) {
 		jcond string
 		self  bool // j is p
 		fires bool
+		later bool // a successor of j reads r too
 	}
 	cset := func(text string) *inst {
 		return &inst{kind: iPlain, text: text, defs: []vreg{c}, uses: []vreg{a, b}}
 	}
 	cases := []tc{
-		{"fires", cset("cmp $u0, $u1\ncset $d0, lt"), c, "cbnz", false, true},
-		{"float compare", cset("fcmp $u0, $u1\nfccmp $u0, $u1, #0, vc\ncset $d0, mi"), c, "cbnz", false, true},
+		{"fires", cset("cmp $u0, $u1\ncset $d0, lt"), c, "cbnz", false, true, false},
+		{"r read later", cset("cmp $u0, $u1\ncset $d0, lt"), c, "cbnz", false, true, true},
+		{"float compare", cset("fcmp $u0, $u1\nfccmp $u0, $u1, #0, vc\ncset $d0, mi"), c, "cbnz", false, true, false},
 		// broken: r is not the Bool the compare made
-		{"other register", cset("cmp $u0, $u1\ncset $d0, lt"), o, "cbnz", false, false},
+		{"other register", cset("cmp $u0, $u1\ncset $d0, lt"), o, "cbnz", false, false, false},
 		// broken: the Bool is not just the cset of the flags
-		{"csel after", cset("cmp $u0, $u1\ncset $d0, lt\ncsel $d0, $u0, $d0, eq"), c, "cbnz", false, false},
-		{"no cset", cset("add $d0, $u0, $u1"), c, "cbnz", false, false},
+		{"csel after", cset("cmp $u0, $u1\ncset $d0, lt\ncsel $d0, $u0, $d0, eq"), c, "cbnz", false, false, false},
+		{"no cset", cset("add $d0, $u0, $u1"), c, "cbnz", false, false, false},
 		// broken: j tests r another way
-		{"tbz", cset("cmp $u0, $u1\ncset $d0, lt"), c, "tbz", false, false},
+		{"tbz", cset("cmp $u0, $u1\ncset $d0, lt"), c, "tbz", false, false, false},
 		// broken: j is p (a loop)
-		{"self", cset("cmp $u0, $u1\ncset $d0, lt"), c, "cbnz", true, false},
+		{"self", cset("cmp $u0, $u1\ncset $d0, lt"), c, "cbnz", true, false, false},
 	}
 	for _, k := range cases {
 		t.Run(k.name, func(t *testing.T) {
@@ -130,6 +132,9 @@ func TestThreadCsetAssumptions(t *testing.T) {
 				j.insts = []*inst{jt}
 			}
 			tt.insts, ff.insts = []*inst{ret()}, []*inst{ret()}
+			if k.later {
+				tt.insts = []*inst{{kind: iPlain, text: "str $u0, [sp]", uses: []vreg{r}}, ret()}
+			}
 			s := newFstate(6, p, j, tt, ff)
 			before := k.def.text
 			s.threadCset()
@@ -152,9 +157,12 @@ func TestThreadCsetAssumptions(t *testing.T) {
 			if len(term.uses) != 2 || term.uses[0] != a || term.uses[1] != b {
 				t.Errorf("branch uses %v, want the compare's", term.uses)
 			}
-			// the move into r stays: j's successors may read it
-			if mv := p.insts[len(p.insts)-2]; mv.kind != iPmove || mv.defs[0] != r {
-				t.Errorf("the move into r was dropped")
+			// the move into r stays when j's successors read it, and goes
+			// when only j's branch did (decision 0184)
+			mv := p.insts[len(p.insts)-2]
+			kept := mv.kind == iPmove && len(mv.defs) > 0 && mv.defs[0] == r
+			if kept != k.later {
+				t.Errorf("the move into r kept %v, want %v", kept, k.later)
 			}
 		})
 	}

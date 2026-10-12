@@ -79,7 +79,7 @@ func (m *Module) verifyRC(f *Func) []string {
 		switch r.kind(l.root) {
 		case rkBorrowed:
 			return true
-		case rkProj:
+		case rkProj, rkBProj:
 			if st[l] > 0 {
 				return true
 			}

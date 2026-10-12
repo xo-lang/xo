@@ -247,48 +247,7 @@ fn (var a: Asm) unwind_sections() {
     } else {
       body.uleb(0)
     }
-    // the instructions, each after an advance to its offset
-    var loc = f.start
-    for c in f.insts {
-      let delta2 = c.at - loc
-      if delta2 > 0 {
-        if delta2 < 64 {
-          body.u8(0x40 | delta2)
-        } else if delta2 < 256 {
-          body.u8(0x02)
-          body.u8(delta2)
-        } else if delta2 < 65536 {
-          body.u8(0x03)
-          body.u16(delta2)
-        } else {
-          body.u8(0x04)
-          body.u32(delta2)
-        }
-        loc = c.at
-      }
-      if c.op == 0 {
-        // DW_CFA_def_cfa
-        body.u8(0x0c)
-        body.uleb(c.reg)
-        body.uleb(c.off)
-      } else {
-        let fo = c.off / -8
-        if fo < 0 {
-          // DW_CFA_offset_extended_sf
-          body.u8(0x11)
-          body.uleb(c.reg)
-          body.sleb(fo)
-        } else if c.reg < 64 {
-          body.u8(0x80 | c.reg)
-          body.uleb(fo)
-        } else {
-          // DW_CFA_offset_extended
-          body.u8(0x05)
-          body.uleb(c.reg)
-          body.uleb(fo)
-        }
-      }
-    }
+    cfa_insts(body, f, -8)
     // padded with DW_CFA_nop so the next entry is 8 byte aligned
     while (start + 4 + body.n) % 8 != 0 {
       body.u8(0)
@@ -299,6 +258,52 @@ fn (var a: Asm) unwind_sections() {
   a.sects[eh].bytes = o.done()
   a.sects[eh].size = a.sects[eh].bytes.len()
   a.sects[eh].relocs = relocs
+}
+
+/// The call frame instructions of f, each after an advance to its
+/// offset; register offsets factored by the data alignment factor.
+fn cfa_insts(var body: Out, f: Frame, factor: Int) {
+  var loc = f.start
+  for c in f.insts {
+    let delta2 = c.at - loc
+    if delta2 > 0 {
+      if delta2 < 64 {
+        body.u8(0x40 | delta2)
+      } else if delta2 < 256 {
+        body.u8(0x02)
+        body.u8(delta2)
+      } else if delta2 < 65536 {
+        body.u8(0x03)
+        body.u16(delta2)
+      } else {
+        body.u8(0x04)
+        body.u32(delta2)
+      }
+      loc = c.at
+    }
+    if c.op == 0 {
+      // DW_CFA_def_cfa
+      body.u8(0x0c)
+      body.uleb(c.reg)
+      body.uleb(c.off)
+    } else {
+      let fo = c.off / factor
+      if fo < 0 {
+        // DW_CFA_offset_extended_sf
+        body.u8(0x11)
+        body.uleb(c.reg)
+        body.sleb(fo)
+      } else if c.reg < 64 {
+        body.u8(0x80 | c.reg)
+        body.uleb(fo)
+      } else {
+        // DW_CFA_offset_extended
+        body.u8(0x05)
+        body.uleb(c.reg)
+        body.uleb(fo)
+      }
+    }
+  }
 }
 
 /// A CIE: augmentation "zR", or "zPLR" (and "zPR", "zLR") with a

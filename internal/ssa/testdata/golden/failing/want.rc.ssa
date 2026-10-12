@@ -274,12 +274,10 @@ b25:  ; preds b22
   unreachable
 b26:  ; preds b22
   v248: Str = payload 1.0, v230
-  retain v248
+  v249: Stdio = cap stdio, v0
+  v250: () = call Stdio.println, v249, v248
   release v230
-  v251: Stdio = cap stdio, v0
-  v252: () = call Stdio.println, v251, v248
-  release v248
-  ret v252
+  ret v250
 }
 
 func show(borrow v0: Result[List[Str], AppErr]) -> Str {
@@ -387,7 +385,7 @@ b2:  ; preds b1
 b3:  ; preds b7
   v19: Int = const 1
   v20: Int = add v7, v19
-  jump b1(v20, v51, v53)
+  jump b1(v20, v49, v52)
 b4:  ; preds b1
   release v0
   v23: Result[List[Str], AppErr] = variant 0, v9
@@ -417,14 +415,14 @@ b5:  ; preds b2
 b6:  ; preds b2
   v46: Str = payload 0.0, v14
   retain v46
-  release v14
+  v48: List[Str] = reuse v8
+  v49: List[Str] = call list.push, v48, v46
+  v50: () = tuple
   retain v46
-  v50: List[Str] = reuse v8
-  v51: List[Str] = call list.push, v50, v46
-  v52: () = tuple
-  v53: List[Str] = call list.push, v9, v46
+  v52: List[Str] = call list.push, v9, v46
+  release v14
   v54: () = tuple
-  v55: Int = call list.len, v53
+  v55: Int = call list.len, v52
   v56: Int = const 2
   v57: Bool = gt v55, v56
   br v57, b8(), b9()
@@ -434,14 +432,14 @@ b7:  ; preds b9
 b8:  ; preds b6
   release v0
   v62: Str = const "words"
-  v63: Int = call list.len, v53
-  release v53
+  v63: Int = call list.len, v52
+  release v52
   retain v62
   v66: AppErr = variant 1, v62, v63
   v67: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
   v68: xo.trace = struct v67
   v69: Result[List[Str], AppErr] = variant 1, v66, v68
-  ret v69, v51
+  ret v69, v49
 b9:  ; preds b6
   v71: () = tuple
   jump b7()

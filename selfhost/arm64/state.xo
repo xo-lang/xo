@@ -74,6 +74,9 @@ struct Memo {
   lo: Map[Int, Int] = {}
   hi: Map[Int, Int] = {}
   low_zero: Map[Int, Int] = {}
+  /// x < y holds for the registers (x, y), from a branch or a passed
+  /// bounds check; the value is x's SSA value (decision 0184)
+  less: Map[(Int, Int), Int] = {}
 }
 
 /// A pointer induction variable of a loop (lsr.xo lsrPlan).

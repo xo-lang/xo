@@ -16,6 +16,7 @@ Lf1_begin:
 Lf1_b0:
 	mov x19, #0
 	mov x20, x19
+	b Lf1_b2
 Lf1_b1:
 	cmp x19, #5
 	b.ge Lf1_b4
@@ -106,8 +107,7 @@ Lf2_b8:
 	cmp x21, x24
 	b.lt Lf2_b4
 Lf2_b9:
-	adds x12, x22, #1
-	b.vs Lf2_fault2
+	add x12, x22, #1
 Lf2_b11:
 	mov x11, #2
 	mov x21, #0
@@ -116,7 +116,7 @@ Lf2_b12:
 	b.ge Lf2_b32
 Lf2_b13:
 	cmp x11, x19
-	b.hs Lf2_fault3
+	b.hs Lf2_fault2
 Lf2_b13_c:
 	add x9, x20, x11
 	ldrb w9, [x9, #24]
@@ -129,12 +129,12 @@ Lf2_b31:
 	b Lf2_b32
 Lf2_b16:
 	adds x21, x21, #1
-	b.vs Lf2_fault4
+	b.vs Lf2_fault3
 Lf2_b18:
 	mul x10, x11, x11
 	smulh x9, x11, x11
 	cmp x9, x10, asr #63
-	b.ne Lf2_fault5
+	b.ne Lf2_fault4
 Lf2_b21:
 	cmp x10, x22
 	b.le Lf2_b22
@@ -144,13 +144,13 @@ Lf2_b21:
 	b Lf2_b32
 Lf2_b22:
 	cmp x10, x19
-	b.hs Lf2_fault6
+	b.hs Lf2_fault5
 Lf2_b22_c:
 	add x9, x20, x10
 	strb wzr, [x9, #24]
 Lf2_b24:
 	adds x10, x10, x11
-	b.vs Lf2_fault7
+	b.vs Lf2_fault6
 	cmp x10, x22
 	b.le Lf2_b22
 	b Lf2_b31
@@ -215,30 +215,30 @@ Lf2_cs1a:
 Lf2_cs1b:
 	brk #1
 Lf2_fault2:
-	mov x0, x22
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc2@PAGE
-	add x3, x3, Lxo_loc2@PAGEOFF
+	mov x0, x11
+	mov x1, x19
+	adrp x2, Lxo_loc2@PAGE
+	add x2, x2, Lxo_loc2@PAGEOFF
 Lf2_cs2a:
-	bl _xo_fault_overflow
+	bl _xo_fault_index
 Lf2_cs2b:
 	brk #1
 Lf2_fault3:
-	mov x0, x11
-	mov x1, x19
-	adrp x2, Lxo_loc3@PAGE
-	add x2, x2, Lxo_loc3@PAGEOFF
-Lf2_cs3a:
-	bl _xo_fault_index
-Lf2_cs3b:
-	brk #1
-Lf2_fault4:
 	mov x17, #1
 	sub x15, x21, x17
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
+	adrp x3, Lxo_loc3@PAGE
+	add x3, x3, Lxo_loc3@PAGEOFF
+Lf2_cs3a:
+	bl _xo_fault_overflow
+Lf2_cs3b:
+	brk #1
+Lf2_fault4:
+	mov x0, x11
+	mov x2, x11
+	mov x1, #42
 	adrp x3, Lxo_loc4@PAGE
 	add x3, x3, Lxo_loc4@PAGEOFF
 Lf2_cs4a:
@@ -246,34 +246,24 @@ Lf2_cs4a:
 Lf2_cs4b:
 	brk #1
 Lf2_fault5:
-	mov x0, x11
-	mov x2, x11
-	mov x1, #42
-	adrp x3, Lxo_loc5@PAGE
-	add x3, x3, Lxo_loc5@PAGEOFF
+	mov x0, x10
+	mov x1, x19
+	adrp x2, Lxo_loc5@PAGE
+	add x2, x2, Lxo_loc5@PAGEOFF
 Lf2_cs5a:
-	bl _xo_fault_overflow
+	bl _xo_fault_index
 Lf2_cs5b:
 	brk #1
 Lf2_fault6:
-	mov x0, x10
-	mov x1, x19
-	adrp x2, Lxo_loc6@PAGE
-	add x2, x2, Lxo_loc6@PAGEOFF
-Lf2_cs6a:
-	bl _xo_fault_index
-Lf2_cs6b:
-	brk #1
-Lf2_fault7:
 	sub x15, x10, x11
 	mov x0, x15
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc7@PAGE
-	add x3, x3, Lxo_loc7@PAGEOFF
-Lf2_cs7a:
+	adrp x3, Lxo_loc6@PAGE
+	add x3, x3, Lxo_loc6@PAGEOFF
+Lf2_cs6a:
 	bl _xo_fault_overflow
-Lf2_cs7b:
+Lf2_cs6b:
 	brk #1
 	.cfi_endproc
 
@@ -349,26 +339,22 @@ Lf2_cst:
 	.byte 0
 	.uleb128 Lf2_cs2a-Lf2_begin
 	.uleb128 Lf2_cs2b-Lf2_cs2a
-	.uleb128 Lf2_b10-Lf2_begin
+	.uleb128 Lf2_b14-Lf2_begin
 	.byte 0
 	.uleb128 Lf2_cs3a-Lf2_begin
 	.uleb128 Lf2_cs3b-Lf2_cs3a
-	.uleb128 Lf2_b14-Lf2_begin
+	.uleb128 Lf2_b17-Lf2_begin
 	.byte 0
 	.uleb128 Lf2_cs4a-Lf2_begin
 	.uleb128 Lf2_cs4b-Lf2_cs4a
-	.uleb128 Lf2_b17-Lf2_begin
+	.uleb128 Lf2_b19-Lf2_begin
 	.byte 0
 	.uleb128 Lf2_cs5a-Lf2_begin
 	.uleb128 Lf2_cs5b-Lf2_cs5a
-	.uleb128 Lf2_b19-Lf2_begin
+	.uleb128 Lf2_b23-Lf2_begin
 	.byte 0
 	.uleb128 Lf2_cs6a-Lf2_begin
 	.uleb128 Lf2_cs6b-Lf2_cs6a
-	.uleb128 Lf2_b23-Lf2_begin
-	.byte 0
-	.uleb128 Lf2_cs7a-Lf2_begin
-	.uleb128 Lf2_cs7b-Lf2_cs7a
 	.uleb128 Lf2_b25-Lf2_begin
 	.byte 0
 Lf2_cste:
@@ -384,14 +370,12 @@ Lxo_loc0:
 Lxo_loc1:
 	.asciz "main.xo:4:15"
 Lxo_loc2:
-	.asciz "main.xo:8:15"
-Lxo_loc3:
 	.asciz "main.xo:9:8"
-Lxo_loc4:
+Lxo_loc3:
 	.asciz "main.xo:10:7"
-Lxo_loc5:
+Lxo_loc4:
 	.asciz "main.xo:11:15"
-Lxo_loc6:
+Lxo_loc5:
 	.asciz "main.xo:13:9"
-Lxo_loc7:
+Lxo_loc6:
 	.asciz "main.xo:14:9"

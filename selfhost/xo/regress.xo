@@ -1,0 +1,175 @@
+// Regression tests from shrunk contract fuzz failures (core 9.2; cmd/xo
+// regress.go): a Go backend test binary writes one JSON record per
+// shrunk failure to $XO_REGRESSION_OUT, and `xo1 test` appends a test
+// that replays it to regressions_test.xo in the module, when the module
+// still checks with it.
+
+use std/json
+use github.com/xo-lang/xo/selfhost/check
+
+/// One parameter of the failing call (rt.RegressRecord's params; the
+/// JSON key "var" is read as is_var).
+struct RParam {
+  name: Str = ""
+  value: Str = ""
+  cap: Str = ""
+  is_var: Bool = false
+} derive Json
+
+/// rt.RegressRecord (the JSON key "test", a keyword, is read as test_name).
+struct RRecord {
+  module: Str = ""
+  dir: Str = ""
+  test_name: Str = ""
+  seed: Int = 0
+  call: Str = ""
+  result: Str = ""
+  params: List[RParam] = []
+} derive Json
+
+/// writeRegressions: each record of path as a test in its module's
+/// regressions_test.xo, unless one of that name is there or the module
+/// would not check with it (the reason is printed).
+fn write_regressions(os: Os, path: Str, std_dir: Str) {
+  let text = match os.fs.read_text(path) {
+    Ok(t) => t
+    Err(_) => return
+  }
+  for line in text.lines() {
+    if line.trim().is_empty() {
+      continue
+    }
+    let r = match json.decode_str[RRecord](line.replace(",\"var\":", ",\"is_var\":").replace("{\"var\":", "{\"is_var\":").replace(",\"test\":", ",\"test_name\":")) {
+      Ok(r) => r
+      Err(_) => continue
+    }
+    let name = "regression: ${r.test_name.trim_prefix("contract fuzz: ")} (seed ${r.seed})"
+    let dst = "${r.dir}/regressions_test.xo"
+    let old = os.fs.read_text(dst).ok() ?? ""
+    if old.contains(name.quote()) {
+      continue
+    }
+    let (src, why) = regression_source(r, name)
+    if !why.is_empty() {
+      os.stdio.println("xo test: no regression test for ${r.test_name}: ${why}")
+      continue
+    }
+    var next = old
+    if next.is_empty() {
+      next = "// Regression tests written by `xo test` from shrunk contract fuzz\n// failures (core 9.2). Keep them; edit or delete them like any test.\n"
+    }
+    next = next + "\n" + src
+    let bad = checks_with(os, r.dir, next, std_dir)
+    if !bad.is_empty() {
+      os.stdio.println("xo test: no regression test for ${r.test_name}: generated test does not check: ${bad}")
+      continue
+    }
+    match os.fs.write(dst, next.bytes()) {
+      Ok(_) => os.stdio.println("xo test: wrote ${name.quote()} to ${dst}")
+      Err(e) => os.stdio.println("xo test: no regression test for ${r.test_name}: ${e}")
+    }
+  }
+}
+
+/// regressionSource: the test's text, or why there is none.
+fn regression_source(r: RRecord, name: Str) -> (Str, Str) {
+  var b = StrBuilder.new()
+  b.write("// Found by contract fuzzing with seed ${r.seed}.\ntest ${name.quote()} {\n")
+  var call = r.call
+  for (i, p) in r.params.indexed() {
+    var arg = ""
+    if p.cap == "os" {
+      return ("", "the function takes `os: Os`, which a test cannot pass")
+    } else if p.cap.is_empty() {
+      if p.value.is_empty() {
+        return ("", "no recorded value for `${p.name}`")
+      }
+      arg = "arg_${p.name}"
+      let kw = if p.is_var { "var" } else { "let" }
+      b.write("  ${kw} ${arg} = ${p.value}\n")
+    } else {
+      arg = "os.${p.cap}"
+    }
+    call = call.replace("{${i}}", arg)
+  }
+  if r.result == "result" {
+    b.write("  ${call}.ignore_err(\"regression: only a fault fails this test\")\n")
+  } else if r.result == "value" {
+    b.write("  let _ = ${call}\n")
+  } else {
+    b.write("  ${call}\n")
+  }
+  b.write("}\n")
+  (b.freeze(), "")
+}
+
+/// checksWith: the first error of the module in dir checked with
+/// regressions_test.xo replaced by src (a copy in a temporary
+/// directory), "" when it checks clean.
+fn checks_with(os: Os, dir: Str, src: Str, std_dir: Str) -> Str {
+  var tmp_root = os.env.get("TMPDIR") ?? ""
+  if tmp_root.is_empty() {
+    tmp_root = "/tmp"
+  }
+  let tmp = "${tmp_root.trim_suffix("/")}/xo-regress-${os.rand.bytes(6).to_hex()}"
+  let m = "${tmp}/${base_name(dir)}"
+  let why = copy_tree(os, dir, m)
+  if !why.is_empty() {
+    os.fs.remove_all(tmp).ignore_err("a temporary directory")
+    return why
+  }
+  match os.fs.write("${m}/regressions_test.xo", src.bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      os.fs.remove_all(tmp).ignore_err("a temporary directory")
+      return "${e}"
+    }
+  }
+  var c = check.new_checker(os.fs, std_dir)
+  c.set_mod_env(tmp, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  var out = ""
+  match c.check_dirs([m]) {
+    Ok(_) => {
+      for d in sorted_diags(c.diags) {
+        if !d.warning {
+          out = "${d.code} ${d.message}"
+          break
+        }
+      }
+    }
+    Err(e) => out = "${e}"
+  }
+  os.fs.remove_all(tmp).ignore_err("a temporary directory")
+  out
+}
+
+/// Copies every file under from to the same path under to.
+fn copy_tree(os: Os, from: Str, to: Str) -> Str {
+  let all = match os.fs.walk(from) {
+    Ok(fs) => fs
+    Err(e) => return "${e}"
+  }
+  match os.fs.create_dir_all(to) {
+    Ok(_) => {}
+    Err(e) => return "${e}"
+  }
+  for fi in all {
+    let rel = fi.path.trim_prefix("${from}/")
+    if rel == fi.path {
+      continue
+    }
+    if fi.is_dir {
+      match os.fs.create_dir_all("${to}/${rel}") {
+        Ok(_) => {}
+        Err(e) => return "${e}"
+      }
+      continue
+    }
+    os.fs.create_dir_all(dir_name("${to}/${rel}")).ignore_err("the copy reports it")
+    match os.fs.copy(fi.path, "${to}/${rel}") {
+      Ok(_) => {}
+      Err(e) => return "${e}"
+    }
+  }
+  ""
+}
