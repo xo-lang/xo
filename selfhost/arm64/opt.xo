@@ -272,7 +272,7 @@ fn dce_keep(insts: List[Inst], live: List[Bool]) -> List[Inst] {
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
-  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero,
+  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less,
     lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs}
   for (k, v) in src.ci {
     // a constant one instruction makes is not worth a register across
@@ -301,6 +301,15 @@ fn (var g: G) inherit(from: Int) {
 
 /// What is known of Int value v.
 fn (var g: G) bounds(v: Int) -> (Int, Int) {
+  g.bounds_at(v, BOUNDS_DEPTH)
+}
+
+/// How many operations deep bounds derives an interval from the
+/// operands' bounds (decision 0184): the range analysis ignores
+/// branches, so `(r - 128) * 3` under `r < 2048` learns its bound here.
+const BOUNDS_DEPTH = 3
+
+fn (var g: G) bounds_at(v: Int, d: Int) -> (Int, Int) {
   let (n, ok) = g.const_int(v)
   if ok {
     return (n, n)
@@ -308,6 +317,13 @@ fn (var g: G) bounds(v: Int) -> (Int, Int) {
   let r = g.ssa_range(v) // ranges.xo
   var lo = r.lo
   var hi = r.hi
+  if d > 0 {
+    let (x, xok) = g.derived(v, d - 1)
+    if xok {
+      lo = imax(lo, x.lo)
+      hi = imin(hi, x.hi)
+    }
+  }
   if !g.has_val[v] || g.vals[v].len() != 1 {
     return (lo, hi)
   }
@@ -320,6 +336,205 @@ fn (var g: G) bounds(v: Int) -> (Int, Int) {
     hi = imin(hi, x)
   }
   (lo, hi)
+}
+
+/// The bounds of v as an interval (bounds_at).
+fn (var g: G) bounds_iv(v: Int, d: Int) -> Interval {
+  let (lo, hi) = g.bounds_at(v, d)
+  Interval{lo: lo, hi: hi}
+}
+
+/// The interval of the Int operation v from its operands' bounds
+/// (derived d more levels deep). Every operation is exact, as in
+/// range_of; a shift left only counts when it is checked.
+fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
+  let x = g.f.values[v]
+  let none = (Interval{lo: 0, hi: 0}, false)
+  if x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+    return none
+  }
+  match x.op {
+    Add => {
+      let a = g.bounds_iv(x.args[0], d)
+      let b = g.bounds_iv(x.args[1], d)
+      (Interval{lo: sat_add(a.lo, b.lo), hi: sat_add(a.hi, b.hi)}, true)
+    }
+    Sub => {
+      let a = g.bounds_iv(x.args[0], d)
+      let b = g.bounds_iv(x.args[1], d)
+      if b.lo == MIN_INT {
+        return none
+      }
+      (Interval{lo: sat_add(a.lo, -b.hi), hi: sat_add(a.hi, -b.lo)}, true)
+    }
+    Mul => {
+      let a = g.bounds_iv(x.args[0], d)
+      let b = g.bounds_iv(x.args[1], d)
+      let c0 = sat_mul(a.lo, b.lo)
+      let c1 = sat_mul(a.lo, b.hi)
+      let c2 = sat_mul(a.hi, b.lo)
+      let c3 = sat_mul(a.hi, b.hi)
+      (Interval{lo: imin(imin(c0, c1), imin(c2, c3)), hi: imax(imax(c0, c1), imax(c2, c3))}, true)
+    }
+    Div => {
+      let (k, ok) = g.const_int(x.args[1])
+      if !ok || k <= 0 {
+        return none
+      }
+      let a = g.bounds_iv(x.args[0], d)
+      (Interval{lo: a.lo / k, hi: a.hi / k}, true)
+    }
+    And => {
+      let a = g.bounds_iv(x.args[0], d)
+      let b = g.bounds_iv(x.args[1], d)
+      if a.lo >= 0 && b.lo >= 0 {
+        return (Interval{lo: 0, hi: imin(a.hi, b.hi)}, true)
+      }
+      if a.lo >= 0 {
+        return (Interval{lo: 0, hi: a.hi}, true)
+      }
+      if b.lo >= 0 {
+        return (Interval{lo: 0, hi: b.hi}, true)
+      }
+      none
+    }
+    Or => {
+      let a = g.bounds_iv(x.args[0], d)
+      let b = g.bounds_iv(x.args[1], d)
+      if a.lo >= 0 && b.lo >= 0 {
+        return (Interval{lo: imax(a.lo, b.lo), hi: ones(imax(a.hi, b.hi))}, true)
+      }
+      none
+    }
+    Shr => {
+      let (k, ok) = g.const_int(x.args[1])
+      if !ok || k < 0 || k > 63 {
+        return none
+      }
+      let a = g.bounds_iv(x.args[0], d)
+      (Interval{lo: a.lo >> k, hi: a.hi >> k}, true)
+    }
+    Shl => {
+      let (k, ok) = g.const_int(x.args[1])
+      if !ok || k < 0 || k > 62 || x.pos.is_empty() {
+        return none
+      }
+      let a = g.bounds_iv(x.args[0], d)
+      (Interval{lo: sat_mul(a.lo, 1 << k), hi: sat_mul(a.hi, 1 << k)}, true)
+    }
+    IntConv => (g.bounds_iv(x.args[0], d), true)
+    Call => {
+      if aux_str(x.aux) != "Str.len" || x.args.is_empty() {
+        return none
+      }
+      let y = g.f.values[x.args[0]]
+      if y.op == ssa.Op.Const {
+        if let Some(bs) = const_bytes(y.aux) {
+          return (Interval{lo: bs.len(), hi: bs.len()}, true)
+        }
+      }
+      none
+    }
+    _ => none
+  }
+}
+
+/// The smallest 2^k - 1 at least x (x >= 0): a bound of x | y for x, y
+/// in [0, x].
+fn ones(x: Int) -> Int {
+  var r = 0
+  while r < x {
+    r = (r << 1) | 1
+  }
+  r
+}
+
+/// Whether 0 <= i < n is known, n a length in a register (decision
+/// 0184): from i's bounds and n's constant value k (-1 when not
+/// constant), or from a fact x < n of the memo where x and i are one
+/// value plus offsets whose bounds put i at or below x.
+fn (var g: G) proved_index(i: Int, n: Int, k: Int) -> Bool {
+  let (lo, hi) = g.bounds(i)
+  if lo < 0 {
+    return false
+  }
+  if k >= 0 && hi < k {
+    return true
+  }
+  let fi = g.add_forms(i)
+  let _mi = g.m_()
+  let facts = g.cm.less
+  for (key, x) in facts {
+    if key.1 != n {
+      continue
+    }
+    for b in g.add_forms(x) {
+      for a in fi {
+        if a.base == b.base && (a.hi <= b.lo || (a.off >= 0 && a.off == b.off)) {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+/// A value is base plus an offset in [lo, hi] (the value off, or -1).
+struct AddForm {
+  base: Int
+  lo: Int
+  hi: Int
+  off: Int
+}
+
+/// The ways Int value v is a value plus an offset: v plus 0; for v =
+/// a + b, a plus b and b plus a; for v = a - c (c constant), a plus -c.
+fn (var g: G) add_forms(v: Int) -> List[AddForm] {
+  var out = [AddForm{base: v, lo: 0, hi: 0, off: -1}]
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Add {
+    let (alo, ahi) = g.bounds(x.args[0])
+    let (blo, bhi) = g.bounds(x.args[1])
+    out.push(AddForm{base: x.args[0], lo: blo, hi: bhi, off: x.args[1]})
+    out.push(AddForm{base: x.args[1], lo: alo, hi: ahi, off: x.args[0]})
+  } else if x.op == ssa.Op.Sub {
+    let (c, ok) = g.const_int(x.args[1])
+    if ok && c != MIN_INT {
+      out.push(AddForm{base: x.args[0], lo: -c, hi: -c, off: -1})
+    }
+  }
+  out
+}
+
+/// Records x < y for SSA value x (one register) and register y.
+fn (var g: G) less_fact(x: Int, y: Int) {
+  if !g.has_val[x] || g.vals[x].len() != 1 || g.vals[x][0] == 0 || y == 0 || g.vkind(x) != ssa.Kind.Int {
+    return
+  }
+  let w = g.vals[x][0]
+  let _mi = g.m_()
+  g.cm.less[(w, y)] = x
+}
+
+/// Whether a + b (Add) or a - b (Sub) cannot overflow for a in [alo,
+/// ahi] and b in [blo, bhi] (decision 0184).
+fn safe_add_range(o: ssa.Op, alo: Int, ahi: Int, blo0: Int, bhi0: Int) -> Bool {
+  var blo = blo0
+  var bhi = bhi0
+  if o == ssa.Op.Sub {
+    if blo == MIN_INT {
+      return false
+    }
+    blo = -bhi0
+    bhi = -blo0
+  }
+  if bhi > 0 && ahi > MAX_INT - bhi {
+    return false
+  }
+  if blo < 0 && alo < MIN_INT - blo {
+    return false
+  }
+  true
 }
 
 fn negate_cmp(o: ssa.Op) -> ssa.Op {
@@ -353,16 +568,82 @@ fn (var g: G) branch_facts(b: Int) {
   let tv = g.f.values[t]
   let yes = g.f.edges[tv.succs[0]].to == b
   let no = g.f.edges[tv.succs[1]].to == b
-  let c = tv.args[0]
-  if yes == no || !is_compare(g.op(c)) || g.vkind(g.arg(c, 0)) != ssa.Kind.Int {
+  if yes == no {
+    return
+  }
+  g.cond_facts(tv.args[0], yes)
+}
+
+/// Matches b entered only from a block J with one parameter r and
+/// nothing but a branch on r, reached with an r that can take b's edge
+/// from one predecessor p only (the join of `x && y` or `x || y`):
+/// (p, what p passes, the truth b's edge needs, true) (opt.go
+/// joinSource, decision 0184).
+fn (g: G) join_source(b: Int) -> (Int, Int, Bool, Bool) {
+  let none = (-1, -1, false, false)
+  let preds = g.f.blocks[b].preds
+  if preds.len() != 1 {
+    return none
+  }
+  let j = g.f.edges[preds[0]].from
+  let t = g.f.term(j)
+  let jb = g.f.blocks[j]
+  if t < 0 || g.op(t) != ssa.Op.Branch || jb.instrs.len() != 1 || jb.params.len() != 1 || g.arg(t, 0) != jb.params[0] || j == b {
+    return none
+  }
+  let tv = g.f.values[t]
+  let yes = g.f.edges[tv.succs[0]].to == b
+  let no = g.f.edges[tv.succs[1]].to == b
+  if yes == no {
+    return none
+  }
+  var p = -1
+  var c = -1
+  for e in jb.preds {
+    let a = g.f.edges[e].args[0]
+    let av = g.f.values[a]
+    if av.op == ssa.Op.Const {
+      match av.aux {
+        B(k) => {
+          if k != yes {
+            continue
+          }
+        }
+        _ => {}
+      }
+    }
+    if p >= 0 {
+      return none
+    }
+    p = g.f.edges[e].from
+    c = a
+  }
+  if p < 0 || g.end_memo[p] < 0 {
+    return none
+  }
+  (p, c, yes, true)
+}
+
+/// Records what Bool c being truth says (a compare of Ints).
+fn (var g: G) cond_facts(c: Int, truth: Bool) {
+  if !is_compare(g.op(c)) || g.vkind(g.arg(c, 0)) != ssa.Kind.Int {
     return
   }
   var o = g.op(c)
-  if no {
+  if !truth {
     o = negate_cmp(o)
   }
   let x = g.arg(c, 0)
   let y = g.arg(c, 1)
+  if o == ssa.Op.Lt {
+    if g.has_val[y] && g.vals[y].len() == 1 {
+      g.less_fact(x, g.vals[y][0])
+    }
+  } else if o == ssa.Op.Gt {
+    if g.has_val[x] && g.vals[x].len() == 1 {
+      g.less_fact(y, g.vals[x][0])
+    }
+  }
   if o == ssa.Op.Eq {
     // x % 2^k == 0: the low k bits of x are zero
     for r in [x, y] {
@@ -416,6 +697,14 @@ fn (var g: G) narrow(x: Int, o: ssa.Op, ylo: Int, yhi: Int) {
   let _mi = g.m_()
   g.cm.lo[w] = lo
   g.cm.hi[w] = hi
+  // x = a + c (exact): a op y - c (decision 0184)
+  if g.op(x) == ssa.Op.Add || g.op(x) == ssa.Op.Sub {
+    let (c0, ok) = g.const_int(g.arg(x, 1))
+    if ok && c0 != MIN_INT {
+      let c = if g.op(x) == ssa.Op.Sub { -c0 } else { c0 }
+      g.narrow(g.arg(x, 0), o, sat_add(ylo, -c), sat_add(yhi, -c))
+    }
+  }
 }
 
 /// Whether a + n (or a - n) cannot overflow.
@@ -442,7 +731,9 @@ fn (var g: G) thread_const() {
       continue
     }
     let np = g.blocks[p].insts.len()
-    let j = g.blocks[p].insts[np - 1].targets[0]
+    // blocks that only move registers and jump are followed to the test;
+    // their moves are copied into p (opt.go threadConst, decision 0184)
+    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR {
       continue
     }
@@ -450,7 +741,7 @@ fn (var g: G) thread_const() {
     if br.us.is_empty() {
       continue // a landing check (decision 0085)
     }
-    let r = br.us[0]
+    var r = br.us[0]
     var k = 0
     if br.cond != "cbnz" {
       if br.us.len() != 1 {
@@ -473,17 +764,35 @@ fn (var g: G) thread_const() {
     }
     var val = 0
     var ok = false
-    for ii in 0..np - 1 {
-      let inst = g.blocks[p].insts[ii]
-      for (i, d) in inst.defs.indexed() {
+    var found = false
+    var c = chain.len() - 1
+    while c >= 0 && !found {
+      for (i, d) in chain[c].defs.indexed() {
         if d != r {
           continue
         }
-        ok = inst.kind == K_PMOVE && inst.srcs[i].kind == S_IMM
-        if ok {
-          val = inst.srcs[i].imm
+        let sr = chain[c].srcs[i]
+        if sr.kind == S_IMM {
+          val = sr.imm
+          ok = true
+          found = true
+        } else if sr.kind == S_REG && sr.v == 0 {
+          val = 0
+          ok = true
+          found = true
+        } else if sr.kind == S_REG {
+          r = sr.v
+        } else {
+          found = true
         }
+        break
       }
+      c -= 1
+    }
+    if !found {
+      let (v0, ok0) = g.const_before(p, np - 1, r)
+      val = v0
+      ok = ok0
     }
     if !ok {
       continue
@@ -502,23 +811,124 @@ fn (var g: G) thread_const() {
     let to = if taken { br.targets[0] } else { br.targets[1] }
     var ins = g.take_insts(p)
     ins[np - 1].targets[0] = to
+    if !chain.is_empty() {
+      ins = copy_moves(ins, chain)
+    }
     g.put_insts(p, ins)
   }
+}
+
+/// Follows j0, p's jump target, through blocks that only move registers
+/// and jump (at most 8): the first other block and their moves in order
+/// (opt.go moveChain, decision 0184).
+fn (g: G) move_chain(p: Int, j0: Int) -> (Int, List[Inst]) {
+  var j = j0
+  var chain: List[Inst] = []
+  var steps = 0
+  while steps < 8 && j != p && g.blocks[j].insts.len() == 2 && g.blocks[j].insts[0].kind == K_PMOVE &&
+    g.blocks[j].insts[1].kind == K_JUMP && g.blocks[j].insts[1].targets.len() == 1 {
+    chain.push(g.blocks[j].insts[0])
+    let next = g.blocks[j].insts[1].targets[0]
+    j = next
+    steps += 1
+  }
+  (j, chain)
+}
+
+/// The register whose value r0 holds after the moves of chain, read
+/// before them; false when one sets it to anything but a register
+/// (opt.go throughMoves).
+fn through_moves(chain: List[Inst], r0: Int) -> (Int, Bool) {
+  var r = r0
+  var c = chain.len() - 1
+  while c >= 0 {
+    for (i, d) in chain[c].defs.indexed() {
+      if d != r {
+        continue
+      }
+      let sr = chain[c].srcs[i]
+      if sr.kind != S_REG || sr.v == 0 {
+        return (0, false)
+      }
+      r = sr.v
+      break
+    }
+    c -= 1
+  }
+  (r, true)
+}
+
+/// ins (a block's instructions) with copies of the moves of chain
+/// before its terminator (opt.go copyMoves).
+fn copy_moves(ins: List[Inst], chain: List[Inst]) -> List[Inst] {
+  var out: List[Inst] = []
+  for ii in 0..ins.len() - 1 {
+    out.push(ins[ii])
+  }
+  for mv in chain {
+    out.push(mv)
+  }
+  out.push(ins[ins.len() - 1])
+  out
+}
+
+/// The constant register r holds before instruction end of block p
+/// (opt.go constBefore): the last definition of r there is a parallel
+/// move of an immediate or of a register that holds one, or a `mov` of a
+/// constant.
+fn (g: G) const_before(p: Int, end: Int, r: Int) -> (Int, Bool) {
+  var k = end - 1
+  while k >= 0 {
+    let inst = g.blocks[p].insts[k]
+    for (i, d) in inst.defs.indexed() {
+      if d != r {
+        continue
+      }
+      if inst.kind == K_PMOVE {
+        let sr = inst.srcs[i]
+        if sr.kind == S_IMM {
+          return (sr.imm, true)
+        }
+        if sr.kind == S_REG && sr.v == 0 {
+          return (0, true) // xzr
+        }
+        if sr.kind == S_REG {
+          return g.const_before(p, k, sr.v)
+        }
+        return (0, false)
+      }
+      if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && inst.text.starts_with("mov $d0, #") {
+        let rest = inst.text.trim_prefix("mov $d0, #")
+        if let Some(n) = Int.parse(rest) {
+          if "${n}" == rest {
+            return (n, true)
+          }
+        }
+      }
+      return (0, false)
+    }
+    k -= 1
+  }
+  (0, false)
 }
 
 /// Turns `t = cmp ...; cset; r = t; jump J` where J only branches on r
 /// into a branch on the comparison itself.
 fn (var g: G) thread_cset() {
+  let nuses = g.use_counts()
   for p in g.all_blocks() {
     let np = g.blocks[p].insts.len()
     if g.term_kind(p) != K_JUMP || np < 3 || g.blocks[p].insts[np - 1].targets.len() > 1 {
       continue
     }
-    let j = g.blocks[p].insts[np - 1].targets[0]
+    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR || g.blocks[j].insts[0].cond != "cbnz" || j == p {
       continue
     }
-    let r = g.blocks[j].insts[0].us[0]
+    let (r, traced) = through_moves(chain, g.blocks[j].insts[0].us[0])
+    if !traced {
+      continue
+    }
     let mv = g.blocks[p].insts[np - 2]
     if mv.kind != K_PMOVE {
       continue
@@ -547,8 +957,60 @@ fn (var g: G) thread_cset() {
     var ins = g.take_insts(p)
     ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us,
       cond: cond, targets: g.blocks[j].insts[0].targets}
+    if !chain.is_empty() {
+      ins = copy_moves(ins, chain)
+    } else if (nuses.get(r) ?? 0) == 1 {
+      // only J's branch reads r, and p no longer reaches it: the move
+      // (and then the cset, by dce) is dead (decision 0184)
+      ins = drop_move(ins, np - 2, r)
+    }
     g.put_insts(p, ins)
   }
+}
+
+/// The number of uses of each register (opt.go useCounts).
+fn (g: G) use_counts() -> Map[Int, Int] {
+  var n: Map[Int, Int] = {}
+  for b in g.all_blocks() {
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        n[u] = (n.get(u) ?? 0) + 1
+      }
+    }
+  }
+  n
+}
+
+/// ins without the move into r of the parallel move ins[k] (without
+/// the instruction when nothing is left; opt.go dropMove).
+fn drop_move(ins: List[Inst], k: Int, r: Int) -> List[Inst] {
+  let mv = ins[k]
+  var defs: List[Int] = []
+  var srcs: List[Src] = []
+  var us: List[Int] = []
+  for (i, d) in mv.defs.indexed() {
+    if d == r {
+      continue
+    }
+    defs.push(d)
+    srcs.push(mv.srcs[i])
+    if mv.srcs[i].kind == S_REG && mv.srcs[i].v != 0 {
+      us.push(mv.srcs[i].v)
+    }
+  }
+  var out: List[Inst] = []
+  for (i, x) in ins.indexed() {
+    if i != k {
+      out.push(x)
+    } else if !defs.is_empty() {
+      var y = x
+      y.defs = defs
+      y.srcs = srcs
+      y.us = us
+      out.push(y)
+    }
+  }
+  out
 }
 
 /// The byte offset of the last sub in s, or -1.
@@ -902,4 +1364,150 @@ fn (var g: G) reuse_flags() {
       g.put_insts(x, ins)
     }
   }
+}
+
+/// Deletes the instructions without side effects, and the moves of
+/// parallel moves, whose definitions are dead where they are written
+/// (opt.go liveDCE, decision 0184): flow sensitive, one backward pass
+/// over each block from the registers live out of it; a register live
+/// into a landing pad counts as live everywhere.
+fn (var g: G) live_dce() {
+  let order = g.all_blocks()
+  let n = g.fp.len()
+  let nb = order.len()
+  let nw = (n + BW - 1) / BW
+  var idx: List[Int] = []
+  for _ in 0..g.blocks.len() {
+    idx.push(-1)
+  }
+  for (k, b) in order.indexed() {
+    idx[b] = k
+  }
+  var succs: List[List[Int]] = []
+  var gen: List[List[Int]] = []
+  var kill: List[List[Int]] = []
+  var live_in: List[List[Int]] = []
+  var pads: List[Int] = []
+  for b in order {
+    var ss: List[Int] = []
+    for t in g.msuccs(b) {
+      if idx[t] >= 0 {
+        ss.push(idx[t])
+      }
+    }
+    succs.push(ss)
+    var gk = new_bits(n)
+    var kk = new_bits(n)
+    for inst in g.blocks[b].insts {
+      if inst.pad >= 0 {
+        let pk = idx[g.pad_of(inst.pad)]
+        if pk < 0 {
+          return
+        }
+        pads.push(pk)
+      }
+      for u in inst.us {
+        if u != 0 && !bits_has(kk, u) {
+          gk[u / BW] = gk[u / BW] | bit_mask(u)
+        }
+      }
+      for d in inst.defs {
+        if d != 0 {
+          kk[d / BW] = kk[d / BW] | bit_mask(d)
+        }
+      }
+    }
+    gen.push(gk)
+    kill.push(kk)
+    live_in.push(new_bits(n))
+  }
+  var changed = true
+  while changed {
+    changed = false
+    var k = nb - 1
+    while k >= 0 {
+      var out = new_bits(n)
+      for j in succs[k] {
+        or_into(out, live_in[j], nw)
+      }
+      var li = live_in[k]
+      live_in[k] = []
+      if transfer(li, gen[k], out, kill[k], nw) {
+        changed = true
+      }
+      live_in[k] = li
+      k -= 1
+    }
+  }
+  var pad_live = new_bits(n)
+  for j in pads {
+    or_into(pad_live, live_in[j], nw)
+  }
+  for (k, b) in order.indexed() {
+    var live = new_bits(n)
+    for j in succs[k] {
+      or_into(live, live_in[j], nw)
+    }
+    var ins = g.take_insts(b)
+    var keep: List[Bool] = []
+    for _ in 0..ins.len() {
+      keep.push(true)
+    }
+    var i = ins.len() - 1
+    while i >= 0 {
+      let kind = ins[i].kind
+      if kind == K_PMOVE {
+        var defs: List[Int] = []
+        var srcs: List[Src] = []
+        var us: List[Int] = []
+        for (k2, d) in ins[i].defs.indexed() {
+          if !ld_dead(d, live, pad_live) {
+            defs.push(d)
+            srcs.push(ins[i].srcs[k2])
+          }
+        }
+        for a in srcs {
+          if a.kind == S_REG && a.v != 0 {
+            us.push(a.v)
+          }
+        }
+        keep[i] = !defs.is_empty()
+        ins[i].defs = defs
+        ins[i].srcs = srcs
+        ins[i].us = us
+      } else if kind == K_PLAIN && !ins[i].has_fault && !ins[i].defs.is_empty() {
+        var all = true
+        for d in ins[i].defs {
+          all = all && ld_dead(d, live, pad_live)
+        }
+        keep[i] = !all
+      }
+      if keep[i] {
+        for d in ins[i].defs {
+          if d != 0 {
+            live[d / BW] = live[d / BW] & ~bit_mask(d)
+          }
+        }
+        for u in ins[i].us {
+          if u != 0 {
+            live[u / BW] = live[u / BW] | bit_mask(u)
+          }
+        }
+      }
+      i -= 1
+    }
+    var kept: List[Inst] = []
+    for (ii, x) in ins.indexed() {
+      if keep[ii] {
+        kept.push(x)
+      }
+    }
+    g.put_insts(b, kept)
+  }
+}
+
+/// Whether register d is dead (live_dce): not live and not live into a
+/// landing pad.
+fn ld_dead(d: Int, live: List[Int], pad_live: List[Int]) -> Bool {
+  d != 0 && !bits_has(live, d) && !bits_has(pad_live, d)
 }

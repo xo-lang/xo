@@ -54,8 +54,9 @@ fn (g: G) range_get(v: Int) -> (Interval, Bool) {
 }
 
 /// Fills the intervals of the function's Int values (computeRanges).
-fn (var g: G) compute_ranges(blocks: List[Int]) {
+fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
   let nv = g.f.values.len()
+  let mids = g.midpoints(blocks, idom)
   g.ranges = []
   g.has_range = []
   for _ in 0..nv {
@@ -122,8 +123,17 @@ fn (var g: G) compute_ranges(blocks: List[Int]) {
         if x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int || x.op == ssa.Op.Const {
           continue
         }
-        let (r, ok) = g.range_of(v)
+        let (r0, ok) = g.range_of(v)
+        var r = r0
         if ok {
+          if let Some(ab) = mids.get(v) {
+            // a <= m < b (decision 0184)
+            let (ra, ok1) = g.range_get(ab.0)
+            let (rb, ok2) = g.range_get(ab.1)
+            if ok1 && ok2 && rb.hi > MIN_INT {
+              r = Interval{lo: imax(r.lo, ra.lo), hi: imin(r.hi, rb.hi - 1)}
+            }
+          }
           changed = g.range_set(v, r, ups, downs, grown) || changed
         }
       }
@@ -136,6 +146,88 @@ fn (var g: G) compute_ranges(blocks: List[Int]) {
   for i in 0..nv {
     g.has_range[i] = false
   }
+}
+
+/// The values m = a + (b - a) / 2 (or `>> 1`) computed where a < b
+/// holds, with their (a, b) (ranges.go midpoints, decision 0184).
+fn (g: G) midpoints(blocks: List[Int], idom: List[Int]) -> Map[Int, (Int, Int)] {
+  var out: Map[Int, (Int, Int)] = {}
+  for b in blocks {
+    for v in g.f.blocks[b].instrs {
+      let (lo, hi, ok) = g.mid_of(v)
+      if !ok {
+        continue
+      }
+      var d = b
+      while d >= 0 {
+        if g.less_on_entry(d, lo, hi) {
+          out[v] = (lo, hi)
+          break
+        }
+        d = idom[d]
+      }
+    }
+  }
+  out
+}
+
+/// Matches v = a + (b - a) / 2 (or `>> 1`, either operand order).
+fn (g: G) mid_of(v: Int) -> (Int, Int, Bool) {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Add || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+    return (-1, -1, false)
+  }
+  for k in 0..2 {
+    let a = x.args[k]
+    let h = g.f.values[x.args[1 - k]]
+    var half = false
+    if h.args.len() == 2 {
+      let (n, is_k) = g.const_int(h.args[1])
+      if is_k {
+        half = (h.op == ssa.Op.Div && n == 2) || (h.op == ssa.Op.Shr && n == 1)
+      }
+    }
+    if !half {
+      continue
+    }
+    let d = g.f.values[h.args[0]]
+    if d.op == ssa.Op.Sub && d.args[1] == a {
+      return (a, d.args[0], true)
+    }
+  }
+  (-1, -1, false)
+}
+
+/// Whether block d is entered only by the edge of a branch on which
+/// a < b holds.
+fn (g: G) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
+  let preds = g.f.blocks[d].preds
+  if preds.len() != 1 {
+    return false
+  }
+  let t = g.f.term(g.f.edges[preds[0]].from)
+  if t < 0 || g.f.values[t].op != ssa.Op.Branch {
+    return false
+  }
+  let tv = g.f.values[t]
+  let yes = g.f.edges[tv.succs[0]].to == d
+  let no = g.f.edges[tv.succs[1]].to == d
+  if yes == no {
+    return false
+  }
+  let c = g.f.values[tv.args[0]]
+  if c.args.len() != 2 {
+    return false
+  }
+  let x = c.args[0]
+  let y = c.args[1]
+  if (yes && c.op == ssa.Op.Lt) || (no && c.op == ssa.Op.Ge) {
+    return x == a && y == b
+  }
+  if (yes && c.op == ssa.Op.Gt) || (no && c.op == ssa.Op.Le) {
+    return x == b && y == a
+  }
+  false
 }
 
 /// Sets the interval of v (widening a loop parameter that keeps growing)
@@ -281,7 +373,9 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
     }
     Call => {
       match aux_str(x.aux) {
-        "list.len" | "Str.len" => (Interval{lo: 0, hi: MAX_INT}, true)
+        "list.len" => (Interval{lo: 0, hi: MAX_INT}, true)
+        // bytes in memory (decision 0184): an address space of 2^48
+        "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
         "bytes.index" => (Interval{lo: 0, hi: 255}, true)
         _ => (full_interval(), true)
       }
@@ -290,6 +384,9 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
     _ => (full_interval(), true)
   }
 }
+
+/// A bound of the length of a Str or Bytes value.
+const MAX_STR_LEN = 281474976710656
 
 /// The interval of Int value v.
 fn (g: G) ssa_range(v: Int) -> Interval {

@@ -11,6 +11,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   changes the container while it is in use (decision 0186): on
   bench/perf/nested the read workloads went from 600,041 retains to 1
   (walk) and from 201,001 to 1 (index2) on arm64, allocations unchanged.
+- The arm64 backend (and its Xo twin, byte identical) inlines small
+  functions that call others and larger ones with at most two call
+  sites, and drops the bounds, overflow, and shift checks that value
+  bounds, loop conditions (also through `&&` and `||`), and binary
+  search midpoints prove (decision 0184). The Unicode runtime in Xo is
+  now within 5 percent of the C path on every bench/perf/unicode
+  workload on arm64 (39 percent fewer instructions on mixed script case
+  mapping, 42 on Rune case mapping).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on
