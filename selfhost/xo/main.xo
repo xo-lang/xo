@@ -5,7 +5,7 @@
 // internal/build does for `xo build --backend=arm64` (decision 0174).
 //
 //   xo1 build [flags] [-o OUT] [--asm=PATH] [--target=OS/arm64] <dir>
-//   xo1 build --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
+//   xo1 build|test --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
 //   xo1 build|test|asm --backend=llvm [flags] [-o OUT] [--asm=PATH] <dir>
 //   xo1 test [flags] [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>
 //   xo1 asm [--std=DIR] [--wd=DIR] [--target=OS/arm64] <dir>
@@ -111,15 +111,15 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo1: name one directory")
     os.proc.exit(2)
   }
-  if backend == "go" && cmd == "build" {
+  if backend == "go" && (cmd == "build" || cmd == "test") {
     if !target.is_empty() {
       fail(os, "--backend=go builds for the host only here")
     }
-    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0])?
+    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0], cmd == "test", topts)?
     return
   }
   if !(backend is "arm64" | "llvm") {
-    fail(os, "--backend=${backend}: want arm64, llvm, or go for build")
+    fail(os, "--backend=${backend}: want arm64, llvm, or go for build and test")
   }
   if backend == "llvm" && tgoos != goos {
     fail(os, "the LLVM backend builds for the host (${goos}/arm64) only, not ${target}")

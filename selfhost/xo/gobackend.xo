@@ -12,7 +12,13 @@ use std/crypto
 
 /// Builds dir with the Go backend into out; the build tree goes to tree
 /// ("" for out + ".go.d").
-fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, dir: Str) ! {
+///
+/// tests builds the test binary (selfhost/gen's test mode) and runs it as
+/// `xo test` does for the Go backend: the binary runs the tests itself,
+/// with -seed, -run, -json, -v, -cases from topts; its exit status is
+/// xo1's. Not done: -explore, --real, standard input, and the
+/// regressions_test.xo of shrunk contract failures (XO_REGRESSION_OUT).
+fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, dir: Str, tests: Bool, topts: TestOpts) ! {
   var c = check.new_checker(os.fs, std_dir)
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
     os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
@@ -31,6 +37,7 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
   }
   let root = abs_line_root(os, wd, dir)
   var opts = gen.Opts{arenas: true, line_root: root, wd: wd}
+  opts.test_mode = tests
   opts.gc = gc_line(os, root)
   let prog = gen.generate(c, opts)
   if !prog.err.is_empty() {
@@ -43,6 +50,15 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
   if out.is_empty() {
     let parts = dir.trim_suffix("/").split("/")
     out = parts[parts.len() - 1]
+    if out == "." || out.is_empty() {
+      out = base_name(wd)
+    }
+    if tests {
+      // the test binary goes to the cache, as `xo test` builds it
+      let tdir = "${user_cache_dir(os, host_os(os))}/xo/xo1-test"
+      os.fs.create_dir_all(tdir)?
+      out = "${tdir}/${out}.test"
+    }
   }
   if !out.starts_with("/") {
     out = "${wd}/${out}"
@@ -75,6 +91,50 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
       os.fs.write("${tree}/rt/${fi.name}", os.fs.read("${std_dir}/rt/${fi.name}")?)?
     }
   }
+  // the adapters of `use go` bindings (internal/gen goBindings): the Go
+  // file the binder wrote beside each declaration file the checker read
+  // (decision 0177); a third party package adds the requirements and
+  // checksums of the binding workspace (gobind workspaceDeps) to the
+  // build's go.mod and go.sum.
+  var timers = false
+  var reqs: List[Str] = []
+  var sums: List[Str] = []
+  for m in c.mods {
+    if m.go_path.is_empty() {
+      continue
+    }
+    let src = os.fs.read("${m.go_decl.trim_suffix(".xo")}.go")?
+    timers = timers || (src.to_str() ?? "").contains("NewGoCallback(")
+    os.fs.write("${tree}/rt/xo_gobind_${go_ident(m.go_path)}.go", src)?
+    let decl = os.fs.read_text(m.go_decl)?
+    if !decl.contains("\n// go-standard: true\n") {
+      let ws = "${gobind_cache_dir(m.go_decl, m.go_path)}/_mod"
+      for r in go_mod_requires((os.fs.read_text("${ws}/go.mod").ok() ?? "").split("\n")) {
+        add_unique(reqs, r)
+      }
+      for l in (os.fs.read_text("${ws}/go.sum").ok() ?? "").split("\n") {
+        if !l.is_empty() {
+          add_unique(sums, l)
+        }
+      }
+    }
+  }
+  let req_lines = reqs
+  if !req_lines.is_empty() {
+    // the go.mod selfhost/gen wrote, with the requirements (goBindings)
+    let gm = os.fs.read_text("${tree}/go.mod")?
+    var b = StrBuilder.new()
+    b.write(gm)
+    b.write("\nrequire (\n")
+    for r in req_lines.sort() {
+      b.write("\t${r}\n")
+    }
+    b.write(")\n")
+    os.fs.write("${tree}/go.mod", b.freeze().bytes())?
+  }
+  if !sums.is_empty() {
+    os.fs.write("${tree}/go.sum", "${sums.sort().join("\n")}\n".bytes())?
+  }
   // gofmt, as internal/gen's file step ends
   let goroot = match os.proc.run("go", ["env", "GOROOT"]) {
     Ok(r) => (r.stdout.to_str() ?? "").trim()
@@ -85,17 +145,122 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
     os.stdio.eprint((fr.stderr.to_str() ?? ""))
     fail(os, "gofmt failed on the generated Go (a code generator bug)")
   }
-  // go build
-  var args = ["GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "go", "-C", tree, "build", "-trimpath"]
-  if !prog.tags.is_empty() {
-    args.push("-tags=" + prog.tags.join(","))
+  // go build; with Go callbacks first with the runtime's view of Go
+  // timers (goBuildTimers, decision 0073), again without it when this Go
+  // does not link runtime.timeSleepUntil
+  var res = (0, "")
+  if timers {
+    res = go_build(os, tree, prog.tags + ["xo_gotimers"], "-checklinkname=0 ", out)?
+    if res.0 != 0 && linkname_failed(res.1) {
+      res = go_build(os, tree, prog.tags, "", out)?
+      if res.0 == 0 {
+        os.stdio.eprintln("xo build: warning: deadlock detection through Go callbacks is off: this Go toolchain does not link runtime.timeSleepUntil (decision 0073)")
+      }
+    }
+  } else {
+    res = go_build(os, tree, prog.tags, "", out)?
   }
-  args = args + ["-gcflags=all=-dwarf=false", "-ldflags=-s -w", "-o", out, "."]
-  let br = os.proc.run("env", args)?
-  if br.code != 0 {
-    os.stdio.eprint(((br.stdout + br.stderr).to_str() ?? ""))
+  if res.0 != 0 {
+    os.stdio.eprint(res.1)
     fail(os, "go build failed (a code generator bug)")
   }
+  if tests {
+    var targs: List[Str] = []
+    if topts.seed != 0 {
+      targs = targs + ["-seed", "${topts.seed}"]
+    }
+    if !topts.run.is_empty() {
+      targs = targs + ["-run", topts.run]
+    }
+    if topts.json {
+      targs.push("-json")
+    }
+    if topts.verbose {
+      targs.push("-v")
+    }
+    if topts.cases > 0 {
+      targs = targs + ["-cases", "${topts.cases}"]
+    }
+    let r = os.proc.run(out, targs)?
+    os.stdio.print(r.stdout.to_str() ?? "")
+    os.stdio.eprint(r.stderr.to_str() ?? "")
+    os.proc.exit(r.code)
+  }
+}
+
+/// One `go build` of the tree with tags and the linker flags ld before
+/// -s -w: its exit status and output.
+fn go_build(os: Os, tree: Str, tags: List[Str], ld: Str, out: Str) -> (Int, Str) ! ProcErr {
+  var args = ["GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "go", "-C", tree, "build", "-trimpath"]
+  if !tags.is_empty() {
+    args.push("-tags=" + tags.join(","))
+  }
+  args = args + ["-gcflags=all=-dwarf=false", "-ldflags=${ld}-s -w", "-o", out, "."]
+  let br = os.proc.run("env", args)?
+  Ok((br.code, (br.stdout + br.stderr).to_str() ?? ""))
+}
+
+/// linknameFailed: go build output of a failed link of a runtime symbol
+/// pulled by a linkname.
+fn linkname_failed(out: Str) -> Bool {
+  out.contains("relocation target runtime.") || out.contains("invalid reference to runtime.") ||
+    (out.contains("undefined") && out.contains("runtime."))
+}
+
+/// The binding cache directory of a declaration file: its path without
+/// the import path, the `.rerun-<sum>` suffix, and `.xo` (gobind
+/// cacheBase).
+fn gobind_cache_dir(decl: Str, gopath: Str) -> Str {
+  var base = decl.trim_suffix(".xo")
+  let parts = base.split(".rerun-")
+  if parts.len() > 1 {
+    base = parts[0..parts.len() - 1].join(".rerun-")
+  }
+  base.trim_suffix("/${gopath}")
+}
+
+fn add_unique(var xs: List[Str], x: Str) {
+  if !xs.contains(x) {
+    xs.push(x)
+  }
+}
+
+/// The requirements of go.mod lines (workspaceDeps): the lines of a
+/// `require (` block and of single `require` lines, comments removed.
+fn go_mod_requires(lines: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  var inside = false
+  for l0 in lines {
+    var l = l0.trim()
+    let cut = l.split("//")
+    if cut.len() > 1 {
+      l = cut[0].trim()
+    }
+    if l == "require (" {
+      inside = true
+    } else if inside && l == ")" {
+      inside = false
+    } else if inside && !l.is_empty() {
+      add_unique(out, l)
+    } else if l.starts_with("require ") {
+      add_unique(out, l.trim_prefix("require ").trim())
+    }
+  }
+  out
+}
+
+/// gobind ident: the import path with every byte but letters and digits
+/// replaced by `_` (the adapter file's name, as Prefix's middle).
+fn go_ident(p: Str) -> Str {
+  var b = StrBuilder.new()
+  for r in p.runes() {
+    if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+      b.write("${r}")
+    } else {
+      b.write("_")
+    }
+  }
+  b.freeze()
 }
 
 fn write_file(os: Os, path: Str, text: Str) -> () ! Str {
