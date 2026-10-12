@@ -9,8 +9,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on
-  xo1's own assembly), 6.8 times faster; `xo1 build --as=macho` uses it
-  (decision 0182).
+  xo1's own assembly; all 158 golden objects byte identical), 6.8 times
+  faster; `xo1 build --as=macho` uses it. Its linker links the objects
+  with a prebuilt runtime pack into a signed executable, so `xo1 build
+  --ld=macho` needs no C compiler at all for programs without `use c`
+  sources (decision 0182).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).
