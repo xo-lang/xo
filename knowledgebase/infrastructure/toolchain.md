@@ -268,6 +268,8 @@ go test ./internal/selfhost                             # merge tier (the defaul
                                                         #   full (XO_SELFHOST_TIER=full): every backend, every corpus, every pass of every run, 400 SSA mutations; about 11 min warm (owner, 2026-10-11, not remeasured); 3,474 s (58 min) cold, measured 2026-10-11 with the native selfhost/check and selfhost/ssa binaries uncached and another full suite running (TestSelfhostChecker 589 s and TestSelfhostSSA 2,366 s, mostly their native builds; the LLVM link of selfhost/ssa alone is about 10 min); use -timeout 120m (raised from 90m on 2026-10-11: 58 min cold under load left about 30 min of margin). Run by bench/nightly.sh and before tagging a release; run it by hand for a change under selfhost/ or the compiler's SSA or native backends that the merge tier does not exercise (a construct only selfhost/ssa or selfhost/check uses, an arm64 or LLVM lowering)
                                                         # since SSA stage 8 (2026-10-11): TestSelfhostSSA's full tier compares every stage after the build, the verifier and its mutants on three backends (about 32 minutes of a cold run); the first cold run timed out at -timeout 40m building the LLVM binaries, the next (partly warm) took 2,264 s
                                                         # time of the full package before SSA stage 8 (2026-10-11, GOMAXPROCS=4): about 160 s with the binary cache warm (was 329 s), most of it TestSelfhostSSA (51 s) and the mutation tests; a cold cache (any change to the compiler) adds the builds of selfhost/check and selfhost/ssa with three backends, now built at the same time (they were one after another: about 740 s of the 1510 s cold run). The backends' subtests, the Go checker and SSA builder over every run, and the batches of the Xo binaries run in parallel (up to min(GOMAXPROCS, 4), `parallel` in lexer_test.go); coverage is unchanged
+scripts/selfhost-record-goldens.sh [--merge]            # records the Go side of every TestSelfhost* differential at the full tier's sizes (no Xo binary built) into $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens, git ignored), one gzip file per unit keyed by kind, options, and input content (decision 0178 stage 7): 1.4 GB, 19,643 units, 1,475 s, peak RSS 15.3 GB on 2026-10-12; RUN='<regexp>' limits the tests. Last verified: 2026-10-12
+XO_SELFHOST_GOLDENS=replay go test ./internal/selfhost  # the TestSelfhost* tests read the recorded Go side instead of running it (any tier); a unit with no recording fails the run and is named (inputs changed: record again); TestSelfhostCheckerHatches skips (it needs the Go checker's gobind side effect); XO_SELFHOST_GOLDENS_DEBUG=<text> prints the key of the units whose label holds it. Same verdicts and logged counts as live on 2026-10-12 (-short: 133 s against 204 s)
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
 bench/nightly.sh                                        # full suite (-timeout 120m) with XO_SELFHOST_TIER=full XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet, then TestArithProperty with XO_ARITH_PROPS=500 from a seed that moves every day (status line `arith=`); log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
@@ -2765,3 +2767,47 @@ newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
 and /tmp on a tmpfs apart from the home disk. Last verified: 2026-10-12
 (--hold run on c8g.8xlarge).
 
+
+## Bootstrapping without Go (decision 0178, stage 7)
+
+The bootstrap chain: the first Xo `xo` on a new host is built by the
+previous release's binary (or any self hosted xo1), never by Go again.
+
+    scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
+
+SEED builds selfhost/xo with the arm64 backend (s1), s1 builds it (s2),
+s2 builds it (s3); s2 and s3 must write the same assembly and the same
+binary (the fixed point), and s3 must build and run a hello program.
+Every stage runs with no `go` on PATH (a directory holding one is
+replaced by a shim directory linking its other programs), GOROOT unset,
+`XO_GO=/nonexistent/go`, and empty caches of its own (`XO_BUILD_DIR`,
+`XO_RTOBJ_CACHE`, `XO_TLS_CACHE`; `XO_BIN_CACHE=off`, `XO_RTPACK=off`),
+so the C runtime and the TLS library are compiled from source with the
+C compiler, the one tool needed (`cc` drives the arm64 backend's
+assembler and linker; clang compiles the runtime). The log and the
+stage times land in OUTDIR/log.txt and OUTDIR/times.txt. What the seed
+still takes from Go today: nothing for a native build; a program that
+embeds time zones reads Go's zoneinfo.zip unless `XO_ZONEINFO` names
+one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
+definition.
+
+On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
+launches one EC2 Graviton instance (c8g.4xlarge spot, remote-full.sh's
+xo-ci key pair and security group, a 120 minute self poweroff plus a
+local watchdog, terminated on exit), makes the seed there (Go builds
+cmd/xo, which builds selfhost/xo with the Go driver), deletes the Go
+toolchain and caches from the machine, and runs bootstrap-xo.sh. The
+log goes to bench/results/remote/bootstrap-<commit>.log (git ignored).
+
+Result on 2026-10-12 (commit 30dfd24, Amazon Linux 2023 arm64, 16
+vCPU, clang 15.0.7 and gcc, Go deleted): seed 630 s; s1 922 s, s2 965
+s, s3 958 s; s2 and s3 assembly identical (375,303,244 bytes) and
+binaries identical (73,492,408 bytes); s1 also equals s2; s3 reports
+`xo 0.9.0 linux/arm64` and runs the hello program. The first run
+(commit 4bdf716) failed at s1: xo1 with the default relative `--std`
+could not build the TLS library on an empty cache
+(gotchas/xo1-relative-std-tls-tree.md, fixed in 30dfd24). On the
+development Mac (commit 7b3da52, Go installed but off PATH): seed 336
+s; s1 556 s, s2 548 s, s3 555 s; s2 and s3 identical (assembly
+384,779,554 bytes, binary 76,874,400 bytes), s1 too. Last verified:
+2026-10-12.

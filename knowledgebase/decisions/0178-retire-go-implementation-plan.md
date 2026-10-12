@@ -203,7 +203,13 @@ Go compiler packages in one commit per package (removal is the owner's
 call, decision 0150), keeping std/rt, gobind, and the test helpers;
 (4) the build tag of the Go `xo` for bootstrapping: the first Xo `xo`
 on a new host is built by the previous release's binary, never by Go
-again (a bootstrap chain, recorded in toolchain.md).
+again (a bootstrap chain, recorded in toolchain.md). The machinery for
+(2) and (4) exists since 2026-10-12, nothing switched (section "Stage 7
+preparation"): the recorder and replay mode (`XO_SELFHOST_GOLDENS=
+record|replay`, scripts/selfhost-record-goldens.sh) and the bootstrap
+chain (scripts/bootstrap-xo.sh, tested on a clean EC2 machine with Go
+deleted: fixed point reached). The recording is 1.3 GB, so it is not
+committed yet; the layout below is proposed.
 
 ## Stage 4 status (2026-10-12)
 
@@ -481,6 +487,70 @@ miss, `xo bind`, `xo publish`, get's API changes, fetching), and three
 commands not in xo1: `ssadump` and `llvmdump` (comparison dumps, not
 needed) and `rtpack` (builds the release's runtime packs: port it, or
 keep it in a Go helper that release.sh runs).
+
+## Stage 7 preparation (2026-10-12)
+
+Built for stage 7 steps 2 and 4 (the bootstrap chain) without switching
+anything; evidence in the results file, section "Stage 7 preparation".
+
+- **Recorder and replay** (internal/selfhost/gogoldens_test.go): every
+  Go side of the TestSelfhost* differentials (lexdump, astdump, the
+  formatter, typedump, ssadump, asmdump, llvmdump, gendump, defhash,
+  and the mutation tests' reference outputs, which are the same kinds on
+  mutated inputs) goes through one function. `XO_SELFHOST_GOLDENS=record`
+  (scripts/selfhost-record-goldens.sh) runs only the Go side, at the
+  full tier's sizes, and writes each unit; `=replay` reads them instead
+  of running Go; unset, nothing changes. A unit is keyed by its kind,
+  options, and input content (a file's path and bytes; a run's
+  directory, working directory, and module tree; the host for the
+  native kinds), with the repository root and the test's temporary
+  directory as placeholders, so a recording replays in any checkout and
+  a changed input shows as a missing unit (TestMain fails the run and
+  names it), never as a stale verdict. What a run imports from outside
+  its module tree (std, other repository packages) is not in the key:
+  regenerate after such a change.
+- **Verdicts**: on one tree, replay gives the live verdicts and the live
+  logged counts for every differential under `-short` and for the
+  mutation, format, and defhash tests at the merge tier's sizes, except
+  TestSelfhostCheckerHatches, which skips in replay (the Xo checker reads
+  the binding the Go checker writes as a side effect; after the
+  deletion it must come from xo-gobind).
+- **Size**: 1.4 GB in one gzip file per unit (19,643 units; ssadump 598
+  MB, llvmdump 538 MB, asmdump 152 MB; 10 GB uncompressed), so the
+  recording is git ignored for now. Measured alternatives: shared
+  content defined chunks 574 MB; zstd's long window takes ssadump from
+  549 MB to 79 MB but is not in Go's standard library.
+- **Proposed layout** (for the owner or the lead to accept before
+  step 2 is done): (a) in git, under internal/selfhost/testdata/
+  gogoldens/: a hash per unit for the kinds compared byte for byte
+  (lexdump, astdump, format, defhash: 10,965 units, about 1.1 MB), since
+  a hash gives the same verdict and, once Go is deleted, there is no
+  reference text to diff against anyway; plus typedump and gendump as
+  chunk pooled gzip (about 16 MB). (b) Out of git: ssadump, llvmdump,
+  and asmdump, stored as a versioned artifact (a release asset or the
+  xo-ci bucket) named by the recording's commit, with its SHA-256 and
+  that commit in a manifest file in git, fetched into
+  `XO_SELFHOST_GOLDENS_DIR` by the record script; or, the smaller next
+  step, replaced by per function hashes (the comparisons already cut
+  these dumps into functions), which would also fit in git. Either way
+  the test code is unchanged except for the store behind `recorded`.
+  Still open: the mutation generators tokenize with internal/lexer, so
+  deleting it needs the mutated inputs recorded or the generators moved
+  onto the Xo lexer's dump; llvm.SplitIR, ssa.SplitModule, and
+  gen.FormatFile used by the comparisons must be copied into the test
+  package first; recording takes 25 minutes and 15 GB of RAM (the Go
+  side of the selfhost components), an EC2 job rather than a Mac one.
+- **Bootstrap chain**: scripts/bootstrap-xo.sh builds selfhost/xo with
+  a given xo (s1), then s1 builds s2 and s2 builds s3, each with empty
+  caches and no Go on PATH, and requires s2 and s3 identical (assembly
+  and binary) and s3 to build and run a program; scripts/remote-bootstrap.sh
+  runs it on a clean EC2 machine after deleting Go. Passed on 2026-10-12
+  (Amazon Linux 2023 arm64, commit 30dfd24): s2 and s3 identical, s1
+  too; and on the development Mac with Go off PATH (commit 7b3da52),
+  the same. It first failed and found a bug of xo1's own TLS build with a
+  relative `--std` (gotchas/xo1-relative-std-tls-tree.md). The seed was
+  built by Go on the same machine before the deletion, standing in for
+  the previous release's binary until a release ships the Xo `xo`.
 
 ## Consequences
 

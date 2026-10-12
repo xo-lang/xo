@@ -64,6 +64,12 @@ func TestSelfhostFormat(t *testing.T) {
 // internal/format and fails on the first differences.
 func formatCompare(t *testing.T, bin, root string, files []string) {
 	t.Helper()
+	if goldensRecording() {
+		for _, f := range files {
+			goFormat(t, root, f)
+		}
+		skipRecording(t)
+	}
 	cmd := exec.Command(bin, files...)
 	cmd.Dir = root
 	var stderr bytes.Buffer
@@ -75,21 +81,12 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 	got := splitFormatDump(string(out))
 	same, errs, bad := 0, 0, 0
 	for _, f := range files {
-		src, err := os.ReadFile(filepath.Join(root, f))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := ""
-		res, err := format.Source(f, src)
-		var pe *format.ParseError
+		want := goFormat(t, root, f)
 		switch {
-		case errors.As(err, &pe):
-			want = fmt.Sprintf(" syntax errors %d\n", len(pe.Diagnostics))
+		case strings.HasPrefix(want, " syntax errors "):
 			errs++
-		case err != nil:
-			t.Fatalf("%s: %v", f, err)
-		default:
-			want = "\n" + string(res)
+		case strings.HasPrefix(want, "== "):
+			t.Fatalf("%s: %s", f, want)
 		}
 		g, ok := got[f]
 		if !ok {
@@ -107,6 +104,30 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 		same++
 	}
 	t.Logf("%d files: %d identical (%d syntax errors in both), %d different", len(files), same, errs, bad)
+}
+
+// goFormat is internal/format's result for file f (relative to root) as
+// the Xo formatter prints it: "\n" and the text, ` syntax errors <n>\n`,
+// or `== error <why>`. Recorded as the format kind (gogoldens_test.go).
+func goFormat(t *testing.T, root, f string) string {
+	t.Helper()
+	full := filepath.Join(root, f)
+	src, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cx := newGoldenCtx(full)
+	return recorded("format", f, []string{cx.fileKey(f, src)}, cx, func() string {
+		res, err := format.Source(f, src)
+		var pe *format.ParseError
+		switch {
+		case errors.As(err, &pe):
+			return fmt.Sprintf(" syntax errors %d\n", len(pe.Diagnostics))
+		case err != nil:
+			return "== error " + err.Error()
+		}
+		return "\n" + string(res)
+	})
 }
 
 // splitFormatDump splits the formatter's output into the text after each
