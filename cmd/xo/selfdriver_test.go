@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// XO_SELF_DRIVER=1 runs the `build`, `run`, and `test` commands of
+// XO_SELF_DRIVER_ALL=1 runs the `build`, `run`, and `test` commands of
 // cmd/xo's tests through the self hosted driver xo1 (selfhost/xo,
 // decision 0178 stage 1's gate): $XO1 names the binary (default
 // .tools/xo1 at the repository root). xo1 gets the repository's std
@@ -19,7 +19,7 @@ import (
 // the command line names no backend (cmd/xo's default; xo1's is arm64).
 // Off by default: every test runs the Go CLI.
 func init() {
-	if os.Getenv("XO_SELF_DRIVER") != "1" {
+	if os.Getenv("XO_SELF_DRIVER_ALL") != "1" {
 		return
 	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))

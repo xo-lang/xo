@@ -186,7 +186,7 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
     Err(e) => fail(os, "check: ${e}")
   }
   if !c.unsupported.is_empty() {
-    fail(os, "unsupported: ${c.unsupported}")
+    fail_unsupported(os, "unsupported: ${c.unsupported}")
   }
   var ds = c.diags
   var bad = blocks(ds, o.holes)
@@ -240,11 +240,11 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var b = ssa.build_program_release(c, root, tests, release)
   t = lap(os, phases, "ssa", t)
   if !b.why.is_empty() {
-    fail(os, b.why)
+    fail_unsupported(os, b.why)
   }
   for f in b.m.funcs {
     if !f.skip.is_empty() {
-      fail(os, "the SSA builder skipped ${f.name}: ${f.skip}")
+      fail_unsupported(os, "the SSA builder skipped ${f.name}: ${f.skip}")
     }
   }
   // the zone data std/time needs, noted as the Go builder lowers
@@ -293,7 +293,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       fail(os, g.err)
     }
     if !g.skipped.is_empty() {
-      fail(os, "the LLVM emitter skipped ${g.skipped[0]}")
+      fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
     let code = with_target_attrs(ir, clang_target_attrs(os, cc))
     if o.cmd == "asm" {
@@ -362,7 +362,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       fail(os, p.err)
     }
     if !p.skipped.is_empty() {
-      fail(os, "the emitter skipped ${p.skipped[0]}")
+      fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
     }
     let code = p.asm
     if o.cmd == "asm" {
