@@ -127,15 +127,33 @@ func runUnits(order []int, heavy func(i int) bool, f func(i int)) {
 
 // parallel runs f(i) for each of dirs, each call in a slot of the pools
 // (mergeHeavy dirs in a heavy one): the runs of the Go checker, SSA
-// builder, and emitters are independent. f must not take a slot itself.
-func parallel(dirs []string, f func(i int)) {
+// builder, and emitters (what, in the log line) are independent. f must
+// not take a slot itself. It logs the time and the longest item.
+func parallel(t testing.TB, what string, dirs []string, f func(i int)) {
+	t.Helper()
 	order := make([]int, len(dirs))
 	for i := range order {
 		order[i] = i
 	}
 	// the heavy runs first: they take longest
 	sort.SliceStable(order, func(a, b int) bool { return mergeHeavy(dirs[order[a]]) && !mergeHeavy(dirs[order[b]]) })
-	runUnits(order, func(i int) bool { return mergeHeavy(dirs[i]) }, f)
+	took := make([]time.Duration, len(dirs))
+	start := time.Now()
+	runUnits(order, func(i int) bool { return mergeHeavy(dirs[i]) }, func(i int) {
+		t0 := time.Now()
+		f(i)
+		took[i] = time.Since(t0)
+	})
+	if len(dirs) > 0 {
+		long := 0
+		for i := range took {
+			if took[i] > took[long] {
+				long = i
+			}
+		}
+		t.Logf("%s: %d items on %d jobs (%d heavy), %.1f s; longest %.1f s (%s)",
+			what, len(dirs), selfhostJobs(), selfhostHeavyJobs(), time.Since(start).Seconds(), took[long].Seconds(), dirs[long])
+	}
 }
 
 // background runs f (the Go side results of a test, which use the
@@ -312,9 +330,13 @@ func runXoBatches(t testing.TB, bin, root string, prefix, paths []string, size i
 			}
 			return fmt.Sprintf("%s and %d more", chunks[i][0], len(chunks[i])-1)
 		}
-		t.Logf("%s %s: %d paths in %d processes on %d jobs (%d heavy), %.1f s; longest %.1f s (%s); peak RSS %d MB (%s)",
+		peak := "n/a"
+		if rss[big] > 0 {
+			peak = fmt.Sprintf("%d MB (%s)", rss[big]>>20, name(big))
+		}
+		t.Logf("%s %s: %d paths in %d processes on %d jobs (%d heavy), %.1f s; longest %.1f s (%s); peak RSS %s",
 			filepath.Base(bin), strings.Join(prefix, " "), len(paths), len(chunks), selfhostJobs(), selfhostHeavyJobs(),
-			time.Since(start).Seconds(), took[long].Seconds(), name(long), rss[big]>>20, name(big))
+			time.Since(start).Seconds(), took[long].Seconds(), name(long), peak)
 	}
 	return outs
 }

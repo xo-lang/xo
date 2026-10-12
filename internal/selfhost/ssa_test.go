@@ -72,7 +72,6 @@ func TestSelfhostSSA(t *testing.T) {
 			buildOnly[d] = mergeHeavy(d)
 		}
 	}
-	bins := selfhostBinaries(t, "ssa", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	// the test binaries (stage 7) of the runs with test blocks
@@ -82,16 +81,24 @@ func TestSelfhostSSA(t *testing.T) {
 	// the Go builder's results, while the subtests run the Xo builder
 	wait := background(t, func() {
 		wants := make([]goSSA, len(dirs))
-		parallel(dirs, func(i int) { wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]]) })
+		twants := make([]goSSA, len(tdirs))
+		all := append(append([]string(nil), dirs...), tdirs...)
+		parallel(t, "Go SSA builder", all, func(i int) {
+			if i < len(dirs) {
+				wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]])
+			} else {
+				i -= len(dirs)
+				twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]])
+			}
+		})
 		for i, d := range dirs {
 			want[d] = wants[i]
 		}
-		twants := make([]goSSA, len(tdirs))
-		parallel(tdirs, func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]]) })
 		for i, d := range tdirs {
 			twant[d] = twants[i]
 		}
 	})
+	bins := selfhostBinaries(t, "ssa", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {

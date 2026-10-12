@@ -65,7 +65,6 @@ func TestSelfhostLLVM(t *testing.T) {
 		}
 		dirs = some
 	}
-	bins := selfhostBinaries(t, "llvm", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	tdirs := testDirs(t, root, dirs)
@@ -73,9 +72,17 @@ func TestSelfhostLLVM(t *testing.T) {
 	twants := make([]goIR, len(tdirs))
 	// the Go emitter's results, while the subtests run the Xo emitter
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goLLVM(root, dirs[i], false) })
-		parallel(tdirs, func(i int) { twants[i] = goLLVM(root, tdirs[i], true) })
+		all := append(append([]string(nil), dirs...), tdirs...)
+		parallel(t, "Go LLVM emitter", all, func(i int) {
+			if i < len(dirs) {
+				wants[i] = goLLVM(root, dirs[i], false)
+			} else {
+				i -= len(dirs)
+				twants[i] = goLLVM(root, tdirs[i], true)
+			}
+		})
 	})
+	bins := selfhostBinaries(t, "llvm", backends)
 	flags := []string{"--std=std"}
 	if v := os.Getenv("XO_SELFHOST_LLVM_STAGE"); v != "" {
 		flags = append(flags, "--stage="+v)
@@ -179,7 +186,7 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	wd := workDir(t)
 	wants := make([]goIR, len(dirs))
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+		parallel(t, "Go LLVM emitter", dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
 	})
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
 	wait()

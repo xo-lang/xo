@@ -35,8 +35,9 @@ func repoRoot(t testing.TB) string {
 // binaries holds the self hosted components (selfhost/lexer,
 // selfhost/parser, ...) built once per component and backend.
 var (
-	binMu    sync.Mutex
-	binaries = map[string]*binEntry{}
+	selfhostDir = filepath.Join("..", "..", "selfhost") // absolute after TestMain
+	binMu       sync.Mutex
+	binaries    = map[string]*binEntry{}
 )
 
 // TestMain turns on the binary cache (a component is rebuilt only when
@@ -45,6 +46,9 @@ var (
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
 	flag.Parse()
+	if d, err := filepath.Abs(filepath.Join("..", "..", "selfhost")); err == nil {
+		selfhostDir = d
+	}
 	selfhostJobs()
 	if jobsErr != nil {
 		fmt.Fprintln(os.Stderr, jobsErr)
@@ -102,7 +106,9 @@ func buildBinary(e *binEntry, component, backend string, slot bool) {
 		if slot {
 			defer acquireJob(true)()
 		}
-		dir := filepath.Join("..", "..", "selfhost", component)
+		// absolute: the tests change the working directory while
+		// prebuildFull's builds start
+		dir := filepath.Join(selfhostDir, component)
 		t0 := time.Now()
 		defer func() { e.took = time.Since(t0) }()
 		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})

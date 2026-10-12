@@ -92,8 +92,15 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	wants := make([]goSSA, len(dirs))
 	twants := make([]goSSA, len(tdirs))
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goSSABuild(wd, dirs[i]) })
-		parallel(tdirs, func(i int) { twants[i] = goSSABuildOpts(wd, tdirs[i], true, true) })
+		all := append(append([]string(nil), dirs...), tdirs...)
+		parallel(t, "Go SSA builder", all, func(i int) {
+			if i < len(dirs) {
+				wants[i] = goSSABuild(wd, dirs[i])
+			} else {
+				i -= len(dirs)
+				twants[i] = goSSABuildOpts(wd, tdirs[i], true, true)
+			}
+		})
 	})
 	got := map[string]string{}
 	const batch = 60

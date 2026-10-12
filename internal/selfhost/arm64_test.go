@@ -65,14 +65,14 @@ func TestSelfhostArm64(t *testing.T) {
 		}
 		dirs = append(dirs, d)
 	}
-	bins := selfhostBinaries(t, "arm64", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	wants := make([]string, len(dirs))
-	// the Go emitter's results, while the subtests run the Xo emitter
+	// the Go emitter's results, while the builds and the subtests run
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
 	})
+	bins := selfhostBinaries(t, "arm64", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -162,7 +162,7 @@ func TestSelfhostArm64Mutations(t *testing.T) {
 	wd := workDir(t)
 	wants := make([]string, len(dirs))
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
 	})
 	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
 	wait()

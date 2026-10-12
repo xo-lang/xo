@@ -45,7 +45,6 @@ func TestSelfhostChecker(t *testing.T) {
 	backends := tierBackends(t)
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	bins := selfhostBinaries(t, "check", backends)
 	// The Go checker prints paths relative to the working directory, as
 	// the Xo checker run from root does.
 	t.Chdir(root)
@@ -57,7 +56,7 @@ func TestSelfhostChecker(t *testing.T) {
 	// the Go checker's results, while the subtests run the Xo checker
 	wait := background(t, func() {
 		wants := make([]*goRun, len(dirs))
-		parallel(dirs, func(i int) { wants[i] = goCheck(dirs[i]) })
+		parallel(t, "Go checker", dirs, func(i int) { wants[i] = goCheck(dirs[i]) })
 		for i, d := range dirs {
 			want[d] = wants[i]
 		}
@@ -65,6 +64,7 @@ func TestSelfhostChecker(t *testing.T) {
 			wantNative[d] = goCheckOpts(d, check.Options{Native: true})
 		}
 	})
+	bins := selfhostBinaries(t, "check", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {

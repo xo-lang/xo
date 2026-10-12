@@ -26,6 +26,13 @@ func maxRSS(ps *os.ProcessState) int64 {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
 		return int64(ru.Maxrss)
 	}
+	// linux counts the memory the child shared with this process
+	// before exec: a 35 GB test process made every child report 35 GB
+	// (2026-10-12); such a value says nothing about the child
+	var self syscall.Rusage
+	if syscall.Getrusage(syscall.RUSAGE_SELF, &self) == nil && ru.Maxrss <= self.Maxrss {
+		return 0
+	}
 	return int64(ru.Maxrss) << 10
 }
 

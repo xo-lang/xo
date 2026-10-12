@@ -71,7 +71,6 @@ func TestSelfhostGen(t *testing.T) {
 			tests = append(tests, d)
 		}
 	}
-	bins := selfhostBinaries(t, "gen", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	altStep := byTier(t, 1, 4, 1)
@@ -86,10 +85,21 @@ func TestSelfhostGen(t *testing.T) {
 	awants := make([]string, len(alts))
 	// the Go generator's results, while the subtests run the Xo one
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
-		parallel(tests, func(i int) { twants[i] = goGen(tests[i], genFlags, true) })
-		parallel(alts, func(i int) { awants[i] = goGen(alts[i], genAlt, false) })
+		all := append(append(append([]string(nil), dirs...), tests...), alts...)
+		parallel(t, "Go generator", all, func(i int) {
+			switch {
+			case i < len(dirs):
+				wants[i] = goGen(dirs[i], genFlags, false)
+			case i < len(dirs)+len(tests):
+				i -= len(dirs)
+				twants[i] = goGen(tests[i], genFlags, true)
+			default:
+				i -= len(dirs) + len(tests)
+				awants[i] = goGen(alts[i], genAlt, false)
+			}
+		})
 	})
+	bins := selfhostBinaries(t, "gen", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -185,7 +195,7 @@ func TestSelfhostGenMutations(t *testing.T) {
 	setModEnv(t, root)
 	wants := make([]string, len(dirs))
 	wait := background(t, func() {
-		parallel(dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
+		parallel(t, "Go generator", dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
 	})
 	got := runGen(t, bin, tmp, dirs, genFlags, "--std="+stdDir)
 	wait()
