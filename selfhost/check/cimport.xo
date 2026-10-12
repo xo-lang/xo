@@ -3,9 +3,10 @@
 // clang (internal/cbind) and writes the binding's declaration file to the
 // cache (`<module root>/.xo/cbind`, or $XO_CBIND_DIR); this checker
 // computes the same binding key and prefix and loads that declaration
-// file, as a std like module. Without the file in the cache (no Go build
-// or `xo bind --c` has bound the header) the run is not checked here
-// (unsupported). The clang step itself is not ported.
+// file, as a std like module. Without the file in the cache the run is
+// not checked here (unsupported); check_dirs_bound (bindmiss.xo) binds
+// the header with selfhost/cli/bind's port of internal/cbind and checks
+// again, as the Go checker binds on every run (decision 0178 stage 6).
 
 use std/crypto
 use github.com/xo-lang/xo/selfhost/lexer

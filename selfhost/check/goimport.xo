@@ -6,8 +6,9 @@
 // (the same path, the same staleness rules: binder version, package
 // name, `replay rerun` list, pinned module version, the adapter next to
 // it) and loads it as a std like module. Without a current file in the
-// cache (no Go build, check, or `xo bind` has bound the package) the run
-// is not checked here (unsupported). The binder itself is not ported.
+// cache the run is not checked here (unsupported); check_dirs_bound
+// (bindmiss.xo) binds the package with the Go helper xo-gobind and
+// checks again (decision 0178 stage 6: the binder stays Go).
 
 use std/crypto
 use github.com/xo-lang/xo/selfhost/parser

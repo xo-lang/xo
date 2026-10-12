@@ -418,6 +418,40 @@ transcript (14 of 14 steps), and replay; cmd/xo's own tests of these
 commands against xo1: 4 of 7 (the three others build or `run --record`
 through xo1, whose default backend is arm64, not Go).
 
+## Stage 6, the binders (2026-10-12)
+
+- **`xo bind --c` is Xo**: selfhost/cli/bind ports internal/cbind
+  (2,299 lines); xo1 dispatches `bind`. TestBindCXoSame runs both
+  binders over the repository's `use c` headers, zlib.h, a header of
+  edge cases, and the error cases: **17 of 17 byte identical** (output,
+  declaration files, adapters), with xobind and with xo1.
+- **`xo bind` for Go packages stays Go**: the helper `xo-gobind`
+  (cmd/xo-gobind, `gobind.RunCLI`, shared with cmd/xo's runBind). The Xo
+  CLI execs it with the same flags; it is found as $XO_GOBIND, beside
+  the program, in a release layout's bin/, on $PATH, or built from the
+  repository holding std with `go build` into a temporary file. Release
+  archives ship it beside `xo` (switch point B's list above).
+- **Binding and fetching on a miss** (decided here): the Xo checker
+  stays free of process and network effects. It records what a run
+  lacks (a `use go` package without a current binding, every `use c`
+  header, a module version missing from the module cache), and
+  `Checker.check_dirs_bound` and `check_dirs_fetching` bind or fetch it
+  and check again from the state before the run, so a run sees what the
+  Go checker sees after its in line gobind.LoadOrBind, cbind.Bind, and
+  mod.Load. A failed binding or fetch is the Go checker's diagnostic
+  (XO1101, XO1104, the module problem). The fetcher is passed in as a
+  function because selfhost/check cannot import selfhost/cli/modules;
+  `query` and `edit` (selfhost/cli/semantic, which the module commands
+  import) bind but do not fetch.
+- **`xo publish` and `xo get`'s API changes** are in
+  selfhost/cli/modules, with release.Publish's last steps (clean tree,
+  mod.Load without a workspace, a check with workspaces off).
+- Gate figures (bench/results/retire-go-2026-10-12.md, "Stage 6"):
+  against xo1, TestBind and TestBindC pass and the module, publish, and
+  audit tests **12 of 13**, the last being TestModules' `build --ci`
+  (no `--ci` in xo1); against xomod 13 of 13. Not yet: `--ci` in xo1,
+  fetching in `query` and `edit`, binding and fetching in the LSP.
+
 ## Consequences
 
 - Until switch point B every language change is still made twice
