@@ -180,6 +180,14 @@ pub struct Builder {
   scan_budget: Bool = false
   /// Why the run cannot be built here (no main, concurrency), or "".
   pub why: Str = ""
+  /// Every construct recorded as unsupported (build.go errs): the no GC
+  /// check's XO1201 diagnostics (nogc.xo), each at the expression being
+  /// lowered when it was recorded.
+  pub errs: List[BuildErr] = []
+  seen_err: Map[Str, Bool] = {}
+  /// The expression being lowered and its file (-1: none), for errs.
+  at: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  at_file: Int = -1
   /// While declaring a function: what was unsupported in its signature.
   declaring: Bool = false
   pend_skip: Str = ""
@@ -357,8 +365,20 @@ fn (var b: Builder) pos_line(sp: Span) -> Str {
 }
 
 /// Records a construct outside the stages ported: the function being
-/// built (or declared) is not compared.
+/// built (or declared) is not compared, and the no GC check reports it
+/// (build.go unsupported).
 fn (var b: Builder) unsupported(what: Str) {
+  b.unsupported_kind(what, false)
+}
+
+/// Records a construct no native backend can support, such as a call into
+/// a `use go` package (build.go impossible).
+fn (var b: Builder) impossible(what: Str) {
+  b.unsupported_kind(what, true)
+}
+
+fn (var b: Builder) unsupported_kind(what: Str, never: Bool) {
+  b.record_err(what, never)
   b.skipped_any = true
   if b.declaring {
     if b.pend_skip.is_empty() {
@@ -613,6 +633,10 @@ fn (var b: Builder) named_type(t: Int) -> Int {
   }
   let impl_t = b.impl_named(t)
   let name = b.type_name(impl_t)
+  if om >= 0 && !b.c.mods[om].go_path.is_empty() {
+    b.impossible("the type `${name}` of the Go package `${b.c.mods[om].go_path}` (`use go`)")
+    return b.unit_t()
+  }
   if om >= 0 && !b.c.mods[om].c_prefix.is_empty() && b.c.objs[obj].opaque {
     // a C handle of `use c`: the pointer in a word, never reference
     // counted (decision 0116)

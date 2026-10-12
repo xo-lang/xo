@@ -1,0 +1,87 @@
+// The no GC check (internal/ssa nogc.go, decision 0083): what the builder
+// recorded as unsupported, as XO1201 diagnostics at the sites. `xo check
+// --no-gc` (selfhost/cli/core) and xo1's native builds report them.
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// One construct the builder does not lower (build.go Error): the file
+/// as the checker names it ("" without a position), the span, the
+/// feature, and whether no native backend can ever support it.
+pub struct BuildErr {
+  pub file: Str
+  pub span: Span
+  pub feature: Str
+  pub impossible: Bool
+}
+
+/// Records what at the expression being lowered, once per position and
+/// feature (build.go unsupportedKind).
+fn (var b: Builder) record_err(what: Str, never: Bool) {
+  var file = ""
+  if b.at_file >= 0 && b.at_file < b.c.files.len() {
+    file = b.c.files[b.at_file].path
+  }
+  let key = "${file}:${b.at.start.line}:${b.at.start.col}:${what}"
+  if b.seen_err.contains(key) {
+    return
+  }
+  b.seen_err[key] = true
+  b.errs.push(BuildErr{file: file, span: b.at, feature: what, impossible: never})
+}
+
+/// The XO1201 diagnostics of the build (NoGCDiagnostics), unsorted: an
+/// error overlapping the source range of one kept before it is a
+/// consequence of it and left out (core 10.2: never cascade).
+pub fn nogc_diags(b: Builder) -> List[check.Diag] {
+  var kept: List[BuildErr] = []
+  var out: List[check.Diag] = []
+  for e in b.errs {
+    if cascades(e, kept) {
+      continue
+    }
+    kept.push(e)
+    out.push(nogc_diag(e))
+  }
+  out
+}
+
+fn before(al: Int, ac: Int, bl: Int, bc: Int) -> Bool {
+  al < bl || (al == bl && ac < bc)
+}
+
+fn cascades(e: BuildErr, kept: List[BuildErr]) -> Bool {
+  if e.file.is_empty() {
+    return false
+  }
+  let es = e.span
+  for k in kept {
+    if k.file != e.file {
+      continue
+    }
+    let ks = k.span
+    // overlap: neither ends before the other starts
+    if before(es.end.line, es.end.col, ks.start.line, ks.start.col) || before(ks.end.line, ks.end.col, es.start.line, es.start.col) {
+      continue
+    }
+    if (es.end.line == ks.start.line && es.end.col == ks.start.col) || (ks.end.line == es.start.line && ks.end.col == es.start.col) {
+      continue
+    }
+    return true
+  }
+  false
+}
+
+/// The XO1201 diagnostic of one construct (NoGCDiagnostic).
+fn nogc_diag(e: BuildErr) -> check.Diag {
+  let msg = if e.impossible {
+    "not available without a garbage collector (`--no-gc`): ${e.feature} (impossible: Go code needs Go's runtime)"
+  } else {
+    "not available without a garbage collector (`--no-gc`) yet: ${e.feature} (support is planned)"
+  }
+  let note = if e.impossible {
+    "support: impossible; build without --no-gc to use the Go backend"
+  } else {
+    "support: planned; build without --no-gc to use the Go backend until then"
+  }
+  check.Diag{code: "XO1201", file: e.file, line: e.span.start.line, col: e.span.start.col, end_line: e.span.end.line, end_col: e.span.end.col, message: msg, notes: [check.DNote{message: note}]}
+}

@@ -265,6 +265,21 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
   }
+  if !b.errs.is_empty() {
+    // what the builder does not lower: the Go driver's XO1201
+    // diagnostics (ssa.NoGCDiagnostics); under switch point A the Go
+    // driver builds it or reports them itself
+    if !(os.env.get("XO1_FALLBACK") ?? "").is_empty() {
+      fail_unsupported(os, "the SSA builder does not support ${b.errs[0].feature}")
+    }
+    let nd = ssa.nogc_diags(b)
+    if o.json && o.cmd == "build" {
+      os.stdio.print(build_json(false, [], nd))
+    } else {
+      print_diags(os, nd)
+    }
+    os.proc.exit(1)
+  }
   for f in b.m.funcs {
     if !f.skip.is_empty() {
       fail_unsupported(os, "the SSA builder skipped ${f.name}: ${f.skip}")

@@ -2,6 +2,7 @@
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/ssa
 
 // ---------------------------------------------------------------------------
 // parse
@@ -213,8 +214,9 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
 }
 
 /// The check of `xo check`: the workspace's modules, or with no_gc the
-/// native check (build.CheckNoGCDirs; the XO1201 check of the SSA builder
-/// is not ported: the native implementation modules are checked).
+/// native check and, when it reports no error and a root module declares
+/// main, the XO1201 diagnostics of the SSA builder
+/// (build.CheckNoGCDirs).
 fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str uses fs.read, env {
   if !no_gc {
     return load(os, ctx, dirs, false, {})
@@ -229,5 +231,17 @@ fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str u
   for m in c.root_mods {
     mods.push(c.mods[m].path)
   }
-  Ok(Session{c: c, mods: mods, diags: sort_diags(c.diags)})
+  var ds = c.diags
+  var errs = false
+  for d in ds {
+    errs = errs || !d.warning
+  }
+  if !errs {
+    let b = ssa.build_program(c, ".", false)
+    // no main: a library has no program to lower
+    if b.why.is_empty() {
+      ds = ds + ssa.nogc_diags(b)
+    }
+  }
+  Ok(Session{c: c, mods: mods, diags: sort_diags(ds)})
 }

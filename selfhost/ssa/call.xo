@@ -84,6 +84,10 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
+  if fm >= 0 && !b.c.mods[fm].go_path.is_empty() {
+    b.impossible("`${b.c.mods[fm].name}.${b.c.display_name(fo)}` of the Go package `${b.c.mods[fm].go_path}` (`use go`)")
+    return b.undef(b.nat_of(x))
+  }
   if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() {
     return b.c_call(x, ci)
   }
