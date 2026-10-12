@@ -260,6 +260,41 @@ fn (var g: G) list_len(l: Int) -> Int {
   n
 }
 
+/// Loads byte i (SSA value iv, register i) of the Bytes object in
+/// register obj0; the data address, and data + j for i = j + c (0 < c <
+/// 4096), are computed once per block (isel.go bytesLoad, decision 0184).
+fn (var g: G) bytes_load(obj0: Int, iv: Int, i: Int) -> Int {
+  let obj = g.real(obj0)
+  let _mi = g.m_()
+  var d = 0
+  if let Some(x) = g.cm.bases.get((obj, 0, -16)) {
+    d = x
+  } else {
+    d = g.def1(false, "add $d0, $u0, #16", [obj])
+    let _mj = g.m_()
+    g.cm.bases[(obj, 0, -16)] = d
+  }
+  let x = g.f.values[iv]
+  if x.op == ssa.Op.Add {
+    let (c, is_k) = g.const_int(x.args[1])
+    let j = x.args[0]
+    if is_k && c > 0 && c < 4096 && g.has_val[j] && g.vals[j].len() == 1 && g.vals[j][0] != 0 {
+      let jw = g.vals[j][0]
+      let _mk = g.m_()
+      var t = 0
+      if let Some(y) = g.cm.bases.get((d, jw, -17)) {
+        t = y
+      } else {
+        t = g.def1(false, "add $d0, $u0, $u1", [d, jw])
+        let _ml = g.m_()
+        g.cm.bases[(d, jw, -17)] = t
+      }
+      return g.def1(false, "ldrb $wd0, [$u0, #${c}]", [t])
+    }
+  }
+  g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])
+}
+
 fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   let pos = g.f.values[v].pos
   if pos.is_empty() {
@@ -586,8 +621,7 @@ fn (var g: G) call_op(v: Int) {
         g.index_facts(i)
         g.less_fact(x.args[1], a[1])
       }
-      let d = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
-      g.set(v, [g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])])
+      g.set(v, [g.bytes_load(a[0], x.args[1], i)])
     }
     "Str.len" => g.set(v, [g.words(x.args[0])[1]])
     "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.words(x.args[0])[1])])])

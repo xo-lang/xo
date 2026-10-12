@@ -474,7 +474,7 @@ func (s *fstate) isel() {
 	}
 	idom := dominators(blocks)
 	s.planLSR(blocks, idom)
-	s.computeRanges(blocks)
+	s.computeRanges(blocks, idom)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -1275,6 +1275,35 @@ func (s *fstate) shift(v *ssa.Value) {
 	s.set(v, r)
 }
 
+// bytesLoad loads byte i (SSA value iv, register i) of the Bytes
+// object in register obj. The data address (16 bytes in) is computed
+// once per block, and so is data + j for i = j + c (0 < c < 4096), so
+// t[k], t[k + 1], t[k + 2] are one add and three loads (decision 0184).
+func (s *fstate) bytesLoad(obj vreg, iv *ssa.Value, i vreg) vreg {
+	m := s.m()
+	obj = s.real(obj)
+	key := [3]int64{int64(obj), 0, -16}
+	d, ok := m.bases[key]
+	if !ok {
+		d = s.def1(false, "add $d0, $u0, #16", obj)
+		m.bases[key] = d
+	}
+	if iv.Op == ssa.OpAdd {
+		if c, isK := constInt(iv.Args[1]); isK && c > 0 && c < 4096 {
+			if ws, ok := s.vals[iv.Args[0]]; ok && len(ws) == 1 && ws[0] != 0 {
+				jkey := [3]int64{int64(d), int64(ws[0]), -17}
+				t, ok := m.bases[jkey]
+				if !ok {
+					t = s.def1(false, "add $d0, $u0, $u1", d, ws[0])
+					m.bases[jkey] = t
+				}
+				return s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", c), t)
+			}
+		}
+	}
+	return s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i)
+}
+
 // safeShl reports whether a << k cannot overflow for every k in [0,
 // khi] (khi <= 63): a's bounds fit in 63 - khi bits and a sign
 // (decision 0184).
@@ -1863,8 +1892,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 			s.indexFacts(i)
 			s.lessFact(v.Args[1], x[1])
 		}
-		d := s.def1(false, "add $d0, $u0, #16", s.real(x[0]))
-		s.set(v, s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i))
+		s.set(v, s.bytesLoad(x[0], v.Args[1], i))
 	case "Str.len":
 		s.set(v, a(0)[1])
 	case "Str.is_empty":

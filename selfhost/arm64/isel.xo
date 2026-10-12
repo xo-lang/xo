@@ -424,7 +424,7 @@ fn (var g: G) isel() {
   let ptrs = g.plan_held()
   let idom = dominators_of(g.f, blocks)
   g.plan_lsr(blocks, idom)
-  g.compute_ranges(blocks)
+  g.compute_ranges(blocks, idom)
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})
