@@ -31,6 +31,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   checks. The Xo driver `selfhost/xo` gains `--backend=go`: it compiles
   selfhost/check to the same Go as `xo build` and compiles itself to a
   fixed point. The released `xo` is unchanged.
+- LLVM builds can split the IR into modules compiled by parallel clang
+  processes: `XO_LLVM_SPLIT=n`, `XO_LLVM_JOBS` (default min(cores, 6)),
+  `XO_LLVM_LTO=thin|none` (decision 0168). Builds without the variable
+  are unchanged (one module, full LTO). The self hosted compiler's
+  tests split (12 modules, no LTO): its LLVM build of selfhost/ssa
+  takes 512 s instead of 2,394 s.
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by

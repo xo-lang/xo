@@ -221,6 +221,49 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestGoldenSplit builds every golden program with its IR split into
+// three modules compiled separately (decision 0168), alternating ThinLTO
+// and no LTO (shortGoldens both), and requires want.txt and no allocation live at exit.
+func TestGoldenSplit(t *testing.T) {
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	type run struct{ dir, lto string }
+	var runs []run
+	for i, dir := range dirs {
+		if shortGoldens[filepath.Base(dir)] {
+			runs = append(runs, run{dir, "none"}, run{dir, "thin"})
+		} else {
+			runs = append(runs, run{dir, []string{"none", "thin"}[i%2]})
+		}
+	}
+	for _, r := range runs {
+		dir, lto := r.dir, r.lto
+		t.Run(filepath.Base(dir)+"/"+lto, func(t *testing.T) {
+			if testing.Short() && !shortGoldens[filepath.Base(dir)] {
+				t.Skip("builds every golden program: -short runs shortGoldens")
+			}
+			t.Parallel()
+			split := &build.SplitConfig{Modules: 3, Jobs: 3, LTO: lto}
+			res, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, LLVMSplit: split})
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != res.String() {
+				t.Errorf("split build differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+			}
+			if res.exit == 0 {
+				leakCheck(t, b.Binaries[build.Host()], dir)
+			}
+		})
+	}
+}
+
 // TestGoldenShared builds every golden program with share probes (every
 // heap value marked shared between threads as it is defined, decision
 // 0058) and requires want.txt and no allocation live at exit: the atomic

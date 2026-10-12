@@ -109,6 +109,10 @@ type Options struct {
 	// update takes the atomic path (ssa.InsertShareProbes, decision
 	// 0058).
 	ShareProbes bool
+	// LLVMSplit (LLVM backend) divides the IR into modules compiled in
+	// parallel (decision 0168); nil reads XO_LLVM_SPLIT and its
+	// companions (LLVMSplitConfig).
+	LLVMSplit *SplitConfig
 	// LLVMIR (LLVM backend; tests) is the IR to compile in place of the
 	// one internal/llvm generates (llvm.Options.IR): the self hosted
 	// emitter's output, decision 0166.
