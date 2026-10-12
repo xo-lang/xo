@@ -342,6 +342,16 @@ const ENCODINGS: List[(Str, Int)] = [
   ("ldr x0, [x1, x2]", 0xf8626820),
   ("fmov d0, d1", 0x1e604020),
   ("fabs d0, d1", 0x1e60c020),
+  // the exclusive loops of the linux emitter and the outline atomics
+  ("ldxr x10, [x9]", 0xc85f7d2a),
+  ("ldaxr x1, [x0]", 0xc85ffc01),
+  ("stxr w11, x10, [x9]", 0xc80b7d2a),
+  ("stlxr w2, x1, [x0]", 0xc802fc01),
+  ("ldxr w0, [x2]", 0x885f7c40),
+  ("stlxr w17, w1, [x2]", 0x8811fc41),
+  ("ldar x0, [x1]", 0xc8dffc20),
+  ("stlr w0, [sp]", 0x889fffe0),
+  ("bic x17, x0, x16", 0x8a300011),
 ]
 
 test "every instruction encodes as the system assembler encodes it" {
@@ -421,4 +431,181 @@ test "errors name the line" {
   expect(assemble("\tnop\n\tfrobnicate x0\n".bytes())) == Err("line 2: unsupported instruction: frobnicate x0")
   expect(assemble("\tb Lnowhere\n".bytes())) == Err("Lnowhere is used but not defined")
   expect(assemble("\tadd x0, x1, #5000\n".bytes())) == Err("line 1: unsupported instruction: add x0, x1, #5000")
+}
+
+// ---------------------------------------------------------------------------
+// ELF (decision 0182 stage 3). The comparison with clang on every golden
+// and on xo1's linux assembly is scripts/elf-compare.py; running the
+// linked goldens on Linux is scripts/elf-goldens.py.
+
+/// A small program in the linux emitter's syntax: a numeric label loop,
+/// a page and :lo12: pair, a call to an undefined function, a frame with
+/// a personality and LSDA, and a pointer in .rodata.
+const ELF_SRC = """
+\t.text
+\t.p2align 2
+\t.type f, %function
+f:
+.Lf_begin:
+\t.cfi_startproc
+\t.cfi_personality 155, DW.ref.xo_personality
+\t.cfi_lsda 27, .Lf_lsda
+\tstp x29, x30, [sp, #-16]!
+\tmov x29, sp
+\t.cfi_def_cfa w29, 16
+\t.cfi_offset w30, -8
+\t.cfi_offset w29, -16
+\tadrp x0, .Ls
+\tadd x0, x0, :lo12:.Ls
+1:
+\tldaxr x1, [x0]
+\tstlxr w2, x1, [x0]
+\tcbnz w2, 1b
+\tbl puts
+\tldp x29, x30, [sp], #16
+\tret
+\t.cfi_endproc
+\t.section .gcc_except_table,"a",@progbits
+\t.p2align 2
+.Lf_lsda:
+\t.byte 255
+\t.byte 255
+\t.byte 1
+\t.uleb128 0
+\t.hidden DW.ref.xo_personality
+\t.weak DW.ref.xo_personality
+\t.section .data.DW.ref.xo_personality,"awG",@progbits,DW.ref.xo_personality,comdat
+\t.p2align 3
+\t.type DW.ref.xo_personality, @object
+\t.size DW.ref.xo_personality, 8
+DW.ref.xo_personality:
+\t.xword xo_personality
+\t.section .rodata
+\t.p2align 3
+.Ls:
+\t.quad .Ls
+\t.section .note.GNU-stack,"",@progbits
+"""
+
+fn elf_obj(src: Str) -> EObj {
+  match assemble_elf(src.bytes()) {
+    Ok(b) => match parse_elf_object("t.o", b) {
+      Ok(o) => o
+      Err(e) => fault("does not parse: ${e}")
+    }
+    Err(e) => fault("does not assemble: ${e}")
+  }
+}
+
+fn sect_named(o: EObj, name: Str) -> ESect {
+  for s in o.sects {
+    if s.name == name {
+      return s
+    }
+  }
+  fault("no section ${name}")
+}
+
+test "an ELF object has LLVM's sections, symbols, and relocations" {
+  let o = elf_obj(ELF_SRC)
+  var names: List[Str] = []
+  for s in o.sects {
+    names.push(s.name)
+  }
+  expect(names) == ["", ".strtab", ".text", ".rela.text", ".gcc_except_table", ".group", ".data.DW.ref.xo_personality", ".rela.data.DW.ref.xo_personality", ".rodata", ".rela.rodata", ".note.GNU-stack", ".eh_frame", ".rela.eh_frame", ".symtab"]
+  // adrp and add to the .rodata section symbol, the call to puts; the
+  // loop's branch resolved
+  var types: List[Int] = []
+  for r in sect_named(o, ".text").relocs {
+    types.push(r.typ)
+  }
+  expect(types) == [R_AARCH64_ADR_PREL_PG_HI21, R_AARCH64_ADD_ABS_LO12_NC, R_AARCH64_CALL26]
+  expect(rd32(sect_named(o, ".text").data, 24)) == 0x35ffffc2
+  // the personality pointer, then the FDE's pc and LSDA
+  var eh: List[Int] = []
+  for r in sect_named(o, ".eh_frame").relocs {
+    eh.push(r.typ)
+  }
+  expect(eh) == [R_AARCH64_PREL32, R_AARCH64_PREL32, R_AARCH64_PREL32]
+  // mapping symbols and the local function, then the weak hidden
+  // DW.ref and the undefined names
+  var syms: List[Str] = []
+  for s in o.syms {
+    if !s.name.is_empty() {
+      syms.push(bstr(s.name))
+    }
+  }
+  expect(syms) == ["f", "$x", "$d", "$d", "$d", "$d", "puts", "DW.ref.xo_personality", "xo_personality"]
+}
+
+test "numeric labels go back to the last definition and forward to the next" {
+  let o = elf_obj("\tb 1f\n1:\n\tb 1b\n1:\n\tb 1b\n")
+  let t = sect_named(o, ".text").data
+  expect(rd32(t, 0)) == 0x14000001
+  expect(rd32(t, 4)) == 0x14000000
+  expect(rd32(t, 8)) == 0x14000000
+}
+
+test "the outline atomics assemble" {
+  for n in ["__aarch64_cas4_acq", "__aarch64_cas8_acq_rel", "__aarch64_swp4_rel", "__aarch64_ldadd8_relax", "__aarch64_ldclr4_acq", "__aarch64_ldset8_rel", "__aarch64_ldeor8_acq_rel"] {
+    match outline_atomic(n) {
+      Some(src) => expect(assemble_elf(src.bytes()).is_ok()) == true
+      None => fault("no ${n}")
+    }
+  }
+  expect(outline_atomic("__aarch64_cas16_acq")) == None
+  expect(outline_atomic("__aarch64_cas4_sync")) == None
+}
+
+test "a linked executable loads glibc and binds versioned imports" {
+  let main = "\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tstp x29, x30, [sp, #-16]!\n\tadrp x0, .Lhi\n\tadd x0, x0, :lo12:.Lhi\n\tbl puts\n\tbl __aarch64_ldadd8_acq_rel\n\tmov x0, #0\n\tldp x29, x30, [sp], #16\n\tret\n\t.section .rodata\n.Lhi:\n\t.asciz \"hi\"\n"
+  let obj = match assemble_elf(main.bytes()) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let exe = match link_elf([LinkInput{path: "main.o", data: obj}], ElfLinkOpts{}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  // ET_EXEC, arm64, the entry in the code segment
+  expect(rd16(exe, 16)) == ET_EXEC
+  expect(rd16(exe, 18)) == 183
+  expect(rd64(exe, 24) > ELF_BASE) == true
+  // PT_PHDR, PT_INTERP naming the loader, three PT_LOADs
+  let phnum = rd16(exe, 56)
+  var types: List[Int] = []
+  for i in 0..phnum {
+    types.push(rd32(exe, 64 + 56 * i))
+  }
+  expect(types[0..5]) == [PT_PHDR, PT_INTERP, PT_LOAD, PT_LOAD, PT_LOAD]
+  let ip = rd64(exe, 64 + 56 + 8)
+  expect(bstr(cstr(exe, ip))) == "/lib/ld-linux-aarch64.so.1"
+  // puts and __libc_start_main from libc.so.6 at GLIBC_2.17; the
+  // atomic is linked in, not imported
+  expect(has(exe, "puts")) == true
+  expect(has(exe, "__libc_start_main")) == true
+  expect(has(exe, "GLIBC_2.17")) == true
+  expect(has(exe, "libc.so.6")) == true
+  expect(has(exe, "__aarch64_ldadd8_acq_rel")) == false
+}
+
+/// b holds the bytes of s.
+fn has(b: Bytes, s: Str) -> Bool {
+  let n = s.bytes()
+  var i = 0
+  while i + n.len() <= b.len() {
+    if b[i..i + n.len()] == n {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+test "glibc versions: libm and libgcc_s names, libc's default" {
+  let v = glibc_versions()
+  expect(v.get("fmod".bytes())) == Some(("libm.so.6", "GLIBC_2.17"))
+  expect(v.get("_Unwind_RaiseException".bytes())) == Some(("libgcc_s.so.1", "GCC_3.0"))
+  expect(v.get("getrandom".bytes())) == Some(("libc.so.6", "GLIBC_2.25"))
+  expect(v.get("malloc".bytes())) == None
 }
