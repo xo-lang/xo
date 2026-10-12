@@ -35,7 +35,7 @@ pub fn is_command(args: List[Str]) -> Bool {
 
 /// Runs the command line args (the command first) and returns the exit
 /// status.
-pub fn run(os: Os, args0: List[Str]) -> Int uses (fs, env, stdio, proc, clock, net, rand) {
+pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock {
   var std_dir = os.env.get("XO_STD") ?? ""
   var wd = os.env.get("PWD") ?? ""
   var args = args0

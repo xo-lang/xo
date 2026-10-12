@@ -25,13 +25,6 @@ pub struct Checker {
   pub root_mods: List[Int] = []
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
   pub unsupported: Str = ""
-  /// The module versions the run needed and the module cache lacks
-  /// ("path@version"; download), for a caller that fetches them
-  /// (selfhost/cli/modules) and checks again; and the problems of the
-  /// fetches that failed, which download then reports as mod.Download
-  /// does.
-  pub missing_mods: List[(Str, Str)] = []
-  pub fetch_problems: Map[Str, Problem] = {}
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false

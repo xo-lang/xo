@@ -1,7 +1,6 @@
 // `xo parse` and `xo check` (cmd/xo main.go runParse, runCheckWith).
 
 use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/modules
 use github.com/xo-lang/xo/selfhost/parser
 use github.com/xo-lang/xo/selfhost/ssa
 
@@ -135,11 +134,11 @@ pub struct Session {
 /// Checks dirs and, unless exact, the other modules of their workspace
 /// (query.Load, LoadExact). The error is what cmd/xo prints after
 /// "xo <command>: ".
-pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses (fs, env, net, proc, rand) {
+pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses fs.read, env {
   var c = new_checker(os, ctx)
   c.overlay = overlay
   let all = if exact { dirs } else { c.workspace_dirs(dirs) }
-  c = modules.check_fetching(os, ctx.wd, c, all)?
+  c.check_dirs(all)?
   if !c.unsupported.is_empty() {
     return Err("not supported by the self hosted checker: ${c.unsupported}")
   }
@@ -218,13 +217,13 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
 /// native check and, when it reports no error and a root module declares
 /// main, the XO1201 diagnostics of the SSA builder
 /// (build.CheckNoGCDirs).
-fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str uses (fs, env, net, proc, rand) {
+fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str uses fs.read, env {
   if !no_gc {
     return load(os, ctx, dirs, false, {})
   }
   var c = new_checker(os, ctx)
   c.native = true
-  c = modules.check_fetching(os, ctx.wd, c, dirs)?
+  c.check_dirs(dirs)?
   if !c.unsupported.is_empty() {
     return Err("not supported by the self hosted checker: ${c.unsupported}")
   }

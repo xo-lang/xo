@@ -85,7 +85,7 @@ fn errors_of(ds: List[check.Diag]) -> List[check.Diag] {
   out
 }
 
-fn load_edit(os: Os, op: Str, target: Str, dirs0: List[Str], dry: Bool) -> EditSession ! Str uses (env, fs, net, proc, rand) {
+fn load_edit(os: Os, op: Str, target: Str, dirs0: List[Str], dry: Bool) -> EditSession ! Str uses env, fs.read {
   let q = load_session(os, dirs0, false, {})?
   // a workspace is one program: the edit reaches every module of it, and
   // the check of the edited program sees the same modules
@@ -134,7 +134,7 @@ fn (s: EditSession) file_by_path(path: Str) -> Int {
 
 /// Applies edits in memory, checks the edited program, and writes it
 /// unless the check fails or the run is dry.
-fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str uses (env, fs, net, proc, rand) {
+fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str uses env, fs {
   var names: List[Str] = []
   for e in edits {
     if !names.contains(e.file) {
@@ -323,7 +323,7 @@ fn last_index_of(s: Str, ch: Str) -> Int {
 
 /// Renames the function, method, or constant target and updates every
 /// reference. new_name may repeat target's qualifier.
-fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) -> EditResult ! Str uses (env, fs, net, proc, rand) {
+fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) -> EditResult ! Str uses env, fs {
   var s = load_edit(os, "rename", target, dirs, dry)?
   var new_name = new_name0
   let i = last_index_of(new_name, ".")
@@ -424,7 +424,7 @@ fn add_ident(var edits: List[TextEdit], var seen: Set[Str], file: Str, id: parse
 /// Adds the field `name: Type = default` to the struct target: the
 /// declaration gets `name: Type`, every struct literal `name: default`.
 /// Without a default the edit is rejected when the type has literals.
-fn edit_add_field(os: Os, dirs: List[Str], dry: Bool, target: Str, spec: Str) -> EditResult ! Str uses (env, fs, net, proc, rand) {
+fn edit_add_field(os: Os, dirs: List[Str], dry: Bool, target: Str, spec: Str) -> EditResult ! Str uses env, fs {
   var s = load_edit(os, "add-field", target, dirs, dry)?
   let fsrc = "struct XoEditField {\n${spec}\n}\n"
   let pf = parser.parse_file(b"field", fsrc.bytes(), false)
@@ -574,7 +574,7 @@ fn indent_of(src: Bytes, off: Int) -> Str {
 /// Replaces the parameters, result, and error type of the function or
 /// method target with sig, `(params) -> R ! E`, and rewrites its call
 /// sites (edit.ChangeSig).
-fn edit_change_sig(os: Os, dirs: List[Str], dry: Bool, target: Str, sig0: Str) -> EditResult ! Str uses (env, fs, net, proc, rand) {
+fn edit_change_sig(os: Os, dirs: List[Str], dry: Bool, target: Str, sig0: Str) -> EditResult ! Str uses env, fs {
   var s = load_edit(os, "change-sig", target, dirs, dry)?
   let sig = sig0.trim()
   if !sig.starts_with("(") {
@@ -792,7 +792,7 @@ fn rewrite_call(src: Bytes, file: Str, call_sp: parser.Span, args: List[parser.A
 /// `xo edit [--dry-run] [--dir=<dir>] <op> <args...>` (cmd/xo runEdit):
 /// it always prints the JSON summary; exit status 1 means the edit was
 /// rejected and nothing was written.
-fn run_edit(os: Os, args: List[Str]) -> Int uses (env, fs, stdio, net, proc, rand) {
+fn run_edit(os: Os, args: List[Str]) -> Int uses env, fs, stdio {
   var dry = false
   var dir = "."
   var rest: List[Str] = []
