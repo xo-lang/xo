@@ -272,7 +272,7 @@ fn dce_keep(insts: List[Inst], live: List[Bool]) -> List[Inst] {
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
-  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less,
+  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less, quo: src.quo,
     lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs}
   for (k, v) in src.ci {
     // a constant one instruction makes is not worth a register across

@@ -123,6 +123,16 @@ its callers move too.
    halves of 4 and 5 digits, halving the loop trips. A 200 byte digit
    pair table read from a `Bytes` constant was tried and was slower
    (1.39x and 1.40x).
+7. **Steps (a) to (c) for Duration text** (decision 0194, results
+   `bench/results/const-div-2026-10-12.md`): (a) is done (both arm64
+   emitters lower a division by a constant to a multiply high), (b) is
+   done in text.xo's source (masks the ranges use), and (c) was tried
+   two ways and not kept. Duration text is now **1.171x on arm64 and
+   1.087x on LLVM**: (a) costs instructions on arm64 (`sdiv` is one
+   instruction) while saving time, so the bar is still missed and
+   `XO_LLRT_C=text` stays. The next experiments are decision 0194's
+   ranked list (wide constants as logical immediates, ranges of call
+   results for the checked shifts).
 
 ## Consequences
 

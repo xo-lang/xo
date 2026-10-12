@@ -17,6 +17,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   before); scripts/remote-full.sh defaults to r8g.8xlarge (256 GiB).
   `-short` no longer samples the heavy runs (175 s to 31 to 52 s on the
   development Mac).
+- The arm64 backend (both emitters) lowers a division or remainder by
+  an Int constant to a multiply high and shifts instead of `sdiv`
+  (decision 0194): faster, with the same faults (only the constants 0
+  and -1 can fault). A negative literal is now a constant there (no
+  overflow check). Duration text in Xo is still 1.171x of the C on
+  arm64 and 1.087x on LLVM in instructions, so it keeps its C path.
+
 - The self hosted `xo` can be bootstrapped without Go:
   `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
   then with itself twice, with no Go on PATH, and checks the fixed point

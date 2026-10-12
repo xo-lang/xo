@@ -45,6 +45,11 @@ type memo struct {
 	// less: x < y holds for the registers (x, y), from a branch or a
 	// passed bounds check; the value is x's SSA value (decision 0184)
 	less map[[2]vreg]*ssa.Value
+	// quo: the quotient register of (dividend register, constant
+	// divisor) for a division by a constant (decision 0194), so `x % c`
+	// and `x / c` multiply once (inherited: a division that may fault
+	// ends its SSA block, so the two are often in successive blocks)
+	quo map[[2]int64]vreg
 }
 
 // m returns the memo of the current block.
@@ -52,7 +57,7 @@ func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
 			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
-			less: map[[2]vreg]*ssa.Value{}}
+			less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}}
 	}
 	return s.mm
 }
@@ -196,9 +201,12 @@ func (s *fstate) dce() {
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
 		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
-		less: map[[2]vreg]*ssa.Value{}}
+		less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}}
 	for k, v := range from.less {
 		m.less[k] = v
+	}
+	for k, v := range from.quo {
+		m.quo[k] = v
 	}
 	for k, v := range from.lowZero {
 		m.lowZero[k] = v
