@@ -157,6 +157,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with a prebuilt runtime pack into a signed executable, so `xo1 build
   --ld=macho` needs no C compiler at all for programs without `use c`
   sources (decision 0182).
+- The WebAssembly backend's modules are much smaller (decision 0179,
+  stage 3): the self hosted checker went from 43.2 MB to 8.9 MB and
+  runs under Node in 1.9 s and 2.5 GB instead of 10.7 s and 5.9 GB.
+  Large `var` parameters are passed by reference and kept in memory,
+  programs where nothing waits keep no suspension frames, field
+  releases are one call, locals are shared and renumbered.
+  `selfhost/wasm --annotate` attributes a module's bytes to SSA opcodes.
 - A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of

@@ -1,6 +1,6 @@
 // xowasm: the WebAssembly backend's command line (decision 0179).
 //
-//   wasm [--std=DIR] [--wd=DIR] [--each] [--why] [--lax] [--out=DIR] <dirs...>   build
+//   wasm [--std=DIR] [--wd=DIR] [--each] [--why] [--lax] [--annotate] [--out=DIR] <dirs...>   build
 //   wasm --asm=IN.wat -o OUT.wasm                                  assemble
 //
 // A build checks the directories as `xo1 build` does (selfhost/check in
@@ -16,7 +16,9 @@
 // (separated by `; `), not only the first. --lax builds a module even
 // with runtime calls the backend does not have: each faults when it
 // runs (`the wasm backend does not support the call ...`), to see how far
-// a program gets; never for a module that is shipped.
+// a program gets; never for a module that is shipped. --annotate comments
+// the code of every SSA instruction in the .wat with its opcode
+// (`;; @op`), to attribute the module's bytes to constructs.
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -28,6 +30,7 @@ fn main(os: Os) ! {
   var each = false
   var why = false
   var lax = false
+  var annotate = false
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
@@ -48,6 +51,8 @@ fn main(os: Os) ! {
       wd = a.trim_prefix("--wd=")
     } else if a == "--lax" {
       lax = true
+    } else if a == "--annotate" {
+      annotate = true
     } else if a == "--why" {
       why = true
     } else if a == "--each" {
@@ -81,13 +86,13 @@ fn main(os: Os) ! {
     if each {
       os.stdio.println("=== wasm ${r[0]}")
     }
-    let line = build_one(os, std_dir, wd, r, out_dir, why, lax)
+    let line = build_one(os, std_dir, wd, r, out_dir, why, lax, annotate)
     os.stdio.println(line)
   }
 }
 
 /// Builds one run and returns its result line.
-fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: Bool, lax: Bool) -> Str {
+fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: Bool, lax: Bool, annotate: Bool) -> Str {
   var c = check.new_checker(os.fs, std_dir)
   c.native = true
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
@@ -116,7 +121,7 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
     }
   }
   b.run_passes()
-  let p = generate_opts(b.m, why, lax)
+  let p = generate_with(b.m, why, lax, annotate)
   if !p.err.is_empty() {
     return "== unsupported ${p.err}"
   }

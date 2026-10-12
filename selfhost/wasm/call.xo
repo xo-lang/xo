@@ -13,6 +13,10 @@ fn (var g: Gen) call(v: Int) {
     _ => ""
   }
   if let Some(ci) = g.by_name.get(name) {
+    if !g.homes[ci].is_empty() {
+      g.home_call(v, ci)
+      return
+    }
     let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
     for a in x.args {
       g.push(a)
@@ -112,8 +116,8 @@ fn (var g: Gen) call(v: Int) {
       g.e("i64.lt_u")
       g.e("if")
       let el = g.leaves(et)
-      let a = g.tmp("i32")
-      let b = g.tmps(el)
+      let a = g.scratch(["i32"])
+      let b = g.scratch(el)
       g.push(l)
       g.push(x.args[1])
       g.e("i32.const ${g.size(et)}")
@@ -130,7 +134,7 @@ fn (var g: Gen) call(v: Int) {
       let a = g.elem_addr(v, x.args[0], x.args[1], et)
       let el = g.leaves(et)
       if g.heap(et) {
-        let old = g.tmps(el)
+        let old = g.scratch(el)
         g.load_leaves(a, 0, old, el)
         g.push_range(old, el.len())
         let d = g.rc_fn("drop", et)
@@ -145,7 +149,7 @@ fn (var g: Gen) call(v: Int) {
     "list.push" => {
       let et = g.vty(x.args[1])
       let el = g.leaves(et)
-      let a = g.tmp("i32")
+      let a = g.scratch(["i32"])
       let r = g.loc(v)
       g.push(x.args[0])
       g.e("i32.const ${g.size(et)}")
@@ -162,9 +166,9 @@ fn (var g: Gen) call(v: Int) {
       let ot = g.m.types[x.ty].elems[1]
       let el = g.leaves(et)
       let r = g.loc(v)
-      let n = g.tmp("i32")
-      let a = g.tmp("i32")
-      let b = g.tmps(el)
+      let n = g.scratch(["i32"])
+      let a = g.scratch(["i32"])
+      let b = g.scratch(el)
       g.push(l)
       g.set(r)
       g.push(l)
@@ -203,7 +207,7 @@ fn (var g: Gen) call(v: Int) {
       g.set(r)
       g.load_leaves(a, 0, r + 1, el)
       if !el.is_empty() {
-        let h = g.tmps(el)
+        let h = g.scratch(el)
         g.push_hole(et)
         g.set_range(h, el.len())
         g.store_leaves(a, 0, h, el)
@@ -359,6 +363,133 @@ fn (var g: Gen) call(v: Int) {
 /// A function of the task runtime (rt3.xo) on the operands' leaves; a
 /// blocking one is a resume point. Atomic keeps an Int: a Bool value is
 /// widened on the way in and narrowed on the way out.
+/// A call of function ci, which takes parameters by reference
+/// (home.xo): a home of this function when the argument is its chain
+/// value given up here, else a temporary copy read back after the call.
+fn (var g: Gen) home_call(v: Int, ci: Int) {
+  let x = g.f.values[v]
+  let cf = g.m.funcs[ci]
+  let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
+  // per `var` result: the temporary block holding it (-1: none)
+  var tmp: List[Int] = []
+  for _ in 0..cf.results.len() {
+    tmp.push(-1)
+  }
+  // the homes this call passes for `var` parameters: a read only one must
+  // not see the callee's writes, so it gets a copy of a value they hold
+  var vhomes: List[Int] = []
+  for (i, _) in x.args.indexed() {
+    if let Some(h) = g.pass.get(v * 4096 + i) {
+      vhomes.push(h)
+    }
+  }
+  var frees: List[Int] = []
+  var ns = 0
+
+  for (i, a) in x.args.indexed() {
+    if !g.homes[ci].contains(i) {
+      g.push(a)
+      continue
+    }
+    if let Some(h) = g.pass.get(v * 4096 + i) {
+      g.get(g.hptr[h])
+      continue
+    }
+    if g.rhomes[ci].contains(i) {
+      let (mp, mo) = g.mem_of(a)
+      let mh = if g.held[a] >= 0 { g.held[a] } else { g.mfield[a] }
+      if mp >= 0 && !vhomes.contains(mh) {
+        g.get(mp)
+        if mo > 0 {
+          g.e("i32.const ${mo}")
+          g.e("i32.add")
+        }
+        continue
+      }
+      let t = g.temp_copy(a, ns)
+      ns += 1
+      frees.push(t)
+      continue
+    }
+    let t = g.temp_copy(a, ns)
+    ns += 1
+    for (j, pi) in cf.var_params.indexed() {
+      if pi == i {
+        tmp[j + 1] = t
+      }
+    }
+  }
+  g.e("call $f${ci}")
+  g.suspend_check(id)
+  // the results the callee returns, into the tuple's locals
+  if g.homes[ci].len() == g.rhomes[ci].len() {
+    // only read only homes: the results are the SSA's
+    g.def(v)
+    for t in frees {
+      g.get(t)
+      g.e("call $free")
+    }
+    g.check_fault(v)
+    return
+  }
+  let rt = x.ty
+  let tys = g.field_tys(rt)
+  let base = g.loc(v)
+  var k = tys.len() - 1
+  while k >= 0 {
+    if !g.home_result(ci, k) {
+      g.set_range(base + g.field_off(rt, k), g.nleaves(tys[k]))
+    }
+    k -= 1
+  }
+  for (k2, t) in tmp.indexed() {
+    if t >= 0 {
+      let ls = g.leaves(tys[k2])
+      g.mem_push(t, 0, ls)
+      g.set_range(base + g.field_off(rt, k2), ls.len())
+      g.get(t)
+      g.e("call $free")
+    }
+  }
+  for t in frees {
+    g.get(t)
+    g.e("call $free")
+  }
+  // snapshots of the `var` result the home now holds (home.xo)
+  g.take_snaps(v)
+  g.check_fault(v)
+}
+
+/// A temporary block holding a copy of value a, for a parameter passed
+/// by reference (home.xo); its address is pushed and its local returned.
+/// The k-th temporary of a call takes the k-th of the function's shared
+/// locals for them. A value in memory is copied with memory.copy.
+fn (var g: Gen) temp_copy(a: Int, k: Int) -> Int {
+  while g.tslots.len() <= k {
+    g.tslots.push(g.tmp("i32"))
+  }
+  let t = g.tslots[k]
+  let ls = g.leaves(g.vty(a))
+  g.e("i32.const ${8 * ls.len()}")
+  g.e("call $alloc")
+  g.set(t)
+  let (mp, mo) = g.mem_of(a)
+  if mp >= 0 {
+    g.get(t)
+    g.get(mp)
+    if mo > 0 {
+      g.e("i32.const ${mo}")
+      g.e("i32.add")
+    }
+    g.e("i32.const ${8 * ls.len()}")
+    g.e("memory.copy")
+  } else {
+    g.mem_store(t, 0, g.loc(a), ls)
+  }
+  g.get(t)
+  t
+}
+
 fn (var g: Gen) rt3_call(v: Int, name: Str) {
   let x = g.f.values[v]
   let fname = name.trim_prefix("rt.")
@@ -395,7 +526,7 @@ fn (var g: Gen) rt_call(v: Int, fname: Str) {
 /// The address of element i of list l (element type et) in a new local,
 /// checked against the length when v has a fault position.
 fn (var g: Gen) elem_addr(v: Int, l: Int, i: Int, et: Int) -> Int {
-  let a = g.tmp("i32")
+  let a = g.scratch(["i32"])
   g.push(l)
   g.push(i)
   g.e("i32.const ${g.size(et)}")

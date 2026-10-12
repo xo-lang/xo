@@ -60,6 +60,10 @@ pub struct Gen {
   raws: Map[Str, Int] = {}
   helpers: List[Str] = []
   emitted: Map[Str, Bool] = {}
+  /// Comment every instruction's code with its opcode (generate_with).
+  annotate: Bool = false
+  /// drop_fields_fn helpers by type and fields.
+  dropf: Map[Str, Str] = {}
   /// Signatures of call_indirect by their text.
   sigs: Map[Str, Str] = {}
   sig_lines: List[Str] = []
@@ -107,6 +111,59 @@ pub struct Gen {
   inplace: List[Bool] = []
   /// Per value: a field read that uses its struct's locals (plan_locals).
   alias: List[Bool] = []
+  /// The result leaves of the function being lowered, and whether a
+  /// fault exit branches to its shared zero results (`$Z`).
+  nres_leaves: Int = 0
+  zexit: Bool = false
+  /// Per value of the function being lowered: its uses.
+  nuse: List[Int] = []
+  /// Some function of the program waits (find_susp): a task can be
+  /// canceled, so unwinding is not always a fault.
+  blocks_wait: Bool = false
+
+  // large `var` parameters by reference (home.xo)
+  /// Per function: the parameters passed by reference.
+  homes: List[List[Int]] = []
+  /// Per function: those of its homes that are read only (not `var`).
+  rhomes: List[List[Int]] = []
+  /// Per home of the function being lowered: read only.
+  hro: List[Bool] = []
+  /// scratch blocks of the function by signature, and the ones the
+  /// instruction being lowered took.
+  scr: Map[Str, List[Int]] = {}
+  scr_n: Map[Str, Int] = {}
+  /// The locals of the temporary blocks of a call (temp_copy).
+  tslots: List[Int] = []
+  /// The homes of the function being lowered: the local of each one's
+  /// address, its parameter index and value, whether its chain stays in
+  /// memory, and the chain value it holds before each instruction.
+  hptr: List[Int] = []
+  hparam: List[Int] = []
+  hval: List[Int] = []
+  hok: List[Bool] = []
+  hbefore: List[List[Int]] = []
+  /// Per value: the home holding it (-1 for none), the value standing for
+  /// it in the dataflow, and for a field read loaded where it is used the
+  /// home, the value read from, and the byte offset.
+  held: List[Int] = []
+  canon: List[Int] = []
+  mfield: List[Int] = []
+  mroot: List[Int] = []
+  moff: List[Int] = []
+  /// call -> the field reads of the value it gives up that it loads
+  /// before passing the home (home.xo snap_reads).
+  /// Per value: the field read whose locals hold its snapshot (it
+  /// reads a chain value that may be given up before), or -1; per value:
+  /// the snapshots taken right after it; per snapshot: that value.
+  snaprep: List[Int] = []
+  snapat: Map[Int, List[Int]] = {}
+  snapdef: Map[Int, Int] = {}
+  /// call * 4096 + parameter -> the home whose address the call passes.
+  pass: Map[Int, Int] = {}
+  users: List[List[Int]] = []
+  /// live_in, memoized per value.
+  livein: Map[Int, List[Bool]] = {}
+  inedge: List[Bool] = []
 }
 
 /// Lowers module m (after the passes and InsertRC).
@@ -118,7 +175,15 @@ pub fn generate(m: ssa.Module) -> Program {
 /// support is reported, not only the first (`selfhost/wasm --why`); with
 /// lax an unsupported runtime call faults when it runs instead (`--lax`).
 pub fn generate_opts(m: ssa.Module, all: Bool, lax: Bool) -> Program {
-  var g = Gen{m: m, all: all, lax: lax}
+  generate_with(m, all, lax, false)
+}
+
+/// generate_opts, and with annotate a comment before the code of every
+/// SSA instruction names its opcode (`;; @op`, `;; @call f`), so the
+/// module's size can be attributed to constructs (`selfhost/wasm
+/// --annotate`; the bytes are the same).
+pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Program {
+  var g = Gen{m: m, all: all, lax: lax, annotate: annotate}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
     g.leaf_done.push(false)
@@ -378,6 +443,26 @@ fn (var g: Gen) tmp(t: Str) -> Int {
   g.cur.nparams + g.cur.locals.len() - 1
 }
 
+/// Locals for leaves ls that hold a value only while one instruction is
+/// lowered (an element read, a copy, a value loaded from memory): the
+/// k-th request of a signature in an instruction takes the k-th block of
+/// that signature, shared by every instruction of the function (a
+/// function of the self hosted checker had thousands of such locals, and
+/// a frame holds every local).
+fn (var g: Gen) scratch(ls: List[Str]) -> Int {
+  let key = ls.join(" ")
+  let k = g.scr_n.get(key) ?? 0
+  g.scr_n[key] = k + 1
+  var l = g.scr.get(key) ?? []
+  if k < l.len() {
+    return l[k]
+  }
+  let b = g.tmps(ls)
+  l.push(b)
+  g.scr[key] = l
+  b
+}
+
 /// New locals for leaves ls; the first one's index.
 fn (var g: Gen) tmps(ls: List[Str]) -> Int {
   let base = g.cur.nparams + g.cur.locals.len()
@@ -635,6 +720,34 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
     _ => {}
   }
   g.end_helper(name, ls, [], "${kind} ${x.name}")
+  g.cur = saved
+  name
+}
+
+/// The helper that releases fields fs of struct or tuple t (all its
+/// leaves as parameters), emitted on first use.
+fn (var g: Gen) drop_fields_fn(t: Int, fs: List[Int]) -> Str {
+  let sorted = fs.sort()
+  var ks: List[Str] = []
+  for i in sorted {
+    ks.push("${i}")
+  }
+  let key = "${t}:${ks.join(",")}"
+  if let Some(n) = g.dropf.get(key) {
+    return n
+  }
+  let name = "$dropf${g.dropf.len()}"
+  g.dropf[key] = name
+  let ls = g.leaves(t)
+  let saved = g.cur
+  g.begin_helper(ls)
+  let tys = g.field_tys(t)
+  for i in sorted {
+    let off = g.field_off(t, i)
+    g.push_range(off, g.nleaves(tys[i]))
+    g.e("call ${g.rc_fn("drop", tys[i])}")
+  }
+  g.end_helper(name, ls, [], "drop fields ${ks.join(" ")} of ${g.m.types[t].name}")
   g.cur = saved
   name
 }
@@ -1004,11 +1117,28 @@ fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
 fn (var g: Gen) find_susp() {
   g.susp = []
   var calls: List[List[Int]] = []
+  // a call through a function value can suspend only when some function
+  // of the program waits: a program that uses the clock (rt3.xo) but no
+  // blocking call never suspends, and its functions keep no frames (the
+  // self hosted checker: 25% of its module was frame saves)
+  var blocks = false
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op == ssa.Op.Call {
+        if let S(n) = x.aux {
+          if rt3_blocking(n) {
+            blocks = true
+          }
+        }
+      }
+    }
+  }
+  g.blocks_wait = blocks
   for f in g.m.funcs {
     var s = false
     var cs: List[Int] = []
     for x in f.values {
-      if x.op == ssa.Op.CallValue {
+      if x.op == ssa.Op.CallValue && blocks {
         s = true
       }
       if x.op == ssa.Op.Call {
@@ -1185,6 +1315,7 @@ fn (var g: Gen) module_text() -> Str {
     }
   }
   g.find_susp()
+  g.compute_homes(main)
   if g.conc {
     rt = rt + rt3_text(g, main, main_res)
   }
