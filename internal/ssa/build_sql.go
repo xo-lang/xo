@@ -58,7 +58,7 @@ func (b *builder) sqlDecode(ct, rowCT check.Type, rt *Type, at ast.Node) string 
 	m := b.mod
 	st, intT, boolT := m.Builtin(KStr), m.Builtin(KInt), m.Builtin(KBool)
 	rowT := b.typ(rowCT, at)
-	return b.genFunc("xo.sql.dec["+ct.String()+"]", []*Type{rowT}, []*Type{rt}, func(s *fn, ps []*Value) {
+	return b.genFunc("xo.sql.dec["+b.typeName(ct)+"]", []*Type{rowT}, []*Type{rt}, func(s *fn, ps []*Value) {
 		row := ps[0]
 		errI, okI := rt.VariantIndex("Err"), rt.VariantIndex("Ok")
 		if rt.Kind != KEnum || errI < 0 || okI < 0 {

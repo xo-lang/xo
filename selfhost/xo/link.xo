@@ -216,7 +216,7 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
-  for sym in ["xo_stdin_", "xo_tw_set_input"] {
+  for sym in ["xo_stdin_", "xo_tw_set_input", "xo_tw_set_tty", "xo_isatty", "xo_term_width"] {
     if code.contains(sym) {
       out.push("-DXO_STDIN")
       break

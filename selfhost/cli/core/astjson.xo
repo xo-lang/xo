@@ -1,0 +1,711 @@
+// The syntax tree as JSON, as `xo parse --ast` prints it (internal/ast
+// Dump): every node an object with "kind" (the Go type name) and "span"
+// ("line:col-line:col") first, then its fields in the order of the Go
+// struct, snake_case; nil fields, false flags, empty lists, and empty
+// strings are left out.
+
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// The fields of an object being built.
+struct Obj {
+  fields: List[(Str, Str)] = []
+}
+
+fn node(kind: Str, sp: parser.Span) -> Obj {
+  Obj{fields: [("kind", jstr(kind)), ("span", jstr("${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col}"))]}
+}
+
+fn (var o: Obj) put(k: Str, v: Str) {
+  o.fields.push((k, v))
+}
+
+fn (var o: Obj) str(k: Str, b: Bytes) {
+  if !b.is_empty() {
+    o.put(k, jstr(text_of(b)))
+  }
+}
+
+fn (var o: Obj) flag(k: Str, b: Bool) {
+  if b {
+    o.put(k, "true")
+  }
+}
+
+fn (var o: Obj) list(k: Str, items: List[Str]) {
+  if !items.is_empty() {
+    o.put(k, jarr(items))
+  }
+}
+
+fn (var o: Obj) opt(k: Str, v: Str?) {
+  if let Some(x) = v {
+    o.put(k, x)
+  }
+}
+
+fn (o: Obj) done() -> Str {
+  jobj(o.fields)
+}
+
+fn ast_json(f: parser.File) -> Str {
+  var o = node("File", f.span)
+  o.str("name", f.name)
+  o.list("uses", f.imports.map(fn(u: parser.UseDecl) -> Str { use_json(u) }))
+  o.list("decls", f.decls.map(fn(d: parser.Decl) -> Str { decl_json(d) }))
+  o.done()
+}
+
+fn ident_json(id: parser.Ident) -> Str {
+  var o = node("Ident", id.span)
+  o.str("name", id.name)
+  o.done()
+}
+
+fn oident(id: parser.Ident?) -> Str? {
+  id.map(fn(x: parser.Ident) -> Str { ident_json(x) })
+}
+
+fn idents(ids: List[parser.Ident]) -> List[Str] {
+  ids.map(fn(x: parser.Ident) -> Str { ident_json(x) })
+}
+
+fn doc_json_of(d: parser.Doc?) -> Str? {
+  d.map(fn(x: parser.Doc) -> Str {
+    var o = node("Doc", x.span)
+    o.str("text", x.text)
+    o.done()
+  })
+}
+
+fn use_json(u: parser.UseDecl) -> Str {
+  var o = node("UseDecl", u.span)
+  o.str("path", u.path)
+  o.opt("alias", oident(u.alias))
+  o.flag("go", u.go)
+  o.flag("c", u.c)
+  o.list("links", u.links.map(fn(l: Bytes) -> Str { jstr(text_of(l)) }))
+  o.list("uses", effects_json(u.effects ?? []))
+  o.done()
+}
+
+fn effects_json(es: List[parser.Effect]) -> List[Str] {
+  es.map(fn(e: parser.Effect) -> Str {
+    var o = node("Effect", e.span)
+    o.put("name", ident_json(e.name))
+    o.opt("sub", oident(e.sub))
+    o.done()
+  })
+}
+
+fn tparams_json(tps: List[parser.TypeParam]) -> List[Str] {
+  tps.map(fn(tp: parser.TypeParam) -> Str {
+    var o = node("TypeParam", tp.span)
+    o.put("name", ident_json(tp.name))
+    o.opt("constraint", otype(tp.constraint))
+    o.flag("effects", tp.effects)
+    o.done()
+  })
+}
+
+fn params_json(ps: List[parser.Param]) -> List[Str] {
+  ps.map(fn(p: parser.Param) -> Str {
+    var o = node("Param", p.span)
+    o.flag("var", p.is_var)
+    o.flag("self", p.is_self)
+    o.put("name", ident_json(p.name))
+    o.opt("type", otype(p.typ))
+    o.opt("default", oexpr(p.default))
+    o.done()
+  })
+}
+
+fn err_json(e: parser.ErrSpec?) -> Str? {
+  e.map(fn(x: parser.ErrSpec) -> Str {
+    var o = node("ErrSpec", x.span)
+    o.opt("type", otype(x.typ))
+    o.done()
+  })
+}
+
+fn fn_decl_json(fd: parser.FnDecl) -> Str {
+  var o = node("FnDecl", fd.span)
+  o.opt("doc", doc_json_of(fd.doc))
+  o.flag("pub", fd.is_pub)
+  if let Some(r) = fd.recv {
+    var ro = node("Receiver", r.span)
+    ro.flag("var", r.is_var)
+    ro.put("name", ident_json(r.name))
+    ro.put("type", type_json(r.typ))
+    o.put("recv", ro.done())
+  }
+  o.put("name", ident_json(fd.name))
+  o.list("type_params", tparams_json(fd.type_params))
+  o.list("params", params_json(fd.params))
+  o.opt("result", otype(fd.result))
+  o.opt("err", err_json(fd.err))
+  o.list("clauses", fd.clauses.map(fn(cl: parser.Clause) -> Str { clause_json(cl) }))
+  o.opt("body", fd.body.map(fn(b: parser.Block) -> Str { block_json(b) }))
+  o.done()
+}
+
+fn clause_json(cl: parser.Clause) -> Str {
+  match cl {
+    UsesClause(span, effects, parens) => {
+      var o = node("UsesClause", span)
+      o.list("effects", effects_json(effects))
+      o.flag("parens", parens)
+      o.done()
+    }
+    RequiresClause(span, debug, cond, els) => {
+      var o = node("RequiresClause", span)
+      o.flag("debug", debug)
+      o.put("cond", expr_json(cond))
+      o.opt("else", oexpr(els))
+      o.done()
+    }
+    EnsuresClause(span, debug, cond) => {
+      var o = node("EnsuresClause", span)
+      o.flag("debug", debug)
+      o.put("cond", expr_json(cond))
+      o.done()
+    }
+  }
+}
+
+fn decl_json(d: parser.Decl) -> Str {
+  match d {
+    FnDecl(fd) => fn_decl_json(fd)
+    StructDecl(s) => {
+      var o = node("StructDecl", s.span)
+      o.opt("doc", doc_json_of(s.doc))
+      o.flag("pub", s.is_pub)
+      o.put("name", ident_json(s.name))
+      o.list("type_params", tparams_json(s.type_params))
+      o.list("fields", s.fields.map(fn(f: parser.Field) -> Str {
+        var fo = node("Field", f.span)
+        fo.opt("doc", doc_json_of(f.doc))
+        fo.flag("pub", f.is_pub)
+        fo.put("name", ident_json(f.name))
+        fo.put("type", type_json(f.typ))
+        fo.opt("default", oexpr(f.default))
+        fo.done()
+      }))
+      o.opt("invariant", oexpr(s.inv))
+      o.list("derive", idents(s.derive))
+      o.done()
+    }
+    EnumDecl(e) => {
+      var o = node("EnumDecl", e.span)
+      o.opt("doc", doc_json_of(e.doc))
+      o.flag("pub", e.is_pub)
+      o.put("name", ident_json(e.name))
+      o.list("type_params", tparams_json(e.type_params))
+      o.list("variants", e.variants.map(fn(v: parser.Variant) -> Str {
+        var vo = node("Variant", v.span)
+        vo.opt("doc", doc_json_of(v.doc))
+        vo.put("name", ident_json(v.name))
+        vo.list("fields", (v.fields ?? []).map(fn(vf: parser.VariantField) -> Str {
+          var fo = node("VariantField", vf.span)
+          fo.opt("name", oident(vf.name))
+          fo.flag("from", vf.from)
+          fo.put("type", type_json(vf.typ))
+          fo.done()
+        }))
+        vo.done()
+      }))
+      o.list("derive", idents(e.derive))
+      o.done()
+    }
+    InterfaceDecl(i) => {
+      var o = node("InterfaceDecl", i.span)
+      o.opt("doc", doc_json_of(i.doc))
+      o.flag("pub", i.is_pub)
+      o.put("name", ident_json(i.name))
+      o.list("type_params", tparams_json(i.type_params))
+      o.list("methods", i.methods.map(fn(m: parser.FnDecl) -> Str { fn_decl_json(m) }))
+      o.done()
+    }
+    TypeDecl(t) => {
+      var o = node("TypeDecl", t.span)
+      o.opt("doc", doc_json_of(t.doc))
+      o.flag("pub", t.is_pub)
+      o.put("name", ident_json(t.name))
+      o.list("type_params", tparams_json(t.type_params))
+      o.flag("newtype", t.newtype)
+      o.opt("type", otype(t.typ))
+      o.done()
+    }
+    ConstDecl(c) => const_json(c)
+    TestDecl(t) => {
+      var o = node("TestDecl", t.span)
+      o.opt("doc", doc_json_of(t.doc))
+      o.opt("name", t.name.map(fn(s: parser.StringLit) -> Str { string_json(s) }))
+      o.list("for", params_json(t.params))
+      o.opt("seed", oexpr(t.seed))
+      o.list("uses", effects_json(t.effects))
+      o.opt("body", t.body.map(fn(b: parser.Block) -> Str { block_json(b) }))
+      o.done()
+    }
+    BadDecl(span) => node("BadDecl", span).done()
+  }
+}
+
+fn const_json(c: parser.ConstDecl) -> Str {
+  var o = node("ConstDecl", c.span)
+  o.opt("doc", doc_json_of(c.doc))
+  o.flag("pub", c.is_pub)
+  o.put("name", ident_json(c.name))
+  o.opt("type", otype(c.typ))
+  o.put("value", expr_json(c.value))
+  o.done()
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+fn otype(t: parser.Type?) -> Str? {
+  t.map(fn(x: parser.Type) -> Str { type_json(x) })
+}
+
+fn types_json(ts: List[parser.Type]) -> List[Str] {
+  ts.map(fn(x: parser.Type) -> Str { type_json(x) })
+}
+
+fn type_json(t: parser.Type) -> Str {
+  match t {
+    NamedType(span, path, args) => {
+      var o = node("NamedType", span)
+      o.list("path", idents(path))
+      o.list("args", types_json(args))
+      o.done()
+    }
+    OptionalType(span, elem) => {
+      var o = node("OptionalType", span)
+      o.put("elem", type_json(elem))
+      o.done()
+    }
+    TupleType(span, elems) => {
+      var o = node("TupleType", span)
+      o.list("elems", types_json(elems))
+      o.done()
+    }
+    FnType(ft) => {
+      var o = node("FnType", ft.span)
+      o.list("params", ft.params.map(fn(p: parser.FnTypeParam) -> Str {
+        var po = node("FnTypeParam", p.span)
+        po.flag("var", p.is_var)
+        po.put("type", type_json(p.typ))
+        po.done()
+      }))
+      o.opt("result", otype(ft.result))
+      o.opt("err", err_json(ft.err))
+      o.list("uses", effects_json(ft.effects))
+      o.flag("uses_parens", ft.uses_parens)
+      o.done()
+    }
+    BadType(span) => node("BadType", span).done()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn block_json(b: parser.Block) -> Str {
+  var o = node("Block", b.span)
+  o.list("stmts", b.stmts.map(fn(s: parser.Stmt) -> Str { stmt_json(s) }))
+  o.done()
+}
+
+fn ostmt(s: parser.Stmt?) -> Str? {
+  s.map(fn(x: parser.Stmt) -> Str { stmt_json(x) })
+}
+
+fn stmt_json(s: parser.Stmt) -> Str {
+  match s {
+    LetStmt(span, pattern, typ, value) => {
+      var o = node("LetStmt", span)
+      o.put("pattern", pat_json(pattern))
+      o.opt("type", otype(typ))
+      o.put("value", expr_json(value))
+      o.done()
+    }
+    VarStmt(span, name, typ, value) => {
+      var o = node("VarStmt", span)
+      o.put("name", ident_json(name))
+      o.opt("type", otype(typ))
+      o.put("value", expr_json(value))
+      o.done()
+    }
+    AssignStmt(span, op, target, value) => {
+      var o = node("AssignStmt", span)
+      o.put("op", jstr(format.op_text(op)))
+      o.put("target", expr_json(target))
+      o.put("value", expr_json(value))
+      o.done()
+    }
+    DeferStmt(span, body) => {
+      var o = node("DeferStmt", span)
+      o.put("body", stmt_json(body))
+      o.done()
+    }
+    ReturnStmt(span, value) => {
+      var o = node("ReturnStmt", span)
+      o.opt("value", oexpr(value))
+      o.done()
+    }
+    BreakStmt(span, label) => {
+      var o = node("BreakStmt", span)
+      o.opt("label", oident(label))
+      o.done()
+    }
+    ContinueStmt(span, label) => {
+      var o = node("ContinueStmt", span)
+      o.opt("label", oident(label))
+      o.done()
+    }
+    ForStmt(span, label, pattern, iter, bound, body, go_range) => {
+      var o = node("ForStmt", span)
+      o.opt("label", oident(label))
+      o.put("pattern", pat_json(pattern))
+      o.put("iter", expr_json(iter))
+      for b in bound {
+        o.put("bound", expr_json(b))
+      }
+      o.put("body", block_json(body))
+      o.flag("go_range", go_range)
+      o.done()
+    }
+    WhileStmt(span, label, cond, pattern, value, bound, body) => {
+      var o = node("WhileStmt", span)
+      o.opt("label", oident(label))
+      o.opt("cond", oexpr(cond))
+      for p in pattern {
+        o.put("pattern", pat_json(p))
+      }
+      for v in value {
+        o.put("value", expr_json(v))
+      }
+      for b in bound {
+        o.put("bound", expr_json(b))
+      }
+      o.put("body", block_json(body))
+      o.done()
+    }
+    ExprStmt(span, x) => {
+      var o = node("ExprStmt", span)
+      o.put("x", expr_json(x))
+      o.done()
+    }
+    BadStmt(span) => node("BadStmt", span).done()
+    ConstDecl(c) => const_json(c)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+fn oexpr(e: parser.Expr?) -> Str? {
+  e.map(fn(x: parser.Expr) -> Str { expr_json(x) })
+}
+
+fn exprs_json(es: List[parser.Expr]) -> List[Str] {
+  es.map(fn(x: parser.Expr) -> Str { expr_json(x) })
+}
+
+fn string_json(s: parser.StringLit) -> Str {
+  var o = node("StringLit", s.span)
+  let kind = match s.kind {
+    Plain => "plain"
+    Triple => "triple"
+    Raw => "raw"
+  }
+  o.put("kind", jstr(kind))
+  o.list("parts", s.parts.map(fn(p: parser.StringPart) -> Str {
+    var po = Obj{fields: [("kind", jstr("StringPart"))]}
+    po.str("text", p.text)
+    po.opt("expr", oexpr(p.expr))
+    po.done()
+  }))
+  o.done()
+}
+
+fn field_inits_json(fs: List[parser.FieldInit]) -> List[Str] {
+  fs.map(fn(f: parser.FieldInit) -> Str {
+    var o = node("FieldInit", f.span)
+    o.put("name", ident_json(f.name))
+    o.put("value", expr_json(f.value))
+    o.done()
+  })
+}
+
+fn expr_json(e: parser.Expr) -> Str {
+  match e {
+    Ident(id) => ident_json(id)
+    IntLit(span, raw, value) => {
+      var o = node("IntLit", span)
+      o.str("raw", raw)
+      o.str("value", value)
+      o.done()
+    }
+    FloatLit(span, raw) => {
+      var o = node("FloatLit", span)
+      o.str("raw", raw)
+      o.done()
+    }
+    DurationLit(span, raw, nanos) => {
+      var o = node("DurationLit", span)
+      o.str("raw", raw)
+      o.str("nanos", nanos)
+      o.done()
+    }
+    RuneLit(span, raw, value) => {
+      var o = node("RuneLit", span)
+      o.str("raw", raw)
+      let r = match Rune.try(value) {
+        Some(x) => "${x}"
+        None => "\u{fffd}"
+      }
+      o.put("value", jstr(r))
+      o.done()
+    }
+    StringLit(s) => string_json(s)
+    BytesLit(span, value) => {
+      var o = node("BytesLit", span)
+      o.str("value", value)
+      o.done()
+    }
+    HoleExpr(span) => node("HoleExpr", span).done()
+    UnitExpr(span) => node("UnitExpr", span).done()
+    ParenExpr(span, x) => {
+      var o = node("ParenExpr", span)
+      o.put("x", expr_json(x))
+      o.done()
+    }
+    TupleExpr(span, elems) => {
+      var o = node("TupleExpr", span)
+      o.list("elems", exprs_json(elems))
+      o.done()
+    }
+    ListLit(span, elems) => {
+      var o = node("ListLit", span)
+      o.list("elems", exprs_json(elems))
+      o.done()
+    }
+    MapLit(span, entries) => {
+      var o = node("MapLit", span)
+      o.list("entries", entries.map(fn(en: parser.MapEntry) -> Str {
+        var eo = node("MapEntry", en.span)
+        eo.put("key", expr_json(en.key))
+        eo.put("value", expr_json(en.value))
+        eo.done()
+      }))
+      o.done()
+    }
+    SetLit(span, elems) => {
+      var o = node("SetLit", span)
+      o.list("elems", exprs_json(elems))
+      o.done()
+    }
+    StructLit(span, typ, fields) => {
+      var o = node("StructLit", span)
+      o.put("type", expr_json(typ))
+      o.list("fields", field_inits_json(fields))
+      o.done()
+    }
+    UnaryExpr(span, op, x) => {
+      var o = node("UnaryExpr", span)
+      o.put("op", jstr(format.op_text(op)))
+      o.put("x", expr_json(x))
+      o.done()
+    }
+    BinaryExpr(span, op, x, y) => {
+      var o = node("BinaryExpr", span)
+      o.put("op", jstr(format.op_text(op)))
+      o.put("x", expr_json(x))
+      o.put("y", expr_json(y))
+      o.done()
+    }
+    IsExpr(span, x, pattern) => {
+      var o = node("IsExpr", span)
+      o.put("x", expr_json(x))
+      o.put("pattern", pat_json(pattern))
+      o.done()
+    }
+    RangeExpr(span, lo, hi, inclusive) => {
+      var o = node("RangeExpr", span)
+      o.opt("lo", oexpr(lo))
+      o.opt("hi", oexpr(hi))
+      o.flag("inclusive", inclusive)
+      o.done()
+    }
+    SelectorExpr(span, x, sel) => {
+      var o = node("SelectorExpr", span)
+      o.put("x", expr_json(x))
+      o.put("sel", ident_json(sel))
+      o.done()
+    }
+    CallExpr(span, fun, args) => {
+      var o = node("CallExpr", span)
+      o.put("fun", expr_json(fun))
+      o.list("args", args.map(fn(a: parser.Arg) -> Str {
+        var ao = node("Arg", a.span)
+        ao.opt("name", oident(a.name))
+        ao.put("value", expr_json(a.value))
+        ao.done()
+      }))
+      o.done()
+    }
+    TypeArgsExpr(span, x, types) => {
+      var o = node("TypeArgsExpr", span)
+      o.put("x", expr_json(x))
+      o.list("types", types_json(types))
+      o.done()
+    }
+    IndexExpr(span, x, index) => {
+      var o = node("IndexExpr", span)
+      o.put("x", expr_json(x))
+      o.put("index", expr_json(index))
+      o.done()
+    }
+    TryExpr(span, x) => {
+      var o = node("TryExpr", span)
+      o.put("x", expr_json(x))
+      o.done()
+    }
+    WithExpr(span, x, fields) => {
+      var o = node("WithExpr", span)
+      o.put("x", expr_json(x))
+      o.list("fields", field_inits_json(fields))
+      o.done()
+    }
+    IfExpr(ie) => if_json(ie)
+    MatchExpr(span, subject, arms) => {
+      var o = node("MatchExpr", span)
+      o.put("subject", expr_json(subject))
+      o.list("arms", arms.map(fn(a: parser.MatchArm) -> Str {
+        var ao = node("MatchArm", a.span)
+        ao.put("pattern", pat_json(a.pattern))
+        ao.opt("guard", oexpr(a.guard))
+        ao.opt("body", ostmt(a.body))
+        ao.done()
+      }))
+      o.done()
+    }
+    ScopeExpr(span, name, body) => {
+      var o = node("ScopeExpr", span)
+      o.put("name", ident_json(name))
+      o.put("body", block_json(body))
+      o.done()
+    }
+    SelectExpr(span, arms) => {
+      var o = node("SelectExpr", span)
+      o.list("arms", arms.map(fn(a: parser.SelectArm) -> Str {
+        var ao = node("SelectArm", a.span)
+        ao.opt("bind", oident(a.bind))
+        ao.opt("op", oexpr(a.op))
+        ao.opt("after", oexpr(a.after))
+        ao.opt("body", ostmt(a.body))
+        ao.done()
+      }))
+      o.done()
+    }
+    Block(b) => block_json(b)
+    FnLit(f) => {
+      var o = node("FnLit", f.span)
+      o.list("params", params_json(f.params))
+      o.opt("result", otype(f.result))
+      o.opt("err", err_json(f.err))
+      o.list("uses", effects_json(f.effects))
+      o.put("body", block_json(f.body))
+      o.done()
+    }
+    WhileExpr(span, body) => {
+      var o = node("WhileExpr", span)
+      o.put("body", block_json(body))
+      o.done()
+    }
+    BadExpr(span) => node("BadExpr", span).done()
+  }
+}
+
+fn if_json(ie: parser.IfExpr) -> Str {
+  var o = node("IfExpr", ie.span)
+  o.opt("cond", oexpr(ie.cond))
+  o.opt("pattern", ie.pattern.map(fn(p: parser.Pattern) -> Str { pat_json(p) }))
+  o.opt("value", oexpr(ie.value))
+  o.put("then", block_json(ie.then))
+  o.opt("else", oexpr(ie.els))
+  o.done()
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+fn pats_json(ps: List[parser.Pattern]) -> List[Str] {
+  ps.map(fn(p: parser.Pattern) -> Str { pat_json(p) })
+}
+
+fn pat_fields_json(fs: List[parser.PatField]) -> List[Str] {
+  fs.map(fn(f: parser.PatField) -> Str {
+    var o = node("PatField", f.span)
+    o.opt("name", oident(f.name))
+    o.put("pattern", pat_json(f.pattern))
+    o.done()
+  })
+}
+
+fn pat_json(p: parser.Pattern) -> Str {
+  match p {
+    WildcardPat(span) => node("WildcardPat", span).done()
+    BindPat(span, name) => {
+      var o = node("BindPat", span)
+      o.put("name", ident_json(name))
+      o.done()
+    }
+    LitPat(span, value) => {
+      var o = node("LitPat", span)
+      o.put("value", expr_json(value))
+      o.done()
+    }
+    RangePat(span, lo, hi, inclusive) => {
+      var o = node("RangePat", span)
+      o.put("lo", expr_json(lo))
+      o.put("hi", expr_json(hi))
+      o.flag("inclusive", inclusive)
+      o.done()
+    }
+    OrPat(span, alts) => {
+      var o = node("OrPat", span)
+      o.list("alts", pats_json(alts))
+      o.done()
+    }
+    TuplePat(span, elems) => {
+      var o = node("TuplePat", span)
+      o.list("elems", pats_json(elems))
+      o.done()
+    }
+    VariantPat(span, path, parens, fields, rest) => {
+      var o = node("VariantPat", span)
+      o.list("path", idents(path))
+      o.flag("parens", parens)
+      o.list("fields", pat_fields_json(fields))
+      o.flag("rest", rest)
+      o.done()
+    }
+    StructPat(span, path, fields, rest) => {
+      var o = node("StructPat", span)
+      o.list("path", idents(path))
+      o.list("fields", pat_fields_json(fields))
+      o.flag("rest", rest)
+      o.done()
+    }
+    ListPat(span, elems, rest) => {
+      var o = node("ListPat", span)
+      o.list("elems", pats_json(elems))
+      o.put("rest", "${rest}")
+      o.done()
+    }
+    BadPat(span) => node("BadPat", span).done()
+  }
+}

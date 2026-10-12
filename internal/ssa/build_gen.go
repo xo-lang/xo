@@ -25,7 +25,7 @@ func (b *builder) genValueFunc(ct check.Type, at ast.Node) string {
 	t := b.typ(ct, at)
 	m := b.mod
 	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
-	return b.genFunc("xo.gen["+ct.String()+"]", []*Type{intT}, []*Type{t}, func(s *fn, ps []*Value) {
+	return b.genFunc("xo.gen["+b.typeName(ct)+"]", []*Type{intT}, []*Type{t}, func(s *fn, ps []*Value) {
 		g := ps[0]
 		sub := func(xt check.Type, want *Type) *Value {
 			xt = check.Deep(xt)

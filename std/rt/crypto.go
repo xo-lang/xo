@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/sha256"
@@ -179,4 +180,30 @@ func verifyArgon2id(password, hash string) bool {
 	}
 	got := argon2Key(argon2ModeID, []byte(password), salt, nil, nil, uint32(t), uint32(m), uint8(p), uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// Crypto_ed25519_public_key is `crypto.ed25519_public_key(seed)`
+// (decision 0189): faults unless the seed is 32 bytes.
+func Crypto_ed25519_public_key(_ *Task, seed Bytes) Bytes {
+	if len(seed) != ed25519.SeedSize {
+		FaultHere("crypto.ed25519_public_key: the seed is %d bytes, want 32", len(seed))
+	}
+	return Bytes(ed25519.NewKeyFromSeed([]byte(seed)).Public().(ed25519.PublicKey))
+}
+
+// Crypto_ed25519_sign is `crypto.ed25519_sign(seed, msg)`.
+func Crypto_ed25519_sign(_ *Task, seed, msg Bytes) Bytes {
+	if len(seed) != ed25519.SeedSize {
+		FaultHere("crypto.ed25519_sign: the seed is %d bytes, want 32", len(seed))
+	}
+	return Bytes(ed25519.Sign(ed25519.NewKeyFromSeed([]byte(seed)), []byte(msg)))
+}
+
+// Crypto_ed25519_verify is `crypto.ed25519_verify(public_key, msg, sig)`:
+// false for a key or signature of the wrong length.
+func Crypto_ed25519_verify(_ *Task, pub, msg, sig Bytes) bool {
+	if len(pub) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), []byte(msg), []byte(sig))
 }

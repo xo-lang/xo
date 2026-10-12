@@ -21,3 +21,13 @@ fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses r
 /// Checks a result of `hash_password_argon2id` or `hash_password`, told apart
 /// by the prefix.
 fn verify_password(password: Str, hash: Str) -> Bool
+/// Ed25519 (RFC 8032, decision 0189): the 32 byte public key of the
+/// private key `seed` (32 bytes; faults otherwise).
+fn ed25519_public_key(seed: Bytes) -> Bytes
+/// The 64 byte Ed25519 signature of msg by the private key `seed` (32
+/// bytes; faults otherwise). Deterministic: the same seed and message
+/// give the same signature.
+fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
+/// Whether sig is a valid Ed25519 signature of msg by public_key; false
+/// for a key that is not 32 bytes or a signature that is not 64.
+fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool

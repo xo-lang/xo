@@ -1,0 +1,158 @@
+// `xo query` (cmd/xo tools.go runQueryWith, hash.go queryHash).
+
+/// The usage text of `xo query`.
+fn query_usage() -> Str {
+  let lines = [
+    "usage: xo query <kind> [--json|--text] [--dir=<dir>] <argument>",
+    "",
+    "kinds:",
+    "  type <file:line:col>     type of the innermost expression or binding there",
+    "  def <name>               declaration of name, Type.member, module.name, module.Type.member",
+    "  callers <module.fn>      calls of the function and uses of it as a value",
+    "  effects <module.fn>      effects the function performs, with the call chain per effect",
+    "  holes                    holes (???) with their expected types",
+    "  api <module path>        exported surface of a module (import path or directory)",
+    "  imports <package>        the package's use lines, with any deny rule that forbids one",
+    "  deps <package>           imports, transitively (std and Go packages are not followed)",
+    "  hash <name>              content hash of a definition of the module (name, Type.method,",
+    "                           pkg.name, or <package path>.name): local names erased,",
+    "                           referenced definitions by their hashes (core 4.3)",
+    "",
+    "--dir (default .) is the directory checked. JSON is the default when stdout",
+    "is not a terminal.",
+  ]
+  lines.join("\n") + "\n"
+}
+
+fn run_query(os: Os, args: List[Str]) -> Int {
+  if args.is_empty() {
+    os.stdio.eprint(query_usage())
+    return 2
+  }
+  let kind = args[0]
+  var as_json = !os.stdio.stdout_is_tty()
+  var dir = "."
+  var rest: List[Str] = []
+  for a in args[1..] {
+    if a == "--json" || a == "-json" {
+      as_json = true
+    } else if a == "--text" || a == "-text" {
+      as_json = false
+    } else if a.starts_with("--dir=") {
+      dir = a.trim_prefix("--dir=")
+    } else if a.starts_with("-") && a != "-" {
+      os.stdio.eprint("xo query: unknown flag ${a}\n\n${query_usage()}")
+      return 2
+    } else {
+      rest.push(a)
+    }
+  }
+  let want = if kind == "holes" { 0 } else { 1 }
+  if rest.len() != want {
+    os.stdio.eprint("xo query ${kind}: want ${want} argument(s)\n\n${query_usage()}")
+    return 2
+  }
+  var dirs = [dir]
+  var file = ""
+  var line = 0
+  var col = 0
+  if kind == "type" {
+    match parse_pos(rest[0]) {
+      Ok(p) => {
+        file = p.0
+        line = p.1
+        col = p.2
+      }
+      Err(e) => {
+        os.stdio.eprintln("xo query type: ${e}")
+        return 2
+      }
+    }
+    if !within(wd_of(os), file, dir) {
+      dirs.push(dir_of(file))
+    }
+  }
+  if kind == "hash" {
+    // syntactic: no check run (decision 0125)
+    return query_hash(os, dir, rest[0], as_json)
+  }
+  if !(kind is "type" | "def" | "callers" | "effects" | "holes" | "api" | "imports" | "deps") {
+    os.stdio.eprint("xo query: unknown kind ${kind.quote()}\n\n${query_usage()}")
+    return 2
+  }
+  semantic_query(os, kind, dirs, rest, file, line, col, as_json)
+}
+
+/// Splits `file:line:col`.
+fn parse_pos(s: Str) -> (Str, Int, Int) ! Str {
+  let parts = s.split(":")
+  if parts.len() < 3 {
+    return Err("want file:line:col, got ${s.quote()}")
+  }
+  let n = parts.len()
+  let line = Int.parse(parts[n - 2])
+  let col = Int.parse(parts[n - 1])
+  match (line, col) {
+    (Some(l), Some(c)) => {
+      if l < 1 || c < 1 {
+        return Err("want file:line:col with positive numbers, got ${s.quote()}")
+      }
+      Ok((parts[0..n - 2].join(":"), l, c))
+    }
+    _ => Err("want file:line:col with positive numbers, got ${s.quote()}")
+  }
+}
+
+/// Whether path lies under dir.
+fn within(wd: Str, path: Str, dir: Str) -> Bool {
+  let ap = abs_path(wd, path)
+  let ad = abs_path(wd, dir)
+  if ad == "/" {
+    return true
+  }
+  ap == ad || ap.starts_with("${ad}/")
+}
+
+/// `xo query hash <name>` (core 4.3, decision 0125): the definition hashes
+/// of the module holding dir. It needs no check run.
+fn query_hash(os: Os, dir: Str, name: Str, as_json: Bool) -> Int {
+  let wd = wd_of(os)
+  var root = mod_root(os.fs, wd, dir)
+  var mod_path = ""
+  if !root.is_empty() {
+    mod_path = mod_path_of(os.fs, root)
+  }
+  if root.is_empty() || mod_path.is_empty() {
+    root = abs_path(wd, dir)
+    mod_path = base_of(root)
+  }
+  let defs = match module_defs(os.fs, root, mod_path) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo query hash: ${e}")
+      return 2
+    }
+  }
+  let found = find_defs(defs, name)
+  if found.is_empty() {
+    var msg = "${name.quote()} does not name a definition of the module ${mod_path}"
+    let near = nearest(defs, name, 3)
+    if !near.is_empty() {
+      msg = "${msg} (did you mean ${near.join(", ")}?)"
+    }
+    os.stdio.eprintln("xo query hash: ${msg}")
+    return 1
+  }
+  if as_json {
+    var items: List[JVal] = []
+    for d in found {
+      items.push(def_json(d))
+    }
+    os.stdio.print(encode(JVal.Obj([("list", JVal.Arr(items))])))
+    return 0
+  }
+  for d in found {
+    os.stdio.print("${d.hash}  ${d.kind} ${d.id} (${d.file}:${d.line})\n  own ${d.own}\n")
+  }
+  0
+}

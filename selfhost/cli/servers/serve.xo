@@ -200,6 +200,41 @@ pub fn forward(os: Os, args: List[Str]) -> (Int, Bool) uses (env, proc, net, fs,
   (r.code, true)
 }
 
+/// The forwarding of `xo check` and `xo query` to a running server
+/// (cmd/xo runCheck and runQuery): the exit status when the server ran
+/// the command, else None (run it here). args starts with the command.
+/// check with --no-gc or --fix runs here (--fix writes files); query
+/// without arguments too; a query to a terminal without --json or --text
+/// asks for --text, as the server's output is not a terminal.
+pub fn forward_cli(os: Os, args: List[Str]) -> Int? uses (env, proc, net, fs, stdio) {
+  if args.is_empty() {
+    return None
+  }
+  var fwd = args
+  if args[0] == "check" {
+    for a in args[1..] {
+      if a is "--no-gc" | "-no-gc" | "--no-gc=true" | "-no-gc=true" | "--fix" | "-fix" | "--fix=true" | "-fix=true" {
+        return None
+      }
+    }
+  } else if args[0] == "query" {
+    if args.len() < 2 {
+      return None
+    }
+    var format = false
+    for a in args[1..] {
+      format = format || a is "--json" | "-json" | "--text" | "-text"
+    }
+    if os.stdio.stdout_is_tty() && !format {
+      fwd.push("--text")
+    }
+  } else {
+    return None
+  }
+  let (code, ok) = forward(os, fwd)
+  if ok { Some(code) } else { None }
+}
+
 // ---------------------------------------------------------------------------
 // the cache
 

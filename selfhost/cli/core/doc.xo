@@ -1,0 +1,383 @@
+// `xo doc` (cmd/xo tools.go runDoc, internal/doc): Markdown documentation
+// of a module from its doc comments and signatures, or JSON.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// A declaration of a module's surface (query.Def).
+pub struct Def {
+  pub kind: Str
+  pub name: Str
+  pub module: Str
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub signature: Str
+  pub doc: Str
+}
+
+/// A documented declaration (doc.Item).
+struct Item {
+  def: Def
+  examples: List[Str]
+  methods: List[Item] = []
+}
+
+/// The documentation of one module (doc.Module).
+struct DocModule {
+  module: Str
+  constants: List[Item] = []
+  types: List[Item] = []
+  functions: List[Item] = []
+}
+
+fn run_doc(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+  var fl = new_flags("doc")
+  fl.bool_flag("json", "print the documentation as JSON")
+  fl.bool_flag("all", "include declarations that are not pub")
+  fl.str_flag("dir", ".", "directory checked when the module is given by import path")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() > 1 {
+    os.stdio.eprintln("xo doc: at most one module")
+    return 2
+  }
+  let target = if fl.args.len() == 1 { fl.args[0] } else { "." }
+  let all = fl.get_bool("all")
+  var docs: List[DocModule] = []
+  let is_dir = match os.fs.stat(target) {
+    Ok(Some(i)) => i.is_dir
+    _ => false
+  }
+  if is_dir {
+    let s = match load(os, ctx, [target], true, {}) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo doc: ${e}")
+        return 2
+      }
+    }
+    for m in s.c.root_mods {
+      docs.push(build_doc(s.c, m, all))
+    }
+    if docs.is_empty() {
+      os.stdio.eprintln("xo doc: no .xo files under ${target}")
+      return 1
+    }
+  } else {
+    let dir = fl.get_str("dir")
+    let s = match load(os, ctx, [dir], false, {}) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo doc: ${e}")
+        return 2
+      }
+    }
+    let m = module_by_path(ctx, s.c, target)
+    if m < 0 {
+      os.stdio.eprintln("xo doc: no module ${go_quote(target)} under ${dir}")
+      return 1
+    }
+    docs.push(build_doc(s.c, m, all))
+  }
+  if fl.get_bool("json") {
+    os.stdio.print(indent_json(jarr(docs.map(fn(d: DocModule) -> Str { doc_json(d) }))))
+    return 0
+  }
+  var b = StrBuilder.new()
+  for (i, d) in docs.indexed() {
+    if i > 0 {
+      b.write("\n")
+    }
+    b.write(markdown(d))
+  }
+  os.stdio.print(b.freeze())
+  0
+}
+
+/// The module named by an import path, or whose directory is path or
+/// whose path ends in /path (query.Session.ModuleByPath); -1 for none.
+fn module_by_path(ctx: Ctx, c: check.Checker, path: Str) -> Int {
+  for (i, m) in c.mods.indexed() {
+    if m.path == path {
+      return i
+    }
+  }
+  let abs = abs_path(ctx, path)
+  for (i, m) in c.mods.indexed() {
+    if m.is_std {
+      continue
+    }
+    if abs_path(ctx, m.dir) == abs || m.path.ends_with("/${path}") {
+      return i
+    }
+  }
+  -1
+}
+
+/// The declarations of module m, pub ones only unless all, test files
+/// and test blocks left out, files by path (query.Session.Surface).
+fn surface(c: check.Checker, m: Int, all: Bool) -> List[Def] {
+  var files = c.mods[m].files
+  files = files.sort_by(fn(f: Int) -> Str { c.files[f].path })
+  var out: List[Def] = []
+  for f in files {
+    let sf = c.files[f]
+    if sf.is_test {
+      continue
+    }
+    for d in sf.ast.decls {
+      if let Some(def) = decl_surface(c.mods[m].path, sf.path, sf.src, d, all) {
+        out.push(def)
+      }
+    }
+  }
+  out
+}
+
+fn doc_text(d: parser.Doc?) -> Str {
+  match d {
+    Some(x) => x.text.to_str() ?? ""
+    None => ""
+  }
+}
+
+fn name_def(kind: Str, name: Str, module: Str, file: Str, id: parser.Ident, sig: Str, doc: Str) -> Def {
+  Def{kind: kind, name: name, module: module, file: file, line: id.span.start.line, col: id.span.start.col, signature: sig, doc: doc}
+}
+
+/// The surface entry of one declaration (query.DeclSurface).
+fn decl_surface(module: Str, file: Str, src: Bytes, d: parser.Decl, all: Bool) -> Def? {
+  match d {
+    FnDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      var name = text_of(x.name.name)
+      var kind = "fn"
+      if let Some(r) = x.recv {
+        kind = "method"
+        match r.typ {
+          NamedType(_, path, _) => {
+            if !path.is_empty() {
+              name = text_of(path[path.len() - 1].name) + "." + name
+            }
+          }
+          _ => {}
+        }
+      }
+      Some(name_def(kind, name, module, file, x.name, format.format_decl(d, src, true), doc_text(x.doc)))
+    }
+    ConstDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(name_def("const", text_of(x.name.name), module, file, x.name, format.format_decl(d, src, true), doc_text(x.doc)))
+    }
+    StructDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      var s = x
+      if !all {
+        s = x with {fields: x.fields.filter(fn(f: parser.Field) -> Bool { f.is_pub }), inv: None}
+      }
+      Some(name_def("struct", text_of(x.name.name), module, file, x.name, format.format_decl(parser.Decl.StructDecl(s), src, true), doc_text(x.doc)))
+    }
+    EnumDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(name_def("enum", text_of(x.name.name), module, file, x.name, format.format_decl(d, src, true), doc_text(x.doc)))
+    }
+    InterfaceDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      Some(name_def("interface", text_of(x.name.name), module, file, x.name, format.format_decl(d, src, true), doc_text(x.doc)))
+    }
+    TypeDecl(x) => {
+      if !x.is_pub && !all {
+        return None
+      }
+      let kind = if x.newtype { "newtype" } else { "alias" }
+      Some(name_def(kind, text_of(x.name.name), module, file, x.name, format.format_decl(d, src, true), doc_text(x.doc)))
+    }
+    _ => None
+  }
+}
+
+/// The documentation of module m: methods under their receiver type when
+/// it is documented, else with the functions (doc.Build).
+fn build_doc(c: check.Checker, m: Int, all: Bool) -> DocModule {
+  var out = DocModule{module: c.mods[m].path}
+  var types: Map[Str, Int] = {}
+  var methods: List[Item] = []
+  for d in surface(c, m, all) {
+    let it = Item{def: d, examples: examples(d.doc)}
+    if d.kind == "const" {
+      out.constants.push(it)
+    } else if d.kind == "fn" {
+      out.functions.push(it)
+    } else if d.kind == "method" {
+      methods.push(it)
+    } else {
+      types[d.name] = out.types.len()
+      out.types.push(it)
+    }
+  }
+  for it in methods {
+    let recv = it.def.name.split(".")[0]
+    match types.get(recv) {
+      Some(i) => {
+        var t = out.types[i]
+        t.methods.push(it)
+        out.types[i] = t
+      }
+      None => out.functions.push(it)
+    }
+  }
+  out
+}
+
+/// The bodies of the example code blocks of a doc comment: fenced blocks
+/// with no info string or `xo` (doc.Examples).
+fn examples(doc: Str) -> List[Str] {
+  var out: List[Str] = []
+  var cur: List[Str] = []
+  var inside = false
+  var example = false
+  for ln in doc.split("\n") {
+    let t = ln.trim()
+    if !t.starts_with("```") {
+      if inside && example {
+        cur.push(ln)
+      }
+      continue
+    }
+    if !inside {
+      let info = t.trim_prefix("```").trim()
+      inside = true
+      example = info.is_empty() || info == "xo"
+      cur = []
+      continue
+    }
+    if example {
+      out.push(cur.join("\n") + "\n")
+    }
+    inside = false
+  }
+  out
+}
+
+/// Tags example fences ```xo so Markdown renderers highlight them.
+fn normalize_fences(doc: Str) -> Str {
+  var lines = doc.split("\n")
+  var inside = false
+  for (i, ln) in lines.indexed() {
+    let t = ln.trim()
+    if !t.starts_with("```") {
+      continue
+    }
+    if !inside && t == "```" {
+      lines[i] = replace_first(ln, "```", "```xo")
+    }
+    inside = !inside
+  }
+  lines.join("\n")
+}
+
+fn replace_first(s: Str, old: Str, new: Str) -> Str {
+  match s.find(old) {
+    Some(i) => s[..i] + new + s[i + old.len()..]
+    None => s
+  }
+}
+
+fn markdown(d: DocModule) -> Str {
+  var b = StrBuilder.new()
+  b.write("# Module `${d.module}`\n")
+  let n = d.constants.len() + d.types.len() + d.functions.len()
+  if n == 0 {
+    b.write("\nNo exported declarations.\n")
+  } else {
+    b.write("\n## Index\n\n")
+    index(b, d.constants, "const")
+    index(b, d.types, "type")
+    index(b, d.functions, "fn")
+    section(b, "Constants", d.constants)
+    section(b, "Types", d.types)
+    section(b, "Functions", d.functions)
+  }
+  b.freeze()
+}
+
+fn index(var b: StrBuilder, items: List[Item], kind: Str) {
+  for it in items {
+    b.write("- ${kind} [`${it.def.name}`](#${anchor(it.def.name)})\n")
+    for m in it.methods {
+      b.write("  - method [`${m.def.name}`](#${anchor(m.def.name)})\n")
+    }
+  }
+}
+
+fn section(var b: StrBuilder, title: Str, items: List[Item]) {
+  if items.is_empty() {
+    return
+  }
+  b.write("\n## ${title}\n")
+  for it in items {
+    write_item(b, it, "###")
+    for m in it.methods {
+      write_item(b, m, "####")
+    }
+  }
+}
+
+fn write_item(var b: StrBuilder, it: Item, level: Str) {
+  b.write("\n${level} ${it.def.name}\n\n")
+  b.write("```xo\n${it.def.signature}\n```\n")
+  if !it.def.doc.is_empty() {
+    b.write("\n${normalize_fences(it.def.doc)}\n")
+  }
+  if !it.examples.is_empty() {
+    b.write("\n${it.examples.len()} example(s) (fenced `xo` blocks above).\n")
+  }
+  b.write("\nDefined at ${it.def.file}:${it.def.line}:${it.def.col}.\n")
+}
+
+/// The GitHub style heading anchor of a heading text.
+fn anchor(s: Str) -> Str {
+  var b = StrBuilder.new()
+  for r in s.to_lower().runes() {
+    if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+      b.write("${r}")
+    } else if r == ' ' {
+      b.write("-")
+    }
+  }
+  b.freeze()
+}
+
+fn def_fields(d: Def) -> List[(Str, Str)] {
+  var fields = [("kind", jstr(d.kind)), ("name", jstr(d.name)), ("module", jstr(d.module)), ("pos", jobj([("file", jstr(d.file)), ("line", "${d.line}"), ("col", "${d.col}")])), ("signature", jstr(d.signature))]
+  if !d.doc.is_empty() {
+    fields.push(("doc", jstr(d.doc)))
+  }
+  fields
+}
+
+fn item_json(it: Item) -> Str {
+  var fields = def_fields(it.def)
+  fields.push(("examples", jstrs(it.examples)))
+  if !it.methods.is_empty() {
+    fields.push(("methods", jarr(it.methods.map(fn(m: Item) -> Str { item_json(m) }))))
+  }
+  jobj(fields)
+}
+
+fn doc_json(d: DocModule) -> Str {
+  jobj([("module", jstr(d.module)), ("constants", jarr(d.constants.map(fn(i: Item) -> Str { item_json(i) }))), ("types", jarr(d.types.map(fn(i: Item) -> Str { item_json(i) }))), ("functions", jarr(d.functions.map(fn(i: Item) -> Str { item_json(i) })))])
+}

@@ -1,0 +1,90 @@
+// `xo fmt` (cmd/xo tools.go runFmt) with the formatter of format/.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+fn run_fmt(os: Os, args: List[Str]) -> Int {
+  var fl = new_flags("fmt")
+  fl.bool_flag("check", "list unformatted files and exit 1 if any; change nothing")
+  fl.bool_flag("json", "print the result as JSON")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  var paths = fl.args
+  if paths.is_empty() {
+    paths = ["."]
+  }
+  let files = match collect(os, paths, true) {
+    Ok(fs) => fs
+    Err(e) => {
+      os.stdio.eprintln("xo fmt: ${e}")
+      return 2
+    }
+  }
+  let check_only = fl.get_bool("check")
+  let as_json = fl.get_bool("json")
+  var results: List[Str] = []
+  var diags: List[Diag] = []
+  var changed = 0
+  var failed = 0
+  for path in files {
+    let src = match os.fs.read(path) {
+      Ok(b) => b
+      Err(e) => {
+        os.stdio.eprintln("xo fmt: ${fs_err(e)}")
+        return 2
+      }
+    }
+    let out = match format.format_source(path, src) {
+      Ok(text) => text
+      SyntaxErrors(ds) => {
+        diags = diags + check.parse_diags(path, ds)
+        failed += 1
+        continue
+      }
+    }
+    let is_changed = out != src
+    results.push(jobj([("path", jstr(path)), ("changed", jbool(is_changed))]))
+    if !is_changed {
+      continue
+    }
+    changed += 1
+    if !check_only {
+      match write_keep_mode(os, path, out) {
+        Ok(_) => {}
+        Err(e) => {
+          os.stdio.eprintln("xo fmt: ${fs_err(e)}")
+          return 2
+        }
+      }
+    }
+    if !as_json {
+      os.stdio.println(path)
+    }
+  }
+  if as_json {
+    os.stdio.print(indent_json(jobj([("files", jarr(results)), ("diagnostics", diags_json(diags))])))
+  } else {
+    var b = StrBuilder.new()
+    for d in diags {
+      b.write(human(d))
+      b.write("\n")
+    }
+    if failed > 0 {
+      b.write("xo fmt: ${failed} file(s) not formatted because of syntax errors\n")
+    }
+    os.stdio.eprint(b.freeze())
+  }
+  if failed > 0 || (check_only && changed > 0) { 1 } else { 0 }
+}
+
+/// Writes data to the existing file at path, keeping its permission bits
+/// (os.WriteFile with the file's mode).
+pub fn write_keep_mode(os: Os, path: Str, data: Bytes) -> () ! FsErr uses fs {
+  let mode = os.fs.mode(path)?
+  os.fs.write(path, data)?
+  if mode != 0o644 {
+    os.fs.set_mode(path, mode)?
+  }
+  Ok(())
+}

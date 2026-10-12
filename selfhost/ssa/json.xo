@@ -145,7 +145,7 @@ fn (var b: Builder) json_sub(a: Int, x0: Int, xt: Int) -> Int {
 fn (var b: Builder) json_enc(ct: Int) -> Str {
   let st = b.str_t()
   let t = b.typ(ct)
-  let name = "xo.json.enc[${b.c.show(ct)}]"
+  let name = "xo.json.enc[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [st, t], [st], [])
   if fi < 0 {
     return name
@@ -502,7 +502,7 @@ fn (var b: Builder) json_dec(ct: Int) -> Str {
   }
   let rt = b.typ(b.result_of(ct, det))
   let list_int = b.m.list(it)
-  let name = "xo.json.dec[${b.c.show(ct)}]"
+  let name = "xo.json.dec[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [st, list_int, it], [rt], [])
   if fi < 0 {
     return name
@@ -903,7 +903,7 @@ fn (var b: Builder) sql_accessor(ct: Int) -> Str {
 /// rt is its lowered result type.
 fn (var b: Builder) sql_decode(ct: Int, row_ct: Int, rt: Int) -> Str {
   let row_t = b.typ(row_ct)
-  let name = "xo.sql.dec[${b.c.show(ct)}]"
+  let name = "xo.sql.dec[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [row_t], [rt], [])
   if fi < 0 {
     return name

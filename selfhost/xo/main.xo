@@ -56,12 +56,26 @@ use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
 use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
+use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/selfhost/cli/modules
+use github.com/xo-lang/xo/selfhost/cli/semantic
 use github.com/xo-lang/xo/selfhost/cli/servers
 
 fn main(os: Os) ! {
   let args = os.env.args()
+  if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.env.get("PWD") ?? "", args)) }
+  if let Some(code) = servers.forward_cli(os, args) {
+    // a running `xo serve` answered check or query
+    os.proc.exit(code)
+  }
+  if !args.is_empty() && args[0] is "query" | "edit" {
+    os.proc.exit(semantic.run(os, args))
+  }
   if !args.is_empty() && servers.is_command(args[0]) {
     os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION))
+  }
+  if core.is_command(args) {
+    os.proc.exit(core.run(os, args))
   }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
     usage(os, "")
