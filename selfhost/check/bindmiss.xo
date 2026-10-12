@@ -1,0 +1,105 @@
+// Binding on a cache miss (decision 0178 stage 6). The Go checker binds a
+// `use go` package that the binding cache lacks (gobind.LoadOrBind) and
+// binds every `use c` header again (cbind.Bind writes only what changed).
+// This checker reads the caches only (goimport.xo, cimport.xo), so a run
+// records what it met and check_dirs_bound binds it, with the helper
+// xo-gobind for Go and selfhost/cli/bind's C binder, then checks the
+// directories again from the state before the run. A binding that fails
+// is a diagnostic (XO1101 for Go, XO1104 for C) with the binder's reason,
+// as the Go checker reports it.
+
+use github.com/xo-lang/xo/selfhost/cli/bind
+
+/// A binding the run needs: a `use go` package without a current binding
+/// (go_path), or a `use c` header (header; met whether its file was in
+/// the cache or not, with what was read).
+pub struct BindMiss {
+  /// "go:<path>", or the C binding's key
+  pub key: Str
+  pub go_path: Str = ""
+  pub header: Str = ""
+  /// The directory whose binding cache it belongs in (go_bind_root).
+  pub root: Str = ""
+  pub mod_dir: Str = ""
+  pub links: List[Str] = []
+  pub effects: List[Str]? = None
+  pub cache: Str = ""
+  /// The C declaration file as the run read it ("" when missing).
+  pub read: Str = ""
+}
+
+fn (var c: Checker) add_miss(m: BindMiss) {
+  for x in c.bind_misses {
+    if x.key == m.key {
+      return
+    }
+  }
+  c.bind_misses.push(m)
+}
+
+/// A `use go` package without a current binding: XO1101 when binding it
+/// failed (bind_failed), else the run is not checked here and the package
+/// is recorded for check_dirs_bound.
+fn (var c: Checker) go_miss(f: Int, sp: Span, gopath: Str, root: Str, cache: Str, fpath: Str) {
+  let key = "go:${gopath}"
+  if let Some(msg) = c.bind_failed.get(key) {
+    if !c.bind_reported.contains(key) {
+      c.bind_reported.add(key)
+      let d = c.error_at(f, "XO1101", sp, "cannot bind Go package `${gopath}`: ${msg}")
+      c.note(d, "`use go` binds the package with `xo bind ${gopath}` into ${cache} (decision 0041)")
+    }
+    return
+  }
+  c.add_miss(BindMiss{key: key, go_path: gopath, root: root, cache: cache})
+  if c.unsupported.is_empty() {
+    c.unsupported = "use go without a current binding of ${gopath} in ${cache} (a Go check or build, or `xo bind`, writes it) in ${fpath}"
+  }
+}
+
+/// check_dirs, binding first what the run lacks: every `use go` package
+/// missing from the binding cache and every `use c` header (rebound when
+/// missing or changed); the directories are checked again from the state
+/// before the run when a binding was written or failed.
+pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str uses (fs, proc, env) {
+  let fresh = c
+  c.check_dirs(dirs)?
+  var failed: Map[Str, Str] = {}
+  var tried: Set[Str] = #{}
+  let wd = os.env.get("PWD") ?? ""
+  // a few rounds: a new binding can import more
+  for _ in 0..4 {
+    var again = false
+    for m in c.bind_misses {
+      if tried.contains(m.key) {
+        continue
+      }
+      tried.add(m.key)
+      if !m.go_path.is_empty() {
+        match bind.bind_go_package(os, c.std_dir, wd, m.root, m.go_path) {
+          Ok(_) => {}
+          Err(e) => failed[m.key] = e
+        }
+        again = true
+        continue
+      }
+      match bind.bind_c(os, bind.Options{header: m.header, mod_dir: m.mod_dir, links: m.links, effects: m.effects, dir: m.cache, wd: wd}) {
+        Ok(b) => {
+          if b.decl != m.read {
+            again = true
+          }
+        }
+        Err(e) => {
+          failed[m.key] = e
+          again = true
+        }
+      }
+    }
+    if !again {
+      return Ok(())
+    }
+    c = fresh
+    c.bind_failed = failed
+    c.check_dirs(dirs)?
+  }
+  Ok(())
+}
