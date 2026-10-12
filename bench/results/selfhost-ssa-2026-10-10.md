@@ -726,3 +726,29 @@ numbering would apply to `live` in rc.xo's walk, with internal/ssa's
 iteration order kept for the placements (they are compared with the Go
 builder's, so the order of the live set matters there, unlike in the
 verifier).
+
+# List.with_capacity in Module.new_func, 2026-10-12
+
+Stage 8's next experiment 2: `List[T].with_capacity(n)` (decision 0170)
+landed in the prelude, and selfhost/ssa's `Module.new_func` was tried
+with room up front for each function's lists. Sizes from the build
+stage of selfhost/ssa (`xo ssadump`, 1,658 functions): values per
+function mean 343, median 180, 90th percentile 766; blocks mean 48,
+median 21, 90th percentile 120. Builder alone (`--bench=10`, go build,
+the snapshot of commit 2cdbb29, after the verifier change above), three
+runs each, alternating, under load (instructions retired by the whole
+process, billions; ms as printed):
+
+| `new_func` lists | selfhost/check | selfhost/ssa |
+|---|---|---|
+| no capacity (as before) | 24.16, 24.05, 23.97 (1,301, 1,314, 1,270 ms) | 44.26, 44.33, 44.44 (2,441, 2,529, 2,488 ms) |
+| 256 values, 32 blocks, 32 edges | 25.29, 25.20, 25.26 (1,331, 1,351, 1,331 ms) | 45.84, 45.78, 46.00 (2,491, 2,622, 2,516 ms) |
+| 128 values, 16 blocks, 16 edges | 24.52, 24.58, 24.46 (1,316, 1,283, 1,328 ms) | 44.89, 45.04, 44.65 (2,484, 2,391, 2,497 ms) |
+
+No gain: more instructions with either size (zeroing room most small
+functions never use outweighs the copies of doubling) and wall clock
+within noise. `new_func` stays without capacities. The earlier profile
+item (memmove and growth about 10%) was not growth of these lists;
+next, find which lists it was with the temporary counter in std/rt
+List_copyOut that found `Builder.comparable` (2026-10-11 section above),
+split by element type.

@@ -229,6 +229,9 @@ fn (r: Rune) quote() -> Str
 // List[T] (std.md 2.3). Higher order methods pass through the callback's
 // effects and errors (std.md 2.3, core 6.2).
 
+/// An empty list with room for n elements before it grows (decision
+/// 0170): `[]` that pushes up to n without copying. n below 0 counts as 0.
+fn (static: List[T]) with_capacity(n: Int) -> List[T]
 fn (xs: List[T]) len() -> Int
 fn (xs: List[T]) is_empty() -> Bool
 fn (xs: List[T]) get(i: Int) -> T?

@@ -6,6 +6,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `List[T].with_capacity(n)` (decision 0170, every backend): an empty
+  list with room for n elements before it grows.
 - The `xo <edition>` line of xo.work is validated as xo.mod's `edition`
   line is (decision 0155): `xo 2026` gets the fixable note `XO1315` and
   `xo fix` rewrites it to `xo preview`; any other unknown name is

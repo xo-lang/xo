@@ -1,0 +1,44 @@
+// `List[T].with_capacity(n)` (decision 0170): an empty list with room for
+// n elements; it behaves as `[]` (value semantics, growth past n, a
+// negative n counts as 0).
+
+struct Point {
+  x: Int
+  name: Str
+}
+
+fn squares(n: Int) -> List[Int] {
+  var out = List[Int].with_capacity(n)
+  for i in 0..n {
+    out.push(i * i)
+  }
+  out
+}
+
+fn main(os: Os) {
+  var xs = List[Int].with_capacity(3)
+  os.stdio.println("empty ${xs.len()} ${xs.is_empty()} ${xs.debug()}")
+  for i in 0..5 {
+    xs.push(i)
+  }
+  let ys = xs
+  xs.push(9)
+  xs[0] = 7
+  os.stdio.println("grown ${xs.debug()} copy ${ys.debug()}")
+  var names: List[Str] = List.with_capacity(-1)
+  names.push("a")
+  names.push("b${names.len()}")
+  os.stdio.println("negative ${names.debug()} ${names.join(",")}")
+  var ps = List[Point].with_capacity(0)
+  ps.push(Point{x: 1, name: "one"})
+  ps.push(Point{x: 2, name: "two"})
+  let first = ps
+  ps[1] = Point{x: 3, name: "three"}
+  os.stdio.println("points ${ps.len()} ${ps[1].name} ${first[1].name}")
+  let sq = squares(6)
+  os.stdio.println("squares ${sq.debug()} ${squares(0).len()}")
+  var nested = List[List[Int]].with_capacity(2)
+  nested.push(sq)
+  nested.push(List[Int].with_capacity(100))
+  os.stdio.println("nested ${nested.len()} ${nested[0].len()} ${nested[1].len()}")
+}

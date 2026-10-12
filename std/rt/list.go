@@ -685,6 +685,13 @@ func Buf_new[T any](*Task) Buf[T] { return Buf[T]{} }
 // Buf_with_capacity is `Buf[T].with_capacity(n)`.
 func Buf_with_capacity[T any](_ *Task, n int64) Buf[T] { return Buf[T]{s: make([]T, 0, max(n, 0))} }
 
+// List_with_capacity is `List[T].with_capacity(n)` (decision 0170): an
+// empty list that owns a backing array with room for n elements, so the
+// first n pushes append in place.
+func List_with_capacity[T any](_ *Task, n int64) List[T] {
+	return List[T]{s: make([]T, 0, max(n, 0)), b: newBlock(0)}
+}
+
 // M_push is `b.push(x)`.
 func (b *Buf[T]) M_push(_ *Task, x T) { b.s = append(b.s, x) }
 
