@@ -10,6 +10,12 @@
 fn rt2_text(var g: Gen) -> Str {
   let b64 = g.raw("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".bytes())
   let empty = g.str_obj(b"")
+  let rand1 = g.litp("rand.int(")
+  let rand2 = g.litp(", ")
+  let rand3 = g.litp("): the range is empty")
+  let rt1 = g.litp("XO-F007: real-time function `")
+  let rt2 = g.litp("` allocated ")
+  let rt3 = g.litp(" time")
   """
     ;; the byte at i (0 to 255), or -1 out of range (xo_str_byte)
     (func $str_byte (param $o i32) (param $n i32) (param $i i64) (result i64)
@@ -1308,11 +1314,390 @@ fn rt2_text(var g: Gen) -> Str {
       local.get $n
       call $dur_parse
       drop)
+
+    ;; random numbers: WASI random_get (the platform's entropy, as
+    ;; xo_crypto.c's cr_entropy)
+    (func $rand_u64 (result i64)
+      i32.const 16
+      i32.const 8
+      call $random_get
+      drop
+      i32.const 16
+      i64.load)
+
+    ;; rand.int(lo, hi): uniform in [lo, hi); an empty range faults
+    (func $rand_int (param $lo i64) (param $hi i64) (param $l i32) (param $ln i32) (result i64) (local $span i64) (local $lim i64) (local $v i64)
+      local.get $hi
+      local.get $lo
+      i64.le_s
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${rand1}
+        call $sapp
+        local.get $lo
+        call $sapp_int
+        ${rand2}
+        call $sapp
+        local.get $hi
+        call $sapp_int
+        ${rand3}
+        call $sapp
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i64.const 0
+        return
+      end
+      local.get $hi
+      local.get $lo
+      i64.sub
+      local.set $span
+      i64.const -1
+      i64.const -1
+      local.get $span
+      i64.rem_u
+      i64.sub
+      local.set $lim
+      loop $r
+        call $rand_u64
+        local.tee $v
+        local.get $lim
+        i64.ge_u
+        br_if $r
+      end
+      local.get $lo
+      local.get $v
+      local.get $span
+      i64.rem_u
+      i64.add)
+
+    (func $rand_float (result f64)
+      call $rand_u64
+      i64.const 11
+      i64.shr_u
+      f64.convert_i64_u
+      ;; 2^-53
+      i64.const 0x3ca0000000000000
+      f64.reinterpret_i64
+      f64.mul)
+
+    (func $rand_bool (result i32)
+      call $rand_u64
+      i32.wrap_i64
+      i32.const 1
+      i32.and)
+
+    (func $rand_bytes (param $n i64) (result i32 i32) (local $s i32) (local $k i32)
+      local.get $n
+      i64.const 0
+      local.get $n
+      i64.const 0
+      i64.gt_s
+      select
+      i32.wrap_i64
+      local.tee $k
+      call $rs_new
+      local.tee $s
+      i32.const 8
+      i32.add
+      local.get $k
+      call $random_get
+      drop
+      local.get $s
+      local.get $k)
+
+    ;; a / b rounded down (b > 0): Time.unix
+    (func $floor_div (param $a i64) (param $b i64) (result i64) (local $q i64)
+      local.get $a
+      local.get $b
+      i64.div_s
+      local.set $q
+      local.get $a
+      local.get $b
+      i64.rem_s
+      i64.const 0
+      i64.ne
+      local.get $a
+      i64.const 0
+      i64.lt_s
+      local.get $b
+      i64.const 0
+      i64.lt_s
+      i32.ne
+      i32.and
+      if
+        local.get $q
+        i64.const 1
+        i64.sub
+        local.set $q
+      end
+      local.get $q)
+
+    ;; a op b wrapping (op 0 +, 1 -, 2 *)
+    (func $int_wrap (param $op i64) (param $a i64) (param $b i64) (result i64)
+      local.get $op
+      i64.eqz
+      if
+        local.get $a
+        local.get $b
+        i64.add
+        return
+      end
+      local.get $op
+      i64.const 1
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.sub
+        return
+      end
+      local.get $a
+      local.get $b
+      i64.mul)
+
+    ;; whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /)
+    (func $int_fits (param $op i64) (param $a i64) (param $b i64) (result i32) (local $r i64)
+      local.get $op
+      i64.eqz
+      if
+        local.get $a
+        local.get $b
+        i64.add
+        local.set $r
+        local.get $a
+        local.get $r
+        i64.xor
+        local.get $b
+        local.get $r
+        i64.xor
+        i64.and
+        i64.const 0
+        i64.ge_s
+        return
+      end
+      local.get $op
+      i64.const 1
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.sub
+        local.set $r
+        local.get $a
+        local.get $b
+        i64.xor
+        local.get $a
+        local.get $r
+        i64.xor
+        i64.and
+        i64.const 0
+        i64.ge_s
+        return
+      end
+      local.get $op
+      i64.const 2
+      i64.eq
+      if
+        ;; a * b fits when b is 0, or (a * b) / b == a without the one
+        ;; overflowing division
+        local.get $b
+        i64.eqz
+        if
+          i32.const 1
+          return
+        end
+        local.get $b
+        i64.const -1
+        i64.eq
+        if
+          local.get $a
+          i64.const 0x8000000000000000
+          i64.ne
+          return
+        end
+        local.get $a
+        local.get $b
+        i64.mul
+        local.get $b
+        i64.div_s
+        local.get $a
+        i64.eq
+        return
+      end
+      local.get $b
+      i64.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $b
+      i64.const -1
+      i64.eq
+      local.get $a
+      i64.const 0x8000000000000000
+      i64.eq
+      i32.and
+      i32.eqz)
+
+    ;; unpadded base64 (RawURLEncoding when url, else RawStdEncoding)
+    (func $crypto_b64 (param $o i32) (param $n i32) (param $url i32) (result i32 i32) (local $s i32) (local $k i32) (local $i i32) (local $c i32)
+      local.get $o
+      local.get $n
+      call $b64_encode
+      local.set $k
+      local.set $s
+      ;; drop the padding
+      block $x
+        loop $l
+          local.get $k
+          i32.eqz
+          br_if $x
+          local.get $s
+          local.get $k
+          i32.add
+          i32.load8_u offset=7
+          i32.const 61
+          i32.ne
+          br_if $x
+          local.get $k
+          i32.const 1
+          i32.sub
+          local.set $k
+          br $l
+        end
+      end
+      local.get $url
+      if
+        block $x
+          loop $l
+            local.get $i
+            local.get $k
+            i32.ge_u
+            br_if $x
+            local.get $s
+            local.get $i
+            i32.add
+            local.tee $c
+            i32.load8_u offset=8
+            i32.const 43
+            i32.eq
+            if
+              local.get $c
+              i32.const 45
+              i32.store8 offset=8
+            end
+            local.get $c
+            i32.load8_u offset=8
+            i32.const 47
+            i32.eq
+            if
+              local.get $c
+              i32.const 95
+              i32.store8 offset=8
+            end
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+            br $l
+          end
+        end
+      end
+      local.get $s
+      local.get $k)
+
+    ;; real-time sections (decision 0133): the allocations inside the
+    ;; outermost one are counted, and its exit faults when there was one
+    ;; (XO-F007); objects are freed at once (one thread, nothing to wait
+    ;; for)
+    (func $realtime_enter
+      global.get $rtdepth
+      i32.eqz
+      if
+        global.get $total
+        global.get $rtskip
+        i64.sub
+        global.set $rtmark
+      end
+      global.get $rtdepth
+      i32.const 1
+      i32.add
+      global.set $rtdepth)
+
+    (func $realtime_exit (param $p i32) (param $n i32) (param $lo i32) (param $ln i32) (local $k i64) (local $m i32) (local $mn i32)
+      global.get $rtdepth
+      i32.const 1
+      i32.sub
+      global.set $rtdepth
+      global.get $rtdepth
+      i32.const 0
+      i32.gt_s
+      if
+        return
+      end
+      i32.const 0
+      global.set $rtdepth
+      global.get $total
+      global.get $rtskip
+      i64.sub
+      global.get $rtmark
+      i64.sub
+      local.tee $k
+      i64.eqz
+      if
+        return
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      ${rt1}
+      call $sapp
+      local.get $p
+      i32.const 8
+      i32.add
+      local.get $n
+      i32.const 128
+      local.get $n
+      i32.const 128
+      i32.lt_u
+      select
+      call $sapp
+      ${rt2}
+      call $sapp
+      local.get $k
+      call $sapp_int
+      ${rt3}
+      call $sapp
+      local.set $mn
+      local.set $m
+      local.get $k
+      i64.const 1
+      i64.ne
+      if
+        local.get $m
+        local.get $mn
+        i32.const 115
+        call $sapp_byte
+        local.set $mn
+        local.set $m
+      end
+      local.get $m
+      local.get $mn
+      local.get $lo
+      i32.const 8
+      i32.add
+      local.get $ln
+      call $fault_set)
   """
 }
 
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode"
+  name is "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode"
 }

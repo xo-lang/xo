@@ -84,6 +84,18 @@ pub struct Gen {
   blk: List[Int] = []
   /// Per block: its position in the dispatch (block order).
   pc_local: Int = 0
+
+  // tasks (rt3.xo, stage 2)
+  /// The program uses the task runtime.
+  conc: Bool = false
+  /// Per function: it can suspend (it waits, or calls what can).
+  susp: List[Bool] = []
+  /// The function being lowered can suspend.
+  su: Bool = false
+  /// The dispatch labels of the function being lowered, in text order,
+  /// and how many resume points it has.
+  segs: List[Str] = []
+  nres: Int = 0
 }
 
 /// Lowers module m (after the passes and InsertRC).
@@ -136,7 +148,7 @@ fn (var g: Gen) leaves(t: Int) -> List[Str] {
     Str => out = ["i32", "i32"]
     List | Box => out = ["i32"]
     Func => out = ["i32", "i32"]
-    Handle => g.fail("the wasm backend does not support the type `${x.name}` (stage 1: no handles)")
+    Handle => out = ["i32"]
     Struct => {
       for fd in x.fields {
         for l in g.leaves(fd.ty) {
@@ -434,7 +446,7 @@ fn (var g: Gen) push_hole(t: Int) {
       g.e("i32.const ${e}")
       g.e("i32.const 0")
     }
-    List | Box => g.e("i32.const ${g.str_obj(b"")}")
+    List | Box | Handle => g.e("i32.const ${g.str_obj(b"")}")
     Func => {
       g.e("i32.const 0")
       g.e("i32.const 0")
@@ -521,6 +533,21 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           g.get(0)
           g.e("call $free")
         }
+        g.e("end")
+      }
+    }
+    Handle => {
+      // a runtime object {rc, drop (a table index), ...}
+      g.get(0)
+      if kind == "dup" {
+        g.e("call $rc_inc")
+      } else {
+        g.e("call $rc_dec")
+        g.e("if")
+        g.get(0)
+        g.get(0)
+        g.e("i32.load offset=4")
+        g.e("call $rc_defer")
         g.e("end")
       }
     }
@@ -948,6 +975,61 @@ fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
 // ---------------------------------------------------------------------------
 // The module
 
+/// Whether the program uses the task runtime (rt3.xo), and which
+/// functions can suspend: those that call a blocking runtime function or
+/// a function value, and their callers.
+fn (var g: Gen) find_susp() {
+  g.susp = []
+  var calls: List[List[Int]] = []
+  for f in g.m.funcs {
+    var s = false
+    var cs: List[Int] = []
+    for x in f.values {
+      if x.op == ssa.Op.CallValue {
+        s = true
+      }
+      if x.op == ssa.Op.Call {
+        let name = match x.aux {
+          S(n) => n
+          _ => ""
+        }
+        if let Some(ci) = g.by_name.get(name) {
+          cs.push(ci)
+        } else if name.starts_with("rt.") && rt3_direct(name.trim_prefix("rt.")) {
+          g.conc = true
+          if rt3_blocking(name) {
+            s = true
+          }
+        }
+      }
+    }
+    g.susp.push(s)
+    calls.push(cs)
+  }
+  if !g.conc {
+    for i in 0..g.susp.len() {
+      g.susp[i] = false
+    }
+    return
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for (fi, cs) in calls.indexed() {
+      if g.susp[fi] {
+        continue
+      }
+      for ci in cs {
+        if g.susp[ci] {
+          g.susp[fi] = true
+          changed = true
+          break
+        }
+      }
+    }
+  }
+}
+
 fn (var g: Gen) module_text() -> Str {
   let main = g.m.func_index("main")
   if main < 0 {
@@ -956,14 +1038,24 @@ fn (var g: Gen) module_text() -> Str {
   }
   g.empty_list = g.place(le32(0x80000000) + le32(0) + le32(0) + le32(0))
   // the runtime first: its literals are placed before the program's
-  let rt = rt_text(g) + rt2_text(g)
+  var rt = rt_text(g) + rt2_text(g)
+  let mf = g.m.funcs[main]
+  var main_res: List[Str] = []
+  for r in mf.results {
+    for l in g.leaves(r) {
+      main_res.push(l)
+    }
+  }
+  g.find_susp()
+  if g.conc {
+    rt = rt + rt3_text(g, main, main_res)
+  }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
     if !g.err.is_empty() {
       return ""
     }
   }
-  let mf = g.m.funcs[main]
   var start: List[Str] = []
   for p in mf.blocks[0].params {
     let t = mf.values[p].ty
@@ -971,9 +1063,12 @@ fn (var g: Gen) module_text() -> Str {
       g.fail("main takes a `${g.m.types[t].name}`")
     }
   }
-  start.push("call $f${main}")
-  for r in mf.results {
-    for _ in g.leaves(r) {
+  if g.conc {
+    // main runs as the first task of the scheduler (rt3.xo)
+    start.push("call $sched")
+  } else {
+    start.push("call $f${main}")
+    for _ in main_res {
       start.push("drop")
     }
   }
@@ -987,7 +1082,13 @@ fn (var g: Gen) module_text() -> Str {
   for s in g.sig_lines {
     b.write("  ${s}\n")
   }
+  if g.conc {
+    b.write(rt3_imports())
+  }
   b.write(rt_imports())
+  if g.conc {
+    b.write(rt3_globals())
+  }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
   b.write(rt)

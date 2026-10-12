@@ -16,7 +16,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The WebAssembly backend, stage 2 (decision 0179): the Unicode code
   in Xo (decision 0180) compiles to wasm with the program, and the
   backend's runtime adds the text primitives it calls, number and
-  duration parsing, and base64: 85 of the 134 LLVM goldens pass.
+  duration parsing, and base64; tasks, scopes, channels, select, Mutex,
+  Atomic, timers, and budgets run on one thread under a deterministic
+  cooperative scheduler (a waiting task's wasm stack is unwound and
+  rewound); `rand` uses WASI `random_get`: 113 of the 134 LLVM goldens
+  pass, and the network fails the build with a clear error.
 - Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
   runtime are written in Xo (decision 0180, the runtime pilot):
   `std/native/llrt/unicode.xo` with generated tables
