@@ -303,14 +303,36 @@ func (s genStats) report() string {
 // genFiles cuts a dump into its files (path to text) and the skipped
 // lines that follow `== skipped`.
 func genFiles(text string) (map[string]string, []string) {
-	body, skipped, _ := strings.Cut(text, "== skipped\n")
+	// the markers start lines; generated Go may hold their text elsewhere
+	// (selfhost/gen's own dump code)
 	files := map[string]string{}
-	parts := strings.Split(body, "== file ")
-	for _, p := range parts[1:] {
-		path, content, _ := strings.Cut(p, "\n")
-		files[path] = content
+	var skipped []string
+	path, inSkipped := "", false
+	var cur strings.Builder
+	flush := func() {
+		if path != "" {
+			files[path] = cur.String()
+		}
+		cur.Reset()
 	}
-	return files, nonEmptyLines(skipped)
+	for _, l := range strings.SplitAfter(text, "\n") {
+		switch {
+		case strings.HasPrefix(l, "== file "):
+			flush()
+			path = strings.TrimSuffix(strings.TrimPrefix(l, "== file "), "\n")
+		case l == "== skipped\n":
+			flush()
+			path, inSkipped = "", true
+		case inSkipped:
+			if s := strings.TrimSuffix(l, "\n"); s != "" {
+				skipped = append(skipped, s)
+			}
+		default:
+			cur.WriteString(l)
+		}
+	}
+	flush()
+	return files, skipped
 }
 
 // compareGen compares one run and returns its differences.

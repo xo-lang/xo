@@ -46,6 +46,35 @@ wrong text:
   statement rule had not shown it: its one line bodies are skipped as
   function literals.
 
+## TestSelfhostGen, merge tier (2026-10-12)
+
+The go build of the Xo generator, every repository run but the five
+largest as a program, each with test blocks also as a test binary, and
+every fourth also with `--no-mono --no-ranges --release
+--no-error-args` (905 runs in all), the Xo side with `--prep`:
+
+| runs (905) | count |
+|---|---|
+| compared | 464 |
+| byte identical as a whole | 464 |
+| rejected by both checkers | 362 |
+| with holes (the Xo checker does not report XO0900) | 2 |
+| not checked by the Xo checker (`use go`, fetching) | 22 |
+| the same error from both generators (no `fn main`) | 55 |
+
+All 23,887 declarations of the Go generator in the runs compared are
+identical; none skipped. TestSelfhostGenMutations, 60 code mutations
+(seed 20261011): 44 compared, 44 byte identical, 1,410 of 1,410
+declarations identical, 16 rejected by both. Both tests take 30 s
+(29.7 s for the package run). The first run of the test failed on
+selfhost/xo only: the test cut the dump at `== file ` anywhere, and the
+Xo generator's own dump code (compiled into selfhost/xo) holds that
+text in a string; the test now cuts at line starts.
+
+The arm64 build of the Xo generator (1 min 46 s to build) gives the
+same text: the 118 goldens and the five largest runs byte identical
+with `--prep`.
+
 ## The driver
 
 `xo1 build --backend=go` (selfhost/xo built with the go backend)
