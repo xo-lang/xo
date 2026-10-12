@@ -31,6 +31,15 @@ pub struct Checker {
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
+  /// $XO_GOBIND_DIR: the `use go` binding cache, when set; else
+  /// `<module root>/.xo/gobind`.
+  pub gobind_dir: Str = ""
+  /// The xo.mod files of checked modules whose `edition` line names an
+  /// old edition name (XO1315), by display path.
+  edition_aliases: Map[Str, ModRoot] = {}
+  /// The vouch lines of the consuming modules (vouch.xo), read once.
+  vouches: List[Vouch] = []
+  vouches_read: Bool = false
   /// The `os` binding and the `for` parameters of each test block, by
   /// test_key (Info.TestOs, Info.TestParams).
   test_os: Map[Int, Int] = {}
@@ -388,16 +397,24 @@ fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
     let data = c.fs.read(join(d, "xo.mod")).ok() ?? None
     if let Some(b) = data {
       var path = ""
-      for line in scan_lines(b) {
+      var r = ModRoot{path: "", dir: d}
+      for (i, line) in scan_lines(b).indexed() {
         let fs = fields(line)
         if fs.len() == 2 && fs[0] == "module" && path.is_empty() {
           path = fs[1]
+        }
+        if fs.len() == 2 && fs[0] == "edition" && edition_alias_of(fs[1]) != "" {
+          // check edition.go: an old name of an edition (XO1315); an
+          // unknown edition fails the Go checker's run
+          r.alias = fs[1]
+          r.alias_line = i + 1
+          r.alias_col = (line.find(fs[1]) ?? 0) + 1
         }
       }
       if path.is_empty() {
         return None
       }
-      let r = ModRoot{path: path, dir: d}
+      r.path = path
       var known = false
       for x in c.roots {
         if x.path == r.path && x.dir == r.dir {
@@ -439,6 +456,9 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   let m = c.new_module(path, name, dir, false)
   if let Some(r) = c.find_mod_root(dir) {
     c.mods[m].dependency = c.dependency_of(r.dir)
+    if !r.alias.is_empty() && c.mods[m].dependency.is_empty() {
+      c.edition_aliases[c.rel_dir(join(r.dir, "xo.mod"))] = r
+    }
   }
   let entries = c.fs.read_dir(dir).ok() ?? []
   var names: List[Str] = []
@@ -467,9 +487,7 @@ fn (var c: Checker) load_imports(m: Int) {
         continue
       }
       if u.go {
-        if c.unsupported.is_empty() {
-          c.unsupported = "use go in ${c.files[f].path}"
-        }
+        c.load_go_import(m, f, u)
         continue
       }
       if u.c {
@@ -732,4 +750,31 @@ fn split_fields(line: Str) -> List[Str] {
     }
   }
   out
+}
+
+/// check edition.go EditionAliases: the edition an old edition name
+/// stands for, or "" (decision 0155: `edition 2026` is `preview`).
+fn edition_alias_of(s: Str) -> Str {
+  if s == "2026" { "preview" } else { "" }
+}
+
+/// check edition.go reportEditionAliases: the fixable note XO1315 on
+/// every `edition` line of a checked module's xo.mod that uses an old
+/// edition name, in file order.
+fn (var c: Checker) report_edition_aliases() {
+  var files: List[Str] = []
+  for (f, _) in c.edition_aliases.entries() {
+    files.push(f)
+  }
+  for f in files.sort() {
+    let r = c.edition_aliases.get(f) ?? ModRoot{path: "", dir: ""}
+    let ed = edition_alias_of(r.alias)
+    let sp = Span{start: parser.Pos{offset: 0, line: r.alias_line, col: r.alias_col}, end: parser.Pos{offset: 0, line: r.alias_line, col: r.alias_col + r.alias.len()}}
+    let d = c.report(f, "XO1315", sp, "`edition ${r.alias}` is the old name of `edition ${ed}`")
+    if d >= 0 {
+      c.diags[d].note_sev = true
+    }
+    c.note(d, "before 1.0 the only edition is `${ed}` (decision 0155); the alias keeps building during the 0.x releases")
+    c.fix(d, "rewrite `edition ${r.alias}` to `edition ${ed}`", [DEdit{span: JSpan{file: f, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}, replace: ed}])
+  }
 }

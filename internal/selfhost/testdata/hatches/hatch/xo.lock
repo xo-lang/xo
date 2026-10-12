@@ -1,0 +1,6 @@
+# xo.lock: content hashes of the module versions this module builds with,
+# and the effects each module may reach (decision 0156).
+# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).
+example.com/gox v1.0.0 h1:EE5eeaYX8E91exiSxwiPDQ027E2WIlA9xh3np3qjvOE=
+example.com/gox v1.0.0/xo.mod h1:9ZY+E0bvGX3mMswwwTnxrgPNp1vtTQAT4K5K52GBobQ=
+example.com/gox effects none

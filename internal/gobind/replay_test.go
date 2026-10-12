@@ -37,7 +37,7 @@ func TestReplayModes(t *testing.T) {
 		"return GoFxValue(tk, \"os.read_file\", []any{a0}, func() Result[Bytes, Go_Error] { return goCall_Go_os_read_file(tk, a0) })",
 		"GoFxValue(tk, \"os.clearenv\", nil, func() Unit { goCall_Go_os_clearenv(tk); return Unit{} })",
 		"GoFxRerun(tk, \"os.open\", \"handle\")",
-		"GoFxRerun(tk, \"os.File.close\", \"handle\")",
+		"GoFxRerun(tk, \"os.OsFile.close\", \"handle\")",
 	} {
 		if !strings.Contains(ad, want) {
 			t.Errorf("os adapter lacks %q", want)

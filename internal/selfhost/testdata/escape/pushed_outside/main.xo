@@ -1,0 +1,9 @@
+use std/task
+
+fn f() -> List[task.Group] {
+  var gs = []
+  scope s {
+    gs.push(s.group())
+  }
+  gs
+}

@@ -1,0 +1,269 @@
+// `use go "<path>"` (internal/check load.go loadGoImport, decision 0041):
+// the module of a Go package's binding. The Go checker binds the package
+// with `go list` and go/types (internal/gobind) and writes the binding's
+// declaration file to the cache (`<module root>/.xo/gobind`, or
+// $XO_GOBIND_DIR); this checker reads that file as gobind.Load does
+// (the same path, the same staleness rules: binder version, package
+// name, `replay rerun` list, pinned module version, the adapter next to
+// it) and loads it as a std like module. Without a current file in the
+// cache (no Go build, check, or `xo bind` has bound the package) the run
+// is not checked here (unsupported). The binder itself is not ported.
+
+use std/crypto
+use github.com/xo-lang/xo/selfhost/parser
+
+/// gobind.Version: bindings of another binder version are stale.
+const GOBIND_VERSION: Int = 5
+
+/// gobind purePackages: the Go std packages whose `use go` in a dependency
+/// is not an escape hatch (decision 0156).
+fn go_pure_package(p: Str) -> Bool {
+  p is "strconv" | "strings" | "bytes" | "unicode" | "unicode/utf8" | "unicode/utf16" | "math" | "math/bits" | "regexp" | "regexp/syntax" | "path" | "html" | "net/url" | "encoding/hex" | "encoding/base64" | "encoding/base32"
+}
+
+/// Resolves `use go` u of file f of module m (loadGoImport).
+fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
+  let gopath = u.path.to_str() ?? ""
+  let key = "go:${gopath}"
+  let fpath = c.files[f].path
+  if !go_pure_package(gopath) {
+    // a dependency's Go code needs the consuming module's vouch
+    // (decision 0156)
+    let _ = c.escape_hatch(m, f, u, "go", gopath, None)
+  }
+  var dep = c.mod_index.get(key) ?? -1
+  if dep < 0 {
+    var root = c.mods[m].dir
+    if let Some(r) = c.find_mod_root(c.mods[m].dir) {
+      root = c.abs(c.go_bind_root(r.dir))
+    }
+    let xomod = join(root, "xo.mod")
+    let pin = go_pin_for(c.go_pins(xomod), gopath)
+    let rerun = c.go_rerun(xomod, gopath)
+    var cache = join(root, ".xo/gobind")
+    if !c.gobind_dir.is_empty() {
+      cache = c.gobind_dir
+    }
+    var base_path = join(cache, gopath)
+    if !rerun.is_empty() {
+      let sum = crypto.sha256(go_rerun_key(rerun).bytes()).to_hex()
+      base_path = "${base_path}.rerun-${sum[0..8]}"
+    }
+    let decl_path = "${base_path}.xo"
+    let src = c.fs.read(decl_path).ok() ?? None
+    let data = match src {
+      Some(b) => b
+      None => {
+        c.go_unsupported(gopath, cache, fpath)
+        return
+      }
+    }
+    if c.fs.stat("${base_path}.go").ok() == None {
+      c.go_unsupported(gopath, cache, fpath)
+      return
+    }
+    let hdr = go_binding_header(data)
+    if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin != hdr.mod_version) {
+      // stale: the Go checker binds it again
+      c.go_unsupported(gopath, cache, fpath)
+      return
+    }
+    dep = c.new_module(key, hdr.name, parent(decl_path), true)
+    c.mods[dep].go_path = gopath
+    c.mods[dep].go_decl = decl_path
+    c.mods[dep].go_skipped = hdr.skipped
+    c.parse_into(dep, decl_path, data, true)
+    c.mods[dep].state = 1
+    c.load_imports(dep)
+    c.mods[dep].state = 2
+    c.order.push(dep)
+  }
+  let name = c.mods[dep].name
+  var imp_name = name
+  if let Some(a) = u.alias {
+    imp_name = text(a.name)
+  } else {
+    let (_, ok) = local_name(name)
+    if !ok {
+      let d = c.error_at(f, "XO0602", u.span, "import of Go package `${gopath}` needs `as`: its package name `${name}` is not a valid module name")
+      c.fix(d, "add `as go_${name}`", [DEdit{span: JSpan{file: fpath, line: u.span.end.line, col: u.span.end.col, end_line: u.span.end.line, end_col: u.span.end.col}, replace: " as go_${name}"}])
+      return
+    }
+  }
+  let k = imp_name.bytes()
+  if let Some(prev) = c.files[f].imports.get(k) {
+    c.error_at(f, "XO0603", u.span, "`${imp_name}` is already imported by `use ${prev.path.to_str() ?? ""}`")
+    return
+  }
+  c.files[f].imports[k] = Import{module: dep, path: u.path, used: false, span: u.span}
+}
+
+fn (var c: Checker) go_unsupported(gopath: Str, cache: Str, fpath: Str) {
+  if c.unsupported.is_empty() {
+    c.unsupported = "use go without a current binding of ${gopath} in ${cache} (a Go check or build, or `xo bind`, writes it) in ${fpath}"
+  }
+}
+
+/// check deps.go goBindRoot: the directory whose binding cache and
+/// `require go` pins an import in the module at root uses: the main
+/// module's for a dependency (the module cache is read only).
+fn (c: Checker) go_bind_root(root: Str) -> Str {
+  if let Some(m) = c.deps.dep_dirs.get(root) {
+    if !m.workspace && !c.deps.main_dir.is_empty() {
+      return c.deps.main_dir
+    }
+  }
+  root
+}
+
+/// The header lines of a binding's declaration file (gobind Load).
+struct GoBindHeader {
+  version: Int = -1
+  name: Str = ""
+  standard: Bool = false
+  mod_version: Str = ""
+  rerun: Str = ""
+  skipped: Map[Str, Str] = {}
+}
+
+fn go_binding_header(data: Bytes) -> GoBindHeader {
+  var h = GoBindHeader{}
+  for line in scan_lines(data) {
+    if !line.starts_with("//") {
+      break
+    }
+    let l = line.trim_prefix("//").trim()
+    if l.starts_with("xo-bind: v") {
+      // fmt.Sscanf("xo-bind: v%d"): the leading digits
+      let rest = l.trim_prefix("xo-bind: v")
+      var n = 0
+      var digits = 0
+      for b in rest.bytes() {
+        if b < '0' || b > '9' {
+          break
+        }
+        n = n * 10 + Int(b - '0')
+        digits += 1
+      }
+      if digits > 0 {
+        h.version = n
+      }
+    } else if l.starts_with("go-package: ") {
+      h.name = l.trim_prefix("go-package: ")
+    } else if l == "go-standard: true" {
+      h.standard = true
+    } else if l.starts_with("go-module: ") {
+      let fs = fields(l.trim_prefix("go-module: "))
+      if fs.len() == 2 {
+        h.mod_version = fs[1]
+      }
+    } else if l.starts_with("replay-rerun: ") {
+      h.rerun = l.trim_prefix("replay-rerun: ")
+    } else if l.starts_with("skip: ") {
+      let rest = l.trim_prefix("skip: ")
+      match rest.find(": ") {
+        Some(i) => {
+          // the Go name at the end, ` (strconv.FormatComplex)`, is not
+          // part of the reason (gobind Load, as Bind records it)
+          var reason = rest[i + 2..rest.len()]
+          let j = last_index(reason, " (")
+          if j >= 0 && reason.ends_with(")") {
+            reason = reason[0..j]
+          }
+          h.skipped[rest[0..i]] = reason
+        }
+        None => h.skipped[rest] = ""
+      }
+    }
+  }
+  h
+}
+
+/// gobind ReadPins: the `require go <module> <version>` lines of an xo.mod.
+fn (c: Checker) go_pins(xomod: Str) -> Map[Str, Str] {
+  var pins: Map[Str, Str] = {}
+  let data = c.fs.read(xomod).ok() ?? None
+  if let Some(b) = data {
+    for line in scan_lines(b) {
+      let fs = fields(line)
+      if fs.len() == 4 && fs[0] == "require" && fs[1] == "go" {
+        pins[fs[2]] = fs[3]
+      }
+    }
+  }
+  pins
+}
+
+/// gobind PinFor: the pinned version of the module that provides gopath
+/// (the longest module path prefix), or "".
+fn go_pin_for(pins: Map[Str, Str], gopath: Str) -> Str {
+  var best = ""
+  var v = ""
+  for (m, ver) in pins.entries() {
+    if (gopath == m || gopath.starts_with("${m}/")) && m.len() > best.len() {
+      best = m
+      v = ver
+    }
+  }
+  v
+}
+
+/// gobind ReadRerun for one package: the names of the `replay rerun go
+/// <path> [names...]` lines of an xo.mod ("*" for a line without names).
+fn (c: Checker) go_rerun(xomod: Str, gopath: Str) -> List[Str] {
+  var out: List[Str] = []
+  let data = c.fs.read(xomod).ok() ?? None
+  if let Some(b) = data {
+    for line in scan_lines(b) {
+      var t = line
+      if let Some(i) = t.find("//") {
+        t = t[0..i]
+      }
+      let fs = fields(t)
+      if fs.len() < 4 || fs[0] != "replay" || fs[1] != "rerun" || fs[2] != "go" || fs[3] != gopath {
+        continue
+      }
+      if fs.len() == 4 {
+        out.push("*")
+      }
+      for n in fs[4..fs.len()] {
+        out.push(n)
+      }
+    }
+  }
+  out
+}
+
+/// gobind rerunKey: the sorted names joined by spaces.
+fn go_rerun_key(names: List[Str]) -> Str {
+  names.sort().join(" ")
+}
+
+/// XO1102 when qual ("name" or "Type.name") was skipped by the binding of
+/// Go module m; true when it reported (goSkipped).
+fn (var c: Checker) go_skipped(m: Int, qual: Str, sp: Span) -> Bool {
+  if m < 0 || c.mods[m].go_path.is_empty() {
+    return false
+  }
+  if !c.mods[m].go_skipped.contains(qual) {
+    return false
+  }
+  let reason = c.mods[m].go_skipped.get(qual) ?? ""
+  let d = c.error("XO1102", sp, "Go `${qual}` in `${c.mods[m].go_path}` is not bound: ${reason}")
+  c.note(d, "the binding lists skipped names at the top of ${c.mods[m].go_decl}; write a Go wrapper with a mappable signature or use another function")
+  true
+}
+
+/// strings.LastIndex: the last byte offset of sub in s, or -1.
+fn last_index(s: Str, sub: Str) -> Int {
+  let b = s.bytes()
+  let p = sub.bytes()
+  var i = b.len() - p.len()
+  while i >= 0 {
+    if b[i..i + p.len()] == p {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}

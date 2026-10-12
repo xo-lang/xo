@@ -24,6 +24,7 @@ fn (var c: Checker) run() {
       c.check_module(m)
     }
   }
+  c.report_edition_aliases()
   c.check_key_types()
   c.solve_effects()
   c.check_realtime()
@@ -157,7 +158,7 @@ fn jspan_json(s: JSpan) -> Str {
 }
 
 fn full_json(d: Diag) -> Str {
-  let sev = if d.warning { "warning" } else { "error" }
+  let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
   var notes: List[Str] = []
   for n in d.notes {
     var s = "{\"message\":${json_html(n.message)}"

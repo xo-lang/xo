@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker (`selfhost/check`) checks `use go` programs
+  from the binding the Go toolchain cached, and reports what the Go
+  checker reports for escaping scope handles and task groups (XO0802),
+  skipped Go names (XO1102), `edition 2026` (XO1315), unvouched escape
+  hatches of dependencies (XO1316), and effects beyond the effect lock
+  (XO1317) (decision 0177). `xo check` reports XO1102 with the same text
+  whether the binding was just made or read from the cache.
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by

@@ -1,0 +1,9 @@
+use std/task
+
+struct Cache { tasks: task.Group }
+
+fn f() -> Cache {
+  scope s {
+    Cache{tasks: s.group()}
+  }
+}

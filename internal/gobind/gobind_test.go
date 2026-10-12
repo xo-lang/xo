@@ -3,6 +3,7 @@ package gobind
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -71,20 +72,24 @@ func TestMapping(t *testing.T) {
 	decl, b, dir := bindDecl(t, "os/exec")
 	// a leading context.Context is supplied from the task (CommandContext is
 	// not New* or Must*, so its pointer result is an Option)
-	if !strings.Contains(decl, "fn command_context(name: Str, arg: List[Str]) -> Cmd? uses go") {
+	if !strings.Contains(decl, "fn command_context(name: Str, arg: List[Str]) -> ExecCmd? uses go") {
 		t.Errorf("command_context:\n%s", grep(decl, "command_context"))
 	}
 	if !strings.Contains(string(b.Adapter), "GoContext(tk)") {
 		t.Error("adapter does not pass GoContext(tk)")
 	}
 	// fields are getters and setters; a nilable pointer field is an Option
-	if !strings.Contains(decl, "fn (recv: Cmd) process() -> Process? uses go") {
+	if !strings.Contains(decl, "fn (recv: ExecCmd) process() -> Process? uses go") {
 		t.Errorf("process field:\n%s", grep(decl, "process"))
 	}
 	// a cached binding loads; another binder version or pin does not
 	l, err := Load("os/exec", Options{Dir: dir})
 	if err != nil || l == nil || l.Name != "exec" || !l.Standard || len(l.Skipped) == 0 {
 		t.Fatalf("Load = %+v, %v", l, err)
+	}
+	// the skipped names read the same as Bind made them (XO1102's text)
+	if !reflect.DeepEqual(l.Skipped, b.Skipped) {
+		t.Errorf("Load Skipped = %v, Bind Skipped = %v", l.Skipped, b.Skipped)
 	}
 	dp := declPath(dir, "os/exec", nil)
 	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v"+strconv.Itoa(Version)+" ", "xo-bind: v1 ", 1)), 0o644)
