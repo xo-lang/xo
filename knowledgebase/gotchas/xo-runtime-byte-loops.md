@@ -28,3 +28,12 @@ work faster than the C, arm64 per rune work still 1.45 to 1.8 times
 the C (bench/results/runtime-pilot-2026-10-12.md). Before porting more
 runtime code, measure the first version against the C with
 `/usr/bin/time -l` instruction counts, not wall time.
+
+More evidence (2026-10-12, decision 0193): a C call per piece loses to a
+C loop even when the Xo loop is tight. Str.split and Str.lines in Xo (a
+`str_find` or memchr call and a `str_slice` call per piece) retired 1.02
+to 1.32 times the C's instructions and stayed C. Short text built
+digit by digit cost a call per byte until whole pieces went over in one
+call (`rt.rs_push_word`, `rt.rs_push_words`); a digit pair table in a
+`Bytes` constant was slower than the plain divide loop on both
+backends (bench/results/runtime-port-2026-10-12.md).

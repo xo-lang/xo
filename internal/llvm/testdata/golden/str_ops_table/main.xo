@@ -1,0 +1,36 @@
+// The Str operations of the native runtime (decision 0193, step 2):
+// replace and the trims, written in Xo, and split, lines, and rune_count,
+// which stay C, over their edge cases (empty separators and patterns,
+// U+FFFD, Unicode white space, \r\n). The Go backend's output is the
+// reference; the Xo path (std/native/llrt/strings.xo) and the C path
+// (XO_LLRT_C=strings) print the same.
+
+fn main(os: Os) {
+  let texts = ["", "a", "a,b,c", ",a,,b,", "abc", "ünï,cödé", "日本,語", "a\u{fffd}b", "x--y--z", "----", "a\r\nb\nc\r\n", "\n", "\n\n", "\r\n", "one\rtwo", "no newline", "trail\n", " \t padded \n ", "\u{a0}\u{3000}wide\u{2000}\u{85}", "\u{fffd} x \u{fffd}", "  ", "é"]
+  let seps = [",", "", "--", "-", "a", "日", "\n", "xyz"]
+  for t in texts {
+    var line = "${t.debug()}:"
+    for sep in seps {
+      line = line + " split${sep.debug()}=${t.split(sep).debug()}"
+    }
+    os.stdio.println(line)
+    os.stdio.println("  lines=${t.lines().debug()} trim=${t.trim().debug()} start=${t.trim_start().debug()} end=${t.trim_end().debug()} runes=${t.rune_count()}")
+    var rep = "  "
+    for old in seps {
+      rep = rep + " ${old.debug()}->${t.replace(old, "<>").debug()}"
+    }
+    os.stdio.println(rep)
+  }
+  // longer inputs
+  var csv = ""
+  for i in 0..300 {
+    csv = csv + "f${i},"
+  }
+  let parts = csv.split(",")
+  os.stdio.println("parts ${parts.len()} ${parts[0]} ${parts[299]} ${parts[300].debug()}")
+  let joined = parts.join("|")
+  os.stdio.println("joined ${joined.len()} ${joined.replace("|", "").len()} ${joined.replace("f1", "F").rune_count()}")
+  let text = "line one\r\nline two\n\nline four   \n".repeat(50)
+  let ls = text.lines()
+  os.stdio.println("lines ${ls.len()} ${ls[0].debug()} ${ls[2].debug()} ${ls[3].trim_end().debug()}")
+}

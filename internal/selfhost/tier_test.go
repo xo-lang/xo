@@ -11,7 +11,9 @@ import (
 //
 //   - short (`go test -short`): the go backend (the lexer and parser
 //     also arm64 and LLVM), small corpora, every 25th run for the SSA
-//     builder, no SSA mutations and no Xo test binaries;
+//     builder and the LLVM emitter but the mergeHeavy ones (selfhost/llvm
+//     fell in the sample and took 58 s and 4.7 GB in the SSA builder,
+//     2026-10-12), no SSA mutations and no Xo test binaries;
 //   - merge (the default without -short): the go backend at full size
 //     (every run, every corpus and mutation count), except that the
 //     comparisons of the SSA builder and the arm64 and LLVM emitters
@@ -29,7 +31,9 @@ import (
 //     not cover).
 //
 // The counts of the XO_SELFHOST_*_FUZZ variables still override a tier,
-// and XO_SELFHOST_BACKEND still names one backend.
+// and XO_SELFHOST_BACKEND still names one backend. Every tier runs its
+// work on the pools of jobs_test.go (XO_SELFHOST_JOBS,
+// XO_SELFHOST_HEAVY_JOBS).
 const (
 	tierShort = "short"
 	tierMerge = "merge"
@@ -37,9 +41,14 @@ const (
 )
 
 // selfhostTier is the tier of this run: short under -short, else
-// $XO_SELFHOST_TIER (merge when unset).
+// $XO_SELFHOST_TIER (merge when unset); full when the run records the
+// Go side (XO_SELFHOST_GOLDENS=record, gogoldens_test.go), so that one
+// recording holds what every tier compares.
 func selfhostTier(t testing.TB) string {
 	t.Helper()
+	if goldensRecording() {
+		return tierFull
+	}
 	if testing.Short() {
 		return tierShort
 	}

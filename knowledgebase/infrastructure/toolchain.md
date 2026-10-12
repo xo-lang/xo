@@ -125,6 +125,7 @@ gofmt -l internal cmd std                # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] <dirs...>   # --fix: apply machine fixes first (decision 0096)
 go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
+xo1 rtpack [same flags]   # the same command in Xo (selfhost/xo rtpack.xo, decision 0178 switch point B): the same pack files byte for byte for the same compiler and sources (cmd/xo TestRTPackXoSame with XO_CLI), so scripts/release.sh can run the self hosted xo (last verified: 2026-10-12)
 scripts/release.sh [version]             # release archives into dist/ (decision 0157; needs zig 0.15.1 as $ZIG; never publishes)
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
@@ -263,11 +264,14 @@ go run ./cmd/xo test selfhost/check                     # the Xo checker's own t
 go test ./internal/selfhost -run TestSelfhostChecker    # Xo checker (go, arm64, llvm in the full tier; go otherwise) vs Go checker: identical names, types, and sigs sections on every accepted repository run, the same diagnostics on runs rejected only with diagnostics of stages 1 to 6 and the parser's (stageDiag, parseDiag), 1000 name, type, generics, effects, habit, value semantics, and pattern mutations (150 with -short, go backend, or XO_SELFHOST_BACKEND=arm64|llvm), 400 module mutations (TestSelfhostCheckerModuleMutations: ceilings, deny rules, versions, xo.lock and vendor/modules.txt lines, added `use` lines over the fixtures internal/selfhost/testdata/modules/app and the golden effect_ceiling_work, effect_ceiling_vendor, imports_deny; 40 with -short; XO_SELFHOST_MOD_FUZZ=N); both checkers run with XO_MODCACHE=internal/selfhost/testdata/modules/cache, XO_OFFLINE=1, XO_WORK=""; XO_SELFHOST_CHECK_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes check-<backend>.txt, the class of every run; do not point it inside the repository: the run directories it writes are .xo modules the next walk finds; last verified: 2026-10-10); `use go` runs read the binding the Go checker writes first (gobind cache, $XO_GOBIND_DIR) and runs with `use c` are compared again with --native (decision 0177); TestSelfhostCheckerHatches checks a copy of internal/selfhost/testdata/hatches (escape hatches, vouches, the effect lock, XO1102; skipped with -short; last verified: 2026-10-12)
 go test ./internal/selfhost                             # merge tier (the default; tiers below). Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short, and for arm64 and llvm in the merge tier); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
                                                         # tiers (internal/selfhost/tier_test.go, XO_SELFHOST_TIER; 2026-10-11, GOMAXPROCS=4, -p 1 -parallel 2, another full suite running on the machine):
-                                                        #   short (-short): go backend (lexer and parser also arm64 and llvm), small corpora; about 20 s
-                                                        #   merge (default without -short): go backend at full size (every run, every pass stage but those of the mergeHeavy runs, 1000 checker and 400 module mutations, 300 SSA mutations), the arm64 emitter on every second run and the LLVM emitter on every third (30 mutations each), both without the mergeHeavy runs (tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser), arm64 and llvm lexer and parser at -short sizes, no native build of a self hosted component, no LLVM end to end test; 139 s warm before the arm64 and LLVM emitter comparisons (2026-10-11). Before/after of 2026-10-12: 1,329 s (load average 11.8 at the start, 5.4 at the end; binary cache warm; TestSelfhostArm64 421 s with its go subtest 295 s, TestSelfhostLLVM 73 s with its go subtest 115 s, TestSelfhostSSA 115 s with its go subtest 492 s, TestSelfhostSSAMutations 42 s, TestSelfhostLLVMMutations 5 s, TestSelfhostArm64Mutations 4 s, TestSelfhostLLVMEndToEnd skipped, the rest under 20 s each) because the fixed heavy lists missed the new components selfhost/arm64, selfhost/llvm, and selfhost/xo; a per run sweep (4 runs at a time, load average 6 to 20) put each of selfhost/arm64, llvm, ssa, and xo at 870 to 1,150 s in the Xo arm64 emitter and 200 to 290 s in the Xo SSA builder's stages, against 82 s (arm64 emitter), 77 s (SSA stages), and 73 s (LLVM emitter) for the other 663 runs together; after mergeHeavy: not yet measured (the lead times the merge tier on the combined main; target 2.5 to 4 min idle); -timeout 30m is plenty
-                                                        #   full (XO_SELFHOST_TIER=full): every backend, every corpus, every pass of every run, 400 SSA mutations; about 11 min warm (owner, 2026-10-11, not remeasured); 3,474 s (58 min) cold, measured 2026-10-11 with the native selfhost/check and selfhost/ssa binaries uncached and another full suite running (TestSelfhostChecker 589 s and TestSelfhostSSA 2,366 s, mostly their native builds; the LLVM link of selfhost/ssa alone is about 10 min); use -timeout 120m (raised from 90m on 2026-10-11: 58 min cold under load left about 30 min of margin). Run by bench/nightly.sh and before tagging a release; run it by hand for a change under selfhost/ or the compiler's SSA or native backends that the merge tier does not exercise (a construct only selfhost/ssa or selfhost/check uses, an arm64 or LLVM lowering)
+                                                        # XO_SELFHOST_JOBS=N (default min(GOMAXPROCS, 4); scripts/remote-full.sh: the core count) sizes one pool (internal/selfhost/jobs_test.go) that every native build, every Xo process on a batch of runs, and every Go side comparison item takes a slot of; XO_SELFHOST_HEAVY_JOBS=N (default one per 8 GiB of memory, one per 16 GiB in the full tier, at most XO_SELFHOST_JOBS: 3 on the 24 GB Mac, 15 in the full tier on r8g.8xlarge) also bounds the builds and the mergeHeavy runs, which get a process each, largest first (bytes of .xo source with the repository packages they use); backend subtests run at once and overlap the Go side results; the full tier with no -run starts every component's native builds at TestMain; XO_LLVM_JOBS (the clang compiles of the process's split LLVM builds) defaults to the pool size, at least 4, at most one per 2 GiB. Expected peak per unit (go -v logs each batch's longest time and peak RSS): a light batch 40 to 300 MB, a Go side item under 1 GB, a mergeHeavy Xo process 0.4 to 2 GB in the merge tier (huge_frame build only 1.9 GB, selfhost/xo checker 0.9 GB, generator 1.0 GB) (selfhost/llvm: SSA builder with stages 4.7 GB, LLVM emitter 5.9 GB) and an Xo arm64 emitter process on a self hosted component 5 to 15 GB in the full tier, a clang on a split part about 1.1 GB; whole merge tier process tree peak 4.7 GB at the default, 2.7 GB at XO_SELFHOST_JOBS=1 (2026-10-12; bench/results/selfhost-parallel-2026-10-12.md). Last verified: 2026-10-12
+                                                        #   short (-short): go backend (lexer and parser also arm64 and llvm), small corpora, the SSA builder and LLVM emitter on every 25th run but the mergeHeavy ones; 31 to 52 s on the Mac under load (2026-10-12; 175 to 208 s before, when the sample held selfhost/llvm: gotchas/selfhost-heavy-runs-memory.md)
+                                                        #   merge (default without -short): go backend at full size (every run, every pass stage but those of the mergeHeavy runs, 1000 checker and 400 module mutations, 300 SSA mutations), the arm64 emitter on every second run and the LLVM emitter on every third (30 mutations each), both without the mergeHeavy runs (tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser), arm64 and llvm lexer and parser at -short sizes, no native build of a self hosted component, no LLVM end to end test; 139 s warm before the arm64 and LLVM emitter comparisons (2026-10-11). Before/after of 2026-10-12: 1,329 s (load average 11.8 at the start, 5.4 at the end; binary cache warm; TestSelfhostArm64 421 s with its go subtest 295 s, TestSelfhostLLVM 73 s with its go subtest 115 s, TestSelfhostSSA 115 s with its go subtest 492 s, TestSelfhostSSAMutations 42 s, TestSelfhostLLVMMutations 5 s, TestSelfhostArm64Mutations 4 s, TestSelfhostLLVMEndToEnd skipped, the rest under 20 s each) because the fixed heavy lists missed the new components selfhost/arm64, selfhost/llvm, and selfhost/xo; a per run sweep (4 runs at a time, load average 6 to 20) put each of selfhost/arm64, llvm, ssa, and xo at 870 to 1,150 s in the Xo arm64 emitter and 200 to 290 s in the Xo SSA builder's stages, against 82 s (arm64 emitter), 77 s (SSA stages), and 73 s (LLVM emitter) for the other 663 runs together; after mergeHeavy and the job pool (2026-10-12, test binary run directly, other agents loading the Mac, binary cache warm; bench/results/selfhost-parallel-2026-10-12.md): 233 s at the default and 468 s at XO_SELFHOST_JOBS=1 with the closure renamer and parallel comparisons (commit 73feab0; TestSelfhostSSA/go 53 s against 157 s); before them 281 s at the default (4 jobs, 3 heavy; TestSelfhostSSA/go 106 s, TestSelfhostSSAMutations 40 s, TestSelfhostWasm 23 s, TestSelfhostGen/go 19 s, TestSelfhostArm64/go 15 s, TestSelfhostLLVM/go 11 s) and 476 s at XO_SELFHOST_JOBS=1 (TestSelfhostSSA/go 196 s, SSAMutations 67 s, Arm64/go 45 s, Gen/go 45 s, LLVM/go 31 s); (the lead times the merge tier on the combined main; target 2.5 to 4 min idle); -timeout 30m is plenty
+                                                        #   full (XO_SELFHOST_TIER=full): every backend, every corpus, every pass of every run, 400 SSA mutations; 3,490 s cold on r8g.8xlarge with XO_SELFHOST_JOBS=32 (scripts/remote-full.sh, peak memory in use 157 GB; critical path the arm64 comparison of selfhost/xo after the llvm build of selfhost/arm64; 2026-10-12, bench/results/selfhost-parallel-2026-10-12.md; over 3 hours before the job pool); about 11 min warm (owner, 2026-10-11, not remeasured); 3,474 s (58 min) cold, measured 2026-10-11 with the native selfhost/check and selfhost/ssa binaries uncached and another full suite running (TestSelfhostChecker 589 s and TestSelfhostSSA 2,366 s, mostly their native builds; the LLVM link of selfhost/ssa alone is about 10 min); use -timeout 120m (raised from 90m on 2026-10-11: 58 min cold under load left about 30 min of margin). Run by bench/nightly.sh and before tagging a release; run it by hand for a change under selfhost/ or the compiler's SSA or native backends that the merge tier does not exercise (a construct only selfhost/ssa or selfhost/check uses, an arm64 or LLVM lowering)
                                                         # since SSA stage 8 (2026-10-11): TestSelfhostSSA's full tier compares every stage after the build, the verifier and its mutants on three backends (about 32 minutes of a cold run); the first cold run timed out at -timeout 40m building the LLVM binaries, the next (partly warm) took 2,264 s
                                                         # time of the full package before SSA stage 8 (2026-10-11, GOMAXPROCS=4): about 160 s with the binary cache warm (was 329 s), most of it TestSelfhostSSA (51 s) and the mutation tests; a cold cache (any change to the compiler) adds the builds of selfhost/check and selfhost/ssa with three backends, now built at the same time (they were one after another: about 740 s of the 1510 s cold run). The backends' subtests, the Go checker and SSA builder over every run, and the batches of the Xo binaries run in parallel (up to min(GOMAXPROCS, 4), `parallel` in lexer_test.go); coverage is unchanged
+scripts/selfhost-record-goldens.sh [--merge]            # records the Go side of every TestSelfhost* differential at the full tier's sizes (no Xo binary built) into $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens, git ignored), one gzip file per unit keyed by kind, options, and input content (decision 0178 stage 7): 1.4 GB, 19,643 units, 1,475 s, peak RSS 15.3 GB on 2026-10-12; RUN='<regexp>' limits the tests. Last verified: 2026-10-12
+XO_SELFHOST_GOLDENS=replay go test ./internal/selfhost  # the TestSelfhost* tests read the recorded Go side instead of running it (any tier); a unit with no recording fails the run and is named (inputs changed: record again); TestSelfhostCheckerHatches skips (it needs the Go checker's gobind side effect); XO_SELFHOST_GOLDENS_DEBUG=<text> prints the key of the units whose label holds it. Same verdicts and logged counts as live on 2026-10-12 (-short: 133 s against 204 s)
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
 bench/nightly.sh                                        # full suite (-timeout 120m) with XO_SELFHOST_TIER=full XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet, then TestArithProperty with XO_ARITH_PROPS=500 from a seed that moves every day (status line `arith=`); log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
@@ -701,6 +705,13 @@ Last verified: 2026-10-07
   darwin); `XO_UNICODE=c` in the environment builds the C path. Run it
   through the heavy lock. Results in
   `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
+- `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
+  decision 0193): the same for bench/perf/text (Int parse, Duration and
+  Time text, Debug quoting, split, lines, replace, trims, rune_count;
+  `none` is the input setup alone); `XO_LLRT_C=text,strings` builds the
+  C paths, `WORKLOADS` picks workloads. Run it through the heavy lock.
+  Results in `bench/results/runtime-port-2026-10-12.md`. Last verified:
+  2026-10-12.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1036,7 +1047,12 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
                         `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
                         (XO_UNICODE=c at build time: the Go checker loads it instead, the build
-                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it)
+                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
+                        text.xo (Int parse, Duration and Time text, Debug quoting) and
+                        strings.xo (replace, trims), decision 0193,
+                        with C paths text_c.xo and strings_c.xo. `XO_LLRT_C=<name>[,<name>]`
+                        (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
+                        -DXO_STRINGS_C, likewise never in a pack); XO_UNICODE=c still works
                         (Last verified: 2026-10-12)
 ```
 
@@ -2737,10 +2753,18 @@ path by `go test` (31 of the 46 files over 20 MB written after
 
 `scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
 full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
-Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
-the account's spot quota was raised from 32 to 128 vCPUs on
-2026-10-12, so c8g.16xlarge, 64 vCPU, about $0.70 to $0.80 an hour spot,
-also fits; keep one instance per agent), copies
+Graviton instance (default r8g.8xlarge, 32 vCPU, 256 GiB, spot,
+us-east-1, $0.47 to $0.52 an hour spot on 2026-10-12, since 2026-10-12:
+c8g.8xlarge's 64 GiB ran out in the full tier, where one Xo arm64 emitter
+process on a self hosted component holds up to 13 GB,
+gotchas/selfhost-heavy-runs-memory.md; XO_REMOTE_TYPE picks another;
+the spot quota was raised from 32 to 128 vCPUs on 2026-10-12, so c8g.16xlarge, 64 vCPU, about $0.70 to $0.80 an hour spot, also fits; keep one instance per agent; a spot
+r8g.8xlarge was reclaimed after 6 minutes on 2026-10-12, so use
+--on-demand for a run that must finish), passes XO_SELFHOST_JOBS=$(nproc)
+(or the caller's XO_SELFHOST_JOBS, and XO_SELFHOST_HEAVY_JOBS when set),
+tests XO_REMOTE_PKGS (default every package but runs/) with
+XO_REMOTE_TESTFLAGS (e.g. -v), appends the peak memory in use (free -m
+every 10 s), copies
 the log to bench/results/remote/<commit>.log (git ignored) and terminates
 the instance. The instance also shuts itself down (terminating it) after
 XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
@@ -2765,3 +2789,47 @@ newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
 and /tmp on a tmpfs apart from the home disk. Last verified: 2026-10-12
 (--hold run on c8g.8xlarge).
 
+
+## Bootstrapping without Go (decision 0178, stage 7)
+
+The bootstrap chain: the first Xo `xo` on a new host is built by the
+previous release's binary (or any self hosted xo1), never by Go again.
+
+    scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
+
+SEED builds selfhost/xo with the arm64 backend (s1), s1 builds it (s2),
+s2 builds it (s3); s2 and s3 must write the same assembly and the same
+binary (the fixed point), and s3 must build and run a hello program.
+Every stage runs with no `go` on PATH (a directory holding one is
+replaced by a shim directory linking its other programs), GOROOT unset,
+`XO_GO=/nonexistent/go`, and empty caches of its own (`XO_BUILD_DIR`,
+`XO_RTOBJ_CACHE`, `XO_TLS_CACHE`; `XO_BIN_CACHE=off`, `XO_RTPACK=off`),
+so the C runtime and the TLS library are compiled from source with the
+C compiler, the one tool needed (`cc` drives the arm64 backend's
+assembler and linker; clang compiles the runtime). The log and the
+stage times land in OUTDIR/log.txt and OUTDIR/times.txt. What the seed
+still takes from Go today: nothing for a native build; a program that
+embeds time zones reads Go's zoneinfo.zip unless `XO_ZONEINFO` names
+one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
+definition.
+
+On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
+launches one EC2 Graviton instance (c8g.4xlarge spot, remote-full.sh's
+xo-ci key pair and security group, a 120 minute self poweroff plus a
+local watchdog, terminated on exit), makes the seed there (Go builds
+cmd/xo, which builds selfhost/xo with the Go driver), deletes the Go
+toolchain and caches from the machine, and runs bootstrap-xo.sh. The
+log goes to bench/results/remote/bootstrap-<commit>.log (git ignored).
+
+Result on 2026-10-12 (commit 30dfd24, Amazon Linux 2023 arm64, 16
+vCPU, clang 15.0.7 and gcc, Go deleted): seed 630 s; s1 922 s, s2 965
+s, s3 958 s; s2 and s3 assembly identical (375,303,244 bytes) and
+binaries identical (73,492,408 bytes); s1 also equals s2; s3 reports
+`xo 0.9.0 linux/arm64` and runs the hello program. The first run
+(commit 4bdf716) failed at s1: xo1 with the default relative `--std`
+could not build the TLS library on an empty cache
+(gotchas/xo1-relative-std-tls-tree.md, fixed in 30dfd24). On the
+development Mac (commit 7b3da52, Go installed but off PATH): seed 336
+s; s1 556 s, s2 548 s, s3 555 s; s2 and s3 identical (assembly
+384,779,554 bytes, binary 76,874,400 bytes), s1 too. Last verified:
+2026-10-12.

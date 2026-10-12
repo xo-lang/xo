@@ -182,9 +182,9 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 	case isPreludeNamed(ct, "Secret"):
 		return s.call("str.concat", st, "", acc, s.add(OpConst, st, "<redacted>"))
 	case isPreludeNamed(ct, "Duration"):
-		return s.rt("rs_append_duration", st, acc, v)
+		return s.llrt("append_duration", st, at, acc, v)
 	case isPreludeNamed(ct, "Time"):
-		return s.rt("rs_append_time", st, acc, v)
+		return s.llrt("append_time", st, at, acc, v)
 	case isPreludeNamed(ct, "Bytes"):
 		return s.appendDebug(acc, v, ct, at)
 	case isPreludeNamed(ct, "UInt64"):
@@ -274,13 +274,13 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 				return
 			}
 		case isPreludeNamed(ct, "Duration"):
-			s.retv(s.rt("rs_append_duration", st, acc, v))
+			s.retv(s.llrt("append_duration", st, at, acc, v))
 			return
 		case isPreludeNamed(ct, "Time"):
-			s.retv(s.rt("rs_append_time", st, acc, v))
+			s.retv(s.llrt("append_time", st, at, acc, v))
 			return
 		case isPreludeNamed(ct, "Bytes"):
-			s.retv(s.rt("rs_append_quote", st, lit(acc, "b"), v))
+			s.retv(s.llrt("append_bytes_quote", st, at, lit(acc, "b"), v))
 			return
 		case isPreludeNamed(ct, "UInt64"):
 			s.retv(s.rt("rs_append_u64", st, acc, v))
@@ -291,7 +291,7 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 		}
 		switch t.Kind {
 		case KStr:
-			s.retv(s.rt("rs_append_quote", st, acc, v))
+			s.retv(s.llrt("append_quote", st, at, acc, v))
 			return
 		case KInt, KFloat:
 			s.retv(s.call("str.concat_"+lowerKind(t), st, "", acc, v))

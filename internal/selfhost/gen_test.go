@@ -71,13 +71,8 @@ func TestSelfhostGen(t *testing.T) {
 			tests = append(tests, d)
 		}
 	}
-	bins := selfhostBinaries(t, "gen", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
-	twants := make([]string, len(tests))
-	parallel(len(tests), func(i int) { twants[i] = goGen(tests[i], genFlags, true) })
 	altStep := byTier(t, 1, 4, 1)
 	var alts []string
 	for i, d := range dirs {
@@ -85,17 +80,37 @@ func TestSelfhostGen(t *testing.T) {
 			alts = append(alts, d)
 		}
 	}
+	wants := make([]string, len(dirs))
+	twants := make([]string, len(tests))
 	awants := make([]string, len(alts))
-	parallel(len(alts), func(i int) { awants[i] = goGen(alts[i], genAlt, false) })
+	// the Go generator's results, while the subtests run the Xo one
+	wait := background(t, func() {
+		all := append(append(append([]string(nil), dirs...), tests...), alts...)
+		parallel(t, "Go generator", all, func(i int) {
+			switch {
+			case i < len(dirs):
+				wants[i] = goGen(dirs[i], genFlags, false)
+			case i < len(dirs)+len(tests):
+				i -= len(dirs)
+				twants[i] = goGen(tests[i], genFlags, true)
+			default:
+				i -= len(dirs) + len(tests)
+				awants[i] = goGen(alts[i], genAlt, false)
+			}
+		})
+	})
+	bins := selfhostBinaries(t, "gen", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runGen(t, bin, root, dirs, genFlags)
 			tgot := runGen(t, bin, root, tests, append([]string{"--test"}, genFlags...))
 			agot := runGen(t, bin, root, alts, genAlt)
+			wait()
 			var st genStats
 			var fails []string
 			for i, d := range dirs {
@@ -178,9 +193,18 @@ func TestSelfhostGenMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
-	got := runGen(t, bin, tmp, dirs, genFlags, "--std="+stdDir)
+	if goldensRecording() {
+		for _, d := range dirs {
+			goGen(d, genFlags, false)
+		}
+		skipRecording(t)
+	}
 	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
+	wait := background(t, func() {
+		parallel(t, "Go generator", dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
+	})
+	got := runGen(t, bin, tmp, dirs, genFlags, "--std="+stdDir)
+	wait()
 	var st genStats
 	var fails []string
 	for i, d := range dirs {
@@ -216,8 +240,20 @@ func hasHole(dir string) bool {
 	return false
 }
 
-// goGen is what `xo gendump` prints for dir with flags.
+// goGen is what `xo gendump` prints for dir with flags. Recorded as the
+// gendump kind (gogoldens_test.go).
 func goGen(dir string, flags []string, test bool) string {
+	if goldensMode() == goldensLive {
+		return goGenLive(dir, flags, test)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, dir)
+	o := fmt.Sprintf("flags=%s test=%v", strings.Join(flags, ","), test)
+	return recorded("gendump", dir+" "+o, []string{o, cx.dirKey(wd, dir, false)}, cx, func() string { return goGenLive(dir, flags, test) })
+}
+
+// goGenLive is goGen with internal/gen run.
+func goGenLive(dir string, flags []string, test bool) string {
 	opts := gen.Options{Mode: gen.Build, Arenas: true}
 	if test {
 		opts.Mode = gen.Test
@@ -253,11 +289,9 @@ func runGen(t *testing.T, bin, root string, dirs []string, flags []string, more 
 	if len(more) == 0 {
 		args = append(args, "--std=std")
 	}
-	texts := runXoBatches(t, bin, root, args, dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := genHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, args, dirs, batch) {
+		chunk := xb.paths
+		parts := genHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo generator printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}

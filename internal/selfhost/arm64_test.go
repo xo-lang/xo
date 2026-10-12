@@ -65,23 +65,26 @@ func TestSelfhostArm64(t *testing.T) {
 		}
 		dirs = append(dirs, d)
 	}
-	bins := selfhostBinaries(t, "arm64", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	// the Go emitter's results, while the builds and the subtests run
+	wait := background(t, func() {
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	})
+	bins := selfhostBinaries(t, "arm64", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runArm64(t, bin, root, dirs, arm64Flags, "--std=std")
-			var st arm64Stats
-			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareArm64(d, wants[i], got[d], &st)...)
-			}
+			wait()
+			st, fails := compareAll(t, "compare arm64", dirs, func(i int, st *arm64Stats) []string {
+				return compareArm64(dirs[i], wants[i], got[dirs[i]], st)
+			}, (*arm64Stats).add)
 			t.Logf("%s", st)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -155,9 +158,18 @@ func TestSelfhostArm64Mutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
-	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
+	if goldensRecording() {
+		for _, d := range dirs {
+			goAsm(wd, d, arm64Flags)
+		}
+		skipRecording(t)
+	}
 	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	wait := background(t, func() {
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	})
+	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
+	wait()
 	var st arm64Stats
 	var fails []string
 	for i, d := range dirs {
@@ -183,8 +195,20 @@ func reportFails(t *testing.T, fails []string) {
 }
 
 // goAsm is what `xo asmdump` prints for dir checked from root: the
-// assembly, or `== rejected`, `== error <why>`.
+// assembly, or `== rejected`, `== error <why>`. Recorded as the asmdump
+// kind (gogoldens_test.go).
 func goAsm(root, dir string, flags []string) string {
+	if goldensMode() == goldensLive {
+		return goAsmLive(root, dir, flags)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("flags=%s lineroot=%s", strings.Join(flags, ","), cx.norm(root))
+	return recorded("asmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx, func() string { return goAsmLive(root, dir, flags) })
+}
+
+// goAsmLive is goAsm with the Go emitter run.
+func goAsmLive(root, dir string, flags []string) string {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return "== error " + err.Error()
@@ -211,11 +235,9 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 	out := map[string]string{}
 	const batch = 20
 	args := append(append([]string{"--each", "--wd=" + workDir(t)}, flags...), more...)
-	texts := runXoBatches(t, bin, root, args, dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := asmHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, args, dirs, batch) {
+		chunk := xb.paths
+		parts := asmHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo emitter printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}
@@ -228,6 +250,23 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 		}
 	}
 	return out
+}
+
+// add adds the counts of o to s.
+func (s *arm64Stats) add(o arm64Stats) {
+	s.runs += o.runs
+	s.compared += o.compared
+	s.notBuilt += o.notBuilt
+	s.rejected += o.rejected
+	s.byteSame += o.byteSame
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.helpers += o.helpers
+	s.helpersSame += o.helpersSame
+	s.literals += o.literals
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.notBuiltWhy, o.notBuiltWhy)
 }
 
 type arm64Stats struct {

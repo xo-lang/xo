@@ -235,8 +235,13 @@ fn variant_file(i: Int) -> Str {
 /// variants, the runtime sources (std/llrt *.c and *.h), and the TLS
 /// library's sources and configuration.
 fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
+  rtpack_key_for(os, ctx, std_dir, goos, "arm64")
+}
+
+/// RTPackKey for any target goos/goarch (`xo rtpack --key`).
+fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str ! FsErr {
   var b = BytesBuilder.new()
-  b.write_str("xo rtpack 1\ntarget ${goos}/arm64\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
+  b.write_str("xo rtpack 1\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
   for i in 0..32 {
     b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))} ${i >= 16}\n")
   }
@@ -276,11 +281,13 @@ fn rtpack_root(os: Os) -> Str {
 }
 
 /// A pack directory as loaded: why it is not used ("" when it is), and
-/// its manifest's files with their SHA-256.
+/// its manifest's files with their SHA-256, compiler, and key.
 struct Pack {
   dir: Str = ""
   why: Str = ""
   files: Map[Str, Str] = {}
+  compiler: Str = ""
+  key: Str = ""
 }
 
 /// loadRTPack for the host; None when there is no pack root.
@@ -301,7 +308,7 @@ fn load_rtpack(os: Os, ctx: Ctx, std_dir: Str) -> Pack? {
     Ok(k) => k
     Err(e) => return Some(Pack{dir: dir, why: "${e}"})
   }
-  var p = Pack{dir: dir, files: m.files}
+  var p = Pack{dir: dir, files: m.files, compiler: m.compiler, key: m.key}
   if m.format != "1" {
     p.why = "the prebuilt runtime in ${dir} has format ${m.format}, this xo reads 1"
   } else if m.target != target {
@@ -317,11 +324,12 @@ fn min(a: Int, b: Int) -> Int {
 }
 
 /// The fields of rtpack.json xo1 reads (the indented JSON BuildRTPack
-/// writes): format, target, key, and files.
+/// writes): format, target, key, compiler, and files.
 struct Manifest {
   format: Str = ""
   target: Str = ""
   key: Str = ""
+  compiler: Str = ""
   files: Map[Str, Str] = {}
 }
 
@@ -352,6 +360,8 @@ fn parse_manifest(text: Str) -> Manifest {
       m.target = v
     } else if k == "key" {
       m.key = v
+    } else if k == "compiler" {
+      m.compiler = v
     }
   }
   m
@@ -442,7 +452,7 @@ fn rtpack_status(os: Os, ctx: Ctx, std_dir: Str) -> Str {
       if !p.why.is_empty() {
         return "prebuilt runtime: not used (${p.why}); the runtime is compiled locally"
       }
-      "prebuilt runtime: ${p.dir}"
+      "prebuilt runtime: ${p.dir} (${p.compiler}, key ${p.key[0..min(12, p.key.len())]})"
     }
   }
 }

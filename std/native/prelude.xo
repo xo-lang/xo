@@ -3,6 +3,8 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/strings
+use native/llrt/text
 use native/llrt/unicode
 use native/rt
 
@@ -29,11 +31,11 @@ fn str_split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
 
 fn str_lines(s: Str) -> List[Str] { rt.str_lines(s) }
 
-fn str_trim(s: Str) -> Str { rt.str_trim(s, 0) }
+fn str_trim(s: Str) -> Str { strings.trim(s, 0) }
 
-fn str_trim_start(s: Str) -> Str { rt.str_trim(s, 1) }
+fn str_trim_start(s: Str) -> Str { strings.trim(s, 1) }
 
-fn str_trim_end(s: Str) -> Str { rt.str_trim(s, 2) }
+fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
   if rt.str_starts_with(s, p) {
@@ -57,7 +59,7 @@ fn str_to_upper(s: Str) -> Str { unicode.map_case(s, false) }
 /// a call of this).
 fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 
-fn str_replace(s: Str, old: Str, new: Str) -> Str { rt.str_replace(s, old, new) }
+fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
 
 fn str_repeat(s: Str, n: Int) -> Str { rt.str_repeat(s, n) }
 
@@ -208,12 +210,7 @@ fn int_saturating_sub(n: Int, m: Int) -> Int { saturated(1, n, m) }
 
 fn int_saturating_mul(n: Int, m: Int) -> Int { saturated(2, n, m) }
 
-fn int_parse(s: Str) -> Int? {
-  if rt.int_parse_ok(s) {
-    return Some(rt.int_parse(s))
-  }
-  None
-}
+fn int_parse(s: Str) -> Int? { text.parse_int(s) }
 
 fn float_parse(s: Str) -> Float? {
   if rt.float_parse_ok(s) {
@@ -524,10 +521,10 @@ fn result_ignore_err[T, E](r: Result[T, E], reason: Str) -> T? {
 // Duration (std.md 2.6)
 
 fn duration_parse(s: Str) -> Duration ! DurationErr {
-  if !rt.duration_parse_ok(s) {
-    return Err(DurationErr{input: s})
+  match text.parse_duration(s) {
+    Some(d) => Ok(Duration.from_nanos(d))
+    None => Err(DurationErr{input: s})
   }
-  Ok(Duration.from_nanos(rt.duration_parse(s)))
 }
 
 fn durationerr_display(e: DurationErr) -> Str {
@@ -1404,7 +1401,7 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if st == "3" {
     return Err(ProcErr.Canceled)
   }
-  ProcOutput { code: rt.int_parse(detail), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
+  ProcOutput { code: text.parse_int(detail) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
 }
 
 // ---------------------------------------------------------------------------
@@ -1644,7 +1641,7 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
   if st != "0" {
     return Err(proc_err(st, d))
   }
-  ProcOutput{code: rt.int_parse(d), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
+  ProcOutput{code: text.parse_int(d) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
 }
 
 /// Denied or Canceled before c runs (std/rt Cmd.M_output).
@@ -1754,7 +1751,7 @@ fn child_wait(c: Child) -> Int ! ProcErr uses proc {
   if st != "0" {
     return Err(proc_err(st, r.get(1) ?? ""))
   }
-  rt.int_parse(r.get(1) ?? "0")
+  text.parse_int(r.get(1) ?? "0") ?? 0
 }
 
 fn child_kill(c: Child) { rt.proc_child_kill(c.h) }
@@ -2022,3 +2019,35 @@ fn rfc_days(year: Int, m: Int, d: Int) -> Int {
   let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 }
+
+// ---------------------------------------------------------------------------
+// The runtime's text, as the SSA builder calls it (decision 0193):
+// Display and Debug of Duration, Time, Str, and Bytes, and std/json's
+// Duration and Time. In Xo (std/native/llrt/text.xo), or the C with
+// XO_LLRT_C=text.
+
+fn llrt_append_duration(s: Str, d: Int) -> Str { text.append_duration(s, d) }
+
+fn llrt_append_time(s: Str, t: Int) -> Str { text.append_time(s, t) }
+
+fn llrt_append_quote(s: Str, t: Str) -> Str { text.append_quote(s, t.bytes()) }
+
+fn llrt_append_bytes_quote(s: Str, b: Bytes) -> Str { text.append_quote(s, b) }
+
+fn llrt_duration_ok(s: Str) -> Bool {
+  match text.parse_duration(s) {
+    Some(_) => true
+    None => false
+  }
+}
+
+fn llrt_duration(s: Str) -> Int { text.parse_duration(s) ?? 0 }
+
+fn llrt_time_ok(s: Str) -> Bool {
+  match text.parse_time(s) {
+    Some(_) => true
+    None => false
+  }
+}
+
+fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }

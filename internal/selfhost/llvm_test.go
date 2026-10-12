@@ -36,7 +36,7 @@ import (
 // emitter leaves to a later stage (`== skipped`). The test binaries of
 // the runs with test blocks are compared the same way. The full tier
 // takes every run; the merge tier every third run but the mergeHeavy
-// ones (each takes about a minute), and -short every 25th.
+// ones (each takes about a minute), and -short every 25th but those.
 // XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover,
 // XO_SELFHOST_DIRS=<texts> takes the runs whose directory contains one
@@ -52,7 +52,7 @@ func TestSelfhostLLVM(t *testing.T) {
 	case tierShort:
 		var some []string
 		for i, d := range dirs {
-			if i%25 == 0 {
+			if i%25 == 0 && !mergeHeavy(d) {
 				some = append(some, d)
 			}
 		}
@@ -81,14 +81,24 @@ func TestSelfhostLLVM(t *testing.T) {
 		}
 		dirs = some
 	}
-	bins := selfhostBinaries(t, "llvm", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]goIR, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goLLVM(root, dirs[i], false) })
 	tdirs := testDirs(t, root, dirs)
+	wants := make([]goIR, len(dirs))
 	twants := make([]goIR, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goLLVM(root, tdirs[i], true) })
+	// the Go emitter's results, while the subtests run the Xo emitter
+	wait := background(t, func() {
+		all := append(append([]string(nil), dirs...), tdirs...)
+		parallel(t, "Go LLVM emitter", all, func(i int) {
+			if i < len(dirs) {
+				wants[i] = goLLVM(root, dirs[i], false)
+			} else {
+				i -= len(dirs)
+				twants[i] = goLLVM(root, tdirs[i], true)
+			}
+		})
+	})
+	bins := selfhostBinaries(t, "llvm", backends)
 	flags := []string{"--std=std"}
 	if v := os.Getenv("XO_SELFHOST_LLVM_STAGE"); v != "" {
 		flags = append(flags, "--stage="+v)
@@ -101,17 +111,16 @@ func TestSelfhostLLVM(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runLLVM(t, bin, root, dirs, flags...)
-			var st llvmStats
-			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareLLVM(d, wants[i], got[d], &st)...)
-			}
+			wait()
+			st, fails := compareAll(t, "compare LLVM", dirs, func(i int, st *llvmStats) []string {
+				return compareLLVM(dirs[i], wants[i], got[dirs[i]], st)
+			}, (*llvmStats).add)
 			t.Logf("%s", st)
 			tgot := runLLVM(t, bin, root, tdirs, append(flags, "--test")...)
-			var tst llvmStats
-			for i, d := range tdirs {
-				fails = append(fails, compareLLVM("test "+d, twants[i], tgot[d], &tst)...)
-			}
+			tst, tfails := compareAll(t, "compare test LLVM", tdirs, func(i int, st *llvmStats) []string {
+				return compareLLVM("test "+tdirs[i], twants[i], tgot[tdirs[i]], st)
+			}, (*llvmStats).add)
+			fails = append(fails, tfails...)
 			t.Logf("test binaries: %s", tst)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -190,8 +199,15 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	setModEnv(t, root)
 	wd := workDir(t)
 	wants := make([]goIR, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+	wait := background(t, func() {
+		parallel(t, "Go LLVM emitter", dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+	})
+	if goldensRecording() {
+		wait()
+		skipRecording(t)
+	}
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
+	wait()
 	var st llvmStats
 	var fails []string
 	for i, d := range dirs {
@@ -213,7 +229,20 @@ type goIR struct {
 
 // goLLVM checks dir as a native build does and lowers it as `xo
 // llvmdump` does from root (the test binary when tests is set).
+// Recorded as the llvmdump kind (gogoldens_test.go).
 func goLLVM(root, dir string, tests bool) goIR {
+	if goldensMode() == goldensLive {
+		return goLLVMLive(root, dir, tests)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
+	return recordedJSON("llvmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx,
+		func() goIR { return goLLVMLive(root, dir, tests) }, encGoIR, decGoIR)
+}
+
+// goLLVMLive is goLLVM with the Go emitter run.
+func goLLVMLive(root, dir string, tests bool) goIR {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goIR{none: "error " + err.Error()}
@@ -247,11 +276,9 @@ var llvmHead = regexp.MustCompile(`(?m)^=== llvm `)
 func runLLVM(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 40
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := llvmHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch) {
+		chunk := xb.paths
+		parts := llvmHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo emitter printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}
@@ -267,6 +294,27 @@ func runLLVM(t *testing.T, bin, root string, dirs []string, flags ...string) map
 }
 
 // llvmStats counts what compareLLVM compared.
+// add adds the counts of o to s.
+func (s *llvmStats) add(o llvmStats) {
+	s.runs += o.runs
+	s.compared += o.compared
+	s.rejected += o.rejected
+	s.noMain += o.noMain
+	s.unsupported += o.unsupported
+	s.ssaIncomplete += o.ssaIncomplete
+	s.goErrors += o.goErrors
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.differ += o.differ
+	s.helpers += o.helpers
+	s.modules += o.modules
+	s.ordered += o.ordered
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.why, o.why)
+	s.moduleDiffs = append(s.moduleDiffs, o.moduleDiffs...)
+}
+
 type llvmStats struct {
 	runs, compared, rejected, noMain, unsupported, ssaIncomplete, goErrors int
 	// the Go emitter's functions (`x.*` and xo_entry) in the runs

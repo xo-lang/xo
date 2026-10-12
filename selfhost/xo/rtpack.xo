@@ -1,0 +1,295 @@
+// `xo rtpack` (cmd/xo rtpack.go, internal/build BuildRTPack; decision
+// 0157): the prebuilt runtime of the arm64 backend for a release.
+//
+//   xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o dir]
+//   xo rtpack --status
+//   xo rtpack --key [--target=os/arch]
+//
+// The first form compiles every variant of the C runtime (std/llrt) and
+// the TLS library into dir/<os>-<arch> (default lib/xo/rtpack) with the
+// manifest rtpack.json, the files byte for byte the Go command's for the
+// same compiler and sources; scripts/release.sh runs it. --cc and --ar
+// are command lines split at spaces (a cross compiler for another
+// target). --status prints the pack this xo uses for the host; --key the
+// key a pack for the target must have.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/core
+use std/crypto
+
+fn rtpack_cmd(os: Os, args: List[Str]) -> Int {
+  let goos = host_os(os)
+  let std_dir = check.std_dir(os.env, os.fs)
+  let ctx = Ctx{goos: goos, std: std_dir, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  var fl = core.new_flags("rtpack")
+  fl.str_flag("target", "${goos}/arm64", "target os/arch")
+  fl.str_flag("cc", "", "C compiler command (default the host's C compiler)")
+  fl.str_flag("ar", "", "archiver command (default $XO_AR, ar, llvm-ar)")
+  fl.str_flag("o", "lib/xo/rtpack", "pack root")
+  fl.bool_flag("status", "print the pack this xo uses for the host")
+  fl.bool_flag("key", "print the key of a pack for the target")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if !fl.args.is_empty() {
+    os.stdio.eprintln("usage: xo rtpack [--target=os/arch] [--cc=cmd] [--ar=cmd] [-o dir] | --status | --key")
+    return 2
+  }
+  if fl.get_bool("status") {
+    os.stdio.println(rtpack_status(os, ctx, ctx.std))
+    return 0
+  }
+  // build.ParseTargets of one target
+  let target = fl.get_str("target")
+  let tparts = target.trim().split("/")
+  if target.contains(",") || target == "all" || tparts.len() != 2 || tparts[0].is_empty() || tparts[1].is_empty() {
+    os.stdio.eprintln("xo rtpack: bad --target ${core.go_quote(target)}")
+    return 2
+  }
+  var tos = tparts[0]
+  var tarch = tparts[1]
+  if tos == "wasi" {
+    tos = "wasip1"
+  }
+  if tarch == "wasm32" {
+    tarch = "wasm"
+  }
+  if fl.get_bool("key") {
+    match rtpack_key_for(os, ctx, ctx.std, tos, tarch) {
+      Ok(k) => os.stdio.println(k)
+      Err(e) => {
+        os.stdio.eprintln("xo rtpack: ${e}")
+        return 1
+      }
+    }
+    return 0
+  }
+  let (dir, err) = build_rtpack(os, ctx, tos, tarch, words(fl.get_str("cc")), words(fl.get_str("ar")), fl.get_str("o"))
+  if !err.is_empty() {
+    os.stdio.eprintln("xo rtpack: ${err}")
+    return 1
+  }
+  os.stdio.println(dir)
+  0
+}
+
+/// strings.Fields.
+fn words(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  for w in s.replace("\t", " ").replace("\n", " ").split(" ") {
+    if !w.is_empty() {
+      out.push(w)
+    }
+  }
+  out
+}
+
+/// BuildRTPack: every variant of the runtime and the TLS library compiled
+/// with rtpack_flags into a work directory mapped to /xo
+/// (-ffile-prefix-map), the archive's member headers normalized, the
+/// manifest written, and the directory moved to out/<os>-<arch>. Returns
+/// that directory, or an error text.
+fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], ar0: List[Str], out: Str) -> (Str, Str) {
+  if !(tarch == "arm64" && (tos == "darwin" || tos == "linux")) {
+    return ("", "prebuilt runtimes are built for [darwin/arm64 linux/arm64], not ${tos}/${tarch}")
+  }
+  var cc = cc0
+  if cc.is_empty() {
+    if tos != ctx.goos {
+      return ("", "building the runtime for ${tos}/${tarch} on ${ctx.goos}/arm64 needs a cross compiler (--cc, for example \"zig cc -target aarch64-linux-gnu.2.31\")")
+    }
+    let c = find_cc(os)
+    if c.is_empty() {
+      return ("", "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
+    }
+    cc = [c]
+  }
+  var ar = ar0
+  if ar.is_empty() {
+    let a = find_ar(os)
+    if a.is_empty() {
+      return ("", "the TLS library of std/http needs an archiver: install ar (binutils) or llvm-ar, or set XO_AR")
+    }
+    ar = [a]
+  }
+  let key = match rtpack_key(os, ctx, ctx.std, tos) {
+    Ok(k) => k
+    Err(e) => return ("", "${e}")
+  }
+  // the work directory (os.MkdirTemp("", "xo-rtpack-"))
+  var tmp_root = os.env.get("TMPDIR") ?? ""
+  if tmp_root.is_empty() {
+    tmp_root = "/tmp"
+  }
+  let work = "${tmp_root.trim_suffix("/")}/xo-rtpack-${os.rand.bytes(6).to_hex()}"
+  let (dir, err) = build_rtpack_in(os, ctx, work, tos, cc, ar, key, out)
+  os.fs.remove_all(work).ignore_err("a temporary directory")
+  (dir, err)
+}
+
+fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: List[Str], key: Str, out: Str) -> (Str, Str) {
+  // the sources: the runtime (writeRuntime: std/llrt/*.c) and the TLS
+  // library's tree
+  let llrt = "${work}/llrt"
+  match os.fs.create_dir_all(llrt) {
+    Ok(_) => {}
+    Err(e) => return ("", "${e}")
+  }
+  let ents = match os.fs.read_dir("${ctx.std}/llrt") {
+    Ok(es) => es
+    Err(e) => return ("", "${e}")
+  }
+  for fi in ents {
+    if fi.is_dir || !fi.name.ends_with(".c") {
+      continue
+    }
+    match os.fs.read("${ctx.std}/llrt/${fi.name}") {
+      Ok(data) => match os.fs.write("${llrt}/${fi.name}", data) {
+        Ok(_) => {}
+        Err(e) => return ("", "${e}")
+      }
+      Err(e) => return ("", "${e}")
+    }
+  }
+  let rt = "${llrt}/xo_rt.c"
+  let tls_dir = "${work}/tls"
+  let tls_srcs = match write_tls_tree(os, ctx.xo, tls_dir) {
+    Ok(s) => s
+    Err(e) => return ("", "${e}")
+  }
+  let stage = "${work}/pack"
+  match os.fs.create_dir_all(stage) {
+    Ok(_) => {}
+    Err(e) => return ("", "${e}")
+  }
+  let base = rtpack_flags(tos) + ["-ffile-prefix-map=${work}=/xo"]
+  // the variants, then the library
+  var cmds: List[List[Str]] = []
+  var labels: List[Str] = []
+  for i in 0..32 {
+    var args = cc + base + variant_defines(i)
+    if i >= 16 {
+      args = args + ["-DXO_TLS"] + tls_defines()
+      for inc in tls_include_dirs() {
+        args = args + ["-I", "${tls_dir}/${inc}"]
+      }
+    }
+    cmds.push(args + ["-c", "-o", "${stage}/${variant_file(i)}", rt])
+    labels.push("compiling the runtime (${variant_file(i)})")
+  }
+  let failed = run_jobs(os, "${work}/jobs", cmds, labels)
+  if !failed.is_empty() {
+    return ("", failed)
+  }
+  let lib = "${stage}/libxotls.a"
+  let lerr = compile_tls_archive(os, tls_dir, cc, ["-c"] + base + ["-w"], tls_srcs, ar, lib)
+  if !lerr.is_empty() {
+    return ("", lerr)
+  }
+  let nerr = normalize_ar(os, lib)
+  if !nerr.is_empty() {
+    return ("", nerr)
+  }
+  // the manifest (json.MarshalIndent with a tab); the compiler is the
+  // first line of its --version output whatever its exit status (zig cc
+  // prints its version and fails on a glibc version in the target)
+  var compiler = ""
+  match os.proc.run(cc[0], cc[1..] + ["--version"]) {
+    Ok(r) => compiler = ((r.stdout.to_str() ?? "").split("\n")[0]).trim()
+    Err(_) => {}
+  }
+  let names = match os.fs.read_dir(stage) {
+    Ok(es) => es.map(fn(e) { e.name }).sort()
+    Err(e) => return ("", "${e}")
+  }
+  var files: List[Str] = []
+  for n in names {
+    match os.fs.read("${stage}/${n}") {
+      Ok(data) => files.push("\t\t${core.jstr_html(n)}: \"${crypto.sha256(data).to_hex()}\"")
+      Err(e) => return ("", "${e}")
+    }
+  }
+  let flags = rtpack_flags(tos).map(fn(f: Str) -> Str { "\t\t${core.jstr_html(f)}" })
+  let m = "{\n\t\"format\": 1,\n\t\"target\": ${core.jstr_html("${tos}/arm64")},\n\t\"key\": ${core.jstr_html(key)},\n\t\"compiler\": ${core.jstr_html(compiler)},\n\t\"flags\": [\n${flags.join(",\n")}\n\t],\n\t\"files\": {\n${files.join(",\n")}\n\t}\n}\n"
+  match os.fs.write("${stage}/rtpack.json", m.bytes()) {
+    Ok(_) => {}
+    Err(e) => return ("", "${e}")
+  }
+  let dst = core.join_path(out, "${tos}-arm64")
+  match os.fs.create_dir_all(out) {
+    Ok(_) => {}
+    Err(e) => return ("", "${e}")
+  }
+  match os.fs.remove_all(dst) {
+    Ok(_) => {}
+    Err(e) => return ("", "${e}")
+  }
+  match os.fs.rename(stage, dst) {
+    Ok(_) => {}
+    Err(_) => {
+      // another file system: copy
+      match os.fs.create_dir_all(dst) {
+        Ok(_) => {}
+        Err(e) => return ("", "${e}")
+      }
+      for n in names + ["rtpack.json"] {
+        match os.fs.read("${stage}/${n}") {
+          Ok(data) => match os.fs.write("${dst}/${n}", data) {
+            Ok(_) => {}
+            Err(e) => return ("", "${e}")
+          }
+          Err(e) => return ("", "${e}")
+        }
+      }
+    }
+  }
+  (dst, "")
+}
+
+/// normalizeAr: the member headers of the ar archive at path rewritten
+/// with zero times, owners, and groups and mode 644 (the headers have
+/// fixed widths, so the symbol table's offsets stay valid).
+fn normalize_ar(os: Os, path: Str) -> Str {
+  let data = match os.fs.read(path) {
+    Ok(d) => d
+    Err(e) => return "${e}"
+  }
+  if data.len() < 8 || (data[0..8].to_str() ?? "") != "!<arch>\n" {
+    return "${path}: not an ar archive"
+  }
+  var b = BytesBuilder.with_capacity(data.len())
+  b.write(data[0..8])
+  var off = 8
+  while off < data.len() {
+    if off + 60 > data.len() || (data[off + 58..off + 60].to_str() ?? "") != "`\n" {
+      return "${path}: bad member header at ${off}"
+    }
+    let size = match Int.parse((data[off + 48..off + 58].to_str() ?? "").trim()) {
+      Some(n) => n
+      None => return "${path}: bad member size at ${off}"
+    }
+    b.write(data[off..off + 16])
+    b.write_str(ar_field("0", 12) + ar_field("0", 6) + ar_field("0", 6) + ar_field("644", 8))
+    b.write(data[off + 48..off + 60])
+    var end = off + 60 + size
+    end += end % 2
+    if end > data.len() {
+      end = data.len()
+    }
+    b.write(data[off + 60..end])
+    off = end
+  }
+  match os.fs.write(path, b.freeze()) {
+    Ok(_) => ""
+    Err(e) => "${e}"
+  }
+}
+
+/// v padded with spaces to n bytes.
+fn ar_field(v: Str, n: Int) -> Str {
+  var s = v
+  while s.len() < n {
+    s = s + " "
+  }
+  s
+}

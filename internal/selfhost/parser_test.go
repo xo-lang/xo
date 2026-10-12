@@ -40,6 +40,9 @@ func TestSelfhostParserDifferential(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			t.Parallel()
 			if backend != "go" {
+				if goldensRecording() {
+					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records the Go side")
+				}
 				if why := nativeSkip(backend); why != "" {
 					t.Skip(why)
 				}
@@ -178,6 +181,25 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		mode = parser.SignatureMode
 	}
 	var fails []string
+	// goParse is the Go parser's dump of p (recorded, gogoldens_test.go)
+	goParse := func(p string) string {
+		full := p
+		if !filepath.IsAbs(p) {
+			full = filepath.Join(root, p)
+		}
+		src, err := os.ReadFile(full)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cx := newGoldenCtx(full)
+		return recorded("astdump", p, []string{fmt.Sprint(sig), cx.fileKey(p, src)}, cx, func() string { return parser.Dump(p, src, mode) })
+	}
+	if goldensRecording() {
+		for _, p := range paths {
+			goParse(p)
+		}
+		skipRecording(t)
+	}
 	const batch = 100
 	for i := 0; i < len(paths); i += batch {
 		chunk := paths[i:min(i+batch, len(paths))]
@@ -187,17 +209,11 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		}
 		got := splitDumps(t, runXo(t, bin, root, args), chunk)
 		for j, p := range chunk {
-			full := p
-			if !filepath.IsAbs(p) {
-				full = filepath.Join(root, p)
-			}
-			src, err := os.ReadFile(full)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := parser.Dump(p, src, mode)
+			want := goParse(p)
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
 			switch {
+			case strings.HasPrefix(want, missingGolden):
+				fails = append(fails, p+": "+want)
 			case goRejects && !xoRejects:
 				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
 			case xoRejects && !goRejects:
