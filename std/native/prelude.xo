@@ -1390,7 +1390,7 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
 
 // ---------------------------------------------------------------------------
 // Attenuation (std.md 3.5 and 3.7, decisions 0156 and 0172): std/rt
-// attenuate.go. A Proc or Env is the lists of its attenuations in one Str:
+// attenuate.go. A Proc, Env, or Net is the lists of its attenuations in one Str:
 // each list is \u{1} and then its names, each followed by \u{0}; "" has
 // none. Every list must admit a name.
 
@@ -1423,6 +1423,18 @@ fn cap_admits(lists: Str, name: Str) -> Bool {
 fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
 
 fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
+
+/// Net.only (decision 0175): the entries trimmed and lowered (std/rt's
+/// normHosts); the C runtime checks dial, listen, and a client's
+/// redirects against the lists (net_admits), std/native/http.xo each
+/// request.
+fn net_only(n: Net, hosts: List[Str]) -> Net {
+  var norm: List[Str] = []
+  for h in hosts {
+    norm.push(h.trim().to_lower())
+  }
+  rt.net_new(cap_lists_add(rt.net_lists(n), norm))
+}
 
 fn env_get(e: Env, name: Str) -> Str? uses env {
   if !cap_admits(rt.env_lists(e), name) {

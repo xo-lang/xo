@@ -369,10 +369,11 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			case "Fs":
 				// its root and mode (decision 0102, build_io.go fsCall)
 				return b.fsType()
-			case "Proc", "Env":
-				// its attenuation lists (decision 0172, build_io.go listsType)
+			case "Proc", "Env", "Net":
+				// its attenuation lists (decisions 0172 and 0175,
+				// build_io.go listsType)
 				return b.listsType(obj.Name)
-			case "Os", "Stdio", "Clock", "Net", "Rand":
+			case "Os", "Stdio", "Clock", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
@@ -403,7 +404,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				if c == "Fs" {
 					return b.fsType()
 				}
-				if c == "Proc" || c == "Env" {
+				if c == "Proc" || c == "Env" || c == "Net" {
 					return b.listsType(c)
 				}
 				x, _ := m.Named(c, KCap)

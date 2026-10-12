@@ -3663,7 +3663,7 @@ static int valid_method(const char *m, int64_t n) {
 // text of the request's Url), with the header of names and values, the
 // body, and the client's timeout (ns, 0: none).
 xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rlist *names, xo_rlist *values, const char *b,
-                   int64_t bn, int64_t timeout, xo_troots *roots) {
+                   int64_t bn, int64_t timeout, xo_troots *roots, const char *lp, int64_t ln) {
 	xo_cresp *r = xo_alloc(sizeof(xo_cresp));
 	memset(r, 0, sizeof *r);
 	h_init(r, cresp_free);
@@ -3727,6 +3727,34 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 			cr_fail(r, redirects == 0 ? 1 : 4, "parse %s: %s", q.p, err);
 			free(q.p);
 			break;
+		}
+		if (redirects > 0 && ln > 0) {
+			// a redirect must stay within the client's attenuated Net
+			// (Net.only, decision 0175): std/rt's CheckRedirect, whose
+			// error names the Location
+			hstr name, port;
+			h_split_hostport(u.host, &name, &port);
+			if (port.n == 0) {
+				hs_free(&port);
+				port = hs_eq(u.scheme, "https") ? hs_dup("443", 3) : hs_dup("80", 2);
+			}
+			if (!net_admits(lp, (size_t)ln, name.p ? name.p : "", (size_t)name.n, port.p, (size_t)port.n)) {
+				nbuf lq = {0};
+				h_go_quote(&lq, last_loc, (int64_t)strlen(last_loc));
+				nbuf_byte(&lq, 0);
+				char op0[32];
+				url_op(op0, m, mn);
+				int v6 = name.n > 0 && memchr(name.p, ':', (size_t)name.n) != NULL;
+				cr_fail(r, 4, "%s %s: denied by Net.only: redirect to %s%.*s%s:%.*s", op0, lq.p, v6 ? "[" : "", (int)name.n,
+				        name.p ? name.p : "", v6 ? "]" : "", (int)port.n, port.p);
+				free(lq.p);
+				hs_free(&name);
+				hs_free(&port);
+				hu_free(&u);
+				break;
+			}
+			hs_free(&name);
+			hs_free(&port);
 		}
 		nbuf q = {0};
 		h_go_quote(&q, raw, (int64_t)strlen(raw));

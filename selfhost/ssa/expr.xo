@@ -640,7 +640,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
       return b.add(Op.Struct, t, Aux.None, [root, b.cint(0)])
     }
     if b.is_lists(t) {
-      // os.proc, os.env: no attenuation (decision 0172)
+      // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
       let lists = b.const_str("")
       return b.add(Op.Struct, t, Aux.None, [lists])
     }

@@ -525,8 +525,8 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       "Duration" | "Time" => return b.int_t()
       "Never" => return b.unit_t()
       "Fs" => return b.fs_type()
-      "Proc" | "Env" => return b.lists_type(oname)
-      "Os" | "Stdio" | "Clock" | "Net" | "Rand" => {
+      "Proc" | "Env" | "Net" => return b.lists_type(oname)
+      "Os" | "Stdio" | "Clock" | "Rand" => {
         let (ct, _) = b.m.named(oname, Kind.Cap)
         return ct
       }
@@ -557,7 +557,7 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       if cap == "Fs" {
         return b.fs_type()
       }
-      if cap is "Proc" | "Env" {
+      if cap is "Proc" | "Env" | "Net" {
         return b.lists_type(cap)
       }
       let (ct, _) = b.m.named(cap, Kind.Cap)
@@ -743,8 +743,8 @@ fn (var b: Builder) is_fs(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.Fs"
 }
 
-/// The lowered Proc or Env (build_io.go listsType): the lists of its
-/// attenuations in one Str.
+/// The lowered Proc, Env, or Net (build_io.go listsType): the lists of
+/// its attenuations in one Str.
 fn (var b: Builder) lists_type(name: Str) -> Int {
   let (t, created) = b.m.named("xo.${name}", Kind.Struct)
   if created {
@@ -755,7 +755,7 @@ fn (var b: Builder) lists_type(name: Str) -> Int {
 }
 
 fn (var b: Builder) is_lists(t: Int) -> Bool {
-  b.m.types[t].kind == Kind.Struct && (b.m.types[t].name == "xo.Proc" || b.m.types[t].name == "xo.Env")
+  b.m.types[t].kind == Kind.Struct && (b.m.types[t].name == "xo.Proc" || b.m.types[t].name == "xo.Env" || b.m.types[t].name == "xo.Net")
 }
 
 /// The value of an interface type Error, Display, or Debug (build_show.go

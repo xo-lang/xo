@@ -207,7 +207,7 @@ static void test_timers(void) {
 
 static void test_echo(void) {
 	static const char a[] = "127.0.0.1:0";
-	xo_listener *l = xo_net_listen(a, (int64_t)sizeof a - 1);
+	xo_listener *l = xo_net_listen("", 0, a, (int64_t)sizeof a - 1);
 	CHECK(xo_net_status() == 0);
 	xo_rlist *al = xo_listener_addr(l);
 	xo_rstr *as = ((xo_rstr **)rl_data(al))[0];
@@ -215,7 +215,7 @@ static void test_echo(void) {
 	CHECK(an > 10 && memcmp(as->data, "127.0.0.1:", 10) == 0);
 	xo_scope *s = xo_scope_open();
 	release(spawn(s, J_ECHO_ONE, 0, l, 0));
-	xo_conn *c = xo_net_dial(as->data, an);
+	xo_conn *c = xo_net_dial("", 0, as->data, an);
 	CHECK(xo_net_status() == 0);
 	drop_str_list(al);
 	// more than the socket buffers hold: the writer parks until the echo
@@ -248,11 +248,11 @@ static void test_echo(void) {
 
 static void test_wakeups(void) {
 	static const char a[] = "127.0.0.1:0";
-	xo_listener *l = xo_net_listen(a, (int64_t)sizeof a - 1);
+	xo_listener *l = xo_net_listen("", 0, a, (int64_t)sizeof a - 1);
 	xo_rlist *al = xo_listener_addr(l);
 	xo_rstr *as = ((xo_rstr **)rl_data(al))[0];
 	int64_t an = ((int64_t *)rl_data(al))[1];
-	xo_conn *c = xo_net_dial(as->data, an);
+	xo_conn *c = xo_net_dial("", 0, as->data, an);
 	CHECK(xo_net_status() == 0);
 	xo_conn *peer = xo_listener_accept(l);
 	CHECK(xo_net_status() == 0);
@@ -266,7 +266,7 @@ static void test_wakeups(void) {
 	release(s);
 	// cancellation wakes a parked accept and read: Canceled (the read is
 	// on a second connection: peer saw c close)
-	xo_conn *c2 = xo_net_dial(as->data, an);
+	xo_conn *c2 = xo_net_dial("", 0, as->data, an);
 	xo_conn *peer2 = xo_listener_accept(l);
 	CHECK(xo_net_status() == 0);
 	s = xo_scope_open();
@@ -287,7 +287,7 @@ static void test_wakeups(void) {
 	release(c);
 	// a closed listener refuses
 	xo_listener_close(l);
-	xo_conn *r = xo_net_dial(as->data, an);
+	xo_conn *r = xo_net_dial("", 0, as->data, an);
 	CHECK(xo_net_status() == 2);
 	release(r);
 	drop_str_list(al);

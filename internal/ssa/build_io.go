@@ -10,8 +10,9 @@ import (
 //
 //   - Duration and Time are Int nanoseconds (the Go backend's
 //     representation), Bytes is a Str (an immutable byte string; the
-//     checker keeps the two apart), Clock, Net, Proc, and Env are
-//     capabilities (zero size), Listener and Conn are handles.
+//     checker keeps the two apart), Clock is a capability (zero size),
+//     Net, Proc, and Env are the lists of their attenuations (listsType),
+//     Listener and Conn are handles.
 //   - `clock.sleep` is a cancellation point that unwinds; the network
 //     operations report cancellation as `NetErr.Canceled` (core 7.2). A
 //     network call records its outcome in the runtime (rt.net_status,
@@ -21,7 +22,7 @@ import (
 
 // statusTags are the runtime's status codes of NetErr's variants (the Go
 // backend's tags).
-var statusTags = map[string]int64{"InvalidAddr": 1, "Refused": 2, "Timeout": 3, "Io": 4, "Canceled": 5}
+var statusTags = map[string]int64{"InvalidAddr": 1, "Refused": 2, "Timeout": 3, "Io": 4, "Canceled": 5, "Denied": 6}
 
 // ioCall lowers a prelude method of Clock, Net, Listener, Conn, Proc,
 // Env, Duration, Time, Str, or Bytes that the event loop or inline code
@@ -218,10 +219,11 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		s.rt("set_grace", nil, arg(0, intT))
 		return s.unit(), true
 	case "Net.listen":
-		h := s.rt("net_listen", m.Handle("Listener"), arg(0, strT))
+		// the Net's attenuation lists first (Net.only, decision 0175)
+		h := s.rt("net_listen", m.Handle("Listener"), s.add(OpField, strT, 0, recv), arg(0, strT))
 		return s.netResult(h, nt), true
 	case "Net.dial":
-		h := s.rt("net_dial", m.Handle("Conn"), arg(0, strT))
+		h := s.rt("net_dial", m.Handle("Conn"), s.add(OpField, strT, 0, recv), arg(0, strT))
 		return s.netResult(h, nt), true
 	case "Listener.addr":
 		return s.call("list.index", strT, "", s.rt("listener_addr", m.List(strT), recv), s.cint(0)), true
@@ -286,6 +288,7 @@ var capImpls = map[string]string{
 	"Env.home":       "env_home",
 	"Env.only":       "env_only",
 	"Proc.only":      "proc_only",
+	"Net.only":       "net_only", // decision 0175
 	"Proc.cmd":       "proc_cmd", // decision 0161
 	"Proc.pipeline":  "proc_pipeline",
 }
@@ -566,9 +569,10 @@ func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
 // isFs reports whether t is the lowered Fs.
 func isFs(t *Type) bool { return t.Kind == KStruct && t.Name == "xo.Fs" }
 
-// listsType is the lowered Proc or Env (decision 0172): the lists of its
-// attenuations (Proc.only, Env.only) in one Str, "" for none
-// (std/native/prelude.xo cap_admits).
+// listsType is the lowered Proc, Env, or Net (decisions 0172 and 0175):
+// the lists of its attenuations (Proc.only, Env.only, Net.only) in one
+// Str, "" for none (std/native/prelude.xo cap_admits, the C runtime's
+// net_admits).
 func (b *builder) listsType(name string) *Type {
 	m := b.mod
 	t, created := m.Named("xo."+name, KStruct)
@@ -578,9 +582,9 @@ func (b *builder) listsType(name string) *Type {
 	return t
 }
 
-// isLists reports whether t is the lowered Proc or Env.
+// isLists reports whether t is the lowered Proc, Env, or Net.
 func isLists(t *Type) bool {
-	return t.Kind == KStruct && (t.Name == "xo.Proc" || t.Name == "xo.Env")
+	return t.Kind == KStruct && (t.Name == "xo.Proc" || t.Name == "xo.Env" || t.Name == "xo.Net")
 }
 
 // memFsCall lowers a method of Fs or MemFs in a test binary (decision

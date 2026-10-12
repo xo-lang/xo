@@ -555,8 +555,9 @@ an attenuated `Net` fails with `SqlErr.Conn` (the driver dials by
 itself, so the list cannot be enforced). `only` on an attenuated `Net`
 keeps both lists: an address must pass each. Names are checked as
 written, not as resolved: an allowed name that resolves to another
-address is allowed. Native builds (`--no-gc`) do not have `only` yet
-(XO1201, planned).
+address is allowed. Native builds (`--no-gc`) have it too (decision
+0175): a `Net` there is the lists of its attenuations; hosts in dial and
+listen addresses and in redirects are lowered ASCII only.
 
 ```
 let api = os.net.only(["api.example.com"])
