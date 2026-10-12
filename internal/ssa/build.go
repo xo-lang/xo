@@ -68,6 +68,8 @@ type builder struct {
 	// natives are the implementation modules of the native backends by
 	// the std path they implement (build_native.go)
 	natives map[string]*check.Module
+	// fileMods maps a source file to its module (logFrom)
+	fileMods map[string]*check.Module
 
 	// consts are the ids of the constants of heap types read so far
 	// (build_int.go constValue)

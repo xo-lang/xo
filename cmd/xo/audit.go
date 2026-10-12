@@ -47,6 +47,17 @@ type auditDep struct {
 	Added   []string      `json:"added_effects,omitempty"`
 	Ceiling string        `json:"ceiling,omitempty"`
 	Escapes []auditEscape `json:"escape_hatches"`
+	// LogTag is the attribution its log records carry ("<path>@<version>",
+	// decision 0173) and LogSites the log calls in its code; both empty
+	// when it does not log.
+	LogTag   string     `json:"log_attribution,omitempty"`
+	LogSites []auditLoc `json:"log_sites,omitempty"`
+}
+
+type auditLoc struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Call string `json:"call"`
 }
 
 type auditEscape struct {
@@ -223,6 +234,7 @@ func audit(root string, res *check.Result, ds []diag.Diagnostic) *auditReport {
 		}
 	}
 	auditCalls(res, rep)
+	auditLogs(res, rep)
 	for _, c := range rep.Capabilities {
 		if !c.Attenuated {
 			rep.Summary.UnattenuatedCaps++
@@ -293,6 +305,47 @@ func auditCalls(res *check.Result, rep *auditReport) {
 		a, b := rep.Attenuations[i], rep.Attenuations[j]
 		return a.File < b.File || a.File == b.File && a.Line < b.Line
 	})
+}
+
+// auditLogs records, for each dependency, the std/log calls in its code
+// and the attribution their records carry (decision 0173).
+func auditLogs(res *check.Result, rep *auditReport) {
+	info := res.Info()
+	sites := map[string][]auditLoc{}
+	for _, m := range info.AllModules() {
+		if m.IsStd || m.Dependency == "" {
+			continue
+		}
+		for _, f := range m.Files {
+			if f.IsTest || f.AST == nil {
+				continue
+			}
+			check.Inspect(f.AST, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				ci := info.CallOf(call)
+				if ci == nil || ci.Fn == nil || ci.Fn.Module == nil || ci.Fn.Recv != nil || ci.Fn.Module.Path != "std/log" {
+					return true
+				}
+				switch ci.Fn.Name {
+				case "debug", "info", "warn", "error":
+					sp := call.Span()
+					sites[m.Dependency] = append(sites[m.Dependency], auditLoc{File: sp.File, Line: sp.Start.Line, Call: "log." + ci.Fn.Name})
+				}
+				return true
+			})
+		}
+	}
+	for i := range rep.Dependencies {
+		d := &rep.Dependencies[i]
+		tag := d.Path + "@" + d.Version
+		if s := sites[tag]; len(s) > 0 {
+			sort.SliceStable(s, func(a, b int) bool { return s[a].File < s[b].File || s[a].File == s[b].File && s[a].Line < s[b].Line })
+			d.LogTag, d.LogSites = tag, s
+		}
+	}
 }
 
 // capName is the capability type name of t, or "".
@@ -418,6 +471,12 @@ func printAudit(rep *auditReport, w io.Writer) {
 		fmt.Fprintf(w, "  lock: %s\n", lock)
 		if d.Ceiling != "" {
 			fmt.Fprintf(w, "  ceiling: %s\n", d.Ceiling)
+		}
+		if d.LogTag != "" {
+			fmt.Fprintf(w, "  logs: %d call sites, records attributed [%s]\n", len(d.LogSites), d.LogTag)
+			for _, l := range d.LogSites {
+				fmt.Fprintf(w, "    %s:%d %s\n", filepath.Base(l.File), l.Line, l.Call)
+			}
 		}
 		for _, e := range d.Escapes {
 			st := "UNVOUCHED"

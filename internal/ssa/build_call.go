@@ -91,6 +91,15 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			return v
 		}
 		if impl := b.implOf(ci.Fn); impl != nil {
+			if from := b.logFrom(ci.Fn, x); from != "" {
+				// a dependency's log record carries the dependency
+				// (decision 0173): set just before the call, after its
+				// arguments, and taken by the log function at entry
+				return s.callAsVia(x, ci, impl, func(callee *Func) string {
+					s.rt("log_from", nil, s.add(OpConst, b.mod.Builtin(KStr), from))
+					return callee.Name
+				})
+			}
 			return s.callAs(x, ci, impl)
 		}
 		if v, ok := s.ioCall(x, ci); ok {

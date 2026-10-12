@@ -26,7 +26,7 @@ fn logs() -> List[log.Record] {
       3 => log.Level.Warn
       _ => log.Level.Error
     }
-    out.push(log.Record{level: level, msg: rttest.test_log_msg(i), fields: fields})
+    out.push(log.Record{level: level, msg: rttest.test_log_msg(i), fields: fields, module: rttest.test_log_module(i)})
   }
   out
 }

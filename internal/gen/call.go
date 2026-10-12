@@ -454,6 +454,11 @@ func (f *fnGen) emitCall(fo *check.FuncObj, sub *check.Subst, recv string, args 
 		call = fmt.Sprintf("%s.%s(tk%s)", recv, goMethod(fo.Name), prefixComma(args))
 	case fo.Module.IsStd:
 		call = f.stdCall(fo, sub, recv, args)
+		if from := f.g.logFrom(fo, at); from != "" {
+			// a log record written by a dependency's code carries the
+			// dependency (decision 0173)
+			call = fmt.Sprintf("%sLog_%sFrom(tk, %q%s)", f.rt(), fo.Name, from, prefixComma(args))
+		}
 	case fo.Recv == nil:
 		call = fmt.Sprintf("%sF_%s%s(tk%s)", f.pg.pkgRef(fo.Module), fo.Name, f.targs(fo.TParams, sub), prefixComma(args))
 	case methodIsGoMethod(fo):
