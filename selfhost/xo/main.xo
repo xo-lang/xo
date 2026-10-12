@@ -2,11 +2,15 @@
 // (decision 0158): the lexer, parser, checker, SSA builder and its
 // passes, and the arm64 emitter, all in Xo, then the system C compiler
 // driver to assemble and link with the C runtime (std/llrt), as
-// internal/build does for `xo build --backend=arm64`.
+// internal/build does for `xo build --backend=arm64` (decision 0174).
 //
-//   xo1 build [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>
-//   xo1 build --backend=go [--std=DIR] [--wd=DIR] [-o OUT] [--go-tree=DIR] <dir>
-//   xo1 asm [--std=DIR] [--wd=DIR] <dir>       print the assembly
+//   xo1 build [flags] [-o OUT] [--asm=PATH] [--target=OS/arm64] <dir>
+//   xo1 build --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
+//   xo1 test [flags] [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>
+//   xo1 asm [--std=DIR] [--wd=DIR] [--target=OS/arm64] <dir>
+//   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
+//
+// flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -14,11 +18,13 @@
 // default OUT.go.d.
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
-// default std). Programs that need what internal/build adds beyond the
-// runtime (time zone data for std/time, `use c` sources, TLS) are not
-// supported yet: the driver says so and exits 1. It is not the released
-// `xo` (decision 0150: that is the owner's decision after the fixed
-// point).
+// default std), the TLS library's from DIR/../third_party. A link takes
+// the runtime from a prebuilt pack or the runtime object cache, the TLS
+// library of std/http, the zone data of std/time, and the C inputs of
+// `use c`, keyed as internal/build keys them, so both drivers share the
+// caches. A target other than the host gets its assembly only, as
+// internal/build does. It is not the released `xo` (decision 0150: that
+// is the owner's decision after the fixed point).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -26,16 +32,19 @@ use github.com/xo-lang/xo/selfhost/arm64
 
 fn main(os: Os) ! {
   let args = os.env.args()
-  if args.is_empty() || !(args[0] is "build" | "asm") {
-    os.stdio.eprintln("usage: xo1 build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>")
+  if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
-  var cc = os.env.get("XO_CC") ?? "cc"
+  var cc = ""
   var out = ""
   var asm_path = ""
+  var tzdata = ""
+  var target = ""
+  var topts = TestOpts{}
   var backend = "arm64"
   var go_tree = ""
   var dirs: List[Str] = []
@@ -47,13 +56,27 @@ fn main(os: Os) ! {
     } else if a.starts_with("--wd=") {
       wd = a.trim_prefix("--wd=")
     } else if a.starts_with("--cc=") {
-      cc = a.trim_prefix("--cc=")
+      cc = look_path(os, a.trim_prefix("--cc="))
+    } else if a.starts_with("--tzdata=") {
+      tzdata = a.trim_prefix("--tzdata=")
     } else if a.starts_with("--asm=") {
       asm_path = a.trim_prefix("--asm=")
     } else if a.starts_with("--backend=") {
       backend = a.trim_prefix("--backend=")
     } else if a.starts_with("--go-tree=") {
       go_tree = a.trim_prefix("--go-tree=")
+    } else if a.starts_with("--target=") || a.starts_with("--targets=") {
+      target = a.split("=")[1]
+    } else if a.starts_with("--run=") {
+      topts.run = a.trim_prefix("--run=")
+    } else if a.starts_with("--seed=") {
+      topts.seed = Int.parse(a.trim_prefix("--seed=")) ?? 0
+    } else if a.starts_with("--cases=") {
+      topts.cases = Int.parse(a.trim_prefix("--cases=")) ?? 0
+    } else if a == "--json" {
+      topts.json = true
+    } else if a == "-v" {
+      topts.verbose = true
     } else if a == "-o" && i + 1 < args.len() {
       out = args[i + 1]
       i += 1
@@ -62,16 +85,33 @@ fn main(os: Os) ! {
     }
     i += 1
   }
+  let goos = host_os(os)
+  let ctx = Ctx{goos: goos, std: std_dir, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  if cmd == "keys" {
+    keys(os, ctx, cc)?
+    return
+  }
+  // the target: the host, or linux/arm64 (assembly only)
+  var tgoos = goos
+  if !target.is_empty() {
+    if !(target is "darwin/arm64" | "linux/arm64") {
+      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${target}")
+    }
+    tgoos = target.split("/")[0]
+  }
   if dirs.len() != 1 {
     os.stdio.eprintln("xo1: name one directory")
     os.proc.exit(2)
   }
   if backend == "go" && cmd == "build" {
-    build_go(os, std_dir, wd, out, go_tree, dirs[0])?
+    if !target.is_empty() {
+      fail(os, "--backend=go builds for the host only here")
+    }
+    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0])?
     return
   }
   if backend != "arm64" {
-    fail(os, "--backend=${backend}: want arm64 or go")
+    fail(os, "--backend=${backend}: want arm64, or go for build")
   }
   var c = check.new_checker(os.fs, std_dir)
   c.native = true
@@ -90,12 +130,13 @@ fn main(os: Os) ! {
       fail(os, "the program does not check (run xo check)")
     }
   }
+  var uses_time = false
   for m in c.mods {
-    if m.path == "native/time" {
-      fail(os, "std/time needs time zone data, which this driver does not write yet")
-    }
+    uses_time = uses_time || m.path == "native/time"
   }
-  var b = ssa.build_program(c, line_root(os, wd, dirs[0]), false)
+  let root = line_root(os, wd, dirs[0])
+  let tests = cmd == "test"
+  var b = ssa.build_program(c, root, tests)
   if !b.why.is_empty() {
     fail(os, b.why)
   }
@@ -104,8 +145,10 @@ fn main(os: Os) ! {
       fail(os, "the SSA builder skipped ${f.name}: ${f.skip}")
     }
   }
+  // the zone data std/time needs, noted as the Go builder lowers
+  let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
   b.run_passes()
-  let p = arm64.generate_module(b.m, "darwin", false)
+  let p = arm64.generate_module(b.m, tgoos, false)
   if !p.err.is_empty() {
     fail(os, p.err)
   }
@@ -116,24 +159,32 @@ fn main(os: Os) ! {
     os.stdio.print(p.asm)
     return
   }
+  let parts = dirs[0].trim_suffix("/").split("/")
+  var name = parts[parts.len() - 1]
+  if name == "." || name.is_empty() {
+    name = base_name(wd)
+  }
+  if tests {
+    name = "${name}.test"
+  }
   if out.is_empty() {
-    let parts = dirs[0].trim_suffix("/").split("/")
-    out = parts[parts.len() - 1]
+    out = name
+    if tests {
+      // the test binary goes to the cache, as `xo test` builds it
+      let tdir = "${ctx.cache}/xo/xo1-test"
+      os.fs.create_dir_all(tdir)?
+      out = "${tdir}/${name}"
+    }
   }
   if asm_path.is_empty() {
     asm_path = "${out}.s"
   }
-  // the symbols internal/build looks for (tlsSymbols), made at run time:
-  // as literals they would be in this program's own assembly, and its
-  // link would need the TLS library
-  var tls = false
-  for sym in [["xo", "cl", "do"], ["xo", "srv", "new"], ["xo", "tls", ""]] {
-    tls = tls || p.asm.contains(sym.join("_"))
-  }
-  if tls {
-    fail(os, "std/http (TLS) is not linked by this driver yet")
-  }
   os.fs.write(asm_path, p.asm.bytes())?
+  if tgoos != goos {
+    // another target: its assembly only (internal/build buildArm64)
+    os.stdio.println("${target}: ${asm_path}")
+    return
+  }
   // the C runtime next to the assembly (writeRuntime)
   let rtdir = "${out}.rt"
   os.fs.create_dir_all(rtdir)?
@@ -142,45 +193,70 @@ fn main(os: Os) ! {
       os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
     }
   }
-  var cargs = ["-O2"] + io_flags(p.asm)
-  cargs = cargs + ["-fexceptions", "-funwind-tables", "-o", out]
-  let srcs = [asm_path, "${rtdir}/xo_rt.c", "-lm", "-lpthread"]
-  // the macOS SDKs internal/build tries (sysrootCandidates), the one that
-  // linked last time first
-  var roots: List[Str] = []
-  let env_root = os.env.get("XO_SYSROOT") ?? ""
-  if !env_root.is_empty() {
-    roots.push(env_root)
-  } else {
-    let memo = "${os.env.get("HOME") ?? ""}/Library/Caches/xo/llvm-sysroot"
-    match os.fs.read_text(memo) {
-      Ok(t) => roots.push(t.trim())
-      Err(_) => {}
-    }
-    roots.push("")
-    match os.proc.run("xcrun", ["--show-sdk-path"]) {
-      Ok(r) => roots.push((r.stdout.to_str() ?? "").trim())
-      Err(_) => {}
-    }
-    roots.push("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
-  }
-  var last = ""
-  for root in roots {
-    var a2 = cargs
-    if !root.is_empty() {
-      a2 = a2 + ["-isysroot", root]
-    }
-    let r = os.proc.run(cc, a2 + srcs)?
-    if r.code == 0 {
-      return
-    }
-    last = (r.stdout + r.stderr).to_str() ?? ""
-    if !last.contains("linker command failed") {
-      break
+  if cc.is_empty() {
+    cc = find_cc(os)
+    if cc.is_empty() {
+      fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
     }
   }
-  os.stdio.eprint(last)
-  fail(os, "${cc} failed")
+  var flags = ["-O2"]
+  var srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  // std/time: XO_TIME and the program's zone data beside the runtime
+  // (timeFlags)
+  if uses_time {
+    if !(tzdata == "" || tzdata == "embedded" || tzdata == "system") {
+      fail(os, "unknown --tzdata=${tzdata} (want embedded or system)")
+    }
+    let sel = tz_select(os, tu, tzdata)
+    if !sel.err.is_empty() {
+      fail(os, sel.err)
+    }
+    flags.push("-DXO_TIME")
+    srcs.push(tz_source(os, rtdir, sel)?)
+    for n in sel.notes {
+      os.stdio.eprintln(n)
+    }
+  }
+  flags = flags + io_flags(p.asm)
+  // the adapters, link files, and libraries of `use c` (cInputs)
+  let ci = c_inputs(os, c, rtdir)
+  if !ci.err.is_empty() {
+    fail(os, ci.err)
+  }
+  flags = flags + ci.flags
+  srcs = srcs + ci.srcs
+  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
+  if !msg.is_empty() {
+    os.stdio.eprint(msg)
+    fail(os, "${cc} failed")
+  }
+  if tests {
+    var bin = out
+    if !bin.starts_with("/") {
+      bin = "${wd}/${bin}"
+    }
+    os.proc.exit(run_tests(os, bin, test_infos(c, root, wd), topts))
+  }
+}
+
+/// `xo1 keys`: the cache keys and directories this driver computes, to
+/// compare with the Go driver's (`xo rtpack --key`, the directories under
+/// the user cache): the prebuilt runtime keys of both targets, the pack
+/// status, the TLS library directory for the C compiler with the SDK of
+/// the last link, and the runtime object of a plain program.
+fn keys(os: Os, ctx: Ctx, cc0: Str) -> () ! FsErr {
+  let cc = if cc0.is_empty() { find_cc(os) } else { cc0 }
+  os.stdio.println("rtpack darwin/arm64 ${rtpack_key(os, ctx, ctx.std, "darwin")?}")
+  os.stdio.println("rtpack linux/arm64 ${rtpack_key(os, ctx, ctx.std, "linux")?}")
+  os.stdio.println(rtpack_status(os, ctx, ctx.std))
+  os.stdio.println("tls source ${tls_source_hash(os, ctx.xo)?}")
+  var root = ""
+  let memo = sysroot_memo(os, ctx)
+  if !memo.is_empty() {
+    root = (os.fs.read_text(memo).ok() ?? "").trim()
+  }
+  let (_, dir, err) = tls_dir(os, ctx, cc, [], root)
+  os.stdio.println("tls ${dir}${err} (cc ${cc}, sysroot ${root})")
 }
 
 /// The directory fault positions are relative to (internal/build
@@ -220,28 +296,4 @@ fn rel_to(wd: Str, p: Str) -> Str {
 fn fail(os: Os, msg: Str) -> Never {
   os.stdio.eprintln("xo1: ${msg}")
   os.proc.exit(1)
-}
-
-/// The C compiler flags of the runtime's Fs operations, standard input,
-/// and Proc.run, when the code calls them (internal/build IOFlags).
-fn io_flags(code: Str) -> List[Str] {
-  var out: List[Str] = []
-  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all",
-    "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
-    "xo_time_of", "xo_time_ns"] {
-    if code.contains(sym) {
-      out.push("-DXO_FS")
-      break
-    }
-  }
-  for sym in ["xo_stdin_", "xo_tw_set_input"] {
-    if code.contains(sym) {
-      out.push("-DXO_STDIN")
-      break
-    }
-  }
-  if code.contains("xo_proc_") {
-    out.push("-DXO_PROC")
-  }
-  out
 }

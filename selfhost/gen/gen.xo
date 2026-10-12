@@ -167,6 +167,9 @@ pub struct Gen {
   skipped: List[Str] = []
   /// the range analysis of the body being generated (ranges.xo)
   ra: RA = RA{}
+  /// the program calls task.with_budget: 0 unknown, 1 yes, -1 no
+  /// (budget.xo)
+  budgets: Int = 0
 }
 
 // ---------------------------------------------------------------------------

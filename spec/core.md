@@ -1947,6 +1947,10 @@ let page = scope s {
   arrives later goes to the next read).
 - `task.is_canceled() -> Bool` reports the current task's state without
   blocking.
+- Under a resource budget (`task.with_budget`, std.md 7, decision 0173)
+  every loop iteration and every call into user code is a cancellation
+  point too: a passed ceiling cancels the budgeted scope, and its tasks
+  unwind at their next one.
 - `defer` blocks run shielded (3.5).
 
 ### 7.3 Channels
@@ -2172,7 +2176,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
@@ -2510,6 +2514,7 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F005` | a shielded `defer` ran longer than 5 seconds (3.5) |
 | `XO-F006` | a loop started more iterations than its `bound N` (3.5) |
 | `XO-F007` | a real-time section allocated (6.5, native builds) |
+| `XO-F008` | shielded code under a resource budget ran past twice a ceiling (std.md 7, decision 0173) |
 
 ---
 
@@ -2725,7 +2730,7 @@ specified in `spec/std.md`. Modules:
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
 | `std/log` | Structured logging; performs the `log` effect (6.1) |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
-| `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13). Go backend only so far |
+| `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13) |
 | `std/testing` | Fake capability types, generators, captured logs |
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |

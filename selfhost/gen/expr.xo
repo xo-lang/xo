@@ -1326,6 +1326,10 @@ fn (var g: Gen) fn_lit(x: parser.FnLit) -> Str {
   let sv = g.cap_begin()
   g.f.ind += 1
   g.at(x.body.span)
+  if g.may_recurse(Node.E(Expr.Block(x.body))) {
+    // a step of a resource budget (decision 0173)
+    g.line("tk.Tick()")
+  }
   for pv in params {
     g.line("_ = ${g.var_name(pv)}")
   }

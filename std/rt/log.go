@@ -71,8 +71,12 @@ var logger = &logSink{level: levelInfo}
 
 var levelNames = map[int]string{levelDebug: "DEBUG", levelInfo: "INFO", levelWarn: "WARN", levelError: "ERROR"}
 
-// logRecord writes one record if its level is enabled.
-func logRecord(tk *Task, level int, msg string, fields []logField) {
+// logRecord writes one record if its level is enabled. from is the
+// dependency that wrote it ("<module path>@<version>", decision 0173), ""
+// for the main module's records: text records carry it in brackets after
+// the level, JSON records as the key "module" (which wins over a field of
+// that name, so a dependency cannot attribute its record to another).
+func logRecord(tk *Task, level int, msg string, fields []logField, from string) {
 	s := logger
 	if tk != nil && tk.w != nil && tk.w.log != nil {
 		s = tk.w.log
@@ -100,6 +104,9 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 				m[f.k] = f.v
 			}
 		}
+		if from != "" {
+			m["module"] = from
+		}
 		data, _ := json.Marshal(m)
 		line = string(data)
 	} else {
@@ -108,6 +115,11 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 		b.WriteString(" ")
 		b.WriteString(levelNames[level])
 		b.WriteString(" ")
+		if from != "" {
+			b.WriteString("[")
+			b.WriteString(from)
+			b.WriteString("] ")
+		}
 		b.WriteString(msg)
 		for _, f := range fields {
 			b.WriteString(" ")
@@ -123,7 +135,7 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 			Map_put(nil, &fm, f.k, f.v)
 		}
 		s.mu.Lock()
-		capture.recs = append(capture.recs, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm})
+		capture.recs = append(capture.recs, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm, F_module: from})
 		if out == nil {
 			capture.lines = append(capture.lines, line)
 		}
@@ -164,22 +176,46 @@ func logFields(tk *Task, m Map[string, IDebug]) []logField {
 
 // Log_debug is `log.debug(msg, fields)`.
 func Log_debug(tk *Task, msg string, fields Map[string, IDebug]) {
-	logRecord(tk, levelDebug, msg, logFields(tk, fields))
+	logRecord(tk, levelDebug, msg, logFields(tk, fields), "")
+}
+
+// Log_debugFrom is `log.debug(msg, fields)` called in the code of the
+// dependency from (decision 0173).
+func Log_debugFrom(tk *Task, from, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelDebug, msg, logFields(tk, fields), from)
 }
 
 // Log_info is `log.info(msg, fields)`.
 func Log_info(tk *Task, msg string, fields Map[string, IDebug]) {
-	logRecord(tk, levelInfo, msg, logFields(tk, fields))
+	logRecord(tk, levelInfo, msg, logFields(tk, fields), "")
+}
+
+// Log_infoFrom is `log.info(msg, fields)` called in the code of the
+// dependency from (decision 0173).
+func Log_infoFrom(tk *Task, from, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelInfo, msg, logFields(tk, fields), from)
 }
 
 // Log_warn is `log.warn(msg, fields)`.
 func Log_warn(tk *Task, msg string, fields Map[string, IDebug]) {
-	logRecord(tk, levelWarn, msg, logFields(tk, fields))
+	logRecord(tk, levelWarn, msg, logFields(tk, fields), "")
+}
+
+// Log_warnFrom is `log.warn(msg, fields)` called in the code of the
+// dependency from (decision 0173).
+func Log_warnFrom(tk *Task, from, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelWarn, msg, logFields(tk, fields), from)
 }
 
 // Log_error is `log.error(msg, fields)`.
 func Log_error(tk *Task, msg string, fields Map[string, IDebug]) {
-	logRecord(tk, levelError, msg, logFields(tk, fields))
+	logRecord(tk, levelError, msg, logFields(tk, fields), "")
+}
+
+// Log_errorFrom is `log.error(msg, fields)` called in the code of the
+// dependency from (decision 0173).
+func Log_errorFrom(tk *Task, from, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelError, msg, logFields(tk, fields), from)
 }
 
 // Log_configure is `log.configure(out, level, format)`: records go to the

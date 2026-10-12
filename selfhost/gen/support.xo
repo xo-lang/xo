@@ -316,7 +316,7 @@ fn (var g: Gen) iface_adapter(from: Int, to: Int) -> Str {
       ps.push("p${i} ${s}")
       args.push("p${i}")
     }
-    let (call, kind) = g.emit_call(m, msub, "a.V", args)
+    let (call, kind) = g.emit_call(m, msub, "a.V", args, false)
     var ires = ""
     var body = ""
     var mr = g.c.objs[m].result

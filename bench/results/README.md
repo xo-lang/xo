@@ -1,0 +1,1 @@
+- [budget-poll-2026-10-11.md](budget-poll-2026-10-11.md): cost of resource-budget polls outside a budget (fib +45%, sieve +18%); polls now only in programs that call `task.with_budget` (decision 0173).

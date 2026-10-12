@@ -356,9 +356,47 @@ var scAttacks = []scAttack{
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
 			xo(t, "check", app).want(0)
-			return scStageNone, "a CPU/time DoS performs no capability effect; the effect and capability layer does not bound compute (a resource budget would be a separate mechanism)"
+			return scStageNone, "a CPU/time DoS performs no capability effect, so no ceiling applies; with no budget the loop runs (task.with_budget bounds it, next row)"
 		},
 	},
+	{
+		name:  "denial of service: unbounded loop, with_budget",
+		class: "sabotage/DoS",
+		want:  scStageRuntime,
+		run: func(t *testing.T) (string, string) {
+			return scBudgeted(t, "steps: 100000", "steps")
+		},
+	},
+	{
+		name:  "denial of service: unbounded loop, with_budget cpu",
+		class: "sabotage/DoS",
+		want:  scStageRuntime,
+		run: func(t *testing.T) (string, string) {
+			return scBudgeted(t, "cpu: 50ms", "cpu")
+		},
+	},
+}
+
+// scBudgeted runs a consumer test that calls a dependency whose function
+// never returns under task.with_budget(budget) and expects the budget to
+// stop it with Exceeded(resource) (decision 0173).
+func scBudgeted(t *testing.T, budget, resource string) (string, string) {
+	t.Helper()
+	app := scWorld(t, map[string]string{
+		"evil.test/spin@v1.0.0/xo.mod": "module evil.test/spin\nedition preview\n",
+		"evil.test/spin@v1.0.0/s.xo":   "pub fn work() -> Int {\n  var i = 0\n  while true {\n    i += 1\n  }\n  i\n}\n",
+	}, map[string]string{
+		"xo.mod": "module example.com/app\nedition preview\n\nrequire evil.test/spin v1.0.0 uses none\n",
+		"app_test.xo": "use std/task\nuse evil.test/spin\n\ntest \"the budget stops the dependency\" {\n" +
+			"  let r = task.with_budget(os.clock, task.budget(" + budget + "), fn() -> Int { spin.work() })\n" +
+			"  expect(r.err()) == Some(task.Budgeted.Exceeded(resource: \"" + resource + "\"))\n}\n",
+	})
+	xo(t, "mod", "tidy", "--dir", app).want(0)
+	r := xo(t, "test", app)
+	if r.code == 0 && strings.Contains(r.out, "passed") {
+		return scStageRuntime, "task.with_budget(" + budget + ") cancels the budgeted scope and the loop unwinds at its next iteration: Err(Exceeded(\"" + resource + "\")), proven by a consumer test"
+	}
+	return scStageNone, "test did not pass: " + r.out + r.err
 }
 
 // scStageFromCheck runs `xo check --json` and reports scStageCheck when

@@ -141,6 +141,10 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     b.retv(b.lit(acc, "<fs>"))
     return
   }
+  if b.is_lists(t) {
+    b.retv(b.lit(acc, "<${lower_name(b.m.types[t].name[3..])}>"))
+    return
+  }
   let (ok_t, et) = b.result_parts(ct)
   if et >= 0 && b.c.is_never(et) {
     let a = b.lit(acc, "Ok(")

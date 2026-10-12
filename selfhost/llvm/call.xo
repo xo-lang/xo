@@ -1,0 +1,540 @@
+// Calls (fromssa.go call and rtCall): of functions of the module, of
+// the operations lowered inline (lists, strings, numbers, Stdio), and of
+// the task runtime (`rt.name` is the C function xo_name, decision 0068).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The object, data pointer, and length of a Str (strParts).
+fn (var g: Gen) str_parts(x: Str) -> (Str, Str, Str) {
+  let obj = g.def("extractvalue %xo.str ${x}, 0")
+  let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
+  let n = g.def("extractvalue %xo.str ${x}, 1")
+  (obj, data, n)
+}
+
+fn (var g: Gen) mk_str(v: Int, obj: Str, n: Str) {
+  let t = g.def("insertvalue %xo.str undef, ptr ${obj}, 0")
+  g.set(v, "insertvalue %xo.str ${t}, i64 ${n}, 1")
+}
+
+/// Lowers call v (call).
+fn (var g: Gen) call(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  let args = x.args
+  let vt = x.ty
+  let callee = g.by_name.get(name) ?? -1
+  if callee >= 0 {
+    g.user_call(v, callee)
+    return
+  }
+  if name == "rt.landing" {
+    // a check only a fault takes: never true here; the landing pads
+    // enter its first successor (decision 0085)
+    g.alias(v, "false")
+    return
+  }
+  if name.starts_with("rt.") {
+    g.rt_call(v)
+    return
+  }
+  match name {
+    "list.new" => {
+      let et = g.m.types[vt].elems[0]
+      if args.len() == 1 {
+        // with room for a number of elements
+        let a0 = g.op(args[0])
+        g.set(v, "call ptr @xo_rl_new_n(i64 ${a0}, i64 ${g.size(et)})")
+        return
+      }
+      g.set(v, "call ptr @xo_rl_new(i64 4, i64 ${g.size(et)})")
+    }
+    "list.len" => {
+      let a0 = g.op(args[0])
+      let n = g.list_len(a0)
+      g.alias(v, n)
+    }
+    "list.index" => {
+      let et = vt
+      if !x.pos.is_empty() {
+        let a0 = g.op(args[0])
+        let n = g.list_len(a0)
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, ${n}")
+        let b1 = g.op(args[1])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_index(i64 ${b1}, i64 ${n}, ptr ${l})")
+      }
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      let p = g.elem_ptr(et, a0, a1)
+      if g.kind(et) == ssa.Kind.Unit {
+        return
+      }
+      if g.is_agg(et) && g.root_borrowed(args[0]) {
+        g.addr[v] = p
+      }
+      let l = g.ll(et)
+      g.set(v, "load ${l}, ptr ${p}${TBAA_ELEM}")
+    }
+    "list.get" => {
+      let ot = vt
+      let et = g.m.types[g.vty(args[0])].elems[0]
+      let some = g.m.variant_index(ot, "Some")
+      let none = g.m.variant_index(ot, "None")
+      let a0 = g.op(args[0])
+      let n = g.list_len(a0)
+      let a1 = g.op(args[1])
+      let inr = g.def("icmp ult i64 ${a1}, ${n}")
+      let yes = g.new_label("get")
+      let no = g.new_label("none")
+      let end = g.new_label("gend")
+      g.emit("br i1 ${inr}, label %${yes}, label %${no}")
+      g.start(yes)
+      let b0 = g.op(args[0])
+      let b1 = g.op(args[1])
+      let p = g.elem_ptr(et, b0, b1)
+      var ev = "zeroinitializer"
+      if g.kind(et) != ssa.Kind.Unit {
+        let l = g.ll(et)
+        ev = g.def("load ${l}, ptr ${p}${TBAA_ELEM}")
+      }
+      let sv = g.variant(ot, some, [ev])
+      let yes_end = g.label
+      g.emit("br label %${end}")
+      g.start(no)
+      let nv = g.variant(ot, none, [])
+      let no_end = g.label
+      g.emit("br label %${end}")
+      g.start(end)
+      let ol = g.ll(ot)
+      g.set(v, "phi ${ol} [ ${sv}, %${yes_end} ], [ ${nv}, %${no_end} ]")
+    }
+    "list.set" => {
+      let et = g.vty(args[2])
+      let l = g.op(args[0])
+      if !x.pos.is_empty() {
+        let n = g.list_len(l)
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, ${n}")
+        let b1 = g.op(args[1])
+        let lc = g.loc(v)
+        g.fault_if(bad, "@xo_fault_index(i64 ${b1}, i64 ${n}, ptr ${lc})")
+      }
+      let a1 = g.op(args[1])
+      let p = g.elem_ptr(et, l, a1)
+      if g.heap(et) {
+        let el = g.ll(et)
+        let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+        let h = g.rc_fn("drop", et)
+        let el2 = g.ll(et)
+        g.emit("call void ${h}(${el2} ${old})")
+      }
+      if g.kind(et) != ssa.Kind.Unit {
+        let t2 = g.typed(args[2])
+        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}")
+      }
+      g.alias(v, l)
+    }
+    "list.push" => {
+      let et = g.vty(args[1])
+      let l = g.op(args[0])
+      let n = g.list_len(l)
+      let cp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 2")
+      let c = g.def("load i64, ptr ${cp}${TBAA_HDR}")
+      let full = g.def("icmp eq i64 ${n}, ${c}")
+      let from = g.label
+      let grow = g.new_label("grow")
+      let room = g.new_label("room")
+      g.emit("br i1 ${full}, label %${grow}, label %${room}, !prof !0")
+      g.start(grow)
+      let l2 = g.def("call ptr @xo_rl_grow(ptr ${l}, i64 ${g.size(et)})")
+      g.emit("br label %${room}")
+      g.start(room)
+      let lm = g.def("phi ptr [ ${l}, %${from} ], [ ${l2}, %${grow} ]")
+      if g.kind(et) != ssa.Kind.Unit {
+        let p = g.elem_ptr(et, lm, n)
+        let t1 = g.typed(args[1])
+        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}")
+      }
+      let n1 = g.def("add nuw nsw i64 ${n}, 1")
+      let lp = g.def("getelementptr %xo.rlist, ptr ${lm}, i32 0, i32 1")
+      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}")
+      g.alias(v, lm)
+    }
+    "list.pop" => {
+      let lt = g.vty(args[0])
+      let et = g.m.types[lt].elems[0]
+      let ot = g.m.types[vt].elems[1]
+      let some = g.m.variant_index(ot, "Some")
+      let none = g.m.variant_index(ot, "None")
+      let l = g.op(args[0])
+      let n = g.list_len(l)
+      let c = g.def("icmp sgt i64 ${n}, 0")
+      let yes = g.new_label("pop")
+      let no = g.new_label("empty")
+      let end = g.new_label("pend")
+      g.emit("br i1 ${c}, label %${yes}, label %${no}")
+      g.start(yes)
+      let n1 = g.def("sub i64 ${n}, 1")
+      let lp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
+      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}")
+      var ev = "zeroinitializer"
+      if g.kind(et) != ssa.Kind.Unit {
+        let p = g.elem_ptr(et, l, n1)
+        let el = g.ll(et)
+        ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+      }
+      let sv = g.variant(ot, some, [ev])
+      let yes_end = g.label
+      g.emit("br label %${end}")
+      g.start(no)
+      let nv = g.variant(ot, none, [])
+      let no_end = g.label
+      g.emit("br label %${end}")
+      g.start(end)
+      let ol = g.ll(ot)
+      let o = g.def("phi ${ol} [ ${sv}, %${yes_end} ], [ ${nv}, %${no_end} ]")
+      let rt = g.ll(vt)
+      let t = g.def("insertvalue ${rt} undef, ptr ${l}, 0")
+      let ol2 = g.ll(ot)
+      g.set(v, "insertvalue ${rt} ${t}, ${ol2} ${o}, 1")
+    }
+    "str.concat" => {
+      let a0 = g.op(args[0])
+      let (ao, _, an) = g.str_parts(a0)
+      let a1 = g.op(args[1])
+      let (bo, _, bn) = g.str_parts(a1)
+      let obj = g.def("call ptr @xo_rs_concat(ptr ${ao}, i64 ${an}, ptr ${bo}, i64 ${bn})")
+      let n = g.def("add i64 ${an}, ${bn}")
+      g.mk_str(v, obj, n)
+    }
+    "str.concat_int" | "str.concat_float" => {
+      let a0 = g.op(args[0])
+      let (ao, _, an) = g.str_parts(a0)
+      let slot = g.alloca("i64")
+      let a1 = g.op(args[1])
+      let obj = if name == "str.concat_int" {
+        g.def("call ptr @xo_rs_concat_int(ptr ${ao}, i64 ${an}, i64 ${a1}, ptr ${slot})")
+      } else {
+        g.def("call ptr @xo_rs_concat_float(ptr ${ao}, i64 ${an}, double ${a1}, ptr ${slot})")
+      }
+      let n = g.def("load i64, ptr ${slot}")
+      g.mk_str(v, obj, n)
+    }
+    "str.eq" => {
+      let a0 = g.op(args[0])
+      let (_, ad, an) = g.str_parts(a0)
+      let a1 = g.op(args[1])
+      let (_, bd, bn) = g.str_parts(a1)
+      let r = g.def("call i32 @xo_str_eq(ptr ${ad}, i64 ${an}, ptr ${bd}, i64 ${bn})")
+      g.set(v, "icmp ne i32 ${r}, 0")
+    }
+    "str.cmp" => {
+      let a0 = g.op(args[0])
+      let (_, ad, an) = g.str_parts(a0)
+      let a1 = g.op(args[1])
+      let (_, bd, bn) = g.str_parts(a1)
+      g.set(v, "call i64 @xo_str_cmp(ptr ${ad}, i64 ${an}, ptr ${bd}, i64 ${bn})")
+    }
+    "str.of_int" | "str.of_float" => {
+      let slot = g.alloca("i64")
+      let (fnn, at) = if name == "str.of_float" { ("@xo_rs_of_float", "double") } else { ("@xo_rs_of_int", "i64") }
+      let a0 = g.op(args[0])
+      let obj = g.def("call ptr ${fnn}(${at} ${a0}, ptr ${slot})")
+      let n = g.def("load i64, ptr ${slot}")
+      g.mk_str(v, obj, n)
+    }
+    "str.of_bool" => {
+      let a0 = g.op(args[0])
+      let t = g.str_const("true")
+      let f = g.str_const("false")
+      g.set(v, "select i1 ${a0}, %xo.str ${t}, %xo.str ${f}")
+    }
+    "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
+      let a1 = g.op(args[1])
+      let (_, d, n) = g.str_parts(a1)
+      let fnn = "@xo_${name.trim_prefix("Stdio.")}"
+      g.emit("call void ${fnn}(ptr ${d}, i64 ${n})")
+    }
+    "Int.min" | "Int.max" | "Float.min" | "Float.max" => {
+      let lt = g.ll(vt)
+      if g.kind(vt) == ssa.Kind.Int {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        let c = g.def("icmp slt i64 ${a0}, ${a1}")
+        let b0 = g.op(args[0])
+        let b1 = g.op(args[1])
+        if name.ends_with(".min") {
+          g.set(v, "select i1 ${c}, ${lt} ${b0}, ${lt} ${b1}")
+        } else {
+          g.set(v, "select i1 ${c}, ${lt} ${b1}, ${lt} ${b0}")
+        }
+        return
+      }
+      // the total order, the receiver on a tie (std.md 1, decisions/0053):
+      // min is `b < a ? b : a`, max `a < b ? b : a`
+      if name.ends_with(".min") {
+        let a1 = g.op(args[1])
+        let a0 = g.op(args[0])
+        let o = g.float_order(ssa.Op.Lt, a1, a0)
+        let c = g.def(o)
+        let b1 = g.op(args[1])
+        let b0 = g.op(args[0])
+        g.set(v, "select i1 ${c}, double ${b1}, double ${b0}")
+      } else {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        let o = g.float_order(ssa.Op.Lt, a0, a1)
+        let c = g.def(o)
+        let b1 = g.op(args[1])
+        let b0 = g.op(args[0])
+        g.set(v, "select i1 ${c}, double ${b1}, double ${b0}")
+      }
+    }
+    "Int.abs" => {
+      if !x.pos.is_empty() {
+        let a0 = g.op(args[0])
+        let bad = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
+        let b0 = g.op(args[0])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_abs(i64 ${b0}, ptr ${l})")
+      }
+      let a0 = g.op(args[0])
+      let neg = g.def("icmp slt i64 ${a0}, 0")
+      let b0 = g.op(args[0])
+      let m = g.def("sub nsw i64 0, ${b0}")
+      let c0 = g.op(args[0])
+      g.set(v, "select i1 ${neg}, i64 ${m}, i64 ${c0}")
+    }
+    "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" => {
+      var intr = name.trim_prefix("Float.")
+      if intr == "abs" {
+        intr = "fabs"
+      }
+      let a0 = g.op(args[0])
+      g.set(v, "call double @llvm.${intr}.f64(double ${a0})")
+    }
+    "Float.is_nan" => {
+      let a0 = g.op(args[0])
+      let b0 = g.op(args[0])
+      g.set(v, "fcmp uno double ${a0}, ${b0}")
+    }
+    "bytes.index" => {
+      // b[i] on Bytes (decision 0081)
+      let a0 = g.op(args[0])
+      let (_, d, n) = g.str_parts(a0)
+      if !x.pos.is_empty() {
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, ${n}")
+        let b1 = g.op(args[1])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_bytes_index(i64 ${b1}, i64 ${n}, ptr ${l})")
+      }
+      let a1 = g.op(args[1])
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${a1}")
+      let c = g.def("load i8, ptr ${p}")
+      g.set(v, "zext i8 ${c} to i64")
+    }
+    "Str.len" => {
+      let a0 = g.op(args[0])
+      g.set(v, "extractvalue %xo.str ${a0}, 1")
+    }
+    "Str.is_empty" => {
+      let a0 = g.op(args[0])
+      let n = g.def("extractvalue %xo.str ${a0}, 1")
+      g.set(v, "icmp eq i64 ${n}, 0")
+    }
+    _ => g.fail("the SSA lowering does not support the runtime call `${name}`")
+  }
+}
+
+/// A call of function callee of the module (call's first part): struct
+/// and enum arguments of 256 bytes or more by reference (decision 0145),
+/// passed in place when they sit in memory nothing writes during the
+/// call (0147), and the results of `var` parameters by reference read
+/// back.
+fn (var g: Gen) user_call(v: Int, callee: Int) {
+  let x = g.f.values[v]
+  let br = g.by_ref_of(callee)
+  if !br.is_empty() && g.stage < 2 {
+    g.unsupported("a call passing a parameter by reference (decision 0145)")
+  }
+  var args: List[Str] = []
+  var slots: List[Str] = []
+  var used: Map[Str, Int] = {}
+  // every operand is read before anything is stored: a value held in a
+  // memory is loaded before another argument overwrites it
+  var st_ts: List[Int] = []
+  var st_xs: List[Str] = []
+  var st_ps: List[Str] = []
+  for (i, a) in x.args.indexed() {
+    slots.push("")
+    let p = g.addr[a]
+    if !p.is_empty() && !br.is_empty() && br[i] && !g.is_var_param(callee, i) {
+      // in memory nothing writes during the call: passed as it is
+      args.push("ptr ${p}")
+      continue
+    }
+    if !br.is_empty() && br[i] {
+      let lt = g.ll(g.vty(a))
+      let sl = g.slot(lt, used)
+      slots[i] = sl
+      args.push("ptr ${sl}")
+      let m = g.held_at(v, a)
+      if m >= 0 && g.held.mems[m].ptr == sl {
+        continue // already in its slot (decision 0148)
+      }
+      st_ts.push(g.vty(a))
+      st_xs.push(g.op(a))
+      st_ps.push(sl)
+      continue
+    }
+    args.push(g.typed(a))
+  }
+  for k in 0..st_ts.len() {
+    g.store_ref(st_ts[k], st_xs[k], st_ps[k])
+  }
+  let rl = g.res_ll(callee)
+  let c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
+  let kept = g.kept_results(callee)
+  let results = g.m.funcs[callee].results
+  if kept.len() == results.len() {
+    if g.kind(x.ty) == ssa.Kind.Unit {
+      g.raise("", c)
+      return
+    }
+    g.raise(vname(v), c)
+    return
+  }
+  // rebuild the results the SSA call has: the `var` parameters passed by
+  // reference are read back from their memory
+  let r = g.tmp()
+  g.raise(r, c)
+  let full = g.full_res_ll(callee)
+  var cur = "undef"
+  var ki = 0
+  let vps = g.m.funcs[callee].var_params
+  for (k, rt) in results.indexed() {
+    var y = ""
+    if k > 0 && br[vps[k - 1]] {
+      if g.lazy_result(v, k) {
+        y = "undef" // read from memory where it is used (decision 0148)
+      } else {
+        y = g.load_ref(rt, slots[vps[k - 1]])
+      }
+    } else {
+      if g.is_void(rt) {
+        y = "zeroinitializer"
+      } else if kept.len() == 1 {
+        y = r
+      } else {
+        let rl2 = g.res_ll(callee)
+        y = g.def("extractvalue ${rl2} ${r}, ${ki}")
+      }
+      ki += 1
+    }
+    let tl = g.ll(rt)
+    cur = g.def("insertvalue ${full} ${cur}, ${tl} ${y}, ${k}")
+  }
+  g.alias(v, cur)
+}
+
+/// Whether the runtime call name (`rt.*`) can raise a fault
+/// (ssa.RuntimeRaises).
+fn runtime_raises(name: Str) -> Bool {
+  ssa.faulting_rt(name) || name == "rt.fault_continue"
+}
+
+/// Lowers a call of the task runtime (rtCall): an Int is an i64, a Bool
+/// an i64 0 or 1, a List or handle a pointer, a Str its bytes and length;
+/// the result is void or one of those.
+fn (var g: Gen) rt_call(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  let sym = "@xo_${name.trim_prefix("rt.")}"
+  // `rt.rs_*` functions take their Str operands as the string object
+  // (the first is consumed, decision 0074); the others its bytes
+  let obj = name.starts_with("rt.rs_")
+  var params: List[Str] = []
+  var args: List[Str] = []
+  for a in x.args {
+    let at = g.vty(a)
+    match g.kind(at) {
+      Int => {
+        params.push("i64")
+        args.push("i64 ${g.op(a)}")
+      }
+      Float => {
+        params.push("double")
+        args.push("double ${g.op(a)}")
+      }
+      Bool => {
+        params.push("i64")
+        let o = g.op(a)
+        let z = g.def("zext i1 ${o} to i64")
+        args.push("i64 ${z}")
+      }
+      List | Handle => {
+        params.push("ptr")
+        args.push("ptr ${g.op(a)}")
+      }
+      Str => {
+        let o0 = g.op(a)
+        let (o, d0, n) = g.str_parts(o0)
+        let d = if obj { o } else { d0 }
+        params.push("ptr")
+        params.push("i64")
+        args.push("ptr ${d}")
+        args.push("i64 ${n}")
+      }
+      _ => {
+        g.fail("the runtime call `${name}` takes a `${g.m.types[at].name}`")
+        return
+      }
+    }
+  }
+  var ret = "void"
+  var slot = ""
+  match g.kind(x.ty) {
+    Unit => {}
+    Int | Bool => ret = "i64"
+    Float => ret = "double"
+    List | Handle => ret = "ptr"
+    Str => {
+      // the string object; its length through a pointer
+      ret = "ptr"
+      slot = g.alloca("i64")
+      params.push("ptr")
+      args.push("ptr ${slot}")
+    }
+    _ => {
+      g.fail("the runtime call `${name}` returns a `${g.m.types[x.ty].name}`")
+      return
+    }
+  }
+  if !g.emitted.contains(sym) && !g.decls.contains(" ${sym}(") {
+    g.emitted[sym] = true
+    var attr = "#2"
+    if runtime_raises(name) {
+      attr = "#5" // it raises faults: not nounwind (decision 0085)
+    }
+    g.rt_decls.push("declare ${ret} ${sym}(${params.join(", ")}) ${attr}\n")
+  }
+  let c = "${ret} ${sym}(${args.join(", ")})"
+  match g.kind(x.ty) {
+    Unit => g.raise("", c)
+    Bool => {
+      let r = g.tmp()
+      g.raise(r, c)
+      g.set(v, "icmp ne i64 ${r}, 0")
+    }
+    Str => {
+      let o = g.tmp()
+      g.raise(o, c)
+      let n = g.def("load i64, ptr ${slot}")
+      g.mk_str(v, o, n)
+    }
+    _ => g.raise(vname(v), c)
+  }
+}

@@ -1,8 +1,0 @@
-// File handles, links, globs, and locks (decision 0163) are planned for
-// the native backends: a build reports them (XO1201) instead of
-// compiling.
-
-fn main(os: Os) ! {
-  let f = os.fs.open("main.xo")?
-  os.stdio.println("${f.read_line()? ?? ""}")
-}

@@ -305,6 +305,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runGenDump(args[1:], stdout, stderr)
 	case "rtpack": // hidden: build a prebuilt runtime for a release (decision 0157)
 		return runRTPack(args[1:], stdout, stderr)
+	case "llvmdump": // hidden: LLVM IR dump, compared with selfhost/llvm
+		return runLLVMDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

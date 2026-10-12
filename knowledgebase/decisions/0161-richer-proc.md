@@ -1,7 +1,7 @@
 # 0161: Richer Proc: commands, children, pipelines
 
 Status: Accepted, implemented on the Go backend and its test fakes
-(2026-10-11). Native builds report the new methods as XO1201 (planned).
+(2026-10-11), and natively by decision 0172 (2026-10-11).
 Spec: std.md 3.7.
 
 ## Context

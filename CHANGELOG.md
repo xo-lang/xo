@@ -13,6 +13,53 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   checks. The Xo driver `selfhost/xo` gains `--backend=go`: it compiles
   selfhost/check to the same Go as `xo build` and compiles itself to a
   fixed point. The released `xo` is unchanged.
+- The LLVM emitter in Xo (decision 0166, stages 1 to 3):
+  `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
+  internal/llvm prints, compared function by function and module by
+  module through the new hidden `xo llvmdump` (TestSelfhostLLVM,
+  TestSelfhostLLVMMutations); every module both lower is byte
+  identical, and the self hosted pipeline lowers selfhost/ssa to IR
+  byte identical to internal/llvm's, from which clang builds a working
+  binary (TestSelfhostLLVMEndToEnd).
+- Spec audit, fifth pass (bench/results/spec-audit-2026-10-11.md): core
+  10.1's `xo build` row lists `--stamp`; core 14 no longer calls
+  `std/time` Go backend only. New tests: `xo replay` keeps `--stamp`
+  values (cmd/xo `TestRecordReplayStamp`); test_cli and test_term in
+  `TestNoGCTests`; formats_toml in `TestGenGoldensNative`.
+- Native builds (arm64, LLVM, `--no-gc`) run commands like the Go
+  backend (decision 0172): `Proc.cmd` with `dir`, `env`, `set_env`,
+  `stdin`, `inherit`, `merge_stderr`; `output`, `run`, `spawn` and every
+  `Child` method; `Proc.pipeline` with pipefail; and `Proc.only` and
+  `Env.only` are enforced natively (`Env.vars` and `Env.home` too).
+  File handles (`open`, `create`, `open_append`), `append`, `copy`,
+  `mode`/`set_mode`, `symlink`/`read_link`, `glob` with `**`, and
+  `lock`/`try_lock` build natively as well, and so does `std/regexp`
+  (Go's RE2 parser and Pike VM ported to Xo: the same matches, groups,
+  replacements, and errors; Unicode classes other than `\pL`, `\p{Nd}`,
+  `\p{Any}`, `\p{ASCII}` are an error natively for now), and
+  `std/archive` (Go's compress/flate, gzip, tar, and zip ported to Xo:
+  the same bytes and errors; zip64 is an error natively).
+- Log attribution and resource budgets (decision 0173). A log record
+  written by a dependency's code names it: `[<module>@<version>]` after
+  the level in text, `"module"` in JSON (a field of that name cannot
+  forge it), `log.Record.module` in tests; `xo audit` lists each
+  dependency's log call sites. `task.with_budget(clock, b, f)` with
+  `task.budget(cpu:, alloc:, steps:)` runs f under ceilings on running
+  time, allocation, and steps and returns `Err(Exceeded(resource))` when
+  one is passed; in a program that calls it, generated Go polls at every
+  loop iteration and at the entry of functions that call user code
+  (Go backend; native XO1201 planned; programs without a budget are
+  unchanged). New fault `XO-F008`. The supply-chain replication blocks 12
+  of 17 scenarios (was 10 of 15).
+
+- xo1 (`selfhost/xo`, decision 0174) does what internal/build adds for
+  native builds, with the same cache keys (shared caches): the TLS
+  library of std/http, the zone data of std/time, prebuilt runtime packs
+  and the runtime object cache, `use c` inputs, `--target=linux/arm64`
+  (assembly), and `xo1 test`. The self compiled compiler passes all 147
+  arm64 goldens; `scripts/selfhost-samebin.py` finds its binaries byte
+  identical to `xo build --backend=arm64`'s (147 of 147).
+  `scripts/selfhost-goldens.py` passes args.txt, env.txt, and stdin.txt.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

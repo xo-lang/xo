@@ -68,6 +68,8 @@ type builder struct {
 	// natives are the implementation modules of the native backends by
 	// the std path they implement (build_native.go)
 	natives map[string]*check.Module
+	// fileMods maps a source file to its module (logFrom)
+	fileMods map[string]*check.Module
 
 	// consts are the ids of the constants of heap types read so far
 	// (build_int.go constValue)
@@ -367,7 +369,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			case "Fs":
 				// its root and mode (decision 0102, build_io.go fsCall)
 				return b.fsType()
-			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Rand":
+			case "Proc", "Env":
+				// its attenuation lists (decision 0172, build_io.go listsType)
+				return b.listsType(obj.Name)
+			case "Os", "Stdio", "Clock", "Net", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
@@ -397,6 +402,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				// (build_testmode.go)
 				if c == "Fs" {
 					return b.fsType()
+				}
+				if c == "Proc" || c == "Env" {
+					return b.listsType(c)
 				}
 				x, _ := m.Named(c, KCap)
 				return x

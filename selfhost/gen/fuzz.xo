@@ -245,7 +245,7 @@ fn (var g: Gen) gen_fuzz(fo: Int) {
   g.f = g.new_fn(-1)
   g.f.file = o.decl_file
   g.f.frames = [Frame{name: g.oname(fo), res_t: g.c.mk_tuple([])}]
-  let (call, kind) = g.emit_call(fo, {}, recv, args)
+  let (call, kind) = g.emit_call(fo, {}, recv, args, false)
   g.f = saved_f2
   var plain: List[Str] = []
   for i in 0..ps.len() {

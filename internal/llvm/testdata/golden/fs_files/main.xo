@@ -1,0 +1,156 @@
+// File handles, append, copy, modes, links, globs, and locks natively
+// (decisions 0163 and 0172) against the Go backend: reads by line and by
+// size across the buffer, the state errors of a handle, create and
+// append, copy with its permission bits, symlink and read_link (a sub
+// capability refuses escaping targets), glob with classes and `**`, bad
+// patterns, and advisory locks.
+
+fn show(r: Result[(), FsErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-files-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d/e")?
+  let root = base.sub(name)
+  // a file read by lines and by size
+  root.write("lines.txt", b"one\r\ntwo\n\nlast without newline")?
+  let f = root.open("lines.txt")?
+  while let Some(line) = f.read_line()? {
+    out.println("line ${line.quote()}")
+  }
+  out.println("after ${f.read(10)?.is_none()}")
+  f.close()?
+  f.close()?
+  match f.read_line() {
+    Ok(_) => out.println("read after close ok?")
+    Err(e) => out.println("closed ${e}")
+  }
+  var big = BytesBuilder.new()
+  var i = 0
+  while i < 20000 {
+    big.write_str("row ${i}\n")
+    i += 1
+  }
+  let data = big.freeze()
+  root.write("big.txt", data)?
+  let g = root.open("big.txt")?
+  var total = 0
+  var reads = 0
+  let first = g.read(5)? ?? b""
+  out.println("first ${(first.to_str() ?? "").quote()}")
+  total += first.len()
+  while let Some(b) = g.read(100000)? {
+    total += b.len()
+    reads += 1
+  }
+  out.println("big ${total} of ${data.len()} in ${reads} reads")
+  out.println("zero ${g.read(0)? == Some(b"")}")
+  g.close()?
+  let h = root.open("big.txt")?
+  out.println("mixed ${h.read_line()? ?? "-"} ${((h.read(7)? ?? b"").to_str() ?? "").quote()} ${h.read_line()? ?? "-"}")
+  h.close()?
+  // handles for writing
+  let w = root.create("w.txt")?
+  w.write(b"alpha\n")?
+  w.write(b"beta\n")?
+  match w.read(3) {
+    Ok(_) => out.println("read of a writer ok?")
+    Err(e) => out.println("writer read ${e}")
+  }
+  w.close()?
+  match w.write(b"x") {
+    Ok(_) => out.println("write after close ok?")
+    Err(e) => out.println("after close ${e}")
+  }
+  let a = root.open_append("w.txt")?
+  a.write(b"gamma\n")?
+  a.close()?
+  root.append("w.txt", b"delta\n")?
+  root.append("new.txt", b"made\n")?
+  out.println("appended ${root.read_text("w.txt")?.quote()} ${root.read_text("new.txt")?.quote()}")
+  let r = root.open("w.txt")?
+  match r.write(b"x") {
+    Ok(_) => out.println("write of a reader ok?")
+    Err(e) => out.println("reader write ${e}")
+  }
+  r.close()?
+  match root.open("d") {
+    Ok(_) => out.println("open dir ok?")
+    Err(e) => out.println("open dir ${e}")
+  }
+  match root.open("missing.txt") {
+    Ok(_) => out.println("open missing ok?")
+    Err(e) => out.println("open missing ${e}")
+  }
+  match root.create("nope/x.txt") {
+    Ok(_) => out.println("create missing dir ok?")
+    Err(e) => out.println("create missing dir ${e}")
+  }
+  match root.read_only().create("ro.txt") {
+    Ok(_) => out.println("ro create ok?")
+    Err(e) => out.println("ro create ${e}")
+  }
+  // modes and copies
+  root.set_mode("w.txt", 0o750)?
+  out.println("mode ${root.mode("w.txt")?}")
+  root.copy("w.txt", "d/copy.txt")?
+  out.println("copy ${root.read_text("d/copy.txt")?.len()} mode ${root.mode("d/copy.txt")?}")
+  root.set_mode("lines.txt", 0o600)?
+  root.copy("lines.txt", "d/copy.txt")?
+  out.println("copy over ${root.mode("d/copy.txt")?} ${root.read_text("d/copy.txt")?.len()}")
+  out.println("copy dir ${show(root.copy("d", "x.txt"))} missing ${show(root.copy("zz", "x.txt"))}")
+  match root.mode("zz") {
+    Ok(m) => out.println("mode missing ${m}?")
+    Err(e) => out.println("mode missing ${e}")
+  }
+  // links
+  root.symlink("lines.txt", "link.txt")?
+  root.symlink("../w.txt", "d/up.txt")?
+  out.println("links ${root.read_link("link.txt")? ?? "-"} ${root.read_link("d/up.txt")? ?? "-"} ${root.read_link("w.txt")?.is_none()}")
+  out.println("through ${root.read_text("d/up.txt")?.len()}")
+  out.println("escape ${show(root.symlink("../../x", "d/bad"))} ${show(root.symlink("/etc/hosts", "abs"))} ${show(root.sub("d").symlink("../w.txt", "up2"))}")
+  out.println("exists ${show(root.symlink("w.txt", "link.txt"))}")
+  match root.read_link("zz") {
+    Ok(_) => out.println("read_link missing ok?")
+    Err(e) => out.println("read_link missing ${e}")
+  }
+  // globs
+  root.write("d/e/deep.txt", b"x")?
+  root.write("d/e/.hidden.txt", b"x")?
+  root.write("d/a1.log", b"x")?
+  root.write("d/b2.log", b"x")?
+  root.write(".top.txt", b"x")?
+  for pat in ["*.txt", "d/*.log", "d/[ab]?.log", "d/[^a]*", "**/*.txt", "d/**", "**/e/*", ".*", "d/e/.*", "nope/*", "w.txt", "zz.txt", "d/*/deep.txt", "*/"] {
+    out.println("glob ${pat} ${root.glob(pat)?.join(" ")}")
+  }
+  for pat in ["[", "d/[a-", "a\\"] {
+    match root.glob(pat) {
+      Ok(l) => out.println("glob ${pat} ok? ${l.len()}")
+      Err(e) => out.println("glob ${pat} ${e}")
+    }
+  }
+  // locks
+  let l = root.lock("state.lock")?
+  out.println("try while held ${root.try_lock("state.lock")?.is_none()}")
+  l.unlock()
+  l.unlock()
+  match root.try_lock("state.lock")? {
+    Some(l2) => {
+      out.println("try after unlock got it")
+      l2.unlock()
+    }
+    None => out.println("try after unlock none?")
+  }
+  out.println("lock exists ${root.exists("state.lock")?}")
+  match root.read_only().lock("x.lock") {
+    Ok(_) => out.println("ro lock ok?")
+    Err(e) => out.println("ro lock ${e}")
+  }
+  base.remove_all(name)?
+}

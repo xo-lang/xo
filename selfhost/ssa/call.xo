@@ -114,6 +114,12 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.mem_fs_call(x, ci) {
       return v
     }
+    if b.native_waits(fo) {
+      b.need_conc = true
+      if !b.conc {
+        return b.undef(b.nat_of(x))
+      }
+    }
     let impl = b.impl_of(fo)
     if impl >= 0 {
       return b.call_as(x, ci, impl)
@@ -1169,6 +1175,20 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let c = b.value_as(es[1] ?? fault("arg"), b.m.types[t].fields[1].ty)
     return b.add(Op.Struct, t, Aux.None, [a, c])
   }
+  if name is "proc_lists" | "env_lists" {
+    // the attenuation lists of a Proc or Env (decision 0172)
+    let v = b.expr(es[0] ?? fault("arg"))
+    if !b.is_lists(b.vty(v)) {
+      b.unsupported("`${name}` of a value that is not a Proc or Env")
+      return b.undef(nt)
+    }
+    return b.add(Op.Field, b.m.types[b.vty(v)].fields[0].ty, Aux.I(n: 0), [v])
+  }
+  if name is "proc_new" | "env_new" {
+    let t = b.lists_type(if name == "env_new" { "Env" } else { "Proc" })
+    let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
+    return b.add(Op.Struct, t, Aux.None, [a])
+  }
   if name is "dyn_text" | "dyn_raw" {
     let v = b.expr(es[0] ?? fault("arg"))
     if !b.is_dyn(b.vty(v)) {
@@ -1539,6 +1559,13 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let key = "${rname}.${fname}"
   if rname == "Fs" {
     // fsCall: the function fs_<name> of the native prelude
+    if fname == "lock" {
+      // waits, polling on the event loop's timers (decision 0172)
+      b.need_conc = true
+      if !b.conc {
+        return Some(b.undef(b.nat_of(x)))
+      }
+    }
     let pm = b.native_mod("std/prelude")
     if pm >= 0 {
       let impl = b.member(pm, "fs_${b.obj_name(fo)}")
@@ -1578,7 +1605,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let it = b.int_t()
   let st = b.str_t()
   let es = arg_exprs(b.c.objs[fo].params, args)
-  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" {
+  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" | "Proc.pipeline" {
     // operations that wait: the program needs unwinding checks
     b.need_conc = true
     if !b.conc {
@@ -1674,10 +1701,6 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       b.rt("set_grace", -1, [b.io_arg(fo, es, 0, it)])
       return Some(b.unit())
     }
-    "Env.get" => {
-      let l = b.rt("env_get", b.m.list(st), [b.io_arg(fo, es, 0, st)])
-      return Some(b.pop_one(l, nt))
-    }
     "Str.bytes" => return Some(recv)
     "Bytes.len" => return Some(b.call("Str.len", it, "", [recv]))
     "Bytes.is_empty" => return Some(b.add(Op.Eq, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [recv]), b.cint(0)]))
@@ -1751,6 +1774,24 @@ fn cap_impl(key: Str) -> Str {
     "Rand.shuffle" => "rand_shuffle"
     "Env.config_dir" => "env_config_dir"
     "Env.cache_dir" => "env_cache_dir"
+    "Env.get" => "env_get"
+    "Env.vars" => "env_vars"
+    "Env.home" => "env_home"
+    "Env.only" => "env_only"
+    "Proc.only" => "proc_only"
+    "Proc.cmd" => "proc_cmd"
+    "Proc.pipeline" => "proc_pipeline"
     _ => ""
   }
+}
+
+/// Whether fo is a prelude method the native prelude implements that
+/// waits on the event loop; internal/ssa's nativeWaits.
+fn (var b: Builder) native_waits(fo: Int) -> Bool {
+  let r = b.c.objs[fo].recv
+  let m = b.obj_mod(fo)
+  if r < 0 || b.c.objs[fo].is_static || m < 0 || !b.is_prelude_mod(m) {
+    return false
+  }
+  "${b.obj_name(r)}.${b.obj_name(fo)}" is "Cmd.output" | "Cmd.run" | "Cmd.spawn" | "Child.write" | "Child.read" | "Child.read_err" | "Child.read_line" | "Child.wait"
 }

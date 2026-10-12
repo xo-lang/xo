@@ -1,7 +1,0 @@
-// Proc.cmd and its Cmd and Child (decision 0161) are planned for the
-// native backends: a build reports them (XO1201) instead of compiling.
-
-fn main(os: Os) ! {
-  let out = os.proc.cmd("echo", ["hi"]).dir("/").output()?
-  os.stdio.println("${out.code}")
-}

@@ -116,6 +116,9 @@ ported, as the arm64 emitter's Go mode was not (decision 0158).
 - A change to internal/gen must be mirrored in selfhost/gen in the same
   change once TestSelfhostGen runs in the merge tier (`go test -short`
   compares every 25th run).
+- Decision 0173's changes to internal/gen (resource budget polls,
+  budget.go; log attribution, logfrom.go) landed on main during the port
+  and are mirrored in selfhost/gen budget.xo (2026-10-12).
 - selfhost/check exports `implements`, `find_method`, and `const_str`
   (Info.Implements, FindMethod, ConstString); its records were enough
   otherwise.

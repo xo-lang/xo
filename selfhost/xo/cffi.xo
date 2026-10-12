@@ -1,0 +1,89 @@
+// The C inputs of `use c` (internal/build cffi.go, decisions 0116 and
+// 0152): the adapter of each bound header, its `link` files, and its
+// libraries. The checker loads a binding from the cache cbind writes
+// (`<module root>/.xo/cbind`, or $XO_CBIND_DIR): the declaration file
+// `<prefix>.xo` and, beside it, the adapter `<prefix>.c`, the same bytes
+// as the binding's Adapter. The link files and libraries are read back
+// from the binding's key (`c:<header>|<link files>|<libraries>|<effects>`
+// for a header next to the module).
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// What `use c` adds to a link: C sources, objects, and archives, and -l
+/// flags; err is set when a binding cannot be linked.
+struct CInputs {
+  srcs: List[Str] = []
+  flags: List[Str] = []
+  err: Str = ""
+}
+
+/// cInputs: each binding's adapter written into dir/cffi (in the order
+/// of the prefixes), its link files after it, and the libraries sorted.
+fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
+  var mods: List[check.Module] = []
+  for m in c.mods {
+    if !m.c_prefix.is_empty() {
+      mods.push(m)
+    }
+  }
+  if mods.is_empty() {
+    return CInputs{}
+  }
+  let cdir = "${dir}/cffi"
+  match os.fs.create_dir_all(cdir) {
+    Ok(_) => {}
+    Err(e) => return CInputs{err: "${e}"}
+  }
+  var out = CInputs{}
+  var seen: Map[Str, Bool] = {}
+  var libs: List[Str] = []
+  for m in mods.sort_by(fn(m) { m.c_prefix }) {
+    let adapter = "${m.c_decl.trim_suffix(".xo")}.c"
+    let data = match os.fs.read(adapter) {
+      Ok(d) => d
+      Err(e) => return CInputs{err: "the adapter of `use c \"${m.c_header}\"`: ${e} (a Go build or `xo bind --c` writes it)"}
+    }
+    let p = "${cdir}/xo_${m.c_prefix.trim_suffix("_")}.c"
+    let old = os.fs.read(p).ok() ?? b""
+    if old != data {
+      match os.fs.write(p, data) {
+        Ok(_) => {}
+        Err(e) => return CInputs{err: "${e}"}
+      }
+    }
+    out.srcs.push(p)
+    let parts = m.path.split("|")
+    var files: List[Str] = []
+    var mlibs: List[Str] = []
+    if parts.len() == 4 {
+      files = if parts[1].is_empty() { [] } else { parts[1].split(",") }
+      mlibs = if parts[2].is_empty() { [] } else { parts[2].split(",") }
+    } else if parts.len() == 3 && !parts[1].is_empty() {
+      // a header found on the include path: the links as written
+      for l in parts[1].split(",") {
+        if !l.contains("/") && !base_name(l).contains(".") {
+          mlibs.push(l)
+        } else if l.starts_with("/") {
+          files.push(l)
+        } else {
+          return CInputs{err: "`use c \"${m.c_header}\"` links ${l} relative to its module, which xo1 does not resolve for a header on the include path"}
+        }
+      }
+    }
+    for f in files {
+      if !seen.contains(f) {
+        seen[f] = true
+        out.srcs.push(f)
+      }
+    }
+    for l in mlibs {
+      if !libs.contains(l) {
+        libs.push(l)
+      }
+    }
+  }
+  for l in libs.sort() {
+    out.flags.push("-l${l}")
+  }
+  out
+}

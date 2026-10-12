@@ -71,6 +71,15 @@ selfhost/xo only: the test cut the dump at `== file ` anywhere, and the
 Xo generator's own dump code (compiled into selfhost/xo) holds that
 text in a string; the test now cuts at line starts.
 
+After merging main (2026-10-12; decision 0173's budget polls and log
+attribution mirrored in selfhost/gen budget.xo): 910 runs, 467
+compared and 467 byte identical, all 27,864 declarations identical, none
+skipped (363 rejected by both, 2 with holes, 20 not checked by the Xo
+checker, 58 the same error from both); mutations 43 of 43 compared runs
+byte identical (894 declarations). `xo1 build --backend=arm64` and
+`--backend=go` of the merged driver both build
+internal/gen/testdata/golden/closures, with the same output.
+
 The arm64 build of the Xo generator (1 min 46 s to build) gives the
 same text: the 118 goldens and the five largest runs byte identical
 with `--prep`.

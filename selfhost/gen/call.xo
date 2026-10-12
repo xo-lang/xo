@@ -406,7 +406,7 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
       return g.emit_spec_call(callee, callee_sub, name, recv_code, arg_codes)
     }
   }
-  let (code0, kind0) = g.emit_call(callee, callee_sub, recv_code, arg_codes)
+  let (code0, kind0) = g.emit_call(callee, callee_sub, recv_code, arg_codes, true)
   var code = code0
   var kind = kind0
   if g.ostd(fo) {
@@ -515,8 +515,9 @@ fn (var g: Gen) targs_code(ps0: List[Int], sub: Map[Int, Int]) -> Str {
 }
 
 /// The Go call of a declared function or method with the receiver and
-/// arguments already generated (emitCall).
-fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str]) -> (Str, Int) {
+/// arguments already generated (emitCall); at tells that the call is a
+/// call expression of the current file (for logFrom).
+fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str], at: Bool) -> (Str, Int) {
   let (spec, sok) = g.spec_for(fo, sub)
   if sok {
     return g.emit_spec_call(fo, sub, spec, recv0, args)
@@ -528,6 +529,13 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     call = "${recv}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   } else if g.ostd(fo) {
     call = g.std_call(fo, sub, recv, args)
+    let from = if at { g.log_from(fo) } else { "" }
+    if !from.is_empty() {
+      // a log record written by a dependency's code carries the
+      // dependency (decision 0173)
+      let r = g.rt()
+      call = "${r}Log_${g.oname(fo)}From(tk, ${from.quote()}${prefix_comma(args)})"
+    }
   } else if o.recv < 0 {
     let pr = g.pkg_ref(o.module)
     call = "${pr}F_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
@@ -610,7 +618,7 @@ fn (var g: Gen) func_value(fo: Int, t: Int, recv: Str?) -> Str {
   let rv = recv ?? ""
   let saved = g.f.out
   g.f.out = []
-  let (call, kind) = g.emit_call(fo, sub, rv, args)
+  let (call, kind) = g.emit_call(fo, sub, rv, args, false)
   g.f.out = saved
   let fe = g.ferr(t)
   let res = g.result_of(fx.result, fe)
