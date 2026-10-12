@@ -1,7 +1,0 @@
-// std/regexp and std/archive (decision 0164) are planned for the native
-// backends: a build reports them (XO1201) instead of compiling.
-use std/regexp
-
-fn main(os: Os) {
-  os.stdio.println("${regexp.must("a+").is_match("aa")}")
-}

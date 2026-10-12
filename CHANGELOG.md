@@ -19,6 +19,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `std/time` Go backend only. New tests: `xo replay` keeps `--stamp`
   values (cmd/xo `TestRecordReplayStamp`); test_cli and test_term in
   `TestNoGCTests`; formats_toml in `TestGenGoldensNative`.
+- Native builds (arm64, LLVM, `--no-gc`) run commands like the Go
+  backend (decision 0172): `Proc.cmd` with `dir`, `env`, `set_env`,
+  `stdin`, `inherit`, `merge_stderr`; `output`, `run`, `spawn` and every
+  `Child` method; `Proc.pipeline` with pipefail; and `Proc.only` and
+  `Env.only` are enforced natively (`Env.vars` and `Env.home` too).
+  File handles (`open`, `create`, `open_append`), `append`, `copy`,
+  `mode`/`set_mode`, `symlink`/`read_link`, `glob` with `**`, and
+  `lock`/`try_lock` build natively as well, and so does `std/regexp`
+  (Go's RE2 parser and Pike VM ported to Xo: the same matches, groups,
+  replacements, and errors; Unicode classes other than `\pL`, `\p{Nd}`,
+  `\p{Any}`, `\p{ASCII}` are an error natively for now), and
+  `std/archive` (Go's compress/flate, gzip, tar, and zip ported to Xo:
+  the same bytes and errors; zip64 is an error natively).
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

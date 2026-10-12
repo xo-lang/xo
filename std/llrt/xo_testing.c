@@ -682,6 +682,22 @@ __attribute__((unused)) static xo_rlist *tw_env_get(const char *p, int64_t n) {
 	return l;
 }
 
+// tw_env_vars is FakeEnv.vars(): NAME=VALUE in the order set.
+__attribute__((unused)) static xo_rlist *tw_env_vars(void) {
+	lk(&tws.mu);
+	xo_rlist *l = n_str_list_new(tws.en);
+	for (int i = 0; i < tws.en; i++) {
+		nbuf b = {0};
+		nbuf_str(&b, tws.ekeys[i]);
+		nbuf_byte(&b, '=');
+		nbuf_str(&b, tws.evals[i]);
+		l = n_str_list_add(l, b.p, b.n);
+		free(b.p);
+	}
+	unlk(&tws.mu);
+	return l;
+}
+
 // xo_test_env_set is FakeEnv.set(name, value).
 void xo_test_env_set(const char *k, int64_t kn, const char *v, int64_t vn) {
 	lk(&tws.mu);

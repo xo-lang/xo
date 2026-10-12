@@ -1,0 +1,94 @@
+// std/regexp natively (decision 0172) against the Go backend's regexp on
+// a shared table: every pattern is compiled (or its error printed) and
+// run on every input with each operation; then replacements, splits,
+// and quote.
+use std/regexp
+
+fn opt(s: Str?) -> Str {
+  match s {
+    Some(x) => x.quote()
+    None => "-"
+  }
+}
+
+fn caps(l: List[Str?]) -> Str {
+  var parts: List[Str] = []
+  for c in l {
+    parts.push(opt(c))
+  }
+  "[${parts.join(", ")}]"
+}
+
+fn quoted(l: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for x in l {
+    parts.push(x.quote())
+  }
+  "[${parts.join(", ")}]"
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  let patterns = [
+    r"a+", r"a*", r"a*?", r"(a|ab)(c|bcd)(d*)", r"(a+)(b+)?", r"^abc$", r"(?m)^\w+$", r"(?s)a.b", r"a.b",
+    r"\d+", r"\D+", r"\s+", r"\w+", r"\W", r"[a-c]+", r"[^a-c]+", r"[[:alpha:]]+", r"[[:^digit:]]+", r"[\d\s]+",
+    r"(?i)hello", r"(?i)[k-m]+", r"(?i)straße", r"\bfoo\b", r"\Bo\B", r"x*", r"(x*)*", r"(a*)+", r"(a?)*?",
+    r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})", r"(?<word>\w+)@(\w+)", r"a{2}", r"a{2,}", r"a{2,3}", r"a{,3}",
+    r"(?U)a+", r"(?U)a+?", r"\x41\x{42}\101\n", r"\Qa.b*c\E+", r"\pL+", r"\PL+", r"\p{Nd}+", r"\p{^L}", r"[\p{L}\d]+",
+    r"héllo|wörld", r"[é-ü]+", r".", r"(?i)ǅ", r"\$\.\^", r"\A\w", r"\w\z", r"a|b|c|ab", r"(?:a|b)+c", r"((a)|b)+",
+    r"(a)|(b)", r"(?i:A)a", r"[]a]+", r"[a-]+", r"[\]]", r"\_",
+    // errors
+    r"(a", r"a)", r"a**", r"a++", r"*a", r"+", r"a{1001}", r"a{3,2}", r"(?P<>x)", r"(?P<na-me>x)", r"(?<n", r"[a",
+    r"[z-a]", r"\8", r"\1", r"x\", r"\C", r"(?z)", r"(?i-)", r"\p{Foo}", r"\pX", r"[[:foo:]]", r"\x{110000}", r"\xZZ",
+    r"a{2}{3}", r"(a{500}){3}", r"\Q",
+  ]
+  let inputs = ["", "aaa", "abcd", "ab", "abc", "foo bar\nbaz", "a\nb", "2026-10-11 x 1999-01-02", "Hello HELLO hello", "STRASSE straße", "foo foobar barfoo", "xyz", "héllo wörld ü", "a1 b2  c3", "kK\u{212a}", "x\u{1c5}y", "$.^", "]]a-a"]
+  for pat in patterns {
+    match regexp.compile(pat) {
+      Err(e) => out.println("${pat.quote()}: ${e}")
+      Ok(re) => {
+        out.println("${pat.quote()}: ${re.pattern() == pat}")
+        for s in inputs {
+          let m = re.is_match(s)
+          let all = re.find_all(s)
+          if !m && all.is_empty() {
+            continue
+          }
+          let idx = match re.find_index(s) {
+            Some((a, b)) => "${a}..${b}"
+            None => "-"
+          }
+          let cs = match re.captures(s) {
+            Some(l) => caps(l)
+            None => "-"
+          }
+          let named = match re.named(s) {
+            Some(m2) => {
+              var parts: List[Str] = []
+              for (k, v) in m2.entries() {
+                parts.push("${k}=${v.quote()}")
+              }
+              parts.join(",")
+            }
+            None => "-"
+          }
+          out.println("  ${s.quote()} ${m} ${opt(re.find(s))} ${idx} ${quoted(all)} ${cs} {${named}} split ${quoted(re.split(s))}")
+        }
+      }
+    }
+  }
+  let date = regexp.must(r"(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})")
+  let text = "from 2026-10-11 to 1999-01-02."
+  for repl in [r"${d}/${m}/${y}", r"$1$2", r"[$0]", r"$$", r"$y_", r"${y}_", r"$9", r"$", r"${", r"${y", r"$01", r"x"] {
+    out.println("replace ${repl.quote()} ${date.replace_all(text, repl).quote()} literal ${date.replace_all_literal(text, repl).quote()}")
+  }
+  let empty = regexp.must(r"x*")
+  out.println("empty ${empty.replace_all("abc", "-").quote()} ${empty.replace_all("xaxxb", "-").quote()} ${quoted(empty.split("axxb"))}")
+  out.println("split ${quoted(regexp.must(r",\s*").split("a, b,c,,  d"))} ${quoted(regexp.must(r",").split(""))} ${quoted(regexp.must(r"").split("abc"))} ${quoted(regexp.must(r"a").split("aaa"))}")
+  out.println("quote ${regexp.quote(r"1.5*[x]+(y)?{z}^$|\\").quote()} ${regexp.must(regexp.quote("a.b")).is_match("axb")}")
+  out.println("unicode ${quoted(regexp.must(r"\w+").find_all("naïve café"))} ${quoted(regexp.must(r"[^a-z ]").find_all("naïve café"))}")
+  match regexp.compile("a\u{80}") {
+    Ok(r) => out.println("utf8 ${r.is_match("a\u{80}")}")
+    Err(e) => out.println("utf8 ${e}")
+  }
+}

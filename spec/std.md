@@ -434,7 +434,8 @@ fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
-MemFs, native builds report them as XO1201, planned):
+MemFs, and native builds on the real filesystem, decision 0172; a native
+test binary's MemFs reports them as XO1201, planned):
 
 ```
 fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
@@ -634,7 +635,7 @@ native ones read `HOME` for the home directory).
 variables: `get` of another name is `None`, `vars` holds only listed
 names, and `home` is `Err(Missing("HOME"))` unless `HOME` is listed;
 `args` and `program` are unchanged. Attenuating again keeps both lists.
-Native builds do not have `only` yet (XO1201, planned).
+Native builds have it too (decision 0172).
 
 ### 3.6 Stdio (`uses stdio`)
 
@@ -703,7 +704,7 @@ fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
 `Denied(cmd)` for a command not listed (compared as written: `git` and
 `/usr/bin/git` are different entries); `exit` and `set_grace` are
 unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
-Native builds do not have `only` yet (XO1201, planned).
+Native builds have it too (decision 0172).
 
 The native backends run commands with `posix_spawn`, reading the output
 on the event loop; cancelling the task kills the command (decision 0107).
@@ -714,7 +715,9 @@ and exits with status 1. Prefer that over `exit` for failures.
 ### 3.8 Commands, children, and pipelines
 
 Status: implemented on the Go backend and its fakes (decision 0161,
-2026-10-11); native builds report these methods as XO1201 (planned).
+2026-10-11) and natively (decision 0172, 2026-10-11: `posix_spawn` in
+the C runtime, pipes on the event loop; FakeProc in native test
+binaries).
 
 ```
 struct Cmd {}                                 // a command that has not run; a value
@@ -801,6 +804,12 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
   `on_run` is `NotFound`.
 - Record and replay (core 11.3) record `output`, `run`, and `pipeline`;
   a `Child`'s reads are not recorded yet.
+- Native builds (decision 0172) differ in what cancellation does to a
+  running command: the command is killed when the cancelled task waits
+  on it (`output`, `run`, `pipeline`, `Child.wait`, `Child.read`), and
+  that call is `Canceled` (the Go backend kills it at once and its
+  `wait` gives the status 137). An attenuated `Proc` or `Env` debugs as
+  `<proc>` or `<env>`, without its lists.
 
 ---
 
@@ -2182,8 +2191,12 @@ pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
 
 ## 17. std/regexp
 
-Status: implemented on the Go backend (decision 0164, Go's `regexp`);
-native builds report it as XO1201 (planned).
+Status: implemented on the Go backend (decision 0164, Go's `regexp`)
+and natively (decision 0172: Go's regexp/syntax parser, compiler, and
+Pike VM ported to Xo, the same matches and errors). Native builds have
+the Unicode classes `\pL` (`\p{Letter}`), `\p{Nd}`, `\p{Any}`, and
+`\p{ASCII}` so far; another class Go knows is a `RegexErr` saying it is
+not supported by native builds yet.
 
 ```
 struct Regex {}                          // handle
@@ -2215,8 +2228,9 @@ In `replace_all`, `$name` takes the longest name it can (`$1x` is group
 ## 18. std/archive
 
 Status: implemented on the Go backend (decision 0164, Go's
-`compress/gzip`, `archive/tar`, `archive/zip`); native builds report it
-as XO1201 (planned).
+`compress/gzip`, `archive/tar`, `archive/zip`) and natively (decision
+0172: those packages ported to Xo, the same bytes and errors; zip64
+archives are an error natively).
 
 ```
 struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }

@@ -827,6 +827,512 @@ fn fs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
 }
 
 // ---------------------------------------------------------------------------
+// Handles, append, copy, modes, links, globs, locks (std.md 3.1, decisions
+// 0163 and 0172): std/rt fsfile.go over std/llrt/xo_fs.c.
+
+struct File {
+  h: rt.FsFile
+  path: Str
+  write: Bool
+}
+
+struct FileLock {
+  h: rt.FsLock
+}
+
+fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
+  let op = fs_check(f, p, mode != 0)?
+  let h = rt.fs_open(op, mode, p)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+  File{h: h, path: p, write: mode != 0}
+}
+
+fn fs_open(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 0) }
+
+fn fs_create(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 1) }
+
+fn fs_open_append(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 2) }
+
+/// The state errors of a handle (std/rt File.M_read): canceled, closed,
+/// or open for the other direction.
+fn file_state(f: File, write: Bool) -> () ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  if rt.fs_file_closed(f.h) {
+    return Err(FsErr.Io(path: f.path, msg: "file already closed"))
+  }
+  if f.write && !write {
+    return Err(FsErr.Io(path: f.path, msg: "file is open for writing"))
+  }
+  if !f.write && write {
+    return Err(FsErr.Io(path: f.path, msg: "file is open for reading"))
+  }
+}
+
+fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
+  file_state(f, false)?
+  if max <= 0 {
+    return Some(b"")
+  }
+  let l = rt.fs_file_read(f.h, max, f.path)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+  l.get(0)
+}
+
+fn file_read_line(f: File) -> Str? ! FsErr {
+  file_state(f, false)?
+  let l = rt.fs_file_read_line(f.h, f.path)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+  l.get(0)
+}
+
+fn file_write(f: File, data: Bytes) -> () ! FsErr {
+  file_state(f, true)?
+  let st = rt.fs_file_write(f.h, data, f.path)
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+}
+
+fn file_close(f: File) -> () ! FsErr {
+  let st = rt.fs_file_close(f.h, f.path)
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+}
+
+fn fs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  let file = fs_open_mode(f, p, 2)?
+  match file_write(file, data) {
+    Ok(_) => ()
+    Err(e) => {
+      match file_close(file) {
+        _ => ()
+      }
+      return Err(e)
+    }
+  }
+  file_close(file)
+}
+
+fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  let src = fs_check(f, from, false)?
+  let dst = fs_check(f, to, true)?
+  let st = rt.fs_copy(src, dst, from, to)
+  if st != 0 {
+    return Err(fs_err(st, rt.fs_msg()[0]))
+  }
+}
+
+fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
+  let op = fs_check(f, p, false)?
+  let m = rt.fs_perm(op, p)
+  if m < 0 {
+    return Err(fs_err(rt.fs_status(), p))
+  }
+  m
+}
+
+fn fs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
+  let op = fs_check(f, p, true)?
+  let st = rt.fs_chmod(op, mode, p)
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+}
+
+/// Go's path.Dir of a cleaned path.
+fn fs_dir(p: Str) -> Str {
+  var i = p.len() - 1
+  while i >= 0 && rt.str_byte(p, i) != 47 {
+    i -= 1
+  }
+  fs_clean(rt.str_slice(p, 0, i + 1))
+}
+
+/// strings.Trim(s, "/").
+fn trim_slashes(s: Str) -> Str {
+  var a = 0
+  var b = s.len()
+  while a < b && rt.str_byte(s, a) == 47 {
+    a += 1
+  }
+  while b > a && rt.str_byte(s, b - 1) == 47 {
+    b -= 1
+  }
+  rt.str_slice(s, a, b)
+}
+
+/// Whether a link at link (in a sub capability) to target points outside
+/// the root: an absolute target, or more `..` than the link has parents
+/// (std/rt linkEscapes).
+fn link_escapes(link: Str, target: Str) -> Bool {
+  let t = target.replace("\\", "/")
+  if t.starts_with("/") || (t.len() >= 2 && rt.str_byte(t, 1) == 58) {
+    return true
+  }
+  let dir = fs_dir(fs_clean("/" + link.replace("\\", "/")))
+  var depth = 0
+  for seg in (trim_slashes(dir) + "/" + t).split("/") {
+    if seg == ".." {
+      depth -= 1
+    } else if seg != "" && seg != "." {
+      depth += 1
+    }
+    if depth < 0 {
+      return true
+    }
+  }
+  false
+}
+
+fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
+  let op = fs_check(f, link, true)?
+  if (rt.fs_mode(f) & 1) != 0 && link_escapes(link, target) {
+    return Err(FsErr.Denied(path: link))
+  }
+  let st = rt.fs_symlink(target, op, link)
+  if st != 0 {
+    return Err(fs_err(st, link))
+  }
+}
+
+fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
+  let op = fs_check(f, p, false)?
+  let l = rt.fs_read_link(op, p)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+  l.get(0)
+}
+
+fn fs_lock_wait(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
+  let op = fs_check(f, p, true)?
+  let h = rt.fs_lock(op, wait, p)
+  if rt.fs_lock_held(h) {
+    return Some(FileLock{h: h})
+  }
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+  None
+}
+
+fn fs_lock(f: Fs, p: Str) -> FileLock ! FsErr {
+  match fs_lock_wait(f, p, true)? {
+    Some(l) => l
+    None => Err(FsErr.Canceled)
+  }
+}
+
+fn fs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { fs_lock_wait(f, p, false) }
+
+fn filelock_unlock(l: FileLock) { rt.fs_unlock(l.h) }
+
+// Globs (std/rt fsGlob): Go's path.Match on each segment, `**` for any
+// number of directories, through read_dir and exists.
+
+/// Go's path.Match scanChunk: whether stars lead, the chunk, the rest.
+fn glob_scan(p: Str) -> (Bool, Str, Str) {
+  let n = p.len()
+  var i = 0
+  var star = false
+  while i < n && rt.str_byte(p, i) == 42 {
+    i += 1
+    star = true
+  }
+  let start = i
+  var inrange = false
+  while i < n {
+    let c = rt.str_byte(p, i)
+    if c == 92 {
+      if i + 1 < n {
+        i += 1
+      }
+    } else if c == 91 {
+      inrange = true
+    } else if c == 93 {
+      inrange = false
+    } else if c == 42 && !inrange {
+      break
+    }
+    i += 1
+  }
+  (star, rt.str_slice(p, start, i), rt.str_slice(p, i, n))
+}
+
+/// Go's path.Match getEsc at chunk[c:]: the rune and the index after it,
+/// or the index -1 for a malformed pattern.
+fn glob_esc(chunk: Str, c0: Int) -> (Int, Int) {
+  let n = chunk.len()
+  var c = c0
+  if c >= n || rt.str_byte(chunk, c) == 45 || rt.str_byte(chunk, c) == 93 {
+    return (0, -1)
+  }
+  if rt.str_byte(chunk, c) == 92 {
+    c += 1
+    if c >= n {
+      return (0, -1)
+    }
+  }
+  let d = rt.bytes_decode(chunk.bytes(), c)
+  let r = d >> 3
+  let k = d & 7
+  if r == 0xfffd && k == 1 {
+    return (0, -1)
+  }
+  c += k
+  if c >= n {
+    return (0, -1)
+  }
+  (r, c)
+}
+
+/// Go's path.Match matchChunk of chunk against s[si:]: the index after
+/// the match, -1 when it does not match, -2 for a malformed pattern.
+fn glob_chunk(chunk: Str, s: Str, si0: Int) -> Int {
+  let cn = chunk.len()
+  let sn = s.len()
+  var c = 0
+  var si = si0
+  var failed = false
+  while c < cn {
+    if !failed && si >= sn {
+      failed = true
+    }
+    let ch = rt.str_byte(chunk, c)
+    if ch == 91 {
+      var r = 0
+      if !failed {
+        let d = rt.bytes_decode(s.bytes(), si)
+        r = d >> 3
+        si += d & 7
+      }
+      c += 1
+      var negated = false
+      if c < cn && rt.str_byte(chunk, c) == 94 {
+        negated = true
+        c += 1
+      }
+      var matched = false
+      var nrange = 0
+      while true {
+        if c < cn && rt.str_byte(chunk, c) == 93 && nrange > 0 {
+          c += 1
+          break
+        }
+        let (lo, c1) = glob_esc(chunk, c)
+        if c1 < 0 {
+          return -2
+        }
+        c = c1
+        var hi = lo
+        if rt.str_byte(chunk, c) == 45 {
+          let (h2, c2) = glob_esc(chunk, c + 1)
+          if c2 < 0 {
+            return -2
+          }
+          hi = h2
+          c = c2
+        }
+        if lo <= r && r <= hi {
+          matched = true
+        }
+        nrange += 1
+      }
+      if matched == negated {
+        failed = true
+      }
+    } else if ch == 63 {
+      if !failed {
+        if rt.str_byte(s, si) == 47 {
+          failed = true
+        }
+        si += rt.bytes_decode(s.bytes(), si) & 7
+      }
+      c += 1
+    } else {
+      if ch == 92 {
+        c += 1
+        if c >= cn {
+          return -2
+        }
+      }
+      if !failed {
+        if rt.str_byte(chunk, c) != rt.str_byte(s, si) {
+          failed = true
+        }
+        si += 1
+      }
+      c += 1
+    }
+  }
+  if failed {
+    return -1
+  }
+  si
+}
+
+/// Go's path.Match: 1 a match, 0 none, -1 a malformed pattern.
+fn glob_match(pattern: Str, name: Str) -> Int {
+  let nl = name.len()
+  var p = pattern
+  var ni = 0
+  while p.len() > 0 {
+    let (star, chunk, rest) = glob_scan(p)
+    p = rest
+    if star && chunk == "" {
+      // a trailing * matches the rest of the name unless it has a /
+      if rt.str_find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
+        return 1
+      }
+      return 0
+    }
+    let t = glob_chunk(chunk, name, ni)
+    if t >= 0 && (t == nl || p.len() > 0) {
+      ni = t
+      continue
+    }
+    if t == -2 {
+      return -1
+    }
+    var found = false
+    if star {
+      // a match after skipping i + 1 bytes, never a /
+      var i = ni
+      while !found && i < nl && rt.str_byte(name, i) != 47 {
+        let t2 = glob_chunk(chunk, name, i + 1)
+        if t2 >= 0 {
+          if p.len() > 0 || t2 == nl {
+            ni = t2
+            found = true
+          }
+        } else if t2 == -2 {
+          return -1
+        }
+        i += 1
+      }
+    }
+    if found {
+      continue
+    }
+    // the rest of the pattern must still be well formed
+    while p.len() > 0 {
+      let (_, c2, r2) = glob_scan(p)
+      p = r2
+      if glob_chunk(c2, "", 0) == -2 {
+        return -1
+      }
+    }
+    return 0
+  }
+  if ni == nl {
+    return 1
+  }
+  0
+}
+
+fn glob_join(dir: Str, name: Str) -> Str {
+  if dir == "" {
+    return name
+  }
+  if dir.ends_with("/") {
+    return dir + name
+  }
+  dir + "/" + name
+}
+
+fn glob_list(f: Fs, dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  var d = dir
+  if d == "" {
+    d = "."
+  }
+  match f.read_dir(d) {
+    Ok(l) => l
+    Err(e) => {
+      match e {
+        FsErr.NotFound(_) | FsErr.NotDir(_) => []
+        _ => Err(e)
+      }
+    }
+  }
+}
+
+fn glob_walk(f: Fs, segs: List[Str], dir: Str, i: Int, var out: List[Str], var seen: Set[Str]) -> () ! FsErr uses fs.read {
+  if i == segs.len() {
+    if !seen.contains(dir) {
+      seen.add(dir)
+      out.push(dir)
+    }
+    return
+  }
+  let s = segs[i]
+  if s == "**" {
+    glob_walk(f, segs, dir, i + 1, out, seen)?
+    for x in glob_list(f, dir)? {
+      if x.is_dir && !x.name.starts_with(".") {
+        glob_walk(f, segs, glob_join(dir, x.name), i, out, seen)?
+      }
+    }
+    return
+  }
+  if !(s.contains("*") || s.contains("?") || s.contains("[") || s.contains("\\")) {
+    // a literal segment: no listing needed
+    let p = glob_join(dir, s)
+    if i == segs.len() - 1 {
+      if f.exists(p)? && !seen.contains(p) {
+        seen.add(p)
+        out.push(p)
+      }
+      return
+    }
+    return glob_walk(f, segs, p, i + 1, out, seen)
+  }
+  for x in glob_list(f, dir)? {
+    if x.name.starts_with(".") && !s.starts_with(".") {
+      continue
+    }
+    if glob_match(s, x.name) != 1 {
+      continue
+    }
+    if i < segs.len() - 1 && !x.is_dir {
+      continue
+    }
+    glob_walk(f, segs, glob_join(dir, x.name), i + 1, out, seen)?
+  }
+}
+
+fn fs_glob(f: Fs, pattern: Str) -> List[Str] ! FsErr uses fs.read {
+  let pat = pattern.replace("\\", "/")
+  let segs = trim_slashes(pat).split("/")
+  for s in segs {
+    if glob_match(s, "") < 0 {
+      return Err(FsErr.Io(path: pat, msg: "bad pattern: syntax error in pattern"))
+    }
+  }
+  var start = ""
+  if pat.starts_with("/") {
+    start = "/"
+  }
+  var out: List[Str] = []
+  var seen: Set[Str] = #{}
+  glob_walk(f, segs, start, 0, out, seen)?
+  out.sort()
+}
+
+// ---------------------------------------------------------------------------
 // Stdio (std.md 3.6, decisions 0088 and 0102): std/rt caps.go's realStdio
 
 fn stdio_write(_s: Stdio, data: Bytes) -> () ! IoErr {
@@ -863,7 +1369,10 @@ fn rand_shuffle[T](r: Rand, xs: List[T]) -> List[T] {
 // ---------------------------------------------------------------------------
 // Proc (std.md 3.7, decision 0107)
 
-fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+  if !cap_admits(rt.proc_lists(p), cmd) {
+    return Err(ProcErr.Denied(cmd))
+  }
   let r = rt.proc_run(cmd, args)
   let st = r.get(0) ?? "2"
   let detail = r.get(1) ?? ""
@@ -878,6 +1387,313 @@ fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   }
   ProcOutput { code: rt.int_parse(detail), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
 }
+
+// ---------------------------------------------------------------------------
+// Attenuation (std.md 3.5 and 3.7, decisions 0156 and 0172): std/rt
+// attenuate.go. A Proc or Env is the lists of its attenuations in one Str:
+// each list is \u{1} and then its names, each followed by \u{0}; "" has
+// none. Every list must admit a name.
+
+fn cap_lists_add(lists: Str, names: List[Str]) -> Str {
+  var b = lists + "\u{1}"
+  for n in names {
+    b = b + n + "\u{0}"
+  }
+  b
+}
+
+fn cap_admits(lists: Str, name: Str) -> Bool {
+  if lists == "" {
+    return true
+  }
+  let want = "\u{0}" + name + "\u{0}"
+  var first = true
+  for l in lists.split("\u{1}") {
+    if first {
+      first = false
+      continue
+    }
+    if !("\u{0}" + l).contains(want) {
+      return false
+    }
+  }
+  true
+}
+
+fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
+
+fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
+
+fn env_get(e: Env, name: Str) -> Str? uses env {
+  if !cap_admits(rt.env_lists(e), name) {
+    return None
+  }
+  rt.env_get(name).get(0)
+}
+
+fn env_vars(e: Env) -> Map[Str, Str] uses env {
+  let lists = rt.env_lists(e)
+  var m: Map[Str, Str] = {}
+  for kv in rt.env_vars() {
+    var k = kv
+    var v = ""
+    match kv.find("=") {
+      Some(i) => {
+        k = kv[0..i]
+        v = kv[i + 1..]
+      }
+      None => ()
+    }
+    if cap_admits(lists, k) {
+      m.put(k, v)
+    }
+  }
+  m
+}
+
+/// os.UserHomeDir: $HOME, or Missing("HOME").
+fn env_home(e: Env) -> Str ! EnvErr uses env {
+  match env_get(e, "HOME") {
+    Some(h) => {
+      if h != "" {
+        return h
+      }
+    }
+    None => ()
+  }
+  Err(EnvErr.Missing(name: "HOME"))
+}
+
+// ---------------------------------------------------------------------------
+// Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172):
+// std/rt proccmd.go. A Cmd is a value that remembers the attenuation of
+// the Proc that made it; a Child is a handle of the C runtime
+// (std/llrt/xo_proc.c).
+
+struct Cmd {
+  lists: Str
+  name: Str
+  args: List[Str]
+  dir: Str
+  env: List[Str]
+  env_set: Bool
+  extra: List[Str]
+  input: Bytes
+  has_input: Bool
+  inherit: Bool
+  merge: Bool
+}
+
+struct Child {
+  h: rt.ProcChild
+}
+
+fn proc_cmd(p: Proc, name: Str, args: List[Str] = []) -> Cmd {
+  Cmd{lists: rt.proc_lists(p), name: name, args: args, dir: "", env: [], env_set: false, extra: [], input: b"", has_input: false, inherit: false, merge: false}
+}
+
+fn cmd_dir(c: Cmd, path: Str) -> Cmd {
+  var x = c
+  x.dir = path
+  x
+}
+
+/// The child's environment is exactly the variables e shows now.
+fn cmd_env(c: Cmd, e: Env) -> Cmd uses env {
+  var x = c
+  var env: List[Str] = []
+  for (k, v) in e.vars().entries() {
+    env.push(k + "=" + v)
+  }
+  x.env = env
+  x.env_set = true
+  x
+}
+
+fn cmd_set_env(c: Cmd, name: Str, value: Str) -> Cmd {
+  var x = c
+  x.extra.push(name + "=" + value)
+  x
+}
+
+fn cmd_stdin(c: Cmd, data: Bytes) -> Cmd {
+  var x = c
+  x.input = data
+  x.has_input = true
+  x
+}
+
+fn cmd_inherit(c: Cmd) -> Cmd {
+  var x = c
+  x.inherit = true
+  x
+}
+
+fn cmd_merge_stderr(c: Cmd) -> Cmd {
+  var x = c
+  x.merge = true
+  x
+}
+
+/// The spec of c for the runtime (std/native/rt.xo proc_exec), appended
+/// to out.
+fn cmd_spec(c: Cmd, var out: List[Str]) {
+  var flags = 0
+  if c.env_set {
+    flags = flags | 1
+  }
+  if c.inherit {
+    flags = flags | 2
+  }
+  if c.merge {
+    flags = flags | 4
+  }
+  out.push(c.name)
+  out.push(c.dir)
+  out.push("${flags}")
+  out.push("${c.args.len()}")
+  for a in c.args {
+    out.push(a)
+  }
+  out.push("${c.env.len()}")
+  for kv in c.env {
+    out.push(kv)
+  }
+  out.push("${c.extra.len()}")
+  for kv in c.extra {
+    out.push(kv)
+  }
+}
+
+/// The ProcErr of a failed outcome (status st, detail d).
+fn proc_err(st: Str, d: Str) -> ProcErr {
+  match st {
+    "1" => ProcErr.NotFound(d)
+    "2" => ProcErr.Io(d)
+    _ => ProcErr.Canceled
+  }
+}
+
+fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
+  let st = r.get(0) ?? "2"
+  let d = r.get(1) ?? ""
+  if st != "0" {
+    return Err(proc_err(st, d))
+  }
+  ProcOutput{code: rt.int_parse(d), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
+}
+
+/// Denied or Canceled before c runs (std/rt Cmd.M_output).
+fn cmd_check(c: Cmd) -> () ! ProcErr {
+  if !cap_admits(c.lists, c.name) {
+    return Err(ProcErr.Denied(c.name))
+  }
+  if rt.fs_canceled() {
+    return Err(ProcErr.Canceled)
+  }
+}
+
+fn cmd_output(c: Cmd) -> ProcOutput ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 0))
+}
+
+fn cmd_run(c: Cmd) -> Int ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  let out = proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 1))?
+  out.code
+}
+
+fn cmd_spawn(c: Cmd) -> Child ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  let h = rt.proc_spawn(spec, c.input, c.has_input)
+  let r = rt.proc_child_start(h)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Child{h: h}
+}
+
+fn proc_pipeline(p: Proc, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc {
+  let lists = rt.proc_lists(p)
+  for c in cmds {
+    if !cap_admits(lists, c.name) {
+      return Err(ProcErr.Denied(c.name))
+    }
+  }
+  if cmds.is_empty() {
+    return ProcOutput{code: 0, stdout: b"", stderr: b""}
+  }
+  var spec: List[Str] = []
+  for c in cmds {
+    if !cap_admits(c.lists, c.name) {
+      return Err(ProcErr.Denied(c.name))
+    }
+    cmd_spec(c, spec)
+  }
+  if rt.fs_canceled() {
+    return Err(ProcErr.Canceled)
+  }
+  proc_outcome(rt.proc_exec(spec, cmds[0].input, cmds[0].has_input, 2))
+}
+
+fn child_pid(c: Child) -> Int { rt.proc_child_pid(c.h) }
+
+fn child_write(c: Child, data: Bytes) -> () ! ProcErr uses proc {
+  let r = rt.proc_child_write(c.h, data)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+}
+
+fn child_close_stdin(c: Child) { rt.proc_child_close_stdin(c.h) }
+
+fn child_read_from(c: Child, err: Bool, max: Int) -> Bytes? ! ProcErr {
+  let r = rt.proc_child_read(c.h, err, max)
+  let st = r.get(0) ?? "2"
+  if st == "e" {
+    return None
+  }
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Some((r.get(1) ?? "").bytes())
+}
+
+fn child_read(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_from(c, false, max) }
+
+fn child_read_err(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_from(c, true, max) }
+
+fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
+  let r = rt.proc_child_read_line(c.h)
+  let st = r.get(0) ?? "2"
+  if st == "e" {
+    return None
+  }
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Some(r.get(1) ?? "")
+}
+
+fn child_wait(c: Child) -> Int ! ProcErr uses proc {
+  let r = rt.proc_child_wait(c.h)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  rt.int_parse(r.get(1) ?? "0")
+}
+
+fn child_kill(c: Child) { rt.proc_child_kill(c.h) }
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
   let line = rt.stdin_read(false)
