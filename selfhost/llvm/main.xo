@@ -1,0 +1,162 @@
+// xollvm: the self hosted LLVM emitter's command line (decision 0166).
+//
+//   llvm [--std=DIR] [--wd=DIR] [--each] [--test] [--stage=N] <dirs...>  print the IR
+//   llvm [--std=DIR] [--wd=DIR] [--each] [--test] --bench=N <dirs...>    lower N times, print the time
+//
+// It checks the directories as `xo llvmdump` does (selfhost/check in
+// native mode), builds the SSA module with selfhost/ssa, runs its passes
+// and InsertRC, and prints the LLVM IR internal/llvm prints for the
+// module (`== ir` and the module), then `== skipped` and one line per
+// function it did not lower (`<name>: <why>`, a construct of a later
+// stage; --stage=N lowers what the stages up to N cover, default all).
+// A run the checker rejects prints `== rejected`; one the SSA builder
+// does not build completely `== unsupported <why>`; one the emitter
+// cannot lower (GenerateSSA's error) `== error <message>`. --each lowers
+// every directory as a run of its own, each preceded by `=== llvm
+// <dir>`. --bench=N builds the SSA once and runs the emitter alone N
+// times. Fault positions are relative to DIR of --wd (default $PWD).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var each = false
+  var tests = false
+  var stage = 3
+  var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
+  var dirs: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else if a.starts_with("--stage=") {
+      stage = Int.parse(a.trim_prefix("--stage=")) ?? fault("--stage needs a number")
+    } else if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
+    } else if a == "--each" {
+      each = true
+    } else if a == "--test" {
+      tests = true
+    } else {
+      dirs.push(a)
+    }
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: llvm [--std=DIR] [--wd=DIR] [--each] [--test] [--stage=N] [--bench=N] <dirs...>")
+    os.proc.exit(2)
+  }
+  let modcache = os.env.get("XO_MODCACHE") ?? ""
+  let home = os.env.get("HOME") ?? ""
+  let xdg = os.env.get("XDG_CACHE_HOME") ?? ""
+  let offline = os.env.get("XO_OFFLINE") ?? ""
+  let work = os.env.get("XO_WORK") ?? ""
+  let cbind = os.env.get("XO_CBIND_DIR") ?? ""
+  var runs: List[List[Str]] = [dirs]
+  if each {
+    runs = []
+    for d in dirs {
+      runs.push([d])
+    }
+  }
+  var out = StrBuilder.new()
+  var total = 0
+  var funcs = 0
+  for r in runs {
+    if each && repeat == 0 {
+      out.write("=== llvm ${r[0]}\n")
+    }
+    var c = check.new_checker(os.fs, std_dir)
+    c.native = true
+    c.set_mod_env(wd, modcache, home, xdg, offline, work)
+    c.cbind_dir = cbind
+    match c.check_dirs(r) {
+      Ok(_) => {}
+      Err(e) => {
+        out.write("== error ${e}\n")
+        continue
+      }
+    }
+    if !c.unsupported.is_empty() {
+      out.write("== unsupported ${c.unsupported}\n")
+      continue
+    }
+    if rejected(c) {
+      out.write("== rejected\n")
+      continue
+    }
+    var b = ssa.build_program(c, wd, tests)
+    if !b.why.is_empty() {
+      out.write("== unsupported ${b.why}\n")
+      continue
+    }
+    let why = incomplete(b.m)
+    if !why.is_empty() {
+      out.write("== unsupported ${why}\n")
+      continue
+    }
+    b.run_passes()
+    if repeat > 0 {
+      let t0 = os.clock.now()
+      for _ in 0..repeat {
+        var g = new_gen(b.m)
+        g.stage = stage
+        let ir = g.generate()
+        if !ir.is_empty() {
+          funcs += b.m.funcs.len()
+        }
+      }
+      total += (os.clock.now() - t0).nanos()
+      continue
+    }
+    var g = new_gen(b.m)
+    g.stage = stage
+    let ir = g.generate()
+    if !g.err.is_empty() {
+      out.write("== error ${g.err}\n")
+      continue
+    }
+    out.write("== ir\n")
+    out.write(ir)
+    out.write("== skipped\n")
+    for l in g.skipped {
+      out.write("${l}\n")
+    }
+  }
+  if repeat > 0 {
+    os.stdio.println("lowered ${runs.len()} runs x ${repeat}: ${funcs} functions in ${total / 1000000} ms")
+    return
+  }
+  os.stdio.print(out.freeze())
+}
+
+/// Whether the checker reported an error (build.go checkOpts).
+fn rejected(c: check.Checker) -> Bool {
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return true
+    }
+  }
+  false
+}
+
+/// Why the SSA builder's module is not complete (a function it skipped,
+/// or one whose types it could not lower), or "".
+fn incomplete(m: ssa.Module) -> Str {
+  var n = 0
+  var first = ""
+  for f in m.funcs {
+    if !f.skip.is_empty() || m.has_poison(f) {
+      if n == 0 {
+        first = "${f.name}: ${if f.skip.is_empty() { "a type outside the stages ported" } else { f.skip }}"
+      }
+      n += 1
+    }
+  }
+  if n == 0 {
+    return ""
+  }
+  "the SSA builder skipped ${n} functions (${first})"
+}
