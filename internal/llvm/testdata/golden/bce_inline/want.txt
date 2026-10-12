@@ -1,0 +1,10 @@
+exit 70
+--- stdout
+41 7
+true true false 3628800
+5528676 -1 -1
+60 0
+181511 0 0
+4163120 40002560
+--- stderr
+fault: index 24 out of range for Bytes of length 24 at main.xo:39:8

@@ -1105,6 +1105,14 @@ func (s *fstate) addSub(v *ssa.Value) {
 		s.set(v, s.checked(false, text, []vreg{av}, ins, "vs", "xo_fault_overflow", l, isrc(opChar[v.Op]), r, symsrc(g.loc(v.Pos))))
 		return
 	}
+	if checked {
+		alo, ahi := s.bounds(a)
+		blo, bhi := s.bounds(b)
+		if s.safeAddRange(v.Op, alo, ahi, blo, bhi) {
+			checked = false
+			flag = ""
+		}
+	}
 	av, bv := s.word(a), s.word(b)
 	text := ins + flag + " $d0, $u0, $u1"
 	if !checked {
@@ -1243,7 +1251,7 @@ func (s *fstate) shift(v *ssa.Value) {
 			return
 		}
 		r := s.def1(false, fmt.Sprintf("lsl $d0, $u0, #%d", k), a)
-		if v.Pos != "" {
+		if v.Pos != "" && !s.safeShl(v.Args[0], k) {
 			back := s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), r)
 			s.check("cmp $u0, $u1", []vreg{back, a}, "ne", "xo_fault_shl", rsrc(a), isrc(k), symsrc(g.loc(v.Pos)))
 		}
@@ -1251,7 +1259,8 @@ func (s *fstate) shift(v *ssa.Value) {
 		return
 	}
 	b := s.word(v.Args[1])
-	if v.Pos != "" {
+	klo, khi := s.bounds(v.Args[1])
+	if v.Pos != "" && (klo < 0 || khi > 63) {
 		s.check("cmp $u0, #64", []vreg{b}, "hs", "xo_fault_shift", rsrc(b), symsrc(g.loc(v.Pos)))
 	}
 	if v.Op == ssa.OpShr {
@@ -1259,11 +1268,23 @@ func (s *fstate) shift(v *ssa.Value) {
 		return
 	}
 	r := s.def1(false, "lsl $d0, $u0, $u1", a, b)
-	if v.Pos != "" {
+	if v.Pos != "" && !(klo >= 0 && khi <= 63 && s.safeShl(v.Args[0], khi)) {
 		back := s.def1(false, "asr $d0, $u0, $u1", r, b)
 		s.check("cmp $u0, $u1", []vreg{back, a}, "ne", "xo_fault_shl", rsrc(a), rsrc(b), symsrc(g.loc(v.Pos)))
 	}
 	s.set(v, r)
+}
+
+// safeShl reports whether a << k cannot overflow for every k in [0,
+// khi] (khi <= 63): a's bounds fit in 63 - khi bits and a sign
+// (decision 0184).
+func (s *fstate) safeShl(a *ssa.Value, khi int64) bool {
+	if khi == 0 {
+		return true
+	}
+	lo, hi := s.bounds(a)
+	lim := int64(1) << (63 - khi)
+	return lo >= -lim && hi <= lim-1
 }
 
 // variant builds the words of variant tag of enum t.
@@ -1575,8 +1596,11 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 	}
 	m.checked[[2]vreg{l, i}] = true
 	n := s.listLen(l)
-	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	if !s.provedIndex(v.Args[1], n, -1) {
+		s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	}
 	s.indexFacts(i)
+	s.lessFact(v.Args[1], n)
 }
 
 // option builds Option words on two paths: in the current block when
@@ -1827,8 +1851,17 @@ func (s *fstate) callOp(v *ssa.Value) {
 		// b[i] on Bytes (decision 0081): the data is 16 bytes into the
 		// string object
 		x, i := a(0), s.word(v.Args[1])
-		if v.Pos != "" {
+		k := int64(-1)
+		if c, ok := v.Args[0].Aux.(string); ok && v.Args[0].Op == ssa.OpConst {
+			k = int64(len(c))
+		}
+		if v.Pos != "" && !s.provedIndex(v.Args[1], x[1], k) {
 			s.check("cmp $u0, $u1", []vreg{i, x[1]}, "hs", "xo_fault_bytes_index", rsrc(i), rsrc(x[1]), symsrc(g.loc(v.Pos)))
+		}
+		if v.Pos != "" {
+			// what the check (or the proof) says holds after it
+			s.indexFacts(i)
+			s.lessFact(v.Args[1], x[1])
 		}
 		d := s.def1(false, "add $d0, $u0, #16", s.real(x[0]))
 		s.set(v, s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i))

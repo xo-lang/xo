@@ -1074,7 +1074,7 @@ fn (var g: G) add_sub(v: Int) {
   if bconst && checked && g.safe_add(a, n0, x.op) {
     checked = false // the bounds of a prove it
   }
-  let flag = if checked { "s" } else { "" }
+  var flag = if checked { "s" } else { "" }
   if bconst && (imm12(n0) || (n0 != MIN_INT && imm12(-n0))) {
     var o = ins
     var n = n0
@@ -1100,6 +1100,14 @@ fn (var g: G) add_sub(v: Int) {
     g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
     g.offset_facts(v, a, n0)
     return
+  }
+  if checked {
+    let (alo, ahi) = g.bounds(a)
+    let (blo, bhi) = g.bounds(b)
+    if safe_add_range(x.op, alo, ahi, blo, bhi) {
+      checked = false
+      flag = ""
+    }
   }
   let av = g.word(a)
   let bv = g.word(b)
@@ -1244,7 +1252,7 @@ fn (var g: G) shift(v: Int) {
       return
     }
     let r = g.def1(false, "lsl $d0, $u0, #${k}", [a])
-    if !x.pos.is_empty() {
+    if !x.pos.is_empty() && !g.safe_shl(x.args[0], k) {
       let back = g.def1(false, "asr $d0, $u0, #${k}", [r])
       let l = g.loc_label(x.pos)
       g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k), symsrc(l)])
@@ -1253,7 +1261,8 @@ fn (var g: G) shift(v: Int) {
     return
   }
   let b = g.word(x.args[1])
-  if !x.pos.is_empty() {
+  let (klo, khi) = g.bounds(x.args[1])
+  if !x.pos.is_empty() && (klo < 0 || khi > 63) {
     let l = g.loc_label(x.pos)
     g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b), symsrc(l)])
   }
@@ -1262,12 +1271,23 @@ fn (var g: G) shift(v: Int) {
     return
   }
   let r = g.def1(false, "lsl $d0, $u0, $u1", [a, b])
-  if !x.pos.is_empty() {
+  if !x.pos.is_empty() && !(klo >= 0 && khi <= 63 && g.safe_shl(x.args[0], khi)) {
     let back = g.def1(false, "asr $d0, $u0, $u1", [r, b])
     let l = g.loc_label(x.pos)
     g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b), symsrc(l)])
   }
   g.set(v, [r])
+}
+
+/// Whether a << k cannot overflow for every k in [0, khi] (khi <= 63):
+/// a's bounds fit in 63 - khi bits and a sign (decision 0184).
+fn (var g: G) safe_shl(a: Int, khi: Int) -> Bool {
+  if khi == 0 {
+    return true
+  }
+  let (lo, hi) = g.bounds(a)
+  let lim = 1 << (63 - khi)
+  lo >= -lim && hi <= lim - 1
 }
 
 /// The words of variant tag of enum t.

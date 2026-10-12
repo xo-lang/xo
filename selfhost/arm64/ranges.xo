@@ -281,7 +281,9 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
     }
     Call => {
       match aux_str(x.aux) {
-        "list.len" | "Str.len" => (Interval{lo: 0, hi: MAX_INT}, true)
+        "list.len" => (Interval{lo: 0, hi: MAX_INT}, true)
+        // bytes in memory (decision 0184): an address space of 2^48
+        "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
         "bytes.index" => (Interval{lo: 0, hi: 255}, true)
         _ => (full_interval(), true)
       }
@@ -290,6 +292,9 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
     _ => (full_interval(), true)
   }
 }
+
+/// A bound of the length of a Str or Bytes value.
+const MAX_STR_LEN = 281474976710656
 
 /// The interval of Int value v.
 fn (g: G) ssa_range(v: Int) -> Interval {

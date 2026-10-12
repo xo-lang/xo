@@ -271,9 +271,13 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   }
   g.cm.checked[(l, i)] = true
   let n = g.list_len(l)
-  let lb = g.loc_label(pos)
-  g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
+  let iv = g.arg(v, 1)
+  if !g.proved_index(iv, n, -1) {
+    let lb = g.loc_label(pos)
+    g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
+  }
   g.index_facts(i)
+  g.less_fact(iv, n)
 }
 
 /// Option words on two paths: in the current block when cond holds (the
@@ -566,9 +570,21 @@ fn (var g: G) call_op(v: Int) {
       // string object
       let a = g.words(x.args[0])
       let i = g.word(x.args[1])
-      if !x.pos.is_empty() {
+      var k = -1
+      let y = g.f.values[x.args[0]]
+      if y.op == ssa.Op.Const {
+        if let Some(bs) = const_bytes(y.aux) {
+          k = bs.len()
+        }
+      }
+      if !x.pos.is_empty() && !g.proved_index(x.args[1], a[1], k) {
         let lb = g.loc_label(x.pos)
         g.check("cmp $u0, $u1", [i, a[1]], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(a[1]), symsrc(lb)])
+      }
+      if !x.pos.is_empty() {
+        // what the check (or the proof) says holds after it
+        g.index_facts(i)
+        g.less_fact(x.args[1], a[1])
       }
       let d = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
       g.set(v, [g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])])

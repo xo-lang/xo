@@ -286,8 +286,11 @@ func (s *fstate) rangeOf(v *ssa.Value, get func(*ssa.Value) (interval, bool)) (i
 		return interval{-a.hi, -a.lo}, true
 	case ssa.OpCall:
 		switch v.Aux {
-		case "list.len", "Str.len":
+		case "list.len":
 			return interval{0, math.MaxInt64}, true
+		case "Str.len":
+			// bytes in memory (decision 0184): an address space of 2^48
+			return interval{0, maxStrLen}, true
 		case "bytes.index":
 			return interval{0, 255}, true
 		}
@@ -296,6 +299,9 @@ func (s *fstate) rangeOf(v *ssa.Value, get func(*ssa.Value) (interval, bool)) (i
 	}
 	return fullInterval, true
 }
+
+// maxStrLen bounds the length of a Str or Bytes value.
+const maxStrLen = 1 << 48
 
 // ssaRange returns the interval of Int value v.
 func (s *fstate) ssaRange(v *ssa.Value) interval {

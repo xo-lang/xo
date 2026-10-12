@@ -42,13 +42,17 @@ type memo struct {
 	lo, hi map[vreg]int64
 	// lowZero: the number of low bits a branch proved zero
 	lowZero map[vreg]int
+	// less: x < y holds for the registers (x, y), from a branch or a
+	// passed bounds check; the value is x's SSA value (decision 0184)
+	less map[[2]vreg]*ssa.Value
 }
 
 // m returns the memo of the current block.
 func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
+			less: map[[2]vreg]*ssa.Value{}}
 	}
 	return s.mm
 }
@@ -191,7 +195,11 @@ func (s *fstate) dce() {
 // that dominates it.
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
+		less: map[[2]vreg]*ssa.Value{}}
+	for k, v := range from.less {
+		m.less[k] = v
+	}
 	for k, v := range from.lowZero {
 		m.lowZero[k] = v
 	}
@@ -252,12 +260,24 @@ func (s *fstate) forgetLen(l vreg) {
 // is not checked (`n - 1` under `n >= 2`, `i + 1` under `i < n`).
 
 // bounds returns what is known of Int value v.
-func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
+func (s *fstate) bounds(v *ssa.Value) (int64, int64) { return s.boundsAt(v, boundsDepth) }
+
+// boundsDepth is how many operations deep bounds derives an interval
+// from the operands' bounds (decision 0184): the range analysis ignores
+// branches, so `(r - 128) * 3` under `r < 2048` learns its bound here.
+const boundsDepth = 3
+
+func (s *fstate) boundsAt(v *ssa.Value, d int) (int64, int64) {
 	if n, ok := constInt(v); ok {
 		return n, n
 	}
 	r := s.ssaRange(v) // ranges.go
 	lo, hi := r.lo, r.hi
+	if d > 0 {
+		if x, ok := s.derived(v, d-1); ok {
+			lo, hi = max(lo, x.lo), min(hi, x.hi)
+		}
+	}
 	ws, ok := s.vals[v]
 	if !ok || len(ws) != 1 {
 		return lo, hi
@@ -270,6 +290,154 @@ func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
 		hi = min(hi, x)
 	}
 	return lo, hi
+}
+
+// derived is the interval of the Int operation v from its operands'
+// bounds (derived d more levels deep). Every operation is exact (a
+// checked one faults outside Int, an unchecked one was proved), as in
+// rangeOf; a shift left only counts when it is checked.
+func (s *fstate) derived(v *ssa.Value, d int) (interval, bool) {
+	if v.Type == nil || v.Type.Kind != ssa.KInt {
+		return interval{}, false
+	}
+	arg := func(i int) interval {
+		lo, hi := s.boundsAt(v.Args[i], d)
+		return interval{lo, hi}
+	}
+	switch v.Op {
+	case ssa.OpAdd:
+		a, b := arg(0), arg(1)
+		return interval{satAdd(a.lo, b.lo), satAdd(a.hi, b.hi)}, true
+	case ssa.OpSub:
+		a, b := arg(0), arg(1)
+		if b.lo == math.MinInt64 {
+			return interval{}, false
+		}
+		return interval{satAdd(a.lo, -b.hi), satAdd(a.hi, -b.lo)}, true
+	case ssa.OpMul:
+		a, b := arg(0), arg(1)
+		c0, c1, c2, c3 := satMul(a.lo, b.lo), satMul(a.lo, b.hi), satMul(a.hi, b.lo), satMul(a.hi, b.hi)
+		return interval{min(c0, c1, c2, c3), max(c0, c1, c2, c3)}, true
+	case ssa.OpDiv:
+		k, ok := constInt(v.Args[1])
+		if !ok || k <= 0 {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{a.lo / k, a.hi / k}, true
+	case ssa.OpAnd:
+		a, b := arg(0), arg(1)
+		switch {
+		case a.lo >= 0 && b.lo >= 0:
+			return interval{0, min(a.hi, b.hi)}, true
+		case a.lo >= 0:
+			return interval{0, a.hi}, true
+		case b.lo >= 0:
+			return interval{0, b.hi}, true
+		}
+	case ssa.OpOr:
+		a, b := arg(0), arg(1)
+		if a.lo >= 0 && b.lo >= 0 {
+			return interval{max(a.lo, b.lo), ones(max(a.hi, b.hi))}, true
+		}
+	case ssa.OpShr:
+		k, ok := constInt(v.Args[1])
+		if !ok || k < 0 || k > 63 {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{a.lo >> k, a.hi >> k}, true
+	case ssa.OpShl:
+		k, ok := constInt(v.Args[1])
+		if !ok || k < 0 || k > 62 || v.Pos == "" {
+			return interval{}, false
+		}
+		a := arg(0)
+		return interval{satMul(a.lo, int64(1)<<k), satMul(a.hi, int64(1)<<k)}, true
+	case ssa.OpIntConv:
+		return arg(0), true
+	case ssa.OpCall:
+		if v.Aux == "Str.len" && v.Args[0].Op == ssa.OpConst {
+			if x, ok := v.Args[0].Aux.(string); ok {
+				return interval{int64(len(x)), int64(len(x))}, true
+			}
+		}
+	}
+	return interval{}, false
+}
+
+// ones is the smallest 2^k - 1 at least x (x >= 0): a bound of x | y
+// for x, y in [0, x].
+func ones(x int64) int64 {
+	r := int64(0)
+	for r < x {
+		r = r<<1 | 1
+	}
+	return r
+}
+
+// provedIndex reports whether 0 <= i < n is known, n a length in a
+// register (decision 0184): from i's bounds and n's constant value k
+// (-1 when not constant), or from a fact x < n of the memo where x and
+// i are one value plus offsets whose bounds put i at or below x
+// (`i + 1` under `i + k < n` with k >= 1).
+func (s *fstate) provedIndex(i *ssa.Value, n vreg, k int64) bool {
+	lo, hi := s.bounds(i)
+	if lo < 0 {
+		return false
+	}
+	if k >= 0 && hi < k {
+		return true
+	}
+	fi := s.addForms(i)
+	for key, x := range s.m().less {
+		if key[1] != n {
+			continue
+		}
+		for _, b := range s.addForms(x) {
+			for _, a := range fi {
+				if a.base == b.base && (a.hi <= b.lo || a.off != nil && a.off == b.off) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// addForm says a value is base plus an offset in [lo, hi] (the value
+// off, when it is one).
+type addForm struct {
+	base   *ssa.Value
+	lo, hi int64
+	off    *ssa.Value
+}
+
+// addForms returns the ways Int value v is a value plus an offset: v
+// plus 0; for v = a + b, a plus b and b plus a; for v = a - c (c
+// constant), a plus -c.
+func (s *fstate) addForms(v *ssa.Value) []addForm {
+	out := []addForm{{v, 0, 0, nil}}
+	switch v.Op {
+	case ssa.OpAdd:
+		alo, ahi := s.bounds(v.Args[0])
+		blo, bhi := s.bounds(v.Args[1])
+		out = append(out, addForm{v.Args[0], blo, bhi, v.Args[1]}, addForm{v.Args[1], alo, ahi, v.Args[0]})
+	case ssa.OpSub:
+		if c, ok := constInt(v.Args[1]); ok && c != math.MinInt64 {
+			out = append(out, addForm{v.Args[0], -c, -c, nil})
+		}
+	}
+	return out
+}
+
+// lessFact records x < y for SSA value x (one register) and register y.
+func (s *fstate) lessFact(x *ssa.Value, y vreg) {
+	ws, ok := s.vals[x]
+	if !ok || len(ws) != 1 || ws[0] == 0 || y == 0 || x.Type.Kind != ssa.KInt {
+		return
+	}
+	s.m().less[[2]vreg{ws[0], y}] = x
 }
 
 var negateCmp = map[ssa.Op]ssa.Op{ssa.OpLt: ssa.OpGe, ssa.OpGe: ssa.OpLt, ssa.OpLe: ssa.OpGt, ssa.OpGt: ssa.OpLe, ssa.OpEq: ssa.OpNe, ssa.OpNe: ssa.OpEq}
@@ -301,6 +469,16 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 					s.m().lowZero[ws[0]] = k
 				}
 			}
+		}
+	}
+	switch op {
+	case ssa.OpLt:
+		if ws, ok := s.vals[y]; ok && len(ws) == 1 {
+			s.lessFact(x, ws[0])
+		}
+	case ssa.OpGt:
+		if ws, ok := s.vals[x]; ok && len(ws) == 1 {
+			s.lessFact(y, ws[0])
 		}
 	}
 	xlo, xhi := s.bounds(x)
@@ -337,6 +515,15 @@ func (s *fstate) narrow(x *ssa.Value, op ssa.Op, ylo, yhi int64) {
 	}
 	m := s.m()
 	m.lo[ws[0]], m.hi[ws[0]] = lo, hi
+	// x = a + c (exact): a op y - c (decision 0184)
+	if x.Op == ssa.OpAdd || x.Op == ssa.OpSub {
+		if c, ok := constInt(x.Args[1]); ok && c != math.MinInt64 {
+			if x.Op == ssa.OpSub {
+				c = -c
+			}
+			s.narrow(x.Args[0], op, satAdd(ylo, -c), satAdd(yhi, -c))
+		}
+	}
 }
 
 // safeAdd reports whether a + n (or a - n) cannot overflow.
@@ -383,18 +570,7 @@ func (s *fstate) threadConst() {
 				continue
 			}
 		}
-		val, ok := int64(0), false
-		for _, in := range p.insts[:len(p.insts)-1] {
-			for i, d := range in.defs {
-				if d != r {
-					continue
-				}
-				ok = in.kind == iPmove && in.srcs[i].kind == sImm
-				if ok {
-					val = in.srcs[i].imm
-				}
-			}
-		}
+		val, ok := constBefore(p, len(p.insts)-1, r)
 		if !ok {
 			continue
 		}
@@ -425,11 +601,47 @@ func (s *fstate) threadConst() {
 	}
 }
 
+// constBefore returns the constant register r holds before instruction
+// end of p, when the last definition of r there is a parallel move of an
+// immediate, or of a register that holds one (decision 0184: the true of
+// `a || b` is a constant register moved into the join's parameter), or a
+// `mov` of a constant.
+func constBefore(p *mblock, end int, r vreg) (int64, bool) {
+	for k := end - 1; k >= 0; k-- {
+		in := p.insts[k]
+		for i, d := range in.defs {
+			if d != r {
+				continue
+			}
+			if in.kind == iPmove {
+				switch {
+				case in.srcs[i].kind == sImm:
+					return in.srcs[i].imm, true
+				case in.srcs[i].kind == sReg && in.srcs[i].v == 0:
+					return 0, true // xzr
+				case in.srcs[i].kind == sReg:
+					return constBefore(p, k, in.srcs[i].v)
+				}
+				return 0, false
+			}
+			var n int64
+			if in.kind == iPlain && in.konst && len(in.defs) == 1 && strings.HasPrefix(in.text, "mov $d0, #") {
+				if _, err := fmt.Sscanf(in.text, "mov $d0, #%d", &n); err == nil && in.text == fmt.Sprintf("mov $d0, #%d", n) {
+					return n, true
+				}
+			}
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
 // threadCset turns `t = cmp ...; cset; r = t; jump J` where J only
 // branches on r into a branch on the comparison itself (an inlined
 // predicate returns its Bool through the continuation's parameter).
 func (s *fstate) threadCset() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	nuses := useCounts(blocks)
 	for _, p := range blocks {
 		t := p.term()
 		if t == nil || t.kind != iJump || len(p.insts) < 3 || len(t.targets) > 1 {
@@ -467,7 +679,49 @@ func (s *fstate) threadCset() {
 		}
 		p.insts[len(p.insts)-1] = &inst{kind: iCondBr, text: def.text[:i], uses: append([]vreg(nil), def.uses...),
 			cond: cond, targets: append([]*mblock(nil), j.insts[0].targets...)}
+		if nuses[r] == 1 {
+			// only J's branch reads r, and p no longer reaches it: the
+			// move (and then the cset, by dce) is dead (decision 0184)
+			dropMove(p, len(p.insts)-2, r)
+		}
 	}
+}
+
+// useCounts counts the uses of each register in blocks.
+func useCounts(blocks []*mblock) map[vreg]int {
+	n := map[vreg]int{}
+	for _, b := range blocks {
+		for _, in := range b.insts {
+			for _, u := range in.uses {
+				n[u]++
+			}
+		}
+	}
+	return n
+}
+
+// dropMove removes the move into r from the parallel move p.insts[k]
+// (the whole instruction when nothing is left).
+func dropMove(p *mblock, k int, r vreg) {
+	mv := p.insts[k]
+	var defs []vreg
+	var srcs []src
+	var uses []vreg
+	for i, d := range mv.defs {
+		if d == r {
+			continue
+		}
+		defs = append(defs, d)
+		srcs = append(srcs, mv.srcs[i])
+		if mv.srcs[i].kind == sReg && mv.srcs[i].v != 0 {
+			uses = append(uses, mv.srcs[i].v)
+		}
+	}
+	if len(defs) == 0 {
+		p.insts = append(p.insts[:k], p.insts[k+1:]...)
+		return
+	}
+	mv.defs, mv.srcs, mv.uses = defs, srcs, uses
 }
 
 // hoistConsts moves the instructions that make constants out of loops,
@@ -735,4 +989,22 @@ func (s *fstate) reuseFlags() {
 			in.text, in.uses = "", nil
 		}
 	}
+}
+
+// safeAddRange reports whether a + b (op OpAdd) or a - b (OpSub) cannot
+// overflow for a in [alo, ahi] and b in [blo, bhi] (decision 0184).
+func (s *fstate) safeAddRange(op ssa.Op, alo, ahi, blo, bhi int64) bool {
+	if op == ssa.OpSub {
+		if blo == math.MinInt64 {
+			return false
+		}
+		blo, bhi = -bhi, -blo
+	}
+	if bhi > 0 && ahi > math.MaxInt64-bhi {
+		return false
+	}
+	if blo < 0 && alo < math.MinInt64-blo {
+		return false
+	}
+	return true
 }
