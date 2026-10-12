@@ -1,7 +1,8 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
-Status: Proposed (2026-10-12; the owner decides every switch-over point
-below). The inventory is from main dbb8b05 with this decision's
+Status: Accepted (owner, 2026-10-12): switch points A and B approved;
+B takes effect when its gate passes; deleting the Go compiler packages is
+delegated to the lead under the criteria in "Owner approvals". The inventory is from main dbb8b05 with this decision's
 commits; the measurements are on the same tree (runs 1 to 4 of the
 results file). Gaps closed on the way, each its own commit: `xo1
 --backend=llvm`; the decision 0172 file symbols in xo1's runtime flags
