@@ -112,6 +112,7 @@ const (
 // Build options (15xx group, decision 0165). Emitted by internal/build.
 const (
 	StampTarget Code = "XO1501" // `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module
+	GoTooOld    Code = "XO1502" // the go command the Go backend runs is older than the oldest Go Xo supports (decision 0176)
 )
 
 // Real-time functions (14xx group, decision 0133). Emitted by the checker
@@ -250,6 +251,7 @@ var Descriptions = map[Code]string{
 	RealtimeRecursion: "recursion among real-time functions",
 	RealtimeBlocking:  "blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function",
 	StampTarget:       "`--stamp NAME=VALUE` names no `const NAME: Str = \"...\"` (a plain string literal) of the main module",
+	GoTooOld:          "the go command the Go backend runs is older than the oldest Go Xo supports (decision 0176)",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

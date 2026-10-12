@@ -1,6 +1,6 @@
 # Three runs take most of TestSelfhostSSA's pass stages
 
-Status: Observed (2026-10-11)
+Status: Observed (2026-10-11, again 2026-10-12)
 
 Symptom: after SSA stage 8, TestSelfhostSSA with only the go backend took
 about 230 s (the toolchain notes said 25 s before the pass stages), so a
@@ -15,9 +15,20 @@ proportional to source size: selfhost/parser (7,900 lines) takes 1.4 s.
 The Go builder's passes (the parent test's 86 s) are skewed the same way.
 
 Fix: the merge tier compares only the build stage of `buildOnlyMerge`
-(ssa_test.go) and every stage of the other 643 runs; TestSelfhostSSA
+(ssa_test.go at the time; now mergeHeavy in tier_test.go) and every stage of the other 643 runs; TestSelfhostSSA
 fell from 231 s to 54 s. The full tier still compares every stage of
 every run. When a new large program (a self hosted component, a huge
 function fixture) slows the merge tier, time it the same way (build
 selfhost/ssa with `xo build -o`, run it per directory with and without
 `--stages`) and add it to the list.
+
+Recurrence (2026-10-12): the fixed lists (buildOnlyMerge in ssa_test.go,
+arm64Heavy in arm64_test.go) missed the components added since,
+selfhost/arm64, selfhost/llvm, and selfhost/xo, so the merge tier ran
+the SSA passes of all three, the arm64 emitter on selfhost/llvm, and the
+LLVM emitter on all three: 1,329 s under load instead of about 2.5 min.
+Fix: one rule, `mergeHeavy` in tier_test.go (huge_frame and every
+directory under selfhost/ but lexer and parser), used by the SSA,
+arm64, and LLVM comparisons, so a new component is heavy without an
+edit. Figures: knowledgebase/infrastructure/toolchain.md, the merge
+tier line.

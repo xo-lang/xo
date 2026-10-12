@@ -17,7 +17,7 @@ fn value_self_faults(x: Value) -> Bool {
     CallValue => true
     Call => {
       let name = aux_name(x.aux)
-      if name is "list.index" | "list.set" | "bytes.index" | "Int.abs" {
+      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
         return !x.pos.is_empty()
       }
       faulting_rt(name)

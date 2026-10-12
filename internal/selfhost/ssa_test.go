@@ -65,11 +65,11 @@ func TestSelfhostSSA(t *testing.T) {
 		dirs = some
 	}
 	// the merge tier compares only the build stage of the runs whose
-	// passes take minutes (buildOnlyMerge)
+	// passes take minutes (mergeHeavy)
 	buildOnly := map[string]bool{}
 	if selfhostTier(t) == tierMerge {
-		for _, d := range buildOnlyMerge {
-			buildOnly[d] = true
+		for _, d := range dirs {
+			buildOnly[d] = mergeHeavy(d)
 		}
 	}
 	bins := selfhostBinaries(t, "ssa", backends)
@@ -127,18 +127,6 @@ func TestSelfhostSSA(t *testing.T) {
 			}
 		})
 	}
-}
-
-// buildOnlyMerge are the runs whose passes the merge tier does not
-// compare: about 110 of the 160 s the go backend's Xo builder spends in
-// the passes of all runs (selfhost/ssa 69 s, selfhost/check 22 s,
-// huge_frame 19 s; 2026-10-11), and as much again for the Go builder.
-// Their build stage is still compared, and the full tier compares every
-// stage of them.
-var buildOnlyMerge = []string{
-	"internal/arm64/testdata/run/huge_frame",
-	"selfhost/check",
-	"selfhost/ssa",
 }
 
 // runSSAStages is runSSA with --stages, except for the dirs in

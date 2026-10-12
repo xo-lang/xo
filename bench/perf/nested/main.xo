@@ -1,0 +1,144 @@
+// Nested element updates (decision 0169). Usage: nested <workload>
+// Each workload does N updates of a collection inside a list element and
+// prints "<workload> <checksum> <elapsed microseconds>". Before decision
+// 0169 the native backends copied the inner collection on every update.
+
+const N = 20000
+
+struct Block {
+  id: Int
+  insts: List[Int]
+  name: Str
+}
+
+struct Cell {
+  g: Int
+  tag: Str
+}
+
+struct Row {
+  cells: List[Cell]
+  m: Map[Int, Int]
+  text: Str
+}
+
+struct Counter {
+  items: List[Int]
+}
+
+fn (var c: Counter) add(x: Int) {
+  c.items.push(x)
+}
+
+struct G {
+  blocks: List[Block]
+  cur: Int
+}
+
+fn (var g: G) emit(x: Int) {
+  g.blocks[g.cur].insts.push(x)
+}
+
+fn new_g() -> G {
+  var g = G{blocks: [], cur: 0}
+  g.blocks.push(Block{id: 0, insts: [], name: "entry"})
+  g.blocks.push(Block{id: 1, insts: [], name: "exit"})
+  g
+}
+
+/// `xs[i].f.push(x)` through a `var` receiver (the self hosted
+/// compiler's G.add).
+fn push_field() -> Int {
+  var g = new_g()
+  for i in 0..N {
+    g.emit(i)
+  }
+  g.blocks[0].insts.len() + g.blocks[0].insts[N - 1]
+}
+
+/// `xs[i][j] = v` on a list of lists.
+fn set_nested() -> Int {
+  var m: List[List[Int]] = []
+  var row: List[Int] = []
+  for i in 0..N {
+    row.push(i)
+  }
+  m.push(row)
+  m.push([])
+  for j in 0..N {
+    m[0][j] = j * 2
+  }
+  m[0][N - 1] + m[0].len()
+}
+
+/// `xs[i].f[j].g = v`: a field of an element of a list in an element.
+fn set_deep() -> Int {
+  var rows: List[Row] = []
+  var cells: List[Cell] = []
+  for i in 0..N {
+    cells.push(Cell{g: i, tag: "c"})
+  }
+  rows.push(Row{cells: cells, m: {}, text: ""})
+  for j in 0..N {
+    rows[0].cells[j].g = j + 1
+  }
+  rows[0].cells[N - 1].g
+}
+
+/// `xs[i].m[k] = v`: a map put in an element.
+fn map_put() -> Int {
+  var rows: List[Row] = [Row{cells: [], m: {}, text: ""}]
+  for k in 0..N {
+    rows[0].m[k] = k
+  }
+  rows[0].m.len()
+}
+
+/// `xs[i].text += "x"`: a string appended in an element.
+fn str_append() -> Int {
+  var rows: List[Row] = [Row{cells: [], m: {}, text: ""}]
+  for _ in 0..N {
+    rows[0].text += "x"
+  }
+  rows[0].text.len()
+}
+
+/// `xs[i].c.add(x)`: a user method with a `var` receiver on an element.
+fn method_field() -> Int {
+  var cs: List[Counter] = [Counter{items: []}]
+  for i in 0..N {
+    cs[0].add(i)
+  }
+  cs[0].items.len()
+}
+
+/// The outer list is shared (a copy is kept) at every update: each
+/// update copies, and the copy keeps its value.
+fn shared() -> Int {
+  var g = new_g()
+  var keep = 0
+  for i in 0..2000 {
+    let before = g.blocks
+    g.emit(i)
+    keep += before[0].insts.len()
+  }
+  keep + g.blocks[0].insts.len()
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "push"
+  let t = os.clock.now()
+  let sum = match w {
+    "push" => push_field()
+    "setnested" => set_nested()
+    "setdeep" => set_deep()
+    "mapput" => map_put()
+    "strappend" => str_append()
+    "method" => method_field()
+    "shared" => shared()
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

@@ -292,10 +292,22 @@ func (s *fn) indexedRecv(e ast.Expr) ast.Expr {
 // place is an assignable location: its current value and how to store a
 // new one. Storing into a field or element rebuilds the enclosing values
 // (setfield, list.set) up to the local.
+//
+// Reading a list element on the way to a store moves it out of the list
+// (`list.take`, decision 0169): the list is made unique and its slot
+// holds a placeholder until the store puts the element back, so the
+// element's own collections are unique too and update in place
+// (`xs[i].f.push(x)`, `xs[i][j] = v`). Value semantics hold on every
+// path: a list still used afterwards (shared, or read on a path where
+// the store does not happen) is copied by `reuse` before the take.
+// keep turns this off for a place whose store may not follow (Map.update
+// stores only on success; a compound assignment whose operand can
+// leave the statement): the element stays a projection (`list.index`).
 type place struct {
-	t   *Type
-	get func() *Value
-	set func(*Value)
+	t    *Type
+	get  func() *Value
+	set  func(*Value)
+	keep *bool
 }
 
 func (s *fn) place(e ast.Expr) (place, bool) {
@@ -308,7 +320,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		if vo == nil {
 			break
 		}
-		return place{s.typeOf(x), func() *Value { return s.read(vo) }, func(v *Value) { s.writeVar(vo, v) }}, true
+		return place{s.typeOf(x), func() *Value { return s.read(vo) }, func(v *Value) { s.writeVar(vo, v) }, new(bool)}, true
 	case *ast.SelectorExpr:
 		base, ok := s.place(x.X)
 		if !ok {
@@ -332,7 +344,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		}
 		return place{pt,
 			func() *Value { return s.unbox(s.add(OpField, ft, idx, cur())) },
-			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }}, true
+			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }, base.keep}, true
 	case *ast.IndexExpr:
 		base, ok := s.place(x.X)
 		if ok && base.t.Coll {
@@ -345,7 +357,7 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 					b.unsupported(x, "reading `m[k]`")
 					return s.undef(mapVal(t))
 				},
-				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }}, true
+				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }, base.keep}, true
 		}
 		if !ok || base.t.Kind != KList {
 			break
@@ -356,16 +368,36 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		// the list is read when first used, as a field's base is: in
 		// `xs[i] = f()` after f, which may change xs (as the Go backend
 		// does; the value stored into xs[i] must not drop f's changes)
-		var l *Value
+		var l, taken *Value
 		cur := func() *Value {
 			if l == nil {
 				l = base.get()
 			}
 			return l
 		}
-		return place{et,
-			func() *Value { return s.call("list.index", et, pos, cur(), i) },
-			func(v *Value) { base.set(s.call("list.set", base.t, pos, cur(), i, v)) }}, true
+		keep := base.keep
+		get := func() *Value {
+			if taken != nil {
+				// read again before the store: the element moved out
+				return taken
+			}
+			if *keep || !et.Heap() {
+				return s.call("list.index", et, pos, cur(), i)
+			}
+			// moved out until the store puts it back (decision 0169)
+			tk := s.call("list.take", b.mod.Tuple(base.t, et), pos, cur(), i)
+			l = s.add(OpField, base.t, 0, tk)
+			taken = s.add(OpField, et, 1, tk)
+			return taken
+		}
+		set := func(v *Value) {
+			p := pos
+			if taken != nil {
+				p = "" // the take checked the index of the same list
+			}
+			base.set(s.call("list.set", base.t, p, cur(), i, v))
+		}
+		return place{et, get, set, keep}, true
 	}
 	b.unsupported(e, "assigning to this expression")
 	return place{}, false
@@ -409,6 +441,10 @@ func (s *fn) assign(x *ast.AssignStmt) {
 		s.b.unsupported(x, "this assignment operator")
 		return
 	}
+	// the operand runs between the read and the store: an element moves
+	// out only when the operand cannot leave the statement or read a
+	// list element (decision 0169)
+	*p.keep = !plainOperand(x.Value)
 	old := p.get()
 	var r *Value
 	if op == token.Shl || op == token.Shr {
@@ -417,4 +453,30 @@ func (s *fn) assign(x *ast.AssignStmt) {
 		r = s.valueAs(x.Value, p.t)
 	}
 	p.set(s.arith(op, old, r, x))
+}
+
+// plainOperand reports an expression that cannot leave the statement (no
+// call, `?`, block, or match) and reads no list element: literals, names,
+// fields, and operators over them.
+func plainOperand(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.IntLit, *ast.FloatLit, *ast.DurationLit, *ast.RuneLit, *ast.BytesLit, *ast.Ident:
+		return true
+	case *ast.StringLit:
+		for _, p := range x.Parts {
+			if p.Expr != nil && !plainOperand(p.Expr) {
+				return false
+			}
+		}
+		return true
+	case *ast.ParenExpr:
+		return plainOperand(x.X)
+	case *ast.UnaryExpr:
+		return plainOperand(x.X)
+	case *ast.BinaryExpr:
+		return plainOperand(x.X) && plainOperand(x.Y)
+	case *ast.SelectorExpr:
+		return plainOperand(x.X)
+	}
+	return false
 }

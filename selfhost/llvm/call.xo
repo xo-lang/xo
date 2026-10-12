@@ -77,6 +77,31 @@ fn (var g: Gen) call(v: Int) {
       let l = g.ll(et)
       g.set(v, "load ${l}, ptr ${p}${TBAA_ELEM}")
     }
+    "list.take" => {
+      // element i moves out (decision 0169); its slot gets a
+      // placeholder that releasing ignores until list.set stores back
+      let et = g.m.types[vt].elems[1]
+      let l = g.op(args[0])
+      if !x.pos.is_empty() {
+        let n = g.list_len(l)
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, ${n}")
+        let b1 = g.op(args[1])
+        let lc = g.loc(v)
+        g.fault_if(bad, "@xo_fault_index(i64 ${b1}, i64 ${n}, ptr ${lc})")
+      }
+      let a1 = g.op(args[1])
+      let p = g.elem_ptr(et, l, a1)
+      let el = g.ll(et)
+      let ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+      let el2 = g.ll(et)
+      let h = g.hole(et)
+      g.emit("store ${el2} ${h}, ptr ${p}${TBAA_ELEM}")
+      let rt = g.ll(vt)
+      let t = g.def("insertvalue ${rt} undef, ptr ${l}, 0")
+      let el3 = g.ll(et)
+      g.set(v, "insertvalue ${rt} ${t}, ${el3} ${ev}, 1")
+    }
     "list.get" => {
       let ot = vt
       let et = g.m.types[g.vty(args[0])].elems[0]

@@ -639,6 +639,45 @@ fn (var g: Gen) str_const(s: Str) -> Str {
   g.str_const_bytes(s.bytes())
 }
 
+/// The constant list.take leaves in a slot (decision 0169; hole): its
+/// Str, List, Box, and handle leaves point to an immortal object (the
+/// empty string's), a function value has no environment, and an enum's
+/// tag is past its variants, so retain, release, and share of it do
+/// nothing.
+fn (var g: Gen) hole(t: Int) -> Str {
+  if !g.heap(t) {
+    return "zeroinitializer"
+  }
+  let x = g.m.types[t]
+  match x.kind {
+    Str => {
+      let o = g.str_obj("".bytes())
+      return "{ ptr ${o}, i64 0 }"
+    }
+    List | Box | Handle => return g.str_obj("".bytes())
+    Enum => return "{ i64 ${x.variants.len()}, [${g.words(t)} x i64] zeroinitializer }"
+    Struct | Tuple => {
+      var fts: List[Int] = []
+      if x.kind == ssa.Kind.Struct {
+        for f in x.fields {
+          fts.push(f.ty)
+        }
+      } else {
+        fts = x.elems
+      }
+      var fs: List[Str] = []
+      for ft in fts {
+        let l = g.ll(ft)
+        let h = g.hole(ft)
+        fs.push("${l} ${h}")
+      }
+      return "{ " + fs.join(", ") + " }"
+    }
+    _ => {}
+  }
+  "zeroinitializer"
+}
+
 /// A NUL terminated global for a fault location (cstr).
 fn (var g: Gen) cstr(s: Str) -> Str {
   if let Some(name) = g.locs.get(s) {
