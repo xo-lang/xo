@@ -6,6 +6,17 @@
 
 use std/crypto
 
+/// The host's GOARCH: the architecture this xo1 was built for ("arm64"
+/// on Apple silicon and Graviton, "amd64" on x86-64 hosts, where xo1 is
+/// built by the LLVM backend), as runtime.GOARCH is the Go driver's.
+fn host_arch() -> Str {
+  match target.arch {
+    Arm64 => "arm64"
+    Amd64 => "amd64"
+    Wasm32 => "wasm"
+  }
+}
+
 /// The host's GOOS ("darwin" or "linux"), from `uname -s`.
 fn host_os(os: Os) -> Str {
   match os.proc.run("uname", ["-s"]) {

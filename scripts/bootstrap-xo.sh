@@ -6,8 +6,12 @@
 #
 #   scripts/bootstrap-xo.sh SEED [OUTDIR]
 #
-# SEED is an xo that builds selfhost/xo with the arm64 backend: the
-# previous release's binary, or a self hosted xo1. OUTDIR defaults to
+# SEED is an xo that builds selfhost/xo with the host's native backend:
+# the previous release's binary, or a self hosted xo1. The backend is
+# $XO_BOOTSTRAP_BACKEND, by default arm64 on an arm64 host and llvm on
+# an x86-64 host (where xo1 is built by the LLVM backend; the LLVM
+# builds are split into $XO_LLVM_SPLIT modules, default 12, decision
+# 0168, with --asm writing the LLVM IR). OUTDIR defaults to
 # .tools/bootstrap. The stages, each with an empty build directory,
 # runtime object cache, and binary cache (so nothing is reused from an
 # earlier build):
@@ -67,11 +71,18 @@ export XO_GO=/nonexistent/go
 export XO_SELF_DRIVER=1
 export XO_BIN_CACHE=off
 export XO_RTPACK=off
+backend=${XO_BOOTSTRAP_BACKEND:-}
+if [ -z "$backend" ]; then
+  case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac
+fi
+if [ "$backend" = llvm ]; then
+  export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12}
+fi
 if command -v go >/dev/null 2>&1; then
   say "FAIL: go is still on PATH ($(command -v go))"
   exit 1
 fi
-say "no go on PATH; seed $seed; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1)"
+say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1)"
 
 # stage N: binary $2 builds selfhost/xo into $out/sN/xo (with the
 # assembly beside it unless N is 1)
@@ -83,7 +94,7 @@ stage() {
   say "s$n: $bin builds selfhost/xo"
   t0=$(date +%s)
   if XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" XO_TLS_CACHE="$out/cache-s$n/tls" \
-    "$bin" build --backend=arm64 -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
+    "$bin" build --backend="$backend" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else
     say "FAIL: stage s$n (see $log)"
@@ -95,7 +106,7 @@ stage 2 "$out/s1/xo"
 stage 3 "$out/s2/xo"
 rc=0
 if cmp -s "$out/s2/xo.s" "$out/s3/xo.s"; then
-  say "fixed point: s2 and s3 assembly identical ($(wc -c < "$out/s3/xo.s" | tr -d ' ') bytes)"
+  say "fixed point: s2 and s3 assembly ($backend) identical ($(wc -c < "$out/s3/xo.s" | tr -d ' ') bytes)"
 else
   say "FAIL: s2 and s3 assembly differ"
   rc=1
@@ -114,7 +125,7 @@ say "s3 version: $("$out/s3/xo" version 2>&1 | head -1)"
 mkdir -p "$out/hello"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the bootstrapped xo")\n}\n' > "$out/hello/main.xo"
 if XO_BUILD_DIR="$out/cache-s3/build" XO_RTOBJ_CACHE="$out/cache-s3/rtobj" \
-  "$out/s3/xo" run --backend=arm64 "$out/hello" > "$out/hello.txt" 2>> "$log"; then
+  "$out/s3/xo" run --backend="$backend" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
   say "s3 builds and runs a hello program: $(head -1 "$out/hello.txt")"
 else
   say "FAIL: s3 cannot build and run a hello program"

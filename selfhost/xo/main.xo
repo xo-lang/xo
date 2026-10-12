@@ -101,11 +101,12 @@ fn main(os: Os) ! {
     os.proc.exit(2)
   }
   // the default backend is `xo`'s (cmd/xo backendFlag): go for build,
-  // run, and test, the host's native backend (arm64: xo1 runs on arm64
-  // hosts only) with --no-gc; asm prints the arm64 assembly
+  // run, and test, the host's native backend with --no-gc (arm64 on
+  // arm64 hosts, LLVM otherwise: build.NativeBackend); asm prints the
+  // arm64 assembly
   var backend = o.backend
   if backend.is_empty() {
-    backend = if o.no_gc || o.cmd == "asm" { "arm64" } else { "go" }
+    backend = if o.cmd == "asm" || (o.no_gc && host_arch() == "arm64") { "arm64" } else if o.no_gc { "llvm" } else { "go" }
   }
   if o.hybrid {
     if backend != "go" {
@@ -287,7 +288,7 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
 fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let phases = o.phases
   let goos = ctx.goos
-  let host = "${goos}/arm64"
+  let host = "${goos}/${host_arch()}"
   let targets = parse_targets(os, o.targets, host)
   for tg in targets {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
