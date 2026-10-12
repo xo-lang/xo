@@ -106,7 +106,6 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo build: --hybrid needs the Go backend")
       os.proc.exit(2)
     }
-    fail(os, "--hybrid is not in xo1 yet (the Go driver's hybrid.go)")
   }
   if o.no_gc && backend == "go" {
     os.stdio.eprintln("xo ${what}: --no-gc needs a native backend (llvm or arm64), not go")
@@ -116,8 +115,28 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo run: --seed needs the Go backend (native builds use the real scheduler)")
     os.proc.exit(2)
   }
-  if o.ci {
-    fail(os, "--ci is not in xo1 yet (it formats and vets: xo fmt and xo vet are stage 2)")
+  if o.cmd == "build" && (o.ci || o.release) {
+    // cmd/xo runBuild: a release (or --ci) build fails while a workspace
+    // overrides a required module, then --ci fails on an unformatted
+    // file or a dbg left in code (selfhost/cli/core ci.xo)
+    let cx = core_ctx(os, o)
+    let code = core.release_check(os, cx, o.dirs, o.json, if o.release { "--release" } else { "--ci" })
+    if code != 0 {
+      os.proc.exit(code)
+    }
+    if o.ci {
+      let code2 = core.ci_check(os, cx, o.dirs, o.json)
+      if code2 != 0 {
+        os.proc.exit(code2)
+      }
+    }
+  }
+  if o.hybrid && o.cmd == "build" && !o.json {
+    // decision 0084's Go assembler mode of the arm64 backend
+    // (internal/arm64 goasm.go) is not in selfhost/arm64: the build is
+    // the plain Go build that `xo build --hybrid` falls back to, and the
+    // report says why, as the Go driver's does when its assembly fails
+    os.stdio.eprintln("hybrid: no assembly (the self hosted arm64 backend has no Go assembler mode yet)")
   }
   if backend == "go" && (o.cmd == "build" || o.cmd == "test" || o.cmd == "run") {
     build_go(os, ctx, o)?
@@ -181,6 +200,24 @@ fn parse_targets(os: Os, s: Str, host: Str) -> List[Str] {
     out.push("${tos}/${arch}")
   }
   out
+}
+
+/// The context of the selfhost/cli/core checks (--ci, --release) for the
+/// command line o: its std, working directory, and module flags.
+fn core_ctx(os: Os, o: Opts) -> core.Ctx {
+  var offline = os.env.get("XO_OFFLINE") ?? ""
+  if o.offline == "1" {
+    offline = "1"
+  } else if o.offline == "0" {
+    offline = ""
+  }
+  var work = os.env.get("XO_WORK") ?? ""
+  if o.workspace == "off" {
+    work = "off"
+  } else if o.workspace == "on" {
+    work = ""
+  }
+  core.Ctx{std: o.std, wd: o.wd, offline: offline, work: work}
 }
 
 /// The checker of a build: the native implementation modules when
@@ -260,7 +297,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     uses_time = uses_time || m.path == "native/time"
   }
   let root = line_root(os, o.wd, o.dirs[0])
-  var b = ssa.build_program_release(c, root, tests, release)
+  var b = ssa.build_program_opts(c, root, tests, release, tests && o.real)
   t = lap(os, phases, "ssa", t)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)

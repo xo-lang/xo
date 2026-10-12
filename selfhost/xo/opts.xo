@@ -257,6 +257,7 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.topts.verbose = on
   } else if name == "real" {
     o.real = on
+    o.topts.real = on
   } else if name == "phase-times" {
     o.phases = on
   } else if name == "offline" {

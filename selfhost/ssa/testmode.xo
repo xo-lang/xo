@@ -55,7 +55,7 @@ fn (var b: Builder) build_tests() {
       b.unsupported("a property test (`test ... for`) whose inputs are not checked")
       continue
     }
-    if !tr.td.effects.is_empty() {
+    if !tr.td.effects.is_empty() && !b.real_tests {
       // skipped without --real (cmd/xo reports them as skipped)
       continue
     }
@@ -403,6 +403,19 @@ fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
   if nm >= 0 {
     let impl = b.member(nm, "memfs_${b.obj_name(fo)}")
     if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+      // Fs methods, and the MemFs methods that are Fs methods (a
+      // TestOs's fs is a MemFs); MemFs's own control methods stay
+      if b.real_tests {
+        let pm = b.native_mod("std/prelude")
+        if pm >= 0 {
+          let real = b.member(pm, "fs_${b.obj_name(fo)}")
+          if real >= 0 && b.c.objs[real].kind == check.ObjKind.Func && b.c.objs[real].recv < 0 {
+            // `xo test --real` (decision 0120): the real Fs when the
+            // test declares fs effects
+            return Some(b.call_as_via(x, ci, impl, real))
+          }
+        }
+      }
       return Some(b.call_as(x, ci, impl))
     }
   }
@@ -863,4 +876,57 @@ fn (var b: Builder) is_expect_compare(e: Expr) -> Bool {
     BinaryExpr(op: op, x: x, ..) => b.is_expect_call(x) && cmp_op(op) != None
     _ => false
   }
+}
+
+/// xo.testfs[memfs] (realFsWrapper): the function a test's Fs method
+/// calls under `xo test --real`, with memfs's signature: real (the
+/// prelude's fs_<name>) with the Fs's mode bits joined to the test's
+/// view (rt.test_fs_real, std/rt's testRealFs) when the test declares fs
+/// effects, else memfs.
+fn (var b: Builder) real_fs_wrapper(memfs: Int, real: Int) -> Str {
+  var ps: List[Int] = []
+  for p in b.m.funcs[memfs].blocks[0].params {
+    ps.push(b.m.funcs[memfs].values[p].ty)
+  }
+  b.gen_func("xo.testfs[${b.m.funcs[memfs].name}]", ps, b.m.funcs[memfs].results, Gen.TestFs(memfs: memfs, real: real))
+}
+
+fn (var b: Builder) test_fs_body(memfs: Int, real: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  var args: List[Int] = []
+  for p in b.s.f.blocks[0].params {
+    args.push(p)
+  }
+  let mode = b.rt("test_fs_real", it, [])
+  let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [mode, b.cint(0)]))
+  var as_ = args
+  if !as_.is_empty() && b.is_fs(b.vty(as_[0])) {
+    let f = as_[0]
+    let old = b.add(Op.Field, it, Aux.I(n: 1), [f])
+    as_[0] = b.add(Op.SetField, b.vty(f), Aux.I(n: 1), [f, b.add(Op.Or, it, Aux.None, [old, mode])])
+  }
+  b.test_fs_ret(real, as_)
+  b.if_then_end(no, join)
+  b.test_fs_ret(memfs, args)
+}
+
+/// Returns the result of calling function f with args (realFsWrapper ret).
+fn (var b: Builder) test_fs_ret(f: Int, args: List[Int]) {
+  let name = b.m.funcs[f].name
+  let rs = b.m.funcs[f].results
+  if rs.len() == 1 {
+    let r = b.call(name, rs[0], "", args)
+    b.check(name)
+    b.retv(r)
+    return
+  }
+  let t = b.m.tuple(rs)
+  let r = b.call(name, t, "", args)
+  b.check(name)
+  var es: List[Int] = []
+  for (i, _) in rs.indexed() {
+    es.push(b.add(Op.Field, b.m.types[t].elems[i], Aux.I(n: i), [r]))
+  }
+  b.retv(b.add(Op.Tuple, t, Aux.None, es))
 }

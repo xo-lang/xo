@@ -84,3 +84,9 @@ fn eval_links(fs: Fs, path: Str) -> Str uses fs.read {
   }
   p
 }
+
+/// p made absolute against the checker's working directory
+/// (filepath.Abs), for the commands' messages.
+pub fn (c: Checker) abs_path(p: Str) -> Str {
+  c.abs(p)
+}

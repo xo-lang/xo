@@ -5,11 +5,9 @@
 // cases, each in a process of its own, and a failure is shrunk
 // (XO_PROP_REPLAY, XO_PROP_BEST), as std/rt's runProperty does.
 //
-// Not here yet: tests with `uses` (real capabilities, `--real`) are
-// reported as skipped, as the Go driver does without --real; the
-// contract fuzz tests the Go driver lists as skipped are not listed; a
-// test that does not finish is not stopped (the native Proc has no
-// timeout yet).
+// Tests with `uses` are skipped unless `--real` gives them real
+// capabilities (XO_TEST_REAL, decision 0120). Not here yet: a test that
+// does not finish is not stopped (the native Proc has no timeout yet).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/gen
@@ -95,6 +93,8 @@ fn abs_path(wd: Str, p: Str) -> Str {
 /// The options of `xo1 test`.
 struct TestOpts {
   seed: Int = 0
+  /// --real: the tests that declare `uses` run with real capabilities.
+  real: Bool = false
   run: Str = ""
   json: Bool = false
   verbose: Bool = false
@@ -115,6 +115,10 @@ struct PropCase {
   reported: Bool = false
   input: Str = ""
   not_smaller: Bool = false
+  /// What the test wrote to the standard streams itself (not the
+  /// harness's lines): a test with real stdio (`--real`).
+  out: List[Str] = []
+  err_out: Str = ""
 }
 
 /// runNativeTests: runs every test of bin and prints the results; the
@@ -137,8 +141,22 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     var out = Outcome{status: "pass"}
     if !t.skip.is_empty() {
       out = Outcome{status: "skip", msg: t.skip}
-    } else if !t.effects.is_empty() {
+    } else if !t.effects.is_empty() && !o.real {
       out = Outcome{status: "skip", msg: "uses ${t.effects.join(", ")}: run with `xo test --real` for real capabilities"}
+    } else if !t.effects.is_empty() {
+      // real capabilities for the declared effects (decision 0120); what
+      // a test with real stdio printed goes where the Go backend's test
+      // binary prints it
+      let (oc, pc) = run_test_env(os, bin, t, s, ["XO_TEST_REAL=${t.effects.join(",")}"])
+      out = oc
+      if t.effects.contains("stdio") {
+        for l in pc.out {
+          os.stdio.println(l)
+        }
+        if out.status == "pass" && !pc.err_out.is_empty() {
+          os.stdio.eprint(pc.err_out)
+        }
+      }
     } else if t.prop {
       out = run_property(os, bin, t, s, if o.cases <= 0 { 100 } else { o.cases })
     } else {
@@ -273,9 +291,12 @@ fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outco
       input.write(l.trim_prefix("XO-PROP-INPUT ") + "\n")
     } else if l == "XO-PROP-NOT-SMALLER" {
       pc.not_smaller = true
+    } else if !l.starts_with("XO-") {
+      pc.out.push(l)
     }
   }
   pc.input = input.freeze()
+  pc.err_out = stderr
   let code = r.code
   if code == 0 {
     return (Outcome{status: "pass", logs: logs}, pc)

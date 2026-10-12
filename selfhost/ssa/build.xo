@@ -114,6 +114,8 @@ enum Gen {
   Concat(t: Int)
   FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int])
   Zero(t: Int)
+  /// xo.testfs[memfs]: the real Fs of a `--real` test (realFsWrapper).
+  TestFs(memfs: Int, real: Int)
 }
 
 struct GenJob {
@@ -217,6 +219,9 @@ pub struct Builder {
   checks: List[UCheck] = []
   /// A release build (`--release`): debug contract clauses are left out.
   pub release: Bool = false
+  /// `xo test --real` (core 9.2, decision 0120): the tests that declare
+  /// `uses` are built, with the real Fs (Options.RealTests).
+  pub real_tests: Bool = false
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""
 }
@@ -249,14 +254,22 @@ pub fn build_program(c: check.Checker, line_root: Str, tests: Bool) -> Builder {
 /// `xo build --release`): the contract clauses marked debug are compiled
 /// out (contractOn).
 pub fn build_program_release(c: check.Checker, line_root: Str, tests: Bool, release: Bool) -> Builder {
+  build_program_opts(c, line_root, tests, release, false)
+}
+
+/// build_program_release with the tests that declare `uses` built when
+/// real_tests is set (Options.RealTests, `xo test --real`).
+pub fn build_program_opts(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool) -> Builder {
   var b = new_builder(c, line_root)
   b.tests = tests
   b.release = release
+  b.real_tests = real_tests
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
     b.tests = tests
     b.release = release
+    b.real_tests = real_tests
     b.conc = true
     b.build()
   }
@@ -2254,6 +2267,10 @@ fn (var b: Builder) build_gen(g: GenJob) {
     Zero(t) => {
       let z = b.zero(b.m.types[t].ret, [])
       b.add(Op.Return, -1, Aux.None, [z])
+    }
+    TestFs(memfs, real) => {
+      b.test_fs_body(memfs, real)
+      b.finish_fn()
     }
   }
   b.end(saved)
