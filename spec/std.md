@@ -1166,8 +1166,9 @@ name (a dependency cannot attribute its record to another module), and
 `Record.module` holds it in tests (`""` for the main module's records).
 The call's source file decides: a closure of the main module run by a
 dependency logs as the main module. Records of the main module carry no
-attribution. **[planned]** The native backends do not attribute yet
-(`Record.module` is `""` there). `xo audit` lists each dependency's log
+attribution, on every backend (cmd/xo TestLogAttribution checks the
+text and JSON records and `Record.module` on Go, arm64, and LLVM).
+`xo audit` lists each dependency's log
 call sites with the attribution its records carry.
 
 **[later]** The current span and the

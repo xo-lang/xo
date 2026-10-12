@@ -2738,8 +2738,8 @@ specified in `spec/std.md`. Modules:
 | `std/cli` | Command line parsing: flags, arguments, subcommands, help, usage errors (std.md 14) |
 | `std/term` | Terminal colors that follow NO_COLOR and FORCE_COLOR (std.md 15) |
 | `std/csv` | CSV and TSV parsing and formatting (std.md 16) |
-| `std/regexp` | RE2 regular expressions (std.md 17). Go backend only so far |
-| `std/archive` | gzip, tar, and zip in memory (std.md 18). Go backend only so far |
+| `std/regexp` | RE2 regular expressions (std.md 17), on every backend (natively in Xo, decision 0172) |
+| `std/archive` | gzip, tar, and zip in memory (std.md 18), on every backend (natively in Xo, decision 0172; zip64 archives are an error natively) |
 | `std/toml` | TOML 1.0 documents decoded with the JSON rules (std.md 19) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
