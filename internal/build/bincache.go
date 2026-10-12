@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -244,6 +245,14 @@ func storeBin(entry, bin string) {
 	}
 }
 
+// copyFile copies src to dst (through a temporary name renamed over it),
+// for a link across file systems (on Linux /tmp is often a tmpfs apart
+// from the user cache). The file is written while holding
+// syscall.ForkLock for reading, so no other goroutine forks while the
+// write descriptor is open: a child forked then holds the descriptor
+// until it execs, and exec of dst in that window failed with "text file
+// busy" (ETXTBSY) in parallel golden tests on Linux (2026-10-12, gotcha
+// linux-etxtbsy-copied-binary).
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -251,14 +260,17 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 	tmp := fmt.Sprintf("%s.copy%d.%d", dst, os.Getpid(), time.Now().UnixNano())
+	syscall.ForkLock.RLock()
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
+		syscall.ForkLock.RUnlock()
 		return err
 	}
 	_, err = io.Copy(out, in)
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
+	syscall.ForkLock.RUnlock()
 	if err == nil {
 		err = os.Rename(tmp, dst)
 	}

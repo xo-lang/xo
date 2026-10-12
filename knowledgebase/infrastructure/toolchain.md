@@ -1590,8 +1590,9 @@ first, AST based prototype, since deleted) and
   parks (`__ulock_wait` on Darwin), awaits and scope joins that run tasks nobody started, a cancellation
   tree, channels, select, Mutex (readers and writer, writers preferred),
   Atomic, and deadlock detection (XO-F001). Since decision 0069 every task
-  runs on a fiber (64 MiB reserved stack with a guard page,
-  `XO_TASK_STACK_MB=n` overrides, 64 cached; register switch in top level
+  runs on a fiber (64 MiB reserved stack with a guard page, 8 MiB under
+  ThreadSanitizer on Linux since 2026-10-12 (gotcha
+  linux-tsan-fiber-stacks), `XO_TASK_STACK_MB=n` overrides, 64 cached; register switch in top level
   assembly for arm64 and x86_64, ThreadSanitizer fiber API at each
   switch): every wait parks the fiber and frees its worker. A poller
   thread started in `main` (kqueue on Darwin, epoll on Linux, a self
@@ -2724,9 +2725,9 @@ path by `go test` (31 of the 46 files over 20 MB written after
 `scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
 full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
 Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
-the account's EC2 quota is 32 vCPUs for spot and for on demand, so
-c8g.16xlarge (64 vCPU, about $0.70 to $0.80 an hour spot) is refused
-with MaxSpotInstanceCountExceeded until a quota increase), copies
+the account's spot quota was raised from 32 to 128 vCPUs on
+2026-10-12, so c8g.16xlarge, 64 vCPU, about $0.70 to $0.80 an hour spot,
+also fits; keep one instance per agent), copies
 the log to bench/results/remote/<commit>.log (git ignored) and terminates
 the instance. The instance also shuts itself down (terminating it) after
 XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
@@ -2735,4 +2736,19 @@ SSH from the owner host's IP only. Linux host: the Mac-only tests
 (Mach-O, code signing, the darwin fixed point) do not run there and stay
 on the development Mac. Approved by the owner on 2026-10-12 to move the
 long combined run off the Mac. Last verified: 2026-10-12 (dry run).
+
+Options (2026-10-12): `--cmd '<command>'` runs one shell command in the
+checkout instead of the full suite (for a targeted reproduction, e.g.
+`--cmd 'go test -count=1 -run TestGoldenThreads ./internal/llvm'`);
+`--hold` clones the commit to ~/xo, writes `ec2-user@<ip>` to
+$XO_REMOTE_HOLD (default bench/results/remote/hold.addr) and waits until
+the watchdog or until the script is stopped, which terminates the
+instance (debug over `ssh -i ~/.ssh/xo-ci.pem`, copy a working tree with
+rsync). Every log now ends with the per-package durations, slowest
+first. The AMI comes from the SSM alias, else (the agent sandbox cannot
+resolve ssm.us-east-1.amazonaws.com) from `ec2 describe-images`, the
+newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
+(the arm64 backend's assembler and linker driver, CC()), clang 15.0.7,
+and /tmp on a tmpfs apart from the home disk. Last verified: 2026-10-12
+(--hold run on c8g.8xlarge).
 
