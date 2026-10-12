@@ -14,3 +14,5 @@ zones a program names (decision 0094), on every backend.
 Fix: set `XO_ZONEINFO` to a zoneinfo.zip (or build with
 `--tzdata=system`). Next step (decision 0157): ship the zip in release
 archives (`lib/xo/zoneinfo.zip`) and look there before `go env GOROOT`.
+
+Update (2026-10-12): with no go command at all, the build used to print only "zone data: cannot find GOROOT: exec: \"go\": executable file not found"; it now says there is no go command and to set XO_ZONEINFO or build with --tzdata=system (internal/build loadZoneinfo, TestLoadZoneinfoNoGo; reported by the website session).
