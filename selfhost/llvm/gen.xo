@@ -472,7 +472,7 @@ fn (var g: Gen) size(t: Int) -> Int {
   s
 }
 
-fn (g: Gen) kind(t: Int) -> ssa.Kind {
+fn (var g: Gen) kind(t: Int) -> ssa.Kind {
   g.m.types[t].kind
 }
 
@@ -488,11 +488,11 @@ fn (var g: Gen) heap(t: Int) -> Bool {
 }
 
 /// Whether t holds a Float (Type.HasFloat).
-fn (g: Gen) has_float(t: Int) -> Bool {
+fn (var g: Gen) has_float(t: Int) -> Bool {
   g.has_float_in(t, [])
 }
 
-fn (g: Gen) has_float_in(t: Int, seen: List[Int]) -> Bool {
+fn (var g: Gen) has_float_in(t: Int, seen: List[Int]) -> Bool {
   if seen.contains(t) {
     return false
   }
@@ -530,12 +530,12 @@ fn (g: Gen) has_float_in(t: Int, seen: List[Int]) -> Bool {
 }
 
 /// A unit or capability type: no value at run time.
-fn (g: Gen) is_void(t: Int) -> Bool {
+fn (var g: Gen) is_void(t: Int) -> Bool {
   g.m.types[t].kind is ssa.Kind.Unit | ssa.Kind.Cap
 }
 
 /// A struct, enum, or tuple type (isAgg).
-fn (g: Gen) is_agg(t: Int) -> Bool {
+fn (var g: Gen) is_agg(t: Int) -> Bool {
   g.m.types[t].kind is ssa.Kind.Struct | ssa.Kind.Enum | ssa.Kind.Tuple
 }
 
@@ -595,7 +595,7 @@ fn (var g: Gen) by_ref_of(fi: Int) -> List[Bool] {
 }
 
 /// Whether parameter i of fi is `var`.
-fn (g: Gen) is_var_param(fi: Int, i: Int) -> Bool {
+fn (var g: Gen) is_var_param(fi: Int, i: Int) -> Bool {
   g.m.funcs[fi].var_params.contains(i)
 }
 

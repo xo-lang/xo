@@ -29,12 +29,12 @@ fn bname(b: Int) -> Str {
 }
 
 /// The block an edge enters.
-fn (g: Gen) edge_to(e: Int) -> Int {
+fn (var g: Gen) edge_to(e: Int) -> Int {
   g.f.edges[e].to
 }
 
 /// The successor edges of block b's terminator (none without one).
-fn (g: Gen) succs(b: Int) -> List[Int] {
+fn (var g: Gen) succs(b: Int) -> List[Int] {
   let ins = g.f.blocks[b].instrs
   if ins.is_empty() {
     return []
@@ -47,7 +47,7 @@ fn (g: Gen) succs(b: Int) -> List[Int] {
 }
 
 /// The type of value v.
-fn (g: Gen) vty(v: Int) -> Int {
+fn (var g: Gen) vty(v: Int) -> Int {
   g.f.values[v].ty
 }
 
@@ -218,7 +218,7 @@ fn (var g: Gen) payload(t: Int, x: Str, tag: Int, fi: Int) -> Str {
 
 /// Whether v is reached from a borrowed parameter or a constant through
 /// fields, payloads, box contents, and list elements (rootBorrowed).
-fn (g: Gen) root_borrowed(v0: Int) -> Bool {
+fn (var g: Gen) root_borrowed(v0: Int) -> Bool {
   var v = v0
   while true {
     let x = g.f.values[v]
@@ -252,7 +252,7 @@ fn (g: Gen) root_borrowed(v0: Int) -> Bool {
 /// The blocks of the current function reachable from its entry in
 /// reverse postorder, then those the walk did not reach in their order
 /// (reversePostorder).
-fn (g: Gen) reverse_postorder() -> List[Int] {
+fn (var g: Gen) reverse_postorder() -> List[Int] {
   let nb = g.f.blocks.len()
   var seen: List[Bool] = []
   for _ in 0..nb {
@@ -532,7 +532,7 @@ fn const_int(s: Str) -> Int? {
 /// of a Str or List payload of a single field variant, in the block its
 /// tag test enters, followed by a release of the enum before anything
 /// but projections.
-fn (g: Gen) cancelled_release(v: Int) -> Int {
+fn (var g: Gen) cancelled_release(v: Int) -> Int {
   let f = g.f
   if f.values[v].op != ssa.Op.Retain {
     return -1
@@ -616,7 +616,7 @@ fn (g: Gen) cancelled_release(v: Int) -> Int {
 
 /// Whether a and b are the same value read through the same chain of
 /// field projections (sameProjection).
-fn (g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
+fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
   var a = a0
   var b = b0
   while g.f.values[a].op == ssa.Op.Field && g.f.values[b].op == ssa.Op.Field {

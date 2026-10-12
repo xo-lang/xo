@@ -45,6 +45,11 @@ type Options struct {
 	// outline atomics where the baseline lacks them; decision 0119) and
 	// LTO may inline runtime functions into it. Empty: LLVM's generic CPU.
 	TargetAttrs string
+	// IR, when set, replaces the IR GenerateSSA makes with this text (the
+	// self hosted emitter's, selfhost/llvm: decision 0166's end to end
+	// test builds a binary from it); the SSA is still built for what the
+	// build needs from it (zone data), and TargetAttrs still apply.
+	IR []byte
 }
 
 // Program is the generated IR of one Xo program.
@@ -69,6 +74,9 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	prog, err := GenerateSSA(m)
 	if err != nil {
 		return nil, err
+	}
+	if opts.IR != nil {
+		prog.IR = append([]byte(nil), opts.IR...)
 	}
 	if opts.TargetAttrs != "" {
 		prog.IR = withTargetAttrs(prog.IR, opts.TargetAttrs)

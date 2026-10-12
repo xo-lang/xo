@@ -54,7 +54,7 @@ fn bot_key() -> HKey {
 }
 
 /// The key of value v (keyOf).
-fn (g: Gen) key_of(v: Int) -> HKey {
+fn (var g: Gen) key_of(v: Int) -> HKey {
   let x = g.f.values[v]
   if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
     return HKey{v: x.args[0], k: aux_int(x.aux)}
@@ -63,7 +63,7 @@ fn (g: Gen) key_of(v: Int) -> HKey {
 }
 
 /// The tracked memory of LLVM type lt, or -1 (memOf).
-fn (g: Gen) mem_of(lt: Str) -> Int {
+fn (var g: Gen) mem_of(lt: Str) -> Int {
   for (i, m) in g.held.mems.indexed() {
     if m.lt == lt {
       return i
@@ -392,7 +392,7 @@ fn (var g: Gen) find_mem_only() {
 }
 
 /// The memory value v is held in at every use, or -1 (memOnly).
-fn (g: Gen) mem_only(v: Int) -> Int {
+fn (var g: Gen) mem_only(v: Int) -> Int {
   if !g.has_held {
     return -1
   }
@@ -401,7 +401,7 @@ fn (g: Gen) mem_only(v: Int) -> Int {
 
 /// The memory that holds block parameter p of b at the block's start
 /// because every edge passes it in place, or -1 (heldParam).
-fn (g: Gen) held_param(b: Int, p: Int) -> Int {
+fn (var g: Gen) held_param(b: Int, p: Int) -> Int {
   if !g.has_held || b == 0 {
     return -1
   }
