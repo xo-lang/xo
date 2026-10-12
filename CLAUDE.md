@@ -97,6 +97,13 @@ Update the knowledgebase in the same change as the work, not later:
     1 h cold, `-timeout 120m`); full runs nightly, before tagging, and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
+- Native builds (`xo build|run|test` with `--backend=arm64|llvm` or
+  `--no-gc`) run the self hosted driver xo1 (decision 0178 switch point
+  A, 2026-10-12): `xo` builds it from its embedded selfhost/ sources
+  into `<user cache>/xo/xo1/<key>` the first time (several minutes, once
+  per source change), so a change under selfhost/ changes what native
+  builds do. `XO_SELF_DRIVER=0` runs the Go driver; `XO1=<path>` uses a
+  prebuilt xo1.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.

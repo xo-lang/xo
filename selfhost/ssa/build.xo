@@ -209,6 +209,26 @@ pub struct Builder {
   checks: List[UCheck] = []
   /// A release build (`--release`): debug contract clauses are left out.
   pub release: Bool = false
+  /// The attribution of the std/log call call_as lowers next (logFrom).
+  pend_log_from: Str = ""
+}
+
+/// logFrom: the attribution of the record the std/log function fo writes
+/// from the code being lowered (decision 0173): "<module path>@<version>"
+/// in a dependency's source, else "".
+fn (var b: Builder) log_from(fo: Int) -> Str {
+  let o = b.c.objs[fo]
+  if o.recv >= 0 || o.module < 0 || b.c.mods[o.module].path != "std/log" || b.s.file < 0 {
+    return ""
+  }
+  if !(b.obj_name(fo) is "debug" | "info" | "warn" | "error") {
+    return ""
+  }
+  let m = b.c.files[b.s.file].module
+  if m < 0 || b.c.mods[m].is_std {
+    return ""
+  }
+  b.c.mods[m].dependency
 }
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
