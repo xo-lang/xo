@@ -1,0 +1,884 @@
+// `xo edit` (core 10.4): a port of internal/edit and cmd/xo runEdit.
+// Semantic edits find every reference through the checker's resolved
+// symbols, rewrite them all at once, and are rejected (nothing written)
+// unless the edited program checks clean.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A source position named in a result.
+pub struct Site {
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub reason: Str = ""
+}
+
+/// The JSON summary of an edit (edit.Result).
+pub struct EditResult {
+  pub op: Str
+  pub target: Str
+  /// false when the edit was rejected; then nothing is written
+  pub ok: Bool = false
+  pub written: Bool = false
+  pub reason: Str = ""
+  /// the files the edit changes (or would change), sorted
+  pub files: List[Str] = []
+  /// the number of text replacements
+  pub edits: Int = 0
+  /// the errors that rejected the edit
+  pub diagnostics: List[check.Diag] = []
+  /// the places that blocked the edit
+  pub sites: List[Site] = []
+}
+
+fn edit_result_json(r: EditResult) -> JVal {
+  var ms: List[(Str, JVal)] = [("op", JVal.Text(r.op)), ("target", JVal.Text(r.target)), ("ok", JVal.Bool(r.ok)), ("written", JVal.Bool(r.written))]
+  if !r.reason.is_empty() {
+    ms.push(("reason", JVal.Text(r.reason)))
+  }
+  ms.push(("files", strs(r.files)))
+  ms.push(("edits", JVal.Num(r.edits)))
+  var ds: List[JVal] = []
+  for d in r.diagnostics {
+    ds.push(diag_json(d))
+  }
+  ms.push(("diagnostics", JVal.Arr(ds)))
+  if !r.sites.is_empty() {
+    var ss: List[JVal] = []
+    for s in r.sites {
+      var sm: List[(Str, JVal)] = [("file", JVal.Text(s.file)), ("line", JVal.Num(s.line)), ("col", JVal.Num(s.col))]
+      if !s.reason.is_empty() {
+        sm.push(("reason", JVal.Text(s.reason)))
+      }
+      ss.push(JVal.Obj(sm))
+    }
+    ms.push(("sites", JVal.Arr(ss)))
+  }
+  JVal.Obj(ms)
+}
+
+/// One replacement of src[start..end] of a file (by its checker path).
+struct TextEdit {
+  file: Str
+  start: Int
+  end: Int
+  text: Str
+}
+
+/// A checked program about to be edited.
+struct EditSession {
+  q: Session
+  dirs: List[Str]
+  dry: Bool
+  res: EditResult
+  errs: List[check.Diag]
+}
+
+fn errors_of(ds: List[check.Diag]) -> List[check.Diag] {
+  var out: List[check.Diag] = []
+  for d in ds {
+    if !d.warning {
+      out.push(d)
+    }
+  }
+  out
+}
+
+fn load_edit(os: Os, op: Str, target: Str, dirs0: List[Str], dry: Bool) -> EditSession ! Str uses env, fs.read {
+  let q = load_session(os, dirs0, false, {})?
+  // a workspace is one program: the edit reaches every module of it, and
+  // the check of the edited program sees the same modules
+  let dirs = q.c.workspace_dirs(dirs0)
+  Ok(EditSession{q: q, dirs: dirs, dry: dry, res: EditResult{op: op, target: target}, errs: errors_of(q.c.diags)})
+}
+
+fn (var s: EditSession) reject(reason: Str) -> EditResult {
+  s.res.ok = false
+  s.res.reason = reason
+  s.res
+}
+
+/// Rejects an edit of a program that does not check clean: the resolved
+/// symbols of a broken program can miss references.
+fn (var s: EditSession) precheck() -> EditResult? {
+  if !s.errs.is_empty() {
+    s.res.diagnostics = s.errs
+    return Some(s.reject("the program does not check clean before the edit"))
+  }
+  None
+}
+
+/// The files of the user modules (not std).
+fn (s: EditSession) user_files() -> List[Int] {
+  var out: List[Int] = []
+  for m in s.q.c.order {
+    if s.q.c.mods[m].is_std {
+      continue
+    }
+    for f in s.q.c.mods[m].files {
+      out.push(f)
+    }
+  }
+  out
+}
+
+fn (s: EditSession) file_by_path(path: Str) -> Int {
+  for f in s.user_files() {
+    if s.q.c.files[f].path == path {
+      return f
+    }
+  }
+  -1
+}
+
+/// Applies edits in memory, checks the edited program, and writes it
+/// unless the check fails or the run is dry.
+fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str uses env, fs {
+  var names: List[Str] = []
+  for e in edits {
+    if !names.contains(e.file) {
+      names.push(e.file)
+    }
+  }
+  var overlay: Map[Str, Bytes] = {}
+  var outs: List[(Str, Bytes)] = []
+  for name in names {
+    let f = s.file_by_path(name)
+    if f < 0 {
+      return Err("edit of ${name} outside the user modules")
+    }
+    let m = s.q.c.files[f].module
+    if m >= 0 && !s.q.c.mods[m].dependency.is_empty() {
+      return Ok(s.reject("the edit would change ${name} in the required module ${s.q.c.mods[m].dependency}; change it in its repository, or list its local copy in an xo.work workspace (decision 0086)"))
+    }
+    let a = abs_path(s.q.wd, name)
+    let orig = s.q.c.files[f].src
+    var mine: List[TextEdit] = []
+    for e in edits {
+      if e.file == name {
+        mine.push(e)
+      }
+    }
+    var src = match apply_edits(orig, mine) {
+      Ok(b) => b
+      Err(e) => return Err("${name}: ${e}")
+    }
+    // keep canonical files canonical; leave others as rewritten
+    if let Some(canon) = fmt_source(name, orig) {
+      if canon == orig {
+        if let Some(o) = fmt_source(name, src) {
+          src = o
+        }
+      }
+    }
+    overlay[a] = src
+    outs.push((a, src))
+    s.res.files.push(name)
+  }
+  s.res.files = s.res.files.sort()
+  s.res.edits = edits.len()
+  let cr = load_session(os, s.dirs, true, overlay)?
+  let errs = errors_of(cr.c.diags)
+  if !errs.is_empty() {
+    s.res.diagnostics = errs
+    return Ok(s.reject("the edited program does not check clean"))
+  }
+  s.res.ok = true
+  if s.dry {
+    return Ok(s.res)
+  }
+  write_all(os.fs, outs)?
+  s.res.written = true
+  Ok(s.res)
+}
+
+/// Writes every file through a temporary file and a rename, so a reader
+/// never sees a half written file; if a rename fails, the files already
+/// replaced are restored.
+fn write_all(fs: Fs, outs0: List[(Str, Bytes)]) -> () ! Str uses fs {
+  let outs = outs0.sort_by(fn(o) { o.0 })
+  var staged: List[(Str, Str, Bytes)] = []
+  for (p, data) in outs {
+    let orig = fs.read(p).ok() ?? b""
+    let mode = fs.mode(p).ok() ?? 0o644
+    let tmp = match fs.create_temp(dir_of(p), ".xo-edit-") {
+      Ok(t) => t
+      Err(e) => {
+        remove_staged(fs, staged)
+        return Err("${e}")
+      }
+    }
+    staged.push((p, tmp, orig))
+    match fs.write(tmp, data) {
+      Ok(_) => {}
+      Err(e) => {
+        remove_staged(fs, staged)
+        return Err("${e}")
+      }
+    }
+    fs.set_mode(tmp, mode).ok()
+  }
+  var done: List[(Str, Bytes)] = []
+  for (p, tmp, orig) in staged {
+    match fs.rename(tmp, p) {
+      Ok(_) => done.push((p, orig))
+      Err(e) => {
+        for (dp, dorig) in done {
+          fs.write(dp, dorig).ok()
+        }
+        remove_staged(fs, staged)
+        return Err("${e}")
+      }
+    }
+  }
+  Ok(())
+}
+
+fn remove_staged(fs: Fs, staged: List[(Str, Str, Bytes)]) uses fs.write {
+  for (_, tmp, _) in staged {
+    fs.remove(tmp).ok()
+  }
+}
+
+fn apply_edits(src: Bytes, es0: List[TextEdit]) -> Bytes ! Str {
+  let es = es0.sort_by(fn(e) { e.start })
+  var b = BytesBuilder.new()
+  var pos = 0
+  for e in es {
+    if e.start < pos || e.end < e.start || e.end > src.len() {
+      return Err("overlapping edits at offset ${e.start}")
+    }
+    b.write(src[pos..e.start])
+    b.write_str(e.text)
+    pos = e.end
+  }
+  b.write(src[pos..])
+  Ok(b.freeze())
+}
+
+// ---------------------------------------------------------------------------
+// Targets
+
+fn (s: EditSession) object(name: Str) -> Int ! Str {
+  let objs = s.q.objects(name)
+  var user: List[Int] = []
+  for o in objs {
+    let m = s.q.c.objs[o].module
+    if m >= 0 && !s.q.c.mods[m].is_std {
+      user.push(o)
+    }
+  }
+  if user.is_empty() {
+    if !objs.is_empty() {
+      return Err("${name.quote()} is declared in std or a binding, which xo edit does not change")
+    }
+    return Err("${name.quote()} does not name a declaration in the checked modules")
+  }
+  if user.len() == 1 {
+    return Ok(user[0])
+  }
+  Err("${name.quote()} is ambiguous; qualify it with the module")
+}
+
+fn is_ident(s: Str) -> Bool {
+  let b = s.bytes()
+  if b.is_empty() {
+    return false
+  }
+  for i in 0..b.len() {
+    let ch = b[i]
+    let alpha = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+    if !alpha && !(i > 0 && ch >= '0' && ch <= '9') {
+      return false
+    }
+  }
+  true
+}
+
+/// The identifier that names the callee of a call or a reference: `f`,
+/// `m.f`, `x.f`, or the same with type arguments.
+fn name_ident(e0: Expr) -> parser.Ident? {
+  var e = e0
+  if let TypeArgsExpr(_, x, _) = e0 {
+    e = x
+  }
+  match e {
+    Ident(id) => Some(id)
+    SelectorExpr(_, _, sel) => Some(sel)
+    _ => None
+  }
+}
+
+fn src_text(src: Bytes, sp: parser.Span) -> Str {
+  src[sp.start.offset..sp.end.offset].to_str() ?? ""
+}
+
+fn last_index_of(s: Str, ch: Str) -> Int {
+  last_index(s, ch) ?? -1
+}
+
+// ---------------------------------------------------------------------------
+// rename
+
+/// Renames the function, method, or constant target and updates every
+/// reference. new_name may repeat target's qualifier.
+fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) -> EditResult ! Str uses env, fs {
+  var s = load_edit(os, "rename", target, dirs, dry)?
+  var new_name = new_name0
+  let i = last_index_of(new_name, ".")
+  if i >= 0 {
+    let j = last_index_of(target, ".")
+    if j < 0 || new_name[0..i] != target[0..j] {
+      return Err("new name ${new_name.quote()} must be a plain name or keep the qualifier of ${target.quote()}")
+    }
+    new_name = new_name[i + 1..]
+  }
+  if !is_ident(new_name) {
+    return Err("${new_name.quote()} is not an identifier")
+  }
+  let obj = s.object(target)?
+  if let Some(r) = s.precheck() {
+    return Ok(r)
+  }
+  let o = s.q.c.objs[obj]
+  var decl_name: parser.Ident? = None
+  match o.kind {
+    Func => {
+      let fd = match o.fn_decl.first() {
+        Some(x) => x
+        None => return Err("${target.quote()}: renaming interface methods is not supported yet")
+      }
+      if o.iface {
+        return Err("${target.quote()}: renaming interface methods is not supported yet")
+      }
+      decl_name = Some(fd.name)
+    }
+    Const => {
+      match s.q.decl_of(obj) {
+        Some((_, ConstDecl(cd))) => decl_name = Some(cd.name)
+        _ => return Err("${target.quote()} has no declaration to rename")
+      }
+    }
+    _ => return Err("${target.quote()}: rename supports functions, methods, and constants so far (not types)")
+  }
+  let dn = match decl_name {
+    Some(x) => x
+    None => return Err("${target.quote()} has no declaration to rename")
+  }
+  if txt(dn.name) == new_name {
+    s.res.ok = true
+    return Ok(s.res)
+  }
+  var seen: Set[Str] = #{}
+  var edits: List[TextEdit] = []
+  add_ident(edits, seen, s.q.c.files[o.decl_file].path, Some(dn), new_name)
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    for d in s.q.c.files[f].ast.decls {
+      for n in decl_nodes(d) {
+        if let E(e) = n {
+          match e {
+            CallExpr(_, fun, _) => {
+              if let Some(ci) = s.q.c.call_in(f, e) {
+                if ci.fn_obj >= 0 && ci.fn_obj == obj {
+                  add_ident(edits, seen, path, name_ident(fun), new_name)
+                }
+              }
+            }
+            Ident(id) => {
+              if s.q.c.ref_of(f, id) == obj {
+                add_ident(edits, seen, path, Some(id), new_name)
+              }
+            }
+            SelectorExpr(_, _, sel) => {
+              if s.q.c.ref_of(f, sel) == obj {
+                add_ident(edits, seen, path, Some(sel), new_name)
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+    }
+  }
+  s.apply(os, edits)
+}
+
+fn add_ident(var edits: List[TextEdit], var seen: Set[Str], file: Str, id: parser.Ident?, text: Str) {
+  let x = match id {
+    Some(v) => v
+    None => return
+  }
+  let k = "${x.span.start.offset}|${file}"
+  if seen.contains(k) {
+    return
+  }
+  seen.add(k)
+  edits.push(TextEdit{file: file, start: x.span.start.offset, end: x.span.end.offset, text: text})
+}
+
+// ---------------------------------------------------------------------------
+// add-field
+
+/// Adds the field `name: Type = default` to the struct target: the
+/// declaration gets `name: Type`, every struct literal `name: default`.
+/// Without a default the edit is rejected when the type has literals.
+fn edit_add_field(os: Os, dirs: List[Str], dry: Bool, target: Str, spec: Str) -> EditResult ! Str uses env, fs {
+  var s = load_edit(os, "add-field", target, dirs, dry)?
+  let fsrc = "struct XoEditField {\n${spec}\n}\n"
+  let pf = parser.parse_file(b"field", fsrc.bytes(), false)
+  if !errors_of_parse(pf.diags).is_empty() || pf.file.decls.len() != 1 {
+    return Err("field ${spec.quote()} does not parse as `name: Type = default`")
+  }
+  let sd = match pf.file.decls[0] {
+    StructDecl(x) => x
+    _ => return Err("field ${spec.quote()} does not parse as one field `name: Type = default`")
+  }
+  if sd.fields.len() != 1 {
+    return Err("field ${spec.quote()} does not parse as one field `name: Type = default`")
+  }
+  let nf = sd.fields[0]
+  let fname = txt(nf.name.name)
+  let ftype = src_text(fsrc.bytes(), parser.type_span(nf.typ))
+  let pub_kw = if nf.is_pub { "pub " } else { "" }
+  var def = ""
+  if let Some(dv) = nf.default {
+    def = src_text(fsrc.bytes(), parser.expr_span(dv))
+  }
+  let t = s.object(target)?
+  let to = s.q.c.objs[t]
+  if to.kind != check.ObjKind.Type || to.tkind != "struct" {
+    return Err("${target.quote()} is not a struct")
+  }
+  let (df, decl) = match s.q.decl_of(t) {
+    Some((f, StructDecl(x))) => (f, x)
+    _ => return Err("${target.quote()} has no struct declaration")
+  }
+  for f in to.fields {
+    if txt(f.name) == fname {
+      return Err("${txt(to.name)} already has a field ${fname}")
+    }
+  }
+  if let Some(r) = s.precheck() {
+    return Ok(r)
+  }
+  let dpath = s.q.c.files[df].path
+  let file = s.file_by_path(dpath)
+  if file < 0 {
+    return Err("${dpath}: file not found")
+  }
+  let src = s.q.c.files[file].src
+  var edits: List[TextEdit] = []
+  // the declaration: a new line after the last field, or inside `{}`
+  let line = "${pub_kw}${fname}: ${ftype}"
+  if !decl.fields.is_empty() {
+    let last = decl.fields[decl.fields.len() - 1]
+    var at = last.span.end.offset
+    if let Some(dv) = last.default {
+      let e = parser.expr_span(dv).end.offset
+      if e > at {
+        at = e
+      }
+    }
+    edits.push(TextEdit{file: dpath, start: at, end: at, text: "\n${indent_of(src, last.span.start.offset)}${line}"})
+  } else {
+    let from = decl.name.span.end.offset
+    var open = -1
+    for k in from..decl.span.end.offset {
+      if src[k] == '{' {
+        open = k
+        break
+      }
+    }
+    if open < 0 {
+      return Err("${txt(to.name)}: cannot find the struct body")
+    }
+    edits.push(TextEdit{file: dpath, start: open + 1, end: open + 1, text: "\n  ${line}\n"})
+  }
+  // every struct literal of the type
+  var missing: List[Site] = []
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    for d in s.q.c.files[f].ast.decls {
+      for n in decl_nodes(d) {
+        if let E(e) = n {
+          if let StructLit(sp, _, fields) = e {
+            let ty = s.q.c.type_in(f, e)
+            if ty < 0 {
+              continue
+            }
+            let r = s.q.c.tys[s.q.c.resolve(ty)]
+            if r.kind != check.TyKind.Named || r.obj != t {
+              continue
+            }
+            if def.is_empty() {
+              missing.push(Site{file: path, line: sp.start.line, col: sp.start.col, reason: "struct literal needs a value for ${fname}"})
+              continue
+            }
+            edits.push(literal_edit(s.q.c.files[f].src, path, sp, fields, "${fname}: ${def}"))
+          }
+        }
+      }
+    }
+  }
+  if !missing.is_empty() {
+    s.res.sites = missing
+    return Ok(s.reject("the new field has no default and the type has struct literals"))
+  }
+  s.apply(os, edits)
+}
+
+fn errors_of_parse(ds: List[parser.Diag]) -> List[parser.Diag] {
+  ds
+}
+
+/// Inserts init as the last field of a struct literal.
+fn literal_edit(src: Bytes, file: Str, sp: parser.Span, fields: List[parser.FieldInit], init: Str) -> TextEdit {
+  if !fields.is_empty() {
+    let last = fields[fields.len() - 1]
+    var at = last.span.end.offset
+    let ve = parser.expr_span(last.value).end.offset
+    if ve > at {
+      at = ve
+    }
+    // a trailing comma stays last: `a: 1,\n}` becomes `a: 1, f: d,\n}`
+    var q = at
+    while q < src.len() && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n' || src[q] == '\r') {
+      q += 1
+    }
+    if q < src.len() && src[q] == ',' {
+      return TextEdit{file: file, start: q + 1, end: q + 1, text: " ${init},"}
+    }
+    return TextEdit{file: file, start: at, end: at, text: ", ${init}"}
+  }
+  let end = sp.end.offset - 1
+  TextEdit{file: file, start: end, end: end, text: init}
+}
+
+fn indent_of(src: Bytes, off: Int) -> Str {
+  var start = off
+  while start > 0 && src[start - 1] != '\n' {
+    start -= 1
+  }
+  var i = start
+  while i < off && (src[i] == ' ' || src[i] == '\t') {
+    i += 1
+  }
+  src[start..i].to_str() ?? ""
+}
+
+// ---------------------------------------------------------------------------
+// change-sig
+
+/// Replaces the parameters, result, and error type of the function or
+/// method target with sig, `(params) -> R ! E`, and rewrites its call
+/// sites (edit.ChangeSig).
+fn edit_change_sig(os: Os, dirs: List[Str], dry: Bool, target: Str, sig0: Str) -> EditResult ! Str uses env, fs {
+  var s = load_edit(os, "change-sig", target, dirs, dry)?
+  let sig = sig0.trim()
+  if !sig.starts_with("(") {
+    return Err("signature ${sig.quote()} must start with the parameter list `(`")
+  }
+  let fsrc = "fn xo_edit_sig${sig} {}\n"
+  let fb = fsrc.bytes()
+  let pf = parser.parse_file(b"sig", fb, false)
+  if !pf.diags.is_empty() || pf.file.decls.len() != 1 {
+    return Err("signature ${sig.quote()} does not parse as `(params) -> Result ! Err`")
+  }
+  let nd = match pf.file.decls[0] {
+    FnDecl(x) => x
+    _ => return Err("signature ${sig.quote()} does not parse")
+  }
+  if !nd.clauses.is_empty() {
+    return Err("signature ${sig.quote()} has clauses; change-sig replaces the parameters, result, and error type only")
+  }
+  let new_text = fb["fn xo_edit_sig".len()..sig_end(fb, nd)].to_str() ?? ""
+  let fo = s.object(target)?
+  let o = s.q.c.objs[fo]
+  let od = match o.fn_decl.first() {
+    Some(x) => x
+    None => return Err("${target.quote()} is not a function or method with a body")
+  }
+  if o.kind != check.ObjKind.Func || o.iface {
+    return Err("${target.quote()} is not a function or method with a body")
+  }
+  if let Some(r) = s.precheck() {
+    return Ok(r)
+  }
+  let dpath = s.q.c.files[o.decl_file].path
+  let file = s.file_by_path(dpath)
+  if file < 0 {
+    return Err("${dpath}: file not found")
+  }
+  let src = s.q.c.files[file].src
+  var from = od.name.span.end.offset
+  if !od.type_params.is_empty() {
+    from = od.type_params[od.type_params.len() - 1].span.end.offset
+  }
+  var open = -1
+  for k in from..src.len() {
+    if src[k] == '(' {
+      open = k
+      break
+    }
+  }
+  if open < 0 {
+    return Err("${target}: cannot find the parameter list")
+  }
+  var edits: List[TextEdit] = [TextEdit{file: dpath, start: open, end: sig_end(src, od), text: new_text}]
+  // old parameter name -> new parameter name (none when removed)
+  let old_names = param_names(od.params)
+  let new_names = param_names(nd.params)
+  var map_to: Map[Str, Str] = {}
+  for (i, n) in old_names.indexed() {
+    if new_names.contains(n) {
+      map_to[n] = n
+    } else if i < new_names.len() && !old_names.contains(new_names[i]) {
+      // renamed in place
+      map_to[n] = new_names[i]
+    }
+  }
+  // a parameter renamed in place is renamed in the body too
+  for pv in s.q.c.param_vars.get(fo) ?? [] {
+    let pname = txt(s.q.c.objs[pv].name)
+    let to = match map_to.get(pname) {
+      Some(x) => x
+      None => continue
+    }
+    if to == pname {
+      continue
+    }
+    if let Some(body) = od.body {
+      for n in expr_nodes(Expr.Block(body)) {
+        if let E(Ident(id)) = n {
+          if s.q.c.var_of(o.decl_file, id) == pv {
+
+            edits.push(TextEdit{file: dpath, start: id.span.start.offset, end: id.span.end.offset, text: to})
+          }
+        }
+      }
+    }
+  }
+  var blocked: List[Site] = []
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    let fsrc2 = s.q.c.files[f].src
+    for d in s.q.c.files[f].ast.decls {
+      for n in decl_nodes(d) {
+        if let E(e) = n {
+          if let CallExpr(sp, _, args) = e {
+            let ci = match s.q.c.call_in(f, e) {
+              Some(x) => x
+              None => continue
+            }
+            if ci.fn_obj != fo {
+              continue
+            }
+            match rewrite_call(fsrc2, path, sp, args, old_names, new_names, nd.params, map_to) {
+              Ok(Some(te)) => edits.push(te)
+              Ok(None) => {}
+              Err(why) => blocked.push(Site{file: path, line: sp.start.line, col: sp.start.col, reason: why})
+            }
+          }
+        }
+      }
+    }
+  }
+  if !blocked.is_empty() {
+    s.res.sites = blocked
+    return Ok(s.reject("some call sites cannot be rewritten mechanically"))
+  }
+  s.apply(os, edits)
+}
+
+/// The offset just past the signature of d: its error type, result type,
+/// or parameter list.
+fn sig_end(src: Bytes, d: parser.FnDecl) -> Int {
+  if let Some(e) = d.err {
+    return e.span.end.offset
+  }
+  if let Some(r) = d.result {
+    return parser.type_span(r).end.offset
+  }
+  var from = d.name.span.end.offset
+  if !d.params.is_empty() {
+    let p = d.params[d.params.len() - 1]
+    from = p.span.end.offset
+    if let Some(dv) = p.default {
+      let e = parser.expr_span(dv).end.offset
+      if e > from {
+        from = e
+      }
+    }
+  } else if !d.type_params.is_empty() {
+    from = d.type_params[d.type_params.len() - 1].span.end.offset
+  }
+  for k in from..src.len() {
+    if src[k] == ')' {
+      return k + 1
+    }
+  }
+  from
+}
+
+fn param_names(ps: List[parser.Param]) -> List[Str] {
+  var out: List[Str] = []
+  for p in ps {
+    out.push(txt(p.name.name))
+  }
+  out
+}
+
+/// The edit of one call's argument list (None when it does not change),
+/// or why it cannot be rewritten.
+fn rewrite_call(src: Bytes, file: Str, call_sp: parser.Span, args: List[parser.Arg], old_names: List[Str], new_names: List[Str], new_params: List[parser.Param], map_to: Map[Str, Str]) -> TextEdit? ! Str {
+  var params: List[Str] = []
+  var values: List[Str] = []
+  var named: List[Bool] = []
+  var passed: Set[Str] = #{}
+  for (i, a) in args.indexed() {
+    var old = ""
+    if let Some(n) = a.name {
+      old = txt(n.name)
+    } else if i < old_names.len() {
+      old = old_names[i]
+    }
+    let to = match map_to.get(old) {
+      Some(x) => x
+      None => return Err("passes an argument for removed parameter ${old}")
+    }
+    passed.add(to)
+    params.push(to)
+    values.push(src_text(src, parser.expr_span(a.value)))
+    named.push(a.name is Some(_))
+  }
+  for (i, n) in new_names.indexed() {
+    if !passed.contains(n) && new_params[i].default is None {
+      return Err("needs an argument for new parameter ${n}, which has no default")
+    }
+  }
+  var parts: List[Str] = []
+  var positional = true
+  for i in 0..params.len() {
+    let idx = new_names.index_of(params[i]) ?? 0
+    if positional && (named[i] || idx != i) {
+      positional = false
+    }
+    if positional {
+      parts.push(values[i])
+    } else {
+      parts.push("${params[i]}: ${values[i]}")
+    }
+  }
+  var old: List[Str] = []
+  for a in args {
+    old.push(src_text(src, a.span))
+  }
+  if parts.join(", ") == old.join(", ") {
+    return Ok(None)
+  }
+  if args.is_empty() {
+    return Ok(None)
+  }
+  let start = args[0].span.start.offset
+  let end = args[args.len() - 1].span.end.offset
+  Ok(Some(TextEdit{file: file, start: start, end: end, text: parts.join(", ")}))
+}
+
+// ---------------------------------------------------------------------------
+// The command
+
+/// `xo edit [--dry-run] [--dir=<dir>] <op> <args...>` (cmd/xo runEdit):
+/// it always prints the JSON summary; exit status 1 means the edit was
+/// rejected and nothing was written.
+fn run_edit(os: Os, args: List[Str]) -> Int uses env, fs, stdio {
+  var dry = false
+  var dir = "."
+  var rest: List[Str] = []
+  // flags before the operation, then flags may follow it too
+  var op = ""
+  var i = 0
+  var stage = 0
+  while i < args.len() {
+    let a = args[i]
+    if a.starts_with("-") && a != "-" {
+      let flag = a.trim_prefix("-").trim_prefix("-")
+      if flag == "dry-run" || flag == "dry-run=true" {
+        dry = true
+      } else if flag == "dry-run=false" {
+        dry = false
+      } else if flag.starts_with("dir=") {
+        dir = flag.trim_prefix("dir=")
+      } else if flag == "dir" && i + 1 < args.len() {
+        dir = args[i + 1]
+        i += 1
+      } else if flag == "json" || flag.starts_with("json=") {
+      } else if flag.is_empty() {
+        // `--` ends the flags
+        for j in i + 1..args.len() {
+          rest.push(args[j])
+        }
+        break
+      } else {
+        os.stdio.eprintln("flag provided but not defined: ${a}")
+        return 2
+      }
+      i += 1
+      continue
+    }
+    if stage == 0 {
+      op = a
+      stage = 1
+      i += 1
+      continue
+    }
+    // flag.Parse stops at the first non flag
+    for j in i..args.len() {
+      rest.push(args[j])
+    }
+    break
+  }
+  if op.is_empty() {
+    os.stdio.eprintln("xo edit: missing operation (rename, add-field, change-sig)")
+    return 2
+  }
+  let dirs = [dir]
+  let r = match op {
+    "rename" => {
+      if rest.len() != 2 {
+        os.stdio.eprintln("usage: xo edit rename <name> <new name>")
+        return 2
+      }
+      edit_rename(os, dirs, dry, rest[0], rest[1])
+    }
+    "add-field" => {
+      if rest.len() < 2 {
+        os.stdio.eprintln("usage: xo edit add-field <Struct> <name: Type = default>")
+        return 2
+      }
+      edit_add_field(os, dirs, dry, rest[0], rest[1..].join(" "))
+    }
+    "change-sig" => {
+      if rest.len() < 2 {
+        os.stdio.eprintln("usage: xo edit change-sig <fn> \"(params) -> Result ! Err\"")
+        return 2
+      }
+      edit_change_sig(os, dirs, dry, rest[0], rest[1..].join(" "))
+    }
+    _ => {
+      os.stdio.eprintln("xo edit: unknown operation ${op.quote()} (rename, add-field, change-sig)")
+      return 2
+    }
+  }
+  match r {
+    Ok(res) => {
+      os.stdio.print(encode(edit_result_json(res)))
+      if res.ok { 0 } else { 1 }
+    }
+    Err(e) => {
+      os.stdio.eprintln("xo edit: ${e}")
+      2
+    }
+  }
+}

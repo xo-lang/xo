@@ -1,0 +1,292 @@
+// `xo doc` (core 1.2 and 10.1): a port of internal/doc and cmd/xo runDoc.
+// The documentation of a module from its doc comments and signatures, as
+// Markdown or (--json) as the Go tool's JSON.
+
+/// One documented declaration (doc.Item).
+pub struct DocItem {
+  pub def: QDef
+  pub examples: List[Str]
+  pub methods: List[DocItem] = []
+}
+
+/// The documentation of one module (doc.Module).
+pub struct DocModule {
+  pub module: Str
+  pub constants: List[DocItem] = []
+  pub types: List[DocItem] = []
+  pub functions: List[DocItem] = []
+}
+
+/// The documentation of module m: pub declarations only unless all.
+/// Methods go under their receiver type when it is documented, else
+/// with the functions.
+pub fn (s: Session) build_doc(m: Int, all: Bool) -> DocModule {
+  var out = DocModule{module: s.c.mods[m].path}
+  var types: Map[Str, Int] = {}
+  var methods: List[DocItem] = []
+  for d in s.surface(m, all) {
+    let it = DocItem{def: d, examples: examples(d.doc)}
+    match d.kind {
+      "const" => out.constants.push(it)
+      "fn" => out.functions.push(it)
+      "method" => methods.push(it)
+      _ => {
+        types[d.name] = out.types.len()
+        out.types.push(it)
+      }
+    }
+  }
+  for it in methods {
+    let recv = it.def.name.split(".")[0]
+    match types.get(recv) {
+      Some(i) => out.types[i].methods.push(it)
+      None => out.functions.push(it)
+    }
+  }
+  out
+}
+
+/// The bodies of the example code blocks of a doc comment: fenced blocks
+/// with no info string or `xo` (doc.Examples).
+pub fn examples(doc: Str) -> List[Str] {
+  var out: List[Str] = []
+  var cur: List[Str] = []
+  var inside = false
+  var example = false
+  for ln in doc.split("\n") {
+    let t = ln.trim()
+    if !t.starts_with("```") {
+      if inside && example {
+        cur.push(ln)
+      }
+      continue
+    }
+    if !inside {
+      let info = t.trim_prefix("```").trim()
+      inside = true
+      example = info.is_empty() || info == "xo"
+      cur = []
+      continue
+    }
+    if example {
+      out.push(cur.join("\n") + "\n")
+    }
+    inside = false
+  }
+  out
+}
+
+/// Example fences tagged ```xo so Markdown renderers highlight them.
+fn normalize_fences(doc: Str) -> Str {
+  var lines = doc.split("\n")
+  var inside = false
+  for i in 0..lines.len() {
+    let ln = lines[i]
+    let t = ln.trim()
+    if !t.starts_with("```") {
+      continue
+    }
+    if !inside && t == "```" {
+      lines[i] = replace_first(ln, "```", "```xo")
+    }
+    inside = !inside
+  }
+  lines.join("\n")
+}
+
+fn replace_first(s: Str, old: Str, new: Str) -> Str {
+  match s.find(old) {
+    Some(i) => "${s[0..i]}${new}${s[i + old.len()..]}"
+    None => s
+  }
+}
+
+/// The documentation as Markdown (Module.Markdown).
+pub fn doc_markdown(d: DocModule) -> Str {
+  var b = StrBuilder.new()
+  b.write("# Module `${d.module}`\n")
+  if d.constants.len() + d.types.len() + d.functions.len() == 0 {
+    b.write("\nNo exported declarations.\n")
+  } else {
+    b.write("\n## Index\n\n")
+    doc_index(b, d.constants, "const")
+    doc_index(b, d.types, "type")
+    doc_index(b, d.functions, "fn")
+    doc_section(b, "Constants", d.constants, "###")
+    doc_section(b, "Types", d.types, "###")
+    doc_section(b, "Functions", d.functions, "###")
+  }
+  b.freeze()
+}
+
+fn doc_index(var b: StrBuilder, items: List[DocItem], kind: Str) {
+  for it in items {
+    b.write("- ${kind} [`${it.def.name}`](#${anchor(it.def.name)})\n")
+    for m in it.methods {
+      b.write("  - method [`${m.def.name}`](#${anchor(m.def.name)})\n")
+    }
+  }
+}
+
+fn doc_section(var b: StrBuilder, title: Str, items: List[DocItem], level: Str) {
+  if items.is_empty() {
+    return
+  }
+  b.write("\n## ${title}\n")
+  for it in items {
+    write_item(b, it, level)
+    for m in it.methods {
+      write_item(b, m, "${level}#")
+    }
+  }
+}
+
+fn write_item(var b: StrBuilder, it: DocItem, level: Str) {
+  b.write("\n${level} ${it.def.name}\n\n")
+  b.write("```xo\n${it.def.signature}\n```\n")
+  if !it.def.doc.is_empty() {
+    b.write("\n${normalize_fences(it.def.doc)}\n")
+  }
+  if !it.examples.is_empty() {
+    b.write("\n${it.examples.len()} example(s) (fenced `xo` blocks above).\n")
+  }
+  b.write("\nDefined at ${pos_text(it.def.pos)}.\n")
+}
+
+/// The GitHub style heading anchor of a heading text.
+fn anchor(s: Str) -> Str {
+  // only ASCII letters, digits, `_`, `-`, and spaces count, so bytes do
+  var b = BytesBuilder.new()
+  for r in s.to_lower().bytes() {
+    if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+      b.write_byte(r)
+    } else if r == ' ' {
+      b.write_byte('-')
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+fn item_json(it: DocItem) -> JVal {
+  let base = match qdef_json(it.def) {
+    Obj(ms) => ms
+    Null | Bool(_) | Num(_) | Text(_) | Html(_) | Arr(_) => []
+  }
+
+  var ms = base
+  ms.push(("examples", strs(it.examples)))
+  if !it.methods.is_empty() {
+    var xs: List[JVal] = []
+    for m in it.methods {
+      xs.push(item_json(m))
+    }
+    ms.push(("methods", JVal.Arr(xs)))
+  }
+  JVal.Obj(ms)
+}
+
+fn items_json(items: List[DocItem]) -> JVal {
+  var xs: List[JVal] = []
+  for it in items {
+    xs.push(item_json(it))
+  }
+  JVal.Arr(xs)
+}
+
+pub fn doc_json(d: DocModule) -> JVal {
+  JVal.Obj([("module", JVal.Text(d.module)), ("constants", items_json(d.constants)), ("types", items_json(d.types)), ("functions", items_json(d.functions))])
+}
+
+/// `xo doc [--json] [--all] [--dir=DIR] [module]` (tools.go runDoc).
+fn run_doc(os: Os, args: List[Str]) -> Int uses env, fs.read, stdio {
+  var as_json = false
+  var all = false
+  var dir = "."
+  var pos: List[Str] = []
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    let flag = a.trim_prefix("-").trim_prefix("-")
+    if a.starts_with("-") && a != "-" {
+      if flag == "json" || flag == "json=true" {
+        as_json = true
+      } else if flag == "json=false" {
+        as_json = false
+      } else if flag == "all" || flag == "all=true" {
+        all = true
+      } else if flag == "all=false" {
+        all = false
+      } else if flag.starts_with("dir=") {
+        dir = flag.trim_prefix("dir=")
+      } else if flag == "dir" && i + 1 < args.len() {
+        dir = args[i + 1]
+        i += 1
+      } else {
+        os.stdio.eprintln("flag provided but not defined: ${a}")
+        return 2
+      }
+    } else {
+      // flag.Parse stops at the first argument that is not a flag
+      for j in i..args.len() {
+        pos.push(args[j])
+      }
+      break
+    }
+    i += 1
+  }
+  if pos.len() > 1 {
+    os.stdio.eprintln("xo doc: at most one module")
+    return 2
+  }
+  let target = if pos.len() == 1 { pos[0] } else { "." }
+  var docs: List[DocModule] = []
+  let is_dir = match os.fs.stat(target) {
+    Ok(Some(fi)) => fi.is_dir
+    _ => false
+  }
+  if is_dir {
+    let s = match load_session(os, [target], true, {}) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo doc: ${e}")
+        return 2
+      }
+    }
+    for m in s.c.root_mods {
+      docs.push(s.build_doc(m, all))
+    }
+    if docs.is_empty() {
+      os.stdio.eprintln("xo doc: no .xo files under ${target}")
+      return 1
+    }
+  } else {
+    let s = match load_session(os, [dir], false, {}) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo doc: ${e}")
+        return 2
+      }
+    }
+    let m = s.module_by_path(target)
+    if m < 0 {
+      os.stdio.eprintln("xo doc: no module ${target.quote()} under ${dir}")
+      return 1
+    }
+    docs.push(s.build_doc(m, all))
+  }
+  if as_json {
+    var xs: List[JVal] = []
+    for d in docs {
+      xs.push(doc_json(d))
+    }
+    os.stdio.print(encode(JVal.Arr(xs)))
+    return 0
+  }
+  for (k, d) in docs.indexed() {
+    if k > 0 {
+      os.stdio.print("\n")
+    }
+    os.stdio.print(doc_markdown(d))
+  }
+  0
+}

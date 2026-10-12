@@ -164,7 +164,7 @@ fn (p: Parser) prev_is(k: Kind) -> Bool {
 }
 
 /// The text of a token kind (token.Kind.String).
-fn kind_text(k: Kind) -> Str {
+pub fn kind_text(k: Kind) -> Str {
   match k {
     Illegal => "illegal"
     Eof => "end of file"

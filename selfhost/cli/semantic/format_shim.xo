@@ -1,0 +1,32 @@
+// The formatter entry points the semantic tools use (format.Decl,
+// format.Source). The port of internal/format is stage 2's
+// (selfhost/cli/core/format); until it is merged these fall back to the
+// source text, so signatures and canonical rewrites are not yet the Go
+// tool's bytes.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// format.Decl: the canonical text of declaration d of src; with sig a
+/// function is printed without its body.
+fn fmt_decl(d: Decl, src: Bytes, sig: Bool) -> Str {
+  let sp = decl_span(d)
+  var end = sp.end.offset
+  if sig {
+    if let FnDecl(x) = d {
+      if let Some(b) = x.body {
+        end = b.span.start.offset
+      }
+    }
+  }
+  (src[sp.start.offset..end].to_str() ?? "").trim()
+}
+
+/// format.Source: the canonical text of a file, None when it does not
+/// parse.
+fn fmt_source(name: Str, src: Bytes) -> Bytes? {
+  let r = parser.parse_file(name.bytes(), src, false)
+  if !r.diags.is_empty() {
+    return None
+  }
+  Some(src)
+}
