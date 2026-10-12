@@ -546,7 +546,8 @@ anything; evidence in the results file, section "Stage 7 preparation".
   and binary) and s3 to build and run a program; scripts/remote-bootstrap.sh
   runs it on a clean EC2 machine after deleting Go. Passed on 2026-10-12
   (Amazon Linux 2023 arm64, commit 30dfd24): s2 and s3 identical, s1
-  too. It first failed and found a bug of xo1's own TLS build with a
+  too; and on the development Mac with Go off PATH (commit 7b3da52),
+  the same. It first failed and found a bug of xo1's own TLS build with a
   relative `--std` (gotchas/xo1-relative-std-tls-tree.md). The seed was
   built by Go on the same machine before the deletion, standing in for
   the previous release's binary until a release ships the Xo `xo`.
