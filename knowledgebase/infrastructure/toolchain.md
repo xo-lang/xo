@@ -2806,7 +2806,8 @@ binaries identical (73,492,408 bytes); s1 also equals s2; s3 reports
 `xo 0.9.0 linux/arm64` and runs the hello program. The first run
 (commit 4bdf716) failed at s1: xo1 with the default relative `--std`
 could not build the TLS library on an empty cache
-(gotchas/xo1-relative-std-tls-tree.md, fixed in 30dfd24). Not yet run
-on macOS without Go (the Mac has the TLS archive and runtime objects
-cached; the script's empty caches cover that). Last verified:
+(gotchas/xo1-relative-std-tls-tree.md, fixed in 30dfd24). On the
+development Mac (commit 7b3da52, Go installed but off PATH): seed 336
+s; s1 556 s, s2 548 s, s3 555 s; s2 and s3 identical (assembly
+384,779,554 bytes, binary 76,874,400 bytes), s1 too. Last verified:
 2026-10-12.
