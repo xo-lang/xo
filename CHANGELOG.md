@@ -29,6 +29,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   makes a parallel exec fail with "text file busy". scripts/remote-full.sh
   gains `--cmd`, `--hold`, and per-package durations at the end of its log.
 
+- The self hosted `xo` (xo1) closes the gaps of decision 0178's switch
+  point B outside stage 6: `build`, `run`, and `test` default to the Go
+  backend as `xo` does; std is found beside the binary (lib/xo/std of a
+  release) through `os.env.program()`, without XO_STD; `xo check
+  --no-gc` reports XO1201; `build --ci`, the workspace check of
+  `--release`, and native `test --real` work; `xo lsp` answers hover,
+  definition, references, rename, formatting, and semantic tokens as the
+  Go server does; `xo replay` reads the rebuilt program's build
+  information again. The Go `xo` can build xo1 from its embedded sources
+  again (the nested selfhost/cli packages were missing).
 - The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
   xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
   quick fixes, symbols) with the Go servers' responses byte for byte,
@@ -50,6 +60,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   reports holes (XO0900). Two types of one name in different modules no
   longer share a generated SSA helper (the native build of such a
   program failed).
+- The LLVM backend drops the overflow checks that value ranges prove
+  (loop counters, binary search midpoints, operations under a branch or
+  after an index), tells LLVM the ranges of loop variables, and inlines
+  the functions the arm64 backend inlines (decision 0192): the Unicode
+  operations written in Xo are now within 5 percent of their C versions
+  on LLVM too.
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's

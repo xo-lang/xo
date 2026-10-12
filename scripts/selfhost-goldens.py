@@ -6,7 +6,8 @@
 # with `<compiler> build`, runs it with XO_LEAKCHECK=1, and compares
 # (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
 # XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
-# a --backend= to pass the compiler, such as llvm, decision 0178;
+# the --backend= to pass the compiler, default arm64 (xo1 defaults to go
+# as xo does), or llvm, decision 0178;
 # XO1_FLAGS: more flags for `<compiler> build`, split at spaces, such as
 # --ld=macho; XO1_PATH: the PATH of `<compiler> build` alone, such as
 # /nonexistent to show a build needs no external tool, decision 0182;
@@ -90,7 +91,7 @@ def run_cmd(d, flags):
 def one(d, want_fn):
     name = d.replace('/', '_')
     bin = os.path.join(out, name)
-    be = os.environ.get('XO1_BACKEND', '')
+    be = os.environ.get('XO1_BACKEND', '') or 'arm64'
     flags = ['--backend=' + be] if be else []
     flags = flags + os.environ.get('XO1_FLAGS', '').split()
     if os.environ.get('XO1_CMD') == 'run':

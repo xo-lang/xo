@@ -1,0 +1,525 @@
+// The requests of `xo lsp` that read what the check resolved (internal/lsp
+// server.go and features.go): hover, definition, references,
+// prepareRename, rename, formatting, and semantic tokens, over the
+// identifier resolution of resolve.xo, query's declaration surfaces
+// (selfhost/cli/semantic), and the formatter (selfhost/cli/core/format).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/selfhost/cli/semantic
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The identifier at a position of an open document (Server.at): the
+/// checked file (-1 for none), its text, and the site (zero or one).
+struct At {
+  f: Int
+  t: Text
+  site: List[Site]
+}
+
+/// The directory std sources are copied to so the editor can open a
+/// definition in std (Server.StdDir: <user cache dir>/xo/lsp-std, "" when
+/// there is no user cache directory).
+fn lsp_std_dir(os: Os) -> Str uses (env, proc) {
+  match user_cache_dir(os) {
+    Ok(d) => d + "/xo/lsp-std"
+    Err(_) => ""
+  }
+}
+
+/// stdKey: the std file path ("std/json.xo") of a copy under the std
+/// copy directory, or "".
+fn std_key(std_dir: Str, path: Str) -> Str {
+  if std_dir.is_empty() {
+    return ""
+  }
+  let root = clean_path(std_dir)
+  let p = clean_path(path)
+  if p == root || !p.starts_with(root + "/") {
+    return ""
+  }
+  p[root.len() + 1..]
+}
+
+fn (s: Session) is_std_copy(path: Str) -> Bool {
+  !std_key(s.lsp_std, path).is_empty()
+}
+
+/// The checked file at path (snapshot.file): by its key, or for a std
+/// copy by its std path; -1 for none.
+fn (s: Session) file_at(path: Str) -> Int {
+  if let Some(f) = s.keys.get(path) {
+    return f
+  }
+  let k = std_key(s.lsp_std, path)
+  if !k.is_empty() {
+    return s.keys.get(k) ?? -1
+  }
+  -1
+}
+
+/// The identifiers of file f, walked once per check (identsOf).
+fn (var s: Session) sites_of(f: Int) -> List[Site] {
+  if let Some(ss) = s.sites.get(f) {
+    return ss
+  }
+  let ss = idents_of(s.res[0].c, f)
+  s.sites[f] = ss
+  ss
+}
+
+/// resolve with the resolution tables of the last check.
+fn (var s: Session) resolve(f: Int, site: Site) -> LspTarget {
+  var r = s.res[0]
+  let t = r.resolve(f, site)
+  s.res[0] = r
+  t
+}
+
+/// at: the identifier at the request's position.
+fn (var s: Session) at(os: Os, params: J) -> At ! Str uses (stdio, fs, env) {
+  s.fresh(os)
+  let path = uri_to_path(uri_of(params))
+  let f = if s.res.is_empty() { -1 } else { s.file_at(path) }
+  if f < 0 {
+    if !s.err.is_empty() {
+      return Err(s.err)
+    }
+    return Ok(At{f: -1, t: new_text(b""), site: []})
+  }
+  let t = new_text(s.res[0].c.files[f].src)
+  let (pl, pc) = pos_of(get(params, "position"))
+  let off = t.offset(pl, pc)
+  for site in s.sites_of(f) {
+    let sp = site.id.span
+    if sp.start.offset <= off && off <= sp.end.offset && !site.id.name.is_empty() {
+      return Ok(At{f: f, t: t, site: [site]})
+    }
+  }
+  Ok(At{f: f, t: t, site: []})
+}
+
+/// spanLocation: a byte range of a file the checker names, as a location;
+/// a std file is copied (read only) under the std copy directory first.
+fn (var s: Session) span_location(os: Os, file: Str, a: Int, b: Int) -> J? uses fs {
+  let f0 = s.keys.get(file) ?? -1
+  var path = if f0 >= 0 { file } else { abs_of(s.wd, file) }
+  let f = if f0 >= 0 { f0 } else { s.keys.get(path) ?? -1 }
+  if f < 0 {
+    return None
+  }
+  let c = s.res[0].c
+  let src = c.files[f].src
+  let t = new_text(src)
+  let m = c.files[f].module
+  if m >= 0 && c.mods[m].is_std {
+    if s.lsp_std.is_empty() {
+      return None
+    }
+    let dst = s.lsp_std + "/" + c.files[f].path
+    let same = match os.fs.read(dst) {
+      Ok(old) => old == src
+      Err(_) => false
+    }
+    if !same {
+      // read only, so the editor shows it cannot be edited; the old copy
+      // is removed first because it is read only too
+      let _ = os.fs.remove(dst).ignore_err("there may be no old copy")
+      if os.fs.create_dir_all(dir_of(dst)).is_err() || os.fs.write(dst, src).is_err() || os.fs.set_mode(dst, 0o444).is_err() {
+        return None
+      }
+    }
+    path = dst
+  }
+  Some(jobj(["uri", "range"], [jstr(path_to_uri(path)), range_json(t.offset_position(a), t.offset_position(b))]))
+}
+
+fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
+  let at = s.at(os, params)?
+  for site in at.site {
+    let tg = s.resolve(at.f, site)
+    if tg.def_file.is_empty() {
+      return Ok(J.Null)
+    }
+    return Ok(s.span_location(os, tg.def_file, tg.def_start, tg.def_end) ?? J.Null)
+  }
+  Ok(J.Null)
+}
+
+/// refs: every identifier of the user files that names what tg names, by
+/// file key, in walk order.
+fn (var s: Session) refs(tg: LspTarget) -> List[(Int, Site)] {
+  let c = s.res[0].c
+  var paths: List[(Str, Int)] = []
+  for (p, f) in s.keys {
+    let m = c.files[f].module
+    if m >= 0 && !c.mods[m].is_std {
+      paths.push((p, f))
+    }
+  }
+  var out: List[(Int, Site)] = []
+  for (_, f) in paths.sort_by(fn(x) { x.0 }) {
+    for site in s.sites_of(f) {
+      if site.id.name.is_empty() {
+        continue
+      }
+      if same_obj(s.resolve(f, site), tg) {
+        out.push((f, site))
+      }
+    }
+  }
+  out
+}
+
+fn (var s: Session) references(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
+  let at = s.at(os, params)?
+  let with_decl = match get(get(params, "context") ?? J.Null, "includeDeclaration") {
+    Some(J.Bool(b)) => b
+    _ => false
+  }
+  for site in at.site {
+    let tg = s.resolve(at.f, site)
+    if tg.obj.is_empty() && tg.def_file.is_empty() {
+      return Ok(jarr([]))
+    }
+    var out: List[J] = []
+    for (f, r) in s.refs(tg) {
+      let file = s.res[0].c.files[f].path
+      let sp = r.id.span
+      if !with_decl && file == tg.def_file && sp.start.offset == tg.def_start && sp.end.offset == tg.def_end {
+        continue
+      }
+      if let Some(loc) = s.span_location(os, file, sp.start.offset, sp.end.offset) {
+        out.push(loc)
+      }
+    }
+    return Ok(jarr(out))
+  }
+  Ok(J.Null)
+}
+
+/// renamable: declared in a user file.
+fn (s: Session) renamable(tg: LspTarget) -> Bool {
+  if tg.def_file.is_empty() || tg.kind == "namespace" {
+    return false
+  }
+  let f = s.keys.get(abs_of(s.wd, tg.def_file)) ?? -1
+  if f < 0 {
+    return false
+  }
+  let m = s.res[0].c.files[f].module
+  m >= 0 && !s.res[0].c.mods[m].is_std
+}
+
+fn (var s: Session) prepare_rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env) {
+  let at = match s.at(os, params) {
+    Ok(a) => a
+    Err(e) => return Err((-32803, e))
+  }
+  for site in at.site {
+    if !s.renamable(s.resolve(at.f, site)) {
+      return Err((-32803, "cannot rename this name"))
+    }
+    let sp = site.id.span
+    return Ok(range_json(at.t.offset_position(sp.start.offset), at.t.offset_position(sp.end.offset)))
+  }
+  Ok(J.Null)
+}
+
+/// isIdent.
+fn is_ident_text(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for (i, c) in s.runes().indexed() {
+    let ok = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i > 0 && c >= '0' && c <= '9')
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+fn (var s: Session) rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env) {
+  let at = match s.at(os, params) {
+    Ok(a) => a
+    Err(e) => return Err((-32803, e))
+  }
+  for site in at.site {
+    let tg = s.resolve(at.f, site)
+    if !s.renamable(tg) {
+      return Err((-32803, "cannot rename this name"))
+    }
+    let new_name = jstr_of(params, "newName")
+    if !is_ident_text(new_name) {
+      return Err((-32803, "${format.go_quote(new_name)} is not an identifier"))
+    }
+    var uris: List[Str] = []
+    var edits: Map[Str, List[J]] = {}
+    for (f, r) in s.refs(tg) {
+      let sp = r.id.span
+      match s.span_location(os, s.res[0].c.files[f].path, sp.start.offset, sp.end.offset) {
+        Some(loc) => {
+          let u = match get(loc, "uri") {
+            Some(J.Str(x)) => x
+            _ => ""
+          }
+          if !uris.contains(u) {
+            uris.push(u)
+          }
+          var l = edits.get(u) ?? []
+          l.push(jobj(["range", "newText"], [get(loc, "range") ?? J.Null, jstr(new_name)]))
+          edits[u] = l
+        }
+        None => {}
+      }
+    }
+    var ck: List[Str] = []
+    var cv: List[J] = []
+    for u in uris.sort() {
+      ck.push(u)
+      cv.push(jarr(edits.get(u) ?? []))
+    }
+    return Ok(jobj(["changes"], [jobj(ck, cv)]))
+  }
+  Ok(J.Null)
+}
+
+fn trim_doc(s: Str) -> Str { s.trim() }
+
+/// The declaration line and doc of a declaration of file f (query's
+/// DeclSurface of all declarations).
+fn (s: Session) surface(f: Int, d: parser.Decl) -> (Str, Str) {
+  let c = s.res[0].c
+  let m = c.files[f].module
+  let mp = if m >= 0 { c.mods[m].path } else { "" }
+  match semantic.decl_surface(mp, c.files[f].path, c.files[f].src, d, true) {
+    Some(def) => (def.signature, trim_doc(def.doc))
+    None => ("", "")
+  }
+}
+
+/// declOf: the file and declaration of a type in its module's files.
+fn (s: Session) decl_of_type(to: Int) -> (Int, parser.Decl)? {
+  let c = s.res[0].c
+  let m = c.objs[to].module
+  if m < 0 {
+    return None
+  }
+  for f in c.mods[m].files {
+    for d in c.files[f].ast.decls {
+      let name = match d {
+        StructDecl(x) => Some(x.name)
+        EnumDecl(x) => Some(x.name)
+        InterfaceDecl(x) => Some(x.name)
+        TypeDecl(x) => Some(x.name)
+        _ => None
+      }
+      if let Some(n) = name {
+        if n.name == c.objs[to].name {
+          return Some((f, d))
+        }
+      }
+    }
+  }
+  None
+}
+
+/// The file index the checker gives the path p, or -1.
+fn (s: Session) file_named(p: Str) -> Int {
+  s.res[0].idx.get(p) ?? -1
+}
+
+/// describe: a declaration line and doc text for a hover.
+fn (s: Session) describe(tg: LspTarget) -> (Str, Str) {
+  let c = s.res[0].c
+  match tg.what {
+    "func" => {
+      let o = c.objs[tg.oi]
+      if let Some(fd) = o.fn_decl.first() {
+        let f = s.file_named(o.file)
+        if f >= 0 {
+          return s.surface(f, parser.Decl.FnDecl(d: fd))
+        }
+      }
+      return (c.display_name(tg.oi), "")
+    }
+    "const" => {
+      let o = c.objs[tg.oi]
+      if o.decl_file >= 0 && o.decl_idx >= 0 && o.decl_idx < c.files[o.decl_file].ast.decls.len() {
+        return s.surface(o.decl_file, c.files[o.decl_file].ast.decls[o.decl_idx])
+      }
+    }
+    "type" => {
+      if let Some((f, d)) = s.decl_of_type(tg.oi) {
+        return s.surface(f, d)
+      }
+      return (c.qual_name(tg.oi), "")
+    }
+    "local" => {
+      let o = c.objs[tg.oi]
+      var kw = "let "
+      if o.local.contains("param") || o.local.contains("recv") {
+        kw = ""
+      } else if o.mutable {
+        kw = "var "
+      }
+      if o.ty < 0 {
+        return (kw + check.text(o.name), "")
+      }
+      return ("${kw}${check.text(o.name)}: ${c.show(o.ty)}", "")
+    }
+    "field" => {
+      let fl = c.objs[tg.oi].fields[tg.sub]
+      return ("${check.text(fl.name)}: ${c.show(fl.ty)}", "")
+    }
+    "variant" => {
+      let v = c.objs[tg.oi].variants[tg.sub]
+      var out = "${check.text(c.objs[tg.oi].name)}.${check.text(v.name)}"
+      if !v.unit {
+        var fs: List[Str] = []
+        for vf in v.fields {
+          if vf.from {
+            fs.push("from ${c.show(vf.ty)}")
+          } else if !vf.name.is_empty() {
+            fs.push("${check.text(vf.name)}: ${c.show(vf.ty)}")
+          } else {
+            fs.push(c.show(vf.ty))
+          }
+        }
+        out = "${out}(${fs.join(", ")})"
+      }
+      return (out, "")
+    }
+    "module" => return ("use ${c.mods[tg.oi].path}", "")
+    _ => {}
+  }
+  if !tg.label.is_empty() {
+    return (tg.label, "")
+  }
+  ("", "")
+}
+
+fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
+  let at = s.at(os, params)?
+  if at.f < 0 {
+    return Ok(J.Null)
+  }
+  var parts: List[Str] = []
+  var rng: List[J] = []
+  for site in at.site {
+    let sp = site.id.span
+    rng.push(range_json(at.t.offset_position(sp.start.offset), at.t.offset_position(sp.end.offset)))
+    let (sig, doc) = s.describe(s.resolve(at.f, site))
+    if !sig.is_empty() {
+      parts.push("```xo\n${sig}\n```")
+    }
+    if !doc.is_empty() {
+      parts.push(doc)
+    }
+  }
+  if parts.is_empty() {
+    // the type of the expression under the cursor (query.Session.Type)
+    let (pl, pc) = pos_of(get(params, "position"))
+    let off = at.t.offset(pl, pc)
+    let li = if pl < at.t.lines.len() { pl } else { at.t.lines.len() - 1 }
+    let q = semantic.Session{c: s.res[0].c, wd: s.wd}
+    match q.type_at(s.res[0].c.files[at.f].path, pl + 1, off - at.t.lines[li] + 1) {
+      Ok(r) => parts.push("```xo\n${r.typ}\n```")
+      Err(_) => {}
+    }
+  }
+  if parts.is_empty() {
+    return Ok(J.Null)
+  }
+  var keys = ["contents"]
+  var vals = [jobj(["kind", "value"], [jstr("markdown"), jstr(parts.join("\n\n"))])]
+  for r in rng {
+    keys.push("range")
+    vals.push(r)
+  }
+  Ok(jobj(keys, vals))
+}
+
+/// formatting: the whole document replaced by its `xo fmt` text, no edit
+/// when it is formatted or does not parse.
+fn (s: Session) formatting(params: J) -> J {
+  let path = uri_to_path(uri_of(params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
+    None => return J.Null
+  }
+  if s.is_std_copy(path) {
+    return J.Null
+  }
+  match format.format_source(path, src) {
+    Ok(out) => {
+      if out == src {
+        return jarr([])
+      }
+      let t = new_text(src)
+      jarr([jobj(["range", "newText"], [range_json((0, 0), t.offset_position(src.len())), jstr(out.to_str() ?? "")])])
+    }
+    // a file that does not parse is left alone; its errors are already
+    // published
+    SyntaxErrors(_) => jarr([])
+  }
+}
+
+/// semanticTokens/full: the identifiers the resolution names, sorted, as
+/// LSP's relative five integer encoding.
+fn (var s: Session) semantic_tokens(os: Os, params: J) -> J uses (stdio, fs, env) {
+  s.fresh(os)
+  let path = uri_to_path(uri_of(params))
+  let f = if s.res.is_empty() { -1 } else { s.file_at(path) }
+  if f < 0 {
+    return jobj(["data"], [jarr([])])
+  }
+  let src = s.res[0].c.files[f].src
+  let t = new_text(src)
+  var toks: List[(Int, Int, Int, Int, Int)] = []
+  var seen: Map[Int, Bool] = {}
+  for site in s.sites_of(f) {
+    let id = site.id
+    let a = id.span.start.offset
+    let b = id.span.end.offset
+    if id.name.is_empty() || seen.contains(a) || b <= a || b > src.len() {
+      continue
+    }
+    // identifiers the parser synthesized (such as `self` in a bare
+    // receiver) do not match the source text
+    if src[a..b] != id.name {
+      continue
+    }
+    let tg = s.resolve(f, site)
+    var ti = -1
+    for (i, k) in TOKEN_TYPES.indexed() {
+      if k == tg.kind {
+        ti = i
+      }
+    }
+    if ti < 0 {
+      continue
+    }
+    seen[a] = true
+    let (l, ch) = t.offset_position(a)
+    toks.push((l, ch, utf16_len(id.name), ti, tg.mods))
+  }
+  let sorted = toks.sort_by(fn(k) { k.0 * 4294967296 + k.1 })
+  var data: List[J] = []
+  var pl = 0
+  var pc = 0
+  for k in sorted {
+    let (l, ch, n, ti, mods) = k
+    let dl = l - pl
+    let dc = if dl == 0 { ch - pc } else { ch }
+    data.push(jint(dl))
+    data.push(jint(dc))
+    data.push(jint(n))
+    data.push(jint(ti))
+    data.push(jint(mods))
+    pl = l
+    pc = ch
+  }
+  jobj(["data"], [jarr(data)])
+}

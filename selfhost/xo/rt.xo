@@ -5,6 +5,7 @@
 // the Go driver's, so both drivers share the cache and accept the same
 // packs.
 
+use github.com/xo-lang/xo/selfhost/check
 use std/crypto
 
 // ---------------------------------------------------------------------------
@@ -256,8 +257,8 @@ fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
 }
 
 /// RTPackRoot: $XO_RTPACK ("off": none), else lib/xo/rtpack beside the
-/// directory of the running binary (bin/xo of a release archive), as $_
-/// names it ("" when it is not set).
+/// directory of the running binary (bin/xo of a release archive; "" when
+/// it cannot be found).
 fn rtpack_root(os: Os) -> Str {
   let d = os.env.get("XO_RTPACK") ?? ""
   if d == "off" {
@@ -266,21 +267,10 @@ fn rtpack_root(os: Os) -> Str {
   if !d.is_empty() {
     return d
   }
-  // the running binary: Env.program is not native yet (XO1201), so the
-  // path the shell exported in $_ when it started this program
-  var exe = os.env.get("_") ?? ""
-  if !exe.contains("/") {
-    exe = look_path(os, exe)
-  } else if !exe.starts_with("/") {
-    exe = "${os.env.get("PWD") ?? "."}/${exe}"
-  }
+  // the running binary (os.Executable and filepath.EvalSymlinks)
+  let exe = check.executable(os.env, os.fs)
   if exe.is_empty() {
     return ""
-  }
-  // filepath.EvalSymlinks
-  let (real, err) = combined(os, "realpath", [exe])
-  if err.is_empty() && !real.trim().is_empty() {
-    exe = real.trim()
   }
   "${dir_name(dir_name(exe))}/lib/xo/rtpack"
 }

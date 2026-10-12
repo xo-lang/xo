@@ -1,0 +1,866 @@
+// Value ranges of Int SSA values and the inlining of calls (internal/llvm
+// ranges.go and inline.go, decision 0192): an interval per value for the
+// whole function, found by iterating over the blocks in reverse
+// postorder until nothing changes (a loop parameter that keeps growing
+// is widened), narrowed where a value is computed by the comparisons of
+// the branches and the indexes that dominate it, and a midpoint
+// m = a + (b - a) / 2 computed where a < b holds is at least a and below
+// b. A checked add, subtract, or multiply the intervals prove is lowered
+// without its check; the intervals of the parameters of loop headers and
+// of midpoints are told to LLVM (llvm.assume). A call of a function the
+// arm64 cost model (decision 0184) finds inlinable is `alwaysinline`.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+const MAX_INT = 9223372036854775807
+
+/// A bound of the length of a Str or Bytes value (2^48).
+const MAX_STR_LEN = 281474976710656
+
+/// How many facts narrowing an operand looks at (ranges.go maxFactWalk).
+const MAX_FACT_WALK = 32
+
+/// An interval of Int values (ranges.go interval).
+struct Interval {
+  lo: Int
+  hi: Int
+}
+
+/// A fact (ranges.go fact): x op y, or, for an index, x is below lim; in
+/// a list linked by next (-1 ends it).
+struct Fact {
+  x: Int
+  y: Int
+  op: ssa.Op
+  idx: Bool
+  lim: Int
+  next: Int
+}
+
+fn imin(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+fn imax(a: Int, b: Int) -> Int {
+  if a > b { a } else { b }
+}
+
+fn full_interval() -> Interval {
+  Interval{lo: MIN_INT, hi: MAX_INT}
+}
+
+fn union_of(r: Interval, o: Interval) -> Interval {
+  Interval{lo: imin(r.lo, o.lo), hi: imax(r.hi, o.hi)}
+}
+
+/// a + b clipped to Int.
+fn sat_add(a: Int, b: Int) -> Int {
+  match a.checked_add(b) {
+    Some(s) => s
+    None => if a > 0 { MAX_INT } else { MIN_INT }
+  }
+}
+
+fn add_ok(a: Int, b: Int) -> Bool {
+  match a.checked_add(b) {
+    Some(_) => true
+    None => false
+  }
+}
+
+fn mul_ok(a: Int, b: Int) -> Bool {
+  match a.checked_mul(b) {
+    Some(_) => true
+    None => false
+  }
+}
+
+fn sat_mul(a: Int, b: Int) -> Int {
+  match a.checked_mul(b) {
+    Some(p) => p
+    None => if (a < 0) != (b < 0) { MIN_INT } else { MAX_INT }
+  }
+}
+
+/// The value of an Int constant (ssaConst).
+fn (var g: Gen) ssa_const(v: Int) -> (Int, Bool) {
+  if g.f.values[v].op != ssa.Op.Const {
+    return (0, false)
+  }
+  match g.f.values[v].aux {
+    I(n) => (n, true)
+    None | S(..) | F(..) | B(..) | Bs(..) | P(..) => (0, false)
+  }
+}
+
+/// Whether value v has kind Int.
+fn (var g: Gen) is_int(v: Int) -> Bool {
+  let t = g.f.values[v].ty
+  t >= 0 && g.kind(t) == ssa.Kind.Int
+}
+
+/// The interval of v, when known (constants are their own).
+fn (var g: Gen) range_get(v: Int) -> (Interval, Bool) {
+  let (n, ok) = g.ssa_const(v)
+  if ok {
+    return (Interval{lo: n, hi: n}, true)
+  }
+  if g.rng_has[v] {
+    return (g.rng[v], true)
+  }
+  (Interval{lo: 0, hi: 0}, false)
+}
+
+/// The interval of v, the full one when unknown.
+fn (var g: Gen) range_of_value(v: Int) -> Interval {
+  let (r, ok) = g.range_get(v)
+  if ok {
+    return r
+  }
+  full_interval()
+}
+
+/// The fact of a value that indexes a list or Bytes (indexFact), as a
+/// node not linked yet, and whether it is one.
+fn (var g: Gen) index_fact(v: Int) -> (Fact, Bool) {
+  let x = g.f.values[v]
+  let none = Fact{x: -1, y: -1, op: ssa.Op.Param, idx: true, lim: 0, next: -1}
+  if x.op != ssa.Op.Call {
+    return (none, false)
+  }
+  match aux_str(x.aux) {
+    "bytes.index" => (Fact{x: x.args[1], y: -1, op: ssa.Op.Param, idx: true, lim: MAX_STR_LEN, next: -1}, true)
+    "list.index" | "list.take" => (Fact{x: x.args[1], y: -1, op: ssa.Op.Param, idx: true, lim: MAX_INT, next: -1}, true)
+    _ => (none, false)
+  }
+}
+
+/// Pushes fact f on the list at head and returns the new head.
+fn (var g: Gen) push_fact(f: Fact, head: Int) -> Int {
+  var n = f
+  n.next = head
+  g.facts.push(n)
+  g.facts.len() - 1
+}
+
+/// The comparison that holds when op does not (negated).
+fn negated(op: ssa.Op) -> ssa.Op {
+  match op {
+    Lt => ssa.Op.Ge
+    Le => ssa.Op.Gt
+    Gt => ssa.Op.Le
+    Ge => ssa.Op.Lt
+    Eq => ssa.Op.Ne
+    _ => ssa.Op.Eq
+  }
+}
+
+/// op with its operands exchanged (swapped).
+fn swapped(op: ssa.Op) -> ssa.Op {
+  match op {
+    Lt => ssa.Op.Gt
+    Le => ssa.Op.Ge
+    Gt => ssa.Op.Lt
+    Ge => ssa.Op.Le
+    _ => op
+  }
+}
+
+fn is_compare(op: ssa.Op) -> Bool {
+  op is ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge | ssa.Op.Eq | ssa.Op.Ne
+}
+
+/// The facts on entry to block b: the comparison of the branch whose edge
+/// is its only way in, then those at base; through the join of `a && b`
+/// or `a || b`, the facts on leaving the one predecessor that can take
+/// the edge and the comparison it passes (entryFacts; exit holds the
+/// facts on leaving the blocks before b).
+fn (var g: Gen) entry_facts(b: Int, base0: Int, exit: List[Int]) -> Int {
+  var base = base0
+  let preds = g.f.blocks[b].preds
+  if preds.len() != 1 {
+    return base
+  }
+  let j = g.f.edges[preds[0]].from
+  let t = g.f.term(j)
+  if t < 0 || g.f.values[t].op != ssa.Op.Branch {
+    return base
+  }
+  let tv = g.f.values[t]
+  let yes = g.f.edges[tv.succs[0]].to == b
+  let no = g.f.edges[tv.succs[1]].to == b
+  if yes == no {
+    return base
+  }
+  let c0 = tv.args[0]
+  var src = -1
+  var k = -1
+  if g.f.values[c0].op == ssa.Op.Param {
+    for (i, p) in g.f.blocks[j].params.indexed() {
+      if p == c0 {
+        k = i
+      }
+    }
+    var n = 0
+    if k >= 0 {
+      for e in g.f.blocks[j].preds {
+        let x = g.f.edges[e].args[k]
+        if g.f.values[x].op == ssa.Op.Const {
+          if let B(bv) = g.f.values[x].aux {
+            if bv == no {
+              continue // leaves by the other edge
+            }
+          }
+        }
+        src = e
+        n += 1
+      }
+    }
+    if n != 1 {
+      return base
+    }
+    base = exit[g.f.edges[src].from]
+  }
+  let cv = if src >= 0 { g.f.edges[src].args[k] } else { c0 }
+  let c = g.f.values[cv]
+  if !is_compare(c.op) {
+    return base
+  }
+  let at = g.f.values[c.args[0]].ty
+  let st = g.m.types[at]
+  if st.kind != ssa.Kind.Int || (st.bits == 64 && st.unsigned) {
+    return base
+  }
+  var op = c.op
+  if no {
+    op = negated(op)
+  }
+  g.push_fact(Fact{x: c.args[0], y: c.args[1], op: op, idx: false, lim: 0, next: -1}, base)
+}
+
+/// The interval of x where the facts at fs hold (narrow).
+fn (var g: Gen) narrow(x: Int, fs: Int) -> (Interval, Bool) {
+  let (r, ok) = g.range_get(x)
+  if !ok {
+    return (r, false)
+  }
+  var n = r
+  var k = 0
+  var l = fs
+  while l >= 0 && k < MAX_FACT_WALK {
+    k += 1
+    let f = g.facts[l]
+    l = f.next
+    if f.idx {
+      if f.x == x {
+        n = Interval{lo: imax(n.lo, 0), hi: imin(n.hi, f.lim - 1)}
+      }
+      continue
+    }
+    var op = f.op
+    var other = f.y
+    if x == f.x {
+      // as it is
+    } else if x == f.y {
+      op = swapped(op)
+      other = f.x
+    } else {
+      continue
+    }
+    let o = g.range_of_value(other)
+    match op {
+      Lt => {
+        if o.hi > MIN_INT {
+          n.hi = imin(n.hi, o.hi - 1)
+        }
+      }
+      Le => n.hi = imin(n.hi, o.hi)
+      Gt => {
+        if o.lo < MAX_INT {
+          n.lo = imax(n.lo, o.lo + 1)
+        }
+      }
+      Ge => n.lo = imax(n.lo, o.lo)
+      Eq => n = Interval{lo: imax(n.lo, o.lo), hi: imin(n.hi, o.hi)}
+      _ => {}
+    }
+  }
+  if n.lo > n.hi {
+    // the facts contradict: code no run reaches
+    return (r, true)
+  }
+  (n, true)
+}
+
+/// The immediate dominator of each block of blocks (reverse postorder),
+/// -1 for the entry and the blocks not reached (idoms).
+fn (var g: Gen) idoms(blocks: List[Int], order: List[Int]) -> List[Int] {
+  let nb = g.f.blocks.len()
+  var idom: List[Int] = []
+  var has: List[Bool] = []
+  for _ in 0..nb {
+    idom.push(-1)
+    has.push(false)
+  }
+  if blocks.is_empty() {
+    return idom
+  }
+  let entry = blocks[0]
+  idom[entry] = entry
+  has[entry] = true
+  var changed = true
+  while changed {
+    changed = false
+    for bi in 1..blocks.len() {
+      let b = blocks[bi]
+      var nd = -1
+      for e in g.f.blocks[b].preds {
+        let p = g.f.edges[e].from
+        if !has[p] {
+          continue
+        }
+        if nd < 0 {
+          nd = p
+          continue
+        }
+        var x = p
+        var y = nd
+        while x != y {
+          while order[x] > order[y] {
+            x = idom[x]
+          }
+          while order[y] > order[x] {
+            y = idom[y]
+          }
+        }
+        nd = x
+      }
+      if nd >= 0 && (!has[b] || idom[b] != nd) {
+        idom[b] = nd
+        has[b] = true
+        changed = true
+      }
+    }
+  }
+  idom[entry] = -1
+  idom
+}
+
+/// Matches v = a + (b - a) / 2 (or `>> 1`, either operand order).
+fn (var g: Gen) mid_of(v: Int) -> (Int, Int, Bool) {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Add || !g.is_int(v) {
+    return (-1, -1, false)
+  }
+  for k in 0..2 {
+    let a = x.args[k]
+    let h = g.f.values[x.args[1 - k]]
+    var half = false
+    if h.args.len() == 2 {
+      let (n, is_k) = g.ssa_const(h.args[1])
+      if is_k {
+        half = (h.op == ssa.Op.Div && n == 2) || (h.op == ssa.Op.Shr && n == 1)
+      }
+    }
+    if !half {
+      continue
+    }
+    let d = g.f.values[h.args[0]]
+    if d.op == ssa.Op.Sub && d.args[1] == a {
+      return (a, d.args[0], true)
+    }
+  }
+  (-1, -1, false)
+}
+
+/// Whether block d is entered only by the edge of a branch on which
+/// a < b holds.
+fn (var g: Gen) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
+  let preds = g.f.blocks[d].preds
+  if preds.len() != 1 {
+    return false
+  }
+  let t = g.f.term(g.f.edges[preds[0]].from)
+  if t < 0 || g.f.values[t].op != ssa.Op.Branch {
+    return false
+  }
+  let tv = g.f.values[t]
+  let yes = g.f.edges[tv.succs[0]].to == d
+  let no = g.f.edges[tv.succs[1]].to == d
+  if yes == no {
+    return false
+  }
+  let c = g.f.values[tv.args[0]]
+  if c.args.len() != 2 {
+    return false
+  }
+  let x = c.args[0]
+  let y = c.args[1]
+  if (yes && c.op == ssa.Op.Lt) || (no && c.op == ssa.Op.Ge) {
+    return x == a && y == b
+  }
+  if (yes && c.op == ssa.Op.Gt) || (no && c.op == ssa.Op.Le) {
+    return x == b && y == a
+  }
+  false
+}
+
+/// Analyses the function being lowered, whose blocks in reverse
+/// postorder are blocks (computeRanges).
+fn (var g: Gen) compute_ranges(blocks: List[Int]) {
+  let nv = g.f.values.len()
+  let nb = g.f.blocks.len()
+  g.rng = []
+  g.rng_has = []
+  g.rng_safe = []
+  g.rng_mid = []
+  for _ in 0..nv {
+    g.rng.push(Interval{lo: 0, hi: 0})
+    g.rng_has.push(false)
+    g.rng_safe.push(false)
+    g.rng_mid.push(false)
+  }
+  g.fact_at = []
+  g.facts = []
+  var order: List[Int] = []
+  for _ in 0..nb {
+    g.fact_at.push(-1)
+    order.push(0)
+  }
+  for (i, b) in blocks.indexed() {
+    order[b] = i
+  }
+  let idom = g.idoms(blocks, order)
+  // the facts on leaving each block: its entry facts and the indexes it
+  // took
+  var exit: List[Int] = []
+  for _ in 0..nb {
+    exit.push(-1)
+  }
+  for b in blocks {
+    let d = idom[b]
+    let base = if d >= 0 { exit[d] } else { -1 }
+    var fs = g.entry_facts(b, base, exit)
+    g.fact_at[b] = fs
+    for v in g.f.blocks[b].instrs {
+      let (f, ok) = g.index_fact(v)
+      if ok {
+        fs = g.push_fact(f, fs)
+      }
+    }
+    exit[b] = fs
+  }
+  var mids: Map[Int, (Int, Int)] = {}
+  var ups: List[Int] = [0, MAX_INT]
+  var downs: List[Int] = [0, MIN_INT]
+  for b in blocks {
+    for v in g.f.blocks[b].instrs {
+      let (lo, hi, ok) = g.mid_of(v)
+      if ok {
+        var d = b
+        while d >= 0 {
+          if g.less_on_entry(d, lo, hi) {
+            mids[v] = (lo, hi)
+            g.rng_mid[v] = true
+            break
+          }
+          d = idom[d]
+        }
+      }
+      let x = g.f.values[v]
+      if (x.op == ssa.Op.Rem || x.op == ssa.Op.And) && g.is_int(v) {
+        let (k0, kok) = g.ssa_const(x.args[1])
+        if kok && k0 != MIN_INT {
+          var k = k0
+          if k < 0 {
+            k = -k
+          }
+          if x.op == ssa.Op.Rem && k > 0 {
+            k -= 1
+          }
+          ups.push(k)
+          downs.push(-k)
+        }
+      }
+    }
+  }
+  var grown: List[Int] = []
+  for _ in 0..nv {
+    grown.push(0)
+  }
+  for _ in 0..100 {
+    var changed = false
+    for (bi, b) in blocks.indexed() {
+      for (k, p) in g.f.blocks[b].params.indexed() {
+        if !g.is_int(p) {
+          continue
+        }
+        if bi == 0 {
+          changed = g.range_set(p, full_interval(), ups, downs, grown) || changed
+          continue
+        }
+        var r = Interval{lo: 0, hi: 0}
+        var any = false
+        for e in g.f.blocks[b].preds {
+          let (a, ok) = g.range_get(g.f.edges[e].args[k])
+          if !ok {
+            continue // not reached yet: optimistic
+          }
+          if !any {
+            r = a
+            any = true
+          } else {
+            r = union_of(r, a)
+          }
+        }
+        if any {
+          changed = g.range_set(p, r, ups, downs, grown) || changed
+        }
+      }
+      var fs = g.fact_at[b]
+      for v in g.f.blocks[b].instrs {
+        if g.is_int(v) && g.f.values[v].op != ssa.Op.Const {
+          let (r0, ok) = g.range_of(v, fs)
+          var r = r0
+          if ok {
+            if let Some(ab) = mids.get(v) {
+              // a <= m < b (decision 0184)
+              let (ra, ok1) = g.range_get(ab.0)
+              let (rb, ok2) = g.range_get(ab.1)
+              if ok1 && ok2 && rb.hi > MIN_INT {
+                r = Interval{lo: imax(r.lo, ra.lo), hi: imin(r.hi, rb.hi - 1)}
+              }
+            }
+            changed = g.range_set(v, r, ups, downs, grown) || changed
+          }
+        }
+        let (f, iok) = g.index_fact(v)
+        if iok {
+          fs = g.push_fact(f, fs)
+        }
+      }
+    }
+    if !changed {
+      g.find_safe(blocks)
+      return
+    }
+  }
+  // did not settle: know nothing
+  for i in 0..nv {
+    g.rng_has[i] = false
+  }
+}
+
+/// Marks the checked adds, subtracts, and multiplies that cannot
+/// overflow (findSafe).
+fn (var g: Gen) find_safe(blocks: List[Int]) {
+  for b in blocks {
+    var fs = g.fact_at[b]
+    for v in g.f.blocks[b].instrs {
+      let x = g.f.values[v]
+      if (x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul) && !x.pos.is_empty() && g.is_int(v) && g.no_overflow(v, fs) {
+        g.rng_safe[v] = true
+      }
+      let (f, ok) = g.index_fact(v)
+      if ok {
+        fs = g.push_fact(f, fs)
+      }
+    }
+  }
+}
+
+/// Sets the interval of v (widening a loop parameter that keeps growing)
+/// and reports whether it changed.
+fn (var g: Gen) range_set(v: Int, r0: Interval, ups: List[Int], downs: List[Int], var grown: List[Int]) -> Bool {
+  var r = r0
+  let had = g.rng_has[v]
+  let old = g.rng[v]
+  if had && old == r {
+    return false
+  }
+  if had && g.f.values[v].op == ssa.Op.Param {
+    // a loop parameter that grows: widen after two rounds
+    r = union_of(r, old)
+    if r == old {
+      return false
+    }
+    grown[v] += 1
+    if grown[v] > 2 {
+      if r.hi > old.hi {
+        var best = MAX_INT
+        for t in ups {
+          if t >= r.hi && t < best {
+            best = t
+          }
+        }
+        r.hi = best
+      }
+      if r.lo < old.lo {
+        var best = MIN_INT
+        for t in downs {
+          if t <= r.lo && t > best {
+            best = t
+          }
+        }
+        r.lo = best
+      }
+    }
+  }
+  g.rng[v] = r
+  g.rng_has[v] = true
+  true
+}
+
+/// The interval of v from its operands' where the facts at fs hold
+/// (false while an operand has none yet; rangeOf).
+fn (var g: Gen) range_of(v: Int, fs: Int) -> (Interval, Bool) {
+  let x = g.f.values[v]
+  let none = (Interval{lo: 0, hi: 0}, false)
+  match x.op {
+    Add | Sub | Mul => {
+      if aux_str(x.aux) == "wrap" {
+        return (full_interval(), true)
+      }
+      let (a, ok1) = g.narrow(x.args[0], fs)
+      let (b, ok2) = g.narrow(x.args[1], fs)
+      if !ok1 || !ok2 {
+        return none
+      }
+      if x.op == ssa.Op.Add {
+        return (Interval{lo: sat_add(a.lo, b.lo), hi: sat_add(a.hi, b.hi)}, true)
+      }
+      if x.op == ssa.Op.Sub {
+        if b.lo == MIN_INT {
+          return (full_interval(), true)
+        }
+        return (Interval{lo: sat_add(a.lo, -b.hi), hi: sat_add(a.hi, -b.lo)}, true)
+      }
+      let c0 = sat_mul(a.lo, b.lo)
+      let c1 = sat_mul(a.lo, b.hi)
+      let c2 = sat_mul(a.hi, b.lo)
+      let c3 = sat_mul(a.hi, b.hi)
+      (Interval{lo: imin(imin(c0, c1), imin(c2, c3)), hi: imax(imax(c0, c1), imax(c2, c3))}, true)
+    }
+    Div => {
+      let (a, ok) = g.narrow(x.args[0], fs)
+      let (k, is_k) = g.ssa_const(x.args[1])
+      if !ok {
+        return none
+      }
+      if !is_k || k <= 0 {
+        return (full_interval(), true)
+      }
+      (Interval{lo: a.lo / k, hi: a.hi / k}, true)
+    }
+    Rem => {
+      let (a, ok) = g.narrow(x.args[0], fs)
+      if !ok {
+        return none
+      }
+      let (k0, is_k) = g.ssa_const(x.args[1])
+      if !is_k || k0 == 0 || k0 == MIN_INT {
+        return (full_interval(), true)
+      }
+      let k = if k0 < 0 { -k0 } else { k0 }
+      let m = k - 1
+      if a.lo >= 0 {
+        return (Interval{lo: 0, hi: imin(a.hi, m)}, true)
+      }
+      if a.hi <= 0 {
+        return (Interval{lo: imax(a.lo, -m), hi: 0}, true)
+      }
+      (Interval{lo: imax(a.lo, -m), hi: imin(a.hi, m)}, true)
+    }
+    And => {
+      let (a, ok1) = g.narrow(x.args[0], fs)
+      let (b, ok2) = g.narrow(x.args[1], fs)
+      if !ok1 || !ok2 {
+        return none
+      }
+      if a.lo >= 0 && b.lo >= 0 {
+        return (Interval{lo: 0, hi: imin(a.hi, b.hi)}, true)
+      }
+      if a.lo >= 0 {
+        return (Interval{lo: 0, hi: a.hi}, true)
+      }
+      if b.lo >= 0 {
+        return (Interval{lo: 0, hi: b.hi}, true)
+      }
+      (full_interval(), true)
+    }
+    Shr => {
+      let (a, ok) = g.narrow(x.args[0], fs)
+      let (k, is_k) = g.ssa_const(x.args[1])
+      if !ok {
+        return none
+      }
+      if !is_k || k < 0 || k > 63 {
+        return (full_interval(), true)
+      }
+      (Interval{lo: a.lo >> k, hi: a.hi >> k}, true)
+    }
+    Neg => {
+      let (a, ok) = g.narrow(x.args[0], fs)
+      if !ok {
+        return none
+      }
+      if a.lo == MIN_INT {
+        return (full_interval(), true)
+      }
+      (Interval{lo: -a.hi, hi: -a.lo}, true)
+    }
+    Call => {
+      match aux_str(x.aux) {
+        "list.len" => (Interval{lo: 0, hi: MAX_INT}, true)
+        "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
+        "bytes.index" => (Interval{lo: 0, hi: 255}, true)
+        _ => (full_interval(), true)
+      }
+    }
+    IntConv => g.narrow(x.args[0], fs)
+    _ => (full_interval(), true)
+  }
+}
+
+/// Whether the Int add, subtract, or multiply v cannot overflow, by its
+/// operands' intervals where the facts at fs hold (noOverflow).
+fn (var g: Gen) no_overflow(v: Int, fs: Int) -> Bool {
+  let x = g.f.values[v]
+  let (a, ok1) = g.narrow(x.args[0], fs)
+  let (b, ok2) = g.narrow(x.args[1], fs)
+  if !ok1 || !ok2 {
+    return false
+  }
+  match x.op {
+    Add => add_ok(a.lo, b.lo) && add_ok(a.hi, b.hi)
+    Sub => {
+      if b.lo == MIN_INT {
+        return false
+      }
+      add_ok(a.lo, -b.hi) && add_ok(a.hi, -b.lo)
+    }
+    Mul => mul_ok(a.lo, b.lo) && mul_ok(a.lo, b.hi) && mul_ok(a.hi, b.lo) && mul_ok(a.hi, b.hi)
+    _ => false
+  }
+}
+
+/// Tells LLVM that the Int value x lies in r (assume; nothing for the
+/// full interval).
+fn (var g: Gen) assume(x: Str, r: Interval) {
+  var c = ""
+  if r.lo == MIN_INT && r.hi == MAX_INT {
+    return
+  } else if r.lo == MIN_INT {
+    c = g.def("icmp sle i64 ${x}, ${r.hi}")
+  } else if r.hi == MAX_INT {
+    c = g.def("icmp sge i64 ${x}, ${r.lo}")
+  } else if r.lo == 0 {
+    c = g.def("icmp ule i64 ${x}, ${r.hi}")
+  } else {
+    let d = g.def("sub i64 ${x}, ${r.lo}")
+    c = g.def("icmp ule i64 ${d}, ${r.hi.wrapping_sub(r.lo)}")
+  }
+  g.emit("call void @llvm.assume(i1 ${c})")
+}
+
+// ---------------------------------------------------------------------------
+// Inlining (inline.go)
+
+const INLINE_MAX_INSTRS = 40
+const INLINE_MAX_BLOCKS = 12
+const INLINE_FEW_SITES = 2
+const INLINE_FEW_BUDGET = 500
+const INLINE_FEW_BLOCKS = 80
+
+/// The expanded size of a function, or bad when it is not inlinable
+/// (inlineCost).
+struct InlineCost {
+  instrs: Int
+  blocks: Int
+  bad: Bool
+}
+
+/// Walks function fi and its callees (inlinableSet's walk): state is 1
+/// while a function is walked, 2 once done.
+fn (var g: Gen) inline_walk(sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
+  let fname0 = g.m.funcs[fi].name
+  state[fname0] = 1
+  var c = InlineCost{instrs: 0, blocks: g.m.funcs[fi].blocks.len(), bad: fname0 == "main"}
+  for bl in g.m.funcs[fi].blocks {
+    for v in bl.instrs {
+      let x = g.m.funcs[fi].values[v]
+      if x.pad >= 0 {
+        // it has landing pads of its own (decision 0085)
+        c.bad = true
+      }
+      var ci = -1
+      if x.op == ssa.Op.Call {
+        ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      }
+      if ci < 0 {
+        c.instrs += 1
+        continue
+      }
+      let cname = g.m.funcs[ci].name
+      var k = InlineCost{instrs: 0, blocks: 0, bad: false}
+      let st = state.get(cname) ?? 0
+      if st == 1 {
+        c.bad = true // a cycle through f
+        k.bad = true
+      } else if st == 2 {
+        k = costs.get(cname) ?? k
+      } else {
+        k = g.inline_walk(sites, ci, state, costs)
+      }
+      if k.bad {
+        c.instrs += 1
+      } else {
+        c.instrs += k.instrs
+        c.blocks += k.blocks + 1
+      }
+    }
+  }
+  if c.instrs > INLINE_MAX_INSTRS || c.blocks > INLINE_MAX_BLOCKS {
+    let n = sites.get(fname0) ?? 0
+    if n > INLINE_FEW_SITES || n * c.instrs > INLINE_FEW_BUDGET || c.blocks > INLINE_FEW_BLOCKS {
+      c.bad = true
+    }
+  }
+  state[fname0] = 2
+  costs[fname0] = c
+  c
+}
+
+/// Fills g.inl: the functions whose calls are inlined (inlinableSet).
+fn (var g: Gen) inlinable_set() {
+  var state: Map[Str, Int] = {}
+  var costs: Map[Str, InlineCost] = {}
+  // the call sites of each function, not counting its own
+  var sites: Map[Str, Int] = {}
+  for f in g.m.funcs {
+    for bl in f.blocks {
+      for v in bl.instrs {
+        let x = f.values[v]
+        if x.op == ssa.Op.Call {
+          let name = aux_str(x.aux)
+          if name != f.name {
+            sites[name] = (sites.get(name) ?? 0) + 1
+          }
+        }
+      }
+    }
+  }
+  for fi in 0..g.m.funcs.len() {
+    if (state.get(g.m.funcs[fi].name) ?? 0) == 0 {
+      let _c = g.inline_walk(sites, fi, state, costs)
+    }
+  }
+  g.inl = {}
+  for f in g.m.funcs {
+    if let Some(c) = costs.get(f.name) {
+      if !c.bad {
+        g.inl[f.name] = true
+      }
+    }
+  }
+}
