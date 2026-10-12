@@ -1,6 +1,6 @@
 # Xo native builds: updating a collection inside a list element copies it
 
-Status: Observed (2026-10-11, the arm64 build of selfhost/xo)
+Status: Observed (2026-10-11, the arm64 build of selfhost/xo); fixed by decision 0169 (2026-10-11)
 
 Symptom: the arm64 build of the self hosted compiler driver
 (selfhost/xo) ran for over 20 minutes compiling itself, where the go
@@ -36,3 +36,14 @@ experiment for the compiler: InsertRC (or the backends) should treat
 `list.index` followed by a field update and `list.set` of the same
 index as a move of the element (load without retain, store back), the
 in place path decision 0147 describes for borrowed roots.
+
+Fixed 2026-10-11 (decision 0169): the SSA builder moves the element out
+of the list (`list.take`, a placeholder in its slot) and back, so these
+updates are in place on both native backends when the outer list is
+unique (bench/results/nested-update-2026-10-11.md: 20,000 pushes 63.6
+ms to 0.1 ms on arm64). What still copies: the contents of a box (a
+field of a recursive type) under an element, `Map.update` on a map in
+an element, and any update whose outer list is shared (value
+semantics). The hand workarounds in selfhost/arm64 are no longer
+needed for speed (see the results file for the experiment without
+take_insts and put_insts).
