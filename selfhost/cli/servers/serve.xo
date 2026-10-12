@@ -472,7 +472,10 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
     }
     var c = os.proc.cmd(ex.program, args)
     if !dir.is_empty() {
-      c = c.dir(dir)
+      // and PWD, as Go's exec.Cmd does for a Dir: the command reads its
+      // working directory from PWD (the server's otherwise, so `check`
+      // printed absolute paths on Linux)
+      c = c.dir(dir).set_env("PWD", dir)
     }
     for (k, v) in ex.env {
       c = c.set_env(k, v)
