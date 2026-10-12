@@ -4,16 +4,15 @@
 // driver to assemble and link with the C runtime (std/llrt), as
 // internal/build does for `xo build --backend=arm64`.
 //
-//   xo1 build [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>
+//   xo1 build [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [-o OUT] [--asm=PATH] <dir>
 //   xo1 asm [--std=DIR] [--wd=DIR] <dir>       print the assembly
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
 // default std), the TLS library's from DIR/../third_party. Programs that
-// need what internal/build adds beyond the runtime and TLS (time zone
-// data for std/time, `use c` sources) are not supported yet: the driver
-// says so and exits 1. It is not the released
-// `xo` (decision 0150: that is the owner's decision after the fixed
-// point).
+// need what internal/build adds beyond the runtime, TLS, and zone data
+// (`use c` sources) are not supported yet: the driver says so and exits
+// 1. It is not the released `xo` (decision 0150: that is the owner's
+// decision after the fixed point).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -31,6 +30,7 @@ fn main(os: Os) ! {
   var cc = ""
   var out = ""
   var asm_path = ""
+  var tzdata = ""
   var dirs: List[Str] = []
   var i = 1
   while i < args.len() {
@@ -41,6 +41,8 @@ fn main(os: Os) ! {
       wd = a.trim_prefix("--wd=")
     } else if a.starts_with("--cc=") {
       cc = look_path(os, a.trim_prefix("--cc="))
+    } else if a.starts_with("--tzdata=") {
+      tzdata = a.trim_prefix("--tzdata=")
     } else if a.starts_with("--asm=") {
       asm_path = a.trim_prefix("--asm=")
     } else if a == "-o" && i + 1 < args.len() {
@@ -72,12 +74,12 @@ fn main(os: Os) ! {
       fail(os, "the program does not check (run xo check)")
     }
   }
+  var uses_time = false
   for m in c.mods {
-    if m.path == "native/time" {
-      fail(os, "std/time needs time zone data, which this driver does not write yet")
-    }
+    uses_time = uses_time || m.path == "native/time"
   }
-  var b = ssa.build_program(c, line_root(os, wd, dirs[0]), false)
+  let root = line_root(os, wd, dirs[0])
+  var b = ssa.build_program(c, root, false)
   if !b.why.is_empty() {
     fail(os, b.why)
   }
@@ -86,6 +88,8 @@ fn main(os: Os) ! {
       fail(os, "the SSA builder skipped ${f.name}: ${f.skip}")
     }
   }
+  // the zone data std/time needs, noted as the Go builder lowers
+  let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
   b.run_passes()
   let p = arm64.generate_module(b.m, "darwin", false)
   if !p.err.is_empty() {
@@ -122,8 +126,25 @@ fn main(os: Os) ! {
       fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
     }
   }
-  let flags = ["-O2"] + io_flags(p.asm)
-  let srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  var flags = ["-O2"]
+  var srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  // std/time: XO_TIME and the program's zone data beside the runtime
+  // (timeFlags)
+  if uses_time {
+    if !(tzdata == "" || tzdata == "embedded" || tzdata == "system") {
+      fail(os, "unknown --tzdata=${tzdata} (want embedded or system)")
+    }
+    let sel = tz_select(os, tu, tzdata)
+    if !sel.err.is_empty() {
+      fail(os, sel.err)
+    }
+    flags.push("-DXO_TIME")
+    srcs.push(tz_source(os, rtdir, sel)?)
+    for n in sel.notes {
+      os.stdio.eprintln(n)
+    }
+  }
+  flags = flags + io_flags(p.asm)
   let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
   if !msg.is_empty() {
     os.stdio.eprint(msg)

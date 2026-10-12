@@ -283,3 +283,21 @@ identical.
 |---|---|
 | before (the switch-over, 138 programs) | 132 of 138 |
 | 1: TLS | **147 of 147** |
+
+## Step 2: zone data of std/time
+
+xo1 writes xo_tzdata.c beside the runtime and compiles with -DXO_TIME,
+as timeFlags does (decision 0157's split): the constant zone names
+`time.zone` is called with (from the calls in the module xo1 built,
+each confirmed as a string literal in the source, since the SSA builder
+folds `let n = "X"` into a constant the Go builder counts as dynamic),
+or the whole zoneinfo.zip when a name is known only at run time, or
+mode 2 with --tzdata=system; the zone data comes from Go's zoneinfo.zip
+($XO_ZONEINFO, else `go env GOROOT`), read as a stored zip. Checked: the
+xo_tzdata.c of time_zones (two zones) and of time_dynamic_zone (the
+whole database) are byte identical to the Go driver's, and the five
+std/time programs of internal/gen/testdata/golden (time_zones,
+time_dynamic_zone, time_civil, time_format, duration_time) built by
+both drivers are byte identical binaries with the same output. The
+arm64 goldens use no std/time, so their count does not move: 147 of 147
+(measured on the build with steps 1 to 6).
