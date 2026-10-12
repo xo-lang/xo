@@ -252,3 +252,22 @@ functions), so it points at an LLVM backend miscompile of the Xo
 emitter, not at the port. TestSelfhostArm64Mutations (300) and the
 checker mutation tests passed in the same run. Root cause under
 investigation (the frame area computation, selfhost/arm64/byref.xo).
+
+Resolved 2026-10-12 (decision 0159). Root cause: not the port, the SSA
+builder (shared by both native backends). `t.f += e` read the old
+`t.f` first, which cached `t`, and the store wrote that cached `t`
+back, so a `var` call of `t` in `e` lost its changes. The program
+`g.n += g.bump(s)` (golden internal/llvm/testdata/golden/compound_assign_call)
+printed `compound 6 5 k4` on LLVM and arm64 against the Go backend's
+`compound 6 6 c0`. On the LLVM backend the cached `t` also aliased the
+home of the large `var` parameter, which the call had updated in place
+(decision 0148), so fields still in use were released: the Xo emitter's
+`g.mem_bytes += 8 * g.nwords(t)` lost frame memory (the 33 runs), and a
+reduced program segfaulted. A compound assignment now reads the target
+after the value (internal/ssa build_stmt.go, selfhost/ssa stmt.xo, spec
+5.2). Recheck, TestSelfhostArm64 with the LLVM build of the Xo emitter
+(XO_SELFHOST_TIER=full XO_SELFHOST_BACKEND=llvm): 670 runs, 320
+compared, 320 byte identical; 15,700 of 15,700 functions and 13,505
+helpers identical; PASS (6,800 s under the machine-wide lock). The LLVM
+and arm64 golden tests (TestGolden, TestGoldenShared, TestGoldenRun,
+TestRun, TestGoldenAsm) pass with the new golden.
