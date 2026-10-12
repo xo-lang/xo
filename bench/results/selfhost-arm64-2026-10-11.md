@@ -252,3 +252,34 @@ functions), so it points at an LLVM backend miscompile of the Xo
 emitter, not at the port. TestSelfhostArm64Mutations (300) and the
 checker mutation tests passed in the same run. Root cause under
 investigation (the frame area computation, selfhost/arm64/byref.xo).
+
+# xo1 takes over internal/build's native steps, 2026-10-11
+
+Decision 0174: the steps internal/build adds beyond the C runtime,
+ported to xo1 (`selfhost/xo`) in order, each measured with
+`scripts/selfhost-goldens.py` on A (selfhost/xo built by the Go compiler
+with `--backend=arm64`; its assembly is B's and C's, decision 0158). The
+golden set has grown since the switch-over above: 123 programs of
+internal/llvm/testdata/golden and 24 of internal/arm64/testdata/run, 147
+in all. `selfhost-goldens.py` now passes each golden's args.txt, env.txt,
+and stdin.txt as TestGoldenRun does (before the fix the 4 programs that
+have them, cli_parse, cli_usage_exit, env_dirs, term_stdio, failed with
+both drivers' binaries for want of their inputs).
+
+## Step 1: the TLS library of std/http
+
+xo1 computes internal/build's key of the TLS library (tlsSourceHash over
+mbedtls.tgz, xo/, and fiat-crypto's sources read from the repository;
+the C compiler's path and `--version`; the SDK; the target; the
+sanitizer flavor; mbedtls.FileDefines) and links
+`<user cache>/xo/mbedtls/4.1.1-<key>/libxotls.a`, building it when it is
+missing (the tree extracted with tar, the compiles run by `xargs -P`,
+`ar rcs` with ZERO_AR_DATE=1). Checked: with an empty XO_TLS_CACHE, xo1
+and the Go driver choose the same directory (4.1.1-05cf46eeba0fd423aba7
+with /usr/bin/cc and the Xcode SDK) and the archives they build are byte
+identical.
+
+| step | goldens with A |
+|---|---|
+| before (the switch-over, 138 programs) | 132 of 138 |
+| 1: TLS | **147 of 147** |

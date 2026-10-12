@@ -1,0 +1,167 @@
+// The native link (internal/build ccBuild): the C compiler driver
+// assembles the program and links it with the C runtime (std/llrt), the
+// TLS library when the program uses std/http, and the system libraries,
+// trying the macOS SDKs internal/build tries until one links.
+
+/// What every step needs: the host, the repository root (std/.. :
+/// third_party), and the user cache directory.
+struct Ctx {
+  goos: Str
+  xo: Str
+  cache: Str
+}
+
+/// ccBuild: compiles and links srcs into bin with cc and flags; returns
+/// the compiler's output of the failed link, "" on success. The sources
+/// are the program's assembly, the runtime (xo_rt.c), and other C
+/// sources; tls says the program calls std/http's runtime.
+fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str, tls: Bool) -> Str {
+  // libraries of `use c` go after the objects (splitLibs)
+  var flags: List[Str] = []
+  var libs: List[Str] = []
+  for f in flags0 {
+    if f.starts_with("-l") && f.len() > 2 {
+      libs.push(f)
+    } else {
+      flags.push(f)
+    }
+  }
+  var cands: List[Str] = []
+  let memo = sysroot_memo(os, ctx)
+  if !memo.is_empty() {
+    match os.fs.read_text(memo) {
+      Ok(t) => cands.push(t.trim())
+      Err(_) => {}
+    }
+  }
+  cands = cands + sysroot_candidates(os, ctx)
+  var first = ""
+  for root in cands {
+    let (out, ok) = try_link(os, ctx, cc, flags, libs, srcs, bin, tls, root)
+    if ok {
+      if !memo.is_empty() {
+        os.fs.create_dir_all(dir_name(memo)).ignore_err("the memo only saves time")
+        os.fs.write(memo, "${root}\n".bytes()).ignore_err("the memo only saves time")
+      }
+      return ""
+    }
+    // report an SDK independent failure over an SDK mismatch
+    if first.is_empty() || (first.contains("tapi error") && !out.contains("tapi error")) {
+      first = out
+    }
+    // only a link failure is worth another SDK
+    if !out.contains("linker command failed") {
+      return out
+    }
+  }
+  first
+}
+
+/// One link with the SDK root ("" the compiler's default): its output
+/// and whether it succeeded.
+fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: List[Str], bin: Str, tls: Bool,
+  root: Str) -> (Str, Bool) {
+  // the C runtime raises faults through the frames of generated code
+  // and its own (decision 0085): every frame needs unwind tables
+  var args = flags + ["-fexceptions", "-funwind-tables", "-o", bin]
+  if !root.is_empty() {
+    args = args + ["-isysroot", root]
+  }
+  var tls_link: List[Str] = []
+  if tls {
+    let t = tls_args(os, ctx, cc, flags, root)
+    if !t.err.is_empty() {
+      return (t.err, false)
+    }
+    args = args + t.compile
+    tls_link = t.link
+  }
+  args = args + srcs + tls_link + libs + ["-lm", "-lpthread"]
+  match os.proc.run(cc, args) {
+    Ok(r) => ((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""), r.code == 0)
+    Err(e) => ("${cc}: ${e}", false)
+  }
+}
+
+/// sysrootCandidates: $XO_SYSROOT alone, else (macOS) the default, the
+/// SDK xcrun names, Xcode's, and the Command Line Tools' newest first.
+fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
+  let env_root = os.env.get("XO_SYSROOT") ?? ""
+  if !env_root.is_empty() {
+    return [env_root]
+  }
+  if ctx.goos != "darwin" {
+    return [""]
+  }
+  var out = [""]
+  match os.proc.run("xcrun", ["--show-sdk-path"]) {
+    Ok(r) => {
+      if r.code == 0 {
+        out.push((r.stdout.to_str() ?? "").trim())
+      }
+    }
+    Err(_) => {}
+  }
+  out.push("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
+  let clt = "/Library/Developer/CommandLineTools/SDKs"
+  var ms: List[Str] = []
+  match os.fs.read_dir(clt) {
+    Ok(fis) => {
+      for fi in fis {
+        if fi.name.starts_with("MacOSX") && fi.name.ends_with(".sdk") {
+          ms.push("${clt}/${fi.name}")
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  out + ms.sort().reverse()
+}
+
+/// sysrootMemo: the file remembering the SDK that linked last time, ""
+/// with $XO_SYSROOT.
+fn sysroot_memo(os: Os, ctx: Ctx) -> Str {
+  if !(os.env.get("XO_SYSROOT") ?? "").is_empty() || ctx.cache.is_empty() {
+    return ""
+  }
+  "${ctx.cache}/xo/llvm-sysroot"
+}
+
+/// CC: $XO_CC, then cc, then clang, as a path; "" when there is none.
+fn find_cc(os: Os) -> Str {
+  let c = os.env.get("XO_CC") ?? ""
+  if !c.is_empty() {
+    return look_path(os, c)
+  }
+  for n in ["cc", "clang"] {
+    let p = look_path(os, n)
+    if !p.is_empty() {
+      return p
+    }
+  }
+  ""
+}
+
+/// The C compiler flags of the runtime's Fs operations, standard input,
+/// and Proc.run, when the code calls them (internal/build IOFlags).
+fn io_flags(code: Str) -> List[Str] {
+  var out: List[Str] = []
+  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all",
+    "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
+    "xo_time_of", "xo_time_ns"] {
+    if code.contains(sym) {
+      out.push("-DXO_FS")
+      break
+    }
+  }
+  for sym in ["xo_stdin_", "xo_tw_set_input"] {
+    if code.contains(sym) {
+      out.push("-DXO_STDIN")
+      break
+    }
+  }
+  if code.contains("xo_proc_") {
+    out.push("-DXO_PROC")
+  }
+  out
+}

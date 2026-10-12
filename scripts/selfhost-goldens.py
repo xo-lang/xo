@@ -25,8 +25,24 @@ def stable(s):
     return '\n'.join(ls) + '\n' if ls else ''
 
 
+def harness(d):
+    # args.txt (fields), env.txt (NAME=VALUE fields), stdin.txt, as
+    # internal/llvm's TestGoldenRun passes them
+    def read(n):
+        p = os.path.join(d, n)
+        return open(p, 'rb').read() if os.path.exists(p) else None
+    args = (read('args.txt') or b'').decode().split()
+    env = dict(os.environ)
+    for kv in (read('env.txt') or b'').decode().split():
+        k, _, v = kv.partition('=')
+        env[k] = v
+    return args, env, read('stdin.txt') or b''
+
+
 def run(bin, d):
-    p = subprocess.run([bin], cwd=d, capture_output=True, env=dict(os.environ, XO_LEAKCHECK='1'))
+    args, env, stdin = harness(d)
+    env['XO_LEAKCHECK'] = '1'
+    p = subprocess.run([bin] + args, cwd=d, capture_output=True, env=env, input=stdin)
     so = p.stdout.decode('utf-8', 'replace')
     se = p.stderr.decode('utf-8', 'replace')
     leak = ''
@@ -62,7 +78,8 @@ def want_go(d):
     name = d.replace('/', '_') + '.go'
     bin = os.path.join(out, name)
     subprocess.run([os.environ.get('XO_GO_XO', os.path.join(root, '.tools/xo')), 'build', '-o', bin, d], check=True, capture_output=True)
-    p = subprocess.run([bin], cwd=d, capture_output=True)
+    args, env, stdin = harness(d)
+    p = subprocess.run([bin] + args, cwd=d, capture_output=True, env=env, input=stdin)
     return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, p.stdout.decode('utf-8', 'replace'), stable(p.stderr.decode('utf-8', 'replace')))
 
 

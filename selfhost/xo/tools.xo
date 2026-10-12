@@ -1,0 +1,199 @@
+// The pieces of internal/build xo1 shares between its steps: the host,
+// the user cache directory, finding programs on PATH, the identity of a
+// tool (toolID), and the hash a cache key accumulates (binKey). Each one
+// computes what the Go driver computes, so both drivers find the same
+// entries in the same caches.
+
+use std/crypto
+
+/// The host's GOOS ("darwin" or "linux"), from `uname -s`.
+fn host_os(os: Os) -> Str {
+  match os.proc.run("uname", ["-s"]) {
+    Ok(r) => {
+      if (r.stdout.to_str() ?? "").trim() == "Linux" {
+        return "linux"
+      }
+    }
+    Err(_) => {}
+  }
+  "darwin"
+}
+
+/// os.UserCacheDir: ~/Library/Caches on macOS; $XDG_CACHE_HOME when it is
+/// absolute, else ~/.cache, on Linux. "" when there is no home.
+fn user_cache_dir(os: Os, goos: Str) -> Str {
+  if goos == "linux" {
+    let x = os.env.get("XDG_CACHE_HOME") ?? ""
+    if x.starts_with("/") {
+      return x
+    }
+  }
+  let home = os.env.get("HOME") ?? ""
+  if home.is_empty() {
+    return ""
+  }
+  if goos == "darwin" {
+    return "${home}/Library/Caches"
+  }
+  "${home}/.cache"
+}
+
+/// exec.LookPath: name when it holds a slash and is an executable file,
+/// else the first executable file name in a directory of $PATH; "" when
+/// there is none.
+fn look_path(os: Os, name: Str) -> Str {
+  if name.contains("/") {
+    return if is_exec(os, name) { name } else { "" }
+  }
+  for d in (os.env.get("PATH") ?? "").split(":") {
+    let dir = if d.is_empty() { "." } else { d }
+    let p = "${dir}/${name}"
+    if is_exec(os, p) {
+      return p
+    }
+  }
+  ""
+}
+
+/// A file that is not a directory (the native Fs has no permission bits
+/// yet, decision 0163, so the execute bit LookPath also wants is not
+/// checked).
+fn is_exec(os: Os, p: Str) -> Bool {
+  match os.fs.stat(p) {
+    Ok(Some(fi)) => !fi.is_dir
+    _ => false
+  }
+}
+
+/// Runs cmd with args and returns its combined output and Go's error
+/// text ("" on success), as exec.Command(...).CombinedOutput does.
+fn combined(os: Os, cmd: Str, args: List[Str]) -> (Str, Str) {
+  match os.proc.run(cmd, args) {
+    Ok(r) => {
+      let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
+      if r.code != 0 {
+        return (out, "exit status ${r.code}")
+      }
+      (out, "")
+    }
+    Err(e) => ("", "exec: ${e}")
+  }
+}
+
+/// toolID: the output of the command, and the path, size, and
+/// modification time (Unix nanoseconds) of the program it runs.
+fn tool_id(os: Os, goos: Str, name: Str, args: List[Str]) -> Str {
+  let (out, err) = combined(os, name, args)
+  var id = out
+  if !err.is_empty() {
+    id = "error ${err}"
+  }
+  let p = look_path(os, name)
+  if !p.is_empty() {
+    match os.fs.stat(p) {
+      Ok(Some(fi)) => {
+        let ns = mtime_ns(os, goos, p)
+        if !ns.is_empty() {
+          id = "${id}\n${p} ${fi.size} ${ns}"
+        }
+      }
+      _ => {}
+    }
+  }
+  id
+}
+
+/// The modification time of p in Unix nanoseconds (os.Stat's ModTime
+/// followed by UnixNano), from stat(1): FileInfo.modified is not finer
+/// than a millisecond.
+fn mtime_ns(os: Os, goos: Str, p: Str) -> Str {
+  let args = if goos == "linux" { ["-L", "-c", "%.9Y", p] } else { ["-L", "-f", "%Fm", p] }
+  let (out, err) = combined(os, "stat", args)
+  if !err.is_empty() {
+    return ""
+  }
+  let t = out.trim()
+  let parts = t.split(".")
+  if parts.len() != 2 || parts[1].len() != 9 {
+    return ""
+  }
+  let sec = Int.parse(parts[0]) ?? 0
+  let frac = Int.parse(parts[1]) ?? 0
+  "${sec * 1000000000 + frac}"
+}
+
+/// A cache key (internal/build binKey): length prefixed strings hashed
+/// with SHA-256.
+struct Key {
+  b: BytesBuilder
+}
+
+fn new_key(kind: Str) -> Key {
+  var k = Key{b: BytesBuilder.new()}
+  k.str("xo-bincache v1 ${kind}")
+  k
+}
+
+fn (var k: Key) str(s: Str) {
+  k.b.write_str("${s.len()}:")
+  k.b.write_str(s)
+  k.b.write_str("\n")
+}
+
+fn (var k: Key) data(d: Bytes) {
+  k.b.write_str("${d.len()}:")
+  k.b.write(d)
+  k.b.write_str("\n")
+}
+
+fn (var k: Key) strs(ss: List[Str]) {
+  k.str("${ss.len()}")
+  for s in ss {
+    k.str(s)
+  }
+}
+
+fn (var k: Key) sum() -> Str {
+  crypto.sha256(k.b.freeze()).to_hex()
+}
+
+/// Go's %q of a []string: ["a" "b"].
+fn go_q(ss: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for s in ss {
+    parts.push(s.quote())
+  }
+  "[${parts.join(" ")}]"
+}
+
+/// A word quoted for sh.
+fn sh_q(s: Str) -> Str {
+  "'${s.replace("'", "'\\''")}'"
+}
+
+/// The last path element.
+fn base_name(p: Str) -> Str {
+  let parts = p.trim_suffix("/").split("/")
+  parts[parts.len() - 1]
+}
+
+/// The directory of p ("." for a bare name).
+fn dir_name(p: Str) -> Str {
+  let parts = p.split("/")
+  if parts.len() <= 1 {
+    return "."
+  }
+  let d = parts[0..parts.len() - 1].join("/")
+  if d.is_empty() { "/" } else { d }
+}
+
+/// Every file under dir (path relative to dir, slash separated), sorted.
+fn files_under(os: Os, dir: Str) -> List[Str] ! FsErr {
+  var out: List[Str] = []
+  for fi in os.fs.walk(dir)? {
+    if !fi.is_dir {
+      out.push(fi.path.trim_prefix("${dir}/"))
+    }
+  }
+  out.sort()
+}

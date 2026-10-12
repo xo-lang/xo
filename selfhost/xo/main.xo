@@ -8,9 +8,10 @@
 //   xo1 asm [--std=DIR] [--wd=DIR] <dir>       print the assembly
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
-// default std). Programs that need what internal/build adds beyond the
-// runtime (time zone data for std/time, `use c` sources, TLS) are not
-// supported yet: the driver says so and exits 1. It is not the released
+// default std), the TLS library's from DIR/../third_party. Programs that
+// need what internal/build adds beyond the runtime and TLS (time zone
+// data for std/time, `use c` sources) are not supported yet: the driver
+// says so and exits 1. It is not the released
 // `xo` (decision 0150: that is the owner's decision after the fixed
 // point).
 
@@ -27,7 +28,7 @@ fn main(os: Os) ! {
   let cmd = args[0]
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
-  var cc = os.env.get("XO_CC") ?? "cc"
+  var cc = ""
   var out = ""
   var asm_path = ""
   var dirs: List[Str] = []
@@ -39,7 +40,7 @@ fn main(os: Os) ! {
     } else if a.starts_with("--wd=") {
       wd = a.trim_prefix("--wd=")
     } else if a.starts_with("--cc=") {
-      cc = a.trim_prefix("--cc=")
+      cc = look_path(os, a.trim_prefix("--cc="))
     } else if a.starts_with("--asm=") {
       asm_path = a.trim_prefix("--asm=")
     } else if a == "-o" && i + 1 < args.len() {
@@ -104,16 +105,8 @@ fn main(os: Os) ! {
   if asm_path.is_empty() {
     asm_path = "${out}.s"
   }
-  // the symbols internal/build looks for (tlsSymbols), made at run time:
-  // as literals they would be in this program's own assembly, and its
-  // link would need the TLS library
-  var tls = false
-  for sym in [["xo", "cl", "do"], ["xo", "srv", "new"], ["xo", "tls", ""]] {
-    tls = tls || p.asm.contains(sym.join("_"))
-  }
-  if tls {
-    fail(os, "std/http (TLS) is not linked by this driver yet")
-  }
+  let goos = host_os(os)
+  let ctx = Ctx{goos: goos, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
   os.fs.write(asm_path, p.asm.bytes())?
   // the C runtime next to the assembly (writeRuntime)
   let rtdir = "${out}.rt"
@@ -123,45 +116,19 @@ fn main(os: Os) ! {
       os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
     }
   }
-  var cargs = ["-O2"] + io_flags(p.asm)
-  cargs = cargs + ["-fexceptions", "-funwind-tables", "-o", out]
-  let srcs = [asm_path, "${rtdir}/xo_rt.c", "-lm", "-lpthread"]
-  // the macOS SDKs internal/build tries (sysrootCandidates), the one that
-  // linked last time first
-  var roots: List[Str] = []
-  let env_root = os.env.get("XO_SYSROOT") ?? ""
-  if !env_root.is_empty() {
-    roots.push(env_root)
-  } else {
-    let memo = "${os.env.get("HOME") ?? ""}/Library/Caches/xo/llvm-sysroot"
-    match os.fs.read_text(memo) {
-      Ok(t) => roots.push(t.trim())
-      Err(_) => {}
-    }
-    roots.push("")
-    match os.proc.run("xcrun", ["--show-sdk-path"]) {
-      Ok(r) => roots.push((r.stdout.to_str() ?? "").trim())
-      Err(_) => {}
-    }
-    roots.push("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
-  }
-  var last = ""
-  for root in roots {
-    var a2 = cargs
-    if !root.is_empty() {
-      a2 = a2 + ["-isysroot", root]
-    }
-    let r = os.proc.run(cc, a2 + srcs)?
-    if r.code == 0 {
-      return
-    }
-    last = (r.stdout + r.stderr).to_str() ?? ""
-    if !last.contains("linker command failed") {
-      break
+  if cc.is_empty() {
+    cc = find_cc(os)
+    if cc.is_empty() {
+      fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
     }
   }
-  os.stdio.eprint(last)
-  fail(os, "${cc} failed")
+  let flags = ["-O2"] + io_flags(p.asm)
+  let srcs = [asm_path, "${rtdir}/xo_rt.c"]
+  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
+  if !msg.is_empty() {
+    os.stdio.eprint(msg)
+    fail(os, "${cc} failed")
+  }
 }
 
 /// The directory fault positions are relative to (internal/build
@@ -201,28 +168,4 @@ fn rel_to(wd: Str, p: Str) -> Str {
 fn fail(os: Os, msg: Str) -> Never {
   os.stdio.eprintln("xo1: ${msg}")
   os.proc.exit(1)
-}
-
-/// The C compiler flags of the runtime's Fs operations, standard input,
-/// and Proc.run, when the code calls them (internal/build IOFlags).
-fn io_flags(code: Str) -> List[Str] {
-  var out: List[Str] = []
-  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all",
-    "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
-    "xo_time_of", "xo_time_ns"] {
-    if code.contains(sym) {
-      out.push("-DXO_FS")
-      break
-    }
-  }
-  for sym in ["xo_stdin_", "xo_tw_set_input"] {
-    if code.contains(sym) {
-      out.push("-DXO_STDIN")
-      break
-    }
-  }
-  if code.contains("xo_proc_") {
-    out.push("-DXO_PROC")
-  }
-  out
 }

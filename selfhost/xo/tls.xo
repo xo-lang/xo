@@ -1,0 +1,327 @@
+// TLS for std/http (internal/build tls.go, decision 0105): a program
+// whose code calls the server or the client of xo_http.c is compiled
+// with -DXO_TLS and the vendored Mbed TLS headers and linked with its
+// static archive, libxotls.a, built once per C compiler, sysroot, and
+// sanitizer flavor into <user cache>/xo/mbedtls/<version>-<key>/
+// ($XO_TLS_CACHE: another root). The key is the Go driver's, so both
+// drivers share the archive. The sources are read from the repository
+// (third_party/mbedtls: mbedtls.tgz and xo/; third_party/fiat-crypto/src),
+// the files package mbedtls and fiatcrypto embed.
+//
+// The configuration below is third_party/mbedtls/mbedtls.go's; a change
+// there changes the Go driver's key, and scripts/selfhost-keys.sh shows
+// the two drivers' keys side by side.
+
+use std/crypto
+
+/// mbedtls.Version
+fn tls_version() -> Str { "4.1.1" }
+
+/// mbedtls.IncludeDirs
+fn tls_include_dirs() -> List[Str] {
+  ["xo", "src/include", "src/tf-psa-crypto/include", "src/tf-psa-crypto/drivers/builtin/include",
+    "src/tf-psa-crypto/drivers/everest/include", "src/tf-psa-crypto/drivers/everest/include/tf-psa-crypto/private/everest",
+    "src/tf-psa-crypto/drivers/everest/include/tf-psa-crypto/private/everest/kremlib",
+    "src/tf-psa-crypto/drivers/p256-m/p256-m/include", "src/tf-psa-crypto/drivers/p256-m/p256-m/include/p256-m",
+    "src/tf-psa-crypto/drivers/p256-m/p256-m_driver_interface", "src/library", "src/tf-psa-crypto/core",
+    "src/tf-psa-crypto/drivers/builtin/src", "src/tf-psa-crypto/dispatch", "src/tf-psa-crypto/extras",
+    "src/tf-psa-crypto/platform", "src/tf-psa-crypto/utilities", "fiat-crypto/src"]
+}
+
+/// mbedtls.Defines
+fn tls_defines() -> List[Str] {
+  // the first file name made at run time (needs_tls)
+  let cfg = ["xo", "tls", "config.h"].join("_")
+  ["-DMBEDTLS_USER_CONFIG_FILE=\"${cfg}\"", "-DTF_PSA_CRYPTO_USER_CONFIG_FILE=\"xo_crypto_config.h\""]
+}
+
+/// mbedtls.SourceDirs
+fn tls_source_dirs() -> List[Str] {
+  ["src/library", "src/tf-psa-crypto/core", "src/tf-psa-crypto/drivers/builtin/src", "src/tf-psa-crypto/extras",
+    "src/tf-psa-crypto/platform", "src/tf-psa-crypto/utilities", "src/tf-psa-crypto/drivers/everest/library",
+    "src/tf-psa-crypto/drivers/p256-m", "src/tf-psa-crypto/drivers/p256-m/p256-m", "xo"]
+}
+
+/// mbedtls.Exclude
+fn tls_exclude() -> List[Str] {
+  ["src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519.c"]
+}
+
+/// mbedtls.FileDefines, by file (sorted).
+fn tls_file_defines() -> List[(Str, List[Str])] {
+  [("src/tf-psa-crypto/drivers/builtin/src/bignum.c", ["-Dmbedtls_mpi_gcd_modinv_odd=xo_builtin_mpi_gcd_modinv_odd"]),
+    ("src/tf-psa-crypto/drivers/builtin/src/psa_crypto_ecp.c",
+      ["-Dmbedtls_psa_ecp_export_public_key=xo_builtin_ecp_export_public_key",
+        "-Dmbedtls_psa_ecdsa_sign_hash=xo_builtin_psa_ecdsa_sign_hash",
+        "-Dmbedtls_psa_ecdsa_verify_hash=xo_builtin_psa_ecdsa_verify_hash"]),
+    ("src/tf-psa-crypto/drivers/builtin/src/sha512.c", ["-D_DARWIN_C_SOURCE"])]
+}
+
+fn tls_file_define(src: Str) -> List[Str] {
+  for (f, ds) in tls_file_defines() {
+    if f == src {
+      return ds
+    }
+  }
+  []
+}
+
+/// Go's %v of mbedtls.FileDefines: map[k:[a b] ...], keys sorted.
+fn tls_file_defines_v() -> Str {
+  var parts: List[Str] = []
+  for (f, ds) in tls_file_defines() {
+    parts.push("${f}:[${ds.join(" ")}]")
+  }
+  "map[${parts.join(" ")}]"
+}
+
+/// The symbols only a program using std/http calls (tlsSymbols), made at
+/// run time: as literals they would be in xo1's own assembly, and its
+/// link would need the TLS library.
+fn needs_tls(code: Str) -> Bool {
+  for sym in [["xo", "cl", "do"], ["xo", "srv", "new"], ["xo", "tls", ""]] {
+    if code.contains(sym.join("_")) {
+      return true
+    }
+  }
+  false
+}
+
+/// tlsSourceHash: SHA-256 of the files package mbedtls embeds
+/// (mbedtls.tgz, then xo/...) and fiat-crypto's (src/*.c), each as
+/// "<path> <size>\n" and its contents. xo is the repository root.
+fn tls_source_hash(os: Os, xo: Str) -> Str ! FsErr {
+  var b = BytesBuilder.new()
+  let mdir = "${xo}/third_party/mbedtls"
+  var names = ["mbedtls.tgz"]
+  for n in files_under(os, "${mdir}/xo")? {
+    names.push("xo/${n}")
+  }
+  for n in names {
+    let data = os.fs.read("${mdir}/${n}")?
+    b.write_str("${n} ${data.len()}\n")
+    b.write(data)
+  }
+  let fdir = "${xo}/third_party/fiat-crypto"
+  for n in files_under(os, "${fdir}/src")? {
+    if n.ends_with(".c") {
+      let data = os.fs.read("${fdir}/src/${n}")?
+      b.write_str("src/${n} ${data.len()}\n")
+      b.write(data)
+    }
+  }
+  Ok(crypto.sha256(b.freeze()).to_hex())
+}
+
+/// What a link with TLS adds: compile flags (before the sources) and link
+/// arguments (after them); err is set when the library could not be had.
+struct TLSArgs {
+  compile: List[Str] = []
+  link: List[Str] = []
+  err: Str = ""
+}
+
+/// tlsArgs: the library for cc, the sanitizer flavor of flags, and
+/// sysroot, built when the cache has none.
+fn tls_args(os: Os, ctx: Ctx, cc: Str, flags: List[Str], sysroot: Str) -> TLSArgs {
+  var flavor: List[Str] = []
+  for f in flags {
+    if f.starts_with("-fsanitize") || f.starts_with("-fno-sanitize") {
+      flavor.push(f)
+    }
+  }
+  let (dir, err) = tls_library(os, ctx, cc, flavor, sysroot)
+  if !err.is_empty() {
+    return TLSArgs{err: err}
+  }
+  var compile = ["-DXO_TLS"] + tls_defines()
+  for inc in tls_include_dirs() {
+    compile = compile + ["-I", "${dir}/${inc}"]
+  }
+  TLSArgs{compile: compile, link: ["${dir}/libxotls.a"] + tls_system_libs(ctx.goos)}
+}
+
+/// tlsSystemLibs: the system's trust anchors on macOS.
+fn tls_system_libs(goos: Str) -> List[Str] {
+  if goos == "darwin" {
+    return ["-framework", "Security", "-framework", "CoreFoundation"]
+  }
+  []
+}
+
+/// tlsLibrary: the directory of the extracted tree and libxotls.a for cc,
+/// flavor, and sysroot, and an error text.
+fn tls_library(os: Os, ctx: Ctx, cc: Str, flavor: List[Str], sysroot: Str) -> (Str, Str) {
+  let src = match tls_source_hash(os, ctx.xo) {
+    Ok(h) => h
+    Err(e) => return ("", "the TLS library sources: ${e}")
+  }
+  let (ver, _) = combined(os, cc, ["--version"])
+  let text = "${src}\n${cc}\n${ver}\n${sysroot}\n${ctx.goos}/arm64\n${flavor.join(" ")}\n${tls_file_defines_v()}\n"
+  let key = crypto.sha256(text.bytes()).to_hex()[0..20]
+  var root = "${ctx.cache}/xo/mbedtls"
+  let env_root = os.env.get("XO_TLS_CACHE") ?? ""
+  if !env_root.is_empty() {
+    root = env_root
+  }
+  let dir = "${root}/${tls_version()}-${key}"
+  if os.fs.exists("${dir}/libxotls.a").ok() ?? false {
+    return (dir, "")
+  }
+  let tmp = "${root}/tmp-xo1-${os.rand.bytes(6).to_hex()}"
+  let err = build_tls_library(os, ctx, tmp, cc, flavor, sysroot)
+  if !err.is_empty() {
+    os.fs.remove_all(tmp).ignore_err("a failed build")
+    return ("", err)
+  }
+  match os.fs.rename(tmp, dir) {
+    Ok(_) => {}
+    Err(e) => {
+      os.fs.remove_all(tmp).ignore_err("another process built it meanwhile")
+      if !(os.fs.exists("${dir}/libxotls.a").ok() ?? false) {
+        return ("", "${e}")
+      }
+    }
+  }
+  (dir, "")
+}
+
+/// buildTLSLibrary: the tree extracted into dir (writeTLSTree) and
+/// compiled into dir/libxotls.a (compileTLSArchive), the compiles run
+/// in parallel by xargs.
+fn build_tls_library(os: Os, ctx: Ctx, dir: Str, cc: Str, flavor: List[Str], sysroot: Str) -> Str {
+  match write_tls_tree(os, ctx.xo, dir) {
+    Ok(srcs) => {
+      var args = ["-c", "-O2", "-w", "-fexceptions", "-funwind-tables"] + flavor
+      if !sysroot.is_empty() {
+        args = args + ["-isysroot", sysroot]
+      }
+      let ar = find_ar(os)
+      if ar.is_empty() {
+        return "the TLS library of std/http needs an archiver: install ar (binutils) or llvm-ar, or set XO_AR"
+      }
+      compile_tls_archive(os, dir, cc, args, srcs, ar, "${dir}/libxotls.a")
+    }
+    Err(e) => "extracting the TLS library: ${e}"
+  }
+}
+
+/// writeTLSTree: mbedtls.tgz's src/ (by tar), xo/, and fiat-crypto's C
+/// files under fiat-crypto/src, written into dir; returns the library's
+/// sources (relative to dir, sorted).
+fn write_tls_tree(os: Os, xo: Str, dir: Str) -> List[Str] ! FsErr {
+  os.fs.create_dir_all(dir)?
+  let mdir = "${xo}/third_party/mbedtls"
+  let (out, err) = combined(os, "tar", ["-xzf", "${mdir}/mbedtls.tgz", "-C", dir])
+  if !err.is_empty() {
+    return Err(FsErr.Io(path: "${mdir}/mbedtls.tgz", msg: "tar: ${err}: ${out}"))
+  }
+  for n in files_under(os, "${mdir}/xo")? {
+    os.fs.create_dir_all(dir_name("${dir}/xo/${n}"))?
+    os.fs.write("${dir}/xo/${n}", os.fs.read("${mdir}/xo/${n}")?)?
+  }
+  os.fs.create_dir_all("${dir}/fiat-crypto/src")?
+  let fdir = "${xo}/third_party/fiat-crypto/src"
+  for n in files_under(os, fdir)? {
+    if n.ends_with(".c") {
+      os.fs.write("${dir}/fiat-crypto/src/${base_name(n)}", os.fs.read("${fdir}/${n}")?)?
+    }
+  }
+  let excluded = tls_exclude()
+  let sdirs = tls_source_dirs()
+  var srcs: List[Str] = []
+  for n in files_under(os, dir)? {
+    if n.ends_with(".c") && sdirs.contains(dir_name(n)) && !excluded.contains(n) {
+      srcs.push(n)
+    }
+  }
+  Ok(srcs)
+}
+
+/// compileTLSArchive: each source compiled to dir/obj (a shell script per
+/// compile, run by `xargs -P <cores>`), then the objects archived in name
+/// order with ZERO_AR_DATE=1.
+fn compile_tls_archive(os: Os, dir: Str, cc: Str, args0: List[Str], srcs: List[Str], ar: Str, lib: Str) -> Str {
+  var args = args0 + tls_defines()
+  for inc in tls_include_dirs() {
+    args = args + ["-I", "${dir}/${inc}"]
+  }
+  let obj_dir = "${dir}/obj"
+  let job_dir = "${dir}/jobs"
+  var objs: List[Str] = []
+  var list = StrBuilder.new()
+  var i = 0
+  for src in srcs {
+    let obj = "${obj_dir}/${src.trim_suffix(".c").replace("/", "_")}.o"
+    objs.push(obj)
+    var words = [cc] + args + tls_file_define(src) + ["-o", obj, "${dir}/${src}"]
+    var line = StrBuilder.new()
+    var first = true
+    for w in words {
+      if !first {
+        line.write(" ")
+      }
+      first = false
+      line.write(sh_q(w))
+    }
+    let log = "${job_dir}/${i}.log"
+    let script = "${job_dir}/${i}.sh"
+    let body = "${line.freeze()} > ${sh_q(log)} 2>&1 || { echo ${sh_q("compiling the TLS library (" + src + ")")} >> ${sh_q(log)}; exit 1; }\nrm -f ${sh_q(log)}\n"
+    match os.fs.create_dir_all(job_dir) {
+      Ok(_) => {}
+      Err(e) => return "${e}"
+    }
+    match os.fs.write(script, body.bytes()) {
+      Ok(_) => {}
+      Err(e) => return "${e}"
+    }
+    list.write("${script}\n")
+    i += 1
+  }
+  match os.fs.create_dir_all(obj_dir) {
+    Ok(_) => {}
+    Err(e) => return "${e}"
+  }
+  match os.fs.write("${job_dir}/all", list.freeze().bytes()) {
+    Ok(_) => {}
+    Err(e) => return "${e}"
+  }
+  let (n, _) = combined(os, "getconf", ["_NPROCESSORS_ONLN"])
+  var jobs = Int.parse(n.trim()) ?? 4
+  if jobs < 1 {
+    jobs = 1
+  }
+  let (out, err) = combined(os, "sh", ["-c", "xargs -P ${jobs} -n 1 sh < ${sh_q(job_dir + "/all")}"])
+  if !err.is_empty() {
+    // the first failed compile's output
+    for k in 0..i {
+      match os.fs.read_text("${job_dir}/${k}.log") {
+        Ok(t) => return t
+        Err(_) => {}
+      }
+    }
+    return "compiling the TLS library: ${err}\n${out}"
+  }
+  let (aout, aerr) = combined(os, "env", ["ZERO_AR_DATE=1", ar, "rcs", lib] + objs.sort())
+  if !aerr.is_empty() {
+    return "archiving the TLS library: ${aerr}\n${aout}"
+  }
+  os.fs.remove_all(obj_dir).ignore_err("only space")
+  os.fs.remove_all(job_dir).ignore_err("only space")
+  ""
+}
+
+/// findAr: $XO_AR, ar, llvm-ar; "" when there is none.
+fn find_ar(os: Os) -> Str {
+  let a = os.env.get("XO_AR") ?? ""
+  if !a.is_empty() {
+    return look_path(os, a)
+  }
+  for c in ["ar", "llvm-ar"] {
+    let p = look_path(os, c)
+    if !p.is_empty() {
+      return p
+    }
+  }
+  ""
+}
