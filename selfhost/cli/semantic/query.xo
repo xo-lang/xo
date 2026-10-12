@@ -14,7 +14,7 @@ pub struct Session {
 /// Checks the modules under dirs (query.Load): with the other modules of
 /// their workspace unless exact (query.LoadExact). overlay replaces the
 /// sources of files by absolute path (check.CheckOverlay).
-pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses env, fs.read {
+pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses env, fs, proc {
   let wd = wd_of(os)
   var c = check.new_checker(os.fs, std_dir_of(os))
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
@@ -23,7 +23,7 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
   c.set_overlay(overlay)
   let dirs = if exact { dirs0 } else { c.workspace_dirs(dirs0) }
-  c.check_dirs(dirs)?
+  c.check_dirs_bound(os, dirs)?
   if !c.unsupported.is_empty() {
     return Err("the self hosted checker cannot check this program: ${c.unsupported}")
   }
@@ -881,7 +881,7 @@ fn imports_json(r: ImportsResult) -> JVal {
 // ---------------------------------------------------------------------------
 // The command (tools.go runQueryWith after the session is loaded)
 
-fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs.read, stdio {
+fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs, proc, stdio {
   let s = match load_session(os, dirs, false, {}) {
     Ok(x) => x
     Err(e) => {

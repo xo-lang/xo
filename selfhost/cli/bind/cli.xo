@@ -309,7 +309,7 @@ fn (f: Flags) usage(os: Os) uses stdio {
 
 /// The helper that binds Go packages, xo-gobind (cmd/xo-gobind, decision
 /// 0178 stage 6), and whether it is a temporary build to remove after
-/// use: $XO_GOBIND; else xo-gobind in the bin directory of a release
+/// use: $XO_GOBIND; else xo-gobind beside this program, in the bin directory of a release
 /// layout (<prefix>/bin beside <prefix>/lib/xo/std), beside the std
 /// directory, or on $PATH; else built with `go build` ($XO_GO, else go)
 /// from the repository holding the std directory, into a temporary file.
@@ -317,6 +317,14 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
   let named = os.env.get("XO_GOBIND") ?? ""
   if !named.is_empty() {
     return Ok((named, false))
+  }
+  // beside this program (a release ships them together)
+  let prog = os.env.program()
+  if prog.contains("/") {
+    let beside = join(dir_of(prog), "xo-gobind")
+    if is_file(os, beside) {
+      return Ok((beside, false))
+    }
   }
   var std = std_dir
   if !std.starts_with("/") && !wd.is_empty() {

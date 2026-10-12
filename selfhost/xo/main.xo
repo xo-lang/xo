@@ -202,7 +202,10 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   }
   c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
-  match c.check_dirs(o.dirs) {
+  c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  // binds a `use go` or `use c` missing from the cache first, as the
+  // Go checker does (decision 0178 stage 6)
+  match c.check_dirs_bound(os, o.dirs) {
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
   }
