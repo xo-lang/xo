@@ -7,13 +7,15 @@ use native/rtjson
 use native/rthttp
 use native/rttest
 
-fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields) }
+// Each takes the dependency that calls it (decision 0173) at entry: the
+// code generator sets it just before a dependency's call.
+fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields, rthttp.log_from_take()) }
 
-fn info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, fields) }
+fn info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, fields, rthttp.log_from_take()) }
 
-fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields) }
+fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields, rthttp.log_from_take()) }
 
-fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields) }
+fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields, rthttp.log_from_take()) }
 
 fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format = log.Format.Text) uses stdio {
   let n = match level {
@@ -34,11 +36,11 @@ fn level_name(level: Int) -> Str {
   }
 }
 
-fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
+fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
   if level < rthttp.log_level() {
     return
   }
-  let line = format(level, msg, fields)
+  let line = format(level, msg, fields, from)
   if rttest.test_on() {
     // a test keeps its records (testing.logs, decision 0083); without a
     // configured output the line goes to the test's buffer (printed when
@@ -51,16 +53,16 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
       vals.push(rt.dyn_text(v))
     }
     if !rthttp.log_configured() {
-      rttest.test_log(level, msg, keys, vals, line)
+      rttest.test_log(level, msg, from, keys, vals, line)
       return
     }
-    rttest.test_log(level, msg, keys, vals, "")
+    rttest.test_log(level, msg, from, keys, vals, "")
   }
   rt.eprintln(line)
 }
 
 /// The text of a record: JSON when configured so, else text.
-fn format(level: Int, msg: Str, fields: Map[Str, Debug]) -> Str {
+fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
   if rthttp.log_json() {
     // encoding/json of a map: keys sorted
     var keys: List[Str] = ["time", "level", "msg"]
@@ -83,6 +85,20 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug]) -> Str {
         vals.push(j)
       }
     }
+    if from != "" {
+      // the attribution replaces a field named "module"
+      var found = false
+      for (i, x) in keys.indexed() {
+        if x == "module" {
+          vals.set(i, rtjson.json_enc("", from))
+          found = true
+        }
+      }
+      if !found {
+        keys.push("module")
+        vals.push(rtjson.json_enc("", from))
+      }
+    }
     var idx: List[Int] = []
     for i in 0..keys.len() {
       idx.push(i)
@@ -97,7 +113,11 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug]) -> Str {
     }
     return line + "}"
   }
-  var line = "${rthttp.log_now(false)} ${level_name(level)} ${msg}"
+  var tag = ""
+  if from != "" {
+    tag = "[${from}] "
+  }
+  var line = "${rthttp.log_now(false)} ${level_name(level)} ${tag}${msg}"
   for (k, v) in fields {
     line = line + " ${k}=${rt.dyn_text(v)}"
   }

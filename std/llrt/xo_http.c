@@ -3096,6 +3096,35 @@ void xo_log_configure(int64_t level, int64_t json) {
 	__atomic_store_n(&xlog.level, (int)level, __ATOMIC_RELEASE);
 }
 
+// The dependency that writes the next record (decision 0173): the
+// native code generator calls xo_log_from just before a dependency's call
+// of log.debug/info/warn/error, whose implementation takes it at entry
+// (no task switch in between, so a thread local holds it).
+static __thread char *xlog_from;
+static __thread int64_t xlog_from_n;
+
+void xo_log_from(const char *p, int64_t n) {
+	free(xlog_from);
+	xlog_from = malloc((size_t)n + 1);
+	if (!xlog_from) {
+		xo_oom();
+	}
+	memcpy(xlog_from, p, (size_t)n);
+	xlog_from[n] = 0;
+	xlog_from_n = n;
+}
+
+xo_rstr *xo_log_from_take(int64_t *len) {
+	if (!xlog_from) {
+		return nstr("", 0, len);
+	}
+	xo_rstr *s = nstr(xlog_from, xlog_from_n, len);
+	free(xlog_from);
+	xlog_from = NULL;
+	xlog_from_n = 0;
+	return s;
+}
+
 // xo_log_now is the time now in UTC as RFC 3339 (with nanoseconds when
 // nano, as time.RFC3339Nano).
 xo_rstr *xo_log_now(int64_t nano, int64_t *len) {

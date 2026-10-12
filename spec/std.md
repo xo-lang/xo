@@ -1148,14 +1148,28 @@ pub fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log   // also info, wa
 pub fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 enum Level { Debug, Info, Warn, Error }
 enum Format { Text, Json }
-struct Record { level: Level, msg: Str, fields: Map[Str, Str] }   // as captured in tests (8.6)
+struct Record { level: Level, msg: Str, fields: Map[Str, Str], module: Str }   // as captured in tests (8.6)
 ```
 
 ```
 log.info("listening", {"addr": addr, "port": port})
 ```
 
-Every record includes the time. **[later]** The current span and the
+Every record includes the time. A record written by the code of a
+dependency (a required module version, not the main module or a
+workspace module) names it, `<module path>@<version>` (decision 0173):
+text records put it in brackets after the level
+(`2026-10-11T09:00:00Z WARN [github.com/acme/billing@v1.2.0] retrying`),
+JSON records as the key `"module"`, which replaces a field of the same
+name (a dependency cannot attribute its record to another module), and
+`Record.module` holds it in tests (`""` for the main module's records).
+The call's source file decides: a closure of the main module run by a
+dependency logs as the main module. Records of the main module carry no
+attribution. **[planned]** The native backends do not attribute yet
+(`Record.module` is `""` there). `xo audit` lists each dependency's log
+call sites with the attribution its records carry.
+
+**[later]** The current span and the
 request id (core 11.6) are not attached yet. Without `configure`, logs go
 to standard error as text at `Info`.
 
@@ -1173,6 +1187,28 @@ logged in a test reaches the real standard error.
 
 ## 7. std/task
 
+**Resource budgets** (decision 0173). `task.with_budget` bounds the work
+of a call, typically a dependency's, against compute and memory denial of
+service: `cpu` is running time (time its tasks spend outside blocking
+waits, measured on the real monotonic clock, also under a `FakeClock`),
+`alloc` is bytes allocated, and `steps` counts loop iterations and calls,
+a deterministic unit. The budget covers every task started inside the
+call, wherever it is started, and nested budgets all apply. Code polls
+the budget at the start of every loop iteration and at the entry of
+every function that calls user code, so under a budget a pure loop or a
+recursion is a cancellation point. The polls are compiled only into a
+program that calls `with_budget` somewhere (one without a budget is
+unchanged); there they cost a nil check outside a budget. Ceilings are checked every 1024 steps of a thread (the last
+quantum before a `steps` ceiling is shortened to hit it exactly).
+Deferred code runs shielded and is not unwound; budgeted shielded code
+that goes past twice a ceiling faults (`XO-F008`). Limits: on the Go
+backend `alloc` is the process wide allocation since the budget started
+(Go keeps no count per goroutine), an upper bound that also counts other
+tasks running at the same time; one std operation (a large `repeat`, a
+sort) is not interrupted; functions compiled to assembly by `--hybrid`
+do not poll. **[planned]** The native backends report `with_budget` as
+XO1201.
+
 ```
 enum Timed[E] { TimedOut, Failed(from E) } derive Display
 enum Isolated[E] { Faulted(info: Fault), Failed(from E) } derive Display
@@ -1183,6 +1219,14 @@ pub fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T !
     // runs f in a child scope; on expiry cancels it, waits for it to unwind, returns Err(TimedOut)
 
 pub fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
+
+enum Budgeted[E] { Exceeded(resource: Str), Failed(from E) } derive Display
+struct Budget { cpu: Duration, alloc: Int, steps: Int }    // 0: no ceiling
+pub fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> Budget
+pub fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T ! Budgeted[E]
+    uses (clock, fx)
+    // runs f in a child scope under the budget; when a ceiling is passed cancels
+    // the scope, waits for it to unwind, returns Err(Exceeded("cpu" | "alloc" | "steps"))
 
 pub fn is_canceled() -> Bool
 pub fn stop_requested() -> Bool          // the first shutdown signal arrived (core 7.5)

@@ -257,6 +257,10 @@ func (f *fnGen) funcBody(fd *ast.FnDecl) string {
 		// a var method of a type with an invariant checks it afterwards
 		// (core 9.1)
 		inv := fo != nil && fo.RecvVar && fo.Recv != nil && fo.Recv.Invariant != nil && !fo.Recv.Module.IsStd
+		if f.mayRecurse(fd.Body) {
+			// a step of a resource budget (decision 0173)
+			f.line("tk.Tick()")
+		}
 		if len(ensures) > 0 || inv {
 			f.withEnsures(fo, fd, ensures, inv)
 			return
@@ -1090,6 +1094,10 @@ func (f *fnGen) emitLoop(l *loopInfo, header, body string) {
 		f.line("for {")
 	} else {
 		f.line("for %s {", header)
+	}
+	// a step of a resource budget (decision 0173)
+	if f.tickLoop() {
+		f.line("\ttk.Tick()")
 	}
 	f.out.WriteString(body)
 	f.line("}")

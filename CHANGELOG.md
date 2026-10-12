@@ -32,6 +32,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `\p{Any}`, `\p{ASCII}` are an error natively for now), and
   `std/archive` (Go's compress/flate, gzip, tar, and zip ported to Xo:
   the same bytes and errors; zip64 is an error natively).
+- Log attribution and resource budgets (decision 0173). A log record
+  written by a dependency's code names it: `[<module>@<version>]` after
+  the level in text, `"module"` in JSON (a field of that name cannot
+  forge it), `log.Record.module` in tests; `xo audit` lists each
+  dependency's log call sites. `task.with_budget(clock, b, f)` with
+  `task.budget(cpu:, alloc:, steps:)` runs f under ceilings on running
+  time, allocation, and steps and returns `Err(Exceeded(resource))` when
+  one is passed; in a program that calls it, generated Go polls at every
+  loop iteration and at the entry of functions that call user code
+  (Go backend; native XO1201 planned; programs without a budget are
+  unchanged). New fault `XO-F008`. The supply-chain replication blocks 12
+  of 17 scenarios (was 10 of 15).
+
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

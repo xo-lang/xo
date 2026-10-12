@@ -21,9 +21,11 @@ enum Format {
 }
 
 /// One log record as captured in tests (std.md 6, 8.6). Field values are
-/// their text form.
+/// their text form. module is the dependency that wrote the record
+/// ("<module path>@<version>", decision 0173), "" for the main module.
 struct Record {
   level: Level
   msg: Str
   fields: Map[Str, Str]
+  module: Str
 }

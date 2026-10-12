@@ -31,15 +31,19 @@ an attenuated capability). The posture is named in each row.
 
 ## Measured result
 
-**10 of 15 scenarios are blocked** (fetch 1, check 7, lock 1, runtime 1;
-5 not blocked).
+**12 of 17 scenarios are blocked** (fetch 1, check 7, lock 1, runtime 3;
+5 not blocked), measured 2026-10-11 after decision 0173 added resource
+budgets. The first measurement (decision 0156) was 10 of 15 (runtime 1);
+the two added rows are the unbounded-loop denial of service under
+`task.with_budget`, with a step ceiling and with a running-time ceiling,
+both blocked at run time. The unbudgeted loop row stays not blocked.
 
 | stage | count |
 |---|---|
 | fetch | 1 |
 | check | 7 |
 | lock | 1 |
-| runtime | 1 |
+| runtime | 3 |
 | not blocked | 5 |
 
 | attack | class | stage | detail |
@@ -55,10 +59,12 @@ an attenuated capability). The posture is named in each row.
 | malicious update adds a net effect | malicious update (default) | lock | the effect lock recorded v1.0.0 as `effects none`; the update to v1.1.0 adds `net.dial`, so `xo get` fails with XO1317 and writes nothing |
 | exfiltrate over net, attenuated capability | data exfiltration (hardened) | runtime | `os.net.only([...])` denies the dial (NetErr.Denied), proven by a consumer test |
 | exfiltrate env over net, no ceiling | data exfiltration (default) | not blocked | the effects (`net.dial`, `env`) are visible in the dependency's API and recorded in xo.lock, and `xo audit` surfaces them, but the consumer granted the capabilities and set no ceiling |
-| logging exfiltration, `log` allowed | data exfiltration (default) | not blocked | `log` is visible in the API and a ceiling can forbid it, but when the consumer allows `log` the record is still written |
+| logging exfiltration, `log` allowed | data exfiltration (default) | not blocked | `log` is visible in the API and a ceiling can forbid it, but when the consumer allows `log` the record is still written; since decision 0173 the record names the dependency that wrote it (`[evil.test/logleak@v1.0.0]`), so the leak is traceable |
 | C binding lies, consumer vouches `uses none` wrongly | effect laundering | not blocked | a vouch is a human review; a consumer that attests `uses none` for C that actually does I/O is not protected (Xo cannot see into C). The vouch records who attested it |
 | pure malice: wrong result (swapped payee) | logic / no effect | not blocked | pure computation performs no effect; a wrong return value is not an authority misuse. Contracts and tests are the defense, not the supply-chain layer |
-| denial of service: unbounded loop | sabotage / DoS | not blocked | a CPU/time DoS performs no capability effect; the effect and capability layer does not bound compute |
+| denial of service: unbounded loop | sabotage / DoS | not blocked | a CPU/time DoS performs no capability effect, so no ceiling applies; with no budget the loop runs |
+| denial of service: unbounded loop, `with_budget(steps)` | sabotage / DoS (hardened) | runtime | `task.with_budget(clock, task.budget(steps: 100000), ...)` cancels the budgeted scope and the loop unwinds at its next iteration: `Err(Exceeded("steps"))` (decision 0173) |
+| denial of service: unbounded loop, `with_budget(cpu)` | sabotage / DoS (hardened) | runtime | the same with `cpu: 50ms` of running time: `Err(Exceeded("cpu"))` |
 
 ## Reading the five "not blocked"
 
@@ -113,13 +119,18 @@ the dependency can no longer vouch for itself.
 
 ## Next experiments
 
-1. Per-record log attribution (tag each `log` record with the writing
-   dependency), so the "log allowed" row becomes traceable even when not
-   blocked. Touch `internal/gen` (thread the module into `Log_*` calls)
-   and `std/rt/log.go`.
-2. A resource budget capability (CPU time / allocation ceiling per task)
-   to bring the DoS row into scope; design as a new capability, not an
-   effect.
+Done 2026-10-11 (decision 0173): per-record log attribution (Go and
+native backends, `xo audit` log sites) and resource budgets
+(`task.with_budget`, Go backend; native XO1201 planned), which moved the
+DoS row into scope for a consumer that budgets the call.
+
+1. (open) A memory-exhaustion row under `with_budget(alloc: ...)`: the
+   mechanism is tested in internal/gen's `budget` golden; the Go backend
+   counts allocation process wide (see decision 0173), so a row would
+   measure an upper bound.
+2. (open) Native `with_budget`: polls in the SSA builder at loop headers
+   and call entries, per task allocation counting in std/llrt's
+   allocator (exact there, unlike Go).
 3. Expand the corpus toward the 51 by porting each Flix case's *behaviour*
    (what the payload does) rather than its code, to tighten the
    comparison, and record which Flix cases have no Xo analogue (for

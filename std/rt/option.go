@@ -78,7 +78,7 @@ func Result_ignore_err[T, E any](tk *Task, r Result[T, E], reason string) Option
 	if r.Ok {
 		return Some(r.V)
 	}
-	logRecord(tk, levelDebug, "error ignored: "+reason, []logField{{k: "error", v: Display(tk, any(r.E))}})
+	logRecord(tk, levelDebug, "error ignored: "+reason, []logField{{k: "error", v: Display(tk, any(r.E))}}, "")
 	return Option[T]{}
 }
 

@@ -1240,6 +1240,10 @@ func (f *fnGen) fnLit(x *ast.FnLit) string {
 	body := f.capture(func() {
 		f.ind++
 		f.at(x.Body)
+		if f.mayRecurse(x.Body) {
+			// a step of a resource budget (decision 0173)
+			f.line("tk.Tick()")
+		}
 		for _, pv := range params {
 			f.line("_ = %s", f.varName(pv))
 		}
