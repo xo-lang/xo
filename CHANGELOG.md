@@ -12,6 +12,36 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   attenuated `Proc` must list `"kill"`, an attenuated `Net` lists the
   socket as `unix:PATH`; `FakeProc` records signals (`killed()`) and
   `FakeNet` listens on sockets in memory (decision 0190).
+- Native builds run the self hosted driver (decision 0178 switch point
+  A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
+  `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds
+  once from its embedded sources into the user cache (a few minutes the
+  first time). Output, diagnostics, JSON, exit codes, and paths are the
+  Go driver's; `XO_SELF_DRIVER=0` restores the Go driver. xo1 gained
+  `run`, `xo build`'s flags, several directories, the build directory
+  and binary cache, split LLVM builds, `--release`, `--stamp`, and the
+  check's diagnostics (stage 1).
+- `selfhost/macho` also writes ELF: `macho asm --elf` assembles the
+  linux/arm64 emitter's assembly into the object `clang -c` writes (byte
+  identical on the 159 arm64 goldens and on xo1), and `macho elflink`
+  links it with the linux runtime pack into a dynamically linked glibc
+  executable (versioned imports, stubs, TLS relaxation,
+  `.eh_frame_hdr`). `xo1 build --target=linux/arm64 --ld=macho` builds a
+  Linux program from any host with no C toolchain; every golden runs on
+  glibc 2.31 and 2.41 (decision 0182 stage 3).
+- The native backends no longer count the element of `for x in <place>`
+  or an inner list read through an outer one (`a[i][j]`) when nothing
+  changes the container while it is in use (decision 0186): on
+  bench/perf/nested the read workloads went from 600,041 retains to 1
+  (walk) and from 201,001 to 1 (index2) on arm64, allocations unchanged.
+- The arm64 backend (and its Xo twin, byte identical) inlines small
+  functions that call others and larger ones with at most two call
+  sites, and drops the bounds, overflow, and shift checks that value
+  bounds, loop conditions (also through `&&` and `||`), and binary
+  search midpoints prove (decision 0184). The Unicode runtime in Xo is
+  now within 5 percent of the C path on every bench/perf/unicode
+  workload on arm64 (39 percent fewer instructions on mixed script case
+  mapping, 42 on Rune case mapping).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on

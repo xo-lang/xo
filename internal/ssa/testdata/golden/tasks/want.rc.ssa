@@ -28,11 +28,11 @@ b2:  ; preds b0
   v18: List[Int]? = field 1, v16
   v19: List[Int] = payload 1.0, v18
   retain v19
-  v21: List[Int]? = field 1, v16
-  release v21
-  v23: ((), List[Int]) = callv v7, v19
+  v21: ((), List[Int]) = callv v7, v19
   release v7
-  v25: List[Int] = field 1, v23
+  v23: List[Int]? = field 1, v16
+  release v23
+  v25: List[Int] = field 1, v21
   v26: List[List[Int]] = call list.push, v17, v25
   share v26
   v28: () = call rt.mutex_unlock, v6, v26 lands v29
@@ -158,8 +158,8 @@ b4:  ; preds b18
 b5:  ; preds b18
   release v28
   v39: Int = const 0
-  v40: Int = call list.index, v103, v39
-  release v103
+  v40: Int = call list.index, v101, v39
+  release v101
   v42: Int = const 0
   v43: Int = call rt.scope_close, v1, v42
   v44: Int = const 1
@@ -211,32 +211,30 @@ b16:  ; preds b8
   release v76
   v80: Int = const 0
   v81: Result[Int, E] = call list.index, v78, v80
-  retain v81
+  v82: E = payload 1.0, v81
+  v83: xo.trace = payload 1.1, v81
+  v84: List[(Str, Str, fn() -> Str)] = field 0, v83
+  retain v84
   release v78
-  v84: E = payload 1.0, v81
-  v85: xo.trace = payload 1.1, v81
-  v86: List[(Str, Str, fn() -> Str)] = field 0, v85
-  retain v86
-  release v81
-  v89: fn() -> Str = closure xo.frameargs(ch: Chan[Int]), v0
-  v90: Str = const "tasks.run"
-  v91: Str = const "main.xo:25"
-  retain v90
-  retain v91
-  v94: (Str, Str, fn() -> Str) = tuple v90, v91, v89
-  v95: List[(Str, Str, fn() -> Str)] = field 0, v85
-  v96: List[(Str, Str, fn() -> Str)] = reuse v95
-  v97: List[(Str, Str, fn() -> Str)] = call list.push, v96, v94
-  v98: xo.trace = struct v97
-  v99: Result[Int, E] = variant 1, v84, v98
-  ret v99
+  v87: fn() -> Str = closure xo.frameargs(ch: Chan[Int]), v0
+  v88: Str = const "tasks.run"
+  v89: Str = const "main.xo:25"
+  retain v88
+  retain v89
+  v92: (Str, Str, fn() -> Str) = tuple v88, v89, v87
+  v93: List[(Str, Str, fn() -> Str)] = field 0, v83
+  v94: List[(Str, Str, fn() -> Str)] = reuse v93
+  v95: List[(Str, Str, fn() -> Str)] = call list.push, v94, v92
+  v96: xo.trace = struct v95
+  v97: Result[Int, E] = variant 1, v82, v96
+  ret v97
 b17:  ; preds b8
   unreachable
 b18:  ; preds b2
-  v102: Str = const "main.xo:28"
-  v103: List[Int] = call rt.task_await, v28, v102 lands v104
-  v104: Bool = call rt.unwinding
-  br v104, b4(), b5()
+  v100: Str = const "main.xo:28"
+  v101: List[Int] = call rt.task_await, v28, v100 lands v102
+  v102: Bool = call rt.unwinding
+  br v102, b4(), b5()
 b19:  ; preds b2
   release v0
   release v1
@@ -264,29 +262,27 @@ func xo.run[Task[Int, E]](v0: List[fn() -> Result[Int, E]], v1: Task[Int, E]) ->
 b0(v0: List[fn() -> Result[Int, E]], v1: Task[Int, E]):
   v2: Int = const 0
   v3: fn() -> Result[Int, E] = call list.index, v0, v2
-  retain v3
-  release v0
-  v6: Result[Int, E] = callv v3 lands v7
-  v7: Bool = call rt.unwinding
-  br v7, b1(), b2()
+  v4: Result[Int, E] = callv v3 lands v5
+  v5: Bool = call rt.unwinding
+  br v5, b1(), b2()
 b1:  ; preds b0
-  release v3
-  v10: () = call rt.task_unwound, v1
+  release v0
+  v8: () = call rt.task_unwound, v1
   release v1
-  v12: () = tuple
-  ret v12
+  v10: () = tuple
+  ret v10
 b2:  ; preds b0
-  release v3
-  v15: Int = tag v6
-  v16: Int = const 1
-  v17: Bool = eq v15, v16
-  v18: List[Result[Int, E]] = call list.new
-  v19: List[Result[Int, E]] = call list.push, v18, v6
-  share v19
-  v21: () = call rt.task_done, v1, v19, v17
+  release v0
+  v13: Int = tag v4
+  v14: Int = const 1
+  v15: Bool = eq v13, v14
+  v16: List[Result[Int, E]] = call list.new
+  v17: List[Result[Int, E]] = call list.push, v16, v4
+  share v17
+  v19: () = call rt.task_done, v1, v17, v15
   release v1
-  v23: () = tuple
-  ret v23
+  v21: () = tuple
+  ret v21
 }
 
 func xo.droplist[Result[Int, E]](v0: List[Result[Int, E]]) -> () {
@@ -323,27 +319,25 @@ func xo.run[Task[Int, ()]](v0: List[fn() -> Int], v1: Task[Int, ()]) -> () {
 b0(v0: List[fn() -> Int], v1: Task[Int, ()]):
   v2: Int = const 0
   v3: fn() -> Int = call list.index, v0, v2
-  retain v3
-  release v0
-  v6: Int = callv v3 lands v7
-  v7: Bool = call rt.unwinding
-  br v7, b1(), b2()
+  v4: Int = callv v3 lands v5
+  v5: Bool = call rt.unwinding
+  br v5, b1(), b2()
 b1:  ; preds b0
-  release v3
-  v10: () = call rt.task_unwound, v1
+  release v0
+  v8: () = call rt.task_unwound, v1
   release v1
-  v12: () = tuple
-  ret v12
+  v10: () = tuple
+  ret v10
 b2:  ; preds b0
-  release v3
-  v15: Bool = const false
-  v16: List[Int] = call list.new
-  v17: List[Int] = call list.push, v16, v6
-  share v17
-  v19: () = call rt.task_done, v1, v17, v15
+  release v0
+  v13: Bool = const false
+  v14: List[Int] = call list.new
+  v15: List[Int] = call list.push, v14, v4
+  share v15
+  v17: () = call rt.task_done, v1, v15, v13
   release v1
-  v21: () = tuple
-  ret v21
+  v19: () = tuple
+  ret v19
 }
 
 func xo.droplist[fn() -> Int](v0: List[fn() -> Int]) -> () {

@@ -22,8 +22,10 @@ fn (var b: Builder) ensures_of(fo: Int) -> List[parser.Clause] {
     return out
   }
   for cl in decl[0].clauses {
-    if let EnsuresClause(..) = cl {
-      out.push(cl)
+    if let EnsuresClause(debug: debug, ..) = cl {
+      if b.contract_on(debug) {
+        out.push(cl)
+      }
     }
   }
   out
@@ -68,8 +70,10 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   b.poll()
   if with_requires {
     for cl in fd.clauses {
-      if let RequiresClause(cond: cond, els: els, ..) = cl {
-        b.check_requires(cond, els, cl)
+      if let RequiresClause(cond: cond, els: els, debug: debug, ..) = cl {
+        if b.contract_on(debug) {
+          b.check_requires(cond, els, cl)
+        }
       }
     }
   }
@@ -133,8 +137,10 @@ fn (var b: Builder) contract_body(fo: Int, fi: Int, sub: Map[Int, Int], ens: Lis
   let vars = b.param_bindings(fo)
   let fd = b.c.objs[fo].fn_decl[0]
   for cl in fd.clauses {
-    if let RequiresClause(cond: cond, els: els, ..) = cl {
-      b.check_requires(cond, els, cl)
+    if let RequiresClause(cond: cond, els: els, debug: debug, ..) = cl {
+      if b.contract_on(debug) {
+        b.check_requires(cond, els, cl)
+      }
     }
   }
   // old(...) values, in clause order

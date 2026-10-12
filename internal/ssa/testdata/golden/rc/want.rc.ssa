@@ -153,10 +153,10 @@ b13:  ; preds b10
   v138: () = tuple
   jump b8()
 b14(v140: Int):  ; preds b56, b16
-  v141: Bool = lt v140, v393
+  v141: Bool = lt v140, v380
   br v141, b15(), b17()
 b15:  ; preds b14
-  v143: Shape = call list.index, v392, v140
+  v143: Shape = call list.index, v379, v140
   v144: Stdio = cap stdio, v0
   v145: Str = call label, v143
   v146: () = call Stdio.println, v144, v145
@@ -167,7 +167,7 @@ b16:  ; preds b15
   v150: Int = add v140, v149
   jump b14(v150)
 b17:  ; preds b14
-  release v392
+  release v379
   v153: List[Str] = call list.new
   v154: Int = const 0
   v155: Int = const 1000
@@ -209,241 +209,228 @@ b23:  ; preds b22
   release v187
   v190: Int = const 0
   v191: Str? = call list.get, v173, v190
-  retain v191
-  v193: Int = const 5
-  v194: Str? = call list.get, v173, v193
-  retain v194
-  release v173
-  v197: Stdio = cap stdio, v0
-  v198: Int = tag v191
-  v199: Int = const 1
-  v200: Bool = eq v198, v199
-  br v200, b29(), b30()
+  v192: Int = const 5
+  v193: Str? = call list.get, v173, v192
+  v194: Stdio = cap stdio, v0
+  v195: Int = tag v191
+  v196: Int = const 1
+  v197: Bool = eq v195, v196
+  br v197, b29(), b30()
 b24:  ; preds b22
-  v202: (List[Str], Str?) = call list.pop, v173
-  v203: List[Str] = field 0, v202
-  v204: Str? = field 1, v202
-  v205: Int = tag v204
-  v206: Int = const 1
-  v207: Bool = eq v205, v206
-  br v207, b27(), b26()
-b25(v209: Str):  ; preds b27, b26
-  v210: () = tuple
-  jump b22(v203, v209)
+  v199: (List[Str], Str?) = call list.pop, v173
+  v200: List[Str] = field 0, v199
+  v201: Str? = field 1, v199
+  v202: Int = tag v201
+  v203: Int = const 1
+  v204: Bool = eq v202, v203
+  br v204, b27(), b26()
+b25(v206: Str):  ; preds b27, b26
+  v207: () = tuple
+  jump b22(v200, v206)
 b26:  ; preds b24
-  v212: Str? = field 1, v202
-  release v212
-  v214: () = tuple
+  v209: Str? = field 1, v199
+  release v209
+  v211: () = tuple
   jump b25(v174)
 b27:  ; preds b24
   release v174
-  v217: Str = payload 1.0, v204
-  retain v217
-  v219: Str? = field 1, v202
-  release v219
-  v221: () = tuple
-  jump b25(v217)
-b28(v223: Str):  ; preds b29, b30
-  v224: Str = const " "
-  v225: Str = call str.concat, v223, v224
-  v226: Int = tag v194
-  v227: Int = const 1
-  v228: Bool = eq v226, v227
-  br v228, b32(), b33()
+  v214: Str = payload 1.0, v201
+  retain v214
+  v216: Str? = field 1, v199
+  release v216
+  v218: () = tuple
+  jump b25(v214)
+b28(v220: Str):  ; preds b29, b30
+  v221: Str = const " "
+  v222: Str = call str.concat, v220, v221
+  v223: Int = tag v193
+  v224: Int = const 1
+  v225: Bool = eq v223, v224
+  br v225, b32(), b33()
 b29:  ; preds b23
-  v230: Str = payload 1.0, v191
-  retain v230
-  release v191
-  jump b28(v230)
+  v227: Str = payload 1.0, v191
+  retain v227
+  jump b28(v227)
 b30:  ; preds b23
-  release v191
-  v235: Str = const "x"
-  retain v235
-  jump b28(v235)
-b31(v238: Str):  ; preds b32, b33
-  v239: Str = call str.concat, v225, v238
-  release v238
-  v241: () = call Stdio.println, v197, v239
-  release v239
-  v243: Str = const ""
-  v244: Int = const 0
-  v245: Int = const 20
-  retain v243
-  jump b34(v244, v243)
+  v230: Str = const "x"
+  retain v230
+  jump b28(v230)
+b31(v233: Str):  ; preds b32, b33
+  v234: Str = call str.concat, v222, v233
+  release v233
+  v236: () = call Stdio.println, v194, v234
+  release v234
+  v238: Str = const ""
+  v239: Int = const 0
+  v240: Int = const 20
+  retain v238
+  jump b34(v239, v238)
 b32:  ; preds b28
-  v248: Str = payload 1.0, v194
-  retain v248
-  release v194
-  jump b31(v248)
+  v243: Str = payload 1.0, v193
+  retain v243
+  release v173
+  jump b31(v243)
 b33:  ; preds b28
-  release v194
-  v253: Str = const "x"
-  retain v253
-  jump b31(v253)
-b34(v256: Int, v257: Str):  ; preds b31, b36
-  v258: Bool = lt v256, v245
-  br v258, b35(), b37()
+  release v173
+  v248: Str = const "x"
+  retain v248
+  jump b31(v248)
+b34(v251: Int, v252: Str):  ; preds b31, b36
+  v253: Bool = lt v251, v240
+  br v253, b35(), b37()
 b35:  ; preds b34
-  v260: Int = const 10
-  v261: Int = rem v256, v260 @ main.xo:92:20 lands v262
-  v262: Bool = call rt.landing
-  br v262, b41(), b40()
+  v255: Int = const 10
+  v256: Int = rem v251, v255 @ main.xo:92:20 lands v257
+  v257: Bool = call rt.landing
+  br v257, b41(), b40()
 b36:  ; preds b40
-  v264: Int = const 1
-  v265: Int = add v256, v264
-  jump b34(v265, v287)
+  v259: Int = const 1
+  v260: Int = add v251, v259
+  jump b34(v260, v282)
 b37:  ; preds b34
-  v267: Stdio = cap stdio, v0
-  v268: () = call Stdio.println, v267, v257
-  release v257
-  ret v268
+  v262: Stdio = cap stdio, v0
+  v263: () = call Stdio.println, v262, v252
+  release v252
+  ret v263
 b38:  ; preds b9
-  v271: List[List[Int]] = field 0, v123
-  v272: List[Int] = field 1, v123
-  v273: List[Int] = reuse v272
-  v274: List[Int] = call list.push, v273, v120
-  v275: List[List[Int]] = call list.set, v271, v119, v274
-  v276: () = tuple
-  v277: Int = const 3
-  v278: Int = const 0
-  v279: Int = const 7
-  v280: (List[List[Int]], List[Int]) = call list.take, v275, v277 @ main.xo:70:3 lands v281
-  v281: Bool = call rt.landing
-  br v281, b43(), b42()
+  v266: List[List[Int]] = field 0, v123
+  v267: List[Int] = field 1, v123
+  v268: List[Int] = reuse v267
+  v269: List[Int] = call list.push, v268, v120
+  v270: List[List[Int]] = call list.set, v266, v119, v269
+  v271: () = tuple
+  v272: Int = const 3
+  v273: Int = const 0
+  v274: Int = const 7
+  v275: (List[List[Int]], List[Int]) = call list.take, v270, v272 @ main.xo:70:3 lands v276
+  v276: Bool = call rt.landing
+  br v276, b43(), b42()
 b39:  ; preds b9
   release v122
   release v110
   jump b1()
 b40:  ; preds b35
-  v286: Str = call str.of_int, v261
-  v287: Str = call str.concat, v257, v286
-  release v286
-  v289: () = tuple
+  v281: Str = call str.of_int, v256
+  v282: Str = call str.concat, v252, v281
+  release v281
+  v284: () = tuple
   jump b36()
 b41:  ; preds b35
-  release v257
+  release v252
   jump b1()
 b42:  ; preds b38
-  v293: List[List[Int]] = field 0, v280
-  v294: List[Int] = field 1, v280
-  v295: List[Int] = reuse v294
-  v296: List[Int] = call list.set, v295, v278, v279 @ main.xo:70:3 lands v297
-  v297: Bool = call rt.landing
-  br v297, b45(), b44()
+  v288: List[List[Int]] = field 0, v275
+  v289: List[Int] = field 1, v275
+  v290: List[Int] = reuse v289
+  v291: List[Int] = call list.set, v290, v273, v274 @ main.xo:70:3 lands v292
+  v292: Bool = call rt.landing
+  br v292, b45(), b44()
 b43:  ; preds b38
-  release v275
+  release v270
   release v110
   jump b1()
 b44:  ; preds b42
-  v302: List[List[Int]] = call list.set, v293, v277, v296
-  v303: Stdio = cap stdio, v0
-  v304: Str = const "grid "
-  v305: Int = const 2
-  v306: List[Int] = call list.index, v302, v305 @ main.xo:71:28 lands v307
-  v307: Bool = call rt.landing
-  br v307, b47(), b46()
+  v297: List[List[Int]] = call list.set, v288, v272, v291
+  v298: Stdio = cap stdio, v0
+  v299: Str = const "grid "
+  v300: Int = const 2
+  v301: List[Int] = call list.index, v297, v300 @ main.xo:71:28 lands v302
+  v302: Bool = call rt.landing
+  br v302, b47(), b46()
 b45:  ; preds b42
-  release v295
+  release v290
   release v110
-  v311: List[List[Int]] = field 0, v280
-  release v311
+  v306: List[List[Int]] = field 0, v275
+  release v306
   jump b1()
 b46:  ; preds b44
-  retain v306
-  v315: Int = call list.len, v306
-  release v306
-  retain v304
-  v318: Str = call str.concat_int, v304, v315
-  v319: Str = const " "
-  v320: Str = call str.concat, v318, v319
-  v321: Int = const 2
-  v322: List[Int] = call list.index, v110, v321 @ main.xo:71:45 lands v323
-  v323: Bool = call rt.landing
-  br v323, b49(), b48()
+  v309: Int = call list.len, v301
+  retain v299
+  v311: Str = call str.concat_int, v299, v309
+  v312: Str = const " "
+  v313: Str = call str.concat, v311, v312
+  v314: Int = const 2
+  v315: List[Int] = call list.index, v110, v314 @ main.xo:71:45 lands v316
+  v316: Bool = call rt.landing
+  br v316, b49(), b48()
 b47:  ; preds b44
   release v110
-  release v302
+  release v297
   jump b1()
 b48:  ; preds b46
-  retain v322
-  v329: Int = call list.len, v322
-  release v322
-  v331: Str = call str.concat_int, v320, v329
-  v332: Str = const " "
-  v333: Str = call str.concat, v331, v332
-  v334: Int = const 3
-  v335: List[Int] = call list.index, v302, v334 @ main.xo:71:60 lands v336
-  v336: Bool = call rt.landing
-  br v336, b51(), b50()
+  v321: Int = call list.len, v315
+  v322: Str = call str.concat_int, v313, v321
+  v323: Str = const " "
+  v324: Str = call str.concat, v322, v323
+  v325: Int = const 3
+  v326: List[Int] = call list.index, v297, v325 @ main.xo:71:60 lands v327
+  v327: Bool = call rt.landing
+  br v327, b51(), b50()
 b49:  ; preds b46
   release v110
-  release v302
-  release v320
+  release v297
+  release v313
   jump b1()
 b50:  ; preds b48
-  retain v335
-  release v302
-  v344: Int = const 0
-  v345: Int = call list.index, v335, v344 @ main.xo:71:60 lands v346
-  v346: Bool = call rt.landing
-  br v346, b53(), b52()
+  v333: Int = const 0
+  v334: Int = call list.index, v326, v333 @ main.xo:71:60 lands v335
+  v335: Bool = call rt.landing
+  br v335, b53(), b52()
 b51:  ; preds b48
-  release v302
   release v110
-  release v333
+  release v297
+  release v324
   jump b1()
 b52:  ; preds b50
-  release v335
-  v353: Str = call str.concat_int, v333, v345
-  v354: Str = const " "
-  v355: Str = call str.concat, v353, v354
-  v356: Int = const 3
-  v357: List[Int] = call list.index, v110, v356 @ main.xo:71:74 lands v358
-  v358: Bool = call rt.landing
-  br v358, b55(), b54()
+  release v297
+  v342: Str = call str.concat_int, v324, v334
+  v343: Str = const " "
+  v344: Str = call str.concat, v342, v343
+  v345: Int = const 3
+  v346: List[Int] = call list.index, v110, v345 @ main.xo:71:74 lands v347
+  v347: Bool = call rt.landing
+  br v347, b55(), b54()
 b53:  ; preds b50
-  release v335
+  release v297
   release v110
-  release v333
+  release v324
   jump b1()
 b54:  ; preds b52
-  retain v357
-  release v110
-  v366: Int = const 0
-  v367: Int = call list.index, v357, v366 @ main.xo:71:74 lands v368
-  v368: Bool = call rt.landing
-  br v368, b57(), b56()
+  v353: Int = const 0
+  v354: Int = call list.index, v346, v353 @ main.xo:71:74 lands v355
+  v355: Bool = call rt.landing
+  br v355, b57(), b56()
 b55:  ; preds b52
   release v110
-  release v355
+  release v344
   jump b1()
 b56:  ; preds b54
-  release v357
-  v374: Str = call str.concat_int, v355, v367
-  v375: () = call Stdio.println, v303, v374
-  release v374
-  v377: List[Shape] = call list.new
-  v378: Str = const "dot"
-  retain v378
-  v380: Shape = variant 0, v378
-  v381: List[Shape] = call list.push, v377, v380
-  v382: List[Int] = call list.new
-  v383: Int = const 1
-  v384: List[Int] = call list.push, v382, v383
-  v385: Int = const 2
-  v386: List[Int] = call list.push, v384, v385
-  v387: Int = const 3
-  v388: List[Int] = call list.push, v386, v387
-  v389: Shape = variant 1, v388
-  v390: List[Shape] = call list.push, v381, v389
-  v391: Shape = variant 2
-  v392: List[Shape] = call list.push, v390, v391
-  v393: Int = call list.len, v392
-  v394: Int = const 0
-  jump b14(v394)
+  release v110
+  v361: Str = call str.concat_int, v344, v354
+  v362: () = call Stdio.println, v298, v361
+  release v361
+  v364: List[Shape] = call list.new
+  v365: Str = const "dot"
+  retain v365
+  v367: Shape = variant 0, v365
+  v368: List[Shape] = call list.push, v364, v367
+  v369: List[Int] = call list.new
+  v370: Int = const 1
+  v371: List[Int] = call list.push, v369, v370
+  v372: Int = const 2
+  v373: List[Int] = call list.push, v371, v372
+  v374: Int = const 3
+  v375: List[Int] = call list.push, v373, v374
+  v376: Shape = variant 1, v375
+  v377: List[Shape] = call list.push, v368, v376
+  v378: Shape = variant 2
+  v379: List[Shape] = call list.push, v377, v378
+  v380: Int = call list.len, v379
+  v381: Int = const 0
+  jump b14(v381)
 b57:  ; preds b54
-  release v357
-  release v355
+  release v110
+  release v344
   jump b1()
 }
 

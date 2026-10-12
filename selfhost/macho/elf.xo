@@ -1,0 +1,717 @@
+// The ELF side of the assembler (decision 0182, stage 3): the emitter's
+// linux/arm64 assembly (`.section` with flags, `.type`, `.L` labels,
+// `:lo12:`, numeric labels, the DW.ref.xo_personality comdat) into an
+// ELF64 relocatable object, as `cc -c` (LLVM's ELFObjectWriter) writes
+// it: RELA relocations against symbols or section symbols, mapping
+// symbols ($x, $d), an .eh_frame for every function, one .strtab for
+// section and symbol names.
+
+/// Section types and flags (elf.h).
+const SHT_PROGBITS = 1
+const SHT_SYMTAB = 2
+const SHT_STRTAB = 3
+const SHT_RELA = 4
+const SHT_NOTE = 7
+const SHT_NOBITS = 8
+const SHT_GROUP = 17
+const SHF_WRITE = 0x1
+const SHF_ALLOC = 0x2
+const SHF_EXECINSTR = 0x4
+const SHF_MERGE = 0x10
+const SHF_STRINGS = 0x20
+const SHF_INFO_LINK = 0x40
+const SHF_GROUP = 0x200
+const SHF_TLS = 0x400
+const GRP_COMDAT = 1
+
+/// Symbol types, bindings, visibility.
+const STT_NOTYPE = 0
+const STT_OBJECT = 1
+const STT_FUNC = 2
+const STT_SECTION = 3
+const STT_TLS = 6
+const STB_LOCAL = 0
+const STB_GLOBAL = 1
+const STB_WEAK = 2
+const STV_HIDDEN = 2
+
+/// The AArch64 relocations (ELF for the Arm 64-bit Architecture).
+const R_AARCH64_ABS64 = 257
+const R_AARCH64_ABS32 = 258
+const R_AARCH64_PREL32 = 261
+const R_AARCH64_ADR_PREL_PG_HI21 = 275
+const R_AARCH64_ADD_ABS_LO12_NC = 277
+const R_AARCH64_LDST8_ABS_LO12_NC = 278
+const R_AARCH64_JUMP26 = 282
+const R_AARCH64_CALL26 = 283
+const R_AARCH64_LDST16_ABS_LO12_NC = 284
+const R_AARCH64_LDST32_ABS_LO12_NC = 285
+const R_AARCH64_LDST64_ABS_LO12_NC = 286
+const R_AARCH64_LDST128_ABS_LO12_NC = 299
+const R_AARCH64_ADR_GOT_PAGE = 311
+const R_AARCH64_LD64_GOT_LO12_NC = 312
+const R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 = 541
+const R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC = 542
+const R_AARCH64_TLSLE_ADD_TPREL_HI12 = 549
+const R_AARCH64_TLSLE_ADD_TPREL_LO12_NC = 551
+const R_AARCH64_TLSDESC_ADR_PAGE21 = 562
+const R_AARCH64_TLSDESC_LD64_LO12 = 563
+const R_AARCH64_TLSDESC_ADD_LO12 = 564
+const R_AARCH64_TLSDESC_CALL = 569
+
+/// assemble_elf: the ELF64 relocatable object of src (the emitter's
+/// linux/arm64 assembly), or the first error as "line N: why".
+pub fn assemble_elf(src: Bytes) -> Result[Bytes, Str] {
+  var a = Asm{elf: true}
+  a.parse(src)
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.finish()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  Ok(a.write_elf())
+}
+
+/// Switches to the ELF section name, made with type, flags, entry size,
+/// and group signature (a symbol, -1 for none) when new. LLVM registers
+/// the group signature, then the section symbol.
+fn (var a: Asm) elf_section(name: Str, typ: Int, flags: Int, entsize: Int, group: Int) {
+  for (i, s) in a.sects.indexed() {
+    if s.name == name {
+      a.cur = i
+      return
+    }
+  }
+  if group >= 0 {
+    a.register(group)
+  }
+  let code = (flags & SHF_EXECINSTR) != 0
+  a.sects.push(Sect{seg: "", name: name, flags: 0, code: code, etype: typ, eflags: flags, entsize: entsize, group: group})
+  a.cur = a.sects.len() - 1
+  // the section symbol: in the symbol table only when a relocation names
+  // it
+  let t = a.syms.len()
+  a.syms.push(Sym{name: "".bytes(), sect: a.cur, kind: STT_SECTION, secsym: true})
+  a.register(t)
+  a.sects[a.cur].ltmp = t
+  if !code {
+    a.sects[a.cur].items.push(Item.Label(t))
+  }
+}
+
+/// The ELF directives; false for the ones the Mach-O path handles too.
+fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
+  match d {
+    ".section" => {
+      a.elf_section_directive(rest)
+      true
+    }
+    ".text" => {
+      a.text()
+      true
+    }
+    ".globl" | ".global" | ".weak" | ".hidden" => {
+      let i = a.sym(rest)
+      if d == ".weak" {
+        a.syms[i].weak = true
+      } else if d == ".hidden" {
+        a.syms[i].hidden = true
+      } else {
+        a.syms[i].global = true
+      }
+      a.register(i)
+      true
+    }
+    ".type" => {
+      let ops = split_operands(rest)
+      if ops.len() != 2 {
+        a.fail(".type takes a symbol and a type")
+        return true
+      }
+      let i = a.sym(ops[0])
+      let t = bstr(ops[1])
+      if t == "%function" || t == "@function" {
+        a.syms[i].kind = STT_FUNC
+      } else if t == "%object" || t == "@object" {
+        a.syms[i].kind = STT_OBJECT
+      } else {
+        a.fail("symbol type ${t}")
+        return true
+      }
+      a.register(i)
+      true
+    }
+    ".size" => {
+      let ops = split_operands(rest)
+      if ops.len() != 2 {
+        a.fail(".size takes a symbol and a size")
+        return true
+      }
+      let i = a.sym(ops[0])
+      match parse_int(ops[1]) {
+        Some(n) => a.syms[i].size = n
+        None => a.fail("bad .size ${bstr(ops[1])}")
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+/// `.section NAME[,"FLAGS"[,@TYPE[,ENTSIZE][,GROUP,comdat]]]`, with
+/// LLVM's default flags by name when none are given.
+fn (var a: Asm) elf_section_directive(rest: Bytes) {
+  let parts = split_operands(rest)
+  if parts.is_empty() {
+    a.fail(".section needs a name")
+    return
+  }
+  let name = bstr(parts[0])
+  var flags = 0
+  var typ = SHT_PROGBITS
+  if name == ".rodata" || name.starts_with(".rodata.") {
+    flags = SHF_ALLOC
+  } else if name == ".text" || name.starts_with(".text.") {
+    flags = SHF_ALLOC + SHF_EXECINSTR
+  } else if name == ".data" || name.starts_with(".data.") || name == ".bss" || name.starts_with(".bss.") {
+    flags = SHF_ALLOC + SHF_WRITE
+  } else if name == ".tdata" || name.starts_with(".tdata.") || name == ".tbss" || name.starts_with(".tbss.") {
+    flags = SHF_ALLOC + SHF_WRITE + SHF_TLS
+  }
+  if name == ".bss" || name.starts_with(".bss.") || name == ".tbss" || name.starts_with(".tbss.") {
+    typ = SHT_NOBITS
+  } else if name.starts_with(".note") {
+    typ = SHT_NOTE
+  }
+  var entsize = 0
+  var group = -1
+  if parts.len() >= 2 {
+    match unquote(parts[1]) {
+      Some(fl) => {
+        flags = 0
+        for c in fl {
+          match c {
+            'a' => flags = flags | SHF_ALLOC
+            'w' => flags = flags | SHF_WRITE
+            'x' => flags = flags | SHF_EXECINSTR
+            'M' => flags = flags | SHF_MERGE
+            'S' => flags = flags | SHF_STRINGS
+            'G' => flags = flags | SHF_GROUP
+            'T' => flags = flags | SHF_TLS
+            _ => {
+              a.fail("section flags ${bstr(parts[1])}")
+              return
+            }
+          }
+        }
+      }
+      None => {
+        a.fail("bad section flags ${bstr(parts[1])}")
+        return
+      }
+    }
+  }
+  var k = 2
+  if parts.len() >= 3 {
+    let t = bstr(parts[2])
+    typ = match t {
+      "@progbits" | "%progbits" => SHT_PROGBITS
+      "@nobits" | "%nobits" => SHT_NOBITS
+      "@note" | "%note" => SHT_NOTE
+      _ => {
+        a.fail("section type ${t}")
+        return
+      }
+    }
+    k = 3
+  }
+  if (flags & SHF_MERGE) != 0 {
+    if k >= parts.len() {
+      a.fail("a mergeable section needs an entry size")
+      return
+    }
+    entsize = parse_int(parts[k]) ?? 0
+    k += 1
+  }
+  if (flags & SHF_GROUP) != 0 {
+    if k >= parts.len() {
+      a.fail("a group section needs a signature")
+      return
+    }
+    group = a.sym(parts[k])
+    k += 1
+    if k < parts.len() && bstr(parts[k]) != "comdat" {
+      a.fail("group type ${bstr(parts[k])}")
+      return
+    }
+  }
+  a.elf_section(name, typ, flags, entsize, group)
+}
+
+/// A mapping symbol ($x before instructions, $d before data) when the
+/// section's state changes.
+fn (var a: Asm) map_code() {
+  if a.sects[a.cur].mapstate != 1 {
+    a.sects[a.cur].mapstate = 1
+    a.map_sym("$x")
+  }
+}
+
+fn (var a: Asm) map_data() {
+  if a.sects[a.cur].mapstate != 2 {
+    a.sects[a.cur].mapstate = 2
+    a.map_sym("$d")
+  }
+}
+
+fn (var a: Asm) map_sym(name: Str) {
+  let i = a.syms.len()
+  a.syms.push(Sym{name: name.bytes(), sect: a.cur, mapsym: true})
+  a.register(i)
+  if a.sects[a.cur].code {
+    a.syms[i].off = a.sects[a.cur].words.len() * 4
+  } else {
+    a.sects[a.cur].items.push(Item.Label(i))
+  }
+}
+
+/// A RELA relocation at off of section si to sym + addend: undefined,
+/// global, and weak symbols are named, a local one becomes its section's
+/// symbol plus its offset (LLVM's shouldRelocateWithSymbol, but for a
+/// mergeable section with a nonzero addend).
+fn (var a: Asm) elf_reloc(si: Int, off: Int, typ: Int, sym: Int, addend: Int) {
+  let s = a.syms[sym]
+  var target = sym
+  var add = addend
+  if s.sect >= 0 && !s.global && !s.weak && !s.secsym {
+    let merge = (a.sects[s.sect].eflags & SHF_MERGE) != 0
+    if !(merge && addend != 0) {
+      target = a.sects[s.sect].ltmp
+      add = addend + s.off
+    }
+  }
+  a.register(target)
+  a.syms[target].used = true
+  a.sects[si].relocs.push(Reloc{addr: off, typ: typ, pcrel: false, len: 0, sym: target, addend: add})
+}
+
+/// The text fixups: branches to labels of their own section resolved
+/// (but to weak symbols), the rest relocated.
+fn (var a: Asm) elf_apply_fixes() {
+  for f in a.fixes {
+    let s = a.syms[f.sym]
+    let pc = f.at * 4
+    var w = a.sects[f.sect].words[f.at]
+    if f.kind == FX_DIFF32 {
+      match a.rel_value(f.sym, f.sym2, 0) {
+        Some(v) => w = v & 0xffffffff
+        None => {
+          a.err = "line ${f.line}: a .long of symbols in different sections"
+          return
+        }
+      }
+      a.sects[f.sect].words[f.at] = w
+      continue
+    }
+    if f.kind == FX_PAGE21 {
+      a.elf_reloc(f.sect, pc, R_AARCH64_ADR_PREL_PG_HI21, f.sym, 0)
+      continue
+    }
+    if f.kind == FX_PAGEOFF12 {
+      a.elf_reloc(f.sect, pc, R_AARCH64_ADD_ABS_LO12_NC, f.sym, 0)
+      continue
+    }
+    let local = s.sect == f.sect && !s.weak
+    if !local {
+      if f.kind == FX_BL26 || f.kind == FX_B26 {
+        a.elf_reloc(f.sect, pc, if f.kind == FX_BL26 { R_AARCH64_CALL26 } else { R_AARCH64_JUMP26 }, f.sym, 0)
+        continue
+      }
+      a.err = "line ${f.line}: ${bstr(s.name)} is not defined in this section"
+      return
+    }
+    let d = s.off - pc
+    if f.kind == FX_B26 || f.kind == FX_BL26 {
+      if d % 4 != 0 || d < -134217728 || d >= 134217728 {
+        a.err = "line ${f.line}: branch out of range"
+        return
+      }
+      w = w | ((d / 4) & 0x3ffffff)
+    } else if f.kind == FX_COND19 {
+      if d % 4 != 0 || d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: conditional branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x7ffff) * 32)
+    } else if f.kind == FX_TB14 {
+      if d % 4 != 0 || d < -32768 || d >= 32768 {
+        a.err = "line ${f.line}: test and branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x3fff) * 32)
+    } else if f.kind == FX_ADR21 {
+      if d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: adr out of range"
+        return
+      }
+      let imm = d & 0x1fffff
+      w = w | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32)
+    }
+    a.sects[f.sect].words[f.at] = w
+  }
+}
+
+/// The .eh_frame of every function, as LLVM's MCDwarf writes it for ELF:
+/// frames stably sorted by CIE key, a CIE whenever the key changes
+/// (augmentation "zR", or "zPLR" with the personality pointer and the
+/// LSDA pc relative 4 byte values), data alignment -4, FDE pointers pc
+/// relative 4 bytes (R_AARCH64_PREL32), entries padded to 4 bytes and the
+/// last to 8.
+fn (var a: Asm) elf_eh_frame() {
+  if a.frames.is_empty() {
+    return
+  }
+  let sorted = a.frames.sort_by(fn(f: Frame) -> Int { cie_key(f) })
+  a.elf_section(".eh_frame", SHT_PROGBITS, SHF_ALLOC, 0, -1)
+  let eh = a.cur
+  a.sects[eh].align = 3
+  a.sects[eh].raw = true
+  a.map_data()
+  a.eh_sect = eh
+  var o = new_out(64 * sorted.len())
+  var cie = -1
+  var last = -1
+  for (fi, f) in sorted.indexed() {
+    let key = cie_key(f)
+    if cie < 0 || key != last {
+      last = key
+      cie = o.n
+      a.elf_cie(o, eh, f)
+    }
+    let start = o.n
+    var body = new_out(64)
+    // CIE pointer: from this field back to the CIE
+    body.u32(start + 4 - cie)
+    // pc begin: the function's start, pc relative
+    a.elf_reloc_sect(eh, start + 8, R_AARCH64_PREL32, f.sect, f.start)
+    body.u32(0)
+    body.u32(f.end - f.start)
+    if f.lsda >= 0 {
+      body.uleb(4)
+      a.elf_reloc(eh, start + 4 + body.n, R_AARCH64_PREL32, f.lsda, 0)
+      body.u32(0)
+    } else {
+      body.uleb(0)
+    }
+    cfa_insts(body, f, -4)
+    let al = if fi == sorted.len() - 1 { 8 } else { 4 }
+    while (start + 4 + body.n) % al != 0 {
+      body.u8(0)
+    }
+    o.u32(body.n)
+    o.bytes(body.done())
+  }
+  a.sects[eh].bytes = o.done()
+  a.sects[eh].size = a.sects[eh].bytes.len()
+}
+
+/// LLVM's CIE key as one number: no personality first, then by the
+/// personality (its symbol number), its encoding, and the LSDA's.
+fn cie_key(f: Frame) -> Int {
+  let lsda = if f.lsda >= 0 { f.lsda_enc } else { 0 }
+  if f.pers < 0 {
+    return lsda
+  }
+  65536 + f.pers * 65536 + f.pers_enc * 256 + lsda
+}
+
+/// A relocation to the section symbol of section sect plus addend.
+fn (var a: Asm) elf_reloc_sect(si: Int, off: Int, typ: Int, sect: Int, addend: Int) {
+  let t = a.sects[sect].ltmp
+  a.register(t)
+  a.syms[t].used = true
+  a.sects[si].relocs.push(Reloc{addr: off, typ: typ, pcrel: false, len: 0, sym: t, addend: addend})
+}
+
+/// A CIE for f's personality and LSDA.
+fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
+  let start = o.n
+  var body = new_out(32)
+  body.u32(0)
+  body.u8(1)
+  var aug = "z"
+  if f.pers >= 0 {
+    aug = aug + "P"
+  }
+  if f.lsda >= 0 {
+    aug = aug + "L"
+  }
+  aug = aug + "R"
+  body.bytes(aug.bytes())
+  body.u8(0)
+  // code alignment 1, data alignment -4, return address x30
+  body.uleb(1)
+  body.sleb(-4)
+  body.uleb(30)
+  var alen = 1
+  if f.pers >= 0 {
+    alen += 5
+  }
+  if f.lsda >= 0 {
+    alen += 1
+  }
+  body.uleb(alen)
+  if f.pers >= 0 {
+    body.u8(f.pers_enc)
+    a.elf_reloc(eh, start + 4 + body.n, R_AARCH64_PREL32, f.pers, 0)
+    body.u32(0)
+  }
+  if f.lsda >= 0 {
+    body.u8(f.lsda_enc)
+  }
+  // the FDE pointers: pc relative signed 4 bytes
+  body.u8(0x1b)
+  // DW_CFA_def_cfa sp, 0
+  body.u8(0x0c)
+  body.u8(31)
+  body.u8(0)
+  while (start + 4 + body.n) % 4 != 0 {
+    body.u8(0)
+  }
+  o.u32(body.n)
+  o.bytes(body.done())
+}
+
+/// The names of a string table as LLVM's StringTableBuilder lays them out:
+/// sorted by their reversed bytes, last first, a name that ends the
+/// previous one sharing its bytes; the table and each name's offset.
+fn strtab_build(names: List[Bytes]) -> (Bytes, Map[Bytes, Int]) {
+  var seen: Map[Bytes, Int] = {}
+  var keyed: List[(Str, Bytes)] = []
+  for n in names {
+    if !n.is_empty() && !seen.contains(n) {
+      seen.put(n, 0)
+      keyed.push((reversed(n), n))
+    }
+  }
+  let sorted = keyed.sort_by(fn(p: (Str, Bytes)) -> Str { p.0 }).reverse()
+  var tab = new_out(16 * sorted.len())
+  tab.u8(0)
+  var prev = ""
+  for (rk, n) in sorted {
+    if !prev.is_empty() && prev.starts_with(rk) {
+      seen.put(n, tab.n - rk.len() - 1)
+      continue
+    }
+    seen.put(n, tab.n)
+    tab.bytes(n)
+    tab.u8(0)
+    prev = rk
+  }
+  (tab.done(), seen)
+}
+
+/// An output section header of the object.
+struct EShdr {
+  name: Str
+  typ: Int
+  flags: Int = 0
+  off: Int = 0
+  size: Int = 0
+  link: Int = 0
+  info: Int = 0
+  align: Int = 1
+  entsize: Int = 0
+  /// the Asm section (-1: strtab, symtab, rela, group)
+  sect: Int = -1
+}
+
+fn (var a: Asm) write_elf() -> Bytes {
+  // the section header table: null, .strtab, then each section after
+  // its group (when new) and before its relocations, then .symtab
+  var hdrs: List[EShdr] = [EShdr{name: "", typ: 0, align: 0}, EShdr{name: ".strtab", typ: SHT_STRTAB}]
+  var ordinal: List[Int] = []
+  var rela_of: List[Int] = []
+  var group_of: Map[Int, Int] = {}
+  // (header index, signature symbol, members)
+  var groups: List[(Int, Int, List[Int])] = []
+  for (i, s) in a.sects.indexed() {
+    var gi = -1
+    if s.group >= 0 {
+      match group_of.get(s.group) {
+        Some(g) => gi = g
+        None => {
+          gi = groups.len()
+          group_of.put(s.group, gi)
+          groups.push((hdrs.len(), s.group, []))
+          hdrs.push(EShdr{name: ".group", typ: SHT_GROUP, align: 4, entsize: 4})
+        }
+      }
+    }
+    ordinal.push(hdrs.len())
+    hdrs.push(EShdr{name: s.name, typ: s.etype, flags: s.eflags, size: s.size, align: pow2(s.align), entsize: s.entsize, sect: i})
+    var members: List[Int] = []
+    if gi >= 0 {
+      members.push(ordinal[i])
+    }
+    if s.relocs.is_empty() {
+      rela_of.push(-1)
+    } else {
+      rela_of.push(hdrs.len())
+      if gi >= 0 {
+        members.push(hdrs.len())
+      }
+      hdrs.push(EShdr{name: ".rela${s.name}", typ: SHT_RELA, flags: if s.group >= 0 { SHF_GROUP } else { SHF_INFO_LINK }, size: 24 * s.relocs.len(), info: ordinal[i], align: 8, entsize: 24})
+    }
+    if gi >= 0 {
+      let (h, sig, ms) = groups[gi]
+      groups[gi] = (h, sig, ms + members)
+    }
+  }
+  let symtab_idx = hdrs.len()
+  hdrs.push(EShdr{name: ".symtab", typ: SHT_SYMTAB, link: 1, align: 8, entsize: 24})
+
+  // the symbol table: locals in registration order, then the globals,
+  // weak, and undefined symbols in registration order
+  var locals: List[Int] = []
+  var exts: List[Int] = []
+  for i in a.reg_order {
+    let s = a.syms[i]
+    let ext = s.global || s.weak
+    if s.sect < 0 {
+      if ext || s.used {
+        exts.push(i)
+      }
+    } else if ext {
+      exts.push(i)
+    } else if s.secsym {
+      if s.used {
+        locals.push(i)
+      }
+    } else if !s.temp || s.used {
+      locals.push(i)
+    }
+  }
+  let order = locals + exts
+  for (k, i) in order.indexed() {
+    a.syms[i].index = k + 1
+  }
+  var names: List[Bytes] = []
+  for i in order {
+    if !a.syms[i].secsym {
+      names.push(a.syms[i].name)
+    }
+  }
+  for h in hdrs {
+    names.push(h.name.bytes())
+  }
+  let (strs, stroff) = strtab_build(names)
+
+  // the contents: sections, groups, the symbols, relocations, names, and
+  // the section headers
+  var o = new_out(64 + 2 * strs.len())
+  o.zeros(64)
+  for (i, s) in a.sects.indexed() {
+    o.pad(pow2(s.align))
+    let h = ordinal[i]
+    hdrs[h].off = o.n
+    if s.etype != SHT_NOBITS {
+      if s.code {
+        for w in s.words {
+          o.u32(w)
+        }
+      } else {
+        o.bytes(s.bytes)
+      }
+    }
+  }
+  for (h, _, ms) in groups {
+    o.pad(4)
+    hdrs[h].off = o.n
+    o.u32(GRP_COMDAT)
+    for m in ms {
+      o.u32(m)
+    }
+    hdrs[h].size = 4 + 4 * ms.len()
+    hdrs[h].link = symtab_idx
+  }
+  o.pad(8)
+  hdrs[symtab_idx].off = o.n
+  o.zeros(24)
+  for i in order {
+    let s = a.syms[i]
+    o.u32(if s.secsym { 0 } else { stroff.get(s.name) ?? 0 })
+    let bind = if s.weak { STB_WEAK } else if s.global || s.sect < 0 { STB_GLOBAL } else { STB_LOCAL }
+    o.u8(bind * 16 + s.kind)
+    o.u8(if s.hidden { STV_HIDDEN } else { 0 })
+    o.u16(if s.sect < 0 { 0 } else { ordinal[s.sect] })
+    o.u64(if s.secsym { 0 } else { s.off })
+    o.u64(s.size)
+  }
+  hdrs[symtab_idx].size = 24 * (order.len() + 1)
+  hdrs[symtab_idx].info = locals.len() + 1
+  for (h, sig, _) in groups {
+    // the group's signature symbol
+    hdrs[h].info = a.syms[sig].index
+  }
+  for (i, s) in a.sects.indexed() {
+    if rela_of[i] < 0 {
+      continue
+    }
+    o.pad(8)
+    let h = rela_of[i]
+    hdrs[h].off = o.n
+    hdrs[h].link = symtab_idx
+    for r in s.relocs {
+      o.u64(r.addr)
+      o.u32(r.typ)
+      o.u32(a.syms[r.sym].index)
+      o.u64(r.addend)
+    }
+  }
+  hdrs[1].off = o.n
+  hdrs[1].size = strs.len()
+  o.bytes(strs)
+  o.pad(8)
+  let shoff = o.n
+  for h in hdrs {
+    o.u32(if h.name.is_empty() { 0 } else { stroff.get(h.name.bytes()) ?? 0 })
+    o.u32(h.typ)
+    o.u64(h.flags)
+    o.u64(0)
+    o.u64(h.off)
+    o.u64(h.size)
+    o.u32(h.link)
+    o.u32(h.info)
+    o.u64(h.align)
+    o.u64(h.entsize)
+  }
+  let body = o.done()
+  // the ELF header
+  var hd = new_out(64)
+  hd.u8(0x7f)
+  hd.bytes("ELF".bytes())
+  // ELFCLASS64, little endian, version 1, System V ABI
+  hd.u8(2)
+  hd.u8(1)
+  hd.u8(1)
+  hd.zeros(9)
+  // ET_REL, EM_AARCH64
+  hd.u16(1)
+  hd.u16(183)
+  hd.u32(1)
+  hd.u64(0)
+  hd.u64(0)
+  hd.u64(shoff)
+  hd.u32(0)
+  hd.u16(64)
+  hd.u16(0)
+  hd.u16(0)
+  hd.u16(64)
+  hd.u16(hdrs.len())
+  hd.u16(1)
+  hd.bytes(body[64..])
+  hd.done()
+}

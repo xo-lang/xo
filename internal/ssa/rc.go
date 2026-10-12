@@ -67,6 +67,7 @@ const (
 	rkOwned    rootKind = iota // owns its leaves from its definition
 	rkBorrowed                 // a borrowed parameter or a constant: always alive, never released
 	rkProj                     // a projection out of a heap container: alive while the container is
+	rkBProj                    // a borrowed projection (decision 0186): never counted, its uses keep its owner alive
 )
 
 // use is one leaf an instruction uses, and how.
@@ -129,6 +130,10 @@ type rcInfo struct {
 	m     *Module
 	paths map[*Type][]string
 	funcs map[string]*Func
+	// bproj maps each borrowed projection of the function being worked
+	// on to its owner: the tracked leaf whose liveness keeps it alive
+	// (decision 0186)
+	bproj map[*Value]leaf
 }
 
 func newRCInfo(m *Module) *rcInfo {
@@ -203,6 +208,9 @@ func paramIndex(v *Value) int {
 }
 
 func (r *rcInfo) kind(v *Value) rootKind {
+	if _, ok := r.bproj[v]; ok {
+		return rkBProj
+	}
 	switch v.Op {
 	case OpParam:
 		f := v.Block.Func
@@ -246,7 +254,10 @@ func (r *rcInfo) parent(v *Value) leaf {
 	return r.leaves(v.Args[0])[0]
 }
 
-func (r *rcInfo) tracked(l leaf) bool { return r.kind(l.root) != rkBorrowed }
+func (r *rcInfo) tracked(l leaf) bool {
+	k := r.kind(l.root)
+	return k != rkBorrowed && k != rkBProj
+}
 
 // modes returns the operand modes of v (not of its edge arguments).
 func (r *rcInfo) modes(v *Value) []mode {
@@ -310,17 +321,38 @@ func (r *rcInfo) uses(v *Value) []use {
 			// last use (or moved out by an alias)
 			_, p := base(a)
 			pre := p + "." + strconv.Itoa(v.Aux.(int))
+			n := len(out)
 			for _, l := range ls {
 				if l.path == pre || strings.HasPrefix(l.path, pre+".") {
 					continue
 				}
 				out = append(out, use{l, m})
 			}
+			if len(out) > n {
+				out = r.ownerUse(out, a)
+			}
 			continue
 		}
 		for _, l := range ls {
 			out = append(out, use{l, m})
 		}
+		if len(ls) > 0 {
+			out = r.ownerUse(out, a)
+		}
+	}
+	return out
+}
+
+// ownerUse appends a borrowing use of the owner of a when a is (a field
+// of) a borrowed projection: the owner must be alive wherever the
+// projection is used (decision 0186).
+func (r *rcInfo) ownerUse(out []use, a *Value) []use {
+	if len(r.bproj) == 0 {
+		return out
+	}
+	root, _ := base(a)
+	if o, ok := r.bproj[root]; ok {
+		out = append(out, use{o, mBorrow})
 	}
 	return out
 }
@@ -526,6 +558,7 @@ func (m *Module) InsertRC() {
 	r.inferBorrows()
 	for _, f := range m.Funcs {
 		c := &rcFunc{r: r, f: f, pre: map[*Block][]*Value{}}
+		r.borrowProjections(f)
 		c.liveness()
 		c.insert()
 		c.cancel()
@@ -536,6 +569,7 @@ func (m *Module) InsertRC() {
 		}
 		f.renumber()
 	}
+	r.bproj = nil
 	m.RC = true
 }
 
@@ -899,7 +933,7 @@ func (r *rcInfo) anchors(v *Value) map[*Value]bool {
 	out := map[*Value]bool{}
 	for {
 		out[v] = true
-		if r.kind(v) != rkProj {
+		if k := r.kind(v); k != rkProj && k != rkBProj {
 			return out
 		}
 		v = r.parent(v).root

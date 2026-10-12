@@ -1,19 +1,34 @@
-// Inlining of small leaf functions, SSA to SSA, after reference counting
-// (internal/arm64 inline.go). The callee body already carries its own
-// retains and releases for its ownership convention, so a faithful copy
-// with the parameters replaced by the call's arguments keeps every count
-// balanced; the module is verified again after inlining.
+// Inlining of small functions, SSA to SSA, after reference counting
+// (internal/arm64 inline.go, decisions 0049, 0184). The callee body
+// already carries its own retains and releases for its ownership
+// convention, so a faithful copy with the parameters replaced by the
+// call's arguments keeps every count balanced; the module is verified
+// again after inlining.
 //
 // A call `v = call f, args` in block B becomes:
 //
 //	B:  ...instructions before v; jump f.entry'
 //	f's blocks, copied; `ret xs` becomes `jump C(xs)`
 //	C(results):  the rest of B (v is C's parameter, or a tuple of them)
+//
+// Cost model (decision 0184): a function's cost is its instruction and
+// block count with every call of an inlinable Xo function counted as that
+// function's cost and every other call as one instruction. A function is
+// inlinable when both stay within the limits, it is not main, and it has
+// no landing pads of its own. The costs are found by a depth first walk
+// of the call graph (functions in module order, callees in instruction
+// order); a function that calls one still being walked (a cycle, or
+// itself) is not inlinable, so copies never nest without end.
 
 use github.com/xo-lang/xo/selfhost/ssa
 
 const INLINE_MAX_INSTRS = 40
 const INLINE_MAX_BLOCKS = 12
+/// A larger function with at most this many call sites, whose copies
+/// stay within the budget (inline.go inlineFewSites).
+const INLINE_FEW_SITES = 2
+const INLINE_FEW_BUDGET = 500
+const INLINE_FEW_BLOCKS = 80
 
 /// The last function of each name (Go's byName).
 fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
@@ -24,38 +39,105 @@ fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
   out
 }
 
-/// Whether f is small and calls no Xo function.
-fn inlinable(f: ssa.Func, by_name: Map[Str, Int]) -> Bool {
-  if f.name == "main" || f.blocks.len() > INLINE_MAX_BLOCKS {
-    return false
-  }
-  var n = 0
+/// The expanded size of a function, or bad when it is not inlinable
+/// (inline.go inlineCost).
+struct InlineCost {
+  instrs: Int
+  blocks: Int
+  bad: Bool
+}
+
+/// Walks function fi and its callees (inline.go inlinableSet's walk):
+/// state is 1 while a function is walked, 2 once done.
+fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
+  let f = m.funcs[fi]
+  state[f.name] = 1
+  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main"}
   for bl in f.blocks {
     for v in bl.instrs {
-      n += 1
       let x = f.values[v]
-      if x.op == ssa.Op.Call && by_name.contains(aux_str(x.aux)) {
-        return false
-      }
       if x.pad >= 0 {
         // it has landing pads of its own (decision 0085)
-        return false
+        c.bad = true
+      }
+      var ci = -1
+      if x.op == ssa.Op.Call {
+        ci = by_name.get(aux_str(x.aux)) ?? -1
+      }
+      if ci < 0 {
+        c.instrs += 1
+        continue
+      }
+      let cname = m.funcs[ci].name
+      var k = InlineCost{instrs: 0, blocks: 0, bad: false}
+      let st = state.get(cname) ?? 0
+      if st == 1 {
+        c.bad = true // a cycle through f
+        k.bad = true
+      } else if st == 2 {
+        k = costs.get(cname) ?? k
+      } else {
+        k = inline_walk(m, by_name, sites, ci, state, costs)
+      }
+      if k.bad {
+        c.instrs += 1
+      } else {
+        c.instrs += k.instrs
+        c.blocks += k.blocks + 1
       }
     }
   }
-  n <= INLINE_MAX_INSTRS
+  if c.instrs > INLINE_MAX_INSTRS || c.blocks > INLINE_MAX_BLOCKS {
+    let n = sites.get(f.name) ?? 0
+    if n > INLINE_FEW_SITES || n * c.instrs > INLINE_FEW_BUDGET || c.blocks > INLINE_FEW_BLOCKS {
+      c.bad = true
+    }
+  }
+  state[f.name] = 2
+  costs[f.name] = c
+  c
 }
 
-/// Inlines the calls of small leaf functions in m and reports whether it
+/// The names of the inlinable functions of m (inline.go inlinableSet).
+fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> Map[Str, Bool] {
+  var state: Map[Str, Int] = {}
+  var costs: Map[Str, InlineCost] = {}
+  // the call sites of each function, not counting its own
+  var sites: Map[Str, Int] = {}
+  for f in m.funcs {
+    for bl in f.blocks {
+      for v in bl.instrs {
+        let x = f.values[v]
+        if x.op == ssa.Op.Call {
+          let name = aux_str(x.aux)
+          if name != f.name {
+            sites[name] = (sites.get(name) ?? 0) + 1
+          }
+        }
+      }
+    }
+  }
+  for fi in 0..m.funcs.len() {
+    if (state.get(m.funcs[fi].name) ?? 0) == 0 {
+      let _c = inline_walk(m, by_name, sites, fi, state, costs)
+    }
+  }
+  var small: Map[Str, Bool] = {}
+  for f in m.funcs {
+    if let Some(c) = costs.get(f.name) {
+      if !c.bad {
+        small[f.name] = true
+      }
+    }
+  }
+  small
+}
+
+/// Inlines the calls of small functions in m and reports whether it
 /// changed anything.
 fn inline_module(var m: ssa.Module) -> Bool {
   let by_name = funcs_by_name(m)
-  var small: Map[Str, Bool] = {}
-  for f in m.funcs {
-    if inlinable(f, by_name) {
-      small[f.name] = true
-    }
-  }
+  let small = inlinable_set(m, by_name)
   var changed = false
   for fi in 0..m.funcs.len() {
     var f = m.funcs[fi]

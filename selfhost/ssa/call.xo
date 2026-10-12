@@ -122,6 +122,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     }
     let impl = b.impl_of(fo)
     if impl >= 0 {
+      // a dependency's log record carries the dependency (decision
+      // 0173): set just before the call, after its arguments (call_as)
+      b.pend_log_from = b.log_from(fo)
       return b.call_as(x, ci, impl)
     }
     if let Some(v) = b.io_call(x, ci) {
@@ -911,6 +914,8 @@ fn same_span(a: Expr, e: Expr?) -> Bool {
 /// Calls the user function or the implementation impl of ci's function
 /// (callAs, declCall).
 fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
+  let log_from = b.pend_log_from
+  b.pend_log_from = ""
   let (span, _, args) = call_parts(x)
   let fo = ci.fn_obj
   var targs: List[Int] = []
@@ -1042,6 +1047,9 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
     }
   }
   let name = b.m.funcs[callee].name
+  if !log_from.is_empty() {
+    b.rt("log_from", -1, [b.const_str(log_from)])
+  }
   // a call of a real-time function from code that is not real-time is a
   // real-time section (core 6.5, decision 0133)
   let section = b.c.objs[impl].realtime && (b.s.fo < 0 || !b.c.objs[b.s.fo].realtime)

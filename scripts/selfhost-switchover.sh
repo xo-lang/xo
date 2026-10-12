@@ -20,7 +20,7 @@ if [ "$XO" = .tools/xo ]; then
 	mkdir -p .tools && go build -o .tools/xo ./cmd/xo
 fi
 echo "== A: the Go compiler, arm64 backend" >> "$L"
-t "$XO" build --backend=arm64 -o "$DIR/A" selfhost/xo
+XO_SELF_DRIVER=0 t "$XO" build --backend=arm64 -o "$DIR/A" selfhost/xo
 echo "== G: the Go emitter's assembly of selfhost/xo (line root selfhost)" >> "$L"
 (cd selfhost && /usr/bin/time -p "../$XO" asmdump xo) > "$DIR/G.s" 2>> "$L"
 echo "== B: A compiles selfhost/xo" >> "$L"

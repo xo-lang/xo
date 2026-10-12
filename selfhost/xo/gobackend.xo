@@ -10,34 +10,30 @@ use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/gen
 use std/crypto
 
-/// Builds dir with the Go backend into out; the build tree goes to tree
-/// ("" for out + ".go.d").
+/// Builds o.dirs with the Go backend (internal/build Build with the Go
+/// backend): the tree is the Go driver's build directory (or --go-tree),
+/// each target of --targets is built with GOOS and GOARCH, through the
+/// binary cache when XO_BIN_CACHE is set.
 ///
-/// tests builds the test binary (selfhost/gen's test mode) and runs it as
-/// `xo test` does for the Go backend: the binary runs the tests itself,
-/// with -seed, -run, -json, -v, -cases from topts; its exit status is
-/// xo1's. Not done: -explore, --real, standard input, and the
-/// regressions_test.xo of shrunk contract failures (XO_REGRESSION_OUT).
-fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, dir: Str, tests: Bool, topts: TestOpts) ! {
-  var c = check.new_checker(os.fs, std_dir)
-  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
-  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
-  match c.check_dirs([dir]) {
-    Ok(_) => {}
-    Err(e) => fail(os, "check: ${e}")
-  }
-  if !c.unsupported.is_empty() {
-    fail(os, "unsupported: ${c.unsupported}")
-  }
-  for d in c.diags {
-    if !d.warning || d.code == "XO0900" {
-      fail(os, "the program does not check (run xo check)")
-    }
-  }
-  let root = abs_line_root(os, wd, dir)
-  var opts = gen.Opts{arenas: true, line_root: root, wd: wd}
+/// build prints `os/arch: path` lines (or the JSON result); run executes
+/// the host binary with the program's arguments (XO_SEED for --seed,
+/// XO_RECORD for --record); test runs the test binary as `xo test` does
+/// for the Go backend: the binary runs the tests itself, with -seed,
+/// -explore, -run, -json, -v, -real, -cases from o; its exit status is
+/// xo1's; shrunk contract fuzz failures become regression tests
+/// (regress.xo).
+fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
+  let tests = o.cmd == "test"
+  let c = check_program(os, o, false)
+  let wd = o.wd
+  let root = abs_line_root(os, wd, o.dirs[0])
+  let release = o.release && !tests
+  var opts = gen.Opts{arenas: !o.no_arenas, line_root: root, wd: wd}
   opts.test_mode = tests
+  opts.holes = o.holes
+  opts.no_mono = o.no_mono
+  opts.release = release
+  opts.no_error_args = release && !o.error_args
   opts.gc = gc_line(os, root)
   let prog = gen.generate(c, opts)
   if !prog.err.is_empty() {
@@ -46,29 +42,35 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
   if !prog.skipped.is_empty() {
     fail(os, "the generator skipped ${prog.skipped[0]}")
   }
-  var out = out0
-  if out.is_empty() {
-    let parts = dir.trim_suffix("/").split("/")
-    out = parts[parts.len() - 1]
-    if out == "." || out.is_empty() {
-      out = base_name(wd)
-    }
-    if tests {
-      // the test binary goes to the cache, as `xo test` builds it
-      let tdir = "${user_cache_dir(os, host_os(os))}/xo/xo1-test"
-      os.fs.create_dir_all(tdir)?
-      out = "${tdir}/${out}.test"
-    }
+  var name = prog_name(wd, o.dirs)
+  if tests {
+    name = "${name}.test"
   }
-  if !out.starts_with("/") {
-    out = "${wd}/${out}"
+  var out = o.out
+  if !out.is_empty() {
+    out = abs_of(wd, out)
   }
-  var tree = tree0
+  var tree = o.go_tree
   if tree.is_empty() {
-    tree = out + ".go.d"
+    var variants: List[Str] = []
+    if release {
+      variants.push("release")
+      if !o.error_args {
+        variants.push("noargs")
+      }
+    }
+    tree = build_dir(os, ctx, wd, o.dirs, if tests { 1 } else { 0 }, !o.no_mono, false, !o.no_arenas, variants)?
+  } else {
+    tree = abs_of(wd, tree)
   }
-  if !tree.starts_with("/") {
-    tree = "${wd}/${tree}"
+  // writeTree: generated packages left from an earlier build go first
+  os.fs.remove_all("${tree}/m")?
+  os.fs.remove_all("${tree}/rt")?
+  os.fs.create_dir_all(tree)?
+  for fi in os.fs.read_dir(tree)? {
+    if !fi.is_dir && fi.name.ends_with(".go") {
+      os.fs.remove("${tree}/${fi.name}")?
+    }
   }
   // the generated files
   var written: List[Str] = []
@@ -82,23 +84,28 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
       written.push("${tree}/${f.path}")
     }
   }
-  write_file(os, "${tree}/xo_buildinfo.go", build_info_file(os, c, root, dir, wd, std_dir))?
-  tz_files(os, prog.tz_names, prog.tz_dynamic, tree, tzdata)?
+  if !tests {
+    write_file(os, "${tree}/xo_buildinfo.go", build_info_file(os, c, root, o.dirs[0], wd, o.std, o))?
+  }
+  tz_files(os, prog.tz_names, prog.tz_dynamic, tree, o.tzdata, o.json && o.cmd == "build")?
   // the runtime
   os.fs.create_dir_all("${tree}/rt")?
-  for fi in os.fs.read_dir("${std_dir}/rt")? {
+  for fi in os.fs.read_dir("${o.std}/rt")? {
     if (fi.name.ends_with(".go") || fi.name.ends_with(".s")) && !fi.name.ends_with("_test.go") {
-      os.fs.write("${tree}/rt/${fi.name}", os.fs.read("${std_dir}/rt/${fi.name}")?)?
+      os.fs.write("${tree}/rt/${fi.name}", os.fs.read("${o.std}/rt/${fi.name}")?)?
     }
   }
   // a program with Go callbacks (an adapter that registers one) builds
   // with the runtime's view of Go timers (needGoTimers)
   var timers = false
-  for f in prog.files {
-    timers = timers || (f.path.starts_with("rt/xo_gobind_") && f.text.contains("NewGoCallback("))
+  if (os.env.get("XO_GOTIMERS") ?? "") != "off" {
+    for f in prog.files {
+      timers = timers || (f.path.starts_with("rt/xo_gobind_") && f.text.contains("NewGoCallback("))
+    }
   }
+  let gocmd = go_cmd(os)
   // gofmt, as internal/gen's file step ends
-  let goroot = match os.proc.run("go", ["env", "GOROOT"]) {
+  let goroot = match os.proc.run(gocmd, ["env", "GOROOT"]) {
     Ok(r) => (r.stdout.to_str() ?? "").trim()
     Err(e) => fail(os, "go env GOROOT: ${e}")
   }
@@ -107,29 +114,77 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
     os.stdio.eprint((fr.stderr.to_str() ?? ""))
     fail(os, "gofmt failed on the generated Go (a code generator bug)")
   }
-  // go build; with Go callbacks first with the runtime's view of Go
-  // timers (goBuildTimers, decision 0073), again without it when this Go
-  // does not link runtime.timeSleepUntil
-  var res = (0, "")
-  if timers {
-    res = go_build(os, tree, prog.tags + ["xo_gotimers"], "-checklinkname=0 ", out)?
-    if res.0 != 0 && linkname_failed(res.1) {
-      res = go_build(os, tree, prog.tags, "", out)?
-      if res.0 == 0 {
-        os.stdio.eprintln("xo build: warning: deadlock detection through Go callbacks is off: this Go toolchain does not link runtime.timeSleepUntil (decision 0073)")
+  let host = "${ctx.goos}/arm64"
+  let targets = parse_targets(os, o.targets, host)
+  if targets.len() > 1 && !out.is_empty() {
+    os.fs.create_dir_all(out)?
+  }
+  var bins: List[(Str, Str)] = []
+  for tg in targets {
+    let bin = bin_path(tree, out, name, tg, targets.len() > 1)
+    os.fs.create_dir_all(dir_name(bin))?
+    // go build; with Go callbacks first with the runtime's view of Go
+    // timers (goBuildTimers, decision 0073), again without it when this
+    // Go does not link runtime.timeSleepUntil
+    var res = (0, "")
+    if timers {
+      res = go_build(os, ctx, gocmd, tree, ["xo_gotimers"] + prog.tags, "-checklinkname=0 ", bin, tg, o.race)?
+      if res.0 != 0 && linkname_failed(res.1) {
+        res = go_build(os, ctx, gocmd, tree, prog.tags, "", bin, tg, o.race)?
+        if res.0 == 0 {
+          os.stdio.eprintln("xo build: warning: deadlock detection through Go callbacks is off: this Go toolchain does not link runtime.timeSleepUntil (decision 0073)")
+          timers = false
+        }
+      }
+    } else {
+      res = go_build(os, ctx, gocmd, tree, prog.tags, "", bin, tg, o.race)?
+    }
+    if res.0 != 0 {
+      os.stdio.eprint(res.1)
+      fail(os, "go build failed (a code generator bug)")
+    }
+    bins.push((tg, bin))
+  }
+  var host_bin = ""
+  for (tg, p) in bins {
+    if tg == host {
+      host_bin = p
+    }
+  }
+  if o.cmd == "build" {
+    if o.json {
+      os.stdio.print(build_json(true, bins, c.diags))
+    } else {
+      for (tg, p) in bins.sort_by(fn(x) { x.0 }) {
+        os.stdio.println("${tg}: ${p}")
       }
     }
-  } else {
-    res = go_build(os, tree, prog.tags, "", out)?
+    return
   }
-  if res.0 != 0 {
-    os.stdio.eprint(res.1)
-    fail(os, "go build failed (a code generator bug)")
+  if o.cmd == "run" {
+    var env: List[Str] = []
+    if o.topts.seed != 0 {
+      env.push("XO_SEED=${o.topts.seed}")
+    }
+    if !o.record.is_empty() {
+      let abs = abs_of(wd, o.record)
+      env.push("XO_RECORD=${abs}")
+      let code = exec_binary(os, host_bin, o.prog_args, env)
+      if os.fs.exists(abs).ok() ?? false {
+        os.stdio.eprintln("xo run: recorded ${o.record} (xo replay ${o.record})")
+      }
+      os.proc.exit(code)
+    }
+    os.proc.exit(exec_binary(os, host_bin, o.prog_args, env))
   }
   if tests {
+    let topts = o.topts
     var targs: List[Str] = []
     if topts.seed != 0 {
       targs = targs + ["-seed", "${topts.seed}"]
+    }
+    if o.explore > 0 {
+      targs = targs + ["-explore", "${o.explore}"]
     }
     if !topts.run.is_empty() {
       targs = targs + ["-run", topts.run]
@@ -140,25 +195,68 @@ fn build_go(os: Os, std_dir: Str, wd: Str, out0: Str, tree0: Str, tzdata: Str, d
     if topts.verbose {
       targs.push("-v")
     }
+    if o.real {
+      targs.push("-real")
+    }
     if topts.cases > 0 {
       targs = targs + ["-cases", "${topts.cases}"]
     }
-    let r = os.proc.run(out, targs)?
-    os.stdio.print(r.stdout.to_str() ?? "")
-    os.stdio.eprint(r.stderr.to_str() ?? "")
-    os.proc.exit(r.code)
+    // shrunk contract fuzz failures become regression tests (core 9.2),
+    // through a file in the test binary's environment
+    var tmp_root = os.env.get("TMPDIR") ?? ""
+    if tmp_root.is_empty() {
+      tmp_root = "/tmp"
+    }
+    let rf = "${tmp_root.trim_suffix("/")}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
+    let made = os.fs.write(rf, b"").is_ok()
+    let code = exec_binary(os, host_bin, targs, if made { ["XO_REGRESSION_OUT=${rf}"] } else { [] })
+    if made {
+      write_regressions(os, rf, o.std)
+      os.fs.remove(rf).ignore_err("a temporary file")
+    }
+    os.proc.exit(code)
   }
 }
 
-/// One `go build` of the tree with tags and the linker flags ld before
-/// -s -w: its exit status and output.
-fn go_build(os: Os, tree: Str, tags: List[Str], ld: Str, out: Str) -> (Int, Str) ! ProcErr {
-  var args = ["GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "go", "-C", tree, "build", "-trimpath"]
+/// goTool: $XO_GO, else go.
+fn go_cmd(os: Os) -> Str {
+  let g = os.env.get("XO_GO") ?? ""
+  if g.is_empty() { "go" } else { g }
+}
+
+/// GoCacheDir: $XO_GOCACHE, else <user cache>/xo/gocache (decision 0176).
+fn go_cache_dir(os: Os, ctx: Ctx) -> Str {
+  let d = os.env.get("XO_GOCACHE") ?? ""
+  if !d.is_empty() {
+    return d
+  }
+  "${ctx.cache}/xo/gocache"
+}
+
+/// One `go build` of the tree for target tg with tags and the linker
+/// flags ld before -s -w (goBuild), through the binary cache: its exit
+/// status and output.
+fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, out: Str, tg: Str, race: Bool) -> (Int, Str) ! ProcErr {
+  var args = ["build", "-trimpath"]
   if !tags.is_empty() {
     args.push("-tags=" + tags.join(","))
   }
-  args = args + ["-gcflags=all=-dwarf=false", "-ldflags=${ld}-s -w", "-o", out, "."]
-  let br = os.proc.run("env", args)?
+  args = args + ["-gcflags=all=-dwarf=false", "-ldflags=${ld}-s -w"]
+  if race {
+    args.push("-race")
+  }
+  let key = go_bin_key(os, ctx, gocmd, tree, args + ["."], tg, race)
+  let (hit, entry) = fetch_bin(os, key, out)
+  if hit {
+    return Ok((0, ""))
+  }
+  let parts = tg.split("/")
+  let cgo = if race { "CGO_ENABLED=1" } else { "CGO_ENABLED=0" }
+  let env = ["GOOS=${parts[0]}", "GOARCH=${parts[1]}", "GOWORK=off", "GOFLAGS=", "GOCACHE=${go_cache_dir(os, ctx)}", cgo]
+  let br = os.proc.run("env", env + [gocmd, "-C", tree] + args + ["-o", out, "."])?
+  if br.code == 0 {
+    store_bin(os, entry, out)
+  }
   Ok((br.code, (br.stdout + br.stderr).to_str() ?? ""))
 }
 
@@ -255,7 +353,7 @@ fn byte_size(s: Str) -> Int {
 /// runtime (internal/build buildInfo, buildInfoFile): the program's
 /// directory, the sha256 of each source relative to the line root, and an
 /// ID over them, the options, and the runtime's files.
-fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_dir: Str) -> Str {
+fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_dir: Str, o: Opts) -> Str {
   var sources: Map[Str, Str] = {}
   for f in c.files {
     let m = f.module
@@ -277,7 +375,18 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
   for p in paths {
     h.write("${p} ${sources.get(p) ?? ""}\n")
   }
-  h.write("holes=false mono=true arenas=true race=false\n")
+  let release = o.release
+  h.write("holes=${o.holes} mono=${!o.no_mono} arenas=${!o.no_arenas} race=${o.race}\n")
+  if !o.tzdata.is_empty() {
+    h.write("tzdata=${o.tzdata}\n")
+  }
+  if release {
+    h.write("release error_args=${o.error_args}\n")
+  }
+  let stamps = o.stamps.sort_by(fn(x) { x.0 })
+  for (n, v) in stamps {
+    h.write("stamp ${n}=${v.quote()}\n")
+  }
   // the runtime's files, as embedded (rt/*.go, rt/*.s), in lexical order
   var rt: List[Str] = []
   match os.fs.read_dir("${std_dir}/rt") {
@@ -295,10 +404,7 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
     h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
   }
   let id = crypto.sha256(h.freeze().bytes()).to_hex().bytes()[0..24].to_str() ?? ""
-  var abs_dir = dir.trim_suffix("/")
-  if !abs_dir.starts_with("/") {
-    abs_dir = "${wd}/${abs_dir}"
-  }
+  let abs_dir = abs_of(wd, dir)
   var j = "{\"id\":${json_str(id)},\"dir\":${json_str(abs_dir)},\"sources\":{"
   for (i, p) in paths.indexed() {
     if i > 0 {
@@ -306,17 +412,46 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
     }
     j = j + "${json_str(p)}:${json_str(sources.get(p) ?? "")}"
   }
-  j = j + "}}"
+  j = j + "}"
+  // the options (Info's omitempty fields, in its order)
+  if o.holes {
+    j = j + ",\"holes\":true"
+  }
+  if o.no_mono {
+    j = j + ",\"no_mono\":true"
+  }
+  if o.no_arenas {
+    j = j + ",\"no_arenas\":true"
+  }
+  if o.race {
+    j = j + ",\"race\":true"
+  }
+  if !o.tzdata.is_empty() {
+    j = j + ",\"tzdata\":${json_str(o.tzdata)}"
+  }
+  if release {
+    j = j + ",\"release\":true"
+    if !o.error_args {
+      j = j + ",\"no_error_args\":true"
+    }
+  }
+  if !stamps.is_empty() {
+    var ss: List[Str] = []
+    for (n, v) in stamps {
+      ss.push("${json_str(n)}:${json_str(v)}")
+    }
+    j = j + ",\"stamps\":{${ss.join(",")}}"
+  }
+  j = j + "}"
   "// Code generated by xo. DO NOT EDIT.\n\npackage main\n\nimport rt \"xoprog/rt\"\n\nfunc init() { rt.SetBuildInfo(${j.quote()}) }\n"
 }
-
 
 /// package main's xo_tzdata.go (internal/build tzFiles): with
 /// --tzdata=embedded (the default) the TZif data of each constant zone
 /// name, or the whole zoneinfo.zip when a name is known only at run time;
 /// with --tzdata=system the host's database; nothing when no zone is
 /// asked for.
-fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str) -> () ! Str {
+fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str, quiet: Bool) -> () ! Str {
   if !(mode is "" | "embedded" | "system") {
     return Err("unknown --tzdata=${mode} (want embedded or system)")
   }
@@ -337,7 +472,7 @@ fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str)
   }
   var path = os.env.get("XO_ZONEINFO") ?? ""
   if path.is_empty() {
-    let goroot = match os.proc.run("go", ["env", "GOROOT"]) {
+    let goroot = match os.proc.run(go_cmd(os), ["env", "GOROOT"]) {
       Ok(r) => (r.stdout.to_str() ?? "").trim()
       Err(e) => return Err("zone data: cannot find GOROOT: ${e}")
     }
@@ -350,6 +485,9 @@ fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str)
   var b = "// Code generated by xo build. DO NOT EDIT.\n\npackage main\n\n"
   if !dynamic.is_empty() {
     for at in dynamic {
+      if quiet {
+        continue
+      }
       os.stdio.eprintln("${at}: note: time.zone with a name known only at run time embeds the whole zone database (${(zip.len() + 512) / 1024} KB); pass a constant name to embed only that zone, or build with --tzdata=system to read the host's database")
     }
     b = b + "import (\n\t_ \"embed\"\n\n\t\"xoprog/rt\"\n)\n\n"
@@ -392,4 +530,3 @@ fn zip_entries(z: Bytes) -> Map[Str, Bytes] {
   }
   out
 }
-
