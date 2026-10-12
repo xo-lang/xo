@@ -17,8 +17,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Debug, encoded as JSON, decoded from SQL, or generated in property
   tests (gotchas/ambiguous-type-generated-function-names.md).
 - The module commands (`get`, `mod tidy|accept-effects|clean|proxy`,
-  `vendor`) are written in Xo too (selfhost/cli/modules, decision 0178
-  stage 4); xo1 runs them.
+  `vendor`, `audit`) are written in Xo too (selfhost/cli/modules,
+  decision 0178 stage 4); xo1 runs them.
+- A native program that asks whether a stream is a terminal
+  (`stdout_is_tty`, `width`) without reading standard input links again
+  (the runtime's terminal functions were left out).
 - `selfhost/macho` also writes ELF: `macho asm --elf` assembles the
   linux/arm64 emitter's assembly into the object `clang -c` writes (byte
   identical on the 159 arm64 goldens and on xo1), and `macho elflink`
