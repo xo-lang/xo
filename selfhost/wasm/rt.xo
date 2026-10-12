@@ -3401,6 +3401,19 @@ fn rt_text(var g: Gen) -> Str {
       i32.wrap_i64
       call $sapp_byte)
 
+    ;; s + the n (0 to 8) low bytes of w, the lowest first, through the
+    ;; scratch memory at 16 (xo_rs_push_word, decision 0193)
+    (func $rs_push_word (param $a i32) (param $an i32) (param $w i64) (param $n i64) (result i32 i32)
+      i32.const 16
+      local.get $w
+      i64.store
+      local.get $a
+      local.get $an
+      i32.const 16
+      local.get $n
+      i32.wrap_i64
+      call $sapp)
+
     (func $rs_with_cap (param $n i64) (result i32 i32)
       local.get $n
       i64.const 16

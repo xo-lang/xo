@@ -1,0 +1,77 @@
+// The number and time text of the native runtime (decision 0193):
+// Int.parse, a Duration's text and Duration.parse, a Time's RFC 3339 text
+// and std/json's Time and Duration, and the Debug quoting of Str and
+// Bytes, over their edge cases. The Go backend's output is the
+// reference; the Xo path (std/native/llrt/text.xo) and the C path
+// (XO_LLRT_C=text) print the same.
+use std/json
+
+fn ints(os: Os) {
+  let cases = ["0", "-0", "+0", "7", "-7", "+42", "007", "", "+", "-", "1a", " 1", "1 ", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "92233720368547758070", "-92233720368547758080", "922337203685477580", "-922337203685477581", "99999999999999999999", "1_000", "0x10", "--1", "+-1", "١٢"]
+  for c in cases {
+    match Int.parse(c) {
+      Some(v) => os.stdio.println("int ${c.debug()} = ${v}")
+      None => os.stdio.println("int ${c.debug()} none")
+    }
+  }
+}
+
+fn durations(os: Os) {
+  let ns = [0, 1, 9, 999, 1000, 1001, 1500, 999999, 1000000, 1000001, 1234567, 999999999, 1000000000, 1000000001, 1500000000, 59999999999, 60000000000, 61000000000, 3599999999999, 3600000000000, 3661000000000, 3661100000000, 3661123456789, 86400000000000, 360000000000000, 123456789012345678, 9223372036854775807, 10000000, 100000000, 10, 100]
+  for n in ns {
+    os.stdio.println("dur ${n} = ${Duration.from_nanos(n)} ${Duration.from_nanos(-n)}")
+  }
+  let min = Duration.from_nanos(-9223372036854775807 - 1)
+  os.stdio.println("dur min = ${min} debug ${min.debug()}")
+  let texts = ["0", "+0", "-0", "1s", "-1s", "+1s", "1.5s", ".5s", "5.s", ".s", "1h2m3.5s", "1h 2m", "  2m  ", "\t3h\n", "1µs", "1μs", "1us", "1ns", "1ms", "1.0000000001s", "0.0000000001s", "2562047h47m16.854775807s", "2562047h47m16.854775808s", "-2562047h47m16.854775808s", "-2562047h47m16.854775809s", "9223372036854775807ns", "9223372036854775808ns", "-9223372036854775808ns", "1.9223372036854775808s", "0.9223372036854775808s", "1x", "1", "", "-", "s", "1h-1m", "3000000h", "2562048h", "1.123456789123456789123s", "1e3s", "\u{a0}1s\u{3000}", "1s\u{a0}", "\u{2000}", "1s\u{85}", "1s\u{fffd}"]
+  for t in texts {
+    match Duration.parse(t) {
+      Ok(d) => os.stdio.println("parse ${t.debug()} = ${d.nanos()}")
+      Err(e) => os.stdio.println("parse ${t.debug()} err ${e}")
+    }
+  }
+}
+
+fn times(os: Os) {
+  let ns = [0, 1, -1, 1000, 999999999, 1000000000, -1000000000, 1700000000123456789, 1700000000120000000, 1700000000100000000, 951782400000000000, 951868800000000000, -9223372036854775807 - 1, 9223372036854775807, 68169600000000000, -2208988800000000000, 4102444800000000001]
+  for n in ns {
+    let t = Time.UNIX_EPOCH + Duration.from_nanos(n)
+    os.stdio.println("time ${n} = ${t} debug ${t.debug()} json ${json.encode_str(t)}")
+  }
+  let texts = ["2026-10-12T13:45:01Z", "2026-10-12T13:45:01.5Z", "2026-10-12T13:45:01.123456789Z", "2026-10-12T13:45:01.1234567891Z", "2026-10-12T13:45:01+02:30", "2026-10-12T13:45:01-07:00", "2024-02-29T00:00:00Z", "2023-02-29T00:00:00Z", "2026-13-01T00:00:00Z", "2026-10-12 13:45:01Z", "2026-10-12T13:45:01", "2026-10-12T24:00:00Z", "2026-10-12T13:45:01.Z", "2026-10-12T13:45:01+0200", "0000-01-01T00:00:00Z", "9999-12-31T23:59:59.999999999Z", "1677-09-21T00:12:43.145224192Z", "2026-1-12T13:45:01Z", "2026-10-12T13:45:01z"]
+  for t in texts {
+    match json.decode_str[Time](json.encode_str(t)) {
+      Ok(v) => os.stdio.println("json time ${t.debug()} = ${v}")
+      Err(e) => os.stdio.println("json time ${t.debug()} err ${e}")
+    }
+  }
+  for t in ["1h2m3.5s", "-1.5us", "x", "9223372036854775808ns"] {
+    match json.decode_str[Duration](json.encode_str(t)) {
+      Ok(v) => os.stdio.println("json dur ${t.debug()} = ${v} ${json.encode_str(v)}")
+      Err(e) => os.stdio.println("json dur ${t.debug()} err ${e}")
+    }
+  }
+}
+
+fn quotes(os: Os) {
+  let strs = ["", "plain", "q\"uote", "back\\slash", "nl\ntab\tcr\r", "nul\u{0}x", "bell\u{7}del\u{7f}esc\u{1b}", "ünïcödé 日本語 𐐀", "repl\u{fffd}x", "\u{fffd}\u{fffd}", "mixed \"é\"\n\u{1}"]
+  for s in strs {
+    os.stdio.println("str ${s.debug()} list ${[s, "a"].debug()}")
+  }
+  let bs = [b"", b"abc", b"\xff", b"a\xc3", b"\xc3\xa9\xe2\x82", b"\xed\xa0\x80", b"\xf4\x90\x80\x80", b"q\"\\\n\x00\x1f\x7f\x80", "é".bytes()]
+  for b in bs {
+    os.stdio.println("bytes ${b.debug()} json ${json.encode_str(b)}")
+  }
+  var long = ""
+  for i in 0..40 {
+    long = long + "é\"${i}\n"
+  }
+  os.stdio.println(long.debug())
+}
+
+fn main(os: Os) {
+  ints(os)
+  durations(os)
+  times(os)
+  quotes(os)
+}

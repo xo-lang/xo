@@ -1,0 +1,70 @@
+"": split","=[""] split""=[] split"--"=[""] split"-"=[""] split"a"=[""] split"日"=[""] split"\n"=[""] split"xyz"=[""]
+  lines=[] trim="" start="" end="" runes=0
+   ","->"" ""->"<>" "--"->"" "-"->"" "a"->"" "日"->"" "\n"->"" "xyz"->""
+"a": split","=["a"] split""=["a"] split"--"=["a"] split"-"=["a"] split"a"=["", ""] split"日"=["a"] split"\n"=["a"] split"xyz"=["a"]
+  lines=["a"] trim="a" start="a" end="a" runes=1
+   ","->"a" ""->"<>a<>" "--"->"a" "-"->"a" "a"->"<>" "日"->"a" "\n"->"a" "xyz"->"a"
+"a,b,c": split","=["a", "b", "c"] split""=["a", ",", "b", ",", "c"] split"--"=["a,b,c"] split"-"=["a,b,c"] split"a"=["", ",b,c"] split"日"=["a,b,c"] split"\n"=["a,b,c"] split"xyz"=["a,b,c"]
+  lines=["a,b,c"] trim="a,b,c" start="a,b,c" end="a,b,c" runes=5
+   ","->"a<>b<>c" ""->"<>a<>,<>b<>,<>c<>" "--"->"a,b,c" "-"->"a,b,c" "a"->"<>,b,c" "日"->"a,b,c" "\n"->"a,b,c" "xyz"->"a,b,c"
+",a,,b,": split","=["", "a", "", "b", ""] split""=[",", "a", ",", ",", "b", ","] split"--"=[",a,,b,"] split"-"=[",a,,b,"] split"a"=[",", ",,b,"] split"日"=[",a,,b,"] split"\n"=[",a,,b,"] split"xyz"=[",a,,b,"]
+  lines=[",a,,b,"] trim=",a,,b," start=",a,,b," end=",a,,b," runes=6
+   ","->"<>a<><>b<>" ""->"<>,<>a<>,<>,<>b<>,<>" "--"->",a,,b," "-"->",a,,b," "a"->",<>,,b," "日"->",a,,b," "\n"->",a,,b," "xyz"->",a,,b,"
+"abc": split","=["abc"] split""=["a", "b", "c"] split"--"=["abc"] split"-"=["abc"] split"a"=["", "bc"] split"日"=["abc"] split"\n"=["abc"] split"xyz"=["abc"]
+  lines=["abc"] trim="abc" start="abc" end="abc" runes=3
+   ","->"abc" ""->"<>a<>b<>c<>" "--"->"abc" "-"->"abc" "a"->"<>bc" "日"->"abc" "\n"->"abc" "xyz"->"abc"
+"ünï,cödé": split","=["ünï", "cödé"] split""=["ü", "n", "ï", ",", "c", "ö", "d", "é"] split"--"=["ünï,cödé"] split"-"=["ünï,cödé"] split"a"=["ünï,cödé"] split"日"=["ünï,cödé"] split"\n"=["ünï,cödé"] split"xyz"=["ünï,cödé"]
+  lines=["ünï,cödé"] trim="ünï,cödé" start="ünï,cödé" end="ünï,cödé" runes=8
+   ","->"ünï<>cödé" ""->"<>ü<>n<>ï<>,<>c<>ö<>d<>é<>" "--"->"ünï,cödé" "-"->"ünï,cödé" "a"->"ünï,cödé" "日"->"ünï,cödé" "\n"->"ünï,cödé" "xyz"->"ünï,cödé"
+"日本,語": split","=["日本", "語"] split""=["日", "本", ",", "語"] split"--"=["日本,語"] split"-"=["日本,語"] split"a"=["日本,語"] split"日"=["", "本,語"] split"\n"=["日本,語"] split"xyz"=["日本,語"]
+  lines=["日本,語"] trim="日本,語" start="日本,語" end="日本,語" runes=4
+   ","->"日本<>語" ""->"<>日<>本<>,<>語<>" "--"->"日本,語" "-"->"日本,語" "a"->"日本,語" "日"->"<>本,語" "\n"->"日本,語" "xyz"->"日本,語"
+"a\u{FFFD}b": split","=["a\u{FFFD}b"] split""=["a", "\u{FFFD}", "b"] split"--"=["a\u{FFFD}b"] split"-"=["a\u{FFFD}b"] split"a"=["", "\u{FFFD}b"] split"日"=["a\u{FFFD}b"] split"\n"=["a\u{FFFD}b"] split"xyz"=["a\u{FFFD}b"]
+  lines=["a\u{FFFD}b"] trim="a\u{FFFD}b" start="a\u{FFFD}b" end="a\u{FFFD}b" runes=3
+   ","->"a\u{FFFD}b" ""->"<>a<>\u{FFFD}<>b<>" "--"->"a\u{FFFD}b" "-"->"a\u{FFFD}b" "a"->"<>\u{FFFD}b" "日"->"a\u{FFFD}b" "\n"->"a\u{FFFD}b" "xyz"->"a\u{FFFD}b"
+"x--y--z": split","=["x--y--z"] split""=["x", "-", "-", "y", "-", "-", "z"] split"--"=["x", "y", "z"] split"-"=["x", "", "y", "", "z"] split"a"=["x--y--z"] split"日"=["x--y--z"] split"\n"=["x--y--z"] split"xyz"=["x--y--z"]
+  lines=["x--y--z"] trim="x--y--z" start="x--y--z" end="x--y--z" runes=7
+   ","->"x--y--z" ""->"<>x<>-<>-<>y<>-<>-<>z<>" "--"->"x<>y<>z" "-"->"x<><>y<><>z" "a"->"x--y--z" "日"->"x--y--z" "\n"->"x--y--z" "xyz"->"x--y--z"
+"----": split","=["----"] split""=["-", "-", "-", "-"] split"--"=["", "", ""] split"-"=["", "", "", "", ""] split"a"=["----"] split"日"=["----"] split"\n"=["----"] split"xyz"=["----"]
+  lines=["----"] trim="----" start="----" end="----" runes=4
+   ","->"----" ""->"<>-<>-<>-<>-<>" "--"->"<><>" "-"->"<><><><>" "a"->"----" "日"->"----" "\n"->"----" "xyz"->"----"
+"a\r\nb\nc\r\n": split","=["a\r\nb\nc\r\n"] split""=["a", "\r", "\n", "b", "\n", "c", "\r", "\n"] split"--"=["a\r\nb\nc\r\n"] split"-"=["a\r\nb\nc\r\n"] split"a"=["", "\r\nb\nc\r\n"] split"日"=["a\r\nb\nc\r\n"] split"\n"=["a\r", "b", "c\r", ""] split"xyz"=["a\r\nb\nc\r\n"]
+  lines=["a", "b", "c"] trim="a\r\nb\nc" start="a\r\nb\nc\r\n" end="a\r\nb\nc" runes=8
+   ","->"a\r\nb\nc\r\n" ""->"<>a<>\r<>\n<>b<>\n<>c<>\r<>\n<>" "--"->"a\r\nb\nc\r\n" "-"->"a\r\nb\nc\r\n" "a"->"<>\r\nb\nc\r\n" "日"->"a\r\nb\nc\r\n" "\n"->"a\r<>b<>c\r<>" "xyz"->"a\r\nb\nc\r\n"
+"\n": split","=["\n"] split""=["\n"] split"--"=["\n"] split"-"=["\n"] split"a"=["\n"] split"日"=["\n"] split"\n"=["", ""] split"xyz"=["\n"]
+  lines=[""] trim="" start="" end="" runes=1
+   ","->"\n" ""->"<>\n<>" "--"->"\n" "-"->"\n" "a"->"\n" "日"->"\n" "\n"->"<>" "xyz"->"\n"
+"\n\n": split","=["\n\n"] split""=["\n", "\n"] split"--"=["\n\n"] split"-"=["\n\n"] split"a"=["\n\n"] split"日"=["\n\n"] split"\n"=["", "", ""] split"xyz"=["\n\n"]
+  lines=["", ""] trim="" start="" end="" runes=2
+   ","->"\n\n" ""->"<>\n<>\n<>" "--"->"\n\n" "-"->"\n\n" "a"->"\n\n" "日"->"\n\n" "\n"->"<><>" "xyz"->"\n\n"
+"\r\n": split","=["\r\n"] split""=["\r", "\n"] split"--"=["\r\n"] split"-"=["\r\n"] split"a"=["\r\n"] split"日"=["\r\n"] split"\n"=["\r", ""] split"xyz"=["\r\n"]
+  lines=[""] trim="" start="" end="" runes=2
+   ","->"\r\n" ""->"<>\r<>\n<>" "--"->"\r\n" "-"->"\r\n" "a"->"\r\n" "日"->"\r\n" "\n"->"\r<>" "xyz"->"\r\n"
+"one\rtwo": split","=["one\rtwo"] split""=["o", "n", "e", "\r", "t", "w", "o"] split"--"=["one\rtwo"] split"-"=["one\rtwo"] split"a"=["one\rtwo"] split"日"=["one\rtwo"] split"\n"=["one\rtwo"] split"xyz"=["one\rtwo"]
+  lines=["one\rtwo"] trim="one\rtwo" start="one\rtwo" end="one\rtwo" runes=7
+   ","->"one\rtwo" ""->"<>o<>n<>e<>\r<>t<>w<>o<>" "--"->"one\rtwo" "-"->"one\rtwo" "a"->"one\rtwo" "日"->"one\rtwo" "\n"->"one\rtwo" "xyz"->"one\rtwo"
+"no newline": split","=["no newline"] split""=["n", "o", " ", "n", "e", "w", "l", "i", "n", "e"] split"--"=["no newline"] split"-"=["no newline"] split"a"=["no newline"] split"日"=["no newline"] split"\n"=["no newline"] split"xyz"=["no newline"]
+  lines=["no newline"] trim="no newline" start="no newline" end="no newline" runes=10
+   ","->"no newline" ""->"<>n<>o<> <>n<>e<>w<>l<>i<>n<>e<>" "--"->"no newline" "-"->"no newline" "a"->"no newline" "日"->"no newline" "\n"->"no newline" "xyz"->"no newline"
+"trail\n": split","=["trail\n"] split""=["t", "r", "a", "i", "l", "\n"] split"--"=["trail\n"] split"-"=["trail\n"] split"a"=["tr", "il\n"] split"日"=["trail\n"] split"\n"=["trail", ""] split"xyz"=["trail\n"]
+  lines=["trail"] trim="trail" start="trail\n" end="trail" runes=6
+   ","->"trail\n" ""->"<>t<>r<>a<>i<>l<>\n<>" "--"->"trail\n" "-"->"trail\n" "a"->"tr<>il\n" "日"->"trail\n" "\n"->"trail<>" "xyz"->"trail\n"
+" \t padded \n ": split","=[" \t padded \n "] split""=[" ", "\t", " ", "p", "a", "d", "d", "e", "d", " ", "\n", " "] split"--"=[" \t padded \n "] split"-"=[" \t padded \n "] split"a"=[" \t p", "dded \n "] split"日"=[" \t padded \n "] split"\n"=[" \t padded ", " "] split"xyz"=[" \t padded \n "]
+  lines=[" \t padded ", " "] trim="padded" start="padded \n " end=" \t padded" runes=12
+   ","->" \t padded \n " ""->"<> <>\t<> <>p<>a<>d<>d<>e<>d<> <>\n<> <>" "--"->" \t padded \n " "-"->" \t padded \n " "a"->" \t p<>dded \n " "日"->" \t padded \n " "\n"->" \t padded <> " "xyz"->" \t padded \n "
+" 　wide ": split","=[" 　wide "] split""=[" ", "　", "w", "i", "d", "e", " ", ""] split"--"=[" 　wide "] split"-"=[" 　wide "] split"a"=[" 　wide "] split"日"=[" 　wide "] split"\n"=[" 　wide "] split"xyz"=[" 　wide "]
+  lines=[" 　wide "] trim="wide" start="wide " end=" 　wide" runes=8
+   ","->" 　wide " ""->"<> <>　<>w<>i<>d<>e<> <><>" "--"->" 　wide " "-"->" 　wide " "a"->" 　wide " "日"->" 　wide " "\n"->" 　wide " "xyz"->" 　wide "
+"\u{FFFD} x \u{FFFD}": split","=["\u{FFFD} x \u{FFFD}"] split""=["\u{FFFD}", " ", "x", " ", "\u{FFFD}"] split"--"=["\u{FFFD} x \u{FFFD}"] split"-"=["\u{FFFD} x \u{FFFD}"] split"a"=["\u{FFFD} x \u{FFFD}"] split"日"=["\u{FFFD} x \u{FFFD}"] split"\n"=["\u{FFFD} x \u{FFFD}"] split"xyz"=["\u{FFFD} x \u{FFFD}"]
+  lines=["\u{FFFD} x \u{FFFD}"] trim="\u{FFFD} x \u{FFFD}" start="\u{FFFD} x \u{FFFD}" end="\u{FFFD} x \u{FFFD}" runes=5
+   ","->"\u{FFFD} x \u{FFFD}" ""->"<>\u{FFFD}<> <>x<> <>\u{FFFD}<>" "--"->"\u{FFFD} x \u{FFFD}" "-"->"\u{FFFD} x \u{FFFD}" "a"->"\u{FFFD} x \u{FFFD}" "日"->"\u{FFFD} x \u{FFFD}" "\n"->"\u{FFFD} x \u{FFFD}" "xyz"->"\u{FFFD} x \u{FFFD}"
+"  ": split","=["  "] split""=[" ", " "] split"--"=["  "] split"-"=["  "] split"a"=["  "] split"日"=["  "] split"\n"=["  "] split"xyz"=["  "]
+  lines=["  "] trim="" start="" end="" runes=2
+   ","->"  " ""->"<> <> <>" "--"->"  " "-"->"  " "a"->"  " "日"->"  " "\n"->"  " "xyz"->"  "
+"é": split","=["é"] split""=["é"] split"--"=["é"] split"-"=["é"] split"a"=["é"] split"日"=["é"] split"\n"=["é"] split"xyz"=["é"]
+  lines=["é"] trim="é" start="é" end="é" runes=1
+   ","->"é" ""->"<>é<>" "--"->"é" "-"->"é" "a"->"é" "日"->"é" "\n"->"é" "xyz"->"é"
+parts 301 f0 f299 ""
+joined 1390 1090 1279
+lines 200 "line one" "" "line four"
+--- stderr

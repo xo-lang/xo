@@ -1,0 +1,200 @@
+// The Str operations of the native runtime that decide something per
+// rune or per match, written in Xo (decision 0193, step 2): Str.split,
+// Str.lines, Str.replace, the trims, and Str.rune_count. They were C
+// (std/llrt/xo_std.c); the semantics are still Go's (strings), so the
+// native backends print what the Go backend prints. The C path stays
+// selectable (`XO_LLRT_C=strings` loads strings_c.xo) until
+// bench/perf/text meets decision 0180's bar on both native backends.
+//
+// The searches, copies, and pure byte moves stay C primitives:
+// rt.str_find (memchr and memcmp), rt.str_slice, rt.rs_append_bytes,
+// rt.bytes_span, and Str.repeat and List[Str].join, which move bytes and
+// decide nothing.
+use native/llrt/unicode
+use native/rt
+
+/// The size of the UTF-8 sequence of b at i (an invalid byte is 1).
+fn seq_size(b: Bytes, i: Int) -> Int {
+  if b[i] < 0x80 {
+    return 1
+  }
+  unicode.decode(b, i) & 7
+}
+
+/// strings.Split: an empty separator splits into UTF-8 sequences (an
+/// invalid byte alone).
+pub fn split(s: Str, sep: Str) -> List[Str] {
+  var out: List[Str] = []
+  let n = s.len()
+  let m = sep.len()
+  if m == 0 {
+    let b = s.bytes()
+    var i = 0
+    while i < n {
+      let k = seq_size(b, i)
+      out.push(rt.str_slice(s, i, i + k))
+      i += k
+    }
+    return out
+  }
+  var start = 0
+  while true {
+    let i = rt.str_find(s, sep, start)
+    if i < 0 {
+      break
+    }
+    out.push(rt.str_slice(s, start, i))
+    start = i + m
+  }
+  out.push(rt.str_slice(s, start, n))
+  out
+}
+
+/// The lines of s: split on \n, a trailing \r of each removed, and no
+/// empty last line after a final newline.
+pub fn lines(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let n = s.len()
+  let b = s.bytes()
+  var start = 0
+  while start < n {
+    var end = rt.str_find(s, "\n", start)
+    if end < 0 {
+      end = n
+    }
+    var e = end
+    if e > start && b[e - 1] == 13 {
+      e -= 1
+    }
+    out.push(rt.str_slice(s, start, e))
+    start = end + 1
+  }
+  out
+}
+
+/// strings.ReplaceAll: an empty old inserts new before every UTF-8
+/// sequence and at the end.
+pub fn replace(s: Str, old: Str, new: Str) -> Str {
+  let n = s.len()
+  let m = old.len()
+  let b = s.bytes()
+  if m == 0 {
+    var o = rt.rs_append(rt.rs_with_cap(n + (n + 1) * new.len()), new)
+    var i = 0
+    while i < n {
+      let k = seq_size(b, i)
+      o = rt.rs_append(rt.rs_append_bytes(o, b, i, i + k, 0), new)
+      i += k
+    }
+    return o
+  }
+  var i = rt.str_find(s, old, 0)
+  if i < 0 {
+    // nothing to replace: a copy, as strings.ReplaceAll makes
+    return rt.str_slice(s, 0, n)
+  }
+  var o = rt.rs_with_cap(n)
+  var start = 0
+  while i >= 0 {
+    o = rt.rs_append(rt.rs_append_bytes(o, b, start, i, 0), new)
+    start = i + m
+    i = rt.str_find(s, old, start)
+  }
+  rt.rs_append_bytes(o, b, start, n, 0)
+}
+
+/// Whether the rune r is white space (unicode.IsSpace).
+fn is_space(r: Int) -> Bool {
+  if r < 0x80 {
+    return r == 32 || (r >= 9 && r <= 13)
+  }
+  rt.rune_is_space(Rune(r))
+}
+
+/// The start of the bytes of b from lo to hi after their leading white
+/// space (an invalid byte is not space).
+pub fn space_end(b: Bytes, lo: Int, hi: Int) -> Int {
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c < 0x80 {
+      if c == 32 || (c >= 9 && c <= 13) {
+        i += 1
+        continue
+      }
+      return i
+    }
+    let p = unicode.decode(b, i)
+    if (p & 7) == 1 || !is_space(p >> 3) {
+      return i
+    }
+    i += p & 7
+  }
+  i
+}
+
+/// The end of the bytes of b from lo to hi before their trailing white
+/// space.
+pub fn space_start(b: Bytes, lo: Int, hi: Int) -> Int {
+  var n = hi
+  while n > lo {
+    let c = Int(b[n - 1])
+    if c < 0x80 {
+      if c == 32 || (c >= 9 && c <= 13) {
+        n -= 1
+        continue
+      }
+      return n
+    }
+    // the start of the last rune: back over up to 3 continuation bytes
+    var st = n - 1
+    while st > lo && n - st < 4 && (Int(b[st]) & 0xC0) == 0x80 {
+      st -= 1
+    }
+    let p = unicode.decode(b, st)
+    let size = p & 7
+    if st + size != n || size == 1 || !is_space(p >> 3) {
+      return n
+    }
+    n = st
+  }
+  n
+}
+
+/// strings.TrimSpace (mode 0), TrimLeftFunc (1), or TrimRightFunc (2)
+/// with unicode.IsSpace. s itself when nothing is trimmed.
+pub fn trim(s: Str, mode: Int) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var lo = 0
+  var hi = n
+  if mode != 2 {
+    lo = space_end(b, 0, n)
+  }
+  if mode != 1 {
+    hi = space_start(b, lo, n)
+  }
+  if lo == 0 && hi == n {
+    return s
+  }
+  rt.str_slice(s, lo, hi)
+}
+
+/// utf8.RuneCountInString: runs of ASCII are counted at once.
+pub fn rune_count(s: Str) -> Int {
+  let b = s.bytes()
+  let n = b.len()
+  var c = 0
+  var i = 0
+  while i < n {
+    if b[i] < 0x80 {
+      let j = rt.bytes_span(b, i, 0)
+      c += j - i
+      i = j
+    } else {
+      i += unicode.decode(b, i) & 7
+      c += 1
+    }
+  }
+  c
+}

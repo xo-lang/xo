@@ -1,0 +1,77 @@
+// The C path of the Str operations (decision 0193): the API of
+// strings.xo over the C runtime's functions (std/llrt/xo_std.c, compiled
+// with -DXO_STRINGS_C). Loaded in place of strings.xo when XO_LLRT_C
+// names `strings`, to compare the two and to fall back while the Xo path
+// misses decision 0180's bar. The self hosted compiler always uses
+// strings.xo. space_end and space_start, which other runtime modules
+// use, are the same Xo as in strings.xo.
+use native/llrt/unicode
+use native/rt
+
+pub fn split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
+
+pub fn lines(s: Str) -> List[Str] { rt.str_lines(s) }
+
+pub fn replace(s: Str, old: Str, new: Str) -> Str { rt.str_replace(s, old, new) }
+
+pub fn trim(s: Str, mode: Int) -> Str { rt.str_trim(s, mode) }
+
+pub fn rune_count(s: Str) -> Int { rt.str_rune_count(s) }
+
+/// Whether the rune r is white space (unicode.IsSpace).
+fn is_space(r: Int) -> Bool {
+  if r < 0x80 {
+    return r == 32 || (r >= 9 && r <= 13)
+  }
+  rt.rune_is_space(Rune(r))
+}
+
+/// The start of the bytes of b from lo to hi after their leading white
+/// space (an invalid byte is not space).
+pub fn space_end(b: Bytes, lo: Int, hi: Int) -> Int {
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c < 0x80 {
+      if c == 32 || (c >= 9 && c <= 13) {
+        i += 1
+        continue
+      }
+      return i
+    }
+    let p = unicode.decode(b, i)
+    if (p & 7) == 1 || !is_space(p >> 3) {
+      return i
+    }
+    i += p & 7
+  }
+  i
+}
+
+/// The end of the bytes of b from lo to hi before their trailing white
+/// space.
+pub fn space_start(b: Bytes, lo: Int, hi: Int) -> Int {
+  var n = hi
+  while n > lo {
+    let c = Int(b[n - 1])
+    if c < 0x80 {
+      if c == 32 || (c >= 9 && c <= 13) {
+        n -= 1
+        continue
+      }
+      return n
+    }
+    // the start of the last rune: back over up to 3 continuation bytes
+    var st = n - 1
+    while st > lo && n - st < 4 && (Int(b[st]) & 0xC0) == 0x80 {
+      st -= 1
+    }
+    let p = unicode.decode(b, st)
+    let size = p & 7
+    if st + size != n || size == 1 || !is_space(p >> 3) {
+      return n
+    }
+    n = st
+  }
+  n
+}

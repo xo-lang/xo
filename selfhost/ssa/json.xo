@@ -165,13 +165,13 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   let v = b.param(1)
   if b.is_prelude_named(ct, ["Duration"]) {
     let a = b.lit(acc, "\"")
-    let r = b.rt("rs_append_duration", st, [a, v])
+    let r = b.llrt("append_duration", st, [a, v])
     b.retv(b.lit(r, "\""))
     return
   }
   if b.is_prelude_named(ct, ["Time"]) {
     let a = b.lit(acc, "\"")
-    let r = b.rt("rs_append_time", st, [a, v])
+    let r = b.llrt("append_time", st, [a, v])
     b.retv(b.lit(r, "\""))
     return
   }
@@ -528,19 +528,19 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   if b.is_prelude_named(ct, ["Duration"]) {
     b.dec_need(d, JK_STR, "expected duration string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("duration_parse_ok", bt, [txt])]))
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.llrt("duration_ok", bt, [txt])]))
     b.dec_fail(d, "expected duration string such as \"1.5s\"")
     b.if_then_end(no, join)
-    b.dec_ok(d, b.rt("duration_parse", it, [txt]))
+    b.dec_ok(d, b.llrt("duration", it, [txt]))
     return
   }
   if b.is_prelude_named(ct, ["Time"]) {
     b.dec_need(d, JK_STR, "expected RFC 3339 time string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("time_parse_ok", bt, [txt])]))
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.llrt("time_ok", bt, [txt])]))
     b.dec_fail(d, "expected RFC 3339 time string")
     b.if_then_end(no, join)
-    b.dec_ok(d, b.rt("time_parse", it, [txt]))
+    b.dec_ok(d, b.llrt("time", it, [txt]))
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {

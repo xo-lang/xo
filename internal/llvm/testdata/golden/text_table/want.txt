@@ -1,0 +1,166 @@
+int "0" = 0
+int "-0" = 0
+int "+0" = 0
+int "7" = 7
+int "-7" = -7
+int "+42" = 42
+int "007" = 7
+int "" none
+int "+" none
+int "-" none
+int "1a" none
+int " 1" none
+int "1 " none
+int "9223372036854775807" = 9223372036854775807
+int "9223372036854775808" none
+int "-9223372036854775808" = -9223372036854775808
+int "-9223372036854775809" none
+int "92233720368547758070" none
+int "-92233720368547758080" none
+int "922337203685477580" = 922337203685477580
+int "-922337203685477581" = -922337203685477581
+int "99999999999999999999" none
+int "1_000" none
+int "0x10" none
+int "--1" none
+int "+-1" none
+int "١٢" none
+dur 0 = 0s 0s
+dur 1 = 1ns -1ns
+dur 9 = 9ns -9ns
+dur 999 = 999ns -999ns
+dur 1000 = 1µs -1µs
+dur 1001 = 1.001µs -1.001µs
+dur 1500 = 1.5µs -1.5µs
+dur 999999 = 999.999µs -999.999µs
+dur 1000000 = 1ms -1ms
+dur 1000001 = 1.000001ms -1.000001ms
+dur 1234567 = 1.234567ms -1.234567ms
+dur 999999999 = 999.999999ms -999.999999ms
+dur 1000000000 = 1s -1s
+dur 1000000001 = 1.000000001s -1.000000001s
+dur 1500000000 = 1.5s -1.5s
+dur 59999999999 = 59.999999999s -59.999999999s
+dur 60000000000 = 1m0s -1m0s
+dur 61000000000 = 1m1s -1m1s
+dur 3599999999999 = 59m59.999999999s -59m59.999999999s
+dur 3600000000000 = 1h0m0s -1h0m0s
+dur 3661000000000 = 1h1m1s -1h1m1s
+dur 3661100000000 = 1h1m1.1s -1h1m1.1s
+dur 3661123456789 = 1h1m1.123456789s -1h1m1.123456789s
+dur 86400000000000 = 24h0m0s -24h0m0s
+dur 360000000000000 = 100h0m0s -100h0m0s
+dur 123456789012345678 = 34293h33m9.012345678s -34293h33m9.012345678s
+dur 9223372036854775807 = 2562047h47m16.854775807s -2562047h47m16.854775807s
+dur 10000000 = 10ms -10ms
+dur 100000000 = 100ms -100ms
+dur 10 = 10ns -10ns
+dur 100 = 100ns -100ns
+dur min = -2562047h47m16.854775808s debug -2562047h47m16.854775808s
+parse "0" = 0
+parse "+0" = 0
+parse "-0" = 0
+parse "1s" = 1000000000
+parse "-1s" = -1000000000
+parse "+1s" = 1000000000
+parse "1.5s" = 1500000000
+parse ".5s" = 500000000
+parse "5.s" = 5000000000
+parse ".s" err invalid duration ".s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1h2m3.5s" = 3723500000000
+parse "1h 2m" err invalid duration "1h 2m": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "  2m  " = 120000000000
+parse "\t3h\n" = 10800000000000
+parse "1µs" = 1000
+parse "1μs" = 1000
+parse "1us" = 1000
+parse "1ns" = 1
+parse "1ms" = 1000000
+parse "1.0000000001s" = 1000000000
+parse "0.0000000001s" = 0
+parse "2562047h47m16.854775807s" = 9223372036854775807
+parse "2562047h47m16.854775808s" err invalid duration "2562047h47m16.854775808s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "-2562047h47m16.854775808s" = -9223372036854775808
+parse "-2562047h47m16.854775809s" err invalid duration "-2562047h47m16.854775809s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "9223372036854775807ns" = 9223372036854775807
+parse "9223372036854775808ns" err invalid duration "9223372036854775808ns": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "-9223372036854775808ns" = -9223372036854775808
+parse "1.9223372036854775808s" = 1922337203
+parse "0.9223372036854775808s" = 922337203
+parse "1x" err invalid duration "1x": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1" err invalid duration "1": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "" err invalid duration "": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "-" err invalid duration "-": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "s" err invalid duration "s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1h-1m" err invalid duration "1h-1m": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "3000000h" err invalid duration "3000000h": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "2562048h" err invalid duration "2562048h": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1.123456789123456789123s" = 1123456789
+parse "1e3s" err invalid duration "1e3s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse " 1s　" = 1000000000
+parse "1s " = 1000000000
+parse " " err invalid duration "\u2000": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1s" = 1000000000
+parse "1s\u{FFFD}" err invalid duration "1s�": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+time 0 = 1970-01-01T00:00:00Z debug 1970-01-01T00:00:00Z json "1970-01-01T00:00:00Z"
+time 1 = 1970-01-01T00:00:00.000000001Z debug 1970-01-01T00:00:00.000000001Z json "1970-01-01T00:00:00.000000001Z"
+time -1 = 1969-12-31T23:59:59.999999999Z debug 1969-12-31T23:59:59.999999999Z json "1969-12-31T23:59:59.999999999Z"
+time 1000 = 1970-01-01T00:00:00.000001Z debug 1970-01-01T00:00:00.000001Z json "1970-01-01T00:00:00.000001Z"
+time 999999999 = 1970-01-01T00:00:00.999999999Z debug 1970-01-01T00:00:00.999999999Z json "1970-01-01T00:00:00.999999999Z"
+time 1000000000 = 1970-01-01T00:00:01Z debug 1970-01-01T00:00:01Z json "1970-01-01T00:00:01Z"
+time -1000000000 = 1969-12-31T23:59:59Z debug 1969-12-31T23:59:59Z json "1969-12-31T23:59:59Z"
+time 1700000000123456789 = 2023-11-14T22:13:20.123456789Z debug 2023-11-14T22:13:20.123456789Z json "2023-11-14T22:13:20.123456789Z"
+time 1700000000120000000 = 2023-11-14T22:13:20.12Z debug 2023-11-14T22:13:20.12Z json "2023-11-14T22:13:20.12Z"
+time 1700000000100000000 = 2023-11-14T22:13:20.1Z debug 2023-11-14T22:13:20.1Z json "2023-11-14T22:13:20.1Z"
+time 951782400000000000 = 2000-02-29T00:00:00Z debug 2000-02-29T00:00:00Z json "2000-02-29T00:00:00Z"
+time 951868800000000000 = 2000-03-01T00:00:00Z debug 2000-03-01T00:00:00Z json "2000-03-01T00:00:00Z"
+time -9223372036854775808 = 1677-09-21T00:12:43.145224192Z debug 1677-09-21T00:12:43.145224192Z json "1677-09-21T00:12:43.145224192Z"
+time 9223372036854775807 = 2262-04-11T23:47:16.854775807Z debug 2262-04-11T23:47:16.854775807Z json "2262-04-11T23:47:16.854775807Z"
+time 68169600000000000 = 1972-02-29T00:00:00Z debug 1972-02-29T00:00:00Z json "1972-02-29T00:00:00Z"
+time -2208988800000000000 = 1900-01-01T00:00:00Z debug 1900-01-01T00:00:00Z json "1900-01-01T00:00:00Z"
+time 4102444800000000001 = 2100-01-01T00:00:00.000000001Z debug 2100-01-01T00:00:00.000000001Z json "2100-01-01T00:00:00.000000001Z"
+json time "2026-10-12T13:45:01Z" = 2026-10-12T13:45:01Z
+json time "2026-10-12T13:45:01.5Z" = 2026-10-12T13:45:01.5Z
+json time "2026-10-12T13:45:01.123456789Z" = 2026-10-12T13:45:01.123456789Z
+json time "2026-10-12T13:45:01.1234567891Z" = 2026-10-12T13:45:01.123456789Z
+json time "2026-10-12T13:45:01+02:30" = 2026-10-12T11:15:01Z
+json time "2026-10-12T13:45:01-07:00" = 2026-10-12T20:45:01Z
+json time "2024-02-29T00:00:00Z" = 2024-02-29T00:00:00Z
+json time "2023-02-29T00:00:00Z" err at $: expected RFC 3339 time string
+json time "2026-13-01T00:00:00Z" err at $: expected RFC 3339 time string
+json time "2026-10-12 13:45:01Z" err at $: expected RFC 3339 time string
+json time "2026-10-12T13:45:01" err at $: expected RFC 3339 time string
+json time "2026-10-12T24:00:00Z" err at $: expected RFC 3339 time string
+json time "2026-10-12T13:45:01.Z" err at $: expected RFC 3339 time string
+json time "2026-10-12T13:45:01+0200" err at $: expected RFC 3339 time string
+json time "0000-01-01T00:00:00Z" = 1753-08-29T22:43:41.128654848Z
+json time "9999-12-31T23:59:59.999999999Z" = 1816-03-30T05:56:08.066277375Z
+json time "1677-09-21T00:12:43.145224192Z" = 1677-09-21T00:12:43.145224192Z
+json time "2026-1-12T13:45:01Z" err at $: expected RFC 3339 time string
+json time "2026-10-12T13:45:01z" err at $: expected RFC 3339 time string
+json dur "1h2m3.5s" = 1h2m3.5s "1h2m3.5s"
+json dur "-1.5us" = -1.5µs "-1.5µs"
+json dur "x" err at $: expected duration string such as "1.5s"
+json dur "9223372036854775808ns" err at $: expected duration string such as "1.5s"
+str "" list ["", "a"]
+str "plain" list ["plain", "a"]
+str "q\"uote" list ["q\"uote", "a"]
+str "back\\slash" list ["back\\slash", "a"]
+str "nl\ntab\tcr\r" list ["nl\ntab\tcr\r", "a"]
+str "nul\0x" list ["nul\0x", "a"]
+str "bell\x07del\x7fesc\x1b" list ["bell\x07del\x7fesc\x1b", "a"]
+str "ünïcödé 日本語 𐐀" list ["ünïcödé 日本語 𐐀", "a"]
+str "repl\u{FFFD}x" list ["repl\u{FFFD}x", "a"]
+str "\u{FFFD}\u{FFFD}" list ["\u{FFFD}\u{FFFD}", "a"]
+str "mixed \"é\"\n\x01" list ["mixed \"é\"\n\x01", "a"]
+bytes b"" json ""
+bytes b"abc" json "YWJj"
+bytes b"\u{FFFD}" json "/w=="
+bytes b"a\u{FFFD}" json "YcM="
+bytes b"é\u{FFFD}\u{FFFD}" json "w6nigg=="
+bytes b"\u{FFFD}\u{FFFD}\u{FFFD}" json "7aCA"
+bytes b"\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}" json "9JCAgA=="
+bytes b"q\"\\\n\0\x1f\x7f\u{FFFD}" json "cSJcCgAff4A="
+bytes b"é" json "w6k="
+"é\"0\né\"1\né\"2\né\"3\né\"4\né\"5\né\"6\né\"7\né\"8\né\"9\né\"10\né\"11\né\"12\né\"13\né\"14\né\"15\né\"16\né\"17\né\"18\né\"19\né\"20\né\"21\né\"22\né\"23\né\"24\né\"25\né\"26\né\"27\né\"28\né\"29\né\"30\né\"31\né\"32\né\"33\né\"34\né\"35\né\"36\né\"37\né\"38\né\"39\n"
+--- stderr

@@ -249,6 +249,24 @@ xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
 	return rs_append(a, an, &c, 1);
 }
 
+// xo_rs_push_word is s + the n (0 to 8) low bytes of w, the lowest
+// first: short text assembled in an Int by Xo runtime code
+// (std/native/llrt/text.xo, decision 0193), one call instead of one per
+// byte. A unique string with room takes the bytes in place.
+xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *len) {
+	uint64_t u = (uint64_t)w;
+	unsigned char t[8];
+	for (int i = 0; i < 8; i++) {
+		t[i] = (unsigned char)(u >> (8 * i));
+	}
+	*len = an + n;
+	if (rc_load(&a->rc) == 1 && a->cap - an >= 8) {
+		memcpy(a->data + an, t, 8);
+		return a;
+	}
+	return rs_append(a, an, (const char *)t, n);
+}
+
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 

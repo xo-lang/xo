@@ -1,0 +1,599 @@
+// The number and time text of the native runtime, written in Xo
+// (decision 0193, step 1): strconv.ParseInt of an Int, a Duration's text
+// (time.Duration.String) and its parse (time.ParseDuration), a Time's
+// RFC 3339 text and the parse std/json uses, and the Debug quoting of a
+// Str or Bytes. They were C (std/llrt/xo_std.c); the semantics are still
+// the Go backend's, so the native backends print what it prints. The C
+// path stays selectable (`XO_LLRT_C=text` loads text_c.xo) until
+// bench/perf/text meets decision 0180's bar on both native backends.
+//
+// Results are built in a Str through the runtime's rs_* intrinsics, as in
+// unicode.xo (decision 0180): runs of bytes that stay as they are go over
+// at once (rt.rs_append_bytes), and short text is assembled in an Int and
+// appended with one call (rt.rs_push_word: up to 8 bytes, the first in
+// the low byte), since an append is a C call.
+use native/llrt/strings
+use native/llrt/unicode
+use native/rt
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+const HEX: Bytes = b"0123456789abcdef"
+
+// ---------------------------------------------------------------------------
+// Words of text
+
+/// The k (1 to 8) low decimal digits of v (0 <= v) as ASCII in a word,
+/// the first digit in the low byte, zero padded.
+fn digits_word(v: Int, k: Int) -> Int {
+  var w = 0
+  var x = v
+  var i = 0
+  while i < k {
+    w = (w << 8) | (48 + x % 10)
+    x = x / 10
+    i += 1
+  }
+  w
+}
+
+/// The number of decimal digits of v (0 <= v < 10^8).
+fn ndigits(v: Int) -> Int {
+  if v < 10000 {
+    if v < 100 {
+      return if v < 10 { 1 } else { 2 }
+    }
+    return if v < 1000 { 3 } else { 4 }
+  }
+  if v < 1000000 {
+    return if v < 100000 { 5 } else { 6 }
+  }
+  if v < 10000000 { 7 } else { 8 }
+}
+
+/// out + the decimal text of v (0 <= v < 10^8) and then the sk bytes of
+/// the word sw (sk 0 to 7).
+fn push_num(out: Str, v: Int, sw: Int, sk: Int) -> Str {
+  let k = ndigits(v)
+  let w = digits_word(v, k)
+  if k + sk <= 8 {
+    return rt.rs_push_word(out, w | (sw << (8 * k)), k + sk)
+  }
+  rt.rs_push_word(rt.rs_push_word(out, w, k), sw, sk)
+}
+
+/// out + the decimal text of v (0 <= v).
+fn push_uint(out: Str, v: Int) -> Str {
+  if v < 100000000 {
+    return push_num(out, v, 0, 0)
+  }
+  let lo = v % 100000000
+  let hi = v / 100000000
+  var o = out
+  if hi < 100000000 {
+    o = push_num(o, hi, 0, 0)
+  } else {
+    o = push_num(o, hi / 100000000, 0, 0)
+    o = rt.rs_push_word(o, digits_word(hi % 100000000, 8), 8)
+  }
+  rt.rs_push_word(o, digits_word(lo, 8), 8)
+}
+
+/// out + a fraction f / 10^prec (0 < f < 10^prec, prec 1 to 9) as `.`
+/// and its digits without trailing zeros, then the sk bytes of sw (sk 0
+/// to 3).
+fn push_frac(out: Str, f: Int, prec: Int, sw: Int, sk: Int) -> Str {
+  var x = f
+  var k = prec
+  while x % 10 == 0 {
+    x = x / 10
+    k -= 1
+  }
+  if k + 1 + sk <= 8 {
+    // `.`, the digits, and the suffix in one word
+    let w = 46 | (digits_word(x, k) << 8) | (sw << (8 * (k + 1)))
+    return rt.rs_push_word(out, w, k + 1 + sk)
+  }
+  if k <= 7 {
+    let o = rt.rs_push_word(out, 46 | (digits_word(x, k) << 8), k + 1)
+    return rt.rs_push_word(o, sw, sk)
+  }
+  // `.` and the first 7 digits, then the rest (1 or 2) and the suffix
+  let p = if k == 8 { 10 } else { 100 }
+  let o = rt.rs_push_word(out, 46 | (digits_word(x / p, 7) << 8), 8)
+  rt.rs_push_word(o, digits_word(x % p, k - 7) | (sw << (8 * (k - 7))), k - 7 + sk)
+}
+
+// ---------------------------------------------------------------------------
+// Int
+
+/// strconv.ParseInt(s, 10, 64): an optional sign and decimal digits, in
+/// range.
+pub fn parse_int(s: Str) -> Int? {
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return None
+  }
+  var i = 0
+  var neg = false
+  if b[0] == 43 || b[0] == 45 {
+    neg = b[0] == 45
+    i = 1
+    if n == 1 {
+      return None
+    }
+  }
+  var v = 0
+  while i < n {
+    let c = Int(b[i]) - 48
+    if c < 0 || c > 9 {
+      return None
+    }
+    if v >= 922337203685477580 {
+      if v > 922337203685477580 || c > 8 || (c == 8 && !neg) {
+        return None
+      }
+      if c == 8 {
+        // -9223372036854775808, if nothing follows
+        if i + 1 != n {
+          return None
+        }
+        return Some(MIN_INT)
+      }
+    }
+    v = v * 10 + c
+    i += 1
+  }
+  if neg {
+    return Some(-v)
+  }
+  Some(v)
+}
+
+// ---------------------------------------------------------------------------
+// Duration (std.md 2.6)
+
+/// out + the text of a Duration of d nanoseconds (time.Duration.String).
+pub fn append_duration(out: Str, d: Int) -> Str {
+  if d == 0 {
+    // "0s"
+    return rt.rs_push_word(out, 0x7330, 2)
+  }
+  var o = out
+  var u = d
+  if d < 0 {
+    if d == MIN_INT {
+      return rt.rs_append(o, "-2562047h47m16.854775808s")
+    }
+    o = rt.rs_push_byte(o, 45)
+    u = -d
+  }
+  if u < 1000000000 {
+    // less than a second: ns, µs, or ms, with a fraction
+    if u < 1000 {
+      // "ns"
+      return push_num(o, u, 0x736E, 2)
+    }
+    var p = 1000
+    var prec = 3
+    // "µs" (U+00B5, 0xC2 0xB5)
+    var sw = 0x73B5C2
+    var sk = 3
+    if u >= 1000000 {
+      p = 1000000
+      prec = 6
+      // "ms"
+      sw = 0x736D
+      sk = 2
+    }
+    let f = u % p
+    if f == 0 {
+      return push_num(o, u / p, sw, sk)
+    }
+    o = push_num(o, u / p, 0, 0)
+    return push_frac(o, f, prec, sw, sk)
+  }
+  let f = u % 1000000000
+  let secs = u / 1000000000
+  let s = secs % 60
+  let mins = secs / 60
+  if mins > 0 {
+    let h = mins / 60
+    if h > 0 {
+      // "h" (at most 2562047 hours)
+      o = push_num(o, h, 0x68, 1)
+    }
+    // "m"
+    o = push_num(o, mins % 60, 0x6D, 1)
+  }
+  if f == 0 {
+    // "s"
+    return push_num(o, s, 0x73, 1)
+  }
+  o = push_num(o, s, 0, 0)
+  push_frac(o, f, 9, 0x73, 1)
+}
+
+/// The value of a unit of a duration's text (b from i to j): its
+/// nanoseconds, or 0.
+fn unit_of(b: Bytes, i: Int, j: Int) -> Int {
+  let k = j - i
+  let c = Int(b[i])
+  if k == 1 {
+    if c == 115 {
+      return 1000000000
+    }
+    if c == 109 {
+      return 60000000000
+    }
+    if c == 104 {
+      return 3600000000000
+    }
+    return 0
+  }
+  if k == 2 {
+    if Int(b[i + 1]) != 115 {
+      return 0
+    }
+    if c == 110 {
+      return 1
+    }
+    if c == 117 {
+      return 1000
+    }
+    if c == 109 {
+      return 1000000
+    }
+    return 0
+  }
+  if k == 3 && Int(b[i + 2]) == 115 {
+    let c1 = Int(b[i + 1])
+    // "µs" (U+00B5) or "μs" (U+03BC)
+    if (c == 0xC2 && c1 == 0xB5) || (c == 0xCE && c1 == 0xBC) {
+      return 1000
+    }
+  }
+  0
+}
+
+/// 2^63 / unit (rounded down) for a unit of unit_of above 1.
+fn unit_limit(unit: Int) -> Int {
+  match unit {
+    1000 => 9223372036854775
+    1000000 => 9223372036854
+    1000000000 => 9223372036
+    60000000000 => 153722867
+    _ => 2562047
+  }
+}
+
+/// Whether byte c of a duration's text starts a number (`.` or a digit).
+fn num_start(c: Int) -> Bool { c == 46 || (c >= 48 && c <= 57) }
+
+/// std/rt's parseDuration: time.ParseDuration of the text with
+/// surrounding white space removed, in nanoseconds. Magnitudes are kept
+/// negated (to 2^63, as Go's uint64 is), so -2^63 parses.
+pub fn parse_duration(s: Str) -> Int? {
+  let b = s.bytes()
+  var i = strings.space_end(b, 0, b.len())
+  let n = strings.space_start(b, i, b.len())
+  var neg = false
+  if i < n && (b[i] == 45 || b[i] == 43) {
+    neg = b[i] == 45
+    i += 1
+  }
+  if n - i == 1 && b[i] == 48 {
+    return Some(0)
+  }
+  if i == n {
+    return None
+  }
+  // the negated total
+  var nd = 0
+  while i < n {
+    if !num_start(Int(b[i])) {
+      return None
+    }
+    // the negated integer part
+    var nv = 0
+    let pl = i
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+      let c = Int(b[i]) - 48
+      if nv < -922337203685477580 {
+        return None
+      }
+      let t = nv * 10
+      if t < MIN_INT + c {
+        return None
+      }
+      nv = t - c
+      i += 1
+    }
+    let pre = i != pl
+    var post = false
+    // the negated fraction and its scale
+    var nf = 0
+    var scale = 1.0
+    if i < n && b[i] == 46 {
+      i += 1
+      let pf = i
+      var overflow = false
+      while i < n && b[i] >= 48 && b[i] <= 57 {
+        if !overflow {
+          let c = Int(b[i]) - 48
+          if nf < -922337203685477580 {
+            overflow = true
+          } else {
+            let t = nf * 10
+            if t < MIN_INT + c {
+              overflow = true
+            } else {
+              nf = t - c
+              scale *= 10.0
+            }
+          }
+        }
+        i += 1
+      }
+      post = i != pf
+    }
+    if !pre && !post {
+      return None
+    }
+    let us = i
+    while i < n && !num_start(Int(b[i])) {
+      i += 1
+    }
+    if i == us {
+      return None
+    }
+    let unit = unit_of(b, us, i)
+    if unit == 0 {
+      return None
+    }
+    if unit > 1 {
+      if nv < -unit_limit(unit) {
+        return None
+      }
+      nv = nv * unit
+    }
+    if nf < 0 {
+      // the fraction's nanoseconds (less than the unit)
+      let x = Int(-Float(nf) * (Float(unit) / scale))
+      if nv < MIN_INT + x {
+        return None
+      }
+      nv -= x
+    }
+    if nd < MIN_INT - nv {
+      return None
+    }
+    nd += nv
+  }
+  if neg {
+    return Some(nd)
+  }
+  if nd == MIN_INT {
+    return None
+  }
+  Some(-nd)
+}
+
+// ---------------------------------------------------------------------------
+// Time (std.md 2.6)
+
+/// out + a Time of t nanoseconds since the Unix epoch as RFC 3339 in UTC,
+/// the nanoseconds' trailing zeros removed (time.RFC3339Nano).
+pub fn append_time(out: Str, t: Int) -> Str {
+  var secs = t / 1000000000
+  var ns = t % 1000000000
+  if ns < 0 {
+    ns += 1000000000
+    secs -= 1
+  }
+  // days since the epoch to a civil date (Howard Hinnant's algorithm)
+  var days = secs / 86400
+  var rem = secs % 86400
+  if rem < 0 {
+    rem += 86400
+    days -= 1
+  }
+  let z = days + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  var y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  if m <= 2 {
+    y += 1
+  }
+  // "YYYY-MM-", "DDThh:mm", ":ss" (a Time's year is 1677 to 2262)
+  var o = rt.rs_push_word(out, digits_word(y, 4) | (45 << 32) | (digits_word(m, 2) << 40) | (45 << 56), 8)
+  let hh = rem / 3600
+  let mm = rem / 60 % 60
+  o = rt.rs_push_word(o, digits_word(d, 2) | (84 << 16) | (digits_word(hh, 2) << 24) | (58 << 40) | (digits_word(mm, 2) << 48), 8)
+  let ss = 58 | (digits_word(rem % 60, 2) << 8)
+  if ns == 0 {
+    // ":ssZ"
+    return rt.rs_push_word(o, ss | (90 << 24), 4)
+  }
+  o = rt.rs_push_word(o, ss, 3)
+  push_frac(o, ns, 9, 90, 1)
+}
+
+/// The value of the k decimal digits of b from at, or -1 when one is not
+/// a digit.
+fn num(b: Bytes, at: Int, k: Int) -> Int {
+  var x = 0
+  var i = 0
+  while i < k {
+    let c = Int(b[at + i]) - 48
+    if c < 0 || c > 9 {
+      return -1
+    }
+    x = x * 10 + c
+    i += 1
+  }
+  x
+}
+
+/// Whether x is in lo..=hi.
+fn within(x: Int, lo: Int, hi: Int) -> Bool { x >= lo && x <= hi }
+
+/// The days of month m of year y.
+fn days_in(m: Int, y: Int) -> Int {
+  if m == 2 {
+    if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  31
+}
+
+/// The days since 1970-01-01 of a date.
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// time.Parse(time.RFC3339Nano, s) for the RFC 3339 forms its fast path
+/// (parseRFC3339) accepts, in nanoseconds since the Unix epoch (std/json
+/// decoding a Time). Times outside the range of Time wrap like Go's
+/// UnixNano.
+pub fn parse_time(s: Str) -> Int? {
+  let b = s.bytes()
+  let n = b.len()
+  if n < 19 {
+    return None
+  }
+  let year = num(b, 0, 4)
+  let month = num(b, 5, 2)
+  if !within(year, 0, 9999) || !within(month, 1, 12) {
+    return None
+  }
+  let day = num(b, 8, 2)
+  let hour = num(b, 11, 2)
+  let min = num(b, 14, 2)
+  let sec = num(b, 17, 2)
+  if !within(day, 1, days_in(month, year)) || !within(hour, 0, 23) || !within(min, 0, 59) || !within(sec, 0, 59) {
+    return None
+  }
+  if b[4] != 45 || b[7] != 45 || b[10] != 84 || b[13] != 58 || b[16] != 58 {
+    return None
+  }
+  var i = 19
+  var nsec = 0
+  if n - i >= 2 && b[i] == 46 && b[i + 1] >= 48 && b[i + 1] <= 57 {
+    var j = i + 1
+    while j < n && b[j] >= 48 && b[j] <= 57 {
+      j += 1
+    }
+    var k = 0
+    while k < 9 {
+      nsec = nsec * 10
+      if i + 1 + k < j {
+        nsec += Int(b[i + 1 + k]) - 48
+      }
+      k += 1
+    }
+    i = j
+  }
+  var zone = 0
+  if !(n - i == 1 && b[i] == 90) {
+    if n - i != 6 {
+      return None
+    }
+    let hr = num(b, i + 1, 2)
+    let mm = num(b, i + 4, 2)
+    if !within(hr, 0, 23) || !within(mm, 0, 59) || !((b[i] == 45 || b[i] == 43) && b[i + 3] == 58) {
+      return None
+    }
+    zone = (hr * 60 + mm) * 60
+    if b[i] == 45 {
+      zone = -zone
+    }
+  }
+  let secs = days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec - zone
+  if secs > -9000000000 && secs < 9000000000 {
+    return Some(secs * 1000000000 + nsec)
+  }
+  Some(rt.int_wrap(0, rt.int_wrap(2, secs, 1000000000), nsec))
+}
+
+// ---------------------------------------------------------------------------
+// Debug quoting
+
+/// The escape of an ASCII byte c the Debug text of a Str does not keep,
+/// as a word, and its length times 2^60 (c is `"`, `\`, or a control
+/// byte).
+fn escape_word(c: Int) -> Int {
+  match c {
+    34 => 0x225C | (2 << 60)
+    92 => 0x5C5C | (2 << 60)
+    10 => 0x6E5C | (2 << 60)
+    9 => 0x745C | (2 << 60)
+    13 => 0x725C | (2 << 60)
+    0 => 0x305C | (2 << 60)
+    _ => 0x785C | (Int(HEX[c >> 4]) << 16) | (Int(HEX[c & 15]) << 24) | (4 << 60)
+  }
+}
+
+/// out + the bytes of b in double quotes with the escapes of the Go
+/// backend's Debug of a Str (std/rt show.go quote): \" \\ \n \t \r \0,
+/// \u{FFFD} for U+FFFD and invalid bytes, \xhh for other control bytes.
+/// Runs of bytes kept as they are are appended at once.
+pub fn append_quote(out: Str, b: Bytes) -> Str {
+  let n = b.len()
+  var o = rt.rs_push_byte(out, 34)
+  var i = 0
+  while i < n {
+    // printable ASCII other than `"` and `\`
+    let j = rt.bytes_span(b, i, 1)
+    if j > i {
+      o = rt.rs_append_bytes(o, b, i, j, 0)
+      i = j
+      if i >= n {
+        break
+      }
+    }
+    let c = Int(b[i])
+    if c < 0x80 {
+      let e = escape_word(c)
+      o = rt.rs_push_word(o, e & 0xFFFFFFFF, e >> 60)
+      i += 1
+      continue
+    }
+    // valid runes from U+0080 other than U+FFFD go over as they are
+    var k = i
+    var size = 0
+    while k < n && b[k] >= 0x80 {
+      let p = unicode.decode(b, k)
+      if (p >> 3) == 0xFFFD {
+        size = p & 7
+        break
+      }
+      k += p & 7
+    }
+    if k > i {
+      o = rt.rs_append_bytes(o, b, i, k, 0)
+      i = k
+    } else {
+      // "\u{FFFD}"
+      o = rt.rs_push_word(o, 0x7D444646467B755C, 8)
+      i += size
+    }
+  }
+  rt.rs_push_byte(o, 34)
+}
