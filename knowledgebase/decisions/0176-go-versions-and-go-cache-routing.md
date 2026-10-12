@@ -178,3 +178,13 @@ episode of gotchas/go-vet-recompiles-rt-per-build-dir.md.
 3. Key `use go` bindings by the Go language version (a `go-version:`
    header in the declaration file, checked by `gobind.Load`) so a Go
    upgrade regenerates them.
+
+## Amendment (2026-10-12): no go command is XO1503
+
+With no go command (`$XO_GO` not an executable file, or no `go` on
+PATH), a Go backend build reported "go build ... failed (code generator
+bug)" with an empty detail: `gotool.Check` treated an unreadable version
+as "let the go command report it", but there was no go command to report
+anything. Found by the website session (2026-10-12). Check now returns a
+`*NotFoundError` first, reported as the new code XO1503 (a new code, since
+XO1502 means "too old"); TestCheckNotFound.
