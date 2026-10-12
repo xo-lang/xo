@@ -1,0 +1,234 @@
+// Borrowed projections (decision 0186): a loop element of `for x in
+// <place>`, or an inner list read through an outer one (`a[i][j]`), is
+// borrowed from its container when nothing in its live range consumes
+// the container. Each case runs on a unique container and on a shared
+// one (a copy kept), and the cases where the body does change the
+// container (a `var` call, a push, a nested update of decision 0169, a
+// compound assignment of decision 0159, a `setfield`) must keep the
+// element's own counts.
+
+struct Inst {
+  op: Str
+  args: List[Int]
+  tags: List[Str] = []
+  n: Int = 0
+}
+
+struct Blk {
+  insts: List[Inst]
+  name: Str = "b"
+}
+
+/// Large, so the LLVM backend keeps a `var` one in its home (decision
+/// 0148).
+struct G {
+  blocks: List[Blk]
+  n: Int = 0
+  log: List[Str] = []
+  a0: List[Int] = []
+  a1: List[Int] = []
+  a2: List[Int] = []
+  a3: List[Int] = []
+  a4: List[Int] = []
+  a5: List[Int] = []
+  a6: List[Int] = []
+  a7: List[Int] = []
+  a8: List[Int] = []
+  a9: List[Int] = []
+  b0: List[Int] = []
+  b1: List[Int] = []
+  b2: List[Int] = []
+  b3: List[Int] = []
+}
+
+enum Shape {
+  Dot
+  Poly(pts: List[Int], name: Str)
+}
+
+fn has(x: Int) -> Bool {
+  x % 2 == 1
+}
+
+fn mk(k: Int) -> G {
+  var insts: List[Inst] = []
+  for i in 0..k {
+    insts.push(Inst{op: "op${i}", args: [i, i + 1, i + 2], tags: ["t${i}"]})
+  }
+  G{blocks: [Blk{insts: insts}, Blk{insts: [], name: "exit"}]}
+}
+
+/// Reads only: the element and its fields are borrowed.
+fn (var g: G) count(b: Int) -> Int {
+  var n = 0
+  for inst in g.blocks[b].insts {
+    for a in inst.args {
+      if has(a) {
+        n += a
+      }
+    }
+    n += inst.op.len() + inst.tags.len()
+  }
+  g.n = n
+  n
+}
+
+fn (var g: G) note(s: Str) -> Int {
+  g.log.push(s)
+  g.log.len()
+}
+
+/// A `var` call in the body changes the container: the element keeps
+/// its counts.
+fn (var g: G) count_logging(b: Int) -> Int {
+  var n = 0
+  for inst in g.blocks[b].insts {
+    n += g.note(inst.op)
+    n += inst.args.len()
+  }
+  n
+}
+
+/// The body pushes to the list it walks: the loop walks the list as it
+/// was.
+fn (var g: G) grow(b: Int) -> Int {
+  var n = 0
+  for inst in g.blocks[b].insts {
+    g.blocks[b].insts.push(Inst{op: inst.op + "'", args: inst.args})
+    n += inst.args[0]
+  }
+  n + g.blocks[b].insts.len()
+}
+
+/// A nested update of the element walked (decision 0169) in the body.
+fn (var g: G) bump_all(b: Int) -> Int {
+  var n = 0
+  var i = 0
+  for inst in g.blocks[b].insts {
+    g.blocks[b].insts[i].n += inst.args.len() + n
+    g.blocks[b].insts[i].args.push(i)
+    n += g.blocks[b].insts[i].n
+    i += 1
+  }
+  n
+}
+
+/// A compound assignment whose value reads an element (decision 0159).
+fn (var g: G) sum_into(b: Int) -> Int {
+  for inst in g.blocks[b].insts {
+    g.n += inst.args[1] + g.note(inst.op)
+  }
+  g.n
+}
+
+/// The element is kept (consumed) by a push, and one is returned.
+fn (var g: G) pick(b: Int) -> Inst {
+  var keep: List[Inst] = []
+  for inst in g.blocks[b].insts {
+    if inst.args[0] % 2 == 0 {
+      keep.push(inst)
+    }
+  }
+  g.n = keep.len()
+  keep[keep.len() - 1]
+}
+
+/// `a[i][j]`: the inner list is borrowed for the read.
+fn sum_rows(var a: List[List[Int]]) -> Int {
+  var s = 0
+  for i in 0..a.len() {
+    for j in 0..a[i].len() {
+      s += a[i][j] * (j + 1)
+    }
+  }
+  a.push([s])
+  s
+}
+
+/// An owned list of lists, read and then updated in place.
+fn rows(k: Int) -> Int {
+  var a: List[List[Int]] = []
+  for i in 0..k {
+    var r: List[Int] = []
+    for j in 0..i + 1 {
+      r.push(i * 10 + j)
+    }
+    a.push(r)
+  }
+  var s = 0
+  for i in 0..a.len() {
+    s += a[i][a[i].len() - 1]
+    a[i][0] = s
+  }
+  s + a[k - 1][0]
+}
+
+/// A payload read out of an element.
+fn shapes(xs: List[Shape]) -> Int {
+  var n = 0
+  var ys = xs
+  for s in ys {
+    match s {
+      Shape.Poly(pts, name) => {
+        for p in pts {
+          n += p
+        }
+        n += name.len()
+      }
+      Shape.Dot => n += 100
+    }
+  }
+  ys.push(Shape.Dot)
+  n + ys.len()
+}
+
+/// The element escapes the loop through a `let` declared outside.
+fn last_long(xs: List[Inst]) -> Str {
+  var out = ""
+  var ys = xs
+  for x in ys {
+    if x.args.len() > 2 {
+      out = x.op
+    }
+  }
+  ys.push(Inst{op: "z", args: []})
+  out + "${ys.len()}"
+}
+
+/// Breaks out of the loop with the element live.
+fn find(var g: G, op: Str) -> Int {
+  var r = -1
+  for (i, inst) in g.blocks[0].insts.indexed() {
+    if inst.op == op {
+      r = i + inst.args[2]
+      break
+    }
+  }
+  g.n = r
+  r
+}
+
+fn main(os: Os) {
+  for shared in [false, true] {
+    var g = mk(5)
+    let keep = if shared { g } else { mk(0) }
+    let c = g.count(0)
+    let cl = g.count_logging(0)
+    let gr = g.grow(0)
+    let ba = g.bump_all(0)
+    let si = g.sum_into(0)
+    let p = g.pick(0)
+    let fd = find(g, "op3")
+    os.stdio.println("shared=${shared} count=${c} logging=${cl} grow=${gr} bump=${ba} sum=${si} pick=${p.op}/${p.args.len()} find=${fd}")
+    os.stdio.println("  g: n=${g.n} log=${g.log.len()} insts=${g.blocks[0].insts.len()} first=${g.blocks[0].insts[0].n}/${g.blocks[0].insts[0].args.len()}")
+    os.stdio.println("  keep: n=${keep.n} insts=${keep.blocks[0].insts.len()}")
+    var a: List[List[Int]] = [[1, 2, 3], [4], [], [5, 6]]
+    let ka = if shared { a } else { [] }
+    let sr = sum_rows(a)
+    os.stdio.println("  rows=${sr} ${a.len()} ${ka.len()} ${rows(6)}")
+    let xs = [Shape.Poly(pts: [1, 2, 3], name: "tri"), Shape.Dot, Shape.Poly(pts: [], name: "e")]
+    let kx = if shared { xs } else { [] }
+    os.stdio.println("  shapes=${shapes(xs)} ${kx.len()}")
+    os.stdio.println("  last=${last_long(g.blocks[0].insts)}")
+  }
+}
