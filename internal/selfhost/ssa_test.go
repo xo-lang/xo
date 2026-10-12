@@ -32,7 +32,7 @@ import (
 // Functions the Xo builder skips (a construct of a later stage) or never
 // declares (the callees of skipped code) are counted, not compared. The
 // coverage is logged. The go backend only, except in the full tier
-// (tier_test.go); -short also takes every 25th run. XO_SELFHOST_BACKEND
+// (tier_test.go); -short also takes every 25th run but the mergeHeavy ones. XO_SELFHOST_BACKEND
 // names one backend.
 func TestSelfhostSSA(t *testing.T) {
 	backends := tierBackends(t)
@@ -58,7 +58,7 @@ func TestSelfhostSSA(t *testing.T) {
 	} else if selfhostTier(t) == tierShort {
 		var some []string
 		for i, d := range dirs {
-			if i%25 == 0 {
+			if i%25 == 0 && !mergeHeavy(d) {
 				some = append(some, d)
 			}
 		}
@@ -75,20 +75,23 @@ func TestSelfhostSSA(t *testing.T) {
 	bins := selfhostBinaries(t, "ssa", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]goSSA, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]]) })
-	want := map[string]goSSA{}
-	for i, d := range dirs {
-		want[d] = wants[i]
-	}
 	// the test binaries (stage 7) of the runs with test blocks
 	tdirs := testDirs(t, root, dirs)
-	twants := make([]goSSA, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]]) })
+	want := map[string]goSSA{}
 	twant := map[string]goSSA{}
-	for i, d := range tdirs {
-		twant[d] = twants[i]
-	}
+	// the Go builder's results, while the subtests run the Xo builder
+	wait := background(t, func() {
+		wants := make([]goSSA, len(dirs))
+		parallel(dirs, func(i int) { wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]]) })
+		for i, d := range dirs {
+			want[d] = wants[i]
+		}
+		twants := make([]goSSA, len(tdirs))
+		parallel(tdirs, func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]]) })
+		for i, d := range tdirs {
+			twant[d] = twants[i]
+		}
+	})
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -97,6 +100,7 @@ func TestSelfhostSSA(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runSSAStages(t, bin, root, dirs, buildOnly, "--std=std")
+			wait()
 			var st ssaStats
 			var fails []string
 			for _, d := range dirs {
@@ -236,13 +240,11 @@ func goSSABuildOpts(root, dir string, tests, passes bool) goSSA {
 func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
+	for _, xb := range runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch) {
+		chunk := xb.paths
 		// at the start of a line: the dump of selfhost/ssa itself holds
 		// the text in a constant
-		parts := runHead.Split(text, -1)
+		parts := runHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo builder printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}

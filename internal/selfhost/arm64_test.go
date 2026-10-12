@@ -69,14 +69,19 @@ func TestSelfhostArm64(t *testing.T) {
 	t.Chdir(root)
 	setModEnv(t, root)
 	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	// the Go emitter's results, while the subtests run the Xo emitter
+	wait := background(t, func() {
+		parallel(dirs, func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	})
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runArm64(t, bin, root, dirs, arm64Flags, "--std=std")
+			wait()
 			var st arm64Stats
 			var fails []string
 			for i, d := range dirs {
@@ -155,9 +160,12 @@ func TestSelfhostArm64Mutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
-	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
 	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	wait := background(t, func() {
+		parallel(dirs, func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	})
+	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
+	wait()
 	var st arm64Stats
 	var fails []string
 	for i, d := range dirs {
@@ -211,11 +219,9 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 	out := map[string]string{}
 	const batch = 20
 	args := append(append([]string{"--each", "--wd=" + workDir(t)}, flags...), more...)
-	texts := runXoBatches(t, bin, root, args, dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := asmHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, args, dirs, batch) {
+		chunk := xb.paths
+		parts := asmHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo emitter printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}

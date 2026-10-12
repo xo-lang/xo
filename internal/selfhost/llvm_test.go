@@ -36,7 +36,7 @@ import (
 // emitter leaves to a later stage (`== skipped`). The test binaries of
 // the runs with test blocks are compared the same way. The full tier
 // takes every run; the merge tier every third run but the mergeHeavy
-// ones (each takes about a minute), and -short every 25th.
+// ones (each takes about a minute), and -short every 25th but those.
 // XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover.
 func TestSelfhostLLVM(t *testing.T) {
@@ -50,7 +50,7 @@ func TestSelfhostLLVM(t *testing.T) {
 	case tierShort:
 		var some []string
 		for i, d := range dirs {
-			if i%25 == 0 {
+			if i%25 == 0 && !mergeHeavy(d) {
 				some = append(some, d)
 			}
 		}
@@ -68,11 +68,14 @@ func TestSelfhostLLVM(t *testing.T) {
 	bins := selfhostBinaries(t, "llvm", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]goIR, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goLLVM(root, dirs[i], false) })
 	tdirs := testDirs(t, root, dirs)
+	wants := make([]goIR, len(dirs))
 	twants := make([]goIR, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goLLVM(root, tdirs[i], true) })
+	// the Go emitter's results, while the subtests run the Xo emitter
+	wait := background(t, func() {
+		parallel(dirs, func(i int) { wants[i] = goLLVM(root, dirs[i], false) })
+		parallel(tdirs, func(i int) { twants[i] = goLLVM(root, tdirs[i], true) })
+	})
 	flags := []string{"--std=std"}
 	if v := os.Getenv("XO_SELFHOST_LLVM_STAGE"); v != "" {
 		flags = append(flags, "--stage="+v)
@@ -85,6 +88,7 @@ func TestSelfhostLLVM(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runLLVM(t, bin, root, dirs, flags...)
+			wait()
 			var st llvmStats
 			var fails []string
 			for i, d := range dirs {
@@ -174,8 +178,11 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	setModEnv(t, root)
 	wd := workDir(t)
 	wants := make([]goIR, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+	wait := background(t, func() {
+		parallel(dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+	})
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
+	wait()
 	var st llvmStats
 	var fails []string
 	for i, d := range dirs {
@@ -231,11 +238,9 @@ var llvmHead = regexp.MustCompile(`(?m)^=== llvm `)
 func runLLVM(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 40
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := llvmHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch) {
+		chunk := xb.paths
+		parts := llvmHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo emitter printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}
