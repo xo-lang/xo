@@ -1,0 +1,343 @@
+// `xo replay <file>` (core 11.3, cmd/xo replay.go): rebuilds the program
+// of a trace (.xotrace) or crash bundle (.xocrash) with the options it
+// was recorded with and runs it with XO_REPLAY set, so every effect
+// result and interleaving comes from the trace.
+//
+// The Go command builds in process and reads the new build's information
+// (build.Info) from the result. Here the build is `xo build --backend=go`
+// run as a child, and the information is read back from the binary: the
+// generated program passes it to rt.SetBuildInfo as one string constant,
+// `{"id":"<64 hex>","dir":"<the directory>",...}`, which is found by its
+// prefix and parsed.
+
+fn replay_flags() -> List[Flag] {
+  [Flag{name: "dir", kind: "string", def: "", usage: "the program's main module directory (default: the one recorded in the trace)"}]
+}
+
+/// The header of a trace: its build information, arguments, and target.
+struct TraceHeader {
+  build: J
+  args: List[Str]
+  target: Str
+}
+
+/// readTraceHeader: the header of a .xotrace file or of the trace in a
+/// .xocrash bundle, or the error text.
+fn read_trace_header(os: Os, path: Str) -> TraceHeader ! Str uses fs {
+  let data = match os.fs.read(path) {
+    Ok(d) => d
+    Err(e) => return Err(fs_err_text(e, path))
+  }
+  let text = data.to_str() ?? ""
+  var first = ""
+  let whole = parse(text).ok() ?? J.Null
+  let kind = match get(whole, "kind") {
+    Some(J.Str(k)) => k
+    _ => ""
+  }
+  if !kind.is_empty() {
+    match get(whole, "trace") {
+      Some(J.Arr(items, raws)) => {
+        if items.is_empty() {
+          return Err(empty_trace(whole, path))
+        }
+        first = raws[0]
+      }
+      _ => return Err(empty_trace(whole, path))
+    }
+  } else {
+    first = text.split("\n")[0].trim_suffix("\r")
+  }
+  let h = parse(first).ok() ?? J.Null
+  let xotrace = match get(h, "xotrace") {
+    Some(J.Num(n)) => n != "0"
+    _ => false
+  }
+  if !xotrace {
+    return Err("${path} is not an Xo trace (.xotrace) or crash bundle (.xocrash)")
+  }
+  var args: List[Str] = []
+  match get(h, "args") {
+    Some(J.Arr(items, _)) => {
+      for x in items {
+        match x {
+          J.Str(s) => args.push(s)
+          J.Null | J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  let target = match get(h, "target") {
+    Some(J.Str(s)) => s
+    _ => ""
+  }
+  Ok(TraceHeader{build: get(h, "build") ?? J.Null, args: args, target: target})
+}
+
+fn empty_trace(bundle: J, path: Str) -> Str {
+  match get(bundle, "build") {
+    None | Some(J.Null) => "${path} has no effect trace and no build information"
+    Some(_) => "${path} has no effect trace: the run was not recorded (xo run --record) and kept no ring buffer (XO_RING=N)"
+  }
+}
+
+/// The text of an fs error as Go's os errors print ("open PATH: no such
+/// file or directory").
+fn fs_err_text(e: FsErr, path: Str) -> Str {
+  match e {
+    FsErr.NotFound(_) => "open ${path}: no such file or directory"
+    FsErr.IsDir(_) => "read ${path}: is a directory"
+    FsErr.Denied(_) => "open ${path}: permission denied"
+    FsErr.Io(_, msg) => msg
+    FsErr.Exists(_) | FsErr.NotEmpty(_) | FsErr.NotDir(_) | FsErr.Canceled => "${e}"
+  }
+}
+
+fn jbool_of(v: J, key: Str) -> Bool {
+  match get(v, key) {
+    Some(J.Bool(b)) => b
+    _ => false
+  }
+}
+
+fn jstr_of(v: J, key: Str) -> Str {
+  match get(v, key) {
+    Some(J.Str(s)) => s
+    _ => ""
+  }
+}
+
+/// The `xo build` flags that rebuild the recorded program.
+fn build_flags(info: J) -> List[Str] {
+  var out: List[Str] = []
+  if jbool_of(info, "holes") {
+    out.push("--holes")
+  }
+  if jbool_of(info, "no_mono") {
+    out.push("--no-mono")
+  }
+  if jbool_of(info, "no_arenas") {
+    out.push("--no-arenas")
+  }
+  if jbool_of(info, "race") {
+    out.push("--race")
+  }
+  let tz = jstr_of(info, "tzdata")
+  if !tz.is_empty() {
+    out.push("--tzdata=" + tz)
+  }
+  if jbool_of(info, "release") {
+    out.push("--release")
+    if jbool_of(info, "no_error_args") {
+      out.push("--error-args=false")
+    }
+  }
+  match get(info, "stamps") {
+    Some(J.Obj(keys, vals, _)) => {
+      for (i, k) in keys.indexed() {
+        match vals[i] {
+          J.Str(v) => out.push("--stamp=${k}=${v}")
+          J.Null | J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+/// The build information embedded in a binary built from dir (see the
+/// top of this file), or J.Null.
+fn embedded_info(os: Os, bin: Str, dir: Str) -> J uses fs {
+  let data = os.fs.read(bin).ok() ?? b""
+  let prefix = "{\"id\":\"".bytes()
+  let tail = "\",\"dir\":".bytes()
+  var i = 0
+  let n = data.len()
+  while i + prefix.len() + 64 + tail.len() < n {
+    if data[i] != '{' || data[i + 1] != '"' {
+      i += 1
+      continue
+    }
+    var ok = true
+    for k in 0..prefix.len() {
+      ok = ok && data[i + k] == prefix[k]
+    }
+    let t = i + prefix.len() + 64
+    for k in 0..tail.len() {
+      ok = ok && data[t + k] == tail[k]
+    }
+    if ok {
+      // the object ends at the first `}` that closes it
+      var depth = 0
+      var j = i
+      var in_str = false
+      var esc = false
+      while j < n {
+        let c = data[j]
+        if in_str {
+          if esc {
+            esc = false
+          } else if c == '\\' {
+            esc = true
+          } else if c == '"' {
+            in_str = false
+          }
+        } else if c == '"' {
+          in_str = true
+        } else if c == '{' {
+          depth += 1
+        } else if c == '}' {
+          depth -= 1
+          if depth == 0 {
+            break
+          }
+        }
+        j += 1
+      }
+      if j < n {
+        let v = parse(data[i..j + 1].to_str() ?? "").ok() ?? J.Null
+        if jstr_of(v, "dir") == dir {
+          return v
+        }
+      }
+    }
+    i += 1
+  }
+  J.Null
+}
+
+/// sourceChanges: the differences between two source hash maps, sorted.
+fn source_changes(was: J, now: J) -> List[Str] {
+  let w = get(was, "sources") ?? J.Null
+  let nw = get(now, "sources") ?? J.Null
+  var out: List[Str] = []
+  match w {
+    J.Obj(keys, vals, _) => {
+      for (i, p) in keys.indexed() {
+        match mget(nw, p) {
+          None => out.push(p + " (removed)")
+          Some(h) => {
+            if h != vals[i] {
+              out.push(p + " (changed)")
+            }
+          }
+        }
+      }
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => {}
+  }
+  match nw {
+    J.Obj(keys, _, _) => {
+      for p in keys {
+        if mget(w, p).is_none() {
+          out.push(p + " (added)")
+        }
+      }
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => {}
+  }
+  out.sort()
+}
+
+/// The host as build.Host prints it ("darwin/arm64").
+fn host_target(os: Os) -> Str uses proc {
+  let out = os.proc.run("uname", ["-sm"]).ok()
+  let text = match out {
+    Some(o) => (o.stdout.to_str() ?? "").trim()
+    None => ""
+  }
+  let parts = text.split(" ")
+  let goos = (parts.get(0) ?? "").to_lower()
+  let machine = parts.get(1) ?? ""
+  let arch = if machine == "x86_64" { "amd64" } else if machine == "aarch64" { "arm64" } else { machine }
+  "${goos}/${arch}"
+}
+
+/// filepath.Abs against the working directory.
+fn abs_path(os: Os, p: Str) -> Str uses env {
+  if p.starts_with("/") {
+    return p
+  }
+  join(os.env.get("PWD") ?? "", p.trim_prefix("./"))
+}
+
+pub fn run_replay(os: Os, ex: Exec, args: List[Str]) -> Int uses (stdio, proc, env, fs, rand) {
+  let flags = replay_flags()
+  let p = match parse_flags("replay", flags, args) {
+    Ok(p) => p
+    Err(text) => {
+      os.stdio.eprint(text)
+      return 2
+    }
+  }
+  if p.args.len() != 1 {
+    os.stdio.eprintln("xo replay: give one .xotrace or .xocrash file")
+    return 2
+  }
+  let path = abs_path(os, p.args[0])
+  let h = match read_trace_header(os, path) {
+    Ok(h) => h
+    Err(e) => {
+      os.stdio.eprintln("xo replay: ${e}")
+      return 2
+    }
+  }
+  match h.build {
+    J.Obj(_, _, _) => {}
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => {
+      os.stdio.eprintln("xo replay: the trace has no build information (the program was not built by xo build or xo run)")
+      return 2
+    }
+  }
+  var src = jstr_of(h.build, "dir")
+  let dir_flag = p.get(flags, "dir")
+  if !dir_flag.is_empty() {
+    src = dir_flag
+  }
+  let bin = join(temp_dir(os), "xo-replay-${os.rand.int(0, 1000000000)}")
+  let cl = ["build", "--backend=go"] + build_flags(h.build) + ["-o", bin, src]
+  var c = os.proc.cmd(ex.program, cl)
+  for (k, v) in ex.env {
+    c = c.set_env(k, v)
+  }
+  let built = match c.output() {
+    Ok(o) => o
+    Err(e) => {
+      os.stdio.eprintln("xo replay: ${e}")
+      return 1
+    }
+  }
+  // the build's diagnostics; its "darwin/arm64: PATH" line is the Go
+  // command's own output, not replay's
+  for line in (built.stderr.to_str() ?? "").lines() {
+    os.stdio.eprintln(line)
+  }
+  if built.code != 0 {
+    let _ = os.fs.remove(bin).ignore_err("a temporary binary")
+    return 1
+  }
+  let now = embedded_info(os, bin, abs_path(os, src))
+  let changed = source_changes(h.build, now)
+  if !changed.is_empty() {
+    os.stdio.eprintln("xo replay: warning: the sources changed since the recording (build ${jstr_of(h.build, "id")}, now ${jstr_of(now, "id")}):")
+    for ch in changed {
+      os.stdio.eprintln("  " + ch)
+    }
+  }
+  let host = host_target(os)
+  if !h.target.is_empty() && h.target != host {
+    os.stdio.eprintln("xo replay: note: recorded on ${h.target}, replayed on ${host}")
+  }
+  // offline: no standard input; every effect result comes from the trace
+  let code = match os.proc.cmd(bin, h.args).set_env("XO_REPLAY", path).stdin(b"").inherit().run() {
+    Ok(code) => code
+    Err(e) => {
+      os.stdio.eprintln("xo: ${e}")
+      1
+    }
+  }
+  let _ = os.fs.remove(bin).ignore_err("a temporary binary")
+  code
+}

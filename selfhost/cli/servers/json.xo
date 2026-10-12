@@ -1,0 +1,679 @@
+// JSON as Go's encoding/json reads and writes it, for the servers of
+// stage 5 of decision 0178 (`xo mcp`, `xo lsp`, `xo serve`): their
+// responses must be byte for byte the Go servers' (internal/mcp,
+// internal/lsp, internal/serve).
+//
+// - parse is Go's checkValid then a decode into a tree: the syntax errors
+//   are the scanner's texts ("invalid character 'x' looking for
+//   beginning of value", "unexpected end of JSON input").
+// - Every member of an object and element of an array keeps its source
+//   text (a json.RawMessage), which Go writes compacted (compact).
+// - encode writes a tree compactly in the order of its members (a Go
+//   struct); go_map sorts an object's keys at every depth and rewrites
+//   numbers through float64, as Go writes a decoded map[string]any.
+// - Strings are escaped as encodeState.string does: `\"`, `\\`, `\b`,
+//   `\f`, `\n`, `\r`, `\t`, other control bytes as \u00XX, U+2028 and
+//   U+2029 always, and `<`, `>`, `&` when html (json.Marshal; an
+//   Encoder with SetEscapeHTML(false) does not).
+
+/// A JSON value. Obj and Arr keep each member's source text in raws
+/// (empty for values built in code).
+pub enum J {
+  Null
+  Bool(v: Bool)
+  /// A number, as written.
+  Num(text: Str)
+  Str(v: Str)
+  Arr(items: List[J], raws: List[Str])
+  Obj(keys: List[Str], vals: List[J], raws: List[Str])
+  /// Source text written compacted (a json.RawMessage).
+  Raw(text: Str)
+}
+
+pub fn jobj(keys: List[Str], vals: List[J]) -> J { J.Obj(keys: keys, vals: vals, raws: []) }
+
+pub fn jarr(items: List[J]) -> J { J.Arr(items: items, raws: []) }
+
+pub fn jstr(s: Str) -> J { J.Str(s) }
+
+pub fn jint(n: Int) -> J { J.Num("${n}") }
+
+pub fn jbool(b: Bool) -> J { J.Bool(b) }
+
+/// The member named key of an object, matched as Go matches a struct
+/// field: exactly first, else without case (the last such member wins,
+/// as later keys overwrite earlier ones).
+pub fn get(v: J, key: Str) -> J? {
+  match v {
+    J.Obj(keys, vals, _) => {
+      var found: J? = None
+      for (i, k) in keys.indexed() {
+        if k == key || k.to_lower() == key.to_lower() {
+          found = Some(vals[i])
+        }
+      }
+      found
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => None
+  }
+}
+
+/// The source text of the member named key (matched as get does), or
+/// None.
+pub fn get_raw(v: J, key: Str) -> Str? {
+  match v {
+    J.Obj(keys, vals, raws) => {
+      var found: Str? = None
+      for (i, k) in keys.indexed() {
+        if k == key || k.to_lower() == key.to_lower() {
+          found = Some(if i < raws.len() { raws[i] } else { encode(vals[i], false) })
+        }
+      }
+      found
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => None
+  }
+}
+
+/// The kind of a value as Go's UnmarshalTypeError names it.
+pub fn kind_name(v: J) -> Str {
+  match v {
+    J.Null => "null"
+    J.Bool(_) => "bool"
+    J.Num(_) => "number"
+    J.Str(_) => "string"
+    J.Arr(_, _) => "array"
+    J.Obj(_, _, _) => "object"
+    J.Raw(_) => "raw"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parsing (encoding/json scanner.go and decode.go)
+
+struct Parser {
+  src: Bytes
+  off: Int = 0
+  err: Str = ""
+}
+
+fn is_space(c: UInt8) -> Bool {
+  c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+fn is_digit(c: UInt8) -> Bool {
+  c >= '0' && c <= '9'
+}
+
+fn is_hex(c: UInt8) -> Bool {
+  is_digit(c) || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f')
+}
+
+fn hex_value(c: UInt8) -> Int {
+  if is_digit(c) { Int(c - '0') } else { Int((c | 0x20) - 'a') + 10 }
+}
+
+/// quoteChar: the character of a syntax error.
+fn quote_char(c: UInt8) -> Str {
+  if c == '\'' {
+    return "'\\''"
+  }
+  if c == '"' {
+    return "'\"'"
+  }
+  let r = Rune.try(Int(c)) ?? '?'
+  let q = "${r}".quote()
+  "'" + q[1..q.len() - 1] + "'"
+}
+
+/// Parses one JSON value with optional white space around it: the tree,
+/// or Go's error text.
+pub fn parse(text: Str) -> J ! Str {
+  var p = Parser{src: text.bytes()}
+  p.skip_space()
+  let v = p.value()
+  if !p.err.is_empty() {
+    return Err(p.err)
+  }
+  p.skip_space()
+  if p.off < p.src.len() {
+    return Err("invalid character ${quote_char(p.src[p.off])} after top-level value")
+  }
+  Ok(v)
+}
+
+fn (var p: Parser) skip_space() {
+  while p.off < p.src.len() && is_space(p.src[p.off]) {
+    p.off += 1
+  }
+}
+
+fn (var p: Parser) fail(context: Str) -> J {
+  if p.err.is_empty() {
+    if p.off >= p.src.len() {
+      p.err = "unexpected end of JSON input"
+    } else {
+      p.err = "invalid character ${quote_char(p.src[p.off])} ${context}"
+    }
+  }
+  J.Null
+}
+
+/// fail inside a literal or a number: at the end of the input Go's
+/// scanner steps a space through the state (scanner.eof), so the error
+/// names ' ' instead of the end.
+fn (var p: Parser) fail_in(context: Str) -> J {
+  if p.err.is_empty() && p.off >= p.src.len() {
+    p.err = "invalid character ' ' ${context}"
+  }
+  p.fail(context)
+}
+
+fn (var p: Parser) value() -> J {
+  if p.off >= p.src.len() {
+    return p.fail("looking for beginning of value")
+  }
+  let c = p.src[p.off]
+  if c == '{' {
+    return p.object()
+  }
+  if c == '[' {
+    return p.array()
+  }
+  if c == '"' {
+    let s = p.string()
+    return J.Str(s)
+  }
+  if c == '-' || is_digit(c) {
+    return p.number()
+  }
+  if c == 't' {
+    return p.literal("true", J.Bool(true))
+  }
+  if c == 'f' {
+    return p.literal("false", J.Bool(false))
+  }
+  if c == 'n' {
+    return p.literal("null", J.Null)
+  }
+  p.fail("looking for beginning of value")
+}
+
+fn (var p: Parser) literal(word: Str, v: J) -> J {
+  let w = word.bytes()
+  p.off += 1
+  var i = 1
+  while i < w.len() {
+    if p.off >= p.src.len() || p.src[p.off] != w[i] {
+      let ch = Rune.try(Int(w[i])) ?? '?'
+      return p.fail_in("in literal ${word} (expecting '${ch}')")
+    }
+    p.off += 1
+    i += 1
+  }
+  v
+}
+
+fn (var p: Parser) digits() {
+  while p.off < p.src.len() && is_digit(p.src[p.off]) {
+    p.off += 1
+  }
+}
+
+fn (var p: Parser) number() -> J {
+  let start = p.off
+  if p.src[p.off] == '-' {
+    p.off += 1
+    if p.off >= p.src.len() || !is_digit(p.src[p.off]) {
+      return p.fail_in("in numeric literal")
+    }
+  }
+  if p.src[p.off] == '0' {
+    p.off += 1
+  } else {
+    p.digits()
+  }
+  if p.off < p.src.len() && p.src[p.off] == '.' {
+    p.off += 1
+    if p.off >= p.src.len() || !is_digit(p.src[p.off]) {
+      return p.fail_in("after decimal point in numeric literal")
+    }
+    p.digits()
+  }
+  if p.off < p.src.len() && (p.src[p.off] == 'e' || p.src[p.off] == 'E') {
+    p.off += 1
+    if p.off < p.src.len() && (p.src[p.off] == '+' || p.src[p.off] == '-') {
+      p.off += 1
+    }
+    if p.off >= p.src.len() || !is_digit(p.src[p.off]) {
+      return p.fail_in("in exponent of numeric literal")
+    }
+    p.digits()
+  }
+  J.Num(p.src[start..p.off].to_str() ?? "0")
+}
+
+/// A string literal at p.off (the opening quote): its value, with invalid
+/// UTF-8 and lone surrogates replaced by U+FFFD as Go does.
+fn (var p: Parser) string() -> Str {
+  p.off += 1
+  var b = BytesBuilder.new()
+  var start = p.off
+  while {
+    if p.off >= p.src.len() {
+      p.fail("in string literal")
+      return ""
+    }
+    let c = p.src[p.off]
+    if c == '"' {
+      b.write(p.src[start..p.off])
+      p.off += 1
+      break
+    }
+    if c < 0x20 {
+      p.fail("in string literal")
+      return ""
+    }
+    if c != '\\' {
+      p.off += 1
+      continue
+    }
+    b.write(p.src[start..p.off])
+    p.off += 1
+    if p.off >= p.src.len() {
+      p.fail("in string escape code")
+      return ""
+    }
+    let e = p.src[p.off]
+    p.off += 1
+    if e == 'u' {
+      let r = p.hex4()
+      if r < 0 {
+        return ""
+      }
+      var code = r
+      if r >= 0xd800 && r < 0xdc00 {
+        // a surrogate pair, if the next escape completes it
+        if p.off + 6 <= p.src.len() && p.src[p.off] == '\\' && p.src[p.off + 1] == 'u' {
+          let save = p.off
+          p.off += 2
+          let r2 = p.hex4()
+          if r2 < 0 {
+            return ""
+          }
+          if r2 >= 0xdc00 && r2 < 0xe000 {
+            code = 0x10000 + ((r - 0xd800) << 10) + (r2 - 0xdc00)
+          } else {
+            p.off = save
+            code = 0xfffd
+          }
+        } else {
+          code = 0xfffd
+        }
+      } else if r >= 0xdc00 && r < 0xe000 {
+        code = 0xfffd
+      }
+      b.write_rune(Rune.try(code) ?? '\u{fffd}')
+    } else if e == 'b' {
+      b.write_byte(0x08)
+    } else if e == 'f' {
+      b.write_byte(0x0c)
+    } else if e == 'n' {
+      b.write_byte('\n')
+    } else if e == 'r' {
+      b.write_byte('\r')
+    } else if e == 't' {
+      b.write_byte('\t')
+    } else if e == '"' || e == '\\' || e == '/' {
+      b.write_byte(e)
+    } else {
+      p.off -= 1
+      p.fail("in string escape code")
+      return ""
+    }
+    start = p.off
+  }
+  let raw = b.freeze()
+  match raw.to_str() {
+    Some(s) => s
+    None => valid_utf8(raw)
+  }
+}
+
+/// The four hex digits at p.off, or -1 after recording the error.
+fn (var p: Parser) hex4() -> Int {
+  var n = 0
+  for _ in 0..4 {
+    if p.off >= p.src.len() || !is_hex(p.src[p.off]) {
+      p.fail("in \\u hexadecimal character escape")
+      return -1
+    }
+    n = n * 16 + hex_value(p.src[p.off])
+    p.off += 1
+  }
+  n
+}
+
+/// The bytes with each invalid UTF-8 sequence replaced by U+FFFD.
+fn valid_utf8(b: Bytes) -> Str {
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write_rune(r)
+    i += if n > 0 { n } else { 1 }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn (var p: Parser) array() -> J {
+  p.off += 1
+  var items: List[J] = []
+  var raws: List[Str] = []
+  p.skip_space()
+  if p.off < p.src.len() && p.src[p.off] == ']' {
+    p.off += 1
+    return J.Arr(items: items, raws: raws)
+  }
+  while {
+    p.skip_space()
+    let start = p.off
+    let v = p.value()
+    if !p.err.is_empty() {
+      return J.Null
+    }
+    items.push(v)
+    raws.push(p.src[start..p.off].to_str() ?? "")
+    p.skip_space()
+    if p.off >= p.src.len() {
+      return p.fail("after array element")
+    }
+    let c = p.src[p.off]
+    if c == ',' {
+      p.off += 1
+      continue
+    }
+    if c == ']' {
+      p.off += 1
+      break
+    }
+    return p.fail("after array element")
+  }
+  J.Arr(items: items, raws: raws)
+}
+
+fn (var p: Parser) object() -> J {
+  p.off += 1
+  var keys: List[Str] = []
+  var vals: List[J] = []
+  var raws: List[Str] = []
+  p.skip_space()
+  if p.off < p.src.len() && p.src[p.off] == '}' {
+    p.off += 1
+    return J.Obj(keys: keys, vals: vals, raws: raws)
+  }
+  while {
+    p.skip_space()
+    if p.off >= p.src.len() || p.src[p.off] != '"' {
+      return p.fail("looking for beginning of object key string")
+    }
+    let k = p.string()
+    if !p.err.is_empty() {
+      return J.Null
+    }
+    p.skip_space()
+    if p.off >= p.src.len() || p.src[p.off] != ':' {
+      return p.fail("after object key")
+    }
+    p.off += 1
+    p.skip_space()
+    let start = p.off
+    let v = p.value()
+    if !p.err.is_empty() {
+      return J.Null
+    }
+    keys.push(k)
+    vals.push(v)
+    raws.push(p.src[start..p.off].to_str() ?? "")
+    p.skip_space()
+    if p.off >= p.src.len() {
+      return p.fail("after object key:value pair")
+    }
+    let c = p.src[p.off]
+    if c == ',' {
+      p.off += 1
+      continue
+    }
+    if c == '}' {
+      p.off += 1
+      break
+    }
+    return p.fail("after object key:value pair")
+  }
+  J.Obj(keys: keys, vals: vals, raws: raws)
+}
+
+// ---------------------------------------------------------------------------
+// Writing (encoding/json encode.go)
+
+const HEX = "0123456789abcdef"
+
+/// Appends the JSON string literal of s (encodeState.string).
+pub fn write_str(var b: BytesBuilder, s: Str, html: Bool) {
+  let src = s.bytes()
+  let hex = HEX.bytes()
+  b.write_byte('"')
+  var start = 0
+  var i = 0
+  while i < src.len() {
+    let c = src[i]
+    if c < 0x80 {
+      let plain = c >= 0x20 && c != '"' && c != '\\' && (!html || (c != '<' && c != '>' && c != '&'))
+      if plain {
+        i += 1
+        continue
+      }
+      b.write(src[start..i])
+      if c == '"' || c == '\\' {
+        b.write_byte('\\')
+        b.write_byte(c)
+      } else if c == 0x08 {
+        b.write_str("\\b")
+      } else if c == 0x0c {
+        b.write_str("\\f")
+      } else if c == '\n' {
+        b.write_str("\\n")
+      } else if c == '\r' {
+        b.write_str("\\r")
+      } else if c == '\t' {
+        b.write_str("\\t")
+      } else {
+        b.write_str("\\u00")
+        b.write_byte(hex[Int(c >> 4)])
+        b.write_byte(hex[Int(c & 0xf)])
+      }
+      i += 1
+      start = i
+      continue
+    }
+    let (r, n) = src.decode_rune(i)
+    if r == '\u{fffd}' && n == 1 {
+      b.write(src[start..i])
+      b.write_str("\\ufffd")
+      i += 1
+      start = i
+      continue
+    }
+    if r == '\u{2028}' || r == '\u{2029}' {
+      b.write(src[start..i])
+      b.write_str(if r == '\u{2028}' { "\\u2028" } else { "\\u2029" })
+      i += n
+      start = i
+      continue
+    }
+    i += n
+  }
+  b.write(src[start..src.len()])
+  b.write_byte('"')
+}
+
+/// Appends src (valid JSON) without insignificant white space
+/// (appendCompact); with html, `<`, `>`, `&`, U+2028, and U+2029 outside
+/// escapes are escaped.
+pub fn write_compact(var b: BytesBuilder, src: Str, html: Bool) {
+  let s = src.bytes()
+  let hex = HEX.bytes()
+  var in_str = false
+  var esc = false
+  var start = 0
+  var i = 0
+  while i < s.len() {
+    let c = s[i]
+    if in_str {
+      if esc {
+        esc = false
+      } else if c == '\\' {
+        esc = true
+      } else if c == '"' {
+        in_str = false
+      }
+    } else if c == '"' {
+      in_str = true
+    } else if is_space(c) {
+      b.write(s[start..i])
+      i += 1
+      start = i
+      continue
+    }
+    if html && (c == '<' || c == '>' || c == '&') {
+      b.write(s[start..i])
+      b.write_str("\\u00")
+      b.write_byte(hex[Int(c >> 4)])
+      b.write_byte(hex[Int(c & 0xf)])
+      i += 1
+      start = i
+      continue
+    }
+    if html && c == 0xe2 && i + 2 < s.len() && s[i + 1] == 0x80 && (s[i + 2] & 0xfe) == 0xa8 {
+      b.write(s[start..i])
+      b.write_str("\\u202")
+      b.write_byte(hex[Int(s[i + 2] & 0xf)])
+      i += 3
+      start = i
+      continue
+    }
+    i += 1
+  }
+  b.write(s[start..s.len()])
+}
+
+/// Appends v compactly, members in their order.
+pub fn write(var b: BytesBuilder, v: J, html: Bool) {
+  match v {
+    J.Null => b.write_str("null")
+    J.Bool(x) => b.write_str(if x { "true" } else { "false" })
+    J.Num(t) => b.write_str(t)
+    J.Str(s) => write_str(b, s, html)
+    J.Raw(t) => write_compact(b, t, html)
+    J.Arr(items, _) => {
+      b.write_byte('[')
+      for (i, x) in items.indexed() {
+        if i > 0 {
+          b.write_byte(',')
+        }
+        write(b, x, html)
+      }
+      b.write_byte(']')
+    }
+    J.Obj(keys, vals, _) => {
+      b.write_byte('{')
+      for (i, k) in keys.indexed() {
+        if i > 0 {
+          b.write_byte(',')
+        }
+        write_str(b, k, html)
+        b.write_byte(':')
+        write(b, vals[i], html)
+      }
+      b.write_byte('}')
+    }
+  }
+}
+
+/// v as compact JSON text.
+pub fn encode(v: J, html: Bool) -> Str {
+  var b = BytesBuilder.new()
+  write(b, v, html)
+  b.freeze().to_str() ?? ""
+}
+
+/// v as Go writes it after decoding it into an `any`: object keys sorted
+/// at every depth (a later duplicate key replaces an earlier one), and
+/// numbers through float64.
+pub fn go_map(v: J) -> J {
+  match v {
+    J.Obj(keys, vals, _) => {
+      var m: Map[Str, J] = {}
+      for (i, k) in keys.indexed() {
+        m[k] = go_map(vals[i])
+      }
+      var ks: List[Str] = []
+      for k in m.keys() {
+        ks.push(k)
+      }
+      ks = ks.sort()
+      var vs: List[J] = []
+      for k in ks {
+        vs.push(m.get(k) ?? J.Null)
+      }
+      J.Obj(keys: ks, vals: vs, raws: [])
+    }
+    J.Arr(items, _) => {
+      var out: List[J] = []
+      for x in items {
+        out.push(go_map(x))
+      }
+      J.Arr(items: out, raws: [])
+    }
+    J.Num(t) => J.Num(go_float_text(t))
+    J.Null | J.Bool(_) | J.Str(_) | J.Raw(_) => v
+  }
+}
+
+/// A JSON number as Go writes the float64 it decodes to: integers of at
+/// most 15 digits as integers (exact in a float64), other values through
+/// Float.
+fn go_float_text(t: Str) -> Str {
+  let plain = !t.contains(".") && !t.contains("e") && !t.contains("E")
+  let digits = t.trim_prefix("-").len()
+  if plain && digits <= 15 {
+    match Int.parse(t) {
+      Some(n) => return if n == 0 && t.starts_with("-") { "-0" } else { "${n}" }
+      None => {}
+    }
+  }
+  match Float.parse(t) {
+    Some(f) => {
+      if f == f.trunc() && f.abs() < 9e18 {
+        "${Int(f)}"
+      } else {
+        "${f}"
+      }
+    }
+    None => t
+  }
+}
+
+/// The object type error Go reports for decoding a value of the wrong kind
+/// into a field of type want ("json: cannot unmarshal number into Go
+/// struct field request.method of type string").
+pub fn field_type_err(v: J, owner: Str, field: Str, want: Str) -> Str {
+  "json: cannot unmarshal ${kind_name(v)} into Go struct field ${owner}.${field} of type ${want}"
+}
+
+/// The error of decoding a value of the wrong kind into a whole Go value
+/// of type want ("json: cannot unmarshal array into Go value of type
+/// mcp.request").
+pub fn value_type_err(v: J, want: Str) -> Str {
+  "json: cannot unmarshal ${kind_name(v)} into Go value of type ${want}"
+}

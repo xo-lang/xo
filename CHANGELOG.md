@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
+  xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
+  quick fixes, symbols) with the Go servers' responses byte for byte,
+  and forwards `check` and `query` to a running `xo serve`. Natively,
+  `os.env.program()` builds, and removing from both a `Map[Str, Str]`
+  and a `Map[Str, Bytes]` in one program no longer fails the SSA
+  verifier.
+- `os.proc.kill(pid, signal)` sends a signal (by name: `TERM`, `QUIT`,
+  ...) to another process, and `os.net.listen` and `dial` take
+  `unix:PATH` addresses for Unix domain sockets, on every backend; an
+  attenuated `Proc` must list `"kill"`, an attenuated `Net` lists the
+  socket as `unix:PATH`; `FakeProc` records signals (`killed()`) and
+  `FakeNet` listens on sockets in memory (decision 0190).
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's

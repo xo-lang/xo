@@ -1,0 +1,94 @@
+// `xo dump <pid>` (core 11.4, cmd/xo dump.go): asks a running Xo program
+// for its task tree with SIGQUIT (Proc.kill, decision 0190) and prints
+// the dump the program writes to XO_DUMP_DIR (default the temporary
+// directory) as xo-dump-<pid>.txt. Only the process the user names is
+// signaled.
+
+fn dump_flags() -> List[Flag] {
+  [Flag{name: "timeout", kind: "duration", def: "5s", usage: "how long to wait for the dump"}]
+}
+
+/// The temporary directory as Go's os.TempDir: $TMPDIR, else /tmp.
+pub fn temp_dir(os: Os) -> Str uses env {
+  let t = os.env.get("TMPDIR") ?? ""
+  if t.is_empty() { "/tmp" } else { t }
+}
+
+/// filepath.Join of a directory and a name (the separators cleaned at
+/// the join).
+pub fn join(dir: Str, name: Str) -> Str {
+  if dir.is_empty() {
+    return name
+  }
+  var d = dir
+  while d.len() > 1 && d.ends_with("/") {
+    d = d[..d.len() - 1]
+  }
+  if d == "/" { "/" + name } else { d + "/" + name }
+}
+
+/// dumpPath: where the program writes its dump (std/rt's DumpPath).
+fn dump_path(os: Os, pid: Int) -> Str uses env {
+  var dir = os.env.get("XO_DUMP_DIR") ?? ""
+  if dir.is_empty() {
+    dir = temp_dir(os)
+  }
+  join(dir, "xo-dump-${pid}.txt")
+}
+
+pub fn run_dump(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock) {
+  let flags = dump_flags()
+  let p = match parse_flags("dump", flags, args) {
+    Ok(p) => p
+    Err(text) => {
+      os.stdio.eprint(text)
+      return 2
+    }
+  }
+  if p.args.len() != 1 {
+    os.stdio.eprintln("usage: xo dump [--timeout=5s] <pid>")
+    return 2
+  }
+  let timeout = Duration.parse(p.get(flags, "timeout")).ok() ?? 5s
+  let pid = Int.parse(p.args[0]) ?? 0
+  if pid <= 0 {
+    os.stdio.eprintln("xo dump: ${p.args[0].quote()} is not a process id")
+    return 2
+  }
+  let path = dump_path(os, pid)
+  let _ = os.fs.remove(path).ignore_err("a stale dump may be missing")
+  match os.proc.kill(pid, "QUIT") {
+    Ok(_) => {}
+    Err(e) => {
+      // os.Process.Signal's texts
+      let msg = match e {
+        ProcErr.Io(m) => if m == "no such process" { "os: process already finished" } else { m }
+        ProcErr.NotFound(c) => c
+        ProcErr.Denied(c) => "denied: ${c}"
+        ProcErr.Canceled => "canceled"
+      }
+      os.stdio.eprintln("xo dump: ${msg}")
+      return 1
+    }
+  }
+  let deadline = os.clock.now() + timeout
+  while {
+    match os.fs.read(path) {
+      Ok(data) => {
+        let _ = os.fs.remove(path).ignore_err("a stale dump may be missing")
+        match os.stdio.write(data) {
+          Ok(_) => {}
+          Err(_) => {}
+        }
+        return 0
+      }
+      Err(_) => {}
+    }
+    if os.clock.now() > deadline {
+      os.stdio.eprintln("xo dump: no dump from process ${pid} within ${timeout} (is it an Xo program?)")
+      return 1
+    }
+    os.clock.sleep(20ms)
+  }
+  1
+}

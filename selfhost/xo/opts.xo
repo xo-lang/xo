@@ -80,6 +80,12 @@ fn usage(os: Os, why: Str) -> Never {
 /// parse_args reads the command line (args[0] is the command).
 fn parse_args(os: Os, args: List[Str]) -> Opts {
   var o = Opts{cmd: args[0], wd: os.env.get("PWD") ?? ""}
+  // $XO_STD names the std sources as for the stage 2 commands (cli/core
+  // cli.xo); --std overrides it
+  let env_std = os.env.get("XO_STD") ?? ""
+  if !env_std.is_empty() {
+    o.std = env_std
+  }
   let vals = value_flags()
   let bools = bool_flags()
   var i = 1

@@ -529,7 +529,8 @@ interface Net {
   fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
   fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
   /// A Net that dials and listens only on the listed hosts: `host`,
-  /// `*.domain`, or `host:port` (std.md 3.2, decision 0156).
+  /// `*.domain`, or `host:port`, and `unix:PATH` for a Unix domain
+  /// socket (std.md 3.2, decisions 0156 and 0190).
   fn only(self, hosts: List[Str]) -> Net
 }
 
@@ -640,6 +641,10 @@ interface Proc {
   /// input: the last one's output, every error stream, and the status of
   /// the rightmost failing command (std.md 3.8).
   fn pipeline(self, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
+  /// Sends the signal named (HUP, INT, QUIT, KILL, TERM, USR1, USR2,
+  /// CONT, STOP) to the process pid; an attenuated Proc must list "kill"
+  /// (std.md 3.7, decision 0190).
+  fn kill(self, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
 }
 
 /// A command that has not run (std.md 3.8, decision 0161). A value: each

@@ -500,7 +500,13 @@ func (b *builder) mapRemove(t *Type, ot *Type, at ast.Node) string {
 	K, V := mapKey(t), mapVal(t)
 	find := b.mapFind(t, at)
 	rt := m.Tuple(t, ot)
-	return b.genFunc("xo.map.remove["+t.Name+"]", []*Type{t, K}, []*Type{rt}, func(s *fn, ps []*Value) {
+	name := "xo.map.remove[" + t.Name + "]"
+	if f := m.Func(name); f != nil && f.Results[0].Name != rt.Name {
+		// Map[K, Bytes] lowers to the Map[K, Str] of Str values, but its
+		// removed value is a Bytes?: one function per result type
+		name += "[" + ot.Name + "]"
+	}
+	return b.genFunc(name, []*Type{t, K}, []*Type{rt}, func(s *fn, ps []*Value) {
 		mp, k := ps[0], ps[1]
 		idx := s.call(find, intT, "", mp, k, s.call(b.hashFunc(K, at), intT, "", k))
 		s.ifThen(s.add(OpLt, boolT, nil, idx, s.cint(0)), func() {

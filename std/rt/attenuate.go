@@ -3,6 +3,7 @@ package rt
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -34,7 +35,13 @@ func newOnlyNet(inner Net, hosts List[string]) Net {
 func normHosts(hs []string) []string {
 	out := make([]string, len(hs))
 	for i, h := range hs {
-		out[i] = strings.ToLower(strings.TrimSpace(h))
+		h = strings.TrimSpace(h)
+		if len(h) >= 5 && strings.EqualFold(h[:5], "unix:") {
+			// a socket path keeps its case (decision 0190)
+			out[i] = "unix:" + h[5:]
+			continue
+		}
+		out[i] = strings.ToLower(h)
 	}
 	return out
 }
@@ -43,6 +50,8 @@ func normHosts(hs []string) []string {
 // host (any port), `*.domain` (any subdomain, any port), or `host:port`.
 func hostAdmits(e, host, port string) bool {
 	switch {
+	case strings.HasPrefix(e, "unix:"):
+		return false // admits only its socket (admitsAddr)
 	case strings.HasPrefix(e, "*."):
 		suf := e[1:]
 		return strings.HasSuffix(host, suf) && len(host) > len(suf)
@@ -77,6 +86,16 @@ func (n *onlyNet) admits(host, port string) bool {
 // admitsAddr checks a dial or listen address; an empty host (`:8080`)
 // is the unspecified address 0.0.0.0.
 func (n *onlyNet) admitsAddr(addr string) bool {
+	if _, ok := unixPath(addr); ok {
+		// a Unix domain socket: the entry `unix:PATH`, exactly
+		// (decision 0190)
+		for _, l := range n.lists {
+			if !slices.Contains(l, addr) {
+				return false
+			}
+		}
+		return true
+	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false

@@ -842,6 +842,26 @@ static tw_ml *tw_ml_of(xo_listener *l) { return (tw_ml *)l->mem; }
 // tw_listen is FakeNet.listen(addr): ":0" (and port 0) picks the next
 // port from 49152.
 __attribute__((unused)) static xo_listener *tw_listen(xo_ctx *c, const char *addr) {
+	if (strncmp(addr, "unix:", 5) == 0) {
+		// an in memory Unix domain socket (decision 0190)
+		tw_ml *ml = calloc(1, sizeof(tw_ml));
+		if (!ml) {
+			xo_oom();
+		}
+		xo_listener *l = xo_alloc(sizeof(xo_listener));
+		h_init(l, listener_free);
+		l->pd = NULL;
+		l->addr = strdup(addr);
+		l->mem = ml;
+		l->unlink_path = 0;
+		lk(&tws.mu);
+		ml->l = l;
+		ml->next = tws.mls;
+		tws.mls = ml;
+		unlk(&tws.mu);
+		net_ok(c);
+		return l;
+	}
 	const char *colon = strrchr(addr, ':');
 	char host[256] = "127.0.0.1";
 	const char *port = colon ? colon + 1 : addr;
@@ -876,6 +896,7 @@ __attribute__((unused)) static xo_listener *tw_listen(xo_ctx *c, const char *add
 	l->pd = NULL;
 	l->addr = strdup(full);
 	l->mem = ml;
+	l->unlink_path = 0;
 	ml->l = l;
 	ml->next = tws.mls;
 	tws.mls = ml;

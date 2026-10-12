@@ -152,6 +152,10 @@ fn (p: FakeProc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
 fn (p: FakeProc) exit_code() -> Int?
 fn (p: FakeProc) signal_after(d: Duration)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
+/// Records the signal; nothing is sent (decision 0190).
+fn (p: FakeProc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+/// The signals kill recorded, as "NAME PID", oldest first.
+fn (p: FakeProc) killed() -> List[Str]
 
 /// Runs a program's main against fakes and returns its exit status: 0, 1
 /// for an error returned from main, or the code passed to exit (std.md 8.4).

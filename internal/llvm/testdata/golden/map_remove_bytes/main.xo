@@ -1,0 +1,13 @@
+// Map[Str, Str] and Map[Str, Bytes] in one program: natively both are
+// a map of Str values, so their remove functions shared a name and the
+// second failed the SSA verifier ("result type does not match the
+// callee"; found by selfhost/cli/servers, decision 0178 stage 5).
+
+fn main(os: Os) {
+  var s: Map[Str, Str] = {"a": "x", "b": "y"}
+  let r1 = s.remove("a")
+  var m: Map[Str, Bytes] = {"a": b"x1", "c": b"z"}
+  let r2 = m.remove("a")
+  let r3 = m.remove("nope")
+  os.stdio.println("${s.len()} ${m.len()} ${r1 ?? "-"} ${(r2 ?? b"-").to_str() ?? "?"} ${r3.is_none()}")
+}

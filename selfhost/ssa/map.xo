@@ -401,7 +401,13 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   let vt = map_val(b.m, t)
   let find = b.map_find(t)
   let rt = b.m.tuple([t, ot])
-  let name = "xo.map.remove[${b.m.types[t].name}]"
+  var name = "xo.map.remove[${b.m.types[t].name}]"
+  let have = b.m.func_index(name)
+  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
+    // Map[K, Bytes] lowers to the Map[K, Str] of Str values, but its
+    // removed value is a Bytes?: one function per result type
+    name = name + "[${b.m.types[ot].name}]"
+  }
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {
     return name
