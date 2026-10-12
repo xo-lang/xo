@@ -1,6 +1,8 @@
-// Nested element updates (decision 0169). Usage: nested <workload>
-// Each workload does N updates of a collection inside a list element and
-// prints "<workload> <checksum> <elapsed microseconds>". Before decision
+// Nested element updates (decision 0169) and element reads (decision
+// 0186). Usage: nested <workload>
+// Each workload does N updates of a collection inside a list element (or
+// reads, for walk and index2) and prints "<workload> <checksum> <elapsed
+// microseconds>". Before decision
 // 0169 the native backends copied the inner collection on every update.
 
 const N = 20000
@@ -125,6 +127,82 @@ fn shared() -> Int {
   keep + g.blocks[0].insts.len()
 }
 
+struct Ins {
+  op: Str
+  us: List[Int]
+  defs: List[Int]
+  tag: Str
+}
+
+struct MBlock {
+  insts: List[Ins]
+}
+
+struct MG {
+  blocks: List[MBlock]
+  n: Int
+}
+
+fn odd(x: Int) -> Bool {
+  x % 2 == 1
+}
+
+/// `for inst in g.blocks[b].insts` over a `var` receiver, reading only
+/// (decision 0186: the element is borrowed).
+fn (var g: MG) walk_pass() -> Int {
+  var n = 0
+  for b in 0..g.blocks.len() {
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        if odd(u) {
+          n += u
+        }
+      }
+      n += inst.defs.len() + inst.op.len()
+    }
+  }
+  g.n = n
+  n
+}
+
+fn walk() -> Int {
+  var g = MG{blocks: [], n: 0}
+  for b in 0..4 {
+    var insts: List[Ins] = []
+    for i in 0..N / 4 {
+      insts.push(Ins{op: "add", us: [i, b], defs: [i], tag: "t"})
+    }
+    g.blocks.push(MBlock{insts: insts})
+  }
+  var s = 0
+  for _ in 0..10 {
+    s += g.walk_pass()
+  }
+  s
+}
+
+/// `a[i][j]` reads of a list of lists (decision 0186: the inner list is
+/// borrowed).
+fn index2() -> Int {
+  var a: List[List[Int]] = []
+  for i in 0..100 {
+    var r: List[Int] = []
+    for j in 0..N / 100 {
+      r.push(i + j)
+    }
+    a.push(r)
+  }
+  var s = 0
+  for _ in 0..10 {
+    for i in 0..a.len() {
+      for j in 0..a[i].len() {
+        s += a[i][j]
+      }
+    }
+  }
+  s
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "push"
@@ -137,6 +215,8 @@ fn main(os: Os) {
     "strappend" => str_append()
     "method" => method_field()
     "shared" => shared()
+    "walk" => walk()
+    "index2" => index2()
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

@@ -30,6 +30,7 @@ enum RootKind {
   Owned
   Borrowed
   Proj
+  BProj
 }
 
 /// One leaf an instruction uses, and how.
@@ -49,6 +50,9 @@ struct Rc {
   fidx: Map[Str, Int] = {}
   borrowed: List[List[Bool]] = []
   fi: Int = -1
+  // the borrowed projections of function fi and their owners (decision
+  // 0186, borrow.xo)
+  bproj: Map[Int, Leaf] = {}
   // the verifier's leaf numbers (verify.xo): of function vfi, by leaf
   // key; the leaves; the counts of the block being checked by leaf
   // number, whether each was touched in it, and those touched; the leaf
@@ -241,6 +245,9 @@ fn param_index(f: Func, v: Int) -> Int {
 
 /// What root v is (kind).
 fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
+  if r.bproj.contains(v) {
+    return RootKind.BProj
+  }
   let x = f.values[v]
   match x.op {
     Param => {
@@ -282,7 +289,8 @@ fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
 }
 
 fn (var r: Rc) tracked(f: Func, l: Leaf) -> Bool {
-  r.kind(f, l.root) != RootKind.Borrowed
+  let k = r.kind(f, l.root)
+  k != RootKind.Borrowed && k != RootKind.BProj
 }
 
 /// The operand modes of v (modes).
@@ -363,19 +371,37 @@ fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
       // the replaced field is not used
       let b = r.base(f, a)
       let pre = "${b.path}.${aux_int(x.aux)}"
+      let n0 = out.len()
       for l in ls {
         if l.path == pre || l.path.starts_with("${pre}.") {
           continue
         }
         out.push(Use{l: l, m: m})
       }
+      if out.len() > n0 {
+        r.owner_use(out, f, a)
+      }
       continue
     }
     for l in ls {
       out.push(Use{l: l, m: m})
     }
+    if !ls.is_empty() {
+      r.owner_use(out, f, a)
+    }
   }
   out
+}
+
+/// Appends a borrowing use of the owner of a when a is (a field of) a
+/// borrowed projection (ownerUse, decision 0186).
+fn (r: Rc) owner_use(var out: List[Use], f: Func, a: Int) {
+  if r.bproj.is_empty() {
+    return
+  }
+  if let Some(o) = r.bproj.get(r.base(f, a).root) {
+    out.push(Use{l: o, m: Mode.Borrow})
+  }
 }
 
 /// The leaves the arguments of edge e pass (edgeUses).
@@ -650,6 +676,7 @@ pub fn (var b: Builder) insert_rc() {
     b.m.funcs[fi] = Func{name: ""}
     r.fi = fi
     var c = RcFunc{}
+    r.borrow_projections(f)
     r.liveness(f, c)
     r.insert(f, c)
     r.cancel(f)
@@ -660,6 +687,7 @@ pub fn (var b: Builder) insert_rc() {
     f.borrowed = r.borrowed[fi]
     b.m.funcs[fi] = f
   }
+  r.bproj = {}
 }
 
 fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
@@ -1071,7 +1099,8 @@ fn (var r: Rc) anchors(f: Func, v0: Int) -> List[Int] {
   var v = v0
   while {
     out.push(v)
-    if r.kind(f, v) != RootKind.Proj {
+    let k = r.kind(f, v)
+    if k != RootKind.Proj && k != RootKind.BProj {
       return out
     }
     v = r.parent(f, v).root

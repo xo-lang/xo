@@ -782,7 +782,7 @@ fn (var r: Rc) alive(f: Func, i: Int) -> Bool {
   let root = r.vleaves[i].root
   match r.kind(f, root) {
     Borrowed => true
-    Proj => {
+    Proj | BProj => {
       if r.cur[i] > 0 {
         return true
       }

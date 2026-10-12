@@ -14,6 +14,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `.eh_frame_hdr`). `xo1 build --target=linux/arm64 --ld=macho` builds a
   Linux program from any host with no C toolchain; every golden runs on
   glibc 2.31 and 2.41 (decision 0182 stage 3).
+- The native backends no longer count the element of `for x in <place>`
+  or an inner list read through an outer one (`a[i][j]`) when nothing
+  changes the container while it is in use (decision 0186): on
+  bench/perf/nested the read workloads went from 600,041 retains to 1
+  (walk) and from 201,001 to 1 (index2) on arm64, allocations unchanged.
 - The arm64 backend (and its Xo twin, byte identical) inlines small
   functions that call others and larger ones with at most two call
   sites, and drops the bounds, overflow, and shift checks that value
