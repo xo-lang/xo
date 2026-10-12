@@ -212,6 +212,8 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 			want := goParse(p)
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
 			switch {
+			case strings.HasPrefix(want, missingGolden):
+				fails = append(fails, p+": "+want)
 			case goRejects && !xoRejects:
 				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
 			case xoRejects && !goRejects:

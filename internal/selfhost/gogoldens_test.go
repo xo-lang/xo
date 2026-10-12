@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"testing"
 )
 
+
 // Recorded Go outputs (decision 0178, stage 7 step 2). Every Go side of
 // a TestSelfhost* differential (the lexer's lexdump, the parser's
 // astdump, the formatter, the checker's typedump, the SSA builder's
@@ -27,17 +29,22 @@ import (
 // which XO_SELFHOST_GOLDENS steers:
 //
 //   - unset or "live": the Go side runs, as before;
-//   - "record": the Go side runs and its output is added to
-//     testdata/gogoldens; the Xo side is skipped (no self hosted
-//     binary is built) and every test takes the full tier's inputs, so
-//     one run records what every tier compares
-//     (scripts/selfhost-record-goldens.sh);
+//   - "record": the Go side runs and its output is written to the
+//     recording; the Xo side is skipped (no self hosted binary is built)
+//     and every test takes the full tier's inputs, so one run records
+//     what every tier compares (scripts/selfhost-record-goldens.sh);
 //   - "replay": the Go side does not run; its recorded output is read.
 //     A unit with no recording is reported by TestMain, which then fails
 //     the run (recordedMissing).
 //
-// A unit is keyed by its kind, its options, and the content of its
-// inputs: a file's path and bytes; a run's directory, the working
+// The recording is a directory ($XO_SELFHOST_GOLDENS_DIR, else
+// testdata/gogoldens, not committed: 1.2 GB, decision 0178's stage 7
+// sizes) holding one gzip file per unit, <kind>/<id[:2]>/<id>.gz: the
+// unit's label (a line), then its output. A unit is read only when a
+// test asks for it, so replay holds no more than the live Go side does.
+//
+// A unit's id is the hash of its kind, its options, and the content of
+// its inputs: a file's path and bytes; a run's directory, the working
 // directory, and every file of its module (the nearest xo.mod at or
 // above it, else the directory alone; under a temporary working
 // directory, the whole top level directory of a mutation). What a run
@@ -69,97 +76,76 @@ func goldensMode() string {
 // goldensRecording reports whether this run records the Go side only.
 func goldensRecording() bool { return goldensMode() == goldensRecord }
 
-// goldenEntry is one recorded output: a label for people (the kind's
-// unit as the test names it) and the output with placeholders.
-type goldenEntry struct {
-	Label string `json:"l"`
-	Out   string `json:"o"`
-}
-
-type goldenKind struct {
-	loaded  bool
-	entries map[string]goldenEntry
-	dirty   bool
-}
-
-var goldens = struct {
+var goldens struct {
 	mu      sync.Mutex
-	kinds   map[string]*goldenKind
 	missing []string
-}{kinds: map[string]*goldenKind{}}
+	errs    []error
+}
 
-// goldensDir is testdata/gogoldens of this package.
+// goldensDir is $XO_SELFHOST_GOLDENS_DIR, else testdata/gogoldens of
+// this package.
 func goldensDir() string {
-	dir, err := filepath.Abs(filepath.FromSlash(goldensRelPath))
+	dir := os.Getenv("XO_SELFHOST_GOLDENS_DIR")
+	if dir == "" {
+		dir = filepath.FromSlash(goldensRelPath)
+	}
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		panic(err)
 	}
-	return dir
+	return abs
 }
 
-// loadKind reads kind's file once (an absent file is an empty kind).
-// goldens.mu is held.
-func loadKind(kind string) *goldenKind {
-	k := goldens.kinds[kind]
-	if k == nil {
-		k = &goldenKind{entries: map[string]goldenEntry{}}
-		goldens.kinds[kind] = k
-	}
-	if k.loaded {
-		return k
-	}
-	k.loaded = true
-	data, err := os.ReadFile(filepath.Join(goldensDir(), kind+".json.gz"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return k
-	}
-	if err != nil {
-		panic(err)
-	}
-	zr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		panic(fmt.Sprintf("%s: %v", kind, err))
-	}
-	if err := json.NewDecoder(zr).Decode(&k.entries); err != nil {
-		panic(fmt.Sprintf("%s: %v", kind, err))
-	}
-	return k
+// goldenPath is the file of unit id of kind.
+func goldenPath(kind, id string) string {
+	return filepath.Join(goldensDir(), kind, id[:2], id+".gz")
 }
 
-// flushGoldens writes every kind this run recorded into (merged with
-// what the file held). TestMain calls it after the tests.
+// readGolden reads unit id of kind: its label and output.
+func readGolden(kind, id string) (label, out string, err error) {
+	f, err := os.Open(goldenPath(kind, id))
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		return "", "", err
+	}
+	data, err := io.ReadAll(zr)
+	if err != nil {
+		return "", "", err
+	}
+	label, out, _ = strings.Cut(string(data), "\n")
+	return label, out, nil
+}
+
+// writeGolden writes unit id of kind (through a temporary file, so a
+// unit is whole or absent).
+func writeGolden(kind, id, label, out string) error {
+	p := goldenPath(kind, id)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	zw.Write([]byte(strings.ReplaceAll(label, "\n", " ") + "\n" + out))
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", p, os.Getpid())
+	if err := os.WriteFile(tmp, b.Bytes(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// flushGoldens is the first error writing the recording (TestMain).
 func flushGoldens() error {
 	goldens.mu.Lock()
 	defer goldens.mu.Unlock()
-	var names []string
-	for name, k := range goldens.kinds {
-		if k.dirty {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return nil
-	}
-	if err := os.MkdirAll(goldensDir(), 0o755); err != nil {
-		return err
-	}
-	for _, name := range names {
-		k := goldens.kinds[name]
-		var b bytes.Buffer
-		zw, _ := gzip.NewWriterLevel(&b, gzip.BestCompression)
-		enc := json.NewEncoder(zw)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(k.entries); err != nil { // map keys sorted
-			return err
-		}
-		if err := zw.Close(); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(goldensDir(), name+".json.gz"), b.Bytes(), 0o644); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "gogoldens: %s: %d units, %d bytes\n", name, len(k.entries), b.Len())
+	if len(goldens.errs) > 0 {
+		return fmt.Errorf("%d units not written, the first: %v", len(goldens.errs), goldens.errs[0])
 	}
 	return nil
 }
@@ -190,25 +176,24 @@ func recorded(kind, label string, key []string, cx goldenCtx, compute func() str
 	}
 	id := hex.EncodeToString(h.Sum(nil)[:16])
 	if mode == goldensReplay {
-		goldens.mu.Lock()
-		e, ok := loadKind(kind).entries[id]
-		if !ok {
+		_, out, err := readGolden(kind, id)
+		if err != nil {
+			goldens.mu.Lock()
 			goldens.missing = append(goldens.missing, kind+" "+cx.norm(label))
-		}
-		goldens.mu.Unlock()
-		if !ok {
+			goldens.mu.Unlock()
 			return missingGolden + kind + " " + label
 		}
-		return cx.denorm(e.Out)
+		return cx.denorm(out)
 	}
 	out := compute()
-	goldens.mu.Lock()
-	k := loadKind(kind)
-	k.entries[id] = goldenEntry{Label: cx.norm(label), Out: cx.norm(out)}
-	k.dirty = true
-	goldens.mu.Unlock()
+	if err := writeGolden(kind, id, cx.norm(label), cx.norm(out)); err != nil {
+		goldens.mu.Lock()
+		goldens.errs = append(goldens.errs, err)
+		goldens.mu.Unlock()
+	}
 	return out
 }
+
 
 // recordedJSON is recorded for a Go side whose result is a struct: enc
 // and dec convert it to and from JSON text; dec of a missing unit gets

@@ -10,6 +10,7 @@ package progen
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 )
 
@@ -249,7 +250,16 @@ func (g *pg) leaf(t string, e env) string {
 // binding is XO0110).
 func (g *pg) useAll(e env) string {
 	parts := []string{fmt.Sprint(g.r.Intn(5))}
-	for t, vs := range e {
+	// in type order: a map's order would make the program differ from
+	// run to run for one seed (the recorded Go outputs of decision 0178
+	// key on the program's text)
+	types := make([]string, 0, len(e))
+	for t := range e {
+		types = append(types, t)
+	}
+	sort.Strings(types)
+	for _, t := range types {
+		vs := e[t]
 		for _, v := range vs {
 			switch t {
 			case "Int":
