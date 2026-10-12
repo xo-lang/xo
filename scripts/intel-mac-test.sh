@@ -91,11 +91,8 @@ ssh_ "bash -s" <<EOF
 set -e
 X=\$HOME/xo-ci
 mkdir -p \$X/logs \$X/state/home \$X/state/tmp \$X/state/gocache \$X/state/gopath
-if [ -d \$X/xo/.git ]; then
-  git -C \$X/xo fetch -q \$X/xo.bundle '+refs/*:refs/bundle/*' 2>/dev/null || git -C \$X/xo fetch -q \$X/xo.bundle
-else
-  git clone -q \$X/xo.bundle \$X/xo
-fi
+[ -d \$X/xo/.git ] || git init -q \$X/xo
+git -C \$X/xo fetch -q \$X/xo.bundle '+refs/xo-intel/*:refs/xo-intel/*'
 git -C \$X/xo checkout -q -f $full
 cd \$X/xo
 export HOME=\$X/state/home TMPDIR=\$X/state/tmp/ GOCACHE=\$X/state/gocache GOPATH=\$X/state/gopath
