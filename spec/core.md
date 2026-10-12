@@ -1947,6 +1947,10 @@ let page = scope s {
   arrives later goes to the next read).
 - `task.is_canceled() -> Bool` reports the current task's state without
   blocking.
+- Under a resource budget (`task.with_budget`, std.md 7, decision 0173)
+  every loop iteration and every call into user code is a cancellation
+  point too: a passed ceiling cancels the budgeted scope, and its tasks
+  unwind at their next one.
 - `defer` blocks run shielded (3.5).
 
 ### 7.3 Channels
@@ -2510,6 +2514,7 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F005` | a shielded `defer` ran longer than 5 seconds (3.5) |
 | `XO-F006` | a loop started more iterations than its `bound N` (3.5) |
 | `XO-F007` | a real-time section allocated (6.5, native builds) |
+| `XO-F008` | shielded code under a resource budget ran past twice a ceiling (std.md 7, decision 0173) |
 
 ---
 

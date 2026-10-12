@@ -62,6 +62,11 @@ type waitTarget interface {
 // blocked on, with the source location, for deadlock reports and `xo dump`,
 // and is the unit the deterministic scheduler hands the turn to.
 type thread struct {
+	// budget accounting of the goroutine (budget.go): steps left before
+	// the next charge, the steps of the current quantum, and when the
+	// current running stretch started (monoNow)
+	budLeft, budQ, budRun int64
+
 	id   int64
 	kind string        // "main", "test", "task", "request", "runtime"
 	site [4]uintptr    // where it was spawned

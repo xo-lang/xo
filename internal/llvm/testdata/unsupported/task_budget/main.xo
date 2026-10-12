@@ -1,0 +1,8 @@
+// task.with_budget (decision 0173) is planned for the native backends: a
+// build reports it (XO1201) instead of compiling.
+use std/task
+
+fn main(os: Os) {
+  let r = task.with_budget(os.clock, task.budget(steps: 1000), fn() -> Int { 1 })
+  os.stdio.println("${r.is_ok()}")
+}

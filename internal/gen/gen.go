@@ -197,6 +197,8 @@ type gen struct {
 	boxed   map[*check.FieldObj]bool
 	ad      adaptState // interface adapters for generic code (adapt.go)
 	tz      tzState    // zones time.zone is asked for (timezone.go)
+	// fileMods maps a source file to its module (logfrom.go)
+	fileMods map[string]*check.Module
 }
 
 // Generate lowers the modules of a check result. roots are the modules

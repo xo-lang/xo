@@ -760,6 +760,7 @@ type Log_Record struct {
 	F_level  Log_Level
 	F_msg    string
 	F_fields Map[string, string]
+	F_module string
 }
 
 func (v Log_Record) XoEq(x any) bool {
@@ -776,6 +777,9 @@ func (v Log_Record) XoEq(x any) bool {
 	if !Eq(v.F_fields, o.F_fields) {
 		return false
 	}
+	if !Eq(v.F_module, o.F_module) {
+		return false
+	}
 	_ = o
 	return true
 }
@@ -785,6 +789,7 @@ func (v Log_Record) XoHash() uint64 {
 	h = MixHash(h, Hash(v.F_level))
 	h = MixHash(h, Hash(v.F_msg))
 	h = MixHash(h, Hash(v.F_fields))
+	h = MixHash(h, Hash(v.F_module))
 	return h
 }
 
@@ -796,6 +801,8 @@ func (v Log_Record) XoDebug(b *strings.Builder) {
 	DebugTo(b, v.F_msg)
 	b.WriteString(", fields: ")
 	DebugTo(b, v.F_fields)
+	b.WriteString(", module: ")
+	DebugTo(b, v.F_module)
 	b.WriteString("}")
 }
 
@@ -2182,6 +2189,113 @@ func (v Task_Fault) M_display(*Task) string { return Debug(v) }
 func (v *Task_Fault) XoMark() {
 	v.F_frames.XoMark()
 }
+
+type Task_Budgeted[tp_E any] struct {
+	Tag int
+	P   any
+}
+
+type Task_Budgeted_Exceeded[tp_E any] struct {
+	F_resource string
+}
+
+type Task_Budgeted_Failed[tp_E any] struct {
+	F0 tp_E
+}
+
+func (v Task_Budgeted[tp_E]) XoEq(x any) bool {
+	o, ok := x.(Task_Budgeted[tp_E])
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Task_Budgeted_Exceeded[tp_E]), o.P.(Task_Budgeted_Exceeded[tp_E])
+		return Eq(a.F_resource, b.F_resource)
+	case 2:
+		a, b := v.P.(Task_Budgeted_Failed[tp_E]), o.P.(Task_Budgeted_Failed[tp_E])
+		return Eq(a.F0, b.F0)
+	}
+	return true
+}
+
+func (v Task_Budgeted[tp_E]) XoHash() uint64 {
+	h := MixHash(uint64(5111695877345750615), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Task_Budgeted_Exceeded[tp_E])
+		h = MixHash(h, Hash(a.F_resource))
+	case 2:
+		a := v.P.(Task_Budgeted_Failed[tp_E])
+		h = MixHash(h, Hash(a.F0))
+	}
+	return h
+}
+
+func (v Task_Budgeted[tp_E]) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Task_Budgeted_Exceeded[tp_E])
+		b.WriteString("Exceeded(")
+		b.WriteString("resource: ")
+		DebugTo(b, a.F_resource)
+		b.WriteString(")")
+	case 2:
+		a := v.P.(Task_Budgeted_Failed[tp_E])
+		b.WriteString("Failed(")
+		DebugTo(b, a.F0)
+		b.WriteString(")")
+	}
+}
+
+func (v Task_Budgeted[tp_E]) M_debug(*Task) string { return Debug(v) }
+
+func (v Task_Budgeted[tp_E]) M_display(*Task) string { return Debug(v) }
+
+type Task_Budget struct {
+	F_cpu   Duration
+	F_alloc int64
+	F_steps int64
+}
+
+func (v Task_Budget) XoEq(x any) bool {
+	o, ok := x.(Task_Budget)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_cpu, o.F_cpu) {
+		return false
+	}
+	if !Eq(v.F_alloc, o.F_alloc) {
+		return false
+	}
+	if !Eq(v.F_steps, o.F_steps) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Task_Budget) XoHash() uint64 {
+	h := uint64(804034247721010711)
+	h = MixHash(h, Hash(v.F_cpu))
+	h = MixHash(h, Hash(v.F_alloc))
+	h = MixHash(h, Hash(v.F_steps))
+	return h
+}
+
+func (v Task_Budget) XoDebug(b *strings.Builder) {
+	b.WriteString("Budget{")
+	b.WriteString("cpu: ")
+	DebugTo(b, v.F_cpu)
+	b.WriteString(", alloc: ")
+	DebugTo(b, v.F_alloc)
+	b.WriteString(", steps: ")
+	DebugTo(b, v.F_steps)
+	b.WriteString("}")
+}
+
+func (v Task_Budget) M_debug(*Task) string { return Debug(v) }
 
 type Term_Painter struct {
 	F_on bool

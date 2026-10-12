@@ -138,6 +138,7 @@ func F_check(tk *rt.Task, v_id int64) bool {
 
 //line main.xo:22:1
 func F_main(tk *rt.Task, v_os rt.Os) {
+	tk.Tick()
 //line main.xo:23:3
 	v_LOCAL := int64(10)
 //line main.xo:23:3
