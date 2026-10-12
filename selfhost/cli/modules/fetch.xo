@@ -1,0 +1,923 @@
+// Fetching module versions (decisions 0086, 0124, 0126): mod's cache.go,
+// repo.go, fetch.go, and the client half of proxy.go. A version comes
+// from the sources XO_PROXY lists (a proxy URL, `direct` for git, or
+// `off`); after a comma the next source is tried only on "not found",
+// after a pipe on any error. Whatever the source, the tree must declare
+// the module path and, with XO_SUMDB, agree with the checksum log; it is
+// then made read only in the module cache.
+
+use github.com/xo-lang/xo/selfhost/check
+use std/archive
+use std/crypto
+use std/http
+
+/// One entry of XO_PROXY (mod source).
+struct Source {
+  url: Str = ""
+  direct: Bool = false
+  off: Bool = false
+  /// A pipe follows the entry: the next source is tried after any error.
+  any_error: Bool = false
+}
+
+fn source_text(s: Source) -> Str {
+  if s.direct {
+    return "direct"
+  }
+  if s.off {
+    return "off"
+  }
+  s.url
+}
+
+/// mod.ParseProxy: an XO_PROXY value; "" is `direct`.
+fn parse_proxy(s0: Str) -> List[Source] ! Str {
+  var s = s0.trim()
+  if s.is_empty() {
+    return Ok([Source{direct: true}])
+  }
+  var out: List[Source] = []
+  while !s.is_empty() {
+    var item = s
+    var sep = ""
+    let ci = s.find(",")
+    let pi = s.find("|")
+    var at: Int? = ci
+    if let Some(p) = pi {
+      match ci {
+        Some(c) => {
+          if p < c {
+            at = Some(p)
+          }
+        }
+        None => at = Some(p)
+      }
+    }
+    match at {
+      Some(i) => {
+        item = s[..i]
+        sep = s[i..i + 1]
+        s = s[i + 1..]
+        if s.trim().is_empty() {
+          return Err("XO_PROXY ends with ${sep.quote()}")
+        }
+      }
+      None => s = ""
+    }
+    item = item.trim()
+    var e = Source{any_error: sep == "|"}
+    if item == "direct" {
+      e.direct = true
+    } else if item == "off" {
+      e.off = true
+    } else if item.starts_with("https://") || item.starts_with("http://") {
+      var u = item
+      while u.ends_with("/") {
+        u = u.trim_suffix("/")
+      }
+      e.url = u
+    } else {
+      return Err("XO_PROXY entry ${item.quote()}: want a http(s) URL, direct, or off")
+    }
+    out.push(e)
+  }
+  Ok(out)
+}
+
+/// path.Match for one pattern element against one path element: `*`,
+/// `?`, `[...]` classes, and `\` escapes.
+fn glob_match(pat: Str, name: Str) -> Bool {
+  glob_at(pat.bytes(), 0, name.bytes(), 0)
+}
+
+fn glob_at(p: Bytes, pi0: Int, s: Bytes, si0: Int) -> Bool {
+  var pi = pi0
+  var si = si0
+  while pi < p.len() {
+    let c = p[pi]
+    if c == '*' {
+      // a star matches any run of non slash bytes
+      var k = si
+      while true {
+        if glob_at(p, pi + 1, s, k) {
+          return true
+        }
+        if k >= s.len() || s[k] == '/' {
+          return false
+        }
+        k += 1
+      }
+      return false
+    }
+    if si >= s.len() || s[si] == '/' && c != '/' {
+      return false
+    }
+    if c == '?' {
+      pi += 1
+      si += 1
+      continue
+    }
+    if c == '[' {
+      var j = pi + 1
+      var negate = false
+      if j < p.len() && p[j] == '^' {
+        negate = true
+        j += 1
+      }
+      var matched = false
+      var first = true
+      while j < p.len() && (first || p[j] != ']') {
+        first = false
+        var lo = p[j]
+        if lo == '\\' && j + 1 < p.len() {
+          j += 1
+          lo = p[j]
+        }
+        var hi = lo
+        if j + 2 < p.len() && p[j + 1] == '-' && p[j + 2] != ']' {
+          hi = p[j + 2]
+          if hi == '\\' && j + 3 < p.len() {
+            j += 1
+            hi = p[j + 2]
+          }
+          j += 2
+        }
+        if s[si] >= lo && s[si] <= hi {
+          matched = true
+        }
+        j += 1
+      }
+      if j >= p.len() || matched == negate {
+        return false
+      }
+      pi = j + 1
+      si += 1
+      continue
+    }
+    if c == '\\' && pi + 1 < p.len() {
+      pi += 1
+    }
+    if p[pi] != s[si] {
+      return false
+    }
+    pi += 1
+    si += 1
+  }
+  si == s.len()
+}
+
+/// mod.MatchPatterns: whether a module path matches one of the comma
+/// separated glob patterns of XO_NOPROXY or XO_NOSUMDB (a pattern matches
+/// as many leading path elements as it has).
+fn match_patterns(patterns: Str, mod_path: Str) -> Bool {
+  let elems = mod_path.split("/")
+  for g0 in patterns.split(",") {
+    var g = g0.trim()
+    while g.starts_with("/") {
+      g = g.trim_prefix("/")
+    }
+    while g.ends_with("/") {
+      g = g.trim_suffix("/")
+    }
+    if g.is_empty() {
+      continue
+    }
+    let n = g.split("/").len()
+    if elems.len() < n {
+      continue
+    }
+    var lead: List[Str] = []
+    for i in 0..n {
+      lead.push(elems[i])
+    }
+    if glob_match(g, lead.join("/")) {
+      return true
+    }
+  }
+  false
+}
+
+/// The sources and the checksum log for one module path (mod settings).
+struct Settings {
+  sources: List[Source] = []
+  sum: SumClient? = None
+  /// Malformed settings (XO1314), "" when none.
+  err: Str = ""
+}
+
+/// mod settingsFor: XO_PROXY, XO_NOPROXY, XO_SUMDB, and XO_NOSUMDB for
+/// the module path; the log's latest tree head is kept under root.
+fn (c: ModCtx) settings_for(root: Str, mod_path: Str) -> Settings {
+  var st = Settings{}
+  if match_patterns(c.getenv("XO_NOPROXY"), mod_path) {
+    st.sources = [Source{direct: true}]
+  } else {
+    match parse_proxy(c.getenv("XO_PROXY")) {
+      Ok(s) => st.sources = s
+      Err(e) => {
+        st.err = e
+        return st
+      }
+    }
+  }
+  let cfg = c.getenv("XO_SUMDB").trim()
+  if cfg.is_empty() || cfg == "off" || match_patterns(c.getenv("XO_NOSUMDB"), mod_path) {
+    return st
+  }
+  match parse_sum_config(cfg) {
+    Ok((v, url)) => st.sum = Some(SumClient{url: url, verifier: v, state_dir: "${root}/cache/sumdb"})
+    Err(e) => st.err = e
+  }
+  st
+}
+
+fn settings_problem(mod_path: Str, err: Str) -> check.Problem {
+  check.Problem{code: "XO1314", module: mod_path, msg: err, notes: ["XO_PROXY is a list of proxy URLs, direct, and off (default direct); XO_SUMDB is off (the default) or <name>+<key id>+<public key> [<URL>]; XO_NOPROXY and XO_NOSUMDB are comma separated path patterns"]}
+}
+
+/// Settings that fetch from git and consult no log (a proxy server
+/// filling its cache).
+fn direct_only() -> Settings {
+  Settings{sources: [Source{direct: true}]}
+}
+
+// ---------------------------------------------------------------------------
+// Module paths in git (mod cache.go, repo.go, major.go)
+
+/// mod.EscapePath (check.escape_path).
+fn escape(p: Str) -> Str {
+  check.escape_path(p)
+}
+
+/// The cache directory of a module version in the cache at root.
+fn version_dir_in(root: Str, path: Str, version: Str) -> Str {
+  "${root}/${escape(path)}@${version}"
+}
+
+/// mod repoPath: the module path without a /vN major suffix.
+fn repo_path(path: Str) -> Str {
+  match last_index(path, "/") {
+    Some(i) => {
+      let last = path[i + 1..]
+      if last.len() >= 2 && last.starts_with("v") {
+        match Int.parse(last[1..]) {
+          Some(n) => {
+            if n >= 2 && "${n}" == last[1..] {
+              return path[..i]
+            }
+          }
+          None => {}
+        }
+      }
+      path
+    }
+    None => path
+  }
+}
+
+/// mod.RepoURL: $XO_GIT_BASE/<path>, a matching XO_GIT_REWRITE, or
+/// https://<path> (with .git on the known hosts), without a /vN suffix.
+fn (c: ModCtx) repo_url(path0: Str) -> Str {
+  let path = repo_path(path0)
+  let rw = c.getenv("XO_GIT_REWRITE")
+  if !rw.is_empty() {
+    var best = ""
+    var url = ""
+    for part in rw.split(",") {
+      let (from, to, ok) = cut(part.trim(), "=")
+      if !ok || from.is_empty() {
+        continue
+      }
+      if (path == from || path.starts_with("${from}/")) && from.len() > best.len() {
+        best = from
+        url = to + path.trim_prefix(from)
+      }
+    }
+    if !best.is_empty() {
+      return url
+    }
+  }
+  let base = c.getenv("XO_GIT_BASE")
+  if !base.is_empty() {
+    var b = base
+    while b.ends_with("/") {
+      b = b.trim_suffix("/")
+    }
+    return "${b}/${path}"
+  }
+  let (host, _, _) = cut(path, "/")
+  if host == "github.com" || host == "gitlab.com" || host == "bitbucket.org" {
+    return "https://${path}.git"
+  }
+  "https://${path}"
+}
+
+/// Where a module's versions live in git (mod.Location).
+struct Location {
+  repo: Str
+  /// The module's directory in the repository, "" at the root.
+  subdir: Str = ""
+}
+
+fn tag_prefix(l: Location) -> Str {
+  if l.subdir.is_empty() { "" } else { "${l.subdir}/" }
+}
+
+/// git runs git with no prompts and no hooks in dir ("" for the working
+/// directory) and returns its standard output; a failure carries its
+/// standard error.
+fn (c: ModCtx) git(dir: Str, args: List[Str]) -> Bytes ! Str uses proc {
+  let full = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"] + args
+  var cmd = c.os.proc.cmd("git", full).set_env("GIT_TERMINAL_PROMPT", "0").set_env("GIT_ASKPASS", "").set_env("SSH_ASKPASS", "").set_env("GIT_CONFIG_NOSYSTEM", "1")
+  if !dir.is_empty() {
+    cmd = cmd.dir(dir)
+  }
+  let out = match cmd.output() {
+    Ok(o) => o
+    Err(e) => return Err("${e}")
+  }
+  if out.code != 0 {
+    var msg = (out.stderr.to_str() ?? "").trim()
+    if msg.is_empty() {
+      msg = "exit status ${out.code}"
+    }
+    return Err(msg)
+  }
+  Ok(out.stdout)
+}
+
+/// mod vcsDir: the bare clone of the repository at module path repo.
+fn (c: ModCtx) vcs_dir(root: Str, repo: Str) -> Str {
+  let sum = crypto.sha256(c.repo_url(repo).bytes())
+  "${root}/cache/vcs/${sum[0..16].to_hex()}"
+}
+
+/// mod locateIn: the repository of a module path and the module's
+/// directory in it.
+fn (var c: ModCtx) locate_in(root: Str, path: Str) -> Location uses (fs.read, proc) {
+  let p = repo_path(path)
+  let elems = p.split("/")
+  if elems[0] == "github.com" || elems[0] == "gitlab.com" || elems[0] == "bitbucket.org" {
+    if elems.len() > 3 {
+      var rest: List[Str] = []
+      for i in 3..elems.len() {
+        rest.push(elems[i])
+      }
+      return Location{repo: "${elems[0]}/${elems[1]}/${elems[2]}", subdir: rest.join("/")}
+    }
+    return Location{repo: p}
+  }
+  let key = c.repo_url(p)
+  if let Some(l) = c.locations.get(key) {
+    return l
+  }
+  if c.exists("${c.vcs_dir(root, p)}/HEAD") {
+    return Location{repo: p}
+  }
+  if c.offline() {
+    return Location{repo: p}
+  }
+  var n = elems.len()
+  while n >= 2 {
+    var lead: List[Str] = []
+    var rest: List[Str] = []
+    for (i, e) in elems.indexed() {
+      if i < n {
+        lead.push(e)
+      } else {
+        rest.push(e)
+      }
+    }
+    let cand = lead.join("/")
+    if c.git("", ["ls-remote", "--quiet", c.repo_url(cand), "HEAD"]).is_ok() {
+      let l = Location{repo: cand, subdir: rest.join("/")}
+      c.locations[key] = l
+      return l
+    }
+    n -= 1
+  }
+  Location{repo: p}
+}
+
+/// mod repoDir: the bare clone of repo in the cache at root, created or
+/// refreshed (tags fetched) when refresh is set.
+fn (c: ModCtx) repo_dir(root: Str, repo: Str, refresh: Bool) -> Str ! Str uses (fs, proc, rand) {
+  let url = c.repo_url(repo)
+  let dir = c.vcs_dir(root, repo)
+  if c.exists("${dir}/HEAD") {
+    if refresh {
+      match c.git(dir, ["fetch", "--quiet", "--force", "--prune", url, "+refs/tags/*:refs/tags/*"]) {
+        Ok(_) => {}
+        Err(e) => return Err("git fetch ${url}: ${e}")
+      }
+    }
+    return Ok(dir)
+  }
+  if !refresh {
+    return Err("not exist")
+  }
+  c.os.fs.create_dir_all(dir_of(dir)).map_err(fs_msg)?
+  let tmp = c.temp_name(dir_of(dir), "clone-")
+  match c.git("", ["clone", "--quiet", "--bare", "--no-local", url, tmp]) {
+    Ok(_) => {}
+    Err(e) => {
+      c.remove_tree(tmp).ignore_err("cleanup")
+      return Err("git clone ${url}: ${e}")
+    }
+  }
+  match c.os.fs.rename(tmp, dir) {
+    Ok(_) => {}
+    Err(e) => {
+      c.remove_tree(tmp).ignore_err("cleanup")
+      if !c.exists("${dir}/HEAD") {
+        return Err(fs_msg(e))
+      }
+    }
+  }
+  Ok(dir)
+}
+
+/// A name for a new temporary entry in dir (os.MkdirTemp's pattern).
+fn (c: ModCtx) temp_name(dir: Str, prefix: Str) -> Str uses (rand, fs.read) {
+  while true {
+    let n = c.os.rand.int(100000000, 999999999)
+    let p = "${dir}/${prefix}${n}"
+    if !c.exists(p) {
+      return p
+    }
+  }
+  dir
+}
+
+/// Extracts the regular files and directories of a tar archive into dir,
+/// refusing paths that leave it (mod untar).
+fn (c: ModCtx) untar_into(data: Bytes, dir: Str) -> () ! Str uses fs {
+  let entries = match archive.untar(data) {
+    Ok(es) => es
+    Err(e) => return Err(e.msg)
+  }
+  for e in entries {
+    if !is_local(e.path) {
+      return Err("archive entry ${e.path.quote()} leaves the module")
+    }
+    let target = "${dir}/${clean(e.path)}"
+    if e.is_dir {
+      c.os.fs.create_dir_all(target).map_err(fs_msg)?
+      continue
+    }
+    c.os.fs.create_dir_all(dir_of(target)).map_err(fs_msg)?
+    c.write_file(target, e.data)?
+    c.os.fs.set_mode(target, 0o644).map_err(fs_msg)?
+  }
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Versions
+
+/// mod cacheVersions: the versions of a module extracted in the cache.
+fn (c: ModCtx) cache_versions(root: Str, mod_path: Str) -> List[Str] uses fs.read {
+  let probe = version_dir_in(root, mod_path, "v0.0.0")
+  let parent = dir_of(probe)
+  let prefix = base_of(escape(mod_path)) + "@"
+  var vs: List[Str] = []
+  for e in c.os.fs.read_dir(parent).ok() ?? [] {
+    if !e.name.starts_with(prefix) {
+      continue
+    }
+    let v = e.name.trim_prefix(prefix)
+    if check.valid_version(v) && c.exists("${parent}/${e.name}/xo.mod") {
+      vs.push(v)
+    }
+  }
+  vs
+}
+
+/// mod gitVersions: the version tags of a module's repository.
+fn (var c: ModCtx) git_versions(root: Str, mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand) {
+  let loc = c.locate_in(root, mod_path)
+  let dir = c.repo_dir(root, loc.repo, true)?
+  let out = c.git(dir, ["tag", "--list", "${tag_prefix(loc)}v*"])?
+  var vs: List[Str] = []
+  for t in check.fields(out.to_str() ?? "") {
+    if t.starts_with(tag_prefix(loc)) {
+      vs.push(t.trim_prefix(tag_prefix(loc)))
+    }
+  }
+  Ok(vs)
+}
+
+/// mod sortVersions: the valid versions the module path's major admits,
+/// lowest first, without duplicates.
+fn sort_versions(mod_path: Str, vs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for v in vs {
+    if check.valid_version(v) && check.major_mismatch(mod_path, v).is_empty() && !out.contains(v) {
+      var i = out.len()
+      while i > 0 && check.compare_versions(v, out[i - 1]) < 0 {
+        i -= 1
+      }
+      out.insert(i, v)
+    }
+  }
+  out
+}
+
+/// mod.Versions: the versions of a module, lowest first, from the first
+/// XO_PROXY source that knows it; offline, those in the module cache.
+fn (var c: ModCtx) versions(mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand, net) {
+  let root = c.cache_dir()
+  if c.offline() {
+    return Ok(sort_versions(mod_path, c.cache_versions(root, mod_path)))
+  }
+  let st = c.settings_for(root, mod_path)
+  if !st.err.is_empty() {
+    return Err(st.err)
+  }
+  c.versions_from(root, mod_path, st)
+}
+
+fn (var c: ModCtx) versions_from(root: Str, mod_path: Str, st: Settings) -> List[Str] ! Str uses (fs, proc, rand, net) {
+  var errs: List[Str] = []
+  for s in st.sources {
+    var not_found = false
+    var err = ""
+    var vs: List[Str] = []
+    if s.off {
+      err = "module lookup is turned off (XO_PROXY=off)"
+    } else if s.direct {
+      match c.git_versions(root, mod_path) {
+        Ok(x) => vs = x
+        Err(e) => err = e
+      }
+    } else {
+      match c.proxy_list(s.url, mod_path) {
+        Ok(x) => vs = x
+        Err((nf, e)) => {
+          not_found = nf
+          err = e
+        }
+      }
+    }
+    if err.is_empty() {
+      return Ok(sort_versions(mod_path, vs))
+    }
+    errs.push(err)
+    if s.off || !(not_found || s.any_error) {
+      break
+    }
+  }
+  Err(errs.join("; "))
+}
+
+/// mod.Latest: the highest release version (prereleases only when there
+/// is no release).
+fn (var c: ModCtx) latest(mod_path: Str) -> Str ! Str uses (fs, proc, rand, net) {
+  let vs = c.versions(mod_path)?
+  var best = ""
+  for v in vs {
+    if !v.contains("-") {
+      best = v
+    }
+  }
+  if best.is_empty() && !vs.is_empty() {
+    best = vs[vs.len() - 1]
+  }
+  if best.is_empty() {
+    let loc = c.locate_in(c.cache_dir(), mod_path)
+    return Err("no ${tag_prefix(loc)}vX.Y.Z tags in ${c.repo_url(loc.repo)}")
+  }
+  Ok(best)
+}
+
+// ---------------------------------------------------------------------------
+// Fetching a version
+
+/// mod gitFetch: the tree of a module version from its repository into
+/// dst (`git archive` of the tag, of the module's directory for a module
+/// in a subdirectory).
+fn (var c: ModCtx) git_fetch(root: Str, mod_path: Str, version: Str, dst: Str) -> () ! Str uses (fs, proc, rand) {
+  let loc = c.locate_in(root, mod_path)
+  let tag = tag_prefix(loc) + version
+  let ref = "refs/tags/${tag}^{commit}"
+  var repo = match c.repo_dir(root, loc.repo, false) {
+    Ok(d) => {
+      if c.git(d, ["rev-parse", "--verify", "--quiet", ref]).is_err() {
+        c.repo_dir(root, loc.repo, true)?
+      } else {
+        d
+      }
+    }
+    Err(_) => c.repo_dir(root, loc.repo, true)?
+  }
+  if c.git(repo, ["rev-parse", "--verify", "--quiet", ref]).is_err() {
+    return Err("no tag ${tag}")
+  }
+  var treeish = "refs/tags/${tag}"
+  if !loc.subdir.is_empty() {
+    treeish = "${treeish}:${loc.subdir}"
+  }
+  let data = match c.git(repo, ["archive", "--format=tar", treeish]) {
+    Ok(d) => d
+    Err(e) => {
+      if !loc.subdir.is_empty() {
+        return Err("the tag ${tag} has no directory ${loc.subdir}/")
+      }
+      return Err(e)
+    }
+  }
+  c.untar_into(data, dst)
+}
+
+/// mod.Download: the module version's directory in the cache, fetched
+/// from the XO_PROXY sources unless offline (XO1303 then).
+fn (var c: ModCtx) download(mod_path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, rand, net) {
+  let root = c.cache_dir()
+  c.download_in(root, mod_path, version, None)
+}
+
+/// mod download: Download into the cache at root; st None reads the
+/// settings from the environment.
+fn (var c: ModCtx) download_in(root: Str, mod_path: Str, version: Str, st0: Settings?) -> Str ! check.Problem uses (fs, proc, rand, net) {
+  let dir = version_dir_in(root, mod_path, version)
+  if c.exists("${dir}/xo.mod") {
+    return Ok(dir)
+  }
+  if c.offline() {
+    return Err(check.Problem{code: "XO1303", module: mod_path, msg: "${mod_path} ${version} is not in the module cache and the build is offline", notes: ["fetch it once without XO_OFFLINE / --offline (`xo mod tidy` or `xo get ${mod_path}@${version}`), or vendor it with `xo vendor`", "module cache: ${root}"]})
+  }
+  let st = match st0 {
+    Some(s) => s
+    None => c.settings_for(root, mod_path)
+  }
+  if !st.err.is_empty() {
+    return Err(settings_problem(mod_path, st.err))
+  }
+  let loc = c.locate_in(root, mod_path)
+  var notes: List[Str] = []
+  match c.os.fs.create_dir_all(dir_of(dir)) {
+    Ok(_) => {}
+    Err(e) => return Err(fetch_problem(mod_path, version, fs_msg(e), notes))
+  }
+  let tmp = c.temp_name(dir_of(dir), ".tmp-")
+  match c.os.fs.create_dir_all(tmp) {
+    Ok(_) => {}
+    Err(e) => return Err(fetch_problem(mod_path, version, fs_msg(e), notes))
+  }
+  var errs: List[Str] = []
+  var from = ""
+  for s in st.sources {
+    c.empty_dir(tmp)
+    var err = ""
+    var not_found = false
+    if s.off {
+      err = "module fetching is turned off (XO_PROXY=off)"
+    } else if s.direct {
+      match c.git_fetch(root, mod_path, version, tmp) {
+        Ok(_) => {}
+        Err(e) => err = e
+      }
+      var where_ = "the module path is its git location: ${c.repo_url(loc.repo)}"
+      if !loc.subdir.is_empty() {
+        where_ = "the module is the directory ${loc.subdir}/ of the repository ${c.repo_url(loc.repo)}, versions are tags ${tag_prefix(loc)}vX.Y.Z"
+      }
+      notes.push("${where_} (XO_GIT_BASE or XO_GIT_REWRITE change it)")
+    } else {
+      match c.proxy_fetch(s.url, mod_path, version, tmp) {
+        Ok(_) => {}
+        Err((nf, e)) => {
+          not_found = nf
+          err = e
+        }
+      }
+      notes.push("module proxy ${s.url} (XO_PROXY)")
+    }
+    if err.is_empty() {
+      from = source_text(s)
+      break
+    }
+    if st.sources.len() > 1 {
+      err = "${source_text(s)}: ${err}"
+    }
+    errs.push(err)
+    if s.off || !(not_found || s.any_error) {
+      break
+    }
+  }
+  if from.is_empty() {
+    c.remove_tree(tmp).ignore_err("cleanup")
+    return Err(fetch_problem(mod_path, version, errs.join("; "), notes))
+  }
+  match c.prune_nested(tmp, true) {
+    Ok(_) => {}
+    Err(e) => {
+      c.remove_tree(tmp).ignore_err("cleanup")
+      return Err(fetch_problem(mod_path, version, e, notes))
+    }
+  }
+  let (mf0, probs) = c.chk.read_mod_file(tmp)
+  let declared = match mf0 {
+    Some(mf) => mf.path
+    None => ""
+  }
+  if !probs.is_empty() && declared.is_empty() {
+    c.remove_tree(tmp).ignore_err("cleanup")
+    var where_ = "at the repository root"
+    if !loc.subdir.is_empty() {
+      where_ = "in ${loc.subdir}/"
+    }
+    if from != "direct" {
+      where_ = "in the tree from ${from}"
+    }
+    return Err(fetch_problem(mod_path, version, "the version has no valid xo.mod ${where_}", notes))
+  }
+  if declared != mod_path {
+    c.remove_tree(tmp).ignore_err("cleanup")
+    return Err(check.Problem{code: "XO1302", module: mod_path, msg: "${mod_path} ${version} declares module ${declared} in its xo.mod, not ${mod_path}"})
+  }
+  if let Some(sum) = st.sum {
+    if let Some(p) = c.check_log(sum, tmp, mod_path, version, from) {
+      c.remove_tree(tmp).ignore_err("cleanup")
+      return Err(p)
+    }
+  }
+  c.make_read_only(tmp)
+  match c.os.fs.rename(tmp, dir) {
+    Ok(_) => {}
+    Err(e) => {
+      c.remove_tree(tmp).ignore_err("cleanup")
+      if !c.exists("${dir}/xo.mod") {
+        return Err(fetch_problem(mod_path, version, fs_msg(e), notes))
+      }
+    }
+  }
+  Ok(dir)
+}
+
+fn fetch_problem(mod_path: Str, version: Str, err: Str, notes: List[Str]) -> check.Problem {
+  check.Problem{code: "XO1302", module: mod_path, msg: "cannot fetch ${mod_path} ${version}: ${err}", notes: notes}
+}
+
+/// mod.Record: the checksum log record of the tree in dir, its two xo.lock
+/// lines.
+fn (c: ModCtx) record(dir: Str, mod_path: Str, version: Str) -> List[Str] ! Str uses fs.read {
+  let tree = c.chk.hash_dir(dir)
+  let modh = match c.chk.hash_mod_file(dir) {
+    Some(h) => h
+    None => return Err("open ${dir}/xo.mod: no such file or directory")
+  }
+  Ok(["${mod_path} ${version} ${tree}", "${mod_path} ${version}/xo.mod ${modh}"])
+}
+
+/// mod checkLog: the fetched tree in dir against the checksum log.
+fn (var c: ModCtx) check_log(sum: SumClient, dir: Str, mod_path: Str, version: Str, from: Str) -> check.Problem? uses (fs, net, rand) {
+  let want = match c.record(dir, mod_path, version) {
+    Ok(w) => w
+    Err(e) => return Some(check.Problem{code: "XO1302", module: mod_path, msg: "cannot hash ${mod_path} ${version}: ${e}"})
+  }
+  match c.sum_check(sum, mod_path, version, want) {
+    Ok(_) => None
+    Err(se) => {
+      if se.security {
+        return Some(check.Problem{code: "XO1313", module: mod_path, msg: "verifying ${mod_path} ${version} (from ${from}): ${se.msg}", notes: ["nothing was cached or built: the source, the log, or the network path to them may be compromised", "if the module is private and never in the public log, add it to XO_NOSUMDB"]})
+      }
+      Some(check.Problem{code: "XO1314", module: mod_path, msg: "verifying ${mod_path} ${version}: ${se.msg}", notes: ["the checksum log is named by XO_SUMDB; set XO_NOSUMDB for private modules, or XO_SUMDB=off to fetch without it"]})
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The module proxy protocol, client side (mod proxy.go)
+
+/// Go's bound on a module zip and the files extracted from it.
+const MAX_ZIP = 524288000
+
+/// The reason phrase of an HTTP status, as Go's resp.Status shows it.
+fn status_text(code: Int) -> Str {
+  let t = match code {
+    200 => "OK"
+    301 => "Moved Permanently"
+    302 => "Found"
+    400 => "Bad Request"
+    401 => "Unauthorized"
+    403 => "Forbidden"
+    404 => "Not Found"
+    405 => "Method Not Allowed"
+    410 => "Gone"
+    429 => "Too Many Requests"
+    500 => "Internal Server Error"
+    502 => "Bad Gateway"
+    503 => "Service Unavailable"
+    504 => "Gateway Timeout"
+    _ => ""
+  }
+  if t.is_empty() { "${code}" } else { "${code} ${t}" }
+}
+
+fn client_msg(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg: m) => m
+    http.ClientErr.Connect(msg: m) => m
+    http.ClientErr.Timeout => "timeout"
+    http.ClientErr.Protocol(msg: m) => m
+    http.ClientErr.Canceled => "canceled"
+  }
+}
+
+/// mod proxyGet: base/p; the error carries whether it was 404 or 410.
+fn (c: ModCtx) proxy_get(base: Str, p: Str, limit: Int) -> Bytes ! (Bool, Str) uses net {
+  let cl = http.client(c.os.net, timeout: 300s)
+  let url = "${base}/${p}"
+  let resp = match cl.get(url) {
+    Ok(r) => r
+    Err(e) => return Err((false, "Get ${url.quote()}: ${client_msg(e)}"))
+  }
+  if resp.status != 200 {
+    var msg = resp.body
+    if msg.len() > 512 {
+      msg = msg[0..512]
+    }
+    let (first, _, _) = cut((msg.to_str() ?? "").trim(), "\n")
+    let nf = resp.status == 404 || resp.status == 410
+    if !first.is_empty() {
+      return Err((nf, "${url}: ${status_text(resp.status)}: ${first}"))
+    }
+    return Err((nf, "${url}: ${status_text(resp.status)}"))
+  }
+  if resp.body.len() > limit {
+    return Err((false, "${url}: larger than ${limit} bytes"))
+  }
+  Ok(resp.body)
+}
+
+fn proxy_base(mod_path: Str) -> Str {
+  "${escape(mod_path)}/@v/"
+}
+
+/// mod proxyList: the versions a proxy has of a module.
+fn (c: ModCtx) proxy_list(base: Str, mod_path: Str) -> List[Str] ! (Bool, Str) uses net {
+  let body = c.proxy_get(base, proxy_base(mod_path) + "list", 1048576)?
+  Ok(check.fields(body.to_str() ?? ""))
+}
+
+/// mod proxyFetch: a module version's zip from a proxy into dst, checked
+/// against the proxy's own .lock answer when it has one.
+fn (c: ModCtx) proxy_fetch(base: Str, mod_path: Str, version: Str, dst: Str) -> () ! (Bool, Str) uses (net, fs) {
+  let name = proxy_base(mod_path) + escape(version)
+  let data = c.proxy_get(base, "${name}.zip", MAX_ZIP)?
+  match c.unzip_module(data, mod_path, version, dst) {
+    Ok(_) => {}
+    Err(e) => return Err((false, "${base}/${name}.zip: ${e}"))
+  }
+  let lock = match c.proxy_get(base, "${name}.lock", 65536) {
+    Ok(l) => l
+    Err(_) => return Ok(())
+  }
+  let got = c.chk.hash_dir(dst)
+  for l in (lock.to_str() ?? "").split("\n") {
+    let f = check.fields(l)
+    if f.len() == 3 && f[0] == mod_path && f[1] == version && f[2] != got {
+      return Err((false, "${base}/${name}.zip hashes to ${got} but the proxy's .lock says ${f[2]}"))
+    }
+  }
+  Ok(())
+}
+
+/// mod unzipModule: the regular files of a module zip, all under
+/// "<path>@<version>/", into dir; anything else fails.
+fn (c: ModCtx) unzip_module(data: Bytes, mod_path: Str, version: Str, dir: Str) -> () ! Str uses fs {
+  let entries = match archive.unzip(data) {
+    Ok(es) => es
+    Err(e) => return Err(e.msg)
+  }
+  let prefix = "${mod_path}@${version}/"
+  var seen: Map[Str, Bool] = {}
+  var total = 0
+  for e in entries {
+    let name = if e.is_dir && !e.path.ends_with("/") { "${e.path}/" } else { e.path }
+    if !name.starts_with(prefix) {
+      return Err("zip entry ${name.quote()} is not under ${prefix}")
+    }
+    let rel = name.trim_prefix(prefix)
+    if rel.is_empty() || rel.ends_with("/") || e.is_dir {
+      continue
+    }
+    if !is_local(rel) || rel.contains("\\") {
+      return Err("zip entry ${name.quote()} leaves the module")
+    }
+    let key = rel.to_lower()
+    if seen.contains(key) {
+      return Err("zip entry ${name.quote()} appears twice (ignoring case)")
+    }
+    seen[key] = true
+    total += e.data.len()
+    if total > MAX_ZIP {
+      return Err("the module is larger than ${MAX_ZIP} bytes")
+    }
+    let target = "${dir}/${clean(rel)}"
+    c.os.fs.create_dir_all(dir_of(target)).map_err(fs_msg)?
+    c.write_file(target, e.data)?
+    c.os.fs.set_mode(target, 0o644).map_err(fs_msg)?
+  }
+  Ok(())
+}

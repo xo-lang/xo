@@ -1,0 +1,170 @@
+// `xo mod proxy serve [--addr=host:port] [--fetch] [<cache dir>]`
+// (decision 0126, cmd/xo runModProxy and mod.ProxyHandler): a module
+// cache served read only over the module proxy protocol; with --fetch a
+// version or list the cache lacks is fetched from git first (never
+// through XO_PROXY, so proxies do not loop).
+
+use github.com/xo-lang/xo/selfhost/check
+use std/archive
+use std/http
+
+fn (var c: ModCtx) run_mod_proxy(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+  if args.is_empty() || args[0] != "serve" {
+    c.os.stdio.eprintln("xo mod proxy: want `serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]`")
+    return 2
+  }
+  var fl = FlagSet{name: "mod proxy serve", defs: [flag_str("addr", "127.0.0.1:7070", "the address to listen on"), flag_bool("fetch", "fetch module versions the cache lacks from git (a caching proxy)")]}
+  if !c.parse_flags(fl, args[1..]) {
+    return 2
+  }
+  if fl.args.len() > 1 {
+    c.os.stdio.eprintln("xo mod proxy serve: want at most one cache directory")
+    return 2
+  }
+  let fetch = fl.on("fetch")
+  var dir = c.cache_dir()
+  if fl.args.len() == 1 {
+    dir = c.abs(fl.args[0])
+  }
+  if !c.is_dir(dir) {
+    if !fetch {
+      c.os.stdio.eprintln("xo mod proxy serve: ${dir} is not a directory")
+      return 2
+    }
+    match c.os.fs.create_dir_all(dir) {
+      Ok(_) => {}
+      Err(e) => {
+        c.os.stdio.eprintln("xo mod proxy serve: ${fs_msg(e)}")
+        return 1
+      }
+    }
+  }
+  let l = match c.os.net.listen(fl.str("addr")) {
+    Ok(x) => x
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod proxy serve: ${e}")
+      return 1
+    }
+  }
+  let mode = if fetch { "filling it from git" } else { "read only" }
+  c.out("serving the module cache ${dir} (${mode}) at http://${l.addr()}\nclients: XO_PROXY=http://${l.addr()}\n")
+  let cc = c
+  var r = http.router()
+  r.handle("/{rest...}", fn(req) { cc.proxy_answer(req, dir, fetch) })
+  match http.server(l, r).serve() {
+    Ok(_) => 0
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod proxy serve: ${e}")
+      1
+    }
+  }
+}
+
+/// http.Error: the message and a newline, as plain text.
+fn http_error(msg: Str, code: Int) -> http.Response {
+  http.text(code, "${msg}\n").with_header("X-Content-Type-Options", "nosniff")
+}
+
+/// sumdb.UnescapePath: `!` and a lower case letter is the upper case
+/// letter; upper case letters and a lone `!` are errors.
+fn unescape_path(s: Str) -> Str? {
+  var b = BytesBuilder.new()
+  let bs = s.bytes()
+  var i = 0
+  while i < bs.len() {
+    let ch = bs[i]
+    if ch >= 'A' && ch <= 'Z' {
+      return None
+    }
+    if ch == '!' {
+      if i + 1 >= bs.len() || bs[i + 1] < 'a' || bs[i + 1] > 'z' {
+        return None
+      }
+      b.write_byte(bs[i + 1] - 32)
+      i += 2
+      continue
+    }
+    b.write_byte(ch)
+    i += 1
+  }
+  b.freeze().to_str()
+}
+
+/// mod.ProxyHandler for one request.
+fn (c: ModCtx) proxy_answer(req: http.Request, root: Str, fetch: Bool) -> http.Response uses (fs, proc, rand, net) {
+  var cc = c
+  if req.method != "GET" && req.method != "HEAD" {
+    return http_error("the module proxy is read only", 405)
+  }
+  let (esc, file, ok) = cut(req.path.trim_prefix("/"), "/@v/")
+  let mod_path = unescape_path(esc) ?? ""
+  if !ok || mod_path.is_empty() || !check.valid_path(mod_path) || file.contains("/") {
+    return http_error("want /<module path>/@v/list or /<module path>/@v/<version>.zip, .mod, or .lock", 404)
+  }
+  if file == "list" {
+    var vs = cc.cache_versions(root, mod_path)
+    if fetch {
+      match cc.git_versions(root, mod_path) {
+        Ok(more) => vs = vs + more
+        Err(e) => {
+          if vs.is_empty() {
+            return http_error(e, 404).with_header("Cache-Control", "no-cache")
+          }
+        }
+      }
+    }
+    vs = sort_versions(mod_path, vs)
+    if vs.is_empty() {
+      return http_error("no versions of ${mod_path}", 404).with_header("Cache-Control", "no-cache")
+    }
+    return http.text(200, vs.join("\n") + "\n").with_header("Cache-Control", "no-cache").with_header("Content-Type", "text/plain; charset=utf-8")
+  }
+  var ext = ""
+  if let Some(i) = last_index(file, ".") {
+    ext = file[i..]
+  }
+  let version = unescape_path(file.trim_suffix(ext)) ?? ""
+  if version.is_empty() || !check.valid_version(version) || !(ext == ".zip" || ext == ".mod" || ext == ".lock") {
+    return http_error("unknown file ${file}", 404).with_header("Cache-Control", "no-cache")
+  }
+  let dir = version_dir_in(root, mod_path, version)
+  if !cc.exists("${dir}/xo.mod") {
+    if !fetch {
+      return http_error("${mod_path} ${version} is not in this proxy", 404).with_header("Cache-Control", "no-cache")
+    }
+    match cc.download_in(root, mod_path, version, Some(direct_only())) {
+      Ok(_) => {}
+      Err(p) => return http_error(p.msg, 404).with_header("Cache-Control", "no-cache")
+    }
+  }
+  if ext == ".mod" {
+    return match cc.os.fs.read("${dir}/xo.mod") {
+      Ok(data) => http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache"}, body: data}
+      Err(e) => http_error(fs_msg(e), 500)
+    }
+  }
+  if ext == ".lock" {
+    return match cc.record(dir, mod_path, version) {
+      Ok(lines) => http.text(200, lines.join("\n") + "\n").with_header("Cache-Control", "no-cache").with_header("Content-Type", "text/plain; charset=utf-8")
+      Err(e) => http_error(e, 500)
+    }
+  }
+  match cc.zip_module(dir, mod_path, version) {
+    Ok(data) => http.Response{status: 200, headers: {"Content-Type": "application/zip", "Cache-Control": "no-cache"}, body: data}
+    Err(e) => http_error(e, 500)
+  }
+}
+
+/// mod.ZipModule: the regular files of the tree in dir (nested modules
+/// left out), sorted, under "<path>@<version>/", mode 0644.
+fn (c: ModCtx) zip_module(dir: Str, mod_path: Str, version: Str) -> Bytes ! Str uses fs.read {
+  var entries: List[archive.Entry] = []
+  for f in c.tree_files(dir) {
+    let data = c.os.fs.read("${dir}/${f}").map_err(fs_msg)?
+    entries.push(archive.file("${mod_path}@${version}/${f}", data))
+  }
+  match archive.zip(entries) {
+    Ok(z) => Ok(z)
+    Err(e) => Err(e.msg)
+  }
+}

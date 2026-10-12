@@ -1,0 +1,285 @@
+// Files: walking module trees, copying them, read only module cache
+// directories, and the writes of xo.mod (mod.SetRequire) and xo.lock
+// (mod.WriteLock).
+
+use github.com/xo-lang/xo/selfhost/check
+
+/// The regular files under dir as slash paths relative to it, sorted,
+/// skipping directories below dir that hold their own xo.mod (nested
+/// modules), as mod.HashDir and mod.ZipModule list them.
+fn (c: ModCtx) tree_files(dir: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  c.tree_walk(dir, "", out)
+  out.sort()
+}
+
+fn (c: ModCtx) tree_walk(dir: Str, rel: Str, var out: List[Str]) uses fs.read {
+  let here = if rel.is_empty() { dir } else { "${dir}/${rel}" }
+  let entries = c.os.fs.read_dir(here).ok() ?? []
+  for e in entries {
+    let r = if rel.is_empty() { e.name } else { "${rel}/${e.name}" }
+    if e.is_dir {
+      if c.exists("${dir}/${r}/xo.mod") {
+        continue
+      }
+      c.tree_walk(dir, r, out)
+    } else {
+      out.push(r)
+    }
+  }
+}
+
+/// The source files of the module at dir that mod.ModuleEffects reads:
+/// `.xo` files, not `_test.xo`, outside nested modules, vendor/,
+/// testdata/, and dot directories; absolute paths in walk order.
+fn (c: ModCtx) module_sources(dir: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  c.sources_walk(dir, true, out)
+  out
+}
+
+fn (c: ModCtx) sources_walk(d: Str, top: Bool, var out: List[Str]) uses fs.read {
+  for e in c.os.fs.read_dir(d).ok() ?? [] {
+    let p = "${d}/${e.name}"
+    if e.is_dir {
+      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || c.exists("${p}/xo.mod") {
+        continue
+      }
+      c.sources_walk(p, false, out)
+      continue
+    }
+    if e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") {
+      out.push(p)
+    }
+  }
+}
+
+fn (c: ModCtx) exists(p: Str) -> Bool uses fs.read {
+  c.os.fs.exists(p).ok() ?? false
+}
+
+fn (c: ModCtx) is_dir(p: Str) -> Bool uses fs.read {
+  match c.os.fs.stat(p).ok() ?? None {
+    Some(info) => info.is_dir
+    None => false
+  }
+}
+
+/// Every directory and file under dir (dir first), for permission
+/// changes.
+fn (c: ModCtx) all_paths(dir: Str, var dirs: List[Str], var files: List[Str]) uses fs.read {
+  dirs.push(dir)
+  for e in c.os.fs.read_dir(dir).ok() ?? [] {
+    let p = "${dir}/${e.name}"
+    if e.is_dir {
+      c.all_paths(p, dirs, files)
+    } else {
+      files.push(p)
+    }
+  }
+}
+
+/// mod makeReadOnly: files 0444, then directories 0555, deepest first.
+fn (c: ModCtx) make_read_only(dir: Str) uses fs {
+  var dirs: List[Str] = []
+  var files: List[Str] = []
+  c.all_paths(dir, dirs, files)
+  for f in files {
+    c.os.fs.set_mode(f, 0o444).ignore_err("best effort, as os.Chmod's error is ignored")
+  }
+  var i = dirs.len() - 1
+  while i >= 0 {
+    c.os.fs.set_mode(dirs[i], 0o555).ignore_err("best effort")
+    i -= 1
+  }
+}
+
+/// mod makeWritable: the owner may write everything under dir (so it can
+/// be removed).
+fn (c: ModCtx) make_writable(dir: Str) uses fs {
+  if !c.exists(dir) {
+    return
+  }
+  c.os.fs.set_mode(dir, 0o755).ignore_err("best effort")
+  if !c.is_dir(dir) {
+    c.os.fs.set_mode(dir, 0o644).ignore_err("best effort")
+    return
+  }
+  for e in c.os.fs.read_dir(dir).ok() ?? [] {
+    let p = "${dir}/${e.name}"
+    if e.is_dir {
+      c.make_writable(p)
+    } else {
+      c.os.fs.set_mode(p, 0o644).ignore_err("best effort")
+    }
+  }
+}
+
+/// os.RemoveAll after making the tree writable.
+fn (c: ModCtx) remove_tree(dir: Str) -> () ! Str uses fs {
+  c.make_writable(dir)
+  match c.os.fs.remove_all(dir) {
+    Ok(_) => Ok(())
+    Err(e) => Err(fs_msg(e))
+  }
+}
+
+/// The text of a file system error, as Go words it.
+fn fs_msg(e: FsErr) -> Str {
+  match e {
+    FsErr.NotFound(path: p) => "open ${p}: no such file or directory"
+    FsErr.Exists(path: p) => "${p}: file exists"
+    FsErr.NotEmpty(path: p) => "${p}: directory not empty"
+    FsErr.NotDir(path: p) => "${p}: not a directory"
+    FsErr.IsDir(path: p) => "${p}: is a directory"
+    FsErr.Denied(path: p) => "open ${p}: permission denied"
+    FsErr.Io(path: p, msg: m) => "${p}: ${m}"
+    FsErr.Canceled => "canceled"
+  }
+}
+
+/// mod copyTree: the regular files under src into dst (directories 0755,
+/// files 0644).
+fn (c: ModCtx) copy_tree(src: Str, dst: Str) -> () ! Str uses fs {
+  c.os.fs.create_dir_all(dst).map_err(fs_msg)?
+  for e in c.os.fs.read_dir(src).map_err(fs_msg)? {
+    let from = "${src}/${e.name}"
+    let to = "${dst}/${e.name}"
+    if e.is_dir {
+      c.copy_tree(from, to)?
+    } else {
+      let data = c.os.fs.read(from).map_err(fs_msg)?
+      c.os.fs.write(to, data).map_err(fs_msg)?
+      c.os.fs.set_mode(to, 0o644).map_err(fs_msg)?
+    }
+  }
+  Ok(())
+}
+
+/// Writes a file with mode 0644 (os.WriteFile of a new file).
+fn (c: ModCtx) write_file(path: Str, data: Bytes) -> () ! Str uses fs {
+  c.os.fs.write(path, data).map_err(fs_msg)?
+  Ok(())
+}
+
+/// mod pruneNested: removes every directory below dir that holds an
+/// xo.mod.
+fn (c: ModCtx) prune_nested(dir: Str, top: Bool) -> () ! Str uses fs {
+  for e in c.os.fs.read_dir(dir).map_err(fs_msg)? {
+    if !e.is_dir {
+      continue
+    }
+    let p = "${dir}/${e.name}"
+    if c.exists("${p}/xo.mod") {
+      c.remove_tree(p)?
+      continue
+    }
+    c.prune_nested(p, false)?
+  }
+  Ok(())
+}
+
+/// mod emptyDir: removes everything inside dir.
+fn (c: ModCtx) empty_dir(dir: Str) uses fs {
+  for e in c.os.fs.read_dir(dir).ok() ?? [] {
+    c.remove_tree("${dir}/${e.name}").ignore_err("best effort, as mod.emptyDir")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// xo.mod and xo.lock writes
+
+/// mod.SetRequire: the xo.mod text with path required at version: the
+/// require line changed in place (keeping an effect ceiling), or a new one
+/// after the last require (or at the end); version "" removes it.
+fn set_require(data: Str, path: Str, version: Str) -> Str {
+  var lines = data.split("\n")
+  var last = -1
+  for (i, l) in lines.indexed() {
+    let fs = check.fields(l)
+    if fs.len() >= 1 && fs[0] == "require" {
+      last = i
+      if fs.len() >= 3 && fs[1] == path {
+        if version.is_empty() {
+          lines.remove_at(i)
+        } else {
+          let (text, _, _) = cut(l, "//")
+          let rest = check.fields(text)
+          var nl = "require ${path} ${version}"
+          if rest.len() > 3 {
+            var tail: List[Str] = []
+            for j in 3..rest.len() {
+              tail.push(rest[j])
+            }
+            nl = "${nl} ${tail.join(" ")}"
+          }
+          lines[i] = nl
+        }
+        return lines.join("\n")
+      }
+    }
+  }
+  if version.is_empty() {
+    return data
+  }
+  let add = "require ${path} ${version}"
+  if last >= 0 {
+    lines.insert(last + 1, add)
+    return lines.join("\n")
+  }
+  var s = data
+  while s.ends_with("\n") {
+    s = s.trim_suffix("\n")
+  }
+  "${s}\n\n${add}\n"
+}
+
+const LOCK_HEADER = "# xo.lock: content hashes of the module versions this module builds with,\n# and the effects each module may reach (decision 0156).\n# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).\n"
+
+/// The order of xo.lock lines (mod.WriteLock): by module path, then by
+/// version (a version's tree before its xo.mod).
+fn lock_less(a: Str, b: Str) -> Bool {
+  let (pa, va, _) = cut(a, " ")
+  let (pb, vb, _) = cut(b, " ")
+  if pa != pb {
+    return pa < pb
+  }
+  let ba = va.trim_suffix("/xo.mod")
+  let bb = vb.trim_suffix("/xo.mod")
+  if ba != bb {
+    return check.compare_versions(ba, bb) < 0
+  }
+  va < vb
+}
+
+/// Insertion sort by lock_less (xo.lock files are short).
+fn sort_lock_keys(keys: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for k in keys {
+    var i = out.len()
+    while i > 0 && lock_less(k, out[i - 1]) {
+      i -= 1
+    }
+    out.insert(i, k)
+  }
+  out
+}
+
+/// mod.WriteLock: dir/xo.lock with the hash entries and effect sets, sorted.
+/// With no entries and no lock file, nothing is written.
+fn (c: ModCtx) write_lock(dir: Str, entries: Map[Str, Str], effects: Map[Str, List[Str]]) -> () ! Str uses fs {
+  let keys = sort_lock_keys(entries.keys())
+  var b = StrBuilder.new()
+  b.write(LOCK_HEADER)
+  for k in keys {
+    b.write("${k} ${entries.get(k) ?? ""}\n")
+  }
+  for p in effects.keys().sort() {
+    b.write("${p} effects ${check.effects_text(effects.get(p) ?? [])}\n")
+  }
+  let name = "${dir}/xo.lock"
+  if keys.is_empty() && !c.exists(name) {
+    return Ok(())
+  }
+  c.write_file(name, b.freeze().bytes())
+}

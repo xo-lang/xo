@@ -10,6 +10,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
   crypto/ed25519 on every backend (native builds compute them in C).
+- `archive.untar` skips a PAX global header (the one `git archive`
+  writes) instead of failing on it, on every backend.
+- Native builds of a program whose packages declare types of the same
+  name no longer fail in the SSA verifier when both are printed with
+  Debug, encoded as JSON, decoded from SQL, or generated in property
+  tests (gotchas/ambiguous-type-generated-function-names.md).
+- The module commands (`get`, `mod tidy|accept-effects|clean|proxy`,
+  `vendor`) are written in Xo too (selfhost/cli/modules, decision 0178
+  stage 4); xo1 runs them.
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on

@@ -156,7 +156,7 @@ fn (var c: Checker) consumer_vouches() -> List[Vouch] {
 }
 
 /// mod.SuggestVouch: the vouch line that would cover an escape hatch.
-fn suggest_vouch(path: Str, version: Str, kind: Str, target: Str, claim: List[Str]?) -> Str {
+pub fn suggest_vouch(path: Str, version: Str, kind: Str, target: Str, claim: List[Str]?) -> Str {
   var s = "vouch ${path} ${version} ${kind} ${target.quote()}"
   if kind == "c" {
     if let Some(cl) = claim {

@@ -1,0 +1,29 @@
+// xomod: the module commands of selfhost/cli/modules as a program of
+// their own, to measure them on their own (decision 0178 stage 4) before
+// xo1 links them: `xomod get|mod|vendor|publish|audit ...` runs the Xo
+// port; any other command is handed to the Go `xo` named by $XOMOD_FALLBACK (with
+// the same arguments, standard streams, and exit status), so cmd/xo's
+// tests can run with XO_CLI=xomod and exercise only the module commands
+// in Xo.
+
+use github.com/xo-lang/xo/selfhost/cli/modules
+
+fn main(os: Os) uses (fs, net, proc, env, stdio, rand) {
+  let args = os.env.args()
+  let wd = os.env.get("PWD") ?? ""
+  if !args.is_empty() && modules.is_command(args[0]) {
+    os.proc.exit(modules.run(os, wd, args))
+  }
+  let go_xo = os.env.get("XOMOD_FALLBACK") ?? ""
+  if go_xo.is_empty() {
+    os.stdio.eprintln("xomod: only get, mod, vendor, publish, and audit; set XOMOD_FALLBACK to the Go xo for the other commands")
+    os.proc.exit(2)
+  }
+  match os.proc.cmd(go_xo, args).inherit().run() {
+    Ok(code) => os.proc.exit(code)
+    Err(e) => {
+      os.stdio.eprintln("xomod: ${go_xo}: ${e}")
+      os.proc.exit(2)
+    }
+  }
+}

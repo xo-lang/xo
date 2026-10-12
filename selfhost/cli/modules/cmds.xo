@@ -1,0 +1,372 @@
+// The module operations behind the commands (mod cmds.go): xo get, xo
+// mod tidy, xo mod accept-effects, and xo vendor.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// One requirement changed by xo get or xo mod tidy (mod.Change); old ""
+/// when added, new "" when removed.
+struct Change {
+  path: Str
+  old: Str = ""
+  new: Str = ""
+}
+
+/// An effect line of xo.lock that changed (mod.EffectChange); old None
+/// when the module had no line.
+struct EffectChange {
+  path: Str
+  old: List[Str]? = None
+  new: List[Str] = []
+}
+
+/// mod.IsRemote: the first element of the import path holds a dot.
+fn is_remote(path: Str) -> Bool {
+  let (first, _, _) = cut(path, "/")
+  first.contains(".")
+}
+
+/// mod.Imports: the import paths of the main module in main_dir that name
+/// other modules, sorted (nested modules, vendor/, testdata/, and dot
+/// directories skipped).
+fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] uses fs.read {
+  var set: Map[Str, Bool] = {}
+  c.imports_walk(main_dir, main_path, set)
+  set.keys().sort()
+}
+
+fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) uses fs.read {
+  for e in c.os.fs.read_dir(d).ok() ?? [] {
+    let p = "${d}/${e.name}"
+    if e.is_dir {
+      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || c.exists("${p}/xo.mod") {
+        continue
+      }
+      c.imports_walk(p, main_path, set)
+      continue
+    }
+    if !e.name.ends_with(".xo") {
+      continue
+    }
+    let src = c.os.fs.read(p).ok() ?? b""
+    let r = parser.parse_file(p.bytes(), src, false)
+    for u in r.file.imports {
+      let path = check.text(u.path)
+      if u.go || u.c || path.is_empty() || !is_remote(path) || path == main_path || path.starts_with("${main_path}/") {
+        continue
+      }
+      set[path] = true
+    }
+  }
+}
+
+/// mod.Owner: the module of mods holding the package path (the longest
+/// module path that is path or a prefix of it).
+fn owner(mods: List[check.DepModule], path: Str) -> check.DepModule? {
+  var best: check.DepModule? = None
+  var best_len = 0
+  for m in mods {
+    if (path == m.path || path.starts_with("${m.path}/")) && m.path.len() > best_len {
+      best = Some(m)
+      best_len = m.path.len()
+    }
+  }
+  best
+}
+
+/// mod findModule: the module holding a package path (the longest prefix,
+/// of at least two elements, whose repository has version tags) and its
+/// latest version.
+fn (var c: ModCtx) find_module(pkg: Str) -> (Str, Str) ! Str uses (fs, proc, rand, net) {
+  let elems = pkg.split("/")
+  var first = ""
+  var n = elems.len()
+  while n >= 2 {
+    var lead: List[Str] = []
+    for i in 0..n {
+      lead.push(elems[i])
+    }
+    let p = lead.join("/")
+    match c.latest(p) {
+      Ok(v) => return Ok((p, v))
+      Err(e) => {
+        if first.is_empty() {
+          first = e
+        }
+      }
+    }
+    n -= 1
+  }
+  if first.is_empty() {
+    first = "no module found"
+  }
+  Err(first)
+}
+
+fn (c: ModCtx) offline_or(code: Str) -> Str {
+  if c.offline() { "XO1303" } else { code }
+}
+
+/// mod acceptOpts.
+fn accept_opts(path: Str, accept: Bool) -> Options {
+  if !accept {
+    return Options{check_hatches: true}
+  }
+  var m: Map[Str, Bool] = {}
+  m[path] = true
+  Options{accept_effects: m, check_hatches: true}
+}
+
+/// mod.GetAccept: `xo get <path>[@version]` in the main module in
+/// main_dir; with accept the module's wider effects are recorded.
+fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[Change], List[check.Problem]) uses (fs, proc, rand, net) {
+  let (path0, version0, _) = cut(arg, "@")
+  var path = path0
+  var version = version0
+  let (main0, probs) = c.chk.read_mod_file(main_dir)
+  if !probs.is_empty() {
+    return ([], probs)
+  }
+  let main = match main0 {
+    Some(m) => m
+    None => return ([], probs)
+  }
+  if !check.valid_path(path) {
+    return ([], [check.Problem{code: "XO1301", file: main.file, msg: "invalid module path ${path.quote()}", notes: ["a module path is its location, such as github.com/acme/billing (core 4.2)"]}])
+  }
+  if !version.is_empty() && version != "latest" && version != "none" && !check.valid_version(version) {
+    return ([], [check.Problem{code: "XO1301", file: main.file, msg: "invalid version ${version.quote()}: want vX.Y.Z, latest, or none"}])
+  }
+  if version == "none" {
+    if require_line(main, path) == 0 {
+      return ([], [])
+    }
+  } else if version.is_empty() || version == "latest" {
+    match c.find_module(path) {
+      Ok((mp, v)) => {
+        path = mp
+        version = v
+      }
+      Err(e) => return ([], [check.Problem{code: c.offline_or("XO1302"), module: path, file: main.file, msg: "cannot find a version of ${path}: ${e}", notes: ["git location: ${c.repo_url(path)}"]}])
+    }
+  }
+  var old = ""
+  for r in main.reqs {
+    if r.path == path {
+      old = r.version
+    }
+  }
+  let data = match c.os.fs.read(main.file) {
+    Ok(d) => d.to_str() ?? ""
+    Err(e) => return ([], [check.Problem{code: "XO1301", file: main.file, msg: fs_msg(e)}])
+  }
+  let nv = if version == "none" { "" } else { version }
+  if old == nv {
+    // still refresh the lock
+    let (_, ps) = c.write_lock_changes(main_dir, accept_opts(path, accept))
+    return ([], ps)
+  }
+  let updated = set_require(data, path, nv)
+  match c.write_file(main.file, updated.bytes()) {
+    Ok(_) => {}
+    Err(e) => return ([], [check.Problem{code: "XO1301", file: main.file, msg: e}])
+  }
+  let (_, ps) = c.write_lock_changes(main_dir, accept_opts(path, accept))
+  if !errs(ps).is_empty() {
+    c.write_file(main.file, data.bytes()).ignore_err("restoring xo.mod, as mod.GetAccept")
+    return ([], ps)
+  }
+  ([Change{path: path, old: old, new: nv}], [])
+}
+
+/// mod writeLockChanges: resolves the main module without workspace or
+/// vendor and writes its xo.lock (hashes and effects), returning the
+/// effect lines that changed.
+fn (var c: ModCtx) write_lock_changes(main_dir: Str, accept: Options) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net) {
+  let opts = Options{no_workspace: true, no_vendor: true, update: true, accept_effects: accept.accept_effects, accept_all: accept.accept_all, check_hatches: accept.check_hatches}
+  var b = c.load(main_dir, opts)
+  if opts.check_hatches && errs(b.problems).is_empty() {
+    if let Some(m) = b.main {
+      c.check_hatches(b, m)
+    }
+  }
+  if !errs(b.problems).is_empty() {
+    return ([], b.problems)
+  }
+  var changes: List[EffectChange] = []
+  for m in b.modules {
+    let cur = match b.effects.get(m.path) {
+      Some(x) => x
+      None => continue
+    }
+    match b.locked.get(m.path) {
+      Some(old) => {
+        if check.effects_text(old) == check.effects_text(cur) {
+          continue
+        }
+        changes.push(EffectChange{path: m.path, old: Some(old), new: cur})
+      }
+      None => changes.push(EffectChange{path: m.path, new: cur})
+    }
+  }
+  match c.write_lock(c.abs(main_dir), b.hashes, b.effects) {
+    Ok(_) => {}
+    Err(e) => return ([], [check.Problem{code: "XO1301", file: "${c.abs(main_dir)}/xo.lock", msg: e}])
+  }
+  (changes, [])
+}
+
+/// mod.AcceptEffects: the current effects of the named modules (all when
+/// none is named) recorded in xo.lock.
+fn (var c: ModCtx) accept_effects(main_dir: Str, paths: List[Str]) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net) {
+  var m: Map[Str, Bool] = {}
+  for p in paths {
+    m[p] = true
+  }
+  c.write_lock_changes(main_dir, Options{accept_all: paths.is_empty(), accept_effects: m, check_hatches: true})
+}
+
+/// mod.Tidy: requires the latest version of every imported module xo.mod
+/// does not require, drops requirements nothing imports (unless the rest
+/// of the graph needs their version), and rewrites xo.lock.
+fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) uses (fs, proc, rand, net) {
+  let (main0, probs) = c.chk.read_mod_file(main_dir)
+  if !errs(probs).is_empty() {
+    return ([], probs)
+  }
+  let main = match main0 {
+    Some(m) => m
+    None => return ([], probs)
+  }
+  let imports = c.imports(main_dir, main.path)
+  var changes: List[Change] = []
+  var extra: List[check.Require] = []
+  let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true, update: true})
+  if !errs(b.problems).is_empty() {
+    return ([], b.problems)
+  }
+  for imp in imports {
+    if owner(b.modules, imp) != None {
+      continue
+    }
+    var done = false
+    for r in extra {
+      if imp == r.path || imp.starts_with("${r.path}/") {
+        done = true
+      }
+    }
+    if done {
+      continue
+    }
+    match c.find_module(imp) {
+      Ok((mp, v)) => {
+        extra.push(check.Require{path: mp, version: v, line: 0})
+        changes.push(Change{path: mp, new: v})
+      }
+      Err(e) => return ([], [check.Problem{code: c.offline_or("XO1302"), module: imp, file: main.file, msg: "no module provides ${imp}: ${e}", notes: ["git location tried: ${c.repo_url(imp)}"]}])
+    }
+  }
+  var unused: List[check.Require] = []
+  for r in main.reqs {
+    var used = false
+    for imp in imports {
+      if imp == r.path || imp.starts_with("${r.path}/") {
+        used = true
+      }
+    }
+    if !used {
+      unused.push(r)
+    }
+  }
+  var drop: Map[Str, Bool] = {}
+  if !unused.is_empty() {
+    // resolve without them: drop one unless the rest selects a lower
+    // version of it (then it is kept, raising that version)
+    let data = (c.os.fs.read(main.file).ok() ?? b"").to_str() ?? ""
+    var trial = data
+    for r in unused {
+      trial = set_require(trial, r.path, "")
+    }
+    c.write_file(main.file, trial.bytes()).ignore_err("as mod.Tidy")
+    let without = c.load(main_dir, Options{no_workspace: true, no_vendor: true, update: true, extra: extra})
+    c.write_file(main.file, data.bytes()).ignore_err("as mod.Tidy")
+    var sel: Map[Str, Str] = {}
+    for m in without.modules {
+      sel[m.path] = m.version
+    }
+    for r in unused {
+      let keep = match sel.get(r.path) {
+        Some(v) => check.compare_versions(v, r.version) < 0
+        None => false
+      }
+      if !keep {
+        drop[r.path] = true
+        changes.push(Change{path: r.path, old: r.version})
+      }
+    }
+  }
+  let orig = match c.os.fs.read(main.file) {
+    Ok(d) => d.to_str() ?? ""
+    Err(e) => return ([], [check.Problem{code: "XO1301", file: main.file, msg: fs_msg(e)}])
+  }
+  var data = orig
+  for p in drop.keys() {
+    data = set_require(data, p, "")
+  }
+  for r in extra {
+    data = set_require(data, r.path, r.version)
+  }
+  if data != orig {
+    match c.write_file(main.file, data.bytes()) {
+      Ok(_) => {}
+      Err(e) => return ([], [check.Problem{code: "XO1301", file: main.file, msg: e}])
+    }
+  }
+  let (_, ps) = c.write_lock_changes(main_dir, Options{})
+  if !errs(ps).is_empty() {
+    c.write_file(main.file, orig.bytes()).ignore_err("restoring xo.mod, as mod.Tidy")
+    return ([], ps)
+  }
+  (changes.sort_by(fn(ch) { ch.path }), [])
+}
+
+/// mod.Vendor: copies every selected module version into vendor/<path>/
+/// and lists them in vendor/modules.txt.
+fn (var c: ModCtx) vendor(main_dir0: Str) -> (List[check.DepModule], List[check.Problem]) uses (fs, proc, rand, net) {
+  let main_dir = c.abs(main_dir0)
+  let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true})
+  if !errs(b.problems).is_empty() {
+    return ([], b.problems)
+  }
+  let main_file = match b.main {
+    Some(m) => m.file
+    None => "${main_dir}/xo.mod"
+  }
+  let vdir = "${main_dir}/vendor"
+  match c.remove_tree(vdir) {
+    Ok(_) => {}
+    Err(e) => return ([], [check.Problem{code: "XO1307", file: main_file, msg: e}])
+  }
+  if b.modules.is_empty() {
+    return ([], [])
+  }
+  var list = StrBuilder.new()
+  list.write("# vendor/modules.txt: written by `xo vendor`; do not edit.\n")
+  for m in b.modules {
+    let dst = "${vdir}/${m.path}"
+    match c.copy_tree(m.dir, dst) {
+      Ok(_) => {}
+      Err(e) => return ([], [check.Problem{code: "XO1307", module: m.path, file: main_file, msg: "vendoring ${m.path} ${m.version}: ${e}"}])
+    }
+    list.write("# ${m.path} ${m.version}\n")
+  }
+  match c.write_file("${vdir}/modules.txt", list.freeze().bytes()) {
+    Ok(_) => {}
+    Err(e) => return ([], [check.Problem{code: "XO1307", file: main_file, msg: e}])
+  }
+  let out = c.load(main_dir, Options{no_workspace: true})
+  if !errs(out.problems).is_empty() {
+    return ([], out.problems)
+  }
+  (out.modules, [])
+}

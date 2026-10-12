@@ -578,7 +578,7 @@ fn (var b: Builder) eq_int(v: Int, k: Int) -> Int {
 fn (var b: Builder) gen_value_func(ct: Int) -> Str {
   let t = b.typ(ct)
   let it = b.int_t()
-  let name = "xo.gen[${b.c.show(ct)}]"
+  let name = "xo.gen[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [it], [t], [])
   if fi < 0 {
     return name
