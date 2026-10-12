@@ -264,7 +264,7 @@ fn (var b: Builder) self_faults(v: Int) -> Bool {
         S(s) => s
         None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
       }
-      if name is "list.index" | "list.set" | "bytes.index" | "Int.abs" {
+      if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
         return !x.pos.is_empty()
       }
       faulting_rt(name)

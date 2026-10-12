@@ -1,0 +1,56 @@
+// Nested element updates (decision 0169) on element shapes the arm64
+// selection treats apart: an element wider than eight words, Float and
+// Bool words, an enum leaf (its tag is the placeholder), a function
+// value (its environment word), and updates in loops over the index
+// (strength reduction), with a shared outer list that must copy.
+struct Wide {
+  a: Str
+  b: List[Int]
+  c: Float
+  d: Bool
+  e: Int?
+  f: Str?
+  g: fn(Int) -> Int
+  h: List[Str]
+  i: Int
+  j: Float
+}
+
+fn wide(n: Int) -> Wide {
+  Wide{a: "w${n}", b: [n], c: 0.5, d: n % 2 == 0, e: Some(n), f: Some("f${n}"), g: fn(x) { x * n }, h: [], i: n, j: 2.5}
+}
+
+fn show(w: Wide) -> Str {
+  "${w.a} ${w.b.len()} ${w.c} ${w.d} ${w.e ?? -1} ${w.f ?? "-"} ${w.g(3)} ${w.h.len()} ${w.i} ${w.j}"
+}
+
+fn fill(var ws: List[Wide], n: Int) {
+  for i in 0..ws.len() {
+    for k in 0..n {
+      ws[i].b.push(k)
+      ws[i].h.push("x")
+    }
+    ws[i].c += 1.0
+    ws[i].d = !ws[i].d
+    ws[i].f = None
+  }
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var ws = [wide(1), wide(2), wide(3)]
+  fill(ws, 100)
+  for w in ws {
+    io.println(show(w))
+  }
+  let keep = ws
+  fill(ws, 1)
+  io.println("${show(keep[0])} | ${show(ws[0])}")
+  var grid: List[List[Float]] = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+  for i in 0..3 {
+    for j in 0..2 {
+      grid[i][j] = Float(i * 10 + j)
+    }
+  }
+  io.println("${grid[2][1]} ${grid[1][0]}")
+}

@@ -64,6 +64,7 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     "list.set" => Some([c, n, c])
     "list.push" => Some([c, c])
     "list.pop" => Some([c])
+    "list.take" => Some([c, n])
     "rt.task_spawn" => Some([w, c, n, n, n, n, n, w])
     "rt.task_done" => Some([w, c, n])
     "rt.chan_send" => Some([w, c, w])
@@ -82,7 +83,7 @@ fn is_proj_call(name: Str) -> Bool {
 }
 
 fn is_update_call(name: Str) -> Bool {
-  name is "list.set" | "list.push" | "list.pop"
+  name is "list.set" | "list.push" | "list.pop" | "list.take"
 }
 
 fn (r: Rc) decomposable(t: Int) -> Bool {
@@ -1206,7 +1207,7 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
       if name is "list.new" | "list.set" | "list.push" {
         return l.path.is_empty()
       }
-      if name == "list.pop" {
+      if name is "list.pop" | "list.take" {
         return l.path == ".0"
       }
     }
@@ -1306,7 +1307,7 @@ fn (var r: Rc) reuse(var f: Func) {
 /// An inline operation that faults before it consumes its operands
 /// (keepsOperands).
 fn keeps_operands(x: Value) -> Bool {
-  x.op == Op.Call && aux_name(x.aux) == "list.set" && !x.pos.is_empty()
+  x.op == Op.Call && (aux_name(x.aux) is "list.set" | "list.take") && !x.pos.is_empty()
 }
 
 fn is_rc_op(o: Op) -> Bool {

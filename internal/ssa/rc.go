@@ -39,8 +39,8 @@ import (
 //   - Cancellation. `retain x ... release x` in one block with nothing
 //     between that consumes or releases x or what x was projected from
 //     is removed.
-//   - Reuse. A list update (`list.set`, `list.push`, `list.pop`) needs a
-//     uniquely owned list to write in place. Where the list is provably
+//   - Reuse. A list update (`list.set`, `list.push`, `list.pop`,
+//     `list.take`) needs a uniquely owned list to write in place. Where the list is provably
 //     unique (fresh from a list operation, never retained, through block
 //     parameters to a fixpoint) nothing is added; elsewhere `reuse`
 //     checks the count at run time and copies only when it is shared.
@@ -86,6 +86,7 @@ var runtimeModes = map[string][]mode{
 	"list.set":         {mConsume, mNone, mConsume},
 	"list.push":        {mConsume, mConsume},
 	"list.pop":         {mConsume},
+	"list.take":        {mConsume, mNone},
 	// the task runtime (decision 0068) takes the lists of one that carry
 	// values into it
 	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mNone, mBorrow},
@@ -105,7 +106,7 @@ var runtimeModes = map[string][]mode{
 var projCalls = map[string]bool{"list.index": true, "list.get": true}
 
 // updateCalls are the list updates that need a unique list (reuse).
-var updateCalls = map[string]bool{"list.set": true, "list.push": true, "list.pop": true}
+var updateCalls = map[string]bool{"list.set": true, "list.push": true, "list.pop": true, "list.take": true}
 
 func decomposable(t *Type) bool { return t.Kind == KStruct || t.Kind == KTuple }
 
@@ -1033,7 +1034,7 @@ func (r *rcInfo) unique(f *Func) func(l leaf) bool {
 			switch v.Aux.(string) {
 			case "list.new", "list.set", "list.push":
 				return l.path == ""
-			case "list.pop":
+			case "list.pop", "list.take":
 				return l.path == ".0"
 			}
 		case OpReuse:
