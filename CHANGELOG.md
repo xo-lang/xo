@@ -182,6 +182,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   faster than before; per rune work on arm64 is 1.45 to 1.8 times the
   C's instructions, so `XO_UNICODE=c` at build time still selects the C
   implementation (compiled only then, never in the prebuilt packs).
+- More of the native runtime is Xo (decision 0193, which also orders the
+  rest of the port): `std/native/llrt/text.xo` does Int.parse, a
+  Duration's text and Duration.parse, a Time's RFC 3339 text and
+  std/json's Time parse, and the Debug quoting of Str and Bytes;
+  `strings.xo` does Str.replace and the trims. Output is unchanged on
+  every backend, and the wasm backend runs the Xo versions. Int.parse,
+  Duration.parse, Time text, Debug quoting, and replace retire fewer
+  instructions than the C did (Time text about a quarter); Duration text
+  does not yet meet the 5 percent bar, so `XO_LLRT_C=text,strings` at
+  build time selects the C implementations (`XO_UNICODE=c` still works).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

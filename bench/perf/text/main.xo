@@ -1,0 +1,210 @@
+// Text workloads of the native runtime port (decision 0193): the number
+// and time text (std/native/llrt/text.xo) against its C path
+// (XO_LLRT_C=text), and the Str operations (strings.xo, XO_LLRT_C=strings). Usage: textperf <workload>. Each workload prints
+// "<workload> <checksum> <elapsed microseconds>"; the checksum must be
+// the same on every backend (the Go backend is the reference).
+use std/json
+
+const ROUNDS = 200
+
+/// h and s mixed into a checksum.
+fn mix(h: Int, s: Str) -> Int {
+  let b = s.bytes()
+  var x = (h * 31 + b.len()) % 1000000007
+  if b.len() > 0 {
+    x = (x * 31 + Int(b[b.len() / 2])) % 1000000007
+  }
+  x
+}
+
+/// n pseudo random values in 0..m (a linear congruential sequence).
+fn values(n: Int, m: Int) -> List[Int] {
+  var out: List[Int] = []
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    out.push(x % m)
+  }
+  out
+}
+
+fn parse_int(texts: List[Str]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for t in texts {
+      sum = (sum + (Int.parse(t) ?? 7)) % 1000000007
+    }
+  }
+  sum
+}
+
+fn dur_fmt(ds: List[Duration]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for d in ds {
+      h = mix(h, "${d}")
+    }
+  }
+  h
+}
+
+fn dur_parse(texts: List[Str]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for t in texts {
+      match Duration.parse(t) {
+        Ok(d) => sum = (sum + d.nanos() % 1000003) % 1000000007
+        Err(_) => sum += 1
+      }
+    }
+  }
+  sum
+}
+
+fn time_fmt(ts: List[Time]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for t in ts {
+      h = mix(h, "${t}")
+    }
+  }
+  h
+}
+
+fn time_parse(doc: Str) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS / 4 {
+    match json.decode_str[List[Time]](doc) {
+      Ok(ts) => {
+        for t in ts {
+          sum = (sum + (t - Time.UNIX_EPOCH).nanos() % 1000003) % 1000000007
+        }
+      }
+      Err(_) => sum += 1
+    }
+  }
+  sum
+}
+
+fn quote(strs: List[Str], bs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 4 {
+    for s in strs {
+      h = mix(h, s.debug())
+    }
+    for b in bs {
+      h = mix(h, b.debug())
+    }
+  }
+  h
+}
+
+fn split(rows: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 4 {
+    for r in rows {
+      let f = r.split(",")
+      h = mix(h, f[f.len() / 2]) + f.len()
+    }
+  }
+  h
+}
+
+fn lines(doc: Str) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS * 2 {
+    let ls = doc.lines()
+    h = mix(h, ls[ls.len() / 3]) + ls.len()
+  }
+  h
+}
+
+fn replace(strs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 4 {
+    for s in strs {
+      h = mix(h, s.replace(" ", "_"))
+      h = mix(h, s.replace("zz", "y"))
+    }
+  }
+  h
+}
+
+fn trim(padded: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for s in padded {
+      h = mix(h, s.trim())
+      h = mix(h, s.trim_end())
+    }
+  }
+  h
+}
+
+fn rune_count(strs: List[Str]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for s in strs {
+      sum += s.rune_count()
+    }
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "parse_int"
+  let vs = values(1000, 1000000000)
+  var ints: List[Str] = []
+  var ds: List[Duration] = []
+  var dtexts: List[Str] = []
+  var ts: List[Time] = []
+  var strs: List[Str] = []
+  var bs: List[Bytes] = []
+  var i = 0
+  for v in vs {
+    // magnitudes from 1 to 10 digits, both signs
+    let k = v % 10
+    var x = v
+    for _ in 0..k {
+      x = x / 10
+    }
+    ints.push(if i % 2 == 0 { "${x}" } else { "-${x}" })
+    // durations from nanoseconds to days
+    var d = v
+    for _ in 0..(i % 5) {
+      d = d * 37
+    }
+    ds.push(Duration.from_nanos(if i % 3 == 0 { d / 1000 * 1000 } else { d }))
+    dtexts.push(if i % 4 == 0 { "${x % 100}h${x % 60}m${x % 7}.5s" } else { "${Duration.from_nanos(d)}" })
+    ts.push(Time.UNIX_EPOCH + Duration.from_nanos(v * 1700000003 + (if i % 2 == 0 { v } else { 0 })))
+    strs.push(if i % 3 == 0 { "plain text ${v}" } else if i % 3 == 1 { "quote \"${v}\"\n\ttab é ${v}" } else { "ünï ${v} 日本語\u{1}\u{fffd}" })
+    bs.push("bytes ${v} \u{1}".bytes())
+    i += 1
+  }
+  let doc = json.encode_str(ts)
+  var rows: List[Str] = []
+  var padded: List[Str] = []
+  for k in 0..1000 {
+    rows.push(ints[k] + "," + strs[k] + ",x,," + dtexts[k] + ",tail")
+    padded.push(if k % 2 == 0 { "  ${strs[k]} \t" } else { "\u{3000}${ints[k]}\n" })
+  }
+  let text = rows.join("\r\n")
+  let t = os.clock.now()
+  let sum = match w {
+    "parse_int" => parse_int(ints)
+    "dur_fmt" => dur_fmt(ds)
+    "dur_parse" => dur_parse(dtexts)
+    "time_fmt" => time_fmt(ts)
+    "time_parse" => time_parse(doc)
+    "quote" => quote(strs, bs)
+    "split" => split(rows)
+    "lines" => lines(text)
+    "replace" => replace(strs)
+    "trim" => trim(padded)
+    "rune_count" => rune_count(strs)
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}
