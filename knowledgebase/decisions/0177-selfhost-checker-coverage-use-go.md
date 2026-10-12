@@ -66,8 +66,11 @@ not compared.
 
 ## Consequences
 
-- See the results file for the runs compared, identical, and still
-  unsupported, by reason.
+- TestSelfhostChecker (go build): all 685 repository runs compared and
+  identical (398 accepted, 287 rejected only with compared
+  diagnostics), 0 unsupported; the 3 `use c` runs identical as native
+  builds too; TestSelfhostCheckerHatches 2 of 2; 400 module mutations
+  identical (results file).
 - The binder (go list, go/types, the adapter generator) stays in Go,
   like cbind's clang step (decision 0152). When the self hosted
   compiler must bind on its own (the switch-over of decision 0150) it
