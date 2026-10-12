@@ -2154,12 +2154,43 @@ fn (var b: Builder) for_up_to_end(i: Int, iv: Int, head: Int, exit: Int) {
 
 /// Declares the generated function name once and builds its body at once
 /// (genFunc).
-fn (var b: Builder) gen_func(name: Str, params: List[Int], results: List[Int], g: Gen) {
-  if b.m.func_index(name) >= 0 {
-    return
+fn (var b: Builder) gen_func(name0: Str, params: List[Int], results: List[Int], g: Gen) -> Str {
+  let (name, found) = b.helper_name(name0, params, false)
+  if found {
+    return name
   }
   let fi = b.m.new_func(name, params, results)
   b.build_gen(GenJob{fi: fi, file: b.s.file, gen: g})
+  name
+}
+
+/// The name of the generated helper name0 with parameter types (or
+/// captures) ts, and whether it exists already: a helper of other types
+/// takes name0 with `#2`, `#3`, ... (helperName: helper names hold
+/// checker type names, which do not name the module).
+fn (b: Builder) helper_name(name0: Str, ts: List[Int], captures: Bool) -> (Str, Bool) {
+  var name = name0
+  var i = 2
+  while true {
+    let fi = b.m.func_index(name)
+    if fi < 0 {
+      return (name, false)
+    }
+    var have: List[Int] = []
+    if captures {
+      have = b.m.funcs[fi].captures
+    } else {
+      for p in b.m.funcs[fi].blocks[0].params {
+        have.push(b.m.funcs[fi].values[p].ty)
+      }
+    }
+    if have == ts {
+      return (name, true)
+    }
+    name = "${name0}#${i}"
+    i += 1
+  }
+  (name, false)
 }
 
 /// Builds the bodies of the generated functions queued so far (and of

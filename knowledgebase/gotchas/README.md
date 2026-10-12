@@ -338,6 +338,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [glibc-compat-symbols-need-versions.md](glibc-compat-symbols-need-versions.md): Anticipated: unversioned imports cannot bind compatibility symbols such as `__xstat` on glibc 2.33 and later; the ELF linker versions every import as glibc 2.31 does (decision 0182 stage 3).
 - [golden-names-collide-across-suites.md](golden-names-collide-across-suites.md): Observed: `byref_enum` and `nested_update` exist in both arm64 golden suites, and `xo asmdump` run from the repository root puts the whole path in fault locations.
 - [go-backend-tuples-up-to-six.md](go-backend-tuples-up-to-six.md): Observed: `rt.Tuple7` and wider do not exist, so a 7+ element tuple checks and builds natively but fails `go build` on the Go backend.
+- [ssa-helper-names-unqualified.md](ssa-helper-names-unqualified.md): Observed: SSA helpers named by checker types (`xo.debug[Ctx]`) were shared by two `Ctx` types of different modules; a colliding helper now takes `#2`.
+
 - [borrowed-projection-keeps-owner-alive.md](borrowed-projection-keeps-owner-alive.md): Observed: borrowing a projection that is later consumed kept its dying owner alive and the moved list shared, so the callee copied it (3 more allocations); decision 0186 rule 3 borrows only where the owner is used after each consume.
 - [ec2-instance-outlived-its-timers.md](ec2-instance-outlived-its-timers.md): Observed, fixed: the remote-full instance outlived its shutdown timer and the script's trap; a systemd timer and a local watchdog now bound it.
 - [list-sort-returns-a-copy.md](list-sort-returns-a-copy.md): Observed: `ks.sort()` alone leaves `ks` unsorted (sort returns a new list) and no diagnostic says so; write `ks = ks.sort()`.

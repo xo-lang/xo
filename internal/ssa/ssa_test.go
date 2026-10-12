@@ -249,6 +249,40 @@ func TestVerifyRCMutations(t *testing.T) {
 	t.Logf("%d mutants rejected", n)
 }
 
+// TestHelperNamesAcrossModules builds a program with a struct `Ctx` in
+// two modules, each a parameter of a function whose frame records it:
+// the generated helpers (xo.frameargs, xo.debug) are named by checker
+// type names, which do not name the module, so the second takes `#2`
+// instead of reusing the first's (gotchas/ssa-helper-names-unqualified.md).
+func TestHelperNamesAcrossModules(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"xo.mod":  "module example.com/two\nedition preview\n",
+		"a/a.xo":  "pub struct Ctx {\n  pub n: Int\n}\n\npub fn f(c: Ctx, s: Str) -> Int ! Str {\n  c.n + num(s)?\n}\n\nfn num(s: Str) -> Int ! Str {\n  match Int.parse(s) {\n    Some(n) => Ok(n)\n    None => Err(\"bad\")\n  }\n}\n",
+		"main.xo": "use example.com/two/a\n\nstruct Ctx {\n  s: Str\n}\n\nfn g(c: Ctx, s: Str) -> Int ! Str {\n  c.s.len() + num(s)? + a.f(a.Ctx{n: 1}, s)?\n}\n\nfn num(s: Str) -> Int ! Str {\n  match Int.parse(s) {\n    Some(n) => Ok(n)\n    None => Err(\"bad\")\n  }\n}\nfn main(os: Os) {\n  match g(Ctx{s: \"ab\"}, \"2\") {\n    Ok(n) => os.stdio.println(\"${n}\")\n    Err(e) => os.stdio.println(e)\n  }\n}\n",
+	}
+	for name, src := range files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := lower(t, dir)
+	withRC(t, m)
+	n := 0
+	for _, f := range m.Funcs {
+		if strings.HasPrefix(f.Name, "xo.frameargs(c: Ctx") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("%d frame argument helpers for the two Ctx types, want 2", n)
+	}
+}
+
 // TestAmbiguousGeneratedNames: two packages each declaring `Ctx`, both
 // interpolating a List[Ctx] with Debug, get one xo.debug function each
 // (generated functions are named by builder.typeName, which qualifies an
