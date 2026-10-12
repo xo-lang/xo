@@ -161,10 +161,13 @@ episode of gotchas/go-vet-recompiles-rt-per-build-dir.md.
    `GOTOOLCHAIN=go1.27.2 scripts/go-version-check.sh` (no download;
    toolchain@v0.0.1-go1.27.2 is present), then raise TestedGo if it
    passes.
-2. Share the repo's test compiles across worktrees: try
-   `GOFLAGS=-trimpath go test -short ./std/rt` with a temporary
-   GOCACHE; if std/rt's frame tests pass, set it in bench/nightly.sh and
-   the agents' heavy runner.
+2. Share the repo's test compiles across worktrees with `-trimpath`
+   (the worktree path then leaves the cache key). First result
+   (2026-10-12): `GOFLAGS=-trimpath go test -short -count=1 ./std/rt`
+   passes, writing 168 MB into an empty temporary GOCACHE. Next: the
+   same over the repo, `GOFLAGS=-trimpath go test -short $(go list
+   ./... | grep -v /runs/)`; if it passes, set `GOFLAGS=-trimpath` in
+   bench/nightly.sh and the agents' heavy runner.
 3. Key `use go` bindings by the Go language version (a `go-version:`
    header in the declaration file, checked by `gobind.Load`) so a Go
    upgrade regenerates them.
