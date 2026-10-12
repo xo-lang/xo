@@ -531,6 +531,21 @@ fn (g: Gen) std_prefix(m: Int) -> Str {
   if m < 0 || g.c.mods[m].is_prelude {
     return ""
   }
+  let gp = g.c.mods[m].go_path
+  if !gp.is_empty() {
+    // a `use go` binding: adapters in rt named by internal/gobind
+    // (gobind.Prefix: "Go_" and the import path with every byte but
+    // letters and digits made `_`)
+    var p = StrBuilder.new()
+    for r in gp.runes() {
+      if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+        p.write("${r}")
+      } else {
+        p.write("_")
+      }
+    }
+    return "Go_${p.freeze()}_"
+  }
   let n = g.c.mods[m].name
   let bs = n.bytes()
   if bs.is_empty() {
