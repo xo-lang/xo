@@ -21,7 +21,7 @@
 # current public IP only.
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # the account quota is 32 vCPUs (2026-10-12)
+TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # spot quota raised to 128 vCPUs on 2026-10-12
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-300}
 GOVER=${XO_REMOTE_GO:-1.26.1}
@@ -66,6 +66,9 @@ fi
 ami=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 --query Parameter.Value --output text)
 userdata=$(cat <<EOF
 #!/bin/bash
+# hard lifetime: a systemd timer (survives cloud-init; shutdown -h +N did not
+# fire on AL2023 on 2026-10-12) and the plain shutdown as a second net
+systemd-run --on-active=${MAXMIN}m /usr/sbin/poweroff
 shutdown -h +$MAXMIN
 dnf install -y git clang llvm gcc tar gzip make >/var/log/xo-setup.log 2>&1
 curl -fsSL https://go.dev/dl/go$GOVER.linux-arm64.tar.gz | tar -C /usr/local -xz
@@ -82,11 +85,16 @@ id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-
   --user-data "$userdata" --query 'Instances[0].InstanceId' --output text 2>&1) || {
   if [ -n "$DRY" ] && echo "$id" | grep -q DryRunOperation; then log "dry run OK: the launch would succeed"; exit 0; fi
   log "launch failed: $id"; exit 1; }
-cleanup() { log "terminating $id"; aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true; }
+cleanup() { log "terminating $id"; aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true; [ -n "${wd:-}" ] && kill "$wd" 2>/dev/null || true; }
 trap cleanup EXIT
+# local watchdog: terminates the instance after MAXMIN minutes even if this
+# script hangs waiting on ssh (2026-10-12: neither the instance's shutdown nor
+# the EXIT trap fired, and the instance ran 5.5 hours). Its PID is captured.
+( sleep $((MAXMIN * 60)); aws ec2 terminate-instances --instance-ids "$id" >/dev/null 2>&1 ) &
+wd=$!
 aws ec2 wait instance-running --instance-ids "$id"
 ip=$(aws ec2 describe-instances --instance-ids "$id" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-ssh_() { ssh -i "$key" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=60 "ec2-user@$ip" "$@"; }
+ssh_() { ssh -i "$key" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=60 -o ServerAliveCountMax=5 "ec2-user@$ip" "$@"; }
 log "instance $id at $ip; waiting for setup"
 for _ in $(seq 1 90); do ssh_ test -f /var/run/xo-ready 2>/dev/null && break; sleep 10; done
 ssh_ test -f /var/run/xo-ready
