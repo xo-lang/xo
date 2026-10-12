@@ -728,7 +728,9 @@ fn (var g: G) thread_const() {
       continue
     }
     let np = g.blocks[p].insts.len()
-    let j = g.blocks[p].insts[np - 1].targets[0]
+    // blocks that only move registers and jump are followed to the test;
+    // their moves are copied into p (opt.go threadConst, decision 0184)
+    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR {
       continue
     }
@@ -736,7 +738,7 @@ fn (var g: G) thread_const() {
     if br.us.is_empty() {
       continue // a landing check (decision 0085)
     }
-    let r = br.us[0]
+    var r = br.us[0]
     var k = 0
     if br.cond != "cbnz" {
       if br.us.len() != 1 {
@@ -757,7 +759,38 @@ fn (var g: G) thread_const() {
         None => continue
       }
     }
-    let (val, ok) = g.const_before(p, np - 1, r)
+    var val = 0
+    var ok = false
+    var found = false
+    var c = chain.len() - 1
+    while c >= 0 && !found {
+      for (i, d) in chain[c].defs.indexed() {
+        if d != r {
+          continue
+        }
+        let sr = chain[c].srcs[i]
+        if sr.kind == S_IMM {
+          val = sr.imm
+          ok = true
+          found = true
+        } else if sr.kind == S_REG && sr.v == 0 {
+          val = 0
+          ok = true
+          found = true
+        } else if sr.kind == S_REG {
+          r = sr.v
+        } else {
+          found = true
+        }
+        break
+      }
+      c -= 1
+    }
+    if !found {
+      let (v0, ok0) = g.const_before(p, np - 1, r)
+      val = v0
+      ok = ok0
+    }
     if !ok {
       continue
     }
@@ -775,8 +808,65 @@ fn (var g: G) thread_const() {
     let to = if taken { br.targets[0] } else { br.targets[1] }
     var ins = g.take_insts(p)
     ins[np - 1].targets[0] = to
+    if !chain.is_empty() {
+      ins = copy_moves(ins, chain)
+    }
     g.put_insts(p, ins)
   }
+}
+
+/// Follows j0, p's jump target, through blocks that only move registers
+/// and jump (at most 8): the first other block and their moves in order
+/// (opt.go moveChain, decision 0184).
+fn (g: G) move_chain(p: Int, j0: Int) -> (Int, List[Inst]) {
+  var j = j0
+  var chain: List[Inst] = []
+  var steps = 0
+  while steps < 8 && j != p && g.blocks[j].insts.len() == 2 && g.blocks[j].insts[0].kind == K_PMOVE &&
+    g.blocks[j].insts[1].kind == K_JUMP && g.blocks[j].insts[1].targets.len() == 1 {
+    chain.push(g.blocks[j].insts[0])
+    let next = g.blocks[j].insts[1].targets[0]
+    j = next
+    steps += 1
+  }
+  (j, chain)
+}
+
+/// The register whose value r0 holds after the moves of chain, read
+/// before them; false when one sets it to anything but a register
+/// (opt.go throughMoves).
+fn through_moves(chain: List[Inst], r0: Int) -> (Int, Bool) {
+  var r = r0
+  var c = chain.len() - 1
+  while c >= 0 {
+    for (i, d) in chain[c].defs.indexed() {
+      if d != r {
+        continue
+      }
+      let sr = chain[c].srcs[i]
+      if sr.kind != S_REG || sr.v == 0 {
+        return (0, false)
+      }
+      r = sr.v
+      break
+    }
+    c -= 1
+  }
+  (r, true)
+}
+
+/// ins (a block's instructions) with copies of the moves of chain
+/// before its terminator (opt.go copyMoves).
+fn copy_moves(ins: List[Inst], chain: List[Inst]) -> List[Inst] {
+  var out: List[Inst] = []
+  for ii in 0..ins.len() - 1 {
+    out.push(ins[ii])
+  }
+  for mv in chain {
+    out.push(mv)
+  }
+  out.push(ins[ins.len() - 1])
+  out
 }
 
 /// The constant register r holds before instruction end of block p
@@ -828,11 +918,14 @@ fn (var g: G) thread_cset() {
     if g.term_kind(p) != K_JUMP || np < 3 || g.blocks[p].insts[np - 1].targets.len() > 1 {
       continue
     }
-    let j = g.blocks[p].insts[np - 1].targets[0]
+    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR || g.blocks[j].insts[0].cond != "cbnz" || j == p {
       continue
     }
-    let r = g.blocks[j].insts[0].us[0]
+    let (r, traced) = through_moves(chain, g.blocks[j].insts[0].us[0])
+    if !traced {
+      continue
+    }
     let mv = g.blocks[p].insts[np - 2]
     if mv.kind != K_PMOVE {
       continue
@@ -861,7 +954,9 @@ fn (var g: G) thread_cset() {
     var ins = g.take_insts(p)
     ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us,
       cond: cond, targets: g.blocks[j].insts[0].targets}
-    if (nuses.get(r) ?? 0) == 1 {
+    if !chain.is_empty() {
+      ins = copy_moves(ins, chain)
+    } else if (nuses.get(r) ?? 0) == 1 {
       // only J's branch reads r, and p no longer reaches it: the move
       // (and then the cset, by dce) is dead (decision 0184)
       ins = drop_move(ins, np - 2, r)

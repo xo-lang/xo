@@ -586,7 +586,10 @@ func (s *fstate) safeAdd(a *ssa.Value, n int64, op ssa.Op) bool {
 // threadConst sends a jump to a block that only tests a register
 // straight to the test's outcome when the jumping block set that
 // register to a constant (the tag of an Option a pop or get built,
-// tested at once by `??` or `if let`).
+// tested at once by `??` or `if let`). Blocks that only move registers
+// and jump (the joins an inlined return passes its value through) are
+// followed to the test, and their moves are copied into the jumping
+// block (decision 0184).
 func (s *fstate) threadConst() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	for _, p := range blocks {
@@ -595,6 +598,7 @@ func (s *fstate) threadConst() {
 			continue
 		}
 		j := t.targets[0]
+		chain := moveChain(p, &j)
 		if len(j.insts) != 1 || j.insts[0].kind != iCondBr {
 			continue
 		}
@@ -612,7 +616,28 @@ func (s *fstate) threadConst() {
 				continue
 			}
 		}
-		val, ok := constBefore(p, len(p.insts)-1, r)
+		val, ok, found := int64(0), false, false
+		for c := len(chain) - 1; c >= 0 && !found; c-- {
+			for i, d := range chain[c].defs {
+				if d != r {
+					continue
+				}
+				switch src := chain[c].srcs[i]; {
+				case src.kind == sImm:
+					val, ok, found = src.imm, true, true
+				case src.kind == sReg && src.v == 0:
+					val, ok, found = 0, true, true
+				case src.kind == sReg:
+					r = src.v
+				default:
+					found = true
+				}
+				break
+			}
+		}
+		if !found {
+			val, ok = constBefore(p, len(p.insts)-1, r)
+		}
 		if !ok {
 			continue
 		}
@@ -640,7 +665,56 @@ func (s *fstate) threadConst() {
 		} else {
 			t.targets[0] = br.targets[1]
 		}
+		if len(chain) > 0 {
+			copyMoves(p, chain)
+		}
 	}
+}
+
+// moveChain follows *j, p's jump target, through blocks that only move
+// registers and jump (at most 8), leaving *j at the first other block,
+// and returns their moves in order (decision 0184).
+func moveChain(p *mblock, j **mblock) []*inst {
+	var chain []*inst
+	for steps := 0; steps < 8 && *j != p && len((*j).insts) == 2 && (*j).insts[0].kind == iPmove &&
+		(*j).insts[1].kind == iJump && len((*j).insts[1].targets) == 1; steps++ {
+		chain = append(chain, (*j).insts[0])
+		*j = (*j).insts[1].targets[0]
+	}
+	return chain
+}
+
+// throughMoves returns the register whose value r holds after the moves
+// of chain, read before them: false when one sets r to anything but a
+// register.
+func throughMoves(chain []*inst, r vreg) (vreg, bool) {
+	for c := len(chain) - 1; c >= 0; c-- {
+		for i, d := range chain[c].defs {
+			if d != r {
+				continue
+			}
+			if chain[c].srcs[i].kind != sReg || chain[c].srcs[i].v == 0 {
+				return 0, false
+			}
+			r = chain[c].srcs[i].v
+			break
+		}
+	}
+	return r, true
+}
+
+// copyMoves puts copies of the moves of chain before p's terminator.
+func copyMoves(p *mblock, chain []*inst) {
+	t := p.insts[len(p.insts)-1]
+	var moves []*inst
+	for _, mv := range chain {
+		c := *mv
+		c.defs = append([]vreg(nil), mv.defs...)
+		c.srcs = append([]src(nil), mv.srcs...)
+		c.uses = append([]vreg(nil), mv.uses...)
+		moves = append(moves, &c)
+	}
+	p.insts = append(append(p.insts[:len(p.insts)-1:len(p.insts)-1], moves...), t)
 }
 
 // constBefore returns the constant register r holds before instruction
@@ -690,10 +764,14 @@ func (s *fstate) threadCset() {
 			continue
 		}
 		j := t.targets[0]
+		chain := moveChain(p, &j)
 		if len(j.insts) != 1 || j.insts[0].kind != iCondBr || j.insts[0].cond != "cbnz" || j == p {
 			continue
 		}
-		r := j.insts[0].uses[0]
+		r, traced := throughMoves(chain, j.insts[0].uses[0])
+		if !traced {
+			continue
+		}
 		mv := p.insts[len(p.insts)-2]
 		if mv.kind != iPmove {
 			continue
@@ -721,7 +799,9 @@ func (s *fstate) threadCset() {
 		}
 		p.insts[len(p.insts)-1] = &inst{kind: iCondBr, text: def.text[:i], uses: append([]vreg(nil), def.uses...),
 			cond: cond, targets: append([]*mblock(nil), j.insts[0].targets...)}
-		if nuses[r] == 1 {
+		if len(chain) > 0 {
+			copyMoves(p, chain)
+		} else if nuses[r] == 1 {
 			// only J's branch reads r, and p no longer reaches it: the
 			// move (and then the cset, by dce) is dead (decision 0184)
 			dropMove(p, len(p.insts)-2, r)
