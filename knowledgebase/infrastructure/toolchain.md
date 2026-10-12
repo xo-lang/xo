@@ -969,7 +969,7 @@ std/                    std declaration files (prelude.xo, archive.xo, cli.xo, c
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_bytes.c, xo_json.c,
+                        and the files it includes: xo_std.c, xo_unicode.c (XO_UNICODE_C only), xo_bytes.c, xo_json.c,
                         xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
@@ -988,7 +988,10 @@ std/native/             std implemented in Xo for the native backends (decision 
 std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
                         Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
                         and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
-                        -golden-update`); imported as `use native/llrt/<name>` by std/native only
+                        -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
+                        `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
+                        (XO_UNICODE=c at build time: the Go checker loads it instead, the build
+                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it)
                         (Last verified: 2026-10-12)
 ```
 

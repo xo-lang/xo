@@ -94,7 +94,30 @@ For reference, the Go backend (unchanged by this work): lower
   and is within 2 percent on text, 13 to 17 percent on the lower
   compare and Rune case mapping, and faster on classes.
 
-EXPERIMENT_PLACEHOLDER
+## Experiment: the arm64 inliner run to a fixed point
+
+Not committed: `inline` in internal/arm64/inline.go repeated (up to 4
+rounds) until nothing changes, so functions that become leaves after one
+round are inlined in the next. arm64 instructions, opt then experiment:
+lower_u 7,162,969,711 to 6,891,728,671, upper_u 7,110,888,914 to
+6,841,872,036, eqlower 18,600,524,768 to 18,058,236,052, classify
+422,221,187 to 421,959,935, runecase 427,241,162 to 382,025,891, quote
+and the ASCII workloads unchanged. 0 to 11 percent: the remaining gap is
+the size limit (40 instructions, `is_letter` with its search is larger)
+and the loop code, not the round count alone.
+
+## The C path kept selectable (final tree, 4d2af44)
+
+`XO_UNICODE=c` builds (std/native/llrt/unicode_c.xo over the C under
+`-DXO_UNICODE_C`), arm64 then LLVM instructions: lower 859,536,438 and
+861,811,440, upper 913,070,581 and 915,398,737, lower_u 4,951,345,973
+and 4,953,675,153, upper_u 4,901,231,190 and 4,909,046,330, eqlower
+11,484,586,229 and 11,474,544,132, classify 322,310,675 and 285,812,914,
+runecase 337,595,366 and 251,668,361, quote 228,334,854 and 181,061,951.
+The text workloads match the C before this work; on arm64 classify and
+runecase pay 11 and 42 percent for the extra call through the runtime
+module's wrapper (the same inliner limit). Checksums identical; the 19
+Str goldens pass on LLVM and arm64 with the default path.
 
 ## Sizes
 
@@ -102,10 +125,11 @@ EXPERIMENT_PLACEHOLDER
   424,864 after the pure step (text 266,761 to 243,909 bytes).
 - Runtime pack (`xo rtpack`, darwin/arm64, 32 variants and the TLS
   library): 17,776 KiB and 16,546,544 bytes of runtime objects before;
-  17,136 KiB and 15,769,664 bytes after (opt): 776,880 bytes (4.7
-  percent) less. The pack key changes (e464bae6... to e4051f2e...), as
-  any edit of std/llrt does; packs stay reproducible (nothing about how
-  they are built changed).
+  17,136 KiB and 15,769,664 bytes after (opt, and the final tree, whose
+  C path is compiled only with -DXO_UNICODE_C, which no pack variant
+  has): 776,880 bytes (4.7 percent) less. The pack key changes
+  (e464bae6... before, 2d68bff2... final), as any edit of std/llrt does;
+  packs stay reproducible (nothing about how they are built changed).
 - C runtime: 26,240 lines before, 24,240 after (opt; `xo_unicode.c`'s
   1,783 lines and 259 lines of users removed, 42 lines of bulk
   primitives added). Xo: `unicode.xo` 405 lines, `unicode_tables.xo` 53

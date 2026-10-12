@@ -1,1 +1,2 @@
 - [budget-poll-2026-10-11.md](budget-poll-2026-10-11.md): cost of resource-budget polls outside a budget (fib +45%, sieve +18%); polls now only in programs that call `task.with_budget` (decision 0173).
+- [runtime-pilot-2026-10-12.md](runtime-pilot-2026-10-12.md): the Unicode operations of the native runtime in Xo against the C (bench/perf/unicode): ASCII case mapping 0.63x to 0.67x the C's instructions, quoting 0.77x to 0.79x, LLVM per rune work up to 1.17x, arm64 per rune work 1.45x to 1.80x; pack and size figures (decision 0180).
