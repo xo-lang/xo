@@ -82,11 +82,9 @@ func TestSelfhostArm64(t *testing.T) {
 			t.Parallel()
 			got := runArm64(t, bin, root, dirs, arm64Flags, "--std=std")
 			wait()
-			var st arm64Stats
-			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareArm64(d, wants[i], got[d], &st)...)
-			}
+			st, fails := compareAll(t, "compare arm64", dirs, func(i int, st *arm64Stats) []string {
+				return compareArm64(dirs[i], wants[i], got[dirs[i]], st)
+			}, (*arm64Stats).add)
 			t.Logf("%s", st)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -234,6 +232,23 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 		}
 	}
 	return out
+}
+
+// add adds the counts of o to s.
+func (s *arm64Stats) add(o arm64Stats) {
+	s.runs += o.runs
+	s.compared += o.compared
+	s.notBuilt += o.notBuilt
+	s.rejected += o.rejected
+	s.byteSame += o.byteSame
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.helpers += o.helpers
+	s.helpersSame += o.helpersSame
+	s.literals += o.literals
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.notBuiltWhy, o.notBuiltWhy)
 }
 
 type arm64Stats struct {

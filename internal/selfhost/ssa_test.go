@@ -108,17 +108,11 @@ func TestSelfhostSSA(t *testing.T) {
 			t.Parallel()
 			got := runSSAStages(t, bin, root, dirs, buildOnly, "--std=std")
 			wait()
-			var st ssaStats
-			var fails []string
-			for _, d := range dirs {
-				fails = append(fails, compareSSA(d, want[d], got[d], &st)...)
-			}
+			st, fails := compareSSAAll(t, "", dirs, want, got)
 			t.Logf("%s", st)
 			tgot := runSSAStages(t, bin, root, tdirs, buildOnly, "--std=std", "--test")
-			var tst ssaStats
-			for _, d := range tdirs {
-				fails = append(fails, compareSSA("test "+d, twant[d], tgot[d], &tst)...)
-			}
+			tst, tfails := compareSSAAll(t, "test ", tdirs, twant, tgot)
+			fails = append(fails, tfails...)
 			t.Logf("test binaries: %s", tst)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -267,6 +261,38 @@ func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[
 }
 
 // ssaStats counts what compareSSA compared.
+// compareSSAAll is compareSSA on every dir (prefix names it in the
+// failures), the dirs at the same time in slots of the pools (the
+// comparison of the stages of a large run, closures renamed by regular
+// expressions, takes seconds; one after another they took most of the
+// merge tier's TestSelfhostSSA/go, 2026-10-12): the counts and the
+// failures in the order of dirs.
+func compareSSAAll(t testing.TB, prefix string, dirs []string, want map[string]goSSA, got map[string]string) (ssaStats, []string) {
+	t.Helper()
+	return compareAll(t, "compare "+prefix+"SSA", dirs, func(i int, st *ssaStats) []string {
+		d := dirs[i]
+		return compareSSA(prefix+d, want[d], got[d], st)
+	}, (*ssaStats).add)
+}
+
+// add adds the counts of o to s.
+func (s *ssaStats) add(o ssaStats) {
+	s.runs += o.runs
+	s.built += o.built
+	s.rejected += o.rejected
+	s.noMain += o.noMain
+	s.unsupported += o.unsupported
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.missing += o.missing
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.unsupportedWhy, o.unsupportedWhy)
+	addCounts(&s.stageRuns, o.stageRuns)
+	addCounts(&s.stageOff, o.stageOff)
+	addCounts(&s.stageSame, o.stageSame)
+}
+
 type ssaStats struct {
 	runs, built, rejected, noMain, unsupported int
 	funcs, same, skipped, missing              int
@@ -526,21 +552,11 @@ func canonClosures(funcs map[string]string, skip map[string]string) map[string]s
 	if len(ren) == 0 {
 		return funcs
 	}
-	var keys []string
-	for k := range ren {
-		keys = append(keys, regexp.QuoteMeta(k))
-	}
-	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
-	pat := regexp.MustCompile(`(^|[ (,])(` + strings.Join(keys, "|") + `)([(, \n]|$)`)
+	rn := newRenamer(ren)
 	out := map[string]string{}
 	for n, text := range funcs {
 		// two passes: adjacent names share the separator between them
-		for range 2 {
-			text = pat.ReplaceAllStringFunc(text, func(s string) string {
-				sm := pat.FindStringSubmatch(s)
-				return sm[1] + ren[sm[2]] + sm[3]
-			})
-		}
+		text = rn.pass(rn.pass(text))
 		if r, ok := ren[n]; ok {
 			n = r
 		}
@@ -553,4 +569,103 @@ func canonClosures(funcs map[string]string, skip map[string]string) map[string]s
 		}
 	}
 	return out
+}
+
+// renamer replaces the names of ren in a text as one pass of the
+// regular expression `(^|[ (,])(names)([(, \n]|$)` (names longest first)
+// does with ReplaceAllString, without the regular expression: its one
+// alternation of every closure name ran over every function of every
+// stage and took 50 s on the build stage of selfhost/xo alone and most
+// of TestSelfhostSSA in the full tier (2026-10-12). Names may hold the
+// separators (generic instances: `f[A, B].fn1`).
+type renamer struct {
+	ren map[string]string
+	// the lengths of the names by their first byte, longest first
+	lens [256][]int
+}
+
+func newRenamer(ren map[string]string) *renamer {
+	r := &renamer{}
+	r.ren = ren
+	seen := map[[2]int]bool{}
+	for k := range ren {
+		if k == "" || seen[[2]int{int(k[0]), len(k)}] {
+			continue
+		}
+		seen[[2]int{int(k[0]), len(k)}] = true
+		r.lens[k[0]] = append(r.lens[k[0]], len(k))
+	}
+	for i := range r.lens {
+		sort.Sort(sort.Reverse(sort.IntSlice(r.lens[i])))
+	}
+	return r
+}
+
+// name is the longest name of ren at text[q:] followed by a separator
+// or the end, or "".
+func (r *renamer) name(text string, q int) string {
+	if q >= len(text) {
+		return ""
+	}
+	for _, l := range r.lens[text[q]] {
+		e := q + l
+		if e > len(text) {
+			continue
+		}
+		if e < len(text) {
+			switch text[e] {
+			case '(', ',', ' ', '\n':
+			default:
+				continue
+			}
+		}
+		if _, ok := r.ren[text[q:e]]; ok {
+			return text[q:e]
+		}
+	}
+	return ""
+}
+
+// pass is one ReplaceAllString of the regular expression: matches start
+// leftmost, do not overlap, and take their trailing separator.
+func (r *renamer) pass(text string) string {
+	var b strings.Builder
+	last := 0
+	for p := 0; p <= len(text); {
+		// (^|[ (,]): the empty start of the text first, then a separator
+		var k string
+		q := -1
+		if p == 0 {
+			if k = r.name(text, 0); k != "" {
+				q = 0
+			}
+		}
+		if q < 0 && p < len(text) && (text[p] == ' ' || text[p] == '(' || text[p] == ',') {
+			if k = r.name(text, p+1); k != "" {
+				q = p + 1
+			}
+		}
+		if q < 0 {
+			p++
+			continue
+		}
+		b.WriteString(text[last:q])
+		b.WriteString(r.ren[k])
+		e := q + len(k)
+		if e < len(text) {
+			e++ // the trailing separator
+		}
+		b.WriteString(text[q+len(k) : e])
+		last = e
+		if e == p {
+			// an empty match cannot happen: a name is not empty
+			e++
+		}
+		p = e
+	}
+	if last == 0 {
+		return text
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }

@@ -340,3 +340,35 @@ func runXoBatches(t testing.TB, bin, root string, prefix, paths []string, size i
 	}
 	return outs
 }
+
+// compareAll runs cmp on every dir at the same time, each in a slot of
+// the pools (comparing the output of a large run takes seconds to
+// minutes: run by run, the comparisons were most of TestSelfhostSSA in
+// the full tier, 2026-10-12), each with its own counts, then adds the
+// counts and joins the failures in the order of dirs.
+func compareAll[S any](t testing.TB, what string, dirs []string, cmp func(i int, st *S) []string, add func(dst *S, src S)) (S, []string) {
+	t.Helper()
+	sts := make([]S, len(dirs))
+	fails := make([][]string, len(dirs))
+	parallel(t, what, dirs, func(i int) { fails[i] = cmp(i, &sts[i]) })
+	var st S
+	var all []string
+	for i := range dirs {
+		add(&st, sts[i])
+		all = append(all, fails[i]...)
+	}
+	return st, all
+}
+
+// addCounts adds the counts of src to *dst.
+func addCounts(dst *map[string]int, src map[string]int) {
+	if src == nil {
+		return
+	}
+	if *dst == nil {
+		*dst = map[string]int{}
+	}
+	for k, v := range src {
+		(*dst)[k] += v
+	}
+}

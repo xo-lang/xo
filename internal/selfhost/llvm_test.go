@@ -96,17 +96,15 @@ func TestSelfhostLLVM(t *testing.T) {
 			t.Parallel()
 			got := runLLVM(t, bin, root, dirs, flags...)
 			wait()
-			var st llvmStats
-			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareLLVM(d, wants[i], got[d], &st)...)
-			}
+			st, fails := compareAll(t, "compare LLVM", dirs, func(i int, st *llvmStats) []string {
+				return compareLLVM(dirs[i], wants[i], got[dirs[i]], st)
+			}, (*llvmStats).add)
 			t.Logf("%s", st)
 			tgot := runLLVM(t, bin, root, tdirs, append(flags, "--test")...)
-			var tst llvmStats
-			for i, d := range tdirs {
-				fails = append(fails, compareLLVM("test "+d, twants[i], tgot[d], &tst)...)
-			}
+			tst, tfails := compareAll(t, "compare test LLVM", tdirs, func(i int, st *llvmStats) []string {
+				return compareLLVM("test "+tdirs[i], twants[i], tgot[tdirs[i]], st)
+			}, (*llvmStats).add)
+			fails = append(fails, tfails...)
 			t.Logf("test binaries: %s", tst)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -263,6 +261,27 @@ func runLLVM(t *testing.T, bin, root string, dirs []string, flags ...string) map
 }
 
 // llvmStats counts what compareLLVM compared.
+// add adds the counts of o to s.
+func (s *llvmStats) add(o llvmStats) {
+	s.runs += o.runs
+	s.compared += o.compared
+	s.rejected += o.rejected
+	s.noMain += o.noMain
+	s.unsupported += o.unsupported
+	s.ssaIncomplete += o.ssaIncomplete
+	s.goErrors += o.goErrors
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.differ += o.differ
+	s.helpers += o.helpers
+	s.modules += o.modules
+	s.ordered += o.ordered
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.why, o.why)
+	s.moduleDiffs = append(s.moduleDiffs, o.moduleDiffs...)
+}
+
 type llvmStats struct {
 	runs, compared, rejected, noMain, unsupported, ssaIncomplete, goErrors int
 	// the Go emitter's functions (`x.*` and xo_entry) in the runs
