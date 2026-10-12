@@ -19,6 +19,10 @@ fn rt_imports() -> Str {
   """
     (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
+    (import "wasi_snapshot_preview1" "args_sizes_get" (func $args_sizes_get (param i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "args_get" (func $args_get (param i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "environ_sizes_get" (func $environ_sizes_get (param i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "environ_get" (func $environ_get (param i32 i32) (result i32)))
     (global $faulting (mut i32) (i32.const 0))
     (global $fmsg (mut i32) (i32.const 0))
     (global $fmsgn (mut i32) (i32.const 0))
@@ -63,6 +67,7 @@ fn rt_text(var g: Gen) -> Str {
   let bytes_n = 5
   let str_n = 3
   let dropsig = g.sig(["i32"], [])
+  let empty = g.empty_list
   let int8 = g.litp("Int8")
   let uint8 = g.litp("UInt8")
   let int16 = g.litp("Int16")
@@ -4132,6 +4137,745 @@ fn rt_text(var g: Gen) -> Str {
       local.get $an
       i32.const 34
       call $sapp_byte)
+
+    ;; the first index of the m bytes at q in the n bytes at p, or -1
+    (func $mem_index (param $p i32) (param $n i32) (param $q i32) (param $m i32) (result i32) (local $i i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $m
+          i32.add
+          local.get $n
+          i32.gt_u
+          br_if $x
+          local.get $p
+          local.get $i
+          i32.add
+          local.get $q
+          local.get $m
+          call $mem_at
+          if
+            local.get $i
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const -1)
+
+    (func $str_find (param $o i32) (param $n i32) (param $q i32) (param $m i32) (param $from i64) (result i64) (local $i i32)
+      local.get $from
+      i64.const 0
+      i64.lt_s
+      if
+        i64.const 0
+        local.set $from
+      end
+      local.get $from
+      local.get $n
+      i64.extend_i32_u
+      i64.gt_s
+      if
+        i64.const -1
+        return
+      end
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $from
+      i32.wrap_i64
+      i32.add
+      local.get $n
+      local.get $from
+      i32.wrap_i64
+      i32.sub
+      local.get $q
+      i32.const 8
+      i32.add
+      local.get $m
+      call $mem_index
+      local.tee $i
+      i32.const 0
+      i32.lt_s
+      if
+        i64.const -1
+        return
+      end
+      local.get $i
+      i64.extend_i32_u
+      local.get $from
+      i64.add)
+
+    ;; l with a new Str of the n bytes at p appended (a List[Str] made by
+    ;; rl_new with 16 byte elements)
+    (func $list_add_str (param $l i32) (param $p i32) (param $n i32) (result i32) (local $a i32) (local $s i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $p
+      local.get $n
+      call $sapp
+      drop
+      local.set $s
+      local.get $l
+      i32.const 16
+      call $rl_slot
+      local.set $a
+      local.set $l
+      local.get $a
+      local.get $s
+      i32.store
+      local.get $a
+      local.get $n
+      i32.store offset=8
+      local.get $l)
+
+    ;; strings.Split: an empty separator splits into UTF-8 sequences
+    (func $str_split (param $o i32) (param $n i32) (param $q i32) (param $m i32) (result i32) (local $l i32) (local $p i32) (local $start i32) (local $i i32) (local $sz i32)
+      i32.const 4
+      i32.const 16
+      call $rl_new
+      local.set $l
+      local.get $o
+      i32.const 8
+      i32.add
+      local.set $p
+      local.get $m
+      i32.eqz
+      if
+        block $x
+          loop $lp
+            local.get $i
+            local.get $n
+            i32.ge_u
+            br_if $x
+            i32.const 1
+            local.set $sz
+            local.get $p
+            local.get $i
+            i32.add
+            i32.load8_u
+            i32.const 128
+            i32.ge_u
+            if
+              local.get $p
+              local.get $i
+              i32.add
+              local.get $n
+              local.get $i
+              i32.sub
+              call $utf8_size
+              local.tee $sz
+              i32.eqz
+              if
+                i32.const 1
+                local.set $sz
+              end
+            end
+            local.get $l
+            local.get $p
+            local.get $i
+            i32.add
+            local.get $sz
+            call $list_add_str
+            local.set $l
+            local.get $i
+            local.get $sz
+            i32.add
+            local.set $i
+            br $lp
+          end
+        end
+        local.get $l
+        return
+      end
+      block $x
+        loop $lp
+          local.get $p
+          local.get $start
+          i32.add
+          local.get $n
+          local.get $start
+          i32.sub
+          local.get $q
+          i32.const 8
+          i32.add
+          local.get $m
+          call $mem_index
+          local.tee $i
+          i32.const 0
+          i32.lt_s
+          br_if $x
+          local.get $l
+          local.get $p
+          local.get $start
+          i32.add
+          local.get $i
+          call $list_add_str
+          local.set $l
+          local.get $start
+          local.get $i
+          i32.add
+          local.get $m
+          i32.add
+          local.set $start
+          br $lp
+        end
+      end
+      local.get $l
+      local.get $p
+      local.get $start
+      i32.add
+      local.get $n
+      local.get $start
+      i32.sub
+      call $list_add_str)
+
+    ;; splits on line feeds and strips a trailing carriage return; a final
+    ;; line feed gives no empty last line
+    (func $str_lines (param $o i32) (param $n i32) (result i32) (local $l i32) (local $p i32) (local $start i32) (local $end i32) (local $e i32)
+      i32.const 4
+      i32.const 16
+      call $rl_new
+      local.set $l
+      local.get $o
+      i32.const 8
+      i32.add
+      local.set $p
+      block $x
+        loop $lp
+          local.get $start
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $start
+          local.set $end
+          block $f
+            loop $s
+              local.get $end
+              local.get $n
+              i32.ge_u
+              br_if $f
+              local.get $p
+              local.get $end
+              i32.add
+              i32.load8_u
+              i32.const 10
+              i32.eq
+              br_if $f
+              local.get $end
+              i32.const 1
+              i32.add
+              local.set $end
+              br $s
+            end
+          end
+          local.get $end
+          local.set $e
+          local.get $e
+          local.get $start
+          i32.gt_u
+          if
+            local.get $p
+            local.get $e
+            i32.add
+            i32.const 1
+            i32.sub
+            i32.load8_u
+            i32.const 13
+            i32.eq
+            if
+              local.get $e
+              i32.const 1
+              i32.sub
+              local.set $e
+            end
+          end
+          local.get $l
+          local.get $p
+          local.get $start
+          i32.add
+          local.get $e
+          local.get $start
+          i32.sub
+          call $list_add_str
+          local.set $l
+          local.get $end
+          i32.const 1
+          i32.add
+          local.set $start
+          br $lp
+        end
+      end
+      local.get $l)
+
+    ;; the rune of the valid sequence of sz bytes at p
+    (func $utf8_rune (param $p i32) (param $sz i32) (result i32) (local $r i32) (local $i i32)
+      local.get $p
+      i32.load8_u
+      i32.const 31
+      i32.const 15
+      i32.const 7
+      local.get $sz
+      i32.const 3
+      i32.eq
+      select
+      local.get $sz
+      i32.const 2
+      i32.eq
+      select
+      i32.and
+      local.set $r
+      i32.const 1
+      local.set $i
+      block $x
+        loop $l
+          local.get $i
+          local.get $sz
+          i32.ge_u
+          br_if $x
+          local.get $r
+          i32.const 6
+          i32.shl
+          local.get $p
+          local.get $i
+          i32.add
+          i32.load8_u
+          i32.const 63
+          i32.and
+          i32.or
+          local.set $r
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $r)
+
+    ;; unicode.IsSpace
+    (func $is_space (param $r i32) (result i32)
+      local.get $r
+      i32.const 9
+      i32.ge_u
+      local.get $r
+      i32.const 13
+      i32.le_u
+      i32.and
+      local.get $r
+      i32.const 32
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 133
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 160
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 5760
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 8232
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 8233
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 8239
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 8287
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 12288
+      i32.eq
+      i32.or
+      local.get $r
+      i32.const 8192
+      i32.ge_u
+      local.get $r
+      i32.const 8202
+      i32.le_u
+      i32.and
+      i32.or)
+
+    ;; whether the rune at p (n bytes left) is a space: its size, else 0
+    (func $space_at (param $p i32) (param $n i32) (result i32) (local $sz i32)
+      local.get $p
+      i32.load8_u
+      i32.const 128
+      i32.lt_u
+      if
+        local.get $p
+        i32.load8_u
+        call $is_space
+        return
+      end
+      local.get $p
+      local.get $n
+      call $utf8_size
+      local.tee $sz
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $p
+      local.get $sz
+      call $utf8_rune
+      call $is_space
+      if
+        local.get $sz
+        return
+      end
+      i32.const 0)
+
+    ;; strings.TrimSpace (mode 0), TrimLeftFunc (1), TrimRightFunc (2)
+    ;; with unicode.IsSpace
+    (func $str_trim (param $o i32) (param $n i32) (param $mode i64) (result i32 i32) (local $p i32) (local $lo i32) (local $hi i32) (local $st i32) (local $sz i32)
+      local.get $o
+      i32.const 8
+      i32.add
+      local.set $p
+      local.get $n
+      local.set $hi
+      local.get $mode
+      i64.const 2
+      i64.ne
+      if
+        block $x
+          loop $l
+            local.get $lo
+            local.get $hi
+            i32.ge_u
+            br_if $x
+            local.get $p
+            local.get $lo
+            i32.add
+            local.get $hi
+            local.get $lo
+            i32.sub
+            call $space_at
+            local.tee $sz
+            i32.eqz
+            br_if $x
+            local.get $lo
+            local.get $sz
+            i32.add
+            local.set $lo
+            br $l
+          end
+        end
+      end
+      local.get $mode
+      i64.const 1
+      i64.ne
+      if
+        block $x
+          loop $l
+            local.get $hi
+            local.get $lo
+            i32.le_u
+            br_if $x
+            ;; the rune ending at hi
+            local.get $hi
+            i32.const 1
+            i32.sub
+            local.set $st
+            block $y
+              loop $m
+                local.get $st
+                local.get $lo
+                i32.gt_u
+                local.get $hi
+                local.get $st
+                i32.sub
+                i32.const 4
+                i32.lt_u
+                i32.and
+                local.get $p
+                local.get $st
+                i32.add
+                call $cont
+                i32.and
+                i32.eqz
+                br_if $y
+                local.get $st
+                i32.const 1
+                i32.sub
+                local.set $st
+                br $m
+              end
+            end
+            local.get $p
+            local.get $st
+            i32.add
+            local.get $hi
+            local.get $st
+            i32.sub
+            call $space_at
+            local.tee $sz
+            i32.eqz
+            br_if $x
+            local.get $st
+            local.get $sz
+            i32.add
+            local.get $hi
+            i32.ne
+            br_if $x
+            local.get $st
+            local.set $hi
+            br $l
+          end
+        end
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $p
+      local.get $lo
+      i32.add
+      local.get $hi
+      local.get $lo
+      i32.sub
+      call $sapp)
+
+    (func $bytes_hex (param $o i32) (param $n i32) (result i32 i32) (local $s i32) (local $i i32) (local $c i32)
+      local.get $n
+      i32.const 1
+      i32.shl
+      call $rs_new
+      local.set $s
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $o
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.set $c
+          local.get $s
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          local.get $c
+          i32.const 4
+          i32.shr_u
+          call $hexd
+          i32.store8 offset=8
+          local.get $s
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          local.get $c
+          i32.const 15
+          i32.and
+          call $hexd
+          i32.store8 offset=9
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $s
+      local.get $n
+      i32.const 1
+      i32.shl)
+
+    ;; env.args(): the arguments after the program name (WASI args_get)
+    (func $env_args (result i32) (local $argc i32) (local $argv i32) (local $buf i32) (local $l i32) (local $i i32) (local $p i32) (local $k i32)
+      i32.const 0
+      i32.const 4
+      call $args_sizes_get
+      drop
+      i32.const 0
+      i32.load
+      local.set $argc
+      local.get $argc
+      i32.const 2
+      i32.shl
+      i32.const 4
+      i32.add
+      call $alloc
+      local.set $argv
+      i32.const 4
+      i32.load
+      i32.const 1
+      i32.add
+      call $alloc
+      local.set $buf
+      local.get $argv
+      local.get $buf
+      call $args_get
+      drop
+      local.get $argc
+      i32.const 16
+      call $rl_new_n
+      local.set $l
+      i32.const 1
+      local.set $i
+      block $x
+        loop $lp
+          local.get $i
+          local.get $argc
+          i32.ge_u
+          br_if $x
+          local.get $argv
+          local.get $i
+          i32.const 2
+          i32.shl
+          i32.add
+          i32.load
+          local.tee $p
+          call $strlen
+          local.set $k
+          local.get $l
+          local.get $p
+          local.get $k
+          call $list_add_str
+          local.set $l
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $lp
+        end
+      end
+      local.get $argv
+      call $free
+      local.get $buf
+      call $free
+      local.get $l)
+
+    (func $strlen (param $p i32) (result i32) (local $n i32)
+      block $x
+        loop $l
+          local.get $p
+          local.get $n
+          i32.add
+          i32.load8_u
+          i32.eqz
+          br_if $x
+          local.get $n
+          i32.const 1
+          i32.add
+          local.set $n
+          br $l
+        end
+      end
+      local.get $n)
+
+    ;; env.get(name): the value in a list of one, or the empty list
+    (func $env_get (param $o i32) (param $n i32) (result i32) (local $c i32) (local $vv i32) (local $buf i32) (local $i i32) (local $p i32) (local $k i32) (local $l i32)
+      i32.const 0
+      i32.const 4
+      call $environ_sizes_get
+      drop
+      i32.const 0
+      i32.load
+      local.set $c
+      local.get $c
+      i32.const 2
+      i32.shl
+      i32.const 4
+      i32.add
+      call $alloc
+      local.set $vv
+      i32.const 4
+      i32.load
+      i32.const 1
+      i32.add
+      call $alloc
+      local.set $buf
+      local.get $vv
+      local.get $buf
+      call $environ_get
+      drop
+      i32.const ${empty}
+      local.set $l
+      block $x
+        loop $lp
+          local.get $i
+          local.get $c
+          i32.ge_u
+          br_if $x
+          local.get $vv
+          local.get $i
+          i32.const 2
+          i32.shl
+          i32.add
+          i32.load
+          local.tee $p
+          call $strlen
+          local.tee $k
+          local.get $n
+          i32.gt_u
+          if
+            local.get $p
+            local.get $n
+            i32.add
+            i32.load8_u
+            i32.const 61
+            i32.eq
+            if
+              local.get $p
+              local.get $o
+              i32.const 8
+              i32.add
+              local.get $n
+              call $mem_at
+              if
+                i32.const 1
+                i32.const 16
+                call $rl_new_n
+                local.get $p
+                local.get $n
+                i32.add
+                i32.const 1
+                i32.add
+                local.get $k
+                local.get $n
+                i32.sub
+                i32.const 1
+                i32.sub
+                call $list_add_str
+                local.set $l
+                br $x
+              end
+            end
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $lp
+        end
+      end
+      local.get $vv
+      call $free
+      local.get $buf
+      call $free
+      local.get $l)
 
     (func $elem (param $p i32) (param $i i64) (param $es i32) (result i32)
       local.get $p
