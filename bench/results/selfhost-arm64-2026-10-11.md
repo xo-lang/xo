@@ -324,3 +324,15 @@ every arm64 golden with xo1 and with `xo build --backend=arm64` under the
 same file name and compares: **147 of 147 byte identical** (not just
 the code: LC_UUID and the ad hoc signature match too, since the inputs
 and names are the same). Goldens with A: 147 of 147.
+
+## Step 4: `use c` sources
+
+xo1 writes each binding's adapter (read from cbind's cache beside the
+declaration file, `<prefix>.c`) into OUT.rt/cffi/xo_<prefix>.c, adds the
+`link` files (read back from the binding's key) and the libraries as
+sorted -l flags after the objects, as cInputs does. Checked:
+internal/selfhost/testdata/ssa/stage6c and examples/realtime-control
+built by both drivers are byte identical binaries (stage6c's output is
+the same; realtime-control prints timings). As decision 0152 says, the
+binding must be in the cache: a first build by xo1 alone reports the
+program unsupported until a Go build or `xo bind --c` writes it.

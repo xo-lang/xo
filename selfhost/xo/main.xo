@@ -13,10 +13,10 @@
 // The runtime sources are read from DIR/llrt (DIR the std directory,
 // default std), the TLS library's from DIR/../third_party. A link takes
 // the runtime from a prebuilt pack or the runtime object cache, the TLS
-// library of std/http, and the zone data of std/time, keyed as
-// internal/build keys them, so both drivers share the caches. `use c`
-// sources are not linked yet. It is not the released `xo` (decision
-// 0150: that is the owner's decision after the fixed point).
+// library of std/http, the zone data of std/time, and the C inputs of
+// `use c`, keyed as internal/build keys them, so both drivers share the
+// caches. It is not the released `xo` (decision 0150: that is the
+// owner's decision after the fixed point).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -157,6 +157,13 @@ fn main(os: Os) ! {
     }
   }
   flags = flags + io_flags(p.asm)
+  // the adapters, link files, and libraries of `use c` (cInputs)
+  let ci = c_inputs(os, c, rtdir)
+  if !ci.err.is_empty() {
+    fail(os, ci.err)
+  }
+  flags = flags + ci.flags
+  srcs = srcs + ci.srcs
   let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
   if !msg.is_empty() {
     os.stdio.eprint(msg)
