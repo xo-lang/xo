@@ -1,0 +1,397 @@
+// `xo bind` (cmd/xo bind.go, decision 0178 stage 6): `--c` binds C
+// headers with the binder in this package; Go packages are bound by the
+// helper xo-gobind (cmd/xo-gobind), which stays Go because it reads Go's
+// export data, so the self hosted `xo` execs it with the same flags and
+// passes its output and status through. selfhost/check uses the same
+// helpers to bind a `use go` package or a `use c` header missing from
+// the binding cache (check_dirs_bound).
+
+/// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status.
+pub fn run(os: Os, args: List[Str]) -> Int uses (fs, proc, env, stdio) {
+  var fl = Flags{}
+  fl.def("c", "bool", "", "bind C headers for `use c` (native builds, decision 0116) instead of Go packages")
+  fl.def("dir", "str", ".", "a directory of the Xo project (its xo.mod root holds the cache)")
+  fl.def("json", "bool", "", "print the coverage of each package as JSON")
+  fl.def("link", "list", "", "with --c: a `link` library or file (repeatable)")
+  fl.def("uses", "str", "", "with --c: the effects of the `use c` line (`none`, or labels separated by commas); default ffi")
+  if !fl.parse(os, if args.is_empty() { [] } else { args[1..] }) {
+    return 2
+  }
+  let wd = os.env.get("PWD") ?? ""
+  let dir = fl.get("dir")
+  let as_json = fl.get("json") == "true"
+  if fl.get("c") == "true" {
+    return run_bind_c(os, wd, fl.args, dir, fl.lists.get("link") ?? [], fl.get("uses"), as_json)
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("xo bind: no Go import paths given")
+    return 2
+  }
+  let std = os.env.get("XO_STD") ?? ""
+  let (helper, temp) = match gobind_helper(os, if std.is_empty() { "std" } else { std }, wd) {
+    Ok(h) => h
+    Err(e) => {
+      os.stdio.eprintln("xo bind: ${e}")
+      return 2
+    }
+  }
+  var hargs = ["--dir", dir]
+  if as_json {
+    hargs.push("--json")
+  }
+  for a in fl.args {
+    hargs.push(a)
+  }
+  let r = os.proc.cmd(helper, hargs).inherit().run()
+  if temp {
+    os.fs.remove(helper).ok()
+  }
+  match r {
+    Ok(code) => code
+    Err(e) => {
+      os.stdio.eprintln("xo bind: ${helper}: ${e}")
+      2
+    }
+  }
+}
+
+/// projectRoot: the directory of the nearest xo.mod at or above dir, or
+/// dir itself (absolute).
+pub fn project_root(os: Os, wd: Str, dir: Str) -> Str uses fs.read {
+  let abs = if dir.starts_with("/") || wd.is_empty() { clean(dir) } else { clean("${wd}/${dir}") }
+  var d = abs
+  while true {
+    if is_file(os, join(d, "xo.mod")) {
+      return d
+    }
+    let p = dir_of(d)
+    if p == d {
+      return abs
+    }
+    d = p
+  }
+  abs
+}
+
+/// runBindC: `xo bind --c` binds C headers (relative to dir, or on the
+/// include path) into the binding cache of the project that contains
+/// dir.
+fn run_bind_c(os: Os, wd: Str, headers: List[Str], dir: Str, links: List[Str], use_effs: Str, as_json: Bool) -> Int uses (fs, proc, env, stdio) {
+  if headers.is_empty() {
+    os.stdio.eprintln("xo bind --c: no C headers given")
+    return 2
+  }
+  let root = project_root(os, wd, dir)
+  var effs: List[Str]? = None
+  if !use_effs.is_empty() {
+    var es: List[Str] = []
+    if use_effs != "none" {
+      for e in use_effs.split(",") {
+        es.push(e.trim())
+      }
+    }
+    effs = Some(es)
+  }
+  var status = 0
+  var results: List[Str] = []
+  for h in headers {
+    match bind_c(os, Options{header: h, mod_dir: dir, links: links, effects: effs, dir: cache_dir(os, root), wd: wd}) {
+      Err(msg) => {
+        let e = error_text(h, msg)
+        status = 1
+        results.push(result_json(h, None, e))
+        if !as_json {
+          os.stdio.eprintln("xo bind --c: ${e}")
+        }
+      }
+      Ok(b) => {
+        results.push(result_json(h, Some(b), ""))
+        if !as_json {
+          os.stdio.print("${h} (${b.header_path}): functions ${b.bound}/${b.total} bound, ${b.skipped.len()} skipped\n")
+          os.stdio.print("  wrote ${b.decl_path}\n")
+        }
+      }
+    }
+  }
+  if as_json {
+    var sb = StrBuilder.new()
+    sb.write("[")
+    for (i, r) in results.indexed() {
+      if i > 0 {
+        sb.write(",")
+      }
+      sb.write("\n  ")
+      sb.write(r)
+    }
+    sb.write("\n]\n")
+    os.stdio.print(sb.freeze())
+  }
+  status
+}
+
+/// One cBindResult as json.Encoder writes it at depth 1 of the array.
+fn result_json(header: Str, b: Binding?, err: Str) -> Str {
+  var ms: List[Str] = ["\"header\": ${json_quote(header)}"]
+  match b {
+    Some(x) => {
+      ms.push("\"path\": ${json_quote(x.header_path)}")
+      ms.push("\"decl\": ${json_quote(x.decl_path)}")
+      ms.push("\"bound\": ${x.bound}")
+      ms.push("\"total\": ${x.total}")
+      if !x.skipped.is_empty() {
+        var ks: List[Str] = []
+        for k in sorted_keys(x.skipped) {
+          ks.push("      ${json_quote(k)}: ${json_quote(x.skipped.get(k) ?? "")}")
+        }
+        ms.push("\"skipped\": {\n${ks.join(",\n")}\n    }")
+      }
+    }
+    None => {
+      ms.push("\"bound\": 0")
+      ms.push("\"total\": 0")
+    }
+  }
+  if !err.is_empty() {
+    ms.push("\"error\": ${json_quote(err)}")
+  }
+  "{\n    ${ms.join(",\n    ")}\n  }"
+}
+
+// ---------------------------------------------------------------------------
+// Flags (Go's flag package with ContinueOnError, as cmd/xo's FlagSet)
+
+struct FlagDef {
+  name: Str
+  /// "bool", "str", or "list" (a repeatable string)
+  kind: Str
+  def: Str
+  usage: Str
+}
+
+struct Flags {
+  defs: List[FlagDef] = []
+  vals: Map[Str, Str] = {}
+  lists: Map[Str, List[Str]] = {}
+  args: List[Str] = []
+}
+
+fn (var f: Flags) def(name: Str, kind: Str, def: Str, usage: Str) {
+  f.defs.push(FlagDef{name: name, kind: kind, def: def, usage: usage})
+  f.vals[name] = if kind == "bool" { "false" } else { def }
+}
+
+fn (f: Flags) get(name: Str) -> Str {
+  f.vals.get(name) ?? ""
+}
+
+fn (var f: Flags) parse(os: Os, args: List[Str]) -> Bool uses stdio {
+  var i = 0
+  while i < args.len() {
+    let s = args[i]
+    if s.len() < 2 || !s.starts_with("-") {
+      break
+    }
+    var minuses = 1
+    if s.starts_with("--") {
+      minuses = 2
+      if s.len() == 2 {
+        i += 1
+        break
+      }
+    }
+    var name = s[minuses..s.len()]
+    if name.is_empty() || name.starts_with("-") || name.starts_with("=") {
+      return f.fail(os, "bad flag syntax: ${s}")
+    }
+    i += 1
+    var has_value = false
+    var value = ""
+    if let Some(eq) = name.find("=") {
+      if eq >= 1 {
+        value = name[eq + 1..name.len()]
+        name = name[0..eq]
+        has_value = true
+      }
+    }
+    var def = FlagDef{name: "", kind: "", def: "", usage: ""}
+    var found = false
+    for d in f.defs {
+      if d.name == name {
+        def = d
+        found = true
+      }
+    }
+    if !found {
+      if name == "help" || name == "h" {
+        f.usage(os)
+        return false
+      }
+      return f.fail(os, "flag provided but not defined: -${name}")
+    }
+    if def.kind == "bool" {
+      if has_value {
+        if value is "1" | "t" | "T" | "TRUE" | "true" | "True" {
+          f.vals[name] = "true"
+        } else if value is "0" | "f" | "F" | "FALSE" | "false" | "False" {
+          f.vals[name] = "false"
+        } else {
+          return f.fail(os, "invalid boolean value ${go_quote(value)} for -${name}: parse error")
+        }
+      } else {
+        f.vals[name] = "true"
+      }
+      continue
+    }
+    if !has_value && i < args.len() {
+      has_value = true
+      value = args[i]
+      i += 1
+    }
+    if !has_value {
+      return f.fail(os, "flag needs an argument: -${name}")
+    }
+    if def.kind == "list" {
+      var l = f.lists.get(name) ?? []
+      l.push(value)
+      f.lists[name] = l
+    } else {
+      f.vals[name] = value
+    }
+  }
+  var rest: List[Str] = []
+  while i < args.len() {
+    rest.push(args[i])
+    i += 1
+  }
+  f.args = rest
+  true
+}
+
+fn (f: Flags) fail(os: Os, msg: Str) -> Bool uses stdio {
+  os.stdio.eprintln(msg)
+  f.usage(os)
+  false
+}
+
+/// `Usage of bind:` and the flags (flag.PrintDefaults).
+fn (f: Flags) usage(os: Os) uses stdio {
+  var b = StrBuilder.new()
+  b.write("Usage of bind:\n")
+  for d in f.defs.sort_by(fn(d: FlagDef) -> Str { d.name }) {
+    var line = "  -${d.name}"
+    var arg = if d.kind == "bool" { "" } else if d.kind == "list" { "value" } else { "string" }
+    var usage = d.usage
+    let parts = d.usage.split("`")
+    if parts.len() >= 3 {
+      arg = parts[1]
+      usage = "${parts[0]}${parts[1]}${parts[2..].join("`")}"
+    }
+    if !arg.is_empty() {
+      line = "${line} ${arg}"
+    }
+    if line.len() <= 4 {
+      line = "${line}\t"
+    } else {
+      line = "${line}\n    \t"
+    }
+    line = line + usage.replace("\n", "\n    \t")
+    if d.kind == "str" && !d.def.is_empty() {
+      line = "${line} (default ${go_quote(d.def)})"
+    }
+    b.write(line)
+    b.write("\n")
+  }
+  os.stdio.eprint(b.freeze())
+}
+
+// ---------------------------------------------------------------------------
+// The Go binder: the helper xo-gobind
+
+/// The helper that binds Go packages, xo-gobind (cmd/xo-gobind, decision
+/// 0178 stage 6), and whether it is a temporary build to remove after
+/// use: $XO_GOBIND; else xo-gobind beside this program, in the bin directory of a release
+/// layout (<prefix>/bin beside <prefix>/lib/xo/std), beside the std
+/// directory, or on $PATH; else built with `go build` ($XO_GO, else go)
+/// from the repository holding the std directory, into a temporary file.
+pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (fs, proc, env) {
+  let named = os.env.get("XO_GOBIND") ?? ""
+  if !named.is_empty() {
+    return Ok((named, false))
+  }
+  // beside this program (a release ships them together)
+  let prog = os.env.program()
+  if prog.contains("/") {
+    let beside = join(dir_of(prog), "xo-gobind")
+    if is_file(os, beside) {
+      return Ok((beside, false))
+    }
+  }
+  var std = std_dir
+  if !std.starts_with("/") && !wd.is_empty() {
+    std = clean("${wd}/${std}")
+  }
+  let up = dir_of(std)
+  for cand in [join(up, "../../bin/xo-gobind"), join(up, "xo-gobind"), join(up, "bin/xo-gobind")] {
+    if is_file(os, cand) {
+      return Ok((cand, false))
+    }
+  }
+  let on_path = look_path(os, "xo-gobind")
+  if !on_path.is_empty() {
+    return Ok((on_path, false))
+  }
+  if !is_file(os, join(up, "cmd/xo-gobind/main.go")) {
+    return Err("xo-gobind not found: set XO_GOBIND, put xo-gobind on PATH or beside xo, or build it with `go build github.com/xo-lang/xo/cmd/xo-gobind`")
+  }
+  var tmp_root = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
+  if tmp_root.is_empty() {
+    tmp_root = "/tmp"
+  }
+  let tmp = match os.fs.create_temp(tmp_root, "xo-gobind-") {
+    Ok(t) => t
+    Err(e) => return Err("building xo-gobind: ${e}")
+  }
+  var go = os.env.get("XO_GO") ?? ""
+  if go.is_empty() {
+    go = "go"
+  }
+  match os.proc.cmd(go, ["build", "-o", tmp, "./cmd/xo-gobind"]).dir(up).output() {
+    Ok(o) => {
+      if o.code != 0 {
+        os.fs.remove(tmp).ok()
+        return Err("building xo-gobind: ${(o.stderr.to_str() ?? "").trim()}")
+      }
+    }
+    Err(e) => {
+      os.fs.remove(tmp).ok()
+      return Err("building xo-gobind: ${e}")
+    }
+  }
+  Ok((tmp, true))
+}
+
+/// Binds Go package gopath into the binding cache of the project at root
+/// with xo-gobind (`xo bind --dir root gopath`); the error is the
+/// binder's reason (gobind.Error's Msg) or why the helper did not run.
+pub fn bind_go_package(os: Os, std_dir: Str, wd: Str, root: Str, gopath: Str) -> () ! Str uses (fs, proc, env) {
+  let (helper, temp) = gobind_helper(os, std_dir, wd)?
+  let r = os.proc.cmd(helper, ["--dir", root, gopath]).output()
+  if temp {
+    os.fs.remove(helper).ok()
+  }
+  let out = match r {
+    Ok(o) => o
+    Err(e) => return Err("xo-gobind: ${e}")
+  }
+  if out.code == 0 {
+    return Ok(())
+  }
+  var msg = (out.stderr.to_str() ?? "").trim()
+  let pre = "xo bind: cannot bind Go package ${go_quote(gopath)}: "
+  if msg.starts_with(pre) {
+    msg = msg.trim_prefix(pre)
+  } else if msg.is_empty() {
+    msg = "xo-gobind exited with status ${out.code}"
+  }
+  Err(msg)
+}

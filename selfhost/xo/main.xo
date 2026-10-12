@@ -59,11 +59,13 @@ use github.com/xo-lang/xo/selfhost/llvm
 use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/cli/modules
 use github.com/xo-lang/xo/selfhost/cli/semantic
+use github.com/xo-lang/xo/selfhost/cli/bind
 use github.com/xo-lang/xo/selfhost/cli/servers
 
 fn main(os: Os) ! {
   let args = os.env.args()
   if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.env.get("PWD") ?? "", args)) }
+  if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run(os, args)) }
   if let Some(code) = servers.forward_cli(os, args) {
     // a running `xo serve` answered check or query
     os.proc.exit(code)
@@ -200,7 +202,11 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   }
   c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
-  match c.check_dirs(o.dirs) {
+  c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  // binds a `use go` or `use c` missing from the cache first, as the
+  // Go checker does (decision 0178 stage 6)
+  // and fetches a module version missing from the module cache
+  match c.check_dirs_fetching(os, o.dirs, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, o.wd, p, v) }) {
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
   }

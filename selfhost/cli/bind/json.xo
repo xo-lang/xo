@@ -1,0 +1,499 @@
+// JSON for the C binder: reading clang's AST dump with object keys in
+// source order (internal/cbind clang.go obj, decodeValue, topDecls), and
+// writing `xo bind --c --json` as Go's json.Encoder writes it (two space
+// indent, `<`, `>`, and `&` escaped).
+
+/// A JSON value; an object keeps its keys in source order: clang leaves
+/// out the `file` of a location that repeats the previous one, so the
+/// order decides which file a declaration is in.
+enum JN {
+  Null
+  B(b: Bool)
+  S(s: Str)
+  Num(raw: Str)
+  A(xs: List[JN])
+  O(keys: List[Str], vals: List[JN])
+}
+
+/// The value of key k of object n (the first such key), None when n is
+/// not an object or has no such key.
+fn jget(n: JN, k: Str) -> JN? {
+  match n {
+    O(keys, vals) => {
+      for i in 0..keys.len() {
+        if keys[i] == k {
+          return Some(vals[i])
+        }
+      }
+      None
+    }
+    Null | B(_) | S(_) | Num(_) | A(_) => None
+  }
+}
+
+/// obj.str: the string value of key k, "" when it is missing or not a
+/// string.
+fn jstr(n: JN, k: Str) -> Str {
+  match jget(n, k) {
+    Some(v) => match v {
+      S(s) => s
+      Null | B(_) | Num(_) | A(_) | O(_, _) => ""
+    }
+    None => ""
+  }
+}
+
+/// obj.obj: the object value of key k.
+fn jobj(n: JN, k: Str) -> JN? {
+  match jget(n, k) {
+    Some(v) => match v {
+      O(_, _) => Some(v)
+      Null | B(_) | S(_) | Num(_) | A(_) => None
+    }
+    None => None
+  }
+}
+
+/// obj.list: the array value of key k, empty otherwise.
+fn jlist(n: JN, k: Str) -> List[JN] {
+  match jget(n, k) {
+    Some(v) => match v {
+      A(xs) => xs
+      Null | B(_) | S(_) | Num(_) | O(_, _) => []
+    }
+    None => []
+  }
+}
+
+/// obj.flag: the Bool value of key k, false otherwise.
+fn jflag(n: JN, k: Str) -> Bool {
+  match jget(n, k) {
+    Some(v) => match v {
+      B(b) => b
+      Null | S(_) | Num(_) | A(_) | O(_, _) => false
+    }
+    None => false
+  }
+}
+
+/// Whether key k is present with a value other than null (obj.get(k) !=
+/// nil).
+fn jhas(n: JN, k: Str) -> Bool {
+  match jget(n, k) {
+    Some(v) => match v {
+      Null => false
+      B(_) | S(_) | Num(_) | A(_) | O(_, _) => true
+    }
+    None => false
+  }
+}
+
+fn is_obj(n: JN) -> Bool {
+  match n {
+    O(_, _) => true
+    Null | B(_) | S(_) | Num(_) | A(_) => false
+  }
+}
+
+/// A JSON reader over bytes.
+struct JP {
+  b: Bytes
+  i: Int = 0
+  err: Str = ""
+}
+
+fn (var p: JP) ws() {
+  while p.i < p.b.len() {
+    let c = p.b[p.i]
+    if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+      p.i += 1
+    } else {
+      return
+    }
+  }
+}
+
+fn (var p: JP) fail(msg: Str) -> JN {
+  if p.err.is_empty() {
+    p.err = "${msg} at offset ${p.i}"
+  }
+  p.i = p.b.len()
+  JN.Null
+}
+
+fn (var p: JP) value() -> JN {
+  p.ws()
+  if p.i >= p.b.len() {
+    return p.fail("unexpected end of JSON input")
+  }
+  let c = p.b[p.i]
+  if c == '{' {
+    p.i += 1
+    var keys: List[Str] = []
+    var vals: List[JN] = []
+    p.ws()
+    if p.i < p.b.len() && p.b[p.i] == '}' {
+      p.i += 1
+      return JN.O(keys: keys, vals: vals)
+    }
+    while p.err.is_empty() {
+      p.ws()
+      if p.i >= p.b.len() || p.b[p.i] != '"' {
+        return p.fail("invalid character looking for beginning of object key string")
+      }
+      let k = p.string()
+      p.ws()
+      if p.i >= p.b.len() || p.b[p.i] != ':' {
+        return p.fail("invalid character after object key")
+      }
+      p.i += 1
+      let v = p.value()
+      keys.push(k)
+      vals.push(v)
+      p.ws()
+      if p.i < p.b.len() && p.b[p.i] == ',' {
+        p.i += 1
+        continue
+      }
+      if p.i < p.b.len() && p.b[p.i] == '}' {
+        p.i += 1
+        return JN.O(keys: keys, vals: vals)
+      }
+      return p.fail("invalid character after object key:value pair")
+    }
+    return JN.Null
+  }
+  if c == '[' {
+    p.i += 1
+    var xs: List[JN] = []
+    p.ws()
+    if p.i < p.b.len() && p.b[p.i] == ']' {
+      p.i += 1
+      return JN.A(xs)
+    }
+    while p.err.is_empty() {
+      xs.push(p.value())
+      p.ws()
+      if p.i < p.b.len() && p.b[p.i] == ',' {
+        p.i += 1
+        continue
+      }
+      if p.i < p.b.len() && p.b[p.i] == ']' {
+        p.i += 1
+        return JN.A(xs)
+      }
+      return p.fail("invalid character after array element")
+    }
+    return JN.Null
+  }
+  if c == '"' {
+    return JN.S(p.string())
+  }
+  if p.word("true") {
+    return JN.B(true)
+  }
+  if p.word("false") {
+    return JN.B(false)
+  }
+  if p.word("null") {
+    return JN.Null
+  }
+  if c == '-' || (c >= '0' && c <= '9') {
+    let start = p.i
+    p.i += 1
+    while p.i < p.b.len() {
+      let d = p.b[p.i]
+      if (d >= '0' && d <= '9') || d == '.' || d == 'e' || d == 'E' || d == '+' || d == '-' {
+        p.i += 1
+      } else {
+        break
+      }
+    }
+    return JN.Num(p.b[start..p.i].to_str() ?? "0")
+  }
+  p.fail("invalid character looking for beginning of value")
+}
+
+fn (var p: JP) word(w: Str) -> Bool {
+  let wb = w.bytes()
+  if p.i + wb.len() > p.b.len() {
+    return false
+  }
+  if p.b[p.i..p.i + wb.len()] != wb {
+    return false
+  }
+  p.i += wb.len()
+  true
+}
+
+/// A string at p.i (its opening quote), decoded.
+fn (var p: JP) string() -> Str {
+  p.i += 1
+  let start = p.i
+  // the common case: no escapes
+  while p.i < p.b.len() {
+    let c = p.b[p.i]
+    if c == '"' {
+      let s = p.b[start..p.i].to_str() ?? ""
+      p.i += 1
+      return s
+    }
+    if c == '\\' {
+      break
+    }
+    p.i += 1
+  }
+  var out = BytesBuilder.new()
+  out.write(p.b[start..p.i])
+  var closed = false
+  while p.i < p.b.len() {
+    let c = p.b[p.i]
+    if c == '"' {
+      p.i += 1
+      closed = true
+      break
+    }
+    if c != '\\' {
+      out.write_byte(c)
+      p.i += 1
+      continue
+    }
+    if p.i + 1 >= p.b.len() {
+      break
+    }
+    let e = p.b[p.i + 1]
+    p.i += 2
+    if e == 'n' {
+      out.write_byte('\n')
+    } else if e == 't' {
+      out.write_byte('\t')
+    } else if e == 'r' {
+      out.write_byte('\r')
+    } else if e == 'b' {
+      out.write_byte(8)
+    } else if e == 'f' {
+      out.write_byte(12)
+    } else if e == 'u' {
+      var n = p.hex4()
+      if n >= 0xd800 && n < 0xdc00 && p.i + 1 < p.b.len() && p.b[p.i] == '\\' && p.b[p.i + 1] == 'u' {
+        let save = p.i
+        p.i += 2
+        let lo = p.hex4()
+        if lo >= 0xdc00 && lo < 0xe000 {
+          n = 0x10000 + (n - 0xd800) * 0x400 + (lo - 0xdc00)
+        } else {
+          p.i = save
+          n = 0xfffd
+        }
+      }
+      out.write_rune(Rune.try(n) ?? '\u{fffd}')
+    } else {
+      out.write_byte(e)
+    }
+  }
+  let text = out.freeze().to_str() ?? ""
+  if !closed {
+    p.fail("unexpected end of JSON input")
+  }
+  text
+}
+
+fn (var p: JP) hex4() -> Int {
+  var n = 0
+  for _ in 0..4 {
+    if p.i >= p.b.len() {
+      return 0xfffd
+    }
+    let c = p.b[p.i]
+    var d = 0
+    if c >= '0' && c <= '9' {
+      d = Int(c) - Int('0')
+    } else if c >= 'a' && c <= 'f' {
+      d = Int(c) - Int('a') + 10
+    } else if c >= 'A' && c <= 'F' {
+      d = Int(c) - Int('A') + 10
+    } else {
+      return 0xfffd
+    }
+    n = n * 16 + d
+    p.i += 1
+  }
+  n
+}
+
+/// A top level declaration of the translation unit and the file of its
+/// location ("" for builtins).
+struct Decl {
+  n: JN
+  file: Str
+}
+
+/// The walk that replays clang's file elision in key order (topDecls).
+struct FileWalk {
+  last: Str = ""
+}
+
+fn (var w: FileWalk) loc(l: JN) {
+  let f = jstr(l, "file")
+  if !f.is_empty() {
+    w.last = f
+  }
+}
+
+fn (var w: FileWalk) walk(v: JN) {
+  match v {
+    O(keys, vals) => {
+      for i in 0..keys.len() {
+        let k = keys[i]
+        if k == "includedFrom" {
+          continue
+        }
+        if k is "loc" | "begin" | "end" | "spellingLoc" | "expansionLoc" {
+          if is_obj(vals[i]) {
+            w.loc(vals[i])
+          }
+        }
+        w.walk(vals[i])
+      }
+    }
+    A(xs) => {
+      for x in xs {
+        w.walk(x)
+      }
+    }
+    Null | B(_) | S(_) | Num(_) => {}
+  }
+}
+
+/// Decodes the dump and finds the file of each top level declaration.
+fn top_decls(data: Bytes) -> List[Decl] ! Str {
+  var p = JP{b: data}
+  let tu = p.value()
+  if !p.err.is_empty() {
+    return Err("reading clang's AST dump: ${p.err}")
+  }
+  if !is_obj(tu) {
+    return Err("clang's AST dump is not an object")
+  }
+  var w = FileWalk{}
+  var out: List[Decl] = []
+  for n in jlist(tu, "inner") {
+    match n {
+      O(keys, vals) => {
+        var file = ""
+        for i in 0..keys.len() {
+          if keys[i] == "loc" {
+            let l = vals[i]
+            if is_obj(l) {
+              w.walk(l)
+              w.loc(l)
+              if jobj(l, "expansionLoc") != None || !jstr(l, "file").is_empty() || jhas(l, "line") || jhas(l, "offset") {
+                file = w.last
+              }
+            }
+            continue
+          }
+          w.walk(vals[i])
+        }
+        out.push(Decl{n: n, file: file})
+      }
+      Null | B(_) | S(_) | Num(_) | A(_) => {}
+    }
+  }
+  Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+/// s as a JSON string as encoding/json writes it with HTML escaping (the
+/// default of json.Encoder): `"`, `\`, control characters, `<`, `>`, `&`,
+/// U+2028, and U+2029 escaped.
+fn json_quote(s: Str) -> Str {
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  out.write("\"")
+  var run = 0
+  var i = 0
+  while i < b.len() {
+    let ch = b[i]
+    var esc = ""
+    var width = 1
+    if ch == '"' {
+      esc = "\\\""
+    } else if ch == '\\' {
+      esc = "\\\\"
+    } else if ch == '\n' {
+      esc = "\\n"
+    } else if ch == '\r' {
+      esc = "\\r"
+    } else if ch == '\t' {
+      esc = "\\t"
+    } else if ch < 0x20 || ch == '<' || ch == '>' || ch == '&' {
+      esc = "\\u00${b[i..i + 1].to_hex()}"
+    } else if ch == 0xe2 && i + 2 < b.len() && b[i + 1] == 0x80 && (b[i + 2] == 0xa8 || b[i + 2] == 0xa9) {
+      esc = if b[i + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }
+      width = 3
+    }
+    if esc.is_empty() {
+      i += 1
+      continue
+    }
+    if run < i {
+      out.write(b[run..i].to_str() ?? "\u{fffd}")
+    }
+    out.write(esc)
+    i += width
+    run = i
+  }
+  if run < b.len() {
+    out.write(b[run..].to_str() ?? "\u{fffd}")
+  }
+  out.write("\"")
+  out.freeze()
+}
+
+/// s quoted as Go's %q quotes it (strconv.Quote).
+fn go_quote(s: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("\"")
+  for r in s.runes() {
+    let n = Int(r)
+    if r == '"' {
+      b.write("\\\"")
+    } else if r == '\\' {
+      b.write("\\\\")
+    } else if n == 7 {
+      b.write("\\a")
+    } else if n == 8 {
+      b.write("\\b")
+    } else if n == 12 {
+      b.write("\\f")
+    } else if r == '\n' {
+      b.write("\\n")
+    } else if r == '\r' {
+      b.write("\\r")
+    } else if r == '\t' {
+      b.write("\\t")
+    } else if n == 11 {
+      b.write("\\v")
+    } else if n < 0x20 || n == 0x7f {
+      b.write("\\x${hex2(n)}")
+    } else if n == 0xfffd || (n >= 0x80 && !r.is_print()) {
+      if n < 0x10000 {
+        b.write("\\u${hex2(n / 256)}${hex2(n % 256)}")
+      } else {
+        b.write("\\U${hex2(n / 16777216)}${hex2((n / 65536) % 256)}${hex2((n / 256) % 256)}${hex2(n % 256)}")
+      }
+    } else {
+      b.write("${r}")
+    }
+  }
+  b.write("\"")
+  b.freeze()
+}
+
+fn hex2(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  "${digits[(n / 16) % 16..(n / 16) % 16 + 1]}${digits[n % 16..n % 16 + 1]}"
+}

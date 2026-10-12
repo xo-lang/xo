@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo bind --c` is written in Xo (decision 0178 stage 6,
+  selfhost/cli/bind): xo1 binds C headers with the same output and
+  cache files, byte for byte, as the Go binder. `xo bind` for Go
+  packages runs the new Go helper `xo-gobind` (cmd/xo-gobind), which
+  stays Go. The self hosted checker now binds a `use go` package or a
+  `use c` header missing from the binding cache, and fetches a module
+  version missing from the module cache, before checking again, as the
+  Go checker does; xo1 runs `xo publish` and prints the API changes of
+  `xo get`. `xo publish` in a module of a repository subdirectory under
+  a symbolic link (macOS's /var) now finds its tags.
 - The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
   xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
   quick fixes, symbols) with the Go servers' responses byte for byte,

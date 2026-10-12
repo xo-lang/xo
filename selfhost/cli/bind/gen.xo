@@ -1,0 +1,518 @@
+// The bound functions and the two files (internal/cbind gen.go): the
+// boundary kind of every parameter and result, the Xo declaration file,
+// and the C adapter.
+
+/// A flat struct of scalars, copied.
+struct Flat {
+  xo: Str = ""
+  tag: Str = ""
+  fields: List[FlatField] = []
+}
+
+struct FlatField {
+  xo: Str
+  c: Str
+  sc: Scalar
+}
+
+/// Parameter and result kinds at the boundary: scalar (one word), str
+/// (const char *, NUL terminated: copied in and out), strn (const char *
+/// and a length: Str, not copied), bytes (a const byte pointer and a
+/// length: Bytes, not copied), handle (a pointer to a struct the header
+/// does not define), struct (a flat struct of scalars by value: copied),
+/// void.
+struct CParam {
+  /// the Xo parameter name
+  xo: Str = ""
+  cname: Str = ""
+  kind: Str = ""
+  ct: CType = CType{}
+  sc: Scalar = Scalar{}
+  /// strn, bytes: the length parameter's type
+  len_ct: CType = CType{}
+  handle: Str = ""
+  st: Flat = Flat{}
+}
+
+struct CRet {
+  kind: Str = ""
+  ct: CType = CType{}
+  sc: Scalar = Scalar{}
+  handle: Str = ""
+  st: Flat = Flat{}
+}
+
+struct CFunc {
+  xo: Str = ""
+  c: Str = ""
+  sig: Str = ""
+  params: List[CParam] = []
+  ret: CRet = CRet{}
+  replay: Str = "value"
+}
+
+/// lengthName: a parameter name that reads as a buffer length.
+fn length_name(n: Str) -> Bool {
+  let l = to_lower(n)
+  l == "n" || l.contains("len") || l.contains("size") || l.contains("count") || l.starts_with("n_") || l == "nbytes"
+}
+
+fn (var b: Binder) function(n: JN) -> CFunc ! Str {
+  let cname = jstr(n, "name")
+  if cname.starts_with("_") {
+    return Err("reserved name")
+  }
+  if jflag(n, "variadic") {
+    return Err("variadic function")
+  }
+  var f = CFunc{c: cname, sig: c_signature(n)}
+  f.xo = xo_name(snake(cname))
+  if b.used.contains(f.xo) {
+    return Err("its Xo name ${f.xo} is taken")
+  }
+  var q = ""
+  if let Some(t) = jobj(n, "type") {
+    q = jstr(t, "qualType")
+  }
+  let i = match q.find("(") {
+    Some(x) => x
+    None => return Err("function type ${q}")
+  }
+  let rt = match b.parse_type(q[0..i]) {
+    Ok(t) => t
+    Err(e) => return Err("result: ${e}")
+  }
+  f.ret = match b.result(rt) {
+    Ok(r) => r
+    Err(e) => return Err("result: ${e}")
+  }
+  var ps: List[JN] = []
+  for e in jlist(n, "inner") {
+    if is_obj(e) && jstr(e, "kind") == "ParmVarDecl" {
+      ps.push(e)
+    }
+  }
+  var names: Set[Str] = #{}
+  var k = 0
+  while k < ps.len() {
+    let p = ps[k]
+    let pn = jstr(p, "name")
+    let ct = match b.parse_type(type_spelling(p)) {
+      Ok(t) => t
+      Err(e) => return Err("parameter ${pn}: ${e}")
+    }
+    var cp = CParam{cname: pn, ct: ct}
+    if ct.ptr == 0 {
+      match scalar_of(ct) {
+        Some(sc) => {
+          cp.kind = "scalar"
+          cp.sc = sc
+        }
+        None => {
+          match b.flat_struct(ct) {
+            Ok(st) => {
+              cp.kind = "struct"
+              cp.st = st
+            }
+            Err(e) => return Err("parameter ${pn}: ${e}")
+          }
+        }
+      }
+    } else if ct.ptr == 1 && is_byte_base(ct.base) && ct.const_base {
+      var next = CType{}
+      var next_ok = false
+      if k + 1 < ps.len() {
+        match b.parse_type(type_spelling(ps[k + 1])) {
+          Ok(t) => {
+            next = t
+            next_ok = true
+          }
+          Err(_) => {}
+        }
+      }
+      if next_ok && is_int_base(next) && length_name(jstr(ps[k + 1], "name")) {
+        cp.kind = if ct.base == "char" { "strn" } else { "bytes" }
+        cp.len_ct = next
+        k += 1
+      } else if ct.base == "char" {
+        cp.kind = "str"
+      } else {
+        return Err("parameter ${pn}: ${ctype_str(ct)} without a length parameter after it")
+      }
+    } else if ct.ptr == 1 && ct.base.starts_with("struct ") {
+      let h = match b.handle(ct) {
+        Ok(x) => x
+        Err(e) => return Err("parameter ${pn}: ${e}")
+      }
+      cp.kind = "handle"
+      cp.handle = h
+      f.replay = "handle"
+    } else {
+      return Err("parameter ${pn}: ${ctype_str(ct)} (a pointer Xo cannot fill: an output parameter or a mutable buffer)")
+    }
+    var x = xo_name(snake(pn))
+    if x.is_empty() || x == "_" || names.contains(x) {
+      x = "a${f.params.len() + 1}"
+    }
+    names.add(x)
+    cp.xo = x
+    f.params.push(cp)
+    k += 1
+  }
+  if f.ret.kind == "handle" {
+    f.replay = "handle"
+  }
+  b.used.add(f.xo)
+  Ok(f)
+}
+
+fn (var b: Binder) result(t: CType) -> CRet ! Str {
+  if t.ptr == 0 && t.base == "void" {
+    return Ok(CRet{kind: "void", ct: t})
+  }
+  if t.ptr == 0 {
+    if let Some(sc) = scalar_of(t) {
+      return Ok(CRet{kind: "scalar", ct: t, sc: sc})
+    }
+    let st = b.flat_struct(t)?
+    return Ok(CRet{kind: "struct", ct: t, st: st})
+  }
+  if t.ptr == 1 && t.base == "char" && t.const_base {
+    return Ok(CRet{kind: "str", ct: t})
+  }
+  if t.ptr == 1 && t.base == "char" {
+    return Err("char * (who frees it is not known: bind a wrapper that returns const char * or copies into a buffer)")
+  }
+  if t.ptr == 1 && t.base.starts_with("struct ") {
+    let h = b.handle(t)?
+    return Ok(CRet{kind: "handle", ct: t, handle: h})
+  }
+  Err(ctype_str(t))
+}
+
+/// handle: the Xo handle type of a pointer to a struct the header does
+/// not define.
+fn (var b: Binder) handle(t: CType) -> Str ! Str {
+  let tag = t.base.trim_prefix("struct ")
+  if let Some(r) = b.records.get(tag) {
+    if r.complete {
+      return Err("pointer to ${t.base}, which the header defines: Xo values never share C memory of a known layout (bind a wrapper that keeps the struct behind an opaque pointer)")
+    }
+  }
+  if let Some(h) = b.handles.get(tag) {
+    return Ok(h)
+  }
+  var h = upper_camel(tag)
+  while b.used.contains(h) {
+    h = "${h}_"
+  }
+  b.used.add(h)
+  b.handles[tag] = h
+  Ok(h)
+}
+
+/// flatStruct: the copied Xo struct of a C struct of scalars.
+fn (var b: Binder) flat_struct(t: CType) -> Flat ! Str {
+  if !t.base.starts_with("struct ") || t.ptr != 0 {
+    return Err(ctype_str(t))
+  }
+  let tag = t.base.trim_prefix("struct ")
+  let r = match b.records.get(tag) {
+    Some(x) => x
+    None => return Err("${t.base} by value, which the header does not define")
+  }
+  if !r.complete {
+    return Err("${t.base} by value, which the header does not define")
+  }
+  if r.fields.is_empty() {
+    return Err("${t.base} has no fields")
+  }
+  var st = Flat{tag: tag}
+  var seen: Set[Str] = #{}
+  for fd in r.fields {
+    let ft = match b.parse_type(fd.1) {
+      Ok(x) => x
+      Err(e) => return Err("${t.base} field ${fd.0}: ${e}")
+    }
+    let sc = match scalar_of(ft) {
+      Some(s) => s
+      None => return Err("${t.base} field ${fd.0} is ${ctype_str(ft)}, not a scalar (only flat structs of numbers and Bools are copied)")
+    }
+    if fd.0.is_empty() {
+      return Err("${t.base} field ${fd.0} is ${ctype_str(ft)}, not a scalar (only flat structs of numbers and Bools are copied)")
+    }
+    let x = xo_name(snake(fd.0))
+    if seen.contains(x) {
+      return Err("${t.base}: two fields named ${x} in Xo")
+    }
+    seen.add(x)
+    st.fields.push(FlatField{xo: x, c: fd.0, sc: sc})
+  }
+  if let Some(x) = b.structs.get(tag) {
+    st.xo = x
+    return Ok(st)
+  }
+  var x = upper_camel(tag)
+  while b.used.contains(x) {
+    x = "${x}_"
+  }
+  b.used.add(x)
+  b.structs[tag] = x
+  st.xo = x
+  Ok(st)
+}
+
+// ---------------------------------------------------------------------------
+// The declaration file
+
+fn (b: Binder) effects() -> Str {
+  match b.opts.effects {
+    None => " uses ffi"
+    Some(us) => if us.is_empty() { "" } else { " uses ${us.join(", ")}" }
+  }
+}
+
+fn sorted_keys(m: Map[Str, Str]) -> List[Str] {
+  m.keys().sort()
+}
+
+fn (var b: Binder) decl_file(os: Os, fns: List[CFunc]) -> Str uses proc {
+  var sb = StrBuilder.new()
+  sb.write("// Code generated by xo bind --c from C header ${b.bnd.header}. DO NOT EDIT.\n")
+  sb.write("// xo-bind-c: v${CBIND_VERSION} ${clang_version(os, b.clang)}\n")
+  sb.write("// c-header: ${b.bnd.header_path}\n")
+  sb.write("//\n")
+  sb.write("// Coverage: functions ${b.bnd.bound}/${b.bnd.total}.\n")
+  match b.opts.effects {
+    None => sb.write("// Every function carries the `ffi` effect.\n")
+    Some(us) => {
+      if us.is_empty() {
+        sb.write("// The `use c` line declares `uses none`: calls perform no effect.\n")
+      } else {
+        sb.write("// The `use c` line declares the effects ${us.join(", ")} for every call.\n")
+      }
+    }
+  }
+  sb.write("// Values are copied at the boundary; handles are C pointers that Xo\n")
+  sb.write("// never frees (call the library's own free function).\n")
+  sb.write("// Replay (decision 0093): native builds do not record yet; each\n")
+  sb.write("// declaration's `Replay:` line says how a recording will treat it.\n")
+  if !b.bnd.skipped.is_empty() {
+    sb.write("//\n// Skipped (signatures that do not map):\n")
+    for k in sorted_keys(b.bnd.skipped) {
+      sb.write("// skip: ${k}: ${b.bnd.skipped.get(k) ?? ""}\n")
+    }
+  }
+  if !b.handles.is_empty() {
+    sb.write("\n// Handles (opaque C pointers)\n\n")
+    for tag in sorted_keys(b.handles) {
+      sb.write("/// C: struct ${tag} *\nstruct ${b.handles.get(tag) ?? ""} {}\n")
+    }
+  }
+  if !b.structs.is_empty() {
+    sb.write("\n// Structs (copied)\n")
+    for tag in sorted_keys(b.structs) {
+      let st = b.flat_struct(CType{base: "struct ${tag}"}).ok() ?? Flat{}
+      sb.write("\n/// C: struct ${tag}\nstruct ${st.xo} {\n")
+      for fd in st.fields {
+        sb.write("  ${fd.xo}: ${fd.sc.xo}\n")
+      }
+      sb.write("}\n")
+    }
+  }
+  if !fns.is_empty() {
+    sb.write("\n// Functions\n")
+  }
+  for f in fns {
+    sb.write("\n/// C: ${f.sig}\n")
+    if f.replay == "handle" {
+      sb.write("/// Replay: a C handle crosses: re executed by a replay\n")
+    } else {
+      sb.write("/// Replay: by value\n")
+    }
+    var ps: List[Str] = []
+    for p in f.params {
+      ps.push("${p.xo}: ${param_xo_type(p)}")
+    }
+    let res = match f.ret.kind {
+      "scalar" => " -> ${f.ret.sc.xo}"
+      "str" => " -> Str"
+      "handle" => " -> ${f.ret.handle}?"
+      "struct" => " -> ${f.ret.st.xo}"
+      _ => ""
+    }
+    sb.write("fn ${f.xo}(${ps.join(", ")})${res}${b.effects()}\n")
+  }
+  sb.freeze()
+}
+
+fn param_xo_type(p: CParam) -> Str {
+  match p.kind {
+    "scalar" => p.sc.xo
+    "str" | "strn" => "Str"
+    "bytes" => "Bytes"
+    "handle" => p.handle
+    "struct" => p.st.xo
+    _ => "?"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The C adapter
+
+fn word_type(sc: Scalar) -> Str {
+  if sc.float { "double" } else { "int64_t" }
+}
+
+/// convIn: a word converted to the C type of sc.
+fn conv_in(sc: Scalar, v: Str) -> Str {
+  if sc.xo == "Bool" {
+    return "(_Bool)(${v} != 0)"
+  }
+  if sc.c.starts_with("enum ") {
+    return "(${sc.c})(int)${v}"
+  }
+  "(${sc.c})${v}"
+}
+
+/// convOut: a C value of sc's type as its word.
+fn conv_out(sc: Scalar, v: Str) -> Str {
+  if sc.xo == "Bool" {
+    return "(${v} ? 1 : 0)"
+  }
+  v
+}
+
+fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
+  let bnd = b.bnd
+  var sb = StrBuilder.new()
+  sb.write("// Code generated by xo bind --c from C header ${bnd.header}. DO NOT EDIT.\n")
+  sb.write("// Adapters with the calling convention of the native runtime (decision 0116).\n\n")
+  sb.write("#include <stdint.h>\n#include <stdlib.h>\n#include <string.h>\n")
+  if bnd.local {
+    sb.write("#include ${go_quote(bnd.header_path)}\n\n")
+  } else {
+    sb.write("#include <${bnd.header}>\n\n")
+  }
+  sb.write("void *xo_cffi_str(const char *p, int64_t n, int64_t *len);\n\n")
+  sb.write("static char *xo_cffi_cstr(const char *p, int64_t n) {\n\tchar *s = malloc((size_t)n + 1);\n\tif (!s) {\n\t\tabort();\n\t}\n\tif (n > 0) {\n\t\tmemcpy(s, p, (size_t)n);\n\t}\n\ts[n] = 0;\n\treturn s;\n}\n")
+  for f in fns {
+    let sym = "xo_${bnd.prefix}${f.xo}"
+    var params: List[Str] = []
+    var args: List[Str] = []
+    var pre: List[Str] = []
+    var post: List[Str] = []
+    for p in f.params {
+      match p.kind {
+        "scalar" => {
+          params.push("${word_type(p.sc)} ${p.xo}")
+          args.push(conv_in(p.sc, p.xo))
+        }
+        "str" => {
+          params.push("const char *${p.xo}_p")
+          params.push("int64_t ${p.xo}_n")
+          pre.push("char *${p.xo} = xo_cffi_cstr(${p.xo}_p, ${p.xo}_n);")
+          post.push("free(${p.xo});")
+          args.push(p.xo)
+        }
+        "strn" | "bytes" => {
+          params.push("const char *${p.xo}_p")
+          params.push("int64_t ${p.xo}_n")
+          let ptr_t = "const ${p.ct.base} *"
+          let len_c = match scalar_of(p.len_ct) {
+            Some(s) => s.c
+            None => ""
+          }
+          args.push("(${ptr_t})${p.xo}_p")
+          args.push("(${len_c})${p.xo}_n")
+        }
+        "handle" => {
+          params.push("int64_t ${p.xo}")
+          args.push("(${p.ct.base} *)(intptr_t)${p.xo}")
+        }
+        "struct" => {
+          var inits: List[Str] = []
+          for fd in p.st.fields {
+            let fp = "${p.xo}_${fd.xo}"
+            params.push("${word_type(fd.sc)} ${fp}")
+            inits.push("${p.xo}.${fd.c} = ${conv_in(fd.sc, fp)};")
+          }
+          pre.push("struct ${p.st.tag} ${p.xo};")
+          pre.push("memset(&${p.xo}, 0, sizeof ${p.xo});")
+          for it in inits {
+            pre.push(it)
+          }
+          args.push(p.xo)
+        }
+        _ => {}
+      }
+    }
+    let call = "${f.c}(${args.join(", ")})"
+    var ret = "void"
+    var body: List[Str] = []
+    for l in pre {
+      body.push(l)
+    }
+    match f.ret.kind {
+      "void" => {
+        body.push("${call};")
+        for l in post {
+          body.push(l)
+        }
+      }
+      "scalar" => {
+        ret = word_type(f.ret.sc)
+        body.push("${ret} r = (${ret})${conv_out(f.ret.sc, call)};")
+        for l in post {
+          body.push(l)
+        }
+        body.push("return r;")
+      }
+      "str" => {
+        ret = "void *"
+        params.push("int64_t *xo_len")
+        body.push("const char *c = ${call};")
+        body.push("if (!c) {")
+        body.push("\tc = \"\";")
+        body.push("}")
+        body.push("void *r = xo_cffi_str(c, (int64_t)strlen(c), xo_len);")
+        for l in post {
+          body.push(l)
+        }
+        body.push("return r;")
+      }
+      "handle" => {
+        ret = "int64_t"
+        body.push("int64_t r = (int64_t)(intptr_t)${call};")
+        for l in post {
+          body.push(l)
+        }
+        body.push("return r;")
+      }
+      "struct" => {
+        let slot = "${sym}_ret"
+        sb.write("\nstatic _Thread_local struct ${f.ret.st.tag} ${slot};\n")
+        body.push("${slot} = ${call};")
+        for l in post {
+          body.push(l)
+        }
+      }
+      _ => {}
+    }
+    if params.is_empty() {
+      params = ["void"]
+    }
+    sb.write("\n// ${f.sig}\n${ret} ${sym}(${params.join(", ")}) {\n")
+    for l in body {
+      sb.write("\t${l}\n")
+    }
+    sb.write("}\n")
+    if f.ret.kind == "struct" {
+      for (i, fd) in f.ret.st.fields.indexed() {
+        let w = word_type(fd.sc)
+        sb.write("\n${w} ${sym}_r${i}(void) {\n\treturn (${w})${conv_out(fd.sc, "${sym}_ret.${fd.c}")};\n}\n")
+      }
+    }
+  }
+  sb.freeze()
+}

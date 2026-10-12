@@ -34,6 +34,18 @@ pub struct Checker {
   /// $XO_GOBIND_DIR: the `use go` binding cache, when set; else
   /// `<module root>/.xo/gobind`.
   pub gobind_dir: Str = ""
+  /// The bindings the run needs (bindmiss.xo): `use go` packages without
+  /// a current binding and `use c` headers, for check_dirs_bound to bind;
+  /// and the ones whose binding failed, by key, with the binder's
+  /// message, each reported once.
+  pub bind_misses: List[BindMiss] = []
+  pub bind_failed: Map[Str, Str] = {}
+  bind_reported: Set[Str] = #{}
+  /// Module versions (path@version) missing from the module cache, for
+  /// check_dirs_fetching to fetch; and the ones whose fetch failed, with
+  /// the fetcher's problem.
+  pub fetch_misses: List[Str] = []
+  pub fetch_failed: Map[Str, Problem] = {}
   /// The xo.mod files of checked modules whose `edition` line names an
   /// old edition name (XO1315), by display path.
   edition_aliases: Map[Str, ModRoot] = {}

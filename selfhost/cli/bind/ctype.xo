@@ -1,0 +1,206 @@
+// C types (internal/cbind ctype.go): clang's spelling of a type parsed to
+// a base type, a pointer depth, and constness, with typedefs resolved.
+
+/// A C type in canonical form: a base type with qualifiers removed and
+/// typedefs resolved, and a pointer depth.
+struct CType {
+  /// "int", "unsigned long", "struct tiny_point", "enum mode", "void"
+  base: Str = ""
+  ptr: Int = 0
+  /// The pointee (or the value, with ptr 0) is const.
+  const_base: Bool = false
+}
+
+/// ctype.String.
+fn ctype_str(t: CType) -> Str {
+  var s = t.base
+  if t.const_base {
+    s = "const ${s}"
+  }
+  if t.ptr > 0 {
+    s = "${s} ${"*".repeat(t.ptr)}"
+  }
+  s
+}
+
+/// builtinBase: the normalized spelling of a builtin type, or "".
+fn builtin_base(words: List[Str]) -> Str {
+  let s = words.join(" ")
+  if s is "void" | "_Bool" | "float" | "double" | "long double" | "char" | "signed char" | "unsigned char" {
+    return s
+  }
+  if s == "bool" {
+    return "_Bool"
+  }
+  var signed = false
+  var unsigned = false
+  var rest: List[Str] = []
+  for w in words {
+    if w == "signed" {
+      signed = true
+    } else if w == "unsigned" {
+      unsigned = true
+    } else {
+      rest.push(w)
+    }
+  }
+  var r = rest.join(" ")
+  if r == "" || r == "int" {
+    if !signed && !unsigned && r == "" {
+      return ""
+    }
+    r = "int"
+  } else if r == "short" || r == "short int" {
+    r = "short"
+  } else if r == "long" || r == "long int" {
+    r = "long"
+  } else if r == "long long" || r == "long long int" {
+    r = "long long"
+  } else if r == "char" {
+    return if unsigned { "unsigned char" } else { "signed char" }
+  } else if r == "__int128" {
+    r = "__int128"
+  } else {
+    return ""
+  }
+  if unsigned {
+    return "unsigned ${r}"
+  }
+  r
+}
+
+/// strings.Fields.
+fn fields(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  var cur = StrBuilder.new()
+  var n = 0
+  for r in s.runes() {
+    if r.is_space() {
+      if n > 0 {
+        out.push(cur.freeze())
+        cur = StrBuilder.new()
+        n = 0
+      }
+      continue
+    }
+    cur.write("${r}")
+    n += 1
+  }
+  if n > 0 {
+    out.push(cur.freeze())
+  }
+  out
+}
+
+/// parseType: clang's spelling of a type as a CType, resolving typedef
+/// names.
+fn (b: Binder) parse_type(q: Str) -> CType ! Str {
+  b.parse_type_depth(q, 0)
+}
+
+fn (b: Binder) parse_type_depth(q0: Str, depth: Int) -> CType ! Str {
+  if depth > 20 {
+    return Err("typedef cycle at ${q0}")
+  }
+  let q = q0.trim()
+  if q.contains("(") || q.contains("[") {
+    return Err("function pointer or array type ${q}")
+  }
+  let parts = q.split("*")
+  var t = CType{ptr: parts.len() - 1}
+  var words: List[Str] = []
+  for w in fields(parts[0]) {
+    if w == "const" {
+      t.const_base = true
+      continue
+    }
+    if w == "_Atomic" {
+      return Err("atomic type ${parts[0].trim()}")
+    }
+    if w is "volatile" | "restrict" | "__restrict" | "__restrict__" | "_Nullable" | "_Nonnull" | "_Null_unspecified" | "__unaligned" {
+      continue
+    }
+    words.push(w)
+  }
+  if words.is_empty() {
+    return Err("type ${go_quote(q)}")
+  }
+  if words[0] is "struct" | "union" | "enum" {
+    if words.len() != 2 {
+      return Err("anonymous ${words[0]} type")
+    }
+    t.base = "${words[0]} ${words[1]}"
+    return Ok(t)
+  }
+  let bb = builtin_base(words)
+  if !bb.is_empty() {
+    t.base = bb
+    return Ok(t)
+  }
+  if words.len() == 1 {
+    if let Some(under) = b.typedefs.get(words[0]) {
+      var u = b.parse_type_depth(under, depth + 1)?
+      u.ptr += t.ptr
+      if t.ptr == 0 || u.ptr == t.ptr {
+        // `const T` where T is a typedef of a value or of the pointee
+        // (with typedef pointers, const stays outermost)
+        u.const_base = u.const_base || t.const_base
+      }
+      return Ok(u)
+    }
+  }
+  Err("unknown type ${words.join(" ")}")
+}
+
+/// A C value type that crosses as one machine word.
+struct Scalar {
+  /// the Xo type
+  xo: Str = ""
+  /// the C type written in the adapter
+  c: Str = ""
+  /// passed as a double
+  float: Bool = false
+}
+
+/// scalarOf: the Xo scalar of a C value type (pointer depth 0).
+fn scalar_of(t: CType) -> Scalar? {
+  if t.ptr != 0 {
+    return None
+  }
+  let s = match t.base {
+    "_Bool" => Scalar{xo: "Bool", c: "_Bool"}
+    "char" => Scalar{xo: "Int8", c: "char"}
+    "signed char" => Scalar{xo: "Int8", c: "signed char"}
+    "unsigned char" => Scalar{xo: "UInt8", c: "unsigned char"}
+    "short" => Scalar{xo: "Int16", c: "short"}
+    "unsigned short" => Scalar{xo: "UInt16", c: "unsigned short"}
+    "int" => Scalar{xo: "Int32", c: "int"}
+    "unsigned int" => Scalar{xo: "UInt32", c: "unsigned int"}
+    "long" => Scalar{xo: "Int", c: "long"}
+    "long long" => Scalar{xo: "Int", c: "long long"}
+    "unsigned long" => Scalar{xo: "UInt64", c: "unsigned long"}
+    "unsigned long long" => Scalar{xo: "UInt64", c: "unsigned long long"}
+    "float" => Scalar{xo: "Float32", c: "float", float: true}
+    "double" => Scalar{xo: "Float", c: "double", float: true}
+    _ => {
+      if t.base.starts_with("enum ") {
+        return Some(Scalar{xo: "Int32", c: t.base})
+      }
+      return None
+    }
+  }
+  Some(s)
+}
+
+/// isByteBase: a base whose pointer is a byte buffer.
+fn is_byte_base(base: Str) -> Bool {
+  base is "void" | "char" | "signed char" | "unsigned char"
+}
+
+/// isIntBase: an integer base type (a buffer length).
+fn is_int_base(t: CType) -> Bool {
+  match scalar_of(t) {
+    Some(s) => !s.float && s.xo != "Bool" && !t.base.starts_with("enum ")
+    None => false
+  }
+}

@@ -1,0 +1,149 @@
+// Running clang (internal/cbind clang.go): finding it, its version line,
+// and the JSON AST dump of a translation unit that includes the header.
+
+/// cbind.Clang: $XO_CLANG, then clang on $PATH (internal/build.Clang's
+/// rule).
+fn find_clang(os: Os) -> Str ! Str uses (env, fs.read) {
+  let named = os.env.get("XO_CLANG") ?? ""
+  if !named.is_empty() {
+    let p = look_path(os, named)
+    if p.is_empty() {
+      return Err("exec: ${go_quote(named)}: executable file not found in $PATH")
+    }
+    return Ok(p)
+  }
+  let p = look_path(os, "clang")
+  if p.is_empty() {
+    return Err("`use c` needs clang to read C headers: install it or set XO_CLANG")
+  }
+  Ok(p)
+}
+
+/// exec.LookPath: name when it holds a slash and is a file, else the
+/// first file of that name in a directory of $PATH; "" when there is
+/// none.
+fn look_path(os: Os, name: Str) -> Str uses (env, fs.read) {
+  if name.contains("/") {
+    return if is_file(os, name) { name } else { "" }
+  }
+  for d0 in (os.env.get("PATH") ?? "").split(":") {
+    let d = if d0.is_empty() { "." } else { d0 }
+    let p = "${d}/${name}"
+    if is_file(os, p) {
+      return p
+    }
+  }
+  ""
+}
+
+fn is_file(os: Os, p: Str) -> Bool uses fs.read {
+  match os.fs.stat(p).ok() ?? None {
+    Some(info) => !info.is_dir
+    None => false
+  }
+}
+
+/// clangVersion: the first line of `clang --version`.
+fn clang_version(os: Os, clang: Str) -> Str uses proc {
+  match os.proc.cmd(clang, ["--version"]).output() {
+    Ok(o) => {
+      if o.code != 0 {
+        return "unknown"
+      }
+      let s = o.stdout.to_str() ?? ""
+      let first = match s.find("\n") {
+        Some(i) => s[0..i]
+        None => s
+      }
+      first.trim()
+    }
+    Err(_) => "unknown"
+  }
+}
+
+/// The host is macOS (runtime.GOOS == "darwin").
+fn host_is_darwin() -> Bool {
+  match target.os {
+    Darwin => true
+    _ => false
+  }
+}
+
+/// dumpAST: clang's JSON AST dump of a translation unit holding include,
+/// as top level declarations with the file each is declared in.
+fn dump_ast(os: Os, clang: Str, include: Str, inc_dirs: List[Str]) -> List[Decl] ! Str uses (fs, proc, env) {
+  var tmp_root = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
+  if tmp_root.is_empty() {
+    tmp_root = "/tmp"
+  }
+  let tmp = match os.fs.create_temp(tmp_root, "xo-cbind-") {
+    Ok(t) => t
+    Err(e) => return Err("${e}")
+  }
+  // create_temp makes a file: a directory of that name instead
+  os.fs.remove(tmp).ok()
+  match os.fs.create_dir_all(tmp) {
+    Ok(_) => {}
+    Err(e) => return Err("${e}")
+  }
+  let r = dump_in(os, clang, include, inc_dirs, tmp)
+  os.fs.remove_all(tmp).ok()
+  let out = r?
+  top_decls(out)
+}
+
+fn dump_in(os: Os, clang: Str, include: Str, inc_dirs: List[Str], tmp: Str) -> Bytes ! Str uses (fs, proc) {
+  let input = "${tmp}/xo_cbind_in.c"
+  match os.fs.write(input, "${include}\n".bytes()) {
+    Ok(_) => {}
+    Err(e) => return Err("${e}")
+  }
+  var args = ["-fsyntax-only", "-Xclang", "-ast-dump=json", "-x", "c"]
+  for d in inc_dirs {
+    args.push("-I")
+    args.push(d)
+  }
+  let (out0, err0, ok0) = run_clang(os, clang, args, [], input)
+  var out = out0
+  var err_out = err0
+  var ok = ok0
+  if !ok && host_is_darwin() {
+    // clang's default SDK may be missing: try the one xcrun names
+    match os.proc.cmd("xcrun", ["--show-sdk-path"]).output() {
+      Ok(p) => {
+        if p.code == 0 {
+          let sdk = (p.stdout.to_str() ?? "").trim()
+          let (o2, e2, ok2) = run_clang(os, clang, args, ["-isysroot", sdk], input)
+          if ok2 {
+            out = o2
+            err_out = e2
+            ok = true
+          }
+        }
+      }
+      Err(_) => {}
+    }
+  }
+  if !ok {
+    var msg = (err_out.to_str() ?? "").trim()
+    if msg.contains("\n") && msg.split("\n").len() - 1 > 6 {
+      let lines = msg.split("\n")
+      msg = lines[0..6].join("\n")
+    }
+    return Err("clang cannot read the header: ${msg}")
+  }
+  Ok(out)
+}
+
+/// clang's standard output and error, and whether it exited 0.
+fn run_clang(os: Os, clang: Str, args: List[Str], extra: List[Str], input: Str) -> (Bytes, Bytes, Bool) uses proc {
+  var full = args
+  for e in extra {
+    full.push(e)
+  }
+  full.push(input)
+  match os.proc.cmd(clang, full).output() {
+    Ok(o) => (o.stdout, o.stderr, o.code == 0)
+    Err(_) => (b"", b"", false)
+  }
+}
