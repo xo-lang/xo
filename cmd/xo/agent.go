@@ -25,7 +25,7 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
-	s := &mcp.Server{Exec: run, Version: "p1"}
+	s := &mcp.Server{Exec: runXo, Version: "p1"}
 	if err := s.Serve(stdin, stdout); err != nil {
 		fmt.Fprintf(stderr, "xo mcp: %v\n", err)
 		return 1
