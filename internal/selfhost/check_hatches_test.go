@@ -46,6 +46,7 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 	for _, d := range dirs {
 		wants[d] = goCheck(d)
 	}
+	skipRecording(t)
 	text := runXo(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs...))
 	parts := strings.Split(text, "=== check ")
 	if len(parts) != len(dirs)+1 {

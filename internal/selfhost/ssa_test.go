@@ -191,8 +191,25 @@ func testDirs(t testing.TB, root string, dirs []string) []string {
 
 // goSSABuildOpts is goSSABuild, of the test binary (`xo ssadump --test`,
 // stage 7) when tests is set, and without the passStages unless passes
-// is set.
+// is set. Recorded as the ssadump kind (gogoldens_test.go) with every
+// pass stage, dropped here when passes is not set.
 func goSSABuildOpts(root, dir string, tests, passes bool) goSSA {
+	if goldensMode() == goldensLive {
+		return goSSALive(root, dir, tests, passes)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
+	g := recordedJSON("ssadump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx,
+		func() goSSA { return goSSALive(root, dir, tests, true) }, encGoSSA, decGoSSA)
+	if !passes && g.stages != nil {
+		g.stages = map[string]string{}
+	}
+	return g
+}
+
+// goSSALive is goSSABuildOpts with the Go builder run.
+func goSSALive(root, dir string, tests, passes bool) goSSA {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goSSA{none: "error " + err.Error()}

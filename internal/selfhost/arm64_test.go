@@ -155,6 +155,12 @@ func TestSelfhostArm64Mutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
+	if goldensRecording() {
+		for _, d := range dirs {
+			goAsm(wd, d, arm64Flags)
+		}
+		skipRecording(t)
+	}
 	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
 	wants := make([]string, len(dirs))
 	parallel(len(dirs), func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
@@ -183,8 +189,20 @@ func reportFails(t *testing.T, fails []string) {
 }
 
 // goAsm is what `xo asmdump` prints for dir checked from root: the
-// assembly, or `== rejected`, `== error <why>`.
+// assembly, or `== rejected`, `== error <why>`. Recorded as the asmdump
+// kind (gogoldens_test.go).
 func goAsm(root, dir string, flags []string) string {
+	if goldensMode() == goldensLive {
+		return goAsmLive(root, dir, flags)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("flags=%s lineroot=%s", strings.Join(flags, ","), cx.norm(root))
+	return recorded("asmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx, func() string { return goAsmLive(root, dir, flags) })
+}
+
+// goAsmLive is goAsm with the Go emitter run.
+func goAsmLive(root, dir string, flags []string) string {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return "== error " + err.Error()

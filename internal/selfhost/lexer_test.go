@@ -40,7 +40,16 @@ var (
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
 	build.EnableTestLLVMSplit()
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := flushGoldens(); err != nil {
+		fmt.Fprintln(os.Stderr, "gogoldens:", err)
+		code = 1
+	}
+	if miss := recordedMissing(); len(miss) > 0 {
+		fmt.Fprintf(os.Stderr, "XO_SELFHOST_GOLDENS=replay: %d units have no recorded Go output (record them with scripts/selfhost-record-goldens.sh), the first: %s\n", len(miss), strings.Join(miss[:min(10, len(miss))], "; "))
+		code = 1
+	}
+	os.Exit(code)
 }
 
 // lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
@@ -60,6 +69,9 @@ func selfhostBinary(component, backend string) (string, error) {
 	}
 	binMu.Unlock()
 	e.once.Do(func() {
+		if goldensRecording() {
+			return // the Xo side is not run
+		}
 		dir := filepath.Join("..", "..", "selfhost", component)
 		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
 		switch {
@@ -85,6 +97,9 @@ type binEntry struct {
 func selfhostBinaries(t *testing.T, component string, backends []string) map[string]string {
 	t.Helper()
 	bins := map[string]string{}
+	if goldensRecording() {
+		return bins // the Xo side is not run
+	}
 	errs := map[string]error{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -376,7 +391,8 @@ func goDump(t testing.TB, root string, paths []string) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b.WriteString(lexer.Dump(p, src))
+		cx := newGoldenCtx(full)
+		b.WriteString(recorded("lexdump", p, []string{cx.fileKey(p, src)}, cx, func() string { return lexer.Dump(p, src) }))
 	}
 	return b.String()
 }
@@ -407,6 +423,10 @@ func firstDiff(got, want string) string {
 // difference.
 func compare(t *testing.T, bin, root string, paths []string) {
 	const batch = 200
+	if goldensRecording() {
+		goDump(t, root, paths)
+		skipRecording(t)
+	}
 	for i := 0; i < len(paths); i += batch {
 		chunk := paths[i:min(i+batch, len(paths))]
 		got, want := runXo(t, bin, root, chunk), goDump(t, root, chunk)
@@ -428,6 +448,9 @@ func TestSelfhostDifferential(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			t.Parallel()
 			if backend != "go" {
+				if goldensRecording() {
+					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records the Go side")
+				}
 				if why := nativeSkip(backend); why != "" {
 					t.Skip(why)
 				}

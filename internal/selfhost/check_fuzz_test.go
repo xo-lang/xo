@@ -112,6 +112,12 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
+	if goldensRecording() {
+		for _, d := range dirs {
+			goCheck(d)
+		}
+		skipRecording(t)
+	}
 	got := map[string]string{}
 	const batch = 100
 	for i := 0; i < len(dirs); i += batch {

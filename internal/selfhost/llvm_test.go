@@ -175,6 +175,7 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	wd := workDir(t)
 	wants := make([]goIR, len(dirs))
 	parallel(len(dirs), func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
+	skipRecording(t)
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
 	var st llvmStats
 	var fails []string
@@ -197,7 +198,20 @@ type goIR struct {
 
 // goLLVM checks dir as a native build does and lowers it as `xo
 // llvmdump` does from root (the test binary when tests is set).
+// Recorded as the llvmdump kind (gogoldens_test.go).
 func goLLVM(root, dir string, tests bool) goIR {
+	if goldensMode() == goldensLive {
+		return goLLVMLive(root, dir, tests)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, root, dir)
+	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
+	return recordedJSON("llvmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx,
+		func() goIR { return goLLVMLive(root, dir, tests) }, encGoIR, decGoIR)
+}
+
+// goLLVMLive is goLLVM with the Go emitter run.
+func goLLVMLive(root, dir string, tests bool) goIR {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goIR{none: "error " + err.Error()}

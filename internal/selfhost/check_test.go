@@ -159,8 +159,21 @@ type goRun struct {
 // goCheck checks dir with the Go checker.
 func goCheck(dir string) *goRun { return goCheckOpts(dir, check.Options{}) }
 
-// goCheckOpts checks dir with the Go checker and options (Native).
+// goCheckOpts checks dir with the Go checker and options (Native),
+// recorded as the typedump kind (gogoldens_test.go).
 func goCheckOpts(dir string, opts check.Options) *goRun {
+	if goldensMode() == goldensLive {
+		return goCheckLive(dir, opts)
+	}
+	wd := goldensWD()
+	cx := newGoldenCtx(wd, dir)
+	o := fmt.Sprintf("native=%v", opts.Native)
+	return recordedJSON("typedump", dir+" "+o, []string{o, cx.dirKey(wd, dir, opts.Native)}, cx,
+		func() *goRun { return goCheckLive(dir, opts) }, encGoRun, decGoRun)
+}
+
+// goCheckLive is goCheckOpts with the Go checker run.
+func goCheckLive(dir string, opts check.Options) *goRun {
 	res, err := check.CheckOpts([]string{dir}, opts)
 	if err != nil {
 		return &goRun{err: err}

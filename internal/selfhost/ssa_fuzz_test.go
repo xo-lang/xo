@@ -86,6 +86,16 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
+	if goldensRecording() {
+		wd := workDir(t)
+		for _, d := range dirs {
+			goSSABuild(wd, d)
+		}
+		for _, d := range testDirs(t, tmp, dirs) {
+			goSSABuildOpts(wd, d, true, true)
+		}
+		skipRecording(t)
+	}
 	got := map[string]string{}
 	const batch = 60
 	texts := runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch)
