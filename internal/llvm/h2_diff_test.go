@@ -1144,7 +1144,7 @@ func TestH2Sanitizers(t *testing.T) {
 				env = []string{tsanOptions()}
 			} else {
 				bin = filepath.Join(t.TempDir(), "prog")
-				aflags := append([]string{"-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"}, flags...)
+				aflags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), flags...)
 				if err := build.CompileC(aflags, srcs, bin); err != nil {
 					if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 						t.Skipf("no AddressSanitizer: %v", err)

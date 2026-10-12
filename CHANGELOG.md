@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM backend builds and passes the golden suite on darwin/amd64
+  (decision 0196): on an Intel Mac with macOS 26.5.2 the whole
+  internal/llvm package passes, TestGolden 143 of 143, with no emitter
+  or runtime change. `scripts/intel-mac-test.sh` runs a test command for
+  a commit on that Mac. The LLVM tests now drop AddressSanitizer where
+  it builds but cannot start, as they did for ThreadSanitizer.
 - internal/selfhost scales with cores: every native build, Xo process,
   and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
   slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
