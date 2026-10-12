@@ -22,7 +22,7 @@ fn rtpack_cmd(os: Os, args: List[Str]) -> Int {
   let std_dir = check.std_dir(os.env, os.fs)
   let ctx = Ctx{goos: goos, std: std_dir, xo: dir_name(std_dir.trim_suffix("/")), cache: user_cache_dir(os, goos)}
   var fl = core.new_flags("rtpack")
-  fl.str_flag("target", "${goos}/arm64", "target os/arch")
+  fl.str_flag("target", "${goos}/${host_arch()}", "target os/arch")
   fl.str_flag("cc", "", "C compiler command (default the host's C compiler)")
   fl.str_flag("ar", "", "archiver command (default $XO_AR, ar, llvm-ar)")
   fl.str_flag("o", "lib/xo/rtpack", "pack root")
@@ -95,8 +95,8 @@ fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], ar0: Lis
   }
   var cc = cc0
   if cc.is_empty() {
-    if tos != ctx.goos {
-      return ("", "building the runtime for ${tos}/${tarch} on ${ctx.goos}/arm64 needs a cross compiler (--cc, for example \"zig cc -target aarch64-linux-gnu.2.31\")")
+    if tos != ctx.goos || host_arch() != "arm64" {
+      return ("", "building the runtime for ${tos}/${tarch} on ${ctx.goos}/${host_arch()} needs a cross compiler (--cc, for example \"zig cc -target aarch64-linux-gnu.2.31\")")
     }
     let c = find_cc(os)
     if c.is_empty() {
