@@ -1,0 +1,18 @@
+// A module that reaches a package only through the fields of another
+// module's types: the generator compared the Go types of `h.t` (coerce,
+// in a string interpolation inside a struct literal) and imported
+// package tok, which this module's Go text never names, so go build
+// failed with "imported and not used" (selfhost/xo reaching
+// selfhost/lexer, 2026-10-12).
+use example.com/transitive/holder
+
+struct Line {
+  text: Str
+  n: Int
+}
+
+fn main(os: Os) {
+  let h = holder.make(3)
+  let l = Line{text: "${h.t.text.trim_prefix("w")}:${h.span.start.line}:${h.span.start.col}", n: h.t.n}
+  os.stdio.println("${l.text} ${l.n}")
+}
