@@ -20,6 +20,16 @@ import v8 from 'node:v8';
 // programs that allocate much (knowledgebase/gotchas/
 // node-wasm-concurrent-gc-crash.md); the single threaded collector does not.
 v8.setFlagsFromString('--single-threaded-gc');
+// A large module (the self hosted checker, 40 MB) crashed the worker
+// (SIGSEGV) when its functions were compiled lazily, at their first call
+// deep in the wasm stack; compiled at instantiation it runs
+// (knowledgebase/gotchas/wasm-lazy-compile-worker-crash.md).
+v8.setFlagsFromString('--no-wasm-lazy-compilation');
+// With the single threaded collector, an incremental marking task of the
+// main isolate while the worker ran for seconds failed V8's check
+// `concurrent_marking_handle_ implies !concurrent_marking_handle_->IsValid()`
+// (status 133; gotchas/wasm-busy-loop-crashes-node.md).
+v8.setFlagsFromString('--no-incremental-marking');
 
 if (isMainThread) {
   const [file, ...args] = process.argv.slice(2);
@@ -47,7 +57,10 @@ if (isMainThread) {
       throw new Error(`import ${imp.module}.${imp.name} is not WASI preview1`);
     }
   }
-  const wasi = new WASI({ version: 'preview1', args: [file, ...args], env: process.env, returnOnExit: true });
+  // the file system a native program sees: fd 3 the working directory
+  // (relative paths), fd 4 the root (absolute paths; rt4.xo $wpath)
+  const preopens = { '.': process.cwd(), '/': '/' };
+  const wasi = new WASI({ version: 'preview1', args: [file, ...args], env: process.env, preopens, returnOnExit: true });
   const inst = new WebAssembly.Instance(mod, { wasi_snapshot_preview1: wasi.wasiImport });
   let code;
   try {

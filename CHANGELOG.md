@@ -73,6 +73,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   71 of the 133 LLVM goldens run under Node with the output of the
   native backends; the rest (tasks, network, files, time, strconv
   quoting, more of the std runtime) fail the build with a clear reason.
+- The WebAssembly backend, stage 2 (decision 0179): the Unicode code
+  in Xo (decision 0180) compiles to wasm with the program, and the
+  backend's runtime adds the text primitives it calls, number and
+  duration parsing, and base64; tasks, scopes, channels, select, Mutex,
+  Atomic, timers, and budgets run on one thread under a deterministic
+  cooperative scheduler (a waiting task's wasm stack is unwound and
+  rewound); `rand` uses WASI `random_get`; files are read through WASI
+  (`path_open`, `fd_read`, `fd_readdir`): 116 of the 134 LLVM goldens
+  pass, and the network fails the build with a clear error. A module
+  carries only the runtime functions it reaches (recursion: 7.5 KB, 16.7
+  KB before). Values share wasm locals by liveness, so large programs
+  build: the self hosted lexer, parser, and checker run as wasm under
+  Node with the output of their go backend builds (the checker: a
+  40 MB module); `selfhost/wasm --why` lists every construct a program
+  needs that the backend lacks.
 - The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
   builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
   (`xo1 test --backend=go`), and builds `use go` programs on the Go

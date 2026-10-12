@@ -13,10 +13,12 @@ fn (var g: Gen) call(v: Int) {
     _ => ""
   }
   if let Some(ci) = g.by_name.get(name) {
+    let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
     for a in x.args {
       g.push(a)
     }
     g.e("call $f${ci}")
+    g.suspend_check(id)
     g.def(v)
     g.check_fault(v)
     return
@@ -28,10 +30,19 @@ fn (var g: Gen) call(v: Int) {
       g.e("i32.const 0")
       g.def(v)
     }
-    "rt.fault_continue" => {}
-    "rt.unwinding" => {
-      // a fault sets it (xo_fault_raise); with no tasks nothing cancels
+    "rt.fault_continue" => {
+      // a fault goes on to the caller (cancellation only returns)
       g.e("global.get $faulting")
+      g.e("global.set $prop")
+    }
+    "rt.unwinding" => {
+      // a fault sets it (xo_fault_raise), and with tasks a cancellation
+      // point that found the task canceled (rt3.xo)
+      g.e("global.get $faulting")
+      if g.conc {
+        g.e("global.get $unw")
+        g.e("i32.or")
+      }
       g.def(v)
     }
     "rt.fault_detail" => {
@@ -55,6 +66,9 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "rt.exit" => {
+      if g.files {
+        g.e("call $consts_free")
+      }
       g.push(x.args[0])
       g.e("i32.wrap_i64")
       g.e("call $exit")
@@ -206,6 +220,7 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "rt.str_slice" | "rt.str_starts_with" | "rt.str_ends_with" | "rt.str_contains" | "rt.str_repeat" | "rt.str_join" | "rt.rs_append_quote" | "rt.str_rune_count" => g.rt_call(v, "$${name.trim_prefix("rt.")}")
+    "rt.rs_append" => g.rt_call(v, "$rs_append_str")
     "str.concat_int" => g.rt_call(v, "$sapp_int")
     "str.concat_float" => g.rt_call(v, "$sapp_float")
     "str.of_float" => g.rt_call(v, "$of_float")
@@ -299,15 +314,72 @@ fn (var g: Gen) call(v: Int) {
     _ => {
       // a runtime function of rt.xo taking the operands' leaves and
       // returning the result's (xo_<name> of std/llrt)
-      if name.starts_with("rt.") && rt_direct(name.trim_prefix("rt.")) {
+      if name.starts_with("rt.") && (rt_direct(name.trim_prefix("rt.")) || rt2_direct(name.trim_prefix("rt."))) {
         g.rt_call(v, "$${name.trim_prefix("rt.")}")
         if ssa.faulting_rt(name) {
           g.check_fault(v)
         }
         return
       }
-      g.fail("the wasm backend does not support the call `${name}` (stage 1)")
+      if name.starts_with("rt.") && g.conc && rt3_direct(name.trim_prefix("rt.")) {
+        g.rt3_call(v, name)
+        return
+      }
+      let op = name.trim_prefix("rt.")
+      if name.starts_with("rt.") && g.files && rt4_direct(op) {
+        g.rt_call(v, "$${op}")
+        return
+      }
+      if name == "rt.fs_canceled" {
+        // a canceled task's Fs operations report Canceled (xo_fs_canceled)
+        g.e(if g.conc { "call $ctx_canceled" } else { "i32.const 0" })
+        g.def(v)
+        return
+      }
+      if g.lax {
+        // --lax: the call faults when it runs
+        let msg = "the wasm backend does not support the call `${name}`"
+        g.e("i32.const ${g.str_obj(msg.bytes())}")
+        g.e("i32.const ${msg.len()}")
+        g.e(g.litp(comment_text(g.f.name)))
+        g.e("call $fault_str")
+        g.fault_exit(v)
+        return
+      }
+      if op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_") {
+        // no sockets in WASI preview1, the targets of decision 0144
+        g.fail("the wasm backend does not support the network (`${name}`): WASI preview1 has no sockets")
+        return
+      }
+      g.fail("the wasm backend does not support the call `${name}` (stage 2)")
     }
+  }
+}
+
+/// A function of the task runtime (rt3.xo) on the operands' leaves; a
+/// blocking one is a resume point. Atomic keeps an Int: a Bool value is
+/// widened on the way in and narrowed on the way out.
+fn (var g: Gen) rt3_call(v: Int, name: Str) {
+  let x = g.f.values[v]
+  let fname = name.trim_prefix("rt.")
+  let id = if rt3_blocking(name) { g.resume_point() } else { -1 }
+  let atomic = fname.starts_with("atomic_")
+  for (i, a) in x.args.indexed() {
+    g.push(a)
+    let ls = g.leaves(g.vty(a))
+    if atomic && ls.len() == 1 && ls[0] == "i32" && (i > 0 || fname == "atomic_new") {
+      g.e("i64.extend_i32_u")
+    }
+  }
+  g.e("call $${fname}")
+  g.suspend_check(id)
+  let rl = g.leaves(x.ty)
+  if fname is "atomic_get" | "atomic_swap" && rl.len() == 1 && rl[0] == "i32" {
+    g.e("i32.wrap_i64")
+  }
+  g.def(v)
+  if ssa.faulting_rt(name) || fname == "prog_group" {
+    g.check_fault(v)
   }
 }
 
