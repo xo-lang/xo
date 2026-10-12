@@ -49,8 +49,14 @@ def one(d):
     cmd = 'test' if name.startswith('test_') else 'build'
     if os.path.exists(bin):
         os.remove(bin)
+    regress = os.path.join(d, 'regressions_test.xo')
+    had = os.path.exists(regress)
     b = subprocess.run([comp, cmd, '--backend=go', '--std=' + os.path.join(root, 'std'), '-o', bin, d],
                        capture_output=True, text=True)
+    # `xo test` writes shrunk contract fuzz failures into the module
+    # (core 9.2); a golden directory must stay as committed
+    if not had and os.path.exists(regress):
+        os.remove(regress)
     # `test` runs the binary too, and exits with its status: the binary
     # is rerun below as TestGolden runs it
     if b.returncode != 0 and not (cmd == 'test' and os.path.exists(bin)):

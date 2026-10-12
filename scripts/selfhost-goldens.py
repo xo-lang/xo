@@ -65,6 +65,9 @@ def run_cmd(d, flags):
     args, env, stdin = harness(d)
     env['XO_LEAKCHECK'] = '1'
     env['PWD'] = os.path.abspath(d)
+    # env.txt is the program's environment, and the compiler sees it too:
+    # a HOME such as env_dirs' /home/test has no user cache to build in
+    env['XO_BUILD_DIR'] = os.path.join(out, 'runbuild')
     p = subprocess.run([comp, 'run'] + flags + ['--std=' + os.path.join(root, 'std'), '.', '--'] + args,
                        cwd=d, capture_output=True, env=env, input=stdin)
     so = p.stdout.decode('utf-8', 'replace')

@@ -1,14 +1,23 @@
 # `xo test` on a golden directory writes regressions_test.xo into it
 
-Status: Observed (2026-10-09)
+Status: Observed (2026-10-12, decision 0178 stage 1)
 
-Symptom: after running `xo test` by hand on
-`internal/gen/testdata/golden/test_contracts`, TestGolden failed with two
-more failing tests, regressions of the contract fuzz cases.
+## Symptom
 
-Cause: a failing contract fuzz case is saved as a regression test in
-`regressions_test.xo` next to the module (core 9.1), also when the
-directory is a golden.
+After `scripts/selfhost-gogoldens.py` ran with an xo1 that writes
+regression tests, `git status` showed untracked
+`internal/gen/testdata/golden/test_contracts/regressions_test.xo` and
+`test_loop_bound/regressions_test.xo`.
 
-Fix: delete the generated file (`git status` shows it untracked); to try
-a golden by hand, copy it to a scratch directory first.
+## Cause
+
+`xo test` (and now `xo1 test`) turns every shrunk contract fuzz failure
+into a test in the module's regressions_test.xo (core 9.2). The goldens
+`test_contracts` and `test_loop_bound` fail contracts on purpose, so any
+`xo test` of them writes the file into the testdata directory.
+
+## Fix
+
+Scripts that run `xo test` or `xo1 test` on a golden remove a
+regressions_test.xo they created (selfhost-gogoldens.py does). Do not
+commit such files unless they are meant to be part of the golden.
