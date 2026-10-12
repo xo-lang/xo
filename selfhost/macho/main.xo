@@ -1,12 +1,19 @@
 // macho: the self hosted Mach-O assembler and linker of decision 0182.
 //
-//   macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s   assemble the arm64 emitter's
-//                                            assembly into an object
+//   macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s
+//       assemble the arm64 emitter's assembly into an object
+//   macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...
+//       link objects and archives into an executable (libSystem, and each
+//       --dylib, imported)
 //
-// The package is also the library xo1 (selfhost/xo) calls: assemble.
+// The package is also the library xo1 (selfhost/xo) calls: assemble, link.
 
 fn main(os: Os) ! {
   let args = os.env.args()
+  if !args.is_empty() && args[0] == "link" {
+    link_main(os, args)?
+    return
+  }
   if args.is_empty() || args[0] != "asm" {
     usage(os)
   }
@@ -21,8 +28,7 @@ fn main(os: Os) ! {
       out = args[i + 1]
       i += 1
     } else if a.starts_with("--minos=") {
-      let v = a.trim_prefix("--minos=").split(".")
-      minos = (Int.parse(v[0]) ?? 11, if v.len() > 1 { Int.parse(v[1]) ?? 0 } else { 0 })
+      minos = version(a.trim_prefix("--minos="))
     } else if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? 0
     } else {
@@ -56,8 +62,55 @@ fn main(os: Os) ! {
   }
 }
 
+fn version(s: Str) -> (Int, Int) {
+  let v = s.split(".")
+  (Int.parse(v[0]) ?? 11, if v.len() > 1 { Int.parse(v[1]) ?? 0 } else { 0 })
+}
+
+fn link_main(os: Os, args: List[Str]) -> () ! FsErr {
+  var out = ""
+  var opts = LinkOpts{name: ""}
+  var dylibs = ["/usr/lib/libSystem.B.dylib"]
+  var ins: List[LinkInput] = []
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a == "-o" && i + 1 < args.len() {
+      out = args[i + 1]
+      i += 1
+    } else if a.starts_with("--minos=") {
+      opts.minos = version(a.trim_prefix("--minos="))
+    } else if a.starts_with("--sdk=") {
+      opts.sdk = version(a.trim_prefix("--sdk="))
+    } else if a.starts_with("--dylib=") {
+      dylibs.push(a.trim_prefix("--dylib="))
+    } else {
+      ins.push(LinkInput{path: a, data: os.fs.read(a)?})
+    }
+    i += 1
+  }
+  if out.is_empty() || ins.is_empty() {
+    usage(os)
+  }
+  opts.dylibs = dylibs
+  let parts = out.split("/")
+  opts.name = parts[parts.len() - 1]
+  match link(ins, opts) {
+    Ok(b) => {
+      // a new file, not one overwritten in place: the kernel caches the
+      // signature of a file it has run
+      let tmp = "${out}.tmp"
+      os.fs.write(tmp, b)?
+      os.fs.set_mode(tmp, 0o755)?
+      os.fs.rename(tmp, out)?
+    }
+    Err(e) => fail(os, e)
+  }
+}
+
 fn usage(os: Os) -> Never {
   os.stdio.eprintln("usage: macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s")
+  os.stdio.eprintln("       macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...")
   os.proc.exit(2)
 }
 

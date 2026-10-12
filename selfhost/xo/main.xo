@@ -11,7 +11,8 @@
 //   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
 //
 // flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
-// --as=macho (decision 0182): assemble with selfhost/macho, cc links
+// --as=macho (decision 0182): assemble with selfhost/macho, cc links;
+// --ld=macho: assemble and link with selfhost/macho, no cc (ld.xo)
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -35,7 +36,7 @@ use github.com/xo-lang/xo/selfhost/macho
 fn main(os: Os) ! {
   let args = os.env.args()
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [--as=cc|macho] [-o OUT] [--asm=PATH] <dir>")
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go] [--go-tree=DIR] [--as=cc|macho] [--ld=cc|macho] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -50,6 +51,7 @@ fn main(os: Os) ! {
   var backend = "arm64"
   var go_tree = ""
   var assembler = "cc"
+  var linker = "cc"
   var dirs: List[Str] = []
   var i = 1
   while i < args.len() {
@@ -68,6 +70,11 @@ fn main(os: Os) ! {
       backend = a.trim_prefix("--backend=")
     } else if a.starts_with("--as=") {
       assembler = a.trim_prefix("--as=")
+    } else if a.starts_with("--ld=") {
+      linker = a.trim_prefix("--ld=")
+      if linker == "macho" {
+        assembler = "macho"
+      }
     } else if a.starts_with("--go-tree=") {
       go_tree = a.trim_prefix("--go-tree=")
     } else if a.starts_with("--target=") || a.starts_with("--targets=") {
@@ -198,7 +205,7 @@ fn main(os: Os) ! {
       os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
     }
   }
-  if cc.is_empty() {
+  if cc.is_empty() && linker != "macho" {
     cc = find_cc(os)
     if cc.is_empty() {
       fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
@@ -228,7 +235,7 @@ fn main(os: Os) ! {
       fail(os, sel.err)
     }
     flags.push("-DXO_TIME")
-    srcs.push(tz_source(os, rtdir, sel)?)
+    srcs.push(if linker == "macho" { tz_object(os, rtdir, sel)? } else { tz_source(os, rtdir, sel)? })
     for n in sel.notes {
       os.stdio.eprintln(n)
     }
@@ -241,10 +248,19 @@ fn main(os: Os) ! {
   }
   flags = flags + ci.flags
   srcs = srcs + ci.srcs
-  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
-  if !msg.is_empty() {
-    os.stdio.eprint(msg)
-    fail(os, "${cc} failed")
+  if linker == "macho" {
+    let why = macho_link(os, ctx, flags, srcs, out, needs_tls(p.asm))
+    if !why.is_empty() {
+      fail(os, why)
+    }
+  } else if linker != "cc" {
+    fail(os, "--ld=${linker}: want cc or macho")
+  } else {
+    let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
+    if !msg.is_empty() {
+      os.stdio.eprint(msg)
+      fail(os, "${cc} failed")
+    }
   }
   if tests {
     var bin = out

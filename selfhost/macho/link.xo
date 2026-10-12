@@ -1,0 +1,1325 @@
+// The linker of decision 0182: arm64 Mach-O objects (the program's, the
+// C runtime's, archive members) into a position independent MH_EXECUTE
+// for macOS, as `ld` links them for `cc`:
+//
+// - input sections concatenated into output sections by name (no dead
+//   stripping, no literal merging);
+// - global symbols resolved across objects, archive members taken when
+//   they define a needed symbol, the rest imported (from libSystem by
+//   two level namespace ordinal 1, or by flat lookup when more dylibs
+//   are linked);
+// - calls to imports through __stubs, GOT loads and personality
+//   pointers through __got, thread local variables through their
+//   descriptors (the TLVP load turned into an add);
+// - absolute pointers rebased and imports bound by chained fixups
+//   (DYLD_CHAINED_PTR_64_OFFSET);
+// - __unwind_info built from the objects' compact unwind entries, DWARF
+//   mode entries pointing at their FDE in the merged __eh_frame;
+// - an ad hoc code signature (sign.xo).
+
+use std/crypto
+
+const IMAGE_BASE = 0x100000000
+const PAGE = 0x4000
+const MH_EXECUTE = 2
+const MH_NOUNDEFS = 0x1
+const MH_DYLDLINK = 0x4
+const MH_TWOLEVEL = 0x80
+const MH_PIE = 0x200000
+const MH_HAS_TLV_DESCRIPTORS = 0x800000
+const LC_LOAD_DYLIB = 0xc
+const LC_LOAD_DYLINKER = 0xe
+const LC_UUID = 0x1b
+const LC_CODE_SIGNATURE = 0x1d
+const LC_MAIN = 0x80000028
+const LC_DYLD_EXPORTS_TRIE = 0x80000033
+const LC_DYLD_CHAINED_FIXUPS = 0x80000034
+const SG_READ_ONLY = 0x10
+const INDIRECT_SYMBOL_LOCAL = 0x80000000
+const REFERENCED_DYNAMICALLY = 0x10
+const S_ATTR_DEBUG_FLAG = 0x02000000
+
+/// What the linker writes: the output's file name (the code signature's
+/// identifier), the macOS versions of LC_BUILD_VERSION, the dylibs, the
+/// entry point.
+pub struct LinkOpts {
+  pub name: Str
+  pub minos: (Int, Int) = (11, 0)
+  pub sdk: (Int, Int) = (11, 0)
+  pub dylibs: List[Str] = ["/usr/lib/libSystem.B.dylib"]
+  pub entry: Str = "_main"
+}
+
+/// An input file: its path (for messages) and contents.
+pub struct LinkInput {
+  pub path: Str
+  pub data: Bytes
+}
+
+/// An output section.
+struct OSect {
+  seg: Str
+  name: Str
+  flags: Int
+  align: Int = 0
+  size: Int = 0
+  addr: Int = 0
+  fileoff: Int = 0
+  /// the input sections placed in it: (object, section)
+  chunks: List[(Int, Int)] = []
+  /// the contents of a synthetic section, before patches
+  synth: Bytes = "".bytes()
+  reserved1: Int = 0
+  reserved2: Int = 0
+  /// the final contents
+  bytes: Bytes = "".bytes()
+}
+
+struct OSeg {
+  name: Str
+  prot: Int
+  flags: Int = 0
+  sects: List[Int] = []
+  vmaddr: Int = 0
+  vmsize: Int = 0
+  fileoff: Int = 0
+  filesize: Int = 0
+}
+
+/// A word of the output replaced: 4 or 8 bytes at a virtual address.
+struct Patch {
+  addr: Int
+  size: Int
+  value: Int
+}
+
+/// A pointer for dyld: a rebase to a virtual address, or a bind of an
+/// import plus an addend.
+struct Fixup {
+  addr: Int
+  bind: Bool
+  target: Int
+  addend: Int = 0
+}
+
+/// A compact unwind entry of an object, resolved.
+struct UEntry {
+  func: Int
+  len: Int
+  enc: Int
+  /// the GOT slot address of the personality, 0 for none
+  pers: Int = 0
+  lsda: Int = 0
+}
+
+/// A relocation target: an address, or an import.
+struct Target {
+  imp: Int = -1
+  addr: Int = 0
+}
+
+struct Linker {
+  opts: LinkOpts
+  objs: List[IObj] = []
+  globals: Map[Bytes, (Int, Int)] = {}
+  imports: List[Bytes] = []
+  import_ix: Map[Bytes, Int] = {}
+  /// GOT slots, by import or by defined symbol (obj, sym)
+  got_imp: Map[Int, Int] = {}
+  got_def: Map[(Int, Int), Int] = {}
+  /// each slot: (import, obj, sym) with -1 for the absent parts
+  got: List[(Int, Int, Int)] = []
+  stub_ix: Map[Int, Int] = {}
+  stubs: List[Int] = []
+  osects: List[OSect] = []
+  segs: List[OSeg] = []
+  patches: List[Patch] = []
+  fixups: List[Fixup] = []
+  uentries: List[UEntry] = []
+  tlv_start: Int = -1
+  has_tlv: Bool = false
+  s_stubs: Int = -1
+  s_got: Int = -1
+  s_unwind: Int = -1
+  s_eh: Int = -1
+  /// the size of the header and load commands
+  cmds_size: Int = 0
+  err: Str = ""
+}
+
+/// link: the executable of the inputs (objects and archives), or the
+/// first error.
+pub fn link(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
+  var l = Linker{opts: opts}
+  for inp in inputs {
+    if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
+      match parse_archive(inp.path, inp.data) {
+        Ok(ms) => l.objs = l.objs + ms
+        Err(e) => return Err(e)
+      }
+    } else {
+      match parse_object(inp.path, inp.data) {
+        Ok(o) => l.objs.push(o)
+        Err(e) => return Err(e)
+      }
+    }
+  }
+  l.resolve()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  l.place()
+  l.scan()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  l.layout()
+  l.relocate()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  l.synthesize()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  let out = l.write()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  Ok(out)
+}
+
+fn (var l: Linker) fail(why: Str) {
+  if l.err.is_empty() {
+    l.err = why
+  }
+}
+
+fn is_ext(s: ISym) -> Bool {
+  (s.typ & N_EXT) != 0 && (s.typ & N_STAB) == 0
+}
+
+fn is_defined(s: ISym) -> Bool {
+  (s.typ & N_STAB) == 0 && ((s.typ & N_TYPE) == N_SECT || (s.typ & N_TYPE) == N_ABS)
+}
+
+// ---------------------------------------------------------------------------
+// Symbols
+
+/// Takes the global definitions of the live objects, then archive members
+/// that define what is still undefined; the rest are imports.
+fn (var l: Linker) resolve() {
+  for o in 0..l.objs.len() {
+    if l.objs[o].live {
+      l.add_globals(o)
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for o in 0..l.objs.len() {
+      if !l.objs[o].live {
+        continue
+      }
+      for s in l.objs[o].syms {
+        if !is_ext(s) || is_defined(s) || l.globals.contains(s.name) {
+          continue
+        }
+        // a member of an archive defining it
+        for m in 0..l.objs.len() {
+          if l.objs[m].live {
+            continue
+          }
+          if l.objs[m].syms.any(fn(t: ISym) -> Bool { is_ext(t) && is_defined(t) && t.name == s.name }) {
+            l.objs[m].live = true
+            l.add_globals(m)
+            changed = true
+            break
+          }
+        }
+      }
+    }
+  }
+  // common symbols (tentative definitions) no object defines: zero
+  // filled in __DATA,__common, the largest size and alignment of each
+  var commons: Map[Bytes, (Int, Int)] = {}
+  var corder: List[Bytes] = []
+  for o in l.objs {
+    if !o.live {
+      continue
+    }
+    for s in o.syms {
+      if is_ext(s) && !is_defined(s) && s.value != 0 && !l.globals.contains(s.name) {
+        let al = (s.desc >> 8) & 15
+        match commons.get(s.name) {
+          Some((sz, a)) => commons.put(s.name, (if s.value > sz { s.value } else { sz }, if al > a { al } else { a }))
+          None => {
+            commons.put(s.name, (s.value, al))
+            corder.push(s.name)
+          }
+        }
+      }
+    }
+  }
+  if !corder.is_empty() {
+    var c = IObj{path: "<common symbols>"}
+    var off = 0
+    var maxal = 0
+    for n in corder {
+      let (sz, al) = commons.get(n) ?? (0, 0)
+      let a = pow2(al)
+      off = (off + a - 1) / a * a
+      c.syms.push(ISym{name: n, typ: N_SECT | N_EXT, sect: 1, desc: 0, value: off})
+      off += sz
+      if al > maxal {
+        maxal = al
+      }
+    }
+    c.sects.push(ISect{seg: "__DATA", name: "__common", addr: 0, size: off, align: maxal, flags: S_ZEROFILL, data: "".bytes()})
+    l.objs.push(c)
+    l.add_globals(l.objs.len() - 1)
+  }
+  // the imports, sorted by name
+  var names: Set[Bytes] = #{}
+  for o in l.objs {
+    if !o.live {
+      continue
+    }
+    for s in o.syms {
+      if is_ext(s) && !is_defined(s) && !l.globals.contains(s.name) {
+        names.add(s.name)
+      }
+    }
+  }
+  l.imports = names.to_list().sort_by(fn(n: Bytes) -> Str { bstr(n) })
+  for (i, n) in l.imports.indexed() {
+    l.import_ix.put(n, i)
+  }
+}
+
+fn (var l: Linker) add_globals(o: Int) {
+  for (i, s) in l.objs[o].syms.indexed() {
+    if is_ext(s) && is_defined(s) {
+      match l.globals.get(s.name) {
+        Some((o2, i2)) => {
+          // a weak definition gives way; two strong ones are an error
+          let weak_old = (l.objs[o2].syms[i2].desc & 0x80) != 0
+          let weak_new = (s.desc & 0x80) != 0
+          if !weak_old && !weak_new {
+            l.fail("duplicate symbol ${bstr(s.name)} in ${l.objs[o2].path} and ${l.objs[o].path}")
+            return
+          }
+          if weak_old && !weak_new {
+            l.globals.put(s.name, (o, i))
+          }
+        }
+        None => l.globals.put(s.name, (o, i))
+      }
+    }
+  }
+}
+
+/// The definition a symbol of an object refers to: (obj, sym), or (-1,
+/// import) for an import.
+fn (l: Linker) def_of(o: Int, i: Int) -> (Int, Int) {
+  let s = l.objs[o].syms[i]
+  if is_defined(s) {
+    if is_ext(s) {
+      // a global defined more than once (weak): the chosen definition
+      return l.globals.get(s.name) ?? (o, i)
+    }
+    return (o, i)
+  }
+  match l.globals.get(s.name) {
+    Some(d) => d
+    None => (-1, l.import_ix.get(s.name) ?? -1)
+  }
+}
+
+/// The address of a defined symbol.
+fn (l: Linker) sym_addr(o: Int, i: Int) -> Int {
+  let s = l.objs[o].syms[i]
+  if (s.typ & N_TYPE) == N_ABS {
+    return s.value
+  }
+  let sect = l.objs[o].sects[s.sect - 1]
+  l.osects[sect.out].addr + sect.off + (s.value - sect.addr)
+}
+
+/// The output address of an object address in a section of the object
+/// (non extern relocations).
+fn (var l: Linker) translate(o: Int, ordinal: Int, a: Int) -> Int {
+  if ordinal < 1 || ordinal > l.objs[o].sects.len() {
+    l.fail("${l.objs[o].path}: relocation to section ${ordinal}")
+    return 0
+  }
+  let sect = l.objs[o].sects[ordinal - 1]
+  if sect.out < 0 {
+    l.fail("${l.objs[o].path}: relocation into ${sect.seg},${sect.name}")
+    return 0
+  }
+  l.osects[sect.out].addr + sect.off + (a - sect.addr)
+}
+
+// ---------------------------------------------------------------------------
+// Sections
+
+/// The output segment and the place in it of an input section; "" to drop
+/// it.
+fn out_name(seg: Str, name: Str, flags: Int) -> (Str, Str) {
+  if seg == "__LD" || (flags & S_ATTR_DEBUG_FLAG) != 0 || seg == "__DWARF" {
+    return ("", "")
+  }
+  if seg == "__DATA" && name == "__const" {
+    return ("__DATA_CONST", "__const")
+  }
+  (seg, name)
+}
+
+/// The output order of sections in each segment.
+fn sect_rank(seg: Str, name: Str) -> Int {
+  let order = ["__TEXT,__text", "__TEXT,__stubs", "__TEXT,__gcc_except_tab", "__TEXT,__const", "__TEXT,__cstring", "__TEXT,__literal4", "__TEXT,__literal8", "__TEXT,__literal16", "__TEXT,__unwind_info", "__TEXT,__eh_frame", "__DATA_CONST,__got", "__DATA_CONST,__const", "__DATA,__data", "__DATA,__thread_vars", "__DATA,__thread_data", "__DATA,__thread_bss", "__DATA,__bss", "__DATA,__common"]
+  let k = "${seg},${name}"
+  match order.index_of(k) {
+    Some(i) => i * 10
+    // unknown sections after the known ones of their segment
+    None => {
+      if seg == "__TEXT" {
+        95
+      } else if seg == "__DATA_CONST" {
+        115
+      } else {
+        // zerofill must stay last
+        135
+      }
+    }
+  }
+}
+
+fn seg_rank(seg: Str) -> Int {
+  match seg {
+    "__TEXT" => 0
+    "__DATA_CONST" => 1
+    "__DATA" => 2
+    _ => 3
+  }
+}
+
+fn (var l: Linker) osect(seg: Str, name: Str, flags: Int) -> Int {
+  for (i, s) in l.osects.indexed() {
+    if s.seg == seg && s.name == name {
+      return i
+    }
+  }
+  l.osects.push(OSect{seg: seg, name: name, flags: flags})
+  l.osects.len() - 1
+}
+
+/// Puts every live input section in its output section, and makes the
+/// synthetic ones.
+fn (var l: Linker) place() {
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      let (seg, name) = out_name(s.seg, s.name, s.flags)
+      if seg.is_empty() {
+        continue
+      }
+      let oi = l.osect(seg, name, s.flags & 0xffffff00 | (s.flags & 0xff))
+      if s.align > l.osects[oi].align {
+        l.osects[oi].align = s.align
+      }
+      l.osects[oi].chunks.push((o, k))
+      l.objs[o].sects[k].out = oi
+      if (s.flags & 0xff) == S_THREAD_LOCAL_VARIABLES {
+        l.has_tlv = true
+      }
+    }
+  }
+}
+
+/// Collects the stubs and GOT slots the relocations need, and the
+/// compact unwind entries' personalities.
+fn (var l: Linker) scan() {
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for s in l.objs[o].sects {
+      let unwind = s.seg == "__LD" && s.name == "__compact_unwind"
+      if s.out < 0 && !unwind {
+        continue
+      }
+      for r in s.relocs {
+        if !r.ext {
+          continue
+        }
+        let (d, i) = l.def_of(o, r.sym)
+        if d < 0 && i < 0 {
+          l.fail("${l.objs[o].path}: undefined symbol ${bstr(l.objs[o].syms[r.sym].name)}")
+          return
+        }
+        if r.typ == R_BRANCH26 && d < 0 {
+          l.need_stub(i)
+        } else if r.typ == R_GOT_LOAD_PAGE21 || r.typ == R_GOT_LOAD_PAGEOFF12 || r.typ == R_POINTER_TO_GOT {
+          l.need_got(d, i)
+        } else if unwind && r.addr % 32 == 16 {
+          // a personality: reached through the GOT
+          l.need_got(d, i)
+        }
+      }
+    }
+  }
+  if !l.got.is_empty() {
+    l.s_got = l.osect("__DATA_CONST", "__got", S_NON_LAZY_SYMBOL_POINTERS)
+    l.osects[l.s_got].align = 3
+    l.osects[l.s_got].size = 8 * l.got.len()
+  }
+  if !l.stubs.is_empty() {
+    l.s_stubs = l.osect("__TEXT", "__stubs", S_SYMBOL_STUBS + S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
+    l.osects[l.s_stubs].align = 2
+    l.osects[l.s_stubs].size = 12 * l.stubs.len()
+    l.osects[l.s_stubs].reserved2 = 12
+  }
+  // the unwind info: sized from the entries now
+  l.count_unwind()
+  // the order of the output sections
+  l.osects = l.osects
+  var order: List[Int] = []
+  for i in 0..l.osects.len() {
+    order.push(i)
+  }
+  let os = l.osects
+  order = order.sort_by(fn(i: Int) -> Int { seg_rank(os[i].seg) * 1000 + sect_rank(os[i].seg, os[i].name) })
+  // renumber: the input sections and the synthetic indexes follow
+  var newix: List[Int] = []
+  for _ in order {
+    newix.push(0)
+  }
+  var sorted: List[OSect] = []
+  for (k, i) in order.indexed() {
+    newix[i] = k
+    sorted.push(os[i])
+  }
+  l.osects = sorted
+  for o in 0..l.objs.len() {
+    for k in 0..l.objs[o].sects.len() {
+      let out = l.objs[o].sects[k].out
+      if out >= 0 {
+        l.objs[o].sects[k].out = newix[out]
+      }
+    }
+  }
+  l.s_got = if l.s_got >= 0 { newix[l.s_got] } else { -1 }
+  l.s_stubs = if l.s_stubs >= 0 { newix[l.s_stubs] } else { -1 }
+  l.s_unwind = if l.s_unwind >= 0 { newix[l.s_unwind] } else { -1 }
+  for (i, s) in l.osects.indexed() {
+    if s.seg == "__TEXT" && s.name == "__eh_frame" {
+      l.s_eh = i
+    }
+  }
+}
+
+fn (var l: Linker) need_stub(imp: Int) {
+  if l.stub_ix.contains(imp) {
+    return
+  }
+  l.stub_ix.put(imp, l.stubs.len())
+  l.stubs.push(imp)
+  l.need_got(-1, imp)
+}
+
+fn (var l: Linker) need_got(d: Int, i: Int) {
+  if d < 0 {
+    if !l.got_imp.contains(i) {
+      l.got_imp.put(i, l.got.len())
+      l.got.push((i, -1, -1))
+    }
+  } else if !l.got_def.contains((d, i)) {
+    l.got_def.put((d, i), l.got.len())
+    l.got.push((-1, d, i))
+  }
+}
+
+fn (l: Linker) got_addr(d: Int, i: Int) -> Int {
+  let k = if d < 0 { l.got_imp.get(i) ?? 0 } else { l.got_def.get((d, i)) ?? 0 }
+  l.osects[l.s_got].addr + 8 * k
+}
+
+/// Sizes the output sections, then places the segments: __TEXT from the
+/// start of the file (the header first), each segment 16 KiB aligned.
+fn (var l: Linker) layout() {
+  for i in 0..l.osects.len() {
+    if l.osects[i].chunks.is_empty() {
+      continue
+    }
+    var off = 0
+    for (o, k) in l.osects[i].chunks {
+      let s = l.objs[o].sects[k]
+      let al = pow2(s.align)
+      off = (off + al - 1) / al * al
+      l.objs[o].sects[k].off = off
+      off += s.size
+    }
+    l.osects[i].size = off
+  }
+  // segments
+  var names: List[Str] = []
+  for s in l.osects {
+    if !names.contains(s.seg) {
+      names.push(s.seg)
+    }
+  }
+  l.segs = [OSeg{name: "__PAGEZERO", prot: 0}]
+  for n in ["__TEXT", "__DATA_CONST", "__DATA"] {
+    if n == "__TEXT" || names.contains(n) {
+      var g = OSeg{name: n, prot: if n == "__TEXT" { 5 } else { 3 }, flags: if n == "__DATA_CONST" { SG_READ_ONLY } else { 0 }}
+      for (i, s) in l.osects.indexed() {
+        if s.seg == n {
+          g.sects.push(i)
+        }
+      }
+      l.segs.push(g)
+    }
+  }
+  l.segs.push(OSeg{name: "__LINKEDIT", prot: 1})
+  // the header and load commands (sizes only)
+  var ns = 0
+  for g in l.segs {
+    ns += g.sects.len()
+  }
+  var cmds = 72 * l.segs.len() + 80 * ns + 16 + 16 + 24 + 80 + 32 + 24 + 24 + 24 + 16
+  for d in l.opts.dylibs {
+    cmds += align_up(24 + d.len() + 1, 8)
+  }
+  l.cmds_size = cmds
+  var vm = IMAGE_BASE
+  var fo = 0
+  for gi in 1..l.segs.len() - 1 {
+    var g = l.segs[gi]
+    g.vmaddr = vm
+    g.fileoff = fo
+    var a = if g.name == "__TEXT" { 32 + cmds } else { 0 }
+    var filesz = a
+    for i in g.sects {
+      let s = l.osects[i]
+      let al = pow2(s.align)
+      a = (a + al - 1) / al * al
+      l.osects[i].addr = vm + a
+      let zero = (s.flags & 0xff) == S_ZEROFILL || (s.flags & 0xff) == S_THREAD_LOCAL_ZEROFILL
+      l.osects[i].fileoff = if zero { 0 } else { fo + a }
+      a += s.size
+      if !zero {
+        filesz = a
+      }
+      if (s.flags & 0xff) == S_THREAD_LOCAL_REGULAR || (s.flags & 0xff) == S_THREAD_LOCAL_ZEROFILL {
+        if l.tlv_start < 0 {
+          l.tlv_start = vm + (a - s.size)
+        }
+      }
+    }
+    g.vmsize = align_up(a, PAGE)
+    g.filesize = align_up(filesz, PAGE)
+    l.segs[gi] = g
+    vm += g.vmsize
+    fo += g.filesize
+  }
+  let le = l.segs.len() - 1
+  l.segs[le].vmaddr = vm
+  l.segs[le].fileoff = fo
+  l.segs[0].vmsize = IMAGE_BASE
+}
+
+// ---------------------------------------------------------------------------
+// Relocations
+
+/// The instruction word at an offset of an input section.
+fn word_at(s: ISect, off: Int) -> Int {
+  rd32(s.data, off)
+}
+
+fn (var l: Linker) patch(addr: Int, size: Int, value: Int) {
+  l.patches.push(Patch{addr: addr, size: size, value: value})
+}
+
+/// The target of a relocation: the symbol's address (or its stub for a
+/// call to an import), with the addend.
+fn (var l: Linker) target(o: Int, r: IReloc, addend: Int) -> Target {
+  if !r.ext {
+    return Target{addr: l.translate(o, r.sym, addend)}
+  }
+  let (d, i) = l.def_of(o, r.sym)
+  if d < 0 {
+    return Target{imp: i, addr: addend}
+  }
+  Target{addr: l.sym_addr(d, i) + addend}
+}
+
+/// Applies the relocations of every placed input section: patches of
+/// instruction immediates and data words, and fixups for dyld.
+fn (var l: Linker) relocate() {
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.out < 0 || s.relocs.is_empty() {
+        continue
+      }
+      let base = l.osects[s.out].addr + s.off
+      let tvars = (s.flags & 0xff) == S_THREAD_LOCAL_VARIABLES
+      var addend = 0
+      var has_addend = false
+      var sub = Target{}
+      var has_sub = false
+      for r in s.relocs {
+        let p = base + r.addr
+        if r.typ == R_ADDEND {
+          addend = sext24(r.sym)
+          has_addend = true
+          continue
+        }
+        if r.typ == R_SUBTRACTOR {
+          sub = l.target(o, r, 0)
+          has_sub = true
+          continue
+        }
+        let ins = if r.len == 2 { word_at(s, r.addr) } else { 0 }
+        if r.typ == R_UNSIGNED {
+          let content = if r.len == 3 { rd64(s.data, r.addr) } else { sext32(rd32(s.data, r.addr)) }
+          let t = l.target(o, r, if r.ext { content } else { content })
+          if has_sub {
+            if t.imp >= 0 || sub.imp >= 0 {
+              l.fail("${l.objs[o].path}: a difference with an import")
+              return
+            }
+            // ext: S - B + content; the non extern target holds the content already
+            let v = if r.ext { t.addr - sub.addr } else { t.addr - sub.addr }
+            l.patch(p, if r.len == 3 { 8 } else { 4 }, v)
+            has_sub = false
+          } else if tvars && r.addr % 24 == 16 {
+            // a descriptor's offset in the thread local template
+            l.patch(p, 8, t.addr - l.tlv_start)
+          } else {
+            if r.len != 3 {
+              l.fail("${l.objs[o].path}: a 32 bit absolute pointer in ${s.seg},${s.name}")
+              return
+            }
+            if t.imp >= 0 {
+              l.fixups.push(Fixup{addr: p, bind: true, target: t.imp, addend: t.addr})
+            } else {
+              l.fixups.push(Fixup{addr: p, bind: false, target: t.addr})
+            }
+          }
+        } else if r.typ == R_BRANCH26 {
+          var t = l.target(o, r, if has_addend { addend } else { 0 })
+          var dest = t.addr
+          if t.imp >= 0 {
+            dest = l.osects[l.s_stubs].addr + 12 * (l.stub_ix.get(t.imp) ?? 0)
+          }
+          let d = dest - p
+          if d < -134217728 || d >= 134217728 {
+            l.fail("${l.objs[o].path}: branch out of range")
+            return
+          }
+          l.patch(p, 4, (ins & 0xfc000000) | ((d / 4) & 0x3ffffff))
+        } else if r.typ == R_PAGE21 || r.typ == R_GOT_LOAD_PAGE21 || r.typ == R_TLVP_LOAD_PAGE21 {
+          var dest = 0
+          let t = l.target(o, r, if has_addend { addend } else { 0 })
+          if r.typ == R_GOT_LOAD_PAGE21 {
+            let (d, i) = l.def_of(o, r.sym)
+            dest = l.got_addr(d, i)
+          } else {
+            if t.imp >= 0 {
+              l.fail("${l.objs[o].path}: a page reference to the import ${bstr(l.imports[t.imp])}")
+              return
+            }
+            dest = t.addr
+          }
+          let delta = (dest >> 12) - (p >> 12)
+          if delta < -1048576 || delta >= 1048576 {
+            l.fail("${l.objs[o].path}: adrp out of range")
+            return
+          }
+          let imm = delta & 0x1fffff
+          l.patch(p, 4, (ins & 0x9f00001f) | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32))
+        } else if r.typ == R_PAGEOFF12 || r.typ == R_GOT_LOAD_PAGEOFF12 || r.typ == R_TLVP_LOAD_PAGEOFF12 {
+          var dest = 0
+          let t = l.target(o, r, if has_addend { addend } else { 0 })
+          var w = ins
+          if r.typ == R_GOT_LOAD_PAGEOFF12 {
+            let (d, i) = l.def_of(o, r.sym)
+            dest = l.got_addr(d, i)
+          } else {
+            if t.imp >= 0 {
+              l.fail("${l.objs[o].path}: a page offset of the import ${bstr(l.imports[t.imp])}")
+              return
+            }
+            dest = t.addr
+            if r.typ == R_TLVP_LOAD_PAGEOFF12 {
+              // the descriptor is in the image: ldr xd, [xn, #off] becomes
+              // add xd, xn, #off
+              if (w & 0xffc00000) != 0xf9400000 {
+                l.fail("${l.objs[o].path}: a TLV load that is not an ldr")
+                return
+              }
+              w = 0x91000000 | (w & 0x3ff)
+            }
+          }
+          let lo = dest & 0xfff
+          var scale = 0
+          if (w & 0x3b000000) == 0x39000000 {
+            // a load or store with an unsigned offset: scaled by its size
+            scale = (w >> 30) & 3
+            if (w & 0x04800000) == 0x04800000 {
+              scale = 4
+            }
+          }
+          if lo % pow2(scale) != 0 {
+            l.fail("${l.objs[o].path}: misaligned page offset for a ${pow2(scale)} byte access")
+            return
+          }
+          l.patch(p, 4, (w & 0xffc003ff) | ((lo >> scale) * 0x400))
+        } else if r.typ == R_POINTER_TO_GOT {
+          let (d, i) = l.def_of(o, r.sym)
+          let g = l.got_addr(d, i)
+          if r.pcrel && r.len == 2 {
+            l.patch(p, 4, (g - p) & 0xffffffff)
+          } else if !r.pcrel && r.len == 3 {
+            l.fixups.push(Fixup{addr: p, bind: false, target: g})
+          } else {
+            l.fail("${l.objs[o].path}: ARM64_RELOC_POINTER_TO_GOT of length ${r.len}")
+            return
+          }
+        } else {
+          l.fail("${l.objs[o].path}: relocation type ${r.typ} in ${s.seg},${s.name}")
+          return
+        }
+        has_addend = false
+      }
+    }
+  }
+  // the GOT: rebases of defined symbols, binds of imports
+  for (k, (imp, d, i)) in l.got.indexed() {
+    let a = l.osects[l.s_got].addr + 8 * k
+    if imp >= 0 {
+      l.fixups.push(Fixup{addr: a, bind: true, target: imp})
+    } else {
+      l.fixups.push(Fixup{addr: a, bind: false, target: l.sym_addr(d, i)})
+    }
+  }
+  // the stubs: adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
+  if l.s_stubs >= 0 {
+    var o = new_out(12 * l.stubs.len())
+    for (k, imp) in l.stubs.indexed() {
+      let p = l.osects[l.s_stubs].addr + 12 * k
+      let g = l.got_addr(-1, imp)
+      let delta = ((g >> 12) - (p >> 12)) & 0x1fffff
+      o.u32(0x90000010 | ((delta & 3) * 0x20000000) | ((delta >> 2) * 32))
+      o.u32(0xf9400210 | (((g & 0xfff) / 8) * 0x400))
+      o.u32(0xd61f0200)
+    }
+    l.osects[l.s_stubs].synth = o.done()
+  }
+}
+
+/// A 24 bit field as a signed Int.
+fn sext24(v: Int) -> Int {
+  if v >= 8388608 { v - 16777216 } else { v }
+}
+
+// ---------------------------------------------------------------------------
+// Contents
+
+/// Builds the bytes of every output section with the patches and the
+/// chained fixups applied, then the unwind info.
+fn (var l: Linker) synthesize() {
+  l.chain_fixups()
+  let ps = l.patches.sort_by(fn(p: Patch) -> Int { p.addr })
+  var pi = 0
+  for i in 0..l.osects.len() {
+    let s = l.osects[i]
+    let zero = (s.flags & 0xff) == S_ZEROFILL || (s.flags & 0xff) == S_THREAD_LOCAL_ZEROFILL
+    if zero || i == l.s_unwind {
+      continue
+    }
+    var o = new_out(s.size)
+    // the pieces of the section: chunks, or the synthetic contents
+    var pieces: List[(Int, Bytes)] = []
+    if s.chunks.is_empty() {
+      pieces.push((0, s.synth))
+    } else {
+      for (ob, k) in s.chunks {
+        pieces.push((l.objs[ob].sects[k].off, l.objs[ob].sects[k].data))
+      }
+    }
+    if i == l.s_got {
+      pieces = [(0, zeros(s.size))]
+    }
+    while pi < ps.len() && ps[pi].addr < s.addr {
+      pi += 1
+    }
+    for (off, data) in pieces {
+      o.zeros(off - o.n)
+      let base = s.addr + off
+      var at = 0
+      while pi < ps.len() && ps[pi].addr < base + data.len() {
+        let p = ps[pi]
+        let rel = p.addr - base
+        if rel < at {
+          l.fail("overlapping patches at ${p.addr}")
+          return
+        }
+        o.bytes(data[at..rel])
+        o.le(p.value, p.size)
+        at = rel + p.size
+        pi += 1
+      }
+      o.bytes(data[at..])
+    }
+    o.zeros(s.size - o.n)
+    l.osects[i].bytes = o.done()
+  }
+  if l.s_unwind >= 0 {
+    l.unwind_info()
+  }
+}
+
+fn zeros(n: Int) -> Bytes {
+  var o = new_out(n)
+  o.zeros(n)
+  o.done()
+}
+
+/// The chained fixups as patches: each pointer holds its target and the
+/// distance to the next fixup of its page.
+fn (var l: Linker) chain_fixups() {
+  let fs = l.fixups.sort_by(fn(f: Fixup) -> Int { f.addr })
+  l.fixups = fs
+  for (k, f) in fs.indexed() {
+    if f.addr % 8 != 0 {
+      l.fail("a pointer at ${f.addr} is not 8 byte aligned")
+      return
+    }
+    var next = 0
+    if k + 1 < fs.len() {
+      let n = fs[k + 1]
+      if n.addr / PAGE == f.addr / PAGE && l.seg_of(n.addr) == l.seg_of(f.addr) {
+        next = (n.addr - f.addr) / 4
+      }
+    }
+    var v = 0
+    if f.bind {
+      if f.addend < 0 || f.addend > 255 {
+        l.fail("a bind addend of ${f.addend}")
+        return
+      }
+      v = f.target | (f.addend * 16777216) | shl(next, 51) | MIN_INT
+    } else {
+      v = (f.target - IMAGE_BASE) | shl(next, 51)
+    }
+    l.patch(f.addr, 8, v)
+  }
+}
+
+fn (l: Linker) seg_of(addr: Int) -> Int {
+  for (i, g) in l.segs.indexed() {
+    if addr >= g.vmaddr && addr < g.vmaddr + g.vmsize {
+      return i
+    }
+  }
+  -1
+}
+
+// ---------------------------------------------------------------------------
+// The file
+
+/// The executable: the segments' contents, then __LINKEDIT (chained
+/// fixups, exports trie, symbols, indirect symbols, names, signature).
+fn (var l: Linker) write() -> Bytes {
+  // __LINKEDIT
+  let le = l.segs.len() - 1
+  let le_off = l.segs[le].fileoff
+  var link = new_out(4096)
+  let fixups = l.fixups_blob()
+  let fixups_off = le_off
+  link.bytes(fixups)
+  link.pad(8)
+  let trie_off = le_off + link.n
+  let trie = exports_trie()
+  link.bytes(trie)
+  link.pad(8)
+  // symbols: locals, the defined externals, the imports
+  let (symtab, strtab, nloc, next, nund, indirect) = l.symbols()
+  let sym_off = le_off + link.n
+  link.bytes(symtab)
+  let ind_off = le_off + link.n
+  link.bytes(indirect)
+  let str_off = le_off + link.n
+  link.bytes(strtab)
+  link.pad(16)
+  let sig_off = le_off + link.n
+  let sig_size = signature_size(sig_off, l.opts.name)
+  let link_bytes = link.done()
+  l.segs[le].filesize = link_bytes.len() + sig_size
+  l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
+
+  // the contents of the segments before __LINKEDIT
+  var body = new_out(le_off + link_bytes.len())
+  for gi in 1..le {
+    let g = l.segs[gi]
+    for i in g.sects {
+      let s = l.osects[i]
+      if s.fileoff == 0 {
+        continue
+      }
+      body.zeros(s.fileoff - (body.n + 0))
+      body.bytes(s.bytes)
+    }
+    body.zeros(g.fileoff + g.filesize - body.n)
+  }
+  body.bytes(link_bytes)
+  let rest = body.done()
+  // the UUID: a hash of everything but the header
+  let uuid = crypto.sha256(rest)[0..16]
+
+  var h = new_out(32 + l.cmds_size)
+  var flags = MH_NOUNDEFS + MH_DYLDLINK + MH_TWOLEVEL + MH_PIE
+  if l.has_tlv {
+    flags += MH_HAS_TLV_DESCRIPTORS
+  }
+  let ncmds = l.segs.len() + 9 + l.opts.dylibs.len()
+  h.u32(MH_MAGIC_64)
+  h.u32(CPU_TYPE_ARM64)
+  h.u32(0)
+  h.u32(MH_EXECUTE)
+  h.u32(ncmds)
+  h.u32(l.cmds_size)
+  h.u32(flags)
+  h.u32(0)
+  for g in l.segs {
+    h.u32(LC_SEGMENT_64)
+    h.u32(72 + 80 * g.sects.len())
+    h.name(g.name, 16)
+    h.u64(g.vmaddr)
+    h.u64(g.vmsize)
+    h.u64(g.fileoff)
+    h.u64(g.filesize)
+    h.u32(if g.name == "__PAGEZERO" { 0 } else if g.name == "__TEXT" { 5 } else if g.name == "__LINKEDIT" { 1 } else { 3 })
+    h.u32(g.prot)
+    h.u32(g.sects.len())
+    h.u32(g.flags)
+    for i in g.sects {
+      let s = l.osects[i]
+      h.name(s.name, 16)
+      h.name(s.seg, 16)
+      h.u64(s.addr)
+      h.u64(s.size)
+      h.u32(s.fileoff)
+      h.u32(s.align)
+      h.u32(0)
+      h.u32(0)
+      h.u32(s.flags)
+      h.u32(s.reserved1)
+      h.u32(s.reserved2)
+      h.u32(0)
+    }
+  }
+  h.u32(LC_DYLD_CHAINED_FIXUPS)
+  h.u32(16)
+  h.u32(fixups_off)
+  h.u32(fixups.len())
+  h.u32(LC_DYLD_EXPORTS_TRIE)
+  h.u32(16)
+  h.u32(trie_off)
+  h.u32(trie.len())
+  h.u32(LC_SYMTAB)
+  h.u32(24)
+  h.u32(sym_off)
+  h.u32(symtab.len() / 16)
+  h.u32(str_off)
+  h.u32(strtab.len())
+  h.u32(LC_DYSYMTAB)
+  h.u32(80)
+  h.u32(0)
+  h.u32(nloc)
+  h.u32(nloc)
+  h.u32(next)
+  h.u32(nloc + next)
+  h.u32(nund)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  h.u32(ind_off)
+  h.u32(indirect.len() / 4)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  h.u32(0)
+  // LC_LOAD_DYLINKER
+  h.u32(LC_LOAD_DYLINKER)
+  h.u32(32)
+  h.u32(12)
+  h.name("/usr/lib/dyld", 20)
+  // LC_UUID
+  h.u32(LC_UUID)
+  h.u32(24)
+  h.bytes(uuid)
+  // LC_BUILD_VERSION: macOS, no tools
+  h.u32(LC_BUILD_VERSION)
+  h.u32(24)
+  h.u32(1)
+  let (mj, mn) = l.opts.minos
+  h.u32(mj * 65536 + mn * 256)
+  let (sj, sn) = l.opts.sdk
+  h.u32(sj * 65536 + sn * 256)
+  h.u32(0)
+  // LC_MAIN
+  h.u32(LC_MAIN)
+  h.u32(24)
+  let entry = match l.globals.get(l.opts.entry.bytes()) {
+    Some((o, i)) => l.sym_addr(o, i) - IMAGE_BASE
+    None => {
+      l.fail("undefined entry point ${l.opts.entry}")
+      0
+    }
+  }
+  h.u64(entry)
+  h.u64(0)
+  // LC_LOAD_DYLIB of each dylib
+  for d in l.opts.dylibs {
+    let size = align_up(24 + d.len() + 1, 8)
+    h.u32(LC_LOAD_DYLIB)
+    h.u32(size)
+    h.u32(24)
+    h.u32(2)
+    // the current and compatibility versions: any current version
+    // works, 1.0.0 is the compatibility version of every system dylib
+    h.u32(if d.contains("libSystem") { 1356 * 65536 } else { 65536 })
+    h.u32(65536)
+    h.name(d, size - 24)
+  }
+  // LC_CODE_SIGNATURE
+  h.u32(LC_CODE_SIGNATURE)
+  h.u32(16)
+  h.u32(sig_off)
+  h.u32(sig_size)
+  if h.n != 32 + l.cmds_size {
+    l.fail("internal: load commands are ${h.n - 32} bytes, expected ${l.cmds_size}")
+    return "".bytes()
+  }
+  // the header and load commands fill the start of __TEXT's first page
+  let head = h.done()
+  let file = head + rest[head.len()..]
+  let text = l.segs[1]
+  file + code_signature(file, l.opts.name, text.fileoff, text.filesize)
+}
+
+/// The exports trie: __mh_execute_header at offset 0.
+fn exports_trie() -> Bytes {
+  var o = new_out(32)
+  // root: no terminal, one edge
+  o.u8(0)
+  o.u8(1)
+  o.bytes("__mh_execute_header".bytes())
+  o.u8(0)
+  o.uleb(23)
+  // the node: terminal (flags 0, address 0), no children
+  o.u8(2)
+  o.u8(0)
+  o.u8(0)
+  o.u8(0)
+  o.pad(8)
+  o.done()
+}
+
+/// The symbol table (local functions and data, the defined externals and
+/// __mh_execute_header, the imports), its names, the counts, and the
+/// indirect symbol table of __stubs and __got.
+fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
+  var locs: List[(Bytes, Int, Int)] = []
+  var exts: List[(Bytes, Int, Int)] = []
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for (i, s) in l.objs[o].syms.indexed() {
+      if !is_defined(s) || (s.typ & N_TYPE) != N_SECT || s.name.is_empty() {
+        continue
+      }
+      let c = s.name[0]
+      if c == 'l' || c == 'L' {
+        continue
+      }
+      let sect = l.objs[o].sects[s.sect - 1]
+      if sect.out < 0 {
+        continue
+      }
+      let a = l.sym_addr(o, i)
+      if is_ext(s) && (s.typ & N_PEXT) == 0 {
+        if l.globals.get(s.name) == Some((o, i)) {
+          exts.push((s.name, sect.out + 1, a))
+        }
+      } else {
+        locs.push((s.name, sect.out + 1, a))
+      }
+    }
+  }
+  exts.push(("__mh_execute_header".bytes(), 1, IMAGE_BASE))
+  exts = exts.sort_by(fn(e: (Bytes, Int, Int)) -> Str { bstr(e.0) })
+  var st = new_out(16 * (locs.len() + exts.len() + l.imports.len()))
+  var names = new_out(64 * (locs.len() + exts.len() + l.imports.len()))
+  names.u8(32)
+  names.u8(0)
+  for (n, sect, a) in locs {
+    st.u32(names.n)
+    names.bytes(n)
+    names.u8(0)
+    st.u8(N_SECT)
+    st.u8(sect)
+    st.u16(0)
+    st.u64(a)
+  }
+  for (n, sect, a) in exts {
+    st.u32(names.n)
+    names.bytes(n)
+    names.u8(0)
+    st.u8(N_SECT | N_EXT)
+    st.u8(sect)
+    st.u16(if bstr(n) == "__mh_execute_header" { REFERENCED_DYNAMICALLY } else { 0 })
+    st.u64(a)
+  }
+  let flat = l.opts.dylibs.len() > 1
+  for n in l.imports {
+    st.u32(names.n)
+    names.bytes(n)
+    names.u8(0)
+    st.u8(N_EXT)
+    st.u8(0)
+    // the library ordinal in the high byte (flat lookup: 0xfe)
+    st.u16(if flat { 0xfe00 } else { 0x100 })
+    st.u64(0)
+  }
+  names.pad(8)
+  let undef0 = locs.len() + exts.len()
+  // the indirect symbols: the stubs, then the GOT slots
+  var ind = new_out(4 * (l.stubs.len() + l.got.len()))
+  if l.s_stubs >= 0 {
+    l.osects[l.s_stubs].reserved1 = 0
+    for imp in l.stubs {
+      ind.u32(undef0 + imp)
+    }
+  }
+  if l.s_got >= 0 {
+    l.osects[l.s_got].reserved1 = l.stubs.len()
+    for (imp, _, _) in l.got {
+      ind.u32(if imp >= 0 { undef0 + imp } else { INDIRECT_SYMBOL_LOCAL })
+    }
+  }
+  (st.done(), names.done(), locs.len(), exts.len(), l.imports.len(), ind.done())
+}
+
+/// LC_DYLD_CHAINED_FIXUPS: the header, the starts of each segment's
+/// pages, the imports, and their names.
+fn (l: Linker) fixups_blob() -> Bytes {
+  // the starts in image: one entry per segment
+  var starts = new_out(256)
+  let nseg = l.segs.len()
+  starts.u32(nseg)
+  var seg_infos: List[Bytes] = []
+  var offs: List[Int] = []
+  var at = 4 + 4 * nseg
+  for (gi, g) in l.segs.indexed() {
+    var fs: List[Fixup] = []
+    for f in l.fixups {
+      if f.addr >= g.vmaddr && f.addr < g.vmaddr + g.vmsize && gi > 0 {
+        fs.push(f)
+      }
+    }
+    if fs.is_empty() {
+      offs.push(0)
+      continue
+    }
+    let pages = g.vmsize / PAGE
+    var firsts: List[Int] = []
+    for _ in 0..pages {
+      firsts.push(0xffff)
+    }
+    for f in fs {
+      let pg = (f.addr - g.vmaddr) / PAGE
+      if firsts[pg] == 0xffff {
+        firsts[pg] = (f.addr - g.vmaddr) % PAGE
+      }
+    }
+    at = align_up(at, 8)
+    offs.push(at)
+    var si = new_out(24 + 2 * pages)
+    si.u32(22 + 2 * pages)
+    si.u16(PAGE)
+    // DYLD_CHAINED_PTR_64_OFFSET
+    si.u16(6)
+    si.u64(g.vmaddr - IMAGE_BASE)
+    si.u32(0)
+    si.u16(pages)
+    for f in firsts {
+      si.u16(f)
+    }
+    let b = si.done()
+    seg_infos.push(b)
+    at += b.len()
+  }
+  for x in offs {
+    starts.u32(x)
+  }
+  var pos = 4 + 4 * nseg
+  var k = 0
+  for x in offs {
+    if x == 0 {
+      continue
+    }
+    starts.zeros(x - pos)
+    starts.bytes(seg_infos[k])
+    pos = x + seg_infos[k].len()
+    k += 1
+  }
+  let sb = starts.done()
+  // the imports and their names
+  let flat = l.opts.dylibs.len() > 1
+  var imps = new_out(4 * l.imports.len())
+  var names = new_out(32 * l.imports.len())
+  names.u8(0)
+  for n in l.imports {
+    let ord = if flat { 0xfe } else { 1 }
+    imps.u32(ord | (names.n * 512))
+    names.bytes(n)
+    names.u8(0)
+  }
+  let ib = imps.done()
+  let nb = names.done()
+  var o = new_out(32 + sb.len() + ib.len() + nb.len())
+  let starts_off = 32
+  let imports_off = align_up(starts_off + sb.len(), 4)
+  let symbols_off = imports_off + ib.len()
+  o.u32(0)
+  o.u32(starts_off)
+  o.u32(imports_off)
+  o.u32(symbols_off)
+  o.u32(l.imports.len())
+  // DYLD_CHAINED_IMPORT, uncompressed names
+  o.u32(1)
+  o.u32(0)
+  o.zeros(starts_off - o.n)
+  o.bytes(sb)
+  o.zeros(imports_off - o.n)
+  o.bytes(ib)
+  o.bytes(nb)
+  o.pad(8)
+  o.done()
+}

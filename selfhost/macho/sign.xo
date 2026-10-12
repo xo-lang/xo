@@ -1,0 +1,72 @@
+// The ad hoc code signature macOS requires of arm64 executables, in the
+// format of Go's linker (cmd/internal/codesign): an embedded signature
+// SuperBlob holding one CodeDirectory, the SHA-256 of every 4 KiB page of
+// the file before the signature, no requirements, no entitlements. All
+// fields are big endian.
+
+use std/crypto
+
+const CS_PAGE_BITS = 12
+const CS_PAGE = 4096
+const CSMAGIC_EMBEDDED_SIGNATURE = 0xfade0cc0
+const CSMAGIC_CODEDIRECTORY = 0xfade0c02
+const CS_CODEDIRECTORY_SIZE = 88
+const CS_SUPERBLOB_SIZE = 12
+const CS_BLOB_SIZE = 8
+
+/// The size of the signature of a file of code_size bytes.
+fn signature_size(code_size: Int, id: Str) -> Int {
+  let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
+  let hash_off = CS_CODEDIRECTORY_SIZE + id.len() + 1
+  CS_SUPERBLOB_SIZE + CS_BLOB_SIZE + hash_off + nhashes * 32
+}
+
+/// The signature of data (the whole file before it): flags adhoc and
+/// linker signed, the executable segment (__TEXT) of a main binary.
+fn code_signature(data: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes {
+  let code_size = data.len()
+  let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
+  let id_off = CS_CODEDIRECTORY_SIZE
+  let hash_off = id_off + id.len() + 1
+  let size = signature_size(code_size, id)
+  var o = new_out(size)
+  // SuperBlob, one blob index entry
+  o.be32(CSMAGIC_EMBEDDED_SIGNATURE)
+  o.be32(size)
+  o.be32(1)
+  o.be32(0)
+  o.be32(CS_SUPERBLOB_SIZE + CS_BLOB_SIZE)
+  // CodeDirectory
+  o.be32(CSMAGIC_CODEDIRECTORY)
+  o.be32(size - CS_SUPERBLOB_SIZE - CS_BLOB_SIZE)
+  o.be32(0x20400)
+  o.be32(0x20002)
+  o.be32(hash_off)
+  o.be32(id_off)
+  o.be32(0)
+  o.be32(nhashes)
+  o.be32(code_size)
+  // hash size, type SHA-256, pad, page size
+  o.u8(32)
+  o.u8(2)
+  o.u8(0)
+  o.u8(CS_PAGE_BITS)
+  o.be32(0)
+  o.be32(0)
+  o.be32(0)
+  o.be32(0)
+  o.be64(0)
+  o.be64(text_off)
+  o.be64(text_size)
+  // CS_EXECSEG_MAIN_BINARY
+  o.be64(1)
+  o.bytes(id.bytes())
+  o.u8(0)
+  var p = 0
+  while p < code_size {
+    let end = imin(code_size, p + CS_PAGE)
+    o.bytes(crypto.sha256(data[p..end]))
+    p = end
+  }
+  o.done()
+}

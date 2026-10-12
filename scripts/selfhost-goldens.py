@@ -6,7 +6,9 @@
 # with `<compiler> build`, runs it with XO_LEAKCHECK=1, and compares
 # (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
 # XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_FLAGS: more
-# flags for `<compiler> build`, split at spaces, such as --as=macho).
+# flags for `<compiler> build`, split at spaces, such as --ld=macho;
+# XO1_PATH: the PATH of `<compiler> build` alone, such as /nonexistent to
+# show a build needs no external tool, decision 0182).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -59,7 +61,10 @@ def run(bin, d):
 def one(d, want_fn):
     name = d.replace('/', '_')
     bin = os.path.join(out, name)
-    b = subprocess.run([comp, 'build', '--std=' + os.path.join(root, 'std')] + os.environ.get('XO1_FLAGS', '').split() + ['-o', bin, d], capture_output=True, text=True)
+    benv = dict(os.environ)
+    if 'XO1_PATH' in os.environ:
+        benv['PATH'] = os.environ['XO1_PATH']
+    b = subprocess.run([comp, 'build', '--std=' + os.path.join(root, 'std')] + os.environ.get('XO1_FLAGS', '').split() + ['-o', bin, d], capture_output=True, text=True, env=benv)
     if b.returncode != 0:
         return d, 'build: ' + (b.stderr.strip().split('\n') or [''])[-1][:200]
     got, leak = run(bin, d)

@@ -211,7 +211,9 @@ fn bstr(b: Bytes) -> Str {
 }
 
 fn (var a: Asm) parse(src: Bytes) {
-  // the default section, as the assembler starts in __TEXT,__text
+  // the assembler starts in __TEXT,__text, which is always the first
+  // section
+  a.switch_section("__TEXT", "__text", S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
   var i = 0
   let n = src.len()
   while i < n && a.err.is_empty() {
@@ -856,6 +858,13 @@ fn (var a: Asm) emit_data(si: Int) {
         var v = 0
         if x < 0 && y < 0 {
           v = k
+        } else if y < 0 {
+          // a pointer: ARM64_RELOC_UNSIGNED, the addend in the contents
+          if n != 8 {
+            a.fail("a ${n} byte pointer to ${bstr(a.syms[x].name)}")
+            return
+          }
+          v = k + a.pointer_reloc(si, off, x)
         } else {
           match a.rel_value(x, y, k) {
             Some(r) => v = r
@@ -951,6 +960,28 @@ fn (var a: Asm) apply_fixes() {
     }
     a.sects[f.sect].words[f.at] = w
   }
+}
+
+/// The relocation of a pointer at off of a data section to sym: the
+/// symbol, or a temporary label's atom with the label's offset from it
+/// returned as the addend (a literal section's label stays a symbol).
+fn (var a: Asm) pointer_reloc(si: Int, off: Int, sym: Int) -> Int {
+  let s = a.syms[sym]
+  var target = sym
+  var addend = 0
+  if s.temp {
+    if s.sect < 0 {
+      a.fail("${bstr(s.name)} is not defined")
+      return 0
+    }
+    if (a.sects[s.sect].flags & 0xff) != S_CSTRING_LITERALS {
+      target = if s.atom >= 0 { s.atom } else { a.sects[s.sect].ltmp }
+      addend = s.off - a.syms[target].off
+    }
+  }
+  a.syms[target].used = true
+  a.sects[si].relocs.push(Reloc{addr: off, typ: R_UNSIGNED, pcrel: false, len: 3, sym: target})
+  addend
 }
 
 /// A relocation of the word at pc to sym: a temporary label becomes its
