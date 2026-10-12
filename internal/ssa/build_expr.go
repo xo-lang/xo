@@ -298,6 +298,10 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			// os.fs: the filesystem root, no mode (decision 0102)
 			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""), s.cint(0))
 		}
+		if isLists(t) {
+			// os.proc, os.env: no attenuation (decision 0172)
+			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""))
+		}
 		return s.add(OpCap, t, x.Sel.Name, v)
 	}
 	if i, ft := s.fieldIndex(v.Type, x.Sel.Name); i >= 0 {

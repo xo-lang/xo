@@ -90,6 +90,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		if v, ok := s.memFsCall(x, ci); ok {
 			return v
 		}
+		if nativeWaits(ci.Fn) {
+			b.needConc = true
+			if !b.conc {
+				return s.undef(s.natOf(x))
+			}
+		}
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}

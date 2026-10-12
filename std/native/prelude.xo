@@ -863,7 +863,10 @@ fn rand_shuffle[T](r: Rand, xs: List[T]) -> List[T] {
 // ---------------------------------------------------------------------------
 // Proc (std.md 3.7, decision 0107)
 
-fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+  if !cap_admits(rt.proc_lists(p), cmd) {
+    return Err(ProcErr.Denied(cmd))
+  }
   let r = rt.proc_run(cmd, args)
   let st = r.get(0) ?? "2"
   let detail = r.get(1) ?? ""
@@ -878,6 +881,313 @@ fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   }
   ProcOutput { code: rt.int_parse(detail), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
 }
+
+// ---------------------------------------------------------------------------
+// Attenuation (std.md 3.5 and 3.7, decisions 0156 and 0172): std/rt
+// attenuate.go. A Proc or Env is the lists of its attenuations in one Str:
+// each list is \u{1} and then its names, each followed by \u{0}; "" has
+// none. Every list must admit a name.
+
+fn cap_lists_add(lists: Str, names: List[Str]) -> Str {
+  var b = lists + "\u{1}"
+  for n in names {
+    b = b + n + "\u{0}"
+  }
+  b
+}
+
+fn cap_admits(lists: Str, name: Str) -> Bool {
+  if lists == "" {
+    return true
+  }
+  let want = "\u{0}" + name + "\u{0}"
+  var first = true
+  for l in lists.split("\u{1}") {
+    if first {
+      first = false
+      continue
+    }
+    if !("\u{0}" + l).contains(want) {
+      return false
+    }
+  }
+  true
+}
+
+fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
+
+fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
+
+fn env_get(e: Env, name: Str) -> Str? uses env {
+  if !cap_admits(rt.env_lists(e), name) {
+    return None
+  }
+  rt.env_get(name).get(0)
+}
+
+fn env_vars(e: Env) -> Map[Str, Str] uses env {
+  let lists = rt.env_lists(e)
+  var m: Map[Str, Str] = {}
+  for kv in rt.env_vars() {
+    var k = kv
+    var v = ""
+    match kv.find("=") {
+      Some(i) => {
+        k = kv[0..i]
+        v = kv[i + 1..]
+      }
+      None => ()
+    }
+    if cap_admits(lists, k) {
+      m.put(k, v)
+    }
+  }
+  m
+}
+
+/// os.UserHomeDir: $HOME, or Missing("HOME").
+fn env_home(e: Env) -> Str ! EnvErr uses env {
+  match env_get(e, "HOME") {
+    Some(h) => {
+      if h != "" {
+        return h
+      }
+    }
+    None => ()
+  }
+  Err(EnvErr.Missing(name: "HOME"))
+}
+
+// ---------------------------------------------------------------------------
+// Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172):
+// std/rt proccmd.go. A Cmd is a value that remembers the attenuation of
+// the Proc that made it; a Child is a handle of the C runtime
+// (std/llrt/xo_proc.c).
+
+struct Cmd {
+  lists: Str
+  name: Str
+  args: List[Str]
+  dir: Str
+  env: List[Str]
+  env_set: Bool
+  extra: List[Str]
+  input: Bytes
+  has_input: Bool
+  inherit: Bool
+  merge: Bool
+}
+
+struct Child {
+  h: rt.ProcChild
+}
+
+fn proc_cmd(p: Proc, name: Str, args: List[Str] = []) -> Cmd {
+  Cmd{lists: rt.proc_lists(p), name: name, args: args, dir: "", env: [], env_set: false, extra: [], input: b"", has_input: false, inherit: false, merge: false}
+}
+
+fn cmd_dir(c: Cmd, path: Str) -> Cmd {
+  var x = c
+  x.dir = path
+  x
+}
+
+/// The child's environment is exactly the variables e shows now.
+fn cmd_env(c: Cmd, e: Env) -> Cmd uses env {
+  var x = c
+  var env: List[Str] = []
+  for (k, v) in e.vars().entries() {
+    env.push(k + "=" + v)
+  }
+  x.env = env
+  x.env_set = true
+  x
+}
+
+fn cmd_set_env(c: Cmd, name: Str, value: Str) -> Cmd {
+  var x = c
+  x.extra.push(name + "=" + value)
+  x
+}
+
+fn cmd_stdin(c: Cmd, data: Bytes) -> Cmd {
+  var x = c
+  x.input = data
+  x.has_input = true
+  x
+}
+
+fn cmd_inherit(c: Cmd) -> Cmd {
+  var x = c
+  x.inherit = true
+  x
+}
+
+fn cmd_merge_stderr(c: Cmd) -> Cmd {
+  var x = c
+  x.merge = true
+  x
+}
+
+/// The spec of c for the runtime (std/native/rt.xo proc_exec), appended
+/// to out.
+fn cmd_spec(c: Cmd, var out: List[Str]) {
+  var flags = 0
+  if c.env_set {
+    flags = flags | 1
+  }
+  if c.inherit {
+    flags = flags | 2
+  }
+  if c.merge {
+    flags = flags | 4
+  }
+  out.push(c.name)
+  out.push(c.dir)
+  out.push("${flags}")
+  out.push("${c.args.len()}")
+  for a in c.args {
+    out.push(a)
+  }
+  out.push("${c.env.len()}")
+  for kv in c.env {
+    out.push(kv)
+  }
+  out.push("${c.extra.len()}")
+  for kv in c.extra {
+    out.push(kv)
+  }
+}
+
+/// The ProcErr of a failed outcome (status st, detail d).
+fn proc_err(st: Str, d: Str) -> ProcErr {
+  match st {
+    "1" => ProcErr.NotFound(d)
+    "2" => ProcErr.Io(d)
+    _ => ProcErr.Canceled
+  }
+}
+
+fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
+  let st = r.get(0) ?? "2"
+  let d = r.get(1) ?? ""
+  if st != "0" {
+    return Err(proc_err(st, d))
+  }
+  ProcOutput{code: rt.int_parse(d), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
+}
+
+/// Denied or Canceled before c runs (std/rt Cmd.M_output).
+fn cmd_check(c: Cmd) -> () ! ProcErr {
+  if !cap_admits(c.lists, c.name) {
+    return Err(ProcErr.Denied(c.name))
+  }
+  if rt.fs_canceled() {
+    return Err(ProcErr.Canceled)
+  }
+}
+
+fn cmd_output(c: Cmd) -> ProcOutput ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 0))
+}
+
+fn cmd_run(c: Cmd) -> Int ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  let out = proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 1))?
+  out.code
+}
+
+fn cmd_spawn(c: Cmd) -> Child ! ProcErr uses proc {
+  cmd_check(c)?
+  var spec: List[Str] = []
+  cmd_spec(c, spec)
+  let h = rt.proc_spawn(spec, c.input, c.has_input)
+  let r = rt.proc_child_start(h)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Child{h: h}
+}
+
+fn proc_pipeline(p: Proc, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc {
+  let lists = rt.proc_lists(p)
+  for c in cmds {
+    if !cap_admits(lists, c.name) {
+      return Err(ProcErr.Denied(c.name))
+    }
+  }
+  if cmds.is_empty() {
+    return ProcOutput{code: 0, stdout: b"", stderr: b""}
+  }
+  var spec: List[Str] = []
+  for c in cmds {
+    if !cap_admits(c.lists, c.name) {
+      return Err(ProcErr.Denied(c.name))
+    }
+    cmd_spec(c, spec)
+  }
+  if rt.fs_canceled() {
+    return Err(ProcErr.Canceled)
+  }
+  proc_outcome(rt.proc_exec(spec, cmds[0].input, cmds[0].has_input, 2))
+}
+
+fn child_pid(c: Child) -> Int { rt.proc_child_pid(c.h) }
+
+fn child_write(c: Child, data: Bytes) -> () ! ProcErr uses proc {
+  let r = rt.proc_child_write(c.h, data)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+}
+
+fn child_close_stdin(c: Child) { rt.proc_child_close_stdin(c.h) }
+
+fn child_read_from(c: Child, err: Bool, max: Int) -> Bytes? ! ProcErr {
+  let r = rt.proc_child_read(c.h, err, max)
+  let st = r.get(0) ?? "2"
+  if st == "e" {
+    return None
+  }
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Some((r.get(1) ?? "").bytes())
+}
+
+fn child_read(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_from(c, false, max) }
+
+fn child_read_err(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_from(c, true, max) }
+
+fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
+  let r = rt.proc_child_read_line(c.h)
+  let st = r.get(0) ?? "2"
+  if st == "e" {
+    return None
+  }
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  Some(r.get(1) ?? "")
+}
+
+fn child_wait(c: Child) -> Int ! ProcErr uses proc {
+  let r = rt.proc_child_wait(c.h)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  rt.int_parse(r.get(1) ?? "0")
+}
+
+fn child_kill(c: Child) { rt.proc_child_kill(c.h) }
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
   let line = rt.stdin_read(false)

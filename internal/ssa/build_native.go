@@ -156,6 +156,20 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 	case "fs_new":
 		t := b.fsType()
 		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type), s.valueAs(es[1], t.Fields[1].Type))
+	case "proc_lists", "env_lists":
+		// the attenuation lists of a Proc or Env (decision 0172)
+		v := s.expr(es[0])
+		if !isLists(v.Type) {
+			b.unsupported(x, "`"+fo.Name+"` of a value that is not a Proc or Env")
+			return s.undef(nt)
+		}
+		return s.add(OpField, v.Type.Fields[0].Type, 0, v)
+	case "proc_new", "env_new":
+		t := b.listsType("Proc")
+		if fo.Name == "env_new" {
+			t = b.listsType("Env")
+		}
+		return s.add(OpStruct, t, nil, s.valueAs(es[0], t.Fields[0].Type))
 	case "dyn_text", "dyn_raw":
 		v := s.expr(es[0])
 		if !isDyn(v.Type) {

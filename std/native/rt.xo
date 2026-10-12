@@ -171,6 +171,49 @@ fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
 /// FakeProc.on_run: a later run of cmd in the test gives these outputs.
 fn proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes)
 
+// Commands, children, and pipelines (decisions 0161 and 0172). A command
+// is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
+// 2 inherit, 4 merge_stderr), the count of args and the args, the count
+// of env entries and the entries, the count of set_env entries and the
+// entries. An outcome is a list whose first element is the status: "0"
+// done (then the values), "e" the end of a stream, "1" not found (the
+// command), "2" an error (the message), "3" canceled.
+
+/// A started command (Child): a handle of the C runtime.
+struct ProcChild {}
+/// Runs the specs (mode 0 output, 1 on the terminal, 2 a pipeline of all
+/// of them) with input as the first one's standard input when has_input:
+/// "0", the status, standard output, standard error.
+fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
+/// Starts the command; proc_child_start tells how that went.
+fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
+fn proc_child_start(c: ProcChild) -> List[Str]
+fn proc_child_pid(c: ProcChild) -> Int
+fn proc_child_write(c: ProcChild, data: Bytes) -> List[Str]
+fn proc_child_close_stdin(c: ProcChild)
+/// At most max bytes of the output (or the error stream): "0" and the
+/// bytes, or "e" at the end.
+fn proc_child_read(c: ProcChild, err: Bool, max: Int) -> List[Str]
+fn proc_child_read_line(c: ProcChild) -> List[Str]
+/// "0" and the exit status.
+fn proc_child_wait(c: ProcChild) -> List[Str]
+fn proc_child_kill(c: ProcChild)
+
+// ---------------------------------------------------------------------------
+// The environment (decision 0172)
+
+/// The attenuation lists of a Proc or Env, and the Proc or Env of lists
+/// (lowered by internal/ssa).
+fn proc_lists(p: Proc) -> Str
+fn proc_new(lists: Str) -> Proc
+fn env_lists(e: Env) -> Str
+fn env_new(lists: Str) -> Env
+/// The value of the variable in a list of one, or the empty list.
+fn env_get(name: Str) -> List[Str]
+/// The NAME=VALUE entries of the environment: os.Environ() sorted, or a
+/// test's FakeEnv in the order of its variables.
+fn env_vars() -> List[Str]
+
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 

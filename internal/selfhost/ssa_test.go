@@ -42,7 +42,20 @@ func TestSelfhostSSA(t *testing.T) {
 	}
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	if selfhostTier(t) == tierShort {
+	if v := os.Getenv("XO_SELFHOST_DIRS"); v != "" {
+		// the runs whose directory contains one of the comma separated
+		// texts (a development loop)
+		var some []string
+		for _, d := range dirs {
+			for _, w := range strings.Split(v, ",") {
+				if strings.Contains(d, w) {
+					some = append(some, d)
+					break
+				}
+			}
+		}
+		dirs = some
+	} else if selfhostTier(t) == tierShort {
 		var some []string
 		for i, d := range dirs {
 			if i%25 == 0 {

@@ -95,7 +95,7 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	// operations that wait: the program needs unwinding checks
 	switch key {
-	case "Clock.sleep", "Clock.sleep_or_cancel", "Net.listen", "Net.dial", "Listener.accept", "Conn.read", "Conn.write":
+	case "Clock.sleep", "Clock.sleep_or_cancel", "Net.listen", "Net.dial", "Listener.accept", "Conn.read", "Conn.write", "Proc.pipeline":
 		b.needConc = true
 		if !b.conc {
 			return s.undef(nt), true
@@ -217,8 +217,6 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	case "Proc.set_grace":
 		s.rt("set_grace", nil, arg(0, intT))
 		return s.unit(), true
-	case "Env.get":
-		return s.popOne(s.rt("env_get", m.List(strT), arg(0, strT)), nt), true
 	case "Net.listen":
 		h := s.rt("net_listen", m.Handle("Listener"), arg(0, strT))
 		return s.netResult(h, nt), true
@@ -283,6 +281,27 @@ var capImpls = map[string]string{
 	"Rand.shuffle":   "rand_shuffle",
 	"Env.config_dir": "env_config_dir", // decision 0163
 	"Env.cache_dir":  "env_cache_dir",
+	"Env.get":        "env_get", // decision 0172: attenuation
+	"Env.vars":       "env_vars",
+	"Env.home":       "env_home",
+	"Env.only":       "env_only",
+	"Proc.only":      "proc_only",
+	"Proc.cmd":       "proc_cmd", // decision 0161
+	"Proc.pipeline":  "proc_pipeline",
+}
+
+// nativeWaits reports whether fo is a prelude method that the native
+// prelude implements and that waits on the event loop (decision 0172):
+// the program needs unwinding checks.
+func nativeWaits(fo *check.FuncObj) bool {
+	if fo.Recv == nil || fo.Static || fo.Module == nil || !fo.Module.IsPrelude {
+		return false
+	}
+	switch fo.Recv.Name + "." + fo.Name {
+	case "Cmd.output", "Cmd.run", "Cmd.spawn", "Child.write", "Child.read", "Child.read_err", "Child.read_line", "Child.wait":
+		return true
+	}
+	return false
 }
 
 // stdioReads reports whether the Stdio method name reads standard input
@@ -539,6 +558,23 @@ func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
 
 // isFs reports whether t is the lowered Fs.
 func isFs(t *Type) bool { return t.Kind == KStruct && t.Name == "xo.Fs" }
+
+// listsType is the lowered Proc or Env (decision 0172): the lists of its
+// attenuations (Proc.only, Env.only) in one Str, "" for none
+// (std/native/prelude.xo cap_admits).
+func (b *builder) listsType(name string) *Type {
+	m := b.mod
+	t, created := m.Named("xo."+name, KStruct)
+	if created {
+		t.Fields = []Field{{"lists", m.Builtin(KStr)}}
+	}
+	return t
+}
+
+// isLists reports whether t is the lowered Proc or Env.
+func isLists(t *Type) bool {
+	return t.Kind == KStruct && (t.Name == "xo.Proc" || t.Name == "xo.Env")
+}
 
 // memFsCall lowers a method of Fs or MemFs in a test binary (decision
 // 0108): the function memfs_<name> of std/native/testing.xo, whose first

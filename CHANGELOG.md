@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds (arm64, LLVM, `--no-gc`) run commands like the Go
+  backend (decision 0172): `Proc.cmd` with `dir`, `env`, `set_env`,
+  `stdin`, `inherit`, `merge_stderr`; `output`, `run`, `spawn` and every
+  `Child` method; `Proc.pipeline` with pipefail; and `Proc.only` and
+  `Env.only` are enforced natively (`Env.vars` and `Env.home` too).
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

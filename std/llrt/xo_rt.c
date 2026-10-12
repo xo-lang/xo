@@ -5685,6 +5685,38 @@ xo_rlist *xo_env_get(const char *p, int64_t n) {
 	return str_list(v, (int64_t)strlen(v));
 }
 
+// xo_env_vars is the NAME=VALUE entries of the environment, sorted as
+// std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
+// FakeEnv in the order of its variables.
+extern char **environ;
+static xo_rlist *tw_env_vars(void);
+static xo_rlist *n_str_list_new(int64_t cap);
+static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n);
+
+static int env_cmp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+
+xo_rlist *xo_env_vars(void) {
+	if (tw_is_fake(TW_REAL_ENV)) {
+		return tw_env_vars();
+	}
+	int n = 0;
+	while (environ[n]) {
+		n++;
+	}
+	char **v = malloc(((size_t)n + 1) * sizeof(char *));
+	if (!v) {
+		xo_oom();
+	}
+	memcpy(v, environ, (size_t)n * sizeof(char *));
+	qsort(v, (size_t)n, sizeof(char *), env_cmp);
+	xo_rlist *l = n_str_list_new(n);
+	for (int i = 0; i < n; i++) {
+		l = n_str_list_add(l, v[i], (int64_t)strlen(v[i]));
+	}
+	free(v);
+	return l;
+}
+
 // ---------------------------------------------------------------------------
 // Signals and two phase shutdown (core 7.5, decision 0042)
 
