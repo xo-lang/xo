@@ -27,10 +27,20 @@ import "github.com/xo-lang/xo/internal/ssa"
 // not inlinable, so every cycle has a function that is not and copies
 // never nest without end. A forwarder to a large function costs a few
 // instructions and is inlined; the large function stays a call.
+//
+// A larger function is inlinable too when it has few call sites (at
+// most inlineFewSites calls of it in the module, not counting its own)
+// and its copies stay within a budget (sites times cost at most
+// inlineFewBudget instructions, at most inlineFewBlocks blocks): the
+// UTF-8 decoder and the case mapping each called from two loops. Every
+// function adds at most that budget of copies, so code grows linearly.
 
 const (
 	inlineMaxInstrs = 40
 	inlineMaxBlocks = 12
+	inlineFewSites  = 2
+	inlineFewBudget = 500
+	inlineFewBlocks = 80
 )
 
 // inlineCost is the expanded size of a function, or bad when it is not
@@ -45,6 +55,16 @@ func inlinableSet(m *ssa.Module, byName map[string]*ssa.Func) map[string]bool {
 	// state: 1 being walked, 2 done
 	state := map[string]int{}
 	costs := map[string]inlineCost{}
+	sites := map[string]int{}
+	for _, f := range m.Funcs {
+		for _, b := range f.Blocks {
+			for _, v := range b.Instrs {
+				if v.Op == ssa.OpCall && v.Aux.(string) != f.Name {
+					sites[v.Aux.(string)]++
+				}
+			}
+		}
+	}
 	var walk func(f *ssa.Func) inlineCost
 	walk = func(f *ssa.Func) inlineCost {
 		state[f.Name] = 1
@@ -82,7 +102,10 @@ func inlinableSet(m *ssa.Module, byName map[string]*ssa.Func) map[string]bool {
 			}
 		}
 		if c.instrs > inlineMaxInstrs || c.blocks > inlineMaxBlocks {
-			c.bad = true
+			n := sites[f.Name]
+			if n > inlineFewSites || n*c.instrs > inlineFewBudget || c.blocks > inlineFewBlocks {
+				c.bad = true
+			}
 		}
 		state[f.Name] = 2
 		costs[f.Name] = c
