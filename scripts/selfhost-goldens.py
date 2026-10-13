@@ -78,7 +78,7 @@ def run_cmd(d, flags):
                        cwd=d, capture_output=True, env=env, input=stdin)
     so = p.stdout.decode('utf-8', 'replace')
     se = p.stderr.decode('utf-8', 'replace')
-    if p.returncode != 0 and se.startswith('xo1: '):
+    if p.returncode != 0 and se.startswith(('xo: ', 'xo1: ')):
         return None, 'build: ' + se.strip().split('\n')[-1][:200]
     leak = ''
     if p.returncode == 0:

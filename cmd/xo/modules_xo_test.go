@@ -39,8 +39,11 @@ func xoModulesBinary(t *testing.T) string {
 	// and the Go binder helper in bin/, as a release ships it (`use go`)
 	gb := exec.Command("go", "build", "-o", filepath.Join(root, "bin", "xo-gobind"), "github.com/xo-lang/xo/cmd/xo-gobind")
 	gb.Env = append(os.Environ(), gotool.CacheEnv())
-	if out, err := gb.CombinedOutput(); err != nil {
-		t.Fatalf("building xo-gobind: %v\n%s", err, out)
+	release := gotool.HoldCache()
+	gbOut, err := gb.CombinedOutput()
+	release()
+	if err != nil {
+		t.Fatalf("building xo-gobind: %v\n%s", err, gbOut)
 	}
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	var out, errOut bytes.Buffer
@@ -235,7 +238,7 @@ func sameRuns(t *testing.T, bin string, files map[string]string, steps []sameSte
 			}
 			modData, _ := os.ReadFile(filepath.Join(s.app, "xo.mod"))
 			lockData, _ := os.ReadFile(filepath.Join(s.app, "xo.lock"))
-			got[k] = "exit " + string(rune('0'+code)) + "\n--- stdout\n" + norm(out.String()) + "--- stderr\n" + norm(errOut.String()) + "--- xo.mod\n" + string(modData) + "--- xo.lock\n" + string(lockData)
+			got[k] = "exit " + string(rune('0'+code)) + "\n--- stdout\n" + norm(out.String()) + "--- stderr\n" + norm(dropUsage(st.args[0], errOut.String())) + "--- xo.mod\n" + string(modData) + "--- xo.lock\n" + string(lockData)
 			trees[k] = treeText(filepath.Join(s.app, "vendor")) + "--- cache\n" + cacheText(s.cache)
 		}
 		if os.Getenv("XO_SAME_LOG") != "" {

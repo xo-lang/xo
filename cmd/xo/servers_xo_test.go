@@ -177,7 +177,7 @@ func TestXoMCPProtocol(t *testing.T) {
 	var e bytes.Buffer
 	gc := goMCP([]string{"--nope"}, strings.NewReader(""), io.Discard, &e)
 	_, xe, xc := execXo(t, bin, t.TempDir(), "", "mcp", "--nope")
-	if gc != xc || e.String() != xe {
+	if gc != xc || dropUsage("mcp", e.String()) != dropUsage("mcp", xe) {
 		t.Errorf("mcp --nope: %d %q (go) vs %d %q (xo)", gc, e.String(), xc, xe)
 	}
 }
@@ -242,13 +242,13 @@ func TestXoDump(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 	pid := strconv.Itoa(p.Process.Pid)
-	cases := [][]string{{pid}, {"abc"}, {"0"}, {}, {"1", "2"}, {"--timeout=x", "5"}, {"--nope", "5"}, {"-h"}, {"2147483000"}}
+	cases := [][]string{{pid}, {"abc"}, {"0"}, {}, {"1", "2"}, {"--timeout=x", "5"}, {"--nope", "5"}, {"2147483000"}} // -h: TestCLIHelp
 	same := 0
 	for _, args := range cases {
 		var gout, gerr bytes.Buffer
 		gc := runXo(append([]string{"dump"}, args...), &gout, &gerr)
 		xout, xerr, xc := execXo(t, bin, dir, "", append([]string{"dump"}, args...)...)
-		if gc != xc || gout.String() != xout || gerr.String() != xerr {
+		if gc != xc || gout.String() != xout || dropUsage("dump", gerr.String()) != dropUsage("dump", xerr) {
 			t.Errorf("dump %v:\n go %d %q %q\n xo %d %q %q", args, gc, gout.String(), gerr.String(), xc, xout, xerr)
 			continue
 		}
@@ -619,7 +619,7 @@ func TestXoReplay(t *testing.T) {
 		var e bytes.Buffer
 		g := runXo(args, io.Discard, &e)
 		_, xe, x := execXo(t, bin, dir, "", args...)
-		if g != x || e.String() != xe {
+		if g != x || dropUsage("replay", e.String()) != dropUsage("replay", xe) {
 			t.Errorf("%v: %d %q (go) vs %d %q (xo)", args, g, e.String(), x, xe)
 		}
 	}

@@ -77,13 +77,21 @@ fn rs_append_quote(s: Str, b: Bytes) -> Str
 
 fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
 fn atomic_max(a: Atomic[Int], n: Int) -> Int
+// The C path of the reference counts (decision 0207 stage 2): compiled
+// only with -DXO_RC_C, called only by std/native/llrt/rc_c.xo
+// (XO_LLRT_C=rc); p is the object's address.
+
+fn rc_inc_c(p: Int)
+fn rc_dec_c(p: Int) -> Int
+fn rc_dec_shared_c(p: Int) -> Int
+fn rc_claim_c(p: Int) -> Int
+fn rc_mark_c(p: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
 // ---------------------------------------------------------------------------
 // Runes and Bytes (decisions 0079, 0081; std/llrt/xo_bytes.c)
 
-fn rune_is_space(r: Rune) -> Bool
 /// Whether the text is a duration (std/rt's parseDuration).
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
@@ -155,6 +163,37 @@ fn str_hash(s: Str) -> Int
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 
 // ---------------------------------------------------------------------------
+// Raw memory (decision 0207): an address is an Int. Unchecked and
+// internal: only the runtime modules (std/native/llrt) use them, for
+// memory the C runtime hands over and for objects whose layout the
+// table of `layout` gives. Every native emitter lowers them inline
+// (memcpy, memmove, memset, memcmp are platform library calls); none
+// has a C version. The width w of mem_load and mem_store must be a
+// constant 1, 2, 4, or 8 (the SSA builders check it, as int_wrap's op).
+// The atomics of decision 0200 take an address too: slot_*[Int](a, i, ...)
+// is the word at a + 8 * i (below).
+
+/// The w bytes at address a + off, little endian, zero extended.
+fn mem_load(a: Int, off: Int, w: Int) -> Int
+/// Stores the w low bytes of v at address a + off.
+fn mem_store(a: Int, off: Int, v: Int, w: Int)
+/// Copies n bytes from src to dst (the ranges do not overlap).
+fn mem_copy(dst: Int, src: Int, n: Int)
+/// Copies n bytes from src to dst (the ranges may overlap).
+fn mem_move(dst: Int, src: Int, n: Int)
+/// Sets the n bytes at dst to the low byte of b.
+fn mem_set(dst: Int, b: Int, n: Int)
+/// Compares n bytes at a and b as unsigned bytes: below zero, zero, or
+/// above zero (memcmp).
+fn mem_cmp(a: Int, b: Int, n: Int) -> Int
+/// A layout constant of the target's runtime objects, k a constant (the
+/// SSA builders fold it from their one table, ssa layout): 0 the data
+/// offset of a string object, 1 the capacity offset of a string object,
+/// 2 the element offset of a list object, 3 its length offset, 4 its
+/// capacity offset, 5 the count's offset in any object, 6 the bytes of
+/// an address, 7 the bytes of a count.
+fn layout(k: Int) -> Int
+
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
 
@@ -222,6 +261,14 @@ fn any_of[T](v: T) -> Any
 /// The value if it has type T.
 fn any_get[T](a: Any) -> T?
 
+/// The address of the object x refers to (decision 0207): a Str's string
+/// object, a List's list object, a handle's record; no count changes.
+fn obj_addr[T](x: T) -> Int
+/// The List or handle of type T whose object is at address a, counted
+/// once more (the reference counting of the result releases it, so the
+/// object's count is unchanged once the value is dead; decision 0207).
+fn obj_at[T](a: Int) -> T
+
 /// a as a B: a std type and its implementation type (http.Response and
 /// the implementation's Response), which lower to one type (decision
 /// 0083); any other pair is not available.
@@ -250,7 +297,8 @@ fn fault_raise(msg: Str, loc: Str) -> Never
 // with no copy on write; decision 0058's shared count hands it to other
 // threads), or an Atomic, whose value is slot 13 of the C runtime's
 // object (xo_rt.c xo_atomic; the wasm backend maps an Atomic's cell to
-// its own runtime). Unchecked: 0 <= i < xs.len(). ord is a constant: 0
+// its own runtime), or an Int, an address: the cell is the word at xs +
+// 8 * i (decision 0207). Unchecked: 0 <= i < xs.len(). ord is a constant: 0
 // relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst (C11's orders); a
 // non constant is seq_cst. A load takes relaxed, acquire, or seq_cst, a
 // store relaxed, release, or seq_cst (another order rounds up to
@@ -423,9 +471,6 @@ fn proc_new(lists: Str) -> Proc
 /// The attenuation lists of a Net, and the Net of lists (decision 0175).
 fn net_lists(n: Net) -> Str
 fn net_new(lists: Str) -> Net
-/// Whether the attenuation lists of a Net admit host and port (std/rt
-/// attenuate.go onlyNet.admits; the C runtime's net_admits).
-fn net_admits(lists: Str, host: Str, port: Str) -> Bool
 fn env_lists(e: Env) -> Str
 fn env_new(lists: Str) -> Env
 /// The value of the variable in a list of one, or the empty list.

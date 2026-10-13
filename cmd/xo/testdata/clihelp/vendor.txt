@@ -1,0 +1,5 @@
+usage: xo vendor [--dir=<dir>] [--json]
+
+Copy every selected module version into vendor/ with
+vendor/modules.txt; builds then use vendor/ only (no cache, no network),
+verified against xo.lock.

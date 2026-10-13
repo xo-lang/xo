@@ -1,0 +1,5 @@
+usage: xo mcp
+
+Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one message
+per line) with the tools check, query, edit, explain, fmt, test, and
+build, each returning compact JSON.

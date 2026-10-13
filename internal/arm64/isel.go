@@ -2443,6 +2443,47 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 	case "rt.slot_load", "rt.slot_store", "rt.slot_swap", "rt.slot_cas", "rt.slot_add", "rt.slot_addr", "rt.fence", "rt.spin_hint":
 		s.atomic(v)
 	default:
+		return s.inlineRaw(v)
+	}
+	return true
+}
+
+// inlineRaw lowers the raw memory intrinsics (decision 0207): loads and
+// stores of a constant width, memcpy, memmove, memset, and memcmp of the
+// platform library, a string with its length set, and an object's
+// address both ways. It reports whether v was one.
+func (s *fstate) inlineRaw(v *ssa.Value) bool {
+	switch v.Aux.(string) {
+	case "rt.mem_load":
+		w, _ := constInt(v.Args[2])
+		ins := map[int64]string{1: "ldrb $wd0, [$u0, $u1]", 2: "ldrh $wd0, [$u0, $u1]", 4: "ldr $wd0, [$u0, $u1]"}[w]
+		if ins == "" {
+			ins = "ldr $d0, [$u0, $u1]"
+		}
+		s.set(v, s.def1(false, ins, s.real(s.word(v.Args[0])), s.real(s.word(v.Args[1]))))
+	case "rt.mem_store":
+		w, _ := constInt(v.Args[3])
+		ins := map[int64]string{1: "strb $wu0, [$u1, $u2]", 2: "strh $wu0, [$u1, $u2]", 4: "str $wu0, [$u1, $u2]"}[w]
+		if ins == "" {
+			ins = "str $u0, [$u1, $u2]"
+		}
+		s.store(ins, s.real(s.word(v.Args[2])), s.word(v.Args[0]), s.word(v.Args[1]))
+		s.set(v)
+	case "rt.mem_copy", "rt.mem_move", "rt.mem_set":
+		fn := map[string]string{"rt.mem_copy": "memcpy", "rt.mem_move": "memmove", "rt.mem_set": "memset"}[v.Aux.(string)]
+		s.rt(fn, regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])))
+		s.clobber()
+		s.set(v)
+	case "rt.mem_cmp":
+		r := s.rt("memcmp", regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])), false)
+		s.set(v, s.def1(false, "sxtw $d0, $wu0", r[0]))
+	case "rt.obj_addr":
+		s.set(v, s.words(v.Args[0])[0])
+	case "rt.obj_at":
+		a := s.real(s.word(v.Args[0]))
+		s.retain(v.Type, []vreg{a})
+		s.set(v, a)
+	default:
 		return false
 	}
 	return true
@@ -2561,8 +2602,17 @@ func ordArg(v *ssa.Value, k int) int {
 // cellAddr returns the address of the cell (container, index) of an
 // atomic: the list's element, or an Atomic's value (the same layout: a
 // header of three words, then words).
+//
+// The address form (decision 0207): a container that is an Int is an
+// address, and the cell is word i from it.
 func (s *fstate) cellAddr(v *ssa.Value) vreg {
 	l := s.word(v.Args[0])
+	if v.Args[0].Type.Kind == ssa.KInt {
+		if k, ok := constInt(v.Args[1]); ok && k >= 0 && 8*k < 4096 {
+			return s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", 8*k), s.real(l))
+		}
+		return s.def1(false, "add $d0, $u0, $u1, lsl #3", s.real(l), s.word(v.Args[1]))
+	}
 	if k, ok := constInt(v.Args[1]); ok && k >= 0 && listHdr+8*k < 4096 {
 		return s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", listHdr+8*k), l)
 	}

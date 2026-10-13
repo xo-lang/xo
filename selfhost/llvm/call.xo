@@ -23,6 +23,8 @@ fn (var g: Gen) call(v: Int) {
   let name = aux_str(x.aux)
   let args = x.args
   let vt = x.ty
+  // the alias scopes of a list access (decision 0211, noalias.xo)
+  let md = g.sc_md(v)
   let callee = g.by_name.get(name) ?? -1
   if callee >= 0 {
     g.user_call(v, callee)
@@ -53,14 +55,14 @@ fn (var g: Gen) call(v: Int) {
     }
     "list.len" => {
       let a0 = g.op(args[0])
-      let n = g.list_len(a0)
+      let n = g.list_len(a0, md)
       g.alias(v, n)
     }
     "list.index" => {
       let et = vt
       if !x.pos.is_empty() {
         let a0 = g.op(args[0])
-        let n = g.list_len(a0)
+        let n = g.list_len(a0, md)
         let a1 = g.op(args[1])
         let bad = g.def("icmp uge i64 ${a1}, ${n}")
         let b1 = g.op(args[1])
@@ -77,7 +79,7 @@ fn (var g: Gen) call(v: Int) {
         g.addr[v] = p
       }
       let l = g.ll(et)
-      g.set(v, "load ${l}, ptr ${p}${TBAA_ELEM}")
+      g.set(v, "load ${l}, ptr ${p}${TBAA_ELEM}${md}")
     }
     "list.take" => {
       // element i moves out (decision 0169); its slot gets a
@@ -85,7 +87,7 @@ fn (var g: Gen) call(v: Int) {
       let et = g.m.types[vt].elems[1]
       let l = g.op(args[0])
       if !x.pos.is_empty() {
-        let n = g.list_len(l)
+        let n = g.list_len(l, md)
         let a1 = g.op(args[1])
         let bad = g.def("icmp uge i64 ${a1}, ${n}")
         let b1 = g.op(args[1])
@@ -95,10 +97,10 @@ fn (var g: Gen) call(v: Int) {
       let a1 = g.op(args[1])
       let p = g.elem_ptr(et, l, a1)
       let el = g.ll(et)
-      let ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+      let ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
       let el2 = g.ll(et)
       let h = g.hole(et)
-      g.emit("store ${el2} ${h}, ptr ${p}${TBAA_ELEM}")
+      g.emit("store ${el2} ${h}, ptr ${p}${TBAA_ELEM}${md}")
       let rt = g.ll(vt)
       let t = g.def("insertvalue ${rt} undef, ptr ${l}, 0")
       let el3 = g.ll(et)
@@ -110,7 +112,7 @@ fn (var g: Gen) call(v: Int) {
       let some = g.m.variant_index(ot, "Some")
       let none = g.m.variant_index(ot, "None")
       let a0 = g.op(args[0])
-      let n = g.list_len(a0)
+      let n = g.list_len(a0, md)
       let a1 = g.op(args[1])
       let inr = g.def("icmp ult i64 ${a1}, ${n}")
       let yes = g.new_label("get")
@@ -124,7 +126,7 @@ fn (var g: Gen) call(v: Int) {
       var ev = "zeroinitializer"
       if g.kind(et) != ssa.Kind.Unit {
         let l = g.ll(et)
-        ev = g.def("load ${l}, ptr ${p}${TBAA_ELEM}")
+        ev = g.def("load ${l}, ptr ${p}${TBAA_ELEM}${md}")
       }
       let sv = g.variant(ot, some, [ev])
       let yes_end = g.label
@@ -141,7 +143,7 @@ fn (var g: Gen) call(v: Int) {
       let et = g.vty(args[2])
       let l = g.op(args[0])
       if !x.pos.is_empty() {
-        let n = g.list_len(l)
+        let n = g.list_len(l, md)
         let a1 = g.op(args[1])
         let bad = g.def("icmp uge i64 ${a1}, ${n}")
         let b1 = g.op(args[1])
@@ -152,23 +154,23 @@ fn (var g: Gen) call(v: Int) {
       let p = g.elem_ptr(et, l, a1)
       if g.heap(et) {
         let el = g.ll(et)
-        let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+        let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
         let h = g.rc_fn("drop", et)
         let el2 = g.ll(et)
         g.emit("call void ${h}(${el2} ${old})")
       }
       if g.kind(et) != ssa.Kind.Unit {
         let t2 = g.typed(args[2])
-        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}")
+        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}${md}")
       }
       g.alias(v, l)
     }
     "list.push" => {
       let et = g.vty(args[1])
       let l = g.op(args[0])
-      let n = g.list_len(l)
+      let n = g.list_len(l, md)
       let cp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 2")
-      let c = g.def("load i64, ptr ${cp}${TBAA_HDR}")
+      let c = g.def("load i64, ptr ${cp}${TBAA_HDR}${md}")
       let full = g.def("icmp eq i64 ${n}, ${c}")
       let from = g.label
       let grow = g.new_label("grow")
@@ -182,11 +184,11 @@ fn (var g: Gen) call(v: Int) {
       if g.kind(et) != ssa.Kind.Unit {
         let p = g.elem_ptr(et, lm, n)
         let t1 = g.typed(args[1])
-        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}")
+        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}${md}")
       }
       let n1 = g.def("add nuw nsw i64 ${n}, 1")
       let lp = g.def("getelementptr %xo.rlist, ptr ${lm}, i32 0, i32 1")
-      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}")
+      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}${md}")
       g.alias(v, lm)
     }
     "list.pop" => {
@@ -196,7 +198,7 @@ fn (var g: Gen) call(v: Int) {
       let some = g.m.variant_index(ot, "Some")
       let none = g.m.variant_index(ot, "None")
       let l = g.op(args[0])
-      let n = g.list_len(l)
+      let n = g.list_len(l, md)
       let c = g.def("icmp sgt i64 ${n}, 0")
       let yes = g.new_label("pop")
       let no = g.new_label("empty")
@@ -205,12 +207,12 @@ fn (var g: Gen) call(v: Int) {
       g.start(yes)
       let n1 = g.def("sub i64 ${n}, 1")
       let lp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
-      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}")
+      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}${md}")
       var ev = "zeroinitializer"
       if g.kind(et) != ssa.Kind.Unit {
         let p = g.elem_ptr(et, l, n1)
         let el = g.ll(et)
-        ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}")
+        ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
       }
       let sv = g.variant(ot, some, [ev])
       let yes_end = g.label
@@ -360,7 +362,7 @@ fn (var g: Gen) call(v: Int) {
       }
       let a1 = g.op(args[1])
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${a1}")
-      let c = g.def("load i8, ptr ${p}")
+      let c = g.def("load i8, ptr ${p}${md}")
       g.set(v, "zext i8 ${c} to i64")
     }
     "Str.len" => {
@@ -544,7 +546,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.bytes_word" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
-      g.set(v, "load i64, ptr ${p}, align 1")
+      g.set(v, "load i64, ptr ${p}, align 1${g.sc_md(v)}")
     }
     "rt.sys6" => {
       // a Linux system call (decision 0206): inline asm with the number
@@ -592,7 +594,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
-      let w = g.def("load <16 x i8>, ptr ${p}, align 1")
+      let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
       var e = ""
       if aux_str(x.aux) == "rt.bytes_eq16" {
         let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
@@ -620,9 +622,111 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.mk_str(v, obj, g.op(x.args[1]))
     }
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
+    _ => return g.inline_raw(v)
+  }
+  true
+}
+
+/// The pointer of the address operand a (inlineRaw's ptr).
+fn (var g: Gen) raw_ptr(a: Int) -> Str { g.def("inttoptr i64 ${g.op(a)} to ptr") }
+
+/// The pointer of address a plus off (inlineRaw's at).
+fn (var g: Gen) raw_at(a: Int, off: Int) -> Str {
+  let p = g.raw_ptr(a)
+  g.def("getelementptr i8, ptr ${p}, i64 ${g.op(off)}")
+}
+
+/// Lowers the raw memory intrinsics (decision 0207, fromssa.go
+/// inlineRaw): loads and stores of a constant width at an address,
+/// llvm.memcpy, llvm.memmove, llvm.memset, the platform's memcmp, a
+/// string with its length set, and an object's address both ways;
+/// whether v was one.
+fn (var g: Gen) inline_raw(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  match name {
+    "rt.mem_load" => {
+      let w = match g.f.values[x.args[2]].aux {
+        I(n) => n
+        _ => 8
+      }
+      let p = g.raw_at(x.args[0], x.args[1])
+      if w == 8 {
+        g.set(v, "load i64, ptr ${p}, align 1")
+      } else {
+        let it = "i${8 * w}"
+        g.set(v, "zext ${it} ${g.def("load ${it}, ptr ${p}, align 1")} to i64")
+      }
+    }
+    "rt.mem_store" => {
+      let w = match g.f.values[x.args[3]].aux {
+        I(n) => n
+        _ => 8
+      }
+      let p = g.raw_at(x.args[0], x.args[1])
+      let y = g.op(x.args[2])
+      if w == 8 {
+        g.emit("store i64 ${y}, ptr ${p}, align 1")
+      } else {
+        let it = "i${8 * w}"
+        g.emit("store ${it} ${g.def("trunc i64 ${y} to ${it}")}, ptr ${p}, align 1")
+      }
+    }
+    "rt.mem_copy" | "rt.mem_move" => {
+      let f = if name == "rt.mem_move" { "@llvm.memmove.p0.p0.i64" } else { "@llvm.memcpy.p0.p0.i64" }
+      g.llvm_decl(f, "declare void ${f}(ptr, ptr, i64, i1)")
+      let d = g.raw_ptr(x.args[0])
+      let s = g.raw_ptr(x.args[1])
+      g.emit("call void ${f}(ptr ${d}, ptr ${s}, i64 ${g.op(x.args[2])}, i1 false)")
+    }
+    "rt.mem_set" => {
+      g.llvm_decl("@llvm.memset.p0.i64", "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+      let d = g.raw_ptr(x.args[0])
+      let b = g.def("trunc i64 ${g.op(x.args[1])} to i8")
+      g.emit("call void @llvm.memset.p0.i64(ptr ${d}, i8 ${b}, i64 ${g.op(x.args[2])}, i1 false)")
+    }
+    "rt.mem_cmp" => {
+      g.llvm_decl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
+      let a = g.raw_ptr(x.args[0])
+      let b = g.raw_ptr(x.args[1])
+      let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(x.args[2])})")
+      g.set(v, "sext i32 ${r} to i64")
+    }
+    "rt.obj_addr" => {
+      var o = g.op(x.args[0])
+      if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {
+        o = g.def("extractvalue %xo.str ${o}, 0")
+      }
+      g.set(v, "ptrtoint ptr ${o} to i64")
+    }
+    "rt.obj_at" => {
+      let p = g.raw_ptr(x.args[0])
+      g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${p})")
+      g.alias(v, p)
+    }
     _ => return false
   }
   true
+}
+
+/// The pause hint of a spin loop on goarch ("" the compiler's own; the
+/// predeclared `target` of internal/ssa's build_target.go), as inline
+/// asm (spinHintAsm): `yield` on arm64, `pause` on amd64, as the C
+/// runtime's spin_relax; "" (nothing) elsewhere.
+fn spin_hint_asm(goarch: Str) -> Str {
+  var arch = goarch
+  if arch.is_empty() {
+    arch = match target.arch {
+      Arm64 => "arm64"
+      Wasm32 => "wasm"
+      Amd64 => "amd64"
+    }
+  }
+  match arch {
+    "arm64" => "call void asm sideeffect \"yield\", \"\"()"
+    "amd64" => "call void asm sideeffect \"pause\", \"\"()"
+    _ => ""
+  }
 }
 
 /// The memory order of argument k of value v (decision 0200; ordArg):
@@ -649,6 +753,12 @@ fn (var g: Gen) ord_arg(v: Int, k: Int) -> Int {
 fn (var g: Gen) cell_addr(v: Int) -> Str {
   let x = g.f.values[v]
   let l = g.op(x.args[0])
+  if g.kind(g.vty(x.args[0])) == ssa.Kind.Int {
+    // the address form (decision 0207): word i from the address
+    let p = g.def("inttoptr i64 ${l} to ptr")
+    let o = g.def("shl i64 ${g.op(x.args[1])}, 3")
+    return g.def("getelementptr i8, ptr ${p}, i64 ${o}")
+  }
   let c = g.f.values[x.args[1]]
   if c.op == ssa.Op.Const {
     if let I(k) = c.aux {
@@ -682,13 +792,16 @@ fn (var g: Gen) atomic_result(v: Int, r: Str) {
 /// atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
 /// LLVM ordering (relaxed is monotonic; a load takes no release and a
 /// store no acquire, and a cmpxchg fails with the strongest ordering
-/// allowed there). The spin hint is nothing: the IR is target
-/// independent (clang picks the target), and yield and pause are target
-/// intrinsics.
+/// allowed there). The spin hint is the target's pause hint as inline
+/// asm (spin_hint_asm), as the C runtime's spin_relax.
 fn (var g: Gen) atomic(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
   if name == "rt.spin_hint" {
+    let asm = spin_hint_asm(g.m.goarch)
+    if !asm.is_empty() {
+      g.emit(asm)
+    }
     return
   }
   if name == "rt.fence" {

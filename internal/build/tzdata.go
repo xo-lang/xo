@@ -378,7 +378,7 @@ func IOFlags(code []byte) []string {
 		out = append(out, "-DXO_GLOB_C")
 	}
 	// and of the hashes of std/crypto (decision 0195, XO_LLRT_C=digest)
-	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_b64", "xo_crypto_verify_password"} {
+	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_argon2id", "xo_crypto_b64", "xo_crypto_verify_password"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_DIGEST_C")
 			break
@@ -391,6 +391,13 @@ func IOFlags(code []byte) []string {
 		"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_INTS_C")
+			break
+		}
+	}
+	// and of the reference counts (decision 0207 stage 2, XO_LLRT_C=rc)
+	for _, sym := range []string{"xo_rc_inc_c", "xo_rc_dec_c", "xo_rc_dec_shared_c", "xo_rc_claim_c", "xo_rc_mark_c"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_RC_C")
 			break
 		}
 	}

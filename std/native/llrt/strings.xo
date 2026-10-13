@@ -57,7 +57,7 @@ fn is_space(r: Int) -> Bool {
   if r < 0x80 {
     return r == 32 || (r >= 9 && r <= 13)
   }
-  rt.rune_is_space(Rune(r))
+  unicode.is_space(r)
 }
 
 /// The start of the bytes of b from lo to hi after their leading white

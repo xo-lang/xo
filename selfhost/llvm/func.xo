@@ -178,9 +178,11 @@ fn (var g: Gen) elem_ptr(et: Int, l: Str, i: Str) -> Str {
   g.def("getelementptr ${lt}, ptr ${data}, i64 ${i}")
 }
 
-fn (var g: Gen) list_len(l: Str) -> Str {
+/// Loads the length of list l (listLen); md is the access's alias scopes
+/// (noalias.xo), or "".
+fn (var g: Gen) list_len(l: Str, md: Str) -> Str {
   let p = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
-  g.def("load i64, ptr ${p}${TBAA_HDR}")
+  g.def("load i64, ptr ${p}${TBAA_HDR}${md}")
 }
 
 /// Builds variant tag of enum t from field operands (variant).
@@ -342,6 +344,11 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.skip = ""
   var ps: List[Str] = []
   let br = g.by_ref_of(fi)
+  g.scopes_of(fi)
+  if g.sc_n > 0 {
+    g.llvm_decl("@llvm.experimental.noalias.scope.decl", "declare void @llvm.experimental.noalias.scope.decl(metadata)")
+    g.body.push(g.sc_decls())
+  }
   if !br.is_empty() && g.stage < 2 {
     g.unsupported("a parameter passed by reference (decision 0145)")
   }
@@ -446,6 +453,7 @@ fn (var g: Gen) lower_func(fi: Int) {
     return
   }
   g.funcs.push(out.join(""))
+  g.meta.push(g.sc_nodes())
 }
 
 /// The comparisons of Int, Bool, and Float operands (cmpInt, cmpBool,

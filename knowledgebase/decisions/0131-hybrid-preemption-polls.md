@@ -55,7 +55,10 @@ Decision 0084 kept `--hybrid` an option partly for this reason.
   4 to 8 instructions pay the most.
 - TestHybridPreemption (internal/gen) checks the bounds (stop the world
   under 10 ms, a goroutine's gap under 100 ms at GOMAXPROCS=4 and 1, the
-  race detector, and that a build without polls fails them).
+  race detector, and that a build without polls fails them). On a
+  loaded host a missed bound is compared with the xo_pure build's figures
+  under the same load, capped at a quarter of the loop (2026-10-13,
+  gotchas/hybrid-preemption-stw-under-load.md).
 - Hybrid builds still exist for arm64 only; amd64 builds use the Go
   versions (`xo_pure.go`), which Go preempts asynchronously.
 - The remaining objection of decision 0084 to a default is the selection

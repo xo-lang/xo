@@ -1,0 +1,26 @@
+usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
+                [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
+                [--release [--error-args=false]] [--stamp NAME=VALUE]... [--hybrid]
+                [--json] [-o out] <dirs...>
+
+Compile to static binaries (default: the host). The directories are one
+program. --backend=llvm and --backend=arm64 build natively (arm64 is
+emitted as assembly when it is not the host); --no-gc (also on run and
+test) builds without a garbage collector: arm64 on arm64 hosts, llvm
+otherwise (--backend may name one); every construct, std API, or effect
+the native backends do not support is reported as XO1201 before code
+generation (decision 0083). --backend=wasm builds a WASI preview1 module.
+Request scoped arenas for HTTP handlers are on by default (decision
+0066); --no-arenas (also on run and test) turns them off. --ci fails
+before building when a .xo file is not formatted (core 10.5) or dbg(...)
+is left in code (core 11.4). --release is a release build:
+requires(debug) and ensures(debug) compiled out; --error-args=false drops
+parameter values from error frames. --stamp (repeatable, also on run)
+sets a `const NAME: Str` of the main module for this build (XO1501
+otherwise). std/time zone data is embedded per use (decision 0094);
+--tzdata=system (also on run and test) reads the host's database
+instead. --hybrid compiles hot leaf functions of a Go backend build to
+native assembly (decision 0084).
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

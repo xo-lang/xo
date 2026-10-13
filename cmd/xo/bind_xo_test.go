@@ -112,8 +112,9 @@ int self(int static_);
 		{"missing-link", "", two, []string{"--json", "--link", "missing.c", "two.h"}},
 		{"missing-link-text", "", two, []string{"--link", "missing.c", "--link", "m", "two.h"}},
 		{"no-headers", "", two, nil},
+		// the usage after the error is the shipped xo's (dropUsage); -h is
+		// TestCLIHelp's
 		{"bad-flag", "", two, []string{"--bogus", "two.h"}},
-		{"help", "", two, []string{"-h"}},
 		{"abs-header", "", two, []string{"--json", "ABS/two.h"}},
 	}
 	for _, tc := range cases {
@@ -148,7 +149,7 @@ int self(int static_);
 				} else {
 					code = execCLI([]string{bin}, args, &out, &errOut)
 				}
-				got[k] = cbindTemp.ReplaceAllString("exit "+strconv.Itoa(code)+"\n--- stdout\n"+out.String()+"--- stderr\n"+errOut.String(), "xo-cbind-TMP")
+				got[k] = cbindTemp.ReplaceAllString("exit "+strconv.Itoa(code)+"\n--- stdout\n"+out.String()+"--- stderr\n"+dropUsage("bind", errOut.String()), "xo-cbind-TMP")
 				trees[k] = readTree(t, dir)
 			}
 			if got[0] != got[1] {

@@ -244,6 +244,7 @@ xo build --backend=arm64 -o xobind selfhost/cli/bind/xobind && XO_BIND_BIN=$PWD/
 XO_CLI=/abs/xo1 XO_STD=$PWD/std go test -short ./cmd/xo -run 'TestCheck|TestParse|TestFmt|...'   # the gate of stage 2: cmd/xo's own tests of those commands against xo1 (last verified: 2026-10-12)
 xo build --backend=arm64 -o rel/bin/xo selfhost/xo && ln -s $PWD/std rel/lib/xo/std && ln -s $PWD/third_party rel/lib/xo/third_party && XO_CLI=$PWD/rel/bin/xo go test ./cmd/xo   # the switch point B gate (decision 0178): every cmd/xo test against xo1 laid out as a release (bin/xo beside lib/xo/std), no XO_STD: xo1 and every selfhost/cli command find std through Env.program (selfhost/check locate.xo); xo1 build|run|test default to the Go backend as xo does, so the golden scripts pass --backend=arm64 (last verified: 2026-10-12)
 XO_CLI=/abs/xo1 XO_STD=$PWD/std go test ./cmd/xo -run 'TestXo'   # stage 5 (decision 0178): cmd/xo servers_xo_test.go drives the Go mcp, lsp, serve, dump, replay in process and xo1 with the same requests and compares the responses byte for byte; skipped without XO_CLI; TestXo1ServersVersion (selfhost/cli/servers XO_VERSION equals cmd/xo's version) always runs; xo1's lsp, MCP tools, and serve find std through XO_STD (last verified: 2026-10-12)
+XO_CLI=/abs/xo go test ./cmd/xo -run 'TestCLIHelp|TestCLIPattern' [-update-help]   # the shipped xo's help (selfhost/cli/cmdhelp: xo help, every command's -h/--help on stdout exit 0, unknown flags exit 2 with the usage on stderr, goldens in cmd/xo/testdata/clihelp) and its DIR/... pattern (decision 0210); without XO_CLI and without -short the test builds xo1 with the Go backend (about 20 s); the differential tests drop the usage after a usage error (dropUsage), the help being xo1's (last verified: 2026-10-13)
 go test ./internal/selfhost -run TestSelfhostFormat     # the formatter of selfhost/cli/core/format against internal/format on every .xo file of the repository and on copies with changed blanks, byte for byte (go backend, about 10 s) (last verified: 2026-10-12)
 go test ./internal/diag -run TestSelfhostExplainData [-update-explain]   # selfhost/cli/core/explain_data.xo is generated from explain.go and codes.go; rewrite it after changing a text (last verified: 2026-10-12)
 python3 scripts/selfhost-cli.py <xo1>                  # check --json, check, vet --json, doc --all --json, fmt --check --json, parse --json on every directory with .xo files, by xo1 and the Go xo (XO_GO_XO, default .tools/xo), compared byte for byte (exit, stdout, stderr); CLI_CMDS, CLI_STRIDE, JOBS (last verified: 2026-10-12)
@@ -328,7 +329,7 @@ go test ./internal/selfhost                             # merge tier (the defaul
                                                         #   full (XO_SELFHOST_TIER=full): every backend, every corpus, every pass of every run, 400 SSA mutations; 3,490 s cold on r8g.8xlarge with XO_SELFHOST_JOBS=32 (scripts/remote-full.sh, peak memory in use 157 GB; critical path the arm64 comparison of selfhost/xo after the llvm build of selfhost/arm64; 2026-10-12, bench/results/selfhost-parallel-2026-10-12.md; over 3 hours before the job pool); about 11 min warm (owner, 2026-10-11, not remeasured); 3,474 s (58 min) cold, measured 2026-10-11 with the native selfhost/check and selfhost/ssa binaries uncached and another full suite running (TestSelfhostChecker 589 s and TestSelfhostSSA 2,366 s, mostly their native builds; the LLVM link of selfhost/ssa alone is about 10 min); use -timeout 120m (raised from 90m on 2026-10-11: 58 min cold under load left about 30 min of margin). Run by bench/nightly.sh and before tagging a release; run it by hand for a change under selfhost/ or the compiler's SSA or native backends that the merge tier does not exercise (a construct only selfhost/ssa or selfhost/check uses, an arm64 or LLVM lowering)
                                                         # since SSA stage 8 (2026-10-11): TestSelfhostSSA's full tier compares every stage after the build, the verifier and its mutants on three backends (about 32 minutes of a cold run); the first cold run timed out at -timeout 40m building the LLVM binaries, the next (partly warm) took 2,264 s
                                                         # time of the full package before SSA stage 8 (2026-10-11, GOMAXPROCS=4): about 160 s with the binary cache warm (was 329 s), most of it TestSelfhostSSA (51 s) and the mutation tests; a cold cache (any change to the compiler) adds the builds of selfhost/check and selfhost/ssa with three backends, now built at the same time (they were one after another: about 740 s of the 1510 s cold run). The backends' subtests, the Go checker and SSA builder over every run, and the batches of the Xo binaries run in parallel (up to min(GOMAXPROCS, 4), `parallel` in lexer_test.go); coverage is unchanged
-scripts/selfhost-record-goldens.sh [--merge]            # records the Go side of every TestSelfhost* differential at the full tier's sizes (no Xo binary built) as hashes into $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens, committed): per unit one line per whole dump, list, meta value, or family (the functions, helpers, files, declarations of a unit: member count and root hash), the member hashes once per kind in pool-<x>.txt; units keyed by kind, options, and input content (decision 0178 stage 7, format in internal/selfhost/gogoldens_test.go): 19,681 units, 6,009,535 bytes in 208 files (2,387,755 gzip -9), 1,341 s, max RSS 14.4 GB on 2026-10-12 (main f786e42 merged; ten agents on the machine); the run kinds key on the std tree too, so a std change shows as units to record again; RUN='<regexp>' limits the tests. Last verified: 2026-10-12
+scripts/selfhost-record-goldens.sh [--merge]            # records the Go side of every TestSelfhost* differential at the full tier's sizes (no Xo binary built) as hashes into $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens, committed): per unit one line per whole dump, list, meta value, or family (the functions, helpers, files, declarations of a unit: member count and root hash), the member hashes once per kind in pool-<x>.txt; units keyed by kind, options, and input content (decision 0178 stage 7, format in internal/selfhost/gogoldens_test.go): 20,034 units, 6,405,857 bytes in 208 files (2,573,573 gzip -9), 1,789 s, max RSS 36.6 GB (GNU time, the whole script) on an r8g.8xlarge on demand, Linux arm64, 2026-10-13 (main 2c63a802; `scripts/remote-full.sh --on-demand --put rec.sh --cmd 'bash ~/rec.sh'`, the recording returned as base64 tar in the log); the run kinds key on the std tree too, so a std change shows as units to record again; the native run kinds (ssadump, asmdump, llvmdump) key on the recording host's GOOS/GOARCH, so a Linux recording replays fully on Linux only (on darwin/arm64: 96 units missing; record those on the Mac with RUN and --merge); RUN='<regexp>' limits the tests. Last verified: 2026-10-13
 XO_SELFHOST_GOLDENS=replay go test ./internal/selfhost  # the TestSelfhost* tests hash the Xo side's pieces and compare them with the recording instead of running the Go side (any tier); a unit with no recording fails the run and is named (inputs changed: record again), a piece that differs fails its test and is listed at the end with how to see both dumps; TestSelfhostCheckerHatches binds `use go` with xo-gobind as xo1's checker does; XO_SELFHOST_GOLDENS_DEBUG=<text> prints the key of the units whose label holds it. Same verdicts and logged counts as live on 2026-10-12 (-short: 121 s against 214 s; merge tier, the 16 differentials: 255 s against 373 s, recording of d9a9c2c; -short again on the merged tree f786e42: identical, 30 s against 39 s)
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
@@ -793,6 +794,18 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
   2026-10-13.
+- `XO_LLRT_C=rc` (2026-10-13, decision 0207 stage 2): the C runtime's
+  own reference counts (rc_inc, rc_dec, rc_claim, xo_rc_mark compiled
+  with -DXO_RC_C, which both drivers add when the generated code calls
+  rc_c.xo's rt.rc_*_c) instead of std/native/llrt/rc.xo through the
+  xo_x_rc_* exports (the default). TestRuntimeThreads runs
+  std/llrt/testdata/rc_threads.c both ways under ThreadSanitizer. The
+  comparison (instructions of bench/perf/nested, xo, text, json, conc)
+  is a scratch script: build each program with and without
+  `XO_LLRT_C=rc`, minimum of 5 runs (conc: 11 or 21, XO_THREADS=1;
+  their counts vary by 10 percent between runs). Results in
+  `bench/results/raw-memory-2026-10-13.md` (stage 2). Last verified:
+  2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
   0195): sized integers, std/crypto's hashes, path.Match, and generated
@@ -801,6 +814,16 @@ Last verified: 2026-10-07
   TestDigestTables -golden-update` regenerates
   std/native/llrt/digest_tables.xo (SHA-256 unrolled). Last verified:
   2026-10-13.
+- `go test ./internal/llvm -run TestCABIDiff` (2026-10-13, decision 0207):
+  the C runtime's pieces that call Xo through the C ABI exports of
+  std/native/llrt/cabi.xo (fault texts, Float to Int and Float32 text,
+  UTF-8, Net.only on loopback) on arm64 and LLVM against the Go backend,
+  about 5 s warm; not under -short. A C only runtime test (a file of
+  std/llrt/testdata that includes xo_rt.c) links the exports through
+  `cOnly` in internal/llvm threads_test.go. `go test ./internal/ssa -run
+  'TestGolden|TestBench' -update` and `go test ./internal/arm64 -run
+  TestGoldenAsm -update` rewrite the SSA and assembly goldens, which
+  carry the exports. Last verified: 2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
@@ -2034,7 +2057,11 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
   testdata/hybrid_preempt with GODEBUG=gctrace=1: stop the world under 10
   ms and a goroutine's gap under 100 ms during a 0.3 s (-short) or 2 s
   hybrid loop, the race detector and a build without polls as control
-  in the full suite; not parallel, three attempts per bound). Use
+  in the full suite; not parallel, three attempts per bound; a missed
+  bound runs the xo_pure build as a load control and widens to twice its
+  figure plus a margin, capped at a quarter of the loop:
+  gotchas/hybrid-preemption-stw-under-load.md; Last verified:
+  2026-10-13). Use
   `-asmdecl` only: the generated Go has unreachable code that plain `go
   vet` reports.
 - `XO_BASE=<old xo> bench/perf/hybrid/run.sh` adds the old build's hybrid

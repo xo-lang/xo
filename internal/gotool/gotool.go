@@ -56,6 +56,16 @@ func CacheDir() string {
 // CacheEnv is the GOCACHE entry that routes a go command to CacheDir.
 func CacheEnv() string { return "GOCACHE=" + CacheDir() }
 
+// HoldCache takes the shared lock on the Xo Go cache and returns its
+// release. Every go command that runs on the cache holds it for the
+// command's whole run (`release := HoldCache(); cmd.Run(); release()`):
+// a trim (internal/build) removes even recent entries once it holds the
+// lock exclusively, so a go command without it can lose the entries it
+// is reading (gotchas/go-commands-outside-build-race-trim.md). Never
+// hold it around something that itself runs an Xo build: a trim waiting
+// at the gate would deadlock with the nested lock.
+func HoldCache() (release func()) { return LockCacheShared().Unlock }
+
 var (
 	verMu   sync.Mutex
 	verSeen = map[string]verResult{}

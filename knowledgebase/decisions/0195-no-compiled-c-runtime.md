@@ -10,7 +10,16 @@ item 6: 1,040 of its 1,799 lines out of default builds,
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
 under XO_NOLIBC=1); stages 2 and 3 (threads, signals, unwinding,
-sockets, DNS from Xo) open.
+sockets, DNS from Xo) open. Prerequisite 2 (raw memory) stage 1 done
+2026-10-13: decision 0207 (raw memory intrinsics, C ABI exports; the
+"(0) held by C callers" group moved but the test world stores, which
+are (1) and (2); `bench/results/raw-memory-2026-10-13.md`); stage 2's
+reference counts moved to Xo (std/native/llrt/rc.xo, XO_LLRT_C=rc for
+the C) and lists of zeros take one allocation (raw.zero_ints), the
+allocator not started; Argon2id and BLAKE2b stayed C (1.155 of the C on
+LLVM, 0.980 on arm64) until decision 0211's alias scopes brought LLVM to
+1.043 (2026-10-13): they are Xo by default, the C under
+`XO_LLRT_C=digest`.
 
 ## Context
 
@@ -138,7 +147,9 @@ portable now under decision 0193's bar.
      intrinsics), SHA-256 0.820 and 0.675, HMAC 0.987 and 0.826, PBKDF2
      0.932 and 0.755, glob 1.009 and 0.884, generated values 0.946 and
      0.888.
-   - Stays C, 759 lines: BLAKE2b and Argon2id (an Xo version retired
+   - Stays C, 759 lines (BLAKE2b and Argon2id moved to Xo on
+     2026-10-13, decisions 0208 and 0211, at 0.980 of the C on arm64 and
+     1.043 on LLVM): BLAKE2b and Argon2id (an Xo version retired
      2.071x the C's instructions on arm64 and 1.294x on LLVM and was
      taken out; the arm64 code shape for List[Int] heavy code is the
      next step), SHA-512 (held by Ed25519, group (5); decision 0204 now

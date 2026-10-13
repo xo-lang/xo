@@ -240,7 +240,8 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
 }
 
 /// Appends dir and every directory below it that holds .xo files,
-/// skipping testdata, dot, and vendor directories below the top.
+/// skipping testdata, dot, underscore (decision 0210), and vendor
+/// directories below the top.
 fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
   let entries = c.fs.read_dir(dir).ok() ?? []
   var has_xo = false
@@ -257,7 +258,7 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
       continue
     }
     let sub = join(dir, e.name)
-    if e.name == "testdata" || e.name.starts_with(".") || c.is_vendor_dir(sub) {
+    if e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.is_vendor_dir(sub) {
       continue
     }
     c.find_module_dirs(sub, false, out)

@@ -1,0 +1,70 @@
+// The C ABI exports of the TLS runtime (decisions 0204, 0207): like
+// cabi.xo, every top level function here is called by the C runtime as
+// xo_x_<name>; xo_tls.c (compiled with -DXO_TLS) calls them, so
+// std/native/http.xo imports this module and only programs that use
+// std/http carry them.
+use native/llrt/raw
+use native/llrt/tlsname
+use native/rt
+
+// ---------------------------------------------------------------------------
+// TLS name checks (xo_tls.c's, now tlsname.xo): the certificate's names
+// as tlsname.names_at reads them.
+
+/// 1 when the host of the hn bytes at hp matches the names
+/// (x509.Certificate.VerifyHostname), else 0.
+fn tls_host_ok(dp: Int, dn: Int, ip: Int, ni: Int, hp: Int, hn: Int) -> Int {
+  if tlsname.host_ok(tlsname.names_at(dp, dn, ip, ni), raw.str_at(hp, hn)) {
+    return 1
+  }
+  0
+}
+
+/// Writes Go's text of the fatal TLS alert a received ("remote error:
+/// tls: " and alertText) zero terminated into the buffer of bn bytes at
+/// buf (cut to fit); its length.
+fn tls_alert_msg(buf: Int, bn: Int, a: Int) -> Int {
+  let m = "remote error: tls: ${tlsname.alert_text(a)}"
+  let n = if m.len() < bn { m.len() } else { bn - 1 }
+  rt.mem_copy(buf, raw.data(m), n)
+  rt.mem_store(buf, n, 0, 1)
+  n
+}
+
+/// The next PEM block of the n bytes at p from the position in the word
+/// at st (pem.Decode): the length of its bytes, written at der (at least
+/// n bytes), with its type zero terminated at ty (80 bytes) and the
+/// position after it at st; -1 when there is none.
+fn pem_next(p: Int, n: Int, st: Int, ty: Int, der: Int) -> Int {
+  let (pos, t, k) = tlsname.pem_next(p, n, rt.mem_load(st, 0, 8), der)
+  rt.mem_store(st, 0, pos, 8)
+  let _t = raw.put_cstr(ty, t)
+  k
+}
+
+/// 1 when the n bytes at p are an IP address (net.ParseIP), else 0.
+fn tls_is_ip(p: Int, n: Int) -> Int {
+  if let Some(_) = tlsname.parse_ip(raw.str_at(p, n)) {
+    return 1
+  }
+  0
+}
+
+/// 0 when the host matches the names, else 1 with the text of
+/// x509.HostnameError written zero terminated into the buffer of bn
+/// bytes at buf (cut to fit). args holds nine words: the names (dp, dn,
+/// ip, ni), whether the certificate has the subject alternative name
+/// extension, the common name's address and length, and the host's.
+fn tls_hostname_msg(args: Int, buf: Int, bn: Int) -> Int {
+  let nm = tlsname.names_at(rt.mem_load(args, 0, 8), rt.mem_load(args, 8, 8), rt.mem_load(args, 16, 8), rt.mem_load(args, 24, 8))
+  let host = raw.str_at(rt.mem_load(args, 56, 8), rt.mem_load(args, 64, 8))
+  if tlsname.host_ok(nm, host) {
+    return 0
+  }
+  let cn = raw.str_at(rt.mem_load(args, 40, 8), rt.mem_load(args, 48, 8))
+  let m = tlsname.hostname_msg(nm, rt.mem_load(args, 32, 8) != 0, cn, host)
+  let n = if m.len() < bn { m.len() } else { bn - 1 }
+  rt.mem_copy(buf, raw.data(m), n)
+  rt.mem_store(buf, n, 0, 1)
+  1
+}

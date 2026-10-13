@@ -1,0 +1,72 @@
+// Helpers over the raw memory intrinsics (decision 0207) for the runtime
+// modules: text handed to and from the C runtime as an address and a
+// length. Unchecked like the intrinsics: the C caller guarantees the
+// sizes (a buffer large enough for what is written, n readable bytes).
+use native/rt
+
+/// The address of the first byte of s (its string object's data).
+pub fn data(s: Str) -> Int { rt.obj_addr(s) + rt.layout(0) }
+
+/// Writes the bytes of s at address a, then a zero byte; the length of s.
+pub fn put_cstr(a: Int, s: Str) -> Int {
+  let n = s.len()
+  rt.mem_copy(a, data(s), n)
+  rt.mem_store(a, n, 0, 1)
+  n
+}
+
+/// A new string of the n bytes at address a.
+pub fn str_at(a: Int, n: Int) -> Str {
+  let s = rt.rs_set_len(rt.rs_with_cap(n), n)
+  rt.mem_copy(data(s), a, n)
+  s
+}
+
+/// The string of the byte b (0 to 255).
+pub fn byte_str(b: Int) -> Str {
+  let s = rt.rs_set_len(rt.rs_with_cap(1), 1)
+  rt.mem_store(data(s), 0, b, 1)
+  s
+}
+
+/// A string of n copies of the byte b.
+pub fn fill(b: Int, n: Int) -> Str {
+  let s = rt.rs_set_len(rt.rs_with_cap(n), n)
+  rt.mem_set(data(s), b, n)
+  s
+}
+
+/// Whether the n bytes at a and at b are equal.
+pub fn mem_eq(a: Int, b: Int, n: Int) -> Bool { n == 0 || rt.mem_cmp(a, b, n) == 0 }
+
+/// The byte at address a + i (0 to 255).
+pub fn byte_at(a: Int, i: Int) -> Int { rt.mem_load(a, i, 1) }
+
+/// The length of the zero terminated bytes at address a (strlen).
+pub fn cstr_len(a: Int) -> Int {
+  var i = 0
+  while rt.mem_load(a, i, 1) != 0 {
+    i += 1
+  }
+  i
+}
+
+/// A list of n zeros in one allocation (decision 0207 stage 2): the
+/// list of List.with_capacity(n), its elements set with one mem_set and
+/// its length stored, instead of n pushes (calloc's role in the C).
+/// n <= 0 is the empty list.
+pub fn zero_ints(n: Int) -> List[Int] {
+  if n <= 0 {
+    return []
+  }
+  let xs = List[Int].with_capacity(n)
+  let a = rt.obj_addr(xs)
+  rt.mem_set(a + rt.layout(2), 0, n * 8)
+  // the length word: 8 bytes on the native targets, 4 on wasm
+  if rt.layout(6) == 8 {
+    rt.mem_store(a, rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(a, rt.layout(3), n, 4)
+  }
+  xs
+}

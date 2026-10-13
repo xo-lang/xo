@@ -135,12 +135,16 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
 /// Windows (decision 0197): lld-link, which reads the LTO bitcode MSVC's
 /// link.exe cannot; the runtime names its import libraries itself
 /// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
-/// MSVC one clang picks. A Linux link with XO_NOLIBC=1 (the runtime
-/// compiled with nolibc_flags) is static with no C library, keeping only
-/// the sections the program reaches (decision 0206).
+/// MSVC one clang picks; /Brepro makes the link deterministic: lld-link
+/// writes a hash of the output in the COFF header's time stamp (and the
+/// debug directory) instead of the link time, so a rebuild is byte
+/// identical (gotchas/windows-lld-link-time-stamp.md). A Linux link with
+/// XO_NOLIBC=1 (the runtime compiled with nolibc_flags) is static with no
+/// C library, keeping only the sections the program reaches (decision
+/// 0206).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
-    return ["-fuse-ld=lld"]
+    return ["-fuse-ld=lld", "-Wl,/Brepro"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
     return ["-static", "-nostdlib", "-Wl,--gc-sections"]
@@ -327,7 +331,7 @@ fn io_flags(code: Str) -> List[Str] {
     out.push("-DXO_GLOB_C")
   }
   // and of the hashes of std/crypto (decision 0195, XO_LLRT_C=digest)
-  for sym in ["xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_b64", "xo_crypto_verify_password"] {
+  for sym in ["xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_argon2id", "xo_crypto_b64", "xo_crypto_verify_password"] {
     if calls_sym(code, sym) {
       out.push("-DXO_DIGEST_C")
       break
@@ -340,6 +344,13 @@ fn io_flags(code: Str) -> List[Str] {
     "xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {
     if calls_sym(code, sym) {
       out.push("-DXO_INTS_C")
+      break
+    }
+  }
+  // and of the reference counts (decision 0207 stage 2, XO_LLRT_C=rc)
+  for sym in ["xo_rc_inc_c", "xo_rc_dec_c", "xo_rc_dec_shared_c", "xo_rc_claim_c", "xo_rc_mark_c"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_RC_C")
       break
     }
   }

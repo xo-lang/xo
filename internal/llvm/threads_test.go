@@ -32,6 +32,45 @@ var rtDir = filepath.Join("..", "..", "std", "llrt")
 // tsanBuild compiles srcs with ThreadSanitizer and extra flags, or skips
 // the test when the host's clang cannot. Where ThreadSanitizer compiles
 // but cannot run, it compiles without it.
+var (
+	cExportsOnce sync.Once
+	cExportsLL   string
+	cExportsErr  error
+)
+
+// cOnly is the sources of a C only test of the runtime (a file of
+// std/llrt/testdata that includes xo_rt.c and plays generated code): the
+// C file and the LLVM IR of an empty program, which defines the C ABI
+// exports the runtime calls (std/native/llrt/cabi.xo, decision 0207).
+func cOnly(t *testing.T, src string) []string {
+	t.Helper()
+	cExportsOnce.Do(func() {
+		dir := filepath.Join(testDir, "cexports")
+		if cExportsErr = os.MkdirAll(dir, 0o755); cExportsErr != nil {
+			return
+		}
+		if cExportsErr = os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main() {}\n"), 0o644); cExportsErr != nil {
+			return
+		}
+		res, ok, err := build.CheckNative([]string{dir}, false)
+		if err != nil || !ok {
+			cExportsErr = fmt.Errorf("check: %v", err)
+			return
+		}
+		prog, err := llvm.Generate(res, llvm.Options{LineRoot: dir})
+		if err != nil {
+			cExportsErr = err
+			return
+		}
+		cExportsLL = filepath.Join(dir, "exports.ll")
+		cExportsErr = os.WriteFile(cExportsLL, prog.IR, 0o644)
+	})
+	if cExportsErr != nil {
+		t.Fatalf("the C ABI exports: %v", cExportsErr)
+	}
+	return []string{src, cExportsLL}
+}
+
 func tsanBuild(t *testing.T, flags, srcs []string) string {
 	t.Helper()
 	if _, err := build.Clang(); err != nil {
@@ -167,18 +206,22 @@ func runTSan(t *testing.T, bin, dir string, env ...string) string {
 func TestRuntimeThreads(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "rc_threads.c")
-	bin := tsanBuild(t, nil, []string{src})
-	out := runTSan(t, bin, ".")
-	for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal"} {
-		if !strings.Contains(out, name+": ok") {
-			t.Errorf("test %s did not pass:\n%s", name, out)
+	// the counts in Xo (std/native/llrt/rc.xo through the C ABI exports,
+	// decision 0207 stage 2), then the C path (XO_LLRT_C=rc's -DXO_RC_C)
+	for _, flags := range [][]string{nil, {"-DXO_RC_C"}} {
+		bin := tsanBuild(t, flags, cOnly(t, src))
+		out := runTSan(t, bin, ".")
+		for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal", "model"} {
+			if !strings.Contains(out, name+": ok") {
+				t.Errorf("%v: test %s did not pass:\n%s", flags, name, out)
+			}
 		}
 	}
 	if testing.Short() {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2", "-DITER=20000"}, []string{src}, opt); err != nil {
+	if err := build.CompileC([]string{"-O2", "-DITER=20000"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -194,7 +237,7 @@ func TestRuntimeThreads(t *testing.T) {
 func TestRuntimeTasks(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "tasks.c")
-	bin := tsanBuild(t, nil, []string{src})
+	bin := tsanBuild(t, nil, cOnly(t, src))
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
 		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"} {
@@ -207,7 +250,7 @@ func TestRuntimeTasks(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, []string{src}, opt); err != nil {
+	if err := build.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -222,7 +265,7 @@ func TestRuntimeTasks(t *testing.T) {
 func TestRuntimeEventLoop(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "evloop.c")
-	bin := tsanBuild(t, nil, []string{src})
+	bin := tsanBuild(t, nil, cOnly(t, src))
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
 		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
@@ -235,7 +278,7 @@ func TestRuntimeEventLoop(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2"}, []string{src}, opt); err != nil {
+	if err := build.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")

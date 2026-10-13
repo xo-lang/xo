@@ -743,56 +743,18 @@ static int tz_valid_name(const char *p, int64_t n) {
 // ---------------------------------------------------------------------------
 // Zone data: embedded per use, the embedded database, or the host's
 
-static uint32_t tz_le4(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-static uint32_t tz_le2(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
+int64_t xo_x_tz_zip_entry(int64_t z, int64_t zn, int64_t name, int64_t nn, int64_t out);
 
-// tz_zip_entry finds a stored entry of a zip archive (std/rt's zipEntry).
+// tz_zip_entry finds a stored entry of a zip archive (std/rt's zipEntry;
+// cabi.xo, decision 0207).
 static int tz_zip_entry(const unsigned char *z, int64_t zn, const char *name, int64_t nn, const unsigned char **out, int64_t *outn) {
-	if (zn < 22) {
+	int64_t r[2];
+	if (!xo_x_tz_zip_entry(XO_ADDR(z), zn, XO_ADDR(name), nn, XO_ADDR(r))) {
 		return 0;
 	}
-	const unsigned char *end = z + zn - 22;
-	if (tz_le4(end) != 0x06054b50) {
-		return 0;
-	}
-	int64_t n = tz_le2(end + 10);
-	int64_t off = tz_le4(end + 16);
-	for (int64_t i = 0; i < n; i++) {
-		if (off + 46 > zn) {
-			return 0;
-		}
-		const unsigned char *h = z + off;
-		if (tz_le4(h) != 0x02014b50) {
-			return 0;
-		}
-		int64_t method = tz_le2(h + 10);
-		int64_t size = tz_le4(h + 24);
-		int64_t namelen = tz_le2(h + 28), extralen = tz_le2(h + 30), commentlen = tz_le2(h + 32);
-		int64_t local = tz_le4(h + 42);
-		if (off + 46 + namelen > zn) {
-			return 0;
-		}
-		const unsigned char *entry = z + off + 46;
-		off += 46 + namelen + extralen + commentlen;
-		if (namelen != nn || memcmp(entry, name, (size_t)nn) != 0) {
-			continue;
-		}
-		if (method != 0 || local + 30 > zn) {
-			return 0;
-		}
-		const unsigned char *lh = z + local;
-		if (tz_le4(lh) != 0x04034b50) {
-			return 0;
-		}
-		int64_t start = local + 30 + tz_le2(lh + 26) + tz_le2(lh + 28);
-		if (start + size > zn) {
-			return 0;
-		}
-		*out = z + start;
-		*outn = size;
-		return 1;
-	}
-	return 0;
+	*out = z + r[0];
+	*outn = r[1];
+	return 1;
 }
 
 // tz_read_file reads a whole regular file (malloc'd), or returns NULL.

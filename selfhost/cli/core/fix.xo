@@ -446,7 +446,7 @@ fn walk_sources(os: Os, top: Str, dir: Str, var out: List[Str], var seen: Map[St
   for e in entries {
     let p = join_path(dir, e.name)
     if e.is_dir {
-      if e.name == "testdata" || e.name.starts_with(".") {
+      if e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") {
         continue
       }
       walk_sources(os, top, p, out, seen)?

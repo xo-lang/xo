@@ -6,6 +6,58 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster list code on the LLVM backend (decision 0211): the compiler
+  tells LLVM which lists cannot share storage (a `var` list once made
+  unique, a new list, the borrowed parameters, as Xo's value semantics
+  guarantee), so it keeps lengths, drops index checks, and vectorizes
+  code that writes one list while reading another. Argon2id and
+  BLAKE2b in std/crypto are Xo again on the native backends, at 1.043
+  times the C's instructions on LLVM and 0.980 on arm64
+  (bench/results/llvm-noalias-2026-10-13.md); `XO_LLRT_C=digest` builds
+  the C. Output is unchanged.
+- Fixed: go commands that ran on the Xo Go cache outside an Xo build
+  (`go vet` in tests, the Go binder's `go list`, tool builds) could lose
+  cache entries to a concurrent trim and fail with `could not import
+  strings (... no such file or directory)`; they now hold the cache's
+  shared lock (gotchas/go-commands-outside-build-race-trim.md).
+- Native backends: the C runtime's reference count operations (retain,
+  release, claim, and marking a value shared between threads) are Xo
+  (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C
+  through C ABI exports; within 5 percent of the C's instructions on
+  both backends (bench/results/raw-memory-2026-10-13.md).
+  `XO_LLRT_C=rc` builds the C path. Lists of zeros made by std's
+  implementation (deflate's tables, regexp's queue, JSON object key
+  tables) take one allocation and a memset instead of a push per
+  element. Fixed: the wasm backend reported std code using the raw
+  memory intrinsics as unsupported.
+- Added: `./...` and `DIR/...` on every command that takes directories
+  (check, test, build, vet, doc, fmt, fix, parse, audit). It means DIR,
+  which those commands already walk below, so `xo check ./...` equals
+  `xo check .`; a `DIR/...` with no `.xo` file under it is an error
+  (exit 1) (decision 0210).
+- Changed: directories whose name starts with `_` are skipped like
+  `testdata` and `.` names, as the go command skips them (decision 0210).
+- Fixed: `xo help` lists every command with its purpose, and every
+  command takes `-h`/`--help` (usage on stdout, exit 0), also after a
+  subcommand (`xo edit rename --help`); `xo` alone and `xo build -h` no
+  longer print the internal xo1 usage line or its internal flags; an
+  unknown flag exits 2 with the command's usage on stderr.
+- The LLVM backend lowers std's internal spin loop hint to the target's
+  pause instruction (`yield` on arm64, `pause` on x86-64) instead of
+  nothing (decision 0200).
+- Windows builds are deterministic: the link passes lld-link `/Brepro`,
+  so rebuilding the same sources gives a byte identical `.exe` (the COFF
+  time stamp is a hash of the output, not the link time; decision 0197).
+- Native backends: more of the C runtime is Xo (decisions 0204, 0207):
+  the text of every arithmetic, index, and conversion fault, Int and
+  Float text, UTF-8 decoding, white space, Int parsing, Duration and Time
+  text used by the runtime itself, `Net.only`'s address checks, and the
+  TLS client's and server's name checks, PEM decoding, and alert texts.
+  Messages are unchanged byte for byte; TLS name checks now follow Go's
+  `net.ParseIP` exactly. Under the hood the C runtime can call runtime
+  functions written in Xo, and std's implementation gets raw memory
+  intrinsics (internal only). A program built with the arm64 backend is
+  about 20 KB larger (LLVM builds are not).
 - Added: on Linux, the native backends' os.fs.read, write, and stat
   (and read_dir's and walk's stats) make their system calls from Xo
   (std/native/llrt/linux.xo and sysio.xo, decision 0206) with the C
@@ -37,7 +89,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0201). They retire from 0.32 to 1.01 times the instructions of the C
   they replace (rune_count about a third); `XO_LLRT_C=scan` builds the
   C path for comparison. Output is unchanged.
-
 - Faster: `Atomic[T]` on the native backends no longer calls the C
   runtime: get, set, swap, and compare_and_swap are one inline atomic
   instruction each (get is a single `ldar` on arm64) and add and max are

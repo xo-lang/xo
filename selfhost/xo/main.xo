@@ -62,9 +62,15 @@ use github.com/xo-lang/xo/selfhost/cli/modules
 use github.com/xo-lang/xo/selfhost/cli/semantic
 use github.com/xo-lang/xo/selfhost/cli/bind
 use github.com/xo-lang/xo/selfhost/cli/servers
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 fn main(os: Os) ! {
-  let args = os.env.args()
+  let fr = front(os, os.env.args())
+  if fr.code >= 0 {
+    // help, or a usage error found before any command runs (opts.xo)
+    os.proc.exit(fr.code)
+  }
+  let args = fr.args
   if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.env.get("PWD") ?? "", args)) }
   if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run(os, args)) }
   if let Some(code) = servers.forward_cli(os, args) {
@@ -85,7 +91,8 @@ fn main(os: Os) ! {
     os.proc.exit(rtpack_cmd(os, args[1..]))
   }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
-    usage(os, "")
+    os.stdio.eprint("xo: unknown command ${(if args.is_empty() { "" } else { args[0] }).quote()}\n\n${cmdhelp.top()}")
+    os.proc.exit(2)
   }
   var o = parse_args(os, args)
   let goos = host_os(os)
@@ -346,7 +353,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // stays the host's (gotchas/wasm-target-os-is-the-host.md)
     tgoarch = "wasm"
   }
-  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
+  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", t)
   t = lo.t
   let b = lo.b
   let tu = lo.tu
@@ -458,7 +465,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", t)
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", false, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -586,8 +593,8 @@ struct Lowered {
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
-fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, t0: Time) -> Lowered {
-  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
+fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
+  var b = ssa.build_program_for(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -795,7 +802,7 @@ fn rel_to(wd: Str, p: Str) -> Str {
 }
 
 fn fail(os: Os, msg: Str) -> Never {
-  os.stdio.eprintln("xo1: ${msg}")
+  os.stdio.eprintln("xo: ${msg}")
   os.proc.exit(1)
 }
 

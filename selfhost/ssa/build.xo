@@ -174,6 +174,12 @@ pub struct Builder {
   /// A test binary (Options.Tests, testmode.xo).
   pub tests: Bool = false
   pub conc: Bool = false
+  /// The program is lowered for the wasm backend (decision 0207): rt.layout
+  /// folds to the wasm runtime's layout, and no C ABI export is built (no
+  /// C calls them).
+  pub wasm: Bool = false
+  /// The paths of the modules of the functions declared (declMods).
+  decl_mods: Map[Str, Bool] = {}
   /// The program calls task.with_budget: the code of its own modules
   /// polls the budget (build_budget.go).
   budgets: Bool = false
@@ -272,12 +278,19 @@ pub fn build_program_opts(c: check.Checker, line_root: Str, tests: Bool, release
 /// each target's, so a cross build's `match target.os` keeps the
 /// target's arm, not the compiler's).
 pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str) -> Builder {
+  build_program_for(c, line_root, tests, release, real_tests, goos, goarch, false)
+}
+
+/// build_program_target for the wasm backend when wasm is set (decision
+/// 0207: the wasm runtime's layout, no C ABI exports).
+pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool) -> Builder {
   var b = new_builder(c, line_root)
   b.tests = tests
   b.release = release
   b.real_tests = real_tests
   b.goos = goos
   b.goarch = goarch
+  b.wasm = wasm
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
@@ -286,9 +299,11 @@ pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, relea
     b.real_tests = real_tests
     b.goos = goos
     b.goarch = goarch
+    b.wasm = wasm
     b.conc = true
     b.build()
   }
+  b.m.goarch = goarch
   b
 }
 
@@ -312,6 +327,10 @@ pub fn (var b: Builder) build() {
   if b.tests {
     // a test binary (testmode.xo): its main runs one test
     b.build_tests()
+    b.run_queue()
+    // after the program's own code: a feature's exports are built only
+    // when code of a module importing them is
+    b.declare_exports()
     b.run_queue()
     return
   }
@@ -342,6 +361,82 @@ pub fn (var b: Builder) build() {
     }
   }
   b.run_queue()
+  b.declare_exports()
+  b.run_queue()
+}
+
+/// Declares every function of the marker modules of C ABI exports the
+/// program loaded (native/llrt/cabi and native/llrt/cabi_<feature>), in
+/// the order of their paths and then of their names, as roots of the
+/// build: the C runtime calls them as xo_x_<name> (decision 0207,
+/// declareExports). Not for the wasm backend, which links no C.
+fn (var b: Builder) declare_exports() {
+  if b.wasm {
+    return
+  }
+  var paths: List[Str] = []
+  var by_path: Map[Str, Int] = {}
+  for (i, m) in b.c.mods.indexed() {
+    if m.path == "native/llrt/cabi" || m.path.starts_with("native/llrt/cabi_") {
+      paths.push(m.path)
+      by_path[m.path] = i
+    }
+  }
+  for p in paths.sort() {
+    let mi = by_path.get(p) ?? -1
+    if p == "native/llrt/cabi" || b.importer_built(mi) {
+      b.declare_exports_of(mi)
+    }
+  }
+}
+
+/// Whether the program builds code of a module that imports module mi
+/// (importerBuilt): a feature's marker module, whose C runs only then.
+fn (var b: Builder) importer_built(mi: Int) -> Bool {
+  for m in b.c.mods {
+    if !b.decl_mods.contains(m.path) {
+      continue
+    }
+    for f in m.files {
+      for (_, imp) in b.c.files[f].imports.entries() {
+        if imp.module == mi {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+fn (var b: Builder) declare_exports_of(mi: Int) {
+  var names: List[Str] = []
+  for (n, o) in b.c.mods[mi].members {
+    if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
+      names.push(n.to_str() ?? "")
+    }
+  }
+  for n in names.sort() {
+    let o = b.c.mods[mi].members.get(n.bytes()) ?? -1
+    if !b.type_params(o).is_empty() {
+      b.unsupported("a generic C ABI export")
+      continue
+    }
+    let fi = b.declare(o, [])
+    b.m.funcs[fi].entry = true
+    b.m.funcs[fi].export = "xo_x_${n}"
+    for p in b.m.funcs[fi].blocks[0].params {
+      let t = b.m.funcs[fi].values[p].ty
+      if !(b.tkind(t) is Kind.Int | Kind.Float) {
+        b.unsupported("a C ABI export with a `${b.m.types[t].name}` parameter")
+      }
+    }
+    let rs = b.m.funcs[fi].results
+    if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
+      b.unsupported("a C ABI export with `var` parameters")
+    } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Str | Kind.Unit) {
+      b.unsupported("a C ABI export with a `${b.m.types[rs[0]].name}` result")
+    }
+  }
 }
 
 /// Builds the queued bodies (and the generated functions they ask for).
@@ -354,6 +449,8 @@ fn (var b: Builder) run_queue() {
     b.run_job(j)
     b.run_gens()
   }
+  // built: a later run (the exports, declare_exports) starts empty
+  b.queue = []
   if b.need_conc && !b.conc {
     b.why = "concurrency: built again with unwinding checks"
   }
@@ -1295,6 +1392,11 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
   if targs.is_empty() {
     b.plain[fo] = f
   }
+  let om = b.obj_mod(fo)
+  if om >= 0 {
+    // the modules the program builds code of (declare_exports)
+    b.decl_mods[b.c.mods[om].path] = true
+  }
   b.queue.push(Job.Body(fo: fo, fi: f, sub: sub))
   f
 }
@@ -1314,7 +1416,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   s.sealed[0] = true
   let saved = b.s

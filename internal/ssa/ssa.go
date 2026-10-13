@@ -460,6 +460,10 @@ type Func struct {
 	// owned, its arguments and result are scalars or pointers (the C
 	// calling convention), and its address is taken with OpFuncAddr.
 	Entry bool
+	// Export is the C symbol of a C ABI export (decision 0207): a function
+	// of the runtime module native/llrt/cabi, which the C runtime calls by
+	// that name. It is also an Entry. Empty for any other function.
+	Export string
 	// UnwindExit is the block that ends the function when it unwinds
 	// (cancellation or a fault, decision 0085): it hands a fault on to
 	// the caller (`rt.fault_continue`) or returns zero values. Nil when
@@ -491,7 +495,10 @@ type Module struct {
 	// fault carry their landing (Value.Pad).
 	FaultUnwind bool
 	// TZ is the zone data std/time needs (build_time.go).
-	TZ     TZUse
+	TZ TZUse
+	// GOARCH is the build's target architecture (Options.GOARCH), ""
+	// for the host; the LLVM emitter picks the spin hint by it.
+	GOARCH string
 	faults map[*Func]bool // mayFault while Verify runs
 	types  map[string]*Type
 	order  []*Type // named struct and enum types, in creation order

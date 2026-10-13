@@ -1,6 +1,6 @@
 //go:build unix
 
-package build
+package gotool
 
 import (
 	"os"
@@ -8,16 +8,19 @@ import (
 	"syscall"
 )
 
-// Cache locks (gotchas/go-cache-trim-races-builds.md). Every Xo go build
-// holds a shared lock on xo-cache.lock for its whole run; a trim holds it
-// exclusively, so it may remove any entry. A trim first takes xo-gate.lock
-// exclusively, and builds pass through the gate (shared) before locking
-// the cache, so a waiting trim is not starved by a stream of new builds.
+// Cache locks (gotchas/go-cache-trim-races-builds.md,
+// gotchas/go-commands-outside-build-race-trim.md). Every go command on
+// the Xo Go cache holds a shared lock on xo-cache.lock for its whole run
+// (HoldCache); internal/build's trim holds it exclusively, so it may
+// remove any entry. A trim first takes xo-gate.lock exclusively, and go
+// commands pass through the gate (shared) before locking the cache, so a
+// waiting trim is not starved by a stream of new ones.
 
-type cacheLock struct{ gate, cache *os.File }
+// CacheLock is a held lock on the Xo Go cache; nil means not locked.
+type CacheLock struct{ gate, cache *os.File }
 
 func openLock(name string) (*os.File, error) {
-	dir := GoCacheDir()
+	dir := CacheDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -33,9 +36,9 @@ func flock(f *os.File, how int) error {
 	}
 }
 
-// lockCacheShared is held by a build. On any error the build runs
+// LockCacheShared is held by a go command. On any error the command runs
 // unlocked (nil lock), as before locks existed.
-func lockCacheShared() *cacheLock {
+func LockCacheShared() *CacheLock {
 	gate, err := openLock("xo-gate.lock")
 	if err != nil {
 		return nil
@@ -52,12 +55,12 @@ func lockCacheShared() *cacheLock {
 	}
 	flock(gate, syscall.LOCK_UN)
 	gate.Close()
-	return &cacheLock{cache: cache}
+	return &CacheLock{cache: cache}
 }
 
-// lockCacheExclusive is held by a trim. wait false gives up at once when
-// a build holds the cache (nil result).
-func lockCacheExclusive(wait bool) *cacheLock {
+// LockCacheExclusive is held by a trim. wait false gives up at once when
+// a go command holds the cache (nil result).
+func LockCacheExclusive(wait bool) *CacheLock {
 	gate, err := openLock("xo-gate.lock")
 	if err != nil {
 		return nil
@@ -82,10 +85,11 @@ func lockCacheExclusive(wait bool) *cacheLock {
 		cache.Close()
 		return nil
 	}
-	return &cacheLock{gate: gate, cache: cache}
+	return &CacheLock{gate: gate, cache: cache}
 }
 
-func (l *cacheLock) unlock() {
+// Unlock releases the lock; nil is a no-op.
+func (l *CacheLock) Unlock() {
 	if l == nil {
 		return
 	}

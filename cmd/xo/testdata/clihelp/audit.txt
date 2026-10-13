@@ -1,0 +1,12 @@
+usage: xo audit [--dir=<dir>] [--json] [--no-gc] [<dir>]
+
+Supply chain report (decision 0156): per dependency its version, the
+effects its API may reach, its xo.lock effects line, its effect ceiling,
+and its escape hatches (use c, use go of an impure package) with the
+vouch that covers each; this module's attenuations and the capabilities
+it passes into dependencies; and the check's diagnostics. JSON when
+--json or stdout is not a terminal. Exit 1 when the check has errors.
+--no-gc checks as a native build (use c).
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

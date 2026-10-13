@@ -1,0 +1,12 @@
+usage: xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]
+
+Apply the machine fixes of check diagnostics, round after round, until
+none apply, then reformat the changed files and print what changed.
+--from runs the migration rewriters for every breaking change after that
+draft first. An xo.mod line edition 2026 becomes edition preview
+(XO1315; the only edition before 1.0, --edition=preview names it).
+--dry-run writes nothing. Exit status 0 even when errors remain (they
+are listed); 2 on usage errors. Default: .
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

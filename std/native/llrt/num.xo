@@ -421,6 +421,16 @@ fn layout(out: Str, neg: Bool, dig: Int, nd: Int, dp: Int) -> Str {
 /// The text of f as the Go backend prints a Float.
 pub fn float_text(f: Float) -> Str { append_float("", f) }
 
+/// strconv.FormatFloat(f, 'g', -1, 64): float_text without the ".0"
+/// FloatStr adds to a whole number ('g' never ends with it).
+pub fn go_g_text(f: Float) -> Str {
+  let s = float_text(f)
+  if s.ends_with(".0") {
+    return s[0..s.len() - 2]
+  }
+  s
+}
+
 /// out + f as std/json writes a Float (std/rt jsonFloat, encoding/json's
 /// floatEncoder without HTML escaping): null for NaN and the infinities,
 /// strconv's 'f' format with the shortest digits, or 'e' below 1e-6 and

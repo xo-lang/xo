@@ -21,6 +21,8 @@ pub struct Gen {
   globals: List[Str] = []
   helpers: List[Str] = []
   funcs: List[Str] = []
+  /// The alias scopes of the functions (noalias.xo).
+  meta: List[Str] = []
   rt_decls: List[Str] = []
   /// The text of runtime_decls (the runtime calls declared there are not
   /// declared again).
@@ -49,6 +51,9 @@ pub struct Gen {
   by_ref_done: List[Bool] = []
   /// The functions used as values (they keep the plain convention).
   addr_taken: Map[Str, Bool] = {}
+  /// Per function and `var` parameter: whether it hands back its own
+  /// object or a new list (noalias.xo summarize).
+  same_var: List[List[Bool]] = []
   /// The first construct the lowering does not support (fail): the
   /// program fails, as GenerateSSA returns an error.
   pub err: Str = ""
@@ -121,6 +126,12 @@ pub struct Gen {
   rng_mid: List[Bool] = []
   facts: List[Fact] = []
   fact_at: List[Int] = []
+  /// The alias scopes of the function (noalias.xo): per value the scope
+  /// of its access (-1 none), the number of scopes (0: none emitted),
+  /// and the first metadata id.
+  sc_tag: List[Int] = []
+  sc_n: Int = 0
+  sc_base: Int = 0
 }
 
 /// The emitter for module m.
@@ -278,6 +289,7 @@ pub fn (var g: Gen) generate() -> Str {
     }
   }
   g.inlinable_set()
+  g.summarize()
   for fi in 0..nf {
     g.lower_func(fi)
     if !g.err.is_empty() {
@@ -295,6 +307,7 @@ pub fn (var g: Gen) generate() -> Str {
   }
   let rl = g.res_ll(mi)
   g.funcs.push("define void @xo_entry() #1 {\n  call ${rl} ${fname(g.m.funcs[mi].name)}(${args.join(", ")})\n  ret void\n}\n")
+  g.exports()
   if !g.err.is_empty() {
     return ""
   }
@@ -308,6 +321,7 @@ pub fn (var g: Gen) generate() -> Str {
   out.push("\n")
   out.push(g.helpers.join(""))
   out.push(g.funcs.join(""))
+  out.push(g.meta.join(""))
   out.join("")
 }
 
@@ -731,6 +745,36 @@ fn (var h: H) w(s: Str) {
 
 /// The helper that retains ("dup"), releases ("drop"), or marks shared
 /// ("share") a value of type t, written at its first use (rcFn).
+/// Defines every C ABI export (Func.export, decision 0207; fromssa.go
+/// exports): an external function of the C calling convention calling
+/// the Xo function; a Str result is returned as its string object, its
+/// length stored through the pointer after the parameters.
+fn (var g: Gen) exports() {
+  for fi in 0..g.m.funcs.len() {
+    let f = g.m.funcs[fi]
+    if f.export.is_empty() {
+      continue
+    }
+    var ps: List[Str] = []
+    var as_: List[Str] = []
+    for (i, p) in f.blocks[0].params.indexed() {
+      let t = g.ll(f.values[p].ty)
+      ps.push("${t} %a${i}")
+      as_.push("${t} %a${i}")
+    }
+    let rl = g.res_ll(fi)
+    let call = "call ${rl} ${fname(f.name)}(${as_.join(", ")})"
+    match g.m.types[f.results[0]].kind {
+      Str => {
+        ps.push("ptr %len")
+        g.funcs.push("define ptr @${f.export}(${ps.join(", ")}) #1 {\n  %r = ${call}\n  %o = extractvalue %xo.str %r, 0\n  %n = extractvalue %xo.str %r, 1\n  store i64 %n, ptr %len\n  ret ptr %o\n}\n")
+      }
+      Unit => g.funcs.push("define void @${f.export}(${ps.join(", ")}) #1 {\n  ${call}\n  ret void\n}\n")
+      _ => g.funcs.push("define ${rl} @${f.export}(${ps.join(", ")}) #1 {\n  %r = ${call}\n  ret ${rl} %r\n}\n")
+    }
+  }
+}
+
 fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
   let tname = g.m.types[t].name
   let name = "@${"xo.${kind}.${tname}".quote()}"
