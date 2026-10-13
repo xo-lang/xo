@@ -103,7 +103,9 @@ fn (var b: Builder) check_no_alloc() {
     return
   }
   for v in b.s.f.values {
-    if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) {
+    // `target`'s fields (a compile time match, sched.xo fiber_frame) are
+    // scalar tags too
+    if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) && !(b.m.types[v.ty].name is "Target" | "TargetOs" | "TargetArch") {
       b.unsupported("a `${b.m.types[v.ty].name}` value in a reference count function (decision 0207: no allocation, no counting)")
       return
     }
