@@ -138,9 +138,11 @@ the arm64 backend never needed clang there, only some `cc`.
 
 Next steps, ranked by likelihood of working:
 
-1. Ship the zone database with the pack (`lib/xo/zoneinfo.zip`, looked
-   up before `go env GOROOT`), so native builds need no Go toolchain:
-   `zoneinfoZip` in tzdata.go, one more release file.
+1. Done (2026-10-12, for xo1, the released `xo`): release.sh copies
+   Go's zoneinfo.zip to `lib/xo/zoneinfo.zip` in each archive, and
+   selfhost/xo tz.xo reads it before `go env GOROOT` (decision 0182
+   next step 2; bench/results/macho-2026-10-12.md, "Default linker and
+   zone data"). The frozen Go `zoneinfoZip` is unchanged.
 2. An arm64 object writer and linker in the arm64 backend (Mach-O first:
    `internal/arm64` emits `.s` today; start with `xo build
    --backend=arm64 --emit=obj` writing a relocatable object for the

@@ -235,14 +235,42 @@ Stage 3 next steps, ranked by likelihood of working:
   struct-named-target-breaks-predeclared-target.md), and the TLS
   library holds common symbols (gotchas/tls-library-common-symbols.md).
 
+Next steps 1 and 2, done (2026-10-12, commits 9c7bee7 and 19824630;
+bench/results/macho-2026-10-12.md, "Default linker and zone data"):
+
+- **xo1's default linker on darwin is selfhost/macho** (main.xo
+  `default_ld`): with no `--ld`, the host's darwin/arm64 link uses it
+  when `--as` is not cc, no `use c` module is linked, and the pack has
+  the runtime variant of the link's flags; otherwise cc, as before.
+  `--ld=cc` forces cc, `--ld=macho` still fails rather than fall back.
+  A linux host keeps cc until the ELF linker writes PIE (stage 3 next
+  step 1), the cc default there.
+- Goldens through xo1: 169 of 169 pass with `--ld=cc` (all linked by
+  ld), with the default (all linked by selfhost/macho, 70,435,324 bytes
+  against 70,509,104), and with the default and an empty PATH.
+- Fixed point with the pack (bootstrap-xo.sh `XO_BOOTSTRAP_RTPACK`): s1,
+  s2, s3 linked by selfhost/macho, s2 and s3 assembly (395,441,956
+  bytes) and binaries (79,002,335 bytes) identical, s1 equal to s2;
+  stages 751 s, 587 s, 583 s against 659 s, 586 s, 588 s for the cc run
+  (`XO_RTPACK=off`; noisy machine).
+- Found on the way: the `-DXO_TEXT_C` and `-DXO_STRINGS_C` scans
+  matched xo1's own string literals, so xo1 linking itself silently
+  fell back to cc (gotchas/runtime-flags-from-string-literals.md).
+- **The archives ship `lib/xo/zoneinfo.zip`** (release.sh), which tz.xo
+  `shipped_zoneinfo` reads before `go env GOROOT`: time_zones and
+  time_dynamic_zone build and pass on darwin/arm64 with no Go and no cc
+  on PATH. release-verify.sh checks the default, `--ld=cc`, and the
+  time zone golden with no Go.
+
 Next steps, ranked by likelihood of working:
 
-1. Make `--ld=macho` xo1's default when a pack is found and no `use c`
-   source is linked, keeping cc as the fallback (one line in
-   selfhost/xo/main.xo, then the goldens and the fixed point again).
-2. Ship zoneinfo.zip with the pack (decision 0157 next step 1) so std/time
-   needs no Go toolchain either: `tz.xo` `zoneinfo_zip` looks beside the
-   pack first.
+1. The ELF linker writes PIE (stage 3 next step 1), then the same
+   default on a linux/arm64 host (`default_ld` drops its darwin test),
+   checked with scripts/elf-goldens.py and a fixed point on Graviton
+   (`scripts/remote-bootstrap.sh` with `XO_BOOTSTRAP_RTPACK`).
+2. Run scripts/release-verify.sh on a release.sh archive of this commit
+   (darwin/arm64), which now exercises the default linker and the
+   shipped zone data end to end.
 3. ELF: done, stage 3 above (its own next steps there).
 4. Port internal/ssa's `target` resolution to compare the prelude type
    by identity (the gotcha above), and the same in selfhost/ssa.
