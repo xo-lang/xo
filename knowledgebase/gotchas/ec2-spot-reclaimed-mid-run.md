@@ -13,6 +13,6 @@ were reclaimed, and the full selfhost tier needs about 45 to 60
 minutes uninterrupted.
 
 Fix: the scripts launch on demand only (owner, 2026-10-13).
-On demand vCPU quota was 32 (request to 96 pending on 2026-10-13), so
-two on demand runs of 16 or more vCPUs each can hit `VcpuLimitExceeded`;
-run them one after another, or use a smaller type with XO_REMOTE_TYPE.
+The on demand vCPU quota (Running On-Demand Standard instances,
+L-1216C47A) was raised from 32 to 96 on 2026-10-13: three 32 vCPU
+instances at once; past that, `VcpuLimitExceeded` means wait and retry.
