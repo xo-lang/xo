@@ -1,7 +1,7 @@
 # 0193: Porting the rest of the native runtime (std/llrt) to Xo: order, what stays C, and the bar per step
 
-Status: Accepted (2026-10-12), steps 1, 2, and 3 implemented (step 3:
-item 8 below):
+Status: Accepted (2026-10-12), steps 1, 2, 3, and 5 implemented (step 3:
+item 8 below; step 5: item 9):
 `std/native/llrt/text.xo` and `text_c.xo` (step 1),
 `std/native/llrt/strings.xo` and `strings_c.xo` (step 2),
 `std/native/prelude.xo` (`llrt_*` and the Str methods),
@@ -190,6 +190,58 @@ its callers move too.
      text through `float_bits` of the widened double; (d) to_hex again
      with a 32 byte push primitive, so a call covers 16 input bytes
      without the tail call.
+
+9. **Step 5, collection and test text, zone rules** (2026-10-13, results
+   `bench/results/runtime-port-step5-2026-10-13.md`, "Final"):
+   - The Debug text of collections was already generated code; its C
+     leaves, a Rune's Display and Debug and a UInt64's text (sized
+     integer text: the narrower types print as Ints through num.xo), are
+     `std/native/llrt/show.xo` (C path `show_c.xo`, `XO_LLRT_C=show`,
+     `-DXO_SHOW_C`); the SSA builders call `llrt_append_rune`,
+     `llrt_append_rune_quote`, `llrt_append_u64` (`fn.showText`,
+     selfhost `show_text`).
+   - std/time's zone rules are `std/native/llrt/tz.xo` (C path `tz_c.xo`,
+     `XO_LLRT_C=tz`, `-DXO_TZ_C`): TZif parsing, the POSIX TZ footer
+     parsed once per zone, Go's lookup and cache. A parsed zone is one
+     List[Int]; xo_time.c keeps the zone data (`tz_data`: constant names'
+     TZif data, the embedded zoneinfo.zip, the host's files and a
+     $ZONEINFO zip, unchanged format and order) and the table of loaded
+     zones (`tz_find`, `tz_keep`: the list held shared, released at exit
+     for the leak check). time.Zone carries `tz.Rules{id, w}`.
+   - A property test case's report (choices, input lines, the shortlex
+     check of XO_PROP_BEST) is `std/native/llrt/report.xo` (C path
+     `report_c.xo`, `XO_LLRT_C=report`, `-DXO_REPORT_C`) over the
+     primitives `gen_choices`, `test_write`, `prop_best`, `test_quit`
+     (std/native/rttest.xo).
+   - The bar holds on both backends (bench/perf/text, less setup, arm64
+     and LLVM): debug 0.663x and 0.622x, zone_offset 0.729x and 0.651x,
+     zone_fmt 0.987x and 0.983x, zone_civil 0.864x and 0.821x, zone_load
+     1.007x and 0.966x. bench/perf/report (a process per case): 0.989x
+     to 1.006x, within the 0.4 percent noise of a test process; the
+     report itself is too small to see.
+   - **What stays C**: the zone data and table (files, mutex, readlink);
+     the fault texts of sized integer arithmetic (C `xo_int_op` raises
+     them; they move with sized integer operations); `xo_rs_append_rune`
+     (BytesBuilder.write_rune); the literal pieces and cold fault
+     `str.concat_int` of Debug text; XO-TEST-FAIL and XO-TEST-LOG
+     framing (writes of text the generated code made); the property
+     generator. The pass and fail lines are the harness's, not the
+     runtime's.
+   - Correctness: TestTZDiff (every zone of Go's database, around its
+     transitions from 1700 to 2250, embedded, system, and $ZONEINFO
+     data, both paths); goldens show_table and tz_table on LLVM and
+     arm64 with either path; cmd/xo TestNoGCTests prop, same,
+     test_logs with either path; the pack built twice byte identical.
+   - Next, ranked: (a) delete the C paths of show, tz, and report once
+     the lead's full tier passes (show_c.xo, tz_c.xo, report_c.xo, the
+     `#ifdef` C, the IOFlags entries, `showText`'s and the testmode C
+     branches); (b) sized integer operations in Xo (`int_op`,
+     `int_conv`, `rune_of` as llrt functions the SSA builder inlines with
+     constant bits), which would take their fault texts along; (c)
+     XO0520 leaving scalar bindings alone
+     (gotchas/xo0520-scalar-copy-reassigned.md), which cost tz.xo two
+     workarounds; (d) TestGoldenThreads with the zone data
+     (gotchas/threads-golden-needs-zone-data.md).
 
 ## Consequences
 

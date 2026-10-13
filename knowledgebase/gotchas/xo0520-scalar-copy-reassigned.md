@@ -20,3 +20,5 @@ Fix: do not start a `var` from a collection element when it only picks
 between values: `let want = if rs.len() > 1 { m.tuple(rs) } else {
 rs[0] }`, or copy through a `let` first as core 5.2 says for scratch
 copies (`let first = rs[0]; var want = first`).
+
+Seen again (2026-10-13, std/native/llrt/tz.xo, decision 0193 step 5): `var hi = w[H_NTX]` in a binary search and four `var`s of tzset started from `w[...]` and swapped; fixed with `0 + w[H_NTX]` and with `let`s chosen by `if` expressions.

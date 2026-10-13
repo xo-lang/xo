@@ -761,12 +761,22 @@ Last verified: 2026-10-07
 - `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
   decision 0193): the same for bench/perf/text (Int parse, Duration and
   Time text, Debug quoting, split, lines, replace, trims, rune_count,
-  and since step 3 int_fmt, float_fmt, float_parse, base64, hex; `none`
-  is the input setup alone); `XO_LLRT_C=text,strings,num` builds the C
-  paths, `WORKLOADS` picks workloads. Run it through the heavy lock with
-  `XO_SELF_DRIVER=0` in the environment for the Go driver. Results in
-  `bench/results/runtime-port-2026-10-12.md` and
-  `runtime-port-step3-2026-10-12.md`. Last verified: 2026-10-12.
+  and since step 3 int_fmt, float_fmt, float_parse, base64, hex, since
+  step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load; `none`
+  is the input setup alone); `XO_LLRT_C=text,strings,num,show,tz` builds
+  the C paths, `WORKLOADS` picks workloads. Run it through the heavy lock
+  with `XO_SELF_DRIVER=0` in the environment for the Go driver. Results
+  in `bench/results/runtime-port-2026-10-12.md`,
+  `runtime-port-step3-2026-10-12.md`, and
+  `runtime-port-step5-2026-10-13.md`. Last verified: 2026-10-13.
+- `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
+  decision 0193 step 5): builds the test binary of report_test.xo
+  (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
+  property test (XO_TEST, XO_PROP_SEED; `0b`, `1b` also with
+  XO_PROP_BEST=0, as while shrinking), printing `<test> <backend> <sum
+  of the min instructions of 5 runs> <bytes of output>`;
+  `XO_LLRT_C=report` builds the C path. Through the heavy lock, with
+  `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1112,10 +1122,15 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,
-                        with C paths text_c.xo and strings_c.xo. `XO_LLRT_C=<name>[,<name>]`
+                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float
+                        text, Float.parse, hex and base64; num_c.xo, step 3); show.xo
+                        (Rune and UInt64 text of Display and Debug), tz.xo (std/time's
+                        zone rules), report.xo (a property test case's report) with
+                        show_c.xo, tz_c.xo, report_c.xo (step 5). `XO_LLRT_C=<name>[,<name>]`
                         (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
-                        -DXO_STRINGS_C, likewise never in a pack); XO_UNICODE=c still works
-                        (Last verified: 2026-10-12)
+                        -DXO_STRINGS_C, -DXO_NUM_C, -DXO_SHOW_C, -DXO_TZ_C, -DXO_REPORT_C,
+                        likewise never in a pack); XO_UNICODE=c still works
+                        (Last verified: 2026-10-13)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
