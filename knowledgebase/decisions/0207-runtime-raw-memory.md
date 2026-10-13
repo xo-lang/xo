@@ -209,7 +209,10 @@ Not implemented; the order and the rules for the step after this one.
   so LTO inlines them where the C copy was inline.
 - **The bar** holds on both backends (results file, stage 3: worst
   arm64 alloc small 1.040 less setup, conc spawn 1.035; LLVM at most
-  1.013); stress test alloc_threads.c (TestRuntimeAlloc) under
+  1.013); xo1 compiling selfhost/xo on it makes the same 1,952,597,859
+  allocations with 1.004 of the C's instructions and 0.953 to 0.986 of
+  its cycles, and the bootstrap fixed point holds with that xo1 as the
+  seed; stress test alloc_threads.c (TestRuntimeAlloc) under
   ThreadSanitizer for both paths.
 
 ### Design: thread local state for the runtime (next, not implemented)

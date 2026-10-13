@@ -501,7 +501,7 @@ the heap in Xo, and `XO_LLRT_C=alloc`. Each compiled selfhost/xo
 | wall clock | 5:38.34 | 5:43.41 | 5:25.65 | 5:41.58 |
 
 Instructions 1.004 of the C's, cycles 0.986 and 0.953, wall clock
-0.985 and 0.954; the assembly both write is byte identical (sha256
+0.985 and 0.953; the assembly both write is byte identical (sha256
 6af248b1...2e7a). Building each xo1: 10:43.33 (Xo heap) and 10:47.51
 (C), 17.5 GB maximum resident set each.
 
