@@ -1,0 +1,18 @@
+// The report of a property test's case (decision 0193 step 5): each case
+// of these tests is a process that generates its inputs, reports their
+// choices and Debug text to the harness (std/native/llrt/report.xo, or
+// its C path with XO_LLRT_C=report), and runs a body that does nothing.
+// measure.sh runs the cases of the test binary itself, with and without
+// XO_PROP_BEST (shrinking), and counts the instructions of each.
+
+test "wide" for a: List[List[Int]], b: Map[Str, List[Int]], c: List[UInt64], d: List[Str], e: List[List[Rune]] {
+  expect(a.len() >= 0)
+}
+
+test "huge" for p0: List[List[UInt64]], p1: List[List[UInt64]], p2: List[List[UInt64]], p3: List[List[UInt64]], p4: List[List[UInt64]], p5: List[List[UInt64]], p6: List[List[UInt64]], p7: List[List[UInt64]], p8: List[List[UInt64]], p9: List[List[UInt64]], p10: List[List[UInt64]], p11: List[List[UInt64]], p12: List[List[UInt64]], p13: List[List[UInt64]], p14: List[List[UInt64]], p15: List[List[UInt64]] {
+  expect(p0.len() >= 0)
+}
+
+test "narrow" for n: Int {
+  expect(n == n)
+}

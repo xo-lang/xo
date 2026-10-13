@@ -373,7 +373,18 @@ func (s *fn) propInputs(params []*check.VarObj, td *ast.TestDecl) []*Value {
 		text = s.appendDebug(text, vals[k], vo.Type, td)
 		text = s.call("str.concat", st, "", text, s.add(OpConst, st, "\n"))
 	}
-	s.rt("prop_report", nil, g, text)
+	if impl := b.preludeImpl("llrt_prop_report"); impl != nil && !check.LLRTUsesC("report") {
+		// in Xo (std/native/llrt/report.xo, decision 0193 step 5),
+		// unchecked like the C it replaces
+		f := b.declare(impl, nil, td)
+		var rt *Type
+		if len(f.Results) > 0 {
+			rt = f.Results[0]
+		}
+		s.call(f.Name, rt, "", g, text)
+	} else {
+		s.rt("prop_report", nil, g, text)
+	}
 	return vals
 }
 

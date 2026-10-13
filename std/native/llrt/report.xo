@@ -1,0 +1,118 @@
+// The report text of native test binaries, written in Xo (decision 0193
+// step 5): what a property test's case tells the harness before its body
+// runs (std/llrt/xo_testing.c's xo_prop_report). A test binary runs one
+// case per process (decision 0120); the harness (cmd/xo nativetest.go,
+// selfhost/xo) reads its standard output: an `XO-PROP-CHOICES c1,c2,...`
+// line with the generator's choices, an `XO-PROP-INPUT name = value` line
+// per input, and while shrinking `XO-PROP-NOT-SMALLER` (exit 3) for a
+// case whose choices are not shortlex smaller than the best so far
+// (XO_PROP_BEST), which std/rt skips. The C runtime keeps the generator,
+// the write, and the exit (rttest.gen_choices, test_write, prop_best,
+// test_quit). The failure and log lines (XO-TEST-FAIL, XO-TEST-LOG) stay
+// C: they frame text the generated code made and decide nothing. The C
+// path stays selectable (`XO_LLRT_C=report` loads report_c.xo) until the
+// bar of decision 0180 holds.
+use native/llrt/show
+use native/rt
+use native/rttest
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+/// Reports the choices of the generator g and the input text (`name =
+/// value` lines) of a property test's case to the harness; exits 3 when
+/// shrinking and the choices are not smaller than the best so far.
+pub fn prop_report(g: Int, input: Str) {
+  let rec = rttest.gen_choices(g)
+  var o = rt.rs_append(rt.rs_with_cap(32 + 20 * rec.len() + input.len()), "XO-PROP-CHOICES ")
+  var i = 0
+  while i < rec.len() {
+    if i > 0 {
+      // ,
+      o = rt.rs_push_byte(o, 44)
+    }
+    o = show.append_u64(o, rec[i])
+    i += 1
+  }
+  o = rt.rs_push_byte(o, 10)
+  // a line per input line; a newline at the end starts no line
+  let b = input.bytes()
+  let n = b.len()
+  var start = 0
+  while start < n {
+    var end = rt.str_find(input, "\n", start)
+    if end < 0 {
+      end = n
+    }
+    o = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_append(o, "XO-PROP-INPUT "), b, start, end, 0), 10)
+    start = end + 1
+  }
+  rttest.test_write(o)
+  let best = rttest.prop_best()
+  if best.len() > 0 && !shorter(rec, choices(best[0])) {
+    rttest.test_write("XO-PROP-NOT-SMALLER\n")
+    rttest.test_quit(3)
+  }
+}
+
+/// The choices of the text "c1,c2,..." (decimal, as strtoull reads
+/// each: leading white space, a sign, at most 2^64 - 1), up to the first
+/// that is not a number.
+fn choices(s: Str) -> List[Int] {
+  let b = s.bytes()
+  let n = b.len()
+  var out: List[Int] = []
+  var i = 0
+  while i < n {
+    var j = i
+    while j < n && (b[j] == 32 || (b[j] >= 9 && b[j] <= 13)) {
+      j += 1
+    }
+    var neg = false
+    if j < n && (b[j] == 43 || b[j] == 45) {
+      neg = b[j] == 45
+      j += 1
+    }
+    let d0 = j
+    var v = 0
+    var over = false
+    while j < n && b[j] >= 48 && b[j] <= 57 {
+      let c = Int(b[j]) - 48
+      // v * 10 + c above 2^64 - 1 saturates (unsigned compares)
+      if ult(1844674407370955161, v) || (v == 1844674407370955161 && c > 5) {
+        over = true
+      }
+      v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c)
+      j += 1
+    }
+    if j == d0 {
+      break
+    }
+    if over {
+      v = -1
+    } else if neg {
+      v = rt.int_wrap(1, 0, v)
+    }
+    out.push(v)
+    i = if j < n && b[j] == 44 { j + 1 } else { j }
+  }
+  out
+}
+
+/// a < b as UInt64s.
+fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
+
+/// std/rt's shortlexLess(a, b): fewer choices, else the first that
+/// differs is smaller.
+fn shorter(a: List[Int], b: List[Int]) -> Bool {
+  if a.len() != b.len() {
+    return a.len() < b.len()
+  }
+  var i = 0
+  while i < a.len() {
+    if a[i] != b[i] {
+      return ult(a[i], b[i])
+    }
+    i += 1
+  }
+  false
+}

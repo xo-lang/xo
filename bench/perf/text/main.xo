@@ -1,10 +1,23 @@
 // Text workloads of the native runtime port (decision 0193): the number
 // and time text (std/native/llrt/text.xo) against its C path
 // (XO_LLRT_C=text), the Str operations (strings.xo, XO_LLRT_C=strings),
-// and the number text (num.xo, XO_LLRT_C=num). Usage: textperf <workload>. Each workload prints
+// the number text (num.xo, XO_LLRT_C=num), the leaf text of Debug
+// (show.xo, XO_LLRT_C=show), and the zone rules of std/time (tz.xo,
+// XO_LLRT_C=tz). Usage: textperf <workload>. Each workload prints
 // "<workload> <checksum> <elapsed microseconds>"; the checksum must be
 // the same on every backend (the Go backend is the reference).
 use std/json
+use std/time
+
+/// A record whose Debug text has Runes and UInt64s in nested
+/// collections (the debug workload).
+struct Rec {
+  id: UInt64
+  mark: Rune
+  runes: List[Rune]
+  sizes: Map[Str, UInt64]
+  pair: (Rune, UInt64)
+}
 
 const ROUNDS = 200
 
@@ -209,6 +222,85 @@ fn hex(bs: List[Bytes]) -> Int {
   h
 }
 
+fn debug(recs: List[Rec]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 4 {
+    for r in recs {
+      h = mix(h, r.debug())
+    }
+  }
+  h
+}
+
+/// The zones of the zone workloads: DST in both hemispheres, a 30 minute
+/// DST, odd offsets, historical rules, a negative DST.
+fn zones() -> List[time.Zone] {
+  var out: List[time.Zone] = []
+  for r in [time.zone("Europe/Berlin"), time.zone("America/New_York"), time.zone("Australia/Lord_Howe"), time.zone("Asia/Kathmandu"), time.zone("America/Sao_Paulo"), time.zone("Europe/Dublin")] {
+    match r {
+      Ok(z) => out.push(z)
+      Err(_) => {}
+    }
+  }
+  out
+}
+
+fn zone_offset(ts: List[Time]) -> Int {
+  let zs = zones()
+  var h = 0
+  for _ in 0..ROUNDS / 6 {
+    for z in zs {
+      for t in ts {
+        h = (h * 31 + z.offset_at(t).nanos() / 1000000000) % 1000000007
+      }
+    }
+  }
+  h
+}
+
+fn zone_fmt(ts: List[Time]) -> Int {
+  let zs = zones()
+  var h = 0
+  for _ in 0..ROUNDS / 24 {
+    for z in zs {
+      for t in ts {
+        h = mix(h, time.format(t, z, time.RFC1123))
+      }
+    }
+  }
+  h
+}
+
+fn zone_civil(ts: List[Time]) -> Int {
+  let zs = zones()
+  var h = 0
+  for _ in 0..ROUNDS / 24 {
+    for z in zs {
+      for t in ts {
+        let c = time.civil(t, z)
+        match time.instant(c.date, c.time, z, time.Ambiguity.Earlier) {
+          Ok(back) => h = (h * 31 + back.unix() % 1000003) % 1000000007
+          Err(_) => h += 1
+        }
+      }
+    }
+  }
+  h
+}
+
+fn zone_load(names: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS * 5 {
+    for n in names {
+      match time.zone(n) {
+        Ok(z) => h = mix(h, z.name())
+        Err(_) => h += 1
+      }
+    }
+  }
+  h
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "parse_int"
@@ -258,6 +350,22 @@ fn main(os: Os) {
     padded.push(if k % 2 == 0 { "  ${strs[k]} \t" } else { "\u{3000}${ints[k]}\n" })
   }
   let text = rows.join("\r\n")
+  var recs: List[Rec] = []
+  var zts: List[Time] = []
+  let runes: List[Rune] = ['a', 'é', '\n', '€', '😀', '\'', 'Z', '日']
+  let big: UInt64 = 18446744073709551615
+  for k in 0..1000 {
+    let v = vs[k]
+    let u = UInt64(v) * UInt64(1 + v % 9000000000)
+    var rl: List[Rune] = []
+    for j in 0..(4 + k % 5) {
+      rl.push(runes[(k + j) % 8])
+    }
+    recs.push(Rec{id: if k % 3 == 0 { big - u } else { u }, mark: runes[k % 8], runes: rl, sizes: {"a": u, "b": big / (u + 1)}, pair: (runes[(k + 3) % 8], UInt64(v))})
+    // 1900 to 2100: historical transitions, the footer, and now
+    zts.push(Time.UNIX_EPOCH + Duration.from_secs_int(v * 6 - 2208988800 + (if k % 4 == 0 { 0 } else { 3600 * (k % 24) })))
+  }
+  let znames = ["Europe/Berlin", "America/New_York", "Australia/Lord_Howe", "Asia/Kathmandu", "America/Sao_Paulo", "Europe/Dublin", "Mars/Olympus"]
   let t = os.clock.now()
   let sum = match w {
     "parse_int" => parse_int(ints)
@@ -276,6 +384,11 @@ fn main(os: Os) {
     "float_parse" => float_parse(ftexts)
     "base64" => base64(bs)
     "hex" => hex(bs)
+    "debug" => debug(recs)
+    "zone_offset" => zone_offset(zts)
+    "zone_fmt" => zone_fmt(zts)
+    "zone_civil" => zone_civil(zts)
+    "zone_load" => zone_load(znames)
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

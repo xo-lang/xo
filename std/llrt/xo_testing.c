@@ -507,6 +507,11 @@ int64_t xo_gen_prop(void) {
 	return (int64_t)(uintptr_t)g;
 }
 
+// The C path of the report of a property test's case (decision 0193 step
+// 5): compiled only with -DXO_REPORT_C (XO_LLRT_C=report,
+// std/native/llrt/report_c.xo); std/native/llrt/report.xo is the
+// default, over the primitives after it.
+#ifdef XO_REPORT_C
 // gen_shorter is std/rt's shortlexLess(a, b).
 static int gen_shorter(const uint64_t *a, int64_t an, const uint64_t *b, int64_t bn) {
 	if (an != bn) {
@@ -559,6 +564,34 @@ void xo_prop_report(int64_t h, const char *in, int64_t inn) {
 		}
 	}
 }
+#endif
+
+// xo_gen_choices is the choices generator h made so far (report.xo).
+xo_rlist *xo_gen_choices(int64_t h) {
+	xo_gen *g = gen_of(h);
+	xo_rlist *l = xo_rl_new_n(g->nrec, 8);
+	memcpy(rl_data(l), g->rec, (size_t)g->nrec * sizeof(uint64_t));
+	l->len = g->nrec;
+	return l;
+}
+
+// xo_test_write writes the n bytes at p on the real standard output: a
+// report for the harness (report.xo).
+void xo_test_write(const char *p, int64_t n) { write_all(1, p, (size_t)n); }
+
+// xo_prop_best is $XO_PROP_BEST (the best choices while shrinking) in a
+// list of one, or the empty list (report.xo).
+xo_rlist *xo_prop_best(void) {
+	const char *best = getenv("XO_PROP_BEST");
+	if (!best) {
+		return &empty_list;
+	}
+	return str_list(best, (int64_t)strlen(best));
+}
+
+// xo_test_quit ends the test binary with status code at once (a case
+// not smaller than the best, report.xo).
+XO_NORETURN void xo_test_quit(int64_t code) { _exit((int)code); }
 
 // xo_gen_intn is GenRand.Intn: a choice in [0, n), no choice for n <= 1.
 int64_t xo_gen_intn(int64_t h, int64_t n) {

@@ -15,6 +15,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with no Go on PATH. scripts/bootstrap-xo.sh picks the
   LLVM backend on x86-64 hosts; scripts/remote-xo1-x86.sh and
   scripts/xo1-host-check.sh run the check on EC2 and the Intel Mac.
+- **More of the native runtime is Xo** (decision 0193 step 5): std/time's
+  zone rules (TZif parsing, the POSIX TZ footer, the lookup and Go's
+  cache) are std/native/llrt/tz.xo, the C keeping only the zone data
+  and the table of loaded zones; a Rune's Display and Debug text and a
+  UInt64's text (the leaves of the Debug text of collections) are
+  show.xo; the report of a property test's case to the harness is
+  report.xo. Output is unchanged (TestTZDiff over every zone of Go's
+  database, the new goldens show_table and tz_table, TestNoGCTests).
+  `XO_LLRT_C=show,tz,report` builds the C paths for comparison
+  (bench/results/runtime-port-step5-2026-10-13.md).
 - Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
   request to an in memory server sent after a stop request waited in
   the listener's backlog instead of failing, and under load could end
