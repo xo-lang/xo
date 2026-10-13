@@ -13,7 +13,9 @@
 # /nonexistent to show a build needs no external tool, decision 0182;
 # XO1_CMD=run: `<compiler> run` builds and runs each program in one
 # command, in the program's directory, its output compared the same way,
-# decision 0178 stage 1).
+# decision 0178 stage 1; XO_GOLD_NO_GO=1: only the want.txt goldens,
+# skipping internal/arm64/testdata/run, whose reference needs the Go
+# `xo`, for a host without Go).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -137,7 +139,7 @@ for d in sorted(glob.glob('internal/llvm/testdata/golden/*')):
     if os.path.isdir(d):
         jobs.append((d, want_golden))
 for d in sorted(glob.glob('internal/arm64/testdata/run/*')):
-    if os.path.isdir(d):
+    if os.path.isdir(d) and os.environ.get('XO_GOLD_NO_GO') != '1':
         jobs.append((d, want_go))
 ok = 0
 fails = []
