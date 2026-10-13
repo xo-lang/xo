@@ -79,7 +79,7 @@ recommended order below (0, 3, 1, 2, 6, 4, 5), so each line counts once.
 | Bucket | Lines | Notes |
 |---|---|---|
 | P, in progress (decision 0193 step 6) | 4,567 | xo_http.c 2,267, xo_h2.c 1,896, xo_proc.c 259, xo_fs.c 145 |
-| G, C paths kept behind XO_LLRT_C | 4,654 | 4,313 deletable after a full tier; text's 341 stay (Duration text). Decision 0198 (2026-10-13) deleted unicode, jsontext, num, strings, and the shared 82: 3,354 of these lines; tz, report, show (959) wait for a full tier of step 5 |
+| G, C paths kept behind XO_LLRT_C | 4,654 | 4,313 deletable after a full tier; text's 341 stay (Duration text). Decision 0198 (2026-10-13) deleted unicode, jsontext, num, strings, and the shared 82: 3,354 of these lines; its second round (after batch 8's full tier) deleted tz, report, show (959) and the C paths added since the audit (see "C paths kept for pieces already ported") |
 | (0) portable now | 1,799 | sized integer operations, crypto hashes, glob, generators, str_hash |
 | (0) held by C callers | 1,806 | fmt_int/fmt_go_g, fault texts, UTF-8 helpers, address policy, TLS name checks |
 | (3) system and platform calls | 3,105 | xo_win.c 1,188 (Windows only), zone files, fs, proc spawn |
@@ -362,14 +362,39 @@ A group often needs several; this counts a group under each one it needs.
 |---|---|---|---|---|---|
 | unicode | `XO_UNICODE=c`, `-DXO_UNICODE_C` | 2,047 | xo_unicode.c 1,783, xo_std.c 111, xo_bytes.c 153 | holds on both (decisions 0184, 0192; 0180 item 7) | deleted (decision 0198, the ADR 0180 asks for) |
 | jsontext | `XO_LLRT_C=jsontext` | 1,016 | xo_json.c 983, xo_std.c 33 | holds (step 4) | deleted (decision 0198; json_diff.c 115 and http_fuzz.c's JSON part 38 too) |
-| tz | `XO_LLRT_C=tz` | 868 | xo_time.c | holds (step 5) | yes |
+| tz | `XO_LLRT_C=tz` | 868 | xo_time.c | holds (step 5) | deleted (decision 0198 second round) |
 | num | `XO_LLRT_C=num` | 135 | xo_std.c 106, xo_bytes.c 29 | holds (step 3) | deleted (decision 0198) |
 | num and jsontext | unguarded | 82 | xo_std.c 604-685 (n_lower_eq, n_parse_float) | | deleted (decision 0198; only their C paths called it) |
 | strings | `XO_LLRT_C=strings` | 74 | xo_std.c | holds (step 2) | deleted (decision 0198) |
-| report | `XO_LLRT_C=report` | 54 | xo_testing.c | holds (step 5) | yes |
-| show | `XO_LLRT_C=show` | 37 | xo_bytes.c | holds (step 5) | yes |
+| report | `XO_LLRT_C=report` | 54 | xo_testing.c | holds (step 5) | deleted (decision 0198 second round) |
+| show | `XO_LLRT_C=show` | 37 | xo_bytes.c | holds (step 5) | deleted (decision 0198 second round) |
 | text | `XO_LLRT_C=text` | 341 | xo_std.c | Duration text misses it (1.171x arm64, 1.087x LLVM, decision 0194) | no: the module's one switch keeps all 341 until Duration text passes |
-| **total** | | **4,654** | | | **4,313 deletable**, 341 kept; 3,354 deleted by decision 0198 (3,373 with the blank and comment lines around them), 959 left (tz, report, show) |
+| **total** | | **4,654** | | | **4,313 deletable**, 341 kept; 3,354 deleted by decision 0198 (3,373 with the blank and comment lines around them), the 959 of tz, report, and show by its second round |
+
+C paths added after this audit (decisions 0193 step 6, 0195, 0200,
+0201, 0206, 0207, 0212), lines of each guarded section in std/llrt at
+47186792 (`wc -l` of what `-DXO_*_C` adds, or of the C only the C path
+reached), and their state after decision 0198's second round
+(2026-10-13, after the batch 8 full tier on 99c5443d covered them):
+
+| Module | Switch | Lines | Where | State |
+|---|---|---|---|---|
+| digest | `XO_LLRT_C=digest` | 804 | xo_crypto.c 790, xo_bytes.c 14 | deleted |
+| ints | `XO_LLRT_C=ints` | 210 of 294 | xo_bytes.c 184, xo_rt.c 26 | deleted; the 84 lines of C intrinsics under the same `-DXO_INTS_C` stay (compiled only when an emitter calls one) |
+| glob | `XO_LLRT_C=glob` | 200 | xo_testing.c | deleted |
+| alloc | `XO_LLRT_C=alloc` | 197 | xo_rt.c | deleted |
+| fspath | `XO_LLRT_C=fspath` | 176 | xo_fs.c | deleted |
+| gen | `XO_LLRT_C=gen` | 99 | xo_testing.c | deleted |
+| rc | `XO_LLRT_C=rc` | 78 | xo_rt.c | deleted |
+| atomic | `XO_LLRT_C=atomic` | 38 | xo_rt.c | deleted |
+| procspec | `XO_LLRT_C=procspec` (no -D: xo_proc.c's own merge) | 232 net | xo_proc.c pr_dedup, pr_abs, pr_w_quote, pr_parse's merge | deleted |
+| http1 | `XO_LLRT_C=http1` (no -D: hc->xo off) | 134 net | xo_http.c: the C parse branches of hc_read_one, the server's text helpers (xo_url_parts and friends) | deleted; the request parser stays for the client's chunked bodies |
+| hpack | `XO_LLRT_C=hpack` (no -D: h2->xo off) | 44 net | xo_h2.c: the server's C HPACK calls | deleted; the C HPACK stays for the HTTP/2 client |
+| scan | `XO_LLRT_C=scan` | 0 | scan_c.xo only | deleted; the C scans stay for their C callers |
+| sysio | `XO_LLRT_C=sysio` | 0 | sysio_c.xo only | deleted; the C stays for wasm, darwin/amd64, the test world, and Clock.now on every OS |
+| text | `XO_LLRT_C=text` | 514 | xo_std.c | kept: Duration text misses the bar (decision 0194) |
+| sched | `XO_LLRT_C=sched` | 481 | xo_rt.c | kept: decision 0212 merged after 99c5443d, no full tier yet |
+| net | `XO_LLRT_C=net` | 0 | net_c.xo (the C library's sockets, which non Linux targets use anyway) | kept: decision 0206 stage 3 merged after 99c5443d, no full tier yet |
 
 Deleting each also removes its `<name>_c.xo`, its IOFlags entry (and
 xo1's `io_flags`), and the SSA builders' C branch (decision 0193 item 3).

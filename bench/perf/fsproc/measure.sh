@@ -8,6 +8,8 @@
 # usage: bench/perf/fsproc/measure.sh <xo binary> <out dir> <backend...>
 # XO_LLRT_C=fspath,procspec in the environment builds the C paths; WORKLOADS
 # overrides the list.
+# Decision 0198 deleted the C path of fspath and procspec (2026-10-13): naming it in
+# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
 set -e
 XO=$1
 OUT=$2

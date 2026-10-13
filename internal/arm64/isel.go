@@ -2408,6 +2408,21 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_restorer":
 		s.g.restorerRef = true
 		s.set(v, s.symAddr(s.g.local("xo_sigreturn")))
+	case "rt.call_c2":
+		// a C ABI call of an address (decision 0206 stage 2): the
+		// arguments in x0 and x1, the address in x2 (`blr x2`)
+		in := &inst{kind: iCall, cptr: true, defs: s.newVregs([]bool{false})}
+		for _, k := range []int{1, 2, 0} {
+			r := s.word(v.Args[k])
+			in.srcs = append(in.srcs, rsrc(r))
+			in.uses = append(in.uses, r)
+		}
+		s.add(in)
+		s.clobber()
+		s.set(v, in.defs...)
+	case "rt.sys_words":
+		s.g.wordsRef = true
+		s.set(v, s.symAddr(s.g.local("xo_sys_words")))
 	case "rt.stack_switch", "rt.tlocal_get", "rt.tlocal_set", "rt.tlocal_addr":
 		// calls of the functions sched.go emits (decision 0212)
 		s.g.schedRef = true

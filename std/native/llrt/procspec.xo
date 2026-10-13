@@ -5,10 +5,9 @@
 // Windows, and addCriticalEnv's SYSTEMROOT on Windows) and, on Windows,
 // the command line of syscall.EscapeArg (also quoting every space
 // character, for the MSYS2 and Cygwin runtimes). They were C
-// (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote, which the
-// C path still uses); process creation stays C. The C path stays
-// selectable (`XO_LLRT_C=procspec` loads procspec_c.xo) until the process
-// workloads meet decision 0180's bar on both native backends.
+// (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote; decision
+// 0198 deleted that C path, `XO_LLRT_C=procspec`); process creation stays
+// C.
 use native/rt
 
 /// Whether the target is Windows.

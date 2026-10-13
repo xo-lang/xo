@@ -5,6 +5,7 @@
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/atomic
 use native/llrt/cabi
+use native/llrt/cabi_nolibc
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -2161,8 +2162,8 @@ fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }
 
 // The leaf text of Display and Debug (decision 0193 step 5): a Rune's
-// Display and Debug, a UInt64's text. In Xo (std/native/llrt/show.xo);
-// with XO_LLRT_C=show the Go SSA builder calls the C runtime instead.
+// Display and Debug, a UInt64's text. In Xo (std/native/llrt/show.xo;
+// decision 0198 deleted the C path).
 
 fn llrt_append_rune(s: Str, r: Int) -> Str { show.append_rune(s, r) }
 
@@ -2172,16 +2173,16 @@ fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 
 // Atomic's add and max (decision 0200): in Xo over the runtime's atomics
 // (std/native/llrt/atomic.xo); the SSA builders lower get, set, swap, and
-// compare_and_swap inline. With XO_LLRT_C=atomic the Go SSA builder calls
-// the C runtime for every Atomic operation instead.
+// compare_and_swap inline. Decision 0198 deleted the C path
+// (`XO_LLRT_C=atomic`).
 
 fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
 
 fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
 
 // The report of a property test's case to the harness (decision 0193
-// step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
-// Go SSA builder calls the C runtime's xo_prop_report instead.
+// step 5): in Xo (std/native/llrt/report.xo; decision 0198 deleted the C
+// path).
 
 fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 
@@ -2219,8 +2220,8 @@ fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
 // The integer operations of generated code (the zero-C audit's portable
 // group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The
 // SSA builders lower a sized integer operation inline and call the
-// faults here when its check fails; with XO_LLRT_C=ints the Go SSA
-// builder calls the C runtime (rt.int_op and friends) instead.
+// faults here when its check fails. Decision 0198 deleted the C path
+// (`XO_LLRT_C=ints`).
 
 fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never { ints.op_fault(op, a, b, bits, uns, at) }
 
@@ -2235,8 +2236,8 @@ fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
 fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }
 
 // The scalar values of property tests and testing.gen (decision 0195):
-// in Xo (std/native/llrt/gen.xo) over the C generator's draws; with
-// XO_LLRT_C=gen the Go SSA builder calls the C runtime instead.
+// in Xo (std/native/llrt/gen.xo) over the C generator's draws (decision
+// 0198 deleted the C path).
 
 fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
 

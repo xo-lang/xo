@@ -1,7 +1,8 @@
-// crypto_diff.c: the native std/crypto (xo_crypto.c) on inputs from
-// standard input, for internal/llvm's TestCryptoDiff, which compares its
-// output with Go's crypto packages, std/rt's verify_password, and the
-// RFC 9106 and x/crypto Argon2 vectors.
+// crypto_diff.c: the C of the native std/crypto (xo_crypto.c; the hashes
+// from crypto_ref.c since decision 0198) on inputs from standard input,
+// for internal/llvm's TestCryptoDiff, which compares its output with Go's
+// crypto packages, std/rt's verify_password, and the RFC 9106 and
+// x/crypto Argon2 vectors.
 //
 // Input, one operation per line, byte strings in hex ("-" is empty):
 //   sha256 <data>
@@ -18,9 +19,23 @@
 // Output, one line per operation: the result in hex, or 0 or 1.
 
 #define XO_RT_NO_MAIN
-// the C path of the hashes (std/native/llrt/digest.xo is the default)
-#define XO_DIGEST_C
 #include "../xo_rt.c"
+// the hashes' C that decision 0198 deleted from the runtime, kept as
+// test data until this test goes (decision 0215)
+#include "crypto_ref.c"
+
+static int n_hex_val(char c) {
+	if (c >= '0' && c <= '9') {
+		return c - '0';
+	}
+	if (c >= 'a' && c <= 'f') {
+		return c - 'a' + 10;
+	}
+	if (c >= 'A' && c <= 'F') {
+		return c - 'A' + 10;
+	}
+	return -1;
+}
 
 static uint8_t *unhex(const char *s, int64_t *n) {
 	if (strcmp(s, "-") == 0) {

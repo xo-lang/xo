@@ -8,8 +8,9 @@
 // system calls on Linux (linux.xo), libSystem on macOS (darwin.xo),
 // kernel32 on Windows (windows.xo). In a wasm module, on darwin/amd64,
 // and where a test binary's world fakes the capability, they call the C
-// runtime; Clock.now calls it everywhere for now. `XO_LLRT_C=sysio`
-// loads sysio_c.xo instead (the C runtime everywhere).
+// runtime; Clock.now calls it on every OS for now. Decision 0198
+// deleted the selectable C path (`XO_LLRT_C=sysio`); the C functions stay
+// for those cases.
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/windows
@@ -110,18 +111,31 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. The C runtime's on every OS for now. On macOS the Xo
-/// path (the virtual clock test, then darwin.realtime_ns:
-/// clock_gettime_nsec_np) took 0.934 times the C path's instructions on
-/// LLVM but 1.042 times on arm64, whose emitter does not fold the
-/// `match` on `target` that picks the layer (each Clock.now paid for the
-/// compares), so it misses decision 0180's bar
-/// (bench/results/platform-calls-2026-10-13.md); Windows's
-/// windows.clock_ns waits with it. On Linux the clock_gettime system
-/// call linux.clock_ns makes cost 4.3 times the vDSO's time per call on
-/// Graviton (bench/results/linux-syscalls-2026-10-13.md); Xo reaches the
-/// vDSO once it can call a C ABI address (decision 0206, next steps).
-pub fn clock_now() -> Int { rt.clock_now() }
+/// virtual clock. On Linux the vDSO's clock_gettime called from Xo
+/// (decision 0206 stage 2: the system call it replaced cost 4.3 times
+/// the time per call, bench/results/linux-syscalls-2026-10-13.md); on
+/// other OSes, and while the virtual clock runs, the C runtime's (on
+/// macOS the Xo path, darwin.realtime_ns, missed decision 0180's bar on
+/// the arm64 backend by the compares of the `match` on `target`,
+/// bench/results/platform-calls-2026-10-13.md; Windows's
+/// windows.clock_ns waits with it). This is the clock's hot path,
+/// written for the arm64 emitter, which neither folds `target` nor
+/// inlines across modules: rt.sys_clock_buf answers 0 off Linux and in a
+/// WASI module (the wasm emitter lowers it to 0) as under the virtual
+/// clock, so no target is tested here, and the vDSO call is inline.
+pub fn clock_now() -> Int {
+  let a = rt.sys_clock_buf()
+  if a == 0 {
+    return rt.clock_now()
+  }
+  let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  let r = if f > 0 { rt.call_c2(f, linux.CLOCK_REALTIME, a) } else { linux.clock_gettime(linux.CLOCK_REALTIME, a) }
+  if r < 0 {
+    return r
+  }
+  // a timespec of the wall clock never overflows: wrapping, as C's
+  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+}
 
 // ---------------------------------------------------------------------------
 // The OS layers behind one interface: a call's result >= 0, or a

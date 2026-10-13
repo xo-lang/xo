@@ -260,12 +260,12 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 // that blocks freed on another thread come back instead, decision 0118).
 static int64_t xo_chunks;
 
-// central_mu guards the central lists' stacks (central_put, central_take
-// in C; alloc.xo's free_mt and refill through xo_heap_lock).
+// central_mu guards the central lists' stacks (alloc.xo's free_mt and
+// refill through xo_heap_lock).
 static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
 
 // The platform calls of the heap in Xo (decision 0207 stage 3,
-// std/native/rt.xo heap_*), which the C path uses too.
+// std/native/rt.xo heap_*).
 
 // xo_heap_large returns a block of n bytes from malloc (the prefix is
 // minus its size).
@@ -315,195 +315,9 @@ void xo_heap_lock(void) { pthread_mutex_lock(&central_mu); }
 
 void xo_heap_unlock(void) { pthread_mutex_unlock(&central_mu); }
 
-#ifdef XO_ALLOC_C
-// The C path (XO_LLRT_C=alloc, decision 0207 stage 3): the C's own
-// allocator, which std/native/llrt/alloc_c.xo also reaches through
-// xo_alloc_*_c below.
-
-static inline int64_t size_class(int64_t n, int64_t *size) {
-	if (n <= XO_SMALL_MAX) {
-		int64_t c = (n + 15) >> 4;
-		if (c == 0) {
-			c = 1;
-		}
-		*size = c << 4;
-		return c;
-	}
-	int64_t c = 65, s = 2048;
-	while (s < n) {
-		s <<= 1;
-		c++;
-	}
-	*size = s;
-	return c;
-}
-
-static inline void *xo_alloc_large(int64_t n) { return (void *)(intptr_t)xo_heap_large(n); }
-
-static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
-	h->allocs++;
-	h->abytes += n;
-	if (__builtin_expect(h->rt_depth != 0, 0)) {
-		h->rt_allocs++; // a real-time section allocated: XO-F007 when it ends
-	}
-	if (n > h->mid_max) {
-		return xo_alloc_large(n);
-	}
-	int64_t size;
-	int64_t c = size_class(n, &size);
-	void *p = h->free_lists[c];
-	if (p) {
-		void *next = *(void **)p;
-		h->free_lists[c] = next;
-		h->nfree[c]--;
-		// the next pop reads the new head's link: start loading it now,
-		// so a list freed long ago (cold) costs overlapped misses rather
-		// than one stall per allocation (bench/results/xo1-speed)
-		__builtin_prefetch(next);
-		return p;
-	}
-	int64_t need = size + 8;
-	if (h->bump_end - h->bump_cur < need) {
-		heap_chunk(h);
-	}
-	int64_t *b = (int64_t *)h->bump_cur;
-	h->bump_cur += need;
-	b[0] = c;
-	return b + 1;
-}
-
-static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
-	h->frees++;
-	int64_t *b = (int64_t *)p - 1;
-	if (b[0] < 0) {
-		free(b);
-		return;
-	}
-	*(void **)p = h->free_lists[b[0]];
-	h->free_lists[b[0]] = p;
-	h->nfree[b[0]]++;
-}
-
-// central_batch is the size of a magazine of class c: 64 KiB of blocks,
-// at least 8.
-static inline int64_t central_batch(int64_t c) {
-	int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
-	int64_t n = (64 << 10) / size;
-	return n < 8 ? 8 : n;
-}
-
-// central_put pushes magazine m of class c.
-__attribute__((noinline)) static void central_put(int64_t c, void *m) {
-	pthread_mutex_lock(&central_mu);
-	((void **)m)[1] = central[c];
-	__atomic_store_n(&central[c], m, __ATOMIC_RELAXED); // read unlocked by central_take
-	pthread_mutex_unlock(&central_mu);
-}
-
-// central_take pops a magazine of class c, or returns null.
-__attribute__((noinline)) static void *central_take(int64_t c) {
-	if (!__atomic_load_n(&central[c], __ATOMIC_RELAXED)) {
-		return NULL;
-	}
-	pthread_mutex_lock(&central_mu);
-	void *m = central[c];
-	if (m) {
-		__atomic_store_n(&central[c], ((void **)m)[1], __ATOMIC_RELAXED);
-	}
-	pthread_mutex_unlock(&central_mu);
-	return m;
-}
-
-// The threaded paths of xo_alloc and xo_free are tail calls, so the
-// single threaded paths stay leaf functions without a frame. With
-// threads, a class keeps its free list (nfree long) and at most one full
-// spare magazine: an empty list takes the spare, else one from the
-// central list; a list that reaches a magazine's size becomes the spare,
-// and the spare it replaces goes to the central list. Nothing walks a
-// list, so moving blocks between threads costs O(1) per magazine.
-static void refill_in(xo_heap *h, int64_t n) {
-	if (n <= h->mid_max) {
-		int64_t size;
-		int64_t c = size_class(n, &size);
-		if (!h->free_lists[c]) {
-			void *m = h->mag[c];
-			h->mag[c] = NULL;
-			if (!m) {
-				m = central_take(c);
-			}
-			if (m) {
-				h->free_lists[c] = m;
-				h->nfree[c] = central_batch(c);
-			}
-		}
-	}
-}
-
-__attribute__((noinline)) static void *alloc_mt(int64_t n) {
-	xo_heap *h = heap_slow();
-	refill_in(h, n);
-	return alloc_in(h, n);
-}
-
-static void free_mt_in(xo_heap *h, void *p) {
-	int64_t c = ((int64_t *)p)[-1]; // before free_in: a large block is gone after
-	free_in(h, p);
-	if (c > 0 && h->nfree[c] >= central_batch(c)) {
-		if (h->mag[c]) {
-			central_put(c, h->mag[c]);
-		}
-		h->mag[c] = h->free_lists[c];
-		h->free_lists[c] = NULL;
-		h->nfree[c] = 0;
-	}
-}
-
-__attribute__((noinline)) static void free_mt(void *p) { free_mt_in(heap_slow(), p); }
-
-// usable returns the bytes a block requested with n bytes really has
-// (its size class), so strings can grow into the slack.
-static int64_t usable_in(xo_heap *h, int64_t n) {
-	if (n > h->mid_max) {
-		return n;
-	}
-	int64_t size;
-	size_class(n, &size);
-	return size;
-}
-
-// resize_in resizes block p of old bytes to n bytes in place where it
-// can, else returns null (the caller moves it).
-static void *resize_in(xo_heap *h, void *p, int64_t old, int64_t n, int64_t mt) {
-	(void)mt;
-	int64_t *b = (int64_t *)p - 1;
-	if (b[0] < 0 && n > h->mid_max) {
-		if (n > old) {
-			h->abytes += n - old; // grown in place: counted for budgets
-		}
-		return (void *)(intptr_t)xo_heap_large_resize((int64_t)(intptr_t)b, n);
-	}
-	if (b[0] > 0) {
-		int64_t size;
-		if (n <= h->mid_max && size_class(n, &size) == b[0]) {
-			return p;
-		}
-	}
-	return NULL;
-}
-
-#define H(h) ((xo_heap *)(intptr_t)(h))
-#define P(p) ((void *)(intptr_t)(p))
-int64_t xo_alloc_new_c(int64_t h, int64_t n) { return (int64_t)(intptr_t)alloc_in(H(h), n); }
-void xo_alloc_free_c(int64_t h, int64_t p) { free_in(H(h), P(p)); }
-void xo_alloc_refill_c(int64_t h, int64_t n) { refill_in(H(h), n); }
-void xo_alloc_free_mt_c(int64_t h, int64_t p) { free_mt_in(H(h), P(p)); }
-int64_t xo_alloc_resize_c(int64_t h, int64_t p, int64_t old, int64_t n) { return (int64_t)(intptr_t)resize_in(H(h), P(p), old, n, 0); }
-#undef H
-#undef P
-#else
 // The heap in Xo (decision 0207 stage 3): std/native/llrt/alloc.xo
-// through the C ABI exports of cabi.xo, the same operations as the C
-// path above; the C finds the calling thread's heap record.
+// through the C ABI exports of cabi.xo (its C path was deleted by
+// decision 0198); the C finds the calling thread's heap record.
 int64_t xo_x_heap_alloc(int64_t n, int64_t h);
 void xo_x_heap_free(int64_t p, int64_t h);
 void xo_x_heap_refill(int64_t h, int64_t n);
@@ -540,7 +354,6 @@ __attribute__((noinline)) static void *alloc_mt(int64_t n) {
 __attribute__((noinline)) static void free_mt(void *p) { xo_x_heap_free_mt(HA(heap_slow()), HA(p)); }
 static inline void *resize_in(xo_heap *h, void *p, int64_t old, int64_t n, int64_t mt) { return (void *)(intptr_t)xo_x_heap_resize(HA(h), HA(p), old, n, mt); }
 #undef HA
-#endif
 
 void *xo_alloc(int64_t n) {
 	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
@@ -568,8 +381,7 @@ static void *xo_resize(void *p, int64_t old, int64_t n) {
 		h = heap_slow();
 		mt = 1;
 	}
-	// the heap in Xo moves a block itself unless mt; the C path only
-	// resizes in place
+	// the heap in Xo moves a block itself unless mt
 	void *q = resize_in(h, p, old, n, mt);
 	if (q) {
 		return q;
@@ -669,85 +481,8 @@ void xo_rc_defer(void *obj, xo_drop_fn drop) {
 
 static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 
-#ifdef XO_RC_C
-// The C path (XO_LLRT_C=rc, decision 0207 stage 2): the C's own copies,
-// which std/native/llrt/rc_c.xo also reaches through xo_rc_*_c below.
-
-// rc_inc adds a reference.
-static inline __attribute__((always_inline)) void rc_inc(int64_t *p) {
-	int64_t c = rc_load(p);
-	if (__builtin_expect(c > 0, 1)) {
-		*p = c + 1;
-		return;
-	}
-	if (c & XO_RC_SHARED_BIT) {
-		__atomic_fetch_sub(p, 1, __ATOMIC_RELAXED);
-	}
-}
-
-__attribute__((noinline)) static int rc_dec_shared(int64_t *p) {
-	// acquire and release in one: the thread that frees sees every other
-	// thread's writes (a release decrement plus an acquire fence would do
-	// too, but ThreadSanitizer does not model fences)
-	if (__atomic_fetch_add(p, 1, __ATOMIC_ACQ_REL) == -1) {
-		return 1;
-	}
-	return 0;
-}
-
-// rc_dec drops a reference and reports whether it was the last one
-// (the caller then releases the children and frees the object). The
-// thread local and immortal cases are inline (the slow atomic path is
-// not), so dropping a literal costs a few compares.
-static inline __attribute__((always_inline)) int rc_dec(int64_t *p) {
-	int64_t c = rc_load(p);
-	if (__builtin_expect(c > 1, 1)) {
-		*p = c - 1;
-		return 0;
-	}
-	if (c == 1) {
-		return 1;
-	}
-	if (!(c & XO_RC_SHARED_BIT)) {
-		return 0; // immortal
-	}
-	return rc_dec_shared(p);
-}
-
-// rc_claim reports whether the caller holds the only reference, so
-// the object may be updated in place; a shared object is made thread
-// local again.
-static inline __attribute__((always_inline)) int rc_claim(int64_t *p) {
-	int64_t c = rc_load(p);
-	if (c == 1) {
-		return 1;
-	}
-	if (c == -1 && __atomic_load_n(p, __ATOMIC_ACQUIRE) == -1) {
-		__atomic_store_n(p, 1, __ATOMIC_RELAXED);
-		return 1;
-	}
-	return 0;
-}
-
-// rc_mark makes the count at p shared and reports whether it was thread
-// local (the caller then marks the object's children).
-static inline int rc_mark(int64_t *p) {
-	int64_t c = rc_load(p);
-	if (c > 0) {
-		__atomic_store_n(p, -c, __ATOMIC_RELAXED);
-		return 1;
-	}
-	return 0;
-}
-
-void xo_rc_inc_c(int64_t p) { rc_inc((int64_t *)(intptr_t)p); }
-int64_t xo_rc_dec_c(int64_t p) { return rc_dec((int64_t *)(intptr_t)p); }
-int64_t xo_rc_dec_shared_c(int64_t p) { return rc_dec_shared((int64_t *)(intptr_t)p); }
-int64_t xo_rc_claim_c(int64_t p) { return rc_claim((int64_t *)(intptr_t)p); }
-int64_t xo_rc_mark_c(int64_t p) { return rc_mark((int64_t *)(intptr_t)p); }
-#else
 // The counts in Xo (decision 0207 stage 2): std/native/llrt/rc.xo through
-// the C ABI exports of cabi.xo, the same operations as the C path above.
+// the C ABI exports of cabi.xo (its C path was deleted by decision 0198).
 void xo_x_rc_inc(int64_t p);
 int64_t xo_x_rc_dec(int64_t p);
 int64_t xo_x_rc_dec_shared(int64_t p);
@@ -759,7 +494,6 @@ static inline __attribute__((always_inline)) int rc_dec_shared(int64_t *p) { ret
 static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
 static inline __attribute__((always_inline)) int rc_claim(int64_t *p) { return (int)xo_x_rc_claim((int64_t)(intptr_t)p); }
 static inline __attribute__((always_inline)) int rc_mark(int64_t *p) { return (int)xo_x_rc_mark((int64_t)(intptr_t)p); }
-#endif
 
 // xo_rc_inc adds a reference (rc_threads.c plays generated code with it).
 void xo_rc_inc(int64_t *p) { rc_inc(p); }
@@ -1071,28 +805,18 @@ typedef struct {
 // slack. The heap in Xo leaves them in the heap record's last_size (one
 // call instead of two, decision 0207 stage 3).
 static inline void *alloc_usable(int64_t n, int64_t *bytes) {
-#ifdef XO_ALLOC_C
-	*bytes = usable_in(heap(), n);
-	return xo_alloc(*bytes);
-#else
 	void *p = xo_alloc(n);
 	*bytes = heap()->last_size;
 	return p;
-#endif
 }
 
 // resize_usable is xo_resize to at least n bytes, the bytes the block
 // really has in *bytes.
 static void *xo_resize(void *p, int64_t old, int64_t n);
 static inline void *resize_usable(void *p, int64_t old, int64_t n, int64_t *bytes) {
-#ifdef XO_ALLOC_C
-	*bytes = usable_in(heap(), n);
-	return xo_resize(p, old, *bytes);
-#else
 	void *q = xo_resize(p, old, n);
 	*bytes = heap()->last_size;
 	return q;
-#endif
 }
 
 static xo_rstr *rs_new(int64_t n) {
@@ -5563,8 +5287,7 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 // get, set, swap, and compare_and_swap are one inline atomic each on
 // byte 128 (slot 13 of rt.slot_load and friends, which count a list's
 // three word header), and add and max are std/native/llrt/atomic.xo.
-// The C operations below the allocation are its C path, compiled only
-// with -DXO_ATOMIC_C (XO_LLRT_C=atomic).
+// The C keeps the allocation (decision 0198 deleted the C path).
 
 typedef struct {
 	xo_hdr h;
@@ -5584,45 +5307,6 @@ xo_atomic *xo_atomic_new(int64_t v) {
 	a->v = v;
 	return a;
 }
-
-#ifdef XO_ATOMIC_C
-int64_t xo_atomic_get(xo_atomic *a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
-
-void xo_atomic_set(xo_atomic *a, int64_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); }
-
-int64_t xo_atomic_swap(xo_atomic *a, int64_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
-
-int64_t xo_atomic_cas(xo_atomic *a, int64_t old, int64_t v) {
-	return __atomic_compare_exchange_n(&a->v, &old, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-
-// xo_atomic_add is `a.add(n)`: the new value; overflow faults.
-int64_t xo_atomic_add(xo_atomic *a, int64_t n, const char *loc, int64_t ln) {
-	int64_t old = __atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
-	for (;;) {
-		int64_t nv;
-		if (__builtin_add_overflow(old, n, &nv)) {
-			char m[160];
-			snprintf(m, sizeof m, "integer overflow: %lld + %lld does not fit Int", (long long)old, (long long)n);
-			fault_at(m, loc, ln);
-		}
-		if (__atomic_compare_exchange_n(&a->v, &old, nv, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-			return nv;
-		}
-	}
-}
-
-// xo_atomic_max is `a.max(n)`: stores the larger value and returns it.
-int64_t xo_atomic_max(xo_atomic *a, int64_t n) {
-	int64_t old = __atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
-	while (old < n) {
-		if (__atomic_compare_exchange_n(&a->v, &old, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-			return n;
-		}
-	}
-	return old;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals
@@ -7710,36 +7394,6 @@ int64_t xo_utf8_valid(const char *p, int64_t n) {
 	}
 	return 1;
 }
-
-// The C path of the Str key hash and floor division (decisions 0193 and
-// 0195): std/native/llrt/ints.xo is the default; compiled only with
-// -DXO_INTS_C (XO_LLRT_C=ints).
-#ifdef XO_INTS_C
-// xo_str_hash hashes the n bytes at p (FNV-1a, then a final mix): Map
-// keys and Set elements (decision 0072).
-int64_t xo_str_hash(const char *p, int64_t n) {
-	uint64_t h = 1469598103934665603ULL;
-	for (int64_t i = 0; i < n; i++) {
-		h ^= (unsigned char)p[i];
-		h *= 1099511628211ULL;
-	}
-	h ^= h >> 31;
-	h *= 0x9E3779B97F4A7C15ULL;
-	h ^= h >> 29;
-	return (int64_t)h;
-}
-#endif
-
-#ifdef XO_INTS_C
-// xo_floor_div is a / b rounded down (b > 0): `Time.unix()`.
-int64_t xo_floor_div(int64_t a, int64_t b) {
-	int64_t q = a / b;
-	if (a % b != 0 && ((a < 0) != (b < 0))) {
-		q--;
-	}
-	return q;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // Environment (std.md 3.5)

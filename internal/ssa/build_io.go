@@ -713,7 +713,9 @@ func (s *fn) procRun(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 // decision 0206), or the C runtime's clock_now without the prelude.
 func (s *fn) clockNow(at ast.Node) *Value {
 	intT := s.b.mod.Builtin(KInt)
-	if s.b.preludeImpl("llrt_clock_now") == nil {
+	// Go mode (NoFaultUnwind, the Go backend's assembly) lowers no
+	// `target`, which sysio.xo's clock tests: the C runtime's clock
+	if s.b.opts.NoFaultUnwind || s.b.preludeImpl("llrt_clock_now") == nil {
 		return s.rt("clock_now", intT)
 	}
 	return s.llrt("clock_now", intT, at)

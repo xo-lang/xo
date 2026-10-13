@@ -631,106 +631,6 @@ static int64_t pr_lint(xo_rlist *l, int64_t i) {
 	return v < 0 ? 0 : v;
 }
 
-// pr_key_len is the length of the name of a NAME=VALUE entry, or -1.
-static int64_t pr_key_len(const char *kv) {
-	const char *eq = strchr(kv, '=');
-	if (eq == kv && kv[0]) {
-		eq = strchr(kv + 1, '='); // a leading = is part of the name (Windows)
-	}
-	return eq ? (int64_t)(eq - kv) : -1;
-}
-
-// names compare without case on Windows (os/exec's dedupEnvCase)
-#ifdef _WIN32
-#define pr_keycmp _strnicmp
-#else
-#define pr_keycmp memcmp
-#endif
-
-// pr_dedup is os/exec's dedupEnv: the last entry of each name wins, in
-// the order of the last entries (the strings are malloc'd, freed or
-// kept).
-static char **pr_dedup(char **env, int n) {
-	char **out = calloc((size_t)n + 1, sizeof(char *));
-	if (!out) {
-		xo_oom();
-	}
-	int k = 0;
-	for (int i = n - 1; i >= 0; i--) {
-		int64_t kl = pr_key_len(env[i]);
-		int seen = 0;
-		if (kl >= 0) {
-			for (int j = 0; j < k && !seen; j++) {
-				seen = pr_key_len(out[j]) == kl && pr_keycmp(out[j], env[i], (size_t)kl) == 0;
-			}
-		} else if (!env[i][0]) {
-			seen = 1;
-		}
-		if (seen) {
-			free(env[i]);
-		} else {
-			out[k++] = env[i];
-		}
-	}
-	for (int i = 0; i < k / 2; i++) {
-		char *t = out[i];
-		out[i] = out[k - 1 - i];
-		out[k - 1 - i] = t;
-	}
-	free(env);
-	return out;
-}
-
-// pr_abs is filepath.Abs of dir (malloc'd): joined to the working
-// directory when relative, and cleaned.
-static char *pr_abs(const char *dir) {
-	char cwd[4096];
-	nbuf b = {0};
-	if (dir[0] != '/') {
-		nbuf_str(&b, getcwd(cwd, sizeof cwd) ? cwd : ".");
-		nbuf_byte(&b, '/');
-	}
-	nbuf_str(&b, dir);
-	nbuf_byte(&b, 0);
-	// clean: drop empty and . segments, resolve .. lexically
-	char *in = b.p;
-	char *out = malloc(strlen(in) + 2);
-	if (!out) {
-		xo_oom();
-	}
-	size_t n = 0;
-	for (char *p = in; *p;) {
-		while (*p == '/') {
-			p++;
-		}
-		char *e = p;
-		while (*e && *e != '/') {
-			e++;
-		}
-		size_t sl = (size_t)(e - p);
-		if (sl == 0 || (sl == 1 && p[0] == '.')) {
-		} else if (sl == 2 && p[0] == '.' && p[1] == '.') {
-			while (n > 0 && out[n - 1] != '/') {
-				n--;
-			}
-			if (n > 0) {
-				n--;
-			}
-		} else {
-			out[n++] = '/';
-			memcpy(out + n, p, sl);
-			n += sl;
-		}
-		p = e;
-	}
-	if (n == 0) {
-		out[n++] = '/';
-	}
-	out[n] = 0;
-	free(in);
-	return out;
-}
-
 // pr_parse reads the command at *i of the spec l.
 static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 	c->name = pr_lstr(l, (*i)++);
@@ -752,94 +652,23 @@ static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 	int64_t ne = pr_lint(l, (*i)++);
 	int64_t e0 = *i;
 	*i += ne;
-	int64_t nx = pr_lint(l, (*i)++);
-	int64_t x0 = *i;
-	*i += nx;
+	// the variables added: none, procspec.xo merged them
+	*i += pr_lint(l, *i) + 1;
 	int env_set = c->flags & 1;
 	c->envp = NULL;
-	if (c->flags & 8) {
-		// built by std/native/llrt/procspec.xo (decision 0193 step 6): the
-		// environment is final (flag 1: there is one, else the program's),
-		// the Windows command line follows
-		c->cmdline = pr_lstr(l, (*i)++);
-		if (env_set) {
-			c->envp = calloc((size_t)ne + 1, sizeof(char *));
-			if (!c->envp) {
-				xo_oom();
-			}
-			for (int64_t j = 0; j < ne; j++) {
-				c->envp[j] = pr_lstr(l, e0 + j);
-			}
-		}
-		return;
-	}
-#ifdef _WIN32
-	// os/exec sets no PWD on Windows
-	if (!env_set && nx == 0) {
-		return;
-	}
-#endif
-	if (!env_set && nx == 0 && !c->dir) {
-		return; // the program's environment, as it is
-	}
-	int n = 0;
-	if (!env_set) {
-		while (environ[n]) {
-			n++;
-		}
-	} else {
-		n = (int)ne;
-	}
-	char **env = calloc((size_t)(n + nx + 2), sizeof(char *));
-	if (!env) {
-		xo_oom();
-	}
-	int k = 0;
-	for (int j = 0; j < n; j++) {
-		env[k++] = env_set ? pr_lstr(l, e0 + j) : cstr_of(environ[j], (int64_t)strlen(environ[j]));
-	}
-	if (!env_set && nx == 0) {
-		// os/exec sets PWD to the directory when the environment is the
-		// program's (Cmd.environ)
-		char *abs = pr_abs(c->dir);
-		size_t al = strlen(abs);
-		char *pwd = malloc(al + 5);
-		if (!pwd) {
+	// built by std/native/llrt/procspec.xo (decision 0193 step 6; flag 8):
+	// the environment is final (flag 1: there is one, else the program's),
+	// the Windows command line follows
+	c->cmdline = pr_lstr(l, (*i)++);
+	if (env_set) {
+		c->envp = calloc((size_t)ne + 1, sizeof(char *));
+		if (!c->envp) {
 			xo_oom();
 		}
-		memcpy(pwd, "PWD=", 4);
-		memcpy(pwd + 4, abs, al + 1);
-		free(abs);
-		env[k++] = pwd;
-	}
-	for (int64_t j = 0; j < nx; j++) {
-		env[k++] = pr_lstr(l, x0 + j);
-	}
-	c->envp = pr_dedup(env, k);
-#ifdef _WIN32
-	// os/exec's addCriticalEnv: a child without SYSTEMROOT cannot start
-	// some system libraries (Winsock among them)
-	int has_root = 0, m = 0;
-	for (; c->envp[m]; m++) {
-		has_root |= pr_key_len(c->envp[m]) == 10 && _strnicmp(c->envp[m], "SYSTEMROOT", 10) == 0;
-	}
-	const char *root = getenv("SYSTEMROOT");
-	if (!has_root && root) {
-		char **e2 = realloc(c->envp, ((size_t)m + 2) * sizeof(char *));
-		if (!e2) {
-			xo_oom();
+		for (int64_t j = 0; j < ne; j++) {
+			c->envp[j] = pr_lstr(l, e0 + j);
 		}
-		size_t rl = strlen(root);
-		e2[m] = malloc(rl + 12);
-		if (!e2[m]) {
-			xo_oom();
-		}
-		memcpy(e2[m], "SYSTEMROOT=", 11);
-		memcpy(e2[m] + 11, root, rl + 1);
-		e2[m + 1] = NULL;
-		c->envp = e2;
 	}
-#endif
 }
 
 static void pr_cmd_free(pr_cmd *c) {
@@ -1004,58 +833,6 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 }
 
 #ifdef _WIN32
-// pr_w_quote appends s to b quoted as Go's syscall.EscapeArg (the rules
-// CommandLineToArgvW and the C runtime parse a command line by), and also
-// when s holds a line end or another space character: the C runtime
-// splits at spaces and tabs only, but the MSYS2 and Cygwin runtimes (Git
-// for Windows' sh, printf, ...) split at every space character, and
-// quoting is harmless to the others.
-static void pr_w_quote(nbuf *b, const char *s) {
-	if (!s[0]) {
-		nbuf_str(b, "\"\"");
-		return;
-	}
-	int bs = 0, sp = 0;
-	for (const char *p = s; *p; p++) {
-		bs |= *p == '"' || *p == '\\';
-		sp |= *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\v' || *p == '\f';
-	}
-	if (!bs && !sp) {
-		nbuf_str(b, s);
-		return;
-	}
-	if (!bs) {
-		nbuf_byte(b, '"');
-		nbuf_str(b, s);
-		nbuf_byte(b, '"');
-		return;
-	}
-	if (sp) {
-		nbuf_byte(b, '"');
-	}
-	int slashes = 0;
-	for (const char *p = s; *p; p++) {
-		char ch = *p;
-		if (ch == '\\') {
-			slashes++;
-		} else if (ch == '"') {
-			for (; slashes > 0; slashes--) {
-				nbuf_byte(b, '\\');
-			}
-			nbuf_byte(b, '\\');
-		} else {
-			slashes = 0;
-		}
-		nbuf_byte(b, ch);
-	}
-	if (sp) {
-		for (; slashes > 0; slashes--) {
-			nbuf_byte(b, '\\');
-		}
-		nbuf_byte(b, '"');
-	}
-}
-
 // pr_w_inheritable is an inheritable copy of h (NULL when h is not a
 // handle)
 static HANDLE pr_w_inheritable(HANDLE h) {
@@ -1095,16 +872,7 @@ static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, 
 		}
 	}
 	nbuf cl = {0};
-	if (c->cmdline) {
-		nbuf_str(&cl, c->cmdline); // procspec.xo's
-	} else {
-		for (char **a = c->argv; *a; a++) {
-			if (a != c->argv) {
-				nbuf_byte(&cl, ' ');
-			}
-			pr_w_quote(&cl, *a);
-		}
-	}
+	nbuf_str(&cl, c->cmdline); // procspec.xo's
 	nbuf_byte(&cl, 0);
 	wchar_t *wcl = xo_w_path(cl.p);
 	wchar_t *wfile = xo_w_path(file);

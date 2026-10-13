@@ -6,10 +6,9 @@
 // trailers (chunkedReader), and the text helpers of std/http (url.Parse's
 // parts and error, url.PathUnescape, url.QueryEscape, strconv.Quote,
 // CanonicalMIMEHeaderKey, EqualFold). They were C (std/llrt/xo_http.c,
-// which keeps its copy for the client and for the C path); the semantics
-// are the same, so a client observes what net/http answers. The C path
-// stays selectable (`XO_LLRT_C=http1` loads http1_c.xo) until the HTTP/1.1
-// workloads meet decision 0180's bar on both native backends.
+// which keeps its copy for the client; decision 0198 deleted the C path,
+// `XO_LLRT_C=http1`); the semantics are the same, so a client observes
+// what net/http answers.
 //
 // C never calls compiled Xo (decision 0180), so the connection's task
 // (std/native/http.xo, serve_conn) calls the C reader (rthttp.hc_read)
@@ -1491,10 +1490,9 @@ pub struct Reader {
   head: Head
 }
 
-/// Makes the connection's request heads and chunked bodies parse in Xo
-/// (rthttp.hc_xo).
+/// The reader of the connection, whose request heads and chunked bodies
+/// parse in Xo.
 pub fn reader(h: rthttp.HConn) -> Reader {
-  rthttp.hc_xo(h)
   Reader{h: h, head: no_head()}
 }
 

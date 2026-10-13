@@ -1,8 +1,7 @@
 // Go's path.Match for MemFs.fail_next patterns (std/rt's globMatch),
 // written in Xo (decisions 0193 and 0195; it was std/llrt/xo_testing.c
 // xo_test_glob): a bad pattern matches nothing. std/native/testing.xo
-// calls matches. The C path stays selectable (`XO_LLRT_C=glob` loads
-// glob_c.xo) until bench/perf/portable meets decision 0180's bar.
+// calls matches. Decision 0198 deleted the C path (`XO_LLRT_C=glob`).
 use native/rt
 
 /// The rune at i of b times 8 plus its size (utf8.DecodeRune; i <

@@ -110,6 +110,10 @@ struct Inst {
   /// K_CALL: a Linux system call (rt.sys6, decision 0206): the number is
   /// the seventh argument (x6), moved to x8 for `svc #0`
   svc: Bool = false
+  /// K_CALL: a C ABI call of the address in the last source register
+  /// (rt.call_c2, decision 0206 stage 2): `blr x<n>` after the n
+  /// arguments
+  cptr: Bool = false
   /// K_CALL: a variadic C function on Apple arm64 (decision 0213): the
   /// arguments from this index on go on the stack, 8 bytes each; -1 for
   /// none

@@ -9,6 +9,8 @@
 # e.g. with sudo or kernel.perf_event_paranoid <= 1). On macOS they are
 # /usr/bin/time -l's: "instructions retired" of the process in the user
 # column, "-" for kernel, and user plus system milliseconds.
+# Decision 0198 deleted the C path of sysio (2026-10-13): naming it in
+# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
 #
 # usage: bench/perf/sysio/measure.sh <xo1 binary> <std dir> <out dir> <backend...>
 # WORKLOADS overrides the list; VARIANTS the variants.
@@ -37,7 +39,7 @@ for be in "$@"; do
 		(cd "$OUT/src-$be-$v" && env $env "$XO" build --std="$STD" --backend="$be" -o "$OUT/t-$be-$v" . >/dev/null)
 	done
 done
-for w in ${WORKLOADS:-none read read_big write stat clock}; do
+for w in ${WORKLOADS:-none read read_big write stat clock chan}; do
 	for be in "$@"; do
 		for v in ${VARIANTS:-$DEFV}; do
 			bu=""

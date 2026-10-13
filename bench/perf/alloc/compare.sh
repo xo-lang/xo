@@ -7,6 +7,8 @@
 # <xo/c> <checksum xo> <checksum c>". Instructions come from
 # /usr/bin/time -l (darwin). Run under the heavy lock with
 # XO_SELF_DRIVER=0.
+# Decision 0198 deleted the C path of alloc (2026-10-13): naming it in
+# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
 #
 # usage: bench/perf/alloc/compare.sh <xo binary> <out dir> <program dir> <workload...>
 # example: bench/perf/alloc/compare.sh .tools/bin/xo /tmp/a bench/perf/alloc none small mixed

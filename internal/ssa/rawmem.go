@@ -115,6 +115,11 @@ func (b *builder) declareExports() {
 	}
 	sort.Slice(mods, func(i, j int) bool { return mods[i].Path < mods[j].Path })
 	for _, mod := range mods {
+		if mod.Path == CABIModule+"_nolibc" {
+			// XO_NOLIBC builds only (decision 0206 stage 2), which the Go
+			// driver does not make
+			continue
+		}
 		if mod.Path == CABIModule || b.importerBuilt(mod) {
 			b.declareExportsOf(mod)
 		}

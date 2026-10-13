@@ -1220,7 +1220,7 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
 // Exchanges
 
 /// The monotonic clock in nanoseconds.
-fn now() -> Int { linux.clock_ns(linux.CLOCK_MONOTONIC) }
+fn now() -> Int { linux.clock_ns(linux.CLOCK_MONOTONIC, rt.bytes_addr(rt.sys_buf())) }
 
 /// A random query ID (getrandom; the clock when it fails).
 fn new_id() -> Int {

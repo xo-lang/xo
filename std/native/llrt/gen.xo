@@ -7,9 +7,8 @@
 // generator's state). The same draws in the same order as std/rt's Gen,
 // so a seed gives the Go backend's values. The SSA builders call these
 // for a generated value's scalars (internal/ssa build_gen.go,
-// selfhost/ssa testmode.xo). The C path stays selectable
-// (`XO_LLRT_C=gen` loads gen_c.xo, and the Go SSA builder calls the C
-// runtime's rt.gen_any_int and friends).
+// selfhost/ssa testmode.xo). Decision 0198 deleted the C path
+// (`XO_LLRT_C=gen`).
 use native/rt
 use native/rttest
 

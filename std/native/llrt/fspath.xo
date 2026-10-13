@@ -4,10 +4,8 @@
 // first, the first error kept, a missing path is no error), the names of
 // os.CreateTemp (the prefix and a random number, tried until one is new),
 // and the working directory with / separators on Windows (std.md 3.1).
-// They were C (std/llrt/xo_fs.c, under XO_FSPATH_C now); the system calls
-// stay C (rt.fs_raw_*). The C path stays selectable (`XO_LLRT_C=fspath`
-// loads fspath_c.xo) until bench/perf/fsproc meets decision 0180's bar on
-// both native backends.
+// They were C (std/llrt/xo_fs.c; decision 0198 deleted that C path,
+// `XO_LLRT_C=fspath`); the system calls stay C (rt.fs_raw_*).
 use native/rt
 
 // The errno values the walks test: the same on darwin, Linux, and the
