@@ -1,4 +1,4 @@
-package arm64_test
+package arm64
 
 import (
 	"path/filepath"

@@ -1,7 +1,7 @@
 // Package arm64 holds the tests of the arm64 backend (selfhost/arm64)
 // through the xo binary (internal/xotool): since decision 0215 the Go
 // emitter is gone and this package has no Go code of its own.
-package arm64_test
+package arm64
 
 import (
 	"bytes"
