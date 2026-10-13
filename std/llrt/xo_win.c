@@ -1077,6 +1077,68 @@ static int xo_w_pump(HANDLE h, int out, int close_h) {
 }
 
 // ---------------------------------------------------------------------------
+// The environment in UTF-8 (stage 5): the C runtime's _environ and getenv
+// are in the ANSI code page, so a value outside it came out as '?'. The
+// runtime reads a UTF-8 copy of GetEnvironmentStringsW, taken once (Xo
+// programs do not set variables), and getenv looks names up in it
+// without case, as Windows does.
+
+static char **xo_w_env;
+static INIT_ONCE xo_w_env_o = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK xo_w_env_init(PINIT_ONCE o, PVOID p, PVOID *c) {
+	(void)o;
+	(void)p;
+	(void)c;
+	WCHAR *block = GetEnvironmentStringsW();
+	size_t n = 0;
+	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
+		n++;
+	}
+	char **env = calloc(n + 1, sizeof(char *));
+	if (!env) {
+		abort();
+	}
+	size_t k = 0;
+	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
+		if (w[0] == L'=') {
+			continue; // the per drive directories (=C:=C:\...)
+		}
+		int u = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+		char *e = u > 0 ? malloc((size_t)u) : NULL;
+		if (!e) {
+			continue;
+		}
+		WideCharToMultiByte(CP_UTF8, 0, w, -1, e, u, NULL, NULL);
+		env[k++] = e;
+	}
+	env[k] = NULL;
+	if (block) {
+		FreeEnvironmentStringsW(block);
+	}
+	xo_w_env = env;
+	return TRUE;
+}
+
+// xo_w_environ is the environment as UTF-8 NAME=VALUE entries.
+static char **xo_w_environ(void) {
+	InitOnceExecuteOnce(&xo_w_env_o, xo_w_env_init, NULL, NULL);
+	return xo_w_env;
+}
+
+// xo_w_getenv is getenv over xo_w_environ (names without case).
+static const char *xo_w_getenv(const char *name) {
+	size_t n = strlen(name);
+	for (char **e = xo_w_environ(); *e; e++) {
+		if (_strnicmp(*e, name, n) == 0 && (*e)[n] == '=') {
+			return *e + n + 1;
+		}
+	}
+	return NULL;
+}
+#define getenv(n) xo_w_getenv(n)
+
+// ---------------------------------------------------------------------------
 // Random bytes
 
 static int xo_w_entropy(void *p, size_t n) {
