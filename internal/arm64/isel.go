@@ -33,7 +33,11 @@ type fstate struct {
 	lsr     map[*ssa.Block]*lsrLoop // loop headers: induction variables (lsr.go)
 	ranges  map[*ssa.Value]interval // intervals of Int values (ranges.go)
 	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
-	dupOK   map[*mblock]bool        // moved latches copied at a branch into them (lsr.go dupLatch)
+	// offBases: the Int values a list index adds a constant to (xs[i]
+	// beside xs[i + 1]): their elements are addressed from xs + i * size
+	// (elemAddr, decision 0208)
+	offBases map[*ssa.Value]bool
+	dupOK    map[*mblock]bool // moved latches copied at a branch into them (lsr.go dupLatch)
 	// Go mode (goasm.go): the length register of each List parameter,
 	// and the parameters a reuse makes unique (the Go wrapper does it)
 	goLens map[vreg]vreg
@@ -444,6 +448,19 @@ func (s *fstate) isel() {
 				s.nuses[a]++
 				s.users[a] = v
 			}
+			if v.Op == ssa.OpCall && len(v.Args) >= 2 && (v.Aux == "list.index" || v.Aux == "list.set" || v.Aux == "list.take") {
+				if x := v.Args[1]; x.Op == ssa.OpAdd || x.Op == ssa.OpSub {
+					for j := 0; j < 2; j++ {
+						if _, ok := constInt(x.Args[1-j]); ok && (j == 0 || x.Op == ssa.OpAdd) {
+							if s.offBases == nil {
+								s.offBases = map[*ssa.Value]bool{}
+							}
+							s.offBases[x.Args[j]] = true
+							break
+						}
+					}
+				}
+			}
 			for _, e := range v.Succs {
 				for _, a := range e.Args {
 					s.nuses[a]++
@@ -804,6 +821,22 @@ func (s *fstate) instr(v *ssa.Value) {
 				low = fmt.Sprintf("lsl $d0, $u0, #%d", k)
 			} else if k, ok := pow2c(c - 1); ok {
 				low = fmt.Sprintf("add $d0, $u0, $u0, lsl #%d", k)
+			}
+		}
+		if low == "" {
+			if text, us, ok := s.mulLong(v.Args[0], v.Args[1]); ok {
+				if v.Pos == "" || s.safeMul(v) {
+					s.set(v, s.def1(false, text, us...))
+					return
+				}
+				if strings.HasPrefix(text, "umull") {
+					// the product of two values below 2^32 is below
+					// 2^64: an Int when bit 63 is clear
+					r := s.def1(false, text, us...)
+					s.check("cmp $u0, #0", []vreg{r}, "lt", "xo_fault_overflow", rsrc(a), isrc('*'), rsrc(b), symsrc(g.loc(v.Pos)))
+					s.set(v, r)
+					return
+				}
 			}
 		}
 		mul := func() vreg {
@@ -1714,20 +1747,117 @@ func (s *fstate) elemBase1(l, i vreg, es int64) vreg {
 	return s.def1(false, "madd $d0, $u0, $u1, $u2", i, n, l)
 }
 
-// loadElem loads the element words at base (as integer registers when
-// asInt).
-func (s *fstate) loadElem(base vreg, et *ssa.Type, asInt bool) []vreg {
-	m := s.m()
-	listHdr := s.hdr()
+// elemAt is the address of a list element: [base, #off] (idx zero,
+// off counting the list header), or [base, idx, lsl #sh] for an element
+// of one word (base the list's data address, its first element).
+type elemAt struct {
+	base, idx vreg
+	off       int
+	sh        int
+}
+
+// at returns the element address b + listHdr.
+func (s *fstate) at(b vreg) elemAt { return elemAt{base: b, off: s.hdr()} }
+
+// regs returns the registers of the address.
+func (a elemAt) regs() []vreg {
+	if a.idx != 0 {
+		return []vreg{a.base, a.idx}
+	}
+	return []vreg{a.base}
+}
+
+// operand returns the memory operand of word k, its registers $u<u> on.
+func (a elemAt) operand(k, u int) string {
+	if a.idx != 0 {
+		if a.sh == 0 {
+			return fmt.Sprintf("[$u%d, $u%d]", u, u+1)
+		}
+		return fmt.Sprintf("[$u%d, $u%d, lsl #%d]", u, u+1, a.sh)
+	}
+	return fmt.Sprintf("[$u%d, #%d]", u, a.off+8*k)
+}
+
+// mem returns what loaded records for word k.
+func (a elemAt) mem(k, epoch int) memAt {
+	if a.idx != 0 {
+		return memAt{a.base, a.idx, 0, epoch}
+	}
+	return memAt{a.base, 0, a.off + 8*k, epoch}
+}
+
+// elemAddr returns the address of element i (SSA value iv) of list l
+// (decision 0208): [l, #24 + k * size] for a constant index k, [b, #24 +
+// c * size] for i = a + c (b the address of element a), [data, i, lsl
+// #3] for a one word element (data the list's data address, once per
+// block, or once per loop when the loop cannot move the buffer: lsr.go),
+// else [b, #24] with b = l + i * size.
+func (s *fstate) elemAddr(l, i vreg, iv *ssa.Value, et *ssa.Type) elemAt {
+	g := s.g
+	es := g.esize(et)
+	if es == 0 || g.goMode {
+		return s.at(s.elemBase(l, i, es))
+	}
+	if b, ok := s.m().bases[[3]int64{int64(l), int64(i), es}]; ok {
+		return s.at(b)
+	}
+	nw := int64(len(g.layout(et)))
+	fits := func(off int64) bool {
+		if et.Kind == ssa.KBool {
+			return off >= 0 && off <= 4095
+		}
+		return off >= 0 && off%8 == 0 && off+8*(nw-1) <= 32760
+	}
+	if iv != nil {
+		if k, ok := constInt(iv); ok && k >= 0 && k < 4096 {
+			if off := listHdr + k*es; fits(off) {
+				return elemAt{base: l, off: int(off)}
+			}
+		}
+	}
+	if o, ok := s.offs[i]; ok && o.c > -4096 && o.c < 4096 && es < 4096 {
+		if off := listHdr + o.c*es; fits(off) {
+			return elemAt{base: s.elemBase(l, o.a, es), off: int(off)}
+		}
+	}
+	if iv != nil && s.offBases[iv] {
+		return s.at(s.elemBase(l, i, es))
+	}
 	if et.Kind == ssa.KBool {
-		d := s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", listHdr), base)
-		m.loaded[d] = memAt{base, listHdr, m.epoch}
+		return elemAt{base: s.dataAddr(l), idx: i}
+	}
+	if es == 8 {
+		return elemAt{base: s.dataAddr(l), idx: i, sh: 3}
+	}
+	return s.at(s.elemBase(l, i, es))
+}
+
+// dataAddr returns the address of the first element of list l, once per
+// block.
+func (s *fstate) dataAddr(l vreg) vreg {
+	m := s.m()
+	key := [3]int64{int64(l), 0, -24}
+	if d, ok := m.bases[key]; ok {
+		return d
+	}
+	d := s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", listHdr), l)
+	m.bases[key] = d
+	return d
+}
+
+// loadElem loads the element words at a (as integer registers when
+// asInt).
+func (s *fstate) loadElem(a elemAt, et *ssa.Type, asInt bool) []vreg {
+	m := s.m()
+	if et.Kind == ssa.KBool {
+		d := s.def1(false, "ldrb $wd0, "+a.operand(0, 0), a.regs()...)
+		m.loaded[d] = a.mem(0, m.epoch)
 		return []vreg{d}
 	}
 	var out []vreg
 	for k, fp := range s.g.layout(et) {
-		d := s.def1(fp && !asInt, fmt.Sprintf("ldr $d0, [$u0, #%d]", listHdr+8*k), base)
-		m.loaded[d] = memAt{base, listHdr + 8*k, m.epoch}
+		d := s.def1(fp && !asInt, "ldr $d0, "+a.operand(k, 0), a.regs()...)
+		m.loaded[d] = a.mem(k, m.epoch)
 		out = append(out, d)
 	}
 	return out
@@ -1751,38 +1881,36 @@ func (s *fstate) storeWords(v *ssa.Value) []vreg {
 	return s.words(v)
 }
 
-func (s *fstate) storeElem(base vreg, et *ssa.Type, ws []vreg) {
+func (s *fstate) storeElem(a elemAt, et *ssa.Type, ws []vreg) {
 	m := s.m()
-	listHdr := s.hdr()
-	same := func(w vreg, off int) bool {
+	same := func(w vreg, k int) bool {
 		at, ok := m.loaded[w]
-		return ok && at == memAt{base, off, m.epoch}
+		return ok && at == a.mem(k, m.epoch)
 	}
 	if et.Kind == ssa.KBool {
-		if !same(ws[0], listHdr) {
-			s.store(fmt.Sprintf("strb $wu0, [$u1, #%d]", listHdr), ws[0], base)
+		if !same(ws[0], 0) {
+			s.store("strb $wu0, "+a.operand(0, 1), append([]vreg{ws[0]}, a.regs()...)...)
 		}
 		return
 	}
 	var skip []bool
 	for k := range s.g.layout(et) {
-		skip = append(skip, same(ws[k], listHdr+8*k))
+		skip = append(skip, same(ws[k], k))
 	}
 	for k := range s.g.layout(et) {
 		if !skip[k] {
-			s.store(fmt.Sprintf("str $u0, [$u1, #%d]", listHdr+8*k), ws[k], base)
+			s.store("str $u0, "+a.operand(k, 1), append([]vreg{ws[k]}, a.regs()...)...)
 		}
 	}
 }
 
 // storeHole writes the placeholder list.take leaves in the element at
-// base (decision 0169): the words reference counting reads, so that
+// a (decision 0169): the words reference counting reads, so that
 // retain, release, and share of it do nothing. A Str, List, Box, or
 // handle points to the empty string's object (immortal), a function
 // value's environment is null, and an enum's tag is past its variants.
-func (s *fstate) storeHole(base vreg, et *ssa.Type) {
+func (s *fstate) storeHole(a elemAt, et *ssa.Type) {
 	g := s.g
-	listHdr := s.hdr()
 	var ls []leaf
 	g.heapLeaves(et, 0, &ls)
 	var obj vreg
@@ -1800,7 +1928,7 @@ func (s *fstate) storeHole(base vreg, et *ssa.Type) {
 			}
 			w = obj
 		}
-		s.store(fmt.Sprintf("str $u0, [$u1, #%d]", listHdr+8*off), w, base)
+		s.store("str $u0, "+a.operand(off, 1), append([]vreg{w}, a.regs()...)...)
 	}
 }
 
@@ -1818,7 +1946,34 @@ func (s *fstate) listLen(l vreg) vreg {
 	}
 	n := s.def1(false, "ldr $d0, [$u0, #8]", l)
 	m.lens[l] = n
+	if a, ok := m.lenAt[l]; ok {
+		s.sameFacts(a, n)
+	}
 	return n
+}
+
+// sameFacts gives register n the facts of register a, which holds the
+// same value (decision 0208).
+func (s *fstate) sameFacts(a, n vreg) {
+	m := s.m()
+	if x, ok := m.lo[a]; ok {
+		m.lo[n] = x
+	}
+	if x, ok := m.hi[a]; ok {
+		m.hi[n] = x
+	}
+	if x, ok := m.lowZero[a]; ok {
+		m.lowZero[n] = x
+	}
+	var ks [][2]vreg
+	for k := range m.less {
+		if k[1] == a {
+			ks = append(ks, k)
+		}
+	}
+	for _, k := range ks {
+		m.less[[2]vreg{k[0], n}] = m.less[k]
+	}
 }
 
 func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
@@ -1939,7 +2094,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		s.boundsCheck(v, l, i)
 		et := v.Type
-		base := s.elemBase(l, i, g.esize(et))
+		base := s.elemAddr(l, i, v.Args[1], et)
 		s.set(v, s.loadElem(base, et, false)...)
 	case "list.take":
 		// element i moves out (decision 0169); its slot gets a
@@ -1947,7 +2102,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		s.boundsCheck(v, l, i)
 		et := v.Type.Elems[1]
-		base := s.elemBase(l, i, g.esize(et))
+		base := s.elemAddr(l, i, v.Args[1], et)
 		e := s.loadElem(base, et, false)
 		s.storeHole(base, et)
 		s.set(v, append([]vreg{l}, e...)...)
@@ -1956,14 +2111,14 @@ func (s *fstate) callOp(v *ssa.Value) {
 		et := v.Args[0].Type.Elems[0]
 		n := s.listLen(l)
 		s.set(v, s.option(v.Type, "cmp $u0, $u1", []vreg{i, n}, "lo", nil, func() ([]vreg, []src) {
-			return s.loadElem(s.elemBase(l, i, g.esize(et)), et, true), nil
+			return s.loadElem(s.elemAddr(l, i, v.Args[1], et), et, true), nil
 		}, nil)...)
 	case "list.set":
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		et := v.Args[2].Type
 		x := s.storeWords(v.Args[2])
 		s.boundsCheck(v, l, i)
-		base := s.elemBase(l, i, g.esize(et))
+		base := s.elemAddr(l, i, v.Args[1], et)
 		if et.Heap() {
 			old := s.loadElem(base, et, false)
 			s.release(et, old)
@@ -1991,7 +2146,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		s.inherit(before)
 		s.clobber()
 		if g.esize(et) > 0 {
-			s.storeElem(s.elemBase(lm, n, g.esize(et)), et, x)
+			s.storeElem(s.at(s.elemBase(lm, n, g.esize(et))), et, x)
 		}
 		n1 := s.def1(false, "add $d0, $u0, #1", n)
 		s.store("str $u0, [$u1, #8]", n1, lm)
@@ -2008,7 +2163,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		o := s.option(ot, "cmp $u0, #0", []vreg{n}, "gt", []vreg{l2, nl}, func() ([]vreg, []src) {
 			n1 := s.def1(false, "sub $d0, $u0, #1", n)
 			s.store("str $u0, [$u1, #8]", n1, l)
-			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true), regs(l, n1)
+			return s.loadElem(s.at(s.elemBase(l, n1, g.esize(et))), et, true), regs(l, n1)
 		}, regs(l, n))
 		s.m().lens[l2] = nl
 		s.set(v, append([]vreg{l2}, o...)...)
@@ -2196,6 +2351,15 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 			}
 			return true
 		}
+		if op == 2 {
+			if text, us, ok := s.mulLong(v.Args[1], v.Args[2]); ok {
+				s.set(v, s.def1(false, text, us...))
+				return true
+			}
+		}
+		if op == 0 && s.fusedAdd(v) {
+			return true
+		}
 		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
 		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
 			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
@@ -2252,6 +2416,102 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		return false
 	}
 	return true
+}
+
+// Long multiplies (decision 0208): the product of two values of 32 bits
+// (masked by 0xFFFFFFFF, or `(x << 32) >> 32`, or known in range) is
+// umull (smull) of their low halves, and a wrapping add of it umaddl
+// (smaddl); a wrapping add of a wrapping shift left by a constant is an
+// add with a shifted operand. The mask or the extension, used only
+// there, is then dead.
+
+// half32 returns the register whose low 32 bits are v, zero extended
+// (sign extended when signed), and whether that took off a mask or an
+// extension.
+func (s *fstate) half32(v *ssa.Value, signed bool) (vreg, bool, bool) {
+	if v.Type.Kind != ssa.KInt {
+		return 0, false, false
+	}
+	if !signed && v.Op == ssa.OpAnd {
+		for j := 0; j < 2; j++ {
+			if k, ok := constInt(v.Args[j]); ok && k == 0xFFFFFFFF {
+				return s.word(v.Args[1-j]), true, true
+			}
+		}
+	}
+	if signed && v.Op == ssa.OpShr && v.Args[0].Op == ssa.OpShl {
+		k1, ok1 := constInt(v.Args[1])
+		k2, ok2 := constInt(v.Args[0].Args[1])
+		if ok1 && ok2 && k1 == 32 && k2 == 32 {
+			return s.word(v.Args[0].Args[0]), true, true
+		}
+	}
+	lo, hi := s.bounds(v)
+	if signed && lo >= math.MinInt32 && hi <= math.MaxInt32 || !signed && lo >= 0 && hi <= math.MaxUint32 {
+		return s.word(v), false, true
+	}
+	return 0, false, false
+}
+
+// mulLong returns umull or smull of x and y, when both are 32 bit values
+// and one is masked or extended for it.
+func (s *fstate) mulLong(x, y *ssa.Value) (string, []vreg, bool) {
+	if s.g.goMode {
+		return "", nil, false
+	}
+	for _, signed := range []bool{false, true} {
+		a, ea, ok1 := s.half32(x, signed)
+		if !ok1 {
+			continue
+		}
+		b, eb, ok2 := s.half32(y, signed)
+		if ok2 && (ea || eb) {
+			if signed {
+				return "smull $d0, $wu0, $wu1", []vreg{a, b}, true
+			}
+			return "umull $d0, $wu0, $wu1", []vreg{a, b}, true
+		}
+	}
+	return "", nil, false
+}
+
+// wrapOp returns the operation of an rt.int_wrap call with a constant
+// operation.
+func wrapOp(v *ssa.Value) (int64, bool) {
+	if v.Op != ssa.OpCall || v.Aux != "rt.int_wrap" {
+		return 0, false
+	}
+	return constInt(v.Args[0])
+}
+
+// fusedAdd lowers rt.int_wrap(0, a, b) when a or b, used only there, is
+// a long multiply (umaddl, smaddl) or a shift left by a constant (an
+// add with a shifted operand).
+func (s *fstate) fusedAdd(v *ssa.Value) bool {
+	if s.g.goMode {
+		return false
+	}
+	for j := 1; j <= 2; j++ {
+		x, o := v.Args[j], v.Args[3-j]
+		op, ok := wrapOp(x)
+		if !ok || s.nuses[x] != 1 {
+			continue
+		}
+		switch op {
+		case 2:
+			if text, us, ok := s.mulLong(x.Args[1], x.Args[2]); ok {
+				text = text[:1] + "maddl $d0, $wu0, $wu1, $u2"
+				s.set(v, s.def1(false, text, append(us, s.word(o))...))
+				return true
+			}
+		case 3:
+			if k, ok := constInt(x.Args[2]); ok && k&63 != 0 {
+				s.set(v, s.def1(false, fmt.Sprintf("add $d0, $u0, $u1, lsl #%d", k&63), s.word(o), s.word(x.Args[1])))
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ordArg returns the memory order of argument k of v (decision 0200):

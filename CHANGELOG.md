@@ -12,6 +12,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Windows builds are deterministic: the link passes lld-link `/Brepro`,
   so rebuilding the same sources gives a byte identical `.exe` (the COFF
   time stamp is a hash of the output, not the link time; decision 0197).
+- Faster list code on arm64 (decision 0208): an element access is one
+  load or store with an immediate or a scaled register offset (the
+  list's data address computed once per loop when the loop cannot move
+  the list), bounds checks a guard before an `a || b` proved stay
+  removed, 32 by 32 bit products of masked values are `umull` and
+  `umaddl`, and a loop that stores into a list it received shared makes
+  it unique once before the loop instead of checking at every store
+  (all native backends). Argon2id written in Xo went from 2.21 to 1.13
+  times the C's instructions on arm64 (1.29 to 1.25 on LLVM); it stays
+  C. Output is unchanged.
+
 - Faster on the native backends: Str.split, Str.lines, Str.rune_count,
   Str.find and contains, Bytes.to_hex, Bytes.rune_count, and
   Bytes.to_str (UTF-8 validity) are now Xo in the runtime, scanning 16
