@@ -57,11 +57,20 @@ fn (var g: G) generate() -> Program {
   out.push(g.section("text"))
   out.push(g.text.join(""))
   out.push(g.helpers.join(""))
-  out.push(g.lsdas.join(""))
   if g.restorer_ref {
     // rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
+    // (in the text section: the call site tables after it switch away)
     out.push("\t.p2align 2\n${g.local("xo_sigreturn")}:\n\tmov x8, #139\n\tsvc #0\n")
   }
+  if g.clone_ref {
+    // rt.sys_clone (decision 0206 stage 2): clone(flags x0, stack x1,
+    // parent tid x2, tls x3, child tid x4 = x2); the child loads the
+    // function and its argument from its stack, calls it, and exits the
+    // thread (exit, 93)
+    out.push("\t.p2align 2\n${g.local("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
+      "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
+  }
+  out.push(g.lsdas.join(""))
   if g.personality_ref {
     // the personality routine through a data word, as ELF compilers
     // refer to it from the unwind tables
@@ -71,6 +80,13 @@ fn (var g: G) generate() -> Program {
       "DW.ref.xo_personality:\n\t.xword xo_personality\n")
   }
   g.data(out)
+  if g.words_ref {
+    // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
+    out.push("${g.section("data")}\t.p2align 3\n${g.local("xo_sys_words")}:\n")
+    for _ in 0..16 {
+      out.push("\t.quad 0\n")
+    }
+  }
   if g.os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }

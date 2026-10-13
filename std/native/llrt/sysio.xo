@@ -89,14 +89,16 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. The C runtime's on every target for now: its
-/// clock_gettime goes through the vDSO (glibc's, or xo_nolibc.c's with
-/// XO_NOLIBC=1), and the system call linux.clock_ns makes cost 4.3 times
-/// the time per call on Graviton (bench/results/linux-syscalls-2026-10-13.md).
-/// Xo reaches the vDSO once it can call a C ABI address and keep the
-/// address (decision 0206, next steps); then the Linux arm is
-/// linux.clock_ns(linux.CLOCK_REALTIME) when not rt.clock_virtual().
-pub fn clock_now() -> Int { rt.clock_now() }
+/// virtual clock. On Linux the vDSO's clock_gettime called from Xo
+/// (linux.clock_ns, decision 0206 stage 2: the system call it replaced
+/// cost 4.3 times the time per call, bench/results/linux-syscalls-2026-10-13.md);
+/// elsewhere, and while the virtual clock runs, the C runtime's.
+pub fn clock_now() -> Int {
+  if !raw() || rt.clock_virtual() {
+    return rt.clock_now()
+  }
+  linux.clock_ns(linux.CLOCK_REALTIME)
+}
 
 /// The contents of the file op: os.ReadFile's loop (a buffer of the size
 /// statx gives plus one byte, at least 512, grown while the file has

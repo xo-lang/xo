@@ -165,6 +165,26 @@ fn sys6(nr: Int, a0: Int, a1: Int, a2: Int, a3: Int, a4: Int, a5: Int) -> Int
 /// The address of the rt_sigreturn trampoline that rt_sigaction's
 /// sa_restorer names (emitted with the first use).
 fn sys_restorer() -> Int
+/// A call of the C function at address f with two Int arguments, by the
+/// C calling convention: its Int result (lowered inline, `blr` or an
+/// LLVM indirect call; decision 0206 stage 2: the vDSO's clock_gettime,
+/// a pthread_once routine).
+fn call_c2(f: Int, a: Int, b: Int) -> Int
+/// The address of 16 words of process state for the system call layer,
+/// zero at start (emitted by each native emitter with the first use:
+/// 0 the vDSO clock's address, 1 the once lock; decision 0206).
+fn sys_words() -> Int
+/// getauxval(k): the value of the auxiliary vector's entry k, or 0
+/// (always 0 off Linux; std/llrt/xo_sys.c).
+fn auxval(k: Int) -> Int
+/// clone(2) of a thread (flags, the child's stack pointer sp, the
+/// address of its 32 bit thread id for CLONE_PARENT_SETTID and
+/// CLONE_CHILD_CLEARTID, its thread pointer for CLONE_SETTLS) through a
+/// trampoline the emitters write at its first use: the child takes the
+/// C function f and its argument from the words at sp and sp + 8, calls
+/// f(arg), and exits the thread. The parent gets the child's id, or the
+/// negative errno (decision 0206 stage 2).
+fn sys_clone(flags: Int, sp: Int, tid: Int, tls: Int) -> Int
 /// The address of b's first byte (valid while b is alive; the kernel may
 /// write there only when b is unique, as bytes_buf's and sys_buf's are).
 fn bytes_addr(b: Bytes) -> Int

@@ -82,3 +82,16 @@ void xo_fs_set_err(int64_t st, const char *p, int64_t pn, const char *m, int64_t
 	memcpy(n_fs_err, m, (size_t)mn);
 	n_fs_err[mn] = 0;
 }
+
+// xo_auxval is getauxval(k) (decision 0206 stage 2: the vDSO's address,
+// the program headers for the TLS image), 0 off Linux; with XO_NOLIBC,
+// xo_nolibc.c's getauxval reads the vector _start found.
+#if defined(__linux__)
+#include <sys/auxv.h>
+int64_t xo_auxval(int64_t k) { return (int64_t)getauxval((unsigned long)k); }
+#else
+int64_t xo_auxval(int64_t k) {
+	(void)k;
+	return 0;
+}
+#endif

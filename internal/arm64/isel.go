@@ -2398,6 +2398,21 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_restorer":
 		s.g.restorerRef = true
 		s.set(v, s.symAddr(s.g.local("xo_sigreturn")))
+	case "rt.call_c2":
+		// a C ABI call of an address (decision 0206 stage 2): the
+		// arguments in x0 and x1, the address in x2 (`blr x2`)
+		in := &inst{kind: iCall, cptr: true, defs: s.newVregs([]bool{false})}
+		for _, k := range []int{1, 2, 0} {
+			r := s.word(v.Args[k])
+			in.srcs = append(in.srcs, rsrc(r))
+			in.uses = append(in.uses, r)
+		}
+		s.add(in)
+		s.clobber()
+		s.set(v, in.defs...)
+	case "rt.sys_words":
+		s.g.wordsRef = true
+		s.set(v, s.symAddr(s.g.local("xo_sys_words")))
 	case "rt.popcount":
 		s.set(v, s.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", s.word(v.Args[0])))
 	case "rt.ctz":

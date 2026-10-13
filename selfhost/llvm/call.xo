@@ -564,6 +564,28 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.sigreturn()
       g.set(v, "ptrtoint ptr @xo_sigreturn to i64")
     }
+    "rt.call_c2" => {
+      // a C ABI call of an address (decision 0206 stage 2)
+      let p = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
+      g.set(v, "call i64 ${p}(i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])})")
+    }
+    "rt.sys_words" => {
+      // 16 words of process state (decision 0206 stage 2): weak, one
+      // object for every module of a split build
+      if !g.emitted.contains("@xo_sys_words") {
+        g.emitted["@xo_sys_words"] = true
+        g.helpers.push("@xo_sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
+      }
+      g.set(v, "ptrtoint ptr @xo_sys_words to i64")
+    }
+    "rt.sys_clone" => {
+      g.clone_tramp()
+      var ops: List[Str] = []
+      for a in x.args {
+        ops.push("i64 ${g.op(a)}")
+      }
+      g.set(v, "call i64 @xo_clone(${ops.join(", ")})")
+    }
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
     "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")

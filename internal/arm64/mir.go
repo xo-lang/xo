@@ -86,6 +86,10 @@ type inst struct {
 	// iCall: a Linux system call (rt.sys6, decision 0206): the number is
 	// the seventh argument (x6), moved to x8 for `svc #0`
 	svc bool
+	// iCall: a C ABI call of the address in the last source register
+	// (rt.call_c2, decision 0206 stage 2): `blr x<n>` after the n
+	// arguments
+	cptr bool
 	// iCall, Go mode: a preemption poll at a loop's back edge (goasm.go
 	// insertPolls): the call of sym runs only when the goroutine's
 	// stack guard holds Go's preemption request

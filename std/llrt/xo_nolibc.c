@@ -14,10 +14,13 @@
 //     as the runtime's main thread has), exit;
 //   - memory (malloc and friends over mmap), strings, integer parsing,
 //     qsort, a printf family without floating point conversions;
-//   - files, directories, pipes, epoll, the clock (the system call, not
-//     the vDSO), getrandom, signals (rt_sigaction with its own restorer);
-//   - locks (futex based mutexes, once), threads (clone with a stack and
-//     a TLS block per thread, joined through CLONE_CHILD_CLEARTID);
+//   - files, directories, pipes, epoll, getrandom;
+//   - forwarded to Xo (stage 2, std/native/llrt/cabi_nolibc.xo, called
+//     as xo_x_<name>): the clock (the vDSO's clock_gettime), signals
+//     (rt_sigaction with the emitters' restorer), locks (futex based
+//     mutexes, once), threads (clone with a stack and a TLS block per
+//     thread, joined through CLONE_CHILD_CLEARTID), the TLS block's
+//     layout;
 //   - not here (stage 2): unwinding (_Unwind_ForcedUnwind finds no
 //     frames: a fault is reported and ends the program, without running
 //     deferred code), floating point printf conversions and strtod (they
@@ -25,6 +28,20 @@
 //     DNS (getaddrinfo is not defined).
 // The system call layer of Xo code is std/native/llrt/linux.xo; this
 // file serves the C runtime only, and shrinks as the runtime moves to Xo.
+
+// The Xo exports this file forwards to (std/native/llrt/cabi_nolibc.xo).
+int64_t xo_x_clock_gettime(int64_t id, int64_t ts);
+int64_t xo_x_mutex_lock(int64_t m);
+int64_t xo_x_mutex_unlock(int64_t m);
+int64_t xo_x_mutex_trylock(int64_t m);
+int64_t xo_x_once_run(int64_t w, int64_t f);
+int64_t xo_x_sigaction(int64_t sig, int64_t act, int64_t old);
+int64_t xo_x_signal(int64_t sig, int64_t h);
+int64_t xo_x_sigprocmask(int64_t how, int64_t set, int64_t old);
+int64_t xo_x_tls_size(void);
+int64_t xo_x_tls_init(int64_t area);
+int64_t xo_x_thread_create(int64_t stack, int64_t f, int64_t arg);
+int64_t xo_x_thread_join(int64_t t);
 
 #ifndef XO_NOLIBC_IMPL
 #define XO_NOLIBC_IMPL
@@ -135,111 +152,32 @@ NL_USED __attribute__((noreturn, cold)) static void nl_die(const char *msg) {
 
 NL_USED __attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv)); }
 
-// The static TLS block of every thread is laid out from the program's
-// PT_TLS segment: variant I on arm64 (the thread pointer at a 16 byte
-// control block, the block after it), variant II on x86_64 (the block
-// before the thread pointer, which points at itself).
-static const Elf64_Phdr *nl_tls_ph;
+// The auxiliary vector _start found (getauxval: the program headers for
+// the TLS image, the vDSO, the page size).
+static long *nl_auxv;
 
-static unsigned long nl_tls_align(void) { return nl_tls_ph && nl_tls_ph->p_align > 16 ? nl_tls_ph->p_align : 16; }
-
-static unsigned long nl_tls_block(void) {
-	unsigned long a = nl_tls_align();
-	return ((nl_tls_ph ? nl_tls_ph->p_memsz : 0) + a - 1) & ~(a - 1);
-}
-
-// nl_tls_size is the bytes nl_tls_init needs (page aligned memory).
-static unsigned long nl_tls_size(void) { return nl_tls_block() + 2 * nl_tls_align() + 64; }
-
-// nl_tls_init lays a TLS block out in zeroed memory at area and returns
-// its thread pointer.
-static char *nl_tls_init(char *area) {
-	unsigned long filesz = nl_tls_ph ? nl_tls_ph->p_filesz : 0;
-#if defined(__aarch64__)
-	char *tp = area;
-	unsigned long a = nl_tls_align();
-	char *data = tp + ((16 + a - 1) & ~(a - 1));
-#else
-	char *tp = area + nl_tls_block();
-	char *data = tp - nl_tls_block();
-	*(char **)tp = tp;
-#endif
-	if (filesz) {
-		__builtin_memcpy(data, (const void *)nl_tls_ph->p_vaddr, filesz);
-	}
-	return tp;
-}
-
-// nl_tls sets up the main thread's TLS block and thread pointer.
-static void nl_tls(const Elf64_Phdr *ph, long phnum) {
-	for (long i = 0; ph && i < phnum; i++) {
-		if (ph[i].p_type == PT_TLS) {
-			nl_tls_ph = &ph[i];
+NL_USED unsigned long getauxval(unsigned long k) {
+	for (long *a = nl_auxv; a && a[0] != AT_NULL; a += 2) {
+		if ((unsigned long)a[0] == k) {
+			return (unsigned long)a[1];
 		}
 	}
-	long area = nl_sys6(SYS_mmap, 0, (long)nl_tls_size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	return 0;
+}
+
+// nl_tls sets up the main thread's TLS block (laid out by Xo,
+// xo_x_tls_init) and thread pointer.
+static void nl_tls(void) {
+	long area = nl_sys6(SYS_mmap, 0, (long)xo_x_tls_size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (area < 0 && area > -4096) {
 		nl_die("mmap of the TLS block failed");
 	}
-	char *tp = nl_tls_init((char *)area);
+	char *tp = (char *)xo_x_tls_init(area);
 #if defined(__aarch64__)
 	__asm__ volatile("msr tpidr_el0, %0" ::"r"(tp));
 #else
 	nl_sys2(SYS_arch_prctl, 0x1002 /* ARCH_SET_FS */, tp);
 #endif
-}
-
-// The vDSO's clock_gettime (decision 0206: the C runtime's clocks keep
-// the libc speed), found through the vDSO's dynamic symbol table; the
-// system call when there is none.
-static int (*nl_vdso_cgt)(clockid_t, struct timespec *);
-
-static void nl_vdso(const char *base) {
-	const Elf64_Ehdr *eh = (const Elf64_Ehdr *)base;
-	const Elf64_Phdr *ph = (const Elf64_Phdr *)(base + eh->e_phoff);
-	long bias = 0;
-	int has_load = 0;
-	const Elf64_Dyn *dyn = NULL;
-	for (int i = 0; i < eh->e_phnum; i++) {
-		if (ph[i].p_type == PT_LOAD && !has_load) {
-			bias = (long)base + (long)ph[i].p_offset - (long)ph[i].p_vaddr;
-			has_load = 1;
-		} else if (ph[i].p_type == PT_DYNAMIC) {
-			dyn = (const Elf64_Dyn *)(base + ph[i].p_offset);
-		}
-	}
-	if (!dyn || !has_load) {
-		return;
-	}
-	const Elf64_Sym *sym = NULL;
-	const char *str = NULL;
-	const uint32_t *hash = NULL;
-	for (; dyn->d_tag != DT_NULL; dyn++) {
-		if (dyn->d_tag == DT_SYMTAB) {
-			sym = (const Elf64_Sym *)(bias + dyn->d_un.d_ptr);
-		} else if (dyn->d_tag == DT_STRTAB) {
-			str = (const char *)(bias + dyn->d_un.d_ptr);
-		} else if (dyn->d_tag == DT_HASH) {
-			hash = (const uint32_t *)(bias + dyn->d_un.d_ptr);
-		}
-	}
-	if (!sym || !str) {
-		return;
-	}
-	// the symbol count: DT_HASH's, else (arm64's vDSO has only
-	// DT_GNU_HASH) the symbol table runs up to the string table
-	uint32_t n = hash ? hash[1] : (str > (const char *)sym ? (uint32_t)((str - (const char *)sym) / sizeof *sym) : 0);
-#if defined(__aarch64__)
-	const char *want = "__kernel_clock_gettime";
-#else
-	const char *want = "__vdso_clock_gettime";
-#endif
-	for (uint32_t i = 0; i < n; i++) {
-		if (sym[i].st_name && sym[i].st_shndx != SHN_UNDEF && ELF64_ST_TYPE(sym[i].st_info) == STT_FUNC &&
-			__builtin_strcmp(str + sym[i].st_name, want) == 0) {
-			nl_vdso_cgt = (int (*)(clockid_t, struct timespec *))(bias + (long)sym[i].st_value);
-		}
-	}
 }
 
 // nl_start runs from _start with the initial stack: argc, argv, envp, the
@@ -252,25 +190,11 @@ NL_USED __attribute__((noreturn)) void xo_nolibc_start(long *sp) {
 	while (*e) {
 		e++;
 	}
-	const Elf64_Phdr *ph = NULL;
-	long phnum = 0;
-	for (long *a = (long *)(e + 1); a[0] != AT_NULL; a += 2) {
-		switch (a[0]) {
-		case AT_PHDR:
-			ph = (const Elf64_Phdr *)a[1];
-			break;
-		case AT_PHNUM:
-			phnum = a[1];
-			break;
-		case AT_PAGESZ:
-			nl_pagesz = a[1];
-			break;
-		case AT_SYSINFO_EHDR:
-			nl_vdso((const char *)a[1]);
-			break;
-		}
+	nl_auxv = (long *)(e + 1);
+	if (getauxval(AT_PAGESZ)) {
+		nl_pagesz = (long)getauxval(AT_PAGESZ);
 	}
-	nl_tls(ph, phnum);
+	nl_tls();
 	// main on a 1 GiB stack (the runtime runs the program's main on a
 	// thread with one, and this thread waits for it)
 	long gb = 1L << 30;
@@ -291,15 +215,11 @@ NL_USED __attribute__((noreturn)) void xo_nolibc_start(long *sp) {
 __asm__(".text\n.global _start\n.type _start, %function\n_start:\n"
 	"\tmov x29, #0\n\tmov x30, #0\n\tmov x0, sp\n\tand sp, x0, #-16\n\tbl xo_nolibc_start\n\tbrk #1\n"
 	".size _start, .-_start\n");
-// rt_sigaction's sa_restorer: rt_sigreturn
-__asm__(".text\n.type xo_nolibc_restorer, %function\nxo_nolibc_restorer:\n\tmov x8, #139\n\tsvc #0\n");
 #else
 __asm__(".text\n.global _start\n.type _start, @function\n_start:\n"
 	"\txor %ebp, %ebp\n\tmov %rsp, %rdi\n\tand $-16, %rsp\n\tcall xo_nolibc_start\n\thlt\n"
 	".size _start, .-_start\n");
-__asm__(".text\n.type xo_nolibc_restorer, @function\nxo_nolibc_restorer:\n\tmov $15, %eax\n\tsyscall\n");
 #endif
-void xo_nolibc_restorer(void);
 
 // ---------------------------------------------------------------------------
 // Memory: malloc over mmap. Blocks up to 64 KiB come from free lists by
@@ -316,10 +236,10 @@ typedef struct nl_free {
 
 static nl_free *nl_lists[NL_MAX_SHIFT + 1];
 static char *nl_cur, *nl_end;
-static int nl_mu;
+static long nl_mu;
 
-static void nl_lock(int *f);
-static void nl_unlock(int *f);
+static void nl_lock(long *f) { xo_x_mutex_lock((int64_t)f); }
+static void nl_unlock(long *f) { xo_x_mutex_unlock((int64_t)f); }
 
 static void *nl_map(long n) {
 	long r = nl_sys6(SYS_mmap, 0, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -1431,17 +1351,7 @@ NL_USED int mprotect(void *a, size_t n, int prot) { return (int)nl_ret(nl_sys3(S
 
 NL_USED int madvise(void *a, size_t n, int adv) { return (int)nl_ret(nl_sys3(SYS_madvise, a, n, adv)); }
 
-NL_USED int clock_gettime(clockid_t id, struct timespec *ts) {
-	if (nl_vdso_cgt) {
-		int r = nl_vdso_cgt(id, ts);
-		if (r < 0) {
-			nl_errno = -r;
-			return -1;
-		}
-		return r;
-	}
-	return (int)nl_ret(nl_sys2(SYS_clock_gettime, id, ts));
-}
+NL_USED int clock_gettime(clockid_t id, struct timespec *ts) { return (int)nl_ret(xo_x_clock_gettime(id, (int64_t)ts)); }
 
 NL_USED time_t time(time_t *t) {
 	struct timespec ts;
@@ -1545,8 +1455,8 @@ NL_USED long syscall(long n, ...) {
 }
 
 // ---------------------------------------------------------------------------
-// Signals: the kernel's struct sigaction (handler, flags, restorer, mask)
-// with this file's rt_sigreturn trampoline.
+// Signals (in Xo: cabi_nolibc.xo sigaction, with the emitters'
+// rt_sigreturn trampoline).
 
 NL_USED int sigemptyset(sigset_t *s) {
 	memset(s, 0, sizeof *s);
@@ -1559,41 +1469,16 @@ NL_USED int sigaddset(sigset_t *s, int sig) {
 }
 
 NL_USED int sigaction(int sig, const struct sigaction *restrict act, struct sigaction *restrict old) {
-	struct {
-		void *handler;
-		unsigned long flags;
-		void *restorer;
-		unsigned long mask;
-	} k = {0}, ko = {0};
-	if (act) {
-		k.handler = (void *)act->sa_handler;
-		k.flags = (unsigned long)act->sa_flags | 0x04000000; // SA_RESTORER
-		k.restorer = (void *)xo_nolibc_restorer;
-		memcpy(&k.mask, &act->sa_mask, sizeof k.mask);
-	}
-	long r = nl_ret(nl_sys4(SYS_rt_sigaction, sig, act ? &k : NULL, &ko, 8));
-	if (r == 0 && old) {
-		memset(old, 0, sizeof *old);
-		old->sa_handler = (void (*)(int))ko.handler;
-		old->sa_flags = (int)ko.flags;
-		memcpy(&old->sa_mask, &ko.mask, sizeof ko.mask);
-	}
-	return (int)r;
+	return (int)nl_ret(xo_x_sigaction(sig, (int64_t)act, (int64_t)old));
 }
 
 NL_USED void (*signal(int sig, void (*h)(int)))(int) {
-	struct sigaction sa, old;
-	memset(&sa, 0, sizeof sa);
-	sa.sa_handler = h;
-	sa.sa_flags = SA_RESTART;
-	if (sigaction(sig, &sa, &old) != 0) {
-		return SIG_ERR;
-	}
-	return old.sa_handler;
+	long r = nl_ret(xo_x_signal(sig, (int64_t)h));
+	return r == -1 ? SIG_ERR : (void (*)(int))r;
 }
 
 NL_USED int sigprocmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
-	return (int)nl_ret(nl_sys4(SYS_rt_sigprocmask, how, set, old, 8));
+	return (int)nl_ret(xo_x_sigprocmask(how, (int64_t)set, (int64_t)old));
 }
 
 NL_USED int pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
@@ -1601,28 +1486,8 @@ NL_USED int pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *res
 }
 
 // ---------------------------------------------------------------------------
-// Locks over futex (Drepper's mutex: 0 free, 1 held, 2 held with
-// waiters); the first int of glibc's pthread_mutex_t is the word.
-
-static void nl_lock(int *f) {
-	int c = 0;
-	if (__atomic_compare_exchange_n(f, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-		return;
-	}
-	if (c != 2) {
-		c = __atomic_exchange_n(f, 2, __ATOMIC_ACQUIRE);
-	}
-	while (c != 0) {
-		nl_sys4(SYS_futex, f, 128 /* FUTEX_WAIT_PRIVATE */, 2, 0);
-		c = __atomic_exchange_n(f, 2, __ATOMIC_ACQUIRE);
-	}
-}
-
-static void nl_unlock(int *f) {
-	if (__atomic_exchange_n(f, 0, __ATOMIC_RELEASE) == 2) {
-		nl_sys4(SYS_futex, f, 129 /* FUTEX_WAKE_PRIVATE */, 1, 0);
-	}
-}
+// Locks (in Xo: cabi_nolibc.xo, futex based; a mutex is the first word
+// of glibc's pthread_mutex_t).
 
 NL_USED int pthread_mutex_init(pthread_mutex_t *restrict m, const pthread_mutexattr_t *restrict a) {
 	(void)a;
@@ -1635,66 +1500,22 @@ NL_USED int pthread_mutex_destroy(pthread_mutex_t *m) {
 	return 0;
 }
 
-NL_USED int pthread_mutex_lock(pthread_mutex_t *m) {
-	nl_lock((int *)m);
-	return 0;
-}
+NL_USED int pthread_mutex_lock(pthread_mutex_t *m) { return (int)xo_x_mutex_lock((int64_t)m); }
 
-NL_USED int pthread_mutex_trylock(pthread_mutex_t *m) {
-	int c = 0;
-	return __atomic_compare_exchange_n((int *)m, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ? 0 : EBUSY;
-}
+NL_USED int pthread_mutex_trylock(pthread_mutex_t *m) { return (int)xo_x_mutex_trylock((int64_t)m); }
 
-NL_USED int pthread_mutex_unlock(pthread_mutex_t *m) {
-	nl_unlock((int *)m);
-	return 0;
-}
+NL_USED int pthread_mutex_unlock(pthread_mutex_t *m) { return (int)xo_x_mutex_unlock((int64_t)m); }
 
-NL_USED int pthread_once(pthread_once_t *o, void (*f)(void)) {
-	int *w = (int *)o;
-	int c = 0;
-	if (__atomic_compare_exchange_n(w, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
-		f();
-		__atomic_store_n(w, 2, __ATOMIC_RELEASE);
-		nl_sys4(SYS_futex, w, 129, 0x7fffffff, 0);
-		return 0;
-	}
-	while ((c = __atomic_load_n(w, __ATOMIC_ACQUIRE)) != 2) {
-		nl_sys4(SYS_futex, w, 128, c, 0);
-	}
-	return 0;
-}
+NL_USED int pthread_once(pthread_once_t *o, void (*f)(void)) { return (int)xo_x_once_run((int64_t)o, (int64_t)f); }
 
-// Threads: clone with the flags of a POSIX thread, a stack and a TLS block
-// in one mapping (with a guard page below the stack), the thread's id
-// cleared and woken by the kernel at its exit (CLONE_CHILD_CLEARTID),
-// which pthread_join waits for. A detached thread's mapping is not
-// reused (the runtime detaches its poller and workers, which live until
-// the program ends).
-
-typedef struct {
-	size_t stack;
-	int detached;
-} nl_attr;
-
-_Static_assert(sizeof(nl_attr) <= sizeof(pthread_attr_t), "pthread_attr_t holds nl_attr");
-
-typedef struct nl_thread {
-	void *(*f)(void *);
-	void *arg;
-	void *ret;
-	volatile int tid;
-	int detached;
-	char *map;
-	size_t maplen;
-} nl_thread;
-
-static nl_thread nl_main_thread;
-static __thread nl_thread *nl_self;
+// Threads (in Xo: cabi_nolibc.xo thread_create and thread_join, clone
+// through the emitters' trampoline). The attributes the runtime sets: the
+// stack size (detached threads' mappings are never reused: the runtime
+// detaches its poller and workers, which live until the program ends).
 
 NL_USED int pthread_attr_init(pthread_attr_t *a) {
 	memset(a, 0, sizeof *a);
-	((nl_attr *)a)->stack = 8 << 20;
+	*(size_t *)a = 8 << 20;
 	return 0;
 }
 
@@ -1704,95 +1525,37 @@ NL_USED int pthread_attr_destroy(pthread_attr_t *a) {
 }
 
 NL_USED int pthread_attr_setstacksize(pthread_attr_t *a, size_t n) {
-	((nl_attr *)a)->stack = n;
+	*(size_t *)a = n;
 	return 0;
 }
 
 NL_USED int pthread_attr_setdetachstate(pthread_attr_t *a, int s) {
-	((nl_attr *)a)->detached = s == PTHREAD_CREATE_DETACHED;
+	(void)a;
+	(void)s;
 	return 0;
 }
 
-NL_USED __attribute__((noreturn)) void xo_nolibc_thread_start(nl_thread *t) {
-	nl_self = t;
-	t->ret = t->f(t->arg);
-	for (;;) {
-		nl_sys1(SYS_exit, 0);
-	}
-}
-
-// nl_clone(flags, stack, parent_tid, tls, child_tid, thread): clone(2);
-// the child calls xo_nolibc_thread_start(thread) on its stack.
-long nl_clone(long flags, char *stack, volatile int *ptid, char *tls, volatile int *ctid, nl_thread *t);
-#if defined(__aarch64__)
-__asm__(".text\n.type nl_clone, %function\nnl_clone:\n"
-	"\tstr x5, [x1, #-16]!\n" // the thread, on the child's stack
-	"\tmov x8, #220\n\tsvc #0\n" // clone(flags, stack, ptid, tls, ctid)
-	"\tcbz x0, 1f\n\tret\n"
-	"1:\tldr x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tbl xo_nolibc_thread_start\n\tbrk #1\n");
-#else
-__asm__(".text\n.type nl_clone, @function\nnl_clone:\n"
-	"\tsub $16, %rsi\n\tmov %r9, (%rsi)\n" // the thread, on the child's stack
-	"\tmov %r8, %r10\n\tmov %rcx, %r8\n" // child_tid, tls
-	"\tmov $56, %eax\n\tsyscall\n" // clone(flags, stack, ptid, ctid, tls)
-	"\ttest %rax, %rax\n\tjz 1f\n\tret\n"
-	"1:\txor %ebp, %ebp\n\tpop %rdi\n\tpop %rax\n\tcall xo_nolibc_thread_start\n\thlt\n");
-#endif
-
 NL_USED int pthread_create(pthread_t *restrict tp, const pthread_attr_t *restrict a, void *(*f)(void *), void *restrict arg) {
-	size_t stack = a ? ((const nl_attr *)a)->stack : (size_t)8 << 20;
-	if (stack < (size_t)1 << 16) {
-		stack = (size_t)1 << 16;
-	}
-	size_t page = (size_t)nl_pagesz;
-	stack = (stack + page - 1) & ~(page - 1);
-	size_t tls = (nl_tls_size() + sizeof(nl_thread) + page - 1) & ~(page - 1);
-	size_t len = page + stack + tls;
-	long m = nl_sys6(SYS_mmap, 0, (long)len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-	if (m < 0 && m > -4096) {
-		return EAGAIN;
-	}
-	char *map = (char *)m;
-	nl_sys3(SYS_mprotect, map, page, PROT_NONE);
-	nl_thread *t = (nl_thread *)(map + page + stack);
-	t->f = f;
-	t->arg = arg;
-	t->detached = a ? ((const nl_attr *)a)->detached : 0;
-	t->map = map;
-	t->maplen = len;
-	char *area = (char *)(((uintptr_t)(t + 1) + 63) & ~(uintptr_t)63);
-	char *tpp = nl_tls_init(area);
-	// CLONE_VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, SETTLS, PARENT_SETTID,
-	// CHILD_CLEARTID
-	long flags = 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x40000 | 0x80000 | 0x100000 | 0x200000;
-	long r = nl_clone(flags, map + page + stack, &t->tid, tpp, &t->tid, t);
+	long r = (long)xo_x_thread_create(a ? (int64_t) * (const size_t *)a : 8 << 20, (int64_t)f, (int64_t)arg);
 	if (r < 0) {
-		nl_sys2(SYS_munmap, map, len);
 		return (int)-r;
 	}
-	*tp = (pthread_t)t;
+	*tp = (pthread_t)r;
 	return 0;
 }
 
 NL_USED int pthread_join(pthread_t th, void **r) {
-	nl_thread *t = (nl_thread *)th;
-	int tid;
-	while ((tid = t->tid) != 0) {
-		nl_sys4(SYS_futex, &t->tid, 0 /* FUTEX_WAIT: CLONE_CHILD_CLEARTID wakes it shared */, tid, 0);
-	}
+	xo_x_thread_join((int64_t)th);
 	if (r) {
-		*r = t->ret;
+		*r = NULL; // the runtime's threads return nothing it reads
 	}
-	nl_sys2(SYS_munmap, t->map, t->maplen);
 	return 0;
 }
 
 NL_USED int pthread_detach(pthread_t th) {
-	((nl_thread *)th)->detached = 1;
+	(void)th;
 	return 0;
 }
-
-NL_USED pthread_t pthread_self(void) { return (pthread_t)(nl_self ? nl_self : &nl_main_thread); }
 
 NL_USED int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
 
