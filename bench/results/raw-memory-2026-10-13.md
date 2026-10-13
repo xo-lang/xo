@@ -342,3 +342,13 @@ Correctness:
   json_text, native_json, regexp_table (the zero_ints callers): pass.
 - SSA and arm64 assembly goldens regenerated (the five rc exports and
   cabi.xo's one line shift).
+- EC2 (r8g.8xlarge, on demand, instance i-EXAMPLE21,
+  terminated), merge commit 2ae37a1e, linux/arm64: internal/llvm
+  TestGolden (every golden, leak checked), TestGoldenThreads,
+  TestGoldenShared, TestRuntimeThreads (ThreadSanitizer, both paths),
+  TestRuntimeTasks, TestCABIDiff, TestLeakCheck: ok (101.6 s);
+  internal/arm64 TestGoldenRun, TestGoldenRunShared: ok (18.3 s);
+  cmd/xo TestNoGCTests through xo1 (built from these sources, so
+  check_no_alloc ran on rc.xo): ok (690.9 s). An earlier instance
+  (i-EXAMPLE36) could not connect (the shared SSH key had been
+  emptied) and was terminated by the script.
