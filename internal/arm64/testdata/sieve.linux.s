@@ -2391,56 +2391,62 @@ xo_f_cabi_2eis__space:
 	b.ge .Lf25_b10
 .Lf25_b2:
 	cmp x0, #32
-	b.eq .Lf25_b39
+	b.eq .Lf25_b36
 .Lf25_b4:
 	cmp x0, #9
-	b.lt .Lf25_b41
+	b.lt .Lf25_b38
 .Lf25_b5:
 	cmp x0, #13
-	b.le .Lf25_b39
-	b .Lf25_b41
+	b.le .Lf25_b36
+	b .Lf25_b38
 .Lf25_b10:
-	cmp x0, #133
-	b.eq .Lf25_b39
-.Lf25_b12:
-	cmp x0, #160
-	b.eq .Lf25_b39
-.Lf25_b15:
-	mov x9, #5760
-	cmp x0, x9
-	b.eq .Lf25_b39
-.Lf25_b18:
 	mov x9, #8192
 	cmp x0, x9
-	b.lt .Lf25_b24
-.Lf25_b19:
+	b.lt .Lf25_b28
+.Lf25_b11:
 	mov x9, #8202
 	cmp x0, x9
-	b.le .Lf25_b39
-.Lf25_b24:
-	mov x9, #8232
-	cmp x0, x9
-	b.eq .Lf25_b39
-.Lf25_b27:
-	mov x9, #8233
-	cmp x0, x9
-	b.eq .Lf25_b39
-.Lf25_b30:
-	mov x9, #8239
-	cmp x0, x9
-	b.eq .Lf25_b39
-.Lf25_b33:
+	b.le .Lf25_b36
+.Lf25_b14:
 	mov x9, #8287
 	cmp x0, x9
-	b.eq .Lf25_b39
-.Lf25_b36:
+	b.le .Lf25_b17
+.Lf25_b15:
 	mov x9, #12288
 	cmp x0, x9
-	b.ne .Lf25_b41
-.Lf25_b39:
+	b.eq .Lf25_b36
+	b .Lf25_b38
+.Lf25_b17:
+	mov x9, #8232
+	cmp x0, x9
+	b.eq .Lf25_b36
+.Lf25_b19:
+	mov x9, #8233
+	cmp x0, x9
+	b.eq .Lf25_b36
+.Lf25_b22:
+	mov x9, #8239
+	cmp x0, x9
+	b.eq .Lf25_b36
+.Lf25_b25:
+	mov x9, #8287
+	cmp x0, x9
+	b.eq .Lf25_b36
+	b .Lf25_b38
+.Lf25_b28:
+	cmp x0, #133
+	b.eq .Lf25_b36
+.Lf25_b30:
+	cmp x0, #160
+	b.eq .Lf25_b36
+.Lf25_b33:
+	mov x9, #5760
+	cmp x0, x9
+	b.ne .Lf25_b38
+.Lf25_b36:
 	mov x0, #1
 	ret
-.Lf25_b41:
+.Lf25_b38:
 	mov x0, #0
 	ret
 	.cfi_endproc
@@ -5373,47 +5379,60 @@ xo_f_unicode_2eis__space:
 .Lf39_b7:
 	ret
 .Lf39_b9:
-	cmp x0, #133
-	b.eq .Lf39_b34
-.Lf39_b11:
-	cmp x0, #160
-	b.eq .Lf39_b34
-.Lf39_b14:
-	mov x9, #5760
-	cmp x0, x9
-	b.eq .Lf39_b34
-.Lf39_b17:
 	mov x9, #8192
 	cmp x0, x9
-	b.lt .Lf39_b23
-.Lf39_b18:
+	b.lt .Lf39_b27
+.Lf39_b10:
 	mov x9, #8202
 	cmp x0, x9
-	b.le .Lf39_b34
-.Lf39_b23:
-	mov x9, #8232
-	cmp x0, x9
-	b.eq .Lf39_b34
-.Lf39_b26:
-	mov x9, #8233
-	cmp x0, x9
-	b.eq .Lf39_b34
-.Lf39_b29:
-	mov x9, #8239
-	cmp x0, x9
-	b.eq .Lf39_b34
-.Lf39_b32:
+	b.gt .Lf39_b13
+.Lf39_b11:
+	mov x0, #1
+	ret
+.Lf39_b13:
 	mov x9, #8287
 	cmp x0, x9
-	b.ne .Lf39_b35
-.Lf39_b34:
-	mov x0, #1
-	b .Lf39_b36
-.Lf39_b35:
+	b.le .Lf39_b16
+.Lf39_b14:
 	mov x9, #12288
 	cmp x0, x9
 	cset x0, eq
-.Lf39_b36:
+	ret
+.Lf39_b16:
+	mov x9, #8232
+	cmp x0, x9
+	b.eq .Lf39_b23
+.Lf39_b18:
+	mov x9, #8233
+	cmp x0, x9
+	b.eq .Lf39_b23
+.Lf39_b21:
+	mov x9, #8239
+	cmp x0, x9
+	b.ne .Lf39_b24
+.Lf39_b23:
+	mov x0, #1
+	b .Lf39_b25
+.Lf39_b24:
+	mov x9, #8287
+	cmp x0, x9
+	cset x0, eq
+.Lf39_b25:
+	ret
+.Lf39_b27:
+	cmp x0, #133
+	b.eq .Lf39_b31
+.Lf39_b29:
+	cmp x0, #160
+	b.ne .Lf39_b32
+.Lf39_b31:
+	mov x0, #1
+	b .Lf39_b33
+.Lf39_b32:
+	mov x9, #5760
+	cmp x0, x9
+	cset x0, eq
+.Lf39_b33:
 	ret
 	.cfi_endproc
 

@@ -3159,8 +3159,8 @@ b0(v0: Int):
   br v2, b2(), b3()
 b1:  ; preds b3
   v4: () = tuple
-  v5: Int = const 133
-  v6: Bool = eq v0, v5
+  v5: Int = const 8192
+  v6: Bool = ge v0, v5
   br v6, b11(), b12()
 b2:  ; preds b0
   v8: Int = const 32
@@ -3187,87 +3187,86 @@ b8:  ; preds b6
 b9:  ; preds b6
   v25: Bool = const false
   jump b7(v25)
-b10(v27: Bool):  ; preds b11, b12
-  br v27, b14(), b15()
+b10:  ; preds b12
+  v27: () = tuple
+  v28: Int = const 133
+  v29: Bool = eq v0, v28
+  br v29, b29(), b30()
 b11:  ; preds b1
-  v29: Bool = const true
-  jump b10(v29)
+  v31: Int = const 8202
+  v32: Bool = le v0, v31
+  br v32, b14(), b15()
 b12:  ; preds b1
-  v31: Int = const 160
-  v32: Bool = eq v0, v31
-  jump b10(v32)
-b13(v34: Bool):  ; preds b14, b15
-  br v34, b17(), b18()
-b14:  ; preds b10
-  v36: Bool = const true
-  jump b13(v36)
-b15:  ; preds b10
-  v38: Int = const 5760
-  v39: Bool = eq v0, v38
-  jump b13(v39)
-b16(v41: Bool):  ; preds b17, b19
-  br v41, b23(), b24()
-b17:  ; preds b13
-  v43: Bool = const true
-  jump b16(v43)
-b18:  ; preds b13
-  v45: Int = const 8192
-  v46: Bool = ge v0, v45
+  v34: () = tuple
+  jump b10()
+b13:  ; preds b15
+  v36: () = tuple
+  v37: Int = const 8287
+  v38: Bool = gt v0, v37
+  br v38, b17(), b18()
+b14:  ; preds b11
+  v40: Bool = const true
+  ret v40
+b15:  ; preds b11
+  v42: () = tuple
+  jump b13()
+b16:  ; preds b18
+  v44: () = tuple
+  v45: Int = const 8232
+  v46: Bool = eq v0, v45
   br v46, b20(), b21()
-b19(v48: Bool):  ; preds b21, b20
-  jump b16(v48)
-b20:  ; preds b18
-  v50: Int = const 8202
-  v51: Bool = le v0, v50
-  jump b19(v51)
-b21:  ; preds b18
-  v53: Bool = const false
-  jump b19(v53)
-b22(v55: Bool):  ; preds b23, b24
-  br v55, b26(), b27()
-b23:  ; preds b16
-  v57: Bool = const true
-  jump b22(v57)
-b24:  ; preds b16
-  v59: Int = const 8232
-  v60: Bool = eq v0, v59
-  jump b22(v60)
-b25(v62: Bool):  ; preds b26, b27
-  br v62, b29(), b30()
+b17:  ; preds b13
+  v48: Int = const 12288
+  v49: Bool = eq v0, v48
+  ret v49
+b18:  ; preds b13
+  v51: () = tuple
+  jump b16()
+b19(v53: Bool):  ; preds b20, b21
+  br v53, b23(), b24()
+b20:  ; preds b16
+  v55: Bool = const true
+  jump b19(v55)
+b21:  ; preds b16
+  v57: Int = const 8233
+  v58: Bool = eq v0, v57
+  jump b19(v58)
+b22(v60: Bool):  ; preds b23, b24
+  br v60, b26(), b27()
+b23:  ; preds b19
+  v62: Bool = const true
+  jump b22(v62)
+b24:  ; preds b19
+  v64: Int = const 8239
+  v65: Bool = eq v0, v64
+  jump b22(v65)
+b25(v67: Bool):  ; preds b26, b27
+  ret v67
 b26:  ; preds b22
-  v64: Bool = const true
-  jump b25(v64)
+  v69: Bool = const true
+  jump b25(v69)
 b27:  ; preds b22
-  v66: Int = const 8233
-  v67: Bool = eq v0, v66
-  jump b25(v67)
-b28(v69: Bool):  ; preds b29, b30
-  br v69, b32(), b33()
-b29:  ; preds b25
-  v71: Bool = const true
-  jump b28(v71)
-b30:  ; preds b25
-  v73: Int = const 8239
-  v74: Bool = eq v0, v73
-  jump b28(v74)
-b31(v76: Bool):  ; preds b32, b33
-  br v76, b35(), b36()
+  v71: Int = const 8287
+  v72: Bool = eq v0, v71
+  jump b25(v72)
+b28(v74: Bool):  ; preds b29, b30
+  br v74, b32(), b33()
+b29:  ; preds b10
+  v76: Bool = const true
+  jump b28(v76)
+b30:  ; preds b10
+  v78: Int = const 160
+  v79: Bool = eq v0, v78
+  jump b28(v79)
+b31(v81: Bool):  ; preds b32, b33
+  ret v81
 b32:  ; preds b28
-  v78: Bool = const true
-  jump b31(v78)
+  v83: Bool = const true
+  jump b31(v83)
 b33:  ; preds b28
-  v80: Int = const 8287
-  v81: Bool = eq v0, v80
-  jump b31(v81)
-b34(v83: Bool):  ; preds b35, b36
-  ret v83
-b35:  ; preds b31
-  v85: Bool = const true
-  jump b34(v85)
-b36:  ; preds b31
-  v87: Int = const 12288
-  v88: Bool = eq v0, v87
-  jump b34(v88)
+  v85: Int = const 5760
+  v86: Bool = eq v0, v85
+  jump b31(v86)
 }
 
 func netpolicy.admits(borrow v0: Str, borrow v1: Str, borrow v2: Str) -> Bool {

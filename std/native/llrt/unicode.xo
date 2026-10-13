@@ -140,7 +140,16 @@ pub fn is_space(r: Int) -> Bool {
   if r < 0x80 {
     return r == 32 || (r >= 9 && r <= 13)
   }
-  r == 0x85 || r == 0xA0 || r == 0x1680 || (r >= 0x2000 && r <= 0x200A) || r == 0x2028 || r == 0x2029 || r == 0x202F || r == 0x205F || r == 0x3000
+  if r >= 0x2000 {
+    if r <= 0x200A {
+      return true
+    }
+    if r > 0x205F {
+      return r == 0x3000
+    }
+    return r == 0x2028 || r == 0x2029 || r == 0x202F || r == 0x205F
+  }
+  r == 0x85 || r == 0xA0 || r == 0x1680
 }
 
 /// utf8.DecodeRune of b from i (i < b.len()): the rune times 8 plus its
