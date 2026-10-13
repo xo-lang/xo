@@ -13,6 +13,8 @@ pub fn starts_with(s: Str, p: Str) -> Bool { rt.str_starts_with(s, p) }
 
 pub fn ends_with(s: Str, p: Str) -> Bool { rt.str_ends_with(s, p) }
 
+pub fn has_at(s: Str, i: Int, p: Str) -> Bool { rt.str_starts_with(rt.str_slice(s, i, s.len()), p) }
+
 pub fn rune_count(s: Str) -> Int { rt.str_rune_count(s) }
 
 pub fn span(b: Bytes, from: Int, cls: Int) -> Int { rt.bytes_span(b, from, cls) }

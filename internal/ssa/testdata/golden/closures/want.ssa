@@ -1228,7 +1228,7 @@ b3:  ; preds b0
   v10: () = tuple
   jump b1()
 b4(v12: Int):  ; preds b2, b48
-  v13: Int = sub v3, v12 @ scan.xo:292:11 lands v14
+  v13: Int = sub v3, v12 @ scan.xo:301:11 lands v14
   v14: Bool = call rt.landing
   br v14, b47(), b46()
 b5:  ; preds b46
@@ -1241,20 +1241,20 @@ b6:  ; preds b46
 b7:  ; preds b9
   v21: () = tuple
   v22: Int = const 16
-  v23: Int = add v12, v22 @ scan.xo:297:7 lands v24
+  v23: Int = add v12, v22 @ scan.xo:306:7 lands v24
   v24: Bool = call rt.landing
   br v24, b49(), b48()
 b8:  ; preds b6
   v26: Int = call rt.ctz, v17
   v27: Int = const 2
-  v28: Int = shr v26, v27 @ scan.xo:295:21 lands v29
+  v28: Int = shr v26, v27 @ scan.xo:304:21 lands v29
   v29: Bool = call rt.landing
   br v29, b51(), b50()
 b9:  ; preds b6
   v31: () = tuple
   jump b7()
 b10(v33: Int):  ; preds b5, b56
-  v34: Int = sub v3, v33 @ scan.xo:299:11 lands v35
+  v34: Int = sub v3, v33 @ scan.xo:308:11 lands v35
   v35: Bool = call rt.landing
   br v35, b53(), b52()
 b11:  ; preds b52
@@ -1268,13 +1268,13 @@ b12:  ; preds b52
 b13:  ; preds b15
   v43: () = tuple
   v44: Int = const 8
-  v45: Int = add v33, v44 @ scan.xo:304:7 lands v46
+  v45: Int = add v33, v44 @ scan.xo:313:7 lands v46
   v46: Bool = call rt.landing
   br v46, b57(), b56()
 b14:  ; preds b54
   v48: Int = call rt.ctz, v149
   v49: Int = const 3
-  v50: Int = shr v48, v49 @ scan.xo:302:21 lands v51
+  v50: Int = shr v48, v49 @ scan.xo:311:21 lands v51
   v51: Bool = call rt.landing
   br v51, b59(), b58()
 b15:  ; preds b54
@@ -1288,7 +1288,7 @@ b17:  ; preds b18
 b18(v59: Bool):  ; preds b20, b60
   br v59, b21(), b17()
 b19:  ; preds b16
-  v61: UInt8 = call bytes.index, v0, v55 @ scan.xo:306:20 lands v62
+  v61: UInt8 = call bytes.index, v0, v55 @ scan.xo:315:20 lands v62
   v62: Bool = call rt.landing
   br v62, b61(), b60()
 b20:  ; preds b16
@@ -1296,11 +1296,11 @@ b20:  ; preds b16
   jump b18(v64)
 b21:  ; preds b18
   v66: Int = const 1
-  v67: Int = add v55, v66 @ scan.xo:307:7 lands v68
+  v67: Int = add v55, v66 @ scan.xo:316:7 lands v68
   v68: Bool = call rt.landing
   br v68, b63(), b62()
 b22(v70: Int):  ; preds b1, b66
-  v71: Int = sub v3, v70 @ scan.xo:311:9 lands v72
+  v71: Int = sub v3, v70 @ scan.xo:320:9 lands v72
   v72: Bool = call rt.landing
   br v72, b65(), b64()
 b23:  ; preds b64
@@ -1323,13 +1323,13 @@ b27:  ; preds b25, b47, b49, b51, b53, b55, b57, b59, b61, b63, b65, b67, b69, b
 b28:  ; preds b30
   v86: () = tuple
   v87: Int = const 8
-  v88: Int = add v70, v87 @ scan.xo:316:5 lands v89
+  v88: Int = add v70, v87 @ scan.xo:325:5 lands v89
   v89: Bool = call rt.landing
   br v89, b67(), b66()
 b29:  ; preds b26
   v91: Int = call rt.ctz, v76
   v92: Int = const 3
-  v93: Int = shr v91, v92 @ scan.xo:314:19 lands v94
+  v93: Int = shr v91, v92 @ scan.xo:323:19 lands v94
   v94: Bool = call rt.landing
   br v94, b69(), b68()
 b30:  ; preds b26
@@ -1341,13 +1341,13 @@ b31(v98: Int):  ; preds b23, b72
 b32:  ; preds b31
   ret v98
 b33:  ; preds b31
-  v102: UInt8 = call bytes.index, v0, v98 @ scan.xo:319:17 lands v103
+  v102: UInt8 = call bytes.index, v0, v98 @ scan.xo:328:17 lands v103
   v103: Bool = call rt.landing
   br v103, b71(), b70()
 b34:  ; preds b45
   v105: () = tuple
   v106: Int = const 1
-  v107: Int = add v98, v106 @ scan.xo:323:5 lands v108
+  v107: Int = add v98, v106 @ scan.xo:332:5 lands v108
   v108: Bool = call rt.landing
   br v108, b73(), b72()
 b35(v110: Bool):  ; preds b36, b37
@@ -1394,7 +1394,7 @@ b48:  ; preds b7
 b49:  ; preds b7
   jump b27()
 b50:  ; preds b8
-  v141: Int = add v12, v28 @ scan.xo:295:16 lands v142
+  v141: Int = add v12, v28 @ scan.xo:304:16 lands v142
   v142: Bool = call rt.landing
   br v142, b75(), b74()
 b51:  ; preds b8
@@ -1418,7 +1418,7 @@ b56:  ; preds b13
 b57:  ; preds b13
   jump b27()
 b58:  ; preds b14
-  v157: Int = add v33, v50 @ scan.xo:302:16 lands v158
+  v157: Int = add v33, v50 @ scan.xo:311:16 lands v158
   v158: Bool = call rt.landing
   br v158, b77(), b76()
 b59:  ; preds b14
@@ -1446,7 +1446,7 @@ b66:  ; preds b28
 b67:  ; preds b28
   jump b27()
 b68:  ; preds b29
-  v175: Int = add v70, v93 @ scan.xo:314:14 lands v176
+  v175: Int = add v70, v93 @ scan.xo:323:14 lands v176
   v176: Bool = call rt.landing
   br v176, b79(), b78()
 b69:  ; preds b29
@@ -2212,7 +2212,7 @@ b4:  ; preds b3
   v19: Int = and v0, v2
   v20: Int = and v19, v4
   v21: Int = const 1
-  v22: Int = neg v21 @ scan.xo:281:80 lands v23
+  v22: Int = neg v21 @ scan.xo:290:80 lands v23
   v23: Bool = call rt.landing
   br v23, b8(), b7()
 b5:  ; preds b11

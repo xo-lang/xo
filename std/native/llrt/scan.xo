@@ -156,6 +156,15 @@ pub fn find(s: Str, sub: Str, from: Int) -> Int {
   -1
 }
 
+/// Whether the bytes of s from i (clamped to 0 and s.len()) start with
+/// p: rt.str_starts_with(rt.str_slice(s, i, s.len()), p) without the
+/// copy.
+pub fn has_at(s: Str, i: Int, p: Str) -> Bool {
+  let n = s.len()
+  let lo = if i < 0 { 0 } else if i > n { n } else { i }
+  p.len() <= n - lo && eq_at(s.bytes(), lo, p.bytes(), 0, p.len())
+}
+
 pub fn contains(s: Str, sub: Str) -> Bool { find(s, sub, 0) >= 0 }
 
 pub fn starts_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), 0, p.bytes(), 0, p.len()) }

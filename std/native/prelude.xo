@@ -1285,7 +1285,7 @@ fn glob_match(pattern: Str, name: Str) -> Int {
     p = rest
     if star && chunk == "" {
       // a trailing * matches the rest of the name unless it has a /
-      if rt.str_find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
+      if scan.find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
         return 1
       }
       return 0
