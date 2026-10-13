@@ -392,7 +392,7 @@ func IOFlags(code []byte) []string {
 	// (decision 0195, XO_LLRT_C=ints)
 	for _, sym := range []string{"xo_int_op", "xo_int_conv", "xo_int_in_range", "xo_rune_of", "xo_rune_valid", "xo_floor_div", "xo_str_hash",
 		// the C versions of the intrinsics (a non-constant op of int_wrap)
-		"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits"} {
+		"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_INTS_C")
 			break

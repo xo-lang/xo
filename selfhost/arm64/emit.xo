@@ -32,7 +32,8 @@ struct Move {
 
 fn reg_name(r: Int, w: Bool) -> Str {
   if r >= FP_BASE {
-    return "d${r - FP_BASE}"
+    // the single precision name (`$wd0` of a Float, decision 0195)
+    return if w { "s${r - FP_BASE}" } else { "d${r - FP_BASE}" }
   }
   if r == 31 {
     return if w { "wzr" } else { "xzr" }

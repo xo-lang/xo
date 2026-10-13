@@ -195,12 +195,17 @@ int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_
 }
 #endif
 
+#ifdef XO_INTS_C
+// the C versions of the conversions of UInt64 and Float32 (the native
+// backends lower rt.u64_to_float, rt.f32_round, and rt.i64_to_f32
+// inline, decision 0195; compiled only when called)
 double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 
 // Float32 values are doubles holding float32 values (internal/ssa
 // Module.Float32): conversions and arithmetic round through float.
 double xo_f32_round(double v) { return (double)(float)v; }
 double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
+#endif
 
 // The C path of the leaf text of Display and Debug (decision 0193 step
 // 5): compiled only with -DXO_SHOW_C (XO_LLRT_C=show,

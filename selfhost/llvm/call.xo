@@ -523,6 +523,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
+    // decision 0195: the conversions of UInt64 and Float32
+    "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
+    "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")
+    "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(x.args[0])} to float")} to double")
     "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
     "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
     "rt.bytes_word" => {

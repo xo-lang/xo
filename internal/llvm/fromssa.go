@@ -2179,6 +2179,13 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		b := s.def("zext i64 %s to i128", s.op(v.Args[1]))
 		p := s.def("mul i128 %s, %s", a, b)
 		s.set(v, "trunc i128 %s to i64", s.def("lshr i128 %s, 64", p))
+	case "rt.u64_to_float":
+		// decision 0195: the conversions of UInt64 and Float32
+		s.set(v, "uitofp i64 %s to double", s.op(v.Args[0]))
+	case "rt.f32_round":
+		s.set(v, "fpext float %s to double", s.def("fptrunc double %s to float", s.op(v.Args[0])))
+	case "rt.i64_to_f32":
+		s.set(v, "fpext float %s to double", s.def("sitofp i64 %s to float", s.op(v.Args[0])))
 	case "rt.float_bits":
 		s.set(v, "bitcast double %s to i64", s.op(v.Args[0]))
 	case "rt.float_from_bits":

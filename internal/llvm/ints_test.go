@@ -48,6 +48,7 @@ fn int_ops(io: Stdio, x: Int, y: Int) uses stdio {
   show(io, "Int saturating", task.isolate(fn() -> Str ! () { "${x.saturating_add(y)} ${x.saturating_sub(y)} ${x.saturating_mul(y)}" }))
   show(io, "Int wrapping", task.isolate(fn() -> Str ! () { "${x.wrapping_add(y)} ${x.wrapping_sub(y)} ${x.wrapping_mul(y)}" }))
   show(io, "Int pow", task.isolate(fn() -> Str ! () { "${x.pow(y % 70)}" }))
+  show(io, "Int Float32", task.isolate(fn() -> Str ! () { "${Float32(x)} ${Float32(Float(x) * 1.0000001)} ${Float32(x) + Float32(y)} ${Float32(x) / Float32(y)}" }))
 }
 
 fn conv(io: Stdio, n: Str, x: Int) uses stdio {
@@ -90,6 +91,8 @@ fn conv(io: Stdio, n: Str, x: Int) uses stdio {
 		fmt.Fprintf(&b, "  show(io, \"%s to Int\", task.isolate(fn() -> Str ! () { \"${Int(x)}\" }))\n", n)
 		fmt.Fprintf(&b, "  show(io, \"%s to Rune\", task.isolate(fn() -> Str ! () { \"${Int(Rune(x))}\" }))\n", n)
 		fmt.Fprintf(&b, "  show(io, \"%s to Float\", task.isolate(fn() -> Str ! () { \"${Float(x)}\" }))\n", n)
+		// rt.u64_to_float, rt.i64_to_f32, rt.f32_round (decision 0195)
+		fmt.Fprintf(&b, "  show(io, \"%s to Float32\", task.isolate(fn() -> Str ! () { \"${Float32(x)} ${Float32(Float(x) / 3.0)} ${Float32(x) * Float32(y)}\" }))\n", n)
 		b.WriteString("}\n")
 	}
 	b.WriteString(`

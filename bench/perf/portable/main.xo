@@ -1,8 +1,8 @@
 // Workloads of the zero-C audit's portable group (decisions 0193 and
 // 0195): the sized integer operations, conversions, UInt64 division,
 // floor division, Str key hash, and Int's checked_ and saturating_
-// methods of std/native/llrt/ints.xo against their C path
-// (XO_LLRT_C=ints). Usage: portable <workload>. Each workload prints
+// methods of std/native/llrt/ints.xo, and the Float32 conversions now
+// lowered inline, against their C path (XO_LLRT_C=ints). Usage: portable <workload>. Each workload prints
 // "<workload> <checksum> <elapsed microseconds>"; the checksum must be
 // the same on every backend (the Go backend is the reference).
 
@@ -138,6 +138,21 @@ fn checked(vs: List[Int]) -> Int {
   sum
 }
 
+/// Float32 arithmetic and conversions from Int and UInt64
+/// (rt.f32_round, rt.i64_to_f32, rt.u64_to_float).
+fn float32(vs: List[Int], us: List[UInt64]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var acc: Float32 = 0.0
+    for i in 0..vs.len() {
+      let x = Float32(vs[i] % 1000) * 0.5 + Float32(us[i] % 7) - acc / 3.0
+      acc = x * 0.75
+    }
+    sum = (sum + Int(acc * 1000.0)) % 1000000007
+  }
+  sum
+}
+
 /// Time.unix and unix_millis (floor division).
 fn unix(ts: List[Time]) -> Int {
   var sum = 0
@@ -185,6 +200,7 @@ fn main(os: Os) {
     "str_hash" => str_hash(keys, m)
     "unix" => unix(ts)
     "checked" => checked(vs)
+    "float32" => float32(vs, us)
     _ => -1
   }
   let us2 = os.clock.since(t).nanos() / 1000

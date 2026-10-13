@@ -2189,6 +2189,13 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", a, s.word(v.Args[2])))
 	case "rt.u64_mul_hi":
 		s.set(v, s.def1(false, "umulh $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
+	case "rt.u64_to_float":
+		// decision 0195: the conversions of UInt64 and Float32
+		s.set(v, s.def1(true, "ucvtf $d0, $u0", s.word(v.Args[0])))
+	case "rt.f32_round":
+		s.set(v, s.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", s.word(v.Args[0])))
+	case "rt.i64_to_f32":
+		s.set(v, s.def1(true, "scvtf $wd0, $u0\nfcvt $d0, $wd0", s.word(v.Args[0])))
 	case "rt.float_bits":
 		s.set(v, s.def1(false, "fmov $d0, $u0", s.word(v.Args[0])))
 	case "rt.float_from_bits":
