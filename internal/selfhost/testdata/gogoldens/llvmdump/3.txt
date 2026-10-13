@@ -72,9 +72,9 @@ llvmdump 32498b48561659d4 module 147709b887eb3f7a
 llvmdump 32498b48561659d4 order a9573071d9d3bf48
 llvmdump 32498b48561659d4 ~rtdecls 134bc04bb2fc64ea
 llvmdump 32498b48561659d4 ~types e3b0c44298fc1c14
-llvmdump 3272dfbd06a88d33 #c 40 1c07454d8940a9c8
-llvmdump 3272dfbd06a88d33 #d 71 10263402e94fdb47
-llvmdump 3272dfbd06a88d33 module 39f857494eaa120b
+llvmdump 3272dfbd06a88d33 #c 40 86fa0596e0a6433c
+llvmdump 3272dfbd06a88d33 #d 71 9304201fcca4ec1b
+llvmdump 3272dfbd06a88d33 module 7dbd77adfc76deb7
 llvmdump 3272dfbd06a88d33 order 4631c37c49286fcf
 llvmdump 3272dfbd06a88d33 ~rtdecls d0915c4eb6bc0c28
 llvmdump 3272dfbd06a88d33 ~types 1c9f13e264bf4993
@@ -116,9 +116,9 @@ llvmdump 334484c55761a8a2 module 8a596782c3803576
 llvmdump 334484c55761a8a2 order 33cf78b725b7e940
 llvmdump 334484c55761a8a2 ~rtdecls 9a7969e7f8280844
 llvmdump 334484c55761a8a2 ~types b3ecf79f7bc9459a
-llvmdump 3357a0e6eb563410 #c 85 f6198ce8eb043e0e
-llvmdump 3357a0e6eb563410 #d 198 e4f4a0df0e91511f
-llvmdump 3357a0e6eb563410 module 9bb291abd563c856
+llvmdump 3357a0e6eb563410 #c 85 8c2d317909996497
+llvmdump 3357a0e6eb563410 #d 198 551208bb7f4ac200
+llvmdump 3357a0e6eb563410 module 7686d75ba7414290
 llvmdump 3357a0e6eb563410 order 5e9067e42d850315
 llvmdump 3357a0e6eb563410 ~rtdecls 7fc089bcfbd08def
 llvmdump 3357a0e6eb563410 ~types cf40c339f1d80ec6
@@ -138,8 +138,8 @@ llvmdump 3368832070be270e ~types effc20eac07cb10e
 llvmdump 3380d08d5e064784 =none "error bench/xo/v0.4/07-cache/cache_test.xo:24:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:42:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:56:12: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:61:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:62:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:66:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:68:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:74:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, ()]`\nbench/xo/v0.4/07-cache/cache_test.xo:94:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:117:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, ()]`\nbench/xo/v0.4/07-cache/cache_test.xo:122:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:125:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:127:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:135:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:156:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/service_test.xo:11:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:11:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:30:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:30:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:40:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:40:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:53:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:53:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:29:66: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:100:32: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:101:33: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:142:64: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:164:64: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service.xo:75:18: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Cache.fx]` to `Cache[Int, Item, UpstreamErr, ()]`\nbench/xo/v0.4/07-cache/service.xo:81:16: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Service.Cache.fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service.xo:85:5: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Service.Cache.fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`"
 llvmdump 33d32a2117ead13c =none rejected
 llvmdump 33dca44ba32dcf27 #c 64 cac78cac33dc0202
-llvmdump 33dca44ba32dcf27 #d 183 7221f7e31cf6bdb6
-llvmdump 33dca44ba32dcf27 module e95d1522fb1dc7e6
+llvmdump 33dca44ba32dcf27 #d 183 d850bc07512fd847
+llvmdump 33dca44ba32dcf27 module df4349b58c57a059
 llvmdump 33dca44ba32dcf27 order f119d12a34bdd13f
 llvmdump 33dca44ba32dcf27 ~rtdecls b53ec54fb595ebd2
 llvmdump 33dca44ba32dcf27 ~types d81276e0724f29f1
@@ -200,9 +200,9 @@ llvmdump 37f6173df4fbaf22 order 422699bf9015573b
 llvmdump 37f6173df4fbaf22 ~rtdecls f723a2faecc13386
 llvmdump 37f6173df4fbaf22 ~types ab1a0eef0231b9b6
 llvmdump 38238ea91c70055b =none rejected
-llvmdump 383646e463809294 #c 197 fad3d5738b267fcd
-llvmdump 383646e463809294 #d 341 108efe937afdea79
-llvmdump 383646e463809294 module 7599a1e36f5805d7
+llvmdump 383646e463809294 #c 197 39ab2b20bb2ef09f
+llvmdump 383646e463809294 #d 341 e5f607b903151a53
+llvmdump 383646e463809294 module 83caeccc118f4eb2
 llvmdump 383646e463809294 order 2b4a6ac8eccf6844
 llvmdump 383646e463809294 ~rtdecls c471697f2a01ca04
 llvmdump 383646e463809294 ~types 1a9ef4489cb8dec6
@@ -212,9 +212,9 @@ llvmdump 3845763ef36091ac module 8de4f2eac297bb68
 llvmdump 3845763ef36091ac order c9a40fe42d2b7b3e
 llvmdump 3845763ef36091ac ~rtdecls f723a2faecc13386
 llvmdump 3845763ef36091ac ~types e3b0c44298fc1c14
-llvmdump 384bf4d71f8515e8 #c 148 116a4dcb4edd1ce7
-llvmdump 384bf4d71f8515e8 #d 276 23035a10303401be
-llvmdump 384bf4d71f8515e8 module d6e688a8bc331daa
+llvmdump 384bf4d71f8515e8 #c 148 8d30de98bdb6a6c2
+llvmdump 384bf4d71f8515e8 #d 276 921f2c6a8004bdab
+llvmdump 384bf4d71f8515e8 module 1c48f16fab178a53
 llvmdump 384bf4d71f8515e8 order e48de6df011e62cf
 llvmdump 384bf4d71f8515e8 ~rtdecls a591c750164e62ff
 llvmdump 384bf4d71f8515e8 ~types fbb8fb84766fc7b5
@@ -249,23 +249,17 @@ llvmdump 39f1f021be13c371 module 526d52308535a09a
 llvmdump 39f1f021be13c371 order 189b5d4c64e4c5a5
 llvmdump 39f1f021be13c371 ~rtdecls 35455a50ecd00fa2
 llvmdump 39f1f021be13c371 ~types 6a4e497fcd1e7335
-llvmdump 3a2b9763c169db6f #c 35 80ab8a2ae5573e3a
-llvmdump 3a2b9763c169db6f #d 63 de2eea2024035c98
-llvmdump 3a2b9763c169db6f module 77bfc6b600e5e586
+llvmdump 3a2b9763c169db6f #c 35 a8ec7a964d42cdda
+llvmdump 3a2b9763c169db6f #d 63 141c3318b5f3fd2e
+llvmdump 3a2b9763c169db6f module 1fbefc9d9ab45ed9
 llvmdump 3a2b9763c169db6f order e36552a14d236303
 llvmdump 3a2b9763c169db6f ~rtdecls 56537b8cd975094f
 llvmdump 3a2b9763c169db6f ~types c92e477c40953241
-llvmdump 3a2d5e9030ac98ee #c 181 8c8d8e6670e3ba24
-llvmdump 3a2d5e9030ac98ee #d 438 b2cf0d890ef53158
-llvmdump 3a2d5e9030ac98ee module b15bdf342bdce2c2
-llvmdump 3a2d5e9030ac98ee order c8d0d4957aa35f8b
-llvmdump 3a2d5e9030ac98ee ~rtdecls efd47973c57b0ef5
-llvmdump 3a2d5e9030ac98ee ~types 496855297fd329f6
 llvmdump 3a2f366230af14d1 =none rejected
 llvmdump 3aa5b714aec30e65 =none rejected
-llvmdump 3aa8c947a9a0f5e8 #c 148 15b7409bd84411cc
-llvmdump 3aa8c947a9a0f5e8 #d 276 87d66022b784d504
-llvmdump 3aa8c947a9a0f5e8 module d76b7b724cab2f4a
+llvmdump 3aa8c947a9a0f5e8 #c 148 581aa4dfaa1fbcbb
+llvmdump 3aa8c947a9a0f5e8 #d 276 405c7793b510b1e3
+llvmdump 3aa8c947a9a0f5e8 module 787e667bf0cdaace
 llvmdump 3aa8c947a9a0f5e8 order e48de6df011e62cf
 llvmdump 3aa8c947a9a0f5e8 ~rtdecls a591c750164e62ff
 llvmdump 3aa8c947a9a0f5e8 ~types fbb8fb84766fc7b5
@@ -293,8 +287,8 @@ llvmdump 3b82df015cd749fa ~types 1263e539c3424bb8
 llvmdump 3bf934e4d12bf6e3 =none rejected
 llvmdump 3bfd496fb9458867 =none rejected
 llvmdump 3c393dfd0022a06a #c 71 19b3878a0dc8a10c
-llvmdump 3c393dfd0022a06a #d 199 9dab4d2de29fbe8e
-llvmdump 3c393dfd0022a06a module 816a48a4c885b2bd
+llvmdump 3c393dfd0022a06a #d 199 a13e72f6692a7bb9
+llvmdump 3c393dfd0022a06a module 83426e0dcfe25e50
 llvmdump 3c393dfd0022a06a order 440748efed3caca7
 llvmdump 3c393dfd0022a06a ~rtdecls ca597df4fe008653
 llvmdump 3c393dfd0022a06a ~types 6cbb1014d097b8f4
@@ -323,8 +317,8 @@ llvmdump 3d4a227a798bebbf order 00eb2343287abea9
 llvmdump 3d4a227a798bebbf ~rtdecls f723a2faecc13386
 llvmdump 3d4a227a798bebbf ~types fc9ea734d7cb5ad8
 llvmdump 3e4bea88c174c657 #c 171 e18c2ccfbe39ab30
-llvmdump 3e4bea88c174c657 #d 532 4154cedaab12c501
-llvmdump 3e4bea88c174c657 module 56441b0fca57928b
+llvmdump 3e4bea88c174c657 #d 532 6dfb590ba588cb0a
+llvmdump 3e4bea88c174c657 module ff33f92511dc376a
 llvmdump 3e4bea88c174c657 order c18f12eda959cc69
 llvmdump 3e4bea88c174c657 ~rtdecls b1a7fb39a209522e
 llvmdump 3e4bea88c174c657 ~types fc4b9d4f06a06747
@@ -347,4 +341,10 @@ llvmdump 3f61d1906e585352 module 4b93f1fe3bb65038
 llvmdump 3f61d1906e585352 order 5546fce987eca317
 llvmdump 3f61d1906e585352 ~rtdecls 1330e80336b6a707
 llvmdump 3f61d1906e585352 ~types ecb6b59d2cde460a
+llvmdump 3f6ce192b9120dcf #c 130 bace2d860424932c
+llvmdump 3f6ce192b9120dcf #d 286 f2d6b95df7a626eb
+llvmdump 3f6ce192b9120dcf module bbce5bfa55b70217
+llvmdump 3f6ce192b9120dcf order 8d7f2e24cc02faa5
+llvmdump 3f6ce192b9120dcf ~rtdecls e247143f71d1fb1d
+llvmdump 3f6ce192b9120dcf ~types 489a5c71a83a692f
 llvmdump 3ff4c7fa88b492d0 =none rejected

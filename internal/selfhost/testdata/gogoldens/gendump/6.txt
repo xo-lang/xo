@@ -207,17 +207,6 @@ gendump 66546b4c82969abb #decl:main.go 2 df8b3d2ca9601ca3
 gendump 66546b4c82969abb #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 66546b4c82969abb #file 5 5257ef219bfd4314
 gendump 66546b4c82969abb =head == file go.mod
-gendump 669f46e2464cea5b #decl:go.mod 1 13ef6f66b06c90ff
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1421 2560e39b747f5f4d
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 249 fdc3cf3f0768891b
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_gen/xo.go 1015 5c214cf7788772e7
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_gen/xo_main.go 2 c40e8ae8e20fbf5b
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
-gendump 669f46e2464cea5b #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 701 5ac3bb21609cbd3e
-gendump 669f46e2464cea5b #decl:main.go 2 2651f242c6892416
-gendump 669f46e2464cea5b #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 669f46e2464cea5b #file 9 a383df5ab4cba128
-gendump 669f46e2464cea5b =head == file go.mod
 gendump 66d9285d2f15219a =head == rejected
 gendump 66da1cd3f76c6798 #decl:go.mod 1 13ef6f66b06c90ff
 gendump 66da1cd3f76c6798 #decl:m/x_g0063/xo.go 11 1973cde893d8a340
@@ -240,6 +229,18 @@ gendump 672c62eb0fae4a95 =head == file go.mod
 gendump 673224259e27bfde =head == error no `fn main` found in the modules given
 gendump 674330aa7000df3a =head == rejected
 gendump 67595bede7abc708 =head == rejected
+gendump 679ce5e578997297 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1561 b83817644f0282f9
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 282 a84578fe5aa85f2a
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo.go 144 e64447c1c5bf636d
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_semantic/xo.go 450 bc49c443901320d7
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_servers/xo.go 493 6bed8e0aa294c4c5
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 187 885796433740b7a8
+gendump 679ce5e578997297 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 785 04b6ec69178deccd
+gendump 679ce5e578997297 #decl:main.go 2 9a0e858ca2704cd3
+gendump 679ce5e578997297 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 679ce5e578997297 #file 10 953d0051ed3216c8
+gendump 679ce5e578997297 =head == file go.mod
 gendump 67cad92deb9c34ec =head == rejected
 gendump 67f4d26c79578ad2 #decl:go.mod 1 13ef6f66b06c90ff
 gendump 67f4d26c79578ad2 #decl:m/x_internal_llvm_testdata_golden_task_budget/xo.go 7 11b90645fcc97cf6
@@ -300,15 +301,6 @@ gendump 68d8a6035be4549e #decl:main.go 2 6825dd3e0626bb2a
 gendump 68d8a6035be4549e #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 68d8a6035be4549e #file 5 ca5beb56276e7c54
 gendump 68d8a6035be4549e =head == file go.mod
-gendump 68f4dc0725f1954e #decl:go.mod 1 13ef6f66b06c90ff
-gendump 68f4dc0725f1954e #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 249 fdc3cf3f0768891b
-gendump 68f4dc0725f1954e #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind_xobind/xo.go 2 121555932850a417
-gendump 68f4dc0725f1954e #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind_xobind/xo_main.go 2 d75d29f1dd7ae64d
-gendump 68f4dc0725f1954e #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
-gendump 68f4dc0725f1954e #decl:main.go 2 2c0a5cee86745949
-gendump 68f4dc0725f1954e #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 68f4dc0725f1954e #file 7 6e0854b777864cd4
-gendump 68f4dc0725f1954e =head == file go.mod
 gendump 68f674815341cbcd #decl:go.mod 1 13ef6f66b06c90ff
 gendump 68f674815341cbcd #decl:m/x_internal_llvm_testdata_golden_native_sql/xo.go 20 531ad23e25d27d8b
 gendump 68f674815341cbcd #decl:m/x_internal_llvm_testdata_golden_native_sql/xo_main.go 2 b049cbdcf224c9ff
@@ -416,6 +408,15 @@ gendump 6c8578fb2fd91fe3 #decl:main.go 2 5c853fbc23c394bd
 gendump 6c8578fb2fd91fe3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 6c8578fb2fd91fe3 #file 5 dcbf9083aa62a272
 gendump 6c8578fb2fd91fe3 =head == file go.mod
+gendump 6c8e2f2ce37d3f88 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6c8e2f2ce37d3f88 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo.go 135 c35d9bdd11bf250f
+gendump 6c8e2f2ce37d3f88 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo_main.go 2 551a19978bc527fc
+gendump 6c8e2f2ce37d3f88 #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
+gendump 6c8e2f2ce37d3f88 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 701 5ac3bb21609cbd3e
+gendump 6c8e2f2ce37d3f88 #decl:main.go 2 5d1bb3bacfd7fc0b
+gendump 6c8e2f2ce37d3f88 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6c8e2f2ce37d3f88 #file 7 705cb38618e6144f
+gendump 6c8e2f2ce37d3f88 =head == file go.mod
 gendump 6cf271f8b7f3c992 #decl:go.mod 1 13ef6f66b06c90ff
 gendump 6cf271f8b7f3c992 #decl:m/x_internal_llvm_testdata_golden_method_values/xo.go 19 caeb1b45706d474f
 gendump 6cf271f8b7f3c992 #decl:m/x_internal_llvm_testdata_golden_method_values/xo_main.go 2 8ecbcc455c7f6fea
@@ -490,6 +491,14 @@ gendump 6df494eef6ec977b #decl:main.go 2 d5f6baea37d53985
 gendump 6df494eef6ec977b #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 6df494eef6ec977b #file 5 513967246d2afc92
 gendump 6df494eef6ec977b =head == file go.mod
+gendump 6e093d3fcfc251d4 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6e093d3fcfc251d4 #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
+gendump 6e093d3fcfc251d4 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 739 b37d7b675e84f428
+gendump 6e093d3fcfc251d4 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo_main.go 2 73216b19d7c19142
+gendump 6e093d3fcfc251d4 #decl:main.go 2 14a23be813e44f3d
+gendump 6e093d3fcfc251d4 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6e093d3fcfc251d4 #file 6 13dfc6567460db29
+gendump 6e093d3fcfc251d4 =head == file go.mod
 gendump 6e20048c529f5181 #decl:go.mod 1 13ef6f66b06c90ff
 gendump 6e20048c529f5181 #decl:m/x_internal_gen_testdata_golden_test_go_callback_task/xo.go 10 08455f19b16f8c17
 gendump 6e20048c529f5181 #decl:m/x_internal_gen_testdata_golden_test_go_callback_task/xo_main.go 2 f5ba639d4207b14c
@@ -536,6 +545,18 @@ gendump 6f4287d32cba72cb #decl:main.go 2 158d93037e5ca6a1
 gendump 6f4287d32cba72cb #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 6f4287d32cba72cb #file 5 4b7f9c0492d6220a
 gendump 6f4287d32cba72cb =head == file go.mod
+gendump 6f4a2599a0b1f96d #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1489 ffc24bf494804620
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 265 aac86b45bc6d582e
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo.go 138 23208019dc49fa71
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_cli_semantic/xo.go 425 66e0c8cd4c946eb1
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_cli_semantic/xo_main.go 2 fb84961169175f2a
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
+gendump 6f4a2599a0b1f96d #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 739 b37d7b675e84f428
+gendump 6f4a2599a0b1f96d #decl:main.go 2 7a2ea51a73b05042
+gendump 6f4a2599a0b1f96d #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6f4a2599a0b1f96d #file 10 10a55c8c97784694
+gendump 6f4a2599a0b1f96d =head == file go.mod
 gendump 6f766d7cc727968a #decl:go.mod 1 13ef6f66b06c90ff
 gendump 6f766d7cc727968a #decl:m/x_g0129/xo.go 11 2175e25ffd7c6397
 gendump 6f766d7cc727968a #decl:m/x_g0129/xo_main.go 2 d3baf4481406c700

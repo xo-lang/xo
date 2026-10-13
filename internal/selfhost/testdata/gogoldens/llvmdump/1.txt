@@ -66,8 +66,8 @@ llvmdump 12ec1a8c5c3f5fdb ~rtdecls 38053e29b69c6843
 llvmdump 12ec1a8c5c3f5fdb ~types fbea599498760759
 llvmdump 132178732fd4df41 =none "error internal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:40:3: the SSA builder does not support `sync.WaitGroup.add` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:47:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:30:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:15:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:16:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:42:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support `time.after_func` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support the type `time.Timer` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:44:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:26:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:27:5: the SSA builder does not support `time.sleep` of the Go package `time` (`use go`)"
 llvmdump 1365dc3f726b5a33 #c 10 1efd59421a05f57a
-llvmdump 1365dc3f726b5a33 #d 36 a75a81fd5527dd5e
-llvmdump 1365dc3f726b5a33 module b721745640dcb42d
+llvmdump 1365dc3f726b5a33 #d 36 e4066141e957f4b1
+llvmdump 1365dc3f726b5a33 module aa5fd93fa9c76fe1
 llvmdump 1365dc3f726b5a33 order 94e2752fc943c9a7
 llvmdump 1365dc3f726b5a33 ~rtdecls f723a2faecc13386
 llvmdump 1365dc3f726b5a33 ~types 8fe7ee93c69d2529
@@ -100,6 +100,12 @@ llvmdump 14f78d00fe52562f module 712b052a096c1b8d
 llvmdump 14f78d00fe52562f order 9e1e9fb1d797b484
 llvmdump 14f78d00fe52562f ~rtdecls 05cfd999d19c57cf
 llvmdump 14f78d00fe52562f ~types c03fc142bdebfe95
+llvmdump 153b453c747850b3 #c 1385 a525e187907599d4
+llvmdump 153b453c747850b3 #d 2764 643fa7ca705d0845
+llvmdump 153b453c747850b3 module d4fd8468434a48c8
+llvmdump 153b453c747850b3 order ddee1ec3ec42eb63
+llvmdump 153b453c747850b3 ~rtdecls 4fba2fcbecdd3039
+llvmdump 153b453c747850b3 ~types d3d72e9143b8c95e
 llvmdump 157e9ccff17a7c21 =none rejected
 llvmdump 15d6b7b32e5cf89b #c 187 a05e976e63848840
 llvmdump 15d6b7b32e5cf89b #d 456 58ab84556a6101f2
@@ -137,12 +143,6 @@ llvmdump 16c60c32ee99ed54 module 9a30a30c95e47ce2
 llvmdump 16c60c32ee99ed54 order 5ed35cce32d48111
 llvmdump 16c60c32ee99ed54 ~rtdecls 886608078ebecde4
 llvmdump 16c60c32ee99ed54 ~types c56cabf6c5178a9d
-llvmdump 16ddac6bee1f7db6 #c 1487 00a4f71dca7fd336
-llvmdump 16ddac6bee1f7db6 #d 2884 57c2e3b2004b69e6
-llvmdump 16ddac6bee1f7db6 module e239966a28a5ac5b
-llvmdump 16ddac6bee1f7db6 order 1f22011e59feb885
-llvmdump 16ddac6bee1f7db6 ~rtdecls d14f31d4a31458f1
-llvmdump 16ddac6bee1f7db6 ~types f636938701177a6d
 llvmdump 16e8e5d8e7b6ff1f =none rejected
 llvmdump 170f56010e71a42f =none rejected
 llvmdump 176423928f0c0393 #c 7 ebf2188615ab87df
@@ -159,8 +159,8 @@ llvmdump 1786b20a122a36be order a9cf63bc880c3119
 llvmdump 1786b20a122a36be ~rtdecls a230623ea914a7f6
 llvmdump 1786b20a122a36be ~types 0237031e228ed2ea
 llvmdump 17a6303eecb31a29 #c 64 95a0aedde9f9d234
-llvmdump 17a6303eecb31a29 #d 192 9e0d051f73fe07fc
-llvmdump 17a6303eecb31a29 module 40d632f9d66b0ce4
+llvmdump 17a6303eecb31a29 #d 192 aa2d88ea9bed9013
+llvmdump 17a6303eecb31a29 module fa694c27be1544f6
 llvmdump 17a6303eecb31a29 order e246163510c07671
 llvmdump 17a6303eecb31a29 ~rtdecls c4107114e6f39c6b
 llvmdump 17a6303eecb31a29 ~types b0079923f26386db
@@ -200,9 +200,9 @@ llvmdump 19f844da51ff7ffa module 772ef62ec79dd169
 llvmdump 19f844da51ff7ffa order fcaae7e2a71e59c5
 llvmdump 19f844da51ff7ffa ~rtdecls 1fbc10166ae43a21
 llvmdump 19f844da51ff7ffa ~types e3b0c44298fc1c14
-llvmdump 1a0c5ed4640f8bd6 #c 299 75cddd3842ce4cb8
-llvmdump 1a0c5ed4640f8bd6 #d 745 fdf0639707f8a710
-llvmdump 1a0c5ed4640f8bd6 module 377c458bf99534fa
+llvmdump 1a0c5ed4640f8bd6 #c 299 23cd33c6a911eb29
+llvmdump 1a0c5ed4640f8bd6 #d 745 bc9583508f623ba4
+llvmdump 1a0c5ed4640f8bd6 module d98c670f39e80f5e
 llvmdump 1a0c5ed4640f8bd6 order c1ee66b201f06fe3
 llvmdump 1a0c5ed4640f8bd6 ~rtdecls 1b775527a43ce280
 llvmdump 1a0c5ed4640f8bd6 ~types 0365af1bcb71c116
@@ -237,9 +237,9 @@ llvmdump 1abf8fa603cbe822 module ab1abb9e60589ac0
 llvmdump 1abf8fa603cbe822 order 9b7c1bde8467ea45
 llvmdump 1abf8fa603cbe822 ~rtdecls e68024d73510ac64
 llvmdump 1abf8fa603cbe822 ~types ebe45a5ad5b0c2ac
-llvmdump 1af35b43652148d0 #c 159 08b83f3efb4386bc
-llvmdump 1af35b43652148d0 #d 353 4cb9ae66e0e68430
-llvmdump 1af35b43652148d0 module a5e709e3bd5ead83
+llvmdump 1af35b43652148d0 #c 159 427c43c435cab36f
+llvmdump 1af35b43652148d0 #d 353 20cbd33367d27b24
+llvmdump 1af35b43652148d0 module dd2561a8f9191dc2
 llvmdump 1af35b43652148d0 order c8cde9897aabb819
 llvmdump 1af35b43652148d0 ~rtdecls 43279d005f48a7cb
 llvmdump 1af35b43652148d0 ~types e54c298f54044977
@@ -285,14 +285,20 @@ llvmdump 1c7b4683d80cca1a order 4b2e683ae3e24ddf
 llvmdump 1c7b4683d80cca1a ~rtdecls fc5427e78d68ca29
 llvmdump 1c7b4683d80cca1a ~types bb1dd679331f315c
 llvmdump 1c877f0d9afdf9f0 =none rejected
-llvmdump 1c8e3cbfcddeecf8 #c 51 55d361aec6c90ff9
-llvmdump 1c8e3cbfcddeecf8 #d 120 2767804f7e657cb7
-llvmdump 1c8e3cbfcddeecf8 module 9625efdecd7545f2
+llvmdump 1c8e3cbfcddeecf8 #c 51 e3272c364c8bebe8
+llvmdump 1c8e3cbfcddeecf8 #d 120 4624bb7878f9ab90
+llvmdump 1c8e3cbfcddeecf8 module d47f51a3d36563c4
 llvmdump 1c8e3cbfcddeecf8 order c64fa839f86a95f4
 llvmdump 1c8e3cbfcddeecf8 ~rtdecls fae5ee5ef38b417a
 llvmdump 1c8e3cbfcddeecf8 ~types f42da384d74820c2
 llvmdump 1cc37e66febd85f2 =none no main
 llvmdump 1d00b785123da14f =none rejected
+llvmdump 1d4838ff64c95012 #c 1488 d51b7ab9a9f39249
+llvmdump 1d4838ff64c95012 #d 2885 5dc985ee1d3f10fe
+llvmdump 1d4838ff64c95012 module da6526003bcb083d
+llvmdump 1d4838ff64c95012 order 9e0c17fb5ea5e0bc
+llvmdump 1d4838ff64c95012 ~rtdecls d14f31d4a31458f1
+llvmdump 1d4838ff64c95012 ~types f636938701177a6d
 llvmdump 1d853361f1c98b60 #c 23 fc8fe446d3896c98
 llvmdump 1d853361f1c98b60 #d 75 8981203d369fd569
 llvmdump 1d853361f1c98b60 module af1151624baa279f

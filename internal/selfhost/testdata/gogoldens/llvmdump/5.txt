@@ -98,9 +98,9 @@ llvmdump 54e67cbff2a75c2a order 693a64d5829e98d7
 llvmdump 54e67cbff2a75c2a ~rtdecls f723a2faecc13386
 llvmdump 54e67cbff2a75c2a ~types 7215909d74ddd1db
 llvmdump 54f09c77073af99c =none rejected
-llvmdump 5500129a3893acdb #c 7 bd662cd12953c650
-llvmdump 5500129a3893acdb #d 30 6fa1edbb7bf52ed7
-llvmdump 5500129a3893acdb module 5183981889c9c269
+llvmdump 5500129a3893acdb #c 7 5b1346035af8c9d6
+llvmdump 5500129a3893acdb #d 30 431e3dbbd0336a08
+llvmdump 5500129a3893acdb module 88c49523c76220d5
 llvmdump 5500129a3893acdb order 3fbf698cdfb4092b
 llvmdump 5500129a3893acdb ~rtdecls f723a2faecc13386
 llvmdump 5500129a3893acdb ~types 56d7534867c0c5a5
@@ -132,8 +132,8 @@ llvmdump 56042105a461a4fb order 4aa18bcdf1d2bec4
 llvmdump 56042105a461a4fb ~rtdecls 48034e811ba8ef36
 llvmdump 56042105a461a4fb ~types 51cd96662e90b6d8
 llvmdump 567834b9c8820530 #c 57 53c51a9fd83f5424
-llvmdump 567834b9c8820530 #d 179 bc321495705b4dec
-llvmdump 567834b9c8820530 module 4a4e7671318ef895
+llvmdump 567834b9c8820530 #d 179 64891684eeb03147
+llvmdump 567834b9c8820530 module 2ba629192bebacd8
 llvmdump 567834b9c8820530 order e836353ab9ac6974
 llvmdump 567834b9c8820530 ~rtdecls d2de8101cbc99b76
 llvmdump 567834b9c8820530 ~types bcbcf35904d45a1a
@@ -152,6 +152,12 @@ llvmdump 575437ebbbeed6f1 order 442e8f7fbacfd4f7
 llvmdump 575437ebbbeed6f1 ~rtdecls c3fd3d105611d8b5
 llvmdump 575437ebbbeed6f1 ~types 75964598dd278d35
 llvmdump 5798718c16d46321 =none holes
+llvmdump 57c4703078ee0afb #c 329 077b0d8c605e643f
+llvmdump 57c4703078ee0afb #d 734 09c8031a9bc92ef8
+llvmdump 57c4703078ee0afb module d6e20f2fad64f513
+llvmdump 57c4703078ee0afb order 93a8d338ec0c9e9c
+llvmdump 57c4703078ee0afb ~rtdecls b72ff0acc5584925
+llvmdump 57c4703078ee0afb ~types ea9bf88d46d92fc2
 llvmdump 57f0451fe9b605d3 =none "error bench/paper/v0.3/07-cache/itemsvc/itemsvc.xo:71:103: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, net.dial]`\nbench/paper/v0.3/07-cache/itemsvc/itemsvc.xo:90:16: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, net.dial]` to `Cache[Int, Item, UpstreamErr, fx]`\nbench/paper/v0.3/07-cache/itemsvc/itemsvc.xo:94:5: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, net.dial]` to `Cache[Int, Item, UpstreamErr, fx]`\nbench/paper/v0.3/07-cache/cache/cache.xo:62:34: the SSA builder does not support the type `K`\nbench/paper/v0.3/07-cache/cache/cache.xo:62:34: the SSA builder does not support the type `V`\nbench/paper/v0.3/07-cache/cache/cache.xo:62:34: the SSA builder does not support the type `E`\nbench/paper/v0.3/07-cache/cache/cache.xo:62:34: the SSA builder does not support converting `Map[(), Entry[V, E]]` to `Map[Int, Entry[Item, UpstreamErr]]`\nbench/paper/v0.3/07-cache/cache/cache.xo:63:35: the SSA builder does not support the type `K`\nbench/paper/v0.3/07-cache/cache/cache.xo:63:35: the SSA builder does not support converting `Map[(), Flight[V, E]]` to `Map[Int, Flight[Item, UpstreamErr]]`"
 llvmdump 57f8e09441c46b21 #c 15 84056baa5c6e8629
 llvmdump 57f8e09441c46b21 #d 25 973693a78a6750f8
@@ -217,9 +223,9 @@ llvmdump 58ff3e96bab08734 order f8beeef6e6ac866a
 llvmdump 58ff3e96bab08734 ~rtdecls 063c12c413506e34
 llvmdump 58ff3e96bab08734 ~types 65e1126c8979934e
 llvmdump 596c7592c1543e41 =none no main
-llvmdump 5a3270e0672e1f67 #c 41 16f5bc35e748c315
-llvmdump 5a3270e0672e1f67 #d 62 d0b0492f6be79371
-llvmdump 5a3270e0672e1f67 module 7bf871933f9904d5
+llvmdump 5a3270e0672e1f67 #c 41 12f1039846c982d0
+llvmdump 5a3270e0672e1f67 #d 62 1ed443b3a0388123
+llvmdump 5a3270e0672e1f67 module 47f6ff97bf2cb637
 llvmdump 5a3270e0672e1f67 order b15985dd591ca257
 llvmdump 5a3270e0672e1f67 ~rtdecls df2940c6b232cf99
 llvmdump 5a3270e0672e1f67 ~types 3c3b1130e58eb909
@@ -313,12 +319,6 @@ llvmdump 5c3c0c998d18060c order 6764d7aa7756a300
 llvmdump 5c3c0c998d18060c ~rtdecls bf85472c9d59ef75
 llvmdump 5c3c0c998d18060c ~types e20d5415fb885159
 llvmdump 5c477eb6ab5832f7 =none rejected
-llvmdump 5c8cb4410baccbcc #c 1385 231ae58178b6c452
-llvmdump 5c8cb4410baccbcc #d 2764 65ba1aef1dd02dbc
-llvmdump 5c8cb4410baccbcc module c5ac3914dbae43c3
-llvmdump 5c8cb4410baccbcc order ddee1ec3ec42eb63
-llvmdump 5c8cb4410baccbcc ~rtdecls 4fba2fcbecdd3039
-llvmdump 5c8cb4410baccbcc ~types d3d72e9143b8c95e
 llvmdump 5ca603264639e5e8 =none "error internal/gen/testdata/golden/go_callback_deadlock_real/main.xo:15:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:15:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:21:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:25:17: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:25:17: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:26:3: the SSA builder does not support `sync.WaitGroup.add` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:33:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:17:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:18:5: the SSA builder does not support `time.sleep` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:28:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:29:5: the SSA builder does not support `time.after_func` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:29:5: the SSA builder does not support the type `time.Timer` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:30:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:36:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/go_callback_deadlock_real/main.xo:37:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)"
 llvmdump 5cbe193ae4e26676 #c 18 bda5d4abfec8a9fd
 llvmdump 5cbe193ae4e26676 #d 62 ccfdf9d4096d0a09

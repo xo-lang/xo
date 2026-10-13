@@ -1,17 +1,17 @@
-asmdump c04f1dac9aa833ae #f 8 ab7b193b654226c1
+asmdump c04f1dac9aa833ae #f 8 3d97710183492224
 asmdump c04f1dac9aa833ae #h 19 bcedc80aea28ccbc
 asmdump c04f1dac9aa833ae #l 6 2204d4000c756b67
 asmdump c04f1dac9aa833ae #literals 7 f70bdf794ac9f73c
-asmdump c04f1dac9aa833ae all 0593aa81db22c513
+asmdump c04f1dac9aa833ae all d44903684388b6df
 asmdump c04f1dac9aa833ae entry 72b4444d9e3c4531
 asmdump c0cb61ac27e0a32b =head == rejected
 asmdump c0cd40b08cd3343b =head == rejected
 asmdump c0f26e31a2016667 =head == rejected
-asmdump c19d1c796c008cc5 #f 53 4fff54d397be8cfd
+asmdump c19d1c796c008cc5 #f 53 f740b95cd3f26cab
 asmdump c19d1c796c008cc5 #h 3 83e2a8609eadd540
-asmdump c19d1c796c008cc5 #l 10 742d7bf177a8f284
-asmdump c19d1c796c008cc5 #literals 146 52f753a863d2600c
-asmdump c19d1c796c008cc5 all c479fa07f52d7813
+asmdump c19d1c796c008cc5 #l 10 815847c9351e97ca
+asmdump c19d1c796c008cc5 #literals 145 4a18e22a810d1077
+asmdump c19d1c796c008cc5 all 00be7483d42a0907
 asmdump c19d1c796c008cc5 entry 72b4444d9e3c4531
 asmdump c1e4281445c9b7e4 #f 9 8eacacafce86d2cf
 asmdump c1e4281445c9b7e4 #h 1 ec917a1bedcaaae1
@@ -21,78 +21,72 @@ asmdump c1e4281445c9b7e4 all bb8d66f28ed8123b
 asmdump c1e4281445c9b7e4 entry 72b4444d9e3c4531
 asmdump c299fab6b01d5527 =head == rejected
 asmdump c2b74c8a9638bc59 =head == rejected
-asmdump c2c473eb2e212517 #f 13 b13b97f1287ee4f9
+asmdump c2c473eb2e212517 #f 13 f516dab020195360
 asmdump c2c473eb2e212517 #h 6 c2e36d408c4b1ee2
 asmdump c2c473eb2e212517 #l 5 7f2ffe72fb6fdd44
 asmdump c2c473eb2e212517 #literals 7 64fc0944da536f75
-asmdump c2c473eb2e212517 all b64514cf5a53bdc8
+asmdump c2c473eb2e212517 all 7d0e62912551cb58
 asmdump c2c473eb2e212517 entry 72b4444d9e3c4531
-asmdump c37dc7d12fa6a410 #f 170 93849b5d9cfebb03
+asmdump c37dc7d12fa6a410 #f 170 55001a0d4247bc06
 asmdump c37dc7d12fa6a410 #h 31 341a45b541f72954
-asmdump c37dc7d12fa6a410 #l 76 b519758656ad7277
-asmdump c37dc7d12fa6a410 #literals 460 529fd8a4481072fd
-asmdump c37dc7d12fa6a410 all f5962cfe42d09441
+asmdump c37dc7d12fa6a410 #l 75 d171578e46c52a7a
+asmdump c37dc7d12fa6a410 #literals 447 51ed0e05a51e714a
+asmdump c37dc7d12fa6a410 all 99641ef04e4b9734
 asmdump c37dc7d12fa6a410 entry 72b4444d9e3c4531
 asmdump c3f6df49c3a7770a =head == rejected
 asmdump c4268d796163e454 =head == rejected
 asmdump c4cd7cf2403f1dca =head == error internal/gen/testdata/golden/go_regexp/main.xo:7:12: the SSA builder does not support `regexp.must_compile` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:7:12: the SSA builder does not support the type `regexp.Regexp` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:9:20: the SSA builder does not support `regexp.Regexp.find_string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:10:12: the SSA builder does not support `regexp.Regexp.find_all_string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:13:12: the SSA builder does not support `regexp.Regexp.find_all_string_submatch` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:16:13: the SSA builder does not support `regexp.Regexp.find_string_index` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:18:20: the SSA builder does not support `regexp.Regexp.replace_all_string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:20:15: the SSA builder does not support `regexp.Regexp.replace_all_string_func` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:22:23: the SSA builder does not support `regexp.Regexp.match_string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:22:53: the SSA builder does not support `regexp.Regexp.match_string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:22:80: the SSA builder does not support `regexp.Regexp.num_subexp` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:22:99: the SSA builder does not support `regexp.Regexp.string` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support `regexp.compile` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support the type `regexp.Regexp` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_regexp/main.xo:27:20: the SSA builder does not support `regexp.quote_meta` of the Go package `regexp` (`use go`) internal/gen/testdata/golden/go_regexp/main.xo:30:20: the SSA builder does not support `regexp.Regexp.string` of the Go package `regexp` (`use go`)
-asmdump c55d3fa744e06c8b #f 25 1e43b4ca5536469b
+asmdump c55d3fa744e06c8b #f 25 13c62db7c5b8af9e
 asmdump c55d3fa744e06c8b #h 11 77abaff0c4ad9019
 asmdump c55d3fa744e06c8b #l 7 41fbc27c1414d6c1
 asmdump c55d3fa744e06c8b #literals 45 cb36dca91635c8a6
-asmdump c55d3fa744e06c8b all 9ea80afed289c3a9
+asmdump c55d3fa744e06c8b all da618d52b2f3d803
 asmdump c55d3fa744e06c8b entry 72b4444d9e3c4531
-asmdump c58a810ce16f8daa #f 380 82764ccc74b3d246
-asmdump c58a810ce16f8daa #h 182 49b255b0357518c1
-asmdump c58a810ce16f8daa #l 186 495b590edb5d457c
-asmdump c58a810ce16f8daa #literals 2091 dc6dc1f763a0c551
-asmdump c58a810ce16f8daa all 507a785dfb3d206e
-asmdump c58a810ce16f8daa entry 72b4444d9e3c4531
-asmdump c5a99007bc3eb0d4 #f 12 40aef87e1098d7e6
+asmdump c5a99007bc3eb0d4 #f 12 5dfd54bdb3fd686d
 asmdump c5a99007bc3eb0d4 #h 8 2de6a026236c53be
 asmdump c5a99007bc3eb0d4 #l 3 21f8860eabbbc3aa
 asmdump c5a99007bc3eb0d4 #literals 11 9e5601bed796db46
-asmdump c5a99007bc3eb0d4 all 5cb173bf4546073c
+asmdump c5a99007bc3eb0d4 all fe328db03003baa3
 asmdump c5a99007bc3eb0d4 entry 72b4444d9e3c4531
-asmdump c5e8a23bdeb48d18 #f 15 c64f9342028e0780
+asmdump c5e8a23bdeb48d18 #f 15 10e836aba5b7e749
 asmdump c5e8a23bdeb48d18 #h 3 83e2a8609eadd540
 asmdump c5e8a23bdeb48d18 #l 6 7811de3b3b1860db
 asmdump c5e8a23bdeb48d18 #literals 32 dd3cbb634b171716
-asmdump c5e8a23bdeb48d18 all 501d6e48f5d106a1
+asmdump c5e8a23bdeb48d18 all a554e02d804d90e7
 asmdump c5e8a23bdeb48d18 entry 72b4444d9e3c4531
-asmdump c6238b146911c89e #f 23 55ec44c7e4ace7fa
+asmdump c6238b146911c89e #f 23 fec6243ea64e8336
 asmdump c6238b146911c89e #h 7 191e460ec6b066f2
 asmdump c6238b146911c89e #l 10 ec9eaf029cae5663
 asmdump c6238b146911c89e #literals 13 e6813dee6f2f835a
-asmdump c6238b146911c89e all 492cb12fcc6d741d
+asmdump c6238b146911c89e all a962d301b32de9b9
 asmdump c6238b146911c89e entry 72b4444d9e3c4531
-asmdump c636ee339b8031da #f 25 135554eb0c45f6dd
+asmdump c636ee339b8031da #f 25 f8cfa3e249930da2
 asmdump c636ee339b8031da #h 44 cbcf7b612e0b3faf
 asmdump c636ee339b8031da #l 14 30f920ce14fff502
 asmdump c636ee339b8031da #literals 62 99a3eebc3a247387
-asmdump c636ee339b8031da all 419f4b9c0c1bd202
+asmdump c636ee339b8031da all 7395d68019dac7d6
 asmdump c636ee339b8031da entry 72b4444d9e3c4531
-asmdump c6c0a58d6a6bb22f #f 9 9ee17531e49c3e9f
+asmdump c6c0a58d6a6bb22f #f 9 bc8c0f6ded7bf9dd
 asmdump c6c0a58d6a6bb22f #h 18 f6052bcc48fad8e0
 asmdump c6c0a58d6a6bb22f #l 3 3ed73fed423fbcf1
 asmdump c6c0a58d6a6bb22f #literals 25 530a0f8b78cd416d
-asmdump c6c0a58d6a6bb22f all a2e2c8d4f572fe3b
+asmdump c6c0a58d6a6bb22f all f4dfb9e91df9c849
 asmdump c6c0a58d6a6bb22f entry 72b4444d9e3c4531
 asmdump c6d37483d5e551e9 =head == error internal/gen/testdata/golden/arena_holes/main.xo:101:14: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:101:14: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:102:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:110:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:111:16: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:111:16: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`) internal/gen/testdata/golden/arena_holes/main.xo:112:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)
-asmdump c74b5840d75dbe1d #f 205 2bab8133950c5389
+asmdump c74b5840d75dbe1d #f 205 daf8c10a262c6d4f
 asmdump c74b5840d75dbe1d #h 127 bc97e54f3220ad6a
-asmdump c74b5840d75dbe1d #l 78 543b40b6dc553f6c
-asmdump c74b5840d75dbe1d #literals 481 948a4ec28461844c
-asmdump c74b5840d75dbe1d all f90620c6cc79ded2
+asmdump c74b5840d75dbe1d #l 78 8cc33a26c9a05b2f
+asmdump c74b5840d75dbe1d #literals 479 1871d2bd57d34b3b
+asmdump c74b5840d75dbe1d all 77505a3ed14712f2
 asmdump c74b5840d75dbe1d entry 72b4444d9e3c4531
 asmdump c75a48381f6e3a56 =head == rejected
 asmdump c76767f128aa5b4e =head == rejected
 asmdump c7b43ea3c98ce591 =head == rejected
-asmdump c7f717753a2ab2d9 #f 31 37708a15e19f5201
+asmdump c7f717753a2ab2d9 #f 31 3517ec84e847c4e5
 asmdump c7f717753a2ab2d9 #h 22 2d983568b43b64a6
 asmdump c7f717753a2ab2d9 #l 11 1df339a0636d9eaa
 asmdump c7f717753a2ab2d9 #literals 54 8f3156b76ce120f1
-asmdump c7f717753a2ab2d9 all b8202b81c73f5271
+asmdump c7f717753a2ab2d9 all 656641b428b9b629
 asmdump c7f717753a2ab2d9 entry 72b4444d9e3c4531
 asmdump c8b0ebb64c795b05 #f 8 45a4a4acc045a385
 asmdump c8b0ebb64c795b05 #h 1 ec917a1bedcaaae1
@@ -101,11 +95,11 @@ asmdump c8b0ebb64c795b05 #literals 4 66f8bf13133fdf85
 asmdump c8b0ebb64c795b05 all c9d5c429f08e249c
 asmdump c8b0ebb64c795b05 entry 72b4444d9e3c4531
 asmdump c8d33a62be7b4601 =head == rejected
-asmdump c8febf224338e1a2 #f 257 cd0caa6ca3c2a613
+asmdump c8febf224338e1a2 #f 257 788986ee8afb02b1
 asmdump c8febf224338e1a2 #h 150 21ce44c911f99176
-asmdump c8febf224338e1a2 #l 96 3586bc1cbe3782de
-asmdump c8febf224338e1a2 #literals 676 4490020feb03c806
-asmdump c8febf224338e1a2 all 91b25c6faf57ff65
+asmdump c8febf224338e1a2 #l 96 baf481284d155cbd
+asmdump c8febf224338e1a2 #literals 673 1a7c4700e1390ad5
+asmdump c8febf224338e1a2 all 496ee0e2fe4c0c0f
 asmdump c8febf224338e1a2 entry 72b4444d9e3c4531
 asmdump c9c379168c0afd89 #f 8 7c676a54aa5551ed
 asmdump c9c379168c0afd89 #h 1 ec917a1bedcaaae1
@@ -113,11 +107,11 @@ asmdump c9c379168c0afd89 #l 2 2a8399eecc2ddf92
 asmdump c9c379168c0afd89 #literals 5 980a257eea5de5e8
 asmdump c9c379168c0afd89 all 1bed6573f5ef93a8
 asmdump c9c379168c0afd89 entry 72b4444d9e3c4531
-asmdump ca2c955e8c441f4b #f 16 2eed1fa391f1db56
+asmdump ca2c955e8c441f4b #f 16 971c6420874d172e
 asmdump ca2c955e8c441f4b #h 25 a973d1431aac36c3
 asmdump ca2c955e8c441f4b #l 8 53ffd9d52181eb6a
 asmdump ca2c955e8c441f4b #literals 25 41898b5409ca64fa
-asmdump ca2c955e8c441f4b all 7e6af2525b8f3b7b
+asmdump ca2c955e8c441f4b all c138949f81d80fa4
 asmdump ca2c955e8c441f4b entry 72b4444d9e3c4531
 asmdump ca757ed2e804cf1f =head == error no `main` function in the root module
 asmdump cabc9c27ecf40020 =head == rejected
@@ -127,49 +121,49 @@ asmdump cb0500d369f68bc3 #l 2 2a8399eecc2ddf92
 asmdump cb0500d369f68bc3 #literals 4 f6b9f033c03a390e
 asmdump cb0500d369f68bc3 all 1c69444085ad5ae3
 asmdump cb0500d369f68bc3 entry 72b4444d9e3c4531
-asmdump cb917079c0f6f343 #f 22 f8b139323402ab74
+asmdump cb917079c0f6f343 #f 22 0196e9d789157126
 asmdump cb917079c0f6f343 #h 16 254a610e95ec9da5
 asmdump cb917079c0f6f343 #l 4 37a7f76a21eb9a58
 asmdump cb917079c0f6f343 #literals 23 c3e3905eb1801e9a
-asmdump cb917079c0f6f343 all 8c392c693bc526d9
+asmdump cb917079c0f6f343 all c7f6ce8428317385
 asmdump cb917079c0f6f343 entry 72b4444d9e3c4531
-asmdump cba5752ec5382a58 #f 79 6fc42f5d692db4ff
+asmdump cba5752ec5382a58 #f 79 e615c00a8fe77323
 asmdump cba5752ec5382a58 #h 5 800d9ce952d1ac58
 asmdump cba5752ec5382a58 #l 12 12427a7f63e41134
 asmdump cba5752ec5382a58 #literals 151 b0bfc3182ce9dfa3
-asmdump cba5752ec5382a58 all c545860c4c327f8a
+asmdump cba5752ec5382a58 all 5751eabad147e794
 asmdump cba5752ec5382a58 entry 72b4444d9e3c4531
 asmdump cbf7e1ee3da13f1d =head == rejected
 asmdump cc0a597d959124de =head == rejected
-asmdump cc526c5c6d934edd #f 28 6c438b527f6120c4
+asmdump cc526c5c6d934edd #f 28 fa969f72f702d12d
 asmdump cc526c5c6d934edd #h 38 e08d68a97b335497
 asmdump cc526c5c6d934edd #l 11 beb52ee9fa67925e
 asmdump cc526c5c6d934edd #literals 36 9e5e8fd1e51e1915
-asmdump cc526c5c6d934edd all 655514567fec78ae
+asmdump cc526c5c6d934edd all be3ef7de5141af9b
 asmdump cc526c5c6d934edd entry 72b4444d9e3c4531
 asmdump cc7937bf60954eb0 =head == rejected
-asmdump cca08809b558f8c2 #f 51 09f9ce24736f2658
+asmdump cca08809b558f8c2 #f 51 3eede84010ac6c77
 asmdump cca08809b558f8c2 #h 18 7ea7fa6f91ca7495
-asmdump cca08809b558f8c2 #l 7 1399a1b72ba08697
-asmdump cca08809b558f8c2 #literals 97 64bf98c7d3f87ba4
-asmdump cca08809b558f8c2 all 6270d61ade3ec2d8
+asmdump cca08809b558f8c2 #l 7 8c58db5d6e32805a
+asmdump cca08809b558f8c2 #literals 96 bfb3bdd682b196a4
+asmdump cca08809b558f8c2 all 3ca0fd477ea71b65
 asmdump cca08809b558f8c2 entry 72b4444d9e3c4531
 asmdump ccf9e315b578f08a =head == rejected
 asmdump cd234ecab640e964 =head == rejected
 asmdump cd30bff65b471814 =head == rejected
 asmdump cda46d20d3960caa =head == rejected
-asmdump cdb4d2d0c2c2205b #f 51 da915e17435fa4f1
+asmdump cdb4d2d0c2c2205b #f 51 f26883bad3e31a5b
 asmdump cdb4d2d0c2c2205b #h 3 f6a4f5ef624f74a0
 asmdump cdb4d2d0c2c2205b #l 9 5725ee6b7c0043b8
 asmdump cdb4d2d0c2c2205b #literals 114 be9dcba79175e21b
-asmdump cdb4d2d0c2c2205b all 6007bfdc52a48509
+asmdump cdb4d2d0c2c2205b all 834061fbf8c86de7
 asmdump cdb4d2d0c2c2205b entry 72b4444d9e3c4531
 asmdump ce389f18398044d4 =head == rejected
-asmdump ce680042b127ace4 #f 17 c57a2c0500124a2d
+asmdump ce680042b127ace4 #f 17 85d0a890cef025c6
 asmdump ce680042b127ace4 #h 15 cd045f7aebfbf90f
 asmdump ce680042b127ace4 #l 6 cb7754b2892c98cf
 asmdump ce680042b127ace4 #literals 14 e4d8e7ac1a4195c1
-asmdump ce680042b127ace4 all 64bd69734a4af2da
+asmdump ce680042b127ace4 all 9ed542dde1d706e3
 asmdump ce680042b127ace4 entry 72b4444d9e3c4531
 asmdump ceb256df9230e2a3 =head == rejected
 asmdump cf923665043656cf =head == error no `main` function in the root module

@@ -84,6 +84,7 @@ gendump 7199a22ac54b385d =head == file go.mod
 gendump 71dc3ca34b21e45d =head == rejected
 gendump 71f35cc77c653fcd =head == rejected
 gendump 71f93145365c0568 =head == rejected
+gendump 7206d9b6dad9f280 =head == error no `fn main` found in the modules given
 gendump 722901b7e1e1cd3a =head == rejected
 gendump 722aa3f796c60b65 =head == rejected
 gendump 7272dd0fe0c02e5d =head == error no `fn main` found in the modules given
@@ -212,18 +213,6 @@ gendump 76cdcef96aaf060d #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 76cdcef96aaf060d #file 5 5cd001a6c5ddb865
 gendump 76cdcef96aaf060d =head == file go.mod
 gendump 7722b88eb43e525d =head == rejected
-gendump 7732ec6bdfb29ee7 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_arm64/xo.go 812 c3289f699cab9277
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_arm64/xo_main.go 2 c2ce32c6fee0ee73
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1489 ffc24bf494804620
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 265 aac86b45bc6d582e
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 739 b37d7b675e84f428
-gendump 7732ec6bdfb29ee7 #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo.go 1153 484b2f925d51fdd2
-gendump 7732ec6bdfb29ee7 #decl:main.go 2 d7baa5ae6fd62108
-gendump 7732ec6bdfb29ee7 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 7732ec6bdfb29ee7 #file 10 c110413b165834b6
-gendump 7732ec6bdfb29ee7 =head == file go.mod
 gendump 7776274f73bb37a5 #decl:go.mod 1 13ef6f66b06c90ff
 gendump 7776274f73bb37a5 #decl:m/x_g0186/xo.go 14 e0ba13270e3a9d24
 gendump 7776274f73bb37a5 #decl:m/x_g0186/xo_main.go 2 ad34a4e74f85057d
@@ -247,6 +236,17 @@ gendump 78345f6c1d28c0f8 #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 78345f6c1d28c0f8 #file 5 2002e09967f4d912
 gendump 78345f6c1d28c0f8 =head == file go.mod
 gendump 784093dbda1e2f70 =head == rejected
+gendump 78a62258a02f75ae #decl:go.mod 1 13ef6f66b06c90ff
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1489 ffc24bf494804620
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 265 aac86b45bc6d582e
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 739 b37d7b675e84f428
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo.go 1154 f35df668e6a2ae15
+gendump 78a62258a02f75ae #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo_main.go 2 a2d7fe02d6d8afd2
+gendump 78a62258a02f75ae #decl:main.go 2 fc16a0b34eda4c5b
+gendump 78a62258a02f75ae #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 78a62258a02f75ae #file 9 a087181b074bd8c3
+gendump 78a62258a02f75ae =head == file go.mod
 gendump 78d8c02dfde4b31c =head == rejected
 gendump 78ec8f370fbc5c56 =head == rejected
 gendump 7951abc3ef7b131a #decl:go.mod 1 13ef6f66b06c90ff
@@ -429,6 +429,13 @@ gendump 7d6afedaacaeff1b #decl:main.go 2 129d64408d8e8865
 gendump 7d6afedaacaeff1b #decl:xo_adapt.go 0 e3b0c44298fc1c14
 gendump 7d6afedaacaeff1b #file 5 86d7010b01208c68
 gendump 7d6afedaacaeff1b =head == file go.mod
+gendump 7d6b00ba8480a317 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 7d6b00ba8480a317 #decl:m/x_internal_ssa_testdata_golden_recursive/xo.go 28 4d7b7cade43035f7
+gendump 7d6b00ba8480a317 #decl:m/x_internal_ssa_testdata_golden_recursive/xo_main.go 2 5e307191e0421117
+gendump 7d6b00ba8480a317 #decl:main.go 2 5a4de75aca99707d
+gendump 7d6b00ba8480a317 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 7d6b00ba8480a317 #file 5 840523bccd6266b5
+gendump 7d6b00ba8480a317 =head == file go.mod
 gendump 7d960362061969db #decl:go.mod 1 13ef6f66b06c90ff
 gendump 7d960362061969db #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo.go 21 ce0788d4a966cd3c
 gendump 7d960362061969db #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo_main.go 2 de93b6ec7be46e31

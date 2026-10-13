@@ -588,9 +588,10 @@ regenerates full dumps on demand. As built (results file, section
   again on main f786e42 (the runtime port changed std, which the run
   kinds now also key on): 19,681 units, 6,009,535 bytes (2,387,755 gzip
   -9); -short replay identical to live there. Recorded again on main
-  c7337337 (2026-10-13) on EC2 Linux arm64, on demand: 20,034 units,
-  6,409,446 bytes; -short replay identical to live there (70 verdicts,
-  41 count lines). The native run kinds key on the host, so on the
+  c7337337 and then 2c63a802 (2026-10-13; decision 0208 changed the Go
+  side's ssadump and asmdump in between) on EC2 Linux arm64, on
+  demand: 20,034 units, 6,405,857 bytes; -short replay identical to
+  live there (70 verdicts, 41 count lines). The native run kinds key on the host, so on the
   Mac 96 units are missing and 2 typedump pieces differ (results file,
   "Recorded again on main c7337337").
 - **Mismatch report**: a differing piece fails its test with the unit,

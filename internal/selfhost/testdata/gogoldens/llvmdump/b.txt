@@ -91,12 +91,6 @@ llvmdump b4c3757378cdc2a6 order eaa83ad707fa7def
 llvmdump b4c3757378cdc2a6 ~rtdecls f723a2faecc13386
 llvmdump b4c3757378cdc2a6 ~types e3b0c44298fc1c14
 llvmdump b50daf0802b20a26 =none rejected
-llvmdump b5a1058285bafc9f #c 103 aaf49a8521cb9174
-llvmdump b5a1058285bafc9f #d 233 cbf8de56ff2bcff8
-llvmdump b5a1058285bafc9f module 565c0f346228ac89
-llvmdump b5a1058285bafc9f order 9d037935119c7b9a
-llvmdump b5a1058285bafc9f ~rtdecls e1e5e17721f345ba
-llvmdump b5a1058285bafc9f ~types fa813675586cb584
 llvmdump b5c6d3dc8263b061 #c 14 c6bf223bcbfac6e6
 llvmdump b5c6d3dc8263b061 #d 28 dc7d4c15b5caef6b
 llvmdump b5c6d3dc8263b061 module 18637428fcd344bb
@@ -136,6 +130,12 @@ llvmdump b78421ec0ca355d4 module 971ef6b56d4e777e
 llvmdump b78421ec0ca355d4 order 3fe4d29812c3976f
 llvmdump b78421ec0ca355d4 ~rtdecls e078ef1db28ebbad
 llvmdump b78421ec0ca355d4 ~types 74dd755260d52ca3
+llvmdump b7847a9c97f382a4 #c 890 01bee76e1a6cb68f
+llvmdump b7847a9c97f382a4 #d 1973 a2dda45fa7579c07
+llvmdump b7847a9c97f382a4 module faf7e2fdaefa59cd
+llvmdump b7847a9c97f382a4 order bfd6f264049fe82a
+llvmdump b7847a9c97f382a4 ~rtdecls d14f31d4a31458f1
+llvmdump b7847a9c97f382a4 ~types f023be94dc02af01
 llvmdump b7b4b42a00341555 #c 19 79913259865c0db0
 llvmdump b7b4b42a00341555 #d 135 032d3a5098a3ae85
 llvmdump b7b4b42a00341555 module 986eeb511940d04a
@@ -189,9 +189,9 @@ llvmdump b968262ed762d3c9 module 53bbf9c99948d8e2
 llvmdump b968262ed762d3c9 order a651b49b5a53b703
 llvmdump b968262ed762d3c9 ~rtdecls e97ca008f35d50c7
 llvmdump b968262ed762d3c9 ~types 93c64a36160a0c82
-llvmdump b974ad58079e5b26 #c 21 9ca5905c8959e59f
-llvmdump b974ad58079e5b26 #d 42 b9ff4d07441919a6
-llvmdump b974ad58079e5b26 module bc6b1eeada7c4f68
+llvmdump b974ad58079e5b26 #c 21 928e15ee46b57f90
+llvmdump b974ad58079e5b26 #d 42 0069f0d001e20263
+llvmdump b974ad58079e5b26 module ad76213141ab7364
 llvmdump b974ad58079e5b26 order b4c59bebae49517c
 llvmdump b974ad58079e5b26 ~rtdecls f723a2faecc13386
 llvmdump b974ad58079e5b26 ~types 2fcfb7abdd25059a
@@ -236,13 +236,19 @@ llvmdump bb28b0c63ce9e8db module fd3bd6081f43c485
 llvmdump bb28b0c63ce9e8db order 88061f30f43484df
 llvmdump bb28b0c63ce9e8db ~rtdecls daf020001fedf230
 llvmdump bb28b0c63ce9e8db ~types e3b0c44298fc1c14
-llvmdump bb5cfc052b70db1b #c 87 14357d125bc86271
-llvmdump bb5cfc052b70db1b #d 191 8ced36f2a629a9e4
-llvmdump bb5cfc052b70db1b module 1d7415aa8d2fd041
+llvmdump bb5cfc052b70db1b #c 87 3f1a7488fe28ba92
+llvmdump bb5cfc052b70db1b #d 191 e21d1e1ca555b132
+llvmdump bb5cfc052b70db1b module d9cb39f546aa7fdb
 llvmdump bb5cfc052b70db1b order 16ebac5b711e1970
 llvmdump bb5cfc052b70db1b ~rtdecls dbcfb985da92e1fe
 llvmdump bb5cfc052b70db1b ~types e8760b66f260f6a8
 llvmdump bbd626b2e9c0bebc =none rejected
+llvmdump bc1684cd11913987 #c 6 9fb4b3dd45fd9fd8
+llvmdump bc1684cd11913987 #d 35 6284136dd95714f4
+llvmdump bc1684cd11913987 module 9d75ab94c0d30b29
+llvmdump bc1684cd11913987 order 4d01dbfdcf21140b
+llvmdump bc1684cd11913987 ~rtdecls f723a2faecc13386
+llvmdump bc1684cd11913987 ~types 1b274b98bb2f77fc
 llvmdump bcbcbf587f0c22f4 =none rejected
 llvmdump bcdecf0d5db7b561 =none rejected
 llvmdump bcfeef5b4666a652 #c 9 43e9ebee181de9c9
@@ -279,11 +285,11 @@ llvmdump bf0a8dce1beab42f order d9ccdcc8845ba3c0
 llvmdump bf0a8dce1beab42f ~rtdecls 5cc2e8ec84c5a1ca
 llvmdump bf0a8dce1beab42f ~types 97da5b9b65fc0c16
 llvmdump bf0e408a23757bf4 =none rejected
-llvmdump bf2e498804e96337 #c 4489 3c02cf33901b41ae
-llvmdump bf2e498804e96337 #d 8449 b9c0290a64a0694c
-llvmdump bf2e498804e96337 module 2caf616243c6823b
-llvmdump bf2e498804e96337 order 2ad720d4792cc630
-llvmdump bf2e498804e96337 ~rtdecls addf4b1c6090dcd9
-llvmdump bf2e498804e96337 ~types 24f41ee4288da8b8
 llvmdump bf5d4d9ba5df0980 =none rejected
+llvmdump bf7131297f3d3a04 #c 1748 bf1326bfa228c2be
+llvmdump bf7131297f3d3a04 #d 3881 283fac1a877f75f2
+llvmdump bf7131297f3d3a04 module 98527ca6a029fce0
+llvmdump bf7131297f3d3a04 order 196200577c614a97
+llvmdump bf7131297f3d3a04 ~rtdecls 3a19b7b5611eadc9
+llvmdump bf7131297f3d3a04 ~types 6a3cfc110dace02c
 llvmdump bff7fbd2c17a8ba3 =none "error internal/gen/testdata/golden/gc_config/main.xo:7:11: the SSA builder does not support `debug.set_gc_percent` of the Go package `runtime/debug` (`use go`)\ninternal/gen/testdata/golden/gc_config/main.xo:8:11: the SSA builder does not support `debug.set_memory_limit` of the Go package `runtime/debug` (`use go`)"

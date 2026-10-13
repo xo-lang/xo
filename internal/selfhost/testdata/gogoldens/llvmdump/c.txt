@@ -1,20 +1,20 @@
 llvmdump c0217c79ad1da3d7 =none "error l0328/main.xo:2:3: the SSA builder does not support the prelude function `dbg`\nl0328/main.xo:3:3: the SSA builder does not support the prelude function `dbg`"
 llvmdump c054ac7cfb634973 =none rejected
 llvmdump c05d4d5383238683 #c 10 cddf37e5f012cadc
-llvmdump c05d4d5383238683 #d 36 afdb718655bba5dd
-llvmdump c05d4d5383238683 module 18df494383110677
+llvmdump c05d4d5383238683 #d 36 e73e6df5b5d540a7
+llvmdump c05d4d5383238683 module c14fd932ea73395c
 llvmdump c05d4d5383238683 order 94e2752fc943c9a7
 llvmdump c05d4d5383238683 ~rtdecls f723a2faecc13386
 llvmdump c05d4d5383238683 ~types 8fe7ee93c69d2529
 llvmdump c0cf7a929d6c3505 #c 57 0c7d35cf93b8c948
-llvmdump c0cf7a929d6c3505 #d 179 8b7170597487bece
-llvmdump c0cf7a929d6c3505 module b989c775fe9a57de
+llvmdump c0cf7a929d6c3505 #d 179 33b507975ccea31e
+llvmdump c0cf7a929d6c3505 module 491c9fcf51ab71eb
 llvmdump c0cf7a929d6c3505 order e836353ab9ac6974
 llvmdump c0cf7a929d6c3505 ~rtdecls d2de8101cbc99b76
 llvmdump c0cf7a929d6c3505 ~types bcbcf35904d45a1a
 llvmdump c0d9492dce69217f #c 10 740219f7d62da4e0
-llvmdump c0d9492dce69217f #d 36 e4517ce66a2887ee
-llvmdump c0d9492dce69217f module 6843282e91046978
+llvmdump c0d9492dce69217f #d 36 70450d8bab8cd312
+llvmdump c0d9492dce69217f module 35855172a6360118
 llvmdump c0d9492dce69217f order 94e2752fc943c9a7
 llvmdump c0d9492dce69217f ~rtdecls f723a2faecc13386
 llvmdump c0d9492dce69217f ~types 8fe7ee93c69d2529
@@ -59,18 +59,12 @@ llvmdump c40c7738097aa58a module 0410d1b294d900c6
 llvmdump c40c7738097aa58a order 101e976bf21dfe84
 llvmdump c40c7738097aa58a ~rtdecls 0cf63a419a2801da
 llvmdump c40c7738097aa58a ~types 615de01e51f95d59
-llvmdump c49bf44c0891fddb #c 150 fc165b19d3538035
-llvmdump c49bf44c0891fddb #d 431 31f1e4909dc18159
-llvmdump c49bf44c0891fddb module 0d73f229933d4fdd
+llvmdump c49bf44c0891fddb #c 150 5171ceb5fa98a237
+llvmdump c49bf44c0891fddb #d 431 f1d67819187252c3
+llvmdump c49bf44c0891fddb module c6b0433ed2cec114
 llvmdump c49bf44c0891fddb order 05c0512791c4d9c3
 llvmdump c49bf44c0891fddb ~rtdecls 0cb1f2dac959e4b1
 llvmdump c49bf44c0891fddb ~types 229d064f97e8d834
-llvmdump c4b277c954b874f0 #c 6 9fb4b3dd45fd9fd8
-llvmdump c4b277c954b874f0 #d 35 a2c858859610b941
-llvmdump c4b277c954b874f0 module ff3c694d73c953d5
-llvmdump c4b277c954b874f0 order 4d01dbfdcf21140b
-llvmdump c4b277c954b874f0 ~rtdecls f723a2faecc13386
-llvmdump c4b277c954b874f0 ~types 1b274b98bb2f77fc
 llvmdump c4b47b0579c318e5 =none "error internal/gen/testdata/golden/go_sha256/main.xo:7:13: the SSA builder does not support `sha256.sum256` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:9:20: the SSA builder does not support `hex.encode_to_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:10:11: the SSA builder does not support `sha256.new` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:10:11: the SSA builder does not support the type `sha256.HashHash` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:11:11: the SSA builder does not support `sha256.HashHash.write` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:11:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_sha256/main.xo:12:11: the SSA builder does not support `sha256.HashHash.write` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:13:66: the SSA builder does not support `sha256.HashHash.sum` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:14:3: the SSA builder does not support `sha256.HashHash.reset` of the Go package `crypto/sha256` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:15:29: the SSA builder does not support `hex.encode_to_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:16:30: the SSA builder does not support `hex.encode_to_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_sha256/main.xo:16:82: the SSA builder does not support `sha256.HashHash.size` of the Go package `crypto/sha256` (`use go`)"
 llvmdump c4c1b590915fbdbc =none rejected
 llvmdump c4f9056a34473b5a #c 14 ad818e57230ad6a4
@@ -98,14 +92,14 @@ llvmdump c58f63bfec43a886 order a6bb48365114dad0
 llvmdump c58f63bfec43a886 ~rtdecls f723a2faecc13386
 llvmdump c58f63bfec43a886 ~types 5ccba84fe93239e8
 llvmdump c5daa4a200171d4a #c 171 28427674b27513c7
-llvmdump c5daa4a200171d4a #d 532 461d0649af9ce1f6
-llvmdump c5daa4a200171d4a module f5c7af4dd3b5fa98
+llvmdump c5daa4a200171d4a #d 532 46a726791fc2adee
+llvmdump c5daa4a200171d4a module 3869eac4cc263a6e
 llvmdump c5daa4a200171d4a order c18f12eda959cc69
 llvmdump c5daa4a200171d4a ~rtdecls b1a7fb39a209522e
 llvmdump c5daa4a200171d4a ~types fc4b9d4f06a06747
-llvmdump c61f1d87173d9d15 #c 41 e510ea0617a248e0
-llvmdump c61f1d87173d9d15 #d 62 1b387cb42952f787
-llvmdump c61f1d87173d9d15 module 069090b51dc6d390
+llvmdump c61f1d87173d9d15 #c 41 2e9f2b67f04475ca
+llvmdump c61f1d87173d9d15 #d 62 78daee7c3e0b2dcf
+llvmdump c61f1d87173d9d15 module ca1a6f8f7ff08963
 llvmdump c61f1d87173d9d15 order b15985dd591ca257
 llvmdump c61f1d87173d9d15 ~rtdecls df2940c6b232cf99
 llvmdump c61f1d87173d9d15 ~types 3c3b1130e58eb909
@@ -274,8 +268,8 @@ llvmdump ce2cc9b05031116b order ed80b006007b5a96
 llvmdump ce2cc9b05031116b ~rtdecls 4bfe35a8e8eabd25
 llvmdump ce2cc9b05031116b ~types 245284321e9443a4
 llvmdump ce4a308cc756feea #c 95 515b9fa663907eba
-llvmdump ce4a308cc756feea #d 244 87a8303b2b5bf3f1
-llvmdump ce4a308cc756feea module f00bbdce0ed0d216
+llvmdump ce4a308cc756feea #d 244 81499b837ef1f289
+llvmdump ce4a308cc756feea module e505fd6dc6c48b9e
 llvmdump ce4a308cc756feea order cf7c2d80712050b0
 llvmdump ce4a308cc756feea ~rtdecls b2afc46dc88cbd95
 llvmdump ce4a308cc756feea ~types 1d36934e9d9dbfa8
@@ -287,9 +281,9 @@ llvmdump cef1ade99991398c order 90824e6ea19a25f0
 llvmdump cef1ade99991398c ~rtdecls 177a02e41e698b67
 llvmdump cef1ade99991398c ~types 5273515d8a55e9b5
 llvmdump cf038ea6992d36aa =none rejected
-llvmdump cf04c0fb15ad8808 #c 24 1c33d3094ee75f58
-llvmdump cf04c0fb15ad8808 #d 51 fdbd33f5cefb2f2d
-llvmdump cf04c0fb15ad8808 module e6f67ddf013b71a0
+llvmdump cf04c0fb15ad8808 #c 24 790294f0c2c59cb7
+llvmdump cf04c0fb15ad8808 #d 51 a47329b128230261
+llvmdump cf04c0fb15ad8808 module 2ab2068d5928a1fc
 llvmdump cf04c0fb15ad8808 order 119a66a387a9b89b
 llvmdump cf04c0fb15ad8808 ~rtdecls f723a2faecc13386
 llvmdump cf04c0fb15ad8808 ~types 843d132f99515213

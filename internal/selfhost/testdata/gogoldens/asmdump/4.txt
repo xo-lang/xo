@@ -8,11 +8,11 @@ asmdump 40f747ecace62e6b all 28a763e28828ca15
 asmdump 40f747ecace62e6b entry 72b4444d9e3c4531
 asmdump 420b800fc387e367 =head == rejected
 asmdump 427dca8c754762ca =head == rejected
-asmdump 42819bbcfa344613 #f 5 31bca54a8c53fdc3
+asmdump 42819bbcfa344613 #f 5 77bf3f2fe57702d0
 asmdump 42819bbcfa344613 #h 10 d06e2ed871a90dcf
 asmdump 42819bbcfa344613 #l 1 8641b498148f81e3
 asmdump 42819bbcfa344613 #literals 11 a132f374c2466109
-asmdump 42819bbcfa344613 all 7f1a662d9952bd82
+asmdump 42819bbcfa344613 all 5cfe1da8366737cf
 asmdump 42819bbcfa344613 entry 72b4444d9e3c4531
 asmdump 42b5e61051b2dcd2 #f 29 37efaa2a2aa2f094
 asmdump 42b5e61051b2dcd2 #h 1 ec917a1bedcaaae1
@@ -20,29 +20,35 @@ asmdump 42b5e61051b2dcd2 #l 5 ecf4c703b463fc73
 asmdump 42b5e61051b2dcd2 #literals 70 664a7515477957c8
 asmdump 42b5e61051b2dcd2 all 30f71ad7ab9a9c41
 asmdump 42b5e61051b2dcd2 entry 72b4444d9e3c4531
-asmdump 42f7cc3b9211d227 #f 69 7d78defa36a7fe8b
+asmdump 42f7cc3b9211d227 #f 69 18cb3b8431b7da4d
 asmdump 42f7cc3b9211d227 #h 6 773e3cbe4b8ffa9a
 asmdump 42f7cc3b9211d227 #l 13 27d30af7a89d0d8c
 asmdump 42f7cc3b9211d227 #literals 159 0b87beec2eb929c7
-asmdump 42f7cc3b9211d227 all 52bacd50b8e6da8b
+asmdump 42f7cc3b9211d227 all 5158865838db860a
 asmdump 42f7cc3b9211d227 entry 72b4444d9e3c4531
-asmdump 43727d919ba3c6ae #f 23 76a93ddd601ef1d5
+asmdump 43727d919ba3c6ae #f 23 b46d4947b002af23
 asmdump 43727d919ba3c6ae #h 7 191e460ec6b066f2
 asmdump 43727d919ba3c6ae #l 10 7dd857140d832e36
 asmdump 43727d919ba3c6ae #literals 13 80d5c7fed2968b5f
-asmdump 43727d919ba3c6ae all 387c58a9f3977c9a
+asmdump 43727d919ba3c6ae all 58ccdb60c6b61d23
 asmdump 43727d919ba3c6ae entry 72b4444d9e3c4531
-asmdump 43740bbdada2fabe #f 79 d33772df74e7e42e
+asmdump 43740bbdada2fabe #f 79 dbb28f7de04579cc
 asmdump 43740bbdada2fabe #h 5 800d9ce952d1ac58
 asmdump 43740bbdada2fabe #l 12 12427a7f63e41134
 asmdump 43740bbdada2fabe #literals 151 9fe5c68ac95fc36d
-asmdump 43740bbdada2fabe all 70629c8b00f29836
+asmdump 43740bbdada2fabe all 262ed3313fd8302e
 asmdump 43740bbdada2fabe entry 72b4444d9e3c4531
-asmdump 43dc5dbea57ea7c4 #f 14 01460213115d4017
+asmdump 438247d5e1ef1af4 #f 269 806528cd25212de6
+asmdump 438247d5e1ef1af4 #h 127 7e7269268aea904e
+asmdump 438247d5e1ef1af4 #l 128 1017fbda0b17ff58
+asmdump 438247d5e1ef1af4 #literals 764 b127de4c449dd779
+asmdump 438247d5e1ef1af4 all caa8d98d218c00b5
+asmdump 438247d5e1ef1af4 entry 72b4444d9e3c4531
+asmdump 43dc5dbea57ea7c4 #f 14 a08521583b828e6c
 asmdump 43dc5dbea57ea7c4 #h 11 5ab35b2c652b6e0b
 asmdump 43dc5dbea57ea7c4 #l 3 20f1cb0df67d480e
 asmdump 43dc5dbea57ea7c4 #literals 10 32b3f2bd5b834f10
-asmdump 43dc5dbea57ea7c4 all 18427cabb8bd9455
+asmdump 43dc5dbea57ea7c4 all e09f5f72308ca8a0
 asmdump 43dc5dbea57ea7c4 entry 72b4444d9e3c4531
 asmdump 444201c80333a0f7 =head == rejected
 asmdump 44656467f0e06414 #f 10 327066292bff9d3e
@@ -51,17 +57,17 @@ asmdump 44656467f0e06414 #l 2 2a8399eecc2ddf92
 asmdump 44656467f0e06414 #literals 10 1c65669e61452bb5
 asmdump 44656467f0e06414 all 635461811bd47e3a
 asmdump 44656467f0e06414 entry 72b4444d9e3c4531
-asmdump 447e510699724896 #f 24 dc57c19094fb136d
+asmdump 447e510699724896 #f 24 58a98bf3bb6120bd
 asmdump 447e510699724896 #h 43 3f5ef8796487ca7c
 asmdump 447e510699724896 #l 12 048689e7a0cc7b5e
 asmdump 447e510699724896 #literals 34 3a6570b5e139a4a2
-asmdump 447e510699724896 all 6f5bdacc0f8e3ef8
+asmdump 447e510699724896 all 148d7caf971a5127
 asmdump 447e510699724896 entry 72b4444d9e3c4531
-asmdump 44803f182cd41b74 #f 45 86193421b730e99f
+asmdump 44803f182cd41b74 #f 45 c0aa5392a3ffaa02
 asmdump 44803f182cd41b74 #h 20 ab3eaca60b57506f
 asmdump 44803f182cd41b74 #l 8 e7416eaedd600210
 asmdump 44803f182cd41b74 #literals 68 bb966efdeb1a1fe2
-asmdump 44803f182cd41b74 all 6f2427befcd2e4e7
+asmdump 44803f182cd41b74 all 1de4b39ec26867b4
 asmdump 44803f182cd41b74 entry 72b4444d9e3c4531
 asmdump 44995315bc79d8a4 #f 10 8b44e65a74cd1b0e
 asmdump 44995315bc79d8a4 #h 1 ec917a1bedcaaae1
@@ -69,38 +75,38 @@ asmdump 44995315bc79d8a4 #l 2 2a8399eecc2ddf92
 asmdump 44995315bc79d8a4 #literals 7 010a5860de81633c
 asmdump 44995315bc79d8a4 all 462864d1bca2f7fe
 asmdump 44995315bc79d8a4 entry 72b4444d9e3c4531
-asmdump 44b4c4b4307af1c0 #f 64 5a60a64a34c9464f
+asmdump 44b4c4b4307af1c0 #f 64 41d54d7897a0f1a5
 asmdump 44b4c4b4307af1c0 #h 14 ce9bdfe6c82c0b79
 asmdump 44b4c4b4307af1c0 #l 18 5e7602dde4c8b9cf
 asmdump 44b4c4b4307af1c0 #literals 98 315e8ca560567a3d
-asmdump 44b4c4b4307af1c0 all f65b61ce63c92abd
+asmdump 44b4c4b4307af1c0 all 76cff1ff0338b3a6
 asmdump 44b4c4b4307af1c0 entry 72b4444d9e3c4531
-asmdump 44beb9f899288bb5 #f 12 f6318bdadf2d61bb
+asmdump 44beb9f899288bb5 #f 12 772e2d6791135090
 asmdump 44beb9f899288bb5 #h 11 6dd33b92efaebb54
 asmdump 44beb9f899288bb5 #l 3 0f236dfd22b22d73
 asmdump 44beb9f899288bb5 #literals 12 c026a1faa894d44e
-asmdump 44beb9f899288bb5 all 017dbf7db4d97b39
+asmdump 44beb9f899288bb5 all 32d89b2976cce674
 asmdump 44beb9f899288bb5 entry 72b4444d9e3c4531
-asmdump 44c086eda9ee28db #f 9 ad001c40e6e86594
+asmdump 44c086eda9ee28db #f 9 58f5ea8f04a6e379
 asmdump 44c086eda9ee28db #h 9 1669b2d1ad31c41c
 asmdump 44c086eda9ee28db #l 3 011b8d2e43ec733e
 asmdump 44c086eda9ee28db #literals 11 c15cebb4ffecc112
-asmdump 44c086eda9ee28db all 27db99a1a3e77c2b
+asmdump 44c086eda9ee28db all 9af618b071a0234e
 asmdump 44c086eda9ee28db entry 72b4444d9e3c4531
 asmdump 4532e3fc627d0a0b =head == rejected
 asmdump 4549c852cfed4fa3 =head == rejected
-asmdump 45c4bbe9594a22c6 #f 26 73cdb43077ef4a8d
+asmdump 45c4bbe9594a22c6 #f 26 2ab572232c271f32
 asmdump 45c4bbe9594a22c6 #h 20 751e250993972296
 asmdump 45c4bbe9594a22c6 #l 14 63e219c1518fb563
 asmdump 45c4bbe9594a22c6 #literals 47 0d9e430f7187ba53
-asmdump 45c4bbe9594a22c6 all 2f8361352f3a6bb6
+asmdump 45c4bbe9594a22c6 all ce597e76a5fd5845
 asmdump 45c4bbe9594a22c6 entry 72b4444d9e3c4531
 asmdump 461eca98b4291865 =head == rejected
-asmdump 463514ddbeb1ab67 #f 48 88d7c40604727347
+asmdump 463514ddbeb1ab67 #f 48 fced3e6e6cd9c369
 asmdump 463514ddbeb1ab67 #h 12 498a24abe158a8f4
 asmdump 463514ddbeb1ab67 #l 11 eee0ec1a09926789
 asmdump 463514ddbeb1ab67 #literals 105 c986a9e796934ddd
-asmdump 463514ddbeb1ab67 all cbda72a442ececc5
+asmdump 463514ddbeb1ab67 all 58957a5e3d48abf5
 asmdump 463514ddbeb1ab67 entry 72b4444d9e3c4531
 asmdump 4661f66ffe1d5ec6 =head == rejected
 asmdump 469fac5cda2cc61f #f 12 105c313425cb5cc0
@@ -109,49 +115,49 @@ asmdump 469fac5cda2cc61f #l 3 1cd53d3d71ba1ad4
 asmdump 469fac5cda2cc61f #literals 21 3163272e0577d89e
 asmdump 469fac5cda2cc61f all 6bde90800832b675
 asmdump 469fac5cda2cc61f entry 72b4444d9e3c4531
-asmdump 4705dbdfe3e82705 #f 128 e735152faa16d2a0
+asmdump 4705dbdfe3e82705 #f 128 bf1ffeeba475d797
 asmdump 4705dbdfe3e82705 #h 25 9fd7cb865c39b227
-asmdump 4705dbdfe3e82705 #l 28 04948277acf6b6fc
-asmdump 4705dbdfe3e82705 #literals 410 b57df3572a4fe514
-asmdump 4705dbdfe3e82705 all 6a3a54e2458452b6
+asmdump 4705dbdfe3e82705 #l 28 9bd298985522f75c
+asmdump 4705dbdfe3e82705 #literals 409 5e62ec59232bc2ee
+asmdump 4705dbdfe3e82705 all f230cbc302748530
 asmdump 4705dbdfe3e82705 entry 72b4444d9e3c4531
-asmdump 47dc458c5a61ff77 #f 30 aae80502ba468054
+asmdump 47dc458c5a61ff77 #f 30 2338ec0899b3a25e
 asmdump 47dc458c5a61ff77 #h 68 47e6af964535bd86
 asmdump 47dc458c5a61ff77 #l 17 72094b0b675aaa44
 asmdump 47dc458c5a61ff77 #literals 28 f089fb5b51c3740c
-asmdump 47dc458c5a61ff77 all 038bb92ab4e147f7
+asmdump 47dc458c5a61ff77 all e52ada692cd2b7c8
 asmdump 47dc458c5a61ff77 entry 72b4444d9e3c4531
 asmdump 47e2ffa07aea5631 =head == rejected
-asmdump 481ab42576d37804 #f 108 a1f448876598a7e8
+asmdump 481ab42576d37804 #f 108 f976342b4932b870
 asmdump 481ab42576d37804 #h 24 eebe6832ebf55dac
-asmdump 481ab42576d37804 #l 27 74bac629b0a5e36e
-asmdump 481ab42576d37804 #literals 557 6a34c95ea255e5ba
-asmdump 481ab42576d37804 all 1a6d0cbcbb66b3a2
+asmdump 481ab42576d37804 #l 27 3707931663f739db
+asmdump 481ab42576d37804 #literals 546 c10ef4774cb2cb5a
+asmdump 481ab42576d37804 all 20283035fc11fae4
 asmdump 481ab42576d37804 entry 72b4444d9e3c4531
-asmdump 483307714eeb7494 #f 49 f04c5fc316a150e1
+asmdump 483307714eeb7494 #f 49 efb1b5d5f7305588
 asmdump 483307714eeb7494 #h 12 32bf940331597572
 asmdump 483307714eeb7494 #l 18 96b271e4317512f1
 asmdump 483307714eeb7494 #literals 141 d603b1c141b781a0
-asmdump 483307714eeb7494 all 1b784f669806fb83
+asmdump 483307714eeb7494 all 3203fd30cf9068a8
 asmdump 483307714eeb7494 entry 72b4444d9e3c4531
 asmdump 486f36ef6920a004 =head == error no `main` function in the root module
-asmdump 4898b4ac88319719 #f 56 77f4733e0ebd6e98
+asmdump 4898b4ac88319719 #f 56 0d76c1812cf20276
 asmdump 4898b4ac88319719 #h 33 a05c0083ad959a0e
 asmdump 4898b4ac88319719 #l 24 a44a496dabe977b0
 asmdump 4898b4ac88319719 #literals 146 02dd299b4cc74147
-asmdump 4898b4ac88319719 all c994f1eb0db48ee9
+asmdump 4898b4ac88319719 all 6d2faf98e9842b80
 asmdump 4898b4ac88319719 entry 72b4444d9e3c4531
-asmdump 48dca018ba79fb72 #f 24 ed79f77120152342
+asmdump 48dca018ba79fb72 #f 24 e2ef5c59f9bfec41
 asmdump 48dca018ba79fb72 #h 22 746185f5e626e05f
 asmdump 48dca018ba79fb72 #l 5 2e7e9b09e88f0ce3
 asmdump 48dca018ba79fb72 #literals 56 cc563e112bec7fd2
-asmdump 48dca018ba79fb72 all c2d19241417b5a14
+asmdump 48dca018ba79fb72 all 32b193a2b9288d08
 asmdump 48dca018ba79fb72 entry 72b4444d9e3c4531
-asmdump 48e0238fbcf70051 #f 16 7009be1f02905151
+asmdump 48e0238fbcf70051 #f 16 4db476d82cb33b85
 asmdump 48e0238fbcf70051 #h 14 b0ce760689c6d23a
 asmdump 48e0238fbcf70051 #l 7 428e3210538148e2
 asmdump 48e0238fbcf70051 #literals 26 278c58120b03b23a
-asmdump 48e0238fbcf70051 all ca1c72d8513d7b7f
+asmdump 48e0238fbcf70051 all f0ae737a7e70e318
 asmdump 48e0238fbcf70051 entry 72b4444d9e3c4531
 asmdump 491695cffb855c97 =head == rejected
 asmdump 4982b8aa85385762 #f 9 0aa8c0c85463936c
@@ -160,33 +166,33 @@ asmdump 4982b8aa85385762 #l 2 2a8399eecc2ddf92
 asmdump 4982b8aa85385762 #literals 5 338c365fc6518ff4
 asmdump 4982b8aa85385762 all 9d7548e878ce250d
 asmdump 4982b8aa85385762 entry 72b4444d9e3c4531
-asmdump 49ee699df4aab77e #f 160 57f8e57084b320ae
+asmdump 49ee699df4aab77e #f 160 b94a4c7a1131a1c4
 asmdump 49ee699df4aab77e #h 113 be0c0917a9bff686
-asmdump 49ee699df4aab77e #l 58 70d4e6f085733d5f
-asmdump 49ee699df4aab77e #literals 343 eee5ac6a9e2d7d4d
-asmdump 49ee699df4aab77e all 9d9d736432c4eafb
+asmdump 49ee699df4aab77e #l 58 cb5efc3c4d5814e3
+asmdump 49ee699df4aab77e #literals 341 dfd59ee804bbb20d
+asmdump 49ee699df4aab77e all 9c03c692ae271ed7
 asmdump 49ee699df4aab77e entry 72b4444d9e3c4531
 asmdump 4a65ce12ff4bdb54 =head == rejected
 asmdump 4a76c24d24956a95 =head == rejected
 asmdump 4ab67e87a23b6b6f =head == error a0088/main.xo:13:3: the SSA builder does not support function values with `var` parameters a0088/main.xo:13:9: the SSA builder does not support function values with `var` parameters a0088/main.xo:13:9: the SSA builder does not support a function with `var` parameters as a value
-asmdump 4abcb6925e6d8ea6 #f 29 e4e27cac9b222abe
+asmdump 4abcb6925e6d8ea6 #f 29 468ce40c5a345f58
 asmdump 4abcb6925e6d8ea6 #h 40 199c75750d83c316
 asmdump 4abcb6925e6d8ea6 #l 14 6c2e8da763532749
 asmdump 4abcb6925e6d8ea6 #literals 36 d32150afb27e3ec9
-asmdump 4abcb6925e6d8ea6 all 89facfe3c036a9cc
+asmdump 4abcb6925e6d8ea6 all 78356da19b8fcaad
 asmdump 4abcb6925e6d8ea6 entry 72b4444d9e3c4531
-asmdump 4af0cf805bee8441 #f 10 72905c5b49666024
+asmdump 4af0cf805bee8441 #f 10 41d839865ec05b30
 asmdump 4af0cf805bee8441 #h 9 65da695168314a61
 asmdump 4af0cf805bee8441 #l 4 c3f4275d7ce2c02c
 asmdump 4af0cf805bee8441 #literals 14 ca8f2df2bc8be35c
-asmdump 4af0cf805bee8441 all 4abcbadaf318dee9
+asmdump 4af0cf805bee8441 all bf4ccb8c4d341522
 asmdump 4af0cf805bee8441 entry 72b4444d9e3c4531
 asmdump 4afedde9a8ddd95b =head == rejected
-asmdump 4b2eb50c603bfb6b #f 125 5626ff42395db2c0
+asmdump 4b2eb50c603bfb6b #f 125 2399368f69cc4f40
 asmdump 4b2eb50c603bfb6b #h 50 e0239c44f15a8132
-asmdump 4b2eb50c603bfb6b #l 56 bfb9207e99acc644
-asmdump 4b2eb50c603bfb6b #literals 228 252e8ea9f660ccf2
-asmdump 4b2eb50c603bfb6b all 8dca20487d227ba1
+asmdump 4b2eb50c603bfb6b #l 56 22dc1c4314ddb273
+asmdump 4b2eb50c603bfb6b #literals 216 c81d4c07560f3ec2
+asmdump 4b2eb50c603bfb6b all d3c4aa931d1d0b8b
 asmdump 4b2eb50c603bfb6b entry 72b4444d9e3c4531
 asmdump 4b34c9a4923176ac =head == rejected
 asmdump 4b4ea19915e50232 #f 9 5ce3bfc8433b29f7
@@ -195,30 +201,30 @@ asmdump 4b4ea19915e50232 #l 2 2a8399eecc2ddf92
 asmdump 4b4ea19915e50232 #literals 6 8e0a13d5f35799b4
 asmdump 4b4ea19915e50232 all c2c34118de9b9c35
 asmdump 4b4ea19915e50232 entry 72b4444d9e3c4531
-asmdump 4b9c72684459bcec #f 19 e490ec6fd2b4c685
+asmdump 4b9c72684459bcec #f 19 91147c235243c4a3
 asmdump 4b9c72684459bcec #h 21 a41d2e01df2cffe4
 asmdump 4b9c72684459bcec #l 7 df384f971e906cb3
 asmdump 4b9c72684459bcec #literals 31 8c976d6caf5c3de7
-asmdump 4b9c72684459bcec all 6becfbaa4f04d778
+asmdump 4b9c72684459bcec all f6f74a3e9f33eee1
 asmdump 4b9c72684459bcec entry 72b4444d9e3c4531
 asmdump 4bbcc72a4cfebb69 =head == rejected
-asmdump 4bc12376a3fe9f71 #f 66 5b08c3cf9705d5c2
+asmdump 4bc12376a3fe9f71 #f 66 e25a93077c3448bd
 asmdump 4bc12376a3fe9f71 #h 43 d53cc6033377564a
 asmdump 4bc12376a3fe9f71 #l 13 ec48a9e39c1869b3
 asmdump 4bc12376a3fe9f71 #literals 68 44cd95e635e3a455
-asmdump 4bc12376a3fe9f71 all 63526ab0d20e10d0
+asmdump 4bc12376a3fe9f71 all 455d06542f6d12c0
 asmdump 4bc12376a3fe9f71 entry 72b4444d9e3c4531
-asmdump 4c38ef34e75c7428 #f 13 ba819f9d3a108fb2
+asmdump 4c38ef34e75c7428 #f 13 bf096d9d0a087a37
 asmdump 4c38ef34e75c7428 #h 15 846d552ab13c412a
 asmdump 4c38ef34e75c7428 #l 4 3b84f886c354ac2d
 asmdump 4c38ef34e75c7428 #literals 15 38d6c5c13a8294d6
-asmdump 4c38ef34e75c7428 all 8c5063b0de4dd907
+asmdump 4c38ef34e75c7428 all 51cf4884420c49b5
 asmdump 4c38ef34e75c7428 entry 72b4444d9e3c4531
-asmdump 4c53b5835e3e345b #f 286 afe29ce00e972988
+asmdump 4c53b5835e3e345b #f 286 bc5fc319df9bd1ce
 asmdump 4c53b5835e3e345b #h 194 5bbbd2433e38ba54
-asmdump 4c53b5835e3e345b #l 107 d6f160c737712fe6
-asmdump 4c53b5835e3e345b #literals 727 79fa4e9a9ae98f8d
-asmdump 4c53b5835e3e345b all f18fba972f4c920a
+asmdump 4c53b5835e3e345b #l 107 95b1d6d2ff1f9c6c
+asmdump 4c53b5835e3e345b #literals 724 2beb2cc556792c41
+asmdump 4c53b5835e3e345b all 7e36e66824bc15df
 asmdump 4c53b5835e3e345b entry 72b4444d9e3c4531
 asmdump 4c61a6ebed1ee3d9 =head == rejected
 asmdump 4c719e314e6ff415 #f 18 66823ed854e92896
@@ -229,38 +235,44 @@ asmdump 4c719e314e6ff415 all 2126ebedeb4e2148
 asmdump 4c719e314e6ff415 entry 72b4444d9e3c4531
 asmdump 4c97f3bcf72ff4c7 =head == rejected
 asmdump 4c9cc9b031855ee7 =head == rejected
-asmdump 4cae94d0c1d810ad #f 11 cf2cb8012c059763
+asmdump 4cae94d0c1d810ad #f 11 30c464d6fa27edea
 asmdump 4cae94d0c1d810ad #h 9 598d2e7a1352d7ed
 asmdump 4cae94d0c1d810ad #l 3 ecf7551da36386b2
 asmdump 4cae94d0c1d810ad #literals 42 474bf7ed48293e4f
-asmdump 4cae94d0c1d810ad all 656807f354040726
+asmdump 4cae94d0c1d810ad all 77c711d8ce8b45e9
 asmdump 4cae94d0c1d810ad entry 72b4444d9e3c4531
 asmdump 4cd4690136e766ad =head == rejected
 asmdump 4d7d95e706a64c28 =head == rejected
 asmdump 4dc015bbbb85cd05 =head == rejected
 asmdump 4de63edf69669fc1 =head == rejected
-asmdump 4ded2ad0b1fbcdaf #f 13 0e9120855ed6fbae
+asmdump 4ded2ad0b1fbcdaf #f 13 9c329b7c623ecced
 asmdump 4ded2ad0b1fbcdaf #h 6 c2e36d408c4b1ee2
 asmdump 4ded2ad0b1fbcdaf #l 5 7f2ffe72fb6fdd44
 asmdump 4ded2ad0b1fbcdaf #literals 7 ab25054aab4b38e2
-asmdump 4ded2ad0b1fbcdaf all cea1182b6c7433a0
+asmdump 4ded2ad0b1fbcdaf all 1592b19e9d62026a
 asmdump 4ded2ad0b1fbcdaf entry 72b4444d9e3c4531
-asmdump 4e0b0bbd81a0a96b #f 41 1462d1773edcf7b0
+asmdump 4e0b0bbd81a0a96b #f 41 b0a3f8d37705e135
 asmdump 4e0b0bbd81a0a96b #h 59 89261a8a27cc2fc3
 asmdump 4e0b0bbd81a0a96b #l 8 76bcc0844d4828a2
 asmdump 4e0b0bbd81a0a96b #literals 41 283a0a266cf19c98
-asmdump 4e0b0bbd81a0a96b all 5cc94423f9353650
+asmdump 4e0b0bbd81a0a96b all ea481833755aecf3
 asmdump 4e0b0bbd81a0a96b entry 72b4444d9e3c4531
+asmdump 4e394f50f3c08644 #f 2075 c3fe6ecdf29debbe
+asmdump 4e394f50f3c08644 #h 785 256509fa3c17692f
+asmdump 4e394f50f3c08644 #l 1250 b4be826712a6ff76
+asmdump 4e394f50f3c08644 #literals 8987 adc9833fc04b8dbe
+asmdump 4e394f50f3c08644 all f1f0ce160e65bbd0
+asmdump 4e394f50f3c08644 entry 72b4444d9e3c4531
 asmdump 4ea95c3422e6f7e3 =head == rejected
-asmdump 4f357472d0b8ec14 #f 11 bef57dd3704341ba
+asmdump 4f357472d0b8ec14 #f 11 9fedd137012c83b3
 asmdump 4f357472d0b8ec14 #h 4 fa3c0ef2dc671ac9
 asmdump 4f357472d0b8ec14 #l 3 032cd01de9a15efe
 asmdump 4f357472d0b8ec14 #literals 15 e3cfdc75ef3ac477
-asmdump 4f357472d0b8ec14 all 41b54bfd0b9ee344
+asmdump 4f357472d0b8ec14 all 8a5d73c56d0990e6
 asmdump 4f357472d0b8ec14 entry 72b4444d9e3c4531
-asmdump 4f75be5dd0b3256f #f 23 2bd77fb4548803f5
+asmdump 4f75be5dd0b3256f #f 23 3cd3d9598c785e73
 asmdump 4f75be5dd0b3256f #h 48 151e1346bc30519a
 asmdump 4f75be5dd0b3256f #l 8 43e651ef5734e70f
 asmdump 4f75be5dd0b3256f #literals 15 96a002809860726a
-asmdump 4f75be5dd0b3256f all 331badcd9bd2743f
+asmdump 4f75be5dd0b3256f all 13ecc3f8855a7a06
 asmdump 4f75be5dd0b3256f entry 72b4444d9e3c4531
