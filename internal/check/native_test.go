@@ -26,7 +26,10 @@ func TestNativeModules(t *testing.T) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".xo")
-		if name == "prelude" || strings.HasPrefix(name, "rt") {
+		if name == "prelude" || strings.HasPrefix(name, "rt") || strings.HasPrefix(name, "sys_") || name == "internal" {
+			// the intrinsics and the platform declarations (decision 0213);
+			// std/internal: only std and the toolchain see it
+			// (TestStdInternalVisibility)
 			continue
 		}
 		uses = append(uses, "use std/"+name)
@@ -135,6 +138,35 @@ func TestLLRTCPath(t *testing.T) {
 		}
 		if files["native/llrt/jsontext"] != c.jsontext {
 			t.Errorf("XO_LLRT_C=%q: jsontext from %q, want %q", c.env, files["native/llrt/jsontext"], c.jsontext)
+		}
+	}
+}
+
+// TestStdInternalVisibility checks decision 0214: a user module cannot
+// import std/internal (module not found, as native/rt), a toolchain
+// module (github.com/xo-lang/xo/...) can, and its native implementation
+// loads without diagnostics.
+func TestStdInternalVisibility(t *testing.T) {
+	ds := checkSrc(t, "use std/internal\n\nfn main(os: Os) {\n  let _l = internal.lock_shared(os.fs, \"x.lock\")\n}\n")
+	if len(ds) == 0 || !strings.Contains(humanAll(ds), "module `std/internal` not found") {
+		t.Errorf("user import of std/internal: want module not found, got:\n%s", humanAll(ds))
+	}
+	if strings.Contains(humanAll(ds), "did you mean `std/internal`") {
+		t.Errorf("std/internal suggested to a user module:\n%s", humanAll(ds))
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module github.com/xo-lang/xo/locktest\n"), 0o644)
+	src := "use std/internal\n\nfn main(os: Os) ! FsErr {\n  let l = internal.lock_shared(os.fs, \"x.lock\")?\n  l.unlock()\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, native := range []bool{false, true} {
+		res, err := CheckOpts([]string{dir}, Options{Native: native})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Diagnostics) > 0 {
+			t.Errorf("toolchain module (native %v):\n%s", native, humanAll(res.Diagnostics))
 		}
 	}
 }

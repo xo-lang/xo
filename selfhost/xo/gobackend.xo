@@ -9,6 +9,7 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/gen
 use std/crypto
+use std/internal
 
 /// Builds o.dirs with the Go backend (internal/build Build with the Go
 /// backend): the tree is the Go driver's build directory (or --go-tree),
@@ -233,6 +234,35 @@ fn go_cache_dir(os: Os, ctx: Ctx) -> Str {
   "${ctx.cache}/xo/gocache"
 }
 
+/// The shared lock on the Xo Go cache that a go command holds while it
+/// runs (internal/gotool HoldCache and LockCacheShared, the same files
+/// and protocol, gotchas/go-commands-outside-build-race-trim.md): a trim
+/// (internal/build's gocache.go) takes xo-gate.lock and then
+/// xo-cache.lock exclusively and may remove any entry, so a go command
+/// passes through the gate (shared) and holds xo-cache.lock shared. None
+/// (run unlocked, as before locks existed) on any error. Never hold it
+/// around something that itself runs an Xo build: a trim waiting at the
+/// gate would deadlock with the nested lock.
+fn hold_go_cache(os: Os, ctx: Ctx) -> internal.SharedLock? {
+  let dir = go_cache_dir(os, ctx)
+  if os.fs.create_dir_all(dir).is_err() {
+    return None
+  }
+  let gate = match internal.lock_shared(os.fs, "${dir}/xo-gate.lock") {
+    Ok(l) => l
+    Err(_) => return None
+  }
+  let cache = internal.lock_shared(os.fs, "${dir}/xo-cache.lock").ok()
+  gate.unlock()
+  cache
+}
+
+fn release_go_cache(l: internal.SharedLock?) {
+  if let Some(h) = l {
+    h.unlock()
+  }
+}
+
 /// One `go build` of the tree for target tg with tags and the linker
 /// flags ld before -s -w (goBuild), through the binary cache: its exit
 /// status and output.
@@ -253,7 +283,15 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
   let parts = tg.split("/")
   let cgo = if race { "CGO_ENABLED=1" } else { "CGO_ENABLED=0" }
   let env = ["GOOS=${parts[0]}", "GOARCH=${parts[1]}", "GOWORK=off", "GOFLAGS=", "GOCACHE=${go_cache_dir(os, ctx)}", cgo]
-  let br = os.proc.run("env", env + [gocmd, "-C", tree] + args + ["-o", out, "."])?
+  let held = hold_go_cache(os, ctx)
+  let br = match os.proc.run("env", env + [gocmd, "-C", tree] + args + ["-o", out, "."]) {
+    Ok(r) => r
+    Err(e) => {
+      release_go_cache(held)
+      return Err(e)
+    }
+  }
+  release_go_cache(held)
   if br.code == 0 {
     store_bin(os, entry, out)
   }

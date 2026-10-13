@@ -1,0 +1,30 @@
+// The Windows API functions the native runtime calls from Xo (decision
+// 0213, decision 0195 prerequisite 3). A declaration file like rt.xo and
+// sys_darwin.xo, imported only by runtime modules (`use
+// native/sys_windows`, decision 0074): each bodiless function is a call
+// of the DLL export of its name (dllimport: kernel32 and bcrypt, which
+// the runtime links) with the C ABI. An Int argument is one word (a
+// HANDLE, DWORD, or pointer: an address made with rt.bytes_addr), a
+// Bytes argument the address of its data (a UTF-16 path with its NUL),
+// kept alive across the call; an Int32 result is a BOOL or NTSTATUS, a
+// UInt32 one a DWORD. The SSA builders make a call for another target OS
+// a fault, so only the Windows arms of std/native/llrt/sysio.xo reach
+// these.
+
+/// CreateFileW: the handle, or INVALID_HANDLE_VALUE (-1).
+fn CreateFileW(name: Bytes, access: Int, share: Int, security: Int, disposition: Int, flags: Int, template: Int) -> Int
+fn ReadFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
+fn WriteFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
+fn CloseHandle(h: Int) -> Int32
+fn GetLastError() -> UInt32
+/// GetFileInformationByHandle into the BY_HANDLE_FILE_INFORMATION (52
+/// bytes) at the address info.
+fn GetFileInformationByHandle(h: Int, info: Int) -> Int32
+/// GetFileAttributesW: INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) when the path
+/// does not exist.
+fn GetFileAttributesW(name: Bytes) -> UInt32
+fn GetFileType(h: Int) -> UInt32
+/// GetSystemTimePreciseAsFileTime into the FILETIME at the address ft.
+fn GetSystemTimePreciseAsFileTime(ft: Int)
+/// BCryptGenRandom (bcrypt.dll): 0 (STATUS_SUCCESS), or an NTSTATUS.
+fn BCryptGenRandom(alg: Int, buf: Int, n: Int, flags: Int) -> Int32

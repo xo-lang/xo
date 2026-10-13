@@ -1,6 +1,8 @@
 package ssa
 
 import (
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
@@ -181,6 +183,9 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 	if len(typeParams(fo)) > 0 {
 		return s.genericIntrinsic(x, ci, es)
 	}
+	if p := fo.Module.Path; p == "native/sys_darwin" || p == "native/sys_windows" {
+		return s.platformCall(x, fo, strings.TrimPrefix(p, "native/sys_"), es)
+	}
 	switch fo.Name {
 	case "fs_root", "fs_mode":
 		// the fields of an Fs (decision 0102)
@@ -325,4 +330,73 @@ func (s *fn) genericIntrinsic(x *ast.CallExpr, ci *check.Call, es []ast.Expr) *V
 	}
 	b.unsupported(x, "the intrinsic `"+fo.Name+"`")
 	return s.undef(nt)
+}
+
+// platformCall lowers a call of a platform library function declared in
+// std/native/sys_<os>.xo (decision 0213): the call `rt.pc.<os>.<sym>`,
+// with `/<n>` when the function is variadic after its first n parameters
+// (those before the first one named `va_*`). The emitters lower it to a
+// call of the bare C symbol with the C ABI, and to a trap on another OS
+// (the passes keep every arm of a `match` on `target`).
+func (s *fn) platformCall(x *ast.CallExpr, fo *check.FuncObj, os string, es []ast.Expr) *Value {
+	b := s.b
+	goos := b.opts.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if os != goos {
+		// another OS: the passes keep every arm of a `match` on `target`,
+		// and the symbol may not exist here
+		s.fault(s.add(OpConst, b.mod.Builtin(KStr), "the platform call `"+fo.Name+"` of "+os+" on another OS"), b.posLine(x))
+		s.dead()
+		return s.undef(b.typ(fo.Result, x))
+	}
+	var args []*Value
+	nfixed := -1
+	for i, p := range fo.Params {
+		if nfixed < 0 && strings.HasPrefix(p.Name, "va_") {
+			nfixed = i
+		}
+		pt := b.typ(p.Type, x)
+		switch pt.Kind {
+		case KInt, KFloat, KStr:
+		default:
+			b.unsupported(x, "a platform call taking a `"+pt.Name+"`")
+			return s.undef(s.natOf(x))
+		}
+		args = append(args, s.valueAs(es[i], pt))
+	}
+	aux := "rt.pc." + os + "." + fo.Name
+	if nfixed >= 0 {
+		aux += "/" + strconv.Itoa(nfixed)
+	}
+	rt := b.typ(fo.Result, x)
+	switch rt.Kind {
+	case KUnit:
+		s.add(OpCall, rt, aux, args...)
+		return s.unit()
+	case KInt, KFloat:
+		return s.add(OpCall, rt, aux, args...)
+	}
+	b.unsupported(x, "a platform call returning a `"+rt.Name+"`")
+	return s.undef(rt)
+}
+
+// PlatformParts splits a platform call's name `rt.pc.<os>.<sym>[/<n>]`
+// (decision 0213): the OS, the C symbol, and the number of fixed
+// parameters of a variadic function (-1 when it is not one).
+func PlatformParts(name string) (os, sym string, nfixed int) {
+	rest := strings.TrimPrefix(name, "rt.pc.")
+	os, sym, ok := strings.Cut(rest, ".")
+	if !ok {
+		return "", rest, -1
+	}
+	nfixed = -1
+	if a, n, ok := strings.Cut(sym, "/"); ok {
+		sym = a
+		if k, err := strconv.Atoi(n); err == nil {
+			nfixed = k
+		}
+	}
+	return os, sym, nfixed
 }

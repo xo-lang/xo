@@ -3,10 +3,15 @@
 
 /// Runs the checker's passes over the loaded modules (check.go run):
 /// declarations, type declarations, and signatures of every module, then
-/// the bodies of the user modules.
-fn (var c: Checker) run() {
+/// the bodies of the user modules. The error is a prelude without a core
+/// type the passes name (prelude_missing), found after the declarations.
+fn (var c: Checker) run() -> () ! Str {
   for m in c.order {
     c.declare(m)
+  }
+  let missing = c.prelude_missing()
+  if !missing.is_empty() {
+    return Err(missing)
   }
   for m in c.order {
     c.resolve_types(m)

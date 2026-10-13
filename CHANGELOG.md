@@ -12,6 +12,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_RTSTATS=1` reports `fiber_live` and `fiber_peak`, and a failing
   task stack mapping says how many stacks were mapped
   (knowledgebase/gotchas/linux-tsan-fiber-stacks.md).
+- Native backends on macOS (arm64) and Windows: `os.fs` read, write,
+  and stat call libSystem and kernel32 directly from Xo (decision 0213)
+  instead of going through the C runtime, with the same errors and
+  messages byte for byte; on macOS within the C path's instructions
+  (0.562 to 1.013 times, bench/results/platform-calls-2026-10-13.md).
+  `XO_LLRT_C=sysio` builds the C path.
+- The self-hosted toolchain's Go backend holds the shared lock on the Xo
+  Go cache while go build runs, as the Go implementation does, so a
+  concurrent cache trim no longer removes entries a build is reading
+  (decision 0214). The lock comes from `std/internal`, a module only std
+  and the toolchain can import; Xo's public `fs.lock` is unchanged.
+- `xo` run with no std library to find (no $XO_STD and no release
+  layout beside the binary), or with a std whose prelude lacks a core
+  type, now says so (`std library not found: ...`, exit 2) instead of
+  faulting in the checker with `prelude type missing: Int`.
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the
