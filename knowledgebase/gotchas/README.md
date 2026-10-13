@@ -410,3 +410,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wasm-rt-name-collides-with-generated.md](wasm-rt-name-collides-with-generated.md): Observed: a WAT runtime helper `$eq8` collided with the wasm backend's generated type equality `$eq8`; prefix runtime helpers.
 - [uses-is-a-keyword.md](uses-is-a-keyword.md): Observed: a local named `uses` is a parse error (effect clauses); name it `us`.
 - [module-shadowed-by-function.md](module-shadowed-by-function.md): Observed: `use native/llrt/scan` in a module with a function `scan` gives XO0407 at its calls; import with `as`.
+- [ec2-full-tier-skipped-wasm.md](ec2-full-tier-skipped-wasm.md): Observed, fixed: EC2 full runs had no Node, so TestSelfhostWasm skipped silently; remote-full.sh installs nodejs and logs its version.
