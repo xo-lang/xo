@@ -284,6 +284,15 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word(0xd4200000 | (v * 32))
     }
     "nop" => a.word(NOP)
+    "sxtw" => {
+      // sbfm xd, xn, #0, #31 (rt.mem_cmp's result, decision 0207)
+      let (d, kd) = if n == 2 { reg(ops[0]) } else { (-1, 0) }
+      let (s, ks) = if n == 2 { reg(ops[1]) } else { (-1, 0) }
+      if kd != RX || ks != RW {
+        return a.bad(m, ops)
+      }
+      a.word(0x93407c00 | (s * 32) | d)
+    }
     "mrs" => {
       // the thread pointer of ELF's local exec model (decision 0212)
       let (r, k) = if n == 2 { reg(ops[0]) } else { (-1, 0) }
