@@ -4958,10 +4958,45 @@ int64_t xo_atomic_max(xo_atomic *a, int64_t n) {
 // inlined and return -errno: errno is a thread local (see cur_get).
 
 #if defined(_WIN32)
-// Windows (decision 0197, stage 1): the poller waits on an event for
-// timers and wake ups; sockets have no readiness source yet (IOCP or
-// AFD polling is stage 2), so pd_new refuses them
+// Windows (decision 0197): the poller waits on an I/O completion port.
+// Socket readiness comes from AFD polls (IOCTL_AFD_POLL on \Device\Afd,
+// the driver under Winsock's select and WSAPoll, as wepoll and mio use
+// it): a waiter arms a one shot poll of its socket for the directions
+// waited in, and its completion hands the readiness over (stage 5). When
+// the AFD device cannot be opened the poller falls back to WSAPoll over
+// every descriptor someone waits on (stage 1), with a loopback socket
+// pair as the self pipe; XO_WINPOLL=wsapoll forces that (to compare).
 #define XO_WINPOLL 1
+#include <winternl.h>
+#pragma comment(lib, "ntdll")
+typedef struct {
+	HANDLE handle;
+	ULONG events;
+	NTSTATUS status;
+} xo_afd_handle;
+typedef struct {
+	LARGE_INTEGER timeout;
+	ULONG n;
+	ULONG exclusive;
+	xo_afd_handle h[1];
+} xo_afd_poll;
+#define XO_IOCTL_AFD_POLL 0x00012024
+#define XO_AFD_RECEIVE 0x0001
+#define XO_AFD_RECEIVE_EXPEDITED 0x0002
+#define XO_AFD_SEND 0x0004
+#define XO_AFD_DISCONNECT 0x0008
+#define XO_AFD_ABORT 0x0010
+#define XO_AFD_LOCAL_CLOSE 0x0020
+#define XO_AFD_ACCEPT 0x0080
+#define XO_AFD_CONNECT_FAIL 0x0100
+#define XO_AFD_READ (XO_AFD_RECEIVE | XO_AFD_RECEIVE_EXPEDITED | XO_AFD_DISCONNECT | XO_AFD_ABORT | XO_AFD_LOCAL_CLOSE | XO_AFD_ACCEPT | XO_AFD_CONNECT_FAIL)
+#define XO_AFD_WRITE (XO_AFD_SEND | XO_AFD_ABORT | XO_AFD_LOCAL_CLOSE | XO_AFD_CONNECT_FAIL)
+#ifndef STATUS_PENDING
+#define STATUS_PENDING ((NTSTATUS)0x00000103L)
+#endif
+#ifndef SIO_BASE_HANDLE
+#define SIO_BASE_HANDLE _WSAIORW(IOC_WS2, 34) // mswsock.h
+#endif
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/event.h>
 #define XO_KQUEUE 1
@@ -4989,6 +5024,17 @@ typedef struct xo_pd {
 	int rready, wready;
 	xo_park *rwait, *wwait;
 	struct xo_pd *next; // ev.dead
+#ifdef XO_WINPOLL
+	// AFD polling (pd_arm): the poll's status block and buffer, the
+	// socket's base handle, the events of the poll in flight (0 none),
+	// whether to poll again once it ends (it was cancelled for more
+	// events), and whether the poller frees it once it ends (pd_free ran)
+	IO_STATUS_BLOCK iosb;
+	xo_afd_poll info;
+	SOCKET base;
+	ULONG armed;
+	int rearm, dying;
+#endif
 } xo_pd;
 
 static struct {
@@ -5001,6 +5047,7 @@ static struct {
 	xo_pd *dead;
 	int sigs; // signals not handled yet (atomic)
 #ifdef XO_WINPOLL
+	HANDLE iocp, afd; // the completion port and the AFD device (NULL: WSAPoll)
 	int wr, ww;     // the self pipe: a connected loopback socket pair
 	xo_pd **regs;   // the registered descriptors (ev.mu)
 	int nreg, creg; //
@@ -5125,7 +5172,11 @@ static void set_nonblock(int fd) {
 // ev_poke wakes the poller (a new first timer).
 static void ev_poke(void) {
 #ifdef XO_WINPOLL
-	send((SOCKET)ev.ww, "w", 1, 0);
+	if (ev.afd) {
+		PostQueuedCompletionStatus(ev.iocp, 0, 1, NULL);
+	} else {
+		send((SOCKET)ev.ww, "w", 1, 0);
+	}
 	return;
 #endif
 	char b = 'w';
@@ -5135,14 +5186,46 @@ static void ev_poke(void) {
 
 static void *poller_main(void *arg);
 
+#ifdef XO_WINPOLL
+// afd_open opens the AFD device for polls, its completions on iocp; NULL
+// when it cannot (the poller uses WSAPoll then).
+static HANDLE afd_open(HANDLE iocp) {
+	const char *e = getenv("XO_WINPOLL");
+	if (e && strcmp(e, "wsapoll") == 0) {
+		return NULL;
+	}
+	xo_wsa_init();
+	static WCHAR name[] = L"\\Device\\Afd\\Xo";
+	UNICODE_STRING u = {(USHORT)(sizeof name - sizeof(WCHAR)), (USHORT)sizeof name, name};
+	OBJECT_ATTRIBUTES a;
+	InitializeObjectAttributes(&a, &u, 0, NULL, NULL);
+	IO_STATUS_BLOCK iosb;
+	HANDLE h = NULL;
+	NTSTATUS st = NtCreateFile(&h, SYNCHRONIZE, &a, &iosb, NULL, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0);
+	if (st != 0) {
+		return NULL;
+	}
+	if (!CreateIoCompletionPort(h, iocp, 0, 0)) {
+		CloseHandle(h);
+		return NULL;
+	}
+	SetFileCompletionNotificationModes(h, FILE_SKIP_SET_EVENT_ON_HANDLE);
+	return h;
+}
+#endif
+
 static void ev_init(void) {
 #ifdef XO_WINPOLL
-	int sv[2];
-	if (xo_w_socketpair(sv) < 0) {
-		xo_oom();
+	ev.iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+	ev.afd = ev.iocp ? afd_open(ev.iocp) : NULL;
+	if (!ev.afd) {
+		int sv[2];
+		if (xo_w_socketpair(sv) < 0) {
+			xo_oom();
+		}
+		ev.wr = sv[0];
+		ev.ww = sv[1];
 	}
-	ev.wr = sv[0];
-	ev.ww = sv[1];
 #else
 	if (xo_pipe(ev.pfd) < 0) {
 		xo_oom();
@@ -5316,9 +5399,20 @@ static xo_pd *pd_new(int fd, int write) {
 	mu_init(&pd->mu);
 	pd->fd = fd;
 #if defined(XO_WINPOLL)
+	(void)write;
+	if (ev.afd) {
+		// polls go to the socket's base handle (below any layered
+		// service provider)
+		DWORD got = 0;
+		pd->base = (SOCKET)fd;
+		SOCKET b = INVALID_SOCKET;
+		if (WSAIoctl((SOCKET)fd, SIO_BASE_HANDLE, NULL, 0, &b, sizeof b, &got, NULL, NULL) == 0 && b != INVALID_SOCKET) {
+			pd->base = b;
+		}
+		return pd;
+	}
 	// WSAPoll is level triggered: the poller polls a descriptor only in
 	// the directions someone waits in (pd_wait_until pokes it)
-	(void)write;
 	pthread_mutex_lock(&ev.mu);
 	if (ev.nreg == ev.creg) {
 		ev.creg = ev.creg ? ev.creg * 2 : 64;
@@ -5418,6 +5512,79 @@ static void pd_close(xo_pd *pd) {
 	}
 }
 
+#ifdef XO_WINPOLL
+// pd_arm (pd->mu held, AFD polling) starts a poll of pd's socket for the
+// directions someone waits in, unless one runs; a running poll that lacks
+// a direction now waited in is cancelled, and its completion starts the
+// wider one.
+static void pd_arm(xo_pd *pd) {
+	if (pd->closed || pd->fd < 0 || pd->dying) {
+		return;
+	}
+	ULONG want = (pd->rwait ? XO_AFD_READ : 0) | (pd->wwait ? XO_AFD_WRITE : 0);
+	if (!want) {
+		return;
+	}
+	if (pd->armed) {
+		if ((want & ~pd->armed) && !pd->rearm) {
+			pd->rearm = 1;
+			CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
+		}
+		return;
+	}
+	pd->info.timeout.QuadPart = INT64_MAX;
+	pd->info.n = 1;
+	pd->info.exclusive = FALSE;
+	pd->info.h[0].handle = (HANDLE)pd->base;
+	pd->info.h[0].events = want;
+	pd->info.h[0].status = 0;
+	pd->iosb.Status = STATUS_PENDING;
+	NTSTATUS st = NtDeviceIoControlFile(ev.afd, NULL, NULL, pd, &pd->iosb, XO_IOCTL_AFD_POLL, &pd->info, sizeof pd->info, &pd->info,
+		sizeof pd->info);
+	if (st == 0 || st == STATUS_PENDING) {
+		pd->armed = want; // the completion comes through the port either way
+		return;
+	}
+	// the poll was refused (a closed socket): let the operations run and
+	// meet the error
+	if (pd->rwait) {
+		park_signal(pd->rwait);
+		pd->rwait = NULL;
+	}
+	if (pd->wwait) {
+		park_signal(pd->wwait);
+		pd->wwait = NULL;
+	}
+}
+
+// afd_done handles the completion of pd's poll (on the poller thread):
+// the readiness to its waiters, then a new poll while someone waits; a
+// descriptor pd_free gave up is freed now that no poll runs.
+static void afd_done(xo_pd *pd) {
+	pthread_mutex_lock(&pd->mu);
+	pd->armed = 0;
+	pd->rearm = 0;
+	int mode = 0;
+	if (NT_SUCCESS(pd->iosb.Status) && pd->info.n >= 1) {
+		ULONG e = pd->info.h[0].events;
+		mode = ((e & XO_AFD_READ) ? 1 : 0) | ((e & XO_AFD_WRITE) ? 2 : 0);
+	}
+	int dying = pd->dying;
+	pthread_mutex_unlock(&pd->mu);
+	if (dying) {
+		pthread_mutex_destroy(&pd->mu);
+		free(pd);
+		return;
+	}
+	if (mode) {
+		pd_ready(pd, mode);
+	}
+	pthread_mutex_lock(&pd->mu);
+	pd_arm(pd);
+	pthread_mutex_unlock(&pd->mu);
+}
+#endif
+
 // pd_free closes the descriptor and hands it to the poller to free.
 static void pd_free(xo_pd *pd) {
 	if (!pd) {
@@ -5460,9 +5627,16 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 		}
 		park_reset(&c->park);
 		*slot = &c->park;
+#ifdef XO_WINPOLL
+		if (ev.afd) {
+			pd_arm(pd);
+		}
+#endif
 		pthread_mutex_unlock(&pd->mu);
 #ifdef XO_WINPOLL
-		ev_poke(); // the poller polls the directions waited in
+		if (!ev.afd) {
+			ev_poke(); // the poller polls the directions waited in
+		}
 #endif
 		if (when && !timed) {
 			timed = 1;
@@ -5548,6 +5722,19 @@ static void *poller_main(void *arg) {
 			xo_pd *pd = ev.dead;
 			ev.dead = pd->next;
 #ifdef XO_WINPOLL
+			if (ev.afd) {
+				// a poll in flight still names it: freed by its completion
+				pthread_mutex_lock(&pd->mu);
+				int armed = pd->armed != 0;
+				if (armed) {
+					pd->dying = 1;
+					CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
+				}
+				pthread_mutex_unlock(&pd->mu);
+				if (armed) {
+					continue;
+				}
+			}
 			for (int i = 0; i < ev.nreg; i++) {
 				if (ev.regs[i] == pd) {
 					ev.regs[i] = ev.regs[--ev.nreg];
@@ -5575,6 +5762,24 @@ static void *poller_main(void *arg) {
 		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
 		if (wait > (int64_t)1 << 40) {
 			ms = 1 << 30;
+		}
+		if (ev.afd) {
+			OVERLAPPED_ENTRY es[64];
+			ULONG got = 0;
+			if (!GetQueuedCompletionStatusEx(ev.iocp, es, 64, &got, ms, FALSE)) {
+				got = 0;
+			}
+			STAT(poll_return);
+			for (ULONG i = 0; i < got; i++) {
+				if (es[i].lpOverlapped) {
+					afd_done((xo_pd *)es[i].lpOverlapped);
+				}
+			}
+			for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
+				stop_signal();
+			}
+			(void)evs;
+			continue;
 		}
 		// the descriptors someone waits on, in the directions waited for
 		pthread_mutex_lock(&ev.mu);

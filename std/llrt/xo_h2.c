@@ -2449,7 +2449,18 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 		pd->rready = 0;
 	} else {
 		pd->rwait = &x->park;
+#ifdef XO_WINPOLL
+		// the poller watches what someone waits for (pd_wait_until)
+		if (ev.afd) {
+			pd_arm(pd);
+		}
+#endif
 		pthread_mutex_unlock(&pd->mu);
+#ifdef XO_WINPOLL
+		if (!ev.afd) {
+			ev_poke();
+		}
+#endif
 		xo_timer t = {.when = when, .idx = -1, .fn = h2_timer_fn, .arg = &x->park};
 		if (when) {
 			if (tnow() >= when) {

@@ -8,8 +8,8 @@
 //   - the futex: WaitOnAddress and WakeByAddressSingle (xo_rt.c);
 //   - clocks: QueryPerformanceCounter (monotonic) and
 //     GetSystemTimePreciseAsFileTime (wall clock);
-//   - sockets: Winsock 2 (initialized on first use); the poller has no
-//     socket readiness yet (stage 2), so registering a socket fails;
+//   - sockets: Winsock 2 (initialized on first use); readiness comes
+//     from AFD polls on the poller's completion port (xo_rt.c);
 //   - descriptors: the C runtime's _read/_write/_close, in binary mode.
 //
 // Faults unwind with the Windows unwinder (RtlVirtualUnwind, xo_rt.c)
