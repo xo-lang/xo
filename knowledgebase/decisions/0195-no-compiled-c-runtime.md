@@ -15,8 +15,10 @@ sockets, DNS from Xo) open. Prerequisite 2 (raw memory) stage 1 done
 "(0) held by C callers" group moved but the test world stores, which
 are (1) and (2); `bench/results/raw-memory-2026-10-13.md`); stage 2's
 reference counts moved to Xo (std/native/llrt/rc.xo, XO_LLRT_C=rc for
-the C) and lists of zeros take one allocation (raw.zero_ints), the
-allocator not started; Argon2id and BLAKE2b stay C (1.155 of the C on
+the C) and lists of zeros take one allocation (raw.zero_ints); stage 3
+moved the allocator (std/native/llrt/alloc.xo, XO_LLRT_C=alloc for the
+C; the heap pointer stays a C thread local, (6), with the intrinsics
+designed in decision 0207); Argon2id and BLAKE2b stay C (1.155 of the C on
 LLVM, 0.980 on arm64).
 
 ## Context

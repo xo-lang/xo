@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends: the memory allocator (size classes, free lists,
+  chunks, and the magazines that hand freed blocks between threads) is
+  Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the
+  C runtime through C ABI exports; within 5 percent of the C's
+  instructions on both backends and below it on LLVM
+  (bench/results/raw-memory-2026-10-13.md, bench/perf/alloc).
+  `XO_LLRT_C=alloc` builds the C path.
 - Native backends: the C runtime's reference count operations (retain,
   release, claim, and marking a value shared between threads) are Xo
   (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C

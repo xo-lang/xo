@@ -5,8 +5,10 @@ mechanism of decision 0204 and the raw memory intrinsics of decision
 0195 prerequisite 2, internal to std (decision 0074). Stage 2 (design
 below): reference counts implemented 2026-10-13 (std/native/llrt/rc.xo,
 the default; `XO_LLRT_C=rc` keeps the C until a full tier passes on
-main), with `raw.zero_ints`; the allocator not started (what it needs:
-results file, stage 2).
+main), with `raw.zero_ints`. Stage 3: the allocator implemented
+2026-10-13 (std/native/llrt/alloc.xo, the default; `XO_LLRT_C=alloc`
+keeps the C until a full tier passes on main; the heap pointer stays
+a C thread local until the thread local design below lands).
 Files: `std/native/llrt/cabi.xo`, `cabi_tls.xo`, `cabi_time.xo`,
 `raw.xo`, `netpolicy.xo`, `tlsname.xo`, `std/native/rt.xo` (raw memory),
 internal/ssa `rawmem.go`, selfhost/ssa `build.xo` (declare_exports) and
@@ -16,7 +18,9 @@ inlineRaw and exports; selfhost/arm64 calls.xo and gen.xo;
 selfhost/llvm call.xo and gen.xo; selfhost/wasm call.xo and rt2.xo),
 std/llrt (xo_rt.c, xo_std.c, xo_bytes.c, xo_http.c, xo_time.c,
 xo_tls.c). Tests: TestCABIDiff (new), the C only runtime tests through
-`cOnly`, the goldens. Evidence: `bench/results/raw-memory-2026-10-13.md`.
+`cOnly`, the goldens; stage 3: `std/native/llrt/alloc.xo`,
+`alloc_c.xo`, `std/llrt/testdata/alloc_threads.c` (TestRuntimeAlloc),
+`bench/perf/alloc`. Evidence: `bench/results/raw-memory-2026-10-13.md`.
 
 ## Context
 
@@ -168,6 +172,74 @@ Not implemented; the order and the rules for the step after this one.
   percent on both backends (worst steady case text debug on arm64,
   1.037 less setup). Not done: TestCABIDiff's count and allocation
   statistics against the C path.
+
+## Stage 3 as implemented (2026-10-13): the allocator
+
+- **Module** `native/llrt/alloc` (alloc.xo; alloc_c.xo is the C path
+  over `rt.alloc_*_c`, -DXO_ALLOC_C): `alloc`, `free`, `refill`
+  (alloc_mt's spare magazine and central_take), `free_mt` (free_in plus
+  central_put), and `resize`, exported by cabi.xo as `xo_x_heap_*`. The
+  C entry points (xo_alloc, xo_free, xo_resize, rs_new, rs_append)
+  stay and call them with the calling thread's heap record; the heap
+  record stays a C struct whose first words are at alloc.xo's constant
+  offsets (`_Static_assert` in xo_rt.c). Size classes, the free lists
+  as intrusive links, the bump chunk, the leak and budget counters,
+  the real-time allocation count, and the magazines are Xo. The
+  central lists keep the C pthread mutex (`rt.heap_lock`/`heap_unlock`;
+  `slot_cas` would need ABA protection for a stack of magazines).
+- **Platform calls** are C leaves the module may call (`rt.heap_*`:
+  malloc with the prefix, realloc, free, a new chunk that re-enters
+  `xo_x_heap_alloc`, the mutex); they exit on out of memory as the C
+  did, never fault. Every call is the last thing on its path (nothing
+  live after it), so the arm64 code keeps no callee saved register.
+- **Design 3** (no allocation, no counting) is enforced on the module by
+  the same `check_no_alloc` (selfhost/ssa contract.xo), which also
+  allows `rt.prefetch`, `rt.mem_copy`, `rt.heap_*`, `rt.alloc_*_c`.
+  Since a function may call no other function, resize writes out
+  alloc's pop and carve and free's push (one Xo call for a move on one
+  thread instead of three).
+- **New internal intrinsic** `rt.prefetch(a)` (the free list pop's
+  prefetch of the next link): prfm on arm64, llvm.prefetch on LLVM,
+  nothing on wasm, in all five emitters. Both arm64 emitters now use
+  the immediate forms for constant `mem_load`/`mem_store` offsets and
+  `int_wrap` add and subtract constants.
+- **`usable`** became a word of the record (`last_size`, set by alloc
+  and resize) that rs_new and rs_append read after their one call; on
+  LLVM the C marks the single threaded calls `[[clang::always_inline]]`
+  so LTO inlines them where the C copy was inline.
+- **The bar** holds on both backends (results file, stage 3: worst
+  arm64 alloc small 1.040 less setup, conc spawn 1.035; LLVM at most
+  1.013); stress test alloc_threads.c (TestRuntimeAlloc) under
+  ThreadSanitizer for both paths.
+
+### Design: thread local state for the runtime (next, not implemented)
+
+Xo has no way to name a thread local or a mutable global word, so the
+C still finds the heap record (`solo_heap`, `__thread tls_heap`) and
+passes it in. Both are internal intrinsics of `native/rt`, not user
+visible (only std's implementation modules load native/rt, decision
+0080), so they need no language change:
+
+1. `rt.static_word(k) -> Int`: the address of word k (a constant) of a
+   zero initialized internal table in the program's data (`.bss`):
+   solo_heap, the central lists' heads, the chunk counter. arm64 an
+   adrp/add of a module symbol (`xo_rt_words`), LLVM a global array,
+   wasm a static address. The words are reached with the slot atomics.
+2. `rt.tls_get(k) -> Int` and `rt.tls_set(k, v)`: word k (a constant)
+   of a per thread table. LLVM: a `thread_local` global array (the C's
+   `__thread`). selfhost/arm64 and internal/arm64 with the platform
+   linker: Linux initial exec (`mrs x0, tpidr_el0` plus a GOT TPREL
+   offset), macOS a TLV descriptor call (`adrp x0, sym@TLVPPAGE; ldr x0,
+   [x0, sym@TLVPPAGEOFF]; ldr x1, [x0]; blr x1`); selfhost/macho's own
+   linker needs a `__thread_vars` section on Mach-O and a PT_TLS segment
+   with TLS relocations in its ELF writer; Windows a TLS index through
+   the TEB. wasm: one thread, a static word.
+3. Then xo_alloc and xo_free become Xo (the solo check is
+   `static_word(SOLO)`, the threaded path `tls_get(HEAP)`), generated
+   code calls the export directly (no C wrapper, no branch), and heap
+   creation moves with the rest of the thread start (decision 0195
+   prerequisite (6): the fiber switch and the current context use the
+   same `tls_get`).
 
 ## Consequences
 

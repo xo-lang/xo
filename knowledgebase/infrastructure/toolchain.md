@@ -806,6 +806,21 @@ Last verified: 2026-10-07
   their counts vary by 10 percent between runs). Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 2). Last verified:
   2026-10-13.
+- `XO_LLRT_C=alloc` (2026-10-13, decision 0207 stage 3): the C
+  runtime's own allocator (alloc_in, free_in, alloc_mt, free_mt,
+  usable, resize compiled with -DXO_ALLOC_C, which both drivers add
+  when the generated code calls alloc_c.xo's rt.alloc_*_c) instead of
+  std/native/llrt/alloc.xo through the xo_x_heap_* exports (the
+  default). `go test ./internal/llvm -run TestRuntimeAlloc` runs
+  std/llrt/testdata/alloc_threads.c both ways under ThreadSanitizer
+  (about 5 s; -O2 with ITER 30000 without -short).
+  `bench/perf/alloc/compare.sh <xo> <out> <program dir> <workload...>`
+  builds a program both ways on arm64 and LLVM and prints the minimum
+  instructions of 5 runs and their ratio (bench/perf/alloc: none small
+  mixed grow strings maps tasks; also nested, xo, text, json, conc);
+  through the heavy lock. Results in
+  `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
+  2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
   0195): sized integers, std/crypto's hashes, path.Match, and generated
