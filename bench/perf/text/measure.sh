@@ -6,7 +6,7 @@
 #
 # usage: bench/perf/text/measure.sh <xo binary> <out dir> <backend...>
 # example: bench/perf/text/measure.sh .tools/bin/xo /tmp/t arm64 llvm
-# XO_LLRT_C=text (or num, show, tz, ...) in the environment builds the C
+# XO_LLRT_C=text (or show, tz, report) in the environment builds the C
 # path (decision 0193);
 # WORKLOADS overrides the list; "none" is the setup alone (the inputs).
 set -e

@@ -393,3 +393,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [threads-golden-needs-zone-data.md](threads-golden-needs-zone-data.md): Observed: TestGoldenThreads links without -DXO_TIME and the zone data object, so std/time goldens are skipped there.
 - [heavy-log-grep-binary.md](heavy-log-grep-binary.md): Observed: a test log holding a NUL byte (a golden printing U+0000) makes grep print nothing; use grep -a.
 - [when-is-a-keyword.md](when-is-a-keyword.md): Observed: a field or variable named `when` gives an XO0502/XO0406/XO0160 cascade that never names the keyword; rename it.
+- [llrt-comment-lines-shift-ssa-goldens.md](llrt-comment-lines-shift-ssa-goldens.md): Observed: a comment in std/native/llrt shortened by one line moved every `@ num.xo:L:C` position in the internal/ssa goldens; keep the line count or rerun with -update.

@@ -1,4 +1,4 @@
-// http_fuzz.c: a mutation fuzzer of the native std/http and std/json
+// http_fuzz.c: a mutation fuzzer of the native std/http
 // parsers (decision 0074), run by internal/llvm's TestHTTPFuzz with
 // AddressSanitizer and UndefinedBehaviorSanitizer for a bounded time.
 // Each input goes through:
@@ -10,17 +10,13 @@
 //   - HTTP/2 (xo_h2.c, decision 0121): mutated frame sequences through the
 //     server's frame code (preface, frames, HPACK, streams, the handlers'
 //     whole and streamed responses and resets, the sending of it all)
-//     and the client's (h2cc_process);
-//   - the JSON parser and the tape readers (xo_json_parse, members,
-//     strings, numbers).
+//     and the client's (h2cc_process).
 //
 // No crash, no sanitizer report, no leak of the runtime's allocator (the
 // leak counter is checked after each input). Prints the number of inputs
 // run. FUZZ_SECONDS (default 3) bounds the time, FUZZ_SEED the inputs.
 
 #define XO_RT_NO_MAIN
-// the C path of std/json's text (decision 0193 step 4)
-#define XO_JSONTEXT_C
 #include "../xo_rt.c"
 
 static const char *seeds[] = {
@@ -161,39 +157,6 @@ static void run_client(const char *in, int64_t n) {
 	free(c.buf);
 	hl_free(&r.hdr);
 	free(r.body.p);
-}
-
-static void run_json(const char *in, int64_t n) {
-	xo_rlist *t = xo_json_parse(in, n);
-	if (t->len == 0) {
-		int64_t l;
-		xo_rstr *e = xo_json_parse_err(in, n, &l);
-		xo_free(e);
-		xo_free(t);
-		return;
-	}
-	int64_t *tp = (int64_t *)rl_data(t);
-	for (int64_t i = 0; i < t->len; i += 3) {
-		int64_t l;
-		switch (tp[i]) {
-		case JK_STR: {
-			xo_rstr *s = xo_json_str(in, n, t, i, &l);
-			xo_free(s);
-			break;
-		}
-		case JK_NUM:
-			(void)xo_json_int_ok(in, n, t, i);
-			(void)xo_json_float(in, n, t, i);
-			break;
-		case JK_OBJ: {
-			xo_rlist *m = xo_json_members(in, n, t, i);
-			xo_free(m);
-			(void)xo_json_find(in, n, t, i, "a", 1);
-			break;
-		}
-		}
-	}
-	xo_free(t);
 }
 
 
@@ -375,7 +338,6 @@ int main(void) {
 			}
 			run_server(b.p ? b.p : "", b.n);
 			run_client(b.p ? b.p : "", b.n);
-			run_json(b.p ? b.p : "", b.n);
 			free(b.p);
 			// HTTP/2 frames
 			nbuf h = {0};

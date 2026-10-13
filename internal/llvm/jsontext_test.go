@@ -189,12 +189,12 @@ func jsonTextCorpus(n int) string {
 // TestJSONTextDiff runs jsonTextDiffProg over jsonTextCorpus on the Go
 // backend (std/rt's jsonParse over encoding/json, the reference) and on
 // both native backends with std/json's text in Xo (std/native/llrt/
-// jsontext.xo) and with its C path (XO_LLRT_C=jsontext), and requires
-// the Go backend's lines; the LLVM build of the Xo path also frees every
-// allocation (decision 0193 step 4).
+// jsontext.xo), and requires the Go backend's lines; the LLVM build also
+// frees every allocation (decision 0193 step 4; decision 0198 deleted
+// the C path).
 func TestJSONTextDiff(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds five programs")
+		t.Skip("builds three programs")
 	}
 	n := 6000
 	if s := os.Getenv("XO_JSONDIFF_N"); s != "" {
@@ -219,12 +219,9 @@ func TestJSONTextDiff(t *testing.T) {
 	if len(want) != len(inLines) {
 		t.Fatalf("go backend: %d lines for %d inputs", len(want), len(inLines))
 	}
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "jsontext")
-				}
 				r, res := buildRun(t, dir, build.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
@@ -253,7 +250,7 @@ func TestJSONTextDiff(t *testing.T) {
 				if bad > 0 {
 					t.Errorf("%d of %d lines differ", bad, len(want))
 				}
-				if path == "xo" && be == build.BackendLLVM {
+				if be == build.BackendLLVM {
 					leakCheck(t, res.Binaries[build.Host()], dir)
 				}
 			})

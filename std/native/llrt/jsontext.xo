@@ -5,13 +5,13 @@
 // escaping of a Str and the text of a Float that its encoders call. They
 // were C (std/llrt/xo_json.c); the semantics are still std/rt's (the Go
 // backend's), so the native backends accept, reject, and print what it
-// does. The C path stays selectable (`XO_LLRT_C=jsontext` loads
-// jsontext_c.xo, and the SSA builder calls the C runtime's json_* as
-// before) until bench/perf/json meets decision 0180's bar on both native
-// backends.
+// does. Its C path (`XO_LLRT_C=jsontext`, jsontext_c.xo, and the SSA
+// builder's calls of the C runtime's json_*, std/llrt/xo_json.c) went
+// once bench/perf/json met decision 0180's bar on both native backends
+// (decision 0198).
 //
 // The tape is a List[Int] of nodes of three words each, as xo_json.c
-// builds it:
+// built it:
 //
 //	kind  0 null, 1 false, 2 true, 3 number, 4 string, 5 array, 6 object
 //	a     number, string: offset of the text in the source (a string's

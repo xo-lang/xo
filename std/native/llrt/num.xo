@@ -6,10 +6,10 @@
 // fmt_int and fmt_go_g, xo_std.c); the semantics are the Go backend's,
 // so the native backends print what it prints. The SSA builder calls
 // append_int and append_float for every interpolation and Display of an
-// Int or Float (the native prelude's llrt_concat_int and friends). The
-// C path stays selectable (`XO_LLRT_C=num` loads num_c.xo, and the SSA
-// builder calls the C runtime's str.concat_int as before) until
-// bench/perf/text meets decision 0180's bar on both native backends.
+// Int or Float (the native prelude's llrt_concat_int and friends). Its
+// C path (`XO_LLRT_C=num`, num_c.xo, and the SSA builder's calls of the
+// C runtime's str.concat_int) went once bench/perf/text met decision
+// 0180's bar on both native backends (decision 0198).
 //
 // Nothing here interpolates a number: the interpolation is this code.
 use native/llrt/num_tables
