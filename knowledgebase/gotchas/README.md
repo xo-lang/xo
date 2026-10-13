@@ -430,3 +430,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-length-after-call.md](llvm-length-after-call.md): Observed: on LLVM every list index after a call is checked again (the length is reloaded, and a call may write any memory); check the length once more after the calls.
 - [llvm-call-noalias-spills.md](llvm-call-noalias-spills.md): Observed, not kept: `!noalias` on calls lets GVN keep stored words in registers across them; 128 words across 16 calls spilled (Argon2id 1.093x against 1.044x).
 - [ssa-unwind-exit-returns-rl-empty.md](ssa-unwind-exit-returns-rl-empty.md): Observed: an unwind exit returns `rt.rl_empty`, not `list.new`, for each `var` List, so an analysis of returns must treat both as new lists.
+- [ec2-bundle-sent-head.md](ec2-bundle-sent-head.md): Observed, fixed: the EC2 scripts bundled HEAD instead of a non-HEAD commit; they now bundle through a temporary branch ref.
