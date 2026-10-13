@@ -49,6 +49,12 @@
 #endif
 #define NL_USED __attribute__((used))
 
+// Every C library function here is NL_USED, kept through LTO: the LLVM
+// backend's link optimizes the runtime with the program, and its code
+// generation may call a C library function (calloc, memcpy) after the
+// optimizer dropped an unreferenced definition. The linker's
+// --gc-sections still drops what nothing calls.
+
 // ---------------------------------------------------------------------------
 // System calls
 
@@ -83,7 +89,7 @@ static inline long nl_sys6(long n, long a, long b, long c, long d, long e, long 
 
 static __thread int nl_errno;
 
-int *__errno_location(void) { return &nl_errno; }
+NL_USED int *__errno_location(void) { return &nl_errno; }
 
 // nl_ret is r, or -1 with errno set when r is a negative errno.
 static long nl_ret(long r) {
@@ -104,22 +110,22 @@ static char **nl_argv;
 
 extern int main(int, char **);
 
-__attribute__((noreturn)) void _exit(int code) {
+NL_USED __attribute__((noreturn)) void _exit(int code) {
 	for (;;) {
 		nl_sys1(SYS_exit_group, code);
 	}
 }
 
-__attribute__((noreturn)) void exit(int code) { _exit(code); }
+NL_USED __attribute__((noreturn)) void exit(int code) { _exit(code); }
 
-__attribute__((noreturn)) void abort(void) {
+NL_USED __attribute__((noreturn)) void abort(void) {
 	nl_sys4(SYS_kill, nl_sys0(SYS_getpid), SIGABRT, 0, 0);
 	_exit(134);
 }
 
 // nl_die writes msg to standard error and ends the program (a call of a
 // C library function this file does not provide).
-__attribute__((noreturn, cold)) static void nl_die(const char *msg) {
+NL_USED __attribute__((noreturn, cold)) static void nl_die(const char *msg) {
 	const char *p = "xo: no C library (XO_NOLIBC, decision 0206): ";
 	nl_sys3(SYS_write, 2, p, __builtin_strlen(p));
 	nl_sys3(SYS_write, 2, msg, __builtin_strlen(msg));
@@ -127,7 +133,7 @@ __attribute__((noreturn, cold)) static void nl_die(const char *msg) {
 	_exit(70);
 }
 
-__attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv)); }
+NL_USED __attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv)); }
 
 // The static TLS block of every thread is laid out from the program's
 // PT_TLS segment: variant I on arm64 (the thread pointer at a 16 byte
@@ -267,7 +273,7 @@ static void *nl_map(long n) {
 	return (void *)r;
 }
 
-void *malloc(size_t n) {
+NL_USED void *malloc(size_t n) {
 	if (n == 0) {
 		n = 1;
 	}
@@ -308,7 +314,7 @@ void *malloc(size_t n) {
 	return (char *)b + 16;
 }
 
-void free(void *p) {
+NL_USED void free(void *p) {
 	if (!p) {
 		return;
 	}
@@ -324,7 +330,7 @@ void free(void *p) {
 	nl_unlock(&nl_mu);
 }
 
-void *calloc(size_t n, size_t m) {
+NL_USED void *calloc(size_t n, size_t m) {
 	size_t t;
 	if (__builtin_mul_overflow(n, m, &t)) {
 		nl_errno = ENOMEM;
@@ -337,7 +343,7 @@ void *calloc(size_t n, size_t m) {
 	return p;
 }
 
-void *realloc(void *p, size_t n) {
+NL_USED void *realloc(void *p, size_t n) {
 	if (!p) {
 		return malloc(n);
 	}
@@ -359,7 +365,7 @@ void *realloc(void *p, size_t n) {
 // Strings and memory (no_builtin: the compiler must not turn these loops
 // into calls of themselves)
 
-NL_NOBUILTIN void *memcpy(void *restrict d, const void *restrict s, size_t n) {
+NL_USED NL_NOBUILTIN void *memcpy(void *restrict d, const void *restrict s, size_t n) {
 	unsigned char *o = d;
 	const unsigned char *i = s;
 	while (n >= 8) {
@@ -376,7 +382,7 @@ NL_NOBUILTIN void *memcpy(void *restrict d, const void *restrict s, size_t n) {
 	return d;
 }
 
-NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
+NL_USED NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
 	unsigned char *o = d;
 	const unsigned char *i = s;
 	if (o == i || n == 0) {
@@ -396,7 +402,7 @@ NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
 	return d;
 }
 
-NL_NOBUILTIN void *memset(void *d, int c, size_t n) {
+NL_USED NL_NOBUILTIN void *memset(void *d, int c, size_t n) {
 	unsigned char *o = d;
 	while (n--) {
 		*o++ = (unsigned char)c;
@@ -404,7 +410,7 @@ NL_NOBUILTIN void *memset(void *d, int c, size_t n) {
 	return d;
 }
 
-NL_NOBUILTIN int memcmp(const void *a, const void *b, size_t n) {
+NL_USED NL_NOBUILTIN int memcmp(const void *a, const void *b, size_t n) {
 	const unsigned char *x = a, *y = b;
 	for (size_t i = 0; i < n; i++) {
 		if (x[i] != y[i]) {
@@ -414,9 +420,9 @@ NL_NOBUILTIN int memcmp(const void *a, const void *b, size_t n) {
 	return 0;
 }
 
-NL_NOBUILTIN int bcmp(const void *a, const void *b, size_t n) { return memcmp(a, b, n); }
+NL_USED NL_NOBUILTIN int bcmp(const void *a, const void *b, size_t n) { return memcmp(a, b, n); }
 
-NL_NOBUILTIN void *memchr(const void *s, int c, size_t n) {
+NL_USED NL_NOBUILTIN void *memchr(const void *s, int c, size_t n) {
 	const unsigned char *p = s;
 	for (size_t i = 0; i < n; i++) {
 		if (p[i] == (unsigned char)c) {
@@ -426,7 +432,7 @@ NL_NOBUILTIN void *memchr(const void *s, int c, size_t n) {
 	return NULL;
 }
 
-NL_NOBUILTIN size_t strlen(const char *s) {
+NL_USED NL_NOBUILTIN size_t strlen(const char *s) {
 	size_t n = 0;
 	while (s[n]) {
 		n++;
@@ -434,7 +440,7 @@ NL_NOBUILTIN size_t strlen(const char *s) {
 	return n;
 }
 
-NL_NOBUILTIN char *strchr(const char *s, int c) {
+NL_USED NL_NOBUILTIN char *strchr(const char *s, int c) {
 	for (;; s++) {
 		if (*s == (char)c) {
 			return (char *)s;
@@ -445,7 +451,7 @@ NL_NOBUILTIN char *strchr(const char *s, int c) {
 	}
 }
 
-NL_NOBUILTIN char *strrchr(const char *s, int c) {
+NL_USED NL_NOBUILTIN char *strrchr(const char *s, int c) {
 	const char *r = NULL;
 	for (;; s++) {
 		if (*s == (char)c) {
@@ -457,7 +463,7 @@ NL_NOBUILTIN char *strrchr(const char *s, int c) {
 	}
 }
 
-NL_NOBUILTIN int strcmp(const char *a, const char *b) {
+NL_USED NL_NOBUILTIN int strcmp(const char *a, const char *b) {
 	while (*a && *a == *b) {
 		a++;
 		b++;
@@ -465,7 +471,7 @@ NL_NOBUILTIN int strcmp(const char *a, const char *b) {
 	return (unsigned char)*a - (unsigned char)*b;
 }
 
-NL_NOBUILTIN int strncmp(const char *a, const char *b, size_t n) {
+NL_USED NL_NOBUILTIN int strncmp(const char *a, const char *b, size_t n) {
 	for (; n; n--, a++, b++) {
 		if (*a != *b || !*a) {
 			return (unsigned char)*a - (unsigned char)*b;
@@ -476,7 +482,7 @@ NL_NOBUILTIN int strncmp(const char *a, const char *b, size_t n) {
 
 static int nl_lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 
-NL_NOBUILTIN int strncasecmp(const char *a, const char *b, size_t n) {
+NL_USED NL_NOBUILTIN int strncasecmp(const char *a, const char *b, size_t n) {
 	for (; n; n--, a++, b++) {
 		int x = nl_lower((unsigned char)*a), y = nl_lower((unsigned char)*b);
 		if (x != y || !x) {
@@ -486,14 +492,14 @@ NL_NOBUILTIN int strncasecmp(const char *a, const char *b, size_t n) {
 	return 0;
 }
 
-NL_NOBUILTIN char *strcpy(char *d, const char *s) {
+NL_USED NL_NOBUILTIN char *strcpy(char *d, const char *s) {
 	char *o = d;
 	while ((*o++ = *s++)) {
 	}
 	return d;
 }
 
-NL_NOBUILTIN char *strstr(const char *h, const char *n) {
+NL_USED NL_NOBUILTIN char *strstr(const char *h, const char *n) {
 	size_t k = strlen(n);
 	for (; *h; h++) {
 		if (strncmp(h, n, k) == 0) {
@@ -503,7 +509,7 @@ NL_NOBUILTIN char *strstr(const char *h, const char *n) {
 	return k == 0 ? (char *)h : NULL;
 }
 
-NL_NOBUILTIN char *strpbrk(const char *s, const char *set) {
+NL_USED NL_NOBUILTIN char *strpbrk(const char *s, const char *set) {
 	for (; *s; s++) {
 		if (strchr(set, *s)) {
 			return (char *)s;
@@ -512,7 +518,7 @@ NL_NOBUILTIN char *strpbrk(const char *s, const char *set) {
 	return NULL;
 }
 
-char *strdup(const char *s) {
+NL_USED char *strdup(const char *s) {
 	size_t n = strlen(s) + 1;
 	char *d = malloc(n);
 	if (d) {
@@ -521,7 +527,7 @@ char *strdup(const char *s) {
 	return d;
 }
 
-char *strndup(const char *s, size_t m) {
+NL_USED char *strndup(const char *s, size_t m) {
 	size_t n = 0;
 	while (n < m && s[n]) {
 		n++;
@@ -673,7 +679,7 @@ static const char *const nl_errors[] = {
 	"Memory page has hardware error",
 };
 
-char *strerror(int e) {
+NL_USED char *strerror(int e) {
 	static __thread char unknown[32];
 	if (e >= 0 && e < (int)(sizeof nl_errors / sizeof nl_errors[0])) {
 		return (char *)nl_errors[e];
@@ -721,36 +727,36 @@ static unsigned long long nl_strtoull(const char *s, char **end, int base, int *
 	return v;
 }
 
-unsigned long long strtoull(const char *s, char **end, int base) {
+NL_USED unsigned long long strtoull(const char *s, char **end, int base) {
 	int neg;
 	unsigned long long v = nl_strtoull(s, end, base, &neg);
 	return neg ? -v : v;
 }
 
-unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtoull(s, end, base); }
+NL_USED unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtoull(s, end, base); }
 
-long long strtoll(const char *s, char **end, int base) {
+NL_USED long long strtoll(const char *s, char **end, int base) {
 	int neg;
 	unsigned long long v = nl_strtoull(s, end, base, &neg);
 	return neg ? -(long long)v : (long long)v;
 }
 
-long strtol(const char *s, char **end, int base) { return (long)strtoll(s, end, base); }
+NL_USED long strtol(const char *s, char **end, int base) { return (long)strtoll(s, end, base); }
 
-int atoi(const char *s) { return (int)strtol(s, NULL, 10); }
+NL_USED int atoi(const char *s) { return (int)strtol(s, NULL, 10); }
 
-long atol(const char *s) { return strtol(s, NULL, 10); }
+NL_USED long atol(const char *s) { return strtol(s, NULL, 10); }
 
-long long atoll(const char *s) { return strtoll(s, NULL, 10); }
+NL_USED long long atoll(const char *s) { return strtoll(s, NULL, 10); }
 
-double strtod(const char *s, char **end) {
+NL_USED double strtod(const char *s, char **end) {
 	(void)s;
 	(void)end;
 	nl_die("strtod (floating point text in C) is not available");
 }
 
 // qsort: a shell sort (the runtime sorts header and channel lists).
-void qsort(void *base, size_t n, size_t w, int (*cmp)(const void *, const void *)) {
+NL_USED void qsort(void *base, size_t n, size_t w, int (*cmp)(const void *, const void *)) {
 	char *b = base;
 	char tmp[256];
 	char *t = w <= sizeof tmp ? tmp : malloc(w);
@@ -791,7 +797,7 @@ static void nl_pad(nl_out *o, char c, int k) {
 	}
 }
 
-int vsnprintf(char *restrict buf, size_t cap, const char *restrict f, va_list ap) {
+NL_USED int vsnprintf(char *restrict buf, size_t cap, const char *restrict f, va_list ap) {
 	nl_out o = {buf, 0, cap};
 	for (; *f; f++) {
 		if (*f != '%') {
@@ -961,7 +967,7 @@ int vsnprintf(char *restrict buf, size_t cap, const char *restrict f, va_list ap
 	return (int)o.n;
 }
 
-int snprintf(char *restrict buf, size_t cap, const char *restrict f, ...) {
+NL_USED int snprintf(char *restrict buf, size_t cap, const char *restrict f, ...) {
 	va_list ap;
 	va_start(ap, f);
 	int n = vsnprintf(buf, cap, f, ap);
@@ -969,7 +975,7 @@ int snprintf(char *restrict buf, size_t cap, const char *restrict f, ...) {
 	return n;
 }
 
-int sprintf(char *restrict buf, const char *restrict f, ...) {
+NL_USED int sprintf(char *restrict buf, const char *restrict f, ...) {
 	va_list ap;
 	va_start(ap, f);
 	int n = vsnprintf(buf, (size_t)1 << 30, f, ap);
@@ -1008,7 +1014,7 @@ static size_t nl_write_all(int fd, const char *p, size_t n) {
 	return off;
 }
 
-size_t fwrite(const void *restrict p, size_t size, size_t n, FILE *restrict f) {
+NL_USED size_t fwrite(const void *restrict p, size_t size, size_t n, FILE *restrict f) {
 	size_t t = size * n;
 	size_t w = nl_write_all(nl_fd(f), p, t);
 	if (w < t) {
@@ -1017,31 +1023,31 @@ size_t fwrite(const void *restrict p, size_t size, size_t n, FILE *restrict f) {
 	return size ? w / size : 0;
 }
 
-int fputs(const char *restrict s, FILE *restrict f) {
+NL_USED int fputs(const char *restrict s, FILE *restrict f) {
 	size_t n = strlen(s);
 	return fwrite(s, 1, n, f) == n ? 0 : -1;
 }
 
-int fputc(int c, FILE *f) {
+NL_USED int fputc(int c, FILE *f) {
 	char b = (char)c;
 	return fwrite(&b, 1, 1, f) == 1 ? (unsigned char)c : -1;
 }
 
-int putc(int c, FILE *f) { return fputc(c, f); }
+NL_USED int putc(int c, FILE *f) { return fputc(c, f); }
 
-int puts(const char *s) {
+NL_USED int puts(const char *s) {
 	fputs(s, stdout);
 	return fputc('\n', stdout);
 }
 
-int putchar(int c) { return fputc(c, stdout); }
+NL_USED int putchar(int c) { return fputc(c, stdout); }
 
-int fflush(FILE *f) {
+NL_USED int fflush(FILE *f) {
 	(void)f;
 	return 0;
 }
 
-int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap) {
+NL_USED int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap) {
 	char small[1024];
 	va_list aq;
 	va_copy(aq, ap);
@@ -1060,7 +1066,7 @@ int vfprintf(FILE *restrict f, const char *restrict fmt, va_list ap) {
 	return n;
 }
 
-int fprintf(FILE *restrict f, const char *restrict fmt, ...) {
+NL_USED int fprintf(FILE *restrict f, const char *restrict fmt, ...) {
 	va_list ap;
 	va_start(ap, fmt);
 	int n = vfprintf(f, fmt, ap);
@@ -1068,7 +1074,7 @@ int fprintf(FILE *restrict f, const char *restrict fmt, ...) {
 	return n;
 }
 
-int printf(const char *restrict fmt, ...) {
+NL_USED int printf(const char *restrict fmt, ...) {
 	va_list ap;
 	va_start(ap, fmt);
 	int n = vfprintf(stdout, fmt, ap);
@@ -1076,7 +1082,7 @@ int printf(const char *restrict fmt, ...) {
 	return n;
 }
 
-FILE *fopen(const char *restrict path, const char *restrict mode) {
+NL_USED FILE *fopen(const char *restrict path, const char *restrict mode) {
 	int flags = O_RDONLY;
 	if (mode[0] == 'w') {
 		flags = O_WRONLY | O_CREAT | O_TRUNC;
@@ -1100,7 +1106,7 @@ FILE *fopen(const char *restrict path, const char *restrict mode) {
 	return (FILE *)f;
 }
 
-size_t fread(void *restrict p, size_t size, size_t n, FILE *restrict f) {
+NL_USED size_t fread(void *restrict p, size_t size, size_t n, FILE *restrict f) {
 	size_t t = size * n, off = 0;
 	while (off < t) {
 		long r = nl_sys3(SYS_read, nl_fd(f), (char *)p + off, t - off);
@@ -1120,9 +1126,9 @@ size_t fread(void *restrict p, size_t size, size_t n, FILE *restrict f) {
 	return size ? off / size : 0;
 }
 
-int ferror(FILE *f) { return ((nl_file *)f)->err; }
+NL_USED int ferror(FILE *f) { return ((nl_file *)f)->err; }
 
-int fclose(FILE *f) {
+NL_USED int fclose(FILE *f) {
 	long r = nl_sys1(SYS_close, nl_fd(f));
 	if ((nl_file *)f < nl_std || (nl_file *)f > nl_std + 2) {
 		free(f);
@@ -1133,7 +1139,7 @@ int fclose(FILE *f) {
 // ---------------------------------------------------------------------------
 // Files, directories, descriptors
 
-int open(const char *path, int flags, ...) {
+NL_USED int open(const char *path, int flags, ...) {
 	va_list ap;
 	va_start(ap, flags);
 	int mode = (flags & O_CREAT) ? va_arg(ap, int) : 0;
@@ -1141,7 +1147,7 @@ int open(const char *path, int flags, ...) {
 	return (int)nl_ret(nl_sys4(SYS_openat, AT_FDCWD, path, flags, mode));
 }
 
-int openat(int dirfd, const char *path, int flags, ...) {
+NL_USED int openat(int dirfd, const char *path, int flags, ...) {
 	va_list ap;
 	va_start(ap, flags);
 	int mode = (flags & O_CREAT) ? va_arg(ap, int) : 0;
@@ -1149,23 +1155,23 @@ int openat(int dirfd, const char *path, int flags, ...) {
 	return (int)nl_ret(nl_sys4(SYS_openat, dirfd, path, flags, mode));
 }
 
-ssize_t read(int fd, void *p, size_t n) { return nl_ret(nl_sys3(SYS_read, fd, p, n)); }
+NL_USED ssize_t read(int fd, void *p, size_t n) { return nl_ret(nl_sys3(SYS_read, fd, p, n)); }
 
-ssize_t write(int fd, const void *p, size_t n) { return nl_ret(nl_sys3(SYS_write, fd, p, n)); }
+NL_USED ssize_t write(int fd, const void *p, size_t n) { return nl_ret(nl_sys3(SYS_write, fd, p, n)); }
 
-ssize_t pread(int fd, void *p, size_t n, off_t off) { return nl_ret(nl_sys4(SYS_pread64, fd, p, n, off)); }
+NL_USED ssize_t pread(int fd, void *p, size_t n, off_t off) { return nl_ret(nl_sys4(SYS_pread64, fd, p, n, off)); }
 
-int close(int fd) { return (int)nl_ret(nl_sys1(SYS_close, fd)); }
+NL_USED int close(int fd) { return (int)nl_ret(nl_sys1(SYS_close, fd)); }
 
-off_t lseek(int fd, off_t off, int whence) { return nl_ret(nl_sys3(SYS_lseek, fd, off, whence)); }
+NL_USED off_t lseek(int fd, off_t off, int whence) { return nl_ret(nl_sys3(SYS_lseek, fd, off, whence)); }
 
-int pipe2(int fds[2], int flags) { return (int)nl_ret(nl_sys2(SYS_pipe2, fds, flags)); }
+NL_USED int pipe2(int fds[2], int flags) { return (int)nl_ret(nl_sys2(SYS_pipe2, fds, flags)); }
 
-int pipe(int fds[2]) { return pipe2(fds, 0); }
+NL_USED int pipe(int fds[2]) { return pipe2(fds, 0); }
 
-int dup2(int a, int b) { return (int)nl_ret(nl_sys3(SYS_dup3, a, b, 0)); }
+NL_USED int dup2(int a, int b) { return (int)nl_ret(nl_sys3(SYS_dup3, a, b, 0)); }
 
-int fcntl(int fd, int cmd, ...) {
+NL_USED int fcntl(int fd, int cmd, ...) {
 	va_list ap;
 	va_start(ap, cmd);
 	long arg = va_arg(ap, long);
@@ -1173,7 +1179,7 @@ int fcntl(int fd, int cmd, ...) {
 	return (int)nl_ret(nl_sys3(SYS_fcntl, fd, cmd, arg));
 }
 
-int ioctl(int fd, unsigned long req, ...) {
+NL_USED int ioctl(int fd, unsigned long req, ...) {
 	va_list ap;
 	va_start(ap, req);
 	long arg = va_arg(ap, long);
@@ -1181,45 +1187,45 @@ int ioctl(int fd, unsigned long req, ...) {
 	return (int)nl_ret(nl_sys3(SYS_ioctl, fd, req, arg));
 }
 
-int isatty(int fd) {
+NL_USED int isatty(int fd) {
 	char t[64];
 	return nl_sys3(SYS_ioctl, fd, 0x5401 /* TCGETS */, t) == 0;
 }
 
-int unlink(const char *p) { return (int)nl_ret(nl_sys3(SYS_unlinkat, AT_FDCWD, p, 0)); }
+NL_USED int unlink(const char *p) { return (int)nl_ret(nl_sys3(SYS_unlinkat, AT_FDCWD, p, 0)); }
 
-int rmdir(const char *p) { return (int)nl_ret(nl_sys3(SYS_unlinkat, AT_FDCWD, p, AT_REMOVEDIR)); }
+NL_USED int rmdir(const char *p) { return (int)nl_ret(nl_sys3(SYS_unlinkat, AT_FDCWD, p, AT_REMOVEDIR)); }
 
-int mkdir(const char *p, mode_t m) { return (int)nl_ret(nl_sys3(SYS_mkdirat, AT_FDCWD, p, m)); }
+NL_USED int mkdir(const char *p, mode_t m) { return (int)nl_ret(nl_sys3(SYS_mkdirat, AT_FDCWD, p, m)); }
 
-int rename(const char *a, const char *b) { return (int)nl_ret(nl_sys6(SYS_renameat2, AT_FDCWD, (long)a, AT_FDCWD, (long)b, 0, 0)); }
+NL_USED int rename(const char *a, const char *b) { return (int)nl_ret(nl_sys6(SYS_renameat2, AT_FDCWD, (long)a, AT_FDCWD, (long)b, 0, 0)); }
 
-int chmod(const char *p, mode_t m) { return (int)nl_ret(nl_sys3(SYS_fchmodat, AT_FDCWD, p, m)); }
+NL_USED int chmod(const char *p, mode_t m) { return (int)nl_ret(nl_sys3(SYS_fchmodat, AT_FDCWD, p, m)); }
 
-int symlink(const char *t, const char *p) { return (int)nl_ret(nl_sys3(SYS_symlinkat, t, AT_FDCWD, p)); }
+NL_USED int symlink(const char *t, const char *p) { return (int)nl_ret(nl_sys3(SYS_symlinkat, t, AT_FDCWD, p)); }
 
-ssize_t readlink(const char *restrict p, char *restrict buf, size_t n) { return nl_ret(nl_sys4(SYS_readlinkat, AT_FDCWD, p, buf, n)); }
+NL_USED ssize_t readlink(const char *restrict p, char *restrict buf, size_t n) { return nl_ret(nl_sys4(SYS_readlinkat, AT_FDCWD, p, buf, n)); }
 
-int ftruncate(int fd, off_t n) { return (int)nl_ret(nl_sys2(SYS_ftruncate, fd, n)); }
+NL_USED int ftruncate(int fd, off_t n) { return (int)nl_ret(nl_sys2(SYS_ftruncate, fd, n)); }
 
-int fsync(int fd) { return (int)nl_ret(nl_sys1(SYS_fsync, fd)); }
+NL_USED int fsync(int fd) { return (int)nl_ret(nl_sys1(SYS_fsync, fd)); }
 
-int flock(int fd, int op) { return (int)nl_ret(nl_sys2(SYS_flock, fd, op)); }
+NL_USED int flock(int fd, int op) { return (int)nl_ret(nl_sys2(SYS_flock, fd, op)); }
 
-char *getcwd(char *buf, size_t n) {
+NL_USED char *getcwd(char *buf, size_t n) {
 	long r = nl_ret(nl_sys2(SYS_getcwd, buf, n));
 	return r < 0 ? NULL : buf;
 }
 
-int stat(const char *restrict p, struct stat *restrict st) { return (int)nl_ret(nl_sys4(SYS_newfstatat, AT_FDCWD, p, st, 0)); }
+NL_USED int stat(const char *restrict p, struct stat *restrict st) { return (int)nl_ret(nl_sys4(SYS_newfstatat, AT_FDCWD, p, st, 0)); }
 
-int lstat(const char *restrict p, struct stat *restrict st) {
+NL_USED int lstat(const char *restrict p, struct stat *restrict st) {
 	return (int)nl_ret(nl_sys4(SYS_newfstatat, AT_FDCWD, p, st, AT_SYMLINK_NOFOLLOW));
 }
 
-int fstat(int fd, struct stat *st) { return (int)nl_ret(nl_sys4(SYS_newfstatat, fd, "", st, AT_EMPTY_PATH)); }
+NL_USED int fstat(int fd, struct stat *st) { return (int)nl_ret(nl_sys4(SYS_newfstatat, fd, "", st, AT_EMPTY_PATH)); }
 
-int utimensat(int dirfd, const char *p, const struct timespec t[2], int flags) {
+NL_USED int utimensat(int dirfd, const char *p, const struct timespec t[2], int flags) {
 	return (int)nl_ret(nl_sys4(SYS_utimensat, dirfd, p, t, flags));
 }
 
@@ -1231,7 +1237,7 @@ struct __dirstream {
 	char buf[16384];
 };
 
-DIR *opendir(const char *p) {
+NL_USED DIR *opendir(const char *p) {
 	long fd = nl_ret(nl_sys4(SYS_openat, AT_FDCWD, p, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0));
 	if (fd < 0) {
 		return NULL;
@@ -1263,7 +1269,7 @@ struct dirent *readdir(DIR *d) {
 	return e;
 }
 
-int closedir(DIR *d) {
+NL_USED int closedir(DIR *d) {
 	int r = (int)nl_ret(nl_sys1(SYS_close, d->fd));
 	free(d);
 	return r;
@@ -1272,7 +1278,7 @@ int closedir(DIR *d) {
 // ---------------------------------------------------------------------------
 // Memory mappings, the clock, randomness, the system
 
-void *mmap(void *a, size_t n, int prot, int flags, int fd, off_t off) {
+NL_USED void *mmap(void *a, size_t n, int prot, int flags, int fd, off_t off) {
 	long r = nl_sys6(SYS_mmap, (long)a, (long)n, prot, flags, fd, off);
 	if (r < 0 && r > -4096) {
 		nl_errno = (int)-r;
@@ -1281,15 +1287,15 @@ void *mmap(void *a, size_t n, int prot, int flags, int fd, off_t off) {
 	return (void *)r;
 }
 
-int munmap(void *a, size_t n) { return (int)nl_ret(nl_sys2(SYS_munmap, a, n)); }
+NL_USED int munmap(void *a, size_t n) { return (int)nl_ret(nl_sys2(SYS_munmap, a, n)); }
 
-int mprotect(void *a, size_t n, int prot) { return (int)nl_ret(nl_sys3(SYS_mprotect, a, n, prot)); }
+NL_USED int mprotect(void *a, size_t n, int prot) { return (int)nl_ret(nl_sys3(SYS_mprotect, a, n, prot)); }
 
-int madvise(void *a, size_t n, int adv) { return (int)nl_ret(nl_sys3(SYS_madvise, a, n, adv)); }
+NL_USED int madvise(void *a, size_t n, int adv) { return (int)nl_ret(nl_sys3(SYS_madvise, a, n, adv)); }
 
-int clock_gettime(clockid_t id, struct timespec *ts) { return (int)nl_ret(nl_sys2(SYS_clock_gettime, id, ts)); }
+NL_USED int clock_gettime(clockid_t id, struct timespec *ts) { return (int)nl_ret(nl_sys2(SYS_clock_gettime, id, ts)); }
 
-time_t time(time_t *t) {
+NL_USED time_t time(time_t *t) {
 	struct timespec ts;
 	clock_gettime(CLOCK_REALTIME, &ts);
 	if (t) {
@@ -1298,7 +1304,7 @@ time_t time(time_t *t) {
 	return ts.tv_sec;
 }
 
-int nanosleep(const struct timespec *req, struct timespec *rem) { return (int)nl_ret(nl_sys2(SYS_nanosleep, req, rem)); }
+NL_USED int nanosleep(const struct timespec *req, struct timespec *rem) { return (int)nl_ret(nl_sys2(SYS_nanosleep, req, rem)); }
 
 // gmtime_r: the civil date of Unix seconds (Howard Hinnant's algorithm).
 struct tm *gmtime_r(const time_t *restrict t, struct tm *restrict tm) {
@@ -1332,9 +1338,9 @@ struct tm *gmtime_r(const time_t *restrict t, struct tm *restrict tm) {
 	return tm;
 }
 
-ssize_t getrandom(void *p, size_t n, unsigned flags) { return nl_ret(nl_sys3(SYS_getrandom, p, n, flags)); }
+NL_USED ssize_t getrandom(void *p, size_t n, unsigned flags) { return nl_ret(nl_sys3(SYS_getrandom, p, n, flags)); }
 
-int getentropy(void *p, size_t n) {
+NL_USED int getentropy(void *p, size_t n) {
 	size_t off = 0;
 	while (off < n) {
 		long r = nl_sys3(SYS_getrandom, (char *)p + off, n - off, 0);
@@ -1350,7 +1356,7 @@ int getentropy(void *p, size_t n) {
 	return 0;
 }
 
-char *getenv(const char *name) {
+NL_USED char *getenv(const char *name) {
 	size_t n = strlen(name);
 	for (char **e = environ; e && *e; e++) {
 		if (strncmp(*e, name, n) == 0 && (*e)[n] == '=') {
@@ -1360,11 +1366,11 @@ char *getenv(const char *name) {
 	return NULL;
 }
 
-pid_t getpid(void) { return (pid_t)nl_sys0(SYS_getpid); }
+NL_USED pid_t getpid(void) { return (pid_t)nl_sys0(SYS_getpid); }
 
-int kill(pid_t pid, int sig) { return (int)nl_ret(nl_sys2(SYS_kill, pid, sig)); }
+NL_USED int kill(pid_t pid, int sig) { return (int)nl_ret(nl_sys2(SYS_kill, pid, sig)); }
 
-long sysconf(int name) {
+NL_USED long sysconf(int name) {
 	if (name == _SC_PAGESIZE) {
 		return nl_pagesz;
 	}
@@ -1381,7 +1387,7 @@ long sysconf(int name) {
 	return -1;
 }
 
-long syscall(long n, ...) {
+NL_USED long syscall(long n, ...) {
 	va_list ap;
 	va_start(ap, n);
 	long a = va_arg(ap, long), b = va_arg(ap, long), c = va_arg(ap, long);
@@ -1394,17 +1400,17 @@ long syscall(long n, ...) {
 // Signals: the kernel's struct sigaction (handler, flags, restorer, mask)
 // with this file's rt_sigreturn trampoline.
 
-int sigemptyset(sigset_t *s) {
+NL_USED int sigemptyset(sigset_t *s) {
 	memset(s, 0, sizeof *s);
 	return 0;
 }
 
-int sigaddset(sigset_t *s, int sig) {
+NL_USED int sigaddset(sigset_t *s, int sig) {
 	((unsigned long *)s)[(sig - 1) / 64] |= 1UL << ((sig - 1) % 64);
 	return 0;
 }
 
-int sigaction(int sig, const struct sigaction *restrict act, struct sigaction *restrict old) {
+NL_USED int sigaction(int sig, const struct sigaction *restrict act, struct sigaction *restrict old) {
 	struct {
 		void *handler;
 		unsigned long flags;
@@ -1427,7 +1433,7 @@ int sigaction(int sig, const struct sigaction *restrict act, struct sigaction *r
 	return (int)r;
 }
 
-void (*signal(int sig, void (*h)(int)))(int) {
+NL_USED void (*signal(int sig, void (*h)(int)))(int) {
 	struct sigaction sa, old;
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = h;
@@ -1438,11 +1444,11 @@ void (*signal(int sig, void (*h)(int)))(int) {
 	return old.sa_handler;
 }
 
-int sigprocmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
+NL_USED int sigprocmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
 	return (int)nl_ret(nl_sys4(SYS_rt_sigprocmask, how, set, old, 8));
 }
 
-int pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
+NL_USED int pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *restrict old) {
 	return sigprocmask(how, set, old) == 0 ? 0 : nl_errno;
 }
 
@@ -1470,33 +1476,33 @@ static void nl_unlock(int *f) {
 	}
 }
 
-int pthread_mutex_init(pthread_mutex_t *restrict m, const pthread_mutexattr_t *restrict a) {
+NL_USED int pthread_mutex_init(pthread_mutex_t *restrict m, const pthread_mutexattr_t *restrict a) {
 	(void)a;
 	memset(m, 0, sizeof *m);
 	return 0;
 }
 
-int pthread_mutex_destroy(pthread_mutex_t *m) {
+NL_USED int pthread_mutex_destroy(pthread_mutex_t *m) {
 	(void)m;
 	return 0;
 }
 
-int pthread_mutex_lock(pthread_mutex_t *m) {
+NL_USED int pthread_mutex_lock(pthread_mutex_t *m) {
 	nl_lock((int *)m);
 	return 0;
 }
 
-int pthread_mutex_trylock(pthread_mutex_t *m) {
+NL_USED int pthread_mutex_trylock(pthread_mutex_t *m) {
 	int c = 0;
 	return __atomic_compare_exchange_n((int *)m, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ? 0 : EBUSY;
 }
 
-int pthread_mutex_unlock(pthread_mutex_t *m) {
+NL_USED int pthread_mutex_unlock(pthread_mutex_t *m) {
 	nl_unlock((int *)m);
 	return 0;
 }
 
-int pthread_once(pthread_once_t *o, void (*f)(void)) {
+NL_USED int pthread_once(pthread_once_t *o, void (*f)(void)) {
 	int *w = (int *)o;
 	int c = 0;
 	if (__atomic_compare_exchange_n(w, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
@@ -1538,23 +1544,23 @@ typedef struct nl_thread {
 static nl_thread nl_main_thread;
 static __thread nl_thread *nl_self;
 
-int pthread_attr_init(pthread_attr_t *a) {
+NL_USED int pthread_attr_init(pthread_attr_t *a) {
 	memset(a, 0, sizeof *a);
 	((nl_attr *)a)->stack = 8 << 20;
 	return 0;
 }
 
-int pthread_attr_destroy(pthread_attr_t *a) {
+NL_USED int pthread_attr_destroy(pthread_attr_t *a) {
 	(void)a;
 	return 0;
 }
 
-int pthread_attr_setstacksize(pthread_attr_t *a, size_t n) {
+NL_USED int pthread_attr_setstacksize(pthread_attr_t *a, size_t n) {
 	((nl_attr *)a)->stack = n;
 	return 0;
 }
 
-int pthread_attr_setdetachstate(pthread_attr_t *a, int s) {
+NL_USED int pthread_attr_setdetachstate(pthread_attr_t *a, int s) {
 	((nl_attr *)a)->detached = s == PTHREAD_CREATE_DETACHED;
 	return 0;
 }
@@ -1585,7 +1591,7 @@ __asm__(".text\n.type nl_clone, @function\nnl_clone:\n"
 	"1:\txor %ebp, %ebp\n\tpop %rdi\n\tpop %rax\n\tcall xo_nolibc_thread_start\n\thlt\n");
 #endif
 
-int pthread_create(pthread_t *restrict tp, const pthread_attr_t *restrict a, void *(*f)(void *), void *restrict arg) {
+NL_USED int pthread_create(pthread_t *restrict tp, const pthread_attr_t *restrict a, void *(*f)(void *), void *restrict arg) {
 	size_t stack = a ? ((const nl_attr *)a)->stack : (size_t)8 << 20;
 	if (stack < (size_t)1 << 16) {
 		stack = (size_t)1 << 16;
@@ -1620,7 +1626,7 @@ int pthread_create(pthread_t *restrict tp, const pthread_attr_t *restrict a, voi
 	return 0;
 }
 
-int pthread_join(pthread_t th, void **r) {
+NL_USED int pthread_join(pthread_t th, void **r) {
 	nl_thread *t = (nl_thread *)th;
 	int tid;
 	while ((tid = t->tid) != 0) {
@@ -1633,25 +1639,25 @@ int pthread_join(pthread_t th, void **r) {
 	return 0;
 }
 
-int pthread_detach(pthread_t th) {
+NL_USED int pthread_detach(pthread_t th) {
 	((nl_thread *)th)->detached = 1;
 	return 0;
 }
 
-pthread_t pthread_self(void) { return (pthread_t)(nl_self ? nl_self : &nl_main_thread); }
+NL_USED pthread_t pthread_self(void) { return (pthread_t)(nl_self ? nl_self : &nl_main_thread); }
 
-int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
+NL_USED int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
 
 // ---------------------------------------------------------------------------
 // Sockets the runtime's event loop touches in every program
 
-int shutdown(int fd, int how) { return (int)nl_ret(nl_sys2(SYS_shutdown, fd, how)); }
+NL_USED int shutdown(int fd, int how) { return (int)nl_ret(nl_sys2(SYS_shutdown, fd, how)); }
 
-int epoll_create1(int flags) { return (int)nl_ret(nl_sys1(SYS_epoll_create1, flags)); }
+NL_USED int epoll_create1(int flags) { return (int)nl_ret(nl_sys1(SYS_epoll_create1, flags)); }
 
-int epoll_ctl(int ep, int op, int fd, struct epoll_event *ev) { return (int)nl_ret(nl_sys4(SYS_epoll_ctl, ep, op, fd, ev)); }
+NL_USED int epoll_ctl(int ep, int op, int fd, struct epoll_event *ev) { return (int)nl_ret(nl_sys4(SYS_epoll_ctl, ep, op, fd, ev)); }
 
-int epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
+NL_USED int epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
 	return (int)nl_ret(nl_sys6(SYS_epoll_pwait, ep, (long)evs, n, ms, 0, 8));
 }
 
@@ -1659,45 +1665,45 @@ int epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
 // Unwinding is stage 2: the forced unwind of a fault finds no frames, so
 // the runtime reports the fault and ends the program (fault_exit).
 
-_Unwind_Reason_Code _Unwind_ForcedUnwind(struct _Unwind_Exception *e, _Unwind_Stop_Fn stop, void *arg) {
+NL_USED _Unwind_Reason_Code _Unwind_ForcedUnwind(struct _Unwind_Exception *e, _Unwind_Stop_Fn stop, void *arg) {
 	(void)e;
 	(void)stop;
 	(void)arg;
 	return _URC_END_OF_STACK;
 }
 
-_Unwind_Word _Unwind_GetCFA(struct _Unwind_Context *c) {
+NL_USED _Unwind_Word _Unwind_GetCFA(struct _Unwind_Context *c) {
 	(void)c;
 	return 0;
 }
 
-_Unwind_Ptr _Unwind_GetIP(struct _Unwind_Context *c) {
+NL_USED _Unwind_Ptr _Unwind_GetIP(struct _Unwind_Context *c) {
 	(void)c;
 	return 0;
 }
 
-void *_Unwind_GetLanguageSpecificData(struct _Unwind_Context *c) {
+NL_USED void *_Unwind_GetLanguageSpecificData(struct _Unwind_Context *c) {
 	(void)c;
 	return NULL;
 }
 
-_Unwind_Ptr _Unwind_GetRegionStart(struct _Unwind_Context *c) {
+NL_USED _Unwind_Ptr _Unwind_GetRegionStart(struct _Unwind_Context *c) {
 	(void)c;
 	return 0;
 }
 
-void _Unwind_SetGR(struct _Unwind_Context *c, int i, _Unwind_Word v) {
+NL_USED void _Unwind_SetGR(struct _Unwind_Context *c, int i, _Unwind_Word v) {
 	(void)c;
 	(void)i;
 	(void)v;
 }
 
-void _Unwind_SetIP(struct _Unwind_Context *c, _Unwind_Ptr v) {
+NL_USED void _Unwind_SetIP(struct _Unwind_Context *c, _Unwind_Ptr v) {
 	(void)c;
 	(void)v;
 }
 
-void _Unwind_Resume(struct _Unwind_Exception *e) {
+NL_USED void _Unwind_Resume(struct _Unwind_Exception *e) {
 	(void)e;
 	nl_die("_Unwind_Resume: unwinding is not available");
 }
