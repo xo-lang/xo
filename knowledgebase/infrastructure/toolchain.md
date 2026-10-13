@@ -3283,8 +3283,16 @@ runs them before s1. A change that makes xo's own sources use something
 an older xo cannot compile records its hop in the same change. The one
 hop today (syscalls2): main 4f792c55's compiler against the
 go-compiler-final std, built by a pre-syscalls2 xo in 311 s, then that
-xo built the branch's xo in 311 s (the Mac, 2026-10-13). Last verified:
-2026-10-13.
+xo built the branch's xo in 311 s (the Mac, 2026-10-13). On EC2 Linux
+arm64 (r8g.8xlarge, no xo at all, 2026-10-13) `go run ./scripts/xobuild`
+took 1,936 s: the go-compiler-final root seed (Go, then its xo1) about
+685 s, then 1,251 s for a direct build from the root that failed
+(undefined xo_call_c2), the hop (411 s), and the final build. The root
+seed now goes through the recorded hops first (an existing xo is still
+tried directly first), which saves the failed direct build, about one
+build of selfhost/xo (an estimate: the remainder of the 1,251 s after
+the hop, split between the failed build and the final one). Last
+verified: 2026-10-13.
 
     scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
     XO_BOOTSTRAP_RTPACK=DIR scripts/bootstrap-xo.sh SEED [OUTDIR]

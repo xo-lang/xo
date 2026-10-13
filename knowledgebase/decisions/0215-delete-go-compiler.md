@@ -152,7 +152,10 @@ with the next step for each:
   the hops when a seed fails, and scripts/bootstrap-xo.sh takes them with
   `XO_SEED_CHAIN`; the root stays the go-compiler-final tag. Measured on
   the Mac: a pre-syscalls2 xo built the hop in 311 s and the hop built
-  the branch's xo in 311 s.
+  the branch's xo in 311 s. On EC2 Linux arm64 with no xo, xobuild took
+  1,936 s (root seed about 685 s; a failed direct build, the hop at
+  411 s, and the final build together 1,251 s); the root seed now takes
+  the hops first, which drops the failed direct build.
 
 - Programs a native emitter does not lower yet (XO1201) were handed by
   xo1 back to the Go driver under switch point A (XO1_FALLBACK). Now

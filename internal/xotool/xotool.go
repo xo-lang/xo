@@ -289,6 +289,16 @@ func buildLocked(root, out string, log io.Writer) error {
 				errs = append(errs, s.Why+": "+err.Error())
 				continue
 			}
+			// the root seed goes through the recorded hops first: the
+			// chain is recorded because the root cannot build these
+			// sources directly (an EC2 run spent minutes failing the
+			// direct build, 2026-10-13)
+			if hop, err := Chain(root, p, log); err != nil {
+				errs = append(errs, s.Why+" through the seed chain: "+err.Error())
+				continue
+			} else {
+				p = hop
+			}
 			s.Path = p
 		}
 		fmt.Fprintf(log, "xotool: building xo (selfhost/xo of %s) with %s, a few minutes, into %s\n", root, s.Why, out)
