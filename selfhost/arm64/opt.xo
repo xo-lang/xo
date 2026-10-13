@@ -1446,7 +1446,6 @@ fn (var g: G) reuse_flags() {
 fn (var g: G) live_dce() {
   let order = g.all_blocks()
   let n = g.fp.len()
-  let nw = (n + BW - 1) / BW
   var idx: List[Int] = []
   for _ in 0..g.blocks.len() {
     idx.push(-1)
@@ -1456,10 +1455,16 @@ fn (var g: G) live_dce() {
   }
   var succs: List[List[Int]] = []
   var gens: List[List[Int]] = []
-  var kill: List[List[Int]] = []
+  var kills: List[List[Int]] = []
   var pads: List[Int] = []
-  var seen = new_bits(n)
-  for b in order {
+  var kst: List[Int] = List.with_capacity(n)
+  var ust: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    kst.push(0)
+    ust.push(0)
+  }
+  for k in 0..order.len() {
+    let b = order[k]
     var ss: List[Int] = []
     for t in g.msuccs(b) {
       if idx[t] >= 0 {
@@ -1477,55 +1482,74 @@ fn (var g: G) live_dce() {
       }
     }
     var gl: List[Int] = []
-    var kk = new_bits(n)
-    gen_kill(g.blocks[b].insts, gl, seen, kk)
-    for v in gl {
-      seen[v / BW] = seen[v / BW] & ~bit_mask(v)
-    }
+    var kl: List[Int] = []
+    gen_kill(g.blocks[b].insts, k + 1, gl, kl, kst, ust)
     gens.push(gl)
-    kill.push(kk)
+    kills.push(kl)
   }
-  let lv = solve_live(succs, gens, kill, n)
-  let live_in = lv.ins
+  let lv = solve_live(succs, gens, kills, n)
   var pad_live = new_bits(n)
   for j in pads {
-    or_into(pad_live, live_in[j], nw)
+    for v in lv.ins[j] {
+      pad_live[v / BW] = pad_live[v / BW] | bit_mask(v)
+    }
   }
-  for (k, b) in order.indexed() {
-    var live = lv.outs[k]
+  // the registers live at the point of a block's backward walk, cleared
+  // after each block through the registers it set
+  var live = new_bits(n)
+  var touched: List[Int] = []
+  for k in 0..order.len() {
+    let b = order[k]
+    for v in lv.outs[k] {
+      live[v / BW] = live[v / BW] | bit_mask(v)
+      touched.push(v)
+    }
     var ins = g.take_insts(b)
-    var keep: List[Bool] = []
+    var keep: List[Bool] = List.with_capacity(ins.len())
     for _ in 0..ins.len() {
       keep.push(true)
     }
+    // whether the block's list changes: an instruction or a parallel
+    // move's destination is dropped
+    var changed = false
     var i = ins.len() - 1
     while i >= 0 {
       let kind = ins[i].kind
       if kind == K_PMOVE {
-        var defs: List[Int] = []
-        var srcs: List[Src] = []
-        var us: List[Int] = []
-        for (k2, d) in ins[i].defs.indexed() {
-          if !ld_dead(d, live, pad_live) {
-            defs.push(d)
-            srcs.push(ins[i].srcs[k2])
-          }
+        // a move with no destination left goes too
+        var dead = ins[i].defs.is_empty()
+        for d in ins[i].defs {
+          dead = dead || ld_dead(d, live, pad_live)
         }
-        for a in srcs {
-          if a.kind == S_REG && a.v != 0 {
-            us.push(a.v)
+        if dead {
+          changed = true
+          var defs: List[Int] = []
+          var srcs: List[Src] = []
+          var us: List[Int] = []
+          for k2 in 0..ins[i].defs.len() {
+            let d = ins[i].defs[k2]
+            if !ld_dead(d, live, pad_live) {
+              defs.push(d)
+              srcs.push(ins[i].srcs[k2])
+            }
           }
+          for a in srcs {
+            if a.kind == S_REG && a.v != 0 {
+              us.push(a.v)
+            }
+          }
+          keep[i] = !defs.is_empty()
+          ins[i].defs = defs
+          ins[i].srcs = srcs
+          ins[i].us = us
         }
-        keep[i] = !defs.is_empty()
-        ins[i].defs = defs
-        ins[i].srcs = srcs
-        ins[i].us = us
       } else if kind == K_PLAIN && !ins[i].has_fault && !ins[i].defs.is_empty() {
         var all = true
         for d in ins[i].defs {
           all = all && ld_dead(d, live, pad_live)
         }
         keep[i] = !all
+        changed = changed || all
       }
       if keep[i] {
         for d in ins[i].defs {
@@ -1536,15 +1560,24 @@ fn (var g: G) live_dce() {
         for u in ins[i].us {
           if u != 0 {
             live[u / BW] = live[u / BW] | bit_mask(u)
+            touched.push(u)
           }
         }
       }
       i -= 1
     }
-    var kept: List[Inst] = []
-    for (ii, x) in ins.indexed() {
+    while !touched.is_empty() {
+      let v = touched.pop() ?? 0
+      live[v / BW] = live[v / BW] & ~bit_mask(v)
+    }
+    if !changed {
+      g.put_insts(b, ins)
+      continue
+    }
+    var kept: List[Inst] = List.with_capacity(ins.len())
+    for ii in 0..ins.len() {
       if keep[ii] {
-        kept.push(x)
+        kept.push(ins[ii])
       }
     }
     g.put_insts(b, kept)

@@ -95,6 +95,16 @@ fn (var g: G) real(u: Int) -> Int {
 
 /// Adds an instruction with a template; returns its index in the block.
 fn (var g: G) plain(text: Str, defs: List[Int], us: List[Int]) -> Int {
+  // the uses as given unless one is xzr: no copy per instruction
+  var has_zero = false
+  for u in us {
+    if u == 0 {
+      has_zero = true
+    }
+  }
+  if !has_zero {
+    return g.add(Inst{kind: K_PLAIN, text: text, defs: defs, us: us})
+  }
   var rs: List[Int] = []
   for u in us {
     rs.push(g.real(u))
