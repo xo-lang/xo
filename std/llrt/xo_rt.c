@@ -6274,6 +6274,13 @@ static xo_conn *unix_dial(xo_ctx *c, const char *addr, int64_t when) {
 		return conn_new(c, fd, pd);
 	}
 	pd_free(pd);
+#ifdef _WIN32
+	// Windows refuses a connect to a missing socket file; POSIX (and the
+	// Fs view of it) says it does not exist
+	if (e == -ECONNREFUSED && xo_w_attrs(path) == INVALID_FILE_ATTRIBUTES) {
+		e = -ENOENT;
+	}
+#endif
 	if (e == 1) {
 		net_fail(c, 5, "");
 	} else if (e == 2) {

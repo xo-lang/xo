@@ -17,7 +17,7 @@ fn find_clang(os: Os) -> Str {
 /// arguments, from `clang -###`, decision 0119); "" when clang reports
 /// neither.
 fn clang_target_attrs(os: Os, clang: Str) -> Str {
-  let (out, err) = combined(os, clang, ["-###", "-c", "-x", "c", "/dev/null", "-o", "/dev/null"])
+  let (out, err) = combined(os, clang, ["-###", "-c", "-x", "c", dev_null(), "-o", dev_null()])
   if !err.is_empty() {
     return ""
   }

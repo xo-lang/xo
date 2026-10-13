@@ -111,7 +111,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
       }
     }
   }
-  args = args + srcs + tls_link + libs + ["-lm", "-lpthread"]
+  args = args + srcs + tls_link + libs + sys_link_args(ctx.goos)
   match os.proc.run(cc, args) {
     Ok(r) => {
       let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
@@ -121,6 +121,15 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
     }
     Err(e) => ("${cc}: ${e}", false, false)
   }
+}
+
+/// sysLinkArgs: the system libraries and linker of a native link on goos.
+/// Windows (decision 0197): lld-link, which reads the LTO bitcode MSVC's
+/// link.exe cannot; the runtime names its import libraries itself
+/// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
+/// MSVC one clang picks.
+fn sys_link_args(goos: Str) -> List[Str] {
+  if goos == "windows" { ["-fuse-ld=lld"] } else { ["-lm", "-lpthread"] }
 }
 
 /// rtPackHint: the hint of a failed local compile of the runtime.

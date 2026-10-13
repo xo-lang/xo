@@ -1,0 +1,26 @@
+exit 0
+--- stdout
+addr is the address: true
+socket file exists: true
+second listen: Io false true
+echoed: over a socket file
+socket file after close: false
+dial after close: Io true false
+listed socket: true
+unlisted socket: Denied true
+hosts only, socket: Denied true
+other case: Denied true
+socket only, tcp: Denied(addr: "127.0.0.1:9")
+term: Io(msg: "signal TERM is not supported on this system")
+status after TERM: 137
+kill: ok
+status after KILL: 137
+unknown name: Io(msg: "unknown signal \"SIGTERM\"")
+pid 0: Io(msg: "invalid process id 0")
+pid -1: Io(msg: "invalid process id -1")
+no such process: Io(msg: "signal CONT is not supported on this system")
+not listed: Denied(cmd: "kill")
+listed: Io(msg: "signal QUIT is not supported on this system")
+status after QUIT: 137
+intersection: Denied(cmd: "kill")
+--- stderr

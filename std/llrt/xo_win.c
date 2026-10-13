@@ -667,6 +667,13 @@ static HANDLE xo_w_open_meta(const char *path, DWORD access, int link) {
 	HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
 		FILE_FLAG_BACKUP_SEMANTICS | (link ? FILE_FLAG_OPEN_REPARSE_POINT : 0), NULL);
 	DWORD e = GetLastError();
+	if (h == INVALID_HANDLE_VALUE && !link && e == ERROR_CANT_ACCESS_FILE) {
+		// a reparse point the system cannot follow (an AF_UNIX socket
+		// file): the point itself, as Go's os.Stat
+		h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+		e = GetLastError();
+	}
 	free(w);
 	if (h == INVALID_HANDLE_VALUE) {
 		errno = xo_w_fix(path, xo_w_errno(e), 0);

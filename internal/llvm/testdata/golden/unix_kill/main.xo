@@ -102,7 +102,12 @@ fn show(r: Result[(), ProcErr]) -> Str {
 fn signals(os: Os) ! {
   let out = os.stdio
   let c = os.proc.cmd("sleep", ["30"]).spawn()?
-  out.println("term: ${show(os.proc.kill(c.pid()))}")
+  let term = os.proc.kill(c.pid())
+  out.println("term: ${show(term)}")
+  if term.is_err() {
+    // where only KILL is sent (Windows), the child is ended here
+    c.kill()
+  }
   out.println("status after TERM: ${c.wait()?}")
   let k = os.proc.cmd("sleep", ["30"]).spawn()?
   out.println("kill: ${show(os.proc.kill(k.pid(), "KILL"))}")
@@ -115,7 +120,11 @@ fn signals(os: Os) ! {
   let q = sleeps.cmd("sleep", ["30"]).spawn()?
   out.println("not listed: ${show(sleeps.kill(q.pid()))}")
   let both = os.proc.only(["sleep", "kill"])
-  out.println("listed: ${show(both.kill(q.pid(), "QUIT"))}")
+  let quit = both.kill(q.pid(), "QUIT")
+  out.println("listed: ${show(quit)}")
+  if quit.is_err() {
+    q.kill()
+  }
   out.println("status after QUIT: ${q.wait()?}")
   out.println("intersection: ${show(both.only(["sleep"]).kill(q.pid()))}")
 }

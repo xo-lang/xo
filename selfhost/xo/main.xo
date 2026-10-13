@@ -665,7 +665,7 @@ fn line_root(os: Os, wd: Str, dir: Str) -> Str {
   if abs.starts_with("./") {
     abs = abs.trim_prefix("./")
   }
-  if !abs.starts_with("/") {
+  if !is_abs_path(abs) {
     abs = if abs == "." { wd } else { "${wd}/${abs}" }
   }
   var d = abs
