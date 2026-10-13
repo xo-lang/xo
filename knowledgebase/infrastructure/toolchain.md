@@ -821,6 +821,29 @@ Last verified: 2026-10-07
   through the heavy lock. Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
+- `XO_LLRT_C=sched` (2026-10-13, decision 0212): the C runtime's own
+  scheduler core (the fiber switch assembly, `__thread` context and
+  worker, the run queue ring, fiber run, park, wake, start, task
+  states: xo_rt.c compiled with -DXO_SCHED_C, which both drivers add
+  when the generated code calls sched_c.xo's rt.sched_c) instead of
+  std/native/llrt/sched.xo through the xo_x_rq_*, xo_x_fiber_*, and
+  task exports and the emitted xo_stack_switch, xo_fiber_entry, and
+  xo_tlocal_* (the default). TestRuntimeTasks and TestRuntimeEventLoop
+  run tasks.c and evloop.c both ways under ThreadSanitizer. The bar is
+  per operation: two builds of bench/perf/conc spawn (200 and 600
+  rounds) and pingpong (100k and 300k round trips), XO_THREADS=1,
+  median of 9, the difference over the extra operations (whole runs
+  follow the idle thread's spinning,
+  gotchas/scheduler-instruction-counts-spin.md); http: server
+  instructions of bench/perf/http's cycle route, 5,500 minus 500 units,
+  fresh servers. Scratch scripts, through the heavy lock. Results in
+  `bench/results/task-switch-2026-10-13.md`. Last verified: 2026-10-13.
+- Checking selfhost/macho against clang after an arm64 emitter change
+  (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
+  -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without
+  its first line), `clang -c -target arm64-apple-macos11` (or
+  `aarch64-linux-gnu`) and `macho asm [--elf]`, `cmp` the objects; with
+  XO_SELF_DRIVER=0. Last verified: 2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
   0195): sized integers, std/crypto's hashes, path.Match, and generated
