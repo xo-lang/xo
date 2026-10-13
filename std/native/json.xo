@@ -1,7 +1,10 @@
 // std/json on the native backends (decision 0074): the codecs are
 // generated per type by internal/ssa (build_json.go) and called through
-// the intrinsics of native/rtjson; std/rt/json.go is the reference.
+// the intrinsics of native/rtjson; the parser and the tape readers they
+// call are native/llrt/jsontext (decision 0193 step 4); std/rt/json.go is
+// the reference.
 use std/json
+use native/llrt/jsontext
 use native/rtjson
 
 fn encode[T: Json](v: T) -> Bytes { rtjson.json_enc("", v).bytes() }
@@ -9,9 +12,9 @@ fn encode[T: Json](v: T) -> Bytes { rtjson.json_enc("", v).bytes() }
 fn encode_str[T: Json](v: T) -> Str { rtjson.json_enc("", v) }
 
 fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
-  let tape = rtjson.json_parse(data)
+  let tape = jsontext.parse(data)
   if tape.is_empty() {
-    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${rtjson.json_parse_err(data)}"})
+    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(data)}"})
   }
   match rtjson.json_dec[T](data, tape, 0) {
     Ok(v) => Ok(v)

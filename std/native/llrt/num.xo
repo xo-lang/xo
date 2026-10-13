@@ -421,6 +421,115 @@ fn layout(out: Str, neg: Bool, dig: Int, nd: Int, dp: Int) -> Str {
 /// The text of f as the Go backend prints a Float.
 pub fn float_text(f: Float) -> Str { append_float("", f) }
 
+/// out + f as std/json writes a Float (std/rt jsonFloat, encoding/json's
+/// floatEncoder without HTML escaping): null for NaN and the infinities,
+/// strconv's 'f' format with the shortest digits, or 'e' below 1e-6 and
+/// from 1e21 with a negative exponent unpadded (1e-7, not 1e-07).
+/// Decision 0193 step 4: the C (xo_json.c n_json_float) ran snprintf and
+/// strtod up to 17 times a Float.
+pub fn append_json_float(out: Str, f: Float) -> Str {
+  let bits = rt.float_bits(f)
+  let neg = bits < 0
+  let be = (bits >> 52) & 0x7FF
+  var mant = bits & 0xFFFFFFFFFFFFF
+  if be == 0x7FF {
+    // "null"
+    return rt.rs_push_word(out, 0x6C6C756E, 4)
+  }
+  if be == 0 && mant == 0 {
+    // "-0" or "0"
+    if neg {
+      return rt.rs_push_word(out, 0x302D, 2)
+    }
+    return rt.rs_push_word(out, 0x30, 1)
+  }
+  var e = be
+  var denorm = false
+  if be == 0 {
+    e = 1
+    denorm = true
+  } else {
+    mant = mant | 0x10000000000000
+  }
+  let (dig, dexp) = dbox(mant, e - 1075, denorm)
+  let nd = ndigits(dig)
+  json_layout(out, neg, dig, nd, nd + dexp)
+}
+
+/// out + encoding/json's layout of the shortest digits dig (nd of them,
+/// no trailing zeros, value 0.dig * 10^dp): 'e' when the value is below
+/// 1e-6 (dp <= -6) or from 1e21 (dp >= 22), else 'f'.
+fn json_layout(out: Str, neg: Bool, dig: Int, nd: Int, dp: Int) -> Str {
+  let sk = if neg { 1 } else { 0 }
+  // the digits padded to 17: a lead digit, then 16 in two words
+  let p = dig * pow10(17 - nd)
+  let lead = p / 10000000000000000
+  let rest = p % 10000000000000000
+  if dp <= -6 || dp >= 22 {
+    // d[.ddd]e(+|-)x: Go's two exponent digits, but e-0x loses its zero
+    var a = 48 + lead
+    var ak = 1
+    if nd > 1 {
+      a = a | 0x2E00
+      ak = 2
+    }
+    if neg {
+      a = (a << 8) | 45
+      ak += 1
+    }
+    let x = dp - 1
+    var ex = x
+    var es = 0x2B
+    if x < 0 {
+      ex = 0 - x
+      es = 0x2D
+    }
+    let ek = if ex >= 100 { 3 } else if ex >= 10 || x > 0 { 2 } else { 1 }
+    let ew = 0x65 | (es << 8) | shl(digits_k(ex, ek), 16)
+    let r = nd - 1
+    let r1 = if r > 8 { 8 } else { r }
+    let w1 = digits8(rest / 100000000)
+    let w2 = digits8(rest % 100000000)
+    return rt.rs_push_words(out, a, w1, w2, ew, ak | (r1 << 4) | ((r - r1) << 8) | ((2 + ek) << 12))
+  }
+  if dp <= 0 {
+    // 0.[00000]ddd: "0." and -dp zeros (at most 5), then the digits
+    var a = 0x2E30 | shl(0x3030303030 & (shl(1, -8 * dp) - 1), 16)
+    var ak = 2 - dp
+    if neg {
+      a = shl(a, 8) | 45
+      ak += 1
+    }
+    let r = nd - 1
+    let r1 = if r > 8 { 8 } else { r }
+    return rt.rs_push_words(out, a, 48 + lead, digits8(rest / 100000000), digits8(rest % 100000000), ak | (1 << 4) | (r1 << 8) | ((r - r1) << 12))
+  }
+  if nd <= dp {
+    // the digits and dp - nd zeros (dp at most 21): the padded digits
+    // are zeros past nd, and four more zeros past 17
+    let r = dp - 1
+    let r1 = if r > 8 { 8 } else { r }
+    let r2 = if r - r1 > 8 { 8 } else { r - r1 }
+    let a = if neg { 0x302D + shl(lead, 8) } else { 48 + lead }
+    return rt.rs_push_words(out, a, digits8(rest / 100000000), digits8(rest % 100000000), 0x30303030, (sk + 1) | (r1 << 4) | (r2 << 8) | ((r - r1 - r2) << 12))
+  }
+  // ddd.ddd: dp digits (1 to 16), '.', then nd - dp (1 to 16)
+  let q = pow10(17 - dp)
+  let ip = p / q
+  let f16 = (p % q) * pow10(dp - 1)
+  let r = nd - dp
+  let r1 = if r > 8 { 8 } else { r }
+  let fa = digits8(f16 / 100000000)
+  let fb = digits8(f16 % 100000000)
+  if dp <= 7 {
+    let a = digits_k(ip, dp) | shl(0x2E, 8 * dp)
+    return rt.rs_push_words(out, 45, a, fa, fb, sk | ((dp + 1) << 4) | (r1 << 8) | ((r - r1) << 12))
+  }
+  // 8 to 16 integer digits: a word of dp - 8, a word of 8, then '.'
+  let o = rt.rs_push_words(out, 45, digits_k(ip / 100000000, dp - 8), digits8(ip % 100000000), 0x2E, sk | ((dp - 8) << 4) | (8 << 8) | (1 << 12))
+  rt.rs_push_words(o, fa, fb, 0, 0, r1 | ((r - r1) << 4))
+}
+
 // ---------------------------------------------------------------------------
 // Float.parse: strconv.ParseFloat(s, 64) (Go 1.26's internal/strconv
 // atof.go): decimal and hexadecimal text with Go's underscores, inf,
@@ -521,19 +630,38 @@ fn underscore_ok(b: Bytes, n: Int) -> Bool {
 /// Float.parse (strconv.ParseFloat(s, 64)); None for an error.
 pub fn parse_float(s: Str) -> Float? {
   let b = s.bytes()
-  let n = b.len()
-  if n == 0 {
+  parse_float_at(b, 0, b.len())
+}
+
+/// The bytes lo..hi of b: b itself when that is all of it.
+fn part(b: Bytes, lo: Int, hi: Int) -> Bytes {
+  if lo == 0 && hi == b.len() {
+    return b
+  }
+  b[lo..hi]
+}
+
+/// Float.parse of the bytes lo..hi of b (std/json reads its numbers in
+/// place, decision 0193 step 4).
+pub fn parse_float_at(b: Bytes, lo: Int, hi: Int) -> Float? {
+  let n = hi
+  if lo >= n {
     return None
   }
-  var i = 0
+  var i = lo
   var neg = false
-  let c0 = Int(b[0])
+  let c0 = Int(b[lo])
   if c0 == 43 || c0 == 45 {
     neg = c0 == 45
-    i = 1
+    i = lo + 1
   }
   // inf, infinity, nan (strconv.special; nan takes no sign)
   let ci = lower_at(b, i)
+  if (ci == 105 || ci == 110) && n != b.len() {
+    // the words are compared up to the end of b
+    let t = part(b, lo, hi)
+    return parse_float_at(t, 0, t.len())
+  }
   if ci == 105 {
     var k = prefix_len(b, i, b"infinity")
     if k > 3 && k < 8 {
@@ -545,7 +673,7 @@ pub fn parse_float(s: Str) -> Float? {
     return None
   }
   if ci == 110 {
-    if i == 0 && n == 3 && prefix_len(b, 0, b"nan") == 3 {
+    if i == lo && n - lo == 3 && prefix_len(b, lo, b"nan") == 3 {
       return Some(0.0 / 0.0)
     }
     return None
@@ -659,8 +787,11 @@ pub fn parse_float(s: Str) -> Float? {
   if i != n {
     return None
   }
-  if underscores && !underscore_ok(b, n) {
-    return None
+  if underscores {
+    let t = part(b, lo, hi)
+    if !underscore_ok(t, t.len()) {
+      return None
+    }
   }
   let exp = if mant != 0 { dp - nd_mant } else { 0 }
   if hex {
@@ -699,7 +830,8 @@ pub fn parse_float(s: Str) -> Float? {
       return Some(rt.float_from_bits(r))
     }
   }
-  slow_parse(b, n)
+  let t = part(b, lo, hi)
+  slow_parse(t, t.len())
 }
 
 /// 10^k as a Float (0 <= k <= 22, exact).

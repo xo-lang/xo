@@ -1,8 +1,11 @@
 // JSON intrinsics of the native backends (decision 0074), like
 // native/rt.xo: imported only by the implementation modules as
-// `use native/rtjson`. The parser and the scalar conversions are C
-// (std/llrt/xo_json.c); json_enc and json_dec are lowered by internal/ssa
-// to codecs it generates per type (build_json.go).
+// `use native/rtjson`. json_enc and json_dec are lowered by internal/ssa
+// to codecs it generates per type (build_json.go). The parser, the tape
+// readers, and the string and Float text are written in Xo
+// (std/native/llrt/jsontext.xo, decision 0193 step 4); the C functions
+// below (std/llrt/xo_json.c) are its C path (XO_LLRT_C=jsontext,
+// jsontext_c.xo).
 use std/json
 
 /// The tape of the text (xo_json.c), or the empty list when the text is
@@ -10,6 +13,22 @@ use std/json
 fn json_parse(src: Bytes) -> List[Int]
 /// Why the text is not valid JSON (the text after "invalid JSON: ").
 fn json_parse_err(src: Bytes) -> Str
+/// The tape index after the value at i.
+fn json_next(tape: List[Int], i: Int) -> Int
+/// The value of the string node at i.
+fn json_str(src: Bytes, tape: List[Int], i: Int) -> Str
+/// The value node of the last member of the object at i named key, or -1.
+fn json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int
+/// The (key, value) node pairs of the object at i, each key once.
+fn json_members(src: Bytes, tape: List[Int], i: Int) -> List[Int]
+fn json_int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool
+fn json_int(src: Bytes, tape: List[Int], i: Int) -> Int
+fn json_float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool
+fn json_float(src: Bytes, tape: List[Int], i: Int) -> Float
+/// s + t as a JSON string.
+fn rs_append_json_str(s: Str, t: Str) -> Str
+/// s + f as JSON.
+fn rs_append_json_float(s: Str, f: Float) -> Str
 
 /// acc + the JSON text of v.
 fn json_enc[T](acc: Str, v: T) -> Str
