@@ -135,6 +135,7 @@ const RT_UNMAP = 12
 const RT_WAIT_BEGIN = 13
 const RT_WAIT_END = 14
 const RT_ROOT_WORKER = 15
+const RT_RUN_CLAIMED = 16
 
 /// The statistics' counters (xo_rt.c st, in its order).
 const ST_STEAL = 1
@@ -1129,4 +1130,130 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted0: Int) {
     node_set_waiter(node, 0)
   }
   let _e = rt.sched_rt(RT_WAIT_END, c, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Scopes (xo_rt.c "Scopes and tasks", core 7.1): a spawn links its task
+// into the scope and queues it; the close helps with the tasks nobody
+// started and waits for the rest. The records are made, counted, and
+// freed by the C (the task's closure and result, faults, budgets).
+
+/// xo_scope (byte offsets; pending is word 30): the node of its tasks,
+/// its lock, the joiner's park, every task (each a reference, linked by
+/// snext), closed (a C int), the list's length and the length at which a
+/// spawn prunes it next, closing (a C int).
+const S_TASKS = 72
+const S_MU = 104
+const S_PENDING = 30
+const S_JOINER = 248
+const S_LIST = 384
+const S_CLOSED = 400
+const S_NLIST = 432
+const S_PRUNE_AT = 440
+const S_CLOSING = 448
+
+/// xo_task (byte offsets; state is word 10, gone word 22): the count of
+/// its header, its node, its scope, its link in the scope's list.
+const T_RC = 0
+const T_NODE = 16
+const T_SCOPE = 72
+const T_STATE = 10
+const T_SNEXT = 168
+const T_GONE = 22
+
+/// Links task t into scope s and queues it (s.spawn): the tasks it
+/// pruned from s's list (linked by snext, for the C to release), 0, or -1
+/// when s has ended (nothing done).
+pub fn scope_add(pl: Int, s: Int, t: Int) -> Int {
+  let m = rt.int_wrap(0, s, S_MU)
+  lock(m)
+  if rt.mem_load(s, S_CLOSED, 4) != 0 {
+    unlock(m)
+    return -1
+  }
+  rt.mem_store(t, T_SCOPE, s, 8)
+  // counted before a helper can find it in the list: the task runs and
+  // its queue entry is taken (two units of two)
+  rt.slot_add(s, S_PENDING, 4, 3)
+  node_link(rt.int_wrap(0, t, T_NODE), rt.mem_load(s, S_TASKS, 8))
+  rt.mem_store(t, T_SNEXT, rt.mem_load(s, S_LIST, 8), 8)
+  rt.mem_store(s, S_LIST, t, 8)
+  let n = rt.int_wrap(0, rt.mem_load(s, S_NLIST, 8), 1)
+  rt.mem_store(s, S_NLIST, n, 8)
+  var dead = 0
+  if n >= rt.mem_load(s, S_PRUNE_AT, 8) && rt.mem_load(s, S_CLOSING, 4) == 0 {
+    dead = scope_prune(s)
+  }
+  unlock(m)
+  pool_push(pl, t)
+  dead
+}
+
+/// Takes the tasks that are over and that only s's list holds out of the
+/// list (s's lock held), linked by snext. A task is over when its run
+/// ended and its queue entry was taken (gone 2); with a count of one
+/// (shared: -1) nobody else has it (decision 0118: a long lived scope of
+/// a server kept every connection's task).
+fn scope_prune(s: Int) -> Int {
+  var dead = 0
+  var pp = rt.int_wrap(0, s, S_LIST)
+  var n = rt.mem_load(s, S_NLIST, 8)
+  while true {
+    let u = rt.mem_load(pp, 0, 8)
+    if u == 0 {
+      break
+    }
+    if rt.slot_load(u, T_GONE, ACQUIRE) == 2 && rt.slot_load(u, T_RC, ACQUIRE) == -1 {
+      rt.mem_store(pp, 0, rt.mem_load(u, T_SNEXT, 8), 8)
+      rt.mem_store(u, T_SNEXT, dead, 8)
+      dead = u
+      n = rt.int_wrap(1, n, 1)
+    } else {
+      pp = rt.int_wrap(0, u, T_SNEXT)
+    }
+  }
+  rt.mem_store(s, S_NLIST, n, 8)
+  let twice = rt.int_wrap(3, n, 1)
+  rt.mem_store(s, S_PRUNE_AT, if twice > 64 { twice } else { 64 }, 8)
+  dead
+}
+
+/// The close of scope s by context c after its tasks were canceled as
+/// the mode asks: runs the tasks that have not started on this thread
+/// (tasks spawned meanwhile go to the head of the list: it looks again
+/// until a pass finds none; a task's link is fixed once it is in the
+/// list), then waits (not a cancellation point: a canceled body still
+/// waits) until every task ended and every queue entry was taken: it sets
+/// bit 0 of pending while that is not zero, and the last unit signals
+/// its park.
+pub fn scope_join(pl: Int, s: Int, c: Int) {
+  let m = rt.int_wrap(0, s, S_MU)
+  var found = true
+  while found {
+    found = false
+    lock(m)
+    var t = rt.mem_load(s, S_LIST, 8)
+    unlock(m)
+    while t != 0 {
+      if rt.slot_load(t, T_STATE, ACQUIRE) == 0 && sched.task_claim(t) != 0 {
+        // claimed: it runs here, its queue entry still queued
+        let _r = rt.sched_rt(RT_RUN_CLAIMED, t, 2)
+        found = true
+      }
+      t = rt.mem_load(t, T_SNEXT, 8)
+    }
+  }
+  let p = rt.int_wrap(0, c, C_PARK)
+  rt.mem_store(s, S_JOINER, p, 8)
+  while true {
+    park_reset(p)
+    let v = rt.slot_load(s, S_PENDING, ACQUIRE)
+    if (v >> 1) == 0 {
+      break
+    }
+    if (v & 1) == 0 && !rt.slot_cas(s, S_PENDING, v, v | 1, 3) {
+      continue
+    }
+    park_wait(pl, c, 0, 1)
+  }
 }

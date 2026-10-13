@@ -3105,6 +3105,8 @@ static void *steal_round(xo_worker *w, int last) { return (void *)(intptr_t)xo_x
 static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
+int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t);
+void xo_x_scope_join(int64_t pl, int64_t s, int64_t c);
 void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
@@ -3624,6 +3626,7 @@ static void dequeued(xo_task *t) {
 // (shared: -1) nobody else has it, and nobody can get it again. The
 // close never prunes (its helpers walk the list without the lock), and a
 // spawn prunes only when the list doubled since the last time.
+#ifdef XO_SCHED_C
 static xo_task *scope_prune(xo_scope *s) {
 	xo_task *dead = NULL;
 	xo_task **pp = &s->list;
@@ -3641,6 +3644,7 @@ static xo_task *scope_prune(xo_scope *s) {
 	s->prune_at = s->nlist * 2 > 64 ? s->nlist * 2 : 64;
 	return dead;
 }
+#endif
 
 // scope_drop_pruned unlinks the pruned tasks' nodes and drops the list's
 // references (without s->mu: a task's result may run drop code).
@@ -4294,7 +4298,11 @@ XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) {
 
 // xo_sched_run_task runs the task of the fiber that just started (Xo's
 // fiber_main): it came from a queue, so its entry and its run end here.
-void xo_sched_run_task(int64_t fa) { run_claimed(((xo_fiber *)(intptr_t)fa)->task, 4); }
+void xo_sched_run_task(int64_t fa) {
+	xo_task *t = ((xo_fiber *)(intptr_t)fa)->task;
+	TSAN_ACQUIRE(t); // its spawn released it (the queues are Xo, not instrumented)
+	run_claimed(t, 4);
+}
 
 // (both are compiled with -DXO_SCHED_C too: the C only tests link that
 // C with the exports of a program built on the default path)
@@ -4415,6 +4423,10 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 15: // the calling root thread's record
 		return XO_ADDR(root_worker());
+	case 16: // task a, claimed, runs here (its queue entry still queued)
+		TSAN_ACQUIRE((void *)(intptr_t)a);
+		run_claimed((xo_task *)(intptr_t)a, b);
+		return 0;
 	}
 	(void)b;
 	return 0;
@@ -4435,6 +4447,10 @@ _Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 &
                    offsetof(xo_node, canceled) == 32 && offsetof(xo_node, waiter) == 40 && offsetof(xo_node, mu) == 48,
                "pool.xo N_*");
 _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
+_Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, joiner) == 248 && offsetof(xo_scope, list) == 384 &&
+                   offsetof(xo_scope, closed) == 400 && offsetof(xo_scope, nlist) == 432 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448,
+               "pool.xo S_*");
+_Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
 _Static_assert(offsetof(__typeof__(dlk), blocked) == 8 && offsetof(__typeof__(dlk), uncounted) == 16 && offsetof(__typeof__(pool), dlk) == 120, "pool.xo DLK_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
@@ -4609,6 +4625,7 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	// the spawning context's budget (decision 0175)
 	t->bud = ctx()->bud;
 	bud_retain(t->bud);
+#ifdef XO_SCHED_C
 	lk(&s->mu);
 	if (s->closed) {
 		unlk(&s->mu);
@@ -4631,6 +4648,20 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	}
 	unlk(&s->mu);
 	pool_push(t);
+#else
+	// linked into s, counted, and queued in Xo (decision 0212 stage 2,
+	// pool.xo scope_add): the tasks it pruned from s's list, or -1 when s
+	// has ended
+	TSAN_RELEASE(t);
+	int64_t r = xo_x_scope_add(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(t));
+	if (r == -1) {
+		bud_release(t->bud);
+		xo_free(t);
+		list_release(fl, (xo_ldrop)fdrop);
+		fault_at("a task was started on a scope that has ended", loc, n);
+	}
+	xo_task *dead = (xo_task *)(intptr_t)r;
+#endif
 	scope_drop_pruned(dead);
 	return t;
 }
@@ -4767,6 +4798,7 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		node_cancel(s->tasks);
 	}
 	unlk(&s->mu);
+#ifdef XO_SCHED_C
 	// help: run the tasks that have not started on this thread (tasks
 	// spawned meanwhile go to the head of the list: look again until a
 	// pass finds none; a task's link is fixed once it is in the list)
@@ -4797,6 +4829,13 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		}
 		park_wait(c, 0);
 	}
+#else
+	// in Xo (decision 0212 stage 2, pool.xo scope_join): the same help,
+	// then the wait (not a cancellation point) for every task's end and
+	// every queue entry
+	xo_x_scope_join(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(c));
+	TSAN_ACQUIRE(&c->park);
+#endif
 	lk(&s->mu);
 	s->closed = 1;
 	xo_task *list = s->list;
