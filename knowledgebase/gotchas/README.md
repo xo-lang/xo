@@ -407,3 +407,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ioflags-symbol-prefix.md](ioflags-symbol-prefix.md): Observed: IOFlags finds runtime symbols by prefix, so a C path function named like a prefix of a default one (`xo_gen_int`, `xo_gen_intn`) would compile the runtime locally for every caller; rename it.
 - [xo-binary-embeds-std-native.md](xo-binary-embeds-std-native.md): Observed: a scratch xo binary built before a std/native edit compiles the old runtime; rebuild it before measuring, and nm the binary when two paths measure the same.
 - [wasm-assembler-opcode-table.md](wasm-assembler-opcode-table.md): Observed: a WAT runtime instruction missing from selfhost/wasm/asm.xo (`i64.rotr`) breaks every wasm program; add the opcode and run TestSelfhostWasm.
+- [wasm-rt-name-collides-with-generated.md](wasm-rt-name-collides-with-generated.md): Observed: a WAT runtime helper `$eq8` collided with the wasm backend's generated type equality `$eq8`; prefix runtime helpers.
+- [uses-is-a-keyword.md](uses-is-a-keyword.md): Observed: a local named `uses` is a parse error (effect clauses); name it `us`.
+- [module-shadowed-by-function.md](module-shadowed-by-function.md): Observed: `use native/llrt/scan` in a module with a function `scan` gives XO0407 at its calls; import with `as`.

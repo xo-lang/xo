@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster on the native backends: Str.split, Str.lines, Str.rune_count,
+  Str.find and contains, Bytes.to_hex, Bytes.rune_count, and
+  Bytes.to_str (UTF-8 validity) are now Xo in the runtime, scanning 16
+  bytes a step with NEON on arm64 and vector compares on LLVM (decision
+  0201). They retire from 0.32 to 1.01 times the instructions of the C
+  they replace (rune_count about a third); `XO_LLRT_C=scan` builds the
+  C path for comparison. Output is unchanged.
+
 - Faster: `Atomic[T]` on the native backends no longer calls the C
   runtime: get, set, swap, and compare_and_swap are one inline atomic
   instruction each (get is a single `ldar` on arm64) and add and max are

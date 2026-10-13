@@ -13,6 +13,7 @@
 // appended with one call (rt.rs_push_word: up to 8 bytes, the first in
 // the low byte; rt.rs_push_words: four such pieces), since an append is
 // a C call.
+use native/llrt/scan
 use native/llrt/strings
 use native/llrt/unicode
 use native/rt
@@ -583,7 +584,7 @@ pub fn append_quote(out: Str, b: Bytes) -> Str {
   var i = 0
   while i < n {
     // printable ASCII other than `"` and `\`
-    let j = rt.bytes_span(b, i, 1)
+    let j = scan.span(b, i, 1)
     if j > i {
       o = rt.rs_append_bytes(o, b, i, j, 0)
       i = j

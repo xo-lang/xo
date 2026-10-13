@@ -1,6 +1,7 @@
 // std/csv on the native backends (decisions 0074 and 0164). std/rt's
 // csv.go is the reference: the same records, text, errors, and faults.
 use std/csv
+use native/llrt/scan
 use native/rt
 
 fn csverr_display(e: csv.CsvErr) -> Str { "csv: line ${e.line}, column ${e.column}: ${e.msg}" }
@@ -77,7 +78,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
         if !closed {
           return Err(err_at(ql, qc, "quoted field not closed"))
         }
-        if i < n && !rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+        if i < n && !scan.has_at(text, i, ss) {
           let c = rt.str_byte(text, i)
           let crlf = c == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10
           let final_cr = c == 13 && i + 1 == n
@@ -88,7 +89,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
       } else {
         while i < n {
           let c = rt.str_byte(text, i)
-          if c == 10 || c == 13 && (i + 1 == n || rt.str_byte(text, i + 1) == 10) || rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+          if c == 10 || c == 13 && (i + 1 == n || rt.str_byte(text, i + 1) == 10) || scan.has_at(text, i, ss) {
             break
           }
           if c == 34 {
@@ -99,7 +100,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
         }
       }
       rec.push(field.freeze().to_str() ?? "")
-      if i < n && rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+      if i < n && scan.has_at(text, i, ss) {
         i += ss.len()
         continue
       }

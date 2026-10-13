@@ -1747,7 +1747,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "Bytes.to_str" => {
       let join = b.new_block()
       let res = b.s.f.add_param(join, nt)
-      let (yes, no) = b.branch(b.rt("utf8_valid", b.bool_t(), [recv]))
+      // the native prelude's llrt_utf8_valid (std/native/llrt/scan.xo,
+      // decision 0201), else rt.utf8_valid (fn.scanRT)
+      let (yes, no) = b.branch(b.scan_rt("utf8_valid", b.bool_t(), [recv]))
       b.s.cur = yes
       b.jump(join, [b.variant(nt, "Some", [recv])])
       b.s.cur = no
