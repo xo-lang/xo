@@ -26,9 +26,10 @@ struct Opts {
   backend: Str = ""
   go_tree: Str = ""
   /// --as and --ld (decision 0182): cc, or macho (selfhost/macho; --ld=macho
-  /// implies --as=macho).
-  assembler: Str = "cc"
-  linker: Str = "cc"
+  /// implies --as=macho); "" when not given: main.xo default_ld picks
+  /// macho for a darwin/arm64 host link the pack covers, else cc.
+  assembler: Str = ""
+  linker: Str = ""
   phases: Bool = false
   json: Bool = false
   ci: Bool = false

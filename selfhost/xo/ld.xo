@@ -26,7 +26,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   }
   let (obj, lib) = shipped_runtime(os, ctx, ctx.std, flags, tls)
   if obj.is_empty() {
-    return "--ld=macho needs a prebuilt runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status(os, ctx, ctx.std)}"
+    return "--ld=macho needs a prebuilt runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, ctx, ctx.std, "arm64")}"
   }
   var ins: List[macho.LinkInput] = []
   for p in objs + [obj] {
@@ -83,7 +83,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: 
   lctx.goos = "linux"
   let (obj, lib) = shipped_runtime(os, lctx, ctx.std, flags, tls)
   if obj.is_empty() {
-    return "--ld=macho needs a prebuilt linux/arm64 runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status(os, lctx, ctx.std)}"
+    return "--ld=macho needs a prebuilt linux/arm64 runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, lctx, ctx.std, "arm64")}"
   }
   var ins: List[macho.LinkInput] = []
   var paths = objs + [obj]
