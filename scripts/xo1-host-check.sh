@@ -60,7 +60,7 @@ trap '[ -n "$sampler" ] && kill "$sampler" 2>/dev/null' EXIT
 # timed NAME CMD...: runs CMD under /usr/bin/time, logs its wall clock
 # time and peak memory
 timed() {
-  name=$1; shift
+  local name=$1 rc t0 dt rss foot mach; shift
   start_sampler "$name"
   t0=$(date +%s)
   if [ "$os" = Darwin ]; then
