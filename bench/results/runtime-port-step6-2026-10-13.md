@@ -147,8 +147,10 @@ full tier passes, then a later change deletes them (decision 0198).
   (also under AddressSanitizer) and arm64, both paths.
 - TestHPACKTables, TestHTTP1Tables (the generated tables are current),
   TestIOFlagsFspathC, TestXo1IOFlagsSymbols, TestLLRTCPath.
-- Windows: the batch (scripts/remote-windows.sh --batch) on a201bea4,
-  below.
+- Windows: scripts/remote-windows.sh --batch on a201bea4 (EC2
+  c7i.4xlarge on demand, i-EXAMPLE53, terminated): xo1 built;
+  windows/amd64 goldens 148 pass of 148; windows/arm64 148 built of 148;
+  the LLVM runtime tests ok; xo test LLVM against Go 16 same, 0 differ.
 
 ## Found on the way
 

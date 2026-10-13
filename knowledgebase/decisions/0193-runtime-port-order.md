@@ -361,7 +361,8 @@ its callers move too.
       inputs), TestProcSpecDiff (new), TestH2Sanitizers, TestTLSDiff,
       TestHTTPParseDiff, TestHTTPFuzz, the http, fs, and proc goldens on
       LLVM (and AddressSanitizer) and arm64, both paths; the Windows
-      batch.
+      batch (148 of 148 windows/amd64 goldens pass, 148 build for
+      windows/arm64).
     - Found: two C parser defects (a chunk size of 2^63 or more read as
       negative, now fixed; IPv4 leading zeros in IPv6 hosts accepted by
       the platform's inet_pton), the Go backend not closing after a body
