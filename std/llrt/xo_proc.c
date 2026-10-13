@@ -87,59 +87,12 @@ static void pr_kill9(pid_t pid) { TerminateProcess((HANDLE)pid, PR_KILLED); }
 // pr_release forgets a child that is not reaped
 static void pr_release(pid_t pid) { CloseHandle((HANDLE)pid); }
 
-// a pumped pipe's copying thread: from the pipe handle h to the socket s
-// (out), or from s to h
-typedef struct {
-	HANDLE h;
-	SOCKET s;
-	int out;
-} pr_pump;
-
-static void *pr_pump_main(void *a) {
-	pr_pump *p = a;
-	char b[65536];
-	if (p->out) {
-		DWORD n;
-		for (;;) {
-			if (!ReadFile(p->h, b, sizeof b, &n, NULL)) {
-				break; // ERROR_BROKEN_PIPE: every writer closed it
-			}
-			int64_t at = 0;
-			while (at < (int64_t)n) {
-				int w = send(p->s, b + at, (int)(n - at), 0);
-				if (w <= 0) {
-					goto done; // the program closed its end
-				}
-				at += w;
-			}
-		}
-	} else {
-		for (;;) {
-			int r = recv(p->s, b, sizeof b, 0);
-			if (r <= 0) {
-				break; // the program closed its end
-			}
-			DWORD at = 0, w;
-			while (at < (DWORD)r) {
-				if (!WriteFile(p->h, b + at, (DWORD)r - at, &w, NULL)) {
-					goto done; // the child closed its input
-				}
-				at += w;
-			}
-		}
-	}
-done:
-	CloseHandle(p->h);
-	closesocket(p->s);
-	free(p);
-	return NULL;
-}
-
 // pr_pipe2 makes a pipe not inherited by children (the handle list names
 // what a child gets). nb -1: both ends are C runtime descriptors of the
 // pipe (between two children, or to the input feeder); nb 0 or 1: that
-// end is the program's, a nonblocking socket pumped to the pipe, and the
-// other end is a descriptor of the pipe for the child.
+// end is the program's, a nonblocking socket pumped to the pipe by a
+// thread (xo_w_pump), and the other end is a descriptor of the pipe for
+// the child.
 static int pr_pipe2(int p[2], int nb) {
 	p[0] = p[1] = -1;
 	HANDLE r, w;
@@ -147,40 +100,21 @@ static int pr_pipe2(int p[2], int nb) {
 		errno = xo_w_errno(GetLastError());
 		return -1;
 	}
-	int sv[2] = {-1, -1};
-	if (nb >= 0) {
-		if (xo_w_socketpair(sv) < 0) {
-			CloseHandle(r);
-			CloseHandle(w);
-			errno = EMFILE;
-			return -1;
-		}
-		// the pump's end blocks
-		u_long zero = 0;
-		ioctlsocket((SOCKET)sv[1], FIONBIO, &zero);
-	}
-	HANDLE child = nb == 0 ? w : r, pumped = nb == 0 ? r : w;
 	if (nb < 0) {
 		p[0] = _open_osfhandle((intptr_t)r, _O_RDONLY | _O_BINARY);
 		p[1] = _open_osfhandle((intptr_t)w, _O_WRONLY | _O_BINARY);
 		return 0;
 	}
+	HANDLE child = nb == 0 ? w : r, pumped = nb == 0 ? r : w;
+	int s = xo_w_pump(pumped, nb == 0, 1);
+	if (s < 0) {
+		CloseHandle(r);
+		CloseHandle(w);
+		errno = EMFILE;
+		return -1;
+	}
 	p[1 - nb] = _open_osfhandle((intptr_t)child, (nb == 0 ? _O_WRONLY : _O_RDONLY) | _O_BINARY);
-	p[nb] = sv[0];
-	pr_pump *pp = malloc(sizeof *pp);
-	if (!pp) {
-		xo_oom();
-	}
-	*pp = (pr_pump){pumped, (SOCKET)sv[1], nb == 0};
-	pthread_t t;
-	pthread_attr_t at;
-	pthread_attr_init(&at);
-	pthread_attr_setstacksize(&at, 256 << 10);
-	pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-	if (pthread_create(&t, &at, pr_pump_main, pp) != 0) {
-		xo_oom();
-	}
-	pthread_attr_destroy(&at);
+	p[nb] = s;
 	return 0;
 }
 #else
