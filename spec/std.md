@@ -728,7 +728,9 @@ failure is `Io` with the system's text (`no such process`, `operation
 not permitted`). An attenuated `Proc` sends signals only when every list
 names `"kill"` (`os.proc.only(["kill"])`), else `Denied("kill")`. Record
 and replay record it (`proc.kill`). Where the system has no signals
-(Windows), only `KILL` is sent. Used by `xo dump` (core 11.4) to ask a
+(Windows), only `KILL` is sent: it ends the process with the status
+137 (128 plus SIGKILL's number, as on Unix), and another name is
+`Io("signal NAME is not supported on this system")`. Used by `xo dump` (core 11.4) to ask a
 running program for its task tree.
 
 `p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
@@ -737,8 +739,14 @@ running program for its task tree.
 unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
 Native builds have it too (decision 0172).
 
-The native backends run commands with `posix_spawn`, reading the output
-on the event loop; cancelling the task kills the command (decision 0107).
+The native backends run commands with `posix_spawn` (on Windows
+`CreateProcessW`, decision 0197), reading the output on the event loop;
+cancelling the task kills the command (decision 0107). On Windows a
+command name without `\`, `/`, or `:` is looked up in `PATH` (`;`
+separated) with the extensions of `PATHEXT`, as Go's exec.LookPath; the
+arguments are quoted for the command line as Go's syscall.EscapeArg
+does, and also when they hold a line end or another space character
+(the MSYS2 and Cygwin runtimes split there).
 
 Returning `Err` from `main` prints the error with its frames to standard error
 and exits with status 1. Prefer that over `exit` for failures.
@@ -808,7 +816,8 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
   and `read_err` for `spawn`. `merge_stderr` sends the error stream
   into the output stream (`output`'s `stderr` is then empty).
 - Exit status: the child's exit code; a child ended by a signal is 128
-  plus the signal number.
+  plus the signal number. On Windows `Child.kill` (and cancellation)
+  ends the child with the status 137, as SIGKILL does on Unix.
 - `read` returns at most `max` bytes (at most 1 MiB) as they arrive and
   `None` at the end of the stream; `read_line` strips `\n` and `\r\n`.
   Reads and `wait` are cancellation points; cancelling the task that

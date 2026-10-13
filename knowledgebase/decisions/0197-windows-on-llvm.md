@@ -2,7 +2,9 @@
 
 Status: Accepted (2026-10-12, windows agent, on the lead's task for
 decision 0196); stage 1 implemented for windows/amd64, stage 3's builds
-for windows/arm64 (not run: no host). Other stages Proposed.
+for windows/arm64 (not run: no host), stage 2 (processes) and xo1's
+Windows driver implemented (2026-10-12, second windows agent). Other
+stages Proposed.
 
 ## Context
 
@@ -45,7 +47,7 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
 | Time zones | xo_time.c | zone data compiled in (XO_TIME) or /usr/share/zoneinfo, /etc/localtime | the compiled in data works; the local zone is "Local" (UTC) until the registry's `TimeZoneKeyName` is mapped to an IANA name (CLDR windowsZones table) | partial |
 | Random bytes | xo_crypto.c | getrandom, getentropy | `BCryptGenRandom` (system preferred RNG) | done |
 | TLS library (decision 0105) | third_party/mbedtls | pthreads | `xo/win/pthread.h` (SRW locks, condition variables) on the include path; Everest's Curve25519 built without `__int128` (kremlib's MSVC branch types it as `__m128i`); system roots from the `ROOT` certificate store (`CertEnumCertificatesInStore`) | done |
-| Processes (Proc, decision 0107) | xo_proc.c | posix_spawn, waitpid, pipes, kill | `CreateProcessW` with an argument string quoted as Go's syscall.EscapeArg, anonymous pipes with overlapped reads or a reader thread, `WaitForSingleObject`, `TerminateProcess`, job objects for process groups | not yet (XO1504) |
+| Processes (Proc, decision 0107) | xo_proc.c | posix_spawn, waitpid, pipes, kill | `CreateProcessW` with an argument string quoted as Go's syscall.EscapeArg (and on any space character), the standard handles in a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, anonymous pipes pumped by a thread to a loopback socket the poller waits on, `WaitForSingleObject`, `TerminateProcess` with status 137; job objects for process groups later | done (stage 2) |
 | Memory mapping (allocator chunks) | xo_rt.c | malloc today | unchanged | n/a |
 | Linking | internal/build | cc/clang + `-lm -lpthread` | clang `--target` default x86_64-pc-windows-msvc, `-fuse-ld=lld` (LTO bitcode), import libraries named by `#pragma comment(lib)` in xo_win.c (ws2_32, bcrypt, synchronization, shell32, crypt32) | done |
 
@@ -70,7 +72,8 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    selfhost/llvm need no target change for stage 1.
 4. **Unsupported parts fail the build, never the run:** XO1504 (new,
    spec 10.6) names the std APIs whose runtime is not ported to the
-   build's target. After stage 1 that is processes (Proc) only.
+   build's target. After stage 1 that was processes (Proc) only; after
+   stage 2 it names none (internal/build unsupportedOnWindows is empty).
 5. **Goldens:** `TestGoldenWant` (XO_GOLDEN_WANT=1) builds every LLVM
    golden with the LLVM backend alone and compares with
    `want_<goos>.txt` when the program's output is target dependent
@@ -88,12 +91,39 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    faults, timers, files, sockets, HTTP and TLS, standard input on
    windows/amd64: 140 of 144 goldens pass, 1 fails (env_program, stage
    4), 3 are XO1504 (processes) (bench/results/windows-2026-10-12.md).
-2. **Stage 2: processes.** xo_proc.c on `CreateProcessW` (proc_cmd,
-   net_only, unix_kill goldens: XO1504 today). Next experiment: port
-   `xo_proc_run` first behind `#ifdef _WIN32` (quote argv as Go's
-   `syscall.EscapeArg`, `STARTUPINFOEXW` with an explicit handle list for
-   the pipes), run `XO_GOLDEN_WANT=1 go test -run 'TestGoldenWant/proc_cmd'
-   ./internal/llvm` on the instance.
+2. **Stage 2: processes (done 2026-10-12).** xo_proc.c on
+   `CreateProcessW`: `pr_w_spawn` builds the command line (`pr_w_quote`:
+   Go's EscapeArg, plus quoting on line ends, which MSYS2 programs split
+   at, gotchas/windows-msys-argv-newlines.md), the environment block
+   (UTF-16, names deduplicated without case, SYSTEMROOT added as
+   os/exec's addCriticalEnv, no PWD as os/exec on Windows), the
+   directory (GetFullPathNameW), and a `STARTUPINFOEXW` whose handle
+   list names exactly the three standard handles (inheritable copies
+   made just for the call). A pipe the program reads or writes on the
+   event loop is pumped: the child gets an anonymous pipe and a thread
+   copies between it and a loopback socket pair, whose other end is a
+   socket the WSAPoll poller already waits on; a pipe between two
+   children or to the input feeder thread is a plain pipe. A process id
+   is the process handle (`pid_t`), reaped with `WaitForSingleObject`;
+   `Child.kill`, cancellation, and `Proc.kill(pid, "KILL")` call
+   `TerminateProcess` with status 137 (the Go backend's Windows
+   `killProcess` too), other signals are `Io("signal NAME is not
+   supported on this system")` as std/rt. PATH lookup follows
+   exec.LookPath on Windows (`;`, PATHEXT). proc_cmd, net_only, and
+   unix_kill pass (two of them with want_windows.txt, for Git for
+   Windows' sh and for signals), so XO1504 names no part now; 143 of
+   144 goldens pass (bench/results/windows-2026-10-12.md).
+   **xo1 on Windows (same day, after the Go compiler froze):** the
+   self hosted driver builds Windows programs: host (`target.os`), user
+   cache (%LocalAppData%), PATH and PATHEXT lookup, `NUL`, the lld link,
+   the TLS library's `xo/win` include and Curve25519 define, the
+   system's bsdtar, drive paths in selfhost/check (`path_volume`,
+   `is_rooted`) and selfhost/xo (`is_abs_path`), and
+   `llvm_cross_triple` for windows/arm64. xo1 is built on the instance
+   by the Go seed with the Go backend; built by xo1 it passes 143 of 144
+   goldens on windows/amd64 and builds all 144 for windows/arm64.
+   Left: xo1 built natively (LLVM) on Windows, so the seed needs no Go
+   there.
 3. **Stage 3: windows/arm64.** Done on 2026-10-12: the fiber switch for
    Windows on Arm (AAPCS64's callee saved set plus the TEB's stack
    bounds through x18), fault_raise's ARM64 `CONTEXT` fields (Pc, Sp, X0,

@@ -22,6 +22,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   string literals, the predeclared `target` of a cross build (it was the
   compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
   an amd64 host, and paths printed by `xo serve` on Linux.
+- Windows, decision 0197 stage 2: native programs run processes
+  (`Proc.run`, `Cmd`, `Child`, pipelines) on Windows through
+  `CreateProcessW` (PATH and PATHEXT lookup, arguments quoted as Go's
+  EscapeArg and on line ends, only the three standard handles
+  inherited); XO1504 no longer stops any Windows build. On Windows
+  `Child.kill`, cancellation, and `Proc.kill(pid, "KILL")` end a process
+  with status 137 on both backends (the Go backend's was 1), and other
+  signal names are an `Io` error. The self hosted `xo` builds Windows
+  programs too (`--backend=llvm` on a windows/amd64 host, and
+  `--targets=windows/arm64` cross builds): 143 of 144 LLVM goldens pass
+  built by it, and all 144 build for windows/arm64.
 - The LLVM backend builds Windows programs (windows/amd64 host, decision
   0197 stage 1): `xo build --backend=llvm` with LLVM's clang
   (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's

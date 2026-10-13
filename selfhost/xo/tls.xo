@@ -122,7 +122,8 @@ struct TLSArgs {
 fn tls_args(os: Os, ctx: Ctx, cc: Str, flags: List[Str], sysroot: Str) -> TLSArgs {
   var flavor: List[Str] = []
   for f in flags {
-    if f.starts_with("-fsanitize") || f.starts_with("-fno-sanitize") {
+    // and a cross build's target (llvm_cross_triple)
+    if f.starts_with("-fsanitize") || f.starts_with("-fno-sanitize") || f.starts_with("--target=") {
       flavor.push(f)
     }
   }

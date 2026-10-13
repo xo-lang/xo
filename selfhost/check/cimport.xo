@@ -58,7 +58,7 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
   }
   // the binding's key and prefix (cbind locate)
   var local = join(mdir, header)
-  if header.starts_with("/") {
+  if is_rooted(header) {
     local = clean(header)
   }
   var header_path = ""
@@ -86,7 +86,7 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
       continue
     }
     var p = l
-    if !p.starts_with("/") {
+    if !is_rooted(p) {
       p = join(mdir, l)
     }
     let abs = c.abs(p)
