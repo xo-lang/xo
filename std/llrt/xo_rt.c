@@ -503,8 +503,26 @@ void xo_x_heap_free_mt(int64_t h, int64_t p);
 int64_t xo_x_heap_resize(int64_t h, int64_t p, int64_t old, int64_t n, int64_t mt);
 
 #define HA(h) ((int64_t)(intptr_t)(h))
-static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) { return (void *)(intptr_t)xo_x_heap_alloc(n, HA(h)); }
-static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) { xo_x_heap_free(HA(p), HA(h)); }
+// With LTO (the LLVM backend) the calls of the single threaded paths are
+// inlined as the C's alloc_in and free_in were (always_inline on the
+// call: LLVM's own cost model kept the Xo function out of line in the
+// hot string builders, bench/results/raw-memory-2026-10-13.md stage 3).
+#if defined(__has_c_attribute)
+#if __has_c_attribute(clang::always_inline)
+#define XO_INLINE_CALL [[clang::always_inline]]
+#endif
+#endif
+#ifndef XO_INLINE_CALL
+#define XO_INLINE_CALL
+#endif
+static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
+	int64_t p;
+	XO_INLINE_CALL p = xo_x_heap_alloc(n, HA(h));
+	return (void *)(intptr_t)p;
+}
+static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
+	XO_INLINE_CALL xo_x_heap_free(HA(p), HA(h));
+}
 __attribute__((noinline)) static void *alloc_mt(int64_t n) {
 	xo_heap *h = heap_slow();
 	xo_x_heap_refill(HA(h), n);
