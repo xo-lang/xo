@@ -333,7 +333,13 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 				switch et.Kind {
 				case KInt, KBool, KFloat:
 					a := lit(acc, "Atomic(")
-					s.retv(lit(sub(a, s.rt("atomic_get", et, v), n.Args[0]), ")"))
+					var g *Value
+					if b.atomicXo() {
+						g = s.rt("slot_load", et, v, s.cint(atomicSlot), s.cint(ordSeqCst))
+					} else {
+						g = s.rt("atomic_get", et, v)
+					}
+					s.retv(lit(sub(a, g, n.Args[0]), ")"))
 					return
 				}
 			}

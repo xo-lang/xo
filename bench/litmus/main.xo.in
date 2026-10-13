@@ -1,0 +1,183 @@
+// Litmus tests of decision 0200's atomics (bench/litmus/run.sh copies
+// this to main.xo next to a std/ with std/litmus): two tasks on two
+// worker threads meet at a barrier before each of n iterations and run
+// one side each, on fresh cells per iteration.
+//
+//   sb   store buffering: x = 1; r1 = y || y = 1; r2 = x. seq_cst forbids
+//        r1 == r2 == 0; relaxed allows it (seen on arm64 and x86).
+//   mp   message passing: data = 1; flag = 1 || r1 = flag; r2 = data.
+//        release and acquire forbid r1 == 1, r2 == 0; relaxed allows it
+//        on arm64 (never on x86, whose loads and stores keep their order).
+//   cas, add, lock, atomic: t tasks of m increments each by a CAS loop,
+//        a fetch add, a swap lock over relaxed loads and stores, and
+//        Atomic[Int].add (the port): the total must be t * m.
+//
+// Output: one line per test, `name weak=K n=N` or `name total=T want=W`;
+// a forbidden outcome prints FAIL and exits 1.
+use std/litmus as lt
+
+/// Both tasks arrive at barrier k (cell 0 of bar counts arrivals).
+fn meet(bar: List[Int], k: Int) {
+  let _ = lt.add_seq_cst(bar, 0, 1)
+  while lt.load_acquire(bar, 0) < 2 * (k + 1) {
+    lt.spin()
+  }
+}
+
+/// Store buffering with seq_cst (sc) or relaxed accesses: the number of
+/// iterations with r1 == r2 == 0.
+fn sb(n: Int, sc: Bool) -> Int {
+  let xs = lt.cells(2 * n)
+  let rs = lt.cells(2 * n)
+  let bar = lt.cells(1)
+  scope s {
+    for me in 0..2 {
+      s.spawn(fn() {
+        for k in 0..n {
+          meet(bar, k)
+          let mine = 2 * k + me
+          let other = 2 * k + 1 - me
+          if sc {
+            lt.store_seq_cst(xs, mine, 1)
+            lt.store_relaxed(rs, mine, lt.load_seq_cst(xs, other))
+          } else {
+            lt.store_relaxed(xs, mine, 1)
+            lt.store_relaxed(rs, mine, lt.load_relaxed(xs, other))
+          }
+        }
+      })
+    }
+  }
+  var weak = 0
+  for k in 0..n {
+    if lt.load_relaxed(rs, 2 * k) == 0 && lt.load_relaxed(rs, 2 * k + 1) == 0 {
+      weak += 1
+    }
+  }
+  weak
+}
+
+/// Message passing with release and acquire (ra) or relaxed accesses:
+/// the number of iterations with r1 == 1 and r2 == 0.
+fn mp(n: Int, ra: Bool) -> Int {
+  let data = lt.cells(n)
+  let flag = lt.cells(n)
+  let rs = lt.cells(2 * n)
+  let bar = lt.cells(1)
+  scope s {
+    s.spawn(fn() {
+      for k in 0..n {
+        meet(bar, k)
+        lt.store_relaxed(data, k, 1)
+        if ra {
+          lt.store_release(flag, k, 1)
+        } else {
+          lt.store_relaxed(flag, k, 1)
+        }
+      }
+    })
+    s.spawn(fn() {
+      for k in 0..n {
+        meet(bar, k)
+        // wait a little for the flag, so that r1 == 1 is common
+        var r1 = 0
+        var tries = 0
+        while r1 == 0 && tries < 64 {
+          r1 = if ra { lt.load_acquire(flag, k) } else { lt.load_relaxed(flag, k) }
+          tries += 1
+        }
+        lt.store_relaxed(rs, 2 * k, r1)
+        lt.store_relaxed(rs, 2 * k + 1, lt.load_relaxed(data, k))
+      }
+    })
+  }
+  var weak = 0
+  for k in 0..n {
+    if lt.load_relaxed(rs, 2 * k) == 1 && lt.load_relaxed(rs, 2 * k + 1) == 0 {
+      weak += 1
+    }
+  }
+  weak
+}
+
+/// t tasks of m increments of one cell each, by kind: "cas" a CAS loop,
+/// "add" a relaxed fetch add, "lock" a relaxed load and store under a
+/// swap lock (acquire and release), "atomic" Atomic[Int].add. The total.
+fn counter(kind: Str, t: Int, m: Int) -> Int {
+  let c = lt.cells(16)
+  let a = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..t {
+      s.spawn(fn() {
+        for _ in 0..m {
+          match kind {
+            "cas" => {
+              var done = false
+              while !done {
+                let o = lt.load_relaxed(c, 8)
+                done = lt.cas_seq_cst(c, 8, o, o + 1)
+              }
+            }
+            "add" => {
+              let _ = lt.add_relaxed(c, 8, 1)
+            }
+            "lock" => {
+              while lt.swap_acq_rel(c, 0, 1) == 1 {
+                lt.spin()
+              }
+              lt.store_relaxed(c, 8, lt.load_relaxed(c, 8) + 1)
+              lt.store_release(c, 0, 0)
+            }
+            _ => {
+              let _ = a.add(1)
+            }
+          }
+        }
+      })
+    }
+  }
+  if kind == "atomic" {
+    return a.get()
+  }
+  lt.load_seq_cst(c, 8)
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let n = Int.parse(args.get(0) ?? "100000") ?? 100000
+  var bad = false
+  let sbr = sb(n, false)
+  os.stdio.println("sb_relaxed weak=${sbr} n=${n}")
+  let sbs = sb(n, true)
+  os.stdio.println("sb_seq_cst weak=${sbs} n=${n}")
+  if sbs != 0 {
+    os.stdio.println("FAIL sb_seq_cst: seq_cst allowed r1 == r2 == 0")
+    bad = true
+  }
+  let mpr = mp(n, false)
+  os.stdio.println("mp_relaxed weak=${mpr} n=${n}")
+  let mpa = mp(n, true)
+  os.stdio.println("mp_rel_acq weak=${mpa} n=${n}")
+  if mpa != 0 {
+    os.stdio.println("FAIL mp_rel_acq: acquire saw the flag before the data")
+    bad = true
+  }
+  let t = 4
+  let m = n / 4 + 1
+  for kind in ["cas", "add", "lock", "atomic"] {
+    let got = counter(kind, t, m)
+    os.stdio.println("${kind} total=${got} want=${t * m}")
+    if got != t * m {
+      os.stdio.println("FAIL ${kind}: lost updates")
+      bad = true
+    }
+  }
+  let c = lt.cells(4)
+  if lt.addr(c, 1) - lt.addr(c, 0) != 8 || lt.addr(c, 0) % 8 != 0 {
+    os.stdio.println("FAIL addr: cells are not aligned words")
+    bad = true
+  }
+  if bad {
+    os.proc.exit(1)
+  }
+}

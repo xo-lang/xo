@@ -183,7 +183,7 @@ pub fn generate_opts(m: ssa.Module, all: Bool, lax: Bool) -> Program {
 /// module's size can be attributed to constructs (`selfhost/wasm
 /// --annotate`; the bytes are the same).
 pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Program {
-  var g = Gen{m: m, all: all, lax: lax, annotate: annotate}
+  var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
     g.leaf_done.push(false)

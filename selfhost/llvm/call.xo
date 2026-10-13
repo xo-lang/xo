@@ -539,9 +539,114 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       g.set(v, "load i64, ptr ${p}, align 1")
     }
+    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return false
   }
   true
+}
+
+/// The memory order of argument k of value v (decision 0200; ordArg):
+/// its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst;
+/// a value that is not one of them is seq_cst.
+fn (var g: Gen) ord_arg(v: Int, k: Int) -> Int {
+  let x = g.f.values[v]
+  if k >= x.args.len() {
+    return 4
+  }
+  let c = g.f.values[x.args[k]]
+  if c.op != ssa.Op.Const {
+    return 4
+  }
+  match c.aux {
+    I(n) => if n >= 0 && n <= 4 { n } else { 4 }
+    _ => 4
+  }
+}
+
+/// The address of the cell (container, index) of an atomic: the list's
+/// element, or an Atomic's value (the same layout: a header of three
+/// words, then words; cellAddr).
+fn (var g: Gen) cell_addr(v: Int) -> Str {
+  let x = g.f.values[v]
+  let l = g.op(x.args[0])
+  let c = g.f.values[x.args[1]]
+  if c.op == ssa.Op.Const {
+    if let I(k) = c.aux {
+      return g.def("getelementptr i8, ptr ${l}, i64 ${24 + 8 * k}")
+    }
+  }
+  let o = g.def("shl i64 ${g.op(x.args[1])}, 3")
+  let o2 = g.def("add i64 ${o}, 24")
+  g.def("getelementptr i8, ptr ${l}, i64 ${o2}")
+}
+
+/// The i64 of an Int or Bool operand (a Bool cell holds 0 or 1).
+fn (var g: Gen) word_of(a: Int) -> Str {
+  let o = g.op(a)
+  if g.kind(g.vty(a)) == ssa.Kind.Bool {
+    return g.def("zext i1 ${o} to i64")
+  }
+  o
+}
+
+/// Sets v, an Int or a Bool, to the i64 r.
+fn (var g: Gen) atomic_result(v: Int, r: Str) {
+  if g.kind(g.vty(v)) == ssa.Kind.Bool {
+    g.set(v, "icmp ne i64 ${r}, 0")
+    return
+  }
+  g.alias(v, r)
+}
+
+/// Lowers the atomics and fences of decision 0200 inline (atomic): load
+/// atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
+/// LLVM ordering (relaxed is monotonic; a load takes no release and a
+/// store no acquire, and a cmpxchg fails with the strongest ordering
+/// allowed there). The spin hint is nothing: the IR is target
+/// independent (clang picks the target), and yield and pause are target
+/// intrinsics.
+fn (var g: Gen) atomic(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  if name == "rt.spin_hint" {
+    return
+  }
+  if name == "rt.fence" {
+    let o = g.ord_arg(v, 0)
+    if o > 0 {
+      g.emit("fence ${["", "acquire", "release", "acq_rel", "seq_cst"][o]}")
+    }
+    return
+  }
+  let p = g.cell_addr(v)
+  if name == "rt.slot_addr" {
+    g.set(v, "ptrtoint ptr ${p} to i64")
+    return
+  }
+  let o = g.ord_arg(v, x.args.len() - 1)
+  let ord = ["monotonic", "acquire", "release", "acq_rel", "seq_cst"][o]
+  match name {
+    "rt.slot_load" => {
+      let lo = if o == 0 { "monotonic" } else if o == 1 { "acquire" } else { "seq_cst" }
+      g.atomic_result(v, g.def("load atomic i64, ptr ${p} ${lo}, align 8"))
+    }
+    "rt.slot_store" => {
+      let so = if o == 0 { "monotonic" } else if o == 2 { "release" } else { "seq_cst" }
+      g.emit("store atomic i64 ${g.word_of(x.args[2])}, ptr ${p} ${so}, align 8")
+    }
+    "rt.slot_swap" | "rt.slot_add" => {
+      let op = if name == "rt.slot_swap" { "xchg" } else { "add" }
+      g.atomic_result(v, g.def("atomicrmw ${op} ptr ${p}, i64 ${g.word_of(x.args[2])} ${ord}, align 8"))
+    }
+    _ => {
+      // rt.slot_cas, strong
+      let old = g.word_of(x.args[2])
+      let new = g.word_of(x.args[3])
+      let fail = ["monotonic", "acquire", "monotonic", "acquire", "seq_cst"][o]
+      let r = g.def("cmpxchg ptr ${p}, i64 ${old}, i64 ${new} ${ord} ${fail}, align 8")
+      g.set(v, "extractvalue { i64, i1 } ${r}, 1")
+    }
+  }
 }
 
 /// Declares the LLVM intrinsic sym once, among the runtime declarations

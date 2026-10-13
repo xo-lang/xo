@@ -30,7 +30,10 @@ on both native backends.
 Prerequisites, each its own decision when started:
 
 1. Atomics and memory ordering intrinsics in the SSA and both backends
-   (unblocks the scheduler).
+   (unblocks the scheduler). **Done** (decision 0200, 2026-10-13):
+   `rt.slot_*`, `rt.fence`, `rt.spin_hint` on List[Int] and Atomic
+   cells in every emitter, litmus tested on arm64 and x86-64; Atomic[T]
+   ported within the bar (its C path behind `XO_LLRT_C=atomic`).
 2. Raw system calls on Linux, and direct libSystem calls on macOS, from
    Xo.
 3. SIMD or word at a time intrinsics so bulk scans can match memchr.

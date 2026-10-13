@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster: `Atomic[T]` on the native backends no longer calls the C
+  runtime: get, set, swap, and compare_and_swap are one inline atomic
+  instruction each (get is a single `ldar` on arm64) and add and max are
+  Xo code (std/native/llrt/atomic.xo), 0.60 to 0.94 times the C path's
+  instructions (bench/results/atomics-2026-10-13.md; `XO_LLRT_C=atomic`
+  restores the C). Under the hood, std's implementation modules get
+  atomics with C11 memory orders (decision 0200, internal only).
 - **Sized integers are much faster on the native backends, and more of
   the runtime is Xo** (decision 0195's portable group): Int8 to UInt64
   arithmetic, shifts, and conversions are checked inline instead of a C
