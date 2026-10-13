@@ -189,6 +189,56 @@ static void nl_tls(const Elf64_Phdr *ph, long phnum) {
 #endif
 }
 
+// The vDSO's clock_gettime (decision 0206: the C runtime's clocks keep
+// the libc speed), found through the vDSO's dynamic symbol table; the
+// system call when there is none.
+static int (*nl_vdso_cgt)(clockid_t, struct timespec *);
+
+static void nl_vdso(const char *base) {
+	const Elf64_Ehdr *eh = (const Elf64_Ehdr *)base;
+	const Elf64_Phdr *ph = (const Elf64_Phdr *)(base + eh->e_phoff);
+	long bias = 0;
+	int has_load = 0;
+	const Elf64_Dyn *dyn = NULL;
+	for (int i = 0; i < eh->e_phnum; i++) {
+		if (ph[i].p_type == PT_LOAD && !has_load) {
+			bias = (long)base + (long)ph[i].p_offset - (long)ph[i].p_vaddr;
+			has_load = 1;
+		} else if (ph[i].p_type == PT_DYNAMIC) {
+			dyn = (const Elf64_Dyn *)(base + ph[i].p_offset);
+		}
+	}
+	if (!dyn || !has_load) {
+		return;
+	}
+	const Elf64_Sym *sym = NULL;
+	const char *str = NULL;
+	const uint32_t *hash = NULL;
+	for (; dyn->d_tag != DT_NULL; dyn++) {
+		if (dyn->d_tag == DT_SYMTAB) {
+			sym = (const Elf64_Sym *)(bias + dyn->d_un.d_ptr);
+		} else if (dyn->d_tag == DT_STRTAB) {
+			str = (const char *)(bias + dyn->d_un.d_ptr);
+		} else if (dyn->d_tag == DT_HASH) {
+			hash = (const uint32_t *)(bias + dyn->d_un.d_ptr);
+		}
+	}
+	if (!sym || !str || !hash) {
+		return;
+	}
+#if defined(__aarch64__)
+	const char *want = "__kernel_clock_gettime";
+#else
+	const char *want = "__vdso_clock_gettime";
+#endif
+	for (uint32_t i = 0; i < hash[1]; i++) {
+		if (sym[i].st_name && sym[i].st_shndx != SHN_UNDEF && ELF64_ST_TYPE(sym[i].st_info) == STT_FUNC &&
+			__builtin_strcmp(str + sym[i].st_name, want) == 0) {
+			nl_vdso_cgt = (int (*)(clockid_t, struct timespec *))(bias + (long)sym[i].st_value);
+		}
+	}
+}
+
 // nl_start runs from _start with the initial stack: argc, argv, envp, the
 // auxiliary vector.
 NL_USED __attribute__((noreturn)) void xo_nolibc_start(long *sp) {
@@ -211,6 +261,9 @@ NL_USED __attribute__((noreturn)) void xo_nolibc_start(long *sp) {
 			break;
 		case AT_PAGESZ:
 			nl_pagesz = a[1];
+			break;
+		case AT_SYSINFO_EHDR:
+			nl_vdso((const char *)a[1]);
 			break;
 		}
 	}
@@ -273,13 +326,59 @@ static void *nl_map(long n) {
 	return (void *)r;
 }
 
+// Freed mappings are kept for reuse (up to NL_BIG of them, 64 MiB at
+// most each): the runtime frees and allocates large blocks in loops (a
+// file's contents), and a fresh mapping costs page faults every time.
+#define NL_BIG 16
+static char *nl_big[NL_BIG];
+static long nl_big_n[NL_BIG];
+
+// nl_big_take is a kept mapping of total bytes to 2 * total, or NULL.
+static char *nl_big_take(long total) {
+	char *p = NULL;
+	nl_lock(&nl_mu);
+	for (int i = 0; i < NL_BIG; i++) {
+		if (nl_big[i] && nl_big_n[i] >= total && nl_big_n[i] <= 2 * total) {
+			p = nl_big[i];
+			nl_big[i] = NULL;
+			((long *)p)[0] = -nl_big_n[i];
+			break;
+		}
+	}
+	nl_unlock(&nl_mu);
+	return p;
+}
+
+// nl_big_keep keeps the mapping h of total bytes for reuse, or says no.
+static int nl_big_keep(char *h, long total) {
+	if (total > 64L << 20) {
+		return 0;
+	}
+	int ok = 0;
+	nl_lock(&nl_mu);
+	for (int i = 0; i < NL_BIG; i++) {
+		if (!nl_big[i]) {
+			nl_big[i] = h;
+			nl_big_n[i] = total;
+			ok = 1;
+			break;
+		}
+	}
+	nl_unlock(&nl_mu);
+	return ok;
+}
+
 NL_USED void *malloc(size_t n) {
 	if (n == 0) {
 		n = 1;
 	}
 	if (n + 16 > (size_t)1 << NL_MAX_SHIFT) {
 		long total = (long)((n + 16 + (size_t)nl_pagesz - 1) & ~((size_t)nl_pagesz - 1));
-		char *p = nl_map(total);
+		char *p = nl_big_take(total);
+		if (p) {
+			return p + 16;
+		}
+		p = nl_map(total);
 		if (!p) {
 			nl_errno = ENOMEM;
 			return NULL;
@@ -321,7 +420,9 @@ NL_USED void free(void *p) {
 	char *h = (char *)p - 16;
 	long c = ((long *)h)[0];
 	if (c < 0) {
-		nl_sys2(SYS_munmap, h, -c);
+		if (!nl_big_keep(h, -c)) {
+			nl_sys2(SYS_munmap, h, -c);
+		}
 		return;
 	}
 	nl_lock(&nl_mu);
@@ -390,7 +491,16 @@ NL_USED NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
 	if (o == i || n == 0) {
 		return d;
 	}
+	// a word at a time, each word read before it is written
 	if (o < i || o >= i + n) {
+		while (n >= 8) {
+			uint64_t w;
+			__builtin_memcpy(&w, i, 8);
+			__builtin_memcpy(o, &w, 8);
+			o += 8;
+			i += 8;
+			n -= 8;
+		}
 		while (n--) {
 			*o++ = *i++;
 		}
@@ -398,6 +508,14 @@ NL_USED NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
 	}
 	o += n;
 	i += n;
+	while (n >= 8) {
+		uint64_t w;
+		o -= 8;
+		i -= 8;
+		n -= 8;
+		__builtin_memcpy(&w, i, 8);
+		__builtin_memcpy(o, &w, 8);
+	}
 	while (n--) {
 		*--o = *--i;
 	}
@@ -406,6 +524,12 @@ NL_USED NL_NOBUILTIN void *memmove(void *d, const void *s, size_t n) {
 
 NL_USED NL_NOBUILTIN void *memset(void *d, int c, size_t n) {
 	unsigned char *o = d;
+	uint64_t w = (unsigned char)c * 0x0101010101010101ULL;
+	while (n >= 8) {
+		__builtin_memcpy(o, &w, 8);
+		o += 8;
+		n -= 8;
+	}
 	while (n--) {
 		*o++ = (unsigned char)c;
 	}
@@ -414,7 +538,16 @@ NL_USED NL_NOBUILTIN void *memset(void *d, int c, size_t n) {
 
 NL_USED NL_NOBUILTIN int memcmp(const void *a, const void *b, size_t n) {
 	const unsigned char *x = a, *y = b;
-	for (size_t i = 0; i < n; i++) {
+	size_t i = 0;
+	for (; i + 8 <= n; i += 8) {
+		uint64_t u, v;
+		__builtin_memcpy(&u, x + i, 8);
+		__builtin_memcpy(&v, y + i, 8);
+		if (u != v) {
+			break;
+		}
+	}
+	for (; i < n; i++) {
 		if (x[i] != y[i]) {
 			return x[i] < y[i] ? -1 : 1;
 		}
@@ -1295,7 +1428,17 @@ NL_USED int mprotect(void *a, size_t n, int prot) { return (int)nl_ret(nl_sys3(S
 
 NL_USED int madvise(void *a, size_t n, int adv) { return (int)nl_ret(nl_sys3(SYS_madvise, a, n, adv)); }
 
-NL_USED int clock_gettime(clockid_t id, struct timespec *ts) { return (int)nl_ret(nl_sys2(SYS_clock_gettime, id, ts)); }
+NL_USED int clock_gettime(clockid_t id, struct timespec *ts) {
+	if (nl_vdso_cgt) {
+		int r = nl_vdso_cgt(id, ts);
+		if (r < 0) {
+			nl_errno = -r;
+			return -1;
+		}
+		return r;
+	}
+	return (int)nl_ret(nl_sys2(SYS_clock_gettime, id, ts));
+}
 
 NL_USED time_t time(time_t *t) {
 	struct timespec ts;
