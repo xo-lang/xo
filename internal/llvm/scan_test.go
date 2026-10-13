@@ -51,7 +51,7 @@ fn main(os: Os) {
       }
       "b" => {
         let a = Bytes.from_hex(f[1]) ?? b""
-        [a.to_hex(), a.debug(), "${a.rune_count()}", "${a.len()}"].join(" | ")
+        [a.to_hex(), a.debug(), "${a.rune_count()}", "${a.len()}", (a.to_str() ?? "<not UTF-8>").debug()].join(" | ")
       }
       _ => "?"
     }
@@ -125,9 +125,12 @@ func scanCorpus(n int) string {
 		r.Read(raw)
 		byt(string(raw))
 	}
-	for _, s := range []string{"\xff", "\xc3", "\xe6\x97", "\xed\xa0\x80", "a\x80b", "\xf4\x90\x80\x80", "\xc0\xaf", strings.Repeat("\x80", 17)} {
-		byt(s)
-		byt(strings.Repeat("x", 9) + s)
+	for _, s := range []string{"\xff", "\xc3", "\xe6\x97", "\xed\xa0\x80", "a\x80b", "\xf4\x90\x80\x80", "\xc0\xaf", strings.Repeat("\x80", 17),
+		"\xc2\x80", "\xdf\xbf", "\xe0\x9f\xbf", "\xe0\xa0\x80", "\xed\x9f\xbf", "\xed\xbf\xbf", "\xef\xbf\xbf", "\xf0\x8f\xbf\xbf", "\xf0\x90\x80\x80",
+		"\xf4\x8f\xbf\xbf", "\xf5\x80\x80\x80", "\xc1\xbf", "\xe2\x82", "\xe2\x82\xac", "\xf0\x9f\x98", "\xf0\x9f\x98\x80", "\xe2\x28\xa1", "\xf0\x28\x8c\xbc"} {
+		for pad := 0; pad <= 20; pad++ {
+			byt(strings.Repeat("x", pad) + s + strings.Repeat("y", pad%7))
+		}
 		byt(s + strings.Repeat("y", 15))
 	}
 	long := strings.Repeat("0123456789", 40)

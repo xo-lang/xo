@@ -255,7 +255,7 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	case "Bytes.to_str":
 		join := s.newBlock()
 		res := join.AddParam(nt)
-		yes, no := s.branch(s.rt("utf8_valid", boolT, recv))
+		yes, no := s.branch(s.scanRT("utf8_valid", boolT, recv))
 		s.cur = yes
 		s.jump(join, s.variant(nt, "Some", []*Value{recv}, x))
 		s.cur = no

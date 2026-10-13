@@ -21,7 +21,7 @@ for be in "$@"; do
 	cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be/"
 	(cd "$OUT/src-$be" && "$XO" build --backend="$be" -o "$OUT/t-$be" .)
 done
-for w in ${WORKLOADS:-none parse_int dur_fmt dur_parse time_fmt time_parse quote split lines replace trim rune_count int_fmt float_fmt float_parse base64 hex debug zone_offset zone_fmt zone_civil zone_load}; do
+for w in ${WORKLOADS:-none parse_int dur_fmt dur_parse time_fmt time_parse quote split lines replace trim rune_count utf8 int_fmt float_fmt float_parse base64 hex debug zone_offset zone_fmt zone_civil zone_load}; do
 	for be in "$@"; do
 		best=""
 		bt=""

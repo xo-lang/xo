@@ -22,3 +22,13 @@ pub fn split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
 pub fn lines(s: Str) -> List[Str] { rt.str_lines(s) }
 
 pub fn to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
+
+/// The C path's Bytes.to_str checks with rt.utf8_valid.
+pub fn utf8_valid(b: Bytes) -> Bool {
+  match b.to_str() {
+    Some(_) => true
+    None => false
+  }
+}
+
+pub fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }

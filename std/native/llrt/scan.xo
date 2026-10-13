@@ -193,6 +193,86 @@ pub fn count_cont(b: Bytes, from: Int, to: Int) -> Int {
 /// are its bytes other than continuation bytes.
 pub fn rune_count(s: Str) -> Int { s.len() - count_cont(s.bytes(), 0, s.len()) }
 
+/// The size of the UTF-8 sequence of b at i (b[i] 0x80 or above, i < n
+/// = b.len()) when it is valid (2 to 4), else 1 (utf8.DecodeRune's
+/// rules: no overlong forms, surrogates, or runes above U+10FFFF).
+fn seq_len(b: Bytes, i: Int, n: Int) -> Int {
+  let c = Int(b[i])
+  var k = 0
+  var lo = 0x80
+  var hi = 0xBF
+  if c >= 0xC2 && c <= 0xDF {
+    k = 1
+  } else if c >= 0xE0 && c <= 0xEF {
+    k = 2
+    if c == 0xE0 {
+      lo = 0xA0
+    } else if c == 0xED {
+      hi = 0x9F
+    }
+  } else if c >= 0xF0 && c <= 0xF4 {
+    k = 3
+    if c == 0xF0 {
+      lo = 0x90
+    } else if c == 0xF4 {
+      hi = 0x8F
+    }
+  } else {
+    return 1
+  }
+  if n - i <= k {
+    return 1
+  }
+  let c1 = Int(b[i + 1])
+  if c1 < lo || c1 > hi {
+    return 1
+  }
+  var j = 2
+  while j <= k {
+    if (Int(b[i + j]) & 0xC0) != 0x80 {
+      return 1
+    }
+    j += 1
+  }
+  k + 1
+}
+
+/// utf8.Valid: runs of ASCII skipped 16 bytes at a time (span).
+pub fn utf8_valid(b: Bytes) -> Bool {
+  let n = b.len()
+  var i = 0
+  while i < n {
+    if b[i] < 0x80 {
+      i = span(b, i, 0)
+      continue
+    }
+    let k = seq_len(b, i, n)
+    if k == 1 {
+      return false
+    }
+    i += k
+  }
+  true
+}
+
+/// utf8.RuneCount (Bytes.rune_count): an invalid byte is one rune.
+pub fn bytes_rune_count(b: Bytes) -> Int {
+  let n = b.len()
+  var c = 0
+  var i = 0
+  while i < n {
+    if b[i] < 0x80 {
+      let j = span(b, i, 0)
+      c += j - i
+      i = j
+      continue
+    }
+    i += seq_len(b, i, n)
+    c += 1
+  }
+  c
+}
+
 /// The high bit of each byte of w that ends a run of class 1 of span
 /// (below 0x20, 0x7F and above, `"`, `\`; the lowest exact).
 fn stops8(w: Int) -> Int {

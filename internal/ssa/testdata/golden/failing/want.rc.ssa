@@ -1245,7 +1245,7 @@ b3:  ; preds b0
   v10: () = tuple
   jump b1()
 b4(v12: Int):  ; preds b2, b7
-  v13: Int = sub v3, v12 @ scan.xo:212:11
+  v13: Int = sub v3, v12 @ scan.xo:292:11
   v14: Int = const 16
   v15: Bool = ge v13, v14
   br v15, b6(), b5()
@@ -1259,20 +1259,20 @@ b6:  ; preds b4
 b7:  ; preds b9
   v22: () = tuple
   v23: Int = const 16
-  v24: Int = add v12, v23 @ scan.xo:217:7
+  v24: Int = add v12, v23 @ scan.xo:297:7
   v25: () = tuple
   jump b4(v24)
 b8:  ; preds b6
   v27: Int = call rt.ctz, v18
   v28: Int = const 2
-  v29: Int = shr v27, v28 @ scan.xo:215:21
-  v30: Int = add v12, v29 @ scan.xo:215:16
+  v29: Int = shr v27, v28 @ scan.xo:295:21
+  v30: Int = add v12, v29 @ scan.xo:295:16
   ret v30
 b9:  ; preds b6
   v32: () = tuple
   jump b7()
 b10(v34: Int):  ; preds b5, b13
-  v35: Int = sub v3, v34 @ scan.xo:219:11
+  v35: Int = sub v3, v34 @ scan.xo:299:11
   v36: Int = const 8
   v37: Bool = ge v35, v36
   br v37, b12(), b11()
@@ -1289,14 +1289,14 @@ b12:  ; preds b10
 b13:  ; preds b15
   v47: () = tuple
   v48: Int = const 8
-  v49: Int = add v34, v48 @ scan.xo:224:7
+  v49: Int = add v34, v48 @ scan.xo:304:7
   v50: () = tuple
   jump b10(v49)
 b14:  ; preds b12
   v52: Int = call rt.ctz, v43
   v53: Int = const 3
-  v54: Int = shr v52, v53 @ scan.xo:222:21
-  v55: Int = add v34, v54 @ scan.xo:222:16
+  v54: Int = shr v52, v53 @ scan.xo:302:21
+  v55: Int = add v34, v54 @ scan.xo:302:16
   ret v55
 b15:  ; preds b12
   v57: () = tuple
@@ -1309,7 +1309,7 @@ b17:  ; preds b18
 b18(v63: Bool):  ; preds b20, b19
   br v63, b21(), b17()
 b19:  ; preds b16
-  v65: UInt8 = call bytes.index, v0, v59 @ scan.xo:226:20
+  v65: UInt8 = call bytes.index, v0, v59 @ scan.xo:306:20
   v66: UInt8 = const 128
   v67: Bool = lt v65, v66
   jump b18(v67)
@@ -1318,11 +1318,11 @@ b20:  ; preds b16
   jump b18(v69)
 b21:  ; preds b18
   v71: Int = const 1
-  v72: Int = add v59, v71 @ scan.xo:227:7
+  v72: Int = add v59, v71 @ scan.xo:307:7
   v73: () = tuple
   jump b16(v72)
 b22(v75: Int):  ; preds b1, b25
-  v76: Int = sub v3, v75 @ scan.xo:231:9
+  v76: Int = sub v3, v75 @ scan.xo:311:9
   v77: Int = const 8
   v78: Bool = ge v76, v77
   br v78, b24(), b23()
@@ -1337,14 +1337,14 @@ b24:  ; preds b22
 b25:  ; preds b27
   v86: () = tuple
   v87: Int = const 8
-  v88: Int = add v75, v87 @ scan.xo:236:5
+  v88: Int = add v75, v87 @ scan.xo:316:5
   v89: () = tuple
   jump b22(v88)
 b26:  ; preds b24
   v91: Int = call rt.ctz, v82
   v92: Int = const 3
-  v93: Int = shr v91, v92 @ scan.xo:234:19
-  v94: Int = add v75, v93 @ scan.xo:234:14
+  v93: Int = shr v91, v92 @ scan.xo:314:19
+  v94: Int = add v75, v93 @ scan.xo:314:14
   ret v94
 b27:  ; preds b24
   v96: () = tuple
@@ -1355,7 +1355,7 @@ b28(v98: Int):  ; preds b23, b31
 b29:  ; preds b28
   ret v98
 b30:  ; preds b28
-  v102: UInt8 = call bytes.index, v0, v98 @ scan.xo:239:17
+  v102: UInt8 = call bytes.index, v0, v98 @ scan.xo:319:17
   v103: Int = iconv v102
   v104: Int = const 32
   v105: Bool = lt v103, v104
@@ -1363,7 +1363,7 @@ b30:  ; preds b28
 b31:  ; preds b42
   v107: () = tuple
   v108: Int = const 1
-  v109: Int = add v98, v108 @ scan.xo:243:5
+  v109: Int = add v98, v108 @ scan.xo:323:5
   v110: () = tuple
   jump b28(v109)
 b32(v112: Bool):  ; preds b33, b34
@@ -1892,7 +1892,7 @@ b0(v0: Int):
   v13: Int = and v0, v2
   v14: Int = and v13, v4
   v15: Int = const 1
-  v16: Int = neg v15 @ scan.xo:201:80
+  v16: Int = neg v15 @ scan.xo:281:80
   v17: Int = xor v14, v16
   v18: Int = and v12, v17
   v19: Int = const 9187201950435737472

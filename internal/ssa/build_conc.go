@@ -179,6 +179,20 @@ func (s *fn) jsonRT(name string, t *Type, args ...*Value) *Value {
 	return s.rt(name, t, args...)
 }
 
+// scanRT is a call of the runtime scan name (utf8_valid for Bytes.to_str):
+// the native prelude's llrt_<name> (std/native/llrt/scan.xo, decision
+// 0201), unchecked like the C it replaces; with XO_LLRT_C=scan, or
+// without the native prelude, the C runtime's rt.<name> as before the
+// port.
+func (s *fn) scanRT(name string, t *Type, args ...*Value) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("scan") {
+		f := b.declare(impl, nil, nil)
+		return s.call(f.Name, f.Results[0], "", args...)
+	}
+	return s.rt(name, t, args...)
+}
+
 // loc is the `file:line` of n as a Str constant (for faults the runtime
 // raises, located like the Go backend's).
 func (s *fn) loc(n ast.Node) *Value {

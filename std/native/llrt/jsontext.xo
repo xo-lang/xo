@@ -26,6 +26,7 @@
 // position and the last value of a key: members, find). The C tape has
 // no string flags; nothing but this module reads a string's b.
 use native/llrt/num
+use native/llrt/scan as scans
 use native/llrt/unicode
 use native/rt
 
@@ -565,7 +566,7 @@ pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str {
   }
   if (raw & STR_ESC) == 0 {
     let s = rt.rs_append_bytes("", src, lo, lo + n, 0)
-    if rt.utf8_valid(s) {
+    if scans.utf8_valid(s.bytes()) {
       return s
     }
   }

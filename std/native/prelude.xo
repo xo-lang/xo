@@ -112,9 +112,13 @@ fn rune_try(x: Int) -> Rune? {
 
 fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
-fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
+fn bytes_rune_count(b: Bytes) -> Int { scan.bytes_rune_count(b) }
 
 fn bytes_to_hex(b: Bytes) -> Str { scan.to_hex(b) }
+
+/// Whether b is UTF-8 (Bytes.to_str: internal/ssa calls this instead of
+/// rt.utf8_valid, decision 0201).
+fn llrt_utf8_valid(b: Bytes) -> Bool { scan.utf8_valid(b) }
 
 fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 
