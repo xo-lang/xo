@@ -528,8 +528,15 @@ func (s *fstate) isel() {
 		if s.pads[b] {
 		} else if p, c, truth, ok := s.joinSource(b); ok {
 			// b is reached from p through a join that only branches on
-			// the Bool p passes (`a && b`, decision 0184)
-			s.inherit(s.endMemo[p])
+			// the Bool p passes (`a && b`, decision 0184): p's facts
+			// hold, but p does not dominate b, so the registers it
+			// computed come only from b's dominator, as below (gotchas/
+			// arm64-vreg-read-before-write-break-flag.md)
+			if d := idom[b]; d != nil && s.endMemo[d] != nil {
+				s.inherit(s.endMemo[d])
+				s.clobber()
+			}
+			s.joinFacts(s.endMemo[p])
 			s.condFacts(c, truth)
 		} else if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds

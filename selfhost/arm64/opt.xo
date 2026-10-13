@@ -387,6 +387,48 @@ fn (var g: G) inherit(from: Int) {
   g.cm = m
 }
 
+/// Adds the facts of memo from (bounds, relations, passed checks) to the
+/// current memo, for a block that from's block reaches on every path
+/// that runs but does not dominate in the control flow graph
+/// (join_source). The registers from's block computed (constants,
+/// lengths, addresses, loads, quotients) are not taken: a path the graph
+/// has but execution never takes would read them before they are written
+/// (opt.go joinFacts, gotchas/arm64-vreg-read-before-write-break-flag.md).
+fn (var g: G) join_facts(from: Int) {
+  let _mi = g.m_()
+  let src = g.memo_at(from)
+  for (k, v) in src.less {
+    g.cm.less[k] = v
+  }
+  for (k, v) in src.checked {
+    g.cm.checked[k] = v
+  }
+  for (k, v) in src.lo {
+    if let Some(o) = g.cm.lo.get(k) {
+      if v <= o {
+        continue
+      }
+    }
+    g.cm.lo[k] = v
+  }
+  for (k, v) in src.hi {
+    if let Some(o) = g.cm.hi.get(k) {
+      if v >= o {
+        continue
+      }
+    }
+    g.cm.hi[k] = v
+  }
+  for (k, v) in src.low_zero {
+    if let Some(o) = g.cm.low_zero.get(k) {
+      if v <= o {
+        continue
+      }
+    }
+    g.cm.low_zero[k] = v
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Bounds: a block whose only predecessor ends in `br (x < y)` knows x < y
 // on the edge it is reached by. A checked add or subtract of a constant

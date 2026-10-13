@@ -32,6 +32,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   percent fewer instructions, HTTP/2 within 2 percent;
   bench/results/runtime-port-step6-2026-10-13.md). `XO_LLRT_C=hpack`,
   `http1`, `fspath`, `procspec` build the C paths for comparison.
+- Fixed: `--backend=arm64` (the Go driver and xo1) failed with
+  "internal: reads virtual register N before it is written" on a loop
+  that clears a flag and breaks, followed by a test of the flag and code
+  that goes on from the loop's index; a block entered through a Bool
+  join (`a && b`, `a || b`, such a flag) now reuses only the registers
+  of the block that dominates it (gotchas/arm64-vreg-read-before-write-break-flag.md).
 - Fixed: a chunked request body with a chunk size of 2^63 or more made
   the native HTTP/1.1 server copy a negative length; an IPv6 request
   host with an IPv4 part written with a leading zero is now rejected as

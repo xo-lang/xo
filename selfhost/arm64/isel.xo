@@ -471,8 +471,15 @@ fn (var g: G) isel() {
       let (jp, jc, jtruth, jok) = g.join_source(b)
       if jok {
         // b is reached from jp through a join that only branches on the
-        // Bool jp passes (`a && b`, decision 0184)
-        g.inherit(g.end_memo[jp])
+        // Bool jp passes (`a && b`, decision 0184): jp's facts hold, but
+        // jp does not dominate b, so the registers it computed come only
+        // from b's dominator, as below
+        // (gotchas/arm64-vreg-read-before-write-break-flag.md)
+        if idom[b] >= 0 && g.end_memo[idom[b]] >= 0 {
+          g.inherit(g.end_memo[idom[b]])
+          g.clobber()
+        }
+        g.join_facts(g.end_memo[jp])
         g.cond_facts(jc, jtruth)
       } else if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
         // the only predecessor dominates b: what it computed holds
