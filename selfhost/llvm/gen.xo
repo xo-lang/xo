@@ -172,6 +172,7 @@ fn runtime_decls() -> Str {
     "declare ptr @xo_rs_of_float(double, ptr) #2",
     "declare ptr @xo_rl_new(i64, i64) #2",
     "declare ptr @xo_rl_new_n(i64, i64) #2",
+    "declare ptr @xo_rl_empty() #2",
     "declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3",
     "declare void @xo_rl_share(ptr, i64, ptr) #2",
     "declare ptr @xo_rl_grow(ptr, i64) #3",

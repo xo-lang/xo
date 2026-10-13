@@ -178,13 +178,6 @@ func floatStr(f float64) string {
 	return s
 }
 
-// numCSkips reports whether line (`f <text>`) is a Float text that only
-// the Xo path parses as Go does: the C path (XO_LLRT_C=num) takes
-// decimal text of at most 4096 bytes without underscores.
-func numCSkips(line string) bool {
-	return strings.HasPrefix(line, "f ") && (strings.Contains(line, "_") || strings.Contains(strings.ToLower(line), "x") || len(line) > 4098)
-}
-
 // numCorpus is the input of numDiffProg and the lines Go's strconv,
 // encoding/hex, and encoding/base64 give for it: random Float bits of
 // every class, decimal texts of up to 20 and of 800 digits, the halfway
@@ -312,11 +305,11 @@ func numCorpus(n int) (in, want string) {
 }
 
 // TestNumDiff runs numDiffProg over numCorpus on both native backends,
-// with the number text in Xo (std/native/llrt/num.xo) and with its C path
-// (XO_LLRT_C=num), and requires Go's answers (decision 0193 step 3).
+// with the number text in Xo (std/native/llrt/num.xo), and requires Go's
+// answers (decision 0193 step 3; decision 0198 deleted the C path).
 func TestNumDiff(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds four native programs")
+		t.Skip("builds two native programs")
 	}
 	n := 20000
 	if s := os.Getenv("XO_NUMDIFF_N"); s != "" {
@@ -334,12 +327,9 @@ func TestNumDiff(t *testing.T) {
 	wantLines := strings.Split(strings.TrimSuffix(want, "\n"), "\n")
 	t.Logf("%d input lines", len(wantLines))
 	inLines := strings.Split(in, "\n")
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "num")
-				}
 				r := buildAndRun(t, dir, build.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
@@ -357,7 +347,7 @@ func TestNumDiff(t *testing.T) {
 					if i < len(inLines) {
 						x = inLines[i]
 					}
-					if g != w && !(path == "c" && numCSkips(x)) {
+					if g != w {
 						if bad < 20 {
 							t.Errorf("%.120q: got %.80q, want %.80q", x, g, w)
 						}

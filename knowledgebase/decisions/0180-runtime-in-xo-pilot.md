@@ -63,7 +63,8 @@ is shared, compiler changes are made twice); the runtime pack (decision
    b.to_lower()` calls the native prelude's `str_eq_lower` instead of
    `xo_str_eq_lower` (mirrored in selfhost/ssa). Rule for later ports: a
    C function that needs a ported function is ported with it, or the
-   port waits; C never calls compiled Xo (that would need an export
+   port waits (superseded by decision 0204, 2026-10-13: C may call
+   runtime functions compiled from Xo); C never calls compiled Xo (that would need an export
    symbol convention in both backends and both compilers, and every
    program would have to emit the callee).
 4. **What stays C: bulk byte moves and scans.** Xo has no inline byte
@@ -117,7 +118,8 @@ is shared, compiler changes are made twice); the runtime pack (decision
    backends** (bench/results/runtime-pilot-2026-10-12.md, section "LLVM
    value ranges and inlining").
    When (b) holds, unicode_c.xo, the `XO_UNICODE_C` C, and xo_unicode.c
-   are deleted (a new ADR). xo_rt.c itself (6,451 lines: reference
+   are deleted (a new ADR: decision 0198 deleted them, 2026-10-13, and
+   with them `XO_UNICODE`). xo_rt.c itself (6,451 lines: reference
    counts, lists, maps, strings, fibers, the scheduler, faults and
    unwinding) is mostly below what Xo can express (raw memory, atomics,
    stack switching); after (b) the order is the policy code over Xo

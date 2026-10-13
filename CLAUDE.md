@@ -102,9 +102,10 @@ Update the knowledgebase in the same change as the work, not later:
 - Native builds (`xo build|run|test` with `--backend=arm64|llvm` or
   `--no-gc`) run the self hosted driver xo1 (decision 0178 switch point
   A, 2026-10-12): `xo` builds it from its embedded selfhost/ sources
-  into `<user cache>/xo/xo1/<key>` the first time (several minutes, once
-  per source change), so a change under selfhost/ changes what native
-  builds do. `XO_SELF_DRIVER=0` runs the Go driver; `XO1=<path>` uses a
+  into `<user cache>/xo/xo1/bin/<binkey>` the first time (several
+  minutes, once per change of selfhost/ or of a std module xo1 uses;
+  other std, std/llrt, and third_party changes reuse it), so a change
+  under selfhost/ changes what native builds do. `XO_SELF_DRIVER=0` runs the Go driver; `XO1=<path>` uses a
   prebuilt xo1.
 - Go implementation frozen (decision 0178 stage 7 step 1, switch point
   B merged 2026-10-13, 730c67a): the shipped `xo` is xo1, and the Xo

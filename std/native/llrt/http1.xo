@@ -1,0 +1,1628 @@
+// The request parsing of the native HTTP/1.1 server, written in Xo
+// (decision 0193 step 6): the request line and the MIME header with
+// continuation lines and Go's checks (net/http's readRequest and
+// conn.readRequest, textproto), the request target (net/url's
+// ParseRequestURI) and its query (ParseQuery), chunked bodies with their
+// trailers (chunkedReader), and the text helpers of std/http (url.Parse's
+// parts and error, url.PathUnescape, url.QueryEscape, strconv.Quote,
+// CanonicalMIMEHeaderKey, EqualFold). They were C (std/llrt/xo_http.c,
+// which keeps its copy for the client and for the C path); the semantics
+// are the same, so a client observes what net/http answers. The C path
+// stays selectable (`XO_LLRT_C=http1` loads http1_c.xo) until the HTTP/1.1
+// workloads meet decision 0180's bar on both native backends.
+//
+// C never calls compiled Xo (decision 0180), so the connection's task
+// (std/native/http.xo, serve_conn) calls the C reader (rthttp.hc_read)
+// until it stops at a parse: 3, a request head at the unread input
+// (rthttp.hc_input, rthttp.hc_eof; the result to rthttp.hc_head); 4, a
+// chunked body (the result to rthttp.hc_chunked). The C keeps the socket,
+// the buffer, the body reading, and the error answers; the parsed head
+// stays here and becomes the Request.
+use native/llrt/http1_tables
+use native/rt
+use native/rthttp
+
+/// net/http's DefaultMaxHeaderBytes plus the 4096 bytes of slack its
+/// server reads; a longer head is 431.
+const MAX_HEAD: Int = 1052672
+
+/// Header fields per request (Go has no count limit: its bytes limit
+/// bounds them); more is 431.
+const MAX_FIELDS: Int = 10000
+
+const MAX_INT: Int = 9223372036854775807
+
+// The results of a head's parse (xo_http.c's HP_*).
+const NEED: Int = 0
+const OK: Int = 1
+const EOF: Int = 2
+const BAD: Int = 3
+const STATUS: Int = 4
+const TOO_LARGE: Int = 5
+const BAD_TE: Int = 6
+
+// The byte classes (http1_tables.CLASS).
+const TCHAR: Int = 1
+const VBYTE: Int = 2
+const HOSTB: Int = 4
+const HEX: Int = 8
+const USERINFO: Int = 16
+const HOSTHDR: Int = 32
+const QKEEP: Int = 64
+const PKEEP: Int = 128
+
+fn cls(c: Int) -> Int { Int(http1_tables.CLASS[c & 255]) }
+
+fn unhex(c: Int) -> Int { if c <= 57 { c - 48 } else { (c | 32) - 87 } }
+
+fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// The index of the first byte c of s in [from, to), or -1.
+fn find(s: Str, c: Str, from: Int, to: Int) -> Int {
+  if from >= to {
+    return -1
+  }
+  let k = rt.str_find(s, c, from)
+  if k < 0 || k >= to {
+    return -1
+  }
+  k
+}
+
+/// The index of the last byte c of b in [0, to), or -1.
+fn rfind(b: Bytes, c: Int, to: Int) -> Int {
+  var i = to - 1
+  while i >= 0 {
+    if Int(b[i]) == c {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn is_sp(c: Int) -> Bool { c == 32 || c == 9 }
+
+// ---------------------------------------------------------------------------
+// Request targets (net/url) and queries
+
+// h_unescape's modes
+const U_PATH: Int = 0
+const U_QUERY: Int = 1
+const U_HOST: Int = 2
+
+/// The end of the bytes of b from lo that unescape keeps as they are.
+fn plain_end(b: Bytes, lo: Int, hi: Int, mode: Int) -> Int {
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c == 37 || (c == 43 && mode == U_QUERY) || (mode == U_HOST && c < 128 && (cls(c) & HOSTB) == 0) {
+      return i
+    }
+    i += 1
+  }
+  hi
+}
+
+/// url.unescape of b[lo..hi] for a path, a query component, or a host:
+/// (false, _) on an invalid escape.
+fn unescape(b: Bytes, s: Str, lo: Int, hi: Int, mode: Int) -> (Bool, Str) {
+  // the common case: nothing to change
+  var i = plain_end(b, lo, hi, mode)
+  if i == hi {
+    return (true, rt.str_slice(s, lo, hi))
+  }
+  // runs of 8 bytes or more go over at once, other bytes seven at a time
+  // in a word (a C call each)
+  var out = rt.rs_append_bytes(rt.rs_with_cap(hi - lo), b, lo, i, 0)
+  var w = 0
+  var wk = 0
+  while i < hi {
+    let c = Int(b[i])
+    var x = c
+    if c == 37 {
+      if i + 2 >= hi || (cls(Int(b[i + 1])) & HEX) == 0 || (cls(Int(b[i + 2])) & HEX) == 0 {
+        return (false, "")
+      }
+      let h = unhex(Int(b[i + 1]))
+      // %25 is the one escape of an ASCII byte a host may have
+      let pct = b[i + 1] == 50 && b[i + 2] == 53
+      if mode == U_HOST && h < 8 && !pct {
+        return (false, "")
+      }
+      x = (h << 4) | unhex(Int(b[i + 2]))
+      i += 3
+    } else if c == 43 && mode == U_QUERY {
+      x = 32
+      i += 1
+    } else if mode == U_HOST && c < 128 && (cls(c) & HOSTB) == 0 {
+      return (false, "")
+    } else {
+      let j = plain_end(b, i, hi, mode)
+      if j - i >= 8 {
+        if wk > 0 {
+          out = rt.rs_push_word(out, w, wk)
+          w = 0
+          wk = 0
+        }
+        out = rt.rs_append_bytes(out, b, i, j, 0)
+        i = j
+        continue
+      }
+      i += 1
+    }
+    w = w | ((x & 255) << ((8 * wk) & 63))
+    wk += 1
+    if wk == 7 {
+      out = rt.rs_push_word(out, w, 7)
+      w = 0
+      wk = 0
+    }
+  }
+  if wk > 0 {
+    out = rt.rs_push_word(out, w, wk)
+  }
+  (true, out)
+}
+
+/// Whether b[lo..hi] is empty or `:` and digits.
+fn valid_port(b: Bytes, lo: Int, hi: Int) -> Bool {
+  if lo >= hi {
+    return true
+  }
+  if b[lo] != 58 {
+    return false
+  }
+  var i = lo + 1
+  while i < hi {
+    if b[i] < 48 || b[i] > 57 {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// inet_pton(AF_INET, ...) of b[lo..hi] (BIND's inet_pton4: four
+/// decimal octets without leading zeros).
+fn ipv4_ok(b: Bytes, lo: Int, hi: Int) -> Bool {
+  var saw = false
+  var octets = 0
+  var cur = 0
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c >= 48 && c <= 57 {
+      let v = cur * 10 + (c - 48)
+      if saw && cur == 0 {
+        return false
+      }
+      if v > 255 {
+        return false
+      }
+      cur = v
+      if !saw {
+        octets += 1
+        if octets > 4 {
+          return false
+        }
+        saw = true
+      }
+    } else if c == 46 && saw {
+      if octets == 4 {
+        return false
+      }
+      cur = 0
+      saw = false
+    } else {
+      return false
+    }
+    i += 1
+  }
+  octets >= 4
+}
+
+/// inet_pton(AF_INET6, ...) of b[lo..hi] (BIND's inet_pton6, which
+/// xo_http.c called): hex groups of at most 4 digits, one `::`, a dotted
+/// IPv4 address at the end.
+fn ipv6_ok(b: Bytes, lo0: Int, hi: Int) -> Bool {
+  var lo = lo0
+  if lo < hi && b[lo] == 58 {
+    lo += 1
+    if lo >= hi || b[lo] != 58 {
+      return false
+    }
+  }
+  var tp = 0
+  var colon = -1
+  var cur = lo
+  var digits = 0
+  var i = lo
+  while i < hi {
+    let c = lower(Int(b[i]))
+    i += 1
+    if (c >= 48 && c <= 57) || (c >= 97 && c <= 102) {
+      digits += 1
+      if digits > 4 {
+        return false
+      }
+      continue
+    }
+    if c == 58 {
+      cur = i
+      if digits == 0 {
+        if colon >= 0 {
+          return false
+        }
+        colon = tp
+        continue
+      } else if i >= hi {
+        return false
+      }
+      if tp + 2 > 16 {
+        return false
+      }
+      tp += 2
+      digits = 0
+      continue
+    }
+    if c == 46 && tp + 4 <= 16 && ipv4_ok(b, cur, hi) {
+      tp += 4
+      digits = 0
+      i = hi
+      break
+    }
+    return false
+  }
+  if digits > 0 {
+    if tp + 2 > 16 {
+      return false
+    }
+    tp += 2
+  }
+  if colon >= 0 {
+    if tp == 16 {
+      return false
+    }
+    tp = 16
+  }
+  tp == 16
+}
+
+/// url.parseHost of b[lo..hi]: the host unescaped, or (false, _).
+fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str) {
+  var ob = -1
+  var i = hi - 1
+  while i >= lo {
+    if b[i] == 91 {
+      ob = i
+      break
+    }
+    i -= 1
+  }
+  if ob > lo {
+    return (false, "")
+  }
+  if ob == lo {
+    var cb = -1
+    var j = hi - 1
+    while j >= lo {
+      if b[j] == 93 {
+        cb = j
+        break
+      }
+      j -= 1
+    }
+    if cb < 0 || !valid_port(b, cb + 1, hi) {
+      return (false, "")
+    }
+    let (ok, inner) = unescape(b, s, lo + 1, cb, U_HOST)
+    if !ok {
+      return (false, "")
+    }
+    let ib = inner.bytes()
+    // the zone goes; inet_pton reads to the first NUL byte
+    var zn = 0
+    while zn < ib.len() && ib[zn] != 37 && ib[zn] != 0 {
+      zn += 1
+    }
+    if !ipv6_ok(ib, 0, zn) {
+      return (false, "")
+    }
+    return unescape(b, s, lo, hi, U_HOST)
+  }
+  let colon = find(s, ":", lo, hi)
+  if colon >= 0 {
+    if rfind(b, 58, hi) != colon {
+      // strict colons (Go 1.26): only one colon outside brackets
+      return (false, "")
+    }
+    if !valid_port(b, colon, hi) {
+      return (false, "")
+    }
+  }
+  unescape(b, s, lo, hi, U_HOST)
+}
+
+/// The error text of a bad escape in b[lo..hi] (url.EscapeError).
+fn escape_error(b: Bytes, s: Str, lo: Int, hi: Int) -> Str {
+  var i = lo
+  while i < hi {
+    if b[i] == 37 {
+      let left = hi - i
+      if left < 3 || (cls(Int(b[i + 1])) & HEX) == 0 || (cls(Int(b[i + 2])) & HEX) == 0 {
+        let k = if left < 3 { left } else { 3 }
+        return "invalid URL escape " + go_quote(rt.str_slice(s, i, i + k))
+      }
+      i += 3
+      continue
+    }
+    i += 1
+  }
+  "invalid URL"
+}
+
+/// A parsed URL (xo_http.c's hurl).
+pub struct Url {
+  ok: Bool
+  /// Go's reason when it failed (without `parse "url": `).
+  err: Str
+  scheme: Str
+  host: Str
+  path: Str
+  rawquery: Str
+}
+
+fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: ""} }
+
+/// net/url's parse of s: ParseRequestURI when via_request, else Parse
+/// (the fragment already cut).
+fn url_parse(s: Str, via_request: Bool) -> Url {
+  let b = s.bytes()
+  let sn = b.len()
+  var i = 0
+  while i < sn {
+    let c = Int(b[i])
+    if c < 32 || c == 127 {
+      return url_fail("net/url: invalid control character in URL")
+    }
+    i += 1
+  }
+  if sn == 0 && via_request {
+    return url_fail("empty url")
+  }
+  if sn == 1 && b[0] == 42 {
+    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: ""}
+  }
+  // getScheme
+  var rest = 0
+  var scheme = ""
+  i = 0
+  while i < sn {
+    let c = Int(b[i])
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
+      i += 1
+      continue
+    }
+    if (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46 {
+      if i == 0 {
+        break
+      }
+      i += 1
+      continue
+    }
+    if c == 58 {
+      if i == 0 {
+        return url_fail("missing protocol scheme")
+      }
+      scheme = rt.rs_append_bytes("", b, 0, i, 1)
+      rest = i + 1
+    }
+    break
+  }
+  // the query: a single trailing ? is ForceQuery with no RawQuery
+  var rn = sn
+  var q = -1
+  var qcount = 0
+  i = rest
+  while i < sn {
+    if b[i] == 63 {
+      if q < 0 {
+        q = i
+      }
+      qcount += 1
+    }
+    i += 1
+  }
+  var rawquery = ""
+  if rn > rest && b[rn - 1] == 63 && qcount == 1 {
+    rn -= 1
+  } else if q >= 0 {
+    rawquery = rt.str_slice(s, q + 1, rn)
+    rn = q
+  }
+  if !(rn > rest && b[rest] == 47) {
+    if !scheme.is_empty() {
+      // opaque: no host, no path
+      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery}
+    }
+    if via_request {
+      return url_fail("invalid URI for request")
+    }
+    let sl = find(s, "/", rest, rn)
+    let segn = if sl < 0 { rn } else { sl }
+    if find(s, ":", rest, segn) >= 0 {
+      return url_fail("first path segment in URL cannot contain colon")
+    }
+  }
+  var host = ""
+  var p = rest
+  let authority = rn - rest >= 2 && b[rest] == 47 && b[rest + 1] == 47 && (!scheme.is_empty() || (!via_request && !(rn - rest >= 3 && b[rest + 2] == 47)))
+  if authority {
+    let a = rest + 2
+    let slash = find(s, "/", a, rn)
+    let ae = if slash < 0 { rn } else { slash }
+    p = ae
+    var at = -1
+    var k = ae - 1
+    while k >= a {
+      if b[k] == 64 {
+        at = k
+        break
+      }
+      k -= 1
+    }
+    let hlo = if at >= 0 { at + 1 } else { a }
+    let (hok, h) = parse_host(b, s, hlo, ae)
+    if !hok {
+      let shown = if ae - hlo > 120 { hlo + 120 } else { ae }
+      return url_fail("invalid host " + go_quote_c(rt.str_slice(s, hlo, shown)))
+    }
+    host = h
+    if at >= 0 {
+      var u = a
+      while u < at {
+        if (cls(Int(b[u])) & USERINFO) == 0 {
+          return url_fail("net/url: invalid userinfo")
+        }
+        u += 1
+      }
+      u = a
+      while u < at {
+        if b[u] == 37 {
+          let left = at - u
+          if left < 3 || (cls(Int(b[u + 1])) & HEX) == 0 || (cls(Int(b[u + 2])) & HEX) == 0 {
+            let kk = if left < 3 { left } else { 3 }
+            return url_fail("invalid URL escape " + go_quote_c(rt.str_slice(s, u, u + kk)))
+          }
+          u += 2
+        }
+        u += 1
+      }
+    }
+  }
+  let (pok, path) = unescape(b, s, p, rn, U_PATH)
+  if !pok {
+    return url_fail(escape_error(b, s, p, rn))
+  }
+  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery}
+}
+
+/// The `"%s"` of a C format: the text in quotes as it is (xo_http.c's
+/// snprintf; the bytes are printable here: control bytes failed first).
+fn go_quote_c(s: Str) -> Str { "\"" + s + "\"" }
+
+/// url.ParseRequestURI of a request target; a CONNECT target that is not
+/// a path is an authority.
+fn parse_target(raw: Str, connect: Bool) -> Url {
+  if connect && !raw.starts_with("/") {
+    let u = url_parse("http://" + raw, true)
+    if u.ok {
+      return Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery}
+    }
+    return u
+  }
+  url_parse(raw, true)
+}
+
+/// std/rt's urlOf over url.ParseQuery: each key once with its first
+/// value, the keys sorted: [k1, v1, k2, v2, ...].
+pub fn query_parts(q: Str) -> List[Str] {
+  let b = q.bytes()
+  let n = b.len()
+  var amps = 0
+  var i = 0
+  while i < n {
+    if b[i] == 38 {
+      amps += 1
+    }
+    i += 1
+  }
+  if amps + 1 > 10000 {
+    return [] // number of URL query parameters exceeded limit
+  }
+  // the keys kept sorted as they come (a key seen before keeps its first
+  // value): [k1, v1, k2, v2, ...]
+  var out: List[Str] = []
+  i = 0
+  while i < n {
+    var j = rt.str_find(q, "&", i)
+    if j < 0 {
+      j = n
+    }
+    let lo = i
+    i = j + 1
+    if j == lo || find(q, ";", lo, j) >= 0 {
+      continue
+    }
+    let eq = find(q, "=", lo, j)
+    let ke = if eq < 0 { j } else { eq }
+    let (kok, k) = unescape(b, q, lo, ke, U_QUERY)
+    if !kok {
+      continue
+    }
+    var v = ""
+    if eq >= 0 {
+      let (vok, vv) = unescape(b, q, eq + 1, j, U_QUERY)
+      if !vok {
+        continue
+      }
+      v = vv
+    }
+    // binary search for k among the keys
+    var a = 0
+    var z = out.len() / 2
+    var found = false
+    while a < z {
+      let m = (a + z) / 2
+      let km = out[2 * m]
+      if km == k {
+        found = true
+        break
+      }
+      if km < k {
+        a = m + 1
+      } else {
+        z = m
+      }
+    }
+    if found {
+      continue
+    }
+    out.push(k)
+    out.push(v)
+    var e = out.len() - 2
+    while e > 2 * a {
+      out[e] = out[e - 2]
+      out[e + 1] = out[e - 1]
+      e -= 2
+    }
+    out[2 * a] = k
+    out[2 * a + 1] = v
+  }
+  out
+}
+
+/// url's splitHostPort: the hostname (brackets removed) and the port
+/// when it is valid.
+fn split_hostport(host: Str) -> (Str, Str) {
+  let b = host.bytes()
+  let n = b.len()
+  var hn = n
+  var port = ""
+  let i = rfind(b, 58, n)
+  if i >= 0 && valid_port(b, i, n) {
+    port = rt.str_slice(host, i + 1, n)
+    hn = i
+  }
+  if hn >= 2 && b[0] == 91 && b[hn - 1] == 93 {
+    return (rt.str_slice(host, 1, hn - 1), port)
+  }
+  (rt.str_slice(host, 0, hn), port)
+}
+
+/// url.Parse (the fragment cut) or ParseRequestURI (request): [] when it
+/// fails, else [scheme, hostname, port, path, raw query, host].
+pub fn url_parts(s: Str, request: Bool) -> List[Str] {
+  var t = s
+  if !request {
+    let h = rt.str_find(s, "#", 0)
+    if h >= 0 {
+      t = rt.str_slice(s, 0, h)
+    }
+  }
+  let u = url_parse(t, request)
+  if !u.ok {
+    return []
+  }
+  let (name, port) = split_hostport(u.host)
+  [u.scheme, name, port, u.path, u.rawquery, u.host]
+}
+
+/// The text of url.Parse's error: parse "url": reason; "" when it parses.
+pub fn url_error(s: Str) -> Str {
+  var t = s
+  let h = rt.str_find(s, "#", 0)
+  if h >= 0 {
+    t = rt.str_slice(s, 0, h)
+  }
+  let u = url_parse(t, false)
+  if u.ok {
+    return ""
+  }
+  "parse " + go_quote(t) + ": " + u.err
+}
+
+/// url.PathUnescape, "" when an escape is invalid.
+pub fn path_unescape(s: Str) -> Str {
+  if rt.str_find(s, "%", 0) < 0 {
+    return s
+  }
+  let b = s.bytes()
+  let (ok, out) = unescape(b, s, 0, b.len(), U_PATH)
+  if ok { out } else { "" }
+}
+
+/// url.QueryEscape.
+pub fn query_escape(s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n && (cls(Int(b[i])) & QKEEP) != 0 {
+    i += 1
+  }
+  if i == n {
+    return s
+  }
+  let hex = b"0123456789ABCDEF"
+  var out = rt.rs_append_bytes("", b, 0, i, 0)
+  while i < n {
+    let c = Int(b[i])
+    if (cls(c) & QKEEP) != 0 {
+      out = rt.rs_push_byte(out, c)
+    } else if c == 32 {
+      out = rt.rs_push_byte(out, 43)
+    } else {
+      out = rt.rs_push_word(out, 37 | (Int(hex[c >> 4]) << 8) | (Int(hex[c & 15]) << 16), 3)
+    }
+    i += 1
+  }
+  out
+}
+
+/// strconv.Quote (printable: ASCII graphic and every rune from U+00A1
+/// but U+00AD, U+2028, U+2029; xo_http.c's approximation of IsPrint).
+pub fn go_quote(s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  let hex = b"0123456789abcdef"
+  var out = rt.rs_push_byte(rt.rs_with_cap(n + 2), 34)
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    if c >= 32 && c < 127 && c != 34 && c != 92 {
+      // a run of plain ASCII
+      var j = i + 1
+      while j < n {
+        let d = Int(b[j])
+        if d < 32 || d >= 127 || d == 34 || d == 92 {
+          break
+        }
+        j += 1
+      }
+      out = rt.rs_append_bytes(out, b, i, j, 0)
+      i = j
+      continue
+    }
+    let x = rt.bytes_decode(b, i)
+    let r = x >> 3
+    let size = x & 7
+    if r == 0xFFFD && size == 1 {
+      out = rt.rs_push_word(out, 92 | (120 << 8) | (Int(hex[c >> 4]) << 16) | (Int(hex[c & 15]) << 24), 4)
+    } else if r == 34 || r == 92 {
+      out = rt.rs_push_word(out, 92 | (r << 8), 2)
+    } else if r >= 0xA1 && r != 0xAD && r != 0x2028 && r != 0x2029 {
+      out = rt.rs_append_bytes(out, b, i, i + size, 0)
+    } else if r == 7 {
+      out = rt.rs_push_word(out, 92 | (97 << 8), 2)
+    } else if r == 8 {
+      out = rt.rs_push_word(out, 92 | (98 << 8), 2)
+    } else if r == 12 {
+      out = rt.rs_push_word(out, 92 | (102 << 8), 2)
+    } else if r == 10 {
+      out = rt.rs_push_word(out, 92 | (110 << 8), 2)
+    } else if r == 13 {
+      out = rt.rs_push_word(out, 92 | (114 << 8), 2)
+    } else if r == 9 {
+      out = rt.rs_push_word(out, 92 | (116 << 8), 2)
+    } else if r == 11 {
+      out = rt.rs_push_word(out, 92 | (118 << 8), 2)
+    } else if r < 32 || r == 127 {
+      out = rt.rs_push_word(out, 92 | (120 << 8) | (Int(hex[r >> 4]) << 16) | (Int(hex[r & 15]) << 24), 4)
+    } else {
+      let k = if r < 0x10000 { 4 } else { 8 }
+      out = rt.rs_push_word(out, 92 | ((if k == 4 { 117 } else { 85 }) << 8), 2)
+      var sh = 4 * (k - 1)
+      while sh >= 0 {
+        out = rt.rs_push_byte(out, Int(hex[(r >> sh) & 15]))
+        sh -= 4
+      }
+    }
+    i += size
+  }
+  rt.rs_push_byte(out, 34)
+}
+
+/// textproto.CanonicalMIMEHeaderKey: unchanged when a byte is not a token
+/// byte.
+pub fn canonical_key(s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  var upper = true
+  var same = true
+  while i < n {
+    let c = Int(b[i])
+    if (cls(c) & TCHAR) == 0 {
+      return s
+    }
+    if (upper && c >= 97 && c <= 122) || (!upper && c >= 65 && c <= 90) {
+      same = false
+    }
+    upper = c == 45
+    i += 1
+  }
+  if same {
+    return s
+  }
+  var out = rt.rs_with_cap(n)
+  upper = true
+  i = 0
+  while i < n {
+    var c = Int(b[i])
+    if upper && c >= 97 && c <= 122 {
+      c -= 32
+    } else if !upper && c >= 65 && c <= 90 {
+      c += 32
+    }
+    out = rt.rs_push_byte(out, c)
+    upper = c == 45
+    i += 1
+  }
+  out
+}
+
+/// strings.EqualFold of ASCII letters.
+pub fn equal_fold(a: Str, b: Str) -> Bool {
+  let x = a.bytes()
+  let y = b.bytes()
+  let n = x.len()
+  if n != y.len() {
+    return false
+  }
+  var i = 0
+  while i < n {
+    if lower(Int(x[i])) != lower(Int(y[i])) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// Reading a request (xo_http.c's hp_head)
+
+/// A request head: what std/rt's serve hands to Xo code, and what the C
+/// needs to read the body and answer.
+pub struct Head {
+  method: Str
+  target: Str
+  major: Int
+  minor: Int
+  /// The header: canonical names and their values joined with ", ", in
+  /// the order of first appearance: [name, value, ...].
+  headers: List[Str]
+  /// req.Host.
+  host: Str
+  url: Url
+  /// The URL's query: [key, first value, ...], keys sorted.
+  query: List[Str]
+  /// ContentLength (-1 chunked).
+  clen: Int
+  chunked: Bool
+  close: Bool
+  wants10ka: Bool
+  wantsclose: Bool
+  expect100: Bool
+  expect_other: Bool
+  /// "PRI * HTTP/2.0" (closed after the answer).
+  h2up: Bool
+}
+
+fn no_head() -> Head {
+  Head{method: "", target: "", major: 0, minor: 0, headers: [], host: "", url: url_fail(""), query: [], clen: 0, chunked: false, close: false, wants10ka: false, wantsclose: false, expect100: false, expect_other: false, h2up: false}
+}
+
+/// The result of a head's parse: res (NEED, OK, ...), the head's length
+/// (OK), the head, and for STATUS its code and text.
+pub struct Parse {
+  res: Int
+  used: Int
+  head: Head
+  status: Int
+  reason: Str
+}
+
+fn fail(res: Int) -> Parse { Parse{res: res, used: 0, head: no_head(), status: 0, reason: ""} }
+
+fn fail_status(code: Int, reason: Str, used: Int) -> Parse { Parse{res: STATUS, used: used, head: no_head(), status: code, reason: reason} }
+
+/// The line at b[i..n]: (found, its end without \n and the \r before it,
+/// the start of the next). Not found when there is no \n yet (at eof the
+/// rest is the line, bufio's ReadLine).
+fn line_at(s: Str, b: Bytes, i: Int, n: Int, eof: Bool) -> (Bool, Int, Int) {
+  let nl = if i < n { rt.str_find(s, "\n", i) } else { -1 }
+  if nl < 0 {
+    if eof && i < n {
+      return (true, n, n)
+    }
+    return (false, 0, 0)
+  }
+  if nl > i && b[nl - 1] == 13 {
+    return (true, nl - 1, nl + 1)
+  }
+  (true, nl, nl + 1)
+}
+
+/// The result when more input may complete the head.
+fn need(n: Int) -> Parse { fail(if n > MAX_HEAD { TOO_LARGE } else { NEED }) }
+
+/// net/http's hasToken: tok anywhere in v between space, comma, or tab
+/// boundaries, ASCII case insensitive (tok lower case).
+fn server_token(v: Str, tok: Str) -> Bool {
+  let b = v.bytes()
+  let t = tok.bytes()
+  let n = b.len()
+  let tl = t.len()
+  if tl > n || tl == 0 {
+    return false
+  }
+  let t0 = Int(t[0])
+  var sp = 0
+  while sp + tl <= n {
+    let c = Int(b[sp])
+    if c == t0 || (c | 32) == t0 {
+      let before = sp == 0 || b[sp - 1] == 32 || b[sp - 1] == 44 || b[sp - 1] == 9
+      let e = sp + tl
+      let after = e == n || b[e] == 32 || b[e] == 44 || b[e] == 9
+      if before && after {
+        var k = 0
+        var eq = true
+        while k < tl {
+          if lower(Int(b[sp + k])) != lower(Int(t[k])) {
+            eq = false
+            break
+          }
+          k += 1
+        }
+        if eq {
+          return true
+        }
+      }
+    }
+    sp += 1
+  }
+  false
+}
+
+/// httpguts.headerValueContainsToken (shouldClose): tok (lower case) is
+/// one of the comma separated elements of v.
+fn has_token(v: Str, tok: Str) -> Bool {
+  let b = v.bytes()
+  let t = tok.bytes()
+  let n = b.len()
+  let tl = t.len()
+  var i = 0
+  while i <= n {
+    var j = i
+    while j < n && b[j] != 44 {
+      j += 1
+    }
+    var a = i
+    var z = j
+    while a < z && is_sp(Int(b[a])) {
+      a += 1
+    }
+    while z > a && is_sp(Int(b[z - 1])) {
+      z -= 1
+    }
+    if z - a == tl {
+      var k = 0
+      var eq = true
+      while k < tl {
+        let c = Int(b[a + k])
+        if c >= 128 || lower(c) != Int(t[k]) {
+          eq = false
+          break
+        }
+        k += 1
+      }
+      if eq {
+        return true
+      }
+    }
+    i = j + 1
+  }
+  false
+}
+
+/// textproto.TrimString (ASCII space, tab, CR, LF).
+fn trim_ws(s: Str) -> Str {
+  let b = s.bytes()
+  var a = 0
+  var z = b.len()
+  while a < z && (b[a] == 32 || b[a] == 9 || b[a] == 13 || b[a] == 10) {
+    a += 1
+  }
+  while z > a && (b[z - 1] == 32 || b[z - 1] == 9 || b[z - 1] == 13 || b[z - 1] == 10) {
+    z -= 1
+  }
+  if a == 0 && z == b.len() { s } else { rt.str_slice(s, a, z) }
+}
+
+/// The start and end of b[a..z] without spaces and tabs at either end.
+fn trim_sp(b: Bytes, a0: Int, z0: Int) -> (Int, Int) {
+  var a = a0
+  var z = z0
+  while a < z && is_sp(Int(b[a])) {
+    a += 1
+  }
+  while z > a && is_sp(Int(b[z - 1])) {
+    z -= 1
+  }
+  (a, z)
+}
+
+/// Reads the request line and the header at the start of s (eof: no
+/// more will come), as net/http's readRequest and the checks of
+/// conn.readRequest.
+pub fn parse_head(s: Str, eof: Bool) -> Parse {
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return fail(if eof { EOF } else { NEED })
+  }
+  let (found, le, next0) = line_at(s, b, 0, n, eof)
+  if !found {
+    return need(n)
+  }
+  if eof && next0 == n && le == n && n % 4096 == 0 {
+    // a request line cut by the end of the stream that fills net/http's
+    // 4096 byte reader exactly: its last read finds no byte, so the line
+    // reads as io.EOF and the connection closes quietly
+    return fail(EOF)
+  }
+  if next0 > MAX_HEAD {
+    return fail(TOO_LARGE)
+  }
+  // METHOD SP target SP proto (strings.Cut on single spaces)
+  let sp1 = find(s, " ", 0, le)
+  if sp1 < 0 {
+    return fail(BAD)
+  }
+  let sp2 = find(s, " ", sp1 + 1, le)
+  if sp2 < 0 || sp1 == 0 {
+    return fail(BAD)
+  }
+  var k = 0
+  while k < sp1 {
+    if (cls(Int(b[k])) & TCHAR) == 0 {
+      return fail(BAD) // invalid method
+    }
+    k += 1
+  }
+  let pn = le - sp2 - 1
+  let p0 = sp2 + 1
+  var major = 0
+  var minor = 0
+  if pn == 8 && b[p0] == 72 && b[p0 + 1] == 84 && b[p0 + 2] == 84 && b[p0 + 3] == 80 && b[p0 + 4] == 47 && b[p0 + 6] == 46 && b[p0 + 5] >= 48 && b[p0 + 5] <= 57 && b[p0 + 7] >= 48 && b[p0 + 7] <= 57 {
+    major = Int(b[p0 + 5]) - 48
+    minor = Int(b[p0 + 7]) - 48
+  } else {
+    return fail(BAD) // malformed HTTP version
+  }
+  let method = rt.str_slice(s, 0, sp1)
+  let target = rt.str_slice(s, sp1 + 1, sp2)
+  let connect = method == "CONNECT"
+  let url = parse_target(target, connect)
+  if !url.ok {
+    return fail(BAD)
+  }
+  let query = if url.rawquery.is_empty() { [] } else { query_parts(url.rawquery) }
+  // the header: lines up to an empty one
+  var i = next0
+  var keys: List[Str] = []
+  var vals: List[Str] = []
+  if i < n && is_sp(Int(b[i])) {
+    // malformed MIME header initial line (needs the line to say so)
+    let (f2, _, _) = line_at(s, b, i, n, eof)
+    if !f2 {
+      return fail(if eof { BAD } else { NEED })
+    }
+    return fail(BAD)
+  }
+  while true {
+    if i > MAX_HEAD {
+      return fail(TOO_LARGE)
+    }
+    let (f, e, nx) = line_at(s, b, i, n, eof)
+    if !f {
+      if eof {
+        return fail(BAD)
+      }
+      return need(n)
+    }
+    if e == i {
+      // the empty line ends the header
+      i = nx
+      break
+    }
+    // a field line: it must have a colon
+    if find(s, ":", i, e) < 0 {
+      return fail(BAD)
+    }
+    // trim (spaces and tabs) and join continuation lines
+    let (a, z) = trim_sp(b, i, e)
+    var cont = rt.str_slice(s, a, z)
+    i = nx
+    while true {
+      if i >= n {
+        if !eof {
+          return need(n)
+        }
+        break
+      }
+      if !is_sp(Int(b[i])) {
+        break
+      }
+      // a continuation line: skip its leading spaces and tabs
+      var c = i
+      while c < n && is_sp(Int(b[c])) {
+        c += 1
+      }
+      if c >= n && !eof {
+        return need(n)
+      }
+      cont = rt.rs_push_byte(cont, 32)
+      let (f3, e3, nx3) = line_at(s, b, c, n, eof)
+      if !f3 {
+        if !eof {
+          return need(n)
+        }
+        // at the end: nothing more (readLineSlice failed)
+        i = n
+        break
+      }
+      let (a3, z3) = trim_sp(b, c, e3)
+      cont = rt.rs_append_bytes(cont, b, a3, z3, 0)
+      i = nx3
+    }
+    // key: up to the first colon; token bytes, or spaces (kept as is)
+    let cb = cont.bytes()
+    let cn = cb.len()
+    let colon = rt.str_find(cont, ":", 0)
+    if colon <= 0 {
+      return fail(BAD)
+    }
+    var x = 0
+    while x < colon {
+      let ch = Int(cb[x])
+      if (cls(ch) & TCHAR) == 0 && ch != 32 {
+        return fail(BAD)
+      }
+      x += 1
+    }
+    x = colon + 1
+    while x < cn {
+      if (cls(Int(cb[x])) & VBYTE) == 0 {
+        return fail(BAD)
+      }
+      x += 1
+    }
+    var v0 = colon + 1
+    while v0 < cn && is_sp(Int(cb[v0])) {
+      v0 += 1
+    }
+    if keys.len() == MAX_FIELDS {
+      return fail(TOO_LARGE)
+    }
+    keys.push(canonical_key(rt.str_slice(cont, 0, colon)))
+    vals.push(rt.str_slice(cont, v0, cn))
+  }
+  if i > MAX_HEAD {
+    return fail(TOO_LARGE)
+  }
+  head_of(method, target, major, minor, url, query, keys, vals, i, connect)
+}
+
+/// The checks and merging of a head whose fields were read (the rest of
+/// hp_head): Go's Header, readTransfer, shouldClose, conn.readRequest.
+fn head_of(method: Str, target: Str, major: Int, minor: Int, url: Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool) -> Parse {
+  let nraw = keys.len()
+  // counts per key, for Host and Content-Length checks
+  var hosts = 0
+  var tes = 0
+  var cls_n = 0
+  var first_cl = ""
+  var cl_conflict = false
+  var host = ""
+  var k = 0
+  while k < nraw {
+    let key = keys[k]
+    if key == "Host" {
+      hosts += 1
+      host = vals[k]
+    } else if key == "Transfer-Encoding" {
+      tes += 1
+    } else if key == "Content-Length" {
+      let v = trim_ws(vals[k])
+      if cls_n == 0 {
+        first_cl = v
+      } else if v != first_cl {
+        cl_conflict = true
+      }
+      cls_n += 1
+    }
+    k += 1
+  }
+  if hosts > 1 {
+    return fail(BAD) // too many Host headers
+  }
+  // readTransfer: Transfer-Encoding (removed from the header); it takes
+  // HTTP/0.0 for HTTP/1.1
+  var chunked = false
+  let t11 = (major == 0 && minor == 0) || major > 1 || (major == 1 && minor >= 1)
+  if tes > 0 && t11 {
+    if tes != 1 {
+      return fail(BAD_TE)
+    }
+    k = 0
+    while k < nraw {
+      if keys[k] == "Transfer-Encoding" && !equal_fold(vals[k], "chunked") {
+        return fail(BAD_TE)
+      }
+      k += 1
+    }
+    chunked = true
+  }
+  // Content-Length (several must agree)
+  if cl_conflict {
+    return fail(BAD)
+  }
+  var clen = 0
+  if cls_n > 0 {
+    let cb = first_cl.bytes()
+    if cb.len() == 0 {
+      return fail(BAD) // invalid empty Content-Length
+    }
+    var v = 0
+    var x = 0
+    while x < cb.len() {
+      let d = Int(cb[x]) - 48
+      if d < 0 || d > 9 || v > (MAX_INT - d) / 10 {
+        return fail(BAD) // bad Content-Length
+      }
+      v = v * 10 + d
+      x += 1
+    }
+    clen = v
+  }
+  if chunked {
+    clen = -1
+  }
+  // the merged header, without the fields Go removes
+  var hn: List[Str] = []
+  var hv: List[Str] = []
+  var pragma = -1
+  var have_cc = false
+  k = 0
+  while k < nraw {
+    let key = keys[k]
+    k += 1
+    if key == "Host" || key == "Transfer-Encoding" {
+      continue
+    }
+    if chunked && (key == "Content-Length" || key == "Trailer") {
+      continue
+    }
+    var e = -1
+    var y = 0
+    while y < hn.len() {
+      if hn[y] == key {
+        e = y
+        break
+      }
+      y += 1
+    }
+    if key == "Content-Length" && e >= 0 {
+      continue // deduplicated; its value as written first
+    }
+    if e >= 0 {
+      hv[e] = hv[e] + ", " + vals[k - 1]
+    } else {
+      hn.push(key)
+      hv.push(vals[k - 1])
+    }
+    if key == "Pragma" && pragma < 0 {
+      pragma = k - 1
+    }
+    if key == "Cache-Control" {
+      have_cc = true
+    }
+  }
+  // fixPragmaCacheControl: Pragma: no-cache without Cache-Control
+  if pragma >= 0 && !have_cc && vals[pragma] == "no-cache" {
+    hn.push("Cache-Control")
+    hv.push("no-cache")
+  }
+  // req.Host: the URL's host, else the Host header
+  let rhost = if url.host.is_empty() { host } else { url.host }
+  // shouldClose (Connection tokens of every Connection field)
+  var has_close = false
+  var has_ka = false
+  var cv = ""
+  var have_cv = false
+  var ev = ""
+  var have_ev = false
+  k = 0
+  while k < nraw {
+    if keys[k] == "Connection" {
+      has_close = has_close || has_token(vals[k], "close")
+      has_ka = has_ka || has_token(vals[k], "keep-alive")
+      if !have_cv {
+        cv = vals[k]
+        have_cv = true
+      }
+    } else if keys[k] == "Expect" && !have_ev {
+      ev = vals[k]
+      have_ev = true
+    }
+    k += 1
+  }
+  var close = has_close
+  if major < 1 {
+    close = true
+  } else if major == 1 && minor == 0 {
+    close = has_close || !has_ka
+  }
+  // conn.readRequest's checks
+  if !(major == 1 || (major == 2 && minor == 0 && method == "PRI" && target == "*")) {
+    return fail_status(505, "unsupported protocol version", used)
+  }
+  let h2up = method == "PRI" && nraw == 0 && url.path == "*" && major == 2 && minor == 0
+  let is11 = major > 1 || (major == 1 && minor >= 1)
+  if is11 && hosts == 0 && !h2up && !connect {
+    return fail_status(400, "missing required Host header", used)
+  }
+  if hosts == 1 {
+    let hb = host.bytes()
+    var x = 0
+    while x < hb.len() {
+      if (cls(Int(hb[x])) & HOSTHDR) == 0 {
+        return fail_status(400, "malformed Host header", used)
+      }
+      x += 1
+    }
+  }
+  k = 0
+  while k < nraw {
+    let kb = keys[k].bytes()
+    var x = 0
+    while x < kb.len() {
+      if (cls(Int(kb[x])) & TCHAR) == 0 {
+        return fail_status(400, "invalid header name", used)
+      }
+      x += 1
+    }
+    k += 1
+  }
+  // Connection close / keep-alive wishes (Header.get: the first value)
+  let wants10ka = major == 1 && minor == 0 && server_token(cv, "keep-alive")
+  var wantsclose = close || server_token(cv, "close")
+  if h2up {
+    clen = 0 // its Body is NoBody (std/rt reads none)
+    close = true
+    wantsclose = true
+  }
+  var expect100 = false
+  var expect_other = false
+  if have_ev && server_token(ev, "100-continue") {
+    expect100 = is11 && clen != 0
+  } else if have_ev && !ev.is_empty() {
+    expect_other = true
+  }
+  var headers: List[Str] = []
+  var y = 0
+  while y < hn.len() {
+    headers.push(hn[y])
+    headers.push(hv[y])
+    y += 1
+  }
+  let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up}
+  Parse{res: OK, used: used, head: head, status: 0, reason: ""}
+}
+
+// ---------------------------------------------------------------------------
+// Chunked bodies (xo_http.c's hb_chunked)
+
+// The results of a chunked body's decoding (HB_*).
+const HB_NEED: Int = 0
+const HB_OK: Int = 1
+const HB_ERR: Int = 2
+
+/// A chunked body decoded: res, its length in the input (HB_OK), and the
+/// data (what was decoded before an error or the end of the input too).
+pub struct Chunked {
+  res: Int
+  used: Int
+  body: Str
+}
+
+/// Decodes the chunked body at the start of s (eof: no more will come),
+/// as net/http's chunkedReader and the trailer reading of
+/// body.readTrailer.
+pub fn chunked(s: Str, eof: Bool) -> Chunked {
+  let b = s.bytes()
+  let n = b.len()
+  var out = ""
+  var i = 0
+  var excess = 0
+  while true {
+    let nl = if i < n { rt.str_find(s, "\n", i) } else { -1 }
+    if nl < 0 {
+      if n - i >= 4096 {
+        return Chunked{res: HB_ERR, used: 0, body: out} // header line too long
+      }
+      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+    }
+    let e = nl
+    // CRLF required, no other CR
+    let cr = find(s, "\r", i, e + 1)
+    if cr < 0 || cr != e - 1 {
+      return Chunked{res: HB_ERR, used: 0, body: out}
+    }
+    let ll = e - 1 - i
+    if ll >= 4096 {
+      return Chunked{res: HB_ERR, used: 0, body: out}
+    }
+    excess += ll + 2
+    var z = i + ll
+    while z > i && is_sp(Int(b[z - 1])) {
+      z -= 1
+    }
+    let semi = find(s, ";", i, z)
+    if semi >= 0 {
+      z = semi
+    }
+    if z == i {
+      return Chunked{res: HB_ERR, used: 0, body: out} // empty hex number
+    }
+    // the size as a UInt64 (a negative Int is at least 2^63)
+    var size = 0
+    var k = i
+    while k < z {
+      let c = Int(b[k])
+      if (cls(c) & HEX) == 0 || k - i == 16 {
+        return Chunked{res: HB_ERR, used: 0, body: out}
+      }
+      size = rt.int_wrap(3, size, 4) | unhex(c)
+      k += 1
+    }
+    let capped = if size < 0 || size > MAX_INT / 4 { MAX_INT / 4 } else { size }
+    excess -= 16 + 2 * capped
+    if excess < 0 {
+      excess = 0
+    }
+    if excess > 16 * 1024 {
+      return Chunked{res: HB_ERR, used: 0, body: out} // too much non-data
+    }
+    i = e + 1
+    if size == 0 {
+      // the trailer: CRLF, or a MIME header up to an empty line
+      if n - i < 2 {
+        return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+      }
+      if b[i] == 13 && b[i + 1] == 10 {
+        return Chunked{res: HB_OK, used: i + 2, body: out}
+      }
+      // up to a double CRLF within 4096 bytes
+      let lim = if n - i < 4096 { n - i } else { 4096 }
+      var end = -1
+      var q = 3
+      while q < lim {
+        if b[i + q - 3] == 13 && b[i + q - 2] == 10 && b[i + q - 1] == 13 && b[i + q] == 10 {
+          end = i + q + 1
+          break
+        }
+        q += 1
+      }
+      if end < 0 {
+        if n - i >= 4096 || eof {
+          return Chunked{res: HB_ERR, used: 0, body: out}
+        }
+        return Chunked{res: HB_NEED, used: 0, body: out}
+      }
+      // the trailer is a MIME header up to its first empty line (a bare
+      // LF ends it too)
+      // (up to the empty line found: the rest does not change the parse)
+      let t = parse_head("GET / HTTP/1.0\r\n" + rt.str_slice(s, i, end), eof)
+      if t.res == NEED {
+        return Chunked{res: HB_NEED, used: 0, body: out}
+      }
+      if t.res != OK && t.res != STATUS {
+        return Chunked{res: HB_ERR, used: 0, body: out}
+      }
+      return Chunked{res: HB_OK, used: i + t.used - 16, body: out}
+    }
+    if size < 0 || size > n - i || (n - i) - size < 2 {
+      // copy what is there: an error later still delivers it
+      let have = if size >= 0 && size < n - i { size } else { n - i }
+      out = rt.rs_append_bytes(out, b, i, i + have, 0)
+      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+    }
+    out = rt.rs_append_bytes(out, b, i, i + size, 0)
+    i += size
+    if b[i] != 13 || b[i + 1] != 10 {
+      return Chunked{res: HB_ERR, used: 0, body: out} // malformed chunked encoding
+    }
+    i += 2
+  }
+  Chunked{res: HB_ERR, used: 0, body: out}
+}
+
+// ---------------------------------------------------------------------------
+// The connection's reader
+
+/// The HTTP/1.1 requests of a server connection.
+pub struct Reader {
+  h: rthttp.HConn
+  /// The head of the request being read.
+  head: Head
+}
+
+/// Makes the connection's request heads and chunked bodies parse in Xo
+/// (rthttp.hc_xo).
+pub fn reader(h: rthttp.HConn) -> Reader {
+  rthttp.hc_xo(h)
+  Reader{h: h, head: no_head()}
+}
+
+/// The request std/rt's serve hands to Xo code (Request's parts).
+pub struct Req {
+  pub method: Str
+  /// The URL's path (unescaped; Request.path).
+  pub path: Str
+  pub scheme: Str
+  /// Request.url.host: the Host without a port, or all of it when it has
+  /// none.
+  pub host: Str
+  /// The port of an absolute request target, or -1.
+  pub port: Int
+  /// [name, value, ...]
+  pub headers: List[Str]
+  /// [key, value, ...]
+  pub query: List[Str]
+}
+
+/// The next request (its body read; rthttp.hc_body), or None when the
+/// connection is done.
+pub fn (var r: Reader) read() -> Req? {
+  while true {
+    let k = rthttp.hc_read(r.h)
+    if k == 3 {
+      // up to the end of the head (the rest does not change the parse)
+      let p = parse_head(rthttp.hc_input(r.h, 0), rthttp.hc_eof(r.h))
+      let hd = p.head
+      var flags = hd.major | (hd.minor << 4)
+      if hd.chunked {
+        flags = flags | 0x100
+      }
+      if hd.close {
+        flags = flags | 0x200
+      }
+      if hd.wants10ka {
+        flags = flags | 0x400
+      }
+      if hd.wantsclose {
+        flags = flags | 0x800
+      }
+      if hd.expect100 {
+        flags = flags | 0x1000
+      }
+      if hd.expect_other {
+        flags = flags | 0x2000
+      }
+      if hd.h2up {
+        flags = flags | 0x4000
+      }
+      if hd.target == "*" {
+        flags = flags | 0x8000
+      }
+      rthttp.hc_head(r.h, p.res, p.used, hd.method, flags, hd.clen, p.status, p.reason)
+      r.head = hd
+    } else if k == 4 {
+      // the first 4 KiB, then (when they end before the body does) all
+      let s = rthttp.hc_input(r.h, 1)
+      let cut = s.len() < rthttp.hc_avail(r.h)
+      var c = chunked(s, rthttp.hc_eof(r.h) && !cut)
+      // (an error too: a line cut by the window's end looks too long)
+      if c.res != HB_OK && cut {
+        c = chunked(rthttp.hc_input(r.h, 2), rthttp.hc_eof(r.h))
+      }
+      rthttp.hc_chunked(r.h, c.res, c.used, c.body)
+    } else if k == 1 {
+      return Some(req_of(r.head))
+    } else {
+      return None
+    }
+  }
+  None
+}
+
+/// The parts of the Request of a head (xo_http.c's hc_* accessors).
+fn req_of(h: Head) -> Req {
+  // Request.url.host: net.SplitHostPort of req.Host, else all of it
+  let hb = h.host.bytes()
+  let n = hb.len()
+  var host = h.host
+  let colon = rfind(hb, 58, n)
+  if colon >= 0 {
+    var lo = 0
+    var hi = colon
+    var ok = true
+    var j = 0
+    var k = 0
+    if n > 0 && hb[0] == 91 {
+      let end = rt.str_find(h.host, "]", 0)
+      if end < 0 || end + 1 != colon {
+        ok = false
+      } else {
+        lo = 1
+        hi = end
+        j = 1
+        k = end + 1
+      }
+    } else if find(h.host, ":", 0, colon) >= 0 {
+      ok = false
+    }
+    if ok && (rt.str_find(h.host, "[", j) >= 0 || rt.str_find(h.host, "]", k) >= 0) {
+      ok = false
+    }
+    if ok {
+      host = rt.str_slice(h.host, lo, hi)
+    }
+  }
+  // the port of the URL's host
+  var port = -1
+  let ub = h.url.host.bytes()
+  let uc = rfind(ub, 58, ub.len())
+  if uc >= 0 && uc + 1 < ub.len() && valid_port(ub, uc, ub.len()) {
+    var v = 0
+    var x = uc + 1
+    var fits = true
+    while x < ub.len() {
+      let d = Int(ub[x]) - 48
+      if v > (MAX_INT - d) / 10 {
+        fits = false
+        break
+      }
+      v = v * 10 + d
+      x += 1
+    }
+    if fits {
+      port = v
+    }
+  }
+  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query}
+}

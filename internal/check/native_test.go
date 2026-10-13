@@ -83,39 +83,12 @@ func TestNativeModules(t *testing.T) {
 	}
 }
 
-// TestUnicodeCPath checks that XO_UNICODE=c loads the C path of the
-// Unicode operations (std/native/llrt/unicode_c.xo, decision 0180) in
-// place of unicode.xo, with no diagnostic.
-func TestUnicodeCPath(t *testing.T) {
-	t.Setenv("XO_UNICODE", "c")
-	dir := t.TempDir()
-	src := "use std/regexp\n\nfn main(os: Os) {\n  os.stdio.println(\"${'A'.to_lower()} ${\"Ä\".to_lower() == \"ä\".to_lower()} ${regexp.compile(r\"\\pL\").is_ok()}\")\n}\n"
-	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	res, err := CheckOpts([]string{dir}, Options{Native: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Diagnostics) > 0 {
-		t.Fatalf("diagnostics:\n%s", humanAll(res.Diagnostics))
-	}
-	file := ""
-	for _, m := range res.Info().AllModules() {
-		if m.Path == "native/llrt/unicode" {
-			file = m.Files[0].Path
-		}
-	}
-	if file != "std/native/llrt/unicode_c.xo" {
-		t.Errorf("native/llrt/unicode from %q, want std/native/llrt/unicode_c.xo", file)
-	}
-}
-
 // TestLLRTCPath checks that XO_LLRT_C=text loads the C path of the number
 // and time text (std/native/llrt/text_c.xo, decision 0193) in place of
-// text.xo, and XO_LLRT_C=strings strings_c.xo, with no diagnostic, that
-// the default is the Xo path, that `all` selects every C path, and that
-// an unknown name is ignored.
+// text.xo, with no diagnostic, that the default is the Xo path, that
+// `all` selects every C path, and that an unknown name, or a module
+// whose C path decision 0198 deleted (unicode, strings, jsontext), is
+// ignored.
 func TestLLRTCPath(t *testing.T) {
 	dir := t.TempDir()
 	src := "fn main(os: Os) {\n  os.stdio.println(\"${Int.parse(\"7\") ?? 0} ${5s} ${'a'.is_letter()} ${\"q\".debug()}\")\n}\n"
@@ -127,10 +100,9 @@ func TestLLRTCPath(t *testing.T) {
 	}{
 		{"", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
 		{"text", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
-		{"strings", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings_c.xo", "std/native/llrt/jsontext.xo"},
-		{"jsontext", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext_c.xo"},
-		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings_c.xo", "std/native/llrt/jsontext_c.xo"},
-		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
+		{"strings, jsontext", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
+		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
+		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
 	} {
 		t.Setenv("XO_LLRT_C", c.env)
 		res, err := CheckOpts([]string{dir}, Options{Native: true})
@@ -149,8 +121,9 @@ func TestLLRTCPath(t *testing.T) {
 		if files["native/llrt/text"] != c.text || files["native/llrt/unicode"] != c.unicode || files["native/llrt/strings"] != c.strings {
 			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q, strings from %q; want %q, %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], files["native/llrt/strings"], c.text, c.unicode, c.strings)
 		}
-		// decision 0193 step 5 and 0195: show, report, and ints come with the prelude
-		for _, name := range []string{"show", "report", "ints"} {
+		// decision 0193 steps 5 and 6 and decision 0195: show, report,
+		// fspath, procspec, ints, and gen come with the prelude
+		for _, name := range []string{"show", "report", "fspath", "procspec", "ints", "gen"} {
 			want := "std/native/llrt/" + name + ".xo"
 			if c.env == "all" {
 				want = "std/native/llrt/" + name + "_c.xo"

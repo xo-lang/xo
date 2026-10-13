@@ -4,8 +4,10 @@ Status: Accepted (2026-10-12, windows agent, on the lead's task for
 decision 0196); stage 1 implemented for windows/amd64, stage 3's builds
 for windows/arm64 (not run: no host), stages 2 (processes), 4 (paths), 5
 (fidelity), and 6 (tests and a batch mode), and xo1's Windows driver
-implemented (2026-10-12, second windows agent). Left: running
-windows/arm64 (no host), xo1 built natively on Windows.
+implemented (2026-10-12, second windows agent); stage 7, xo1 built by
+Xo for Windows (cross from Linux and natively, to a fixed point),
+done 2026-10-13 (windows3 agent). Left: running windows/arm64 (no
+host), publishing a windows/amd64 archive.
 
 ## Context
 
@@ -208,6 +210,24 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    Next: the lead's batched runs call it after each batch's merges;
    then xo1 built by xo1 with the LLVM backend on Windows, so the seed
    step needs no Go there.
+7. **Stage 7: xo1 built by Xo for Windows (done 2026-10-13).** The
+   driver cross builds for Windows from any host given a Windows
+   sysroot (`XO_WINSYSROOT`: MSVC's C library and the SDK in clang's
+   /winsysroot layout, made by xwin): clang gets `--target=` and
+   `-Xmicrosoft-windows-sys-root`, split modules compile for the
+   target, the TLS library and the link follow the target OS. With
+   split modules and ThinLTO (`XO_LLVM_SPLIT=16 XO_LLVM_JOBS=16
+   XO_LLVM_LTO=thin`, 32 vCPU, 64 GiB) the Linux cross build of xo1
+   takes 1,362 s and the native Windows build 1,544 s (most of each is
+   the lld-link ThinLTO link, about 22 GB); the cross built xo1 passes
+   the 145 goldens, builds itself natively, and its output builds
+   itself again to the same IR and (but the time stamp) the same
+   binary. Full LTO on one module stays out of reach (out of memory at
+   32 GiB). The release layout needed one fix: xo started by name from
+   cmd.exe found no std (PATHEXT in the PATH lookup). release.sh builds
+   the windows/amd64 archive only with `XO_RELEASE_WINDOWS=1`.
+   Evidence: bench/results/windows-2026-10-12.md, "xo1 built by Xo for
+   Windows".
 
 ## Consequences
 

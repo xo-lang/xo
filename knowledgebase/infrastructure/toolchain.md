@@ -122,6 +122,12 @@ The bootstrap chain, as release.sh runs it:
                                            -> linux/arm64 xo1 (no cc: selfhost/macho's ELF link)
     darwin xo1: --backend=go --targets=linux/amd64
                                            -> linux/amd64 xo1 (Go toolchain)
+    darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
+                                           -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
+                                              XO_WIN_CLANG, an upstream clang with lld-link beside it,
+                                              and XO_WINSYSROOT from xwin; not tried on the Mac yet,
+                                              whose 24 GB is below the 29.5 GB the Linux run used;
+                                              XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
 
 After a release exists, the previous release's xo replaces the Go seed
 (`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
@@ -216,6 +222,8 @@ go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc,verify,mutants
 go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--test] [--stages] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder: the build stage of xo ssadump for the functions it completes, then (--stages, when it skipped nothing) the stages unwind, landings, cleanup, rc, verify, and mutants, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
 go run ./cmd/xo asmdump [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # hidden: the arm64 assembly of internal/arm64 (build.Arm64AsmDump: the SSA as xo ssadump builds it, verified, InsertRC, generated, again without inlining when the inlined module does not verify); --each prints === asm <dir> before each run; --bench=N times arm64.Generate alone (decision 0158; last verified: 2026-10-11)
 XO_PHASE_TIMES=1 xo asmdump <dir>  /  xo1 asm|build|test --phase-times <dir>   # per phase wall clock on stderr as `phase NAME MS ms` (Go: check, ssa, verify, insert_rc, verify, inline, emit, print; xo1: check, ssa, tz, prune_unwind, add_landings, cleanup, insert_rc, inline, emit, print or write, cc); bench/results/xo1-perf-2026-10-12.md (last verified: 2026-10-12)
+XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
+xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>   # xo1, the self hosted compiler driver of decision 0158's switch-over experiment: selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) assembles and links with std/llrt (copied next to OUT as OUT.rt), trying the macOS SDKs internal/build tries ($XO_SYSROOT, the remembered one, none, xcrun's, Xcode's); fault positions relative to the program's line root (the nearest xo.mod); refuses programs that need time zone data (std/time), TLS (std/http), or `use c` sources; not the released xo (last verified: 2026-10-11)
 go run ./cmd/xo gendump [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--each] <dirs...>   # hidden: the files gen.Generate makes for the Go backend (build.GoGenDump), == file <path> before each; --fmt reads the Xo generator's output and puts its Go files through gen.FormatFile (only gofmt after == prepped) (decision 0167; last verified: 2026-10-11)
@@ -244,7 +252,7 @@ python3 scripts/selfhost-gogoldens.py <xo1>          # every internal/gen/testda
 xo1 build|run|test [flags] [dir ...]                 # decision 0178 stage 1: xo build|run|test's flags with Go's flag rules (--targets, -o, --json, --release, --error-args, --stamp, --no-mono, --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore, --record, --run, --cases, -v, --offline, --workspace) plus --std --wd --cc --asm --go-tree --phase-times; several directories are one program; the check's diagnostics printed as xo prints them (human, or --json's indented object); the build goes to the Go driver's build directory (<user cache>/xo/build/<hash>/arm64|llvm|..., XO_BIN_CACHE shared with xo under the same keys), prints `os/arch: path`; XO_LLVM_SPLIT/JOBS/LTO split LLVM builds; `run DIR -- ARGS` execs the program, its exit status passed through; not in xo1 yet: --ci, --hybrid, --real on native tests, XO1201 diagnostics (last verified: 2026-10-12)
 XO1_CMD=run python3 scripts/selfhost-goldens.py <xo1>   # the arm64 goldens through `xo1 run` (build and run in one command, in the program's directory); combine with XO1_BACKEND (decision 0178 stage 1; last verified: 2026-10-12)
 XO_SELF_DRIVER_ALL=1 XO1=<xo1> go test ./cmd/xo -run ...    # cmd/xo's tests with `build`, `run`, and `test` routed through xo1 (cmd/xo/selfdriver_test.go: --std of the repository, --wd, --backend=go when none is named); off by default (decision 0178 stage 1; last verified: 2026-10-12)
-xo build|run|test --backend=arm64|llvm|--no-gc ...       # decision 0178 switch point A: runs xo1 (internal/selfdriver), built once per embedded source set into <user cache>/xo/xo1/<key>/bin/xo1 (XO1_CACHE moves it; the first build takes about 5 to 12 minutes on Apple silicon and prints a line); on darwin/amd64 and linux/amd64 hosts only --backend=llvm and --no-gc (LLVM there) run xo1, which is built by the LLVM backend split into 12 modules without LTO (about 34 minutes and 16.5 GB on a 16 vCPU EC2 host, 86 minutes with ThinLTO on the 16 GB Intel Mac; XO_LLVM_SPLIT, XO_LLVM_LTO override; bench/results/xo1-x86-2026-10-12.md); XO1=<path> uses a prebuilt one; XO_SELF_DRIVER=0 runs the Go driver; programs xo1 cannot lower yet fall back to the Go driver (XO1201 diagnostics); --ci, --hybrid, --real, and workspace tests stay on the Go driver (last verified: 2026-10-12)
+xo build|run|test --backend=arm64|llvm|--no-gc ...       # decision 0178 switch point A: runs xo1 (internal/selfdriver), its sources and std written to <user cache>/xo/xo1/<key> per embedded source set, the binary built once per set of its own inputs (selfhost/, the std modules it uses, the xo version, the host) into <user cache>/xo/xo1/bin/<binkey>/xo1, so a change to another std module, std/llrt, or third_party reuses it (decision 0199; XO1_CACHE moves both; a build takes about 5 to 12 minutes on Apple silicon and prints a line; last verified: 2026-10-13); on darwin/amd64 and linux/amd64 hosts only --backend=llvm and --no-gc (LLVM there) run xo1, which is built by the LLVM backend split into 12 modules without LTO (about 34 minutes and 16.5 GB on a 16 vCPU EC2 host, 86 minutes with ThinLTO on the 16 GB Intel Mac; XO_LLVM_SPLIT, XO_LLVM_LTO override; bench/results/xo1-x86-2026-10-12.md); XO1=<path> uses a prebuilt one; XO_SELF_DRIVER=0 runs the Go driver; programs xo1 cannot lower yet fall back to the Go driver (XO1201 diagnostics); --ci, --hybrid, --real, and workspace tests stay on the Go driver (last verified: 2026-10-12)
 python3 scripts/selfhost-samebin.py <xo1> [DIR]        # every arm64 golden built by xo1 and by `xo build --backend=arm64` under the same file name, compared: identical, same code and data (otool -s), or different; DIR default .tools/samebin (decision 0174; last verified: 2026-10-12)
 (cd selfhost && go run ../cmd/xo build --backend=arm64 -o macho ./macho) && ./macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s   # the self hosted Mach-O assembler (decision 0182): the arm64 emitter's assembly into an MH_OBJECT with the sections, relocations, compact unwind entries, and eh_frame of `cc -c`; LC_BUILD_VERSION minos default 11.0 (last verified: 2026-10-12)
 python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c on each file: identical objects, functions, sections, relocation tables (symbols by name), sizes, time; MACHO_KEEP=1 keeps the objects; inputs from `xo asmdump <dir>` (decision 0182; last verified: 2026-10-12)
@@ -277,7 +285,7 @@ go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared c
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
-go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
+go test ./internal/llvm -run 'TestHTTPParseDiff'   # native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds). TestJSONParseDiff, the C JSON parser's, went with it (decision 0198); TestJSONTextDiff checks the Xo parser (last verified: 2026-10-13)
 go test ./internal/llvm -run TestTLSDiff           # native HTTPS vs the Go backend: client errors, SNI, ALPN, versions, plain HTTP on the TLS port, SIGTERM (decisions 0105, 0106; about 15 s)
 go test ./internal/llvm -run TestH2Diff -count=3    # HTTP/2 (decision 0121): Go vs LLVM vs arm64 backends as client and server, net/http's client with 400 streams at once, 70 raw frame cases h2spec style; repeat to catch racing cases (about 6 s each)
 go test ./internal/llvm -run TestH2Sanitizers      # the TestH2Diff program (LLVM) under ThreadSanitizer and under AddressSanitizer with UBSan (about 10 s)
@@ -755,16 +763,16 @@ Last verified: 2026-10-07
   (2026-10-12, decisions 0180 and 0184): builds bench/perf/unicode with
   each backend and prints `<workload> <backend> <min instructions> <best
   us> <checksum>` over 5 runs of each workload (`/usr/bin/time -l`,
-  darwin); `XO_UNICODE=c` in the environment builds the C path. Run it
-  through the heavy lock. Results in
+  darwin); `XO_UNICODE=c` built the C path until decision 0198 deleted
+  it (2026-10-13). Run it through the heavy lock. Results in
   `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
 - `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
   decision 0193): the same for bench/perf/text (Int parse, Duration and
   Time text, Debug quoting, split, lines, replace, trims, rune_count,
   and since step 3 int_fmt, float_fmt, float_parse, base64, hex, since
   step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load; `none`
-  is the input setup alone); `XO_LLRT_C=text,strings,num,show,tz` builds
-  the C paths, `WORKLOADS` picks workloads. Run it through the heavy lock
+  is the input setup alone); `XO_LLRT_C=text,show,tz` builds the C paths
+  (strings and num went in decision 0198, 2026-10-13), `WORKLOADS` picks workloads. Run it through the heavy lock
   with `XO_SELF_DRIVER=0` in the environment for the Go driver. Results
   in `bench/results/runtime-port-2026-10-12.md`,
   `runtime-port-step3-2026-10-12.md`, and
@@ -802,14 +810,42 @@ Last verified: 2026-10-07
   of small objects, Int, Float, and string arrays, Map objects, the
   parser alone, invalid texts; encode of structs, strings, Floats; Bytes
   both ways; `none` is the input setup alone); `XO_LLRT_C=jsontext`
-  builds the C path. Run it through the heavy lock with
+  built the C path until decision 0198 (2026-10-13). Run it through the heavy lock with
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-step4-2026-10-13.md`. Last verified:
   2026-10-13.
 - `go test ./internal/llvm -run TestJSONTextDiff` (2026-10-13, decision
-  0193 step 4): std/json on arm64 and LLVM, Xo and C paths, against the
+  0193 step 4): std/json on arm64 and LLVM (the Xo path; the C path's
+  subtests went with it in decision 0198) against the
   Go backend on about 28,000 generated and edge case inputs (not under
   -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
+  verified: 2026-10-13.
+- `bench/perf/httpparse/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): builds the server of
+  bench/perf/httpparse with each backend and, for each workload (h1_get,
+  h1_chunked, h1_url, h2_get, h2_varied; `none` starts and stops it),
+  runs it 5 times under `/usr/bin/time -l` while load/ (a Go client,
+  built into the out dir; it also writes the TLS certificate) sends N
+  requests (default 20000), then stops it with SIGTERM to the server's
+  PID (the child of the time process the script started); prints `<w>
+  <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
+  the C paths; PORT (18090). Through the heavy lock, with
+  `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
+  working directory, and process environments (mkdir, tree, remove,
+  temp, cwd, proc_plain, proc) in a fresh scratch directory per run;
+  `XO_LLRT_C=fspath,procspec` builds the C paths. The counts include the
+  kernel's instructions. Last verified: 2026-10-13.
+- `go test ./internal/llvm -run 'TestHTTP1ParseDiff|TestProcSpecDiff'`
+  (2026-10-13, decision 0193 step 6, not under -short): a server program
+  built with the Go backend, LLVM, and arm64 answers the same raw
+  HTTP/1.1 connections over loopback (`XO_HTTP_DIFF_N` random requests,
+  default 2000, `XO_HTTP_DIFF_SEED`); env(1) and printf(1) children with
+  the environments procspec.xo builds. `XO_LLRT_C=http1` or `procspec`
+  checks the C path. TestH2Diff's probeH2HPACK covers hpack.xo.
+  `-run 'TestHPACKTables|TestHTTP1Tables' -golden-update` regenerates
+  `std/native/llrt/hpack_tables.xo` and `http1_tables.xo`. Last
   verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
@@ -1134,7 +1170,7 @@ std/                    std declaration files (prelude.xo, archive.xo, cli.xo, c
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_unicode.c (XO_UNICODE_C only), xo_bytes.c, xo_json.c,
+                        and the files it includes: xo_std.c, xo_bytes.c,
                         xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
@@ -1153,27 +1189,25 @@ std/native/             std implemented in Xo for the native backends (decision 
 std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
                         Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
                         and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
-                        -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
-                        `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
-                        (XO_UNICODE=c at build time: the Go checker loads it instead, the build
-                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
+                        -golden-update`); imported as
+                        `use native/llrt/<name>` by std/native only.
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,
-                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float text,
-                        Float.parse, hex, base64; num_c.xo) and jsontext.xo (std/json's parser,
-                        tape readers, string, Float, and Bytes text; jsontext_c.xo); show.xo
+                        with C path text_c.xo; num.xo (Int and Float text,
+                        Float.parse, hex, base64) and jsontext.xo (std/json's parser,
+                        tape readers, string, Float, and Bytes text); show.xo
                         (Rune and UInt64 text of Display and Debug), tz.xo (std/time's zone
                         rules), report.xo (a property test case's report) with show_c.xo,
-                        tz_c.xo, report_c.xo (step 5); ints.xo (sized integer faults, UInt64
+                        tz_c.xo, report_c.xo (step 5). `XO_LLRT_C=<name>[,<name>]` (or `all`)
+                        at build time selects a module's C path (-DXO_TEXT_C, -DXO_SHOW_C,
+                        -DXO_TZ_C, -DXO_REPORT_C, compiled locally, never in a pack). Decision
+                        0198 deleted the C paths of unicode (XO_UNICODE=c), strings, num, and
+                        jsontext; those names now select nothing; ints.xo (sized integer faults, UInt64
                         division, floor division, Str key hash, Int's checked_ methods), glob.xo
                         (path.Match), digest.xo (SHA-256 via the generated digest_tables.xo,
                         HMAC, PBKDF2, base64, verify_password), gen.xo (property test values)
-                        with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195).
-                        `XO_LLRT_C=<name>[,<name>]` (or `all`)
-                        at build time selects a module's C path (-DXO_TEXT_C, -DXO_STRINGS_C,
-                        -DXO_NUM_C, -DXO_JSONTEXT_C, -DXO_SHOW_C, -DXO_TZ_C, -DXO_REPORT_C,
-                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C,
-                        likewise never in a pack); XO_UNICODE=c still works
+                        with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195;
+                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C)
                         (Last verified: 2026-10-13)
 ```
 
@@ -1769,7 +1803,8 @@ first, AST based prototype, since deleted) and
   numbers, durations, times, base64), `xo_bytes.c` (decision 0081: checked arithmetic and
   conversions of sized integers, Rune text and quoting, Bytes slicing and
   decoding, the builders' appends, `fs.read`, `env.args`, and the slots
-  of constants of collection types), `xo_json.c`, and `xo_http.c`;
+  of constants of collection types), and `xo_http.c` (`xo_json.c`
+  until decision 0198);
   builds write every `std/llrt/*.c` next to xo_rt.c and compile only
   xo_rt.c.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
@@ -3009,6 +3044,25 @@ x86_64-pc-windows-msvc by default and finds the build tools itself; the
 link is `-fuse-ld=lld` (LTO bitcode). Results:
 bench/results/windows-2026-10-12.md. Last verified: 2026-10-12
 (instance i-EXAMPLE19).
+
+xo1 for Windows built by Xo (decision 0197 stage 7). Cross, from Linux
+or macOS: an upstream LLVM (clang and lld-link; Apple's clang has no
+lld-link; 23.1.3 measured) and a Windows sysroot,
+`xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style
+--preserve-ms-arch-notation --output DIR` (xwin 0.10.0, 19 s, 1.1 GB;
+without the last flag lld-link finds no .lib,
+gotchas/windows-cross-sysroot.md), then
+`XO_CLANG=<llvm>/bin/clang XO_AR=<llvm>/bin/llvm-ar XO_WINSYSROOT=DIR
+XO_LLVM_SPLIT=16 XO_LLVM_JOBS=16 XO_LLVM_LTO=thin xo build --backend=llvm
+--targets=windows/amd64 -o xo.exe ./selfhost/xo` (1,362 s on 32 vCPU and
+64 GiB, 29.5 GB peak in use; the link alone about 22 GB). Natively on
+Windows: the same without XO_WINSYSROOT, XO_CLANG, XO_AR (1,544 s,
+35 GB peak in use on c7i.8xlarge; use `XO_REMOTE_TYPE=c7i.8xlarge`, 32
+GiB is too little for one module with full LTO and tight for this).
+XO_LLVM_LTO=none is slower here (1,571 s cross: each -O2 module takes
+764 to 1,426 s). Results: bench/results/windows-2026-10-12.md, "xo1
+built by Xo for Windows". Last verified: 2026-10-13 (i-EXAMPLE07,
+i-EXAMPLE03).
 
 
 ### xo1 on x86-64 hosts

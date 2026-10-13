@@ -10,6 +10,14 @@ struct Ctx {
   std: Str
   xo: Str
   cache: Str
+  // the OS a link targets when it is not goos (an LLVM cross build for
+  // Windows, decision 0197); "" for the host
+  tgoos: Str = ""
+}
+
+/// The OS the link of ctx targets: the host unless a cross build set it.
+fn link_os(ctx: Ctx) -> Str {
+  if ctx.tgoos.is_empty() { ctx.goos } else { ctx.tgoos }
 }
 
 /// ccBuild: compiles and links srcs into bin with cc and flags; returns
@@ -86,7 +94,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
   if !sobj.is_empty() {
     srcs[rti] = sobj
     if tls {
-      tls_link = [slib] + tls_system_libs(ctx.goos)
+      tls_link = [slib] + tls_system_libs(link_os(ctx))
     }
   } else {
     var tls_compile: List[Str] = []
@@ -111,7 +119,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
       }
     }
   }
-  args = args + srcs + tls_link + libs + sys_link_args(ctx.goos)
+  args = args + srcs + tls_link + libs + sys_link_args(link_os(ctx))
   match os.proc.run(cc, args) {
     Ok(r) => {
       let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
@@ -158,7 +166,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
   if !env_root.is_empty() {
     return [env_root]
   }
-  if ctx.goos != "darwin" {
+  if link_os(ctx) != "darwin" {
     return [""]
   }
   var out = [""]
@@ -189,7 +197,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
 /// sysrootMemo: the file remembering the SDK that linked last time, ""
 /// with $XO_SYSROOT.
 fn sysroot_memo(os: Os, ctx: Ctx) -> Str {
-  if !(os.env.get("XO_SYSROOT") ?? "").is_empty() || ctx.cache.is_empty() {
+  if !(os.env.get("XO_SYSROOT") ?? "").is_empty() || ctx.cache.is_empty() || link_os(ctx) != ctx.goos {
     return ""
   }
   "${ctx.cache}/xo/llvm-sysroot"
@@ -219,7 +227,9 @@ fn io_flags(code: Str) -> List[Str] {
     "xo_time_of", "xo_time_ns",
     // handles, copies, modes, links, locks (decision 0172)
     "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link",
-    "xo_fs_lock", "xo_fs_unlock"] {
+    "xo_fs_lock", "xo_fs_unlock",
+    // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
+    "xo_fs_raw_"] {
     if calls_sym(code, sym) {
       out.push("-DXO_FS")
       break
@@ -234,34 +244,12 @@ fn io_flags(code: Str) -> List[Str] {
   if calls_sym(code, "xo_proc_") {
     out.push("-DXO_PROC")
   }
-  // the C path of the Unicode operations (decision 0180), which only
-  // XO_UNICODE=c builds call
-  for sym in ["xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit",
-    "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_UNICODE_C")
-      break
-    }
-  }
-  // the C paths of the number and time text and of the Str operations
-  // (decision 0193), which only XO_LLRT_C builds call
+  // the C path of the number and time text (decision 0193), which only
+  // XO_LLRT_C=text builds call
   for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
     "xo_time_parse"] {
     if calls_sym(code, sym) {
       out.push("-DXO_TEXT_C")
-      break
-    }
-  }
-  for sym in ["xo_str_trim", "xo_str_replace"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_STRINGS_C")
-      break
-    }
-  }
-  // and of the number text (decision 0193 step 3, XO_LLRT_C=num)
-  for sym in ["xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_NUM_C")
       break
     }
   }
@@ -285,10 +273,10 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
-  // and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
-  for sym in ["xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"] {
+  // and of the Fs path policy (decision 0193 step 6, XO_LLRT_C=fspath)
+  for sym in ["xo_fs_mkdir_all", "xo_fs_remove_all", "xo_fs_create_temp", "xo_fs_cwd"] {
     if calls_sym(code, sym) {
-      out.push("-DXO_JSONTEXT_C")
+      out.push("-DXO_FSPATH_C")
       break
     }
   }

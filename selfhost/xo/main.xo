@@ -293,22 +293,28 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let targets = parse_targets(os, o.targets, host)
   // the LLVM backend: the host, or one other target clang cross
   // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
-  // windows/amd64, decision 0197)
+  // windows/amd64, decision 0197), or Windows from any host given a
+  // Windows sysroot (XO_WINSYSROOT)
   var ltarget = host
   var cross: List[Str] = []
+  let winsysroot = os.env.get("XO_WINSYSROOT") ?? ""
   for tg in targets {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
     }
     if backend == "llvm" && tg != host {
-      let triple = llvm_cross_triple(host, tg)
+      let triple = llvm_cross_triple(host, tg, winsysroot)
       if triple.is_empty() || targets.len() > 1 {
-        fail(os, "the LLVM backend builds for the host (${host}) only, not ${tg}")
+        let hint = if tg.starts_with("windows/") { " (set XO_WINSYSROOT to a Windows sysroot to cross build for Windows)" } else { "" }
+        fail(os, "the LLVM backend builds for the host (${host}) only, not ${tg}${hint}")
       }
       ltarget = tg
-      cross = ["--target=${triple}"]
+      cross = llvm_cross_flags(host, triple, winsysroot)
     }
   }
+  // the link's context: its target OS (a cross build's)
+  var lctx = ctx
+  lctx.tgoos = ltarget.split("/")[0]
   let tests = o.cmd == "test"
   let release = o.release && !tests
   var t = os.clock.now()
@@ -398,7 +404,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, ltarget, false)
-    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, ctx.goos)
+    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos)
     lk.flags = cross + lk.flags
     var mode_flags = ["llvm", "-O2"]
     if lls.len() > 1 {
@@ -411,9 +417,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       let msg = if lls.len() > 1 {
-        split_build(os, ctx, cc, lls, lk.srcs, bin, split, lk.flags, tls)
+        split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags, tls)
       } else {
-        cc_build(os, ctx, cc, ["-O2", "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
+        cc_build(os, lctx, cc, ["-O2", "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)

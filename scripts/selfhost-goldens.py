@@ -122,7 +122,7 @@ def one(d, want_fn):
 
 
 def want_golden(d):
-    return open(os.path.join(d, 'want.txt')).read()
+    return open(os.path.join(d, 'want.txt'), encoding='utf-8', newline='').read()
 
 
 def want_go(d):

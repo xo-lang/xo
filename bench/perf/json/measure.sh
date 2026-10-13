@@ -6,7 +6,7 @@
 #
 # usage: bench/perf/json/measure.sh <xo binary> <out dir> <backend...>
 # example: bench/perf/json/measure.sh .tools/bin/xo /tmp/t arm64 llvm
-# XO_LLRT_C=jsontext in the environment builds the C path (decision 0193);
+# (XO_LLRT_C=jsontext, the C path of decision 0193, went in decision 0198.)
 # WORKLOADS overrides the list; "none" is the setup alone (the inputs).
 set -e
 XO=$1

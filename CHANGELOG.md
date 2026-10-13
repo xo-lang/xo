@@ -21,6 +21,59 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   builds the C paths for comparison
   (bench/results/runtime-port-portable-2026-10-13.md).
 
+- Changed: on the native backends, the HTTP/2 server's HPACK (header
+  block decoding and encoding), the HTTP/1.1 server's request parsing
+  (request line, header fields, request targets and queries, chunked
+  bodies and trailers, and std/http's URL helpers), the Fs path walks
+  (create_dir_all, remove_all, create_temp, the working directory), and
+  the environments and Windows command lines of child processes are Xo
+  (std/native/llrt hpack.xo, http1.xo, fspath.xo, procspec.xo; decision
+  0193 step 6), as fast as the C or faster (HTTP/1.1 GETs 13 to 16
+  percent fewer instructions, HTTP/2 within 2 percent;
+  bench/results/runtime-port-step6-2026-10-13.md). `XO_LLRT_C=hpack`,
+  `http1`, `fspath`, `procspec` build the C paths for comparison.
+- Fixed: a chunked request body with a chunk size of 2^63 or more made
+  the native HTTP/1.1 server copy a negative length; an IPv6 request
+  host with an IPv4 part written with a leading zero is now rejected as
+  the Go backend rejects it.
+- **The xo1 golden scripts no longer report show_table as failing**:
+  scripts/selfhost-goldens.py (and selfhost-gogoldens.py,
+  elf-goldens.py) read want.txt in Python's text mode, which turned the
+  raw `\r` show_table prints into `\n`, so the golden "differed" on xo1
+  although xo1's output matched it byte for byte. They now read it with
+  `newline=''`; internal/diag's TestScriptsReadWantBytes keeps it so
+  (gotcha python-text-mode-want-cr.md). No compiler change.
+- **The C paths of the ported runtime pieces are gone** (decision
+  0198): the Unicode operations (`XO_UNICODE=c`, xo_unicode.c), std/json's
+  text (`XO_LLRT_C=jsontext`, xo_json.c), the number text
+  (`XO_LLRT_C=num`), and the Str operations (`XO_LLRT_C=strings`), 3,373
+  lines of std/llrt. Those settings now select nothing; the Xo versions,
+  the default since decisions 0180 and 0193, are the only ones. No pack
+  object changes (packs never held these paths).
+- **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
+  build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
+  cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows
+  sysroot (MSVC's C library and the Windows SDK, e.g. made by xwin)
+  and an upstream clang with lld-link is used. xo built this way from
+  Linux runs on Windows, passes the 145 Windows goldens, and builds
+  itself on Windows to the same output. Fixed: on Windows, `xo` started
+  by name from cmd.exe did not find its standard library
+  (`fault: prelude type missing: Str`).
+- Faster: the self hosted compiler (xo1) compiles selfhost/xo 3.6 times
+  faster in 37 percent of the memory (588.86 s to 163.83 s, 26.1 GB to
+  9.66 GB on the Mac; bench/results/xo1-speed-2026-10-13.md), with the
+  same assembly: liveness and dce by worklists over sparse sets, fewer
+  allocations per instruction, insert_rc's liveness and borrow sites
+  without per pass maps. On the native backends an empty list literal
+  `[]` allocates nothing until its first push (decision 0199), and the
+  heap prefetches on each allocation from a free list. `XO_HEAPSTATS=1`
+  prints a native program's heap by size class at exit.
+- Changed: the xo1 that native builds of the development `xo` run
+  (switch point A) is cached on its own inputs (selfhost/, the std
+  modules it uses, the `xo` version) in `<user cache>/xo/xo1/bin/<key>`,
+  so a change to another std module, the C runtime (std/llrt), or
+  third_party no longer rebuilds it (5 to 12 minutes); the std beside it
+  is still written from the full embedded set.
 - The self hosted toolchain runs on x86-64 hosts: on darwin/amd64 and
   linux/amd64, `xo build|run|test --backend=llvm` (and `--no-gc`, whose
   default backend is LLVM there) go through xo1, which `xo` builds with
