@@ -384,6 +384,19 @@ fn (var g: G) isel() {
         g.nuses[a] += 1
         g.users[a] = v
       }
+      let xv = g.f.values[v]
+      if xv.op == ssa.Op.Call && xv.args.len() >= 2 && (aux_str(xv.aux) is "list.index" | "list.set" | "list.take") {
+        let ix = g.f.values[xv.args[1]]
+        if ix.op == ssa.Op.Add || ix.op == ssa.Op.Sub {
+          for j in 0..2 {
+            let (_, kc) = g.const_int(ix.args[1 - j])
+            if kc && (j == 0 || ix.op == ssa.Op.Add) {
+              g.off_bases[ix.args[j]] = true
+              break
+            }
+          }
+        }
+      }
       for e in g.f.values[v].succs {
         for a in g.f.edges[e].args {
           g.nuses[a] += 1
@@ -1061,6 +1074,24 @@ fn (var g: G) mul(v: Int) {
       let (k2, ok2) = pow2c(c - 1)
       if ok2 {
         low = "add $d0, $u0, $u0, lsl #${k2}"
+      }
+    }
+  }
+  if low.is_empty() {
+    let (text, us, ok) = g.mul_long(x.args[0], x.args[1])
+    if ok {
+      if x.pos.is_empty() || g.safe_mul(v) {
+        g.set(v, [g.def1(false, text, us)])
+        return
+      }
+      if text.starts_with("umull") {
+        // the product of two values below 2^32 is below 2^64: an Int
+        // when bit 63 is clear
+        let r = g.def1(false, text, us)
+        let l = g.loc_label(x.pos)
+        g.check("cmp $u0, #0", [r], "lt", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+        g.set(v, [r])
+        return
       }
     }
   }

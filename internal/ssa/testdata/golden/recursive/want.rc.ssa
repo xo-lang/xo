@@ -595,24 +595,24 @@ b5:  ; preds b2
   v22: List[Str] = call leaves[Str], v20
   v23: Int = call list.len, v22
   v24: Int = const 0
-  jump b6(v24, v21)
-b6(v26: Int, v27: List[Str]):  ; preds b5, b8
-  v28: Bool = lt v26, v23
-  br v28, b7(), b9()
+  v25: List[Str] = reuse v21
+  jump b6(v24, v25)
+b6(v27: Int, v28: List[Str]):  ; preds b5, b8
+  v29: Bool = lt v27, v23
+  br v29, b7(), b9()
 b7:  ; preds b6
-  v30: Str = call list.index, v22, v26
-  retain v30
-  v32: List[Str] = reuse v27
-  v33: List[Str] = call list.push, v32, v30
+  v31: Str = call list.index, v22, v27
+  retain v31
+  v33: List[Str] = call list.push, v28, v31
   v34: () = tuple
   jump b8()
 b8:  ; preds b7
   v36: Int = const 1
-  v37: Int = add v26, v36
+  v37: Int = add v27, v36
   jump b6(v37, v33)
 b9:  ; preds b6
   release v22
-  jump b1(v27)
+  jump b1(v28)
 }
 
 func num.append_int(v0: Str, v1: Int) -> Str {

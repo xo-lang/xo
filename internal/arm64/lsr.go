@@ -43,6 +43,9 @@ type lsrPlan struct {
 	es      int64
 	body    map[*ssa.Block]bool
 	p       vreg
+	// data: p is the list's data address instead (iv unused), for
+	// [p, i, lsl #3] (decision 0208)
+	data bool
 }
 
 // lsrLoop is what is known of a loop header.
@@ -159,7 +162,7 @@ func (s *fstate) planLSR(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 			}
 		}
 		for _, b := range blocks {
-			if !body[b] || !every(b) {
+			if !body[b] {
 				continue
 			}
 			for _, v := range b.Instrs {
@@ -167,6 +170,10 @@ func (s *fstate) planLSR(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 					continue
 				}
 				if name := v.Aux.(string); name != "list.index" && name != "list.set" {
+					continue
+				}
+				s.dataPlan(lp, h, v)
+				if !every(b) {
 					continue
 				}
 				x := v.Args[1]
@@ -192,6 +199,32 @@ func (s *fstate) planLSR(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 			}
 		}
 	}
+}
+
+// dataPlan adds a plan for the data address of the list of access v
+// (decision 0208): a one word element at an index that is not a
+// constant, of a list whose buffer the loop cannot move.
+func (s *fstate) dataPlan(lp *lsrLoop, h *ssa.Block, v *ssa.Value) {
+	if s.g.goMode {
+		return
+	}
+	if _, ok := constInt(v.Args[1]); ok {
+		return
+	}
+	et := v.Args[0].Type.Elems[0]
+	if et.Kind != ssa.KBool && (s.g.esize(et) != 8 || len(s.g.layout(et)) != 1) {
+		return
+	}
+	l, li := s.stableList(v.Args[0], h, lp.body, lp.latches)
+	if l == nil {
+		return
+	}
+	for _, p := range lp.plans {
+		if p.data && p.list == l {
+			return
+		}
+	}
+	lp.plans = append(lp.plans, &lsrPlan{list: l, listIdx: li, data: true, body: lp.body})
 }
 
 // ivStep reports whether every back edge passes parameter iv (index k)
@@ -324,6 +357,10 @@ func (s *fstate) lsrHeader(b *ssa.Block) {
 	}
 	m := s.m()
 	for _, p := range lp.plans {
+		if p.data {
+			m.bases[[3]int64{int64(s.vals[p.list][0]), 0, -24}] = p.p
+			continue
+		}
 		l, i := s.vals[p.list][0], s.vals[p.iv][0]
 		m.bases[[3]int64{int64(l), int64(i), p.es}] = p.p
 	}
@@ -383,6 +420,19 @@ func (s *fstate) lsrHeader(b *ssa.Block) {
 // lsrMoves adds the moves of the pointer parameters along e.
 func (s *fstate) lsrMoves(e *ssa.Edge, dsts []vreg, srcs []src) ([]vreg, []src) {
 	for _, p := range s.plans(e.To) {
+		if p.data {
+			// the data address: the same on the back edges
+			if p.body[e.From] {
+				continue
+			}
+			l := s.vals[p.list][0]
+			if p.listIdx >= 0 {
+				l = s.words(e.Args[p.listIdx])[0]
+			}
+			dsts = append(dsts, p.p)
+			srcs = append(srcs, rsrc(s.dataAddr(s.real(l))))
+			continue
+		}
 		a := e.Args[p.ivIdx]
 		if p.body[e.From] {
 			c, _ := stepOf(p.iv, a)
@@ -570,6 +620,81 @@ func pairLoads(text string) string {
 }
 
 var ldrRE = regexp.MustCompile(`^\tldr (x[0-9]+), \[(x[0-9]+|sp), #(-?[0-9]+)\]$`)
+
+var strRE = regexp.MustCompile(`^\tstr (x[0-9]+|xzr), \[(x[0-9]+), #(-?[0-9]+)\]$`)
+
+var defRE = regexp.MustCompile(`^(L[A-Za-z0-9_]+):$`)
+
+var labelUseRE = regexp.MustCompile(`L[A-Za-z0-9_]+`)
+
+// pairMem is pairLoads for a function's text, which also joins two
+// stores of adjacent words through one base register (not sp) into a
+// store pair, and pairs across labels nothing refers to (the labels of
+// blocks only fallen into, which go): xs[i + 1] to xs[i + 15] in blocks
+// of their own (decision 0208). ext is the text that may refer to the
+// function's labels besides it (its call site table).
+func pairMem(text, ext string) string {
+	lines := strings.Split(text, "\n")
+	var refs map[string]bool
+	unused := func(l string) bool {
+		m := defRE.FindStringSubmatch(l)
+		if m == nil {
+			return false
+		}
+		if refs == nil {
+			refs = map[string]bool{}
+			for _, t := range []string{text, ext} {
+				for _, x := range strings.Split(t, "\n") {
+					if defRE.MatchString(x) {
+						continue
+					}
+					for _, u := range labelUseRE.FindAllString(x, -1) {
+						refs[u] = true
+					}
+				}
+			}
+		}
+		return !refs[m[1]]
+	}
+	out := lines[:0]
+	for i := 0; i < len(lines); i++ {
+		a := ldrRE.FindStringSubmatch(lines[i])
+		st := false
+		if a == nil {
+			a = strRE.FindStringSubmatch(lines[i])
+			st = true
+		}
+		if a != nil {
+			j := i + 1
+			for j < len(lines) && unused(lines[j]) {
+				j++
+			}
+			if j < len(lines) {
+				var c []string
+				if st {
+					c = strRE.FindStringSubmatch(lines[j])
+				} else {
+					c = ldrRE.FindStringSubmatch(lines[j])
+				}
+				if c != nil && a[2] == c[2] && (st || a[1] != c[1] && a[1] != a[2]) {
+					ka, _ := strconv.Atoi(a[3])
+					kc, _ := strconv.Atoi(c[3])
+					if kc == ka+8 && ka%8 == 0 && ka >= -512 && ka <= 504 {
+						op := "ldp"
+						if st {
+							op = "stp"
+						}
+						out = append(out, fmt.Sprintf("\t%s %s, %s, [%s, #%d]", op, a[1], c[1], a[2], ka))
+						i = j
+						continue
+					}
+				}
+			}
+		}
+		out = append(out, lines[i])
+	}
+	return strings.Join(out, "\n")
+}
 
 // placeLatches lays out the latch of a loop right after a block that
 // branches either to it or into an inner loop: `for i in .. { if
