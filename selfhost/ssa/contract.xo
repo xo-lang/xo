@@ -81,8 +81,55 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     let v = b.block(body)
     b.ret_at(v, Some(Expr.Block(b: body)))
   }
+  if om >= 0 && b.c.mods[om].path == "native/llrt/rc" {
+    b.check_no_alloc()
+  }
   b.finish_fn()
   b.end(saved)
+}
+
+/// The no allocation, no counting rule of the reference counts in Xo
+/// (decision 0207 stage 2, design 3) on the function being built, of
+/// module native/llrt/rc (m its name): only scalar values (nothing to
+/// count, nothing allocated), no fault (a fault allocates its message
+/// and unwinds through the C caller), and calls only of the inline
+/// intrinsics of raw memory and the slot atomics and of the C path's
+/// rt.rc_*_c (a call of a function adds a landing check, which may
+/// fault). A violation is a build error of std (unsupported), not a
+/// runtime surprise.
+fn (var b: Builder) check_no_alloc() {
+  if b.s.unwind_b >= 0 {
+    b.unsupported("a reference count function that can fault (decision 0207: no allocation, no counting)")
+    return
+  }
+  for v in b.s.f.values {
+    if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) {
+      b.unsupported("a `${b.m.types[v.ty].name}` value in a reference count function (decision 0207: no allocation, no counting)")
+      return
+    }
+    if v.op is Op.Fault | Op.Closure | Op.Capture | Op.CallValue | Op.Box {
+      b.unsupported("`${op_name(v.op)}` in a reference count function (decision 0207: no allocation, no counting)")
+      return
+    }
+    if v.op == Op.Call {
+      if let Aux.S(s: n) = v.aux {
+        if !rc_callee_ok(n) {
+          b.unsupported("a call of `${n}` in a reference count function (decision 0207: no allocation, no counting)")
+          return
+        }
+      }
+    }
+  }
+}
+
+/// Whether a reference count function may call the function named n
+/// (check_no_alloc): the inline raw memory and atomic intrinsics, and the
+/// C path's rt.rc_*_c.
+fn rc_callee_ok(n: Str) -> Bool {
+  if n.starts_with("rt.rc_") && n.ends_with("_c") {
+    return true
+  }
+  n is "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint"
 }
 
 /// A `requires` clause (core 9.1): without `else` a false condition

@@ -7,6 +7,7 @@
 // reading tar archives in the old V7 and STAR formats beyond their
 // common fields.
 use std/archive
+use native/llrt/raw
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -38,15 +39,8 @@ fn get_u16(b: Bytes, i: Int) -> Int { byte_of(b, i) | (byte_of(b, i + 1) << 8) }
 
 fn get_u32(b: Bytes, i: Int) -> Int { get_u16(b, i) | (get_u16(b, i + 2) << 16) }
 
-fn zeros(n: Int) -> List[Int] {
-  var l: List[Int] = []
-  var i = 0
-  while i < n {
-    l.push(0)
-    i += 1
-  }
-  l
-}
+/// A list of n zeros in one allocation (decision 0207 stage 2).
+fn zeros(n: Int) -> List[Int] { raw.zero_ints(n) }
 
 // ---------------------------------------------------------------------------
 // CRC-32 (IEEE), hash/crc32

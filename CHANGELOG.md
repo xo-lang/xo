@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends: the C runtime's reference count operations (retain,
+  release, claim, and marking a value shared between threads) are Xo
+  (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C
+  through C ABI exports; within 5 percent of the C's instructions on
+  both backends (bench/results/raw-memory-2026-10-13.md).
+  `XO_LLRT_C=rc` builds the C path. Lists of zeros made by std's
+  implementation (deflate's tables, regexp's queue, JSON object key
+  tables) take one allocation and a memset instead of a push per
+  element. Fixed: the wasm backend reported std code using the raw
+  memory intrinsics as unsupported.
 - Added: `./...` and `DIR/...` on every command that takes directories
   (check, test, build, vet, doc, fmt, fix, parse, audit). It means DIR,
   which those commands already walk below, so `xo check ./...` equals

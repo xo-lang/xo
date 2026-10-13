@@ -2,8 +2,11 @@
 
 Status: Accepted (2026-10-13), stage 1 implemented: the C ABI export
 mechanism of decision 0204 and the raw memory intrinsics of decision
-0195 prerequisite 2, internal to std (decision 0074); stage 2 (reference
-counts, then the allocator, in Xo) is designed below, not implemented.
+0195 prerequisite 2, internal to std (decision 0074). Stage 2 (design
+below): reference counts implemented 2026-10-13 (std/native/llrt/rc.xo,
+the default; `XO_LLRT_C=rc` keeps the C until a full tier passes on
+main), with `raw.zero_ints`; the allocator not started (what it needs:
+results file, stage 2).
 Files: `std/native/llrt/cabi.xo`, `cabi_tls.xo`, `cabi_time.xo`,
 `raw.xo`, `netpolicy.xo`, `tlsname.xo`, `std/native/rt.xo` (raw memory),
 internal/ssa `rawmem.go`, selfhost/ssa `build.xo` (declare_exports) and
@@ -131,6 +134,40 @@ Not implemented; the order and the rules for the step after this one.
    allocation heavy workload set: list push, string append, map insert,
    task spawn), and a fuzz of interleaved retain, release, share, and
    claim across threads against a reference model.
+
+## Stage 2 as implemented (2026-10-13)
+
+- **Zero filled lists**: `raw.zero_ints(n)` (with_capacity, one
+  mem_set, the length stored at `layout(3)` with the width of
+  `layout(6)`), used by archive's zeros, regexp's queue, and jsontext's
+  key table. With it the Argon2id in Xo is 0.980 of the C's
+  instructions (less setup) on arm64 but 1.155 on LLVM, so decision
+  0180's bar still fails and Argon2id and BLAKE2b stay C; the LLVM cause
+  is the unvectorized xor loops (the `var` List parameters may alias,
+  gotchas/llvm-list-params-block-vectorizing.md).
+- **Reference counts** as design 1, with these differences: the module
+  is `native/llrt/rc` (inc, dec, dec_shared, claim, mark) and the
+  exports are cabi.xo's `rc_*` wrappers (cabi's marker rule; rc.xo is
+  not itself a marker); xo_rc_free's dispatch and the free walkers stay
+  C (they call element callbacks by address, which Xo cannot yet: an
+  `rt.call_addr` intrinsic is the missing piece). Generated code keeps
+  its inline paths, so only the C runtime's own count operations moved.
+  The C path is rc_c.xo calling `rt.rc_*_c` (-DXO_RC_C).
+- **Design 3** is enforced in the self hosted SSA builder
+  (selfhost/ssa contract.xo `check_no_alloc`): scalar values only, no
+  fault, no closure or box, no unwind block, and calls only of inline
+  intrinsics; a call of another function is refused because the
+  builders add a landing check after every call while building
+  (gotchas/call-adds-landing-check.md). The Go builders, frozen, do not
+  check it (std is the same source for both).
+- **Design 4**: rc_threads.c's `model` (random interleaved retain,
+  release, claim, and mark across 8 threads against each thread's own
+  knowledge of its references) and the whole file run under
+  ThreadSanitizer for both paths (TestRuntimeThreads); the bar on
+  bench/perf/nested, bench/perf/xo, text, json, and conc holds within 5
+  percent on both backends (worst steady case text debug on arm64,
+  1.037 less setup). Not done: TestCABIDiff's count and allocation
+  statistics against the C path.
 
 ## Consequences
 

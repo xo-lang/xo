@@ -206,11 +206,15 @@ func runTSan(t *testing.T, bin, dir string, env ...string) string {
 func TestRuntimeThreads(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "rc_threads.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	out := runTSan(t, bin, ".")
-	for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal"} {
-		if !strings.Contains(out, name+": ok") {
-			t.Errorf("test %s did not pass:\n%s", name, out)
+	// the counts in Xo (std/native/llrt/rc.xo through the C ABI exports,
+	// decision 0207 stage 2), then the C path (XO_LLRT_C=rc's -DXO_RC_C)
+	for _, flags := range [][]string{nil, {"-DXO_RC_C"}} {
+		bin := tsanBuild(t, flags, cOnly(t, src))
+		out := runTSan(t, bin, ".")
+		for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal", "model"} {
+			if !strings.Contains(out, name+": ok") {
+				t.Errorf("%v: test %s did not pass:\n%s", flags, name, out)
+			}
 		}
 	}
 	if testing.Short() {

@@ -26,6 +26,7 @@
 // position and the last value of a key: members, find). The C tape has
 // no string flags; nothing but this module reads a string's b.
 use native/llrt/num
+use native/llrt/raw
 use native/llrt/scan as scans
 use native/llrt/unicode
 use native/rt
@@ -765,10 +766,7 @@ pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
     slots = slots * 2
   }
   // entry + 1, 0 empty
-  var tab = List[Int].with_capacity(slots)
-  for _ in 0..slots {
-    tab.push(0)
-  }
+  var tab = raw.zero_ints(slots)
   var k = 0
   while k < m {
     let v = j + 3

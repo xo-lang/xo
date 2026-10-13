@@ -77,6 +77,15 @@ fn rs_append_quote(s: Str, b: Bytes) -> Str
 
 fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
 fn atomic_max(a: Atomic[Int], n: Int) -> Int
+// The C path of the reference counts (decision 0207 stage 2): compiled
+// only with -DXO_RC_C, called only by std/native/llrt/rc_c.xo
+// (XO_LLRT_C=rc); p is the object's address.
+
+fn rc_inc_c(p: Int)
+fn rc_dec_c(p: Int) -> Int
+fn rc_dec_shared_c(p: Int) -> Int
+fn rc_claim_c(p: Int) -> Int
+fn rc_mark_c(p: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 

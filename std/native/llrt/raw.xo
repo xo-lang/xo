@@ -50,3 +50,23 @@ pub fn cstr_len(a: Int) -> Int {
   }
   i
 }
+
+/// A list of n zeros in one allocation (decision 0207 stage 2): the
+/// list of List.with_capacity(n), its elements set with one mem_set and
+/// its length stored, instead of n pushes (calloc's role in the C).
+/// n <= 0 is the empty list.
+pub fn zero_ints(n: Int) -> List[Int] {
+  if n <= 0 {
+    return []
+  }
+  let xs = List[Int].with_capacity(n)
+  let a = rt.obj_addr(xs)
+  rt.mem_set(a + rt.layout(2), 0, n * 8)
+  // the length word: 8 bytes on the native targets, 4 on wasm
+  if rt.layout(6) == 8 {
+    rt.mem_store(a, rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(a, rt.layout(3), n, 4)
+  }
+  xs
+}

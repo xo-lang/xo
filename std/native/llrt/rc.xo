@@ -1,0 +1,98 @@
+// Reference counts in Xo (decision 0207 stage 2, decisions 0046 and
+// 0058): retain, release, claim, and mark of the count word at the start
+// of every counted object, over the raw memory intrinsics and the slot
+// atomics (decision 0200) at an address. The C runtime calls them
+// through cabi.xo (xo_x_rc_inc and friends: std/llrt/xo_rt.c rc_inc,
+// rc_dec, rc_dec_shared, rc_claim, xo_rc_mark); generated code keeps
+// its own inline copies (the emitters' retain and release). The C path
+// is rc_c.xo (XO_LLRT_C=rc), which calls xo_rt.c's C copies.
+//
+// The count c of the object at address p:
+//
+//   c > 0            thread local, c references: plain loads and stores
+//   c = -n, n > 0    shared, n references (bit 62 set): atomic updates
+//   INT64_MIN        immortal (a literal; bit 62 clear): never written
+//
+// The no allocation, no counting rule (decision 0207, design 3): every
+// function here takes and returns Int words only, uses no Str, List,
+// Map, closure, or interpolation, and no arithmetic that can fault
+// (int_wrap for the count arithmetic), and calls nothing but the inline
+// intrinsics, so the code under them never allocates, counts, or
+// faults; the self hosted SSA builder checks it on every function here
+// (selfhost/ssa contract.xo check_no_alloc), a build error of std.
+use native/rt
+
+/// Bit 62: set in every shared count, clear in the immortal one.
+const SHARED: Int = 0x4000000000000000
+
+/// The orders of the slot atomics (C11's): relaxed, acquire, acq_rel.
+const RELAXED = 0
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+/// Adds a reference to the object at p (xo_rt.c rc_inc): a thread local
+/// count goes up by one; a shared count down by one (relaxed); an
+/// immortal count stays.
+pub fn inc(p: Int) {
+  let c = rt.slot_load(p, 0, RELAXED)
+  if c > 0 {
+    rt.mem_store(p, 0, rt.int_wrap(0, c, 1), 8)
+    return
+  }
+  if c & SHARED != 0 {
+    rt.slot_add(p, 0, -1, RELAXED)
+  }
+}
+
+/// Drops a reference from the shared count at p with acquire and release
+/// order (rc_dec_shared): 1 when it was the last one (the thread that
+/// frees sees every other thread's writes), else 0.
+pub fn dec_shared(p: Int) -> Int {
+  if rt.slot_add(p, 0, 1, ACQ_REL) == -1 { 1 } else { 0 }
+}
+
+/// Drops a reference from the object at p (rc_dec): 1 when it was the
+/// last one (the caller then releases the children and frees it), else
+/// 0. An immortal count stays.
+pub fn dec(p: Int) -> Int {
+  let c = rt.slot_load(p, 0, RELAXED)
+  if c > 1 {
+    rt.mem_store(p, 0, rt.int_wrap(1, c, 1), 8)
+    return 0
+  }
+  if c == 1 {
+    return 1
+  }
+  if c & SHARED == 0 {
+    return 0
+  }
+  // dec_shared's operation (no calls here: check_no_alloc)
+  if rt.slot_add(p, 0, 1, ACQ_REL) == -1 { 1 } else { 0 }
+}
+
+/// Whether the caller holds the only reference to the object at p, so it
+/// may be updated in place (rc_claim): 1 or 0. A shared count of -1 read
+/// again with acquire order proves it too, and the object goes back to
+/// thread local.
+pub fn claim(p: Int) -> Int {
+  let c = rt.slot_load(p, 0, RELAXED)
+  if c == 1 {
+    return 1
+  }
+  if c == -1 && rt.slot_load(p, 0, ACQUIRE) == -1 {
+    rt.slot_store(p, 0, 1, RELAXED)
+    return 1
+  }
+  0
+}
+
+/// Makes the count at p shared (xo_rc_mark): 1 when it was thread local
+/// (the caller then marks the object's children), else 0.
+pub fn mark(p: Int) -> Int {
+  let c = rt.slot_load(p, 0, RELAXED)
+  if c > 0 {
+    rt.slot_store(p, 0, rt.int_wrap(1, 0, c), RELAXED)
+    return 1
+  }
+  0
+}
