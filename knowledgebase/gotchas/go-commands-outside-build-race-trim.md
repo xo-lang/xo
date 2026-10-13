@@ -31,6 +31,15 @@ call `HoldCache()` (or explain itself with `//xo:default-gocache`).
 `TestGoCommandSurvivesTrim` warms a one byte capped cache, then trims it
 during a `go vet`; without the lock it fails with the same `could not
 import fmt (open .../-d: no such file or directory)`, with it it passes.
+On EC2 (r8g.8xlarge, 2026-10-13, instance i-EXAMPLE04) a
+stress with `XO_GOCACHE_MAX=300000000` running internal/gen's
+`TestGeneratedGoVets`, the -short suites of cmd/xo, internal/build,
+internal/gen, internal/selfhost, and `TestGoCommandSurvivesTrim` (count
+3) side by side failed on main 24982a6a with `could not import
+xoprog/rt` and `could not import os (open .../-d: no such file or
+directory)` in `TestGeneratedGoVetsLarge`, and passed with the fix
+(970f0b5d), with no `could not import` in any log. (`TestHybridPreemption`
+failed in both runs with "no GC ran during the loop", unrelated.)
 Never hold the lock around something that itself runs an Xo build: a
 trim waiting at the gate would deadlock with the nested shared lock.
 
