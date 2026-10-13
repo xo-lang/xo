@@ -139,7 +139,7 @@ above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
 prebuilt runtime in `lib/xo/rtpack/<os>-<arch>/` (built by xo1's `xo
 rtpack`), README.md, CHANGELOG.md; and `dist/SHA256SUMS`. It needs zig
 0.15.1 (`$ZIG`), Go, the host's clang, and a clean tree
-(`XO_RELEASE_ALLOW_DIRTY=1` to try it); 997 s and 12.7 GB peak RSS on
+(`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
 the development Mac with other agents running (2026-10-12). Nothing
 publishes them; releases are on hold (owner).
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its

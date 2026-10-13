@@ -2,7 +2,9 @@
 
 Status: Accepted (owner, 2026-10-12): switch points A and B approved;
 B takes effect when its gate passes (it passed on 2026-10-12: section
-"Switch point B gate", with the flip proposal); deleting the Go compiler packages is
+"Switch point B gate", with the flip proposal). **Switch point B done
+(2026-10-12)**: the release archives ship xo1 as `bin/xo`, verified on
+each target (section "Switch point B: the flip"); deleting the Go compiler packages is
 delegated to the lead under the criteria in "Owner approvals". Stage 1
 done (2026-10-12, runs 5 and 6 of the results file); switch point A
 implemented (internal/selfdriver; section "Switch point A, as
@@ -637,6 +639,69 @@ the gate on the EC2 arm64 host and a linux/amd64 host with
 paths (`ctx.goos`/arm64), which on amd64 only matters for
 `--backend=arm64|llvm` builds, which the Go `xo` cannot run there
 either.
+
+## Switch point B: the flip (2026-10-12)
+
+Done as proposed, item 1 (results file, "Switch point B: the flip"):
+scripts/release.sh builds the Go seed (`go build ./cmd/xo`, deleted at
+the end), the seed builds the darwin/arm64 xo1 (`XO_SELF_DRIVER=0 xo
+build --backend=arm64 selfhost/xo`), and **that xo1 builds the rest**:
+both runtime packs (its own `xo rtpack`), the linux/arm64 xo1
+(`--target=linux/arm64 --ld=macho`, so no cc and no cross linker), and
+the linux/amd64 xo1 (`--backend=go --targets=linux/amd64`). Each archive
+holds bin/xo, bin/xo-gobind, lib/xo/std, lib/xo/third_party, the pack
+(arm64 targets), README.md, and CHANGELOG.md; the version is
+selfhost/cli/core's `VERSION`. The packs are built by the staged xo1,
+not the Go command, and the darwin pack is the Go command's byte for
+byte (TestRTPackXoSame). scripts/release-verify.sh checks an archive on
+its host (native builds with no Go on PATH, the Go backend and `use go`
+with Go, cmd/xo's suite with `XO_CLI` = the archive's bin/xo);
+scripts/remote-full.sh gained `--arch amd64` and `--put` for the Linux
+hosts.
+
+Evidence at commit bf5e408 (release run 7, 992 s on the shared Mac):
+
+- darwin/arm64 (the development Mac): every native check without Go
+  passes (hello on arm64, arm64 `--ld=macho`, llvm), the Go backend and
+  `use go` pass, cmd/xo **69 of 71 pass, 0 fail, 2 skipped** (ssadump,
+  llvmdump: exempt), the gate rerun on the archive.
+- linux/arm64 (EC2 Graviton, Amazon Linux 2023, glibc 2.34, Go only for
+  the Go backend steps): every native check passes (hello on arm64,
+  arm64 `--ld=macho`, llvm), the Go backend and `use go` pass, cmd/xo
+  **69 of 71 pass, 0 fail, 2 skipped**.
+- linux/amd64 (EC2 c7i, Amazon Linux 2023): version, check, and the
+  llvm hello pass (arm64 and `--ld=macho` cannot run there, as for the
+  Go `xo`), the Go backend and `use go` pass, cmd/xo **66 of 71 pass, 2
+  fail, 3 skipped**; the 2 (TestBindCXoSame, TestModulesXoSame build
+  their stage binaries with `--backend=arm64`) fail against the Go `xo`
+  on that host too.
+
+What it took (each a commit, a regression test, and a gotcha where it
+surprised): the ELF assembler's `.file` (9d8fac8); runtime `-D` flags
+were turned on by symbol names in string literals, so xo1 itself asked
+for decision 0180's C path, which no pack has (440c630, Go and Xo
+alike); glibc 2.31's libc.so.6 has no `stat`, `fstat`, `lstat` (they
+are libc_nonshared.a wrappers over `__xstat`), which the ELF linker now
+synthesizes (121a9d7); the predeclared `target` of a native build was
+the compiler's, so the cross built linux xo1 said `darwin/arm64` (now
+the build's target, as internal/build passes it: db3e2e1); xo1 assumed
+an arm64 host in its Go backend, `--no-gc` default, and `xo rtpack`
+(c774a2c, e39e674); and the Xo `xo serve` ran commands with the
+server's `PWD` (bf5e408: the request directory's real path, what the
+Go server's `os.Getwd` sees).
+
+Items 2 to 4 of the proposal: install text and toolchain.md describe the
+layout (README "Install", toolchain.md "Versions and releases");
+XO1_FALLBACK is unset in a release, so xo1 prints XO1201 for what its
+native emitters skip; CI running cmd/xo with `XO_CLI` at the staged
+bin/xo is left to the lead (release-verify.sh is that run). The Go
+freeze (stage 7 step 1) is the lead's CLAUDE.md rule. Left: no archive
+is published (releases on hold); the linux/amd64 xo1 has no native
+backend (only llvm runs there, as for the Go `xo`), so TestBindCXoSame
+and TestModulesXoSame, which build their stage binaries with
+`--backend=arm64`, fail there against the Go `xo` too; a multi target
+native build whose targets differ in OS shares one SSA, whose `target`
+is the host's (the Go driver builds one per target).
 
 ## Consequences
 

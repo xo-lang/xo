@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **`xo` is written in Xo** (decision 0178, switch point B): the release
+  archives ship the self hosted toolchain as `bin/xo`, with
+  `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the
+  prebuilt runtime) beside it; keep that layout, `bin/xo` alone does not
+  run. The Go `cmd/xo` only builds the first one: scripts/release.sh
+  builds it, it builds the darwin/arm64 `xo`, and that `xo` builds the
+  runtime packs, the linux/arm64 `xo` (linked by its own ELF linker, no C
+  compiler), and the linux/amd64 `xo` (Go backend).
+  `scripts/release-verify.sh` checks an archive on its host; cmd/xo's
+  suite passes against the archive's `xo` on darwin/arm64 and
+  linux/arm64. Fixed on the way: the ELF assembler's `.file`, glibc's
+  `stat` family for binaries linked without cc (glibc before 2.33 has no
+  `stat` in libc.so.6), runtime flags turned on by symbol names inside
+  string literals, the predeclared `target` of a cross build (it was the
+  compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
+  an amd64 host, and paths printed by `xo serve` on Linux.
+
 - The self hosted `xo` can be bootstrapped without Go:
   `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
   then with itself twice, with no Go on PATH, and checks the fixed point
