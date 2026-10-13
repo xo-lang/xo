@@ -148,6 +148,20 @@ func Build(dirs []string, o Options) (*Result, error) {
 	args = append(args, o.Flags...)
 	args = append(args, "-o", out)
 	args = append(args, dirs...)
+	if mode == ModeTest {
+		// `xo test` writes shrunk contract fuzz failures into the module
+		// (regressions_test.xo, core 9.2); a test's directory stays as
+		// it was (two golden programs were committed with one)
+		for _, d := range dirs {
+			p := filepath.Join(d, "regressions_test.xo")
+			if o.Dir != "" && !filepath.IsAbs(p) {
+				p = filepath.Join(o.Dir, p)
+			}
+			if _, err := os.Stat(p); err != nil {
+				defer os.Remove(p)
+			}
+		}
+	}
 	cmd := exec.Command(cli[0], args...)
 	cmd.Dir = o.Dir
 	wd := o.Dir
