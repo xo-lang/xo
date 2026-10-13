@@ -1,0 +1,28 @@
+// MemFs.fail_next's pattern match (path.Match; std/native/llrt/glob.xo,
+// or its C path with XO_LLRT_C=glob; decision 0195). Each write tests
+// every pending fail_next pattern of its op against its path, so with 40
+// patterns that never match, 2,000 writes are 80,000 matches. "writes"
+// is the same writes with no pattern pending (the setup to subtract).
+// measure.sh runs each test of the binary itself and counts its
+// instructions.
+use std/testing
+
+const PATTERNS = ["logs/*.tmp", "data/[0-9]*/x?z", "a*b*c*d*e*/f", "cache/*/[^a-z]*.bin", "*.lock", "q??/*", "[x-z]*[0-9]", "deep/*/*/*/*", "*é*日*", "w\\*x", "spool/*.[ch]", "*/*/*.json", "ab[c-e]?*", "*z", "n[^n]n*", "tmp/*~", "out/??.log", "*.[a-c][a-c][a-c]", "img/*/thumb_*", "*-old"]
+
+test "writes" {
+  for i in 0..2000 {
+    os.fs.write("data/file_${i % 50}.txt", b"x")?
+  }
+  expect(os.fs.files().len()) == 50
+}
+
+test "glob" {
+  for p in PATTERNS {
+    os.fs.fail_next(testing.FsOp.Write, p, FsErr.Canceled)
+    os.fs.fail_next(testing.FsOp.Write, p + "q", FsErr.Canceled)
+  }
+  for i in 0..2000 {
+    os.fs.write("data/file_${i % 50}.txt", b"x")?
+  }
+  expect(os.fs.files().len()) == 50
+}

@@ -9,6 +9,7 @@ use std/log
 use std/path
 use std/sql
 use std/testing
+use native/llrt/glob
 use native/rt
 use native/rttest
 
@@ -221,7 +222,7 @@ fn memfs_failed(var st: MemState, op: Int, paths: List[Str]) -> FsErr? {
     let fl = st.fails[i]
     if fl.op == op {
       for p in paths {
-        if rttest.test_glob(memfs_key(st, fl.pattern), memfs_key(st, p)) {
+        if glob.matches(memfs_key(st, fl.pattern), memfs_key(st, p)) {
           let _gone = st.fails.remove_at(i)
           return Some(fl.err)
         }

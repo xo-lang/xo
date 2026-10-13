@@ -1294,6 +1294,10 @@ void xo_test_memfs_put(xo_any *st) {
 // xo_test_now is the virtual clock's now (MemFs modified times).
 int64_t xo_test_now(void) { return xo_clock_now(); }
 
+// The C path of MemFs.fail_next's pattern match (decisions 0193 and
+// 0195): compiled only with -DXO_GLOB_C (XO_LLRT_C=glob,
+// std/native/llrt/glob_c.xo); std/native/llrt/glob.xo is the default.
+#ifdef XO_GLOB_C
 // Go's path.Match, for MemFs.fail_next patterns: a bad pattern matches
 // nothing (std/rt's globMatch).
 
@@ -1492,6 +1496,7 @@ int64_t xo_test_glob(const char *pp, int64_t pn, const char *np, int64_t nn) {
 	}
 	return name.n == 0;
 }
+#endif
 
 // tw_cleanup releases the values the test world keeps (handlers,
 // failures, requests, served routers, the MemFs) when the test ends, for
