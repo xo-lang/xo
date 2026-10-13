@@ -1374,7 +1374,6 @@ fn (var g: G) reuse_flags() {
 fn (var g: G) live_dce() {
   let order = g.all_blocks()
   let n = g.fp.len()
-  let nb = order.len()
   let nw = (n + BW - 1) / BW
   var idx: List[Int] = []
   for _ in 0..g.blocks.len() {
@@ -1384,10 +1383,10 @@ fn (var g: G) live_dce() {
     idx[b] = k
   }
   var succs: List[List[Int]] = []
-  var gen: List[List[Int]] = []
+  var gens: List[List[Int]] = []
   var kill: List[List[Int]] = []
-  var live_in: List[List[Int]] = []
   var pads: List[Int] = []
+  var seen = new_bits(n)
   for b in order {
     var ss: List[Int] = []
     for t in g.msuccs(b) {
@@ -1396,8 +1395,6 @@ fn (var g: G) live_dce() {
       }
     }
     succs.push(ss)
-    var gk = new_bits(n)
-    var kk = new_bits(n)
     for inst in g.blocks[b].insts {
       if inst.pad >= 0 {
         let pk = idx[g.pad_of(inst.pad)]
@@ -1406,48 +1403,24 @@ fn (var g: G) live_dce() {
         }
         pads.push(pk)
       }
-      for u in inst.us {
-        if u != 0 && !bits_has(kk, u) {
-          gk[u / BW] = gk[u / BW] | bit_mask(u)
-        }
-      }
-      for d in inst.defs {
-        if d != 0 {
-          kk[d / BW] = kk[d / BW] | bit_mask(d)
-        }
-      }
     }
-    gen.push(gk)
+    var gl: List[Int] = []
+    var kk = new_bits(n)
+    gen_kill(g.blocks[b].insts, gl, seen, kk)
+    for v in gl {
+      seen[v / BW] = seen[v / BW] & ~bit_mask(v)
+    }
+    gens.push(gl)
     kill.push(kk)
-    live_in.push(new_bits(n))
   }
-  var changed = true
-  while changed {
-    changed = false
-    var k = nb - 1
-    while k >= 0 {
-      var out = new_bits(n)
-      for j in succs[k] {
-        or_into(out, live_in[j], nw)
-      }
-      var li = live_in[k]
-      live_in[k] = []
-      if transfer(li, gen[k], out, kill[k], nw) {
-        changed = true
-      }
-      live_in[k] = li
-      k -= 1
-    }
-  }
+  let lv = solve_live(succs, gens, kill, n)
+  let live_in = lv.ins
   var pad_live = new_bits(n)
   for j in pads {
     or_into(pad_live, live_in[j], nw)
   }
   for (k, b) in order.indexed() {
-    var live = new_bits(n)
-    for j in succs[k] {
-      or_into(live, live_in[j], nw)
-    }
+    var live = lv.outs[k]
     var ins = g.take_insts(b)
     var keep: List[Bool] = []
     for _ in 0..ins.len() {

@@ -45,11 +45,87 @@ struct Rng {
 const BW = 62
 
 fn new_bits(n: Int) -> List[Int] {
-  var out: List[Int] = []
-  for _ in 0..(n + BW - 1) / BW {
+  let nw = (n + BW - 1) / BW
+  var out: List[Int] = List.with_capacity(nw)
+  for _ in 0..nw {
     out.push(0)
   }
   out
+}
+
+/// The registers live into (ins) and out of (outs) each block, as bit
+/// sets over n registers.
+struct Live {
+  ins: List[List[Int]]
+  outs: List[List[Int]]
+}
+
+/// Backward liveness by path exploration: each upward exposed use
+/// (gens[k], the registers block k reads before writing them, each once)
+/// is walked back through the predecessors until a block that writes it
+/// (kill[k], a bit set) or one where it is already live. The result is
+/// the least fixed point of in = gen | (out &^ kill), out = the union of
+/// the successors' ins, the sets the round robin iteration over whole bit
+/// sets computed, in time proportional to the live sets instead of
+/// blocks times words times passes (bench/results/xo1-speed-2026-10-13.md).
+fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kill: List[List[Int]], n: Int) -> Live {
+  let nb = succs.len()
+  var preds: List[List[Int]] = []
+  var ins: List[List[Int]] = []
+  var outs: List[List[Int]] = []
+  for _ in 0..nb {
+    preds.push([])
+    ins.push(new_bits(n))
+    outs.push(new_bits(n))
+  }
+  for (k, ss) in succs.indexed() {
+    for t in ss {
+      preds[t].push(k)
+    }
+  }
+  // a stack of (block, register) whose register became live into block
+  var sb: List[Int] = []
+  var sv: List[Int] = []
+  var top = 0
+  for (k, gs) in gens.indexed() {
+    for v in gs {
+      ins[k][v / BW] = ins[k][v / BW] | bit_mask(v)
+      if top == sb.len() {
+        sb.push(k)
+        sv.push(v)
+      } else {
+        sb[top] = k
+        sv[top] = v
+      }
+      top += 1
+    }
+  }
+  while top > 0 {
+    top -= 1
+    let k = sb[top]
+    let v = sv[top]
+    let w = v / BW
+    let m = bit_mask(v)
+    for p in preds[k] {
+      if outs[p][w] & m != 0 {
+        continue
+      }
+      outs[p][w] = outs[p][w] | m
+      if kill[p][w] & m != 0 || ins[p][w] & m != 0 {
+        continue
+      }
+      ins[p][w] = ins[p][w] | m
+      if top == sb.len() {
+        sb.push(p)
+        sv.push(v)
+      } else {
+        sb[top] = p
+        sv[top] = v
+      }
+      top += 1
+    }
+  }
+  Live{ins: ins, outs: outs}
 }
 
 fn bits_has(b: List[Int], i: Int) -> Bool {
@@ -111,60 +187,40 @@ fn (var g: G) regalloc() {
   }
   g.ninst = i
   let n = g.fp.len()
-  let nb = g.order.len()
 
   // liveness
   var idx: List[Int] = []
   for _ in 0..g.blocks.len() {
     idx.push(-1)
   }
-  var gen: List[List[Int]] = []
-  var kill: List[List[Int]] = []
-  var live_in: List[List[Int]] = []
-  var live_out: List[List[Int]] = []
   for (k, b) in g.order.indexed() {
     idx[b] = k
-    var gk = new_bits(n)
+  }
+  var gens: List[List[Int]] = []
+  var kill: List[List[Int]] = []
+  var succs: List[List[Int]] = []
+  // the registers read so far in the block before a write: cleared after
+  // each block through its list
+  var seen = new_bits(n)
+  for b in g.order {
+    var gl: List[Int] = []
     var kk = new_bits(n)
-    for inst in g.blocks[b].insts {
-      for u in inst.us {
-        if u != 0 && !bits_has(kk, u) {
-          gk[u / BW] = gk[u / BW] | bit_mask(u)
-        }
-      }
-      for d in inst.defs {
-        if d != 0 {
-          kk[d / BW] = kk[d / BW] | bit_mask(d)
-        }
-      }
+    gen_kill(g.blocks[b].insts, gl, seen, kk)
+    for v in gl {
+      seen[v / BW] = seen[v / BW] & ~bit_mask(v)
     }
-    gen.push(gk)
+    gens.push(gl)
     kill.push(kk)
-    live_in.push(new_bits(n))
-    live_out.push(new_bits(n))
+    var ss: List[Int] = []
+    for t in g.blocks[b].succs {
+      ss.push(idx[t])
+    }
+    succs.push(ss)
   }
   let nw = (n + BW - 1) / BW
-  var changed = true
-  while changed {
-    changed = false
-    var k = nb - 1
-    while k >= 0 {
-      let b = g.order[k]
-      var out = live_out[k]
-      live_out[k] = []
-      for t in g.blocks[b].succs {
-        or_into(out, live_in[idx[t]], nw)
-      }
-      var li = live_in[k]
-      live_in[k] = []
-      if transfer(li, gen[k], out, kill[k], nw) {
-        changed = true
-      }
-      live_in[k] = li
-      live_out[k] = out
-      k -= 1
-    }
-  }
+  let lv = solve_live(succs, gens, kill, n)
+  let live_in = lv.ins
+  let live_out = lv.outs
 
   // a register live into the entry is read before anything writes it
   // (gotchas/arm64-mir-param-without-moves.md)
@@ -496,6 +552,25 @@ fn (var g: G) regalloc() {
   }
 }
 
+/// Adds a block's upward exposed uses (the registers its instructions
+/// read before writing them) to gl, each once (marked in seen), and the
+/// registers it writes to kk.
+fn gen_kill(insts: List[Inst], var gl: List[Int], var seen: List[Int], var kk: List[Int]) {
+  for inst in insts {
+    for u in inst.us {
+      if u != 0 && !bits_has(kk, u) && !bits_has(seen, u) {
+        seen[u / BW] = seen[u / BW] | bit_mask(u)
+        gl.push(u)
+      }
+    }
+    for d in inst.defs {
+      if d != 0 {
+        kk[d / BW] = kk[d / BW] | bit_mask(d)
+      }
+    }
+  }
+}
+
 /// out |= src over the first nw words. The bit sets are parameters, so
 /// they are borrowed: `out[w] | live_in[ti][w]` in regalloc's loop
 /// copied (a dup and a drop of) the inner list per word
@@ -504,20 +579,6 @@ fn or_into(var out: List[Int], src: List[Int], nw: Int) {
   for w in 0..nw {
     out[w] = out[w] | src[w]
   }
-}
-
-/// li = gen | (out &^ kill) over the first nw words; reports whether li
-/// changed.
-fn transfer(var li: List[Int], gen: List[Int], out: List[Int], kill: List[Int], nw: Int) -> Bool {
-  var changed = false
-  for w in 0..nw {
-    let nv = gen[w] | (out[w] & ~kill[w])
-    if nv != li[w] {
-      li[w] = nv
-      changed = true
-    }
-  }
-  changed
 }
 
 /// The leader of v's coalesced group (with path halving, as the Go
