@@ -483,3 +483,52 @@ alias of the function instead of a branch.
 - Mac, -short: TestRuntimeAlloc, TestRuntimeThreads, TestRuntimeTasks,
   TestCABIDiff pass; `go test -short` over the repository passes.
 - TestSelfhostWasm: 132 pass, 20 unsupported, 0 fail of 152 (as stage 2).
+
+### xo1 on the heap in Xo (EC2)
+
+EC2 r8g.8xlarge, on demand, linux/arm64, clang 15.0.7, one instance
+(i-EXAMPLE51, terminated), commit e91211b7. Two xo1 built by
+the Go seed (`XO_SELF_DRIVER=0 xo build --backend=arm64 selfhost/xo`):
+the heap in Xo, and `XO_LLRT_C=alloc`. Each compiled selfhost/xo
+(`xo1 asm --phase-times --std=std selfhost/xo`, `XO_LEAKCHECK=1`,
+`perf stat -e instructions,cycles`, GNU time), alternating, twice:
+
+| | Xo heap run 1 | C run 1 | Xo heap run 2 | C run 2 |
+|---|---|---|---|---|
+| allocations (all freed) | 1,952,597,859 | 1,952,597,859 | 1,952,597,859 | 1,952,597,859 |
+| instructions (user) | 2,235.93 billion | 2,227.79 billion | 2,235.93 billion | 2,227.79 billion |
+| cycles (user) | 925.75 billion | 939.25 billion | 890.63 billion | 934.33 billion |
+| wall clock | 5:38.34 | 5:43.41 | 5:25.65 | 5:41.58 |
+
+Instructions 1.004 of the C's, cycles 0.986 and 0.953, wall clock
+0.985 and 0.954; the assembly both write is byte identical (sha256
+6af248b1...2e7a). Building each xo1: 10:43.33 (Xo heap) and 10:47.51
+(C), 17.5 GB maximum resident set each.
+
+The fixed point with xo1 on the heap in Xo: scripts/bootstrap-xo.sh
+with the Xo heap xo1 as the seed, no Go on PATH: s1 433 s, s2 419 s,
+s3 427 s; s2 and s3 assembly identical (441,579,991 bytes) and
+binaries identical (86,383,200 bytes), s1 equals s2, s3 builds and
+runs hello.
+
+### Tests run (stage 3)
+
+- Same EC2 run: internal/llvm TestGolden (every golden, leak checked),
+  TestGoldenWant, TestGoldenThreads (four threads, ThreadSanitizer),
+  TestGoldenShared, TestRuntimeThreads, TestRuntimeTasks, TestCABIDiff,
+  TestLeakCheck: pass; TestRuntimeAlloc: its ThreadSanitizer runs
+  passed, the -O2 run of 300 rounds failed the first waves bound (19
+  chunks, above), fixed in 5e2ec59b and passing in full (both paths,
+  ThreadSanitizer and -O2) on the Mac. internal/arm64 TestGoldenRun,
+  TestGoldenRunShared, TestGoldenAsm: pass (19.9 s). internal/selfhost
+  TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM (the Go and
+  self hosted emitters identical, with both arm64 emitters' new
+  immediate forms): pass (266.4 s). cmd/xo TestNoGCTests through xo1
+  built from these sources (so check_no_alloc ran on alloc.xo): pass
+  (690.2 s).
+- An earlier instance (i-EXAMPLE13, commit 69b80fa1) failed
+  every C runtime build: clang 15 cannot parse
+  `__has_c_attribute(clang::always_inline)`
+  (gotchas/lto-keeps-export-out-of-line.md); terminated by id.
+- Not run: the full tier (the lead's, per batch). `XO_LLRT_C=alloc`
+  stays until it passes on main.
