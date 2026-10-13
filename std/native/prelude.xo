@@ -150,7 +150,7 @@ fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
   var r = 1
   var i = 0
   while i < e {
-    if !rt.int_fits(2, r, n) {
+    if !ints.fits(2, r, n) {
       rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
     }
     r = r * n
@@ -166,13 +166,10 @@ fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
 fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
 
 fn checked(op: Int, n: Int, m: Int) -> Int? {
-  if !rt.int_fits(op, n, m) {
+  if !ints.fits(op, n, m) {
     return None
   }
-  if op == 3 {
-    return Some(n / m)
-  }
-  Some(rt.int_wrap(op, n, m))
+  Some(ints.apply(op, n, m))
 }
 
 fn int_checked_add(n: Int, m: Int) -> Int? { checked(0, n, m) }
@@ -187,8 +184,8 @@ fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
 fn saturated(op: Int, n: Int, m: Int) -> Int {
   let max = 9223372036854775807
   let min = -9223372036854775807 - 1
-  if rt.int_fits(op, n, m) {
-    return rt.int_wrap(op, n, m)
+  if ints.fits(op, n, m) {
+    return ints.apply(op, n, m)
   }
   if op == 0 {
     return if m > 0 { max } else { min }

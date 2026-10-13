@@ -147,3 +147,45 @@ pub fn str_hash(s: Str) -> Int {
   h = rt.int_wrap(2, h, -7046029254386353131)
   h ^ rt.int_wrap(4, h, 29)
 }
+
+/// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /: b is not 0 and not
+/// the minimum over -1): the checked_ and saturating_ methods (it was
+/// std/llrt/xo_bytes.c xo_int_fits, a C call).
+pub fn fits(op: Int, a: Int, b: Int) -> Bool {
+  if op == 0 {
+    let r = rt.int_wrap(0, a, b)
+    return ((a ^ r) & (b ^ r)) >= 0
+  }
+  if op == 1 {
+    let r = rt.int_wrap(1, a, b)
+    return ((a ^ b) & (a ^ r)) >= 0
+  }
+  if op == 2 {
+    // the signed high word of the product is the sign of the low one
+    let lo = rt.int_wrap(2, a, b)
+    var hi = rt.u64_mul_hi(a, b)
+    if a < 0 {
+      hi = rt.int_wrap(1, hi, b)
+    }
+    if b < 0 {
+      hi = rt.int_wrap(1, hi, a)
+    }
+    return hi == lo >> 63
+  }
+  b != 0 && !(b == -1 && a == MIN_INT)
+}
+
+/// a op b (op 0 +, 1 -, 2 *, 3 /) where fits(op, a, b): the checked_ and
+/// saturating_ methods' result.
+pub fn apply(op: Int, a: Int, b: Int) -> Int {
+  if op == 0 {
+    return rt.int_wrap(0, a, b)
+  }
+  if op == 1 {
+    return rt.int_wrap(1, a, b)
+  }
+  if op == 2 {
+    return rt.int_wrap(2, a, b)
+  }
+  a / b
+}

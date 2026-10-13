@@ -1,10 +1,10 @@
 // Workloads of the zero-C audit's portable group (decisions 0193 and
 // 0195): the sized integer operations, conversions, UInt64 division,
-// floor division, and Str key hash of std/native/llrt/ints.xo against
-// their C path (XO_LLRT_C=ints). Usage: portable <workload>. Each
-// workload prints "<workload> <checksum> <elapsed microseconds>"; the
-// checksum must be the same on every backend (the Go backend is the
-// reference).
+// floor division, Str key hash, and Int's checked_ and saturating_
+// methods of std/native/llrt/ints.xo against their C path
+// (XO_LLRT_C=ints). Usage: portable <workload>. Each workload prints
+// "<workload> <checksum> <elapsed microseconds>"; the checksum must be
+// the same on every backend (the Go backend is the reference).
 
 const ROUNDS = 2000
 
@@ -122,6 +122,22 @@ fn str_hash(keys: List[Str], m: Map[Str, Int]) -> Int {
   sum
 }
 
+/// Int's checked_ and saturating_ methods (ints.fits and ints.apply).
+fn checked(vs: List[Int]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h = 1
+    for v in vs {
+      let a = (v.checked_mul(h % 1000 + 3) ?? 1) % 1000000007
+      let b = (v * 9000000).checked_add(9223372036000000000 - h) ?? 5
+      let c = v.saturating_mul(h) % 1000000007
+      h = (h + a + b % 1000000007 + c) % 1000000007
+    }
+    sum = (sum + h) % 1000000007
+  }
+  sum
+}
+
 /// Time.unix and unix_millis (floor division).
 fn unix(ts: List[Time]) -> Int {
   var sum = 0
@@ -168,6 +184,7 @@ fn main(os: Os) {
     "conv" => conv(vs)
     "str_hash" => str_hash(keys, m)
     "unix" => unix(ts)
+    "checked" => checked(vs)
     _ => -1
   }
   let us2 = os.clock.since(t).nanos() / 1000

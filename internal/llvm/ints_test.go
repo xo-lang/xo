@@ -43,6 +43,13 @@ fn show(io: Stdio, label: Str, r: Result[Str, task.Isolated[()]]) uses stdio {
 /// The UInt64 of the Int word w.
 fn u64(w: Int) -> UInt64 { (UInt64((w >> 32) & 0xFFFFFFFF) << 32) | UInt64(w & 0xFFFFFFFF) }
 
+fn int_ops(io: Stdio, x: Int, y: Int) uses stdio {
+  show(io, "Int checked", task.isolate(fn() -> Str ! () { "${x.checked_add(y) ?? 7} ${x.checked_sub(y) ?? 7} ${x.checked_mul(y) ?? 7} ${x.checked_div(y) ?? 7} ${x.checked_add(y).is_some()} ${x.checked_sub(y).is_some()} ${x.checked_mul(y).is_some()} ${x.checked_div(y).is_some()}" }))
+  show(io, "Int saturating", task.isolate(fn() -> Str ! () { "${x.saturating_add(y)} ${x.saturating_sub(y)} ${x.saturating_mul(y)}" }))
+  show(io, "Int wrapping", task.isolate(fn() -> Str ! () { "${x.wrapping_add(y)} ${x.wrapping_sub(y)} ${x.wrapping_mul(y)}" }))
+  show(io, "Int pow", task.isolate(fn() -> Str ! () { "${x.pow(y % 70)}" }))
+}
+
 fn conv(io: Stdio, n: Str, x: Int) uses stdio {
   show(io, n + " try", task.isolate(fn() -> Str ! () { "${Int8.try(x) ?? 0} ${Int16.try(x) ?? 0} ${Int32.try(x) ?? 0} ${UInt8.try(x) ?? 0} ${UInt16.try(x) ?? 0} ${UInt32.try(x) ?? 0} ${UInt64.try(x) ?? 0} ${Int(Rune.try(x) ?? 'a')}" }))
   show(io, n + " try?", task.isolate(fn() -> Str ! () { "${Int8.try(x).is_some()} ${Int16.try(x).is_some()} ${Int32.try(x).is_some()} ${UInt8.try(x).is_some()} ${UInt16.try(x).is_some()} ${UInt32.try(x).is_some()} ${UInt64.try(x).is_some()} ${Rune.try(x).is_some()}" }))
@@ -111,7 +118,8 @@ fn main(os: Os) {
 			fmt.Fprintf(&b, "      %d => run_%s(io, %s(a), %s(b), k)\n", i, strings.ToLower(t.name), t.name, t.name)
 		}
 	}
-	b.WriteString(`      _ => conv(io, "Int", a)
+	b.WriteString(`      8 => int_ops(io, a, b)
+      _ => conv(io, "Int", a)
     }
   }
 }
@@ -180,6 +188,18 @@ func intsCorpus() string {
 	}
 	for _, x := range conv {
 		fmt.Fprintf(&b, "%d %d 0 0\n", len(intsTypes), x)
+	}
+	// Int's checked_, saturating_, and wrapping_ methods and pow
+	// (ints.fits, decision 0195): every pair of the bounds, then random
+	ib := []int64{-1 << 63, -1<<63 + 1, 1<<63 - 1, 1<<63 - 2, 0, 1, -1, 2, -2, 3, 1 << 31, -1 << 31, 1<<32 + 7, 3037000499, 3037000500, -3037000500}
+	for _, x := range ib {
+		for _, y := range ib {
+			fmt.Fprintf(&b, "%d %d %d 0\n", len(intsTypes)+1, x, y)
+		}
+	}
+	for range 300 {
+		x, y := int64(rng.Uint64())>>rng.IntN(64), int64(rng.Uint64())>>rng.IntN(64)
+		fmt.Fprintf(&b, "%d %d %d 0\n", len(intsTypes)+1, x, y)
 	}
 	return b.String()
 }

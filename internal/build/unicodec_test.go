@@ -127,7 +127,7 @@ func TestIOFlagsStep5(t *testing.T) {
 
 // TestIOFlagsInts checks that code calling the C path of the integer
 // operations (XO_LLRT_C=ints, decision 0195) compiles the runtime with
-// -DXO_INTS_C, and that the Xo path's intrinsics turn on nothing.
+// -DXO_INTS_C, as does a call of an intrinsic's C version.
 func TestIOFlagsInts(t *testing.T) {
 	for _, c := range []struct {
 		code string
@@ -140,7 +140,9 @@ func TestIOFlagsInts(t *testing.T) {
 		{"bl _xo_rune_valid\n", true},
 		{"bl _xo_floor_div\n", true},
 		{"bl _xo_str_hash\n", true},
-		{"bl _xo_int_wrap\nbl _xo_u64_mul_hi\nbl _xo_fault_raise\n", false},
+		{"bl _xo_int_wrap\n", true},
+		{"call i64 @xo_int_fits(i64 0, i64 %1, i64 %2)\n", true},
+		{"bl _xo_fault_raise\nbl _xo_rs_push_word\n", false},
 		{".ascii \"xo_int_op\"\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_INTS_C")

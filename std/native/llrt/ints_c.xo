@@ -30,3 +30,12 @@ pub fn u64_rem(a: Int, b: Int) -> Int { rt.int_op(4, a, b, 64, 1, "") }
 pub fn floor_div(a: Int, b: Int) -> Int { rt.floor_div(a, b) }
 
 pub fn str_hash(s: Str) -> Int { rt.str_hash(s) }
+
+pub fn fits(op: Int, a: Int, b: Int) -> Bool { rt.int_fits(op, a, b) }
+
+pub fn apply(op: Int, a: Int, b: Int) -> Int {
+  if op == 3 {
+    return a / b
+  }
+  rt.int_wrap(op, a, b)
+}

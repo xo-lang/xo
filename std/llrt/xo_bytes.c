@@ -591,6 +591,14 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+// The C versions of the runtime intrinsics (decisions 0193 and 0195):
+// both native backends lower rt.int_wrap with a constant op,
+// rt.u64_mul_hi, the bits of a Float, and rt.bytes_word inline, and
+// Int's checked_ and saturating_ methods are std/native/llrt/ints.xo,
+// so no default build calls these: they are compiled only with
+// -DXO_INTS_C, which IOFlags adds when the generated code calls one
+// (a non-constant op, or the C path XO_LLRT_C=ints).
+#ifdef XO_INTS_C
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
 // shifts of a word by b mod 64 (op 3 left, 4 right logical) for the
@@ -663,10 +671,12 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	}
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
+#endif
 
 // n_hex_val is the value of a hex digit, or -1 (the C path below and the
-// crypto C test use it).
-static __attribute__((unused)) int n_hex_val(char c) {
+// crypto C test, which defines XO_DIGEST_C, use it).
+#if defined(XO_NUM_C) || defined(XO_DIGEST_C)
+static int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';
 	}
@@ -678,6 +688,7 @@ static __attribute__((unused)) int n_hex_val(char c) {
 	}
 	return -1;
 }
+#endif
 
 #ifdef XO_NUM_C
 // the C path of the number text (decision 0193 step 3): only

@@ -21,7 +21,7 @@ for be in "$@"; do
 	cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be/"
 	(cd "$OUT/src-$be" && "$XO" build --backend="$be" -o "$OUT/t-$be" .)
 done
-for w in ${WORKLOADS:-none arith32 arith8 u64 divmod shift conv str_hash unix}; do
+for w in ${WORKLOADS:-none arith32 arith8 u64 divmod shift conv str_hash unix checked}; do
 	for be in "$@"; do
 		best=""
 		bt=""
