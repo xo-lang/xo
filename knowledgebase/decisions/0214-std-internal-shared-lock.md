@@ -62,7 +62,13 @@ them, and do not exist on the Go backend.
   built by the test) passed with "trims 28, refused while xo1 held the
   cache 593"; Linux arm64 (EC2, through the lead's queue) passed with
   "trims 3, refused while xo1 held the cache 626", with
-  TestStdInternalVisibility and TestGoCommandSurvivesTrim.
+  TestStdInternalVisibility and TestGoCommandSurvivesTrim. Windows
+  (EC2, scripts/windows-batch.sh at 7a026d68): xo1 built on Windows,
+  windows/amd64 goldens 152 pass, 1 fail of 153 (sys_files_clock,
+  "output differs"), windows/arm64 153 built, LLVM runtime tests ok, xo
+  test LLVM against Go 16 same; the same batch at the parent commit
+  40b08de1 gave the same sys_files_clock failure, so it predates this
+  change.
 - On Windows the Go implementation still takes no cache lock
   (internal/gotool cachelock_other.go) and trims only old entries; xo1's
   shared locks there are harmless and ready for a Go side lock.
