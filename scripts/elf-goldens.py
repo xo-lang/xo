@@ -119,7 +119,7 @@ def main():
             fails[d] = 'no result: %s' % e
             continue
         got = 'exit %d\n--- stdout\n%s--- stderr\n%s' % (code, so, stable(se))
-        want = open(os.path.join(d, 'want.txt')).read() if kind == 'golden' else want_go(d)
+        want = open(os.path.join(d, 'want.txt'), encoding='utf-8', newline='').read() if kind == 'golden' else want_go(d)
         if got != want:
             fails[d] = 'differs:\n--- want\n%s--- got\n%s' % (want[:600], got[:600])
             continue

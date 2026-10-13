@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **The xo1 golden scripts no longer report show_table as failing**:
+  scripts/selfhost-goldens.py (and selfhost-gogoldens.py,
+  elf-goldens.py) read want.txt in Python's text mode, which turned the
+  raw `\r` show_table prints into `\n`, so the golden "differed" on xo1
+  although xo1's output matched it byte for byte. They now read it with
+  `newline=''`; internal/diag's TestScriptsReadWantBytes keeps it so
+  (gotcha python-text-mode-want-cr.md). No compiler change.
 - **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
   build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
   cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows
