@@ -120,6 +120,21 @@ func (s *fn) rt(name string, t *Type, args ...*Value) *Value {
 // llrt calls the native prelude's llrt_<name>: runtime text written in
 // Xo (std/native/llrt/text.xo, decision 0193), or its C path with
 // XO_LLRT_C=text, called where the C runtime's rt.<name> was.
+// atomicSlot is the cell of an Atomic's value: slot 13 (byte 128) of the
+// C runtime's object (xo_rt.c xo_atomic), for rt.slot_load and friends;
+// ordSeqCst is their sequentially consistent order (decision 0200).
+const (
+	atomicSlot = 13
+	ordSeqCst  = 4
+)
+
+// atomicXo reports whether Atomic's operations are the inline atomics
+// and std/native/llrt/atomic.xo (decision 0200), not the C runtime's
+// (XO_LLRT_C=atomic, or no native prelude).
+func (b *builder) atomicXo() bool {
+	return b.preludeImpl("llrt_atomic_add") != nil && !check.LLRTUsesC("atomic")
+}
+
 func (s *fn) llrt(name string, t *Type, at ast.Node, args ...*Value) *Value {
 	b := s.b
 	impl := b.preludeImpl("llrt_" + name)
@@ -172,6 +187,20 @@ func (s *fn) numText(acc, v *Value) *Value {
 // native prelude it is unsupported, as fn.llrt.
 func (s *fn) jsonRT(name string, t *Type, args ...*Value) *Value {
 	return s.llrt(name, t, nil, args...)
+}
+
+// scanRT is a call of the runtime scan name (utf8_valid for Bytes.to_str):
+// the native prelude's llrt_<name> (std/native/llrt/scan.xo, decision
+// 0201), unchecked like the C it replaces; with XO_LLRT_C=scan, or
+// without the native prelude, the C runtime's rt.<name> as before the
+// port.
+func (s *fn) scanRT(name string, t *Type, args ...*Value) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("scan") {
+		f := b.declare(impl, nil, nil)
+		return s.call(f.Name, f.Results[0], "", args...)
+	}
+	return s.rt(name, t, args...)
 }
 
 // loc is the `file:line` of n as a Str constant (for faults the runtime
@@ -868,17 +897,37 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.rt("chan_close", nil, h), true
 	case "Chan.len":
 		return s.rt("chan_len", intT, h), true
-	case "Atomic.get":
-		return s.rt("atomic_get", et, h), true
-	case "Atomic.set":
-		return s.rt("atomic_set", nil, h, arg(0, et)), true
-	case "Atomic.swap":
-		return s.rt("atomic_swap", et, h, arg(0, et)), true
-	case "Atomic.compare_and_swap":
-		return s.rt("atomic_cas", boolT, h, arg(0, et), arg(1, et)), true
-	case "Atomic.add":
-		return s.rt("atomic_add", intT, h, arg(0, intT), s.loc(x)), true
-	case "Atomic.max":
+	case "Atomic.get", "Atomic.set", "Atomic.swap", "Atomic.compare_and_swap", "Atomic.add", "Atomic.max":
+		if b.atomicXo() {
+			// the inline atomics on the value's cell, and Xo's add and max
+			// (decision 0200)
+			slot := func() *Value { return s.cint(atomicSlot) }
+			switch key {
+			case "Atomic.get":
+				return s.rt("slot_load", et, h, slot(), s.cint(ordSeqCst)), true
+			case "Atomic.set":
+				return s.rt("slot_store", nil, h, slot(), arg(0, et), s.cint(ordSeqCst)), true
+			case "Atomic.swap":
+				return s.rt("slot_swap", et, h, slot(), arg(0, et), s.cint(ordSeqCst)), true
+			case "Atomic.compare_and_swap":
+				return s.rt("slot_cas", boolT, h, slot(), arg(0, et), arg(1, et), s.cint(ordSeqCst)), true
+			case "Atomic.add":
+				return s.llrt("atomic_add", intT, x, h, arg(0, intT), s.loc(x)), true
+			}
+			return s.llrt("atomic_max", intT, x, h, arg(0, intT)), true
+		}
+		switch key {
+		case "Atomic.get":
+			return s.rt("atomic_get", et, h), true
+		case "Atomic.set":
+			return s.rt("atomic_set", nil, h, arg(0, et)), true
+		case "Atomic.swap":
+			return s.rt("atomic_swap", et, h, arg(0, et)), true
+		case "Atomic.compare_and_swap":
+			return s.rt("atomic_cas", boolT, h, arg(0, et), arg(1, et)), true
+		case "Atomic.add":
+			return s.rt("atomic_add", intT, h, arg(0, intT), s.loc(x)), true
+		}
 		return s.rt("atomic_max", intT, h, arg(0, intT)), true
 	case "Mutex.with", "Mutex.with_read":
 		return s.mutexWith(x, h, et, fo.Name == "with_read"), true

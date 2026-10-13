@@ -71,6 +71,12 @@ fn rs_append_time(s: Str, t: Int) -> Str
 fn time_parse_ok(s: Str) -> Bool
 fn time_parse(s: Str) -> Int
 fn rs_append_quote(s: Str, b: Bytes) -> Str
+// The C path of Atomic's add and max (decision 0200): compiled only with
+// -DXO_ATOMIC_C, called only by std/native/llrt/atomic_c.xo
+// (XO_LLRT_C=atomic).
+
+fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
+fn atomic_max(a: Atomic[Int], n: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
@@ -108,6 +114,30 @@ fn float_from_bits(b: Int) -> Float
 /// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
 /// b.len().
 fn bytes_word(b: Bytes, i: Int) -> Int
+/// The number of bits set in w (lowered inline: arm64 cnt, LLVM ctpop,
+/// wasm i64.popcnt; decision 0201).
+fn popcount(w: Int) -> Int
+/// The number of zero bits below the lowest set bit of w, 64 for 0
+/// (lowered inline: arm64 rbit and clz, LLVM cttz, wasm i64.ctz).
+fn ctz(w: Int) -> Int
+/// The number of zero bits above the highest set bit of w, 64 for 0
+/// (lowered inline: arm64 clz, LLVM ctlz, wasm i64.clz).
+fn clz(w: Int) -> Int
+/// The 16 bytes of b from i compared with the byte c (0 to 255): bits
+/// 4k to 4k + 3 of the result are all set when byte i + k is c, else
+/// clear (lowered inline: arm64 cmeq and shrn, LLVM a <16 x i8> compare;
+/// decision 0201). Unchecked: 0 <= i and i + 16 <= b.len().
+fn bytes_eq16(b: Bytes, i: Int, c: Int) -> Int
+/// The 16 bytes of b from i: bits 4k to 4k + 3 of the result are all
+/// set when byte i + k is 0x80 or above, else clear (as bytes_eq16).
+fn bytes_high16(b: Bytes, i: Int) -> Int
+/// s with the 8 bytes of w (the lowest first) at i, in place (lowered
+/// inline to one store; decision 0201). Unchecked: s is a new string of
+/// rs_with_cap (unique) with room for i + 8 bytes.
+fn rs_put_word(s: Str, i: Int, w: Int) -> Str
+/// s with length n (lowered inline: no instruction). Unchecked: the n
+/// bytes are in s's room (rs_put_word wrote them).
+fn rs_set_len(s: Str, n: Int) -> Str
 /// Checked arithmetic on a sized integer type (std/llrt/xo_bytes.c, the
 /// C path of std/native/llrt/ints.xo, XO_LLRT_C=ints): op 0 +, 1 -, 2 *,
 /// 3 /, 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at.
@@ -154,6 +184,36 @@ fn fault_at(msg: Str, at: Loc) -> Never
 /// Faults with msg at loc, a `file:line` text (a stored fault raised
 /// again, as std/rt re-panics a stored FaultErr).
 fn fault_raise(msg: Str, loc: Str) -> Never
+
+// Atomics and memory ordering (decision 0200), lowered inline by every
+// native emitter. A cell is slot i of xs: a List[Int] made at its final
+// size and never grown or set while shared (these write it in place,
+// with no copy on write; decision 0058's shared count hands it to other
+// threads), or an Atomic, whose value is slot 13 of the C runtime's
+// object (xo_rt.c xo_atomic; the wasm backend maps an Atomic's cell to
+// its own runtime). Unchecked: 0 <= i < xs.len(). ord is a constant: 0
+// relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst (C11's orders); a
+// non constant is seq_cst. A load takes relaxed, acquire, or seq_cst, a
+// store relaxed, release, or seq_cst (another order rounds up to
+// seq_cst).
+
+/// The value of the cell.
+fn slot_load[T](xs: T, i: Int, ord: Int) -> Int
+fn slot_store[T](xs: T, i: Int, v: Int, ord: Int)
+/// Stores v and returns the old value.
+fn slot_swap[T](xs: T, i: Int, v: Int, ord: Int) -> Int
+/// Stores new when the cell holds old; whether it did (strong: never
+/// fails spuriously). ord orders both outcomes.
+fn slot_cas[T](xs: T, i: Int, old: Int, new: Int, ord: Int) -> Bool
+/// Adds d (wrapping) and returns the old value (fetch add).
+fn slot_add[T](xs: T, i: Int, d: Int, ord: Int) -> Int
+/// The address of the cell, for futex style waits (futex, __ulock_wait,
+/// WaitOnAddress; a 32 bit futex word is its low half on every target).
+fn slot_addr[T](xs: T, i: Int) -> Int
+/// A fence of order ord (relaxed is none).
+fn fence(ord: Int)
+/// A spin loop's pause (yield on arm64, pause on x86; nothing on wasm).
+fn spin_hint()
 
 /// Whether a log field value is a number or a Bool (written bare in a
 /// JSON record).

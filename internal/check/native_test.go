@@ -122,8 +122,9 @@ func TestLLRTCPath(t *testing.T) {
 			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q, strings from %q; want %q, %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], files["native/llrt/strings"], c.text, c.unicode, c.strings)
 		}
 		// decision 0193 steps 5 and 6 and decision 0195: show, report,
-		// fspath, procspec, ints, and gen come with the prelude
-		for _, name := range []string{"show", "report", "fspath", "procspec", "ints", "gen"} {
+		// fspath, procspec, ints, and gen come with the prelude, as does
+		// decision 0200's atomic
+		for _, name := range []string{"show", "report", "fspath", "procspec", "ints", "gen", "atomic"} {
 			want := "std/native/llrt/" + name + ".xo"
 			if c.env == "all" {
 				want = "std/native/llrt/" + name + "_c.xo"

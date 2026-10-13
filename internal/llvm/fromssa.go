@@ -85,6 +85,9 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
 declare void @llvm.assume(i1)
+declare i64 @llvm.ctpop.i64(i64)
+declare i64 @llvm.cttz.i64(i64, i1)
+declare i64 @llvm.ctlz.i64(i64, i1)
 
 declare i32 @xo_personality(...)
 
@@ -2147,7 +2150,14 @@ func (s *sfn) call(v *ssa.Value) {
 // right by the amount mod 64, 6 the low 32 bits rotated right by the
 // amount mod 32 and zero extended, 7 the bytes reversed), rt.u64_mul_hi
 // (an i128 multiply), the bits of a Float both ways, and rt.bytes_word
-// (an unchecked load of 8 bytes). It reports whether v was one.
+// (an unchecked load of 8 bytes);
+// the scan intrinsics of decision 0201:
+// rt.popcount, rt.ctz, rt.clz (llvm.ctpop, cttz, ctlz), and
+// rt.bytes_eq16 and rt.bytes_high16 (a <16 x i8> compare narrowed to 4
+// bits a byte, which arm64 selects as cmeq and shrn), and the string
+// writes of Bytes.to_hex: rt.rs_put_word (an unchecked store of 8 bytes
+// into a new string with room) and rt.rs_set_len (the same object with
+// a new length). It reports whether v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2197,10 +2207,151 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		_, d, _ := s.strParts(s.op(v.Args[0]))
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
 		s.set(v, "load i64, ptr %s, align 1", p)
+	case "rt.popcount":
+		s.set(v, "call i64 @llvm.ctpop.i64(i64 %s)", s.op(v.Args[0]))
+	case "rt.ctz":
+		s.set(v, "call i64 @llvm.cttz.i64(i64 %s, i1 false)", s.op(v.Args[0]))
+	case "rt.clz":
+		s.set(v, "call i64 @llvm.ctlz.i64(i64 %s, i1 false)", s.op(v.Args[0]))
+	case "rt.bytes_eq16", "rt.bytes_high16":
+		_, d, _ := s.strParts(s.op(v.Args[0]))
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
+		x := s.def("load <16 x i8>, ptr %s, align 1", p)
+		var e string
+		if v.Aux.(string) == "rt.bytes_eq16" {
+			c := s.def("trunc i64 %s to i8", s.op(v.Args[2]))
+			r := s.def("insertelement <16 x i8> poison, i8 %s, i64 0", c)
+			r = s.def("shufflevector <16 x i8> %s, <16 x i8> poison, <16 x i32> zeroinitializer", r)
+			e = s.def("icmp eq <16 x i8> %s, %s", x, r)
+		} else {
+			e = s.def("icmp slt <16 x i8> %s, zeroinitializer", x)
+		}
+		m := s.def("sext <16 x i1> %s to <16 x i8>", e)
+		h := s.def("bitcast <16 x i8> %s to <8 x i16>", m)
+		h = s.def("lshr <8 x i16> %s, <i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4>", h)
+		n := s.def("trunc <8 x i16> %s to <8 x i8>", h)
+		s.set(v, "bitcast <8 x i8> %s to i64", n)
+	case "rt.rs_put_word":
+		x := s.op(v.Args[0])
+		_, d, _ := s.strParts(x)
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
+		s.emit("store i64 %s, ptr %s, align 1", s.op(v.Args[2]), p)
+		s.alias(v, x)
+	case "rt.rs_set_len":
+		obj := s.def("extractvalue %%xo.str %s, 0", s.op(v.Args[0]))
+		s.mkStr(v, obj, s.op(v.Args[1]))
+	case "rt.slot_load", "rt.slot_store", "rt.slot_swap", "rt.slot_cas", "rt.slot_add", "rt.slot_addr", "rt.fence", "rt.spin_hint":
+		s.atomic(v)
 	default:
 		return false
 	}
 	return true
+}
+
+// ordArg returns the memory order of argument k of v (decision 0200):
+// its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst; a
+// value that is not one of them is seq_cst.
+func ordArg(v *ssa.Value, k int) int {
+	if k >= len(v.Args) || v.Args[k].Op != ssa.OpConst {
+		return 4
+	}
+	n, ok := v.Args[k].Aux.(int64)
+	if !ok || n < 0 || n > 4 {
+		return 4
+	}
+	return int(n)
+}
+
+// cellAddr returns the address of the cell (container, index) of an
+// atomic: the list's element, or an Atomic's value (the same layout: a
+// header of three words, then words).
+func (s *sfn) cellAddr(v *ssa.Value) string {
+	l := s.op(v.Args[0])
+	if v.Args[1].Op == ssa.OpConst {
+		if k, ok := v.Args[1].Aux.(int64); ok {
+			return s.def("getelementptr i8, ptr %s, i64 %d", l, 24+8*k)
+		}
+	}
+	o := s.def("shl i64 %s, 3", s.op(v.Args[1]))
+	o2 := s.def("add i64 %s, 24", o)
+	return s.def("getelementptr i8, ptr %s, i64 %s", l, o2)
+}
+
+// wordOf returns the i64 of an Int or Bool operand (a Bool cell holds 0
+// or 1).
+func (s *sfn) wordOf(a *ssa.Value) string {
+	o := s.op(a)
+	if a.Type.Kind == ssa.KBool {
+		return s.def("zext i1 %s to i64", o)
+	}
+	return o
+}
+
+// atomicResult sets v, an Int or a Bool, to the i64 r.
+func (s *sfn) atomicResult(v *ssa.Value, r string) {
+	if v.Type.Kind == ssa.KBool {
+		s.set(v, "icmp ne i64 %s, 0", r)
+		return
+	}
+	s.alias(v, r)
+}
+
+// atomic lowers the atomics and fences of decision 0200 inline: load
+// atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
+// LLVM ordering (relaxed is monotonic; a load takes no release and a
+// store no acquire, and a cmpxchg fails with the strongest ordering
+// allowed there). The spin hint is nothing: the IR is target
+// independent (clang picks the target), and yield and pause are target
+// intrinsics.
+func (s *sfn) atomic(v *ssa.Value) {
+	name := v.Aux.(string)
+	switch name {
+	case "rt.spin_hint":
+		return
+	case "rt.fence":
+		if o := ordArg(v, 0); o > 0 {
+			s.emit("fence %s", [...]string{"", "acquire", "release", "acq_rel", "seq_cst"}[o])
+		}
+		return
+	}
+	p := s.cellAddr(v)
+	if name == "rt.slot_addr" {
+		s.set(v, "ptrtoint ptr %s to i64", p)
+		return
+	}
+	o := ordArg(v, len(v.Args)-1)
+	ord := [...]string{"monotonic", "acquire", "release", "acq_rel", "seq_cst"}[o]
+	switch name {
+	case "rt.slot_load":
+		lo := "seq_cst"
+		if o == 0 {
+			lo = "monotonic"
+		} else if o == 1 {
+			lo = "acquire"
+		}
+		s.atomicResult(v, s.def("load atomic i64, ptr %s %s, align 8", p, lo))
+	case "rt.slot_store":
+		so := "seq_cst"
+		if o == 0 {
+			so = "monotonic"
+		} else if o == 2 {
+			so = "release"
+		}
+		s.emit("store atomic i64 %s, ptr %s %s, align 8", s.wordOf(v.Args[2]), p, so)
+	case "rt.slot_swap", "rt.slot_add":
+		op := "add"
+		if name == "rt.slot_swap" {
+			op = "xchg"
+		}
+		s.atomicResult(v, s.def("atomicrmw %s ptr %s, i64 %s %s, align 8", op, p, s.wordOf(v.Args[2]), ord))
+	default:
+		// rt.slot_cas, strong
+		old := s.wordOf(v.Args[2])
+		nw := s.wordOf(v.Args[3])
+		fail := [...]string{"monotonic", "acquire", "monotonic", "acquire", "seq_cst"}[o]
+		r := s.def("cmpxchg ptr %s, i64 %s, i64 %s %s %s, align 8", p, old, nw, ord, fail)
+		s.set(v, "extractvalue { i64, i1 } %s, 1", r)
+	}
 }
 
 // llvmDecl declares the LLVM intrinsic sym once, among the runtime

@@ -62,6 +62,16 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let fi = b.m.func_index(f)
     return b.call(f, b.m.funcs[fi].results[0], "", [src, tape, i])
   }
+  if name is "slot_load" | "slot_store" | "slot_swap" | "slot_cas" | "slot_add" | "slot_addr" {
+    // the atomics on a cell (decision 0200): the container as it is, the
+    // rest Ints; the emitters lower them inline
+    var vs = [b.value_as(es[0] ?? fault("arg"), b.typ(b.intrinsic_targ(ci, 0)))]
+    let ps = b.c.objs[fo].params
+    for i in 1..ps.len() {
+      vs.push(b.value_as(es[i] ?? fault("arg"), b.typ(ps[i].ty)))
+    }
+    return b.rt(name, nt, vs)
+  }
   if name is "launder1" | "launder2" {
     // the function itself (only its effects are accounted for here)
     return b.value_as(es[0] ?? fault("arg"), nt)

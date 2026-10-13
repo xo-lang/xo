@@ -889,6 +889,7 @@ fn simple_op(op: Str) -> Int {
     "i32.rotr" => 0x78
     "i64.clz" => 0x79
     "i64.ctz" => 0x7A
+    "i64.popcnt" => 0x7B
     "i64.add" => 0x7C
     "i64.sub" => 0x7D
     "i64.mul" => 0x7E
@@ -902,6 +903,8 @@ fn simple_op(op: Str) -> Int {
     "i64.shl" => 0x86
     "i64.shr_s" => 0x87
     "i64.shr_u" => 0x88
+    "i64.rotl" => 0x89
+    "i64.rotr" => 0x8A
     "f64.abs" => 0x99
     "f64.neg" => 0x9A
     "f64.ceil" => 0x9B

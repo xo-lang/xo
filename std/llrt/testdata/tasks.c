@@ -9,6 +9,9 @@
 // heaps). Exit status 0 means every test passed.
 
 #define XO_RT_NO_MAIN
+// the C path of Atomic's operations (decision 0200), which this test
+// drives directly
+#define XO_ATOMIC_C
 #include "../xo_rt.c"
 
 // the tasks of the fan out tests (-DXO_TASKS_N; a plain -DN would reach
