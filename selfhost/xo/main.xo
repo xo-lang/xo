@@ -695,6 +695,20 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   if !ci.err.is_empty() {
     fail(os, ci.err)
   }
+  if nolibc(os, tgoos) {
+    // a static program with no C library (decisions 0203, 0206)
+    if !ci.srcs.is_empty() || !ci.flags.is_empty() {
+      fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")
+    }
+    if no_cc {
+      fail(os, "XO_NOLIBC=1 links with cc (--ld=cc): the ELF linker of decision 0182 has no static mode yet (decision 0206)")
+    }
+    if needs_tls(code) {
+      fail(os, "XO_NOLIBC=1: std/http's TLS library needs the C library (decision 0206 stage 3)")
+    }
+    let arch = if o.backend == "llvm" { host_arch() } else { "arm64" }
+    lk.flags = lk.flags + nolibc_flags(arch)
+  }
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs
   lk

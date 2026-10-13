@@ -7457,3 +7457,9 @@ int main(int argc, char **argv) {
 
 // The intrinsics of the native std implementation (decision 0074).
 #include "xo_std.c"
+
+// The C library functions of a Linux program linked with no C library
+// (XO_NOLIBC=1 builds, decisions 0203 and 0206).
+#ifdef XO_NOLIBC
+#include "xo_nolibc.c"
+#endif
