@@ -413,7 +413,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [uses-is-a-keyword.md](uses-is-a-keyword.md): Observed: a local named `uses` is a parse error (effect clauses); name it `us`.
 - [module-shadowed-by-function.md](module-shadowed-by-function.md): Observed: `use native/llrt/scan` in a module with a function `scan` gives XO0407 at its calls; import with `as`.
 - [ec2-full-tier-skipped-wasm.md](ec2-full-tier-skipped-wasm.md): Observed, fixed: EC2 full runs had no Node, so TestSelfhostWasm skipped silently; remote-full.sh installs nodejs and logs its version.
-- [hybrid-preemption-stw-under-load.md](hybrid-preemption-stw-under-load.md): Observed: TestHybridPreemption stop-the-world bound fails under full-suite load; passes 5 of 5 alone; rerun alone first.
+- [hybrid-preemption-stw-under-load.md](hybrid-preemption-stw-under-load.md): Fixed: TestHybridPreemption failed its 10 ms stop-the-world bound under full-suite load; a missed bound now runs the pure Go control and compares with it, capped at a quarter of the loop.
 - [std-testing-loads-http-everywhere.md](std-testing-loads-http-everywhere.md): Observed: std/testing imports std/http, so every native program loads std/native/http.xo; root feature exports by the code built, not the modules loaded.
 - [selfhost-run-queue-twice.md](selfhost-run-queue-twice.md): Observed, fixed: selfhost/ssa run_queue never emptied its queue, so a second call rebuilt every body and broke prune_unwind.
 - [c-only-runtime-tests-need-exports.md](c-only-runtime-tests-need-exports.md): Observed: std/llrt/testdata C tests no longer link alone; internal/llvm cOnly adds an empty program's IR, which defines the xo_x_ exports.

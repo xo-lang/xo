@@ -2044,7 +2044,11 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
   testdata/hybrid_preempt with GODEBUG=gctrace=1: stop the world under 10
   ms and a goroutine's gap under 100 ms during a 0.3 s (-short) or 2 s
   hybrid loop, the race detector and a build without polls as control
-  in the full suite; not parallel, three attempts per bound). Use
+  in the full suite; not parallel, three attempts per bound; a missed
+  bound runs the xo_pure build as a load control and widens to twice its
+  figure plus a margin, capped at a quarter of the loop:
+  gotchas/hybrid-preemption-stw-under-load.md; Last verified:
+  2026-10-13). Use
   `-asmdecl` only: the generated Go has unreachable code that plain `go
   vet` reports.
 - `XO_BASE=<old xo> bench/perf/hybrid/run.sh` adds the old build's hybrid
