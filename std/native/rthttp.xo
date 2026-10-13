@@ -72,7 +72,7 @@ fn h2_block(h: HConn) -> Str
 fn h2_block_first(h: HConn) -> Bool
 /// Goes on with the decoded fields (hpack.Fields); true when a 100
 /// Continue is to be encoded now (h2_enc_job, h2_encoded).
-fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: Str, first: Bool) -> Bool
+fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: List[Int], first: Bool) -> Bool
 /// The table size settings and heads to encode (after 3, or h2_fields
 /// true), and the blocks encoded for them.
 fn h2_enc_job(h: HConn) -> Str

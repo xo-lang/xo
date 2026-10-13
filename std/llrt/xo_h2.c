@@ -2826,18 +2826,19 @@ static uint32_t h2_le32(const char *p) {
 
 // xo_h2_fields goes on with the fragment Xo decoded: ok (0 a decoding
 // error), how far it got, the fields (their names and values one after
-// the other in d, their lengths in l, 8 bytes a field: the name's in the
-// low 4, the value's in the high 4), and whether the block's first
-// representation is still to come. True when a 100 Continue is to be
-// encoded now (h2_enc_job, h2_encoded).
-int64_t xo_h2_fields(xo_hconn *hc, int64_t ok, int64_t used, const char *d, int64_t dn, const char *l, int64_t ln, int64_t first) {
+// the other in d, their lengths in the List[Int] lens, a word a field:
+// the name's in the low 32 bits, the value's above), and whether the
+// block's first representation is still to come. True when a 100
+// Continue is to be encoded now (h2_enc_job, h2_encoded).
+int64_t xo_h2_fields(xo_hconn *hc, int64_t ok, int64_t used, const char *d, int64_t dn, xo_rlist *lens, int64_t first) {
 	h2c *c = hc->h2;
 	pthread_mutex_lock(&c->mu);
 	c->dec_pending = 0;
 	c->hfirst = (int)first;
 	int64_t off = 0;
-	for (int64_t i = 0; i + 8 <= ln; i += 8) {
-		int64_t nn = h2_le32(l + i), vn = h2_le32(l + i + 4);
+	const int64_t *l = (const int64_t *)rl_data(lens);
+	for (int64_t i = 0; i < lens->len; i++) {
+		int64_t nn = l[i] & 0xffffffff, vn = (int64_t)((uint64_t)l[i] >> 32);
 		if (off + nn + vn > dn) {
 			break;
 		}
@@ -2861,7 +2862,8 @@ static void h2_job_u32(nbuf *b, uint32_t v) {
 // returned 3, or h2_fields true): the peer's table size settings since
 // the last job (their number, then each), then the heads (their number,
 // then each head's number of fields and each field's name and value
-// after their lengths), 4 bytes little endian each number. The heads
+// lengths, then the name and the value), 4 bytes little endian each
+// number. The heads
 // are a 100 Continue (h2_fields) or those of c->encq.
 xo_rstr *xo_h2_enc_job(xo_hconn *hc, int64_t *len) {
 	h2c *c = hc->h2;
@@ -2875,9 +2877,8 @@ xo_rstr *xo_h2_enc_job(xo_hconn *hc, int64_t *len) {
 		h2_job_u32(&b, 1);
 		h2_job_u32(&b, 1);
 		h2_job_u32(&b, 7);
-		nbuf_put(&b, ":status", 7);
 		h2_job_u32(&b, 3);
-		nbuf_put(&b, "100", 3);
+		nbuf_put(&b, ":status100", 10);
 	} else {
 		h2_job_u32(&b, (uint32_t)c->nencq);
 		for (int64_t k = 0; k < c->nencq; k++) {
@@ -2885,8 +2886,8 @@ xo_rstr *xo_h2_enc_job(xo_hconn *hc, int64_t *len) {
 			h2_job_u32(&b, (uint32_t)h->n);
 			for (int64_t i = 0; i < h->n; i++) {
 				h2_job_u32(&b, (uint32_t)h->a[i].k.n);
-				nbuf_put(&b, h->a[i].k.p, h->a[i].k.n);
 				h2_job_u32(&b, (uint32_t)h->a[i].v.n);
+				nbuf_put(&b, h->a[i].k.p, h->a[i].k.n);
 				nbuf_put(&b, h->a[i].v.p, h->a[i].v.n);
 			}
 		}

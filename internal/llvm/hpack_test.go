@@ -242,7 +242,25 @@ func hpackTables() []byte {
 	b.WriteString("/// name in STATIC_TEXT (2 bytes, little endian), the length of the name,\n")
 	b.WriteString("/// the length of the value (the value follows the name); 4 bytes\n")
 	b.WriteString("/// of padding follow.\n")
-	fmt.Fprintf(&b, "pub const STATIC_AT: Bytes = %s\n", xoBytesLit(at))
+	fmt.Fprintf(&b, "pub const STATIC_AT: Bytes = %s\n\n", xoBytesLit(at))
+	// the entries by the length of their names (the encoder's lookup)
+	var order []byte
+	bylen := make([]byte, 33)
+	for l := 0; l < 32; l++ {
+		bylen[l] = byte(len(order))
+		for k, e := range hpackStatic {
+			if len(e[0]) == l {
+				order = append(order, byte(k+1))
+			}
+		}
+	}
+	bylen[32] = byte(len(order))
+	b.WriteString("/// The static table's entries ordered by the length of their names,\n")
+	b.WriteString("/// then by index.\n")
+	fmt.Fprintf(&b, "pub const STATIC_ORDER: Bytes = %s\n\n", xoBytesLit(order))
+	b.WriteString("/// Where the names of each length (0 to 31) start in STATIC_ORDER;\n")
+	b.WriteString("/// entry 32 is the end.\n")
+	fmt.Fprintf(&b, "pub const STATIC_BYLEN: Bytes = %s\n", xoBytesLit(bylen))
 	return b.Bytes()
 }
 

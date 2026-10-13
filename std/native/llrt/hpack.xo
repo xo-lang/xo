@@ -24,44 +24,45 @@ use native/llrt/hpack_tables
 use native/rt
 use native/rthttp
 
-/// A dynamic table (RFC 7541 2.3.2): the entries are names[first..] and
-/// values[first..], the newest last; size counts each entry's name and
-/// value lengths plus 32 (4.1).
+
+/// A dynamic table (RFC 7541 2.3.2): entry i is nv[i], its name then its
+/// value, the name nl[i] bytes long; the entries are those from first on,
+/// the newest last. size counts each entry's name and value lengths plus
+/// 32 (4.1).
 struct Table {
-  names: List[Str]
-  values: List[Str]
+  nv: List[Str]
+  nl: List[Int]
   first: Int
   size: Int
   max: Int
 }
 
-fn new_table(max: Int) -> Table { Table{names: [], values: [], first: 0, size: 0, max: max} }
+fn new_table(max: Int) -> Table { Table{nv: [], nl: [], first: 0, size: 0, max: max} }
 
-fn (t: Table) count() -> Int { t.names.len() - t.first }
+fn (t: Table) count() -> Int { t.nv.len() - t.first }
 
 /// Drops the oldest entry.
 fn (var t: Table) evict() {
   let k = t.first
-  t.size -= t.names[k].len() + t.values[k].len() + 32
-  t.names[k] = ""
-  t.values[k] = ""
+  t.size -= t.nv[k].len() + 32
+  t.nv[k] = ""
   t.first = k + 1
-  let n = t.names.len()
+  let n = t.nv.len()
   if t.first == n {
-    t.names = []
-    t.values = []
+    t.nv = []
+    t.nl = []
     t.first = 0
   } else if t.first >= 32 && 2 * t.first >= n {
-    var ns: List[Str] = []
-    var vs: List[Str] = []
+    var nv: List[Str] = []
+    var nl: List[Int] = []
     var i = t.first
     while i < n {
-      ns.push(t.names[i])
-      vs.push(t.values[i])
+      nv.push(t.nv[i])
+      nl.push(t.nl[i])
       i += 1
     }
-    t.names = ns
-    t.values = vs
+    t.nv = nv
+    t.nl = nl
     t.first = 0
   }
 }
@@ -73,17 +74,18 @@ fn (var t: Table) set_max(max: Int) {
   }
 }
 
-/// Adds an entry; one larger than the table empties it (4.4).
-fn (var t: Table) add(name: Str, value: Str) {
-  let sz = name.len() + value.len() + 32
+/// Adds the entry nv (a name of nl bytes, then the value); one larger
+/// than the table empties it (4.4).
+fn (var t: Table) add(nv: Str, nl: Int) {
+  let sz = nv.len() + 32
   while t.count() > 0 && t.size + sz > t.max {
     t.evict()
   }
   if sz > t.max {
     return
   }
-  t.names.push(name)
-  t.values.push(value)
+  t.nv.push(nv)
+  t.nl.push(nl)
   t.size += sz
 }
 
@@ -97,14 +99,17 @@ fn static_at(k: Int) -> (Int, Int, Int) {
   (w & 0xFFFF, (w >> 16) & 0xFF, (w >> 24) & 0xFF)
 }
 
-/// Whether s equals the len bytes of t from off.
-fn eq_at(s: Bytes, t: Bytes, off: Int, len: Int) -> Bool {
-  if s.len() != len {
-    return false
-  }
+/// Whether b[lo..lo+n] equals t[off..off+n].
+fn eq_at(b: Bytes, lo: Int, t: Bytes, off: Int, n: Int) -> Bool {
   var i = 0
-  while i < len {
-    if s[i] != t[off + i] {
+  while i + 8 <= n {
+    if rt.bytes_word(b, lo + i) != rt.bytes_word(t, off + i) {
+      return false
+    }
+    i += 8
+  }
+  while i < n {
+    if b[lo + i] != t[off + i] {
       return false
     }
     i += 1
@@ -112,27 +117,34 @@ fn eq_at(s: Bytes, t: Bytes, off: Int, len: Int) -> Bool {
   true
 }
 
-/// The static table's entry for name and value: the index of the entry
-/// with both (0: none) and the index of the last entry with the name, as
-/// hpack's staticTable byNameValue and byName.
-fn static_find(name: Bytes, value: Bytes) -> (Int, Int) {
+/// The static table's entry for the name b[nlo..nlo+nn] and the value
+/// b[vlo..vlo+vn]: the index of the entry with both (0: none) and the
+/// index of the last entry with the name, as hpack's staticTable
+/// byNameValue and byName. Only the names of the same length are
+/// compared (STATIC_ORDER).
+fn static_find(b: Bytes, nlo: Int, nn: Int, vlo: Int, vn: Int) -> (Int, Int) {
+  if nn >= 32 {
+    return (0, 0)
+  }
   let t = hpack_tables.STATIC_TEXT
-  let nn = name.len()
+  let order = hpack_tables.STATIC_ORDER
+  let bylen = hpack_tables.STATIC_BYLEN
   var by_name = 0
-  var k = 1
-  while k <= 61 {
-    let (off, kn, vn) = static_at(k)
-    if kn == nn && eq_at(name, t, off, kn) {
-      if eq_at(value, t, off + kn, vn) {
+  var p = Int(bylen[nn])
+  let end = Int(bylen[nn + 1])
+  while p < end {
+    let k = Int(order[p])
+    let (off, kn, kv) = static_at(k)
+    if eq_at(b, nlo, t, off, kn) {
+      if kv == vn && eq_at(b, vlo, t, off + kn, kv) {
         return (k, k)
       }
       by_name = k
     }
-    k += 1
+    p += 1
   }
   (0, by_name)
 }
-
 // ---------------------------------------------------------------------------
 // Integers and strings (5.1, 5.2)
 
@@ -248,6 +260,24 @@ fn get_str(b: Bytes, n: Int, i: Int, out: Str, max: Int) -> (Int, Str, Int) {
   (1, rt.rs_append_bytes(out, b, j, j + len, 0), j + len)
 }
 
+/// out + v with a prefix of the given bits whose other bits are first.
+fn put_int(out: Str, first: Int, prefix: Int, v: Int) -> Str {
+  let max = (1 << (prefix & 7)) - 1
+  if v < max {
+    return rt.rs_push_word(out, first | v, 1)
+  }
+  var w = first | max
+  var k = 1
+  var x = v - max
+  while x >= 128 {
+    w = w | (((x & 127) | 128) << ((8 * k) & 63))
+    k += 1
+    x = x >> 7
+  }
+  w = w | (x << ((8 * k) & 63))
+  rt.rs_push_word(out, w, k + 1)
+}
+
 // ---------------------------------------------------------------------------
 // The decoder
 
@@ -261,7 +291,8 @@ pub struct Dec {
 pub fn decoder(limit: Int) -> Dec { Dec{t: new_table(limit), limit: limit} }
 
 /// The fields of a block fragment: the bytes of each name then its
-/// value in data, their lengths (4 bytes each, little endian) in lens.
+/// value in data, their lengths in lens (a word each: the name's in the
+/// low 32 bits, the value's above).
 pub struct Fields {
   /// 1, or 0 for a decoding error (a COMPRESSION_ERROR).
   ok: Int
@@ -269,7 +300,7 @@ pub struct Fields {
   /// waits for the next fragment.
   used: Int
   data: Str
-  lens: Str
+  lens: List[Int]
   /// No representation of the block was decoded yet.
   first: Bool
 }
@@ -284,7 +315,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
   let st = hpack_tables.STATIC_TEXT
   var first = first0
   var data = ""
-  var lens = ""
+  var lens: List[Int] = []
   var used = 0
   var i = 0
   while i < n {
@@ -302,13 +333,13 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       if idx <= 61 {
         let (off, kn, vn) = static_at(idx)
         data = rt.rs_append_bytes(data, st, off, off + kn + vn, 0)
-        lens = rt.rs_push_word(lens, kn | (vn << 32), 8)
+        lens.push(kn | (vn << 32))
       } else if idx - 62 < d.t.count() {
-        let e = d.t.names.len() - 1 - (idx - 62)
-        let nm = d.t.names[e]
-        let v = d.t.values[e]
-        data = rt.rs_append(rt.rs_append(data, nm), v)
-        lens = rt.rs_push_word(lens, nm.len() | (v.len() << 32), 8)
+        let e = d.t.nv.len() - 1 - (idx - 62)
+        let nv = d.t.nv[e]
+        let nl = d.t.nl[e]
+        data = rt.rs_append(data, nv)
+        lens.push(nl | ((nv.len() - nl) << 32))
       } else {
         return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
       }
@@ -360,7 +391,8 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       let (off, kn, _) = static_at(idx)
       data = rt.rs_append_bytes(data, st, off, off + kn, 0)
     } else if idx - 62 < d.t.count() {
-      data = rt.rs_append(data, d.t.names[d.t.names.len() - 1 - (idx - 62)])
+      let e = d.t.nv.len() - 1 - (idx - 62)
+      data = rt.rs_append_bytes(data, d.t.nv[e].bytes(), 0, d.t.nl[e], 0)
     } else {
       return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
     }
@@ -374,9 +406,9 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
     }
     let vlen = data.len() - mark - nlen
-    lens = rt.rs_push_word(lens, nlen | (vlen << 32), 8)
+    lens.push(nlen | (vlen << 32))
     if indexing {
-      d.t.add(rt.str_slice(data, mark, mark + nlen), rt.str_slice(data, mark + nlen, mark + nlen + vlen))
+      d.t.add(rt.str_slice(data, mark, mark + nlen + vlen), nlen)
     }
     first = false
     used = j3
@@ -414,39 +446,20 @@ pub fn (var e: Enc) set_max(v0: Int) {
   e.t.set_max(v)
 }
 
-/// out + v with a prefix of the given bits whose other bits are first.
-fn put_int(out: Str, first: Int, prefix: Int, v: Int) -> Str {
-  let max = (1 << (prefix & 7)) - 1
-  if v < max {
-    return rt.rs_push_word(out, first | v, 1)
-  }
-  var w = first | max
-  var k = 1
-  var x = v - max
-  while x >= 128 {
-    w = w | (((x & 127) | 128) << ((8 * k) & 63))
-    k += 1
-    x = x >> 7
-  }
-  w = w | (x << ((8 * k) & 63))
-  rt.rs_push_word(out, w, k + 1)
-}
-
-/// The length of the Huffman code of s in bytes.
-fn huff_len(s: Bytes) -> Int {
+/// The length of the Huffman code of b[lo..hi] in bytes.
+fn huff_len(b: Bytes, lo: Int, hi: Int) -> Int {
   let t = hpack_tables.HUFF_LEN
   var bits = 0
-  var i = 0
-  let n = s.len()
-  while i < n {
-    bits += Int(t[Int(s[i])])
+  var i = lo
+  while i < hi {
+    bits += Int(t[Int(b[i])])
     i += 1
   }
   (bits + 7) >> 3
 }
 
-/// out + the Huffman code of s, padded with ones.
-fn huff_enc(out0: Str, s: Bytes) -> Str {
+/// out + the Huffman code of b[lo..hi], padded with ones.
+fn huff_enc(out0: Str, b: Bytes, lo: Int, hi: Int) -> Str {
   let code = hpack_tables.HUFF_CODE
   let lens = hpack_tables.HUFF_LEN
   var out = out0
@@ -454,10 +467,9 @@ fn huff_enc(out0: Str, s: Bytes) -> Str {
   var bits = 0
   var w = 0
   var wk = 0
-  var i = 0
-  let n = s.len()
-  while i < n {
-    let c = Int(s[i])
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
     let l = Int(lens[c])
     acc = (acc << (l & 31)) | (rt.bytes_word(code, 4 * c) & 0xFFFFFFFF)
     bits += l
@@ -484,19 +496,20 @@ fn huff_enc(out0: Str, s: Bytes) -> Str {
   out
 }
 
-/// out + the string literal of s.
-fn put_str(out: Str, s: Str) -> Str {
-  let b = s.bytes()
-  let n = b.len()
-  let hl = huff_len(b)
+/// out + the string literal of b[lo..hi].
+fn put_str(out: Str, b: Bytes, lo: Int, hi: Int) -> Str {
+  let n = hi - lo
+  let hl = huff_len(b, lo, hi)
   if hl < n {
-    return huff_enc(put_int(out, 0x80, 7, hl), b)
+    return huff_enc(put_int(out, 0x80, 7, hl), b, lo, hi)
   }
-  rt.rs_append(put_int(out, 0, 7, n), s)
+  rt.rs_append_bytes(put_int(out, 0, 7, n), b, lo, hi, 0)
 }
 
-/// out + the representation of the field name: value.
-pub fn (var e: Enc) encode(out0: Str, name: Str, value: Str) -> Str {
+/// out + the representation of the field whose name and value are the nn
+/// and vn bytes of job from at (the name first).
+fn (var e: Enc) encode(out0: Str, job: Str, at: Int, nn: Int, vn: Int) -> Str {
+  let b = job.bytes()
   var out = out0
   if e.update {
     e.update = false
@@ -506,34 +519,38 @@ pub fn (var e: Enc) encode(out0: Str, name: Str, value: Str) -> Str {
     e.min_size = NO_MIN
     out = put_int(out, 0x20, 5, e.t.max)
   }
-  let (si, sn) = static_find(name.bytes(), value.bytes())
+  let vlo = at + nn
+  let (si, sn) = static_find(b, at, nn, vlo, vn)
   if si > 0 {
     return put_int(out, 0x80, 7, si)
   }
   var di = 0
   let cnt = e.t.count()
-  let last = e.t.names.len() - 1
+  let last = e.t.nv.len() - 1
   var k = 0
   while k < cnt {
-    if e.t.names[last - k] == name {
-      if e.t.values[last - k] == value {
-        return put_int(out, 0x80, 7, 62 + k)
-      }
-      if di == 0 {
-        di = 62 + k
+    if e.t.nl[last - k] == nn {
+      let x = e.t.nv[last - k].bytes()
+      if eq_at(b, at, x, 0, nn) {
+        if x.len() - nn == vn && eq_at(b, vlo, x, nn, vn) {
+          return put_int(out, 0x80, 7, 62 + k)
+        }
+        if di == 0 {
+          di = 62 + k
+        }
       }
     }
     k += 1
   }
   let idx = if sn > 0 { sn } else { di }
-  let indexing = name.len() + value.len() + 32 <= e.t.max
+  let indexing = nn + vn + 32 <= e.t.max
   out = if indexing { put_int(out, 0x40, 6, idx) } else { put_int(out, 0, 4, idx) }
   if idx == 0 {
-    out = put_str(out, name)
+    out = put_str(out, b, at, vlo)
   }
-  out = put_str(out, value)
+  out = put_str(out, b, vlo, vlo + vn)
   if indexing {
-    e.t.add(name, value)
+    e.t.add(rt.str_slice(job, at, vlo + vn), nn)
   }
   out
 }
@@ -582,9 +599,10 @@ pub fn (var c: Conn) next() -> Bool {
 }
 
 /// Encodes the response heads of a job of rthttp.h2_enc_job: the peer's
-/// table size settings since the last job (a count, then each, 4 bytes
-/// each), then for each head its number of fields and each field's name
-/// and value with their lengths. The blocks, each after its length.
+/// table size settings since the last job (a count, then each), then for
+/// each head its number of fields and each field's name and value
+/// lengths and the name and the value, the numbers 4 bytes little
+/// endian. The blocks, each after its length.
 fn (var c: Conn) encode_job(job: Str) -> Str {
   let b = job.bytes()
   var i = 0
@@ -606,13 +624,10 @@ fn (var c: Conn) encode_job(job: Str) -> Str {
     var blk = ""
     var f = 0
     while f < nf {
-      let nl = u32_at(b, i)
-      let name = rt.str_slice(job, i + 4, i + 4 + nl)
-      i += 4 + nl
-      let vl = u32_at(b, i)
-      let value = rt.str_slice(job, i + 4, i + 4 + vl)
-      i += 4 + vl
-      blk = c.enc.encode(blk, name, value)
+      let nn = u32_at(b, i)
+      let vn = u32_at(b, i + 4)
+      blk = c.enc.encode(blk, job, i + 8, nn, vn)
+      i += 8 + nn + vn
       f += 1
     }
     out = rt.rs_append(rt.rs_push_word(out, blk.len(), 4), blk)
