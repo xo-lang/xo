@@ -11,8 +11,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   default backend is LLVM there) go through xo1, which `xo` builds with
   the LLVM backend split into 12 modules without LTO (decision 0178
   stage 7, decision 0196). That xo1 passes the LLVM goldens on both
-  hosts and rebuilds itself to a byte identical fixed point on
-  linux/amd64 with no Go installed. scripts/bootstrap-xo.sh picks the
+  hosts and rebuilds itself to a byte identical fixed point on both
+  with no Go on PATH. scripts/bootstrap-xo.sh picks the
   LLVM backend on x86-64 hosts; scripts/remote-xo1-x86.sh and
   scripts/xo1-host-check.sh run the check on EC2 and the Intel Mac.
 - **`xo` is written in Xo** (decision 0178, switch point B): the release

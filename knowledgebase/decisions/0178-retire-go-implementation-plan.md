@@ -770,7 +770,8 @@ without LTO in 2,037 s with a 16.5 GB machine peak; that xo1 passes the
 LLVM goldens 169 of 169, and the bootstrap chain without Go reaches the
 fixed point (s2 and s3 IR and binaries identical, s1 equal too, and all
 three equal to the Go built xo1); on darwin/amd64 (the Intel Mac) the
-LLVM-built xo1 passes the goldens 169 of 169. ThinLTO is not used for
+LLVM-built xo1 passes the goldens 169 of 169 and reaches the same fixed
+point (s1 = s2 = s3, with ThinLTO, which ld64 keeps deterministic). ThinLTO is not used for
 xo1: its link needed 18.8 GB and its promoted symbol names follow the
 build directory, which broke the fixed point
 (gotchas/xo1-thinlto-link-memory.md). internal/selfdriver now runs

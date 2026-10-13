@@ -44,8 +44,8 @@ block the freeze, goldens, or bootstrap steps.
 - The self hosted toolchain itself runs on both x86-64 hosts
   (2026-10-12, bench/results/xo1-x86-2026-10-12.md): xo1 built by the
   LLVM backend on linux/amd64 and darwin/amd64 passes the LLVM goldens
-  169 of 169 on each, and on linux/amd64 it rebuilds itself to a fixed
-  point with no Go toolchain. So deleting Go does not strand x86-64
+  169 of 169 on each, and on each it rebuilds itself to a fixed point
+  with no Go toolchain. So deleting Go does not strand x86-64
   hosts; release archives for them still need an amd64 build host or
   an LLVM cross compile in xo1 (the results file lists both).
 - wasi/wasm32 is not part of this gate; the Xo wasm backend covers wasm.
