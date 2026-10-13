@@ -61,7 +61,10 @@ var goCommandExempt = map[string]bool{"env": true, "version": true}
 // 2026-10-11 from go commands that missed it
 // (gotchas/go-vet-recompiles-rt-per-build-dir.md). A go command that
 // must use the default cache says why in a `//xo:default-gocache`
-// comment in the function.
+// comment in the function. The function must also hold the cache's
+// shared lock (gotool.HoldCache) while the command runs: a trim in
+// another process removes even recent entries once it holds the lock
+// exclusively (gotchas/go-commands-outside-build-race-trim.md).
 func TestGoCommandsUseXoCache(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -101,6 +104,7 @@ func TestGoCommandsUseXoCache(t *testing.T) {
 			routed := strings.Contains(body, "GoEnv()") || strings.Contains(body, "goVetEnv()") ||
 				strings.Contains(body, "CacheEnv()") || strings.Contains(body, `"GOCACHE=`) ||
 				commentIn(f, fset, fd, "xo:default-gocache")
+			held := strings.Contains(body, "HoldCache()") || commentIn(f, fset, fd, "xo:default-gocache")
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -130,6 +134,8 @@ func TestGoCommandsUseXoCache(t *testing.T) {
 				}
 				if !routed {
 					t.Errorf("%s:%d: go command without Xo's Go cache: set cmd.Env from build.GoEnv() (or gotool.CacheEnv()), or explain with //xo:default-gocache", rel, fset.Position(call.Pos()).Line)
+				} else if !held {
+					t.Errorf("%s:%d: go command on Xo's Go cache without its lock: hold gotool.HoldCache() while it runs, or a trim can remove the entries it reads (gotchas/go-commands-outside-build-race-trim.md)", rel, fset.Position(call.Pos()).Line)
 				}
 				return true
 			})

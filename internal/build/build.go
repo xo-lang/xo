@@ -776,9 +776,9 @@ func goBuildRun(dir string, t Target, opts Options, args []string) error {
 	cmd.Env = env
 	var outb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &outb, &outb
-	lock := lockCacheShared()
+	release := gotool.HoldCache()
 	err := cmd.Run()
-	lock.unlock()
+	release()
 	if err != nil {
 		return &BuildError{Target: t, Output: outb.String()}
 	}

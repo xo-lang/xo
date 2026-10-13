@@ -15,6 +15,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // Hybrid builds (decision 0084): functions compiled to Go assembler by
@@ -34,6 +35,7 @@ func vetHybrid(t *testing.T, dir string) {
 	cmd := exec.Command("go", "vet", "-asmdecl", "./m/...")
 	cmd.Dir = dir
 	cmd.Env = append(goVetEnv(), "CGO_ENABLED=0")
+	defer gotool.HoldCache()()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go vet: %v\n%s", err, out)
 	}

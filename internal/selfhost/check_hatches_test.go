@@ -118,7 +118,10 @@ func runXoBinding(t *testing.T, bin, dir string, args, runs []string) string {
 			cmd := exec.Command("go", "build", "-o", gobind, "github.com/xo-lang/xo/cmd/xo-gobind")
 			cmd.Dir = pkgDir
 			cmd.Env = append(os.Environ(), gotool.CacheEnv())
-			if out, err := cmd.CombinedOutput(); err != nil {
+			release := gotool.HoldCache()
+			out, err := cmd.CombinedOutput()
+			release()
+			if err != nil {
 				t.Fatalf("building xo-gobind: %v\n%s", err, out)
 			}
 		}
