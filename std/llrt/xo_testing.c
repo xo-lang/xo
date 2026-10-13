@@ -601,6 +601,13 @@ int64_t xo_gen_intn(int64_t h, int64_t n) {
 	return (int64_t)gen_draw(gen_of(h), (uint64_t)n);
 }
 
+// xo_gen_draw is a choice in [0, n), or any 64 bit value when n is 0,
+// recorded (std/native/llrt/gen.xo, decision 0195).
+int64_t xo_gen_draw(int64_t h, int64_t n) { return (int64_t)gen_draw(gen_of(h), (uint64_t)n); }
+
+// xo_gen_depth is the nesting depth of the value being generated.
+int64_t xo_gen_depth(int64_t h) { return gen_of(h)->depth; }
+
 // xo_gen_enter and xo_gen_leave bracket a nested value; xo_gen_deep
 // tells when nested values stop growing (GenRand.Deep).
 void xo_gen_enter(int64_t h) { gen_of(h)->depth++; }
@@ -609,6 +616,10 @@ void xo_gen_leave(int64_t h) { gen_of(h)->depth--; }
 
 int64_t xo_gen_deep(int64_t h) { return gen_of(h)->depth >= 4; }
 
+// The C path of the scalar values (decisions 0193 and 0195):
+// std/native/llrt/gen.xo is the default; compiled only with
+// -DXO_GEN_C (XO_LLRT_C=gen, std/native/llrt/gen_c.xo).
+#ifdef XO_GEN_C
 // xo_gen_size is a collection's length: small, shrinking with depth.
 int64_t xo_gen_size(int64_t h) {
 	xo_gen *g = gen_of(h);
@@ -620,8 +631,8 @@ int64_t xo_gen_size(int64_t h) {
 
 static int64_t gen_zigzag(uint64_t v) { return (int64_t)(v >> 1) ^ -(int64_t)(v & 1); }
 
-// xo_gen_int is std/rt's genInt: small values and edges preferred.
-int64_t xo_gen_int(int64_t h) {
+// xo_gen_any_int is std/rt's genInt: small values and edges preferred.
+int64_t xo_gen_any_int(int64_t h) {
 	xo_gen *g = gen_of(h);
 	if (g->small) {
 		if (gen_draw(g, 5) < 4) {
@@ -646,7 +657,7 @@ static int64_t gen_abs(int64_t n) { return n < 0 ? (n == INT64_MIN ? INT64_MAX :
 // xo_gen_sized is a sized integer (std/rt's Gen): kind 1 Int32, 2 Int16,
 // 3 Int8, 4 UInt64, 5 UInt32, 6 UInt16, 7 UInt8, in the Int word.
 int64_t xo_gen_sized(int64_t h, int64_t kind) {
-	int64_t v = xo_gen_int(h);
+	int64_t v = xo_gen_any_int(h);
 	switch (kind) {
 	case 1:
 		return (int32_t)(v % ((int64_t)1 << 31));
@@ -703,9 +714,10 @@ xo_rstr *xo_gen_str(int64_t h, int64_t *len) {
 
 // xo_gen_duration and xo_gen_time are std/rt's: milliseconds of genInt,
 // seconds of genInt from 2026-01-01 (wrapping as Go's int64 does).
-int64_t xo_gen_duration(int64_t h) { return (int64_t)((uint64_t)xo_gen_int(h) * 1000000ULL); }
+int64_t xo_gen_duration(int64_t h) { return (int64_t)((uint64_t)xo_gen_any_int(h) * 1000000ULL); }
 
-int64_t xo_gen_time(int64_t h) { return (int64_t)(1767225600000000000ULL + (uint64_t)xo_gen_int(h) * 1000000000ULL); }
+int64_t xo_gen_time(int64_t h) { return (int64_t)(1767225600000000000ULL + (uint64_t)xo_gen_any_int(h) * 1000000000ULL); }
+#endif
 
 // Standard streams and the environment
 

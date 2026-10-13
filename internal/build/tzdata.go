@@ -376,6 +376,14 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the scalar values of property tests (decision 0195,
+	// XO_LLRT_C=gen; xo_gen_size also names xo_gen_sized)
+	for _, sym := range []string{"xo_gen_size", "xo_gen_any_int", "xo_gen_float", "xo_gen_rune", "xo_gen_str", "xo_gen_duration", "xo_gen_time"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_GEN_C")
+			break
+		}
+	}
 	// and of MemFs.fail_next's pattern match (decision 0195,
 	// XO_LLRT_C=glob)
 	if callsSym(code, "xo_test_glob") {

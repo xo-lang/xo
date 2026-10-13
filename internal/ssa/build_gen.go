@@ -15,6 +15,24 @@ import (
 // backend's values and a recorded choice list replays to the same value
 // (shrinking, cmd/xo nativetest.go). Scalars come from the runtime.
 
+// genRT is the scalar value name (gen_any_int, gen_sized, gen_float,
+// ...) of type t from args (the generator first): the native prelude's
+// llrt_<name> (std/native/llrt/gen.xo, decision 0195) over the C
+// generator's draws, or with XO_LLRT_C=gen (or without the native
+// prelude) the C runtime's rt.<name>.
+func (s *fn) genRT(name string, t *Type, args ...*Value) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("gen") {
+		f := b.declare(impl, nil, nil)
+		v := s.call(f.Name, f.Results[0], "", args...)
+		if v.Type != t && v.Type.Kind == KInt && t.Kind == KInt {
+			v = s.add(OpIntConv, t, nil, v)
+		}
+		return v
+	}
+	return s.rt(name, t, args...)
+}
+
 // sizedGenKind is xo_gen_sized's kind of each sized integer.
 var sizedGenKind = map[string]int64{"Int32": 1, "Int16": 2, "Int8": 3, "UInt64": 4, "UInt32": 5, "UInt16": 6, "UInt8": 7}
 
@@ -43,32 +61,32 @@ func (b *builder) genValueFunc(ct check.Type, at ast.Node) string {
 		}
 		switch {
 		case isPreludeNamed(ct, "Int", "Int64"):
-			s.retv(s.rt("gen_int", t, g))
+			s.retv(s.genRT("gen_any_int", t, g))
 			return
 		case isPreludeNamed(ct, "Int32", "Int16", "Int8", "UInt64", "UInt32", "UInt16", "UInt8"):
 			n := check.Resolve(ct).(*check.Named)
-			s.retv(s.rt("gen_sized", t, g, s.cint(sizedGenKind[n.Obj.Name])))
+			s.retv(s.genRT("gen_sized", t, g, s.cint(sizedGenKind[n.Obj.Name])))
 			return
 		case isPreludeNamed(ct, "Float"):
-			s.retv(s.rt("gen_float", t, g))
+			s.retv(s.genRT("gen_float", t, g))
 			return
 		case isPreludeNamed(ct, "Float32"):
-			s.retv(s.rt("f32_round", t, s.rt("gen_float", m.Builtin(KFloat), g)))
+			s.retv(s.rt("f32_round", t, s.genRT("gen_float", m.Builtin(KFloat), g)))
 			return
 		case isPreludeNamed(ct, "Bool"):
 			s.retv(eqInt(intn(2), 1))
 			return
 		case isPreludeNamed(ct, "Str", "Bytes"):
-			s.retv(s.rt("gen_str", t, g))
+			s.retv(s.genRT("gen_str", t, g))
 			return
 		case isPreludeNamed(ct, "Rune"):
-			s.retv(s.rt("gen_rune", t, g))
+			s.retv(s.genRT("gen_rune", t, g))
 			return
 		case isPreludeNamed(ct, "Duration"):
-			s.retv(s.rt("gen_duration", t, g))
+			s.retv(s.genRT("gen_duration", t, g))
 			return
 		case isPreludeNamed(ct, "Time"):
-			s.retv(s.rt("gen_time", t, g))
+			s.retv(s.genRT("gen_time", t, g))
 			return
 		case isPreludeNamed(ct, "Secret") && t.Kind == KStruct && len(t.Fields) == 1:
 			n := check.Resolve(ct).(*check.Named)
@@ -77,7 +95,7 @@ func (b *builder) genValueFunc(ct check.Type, at ast.Node) string {
 		case isPreludeNamed(ct, "List") && t.Kind == KList:
 			n := check.Resolve(ct).(*check.Named)
 			enter()
-			cnt := s.rt("gen_size", intT, g)
+			cnt := s.genRT("gen_size", intT, g)
 			xs := local("xs")
 			s.writeVar(xs, s.call("list.new", t, ""))
 			s.forUpTo(cnt, func(*Value) {
@@ -92,7 +110,7 @@ func (b *builder) genValueFunc(ct check.Type, at ast.Node) string {
 			n := check.Resolve(ct).(*check.Named)
 			put := b.mapPut(t, at)
 			enter()
-			cnt := s.rt("gen_size", intT, g)
+			cnt := s.genRT("gen_size", intT, g)
 			mv := local("m")
 			s.writeVar(mv, s.emptyMap(t))
 			s.forUpTo(cnt, func(*Value) {

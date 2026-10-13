@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/gen
 use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/num
@@ -2216,3 +2217,23 @@ fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
 fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
 
 fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }
+
+// The scalar values of property tests and testing.gen (decision 0195):
+// in Xo (std/native/llrt/gen.xo) over the C generator's draws; with
+// XO_LLRT_C=gen the Go SSA builder calls the C runtime instead.
+
+fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
+
+fn llrt_gen_any_int(g: Int) -> Int { gen.any_int(g) }
+
+fn llrt_gen_sized(g: Int, kind: Int) -> Int { gen.sized(g, kind) }
+
+fn llrt_gen_float(g: Int) -> Float { gen.float(g) }
+
+fn llrt_gen_rune(g: Int) -> Int { gen.rune(g) }
+
+fn llrt_gen_str(g: Int) -> Str { gen.str(g) }
+
+fn llrt_gen_duration(g: Int) -> Int { gen.duration(g) }
+
+fn llrt_gen_time(g: Int) -> Int { gen.time(g) }

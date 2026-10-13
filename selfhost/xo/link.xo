@@ -292,6 +292,14 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // and of the scalar values of property tests (decision 0195,
+  // XO_LLRT_C=gen; xo_gen_size also names xo_gen_sized)
+  for sym in ["xo_gen_size", "xo_gen_any_int", "xo_gen_float", "xo_gen_rune", "xo_gen_str", "xo_gen_duration", "xo_gen_time"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_GEN_C")
+      break
+    }
+  }
   // and of MemFs.fail_next's pattern match (decision 0195,
   // XO_LLRT_C=glob)
   if calls_sym(code, "xo_test_glob") {

@@ -168,6 +168,10 @@ func TestIOFlagsDigestAndGlob(t *testing.T) {
 		{"bl _xo_crypto_b64\n", "-DXO_DIGEST_C", true},
 		{"bl _xo_crypto_equal\nbl _xo_crypto_ed25519_sign\n", "-DXO_DIGEST_C", false},
 		{"bl _xo_test_glob\n", "-DXO_GLOB_C", true},
+		{"bl _xo_gen_any_int\n", "-DXO_GEN_C", true},
+		{"bl _xo_gen_sized\n", "-DXO_GEN_C", true},
+		{"call ptr @xo_gen_str(i64 %1, ptr %2)\n", "-DXO_GEN_C", true},
+		{"bl _xo_gen_intn\nbl _xo_gen_draw\nbl _xo_gen_depth\nbl _xo_gen_enter\nbl _xo_gen_deep\n", "-DXO_GEN_C", false},
 		{"bl _xo_test_memfs_take\n", "-DXO_GLOB_C", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), c.flag)
