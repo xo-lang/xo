@@ -582,6 +582,7 @@ fn (var g: Gen) begin_helper(ps: List[Str]) {
 
 /// The text of the helper in the current buffer.
 fn (var g: Gen) end_helper(name: Str, ps: List[Str], rs: List[Str], comment: Str) {
+  g.coalesce_locals(-1)
   var head = "(func ${name}"
   if !ps.is_empty() {
     head = "${head} (param ${ps.join(" ")})"

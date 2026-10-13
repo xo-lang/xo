@@ -1,0 +1,484 @@
+// Local coalescing (decision 0179, stage 3): after a function is
+// lowered, its locals are merged by exact liveness over the emitted
+// code, so a frame holds only as many locals of each type as are live at
+// once. A browser's baseline compiler (V8's Liftoff) gives every local a
+// stack slot, and the self hosted checker's expression walk (eleven
+// functions per level of a program's nested expression, 14,217 locals
+// in all) overflowed a Chrome worker's stack; plan_locals shares locals
+// only between values of one leaf signature whose widened intervals do
+// not overlap, and the dispatch loop's br_table makes every block a
+// successor of every jump to it.
+//
+// The pass: control flow of the wasm code (block, loop, if, else, br,
+// br_if, br_table, return), with the dispatch loop's jumps
+// (`i32.const K`, `local.set PC`, `br $L`) taken as jumps to the K-th
+// target of its br_table; live locals per basic block (bitsets); an
+// interference graph (a local defined where another is live, except the
+// source of a copy); and a greedy coloring per type. Parameters keep
+// their indexes and the dispatch local keeps a local of its own. Locals
+// never read or written are dropped.
+
+/// Bits per word of a bitset (no sign bit, no overflowing shift).
+const CW = 62
+
+/// Coalesces the locals of the function in the current buffer. pc is the
+/// dispatch loop's local (its index).
+fn (var g: Gen) coalesce_locals(pc: Int) {
+  let np = g.cur.nparams
+  let nl = g.cur.locals.len()
+  if nl < 2 {
+    return
+  }
+  let lines = g.cur.lines
+  let n = lines.len()
+  // per line: what it does (OP_*) and its local (-1 none, relative to
+  // the first local) or label
+  var op: List[Int] = []
+  var arg: List[Int] = []
+  var lab: List[Str] = []
+  // the used locals, numbered densely
+  var dense: List[Int] = []
+  for _ in 0..nl {
+    dense.push(-1)
+  }
+  var orig: List[Int] = []
+  for l in lines {
+    var o = OP_OTHER
+    var a = -1
+    var lb = ""
+    if l.starts_with("local.") && l.len() > 10 {
+      let i = (Int.parse(l[10..l.len()]) ?? 0) - np
+      if i >= 0 && i < nl {
+        o = if l.starts_with("local.get") { OP_GET } else if l.starts_with("local.set") { OP_SET } else { OP_TEE }
+        if dense[i] < 0 {
+          dense[i] = orig.len()
+          orig.push(i)
+        }
+        a = dense[i]
+      }
+    } else if l.starts_with("block") {
+      o = OP_BLOCK
+      lb = label_of(l, 6)
+    } else if l.starts_with("loop") {
+      o = OP_LOOP
+      lb = label_of(l, 5)
+    } else if l == "if" || l.starts_with("if ") {
+      o = OP_IF
+      lb = label_of(l, 3)
+    } else if l == "else" {
+      o = OP_ELSE
+    } else if l == "end" {
+      o = OP_END
+    } else if l.starts_with("br_table ") {
+      o = OP_BR_TABLE
+      lb = l[9..l.len()]
+    } else if l.starts_with("br_if ") {
+      o = OP_BR_IF
+      lb = l[6..l.len()]
+    } else if l.starts_with("br ") {
+      o = OP_BR
+      lb = l[3..l.len()]
+    } else if l == "return" || l == "unreachable" {
+      o = OP_STOP
+    }
+    op.push(o)
+    arg.push(a)
+    lab.push(lb)
+  }
+  let nu = orig.len()
+  if nu == 0 {
+    g.cur.locals = []
+    return
+  }
+  let pcd = if pc - np >= 0 && pc - np < nl { dense[pc - np] } else { -1 }
+  // the structure: the end (and else) of every block, loop, and if
+  var mend: List[Int] = []
+  var melse: List[Int] = []
+  for _ in 0..n {
+    mend.push(-1)
+    melse.push(-1)
+  }
+  var st: List[Int] = []
+  for i in 0..n {
+    let o = op[i]
+    if o == OP_BLOCK || o == OP_LOOP || o == OP_IF {
+      st.push(i)
+    } else if o == OP_ELSE {
+      if st.len() > 0 {
+        melse[st[st.len() - 1]] = i
+        mend[i] = -2
+      }
+    } else if o == OP_END {
+      if let Some(s) = st.pop() {
+        mend[s] = i
+        if melse[s] >= 0 {
+          mend[melse[s]] = i
+        }
+      }
+    }
+  }
+  // the target line of each branch (-1: past the end, a return), found
+  // with the stack of open constructs at the branch
+  var tgt: List[List[Int]] = []
+  for _ in 0..n {
+    tgt.push([])
+  }
+  st = []
+  for i in 0..n {
+    let o = op[i]
+    if o == OP_BLOCK || o == OP_LOOP || o == OP_IF {
+      st.push(i)
+    } else if o == OP_END {
+      st.pop()
+    } else if o == OP_BR || o == OP_BR_IF {
+      tgt[i] = [branch_target(op, lab, mend, st, lab[i])]
+    } else if o == OP_BR_TABLE {
+      var ts: List[Int] = []
+      for x in lab[i].split(" ") {
+        if !x.is_empty() {
+          ts.push(branch_target(op, lab, mend, st, x))
+        }
+      }
+      tgt[i] = ts
+    }
+  }
+  // the dispatch loop: when every write of the dispatch local is
+  // `i32.const K` then `br` to the loop of the br_table that reads it,
+  // that br goes to the table's K-th target, and the table is reached
+  // only from the function's entry (the local is 0)
+  var bt = -1
+  for i in 1..n {
+    if op[i] == OP_BR_TABLE && op[i - 1] == OP_GET && arg[i - 1] == pcd && pcd >= 0 {
+      bt = i
+      break
+    }
+  }
+  var direct = bt >= 0
+  if direct {
+    for i in 0..n {
+      if (op[i] == OP_SET || op[i] == OP_TEE) && arg[i] == pcd {
+        if op[i] == OP_TEE || i == 0 || i + 1 >= n || !lines[i - 1].starts_with("i32.const ") || op[i + 1] != OP_BR {
+          direct = false
+          break
+        }
+        // the br must go to the table's loop: back to the line after
+        // the loop, before the table
+        let t = tgt[i + 1][0]
+        if t < 0 || t > bt || op[t - 1] != OP_LOOP {
+          direct = false
+          break
+        }
+      }
+    }
+  }
+  if direct {
+    let ts = tgt[bt]
+    for i in 0..n {
+      if op[i] == OP_SET && arg[i] == pcd {
+        let k = Int.parse(lines[i - 1][10..lines[i - 1].len()]) ?? 0
+        let k2 = if k >= 0 && k < ts.len() - 1 { k } else { ts.len() - 1 }
+        tgt[i + 1] = [ts[k2]]
+      }
+    }
+    tgt[bt] = [ts[0]]
+  }
+  // basic blocks: a block starts at line 0 and after every control line
+  var bof: List[Int] = []
+  var bstart: List[Int] = []
+  for i in 0..n {
+    if i == 0 || is_control(op[i - 1]) {
+      bstart.push(i)
+    }
+    bof.push(bstart.len() - 1)
+  }
+  let nb = bstart.len()
+  var bend: List[Int] = []
+  for b in 0..nb {
+    bend.push(if b + 1 < nb { bstart[b + 1] - 1 } else { n - 1 })
+  }
+  var succ: List[List[Int]] = []
+  var pred: List[List[Int]] = []
+  for _ in 0..nb {
+    succ.push([])
+    pred.push([])
+  }
+  for b in 0..nb {
+    let l = bend[b]
+    let o = op[l]
+    var ls: List[Int] = []
+    if o == OP_BR || o == OP_BR_TABLE {
+      ls = tgt[l]
+    } else if o == OP_BR_IF {
+      ls = [tgt[l][0], l + 1]
+    } else if o == OP_IF {
+      ls = [l + 1, if melse[l] >= 0 { melse[l] + 1 } else { mend[l] + 1 }]
+    } else if o == OP_ELSE {
+      ls = [mend[l] + 1]
+    } else if o == OP_STOP {
+      ls = []
+    } else {
+      ls = [l + 1]
+    }
+    for t in ls {
+      if t >= 0 && t < n {
+        let sb = bof[t]
+        if !succ[b].contains(sb) {
+          succ[b].push(sb)
+          pred[sb].push(b)
+        }
+      }
+    }
+  }
+  // gen and kill per block, then live in to a fixpoint
+  let w = (nu + CW - 1) / CW
+  var gen: List[Int] = []
+  var kill: List[Int] = []
+  var lin: List[Int] = []
+  for _ in 0..nb * w {
+    gen.push(0)
+    kill.push(0)
+    lin.push(0)
+  }
+  for b in 0..nb {
+    for r in 0..bend[b] - bstart[b] + 1 {
+      let i = bend[b] - r
+      let a = arg[i]
+      if a >= 0 {
+        let x = b * w + a / CW
+        let bit = 1 << (a % CW)
+        if op[i] == OP_GET {
+          gen[x] = gen[x] | bit
+        } else {
+          gen[x] = gen[x] & ~bit
+          kill[x] = kill[x] | bit
+        }
+      }
+    }
+  }
+  var inq: List[Bool] = []
+  var work: List[Int] = []
+  for b in 0..nb {
+    inq.push(true)
+    work.push(b)
+  }
+  var out: List[Int] = []
+  for _ in 0..w {
+    out.push(0)
+  }
+  while let Some(b) = work.pop() {
+    inq[b] = false
+    for k in 0..w {
+      out[k] = 0
+    }
+    for s in succ[b] {
+      for k in 0..w {
+        out[k] = out[k] | lin[s * w + k]
+      }
+    }
+    var changed = false
+    for k in 0..w {
+      let v = gen[b * w + k] | (out[k] & ~kill[b * w + k])
+      if v != lin[b * w + k] {
+        lin[b * w + k] = v
+        changed = true
+      }
+    }
+    if changed {
+      for p in pred[b] {
+        if !inq[p] {
+          inq[p] = true
+          work.push(p)
+        }
+      }
+    }
+  }
+  // interference: a local defined where another is live
+  var adj: List[Int] = []
+  for _ in 0..nu * w {
+    adj.push(0)
+  }
+  var live: List[Int] = []
+  for _ in 0..w {
+    live.push(0)
+  }
+  for b in 0..nb {
+    for k in 0..w {
+      live[k] = 0
+    }
+    for s in succ[b] {
+      for k in 0..w {
+        live[k] = live[k] | lin[s * w + k]
+      }
+    }
+    for r in 0..bend[b] - bstart[b] + 1 {
+      let i = bend[b] - r
+      let a = arg[i]
+      if a >= 0 {
+        let x = a / CW
+        let bit = 1 << (a % CW)
+        if op[i] == OP_GET {
+          live[x] = live[x] | bit
+        } else {
+          // the source of a copy (`local.get y`, `local.set a`) holds the
+          // same value: they may share
+          var y = -1
+          if op[i] == OP_SET && i > 0 && op[i - 1] == OP_GET {
+            y = arg[i - 1]
+          }
+          let ybit = if y >= 0 { 1 << (y % CW) } else { 0 }
+          let had = y >= 0 && live[y / CW] & ybit != 0
+          if had {
+            live[y / CW] = live[y / CW] & ~ybit
+          }
+          for k in 0..w {
+            adj[a * w + k] = adj[a * w + k] | live[k]
+          }
+          if had {
+            live[y / CW] = live[y / CW] | ybit
+          }
+          live[x] = live[x] & ~bit
+        }
+      }
+    }
+  }
+  // symmetric, no self edges
+  for a in 0..nu {
+    adj[a * w + a / CW] = adj[a * w + a / CW] & ~(1 << (a % CW))
+  }
+  for a in 0..nu {
+    for k in 0..w {
+      var x = 0 + adj[a * w + k]
+      var c = 0
+      while x != 0 {
+        if x & 1 == 1 {
+          let j = k * CW + c
+          adj[j * w + a / CW] = adj[j * w + a / CW] | (1 << (a % CW))
+        }
+        x = x >> 1
+        c += 1
+      }
+    }
+  }
+  // greedy coloring per type, in order of first use; the dispatch local
+  // has a color no other local takes
+  var color: List[Int] = []
+  for _ in 0..nu {
+    color.push(-1)
+  }
+  var ncolor: Map[Str, Int] = {}
+  var newidx: List[Int] = []
+  for _ in 0..nu {
+    newidx.push(-1)
+  }
+  var types: List[Str] = []
+  var slot: Map[Str, List[Int]] = {}
+  var mark: List[Int] = []
+  if pcd >= 0 {
+    newidx[pcd] = np
+    types.push(g.cur.locals[orig[pcd]])
+  }
+  for a in 0..nu {
+    if a == pcd {
+      continue
+    }
+    let t = g.cur.locals[orig[a]]
+    let nc = ncolor.get(t) ?? 0
+    while mark.len() < nc + 1 {
+      mark.push(-1)
+    }
+    for k in 0..w {
+      var x = 0 + adj[a * w + k]
+      var c = 0
+      while x != 0 {
+        if x & 1 == 1 {
+          let j = k * CW + c
+          if j != pcd && color[j] >= 0 && g.cur.locals[orig[j]] == t {
+            mark[color[j]] = a
+          }
+        }
+        x = x >> 1
+        c += 1
+      }
+    }
+    var c = 0
+    while c < nc && mark[c] == a {
+      c += 1
+    }
+    color[a] = c
+    var sl = slot.get(t) ?? []
+    if c == nc {
+      ncolor[t] = nc + 1
+      sl.push(np + types.len())
+      types.push(t)
+      slot[t] = sl
+    }
+    newidx[a] = sl[c]
+  }
+  var outl: List[Str] = []
+  for i in 0..n {
+    if arg[i] >= 0 {
+      let l = lines[i]
+      outl.push("${l[0..10]}${newidx[arg[i]]}")
+    } else {
+      outl.push(lines[i])
+    }
+  }
+  g.cur.lines = outl
+  g.cur.locals = types
+}
+
+const OP_OTHER = 0
+const OP_GET = 1
+const OP_SET = 2
+const OP_TEE = 3
+const OP_BLOCK = 4
+const OP_LOOP = 5
+const OP_IF = 6
+const OP_ELSE = 7
+const OP_END = 8
+const OP_BR = 9
+const OP_BR_IF = 10
+const OP_BR_TABLE = 11
+const OP_STOP = 12
+
+/// Whether a line of kind o ends a basic block.
+fn is_control(o: Int) -> Bool {
+  o >= OP_BLOCK
+}
+
+/// The label of a block, loop, or if line (`$X` after the keyword), or "".
+fn label_of(l: Str, at: Int) -> Str {
+  if l.len() > at && l[at..at + 1] == "$" {
+    let rest = l[at..l.len()]
+    if let Some(sp) = rest.find(" ") {
+      return rest[0..sp]
+    }
+    return rest
+  }
+  ""
+}
+
+/// The line a branch to label x goes to, given the open constructs st
+/// (innermost last): after the end of a block or if, the start of a
+/// loop's body; -1 past the function's end (a return).
+fn branch_target(op: List[Int], lab: List[Str], mend: List[Int], st: List[Int], x: Str) -> Int {
+  var k = st.len() - 1
+  if !x.starts_with("$") {
+    k = st.len() - 1 - (Int.parse(x) ?? 0)
+  } else {
+    while k >= 0 && lab[st[k]] != x {
+      k -= 1
+    }
+  }
+  if k < 0 {
+    return -1
+  }
+  let s = st[k]
+  if op[s] == OP_LOOP {
+    return s + 1
+  }
+  if mend[s] < 0 {
+    return -1
+  }
+  mend[s] + 1
+}
