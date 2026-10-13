@@ -147,17 +147,13 @@ fn removable(inst: Inst) -> Bool {
 /// copied it again even when nothing was deleted (bench/results/xo1-perf).
 fn (var g: G) dce() {
   let blocks = g.all_blocks()
-  var live: List[Bool] = []
-  for _ in 0..g.fp.len() {
-    live.push(false)
+  var lists: List[List[Inst]] = []
+  for b in blocks {
+    lists.push(g.blocks[b].insts)
   }
-  var changed = true
-  while changed {
-    changed = false
-    for b in blocks {
-      changed = dce_mark(g.blocks[b].insts, live) || changed
-    }
-  }
+  let live = dce_live(lists, g.fp.len())
+  // the blocks' lists are unique again before they are rebuilt
+  lists = []
   for b in blocks {
     if dce_dead(g.blocks[b].insts, live) {
       let out = dce_keep(g.blocks[b].insts, live)
@@ -166,37 +162,113 @@ fn (var g: G) dce() {
   }
 }
 
-/// One pass of dce's liveness over insts: marks the uses of what is kept
-/// and the sources of live parallel moves; reports whether it marked
-/// anything new.
-fn dce_mark(insts: List[Inst], var live: List[Bool]) -> Bool {
-  var changed = false
-  for inst in insts {
-    if inst.kind == K_PMOVE {
-      for (k, d) in inst.defs.indexed() {
-        let a = inst.srcs[k]
-        if live[d] && a.kind == S_REG && !live[a.v] {
-          live[a.v] = true
-          changed = true
-        }
-      }
-      continue
-    }
-    var keep = !removable(inst)
-    for d in inst.defs {
-      keep = keep || live[d]
-    }
-    if !keep {
-      continue
-    }
-    for u in inst.us {
-      if !live[u] {
-        live[u] = true
-        changed = true
-      }
+/// dce's liveness over the instruction lists of all blocks, to a fixed
+/// point: the uses of every instruction kept (not removable, or with a
+/// live definition) and the sources of the live destinations of parallel
+/// moves. A worklist over the definition sites of each register that
+/// becomes live, where passes over every instruction until none marked
+/// anything new took as many passes as the longest chain of moves: the
+/// same least fixed point (bench/results/xo1-speed-2026-10-13.md).
+fn dce_live(lists: List[List[Inst]], n: Int) -> List[Bool] {
+  var live: List[Bool] = List.with_capacity(n)
+  var start: List[Int] = List.with_capacity(n + 1)
+  for _ in 0..n {
+    live.push(false)
+    start.push(0)
+  }
+  start.push(0)
+  // the definition sites of register v are site_l, site_i, site_k at
+  // start[v] .. start[v + 1] (list, instruction, position in its defs)
+  for l in lists {
+    dce_count_defs(l, start)
+  }
+  for v in 0..n {
+    start[v + 1] = start[v + 1] + start[v]
+  }
+  let total = start[n]
+  var fill: List[Int] = List.with_capacity(n)
+  for v in 0..n {
+    fill.push(start[v])
+  }
+  var site_l: List[Int] = List.with_capacity(total)
+  var site_i: List[Int] = List.with_capacity(total)
+  var site_k: List[Int] = List.with_capacity(total)
+  for _ in 0..total {
+    site_l.push(0)
+    site_i.push(0)
+    site_k.push(0)
+  }
+  var stack: List[Int] = []
+  for li in 0..lists.len() {
+    dce_sites(lists[li], li, fill, site_l, site_i, site_k)
+    dce_roots(lists[li], live, stack)
+  }
+  while !stack.is_empty() {
+    let v = stack.pop() ?? 0
+    for j in start[v]..start[v + 1] {
+      dce_reach(lists[site_l[j]], site_i[j], site_k[j], live, stack)
     }
   }
-  changed
+  live
+}
+
+/// Counts the definitions of each register v of insts into start[v + 1].
+fn dce_count_defs(insts: List[Inst], var start: List[Int]) {
+  for inst in insts {
+    for d in inst.defs {
+      start[d + 1] = start[d + 1] + 1
+    }
+  }
+}
+
+/// Records the definition sites of the instructions of list li.
+fn dce_sites(insts: List[Inst], li: Int, var fill: List[Int], var site_l: List[Int], var site_i: List[Int], var site_k: List[Int]) {
+  for i in 0..insts.len() {
+    var k = 0
+    for d in insts[i].defs {
+      let at = fill[d]
+      site_l[at] = li
+      site_i[at] = i
+      site_k[at] = k
+      fill[d] = at + 1
+      k += 1
+    }
+  }
+}
+
+/// Marks the uses of the instructions of insts that are kept whatever is
+/// live: neither parallel moves nor removable.
+fn dce_roots(insts: List[Inst], var live: List[Bool], var stack: List[Int]) {
+  for inst in insts {
+    if inst.kind == K_PMOVE || removable(inst) {
+      continue
+    }
+    dce_use(inst.us, live, stack)
+  }
+}
+
+/// Definition k of instruction i of insts became live: a parallel move
+/// makes its source live, another instruction is kept and makes its uses
+/// live.
+fn dce_reach(insts: List[Inst], i: Int, k: Int, var live: List[Bool], var stack: List[Int]) {
+  if insts[i].kind == K_PMOVE {
+    let a = insts[i].srcs[k]
+    if a.kind == S_REG && !live[a.v] {
+      live[a.v] = true
+      stack.push(a.v)
+    }
+    return
+  }
+  dce_use(insts[i].us, live, stack)
+}
+
+fn dce_use(us: List[Int], var live: List[Bool], var stack: List[Int]) {
+  for u in us {
+    if !live[u] {
+      live[u] = true
+      stack.push(u)
+    }
+  }
 }
 
 /// Whether dce_keep would change insts: a removable instruction with

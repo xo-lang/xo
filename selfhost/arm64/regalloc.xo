@@ -490,13 +490,13 @@ fn (var g: G) regalloc() {
       var chosen = -1
       for r0 in cands {
         var r = r0
-        if overlaps(occ[r], ranges[v]) || (nc && !is_callee(r)) {
+        if overlaps_sorted(occ[r], ranges[v]) || (nc && !is_callee(r)) {
           continue
         }
         if is_callee(r) && !used_callee[r] {
           // a callee saved register already saved before a fresh one
           for r2 in cands {
-            if is_callee(r2) && used_callee[r2] && !overlaps(occ[r2], ranges[v]) {
+            if is_callee(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) {
               r = r2
               break
             }
@@ -509,16 +509,14 @@ fn (var g: G) regalloc() {
         // a spill slot no value live at the same time holds (first fit,
         // like the registers; gotchas/arm64-large-frame.md)
         var k = 0
-        while k < slot_occ.len() && overlaps(slot_occ[k], ranges[v]) {
+        while k < slot_occ.len() && overlaps_sorted(slot_occ[k], ranges[v]) {
           k += 1
         }
         if k == slot_occ.len() {
           slot_occ.push([])
           g.slots += 1
         }
-        let so = slot_occ[k]
-        slot_occ[k] = []
-        slot_occ[k] = merge_sorted(so, ranges[v])
+        insert_ranges(slot_occ, k, ranges[v])
         g.loc[v] = Loc{reg: -1, slot: k}
         continue
       }
@@ -527,9 +525,7 @@ fn (var g: G) regalloc() {
         used_callee[chosen] = true
         ncallee += 1
       }
-      let oc = occ[chosen]
-      occ[chosen] = []
-      occ[chosen] = merge_sorted(oc, ranges[v])
+      insert_ranges(occ, chosen, ranges[v])
     }
     // a frame past the reach of an sp relative ldr or str: allocate again
     // with x28 kept free, for the addresses of the far slots
@@ -611,6 +607,53 @@ fn merge_ranges(rs: List[Rng]) -> List[Rng] {
     out.push(r)
   }
   out
+}
+
+/// Adds the ranges of rs (sorted and disjoint, none overlapping a range
+/// of lists[i]) to lists[i], kept sorted by start. The allocator's
+/// occupancy lists are only asked overlaps_sorted, so adjacent ranges
+/// stay apart: merge_sorted joined them and rebuilt the whole list per
+/// assignment, quadratic in the ranges a register or slot holds
+/// (bench/results/xo1-speed-2026-10-13.md).
+fn insert_ranges(var lists: List[List[Rng]], i: Int, rs: List[Rng]) {
+  for q in rs {
+    // the first range starting after q
+    var lo = 0
+    var hi = lists[i].len()
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if lists[i][mid].s <= q.s {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+    lists[i].insert(lo, q)
+  }
+}
+
+/// Whether a range of rs overlaps one of occ, whose ranges are disjoint
+/// and sorted by start (so by end as well): a binary search per range of
+/// rs instead of overlaps' walk over all of occ.
+fn overlaps_sorted(occ: List[Rng], rs: List[Rng]) -> Bool {
+  let n = occ.len()
+  for q in rs {
+    // the first range of occ ending at or after q's start
+    var lo = 0
+    var hi = n
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if occ[mid].e < q.s {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+    if lo < n && occ[lo].s <= q.e {
+      return true
+    }
+  }
+  false
 }
 
 /// Merges two sorted, merged range lists (mergeSorted).
@@ -751,15 +794,9 @@ fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
 /// list inside a list element copies it on the native backends,
 /// gotchas/xo-native-nested-element-update.md).
 fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
-  var l = lists[i]
-  lists[i] = []
-  l.push(r)
-  lists[i] = l
+  lists[i].push(r)
 }
 
 fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
-  var l = lists[i]
-  lists[i] = []
-  l.push(x)
-  lists[i] = l
+  lists[i].push(x)
 }
