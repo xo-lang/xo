@@ -13,11 +13,203 @@
 // decimal (or the error's message), then standard output and error when
 // it ran.
 
+#ifdef _WIN32
+// Windows (decision 0197, stage 2): CreateProcessW instead of posix_spawn,
+// with the command line quoted as Go's syscall.EscapeArg and the child's
+// standard handles passed through an explicit handle list
+// (STARTUPINFOEXW), so no other handle leaks into it. A process id is the
+// process handle (pid_t), reaped by WaitForSingleObject. A pipe whose end
+// the program reads or writes on the event loop is "pumped": the child
+// gets an anonymous pipe, and a thread of its own copies between that
+// pipe and a loopback socket pair whose other end the program uses (the
+// poller waits on sockets only, xo_win.c). A pipe between two children
+// or to the standard input feeder is a plain pipe.
+typedef intptr_t pid_t;
+
+// pr_rd and pr_wr read and write the program's end of a pumped pipe (a
+// socket), errno set on failure.
+static ssize_t pr_rd(int fd, void *b, size_t n) {
+	int r = recv((SOCKET)fd, b, (int)n, 0);
+	if (r == SOCKET_ERROR) {
+		errno = xo_wsa_errno();
+		return -1;
+	}
+	return r;
+}
+
+static ssize_t pr_wr(int fd, const void *b, size_t n) {
+	int r = send((SOCKET)fd, b, (int)n, 0);
+	if (r == SOCKET_ERROR) {
+		errno = xo_wsa_errno();
+		return -1;
+	}
+	return r;
+}
+
+// pr_w_text is the system's message for a Win32 error (Go's
+// syscall.Errno.Error on Windows: FormatMessage without the line end).
+static void pr_w_text(DWORD e, char *buf, size_t n) {
+	wchar_t w[512];
+	DWORD k = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, NULL, e,
+		MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), w, 512, NULL);
+	while (k > 0 && (w[k - 1] == L'\n' || w[k - 1] == L'\r' || w[k - 1] == L' ')) {
+		k--;
+	}
+	int u = k == 0 ? -1 : xo_w_utf8(w, (int)k, buf, n - 1);
+	if (u < 0) {
+		snprintf(buf, n, "winapi error #%lu", (unsigned long)e);
+		return;
+	}
+	buf[u] = 0;
+}
+
+// the status a process gets when it is killed: 128 plus SIGKILL's number,
+// as on Unix (std.md 3.7)
+#define PR_KILLED 137
+
+// pr_reap reaps pid when it has exited (waiting when block): 1 and its
+// exit code in *ws, else 0. The handle is closed once reaped.
+static int pr_reap(pid_t pid, int *ws, int block) {
+	HANDLE h = (HANDLE)pid;
+	if (WaitForSingleObject(h, block ? INFINITE : 0) != WAIT_OBJECT_0) {
+		return 0;
+	}
+	DWORD code = 0;
+	GetExitCodeProcess(h, &code);
+	*ws = (int)code;
+	CloseHandle(h);
+	return 1;
+}
+
+// pr_kill9 ends a started child (Child.kill, cancellation)
+static void pr_kill9(pid_t pid) { TerminateProcess((HANDLE)pid, PR_KILLED); }
+
+// pr_release forgets a child that is not reaped
+static void pr_release(pid_t pid) { CloseHandle((HANDLE)pid); }
+
+// a pumped pipe's copying thread: from the pipe handle h to the socket s
+// (out), or from s to h
+typedef struct {
+	HANDLE h;
+	SOCKET s;
+	int out;
+} pr_pump;
+
+static void *pr_pump_main(void *a) {
+	pr_pump *p = a;
+	char b[65536];
+	if (p->out) {
+		DWORD n;
+		for (;;) {
+			if (!ReadFile(p->h, b, sizeof b, &n, NULL)) {
+				break; // ERROR_BROKEN_PIPE: every writer closed it
+			}
+			int64_t at = 0;
+			while (at < (int64_t)n) {
+				int w = send(p->s, b + at, (int)(n - at), 0);
+				if (w <= 0) {
+					goto done; // the program closed its end
+				}
+				at += w;
+			}
+		}
+	} else {
+		for (;;) {
+			int r = recv(p->s, b, sizeof b, 0);
+			if (r <= 0) {
+				break; // the program closed its end
+			}
+			DWORD at = 0, w;
+			while (at < (DWORD)r) {
+				if (!WriteFile(p->h, b + at, (DWORD)r - at, &w, NULL)) {
+					goto done; // the child closed its input
+				}
+				at += w;
+			}
+		}
+	}
+done:
+	CloseHandle(p->h);
+	closesocket(p->s);
+	free(p);
+	return NULL;
+}
+
+// pr_pipe2 makes a pipe not inherited by children (the handle list names
+// what a child gets). nb -1: both ends are C runtime descriptors of the
+// pipe (between two children, or to the input feeder); nb 0 or 1: that
+// end is the program's, a nonblocking socket pumped to the pipe, and the
+// other end is a descriptor of the pipe for the child.
+static int pr_pipe2(int p[2], int nb) {
+	p[0] = p[1] = -1;
+	HANDLE r, w;
+	if (!CreatePipe(&r, &w, NULL, 1 << 16)) {
+		errno = xo_w_errno(GetLastError());
+		return -1;
+	}
+	int sv[2] = {-1, -1};
+	if (nb >= 0) {
+		if (xo_w_socketpair(sv) < 0) {
+			CloseHandle(r);
+			CloseHandle(w);
+			errno = EMFILE;
+			return -1;
+		}
+		// the pump's end blocks
+		u_long zero = 0;
+		ioctlsocket((SOCKET)sv[1], FIONBIO, &zero);
+	}
+	HANDLE child = nb == 0 ? w : r, pumped = nb == 0 ? r : w;
+	if (nb < 0) {
+		p[0] = _open_osfhandle((intptr_t)r, _O_RDONLY | _O_BINARY);
+		p[1] = _open_osfhandle((intptr_t)w, _O_WRONLY | _O_BINARY);
+		return 0;
+	}
+	p[1 - nb] = _open_osfhandle((intptr_t)child, (nb == 0 ? _O_WRONLY : _O_RDONLY) | _O_BINARY);
+	p[nb] = sv[0];
+	pr_pump *pp = malloc(sizeof *pp);
+	if (!pp) {
+		xo_oom();
+	}
+	*pp = (pr_pump){pumped, (SOCKET)sv[1], nb == 0};
+	pthread_t t;
+	pthread_attr_t at;
+	pthread_attr_init(&at);
+	pthread_attr_setstacksize(&at, 256 << 10);
+	pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+	if (pthread_create(&t, &at, pr_pump_main, pp) != 0) {
+		xo_oom();
+	}
+	pthread_attr_destroy(&at);
+	return 0;
+}
+#else
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 extern char **environ;
+
+#define pr_rd read
+#define pr_wr write
+
+// pr_reap reaps pid when it has exited (waiting when block): 1 and its
+// wait status in *ws, else 0 (-1 on an error).
+static int pr_reap(pid_t pid, int *ws, int block) {
+	pid_t r = waitpid(pid, ws, block ? 0 : WNOHANG);
+	if (r == pid) {
+		return 1;
+	}
+	return r < 0 && errno != EINTR ? -1 : 0;
+}
+
+static void pr_kill9(pid_t pid) { kill(pid, SIGKILL); }
+
+static void pr_release(pid_t pid) {
+	int ws;
+	waitpid(pid, &ws, WNOHANG);
+}
+#endif
 
 
 // the outputs FakeProc.on_run registered, by command
@@ -93,6 +285,103 @@ static xo_rlist *pr_errmsg(const char *cmd, int err) {
 	return pr_fail('2', m);
 }
 
+#ifdef _WIN32
+// pr_has_slash reports whether a command names a path rather than a name
+// looked up in PATH (exec.LookPath on Windows: any of \ / :)
+static int pr_has_slash(const char *cmd) { return strpbrk(cmd, "/\\:") != NULL; }
+
+// pr_w_exe reports whether path is an existing file (not a directory)
+static int pr_w_exe(const char *path) {
+	DWORD a = xo_w_attrs(path);
+	return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// pr_find_exe is exec's findExecutable on Windows: path itself when it
+// has an extension of PATHEXT and exists, else path with each extension
+// of PATHEXT in turn (malloc'd), or NULL.
+static char *pr_find_exe(const char *path) {
+	const char *pe = getenv("PATHEXT");
+	if (!pe || !pe[0]) {
+		pe = ".com;.exe;.bat;.cmd";
+	}
+	size_t pl = strlen(path);
+	const char *dot = strrchr(path, '.');
+	const char *sep = strpbrk(dot ? dot : "", "/\\");
+	if (dot && !sep) {
+		// an extension: as written, when it exists
+		if (pr_w_exe(path)) {
+			return cstr_of(path, (int64_t)pl);
+		}
+	}
+	for (const char *p = pe; *p;) {
+		const char *end = strchr(p, ';');
+		size_t el = end ? (size_t)(end - p) : strlen(p);
+		if (el > 0) {
+			char *full = malloc(pl + el + 1);
+			if (!full) {
+				xo_oom();
+			}
+			memcpy(full, path, pl);
+			for (size_t i = 0; i < el; i++) {
+				char c = p[i];
+				full[pl + i] = (char)(c >= 'A' && c <= 'Z' ? c + 32 : c);
+			}
+			full[pl + el] = 0;
+			if (pr_w_exe(full)) {
+				return full;
+			}
+			free(full);
+		}
+		if (!end) {
+			break;
+		}
+		p = end + 1;
+	}
+	return NULL;
+}
+
+// pr_look_path is exec.LookPath on Windows: a command naming a path is
+// found with PATHEXT's extensions; a name is looked up in each directory
+// of PATH (; separated). The file (malloc'd), or NULL.
+static char *pr_look_path(const char *cmd) {
+	if (pr_has_slash(cmd)) {
+		return pr_find_exe(cmd);
+	}
+	const char *path = getenv("PATH");
+	if (!path) {
+		return NULL;
+	}
+	size_t cl = strlen(cmd);
+	for (const char *p = path;;) {
+		const char *end = strchr(p, ';');
+		size_t dl = end ? (size_t)(end - p) : strlen(p);
+		if (dl >= 2 && p[0] == '"' && p[dl - 1] == '"') {
+			p++;
+			dl -= 2;
+		}
+		if (dl > 0) {
+			char *full = malloc(dl + cl + 2);
+			if (!full) {
+				xo_oom();
+			}
+			memcpy(full, p, dl);
+			full[dl] = '\\';
+			memcpy(full + dl + 1, cmd, cl + 1);
+			char *f = pr_find_exe(full);
+			free(full);
+			if (f) {
+				return f;
+			}
+		}
+		if (!end) {
+			return NULL;
+		}
+		p = end + 1;
+	}
+}
+#else
+static int pr_has_slash(const char *cmd) { return strchr(cmd, '/') != NULL; }
+
 // pr_look_path is exec.LookPath of a name without a slash: the first
 // executable regular file of that name in PATH (malloc'd), or NULL.
 static char *pr_look_path(const char *cmd) {
@@ -127,12 +416,13 @@ static char *pr_look_path(const char *cmd) {
 		p = end + 1;
 	}
 }
+#endif
 
 // pr_drain reads what fd has now into b; 1 at the end of the output.
 static int pr_drain(int fd, nbuf *b) {
 	char t[65536];
 	for (;;) {
-		ssize_t n = read(fd, t, sizeof t);
+		ssize_t n = pr_rd(fd, t, sizeof t);
 		if (n > 0) {
 			nbuf_put(b, t, (int64_t)n);
 			continue;
@@ -147,6 +437,7 @@ static int pr_drain(int fd, nbuf *b) {
 	}
 }
 
+#ifndef _WIN32
 static int pr_pipe(int p[2]) {
 	if (xo_pipe(p) < 0) {
 		return -1;
@@ -338,6 +629,7 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	free(errb.p);
 	return l;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172),
@@ -391,6 +683,13 @@ static int64_t pr_key_len(const char *kv) {
 	return eq ? (int64_t)(eq - kv) : -1;
 }
 
+// names compare without case on Windows (os/exec's dedupEnvCase)
+#ifdef _WIN32
+#define pr_keycmp _strnicmp
+#else
+#define pr_keycmp memcmp
+#endif
+
 // pr_dedup is os/exec's dedupEnv: the last entry of each name wins, in
 // the order of the last entries (the strings are malloc'd, freed or
 // kept).
@@ -405,7 +704,7 @@ static char **pr_dedup(char **env, int n) {
 		int seen = 0;
 		if (kl >= 0) {
 			for (int j = 0; j < k && !seen; j++) {
-				seen = pr_key_len(out[j]) == kl && memcmp(out[j], env[i], (size_t)kl) == 0;
+				seen = pr_key_len(out[j]) == kl && pr_keycmp(out[j], env[i], (size_t)kl) == 0;
 			}
 		} else if (!env[i][0]) {
 			seen = 1;
@@ -501,6 +800,12 @@ static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 	*i += nx;
 	int env_set = c->flags & 1;
 	c->envp = NULL;
+#ifdef _WIN32
+	// os/exec sets no PWD on Windows
+	if (!env_set && nx == 0) {
+		return;
+	}
+#endif
 	if (!env_set && nx == 0 && !c->dir) {
 		return; // the program's environment, as it is
 	}
@@ -538,6 +843,30 @@ static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 		env[k++] = pr_lstr(l, x0 + j);
 	}
 	c->envp = pr_dedup(env, k);
+#ifdef _WIN32
+	// os/exec's addCriticalEnv: a child without SYSTEMROOT cannot start
+	// some system libraries (Winsock among them)
+	int has_root = 0, m = 0;
+	for (; c->envp[m]; m++) {
+		has_root |= pr_key_len(c->envp[m]) == 10 && _strnicmp(c->envp[m], "SYSTEMROOT", 10) == 0;
+	}
+	const char *root = getenv("SYSTEMROOT");
+	if (!has_root && root) {
+		char **e2 = realloc(c->envp, ((size_t)m + 2) * sizeof(char *));
+		if (!e2) {
+			xo_oom();
+		}
+		size_t rl = strlen(root);
+		e2[m] = malloc(rl + 12);
+		if (!e2[m]) {
+			xo_oom();
+		}
+		memcpy(e2[m], "SYSTEMROOT=", 11);
+		memcpy(e2[m] + 11, root, rl + 1);
+		e2[m + 1] = NULL;
+		c->envp = e2;
+	}
+#endif
 }
 
 static void pr_cmd_free(pr_cmd *c) {
@@ -559,6 +888,7 @@ static void pr_cmd_free(pr_cmd *c) {
 
 // pr_pipe2 makes a pipe whose ends close on exec; the end nb (0 or 1, -1
 // neither) is nonblocking.
+#ifndef _WIN32
 static int pr_pipe2(int p[2], int nb) {
 	if (xo_pipe(p) < 0) {
 		p[0] = p[1] = -1;
@@ -572,6 +902,7 @@ static int pr_pipe2(int p[2], int nb) {
 	}
 	return 0;
 }
+#endif
 
 static void pr_close(int *fd) {
 	if (*fd >= 0) {
@@ -585,8 +916,19 @@ static void pr_close(int *fd) {
 // program's, PR_DUP_OUT error as output): 0 started, else the status of
 // an outcome ('1' not found, '2' an error) with *msg its detail
 // (malloc'd).
+#ifdef _WIN32
+static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, char **msg);
+#endif
+
 static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg) {
 	char *file = c->name;
+#ifdef _WIN32
+	file = pr_look_path(c->name); // PATHEXT's extensions apply to paths too
+	if (!file) {
+		*msg = cstr_of(c->name, (int64_t)strlen(c->name));
+		return '1';
+	}
+#else
 	if (!strchr(c->name, '/')) {
 		file = pr_look_path(c->name);
 		if (!file) {
@@ -594,6 +936,7 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 			return '1';
 		}
 	}
+#endif
 	if (c->dir) {
 		// os.StartProcess checks the directory first
 		struct stat sb;
@@ -619,6 +962,14 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 	if (out == PR_INHERIT || err == PR_INHERIT || err == PR_DUP_OUT) {
 		xo_flush(); // the program's output so far comes first
 	}
+#ifdef _WIN32
+	int wfds[3] = {in, out, err};
+	char wst = pr_w_spawn(c, file, wfds, pid, msg);
+	if (file != c->name) {
+		free(file);
+	}
+	return wst;
+#else
 	posix_spawn_file_actions_t fa;
 	posix_spawnattr_t at;
 	posix_spawn_file_actions_init(&fa);
@@ -675,11 +1026,223 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 		free(file);
 	}
 	return st;
+#endif
 }
+
+#ifdef _WIN32
+// pr_w_quote appends s to b quoted as Go's syscall.EscapeArg (the rules
+// CommandLineToArgvW and the C runtime parse a command line by), and also
+// when s holds a line end or another space character: the C runtime
+// splits at spaces and tabs only, but the MSYS2 and Cygwin runtimes (Git
+// for Windows' sh, printf, ...) split at every space character, and
+// quoting is harmless to the others.
+static void pr_w_quote(nbuf *b, const char *s) {
+	if (!s[0]) {
+		nbuf_str(b, "\"\"");
+		return;
+	}
+	int bs = 0, sp = 0;
+	for (const char *p = s; *p; p++) {
+		bs |= *p == '"' || *p == '\\';
+		sp |= *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\v' || *p == '\f';
+	}
+	if (!bs && !sp) {
+		nbuf_str(b, s);
+		return;
+	}
+	if (!bs) {
+		nbuf_byte(b, '"');
+		nbuf_str(b, s);
+		nbuf_byte(b, '"');
+		return;
+	}
+	if (sp) {
+		nbuf_byte(b, '"');
+	}
+	int slashes = 0;
+	for (const char *p = s; *p; p++) {
+		char ch = *p;
+		if (ch == '\\') {
+			slashes++;
+		} else if (ch == '"') {
+			for (; slashes > 0; slashes--) {
+				nbuf_byte(b, '\\');
+			}
+			nbuf_byte(b, '\\');
+		} else {
+			slashes = 0;
+		}
+		nbuf_byte(b, ch);
+	}
+	if (sp) {
+		for (; slashes > 0; slashes--) {
+			nbuf_byte(b, '\\');
+		}
+		nbuf_byte(b, '"');
+	}
+}
+
+// pr_w_inheritable is an inheritable copy of h (NULL when h is not a
+// handle)
+static HANDLE pr_w_inheritable(HANDLE h) {
+	HANDLE d = NULL;
+	if (h == NULL || h == INVALID_HANDLE_VALUE ||
+		!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+		return NULL;
+	}
+	return d;
+}
+
+// pr_w_null opens NUL for a child's standard stream k, inheritable
+static HANDLE pr_w_null(int k) {
+	SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+	HANDLE h = CreateFileW(L"NUL", k == 0 ? GENERIC_READ : GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+		OPEN_EXISTING, 0, NULL);
+	return h == INVALID_HANDLE_VALUE ? NULL : h;
+}
+
+// pr_w_spawn starts file with c's arguments, environment, and directory
+// and the standard streams fds (pr_start's): CreateProcessW with exactly
+// those three handles inherited.
+static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, char **msg) {
+	static const DWORD stds[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+	HANDLE hs[3] = {NULL, NULL, NULL};
+	for (int k = 0; k < 3; k++) {
+		int fd = fds[k];
+		if (fd == PR_DUP_OUT) {
+			hs[k] = pr_w_inheritable(hs[1]);
+		} else if (fd == PR_INHERIT) {
+			hs[k] = pr_w_inheritable(GetStdHandle(stds[k]));
+		} else if (fd >= 0) {
+			hs[k] = pr_w_inheritable((HANDLE)_get_osfhandle(fd));
+		}
+		if (!hs[k]) {
+			hs[k] = pr_w_null(k); // PR_NULL, or no such stream
+		}
+	}
+	nbuf cl = {0};
+	for (char **a = c->argv; *a; a++) {
+		if (a != c->argv) {
+			nbuf_byte(&cl, ' ');
+		}
+		pr_w_quote(&cl, *a);
+	}
+	nbuf_byte(&cl, 0);
+	wchar_t *wcl = xo_w_path(cl.p);
+	wchar_t *wfile = xo_w_path(file);
+	free(cl.p);
+	wchar_t *wdir = NULL;
+	if (c->dir) {
+		wchar_t *rel = xo_w_path(c->dir);
+		if (rel) {
+			DWORD n = GetFullPathNameW(rel, 0, NULL, NULL);
+			wdir = n ? malloc((size_t)n * sizeof(wchar_t)) : NULL;
+			if (wdir && !GetFullPathNameW(rel, n, wdir, NULL)) {
+				free(wdir);
+				wdir = NULL;
+			}
+			free(rel);
+		}
+	}
+	wchar_t *wenv = NULL;
+	if (c->envp) {
+		// NAME=VALUE\0 ... \0, UTF-16
+		size_t n = 0, cap = 256;
+		wenv = malloc(cap * sizeof(wchar_t));
+		if (!wenv) {
+			xo_oom();
+		}
+		for (char **e = c->envp; *e; e++) {
+			int k = MultiByteToWideChar(CP_UTF8, 0, *e, -1, NULL, 0);
+			if (k <= 1) {
+				continue;
+			}
+			while (n + (size_t)k + 2 > cap) {
+				cap *= 2;
+				wenv = realloc(wenv, cap * sizeof(wchar_t));
+				if (!wenv) {
+					xo_oom();
+				}
+			}
+			MultiByteToWideChar(CP_UTF8, 0, *e, -1, wenv + n, k);
+			n += (size_t)k;
+		}
+		wenv[n++] = 0;
+		if (n == 1) {
+			wenv[n++] = 0; // an empty block is two terminators
+		}
+	}
+	// the handle list: each handle once
+	HANDLE list[3];
+	int nl = 0;
+	for (int k = 0; k < 3; k++) {
+		int dup = 0;
+		for (int j = 0; j < nl; j++) {
+			dup |= list[j] == hs[k];
+		}
+		if (hs[k] && !dup) {
+			list[nl++] = hs[k];
+		}
+	}
+	SIZE_T asz = 0;
+	InitializeProcThreadAttributeList(NULL, 1, 0, &asz);
+	LPPROC_THREAD_ATTRIBUTE_LIST al = malloc(asz);
+	if (!al) {
+		xo_oom();
+	}
+	BOOL ok = InitializeProcThreadAttributeList(al, 1, 0, &asz) &&
+		(nl == 0 || UpdateProcThreadAttribute(al, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list, (SIZE_T)nl * sizeof(HANDLE), NULL, NULL));
+	STARTUPINFOEXW si;
+	memset(&si, 0, sizeof si);
+	si.StartupInfo.cb = sizeof si;
+	si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	si.StartupInfo.hStdInput = hs[0];
+	si.StartupInfo.hStdOutput = hs[1];
+	si.StartupInfo.hStdError = hs[2];
+	si.lpAttributeList = al;
+	PROCESS_INFORMATION pi;
+	memset(&pi, 0, sizeof pi);
+	DWORD e = 0;
+	if (!ok || !wcl || !wfile) {
+		e = ok ? ERROR_INVALID_PARAMETER : GetLastError();
+	} else if (!CreateProcessW(wfile, wcl, NULL, NULL, nl > 0, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, wenv,
+		wdir, &si.StartupInfo, &pi)) {
+		e = GetLastError();
+	}
+	DeleteProcThreadAttributeList(al);
+	free(al);
+	free(wcl);
+	free(wfile);
+	free(wdir);
+	free(wenv);
+	for (int k = 0; k < 3; k++) {
+		if (hs[k]) {
+			CloseHandle(hs[k]);
+		}
+	}
+	if (e == 0) {
+		CloseHandle(pi.hThread);
+		*pid = (pid_t)pi.hProcess;
+		return '0';
+	}
+	if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {
+		*msg = cstr_of(c->name, (int64_t)strlen(c->name));
+		return '1';
+	}
+	char t[512], m[1024];
+	pr_w_text(e, t, sizeof t);
+	snprintf(m, sizeof m, "fork/exec %s: %s", file, t);
+	*msg = cstr_of(m, (int64_t)strlen(m));
+	return '2';
+}
+#endif
 
 // pr_code is the status of a finished command: its exit code, or 128
 // plus the signal that ended it.
 static int64_t pr_code(int ws) {
+#ifdef _WIN32
+	return (int64_t)(uint32_t)ws; // the exit code (os.ProcessState.ExitCode)
+#else
 	if (WIFEXITED(ws)) {
 		return WEXITSTATUS(ws);
 	}
@@ -687,6 +1250,7 @@ static int64_t pr_code(int ws) {
 		return 128 + WTERMSIG(ws);
 	}
 	return -1;
+#endif
 }
 
 // pr_wait waits for pid, killing it when the task is canceled (*canceled
@@ -694,14 +1258,14 @@ static int64_t pr_code(int ws) {
 static int pr_wait(xo_ctx *cx, pid_t pid, int *canceled) {
 	int ws = 0;
 	for (int64_t step = 1000000;;) {
-		pid_t r = waitpid(pid, &ws, WNOHANG);
-		if (r == pid || (r < 0 && errno != EINTR)) {
+		int r = pr_reap(pid, &ws, 0);
+		if (r != 0) {
 			return ws;
 		}
 		if (r == 0) {
 			if (!*canceled && ctx_canceled(cx)) {
 				*canceled = 1;
-				kill(pid, SIGKILL);
+				pr_kill9(pid);
 			}
 			if (*canceled) {
 				struct timespec ts = {0, (long)step};
@@ -810,6 +1374,84 @@ static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
 	free(open);
 	return canceled;
 }
+
+#ifdef _WIN32
+// xo_proc_run on Windows: the command with its standard input NUL and
+// its output and error collected, through pr_start (as xo_proc_exec's
+// Cmd.output).
+xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
+	xo_ctx *cx = ctx();
+	if (ctx_canceled(cx)) {
+		return pr_fail('3', "");
+	}
+	char *cmd = cstr_of(c, cn);
+	if (tw_is_fake(TW_REAL_PROC)) {
+		lk(&pr_fakes.mu);
+		for (int i = 0; i < pr_fakes.n; i++) {
+			pr_fake *f = &pr_fakes.v[i];
+			if (strcmp(f->cmd, cmd) == 0) {
+				xo_rlist *l = pr_outputs(f->code, f->out, f->outn, f->err, f->errn);
+				unlk(&pr_fakes.mu);
+				free(cmd);
+				return l;
+			}
+		}
+		unlk(&pr_fakes.mu);
+		free(cmd);
+		return pr_fail('1', "");
+	}
+	pr_cmd pc;
+	memset(&pc, 0, sizeof pc);
+	pc.name = cmd;
+	int64_t na = args->len;
+	pc.argv = calloc((size_t)na + 2, sizeof(char *));
+	if (!pc.argv) {
+		xo_oom();
+	}
+	pc.argv[0] = cstr_of(cmd, (int64_t)strlen(cmd));
+	for (int64_t i = 0; i < na; i++) {
+		pc.argv[i + 1] = pr_lstr(args, i);
+	}
+	int o[2] = {-1, -1}, e[2] = {-1, -1};
+	char st = '2';
+	char *msg = NULL;
+	pid_t pid = 0;
+	if (pr_pipe2(o, 0) < 0 || pr_pipe2(e, 0) < 0) {
+		msg = cstr_of(strerror(errno), (int64_t)strlen(strerror(errno)));
+	} else {
+		st = pr_start(&pc, PR_NULL, o[1], e[1], &pid, &msg);
+	}
+	pr_close(&o[1]);
+	pr_close(&e[1]);
+	if (st != '0') {
+		pr_close(&o[0]);
+		pr_close(&e[0]);
+		pr_cmd_free(&pc);
+		// Proc.run's NotFound carries no name (the prelude adds it)
+		xo_rlist *l = pr_fail(st, st == '1' ? "" : (msg ? msg : ""));
+		free(msg);
+		return l;
+	}
+	pr_cmd_free(&pc);
+	nbuf out = {0}, errb = {0};
+	int rd[2] = {o[0], e[0]};
+	nbuf *bufs[2] = {&out, &errb};
+	int canceled = pr_collect(cx, rd, bufs, 2);
+	if (canceled) {
+		pr_kill9(pid);
+	}
+	int ws = pr_wait(cx, pid, &canceled);
+	if (canceled) {
+		free(out.p);
+		free(errb.p);
+		return pr_fail('3', "");
+	}
+	xo_rlist *l = pr_outputs(pr_code(ws), out.p ? out.p : "", out.n, errb.p ? errb.p : "", errb.n);
+	free(out.p);
+	free(errb.p);
+	return l;
+}
+#endif
 
 // pr_fake_find is the output FakeProc.on_run registered for name (with
 // pr_fakes.mu held), or NULL.
@@ -988,7 +1630,7 @@ xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has
 	if (st != '0') {
 		// a command did not start: the ones before it are killed
 		for (int i = 0; i < started; i++) {
-			kill(pids[i], SIGKILL);
+			pr_kill9(pids[i]);
 		}
 	}
 	if (nrd > 0) {
@@ -997,7 +1639,7 @@ xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has
 	int64_t code = 0;
 	for (int i = 0; i < started; i++) {
 		if (canceled) {
-			kill(pids[i], SIGKILL);
+			pr_kill9(pids[i]);
 		}
 		int64_t c = pr_code(pr_wait(cx, pids[i], &canceled));
 		if (c != 0) {
@@ -1069,8 +1711,7 @@ static void child_free(void *p) {
 		free(ch->fbuf[i].p);
 	}
 	if (!ch->fake && ch->st == '0' && !ch->reaped) {
-		int ws;
-		waitpid(ch->pid, &ws, WNOHANG);
+		pr_release(ch->pid);
 	}
 	free(ch->ahead.p);
 	free(ch->msg);
@@ -1173,7 +1814,11 @@ xo_rlist *xo_proc_child_start(xo_child *ch) {
 	return pr_fail(ch->st, ch->msg ? ch->msg : "");
 }
 
+#ifdef _WIN32
+int64_t xo_proc_child_pid(xo_child *ch) { return ch->fake || ch->st != '0' ? 0 : (int64_t)GetProcessId((HANDLE)ch->pid); }
+#else
 int64_t xo_proc_child_pid(xo_child *ch) { return ch->fake ? 0 : (int64_t)ch->pid; }
+#endif
 
 // pr_data is the outcome "0" with the n bytes at p.
 static xo_rlist *pr_data(const char *p, int64_t n) {
@@ -1210,7 +1855,7 @@ xo_rlist *xo_proc_child_write(xo_child *ch, const char *p, int64_t n) {
 	}
 	int64_t off = 0;
 	while (off < n) {
-		ssize_t w = write(ch->in_fd, p + off, (size_t)(n - off));
+		ssize_t w = pr_wr(ch->in_fd, p + off, (size_t)(n - off));
 		if (w > 0) {
 			off += w;
 			continue;
@@ -1253,7 +1898,7 @@ void xo_proc_child_close_stdin(xo_child *ch) {
 // poller: the count, 0 at the end, -1 canceled, or -2 - errno.
 static int64_t ch_read(xo_ctx *cx, xo_child *ch, int i, char *b, int64_t n) {
 	for (;;) {
-		ssize_t r = read(ch->fd[i], b, (size_t)n);
+		ssize_t r = pr_rd(ch->fd[i], b, (size_t)n);
 		if (r >= 0) {
 			return r;
 		}
@@ -1431,7 +2076,7 @@ xo_rlist *xo_proc_child_wait(xo_child *ch) {
 // xo_proc_child_kill is `c.kill()`.
 void xo_proc_child_kill(xo_child *ch) {
 	if (!ch->fake && ch->st == '0' && !ch->reaped) {
-		kill(ch->pid, SIGKILL);
+		pr_kill9(ch->pid);
 	}
 }
 
@@ -1439,7 +2084,11 @@ void xo_proc_child_kill(xo_child *ch) {
 // Proc.kill (std.md 3.7, decision 0190)
 
 // the signals of std/native/prelude.xo proc_kill, by index
+#ifdef _WIN32
+static const int pr_signals[] = {1, 2, 3, 9, 15, 10, 12, 18, 19}; // KILL (3) only is sent
+#else
 static const int pr_signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGKILL, SIGTERM, SIGUSR1, SIGUSR2, SIGCONT, SIGSTOP};
+#endif
 static const char *const pr_signal_names[] = {"HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"};
 
 // the signals a test's FakeProc.kill recorded, "NAME PID"
@@ -1466,6 +2115,31 @@ xo_rlist *xo_proc_kill(int64_t pid, int64_t sig) {
 		unlk(&pr_killed.mu);
 		return n_str_list_new(0);
 	}
+#ifdef _WIN32
+	// no signals: KILL terminates the process (std/rt's sendSignal)
+	char wm[600];
+	if (sig != 3) {
+		snprintf(wm, sizeof wm, "signal %s is not supported on this system", pr_signal_names[sig]);
+		xo_rlist *wl = n_str_list_new(1);
+		return n_str_list_add(wl, wm, (int64_t)strlen(wm));
+	}
+	HANDLE h = pid > 0xFFFFFFFFLL ? NULL : OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid);
+	DWORD we = h ? 0 : (pid > 0xFFFFFFFFLL ? ERROR_INVALID_PARAMETER : GetLastError());
+	if (h) {
+		if (!TerminateProcess(h, PR_KILLED)) {
+			we = GetLastError();
+		}
+		CloseHandle(h);
+	}
+	if (we == 0) {
+		return n_str_list_new(0);
+	}
+	char wt[512];
+	pr_w_text(we, wt, sizeof wt);
+	snprintf(wm, sizeof wm, "%s: %s", h ? "TerminateProcess" : "OpenProcess", wt);
+	xo_rlist *wl = n_str_list_new(1);
+	return n_str_list_add(wl, wm, (int64_t)strlen(wm));
+#else
 	if (kill((pid_t)pid, pr_signals[sig]) == 0) {
 		return n_str_list_new(0);
 	}
@@ -1476,6 +2150,7 @@ xo_rlist *xo_proc_kill(int64_t pid, int64_t sig) {
 	}
 	xo_rlist *l = n_str_list_new(1);
 	return n_str_list_add(l, m, (int64_t)strlen(m));
+#endif
 }
 
 // xo_proc_killed is FakeProc.killed: the recorded signals, oldest first.

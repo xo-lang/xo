@@ -252,6 +252,14 @@ static int xo_clock_gettime(int clk, struct timespec *ts) {
 }
 #define clock_gettime(c, t) xo_clock_gettime((c), (t))
 
+// nanosleep sleeps at least ts (millisecond resolution)
+static inline int nanosleep(const struct timespec *ts, struct timespec *rem) {
+	(void)rem;
+	int64_t ms = (int64_t)ts->tv_sec * 1000 + (ts->tv_nsec + 999999) / 1000000;
+	Sleep((DWORD)(ms > 0x7FFFFFFF ? 0x7FFFFFFF : ms));
+	return 0;
+}
+
 static inline struct tm *gmtime_r(const time_t *t, struct tm *out) { return gmtime_s(out, t) == 0 ? out : NULL; }
 static inline struct tm *localtime_r(const time_t *t, struct tm *out) { return localtime_s(out, t) == 0 ? out : NULL; }
 
