@@ -706,13 +706,12 @@ func (s *fn) procRun(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	return nil, false
 }
 
-// clockNow is Clock.now: the native prelude's llrt_clock_now
-// (std/native/llrt/sysio.xo: libSystem from Xo on macOS, decision 0213),
-// or the C runtime's clock_now without the prelude and in Go mode
-// assembly (its target is not known there, and sysio.clock_now tests it).
+// clockNow is Clock.now: the native prelude's llrt_clock_now, which
+// makes the system call from Xo on Linux (std/native/llrt/sysio.xo,
+// decision 0206), or the C runtime's clock_now without the prelude.
 func (s *fn) clockNow(at ast.Node) *Value {
 	intT := s.b.mod.Builtin(KInt)
-	if s.b.preludeImpl("llrt_clock_now") == nil || s.b.opts.NoFaultUnwind {
+	if s.b.preludeImpl("llrt_clock_now") == nil {
 		return s.rt("clock_now", intT)
 	}
 	return s.llrt("clock_now", intT, at)

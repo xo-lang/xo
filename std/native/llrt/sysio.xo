@@ -109,24 +109,18 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. On macOS libSystem's clock_gettime from Xo, on Windows
-/// GetSystemTimePreciseAsFileTime (as the C runtime's; the test world's
-/// virtual clock stays in C). On Linux the C
-/// runtime's: its clock_gettime goes through the vDSO (glibc's, or
-/// xo_nolibc.c's with XO_NOLIBC=1), and the system call linux.clock_ns
-/// makes cost 4.3 times the time per call on Graviton
-/// (bench/results/linux-syscalls-2026-10-13.md); Xo reaches the vDSO once
-/// it can call a C ABI address (decision 0206, next steps).
-pub fn clock_now() -> Int {
-  let l = layer()
-  if l < 2 || rt.clock_virtual() {
-    return rt.clock_now()
-  }
-  if l == 3 {
-    return windows.clock_ns()
-  }
-  darwin.clock_ns(darwin.CLOCK_REALTIME)
-}
+/// virtual clock. The C runtime's on every OS for now. On macOS the Xo
+/// path (the virtual clock test, then darwin.realtime_ns:
+/// clock_gettime_nsec_np) took 0.934 times the C path's instructions on
+/// LLVM but 1.042 times on arm64, whose emitter does not fold the
+/// `match` on `target` that picks the layer (each Clock.now paid for the
+/// compares), so it misses decision 0180's bar
+/// (bench/results/platform-calls-2026-10-13.md); Windows's
+/// windows.clock_ns waits with it. On Linux the clock_gettime system
+/// call linux.clock_ns makes cost 4.3 times the vDSO's time per call on
+/// Graviton (bench/results/linux-syscalls-2026-10-13.md); Xo reaches the
+/// vDSO once it can call a C ABI address (decision 0206, next steps).
+pub fn clock_now() -> Int { rt.clock_now() }
 
 // ---------------------------------------------------------------------------
 // The OS layers behind one interface: a call's result >= 0, or a
