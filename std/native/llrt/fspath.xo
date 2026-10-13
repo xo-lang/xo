@@ -1,0 +1,124 @@
+// The path policy of the native Fs operations, written in Xo (decision
+// 0193 step 6): the walks of os.MkdirAll (a missing parent first, a
+// directory that appears meanwhile is fine) and os.RemoveAll (children
+// first, the first error kept, a missing path is no error), the names of
+// os.CreateTemp (the prefix and a random number, tried until one is new),
+// and the working directory with / separators on Windows (std.md 3.1).
+// They were C (std/llrt/xo_fs.c, under XO_FSPATH_C now); the system calls
+// stay C (rt.fs_raw_*). The C path stays selectable (`XO_LLRT_C=fspath`
+// loads fspath_c.xo) until bench/perf/fsproc meets decision 0180's bar on
+// both native backends.
+use native/rt
+
+// The errno values the walks test: the same on darwin, Linux, and the
+// MSVC C runtime of Windows.
+const ENOENT: Int = 2
+const ENOTDIR: Int = 20
+const EEXIST: Int = 17
+
+/// Whether paths follow Windows' rules (std.md 3.1): the target's.
+fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+}
+
+/// os.MkdirAll(op, 0755): the status, an error naming the Xo path x.
+pub fn mkdir_all(op: Str, x: Str) -> Int {
+  // \ separates too on Windows (std.md 3.1); the walk splits at /
+  let p = if windows() { op.replace("\\", "/") } else { op }
+  rt.fs_raw_fail(mkdir_walk(p), x)
+}
+
+/// MkdirAll's walk: 0 or the errno.
+fn mkdir_walk(path: Str) -> Int {
+  let k = rt.fs_raw_kind(path, true)
+  if k >= 0 {
+    return if k == 1 { 0 } else { ENOTDIR }
+  }
+  let b = path.bytes()
+  var l = b.len()
+  while l > 1 && b[l - 1] == 47 {
+    l -= 1
+  }
+  var j = l
+  while j > 0 && b[j - 1] != 47 {
+    j -= 1
+  }
+  if j > 1 {
+    let r = mkdir_walk(rt.str_slice(path, 0, j - 1))
+    if r != 0 {
+      return r
+    }
+  }
+  let e = rt.fs_raw_mkdir(path)
+  if e != 0 {
+    if rt.fs_raw_kind(path, true) == 1 {
+      return 0
+    }
+    return e
+  }
+  0
+}
+
+/// os.RemoveAll(op): the status, an error naming the Xo path x.
+pub fn remove_all(op: Str, x: Str) -> Int { rt.fs_raw_fail(remove_walk(if op.is_empty() { "." } else { op }), x) }
+
+/// RemoveAll's walk: 0 or the errno (the first of the children's).
+fn remove_walk(path: Str) -> Int {
+  let k = rt.fs_raw_kind(path, false)
+  if k < 0 {
+    return if -k == ENOENT { 0 } else { -k }
+  }
+  if k == 0 {
+    let e = rt.fs_raw_unlink(path)
+    return if e == 0 || e == ENOENT { 0 } else { e }
+  }
+  let names = rt.fs_raw_names(path)
+  let oe = rt.fs_raw_errno()
+  if oe != 0 {
+    return oe
+  }
+  var first = 0
+  for name in names {
+    let r = remove_walk(path + "/" + name)
+    if r != 0 && first == 0 {
+      first = r
+    }
+  }
+  let e = rt.fs_raw_rmdir(path)
+  if e != 0 && e != ENOENT {
+    return if first != 0 { first } else { e }
+  }
+  0
+}
+
+/// os.CreateTemp(op, prefix + "*"): the new empty file's base name (the
+/// prefix and a random number), "" with the status set on an error
+/// (which names the Xo path x).
+pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str {
+  let dir = if op.is_empty() { "." } else { op }
+  var err = EEXIST
+  var name = ""
+  var i = 0
+  while i < 10000 && err == EEXIST {
+    name = prefix + "${rt.fs_raw_rand()}"
+    err = rt.fs_raw_create(dir + "/" + name)
+    i += 1
+  }
+  rt.fs_raw_fail(err, x)
+  if err != 0 {
+    return ""
+  }
+  name
+}
+
+/// The working directory, with / separators on Windows (std.md 3.1).
+pub fn cwd() -> Str {
+  let w = rt.fs_raw_getcwd()
+  if windows() {
+    return w.replace("\\", "/")
+  }
+  w
+}

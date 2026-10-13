@@ -302,7 +302,9 @@ func IOFlags(code []byte) []string {
 	var out []string
 	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
 		// handles, copies, modes, links, locks (decision 0172)
-		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock"} {
+		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock",
+		// the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
+		"xo_fs_raw_"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_FS")
 			break
@@ -366,6 +368,13 @@ func IOFlags(code []byte) []string {
 	for _, sym := range []string{"xo_tz_load", "xo_tz_offset", "xo_tz_abbr"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_TZ_C")
+			break
+		}
+	}
+	// and of the Fs path policy (decision 0193 step 6, XO_LLRT_C=fspath)
+	for _, sym := range []string{"xo_fs_mkdir_all", "xo_fs_remove_all", "xo_fs_create_temp", "xo_fs_cwd"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_FSPATH_C")
 			break
 		}
 	}

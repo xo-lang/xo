@@ -149,3 +149,30 @@ func TestIOFlagsJSONTextC(t *testing.T) {
 		}
 	}
 }
+
+// TestIOFlagsFspathC checks that code calling the C path of the Fs path
+// policy compiles the runtime with -DXO_FSPATH_C (decision 0193 step 6),
+// and that the default (Xo) path, which calls the raw system calls,
+// compiles xo_fs.c (-DXO_FS) without it.
+func TestIOFlagsFspathC(t *testing.T) {
+	for _, c := range []struct {
+		code       string
+		fspath, fs bool
+	}{
+		{"bl _xo_fs_mkdir_all\n", true, true},
+		{"call i64 @xo_fs_remove_all(ptr %1, i64 %2, ptr %3, i64 %4)\n", true, true},
+		{"bl _xo_fs_create_temp\n", true, true},
+		{"bl _xo_fs_cwd\n", true, true},
+		{"\t.ascii \"xo_fs_cwd\"\n", false, false},
+		{"bl _xo_fs_raw_mkdir\nbl _xo_fs_raw_kind\nbl _xo_fs_raw_fail\n", false, true},
+		{"call ptr @xo_fs_raw_getcwd(ptr %1)\n", false, true},
+	} {
+		flags := IOFlags([]byte(c.code))
+		if got := slices.Contains(flags, "-DXO_FSPATH_C"); got != c.fspath {
+			t.Errorf("IOFlags(%q) has -DXO_FSPATH_C: %v, want %v", c.code, got, c.fspath)
+		}
+		if got := slices.Contains(flags, "-DXO_FS"); got != c.fs {
+			t.Errorf("IOFlags(%q) has -DXO_FS: %v, want %v", c.code, got, c.fs)
+		}
+	}
+}
