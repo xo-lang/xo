@@ -9,6 +9,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The LLVM backend lowers std's internal spin loop hint to the target's
   pause instruction (`yield` on arm64, `pause` on x86-64) instead of
   nothing (decision 0200).
+- Windows builds are deterministic: the link passes lld-link `/Brepro`,
+  so rebuilding the same sources gives a byte identical `.exe` (the COFF
+  time stamp is a hash of the output, not the link time; decision 0197).
 - Faster on the native backends: Str.split, Str.lines, Str.rune_count,
   Str.find and contains, Bytes.to_hex, Bytes.rune_count, and
   Bytes.to_str (UTF-8 validity) are now Xo in the runtime, scanning 16
