@@ -280,8 +280,13 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	int64_t c = size_class(n, &size);
 	void *p = h->free_lists[c];
 	if (p) {
-		h->free_lists[c] = *(void **)p;
+		void *next = *(void **)p;
+		h->free_lists[c] = next;
 		h->nfree[c]--;
+		// the next pop reads the new head's link: start loading it now,
+		// so a list freed long ago (cold) costs overlapped misses rather
+		// than one stall per allocation (bench/results/xo1-speed)
+		__builtin_prefetch(next);
 		return p;
 	}
 	int64_t need = size + 8;
