@@ -11,6 +11,9 @@
 #   bench/results/remote/xo1-x86-<commit>.log, not committed here), the
 #   step logs beside it in xo1-x86-<commit>/.
 #
+# On demand only (owner, 2026-10-13: no spot instances; a spot run was
+# reclaimed mid run on 2026-10-13). On VcpuLimitExceeded wait and retry.
+#
 # Safety as remote-full.sh: the instance powers itself off (and so
 # terminates) after XO_REMOTE_MAX_MIN minutes (default 240), a local
 # watchdog terminates it after the same time, and the EXIT trap
@@ -52,9 +55,8 @@ curl -fsSL https://go.dev/dl/go$GOVER.linux-amd64.tar.gz | tar -C /usr/local -xz
 touch /var/run/xo-ready
 EOF
 )
-log "launching $TYPE (spot) for $commit, self-terminating after ${MAXMIN} min"
+log "launching $TYPE (on demand) for $commit, self-terminating after ${MAXMIN} min"
 id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-name xo-ci --security-group-ids "$sg" \
-  --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time}' \
   --instance-initiated-shutdown-behavior terminate \
   --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=80,VolumeType=gp3,DeleteOnTermination=true}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=xo-ci},{Key=purpose,Value=xo-remote-xo1-x86}]' \
