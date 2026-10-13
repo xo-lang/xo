@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The WebAssembly backend (decision 0179) coalesces each function's
+  locals by liveness and lays out reducible functions as structured
+  control flow (block, loop, br) instead of the dispatch loop: the self
+  hosted checker's module is 8.3 MB (8.9 MB), runs seven goldens under
+  Node in about 0.55 s and 340 MB (2.3 s and 2.1 GB), and checks all 144
+  LLVM goldens in a Chrome worker (63 before, the rest overflowed the
+  worker's stack). `os.fs.write` works in wasm (WASI `path_open` and
+  `fd_write`).
 - internal/selfhost scales with cores: every native build, Xo process,
   and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
   slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
