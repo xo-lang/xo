@@ -67,8 +67,8 @@ its heap pointer left a C thread local until thread locals exist.
 3. **Thread state.** The C's `cur`, `tls_fib`, and `tls_w` are words 0,
    1, and 2 of the table (the C declares `extern __thread int64_t
    xo_tlocal[16]` and reads it in its noinline accessors, at the cost its
-   own `__thread` had); word 3 is free for the heap pointer (decision
-   0207 stage 3's next step), 4 to 15 unused.
+   own `__thread` had); word 3 is the heap pointer (decision 0207 stage
+   3's `tls_heap`, which waited for this), 4 to 15 unused.
 4. **The scheduler core in Xo** (std/native/llrt/sched.xo, C ABI exports
    in cabi.xo): the run queue ring (put, get, a thief's half, a batch;
    head and tail are 64 bit counts now, in both paths), the first frame
@@ -116,9 +116,10 @@ its heap pointer left a C thread local until thread locals exist.
   `rt.static_word` (decision 0207's design) for the pool's words.
 - **Fiber stacks** (mmap, mprotect, VirtualAlloc, the caches): platform
   calls (decision 0213); Linux could use `rt.sys6` now.
-- **Worker threads and the heap pointer**: thread creation is decision
-  0206 stage 2 (Linux) and 0213 (pthread_create, _beginthreadex); the
-  heap pointer can move to word 3 of the table now.
+- **Worker threads**: thread creation is decision 0206 stage 2 (Linux)
+  and 0213 (pthread_create, _beginthreadex). The heap pointer is word 3
+  of the table already; alloc.xo can read it with `rt.tlocal_get` once
+  heap creation (heap_slow: calloc and the heaps' mutex) moves too.
 
 ## Consequences
 

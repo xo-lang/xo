@@ -172,7 +172,14 @@ static int xo_threaded; // set once, before a second thread runs Xo code
 // solo_heap is main_heap while one thread runs, null after (one load
 // both tells the case and gives the heap)
 static xo_heap *solo_heap = &main_heap;
+#ifdef XO_SCHED_C
 static __thread xo_heap *tls_heap;
+#else
+// the calling thread's heap is word 3 of the thread local table the
+// compiler emits (decision 0212; std/native/llrt/sched.xo TLS_HEAP)
+extern __thread int64_t xo_tlocal[16];
+#define tls_heap (*(xo_heap **)&xo_tlocal[3])
+#endif
 static xo_heap *all_heaps = &main_heap;
 // spare_heaps are the heaps of worker threads that exited (decision
 // 0068): a new thread takes one before it makes a heap, so a program that
