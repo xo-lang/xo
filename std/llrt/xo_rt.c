@@ -3268,8 +3268,12 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 #else
 void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted);
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
-	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted);
+	flush_pending();
+	bud_pause(c); // waiting is not running time (decision 0175)
+	// in the test world nothing outside the program ends a wait
+	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted || tw.virt);
 	TSAN_ACQUIRE(&c->park);
+	bud_resume(c);
 }
 #endif
 
@@ -4387,13 +4391,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		munmap((void *)(intptr_t)a, (size_t)b);
 		return 0;
 #endif
-	case 13: // context a starts to wait: whether the test world's clock runs
-		flush_pending();
-		bud_pause((xo_ctx *)(intptr_t)a); // waiting is not running time (decision 0175)
-		return tw.virt != 0;
-	case 14: // context a's wait ended
-		bud_resume((xo_ctx *)(intptr_t)a);
-		return 0;
 	case 15: // the calling root thread's record
 		return XO_ADDR(root_worker());
 	case 16: // task a, claimed, runs here (its queue entry still queued)
@@ -4806,8 +4803,11 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 	// in Xo (decision 0212 stage 2, pool.xo scope_join): the same help,
 	// then the wait (not a cancellation point) for every task's end and
 	// every queue entry
+	flush_pending();
+	bud_pause(c); // helping and waiting are not the closer's running time
 	xo_x_scope_join(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(c));
 	TSAN_ACQUIRE(&c->park);
+	bud_resume(c);
 #endif
 	lk(&s->mu);
 	s->closed = 1;
