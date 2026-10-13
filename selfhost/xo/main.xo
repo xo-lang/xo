@@ -101,11 +101,11 @@ fn main(os: Os) ! {
     os.proc.exit(2)
   }
   // the default backend is `xo`'s (cmd/xo backendFlag): go for build,
-  // run, and test, the host's native backend (arm64: xo1 runs on arm64
-  // hosts only) with --no-gc; asm prints the arm64 assembly
+  // run, and test, the host's native backend with --no-gc (arm64 on
+  // arm64 hosts, llvm otherwise, as cmd/xo); asm prints the arm64 assembly
   var backend = o.backend
   if backend.is_empty() {
-    backend = if o.no_gc || o.cmd == "asm" { "arm64" } else { "go" }
+    backend = if o.cmd == "asm" || (o.no_gc && host_arch() == "arm64") { "arm64" } else if o.no_gc { "llvm" } else { "go" }
   }
   if o.hybrid {
     if backend != "go" {
@@ -287,7 +287,9 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
 fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let phases = o.phases
   let goos = ctx.goos
-  let host = "${goos}/arm64"
+  // LLVM builds for the host; the arm64 backend for arm64 (on an amd64
+  // host its default is still the arm64 code of the host's OS)
+  let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/arm64" }
   let targets = parse_targets(os, o.targets, host)
   for tg in targets {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
@@ -307,7 +309,22 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     uses_time = uses_time || m.path == "native/time"
   }
   let root = line_root(os, o.wd, o.dirs[0])
-  var b = ssa.build_program_opts(c, root, tests, release, tests && o.real)
+  // the predeclared `target` of the build's target (internal/build's
+  // ssa.Options GOOS, GOARCH): the targets' OS when they share one (a
+  // cross build from another host), else the host's; one SSA serves
+  // every target, where the Go driver builds one per target
+  var tgoos = ""
+  var tgoarch = ""
+  if backend == "arm64" || backend == "llvm" {
+    tgoos = targets[0].split("/")[0]
+    for tg in targets {
+      if tg.split("/")[0] != tgoos {
+        tgoos = goos
+      }
+    }
+    tgoarch = if backend == "arm64" { "arm64" } else { host_arch() }
+  }
+  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
   t = lap(os, phases, "ssa", t)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
