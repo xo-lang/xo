@@ -85,6 +85,43 @@ fn eval_links(fs: Fs, path: Str) -> Str uses fs.read {
   p
 }
 
+/// The absolute path with the links of every element followed
+/// (filepath.EvalSymlinks, and what getcwd returns in that directory:
+/// macOS's /var/folders/... is /private/var/folders/...); a relative
+/// path, or more than 40 links, is returned cleaned.
+pub fn real_path(fs: Fs, path: Str) -> Str uses fs.read {
+  if !path.starts_with("/") {
+    return clean(path)
+  }
+  var parts = clean(path).split("/")
+  var out = ""
+  var i = 0
+  var hops = 0
+  while i < parts.len() {
+    let part = parts[i]
+    i += 1
+    if part.is_empty() {
+      continue
+    }
+    let p = "${out}/${part}"
+    match fs.read_link(p) {
+      Ok(Some(t)) => {
+        hops += 1
+        if hops > 40 {
+          return clean(path)
+        }
+        // the target, then the rest, resolved again from the root
+        let next = if t.starts_with("/") { t } else { "${if out.is_empty() { "/" } else { out }}/${t}" }
+        parts = clean(next).split("/") + parts[i..]
+        out = ""
+        i = 0
+      }
+      _ => out = p
+    }
+  }
+  if out.is_empty() { "/" } else { out }
+}
+
 /// p made absolute against the checker's working directory
 /// (filepath.Abs), for the commands' messages.
 pub fn (c: Checker) abs_path(p: Str) -> Str {

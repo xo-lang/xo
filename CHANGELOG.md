@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **`xo` is written in Xo** (decision 0178, switch point B): the release
+  archives ship the self hosted toolchain as `bin/xo`, with
+  `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the
+  prebuilt runtime) beside it; keep that layout, `bin/xo` alone does not
+  run. The Go `cmd/xo` only builds the first one: scripts/release.sh
+  builds it, it builds the darwin/arm64 `xo`, and that `xo` builds the
+  runtime packs, the linux/arm64 `xo` (linked by its own ELF linker, no C
+  compiler), and the linux/amd64 `xo` (Go backend).
+  `scripts/release-verify.sh` checks an archive on its host; cmd/xo's
+  suite passes against the archive's `xo` on darwin/arm64 and
+  linux/arm64. Fixed on the way: the ELF assembler's `.file`, glibc's
+  `stat` family for binaries linked without cc (glibc before 2.33 has no
+  `stat` in libc.so.6), runtime flags turned on by symbol names inside
+  string literals, the predeclared `target` of a cross build (it was the
+  compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
+  an amd64 host, and paths printed by `xo serve` on Linux.
 - The LLVM backend builds Windows programs (windows/amd64 host, decision
   0197 stage 1): `xo build --backend=llvm` with LLVM's clang
   (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's

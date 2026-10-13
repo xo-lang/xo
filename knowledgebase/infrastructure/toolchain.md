@@ -103,14 +103,56 @@ run the full suite with the full internal/selfhost tier:
 `XO_SELFHOST_TIER=full go test -timeout 120m ./...` (see the TestSelfhost
 tier lines under Commands). Last verified: 2026-10-11.
 
-Release archives (decision 0157, 2026-10-11): `scripts/release.sh
+**What `xo` is (switch point B, decision 0178, 2026-10-12)**: the
+released `xo` is xo1, the self hosted toolchain built from
+`selfhost/xo` (Xo), not the Go `cmd/xo`. The Go `cmd/xo` stays in the
+repository only as the bootstrap seed that builds the first xo1 (and as
+the reference of the differential tests until stage 7); it is frozen
+for language changes after B (stage 7 step 1; the rule goes in CLAUDE.md). The
+version is `selfhost/cli/core` `VERSION` (TestSelfhostVersion keeps
+cmd/xo's equal).
+
+The bootstrap chain, as release.sh runs it:
+
+    go build ./cmd/xo                      -> seed (Go, host only)
+    seed: XO_SELF_DRIVER=0 xo build --backend=arm64 selfhost/xo
+                                           -> darwin/arm64 xo1
+    darwin xo1: xo rtpack (darwin, and linux with zig cc)
+    darwin xo1: --backend=arm64 --target=linux/arm64 --ld=macho
+                                           -> linux/arm64 xo1 (no cc: selfhost/macho's ELF link)
+    darwin xo1: --backend=go --targets=linux/amd64
+                                           -> linux/amd64 xo1 (Go toolchain)
+
+After a release exists, the previous release's xo replaces the Go seed
+(`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
+release layout: `bin/xo` finds std, the pack, and `bin/xo-gobind`
+beside itself (`bin/../lib/xo`, symbolic links followed), so a bare
+copy of bin/xo does not run (`XO_STD` and `XO_RTPACK` override;
+gotchas/xo1-outside-release-layout.md). Building xo1 into a checkout's
+.tools/bin needs `XO_STD=$PWD/std`.
+
+Release archives (decisions 0157 and 0178): `scripts/release.sh
 [version]` on darwin/arm64 writes `dist/xo-<version>-<os>-<arch>.tar.gz`
-for darwin/arm64, linux/arm64, and linux/amd64 (`bin/xo`, README.md,
-CHANGELOG.md, and for the arm64 targets the prebuilt runtime in
-`lib/xo/rtpack/<os>-<arch>/`) and `dist/SHA256SUMS`; it needs zig 0.15.1
-(`$ZIG`) and a clean tree (`XO_RELEASE_ALLOW_DIRTY=1` to try it). Two
-runs print the same SHA256SUMS. Nothing publishes them yet; users still
-build from a checkout. Last verified: 2026-10-11.
+for darwin/arm64, linux/arm64, and linux/amd64: `bin/xo` (xo1, as
+above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
+`lib/xo/third_party` (the tracked files), for the arm64 targets the
+prebuilt runtime in `lib/xo/rtpack/<os>-<arch>/` (built by xo1's `xo
+rtpack`), README.md, CHANGELOG.md; and `dist/SHA256SUMS`. It needs zig
+0.15.1 (`$ZIG`), Go, the host's clang, and a clean tree
+(`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
+the development Mac with other agents running (2026-10-12). Nothing
+publishes them; releases are on hold (owner).
+`scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
+host from a checkout of the same commit: unpacked clean, with no Go on
+PATH `xo version`, `rtpack --status`, `check`, and a hello program on
+arm64 (cc), arm64 `--ld=macho`, and llvm ("UNSUPPORTED" on
+linux/amd64), the missing Go reported by the default backend; with Go a
+hello on the Go backend, a `use go` program, and cmd/xo's whole suite
+with `XO_CLI` = the archive's bin/xo (`BASELINE=1`: also against the
+Go cmd/xo). On EC2: `scripts/remote-full.sh --arch arm64|amd64 --put
+dist/<archive> --cmd 'bash scripts/release-verify.sh ~/<archive>'`.
+Results: bench/results/retire-go-2026-10-12.md "Switch point B: the
+flip". Last verified: 2026-10-12.
 
 ## Commands
 
@@ -126,7 +168,8 @@ go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] <dirs...>   # --fix: apply machine fixes first (decision 0096)
 go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
 xo1 rtpack [same flags]   # the same command in Xo (selfhost/xo rtpack.xo, decision 0178 switch point B): the same pack files byte for byte for the same compiler and sources (cmd/xo TestRTPackXoSame with XO_CLI), so scripts/release.sh can run the self hosted xo (last verified: 2026-10-12)
-scripts/release.sh [version]             # release archives into dist/ (decision 0157; needs zig 0.15.1 as $ZIG; never publishes)
+scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178; needs zig 0.15.1 as $ZIG; never publishes)
+scripts/release-verify.sh ARCHIVE [OUTDIR]   # check a release archive on its host: no-Go native checks, Go backend and use go, cmd/xo's suite with XO_CLI (see "Versions and releases"; last verified 2026-10-12)
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
@@ -2797,7 +2840,12 @@ $XO_REMOTE_HOLD (default bench/results/remote/hold.addr) and waits until
 the watchdog or until the script is stopped, which terminates the
 instance (debug over `ssh -i ~/.ssh/xo-ci.pem`, copy a working tree with
 rsync). Every log now ends with the per-package durations, slowest
-first. The AMI comes from the SSM alias, else (the agent sandbox cannot
+first. `--arch amd64` launches an x86_64 instance instead (default
+c7i.8xlarge, the AL2023 x86_64 image, Go for linux-amd64); `--put FILE`
+(repeatable) copies a local file to the instance's home directory
+before `--cmd` runs (a release archive for scripts/release-verify.sh).
+`--cmd` runs with /usr/local/go/bin on PATH; a step that must not see Go
+drops it itself. Last verified: 2026-10-12 (release verification runs). The AMI comes from the SSM alias, else (the agent sandbox cannot
 resolve ssm.us-east-1.amazonaws.com) from `ec2 describe-images`, the
 newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
 (the arm64 backend's assembler and linker driver, CC()), clang 15.0.7,

@@ -245,3 +245,14 @@ test "Go bindings, vouches, and effect locks read as internal/gobind and interna
   expect(edition_alias_of("preview")) == ""
   expect(last_index("a (b) (c)", " (")) == 5
 }
+
+test "real_path follows the links of every element, as getcwd reports" {
+  os.fs.create_dir_all("/private/var/folders/t").or_fault("mkdir")
+  os.fs.symlink("/private/var", "/var").or_fault("var")
+  os.fs.symlink("t", "/private/var/folders/u").or_fault("u")
+  expect(real_path(os.fs, "/var/folders/t")) == "/private/var/folders/t"
+  expect(real_path(os.fs, "/var/folders/u/./x/..")) == "/private/var/folders/t"
+  expect(real_path(os.fs, "/private/var/folders")) == "/private/var/folders"
+  expect(real_path(os.fs, "rel/../a")) == "a"
+  expect(real_path(os.fs, "/")) == "/"
+}
