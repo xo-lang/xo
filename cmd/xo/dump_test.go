@@ -47,6 +47,16 @@ end of xo dump
 
 var dumpHeader = regexp.MustCompile(`^xo dump: pid \d+, 3 tasks\n`)
 
+// dumpPath is the file a program writes its dump to for `xo dump`:
+// $XO_DUMP_DIR (else the temporary directory)/xo-dump-<pid>.txt.
+func dumpPath(pid int) string {
+	dir := os.Getenv("XO_DUMP_DIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "xo-dump-"+strconv.Itoa(pid)+".txt")
+}
+
 // lockedBuffer is a bytes.Buffer safe for the copying goroutine of exec.
 type lockedBuffer struct {
 	mu sync.Mutex

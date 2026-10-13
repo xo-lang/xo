@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
@@ -482,4 +481,3 @@ func writeSCReport(t *testing.T, rs, natives []scResult) {
 	t.Logf("wrote %s", out)
 }
 
-var _ = mod.EffectsText

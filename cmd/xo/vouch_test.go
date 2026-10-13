@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/cbind"
-	"github.com/xo-lang/xo/internal/mod"
+	"github.com/xo-lang/xo/internal/xotool"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
@@ -18,7 +17,7 @@ func repoWorld(t *testing.T, files map[string]string) *modtest.Env {
 	t.Helper()
 	src := t.TempDir()
 	modtest.WriteFiles(t, src, files)
-	return modtest.Setup(t, src, mod.Compare)
+	return modtest.Setup(t, src, modtest.Compare)
 }
 
 // TestVouches checks decision 0156 item 1: a dependency's `use go` of an
@@ -93,7 +92,7 @@ func TestVouches(t *testing.T) {
 // its pure pub function is XO0701); the consumer's vouch decides the
 // binding's effects.
 func TestVouchesC(t *testing.T) {
-	if _, err := cbind.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip(err)
 	}
 	t.Setenv("XO_CBIND_DIR", "")
