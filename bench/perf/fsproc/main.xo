@@ -1,0 +1,66 @@
+// The Fs path policy and the process environment building of the native
+// runtime port (decision 0193 step 6): std/native/llrt/fspath.xo and
+// procspec.xo against their C paths (XO_LLRT_C=fspath,procspec).
+// Usage: fsproc <workload> <scratch dir>, the directory empty and only
+// for this program. Workloads: mkdir (create_dir_all of 400 paths 8
+// directories deep, half of whose parents exist), remove (remove_all of
+// a tree of 400 directories and 1,200 files; tree is the tree alone),
+// temp (create_temp of 2,000 files), cwd (the working directory 20,000
+// times), proc (200 runs of true(1) in a directory with 3 variables
+// added: the program's environment deduplicated, PWD), proc_plain (200
+// runs of true(1) as they are), none (the setup alone). Each prints
+// "<workload> <checksum>".
+fn tree(fs: Fs, root: Str) -> Int ! FsErr {
+  var n = 0
+  for i in 0..20 {
+    for j in 0..20 {
+      let d = "${root}/a${i}/b${j}"
+      fs.create_dir_all(d)?
+      for k in 0..3 {
+        fs.write("${d}/f${k}", "x".bytes())?
+        n += 1
+      }
+    }
+  }
+  n
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let w = args.get(0) ?? "none"
+  let fs = os.fs.sub(args.get(1) ?? "fsproc-scratch")
+  var sum = 0
+  if w == "mkdir" {
+    for i in 0..400 {
+      fs.create_dir_all("m/p${i % 200}/q/r${i}/s/t/u/v")?
+      sum += i
+    }
+  } else if w == "tree" {
+    sum = tree(fs, "t")?
+  } else if w == "remove" {
+    sum = tree(fs, "t")?
+    fs.remove_all("t")?
+  } else if w == "temp" {
+    fs.create_dir_all("tmp")?
+    for _ in 0..2000 {
+      sum += fs.create_temp("tmp", "x-")?.len()
+    }
+  } else if w == "cwd" {
+    for _ in 0..20000 {
+      if os.fs.cwd().case_sensitive() {
+        sum += 1
+      }
+    }
+  } else if w == "proc" {
+    for i in 0..200 {
+      let o = os.proc.cmd("true").dir(".").set_env("XO_FSPROC_A", "${i}").set_env("PATH", "/usr/bin:/bin").set_env("XO_FSPROC_A", "x").output()?
+      sum += o.code + 1
+    }
+  } else if w == "proc_plain" {
+    for _ in 0..200 {
+      let o = os.proc.cmd("true").output()?
+      sum += o.code + 1
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

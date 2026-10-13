@@ -1,0 +1,18 @@
+// The C path of the HTTP/2 server's HPACK (decision 0193 step 6): the
+// API of hpack.xo over std/llrt/xo_h2.c, which then decodes and encodes
+// header blocks itself (h2_next never returns 2 or 3). Loaded in place of
+// hpack.xo when XO_LLRT_C names `hpack`, to compare the two and to fall
+// back while the Xo path misses decision 0180's bar. The self hosted
+// compiler always uses hpack.xo.
+use native/rthttp
+
+/// The HTTP/2 connection.
+pub struct Conn {
+  h: rthttp.HConn
+}
+
+pub fn conn(h: rthttp.HConn) -> Conn { Conn{h: h} }
+
+/// Runs the HTTP/2 connection until a request is ready for a handler
+/// (true; rthttp.h2_take hands it out) or the connection is done.
+pub fn (var c: Conn) next() -> Bool { rthttp.h2_next(c.h) == 1 }

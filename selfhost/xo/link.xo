@@ -227,7 +227,9 @@ fn io_flags(code: Str) -> List[Str] {
     "xo_time_of", "xo_time_ns",
     // handles, copies, modes, links, locks (decision 0172)
     "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link",
-    "xo_fs_lock", "xo_fs_unlock"] {
+    "xo_fs_lock", "xo_fs_unlock",
+    // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
+    "xo_fs_raw_"] {
     if calls_sym(code, sym) {
       out.push("-DXO_FS")
       break
@@ -268,6 +270,13 @@ fn io_flags(code: Str) -> List[Str] {
   for sym in ["xo_tz_load", "xo_tz_offset", "xo_tz_abbr"] {
     if calls_sym(code, sym) {
       out.push("-DXO_TZ_C")
+      break
+    }
+  }
+  // and of the Fs path policy (decision 0193 step 6, XO_LLRT_C=fspath)
+  for sym in ["xo_fs_mkdir_all", "xo_fs_remove_all", "xo_fs_create_temp", "xo_fs_cwd"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_FSPATH_C")
       break
     }
   }

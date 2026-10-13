@@ -800,6 +800,33 @@ Last verified: 2026-10-07
   Go backend on about 28,000 generated and edge case inputs (not under
   -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
   verified: 2026-10-13.
+- `bench/perf/httpparse/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): builds the server of
+  bench/perf/httpparse with each backend and, for each workload (h1_get,
+  h1_chunked, h1_url, h2_get, h2_varied; `none` starts and stops it),
+  runs it 5 times under `/usr/bin/time -l` while load/ (a Go client,
+  built into the out dir; it also writes the TLS certificate) sends N
+  requests (default 20000), then stops it with SIGTERM to the server's
+  PID (the child of the time process the script started); prints `<w>
+  <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
+  the C paths; PORT (18090). Through the heavy lock, with
+  `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
+  working directory, and process environments (mkdir, tree, remove,
+  temp, cwd, proc_plain, proc) in a fresh scratch directory per run;
+  `XO_LLRT_C=fspath,procspec` builds the C paths. The counts include the
+  kernel's instructions. Last verified: 2026-10-13.
+- `go test ./internal/llvm -run 'TestHTTP1ParseDiff|TestProcSpecDiff'`
+  (2026-10-13, decision 0193 step 6, not under -short): a server program
+  built with the Go backend, LLVM, and arm64 answers the same raw
+  HTTP/1.1 connections over loopback (`XO_HTTP_DIFF_N` random requests,
+  default 2000, `XO_HTTP_DIFF_SEED`); env(1) and printf(1) children with
+  the environments procspec.xo builds. `XO_LLRT_C=http1` or `procspec`
+  checks the C path. TestH2Diff's probeH2HPACK covers hpack.xo.
+  `-run 'TestHPACKTables|TestHTTP1Tables' -golden-update` regenerates
+  `std/native/llrt/hpack_tables.xo` and `http1_tables.xo`. Last
+  verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point

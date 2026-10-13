@@ -65,7 +65,7 @@ def one(d):
     p = subprocess.run([bin] + args, cwd=d, capture_output=True, env=env, input=stdin)
     got = 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, p.stdout.decode('utf-8', 'replace'),
                                                      stable(p.stderr.decode('utf-8', 'replace')))
-    want = open(os.path.join(d, 'want.txt')).read()
+    want = open(os.path.join(d, 'want.txt'), encoding='utf-8', newline='').read()
     if go_frame_re.sub('', got) != go_frame_re.sub('', want):
         return d, 'differs:\n--- want\n%s--- got\n%s' % (want[:600], got[:600])
     return d, ''

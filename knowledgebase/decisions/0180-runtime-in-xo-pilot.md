@@ -63,7 +63,8 @@ is shared, compiler changes are made twice); the runtime pack (decision
    b.to_lower()` calls the native prelude's `str_eq_lower` instead of
    `xo_str_eq_lower` (mirrored in selfhost/ssa). Rule for later ports: a
    C function that needs a ported function is ported with it, or the
-   port waits; C never calls compiled Xo (that would need an export
+   port waits (superseded by decision 0204, 2026-10-13: C may call
+   runtime functions compiled from Xo); C never calls compiled Xo (that would need an export
    symbol convention in both backends and both compilers, and every
    program would have to emit the callee).
 4. **What stays C: bulk byte moves and scans.** Xo has no inline byte

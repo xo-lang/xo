@@ -589,8 +589,31 @@ typedef struct {
 	char *dir; // NULL: the program's
 	int flags; // 1 env set, 2 inherit, 4 merge_stderr
 	char **argv;
-	char **envp; // NULL: the program's environment
+	char **envp;   // NULL: the program's environment
+	char *cmdline; // Windows: the command line std/native/llrt/procspec.xo built
 } pr_cmd;
+
+// xo_proc_environ is the program's environment as exec passes it on
+// (std/native/llrt/procspec.xo builds a child's from it).
+xo_rlist *xo_proc_environ(void) {
+	int n = 0;
+	while (environ[n]) {
+		n++;
+	}
+	xo_rlist *l = n_str_list_new(n);
+	for (int k = 0; k < n; k++) {
+		l = n_str_list_add(l, environ[k], (int64_t)strlen(environ[k]));
+	}
+	return l;
+}
+
+// xo_proc_getcwd is the working directory (filepath.Abs of a command's
+// directory, procspec.xo).
+xo_rstr *xo_proc_getcwd(int64_t *len) {
+	char cwd[4096];
+	const char *w = getcwd(cwd, sizeof cwd) ? cwd : ".";
+	return nstr(w, (int64_t)strlen(w), len);
+}
 
 static char *pr_lstr(xo_rlist *l, int64_t i) {
 	if (i >= l->len) {
@@ -734,6 +757,22 @@ static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 	*i += nx;
 	int env_set = c->flags & 1;
 	c->envp = NULL;
+	if (c->flags & 8) {
+		// built by std/native/llrt/procspec.xo (decision 0193 step 6): the
+		// environment is final (flag 1: there is one, else the program's),
+		// the Windows command line follows
+		c->cmdline = pr_lstr(l, (*i)++);
+		if (env_set) {
+			c->envp = calloc((size_t)ne + 1, sizeof(char *));
+			if (!c->envp) {
+				xo_oom();
+			}
+			for (int64_t j = 0; j < ne; j++) {
+				c->envp[j] = pr_lstr(l, e0 + j);
+			}
+		}
+		return;
+	}
 #ifdef _WIN32
 	// os/exec sets no PWD on Windows
 	if (!env_set && nx == 0) {
@@ -806,6 +845,7 @@ static void pr_parse(xo_rlist *l, int64_t *i, pr_cmd *c) {
 static void pr_cmd_free(pr_cmd *c) {
 	free(c->name);
 	free(c->dir);
+	free(c->cmdline);
 	if (c->argv) {
 		for (char **a = c->argv; *a; a++) {
 			free(*a);
@@ -1055,11 +1095,15 @@ static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, 
 		}
 	}
 	nbuf cl = {0};
-	for (char **a = c->argv; *a; a++) {
-		if (a != c->argv) {
-			nbuf_byte(&cl, ' ');
+	if (c->cmdline) {
+		nbuf_str(&cl, c->cmdline); // procspec.xo's
+	} else {
+		for (char **a = c->argv; *a; a++) {
+			if (a != c->argv) {
+				nbuf_byte(&cl, ' ');
+			}
+			pr_w_quote(&cl, *a);
 		}
-		pr_w_quote(&cl, *a);
 	}
 	nbuf_byte(&cl, 0);
 	wchar_t *wcl = xo_w_path(cl.p);
