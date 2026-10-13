@@ -491,7 +491,10 @@ type Module struct {
 	// fault carry their landing (Value.Pad).
 	FaultUnwind bool
 	// TZ is the zone data std/time needs (build_time.go).
-	TZ     TZUse
+	TZ TZUse
+	// GOARCH is the build's target architecture (Options.GOARCH), ""
+	// for the host; the LLVM emitter picks the spin hint by it.
+	GOARCH string
 	faults map[*Func]bool // mayFault while Verify runs
 	types  map[string]*Type
 	order  []*Type // named struct and enum types, in creation order

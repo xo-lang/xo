@@ -195,6 +195,7 @@ func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder
 		b.see = func(stage string) { see(b, stage) }
 	}
 	b.mod.FaultUnwind = b.faultUnwind
+	b.mod.GOARCH = opts.GOARCH
 	b.ambiguous = ambiguousTypeNames(info.AllModules())
 	b.budgets = b.usesBudgets()
 	if opts.Tests {

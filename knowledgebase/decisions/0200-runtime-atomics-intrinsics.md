@@ -52,8 +52,14 @@ Atomic[T] was six calls into xo_rt.c.
      `atomicrmw xchg|add`, `cmpxchg` (failure ordering the strongest
      allowed), `fence`; the target attributes of decision 0119 pick the
      instructions (LSE on darwin/arm64, outline atomics on Linux arm64,
-     locked instructions on x86-64). `spin_hint` is nothing there: the
-     IR is target independent.
+     locked instructions on x86-64). `spin_hint` is inline asm of the
+     target's pause hint, as the C runtime's spin_relax: `yield` on
+     arm64, `pause` on amd64, nothing elsewhere (2026-10-13; it was
+     nothing at first). The module carries the build's GOARCH for it
+     (ssa.Module.GOARCH, selfhost ssa Module.goarch, set from the
+     builder's target; "" is the compiler's own host), since the IR
+     itself names no target (spin_hint_asm, spinHintAsm,
+     TestSpinHintAsm).
    - selfhost/wasm (one thread): plain loads and stores on a list cell;
      on an Atomic, the operations go back to rt3.xo's `$atomic_*`, which
      are scheduling points (gotchas/wasm-atomic-ops-are-scheduling-points.md).

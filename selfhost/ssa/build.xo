@@ -289,6 +289,7 @@ pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, relea
     b.conc = true
     b.build()
   }
+  b.m.goarch = goarch
   b
 }
 

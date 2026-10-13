@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM backend lowers std's internal spin loop hint to the target's
+  pause instruction (`yield` on arm64, `pause` on x86-64) instead of
+  nothing (decision 0200).
 - Faster: `Atomic[T]` on the native backends no longer calls the C
   runtime: get, set, swap, and compare_and_swap are one inline atomic
   instruction each (get is a single `ldar` on arm64) and add and max are

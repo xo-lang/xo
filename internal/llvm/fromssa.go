@@ -3,6 +3,7 @@ package llvm
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -2205,6 +2206,22 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 	return true
 }
 
+// spinHintAsm is the pause hint of a spin loop on goarch ("" the host),
+// as inline asm (selfhost/llvm spin_hint_asm): yield on arm64, pause on
+// amd64, as the C runtime's spin_relax; "" (nothing) elsewhere.
+func spinHintAsm(goarch string) string {
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	switch goarch {
+	case "arm64":
+		return `call void asm sideeffect "yield", ""()`
+	case "amd64":
+		return `call void asm sideeffect "pause", ""()`
+	}
+	return ""
+}
+
 // ordArg returns the memory order of argument k of v (decision 0200):
 // its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst; a
 // value that is not one of them is seq_cst.
@@ -2257,13 +2274,15 @@ func (s *sfn) atomicResult(v *ssa.Value, r string) {
 // atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
 // LLVM ordering (relaxed is monotonic; a load takes no release and a
 // store no acquire, and a cmpxchg fails with the strongest ordering
-// allowed there). The spin hint is nothing: the IR is target
-// independent (clang picks the target), and yield and pause are target
-// intrinsics.
+// allowed there). The spin hint is the target's pause hint as inline
+// asm (spinHintAsm), as the C runtime's spin_relax.
 func (s *sfn) atomic(v *ssa.Value) {
 	name := v.Aux.(string)
 	switch name {
 	case "rt.spin_hint":
+		if asm := spinHintAsm(s.g.m.GOARCH); asm != "" {
+			s.emit("%s", asm)
+		}
 		return
 	case "rt.fence":
 		if o := ordArg(v, 0); o > 0 {

@@ -255,6 +255,9 @@ pub struct Module {
   pub type_at: Map[Str, Int] = {}
   /// Named struct and enum types in creation order.
   pub order: List[Int] = []
+  /// The build's target architecture (Builder.goarch), "" for the
+  /// compiler's own; the LLVM emitter picks the spin hint by it.
+  pub goarch: Str = ""
 }
 
 // ---------------------------------------------------------------------------
