@@ -1,4 +1,4 @@
-# 0198: The xo1 speed work: an empty list allocates nothing, xo1 cached on its own inputs
+# 0199: The xo1 speed work: an empty list allocates nothing, xo1 cached on its own inputs
 
 Status: Accepted (2026-10-13). Implemented on the xo1-speed branch.
 Evidence: `bench/results/xo1-speed-2026-10-13.md`.

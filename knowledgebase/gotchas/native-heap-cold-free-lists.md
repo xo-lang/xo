@@ -19,7 +19,7 @@ returned to the system nor used for another class, so a list that grew
 through several classes leaves its old blocks behind in each.
 
 Fix: allocate less (bench/results/xo1-speed-2026-10-13.md: an empty
-list literal no longer allocates, decision 0198; temporary lists, per
+list literal no longer allocates, decision 0199; temporary lists, per
 block bit sets, and per load strings removed from the emitter), and
 the allocator prefetches the new head's link on each pop. To see where
 a program's heap went, run it with `XO_HEAPSTATS=1` (the blocks on

@@ -10,7 +10,7 @@ passed in 428.7 s.
 Cause: cmd/xo's tests run native builds through the self hosted driver
 (decision 0178 switch point A), and the xo1 for the changed sources is
 built first (minutes, once per change of selfhost/ or of a std module
-xo1 uses since decision 0198). Under load that alone can take most of
+xo1 uses since decision 0199). Under load that alone can take most of
 the timeout.
 
 Fix: after a selfhost change, run cmd/xo's short tests on their own

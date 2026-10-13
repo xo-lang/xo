@@ -12,7 +12,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   same assembly: liveness and dce by worklists over sparse sets, fewer
   allocations per instruction, insert_rc's liveness and borrow sites
   without per pass maps. On the native backends an empty list literal
-  `[]` allocates nothing until its first push (decision 0198), and the
+  `[]` allocates nothing until its first push (decision 0199), and the
   heap prefetches on each allocation from a free list. `XO_HEAPSTATS=1`
   prints a native program's heap by size class at exit.
 - Changed: the xo1 that native builds of the development `xo` run
