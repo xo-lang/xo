@@ -1851,6 +1851,20 @@ fn (var b: Builder) llrt(name: Str, t: Int, args: List[Int]) -> Int {
   b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
 }
 
+/// A call of std/json's tape reader or text function name (json_str,
+/// rs_append_json_str, b64_ok, ...) for the codecs json.xo generates:
+/// the native prelude's llrt_<name> (std/native/llrt/jsontext.xo,
+/// decision 0193 step 4), unchecked like the C it replaces; without the
+/// native prelude the C runtime's rt.<name> (fn.jsonRT).
+fn (var b: Builder) json_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl >= 0 {
+    let f = b.declare(impl, [])
+    return b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
+  }
+  b.rt(name, t, args)
+}
+
 /// acc + the text of v, an Int or Float (acc < 0: the text alone), for
 /// interpolation and Display: the native prelude's llrt_concat_int or
 /// llrt_concat_float (std/native/llrt/num.xo, decision 0193 step 3),

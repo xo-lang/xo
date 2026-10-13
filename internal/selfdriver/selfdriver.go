@@ -4,17 +4,24 @@
 //
 // Which commands: build, run, and test whose backend is native
 // (--backend=arm64 or llvm, or --no-gc without a backend) on a
-// darwin/arm64 or linux/arm64 host. Everything else, the Go backend
+// darwin/arm64 or linux/arm64 host, and whose backend is LLVM
+// (--backend=llvm, or --no-gc without a backend, which is LLVM there) on
+// a darwin/amd64 or linux/amd64 host. Everything else, the Go backend
 // included, stays with the Go driver. So do the flags xo1 does not
 // implement yet (--ci, --hybrid, --real) and a test of a workspace (the
 // Go driver takes its modules as one program).
 //
 // Where xo1 comes from: $XO1 names a binary; else the sources embedded in
 // this xo (package selfhost, std, third_party) are written under
-// <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file)
-// and xo1 is built there once by this xo with the arm64 backend, under a
-// file lock; later runs reuse it. xo1 reads std and third_party from the
-// same directory, so the build is a function of the embedded sources.
+// <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file),
+// xo1 reads std and third_party from there, and xo1 itself is built once
+// by this xo, under a file lock (with the arm64 backend on an arm64 host,
+// with the LLVM backend split into modules on an amd64 host:
+// xo1Backend), into <user cache>/xo/xo1/bin/<binkey>/xo1. The binary's
+// key covers only its own inputs (BinaryInputs: the xo version, the host,
+// selfhost/, and the Xo files of the std modules selfhost reaches
+// through `use`), so a change to another std module, the C runtime, or
+// third_party writes a new source tree but reuses the built xo1.
 //
 // Rollback: XO_SELF_DRIVER=0 (or off) runs every command with the Go
 // driver, as before the switch.
@@ -70,10 +77,15 @@ var unsupported = map[string]bool{"ci": true, "hybrid": true, "real": true}
 // Wants reports whether cmd with args (after the command, module flags
 // such as --offline already taken out) runs through xo1.
 func Wants(cmd string, args []string) bool {
+	return wantsOn(runtime.GOOS, runtime.GOARCH, cmd, args)
+}
+
+// wantsOn is Wants on a goos/goarch host.
+func wantsOn(goos, goarch, cmd string, args []string) bool {
 	if Off() || (cmd != "build" && cmd != "run" && cmd != "test") {
 		return false
 	}
-	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+	if (goarch != "arm64" && goarch != "amd64") || (goos != "darwin" && goos != "linux") {
 		return false
 	}
 	backend, noGC, ok := "", false, true
@@ -103,6 +115,11 @@ func Wants(cmd string, args []string) bool {
 		}
 	}
 	native := backend == "arm64" || backend == "llvm" || (backend == "" && noGC)
+	if goarch == "amd64" {
+		// xo1 is built by the LLVM backend there and runs LLVM builds;
+		// --backend=arm64 (a cross build) stays with the Go driver
+		native = backend == "llvm" || (backend == "" && noGC)
+	}
 	if !native || !ok {
 		return false
 	}
@@ -173,7 +190,16 @@ func Run(args []string, stdout, stderr io.Writer) (int, error) {
 // third_party: $XO1 (with $XO1_ROOT, or the sources of this xo), else
 // the xo1 built from the sources embedded in this xo.
 func Binary() (bin, root string, err error) {
-	root, err = Sources()
+	files, err := embedded()
+	if err != nil {
+		return "", "", err
+	}
+	return binary(files)
+}
+
+// binary is Binary for the given embedded files.
+func binary(files map[string][]byte) (bin, root string, err error) {
+	root, err = sources(files)
 	if err != nil {
 		return "", "", err
 	}
@@ -186,7 +212,11 @@ func Binary() (bin, root string, err error) {
 		}
 		return b, root, nil
 	}
-	bin = filepath.Join(root, "bin", "xo1")
+	base, err := cacheBase()
+	if err != nil {
+		return "", "", err
+	}
+	bin = filepath.Join(base, "bin", BinaryKey(files), "xo1")
 	if fi, err := os.Stat(bin); err == nil && fi.Mode().IsRegular() {
 		return bin, root, nil
 	}
@@ -238,6 +268,10 @@ func Sources() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return sources(files)
+}
+
+func sources(files map[string][]byte) (string, error) {
 	var names []string
 	for n := range files {
 		names = append(names, n)
@@ -250,13 +284,9 @@ func Sources() (string, error) {
 		h.Write(files[n])
 	}
 	key := hex.EncodeToString(h.Sum(nil))[:16]
-	base := os.Getenv("XO1_CACHE")
-	if base == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(cache, "xo", "xo1")
+	base, err := cacheBase()
+	if err != nil {
+		return "", err
 	}
 	root := filepath.Join(base, key)
 	stamp := filepath.Join(root, "sources.ok")
@@ -295,11 +325,35 @@ func Sources() (string, error) {
 	return root, nil
 }
 
-// buildXo1 builds selfhost/xo of root into bin with this xo's arm64
-// backend, once across processes (a file lock; a waiting process finds
-// the binary when it gets the lock).
+// xo1Backend is how this xo builds xo1 on a goarch host: the arm64
+// backend on arm64; elsewhere (amd64) the LLVM backend, split into 12
+// modules without LTO (decision 0168) unless XO_LLVM_SPLIT and
+// XO_LLVM_LTO say otherwise: one module of selfhost/xo takes clang over
+// half an hour, and the ThinLTO link of the 12 modules held 18.8 GB on
+// linux/amd64 (bench/results/xo1-x86-2026-10-12.md), more than a 16 GB
+// laptop has.
+func xo1Backend(goarch string) (string, *build.SplitConfig) {
+	if goarch == "arm64" {
+		return build.BackendArm64, nil
+	}
+	c := build.LLVMSplitConfig()
+	if os.Getenv("XO_LLVM_SPLIT") == "" {
+		c.Modules = 12
+	}
+	if os.Getenv("XO_LLVM_LTO") == "" {
+		c.LTO = "none"
+	}
+	return build.BackendLLVM, &c
+}
+
+// buildXo1 builds selfhost/xo of root into bin with this xo's native
+// backend for the host (xo1Backend), once across processes (a file lock;
+// a waiting process finds the binary when it gets the lock).
 func buildXo1(root, bin string) error {
-	unlock, err := lockFile(filepath.Join(root, "build.lock"))
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		return err
+	}
+	unlock, err := lockFile(filepath.Join(filepath.Dir(bin), "build.lock"))
 	if err != nil {
 		return err
 	}
@@ -312,7 +366,8 @@ func buildXo1(root, bin string) error {
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return err
 	}
-	res, err := build.Build([]string{filepath.Join(root, "selfhost", "xo")}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, Out: tmp})
+	backend, split := xo1Backend(runtime.GOARCH)
+	res, err := build.Build([]string{filepath.Join(root, "selfhost", "xo")}, build.Options{Mode: gen.Build, Backend: backend, LLVMSplit: split, Out: tmp})
 	if err != nil {
 		return fmt.Errorf("building xo1: %v", err)
 	}
@@ -324,6 +379,94 @@ func buildXo1(root, bin string) error {
 		return fmt.Errorf("building xo1: the check failed:%s", b.String())
 	}
 	return os.Rename(tmp, bin)
+}
+
+// cacheBase is the directory of the source trees and the built binaries:
+// $XO1_CACHE, else <user cache>/xo/xo1.
+func cacheBase() (string, error) {
+	if base := os.Getenv("XO1_CACHE"); base != "" {
+		return base, nil
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "xo", "xo1"), nil
+}
+
+// Version is the version of the xo that builds xo1 (cmd/xo sets it). It
+// is part of the binary's key: that xo's compiler builds it.
+var Version = "dev"
+
+// BinaryInputs are the embedded files the built xo1 depends on, sorted:
+// every file under selfhost/, and of std the Xo files of the prelude and
+// of each module selfhost reaches through `use` lines, followed through
+// the std files themselves (std/NAME.xo and its native implementation
+// std/native/NAME.xo for `use std/NAME`; std/native/NAME.xo for `use
+// native/NAME`; std/native/llrt/NAME.xo and its C path NAME_c.xo for
+// `use native/llrt/NAME`). Left out: the other std modules, the C runtime
+// (std/llrt), and third_party. Programs xo1 builds read those from the
+// source tree beside it, so a change there does not change what xo1
+// compiles, only the runtime xo1 itself was linked with.
+func BinaryInputs(files map[string][]byte) []string {
+	in := map[string]bool{}
+	var queue []string
+	add := func(name string) {
+		if _, ok := files[name]; ok && !in[name] {
+			in[name] = true
+			queue = append(queue, name)
+		}
+	}
+	for n := range files {
+		if strings.HasPrefix(n, "selfhost/") {
+			add(n)
+		}
+	}
+	add("std/prelude.xo")
+	add("std/native/prelude.xo")
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		if !strings.HasSuffix(n, ".xo") {
+			continue
+		}
+		for _, line := range strings.Split(string(files[n]), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 || f[0] != "use" {
+				continue
+			}
+			p := strings.Trim(f[1], `"`)
+			switch {
+			case strings.HasPrefix(p, "std/"):
+				m := strings.TrimPrefix(p, "std/")
+				add("std/" + m + ".xo")
+				add("std/native/" + m + ".xo")
+			case strings.HasPrefix(p, "native/llrt/"):
+				add("std/" + p + ".xo")
+				add("std/" + p + "_c.xo")
+			case strings.HasPrefix(p, "native/"):
+				add("std/" + p + ".xo")
+			}
+		}
+	}
+	names := make([]string, 0, len(in))
+	for n := range in {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// BinaryKey is the cache key of the xo1 built from files: a hash of the
+// xo version, the host, and BinaryInputs.
+func BinaryKey(files map[string][]byte) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "xo1 binary v1\nxo %s %s/%s\n", Version, runtime.GOOS, runtime.GOARCH)
+	for _, n := range BinaryInputs(files) {
+		fmt.Fprintf(h, "%s %d\n", n, len(files[n]))
+		h.Write(files[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func exists(p string) bool {

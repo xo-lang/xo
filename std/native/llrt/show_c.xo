@@ -1,0 +1,14 @@
+// The C path of the leaf text of Display and Debug (decision 0193 step
+// 5): the API of show.xo over the C runtime's functions
+// (std/llrt/xo_bytes.c). Loaded in place of show.xo when XO_LLRT_C names
+// `show`, to compare the two and to fall back while the Xo path misses
+// decision 0180's bar; the Go SSA builder then calls the C runtime
+// directly, as before the port. The self hosted compiler always uses
+// show.xo.
+use native/rt
+
+pub fn append_rune(out: Str, r: Int) -> Str { rt.rs_append_rune(out, r) }
+
+pub fn append_rune_quote(out: Str, r: Int) -> Str { rt.rs_append_rune_quote(out, r) }
+
+pub fn append_u64(out: Str, v: Int) -> Str { rt.rs_append_u64(out, v) }

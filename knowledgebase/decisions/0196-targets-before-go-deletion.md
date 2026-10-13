@@ -34,12 +34,20 @@ block the freeze, goldens, or bootstrap steps.
   carries no triple (clang supplies the host's), the C runtime already
   had the x86-64 fiber switch with Mach-O names, `__ulock`, and kqueue,
   and the LLVM backend needs no runtime pack (it compiles std/llrt with
-  the program). Builds are native on that Mac with the Go driver (xo1 is
-  arm64 only and `xo` falls back by itself there); the development Mac
+  the program). Builds are native on that Mac (with the Go driver at the
+  time; since the xo1-x86 change xo1 runs there too, built by LLVM);
+  the development Mac
   cannot run x86_64 binaries. Test host: `scripts/intel-mac-test.sh`.
   Gap: ASan and TSan do not start there
   (gotchas/darwin-amd64-sanitizers-sigill.md), so those tests run
   without the sanitizer.
+- The self hosted toolchain itself runs on both x86-64 hosts
+  (2026-10-12, bench/results/xo1-x86-2026-10-12.md): xo1 built by the
+  LLVM backend on linux/amd64 and darwin/amd64 passes the LLVM goldens
+  169 of 169 on each, and on each it rebuilds itself to a fixed point
+  with no Go toolchain. So deleting Go does not strand x86-64
+  hosts; release archives for them still need an amd64 build host or
+  an LLVM cross compile in xo1 (the results file lists both).
 - wasi/wasm32 is not part of this gate; the Xo wasm backend covers wasm.
 
 ## Alternatives

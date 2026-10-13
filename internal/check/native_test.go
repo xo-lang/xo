@@ -123,13 +123,14 @@ func TestLLRTCPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		env, text, unicode, strings string
+		env, text, unicode, strings, jsontext string
 	}{
-		{"", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo"},
-		{"text", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo"},
-		{"strings", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings_c.xo"},
-		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings_c.xo"},
-		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings.xo"},
+		{"", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
+		{"text", "std/native/llrt/text_c.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
+		{"strings", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings_c.xo", "std/native/llrt/jsontext.xo"},
+		{"jsontext", "std/native/llrt/text.xo", "std/native/llrt/unicode.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext_c.xo"},
+		{"all", "std/native/llrt/text_c.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings_c.xo", "std/native/llrt/jsontext_c.xo"},
+		{"unicode, nosuch", "std/native/llrt/text.xo", "std/native/llrt/unicode_c.xo", "std/native/llrt/strings.xo", "std/native/llrt/jsontext.xo"},
 	} {
 		t.Setenv("XO_LLRT_C", c.env)
 		res, err := CheckOpts([]string{dir}, Options{Native: true})
@@ -147,6 +148,19 @@ func TestLLRTCPath(t *testing.T) {
 		}
 		if files["native/llrt/text"] != c.text || files["native/llrt/unicode"] != c.unicode || files["native/llrt/strings"] != c.strings {
 			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q, strings from %q; want %q, %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], files["native/llrt/strings"], c.text, c.unicode, c.strings)
+		}
+		// decision 0193 step 5: show and report come with the prelude
+		for _, name := range []string{"show", "report"} {
+			want := "std/native/llrt/" + name + ".xo"
+			if c.env == "all" {
+				want = "std/native/llrt/" + name + "_c.xo"
+			}
+			if files["native/llrt/"+name] != want {
+				t.Errorf("XO_LLRT_C=%q: %s from %q, want %q", c.env, name, files["native/llrt/"+name], want)
+			}
+		}
+		if files["native/llrt/jsontext"] != c.jsontext {
+			t.Errorf("XO_LLRT_C=%q: jsontext from %q, want %q", c.env, files["native/llrt/jsontext"], c.jsontext)
 		}
 	}
 }

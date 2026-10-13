@@ -189,7 +189,7 @@ fn tls_dir(os: Os, ctx: Ctx, cc: Str, flavor: List[Str], sysroot: Str) -> (Str, 
     Err(e) => return ("", "", "the TLS library sources: ${e}")
   }
   let (ver, _) = combined(os, cc, ["--version"])
-  let text = "${src}\n${cc}\n${ver}\n${sysroot}\n${ctx.goos}/arm64\n${flavor.join(" ")}\n${tls_file_defines_v()}\n"
+  let text = "${src}\n${cc}\n${ver}\n${sysroot}\n${ctx.goos}/${host_arch()}\n${flavor.join(" ")}\n${tls_file_defines_v()}\n"
   let key = crypto.sha256(text.bytes()).to_hex()[0..20]
   var root = "${ctx.cache}/xo/mbedtls"
   let env_root = os.env.get("XO_TLS_CACHE") ?? ""

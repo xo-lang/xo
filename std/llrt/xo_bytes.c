@@ -195,6 +195,10 @@ double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 double xo_f32_round(double v) { return (double)(float)v; }
 double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
 
+// The C path of the leaf text of Display and Debug (decision 0193 step
+// 5): compiled only with -DXO_SHOW_C (XO_LLRT_C=show,
+// std/native/llrt/show_c.xo); std/native/llrt/show.xo is the default.
+#ifdef XO_SHOW_C
 // xo_rs_append_u64 is s + the text of a UInt64.
 xo_rstr *xo_rs_append_u64(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
 	char t[32];
@@ -202,6 +206,7 @@ xo_rstr *xo_rs_append_u64(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
 	*len = an + n;
 	return rs_append(a, an, t, n);
 }
+#endif
 
 // n_rune_utf8 writes the UTF-8 encoding of r (U+FFFD when it is not a
 // scalar value) to p and returns its size (utf8.AppendRune).
@@ -215,6 +220,7 @@ xo_rstr *xo_rs_append_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
 	return rs_append(a, an, t, n);
 }
 
+#ifdef XO_SHOW_C
 // xo_rs_append_rune_quote is s + the Debug text of r (std/rt quoteRune).
 xo_rstr *xo_rs_append_rune_quote(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
 	char t[8];
@@ -241,6 +247,7 @@ xo_rstr *xo_rs_append_rune_quote(xo_rstr *a, int64_t an, int64_t r, int64_t *len
 	*len = an + n;
 	return rs_append(a, an, t, n);
 }
+#endif
 
 // xo_rs_push_byte is a BytesBuilder's write_byte: s + the byte x.
 xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {

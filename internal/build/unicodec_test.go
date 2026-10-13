@@ -87,10 +87,65 @@ func TestIOFlagsNumC(t *testing.T) {
 		{"bl _xo_bytes_hex_ok\n", true},
 		{"bl _xo_bytes_hex\n", false},
 		{"bl _xo_rs_concat_int\nbl _xo_rs_concat_float\nbl _xo_rs_push_words\nbl _xo_rs_append_b64_quoted\n", false},
+		// xo1's own io_flags table is string data, no call
+		{"\t.ascii \"xo_float_parse\"\n", false},
+		{"@s = private constant [13 x i8] c\"xo_b64_decode\"\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_NUM_C")
 		if got != c.want {
 			t.Errorf("IOFlags(%q) has -DXO_NUM_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
+// TestIOFlagsStep5 checks the C paths of decision 0193 step 5: the leaf
+// text of Debug (XO_LLRT_C=show), the report of a property test's case
+// (report), and the zone rules (tz) compile their C only into programs
+// that call it; the primitives the Xo paths call (xo_tz_data,
+// xo_gen_choices, xo_rs_append_rune) turn on nothing.
+func TestIOFlagsStep5(t *testing.T) {
+	for _, c := range []struct {
+		code, flag string
+		want       bool
+	}{
+		{"bl _xo_rs_append_u64\n", "-DXO_SHOW_C", true},
+		{"call ptr @xo_rs_append_rune_quote(ptr %1, i64 %2)\n", "-DXO_SHOW_C", true},
+		{"bl _xo_rs_append_rune\nbl _xo_rs_push_word\n", "-DXO_SHOW_C", false},
+		{"bl _xo_prop_report\n", "-DXO_REPORT_C", true},
+		{"bl _xo_gen_choices\nbl _xo_test_write\nbl _xo_prop_best\n", "-DXO_REPORT_C", false},
+		{"bl _xo_tz_load_host\n", "-DXO_TZ_C", true},
+		{"bl _xo_tz_offset\n", "-DXO_TZ_C", true},
+		{"bl _xo_tz_data\nbl _xo_tz_find\nbl _xo_tz_keep\nbl _xo_tz_now\nbl _xo_tz_local_name\n", "-DXO_TZ_C", false},
+		{".ascii \"xo_tz_offset\"\n", "-DXO_TZ_C", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), c.flag)
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has %s: %v, want %v", c.code, c.flag, got, c.want)
+		}
+	}
+}
+
+// TestIOFlagsJSONTextC checks that code calling the C path of std/json's
+// text compiles the runtime with -DXO_JSONTEXT_C (decision 0193 step 4),
+// and that the default (Xo) path, which calls the byte primitives, does
+// not.
+func TestIOFlagsJSONTextC(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_json_parse\n", true},
+		{"call ptr @xo_json_str(ptr %1, i64 %2, ptr %3, i64 %4, ptr %5)\n", true},
+		{"bl _xo_json_members\n", true},
+		{"bl _xo_rs_append_json_float\n", true},
+		{"\t.ascii \"xo_json_\"\n", false},
+		{"@s = private constant [18 x i8] c\"xo_rs_append_json_\"\n", false},
+		{"bl _xo_rs_append_b64_quoted\n", true},
+		{"bl _xo_rs_push_word\nbl _xo_rs_append_bytes\nbl _xo_utf8_valid\nbl _xo_rs_push_rune\nbl _xo_b64_encode\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_JSONTEXT_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_JSONTEXT_C: %v, want %v", c.code, got, c.want)
 		}
 	}
 }

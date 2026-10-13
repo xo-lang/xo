@@ -9,6 +9,8 @@
 // each key once at its first position and its last value.
 
 #define XO_RT_NO_MAIN
+// the C path of std/json's text (decision 0193 step 4)
+#define XO_JSONTEXT_C
 #include "../xo_rt.c"
 
 static void hex(nbuf *b, const char *p, int64_t n) {

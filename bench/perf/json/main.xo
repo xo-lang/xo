@@ -1,0 +1,270 @@
+// std/json workloads of the native runtime port (decision 0193 step 4):
+// the parser, the tape readers, and the string and Float text in Xo
+// (std/native/llrt/jsontext.xo) against their C path
+// (XO_LLRT_C=jsontext, std/llrt/xo_json.c). Usage: jsonperf <workload>.
+// Each workload prints "<workload> <checksum> <elapsed microseconds>";
+// the checksum must be the same on every backend (the Go backend is the
+// reference). The documents are built by interpolation, not by
+// json.encode, so the setup (`none`) costs the same on both paths.
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  score: Float
+  active: Bool
+  tags: List[Str]
+} derive Json
+
+/// h and s mixed into a checksum.
+fn mix(h: Int, s: Str) -> Int {
+  let b = s.bytes()
+  var x = (h * 31 + b.len()) % 1000000007
+  if b.len() > 0 {
+    x = (x * 31 + Int(b[b.len() / 2])) % 1000000007
+  }
+  x
+}
+
+/// n pseudo random values in 0..m (a linear congruential sequence).
+fn values(n: Int, m: Int, seed: Int) -> List[Int] {
+  var out: List[Int] = []
+  var x = seed
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    out.push(x % m)
+  }
+  out
+}
+
+/// The JSON text of a string of k: plain ASCII, escapes, raw UTF-8, or
+/// \u escapes with surrogate pairs.
+fn str_text(v: Int, k: Int) -> Str {
+  match k % 6 {
+    0 => "\"user ${v}\""
+    1 => "\"a longer plain ASCII value number ${v} with some words in it\""
+    2 => "\"line\\none \\\"quoted\\\" ${v}\\t\\\\ tail\""
+    3 => "\"caf\u{e9} na\u{ef}ve \u{65e5}\u{672c}\u{8a9e} ${v}\""
+    4 => "\"\\u00e9\\ud83d\\ude00 ${v} \\u2028x\""
+    _ => "\"${v}\""
+  }
+}
+
+/// The JSON text of a number of k: Ints and Floats in several forms.
+fn num_text(v: Int, k: Int) -> Str {
+  match k % 5 {
+    0 => "${v}"
+    1 => "-${v}.${v % 1000}"
+    2 => "${v % 1000}.${v}e-${k % 30}"
+    3 => "${Float(v) / 7.0}"
+    _ => "${v}E+${k % 20}"
+  }
+}
+
+fn small(docs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    for d in docs {
+      match json.decode_str[User](d) {
+        Ok(u) => h = mix(h, u.name) + u.id % 1000 + u.tags.len() + (if u.active { 1 } else { 0 }) + Int(u.score) % 100
+        Err(e) => h = mix(h, e.msg)
+      }
+    }
+  }
+  h
+}
+
+fn ints(doc: Str) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    match json.decode_str[List[Int]](doc) {
+      Ok(xs) => {
+        for x in xs {
+          h = (h * 31 + x % 1000003) % 1000000007
+        }
+      }
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
+fn floats(doc: Str) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    match json.decode_str[List[Float]](doc) {
+      Ok(xs) => {
+        for x in xs {
+          let g = x.abs()
+          h = (h * 31 + (if g < 1e15 { Int(g * 1000.0) % 1000003 } else { 7 })) % 1000000007
+        }
+      }
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
+fn strings(doc: Str) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    match json.decode_str[List[Str]](doc) {
+      Ok(xs) => {
+        for x in xs {
+          h = mix(h, x)
+        }
+      }
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
+fn maps(docs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    for d in docs {
+      match json.decode_str[Map[Str, Int]](d) {
+        Ok(m) => h = (h * 31 + m.len() + (m.get("k7") ?? 0) % 1000) % 1000000007
+        Err(e) => h = mix(h, e.msg)
+      }
+    }
+  }
+  h
+}
+
+fn parse_only(doc: Str) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    match json.decode_str[Bool](doc) {
+      Ok(_) => h += 1
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
+fn invalid(docs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    for d in docs {
+      match json.decode_str[User](d) {
+        Ok(_) => h += 1
+        Err(e) => h = mix(h, e.msg)
+      }
+    }
+  }
+  h
+}
+
+fn enc_small(us: List[User]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    h = mix(h, json.encode_str(us))
+  }
+  h
+}
+
+fn enc_strings(xs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    h = mix(h, json.encode_str(xs))
+  }
+  h
+}
+
+fn enc_floats(xs: List[Float]) -> Int {
+  var h = 0
+  for _ in 0..40 {
+    h = mix(h, json.encode_str(xs))
+  }
+  h
+}
+
+fn bytes(bs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..20 {
+    let t = json.encode_str(bs)
+    h = mix(h, t)
+    match json.decode_str[List[Bytes]](t) {
+      Ok(back) => h = (h + back.len() + back[back.len() / 2].len()) % 1000000007
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "small"
+  let vs = values(5000, 1000000000, 12345)
+  var docs: List[Str] = []
+  var bad: List[Str] = []
+  var us: List[User] = []
+  var ipart: List[Str] = []
+  var fpart: List[Str] = []
+  var spart: List[Str] = []
+  var strs: List[Str] = []
+  var fs: List[Float] = []
+  var bs: List[Bytes] = []
+  var i = 0
+  for v in vs {
+    var x = v
+    for _ in 0..(v % 10) {
+      x = x / 10
+    }
+    if i < 1000 {
+      let name = if i % 3 == 0 { "user ${v}" } else if i % 3 == 1 { "J\u{f6}rg \\\"${x}\\\"" } else { "name ${x}" }
+      let tags = if i % 2 == 0 { "[\"a\",\"bb\"]" } else { "[]" }
+      let d = "{\"id\": ${v}, \"name\": \"${name}\", \"email\": \"u${x}@example.com\", \"score\": ${x}.5, \"active\": ${i % 2 == 0}, \"tags\": ${tags}}"
+      docs.push(d)
+      // the error is at the end, in the middle, or at the start
+      bad.push(match i % 4 {
+        0 => d + "x"
+        1 => d[0..d.len() / 2]
+        2 => "{\"id\": ${v}, \"name\" \"x\"}"
+        _ => "[1, 2, ${v}e]"
+      })
+      us.push(User{id: v, name: if i % 3 == 1 { "J\u{f6}rg \"${x}\"\n" } else { "user ${v}" }, email: "u${x}@example.com", score: Float(x) / 3.0, active: i % 2 == 0, tags: ["a", "b${i}"]})
+    }
+    // Ints of 1 to 19 digits, both signs
+    ipart.push(if i % 4 == 3 { "${v * 9000000007}" } else if i % 2 == 0 { "${x}" } else { "-${x}" })
+    fpart.push(num_text(x, i))
+    spart.push(str_text(v, i))
+    strs.push(if i % 3 == 0 { "plain text ${v}" } else if i % 3 == 1 { "quote \"${v}\"\n\ttab \u{e9} ${v}" } else { "\u{fc}n\u{ef} ${v} \u{65e5}\u{672c}\u{8a9e}\u{1}\u{2028}" })
+    fs.push(if i % 3 == 0 { Float(x) } else { Float(v) / Float(1 + i % 97) * [1.0, 0.001, 1e-9, 1e12, 1e-310, 1e300, 0.5, 3.0e-5][i % 8] })
+    bs.push("bytes ${v} \u{1} ${x}".bytes())
+    i += 1
+  }
+  var mdocs: List[Str] = []
+  for k in 0..100 {
+    var parts: List[Str] = []
+    for j in 0..40 {
+      parts.push("\"k${j}\": ${vs[(k * 40 + j) % vs.len()] % 100000}")
+    }
+    mdocs.push("{" + parts.join(", ") + "}")
+  }
+  let idoc = "[" + ipart.join(",") + "]"
+  let fdoc = "[" + fpart.join(", ") + "]"
+  let sdoc = "[" + spart.join(",") + "]"
+  let pdoc = "[" + docs.join(",\n  ") + ", " + idoc + ", " + sdoc + "]"
+  let t = os.clock.now()
+  let sum = match w {
+    "none" => -1
+    "small" => small(docs)
+    "ints" => ints(idoc)
+    "floats" => floats(fdoc)
+    "strings" => strings(sdoc)
+    "maps" => maps(mdocs)
+    "parse" => parse_only(pdoc)
+    "invalid" => invalid(bad)
+    "enc_small" => enc_small(us)
+    "enc_strings" => enc_strings(strs)
+    "enc_floats" => enc_floats(fs)
+    "bytes" => bytes(bs)
+    _ => -1
+  }
+  let us_ = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us_}")
+}
