@@ -244,7 +244,7 @@ fn sys_buf() -> Bytes
 fn tw_fake(real: Int) -> Bool
 /// The address of the calling thread's 16 bytes of scratch for Clock.now's
 /// timespec, or 0 while the test world's virtual clock runs (one call on
-/// the clock's path; decision 0206 stage 2).
+/// the clock's path; decision 0206 stage 2); always 0 off Linux.
 fn sys_clock_buf() -> Int
 /// Clock.now of the C runtime (the SSA builders' lowering before
 /// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.

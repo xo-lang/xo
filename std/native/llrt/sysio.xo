@@ -93,12 +93,11 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 /// (linux.clock_ns, decision 0206 stage 2: the system call it replaced
 /// cost 4.3 times the time per call, bench/results/linux-syscalls-2026-10-13.md);
 /// elsewhere, and while the virtual clock runs, the C runtime's.
-/// The target tests are inline (not raw()): this is the clock's hot path.
+/// This is the clock's hot path, written for the arm64 emitter, which
+/// neither folds `target` nor inlines across modules: rt.sys_clock_buf
+/// answers 0 off Linux as under the virtual clock (so only the wasm
+/// architecture is tested here), and the vDSO call is inline.
 pub fn clock_now() -> Int {
-  match target.os {
-    TargetOs.Linux => {}
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => return rt.clock_now()
-  }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
     TargetArch.Wasm32 => return rt.clock_now()
@@ -107,7 +106,13 @@ pub fn clock_now() -> Int {
   if a == 0 {
     return rt.clock_now()
   }
-  linux.clock_ns(linux.CLOCK_REALTIME, a)
+  let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  let r = if f > 0 { rt.call_c2(f, linux.CLOCK_REALTIME, a) } else { linux.clock_gettime(linux.CLOCK_REALTIME, a) }
+  if r < 0 {
+    return r
+  }
+  // a timespec of the wall clock never overflows: wrapping, as C's
+  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
 }
 
 /// The contents of the file op: os.ReadFile's loop (a buffer of the size

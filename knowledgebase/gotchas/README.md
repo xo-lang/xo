@@ -430,3 +430,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-length-after-call.md](llvm-length-after-call.md): Observed: on LLVM every list index after a call is checked again (the length is reloaded, and a call may write any memory); check the length once more after the calls.
 - [llvm-call-noalias-spills.md](llvm-call-noalias-spills.md): Observed, not kept: `!noalias` on calls lets GVN keep stored words in registers across them; 128 words across 16 calls spilled (Argon2id 1.093x against 1.044x).
 - [ssa-unwind-exit-returns-rl-empty.md](ssa-unwind-exit-returns-rl-empty.md): Observed: an unwind exit returns `rt.rl_empty`, not `list.new`, for each `var` List, so an analysis of returns must treat both as new lists.
+- [nolibc-arm64-outline-atomics.md](nolibc-arm64-outline-atomics.md): Observed: XO_NOLIBC=1 arm64-backend links lack libgcc's `__aarch64_*` outline atomics; the driver writes them.
+- [go-mode-no-target.md](go-mode-no-target.md): Observed: the Go backend's assembly mode lowers no `target`; Clock.now stays on the C clock there.
+- [parallel-xo-builds-share-build-dir.md](parallel-xo-builds-share-build-dir.md): Observed: concurrent `xo build` runs overwrite each other's files without their own XO_BUILD_DIR.
+- [arm64-trampoline-after-lsda.md](arm64-trampoline-after-lsda.md): Anticipated: code the arm64 emitters append after the call site tables lands in their section.
+- [selfhost-llvm-global-names.md](selfhost-llvm-global-names.md): Observed: TestSelfhostLLVM's IR splitter accepts only `@.` globals.
