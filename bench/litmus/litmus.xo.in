@@ -1,0 +1,25 @@
+// std/litmus: a test only module of bench/litmus (decision 0200), never
+// part of std/. run.sh copies std/ to a temporary directory and adds this
+// file as std/litmus.xo and native_litmus.xo.in as
+// std/native/litmus.xo, so that a program can reach the runtime's
+// atomics (rt.slot_load and friends, which only std's implementation
+// modules see) with each memory order. Declaration file; encoding rules
+// are at the top of std/prelude.xo.
+
+/// A list of n zero cells, made at its final size.
+fn cells(n: Int) -> List[Int]
+fn load_relaxed(xs: List[Int], i: Int) -> Int
+fn load_acquire(xs: List[Int], i: Int) -> Int
+fn load_seq_cst(xs: List[Int], i: Int) -> Int
+fn store_relaxed(xs: List[Int], i: Int, v: Int)
+fn store_release(xs: List[Int], i: Int, v: Int)
+fn store_seq_cst(xs: List[Int], i: Int, v: Int)
+fn swap_acq_rel(xs: List[Int], i: Int, v: Int) -> Int
+fn cas_relaxed(xs: List[Int], i: Int, old: Int, new: Int) -> Bool
+fn cas_seq_cst(xs: List[Int], i: Int, old: Int, new: Int) -> Bool
+fn add_relaxed(xs: List[Int], i: Int, d: Int) -> Int
+fn add_seq_cst(xs: List[Int], i: Int, d: Int) -> Int
+fn fence_seq_cst()
+fn spin()
+/// The address of cell i, for checking alignment.
+fn addr(xs: List[Int], i: Int) -> Int
