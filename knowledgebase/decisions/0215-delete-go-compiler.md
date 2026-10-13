@@ -145,6 +145,16 @@ with the next step for each:
   regressions_test.xo there; one commit picked it up (fixed: xotool's
   test builds remove a file they created).
 
+### Verification (the Mac, 2026-10-13)
+
+After every deletion: `go build ./...`, `go vet` of every package, and
+`go test -short` of the packages it touched; the whole repository's
+-short after the cmd/xo and selfhost steps. After the last deletion
+(7fdbe7eb and the docs): bin/xo built by the earlier bin/xo in 346 s,
+`xo run --backend=arm64` of a hello program, scripts/selfhost-goldens.py
+179 of 179 (arm64) and 179 of 179 (XO1_BACKEND=llvm),
+scripts/selfhost-gogoldens.py 136 of 136 (the Go backend).
+
 ## Consequences
 
 - Every compiler change lands in selfhost/ alone. A change that alters
