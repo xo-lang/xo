@@ -13,6 +13,16 @@ gotchas/python-text-mode-want-cr.md), and need Python. After decision
 0178 stage 7 the Go compiler packages are deleted (the test helpers
 stay), so Go tests are not the long term home for Xo's own tooling.
 
+Why Python: the first script (selfhost-goldens.py, 2026-10-11, the
+decision 0158 switch-over experiment) was scaffolding to drive an
+external compiler binary while the Go tests called the Go compiler in
+process; the other two copied it. No decision chose Python. The Go
+tests already hold the same comparison logic (TestGoldenRun,
+TestGolden, stableStderr, dropGoFrames) and already accept an external
+compiler for the want.txt goldens (`XO_GOLDEN_WANT=1
+XO_GOLDEN_WANT_XO=<xo1> go test -run TestGoldenWant ./internal/llvm`,
+used for the Windows runs), which is the starting point.
+
 ## Decision
 
 The harnesses become a hidden developer subcommand of xo, written in Xo
