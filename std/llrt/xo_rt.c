@@ -3097,7 +3097,7 @@ static void register_worker(xo_worker *w) { xo_x_register_worker(XO_ADDR(&pool),
 static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
-int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t);
+int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t, int64_t w);
 void xo_x_scope_join(int64_t pl, int64_t s, int64_t c, int64_t f, int64_t rw);
 void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
@@ -4587,8 +4587,9 @@ static void *worker_main(void *arg) {
 xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, const char *loc, int64_t n) {
 	pthread_once(&pool.once, pool_init);
 	STAT(spawn);
-	if (!w_get()) {
-		root_worker();
+	xo_worker *w = w_get();
+	if (!w) {
+		w = root_worker();
 	}
 	xo_task *t = xo_alloc(sizeof(xo_task));
 	memset(t, 0, sizeof *t);
@@ -4633,7 +4634,7 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	// pool.xo scope_add): the tasks it pruned from s's list, or -1 when s
 	// has ended
 	TSAN_RELEASE(t);
-	int64_t r = xo_x_scope_add(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(t));
+	int64_t r = xo_x_scope_add(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(t), XO_ADDR(w));
 	if (r == -1) {
 		bud_release(t->bud);
 		xo_free(t);

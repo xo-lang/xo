@@ -390,6 +390,6 @@ fn node_unlink(n: Int) { pool.node_unlink(n) }
 
 fn node_cancel(pl: Int, n: Int) { pool.node_cancel(pl, n) }
 
-fn scope_add(pl: Int, s: Int, t: Int) -> Int { pool.scope_add(pl, s, t) }
+fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int { pool.scope_add(pl, s, t, w) }
 
 fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) { pool.scope_join(pl, s, c, f, rw) }

@@ -1203,10 +1203,11 @@ const T_STATE = 10
 const T_SNEXT = 168
 const T_GONE = 22
 
-/// Links task t into scope s and queues it (s.spawn): the tasks it
+/// Links task t into scope s and queues it in the ring of w, the
+/// spawning thread's record (s.spawn): the tasks it
 /// pruned from s's list (linked by snext, for the C to release), 0, or -1
 /// when s has ended (nothing done).
-pub fn scope_add(pl: Int, s: Int, t: Int) -> Int {
+pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
   let m = rt.int_wrap(0, s, S_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
@@ -1229,7 +1230,9 @@ pub fn scope_add(pl: Int, s: Int, t: Int) -> Int {
     dead = scope_prune(s)
   }
   unlock(m)
-  pool_push(pl, t)
+  // a new task goes to the spawning thread's ring (w, its record)
+  rq_put(pl, w, t)
+  wakep(pl)
   dead
 }
 

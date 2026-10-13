@@ -4072,14 +4072,190 @@ xo_f_cabi_2eregister__worker:
 xo_f_cabi_2escope__add:
 .Lf51_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
+	stp x29, x30, [sp, #-96]!
 	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	.cfi_def_cfa w29, 96
+	.cfi_offset w29, -96
+	.cfi_offset w30, -88
+	.cfi_offset w20, -80
+	.cfi_offset w19, -72
+	.cfi_offset w22, -64
+	.cfi_offset w21, -56
+	.cfi_offset w24, -48
+	.cfi_offset w23, -40
+	.cfi_offset w26, -32
+	.cfi_offset w25, -24
+	.cfi_offset w27, -16
 .Lf51_b0:
-	bl xo_f_pool_2escope__add
-	ldp x29, x30, [sp], #16
+	mov x26, x0
+	mov x23, x1
+	mov x25, x2
+	mov x27, x3
+.Lf51_b1:
+	add x24, x23, #104
+	add x2, x24, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf51_b4
+.Lf51_b2:
+	mov x0, x24
+	bl xo_f_pool_2elock__slow
+.Lf51_b4:
+	ldr w9, [x23, #400]
+	cmp x9, #0
+	b.eq .Lf51_b12
+.Lf51_b6:
+	add x1, x24, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf51_b10
+.Lf51_b7:
+	mov x0, x24
+	bl xo_f_pool_2efutex__wake
+.Lf51_b10:
+	mov x19, #-1
+	b .Lf51_b57
+.Lf51_b12:
+	str x23, [x25, #72]
+	add x1, x23, #240
+	mov x0, #4
+	bl __aarch64_ldadd8_acq_rel
+	add x20, x25, #16
+	ldr x21, [x23, #72]
+.Lf51_b13:
+	add x22, x21, #48
+	add x2, x22, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf51_b16
+.Lf51_b14:
+	mov x0, x22
+	bl xo_f_pool_2elock__slow
+.Lf51_b16:
+	str x21, [x20, #0]
+	mov x9, #0
+	str x9, [x20, #16]
+	ldr x9, [x21, #8]
+	str x9, [x20, #24]
+	cmp x9, #0
+	b.eq .Lf51_b19
+.Lf51_b17:
+	str x20, [x9, #16]
+.Lf51_b19:
+	str x20, [x21, #8]
+	ldr x9, [x21, #32]
+	cmp x9, #0
+	b.eq .Lf51_b23
+.Lf51_b20:
+	add x10, x20, #32
+	mov x9, #1
+	stlr x9, [x10]
+.Lf51_b23:
+	add x1, x22, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf51_b28
+.Lf51_b24:
+	mov x0, x22
+	bl xo_f_pool_2efutex__wake
+.Lf51_b28:
+	ldr x9, [x23, #384]
+	str x9, [x25, #168]
+	str x25, [x23, #384]
+	ldr x9, [x23, #432]
+	add x10, x9, #1
+	str x10, [x23, #432]
+	ldr x9, [x23, #440]
+	cmp x10, x9
+	b.lt .Lf51_b50
+.Lf51_b29:
+	ldr w9, [x23, #448]
+	cmp x9, #0
+	b.ne .Lf51_b50
+.Lf51_b33:
+	add x12, x23, #384
+	ldr x13, [x23, #432]
+	mov x19, #0
+	mov x14, #-1
+.Lf51_b35:
+	ldr x11, [x12, #0]
+	cmp x11, #0
+	b.eq .Lf51_b45
+.Lf51_b38:
+	add x9, x11, #176
+	ldar x10, [x9]
+	cmp x10, #2
+	b.ne .Lf51_b43
+.Lf51_b39:
+	add x9, x11, #0
+	ldar x10, [x9]
+	cmp x10, x14
+	b.ne .Lf51_b43
+.Lf51_b42:
+	ldr x9, [x11, #168]
+	str x9, [x12, #0]
+	str x19, [x11, #168]
+	sub x13, x13, #1
+	b .Lf51_b44
+.Lf51_b43:
+	add x12, x11, #168
+	mov x11, x19
+.Lf51_b44:
+	mov x19, x11
+	b .Lf51_b35
+.Lf51_b45:
+	str x13, [x23, #432]
+	lsl x9, x13, #1
+	cmp x9, #64
+	b.gt .Lf51_b48
+.Lf51_b47:
+	mov x9, #64
+.Lf51_b48:
+	str x9, [x23, #440]
+	b .Lf51_b52
+.Lf51_b50:
+	mov x19, #0
+.Lf51_b52:
+	add x1, x24, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf51_b56
+.Lf51_b53:
+	mov x0, x24
+	bl xo_f_pool_2efutex__wake
+.Lf51_b56:
+	mov x0, x26
+	mov x1, x27
+	mov x2, x25
+	bl xo_f_pool_2erq__put
+	mov x0, x26
+	bl xo_f_pool_2ewakep
+.Lf51_b57:
+	mov x0, x19
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
 	ret
 	.cfi_endproc
 
@@ -4089,26 +4265,31 @@ xo_f_cabi_2escope__add:
 xo_f_cabi_2escope__join:
 .Lf52_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-80]!
+	stp x29, x30, [sp, #-96]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
 	stp x22, x21, [sp, #32]
 	stp x24, x23, [sp, #48]
-	str x25, [sp, #64]
-	.cfi_def_cfa w29, 80
-	.cfi_offset w29, -80
-	.cfi_offset w30, -72
-	.cfi_offset w20, -64
-	.cfi_offset w19, -56
-	.cfi_offset w22, -48
-	.cfi_offset w21, -40
-	.cfi_offset w24, -32
-	.cfi_offset w23, -24
-	.cfi_offset w25, -16
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	.cfi_def_cfa w29, 96
+	.cfi_offset w29, -96
+	.cfi_offset w30, -88
+	.cfi_offset w20, -80
+	.cfi_offset w19, -72
+	.cfi_offset w22, -64
+	.cfi_offset w21, -56
+	.cfi_offset w24, -48
+	.cfi_offset w23, -40
+	.cfi_offset w26, -32
+	.cfi_offset w25, -24
+	.cfi_offset w27, -16
 .Lf52_b0:
 	mov x25, x0
 	mov x22, x1
 	mov x24, x2
+	mov x26, x3
+	mov x27, x4
 .Lf52_b1:
 	add x23, x22, #104
 	b .Lf52_b3
@@ -4232,14 +4413,17 @@ xo_f_cabi_2escope__join:
 	mov x3, #1
 	mov x0, x25
 	mov x1, x24
+	mov x4, x26
+	mov x5, x27
 	bl xo_f_pool_2epark__wait
 	b .Lf52_b29
 .Lf52_b49:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
-	ldr x25, [sp, #64]
-	ldp x29, x30, [sp], #80
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
 	ret
 	.cfi_endproc
 
@@ -9133,7 +9317,7 @@ xo_f_pool_2epark__signal:
 .Lf89_b6:
 	ldr x19, [x28, #24]
 	cmp x19, #0
-	b.eq .Lf89_b64
+	b.eq .Lf89_b69
 .Lf89_b7:
 	mov x9, #0
 	str x9, [x28, #24]
@@ -9142,14 +9326,14 @@ xo_f_pool_2epark__signal:
 	mov x0, #3
 	bl __aarch64_swp8_acq_rel
 	cmp x0, #2
-	b.ne .Lf89_b71
+	b.ne .Lf89_b76
 .Lf89_b13:
 	orr x26, x19, #1
 .Lf89_b14:
 	mov x0, #2
 	bl xo_tlocal_get
-	mov x20, x0
-	cmp x20, #0
+	mov x19, x0
+	cmp x19, #0
 	b.ne .Lf89_b50
 .Lf89_b16:
 	add x16, x27, #64
@@ -9271,70 +9455,87 @@ xo_f_pool_2epark__signal:
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf89_b60
+	b.ne .Lf89_b65
 .Lf89_b45:
 	ldr x0, [sp, #16]
 	bl xo_f_pool_2efutex__wake
-	b .Lf89_b60
+	b .Lf89_b65
 .Lf89_b50:
 	and x9, x26, #1
 	cmp x9, #0
-	b.eq .Lf89_b58
+	b.eq .Lf89_b63
 .Lf89_b51:
-	ldr x9, [x20, #2256]
+	ldr x9, [x19, #2256]
 	cmp x9, #0
-	b.ne .Lf89_b58
+	b.ne .Lf89_b63
 .Lf89_b54:
 	mov x9, #2192
-	asr x19, x9, #3
+	asr x20, x9, #3
+.Lf89_b55:
+	bl xo_f_pool_2elayer
+	cmp x0, #2
+	b.ne .Lf89_b57
+.Lf89_b56:
+	adrp x9, .Lxo_str31
+	add x9, x9, :lo12:.Lxo_str31
+	mov x1, #65
+	add x0, x9, #16
+	adrp x9, .Lxo_str32
+	add x9, x9, :lo12:.Lxo_str32
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf89_b57:
 	mov x0, #3
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-	add x9, x20, x19, lsl #3
+.Lf89_b59:
+	add x9, x19, x20, lsl #3
 	str x0, [x9]
-	add x1, x20, #2184
+	add x1, x19, #2184
 	mov x0, x26
 	bl __aarch64_swp8_acq_rel
 	cmp x0, #0
-	b.eq .Lf89_b60
-.Lf89_b55:
-	mov x1, x20
+	b.eq .Lf89_b65
+.Lf89_b60:
+	mov x1, x19
 	mov x2, x0
 	mov x0, x27
 	bl xo_f_pool_2erq__put
-	b .Lf89_b60
-.Lf89_b58:
+	b .Lf89_b65
+.Lf89_b63:
 	mov x0, x27
-	mov x1, x20
+	mov x1, x19
 	mov x2, x26
 	bl xo_f_pool_2erq__put
-.Lf89_b60:
+.Lf89_b65:
 	mov x0, x27
 	bl xo_f_pool_2ewakep
-	b .Lf89_b71
-.Lf89_b64:
+	b .Lf89_b76
+.Lf89_b69:
 	ldr w9, [x28, #16]
 	cmp x9, #0
-	b.eq .Lf89_b71
-.Lf89_b66:
+	b.eq .Lf89_b76
+.Lf89_b71:
 	mov x0, #0
 	mov x1, #9
 	mov x2, x0
 	bl xo_sched_rt
-.Lf89_b67:
+.Lf89_b72:
 	add x0, x28, #8
 	bl xo_f_pool_2efutex__wake
-.Lf89_b71:
+.Lf89_b76:
 	add x1, x28, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf89_b75
-.Lf89_b72:
+	b.ne .Lf89_b80
+.Lf89_b77:
 	mov x0, x28
 	bl xo_f_pool_2efutex__wake
-.Lf89_b75:
+.Lf89_b80:
 	ldp x20, x19, [sp, #24]
 	ldp x22, x21, [sp, #40]
 	ldp x24, x23, [sp, #56]
@@ -9389,6 +9590,8 @@ xo_f_pool_2epark__wait:
 	str x1, [sp, #16]
 	mov x22, x2
 	mov x27, x3
+	mov x21, x4
+	mov x24, x5
 	ldr x16, [sp, #16]
 	ldr w9, [x16, #12]
 	cmp x9, #0
@@ -9403,8 +9606,8 @@ xo_f_pool_2epark__wait:
 	cmp x22, #0
 	b.eq .Lf90_b16
 .Lf90_b5:
-	add x21, x23, #48
-	add x2, x21, #0
+	add x25, x23, #48
+	add x2, x25, #0
 	mov x19, #0
 	mov x1, #1
 	mov x0, x19
@@ -9414,48 +9617,28 @@ xo_f_pool_2epark__wait:
 	eor x9, x9, #1
 	cbz x9, .Lf90_b8
 .Lf90_b6:
-	mov x0, x21
+	mov x0, x25
 	bl xo_f_pool_2elock__slow
 .Lf90_b8:
 	str x20, [x23, #40]
 .Lf90_b9:
-	add x1, x21, #0
+	add x1, x25, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
 	b.ne .Lf90_b16
 .Lf90_b10:
-	mov x0, x21
+	mov x0, x25
 	bl xo_f_pool_2efutex__wake
 .Lf90_b16:
-	mov x0, #1
-	bl xo_tlocal_get
-	mov x21, x0
-	cmp x21, #0
-	b.ne .Lf90_b21
-.Lf90_b17:
-	add x9, x26, #8
-	ldar x10, [x9]
-	cmp x10, #0
-	b.eq .Lf90_b21
-.Lf90_b20:
-	mov x0, #15
-	mov x1, #0
-	mov x2, x1
-	bl xo_sched_rt
-	mov x24, x0
-	b .Lf90_b22
-.Lf90_b21:
-	mov x24, #0
-.Lf90_b22:
 	ldr x28, [x26, #120]
 	cmp x27, #0
-	b.ne .Lf90_b25
-.Lf90_b23:
+	b.ne .Lf90_b19
+.Lf90_b17:
 	add x1, x28, #16
 	mov x0, #1
 	bl __aarch64_ldadd8_acq_rel
-.Lf90_b25:
+.Lf90_b19:
 	add x2, x20, #0
 	mov x19, #0
 	mov x1, #1
@@ -9464,74 +9647,74 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b29
-.Lf90_b26:
+	cbz x9, .Lf90_b23
+.Lf90_b20:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf90_b29:
+.Lf90_b23:
 	add x9, x20, #8
 	ldar x10, [x9]
 	cmp x10, #0
-	b.ne .Lf90_b128
-.Lf90_b30:
+	b.ne .Lf90_b122
+.Lf90_b24:
 	cmp x22, #0
-	b.eq .Lf90_b34
-.Lf90_b32:
+	b.eq .Lf90_b28
+.Lf90_b26:
 	add x9, x23, #32
 	ldar x10, [x9]
 	cmp x10, #0
 	cset x9, ne
-	b .Lf90_b35
-.Lf90_b34:
+	b .Lf90_b29
+.Lf90_b28:
 	mov x9, #0
-.Lf90_b35:
+.Lf90_b29:
 	eor x9, x9, #1
-.Lf90_b37:
-	cbz x9, .Lf90_b128
-.Lf90_b38:
+.Lf90_b31:
+	cbz x9, .Lf90_b122
+.Lf90_b32:
 	cmp x21, #0
-	b.eq .Lf90_b60
-.Lf90_b39:
+	b.eq .Lf90_b54
+.Lf90_b33:
 	str x21, [x20, #24]
-.Lf90_b40:
+.Lf90_b34:
 	add x10, x21, #40
 	mov x9, #1
 	stlr x9, [x10]
-.Lf90_b42:
+.Lf90_b36:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b47
-.Lf90_b43:
+	b.ne .Lf90_b41
+.Lf90_b37:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf90_b47:
+.Lf90_b41:
 	bl xo_tlocal_addr
 	ldr x9, [x0, #0]
 	str x9, [x21, #32]
 	ldr x19, [x0, #16]
 	ldr x25, [x21, #80]
 	cmp x25, #0
-	b.eq .Lf90_b50
-.Lf90_b48:
+	b.eq .Lf90_b44
+.Lf90_b42:
 	mov x0, #2
 	mov x1, x19
 	mov x2, x21
 	bl xo_sched_hook
-.Lf90_b50:
+.Lf90_b44:
 	ldr x1, [x19, #2208]
 	mov x0, x21
 	bl xo_stack_switch
 	cmp x25, #0
-	b.eq .Lf90_b54
-.Lf90_b51:
+	b.eq .Lf90_b48
+.Lf90_b45:
 	bl xo_tlocal_addr
 	ldr x1, [x0, #16]
 	mov x0, #3
 	mov x2, x21
 	bl xo_sched_hook
-.Lf90_b54:
+.Lf90_b48:
 	add x2, x20, #0
 	mov x19, #0
 	mov x1, #1
@@ -9540,54 +9723,54 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b57
-.Lf90_b55:
+	cbz x9, .Lf90_b51
+.Lf90_b49:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf90_b57:
+.Lf90_b51:
 	mov x9, #0
 	str x9, [x20, #24]
-	b .Lf90_b29
-.Lf90_b60:
+	b .Lf90_b23
+.Lf90_b54:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b64
-.Lf90_b61:
+	b.ne .Lf90_b58
+.Lf90_b55:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf90_b64:
+.Lf90_b58:
 	cmp x24, #0
-	b.eq .Lf90_b89
-.Lf90_b65:
+	b.eq .Lf90_b83
+.Lf90_b59:
 	mov x2, #0
 	mov x0, x26
 	mov x1, x24
 	bl xo_f_pool_2efind__work
 	mov x19, x0
 	cmp x19, #0
-	b.ne .Lf90_b70
-.Lf90_b66:
+	b.ne .Lf90_b64
+.Lf90_b60:
 	mov x2, #0
 	mov x0, x26
 	mov x1, x24
 	bl xo_f_pool_2esteal__round
 	mov x19, x0
-.Lf90_b70:
+.Lf90_b64:
 	cmp x19, #0
-	b.eq .Lf90_b89
-.Lf90_b72:
+	b.eq .Lf90_b83
+.Lf90_b66:
 	and x9, x19, #1
 	cmp x9, #0
-	b.eq .Lf90_b76
-.Lf90_b73:
+	b.eq .Lf90_b70
+.Lf90_b67:
 	eor x2, x19, #1
 	mov x0, x26
 	mov x1, x24
 	bl xo_f_pool_2erun__fiber
-	b .Lf90_b84
-.Lf90_b76:
+	b .Lf90_b78
+.Lf90_b70:
 	add x2, x19, #80
 	mov x25, #0
 	mov x1, #1
@@ -9595,14 +9778,14 @@ xo_f_pool_2epark__wait:
 	bl __aarch64_cas8_acq_rel
 	cmp x0, x25
 	cset x9, eq
-	cbnz x9, .Lf90_b83
-.Lf90_b81:
+	cbnz x9, .Lf90_b77
+.Lf90_b75:
 	mov x0, #10
 	mov x2, #0
 	mov x1, x19
 	bl xo_sched_rt
-	b .Lf90_b84
-.Lf90_b83:
+	b .Lf90_b78
+.Lf90_b77:
 	ldr x0, [x26, #104]
 	mov x1, x24
 	mov x2, x19
@@ -9611,7 +9794,7 @@ xo_f_pool_2epark__wait:
 	mov x2, x0
 	mov x0, x26
 	bl xo_f_pool_2erun__fiber
-.Lf90_b84:
+.Lf90_b78:
 	mov x19, #0
 	mov x0, x19
 	ldr x1, [sp, #16]
@@ -9623,12 +9806,12 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b29
-.Lf90_b85:
+	cbz x9, .Lf90_b23
+.Lf90_b79:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-	b .Lf90_b29
-.Lf90_b89:
+	b .Lf90_b23
+.Lf90_b83:
 	add x2, x20, #0
 	mov x19, #0
 	mov x1, #1
@@ -9637,40 +9820,40 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b92
-.Lf90_b90:
+	cbz x9, .Lf90_b86
+.Lf90_b84:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf90_b92:
+.Lf90_b86:
 	add x9, x20, #8
 	ldar x10, [x9]
 	cmp x10, #0
-	b.ne .Lf90_b128
-.Lf90_b94:
+	b.ne .Lf90_b122
+.Lf90_b88:
 	cmp x22, #0
-	b.eq .Lf90_b103
-.Lf90_b96:
+	b.eq .Lf90_b97
+.Lf90_b90:
 	add x9, x23, #32
 	ldar x10, [x9]
 	cmp x10, #0
-	b.ne .Lf90_b128
-.Lf90_b103:
+	b.ne .Lf90_b122
+.Lf90_b97:
 	mov x9, #1
 	str w9, [x20, #16]
 	str w27, [x20, #20]
-.Lf90_b104:
+.Lf90_b98:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b108
-.Lf90_b105:
+	b.ne .Lf90_b102
+.Lf90_b99:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf90_b108:
+.Lf90_b102:
 	cmp x27, #0
-	b.eq .Lf90_b120
-.Lf90_b109:
+	b.eq .Lf90_b114
+.Lf90_b103:
 	add x2, x26, #0
 	mov x19, #0
 	mov x1, #1
@@ -9679,11 +9862,11 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b112
-.Lf90_b110:
+	cbz x9, .Lf90_b106
+.Lf90_b104:
 	mov x0, x26
 	bl xo_f_pool_2elock__slow
-.Lf90_b112:
+.Lf90_b106:
 	add x1, x28, #8
 	mov x19, #1
 	mov x0, x19
@@ -9692,26 +9875,26 @@ xo_f_pool_2epark__wait:
 	mov x0, x19
 	mov x2, x1
 	bl xo_sched_rt
-.Lf90_b113:
+.Lf90_b107:
 	add x1, x26, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b117
-.Lf90_b114:
+	b.ne .Lf90_b111
+.Lf90_b108:
 	mov x0, x26
 	bl xo_f_pool_2efutex__wake
-.Lf90_b117:
+.Lf90_b111:
 	mov x0, #2
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-.Lf90_b120:
+.Lf90_b114:
 	mov x0, #0
 	mov x1, #8
 	mov x2, x0
 	bl xo_sched_rt
-.Lf90_b121:
+.Lf90_b115:
 	add x0, x20, #8
 	mov x19, #0
 	mov x1, x19
@@ -9723,47 +9906,47 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b124
-.Lf90_b122:
+	cbz x9, .Lf90_b118
+.Lf90_b116:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf90_b124:
+.Lf90_b118:
 	mov x9, #0
 	str w9, [x20, #16]
 	ldr w9, [x20, #20]
 	cmp x9, #0
-	b.eq .Lf90_b29
-.Lf90_b125:
+	b.eq .Lf90_b23
+.Lf90_b119:
 	mov x9, #0
 	str w9, [x20, #20]
 	mov x0, #-1
 	add x1, x28, #8
 	bl __aarch64_ldadd8_acq_rel
-	b .Lf90_b29
-.Lf90_b128:
+	b .Lf90_b23
+.Lf90_b122:
 	add x10, x20, #8
 	mov x9, #0
 	str x9, [x10]
-.Lf90_b129:
+.Lf90_b123:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b133
-.Lf90_b130:
+	b.ne .Lf90_b127
+.Lf90_b124:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf90_b133:
+.Lf90_b127:
 	cmp x27, #0
-	b.ne .Lf90_b136
-.Lf90_b134:
+	b.ne .Lf90_b130
+.Lf90_b128:
 	mov x0, #-1
 	add x1, x28, #16
 	bl __aarch64_ldadd8_acq_rel
-.Lf90_b136:
+.Lf90_b130:
 	cmp x22, #0
-	b.eq .Lf90_b149
-.Lf90_b138:
+	b.eq .Lf90_b143
+.Lf90_b132:
 	add x20, x23, #48
 	add x2, x20, #0
 	mov x19, #0
@@ -9773,23 +9956,23 @@ xo_f_pool_2epark__wait:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf90_b141
-.Lf90_b139:
+	cbz x9, .Lf90_b135
+.Lf90_b133:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf90_b141:
+.Lf90_b135:
 	mov x9, #0
 	str x9, [x23, #40]
-.Lf90_b142:
+.Lf90_b136:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf90_b149
-.Lf90_b143:
+	b.ne .Lf90_b143
+.Lf90_b137:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf90_b149:
+.Lf90_b143:
 	ldp x20, x19, [sp, #24]
 	ldp x22, x21, [sp, #40]
 	ldp x24, x23, [sp, #56]
@@ -10146,30 +10329,30 @@ xo_f_pool_2eregister__worker:
 xo_f_pool_2escope__add:
 .Lf100_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-112]!
+	stp x29, x30, [sp, #-96]!
 	mov x29, sp
-	stp x20, x19, [sp, #24]
-	stp x22, x21, [sp, #40]
-	stp x24, x23, [sp, #56]
-	stp x26, x25, [sp, #72]
-	stp x28, x27, [sp, #88]
-	.cfi_def_cfa w29, 112
-	.cfi_offset w29, -112
-	.cfi_offset w30, -104
-	.cfi_offset w20, -88
-	.cfi_offset w19, -80
-	.cfi_offset w22, -72
-	.cfi_offset w21, -64
-	.cfi_offset w24, -56
-	.cfi_offset w23, -48
-	.cfi_offset w26, -40
-	.cfi_offset w25, -32
-	.cfi_offset w28, -24
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	.cfi_def_cfa w29, 96
+	.cfi_offset w29, -96
+	.cfi_offset w30, -88
+	.cfi_offset w20, -80
+	.cfi_offset w19, -72
+	.cfi_offset w22, -64
+	.cfi_offset w21, -56
+	.cfi_offset w24, -48
+	.cfi_offset w23, -40
+	.cfi_offset w26, -32
+	.cfi_offset w25, -24
 	.cfi_offset w27, -16
 .Lf100_b0:
-	mov x28, x0
+	mov x26, x0
 	mov x23, x1
-	mov x27, x2
+	mov x25, x2
+	mov x27, x3
 	add x24, x23, #104
 	add x2, x24, #0
 	mov x19, #0
@@ -10198,19 +10381,19 @@ xo_f_pool_2escope__add:
 	bl xo_f_pool_2efutex__wake
 .Lf100_b9:
 	mov x0, #-1
-	ldp x20, x19, [sp, #24]
-	ldp x22, x21, [sp, #40]
-	ldp x24, x23, [sp, #56]
-	ldp x26, x25, [sp, #72]
-	ldp x28, x27, [sp, #88]
-	ldp x29, x30, [sp], #112
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
 	ret
 .Lf100_b11:
-	str x23, [x27, #72]
+	str x23, [x25, #72]
 	add x1, x23, #240
 	mov x0, #4
 	bl __aarch64_ldadd8_acq_rel
-	add x20, x27, #16
+	add x20, x25, #16
 	ldr x21, [x23, #72]
 .Lf100_b12:
 	add x22, x21, #48
@@ -10256,8 +10439,8 @@ xo_f_pool_2escope__add:
 	bl xo_f_pool_2efutex__wake
 .Lf100_b27:
 	ldr x9, [x23, #384]
-	str x9, [x27, #168]
-	str x27, [x23, #384]
+	str x9, [x25, #168]
+	str x25, [x23, #384]
 	ldr x9, [x23, #432]
 	add x10, x9, #1
 	str x10, [x23, #432]
@@ -10271,7 +10454,7 @@ xo_f_pool_2escope__add:
 .Lf100_b32:
 	add x12, x23, #384
 	ldr x13, [x23, #432]
-	mov x26, #0
+	mov x19, #0
 	mov x14, #-1
 .Lf100_b34:
 	ldr x11, [x12, #0]
@@ -10290,14 +10473,14 @@ xo_f_pool_2escope__add:
 .Lf100_b41:
 	ldr x9, [x11, #168]
 	str x9, [x12, #0]
-	str x26, [x11, #168]
+	str x19, [x11, #168]
 	sub x13, x13, #1
 	b .Lf100_b43
 .Lf100_b42:
 	add x12, x11, #168
-	mov x11, x26
+	mov x11, x19
 .Lf100_b43:
-	mov x26, x11
+	mov x19, x11
 	b .Lf100_b34
 .Lf100_b44:
 	str x13, [x23, #432]
@@ -10310,206 +10493,31 @@ xo_f_pool_2escope__add:
 	str x9, [x23, #440]
 	b .Lf100_b51
 .Lf100_b49:
-	mov x26, #0
+	mov x19, #0
 .Lf100_b51:
 	add x1, x24, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf100_b56
+	b.ne .Lf100_b55
 .Lf100_b52:
 	mov x0, x24
 	bl xo_f_pool_2efutex__wake
-.Lf100_b56:
-	mov x0, #2
-	bl xo_tlocal_get
-	mov x20, x0
-	cmp x20, #0
-	b.ne .Lf100_b92
-.Lf100_b58:
-	add x16, x28, #64
-	str x16, [sp, #16]
-	cmp x27, #0
-	b.eq .Lf100_b60
-.Lf100_b59:
-	mov x9, #0
-	add x25, x9, #1
-	b .Lf100_b61
-.Lf100_b60:
-	mov x25, #0
-.Lf100_b61:
-	ldr x16, [sp, #16]
-	add x2, x16, #0
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf100_b64
-.Lf100_b62:
-	ldr x0, [sp, #16]
-	bl xo_f_pool_2elock__slow
-.Lf100_b64:
-	ldp x22, x20, [x28, #88]
-	ldr x23, [x28, #80]
-	ldr x24, [x28, #72]
-	add x9, x22, x25
-	cmp x9, x20
-	b.le .Lf100_b78
-.Lf100_b65:
-	cmp x20, #0
-	b.eq .Lf100_b67
-.Lf100_b66:
-	lsl x19, x20, #1
-	b .Lf100_b69
-.Lf100_b67:
-	mov x19, #64
-.Lf100_b69:
-	add x9, x22, x25
-	cmp x19, x9
-	b.ge .Lf100_b71
-.Lf100_b70:
-	lsl x19, x19, #1
-	b .Lf100_b69
-.Lf100_b71:
-	lsl x0, x19, #3
-	bl xo_heap_large
-	mov x21, x0
-	mov x11, #0
-.Lf100_b72:
-	cmp x11, x22
-	b.ge .Lf100_b74
-.Lf100_b73:
-	lsl x12, x11, #3
-	add x10, x23, x11
-	cmp x20, #0
-	b.eq .Lf100_fault1
-	sdiv x9, x10, x20
-	msub x9, x9, x20, x10
-	lsl x9, x9, #3
-	ldr x9, [x24, x9]
-	str x9, [x21, x12]
-	add x11, x11, #1
-	cmp x11, x22
-	b.lt .Lf100_b73
-.Lf100_b74:
-	cmp x24, #0
-	b.eq .Lf100_b77
-.Lf100_b75:
-	sub x0, x24, #8
-	bl xo_heap_release
-.Lf100_b77:
-	str x21, [x28, #72]
-	mov x23, #0
-	str x23, [x28, #80]
-	str x19, [x28, #96]
-	b .Lf100_b79
-.Lf100_b78:
-	mov x21, x24
-	mov x19, x20
-.Lf100_b79:
-	mov x12, #0
-	mov x13, #0
-.Lf100_b80:
-	cmp x12, x25
-	b.ge .Lf100_b85
-.Lf100_b81:
-	cmp x12, #0
-	b.ge .Lf100_b83
-.Lf100_b82:
-	lsl x9, x12, #3
-	ldr x11, [x13, x9]
-	b .Lf100_b84
-.Lf100_b83:
-	mov x11, x27
-.Lf100_b84:
-	add x9, x23, x22
-	add x10, x9, x12
-	cmp x19, #0
-	b.eq .Lf100_fault2
-	sdiv x9, x10, x19
-	msub x9, x9, x19, x10
-	lsl x9, x9, #3
-	str x11, [x21, x9]
-	add x12, x12, #1
-	cmp x12, x25
-	b.lt .Lf100_b81
-.Lf100_b85:
-	add x10, x22, x25
-	add x9, x28, #88
-	stlr x10, [x9]
-.Lf100_b86:
-	ldr x16, [sp, #16]
-	add x1, x16, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf100_b102
-.Lf100_b87:
-	ldr x0, [sp, #16]
-	bl xo_f_pool_2efutex__wake
-	b .Lf100_b102
-.Lf100_b92:
-	and x9, x27, #1
-	cmp x9, #0
-	b.eq .Lf100_b100
-.Lf100_b93:
-	ldr x9, [x20, #2256]
-	cmp x9, #0
-	b.ne .Lf100_b100
-.Lf100_b96:
-	mov x9, #2192
-	asr x19, x9, #3
-	mov x0, #3
-	mov x1, #0
-	mov x2, x1
-	bl xo_sched_rt
-	add x9, x20, x19, lsl #3
-	str x0, [x9]
-	add x1, x20, #2184
-	mov x0, x27
-	bl __aarch64_swp8_acq_rel
-	cmp x0, #0
-	b.eq .Lf100_b102
-.Lf100_b97:
-	mov x1, x20
-	mov x2, x0
-	mov x0, x28
-	bl xo_f_pool_2erq__put
-	b .Lf100_b102
-.Lf100_b100:
-	mov x0, x28
-	mov x1, x20
-	mov x2, x27
-	bl xo_f_pool_2erq__put
-.Lf100_b102:
-	mov x0, x28
-	bl xo_f_pool_2ewakep
-.Lf100_b103:
+.Lf100_b55:
 	mov x0, x26
-	ldp x20, x19, [sp, #24]
-	ldp x22, x21, [sp, #40]
-	ldp x24, x23, [sp, #56]
-	ldp x26, x25, [sp, #72]
-	ldp x28, x27, [sp, #88]
-	ldp x29, x30, [sp], #112
+	mov x1, x27
+	mov x2, x25
+	bl xo_f_pool_2erq__put
+	mov x0, x26
+	bl xo_f_pool_2ewakep
+	mov x0, x19
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
 	ret
-.Lf100_fault1:
-	mov x0, x10
-	mov x1, #37
-	adrp x2, .Lxo_loc65
-	add x2, x2, :lo12:.Lxo_loc65
-	bl xo_fault_divzero
-	brk #1
-.Lf100_fault2:
-	mov x0, x10
-	mov x1, #37
-	adrp x2, .Lxo_loc66
-	add x2, x2, :lo12:.Lxo_loc66
-	bl xo_fault_divzero
-	brk #1
 	.cfi_endproc
 
 // func pool.scope_join
@@ -10518,26 +10526,31 @@ xo_f_pool_2escope__add:
 xo_f_pool_2escope__join:
 .Lf101_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-80]!
+	stp x29, x30, [sp, #-96]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
 	stp x22, x21, [sp, #32]
 	stp x24, x23, [sp, #48]
-	str x25, [sp, #64]
-	.cfi_def_cfa w29, 80
-	.cfi_offset w29, -80
-	.cfi_offset w30, -72
-	.cfi_offset w20, -64
-	.cfi_offset w19, -56
-	.cfi_offset w22, -48
-	.cfi_offset w21, -40
-	.cfi_offset w24, -32
-	.cfi_offset w23, -24
-	.cfi_offset w25, -16
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	.cfi_def_cfa w29, 96
+	.cfi_offset w29, -96
+	.cfi_offset w30, -88
+	.cfi_offset w20, -80
+	.cfi_offset w19, -72
+	.cfi_offset w22, -64
+	.cfi_offset w21, -56
+	.cfi_offset w24, -48
+	.cfi_offset w23, -40
+	.cfi_offset w26, -32
+	.cfi_offset w25, -24
+	.cfi_offset w27, -16
 .Lf101_b0:
 	mov x25, x0
 	mov x22, x1
 	mov x24, x2
+	mov x26, x3
+	mov x27, x4
 	add x23, x22, #104
 	b .Lf101_b2
 .Lf101_b1:
@@ -10660,14 +10673,17 @@ xo_f_pool_2escope__join:
 	mov x3, #1
 	mov x0, x25
 	mov x1, x24
+	mov x4, x26
+	mov x5, x27
 	bl xo_f_pool_2epark__wait
 	b .Lf101_b28
 .Lf101_b47:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
-	ldr x25, [sp, #64]
-	ldp x29, x30, [sp], #80
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
 	ret
 	.cfi_endproc
 
@@ -10788,8 +10804,8 @@ xo_f_netpolicy_2esplit__hostport:
 	mov x3, x19
 .Lf103_b18:
 	add x0, x21, #16
-	adrp x9, .Lxo_str31
-	add x9, x9, :lo12:.Lxo_str31
+	adrp x9, .Lxo_str33
+	add x9, x9, :lo12:.Lxo_str33
 	mov x5, #35
 	add x4, x9, #16
 	mov x1, x20
@@ -10800,8 +10816,8 @@ xo_f_netpolicy_2esplit__hostport:
 	add x2, x19, #1
 .Lf103_b20:
 	add x0, x21, #16
-	adrp x9, .Lxo_str32
-	add x9, x9, :lo12:.Lxo_str32
+	adrp x9, .Lxo_str34
+	add x9, x9, :lo12:.Lxo_str34
 	mov x5, #35
 	add x4, x9, #16
 	mov x1, x20
@@ -10964,12 +10980,12 @@ xo_f_pool_2eworker__main:
 	add x10, x0, #32
 	movz x9, #1, lsl #16
 	str w9, [x10, #0]
-	adrp x9, .Lxo_str33
-	add x9, x9, :lo12:.Lxo_str33
+	adrp x9, .Lxo_str35
+	add x9, x9, :lo12:.Lxo_str35
 	mov x1, #68
 	add x0, x9, #16
-	adrp x9, .Lxo_str34
-	add x9, x9, :lo12:.Lxo_str34
+	adrp x9, .Lxo_str36
+	add x9, x9, :lo12:.Lxo_str36
 	mov x3, #27
 	add x2, x9, #16
 	bl xo_fault_raise
@@ -13066,12 +13082,12 @@ xo_f_pool_2efutex__wait:
 .Lf125_b12:
 	brk #1
 .Lf125_b14:
-	adrp x9, .Lxo_str35
-	add x9, x9, :lo12:.Lxo_str35
+	adrp x9, .Lxo_str37
+	add x9, x9, :lo12:.Lxo_str37
 	mov x1, #56
 	add x0, x9, #16
-	adrp x9, .Lxo_str36
-	add x9, x9, :lo12:.Lxo_str36
+	adrp x9, .Lxo_str38
+	add x9, x9, :lo12:.Lxo_str38
 	mov x3, #27
 	add x2, x9, #16
 	bl xo_fault_raise
@@ -13080,12 +13096,12 @@ xo_f_pool_2efutex__wait:
 	bl xo_tlocal_addr
 	add x9, x0, #32
 	str w19, [x9, #0]
-	adrp x9, .Lxo_str37
-	add x9, x9, :lo12:.Lxo_str37
+	adrp x9, .Lxo_str39
+	add x9, x9, :lo12:.Lxo_str39
 	mov x1, #58
 	add x0, x9, #16
-	adrp x9, .Lxo_str38
-	add x9, x9, :lo12:.Lxo_str38
+	adrp x9, .Lxo_str40
+	add x9, x9, :lo12:.Lxo_str40
 	mov x3, #27
 	add x2, x9, #16
 	bl xo_fault_raise
@@ -14419,8 +14435,8 @@ xo_f_pool_2epool__push:
 	mov x26, x1
 	mov x0, #2
 	bl xo_tlocal_get
-	mov x20, x0
-	cmp x20, #0
+	mov x19, x0
+	cmp x19, #0
 	b.ne .Lf134_b36
 .Lf134_b2:
 	add x28, x27, #64
@@ -14539,45 +14555,62 @@ xo_f_pool_2epool__push:
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf134_b46
+	b.ne .Lf134_b51
 .Lf134_b31:
 	mov x0, x28
 	bl xo_f_pool_2efutex__wake
-	b .Lf134_b46
+	b .Lf134_b51
 .Lf134_b36:
 	and x9, x26, #1
 	cmp x9, #0
-	b.eq .Lf134_b44
+	b.eq .Lf134_b49
 .Lf134_b37:
-	ldr x9, [x20, #2256]
+	ldr x9, [x19, #2256]
 	cmp x9, #0
-	b.ne .Lf134_b44
+	b.ne .Lf134_b49
 .Lf134_b40:
 	mov x9, #2192
-	asr x19, x9, #3
+	asr x20, x9, #3
+.Lf134_b41:
+	bl xo_f_pool_2elayer
+	cmp x0, #2
+	b.ne .Lf134_b43
+.Lf134_b42:
+	adrp x9, .Lxo_str31
+	add x9, x9, :lo12:.Lxo_str31
+	mov x1, #65
+	add x0, x9, #16
+	adrp x9, .Lxo_str32
+	add x9, x9, :lo12:.Lxo_str32
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf134_b43:
 	mov x0, #3
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-	add x9, x20, x19, lsl #3
+.Lf134_b45:
+	add x9, x19, x20, lsl #3
 	str x0, [x9]
-	add x1, x20, #2184
+	add x1, x19, #2184
 	mov x0, x26
 	bl __aarch64_swp8_acq_rel
 	cmp x0, #0
-	b.eq .Lf134_b46
-.Lf134_b41:
-	mov x1, x20
+	b.eq .Lf134_b51
+.Lf134_b46:
+	mov x1, x19
 	mov x2, x0
 	mov x0, x27
 	bl xo_f_pool_2erq__put
-	b .Lf134_b46
-.Lf134_b44:
+	b .Lf134_b51
+.Lf134_b49:
 	mov x0, x27
-	mov x1, x20
+	mov x1, x19
 	mov x2, x26
 	bl xo_f_pool_2erq__put
-.Lf134_b46:
+.Lf134_b51:
 	mov x0, x27
 	bl xo_f_pool_2ewakep
 	ldp x20, x19, [sp, #16]
@@ -15156,7 +15189,7 @@ xo_f_pool_2efind__work:
 	mov x9, #0
 	b .Lf139_b150
 .Lf139_b149:
-	cmp x9, #32
+	cmp x9, #4
 	b.lt .Lf139_b150
 	add x23, x23, #1
 	cmp x23, x25
@@ -15164,8 +15197,15 @@ xo_f_pool_2efind__work:
 	b .Lf139_b154
 .Lf139_b150:
 	yield
+	yield
+	yield
+	yield
+	yield
+	yield
+	yield
+	yield
 	add x9, x9, #1
-	cmp x9, #32
+	cmp x9, #4
 	b.lt .Lf139_b150
 	b .Lf139_b153
 .Lf139_b154:
@@ -15283,7 +15323,7 @@ xo_f_pool_2esteal__round:
 	mov x23, #0
 .Lf140_b4:
 	cmp x23, x24
-	b.ge .Lf140_b63
+	b.ge .Lf140_b68
 .Lf140_b5:
 	add x10, x26, x23
 	cmp x24, #0
@@ -15376,28 +15416,44 @@ xo_f_pool_2esteal__round:
 	stlr x10, [x9]
 	cmp x20, #0
 	b.eq .Lf140_b40
-	b .Lf140_b53
+	b .Lf140_b58
 .Lf140_b38:
 	mov x20, #0
 	cmp x28, #0
 	b.ne .Lf140_b43
-	b .Lf140_b53
+	b .Lf140_b58
 .Lf140_b39:
 	cmp x20, #0
-	b.ne .Lf140_b53
+	b.ne .Lf140_b58
 .Lf140_b40:
 	cmp x28, #0
-	b.eq .Lf140_b53
+	b.eq .Lf140_b58
 .Lf140_b43:
 	add x9, x21, #2184
 	ldar x19, [x9]
 	cmp x19, #0
-	b.eq .Lf140_b51
-.Lf140_b44:
+	b.eq .Lf140_b56
+.Lf140_b45:
+	bl xo_f_pool_2elayer
+	cmp x0, #2
+	b.ne .Lf140_b47
+.Lf140_b46:
+	adrp x9, .Lxo_str31
+	add x9, x9, :lo12:.Lxo_str31
+	mov x1, #65
+	add x0, x9, #16
+	adrp x9, .Lxo_str32
+	add x9, x9, :lo12:.Lxo_str32
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf140_b47:
 	mov x0, #3
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
+.Lf140_b49:
 	mov x9, #2192
 	asr x9, x9, #3
 	add x9, x21, x9, lsl #3
@@ -15405,34 +15461,34 @@ xo_f_pool_2esteal__round:
 	sub x10, x0, x10
 	mov x9, #50000
 	cmp x10, x9
-	b.le .Lf140_b51
-.Lf140_b47:
+	b.le .Lf140_b56
+.Lf140_b52:
 	add x2, x21, #2184
 	mov x1, #0
 	mov x0, x19
 	bl __aarch64_cas8_acq_rel
 	cmp x0, x19
-	b.eq .Lf140_b54
-.Lf140_b51:
+	b.eq .Lf140_b59
+.Lf140_b56:
 	mov x19, x20
 	cmp x19, #0
-	b.ne .Lf140_b55
+	b.ne .Lf140_b60
 	b .Lf140_b4
-.Lf140_b53:
+.Lf140_b58:
 	mov x19, x20
-.Lf140_b54:
+.Lf140_b59:
 	cmp x19, #0
 	b.eq .Lf140_b4
-.Lf140_b55:
+.Lf140_b60:
 	ldr x9, [x25, #2216]
 	cmp x9, #0
-	b.eq .Lf140_b60
-.Lf140_b57:
+	b.eq .Lf140_b65
+.Lf140_b62:
 	mov x0, #0
 	mov x1, #1
 	mov x2, x0
 	bl xo_sched_rt
-.Lf140_b60:
+.Lf140_b65:
 	mov x0, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -15441,7 +15497,7 @@ xo_f_pool_2esteal__round:
 	ldp x28, x27, [sp, #80]
 	ldp x29, x30, [sp], #96
 	ret
-.Lf140_b63:
+.Lf140_b68:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -15582,1320 +15638,12 @@ xo_f_pool_2escope__prune:
 	ret
 	.cfi_endproc
 
-// func pool.wakep
+// func pool.rq_put
 	.p2align 2
-	.type xo_f_pool_2ewakep, %function
-xo_f_pool_2ewakep:
+	.type xo_f_pool_2erq__put, %function
+xo_f_pool_2erq__put:
 .Lf143_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	str x21, [sp, #32]
-	.cfi_def_cfa w29, 48
-	.cfi_offset w29, -48
-	.cfi_offset w30, -40
-	.cfi_offset w20, -32
-	.cfi_offset w19, -24
-	.cfi_offset w21, -16
-.Lf143_b0:
-	mov x20, x0
-	add x9, x20, #48
-	ldar x10, [x9]
-	cmp x10, #0
-	b.eq .Lf143_b3
-.Lf143_b1:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf143_b3:
-	ldr x21, [x20, #8]
-	add x9, x20, #40
-	ldar x10, [x9]
-	cmp x10, #0
-	b.ne .Lf143_b9
-.Lf143_b4:
-	add x9, x20, #32
-	ldar x10, [x9]
-	cmp x10, x21
-	b.lt .Lf143_b9
-.Lf143_b7:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf143_b9:
-	add x2, x20, #48
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq_rel
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf143_b12
-.Lf143_b10:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf143_b12:
-	add x2, x20, #0
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf143_b15
-.Lf143_b13:
-	mov x0, x20
-	bl xo_f_pool_2elock__slow
-.Lf143_b15:
-	ldr x19, [x20, #56]
-	cmp x19, #0
-	b.eq .Lf143_b25
-.Lf143_b16:
-	ldr x9, [x19, #2240]
-	str x9, [x20, #56]
-	mov x9, #0
-	str x9, [x19, #2240]
-	mov x0, #-1
-	add x1, x20, #40
-	bl __aarch64_ldadd8_acq_rel
-.Lf143_b17:
-	add x1, x20, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf143_b22
-.Lf143_b18:
-	mov x0, x20
-	bl xo_f_pool_2efutex__wake
-.Lf143_b22:
-	mov x0, #0
-	mov x1, #3
-	mov x2, x0
-	bl xo_sched_rt
-.Lf143_b23:
-	add x10, x19, #2232
-	mov x9, #1
-	stlr x9, [x10]
-	add x0, x19, #2232
-	bl xo_f_pool_2efutex__wake
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf143_b25:
-	add x9, x20, #32
-	ldar x10, [x9]
-	cmp x10, x21
-	b.ge .Lf143_b44
-.Lf143_b27:
-	mov x19, #3400
-	mov x0, x19
-	bl xo_heap_large
-	mov x21, x0
-	mov x1, #0
-	mov x0, x21
-	mov x2, x19
-	bl memset
-	mov x9, #1
-	str w9, [x21, #2200]
-.Lf143_b28:
-	mov x9, #8
-	add x9, x9, x9, lsl #1
-	ldr x19, [x20, x9]
-	mov x9, #4096
-	cmp x19, x9
-	b.lt .Lf143_b31
-.Lf143_b29:
-	mov x0, #9
-	mov x1, #0
-	mov x2, x1
-	bl xo_sched_rt
-.Lf143_b31:
-	movz x9, #31765, lsl #0
-	movk x9, #32586, lsl #16
-	movk x9, #31161, lsl #32
-	movk x9, #40503, lsl #48
-	mul x9, x21, x9
-	orr x9, x9, #1
-	str x9, [x21, #2248]
-	str x20, [x21, #2360]
-	mov x9, #128
-	add x9, x9, x19, lsl #3
-	str x21, [x20, x9]
-	add x10, x19, #1
-	add x9, x20, #24
-	stlr x10, [x9]
-.Lf143_b32:
-	add x9, x20, #32
-	ldar x10, [x9]
-	add x10, x10, #1
-	add x9, x20, #32
-	stlr x10, [x9]
-	ldr x19, [x20, #112]
-.Lf143_b33:
-	bl xo_f_pool_2elayer
-	cmp x0, #2
-	b.eq .Lf143_b34
-.Lf143_b35:
-	cmp x0, #3
-	b.eq .Lf143_b36
-	b .Lf143_b37
-.Lf143_b34:
-	mov x0, #80
-	bl xo_heap_large
-	adrp x9, .Lxo_str39
-	add x9, x9, :lo12:.Lxo_str39
-	mov x1, #61
-	add x0, x9, #16
-	adrp x9, .Lxo_str40
-	add x9, x9, :lo12:.Lxo_str40
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf143_b36:
-	adrp x9, .Lxo_str41
-	add x9, x9, :lo12:.Lxo_str41
-	mov x1, #57
-	add x0, x9, #16
-	adrp x9, .Lxo_str42
-	add x9, x9, :lo12:.Lxo_str42
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf143_b37:
-	mov x0, #8
-	mov x1, x19
-	mov x2, x21
-	bl xo_sched_rt
-	cmp x0, #0
-	cset x9, ne
-.Lf143_b39:
-	cbz x9, .Lf143_b42
-.Lf143_b40:
-	mov x19, #1
-	b .Lf143_b46
-.Lf143_b42:
-	mov x19, #0
-	str w19, [x21, #2200]
-	add x9, x20, #32
-	ldar x10, [x9]
-	sub x10, x10, #1
-	add x9, x20, #32
-	stlr x10, [x9]
-	b .Lf143_b46
-.Lf143_b44:
-	mov x19, #0
-.Lf143_b46:
-	add x1, x20, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf143_b50
-.Lf143_b47:
-	mov x0, x20
-	bl xo_f_pool_2efutex__wake
-.Lf143_b50:
-	eor x9, x19, #1
-	cbz x9, .Lf143_b53
-.Lf143_b51:
-	mov x0, #-1
-	add x1, x20, #48
-	bl __aarch64_ldadd8_acq_rel
-.Lf143_b53:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-	.cfi_endproc
-
-// func pool.go_idle
-	.p2align 2
-	.type xo_f_pool_2ego__idle, %function
-xo_f_pool_2ego__idle:
-.Lf144_begin:
-	.cfi_startproc
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	stp x22, x21, [sp, #32]
-	.cfi_def_cfa w29, 48
-	.cfi_offset w29, -48
-	.cfi_offset w30, -40
-	.cfi_offset w20, -32
-	.cfi_offset w19, -24
-	.cfi_offset w22, -16
-	.cfi_offset w21, -8
-.Lf144_b0:
-	mov x22, x0
-	mov x21, x1
-	add x2, x22, #0
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf144_b3
-.Lf144_b1:
-	mov x0, x22
-	bl xo_f_pool_2elock__slow
-.Lf144_b3:
-	add x9, x21, #2232
-	mov x20, #0
-	str x20, [x9]
-	ldr x9, [x22, #56]
-	str x9, [x21, #2240]
-	str x21, [x22, #56]
-	add x1, x22, #40
-	mov x19, #1
-	mov x0, x19
-	bl __aarch64_ldadd8_acq_rel
-	mov x0, x19
-	mov x1, x20
-	mov x2, x20
-	bl xo_sched_rt
-.Lf144_b4:
-	add x1, x22, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf144_b8
-.Lf144_b5:
-	mov x0, x22
-	bl xo_f_pool_2efutex__wake
-.Lf144_b8:
-	mov x0, #2
-	mov x1, #0
-	mov x2, x1
-	bl xo_sched_rt
-.Lf144_b9:
-	add x9, x22, #88
-	ldar x10, [x9]
-	cmp x10, #0
-	b.gt .Lf144_b23
-.Lf144_b12:
-	add x9, x22, #24
-	ldar x8, [x9]
-	mov x13, #0
-	mov x14, #128
-.Lf144_b13:
-	cmp x13, x8
-	b.ge .Lf144_b51
-.Lf144_b14:
-	add x9, x14, x13, lsl #3
-	ldr x11, [x22, x9]
-	add x9, x11, #2184
-	ldar x10, [x9]
-	cmp x10, #0
-	b.ne .Lf144_b23
-.Lf144_b16:
-	add x9, x11, #0
-	ldar x12, [x9]
-	add x9, x11, #128
-	ldar x10, [x9]
-	cmp x12, x10
-	b.ne .Lf144_b23
-.Lf144_b20:
-	add x13, x13, #1
-	cmp x13, x8
-	b.lt .Lf144_b14
-	b .Lf144_b51
-.Lf144_b23:
-	add x2, x22, #0
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf144_b26
-.Lf144_b24:
-	mov x0, x22
-	bl xo_f_pool_2elock__slow
-.Lf144_b26:
-	ldr x10, [x22, #56]
-	mov x9, #0
-.Lf144_b27:
-	cmp x10, #0
-	b.eq .Lf144_b32
-.Lf144_b28:
-	cmp x10, x21
-	b.eq .Lf144_b32
-.Lf144_b31:
-	ldr x9, [x10, #2240]
-	mov x16, x10
-	mov x10, x9
-	mov x9, x16
-	cmp x10, #0
-	b.ne .Lf144_b28
-.Lf144_b32:
-	cmp x10, #0
-	b.eq .Lf144_b44
-.Lf144_b33:
-	ldr x10, [x21, #2240]
-	cmp x9, #0
-	b.ne .Lf144_b35
-.Lf144_b34:
-	str x10, [x22, #56]
-	b .Lf144_b36
-.Lf144_b35:
-	str x10, [x9, #2240]
-.Lf144_b36:
-	mov x9, #0
-	str x9, [x21, #2240]
-	mov x0, #-1
-	add x1, x22, #40
-	bl __aarch64_ldadd8_acq_rel
-.Lf144_b37:
-	add x1, x22, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf144_b41
-.Lf144_b38:
-	mov x0, x22
-	bl xo_f_pool_2efutex__wake
-.Lf144_b41:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf144_b44:
-	add x1, x22, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf144_b51
-.Lf144_b45:
-	mov x0, x22
-	bl xo_f_pool_2efutex__wake
-.Lf144_b51:
-	add x9, x21, #2232
-	ldar x10, [x9]
-	cmp x10, #0
-	b.ne .Lf144_b55
-.Lf144_b53:
-	mov x0, #0
-	mov x1, #4
-	mov x2, x0
-	bl xo_sched_rt
-.Lf144_b54:
-	add x0, x21, #2232
-	mov x1, #0
-	bl xo_f_pool_2efutex__wait
-	b .Lf144_b51
-.Lf144_b55:
-	mov x0, #1
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-	.cfi_endproc
-
-// func sock.nr
-	.p2align 2
-	.type xo_f_sock_2enr, %function
-xo_f_sock_2enr:
-.Lf145_begin:
-	.cfi_startproc
-.Lf145_b0:
-	mov x9, #1
-	cmp x9, #1
-	b.eq .Lf145_b6
-.Lf145_b2:
-	cmp x9, #0
-	b.eq .Lf145_b3
-.Lf145_b4:
-	cmp x9, #2
-	b.eq .Lf145_b5
-	b .Lf145_b7
-.Lf145_b3:
-	mov x0, x1
-	b .Lf145_b6
-.Lf145_b5:
-	mov x0, #-1
-.Lf145_b6:
-	ret
-.Lf145_b7:
-	brk #1
-	.cfi_endproc
-
-// func sock.fcntl
-	.p2align 2
-	.type xo_f_sock_2efcntl, %function
-xo_f_sock_2efcntl:
-.Lf146_begin:
-	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-.Lf146_b0:
-.Lf146_b1:
-	mov x9, #1
-	cmp x9, #1
-	b.eq .Lf146_b2
-.Lf146_b3:
-	cmp x9, #0
-	b.eq .Lf146_b4
-.Lf146_b5:
-	cmp x9, #2
-	b.eq .Lf146_b6
-	b .Lf146_b9
-.Lf146_b2:
-	mov x6, #25
-	b .Lf146_b8
-.Lf146_b4:
-	mov x6, #72
-	b .Lf146_b8
-.Lf146_b6:
-	mov x6, #-1
-.Lf146_b8:
-	mov x3, #0
-	mov x4, x3
-	mov x5, x3
-	mov x8, x6
-	svc #0
-	ldp x29, x30, [sp], #16
-	ret
-.Lf146_b9:
-	brk #1
-	.cfi_endproc
-
-// func scan.ends_with
-	.p2align 2
-	.type xo_f_scan_2eends__with, %function
-xo_f_scan_2eends__with:
-.Lf147_begin:
-	.cfi_startproc
-.Lf147_b0:
-	cmp x3, x1
-	b.gt .Lf147_b19
-.Lf147_b1:
-	sub x13, x1, x3
-.Lf147_b2:
-	cmp x3, #8
-	b.lt .Lf147_b11
-.Lf147_b3:
-	mov x11, #0
-.Lf147_b4:
-	sub x9, x3, x11
-	cmp x9, #8
-	b.le .Lf147_b9
-.Lf147_b5:
-	adds x10, x13, x11
-	b.vs .Lf147_fault1
-	add x9, x0, #16
-	ldr x12, [x9, x10]
-	add x10, x11, #0
-	add x9, x2, #16
-	ldr x9, [x9, x10]
-	cmp x12, x9
-	b.eq .Lf147_b8
-.Lf147_b6:
-	mov x0, #0
-	b .Lf147_b20
-.Lf147_b8:
-	adds x11, x11, #8
-	b.vs .Lf147_fault2
-	b .Lf147_b4
-.Lf147_b9:
-	add x9, x13, x3
-	sub x10, x9, #8
-	add x9, x0, #16
-	ldr x11, [x9, x10]
-	add x9, x3, #0
-	sub x10, x9, #8
-	add x9, x2, #16
-	ldr x9, [x9, x10]
-	cmp x11, x9
-	cset x0, eq
-	b .Lf147_b20
-.Lf147_b11:
-	mov x11, #0
-.Lf147_b12:
-	cmp x11, x3
-	b.ge .Lf147_b17
-.Lf147_b13:
-	add x10, x13, x11
-	cmp x10, x1
-	b.hs .Lf147_fault3
-	add x9, x0, #16
-	ldrb w12, [x9, x10]
-	add x10, x11, #0
-	add x9, x2, #16
-	ldrb w9, [x9, x10]
-	cmp x12, x9
-	b.eq .Lf147_b16
-.Lf147_b14:
-	mov x0, #0
-	b .Lf147_b20
-.Lf147_b16:
-	add x11, x11, #1
-	cmp x11, x3
-	b.lt .Lf147_b13
-.Lf147_b17:
-	mov x0, #1
-	b .Lf147_b20
-.Lf147_b19:
-	mov x0, #0
-.Lf147_b20:
-	ret
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-.Lf147_fault1:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x0, x13
-	mov x2, x11
-	mov x1, #43
-	adrp x3, .Lxo_loc28
-	add x3, x3, :lo12:.Lxo_loc28
-	bl xo_fault_overflow
-	brk #1
-.Lf147_fault2:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x17, #8
-	sub x15, x11, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #8
-	adrp x3, .Lxo_loc29
-	add x3, x3, :lo12:.Lxo_loc29
-	bl xo_fault_overflow
-	brk #1
-.Lf147_fault3:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x0, x10
-	adrp x2, .Lxo_loc30
-	add x2, x2, :lo12:.Lxo_loc30
-	bl xo_fault_bytes_index
-	brk #1
-	.cfi_endproc
-
-// func num.dbox
-	.p2align 2
-	.type xo_f_num_2edbox, %function
-xo_f_num_2edbox:
-.Lf148_begin:
-	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-.Lf148_b0:
-	mov x6, x0
-	movz x9, #16, lsl #48
-	cmp x6, x9
-	b.ne .Lf148_b45
-.Lf148_b1:
-	eor x9, x2, #1
-.Lf148_b3:
-	cbz x9, .Lf148_b45
-.Lf148_b4:
-	movz x10, #41481, lsl #0
-	movk x10, #9, lsl #16
-	mul x11, x1, x10
-	smulh x9, x1, x10
-	cmp x9, x11, asr #63
-	b.ne .Lf148_fault1
-	movz x9, #65055, lsl #0
-	movk x9, #3, lsl #16
-	subs x9, x11, x9
-	b.vs .Lf148_fault2
-	asr x10, x9, #21
-	mov x9, #0
-	sub x14, x9, x10
-.Lf148_b5:
-	mov x9, #-348
-	sub x9, x14, x9
-	lsl x10, x9, #4
-.Lf148_b6:
-	adrp x9, .Lxo_str43
-	add x9, x9, :lo12:.Lxo_str43
-	add x9, x9, #16
-	ldr x12, [x9, x10]
-.Lf148_b8:
-	adds x10, x1, #1
-	b.vs .Lf148_fault3
-.Lf148_b9:
-	movz x9, #43317, lsl #0
-	movk x9, #1, lsl #16
-	mul x9, x14, x9
-	asr x9, x9, #15
-.Lf148_b10:
-	adds x9, x10, x9
-	b.vs .Lf148_fault4
-	subs x13, x9, #1
-	b.vs .Lf148_fault5
-.Lf148_b11:
-	lsr x9, x12, #54
-.Lf148_b13:
-	sub x10, x12, x9
-.Lf148_b14:
-	mov x9, #11
-	subs x9, x9, x13
-	b.vs .Lf148_fault6
-.Lf148_b15:
-	lsr x11, x10, x9
-.Lf148_b17:
-	lsr x9, x12, #53
-.Lf148_b19:
-	add x10, x12, x9
-.Lf148_b20:
-	mov x9, #11
-	subs x9, x9, x13
-	b.vs .Lf148_fault7
-.Lf148_b21:
-	lsr x10, x10, x9
-.Lf148_b22:
-	cmp x1, #2
-	b.eq .Lf148_b28
-.Lf148_b23:
-	cmp x1, #3
-	b.eq .Lf148_b28
-.Lf148_b26:
-	adds x11, x11, #1
-	b.vs .Lf148_fault8
-.Lf148_b28:
-	movz x9, #26215, lsl #0
-	movk x9, #26214, lsl #16
-	movk x9, #26214, lsl #32
-	movk x9, #26214, lsl #48
-	smulh x9, x10, x9
-	asr x9, x9, #2
-	add x0, x9, x9, lsr #63
-	mov x9, #10
-	mul x9, x0, x9
-	cmp x11, x9
-	b.gt .Lf148_b31
-.Lf148_b29:
-	mov x9, #0
-	sub x9, x9, x14
-	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
-.Lf148_b31:
-	mov x9, #10
-	subs x9, x9, x13
-	b.vs .Lf148_fault9
-.Lf148_b32:
-	lsr x9, x12, x9
-.Lf148_b33:
-	adds x9, x9, #1
-	b.vs .Lf148_fault10
-	add x9, x9, x9, lsr #63
-	asr x0, x9, #1
-	mov x9, #-77
-	cmp x1, x9
-	b.ne .Lf148_b38
-.Lf148_b34:
-	tst x0, #1
-	b.eq .Lf148_b38
-.Lf148_b37:
-	sub x0, x0, #1
-	b .Lf148_b42
-.Lf148_b38:
-	cmp x0, x11
-	b.ge .Lf148_b42
-.Lf148_b39:
-	add x0, x0, #1
-.Lf148_b42:
-	mov x9, #0
-	sub x1, x9, x14
-	ldp x29, x30, [sp], #16
-	ret
-.Lf148_b45:
-	movz x10, #13377, lsl #0
-	movk x10, #1, lsl #16
-	mul x11, x1, x10
-	smulh x9, x1, x10
-	cmp x9, x11, asr #63
-	b.ne .Lf148_fault11
-	asr x10, x11, #18
-.Lf148_b46:
-	mov x9, #0
-	sub x4, x9, x10
-	add x12, x4, #2
-.Lf148_b47:
-	mov x9, #-348
-	sub x9, x12, x9
-	lsl x10, x9, #4
-.Lf148_b48:
-	adrp x11, .Lxo_str43
-	add x11, x11, :lo12:.Lxo_str43
-	add x9, x11, #16
-	ldr x5, [x9, x10]
-.Lf148_b51:
-	mov x9, #-348
-	sub x9, x12, x9
-	lsl x9, x9, #4
-	add x10, x9, #8
-.Lf148_b52:
-	add x9, x11, #16
-	ldr x8, [x9, x10]
-.Lf148_b54:
-	cmp x12, #0
-	b.lt .Lf148_b59
-.Lf148_b56:
-	cmp x12, #55
-	b.le .Lf148_b62
-.Lf148_b59:
-	add x8, x8, #1
-.Lf148_b62:
-	adds x10, x1, #1
-	b.vs .Lf148_fault12
-.Lf148_b63:
-	movz x9, #43317, lsl #0
-	movk x9, #1, lsl #16
-	mul x9, x12, x9
-	asr x9, x9, #15
-.Lf148_b64:
-	adds x9, x10, x9
-	b.vs .Lf148_fault13
-	subs x7, x9, #1
-	b.vs .Lf148_fault14
-	mov x11, #2
-	lsl x10, x6, #1
-	smulh x9, x6, x11
-	cmp x9, x10, asr #63
-	b.ne .Lf148_fault15
-	adds x9, x10, #1
-	b.vs .Lf148_fault16
-.Lf148_b65:
-	lsl x9, x9, x7
-.Lf148_b66:
-	umulh x14, x9, x5
-.Lf148_b67:
-	mul x12, x9, x5
-.Lf148_b68:
-	umulh x9, x9, x8
-.Lf148_b69:
-	add x13, x12, x9
-.Lf148_b71:
-	movz x10, #1, lsl #0
-	movk x10, #32768, lsl #48
-	sub x9, x10, #1
-	eor x11, x13, x9
-	sub x9, x10, #1
-	eor x9, x12, x9
-	cmp x11, x9
-	b.ge .Lf148_b77
-.Lf148_b74:
-	add x14, x14, #1
-.Lf148_b77:
-	cmp x13, #0
-	cset x11, eq
-.Lf148_b78:
-	lsr x10, x14, #3
-.Lf148_b79:
-	movz x9, #63439, lsl #0
-	movk x9, #58195, lsl #16
-	movk x9, #39845, lsl #32
-	movk x9, #8388, lsl #48
-	smulh x9, x10, x9
-	asr x9, x9, #4
-	add x0, x9, x9, lsr #63
-.Lf148_b80:
-	mov x9, #1000
-	mul x9, x0, x9
-.Lf148_b82:
-	sub x13, x14, x9
-.Lf148_b83:
-	mov x9, #63
-	subs x9, x9, x7
-	b.vs .Lf148_fault17
-.Lf148_b84:
-	lsr x14, x5, x9
-.Lf148_b85:
-	cmp x13, x14
-	b.ge .Lf148_b96
-.Lf148_b86:
-	cmp x13, #0
-	b.ne .Lf148_b93
-.Lf148_b88:
-	eor x9, x11, #1
-.Lf148_b89:
-	cbnz x9, .Lf148_b93
-.Lf148_b91:
-	tst x6, #1
-	b.ne .Lf148_b95
-.Lf148_b93:
-	mov x9, #0
-	sub x9, x9, x4
-	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
-.Lf148_b95:
-	sub x0, x0, #1
-	mov x13, #1000
-	b .Lf148_b126
-.Lf148_b96:
-	b.ne .Lf148_b126
-.Lf148_b97:
-	mov x11, #2
-	lsl x10, x6, #1
-	smulh x9, x6, x11
-	cmp x9, x10, asr #63
-	b.ne .Lf148_fault18
-	subs x10, x10, #1
-	b.vs .Lf148_fault19
-.Lf148_b98:
-	umulh x11, x10, x8
-.Lf148_b99:
-	mul x9, x10, x5
-.Lf148_b101:
-	add x11, x9, x11
-.Lf148_b103:
-	mul x12, x10, x8
-.Lf148_b104:
-	mov x9, #64
-	subs x9, x9, x7
-	b.vs .Lf148_fault20
-.Lf148_b105:
-	lsr x9, x11, x9
-.Lf148_b106:
-	and x10, x9, #1
-.Lf148_b107:
-	lsl x11, x11, x7
-.Lf148_b108:
-	mov x9, #64
-	subs x9, x9, x7
-	b.vs .Lf148_fault21
-.Lf148_b109:
-	lsr x9, x12, x9
-.Lf148_b110:
-	orr x9, x11, x9
-	cmp x9, #0
-	b.ne .Lf148_b114
-.Lf148_b111:
-	orr x10, x10, #2
-.Lf148_b114:
-	and x9, x10, #1
-	cmp x9, #0
-	b.ne .Lf148_b121
-.Lf148_b116:
-	and x9, x10, #2
-	cmp x9, #0
-	b.eq .Lf148_b126
-.Lf148_b117:
-	tst x6, #1
-	b.ne .Lf148_b126
-.Lf148_b121:
-	mov x9, #0
-	sub x9, x9, x4
-	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
-.Lf148_b126:
-	adds x10, x13, #50
-	b.vs .Lf148_fault22
-	add x9, x14, x14, lsr #63
-	asr x9, x9, #1
-	subs x13, x10, x9
-	b.vs .Lf148_fault23
-	movz x9, #55051, lsl #0
-	movk x9, #28835, lsl #16
-	movk x9, #2621, lsl #32
-	movk x9, #41943, lsl #48
-	smulh x9, x13, x9
-	add x9, x9, x13
-	asr x9, x9, #6
-	add x10, x9, x9, lsr #63
-	mov x9, #10
-	mul x9, x9, x0
-	add x0, x9, x10
-	mov x9, #100
-	msub x9, x10, x9, x13
-	cmp x9, #0
-	b.ne .Lf148_b155
-.Lf148_b127:
-	mov x10, #2
-	lsl x11, x6, #1
-	smulh x9, x6, x10
-	cmp x9, x11, asr #63
-	b.ne .Lf148_fault24
-.Lf148_b128:
-	umulh x10, x11, x8
-.Lf148_b129:
-	mul x9, x11, x5
-.Lf148_b131:
-	add x10, x9, x10
-.Lf148_b133:
-	mul x12, x11, x8
-.Lf148_b134:
-	mov x9, #64
-	subs x9, x9, x7
-	b.vs .Lf148_fault25
-.Lf148_b135:
-	lsr x9, x10, x9
-.Lf148_b136:
-	and x11, x9, #1
-.Lf148_b137:
-	lsl x10, x10, x7
-.Lf148_b138:
-	mov x9, #64
-	subs x9, x9, x7
-	b.vs .Lf148_fault26
-.Lf148_b139:
-	lsr x9, x12, x9
-.Lf148_b140:
-	orr x9, x10, x9
-	cmp x9, #0
-	b.ne .Lf148_b144
-.Lf148_b141:
-	orr x11, x11, #2
-.Lf148_b144:
-	and x9, x11, #1
-	cmp x9, #0
-	cset x10, ne
-	subs x9, x13, #50
-	b.vs .Lf148_fault27
-	tst x9, #1
-	cset x9, ne
-	cmp x10, x9
-	b.ne .Lf148_b151
-.Lf148_b146:
-	and x9, x11, #2
-	cmp x9, #0
-	b.eq .Lf148_b155
-.Lf148_b147:
-	tst x0, #1
-	b.eq .Lf148_b155
-.Lf148_b151:
-	sub x0, x0, #1
-.Lf148_b155:
-	mov x9, #0
-	sub x1, x9, x4
-	ldp x29, x30, [sp], #16
-	ret
-.Lf148_fault1:
-	mov x0, x1
-	mov x2, x10
-	mov x1, #42
-	adrp x3, .Lxo_loc110
-	add x3, x3, :lo12:.Lxo_loc110
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault2:
-	sub x15, x11, x9
-	mov x0, x11
-	mov x2, x15
-	mov x1, #45
-	adrp x3, .Lxo_loc110
-	add x3, x3, :lo12:.Lxo_loc110
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault3:
-	mov x0, x1
-	mov x1, #43
-	mov x2, #1
-	adrp x3, .Lxo_loc111
-	add x3, x3, :lo12:.Lxo_loc111
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault4:
-	sub x15, x9, x10
-	mov x0, x10
-	mov x2, x15
-	mov x1, #43
-	adrp x3, .Lxo_loc111
-	add x3, x3, :lo12:.Lxo_loc111
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault5:
-	mov x0, x9
-	mov x1, #45
-	mov x2, #1
-	adrp x3, .Lxo_loc111
-	add x3, x3, :lo12:.Lxo_loc111
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault6:
-	add x15, x9, x13
-	mov x0, x15
-	mov x2, x13
-	mov x1, #45
-	adrp x3, .Lxo_loc112
-	add x3, x3, :lo12:.Lxo_loc112
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault7:
-	add x15, x9, x13
-	mov x0, x15
-	mov x2, x13
-	mov x1, #45
-	adrp x3, .Lxo_loc113
-	add x3, x3, :lo12:.Lxo_loc113
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault8:
-	mov x17, #1
-	sub x15, x11, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #1
-	adrp x3, .Lxo_loc114
-	add x3, x3, :lo12:.Lxo_loc114
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault9:
-	add x15, x9, x13
-	mov x0, x15
-	mov x2, x13
-	mov x1, #45
-	adrp x3, .Lxo_loc115
-	add x3, x3, :lo12:.Lxo_loc115
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault10:
-	mov x17, #1
-	sub x15, x9, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #1
-	adrp x3, .Lxo_loc116
-	add x3, x3, :lo12:.Lxo_loc116
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault11:
-	mov x0, x1
-	mov x2, x10
-	mov x1, #42
-	adrp x3, .Lxo_loc117
-	add x3, x3, :lo12:.Lxo_loc117
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault12:
-	mov x0, x1
-	mov x1, #43
-	mov x2, #1
-	adrp x3, .Lxo_loc118
-	add x3, x3, :lo12:.Lxo_loc118
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault13:
-	sub x15, x9, x10
-	mov x0, x10
-	mov x2, x15
-	mov x1, #43
-	adrp x3, .Lxo_loc118
-	add x3, x3, :lo12:.Lxo_loc118
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault14:
-	mov x0, x9
-	mov x1, #45
-	mov x2, #1
-	adrp x3, .Lxo_loc118
-	add x3, x3, :lo12:.Lxo_loc118
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault15:
-	mov x0, x6
-	mov x2, x11
-	mov x1, #42
-	adrp x3, .Lxo_loc119
-	add x3, x3, :lo12:.Lxo_loc119
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault16:
-	mov x0, x10
-	mov x1, #43
-	mov x2, #1
-	adrp x3, .Lxo_loc119
-	add x3, x3, :lo12:.Lxo_loc119
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault17:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, .Lxo_loc120
-	add x3, x3, :lo12:.Lxo_loc120
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault18:
-	mov x0, x6
-	mov x2, x11
-	mov x1, #42
-	adrp x3, .Lxo_loc121
-	add x3, x3, :lo12:.Lxo_loc121
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault19:
-	mov x17, #1
-	add x15, x10, x17
-	mov x0, x15
-	mov x1, #45
-	mov x2, #1
-	adrp x3, .Lxo_loc121
-	add x3, x3, :lo12:.Lxo_loc121
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault20:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, .Lxo_loc122
-	add x3, x3, :lo12:.Lxo_loc122
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault21:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, .Lxo_loc123
-	add x3, x3, :lo12:.Lxo_loc123
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault22:
-	mov x0, x13
-	mov x1, #43
-	mov x2, #50
-	adrp x3, .Lxo_loc124
-	add x3, x3, :lo12:.Lxo_loc124
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault23:
-	mov x0, x10
-	mov x2, x9
-	mov x1, #45
-	adrp x3, .Lxo_loc124
-	add x3, x3, :lo12:.Lxo_loc124
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault24:
-	mov x0, x6
-	mov x2, x10
-	mov x1, #42
-	adrp x3, .Lxo_loc125
-	add x3, x3, :lo12:.Lxo_loc125
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault25:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, .Lxo_loc122
-	add x3, x3, :lo12:.Lxo_loc122
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault26:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, .Lxo_loc123
-	add x3, x3, :lo12:.Lxo_loc123
-	bl xo_fault_overflow
-	brk #1
-.Lf148_fault27:
-	mov x0, x13
-	mov x1, #45
-	mov x2, #50
-	adrp x3, .Lxo_loc126
-	add x3, x3, :lo12:.Lxo_loc126
-	bl xo_fault_overflow
-	brk #1
-	.cfi_endproc
-
-// func num.ndigits
-	.p2align 2
-	.type xo_f_num_2endigits, %function
-xo_f_num_2endigits:
-.Lf149_begin:
-	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-.Lf149_b0:
-	movz x9, #57600, lsl #0
-	movk x9, #1525, lsl #16
-	cmp x0, x9
-	b.ge .Lf149_b3
-.Lf149_b1:
-	bl xo_f_num_2endigits8
-	ldp x29, x30, [sp], #16
-	ret
-.Lf149_b3:
-	movz x9, #28609, lsl #16
-	movk x9, #34546, lsl #32
-	movk x9, #35, lsl #48
-	cmp x0, x9
-	b.ge .Lf149_b6
-.Lf149_b4:
-	movz x9, #59263, lsl #0
-	movk x9, #49712, lsl #16
-	movk x9, #15240, lsl #32
-	movk x9, #21990, lsl #48
-	smulh x9, x0, x9
-	asr x0, x9, #25
-	bl xo_f_num_2endigits8
-	adds x0, x0, #8
-	b.vs .Lf149_fault1
-	ldp x29, x30, [sp], #16
-	ret
-.Lf149_b6:
-	movz x9, #23946, lsl #16
-	movk x9, #17784, lsl #32
-	movk x9, #355, lsl #48
-	cmp x0, x9
-	b.ge .Lf149_b8
-.Lf149_b7:
-	mov x0, #17
-	b .Lf149_b9
-.Lf149_b8:
-	mov x0, #18
-.Lf149_b9:
-	ldp x29, x30, [sp], #16
-	ret
-.Lf149_fault1:
-	mov x17, #8
-	sub x15, x0, x17
-	mov x2, x15
-	mov x0, #8
-	mov x1, #43
-	adrp x3, .Lxo_loc89
-	add x3, x3, :lo12:.Lxo_loc89
-	bl xo_fault_overflow
-	brk #1
-	.cfi_endproc
-
-// func num.layout
-	.p2align 2
-	.type xo_f_num_2elayout, %function
-xo_f_num_2elayout:
-.Lf150_begin:
-	.cfi_startproc
-	.cfi_personality 155, DW.ref.xo_personality
-	.cfi_lsda 27, .Lf150_lsda
 	stp x29, x30, [sp, #-112]!
 	mov x29, sp
 	stp x20, x19, [sp, #32]
@@ -16916,33 +15664,1586 @@ xo_f_num_2elayout:
 	.cfi_offset w25, -24
 	.cfi_offset w28, -16
 	.cfi_offset w27, -8
+.Lf143_b0:
+	str x0, [sp, #16]
+	mov x20, x1
+	mov x28, x2
+.Lf143_b3:
+	add x9, x20, #0
+	ldar x10, [x9]
+	ldr x11, [x20, #128]
+	sub x9, x11, x10
+	cmp x9, #256
+	b.ge .Lf143_b10
+.Lf143_b4:
+	and x10, x11, #255
+	mov x9, #17
+	add x9, x9, x10
+	add x9, x20, x9, lsl #3
+	str x28, [x9]
+	add x10, x11, #1
+	add x9, x20, #128
+	stlr x10, [x9]
+.Lf143_b8:
+	ldp x20, x19, [sp, #32]
+	ldp x22, x21, [sp, #48]
+	ldp x24, x23, [sp, #64]
+	ldp x26, x25, [sp, #80]
+	ldp x28, x27, [sp, #96]
+	ldp x29, x30, [sp], #112
+	ret
+.Lf143_b10:
+	add x9, x20, #0
+	ldar x19, [x9]
+	ldr x10, [x20, #128]
+	sub x9, x10, x19
+	cmp x9, #256
+	b.lt .Lf143_b3
+.Lf143_b13:
+	sub x9, x10, x19
+	asr x21, x9, #1
+	add x22, x20, #2368
+	mov x11, #0
+	mov x13, #17
+.Lf143_b14:
+	cmp x11, x21
+	b.ge .Lf143_b16
+.Lf143_b15:
+	lsl x12, x11, #3
+	add x9, x19, x11
+	and x9, x9, #255
+	add x9, x13, x9
+	add x9, x20, x9, lsl #3
+	ldr x10, [x9]
+	str x10, [x22, x12]
+	add x11, x11, #1
+	cmp x11, x21
+	b.lt .Lf143_b15
+.Lf143_b16:
+	add x1, x19, x21
+	add x2, x20, #0
+	mov x0, x19
+	bl __aarch64_cas8_rel
+	cmp x0, x19
+	cset x9, eq
+	cbz x9, .Lf143_b3
+.Lf143_b18:
+	ldr x16, [sp, #16]
+	add x16, x16, #64
+	str x16, [sp, #24]
+	cmp x28, #0
+	b.eq .Lf143_b20
+.Lf143_b19:
+	add x27, x21, #1
+	b .Lf143_b21
+.Lf143_b20:
+	mov x27, x21
+.Lf143_b21:
+	ldr x16, [sp, #24]
+	add x2, x16, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf143_b24
+.Lf143_b22:
+	ldr x0, [sp, #24]
+	bl xo_f_pool_2elock__slow
+.Lf143_b24:
+	ldr x16, [sp, #16]
+	ldr x24, [x16, #88]
+	ldr x16, [sp, #16]
+	ldr x20, [x16, #96]
+	ldr x16, [sp, #16]
+	ldr x25, [x16, #80]
+	ldr x16, [sp, #16]
+	ldr x26, [x16, #72]
+	add x9, x24, x27
+	cmp x9, x20
+	b.le .Lf143_b38
+.Lf143_b25:
+	cmp x20, #0
+	b.eq .Lf143_b27
+.Lf143_b26:
+	lsl x19, x20, #1
+	b .Lf143_b29
+.Lf143_b27:
+	mov x19, #64
+.Lf143_b29:
+	add x9, x24, x27
+	cmp x19, x9
+	b.ge .Lf143_b31
+.Lf143_b30:
+	lsl x19, x19, #1
+	b .Lf143_b29
+.Lf143_b31:
+	lsl x0, x19, #3
+	bl xo_heap_large
+	mov x23, x0
+	mov x11, #0
+.Lf143_b32:
+	cmp x11, x24
+	b.ge .Lf143_b34
+.Lf143_b33:
+	lsl x12, x11, #3
+	add x10, x25, x11
+	cmp x20, #0
+	b.eq .Lf143_fault1
+	sdiv x9, x10, x20
+	msub x9, x9, x20, x10
+	lsl x9, x9, #3
+	ldr x9, [x26, x9]
+	str x9, [x23, x12]
+	add x11, x11, #1
+	cmp x11, x24
+	b.lt .Lf143_b33
+.Lf143_b34:
+	cmp x26, #0
+	b.eq .Lf143_b37
+.Lf143_b35:
+	sub x0, x26, #8
+	bl xo_heap_release
+.Lf143_b37:
+	ldr x16, [sp, #16]
+	str x23, [x16, #72]
+	mov x25, #0
+	ldr x16, [sp, #16]
+	str x25, [x16, #80]
+	ldr x16, [sp, #16]
+	str x19, [x16, #96]
+	b .Lf143_b39
+.Lf143_b38:
+	mov x23, x26
+	mov x19, x20
+.Lf143_b39:
+	mov x12, #0
+.Lf143_b40:
+	cmp x12, x27
+	b.ge .Lf143_b45
+.Lf143_b41:
+	cmp x12, x21
+	b.ge .Lf143_b43
+.Lf143_b42:
+	lsl x9, x12, #3
+	ldr x11, [x22, x9]
+	b .Lf143_b44
+.Lf143_b43:
+	mov x11, x28
+.Lf143_b44:
+	add x9, x25, x24
+	add x10, x9, x12
+	cmp x19, #0
+	b.eq .Lf143_fault2
+	sdiv x9, x10, x19
+	msub x9, x9, x19, x10
+	lsl x9, x9, #3
+	str x11, [x23, x9]
+	add x12, x12, #1
+	cmp x12, x27
+	b.lt .Lf143_b41
+.Lf143_b45:
+	add x10, x24, x27
+	ldr x16, [sp, #16]
+	add x9, x16, #88
+	stlr x10, [x9]
+.Lf143_b46:
+	ldr x16, [sp, #24]
+	add x1, x16, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf143_b51
+.Lf143_b47:
+	ldr x0, [sp, #24]
+	bl xo_f_pool_2efutex__wake
+.Lf143_b51:
+	ldp x20, x19, [sp, #32]
+	ldp x22, x21, [sp, #48]
+	ldp x24, x23, [sp, #64]
+	ldp x26, x25, [sp, #80]
+	ldp x28, x27, [sp, #96]
+	ldp x29, x30, [sp], #112
+	ret
+.Lf143_fault1:
+	mov x0, x10
+	mov x1, #37
+	adrp x2, .Lxo_loc65
+	add x2, x2, :lo12:.Lxo_loc65
+	bl xo_fault_divzero
+	brk #1
+.Lf143_fault2:
+	mov x0, x10
+	mov x1, #37
+	adrp x2, .Lxo_loc66
+	add x2, x2, :lo12:.Lxo_loc66
+	bl xo_fault_divzero
+	brk #1
+	.cfi_endproc
+
+// func pool.wakep
+	.p2align 2
+	.type xo_f_pool_2ewakep, %function
+xo_f_pool_2ewakep:
+.Lf144_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w21, -16
+.Lf144_b0:
+	mov x20, x0
+	add x9, x20, #48
+	ldar x10, [x9]
+	cmp x10, #0
+	b.eq .Lf144_b3
+.Lf144_b1:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+.Lf144_b3:
+	ldr x21, [x20, #8]
+	add x9, x20, #40
+	ldar x10, [x9]
+	cmp x10, #0
+	b.ne .Lf144_b9
+.Lf144_b4:
+	add x9, x20, #32
+	ldar x10, [x9]
+	cmp x10, x21
+	b.lt .Lf144_b9
+.Lf144_b7:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+.Lf144_b9:
+	add x2, x20, #48
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq_rel
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf144_b12
+.Lf144_b10:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+.Lf144_b12:
+	add x2, x20, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf144_b15
+.Lf144_b13:
+	mov x0, x20
+	bl xo_f_pool_2elock__slow
+.Lf144_b15:
+	ldr x19, [x20, #56]
+	cmp x19, #0
+	b.eq .Lf144_b25
+.Lf144_b16:
+	ldr x9, [x19, #2240]
+	str x9, [x20, #56]
+	mov x9, #0
+	str x9, [x19, #2240]
+	mov x0, #-1
+	add x1, x20, #40
+	bl __aarch64_ldadd8_acq_rel
+.Lf144_b17:
+	add x1, x20, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf144_b22
+.Lf144_b18:
+	mov x0, x20
+	bl xo_f_pool_2efutex__wake
+.Lf144_b22:
+	mov x0, #0
+	mov x1, #3
+	mov x2, x0
+	bl xo_sched_rt
+.Lf144_b23:
+	add x10, x19, #2232
+	mov x9, #1
+	stlr x9, [x10]
+	add x0, x19, #2232
+	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+.Lf144_b25:
+	add x9, x20, #32
+	ldar x10, [x9]
+	cmp x10, x21
+	b.ge .Lf144_b44
+.Lf144_b27:
+	mov x19, #3400
+	mov x0, x19
+	bl xo_heap_large
+	mov x21, x0
+	mov x1, #0
+	mov x0, x21
+	mov x2, x19
+	bl memset
+	mov x9, #1
+	str w9, [x21, #2200]
+.Lf144_b28:
+	mov x9, #8
+	add x9, x9, x9, lsl #1
+	ldr x19, [x20, x9]
+	mov x9, #4096
+	cmp x19, x9
+	b.lt .Lf144_b31
+.Lf144_b29:
+	mov x0, #9
+	mov x1, #0
+	mov x2, x1
+	bl xo_sched_rt
+.Lf144_b31:
+	movz x9, #31765, lsl #0
+	movk x9, #32586, lsl #16
+	movk x9, #31161, lsl #32
+	movk x9, #40503, lsl #48
+	mul x9, x21, x9
+	orr x9, x9, #1
+	str x9, [x21, #2248]
+	str x20, [x21, #2360]
+	mov x9, #128
+	add x9, x9, x19, lsl #3
+	str x21, [x20, x9]
+	add x10, x19, #1
+	add x9, x20, #24
+	stlr x10, [x9]
+.Lf144_b32:
+	add x9, x20, #32
+	ldar x10, [x9]
+	add x10, x10, #1
+	add x9, x20, #32
+	stlr x10, [x9]
+	ldr x19, [x20, #112]
+.Lf144_b33:
+	bl xo_f_pool_2elayer
+	cmp x0, #2
+	b.eq .Lf144_b34
+.Lf144_b35:
+	cmp x0, #3
+	b.eq .Lf144_b36
+	b .Lf144_b37
+.Lf144_b34:
+	mov x0, #80
+	bl xo_heap_large
+	adrp x9, .Lxo_str41
+	add x9, x9, :lo12:.Lxo_str41
+	mov x1, #61
+	add x0, x9, #16
+	adrp x9, .Lxo_str42
+	add x9, x9, :lo12:.Lxo_str42
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf144_b36:
+	adrp x9, .Lxo_str43
+	add x9, x9, :lo12:.Lxo_str43
+	mov x1, #57
+	add x0, x9, #16
+	adrp x9, .Lxo_str44
+	add x9, x9, :lo12:.Lxo_str44
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf144_b37:
+	mov x0, #8
+	mov x1, x19
+	mov x2, x21
+	bl xo_sched_rt
+	cmp x0, #0
+	cset x9, ne
+.Lf144_b39:
+	cbz x9, .Lf144_b42
+.Lf144_b40:
+	mov x19, #1
+	b .Lf144_b46
+.Lf144_b42:
+	mov x19, #0
+	str w19, [x21, #2200]
+	add x9, x20, #32
+	ldar x10, [x9]
+	sub x10, x10, #1
+	add x9, x20, #32
+	stlr x10, [x9]
+	b .Lf144_b46
+.Lf144_b44:
+	mov x19, #0
+.Lf144_b46:
+	add x1, x20, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf144_b50
+.Lf144_b47:
+	mov x0, x20
+	bl xo_f_pool_2efutex__wake
+.Lf144_b50:
+	eor x9, x19, #1
+	cbz x9, .Lf144_b53
+.Lf144_b51:
+	mov x0, #-1
+	add x1, x20, #48
+	bl __aarch64_ldadd8_acq_rel
+.Lf144_b53:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+	.cfi_endproc
+
+// func pool.go_idle
+	.p2align 2
+	.type xo_f_pool_2ego__idle, %function
+xo_f_pool_2ego__idle:
+.Lf145_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w22, -16
+	.cfi_offset w21, -8
+.Lf145_b0:
+	mov x22, x0
+	mov x21, x1
+	add x2, x22, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf145_b3
+.Lf145_b1:
+	mov x0, x22
+	bl xo_f_pool_2elock__slow
+.Lf145_b3:
+	add x9, x21, #2232
+	mov x20, #0
+	str x20, [x9]
+	ldr x9, [x22, #56]
+	str x9, [x21, #2240]
+	str x21, [x22, #56]
+	add x1, x22, #40
+	mov x19, #1
+	mov x0, x19
+	bl __aarch64_ldadd8_acq_rel
+	mov x0, x19
+	mov x1, x20
+	mov x2, x20
+	bl xo_sched_rt
+.Lf145_b4:
+	add x1, x22, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf145_b8
+.Lf145_b5:
+	mov x0, x22
+	bl xo_f_pool_2efutex__wake
+.Lf145_b8:
+	mov x0, #2
+	mov x1, #0
+	mov x2, x1
+	bl xo_sched_rt
+.Lf145_b9:
+	add x9, x22, #88
+	ldar x10, [x9]
+	cmp x10, #0
+	b.gt .Lf145_b23
+.Lf145_b12:
+	add x9, x22, #24
+	ldar x8, [x9]
+	mov x13, #0
+	mov x14, #128
+.Lf145_b13:
+	cmp x13, x8
+	b.ge .Lf145_b51
+.Lf145_b14:
+	add x9, x14, x13, lsl #3
+	ldr x11, [x22, x9]
+	add x9, x11, #2184
+	ldar x10, [x9]
+	cmp x10, #0
+	b.ne .Lf145_b23
+.Lf145_b16:
+	add x9, x11, #0
+	ldar x12, [x9]
+	add x9, x11, #128
+	ldar x10, [x9]
+	cmp x12, x10
+	b.ne .Lf145_b23
+.Lf145_b20:
+	add x13, x13, #1
+	cmp x13, x8
+	b.lt .Lf145_b14
+	b .Lf145_b51
+.Lf145_b23:
+	add x2, x22, #0
+	mov x19, #0
+	mov x1, #1
+	mov x0, x19
+	bl __aarch64_cas8_acq
+	cmp x0, x19
+	cset x9, eq
+	eor x9, x9, #1
+	cbz x9, .Lf145_b26
+.Lf145_b24:
+	mov x0, x22
+	bl xo_f_pool_2elock__slow
+.Lf145_b26:
+	ldr x10, [x22, #56]
+	mov x9, #0
+.Lf145_b27:
+	cmp x10, #0
+	b.eq .Lf145_b32
+.Lf145_b28:
+	cmp x10, x21
+	b.eq .Lf145_b32
+.Lf145_b31:
+	ldr x9, [x10, #2240]
+	mov x16, x10
+	mov x10, x9
+	mov x9, x16
+	cmp x10, #0
+	b.ne .Lf145_b28
+.Lf145_b32:
+	cmp x10, #0
+	b.eq .Lf145_b44
+.Lf145_b33:
+	ldr x10, [x21, #2240]
+	cmp x9, #0
+	b.ne .Lf145_b35
+.Lf145_b34:
+	str x10, [x22, #56]
+	b .Lf145_b36
+.Lf145_b35:
+	str x10, [x9, #2240]
+.Lf145_b36:
+	mov x9, #0
+	str x9, [x21, #2240]
+	mov x0, #-1
+	add x1, x22, #40
+	bl __aarch64_ldadd8_acq_rel
+.Lf145_b37:
+	add x1, x22, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf145_b41
+.Lf145_b38:
+	mov x0, x22
+	bl xo_f_pool_2efutex__wake
+.Lf145_b41:
+	mov x0, #0
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+.Lf145_b44:
+	add x1, x22, #0
+	mov x0, #0
+	bl __aarch64_swp8_rel
+	cmp x0, #2
+	b.ne .Lf145_b51
+.Lf145_b45:
+	mov x0, x22
+	bl xo_f_pool_2efutex__wake
+.Lf145_b51:
+	add x9, x21, #2232
+	ldar x10, [x9]
+	cmp x10, #0
+	b.ne .Lf145_b55
+.Lf145_b53:
+	mov x0, #0
+	mov x1, #4
+	mov x2, x0
+	bl xo_sched_rt
+.Lf145_b54:
+	add x0, x21, #2232
+	mov x1, #0
+	bl xo_f_pool_2efutex__wait
+	b .Lf145_b51
+.Lf145_b55:
+	mov x0, #1
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+	.cfi_endproc
+
+// func sock.nr
+	.p2align 2
+	.type xo_f_sock_2enr, %function
+xo_f_sock_2enr:
+.Lf146_begin:
+	.cfi_startproc
+.Lf146_b0:
+	mov x9, #1
+	cmp x9, #1
+	b.eq .Lf146_b6
+.Lf146_b2:
+	cmp x9, #0
+	b.eq .Lf146_b3
+.Lf146_b4:
+	cmp x9, #2
+	b.eq .Lf146_b5
+	b .Lf146_b7
+.Lf146_b3:
+	mov x0, x1
+	b .Lf146_b6
+.Lf146_b5:
+	mov x0, #-1
+.Lf146_b6:
+	ret
+.Lf146_b7:
+	brk #1
+	.cfi_endproc
+
+// func sock.fcntl
+	.p2align 2
+	.type xo_f_sock_2efcntl, %function
+xo_f_sock_2efcntl:
+.Lf147_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+.Lf147_b0:
+.Lf147_b1:
+	mov x9, #1
+	cmp x9, #1
+	b.eq .Lf147_b2
+.Lf147_b3:
+	cmp x9, #0
+	b.eq .Lf147_b4
+.Lf147_b5:
+	cmp x9, #2
+	b.eq .Lf147_b6
+	b .Lf147_b9
+.Lf147_b2:
+	mov x6, #25
+	b .Lf147_b8
+.Lf147_b4:
+	mov x6, #72
+	b .Lf147_b8
+.Lf147_b6:
+	mov x6, #-1
+.Lf147_b8:
+	mov x3, #0
+	mov x4, x3
+	mov x5, x3
+	mov x8, x6
+	svc #0
+	ldp x29, x30, [sp], #16
+	ret
+.Lf147_b9:
+	brk #1
+	.cfi_endproc
+
+// func scan.ends_with
+	.p2align 2
+	.type xo_f_scan_2eends__with, %function
+xo_f_scan_2eends__with:
+.Lf148_begin:
+	.cfi_startproc
+.Lf148_b0:
+	cmp x3, x1
+	b.gt .Lf148_b19
+.Lf148_b1:
+	sub x13, x1, x3
+.Lf148_b2:
+	cmp x3, #8
+	b.lt .Lf148_b11
+.Lf148_b3:
+	mov x11, #0
+.Lf148_b4:
+	sub x9, x3, x11
+	cmp x9, #8
+	b.le .Lf148_b9
+.Lf148_b5:
+	adds x10, x13, x11
+	b.vs .Lf148_fault1
+	add x9, x0, #16
+	ldr x12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x12, x9
+	b.eq .Lf148_b8
+.Lf148_b6:
+	mov x0, #0
+	b .Lf148_b20
+.Lf148_b8:
+	adds x11, x11, #8
+	b.vs .Lf148_fault2
+	b .Lf148_b4
+.Lf148_b9:
+	add x9, x13, x3
+	sub x10, x9, #8
+	add x9, x0, #16
+	ldr x11, [x9, x10]
+	add x9, x3, #0
+	sub x10, x9, #8
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x11, x9
+	cset x0, eq
+	b .Lf148_b20
+.Lf148_b11:
+	mov x11, #0
+.Lf148_b12:
+	cmp x11, x3
+	b.ge .Lf148_b17
+.Lf148_b13:
+	add x10, x13, x11
+	cmp x10, x1
+	b.hs .Lf148_fault3
+	add x9, x0, #16
+	ldrb w12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldrb w9, [x9, x10]
+	cmp x12, x9
+	b.eq .Lf148_b16
+.Lf148_b14:
+	mov x0, #0
+	b .Lf148_b20
+.Lf148_b16:
+	add x11, x11, #1
+	cmp x11, x3
+	b.lt .Lf148_b13
+.Lf148_b17:
+	mov x0, #1
+	b .Lf148_b20
+.Lf148_b19:
+	mov x0, #0
+.Lf148_b20:
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+.Lf148_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x13
+	mov x2, x11
+	mov x1, #43
+	adrp x3, .Lxo_loc28
+	add x3, x3, :lo12:.Lxo_loc28
+	bl xo_fault_overflow
+	brk #1
+.Lf148_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #8
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #8
+	adrp x3, .Lxo_loc29
+	add x3, x3, :lo12:.Lxo_loc29
+	bl xo_fault_overflow
+	brk #1
+.Lf148_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	adrp x2, .Lxo_loc30
+	add x2, x2, :lo12:.Lxo_loc30
+	bl xo_fault_bytes_index
+	brk #1
+	.cfi_endproc
+
+// func num.dbox
+	.p2align 2
+	.type xo_f_num_2edbox, %function
+xo_f_num_2edbox:
+.Lf149_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+.Lf149_b0:
+	mov x6, x0
+	movz x9, #16, lsl #48
+	cmp x6, x9
+	b.ne .Lf149_b45
+.Lf149_b1:
+	eor x9, x2, #1
+.Lf149_b3:
+	cbz x9, .Lf149_b45
+.Lf149_b4:
+	movz x10, #41481, lsl #0
+	movk x10, #9, lsl #16
+	mul x11, x1, x10
+	smulh x9, x1, x10
+	cmp x9, x11, asr #63
+	b.ne .Lf149_fault1
+	movz x9, #65055, lsl #0
+	movk x9, #3, lsl #16
+	subs x9, x11, x9
+	b.vs .Lf149_fault2
+	asr x10, x9, #21
+	mov x9, #0
+	sub x14, x9, x10
+.Lf149_b5:
+	mov x9, #-348
+	sub x9, x14, x9
+	lsl x10, x9, #4
+.Lf149_b6:
+	adrp x9, .Lxo_str45
+	add x9, x9, :lo12:.Lxo_str45
+	add x9, x9, #16
+	ldr x12, [x9, x10]
+.Lf149_b8:
+	adds x10, x1, #1
+	b.vs .Lf149_fault3
+.Lf149_b9:
+	movz x9, #43317, lsl #0
+	movk x9, #1, lsl #16
+	mul x9, x14, x9
+	asr x9, x9, #15
+.Lf149_b10:
+	adds x9, x10, x9
+	b.vs .Lf149_fault4
+	subs x13, x9, #1
+	b.vs .Lf149_fault5
+.Lf149_b11:
+	lsr x9, x12, #54
+.Lf149_b13:
+	sub x10, x12, x9
+.Lf149_b14:
+	mov x9, #11
+	subs x9, x9, x13
+	b.vs .Lf149_fault6
+.Lf149_b15:
+	lsr x11, x10, x9
+.Lf149_b17:
+	lsr x9, x12, #53
+.Lf149_b19:
+	add x10, x12, x9
+.Lf149_b20:
+	mov x9, #11
+	subs x9, x9, x13
+	b.vs .Lf149_fault7
+.Lf149_b21:
+	lsr x10, x10, x9
+.Lf149_b22:
+	cmp x1, #2
+	b.eq .Lf149_b28
+.Lf149_b23:
+	cmp x1, #3
+	b.eq .Lf149_b28
+.Lf149_b26:
+	adds x11, x11, #1
+	b.vs .Lf149_fault8
+.Lf149_b28:
+	movz x9, #26215, lsl #0
+	movk x9, #26214, lsl #16
+	movk x9, #26214, lsl #32
+	movk x9, #26214, lsl #48
+	smulh x9, x10, x9
+	asr x9, x9, #2
+	add x0, x9, x9, lsr #63
+	mov x9, #10
+	mul x9, x0, x9
+	cmp x11, x9
+	b.gt .Lf149_b31
+.Lf149_b29:
+	mov x9, #0
+	sub x9, x9, x14
+	add x1, x9, #1
+	bl xo_f_num_2etrimmed
+	ldp x29, x30, [sp], #16
+	ret
+.Lf149_b31:
+	mov x9, #10
+	subs x9, x9, x13
+	b.vs .Lf149_fault9
+.Lf149_b32:
+	lsr x9, x12, x9
+.Lf149_b33:
+	adds x9, x9, #1
+	b.vs .Lf149_fault10
+	add x9, x9, x9, lsr #63
+	asr x0, x9, #1
+	mov x9, #-77
+	cmp x1, x9
+	b.ne .Lf149_b38
+.Lf149_b34:
+	tst x0, #1
+	b.eq .Lf149_b38
+.Lf149_b37:
+	sub x0, x0, #1
+	b .Lf149_b42
+.Lf149_b38:
+	cmp x0, x11
+	b.ge .Lf149_b42
+.Lf149_b39:
+	add x0, x0, #1
+.Lf149_b42:
+	mov x9, #0
+	sub x1, x9, x14
+	ldp x29, x30, [sp], #16
+	ret
+.Lf149_b45:
+	movz x10, #13377, lsl #0
+	movk x10, #1, lsl #16
+	mul x11, x1, x10
+	smulh x9, x1, x10
+	cmp x9, x11, asr #63
+	b.ne .Lf149_fault11
+	asr x10, x11, #18
+.Lf149_b46:
+	mov x9, #0
+	sub x4, x9, x10
+	add x12, x4, #2
+.Lf149_b47:
+	mov x9, #-348
+	sub x9, x12, x9
+	lsl x10, x9, #4
+.Lf149_b48:
+	adrp x11, .Lxo_str45
+	add x11, x11, :lo12:.Lxo_str45
+	add x9, x11, #16
+	ldr x5, [x9, x10]
+.Lf149_b51:
+	mov x9, #-348
+	sub x9, x12, x9
+	lsl x9, x9, #4
+	add x10, x9, #8
+.Lf149_b52:
+	add x9, x11, #16
+	ldr x8, [x9, x10]
+.Lf149_b54:
+	cmp x12, #0
+	b.lt .Lf149_b59
+.Lf149_b56:
+	cmp x12, #55
+	b.le .Lf149_b62
+.Lf149_b59:
+	add x8, x8, #1
+.Lf149_b62:
+	adds x10, x1, #1
+	b.vs .Lf149_fault12
+.Lf149_b63:
+	movz x9, #43317, lsl #0
+	movk x9, #1, lsl #16
+	mul x9, x12, x9
+	asr x9, x9, #15
+.Lf149_b64:
+	adds x9, x10, x9
+	b.vs .Lf149_fault13
+	subs x7, x9, #1
+	b.vs .Lf149_fault14
+	mov x11, #2
+	lsl x10, x6, #1
+	smulh x9, x6, x11
+	cmp x9, x10, asr #63
+	b.ne .Lf149_fault15
+	adds x9, x10, #1
+	b.vs .Lf149_fault16
+.Lf149_b65:
+	lsl x9, x9, x7
+.Lf149_b66:
+	umulh x14, x9, x5
+.Lf149_b67:
+	mul x12, x9, x5
+.Lf149_b68:
+	umulh x9, x9, x8
+.Lf149_b69:
+	add x13, x12, x9
+.Lf149_b71:
+	movz x10, #1, lsl #0
+	movk x10, #32768, lsl #48
+	sub x9, x10, #1
+	eor x11, x13, x9
+	sub x9, x10, #1
+	eor x9, x12, x9
+	cmp x11, x9
+	b.ge .Lf149_b77
+.Lf149_b74:
+	add x14, x14, #1
+.Lf149_b77:
+	cmp x13, #0
+	cset x11, eq
+.Lf149_b78:
+	lsr x10, x14, #3
+.Lf149_b79:
+	movz x9, #63439, lsl #0
+	movk x9, #58195, lsl #16
+	movk x9, #39845, lsl #32
+	movk x9, #8388, lsl #48
+	smulh x9, x10, x9
+	asr x9, x9, #4
+	add x0, x9, x9, lsr #63
+.Lf149_b80:
+	mov x9, #1000
+	mul x9, x0, x9
+.Lf149_b82:
+	sub x13, x14, x9
+.Lf149_b83:
+	mov x9, #63
+	subs x9, x9, x7
+	b.vs .Lf149_fault17
+.Lf149_b84:
+	lsr x14, x5, x9
+.Lf149_b85:
+	cmp x13, x14
+	b.ge .Lf149_b96
+.Lf149_b86:
+	cmp x13, #0
+	b.ne .Lf149_b93
+.Lf149_b88:
+	eor x9, x11, #1
+.Lf149_b89:
+	cbnz x9, .Lf149_b93
+.Lf149_b91:
+	tst x6, #1
+	b.ne .Lf149_b95
+.Lf149_b93:
+	mov x9, #0
+	sub x9, x9, x4
+	add x1, x9, #1
+	bl xo_f_num_2etrimmed
+	ldp x29, x30, [sp], #16
+	ret
+.Lf149_b95:
+	sub x0, x0, #1
+	mov x13, #1000
+	b .Lf149_b126
+.Lf149_b96:
+	b.ne .Lf149_b126
+.Lf149_b97:
+	mov x11, #2
+	lsl x10, x6, #1
+	smulh x9, x6, x11
+	cmp x9, x10, asr #63
+	b.ne .Lf149_fault18
+	subs x10, x10, #1
+	b.vs .Lf149_fault19
+.Lf149_b98:
+	umulh x11, x10, x8
+.Lf149_b99:
+	mul x9, x10, x5
+.Lf149_b101:
+	add x11, x9, x11
+.Lf149_b103:
+	mul x12, x10, x8
+.Lf149_b104:
+	mov x9, #64
+	subs x9, x9, x7
+	b.vs .Lf149_fault20
+.Lf149_b105:
+	lsr x9, x11, x9
+.Lf149_b106:
+	and x10, x9, #1
+.Lf149_b107:
+	lsl x11, x11, x7
+.Lf149_b108:
+	mov x9, #64
+	subs x9, x9, x7
+	b.vs .Lf149_fault21
+.Lf149_b109:
+	lsr x9, x12, x9
+.Lf149_b110:
+	orr x9, x11, x9
+	cmp x9, #0
+	b.ne .Lf149_b114
+.Lf149_b111:
+	orr x10, x10, #2
+.Lf149_b114:
+	and x9, x10, #1
+	cmp x9, #0
+	b.ne .Lf149_b121
+.Lf149_b116:
+	and x9, x10, #2
+	cmp x9, #0
+	b.eq .Lf149_b126
+.Lf149_b117:
+	tst x6, #1
+	b.ne .Lf149_b126
+.Lf149_b121:
+	mov x9, #0
+	sub x9, x9, x4
+	add x1, x9, #1
+	bl xo_f_num_2etrimmed
+	ldp x29, x30, [sp], #16
+	ret
+.Lf149_b126:
+	adds x10, x13, #50
+	b.vs .Lf149_fault22
+	add x9, x14, x14, lsr #63
+	asr x9, x9, #1
+	subs x13, x10, x9
+	b.vs .Lf149_fault23
+	movz x9, #55051, lsl #0
+	movk x9, #28835, lsl #16
+	movk x9, #2621, lsl #32
+	movk x9, #41943, lsl #48
+	smulh x9, x13, x9
+	add x9, x9, x13
+	asr x9, x9, #6
+	add x10, x9, x9, lsr #63
+	mov x9, #10
+	mul x9, x9, x0
+	add x0, x9, x10
+	mov x9, #100
+	msub x9, x10, x9, x13
+	cmp x9, #0
+	b.ne .Lf149_b155
+.Lf149_b127:
+	mov x10, #2
+	lsl x11, x6, #1
+	smulh x9, x6, x10
+	cmp x9, x11, asr #63
+	b.ne .Lf149_fault24
+.Lf149_b128:
+	umulh x10, x11, x8
+.Lf149_b129:
+	mul x9, x11, x5
+.Lf149_b131:
+	add x10, x9, x10
+.Lf149_b133:
+	mul x12, x11, x8
+.Lf149_b134:
+	mov x9, #64
+	subs x9, x9, x7
+	b.vs .Lf149_fault25
+.Lf149_b135:
+	lsr x9, x10, x9
+.Lf149_b136:
+	and x11, x9, #1
+.Lf149_b137:
+	lsl x10, x10, x7
+.Lf149_b138:
+	mov x9, #64
+	subs x9, x9, x7
+	b.vs .Lf149_fault26
+.Lf149_b139:
+	lsr x9, x12, x9
+.Lf149_b140:
+	orr x9, x10, x9
+	cmp x9, #0
+	b.ne .Lf149_b144
+.Lf149_b141:
+	orr x11, x11, #2
+.Lf149_b144:
+	and x9, x11, #1
+	cmp x9, #0
+	cset x10, ne
+	subs x9, x13, #50
+	b.vs .Lf149_fault27
+	tst x9, #1
+	cset x9, ne
+	cmp x10, x9
+	b.ne .Lf149_b151
+.Lf149_b146:
+	and x9, x11, #2
+	cmp x9, #0
+	b.eq .Lf149_b155
+.Lf149_b147:
+	tst x0, #1
+	b.eq .Lf149_b155
+.Lf149_b151:
+	sub x0, x0, #1
+.Lf149_b155:
+	mov x9, #0
+	sub x1, x9, x4
+	ldp x29, x30, [sp], #16
+	ret
+.Lf149_fault1:
+	mov x0, x1
+	mov x2, x10
+	mov x1, #42
+	adrp x3, .Lxo_loc110
+	add x3, x3, :lo12:.Lxo_loc110
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault2:
+	sub x15, x11, x9
+	mov x0, x11
+	mov x2, x15
+	mov x1, #45
+	adrp x3, .Lxo_loc110
+	add x3, x3, :lo12:.Lxo_loc110
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault3:
+	mov x0, x1
+	mov x1, #43
+	mov x2, #1
+	adrp x3, .Lxo_loc111
+	add x3, x3, :lo12:.Lxo_loc111
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault4:
+	sub x15, x9, x10
+	mov x0, x10
+	mov x2, x15
+	mov x1, #43
+	adrp x3, .Lxo_loc111
+	add x3, x3, :lo12:.Lxo_loc111
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault5:
+	mov x0, x9
+	mov x1, #45
+	mov x2, #1
+	adrp x3, .Lxo_loc111
+	add x3, x3, :lo12:.Lxo_loc111
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault6:
+	add x15, x9, x13
+	mov x0, x15
+	mov x2, x13
+	mov x1, #45
+	adrp x3, .Lxo_loc112
+	add x3, x3, :lo12:.Lxo_loc112
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault7:
+	add x15, x9, x13
+	mov x0, x15
+	mov x2, x13
+	mov x1, #45
+	adrp x3, .Lxo_loc113
+	add x3, x3, :lo12:.Lxo_loc113
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault8:
+	mov x17, #1
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #1
+	adrp x3, .Lxo_loc114
+	add x3, x3, :lo12:.Lxo_loc114
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault9:
+	add x15, x9, x13
+	mov x0, x15
+	mov x2, x13
+	mov x1, #45
+	adrp x3, .Lxo_loc115
+	add x3, x3, :lo12:.Lxo_loc115
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault10:
+	mov x17, #1
+	sub x15, x9, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #1
+	adrp x3, .Lxo_loc116
+	add x3, x3, :lo12:.Lxo_loc116
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault11:
+	mov x0, x1
+	mov x2, x10
+	mov x1, #42
+	adrp x3, .Lxo_loc117
+	add x3, x3, :lo12:.Lxo_loc117
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault12:
+	mov x0, x1
+	mov x1, #43
+	mov x2, #1
+	adrp x3, .Lxo_loc118
+	add x3, x3, :lo12:.Lxo_loc118
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault13:
+	sub x15, x9, x10
+	mov x0, x10
+	mov x2, x15
+	mov x1, #43
+	adrp x3, .Lxo_loc118
+	add x3, x3, :lo12:.Lxo_loc118
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault14:
+	mov x0, x9
+	mov x1, #45
+	mov x2, #1
+	adrp x3, .Lxo_loc118
+	add x3, x3, :lo12:.Lxo_loc118
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault15:
+	mov x0, x6
+	mov x2, x11
+	mov x1, #42
+	adrp x3, .Lxo_loc119
+	add x3, x3, :lo12:.Lxo_loc119
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault16:
+	mov x0, x10
+	mov x1, #43
+	mov x2, #1
+	adrp x3, .Lxo_loc119
+	add x3, x3, :lo12:.Lxo_loc119
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault17:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, .Lxo_loc120
+	add x3, x3, :lo12:.Lxo_loc120
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault18:
+	mov x0, x6
+	mov x2, x11
+	mov x1, #42
+	adrp x3, .Lxo_loc121
+	add x3, x3, :lo12:.Lxo_loc121
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault19:
+	mov x17, #1
+	add x15, x10, x17
+	mov x0, x15
+	mov x1, #45
+	mov x2, #1
+	adrp x3, .Lxo_loc121
+	add x3, x3, :lo12:.Lxo_loc121
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault20:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, .Lxo_loc122
+	add x3, x3, :lo12:.Lxo_loc122
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault21:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, .Lxo_loc123
+	add x3, x3, :lo12:.Lxo_loc123
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault22:
+	mov x0, x13
+	mov x1, #43
+	mov x2, #50
+	adrp x3, .Lxo_loc124
+	add x3, x3, :lo12:.Lxo_loc124
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault23:
+	mov x0, x10
+	mov x2, x9
+	mov x1, #45
+	adrp x3, .Lxo_loc124
+	add x3, x3, :lo12:.Lxo_loc124
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault24:
+	mov x0, x6
+	mov x2, x10
+	mov x1, #42
+	adrp x3, .Lxo_loc125
+	add x3, x3, :lo12:.Lxo_loc125
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault25:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, .Lxo_loc122
+	add x3, x3, :lo12:.Lxo_loc122
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault26:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, .Lxo_loc123
+	add x3, x3, :lo12:.Lxo_loc123
+	bl xo_fault_overflow
+	brk #1
+.Lf149_fault27:
+	mov x0, x13
+	mov x1, #45
+	mov x2, #50
+	adrp x3, .Lxo_loc126
+	add x3, x3, :lo12:.Lxo_loc126
+	bl xo_fault_overflow
+	brk #1
+	.cfi_endproc
+
+// func num.ndigits
+	.p2align 2
+	.type xo_f_num_2endigits, %function
+xo_f_num_2endigits:
+.Lf150_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 .Lf150_b0:
+	movz x9, #57600, lsl #0
+	movk x9, #1525, lsl #16
+	cmp x0, x9
+	b.ge .Lf150_b3
+.Lf150_b1:
+	bl xo_f_num_2endigits8
+	ldp x29, x30, [sp], #16
+	ret
+.Lf150_b3:
+	movz x9, #28609, lsl #16
+	movk x9, #34546, lsl #32
+	movk x9, #35, lsl #48
+	cmp x0, x9
+	b.ge .Lf150_b6
+.Lf150_b4:
+	movz x9, #59263, lsl #0
+	movk x9, #49712, lsl #16
+	movk x9, #15240, lsl #32
+	movk x9, #21990, lsl #48
+	smulh x9, x0, x9
+	asr x0, x9, #25
+	bl xo_f_num_2endigits8
+	adds x0, x0, #8
+	b.vs .Lf150_fault1
+	ldp x29, x30, [sp], #16
+	ret
+.Lf150_b6:
+	movz x9, #23946, lsl #16
+	movk x9, #17784, lsl #32
+	movk x9, #355, lsl #48
+	cmp x0, x9
+	b.ge .Lf150_b8
+.Lf150_b7:
+	mov x0, #17
+	b .Lf150_b9
+.Lf150_b8:
+	mov x0, #18
+.Lf150_b9:
+	ldp x29, x30, [sp], #16
+	ret
+.Lf150_fault1:
+	mov x17, #8
+	sub x15, x0, x17
+	mov x2, x15
+	mov x0, #8
+	mov x1, #43
+	adrp x3, .Lxo_loc89
+	add x3, x3, :lo12:.Lxo_loc89
+	bl xo_fault_overflow
+	brk #1
+	.cfi_endproc
+
+// func num.layout
+	.p2align 2
+	.type xo_f_num_2elayout, %function
+xo_f_num_2elayout:
+.Lf151_begin:
+	.cfi_startproc
+	.cfi_personality 155, DW.ref.xo_personality
+	.cfi_lsda 27, .Lf151_lsda
+	stp x29, x30, [sp, #-112]!
+	mov x29, sp
+	stp x20, x19, [sp, #32]
+	stp x22, x21, [sp, #48]
+	stp x24, x23, [sp, #64]
+	stp x26, x25, [sp, #80]
+	stp x28, x27, [sp, #96]
+	.cfi_def_cfa w29, 112
+	.cfi_offset w29, -112
+	.cfi_offset w30, -104
+	.cfi_offset w20, -80
+	.cfi_offset w19, -72
+	.cfi_offset w22, -64
+	.cfi_offset w21, -56
+	.cfi_offset w24, -48
+	.cfi_offset w23, -40
+	.cfi_offset w26, -32
+	.cfi_offset w25, -24
+	.cfi_offset w28, -16
+	.cfi_offset w27, -8
+.Lf151_b0:
 	mov x27, x0
 	str x1, [sp, #24]
 	mov x24, x2
 	mov x20, x3
 	mov x25, x4
 	mov x21, x5
-	cbz x24, .Lf150_b2
-.Lf150_b1:
+	cbz x24, .Lf151_b2
+.Lf151_b1:
 	mov x26, #1
-	b .Lf150_b3
-.Lf150_b2:
+	b .Lf151_b3
+.Lf151_b2:
 	mov x26, #0
-.Lf150_b3:
+.Lf151_b3:
 	mov x9, #17
 	subs x0, x9, x25
-	b.vs .Lf150_fault1
-.Lf150_b5:
-.Lf150_cs132a:
+	b.vs .Lf151_fault1
+.Lf151_b5:
+.Lf151_cs132a:
 	bl xo_f_num_2epow10
-.Lf150_cs132b:
-.Lf150_b7:
+.Lf151_cs132b:
+.Lf151_b7:
 	mul x19, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x19, asr #63
-	b.ne .Lf150_fault2
-.Lf150_b9:
+	b.ne .Lf151_fault2
+.Lf151_b9:
 	movz x9, #30807, lsl #0
 	movk x9, #45331, lsl #16
 	movk x9, #25903, lsl #32
@@ -16950,99 +17251,99 @@ xo_f_num_2elayout:
 	smulh x9, x19, x9
 	asr x9, x9, #51
 	add x10, x9, x9, lsr #63
-.Lf150_b11:
+.Lf151_b11:
 	movz x9, #28609, lsl #16
 	movk x9, #34546, lsl #32
 	movk x9, #35, lsl #48
 	msub x28, x10, x9, x19
-.Lf150_b13:
+.Lf151_b13:
 	subs x0, x21, #1
-	b.vs .Lf150_fault3
-.Lf150_b15:
+	b.vs .Lf151_fault3
+.Lf151_b15:
 	mov x9, #-4
-.Lf150_b17:
+.Lf151_b17:
 	cmp x0, x9
-	b.lt .Lf150_b21
-.Lf150_b19:
+	b.lt .Lf151_b21
+.Lf151_b19:
 	cmp x0, #6
-	b.lt .Lf150_b74
-.Lf150_b21:
+	b.lt .Lf151_b74
+.Lf151_b21:
 	add x22, x10, #48
-.Lf150_b23:
+.Lf151_b23:
 	cmp x25, #1
-	b.le .Lf150_b25
-.Lf150_b24:
+	b.le .Lf151_b25
+.Lf151_b24:
 	mov x9, #11776
 	orr x22, x22, x9
 	mov x23, #2
-	cbnz x24, .Lf150_b27
-	b .Lf150_b33
-.Lf150_b25:
+	cbnz x24, .Lf151_b27
+	b .Lf151_b33
+.Lf151_b25:
 	mov x23, #1
-.Lf150_b26:
-	cbz x24, .Lf150_b33
-.Lf150_b27:
+.Lf151_b26:
+	cbz x24, .Lf151_b33
+.Lf151_b27:
 	lsl x10, x22, #8
 	asr x9, x10, #8
 	cmp x9, x22
-	b.ne .Lf150_fault4
-.Lf150_b29:
+	b.ne .Lf151_fault4
+.Lf151_b29:
 	mov x9, #45
 	orr x22, x10, x9
 	add x23, x23, #1
-.Lf150_b33:
+.Lf151_b33:
 	cmp x0, #0
-	b.ge .Lf150_b37
-.Lf150_b34:
+	b.ge .Lf151_b37
+.Lf151_b34:
 	mov x9, #0
 	subs x0, x9, x0
-	b.vs .Lf150_fault5
-.Lf150_b36:
+	b.vs .Lf151_fault5
+.Lf151_b36:
 	mov x9, #45
 	cmp x0, #100
-	b.ge .Lf150_b39
-	b .Lf150_b40
-.Lf150_b37:
+	b.ge .Lf151_b39
+	b .Lf151_b40
+.Lf151_b37:
 	mov x9, #43
-.Lf150_b38:
+.Lf151_b38:
 	cmp x0, #100
-	b.lt .Lf150_b40
-.Lf150_b39:
+	b.lt .Lf151_b40
+.Lf151_b39:
 	mov x24, #3
-	b .Lf150_b41
-.Lf150_b40:
+	b .Lf151_b41
+.Lf151_b40:
 	mov x24, #2
-.Lf150_b41:
+.Lf151_b41:
 	lsl x10, x9, #8
-.Lf150_b43:
+.Lf151_b43:
 	mov x9, #101
 	orr x19, x9, x10
-.Lf150_b44:
-.Lf150_cs137a:
+.Lf151_b44:
+.Lf151_cs137a:
 	bl xo_f_num_2edigits8
-.Lf150_cs137b:
+.Lf151_cs137b:
 	and x10, x24, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x9, x0, x9
-.Lf150_b45:
-.Lf150_b48:
+.Lf151_b45:
+.Lf151_b48:
 	lsl x9, x9, #16
-.Lf150_b49:
+.Lf151_b49:
 	orr x26, x19, x9
 	subs x21, x25, #1
-	b.vs .Lf150_fault6
-.Lf150_b51:
+	b.vs .Lf151_fault6
+.Lf151_b51:
 	cmp x21, #8
-	b.le .Lf150_b53
-.Lf150_b52:
+	b.le .Lf151_b53
+.Lf151_b52:
 	mov x20, #8
-	b .Lf150_b54
-.Lf150_b53:
+	b .Lf151_b54
+.Lf151_b53:
 	mov x20, x21
-.Lf150_b54:
+.Lf151_b54:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -17050,40 +17351,40 @@ xo_f_num_2elayout:
 	smulh x9, x28, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-.Lf150_b56:
+.Lf151_b56:
 	mov x0, x19
-.Lf150_cs139a:
+.Lf151_cs139a:
 	bl xo_f_num_2edigits8
-.Lf150_cs139b:
+.Lf151_cs139b:
 	mov x25, x0
-.Lf150_b58:
+.Lf151_b58:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x28
-.Lf150_b60:
-.Lf150_cs140a:
+.Lf151_b60:
+.Lf151_cs140a:
 	bl xo_f_num_2edigits8
-.Lf150_cs140b:
-.Lf150_b62:
+.Lf151_cs140b:
+.Lf151_b62:
 	lsl x10, x20, #4
 	asr x9, x10, #4
 	cmp x9, x20
-	b.ne .Lf150_fault7
-.Lf150_b64:
+	b.ne .Lf151_fault7
+.Lf151_b64:
 	orr x12, x23, x10
 	subs x10, x21, x20
-	b.vs .Lf150_fault8
-.Lf150_b66:
+	b.vs .Lf151_fault8
+.Lf151_b66:
 	lsl x11, x10, #8
 	asr x9, x11, #8
 	cmp x9, x10
-	b.ne .Lf150_fault9
-.Lf150_b68:
+	b.ne .Lf151_fault9
+.Lf151_b68:
 	orr x10, x12, x11
 	add x9, x24, #2
-.Lf150_b70:
+.Lf151_b70:
 	lsl x9, x9, #12
-.Lf150_b72:
+.Lf151_b72:
 	orr x6, x10, x9
 	ldr x1, [sp, #24]
 	mov x2, x22
@@ -17101,60 +17402,60 @@ xo_f_num_2elayout:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-.Lf150_b74:
+.Lf151_b74:
 	cmp x21, #0
-	b.gt .Lf150_b123
-.Lf150_b75:
+	b.gt .Lf151_b123
+.Lf151_b75:
 	add x11, x10, #48
-.Lf150_b77:
+.Lf151_b77:
 	lsl x10, x21, #3
-.Lf150_b79:
+.Lf151_b79:
 	mov x9, #16
 	sub x9, x9, x10
-.Lf150_b82:
+.Lf151_b82:
 	lsl x10, x11, x9
-.Lf150_b83:
+.Lf151_b83:
 	mov x9, #11824
 	orr x11, x10, x9
 	mov x9, #-8
-.Lf150_b85:
+.Lf151_b85:
 	mul x10, x9, x21
-.Lf150_b88:
+.Lf151_b88:
 	mov x9, #1
 	lsl x9, x9, x10
-.Lf150_b89:
+.Lf151_b89:
 	subs x10, x9, #1
-	b.vs .Lf150_fault10
-.Lf150_b91:
+	b.vs .Lf151_fault10
+.Lf151_b91:
 	movz x9, #12336, lsl #0
 	movk x9, #48, lsl #16
 	and x9, x9, x10
-.Lf150_b92:
+.Lf151_b92:
 	lsl x9, x9, #16
-.Lf150_b93:
+.Lf151_b93:
 	orr x23, x11, x9
 	mov x9, #3
 	sub x21, x9, x21
-.Lf150_b95:
-	cbz x24, .Lf150_b102
-.Lf150_b97:
+.Lf151_b95:
+	cbz x24, .Lf151_b102
+.Lf151_b97:
 	lsl x10, x23, #8
-.Lf150_b98:
+.Lf151_b98:
 	mov x9, #45
 	orr x23, x10, x9
 	add x21, x21, #1
-.Lf150_b102:
+.Lf151_b102:
 	subs x22, x25, #1
-	b.vs .Lf150_fault11
-.Lf150_b104:
+	b.vs .Lf151_fault11
+.Lf151_b104:
 	cmp x22, #8
-	b.le .Lf150_b106
-.Lf150_b105:
+	b.le .Lf151_b106
+.Lf151_b105:
 	mov x20, #8
-	b .Lf150_b107
-.Lf150_b106:
+	b .Lf151_b107
+.Lf151_b106:
 	mov x20, x22
-.Lf150_b107:
+.Lf151_b107:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -17162,35 +17463,35 @@ xo_f_num_2elayout:
 	smulh x9, x28, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-.Lf150_b109:
+.Lf151_b109:
 	mov x0, x19
-.Lf150_cs146a:
+.Lf151_cs146a:
 	bl xo_f_num_2edigits8
-.Lf150_cs146b:
+.Lf151_cs146b:
 	mov x24, x0
-.Lf150_b111:
+.Lf151_b111:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x28
-.Lf150_b113:
-.Lf150_cs147a:
+.Lf151_b113:
+.Lf151_cs147a:
 	bl xo_f_num_2edigits8
-.Lf150_cs147b:
-.Lf150_b115:
+.Lf151_cs147b:
+.Lf151_b115:
 	lsl x10, x20, #4
 	asr x9, x10, #4
 	cmp x9, x20
-	b.ne .Lf150_fault12
-.Lf150_b117:
+	b.ne .Lf151_fault12
+.Lf151_b117:
 	orr x12, x21, x10
 	subs x10, x22, x20
-	b.vs .Lf150_fault13
-.Lf150_b119:
+	b.vs .Lf151_fault13
+.Lf151_b119:
 	lsl x11, x10, #8
 	asr x9, x11, #8
 	cmp x9, x10
-	b.ne .Lf150_fault14
-.Lf150_b121:
+	b.ne .Lf151_fault14
+.Lf151_b121:
 	orr x6, x12, x11
 	mov x5, #0
 	ldr x1, [sp, #24]
@@ -17208,40 +17509,40 @@ xo_f_num_2elayout:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-.Lf150_b123:
+.Lf151_b123:
 	cmp x25, x21
-	b.gt .Lf150_b140
-.Lf150_b124:
+	b.gt .Lf151_b140
+.Lf151_b124:
 	subs x0, x21, x25
-	b.vs .Lf150_fault15
-.Lf150_b126:
-.Lf150_cs152a:
+	b.vs .Lf151_fault15
+.Lf151_b126:
+.Lf151_cs152a:
 	bl xo_f_num_2epow10
-.Lf150_cs152b:
-.Lf150_b128:
+.Lf151_cs152b:
+.Lf151_b128:
 	mul x10, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x10, asr #63
-	b.ne .Lf150_fault16
-.Lf150_b131:
+	b.ne .Lf151_fault16
+.Lf151_b131:
 	mov x0, x10
-.Lf150_cs154a:
+.Lf151_cs154a:
 	bl xo_f_num_2edigits8
-.Lf150_cs154b:
+.Lf151_cs154b:
 	and x10, x21, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x3, x0, x9
-.Lf150_b132:
-.Lf150_b134:
+.Lf151_b132:
+.Lf151_b134:
 	lsl x9, x21, #4
-.Lf150_b136:
+.Lf151_b136:
 	orr x10, x26, x9
 	mov x9, #2
 	lsl x9, x9, #8
-.Lf150_b138:
+.Lf151_b138:
 	orr x6, x10, x9
 	mov x2, #45
 	mov x4, #12334
@@ -17258,74 +17559,74 @@ xo_f_num_2elayout:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-.Lf150_b140:
+.Lf151_b140:
 	mov x9, #17
 	sub x0, x9, x21
-.Lf150_b142:
-.Lf150_cs155a:
+.Lf151_b142:
+.Lf151_cs155a:
 	bl xo_f_num_2epow10
-.Lf150_cs155b:
-.Lf150_b144:
+.Lf151_cs155b:
+.Lf151_b144:
 	cmp x0, #0
-	b.eq .Lf150_fault17
-.Lf150_b144_c:
+	b.eq .Lf151_fault17
+.Lf151_b144_c:
 	sdiv x9, x19, x0
 	msub x20, x9, x0, x19
-.Lf150_b146:
+.Lf151_b146:
 	mov x9, #17
 	sub x0, x9, x21
-.Lf150_b148:
-.Lf150_cs157a:
+.Lf151_b148:
+.Lf151_cs157a:
 	bl xo_f_num_2epow10
-.Lf150_cs157b:
-.Lf150_b150:
+.Lf151_cs157b:
+.Lf151_b150:
 	cmp x0, #0
-	b.eq .Lf150_fault18
-.Lf150_b150_c:
+	b.eq .Lf151_fault18
+.Lf151_b150_c:
 	movz x9, #32768, lsl #48
 	cmp x19, x9
 	ccmn x0, #1, #0, eq
-	b.eq .Lf150_fault19
+	b.eq .Lf151_fault19
 	sdiv x19, x19, x0
-.Lf150_b152:
+.Lf151_b152:
 	sub x0, x21, #1
-.Lf150_b154:
-.Lf150_cs160a:
+.Lf151_b154:
+.Lf151_cs160a:
 	bl xo_f_num_2epow10
-.Lf150_cs160b:
-.Lf150_b156:
+.Lf151_cs160b:
+.Lf151_b156:
 	mul x22, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x22, asr #63
-	b.ne .Lf150_fault20
-.Lf150_b158:
+	b.ne .Lf151_fault20
+.Lf151_b158:
 	sub x23, x25, x21
-.Lf150_b160:
+.Lf151_b160:
 	cmp x23, #8
-	b.le .Lf150_b162
-.Lf150_b161:
+	b.le .Lf151_b162
+.Lf151_b161:
 	mov x20, #8
-	b .Lf150_b164
-.Lf150_b162:
+	b .Lf151_b164
+.Lf151_b162:
 	mov x20, x23
-.Lf150_b164:
+.Lf151_b164:
 	mov x0, x19
-.Lf150_cs162a:
+.Lf151_cs162a:
 	bl xo_f_num_2edigits8
-.Lf150_cs162b:
+.Lf151_cs162b:
 	and x10, x21, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x11, x0, x9
-.Lf150_b165:
-.Lf150_b167:
+.Lf151_b165:
+.Lf151_b167:
 	lsl x10, x21, #3
-.Lf150_b170:
+.Lf151_b170:
 	mov x9, #46
 	lsl x9, x9, x10
-.Lf150_b171:
+.Lf151_b171:
 	orr x25, x11, x9
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
@@ -17334,40 +17635,40 @@ xo_f_num_2elayout:
 	smulh x9, x22, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-.Lf150_b173:
+.Lf151_b173:
 	mov x0, x19
-.Lf150_cs163a:
+.Lf151_cs163a:
 	bl xo_f_num_2edigits8
-.Lf150_cs163b:
+.Lf151_cs163b:
 	mov x24, x0
-.Lf150_b175:
+.Lf151_b175:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x22
-.Lf150_b177:
-.Lf150_cs164a:
+.Lf151_b177:
+.Lf151_cs164a:
 	bl xo_f_num_2edigits8
-.Lf150_cs164b:
-.Lf150_b179:
+.Lf151_cs164b:
+.Lf151_b179:
 	add x9, x21, #1
-.Lf150_b181:
+.Lf151_b181:
 	lsl x9, x9, #4
-.Lf150_b183:
+.Lf151_b183:
 	orr x11, x26, x9
 	lsl x10, x20, #8
 	asr x9, x10, #8
 	cmp x9, x20
-	b.ne .Lf150_fault21
-.Lf150_b185:
+	b.ne .Lf151_fault21
+.Lf151_b185:
 	orr x12, x11, x10
 	subs x10, x23, x20
-	b.vs .Lf150_fault22
-.Lf150_b187:
+	b.vs .Lf151_fault22
+.Lf151_b187:
 	lsl x11, x10, #12
 	asr x9, x11, #12
 	cmp x9, x10
-	b.ne .Lf150_fault23
-.Lf150_b190:
+	b.ne .Lf151_fault23
+.Lf151_b190:
 	orr x6, x12, x11
 	mov x2, #45
 	ldr x1, [sp, #24]
@@ -17385,270 +17686,270 @@ xo_f_num_2elayout:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-.Lf150_b4:
+.Lf151_b4:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b6:
+	b .Lf151_b189
+.Lf151_b6:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b8:
+	b .Lf151_b189
+.Lf151_b8:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b10:
+	b .Lf151_b189
+.Lf151_b10:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b12:
+	b .Lf151_b189
+.Lf151_b12:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b14:
+	b .Lf151_b189
+.Lf151_b14:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b16:
+	b .Lf151_b189
+.Lf151_b16:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b22:
+	b .Lf151_b189
+.Lf151_b22:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b28:
+	b .Lf151_b189
+.Lf151_b28:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b30:
+	b .Lf151_b189
+.Lf151_b30:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b35:
+	b .Lf151_b189
+.Lf151_b35:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b42:
+	b .Lf151_b189
+.Lf151_b42:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b46:
+	b .Lf151_b189
+.Lf151_b46:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b50:
+	b .Lf151_b189
+.Lf151_b50:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b55:
+	b .Lf151_b189
+.Lf151_b55:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b57:
+	b .Lf151_b189
+.Lf151_b57:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b59:
+	b .Lf151_b189
+.Lf151_b59:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b61:
+	b .Lf151_b189
+.Lf151_b61:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b63:
+	b .Lf151_b189
+.Lf151_b63:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b65:
+	b .Lf151_b189
+.Lf151_b65:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b67:
+	b .Lf151_b189
+.Lf151_b67:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b69:
+	b .Lf151_b189
+.Lf151_b69:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b71:
+	b .Lf151_b189
+.Lf151_b71:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b76:
+	b .Lf151_b189
+.Lf151_b76:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b78:
+	b .Lf151_b189
+.Lf151_b78:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b80:
+	b .Lf151_b189
+.Lf151_b80:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b84:
+	b .Lf151_b189
+.Lf151_b84:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b86:
+	b .Lf151_b189
+.Lf151_b86:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b90:
+	b .Lf151_b189
+.Lf151_b90:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b94:
+	b .Lf151_b189
+.Lf151_b94:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b99:
+	b .Lf151_b189
+.Lf151_b99:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b103:
+	b .Lf151_b189
+.Lf151_b103:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b108:
+	b .Lf151_b189
+.Lf151_b108:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b110:
+	b .Lf151_b189
+.Lf151_b110:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b112:
+	b .Lf151_b189
+.Lf151_b112:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b114:
+	b .Lf151_b189
+.Lf151_b114:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b116:
+	b .Lf151_b189
+.Lf151_b116:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b118:
+	b .Lf151_b189
+.Lf151_b118:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b120:
+	b .Lf151_b189
+.Lf151_b120:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b125:
+	b .Lf151_b189
+.Lf151_b125:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b127:
+	b .Lf151_b189
+.Lf151_b127:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b129:
+	b .Lf151_b189
+.Lf151_b129:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b133:
+	b .Lf151_b189
+.Lf151_b133:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b135:
+	b .Lf151_b189
+.Lf151_b135:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b137:
+	b .Lf151_b189
+.Lf151_b137:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b141:
+	b .Lf151_b189
+.Lf151_b141:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b143:
+	b .Lf151_b189
+.Lf151_b143:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b145:
+	b .Lf151_b189
+.Lf151_b145:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b147:
+	b .Lf151_b189
+.Lf151_b147:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b149:
+	b .Lf151_b189
+.Lf151_b149:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b151:
+	b .Lf151_b189
+.Lf151_b151:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b153:
+	b .Lf151_b189
+.Lf151_b153:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b155:
+	b .Lf151_b189
+.Lf151_b155:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b157:
+	b .Lf151_b189
+.Lf151_b157:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b159:
+	b .Lf151_b189
+.Lf151_b159:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b166:
+	b .Lf151_b189
+.Lf151_b166:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b168:
+	b .Lf151_b189
+.Lf151_b168:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b172:
+	b .Lf151_b189
+.Lf151_b172:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b174:
+	b .Lf151_b189
+.Lf151_b174:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b176:
+	b .Lf151_b189
+.Lf151_b176:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b178:
+	b .Lf151_b189
+.Lf151_b178:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b180:
+	b .Lf151_b189
+.Lf151_b180:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b182:
+	b .Lf151_b189
+.Lf151_b182:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b184:
+	b .Lf151_b189
+.Lf151_b184:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b186:
+	b .Lf151_b189
+.Lf151_b186:
 	mov x0, x27
 	bl .Lxo_drop1
-	b .Lf150_b189
-.Lf150_b188:
+	b .Lf151_b189
+.Lf151_b188:
 	mov x0, x27
 	bl .Lxo_drop1
-.Lf150_b189:
+.Lf151_b189:
 	bl xo_fault_continue
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
@@ -17660,227 +17961,227 @@ xo_f_num_2elayout:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-.Lf150_fault1:
+.Lf151_fault1:
 	mov x0, x9
 	mov x2, x25
 	mov x1, #45
 	adrp x3, .Lxo_loc127
 	add x3, x3, :lo12:.Lxo_loc127
-.Lf150_cs131a:
+.Lf151_cs131a:
 	bl xo_fault_overflow
-.Lf150_cs131b:
+.Lf151_cs131b:
 	brk #1
-.Lf150_fault2:
+.Lf151_fault2:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #42
 	adrp x3, .Lxo_loc128
 	add x3, x3, :lo12:.Lxo_loc128
-.Lf150_cs133a:
+.Lf151_cs133a:
 	bl xo_fault_overflow
-.Lf150_cs133b:
+.Lf151_cs133b:
 	brk #1
-.Lf150_fault3:
+.Lf151_fault3:
 	mov x0, x21
 	mov x1, #45
 	mov x2, #1
 	adrp x3, .Lxo_loc129
 	add x3, x3, :lo12:.Lxo_loc129
-.Lf150_cs134a:
+.Lf151_cs134a:
 	bl xo_fault_overflow
-.Lf150_cs134b:
+.Lf151_cs134b:
 	brk #1
-.Lf150_fault4:
+.Lf151_fault4:
 	mov x0, x22
 	mov x1, #8
 	adrp x2, .Lxo_loc130
 	add x2, x2, :lo12:.Lxo_loc130
-.Lf150_cs135a:
+.Lf151_cs135a:
 	bl xo_fault_shl
-.Lf150_cs135b:
+.Lf151_cs135b:
 	brk #1
-.Lf150_fault5:
+.Lf151_fault5:
 	sub x15, x9, x0
 	mov x0, x9
 	mov x2, x15
 	mov x1, #45
 	adrp x3, .Lxo_loc131
 	add x3, x3, :lo12:.Lxo_loc131
-.Lf150_cs136a:
+.Lf151_cs136a:
 	bl xo_fault_overflow
-.Lf150_cs136b:
+.Lf151_cs136b:
 	brk #1
-.Lf150_fault6:
+.Lf151_fault6:
 	mov x0, x25
 	mov x1, #45
 	mov x2, #1
 	adrp x3, .Lxo_loc132
 	add x3, x3, :lo12:.Lxo_loc132
-.Lf150_cs138a:
+.Lf151_cs138a:
 	bl xo_fault_overflow
-.Lf150_cs138b:
+.Lf151_cs138b:
 	brk #1
-.Lf150_fault7:
+.Lf151_fault7:
 	mov x0, x20
 	mov x1, #4
 	adrp x2, .Lxo_loc133
 	add x2, x2, :lo12:.Lxo_loc133
-.Lf150_cs141a:
+.Lf151_cs141a:
 	bl xo_fault_shl
-.Lf150_cs141b:
+.Lf151_cs141b:
 	brk #1
-.Lf150_fault8:
+.Lf151_fault8:
 	mov x0, x21
 	mov x2, x20
 	mov x1, #45
 	adrp x3, .Lxo_loc134
 	add x3, x3, :lo12:.Lxo_loc134
-.Lf150_cs142a:
+.Lf151_cs142a:
 	bl xo_fault_overflow
-.Lf150_cs142b:
+.Lf151_cs142b:
 	brk #1
-.Lf150_fault9:
+.Lf151_fault9:
 	mov x0, x10
 	mov x1, #8
 	adrp x2, .Lxo_loc135
 	add x2, x2, :lo12:.Lxo_loc135
-.Lf150_cs143a:
+.Lf151_cs143a:
 	bl xo_fault_shl
-.Lf150_cs143b:
+.Lf151_cs143b:
 	brk #1
-.Lf150_fault10:
+.Lf151_fault10:
 	mov x0, x9
 	mov x1, #45
 	mov x2, #1
 	adrp x3, .Lxo_loc136
 	add x3, x3, :lo12:.Lxo_loc136
-.Lf150_cs144a:
+.Lf151_cs144a:
 	bl xo_fault_overflow
-.Lf150_cs144b:
+.Lf151_cs144b:
 	brk #1
-.Lf150_fault11:
+.Lf151_fault11:
 	mov x0, x25
 	mov x1, #45
 	mov x2, #1
 	adrp x3, .Lxo_loc137
 	add x3, x3, :lo12:.Lxo_loc137
-.Lf150_cs145a:
+.Lf151_cs145a:
 	bl xo_fault_overflow
-.Lf150_cs145b:
+.Lf151_cs145b:
 	brk #1
-.Lf150_fault12:
+.Lf151_fault12:
 	mov x0, x20
 	mov x1, #4
 	adrp x2, .Lxo_loc138
 	add x2, x2, :lo12:.Lxo_loc138
-.Lf150_cs148a:
+.Lf151_cs148a:
 	bl xo_fault_shl
-.Lf150_cs148b:
+.Lf151_cs148b:
 	brk #1
-.Lf150_fault13:
+.Lf151_fault13:
 	mov x0, x22
 	mov x2, x20
 	mov x1, #45
 	adrp x3, .Lxo_loc139
 	add x3, x3, :lo12:.Lxo_loc139
-.Lf150_cs149a:
+.Lf151_cs149a:
 	bl xo_fault_overflow
-.Lf150_cs149b:
+.Lf151_cs149b:
 	brk #1
-.Lf150_fault14:
+.Lf151_fault14:
 	mov x0, x10
 	mov x1, #8
 	adrp x2, .Lxo_loc140
 	add x2, x2, :lo12:.Lxo_loc140
-.Lf150_cs150a:
+.Lf151_cs150a:
 	bl xo_fault_shl
-.Lf150_cs150b:
+.Lf151_cs150b:
 	brk #1
-.Lf150_fault15:
+.Lf151_fault15:
 	mov x0, x21
 	mov x2, x25
 	mov x1, #45
 	adrp x3, .Lxo_loc141
 	add x3, x3, :lo12:.Lxo_loc141
-.Lf150_cs151a:
+.Lf151_cs151a:
 	bl xo_fault_overflow
-.Lf150_cs151b:
+.Lf151_cs151b:
 	brk #1
-.Lf150_fault16:
+.Lf151_fault16:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #42
 	adrp x3, .Lxo_loc142
 	add x3, x3, :lo12:.Lxo_loc142
-.Lf150_cs153a:
+.Lf151_cs153a:
 	bl xo_fault_overflow
-.Lf150_cs153b:
+.Lf151_cs153b:
 	brk #1
-.Lf150_fault17:
+.Lf151_fault17:
 	mov x0, x19
 	mov x1, #37
 	adrp x2, .Lxo_loc143
 	add x2, x2, :lo12:.Lxo_loc143
-.Lf150_cs156a:
+.Lf151_cs156a:
 	bl xo_fault_divzero
-.Lf150_cs156b:
+.Lf151_cs156b:
 	brk #1
-.Lf150_fault18:
+.Lf151_fault18:
 	mov x0, x19
 	mov x1, #47
 	adrp x2, .Lxo_loc144
 	add x2, x2, :lo12:.Lxo_loc144
-.Lf150_cs158a:
+.Lf151_cs158a:
 	bl xo_fault_divzero
-.Lf150_cs158b:
+.Lf151_cs158b:
 	brk #1
-.Lf150_fault19:
+.Lf151_fault19:
 	mov x2, x0
 	mov x0, x19
 	mov x1, #47
 	adrp x3, .Lxo_loc144
 	add x3, x3, :lo12:.Lxo_loc144
-.Lf150_cs159a:
+.Lf151_cs159a:
 	bl xo_fault_overflow
-.Lf150_cs159b:
+.Lf151_cs159b:
 	brk #1
-.Lf150_fault20:
+.Lf151_fault20:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #42
 	adrp x3, .Lxo_loc145
 	add x3, x3, :lo12:.Lxo_loc145
-.Lf150_cs161a:
+.Lf151_cs161a:
 	bl xo_fault_overflow
-.Lf150_cs161b:
+.Lf151_cs161b:
 	brk #1
-.Lf150_fault21:
+.Lf151_fault21:
 	mov x0, x20
 	mov x1, #8
 	adrp x2, .Lxo_loc146
 	add x2, x2, :lo12:.Lxo_loc146
-.Lf150_cs165a:
+.Lf151_cs165a:
 	bl xo_fault_shl
-.Lf150_cs165b:
+.Lf151_cs165b:
 	brk #1
-.Lf150_fault22:
+.Lf151_fault22:
 	mov x0, x23
 	mov x2, x20
 	mov x1, #45
 	adrp x3, .Lxo_loc147
 	add x3, x3, :lo12:.Lxo_loc147
-.Lf150_cs166a:
+.Lf151_cs166a:
 	bl xo_fault_overflow
-.Lf150_cs166b:
+.Lf151_cs166b:
 	brk #1
-.Lf150_fault23:
+.Lf151_fault23:
 	mov x0, x10
 	mov x1, #12
 	adrp x2, .Lxo_loc148
 	add x2, x2, :lo12:.Lxo_loc148
-.Lf150_cs167a:
+.Lf151_cs167a:
 	bl xo_fault_shl
-.Lf150_cs167b:
+.Lf151_cs167b:
 	brk #1
 	.cfi_endproc
 
@@ -17888,27 +18189,27 @@ xo_f_num_2elayout:
 	.p2align 2
 	.type xo_f_linux_2enr, %function
 xo_f_linux_2enr:
-.Lf151_begin:
+.Lf152_begin:
 	.cfi_startproc
-.Lf151_b0:
+.Lf152_b0:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf151_b6
-.Lf151_b2:
+	b.eq .Lf152_b6
+.Lf152_b2:
 	cmp x9, #0
-	b.eq .Lf151_b3
-.Lf151_b4:
+	b.eq .Lf152_b3
+.Lf152_b4:
 	cmp x9, #2
-	b.eq .Lf151_b5
-	b .Lf151_b7
-.Lf151_b3:
+	b.eq .Lf152_b5
+	b .Lf152_b7
+.Lf152_b3:
 	mov x0, x1
-	b .Lf151_b6
-.Lf151_b5:
+	b .Lf152_b6
+.Lf152_b5:
 	mov x0, #-1
-.Lf151_b6:
+.Lf152_b6:
 	ret
-.Lf151_b7:
+.Lf152_b7:
 	brk #1
 	.cfi_endproc
 
@@ -17916,10 +18217,10 @@ xo_f_linux_2enr:
 	.p2align 2
 	.type xo_f_ints_2econv__fault, %function
 xo_f_ints_2econv__fault:
-.Lf152_begin:
+.Lf153_begin:
 	.cfi_startproc
 	.cfi_personality 155, DW.ref.xo_personality
-	.cfi_lsda 27, .Lf152_lsda
+	.cfi_lsda 27, .Lf153_lsda
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -17934,112 +18235,112 @@ xo_f_ints_2econv__fault:
 	.cfi_offset w21, -24
 	.cfi_offset w24, -16
 	.cfi_offset w23, -8
-.Lf152_b0:
+.Lf153_b0:
 	mov x9, x0
 	mov x19, x3
 	mov x20, x4
 	mov x23, x5
 	mov x24, x6
-.Lf152_b2:
+.Lf153_b2:
 	cmp x2, #0
-	b.eq .Lf152_b8
-.Lf152_b3:
+	b.eq .Lf153_b8
+.Lf153_b3:
 	cmp x1, #64
-	b.ne .Lf152_b8
-.Lf152_b6:
+	b.ne .Lf153_b8
+.Lf153_b6:
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
 	mov x1, #0
 	mov x2, x9
 	bl xo_f_show_2eappend__u64
 	cmp x19, #0
-	b.eq .Lf152_b10
-	b .Lf152_b12
-.Lf152_b8:
+	b.eq .Lf153_b10
+	b .Lf153_b12
+.Lf153_b8:
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
 	mov x1, #0
 	mov x2, x9
 	bl xo_f_num_2eappend__int
-.Lf152_b9:
+.Lf153_b9:
 	cmp x19, #0
-	b.ne .Lf152_b12
-.Lf152_b10:
-	adrp x2, .Lxo_str44
-	add x2, x2, :lo12:.Lxo_str44
+	b.ne .Lf153_b12
+.Lf153_b10:
+	adrp x2, .Lxo_str46
+	add x2, x2, :lo12:.Lxo_str46
 	mov x3, #51
 	add x21, x1, x3
 	bl xo_rs_concat
 	mov x20, x0
-	b .Lf152_b36
-.Lf152_b12:
-	adrp x2, .Lxo_str45
-	add x2, x2, :lo12:.Lxo_str45
+	b .Lf153_b36
+.Lf153_b12:
+	adrp x2, .Lxo_str47
+	add x2, x2, :lo12:.Lxo_str47
 	mov x3, #21
 	add x22, x1, x3
 	bl xo_rs_concat
-.Lf152_b13:
+.Lf153_b13:
 	cmp x19, #8
-	b.eq .Lf152_b14
-.Lf152_b19:
+	b.eq .Lf153_b14
+.Lf153_b19:
 	cmp x19, #16
-	b.eq .Lf152_b20
-.Lf152_b25:
+	b.eq .Lf153_b20
+.Lf153_b25:
 	cmp x19, #32
-	b.eq .Lf152_b26
-	b .Lf152_b31
-.Lf152_b14:
+	b.eq .Lf153_b26
+	b .Lf153_b31
+.Lf153_b14:
 	cmp x20, #0
-	b.eq .Lf152_b16
-.Lf152_b15:
-	adrp x19, .Lxo_str46
-	add x19, x19, :lo12:.Lxo_str46
-	mov x3, #5
-	b .Lf152_b35
-.Lf152_b16:
-	adrp x19, .Lxo_str47
-	add x19, x19, :lo12:.Lxo_str47
-	mov x3, #4
-	b .Lf152_b35
-.Lf152_b20:
-	cmp x20, #0
-	b.eq .Lf152_b22
-.Lf152_b21:
+	b.eq .Lf153_b16
+.Lf153_b15:
 	adrp x19, .Lxo_str48
 	add x19, x19, :lo12:.Lxo_str48
-	mov x3, #6
-	b .Lf152_b35
-.Lf152_b22:
+	mov x3, #5
+	b .Lf153_b35
+.Lf153_b16:
 	adrp x19, .Lxo_str49
 	add x19, x19, :lo12:.Lxo_str49
-	mov x3, #5
-	b .Lf152_b35
-.Lf152_b26:
+	mov x3, #4
+	b .Lf153_b35
+.Lf153_b20:
 	cmp x20, #0
-	b.eq .Lf152_b28
-.Lf152_b27:
+	b.eq .Lf153_b22
+.Lf153_b21:
 	adrp x19, .Lxo_str50
 	add x19, x19, :lo12:.Lxo_str50
 	mov x3, #6
-	b .Lf152_b35
-.Lf152_b28:
+	b .Lf153_b35
+.Lf153_b22:
 	adrp x19, .Lxo_str51
 	add x19, x19, :lo12:.Lxo_str51
 	mov x3, #5
-	b .Lf152_b35
-.Lf152_b31:
+	b .Lf153_b35
+.Lf153_b26:
 	cmp x20, #0
-	b.eq .Lf152_b33
-.Lf152_b32:
+	b.eq .Lf153_b28
+.Lf153_b27:
 	adrp x19, .Lxo_str52
 	add x19, x19, :lo12:.Lxo_str52
 	mov x3, #6
-	b .Lf152_b35
-.Lf152_b33:
+	b .Lf153_b35
+.Lf153_b28:
 	adrp x19, .Lxo_str53
 	add x19, x19, :lo12:.Lxo_str53
+	mov x3, #5
+	b .Lf153_b35
+.Lf153_b31:
+	cmp x20, #0
+	b.eq .Lf153_b33
+.Lf153_b32:
+	adrp x19, .Lxo_str54
+	add x19, x19, :lo12:.Lxo_str54
+	mov x3, #6
+	b .Lf153_b35
+.Lf153_b33:
+	adrp x19, .Lxo_str55
+	add x19, x19, :lo12:.Lxo_str55
 	mov x3, #3
-.Lf152_b35:
+.Lf153_b35:
 	add x21, x22, x3
 	mov x1, x22
 	mov x2, x19
@@ -18047,20 +18348,20 @@ xo_f_ints_2econv__fault:
 	mov x20, x0
 	mov x0, x19
 	bl .Lxo_drop1
-.Lf152_b36:
+.Lf153_b36:
 	add x0, x20, #16
 	add x2, x23, #16
 	mov x1, x21
 	mov x3, x24
-.Lf152_cs168a:
+.Lf153_cs168a:
 	bl xo_fault_raise
-.Lf152_cs168b:
-.Lf152_b39:
+.Lf153_cs168b:
+.Lf153_b39:
 	brk #1
-.Lf152_b37:
+.Lf153_b37:
 	mov x0, x20
 	bl .Lxo_drop1
-.Lf152_b38:
+.Lf153_b38:
 	bl xo_fault_continue
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -18073,183 +18374,6 @@ xo_f_ints_2econv__fault:
 	.p2align 2
 	.type xo_f_pool_2einject__add, %function
 xo_f_pool_2einject__add:
-.Lf153_begin:
-	.cfi_startproc
-	stp x29, x30, [sp, #-112]!
-	mov x29, sp
-	stp x20, x19, [sp, #32]
-	stp x22, x21, [sp, #48]
-	stp x24, x23, [sp, #64]
-	stp x26, x25, [sp, #80]
-	stp x28, x27, [sp, #96]
-	.cfi_def_cfa w29, 112
-	.cfi_offset w29, -112
-	.cfi_offset w30, -104
-	.cfi_offset w20, -80
-	.cfi_offset w19, -72
-	.cfi_offset w22, -64
-	.cfi_offset w21, -56
-	.cfi_offset w24, -48
-	.cfi_offset w23, -40
-	.cfi_offset w26, -32
-	.cfi_offset w25, -24
-	.cfi_offset w28, -16
-	.cfi_offset w27, -8
-.Lf153_b0:
-	mov x28, x0
-	str x1, [sp, #16]
-	mov x26, x2
-	mov x27, x3
-	add x16, x28, #64
-	str x16, [sp, #24]
-	cmp x27, #0
-	b.eq .Lf153_b2
-.Lf153_b1:
-	add x25, x26, #1
-	b .Lf153_b3
-.Lf153_b2:
-	mov x25, x26
-.Lf153_b3:
-	ldr x16, [sp, #24]
-	add x2, x16, #0
-	mov x19, #0
-	mov x1, #1
-	mov x0, x19
-	bl __aarch64_cas8_acq
-	cmp x0, x19
-	cset x9, eq
-	eor x9, x9, #1
-	cbz x9, .Lf153_b6
-.Lf153_b4:
-	ldr x0, [sp, #24]
-	bl xo_f_pool_2elock__slow
-.Lf153_b6:
-	ldp x22, x20, [x28, #88]
-	ldr x23, [x28, #80]
-	ldr x24, [x28, #72]
-	add x9, x22, x25
-	cmp x9, x20
-	b.le .Lf153_b20
-.Lf153_b7:
-	cmp x20, #0
-	b.eq .Lf153_b9
-.Lf153_b8:
-	lsl x19, x20, #1
-	b .Lf153_b11
-.Lf153_b9:
-	mov x19, #64
-.Lf153_b11:
-	add x9, x22, x25
-	cmp x19, x9
-	b.ge .Lf153_b13
-.Lf153_b12:
-	lsl x19, x19, #1
-	b .Lf153_b11
-.Lf153_b13:
-	lsl x0, x19, #3
-	bl xo_heap_large
-	mov x21, x0
-	mov x11, #0
-.Lf153_b14:
-	cmp x11, x22
-	b.ge .Lf153_b16
-.Lf153_b15:
-	lsl x12, x11, #3
-	add x10, x23, x11
-	cmp x20, #0
-	b.eq .Lf153_fault1
-	sdiv x9, x10, x20
-	msub x9, x9, x20, x10
-	lsl x9, x9, #3
-	ldr x9, [x24, x9]
-	str x9, [x21, x12]
-	add x11, x11, #1
-	cmp x11, x22
-	b.lt .Lf153_b15
-.Lf153_b16:
-	cmp x24, #0
-	b.eq .Lf153_b19
-.Lf153_b17:
-	sub x0, x24, #8
-	bl xo_heap_release
-.Lf153_b19:
-	str x21, [x28, #72]
-	mov x23, #0
-	str x23, [x28, #80]
-	str x19, [x28, #96]
-	b .Lf153_b21
-.Lf153_b20:
-	mov x21, x24
-	mov x19, x20
-.Lf153_b21:
-	mov x12, #0
-.Lf153_b22:
-	cmp x12, x25
-	b.ge .Lf153_b27
-.Lf153_b23:
-	cmp x12, x26
-	b.ge .Lf153_b25
-.Lf153_b24:
-	lsl x9, x12, #3
-	ldr x16, [sp, #16]
-	ldr x11, [x16, x9]
-	b .Lf153_b26
-.Lf153_b25:
-	mov x11, x27
-.Lf153_b26:
-	add x9, x23, x22
-	add x10, x9, x12
-	cmp x19, #0
-	b.eq .Lf153_fault2
-	sdiv x9, x10, x19
-	msub x9, x9, x19, x10
-	lsl x9, x9, #3
-	str x11, [x21, x9]
-	add x12, x12, #1
-	cmp x12, x25
-	b.lt .Lf153_b23
-.Lf153_b27:
-	add x10, x22, x25
-	add x9, x28, #88
-	stlr x10, [x9]
-.Lf153_b28:
-	ldr x16, [sp, #24]
-	add x1, x16, #0
-	mov x0, #0
-	bl __aarch64_swp8_rel
-	cmp x0, #2
-	b.ne .Lf153_b32
-.Lf153_b29:
-	ldr x0, [sp, #24]
-	bl xo_f_pool_2efutex__wake
-.Lf153_b32:
-	ldp x20, x19, [sp, #32]
-	ldp x22, x21, [sp, #48]
-	ldp x24, x23, [sp, #64]
-	ldp x26, x25, [sp, #80]
-	ldp x28, x27, [sp, #96]
-	ldp x29, x30, [sp], #112
-	ret
-.Lf153_fault1:
-	mov x0, x10
-	mov x1, #37
-	adrp x2, .Lxo_loc65
-	add x2, x2, :lo12:.Lxo_loc65
-	bl xo_fault_divzero
-	brk #1
-.Lf153_fault2:
-	mov x0, x10
-	mov x1, #37
-	adrp x2, .Lxo_loc66
-	add x2, x2, :lo12:.Lxo_loc66
-	bl xo_fault_divzero
-	brk #1
-	.cfi_endproc
-
-// func pool.rq_put
-	.p2align 2
-	.type xo_f_pool_2erq__put, %function
-xo_f_pool_2erq__put:
 .Lf154_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-112]!
@@ -18273,80 +18397,20 @@ xo_f_pool_2erq__put:
 	.cfi_offset w28, -16
 	.cfi_offset w27, -8
 .Lf154_b0:
-	str x0, [sp, #16]
-	mov x20, x1
-	mov x28, x2
-.Lf154_b3:
-	add x9, x20, #0
-	ldar x10, [x9]
-	ldr x11, [x20, #128]
-	sub x9, x11, x10
-	cmp x9, #256
-	b.ge .Lf154_b10
-.Lf154_b4:
-	and x10, x11, #255
-	mov x9, #17
-	add x9, x9, x10
-	add x9, x20, x9, lsl #3
-	str x28, [x9]
-	add x10, x11, #1
-	add x9, x20, #128
-	stlr x10, [x9]
-.Lf154_b8:
-	ldp x20, x19, [sp, #32]
-	ldp x22, x21, [sp, #48]
-	ldp x24, x23, [sp, #64]
-	ldp x26, x25, [sp, #80]
-	ldp x28, x27, [sp, #96]
-	ldp x29, x30, [sp], #112
-	ret
-.Lf154_b10:
-	add x9, x20, #0
-	ldar x19, [x9]
-	ldr x10, [x20, #128]
-	sub x9, x10, x19
-	cmp x9, #256
-	b.lt .Lf154_b3
-.Lf154_b13:
-	sub x9, x10, x19
-	asr x21, x9, #1
-	add x22, x20, #2368
-	mov x11, #0
-	mov x13, #17
-.Lf154_b14:
-	cmp x11, x21
-	b.ge .Lf154_b16
-.Lf154_b15:
-	lsl x12, x11, #3
-	add x9, x19, x11
-	and x9, x9, #255
-	add x9, x13, x9
-	add x9, x20, x9, lsl #3
-	ldr x10, [x9]
-	str x10, [x22, x12]
-	add x11, x11, #1
-	cmp x11, x21
-	b.lt .Lf154_b15
-.Lf154_b16:
-	add x1, x19, x21
-	add x2, x20, #0
-	mov x0, x19
-	bl __aarch64_cas8_rel
-	cmp x0, x19
-	cset x9, eq
-	cbz x9, .Lf154_b3
-.Lf154_b18:
-	ldr x16, [sp, #16]
-	add x16, x16, #64
+	mov x28, x0
+	str x1, [sp, #16]
+	mov x26, x2
+	mov x27, x3
+	add x16, x28, #64
 	str x16, [sp, #24]
-	cmp x28, #0
-	b.eq .Lf154_b20
-.Lf154_b19:
-	add x27, x21, #1
-	b .Lf154_b21
-.Lf154_b20:
-	mov x27, x21
-.Lf154_b21:
+	cmp x27, #0
+	b.eq .Lf154_b2
+.Lf154_b1:
+	add x25, x26, #1
+	b .Lf154_b3
+.Lf154_b2:
+	mov x25, x26
+.Lf154_b3:
 	ldr x16, [sp, #24]
 	add x2, x16, #0
 	mov x19, #0
@@ -18356,118 +18420,110 @@ xo_f_pool_2erq__put:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf154_b24
-.Lf154_b22:
+	cbz x9, .Lf154_b6
+.Lf154_b4:
 	ldr x0, [sp, #24]
 	bl xo_f_pool_2elock__slow
-.Lf154_b24:
-	ldr x16, [sp, #16]
-	ldr x24, [x16, #88]
-	ldr x16, [sp, #16]
-	ldr x20, [x16, #96]
-	ldr x16, [sp, #16]
-	ldr x25, [x16, #80]
-	ldr x16, [sp, #16]
-	ldr x26, [x16, #72]
-	add x9, x24, x27
+.Lf154_b6:
+	ldp x22, x20, [x28, #88]
+	ldr x23, [x28, #80]
+	ldr x24, [x28, #72]
+	add x9, x22, x25
 	cmp x9, x20
-	b.le .Lf154_b38
-.Lf154_b25:
+	b.le .Lf154_b20
+.Lf154_b7:
 	cmp x20, #0
-	b.eq .Lf154_b27
-.Lf154_b26:
+	b.eq .Lf154_b9
+.Lf154_b8:
 	lsl x19, x20, #1
-	b .Lf154_b29
-.Lf154_b27:
+	b .Lf154_b11
+.Lf154_b9:
 	mov x19, #64
-.Lf154_b29:
-	add x9, x24, x27
+.Lf154_b11:
+	add x9, x22, x25
 	cmp x19, x9
-	b.ge .Lf154_b31
-.Lf154_b30:
+	b.ge .Lf154_b13
+.Lf154_b12:
 	lsl x19, x19, #1
-	b .Lf154_b29
-.Lf154_b31:
+	b .Lf154_b11
+.Lf154_b13:
 	lsl x0, x19, #3
 	bl xo_heap_large
-	mov x23, x0
+	mov x21, x0
 	mov x11, #0
-.Lf154_b32:
-	cmp x11, x24
-	b.ge .Lf154_b34
-.Lf154_b33:
+.Lf154_b14:
+	cmp x11, x22
+	b.ge .Lf154_b16
+.Lf154_b15:
 	lsl x12, x11, #3
-	add x10, x25, x11
+	add x10, x23, x11
 	cmp x20, #0
 	b.eq .Lf154_fault1
 	sdiv x9, x10, x20
 	msub x9, x9, x20, x10
 	lsl x9, x9, #3
-	ldr x9, [x26, x9]
-	str x9, [x23, x12]
+	ldr x9, [x24, x9]
+	str x9, [x21, x12]
 	add x11, x11, #1
-	cmp x11, x24
-	b.lt .Lf154_b33
-.Lf154_b34:
-	cmp x26, #0
-	b.eq .Lf154_b37
-.Lf154_b35:
-	sub x0, x26, #8
+	cmp x11, x22
+	b.lt .Lf154_b15
+.Lf154_b16:
+	cmp x24, #0
+	b.eq .Lf154_b19
+.Lf154_b17:
+	sub x0, x24, #8
 	bl xo_heap_release
-.Lf154_b37:
-	ldr x16, [sp, #16]
-	str x23, [x16, #72]
-	mov x25, #0
-	ldr x16, [sp, #16]
-	str x25, [x16, #80]
-	ldr x16, [sp, #16]
-	str x19, [x16, #96]
-	b .Lf154_b39
-.Lf154_b38:
-	mov x23, x26
+.Lf154_b19:
+	str x21, [x28, #72]
+	mov x23, #0
+	str x23, [x28, #80]
+	str x19, [x28, #96]
+	b .Lf154_b21
+.Lf154_b20:
+	mov x21, x24
 	mov x19, x20
-.Lf154_b39:
+.Lf154_b21:
 	mov x12, #0
-.Lf154_b40:
-	cmp x12, x27
-	b.ge .Lf154_b45
-.Lf154_b41:
-	cmp x12, x21
-	b.ge .Lf154_b43
-.Lf154_b42:
+.Lf154_b22:
+	cmp x12, x25
+	b.ge .Lf154_b27
+.Lf154_b23:
+	cmp x12, x26
+	b.ge .Lf154_b25
+.Lf154_b24:
 	lsl x9, x12, #3
-	ldr x11, [x22, x9]
-	b .Lf154_b44
-.Lf154_b43:
-	mov x11, x28
-.Lf154_b44:
-	add x9, x25, x24
+	ldr x16, [sp, #16]
+	ldr x11, [x16, x9]
+	b .Lf154_b26
+.Lf154_b25:
+	mov x11, x27
+.Lf154_b26:
+	add x9, x23, x22
 	add x10, x9, x12
 	cmp x19, #0
 	b.eq .Lf154_fault2
 	sdiv x9, x10, x19
 	msub x9, x9, x19, x10
 	lsl x9, x9, #3
-	str x11, [x23, x9]
+	str x11, [x21, x9]
 	add x12, x12, #1
-	cmp x12, x27
-	b.lt .Lf154_b41
-.Lf154_b45:
-	add x10, x24, x27
-	ldr x16, [sp, #16]
-	add x9, x16, #88
+	cmp x12, x25
+	b.lt .Lf154_b23
+.Lf154_b27:
+	add x10, x22, x25
+	add x9, x28, #88
 	stlr x10, [x9]
-.Lf154_b46:
+.Lf154_b28:
 	ldr x16, [sp, #24]
 	add x1, x16, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf154_b51
-.Lf154_b47:
+	b.ne .Lf154_b32
+.Lf154_b29:
 	ldr x0, [sp, #24]
 	bl xo_f_pool_2efutex__wake
-.Lf154_b51:
+.Lf154_b32:
 	ldp x20, x19, [sp, #32]
 	ldp x22, x21, [sp, #48]
 	ldp x24, x23, [sp, #64]
@@ -18491,11 +18547,47 @@ xo_f_pool_2erq__put:
 	brk #1
 	.cfi_endproc
 
+// func pool.now
+	.p2align 2
+	.type xo_f_pool_2enow, %function
+xo_f_pool_2enow:
+.Lf155_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+.Lf155_b0:
+	bl xo_f_pool_2elayer
+	cmp x0, #2
+	b.ne .Lf155_b2
+.Lf155_b1:
+	adrp x9, .Lxo_str31
+	add x9, x9, :lo12:.Lxo_str31
+	mov x1, #65
+	add x0, x9, #16
+	adrp x9, .Lxo_str32
+	add x9, x9, :lo12:.Lxo_str32
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf155_b2:
+	mov x0, #3
+	mov x1, #0
+	mov x2, x1
+	bl xo_sched_rt
+.Lf155_b3:
+	ldp x29, x30, [sp], #16
+	ret
+	.cfi_endproc
+
 // func pool.take_local
 	.p2align 2
 	.type xo_f_pool_2etake__local, %function
 xo_f_pool_2etake__local:
-.Lf155_begin:
+.Lf156_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -18507,30 +18599,30 @@ xo_f_pool_2etake__local:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf155_b0:
+.Lf156_b0:
 	mov x20, x0
 	add x9, x20, #2184
 	ldr x10, [x9]
 	cmp x10, #0
-	b.eq .Lf155_b7
-.Lf155_b1:
+	b.eq .Lf156_b7
+.Lf156_b1:
 	add x1, x20, #2184
 	mov x0, #0
 	bl __aarch64_swp8_acq_rel
 	mov x21, x0
-.Lf155_b3:
+.Lf156_b3:
 	cmp x21, #0
-	b.ne .Lf155_b17
-.Lf155_b7:
+	b.ne .Lf156_b17
+.Lf156_b7:
 	add x9, x20, #0
 	ldar x19, [x9]
 	ldr x9, [x20, #128]
 	cmp x9, x19
-	b.ne .Lf155_b10
-.Lf155_b8:
+	b.ne .Lf156_b10
+.Lf156_b8:
 	mov x21, #0
-	b .Lf155_b17
-.Lf155_b10:
+	b .Lf156_b17
+.Lf156_b10:
 	and x10, x19, #255
 	mov x9, #17
 	add x9, x9, x10
@@ -18542,8 +18634,8 @@ xo_f_pool_2etake__local:
 	bl __aarch64_cas8_rel
 	cmp x0, x19
 	cset x9, eq
-	cbz x9, .Lf155_b7
-.Lf155_b17:
+	cbz x9, .Lf156_b7
+.Lf156_b17:
 	mov x0, x21
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -18555,7 +18647,7 @@ xo_f_pool_2etake__local:
 	.p2align 2
 	.type xo_f_pool_2einject__pop, %function
 xo_f_pool_2einject__pop:
-.Lf156_begin:
+.Lf157_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
@@ -18570,21 +18662,21 @@ xo_f_pool_2einject__pop:
 	.cfi_offset w22, -32
 	.cfi_offset w21, -24
 	.cfi_offset w23, -16
-.Lf156_b0:
+.Lf157_b0:
 	mov x22, x0
 	mov x21, x1
 	add x9, x22, #88
 	ldar x10, [x9]
 	cmp x10, #0
-	b.ne .Lf156_b3
-.Lf156_b1:
+	b.ne .Lf157_b3
+.Lf157_b1:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf156_b3:
+.Lf157_b3:
 	add x23, x22, #64
 	add x2, x23, #0
 	mov x19, #0
@@ -18594,123 +18686,123 @@ xo_f_pool_2einject__pop:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf156_b6
-.Lf156_b4:
+	cbz x9, .Lf157_b6
+.Lf157_b4:
 	mov x0, x23
 	bl xo_f_pool_2elock__slow
-.Lf156_b6:
+.Lf157_b6:
 	ldr x7, [x22, #88]
 	cmp x7, #0
-	b.le .Lf156_b23
-.Lf156_b7:
+	b.le .Lf157_b23
+.Lf157_b7:
 	ldr x9, [x22, #8]
 	add x10, x9, #1
 	cmp x10, #0
-	b.eq .Lf156_fault1
+	b.eq .Lf157_fault1
 	movz x9, #32768, lsl #48
 	cmp x7, x9
 	ccmn x10, #1, #0, eq
-	b.eq .Lf156_fault2
+	b.eq .Lf157_fault2
 	sdiv x9, x7, x10
 	add x19, x9, #1
 	cmp x19, x7
-	b.le .Lf156_b10
-.Lf156_b8:
+	b.le .Lf157_b10
+.Lf157_b8:
 	mov x19, x7
-.Lf156_b10:
+.Lf157_b10:
 	cmp x19, #128
-	b.le .Lf156_b13
-.Lf156_b11:
+	b.le .Lf157_b13
+.Lf157_b11:
 	mov x19, #128
-.Lf156_b13:
+.Lf157_b13:
 	cmp x21, #0
-	b.ne .Lf156_b16
-.Lf156_b14:
+	b.ne .Lf157_b16
+.Lf157_b14:
 	mov x19, #1
-.Lf156_b16:
+.Lf157_b16:
 	ldr x8, [x22, #72]
 	ldr x13, [x22, #96]
 	ldr x10, [x22, #80]
 	mov x12, #0
 	mov x20, x12
 	mov x14, #2368
-.Lf156_b17:
+.Lf157_b17:
 	cmp x12, x19
-	b.ge .Lf156_b22
-.Lf156_b18:
+	b.ge .Lf157_b22
+.Lf157_b18:
 	lsl x9, x10, #3
 	ldr x11, [x8, x9]
 	cmp x12, #0
-	b.eq .Lf156_b21
-.Lf156_b20:
+	b.eq .Lf157_b21
+.Lf157_b20:
 	sub x9, x12, #1
 	add x9, x14, x9, lsl #3
 	str x11, [x21, x9]
 	mov x11, x20
-.Lf156_b21:
+.Lf157_b21:
 	add x10, x10, #1
 	cmp x13, #0
-	b.eq .Lf156_fault3
+	b.eq .Lf157_fault3
 	sdiv x9, x10, x13
 	msub x10, x9, x13, x10
 	add x12, x12, #1
 	mov x20, x11
 	cmp x12, x19
-	b.lt .Lf156_b18
-.Lf156_b22:
+	b.lt .Lf157_b18
+.Lf157_b22:
 	str x10, [x22, #80]
 	sub x10, x7, x19
 	add x9, x22, #88
 	str x10, [x9]
-	b .Lf156_b25
-.Lf156_b23:
+	b .Lf157_b25
+.Lf157_b23:
 	mov x19, #0
 	mov x20, x19
-.Lf156_b25:
+.Lf157_b25:
 	add x1, x23, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf156_b29
-.Lf156_b26:
+	b.ne .Lf157_b29
+.Lf157_b26:
 	mov x0, x23
 	bl xo_f_pool_2efutex__wake
-.Lf156_b29:
+.Lf157_b29:
 	cmp x19, #0
-	b.ne .Lf156_b32
-.Lf156_b30:
+	b.ne .Lf157_b32
+.Lf157_b30:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf156_b32:
+.Lf157_b32:
 	cmp x21, #0
-	b.eq .Lf156_b48
-.Lf156_b33:
+	b.eq .Lf157_b48
+.Lf157_b33:
 	ldr x9, [x21, #2216]
 	cmp x9, #0
-	b.eq .Lf156_b38
-.Lf156_b35:
+	b.eq .Lf157_b38
+.Lf157_b35:
 	mov x0, #0
 	mov x1, #2
 	mov x2, x0
 	bl xo_sched_rt
-.Lf156_b38:
+.Lf157_b38:
 	cmp x19, #1
-	b.le .Lf156_b48
-.Lf156_b39:
+	b.le .Lf157_b48
+.Lf157_b39:
 	add x7, x21, #2368
 	sub x8, x19, #1
-.Lf156_b40:
+.Lf157_b40:
 	ldr x14, [x21, #128]
 	mov x12, #0
 	mov x13, #17
-.Lf156_b41:
+.Lf157_b41:
 	cmp x12, x8
-	b.ge .Lf156_b43
-.Lf156_b42:
+	b.ge .Lf157_b43
+.Lf157_b42:
 	add x9, x14, x12
 	and x9, x9, #255
 	add x11, x13, x9
@@ -18720,26 +18812,26 @@ xo_f_pool_2einject__pop:
 	str x10, [x9]
 	add x12, x12, #1
 	cmp x12, x8
-	b.lt .Lf156_b42
-.Lf156_b43:
+	b.lt .Lf157_b42
+.Lf157_b43:
 	add x10, x14, x8
 	add x9, x21, #128
 	stlr x10, [x9]
-.Lf156_b48:
+.Lf157_b48:
 	mov x0, x20
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf156_fault1:
+.Lf157_fault1:
 	mov x0, x7
 	mov x1, #47
 	adrp x2, .Lxo_loc106
 	add x2, x2, :lo12:.Lxo_loc106
 	bl xo_fault_divzero
 	brk #1
-.Lf156_fault2:
+.Lf157_fault2:
 	mov x0, x7
 	mov x2, x10
 	mov x1, #47
@@ -18747,7 +18839,7 @@ xo_f_pool_2einject__pop:
 	add x3, x3, :lo12:.Lxo_loc106
 	bl xo_fault_overflow
 	brk #1
-.Lf156_fault3:
+.Lf157_fault3:
 	mov x0, x10
 	mov x1, #37
 	adrp x2, .Lxo_loc107
@@ -18760,7 +18852,7 @@ xo_f_pool_2einject__pop:
 	.p2align 2
 	.type xo_f_sched_2erq__grab, %function
 xo_f_sched_2erq__grab:
-.Lf157_begin:
+.Lf158_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -18773,10 +18865,10 @@ xo_f_sched_2erq__grab:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf157_b0:
+.Lf158_b0:
 	mov x21, x0
 	mov x22, x1
-.Lf157_b2:
+.Lf158_b2:
 	add x9, x21, #0
 	ldar x20, [x9]
 	add x9, x21, #128
@@ -18785,23 +18877,23 @@ xo_f_sched_2erq__grab:
 	asr x9, x10, #1
 	sub x19, x10, x9
 	cmp x19, #0
-	b.gt .Lf157_b5
-.Lf157_b3:
+	b.gt .Lf158_b5
+.Lf158_b3:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf157_b5:
+.Lf158_b5:
 	cmp x19, #128
-	b.gt .Lf157_b2
-.Lf157_b8:
+	b.gt .Lf158_b2
+.Lf158_b8:
 	mov x11, #0
 	mov x12, #17
-.Lf157_b9:
+.Lf158_b9:
 	cmp x11, x19
-	b.ge .Lf157_b11
-.Lf157_b10:
+	b.ge .Lf158_b11
+.Lf158_b10:
 	add x9, x20, x11
 	and x9, x9, #255
 	add x9, x12, x9
@@ -18811,16 +18903,16 @@ xo_f_sched_2erq__grab:
 	str x10, [x9]
 	add x11, x11, #1
 	cmp x11, x19
-	b.lt .Lf157_b10
-.Lf157_b11:
+	b.lt .Lf158_b10
+.Lf158_b11:
 	add x1, x20, x19
 	add x2, x21, #0
 	mov x0, x20
 	bl __aarch64_cas8_rel
 	cmp x0, x20
 	cset x9, eq
-	cbz x9, .Lf157_b2
-.Lf157_b12:
+	cbz x9, .Lf158_b2
+.Lf158_b12:
 	mov x0, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -18832,16 +18924,16 @@ xo_f_sched_2erq__grab:
 	.p2align 2
 	.type xo_f_sched_2erq__put__batch, %function
 xo_f_sched_2erq__put__batch:
-.Lf158_begin:
+.Lf159_begin:
 	.cfi_startproc
-.Lf158_b0:
+.Lf159_b0:
 	ldr x14, [x0, #128]
 	mov x12, #0
 	mov x13, #17
-.Lf158_b1:
+.Lf159_b1:
 	cmp x12, x2
-	b.ge .Lf158_b3
-.Lf158_b2:
+	b.ge .Lf159_b3
+.Lf159_b2:
 	add x9, x14, x12
 	and x9, x9, #255
 	add x11, x13, x9
@@ -18851,8 +18943,8 @@ xo_f_sched_2erq__put__batch:
 	str x10, [x9]
 	add x12, x12, #1
 	cmp x12, x2
-	b.lt .Lf158_b2
-.Lf158_b3:
+	b.lt .Lf159_b2
+.Lf159_b3:
 	add x10, x14, x2
 	add x9, x0, #128
 	stlr x10, [x9]
@@ -18863,7 +18955,7 @@ xo_f_sched_2erq__put__batch:
 	.p2align 2
 	.type xo_f_pool_2erun__fiber, %function
 xo_f_pool_2erun__fiber:
-.Lf159_begin:
+.Lf160_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-80]!
 	mov x29, sp
@@ -18881,16 +18973,16 @@ xo_f_pool_2erun__fiber:
 	.cfi_offset w24, -32
 	.cfi_offset w23, -24
 	.cfi_offset w25, -16
-.Lf159_b0:
+.Lf160_b0:
 	mov x25, x0
 	mov x22, x1
 	mov x21, x2
-.Lf159_b1:
+.Lf160_b1:
 	bl xo_tlocal_addr
 	mov x20, x0
 	ldr x24, [x20, #0]
 	ldr x23, [x22, #2216]
-.Lf159_b3:
+.Lf160_b3:
 	add x10, x21, #40
 	mov x9, #0
 	str x9, [x10]
@@ -18898,31 +18990,31 @@ xo_f_pool_2erun__fiber:
 	ldr x9, [x21, #32]
 	str x9, [x20, #0]
 	cmp x23, #0
-	b.eq .Lf159_b6
-.Lf159_b4:
+	b.eq .Lf160_b6
+.Lf160_b4:
 	mov x0, #4
 	mov x1, x22
 	mov x2, x21
 	bl xo_sched_hook
-.Lf159_b6:
+.Lf160_b6:
 	add x0, x22, #2208
 	ldr x1, [x21, #0]
 	bl xo_stack_switch
 	cmp x23, #0
-	b.eq .Lf159_b9
-.Lf159_b7:
+	b.eq .Lf160_b9
+.Lf160_b7:
 	mov x0, #5
 	mov x1, x22
 	mov x2, x21
 	bl xo_sched_hook
-.Lf159_b9:
+.Lf160_b9:
 	mov x9, #0
 	str x9, [x20, #8]
 	str x24, [x20, #0]
 	ldr x9, [x21, #48]
 	cmp x9, #0
-	b.ne .Lf159_b18
-.Lf159_b12:
+	b.ne .Lf160_b18
+.Lf160_b12:
 	add x2, x21, #40
 	mov x19, #1
 	mov x1, #2
@@ -18930,22 +19022,22 @@ xo_f_pool_2erun__fiber:
 	bl __aarch64_cas8_acq_rel
 	cmp x0, x19
 	cset x9, eq
-	cbnz x9, .Lf159_b64
-	b .Lf159_b3
-.Lf159_b18:
+	cbnz x9, .Lf160_b64
+	b .Lf160_b3
+.Lf160_b18:
 	ldr x20, [x25, #104]
-.Lf159_b19:
+.Lf160_b19:
 	ldr x10, [x22, #2328]
 	cmp x10, #8
-	b.ge .Lf159_b22
-.Lf159_b20:
+	b.ge .Lf160_b22
+.Lf160_b20:
 	mov x9, #2264
 	add x9, x9, x10, lsl #3
 	str x21, [x22, x9]
 	add x9, x10, #1
 	str x9, [x22, #2328]
-	b .Lf159_b64
-.Lf159_b22:
+	b .Lf160_b64
+.Lf160_b22:
 	add x2, x20, #0
 	mov x19, #0
 	mov x1, #1
@@ -18954,87 +19046,87 @@ xo_f_pool_2erun__fiber:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf159_b25
-.Lf159_b23:
+	cbz x9, .Lf160_b25
+.Lf160_b23:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf159_b25:
+.Lf160_b25:
 	ldr x10, [x20, #16]
 	cmp x10, #64
-	b.ge .Lf159_b34
-.Lf159_b26:
+	b.ge .Lf160_b34
+.Lf160_b26:
 	ldr x9, [x20, #8]
 	str x9, [x21, #64]
 	add x9, x20, #8
 	str x21, [x9]
 	add x9, x10, #1
 	str x9, [x20, #16]
-.Lf159_b27:
+.Lf160_b27:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf159_b64
-.Lf159_b28:
+	b.ne .Lf160_b64
+.Lf160_b28:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-	b .Lf159_b64
-.Lf159_b34:
+	b .Lf160_b64
+.Lf160_b34:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf159_b38
-.Lf159_b35:
+	b.ne .Lf160_b38
+.Lf160_b35:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf159_b38:
+.Lf160_b38:
 	mov x0, #5
 	mov x2, #0
 	mov x1, x21
 	bl xo_sched_rt
 	ldp x22, x20, [x21, #8]
 	ldr x19, [x21, #80]
-.Lf159_b39:
+.Lf160_b39:
 	bl xo_f_pool_2elayer
 	cmp x0, #1
-	b.eq .Lf159_b40
-.Lf159_b55:
+	b.eq .Lf160_b40
+.Lf160_b55:
 	cmp x0, #2
-	b.eq .Lf159_b56
-.Lf159_b57:
+	b.eq .Lf160_b56
+.Lf160_b57:
 	cmp x0, #3
-	b.eq .Lf159_b58
-	b .Lf159_b61
-.Lf159_b40:
+	b.eq .Lf160_b58
+	b .Lf160_b61
+.Lf160_b40:
 	cmp x19, #0
-	b.eq .Lf159_b44
-.Lf159_b41:
+	b.eq .Lf160_b44
+.Lf160_b41:
 	mov x0, #12
 	mov x1, x22
 	mov x2, x20
 	bl xo_sched_rt
-	b .Lf159_b61
-.Lf159_b44:
+	b .Lf160_b61
+.Lf160_b44:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf159_b45
-.Lf159_b46:
+	b.eq .Lf160_b45
+.Lf160_b46:
 	cmp x9, #0
-	b.eq .Lf159_b47
-.Lf159_b48:
+	b.eq .Lf160_b47
+.Lf160_b48:
 	cmp x9, #2
-	b.eq .Lf159_b49
-	b .Lf159_b54
-.Lf159_b45:
+	b.eq .Lf160_b49
+	b .Lf160_b54
+.Lf160_b45:
 	mov x6, #215
-	b .Lf159_b51
-.Lf159_b47:
+	b .Lf160_b51
+.Lf160_b47:
 	mov x6, #11
-	b .Lf159_b51
-.Lf159_b49:
+	b .Lf160_b51
+.Lf160_b49:
 	mov x6, #-1
-.Lf159_b51:
+.Lf160_b51:
 	mov x2, #0
 	mov x0, x22
 	mov x1, x20
@@ -19043,24 +19135,13 @@ xo_f_pool_2erun__fiber:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-	b .Lf159_b61
-.Lf159_b54:
+	b .Lf160_b61
+.Lf160_b54:
 	brk #1
-.Lf159_b56:
-	adrp x9, .Lxo_str54
-	add x9, x9, :lo12:.Lxo_str54
-	mov x1, #50
-	add x0, x9, #16
-	adrp x9, .Lxo_str55
-	add x9, x9, :lo12:.Lxo_str55
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf159_b58:
+.Lf160_b56:
 	adrp x9, .Lxo_str56
 	add x9, x9, :lo12:.Lxo_str56
-	mov x1, #56
+	mov x1, #50
 	add x0, x9, #16
 	adrp x9, .Lxo_str57
 	add x9, x9, :lo12:.Lxo_str57
@@ -19068,10 +19149,21 @@ xo_f_pool_2erun__fiber:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf159_b61:
+.Lf160_b58:
+	adrp x9, .Lxo_str58
+	add x9, x9, :lo12:.Lxo_str58
+	mov x1, #56
+	add x0, x9, #16
+	adrp x9, .Lxo_str59
+	add x9, x9, :lo12:.Lxo_str59
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf160_b61:
 	sub x0, x21, #8
 	bl xo_heap_release
-.Lf159_b64:
+.Lf160_b64:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
@@ -19084,7 +19176,7 @@ xo_f_pool_2erun__fiber:
 	.p2align 2
 	.type xo_f_pool_2efiber__new, %function
 xo_f_pool_2efiber__new:
-.Lf160_begin:
+.Lf161_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-80]!
 	mov x29, sp
@@ -19103,28 +19195,28 @@ xo_f_pool_2efiber__new:
 	.cfi_offset w23, -24
 	.cfi_offset w26, -16
 	.cfi_offset w25, -8
-.Lf160_b0:
+.Lf161_b0:
 	mov x23, x0
 	mov x25, x1
 	mov x26, x2
 	ldr x9, [x25, #2328]
 	cmp x9, #0
-	b.le .Lf160_b2
-.Lf160_b1:
+	b.le .Lf161_b2
+.Lf161_b1:
 	sub x10, x9, #1
 	str x10, [x25, #2328]
 	mov x9, #2264
 	add x9, x9, x10, lsl #3
 	ldr x22, [x25, x9]
 	cmp x22, #0
-	b.eq .Lf160_b19
-	b .Lf160_b66
-.Lf160_b2:
+	b.eq .Lf161_b19
+	b .Lf161_b66
+.Lf161_b2:
 	add x9, x23, #8
 	ldr x10, [x9]
 	cmp x10, #0
-	b.eq .Lf160_b19
-.Lf160_b3:
+	b.eq .Lf161_b19
+.Lf161_b3:
 	add x2, x23, #0
 	mov x19, #0
 	mov x1, #1
@@ -19133,88 +19225,88 @@ xo_f_pool_2efiber__new:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf160_b6
-.Lf160_b4:
+	cbz x9, .Lf161_b6
+.Lf161_b4:
 	mov x0, x23
 	bl xo_f_pool_2elock__slow
-.Lf160_b6:
+.Lf161_b6:
 	ldr x22, [x23, #8]
 	cmp x22, #0
-	b.eq .Lf160_b10
-.Lf160_b7:
+	b.eq .Lf161_b10
+.Lf161_b7:
 	ldr x10, [x22, #64]
 	add x9, x23, #8
 	str x10, [x9]
 	ldr x9, [x23, #16]
 	sub x9, x9, #1
 	str x9, [x23, #16]
-.Lf160_b10:
+.Lf161_b10:
 	add x1, x23, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf160_b17
-.Lf160_b11:
+	b.ne .Lf161_b17
+.Lf161_b11:
 	mov x0, x23
 	bl xo_f_pool_2efutex__wake
-.Lf160_b17:
+.Lf161_b17:
 	cmp x22, #0
-	b.ne .Lf160_b66
-.Lf160_b19:
+	b.ne .Lf161_b66
+.Lf161_b19:
 	mov x0, #0
 	mov x1, #7
 	mov x2, x0
 	bl xo_sched_rt
-.Lf160_b20:
+.Lf161_b20:
 	ldr x20, [x23, #32]
 	ldr x9, [x23, #24]
 	add x24, x9, x20
 	ldr x19, [x25, #2216]
-.Lf160_b21:
+.Lf161_b21:
 	bl xo_f_pool_2elayer
 	cmp x0, #1
-	b.eq .Lf160_b22
-.Lf160_b55:
+	b.eq .Lf161_b22
+.Lf161_b55:
 	cmp x0, #2
-	b.eq .Lf160_b56
-.Lf160_b57:
+	b.eq .Lf161_b56
+.Lf161_b57:
 	cmp x0, #3
-	b.eq .Lf160_b58
-	b .Lf160_b59
-.Lf160_b22:
+	b.eq .Lf161_b58
+	b .Lf161_b59
+.Lf161_b22:
 	cmp x19, #0
-	b.eq .Lf160_b25
-.Lf160_b23:
+	b.eq .Lf161_b25
+.Lf161_b23:
 	mov x0, #11
 	mov x1, x24
 	mov x2, x20
 	bl xo_sched_rt
 	mov x21, x0
 	cmp x21, #0
-	b.eq .Lf160_b62
-	b .Lf160_b64
-.Lf160_b25:
+	b.eq .Lf161_b62
+	b .Lf161_b64
+.Lf161_b25:
 	mov x4, #-1
-.Lf160_b27:
+.Lf161_b27:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf160_b28
-.Lf160_b29:
+	b.eq .Lf161_b28
+.Lf161_b29:
 	cmp x9, #0
-	b.eq .Lf160_b30
-.Lf160_b31:
+	b.eq .Lf161_b30
+.Lf161_b31:
 	cmp x9, #2
-	b.eq .Lf160_b32
-	b .Lf160_b54
-.Lf160_b28:
+	b.eq .Lf161_b32
+	b .Lf161_b54
+.Lf161_b28:
 	mov x6, #222
-	b .Lf160_b34
-.Lf160_b30:
+	b .Lf161_b34
+.Lf161_b30:
 	mov x6, #9
-	b .Lf160_b34
-.Lf160_b32:
+	b .Lf161_b34
+.Lf161_b32:
 	mov x6, #-1
-.Lf160_b34:
+.Lf161_b34:
 	mov x0, #0
 	mov x2, #3
 	mov x3, #16418
@@ -19223,36 +19315,36 @@ xo_f_pool_2efiber__new:
 	mov x8, x6
 	svc #0
 	mov x19, x0
-.Lf160_b35:
+.Lf161_b35:
 	cmp x19, #0
-	b.ge .Lf160_b42
-.Lf160_b36:
+	b.ge .Lf161_b42
+.Lf161_b36:
 	mov x9, #-4096
 	cmp x19, x9
-	b.le .Lf160_b42
-.Lf160_b39:
+	b.le .Lf161_b42
+.Lf161_b39:
 	mov x21, #0
 	sub x1, x21, x19
 	mov x0, #4
 	bl xo_tlocal_set
-	b .Lf160_b62
-.Lf160_b42:
+	b .Lf161_b62
+.Lf161_b42:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf160_b50
-.Lf160_b44:
+	b.eq .Lf161_b50
+.Lf161_b44:
 	cmp x9, #0
-	b.eq .Lf160_b51
-.Lf160_b46:
+	b.eq .Lf161_b51
+.Lf161_b46:
 	cmp x9, #2
-	b.eq .Lf160_b51
-	b .Lf160_b53
-.Lf160_b50:
+	b.eq .Lf161_b51
+	b .Lf161_b53
+.Lf161_b50:
 	mov x6, #226
-	b .Lf160_b52
-.Lf160_b51:
+	b .Lf161_b52
+.Lf161_b51:
 	mov x6, #10
-.Lf160_b52:
+.Lf161_b52:
 	mov x2, #0
 	mov x0, x19
 	mov x1, x20
@@ -19261,26 +19353,15 @@ xo_f_pool_2efiber__new:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-	b .Lf160_b60
-.Lf160_b53:
+	b .Lf161_b60
+.Lf161_b53:
 	brk #1
-.Lf160_b54:
+.Lf161_b54:
 	brk #1
-.Lf160_b56:
-	adrp x9, .Lxo_str58
-	add x9, x9, :lo12:.Lxo_str58
-	mov x1, #48
-	add x0, x9, #16
-	adrp x9, .Lxo_str59
-	add x9, x9, :lo12:.Lxo_str59
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf160_b58:
+.Lf161_b56:
 	adrp x9, .Lxo_str60
 	add x9, x9, :lo12:.Lxo_str60
-	mov x1, #57
+	mov x1, #48
 	add x0, x9, #16
 	adrp x9, .Lxo_str61
 	add x9, x9, :lo12:.Lxo_str61
@@ -19288,23 +19369,34 @@ xo_f_pool_2efiber__new:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf160_b59:
+.Lf161_b58:
+	adrp x9, .Lxo_str62
+	add x9, x9, :lo12:.Lxo_str62
+	mov x1, #57
+	add x0, x9, #16
+	adrp x9, .Lxo_str63
+	add x9, x9, :lo12:.Lxo_str63
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf161_b59:
 	mov x19, #0
 	mov x21, x19
-	b .Lf160_b62
-.Lf160_b60:
+	b .Lf161_b62
+.Lf161_b60:
 	mov x21, x19
-.Lf160_b61:
+.Lf161_b61:
 	cmp x21, #0
-	b.ne .Lf160_b64
-.Lf160_b62:
+	b.ne .Lf161_b64
+.Lf161_b62:
 	mov x0, #4
 	bl xo_tlocal_get
 	mov x1, x0
 	mov x0, #6
 	mov x2, #0
 	bl xo_sched_rt
-.Lf160_b64:
+.Lf161_b64:
 	mov x19, #88
 	mov x0, x19
 	bl xo_heap_large
@@ -19319,7 +19411,7 @@ xo_f_pool_2efiber__new:
 	mov x1, x22
 	mov x2, x20
 	bl xo_sched_rt
-.Lf160_b66:
+.Lf161_b66:
 	str x26, [x22, #24]
 	mov x10, #0
 	str x10, [x22, #32]
@@ -19330,7 +19422,7 @@ xo_f_pool_2efiber__new:
 	str x10, [x9]
 	ldp x13, x9, [x22, #8]
 	ldr x14, [x23, #40]
-.Lf160_b67:
+.Lf161_b67:
 	add x12, x13, x9
 	and x9, x12, #15
 	sub x11, x12, x9
@@ -19338,29 +19430,29 @@ xo_f_pool_2efiber__new:
 	add x8, x8, :lo12:xo_fiber_entry
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf160_b68
-.Lf160_b80:
+	b.eq .Lf161_b68
+.Lf161_b80:
 	cmp x9, #0
-	b.eq .Lf160_b81
-.Lf160_b93:
+	b.eq .Lf161_b81
+.Lf161_b93:
 	cmp x9, #2
-	b.eq .Lf160_b94
-	b .Lf160_b97
-.Lf160_b68:
+	b.eq .Lf161_b94
+	b .Lf161_b97
+.Lf161_b68:
 	mov x9, #0
 	cmp x9, #2
-	b.eq .Lf160_b69
-.Lf160_b70:
+	b.eq .Lf161_b69
+.Lf161_b70:
 	cmp x9, #1
-	b.eq .Lf160_b76
-.Lf160_b72:
+	b.eq .Lf161_b76
+.Lf161_b72:
 	cmp x9, #0
-	b.eq .Lf160_b76
-.Lf160_b74:
+	b.eq .Lf161_b76
+.Lf161_b74:
 	cmp x9, #3
-	b.eq .Lf160_b76
-	b .Lf160_b79
-.Lf160_b69:
+	b.eq .Lf161_b76
+	b .Lf161_b79
+.Lf161_b69:
 	sub x10, x11, #192
 	mov x9, #0
 	str x9, [x10, #80]
@@ -19370,31 +19462,31 @@ xo_f_pool_2efiber__new:
 	movz x9, #1, lsl #16
 	sub x9, x12, x9
 	stp x9, x13, [x10, #168]
-	b .Lf160_b96
-.Lf160_b76:
+	b .Lf161_b96
+.Lf161_b76:
 	sub x10, x11, #160
 	mov x9, #0
 	str x9, [x10, #80]
 	stp x22, x14, [x10, #0]
 	str x8, [x10, #88]
-	b .Lf160_b96
-.Lf160_b79:
+	b .Lf161_b96
+.Lf161_b79:
 	brk #1
-.Lf160_b81:
+.Lf161_b81:
 	mov x9, #0
 	cmp x9, #2
-	b.eq .Lf160_b82
-.Lf160_b83:
+	b.eq .Lf161_b82
+.Lf161_b83:
 	cmp x9, #1
-	b.eq .Lf160_b89
-.Lf160_b85:
+	b.eq .Lf161_b89
+.Lf161_b85:
 	cmp x9, #0
-	b.eq .Lf160_b89
-.Lf160_b87:
+	b.eq .Lf161_b89
+.Lf161_b87:
 	cmp x9, #3
-	b.eq .Lf160_b89
-	b .Lf160_b92
-.Lf160_b82:
+	b.eq .Lf161_b89
+	b .Lf161_b92
+.Lf161_b82:
 	sub x10, x11, #264
 	mov x9, #0
 	str x9, [x10, #248]
@@ -19409,8 +19501,8 @@ xo_f_pool_2efiber__new:
 	str x14, [x10, #216]
 	str x22, [x10, #240]
 	str x8, [x10, #256]
-	b .Lf160_b96
-.Lf160_b89:
+	b .Lf161_b96
+.Lf161_b89:
 	sub x10, x11, #64
 	mov x9, #0
 	str x9, [x10, #48]
@@ -19420,12 +19512,12 @@ xo_f_pool_2efiber__new:
 	strh w9, [x10, #4]
 	stp x14, x22, [x10, #32]
 	str x8, [x10, #56]
-	b .Lf160_b96
-.Lf160_b92:
+	b .Lf161_b96
+.Lf161_b92:
 	brk #1
-.Lf160_b94:
+.Lf161_b94:
 	mov x10, #0
-.Lf160_b96:
+.Lf161_b96:
 	str x10, [x22, #0]
 	mov x0, x22
 	ldp x20, x19, [sp, #16]
@@ -19434,15 +19526,44 @@ xo_f_pool_2efiber__new:
 	ldp x26, x25, [sp, #64]
 	ldp x29, x30, [sp], #80
 	ret
-.Lf160_b97:
+.Lf161_b97:
 	brk #1
+	.cfi_endproc
+
+// func sched.rq_put
+	.p2align 2
+	.type xo_f_sched_2erq__put, %function
+xo_f_sched_2erq__put:
+.Lf162_begin:
+	.cfi_startproc
+.Lf162_b0:
+	add x9, x0, #0
+	ldar x10, [x9]
+	ldr x11, [x0, #128]
+	sub x9, x11, x10
+	cmp x9, #256
+	b.ge .Lf162_b3
+.Lf162_b1:
+	and x10, x11, #255
+	mov x9, #17
+	add x9, x9, x10
+	add x9, x0, x9, lsl #3
+	str x1, [x9]
+	add x10, x11, #1
+	add x9, x0, #128
+	stlr x10, [x9]
+	mov x0, #1
+	ret
+.Lf162_b3:
+	mov x0, #0
+	ret
 	.cfi_endproc
 
 // func pool.start_worker
 	.p2align 2
 	.type xo_f_pool_2estart__worker, %function
 xo_f_pool_2estart__worker:
-.Lf161_begin:
+.Lf163_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -19454,7 +19575,7 @@ xo_f_pool_2estart__worker:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf161_b0:
+.Lf163_b0:
 	mov x21, x0
 	mov x19, #3400
 	mov x0, x19
@@ -19466,19 +19587,19 @@ xo_f_pool_2estart__worker:
 	bl memset
 	mov x9, #1
 	str w9, [x20, #2200]
-.Lf161_b1:
+.Lf163_b1:
 	mov x9, #8
 	add x9, x9, x9, lsl #1
 	ldr x19, [x21, x9]
 	mov x9, #4096
 	cmp x19, x9
-	b.lt .Lf161_b4
-.Lf161_b2:
+	b.lt .Lf163_b4
+.Lf163_b2:
 	mov x0, #9
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-.Lf161_b4:
+.Lf163_b4:
 	movz x9, #31765, lsl #0
 	movk x9, #32586, lsl #16
 	movk x9, #31161, lsl #32
@@ -19493,38 +19614,27 @@ xo_f_pool_2estart__worker:
 	add x10, x19, #1
 	add x9, x21, #24
 	stlr x10, [x9]
-.Lf161_b5:
+.Lf163_b5:
 	add x9, x21, #32
 	ldar x10, [x9]
 	add x10, x10, #1
 	add x9, x21, #32
 	stlr x10, [x9]
 	ldr x19, [x21, #112]
-.Lf161_b6:
+.Lf163_b6:
 	bl xo_f_pool_2elayer
 	cmp x0, #2
-	b.eq .Lf161_b7
-.Lf161_b8:
+	b.eq .Lf163_b7
+.Lf163_b8:
 	cmp x0, #3
-	b.eq .Lf161_b9
-	b .Lf161_b10
-.Lf161_b7:
+	b.eq .Lf163_b9
+	b .Lf163_b10
+.Lf163_b7:
 	mov x0, #80
 	bl xo_heap_large
-	adrp x9, .Lxo_str39
-	add x9, x9, :lo12:.Lxo_str39
-	mov x1, #61
-	add x0, x9, #16
-	adrp x9, .Lxo_str40
-	add x9, x9, :lo12:.Lxo_str40
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf161_b9:
 	adrp x9, .Lxo_str41
 	add x9, x9, :lo12:.Lxo_str41
-	mov x1, #57
+	mov x1, #61
 	add x0, x9, #16
 	adrp x9, .Lxo_str42
 	add x9, x9, :lo12:.Lxo_str42
@@ -19532,22 +19642,33 @@ xo_f_pool_2estart__worker:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf161_b10:
+.Lf163_b9:
+	adrp x9, .Lxo_str43
+	add x9, x9, :lo12:.Lxo_str43
+	mov x1, #57
+	add x0, x9, #16
+	adrp x9, .Lxo_str44
+	add x9, x9, :lo12:.Lxo_str44
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf163_b10:
 	mov x0, #8
 	mov x1, x19
 	mov x2, x20
 	bl xo_sched_rt
 	cmp x0, #0
 	cset x9, ne
-.Lf161_b12:
-	cbz x9, .Lf161_b15
-.Lf161_b13:
+.Lf163_b12:
+	cbz x9, .Lf163_b15
+.Lf163_b13:
 	mov x0, #1
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf161_b15:
+.Lf163_b15:
 	mov x0, #0
 	str w0, [x20, #2200]
 	add x9, x21, #32
@@ -19565,83 +19686,83 @@ xo_f_pool_2estart__worker:
 	.p2align 2
 	.type xo_f_scan_2eeq__at, %function
 xo_f_scan_2eeq__at:
-.Lf162_begin:
+.Lf164_begin:
 	.cfi_startproc
-.Lf162_b0:
+.Lf164_b0:
 	cmp x6, #8
-	b.lt .Lf162_b9
-.Lf162_b1:
+	b.lt .Lf164_b9
+.Lf164_b1:
 	mov x11, #0
-.Lf162_b2:
+.Lf164_b2:
 	sub x9, x6, x11
 	cmp x9, #8
-	b.le .Lf162_b7
-.Lf162_b3:
+	b.le .Lf164_b7
+.Lf164_b3:
 	adds x10, x2, x11
-	b.vs .Lf162_fault1
+	b.vs .Lf164_fault1
 	add x9, x0, #16
 	ldr x12, [x9, x10]
 	adds x10, x5, x11
-	b.vs .Lf162_fault2
+	b.vs .Lf164_fault2
 	add x9, x3, #16
 	ldr x9, [x9, x10]
 	cmp x12, x9
-	b.eq .Lf162_b6
-.Lf162_b4:
+	b.eq .Lf164_b6
+.Lf164_b4:
 	mov x0, #0
 	ret
-.Lf162_b6:
+.Lf164_b6:
 	adds x11, x11, #8
-	b.vs .Lf162_fault3
-	b .Lf162_b2
-.Lf162_b7:
+	b.vs .Lf164_fault3
+	b .Lf164_b2
+.Lf164_b7:
 	adds x9, x2, x6
-	b.vs .Lf162_fault4
+	b.vs .Lf164_fault4
 	sub x10, x9, #8
 	add x9, x0, #16
 	ldr x11, [x9, x10]
 	adds x9, x5, x6
-	b.vs .Lf162_fault5
+	b.vs .Lf164_fault5
 	sub x10, x9, #8
 	add x9, x3, #16
 	ldr x9, [x9, x10]
 	cmp x11, x9
 	cset x0, eq
 	ret
-.Lf162_b9:
+.Lf164_b9:
 	mov x11, #0
-.Lf162_b10:
+.Lf164_b10:
 	cmp x11, x6
-	b.ge .Lf162_b15
-.Lf162_b11:
+	b.ge .Lf164_b15
+.Lf164_b11:
 	adds x10, x2, x11
-	b.vs .Lf162_fault6
+	b.vs .Lf164_fault6
 	cmp x10, x1
-	b.hs .Lf162_fault7
+	b.hs .Lf164_fault7
 	add x9, x0, #16
 	ldrb w12, [x9, x10]
 	adds x10, x5, x11
-	b.vs .Lf162_fault8
+	b.vs .Lf164_fault8
 	cmp x10, x4
-	b.hs .Lf162_fault9
+	b.hs .Lf164_fault9
 	add x9, x3, #16
 	ldrb w9, [x9, x10]
 	cmp x12, x9
-	b.eq .Lf162_b14
-.Lf162_b12:
+	b.eq .Lf164_b14
+.Lf164_b12:
 	mov x0, #0
 	ret
-.Lf162_b14:
+.Lf164_b14:
 	add x11, x11, #1
 	cmp x11, x6
-	b.lt .Lf162_b11
-.Lf162_b15:
+	b.lt .Lf164_b11
+.Lf164_b15:
 	mov x0, #1
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf162_fault1:
+.Lf164_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x2
@@ -19651,7 +19772,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc28
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault2:
+.Lf164_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x5
@@ -19661,7 +19782,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc149
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault3:
+.Lf164_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #8
@@ -19673,7 +19794,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc29
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault4:
+.Lf164_fault4:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x2
@@ -19683,7 +19804,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc150
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault5:
+.Lf164_fault5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x5
@@ -19693,7 +19814,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc151
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault6:
+.Lf164_fault6:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x2
@@ -19703,7 +19824,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc152
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault7:
+.Lf164_fault7:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
@@ -19711,7 +19832,7 @@ xo_f_scan_2eeq__at:
 	add x2, x2, :lo12:.Lxo_loc30
 	bl xo_fault_bytes_index
 	brk #1
-.Lf162_fault8:
+.Lf164_fault8:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x5
@@ -19721,7 +19842,7 @@ xo_f_scan_2eeq__at:
 	add x3, x3, :lo12:.Lxo_loc153
 	bl xo_fault_overflow
 	brk #1
-.Lf162_fault9:
+.Lf164_fault9:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
@@ -19736,28 +19857,28 @@ xo_f_scan_2eeq__at:
 	.p2align 2
 	.type xo_f_num_2epow10__hi, %function
 xo_f_num_2epow10__hi:
-.Lf163_begin:
+.Lf165_begin:
 	.cfi_startproc
-.Lf163_b0:
+.Lf165_b0:
 	mov x9, #-348
 	subs x10, x0, x9
-	b.vs .Lf163_fault1
+	b.vs .Lf165_fault1
 	mov x11, #16
 	lsl x12, x10, #4
 	smulh x9, x10, x11
 	cmp x9, x12, asr #63
-	b.ne .Lf163_fault2
-.Lf163_b1:
-	adrp x9, .Lxo_str43
-	add x9, x9, :lo12:.Lxo_str43
+	b.ne .Lf165_fault2
+.Lf165_b1:
+	adrp x9, .Lxo_str45
+	add x9, x9, :lo12:.Lxo_str45
 	add x9, x9, #16
 	ldr x0, [x9, x12]
-.Lf163_b2:
+.Lf165_b2:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf163_fault1:
+.Lf165_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x2, x9
@@ -19766,7 +19887,7 @@ xo_f_num_2epow10__hi:
 	add x3, x3, :lo12:.Lxo_loc155
 	bl xo_fault_overflow
 	brk #1
-.Lf163_fault2:
+.Lf165_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
@@ -19782,21 +19903,21 @@ xo_f_num_2epow10__hi:
 	.p2align 2
 	.type xo_f_num_2emul__log2__10, %function
 xo_f_num_2emul__log2__10:
-.Lf164_begin:
+.Lf166_begin:
 	.cfi_startproc
-.Lf164_b0:
+.Lf166_b0:
 	movz x10, #43317, lsl #0
 	movk x10, #1, lsl #16
 	mul x11, x0, x10
 	smulh x9, x0, x10
 	cmp x9, x11, asr #63
-	b.ne .Lf164_fault1
+	b.ne .Lf166_fault1
 	asr x0, x11, #15
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf164_fault1:
+.Lf166_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x2, x10
@@ -19811,9 +19932,9 @@ xo_f_num_2emul__log2__10:
 	.p2align 2
 	.type xo_f_num_2eshr, %function
 xo_f_num_2eshr:
-.Lf165_begin:
+.Lf167_begin:
 	.cfi_startproc
-.Lf165_b0:
+.Lf167_b0:
 	lsr x0, x0, x1
 	ret
 	.cfi_endproc
@@ -19822,9 +19943,9 @@ xo_f_num_2eshr:
 	.p2align 2
 	.type xo_f_num_2esubw, %function
 xo_f_num_2esubw:
-.Lf166_begin:
+.Lf168_begin:
 	.cfi_startproc
-.Lf166_b0:
+.Lf168_b0:
 	sub x0, x0, x1
 	ret
 	.cfi_endproc
@@ -19833,9 +19954,9 @@ xo_f_num_2esubw:
 	.p2align 2
 	.type xo_f_num_2eaddw, %function
 xo_f_num_2eaddw:
-.Lf167_begin:
+.Lf169_begin:
 	.cfi_startproc
-.Lf167_b0:
+.Lf169_b0:
 	add x0, x0, x1
 	ret
 	.cfi_endproc
@@ -19844,9 +19965,9 @@ xo_f_num_2eaddw:
 	.p2align 2
 	.type xo_f_num_2etrimmed, %function
 xo_f_num_2etrimmed:
-.Lf168_begin:
+.Lf170_begin:
 	.cfi_startproc
-.Lf168_b0:
+.Lf170_b0:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -19858,14 +19979,14 @@ xo_f_num_2etrimmed:
 	movk x9, #1525, lsl #16
 	msub x9, x11, x9, x0
 	cmp x9, #0
-	b.ne .Lf168_b2
-.Lf168_b1:
+	b.ne .Lf170_b2
+.Lf170_b1:
 	adds x1, x1, #8
-	b.vs .Lf168_fault1
-	b .Lf168_b3
-.Lf168_b2:
+	b.vs .Lf170_fault1
+	b .Lf170_b3
+.Lf170_b2:
 	mov x11, x0
-.Lf168_b3:
+.Lf170_b3:
 	movz x9, #22859, lsl #0
 	movk x9, #14470, lsl #16
 	movk x9, #50646, lsl #32
@@ -19876,14 +19997,14 @@ xo_f_num_2etrimmed:
 	mov x9, #10000
 	msub x9, x10, x9, x11
 	cmp x9, #0
-	b.ne .Lf168_b5
-.Lf168_b4:
+	b.ne .Lf170_b5
+.Lf170_b4:
 	adds x1, x1, #4
-	b.vs .Lf168_fault2
-	b .Lf168_b6
-.Lf168_b5:
+	b.vs .Lf170_fault2
+	b .Lf170_b6
+.Lf170_b5:
 	mov x10, x11
-.Lf168_b6:
+.Lf170_b6:
 	movz x9, #55051, lsl #0
 	movk x9, #28835, lsl #16
 	movk x9, #2621, lsl #32
@@ -19895,14 +20016,14 @@ xo_f_num_2etrimmed:
 	mov x9, #100
 	msub x9, x11, x9, x10
 	cmp x9, #0
-	b.ne .Lf168_b8
-.Lf168_b7:
+	b.ne .Lf170_b8
+.Lf170_b7:
 	adds x1, x1, #2
-	b.vs .Lf168_fault3
-	b .Lf168_b9
-.Lf168_b8:
+	b.vs .Lf170_fault3
+	b .Lf170_b9
+.Lf170_b8:
 	mov x11, x10
-.Lf168_b9:
+.Lf170_b9:
 	movz x9, #26215, lsl #0
 	movk x9, #26214, lsl #16
 	movk x9, #26214, lsl #32
@@ -19913,19 +20034,19 @@ xo_f_num_2etrimmed:
 	mov x9, #10
 	msub x9, x0, x9, x11
 	cmp x9, #0
-	b.ne .Lf168_b11
-.Lf168_b10:
+	b.ne .Lf170_b11
+.Lf170_b10:
 	adds x1, x1, #1
-	b.vs .Lf168_fault4
-	b .Lf168_b12
-.Lf168_b11:
+	b.vs .Lf170_fault4
+	b .Lf170_b12
+.Lf170_b11:
 	mov x0, x11
-.Lf168_b12:
+.Lf170_b12:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf168_fault1:
+.Lf170_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #8
@@ -19937,7 +20058,7 @@ xo_f_num_2etrimmed:
 	add x3, x3, :lo12:.Lxo_loc158
 	bl xo_fault_overflow
 	brk #1
-.Lf168_fault2:
+.Lf170_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #4
@@ -19949,7 +20070,7 @@ xo_f_num_2etrimmed:
 	add x3, x3, :lo12:.Lxo_loc159
 	bl xo_fault_overflow
 	brk #1
-.Lf168_fault3:
+.Lf170_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #2
@@ -19961,7 +20082,7 @@ xo_f_num_2etrimmed:
 	add x3, x3, :lo12:.Lxo_loc160
 	bl xo_fault_overflow
 	brk #1
-.Lf168_fault4:
+.Lf170_fault4:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #1
@@ -19979,21 +20100,21 @@ xo_f_num_2etrimmed:
 	.p2align 2
 	.type xo_f_num_2emul__log10__2, %function
 xo_f_num_2emul__log10__2:
-.Lf169_begin:
+.Lf171_begin:
 	.cfi_startproc
-.Lf169_b0:
+.Lf171_b0:
 	movz x10, #13377, lsl #0
 	movk x10, #1, lsl #16
 	mul x11, x0, x10
 	smulh x9, x0, x10
 	cmp x9, x11, asr #63
-	b.ne .Lf169_fault1
+	b.ne .Lf171_fault1
 	asr x0, x11, #18
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf169_fault1:
+.Lf171_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x2, x10
@@ -20008,30 +20129,30 @@ xo_f_num_2emul__log10__2:
 	.p2align 2
 	.type xo_f_num_2epow10__lo, %function
 xo_f_num_2epow10__lo:
-.Lf170_begin:
+.Lf172_begin:
 	.cfi_startproc
-.Lf170_b0:
+.Lf172_b0:
 	mov x9, #-348
 	subs x11, x0, x9
-	b.vs .Lf170_fault1
+	b.vs .Lf172_fault1
 	mov x12, #16
 	lsl x10, x11, #4
 	smulh x9, x11, x12
 	cmp x9, x10, asr #63
-	b.ne .Lf170_fault2
+	b.ne .Lf172_fault2
 	adds x10, x10, #8
-	b.vs .Lf170_fault3
-.Lf170_b1:
-	adrp x9, .Lxo_str43
-	add x9, x9, :lo12:.Lxo_str43
+	b.vs .Lf172_fault3
+.Lf172_b1:
+	adrp x9, .Lxo_str45
+	add x9, x9, :lo12:.Lxo_str45
 	add x9, x9, #16
 	ldr x0, [x9, x10]
-.Lf170_b2:
+.Lf172_b2:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf170_fault1:
+.Lf172_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x2, x9
@@ -20040,7 +20161,7 @@ xo_f_num_2epow10__lo:
 	add x3, x3, :lo12:.Lxo_loc162
 	bl xo_fault_overflow
 	brk #1
-.Lf170_fault2:
+.Lf172_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x11
@@ -20050,7 +20171,7 @@ xo_f_num_2epow10__lo:
 	add x3, x3, :lo12:.Lxo_loc163
 	bl xo_fault_overflow
 	brk #1
-.Lf170_fault3:
+.Lf172_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #8
@@ -20068,9 +20189,9 @@ xo_f_num_2epow10__lo:
 	.p2align 2
 	.type xo_f_num_2eshl, %function
 xo_f_num_2eshl:
-.Lf171_begin:
+.Lf173_begin:
 	.cfi_startproc
-.Lf171_b0:
+.Lf173_b0:
 	lsl x0, x0, x1
 	ret
 	.cfi_endproc
@@ -20079,9 +20200,9 @@ xo_f_num_2eshl:
 	.p2align 2
 	.type xo_f_num_2emulw, %function
 xo_f_num_2emulw:
-.Lf172_begin:
+.Lf174_begin:
 	.cfi_startproc
-.Lf172_b0:
+.Lf174_b0:
 	mul x0, x0, x1
 	ret
 	.cfi_endproc
@@ -20090,9 +20211,9 @@ xo_f_num_2emulw:
 	.p2align 2
 	.type xo_f_num_2eult, %function
 xo_f_num_2eult:
-.Lf173_begin:
+.Lf175_begin:
 	.cfi_startproc
-.Lf173_b0:
+.Lf175_b0:
 	movz x10, #1, lsl #0
 	movk x10, #32768, lsl #48
 	sub x9, x10, #1
@@ -20108,44 +20229,44 @@ xo_f_num_2eult:
 	.p2align 2
 	.type xo_f_num_2eparity, %function
 xo_f_num_2eparity:
-.Lf174_begin:
+.Lf176_begin:
 	.cfi_startproc
-.Lf174_b0:
+.Lf176_b0:
 	umulh x10, x0, x2
-.Lf174_b1:
+.Lf176_b1:
 	mul x9, x0, x1
-.Lf174_b3:
+.Lf176_b3:
 	add x10, x9, x10
-.Lf174_b5:
+.Lf176_b5:
 	mul x11, x0, x2
-.Lf174_b6:
+.Lf176_b6:
 	mov x9, #64
 	subs x9, x9, x3
-	b.vs .Lf174_fault1
-.Lf174_b7:
+	b.vs .Lf176_fault1
+.Lf176_b7:
 	lsr x9, x10, x9
-.Lf174_b8:
+.Lf176_b8:
 	and x0, x9, #1
-.Lf174_b9:
+.Lf176_b9:
 	lsl x10, x10, x3
-.Lf174_b10:
+.Lf176_b10:
 	mov x9, #64
 	subs x9, x9, x3
-	b.vs .Lf174_fault2
-.Lf174_b11:
+	b.vs .Lf176_fault2
+.Lf176_b11:
 	lsr x9, x11, x9
-.Lf174_b12:
+.Lf176_b12:
 	orr x9, x10, x9
 	cmp x9, #0
-	b.ne .Lf174_b15
-.Lf174_b13:
+	b.ne .Lf176_b15
+.Lf176_b13:
 	orr x0, x0, #2
-.Lf174_b15:
+.Lf176_b15:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf174_fault1:
+.Lf176_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	add x15, x9, x3
@@ -20156,7 +20277,7 @@ xo_f_num_2eparity:
 	add x3, x3, :lo12:.Lxo_loc122
 	bl xo_fault_overflow
 	brk #1
-.Lf174_fault2:
+.Lf176_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	add x15, x9, x3
@@ -20173,78 +20294,78 @@ xo_f_num_2eparity:
 	.p2align 2
 	.type xo_f_num_2epow10, %function
 xo_f_num_2epow10:
-.Lf175_begin:
+.Lf177_begin:
 	.cfi_startproc
-.Lf175_b0:
+.Lf177_b0:
 	and x9, x0, #16
 	cmp x9, #0
-	b.eq .Lf175_b2
-.Lf175_b1:
+	b.eq .Lf177_b2
+.Lf177_b1:
 	movz x11, #28609, lsl #16
 	movk x11, #34546, lsl #32
 	movk x11, #35, lsl #48
-	b .Lf175_b3
-.Lf175_b2:
+	b .Lf177_b3
+.Lf177_b2:
 	mov x11, #1
-.Lf175_b3:
+.Lf177_b3:
 	and x9, x0, #8
 	cmp x9, #0
-	b.eq .Lf175_b5
-.Lf175_b4:
+	b.eq .Lf177_b5
+.Lf177_b4:
 	movz x10, #57600, lsl #0
 	movk x10, #1525, lsl #16
 	mul x12, x11, x10
 	smulh x9, x11, x10
 	cmp x9, x12, asr #63
-	b.ne .Lf175_fault1
-	b .Lf175_b6
-.Lf175_b5:
+	b.ne .Lf177_fault1
+	b .Lf177_b6
+.Lf177_b5:
 	mov x12, x11
-.Lf175_b6:
+.Lf177_b6:
 	and x9, x0, #4
 	cmp x9, #0
-	b.eq .Lf175_b8
-.Lf175_b7:
+	b.eq .Lf177_b8
+.Lf177_b7:
 	mov x10, #10000
 	mul x11, x12, x10
 	smulh x9, x12, x10
 	cmp x9, x11, asr #63
-	b.ne .Lf175_fault2
-	b .Lf175_b9
-.Lf175_b8:
+	b.ne .Lf177_fault2
+	b .Lf177_b9
+.Lf177_b8:
 	mov x11, x12
-.Lf175_b9:
+.Lf177_b9:
 	and x9, x0, #2
 	cmp x9, #0
-	b.eq .Lf175_b11
-.Lf175_b10:
+	b.eq .Lf177_b11
+.Lf177_b10:
 	mov x10, #100
 	mul x12, x11, x10
 	smulh x9, x11, x10
 	cmp x9, x12, asr #63
-	b.ne .Lf175_fault3
-	b .Lf175_b12
-.Lf175_b11:
+	b.ne .Lf177_fault3
+	b .Lf177_b12
+.Lf177_b11:
 	mov x12, x11
-.Lf175_b12:
+.Lf177_b12:
 	and x9, x0, #1
 	cmp x9, #0
-	b.eq .Lf175_b14
-.Lf175_b13:
+	b.eq .Lf177_b14
+.Lf177_b13:
 	mov x10, #10
 	mul x0, x12, x10
 	smulh x9, x12, x10
 	cmp x9, x0, asr #63
-	b.ne .Lf175_fault4
-	b .Lf175_b15
-.Lf175_b14:
+	b.ne .Lf177_fault4
+	b .Lf177_b15
+.Lf177_b14:
 	mov x0, x12
-.Lf175_b15:
+.Lf177_b15:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf175_fault1:
+.Lf177_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x11
@@ -20254,7 +20375,7 @@ xo_f_num_2epow10:
 	add x3, x3, :lo12:.Lxo_loc164
 	bl xo_fault_overflow
 	brk #1
-.Lf175_fault2:
+.Lf177_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
@@ -20264,7 +20385,7 @@ xo_f_num_2epow10:
 	add x3, x3, :lo12:.Lxo_loc165
 	bl xo_fault_overflow
 	brk #1
-.Lf175_fault3:
+.Lf177_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x11
@@ -20274,7 +20395,7 @@ xo_f_num_2epow10:
 	add x3, x3, :lo12:.Lxo_loc166
 	bl xo_fault_overflow
 	brk #1
-.Lf175_fault4:
+.Lf177_fault4:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
@@ -20290,7 +20411,7 @@ xo_f_num_2epow10:
 	.p2align 2
 	.type xo_f_ints_2econv__message, %function
 xo_f_ints_2econv__message:
-.Lf176_begin:
+.Lf178_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -20303,37 +20424,37 @@ xo_f_ints_2econv__message:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf176_b0:
+.Lf178_b0:
 	mov x9, x0
 	mov x19, x3
 	mov x20, x4
-.Lf176_b1:
+.Lf178_b1:
 	cmp x2, #0
-	b.eq .Lf176_b7
-.Lf176_b2:
+	b.eq .Lf178_b7
+.Lf178_b2:
 	cmp x1, #64
-	b.ne .Lf176_b7
-.Lf176_b5:
+	b.ne .Lf178_b7
+.Lf178_b5:
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
 	mov x1, #0
 	mov x2, x9
 	bl xo_f_show_2eappend__u64
 	cmp x19, #0
-	b.eq .Lf176_b9
-	b .Lf176_b11
-.Lf176_b7:
+	b.eq .Lf178_b9
+	b .Lf178_b11
+.Lf178_b7:
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
 	mov x1, #0
 	mov x2, x9
 	bl xo_f_num_2eappend__int
-.Lf176_b8:
+.Lf178_b8:
 	cmp x19, #0
-	b.ne .Lf176_b11
-.Lf176_b9:
-	adrp x2, .Lxo_str44
-	add x2, x2, :lo12:.Lxo_str44
+	b.ne .Lf178_b11
+.Lf178_b9:
+	adrp x2, .Lxo_str46
+	add x2, x2, :lo12:.Lxo_str46
 	mov x3, #51
 	add x19, x1, x3
 	bl xo_rs_concat
@@ -20342,74 +20463,74 @@ xo_f_ints_2econv__message:
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf176_b11:
-	adrp x2, .Lxo_str45
-	add x2, x2, :lo12:.Lxo_str45
+.Lf178_b11:
+	adrp x2, .Lxo_str47
+	add x2, x2, :lo12:.Lxo_str47
 	mov x3, #21
 	add x22, x1, x3
 	bl xo_rs_concat
-.Lf176_b12:
+.Lf178_b12:
 	cmp x19, #8
-	b.eq .Lf176_b13
-.Lf176_b18:
+	b.eq .Lf178_b13
+.Lf178_b18:
 	cmp x19, #16
-	b.eq .Lf176_b19
-.Lf176_b24:
+	b.eq .Lf178_b19
+.Lf178_b24:
 	cmp x19, #32
-	b.eq .Lf176_b25
-	b .Lf176_b30
-.Lf176_b13:
+	b.eq .Lf178_b25
+	b .Lf178_b30
+.Lf178_b13:
 	cmp x20, #0
-	b.eq .Lf176_b15
-.Lf176_b14:
-	adrp x19, .Lxo_str46
-	add x19, x19, :lo12:.Lxo_str46
-	mov x3, #5
-	b .Lf176_b34
-.Lf176_b15:
-	adrp x19, .Lxo_str47
-	add x19, x19, :lo12:.Lxo_str47
-	mov x3, #4
-	b .Lf176_b34
-.Lf176_b19:
-	cmp x20, #0
-	b.eq .Lf176_b21
-.Lf176_b20:
+	b.eq .Lf178_b15
+.Lf178_b14:
 	adrp x19, .Lxo_str48
 	add x19, x19, :lo12:.Lxo_str48
-	mov x3, #6
-	b .Lf176_b34
-.Lf176_b21:
+	mov x3, #5
+	b .Lf178_b34
+.Lf178_b15:
 	adrp x19, .Lxo_str49
 	add x19, x19, :lo12:.Lxo_str49
-	mov x3, #5
-	b .Lf176_b34
-.Lf176_b25:
+	mov x3, #4
+	b .Lf178_b34
+.Lf178_b19:
 	cmp x20, #0
-	b.eq .Lf176_b27
-.Lf176_b26:
+	b.eq .Lf178_b21
+.Lf178_b20:
 	adrp x19, .Lxo_str50
 	add x19, x19, :lo12:.Lxo_str50
 	mov x3, #6
-	b .Lf176_b34
-.Lf176_b27:
+	b .Lf178_b34
+.Lf178_b21:
 	adrp x19, .Lxo_str51
 	add x19, x19, :lo12:.Lxo_str51
 	mov x3, #5
-	b .Lf176_b34
-.Lf176_b30:
+	b .Lf178_b34
+.Lf178_b25:
 	cmp x20, #0
-	b.eq .Lf176_b32
-.Lf176_b31:
+	b.eq .Lf178_b27
+.Lf178_b26:
 	adrp x19, .Lxo_str52
 	add x19, x19, :lo12:.Lxo_str52
 	mov x3, #6
-	b .Lf176_b34
-.Lf176_b32:
+	b .Lf178_b34
+.Lf178_b27:
 	adrp x19, .Lxo_str53
 	add x19, x19, :lo12:.Lxo_str53
+	mov x3, #5
+	b .Lf178_b34
+.Lf178_b30:
+	cmp x20, #0
+	b.eq .Lf178_b32
+.Lf178_b31:
+	adrp x19, .Lxo_str54
+	add x19, x19, :lo12:.Lxo_str54
+	mov x3, #6
+	b .Lf178_b34
+.Lf178_b32:
+	adrp x19, .Lxo_str55
+	add x19, x19, :lo12:.Lxo_str55
 	mov x3, #3
-.Lf176_b34:
+.Lf178_b34:
 	add x21, x22, x3
 	mov x1, x22
 	mov x2, x19
@@ -20425,40 +20546,11 @@ xo_f_ints_2econv__message:
 	ret
 	.cfi_endproc
 
-// func sched.rq_put
-	.p2align 2
-	.type xo_f_sched_2erq__put, %function
-xo_f_sched_2erq__put:
-.Lf177_begin:
-	.cfi_startproc
-.Lf177_b0:
-	add x9, x0, #0
-	ldar x10, [x9]
-	ldr x11, [x0, #128]
-	sub x9, x11, x10
-	cmp x9, #256
-	b.ge .Lf177_b3
-.Lf177_b1:
-	and x10, x11, #255
-	mov x9, #17
-	add x9, x9, x10
-	add x9, x0, x9, lsl #3
-	str x1, [x9]
-	add x10, x11, #1
-	add x9, x0, #128
-	stlr x10, [x9]
-	mov x0, #1
-	ret
-.Lf177_b3:
-	mov x0, #0
-	ret
-	.cfi_endproc
-
 // func sched.rq_get
 	.p2align 2
 	.type xo_f_sched_2erq__get, %function
 xo_f_sched_2erq__get:
-.Lf178_begin:
+.Lf179_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -20470,21 +20562,21 @@ xo_f_sched_2erq__get:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf178_b0:
+.Lf179_b0:
 	mov x20, x0
-.Lf178_b2:
+.Lf179_b2:
 	add x9, x20, #0
 	ldar x19, [x9]
 	ldr x9, [x20, #128]
 	cmp x9, x19
-	b.ne .Lf178_b5
-.Lf178_b3:
+	b.ne .Lf179_b5
+.Lf179_b3:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf178_b5:
+.Lf179_b5:
 	and x10, x19, #255
 	mov x9, #17
 	add x9, x9, x10
@@ -20496,8 +20588,8 @@ xo_f_sched_2erq__get:
 	bl __aarch64_cas8_rel
 	cmp x0, x19
 	cset x9, eq
-	cbz x9, .Lf178_b2
-.Lf178_b6:
+	cbz x9, .Lf179_b2
+.Lf179_b6:
 	mov x0, x21
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -20509,7 +20601,7 @@ xo_f_sched_2erq__get:
 	.p2align 2
 	.type xo_f_sched_2efiber__run, %function
 xo_f_sched_2efiber__run:
-.Lf179_begin:
+.Lf180_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
@@ -20525,14 +20617,14 @@ xo_f_sched_2efiber__run:
 	.cfi_offset w21, -24
 	.cfi_offset w24, -16
 	.cfi_offset w23, -8
-.Lf179_b0:
+.Lf180_b0:
 	mov x22, x0
 	mov x20, x1
 	bl xo_tlocal_addr
 	mov x21, x0
 	ldr x24, [x21, #0]
 	ldr x23, [x22, #2216]
-.Lf179_b2:
+.Lf180_b2:
 	add x10, x20, #40
 	mov x9, #0
 	str x9, [x10]
@@ -20540,38 +20632,38 @@ xo_f_sched_2efiber__run:
 	ldr x9, [x20, #32]
 	str x9, [x21, #0]
 	cmp x23, #0
-	b.eq .Lf179_b5
-.Lf179_b3:
+	b.eq .Lf180_b5
+.Lf180_b3:
 	mov x0, #4
 	mov x1, x22
 	mov x2, x20
 	bl xo_sched_hook
-.Lf179_b5:
+.Lf180_b5:
 	add x0, x22, #2208
 	ldr x1, [x20, #0]
 	bl xo_stack_switch
 	cmp x23, #0
-	b.eq .Lf179_b8
-.Lf179_b6:
+	b.eq .Lf180_b8
+.Lf180_b6:
 	mov x0, #5
 	mov x1, x22
 	mov x2, x20
 	bl xo_sched_hook
-.Lf179_b8:
+.Lf180_b8:
 	mov x9, #0
 	str x9, [x21, #8]
 	str x24, [x21, #0]
 	ldr x9, [x20, #48]
 	cmp x9, #0
-	b.eq .Lf179_b11
-.Lf179_b9:
+	b.eq .Lf180_b11
+.Lf180_b9:
 	mov x0, #1
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf179_b11:
+.Lf180_b11:
 	add x2, x20, #40
 	mov x19, #1
 	mov x1, #2
@@ -20579,8 +20671,8 @@ xo_f_sched_2efiber__run:
 	bl __aarch64_cas8_acq_rel
 	cmp x0, x19
 	cset x9, eq
-	cbz x9, .Lf179_b2
-.Lf179_b12:
+	cbz x9, .Lf180_b2
+.Lf180_b12:
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -20593,7 +20685,7 @@ xo_f_sched_2efiber__run:
 	.p2align 2
 	.type xo_f_pool_2efiber__free, %function
 xo_f_pool_2efiber__free:
-.Lf180_begin:
+.Lf181_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -20606,13 +20698,13 @@ xo_f_pool_2efiber__free:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf180_b0:
+.Lf181_b0:
 	mov x20, x0
 	mov x21, x2
 	ldr x10, [x1, #2328]
 	cmp x10, #8
-	b.ge .Lf180_b3
-.Lf180_b1:
+	b.ge .Lf181_b3
+.Lf181_b1:
 	mov x9, #2264
 	add x9, x9, x10, lsl #3
 	str x21, [x1, x9]
@@ -20622,7 +20714,7 @@ xo_f_pool_2efiber__free:
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf180_b3:
+.Lf181_b3:
 	add x2, x20, #0
 	mov x19, #0
 	mov x1, #1
@@ -20631,91 +20723,91 @@ xo_f_pool_2efiber__free:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-	cbz x9, .Lf180_b6
-.Lf180_b4:
+	cbz x9, .Lf181_b6
+.Lf181_b4:
 	mov x0, x20
 	bl xo_f_pool_2elock__slow
-.Lf180_b6:
+.Lf181_b6:
 	ldr x10, [x20, #16]
 	cmp x10, #64
-	b.ge .Lf180_b15
-.Lf180_b7:
+	b.ge .Lf181_b15
+.Lf181_b7:
 	ldr x9, [x20, #8]
 	str x9, [x21, #64]
 	add x9, x20, #8
 	str x21, [x9]
 	add x9, x10, #1
 	str x9, [x20, #16]
-.Lf180_b8:
+.Lf181_b8:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf180_b12
-.Lf180_b9:
+	b.ne .Lf181_b12
+.Lf181_b9:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf180_b12:
+.Lf181_b12:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf180_b15:
+.Lf181_b15:
 	add x1, x20, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf180_b19
-.Lf180_b16:
+	b.ne .Lf181_b19
+.Lf181_b16:
 	mov x0, x20
 	bl xo_f_pool_2efutex__wake
-.Lf180_b19:
+.Lf181_b19:
 	mov x0, #5
 	mov x2, #0
 	mov x1, x21
 	bl xo_sched_rt
 	ldp x22, x20, [x21, #8]
 	ldr x19, [x21, #80]
-.Lf180_b20:
+.Lf181_b20:
 	bl xo_f_pool_2elayer
 	cmp x0, #1
-	b.eq .Lf180_b21
-.Lf180_b36:
+	b.eq .Lf181_b21
+.Lf181_b36:
 	cmp x0, #2
-	b.eq .Lf180_b37
-.Lf180_b38:
+	b.eq .Lf181_b37
+.Lf181_b38:
 	cmp x0, #3
-	b.eq .Lf180_b39
-	b .Lf180_b42
-.Lf180_b21:
+	b.eq .Lf181_b39
+	b .Lf181_b42
+.Lf181_b21:
 	cmp x19, #0
-	b.eq .Lf180_b25
-.Lf180_b22:
+	b.eq .Lf181_b25
+.Lf181_b22:
 	mov x0, #12
 	mov x1, x22
 	mov x2, x20
 	bl xo_sched_rt
-	b .Lf180_b42
-.Lf180_b25:
+	b .Lf181_b42
+.Lf181_b25:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf180_b26
-.Lf180_b27:
+	b.eq .Lf181_b26
+.Lf181_b27:
 	cmp x9, #0
-	b.eq .Lf180_b28
-.Lf180_b29:
+	b.eq .Lf181_b28
+.Lf181_b29:
 	cmp x9, #2
-	b.eq .Lf180_b30
-	b .Lf180_b35
-.Lf180_b26:
+	b.eq .Lf181_b30
+	b .Lf181_b35
+.Lf181_b26:
 	mov x6, #215
-	b .Lf180_b32
-.Lf180_b28:
+	b .Lf181_b32
+.Lf181_b28:
 	mov x6, #11
-	b .Lf180_b32
-.Lf180_b30:
+	b .Lf181_b32
+.Lf181_b30:
 	mov x6, #-1
-.Lf180_b32:
+.Lf181_b32:
 	mov x2, #0
 	mov x0, x22
 	mov x1, x20
@@ -20724,24 +20816,13 @@ xo_f_pool_2efiber__free:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-	b .Lf180_b42
-.Lf180_b35:
+	b .Lf181_b42
+.Lf181_b35:
 	brk #1
-.Lf180_b37:
-	adrp x9, .Lxo_str54
-	add x9, x9, :lo12:.Lxo_str54
-	mov x1, #50
-	add x0, x9, #16
-	adrp x9, .Lxo_str55
-	add x9, x9, :lo12:.Lxo_str55
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf180_b39:
+.Lf181_b37:
 	adrp x9, .Lxo_str56
 	add x9, x9, :lo12:.Lxo_str56
-	mov x1, #56
+	mov x1, #50
 	add x0, x9, #16
 	adrp x9, .Lxo_str57
 	add x9, x9, :lo12:.Lxo_str57
@@ -20749,7 +20830,18 @@ xo_f_pool_2efiber__free:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf180_b42:
+.Lf181_b39:
+	adrp x9, .Lxo_str58
+	add x9, x9, :lo12:.Lxo_str58
+	mov x1, #56
+	add x0, x9, #16
+	adrp x9, .Lxo_str59
+	add x9, x9, :lo12:.Lxo_str59
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf181_b42:
 	sub x0, x21, #8
 	bl xo_heap_release
 	ldp x20, x19, [sp, #16]
@@ -20762,7 +20854,7 @@ xo_f_pool_2efiber__free:
 	.p2align 2
 	.type xo_f_pool_2emap__stack, %function
 xo_f_pool_2emap__stack:
-.Lf181_begin:
+.Lf182_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -20774,24 +20866,24 @@ xo_f_pool_2emap__stack:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf181_b0:
+.Lf182_b0:
 	mov x20, x0
 	mov x21, x1
 	mov x19, x2
 	bl xo_f_pool_2elayer
 	cmp x0, #1
-	b.eq .Lf181_b1
-.Lf181_b34:
+	b.eq .Lf182_b1
+.Lf182_b34:
 	cmp x0, #2
-	b.eq .Lf181_b35
-.Lf181_b36:
+	b.eq .Lf182_b35
+.Lf182_b36:
 	cmp x0, #3
-	b.eq .Lf181_b37
-	b .Lf181_b38
-.Lf181_b1:
+	b.eq .Lf182_b37
+	b .Lf182_b38
+.Lf182_b1:
 	cmp x19, #0
-	b.eq .Lf181_b4
-.Lf181_b2:
+	b.eq .Lf182_b4
+.Lf182_b2:
 	mov x0, #11
 	mov x1, x20
 	mov x2, x21
@@ -20800,28 +20892,28 @@ xo_f_pool_2emap__stack:
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf181_b4:
+.Lf182_b4:
 	mov x4, #-1
-.Lf181_b6:
+.Lf182_b6:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf181_b7
-.Lf181_b8:
+	b.eq .Lf182_b7
+.Lf182_b8:
 	cmp x9, #0
-	b.eq .Lf181_b9
-.Lf181_b10:
+	b.eq .Lf182_b9
+.Lf182_b10:
 	cmp x9, #2
-	b.eq .Lf181_b11
-	b .Lf181_b33
-.Lf181_b7:
+	b.eq .Lf182_b11
+	b .Lf182_b33
+.Lf182_b7:
 	mov x6, #222
-	b .Lf181_b13
-.Lf181_b9:
+	b .Lf182_b13
+.Lf182_b9:
 	mov x6, #9
-	b .Lf181_b13
-.Lf181_b11:
+	b .Lf182_b13
+.Lf182_b11:
 	mov x6, #-1
-.Lf181_b13:
+.Lf182_b13:
 	mov x0, #0
 	mov x2, #3
 	mov x3, #16418
@@ -20830,14 +20922,14 @@ xo_f_pool_2emap__stack:
 	mov x8, x6
 	svc #0
 	mov x20, x0
-.Lf181_b14:
+.Lf182_b14:
 	cmp x20, #0
-	b.ge .Lf181_b21
-.Lf181_b15:
+	b.ge .Lf182_b21
+.Lf182_b15:
 	mov x9, #-4096
 	cmp x20, x9
-	b.le .Lf181_b21
-.Lf181_b18:
+	b.le .Lf182_b21
+.Lf182_b18:
 	mov x19, #0
 	sub x1, x19, x20
 	mov x0, #4
@@ -20847,23 +20939,23 @@ xo_f_pool_2emap__stack:
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf181_b21:
+.Lf182_b21:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf181_b29
-.Lf181_b23:
+	b.eq .Lf182_b29
+.Lf182_b23:
 	cmp x9, #0
-	b.eq .Lf181_b30
-.Lf181_b25:
+	b.eq .Lf182_b30
+.Lf182_b25:
 	cmp x9, #2
-	b.eq .Lf181_b30
-	b .Lf181_b32
-.Lf181_b29:
+	b.eq .Lf182_b30
+	b .Lf182_b32
+.Lf182_b29:
 	mov x6, #226
-	b .Lf181_b31
-.Lf181_b30:
+	b .Lf182_b31
+.Lf182_b30:
 	mov x6, #10
-.Lf181_b31:
+.Lf182_b31:
 	mov x2, #0
 	mov x0, x20
 	mov x1, x21
@@ -20872,26 +20964,15 @@ xo_f_pool_2emap__stack:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-	b .Lf181_b39
-.Lf181_b32:
+	b .Lf182_b39
+.Lf182_b32:
 	brk #1
-.Lf181_b33:
+.Lf182_b33:
 	brk #1
-.Lf181_b35:
-	adrp x9, .Lxo_str58
-	add x9, x9, :lo12:.Lxo_str58
-	mov x1, #48
-	add x0, x9, #16
-	adrp x9, .Lxo_str59
-	add x9, x9, :lo12:.Lxo_str59
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf181_b37:
+.Lf182_b35:
 	adrp x9, .Lxo_str60
 	add x9, x9, :lo12:.Lxo_str60
-	mov x1, #57
+	mov x1, #48
 	add x0, x9, #16
 	adrp x9, .Lxo_str61
 	add x9, x9, :lo12:.Lxo_str61
@@ -20899,9 +20980,20 @@ xo_f_pool_2emap__stack:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf181_b38:
+.Lf182_b37:
+	adrp x9, .Lxo_str62
+	add x9, x9, :lo12:.Lxo_str62
+	mov x1, #57
+	add x0, x9, #16
+	adrp x9, .Lxo_str63
+	add x9, x9, :lo12:.Lxo_str63
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf182_b38:
 	mov x20, #0
-.Lf181_b39:
+.Lf182_b39:
 	mov x0, x20
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -20913,9 +21005,9 @@ xo_f_pool_2emap__stack:
 	.p2align 2
 	.type xo_f_sched_2efiber__frame, %function
 xo_f_sched_2efiber__frame:
-.Lf182_begin:
+.Lf183_begin:
 	.cfi_startproc
-.Lf182_b0:
+.Lf183_b0:
 	mov x12, x0
 	add x11, x1, x2
 	and x9, x11, #15
@@ -20924,29 +21016,29 @@ xo_f_sched_2efiber__frame:
 	add x13, x13, :lo12:xo_fiber_entry
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf182_b1
-.Lf182_b13:
+	b.eq .Lf183_b1
+.Lf183_b13:
 	cmp x9, #0
-	b.eq .Lf182_b14
-.Lf182_b26:
+	b.eq .Lf183_b14
+.Lf183_b26:
 	cmp x9, #2
-	b.eq .Lf182_b27
-	b .Lf182_b29
-.Lf182_b1:
+	b.eq .Lf183_b27
+	b .Lf183_b29
+.Lf183_b1:
 	mov x9, #0
 	cmp x9, #2
-	b.eq .Lf182_b2
-.Lf182_b3:
+	b.eq .Lf183_b2
+.Lf183_b3:
 	cmp x9, #1
-	b.eq .Lf182_b9
-.Lf182_b5:
+	b.eq .Lf183_b9
+.Lf183_b5:
 	cmp x9, #0
-	b.eq .Lf182_b9
-.Lf182_b7:
+	b.eq .Lf183_b9
+.Lf183_b7:
 	cmp x9, #3
-	b.eq .Lf182_b9
-	b .Lf182_b12
-.Lf182_b2:
+	b.eq .Lf183_b9
+	b .Lf183_b12
+.Lf183_b2:
 	sub x0, x10, #192
 	mov x9, #0
 	str x9, [x0, #80]
@@ -20955,31 +21047,31 @@ xo_f_sched_2efiber__frame:
 	str x10, [x0, #160]
 	sub x9, x11, x3
 	stp x9, x1, [x0, #168]
-	b .Lf182_b28
-.Lf182_b9:
+	b .Lf183_b28
+.Lf183_b9:
 	sub x0, x10, #160
 	mov x9, #0
 	str x9, [x0, #80]
 	stp x12, x4, [x0, #0]
 	str x13, [x0, #88]
-	b .Lf182_b28
-.Lf182_b12:
+	b .Lf183_b28
+.Lf183_b12:
 	brk #1
-.Lf182_b14:
+.Lf183_b14:
 	mov x9, #0
 	cmp x9, #2
-	b.eq .Lf182_b15
-.Lf182_b16:
+	b.eq .Lf183_b15
+.Lf183_b16:
 	cmp x9, #1
-	b.eq .Lf182_b22
-.Lf182_b18:
+	b.eq .Lf183_b22
+.Lf183_b18:
 	cmp x9, #0
-	b.eq .Lf182_b22
-.Lf182_b20:
+	b.eq .Lf183_b22
+.Lf183_b20:
 	cmp x9, #3
-	b.eq .Lf182_b22
-	b .Lf182_b25
-.Lf182_b15:
+	b.eq .Lf183_b22
+	b .Lf183_b25
+.Lf183_b15:
 	sub x0, x10, #264
 	mov x9, #0
 	str x9, [x0, #248]
@@ -20993,8 +21085,8 @@ xo_f_sched_2efiber__frame:
 	str x4, [x0, #216]
 	str x12, [x0, #240]
 	str x13, [x0, #256]
-	b .Lf182_b28
-.Lf182_b22:
+	b .Lf183_b28
+.Lf183_b22:
 	sub x0, x10, #64
 	mov x9, #0
 	str x9, [x0, #48]
@@ -21004,14 +21096,14 @@ xo_f_sched_2efiber__frame:
 	strh w9, [x0, #4]
 	stp x4, x12, [x0, #32]
 	str x13, [x0, #56]
-	b .Lf182_b28
-.Lf182_b25:
+	b .Lf183_b28
+.Lf183_b25:
 	brk #1
-.Lf182_b27:
+.Lf183_b27:
 	mov x0, #0
-.Lf182_b28:
+.Lf183_b28:
 	ret
-.Lf182_b29:
+.Lf183_b29:
 	brk #1
 	.cfi_endproc
 
@@ -21019,7 +21111,7 @@ xo_f_sched_2efiber__frame:
 	.p2align 2
 	.type xo_f_pool_2ethread__start, %function
 xo_f_pool_2ethread__start:
-.Lf183_begin:
+.Lf184_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
@@ -21029,33 +21121,22 @@ xo_f_pool_2ethread__start:
 	.cfi_offset w30, -24
 	.cfi_offset w20, -16
 	.cfi_offset w19, -8
-.Lf183_b0:
+.Lf184_b0:
 	mov x19, x0
 	mov x20, x1
 	bl xo_f_pool_2elayer
 	cmp x0, #2
-	b.eq .Lf183_b1
-.Lf183_b2:
+	b.eq .Lf184_b1
+.Lf184_b2:
 	cmp x0, #3
-	b.eq .Lf183_b3
-	b .Lf183_b4
-.Lf183_b1:
+	b.eq .Lf184_b3
+	b .Lf184_b4
+.Lf184_b1:
 	mov x0, #80
 	bl xo_heap_large
-	adrp x9, .Lxo_str39
-	add x9, x9, :lo12:.Lxo_str39
-	mov x1, #61
-	add x0, x9, #16
-	adrp x9, .Lxo_str40
-	add x9, x9, :lo12:.Lxo_str40
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf183_b3:
 	adrp x9, .Lxo_str41
 	add x9, x9, :lo12:.Lxo_str41
-	mov x1, #57
+	mov x1, #61
 	add x0, x9, #16
 	adrp x9, .Lxo_str42
 	add x9, x9, :lo12:.Lxo_str42
@@ -21063,14 +21144,25 @@ xo_f_pool_2ethread__start:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf183_b4:
+.Lf184_b3:
+	adrp x9, .Lxo_str43
+	add x9, x9, :lo12:.Lxo_str43
+	mov x1, #57
+	add x0, x9, #16
+	adrp x9, .Lxo_str44
+	add x9, x9, :lo12:.Lxo_str44
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf184_b4:
 	mov x0, #8
 	mov x1, x19
 	mov x2, x20
 	bl xo_sched_rt
 	cmp x0, #0
 	cset x0, ne
-.Lf183_b5:
+.Lf184_b5:
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
@@ -21080,9 +21172,9 @@ xo_f_pool_2ethread__start:
 	.p2align 2
 	.type xo_f_num_2eword__at, %function
 xo_f_num_2eword__at:
-.Lf184_begin:
+.Lf185_begin:
 	.cfi_startproc
-.Lf184_b0:
+.Lf185_b0:
 	add x9, x0, #16
 	ldr x0, [x9, x2]
 	ret
@@ -21092,24 +21184,24 @@ xo_f_num_2eword__at:
 	.p2align 2
 	.type xo_f_ints_2eappend__val, %function
 xo_f_ints_2eappend__val:
-.Lf185_begin:
+.Lf186_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf185_b0:
+.Lf186_b0:
 	cmp x4, #0
-	b.eq .Lf185_b6
-.Lf185_b1:
+	b.eq .Lf186_b6
+.Lf186_b1:
 	cmp x3, #64
-	b.ne .Lf185_b6
-.Lf185_b4:
+	b.ne .Lf186_b6
+.Lf186_b4:
 	bl xo_f_show_2eappend__u64
 	ldp x29, x30, [sp], #16
 	ret
-.Lf185_b6:
+.Lf186_b6:
 	bl xo_f_num_2eappend__int
 	ldp x29, x30, [sp], #16
 	ret
@@ -21119,73 +21211,73 @@ xo_f_ints_2eappend__val:
 	.p2align 2
 	.type xo_f_ints_2etype__name, %function
 xo_f_ints_2etype__name:
-.Lf186_begin:
+.Lf187_begin:
 	.cfi_startproc
-.Lf186_b0:
+.Lf187_b0:
 	cmp x0, #8
-	b.eq .Lf186_b1
-.Lf186_b6:
+	b.eq .Lf187_b1
+.Lf187_b6:
 	cmp x0, #16
-	b.eq .Lf186_b7
-.Lf186_b12:
+	b.eq .Lf187_b7
+.Lf187_b12:
 	cmp x0, #32
-	b.eq .Lf186_b13
-	b .Lf186_b18
-.Lf186_b1:
+	b.eq .Lf187_b13
+	b .Lf187_b18
+.Lf187_b1:
 	cmp x1, #0
-	b.eq .Lf186_b3
-.Lf186_b2:
-	adrp x0, .Lxo_str46
-	add x0, x0, :lo12:.Lxo_str46
-	mov x1, #5
-	b .Lf186_b4
-.Lf186_b3:
-	adrp x0, .Lxo_str47
-	add x0, x0, :lo12:.Lxo_str47
-	mov x1, #4
-.Lf186_b4:
-	ret
-.Lf186_b7:
-	cmp x1, #0
-	b.eq .Lf186_b9
-.Lf186_b8:
+	b.eq .Lf187_b3
+.Lf187_b2:
 	adrp x0, .Lxo_str48
 	add x0, x0, :lo12:.Lxo_str48
-	mov x1, #6
-	b .Lf186_b10
-.Lf186_b9:
+	mov x1, #5
+	b .Lf187_b4
+.Lf187_b3:
 	adrp x0, .Lxo_str49
 	add x0, x0, :lo12:.Lxo_str49
-	mov x1, #5
-.Lf186_b10:
+	mov x1, #4
+.Lf187_b4:
 	ret
-.Lf186_b13:
+.Lf187_b7:
 	cmp x1, #0
-	b.eq .Lf186_b15
-.Lf186_b14:
+	b.eq .Lf187_b9
+.Lf187_b8:
 	adrp x0, .Lxo_str50
 	add x0, x0, :lo12:.Lxo_str50
 	mov x1, #6
-	b .Lf186_b16
-.Lf186_b15:
+	b .Lf187_b10
+.Lf187_b9:
 	adrp x0, .Lxo_str51
 	add x0, x0, :lo12:.Lxo_str51
 	mov x1, #5
-.Lf186_b16:
+.Lf187_b10:
 	ret
-.Lf186_b18:
+.Lf187_b13:
 	cmp x1, #0
-	b.eq .Lf186_b20
-.Lf186_b19:
+	b.eq .Lf187_b15
+.Lf187_b14:
 	adrp x0, .Lxo_str52
 	add x0, x0, :lo12:.Lxo_str52
 	mov x1, #6
-	b .Lf186_b21
-.Lf186_b20:
+	b .Lf187_b16
+.Lf187_b15:
 	adrp x0, .Lxo_str53
 	add x0, x0, :lo12:.Lxo_str53
+	mov x1, #5
+.Lf187_b16:
+	ret
+.Lf187_b18:
+	cmp x1, #0
+	b.eq .Lf187_b20
+.Lf187_b19:
+	adrp x0, .Lxo_str54
+	add x0, x0, :lo12:.Lxo_str54
+	mov x1, #6
+	b .Lf187_b21
+.Lf187_b20:
+	adrp x0, .Lxo_str55
+	add x0, x0, :lo12:.Lxo_str55
 	mov x1, #3
-.Lf186_b21:
+.Lf187_b21:
 	ret
 	.cfi_endproc
 
@@ -21193,7 +21285,7 @@ xo_f_ints_2etype__name:
 	.p2align 2
 	.type xo_f_pool_2eunmap__stack, %function
 xo_f_pool_2eunmap__stack:
-.Lf187_begin:
+.Lf188_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -21205,49 +21297,49 @@ xo_f_pool_2eunmap__stack:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf187_b0:
+.Lf188_b0:
 	mov x20, x0
 	mov x21, x1
 	mov x19, x2
 	bl xo_f_pool_2elayer
 	cmp x0, #1
-	b.eq .Lf187_b1
-.Lf187_b16:
+	b.eq .Lf188_b1
+.Lf188_b16:
 	cmp x0, #2
-	b.eq .Lf187_b17
-.Lf187_b18:
+	b.eq .Lf188_b17
+.Lf188_b18:
 	cmp x0, #3
-	b.eq .Lf187_b19
-	b .Lf187_b21
-.Lf187_b1:
+	b.eq .Lf188_b19
+	b .Lf188_b21
+.Lf188_b1:
 	cmp x19, #0
-	b.eq .Lf187_b5
-.Lf187_b2:
+	b.eq .Lf188_b5
+.Lf188_b2:
 	mov x0, #12
 	mov x1, x20
 	mov x2, x21
 	bl xo_sched_rt
-	b .Lf187_b21
-.Lf187_b5:
+	b .Lf188_b21
+.Lf188_b5:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf187_b6
-.Lf187_b7:
+	b.eq .Lf188_b6
+.Lf188_b7:
 	cmp x9, #0
-	b.eq .Lf187_b8
-.Lf187_b9:
+	b.eq .Lf188_b8
+.Lf188_b9:
 	cmp x9, #2
-	b.eq .Lf187_b10
-	b .Lf187_b15
-.Lf187_b6:
+	b.eq .Lf188_b10
+	b .Lf188_b15
+.Lf188_b6:
 	mov x6, #215
-	b .Lf187_b12
-.Lf187_b8:
+	b .Lf188_b12
+.Lf188_b8:
 	mov x6, #11
-	b .Lf187_b12
-.Lf187_b10:
+	b .Lf188_b12
+.Lf188_b10:
 	mov x6, #-1
-.Lf187_b12:
+.Lf188_b12:
 	mov x2, #0
 	mov x0, x20
 	mov x1, x21
@@ -21256,24 +21348,13 @@ xo_f_pool_2eunmap__stack:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-	b .Lf187_b21
-.Lf187_b15:
+	b .Lf188_b21
+.Lf188_b15:
 	brk #1
-.Lf187_b17:
-	adrp x9, .Lxo_str54
-	add x9, x9, :lo12:.Lxo_str54
-	mov x1, #50
-	add x0, x9, #16
-	adrp x9, .Lxo_str55
-	add x9, x9, :lo12:.Lxo_str55
-	mov x3, #27
-	add x2, x9, #16
-	bl xo_fault_raise
-	brk #1
-.Lf187_b19:
+.Lf188_b17:
 	adrp x9, .Lxo_str56
 	add x9, x9, :lo12:.Lxo_str56
-	mov x1, #56
+	mov x1, #50
 	add x0, x9, #16
 	adrp x9, .Lxo_str57
 	add x9, x9, :lo12:.Lxo_str57
@@ -21281,7 +21362,18 @@ xo_f_pool_2eunmap__stack:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf187_b21:
+.Lf188_b19:
+	adrp x9, .Lxo_str58
+	add x9, x9, :lo12:.Lxo_str58
+	mov x1, #56
+	add x0, x9, #16
+	adrp x9, .Lxo_str59
+	add x9, x9, :lo12:.Lxo_str59
+	mov x3, #27
+	add x2, x9, #16
+	bl xo_fault_raise
+	brk #1
+.Lf188_b21:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -21292,39 +21384,39 @@ xo_f_pool_2eunmap__stack:
 	.p2align 2
 	.type xo_f_linux_2emmap, %function
 xo_f_linux_2emmap:
-.Lf188_begin:
+.Lf189_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf188_b0:
-.Lf188_b1:
+.Lf189_b0:
+.Lf189_b1:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf188_b2
-.Lf188_b3:
+	b.eq .Lf189_b2
+.Lf189_b3:
 	cmp x9, #0
-	b.eq .Lf188_b4
-.Lf188_b5:
+	b.eq .Lf189_b4
+.Lf189_b5:
 	cmp x9, #2
-	b.eq .Lf188_b6
-	b .Lf188_b9
-.Lf188_b2:
+	b.eq .Lf189_b6
+	b .Lf189_b9
+.Lf189_b2:
 	mov x6, #222
-	b .Lf188_b8
-.Lf188_b4:
+	b .Lf189_b8
+.Lf189_b4:
 	mov x6, #9
-	b .Lf188_b8
-.Lf188_b6:
+	b .Lf189_b8
+.Lf189_b6:
 	mov x6, #-1
-.Lf188_b8:
+.Lf189_b8:
 	mov x8, x6
 	svc #0
 	ldp x29, x30, [sp], #16
 	ret
-.Lf188_b9:
+.Lf189_b9:
 	brk #1
 	.cfi_endproc
 
@@ -21332,30 +21424,30 @@ xo_f_linux_2emmap:
 	.p2align 2
 	.type xo_f_pool_2elayer__arch, %function
 xo_f_pool_2elayer__arch:
-.Lf189_begin:
+.Lf190_begin:
 	.cfi_startproc
-.Lf189_b0:
+.Lf190_b0:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf189_b1
-.Lf189_b2:
+	b.eq .Lf190_b1
+.Lf190_b2:
 	cmp x9, #0
-	b.eq .Lf189_b3
-.Lf189_b4:
+	b.eq .Lf190_b3
+.Lf190_b4:
 	cmp x9, #2
-	b.eq .Lf189_b5
-	b .Lf189_b7
-.Lf189_b1:
+	b.eq .Lf190_b5
+	b .Lf190_b7
+.Lf190_b1:
 	mov x0, #1
-	b .Lf189_b6
-.Lf189_b3:
+	b .Lf190_b6
+.Lf190_b3:
 	mov x0, #2
-	b .Lf189_b6
-.Lf189_b5:
+	b .Lf190_b6
+.Lf190_b5:
 	mov x0, #0
-.Lf189_b6:
+.Lf190_b6:
 	ret
-.Lf189_b7:
+.Lf190_b7:
 	brk #1
 	.cfi_endproc
 
@@ -21363,10 +21455,10 @@ xo_f_pool_2elayer__arch:
 	.p2align 2
 	.type xo_f_show_2eappend__u64, %function
 xo_f_show_2eappend__u64:
-.Lf190_begin:
+.Lf191_begin:
 	.cfi_startproc
 	.cfi_personality 155, DW.ref.xo_personality
-	.cfi_lsda 27, .Lf190_lsda
+	.cfi_lsda 27, .Lf191_lsda
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #24]
@@ -21375,17 +21467,17 @@ xo_f_show_2eappend__u64:
 	.cfi_offset w30, -40
 	.cfi_offset w20, -24
 	.cfi_offset w19, -16
-.Lf190_b0:
+.Lf191_b0:
 	mov x11, x2
 	cmp x11, #0
-	b.lt .Lf190_b3
-.Lf190_b1:
+	b.lt .Lf191_b3
+.Lf191_b1:
 	mov x2, x11
 	bl xo_f_num_2eappend__int
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf190_b3:
+.Lf191_b3:
 	lsr x10, x11, #1
 	movz x9, #26215, lsl #0
 	movk x9, #26214, lsl #16
@@ -21394,15 +21486,15 @@ xo_f_show_2eappend__u64:
 	smulh x9, x10, x9
 	asr x9, x9, #1
 	add x2, x9, x9, lsr #63
-.Lf190_b5:
+.Lf191_b5:
 	mov x9, #10
 	mul x9, x2, x9
 	sub x19, x11, x9
 	bl xo_f_num_2eappend__int
 	mov x20, x0
 	adds x2, x19, #48
-	b.vs .Lf190_fault1
-.Lf190_b8:
+	b.vs .Lf191_fault1
+.Lf191_b8:
 	mov x0, x20
 	add x3, sp, #16
 	bl xo_rs_push_byte
@@ -21410,13 +21502,13 @@ xo_f_show_2eappend__u64:
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf190_b4:
+.Lf191_b4:
 	bl .Lxo_drop1
-	b .Lf190_b7
-.Lf190_b6:
+	b .Lf191_b7
+.Lf191_b6:
 	mov x0, x20
 	bl .Lxo_drop1
-.Lf190_b7:
+.Lf191_b7:
 	bl xo_fault_continue
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
@@ -21424,15 +21516,15 @@ xo_f_show_2eappend__u64:
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-.Lf190_fault1:
+.Lf191_fault1:
 	mov x2, x19
 	mov x0, #48
 	mov x1, #43
 	adrp x3, .Lxo_loc168
 	add x3, x3, :lo12:.Lxo_loc168
-.Lf190_cs169a:
+.Lf191_cs169a:
 	bl xo_fault_overflow
-.Lf190_cs169b:
+.Lf191_cs169b:
 	brk #1
 	.cfi_endproc
 
@@ -21440,34 +21532,34 @@ xo_f_show_2eappend__u64:
 	.p2align 2
 	.type xo_f_linux_2emunmap, %function
 xo_f_linux_2emunmap:
-.Lf191_begin:
+.Lf192_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf191_b0:
-.Lf191_b1:
+.Lf192_b0:
+.Lf192_b1:
 	mov x9, #1
 	cmp x9, #1
-	b.eq .Lf191_b2
-.Lf191_b3:
+	b.eq .Lf192_b2
+.Lf192_b3:
 	cmp x9, #0
-	b.eq .Lf191_b4
-.Lf191_b5:
+	b.eq .Lf192_b4
+.Lf192_b5:
 	cmp x9, #2
-	b.eq .Lf191_b6
-	b .Lf191_b9
-.Lf191_b2:
+	b.eq .Lf192_b6
+	b .Lf192_b9
+.Lf192_b2:
 	mov x6, #215
-	b .Lf191_b8
-.Lf191_b4:
+	b .Lf192_b8
+.Lf192_b4:
 	mov x6, #11
-	b .Lf191_b8
-.Lf191_b6:
+	b .Lf192_b8
+.Lf192_b6:
 	mov x6, #-1
-.Lf191_b8:
+.Lf192_b8:
 	mov x2, #0
 	mov x3, x2
 	mov x4, x2
@@ -21476,7 +21568,7 @@ xo_f_linux_2emunmap:
 	svc #0
 	ldp x29, x30, [sp], #16
 	ret
-.Lf191_b9:
+.Lf192_b9:
 	brk #1
 	.cfi_endproc
 
@@ -22673,187 +22765,187 @@ xo_x_poll_wait:
 .Lf120_cste:
 	.section .gcc_except_table,"a",@progbits
 	.p2align 2
-.Lf150_lsda:
+.Lf151_lsda:
 	.byte 255
 	.byte 255
 	.byte 1
-	.uleb128 .Lf150_cste-.Lf150_cst
-.Lf150_cst:
-	.uleb128 .Lf150_cs132a-.Lf150_begin
-	.uleb128 .Lf150_cs132b-.Lf150_cs132a
-	.uleb128 .Lf150_b6-.Lf150_begin
+	.uleb128 .Lf151_cste-.Lf151_cst
+.Lf151_cst:
+	.uleb128 .Lf151_cs132a-.Lf151_begin
+	.uleb128 .Lf151_cs132b-.Lf151_cs132a
+	.uleb128 .Lf151_b6-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs137a-.Lf150_begin
-	.uleb128 .Lf150_cs137b-.Lf150_cs137a
-	.uleb128 .Lf150_b46-.Lf150_begin
+	.uleb128 .Lf151_cs137a-.Lf151_begin
+	.uleb128 .Lf151_cs137b-.Lf151_cs137a
+	.uleb128 .Lf151_b46-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs139a-.Lf150_begin
-	.uleb128 .Lf150_cs139b-.Lf150_cs139a
-	.uleb128 .Lf150_b57-.Lf150_begin
+	.uleb128 .Lf151_cs139a-.Lf151_begin
+	.uleb128 .Lf151_cs139b-.Lf151_cs139a
+	.uleb128 .Lf151_b57-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs140a-.Lf150_begin
-	.uleb128 .Lf150_cs140b-.Lf150_cs140a
-	.uleb128 .Lf150_b61-.Lf150_begin
+	.uleb128 .Lf151_cs140a-.Lf151_begin
+	.uleb128 .Lf151_cs140b-.Lf151_cs140a
+	.uleb128 .Lf151_b61-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs146a-.Lf150_begin
-	.uleb128 .Lf150_cs146b-.Lf150_cs146a
-	.uleb128 .Lf150_b110-.Lf150_begin
+	.uleb128 .Lf151_cs146a-.Lf151_begin
+	.uleb128 .Lf151_cs146b-.Lf151_cs146a
+	.uleb128 .Lf151_b110-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs147a-.Lf150_begin
-	.uleb128 .Lf150_cs147b-.Lf150_cs147a
-	.uleb128 .Lf150_b114-.Lf150_begin
+	.uleb128 .Lf151_cs147a-.Lf151_begin
+	.uleb128 .Lf151_cs147b-.Lf151_cs147a
+	.uleb128 .Lf151_b114-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs152a-.Lf150_begin
-	.uleb128 .Lf150_cs152b-.Lf150_cs152a
-	.uleb128 .Lf150_b127-.Lf150_begin
+	.uleb128 .Lf151_cs152a-.Lf151_begin
+	.uleb128 .Lf151_cs152b-.Lf151_cs152a
+	.uleb128 .Lf151_b127-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs154a-.Lf150_begin
-	.uleb128 .Lf150_cs154b-.Lf150_cs154a
-	.uleb128 .Lf150_b133-.Lf150_begin
+	.uleb128 .Lf151_cs154a-.Lf151_begin
+	.uleb128 .Lf151_cs154b-.Lf151_cs154a
+	.uleb128 .Lf151_b133-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs155a-.Lf150_begin
-	.uleb128 .Lf150_cs155b-.Lf150_cs155a
-	.uleb128 .Lf150_b143-.Lf150_begin
+	.uleb128 .Lf151_cs155a-.Lf151_begin
+	.uleb128 .Lf151_cs155b-.Lf151_cs155a
+	.uleb128 .Lf151_b143-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs157a-.Lf150_begin
-	.uleb128 .Lf150_cs157b-.Lf150_cs157a
-	.uleb128 .Lf150_b149-.Lf150_begin
+	.uleb128 .Lf151_cs157a-.Lf151_begin
+	.uleb128 .Lf151_cs157b-.Lf151_cs157a
+	.uleb128 .Lf151_b149-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs160a-.Lf150_begin
-	.uleb128 .Lf150_cs160b-.Lf150_cs160a
-	.uleb128 .Lf150_b155-.Lf150_begin
+	.uleb128 .Lf151_cs160a-.Lf151_begin
+	.uleb128 .Lf151_cs160b-.Lf151_cs160a
+	.uleb128 .Lf151_b155-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs162a-.Lf150_begin
-	.uleb128 .Lf150_cs162b-.Lf150_cs162a
-	.uleb128 .Lf150_b166-.Lf150_begin
+	.uleb128 .Lf151_cs162a-.Lf151_begin
+	.uleb128 .Lf151_cs162b-.Lf151_cs162a
+	.uleb128 .Lf151_b166-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs163a-.Lf150_begin
-	.uleb128 .Lf150_cs163b-.Lf150_cs163a
-	.uleb128 .Lf150_b174-.Lf150_begin
+	.uleb128 .Lf151_cs163a-.Lf151_begin
+	.uleb128 .Lf151_cs163b-.Lf151_cs163a
+	.uleb128 .Lf151_b174-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs164a-.Lf150_begin
-	.uleb128 .Lf150_cs164b-.Lf150_cs164a
-	.uleb128 .Lf150_b178-.Lf150_begin
+	.uleb128 .Lf151_cs164a-.Lf151_begin
+	.uleb128 .Lf151_cs164b-.Lf151_cs164a
+	.uleb128 .Lf151_b178-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs131a-.Lf150_begin
-	.uleb128 .Lf150_cs131b-.Lf150_cs131a
-	.uleb128 .Lf150_b4-.Lf150_begin
+	.uleb128 .Lf151_cs131a-.Lf151_begin
+	.uleb128 .Lf151_cs131b-.Lf151_cs131a
+	.uleb128 .Lf151_b4-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs133a-.Lf150_begin
-	.uleb128 .Lf150_cs133b-.Lf150_cs133a
-	.uleb128 .Lf150_b8-.Lf150_begin
+	.uleb128 .Lf151_cs133a-.Lf151_begin
+	.uleb128 .Lf151_cs133b-.Lf151_cs133a
+	.uleb128 .Lf151_b8-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs134a-.Lf150_begin
-	.uleb128 .Lf150_cs134b-.Lf150_cs134a
-	.uleb128 .Lf150_b14-.Lf150_begin
+	.uleb128 .Lf151_cs134a-.Lf151_begin
+	.uleb128 .Lf151_cs134b-.Lf151_cs134a
+	.uleb128 .Lf151_b14-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs135a-.Lf150_begin
-	.uleb128 .Lf150_cs135b-.Lf150_cs135a
-	.uleb128 .Lf150_b28-.Lf150_begin
+	.uleb128 .Lf151_cs135a-.Lf151_begin
+	.uleb128 .Lf151_cs135b-.Lf151_cs135a
+	.uleb128 .Lf151_b28-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs136a-.Lf150_begin
-	.uleb128 .Lf150_cs136b-.Lf150_cs136a
-	.uleb128 .Lf150_b35-.Lf150_begin
+	.uleb128 .Lf151_cs136a-.Lf151_begin
+	.uleb128 .Lf151_cs136b-.Lf151_cs136a
+	.uleb128 .Lf151_b35-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs138a-.Lf150_begin
-	.uleb128 .Lf150_cs138b-.Lf150_cs138a
-	.uleb128 .Lf150_b50-.Lf150_begin
+	.uleb128 .Lf151_cs138a-.Lf151_begin
+	.uleb128 .Lf151_cs138b-.Lf151_cs138a
+	.uleb128 .Lf151_b50-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs141a-.Lf150_begin
-	.uleb128 .Lf150_cs141b-.Lf150_cs141a
-	.uleb128 .Lf150_b63-.Lf150_begin
+	.uleb128 .Lf151_cs141a-.Lf151_begin
+	.uleb128 .Lf151_cs141b-.Lf151_cs141a
+	.uleb128 .Lf151_b63-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs142a-.Lf150_begin
-	.uleb128 .Lf150_cs142b-.Lf150_cs142a
-	.uleb128 .Lf150_b65-.Lf150_begin
+	.uleb128 .Lf151_cs142a-.Lf151_begin
+	.uleb128 .Lf151_cs142b-.Lf151_cs142a
+	.uleb128 .Lf151_b65-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs143a-.Lf150_begin
-	.uleb128 .Lf150_cs143b-.Lf150_cs143a
-	.uleb128 .Lf150_b67-.Lf150_begin
+	.uleb128 .Lf151_cs143a-.Lf151_begin
+	.uleb128 .Lf151_cs143b-.Lf151_cs143a
+	.uleb128 .Lf151_b67-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs144a-.Lf150_begin
-	.uleb128 .Lf150_cs144b-.Lf150_cs144a
-	.uleb128 .Lf150_b90-.Lf150_begin
+	.uleb128 .Lf151_cs144a-.Lf151_begin
+	.uleb128 .Lf151_cs144b-.Lf151_cs144a
+	.uleb128 .Lf151_b90-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs145a-.Lf150_begin
-	.uleb128 .Lf150_cs145b-.Lf150_cs145a
-	.uleb128 .Lf150_b103-.Lf150_begin
+	.uleb128 .Lf151_cs145a-.Lf151_begin
+	.uleb128 .Lf151_cs145b-.Lf151_cs145a
+	.uleb128 .Lf151_b103-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs148a-.Lf150_begin
-	.uleb128 .Lf150_cs148b-.Lf150_cs148a
-	.uleb128 .Lf150_b116-.Lf150_begin
+	.uleb128 .Lf151_cs148a-.Lf151_begin
+	.uleb128 .Lf151_cs148b-.Lf151_cs148a
+	.uleb128 .Lf151_b116-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs149a-.Lf150_begin
-	.uleb128 .Lf150_cs149b-.Lf150_cs149a
-	.uleb128 .Lf150_b118-.Lf150_begin
+	.uleb128 .Lf151_cs149a-.Lf151_begin
+	.uleb128 .Lf151_cs149b-.Lf151_cs149a
+	.uleb128 .Lf151_b118-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs150a-.Lf150_begin
-	.uleb128 .Lf150_cs150b-.Lf150_cs150a
-	.uleb128 .Lf150_b120-.Lf150_begin
+	.uleb128 .Lf151_cs150a-.Lf151_begin
+	.uleb128 .Lf151_cs150b-.Lf151_cs150a
+	.uleb128 .Lf151_b120-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs151a-.Lf150_begin
-	.uleb128 .Lf150_cs151b-.Lf150_cs151a
-	.uleb128 .Lf150_b125-.Lf150_begin
+	.uleb128 .Lf151_cs151a-.Lf151_begin
+	.uleb128 .Lf151_cs151b-.Lf151_cs151a
+	.uleb128 .Lf151_b125-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs153a-.Lf150_begin
-	.uleb128 .Lf150_cs153b-.Lf150_cs153a
-	.uleb128 .Lf150_b129-.Lf150_begin
+	.uleb128 .Lf151_cs153a-.Lf151_begin
+	.uleb128 .Lf151_cs153b-.Lf151_cs153a
+	.uleb128 .Lf151_b129-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs156a-.Lf150_begin
-	.uleb128 .Lf150_cs156b-.Lf150_cs156a
-	.uleb128 .Lf150_b145-.Lf150_begin
+	.uleb128 .Lf151_cs156a-.Lf151_begin
+	.uleb128 .Lf151_cs156b-.Lf151_cs156a
+	.uleb128 .Lf151_b145-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs158a-.Lf150_begin
-	.uleb128 .Lf150_cs158b-.Lf150_cs158a
-	.uleb128 .Lf150_b151-.Lf150_begin
+	.uleb128 .Lf151_cs158a-.Lf151_begin
+	.uleb128 .Lf151_cs158b-.Lf151_cs158a
+	.uleb128 .Lf151_b151-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs159a-.Lf150_begin
-	.uleb128 .Lf150_cs159b-.Lf150_cs159a
-	.uleb128 .Lf150_b151-.Lf150_begin
+	.uleb128 .Lf151_cs159a-.Lf151_begin
+	.uleb128 .Lf151_cs159b-.Lf151_cs159a
+	.uleb128 .Lf151_b151-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs161a-.Lf150_begin
-	.uleb128 .Lf150_cs161b-.Lf150_cs161a
-	.uleb128 .Lf150_b157-.Lf150_begin
+	.uleb128 .Lf151_cs161a-.Lf151_begin
+	.uleb128 .Lf151_cs161b-.Lf151_cs161a
+	.uleb128 .Lf151_b157-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs165a-.Lf150_begin
-	.uleb128 .Lf150_cs165b-.Lf150_cs165a
-	.uleb128 .Lf150_b184-.Lf150_begin
+	.uleb128 .Lf151_cs165a-.Lf151_begin
+	.uleb128 .Lf151_cs165b-.Lf151_cs165a
+	.uleb128 .Lf151_b184-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs166a-.Lf150_begin
-	.uleb128 .Lf150_cs166b-.Lf150_cs166a
-	.uleb128 .Lf150_b186-.Lf150_begin
+	.uleb128 .Lf151_cs166a-.Lf151_begin
+	.uleb128 .Lf151_cs166b-.Lf151_cs166a
+	.uleb128 .Lf151_b186-.Lf151_begin
 	.byte 0
-	.uleb128 .Lf150_cs167a-.Lf150_begin
-	.uleb128 .Lf150_cs167b-.Lf150_cs167a
-	.uleb128 .Lf150_b188-.Lf150_begin
+	.uleb128 .Lf151_cs167a-.Lf151_begin
+	.uleb128 .Lf151_cs167b-.Lf151_cs167a
+	.uleb128 .Lf151_b188-.Lf151_begin
 	.byte 0
-.Lf150_cste:
+.Lf151_cste:
 	.section .gcc_except_table,"a",@progbits
 	.p2align 2
-.Lf152_lsda:
+.Lf153_lsda:
 	.byte 255
 	.byte 255
 	.byte 1
-	.uleb128 .Lf152_cste-.Lf152_cst
-.Lf152_cst:
-	.uleb128 .Lf152_cs168a-.Lf152_begin
-	.uleb128 .Lf152_cs168b-.Lf152_cs168a
-	.uleb128 .Lf152_b37-.Lf152_begin
+	.uleb128 .Lf153_cste-.Lf153_cst
+.Lf153_cst:
+	.uleb128 .Lf153_cs168a-.Lf153_begin
+	.uleb128 .Lf153_cs168b-.Lf153_cs168a
+	.uleb128 .Lf153_b37-.Lf153_begin
 	.byte 0
-.Lf152_cste:
+.Lf153_cste:
 	.section .gcc_except_table,"a",@progbits
 	.p2align 2
-.Lf190_lsda:
+.Lf191_lsda:
 	.byte 255
 	.byte 255
 	.byte 1
-	.uleb128 .Lf190_cste-.Lf190_cst
-.Lf190_cst:
-	.uleb128 .Lf190_cs169a-.Lf190_begin
-	.uleb128 .Lf190_cs169b-.Lf190_cs169a
-	.uleb128 .Lf190_b6-.Lf190_begin
+	.uleb128 .Lf191_cste-.Lf191_cst
+.Lf191_cst:
+	.uleb128 .Lf191_cs169a-.Lf191_begin
+	.uleb128 .Lf191_cs169b-.Lf191_cs169a
+	.uleb128 .Lf191_b6-.Lf191_begin
 	.byte 0
-.Lf190_cste:
+.Lf191_cste:
 	.text
 	.globl xo_stack_switch
 	.hidden xo_stack_switch
@@ -23072,7 +23164,7 @@ DW.ref.xo_personality:
 .Lxo_str23:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:211"
+	.ascii "std/native/llrt/pool.xo:218"
 	.p2align 3
 .Lxo_str24:
 	.quad -9223372036854775808
@@ -23082,7 +23174,7 @@ DW.ref.xo_personality:
 .Lxo_str25:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:213"
+	.ascii "std/native/llrt/pool.xo:220"
 	.p2align 3
 .Lxo_str26:
 	.quad -9223372036854775808
@@ -23111,158 +23203,168 @@ DW.ref.xo_personality:
 	.p2align 3
 .Lxo_str31:
 	.quad -9223372036854775808
+	.quad 65
+	.ascii "the platform call `clock_gettime_nsec_np` of darwin on another OS"
+	.p2align 3
+.Lxo_str32:
+	.quad -9223372036854775808
+	.quad 27
+	.ascii "std/native/llrt/pool.xo:174"
+	.p2align 3
+.Lxo_str33:
+	.quad -9223372036854775808
 	.quad 35
 	.ascii "std/native/llrt/netpolicy.xo:221:10"
 	.p2align 3
-.Lxo_str32:
+.Lxo_str34:
 	.quad -9223372036854775808
 	.quad 35
 	.ascii "std/native/llrt/netpolicy.xo:221:21"
 	.p2align 3
-.Lxo_str33:
+.Lxo_str35:
 	.quad -9223372036854775808
 	.quad 68
 	.ascii "the platform call `SetThreadStackGuarantee` of windows on another OS"
 	.p2align 3
-.Lxo_str34:
+.Lxo_str36:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:673"
+	.ascii "std/native/llrt/pool.xo:690"
 	.p2align 3
-.Lxo_str35:
+.Lxo_str37:
 	.quad -9223372036854775808
 	.quad 56
 	.ascii "the platform call `__ulock_wait` of darwin on another OS"
 	.p2align 3
-.Lxo_str36:
+.Lxo_str38:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:192"
+	.ascii "std/native/llrt/pool.xo:199"
 	.p2align 3
-.Lxo_str37:
+.Lxo_str39:
 	.quad -9223372036854775808
 	.quad 58
 	.ascii "the platform call `WaitOnAddress` of windows on another OS"
 	.p2align 3
-.Lxo_str38:
+.Lxo_str40:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:197"
+	.ascii "std/native/llrt/pool.xo:204"
 	.p2align 3
-.Lxo_str39:
+.Lxo_str41:
 	.quad -9223372036854775808
 	.quad 61
 	.ascii "the platform call `pthread_attr_init` of darwin on another OS"
 	.p2align 3
-.Lxo_str40:
+.Lxo_str42:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:272"
+	.ascii "std/native/llrt/pool.xo:279"
 	.p2align 3
-.Lxo_str41:
+.Lxo_str43:
 	.quad -9223372036854775808
 	.quad 57
 	.ascii "the platform call `CreateThread` of windows on another OS"
 	.p2align 3
-.Lxo_str42:
+.Lxo_str44:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:286"
+	.ascii "std/native/llrt/pool.xo:293"
 	.p2align 3
-.Lxo_str43:
+.Lxo_str45:
 	.quad -9223372036854775808
 	.quad 11136
 	.ascii "\210\002\034\010\240\325\217\372S\344`\315i\3102\027\225\201\021\005\204\345\231\234\264\216\\ B\275\177\016\372\341U\006\345^\300\303a\262s\250\222\254\037RxZ\353G\236v\260\364\371\236\220R\267\227\247\346\213\030\363\354\"J\356\230\\c\232\223\322\276(\220\256\336/\250\253\334)\2773\374\2008\207\3562tZ\326;\222\326S\364\356?;\241\006)\252?\021\370ee\033f\264X\225\007\305$\244Y\312\307Jv\277>\242\177\341\256\272I\366-\015\360\274y]So\316\212\337\231Z\351\334sy\020,,\330\364\224\005\301\266+\240\330\221i\350K\212\233\033\007y\371Fq\2446\310N\266\204\342\336l\202\342H\227\267\230\215MDz\342\343%\233\026\010#\033\033\375r\177x\260j\214m\216\367 \016\345\365\3600\376O\237\226\\\205\357\010\2625\251Q^3-\275\275#G\274\263f+\213\336\202\023\3465\200x,\255v\254U0 \373\026\2131\314\257!P\313;L\223\027k<\350\271\334\255=\277\033*$\276J\337x\335\205Kb\350S\331\015\257\2424\255m\035\327k\2523o=q\324\207h\255\345@\214dr\206\006\225\000\313\214\215\311\251\302\030\037Q\257\375\016hH\272\300\375\357\360;\324\362\336f%\033\275\022\002mt\230\376\225v\245\204WK`\3670\266K\001\210\221>~;\324\316\245-^85\275\243\236A\3525\316]J\211B\317\271u\206\202\254L\006R\262\341\240z\316\225\211\201\223\011\224\321\353\357Cs\037\032I\031B\373\353\241\370\013\371\305\346\353\024\020\246`\233\237\022\372f\312\366Nww\340&\032\324\3208\202G\227\270\000\375\264\"U\225\230\260 \211\202c\261\214^s \236\2605U]_n\264Ub\274\335/6\220\250\305\035\203\2524\367\211!\353{+\325\273C\264\022\367\344#\325\001u\354\351\245-;eU\252\260k\232n6%!\3113\262G\370\211\276\352\324\234\006\301\012\204ni\273\300\236\231v,n%\012DH\361\015%\312C\352p\006\300\312\333dW\206*\315\226(W^j\222\006\0048\274\022>\355'u\200\274\362\354\365\0047\010\005\306k\227\215\350q\222\240\353.h3\306DJ\206\367\243~X1\207[D\223\035!\340\373j\356\263zL\236\256\375hr\025\270d)\330\272\005\352`Y\337E\032=\003\317\032\346\2753\216)\207$\271o\253k0\006b\301\320\217V\340\370y\324\266\323\245\226\206\274\207\272\361\304\263l\030w\230\211\244H\217<\250\253)).\266\340\207\336\224\376\253\315\0323%I\013\272\331\334q\214\024\013\035\177\213\300\360\237o\033\216(\020T\216\257\331M\344^\256\360\354\007J\242\2612\024\351q\333Pa\235\366\331,\350\311n\005\257\237\2541'\211\322\\\":\010\0341\276\312\306\232\307\027\376p\253\006\364\252H\012c\275m}x\201\271\235=M\326\010\261\325\332\314\273,\011N\353\360\223\202F\360\205\245\216\305\010`\365\273%!&\3558#Xl\247N\362\366\012\270\362*\257\252o(\007,nG\321\341\256\264\015f\257\365\032\312Ey\204\333\244\314\202M\355\220\310\237\215\331P<\227\227e\022\316\177\243\240(\265\272\007\361\017\345\014}\375\376\226\301_\314\310rb\251I\355S\036O\334\274\276\374\261w\377z\017\273\023\234\350\350%\261\0116\367=\317\252\237\254\351T\214a\221\261w\035\214\003u\015\203\225\307\027$j\357\271\365\235\325%oD\322\320\343z\371\035\255Dk(s\005Kw\305j\203b\316\354\2332\354\012C\371g\343N\325vE$\373\001\350\302?\247\315\223\367A\234\"\212\324V\355y\002\242\363\017\021\301xuRCk\326DV4\214AE\230\251\252xk\211\023\012\203\014\326kA\357\221V\276S\325V\306k\230\314#\217\313\306\021k6\354\355\250\212\354\267\206\276\277,9?\034\353\002\242\263\224\251\326\3632\024\327\367{\007O\343\245\203\212\340\271S\314\260?\331\314\365\332\311\"\\\217$\255X\350h\377\234\217\017@\263\321\276\225\231\3316l7\221\241\037\302\271\011\010\020#-\373\377\217DG\205\265\212\2472(\014\012\324\253\371\371\377\263\025\231\346\342lQ?2\217\014\311\026;\374\177\220\255\037\320\215\343\222g\177\331\247=\256J\373\237\364\230'D\261\234wA\337\317\021\315\231\035\372\3071\1771\225\335\203\325\021\327CV@@R\374\034\177\357>}\212r%kf\3525(Hf;\344^\253\216\034\255\317\356\005\000eC2\332@J\2356V\262c\330\202j\007@>\324\276\220hN\"\342uO>\207\221\242\004\350\246DwZ\002\342\252ZS\343\015\2516\313\005\242\320\025\025q\203\232U1(\\Q\323\003>\207\312D[Z\015\221\200\325\036\231\331\022\204\302\206\224\376\012yX\350\266\340\212f\377\217\027\245r\2509\276M\227nb\343\230-@\377s]\316\217\022\310-!=\012\373\216\177\034\210\177h\372\200\231\013\235\2744f\346|r\237#j\237\0029\241\200N\304\353\301\377\037\034N\207\254DGC\207\311 b\265f\262\377'\243\"\251\327\025\031\024\351\373\250\272b\000\237\377\361K\265\311\246\255\217\254q\235\251\264=`\303?wo\"|\020\231\263\027\316\304\323!M8\264\017U\313+\233T\177\240\235\001\366Hj`F\241S*~\373\340\224O\204\002\301\231mB\374\313Dt\332.9\031zc%C1\300\010S\373\376U\021\221\372\210\237X\274\356\223=\360\312'\272~\253U5y\265c\2675u|&\226\336X4/\213U\301K\242<%\203\222\033\260\273\026o\001\373\355\252\261\236\313\213\356#w\"\234\352\334\312\301y\251\025^F_\027uv\212\225\241\222\311\036\031\354\211\315\372\0136]\022\024\355\372I\267{f\037g\354\200\371\316\204\364\026Y\250y\034\345\032@\347\200'\341\267\202\322X\2567\011\3141\217\020\210\220\260\270\354\262\321\007\357\231\205\013?\376\262\025\252\264\334\346\247\037\206\311j\000g\316\316\275\337\232\324\341\223\340\221\247g\275B`\000A\241\326\213\340$m\\,\273\310\340mSx@\221I\314\256\030n\210s\367\351\372XHh\226\220\365[\177\332\236\211jPu\2449\257-\001^zy\231\217\210\003\226BR\311\006\204mx\201\365\330\327\177\263\252\203;\323\246{\010\345\310\326\3412\317\315_`\325d\012\210\220\232J\036\373&\315\177\241\340;\\\205\177\006U\232\240\356\362\\o\300\337\311\330J\263\246\036H\352\300H\252/\364\213\260W\374\216\035`\320&\332$\361\332\224;\361W\316\266]y\022<\202X\010\267\326\010=\305v\355\201$\265\027\027\313\242n\312d\014K\214vTh\242m\242\335\334}\313\011\375}\317]/\224\251\002\013\011\013\025T]\376L|]C5;\371\323\341\246\345&\215T\372\236\257m\032J\001\305{\304\232\020\237p\260\351\270\306\033\011\241\234A\266\2325\300\324\306\214\034$g\370bK\311\003\322c\001\303\370D\374\327\221v@\233\035\317]Bc\336\340y6V\373M6\224\020\302\344B\365\022\374\025Y\230\304+z\341C\271\224\362\235\223\262\027{[o>Z[\354l\312\363\234\227B\234\317\356,\231\005\2471r'\010\2750\204\275S\203\203*x\377\306P\275N1J\354<\345\354(d$5V\277\370\2446\321^\256\023F\017\224\231\2766\341\225w\033\207\204\205\366\231\230\027\023\271?n\204Y{U\342(\345&t\300~\335W\347\317\211\345/\332\352\0323O\230H8o\352\226\220!v\357]\310\322\360?c\276Z\006\013\245\274\264\251Skuz\007\355\017\373m\361\307M\316\353\341\224(\306\022YI\350\323\275\344\366\234\360`3\215\\\331\273\253\327-qd\354\2354\304,9\200\260\263\317\252\226My\215\275g\305A\365wG\240\334\240\203U\374\240\327\360\354`\033I\371\252,\344\211Dr\265\235\304\206\026\3649b\233\267\3257]\254\325\316\"\305u(\0341\307:\202%\313\205t\327\213\202k6\2232c}\274dq\367\236\323\250\206\2271\003\002\234\377]\256\353\275M\265\206\010S\250\374\375\203\002\203\177\365\331f-\241b\250\312g\322{\375$\303c\337r\320`\274\244=\251\336\200\203m\036\367Y\236\313GBx\353\015\215S\026a\244\010\346t\360\205\276\331RVfQp\350[y\315\213\037\222l'.\220g\366\3372Fq\331k\200\266S\333\243\330\034\272\000\363\227\277\227\315\317\206\240\244(\322\314\016\244\350\200\360}\257\375\300\203\250\310\315\262\006\200\022\315\"al]\033=\261\244\322\372\201_\010 W\200kyc\0321\306\356\246\303\234\260;\005t60\343\313\374`\275w\252\220\364\303\234\212\006\021D\374\333\276;\271\254\025\325\264\361\364D-H\025U\373\222\356\305\363\213-\005\021\027\231J\034M-\025\335\033u\266\360\356xF\325\\\277]c\240xZ\324b\322\344\254*\027\230\0124\3574|\310\026q\211\373\206\016\254z\016\237\206\200\225\240M=\256\3465]\324\022W\031\322F\250\340\272\011\241\314Y`\203t\211\327\254\237\206X\322\230\351K\311?p8\244\321+\006\314#Tw\203\377\221\317\335'F\243\006c{\010\277,)Ud\177\266B\325\261\027L\310;\032\312\356wsj=\037\344\223J\236\035_\272\312 >\365*\210b\206\223\216\234\356\202r{\264~T\215\2625*\373g8\262C\252#O\232a\236\3511\037\303\364\371\201\306\336\324\224\354\342\000\372\005d~\363\3718<\021<\213\004\335\323\215@\274\203\336^p8G\213\025\013\256E\324H\261P\253$\226v\214\006\031\356\332\215\331W\011\233\335$\326\255;\311\027\244\317\324\250\370\207\326\345\200\012\327\245L\345\274\035\215\003\012\323\366\251L\037!\315L\317\237^+ep\204\314\207t\324\037gi\000 \303Gv;?\306\322\337\324\310\204s\340A\000\364\331\354)\011\317w\307\027\012\373\245\220XR\000q\020h\364\314\302U\271\235\314y\317\264\356f@\215\024\202q\277\231\325\223\342\037\254\2010U@H\330L\361\306/\000\3138\333'\027\242|jPZ\016\240\255\270;\300\375\006\322\361\234\312\034\205\344\360\021\010\331\246J0\275\210F.D\375c\246\035m\026J\217\220.>v\025\354\234J\236\376\2072\004N\216Y\232\272\315\323\032'D\335\305\375)?\205\341\361\357@(\301\210\3410\225T\367|\364\216\346Y\356+\321\271x\365\214>\335\224\232\316X\0310\370t\273\202\347\32620\216\024:\301\001\257\037<6Rj\343\241\214?\274\261\231\210\361\301\232'\313\303\346D\334\345\267\247\025\017`\365\226\271\300\370^:\020\253)\336\245\021\333\022\270\262\274\347\360\266\366H\324\025tV\017\326\221\027f\337\353!\255d4[I\033\021\225\311%\273\316\237k\2234\354\276\000\331\015\261\312\373;\357i\302\207F\270B\247\356@OQ]=\372\012k\004\263)X\346\022Q*\021\243\245\264\014\334\346\302\342\017\032\367\217\253r\272\352\205\347\360G\223\240s\333\223\340\364\263V\017ieg!\355Y\270\210P\322\270\030\362\340,S\303>\301ih0sUr\203sO\227\214\373\023:\307\030BA\036\317\352NdP#\275\257\372\230\010\371\236\222\321\345\203\245b}$l\254\3339\277J\267F\367E\337r\247]\316\226\303K\211\203\267\2162\214\272\213kO\021\365\201|\264\236\253de2?/\251n\006\242Ur\242\233a\206\326\275\376\376\016{S\012\310\205u\207E\001\375\023\2066__\351,t\006\275\347R\351\226A\374\230\247\0047\267#8\021H,\240\247\243\374Q;\177\321\305\004\245,\206\025Z\367\304H\346=\023\205\357\202\373\"\347\333sM\230\232\365\332_\015Xf\253\243\272\353\340\322\320`>\301\263\321\267\020\356?\226\314\250&\231\007\005\371\2151\037\306\345\224\351\317\273\377Rp\177IFw\361\375\323\233\017\375\361a\325\2373\246\357\355\213\352\266\376\310\202S|n\272\312\307\300\217k\351.\245d\376{ch\033\012i\275\371\260s\306\243z\316\375=->!Q\246a\026\234N\010\\\246\014\241\276\006\270\215i\345\017\372\033\303b\012\363\317OInH&\361\303\336\223\370\342\363\372\314\357\303\243\333\211Z\267v:k\\\333m\230\034\340uZF)\226\370e\024\011\2063R\211\276#X\023\361\227\263\273\366\177Y\213g\300\246+\356,.X\355}\240jt\357\027\267@8H\333\224\334\034W\264N\244\302\250\353\335\344PF\032\022\272\023\344labM\363\222f\025\036\345\327\240\226\350\027\035\310\371\272 \260w`\3152\357\206$^\221.\022\035\334t\024\316\012\270\200\377\252\250\255\265\265\272V$\023\222\231\201\015\346`\277\325\022\031#\343il\355\227\366\377\341\020\217\234\227\305\253\357\365\215\301c\364\036\372?\215\312\263\203\375\266\226ks\261\262|\261\246\370\2170\275\240\344\274d|F\320\335\336\333]\320\366\263|\254\344\016\366\276\015,\242\212k\251:Bz\360\315k\235\222\263.\021\267J\255\306S\311\322\230l\301\206Dw`z\325d\235\330\267\250{\007\277\307q\350\213J|l\005_b\207rI\255d\327\034G\021-]\233\307\306\366:\251\317\233\330=\015\344\230\325y4\202yx\264\211\323\303\302N\215\020\035\377J\313`\361K\313\0206\204\2729QX*r\337\316\376\270\355\036\376\224C\245(\210e\356\264N\227\302>'\251\246=z\224\3162\352\376)b\"=s\207\270)\210f\314\034\201_R?Z}5\006\010\250&4*\200\377c\241\367&\317\260\334\302\007\312R0\3014`\377\274\311\265\360\002\335\223\263\211\374g|\361A8?,\374\342\254C\324x \254\273\300\3556)\203\247\233\235\015L\252\204K\224K\3251\251\204\363c\221\002\305\021\337\324e^y\236\012}\323e\360\2745C\366\325\026J\377\265\027FM.\244?\026\226\001\352\231EN\216\277\321\316KP9\215\317\233\373\201d\300\326\341q/\206\302^\344\210p\303\202z\242}\360LZN\273'sv]U&\272\221\214\205N\226o\370\020\325\370\007j:\352\257(\266\357&\342\273\2136U\012\367\211\004\211\345\333\262\243\253\260\332\352.\204\352\314t\254E+o\311OFk\256\310\222\235\222\022\000\311\213\013;\313\273\343\027\006\332z\267D7\027@\273n\316\011\275\252\334\235\207\220Y\345\025\005\035\020j\012B\314\266\352\251\302T\372W\217-#\022J\202F\251\237deT\363\351\370-\263\371\253\226\334\"\230\223G\275~)p$w\371\337\367V\274\223+~xY6\357\031\306v\352\373\213Z\266U<\333N\353W\003k\240w\024\345\372\256\361#k\013\222\"\346\355\304\205\210\225Y\236\271\332\355\354E\2166\253_\351\233Su\375\367\002\264\210\024\264\353\030\002\313\333\021\201\250\322\374\265\003\341\252\031\241&\237\302\275R\326\242R\007|\243D\231\325_I\360F3m\347K\245\223\204-\346\312\177\205\333-V\014@\244po\216\270\345\270\237\275\337\246R\271k\017P\315L\313\262&\037\247\007\255\227\320\247\247F\023\244\000 ~/xs\310$\314^\202\310(\014\214f\000\324\216;V\220\372-\177\366\242\3722\017/\200\000\211r\312k4y\371\036\264\313\271\377\322:\240@+O\274\206\201\327\267&\241\376\250\277\207I\310\020\366\3426\364\260\3462\270$\237\311\327\364-}\312\331\015C1]\240?\346\355\306\273\015ry\034=P\221\224}t\210\317_\251\370*\221\316\227cL\244u|\316H\265\341\333i\233\272\032\341>\276\257\206\311\033\002\233\"\332RD\302ha\231\316\255[\350\373\242\302A\253\220g\325\362\303\271?B\231r\342\372\245\031\011k\272`\305\227\032\324g\311\237\207\315\334\017`\313\005\351\270\266\275 \311\301\273\207\351\000T\0238>G#g$\355h;\262\252\351#\001)\013\343\206\014v\3006\224!e\257\012r\266\240\371\316\233\250\217\223pD\271i>[\215\016\344\010\370\302\302\222s\270\214\225\347\004\016\2620\022\035\013\266\271\271;H\363w\275\220\302Ho^+\362\306\261(\250J\032\360\325\354\264\363\032\0136\266\2568\0362R\335 l\013(\342\260\341\215\303c\332\306%_S\212\224#\007Y\215\016\2558Z~H\234W7\350\254y\354H\257\260Q\330\306\360\235Z\203-D\"\030\230'\033\333\334e\216\370lE1\344\370k\025\017\277\370\360\010\212\377X\033d\313\236\216\033\305\332\322\3566-\213\254?/\"=~Fr\342w\221\207\252\204\370\255\327\017\273j\314\035\330\016[\352\272\224\352R\273\314\206\351\264\302\237\022G\351\230\245\3519\245'\352\177\250$b\263G\327\230#?\016d\210\216\261\344\237\322\255:\240\031\015\177\354\216\211>\025\371\356\356\243\203\254$\0040h\317S\031+\216Z\267\252\352\214\244\327-\005<B\303\250_\26611eU%\260\315My\006\313\022\364\2227\021\277>_U\027\216\200\320\013\344\276\213\330\273\342\326n\016\267*\235\261\240\304\016\235\256\256\316j[\213\012\322du\004\336\310uRDZZ\202E\362.\215\006\276\222\205\025\373\022g\325\360\360\342\326\356=\030\304\266{s\355\234k`\205\226\326MFUL\036u\244Z\320(\304\206\270&<L\341\227\252\337e\222Mq\0043\365\250f0K\237\331=\325\253\177{\320\306\342?\231)@\376\216\003\250F\345\226_\232\204x\333\217\2773\320\275r\004R\230\336|\367\300\245V\322s\357@Dm\217\205f>\226\255\232\230'vc\250\225\250J\244y\023\000\347\335Y\301~\261S|\022\273R]\015X\030\300`U\257q\336\235h\033\327\351\246\264\020n\036\360\270\252\015\007\253b!q&\222\350p\312\004\023\226\263\312\321\310U\273i\015\260\266\"\015\375\305\227{`=\005;+*\304\020\\\344jP|\267}\232\270\214\343\004[\232z\212\271\216B\262\255\222\216`\363w\034\306\361@\031\355g\262\323\036Y7\2628\360U\2437.\221_\350\001\337\210f/\305\336Flk\306\342\274\272;1a\213\025\240=;K\254##w\033l\251\212}9\256\032\010\015\012^\227\354\253U\"\307S\355\334\307\331!J\220\2145\275\347\226uu\\T\024\352\034\210T.\332wA\326P~\322\222si\231$$\252\351\271\320\325\321\013\345\335\207w\320\303\277-\255\324d\350DK\306N^\225\264Jb\332\227<\354\204>\021\013\357;\361Z\275a\335\372\320\275K'\246\216\325\315\352\212\255\261\354\272\2249E\255\036\261\317\362J\201\245\355\030\336g\364\374CK,\263\316\201\327\316p\207\224\317\352\2001\374\024^\367_B\242\215\002M\251y\203%\241>;\2325\365\367\322\3120C\240\023X\344n\011\015\312\000\203\362\265\207\375\374S\210\030n\235\312\213H~\340\221\267\321t\236}4U\317d\242^w\332\235Xv%\006\022\306\235\201*\003\376J6\225Q\305\356\323\256\207\226\367\004\"\365\203\275\335\203:R;uD\315\024\276\232B5yr\226j\222\304'\212\222\225\000\232m\301\223\202\027\017<\005\267u\261,\367\272\200\000\311\3618c\335\022\213\306$S\356{\332tP\240\035\227\003^\312\353\026\374\366\323\352\032\021\222d\010\345\274\204\365\274\246\034\273\364\210\245a\225\266}J\036\354\3452l\320\343\3511+\007]\035\222\216\356\222\223\317\237Cb.2\377:I\264\24462\252w\270\302\207\324\372\271\376\276\011[\341M\304\276\224\225\346\263\251\211yh\276.L\331\254\260:\367|\035\220\020\012\366K\0017\235\017\017\330\\\0115\334$\264\224\214\363\236\301\204\204S\023\016\264KB\023.\341\271o\260\006\362\245e(\313\210Po\011\314\274\214\323E.D\267\207?\371\376\252$\313\013\377\353\257H\3279\025\245i\217\367\276\325\355\275\316\376\346\333\033M\210Z\016Ds\265\227\245\2646A_p\21100\225\370\210\012h1\374\316a\204\021w\314\253=|\2726+\015\302\375\274Bz\345\325\224\277\326L\033i\004v\2202=\265il\257\005\2757\206\017\261\301\302I\232?\246#\204G\033G\254\305\247S\035r3\334\200\317\017+e\031\342X\027\267\321\250\244N@\023a\303\323;\337O\215\227n\022\203\351&1\010\254\034Zd\012\327\243p=\012\327\243\243p=\012\327\243p=\314\314\314\314\314\314\314\314\314\314\314\314\314\314\314\314\000\000\000\000\000\000\000\200\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\240\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\310\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\372\000\000\000\000\000\000\000\000\000\000\000\000\000\000@\234\000\000\000\000\000\000\000\000\000\000\000\000\000\000P\303\000\000\000\000\000\000\000\000\000\000\000\000\000\000$\364\000\000\000\000\000\000\000\000\000\000\000\000\000\200\226\230\000\000\000\000\000\000\000\000\000\000\000\000\000 \274\276\000\000\000\000\000\000\000\000\000\000\000\000\000(k\356\000\000\000\000\000\000\000\000\000\000\000\000\000\371\002\225\000\000\000\000\000\000\000\000\000\000\000\000@\267C\272\000\000\000\000\000\000\000\000\000\000\000\000\020\245\324\350\000\000\000\000\000\000\000\000\000\000\000\000*\347\204\221\000\000\000\000\000\000\000\000\000\000\000\200\364 \346\265\000\000\000\000\000\000\000\000\000\000\000\2401\251_\343\000\000\000\000\000\000\000\000\000\000\000\004\277\311\033\216\000\000\000\000\000\000\000\000\000\000\000\305.\274\242\261\000\000\000\000\000\000\000\000\000\000@v:k\013\336\000\000\000\000\000\000\000\000\000\000\350\211\004#\307\212\000\000\000\000\000\000\000\000\000\000b\254\305\353x\255\000\000\000\000\000\000\000\000\000\200z\027\267&\327\330\000\000\000\000\000\000\000\000\000\220\254n2x\206\207\000\000\000\000\000\000\000\000\000\264W\012?\026h\251\000\000\000\000\000\000\000\000\000\241\355\314\316\033\302\323\000\000\000\000\000\000\000\000\240\204\024@aQY\204\000\000\000\000\000\000\000\000\310\245\031\220\271\245o\245\000\000\000\000\000\000\000\000:\017 \364'\217\313\316\000\000\000\000\000\000\000\000\204\011\224\370x9?\201\000\000\000\000\000\000\000@\345\013\2716\327\007\217\241\000\000\000\000\000\000\000P\336Ng\004\315\311\362\311\000\000\000\000\000\000\000\244\226\"\201E@|o\374\000\000\000\000\000\000\000M\235\265p+\250\255\305\235\000\000\000\000\000\000 \360\005\343L6\022\0317\305\000\000\000\000\000\000(l\306\033\340\303V\337\204\366\000\000\000\000\000\0002\307\\\021l:\226\013\023\232\000\000\000\000\000@\177<\263\025\007\311{\316\227\300\000\000\000\000\000\020\237K \333H\273\032\302\275\360\000\000\000\000\000\324\206\036\364\210\015\265P\231v\226\000\000\000\000\200D\024\0231\353P\342\244?\024\274\000\000\000\000\240U\331\027\375%\345\032\216O\031\353\000\000\000\000\010\253\317]\2767\317\320\270\321\357\222\000\000\000\000\345\312\241Z\255\005\003\005'\306\253\267\000\000\000@\236=J\361\031\307C\306\260\267\226\345\000\000\000\320\005\315\234mo\\\352{\3162~\217\000\000\000\242#\000\202\344\213\363\344\032\202\277]\263\000\000\200\212,\200\242\335n0\236\241b/5\340\000\000 \2557 \013\325E\336\002\245\235=!\214\000\0004\314\"\364&E\326\225C\016\005\215)\257\000\000A\177+\261p\226L{\324QF\360\363\332\000@\021_v\335\014<\017\315$\363+v\330\210\000\310j\373i\012\210\245S\000\356\357\266\223\016\253\000zEz\004\015\352\216h\200\351\253\2448\322\325\200\330\326\230E\220\244rA\360q\353fc\243\205PG\206\177+\332\246GQlN\246@<\014\247$\331g_\266\220\220\231e\007\342\317PK\317\320m\317A\367\343\264\364\377\237D\355\201\022\217\201\202\244!\211z\016\361\370\277\307\225h\"\327\362!\243\015j+\031R-\367\2579\273\002\353\214o\352\313\220Dv\237\246\370\364\233\010j\303%p\013\345\376\264\325SG\3206\362\002E\"\232\027&'O\237\220e\224,Bb\327\001\326\252\200\235\357\360\"\307\365~\271\267\322:MB\213\325\340\204+\255\353\370\262\336\247e\207\211\340\322w\205\0143;L\223\233/\353\210\237\364U\314c\325\246\317\377I\037x\302\373%k\307qk\277<\212\220\303\177\034'\026\363z\357E9NF\357\213V:\332\317q\330\355\227\254\265\313\343\360\213u\227\354\310\320C\216N\351\275\027\243\276\034\355\356R='\373\304\3241\242c\355\335K\356c\250\252\247L\370\034\373$_E^\224j\357t>\251\312\350\2176\3449\356\266\326u\271D+\022\216S\375\342\263D]\310\251dL\323\347\026\266\226q\250\274\333`J:\035\352\276\017\344\220\3151\376F\351U\211\274\335\210\244\244\256\023\035\265A\276\275\230c\253\253k\024\253\315M\232Xd\342\321-\355~<\226\226\306\354\212\240p`\267~\215\242<T\317\345\035\036\374\250\255\310\2148e\336\260\313K)C_\245%;\022\331\372\257\206\376\025\335\276\236\363\023\267\016\357I\253\307\374-\024\277-\2127Cxl2i5n\226\371{9\331.\271\254\004T\226\007\177\303\302I\373\367\332\207\217z\347\327\006\351{\311^t3\334\375\332\350\264\231\254\360\206\243q\355=\273(\240i\274\021#\"\300\327\254\250\014\316h\015\3522\010\304+\326\253*\260\015\330\322\220\001\303\220\244?\012\365\333e\253\032\216\010\307\203\372\340y\332\306g&yR?V\241\261\312\270\2448Y\030\221\270\001pW&\317\253\011^\375\346\315\206o^\265&\002L\355xa\013\306Z^\260\200\264\005[1X\201OT\3269\216w\361u\334\240!\307\261=\256aciL\310q\325m\223\023\311\3518\036\315\031:\274\003_:\316JIxX\373#\307e@\240H\253\004{\344\300\316-K\027\235v\234?(d\015\353b\232\035qB\371\035]\304\224\203O2\275\320\245;\000e\015\223wet\365yd\343~\354D\217\312 _\350\273j\277h\231\313\036N\317\023\213\231~\350v\342jE\357\302\277~\246!\303\330\355?\236\242\024\233\305\026\253\263\357\036\020\352\363N\351\317\305\345\354\200;\356J\320\225\022JrX\321\361\241\273\037(a\312\251]D\273\227\334\216\256En\212*&r\371<\024u\025\352\275\2232\032\327\011-\365X\347\033\246,iM\222V\234_p&&<Y.\341\242\317w\303\340\266l\203w\014\260/\213oz\231\213\303U\364\230\344Gd\225\017\234\373m\013\354?7\232\265\230\337\216\254^\275\211A\275$G\347\017\305\000\343~\227\262W\266,\354\221\354\355X\341S\366\300\233^=\337\355\3437g\266g)/l\364\231X![\206\213t\356\202\000\322\340y\275\207q\300\256\351\361g\256\021\252\243\200\006Y\330\354\351\215p\032d\356\001\332\225\224\314 Ho\016\350\262X\206\220\3764A\210\335\334\177\024\215\005\0111\336\356\2474>\202Q\252\025\324\237Y\360FK\275\226\352\321\301\315\342\345\324\032\311\007p\254\030\236l\2362#\231\300\255\017\205\260\335\004\306k\317\342\003E\377k\2770\231S\246\034\025\206\267F\203\333\204\026\377F\357|\177\350\317c\232ge\030d\022\346n_\214\025\256O\361\201~\300`?\217~\313OIw\357\232\231\243m\242\235\3608\0173^\276\343\034U\253\001\200\014\011\313\305,\007\323\277\365\255\\c*\026\002\240O\313\375\366\367\310\307/s\331s~\332M\001\304\021\237\236\372\232\335\334\375\347g(\035Q\241\0015\326F\306\270\001\025T\375\341\201\262e\245\011B\302\213\330\367&B\032\251|Z\"\037_\007FiYW\347\232Xi\260\351\215xu37\211\227\303/-\241\301\256\203\034d\261\326R\000\204k}\264{x\011\362\232\244#\275]\214g\3002c\316PM\353E\227\340F6\226\272\267@\370\377\373\001\245 f\027\275\230\330\303;\251\345P\266\377zB\316\250?]\354\276\316\264\212\023\037\345\243\337\214\351\200\311G\272\2237\001\2616l3o\306\027\360#\341\273\331\250\270\204A]DG\000\013\270\035\354l\331*\020\323\346\345\221t\025Y\300\015\246\222\023\344\307\032\352C\220/\333h\2557\230\310\207w\030\335y\241\344T\264\373\021\303\230E\276\272)\224^T\330\311\035j\341z\326\363\376\326m)\364\035\2734'\236R\342\214\014fX_\246\344\231\030\344\351\001\261E\347\032\260\217\177.\367\317]\300^]dB\035\027\241!\334s\037\372\364Cupv\272~Ir\256\004\225\211\250S\034yJI\006ji\336\333\016\332E\372\253\222hc\027\235\333\207\004\003\326\222\222P\327\370\326\266B<]\204\322\251E\302\305\233[\222\206[\206\262\251E\272\222#\212\0132\267\202\3626h\362\247\036\024\327hw\254l\216\377d#\257D\002\357\321&\331\014C\225\327\0072\037\037v\355ja5\203\270\007\350I\275\346D\177\347\246\323\250\305\271\002\244\246\011b\234l \026_\241\220\010\0237h\003\315\017\214z\303\207\250\3336dZ\345k\"!\"\200\211\227,\332TII\302\375\260\336\006k\251*\240l\275\267\020\252\233\333\362=]\226\310\305S5\310\307\254\345\224\224\202\222o\214\364\273:\267\250B\372\371\027\037\2729#w\313\327x\265\204r\251i\234\373nS\024\004v*\377\015\327\342%\317\023\204\303\272Jh\031\205\023\365\376\321\214[\357\302\030e\364i]\302_fX\262~\0028\231\325y/\277\230az\331\373?w/\357\003\206\377JX\373\356\276\372\330\317\372\017U\373\252\204g\277].\272\252\3568\317\203\371S*\272\225\262\240\227\372\\\264*\225\203a\362{tZ\224\335\337\210=9tau\272\344\371\356\232\021q\371\224\027\353\214G\321\271\022\351]\270\252\001V\3157z\356\022\270\314\"\264\253\221:\263\012\301U\340b\254\252\027\346\177+\241\026\266\011`M1k\230{W\224\235\337_vI\234\343\013\270\240\375\205~Z\355}\302\353\373\351\255A\216\007s\204\276\023\217X\024\034\263\346zd\031\322\261\310\217%\256\330\262nY\343_\240\231\275\237F\336\273\363\256\331\216_\312o\356;\004\200\326#\354\212TX\015H\271{\336%\351J\005 \314,\247\255j\256\020\232\247\032V\257\244\235\006(\377\367\020\331\004\332\224\200Q\241+\033\206\"\004y\377\232\252\207B\010]\360\322D\373\220(+EW\277A\225\251SJt\254\007\026:5\362u\026-/\222\372\323\350\\\221\227\211\233\210B\267\011.|]\233|\204\021\332\272\3765a\225i%\2149\3334\302\233\245\225\220i~\203\271\372C.\357\007\022\302\262\002\317\273\364\003^\344g\371\224}\365DK\271\257a\201\365x\302\272\356\340\033\035\3342\026\236\247\033\272\2412\027si*\331bd\223\277\233\205\221\242(\312\376\334\317\003u\217{}x\257\002\3475\313\262\374>\324\303DRs\332\\\253\255a\260\001\277\357\235\247d\372j\023\210\010:\026\031z\034\302\256k\305\320\375\270E\030\252\212\010[\237\230\243r\232\306\366E='W\236T\255\212\231c?\246\207 <\232K\206x\366\342T\2546\177<\317\217\251(\313\300\335\247\026\264\033jW\204\237\013\303\363\323\362\375\360\325Q\034\241\242DmeC\347Yx\304\267\236\226%\263\261\244\345Jd\237\024ap\226\265eF\274\356\037\336\015\237]=\207Yy\014\374\"\377W\353\352\247U\321\006\265\014\251\330\313\207\335u\377\026\223\362\210\325B$\361\247\011\316\276\351TS\277\334\267/\353\212Sm\355\021\014\201.$*(\357\323\345\372\245m\250\310h\026\217\020\235V\032yu\244\217\274\207Di}\001n\371UD\354`\327\222\215\263\254\251\225\303\334\201\3117jU'9\215\367p\340\027\024{\364S\342\273\205b\225\270C\270\232F\214\216\354\314xtm\225\223\273\272\246TfAX\257\262'\000\227\321\310z8ji\320\351\277Q.\333\2361\300\374\005{\231\006\342A\"\362\027\363\374\210\003\037\370\275\343\354\037DZ\322\252\356\335/<\253\303&v\255\034\350'\325\361\206Uj\325;\013\326t\260\323\330#\342q\212Vtube\005\307\205IN\204gV-\207\366l\321\022\273\276\3068\247\333ae\001\254\370(\264\307\205\327in\370\006\321R\272\276\001\32763\341\234\263&\002E[\244\202s4\027aF\002\300\354\204`\260B\026rM\243\220\001]\371\327\002\360'\245x\\\323\233\316 \314\364A\264\367\215\003\3541\316\2263\310B\002)\377qR\241uq\004g~A> \275i\241y\237\206\323\204\351\306b\000\017\321Mh,\304\011X\307h\010\346\243x{\300REa\20275\014.\371\202\212\337\314V\232p\247\313|\261B\241\307\274\233\221\266\013@v`\246\210\376\333]\223\211\371\253\3025\244\016\320\223\370\317j\376R5\370\353\367V\363CM\022\304\270\366\203\005\336S!{\363Z\026\230Jp\213z3zr\303\326\250\351Y\260\361\033\276\\L.Y\300\030Ot\014\023dp\034\356\242\355s\337yo\360\336b\021\347\213>\306\321\324\205\224\250+\254EV\313\335\212\341.\3167\006J\247\271\2226\027\327+>\225m\231\272\301\305\207\034\021\3507\004\335\314\266\215\372\310\240\024\231\333\324\261\012\221\242\"\012@\222\230\234\035\310Y\177\022J^M\265K\253\014\320\266\276\003%:0\037\227\334\265\240\342\035\326\017\204d\256D.$~s\336\251q\244\215\322\345\211\322\376\354\352\\\255]\020V\024\216\015\261G_,\207>\250%t\030u\224k\231\361P\335\031w\367(N\022/\321/\311<\343\377\226R\212o\252\232\331pk\275\202{\373\013\334\277<\347\254\013U\001\020M\306lcZ\372\016\323\357\013!\330N\252\001T\340\367G<x\\\351\343u\247\024\207q\012\2014\354\372\254e\226\263\343\\S\321\331\250\015M\241A\2479\030\177|\240\0344\250E\020\323P\240\011\022\021H\336\036M\344\221 \211+\352\2032\004F\253\012\355J\223`]\266hk\266\344\244?\205\027VM\250\035\370\271\364\343B\006\344\035\316\216f\235\253`\022%6\363x\316\351\203\256\322\200\031`Bk|+\327\3010\027B\344$Z\007\241\037\370\022\206[\366L\262\374\234R\035\2560I\311'\266\227g\3623\340\336<D\247\244\331|\233\373\261\243}\001\357@\230\026\245\212\350\006\010.A\235N\206\356`\225(\037\216N\255\242\010\212y\221\304\342'*\271\272\362\246\361\242X\313\212\354\327\265\365\333\261tgi\257\020\256e\027\277\326\363\246\221\231)\357\250\340\241m\312\254?\335n\314\260\020\366\277\363*\323X\012\011\375\027\216\224\212\377\334\224\363\357\260\365\007\357LK\374\335\331\234\266\037\012=\370\225\216\371d\025\020\257\275J\017D\244\247LLv\273\3617\276\032\324\032m\235\023U\215\321_\337S\352\355\305m!\211a\310\204,U\370\342\233kt\222\264\233\344\264\365<\3752wj\266\333\202\206\021\267\241\302\035\"3\214\274?\025\005\244\222#\350\325\344J3\245\352?\257\253\017-\203\246;\026\261\005\217\016@\247\362\207M\313)\370#\220\312[\035\307\262\022\020Q\357\351 >t\366,4\275\262\344x\337\026T%k$\251M\221\032\234@\266\357\216\253\213\216T\367\302\266\211\320\032 \303\320\243\253r\226\256\261)\265s$\254\204\241\350\363\304\214V\017<\332\036t\242\220-\327\345\311q\030\373\027\226\211e\210\222\210ez|\246/~\215\336\371\235\373\353~\252\267\352\376\230\033\220\273\3351Vx\205\372\246\036\325e\245>\177\"t*U\3365k\223\\(3\205_'\207\217\225\210:\325V\003F\270s\362\177\2467\361h\363\272*\211\212,\204W\246\020\357\037\320\205-C\260iu+-\233\262\366gj\365\023\202s\374)\016b);\234B_\364\001\305\362\230\242\217{\264\221\272\363I\203\023wqBv/?\313s\232!6\251p\034$\327\324\015\323S\373\016\376\020\001\252\203\323\214#\355\006\245\350c\024]\311\236\252@J2\00486\364H\316\342|Y\264{\306\325\320\334>\005\306C\261\332\201\033\334o\241\032\370\012\005\224\216\206\267\224\335(1\221\351\345\244\020\233&\203\034\031\264\362|\312r}\365c\037\316\324\301\360\243c\037a/\034\375\317\334\362<\247\001J\362\354\214<g9;c\274\001\312\027\206\010An\227\023\330\205\340\003\005\276\325\202\274\235\247J\321I\275\030N\247\330D\206-K\242+\205Q\235E\234\354\236!\321\016\326\347\370\335E;\363R\202\253\341\223\003\265B\311\345\220\273\312\027\012\260\347b\026\332\270Cb\223;\037uj=\235\014\234\241\373\233\020\347\324:x\012g\022\305\014\342\207\001E}aj\220\305$\213f\200+\373'\332\351A\226\334\371\204\264\366\355-\200`\366\371\261Qd\322\273S8\246\341si9\240\370sx^\262~cU4\343\007\215\350\341#d{H\013\333_^\274j\001\334I\260b\332,=\232\032\316\221\367uk\305\001S\\\334\373\020x\314@\241Av\272)c\033\341\263\271\211\235\012\313\177\310\004\351\251)\364;b\331 (\254D\315\275\237\372EcT3\361\312\272\017)2\327\225@\255Gy\027|\251\300\326\276\324\251Y\177\206]H\314\314\253\216\355Ip\214\356I\0240\037\250tZ\377\277V\362h\\\214/j\\\031\374&\322\0211\377o\354.\203s\267]\302\331\217]X\203\253~\377\305S\3751\310%\3652\320\363t.\244U^\177\267\250|>\272o\262?\3040\022:\315\3535_\345\322\033\316(\205\317\247z^KD\200\263\201[\317c\321\200yf\303Q\0316^U\240\037b2\303\274\005\341\327@4\246\237\303\265j\310\247\372\376\363+G\331\215P\301\217\2074c\205\372Q\271\376\360\366\230O\261\322\330\271\324\000^\223\234\3233\237V\232\277\321n\007O\350\011\2015\270\303\310\000G\354\200/\206\012\310bbL\341B\246\364\372\300X'a\273'\315\275}\275\317\314\351\347\230\234x\227\270\034\3258\200,\335\254\003@\344!\277\303V\275\346c\012G\340x\024\230\004P]\352\356t\254l\340\374\314X\030\313\014\337\002RzR\225\310\353C\014\036\2007\017\375\317\226\203\346\030\247\272\272\346T\217%`\005\323\375\203|$ \337P\351i *\363.\270\306G~\322\315\026t\213\322\221AT\372W\0353\334L\035G\201\034Q.G\266R\351\370\255\344?\023\340\345\230\241c\345\371\330\343\246#w\331\335\017\030X\217\377D^/\234g\216Hv\352\247\352\011\017Ws?\3265;\203\001\262\332\023\345Qe\314\322,O\317K\003\012\344\201\336\321X^\246~\177\007\370\221a\017B\206.\021\213\202\367\372'\257\257\004\373\3669\223\322'z\325\255c\265\371\361\232\333\305yt\0108\307\261\330J\331\274\"x\256\201R7\030H\005\203\034o\307\316\207\265\025\013\015\221\223\"\217\232\306\243\343Jy\302\251\"\333MPu8\353\262A\270\214\234\235\0273\324\353Qa\244\222\006\246_(\363\327\201\302\356\237\2043\323\274\246\033\304\307\333\363\357M\"s\352\307\245\000\010l\220\"\265\271\022\357k\341\352\017\3459\317\000\012\2074k\"h\327u\343\314\362)/\204\201@f\324\000\203\025\241\346S\034\200o\364:\345\241\320\177\011\301\343ZI`h#`\213\261\211^\312\304\337K\261\234\261[8B,8\356\035,\366\374\265\327\236\335\003\236rF\251\033\343\264\222\333\031\236\321F\203j\302\242\007l\223\342\033bwR\240\305\205\030$\005s\213\011\3078\333\242:\025g\010\367\247\036m\306O\356\313\270\003\311\245Dm@e\232(3\004\334\361t\177sD;\317\225\210\220\376\300\362?\005S.R_P\025\012C\273\2524>\361\357\217\306\347\271&wdM\346\011\265\352\340\306\226\365\031\33404x\312^\340_Lb%\231x\274r \023=A\026}\266\330w\337\272n\277\226\353\217\350W\214\321[\034\344\347\252\3134\2457>\223Y\361\266\367b\271\221\216\241\225\376\201\216\305\015\270\260\255\244\265\273'6r\011;~\"\3626\021\346\034\331\015\243\252\261\303\316\346\344\216UW\302\312\217\261\247\350\245\012O:!\037\236\362*\355r\275\263\235\321bO\315\342\210\251\247E\257u\250\317\254\340\005\206;\243\200\033\353\223\210\213\215I\311\001l\214\3033\005f0\361r\274j\356\360\233;\002\207\257\264\200\206\177|\255\217\353\005*\355\202\312\302h\333\341 h\237\333\230s\246C:\324\221\276y!\211\214\024\241C\211?\010\210\324HI6.\330i\253\260Y\211\224kO\012j\011\233\333\3039ND\326\034\260\253yF\343\214\204\345@i\032\344\260\352\205\021N\013\014\014\016\330\362\037\221\003!\035]e\247\225!\016\017\217\021\216oguDid\264>\321\373\251\321\322\362\225qK"
 	.p2align 3
-.Lxo_str44:
+.Lxo_str46:
 	.quad -9223372036854775808
 	.quad 51
 	.ascii " is not a Unicode scalar value, so it is not a Rune"
 	.p2align 3
-.Lxo_str45:
+.Lxo_str47:
 	.quad -9223372036854775808
 	.quad 21
 	.ascii " is out of range for "
 	.p2align 3
-.Lxo_str46:
+.Lxo_str48:
 	.quad -9223372036854775808
 	.quad 5
 	.ascii "UInt8"
 	.p2align 3
-.Lxo_str47:
+.Lxo_str49:
 	.quad -9223372036854775808
 	.quad 4
 	.ascii "Int8"
 	.p2align 3
-.Lxo_str48:
+.Lxo_str50:
 	.quad -9223372036854775808
 	.quad 6
 	.ascii "UInt16"
 	.p2align 3
-.Lxo_str49:
+.Lxo_str51:
 	.quad -9223372036854775808
 	.quad 5
 	.ascii "Int16"
 	.p2align 3
-.Lxo_str50:
+.Lxo_str52:
 	.quad -9223372036854775808
 	.quad 6
 	.ascii "UInt32"
 	.p2align 3
-.Lxo_str51:
+.Lxo_str53:
 	.quad -9223372036854775808
 	.quad 5
 	.ascii "Int32"
 	.p2align 3
-.Lxo_str52:
+.Lxo_str54:
 	.quad -9223372036854775808
 	.quad 6
 	.ascii "UInt64"
 	.p2align 3
-.Lxo_str53:
+.Lxo_str55:
 	.quad -9223372036854775808
 	.quad 3
 	.ascii "Int"
 	.p2align 3
-.Lxo_str54:
+.Lxo_str56:
 	.quad -9223372036854775808
 	.quad 50
 	.ascii "the platform call `munmap` of darwin on another OS"
 	.p2align 3
-.Lxo_str55:
+.Lxo_str57:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:811"
+	.ascii "std/native/llrt/pool.xo:828"
 	.p2align 3
-.Lxo_str56:
+.Lxo_str58:
 	.quad -9223372036854775808
 	.quad 56
 	.ascii "the platform call `VirtualFree` of windows on another OS"
 	.p2align 3
-.Lxo_str57:
+.Lxo_str59:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:815"
+	.ascii "std/native/llrt/pool.xo:832"
 	.p2align 3
-.Lxo_str58:
+.Lxo_str60:
 	.quad -9223372036854775808
 	.quad 48
 	.ascii "the platform call `mmap` of darwin on another OS"
 	.p2align 3
-.Lxo_str59:
+.Lxo_str61:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:764"
+	.ascii "std/native/llrt/pool.xo:781"
 	.p2align 3
-.Lxo_str60:
+.Lxo_str62:
 	.quad -9223372036854775808
 	.quad 57
 	.ascii "the platform call `VirtualAlloc` of windows on another OS"
 	.p2align 3
-.Lxo_str61:
+.Lxo_str63:
 	.quad -9223372036854775808
 	.quad 27
-	.ascii "std/native/llrt/pool.xo:775"
+	.ascii "std/native/llrt/pool.xo:792"
 	.section .rodata.str1.1,"aMS",@progbits,1
 .Lxo_loc0:
 	.asciz "main.xo:24:5"
@@ -23395,9 +23497,9 @@ DW.ref.xo_personality:
 .Lxo_loc64:
 	.asciz "std/native/llrt/netpolicy.xo:14:12"
 .Lxo_loc65:
-	.asciz "std/native/llrt/pool.xo:371:78"
+	.asciz "std/native/llrt/pool.xo:378:78"
 .Lxo_loc66:
-	.asciz "std/native/llrt/pool.xo:387:38"
+	.asciz "std/native/llrt/pool.xo:394:38"
 .Lxo_loc67:
 	.asciz "std/native/llrt/netpolicy.xo:209:19"
 .Lxo_loc68:
@@ -23477,13 +23579,13 @@ DW.ref.xo_personality:
 .Lxo_loc105:
 	.asciz "std/native/llrt/netpolicy.xo:108:37"
 .Lxo_loc106:
-	.asciz "std/native/llrt/pool.xo:409:24"
+	.asciz "std/native/llrt/pool.xo:416:24"
 .Lxo_loc107:
-	.asciz "std/native/llrt/pool.xo:430:14"
+	.asciz "std/native/llrt/pool.xo:437:14"
 .Lxo_loc108:
-	.asciz "std/native/llrt/pool.xo:530:15"
+	.asciz "std/native/llrt/pool.xo:537:15"
 .Lxo_loc109:
-	.asciz "std/native/llrt/pool.xo:534:64"
+	.asciz "std/native/llrt/pool.xo:541:64"
 .Lxo_loc110:
 	.asciz "std/native/llrt/num.xo:218:20"
 .Lxo_loc111:
