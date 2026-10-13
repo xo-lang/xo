@@ -14,6 +14,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a loaded machine the virtual clock of a native test could move twice
   for one idle instant, so a task woken by the first move saw the time
   of the second (gotchas/virtual-clock-double-kick.md).
+- **A native build on macOS needs no C compiler** (decision 0182 next
+  steps 1 and 2): `xo build --backend=arm64` (and run, test) now
+  assembles and links with Xo's own Mach-O assembler and linker when the
+  release's runtime pack covers the program and no `use c` source is
+  linked; otherwise it uses cc as before. `--ld=cc` keeps cc, `--ld=macho`
+  insists on Xo's linker. Linux hosts keep cc for now. Release archives
+  carry Go's zone database as `lib/xo/zoneinfo.zip`, which `xo` reads
+  before asking `go env GOROOT`, so programs that name time zones build
+  with no Go installed. Fixed on the way: a native build for several
+  targets of different OSes (`--targets=darwin/arm64,linux/arm64`) gave
+  every target the host's predeclared `target`; each OS now gets its
+  own; `xo rtpack --status` on linux/amd64 named linux/arm64.
 - **`xo` is written in Xo** (decision 0178, switch point B): the release
   archives ship the self hosted toolchain as `bin/xo`, with
   `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the

@@ -137,7 +137,9 @@ for darwin/arm64, linux/arm64, and linux/amd64: `bin/xo` (xo1, as
 above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
 `lib/xo/third_party` (the tracked files), for the arm64 targets the
 prebuilt runtime in `lib/xo/rtpack/<os>-<arch>/` (built by xo1's `xo
-rtpack`), README.md, CHANGELOG.md; and `dist/SHA256SUMS`. It needs zig
+rtpack`), `lib/xo/zoneinfo.zip` (Go's zone database, copied from `go env
+GOROOT`, so std/time needs no Go; decision 0157 next step 1, 2026-10-12),
+README.md, CHANGELOG.md; and `dist/SHA256SUMS`. It needs zig
 0.15.1 (`$ZIG`), Go, the host's clang, and a clean tree
 (`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
 the development Mac with other agents running (2026-10-12). Nothing
@@ -145,8 +147,10 @@ publishes them; releases are on hold (owner).
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
-arm64 (cc), arm64 `--ld=macho`, and llvm ("UNSUPPORTED" on
-linux/amd64), the missing Go reported by the default backend; with Go a
+arm64 (the default linker: macho on darwin, cc on linux), arm64
+`--ld=cc`, arm64 `--ld=macho`, and llvm ("UNSUPPORTED" on
+linux/amd64), the time_zones golden on arm64 against its want.txt
+(zone data from the archive's lib/xo/zoneinfo.zip), the missing Go reported by the default backend; with Go a
 hello on the Go backend, a `use go` program, and cmd/xo's whole suite
 with `XO_CLI` = the archive's bin/xo (`BASELINE=1`: also against the
 Go cmd/xo). On EC2: `scripts/remote-full.sh --arch arm64|amd64 --put
@@ -246,7 +250,8 @@ python3 scripts/selfhost-samebin.py <xo1> [DIR]        # every arm64 golden buil
 python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c on each file: identical objects, functions, sections, relocation tables (symbols by name), sizes, time; MACHO_KEEP=1 keeps the objects; inputs from `xo asmdump <dir>` (decision 0182; last verified: 2026-10-12)
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; XO1_FLAGS="--as=macho" python3 scripts/selfhost-goldens.py <xo1> runs the goldens that way (decision 0182; last verified: 2026-10-12)
-xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; with no go on PATH set XO_ZONEINFO); `use c` sources still need cc; XO1_FLAGS=--ld=macho XO1_PATH=/nonexistent XO_RTPACK=DIR python3 scripts/selfhost-goldens.py <xo1> builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
+xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant (and TLS library); else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
+xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO1_FLAGS=--ld=macho XO1_PATH=/nonexistent XO_RTPACK=DIR python3 scripts/selfhost-goldens.py <xo1> builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
 python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
 ./macho elflink -o OUT [--interp=PATH] IN.o|IN.a...   # the self hosted ELF linker (decision 0182 stage 3): objects and archives (GNU or BSD ar) into a dynamically linked ET_EXEC for glibc at 0x400000: _start and the outline atomics (__aarch64_*) synthesized, imports versioned from selfhost/macho/glibc.xo (libm, libpthread, libgcc_s, libc NEEDED), calls through 16 byte stubs and GOT slots bound at load (GLOB_DAT, BIND_NOW), TLS descriptors relaxed to local exec, .eh_frame_hdr, a .symtab of functions and objects (last verified: 2026-10-12)
@@ -574,7 +579,11 @@ gets `xo_tzdata.go` (package main: `rt.TZEmbed` per constant zone name,
 or `rt.TZFull` over `xo_zoneinfo.zip` embedded with go:embed when a name
 is known only at run time, or `rt.TZUseSystem` with `--tzdata=system`).
 The zone data is `$(go env GOROOT)/lib/time/zoneinfo.zip` of the go
-command the build uses; `XO_ZONEINFO=<file>` names another zip. Last
+command the build uses; `XO_ZONEINFO=<file>` names another zip. xo1
+(the released `xo`) looks at `lib/xo/zoneinfo.zip` of its release
+layout first (beside the running binary's `lib/xo`, or beside the pack
+root `$XO_RTPACK`), then `go env GOROOT` (selfhost/xo tz.xo
+shipped_zoneinfo; 2026-10-12). Last
 verified: 2026-10-09.
 
 ## Deterministic scheduling and live inspection
@@ -1931,8 +1940,9 @@ Last verified: 2026-10-11. Results:
   bullseye, no clang) for a plain, a std/time, and an HTTPS program.
 - Not in a pack: the LLVM backend's runtime (bitcode for LTO, compiled
   by the local clang), sanitizer builds, links with `use c` include
-  flags, and Go's zoneinfo.zip (native programs that name zones read it
-  from `go env GOROOT` or `XO_ZONEINFO`).
+  flags. Go's zoneinfo.zip ships beside the pack instead
+  (`lib/xo/zoneinfo.zip`, 2026-10-12), which xo1 reads before `go env
+  GOROOT`; `XO_ZONEINFO` still overrides.
 - Tests: `internal/build/rtpack_test.go` (TestRTPackVariant,
   TestRTPackKey, TestNormalizeAr, TestClangErrorRuntimeHint; without
   -short TestRTPackDeterministic: two packs from two work directories
@@ -2923,6 +2933,8 @@ The bootstrap chain: the first Xo `xo` on a new host is built by the
 previous release's binary (or any self hosted xo1), never by Go again.
 
     scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
+    XO_BOOTSTRAP_RTPACK=DIR scripts/bootstrap-xo.sh SEED [OUTDIR]
+                                              # with a pack root: the stages link with selfhost/macho (darwin)
 
 SEED builds selfhost/xo with the arm64 backend (s1), s1 builds it (s2),
 s2 builds it (s3); s2 and s3 must write the same assembly and the same
@@ -2936,7 +2948,8 @@ C compiler, the one tool needed (`cc` drives the arm64 backend's
 assembler and linker; clang compiles the runtime). The log and the
 stage times land in OUTDIR/log.txt and OUTDIR/times.txt. What the seed
 still takes from Go today: nothing for a native build; a program that
-embeds time zones reads Go's zoneinfo.zip unless `XO_ZONEINFO` names
+embeds time zones reads Go's zoneinfo.zip (a release's xo reads its
+own lib/xo/zoneinfo.zip, 2026-10-12) unless `XO_ZONEINFO` names
 one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
 definition.
 

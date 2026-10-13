@@ -151,10 +151,10 @@ fn main(os: Os) ! {
   if !(backend is "arm64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
     fail(os, "--backend=${backend}: want arm64, llvm, or go for build, run, and test, or wasm for build")
   }
-  if !(o.assembler is "cc" | "macho") {
+  if !(o.assembler is "" | "cc" | "macho") {
     fail(os, "--as=${o.assembler}: want cc or macho")
   }
-  if !(o.linker is "cc" | "macho") {
+  if !(o.linker is "" | "cc" | "macho") {
     fail(os, "--ld=${o.linker}: want cc or macho")
   }
   if o.race || o.holes {
@@ -309,58 +309,20 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     uses_time = uses_time || m.path == "native/time"
   }
   let root = line_root(os, o.wd, o.dirs[0])
-  // the predeclared `target` of the build's target (internal/build's
-  // ssa.Options GOOS, GOARCH): the targets' OS when they share one (a
-  // cross build from another host), else the host's; one SSA serves
-  // every target, where the Go driver builds one per target
+  // the predeclared `target` of each target (internal/build's
+  // ssa.Options GOOS, GOARCH): one SSA per target OS, as the Go driver
+  // builds one per target; the first target's here, another OS's in the
+  // arm64 loop below
   var tgoos = ""
   var tgoarch = ""
   if backend == "arm64" || backend == "llvm" {
     tgoos = targets[0].split("/")[0]
-    for tg in targets {
-      if tg.split("/")[0] != tgoos {
-        tgoos = goos
-      }
-    }
     tgoarch = if backend == "arm64" { "arm64" } else { host_arch() }
   }
-  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
-  t = lap(os, phases, "ssa", t)
-  if !b.why.is_empty() {
-    fail_unsupported(os, b.why)
-  }
-  if !b.errs.is_empty() {
-    // what the builder does not lower: the Go driver's XO1201
-    // diagnostics (ssa.NoGCDiagnostics); under switch point A the Go
-    // driver builds it or reports them itself
-    if !(os.env.get("XO1_FALLBACK") ?? "").is_empty() {
-      fail_unsupported(os, "the SSA builder does not support ${b.errs[0].feature}")
-    }
-    let nd = ssa.nogc_diags(b)
-    if o.json && o.cmd == "build" {
-      os.stdio.print(build_json(false, [], nd))
-    } else {
-      print_diags(os, nd)
-    }
-    os.proc.exit(1)
-  }
-  for f in b.m.funcs {
-    if !f.skip.is_empty() {
-      fail_unsupported(os, "the SSA builder skipped ${f.name}: ${f.skip}")
-    }
-  }
-  // the zone data std/time needs, noted as the Go builder lowers
-  let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
-  t = lap(os, phases, "tz", t)
-  // b.run_passes(), timed
-  b.prune_unwind()
-  t = lap(os, phases, "prune_unwind", t)
-  b.add_landings()
-  t = lap(os, phases, "add_landings", t)
-  b.cleanup_all()
-  t = lap(os, phases, "cleanup", t)
-  b.insert_rc()
-  t = lap(os, phases, "insert_rc", t)
+  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
+  t = lo.t
+  let b = lo.b
+  let tu = lo.tu
   if backend == "wasm" {
     build_wasm(os, b.m, o.out, o.wd, o.dirs[0])
     return Native{}
@@ -451,14 +413,27 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   // arm64: the assembly of each target; the host's is linked
   let dir = "${bdir}/arm64"
   write_or_fail(os, dir, "", b"")
-  var mi = b.m
-  let inl = arm64.inline_step(mi)
+  var cur = b
+  var cur_tu = tu
+  var cur_os = tgoos
+  var mi = cur.m
+  var inl = arm64.inline_step(mi)
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
     let tgoos = tg.split("/")[0]
-    // arm64.generate_module(b.m, tgoos, false), timed
-    let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(b.m, tgoos) }
+    if tgoos != cur_os {
+      // another OS: its own SSA, its `target` that OS's
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", t)
+      cur = l.b
+      cur_tu = l.tu
+      cur_os = tgoos
+      mi = cur.m
+      inl = arm64.inline_step(mi)
+      t = lap(os, phases, "inline", l.t)
+    }
+    // arm64.generate_module(cur.m, tgoos, false), timed
+    let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(cur.m, tgoos) }
     t = lap(os, phases, "emit", t)
     if !p.err.is_empty() {
       fail(os, p.err)
@@ -479,8 +454,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     // --ld=macho links arm64 programs without cc, linux/arm64 ones from
-    // any host (decision 0182)
-    let no_cc = o.linker == "macho"
+    // any host (decision 0182); with no --ld, the host's darwin/arm64
+    // link is macho's when the pack has its runtime and no `use c`
+    // source is linked, else cc's (default_ld)
+    var no_cc = o.linker == "macho"
+    if o.linker.is_empty() && tg == host {
+      no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
+    }
+    let macho_as = o.assembler == "macho" || (no_cc && o.assembler.is_empty())
     if tg != host && !(no_cc && tgoos == "linux") {
       // another target: its assembly only (internal/build buildArm64)
       if !o.json {
@@ -495,10 +476,10 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, no_cc, tgoos)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos)
     let flags = ["-O2"] + lk.flags
     var prog = s
-    if o.assembler == "macho" {
+    if macho_as {
       // the object from selfhost/macho (decision 0182)
       prog = "${dir}/prog-${tgoos}.o"
       match if tgoos == "linux" { macho.assemble_elf(code.bytes()) } else { macho.assemble(code.bytes()) } {
@@ -518,7 +499,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       bins.push((tg, bin))
       continue
     }
-    let key = if o.assembler == "macho" { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls) }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls) }
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -536,6 +517,80 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     return Native{}
   }
   finish(os, o, c, root, bins, tests)
+}
+
+/// The linker of a host link with no --ld (decision 0182 next step 1):
+/// selfhost/macho on darwin when the assembler is not --as=cc, no `use
+/// c` source is linked, and the runtime pack has the runtime object (and
+/// TLS library) of the link's flags; else cc. A linux host keeps cc
+/// until the ELF linker writes PIE (decision 0182 stage 3 next step 1).
+fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
+  if ctx.goos != "darwin" || tgoos != "darwin" || o.assembler == "cc" {
+    return false
+  }
+  for m in c.mods {
+    if !m.c_prefix.is_empty() {
+      return false
+    }
+  }
+  // the flags link_inputs gives a program with no `use c`
+  var flags = ["-O2"]
+  if uses_time {
+    flags.push("-DXO_TIME")
+  }
+  let (obj, _) = shipped_runtime(os, ctx, ctx.std, flags + io_flags(code), needs_tls(code))
+  !obj.is_empty()
+}
+
+/// A program lowered to SSA for one target OS, with the passes run: the
+/// builder, the zone data std/time needs, and the time after.
+struct Lowered {
+  b: ssa.Builder
+  tu: TZUse
+  t: Time
+}
+
+/// The SSA of the checked program for tgoos/tgoarch (the predeclared
+/// `target`), then the passes; fails as the build does.
+fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, t0: Time) -> Lowered {
+  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
+  var t = lap(os, o.phases, "ssa", t0)
+  if !b.why.is_empty() {
+    fail_unsupported(os, b.why)
+  }
+  if !b.errs.is_empty() {
+    // what the builder does not lower: the Go driver's XO1201
+    // diagnostics (ssa.NoGCDiagnostics); under switch point A the Go
+    // driver builds it or reports them itself
+    if !(os.env.get("XO1_FALLBACK") ?? "").is_empty() {
+      fail_unsupported(os, "the SSA builder does not support ${b.errs[0].feature}")
+    }
+    let nd = ssa.nogc_diags(b)
+    if o.json && o.cmd == "build" {
+      os.stdio.print(build_json(false, [], nd))
+    } else {
+      print_diags(os, nd)
+    }
+    os.proc.exit(1)
+  }
+  for f in b.m.funcs {
+    if !f.skip.is_empty() {
+      fail_unsupported(os, "the SSA builder skipped ${f.name}: ${f.skip}")
+    }
+  }
+  // the zone data std/time needs, noted as the Go builder lowers
+  let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
+  t = lap(os, o.phases, "tz", t)
+  // b.run_passes(), timed
+  b.prune_unwind()
+  t = lap(os, o.phases, "prune_unwind", t)
+  b.add_landings()
+  t = lap(os, o.phases, "add_landings", t)
+  b.cleanup_all()
+  t = lap(os, o.phases, "cleanup", t)
+  b.insert_rc()
+  t = lap(os, o.phases, "insert_rc", t)
+  Lowered{b: b, tu: tu, t: t}
 }
 
 /// The end of a native build: the test list of a test binary, or the

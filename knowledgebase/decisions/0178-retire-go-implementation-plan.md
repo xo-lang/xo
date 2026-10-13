@@ -760,6 +760,16 @@ and TestModulesXoSame, which build their stage binaries with
 native build whose targets differ in OS shares one SSA, whose `target`
 is the host's (the Go driver builds one per target).
 
+Closed after the flip (2026-10-12, commit 9c7bee7): xo1 builds one SSA
+per target OS (main.xo `lower`; `--targets=darwin/arm64,linux/arm64`
+emits `target.os` as Darwin in the darwin assembly and Linux in the
+linux one, where both were the host's), and `rtpack --status` names the
+host's architecture (rt.xo `rtpack_status_for`; an arm64 link still
+loads the arm64 pack of its OS). Also from decision 0182: xo1's default
+linker on darwin is selfhost/macho when the pack covers the link, and
+the archives ship lib/xo/zoneinfo.zip (bench/results/macho-2026-10-12.md,
+"Default linker and zone data").
+
 ## Consequences
 
 - Until switch point B every language change is still made twice
