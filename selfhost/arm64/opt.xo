@@ -366,7 +366,7 @@ fn dce_keep(var insts: List[Inst], live: List[Bool]) {
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
   var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less, quo: src.quo,
-    lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs}
+    lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs, len_at: src.len_at}
   for (k, v) in src.ci {
     // a constant one instruction makes is not worth a register across
     // blocks (and a fresh one coalesces with a block parameter)
@@ -426,6 +426,18 @@ fn (var g: G) join_facts(from: Int) {
       }
     }
     g.cm.low_zero[k] = v
+  }
+  // a list's length is the same here (the join only branches; decision
+  // 0208)
+  for (l, n) in src.len_at {
+    if !g.cm.lens.contains(l) {
+      g.cm.len_at[l] = n
+    }
+  }
+  for (l, n) in src.lens {
+    if !g.cm.lens.contains(l) {
+      g.cm.len_at[l] = n
+    }
   }
 }
 
@@ -595,6 +607,12 @@ fn (var g: G) proved_index(i: Int, n: Int, k: Int) -> Bool {
   }
   if k >= 0 && hi < k {
     return true
+  }
+  let _mn = g.m_()
+  if let Some(nlo) = g.cm.lo.get(n) {
+    if hi < nlo {
+      return true
+    }
   }
   let fi = g.add_forms(i)
   let _mi = g.m_()

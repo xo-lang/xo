@@ -222,6 +222,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word(base | (s * 32) | d)
     }
     "mul" | "madd" | "msub" | "smulh" | "umulh" | "sdiv" | "udiv" | "mneg" => a.muldiv(m, ops)
+    "umull" | "smull" | "umaddl" | "smaddl" => a.mull(m, ops)
     "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cneg" => a.csel(m, ops)
     "ccmp" | "ccmn" => a.ccmp(m, ops)
     "cbz" | "cbnz" => {
@@ -841,6 +842,31 @@ fn (var a: Asm) muldiv(m: Str, ops: List[Bytes]) {
       a.word(0x1ac00000 | sfb | (rs[2] * 0x10000) | op2 | (rs[1] * 32) | rs[0])
     }
   }
+}
+
+/// The long multiplies (decision 0208): umull and smull Xd, Wn, Wm, and
+/// umaddl and smaddl Xd, Wn, Wm, Xa.
+fn (var a: Asm) mull(m: Str, ops: List[Bytes]) {
+  let four = m.ends_with("addl")
+  let n = if four { 4 } else { 3 }
+  if ops.len() != n {
+    return a.bad(m, ops)
+  }
+  let (d, fd) = gpr(ops[0], false)
+  let (rn, fn0) = gpr(ops[1], false)
+  let (rm, fm) = gpr(ops[2], false)
+  var ra = 31
+  var fa = 1
+  if four {
+    let (x, fx) = gpr(ops[3], false)
+    ra = x
+    fa = fx
+  }
+  if d < 0 || rn < 0 || rm < 0 || ra < 0 || fd != 1 || fn0 != 0 || fm != 0 || fa != 1 {
+    return a.bad(m, ops)
+  }
+  let base = if m.starts_with("u") { 0x9ba00000 } else { 0x9b200000 }
+  a.word(base | (rm * 0x10000) | (ra * 0x400) | (rn * 32) | d)
 }
 
 /// The conditional selects and their aliases.

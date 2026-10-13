@@ -244,11 +244,13 @@ fn (var g: G) emit() {
   b.push(g.stubs.join(""))
   b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
+  var ext = ""
   if !sites.is_empty() {
     g.lsda(sites)
+    ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
-  g.text.push(g.far_tests(g.far_slots(pair_loads(b.join("")))))
+  g.text.push(g.far_tests(g.far_slots(pair_mem(b.join(""), ext))))
 }
 
 /// The number of instructions past which a function's tbz and tbnz may

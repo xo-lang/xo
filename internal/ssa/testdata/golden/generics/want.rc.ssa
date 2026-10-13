@@ -370,27 +370,27 @@ b2:  ; preds b0
   release v1
   v8: Int = call list.len, v0
   v9: Int = const 0
-  jump b4(v9, v2)
+  v10: List[Str] = reuse v2
+  jump b4(v9, v10)
 b3:  ; preds b1
-  v11: () = call rt.fault_continue
-  v12: List[Str] = call rt.rl_empty
-  ret v12
-b4(v14: Int, v15: List[Str]):  ; preds b2, b6
-  v16: Bool = lt v14, v8
-  br v16, b5(), b7()
+  v12: () = call rt.fault_continue
+  v13: List[Str] = call rt.rl_empty
+  ret v13
+b4(v15: Int, v16: List[Str]):  ; preds b2, b6
+  v17: Bool = lt v15, v8
+  br v17, b5(), b7()
 b5:  ; preds b4
-  v18: Str = call list.index, v0, v14
-  retain v18
-  v20: List[Str] = reuse v15
-  v21: List[Str] = call list.push, v20, v18
+  v19: Str = call list.index, v0, v15
+  retain v19
+  v21: List[Str] = call list.push, v16, v19
   v22: () = tuple
   jump b6()
 b6:  ; preds b5
   v24: Int = const 1
-  v25: Int = add v14, v24
+  v25: Int = add v15, v24
   jump b4(v25, v21)
 b7:  ; preds b4
-  ret v15
+  ret v16
 }
 
 func ident[Str](v0: Str) -> Str {
