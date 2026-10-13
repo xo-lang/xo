@@ -21,6 +21,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the native HTTP/1.1 server copy a negative length; an IPv6 request
   host with an IPv4 part written with a leading zero is now rejected as
   the Go backend rejects it.
+- **The xo1 golden scripts no longer report show_table as failing**:
+  scripts/selfhost-goldens.py (and selfhost-gogoldens.py,
+  elf-goldens.py) read want.txt in Python's text mode, which turned the
+  raw `\r` show_table prints into `\n`, so the golden "differed" on xo1
+  although xo1's output matched it byte for byte. They now read it with
+  `newline=''`; internal/diag's TestScriptsReadWantBytes keeps it so
+  (gotcha python-text-mode-want-cr.md). No compiler change.
 - **The C paths of the ported runtime pieces are gone** (decision
   0198): the Unicode operations (`XO_UNICODE=c`, xo_unicode.c), std/json's
   text (`XO_LLRT_C=jsontext`, xo_json.c), the number text
