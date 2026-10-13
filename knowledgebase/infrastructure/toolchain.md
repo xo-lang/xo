@@ -1581,6 +1581,18 @@ first, AST based prototype, since deleted) and
   darwin/arm64 `apple-m1` (LSE atomics inline), Linux arm64 `generic`
   with `+outline-atomics` (Debian clang 19), Linux amd64 `x86-64`.
   Check with `otool -tv bin | grep -c ldaxr` (0 on darwin/arm64).
+- Atomics (decision 0200, 2026-10-13): the cell intrinsics `rt.slot_*`
+  lower to `load atomic`, `store atomic`, `atomicrmw xchg|add`, and a
+  strong `cmpxchg` (failure ordering the strongest allowed: acquire for
+  acquire and acq_rel, monotonic for relaxed and release) at object +
+  24 + 8i, `align 8`; relaxed is `monotonic`, a load's release or
+  acq_rel and a store's acquire or acq_rel become `seq_cst`; `rt.fence`
+  is `fence` (relaxed none). The target attributes above decide the
+  machine code (LSE on darwin/arm64, outline atomics on Linux arm64,
+  `lock` instructions and `xchg` on x86-64). `rt.spin_hint` is nothing:
+  the IR is target independent (selfhost/llvm call.xo `atomic`,
+  internal/llvm fromssa.go `atomic`, identical IR) (last verified:
+  2026-10-13).
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
   constants with the immortal count INT64_MIN, never written), List a
@@ -1833,6 +1845,24 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   templates). Environments are `{rc, drop, share, captures}` (24 byte
   header). Literals are in `__TEXT,__const` / `.rodata`. `iCondBr` with
   `tbz`/`tbnz` tests `inst.bit`.
+- Atomics (decision 0200, 2026-10-13): `rt.slot_load`, `slot_store`,
+  `slot_swap`, `slot_cas`, `slot_add`, `slot_addr` (a cell: element i of
+  a `List[Int]` or an Atomic's value, at object + 24 + 8i), `rt.fence`,
+  `rt.spin_hint` lower inline (selfhost/arm64 calls.xo `atomic`,
+  internal/arm64 isel.go `atomic`, identical output): relaxed loads and
+  stores `ldr`/`str`, the others `ldar`/`stlr`; on Darwin `swp`, `cas`,
+  `ldadd` with the order's `a`/`l`/`al` suffix (a cas is `mov; casal;
+  cmp; cset`), on Linux calls of libgcc's outline atomics
+  `__aarch64_{swp,cas,ldadd}8_{relax,acq,rel,acq_rel}` (what the C
+  runtime's `-moutline-atomics` objects call; selfhost/macho elflink.xo
+  writes them when linking without cc); fences `dmb ishld` (acquire) or
+  `dmb ish`; the spin hint `yield`. The instructions are `keep` (never
+  deleted with a dead result, never folded into a branch) and early
+  (gotchas/arm64-plain-defs-assumed-pure.md). Atomic's get, set, swap,
+  and compare_and_swap are one of these each (seq_cst); add and max are
+  std/native/llrt/atomic.xo; `XO_LLRT_C=atomic` (Go driver) calls
+  xo_atomic_* (compiled with -DXO_ATOMIC_C). Litmus tests:
+  `bench/litmus/run.sh <xo1>` (last verified: 2026-10-13).
 - Unwinding (2026-10-09, decision 0085): every function has `.cfi_*`
   call frame information (leaf functions' fault stubs push a frame record
   first); a function with landing pads (`inst.pad`) gets

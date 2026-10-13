@@ -4912,7 +4912,7 @@ typedef struct {
 	int64_t v;
 } xo_atomic;
 
-_Static_assert(offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
+_Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
 static void atomic_free(void *p) { xo_free(p); }
 
