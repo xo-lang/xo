@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixed: ThreadSanitizer builds on Linux ran out of address space for
+  task stacks under load (`fault: out of memory` in conc_stress, not a
+  leak); their task stacks are now 2 MiB (XO_TASK_STACK_MB overrides).
+  `XO_RTSTATS=1` reports `fiber_live` and `fiber_peak`, and a failing
+  task stack mapping says how many stacks were mapped
+  (knowledgebase/gotchas/linux-tsan-fiber-stacks.md).
+- Native backends on macOS (arm64) and Windows: `os.fs` read, write,
+  and stat call libSystem and kernel32 directly from Xo (decision 0213)
+  instead of going through the C runtime, with the same errors and
+  messages byte for byte; on macOS within the C path's instructions
+  (0.562 to 1.013 times, bench/results/platform-calls-2026-10-13.md).
+  `XO_LLRT_C=sysio` builds the C path.
 - The self-hosted toolchain's Go backend holds the shared lock on the Xo
   Go cache while go build runs, as the Go implementation does, so a
   concurrent cache trim no longer removes entries a build is reading

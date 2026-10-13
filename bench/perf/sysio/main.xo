@@ -1,6 +1,7 @@
-// Files and the clock over the Linux system call layer in Xo (decision
-// 0206): std/native/llrt/sysio.xo and linux.xo against their C path
-// (XO_LLRT_C=sysio), and with XO_NOLIBC=1 against the C library.
+// Files and the clock over the OS layers in Xo (decisions 0206 and 0213):
+// std/native/llrt/sysio.xo over linux.xo, darwin.xo, or windows.xo
+// against their C path (XO_LLRT_C=sysio), and on Linux with XO_NOLIBC=1
+// against the C library.
 // Usage: sysio <workload> <scratch dir>, the directory only for this
 // program. Workloads: read (os.fs.read of a 4 KiB file 20,000 times),
 // read_big (a 1 MiB file 300 times), write (20,000 writes of a 100 byte

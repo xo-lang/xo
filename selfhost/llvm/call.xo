@@ -839,6 +839,10 @@ fn (var g: Gen) llvm_decl(sym: Str, decl: Str) {
 /// an i64 0 or 1, a List or handle a pointer, a Str its bytes and length;
 /// the result is void or one of those.
 fn (var g: Gen) rt_call(v: Int) {
+  if aux_str(g.f.values[v].aux).starts_with("rt.pc.") {
+    g.platform_call(v)
+    return
+  }
   if g.inline_rt(v) {
     return
   }
@@ -928,5 +932,112 @@ fn (var g: Gen) rt_call(v: Int) {
       g.mk_str(v, o, n)
     }
     _ => g.raise(vname(v), c)
+  }
+}
+
+/// The parts of a platform call's name `rt.pc.<os>.<sym>[/<n>]`
+/// (decision 0213): the OS, the C symbol, and the number of fixed
+/// parameters of a variadic function (-1 when it is not one).
+fn platform_parts(name: Str) -> (Str, Str, Int) {
+  let rest = name.trim_prefix("rt.pc.")
+  let parts = rest.split(".")
+  if parts.len() < 2 {
+    return ("", rest, -1)
+  }
+  let sv = parts[1].split("/")
+  var n = -1
+  if sv.len() == 2 {
+    n = Int.parse(sv[1]) ?? -1
+  }
+  (parts[0], sv[0], n)
+}
+
+/// Lowers a call of a platform library function (decision 0213,
+/// std/native/sys_<os>.xo): a call of the bare C symbol, declared with
+/// the C types of the declaration (an Int i64, an Int32 or UInt32 i32, a
+/// Float double, Bytes the pointer to its data; `...` after the fixed
+/// parameters of a variadic function), `dllimport` on Windows. A call
+/// for another OS (an arm of a `match` on `target.os` the passes keep)
+/// is a trap.
+fn (var g: Gen) platform_call(v: Int) {
+  let x = g.f.values[v]
+  let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
+  let rk = g.kind(x.ty)
+  if os != g.os() {
+    g.llvm_decl("@llvm.trap", "declare void @llvm.trap() cold noreturn nounwind")
+    g.emit("call void @llvm.trap()")
+    match rk {
+      Int => g.alias(v, "0")
+      Float => g.alias(v, "0.0")
+      _ => {}
+    }
+    return
+  }
+  var params: List[Str] = []
+  var args: List[Str] = []
+  for a in x.args {
+    let at = g.vty(a)
+    match g.kind(at) {
+      Int => {
+        if g.m.types[at].bits == 32 {
+          params.push("i32")
+          args.push("i32 ${g.def("trunc i64 ${g.op(a)} to i32")}")
+        } else {
+          params.push("i64")
+          args.push("i64 ${g.op(a)}")
+        }
+      }
+      Float => {
+        params.push("double")
+        args.push("double ${g.op(a)}")
+      }
+      Str => {
+        let (_, d, _) = g.str_parts(g.op(a))
+        params.push("ptr")
+        args.push("ptr ${d}")
+      }
+      _ => {
+        g.fail("the platform call `${sym}` takes a `${g.m.types[at].name}`")
+        return
+      }
+    }
+  }
+  let i32r = rk == ssa.Kind.Int && g.m.types[x.ty].bits == 32
+  var ret = "void"
+  match rk {
+    Unit => {}
+    Int => ret = if i32r { "i32" } else { "i64" }
+    Float => ret = "double"
+    _ => {
+      g.fail("the platform call `${sym}` returns a `${g.m.types[x.ty].name}`")
+      return
+    }
+  }
+  var decl_params = params.join(", ")
+  var fty = ""
+  if nfixed >= 0 && nfixed <= params.len() {
+    var fixed: List[Str] = []
+    for i in 0..nfixed {
+      fixed.push(params[i])
+    }
+    fixed.push("...")
+    decl_params = fixed.join(", ")
+    fty = "(${decl_params}) "
+  }
+  let dll = if os == "windows" { "dllimport " } else { "" }
+  g.llvm_decl("@${sym}", "declare ${dll}${ret} @${sym}(${decl_params}) nounwind")
+  let c = "call ${ret} ${fty}@${sym}(${args.join(", ")})"
+  match rk {
+    Unit => g.emit(c)
+    Int => {
+      if i32r {
+        let r = g.def(c)
+        let ext = if g.m.types[x.ty].unsigned { "zext" } else { "sext" }
+        g.set(v, "${ext} i32 ${r} to i64")
+      } else {
+        g.set(v, c)
+      }
+    }
+    _ => g.set(v, c)
   }
 }

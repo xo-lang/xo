@@ -110,6 +110,10 @@ struct Inst {
   /// K_CALL: a Linux system call (rt.sys6, decision 0206): the number is
   /// the seventh argument (x6), moved to x8 for `svc #0`
   svc: Bool = false
+  /// K_CALL: a variadic C function on Apple arm64 (decision 0213): the
+  /// arguments from this index on go on the stack, 8 bytes each; -1 for
+  /// none
+  vfix: Int = -1
   /// a plain instruction that makes a constant (hoistConsts may move it)
   konst: Bool = false
   /// a plain instruction with a memory effect (an atomic, decision
