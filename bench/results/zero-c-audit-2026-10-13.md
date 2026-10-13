@@ -79,7 +79,7 @@ recommended order below (0, 3, 1, 2, 6, 4, 5), so each line counts once.
 | Bucket | Lines | Notes |
 |---|---|---|
 | P, in progress (decision 0193 step 6) | 4,567 | xo_http.c 2,267, xo_h2.c 1,896, xo_proc.c 259, xo_fs.c 145 |
-| G, C paths kept behind XO_LLRT_C | 4,654 | 4,313 deletable after a full tier; text's 341 stay (Duration text) |
+| G, C paths kept behind XO_LLRT_C | 4,654 | 4,313 deletable after a full tier; text's 341 stay (Duration text). Decision 0198 (2026-10-13) deleted unicode, jsontext, num, strings, and the shared 82: 3,354 of these lines; tz, report, show (959) wait for a full tier of step 5 |
 | (0) portable now | 1,799 | sized integer operations, crypto hashes, glob, generators, str_hash |
 | (0) held by C callers | 1,806 | fmt_int/fmt_go_g, fault texts, UTF-8 helpers, address policy, TLS name checks |
 | (3) system and platform calls | 3,105 | xo_win.c 1,188 (Windows only), zone files, fs, proc spawn |
@@ -348,28 +348,28 @@ A group often needs several; this counts a group under each one it needs.
 
 | Lines | Count | What | Needs | Unblocked by | Note |
 |---|---|---|---|---|---|
-| 1-1783 | 1783 | Unicode tables and operations C path | C path kept | unicode |  |
+| 1-1783 | 1783 | Unicode tables and operations C path | C path kept | unicode | deleted (decision 0198, 2026-10-13) |
 
 ### std/llrt/xo_json.c (983 lines)
 
 | Lines | Count | What | Needs | Unblocked by | Note |
 |---|---|---|---|---|---|
-| 1-983 | 983 | std/json parser C path | C path kept | jsontext |  |
+| 1-983 | 983 | std/json parser C path | C path kept | jsontext | deleted (decision 0198, 2026-10-13) |
 
 ## C paths kept for pieces already ported (decision 0193 steps 1 to 5, decision 0180)
 
 | Module | Switch | Lines | Where | Bar | Delete after a full tier? |
 |---|---|---|---|---|---|
-| unicode | `XO_UNICODE=c`, `-DXO_UNICODE_C` | 2,047 | xo_unicode.c 1,783, xo_std.c 111, xo_bytes.c 153 | holds on both (decisions 0184, 0192; 0180 item 7) | yes, with the new ADR 0180 asks for |
-| jsontext | `XO_LLRT_C=jsontext` | 1,016 | xo_json.c 983, xo_std.c 33 | holds (step 4) | yes (also json_diff.c 115, http_fuzz.c's JSON part) |
+| unicode | `XO_UNICODE=c`, `-DXO_UNICODE_C` | 2,047 | xo_unicode.c 1,783, xo_std.c 111, xo_bytes.c 153 | holds on both (decisions 0184, 0192; 0180 item 7) | deleted (decision 0198, the ADR 0180 asks for) |
+| jsontext | `XO_LLRT_C=jsontext` | 1,016 | xo_json.c 983, xo_std.c 33 | holds (step 4) | deleted (decision 0198; json_diff.c 115 and http_fuzz.c's JSON part 38 too) |
 | tz | `XO_LLRT_C=tz` | 868 | xo_time.c | holds (step 5) | yes |
-| num | `XO_LLRT_C=num` | 135 | xo_std.c 106, xo_bytes.c 29 | holds (step 3) | yes |
-| num and jsontext | unguarded | 82 | xo_std.c 604-685 (n_lower_eq, n_parse_float) | | yes, with both (only their C paths call it) |
-| strings | `XO_LLRT_C=strings` | 74 | xo_std.c | holds (step 2) | yes |
+| num | `XO_LLRT_C=num` | 135 | xo_std.c 106, xo_bytes.c 29 | holds (step 3) | deleted (decision 0198) |
+| num and jsontext | unguarded | 82 | xo_std.c 604-685 (n_lower_eq, n_parse_float) | | deleted (decision 0198; only their C paths called it) |
+| strings | `XO_LLRT_C=strings` | 74 | xo_std.c | holds (step 2) | deleted (decision 0198) |
 | report | `XO_LLRT_C=report` | 54 | xo_testing.c | holds (step 5) | yes |
 | show | `XO_LLRT_C=show` | 37 | xo_bytes.c | holds (step 5) | yes |
 | text | `XO_LLRT_C=text` | 341 | xo_std.c | Duration text misses it (1.171x arm64, 1.087x LLVM, decision 0194) | no: the module's one switch keeps all 341 until Duration text passes |
-| **total** | | **4,654** | | | **4,313 deletable**, 341 kept |
+| **total** | | **4,654** | | | **4,313 deletable**, 341 kept; 3,354 deleted by decision 0198 (3,373 with the blank and comment lines around them), 959 left (tz, report, show) |
 
 Deleting each also removes its `<name>_c.xo`, its IOFlags entry (and
 xo1's `io_flags`), and the SSA builders' C branch (decision 0193 item 3).
@@ -607,6 +607,9 @@ internal intrinsic or an internal marker on native modules.
 1. Delete the C paths that hold the bar once the lead's full tier
    passes: unicode (with its ADR), jsontext, tz, num (plus the shared
    82 lines), strings, report, show: 4,313 lines, one change per module.
+   Done for unicode, jsontext, num, the shared 82, and strings (decision
+   0198, 2026-10-13: 3,354 lines); tz, report, and show (959) wait for a
+   full tier of step 5.
 2. (4)'s SWAR half now: `rt.popcount` in the three self hosted emitters
    and rune_count over `bytes_word`; remeasure with
    `bench/perf/text/measure.sh` (`WORKLOADS=rune_count`).

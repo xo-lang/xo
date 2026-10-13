@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **The C paths of the ported runtime pieces are gone** (decision
+  0198): the Unicode operations (`XO_UNICODE=c`, xo_unicode.c), std/json's
+  text (`XO_LLRT_C=jsontext`, xo_json.c), the number text
+  (`XO_LLRT_C=num`), and the Str operations (`XO_LLRT_C=strings`), 3,373
+  lines of std/llrt. Those settings now select nothing; the Xo versions,
+  the default since decisions 0180 and 0193, are the only ones. No pack
+  object changes (packs never held these paths).
 - The self hosted toolchain runs on x86-64 hosts: on darwin/amd64 and
   linux/amd64, `xo build|run|test --backend=llvm` (and `--no-gc`, whose
   default backend is LLVM there) go through xo1, which `xo` builds with
