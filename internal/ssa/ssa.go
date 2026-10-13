@@ -460,6 +460,10 @@ type Func struct {
 	// owned, its arguments and result are scalars or pointers (the C
 	// calling convention), and its address is taken with OpFuncAddr.
 	Entry bool
+	// Export is the C symbol of a C ABI export (decision 0207): a function
+	// of the runtime module native/llrt/cabi, which the C runtime calls by
+	// that name. It is also an Entry. Empty for any other function.
+	Export string
 	// UnwindExit is the block that ends the function when it unwinds
 	// (cancellation or a fault, decision 0085): it hands a fault on to
 	// the caller (`rt.fault_continue`) or returns zero values. Nil when

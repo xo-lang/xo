@@ -4,6 +4,7 @@
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/atomic
+use native/llrt/cabi
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -14,6 +15,7 @@ use native/llrt/report
 use native/llrt/scan
 use native/llrt/show
 use native/llrt/strings
+use native/llrt/sysio
 use native/llrt/text
 use native/llrt/unicode
 use native/rt
@@ -84,7 +86,7 @@ fn rune_is_letter(r: Rune) -> Bool { unicode.is_letter(Int(r)) }
 
 fn rune_is_digit(r: Rune) -> Bool { unicode.is_digit(Int(r)) }
 
-fn rune_is_space(r: Rune) -> Bool { rt.rune_is_space(r) }
+fn rune_is_space(r: Rune) -> Bool { unicode.is_space(Int(r)) }
 
 fn rune_is_print(r: Rune) -> Bool { unicode.is_print(Int(r)) }
 
@@ -757,9 +759,9 @@ fn fs_check(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
   }
 }
 
-// fs_info_of is the FileInfo of the last fs_stat, of OS path op.
-fn fs_info_of(f: Fs, op: Str, given: Str) -> FileInfo {
-  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.time_of(rt.fs_info(2))}
+// fs_info_of is the FileInfo of the facts i of OS path op (sysio.fs_stat).
+fn fs_info_of(f: Fs, op: Str, given: Str, i: sysio.Info) -> FileInfo {
+  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: i.is_dir, size: i.size, modified: rt.time_of(i.modified)}
 }
 
 fn fs_sub(f: Fs, dir: Str) -> Fs {
@@ -779,14 +781,15 @@ fn fs_case_sensitive(_f: Fs) -> Bool { rt.fs_case_sensitive() }
 
 fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
   let op = fs_check(f, p, false)?
-  let st = rt.fs_stat(op, true, p)
+  let i = sysio.fs_stat(op, true, p)
+  let st = i.st
   if st == 1 {
     return None
   }
   if st != 0 {
     return Err(fs_err(st, p))
   }
-  Some(fs_info_of(f, op, p))
+  Some(fs_info_of(f, op, p, i))
 }
 
 fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
@@ -796,7 +799,7 @@ fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
 
 fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
   let op = fs_check(f, p, false)?
-  let l = rt.fs_read(op)
+  let l = sysio.fs_read(op)
   if l.len() == 0 {
     return Err(fs_err(rt.fs_status(), p))
   }
@@ -818,8 +821,9 @@ fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
   var out: List[FileInfo] = []
   for n in names {
     let child = fs_join(op, n)
-    if rt.fs_stat(child, false, n) == 0 {
-      out.push(fs_info_of(f, child, fs_join(dir, n)))
+    let i = sysio.fs_stat(child, false, n)
+    if i.st == 0 {
+      out.push(fs_info_of(f, child, fs_join(dir, n), i))
     }
   }
   out.sort_by(fn(fi) { fi.name })
@@ -834,8 +838,9 @@ fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! F
   for n in names.sort() {
     let child = fs_join(osdir, n)
     let xc = fs_join(xodir, n)
-    if rt.fs_stat(child, false, xc) == 0 {
-      let fi = fs_info_of(f, child, xc)
+    let i = sysio.fs_stat(child, false, xc)
+    if i.st == 0 {
+      let fi = fs_info_of(f, child, xc, i)
       out.push(fi)
       if fi.is_dir {
         fs_walk_dir(f, child, xc, out)?
@@ -846,7 +851,7 @@ fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! F
 
 fn fs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
   let op = fs_check(f, dir, false)?
-  let st = rt.fs_stat(op, true, dir)
+  let st = sysio.fs_stat(op, true, dir).st
   if st != 0 {
     return Err(fs_err(st, dir))
   }
@@ -857,7 +862,7 @@ fn fs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
 
 fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_write(op, data, p)
+  let st = sysio.fs_write(op, data, p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -2138,6 +2143,12 @@ fn llrt_time_ok(s: Str) -> Bool {
 }
 
 fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
+
+// Clock.now and Clock.since, as the SSA builders call them (decision
+// 0206): a system call from Xo on Linux (std/native/llrt/sysio.xo), the
+// C runtime elsewhere.
+
+fn llrt_clock_now() -> Int { sysio.clock_now() }
 
 // The number text, as the SSA builder calls it for every interpolation
 // and Display of an Int or Float (decision 0193 step 3): in Xo

@@ -1,0 +1,58 @@
+# 0209: Test harnesses as an `xo dev` subcommand written in Xo
+
+Status: Accepted (owner, 2026-10-13); not started. Queued after decision
+0195's zero-C work, as part of the tooling hardening.
+
+## Context
+
+Three Python scripts (scripts/selfhost-goldens.py,
+selfhost-gogoldens.py, elf-goldens.py) build the golden programs with
+xo1, run them, and compare output. They overlap, behave differently by
+platform (a text mode read turned show_table's raw CR into LF,
+gotchas/python-text-mode-want-cr.md), and need Python. After decision
+0178 stage 7 the Go compiler packages are deleted (the test helpers
+stay), so Go tests are not the long term home for Xo's own tooling.
+
+Why Python: the first script (selfhost-goldens.py, 2026-10-11, the
+decision 0158 switch-over experiment) was scaffolding to drive an
+external compiler binary while the Go tests called the Go compiler in
+process; the other two copied it. No decision chose Python. The Go
+tests already hold the same comparison logic (TestGoldenRun,
+TestGolden, stableStderr, dropGoFrames) and already accept an external
+compiler for the want.txt goldens (`XO_GOLDEN_WANT=1
+XO_GOLDEN_WANT_XO=<xo1> go test -run TestGoldenWant ./internal/llvm`,
+used for the Windows runs), which is the starting point.
+
+## Decision
+
+The harnesses become a hidden developer subcommand of xo, written in Xo
+(for example `xo dev goldens --backend=arm64 <dir>`, later the replay
+recorder, the ELF and Mach-O checks, and the Windows batch steps), with
+byte exact comparison by default and code shared with `xo test`. One
+thin Go test per harness calls it, so the existing tiers and batches
+keep running it. The Python scripts run beside it until both agree on a
+full batch, then they are deleted.
+
+The same work gathers xo's hidden developer commands (cmd/xo/main.go:
+lexdump, astdump, typedump, ssadump, asmdump, llvmdump, gendump, rtpack)
+under `xo dev` in xo1: `xo dev goldens`, `xo dev dump
+lex|ast|types|ssa|asm|llvm|go`, `xo dev rtpack`, `xo dev record`; xo1
+gains the dumps it lacks today (ssadump and llvmdump, the two commands
+the switch point B gate exempted). The Go compiler's dump commands go
+with stage 7's deletion.
+
+## Consequences
+
+- The harness dogfoods Xo's std (files, processes, text) on every run
+  and works on every host xo1 runs on, without Go or Python.
+- A std bug can break the harness itself; running beside the old scripts
+  until they agree catches that before the switch.
+- `xo dev` is not part of the user facing CLI surface in spec/core.md
+  (hidden, like the dump commands).
+
+## Alternatives
+
+- Go tests only: rejected; ties Xo's tooling to the Go toolchain and is
+  not runnable outside the repository.
+- Keep the Python scripts: rejected; platform differences and three
+  overlapping implementations.

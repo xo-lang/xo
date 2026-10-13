@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+read "hello\n"
+empty 0
+big 43890 true
+rewritten short
+stat big.txt 5 dir false
+stat dir true
+missing true
+read nope: NotFound(path: "nope.txt")
+read through a file: NotDir(path: "a.txt/x")
+read dir is an error true
+write into missing dir: NotFound(path: "no/such/x.txt")
+long: Io(path: "x*300", msg: "file name too long")
+proc ok true
+clock moves true after 2020 true since true
+entries a.txt:6 big.txt:5 empty.txt:0
+done
+--- stderr

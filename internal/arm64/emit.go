@@ -579,6 +579,8 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		if in.indirect {
 			b.WriteString("\tblr x0\n")
+		} else if in.svc {
+			b.WriteString("\tmov x8, x6\n\tsvc #0\n")
 		} else {
 			fmt.Fprintf(b, "\tbl %s\n", in.sym)
 		}

@@ -233,6 +233,12 @@ fn core_ctx(os: Os, o: Opts) -> core.Ctx {
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
   c.native = native
+  // the C paths of ported runtime modules (decisions 0193, 0206)
+  for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
+    if !n.trim().is_empty() {
+      c.llrt_c.push(n.trim())
+    }
+  }
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"
@@ -334,8 +340,13 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   if backend == "arm64" || backend == "llvm" {
     tgoos = targets[0].split("/")[0]
     tgoarch = if backend == "arm64" { "arm64" } else { ltarget.split("/")[1] }
+  } else if backend == "wasm" {
+    // the architecture of a WASI module: std/native/llrt/sysio.xo's
+    // Linux system calls are not for it (decision 0206); `target.os`
+    // stays the host's (gotchas/wasm-target-os-is-the-host.md)
+    tgoarch = "wasm"
   }
-  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
+  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", t)
   t = lo.t
   let b = lo.b
   let tu = lo.tu
@@ -367,6 +378,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     var g = llvm.new_gen(b.m)
+    g.goarch = tgoarch
     let ir = g.generate()
     t = lap(os, phases, "emit", t)
     if !g.err.is_empty() {
@@ -375,7 +387,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if !g.skipped.is_empty() {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
-    let code = with_target_attrs(ir, clang_target_attrs(os, cc, cross))
+    // with no C library, no libgcc: arm64 atomics inline (decision 0206)
+    let attr_flags = if nolibc(os, lctx.tgoos) && host_arch() == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
+    let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
     if o.cmd == "asm" {
       os.stdio.print(code)
       lap(os, phases, "print", t)
@@ -444,7 +458,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", t)
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", false, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -572,8 +586,8 @@ struct Lowered {
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
-fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, t0: Time) -> Lowered {
-  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
+fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
+  var b = ssa.build_program_for(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -687,6 +701,20 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   let ci = c_inputs(os, c, dir)
   if !ci.err.is_empty() {
     fail(os, ci.err)
+  }
+  if nolibc(os, tgoos) {
+    // a static program with no C library (decisions 0203, 0206)
+    if !ci.srcs.is_empty() || !ci.flags.is_empty() {
+      fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")
+    }
+    if no_cc {
+      fail(os, "XO_NOLIBC=1 links with cc (--ld=cc): the ELF linker of decision 0182 has no static mode yet (decision 0206)")
+    }
+    if needs_tls(code) {
+      fail(os, "XO_NOLIBC=1: std/http's TLS library needs the C library (decision 0206 stage 3)")
+    }
+    let arch = if o.backend == "llvm" { host_arch() } else { "arm64" }
+    lk.flags = lk.flags + nolibc_flags(arch)
   }
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs

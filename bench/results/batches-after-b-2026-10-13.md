@@ -14,3 +14,4 @@ with no regression". Logs are in the lead's scratchpad.
 Batch 3 also ran without Node (TestSelfhostWasm skipped); the wasm tier
 passed at that commit in the agents' targeted runs, so batch 3 still
 counts, but batch 5 is the first batch that runs the wasm tier on EC2.
+| 5 | 7cd80f04 | EC2 r8g.8xlarge on demand, i-EXAMPLE14 (terminated), node v22.22.1 (the wasm tier ran) | 38 ok, 1 failed: internal/gen TestHybridPreemption again (the load flake of batch 4, gotchas/hybrid-preemption-stw-under-load.md); every other package including internal/selfhost with the wasm tier passed. Not counted until the flake is fixed |

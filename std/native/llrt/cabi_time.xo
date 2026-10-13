@@ -1,0 +1,54 @@
+// The C ABI exports of std/time's zone data (decisions 0204, 0207): like
+// cabi.xo, every top level function here is called by the C runtime as
+// xo_x_<name>; xo_time.c (compiled with -DXO_TIME) calls them, so
+// std/native/time.xo imports this module.
+use native/llrt/raw
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Zone data (xo_time.c)
+
+/// Finds the stored entry of the zip archive of zn bytes at z named by
+/// the nn bytes at name (std/rt's zipEntry): 1 with its offset and size
+/// in the two words at out, else 0.
+fn tz_zip_entry(z: Int, zn: Int, name: Int, nn: Int, out: Int) -> Int {
+  if zn < 22 {
+    return 0
+  }
+  let end = zn - 22
+  if rt.mem_load(z, end, 4) != 0x06054b50 {
+    return 0
+  }
+  let n = rt.mem_load(z, end + 10, 2)
+  var off = rt.mem_load(z, end + 16, 4)
+  for _ in 0..n {
+    if off + 46 > zn || rt.mem_load(z, off, 4) != 0x02014b50 {
+      return 0
+    }
+    let method = rt.mem_load(z, off + 10, 2)
+    let size = rt.mem_load(z, off + 24, 4)
+    let namelen = rt.mem_load(z, off + 28, 2)
+    let extralen = rt.mem_load(z, off + 30, 2)
+    let commentlen = rt.mem_load(z, off + 32, 2)
+    let local = rt.mem_load(z, off + 42, 4)
+    if off + 46 + namelen > zn {
+      return 0
+    }
+    let entry = off + 46
+    off += 46 + namelen + extralen + commentlen
+    if namelen != nn || !raw.mem_eq(z + entry, name, nn) {
+      continue
+    }
+    if method != 0 || local + 30 > zn || rt.mem_load(z, local, 4) != 0x04034b50 {
+      return 0
+    }
+    let start = local + 30 + rt.mem_load(z, local + 26, 2) + rt.mem_load(z, local + 28, 2)
+    if start + size > zn {
+      return 0
+    }
+    rt.mem_store(out, 0, start, 8)
+    rt.mem_store(out, 8, size, 8)
+    return 1
+  }
+  0
+}

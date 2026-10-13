@@ -30,7 +30,8 @@ func TestSSADump(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 	for _, want := range []string{
-		"== stage build\nfunc main(v0: Os) -> () {\n",
+		"== stage build\n",
+		"\nfunc main(v0: Os) -> () {\n",
 		"func div(v0: Int, v1: Int) -> Int {\n",
 		"v2: Int = div v0, v1 @ prog/main.xo:1:33\n",
 		"call rt.landing",

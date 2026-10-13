@@ -101,7 +101,7 @@ func TestRealtimeNative(t *testing.T) {
 func TestRuntimeRealtime(t *testing.T) {
 	t.Parallel()
 	src := filepath.Join(rtDir, "testdata", "realtime.c")
-	bin := tsanBuild(t, nil, []string{src})
+	bin := tsanBuild(t, nil, cOnly(t, src))
 	out := runTSan(t, bin, ".")
 	for _, name := range []string{"defer", "nested", "overflow", "allocs", "threads"} {
 		if !strings.Contains(out, name+": ok") {
@@ -112,7 +112,7 @@ func TestRuntimeRealtime(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2"}, []string{src}, opt); err != nil {
+	if err := build.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")

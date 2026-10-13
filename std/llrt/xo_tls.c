@@ -129,123 +129,28 @@ typedef struct {
 	size_t n;
 } pem_block;
 
-static int pem_b64(int c) {
-	if (c >= 'A' && c <= 'Z') {
-		return c - 'A';
-	}
-	if (c >= 'a' && c <= 'z') {
-		return c - 'a' + 26;
-	}
-	if (c >= '0' && c <= '9') {
-		return c - '0' + 52;
-	}
-	if (c == '+') {
-		return 62;
-	}
-	if (c == '/') {
-		return 63;
-	}
-	return -1;
-}
+int64_t xo_x_pem_next(int64_t p, int64_t n, int64_t st, int64_t ty, int64_t der);
 
-static const char *pem_find(const char *p, const char *end, const char *s) {
-	size_t k = strlen(s);
-	for (; p + k <= end; p++) {
-		if (memcmp(p, s, k) == 0) {
-			return p;
-		}
-	}
-	return NULL;
-}
-
-// pem_next decodes the next PEM block of [*p, end): 1 and the block (its
-// der to free), 0 when there is none. A block that does not decode is
-// skipped, as pem.Decode does.
+// pem_next decodes the next PEM block of [*p, end) (tlsname.xo's
+// pem_next, decision 0207): 1 and the block (its der to free), 0 when
+// there is none. A block that does not decode is skipped, as pem.Decode
+// does.
 static int pem_next(const char **p, const char *end, pem_block *b) {
-	for (;;) {
-		const char *begin = pem_find(*p, end, "-----BEGIN ");
-		if (!begin) {
-			*p = end;
-			return 0;
-		}
-		// pem.Decode requires BEGIN at the start of a line
-		if (begin != *p && begin[-1] != '\n') {
-			*p = begin + 11;
-			continue;
-		}
-		const char *t = begin + 11;
-		const char *tend = pem_find(t, end, "-----");
-		*p = begin + 11;
-		if (!tend || (size_t)(tend - t) >= sizeof b->type) {
-			continue;
-		}
-		const char *nl = tend + 5;
-		while (nl < end && (*nl == ' ' || *nl == '\t' || *nl == '\r')) {
-			nl++;
-		}
-		if (nl < end && *nl != '\n') {
-			continue;
-		}
-		memcpy(b->type, t, (size_t)(tend - t));
-		b->type[tend - t] = 0;
-		char endline[100];
-		snprintf(endline, sizeof endline, "-----END %s-----", b->type);
-		const char *body = nl < end ? nl + 1 : end;
-		const char *stop = pem_find(body, end, endline);
-		if (!stop) {
-			continue;
-		}
-		// headers ("Key: value" lines up to an empty line) are skipped
-		const char *q = body;
-		const char *line_end = memchr(q, '\n', (size_t)(stop - q));
-		if (line_end && memchr(q, ':', (size_t)(line_end - q))) {
-			const char *blank = pem_find(q, stop, "\n\n");
-			const char *blank2 = pem_find(q, stop, "\n\r\n");
-			if (blank2 && (!blank || blank2 < blank)) {
-				blank = blank2 + 1;
-			}
-			if (!blank) {
-				continue;
-			}
-			q = blank + 2;
-		}
-		size_t cap = (size_t)(stop - q) / 4 * 3 + 3;
-		unsigned char *der = malloc(cap ? cap : 1);
-		if (!der) {
-			xo_oom();
-		}
-		size_t n = 0;
-		uint32_t acc = 0;
-		int bits = 0, pad = 0, bad = 0;
-		for (const char *c = q; c < stop; c++) {
-			if (*c == '\n' || *c == '\r' || *c == ' ' || *c == '\t') {
-				continue;
-			}
-			if (*c == '=') {
-				pad++;
-				continue;
-			}
-			int v = pem_b64((unsigned char)*c);
-			if (v < 0 || pad) {
-				bad = 1;
-				break;
-			}
-			acc = (acc << 6) | (uint32_t)v;
-			bits += 6;
-			if (bits >= 8) {
-				bits -= 8;
-				der[n++] = (unsigned char)(acc >> bits);
-			}
-		}
-		if (bad || pad > 2) {
-			free(der);
-			continue;
-		}
-		b->der = der;
-		b->n = n;
-		*p = stop + strlen(endline);
-		return 1;
+	int64_t n = (int64_t)(end - *p);
+	unsigned char *der = malloc((size_t)n + 1);
+	if (!der) {
+		xo_oom();
 	}
+	int64_t st = 0;
+	int64_t k = xo_x_pem_next(XO_ADDR(*p), n, XO_ADDR(&st), XO_ADDR(b->type), XO_ADDR(der));
+	*p += st;
+	if (k < 0) {
+		free(der);
+		return 0;
+	}
+	b->der = der;
+	b->n = (size_t)k;
+	return 1;
 }
 
 static int ends_with(const char *s, const char *suf) {
@@ -929,93 +834,14 @@ struct tls_srv {
 	int n;
 };
 
-// dns_match is x509's matchHostnames (pattern with a leftmost "*").
-static int dns_match(const char *pattern, size_t pn, const char *host) {
-	char pat[256], h[256];
-	size_t hn = strlen(host);
-	if (hn > 0 && host[hn - 1] == '.') {
-		hn--;
-	}
-	if (pn == 0 || hn == 0 || pn >= sizeof pat || hn >= sizeof h) {
-		return 0;
-	}
-	for (size_t i = 0; i < pn; i++) {
-		pat[i] = (char)h_lower((unsigned char)pattern[i]);
-	}
-	pat[pn] = 0;
-	for (size_t i = 0; i < hn; i++) {
-		h[i] = (char)h_lower((unsigned char)host[i]);
-	}
-	h[hn] = 0;
-	char *ps = NULL, *hs = NULL;
-	char *pp = strtok_r(pat, ".", &ps), *hp = strtok_r(h, ".", &hs);
-	// strtok_r drops empty labels: compare label counts by dots instead
-	size_t pd = 0, hd = 0;
-	for (size_t i = 0; i < pn; i++) {
-		pd += pattern[i] == '.';
-	}
-	for (size_t i = 0; i < hn; i++) {
-		hd += host[i] == '.';
-	}
-	if (pd != hd) {
-		return 0;
-	}
-	for (int i = 0; pp && hp; i++) {
-		if (!(i == 0 && strcmp(pp, "*") == 0) && strcmp(pp, hp) != 0) {
-			return 0;
-		}
-		pp = strtok_r(NULL, ".", &ps);
-		hp = strtok_r(NULL, ".", &hs);
-	}
-	return !pp && !hp;
-}
-
-// valid_hostname is x509's validHostname.
-static int valid_hostname(const char *host, size_t n, int pattern) {
-	if (!pattern && n > 0 && host[n - 1] == '.') {
-		n--;
-	}
-	if (n == 0 || (n == 1 && host[0] == '*')) {
-		return 0;
-	}
-	size_t start = 0;
-	for (int label = 0;; label++) {
-		size_t e = start;
-		while (e < n && host[e] != '.') {
-			e++;
-		}
-		if (e == start) {
-			return 0;
-		}
-		if (!(pattern && label == 0 && e - start == 1 && host[start] == '*')) {
-			for (size_t j = start; j < e; j++) {
-				unsigned char c = (unsigned char)host[j];
-				if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || (c == '-' && j != start)) {
-					continue;
-				}
-				return 0;
-			}
-		}
-		if (e >= n) {
-			return 1;
-		}
-		start = e + 1;
-	}
-}
-
-// match_exactly is x509's matchExactly.
-static int match_exactly(const char *a, size_t an, const char *b) {
-	size_t bn = strlen(b);
-	if (an == 0 || (an == 1 && a[0] == '.') || bn == 0 || (bn == 1 && b[0] == '.') || an != bn) {
-		return 0;
-	}
-	for (size_t i = 0; i < an; i++) {
-		if (h_lower((unsigned char)a[i]) != h_lower((unsigned char)b[i])) {
-			return 0;
-		}
-	}
-	return 1;
-}
+// The name checks (x509's matchHostnames, validHostname, matchExactly,
+// VerifyHostname, HostnameError; net.ParseIP and net.IP.String) are Xo
+// (std/native/llrt/tlsname.xo through cabi.xo, decision 0207): the C
+// reads a certificate's names and hands them over flat.
+int64_t xo_x_tls_host_ok(int64_t dp, int64_t dn, int64_t ip, int64_t ni, int64_t hp, int64_t hn);
+int64_t xo_x_tls_hostname_msg(int64_t args, int64_t buf, int64_t bn);
+int64_t xo_x_tls_is_ip(int64_t p, int64_t n);
+int64_t xo_x_tls_alert_msg(int64_t buf, int64_t bn, int64_t a);
 
 // The names of a certificate's subject alternative name extension.
 typedef struct {
@@ -1050,23 +876,6 @@ static void names_free(cert_names *nm) {
 	}
 }
 
-// ip_parse is net.ParseIP as 16 bytes (IPv4 mapped): 1 for an address.
-static int ip_parse(const char *s, unsigned char out[16]) {
-	struct in_addr a4;
-	struct in6_addr a6;
-	if (inet_pton(AF_INET, s, &a4) == 1) {
-		memset(out, 0, 10);
-		out[10] = out[11] = 0xff;
-		memcpy(out + 12, &a4, 4);
-		return 1;
-	}
-	if (inet_pton(AF_INET6, s, &a6) == 1) {
-		memcpy(out, &a6, 16);
-		return 1;
-	}
-	return 0;
-}
-
 static void ip_to16(const unsigned char *ip, int n, unsigned char out[16]) {
 	if (n == 4) {
 		memset(out, 0, 10);
@@ -1077,43 +886,25 @@ static void ip_to16(const unsigned char *ip, int n, unsigned char out[16]) {
 	}
 }
 
-// ip_string is net.IP.String.
-static void ip_string(const unsigned char *ip, int n, char *out, size_t on) {
-	unsigned char b[16];
-	ip_to16(ip, n, b);
-	static const unsigned char v4[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
-	if (memcmp(b, v4, 12) == 0) {
-		inet_ntop(AF_INET, b + 12, out, (socklen_t)on);
-	} else {
-		inet_ntop(AF_INET6, b, out, (socklen_t)on);
+// names_flat is nm as tlsname.names_at reads it: the DNS names each
+// followed by a zero byte in dns, the IP addresses as 16 bytes each in ips.
+static void names_flat(const cert_names *nm, nbuf *dns, unsigned char ips[100][16]) {
+	for (int i = 0; i < nm->ndns; i++) {
+		nbuf_put(dns, nm->dns[i], (int64_t)strlen(nm->dns[i]) + 1);
+	}
+	for (int i = 0; i < nm->nip; i++) {
+		ip_to16(nm->ip[i], nm->iplen[i], ips[i]);
 	}
 }
 
-// host_ok is x509.Certificate.VerifyHostname.
+// host_ok is x509.Certificate.VerifyHostname (tlsname.xo).
 static int host_ok(const cert_names *nm, const char *host) {
-	unsigned char want[16];
-	if (ip_parse(host, want)) {
-		for (int i = 0; i < nm->nip; i++) {
-			unsigned char got[16];
-			ip_to16(nm->ip[i], nm->iplen[i], got);
-			if (memcmp(got, want, 16) == 0) {
-				return 1;
-			}
-		}
-		return 0;
-	}
-	int valid = valid_hostname(host, strlen(host), 0);
-	for (int i = 0; i < nm->ndns; i++) {
-		const char *m = nm->dns[i];
-		if (valid && valid_hostname(m, strlen(m), 1)) {
-			if (dns_match(m, strlen(m), host)) {
-				return 1;
-			}
-		} else if (match_exactly(m, strlen(m), host)) {
-			return 1;
-		}
-	}
-	return 0;
+	nbuf d = {0};
+	unsigned char ips[100][16];
+	names_flat(nm, &d, ips);
+	int ok = (int)xo_x_tls_host_ok(XO_ADDR(d.p), d.n, XO_ADDR(ips), nm->nip, XO_ADDR(host), (int64_t)strlen(host));
+	free(d.p);
+	return ok;
 }
 
 // sni_cb picks the certificate for the name the client sent (Go's
@@ -1289,58 +1080,22 @@ static time_t x509_time(const mbedtls_x509_time *t) {
 static int hostname_msg(const mbedtls_x509_crt *crt, const char *host, char *msg, size_t mn) {
 	cert_names nm;
 	names_load(crt, &nm);
-	if (host_ok(&nm, host)) {
-		names_free(&nm);
-		return 0;
-	}
-	char cn[256] = "";
+	const char *cn = "";
+	size_t cnl = 0;
 	for (const mbedtls_x509_name *n = &crt->subject; n; n = n->next) {
-		if (MBEDTLS_OID_CMP(MBEDTLS_OID_AT_CN, &n->oid) == 0 && n->val.len < sizeof cn) {
-			memcpy(cn, n->val.p, n->val.len);
-			cn[n->val.len] = 0;
+		if (MBEDTLS_OID_CMP(MBEDTLS_OID_AT_CN, &n->oid) == 0 && n->val.len < 256) {
+			cn = (const char *)n->val.p;
+			cnl = n->val.len;
 		}
 	}
-	unsigned char ipb[16];
-	nbuf o = {0};
-	if (!nm.has_san && dns_match(cn, strlen(cn), host)) {
-		nbuf_str(&o, "x509: certificate relies on legacy Common Name field, use SANs instead");
-	} else if (ip_parse(host, ipb)) {
-		if (nm.nip == 0) {
-			nbuf_str(&o, "x509: cannot validate certificate for ");
-			nbuf_str(&o, host);
-			nbuf_str(&o, " because it doesn't contain any IP SANs");
-		} else {
-			nbuf_str(&o, "x509: certificate is valid for ");
-			for (int i = 0; i < nm.nip; i++) {
-				char ips[64];
-				ip_string(nm.ip[i], nm.iplen[i], ips, sizeof ips);
-				if (i > 0) {
-					nbuf_str(&o, ", ");
-				}
-				nbuf_str(&o, ips);
-			}
-			nbuf_str(&o, ", not ");
-			nbuf_str(&o, host);
-		}
-	} else if (nm.ndns == 0) {
-		nbuf_str(&o, "x509: certificate is not valid for any names, but wanted to match ");
-		nbuf_str(&o, host);
-	} else {
-		nbuf_str(&o, "x509: certificate is valid for ");
-		for (int i = 0; i < nm.ndns; i++) {
-			if (i > 0) {
-				nbuf_str(&o, ", ");
-			}
-			nbuf_str(&o, nm.dns[i]);
-		}
-		nbuf_str(&o, ", not ");
-		nbuf_str(&o, host);
-	}
-	nbuf_byte(&o, 0);
-	snprintf(msg, mn, "%s", o.p);
-	free(o.p);
+	nbuf d = {0};
+	unsigned char ips[100][16];
+	names_flat(&nm, &d, ips);
+	int64_t args[9] = {XO_ADDR(d.p), d.n, XO_ADDR(ips), nm.nip, nm.has_san, XO_ADDR(cn), (int64_t)cnl, XO_ADDR(host), (int64_t)strlen(host)};
+	int bad = (int)xo_x_tls_hostname_msg(XO_ADDR(args), XO_ADDR(msg), (int64_t)mn);
+	free(d.p);
 	names_free(&nm);
-	return 1;
+	return bad;
 }
 
 #ifdef __APPLE__
@@ -1479,57 +1234,10 @@ static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags
 	return 0;
 }
 
-// alert_text is crypto/tls's alertText.
-static const char *alert_text(int a) {
-	switch (a) {
-	case 0: return "close notify";
-	case 10: return "unexpected message";
-	case 20: return "bad record MAC";
-	case 21: return "decryption failed";
-	case 22: return "record overflow";
-	case 30: return "decompression failure";
-	case 40: return "handshake failure";
-	case 42: return "bad certificate";
-	case 43: return "unsupported certificate";
-	case 44: return "revoked certificate";
-	case 45: return "expired certificate";
-	case 46: return "unknown certificate";
-	case 47: return "illegal parameter";
-	case 48: return "unknown certificate authority";
-	case 49: return "access denied";
-	case 50: return "error decoding message";
-	case 51: return "error decrypting message";
-	case 60: return "export restriction";
-	case 70: return "protocol version not supported";
-	case 71: return "insufficient security level";
-	case 80: return "internal error";
-	case 86: return "inappropriate fallback";
-	case 90: return "user canceled";
-	case 100: return "no renegotiation";
-	case 109: return "missing extension";
-	case 110: return "unsupported extension";
-	case 111: return "certificate unobtainable";
-	case 112: return "unrecognized name";
-	case 113: return "bad certificate status response";
-	case 114: return "bad certificate hash value";
-	case 115: return "unknown PSK identity";
-	case 116: return "certificate required";
-	case 120: return "no application protocol";
-	case 121: return "encrypted client hello required";
-	}
-	return NULL;
-}
-
 // alert_msg is Go's text of the fatal alert t received:
-// "remote error: tls: <alertText>".
+// "remote error: tls: <alertText>" (tlsname.xo's alert_text).
 static void alert_msg(tls_conn *t, char *m, size_t mn) {
-	int a = mbedtls_ssl_get_fatal_alert(&t->ssl);
-	const char *txt = alert_text(a);
-	if (txt) {
-		snprintf(m, mn, "remote error: tls: %s", txt);
-	} else {
-		snprintf(m, mn, "remote error: tls: alert(%d)", a);
-	}
+	xo_x_tls_alert_msg(XO_ADDR(m), (int64_t)mn, mbedtls_ssl_get_fatal_alert(&t->ssl));
 }
 
 // tls_client_start runs the client's handshake on pd for host (the
@@ -1562,9 +1270,8 @@ static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64
 		memmove(name, name + 1, hn - 2);
 		name[hn - 2] = 0;
 	}
-	unsigned char ipb[16];
 	t->host = name;
-	t->host_ip = ip_parse(name, ipb);
+	t->host_ip = (int)xo_x_tls_is_ip(XO_ADDR(name), (int64_t)strlen(name));
 #ifdef __APPLE__
 	t->apple = roots == &sys_roots;
 #endif

@@ -71,101 +71,20 @@ static xo_rstr *nbuf_take(nbuf *b, int64_t *len) {
 	return s;
 }
 
-// utf8_decode decodes the rune at p (n bytes available) like Go's
-// utf8.DecodeRune: an invalid or short sequence is U+FFFD of size 1.
-static int32_t n_utf8_decode(const unsigned char *p, int64_t n, int *size) {
-	unsigned c = p[0];
-	if (c < 0x80) {
-		*size = 1;
-		return (int32_t)c;
-	}
-	int k;
-	unsigned lo = 0x80, hi = 0xBF;
-	int32_t r;
-	if (c >= 0xC2 && c <= 0xDF) {
-		k = 1;
-		r = c & 0x1F;
-	} else if (c >= 0xE0 && c <= 0xEF) {
-		k = 2;
-		r = c & 0x0F;
-		if (c == 0xE0) {
-			lo = 0xA0;
-		} else if (c == 0xED) {
-			hi = 0x9F;
-		}
-	} else if (c >= 0xF0 && c <= 0xF4) {
-		k = 3;
-		r = c & 0x07;
-		if (c == 0xF0) {
-			lo = 0x90;
-		} else if (c == 0xF4) {
-			hi = 0x8F;
-		}
-	} else {
-		*size = 1;
-		return 0xFFFD;
-	}
-	if (n < k + 1 || p[1] < lo || p[1] > hi) {
-		*size = 1;
-		return 0xFFFD;
-	}
-	r = (r << 6) | (p[1] & 0x3F);
-	for (int j = 2; j <= k; j++) {
-		if (p[j] < 0x80 || p[j] > 0xBF) {
-			*size = 1;
-			return 0xFFFD;
-		}
-		r = (r << 6) | (p[j] & 0x3F);
-	}
-	*size = k + 1;
-	return r;
+// The UTF-8 helpers of the C code are Xo (std/native/llrt/cabi.xo,
+// decision 0207): utf8_decode is utf8.DecodeRune of the n > 0 bytes at
+// p, an invalid or short sequence U+FFFD of size 1.
+static inline int32_t n_utf8_decode(const unsigned char *p, int64_t n, int *size) {
+	int64_t x = xo_x_utf8_decode(XO_ADDR(p), n);
+	*size = (int)(x & 7);
+	return (int32_t)(x >> 3);
 }
 
 // utf8_encode writes r (a valid rune) to p and returns its size.
-static int n_utf8_encode(char *p, int32_t r) {
-	if (r < 0x80) {
-		p[0] = (char)r;
-		return 1;
-	}
-	if (r < 0x800) {
-		p[0] = (char)(0xC0 | (r >> 6));
-		p[1] = (char)(0x80 | (r & 0x3F));
-		return 2;
-	}
-	if (r < 0x10000) {
-		p[0] = (char)(0xE0 | (r >> 12));
-		p[1] = (char)(0x80 | ((r >> 6) & 0x3F));
-		p[2] = (char)(0x80 | (r & 0x3F));
-		return 3;
-	}
-	p[0] = (char)(0xF0 | (r >> 18));
-	p[1] = (char)(0x80 | ((r >> 12) & 0x3F));
-	p[2] = (char)(0x80 | ((r >> 6) & 0x3F));
-	p[3] = (char)(0x80 | (r & 0x3F));
-	return 4;
-}
+static inline int n_utf8_encode(char *p, int32_t r) { return (int)xo_x_utf8_encode(XO_ADDR(p), r); }
 
 // is_space is Go's unicode.IsSpace.
-static int n_is_space(int32_t r) {
-	switch (r) {
-	case '\t':
-	case '\n':
-	case '\v':
-	case '\f':
-	case '\r':
-	case ' ':
-	case 0x85:
-	case 0xA0:
-	case 0x1680:
-	case 0x2028:
-	case 0x2029:
-	case 0x202F:
-	case 0x205F:
-	case 0x3000:
-		return 1;
-	}
-	return r >= 0x2000 && r <= 0x200A;
-}
+static inline int n_is_space(int32_t r) { return (int)xo_x_is_space(r); }
 
 // ---------------------------------------------------------------------------
 // Strings (std.md 2.2)
@@ -360,35 +279,8 @@ xo_rstr *xo_rs_append(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *l
 // Numbers
 
 // parse_int is strconv.ParseInt(s, 10, 64): an optional sign and decimal
-// digits, in range.
-static int n_parse_int(const char *p, int64_t n, int64_t *out) {
-	int64_t i = 0;
-	int neg = 0;
-	if (n == 0) {
-		return 0;
-	}
-	if (p[0] == '+' || p[0] == '-') {
-		neg = p[0] == '-';
-		i++;
-	}
-	if (i == n) {
-		return 0;
-	}
-	uint64_t v = 0;
-	uint64_t lim = neg ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
-	for (; i < n; i++) {
-		if (p[i] < '0' || p[i] > '9') {
-			return 0;
-		}
-		uint64_t d = (uint64_t)(p[i] - '0');
-		if (v > (lim - d) / 10) {
-			return 0;
-		}
-		v = v * 10 + d;
-	}
-	*out = neg ? (int64_t)(0 - v) : (int64_t)v;
-	return 1;
-}
+// digits, in range (cabi.xo).
+static inline int n_parse_int(const char *p, int64_t n, int64_t *out) { return (int)xo_x_parse_int(XO_ADDR(p), n, XO_ADDR(out)); }
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -408,6 +300,9 @@ int64_t xo_int_parse(const char *p, int64_t n) {
 // ---------------------------------------------------------------------------
 // Duration and Time (std.md 2.6)
 
+#ifdef XO_TEXT_C
+// the C copy for the C path of text (XO_LLRT_C=text, decision 0193);
+// the runtime's own callers use cabi.xo's fmt_duration
 // fmt_frac writes v / 10^prec with trailing zeros of the fraction
 // removed, as Go's time.Duration.String does (fmtFrac and fmtInt).
 static int n_fmt_duration(char *out, int64_t d) {
@@ -531,6 +426,8 @@ static int n_fmt_duration(char *out, int64_t d) {
 	return k;
 }
 
+#endif
+
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
 // XO_LLRT_C=text builds call it (std/native/llrt/text_c.xo)
@@ -545,6 +442,9 @@ xo_rstr *xo_rs_append_duration(xo_rstr *a, int64_t an, int64_t d, int64_t *len) 
 #endif
 
 
+#ifdef XO_TEXT_C
+// the C copy for the C path of text (XO_LLRT_C=text); the runtime's own
+// callers use cabi.xo's fmt_time
 // n_fmt_time writes a Time of t nanoseconds since the Unix epoch as RFC
 // 3339 in UTC with the nanoseconds' trailing zeros removed (Go's
 // time.RFC3339Nano).
@@ -589,6 +489,8 @@ static int n_fmt_time(char *out, int64_t t) {
 	out[k] = 0;
 	return k;
 }
+
+#endif
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -677,24 +579,7 @@ void xo_exit(int64_t code) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static __attribute__((unused)) int b64_val(unsigned c) {
-	if (c >= 'A' && c <= 'Z') {
-		return (int)(c - 'A');
-	}
-	if (c >= 'a' && c <= 'z') {
-		return (int)(c - 'a' + 26);
-	}
-	if (c >= '0' && c <= '9') {
-		return (int)(c - '0' + 52);
-	}
-	if (c == '+') {
-		return 62;
-	}
-	if (c == '/') {
-		return 63;
-	}
-	return -1;
-}
+static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -851,14 +736,7 @@ int64_t xo_duration_parse(const char *p, int64_t n) {
 
 
 // n_days_from_civil is the days since 1970-01-01 of a date.
-static int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) {
-	y -= m <= 2;
-	int64_t era = (y >= 0 ? y : y - 399) / 400;
-	int64_t yoe = y - era * 400;
-	int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-	int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-	return era * 146097 + doe - 719468;
-}
+static inline int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) { return xo_x_days_from_civil(y, m, d); }
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -960,6 +838,9 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
+
+// the buffers of the Linux system call layer in Xo (decision 0206)
+#include "xo_sys.c"
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"

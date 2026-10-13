@@ -602,6 +602,8 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
     }
     if inst.indirect {
       b.push("\tblr x0\n")
+    } else if inst.svc {
+      b.push("\tmov x8, x6\n\tsvc #0\n")
     } else {
       b.push("\tbl ${inst.sym}\n")
     }

@@ -1227,6 +1227,10 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let pt = b.typ(p.ty)
     vs.push(b.value_as(es[i] ?? fault("arg"), pt))
   }
+  let (rv, raw) = b.raw_intrinsic(name, vs)
+  if raw {
+    return rv
+  }
   if b.is_never(b.c.objs[fo].result) {
     b.rt(name, -1, vs)
     b.add(Op.Unreachable, -1, Aux.None, [])
@@ -1234,6 +1238,67 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     return b.undef(nt)
   }
   b.rt(name, nt, vs)
+}
+
+// ---------------------------------------------------------------------------
+// Raw memory intrinsics (internal/ssa rawmem.go, decision 0207)
+
+/// The table of rt.layout (internal/ssa Layout): the offsets and sizes
+/// of the C runtime's objects on the 64 bit native targets, or (wasm) of
+/// the wasm runtime's; -1 for a key outside it.
+pub fn layout_value(k: Int, wasm: Bool) -> Int {
+  let native = [16, 8, 24, 8, 16, 0, 8, 8]
+  let w32 = [8, 4, 16, 4, 8, 0, 4, 4]
+  if k < 0 || k >= native.len() {
+    return -1
+  }
+  if wasm { w32[k] } else { native[k] }
+}
+
+/// Checks and folds the raw memory intrinsics (rawIntrinsic): the value
+/// and true, or false for another intrinsic.
+fn (var b: Builder) raw_intrinsic(name: Str, vs: List[Int]) -> (Int, Bool) {
+  if name == "layout" {
+    let (k, ok) = b.const_word(vs[0])
+    let n = layout_value(k, b.wasm)
+    if !ok || n < 0 {
+      b.unsupported("`rt.layout` of a key that is not a constant of the layout table")
+      return (b.undef(b.int_t()), true)
+    }
+    return (b.cint(n), true)
+  }
+  if name is "mem_load" | "mem_store" {
+    let (w, ok) = b.const_word(vs[vs.len() - 1])
+    if !ok || !(w is 1 | 2 | 4 | 8) {
+      b.unsupported("`rt.${name}` of a width that is not a constant 1, 2, 4, or 8")
+      return (b.undef(b.int_t()), true)
+    }
+  }
+  (-1, false)
+}
+
+/// rt.obj_addr[T] and rt.obj_at[T] (rawGeneric) of type t: the value and
+/// true, or false for another generic intrinsic.
+fn (var b: Builder) raw_generic(name: Str, t: Int, es: List[Expr?]) -> (Int, Bool) {
+  let it = b.int_t()
+  let k = b.tkind(t)
+  if name == "obj_addr" {
+    if !(k is Kind.Str | Kind.List | Kind.Handle) {
+      b.unsupported("`rt.obj_addr` of a `${b.m.types[t].name}` (a Str, List, or handle)")
+      return (b.undef(it), true)
+    }
+    let v = b.value_as(es[0] ?? fault("arg"), t)
+    return (b.rt("obj_addr", it, [v]), true)
+  }
+  if name == "obj_at" {
+    if !(k is Kind.List | Kind.Handle) {
+      b.unsupported("`rt.obj_at` of a `${b.m.types[t].name}` (a List or handle)")
+      return (b.undef(t), true)
+    }
+    let a = b.value_as(es[0] ?? fault("arg"), it)
+    return (b.rt("obj_at", t, [a]), true)
+  }
+  (-1, false)
 }
 
 /// a.min(b) or a.max(b) on Int, Float, the sized integers, and Str; -1
@@ -1729,9 +1794,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "Rand.float" => return Some(b.rt("rand_float", b.float_t(), []))
     "Rand.bool" => return Some(b.rt("rand_bool", b.bool_t(), []))
     "Rand.bytes" => return Some(b.rt("rand_bytes", st, [b.io_arg(fo, es, 0, it)]))
-    "Clock.now" => return Some(b.rt("clock_now", it, []))
+    "Clock.now" => return Some(b.clock_now())
     "Clock.since" => {
-      let now = b.rt("clock_now", it, [])
+      let now = b.clock_now()
       let a = b.io_arg(fo, es, 0, it)
       let v = b.add(Op.Sub, it, Aux.None, [now, a])
       b.set_pos(v, pos)
