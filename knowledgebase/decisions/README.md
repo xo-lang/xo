@@ -195,3 +195,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0201-runtime-scan-intrinsics.md](0201-runtime-scan-intrinsics.md): Proposed (stub): SIMD and word at a time scan intrinsics, internal to std via native/rt (decision 0195 prerequisite 4).
 - [0202-tls-in-xo.md](0202-tls-in-xo.md): Accepted (owner, 2026-10-13): TLS and its crypto written in Xo after Go's design replace Mbed TLS and fiat-crypto, last in decision 0195's order, after constant time support.
 - [0203-linux-without-libc.md](0203-linux-without-libc.md): Accepted (owner, 2026-10-13): Linux programs make raw system calls and link statically with no libc, with an Xo DNS resolver, as Go does; macOS and Windows keep their platform libraries.
+- [0204-c-may-call-xo-runtime.md](0204-c-may-call-xo-runtime.md): Accepted (owner, 2026-10-13): the C runtime may call runtime functions compiled from Xo through internal C ABI exports; supersedes decision 0180 item 3.
+- [0205-zero-c-scope.md](0205-zero-c-scope.md): Accepted (owner, 2026-10-13): no C toolchain for the runtime and for programs without `use c`; `use c` programs keep needing a C compiler, as with cgo.
