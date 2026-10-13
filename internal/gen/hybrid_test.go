@@ -148,7 +148,9 @@ func TestHybridRandom(t *testing.T) {
 // passes when it is within twice the control's figures plus a margin.
 // The bounds never exceed a quarter of the loop, which a run without
 // polls (its first stop the world waits for the rest of the loop)
-// always misses; the no-poll control at the end checks that.
+// always misses; the no-poll control at the end checks that. The runs
+// set GOGC=10 so a GC (and its stop the world) always happens while the
+// loop runs, whatever the host's sleep granularity.
 func TestHybridPreemption(t *testing.T) {
 	// not parallel: the other tests of the package would load the host
 	needArm64(t)
@@ -262,7 +264,13 @@ func (m preemptRes) missed(procs string, race bool, stwBound float64, gapBound i
 func preemptRun(t *testing.T, what, bin, rounds, procs string, race bool) preemptRes {
 	t.Helper()
 	cmd := exec.Command(bin, rounds)
-	cmd.Env = append(goldenEnv(), "GOMAXPROCS="+procs, "GODEBUG=gctrace=1")
+	// GOGC=10 (which also turns off the Xo heap floor, decision 0065)
+	// puts the heap goal near 400 KB, so main (at least 16 KB a round)
+	// starts a GC every few dozen rounds while spin runs. With the default
+	// floor (16 MiB at GOMAXPROCS=4) a -short loop on Linux, where a 100us
+	// sleep takes about 1 ms, allocated about 12 MB and never started one
+	// (gotchas/hybrid-preemption-stw-under-load.md).
+	cmd.Env = append(goldenEnv(), "GOMAXPROCS="+procs, "GODEBUG=gctrace=1", "GOGC=10")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
