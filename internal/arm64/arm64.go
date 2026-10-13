@@ -115,7 +115,7 @@ type gen struct {
 	// the task switch or the thread locals were used: sched.go's
 	// functions are emitted (decision 0212)
 	schedRef bool
-	place       Layout
+	place    Layout
 	// Go mode (goasm.go): functions as Go assembler for Go backend builds
 	goMode   bool
 	noPoll   bool               // GoOptions.NoPoll
