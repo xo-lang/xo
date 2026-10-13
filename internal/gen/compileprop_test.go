@@ -13,10 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/progen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestCompileProperty is a property test of the toolchain (decision 0110):
@@ -60,8 +58,8 @@ func TestCompileProperty(t *testing.T) {
 		first, n = k, 1
 	}
 	native := ""
-	if _, err := build.Clang(); err == nil {
-		native = build.NativeBackend()
+	if _, err := xotool.Clang(); err == nil {
+		native = xotool.NativeBackend()
 	}
 	keep := os.Getenv("XO_COMPILE_PROP_KEEP")
 	for seed := first; seed < first+n; seed++ {
@@ -76,14 +74,14 @@ func TestCompileProperty(t *testing.T) {
 			}
 			os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/prop\n"), 0o644)
 			os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644)
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Out: filepath.Join(dir, "prog")})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog")})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
 			if native == "" {
 				return
 			}
-			nres, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, NoGC: true, Backend: native, Out: filepath.Join(dir, "prog-native")})
+			nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: native, Out: filepath.Join(dir, "prog-native")})
 			if nres != nil && nres.Failed && err == nil && onlyNoGC(nres.Diagnostics) {
 				t.Logf("seed %d: not native (%s)", seed, firstMsg(nres.Diagnostics))
 				return
@@ -93,7 +91,7 @@ func TestCompileProperty(t *testing.T) {
 			}
 			// both run alike: the same exit status, output, and
 			// standard error (runProp)
-			gr, nr := runProp(t, res.Binaries[build.Host()], dir), runProp(t, nres.Binaries[build.Host()], dir)
+			gr, nr := runProp(t, res.Binaries[xotool.Host()], dir), runProp(t, nres.Binaries[xotool.Host()], dir)
 			if gr != nr {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
 			}
@@ -171,13 +169,13 @@ func normStderr(s string) string {
 	return b.String()
 }
 
-func onlyNoGC(ds []diag.Diagnostic) bool {
+func onlyNoGC(ds []xotool.Diagnostic) bool {
 	n := 0
 	for _, d := range ds {
-		if d.Severity != diag.Error {
+		if d.Severity != "error" {
 			continue
 		}
-		if d.Code != string(diag.NoGCUnavailable) {
+		if d.Code != "XO1201" {
 			return false
 		}
 		n++
@@ -185,16 +183,16 @@ func onlyNoGC(ds []diag.Diagnostic) bool {
 	return n > 0
 }
 
-func firstMsg(ds []diag.Diagnostic) string {
+func firstMsg(ds []xotool.Diagnostic) string {
 	for _, d := range ds {
-		if d.Severity == diag.Error {
+		if d.Severity == "error" {
 			return d.Message
 		}
 	}
 	return ""
 }
 
-func diagText(res *build.Result) string {
+func diagText(res *xotool.Result) string {
 	if res == nil {
 		return ""
 	}

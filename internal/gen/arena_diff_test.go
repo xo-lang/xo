@@ -15,8 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // Arena differential tests on examples/notes-service (decision 0066): the
@@ -56,8 +55,8 @@ func TestExampleArenaDiff(t *testing.T) {
 		t.Skip("builds Go twice")
 	}
 	dir := copyExample(t)
-	on, _ := buildAndRunOpts(t, dir, build.Options{Mode: gen.Test})
-	off, _ := buildAndRunOpts(t, dir, build.Options{Mode: gen.Test, NoArenas: true})
+	on, _ := buildAndRunOpts(t, dir, xotool.Options{Mode: xotool.ModeTest})
+	off, _ := buildAndRunOpts(t, dir, xotool.Options{Mode: xotool.ModeTest, NoArenas: true})
 	if on.exit != 0 {
 		t.Errorf("tests failed with arenas:\n%s", on.String())
 	}
@@ -79,11 +78,11 @@ func TestExampleArenaServeDiff(t *testing.T) {
 	dir := copyExample(t)
 	var outs [2]string
 	for i, noArenas := range []bool{false, true} {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, NoArenas: noArenas})
+		res, err := xotool.Build([]string{dir}, xotool.Options{NoArenas: noArenas})
 		if err != nil || res.Failed {
 			t.Fatalf("build: %v %+v", err, res)
 		}
-		outs[i] = serveNotes(t, res.Binaries[build.Host()], dir)
+		outs[i] = serveNotes(t, res.Binaries[xotool.Host()], dir)
 	}
 	if outs[0] != outs[1] {
 		t.Errorf("responses differ\n--- arenas\n%s\n--- no arenas\n%s", outs[0], outs[1])

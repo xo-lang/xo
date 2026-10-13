@@ -12,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestStdinNative runs testdata/stdin/reads, built with the Go backend and
@@ -23,24 +22,24 @@ import (
 // whose input arrives later, and a read ended by a stop request
 // (SIGTERM).
 func TestStdinNative(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	if testing.Short() {
 		t.Skip("builds a program three times")
 	}
 	dir := filepath.Join("testdata", "stdin", "reads")
-	backends := []string{build.BackendGo, build.BackendLLVM}
+	backends := []string{xotool.BackendGo, xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	bins := map[string]string{}
 	for _, be := range backends {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 		if err != nil || res.Failed {
 			t.Fatalf("build (%s): %v %v", be, err, res)
 		}
-		bins[be] = res.Binaries[build.Host()]
+		bins[be] = res.Binaries[xotool.Host()]
 	}
 	type feed func(w io.WriteCloser, p *exec.Cmd, out *syncBuf)
 	cases := []struct {
@@ -93,7 +92,7 @@ func TestStdinNative(t *testing.T) {
 				code = ee.ExitCode()
 			}
 			got := out.String() + "exit " + string(rune('0'+code%10)) + "\n" + stableStderr(stderr.String())
-			if be == build.BackendGo {
+			if be == xotool.BackendGo {
 				want = got
 				t.Logf("%s:\n%s", c.mode, got)
 				continue

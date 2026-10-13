@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // cabiDiffProg is the program of TestCABIDiff: each input line exercises
@@ -189,15 +189,15 @@ func TestCABIDiff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "stdin.txt"), []byte(in), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ref := buildAndRun(t, dir, build.Options{Backend: build.BackendGo})
+	ref := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 	if ref.exit != 0 {
 		t.Fatalf("go backend: exit %d: %s", ref.exit, ref.stderr)
 	}
 	want := strings.Split(strings.TrimSuffix(ref.stdout, "\n"), "\n")
 	t.Logf("%d input lines, %d output lines", strings.Count(in, "\n"), len(want))
-	for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
+	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 		t.Run(be, func(t *testing.T) {
-			r := buildAndRun(t, dir, build.Options{Backend: be})
+			r := buildAndRun(t, dir, xotool.Options{Backend: be})
 			if r.exit != 0 {
 				t.Fatalf("exit %d: %s", r.exit, r.stderr)
 			}

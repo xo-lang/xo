@@ -18,8 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // Record and replay (core 11.3) and crash bundles (core 11.2): programs
@@ -42,11 +41,11 @@ func replayBuilds(t *testing.T, f func(t *testing.T, race bool)) {
 
 func buildReplayProg(t *testing.T, dir string, race bool) string {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Race: race})
+	res, err := xotool.Build([]string{dir}, xotool.Options{Race: race})
 	if err != nil || res.Failed {
 		t.Fatalf("build %s: %v %+v", dir, err, res)
 	}
-	return res.Binaries[build.Host()]
+	return res.Binaries[xotool.Host()]
 }
 
 // progRun is one run of a built program.

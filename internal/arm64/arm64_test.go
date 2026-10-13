@@ -1,3 +1,6 @@
+// Package arm64 holds the tests of the arm64 backend (selfhost/arm64)
+// through the xo binary (internal/xotool): since decision 0215 the Go
+// emitter is gone and this package has no Go code of its own.
 package arm64_test
 
 import (
@@ -12,15 +15,10 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/arm64"
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/ssa"
 	"github.com/xo-lang/xo/internal/testtmp"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden assembly files")
@@ -28,7 +26,7 @@ var update = flag.Bool("update", false, "rewrite the golden assembly files")
 func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
-	build.EnableTestBinCache()
+	xotool.EnableTestBinCache()
 	dir, err := testtmp.Dir("xo-arm64-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -45,22 +43,12 @@ func native() bool {
 	return runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux")
 }
 
+// asm is the arm64 assembly xo emits for dir and goos (`xo asm`).
 func asm(t *testing.T, dir, goos string) string {
 	t.Helper()
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil || !ok {
-		var b strings.Builder
-		if res != nil {
-			for _, d := range res.Diagnostics {
-				b.WriteString(diag.Human(d) + "\n")
-			}
-		}
-		t.Fatalf("check failed: %v\n%s", err, b.String())
-	}
-	abs, _ := filepath.Abs(dir)
-	out, err := build.Arm64Asm(res, abs, goos)
+	out, err := xotool.Asm(dir, xotool.BackendArm64, goos+"/arm64")
 	if err != nil {
-		t.Fatalf("generate: %v", err)
+		t.Fatal(err)
 	}
 	return string(out)
 }
@@ -172,24 +160,22 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 	return buildRunOpts(t, dir, false)
 }
 
-// buildRunOpts is buildRun, with share probes when probes is set
-// (build.Options.ShareProbes).
 func buildRunOpts(t *testing.T, dir string, probes bool) (runResult, error) {
 	t.Helper()
-	return buildRunWith(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: probes})
+	return buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64})
 }
 
 // buildRunWith builds dir with opts and runs it with XO_LEAKCHECK=1.
-func buildRunWith(t *testing.T, dir string, opts build.Options) (runResult, error) {
+func buildRunWith(t *testing.T, dir string, opts xotool.Options) (runResult, error) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, opts)
+	res, err := xotool.Build([]string{dir}, opts)
 	if err != nil {
 		return runResult{}, err
 	}
 	if res.Failed {
-		t.Fatalf("check failed")
+		t.Fatalf("build failed:\n%s", res.Output)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
+	cmd := exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...)
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	cmd.Stdin = progStdin(dir)
@@ -254,48 +240,10 @@ func TestGoldenRun(t *testing.T) {
 	}
 }
 
-// TestGoldenRunShared builds every golden program of internal/llvm with
-// share probes (every heap value marked shared between threads as it is
-// defined, decision 0058) and requires want.txt and no allocation live
-// at exit; the Linux assembly (exclusive load and store loops instead of
-// LSE atomics) must assemble as ELF.
-func TestGoldenRunShared(t *testing.T) {
-	if !native() {
-		t.Skip("the host is not arm64")
-	}
-	if testing.Short() {
-		t.Skip("builds and runs programs")
-	}
-	lin := build.Target{OS: "linux", Arch: "arm64"}
-	for _, dir := range goldenDirs(t) {
-		dir := dir
-		t.Run(filepath.Base(dir), func(t *testing.T) {
-			t.Parallel()
-			got, err := buildRunOpts(t, dir, true)
-			if err != nil {
-				t.Fatalf("build: %v", err)
-			}
-			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(want) != got.String() {
-				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
-			}
-			if build.Host() != lin {
-				res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: true, Targets: []build.Target{lin}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				assembleELF(t, res.Asm[lin])
-			}
-		})
-	}
-}
-
-// TestRun builds the programs of testdata/run with the Go backend and
-// the arm64 backend and requires the same exit status, stdout, and
-// fault messages (and no allocation live at exit on arm64).
+// TestRun builds the programs of testdata/run with the arm64 backend
+// and requires the Go backend's exit status, stdout, and fault messages
+// (recorded in testdata/runwant by the Go xo of the go-compiler-final
+// tag, decision 0215) and no allocation live at exit.
 func TestRun(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -316,35 +264,22 @@ func TestRun(t *testing.T) {
 				t.Fatalf("build: %v", err)
 			}
 			want := goRun(t, dir)
-			if want.String() != got.String() {
+			if want != got.String() {
 				t.Errorf("arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", want, got)
 			}
 		})
 	}
 }
 
-// goRun builds dir with the Go backend and runs it.
-func goRun(t *testing.T, dir string) runResult {
+// goRun is the recorded run of testdata/run/<dir> with the Go backend
+// (testdata/runwant/<name>.txt).
+func goRun(t *testing.T, dir string) string {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendGo})
-	if err != nil || res.Failed {
-		t.Fatalf("go build: %v", err)
+	data, err := os.ReadFile(filepath.Join("testdata", "runwant", filepath.Base(dir)+".txt"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), progEnv(dir)...)
-	cmd.Stdin = progStdin(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
-	code := 0
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		code = ee.ExitCode()
-	} else if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}
+	return string(data)
 }
 
 // benchWant is the output of the benchmark programs (the same with the
@@ -383,153 +318,17 @@ func TestBench(t *testing.T) {
 	}
 }
 
-// TestUnsupported checks that an op outside what the backend lowers is
-// rejected with an error, not miscompiled. Every op the builder and the
-// RC pass emit is lowered, so the module is built by hand: OpDrop (drop
-// specialization) is declared in internal/ssa but never emitted yet.
-func TestUnsupported(t *testing.T) {
-	m := ssa.NewModule()
-	str := m.Builtin(ssa.KStr)
-	f := m.NewFunc("main", []*ssa.Type{str}, []*ssa.Type{m.Builtin(ssa.KUnit)})
-	b := f.Blocks[0]
-	b.Add(ssa.OpDrop, m.Builtin(ssa.KUnit), nil, f.Params()[0])
-	u := b.Add(ssa.OpTuple, m.Builtin(ssa.KUnit), nil)
-	b.Add(ssa.OpReturn, nil, nil, u)
-	m.RC = true
-	_, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin, NoInline: true})
-	var ae *arm64.Error
-	if !errors.As(err, &ae) || !strings.Contains(err.Error(), "drop") {
-		t.Fatalf("got %v, want an unsupported op error naming drop", err)
-	}
-}
-
-// TestBuildErrors covers the options the arm64 backend rejects.
-func TestBuildErrors(t *testing.T) {
-	dir := filepath.Join(benchDir, "fib")
-	cases := []struct {
-		opts build.Options
-		want string
-	}{
-		{build.Options{Mode: gen.Build, Backend: build.BackendArm64, Targets: []build.Target{{OS: "linux", Arch: "amd64"}}}, "darwin/arm64 and linux/arm64"},
-	}
-	for _, c := range cases {
-		_, err := build.Build([]string{dir}, c.opts)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%+v: got %v, want an error containing %q", c.opts, err, c.want)
-		}
-	}
-}
-
-// TestLinuxEmit builds for linux/arm64: on another host the assembly is
-// written and not linked.
+// TestLinuxEmit emits fib for linux/arm64 and assembles it as ELF.
 func TestLinuxEmit(t *testing.T) {
-	lin := build.Target{OS: "linux", Arch: "arm64"}
-	res, err := build.Build([]string{filepath.Join(benchDir, "fib")}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, Targets: []build.Target{lin}})
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "fib.s")
+	if err := os.WriteFile(path, []byte(asm(t, filepath.Join(benchDir, "fib"), "linux")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if res.Asm[lin] == "" {
-		t.Fatal("no assembly for linux/arm64")
-	}
-	if build.Host() != lin && res.Binaries[lin] != "" {
-		t.Errorf("linked a binary for linux/arm64 on %s", build.Host())
-	}
-	assembleELF(t, res.Asm[lin])
+	assembleELF(t, path)
 }
 
-// TestInlineVerifies requires every program to verify (reference
-// counting balance included) after the backend inlines small functions:
-// build.Arm64Asm would otherwise fall back to no inlining silently.
-func TestInlineVerifies(t *testing.T) {
-	var dirs []string
-	for name := range benchWant {
-		dirs = append(dirs, filepath.Join(benchDir, name))
-	}
-	dirs = append(dirs, goldenDirs(t)...)
-	runs, _ := filepath.Glob(filepath.Join("testdata", "run", "*"))
-	dirs = append(dirs, runs...)
-	var inlined atomic.Int64
-	// the programs in parallel; the group returns when all are done
-	t.Run("all", func(t *testing.T) {
-		for _, dir := range dirs {
-			dir := dir
-			t.Run(filepath.Base(dir), func(t *testing.T) {
-				t.Parallel()
-				res, ok, err := build.CheckNative([]string{dir}, false)
-				if err != nil || !ok {
-					t.Fatalf("%s: check failed: %v", dir, err)
-				}
-				m, err := ssa.Build(res)
-				if err != nil {
-					t.Fatalf("%s: %v", dir, err)
-				}
-				m.InsertRC()
-				before := len(m.Funcs[0].Blocks)
-				for _, f := range m.Funcs {
-					before += len(f.Blocks)
-				}
-				if _, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin}); err != nil {
-					t.Errorf("%s: %v", dir, err)
-				}
-				after := len(m.Funcs[0].Blocks)
-				for _, f := range m.Funcs {
-					after += len(f.Blocks)
-				}
-				if after != before {
-					inlined.Add(1)
-				}
-			})
-		}
-	})
-	if inlined.Load() == 0 {
-		t.Error("nothing was inlined")
-	}
-}
-
-// TestLayoutRun builds the bench programs and the loop heavy run programs
-// with code placement settings ($XO_ARM64_LAYOUT, decision 0075): loop
-// tops aligned with a jump over the padding or nops run through, outer
-// loops, offsets, functions moved by nops. The output must not change.
-func TestLayoutRun(t *testing.T) {
-	if !native() {
-		t.Skip("the host is not arm64")
-	}
-	if testing.Short() {
-		t.Skip("builds and runs programs")
-	}
-	runs := []string{"lsr", "lsr_fault_neg", "latch", "switch", "ranges", "select", "fault_bounds"}
-	// the Go backend's output of the run programs, once each
-	goWant := map[string]string{}
-	for _, r := range runs {
-		goWant[r] = goRun(t, filepath.Join("testdata", "run", r)).String()
-	}
-	for _, lay := range []string{"func=6,loop=6,pad=3", "func=4,loop=5,fall=1,off=3,outer=1,pad=1"} {
-		opts := build.Options{Mode: gen.Build, Backend: build.BackendArm64, ARM64Layout: lay}
-		for name, want := range benchWant {
-			name, want := name, want
-			t.Run(lay+"/"+name, func(t *testing.T) {
-				t.Parallel()
-				got, err := buildRunWith(t, filepath.Join(benchDir, name), opts)
-				if err != nil {
-					t.Fatalf("%s: build: %v", name, err)
-				}
-				if got.exit != 0 || got.stdout != want {
-					t.Errorf("%s: got %s\nwant stdout %q", name, got, want)
-				}
-			})
-		}
-		for _, r := range runs {
-			r := r
-			t.Run(lay+"/"+r, func(t *testing.T) {
-				t.Parallel()
-				got, err := buildRunWith(t, filepath.Join("testdata", "run", r), opts)
-				if err != nil {
-					t.Fatalf("%s: build: %v", r, err)
-				}
-				if got.String() != goWant[r] {
-					t.Errorf("%s: arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", r, goWant[r], got)
-				}
-			})
-		}
-	}
-}
+// The tests of the Go emitter's internals (TestUnsupported on a module
+// built by hand, TestInlineVerifies on internal/ssa modules, the layout
+// and share probe options of the Go build package) went with decision
+// 0215; selfhost/arm64 has its own Xo tests (TestSelfhostArm64 compares
+// its assembly with the recording).

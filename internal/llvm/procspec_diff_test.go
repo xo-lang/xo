@@ -7,8 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // procSpecProgram runs env(1) with the environments and directories
@@ -48,7 +47,7 @@ func TestProcSpecDiff(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("runs env(1)")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dir := t.TempDir()
@@ -59,20 +58,20 @@ func TestProcSpecDiff(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(run, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	backends := []string{build.BackendGo, build.BackendLLVM}
+	backends := []string{xotool.BackendGo, xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	outs := make([]string, len(backends))
 	for i, be := range backends {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 		if err != nil {
 			t.Fatalf("build (%s): %v", be, err)
 		}
 		if res.Failed {
-			t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
+			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[build.Host()])
+		cmd := exec.Command(res.Binaries[xotool.Host()])
 		cmd.Dir = run
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "PWD=/stale", "XO_SPEC_C=c", "XO_SPEC_D=d", "XO_SPEC_Z=0", "LANG=C"}
 		out, err := cmd.CombinedOutput()

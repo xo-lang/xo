@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // The native HTTP/1.1 server (std/llrt/xo_http.c, decision 0074) against
@@ -352,15 +352,15 @@ func mutateHTTP(r *rand.Rand, s []byte) []byte {
 // buildHTTPDiff compiles http_diff.c with AddressSanitizer and
 // UndefinedBehaviorSanitizer when the host's clang has them.
 func buildHTTPDiff(t *testing.T) (string, bool) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	src := filepath.Join(rtDir, "testdata", "http_diff.c")
 	bin := filepath.Join(t.TempDir(), "http_diff")
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err == nil {
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err == nil {
 		return bin, true
 	}
-	if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+	if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 		t.Fatal(err)
 	}
 	return bin, false
@@ -478,7 +478,7 @@ var diffDriver struct {
 
 func startDiffDriver(t *testing.T) {
 	diffDriver.once.Do(func() {
-		if _, err := build.Clang(); err != nil {
+		if _, err := xotool.Clang(); err != nil {
 			diffDriver.err = err
 			return
 		}
@@ -490,8 +490,8 @@ func startDiffDriver(t *testing.T) {
 			return
 		}
 		bin := filepath.Join(dir, "http_diff")
-		if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
-			if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+		if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
+			if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 				diffDriver.err = err
 				return
 			}
@@ -579,15 +579,15 @@ func FuzzHTTPDiff(f *testing.F) {
 // with -short; XO_FUZZ_SECONDS overrides): no crash, no report, no leak.
 func TestHTTPFuzz(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	src := filepath.Join(rtDir, "testdata", "http_fuzz.c")
 	bin := filepath.Join(t.TempDir(), "http_fuzz")
 	sanitized := true
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
 		sanitized = false
-		if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+		if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 			t.Fatal(err)
 		}
 	}

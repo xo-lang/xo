@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestRuntimeFaultResume raises a fault through a C frame whose cleanup
@@ -20,12 +20,12 @@ import (
 // function (the Linux CI failure of 2026-10-09).
 func TestRuntimeFaultResume(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	src := filepath.Join(rtDir, "testdata", "fault_resume.c")
 	plain := exe(filepath.Join(t.TempDir(), "plain"))
-	if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), plain); err != nil {
+	if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), plain); err != nil {
 		t.Fatal(err)
 	}
 	bins := map[string]string{"plain": plain, "tsan": tsanBuild(t, nil, cOnly(t, src))}

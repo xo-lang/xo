@@ -10,8 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestSysioParity builds testdata/sysio_parity with the Xo path of the
@@ -25,7 +24,7 @@ func TestSysioParity(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program twice")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	dir := filepath.Join("testdata", "sysio_parity")
@@ -34,17 +33,17 @@ func TestSysioParity(t *testing.T) {
 		t.Setenv("XO_LLRT_C", cpath)
 		var bin string
 		if xo1 != "" {
-			b, out, err := xo1Build(xo1, dir, "sysio_parity", build.Host())
+			b, out, err := xo1Build(xo1, dir, "sysio_parity", xotool.Host())
 			if err != nil {
 				t.Fatalf("xo1 build (XO_LLRT_C=%q): %v\n%s", cpath, err, out)
 			}
 			bin = b
 		} else {
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM})
 			if err != nil || res.Failed {
 				t.Fatalf("build (XO_LLRT_C=%q): %v %+v", cpath, err, res)
 			}
-			bin = res.Binaries[build.Host()]
+			bin = res.Binaries[xotool.Host()]
 		}
 		got, err := runBinary(bin, dir)
 		if err != nil || got.exit != 0 {
@@ -83,7 +82,7 @@ func TestErrnoTables(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	if err := build.CompileC(nil, []string{filepath.Join("testdata", "errno_probe.c")}, bin); err != nil {
+	if err := xotool.CompileC(nil, []string{filepath.Join("testdata", "errno_probe.c")}, bin); err != nil {
 		t.Fatalf("compile errno_probe.c: %v", err)
 	}
 	out, err := exec.Command(bin).Output()

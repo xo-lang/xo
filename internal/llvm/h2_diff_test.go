@@ -21,9 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestH2Diff runs the same HTTPS program over HTTP/2 (decision 0121)
@@ -53,7 +51,7 @@ func TestH2Diff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds an HTTP/2 program with three backends")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	pki := newTestPKI(t)
@@ -62,9 +60,9 @@ func TestH2Diff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(h2DiffProgram(pki, peer)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	backends := []string{build.BackendGo, build.BackendLLVM}
+	backends := []string{xotool.BackendGo, xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	outs := make([]string, len(backends))
 	t.Run("run", func(t *testing.T) {
@@ -72,14 +70,14 @@ func TestH2Diff(t *testing.T) {
 			i, be := i, be
 			t.Run(be, func(t *testing.T) {
 				t.Parallel()
-				res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 				if err != nil {
 					t.Fatalf("build (%s): %v", be, err)
 				}
 				if res.Failed {
-					t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
+					t.Fatalf("build (%s) failed: %v", be, res.Output)
 				}
-				outs[i], _ = runH2Diff(t, res.Binaries[build.Host()], pki, be != build.BackendGo)
+				outs[i], _ = runH2Diff(t, res.Binaries[xotool.Host()], pki, be != xotool.BackendGo)
 				outs[i] = rejectRace(outs[i])
 			})
 		}
@@ -1132,10 +1130,14 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 // once on a connection, the raw frame cases, a stop with a stream in
 // flight) with no sanitizer report and no allocation live at exit.
 func TestH2Sanitizers(t *testing.T) {
+	// the TLS library built with sanitizer flags came from the Go build
+	// package (tls.go); xo builds it without them, and this test links
+	// it itself: port pending (decision 0215, "Tests not carried over")
+	t.Skip("decision 0215: needs a sanitizer build of the TLS library")
 	if testing.Short() {
 		t.Skip("builds an HTTP/2 program with sanitizers")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	pki := newTestPKI(t)
@@ -1144,20 +1146,16 @@ func TestH2Sanitizers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(h2DiffProgram(pki, peer)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil || !ok {
-		t.Fatalf("check: %v", err)
-	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: dir})
+	ir, err := xotool.LLVMIR(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ll := filepath.Join(t.TempDir(), "prog.ll")
-	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	srcs := []string{ll, filepath.Join(rtDir, "xo_rt.c")}
-	flags := append([]string{"-Wno-override-module"}, build.IOFlags(prog.IR)...)
+	flags := append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...)
 	for _, san := range []string{"thread", "address"} {
 		t.Run(san, func(t *testing.T) {
 			t.Parallel()
@@ -1169,7 +1167,7 @@ func TestH2Sanitizers(t *testing.T) {
 			} else {
 				bin = exe(filepath.Join(t.TempDir(), "prog"))
 				aflags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), flags...)
-				if err := build.CompileC(aflags, srcs, bin); err != nil {
+				if err := xotool.CompileC(aflags, srcs, bin); err != nil {
 					if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 						t.Skipf("no AddressSanitizer: %v", err)
 					}

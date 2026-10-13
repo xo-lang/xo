@@ -12,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // The two phase shutdown (core 7.5) on the native backends (decision
@@ -24,9 +23,9 @@ import (
 // gave it.
 
 func nativeBackends() []string {
-	bs := []string{build.BackendLLVM}
+	bs := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		bs = append(bs, build.BackendArm64)
+		bs = append(bs, xotool.BackendArm64)
 	}
 	return bs
 }
@@ -36,14 +35,14 @@ var signalBins sync.Map // backend -> func() (string, error)
 func signalBinary(t *testing.T, backend string) string {
 	t.Helper()
 	f, _ := signalBins.LoadOrStore(backend, sync.OnceValues(func() (string, error) {
-		res, err := build.Build([]string{filepath.Join("testdata", "signal")}, build.Options{Mode: gen.Build, Backend: backend})
+		res, err := xotool.Build([]string{filepath.Join("testdata", "signal")}, xotool.Options{Backend: backend})
 		if err != nil {
 			return "", err
 		}
 		if res.Failed {
 			return "", errors.New("check failed")
 		}
-		return res.Binaries[build.Host()], nil
+		return res.Binaries[xotool.Host()], nil
 	}))
 	bin, err := f.(func() (string, error))()
 	if err != nil {
@@ -62,7 +61,7 @@ type nativeChild struct {
 
 func startNative(t *testing.T, backend string, env ...string) *nativeChild {
 	t.Helper()
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	bin := signalBinary(t, backend)

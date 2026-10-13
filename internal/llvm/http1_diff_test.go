@@ -18,8 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // http1DiffProgram is an HTTP/1.1 server whose handler (a middleware, so
@@ -244,27 +243,27 @@ func TestHTTP1ParseDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds an HTTP server with three backends")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(http1DiffProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	backends := []string{build.BackendGo, build.BackendLLVM}
+	backends := []string{xotool.BackendGo, xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	addrs := make([]string, len(backends))
 	for i, be := range backends {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 		if err != nil {
 			t.Fatalf("build (%s): %v", be, err)
 		}
 		if res.Failed {
-			t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
+			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		addr, stop := http1Server(t, res.Binaries[build.Host()])
+		addr, stop := http1Server(t, res.Binaries[xotool.Host()])
 		defer stop()
 		addrs[i] = addr
 	}

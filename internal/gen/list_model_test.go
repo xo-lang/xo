@@ -10,8 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestListModel generates programs that copy, capture, send, and mutate
@@ -42,7 +41,7 @@ func TestListModel(t *testing.T) {
 		}
 	}
 	for i, seed := range seeds {
-		opts := build.Options{Mode: gen.Build}
+		opts := xotool.Options{}
 		switch i {
 		case 1:
 			// the generic lowering marks through rt.Own and MarkP

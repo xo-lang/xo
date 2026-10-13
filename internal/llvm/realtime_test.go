@@ -11,8 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 var rtStatsRE = regexp.MustCompile(`rt_section=(\d+) rt_defer=(\d+) rt_overflow=(\d+)`)
@@ -28,17 +27,17 @@ var rtStatsRE = regexp.MustCompile(`rt_section=(\d+) rt_defer=(\d+) rt_overflow=
 //   - the realtime_section golden: frees are deferred inside sections
 //     (XO_RTSTATS counts them) and none overflows the queue.
 func TestRealtimeNative(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
-	backends := []string{build.BackendLLVM}
+	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	for _, be := range backends {
 		t.Run(be, func(t *testing.T) {
 			dir := filepath.Join("testdata", "realtime", "alloc")
-			r, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
+			r, b := buildRun(t, dir, xotool.Options{Backend: be})
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -46,11 +45,11 @@ func TestRealtimeNative(t *testing.T) {
 			if r.String() != string(want) {
 				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, r)
 			}
-			leakCheck(t, b.Binaries[build.Host()], dir)
+			leakCheck(t, b.Binaries[xotool.Host()], dir)
 
 			dir = filepath.Join("testdata", "golden", "realtime_section")
-			_, b = buildRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
-			cmd := exec.Command(b.Binaries[build.Host()])
+			_, b = buildRun(t, dir, xotool.Options{Backend: be})
+			cmd := exec.Command(b.Binaries[xotool.Host()])
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_RTSTATS=1")
 			var stderr bytes.Buffer
@@ -72,12 +71,12 @@ func TestRealtimeNative(t *testing.T) {
 			// the demo (bench/results/realtime-2026-10-10.md), each tick
 			// version briefly, every allocation freed
 			dir = filepath.Join("..", "..", "examples", "realtime-control")
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 			if err != nil || res.Failed {
-				t.Fatalf("build the demo: %v %v", err, res.Diagnostics)
+				t.Fatalf("build the demo: %v %v", err, res.Output)
 			}
 			for _, mode := range []string{"rt", "plain", "alloc"} {
-				cmd := exec.Command(res.Binaries[build.Host()], mode, "3000", "500")
+				cmd := exec.Command(res.Binaries[xotool.Host()], mode, "3000", "500")
 				cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 				var out bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &out, &out
@@ -112,7 +111,7 @@ func TestRuntimeRealtime(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
