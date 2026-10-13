@@ -922,9 +922,9 @@ typedef struct {
 	WCHAR buf[1];
 } xo_w_reparse;
 
-// readlink reads a symbolic link's target (its print name, with / for \
-// when the target is relative); no link names /etc/localtime, so the
-// local zone is "Local" (xo_time.c)
+// readlink reads a symbolic link's target (its print name, with / for \,
+// as Fs.read_link gives it, std.md 3.1); no link names /etc/localtime,
+// so the local zone is "Local" (xo_time.c)
 static ssize_t readlink(const char *path, char *buf, size_t n) {
 	HANDLE h = xo_w_open_meta(path, 0, 1);
 	if (h == INVALID_HANDLE_VALUE) {
@@ -952,11 +952,9 @@ static ssize_t readlink(const char *path, char *buf, size_t n) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
-	if (u.r.flags & 1) { // SYMLINK_FLAG_RELATIVE
-		for (int i = 0; i < k; i++) {
-			if (buf[i] == '\\') {
-				buf[i] = '/';
-			}
+	for (int i = 0; i < k; i++) {
+		if (buf[i] == '\\') {
+			buf[i] = '/';
 		}
 	}
 	return k;

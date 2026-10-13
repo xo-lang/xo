@@ -139,12 +139,24 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    copy the cross built goldens and their want.txt to such a host and
    run them with a script that compares output (TestGoldenWant's run
    step without the build).
-4. **Stage 4: paths.** Absolute Windows paths (`C:\...`) in std's path
-   handling: env_program fails on both backends because std/native and
-   std/rt join the working directory with a drive path (the Go backend
-   reports `Io(... The filename, directory name, or volume label syntax
-   is incorrect.)`). A std/spec change: which paths are absolute, `\` as
-   a separator on Windows.
+4. **Stage 4: paths (done 2026-10-12).** std.md 3.1 and 3.5: on
+   Windows `\` separates as `/` does, drive paths (`C:/x`, `C:\x`) and
+   UNC paths (`//host/share`, `\\host\share`) are absolute, a path
+   rooted at `/` is on the working directory's drive, and every path std
+   gives back uses `/` (`Env.program`, `home`, `config_dir`,
+   `cache_dir`, `FileInfo.path`, `create_temp`, `read_link`). Native:
+   std/native's `fs_clean`, `fs_base`, `fs_abs`, `fs_rel`, and the new
+   `fs_windows`, `fs_slash`, `fs_volume`, `fs_is_abs` (a compile time
+   `target.os` choice, so other targets compile what they did);
+   xo_fs_cwd, xo_env_program, and readlink give `/`; MkdirAll splits at
+   `\` too. `Env.home` reads `USERPROFILE` on Windows and the user
+   directories are `%AppData%` and `%LocalAppData%`, as std/rt's
+   userDir already did (env_dirs gets a want_windows.txt for that). Go
+   backend: `program` and `home` through filepath.ToSlash (identity on
+   other OSes). env_program passes on both backends, and the new golden
+   fs_paths_os (OS separators, a UNC administrative share, a drive-less
+   rooted path, a sub capability on an OS form, walk, create_temp,
+   escape) passes on both backends on Windows and on macOS.
 5. **Stage 5: scale and fidelity.** IOCP (AFD poll) instead of WSAPoll;
    a stdin reader thread so reads are cancellation points; the local
    time zone from the registry; UTF-8 environment (`_wenviron`);

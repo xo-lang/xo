@@ -395,6 +395,16 @@ the working directory. In a sub capability, paths are relative to its root,
 `"."` and `"/"` both mean the root, and a path that escapes it (`..`) fails
 with `Denied`.
 
+On Windows (decision 0197, stage 4) `os.fs`, `sub`, and the other
+operations also take the forms the OS writes, so a path read from a
+variable or an argument works as it is: `\` separates as `/` does; a
+drive path (`C:/data`, `C:\data`) and a UNC path (`//server/share/x`,
+`\\server\share\x`) are absolute; a path rooted at `/` without a drive
+is on the working directory's drive. Every path std gives back uses `/`
+only: `FileInfo.path`, `create_temp`, `read_link`, `glob`, and
+`Env.program`, `home`, `config_dir`, and `cache_dir` (3.5). On other OSes
+`\` is an ordinary character of a name, as before.
+
 ```
 enum FsErr {
   NotFound(path: Str)
@@ -638,9 +648,14 @@ fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
 fn (e: Env) cache_dir() -> Str ! EnvErr
 ```
 
+`program()` is the name the program was started with (argv[0]), and
+`home()` the home directory (`HOME`; on Windows `USERPROFILE`, read when
+the `Env` admits `HOME`); on Windows both use `/` separators (3.1).
+
 `config_dir()` and `cache_dir()` (decision 0163) are read through the
 `Env`, so attenuation and fakes apply: `XDG_CONFIG_HOME` (or
-`XDG_CACHE_HOME`) when it holds an absolute path, on every OS; else
+`XDG_CACHE_HOME`) when it holds an absolute path (`/x`, or `C:/x`), on
+every OS; else
 `<home>/.config` (`<home>/.cache`) on Linux and other Unix systems,
 `<home>/Library/Application Support` (`<home>/Library/Caches`) on macOS,
 `%AppData%` (`%LocalAppData%`) on Windows, with `/` separators. A

@@ -22,6 +22,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   string literals, the predeclared `target` of a cross build (it was the
   compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
   an amd64 host, and paths printed by `xo serve` on Linux.
+- Windows paths (decision 0197 stage 4, std.md 3.1 and 3.5): on
+  Windows `Fs` takes `\` as a separator, drive paths (`C:\x`) and UNC
+  paths (`\\host\share`) as absolute, and a path rooted at `/` on the
+  working directory's drive; `Env.program`, `home`, `config_dir`,
+  `cache_dir`, and every path an `Fs` returns use `/`. Native builds
+  read the home directory from `USERPROFILE` and the user directories
+  from `%AppData%` and `%LocalAppData%` on Windows, as the Go backend
+  did. Other OSes are unchanged. All 145 LLVM goldens pass on Windows
+  built by the self hosted `xo`.
 - Windows, decision 0197 stage 2: native programs run processes
   (`Proc.run`, `Cmd`, `Child`, pipelines) on Windows through
   `CreateProcessW` (PATH and PATHEXT lookup, arguments quoted as Go's

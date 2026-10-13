@@ -736,7 +736,22 @@ xo_rlist *xo_env_program(void) {
 		return n_str_list_add(l, "test", 4);
 	}
 	const char *p = xo_argc > 0 ? xo_argv[0] : "";
+#ifdef _WIN32
+	// with / separators, as every path Xo is given (std.md 3.1, 3.5)
+	size_t pn = strlen(p);
+	char *q = malloc(pn + 1);
+	if (!q) {
+		xo_oom();
+	}
+	for (size_t i = 0; i <= pn; i++) {
+		q[i] = p[i] == '\\' ? '/' : p[i];
+	}
+	l = n_str_list_add(l, q, (int64_t)pn);
+	free(q);
+	return l;
+#else
 	return n_str_list_add(l, p, (int64_t)strlen(p));
+#endif
 }
 
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
