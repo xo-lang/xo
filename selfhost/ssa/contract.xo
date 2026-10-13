@@ -81,7 +81,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     let v = b.block(body)
     b.ret_at(v, Some(Expr.Block(b: body)))
   }
-  if om >= 0 && b.c.mods[om].path == "native/llrt/rc" {
+  if om >= 0 && b.c.mods[om].path is "native/llrt/rc" | "native/llrt/sched" {
     b.check_no_alloc()
   }
   b.finish_fn()
@@ -124,9 +124,14 @@ fn (var b: Builder) check_no_alloc() {
 
 /// Whether a reference count function may call the function named n
 /// (check_no_alloc): the inline raw memory and atomic intrinsics, and the
-/// C path's rt.rc_*_c.
+/// C path's rt.rc_*_c; in the scheduler core (sched.xo, decision 0212)
+/// also the task switch, the thread locals, mem_set, and the C
+/// runtime's scheduler hooks, which neither allocate nor fault.
 fn rc_callee_ok(n: Str) -> Bool {
   if n.starts_with("rt.rc_") && n.ends_with("_c") {
+    return true
+  }
+  if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" | "rt.sched_c" {
     return true
   }
   n is "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint"

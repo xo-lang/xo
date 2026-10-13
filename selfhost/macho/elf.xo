@@ -152,6 +152,8 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
         a.syms[i].kind = STT_FUNC
       } else if t == "%object" || t == "@object" {
         a.syms[i].kind = STT_OBJECT
+      } else if t == "%tls_object" || t == "@tls_object" {
+        a.syms[i].kind = STT_TLS
       } else {
         a.fail("symbol type ${t}")
         return true
@@ -285,6 +287,11 @@ fn (var a: Asm) map_data() {
 fn (var a: Asm) map_sym(name: Str) {
   let i = a.syms.len()
   a.syms.push(Sym{name: name.bytes(), sect: a.cur, mapsym: true})
+  if (a.sects[a.cur].eflags & SHF_TLS) != 0 {
+    // LLVM types every symbol of a TLS section STT_TLS, its mapping
+    // symbols too (decision 0212's thread locals)
+    a.syms[i].kind = STT_TLS
+  }
   a.register(i)
   if a.sects[a.cur].code {
     a.syms[i].off = a.sects[a.cur].words.len() * 4
@@ -301,7 +308,9 @@ fn (var a: Asm) elf_reloc(si: Int, off: Int, typ: Int, sym: Int, addend: Int) {
   let s = a.syms[sym]
   var target = sym
   var add = addend
-  if s.sect >= 0 && !s.global && !s.weak && !s.secsym {
+  // a TLS relocation names its symbol, as LLVM's (decision 0212)
+  let tls = typ == R_AARCH64_TLSLE_ADD_TPREL_HI12 || typ == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC
+  if s.sect >= 0 && !s.global && !s.weak && !s.secsym && !tls {
     let merge = (a.sects[s.sect].eflags & SHF_MERGE) != 0
     if !(merge && addend != 0) {
       target = a.sects[s.sect].ltmp
@@ -339,7 +348,16 @@ fn (var a: Asm) elf_apply_fixes() {
       a.elf_reloc(f.sect, pc, R_AARCH64_ADD_ABS_LO12_NC, f.sym, 0)
       continue
     }
-    let local = s.sect == f.sect && !s.weak
+    if f.kind == FX_TPREL_HI12 || f.kind == FX_TPREL_LO12 {
+      // a thread local symbol (decision 0212): STT_TLS, as LLVM marks
+      // the symbols of TLS relocations
+      a.syms[f.sym].kind = STT_TLS
+      a.elf_reloc(f.sect, pc, if f.kind == FX_TPREL_HI12 { R_AARCH64_TLSLE_ADD_TPREL_HI12 } else { R_AARCH64_TLSLE_ADD_TPREL_LO12_NC }, f.sym, 0)
+      continue
+    }
+    // a branch to a global symbol is relocated even in its own section,
+    // as LLVM's (decision 0212's xo_tlocal_get and friends)
+    let local = s.sect == f.sect && !s.weak && !s.global
     if !local {
       if f.kind == FX_BL26 || f.kind == FX_B26 {
         a.elf_reloc(f.sect, pc, if f.kind == FX_BL26 { R_AARCH64_CALL26 } else { R_AARCH64_JUMP26 }, f.sym, 0)

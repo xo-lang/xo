@@ -87,7 +87,7 @@ func schedAsm(os OS) string {
 		b.WriteString("\t.quad __tlv_bootstrap\n\t.quad 0\n\t.quad _xo_tlocal_init\n")
 		return b.String()
 	}
-	tp := []string{"mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal, lsl #12", "add x9, x9, :tprel_lo12_nc:xo_tlocal"}
+	tp := []string{"mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"}
 	fn("xo_tlocal_get", true, append(tp, "ldr x0, [x9, x0, lsl #3]", "ret"))
 	fn("xo_tlocal_set", true, append(tp, "str x1, [x9, x0, lsl #3]", "ret"))
 	b.WriteString("\t.section .tdata,\"awT\",@progbits\n\t.p2align 3\n\t.type xo_tlocal, @tls_object\n\t.size xo_tlocal, 128\nxo_tlocal:\n")

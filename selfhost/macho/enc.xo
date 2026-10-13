@@ -114,6 +114,13 @@ fn label_op(b: Bytes) -> (Bytes, Str) {
   if b.len() > 6 && bstr(b[0..6]) == ":lo12:" {
     return (b[6..], "PAGEOFF")
   }
+  // ELF's local exec thread local offsets (decision 0212)
+  if b.len() > 12 && bstr(b[0..12]) == ":tprel_hi12:" {
+    return (b[12..], "TPREL_HI12")
+  }
+  if b.len() > 15 && bstr(b[0..15]) == ":tprel_lo12_nc:" {
+    return (b[15..], "TPREL_LO12")
+  }
   for i in 0..b.len() {
     if b[i] == '@' {
       return (b[0..i], bstr(b[i + 1..]))
@@ -277,6 +284,14 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word(0xd4200000 | (v * 32))
     }
     "nop" => a.word(NOP)
+    "mrs" => {
+      // the thread pointer of ELF's local exec model (decision 0212)
+      let (r, k) = if n == 2 { reg(ops[0]) } else { (-1, 0) }
+      if k != RX || bstr(ops[1]).to_lower() != "tpidr_el0" {
+        return a.bad(m, ops)
+      }
+      a.word(0xd53bd040 | r)
+    }
     "adr" | "adrp" => {
       if n != 2 {
         return a.bad(m, ops)
@@ -292,6 +307,11 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
         }
         a.word_fix(0x10000000 | r, FX_ADR21, name)
       } else {
+        if op == "TLVPPAGE" && !a.elf {
+          // a thread local's TLV descriptor (decision 0212)
+          a.word_fix(0x90000000 | r, FX_TLVP_PAGE21, name)
+          return
+        }
         // ELF: a bare label is its page
         if op != "PAGE" && !(a.elf && op == "") {
           return a.bad(m, ops)
@@ -680,6 +700,17 @@ fn (var a: Asm) addsub(m: Str, ops: List[Bytes]) {
   }
   // a page offset
   let (lab, op) = label_op(ops[2])
+  if op == "TPREL_HI12" || op == "TPREL_LO12" {
+    if sub || flags || n != 3 || !a.elf {
+      return a.bad(m, ops)
+    }
+    if op == "TPREL_HI12" {
+      a.word_fix(0x91400000 | (s * 32) | d, FX_TPREL_HI12, lab)
+    } else {
+      a.word_fix(0x91000000 | (s * 32) | d, FX_TPREL_LO12, lab)
+    }
+    return
+  }
   if op == "PAGEOFF" {
     if sub || flags || n != 3 {
       return a.bad(m, ops)
@@ -1333,6 +1364,22 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
       }
       size = 2
       opc = 2
+    }
+  }
+  if m == "ldr" && kt == RX && ops.len() == 2 && !a.elf {
+    // [base, sym@TLVPPAGEOFF]: a thread local's TLV descriptor (decision
+    // 0212)
+    let b = ops[1]
+    if b.len() > 2 && b[0] == '[' && b[b.len() - 1] == ']' {
+      let parts = split_operands(b[1..b.len() - 1])
+      if parts.len() == 2 {
+        let (name, op) = label_op(parts[1])
+        let (base, kb) = reg(parts[0])
+        if op == "TLVPPAGEOFF" && kb == RX {
+          a.word_fix(0xf9400000 | (base * 32) | t, FX_TLVP_PAGEOFF12, name)
+          return
+        }
+      }
     }
   }
   let mo = mem_op(ops, 1)
