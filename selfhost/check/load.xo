@@ -203,6 +203,9 @@ pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
 /// directories, as in check.Check.
 pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   c.load_prelude()
+  if c.prelude < 0 {
+    return Err(c.prelude_missing())
+  }
   for d in dirs {
     let st = c.fs.stat(d).ok() ?? None
     match st {
@@ -235,7 +238,7 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     c.load_native()
   }
   if c.unsupported.is_empty() {
-    c.run()
+    c.run()?
   }
 }
 
@@ -277,6 +280,34 @@ fn (var c: Checker) load_prelude() {
   // std/testing provides the predeclared `os`, `expect`, and `testing`
   // of test blocks (core 9.2), so it is always loaded.
   c.load_std("testing")
+}
+
+/// Why the std directory cannot be checked against, or "": no
+/// prelude.xo in it (xo1 run outside a release layout with no $XO_STD
+/// falls back to ./std, which TestCLIPattern hit on 2026-10-13), or a
+/// prelude lacking a core type every check names (an $XO_STD naming
+/// another directory; checked by run after the declarations, which fill the
+/// members). An error of check_dirs, which every command
+/// prints, rather than a fault in prelude_obj during the run.
+fn (c: Checker) prelude_missing() -> Str {
+  let hint = "set XO_STD to the std directory, or run xo from a release layout, bin/xo beside lib/xo/std"
+  if c.prelude < 0 {
+    return "std library not found: no ${join(c.std_dir, "prelude.xo")} (${hint})"
+  }
+  var lacks: List[Str] = []
+  for name in ["Bool", "Int", "Never", "Option", "Result", "Str"] {
+    let ok = match c.mods[c.prelude].members.get(name.bytes()) {
+      Some(o) => c.objs[o].kind == ObjKind.Type
+      None => false
+    }
+    if !ok {
+      lacks.push(name)
+    }
+  }
+  if lacks.is_empty() {
+    return ""
+  }
+  "std library ${c.std_dir} does not match this xo: its prelude.xo lacks ${lacks.join(", ")} (${hint})"
 }
 
 /// Loads std/<name>.xo, or returns -1 when there is none.

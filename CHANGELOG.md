@@ -11,6 +11,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   concurrent cache trim no longer removes entries a build is reading
   (decision 0214). The lock comes from `std/internal`, a module only std
   and the toolchain can import; Xo's public `fs.lock` is unchanged.
+- `xo` run with no std library to find (no $XO_STD and no release
+  layout beside the binary), or with a std whose prelude lacks a core
+  type, now says so (`std library not found: ...`, exit 2) instead of
+  faulting in the checker with `prelude type missing: Int`.
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the
