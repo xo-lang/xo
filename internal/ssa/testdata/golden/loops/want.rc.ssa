@@ -10219,7 +10219,7 @@ b6:  ; preds b4
   unreachable
 b7:  ; preds b4
   v23: Int = const 1
-  v24: Int = neg v23 @ linux.xo:53:26
+  v24: Int = neg v23 @ linux.xo:54:26
   jump b1(v24)
 }
 

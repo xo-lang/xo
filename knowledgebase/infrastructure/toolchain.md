@@ -839,7 +839,15 @@ Last verified: 2026-10-07
   gotchas/scheduler-instruction-counts-spin.md); http: server
   instructions of bench/perf/http's cycle route, 5,500 minus 500 units,
   fresh servers. Scratch scripts, through the heavy lock. Results in
-  `bench/results/task-switch-2026-10-13.md`. Last verified: 2026-10-13.
+  `bench/results/task-switch-2026-10-13.md`. Since stage 2 (2026-10-13)
+  the same switch also selects the C runtime's worker pool, locks' slow
+  paths and futexes, worker thread starts, fiber stacks, parks,
+  cancellation tree, and spawn and join code instead of
+  std/native/llrt/pool.xo (xo_x_lock_slow, xo_x_park_*, xo_x_node_*,
+  xo_x_scope_add, xo_x_scope_join, xo_x_worker_main, ...; the C services
+  pool.xo calls are xo_sched_rt). Measure it with XO_SPIN_ROUNDS=0 too:
+  the spinning worker's instructions are part of a ping pong's per
+  operation count. Last verified: 2026-10-13.
 - Checking selfhost/macho against clang after an arm64 emitter change
   (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
   -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without

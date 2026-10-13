@@ -12454,7 +12454,7 @@ b6:  ; preds b4
   unreachable
 b7:  ; preds b4
   v23: Int = const 1
-  v24: Int = neg v23 @ linux.xo:53:26 lands v25
+  v24: Int = neg v23 @ linux.xo:54:26 lands v25
   v25: Bool = call rt.landing
   br v25, b9(), b8()
 b8:  ; preds b7

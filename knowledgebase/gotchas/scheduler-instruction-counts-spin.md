@@ -24,3 +24,5 @@ trips), the difference over 2N, medians of 9 runs
 about 1 percent; pingpong still varies by about 15 percent, so its
 result is a set of rounds, not one number. Keep spin loop work (the
 thieves' peek) inline.
+
+Observed again (2026-10-13, decision 0212 stage 2): with the worker pool in Xo, arm64 ping pong measured 1.116 to 1.171 of the C path per round trip, and 1.037 with XO_SPIN_ROUNDS=0. The spinning worker's 32 pauses per round were a counted Xo loop (yield, add, compare, branch: 128 instructions) where clang unrolls the C's loop to 32 yields; unrolled by 8 in pool.xo, ping pong measured 1.028 and 1.034. Run the per operation pair with XO_SPIN_ROUNDS=0 as well to separate spin loop work from the operation's own code.
