@@ -17,9 +17,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   truncation, and RFC 6724 ordering, following Go's resolver with
   glibc's error texts (decision 0206 stage 3). Its differences from
   glibc are listed at the top of dns.xo. `XO_LLRT_C=net` builds the C
-  library path. With `XO_NOLIBC=1`, programs that dial, listen, or
-  serve plain HTTP now link and run with no C library (https needs it
-  until decision 0202).
+  library path. With `XO_NOLIBC=1`, programs that dial or listen now
+  link and run with no C library (std/http still needs it until
+  decision 0202).
 - Fixed: ThreadSanitizer builds on Linux ran out of address space for
   task stacks under load (`fault: out of memory` in conc_stress, not a
   leak); their task stacks are now 2 MiB (XO_TASK_STACK_MB overrides).

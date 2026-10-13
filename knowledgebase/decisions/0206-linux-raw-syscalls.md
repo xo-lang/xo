@@ -168,10 +168,15 @@ mutexes, stdio for faults, malloc, getenv).
     resolution on EC2.
   - xo_nolibc.c lost shutdown and the epoll functions; no socket or
     resolver function is left in it.
-  - XO_NOLIBC=1 links std/http programs that load no certificates or
-    roots, with the runtime's TLS stubs (https fails at run time);
-    programs that load them are refused until decision 0202.
-  - Left: TLS in Xo (decision 0202) for std/http without Mbed TLS; the
+  - Bar: sockets and the poller 0.88x to 0.95x the C path's user
+    instructions; resolving localhost 1.065x (LLVM) and 1.175x (arm64),
+    with 0.93x the kernel instructions (bench/perf/net, linux/arm64).
+  - XO_NOLIBC=1 would link std/http programs that reference no TLS
+    runtime symbol with the runtime's TLS stubs; every std/http golden
+    references some (the client's default roots), so they are still
+    refused until decision 0202.
+  - Left: the resolve bar (an allocation free hosts scan and parse); TLS
+    in Xo (decision 0202) for std/http without Mbed TLS; the
     poll descriptors and the poller thread move to Xo with stage 2's
     threads; caching /etc/hosts (Go keeps it 5 seconds) needs runtime
     state for a list, which the C's two words cannot hold.
@@ -191,7 +196,8 @@ mutexes, stdio for faults, malloc, getenv).
   gotchas/wasm-target-os-is-the-host.md); xo1 now gives wasm builds the
   wasm architecture, which sysio.xo's guard tests, and the wasm emitter
   turns the layer's intrinsics into faults.
-- The C shim adds 1,859 lines of C (std/llrt/xo_nolibc.c, 2026-10-13)
+- The C shim adds 1,851 lines of C (std/llrt/xo_nolibc.c, 2026-10-13,
+  after stage 3; 1,859 in stage 1)
   under `#ifdef XO_NOLIBC`, compiled only into XO_NOLIBC builds; each later port removes some of its
   callers.
 
