@@ -188,9 +188,9 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 	case isPreludeNamed(ct, "Bytes"):
 		return s.appendDebug(acc, v, ct, at)
 	case isPreludeNamed(ct, "UInt64"):
-		return s.rt("rs_append_u64", st, acc, v)
+		return s.showText("append_u64", acc, v, at)
 	case isPreludeNamed(ct, "Rune"):
-		return s.rt("rs_append_rune", st, acc, v)
+		return s.showText("append_rune", acc, v, at)
 	}
 	switch v.Type.Kind {
 	case KStr:
@@ -204,6 +204,24 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 		return s.call("str.concat", st, "", acc, s.callMethod(md, ct, v, at))
 	}
 	return s.appendDebug(acc, v, ct, at)
+}
+
+// showText is acc + the leaf text name (append_rune, append_rune_quote,
+// append_u64) of v, a Rune or UInt64: the native prelude's llrt_<name>
+// (std/native/llrt/show.xo, decision 0193 step 5), unchecked like the C
+// it replaces. With XO_LLRT_C=show, or without the native prelude, the C
+// runtime's rs_<name> as before the port.
+func (s *fn) showText(name string, acc, v *Value, at ast.Node) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("show") {
+		if it := b.mod.Builtin(KInt); v.Type != it {
+			// the same word as an Int
+			v = s.add(OpIntConv, it, nil, v)
+		}
+		f := b.declare(impl, nil, at)
+		return s.call(f.Name, f.Results[0], "", acc, v)
+	}
+	return s.rt("rs_"+name, b.mod.Builtin(KStr), acc, v)
 }
 
 // isBuiltinKind reports a Str, Int, Float, or Bool.
@@ -283,10 +301,10 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			s.retv(s.llrt("append_bytes_quote", st, at, lit(acc, "b"), v))
 			return
 		case isPreludeNamed(ct, "UInt64"):
-			s.retv(s.rt("rs_append_u64", st, acc, v))
+			s.retv(s.showText("append_u64", acc, v, at))
 			return
 		case isPreludeNamed(ct, "Rune"):
-			s.retv(s.rt("rs_append_rune_quote", st, acc, v))
+			s.retv(s.showText("append_rune_quote", acc, v, at))
 			return
 		}
 		switch t.Kind {

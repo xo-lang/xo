@@ -349,6 +349,21 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the leaf text of Display and Debug (decision 0193 step 5,
+	// XO_LLRT_C=show)
+	for _, sym := range []string{"xo_rs_append_u64", "xo_rs_append_rune_quote"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_SHOW_C")
+			break
+		}
+	}
+	// and of the zone rules (decision 0193 step 5, XO_LLRT_C=tz)
+	for _, sym := range []string{"xo_tz_load", "xo_tz_offset", "xo_tz_abbr"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_TZ_C")
+			break
+		}
+	}
 	return out
 }
 

@@ -256,6 +256,21 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // and of the leaf text of Display and Debug (decision 0193 step 5,
+  // XO_LLRT_C=show)
+  for sym in ["xo_rs_append_u64", "xo_rs_append_rune_quote"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_SHOW_C")
+      break
+    }
+  }
+  // and of the zone rules (decision 0193 step 5, XO_LLRT_C=tz)
+  for sym in ["xo_tz_load", "xo_tz_offset", "xo_tz_abbr"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_TZ_C")
+      break
+    }
+  }
   out
 }
 

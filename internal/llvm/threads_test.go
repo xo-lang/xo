@@ -278,6 +278,11 @@ func TestGoldenThreads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if bytes.Contains(prog.IR, []byte("@xo_tz_")) {
+				// std/time: the zone data object (xo_tzdata.c) and XO_TIME
+				// come from internal/build, which this build does without
+				t.Skip("std/time needs the program's zone data")
+			}
 			ll := filepath.Join(t.TempDir(), "prog.ll")
 			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 				t.Fatal(err)

@@ -4,6 +4,7 @@
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/num
+use native/llrt/show
 use native/llrt/strings
 use native/llrt/text
 use native/llrt/unicode
@@ -2046,3 +2047,13 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 
 fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }
+
+// The leaf text of Display and Debug (decision 0193 step 5): a Rune's
+// Display and Debug, a UInt64's text. In Xo (std/native/llrt/show.xo);
+// with XO_LLRT_C=show the Go SSA builder calls the C runtime instead.
+
+fn llrt_append_rune(s: Str, r: Int) -> Str { show.append_rune(s, r) }
+
+fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) }
+
+fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }

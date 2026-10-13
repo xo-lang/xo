@@ -1,16 +1,20 @@
-// xo_time.c: the zone rules of std/time on the native backends (decision
+// xo_time.c: the zone data of std/time on the native backends (decision
 // 0094), included by xo_std.c only when the program uses std/time (the
 // build defines XO_TIME and writes xo_tzdata.c, the program's zone data,
-// compiled beside the runtime), so other programs do not grow. std/native/rttime.xo declares the
-// intrinsics; std/native/time.xo does the rest (civil time, layouts) in
-// Xo.
+// compiled beside the runtime), so other programs do not grow.
+// std/native/rttime.xo declares the intrinsics. The zone rules are Xo
+// (std/native/llrt/tz.xo, decision 0193 step 5): this file finds the
+// TZif data of a name (xo_tz_data) and keeps the zones tz.xo parsed, by
+// name (xo_tz_find, xo_tz_keep, xo_tz_rules). std/native/time.xo does
+// the rest (civil time, layouts) in Xo.
 //
-// A zone is Go's time.Location: the TZif data is read as
-// LoadLocationFromTZData reads it, and an instant is looked up as
-// Location.lookup does (transitions, then the POSIX TZ rule of the footer,
-// tzset; the first zone for times before the first transition; the cache
-// of the zone in effect at load time, which Go fills too), so offsets and
-// abbreviations match the Go backend's for every instant.
+// The C path of the rules (XO_TZ_C, std/native/llrt/tz_c.xo with
+// XO_LLRT_C=tz) is below too: a zone is Go's time.Location, the TZif data
+// read as LoadLocationFromTZData reads it, and an instant looked up as
+// Location.lookup does (transitions, then the POSIX TZ rule of the
+// footer, tzset; the first zone for times before the first transition;
+// the cache of the zone in effect at load time, which Go fills too), so
+// offsets and abbreviations match the Go backend's for every instant.
 
 // The program's zone data (decision 0094), defined in xo_tzdata.c, which
 // the build writes and compiles beside the runtime, so the runtime's
@@ -30,6 +34,17 @@ extern const xo_tz_blob xo_tz_blobs[];
 
 #include <sys/stat.h>
 
+#define TZ_MAX 4096
+
+static void *tz_malloc(size_t n) {
+	void *p = calloc(1, n ? n : 1);
+	if (!p) {
+		xo_oom();
+	}
+	return p;
+}
+
+#ifdef XO_TZ_C
 typedef struct {
 	int64_t off;
 	int dst;
@@ -57,20 +72,11 @@ typedef struct {
 
 #define TZ_ALPHA INT64_MIN
 #define TZ_OMEGA INT64_MAX
-#define TZ_MAX 4096
 
 // Loaded zones by id (1..tz_n); 0 is UTC. A name always gets the same id.
 static tz_loc *tz_locs[TZ_MAX + 1];
 static int64_t tz_n;
 static pthread_mutex_t tz_mu = PTHREAD_MUTEX_INITIALIZER;
-
-static void *tz_malloc(size_t n) {
-	void *p = calloc(1, n ? n : 1);
-	if (!p) {
-		xo_oom();
-	}
-	return p;
-}
 
 static char *tz_strndup(const char *p, int64_t n) {
 	char *s = tz_malloc((size_t)n + 1);
@@ -720,9 +726,6 @@ static tz_loc *tz_parse(const char *name, const unsigned char *data, int64_t len
 	return l;
 }
 
-// ---------------------------------------------------------------------------
-// Zone data: embedded per use, the embedded database, or the host's
-
 static int tz_valid_name(const char *p, int64_t n) {
 	if (n == 0 || n > 255 || (n == 5 && memcmp(p, "Local", 5) == 0) || p[0] == '/') {
 		return 0;
@@ -734,6 +737,11 @@ static int tz_valid_name(const char *p, int64_t n) {
 	}
 	return 1;
 }
+
+#endif // XO_TZ_C
+
+// ---------------------------------------------------------------------------
+// Zone data: embedded per use, the embedded database, or the host's
 
 static uint32_t tz_le4(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint32_t tz_le2(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
@@ -812,6 +820,163 @@ static unsigned char *tz_read_file(const char *path, int64_t *n) {
 	return buf;
 }
 
+// tz_data_add is l with the n bytes at p appended (a TZif candidate).
+static xo_rlist *tz_data_add(xo_rlist *l, const unsigned char *p, int64_t n) { return n_str_list_add(l, (const char *)p, n); }
+
+// tz_host_data appends the TZif data that may hold the zone name in the
+// host's database to l, in the order time.LoadLocation tries them:
+// $ZONEINFO (a directory or a zip), then the system directories; "Local"
+// is /etc/localtime.
+static xo_rlist *tz_host_data(xo_rlist *l, const char *name) {
+	int64_t n;
+	if (strcmp(name, "Local") == 0) {
+		unsigned char *data = tz_read_file("/etc/localtime", &n);
+		if (data) {
+			l = tz_data_add(l, data, n);
+			free(data);
+		}
+		return l;
+	}
+	const char *zi = getenv("ZONEINFO");
+	const char *dirs[] = {zi, "/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"};
+	for (size_t i = 0; i < sizeof dirs / sizeof dirs[0]; i++) {
+		if (!dirs[i] || !dirs[i][0]) {
+			continue;
+		}
+		size_t dl = strlen(dirs[i]), nl = strlen(name);
+		char *path = tz_malloc(dl + nl + 2);
+		memcpy(path, dirs[i], dl);
+		size_t k = dl;
+		if (k > 0 && path[k - 1] != '/') {
+			path[k++] = '/';
+		}
+		memcpy(path + k, name, nl);
+		path[k + nl] = 0;
+		unsigned char *data = tz_read_file(path, &n);
+		free(path);
+		if (!data && i == 0) {
+			// $ZONEINFO may be a zip
+			unsigned char *zip = tz_read_file(dirs[i], &n);
+			if (zip) {
+				const unsigned char *e;
+				int64_t en;
+				if (tz_zip_entry(zip, n, name, (int64_t)nl, &e, &en)) {
+					l = tz_data_add(l, e, en);
+				}
+				free(zip);
+			}
+			continue;
+		}
+		if (data) {
+			l = tz_data_add(l, data, n);
+			free(data);
+		}
+	}
+	return l;
+}
+
+// xo_tz_data is the TZif data that may hold the zone named p, in the
+// order to try them: from the program's zone data (xo_tzdata.c: the data
+// of each constant name, the whole zoneinfo.zip, or with --tzdata=system
+// the host's), or with host set from the host's database. tz.xo checks
+// the name first and parses each until one is TZif.
+xo_rlist *xo_tz_data(const char *p, int64_t n, int64_t host) {
+	xo_rlist *l = n_str_list_new(1);
+	char *name = cstr_of(p, n);
+	if (host || xo_tz_mode == 2) {
+		l = tz_host_data(l, name);
+	} else if (xo_tz_mode == 1) {
+		const unsigned char *e;
+		int64_t en;
+		if (tz_zip_entry((const unsigned char *)xo_tz_zip, xo_tz_zip_len, name, n, &e, &en)) {
+			l = tz_data_add(l, e, en);
+		}
+	} else {
+		for (int64_t i = 0; xo_tz_blobs[i].name; i++) {
+			if ((int64_t)strlen(xo_tz_blobs[i].name) == n && memcmp(xo_tz_blobs[i].name, name, (size_t)n) == 0) {
+				l = tz_data_add(l, (const unsigned char *)xo_tz_blobs[i].data, xo_tz_blobs[i].len);
+				break;
+			}
+		}
+	}
+	free(name);
+	return l;
+}
+
+// The zones tz.xo parsed, by id (1..tzx_n): a name always gets the same
+// id, and is parsed once.
+static char *tzx_names[TZ_MAX + 1];
+static xo_any *tzx_zones[TZ_MAX + 1];
+static int64_t tzx_n;
+static pthread_mutex_t tzx_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int64_t tzx_find(const char *p, int64_t n) {
+	for (int64_t i = 1; i <= tzx_n; i++) {
+		if ((int64_t)strlen(tzx_names[i]) == n && memcmp(tzx_names[i], p, (size_t)n) == 0) {
+			return i;
+		}
+	}
+	return 0;
+}
+
+// xo_tz_find is the id of the zone named p kept so far, or 0.
+int64_t xo_tz_find(const char *p, int64_t n) {
+	pthread_mutex_lock(&tzx_mu);
+	int64_t id = tzx_find(p, n);
+	pthread_mutex_unlock(&tzx_mu);
+	return id;
+}
+
+// tzx_free releases the kept zones at exit, so the leak check sees them
+// freed (xo_rt.c calls it through xo_tz_exit_free).
+static void tzx_free(void) {
+	pthread_mutex_lock(&tzx_mu);
+	for (int64_t i = 1; i <= tzx_n; i++) {
+		h_release(tzx_zones[i]);
+		free(tzx_names[i]);
+		tzx_zones[i] = NULL;
+		tzx_names[i] = NULL;
+	}
+	tzx_n = 0;
+	pthread_mutex_unlock(&tzx_mu);
+}
+
+// xo_tz_keep keeps the zone z (borrowed) that tz.xo parsed under the name
+// p and returns its id; a zone kept under the name first keeps its id. 0
+// when the table is full.
+int64_t xo_tz_keep(const char *p, int64_t n, xo_any *z) {
+	pthread_mutex_lock(&tzx_mu);
+	int64_t id = tzx_find(p, n);
+	if (id == 0 && tzx_n < TZ_MAX) {
+		id = ++tzx_n;
+		tzx_names[id] = cstr_of(p, n);
+		h_retain(z);
+		__atomic_store_n(&tzx_zones[id], z, __ATOMIC_RELEASE);
+		xo_tz_exit_free = tzx_free;
+	}
+	pthread_mutex_unlock(&tzx_mu);
+	return id;
+}
+
+// xo_tz_rules is the zone kept under id (a reference).
+xo_any *xo_tz_rules(int64_t id) {
+	xo_any *z = id >= 1 && id <= TZ_MAX ? __atomic_load_n(&tzx_zones[id], __ATOMIC_ACQUIRE) : NULL;
+	if (!z) {
+		return xo_h_zero();
+	}
+	h_retain(z);
+	return z;
+}
+
+// xo_tz_now is the wall clock in seconds (the time of a load: Go fills
+// its cache with the zone in effect then).
+int64_t xo_tz_now(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	return (int64_t)ts.tv_sec;
+}
+
+#ifdef XO_TZ_C
 // tz_host loads a zone from the host's database as time.LoadLocation
 // does: $ZONEINFO (a directory or a zip), then the system directories.
 // "Local" is /etc/localtime.
@@ -922,11 +1087,12 @@ static int64_t tz_get(const char *p, int64_t n, int host) {
 }
 
 // ---------------------------------------------------------------------------
-// Intrinsics (std/native/rttime.xo)
+// Intrinsics of the C path (std/native/rttime.xo, tz_c.xo)
 
 int64_t xo_tz_load(const char *p, int64_t n) { return tz_get(p, n, 0); }
 
 int64_t xo_tz_load_host(const char *p, int64_t n) { return tz_get(p, n, 1); }
+#endif // XO_TZ_C
 
 xo_rstr *xo_tz_local_name(int64_t *len) {
 	char buf[1024];
@@ -941,6 +1107,7 @@ xo_rstr *xo_tz_local_name(int64_t *len) {
 	return rs_of_cstr("Local", len);
 }
 
+#ifdef XO_TZ_C
 static const tz_loc *tz_of(int64_t id) {
 	if (id < 1 || id > TZ_MAX) {
 		return NULL;
@@ -967,3 +1134,4 @@ xo_rstr *xo_tz_abbr(int64_t id, int64_t sec, int64_t *len) {
 	tz_lookup(l, sec, &h);
 	return nstr(h.name.p, h.name.n, len);
 }
+#endif // XO_TZ_C
