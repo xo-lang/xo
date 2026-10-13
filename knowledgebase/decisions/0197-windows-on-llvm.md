@@ -222,7 +222,12 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    the lld-link ThinLTO link, about 22 GB); the cross built xo1 passes
    the 145 goldens, builds itself natively, and its output builds
    itself again to the same IR and (but the time stamp) the same
-   binary. Full LTO on one module stays out of reach (out of memory at
+   binary. The time stamp is gone since 2026-10-13: both drivers link
+   with lld-link `/Brepro` (a hash of the output in the COFF time stamp
+   instead of the link time), and a rebuild on Windows is byte
+   identical for the Go driver and for xo1
+   (gotchas/windows-lld-link-time-stamp.md; the xo1 self build was not
+   rerun for it). Full LTO on one module stays out of reach (out of memory at
    32 GiB). The release layout needed one fix: xo started by name from
    cmd.exe found no std (PATHEXT in the PATH lookup). release.sh builds
    the windows/amd64 archive only with `XO_RELEASE_WINDOWS=1`.

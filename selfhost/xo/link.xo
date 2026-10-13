@@ -135,12 +135,16 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
 /// Windows (decision 0197): lld-link, which reads the LTO bitcode MSVC's
 /// link.exe cannot; the runtime names its import libraries itself
 /// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
-/// MSVC one clang picks. A Linux link with XO_NOLIBC=1 (the runtime
-/// compiled with nolibc_flags) is static with no C library, keeping only
-/// the sections the program reaches (decision 0206).
+/// MSVC one clang picks; /Brepro makes the link deterministic: lld-link
+/// writes a hash of the output in the COFF header's time stamp (and the
+/// debug directory) instead of the link time, so a rebuild is byte
+/// identical (gotchas/windows-lld-link-time-stamp.md). A Linux link with
+/// XO_NOLIBC=1 (the runtime compiled with nolibc_flags) is static with no
+/// C library, keeping only the sections the program reaches (decision
+/// 0206).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
-    return ["-fuse-ld=lld"]
+    return ["-fuse-ld=lld", "-Wl,/Brepro"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
     return ["-static", "-nostdlib", "-Wl,--gc-sections"]
