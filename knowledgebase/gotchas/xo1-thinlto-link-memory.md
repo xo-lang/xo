@@ -23,3 +23,11 @@ scripts/xo1-host-check.sh use the same setting. Decision 0168 measured
 the cost of dropping ThinLTO at 2 to 3 percent of run time. Set
 `XO_LLVM_LTO=thin` to get the old behavior on a machine with the
 memory.
+
+Second trap (same run): with ThinLTO the bootstrap's s2 and s3 wrote
+the same IR and different binaries. ThinLTO renames the locals it
+promotes across modules `<name>.llvm.<hash>`, and the hash followed the
+module's path (each bootstrap stage has its own build directory); a
+split build without LTO is byte identical across directories. Without
+LTO the linux/amd64 fixed point holds (s1 = s2 = s3). Compare binaries
+of split LLVM builds only without LTO, or from the same build directory.

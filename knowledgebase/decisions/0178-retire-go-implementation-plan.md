@@ -760,6 +760,26 @@ and TestModulesXoSame, which build their stage binaries with
 native build whose targets differ in OS shares one SSA, whose `target`
 is the host's (the Go driver builds one per target).
 
+## Stage 7 note: xo1 on x86-64 hosts (2026-10-12)
+
+After the Go compiler is deleted, an x86-64 host's xo1 must be built by
+the LLVM backend (the arm64 backend emits arm64 only). Measured in
+bench/results/xo1-x86-2026-10-12.md: on linux/amd64 (EC2 m7i.4xlarge)
+the Go `xo` builds xo1 with `--backend=llvm` split into 12 modules
+without LTO in 2,037 s with a 16.5 GB machine peak; that xo1 passes the
+LLVM goldens 169 of 169, and the bootstrap chain without Go reaches the
+fixed point (s2 and s3 IR and binaries identical, s1 equal too, and all
+three equal to the Go built xo1); on darwin/amd64 (the Intel Mac) the
+LLVM-built xo1 passes the goldens 169 of 169. ThinLTO is not used for
+xo1: its link needed 18.8 GB and its promoted symbol names follow the
+build directory, which broke the fixed point
+(gotchas/xo1-thinlto-link-memory.md). internal/selfdriver now runs
+`--backend=llvm` and `--no-gc` builds through xo1 on darwin/amd64 and
+linux/amd64 and builds xo1 there with the LLVM backend (`xo1Backend`);
+`XO_SELF_DRIVER=0` still rolls back. What release.sh needs for amd64
+archives without Go (built on the amd64 hosts, or an LLVM cross
+compile in xo1) is in the results file.
+
 ## Consequences
 
 - Until switch point B every language change is still made twice

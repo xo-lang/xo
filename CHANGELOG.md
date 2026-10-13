@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted toolchain runs on x86-64 hosts: on darwin/amd64 and
+  linux/amd64, `xo build|run|test --backend=llvm` (and `--no-gc`, whose
+  default backend is LLVM there) go through xo1, which `xo` builds with
+  the LLVM backend split into 12 modules without LTO (decision 0178
+  stage 7, decision 0196). That xo1 passes the LLVM goldens on both
+  hosts and rebuilds itself to a byte identical fixed point on
+  linux/amd64 with no Go installed. scripts/bootstrap-xo.sh picks the
+  LLVM backend on x86-64 hosts; scripts/remote-xo1-x86.sh and
+  scripts/xo1-host-check.sh run the check on EC2 and the Intel Mac.
 - **`xo` is written in Xo** (decision 0178, switch point B): the release
   archives ship the self hosted toolchain as `bin/xo`, with
   `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the
