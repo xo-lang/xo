@@ -376,10 +376,10 @@ its callers move too.
       way hc_read was, so its response parsing and HPACK use http1.xo and
       hpack.xo and the C copies go; (c) the HTTP/2 request checks
       (h2_collect, h2_pseudos_ok, h2_request) in Xo, with the request
-      built in Xo as HTTP/1.1's is; (d) fix the arm64 emitter bug
-      (gotchas/arm64-vreg-read-before-write-break-flag.md: run the repro
-      through xo1, then dump the virtual register code of
-      internal/arm64 before register allocation); (e) find why the Go
+      built in Xo as HTTP/1.1's is; (d) done 2026-10-13: the arm64
+      emitter bug is fixed in both emitters
+      (gotchas/arm64-vreg-read-before-write-break-flag.md; h1 figures
+      again in the step 6 results file); (e) find why the Go
       backend's server keeps a connection open after a body cut short
       (gotchas/http-short-body-close-differs.md) and make TestHTTPParseDiff
       compare with the Go backend instead of plain net/http.
