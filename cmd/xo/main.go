@@ -257,6 +257,7 @@ func runXo(args []string, stdout, stderr io.Writer) int {
 	// decision 0178 switch point A: native builds run the self hosted
 	// driver xo1 (XO_SELF_DRIVER=0 restores the Go driver)
 	if selfdriver.Wants(args[0], args[1:]) {
+		selfdriver.Version = version // part of xo1's cache key
 		code, err := selfdriver.Run(args, stdout, stderr)
 		if !errors.Is(err, selfdriver.ErrFallback) {
 			if err != nil {

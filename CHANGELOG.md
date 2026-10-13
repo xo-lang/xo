@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Changed: the xo1 that native builds of the development `xo` run
+  (switch point A) is cached on its own inputs (selfhost/, the std
+  modules it uses, the `xo` version) in `<user cache>/xo/xo1/bin/<key>`,
+  so a change to another std module, the C runtime (std/llrt), or
+  third_party no longer rebuilds it (5 to 12 minutes); the std beside it
+  is still written from the full embedded set.
 - Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
   request to an in memory server sent after a stop request waited in
   the listener's backlog instead of failing, and under load could end

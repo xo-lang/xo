@@ -11,10 +11,14 @@
 //
 // Where xo1 comes from: $XO1 names a binary; else the sources embedded in
 // this xo (package selfhost, std, third_party) are written under
-// <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file)
-// and xo1 is built there once by this xo with the arm64 backend, under a
-// file lock; later runs reuse it. xo1 reads std and third_party from the
-// same directory, so the build is a function of the embedded sources.
+// <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file),
+// xo1 reads std and third_party from there, and xo1 itself is built once
+// by this xo with the arm64 backend, under a file lock, into
+// <user cache>/xo/xo1/bin/<binkey>/xo1. The binary's key covers only its
+// own inputs (BinaryInputs: the xo version, selfhost/, and the Xo files
+// of the std modules selfhost reaches through `use`), so a change to
+// another std module, the C runtime, or third_party writes a new source
+// tree but reuses the built xo1.
 //
 // Rollback: XO_SELF_DRIVER=0 (or off) runs every command with the Go
 // driver, as before the switch.
@@ -173,7 +177,16 @@ func Run(args []string, stdout, stderr io.Writer) (int, error) {
 // third_party: $XO1 (with $XO1_ROOT, or the sources of this xo), else
 // the xo1 built from the sources embedded in this xo.
 func Binary() (bin, root string, err error) {
-	root, err = Sources()
+	files, err := embedded()
+	if err != nil {
+		return "", "", err
+	}
+	return binary(files)
+}
+
+// binary is Binary for the given embedded files.
+func binary(files map[string][]byte) (bin, root string, err error) {
+	root, err = sources(files)
 	if err != nil {
 		return "", "", err
 	}
@@ -186,7 +199,11 @@ func Binary() (bin, root string, err error) {
 		}
 		return b, root, nil
 	}
-	bin = filepath.Join(root, "bin", "xo1")
+	base, err := cacheBase()
+	if err != nil {
+		return "", "", err
+	}
+	bin = filepath.Join(base, "bin", BinaryKey(files), "xo1")
 	if fi, err := os.Stat(bin); err == nil && fi.Mode().IsRegular() {
 		return bin, root, nil
 	}
@@ -238,6 +255,10 @@ func Sources() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return sources(files)
+}
+
+func sources(files map[string][]byte) (string, error) {
 	var names []string
 	for n := range files {
 		names = append(names, n)
@@ -250,13 +271,9 @@ func Sources() (string, error) {
 		h.Write(files[n])
 	}
 	key := hex.EncodeToString(h.Sum(nil))[:16]
-	base := os.Getenv("XO1_CACHE")
-	if base == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(cache, "xo", "xo1")
+	base, err := cacheBase()
+	if err != nil {
+		return "", err
 	}
 	root := filepath.Join(base, key)
 	stamp := filepath.Join(root, "sources.ok")
@@ -299,7 +316,10 @@ func Sources() (string, error) {
 // backend, once across processes (a file lock; a waiting process finds
 // the binary when it gets the lock).
 func buildXo1(root, bin string) error {
-	unlock, err := lockFile(filepath.Join(root, "build.lock"))
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		return err
+	}
+	unlock, err := lockFile(filepath.Join(filepath.Dir(bin), "build.lock"))
 	if err != nil {
 		return err
 	}
@@ -324,6 +344,94 @@ func buildXo1(root, bin string) error {
 		return fmt.Errorf("building xo1: the check failed:%s", b.String())
 	}
 	return os.Rename(tmp, bin)
+}
+
+// cacheBase is the directory of the source trees and the built binaries:
+// $XO1_CACHE, else <user cache>/xo/xo1.
+func cacheBase() (string, error) {
+	if base := os.Getenv("XO1_CACHE"); base != "" {
+		return base, nil
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "xo", "xo1"), nil
+}
+
+// Version is the version of the xo that builds xo1 (cmd/xo sets it). It
+// is part of the binary's key: that xo's compiler builds it.
+var Version = "dev"
+
+// BinaryInputs are the embedded files the built xo1 depends on, sorted:
+// every file under selfhost/, and of std the Xo files of the prelude and
+// of each module selfhost reaches through `use` lines, followed through
+// the std files themselves (std/NAME.xo and its native implementation
+// std/native/NAME.xo for `use std/NAME`; std/native/NAME.xo for `use
+// native/NAME`; std/native/llrt/NAME.xo and its C path NAME_c.xo for
+// `use native/llrt/NAME`). Left out: the other std modules, the C runtime
+// (std/llrt), and third_party. Programs xo1 builds read those from the
+// source tree beside it, so a change there does not change what xo1
+// compiles, only the runtime xo1 itself was linked with.
+func BinaryInputs(files map[string][]byte) []string {
+	in := map[string]bool{}
+	var queue []string
+	add := func(name string) {
+		if _, ok := files[name]; ok && !in[name] {
+			in[name] = true
+			queue = append(queue, name)
+		}
+	}
+	for n := range files {
+		if strings.HasPrefix(n, "selfhost/") {
+			add(n)
+		}
+	}
+	add("std/prelude.xo")
+	add("std/native/prelude.xo")
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		if !strings.HasSuffix(n, ".xo") {
+			continue
+		}
+		for _, line := range strings.Split(string(files[n]), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 || f[0] != "use" {
+				continue
+			}
+			p := strings.Trim(f[1], `"`)
+			switch {
+			case strings.HasPrefix(p, "std/"):
+				m := strings.TrimPrefix(p, "std/")
+				add("std/" + m + ".xo")
+				add("std/native/" + m + ".xo")
+			case strings.HasPrefix(p, "native/llrt/"):
+				add("std/" + p + ".xo")
+				add("std/" + p + "_c.xo")
+			case strings.HasPrefix(p, "native/"):
+				add("std/" + p + ".xo")
+			}
+		}
+	}
+	names := make([]string, 0, len(in))
+	for n := range in {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// BinaryKey is the cache key of the xo1 built from files: a hash of the
+// xo version, the host, and BinaryInputs.
+func BinaryKey(files map[string][]byte) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "xo1 binary v1\nxo %s %s/%s\n", Version, runtime.GOOS, runtime.GOARCH)
+	for _, n := range BinaryInputs(files) {
+		fmt.Fprintf(h, "%s %d\n", n, len(files[n]))
+		h.Write(files[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func exists(p string) bool {
