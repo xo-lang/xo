@@ -13,7 +13,7 @@ import (
 // rt.tlocal_set are calls of xo_tlocal_get and xo_tlocal_set, never inlined (a
 // fiber may go on on another thread after a switch, and a caller must
 // not keep a thread local's address), over a table of 16 words in a
-// thread_local global that only xo_tlocal_addr names (a split build,
+// thread_local global that only xo_tlocal_at names (a split build,
 // decision 0168, copies a global into each module that uses it).
 
 // schedSwitch defines xo_stack_switch and xo_fiber_entry at the first
@@ -45,27 +45,34 @@ func (g *sgen) schedTlocal() {
 	}
 	g.emitted["@xo_tlocal_get"] = true
 	g.emitted["@xo_tlocal_set"] = true
+	g.emitted["@xo_tlocal_addr"] = true
 	g.helpers.WriteString(tlocalIR)
 }
 
 // tlocalIR is the thread local table of decision 0212 in IR.
 const tlocalIR = `@xo_tlocal = hidden thread_local global [16 x i64] zeroinitializer, align 8
 
-define internal ptr @xo_tlocal_addr(i64 %k) nounwind {
+define internal ptr @xo_tlocal_at(i64 %k) nounwind {
   %p = getelementptr [16 x i64], ptr @xo_tlocal, i64 0, i64 %k
   ret ptr %p
 }
 
 define i64 @xo_tlocal_get(i64 %k) noinline nounwind {
-  %p = call ptr @xo_tlocal_addr(i64 %k)
+  %p = call ptr @xo_tlocal_at(i64 %k)
   %v = load i64, ptr %p, align 8
   ret i64 %v
 }
 
 define void @xo_tlocal_set(i64 %k, i64 %v) noinline nounwind {
-  %p = call ptr @xo_tlocal_addr(i64 %k)
+  %p = call ptr @xo_tlocal_at(i64 %k)
   store i64 %v, ptr %p, align 8
   ret void
+}
+
+define i64 @xo_tlocal_addr() noinline nounwind {
+  %p = call ptr @xo_tlocal_at(i64 0)
+  %a = ptrtoint ptr %p to i64
+  ret i64 %a
 }
 
 `

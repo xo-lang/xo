@@ -3562,6 +3562,7 @@ typedef struct xo_fiber {
 	void *tsan;
 	struct xo_fiber *next; // the cache
 	void *asan_fake;       // AddressSanitizer: its fake stack while switched out
+	int64_t hooks;         // its worker's hooks (sched.xo, decision 0212)
 } xo_fiber;
 
 // xo_fiber_switch saves the callee saved registers on the current stack,
@@ -3981,6 +3982,7 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 	f->task = t;
 	f->cur = NULL;
 	f->done = 0;
+	f->hooks = w->hooks;
 	__atomic_store_n(&f->state, F_RUNNING, __ATOMIC_RELAXED);
 #ifndef XO_SCHED_C
 	// the first frame, for the switch the compiler emits (sched.xo)
@@ -4182,7 +4184,7 @@ static void run_item(xo_worker *w, void *it) {
 // its constants are these offsets).
 _Static_assert(offsetof(xo_runq, head) == 0 && offsetof(xo_runq, tail) == 128 && offsetof(xo_runq, slot) == 136, "sched.xo RQ_*");
 _Static_assert(offsetof(xo_worker, q) == 0 && offsetof(xo_worker, sched_sp) == 2208 && offsetof(xo_worker, hooks) == 2216, "sched.xo W_*");
-_Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48, "sched.xo F_*");
+_Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48 && offsetof(xo_fiber, hooks) == 80, "sched.xo F_*");
 _Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
 _Static_assert(offsetof(xo_scope, pending) == 240, "sched.xo S_PENDING");
 _Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");

@@ -2408,7 +2408,7 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_restorer":
 		s.g.restorerRef = true
 		s.set(v, s.symAddr(s.g.local("xo_sigreturn")))
-	case "rt.stack_switch", "rt.tlocal_get", "rt.tlocal_set":
+	case "rt.stack_switch", "rt.tlocal_get", "rt.tlocal_set", "rt.tlocal_addr":
 		// calls of the functions sched.go emits (decision 0212)
 		s.g.schedRef = true
 		return false

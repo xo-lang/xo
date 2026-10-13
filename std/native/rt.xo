@@ -355,6 +355,12 @@ fn fiber_start_addr() -> Int
 fn tlocal_get(k: Int) -> Int
 /// Sets word k of the calling thread's table.
 fn tlocal_set(k: Int, v: Int)
+/// The address of the calling thread's table (word k at 8 * k): valid
+/// while the code stays on the thread, so not across a stack_switch of a
+/// fiber (one that may go on on another thread), and only plain loads
+/// and stores (a function on a scheduler's own stack, which never moves,
+/// keeps it across its switches).
+fn tlocal_addr() -> Int
 /// The C path of sched.xo (XO_LLRT_C=sched, -DXO_SCHED_C): operation op
 /// of the C runtime's own scheduler (std/llrt/xo_rt.c xo_sched_c).
 fn sched_c(op: Int, a: Int, b: Int, c: Int) -> Int

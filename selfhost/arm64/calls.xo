@@ -872,7 +872,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.restorer_ref = true
       g.set(v, [g.sym_addr(g.local("xo_sigreturn"))])
     }
-    "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" => {
+    "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       // calls of the functions sched.xo emits (decision 0212)
       g.sched_ref = true
       return false

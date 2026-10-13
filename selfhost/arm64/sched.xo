@@ -55,6 +55,7 @@ fn sched_asm(os: Str) -> Str {
     let tlv = ["mov x10, x30", "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "ldr x8, [x0]", "blr x8"]
     b.push(sched_fn(os, "xo_tlocal_get", true, ["mov x9, x0"] + tlv + ["ldr x0, [x0, x9, lsl #3]", "ret x10"]))
     b.push(sched_fn(os, "xo_tlocal_set", true, ["mov x9, x0", "mov x11, x1"] + tlv + ["str x11, [x0, x9, lsl #3]", "ret x10"]))
+    b.push(sched_fn(os, "xo_tlocal_addr", true, tlv + ["ret x10"]))
     b.push("\t.section __DATA,__thread_data,thread_local_regular\n\t.p2align 3\n_xo_tlocal_init:\n")
     b.push("\t.quad 0\n".repeat(16))
     b.push("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
@@ -64,6 +65,7 @@ fn sched_asm(os: Str) -> Str {
   let tp = ["mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"]
   b.push(sched_fn(os, "xo_tlocal_get", true, tp + ["ldr x0, [x9, x0, lsl #3]", "ret"]))
   b.push(sched_fn(os, "xo_tlocal_set", true, tp + ["str x1, [x9, x0, lsl #3]", "ret"]))
+  b.push(sched_fn(os, "xo_tlocal_addr", true, tp + ["mov x0, x9", "ret"]))
   b.push("\t.section .tdata,\"awT\",@progbits\n\t.globl xo_tlocal\n\t.hidden xo_tlocal\n\t.p2align 3\n\t.type xo_tlocal, @tls_object\n\t.size xo_tlocal, 128\nxo_tlocal:\n")
   b.push("\t.xword 0\n".repeat(16))
   b.join("")

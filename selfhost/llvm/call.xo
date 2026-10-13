@@ -576,7 +576,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.sched_switch()
       g.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
     }
-    "rt.tlocal_get" | "rt.tlocal_set" => {
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       g.sched_tlocal()
       return false
     }

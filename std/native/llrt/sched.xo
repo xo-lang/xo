@@ -30,6 +30,10 @@ const SEQ_CST = 4
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1
 pub const TLS_W: Int = 2
+/// Their byte offsets in the table (rt.tlocal_addr).
+const TLS_CUR_AT = 0
+const TLS_FIB_AT = 8
+const TLS_W_AT = 16
 
 /// xo_runq: head (word 0), tail (word 16), then the ring of RUNQ slots
 /// (from word 17).
@@ -52,6 +56,9 @@ const F_TASK = 24
 const F_CUR = 32
 const F_STATE = 5
 const F_DONE = 48
+/// Whether the fiber's code calls xo_sched_hook (xo_fiber hooks, set by
+/// fiber_new from its worker's W_HOOKS: the same for every worker).
+const F_HOOKS = 80
 
 /// The fiber states (xo_rt.c F_*): a parking handshake, so a wake up is
 /// never lost and a fiber never runs on two workers.
@@ -236,17 +243,17 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
 }
 
 /// Where fiber f starts (its frame's main): its task, then back to the
-/// scheduler for good.
+/// scheduler for good. The thread local table is found again after the
+/// task: it may have parked and gone on on another worker.
 pub fn fiber_main(f: Int) {
-  let w0 = rt.tlocal_get(TLS_W)
-  if rt.mem_load(w0, W_HOOKS, 8) != 0 {
-    rt.sched_hook(HOOK_START, w0, f)
+  let hooks = rt.mem_load(f, F_HOOKS, 8)
+  if hooks != 0 {
+    rt.sched_hook(HOOK_START, rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8), f)
   }
   rt.sched_run_task(f)
   rt.mem_store(f, F_DONE, 1, 8)
-  // the task may have parked and gone on on another worker
-  let w = rt.tlocal_get(TLS_W)
-  if rt.mem_load(w, W_HOOKS, 8) != 0 {
+  let w = rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8)
+  if hooks != 0 {
     rt.sched_hook(HOOK_END, w, f)
   }
   rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
@@ -256,18 +263,19 @@ pub fn fiber_main(f: Int) {
 pub fn fiber_parking(f: Int) { rt.slot_store(f, F_STATE, F_PARKING, RELEASE) }
 
 /// Switches from fiber f to the scheduler of the worker running it; it
-/// returns when a worker resumes f.
+/// returns when a worker resumes f (maybe another one: the hook finds
+/// the thread's table again).
 pub fn fiber_park(f: Int) {
-  rt.mem_store(f, F_CUR, rt.tlocal_get(TLS_CUR), 8)
-  let w = rt.tlocal_get(TLS_W)
-  if rt.mem_load(w, W_HOOKS, 8) != 0 {
+  let t = rt.tlocal_addr()
+  rt.mem_store(f, F_CUR, rt.mem_load(t, TLS_CUR_AT, 8), 8)
+  let w = rt.mem_load(t, TLS_W_AT, 8)
+  let hooks = rt.mem_load(f, F_HOOKS, 8)
+  if hooks != 0 {
     rt.sched_hook(HOOK_PARK, w, f)
   }
   rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
-  // resumed, maybe by another worker
-  let w2 = rt.tlocal_get(TLS_W)
-  if rt.mem_load(w2, W_HOOKS, 8) != 0 {
-    rt.sched_hook(HOOK_RESUMED, w2, f)
+  if hooks != 0 {
+    rt.sched_hook(HOOK_RESUMED, rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8), f)
   }
 }
 
@@ -281,12 +289,15 @@ pub fn fiber_wake(f: Int) -> Int {
 /// frees it). The thread's current context is restored after (a root
 /// thread runs fibers while it waits).
 pub fn fiber_run(w: Int, f: Int) -> Int {
-  let saved = rt.tlocal_get(TLS_CUR)
+  // the table of this thread, whose scheduler stack never moves to
+  // another: valid across the switches
+  let t = rt.tlocal_addr()
+  let saved = rt.mem_load(t, TLS_CUR_AT, 8)
   let hooks = rt.mem_load(w, W_HOOKS, 8)
   while true {
     rt.slot_store(f, F_STATE, F_RUNNING, RELAXED)
-    rt.tlocal_set(TLS_FIB, f)
-    rt.tlocal_set(TLS_CUR, rt.mem_load(f, F_CUR, 8))
+    rt.mem_store(t, TLS_FIB_AT, f, 8)
+    rt.mem_store(t, TLS_CUR_AT, rt.mem_load(f, F_CUR, 8), 8)
     if hooks != 0 {
       rt.sched_hook(HOOK_RUN, w, f)
     }
@@ -294,8 +305,8 @@ pub fn fiber_run(w: Int, f: Int) -> Int {
     if hooks != 0 {
       rt.sched_hook(HOOK_BACK, w, f)
     }
-    rt.tlocal_set(TLS_FIB, 0)
-    rt.tlocal_set(TLS_CUR, saved)
+    rt.mem_store(t, TLS_FIB_AT, 0, 8)
+    rt.mem_store(t, TLS_CUR_AT, saved, 8)
     if rt.mem_load(f, F_DONE, 8) != 0 {
       return 1
     }

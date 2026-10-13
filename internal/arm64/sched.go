@@ -81,6 +81,7 @@ func schedAsm(os OS) string {
 		tlv := []string{"mov x10, x30", "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "ldr x8, [x0]", "blr x8"}
 		fn("xo_tlocal_get", true, append(append([]string{"mov x9, x0"}, tlv...), "ldr x0, [x0, x9, lsl #3]", "ret x10"))
 		fn("xo_tlocal_set", true, append(append([]string{"mov x9, x0", "mov x11, x1"}, tlv...), "str x11, [x0, x9, lsl #3]", "ret x10"))
+		fn("xo_tlocal_addr", true, append(tlv, "ret x10"))
 		b.WriteString("\t.section __DATA,__thread_data,thread_local_regular\n\t.p2align 3\n_xo_tlocal_init:\n")
 		b.WriteString(strings.Repeat("\t.quad 0\n", 16))
 		b.WriteString("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
@@ -90,6 +91,7 @@ func schedAsm(os OS) string {
 	tp := []string{"mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"}
 	fn("xo_tlocal_get", true, append(tp, "ldr x0, [x9, x0, lsl #3]", "ret"))
 	fn("xo_tlocal_set", true, append(tp, "str x1, [x9, x0, lsl #3]", "ret"))
+	fn("xo_tlocal_addr", true, append(tp, "mov x0, x9", "ret"))
 	b.WriteString("\t.section .tdata,\"awT\",@progbits\n\t.globl xo_tlocal\n\t.hidden xo_tlocal\n\t.p2align 3\n\t.type xo_tlocal, @tls_object\n\t.size xo_tlocal, 128\nxo_tlocal:\n")
 	b.WriteString(strings.Repeat("\t.xword 0\n", 16))
 	return b.String()
