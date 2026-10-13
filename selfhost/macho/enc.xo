@@ -284,6 +284,14 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word(0xd4200000 | (v * 32))
     }
     "nop" => a.word(NOP)
+    "prfm" => {
+      // rt.prefetch (decision 0207 stage 3): pldl1keep at [xn{, #imm}]
+      let mo = mem_op(ops, 1)
+      if n != 2 || bstr(ops[0]) != "pldl1keep" || !mo.ok || mo.mode != 0 || mo.off < 0 || mo.off % 8 != 0 || mo.off / 8 > 4095 {
+        return a.bad(m, ops)
+      }
+      a.word(0xf9800000 | ((mo.off / 8) * 0x400) | (mo.base * 32))
+    }
     "sxtw" => {
       // sbfm xd, xn, #0, #31 (rt.mem_cmp's result, decision 0207)
       let (d, kd) = if n == 2 { reg(ops[0]) } else { (-1, 0) }
