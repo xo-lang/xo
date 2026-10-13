@@ -12,7 +12,7 @@ llvmdump d029205740c54028 module 9cc57e97d3d2dc42
 llvmdump d029205740c54028 order 2e4486e62fc40044
 llvmdump d029205740c54028 ~rtdecls 95345576c7a96edf
 llvmdump d029205740c54028 ~types 2e691c085bb6fdb5
-llvmdump d06785a1dc199e71 =@slot 10c0626f115c5019
+llvmdump d06785a1dc199e71 =@slot 969d0568625ebe15
 llvmdump d06785a1dc199e71 =none rejected
 llvmdump d0a2921a42e4b33b =@slot 6d6ba07930b61c80
 llvmdump d0a2921a42e4b33b =none rejected
@@ -20,14 +20,14 @@ llvmdump d0dcc7b0a5b8562a =@slot 95d05580576ee885
 llvmdump d0dcc7b0a5b8562a =none rejected
 llvmdump d113f2f6b031d48b #c 80 133cbbc098ac933b
 llvmdump d113f2f6b031d48b #d 250 41bc7426e72858d6
-llvmdump d113f2f6b031d48b =@slot df274f2a35fbf1eb
+llvmdump d113f2f6b031d48b =@slot d7f41046baf231aa
 llvmdump d113f2f6b031d48b module f20db38723824f2b
 llvmdump d113f2f6b031d48b order 7cc55647012ee04f
 llvmdump d113f2f6b031d48b ~rtdecls 9dce7dde52778e4a
 llvmdump d113f2f6b031d48b ~types 88eee48718de7964
 llvmdump d1479cb85241beaa #c 114 13c2e45091dd7604
 llvmdump d1479cb85241beaa #d 282 0a45806745c74e6e
-llvmdump d1479cb85241beaa =@slot d4618bed9cfc7347
+llvmdump d1479cb85241beaa =@slot b341ffff5727d149
 llvmdump d1479cb85241beaa module 3306f9b573367457
 llvmdump d1479cb85241beaa order c90b63fdeb979998
 llvmdump d1479cb85241beaa ~rtdecls cf5006311d378a65
@@ -39,22 +39,22 @@ llvmdump d14c6904fba5f6cf module 7c16aec2ed672610
 llvmdump d14c6904fba5f6cf order f7c030401f6ca0a1
 llvmdump d14c6904fba5f6cf ~rtdecls 14a4425d1d3767e8
 llvmdump d14c6904fba5f6cf ~types c71b795e25f7bedd
-llvmdump d1d48f84f28917a2 =@slot ee952aa8f2bfbc02
+llvmdump d1d48f84f28917a2 =@slot c9e136c852776bd5
 llvmdump d1d48f84f28917a2 =none rejected
 llvmdump d2226a5cc6f66940 #c 71 00d05dedeae8d199
 llvmdump d2226a5cc6f66940 #d 232 be328c7186261033
-llvmdump d2226a5cc6f66940 =@slot 03c6ee55fe87c5cc
+llvmdump d2226a5cc6f66940 =@slot ad3c7f361766e22d
 llvmdump d2226a5cc6f66940 module 2d5d53dd43756a31
 llvmdump d2226a5cc6f66940 order b16c5463ea373180
 llvmdump d2226a5cc6f66940 ~rtdecls 9dce7dde52778e4a
 llvmdump d2226a5cc6f66940 ~types 5d751dd8dfe2d616
 llvmdump d227dc2c42f677bf =@slot 223dc742f5d3e17e
 llvmdump d227dc2c42f677bf =none rejected
-llvmdump d2314c81c2d6dab6 =@slot 6e3d9d77e55f5581
+llvmdump d2314c81c2d6dab6 =@slot 342c92f55b0e4110
 llvmdump d2314c81c2d6dab6 =none rejected
 llvmdump d253284350586879 #c 87 181865ebf2c3cb35
 llvmdump d253284350586879 #d 302 0d58dae18e6229d1
-llvmdump d253284350586879 =@slot 2cad6183814c2b9b
+llvmdump d253284350586879 =@slot d5e813efcc0099a6
 llvmdump d253284350586879 module 554924a43156c6c8
 llvmdump d253284350586879 order ad73ab1ae813c671
 llvmdump d253284350586879 ~rtdecls 6cd1ea680f8fab2d
@@ -82,7 +82,7 @@ llvmdump d2be4f73fbce7826 ~rtdecls 0205c04577d3bcc9
 llvmdump d2be4f73fbce7826 ~types fff99f2c9eb26bb8
 llvmdump d36cb9f6d1d65ff0 =@slot 27724b879f7de505
 llvmdump d36cb9f6d1d65ff0 =none no main
-llvmdump d38e39aa16c190d5 =@slot df0869a205a1739f
+llvmdump d38e39aa16c190d5 =@slot 4828196cbc496fd9
 llvmdump d38e39aa16c190d5 =none rejected
 llvmdump d3bf1436f0aa6ed1 =@slot 48809b423701829e
 llvmdump d3bf1436f0aa6ed1 =none rejected
@@ -103,7 +103,7 @@ llvmdump d493336b1c8e3e0e =@slot a4fe8872c5eb58f6
 llvmdump d493336b1c8e3e0e =none rejected
 llvmdump d4d342163accaa47 #c 157 d8169da19eb4bfb9
 llvmdump d4d342163accaa47 #d 395 ff56462ed0639e2f
-llvmdump d4d342163accaa47 =@slot cb42e8a83954bb5a
+llvmdump d4d342163accaa47 =@slot ba4589e26ed9a020
 llvmdump d4d342163accaa47 module 65e7c596c2325dcc
 llvmdump d4d342163accaa47 order bc984ff57fd9d428
 llvmdump d4d342163accaa47 ~rtdecls 329186a9a7837914
@@ -112,14 +112,14 @@ llvmdump d4fff2e343f23afb =@slot 6c6e0b9e05457f17
 llvmdump d4fff2e343f23afb =none "error internal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_url/main.xo:8:23: the SSA builder does not support `url.URL.scheme` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:37: the SSA builder does not support `url.URL.host` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:49: the SSA builder does not support `url.URL.hostname` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:65: the SSA builder does not support `url.URL.port` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:77: the SSA builder does not support `url.URL.path` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:89: the SSA builder does not support `url.URL.fragment` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:105: the SSA builder does not support `url.URL.raw_query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support `url.URL.query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:37: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:51: the SSA builder does not support `url.Values.has` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:11:3: the SSA builder does not support `url.Values.set` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:12:3: the SSA builder does not support `url.Values.add` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:13:20: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support `url.URL.user` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support the type `url.Userinfo` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:16:23: the SSA builder does not support `url.Userinfo.password` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:17:32: the SSA builder does not support `url.Userinfo.username` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:21:23: the SSA builder does not support `url.query_escape` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:21:52: the SSA builder does not support `url.path_escape` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:22:9: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:24:48: the SSA builder does not support the std function `go.Error.go_type`\ninternal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support `url.URL.resolve_reference` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:28:33: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support `url.URL.new` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:32:3: the SSA builder does not support `url.URL.set_scheme` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:33:3: the SSA builder does not support `url.URL.set_host` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:34:3: the SSA builder does not support `url.URL.set_path` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:35:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support `url.parse_query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_url/main.xo:37:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:37:40: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:39:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)"
 llvmdump d53ab184eab7493c #c 69 9be27e5abe9093d5
 llvmdump d53ab184eab7493c #d 222 bf45d1d54eeca144
-llvmdump d53ab184eab7493c =@slot 7ec58c59778d6b0d
+llvmdump d53ab184eab7493c =@slot f8ddf68830645ce8
 llvmdump d53ab184eab7493c module 017289dcab3353ff
 llvmdump d53ab184eab7493c order 65e55498c147c01a
 llvmdump d53ab184eab7493c ~rtdecls 6c3be4951dd409f1
 llvmdump d53ab184eab7493c ~types 2e691c085bb6fdb5
 llvmdump d56f7ef2cdc12c19 =@slot 73e657473a9f7593
 llvmdump d56f7ef2cdc12c19 =none "error internal/gen/testdata/golden/go_hex/main.xo:6:20: the SSA builder does not support `hex.encode_to_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:7:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:7:9: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_hex/main.xo:11:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:13:48: the SSA builder does not support the std function `go.Error.go_type`\ninternal/gen/testdata/golden/go_hex/main.xo:15:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:19:23: the SSA builder does not support `hex.encoded_len` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:19:45: the SSA builder does not support `hex.decoded_len` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:20:18: the SSA builder does not support `hex.dump` of the Go package `encoding/hex` (`use go`)\ninternal/gen/testdata/golden/go_hex/main.xo:21:13: the SSA builder does not support `hex.append_encode` of the Go package `encoding/hex` (`use go`)"
-llvmdump d59e45a2cfdeae7e =@slot eaf650eb744c58c7
+llvmdump d59e45a2cfdeae7e =@slot 23861e2c3e7f9379
 llvmdump d59e45a2cfdeae7e =none rejected
 llvmdump d61148204ea9001b =@slot ed3733d0e36fa195
 llvmdump d61148204ea9001b =none no main
@@ -138,7 +138,7 @@ llvmdump d67dbbe0b5bb7974 =@slot 837dd712f3e52506
 llvmdump d67dbbe0b5bb7974 =none rejected
 llvmdump d6db73ccd10afa11 =@slot 2344f5da3a7d6ed2
 llvmdump d6db73ccd10afa11 =none rejected
-llvmdump d6e4f0b49ab46bb6 =@slot 6e4856c0271511c4
+llvmdump d6e4f0b49ab46bb6 =@slot 952ccb68ef19e5d2
 llvmdump d6e4f0b49ab46bb6 =none rejected
 llvmdump d731fb0b0ffe41b9 #c 72 5ab5fd4c5c969d2c
 llvmdump d731fb0b0ffe41b9 #d 233 982887e78ef71278
@@ -174,14 +174,14 @@ llvmdump d892e989e6d76b94 ~rtdecls c10147e319b6340f
 llvmdump d892e989e6d76b94 ~types 5cd5e6a132d80d5d
 llvmdump d92dc76efd33d91e #c 70 ef62c32d79d419b4
 llvmdump d92dc76efd33d91e #d 208 fb8a753178a3bd04
-llvmdump d92dc76efd33d91e =@slot f458cacc08d51450
+llvmdump d92dc76efd33d91e =@slot 90cf884bd1d9e540
 llvmdump d92dc76efd33d91e module 34b12471cc3325d5
 llvmdump d92dc76efd33d91e order 781f553c90c6f0dc
 llvmdump d92dc76efd33d91e ~rtdecls 95345576c7a96edf
 llvmdump d92dc76efd33d91e ~types 2e691c085bb6fdb5
 llvmdump d96824bd9550505e #c 72 05a10c64c6181b4e
 llvmdump d96824bd9550505e #d 212 3b23032cadac18c4
-llvmdump d96824bd9550505e =@slot 1f85bddd6c2eb0f9
+llvmdump d96824bd9550505e =@slot ed88c6564b0a7d56
 llvmdump d96824bd9550505e module 857b173e753a3b0f
 llvmdump d96824bd9550505e order 5f52f8fcd03a9759
 llvmdump d96824bd9550505e ~rtdecls 95345576c7a96edf
@@ -227,23 +227,23 @@ llvmdump da9274785cc437a7 ~rtdecls 9dce7dde52778e4a
 llvmdump da9274785cc437a7 ~types 83e08c65896e3a0f
 llvmdump dabf9b66c919ec16 #c 76 70d42ca6a2b959b5
 llvmdump dabf9b66c919ec16 #d 224 4e3c492dee39f530
-llvmdump dabf9b66c919ec16 =@slot 14aad44bad5e0602
+llvmdump dabf9b66c919ec16 =@slot b221add5d60b3114
 llvmdump dabf9b66c919ec16 module 87d0495deda566fa
 llvmdump dabf9b66c919ec16 order b49c9bdeb668343b
 llvmdump dabf9b66c919ec16 ~rtdecls 7a380db05ae3ac6a
 llvmdump dabf9b66c919ec16 ~types 2e691c085bb6fdb5
 llvmdump db780d58f17c899d #c 70 3642adec0bc0c22f
 llvmdump db780d58f17c899d #d 237 be0109ee80414051
-llvmdump db780d58f17c899d =@slot a93b829733de2886
+llvmdump db780d58f17c899d =@slot 20fdb668bb6f96ab
 llvmdump db780d58f17c899d module b3deaf5d6efe5bd5
 llvmdump db780d58f17c899d order 6898799243deb5c7
 llvmdump db780d58f17c899d ~rtdecls 95345576c7a96edf
 llvmdump db780d58f17c899d ~types 9ab25bab71250429
-llvmdump dbc011f912790023 =@slot 134ed796de61d960
+llvmdump dbc011f912790023 =@slot b04998f0c6ae2b52
 llvmdump dbc011f912790023 =none rejected
 llvmdump dbd900aaaec6cf35 #c 289 b9c9815506a978a9
 llvmdump dbd900aaaec6cf35 #d 756 0084b632dcefda05
-llvmdump dbd900aaaec6cf35 =@slot 037200cf6efcce97
+llvmdump dbd900aaaec6cf35 =@slot 9d1316dab5c65fb8
 llvmdump dbd900aaaec6cf35 module 76848b6547254fe2
 llvmdump dbd900aaaec6cf35 order 42ffd75d97594055
 llvmdump dbd900aaaec6cf35 ~rtdecls 37f01acfdc10264a
@@ -254,7 +254,7 @@ llvmdump dd6ab069326c6e85 =@slot ef93bf1fb0ff2d8b
 llvmdump dd6ab069326c6e85 =none rejected
 llvmdump de5ffbcb78fddc8e #c 171 6658ac71d4d3f778
 llvmdump de5ffbcb78fddc8e #d 454 581086b1646b44f6
-llvmdump de5ffbcb78fddc8e =@slot 194a3223fb2c65c2
+llvmdump de5ffbcb78fddc8e =@slot 051600cae8c6978c
 llvmdump de5ffbcb78fddc8e module 3cbb8a00e3d4d447
 llvmdump de5ffbcb78fddc8e order d38640f427fac0d0
 llvmdump de5ffbcb78fddc8e ~rtdecls 4f8b8c0a10e0c7c2
@@ -268,21 +268,21 @@ llvmdump de66d7c71d9bf04b ~rtdecls dac7b1176a047c15
 llvmdump de66d7c71d9bf04b ~types c1f699a4e805f6af
 llvmdump dec5a715828a4433 #c 72 c3e5daf853af4bb9
 llvmdump dec5a715828a4433 #d 226 2e41d29cd9a40400
-llvmdump dec5a715828a4433 =@slot 430b0c46229d8964
+llvmdump dec5a715828a4433 =@slot 8fda98b437e7df85
 llvmdump dec5a715828a4433 module 661464bc350f735c
 llvmdump dec5a715828a4433 order 3542d5491d34b57d
 llvmdump dec5a715828a4433 ~rtdecls 9dce7dde52778e4a
 llvmdump dec5a715828a4433 ~types 9d6000f6c1908747
 llvmdump df29c476e6b51052 #c 91 22dfb5ced100acaa
 llvmdump df29c476e6b51052 #d 262 0fd7fe85e779c2b1
-llvmdump df29c476e6b51052 =@slot 39531cbe15c61eff
+llvmdump df29c476e6b51052 =@slot 860e2bc2708b109b
 llvmdump df29c476e6b51052 module d03bea3811e2290a
 llvmdump df29c476e6b51052 order 6db84dafbb6c069e
 llvmdump df29c476e6b51052 ~rtdecls d9cf66afbdebea4e
 llvmdump df29c476e6b51052 ~types 83fb23baee3ec929
 llvmdump df63e5428deace46 #c 138 55fd60ed07457224
 llvmdump df63e5428deace46 #d 375 160ab5db326e68b5
-llvmdump df63e5428deace46 =@slot 6bb177e0ec94721d
+llvmdump df63e5428deace46 =@slot 689870d8d092eb4e
 llvmdump df63e5428deace46 module c3d8ee84d3de88ed
 llvmdump df63e5428deace46 order 690d16d6e24a986e
 llvmdump df63e5428deace46 ~rtdecls 9ee3dd3140fa4392

@@ -5,31 +5,24 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/progen"
 	"github.com/xo-lang/xo/internal/selfhost/mutlex"
 )
 
 // TestSelfhostParserDifferential runs the Xo parser (selfhost/parser),
-// built with each backend, and the Go parser (internal/parser) on every
-// .xo file of the repository (std declaration files in signature mode),
-// the spec's code blocks, generated programs (internal/progen, decision
-// 0110), and token level mutations of repository files, and requires
-// (decision 0127):
-//
-//   - every file, accepted or rejected, has a byte identical dump (`xo
-//     astdump`, parser.Dump): the tree, recovered after errors, and the
-//     diagnostics; after a hard error both parsers resynchronize at the
-//     end of the statement, member, arm, or declaration.
+// built with each backend, on every .xo file of the repository (std
+// declaration files in signature mode), the spec's code blocks, generated
+// programs (internal/progen, decision 0110), and token level mutations of
+// repository files, and requires (decision 0127) every file, accepted or
+// rejected, to have the recorded dump (the astdump of the Go parser until
+// decision 0215, gogoldens_test.go): the tree, recovered after errors,
+// and the diagnostics; after a hard error the parser resynchronizes at
+// the end of the statement, member, arm, or declaration.
 //
 // -short uses fewer generated and mutated inputs, and so do the arm64
 // and LLVM parsers in the merge tier (tier_test.go). XO_SELFHOST_SEED,
@@ -41,7 +34,7 @@ func TestSelfhostParserDifferential(t *testing.T) {
 			t.Parallel()
 			if backend != "go" {
 				if goldensRecording() {
-					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records the Go side")
+					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records")
 				}
 				if why := nativeSkip(backend); why != "" {
 					t.Skip(why)
@@ -176,14 +169,11 @@ func habitCorpus(t *testing.T, root, dir string, files []string, n int) []string
 // other languages, decision 0087, and other soft errors).
 func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (accepted, rejected, hard int) {
 	t.Helper()
-	mode := parser.Mode(0)
-	if sig {
-		mode = parser.SignatureMode
-	}
 	var fails []string
-	// goParse is the Go parser's dump of p (recorded as the astdump
-	// kind, gogoldens_test.go: the whole dump is piece "-")
-	goParse := func(p string) *goldPieces {
+	// goParse is the recorded dump of p (the astdump kind,
+	// gogoldens_test.go: the whole dump is piece "-"); x is the Xo
+	// parser's, which a recording run records
+	goParse := func(p, x string) *goldPieces {
 		full := p
 		if !filepath.IsAbs(p) {
 			full = filepath.Join(root, p)
@@ -197,18 +187,12 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		if sig {
 			args = "--sig " + p
 		}
-		hint := goldHint("TestSelfhostParserDifferential", "astdump "+args, "parser", args, root)
+		hint := goldHint("TestSelfhostParserDifferential", "parser", args, root)
 		return recordedPieces("astdump", p, hint, []string{fmt.Sprint(sig), cx.fileKey(p, src)}, cx, func() *goldPieces {
 			g := newPieces()
-			g.add("-", parser.Dump(p, src, mode))
+			g.add("-", x)
 			return g
 		})
-	}
-	if goldensRecording() {
-		for _, p := range paths {
-			goParse(p)
-		}
-		skipRecording(t)
 	}
 	const batch = 100
 	for i := 0; i < len(paths); i += batch {
@@ -219,7 +203,7 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		}
 		got := splitDumps(t, runXo(t, bin, root, args), chunk)
 		for j, p := range chunk {
-			g := goParse(p)
+			g := goParse(p, got[j])
 			if g.missing {
 				fails = append(fails, p+": "+g.missingText())
 				continue
@@ -229,7 +213,7 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 				// replayed: the hash says whether the dumps are the same;
 				// the rest of the verdict reads the Xo side's dump
 				if !g.eq("-", got[j]) {
-					fails = append(fails, fmt.Sprintf("%s: Xo and Go parsers differ: %s", p, g.diff("-", got[j])))
+					fails = append(fails, fmt.Sprintf("%s: the Xo parser differs from the recording: %s", p, g.diff("-", got[j])))
 					continue
 				}
 				want = got[j]
@@ -237,11 +221,11 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
 			switch {
 			case goRejects && !xoRejects:
-				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
+				fails = append(fails, fmt.Sprintf("%s: the recording rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
 			case xoRejects && !goRejects:
-				fails = append(fails, fmt.Sprintf("%s: the Xo parser rejects it, the Go parser accepts it:\n%s", p, diagLines(got[j])))
+				fails = append(fails, fmt.Sprintf("%s: the Xo parser rejects it, the recording accepts it:\n%s", p, diagLines(got[j])))
 			case got[j] != want:
-				fails = append(fails, fmt.Sprintf("%s: Xo and Go parsers differ: %s", p, firstDiff(got[j], want)))
+				fails = append(fails, fmt.Sprintf("%s: the Xo parser differs from the recording: %s", p, firstDiff(got[j], want)))
 			case goRejects:
 				rejected++
 				if !habitOnly(want) {
@@ -416,21 +400,5 @@ func TestSelfhostParserXoTests(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
-	dir := filepath.Join("..", "..", "selfhost", "parser")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed {
-		t.Fatalf("check failed: %+v", res.Diagnostics)
-	}
-	cmd := exec.Command(res.Binaries[build.Host()])
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("xo test selfhost/parser: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "0 failed") {
-		t.Fatalf("unexpected test output:\n%s", out)
-	}
+	runXoTests(t, "parser")
 }

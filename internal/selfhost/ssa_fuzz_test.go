@@ -15,7 +15,7 @@ import (
 
 // TestSelfhostSSAMutations compares the Xo and Go SSA builders (decision
 // 0150) on mutations of the single directory programs (with `main`) of
-// the repository that the Go checker accepts and that import only std:
+// the repository that the recording accepts and that import only std:
 // an operator swapped for another of its kind, an integer or Bool
 // literal changed, a statement line dropped or doubled, or a `?`
 // removed. Mutations either checker rejects are counted; the others are
@@ -85,25 +85,8 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
-	// the Go builder's results, while the Xo builder runs
+	// the recording's results, while the Xo builder runs
 	tdirs := testDirs(t, tmp, dirs)
-	wants := make([]goSSA, len(dirs))
-	twants := make([]goSSA, len(tdirs))
-	wait := background(t, func() {
-		all := append(append([]string(nil), dirs...), tdirs...)
-		parallel(t, "Go SSA builder", all, func(i int) {
-			if i < len(dirs) {
-				wants[i] = goSSABuild(wd, dirs[i])
-			} else {
-				i -= len(dirs)
-				twants[i] = goSSABuildOpts(wd, tdirs[i], true, true)
-			}
-		})
-	})
-	if goldensRecording() {
-		wait()
-		skipRecording(t)
-	}
 	got := map[string]string{}
 	const batch = 60
 	for _, xb := range runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch) {
@@ -117,7 +100,14 @@ func TestSelfhostSSAMutations(t *testing.T) {
 		}
 	}
 	tgot := runSSA(t, bin, tmp, tdirs, "--stages", "--std="+stdDir, "--test")
-	wait()
+	wants := make([]goSSA, len(dirs))
+	for i, d := range dirs {
+		wants[i] = goSSABuild(wd, d, got[d])
+	}
+	twants := make([]goSSA, len(tdirs))
+	for i, d := range tdirs {
+		twants[i] = goSSABuildOpts(wd, d, true, true, tgot[d])
+	}
 	var st ssaStats
 	var fails []string
 	for i, d := range dirs {

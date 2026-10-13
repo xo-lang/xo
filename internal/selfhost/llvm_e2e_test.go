@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestSelfhostLLVMEndToEnd is stage 4 of decision 0166: the self hosted
 // pipeline (selfhost/check, selfhost/ssa and its passes, selfhost/llvm,
 // in the binary of selfhost/llvm built with the go backend, or the one
 // XO_SELFHOST_BACKEND names) lowers a self hosted component, its IR must
-// be byte identical to internal/llvm's, and clang must build from that
-// IR (build.Options.LLVMIR, no binary cache) a binary whose output on a
-// fixed input is the go backend build's output. The component is
+// be the recorded one (internal/llvm's until decision 0215), and `xo
+// build --backend=llvm` (the same pipeline in xo, no binary cache) must
+// build a binary whose output on a fixed input is the go backend build's
+// output. The component is
 // selfhost/lexer, or the one XO_SELFHOST_E2E names (lexer, parser,
 // check, ssa, llvm; clang on the IR of ssa took 34
 // minutes). Full tier only, unless XO_SELFHOST_E2E is set.
@@ -61,13 +61,6 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	dir := "selfhost/" + comp
 	t.Chdir(root)
 	setModEnv(t, root)
-	want := goLLVM(root, dir, false)
-	if want.missing {
-		t.Fatal(want.missingText())
-	}
-	if n := want.m("none") + want.m("split"); n != "" {
-		t.Fatalf("the Go emitter: %s", n)
-	}
 	t0 := time.Now()
 	cmd := exec.Command(emitter, "--std=std", "--wd="+workDir(t), dir)
 	cmd.Dir = root
@@ -84,22 +77,28 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	if skipped != "" {
 		t.Fatalf("the Xo emitter skipped functions:\n%s", skipped)
 	}
-	if !want.eq("module", got) {
-		t.Fatalf("the IR differs from internal/llvm's: %s", want.diff("module", got))
+	want := goLLVM(root, dir, false, string(out))
+	if want.missing {
+		t.Fatal(want.missingText())
 	}
-	t.Logf("the IR of %s: %d bytes, %d lines, byte identical to internal/llvm's", dir, len(got), strings.Count(got, "\n"))
-	t.Setenv("XO_BIN_CACHE", "off")
-	t.Setenv("XO_BUILD_DIR", t.TempDir())
+	if n := want.m("none") + want.m("split"); n != "" {
+		t.Fatalf("the recording: %s", n)
+	}
+	if !want.eq("module", got) {
+		t.Fatalf("the IR differs from the recording: %s", want.diff("module", got))
+	}
+	t.Logf("the IR of %s: %d bytes, %d lines, the recorded IR byte for byte", dir, len(got), strings.Count(got, "\n"))
 	t0 = time.Now()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, LLVMIR: []byte(got), Out: filepath.Join(t.TempDir(), comp)})
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Out: filepath.Join(t.TempDir(), comp),
+		Env: []string{"XO_BIN_CACHE=off", "XO_BUILD_DIR=" + t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Failed {
-		t.Fatalf("check failed: %+v", res.Diagnostics)
+		t.Fatalf("xo build --backend=llvm %s failed:\n%s", dir, res.Output)
 	}
-	bin := res.Binaries[build.Host()]
-	t.Logf("clang built %s from the self hosted IR in %v", filepath.Base(bin), time.Since(t0).Round(time.Second))
+	bin := res.Binaries[xotool.Host()]
+	t.Logf("xo built %s with the LLVM backend in %v", filepath.Base(bin), time.Since(t0).Round(time.Second))
 	run := func(b string) string {
 		c := exec.Command(b, args...)
 		c.Dir = root

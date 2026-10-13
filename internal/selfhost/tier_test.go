@@ -41,9 +41,9 @@ const (
 )
 
 // selfhostTier is the tier of this run: short under -short, else
-// $XO_SELFHOST_TIER (merge when unset); full when the run records the
-// Go side (XO_SELFHOST_GOLDENS=record, gogoldens_test.go), so that one
-// recording holds what every tier compares.
+// $XO_SELFHOST_TIER (merge when unset); full when the run records
+// (XO_SELFHOST_GOLDENS=record, gogoldens_test.go), so that one recording
+// holds what every tier compares.
 func selfhostTier(t testing.TB) string {
 	t.Helper()
 	if goldensRecording() {
@@ -96,10 +96,11 @@ func mergeHeavy(d string) bool {
 }
 
 // tierBackends are the backends a differential of the parser, checker,
-// or SSA builder compares: go, except in the full tier.
+// or SSA builder compares: go, except in the full tier (a recording run
+// records the go backend build's output).
 func tierBackends(t testing.TB) []string {
 	t.Helper()
-	if selfhostTier(t) == tierFull {
+	if selfhostTier(t) == tierFull && !goldensRecording() {
 		return []string{"go", "arm64", "llvm"}
 	}
 	return []string{"go"}

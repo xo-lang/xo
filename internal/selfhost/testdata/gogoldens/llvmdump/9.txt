@@ -11,14 +11,14 @@ llvmdump 906d57ca6682ef99 ~rtdecls 95345576c7a96edf
 llvmdump 906d57ca6682ef99 ~types 2e691c085bb6fdb5
 llvmdump 9096147ef66bcf5b #c 70 11dfa277608f3067
 llvmdump 9096147ef66bcf5b #d 210 e09880ff4f4a382d
-llvmdump 9096147ef66bcf5b =@slot 21fb19380347eceb
+llvmdump 9096147ef66bcf5b =@slot b83925fa9111b932
 llvmdump 9096147ef66bcf5b module c50eb5eacc3c1b61
 llvmdump 9096147ef66bcf5b order 8809ebbbb69c63c4
 llvmdump 9096147ef66bcf5b ~rtdecls 925056129aa1e9c5
 llvmdump 9096147ef66bcf5b ~types f8437dc3d18e65ed
 llvmdump 90a383023399eba2 #c 68 dafb13874a053f7c
 llvmdump 90a383023399eba2 #d 207 1324b54f0f2f6d40
-llvmdump 90a383023399eba2 =@slot 4b1ffefcbed6130a
+llvmdump 90a383023399eba2 =@slot ce10fb626647548a
 llvmdump 90a383023399eba2 module b60e6df790e282f7
 llvmdump 90a383023399eba2 order 9937b0a31d83779d
 llvmdump 90a383023399eba2 ~rtdecls 95345576c7a96edf
@@ -36,7 +36,7 @@ llvmdump 926e1aa9cadc348d module 492967151b0f5e5e
 llvmdump 926e1aa9cadc348d order edb4901e71c392f9
 llvmdump 926e1aa9cadc348d ~rtdecls 3cd52ed95f21021c
 llvmdump 926e1aa9cadc348d ~types 8845b6cfa5868d25
-llvmdump 92d5cbe2cf302217 =@slot c284fa2f5c7deb42
+llvmdump 92d5cbe2cf302217 =@slot 5655168c49232f06
 llvmdump 92d5cbe2cf302217 =none rejected
 llvmdump 92dd1af7181c5794 =@slot b8c5c1aafefcfd56
 llvmdump 92dd1af7181c5794 =none rejected
@@ -67,14 +67,14 @@ llvmdump 933bcb8088e9f0ed =@slot 514790d636004fd3
 llvmdump 933bcb8088e9f0ed =none rejected
 llvmdump 93c2a3cc620ae9ff #c 69 e5c17034baa96a86
 llvmdump 93c2a3cc620ae9ff #d 219 d1b62d017c0896ce
-llvmdump 93c2a3cc620ae9ff =@slot 096db146176a1d04
+llvmdump 93c2a3cc620ae9ff =@slot 71f365cc431c0ac2
 llvmdump 93c2a3cc620ae9ff module 26a65f2d93bba084
 llvmdump 93c2a3cc620ae9ff order 9c1210d04252d185
 llvmdump 93c2a3cc620ae9ff ~rtdecls 95345576c7a96edf
 llvmdump 93c2a3cc620ae9ff ~types 5e5b9319c1eb2d07
 llvmdump 94360de6b4c2077a #c 72 b7e86f90389895e7
 llvmdump 94360de6b4c2077a #d 229 4000cde715a99438
-llvmdump 94360de6b4c2077a =@slot 83d9d7d1711e2fa2
+llvmdump 94360de6b4c2077a =@slot ccbfc5cd678c4793
 llvmdump 94360de6b4c2077a module c8d11701d5c39a49
 llvmdump 94360de6b4c2077a order d1f2caf14194c68c
 llvmdump 94360de6b4c2077a ~rtdecls 8f37617fcc3bd6fc
@@ -83,7 +83,7 @@ llvmdump 94362caeaf242671 =@slot 0ce2069fd6a1870e
 llvmdump 94362caeaf242671 =none rejected
 llvmdump 943ae2c7ea05eb2b #c 95 acd4ef91364ab887
 llvmdump 943ae2c7ea05eb2b #d 261 5818cc4b0482c6c0
-llvmdump 943ae2c7ea05eb2b =@slot 6a0d4ef66cc3cb70
+llvmdump 943ae2c7ea05eb2b =@slot e0c04bf84894f8f4
 llvmdump 943ae2c7ea05eb2b module 266a45bafbe53d36
 llvmdump 943ae2c7ea05eb2b order 5953080fb36cfb46
 llvmdump 943ae2c7ea05eb2b ~rtdecls 351c41902d566897
@@ -102,11 +102,11 @@ llvmdump 947df1969bd4a33f module f53e33068d600f91
 llvmdump 947df1969bd4a33f order d391a9e8cf4a4970
 llvmdump 947df1969bd4a33f ~rtdecls 2136a471d9f402b5
 llvmdump 947df1969bd4a33f ~types 1325dfd1df29b0da
-llvmdump 94833b04fea4e938 =@slot 96b9b4233a7cf2d3
+llvmdump 94833b04fea4e938 =@slot 7ee3152d90e1d2d0
 llvmdump 94833b04fea4e938 =none rejected
 llvmdump 94b2aed5258c218d #c 72 6dd5bcfe42edae4c
 llvmdump 94b2aed5258c218d #d 233 4f38f5f077cf2990
-llvmdump 94b2aed5258c218d =@slot 7105c428c3724223
+llvmdump 94b2aed5258c218d =@slot acd9aa986790e533
 llvmdump 94b2aed5258c218d module a47d2829332f198b
 llvmdump 94b2aed5258c218d order d2d81c184b42e1c7
 llvmdump 94b2aed5258c218d ~rtdecls 9dce7dde52778e4a
@@ -137,7 +137,7 @@ llvmdump 9609a3bcd35dc45a ~rtdecls 9bba500f53433d31
 llvmdump 9609a3bcd35dc45a ~types 75445d716b31750c
 llvmdump 960af1b9620d0613 #c 76 c510c6cae3e036d2
 llvmdump 960af1b9620d0613 #d 244 2398cf8c635df1d0
-llvmdump 960af1b9620d0613 =@slot 1a480bc34629fda2
+llvmdump 960af1b9620d0613 =@slot b177002b81aab832
 llvmdump 960af1b9620d0613 module 6d9b5cd88ff25e25
 llvmdump 960af1b9620d0613 order 2d0a946d9004336d
 llvmdump 960af1b9620d0613 ~rtdecls 0442a1ab574922df
@@ -149,7 +149,7 @@ llvmdump 962e6439e3c7438c module 953090709f6b7022
 llvmdump 962e6439e3c7438c order 319be6ad216db179
 llvmdump 962e6439e3c7438c ~rtdecls 9dce7dde52778e4a
 llvmdump 962e6439e3c7438c ~types c0176be71e8c827f
-llvmdump 96ae76e3d59234dc =@slot e928536a10734b28
+llvmdump 96ae76e3d59234dc =@slot 822d708d1db61169
 llvmdump 96ae76e3d59234dc =none rejected
 llvmdump 971252e889b71d7c =@slot fd2e0f64d8b058d7
 llvmdump 971252e889b71d7c =none "error internal/llvm/testdata/unsupported/fn_value_var_param/main.xo:14:3: the SSA builder does not support function values with `var` parameters\ninternal/llvm/testdata/unsupported/fn_value_var_param/main.xo:14:9: the SSA builder does not support function values with `var` parameters\ninternal/llvm/testdata/unsupported/fn_value_var_param/main.xo:14:9: the SSA builder does not support a function with `var` parameters as a value"
@@ -178,14 +178,14 @@ llvmdump 97b06d1bc52f7b39 ~rtdecls 9a2242dec1736d7f
 llvmdump 97b06d1bc52f7b39 ~types 83fb23baee3ec929
 llvmdump 98072f780508fa17 #c 69 b430318cbb443e49
 llvmdump 98072f780508fa17 #d 228 858e518af7bf0867
-llvmdump 98072f780508fa17 =@slot 8ded36d8138f4d74
+llvmdump 98072f780508fa17 =@slot a070b4f38da16616
 llvmdump 98072f780508fa17 module 313b6a67f82d0b13
 llvmdump 98072f780508fa17 order 7da06faf0e00586e
 llvmdump 98072f780508fa17 ~rtdecls 947d6b5f72da4eee
 llvmdump 98072f780508fa17 ~types 83fb23baee3ec929
 llvmdump 9882795f5266f310 #c 72 baa398454a092add
 llvmdump 9882795f5266f310 #d 226 2e41d29cd9a40400
-llvmdump 9882795f5266f310 =@slot 6580b12723460ec8
+llvmdump 9882795f5266f310 =@slot 192260018cf0adaa
 llvmdump 9882795f5266f310 module 1be658c3585dd101
 llvmdump 9882795f5266f310 order 3542d5491d34b57d
 llvmdump 9882795f5266f310 ~rtdecls 9dce7dde52778e4a
@@ -208,7 +208,7 @@ llvmdump 997086308a7e4aee =@slot a6a63b372e9c9aac
 llvmdump 997086308a7e4aee =none rejected
 llvmdump 9a2aabb2169e020b #c 68 fe0057d9ebbb7811
 llvmdump 9a2aabb2169e020b #d 207 e7d992e21bf5d52d
-llvmdump 9a2aabb2169e020b =@slot d8a5e448e9456957
+llvmdump 9a2aabb2169e020b =@slot f007b77975ca8b99
 llvmdump 9a2aabb2169e020b module 90ed79210ef9f16d
 llvmdump 9a2aabb2169e020b order 28bce49ce5709bbb
 llvmdump 9a2aabb2169e020b ~rtdecls 95345576c7a96edf
@@ -251,7 +251,7 @@ llvmdump 9bb2c306846ee620 =@slot 6d12de9a55e51e7a
 llvmdump 9bb2c306846ee620 =none rejected
 llvmdump 9bcbedb057ed4355 #c 81 21279fb061d9db26
 llvmdump 9bcbedb057ed4355 #d 309 9ed7a1c84cf07442
-llvmdump 9bcbedb057ed4355 =@slot 697cc14323dad549
+llvmdump 9bcbedb057ed4355 =@slot 0a167d3e5e421d78
 llvmdump 9bcbedb057ed4355 module 4d9d0a319115873d
 llvmdump 9bcbedb057ed4355 order a60d6cee7890c9e3
 llvmdump 9bcbedb057ed4355 ~rtdecls 9fcb35b124b80bee
@@ -273,14 +273,14 @@ llvmdump 9d67b50076bf4b35 =@slot d928772260ede48e
 llvmdump 9d67b50076bf4b35 =none rejected
 llvmdump 9ddfad59dbfde7ca #c 152 e03bc21b49939a1a
 llvmdump 9ddfad59dbfde7ca #d 365 b62f3cc77b0bb6f4
-llvmdump 9ddfad59dbfde7ca =@slot 499f8aea4cf79ae2
+llvmdump 9ddfad59dbfde7ca =@slot be90ee09d24fa27d
 llvmdump 9ddfad59dbfde7ca module 36ab445a91964563
 llvmdump 9ddfad59dbfde7ca order 0776d9ac1cb02870
 llvmdump 9ddfad59dbfde7ca ~rtdecls aa5d07285d7ea142
 llvmdump 9ddfad59dbfde7ca ~types fd3a07c8a031cc47
 llvmdump 9e47f6c647cda8c7 #c 172 d1a58cd620b6a81c
 llvmdump 9e47f6c647cda8c7 #d 455 51b671524c925cff
-llvmdump 9e47f6c647cda8c7 =@slot b0a932efdc4d1498
+llvmdump 9e47f6c647cda8c7 =@slot f2b8e076eaa62bf3
 llvmdump 9e47f6c647cda8c7 module 1d3fc5e5712adaa0
 llvmdump 9e47f6c647cda8c7 order 134bf0b57d4fb961
 llvmdump 9e47f6c647cda8c7 ~rtdecls 4f8b8c0a10e0c7c2
@@ -294,11 +294,11 @@ llvmdump 9e654489857274ef ~rtdecls 0d0fca345f553213
 llvmdump 9e654489857274ef ~types 137b9f97d76c577d
 llvmdump 9e94319ce14a27c6 =@slot b70f6ce2cb4c3e1d
 llvmdump 9e94319ce14a27c6 =none "error internal/gen/testdata/golden/go_strconv/main.xo:6:11: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:6:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strconv/main.xo:7:11: the SSA builder does not support `strconv.parse_float` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:7:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strconv/main.xo:9:23: the SSA builder does not support `strconv.itoa` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:9:44: the SSA builder does not support `strconv.format_int` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:9:75: the SSA builder does not support `strconv.format_float` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:10:20: the SSA builder does not support `strconv.quote` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:11:9: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:13:48: the SSA builder does not support the std function `go.Error.go_type`\ninternal/gen/testdata/golden/go_strconv/main.xo:15:9: the SSA builder does not support `strconv.parse_int` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:19:23: the SSA builder does not support `strconv.parse_bool` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:19:23: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strconv/main.xo:20:20: the SSA builder does not support `strconv.unquote` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:20:20: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strconv/main.xo:21:20: the SSA builder does not support `strconv.append_int` of the Go package `strconv` (`use go`)\ninternal/gen/testdata/golden/go_strconv/main.xo:22:11: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`)"
-llvmdump 9ed29c793fd2db0c =@slot c590ace3117df822
+llvmdump 9ed29c793fd2db0c =@slot 29fb7fb56513e11a
 llvmdump 9ed29c793fd2db0c =none rejected
 llvmdump 9ed614d4dea5f3a7 #c 92 4e650c1e7e91ba36
 llvmdump 9ed614d4dea5f3a7 #d 256 0a52dd83ea6f0dea
-llvmdump 9ed614d4dea5f3a7 =@slot 8c222de2383c966c
+llvmdump 9ed614d4dea5f3a7 =@slot 2f118056e148107e
 llvmdump 9ed614d4dea5f3a7 module a44b2f4ac73b7482
 llvmdump 9ed614d4dea5f3a7 order 0260ca5464627c45
 llvmdump 9ed614d4dea5f3a7 ~rtdecls 921382223888e66b
@@ -312,7 +312,7 @@ llvmdump 9edfaca6a5006414 ~rtdecls ba8970ffb729eda5
 llvmdump 9edfaca6a5006414 ~types 2e691c085bb6fdb5
 llvmdump 9f3f5471f4f273a8 #c 111 c05eea0066b1b165
 llvmdump 9f3f5471f4f273a8 #d 280 92f9fea4570c586e
-llvmdump 9f3f5471f4f273a8 =@slot 992764777b09ddc8
+llvmdump 9f3f5471f4f273a8 =@slot c7b40ae788a6e314
 llvmdump 9f3f5471f4f273a8 module 43cb76fe8491edd8
 llvmdump 9f3f5471f4f273a8 order 8c9769e2d63c9f75
 llvmdump 9f3f5471f4f273a8 ~rtdecls 801a92274562331d
@@ -346,7 +346,7 @@ llvmdump 9fdf1c9ee75ad19f ~rtdecls 8cc532d68ef27df7
 llvmdump 9fdf1c9ee75ad19f ~types 8837f59a3c756dc3
 llvmdump 9ff9b4c509c8977b #c 85 4534dbdcf1415edd
 llvmdump 9ff9b4c509c8977b #d 252 14e90af508b61fd8
-llvmdump 9ff9b4c509c8977b =@slot a77caf57179080d5
+llvmdump 9ff9b4c509c8977b =@slot 729ff974cb439f38
 llvmdump 9ff9b4c509c8977b module e6ee60851e77e2ff
 llvmdump 9ff9b4c509c8977b order e5ea95aca148fd05
 llvmdump 9ff9b4c509c8977b ~rtdecls 9eb49bcf86cac66c

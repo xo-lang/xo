@@ -16,14 +16,14 @@ asmdump e050cd1ddf33f098 #f 145 834253d0c80796c6
 asmdump e050cd1ddf33f098 #h 1 ec917a1bedcaaae1
 asmdump e050cd1ddf33f098 #l 32 083279167279a816
 asmdump e050cd1ddf33f098 #literals 196 e94c6ae6d6bd3eae
-asmdump e050cd1ddf33f098 =@slot 8635d3051095de35
+asmdump e050cd1ddf33f098 =@slot e757050010296ea7
 asmdump e050cd1ddf33f098 all 25bfe79353a06aa2
 asmdump e050cd1ddf33f098 entry 93f5c7366a9656c5
 asmdump e0726ef7d446cb09 #f 160 e04de1a592ddd28c
 asmdump e0726ef7d446cb09 #h 3 83e2a8609eadd540
 asmdump e0726ef7d446cb09 #l 35 873a8c11c14d02fa
 asmdump e0726ef7d446cb09 #literals 265 0ce48076bd0d8e7a
-asmdump e0726ef7d446cb09 =@slot a1f01367c9b5be4b
+asmdump e0726ef7d446cb09 =@slot 5a7ea46c1a49f332
 asmdump e0726ef7d446cb09 all 8dfb0a24211abc41
 asmdump e0726ef7d446cb09 entry 93f5c7366a9656c5
 asmdump e084b33042bddf8b #f 149 79576711d671024f
@@ -44,7 +44,7 @@ asmdump e08a8fd11ea0c868 #f 184 4134242d5df58134
 asmdump e08a8fd11ea0c868 #h 31 747608af8bb8a32c
 asmdump e08a8fd11ea0c868 #l 56 eb180f66bf73b61d
 asmdump e08a8fd11ea0c868 #literals 253 81401fee1ac5f6f7
-asmdump e08a8fd11ea0c868 =@slot 87a80109ffc1fb2d
+asmdump e08a8fd11ea0c868 =@slot 24df742a5b23301a
 asmdump e08a8fd11ea0c868 all c6b9f3693e5bab13
 asmdump e08a8fd11ea0c868 entry 93f5c7366a9656c5
 asmdump e0a5698be9114628 #f 177 b8620b9897a7e2b1
@@ -70,13 +70,13 @@ asmdump e143292114cc4669 #literals 252 6cba9e2e5c366c5e
 asmdump e143292114cc4669 =@slot 6061894943120c05
 asmdump e143292114cc4669 all b65ffa21c599c718
 asmdump e143292114cc4669 entry 93f5c7366a9656c5
-asmdump e15fa84f19e5a05d =@slot 7d0ad332547117b4
+asmdump e15fa84f19e5a05d =@slot 9cc49b9ba7d44fd9
 asmdump e15fa84f19e5a05d =head == rejected
 asmdump e17a640f2cdd3747 #f 228 b3b76aa6980157ac
 asmdump e17a640f2cdd3747 #h 54 729965aad5c22863
 asmdump e17a640f2cdd3747 #l 56 34de1f4f79e82012
 asmdump e17a640f2cdd3747 #literals 342 a1320bed5946caaa
-asmdump e17a640f2cdd3747 =@slot 37000b4398bd3589
+asmdump e17a640f2cdd3747 =@slot 35ca79fb2a806441
 asmdump e17a640f2cdd3747 all 7e2d3ba2ab36f29d
 asmdump e17a640f2cdd3747 entry 93f5c7366a9656c5
 asmdump e19ad093b4236a82 =@slot 518cc056d1cd7e51
@@ -91,7 +91,7 @@ asmdump e2ab30b91567a1de #f 160 a66008938713e2ab
 asmdump e2ab30b91567a1de #h 2 4bb8f97c9a7aa4e0
 asmdump e2ab30b91567a1de #l 34 c2a14a6ad0abed9c
 asmdump e2ab30b91567a1de #literals 216 b0f29fa99e4fd699
-asmdump e2ab30b91567a1de =@slot 71e59c19cc9b93ce
+asmdump e2ab30b91567a1de =@slot 05d6db81468d13e5
 asmdump e2ab30b91567a1de all 8477177e4ddf002d
 asmdump e2ab30b91567a1de entry 93f5c7366a9656c5
 asmdump e2b4e612540ef23e #f 346 f718b4f32f99f829
@@ -103,7 +103,7 @@ asmdump e2b4e612540ef23e all ddf02982c4ac5d55
 asmdump e2b4e612540ef23e entry 381c053e0b847a3c
 asmdump e2f0502fed738e8b =@slot 79feb290110df2c3
 asmdump e2f0502fed738e8b =head == rejected
-asmdump e2f4717e1bd929a2 =@slot 057302d0e9cd0f09
+asmdump e2f4717e1bd929a2 =@slot f71342dcfc044d7f
 asmdump e2f4717e1bd929a2 =head == rejected
 asmdump e3e00dd2f2e82358 =@slot 815a919557990c15
 asmdump e3e00dd2f2e82358 =head == rejected
@@ -129,7 +129,7 @@ asmdump e641bc321c0a8fbc #f 150 d8c78fba1e4c8c94
 asmdump e641bc321c0a8fbc #h 15 ba46e4773db47cb4
 asmdump e641bc321c0a8fbc #l 36 3c2e5dca8fb8d6ba
 asmdump e641bc321c0a8fbc #literals 219 23777afb73edc7d1
-asmdump e641bc321c0a8fbc =@slot 1da7413f6f906eb4
+asmdump e641bc321c0a8fbc =@slot b062ef9c910bd80f
 asmdump e641bc321c0a8fbc all 281ba24baa3a49bf
 asmdump e641bc321c0a8fbc entry 93f5c7366a9656c5
 asmdump e647dbd098aa6fe8 #f 147 58fc49f071fdd3d8
@@ -145,7 +145,7 @@ asmdump e6ddd54a34696988 #f 150 6d035388a612ff0e
 asmdump e6ddd54a34696988 #h 1 ec917a1bedcaaae1
 asmdump e6ddd54a34696988 #l 32 083279167279a816
 asmdump e6ddd54a34696988 #literals 211 8c99a9b2c7882d4e
-asmdump e6ddd54a34696988 =@slot dff43822ba385c02
+asmdump e6ddd54a34696988 =@slot 4b7ec20f270fbcb6
 asmdump e6ddd54a34696988 all 591c3e4b00f9a2e4
 asmdump e6ddd54a34696988 entry 93f5c7366a9656c5
 asmdump e706615de4fb991c =@slot 45330018a5145e9d
@@ -181,21 +181,21 @@ asmdump e894bc784aab44bf #f 191 d5bd84099461647e
 asmdump e894bc784aab44bf #h 4 f6097f17ee49f2e4
 asmdump e894bc784aab44bf #l 38 c19e0e95f12db927
 asmdump e894bc784aab44bf #literals 304 a04fc52c796ebd96
-asmdump e894bc784aab44bf =@slot 6b41136c758cc22a
+asmdump e894bc784aab44bf =@slot e9cc37b3a4143580
 asmdump e894bc784aab44bf all eef3dbde3343bb37
 asmdump e894bc784aab44bf entry 93f5c7366a9656c5
 asmdump e8d1d2a34a652047 #f 146 ba8f4236419250a2
 asmdump e8d1d2a34a652047 #h 1 ec917a1bedcaaae1
 asmdump e8d1d2a34a652047 #l 33 22b0cc575b8ffd2a
 asmdump e8d1d2a34a652047 #literals 196 d573cd0be7bf7e65
-asmdump e8d1d2a34a652047 =@slot d26a8716f85bbe41
+asmdump e8d1d2a34a652047 =@slot 4ab4bbd6262ef3c6
 asmdump e8d1d2a34a652047 all f1f0490f33af7ff2
 asmdump e8d1d2a34a652047 entry 93f5c7366a9656c5
 asmdump e8f52ee3b1c1da63 #f 167 207e1067756c57be
 asmdump e8f52ee3b1c1da63 #h 8 dd0c8a487e338f1b
 asmdump e8f52ee3b1c1da63 #l 39 6d4351508b7f466e
 asmdump e8f52ee3b1c1da63 #literals 234 ec974ca6255006cb
-asmdump e8f52ee3b1c1da63 =@slot 785ae9a8419ad265
+asmdump e8f52ee3b1c1da63 =@slot cad3b017bc1cac50
 asmdump e8f52ee3b1c1da63 all 2071ebe284dc6f58
 asmdump e8f52ee3b1c1da63 entry 93f5c7366a9656c5
 asmdump e912f11672126091 #f 167 207e1067756c57be
@@ -216,7 +216,7 @@ asmdump e94e7a8a9d290505 #f 147 acf4a81c8784544a
 asmdump e94e7a8a9d290505 #h 9 43ac0b9137cd1ac5
 asmdump e94e7a8a9d290505 #l 33 8ee7ed87f1eee67b
 asmdump e94e7a8a9d290505 #literals 220 76fa39c8714b88cd
-asmdump e94e7a8a9d290505 =@slot 78dcdac2490fb365
+asmdump e94e7a8a9d290505 =@slot 9f1c9b2ad61d18c9
 asmdump e94e7a8a9d290505 all f8e382a5a440699a
 asmdump e94e7a8a9d290505 entry 93f5c7366a9656c5
 asmdump e9562f737464c54c #f 301 ee8ad501f53d8b74
@@ -270,7 +270,7 @@ asmdump eb446bfccd50c80a =@slot b2389e3f850f2922
 asmdump eb446bfccd50c80a =head == error internal/gen/testdata/golden/go_hex/main.xo:6:20: the SSA builder does not support `hex.encode_to_string` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:7:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:7:9: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_hex/main.xo:11:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:13:48: the SSA builder does not support the std function `go.Error.go_type` internal/gen/testdata/golden/go_hex/main.xo:15:9: the SSA builder does not support `hex.decode_string` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:19:23: the SSA builder does not support `hex.encoded_len` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:19:45: the SSA builder does not support `hex.decoded_len` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:20:18: the SSA builder does not support `hex.dump` of the Go package `encoding/hex` (`use go`) internal/gen/testdata/golden/go_hex/main.xo:21:13: the SSA builder does not support `hex.append_encode` of the Go package `encoding/hex` (`use go`)
 asmdump eb76497e68780c91 =@slot 362d3adcb83bc1a7
 asmdump eb76497e68780c91 =head == rejected
-asmdump ebc9e0aae31cfe09 =@slot f1f91d73d55d4584
+asmdump ebc9e0aae31cfe09 =@slot 69afc00a393d630e
 asmdump ebc9e0aae31cfe09 =head == rejected
 asmdump ec5190e425b940fe =@slot 3c0568c899f7ea9d
 asmdump ec5190e425b940fe =head == rejected
@@ -288,16 +288,16 @@ asmdump ecbe279b866c8843 #literals 204 27b97a7f722262c4
 asmdump ecbe279b866c8843 =@slot 888e8ea668855958
 asmdump ecbe279b866c8843 all 63907faaeaec874e
 asmdump ecbe279b866c8843 entry 93f5c7366a9656c5
-asmdump eccf7be6d2a766d1 =@slot 5ec40e0afeee94c1
+asmdump eccf7be6d2a766d1 =@slot 8a61a52b83e8b1e0
 asmdump eccf7be6d2a766d1 =head == rejected
 asmdump ecff33e8606389be #f 145 7631d27361307887
 asmdump ecff33e8606389be #h 1 ec917a1bedcaaae1
 asmdump ecff33e8606389be #l 32 083279167279a816
 asmdump ecff33e8606389be #literals 196 cc27f0d905a84cfb
-asmdump ecff33e8606389be =@slot 2ac3a4bc0a5884e3
+asmdump ecff33e8606389be =@slot f7d05c45e9577b39
 asmdump ecff33e8606389be all 9cd9de953bebc7e3
 asmdump ecff33e8606389be entry 93f5c7366a9656c5
-asmdump ed67a2eb86560b1e =@slot fe7ae0afc4819bd9
+asmdump ed67a2eb86560b1e =@slot 75931ca181107088
 asmdump ed67a2eb86560b1e =head == rejected
 asmdump ee5fbbf2f9ee74ed #f 290 3b7d3b6bf5adfeae
 asmdump ee5fbbf2f9ee74ed #h 31 6fd774e407899403
@@ -324,14 +324,14 @@ asmdump ef5f14b509d7a2b3 #f 146 3eb1726d52a043cf
 asmdump ef5f14b509d7a2b3 #h 1 ec917a1bedcaaae1
 asmdump ef5f14b509d7a2b3 #l 32 083279167279a816
 asmdump ef5f14b509d7a2b3 #literals 195 7b470754811e4d76
-asmdump ef5f14b509d7a2b3 =@slot 91778f2a7554a751
+asmdump ef5f14b509d7a2b3 =@slot cb9386972223b362
 asmdump ef5f14b509d7a2b3 all 00978ce453550e8b
 asmdump ef5f14b509d7a2b3 entry 93f5c7366a9656c5
 asmdump ef747c97e20ad3cf #f 156 bd1103fc6e85bac6
 asmdump ef747c97e20ad3cf #h 22 018640b037beba18
 asmdump ef747c97e20ad3cf #l 35 2e01d58ac2fc35e4
 asmdump ef747c97e20ad3cf #literals 206 b825db0f6ff77e3a
-asmdump ef747c97e20ad3cf =@slot 40715839b6f5f087
+asmdump ef747c97e20ad3cf =@slot d711dc47162b9e88
 asmdump ef747c97e20ad3cf all 9cc8169d1da54385
 asmdump ef747c97e20ad3cf entry 93f5c7366a9656c5
 asmdump ef8554d322f5a9b3 =@slot 66ba5f4c3c33a4c3

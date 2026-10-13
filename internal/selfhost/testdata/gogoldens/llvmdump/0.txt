@@ -14,22 +14,22 @@ llvmdump 0036c727f65b5b01 ~rtdecls ec8b14218b46918f
 llvmdump 0036c727f65b5b01 ~types 74ac48cbb2a68113
 llvmdump 0038a975c6d855b9 #c 84 5d9383fac42a50ef
 llvmdump 0038a975c6d855b9 #d 256 7b5fb94894eecd76
-llvmdump 0038a975c6d855b9 =@slot 80c0b28d0bf97fc7
+llvmdump 0038a975c6d855b9 =@slot 24a3aa31b07dc4cc
 llvmdump 0038a975c6d855b9 module 77f8ea36f1e2da6f
 llvmdump 0038a975c6d855b9 order 1ceb4007930cd7b4
 llvmdump 0038a975c6d855b9 ~rtdecls 45cac58a459bcf99
 llvmdump 0038a975c6d855b9 ~types e9d464f6f7a80c3d
-llvmdump 003d1d4f4c98d4ae =@slot 299a8a75cd53e029
+llvmdump 003d1d4f4c98d4ae =@slot 1ad6e58bd5a9586c
 llvmdump 003d1d4f4c98d4ae =none rejected
 llvmdump 007de19ce1a23708 =@slot 65e2e85aa6800967
 llvmdump 007de19ce1a23708 =none "error internal/gen/testdata/golden/gc_config/main.xo:7:11: the SSA builder does not support `debug.set_gc_percent` of the Go package `runtime/debug` (`use go`)\ninternal/gen/testdata/golden/gc_config/main.xo:8:11: the SSA builder does not support `debug.set_memory_limit` of the Go package `runtime/debug` (`use go`)"
-llvmdump 00922d3aeeeff2ef =@slot a56b3e5a16b5aab5
+llvmdump 00922d3aeeeff2ef =@slot efc41c44ac9491f0
 llvmdump 00922d3aeeeff2ef =none rejected
-llvmdump 00ce3be318d040e6 =@slot 082e353cc3f2898d
+llvmdump 00ce3be318d040e6 =@slot a16ef3c66bdb9824
 llvmdump 00ce3be318d040e6 =none rejected
 llvmdump 0143387a82a35a19 #c 71 c9964bc51cc400fe
 llvmdump 0143387a82a35a19 #d 214 77134fe0d859fd48
-llvmdump 0143387a82a35a19 =@slot fd0d6da415501d0c
+llvmdump 0143387a82a35a19 =@slot 2b07d13c993d7987
 llvmdump 0143387a82a35a19 module dcbd526132f8947a
 llvmdump 0143387a82a35a19 order de058e65c32df0a5
 llvmdump 0143387a82a35a19 ~rtdecls 9dce7dde52778e4a
@@ -52,14 +52,14 @@ llvmdump 01839b439c88fb9e ~rtdecls 95345576c7a96edf
 llvmdump 01839b439c88fb9e ~types 2e691c085bb6fdb5
 llvmdump 0198c76bbc793a5b #c 72 fee26ec1ecca9c32
 llvmdump 0198c76bbc793a5b #d 238 d597625bd9f2d95f
-llvmdump 0198c76bbc793a5b =@slot 6939d435c94e131c
+llvmdump 0198c76bbc793a5b =@slot 863a1360d98608e2
 llvmdump 0198c76bbc793a5b module d351ff003f0c07a6
 llvmdump 0198c76bbc793a5b order a0c59b2e849179d7
 llvmdump 0198c76bbc793a5b ~rtdecls f83b6613cc3d140d
 llvmdump 0198c76bbc793a5b ~types 33518a0428651a45
 llvmdump 01c34a0f85c6f1b6 #c 129 deb3831e79c0b7ee
 llvmdump 01c34a0f85c6f1b6 #d 317 fc4a4c1c30687ab1
-llvmdump 01c34a0f85c6f1b6 =@slot 7c5823449cb05e03
+llvmdump 01c34a0f85c6f1b6 =@slot 9539ee554036f4fd
 llvmdump 01c34a0f85c6f1b6 module e5f48539dc125c18
 llvmdump 01c34a0f85c6f1b6 order 4fe6024d9ec8829d
 llvmdump 01c34a0f85c6f1b6 ~rtdecls 54f7cefb192063db
@@ -123,7 +123,7 @@ llvmdump 053d93980a16588a module 442e1e6049b89814
 llvmdump 053d93980a16588a order f92e2642c3a2c84b
 llvmdump 053d93980a16588a ~rtdecls 95345576c7a96edf
 llvmdump 053d93980a16588a ~types b8bac41b9f79f925
-llvmdump 0543ad05395fc94f =@slot d682ab192486be9d
+llvmdump 0543ad05395fc94f =@slot 9f371955ba75314d
 llvmdump 0543ad05395fc94f =none rejected
 llvmdump 05948557124de272 =@slot 5c1da5162c31e67b
 llvmdump 05948557124de272 =none rejected
@@ -150,13 +150,13 @@ llvmdump 0602f458d30de882 module 2339d9a808d51c31
 llvmdump 0602f458d30de882 order 37b8dcf894fb1f8e
 llvmdump 0602f458d30de882 ~rtdecls 2cc8468d4bce0e69
 llvmdump 0602f458d30de882 ~types 0a70ad58c2e81887
-llvmdump 0696967f5cfdfe87 =@slot f1525bc65a14e506
+llvmdump 0696967f5cfdfe87 =@slot 04b9aa05b93f7f91
 llvmdump 0696967f5cfdfe87 =none rejected
 llvmdump 06a947dc60a76751 =@slot a6ae9df22abc6d37
 llvmdump 06a947dc60a76751 =none rejected
 llvmdump 07878a7863cab694 #c 81 709217286b756cbc
 llvmdump 07878a7863cab694 #d 221 ccc9ae6e15f38d40
-llvmdump 07878a7863cab694 =@slot 420b423855c621b0
+llvmdump 07878a7863cab694 =@slot 82be1cada71f532c
 llvmdump 07878a7863cab694 module f973ff765264e4af
 llvmdump 07878a7863cab694 order d9bfd1aa88b12091
 llvmdump 07878a7863cab694 ~rtdecls 95345576c7a96edf
@@ -165,22 +165,22 @@ llvmdump 07b7ef72e96ece57 =@slot 281c7847e582d481
 llvmdump 07b7ef72e96ece57 =none rejected
 llvmdump 07baece47db85fcb #c 68 23101a41a3b1879d
 llvmdump 07baece47db85fcb #d 231 f8e451cb545c81dd
-llvmdump 07baece47db85fcb =@slot 575d625b9188b890
+llvmdump 07baece47db85fcb =@slot e14a93061a5991e7
 llvmdump 07baece47db85fcb module 139b27cf078c84de
 llvmdump 07baece47db85fcb order 043c80837f3ff5b0
 llvmdump 07baece47db85fcb ~rtdecls 9dce7dde52778e4a
 llvmdump 07baece47db85fcb ~types f8f650de67160c67
-llvmdump 08155c8b7951a349 =@slot 338cc31060c54787
+llvmdump 08155c8b7951a349 =@slot 0a271476666f4e97
 llvmdump 08155c8b7951a349 =none rejected
-llvmdump 08402c4d82ef6bc0 =@slot 695765f0972220bc
+llvmdump 08402c4d82ef6bc0 =@slot 1a8cf28ace194caf
 llvmdump 08402c4d82ef6bc0 =none rejected
-llvmdump 0844694558b6eb43 =@slot dc5defcfb957028c
+llvmdump 0844694558b6eb43 =@slot f7c98b9c7aed2d04
 llvmdump 0844694558b6eb43 =none rejected
 llvmdump 0895eac60c2968c3 =@slot a2d5e528cbfc9093
 llvmdump 0895eac60c2968c3 =none no main
 llvmdump 08aad4c5adccf9d1 #c 70 cca5c13552177831
 llvmdump 08aad4c5adccf9d1 #d 237 c4438cfd6518632c
-llvmdump 08aad4c5adccf9d1 =@slot a8441fe9a3d494c3
+llvmdump 08aad4c5adccf9d1 =@slot 3fe8ac33ca015029
 llvmdump 08aad4c5adccf9d1 module f891bb4086470e59
 llvmdump 08aad4c5adccf9d1 order 6898799243deb5c7
 llvmdump 08aad4c5adccf9d1 ~rtdecls 95345576c7a96edf
@@ -207,7 +207,7 @@ llvmdump 0a0111307edb6f62 =@slot 168a89db7ef8bf1b
 llvmdump 0a0111307edb6f62 =none rejected
 llvmdump 0a3cb3ea1f3290f3 #c 211 932970ce3be13eaf
 llvmdump 0a3cb3ea1f3290f3 #d 611 72423221ff920c5b
-llvmdump 0a3cb3ea1f3290f3 =@slot 5c662acb634f8d7d
+llvmdump 0a3cb3ea1f3290f3 =@slot 4f2a0d1fec79e21a
 llvmdump 0a3cb3ea1f3290f3 module 1ad5acd0e4f382c0
 llvmdump 0a3cb3ea1f3290f3 order f486025384edaa48
 llvmdump 0a3cb3ea1f3290f3 ~rtdecls 03333e611bc8aa86
@@ -216,12 +216,12 @@ llvmdump 0a520e1ab7a00f0b =@slot 2b398734f7570558
 llvmdump 0a520e1ab7a00f0b =none "error internal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:40:3: the SSA builder does not support `sync.WaitGroup.add` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:47:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:30:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:15:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:16:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:42:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support `time.after_func` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support the type `time.Timer` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:44:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:26:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:27:5: the SSA builder does not support `time.sleep` of the Go package `time` (`use go`)"
 llvmdump 0aa1f2fac06eefec #c 68 ee4b3c27912390af
 llvmdump 0aa1f2fac06eefec #d 207 e7d992e21bf5d52d
-llvmdump 0aa1f2fac06eefec =@slot be3c806d09ac1b5f
+llvmdump 0aa1f2fac06eefec =@slot 214a44a6b2c39ef0
 llvmdump 0aa1f2fac06eefec module b1cc4a51a3504c9c
 llvmdump 0aa1f2fac06eefec order 28bce49ce5709bbb
 llvmdump 0aa1f2fac06eefec ~rtdecls 95345576c7a96edf
 llvmdump 0aa1f2fac06eefec ~types 83fb23baee3ec929
-llvmdump 0ab1436d7c2e0dff =@slot 5d44b63c3911fc98
+llvmdump 0ab1436d7c2e0dff =@slot ebdc0439f20e9aaa
 llvmdump 0ab1436d7c2e0dff =none rejected
 llvmdump 0ae5d7a8905c53e0 #c 2142 6419a6756d52a7b6
 llvmdump 0ae5d7a8905c53e0 #d 4189 0692bd2b1f2b4473
@@ -250,18 +250,18 @@ llvmdump 0c56b46e754eb7df =@slot 0c1450fec5dc5a59
 llvmdump 0c56b46e754eb7df =none rejected
 llvmdump 0ca721d4c70b2dcc #c 77 bff86ffb8edbb175
 llvmdump 0ca721d4c70b2dcc #d 246 f9e9b1da9ec806c1
-llvmdump 0ca721d4c70b2dcc =@slot c0ee30792d5a94e3
+llvmdump 0ca721d4c70b2dcc =@slot 11f89576f7d5eb4e
 llvmdump 0ca721d4c70b2dcc module ed6611c7e6ce6c2d
 llvmdump 0ca721d4c70b2dcc order 4b64d26c6f82d91a
 llvmdump 0ca721d4c70b2dcc ~rtdecls 389700f41a0a4f89
 llvmdump 0ca721d4c70b2dcc ~types 65e04069d68fc201
 llvmdump 0cfcee5dfe7d5cb6 =@slot bd7493794e177872
 llvmdump 0cfcee5dfe7d5cb6 =none rejected
-llvmdump 0d0ab507d4374707 =@slot 74cadf6db09cb30d
+llvmdump 0d0ab507d4374707 =@slot 34dcda80cb96334a
 llvmdump 0d0ab507d4374707 =none rejected
 llvmdump 0d4e97621dc917ed #c 75 ba7d49bd19b34767
 llvmdump 0d4e97621dc917ed #d 242 e91214002a505522
-llvmdump 0d4e97621dc917ed =@slot 6f322f9aa2a4321c
+llvmdump 0d4e97621dc917ed =@slot 41cf2d4c6cab9b47
 llvmdump 0d4e97621dc917ed module 1abcc846d84eb7e3
 llvmdump 0d4e97621dc917ed order e32f9b0b67813ccb
 llvmdump 0d4e97621dc917ed ~rtdecls 0442a1ab574922df
@@ -274,7 +274,7 @@ llvmdump 0d6d49bb69b69a84 =@slot ce80e3bea00f9478
 llvmdump 0d6d49bb69b69a84 =none rejected
 llvmdump 0d83b2638fd48331 =@slot 5c296d05f9e1b0bd
 llvmdump 0d83b2638fd48331 =none rejected
-llvmdump 0db340ecded54a41 =@slot 748672669808ee55
+llvmdump 0db340ecded54a41 =@slot 68254517b6b14c02
 llvmdump 0db340ecded54a41 =none rejected
 llvmdump 0e573833348bf0b9 #c 75 5d2878725a9ad625
 llvmdump 0e573833348bf0b9 #d 245 0b1087099cf7801a
@@ -297,20 +297,20 @@ llvmdump 0e9c1ef02e8b8b62 module 8028adc7ab63de26
 llvmdump 0e9c1ef02e8b8b62 order 6533ce712f591951
 llvmdump 0e9c1ef02e8b8b62 ~rtdecls 3bc0d371b8f6f67c
 llvmdump 0e9c1ef02e8b8b62 ~types 96f0d1fd0c1fac03
-llvmdump 0ed7f3f2597347a2 =@slot 599c66169165935e
+llvmdump 0ed7f3f2597347a2 =@slot 5e3ef22e74996095
 llvmdump 0ed7f3f2597347a2 =none rejected
 llvmdump 0f41618cf5c4d31a =@slot d582a5eb38f5fbfc
 llvmdump 0f41618cf5c4d31a =none rejected
 llvmdump 0f66ca7edaa4d150 =@slot 78f5069dd0da71e1
 llvmdump 0f66ca7edaa4d150 =none rejected
-llvmdump 0fcebc471cf28a8f =@slot 49408261fa65109c
+llvmdump 0fcebc471cf28a8f =@slot ed6a7d2532dd9838
 llvmdump 0fcebc471cf28a8f =none rejected
 llvmdump 0fd47f6c161e37bd #c 81 0c32f186447e8f2c
 llvmdump 0fd47f6c161e37bd #d 331 1561f32279e4d321
-llvmdump 0fd47f6c161e37bd =@slot e07774e8356116d2
+llvmdump 0fd47f6c161e37bd =@slot b3156ee001d7b325
 llvmdump 0fd47f6c161e37bd module b366fd360933f8b0
 llvmdump 0fd47f6c161e37bd order cd6a3760296d9c8d
 llvmdump 0fd47f6c161e37bd ~rtdecls 1316cd0fb77a987b
 llvmdump 0fd47f6c161e37bd ~types e44136b84650df0c
-llvmdump 0fdc9585f6c4842b =@slot 5787a89c424df845
+llvmdump 0fdc9585f6c4842b =@slot 34660fad629f956f
 llvmdump 0fdc9585f6c4842b =none rejected

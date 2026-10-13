@@ -79,7 +79,7 @@ func TestGoldPieces(t *testing.T) {
 	if strings.Join(q.names("f:"), ",") != "dup List[Int],main" {
 		t.Errorf("differing family: names %v", q.names("f:"))
 	}
-	// a set with an element the Go side lacks
+	// a set with an element the recorded side lacks
 	s := rep.resolvedSet("lits", []string{"y y", "z"})
 	if !s.inSet("lits", "y y") || s.inSet("lits", "z") {
 		t.Errorf("differing set: %v", s.parts)
