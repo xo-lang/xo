@@ -352,3 +352,183 @@ Correctness:
   check_no_alloc ran on rc.xo): ok (690.9 s). An earlier instance
   (i-EXAMPLE36) could not connect (the shared SSH key had been
   emptied) and was terminated by the script.
+
+## Stage 3 (2026-10-13): the heap in Xo
+
+alloc agent; base 3f8f6ac2 (stage 2 merged). Same method: whole process
+instructions retired, minimum of 5 runs (conc: 11, XO_THREADS=1),
+`/usr/bin/time -l`, development Mac shared with other agents, Go driver
+(`XO_SELF_DRIVER=0`), commit 69b80fa1 (e91211b7 changes only the C
+version guard of `XO_INLINE_CALL`, the same C on the Mac). "less setup"
+is (workload - none) of the Xo build over the same for the C build.
+The C path is `XO_LLRT_C=alloc` (-DXO_ALLOC_C) of the same commit.
+
+### What moved
+
+`std/native/llrt/alloc.xo`: xo_rt.c's alloc_in, free_in, the magazine
+steps of alloc_mt and free_mt (spare magazine, central_take,
+central_put), and xo_resize, over the raw memory intrinsics and the
+slot atomics at an address. cabi.xo exports them as `xo_x_heap_alloc`
+(n, h), `xo_x_heap_free` (p, h), `xo_x_heap_refill`,
+`xo_x_heap_free_mt`, `xo_x_heap_resize`; the C keeps its entry points
+(xo_alloc, xo_free, xo_resize, rs_new) and calls them with the calling
+thread's heap record. What stays C:
+
+- Finding the heap record: `solo_heap` (one thread) and the `__thread`
+  `tls_heap` (heap_slow), heap creation, the spare heaps, the list of
+  all heaps under heaps_mu, and xo_rt_live's sum. Xo has no thread
+  local or mutable global word; the record's address is an argument
+  (ADR 0207 stage 3 designs `rt.tls_get`/`rt.tls_set` and a static
+  word table for the step after).
+- The platform calls, as `rt.heap_*` C leaves: malloc above the classes
+  (`heap_large`, which writes the prefix), realloc (`heap_large_resize`),
+  free (`heap_release`), a new 4 MiB chunk (`heap_grow`: installs the
+  chunk, counts it for tasks.c, and calls `xo_x_heap_alloc` again), and
+  the central lists' pthread mutex (`heap_lock`, `heap_unlock`).
+- The heap record stays a C struct; its first words (counters, bump
+  chunk, real-time depth and allocations, mid_max, the central lists'
+  address, the last block's usable size, then the per class free list
+  heads, lengths, and spare magazines) are at the offsets of alloc.xo's
+  constants, checked by `_Static_assert` in xo_rt.c.
+
+Changes to the C's design, each measured:
+
+- `usable` (a string's capacity) was a second call per string; alloc
+  and resize leave the usable size in the record (`last_size`), which
+  rs_new and rs_append read after the call (`alloc_usable`,
+  `resize_usable`). The C path keeps its usable().
+- xo_resize's move (allocate, copy, free) is one Xo call on one thread
+  (alloc's pop or carve and free's push written out in resize, since
+  the module calls no functions); with threads, or a block to or from
+  malloc, or an empty chunk, the C moves it as before. bench/perf/alloc
+  maps went from 1.046 to 0.991 on arm64 with it.
+- The magazine size test `nfree >= max(65536 / size, 8)` is `(nfree + 1)
+  * size > 65536` (no division, which can fault); a magazine taken
+  counts `65536 / size` blocks by a long division loop.
+- Every call is last with nothing live after it, so arm64 keeps no
+  callee saved register (gotchas/arm64-call-anywhere-costs-frame.md).
+
+New internal pieces: `rt.prefetch(a)` (prfm pldl1keep on arm64,
+llvm.prefetch on LLVM, nothing on wasm; the pop's prefetch of the next
+link, gotchas/native-heap-cold-free-lists.md), and both arm64 emitters
+lower `rt.mem_load`/`mem_store` with a constant offset to the scaled
+immediate form and `rt.int_wrap` add and subtract of a constant below
+4096 to the immediate form (the Go emitter mirrors it for
+TestSelfhostArm64). On LLVM the C marks the calls of the single
+threaded exports `[[clang::always_inline]]` (clang 17, Apple clang
+16): LTO left `xo_x_heap_alloc` out of line in the hot string builders
+(text int_fmt 1.077 and float_fmt 1.054 less setup before,
+gotchas/lto-keeps-export-out-of-line.md).
+
+The no allocation rule: selfhost/ssa contract.xo `check_no_alloc` runs
+on native/llrt/alloc as on native/llrt/rc, allowing also `rt.prefetch`,
+`rt.mem_copy`, `rt.heap_*`, and the C path's `rt.alloc_*_c`.
+
+### The bar (decision 0180): bench/perf/alloc, nested, xo, text, json, conc
+
+bench/perf/alloc (new, `compare.sh` builds both paths): small (2
+million one element lists), mixed (a ring of 4,096 lists of random
+lengths up to 3,000, replaced at random: every class and malloc), grow,
+strings, maps, tasks (32 tasks a round allocating on the workers).
+
+| Workload | arm64 | LLVM |
+|---|---|---|
+| alloc small (less setup) | 1.040 | 0.876 |
+| alloc mixed | 0.987 | 0.954 |
+| alloc grow | 0.996 | 0.990 |
+| alloc strings | 0.984 | 0.932 |
+| alloc maps | 0.991 | 0.935 |
+| alloc tasks | 1.033 | 0.952 |
+| nested (rc-borrow's 9 workloads) | 0.993 to 1.009 | 0.980 to 1.006 |
+| perf (bench/perf/xo, 18 workloads) | 0.999 to 1.002 | 0.990 to 1.003 |
+| text quote (less setup) | 0.977 | 0.943 |
+| text split | 0.981 | 0.882 |
+| text lines | 0.984 | 0.908 |
+| text replace | 0.998 | 0.966 |
+| text int_fmt | 1.029 | 1.013 |
+| text float_fmt | 1.011 | 1.009 |
+| text debug | 0.990 | 0.973 |
+| json parse (less setup) | 1.001 | 1.002 |
+| json maps | 0.993 | 0.961 |
+| json strings | 0.996 | 0.973 |
+| json enc_strings | 1.006 | 1.005 |
+| conc spawn (XO_THREADS=1, min of 11) | 1.035 | 0.979 |
+| conc fanout | 1.014 | 1.001 |
+| conc pmap | 1.000 | 1.000 |
+
+Every workload is within 5 percent on both backends; checksums equal.
+The worst are arm64's: alloc small 1.040 (a pop and a push per
+iteration through C wrapper, export branch, and the Xo function's frame
+record, about 6 instructions more a pair than the C's inline code),
+conc spawn 1.035, alloc tasks 1.033. On LLVM the Xo heap is below the
+C on every allocation workload (LTO inlines it; the C path re-derives
+the size class for usable()). Next for arm64: a tail call in the
+arm64 emitters (free's only call is last) and the export symbol as an
+alias of the function instead of a branch.
+
+### Correctness
+
+- `std/llrt/testdata/alloc_threads.c` (TestRuntimeAlloc, both paths,
+  ThreadSanitizer, then -O2 with ITER 30000): solo (one thread, random
+  sizes over every class, the mid classes and malloc, sizes 0 to 7,
+  resizes, rs_new's capacity), threads (8 threads, blocks sent to other
+  threads' mailboxes, checked, resized, and freed there), waves (one
+  thread allocates, two new threads free, n rounds, at most n / 10 + 3
+  chunks carved where without the central lists a round needs 0.21 of
+  a chunk; the first bound, 4 whatever n, failed the -O2 run on EC2
+  with 19 chunks in 300 rounds, the dead freeing heaps' magazines).
+  Every block's contents are a pattern of its tag, checked
+  before each resize and free; every test ends with 0 live. A mutation
+  (resize copying half of the kept bytes) fails it with 44 checks.
+- Mac, -short: TestRuntimeAlloc, TestRuntimeThreads, TestRuntimeTasks,
+  TestCABIDiff pass; `go test -short` over the repository passes.
+- TestSelfhostWasm: 132 pass, 20 unsupported, 0 fail of 152 (as stage 2).
+
+### xo1 on the heap in Xo (EC2)
+
+EC2 r8g.8xlarge, on demand, linux/arm64, clang 15.0.7, one instance
+(i-EXAMPLE51, terminated), commit e91211b7. Two xo1 built by
+the Go seed (`XO_SELF_DRIVER=0 xo build --backend=arm64 selfhost/xo`):
+the heap in Xo, and `XO_LLRT_C=alloc`. Each compiled selfhost/xo
+(`xo1 asm --phase-times --std=std selfhost/xo`, `XO_LEAKCHECK=1`,
+`perf stat -e instructions,cycles`, GNU time), alternating, twice:
+
+| | Xo heap run 1 | C run 1 | Xo heap run 2 | C run 2 |
+|---|---|---|---|---|
+| allocations (all freed) | 1,952,597,859 | 1,952,597,859 | 1,952,597,859 | 1,952,597,859 |
+| instructions (user) | 2,235.93 billion | 2,227.79 billion | 2,235.93 billion | 2,227.79 billion |
+| cycles (user) | 925.75 billion | 939.25 billion | 890.63 billion | 934.33 billion |
+| wall clock | 5:38.34 | 5:43.41 | 5:25.65 | 5:41.58 |
+
+Instructions 1.004 of the C's, cycles 0.986 and 0.953, wall clock
+0.985 and 0.953; the assembly both write is byte identical (sha256
+6af248b1...2e7a). Building each xo1: 10:43.33 (Xo heap) and 10:47.51
+(C), 17.5 GB maximum resident set each.
+
+The fixed point with xo1 on the heap in Xo: scripts/bootstrap-xo.sh
+with the Xo heap xo1 as the seed, no Go on PATH: s1 433 s, s2 419 s,
+s3 427 s; s2 and s3 assembly identical (441,579,991 bytes) and
+binaries identical (86,383,200 bytes), s1 equals s2, s3 builds and
+runs hello.
+
+### Tests run (stage 3)
+
+- Same EC2 run: internal/llvm TestGolden (every golden, leak checked),
+  TestGoldenWant, TestGoldenThreads (four threads, ThreadSanitizer),
+  TestGoldenShared, TestRuntimeThreads, TestRuntimeTasks, TestCABIDiff,
+  TestLeakCheck: pass; TestRuntimeAlloc: its ThreadSanitizer runs
+  passed, the -O2 run of 300 rounds failed the first waves bound (19
+  chunks, above), fixed in 5e2ec59b and passing in full (both paths,
+  ThreadSanitizer and -O2) on the Mac. internal/arm64 TestGoldenRun,
+  TestGoldenRunShared, TestGoldenAsm: pass (19.9 s). internal/selfhost
+  TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM (the Go and
+  self hosted emitters identical, with both arm64 emitters' new
+  immediate forms): pass (266.4 s). cmd/xo TestNoGCTests through xo1
+  built from these sources (so check_no_alloc ran on alloc.xo): pass
+  (690.2 s).
+- An earlier instance (i-EXAMPLE13, commit 69b80fa1) failed
+  every C runtime build: clang 15 cannot parse
+  `__has_c_attribute(clang::always_inline)`
+  (gotchas/lto-keeps-export-out-of-line.md); terminated by id.
+- Not run: the full tier (the lead's, per batch). `XO_LLRT_C=alloc`
+  stays until it passes on main.

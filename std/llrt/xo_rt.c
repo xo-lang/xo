@@ -116,6 +116,11 @@ typedef struct {
 } xo_rtdef;
 
 typedef struct xo_heap {
+	// The words std/native/llrt/alloc.xo reads and writes, at the offsets
+	// of its constants (checked below): with the heap in Xo (decision
+	// 0207 stage 3) the C finds a thread's heap and hands its address
+	// to the cabi.xo exports.
+	//
 	// blocks allocated, and blocks freed, by this heap's thread (the
 	// leak check reports the difference): one counter per call
 	int64_t allocs;
@@ -126,6 +131,17 @@ typedef struct xo_heap {
 	int64_t abytes;
 	char *bump_cur;
 	char *bump_end;
+	// real-time sections (decision 0133): calls of real-time functions
+	// entered and not left on this thread, allocations since the
+	// outermost one began
+	int64_t rt_depth;
+	int64_t rt_allocs;
+	// xo_mid_max, and the central lists (every heap has the same)
+	int64_t mid_max;
+	void **central;
+	// the usable bytes of the block alloc.xo returned last (rs_new reads
+	// it for a string's capacity)
+	int64_t last_size;
 	void *free_lists[XO_NCLASS + 1];
 	int64_t nfree[XO_NCLASS + 1]; // blocks on each free list (about: a magazine taken counts as full)
 	void *mag[XO_NCLASS + 1];     // a full magazine per class (threaded: free_mt)
@@ -135,17 +151,22 @@ typedef struct xo_heap {
 	int defer_busy;
 	struct xo_heap *next;  // all heaps, for the leak check
 	struct xo_heap *spare; // the list of heaps of exited threads
-	// real-time sections (decision 0133): calls of real-time functions
-	// entered and not left on this thread, allocations since the
-	// outermost one began, and the frees it deferred (a fixed queue, so
+	// the frees deferred by real-time sections (a fixed queue, so
 	// deferring never allocates)
-	int64_t rt_depth;
-	int64_t rt_allocs;
 	int64_t rt_n;
 	xo_rtdef rt_q[XO_RTQ];
 } xo_heap;
 
-static xo_heap main_heap;
+#include <stddef.h>
+_Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) == 56 && offsetof(xo_heap, central) == 64 && offsetof(xo_heap, last_size) == 72, "alloc.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
+
+// The central lists: per class, a stack of magazines (free lists of
+// about central_batch(c) blocks) linked by their first block's second
+// word (every block has at least 16 bytes).
+static void *central[XO_NCLASS + 1];
+
+static xo_heap main_heap = {.mid_max = XO_MID_MAX, .central = central};
 static int xo_threaded; // set once, before a second thread runs Xo code
 // solo_heap is main_heap while one thread runs, null after (one load
 // both tells the case and gives the heap)
@@ -182,6 +203,8 @@ __attribute__((noinline)) static xo_heap *heap_slow(void) {
 	if (!h) {
 		xo_oom();
 	}
+	h->mid_max = xo_mid_max;
+	h->central = central;
 	pthread_mutex_lock(&heaps_mu);
 	h->next = all_heaps;
 	all_heaps = h;
@@ -225,6 +248,70 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 	*total = t;
 }
 
+// xo_chunks counts the chunks carved (std/llrt/testdata/tasks.c checks
+// that blocks freed on another thread come back instead, decision 0118).
+static int64_t xo_chunks;
+
+// central_mu guards the central lists' stacks (central_put, central_take
+// in C; alloc.xo's free_mt and refill through xo_heap_lock).
+static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
+
+// The platform calls of the heap in Xo (decision 0207 stage 3,
+// std/native/rt.xo heap_*), which the C path uses too.
+
+// xo_heap_large returns a block of n bytes from malloc (the prefix is
+// minus its size).
+__attribute__((noinline)) int64_t xo_heap_large(int64_t n) {
+	int64_t *b = malloc((size_t)n + 8);
+	if (!b) {
+		xo_oom();
+	}
+	b[0] = -n;
+	return (int64_t)(intptr_t)(b + 1);
+}
+
+// xo_heap_large_resize reallocates the malloc'd block at b (its prefix)
+// to n bytes.
+int64_t xo_heap_large_resize(int64_t b, int64_t n) {
+	int64_t *nb = realloc((void *)(intptr_t)b, (size_t)n + 8);
+	if (!nb) {
+		xo_oom();
+	}
+	nb[0] = -n;
+	return (int64_t)(intptr_t)(nb + 1);
+}
+
+void xo_heap_release(int64_t b) { free((void *)(intptr_t)b); }
+
+// heap_chunk gives heap h a new chunk to carve blocks from.
+__attribute__((noinline)) static void heap_chunk(xo_heap *h) {
+	char *c = malloc(XO_CHUNK);
+	if (!c) {
+		xo_oom();
+	}
+	__atomic_fetch_add(&xo_chunks, 1, __ATOMIC_RELAXED);
+	h->bump_cur = c;
+	h->bump_end = c + XO_CHUNK;
+}
+
+// xo_heap_grow gives heap h a new chunk and allocates n bytes again (the
+// heap in Xo calls it last, so its arm64 code keeps no register across
+// a call).
+int64_t xo_x_heap_alloc(int64_t n, int64_t h);
+__attribute__((noinline)) int64_t xo_heap_grow(int64_t h, int64_t n) {
+	heap_chunk((xo_heap *)(intptr_t)h);
+	return xo_x_heap_alloc(n, h);
+}
+
+void xo_heap_lock(void) { pthread_mutex_lock(&central_mu); }
+
+void xo_heap_unlock(void) { pthread_mutex_unlock(&central_mu); }
+
+#ifdef XO_ALLOC_C
+// The C path (XO_LLRT_C=alloc, decision 0207 stage 3): the C's own
+// allocator, which std/native/llrt/alloc_c.xo also reaches through
+// xo_alloc_*_c below.
+
 static inline int64_t size_class(int64_t n, int64_t *size) {
 	if (n <= XO_SMALL_MAX) {
 		int64_t c = (n + 15) >> 4;
@@ -243,29 +330,7 @@ static inline int64_t size_class(int64_t n, int64_t *size) {
 	return c;
 }
 
-__attribute__((noinline)) static void *xo_alloc_large(int64_t n) {
-	int64_t *b = malloc((size_t)n + 8);
-	if (!b) {
-		xo_oom();
-	}
-	b[0] = -n;
-	return b + 1;
-}
-
-// xo_chunks counts the chunks carved (std/llrt/testdata/tasks.c checks
-// that blocks freed on another thread come back instead, decision 0118).
-static int64_t xo_chunks;
-
-__attribute__((noinline)) static void xo_refill(xo_heap *h, int64_t need) {
-	char *c = malloc(XO_CHUNK);
-	if (!c) {
-		xo_oom();
-	}
-	__atomic_fetch_add(&xo_chunks, 1, __ATOMIC_RELAXED);
-	(void)need;
-	h->bump_cur = c;
-	h->bump_end = c + XO_CHUNK;
-}
+static inline void *xo_alloc_large(int64_t n) { return (void *)(intptr_t)xo_heap_large(n); }
 
 static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
 	h->allocs++;
@@ -273,7 +338,7 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	if (__builtin_expect(h->rt_depth != 0, 0)) {
 		h->rt_allocs++; // a real-time section allocated: XO-F007 when it ends
 	}
-	if (n > xo_mid_max) {
+	if (n > h->mid_max) {
 		return xo_alloc_large(n);
 	}
 	int64_t size;
@@ -291,7 +356,7 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	}
 	int64_t need = size + 8;
 	if (h->bump_end - h->bump_cur < need) {
-		xo_refill(h, need);
+		heap_chunk(h);
 	}
 	int64_t *b = (int64_t *)h->bump_cur;
 	h->bump_cur += need;
@@ -310,12 +375,6 @@ static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
 	h->free_lists[b[0]] = p;
 	h->nfree[b[0]]++;
 }
-
-// The central lists: per class, a stack of magazines (free lists of
-// about central_batch(c) blocks) linked by their first block's second
-// word (every block has at least 16 bytes).
-static void *central[XO_NCLASS + 1];
-static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
 
 // central_batch is the size of a magazine of class c: 64 KiB of blocks,
 // at least 8.
@@ -354,9 +413,8 @@ __attribute__((noinline)) static void *central_take(int64_t c) {
 // central list; a list that reaches a magazine's size becomes the spare,
 // and the spare it replaces goes to the central list. Nothing walks a
 // list, so moving blocks between threads costs O(1) per magazine.
-__attribute__((noinline)) static void *alloc_mt(int64_t n) {
-	xo_heap *h = heap_slow();
-	if (n <= xo_mid_max) {
+static void refill_in(xo_heap *h, int64_t n) {
+	if (n <= h->mid_max) {
 		int64_t size;
 		int64_t c = size_class(n, &size);
 		if (!h->free_lists[c]) {
@@ -371,11 +429,15 @@ __attribute__((noinline)) static void *alloc_mt(int64_t n) {
 			}
 		}
 	}
+}
+
+__attribute__((noinline)) static void *alloc_mt(int64_t n) {
+	xo_heap *h = heap_slow();
+	refill_in(h, n);
 	return alloc_in(h, n);
 }
 
-__attribute__((noinline)) static void free_mt(void *p) {
-	xo_heap *h = heap_slow();
+static void free_mt_in(xo_heap *h, void *p) {
 	int64_t c = ((int64_t *)p)[-1]; // before free_in: a large block is gone after
 	free_in(h, p);
 	if (c > 0 && h->nfree[c] >= central_batch(c)) {
@@ -387,6 +449,90 @@ __attribute__((noinline)) static void free_mt(void *p) {
 		h->nfree[c] = 0;
 	}
 }
+
+__attribute__((noinline)) static void free_mt(void *p) { free_mt_in(heap_slow(), p); }
+
+// usable returns the bytes a block requested with n bytes really has
+// (its size class), so strings can grow into the slack.
+static int64_t usable_in(xo_heap *h, int64_t n) {
+	if (n > h->mid_max) {
+		return n;
+	}
+	int64_t size;
+	size_class(n, &size);
+	return size;
+}
+
+// resize_in resizes block p of old bytes to n bytes in place where it
+// can, else returns null (the caller moves it).
+static void *resize_in(xo_heap *h, void *p, int64_t old, int64_t n, int64_t mt) {
+	(void)mt;
+	int64_t *b = (int64_t *)p - 1;
+	if (b[0] < 0 && n > h->mid_max) {
+		if (n > old) {
+			h->abytes += n - old; // grown in place: counted for budgets
+		}
+		return (void *)(intptr_t)xo_heap_large_resize((int64_t)(intptr_t)b, n);
+	}
+	if (b[0] > 0) {
+		int64_t size;
+		if (n <= h->mid_max && size_class(n, &size) == b[0]) {
+			return p;
+		}
+	}
+	return NULL;
+}
+
+#define H(h) ((xo_heap *)(intptr_t)(h))
+#define P(p) ((void *)(intptr_t)(p))
+int64_t xo_alloc_new_c(int64_t h, int64_t n) { return (int64_t)(intptr_t)alloc_in(H(h), n); }
+void xo_alloc_free_c(int64_t h, int64_t p) { free_in(H(h), P(p)); }
+void xo_alloc_refill_c(int64_t h, int64_t n) { refill_in(H(h), n); }
+void xo_alloc_free_mt_c(int64_t h, int64_t p) { free_mt_in(H(h), P(p)); }
+int64_t xo_alloc_resize_c(int64_t h, int64_t p, int64_t old, int64_t n) { return (int64_t)(intptr_t)resize_in(H(h), P(p), old, n, 0); }
+#undef H
+#undef P
+#else
+// The heap in Xo (decision 0207 stage 3): std/native/llrt/alloc.xo
+// through the C ABI exports of cabi.xo, the same operations as the C
+// path above; the C finds the calling thread's heap record.
+int64_t xo_x_heap_alloc(int64_t n, int64_t h);
+void xo_x_heap_free(int64_t p, int64_t h);
+void xo_x_heap_refill(int64_t h, int64_t n);
+void xo_x_heap_free_mt(int64_t h, int64_t p);
+int64_t xo_x_heap_resize(int64_t h, int64_t p, int64_t old, int64_t n, int64_t mt);
+
+#define HA(h) ((int64_t)(intptr_t)(h))
+// With LTO (the LLVM backend) the calls of the single threaded paths are
+// inlined as the C's alloc_in and free_in were (always_inline on the
+// call: LLVM's own cost model kept the Xo function out of line in the
+// hot string builders, bench/results/raw-memory-2026-10-13.md stage 3).
+// The statement form needs clang 17 (LLVM; Apple clang 16): older ones,
+// such as Amazon Linux's clang 15, fail on `[[` in C and even on
+// `__has_c_attribute(clang::always_inline)`.
+#if defined(__clang__) && ((defined(__apple_build_version__) && __clang_major__ >= 16) || (!defined(__apple_build_version__) && __clang_major__ >= 17))
+#define XO_INLINE_CALL [[clang::always_inline]]
+#endif
+#ifndef XO_INLINE_CALL
+#define XO_INLINE_CALL
+#endif
+static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
+	int64_t p;
+	XO_INLINE_CALL p = xo_x_heap_alloc(n, HA(h));
+	return (void *)(intptr_t)p;
+}
+static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
+	XO_INLINE_CALL xo_x_heap_free(HA(p), HA(h));
+}
+__attribute__((noinline)) static void *alloc_mt(int64_t n) {
+	xo_heap *h = heap_slow();
+	xo_x_heap_refill(HA(h), n);
+	return alloc_in(h, n);
+}
+__attribute__((noinline)) static void free_mt(void *p) { xo_x_heap_free_mt(HA(heap_slow()), HA(p)); }
+static inline void *resize_in(xo_heap *h, void *p, int64_t old, int64_t n, int64_t mt) { return (void *)(intptr_t)xo_x_heap_resize(HA(h), HA(p), old, n, mt); }
+#undef HA
+#endif
 
 void *xo_alloc(int64_t n) {
 	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
@@ -408,25 +554,19 @@ void xo_free(void *p) {
 // xo_resize returns a block of n bytes with the first old bytes of p (a
 // block of old bytes, which is freed).
 static void *xo_resize(void *p, int64_t old, int64_t n) {
-	int64_t *b = (int64_t *)p - 1;
-	if (b[0] < 0 && n > xo_mid_max) {
-		if (n > old) {
-			heap()->abytes += n - old; // grown in place: counted for budgets
-		}
-		int64_t *nb = realloc(b, (size_t)n + 8);
-		if (!nb) {
-			xo_oom();
-		}
-		nb[0] = -n;
-		return nb + 1;
+	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
+	int64_t mt = 0;
+	if (__builtin_expect(!h, 0)) {
+		h = heap_slow();
+		mt = 1;
 	}
-	if (b[0] > 0) {
-		int64_t size;
-		if (n <= xo_mid_max && size_class(n, &size) == b[0]) {
-			return p;
-		}
+	// the heap in Xo moves a block itself unless mt; the C path only
+	// resizes in place
+	void *q = resize_in(h, p, old, n, mt);
+	if (q) {
+		return q;
 	}
-	void *q = xo_alloc(n);
+	q = xo_alloc(n);
 	memcpy(q, p, (size_t)(old < n ? old : n));
 	xo_free(p);
 	return q;
@@ -918,20 +1058,38 @@ typedef struct {
 	char data[];
 } xo_rstr;
 
-// usable returns the bytes a block requested with n bytes really has
-// (its size class), so strings can grow into the slack.
-static int64_t usable(int64_t n) {
-	if (n > xo_mid_max) {
-		return n;
-	}
-	int64_t size;
-	size_class(n, &size);
-	return size;
+// alloc_usable returns a block of at least n bytes and in *bytes the
+// bytes it really has (its size class), so strings can grow into the
+// slack. The heap in Xo leaves them in the heap record's last_size (one
+// call instead of two, decision 0207 stage 3).
+static inline void *alloc_usable(int64_t n, int64_t *bytes) {
+#ifdef XO_ALLOC_C
+	*bytes = usable_in(heap(), n);
+	return xo_alloc(*bytes);
+#else
+	void *p = xo_alloc(n);
+	*bytes = heap()->last_size;
+	return p;
+#endif
+}
+
+// resize_usable is xo_resize to at least n bytes, the bytes the block
+// really has in *bytes.
+static void *xo_resize(void *p, int64_t old, int64_t n);
+static inline void *resize_usable(void *p, int64_t old, int64_t n, int64_t *bytes) {
+#ifdef XO_ALLOC_C
+	*bytes = usable_in(heap(), n);
+	return xo_resize(p, old, *bytes);
+#else
+	void *q = xo_resize(p, old, n);
+	*bytes = heap()->last_size;
+	return q;
+#endif
 }
 
 static xo_rstr *rs_new(int64_t n) {
-	int64_t bytes = usable((int64_t)sizeof(xo_rstr) + n);
-	xo_rstr *s = xo_alloc(bytes);
+	int64_t bytes;
+	xo_rstr *s = alloc_usable((int64_t)sizeof(xo_rstr) + n, &bytes);
 	s->rc = 1;
 	s->cap = bytes - (int64_t)sizeof(xo_rstr);
 	return s;
@@ -951,8 +1109,8 @@ static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
 				want = need;
 			}
 			int64_t hdr = (int64_t)sizeof(xo_rstr);
-			int64_t bytes = usable(hdr + want);
-			a = xo_resize(a, hdr + an, bytes);
+			int64_t bytes;
+			a = resize_usable(a, hdr + an, hdr + want, &bytes);
 			a->cap = bytes - hdr;
 		}
 		memmove(a->data + an, p, (size_t)n);
@@ -7102,6 +7260,7 @@ int main(int argc, char **argv) {
 	const char *mid = getenv("XO_HEAP_MID_MAX");
 	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
 		xo_mid_max = atoll(mid);
+		main_heap.mid_max = xo_mid_max;
 	}
 	if (getenv("XO_TEST")) {
 		// a test binary runs one test in the test world (xo_testing.c)

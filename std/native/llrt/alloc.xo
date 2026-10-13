@@ -1,0 +1,325 @@
+// The native heap in Xo (decision 0207 stage 3): the size classes, the
+// free lists, the bump chunk, the leak and budget counters, and the
+// magazines that move free lists between threads through the central
+// lists (decision 0118), over the raw memory intrinsics and the slot
+// atomics (decision 0200) at an address. The C runtime keeps its entry
+// points (xo_alloc, xo_free, xo_resize in std/llrt/xo_rt.c) and
+// calls these through cabi.xo's `heap_*` exports with the calling
+// thread's heap record; finding that record (a thread local, decision
+// 0195 prerequisite (6)) stays C until `rt.tls_get` exists (ADR 0207,
+// stage 3). The C path is alloc_c.xo (XO_LLRT_C=alloc).
+//
+// Every block has an 8 byte prefix before the address handed out: its
+// size class (1 to 72) or, for a block from malloc, minus its size.
+// Classes 1 to 64 are 16 to 1,024 bytes by 16, classes 65 to 72 are
+// 2 KiB to 256 KiB by powers of two; blocks above the heap's mid_max
+// (at most 256 KiB, lowered by XO_HEAP_MID_MAX) come from malloc. A free
+// block of a class is on that class's free list (the next address is
+// its first word); new blocks are carved from 4 MiB chunks.
+//
+// The no allocation, no counting rule (decision 0207, design 3), as for
+// rc.xo: every function here takes and returns Int words only, uses no
+// Str, List, Map, closure, or interpolation, no arithmetic that can
+// fault (rt.int_wrap: op 0 add, 1 subtract, 2 multiply, 3 shift left, 4
+// shift right), and calls only inline intrinsics and the platform calls
+// rt.heap_* (malloc, realloc, free, a new chunk, the central lists'
+// mutex); selfhost/ssa contract.xo check_no_alloc checks it on every
+// function here. The single threaded paths (alloc, free) make
+// their calls last, with nothing live after them, so the arm64 code
+// keeps no register across a call.
+use native/rt
+
+// The heap record (xo_rt.c struct xo_heap, whose first words these are;
+// a _Static_assert there checks the offsets): blocks allocated and
+// freed by its thread (the leak check), bytes allocated (resource
+// budgets, decision 0175), the bump chunk's next and end addresses, the
+// real-time section depth and its allocations (decision 0133), the
+// largest block the classes serve, the address of the central lists
+// (one word per class), the usable bytes of the block alloc or resize
+// returned last (its class's size, or n from malloc: the C reads it for
+// a string's capacity, where it called usable before), then per class
+// (at h + 8 * c) the free list's head, its length (about: a magazine
+// taken counts as full), and the spare full magazine.
+const ALLOCS = 0
+const FREES = 8
+const ABYTES = 16
+const BUMP_CUR = 24
+const BUMP_END = 32
+const RT_DEPTH = 40
+const RT_ALLOCS = 48
+const MID_MAX = 56
+const CENTRAL = 64
+const LAST = 72
+const FREE_LISTS = 80
+const NFREE = 664
+const MAG = 1248
+
+const SMALL_MAX = 1024
+/// The bytes of blocks in a magazine (at least 8 blocks).
+const MAG_BYTES = 65536
+
+/// The slot atomics' relaxed order.
+const RELAXED = 0
+
+/// A block of n bytes from heap h (xo_rt.c alloc_in): the head of its
+/// class's free list, else carved from the chunk, or from malloc above
+/// the classes. Counts the allocation, its bytes, and an allocation in a
+/// real-time section. A chunk that runs out is replaced by rt.heap_grow,
+/// which calls this again.
+pub fn alloc(h: Int, n: Int) -> Int {
+  if n > rt.mem_load(h, MID_MAX, 8) {
+    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+    if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+      rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+    }
+    rt.mem_store(h, LAST, n, 8)
+    return rt.heap_large(n)
+  }
+  // the size class (size_class)
+  var c = 65
+  var size = 2048
+  if n <= SMALL_MAX {
+    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    if c == 0 {
+      c = 1
+    }
+    size = rt.int_wrap(3, c, 4)
+  } else {
+    while size < n {
+      size = rt.int_wrap(3, size, 1)
+      c = rt.int_wrap(0, c, 1)
+    }
+  }
+  // the class's words are at fl + FREE_LISTS, fl + NFREE, fl + MAG
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  var r = rt.mem_load(fl, FREE_LISTS, 8)
+  if r != 0 {
+    let next = rt.mem_load(r, 0, 8)
+    rt.mem_store(fl, FREE_LISTS, next, 8)
+    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    // the next pop reads the new head's link: start loading it now, so a
+    // list freed long ago (cold) costs overlapped misses rather than one
+    // stall per allocation (bench/results/xo1-speed-2026-10-13.md)
+    rt.prefetch(next)
+  } else {
+    let need = rt.int_wrap(0, size, 8)
+    let cur = rt.mem_load(h, BUMP_CUR, 8)
+    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+      return rt.heap_grow(h, n)
+    }
+    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(cur, 0, c, 8)
+    r = rt.int_wrap(0, cur, 8)
+  }
+  rt.mem_store(h, LAST, size, 8)
+  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+  }
+  r
+}
+
+/// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
+/// list, or to free for a block from malloc. Counts the free.
+pub fn free(h: Int, p: Int) {
+  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
+  let b = rt.int_wrap(1, p, 8)
+  let c = rt.mem_load(b, 0, 8)
+  if c < 0 {
+    rt.heap_release(b)
+    return
+  }
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, p, 8)
+  rt.mem_store(fl, NFREE, rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1), 8)
+}
+
+/// Before an allocation of n bytes on a heap of a program with threads
+/// (xo_rt.c alloc_mt): when the class's free list is empty, it takes the
+/// heap's spare magazine, else one from the central list, so blocks
+/// other threads freed come back (decision 0118).
+pub fn refill(h: Int, n: Int) {
+  if n > rt.mem_load(h, MID_MAX, 8) {
+    return
+  }
+  var c = 65
+  var size = 2048
+  if n <= SMALL_MAX {
+    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    if c == 0 {
+      c = 1
+    }
+    size = rt.int_wrap(3, c, 4)
+  } else {
+    while size < n {
+      size = rt.int_wrap(3, size, 1)
+      c = rt.int_wrap(0, c, 1)
+    }
+  }
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  if rt.mem_load(fl, FREE_LISTS, 8) != 0 {
+    return
+  }
+  var m = rt.mem_load(fl, MAG, 8)
+  if m != 0 {
+    rt.mem_store(fl, MAG, 0, 8)
+  } else {
+    // central_take: a magazine is linked by its first block's second word
+    let cen = rt.mem_load(h, CENTRAL, 8)
+    if rt.slot_load(cen, c, RELAXED) == 0 {
+      return
+    }
+    rt.heap_lock()
+    m = rt.slot_load(cen, c, RELAXED)
+    if m != 0 {
+      rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
+    }
+    rt.heap_unlock()
+    if m == 0 {
+      return
+    }
+  }
+  rt.mem_store(fl, FREE_LISTS, m, 8)
+  // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
+  // division: no `/`, which can fault)
+  var q = 0
+  var rem = MAG_BYTES
+  var k = 12
+  while k >= 0 {
+    let d = rt.int_wrap(3, size, k)
+    if d <= rem {
+      rem = rt.int_wrap(1, rem, d)
+      q = q | rt.int_wrap(3, 1, k)
+    }
+    k = rt.int_wrap(1, k, 1)
+  }
+  if q < 8 {
+    q = 8
+  }
+  rt.mem_store(fl, NFREE, q, 8)
+}
+
+/// Gives back block p to heap h in a program with threads (xo_rt.c
+/// free_mt): as free, then a class's list that reached a magazine's
+/// size becomes the heap's spare magazine, and the spare it replaces
+/// goes to the central list.
+pub fn free_mt(h: Int, p: Int) {
+  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
+  let b = rt.int_wrap(1, p, 8)
+  let c = rt.mem_load(b, 0, 8)
+  if c < 0 {
+    rt.heap_release(b)
+    return
+  }
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, p, 8)
+  let nf = rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1)
+  rt.mem_store(fl, NFREE, nf, 8)
+  // nf >= max(MAG_BYTES / size, 8) without a division: nf >= q, q the
+  // quotient, is (nf + 1) * size > MAG_BYTES
+  if nf < 8 {
+    return
+  }
+  var size = rt.int_wrap(3, c, 4)
+  if c > 64 {
+    size = rt.int_wrap(3, 2048, rt.int_wrap(1, c, 65))
+  }
+  if rt.int_wrap(2, rt.int_wrap(0, nf, 1), size) <= MAG_BYTES {
+    return
+  }
+  let old = rt.mem_load(fl, MAG, 8)
+  if old != 0 {
+    // central_put
+    let cen = rt.mem_load(h, CENTRAL, 8)
+    rt.heap_lock()
+    rt.mem_store(old, 8, rt.slot_load(cen, c, RELAXED), 8)
+    rt.slot_store(cen, c, old, RELAXED)
+    rt.heap_unlock()
+  }
+  rt.mem_store(fl, MAG, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, 0, 8)
+  rt.mem_store(fl, NFREE, 0, 8)
+}
+
+/// Resizes block p of old bytes to n bytes (xo_rt.c xo_resize): a block
+/// from malloc that stays above the classes is reallocated (its growth
+/// counted for budgets), a block whose class also serves n is kept, and
+/// a block of a class moves to one of n's class when that class has a
+/// free block or the chunk has room (copied, then p freed: alloc's and
+/// free's single threaded paths, written out here because this module
+/// calls no functions). The new address, or 0 when the caller must move
+/// it (xo_alloc, copy, xo_free: a program with threads, mt not 0, or a
+/// block from or to malloc, or a chunk to replace). A block it returns
+/// sets LAST.
+pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
+  let b = rt.int_wrap(1, p, 8)
+  let hdr = rt.mem_load(b, 0, 8)
+  let mid = rt.mem_load(h, MID_MAX, 8)
+  if hdr < 0 && n > mid {
+    if n > old {
+      rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
+    }
+    rt.mem_store(h, LAST, n, 8)
+    return rt.heap_large_resize(b, n)
+  }
+  if hdr <= 0 || n > mid {
+    return 0
+  }
+  var c = 65
+  var size = 2048
+  if n <= SMALL_MAX {
+    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    if c == 0 {
+      c = 1
+    }
+    size = rt.int_wrap(3, c, 4)
+  } else {
+    while size < n {
+      size = rt.int_wrap(3, size, 1)
+      c = rt.int_wrap(0, c, 1)
+    }
+  }
+  if c == hdr {
+    rt.mem_store(h, LAST, size, 8)
+    return p
+  }
+  if mt != 0 {
+    return 0
+  }
+  // alloc's pop or carve
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  var q = rt.mem_load(fl, FREE_LISTS, 8)
+  if q != 0 {
+    let next = rt.mem_load(q, 0, 8)
+    rt.mem_store(fl, FREE_LISTS, next, 8)
+    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    rt.prefetch(next)
+  } else {
+    let need = rt.int_wrap(0, size, 8)
+    let cur = rt.mem_load(h, BUMP_CUR, 8)
+    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+      return 0
+    }
+    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(cur, 0, c, 8)
+    q = rt.int_wrap(0, cur, 8)
+  }
+  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+  }
+  rt.mem_store(h, LAST, size, 8)
+  rt.mem_copy(q, p, if old < n { old } else { n })
+  // free's push of p
+  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
+  let pl = rt.int_wrap(0, h, rt.int_wrap(3, hdr, 3))
+  rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
+  rt.mem_store(pl, FREE_LISTS, p, 8)
+  rt.mem_store(pl, NFREE, rt.int_wrap(0, rt.mem_load(pl, NFREE, 8), 1), 8)
+  q
+}

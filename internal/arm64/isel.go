@@ -413,6 +413,11 @@ func negConst(v *ssa.Value) (int64, bool) {
 
 func imm12(n int64) bool { return n >= 0 && n < 4096 }
 
+// rawImmOff reports whether off is the scaled unsigned immediate of a
+// load or store of w bytes (1, 2, 4, or 8): a multiple of w below 4096 *
+// w.
+func rawImmOff(off, w int64) bool { return w > 0 && off >= 0 && off%w == 0 && off/w < 4096 }
+
 // ---------------------------------------------------------------------------
 // Functions and blocks
 
@@ -2361,6 +2366,11 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 			return true
 		}
 		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
+		if k, ok := constInt(v.Args[2]); ok && op <= 1 && imm12(k) {
+			// a constant addend is the immediate (decision 0207 stage 3)
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k), a))
+			return true
+		}
 		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
 			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
 			return true
@@ -2441,6 +2451,16 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.mem_load":
 		w, _ := constInt(v.Args[2])
+		if off, ok := constInt(v.Args[1]); ok && rawImmOff(off, w) {
+			// a constant offset is the instruction's scaled immediate
+			// (decision 0207 stage 3: the heap record's words)
+			ins := map[int64]string{1: "ldrb $wd0, [$u0, #%d]", 2: "ldrh $wd0, [$u0, #%d]", 4: "ldr $wd0, [$u0, #%d]"}[w]
+			if ins == "" {
+				ins = "ldr $d0, [$u0, #%d]"
+			}
+			s.set(v, s.def1(false, fmt.Sprintf(ins, off), s.real(s.word(v.Args[0]))))
+			break
+		}
 		ins := map[int64]string{1: "ldrb $wd0, [$u0, $u1]", 2: "ldrh $wd0, [$u0, $u1]", 4: "ldr $wd0, [$u0, $u1]"}[w]
 		if ins == "" {
 			ins = "ldr $d0, [$u0, $u1]"
@@ -2448,6 +2468,15 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 		s.set(v, s.def1(false, ins, s.real(s.word(v.Args[0])), s.real(s.word(v.Args[1]))))
 	case "rt.mem_store":
 		w, _ := constInt(v.Args[3])
+		if off, ok := constInt(v.Args[1]); ok && rawImmOff(off, w) {
+			ins := map[int64]string{1: "strb $wu0, [$u1, #%d]", 2: "strh $wu0, [$u1, #%d]", 4: "str $wu0, [$u1, #%d]"}[w]
+			if ins == "" {
+				ins = "str $u0, [$u1, #%d]"
+			}
+			s.store(fmt.Sprintf(ins, off), s.real(s.word(v.Args[2])), s.word(v.Args[0]))
+			s.set(v)
+			break
+		}
 		ins := map[int64]string{1: "strb $wu0, [$u1, $u2]", 2: "strh $wu0, [$u1, $u2]", 4: "str $wu0, [$u1, $u2]"}[w]
 		if ins == "" {
 			ins = "str $u0, [$u1, $u2]"
@@ -2458,6 +2487,10 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 		fn := map[string]string{"rt.mem_copy": "memcpy", "rt.mem_move": "memmove", "rt.mem_set": "memset"}[v.Aux.(string)]
 		s.rt(fn, regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])))
 		s.clobber()
+		s.set(v)
+	case "rt.prefetch":
+		// decision 0207 stage 3: the heap's free list pops
+		s.store("prfm pldl1keep, [$u0]", s.real(s.word(v.Args[0])))
 		s.set(v)
 	case "rt.mem_cmp":
 		r := s.rt("memcmp", regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])), false)
