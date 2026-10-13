@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/jsontext
 use native/llrt/num
 use native/llrt/strings
 use native/llrt/text
@@ -2150,3 +2151,34 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 
 fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }
+
+// std/json's tape readers and text, as the decoders and encoders the SSA
+// builder generates per type call them (decision 0193 step 4): in Xo
+// (std/native/llrt/jsontext.xo). With XO_LLRT_C=jsontext the SSA builder
+// calls the C runtime (json_str and friends) instead.
+
+fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
+
+fn llrt_json_str(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.str_at(src, tape, i) }
+
+fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
+
+fn llrt_json_members(src: Bytes, tape: List[Int], i: Int) -> List[Int] { jsontext.members(src, tape, i) }
+
+fn llrt_json_int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.int_ok(src, tape, i) }
+
+fn llrt_json_int(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.int_at(src, tape, i) }
+
+fn llrt_json_float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.float_ok(src, tape, i) }
+
+fn llrt_json_float(src: Bytes, tape: List[Int], i: Int) -> Float { jsontext.float_at(src, tape, i) }
+
+fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
+
+fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }
+
+fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b) }
+
+fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
+
+fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }

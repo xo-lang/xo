@@ -971,6 +971,9 @@ void xo_exit(int64_t code) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+#ifdef XO_JSONTEXT_C
+// the C path of std/json's text (decision 0193 step 4): only
+// XO_LLRT_C=jsontext builds call it (std/native/llrt/jsontext_c.xo)
 // xo_rs_append_b64_quoted is s + the standard base64 of t (padded) in
 // double quotes (a Bytes in JSON).
 xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
@@ -994,6 +997,7 @@ xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn,
 	free(o.p);
 	return r;
 }
+#endif
 
 #ifdef XO_NUM_C
 // the C path of the number text (decision 0193 step 3): only
@@ -1371,8 +1375,12 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
 
-// JSON (std.md 5)
+#ifdef XO_JSONTEXT_C
+// JSON (std.md 5): the C path of std/json's text (decision 0193 step 4),
+// which only XO_LLRT_C=jsontext builds call (std/native/llrt/
+// jsontext_c.xo); std/native/llrt/jsontext.xo is the default
 #include "xo_json.c"
+#endif
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"

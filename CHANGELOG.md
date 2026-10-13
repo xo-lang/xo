@@ -325,6 +325,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   takes what the Go backend takes: hex floats (`0x1p-2`), underscores
   between digits (`1_000`), and any length. `XO_LLRT_C=num` at build time
   selects the C implementations.
+- std/json on the native backends is Xo (`std/native/llrt/jsontext.xo`,
+  decision 0193 step 4): the parser, the readers the generated decoders
+  use, and the text of strings, Floats, and Bytes, checked against the Go
+  backend on about 28,000 inputs. Decoding takes 0.41x to 0.96x of the
+  instructions it did, encoding strings about 0.9x, structs about 0.12x,
+  and Floats about 1/50 (the C ran snprintf up to 17 times a Float).
+  std/json now also works on the wasm backend. `XO_LLRT_C=jsontext` at
+  build time selects the C implementation.
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

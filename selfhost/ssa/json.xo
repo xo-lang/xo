@@ -176,12 +176,12 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {
-    b.retv(b.rt("rs_append_b64_quoted", st, [acc, v]))
+    b.retv(b.json_rt("rs_append_b64_quoted", st, [acc, v]))
     return
   }
   match b.tkind(t) {
     Str => {
-      b.retv(b.rt("rs_append_json_str", st, [acc, v]))
+      b.retv(b.json_rt("rs_append_json_str", st, [acc, v]))
       return
     }
     Int => {
@@ -189,7 +189,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       return
     }
     Float => {
-      b.retv(b.rt("rs_append_json_float", st, [acc, v]))
+      b.retv(b.json_rt("rs_append_json_float", st, [acc, v]))
       return
     }
     Bool => {
@@ -286,7 +286,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     var a = -1
     if oname == "Map" {
       let cur = b.read(av)
-      let q = b.rt("rs_append_json_str", st, [cur, k])
+      let q = b.json_rt("rs_append_json_str", st, [cur, k])
       a = b.lit(q, ":")
       let x = b.call("list.index", vt, "", [vals, i])
       a = b.json_sub(a, x, args[1])
@@ -482,11 +482,11 @@ fn (var b: Builder) dec_child(d: Dec, xt: Int, j: Int, seg: Int) -> Int {
 }
 
 fn (var b: Builder) dec_next(d: Dec, j: Int) -> Int {
-  b.rt("json_next", b.int_t(), [d.tape, j])
+  b.json_rt("json_next", b.int_t(), [d.tape, j])
 }
 
 fn (var b: Builder) dec_str(d: Dec, j: Int) -> Int {
-  b.rt("json_str", b.str_t(), [d.src, d.tape, j])
+  b.json_rt("json_str", b.str_t(), [d.src, d.tape, j])
 }
 
 /// xo.json.dec[ct](src: Str, tape: List[Int], i: Int) -> Result[T,
@@ -546,10 +546,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   if b.is_prelude_named(ct, ["Bytes"]) {
     b.dec_need(d, JK_STR, "expected base64 string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("b64_ok", bt, [txt])]))
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("b64_ok", bt, [txt])]))
     b.dec_fail(d, "expected base64 string")
     b.if_then_end(no, join)
-    b.dec_ok(d, b.rt("b64_decode", st, [txt]))
+    b.dec_ok(d, b.json_rt("b64_decode", st, [txt]))
     return
   }
   match b.tkind(t) {
@@ -560,18 +560,18 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     Int => {
       b.dec_need(d, JK_NUM, "expected integer")
-      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("json_int_ok", bt, [d.src, d.tape, i])]))
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_int_ok", bt, [d.src, d.tape, i])]))
       b.dec_fail(d, "expected integer")
       b.if_then_end(no, join)
-      b.dec_ok(d, b.rt("json_int", it, [d.src, d.tape, i]))
+      b.dec_ok(d, b.json_rt("json_int", it, [d.src, d.tape, i]))
       return
     }
     Float => {
       b.dec_need(d, JK_NUM, "expected number")
-      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("json_float_ok", bt, [d.src, d.tape, i])]))
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_float_ok", bt, [d.src, d.tape, i])]))
       b.dec_fail(d, "expected number")
       b.if_then_end(no, join)
-      b.dec_ok(d, b.rt("json_float", b.float_t(), [d.src, d.tape, i]))
+      b.dec_ok(d, b.json_rt("json_float", b.float_t(), [d.src, d.tape, i]))
       return
     }
     Bool => {
@@ -683,7 +683,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     let mv = b.local()
     b.write_var(mv, b.empty_map(t))
-    let mem = b.rt("json_members", b.m.list(it), [d.src, d.tape, i])
+    let mem = b.json_rt("json_members", b.m.list(it), [d.src, d.tape, i])
     let iv = b.local()
     let n = b.call("list.len", it, "", [mem])
     let (k, head, exit) = b.for_up_to_begin(n, iv)
@@ -835,7 +835,7 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
   let bt = b.bool_t()
   var out: List[Int] = []
   for f in fs {
-    let j = b.rt("json_find", it, [d.src, d.tape, o, b.const_str(f.name)])
+    let j = b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.name)])
     let join = b.new_block()
     let res = b.s.f.add_param(join, f.st)
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))

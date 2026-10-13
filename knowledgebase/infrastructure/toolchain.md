@@ -767,6 +767,20 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0` in the environment for the Go driver. Results in
   `bench/results/runtime-port-2026-10-12.md` and
   `runtime-port-step3-2026-10-12.md`. Last verified: 2026-10-12.
+- `bench/perf/json/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
+  decision 0193 step 4): the same for bench/perf/json (std/json decode
+  of small objects, Int, Float, and string arrays, Map objects, the
+  parser alone, invalid texts; encode of structs, strings, Floats; Bytes
+  both ways; `none` is the input setup alone); `XO_LLRT_C=jsontext`
+  builds the C path. Run it through the heavy lock with
+  `XO_SELF_DRIVER=0`. Results in
+  `bench/results/runtime-port-step4-2026-10-13.md`. Last verified:
+  2026-10-13.
+- `go test ./internal/llvm -run TestJSONTextDiff` (2026-10-13, decision
+  0193 step 4): std/json on arm64 and LLVM, Xo and C paths, against the
+  Go backend on about 28,000 generated and edge case inputs (not under
+  -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
+  verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1112,10 +1126,13 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,
-                        with C paths text_c.xo and strings_c.xo. `XO_LLRT_C=<name>[,<name>]`
-                        (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
-                        -DXO_STRINGS_C, likewise never in a pack); XO_UNICODE=c still works
-                        (Last verified: 2026-10-12)
+                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float text,
+                        Float.parse, hex, base64; num_c.xo) and jsontext.xo (std/json's parser,
+                        tape readers, string, Float, and Bytes text; jsontext_c.xo).
+                        `XO_LLRT_C=<name>[,<name>]` (or `all`) at build time selects a
+                        module's C path (-DXO_TEXT_C, -DXO_STRINGS_C, -DXO_NUM_C,
+                        -DXO_JSONTEXT_C, likewise never in a pack); XO_UNICODE=c still works
+                        (Last verified: 2026-10-13)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
