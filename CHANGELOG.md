@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The Go implementation of the compiler is deleted (decision 0215): Go
+  cmd/xo, the hidden comparison dumps, and the Go compiler packages
+  (lexer, parser, checker, SSA builder, Go, arm64, and LLVM emitters,
+  build driver, modules, and the tools), 95,011 lines of non-test Go
+  and 18,837 of tests. `xo` is the self hosted toolchain alone; the
+  last commit with the Go compiler is tagged `go-compiler-final`. A
+  checkout's `xo` is built by an earlier xo (`go run ./scripts/xobuild`;
+  with none, by the xo1 of that tag). The Go backend stays (selfhost/gen
+  and std/rt), as does `use go` (xo-gobind). The playground's compiler
+  half (cmd/xoplay) is gone with it: the site builds it from the tag
+  until an Xo replacement exists.
 - Native backends on Linux: the network's system calls (socket, bind,
   listen, accept4, connect, reads, sends with MSG_NOSIGNAL, socket
   options, names, shutdown, close, and the poller's epoll) are made from
