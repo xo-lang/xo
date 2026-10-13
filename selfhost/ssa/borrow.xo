@@ -16,19 +16,18 @@ struct BSite {
 /// terminator uses, the candidates, and those decided.
 struct Borrows {
   pos: List[Int] = []
-  users: Map[Int, List[BSite]] = {}
-  all: Map[Int, List[BSite]] = {}
-  cons: Map[Int, List[BSite]] = {}
-  in_term: Map[Int, Bool] = {}
+  /// by value: lists where maps keyed by value made a lookup, a removal,
+  /// and an insertion per site (bench/results/xo1-speed-2026-10-13.md)
+  users: List[List[BSite]] = []
+  all: List[List[BSite]] = []
+  cons: List[List[BSite]] = []
+  in_term: List[Bool] = []
   cand: List[Bool] = []
   done: List[Bool] = []
 }
 
-fn add_site(var m: Map[Int, List[BSite]], root: Int, s: BSite) {
-  var xs = m.get(root) ?? []
-  m.remove(root)
-  xs.push(s)
-  m[root] = xs
+fn add_site(var m: List[List[BSite]], root: Int, s: BSite) {
+  m[root].push(s)
 }
 
 /// Decides the borrowed projections of f into r.bproj
@@ -40,6 +39,10 @@ fn (var r: Rc) borrow_projections(f: Func) {
     st.pos.push(0)
     st.cand.push(false)
     st.done.push(false)
+    st.users.push([])
+    st.all.push([])
+    st.cons.push([])
+    st.in_term.push(false)
   }
   var cands: List[Int] = []
   for bl in 0..f.blocks.len() {
@@ -96,7 +99,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
   if let Some(o) = r.bproj.get(p.root) {
     owner = o
   }
-  if st.in_term.contains(v) || !r.tracked(f, owner) {
+  if st.in_term[v] || !r.tracked(f, owner) {
     return
   }
   // the blocks v is live into and out of, and its last use in each
@@ -106,7 +109,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
   var live_out: Map[Int, Bool] = {}
   var last: Map[Int, Int] = {}
   var work: List[Int] = []
-  for s in st.users.get(v) ?? [] {
+  for s in st.users[v] {
     if s.i > (last.get(s.b) ?? -1) {
       last[s.b] = s.i
     }
@@ -126,7 +129,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
       }
     }
   }
-  for s in st.cons.get(owner.root) ?? [] {
+  for s in st.cons[owner.root] {
     var inside = false
     if s.b == db {
       inside = s.i > di && (live_out.contains(db) || s.i <= (last.get(db) ?? -1))
@@ -140,7 +143,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
   // a projection consumed where its owner would be dead stays counted:
   // the owner dying first left it unique, while borrowing would keep the
   // owner alive and the value shared at the consume
-  for s in st.cons.get(v) ?? [] {
+  for s in st.cons[v] {
     if !used_after(f, st, owner.root, s) {
       return
     }
@@ -152,7 +155,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
 /// (borrowProjections' usedAfter).
 fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
   var used: Map[Int, Bool] = {}
-  for u in st.all.get(root) ?? [] {
+  for u in st.all[root] {
     if u.b == s.b && u.i > s.i {
       return true
     }
