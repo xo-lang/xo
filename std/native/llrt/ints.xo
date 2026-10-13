@@ -9,9 +9,7 @@
 // The SSA builders (internal/ssa build_int.go, selfhost/ssa show.xo)
 // lower a sized integer operation inline: the word operation, the range
 // check, and on failure a call of op_fault or conv_fault here, which
-// never return. The C path stays selectable (`XO_LLRT_C=ints` loads
-// ints_c.xo, and the Go SSA builder calls the C runtime's rt.int_op and
-// friends as before) until bench/perf/ints meets decision 0180's bar.
+// never return. Decision 0198 deleted the C path (`XO_LLRT_C=ints`).
 use native/llrt/num
 use native/llrt/show
 use native/rt

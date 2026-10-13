@@ -745,8 +745,8 @@ fn (var b: Builder) atomic_op(key: Str, fo: Int, es: List[Expr?], h: Int, et: In
   }
 }
 
-/// An Atomic operation as a call of the C runtime (XO_LLRT_C=atomic in
-/// the Go builder).
+/// An Atomic operation as a runtime call, without the native prelude: the
+/// wasm runtime has them (decision 0198 deleted the C runtime's).
 fn (var b: Builder) atomic_c(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int, span: Span) -> Int {
   let it = b.int_t()
   match key {

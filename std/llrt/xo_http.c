@@ -1917,10 +1917,8 @@ typedef struct xo_hconn {
 	struct h2c *h2;
 	struct h2s *h2s;
 	struct xo_hconn *h2owner;
-	// the parsing in Xo (decision 0193 step 6, xo_hc_xo): where
-	// hc_read_one goes on, and the result Xo passed (xo_hc_head,
-	// xo_hc_chunked)
-	int xo;
+	// the parsing in Xo (decision 0193 step 6): where hc_read_one goes
+	// on, and the result Xo passed (xo_hc_head, xo_hc_chunked)
 	int rd_phase;
 	int rd_have, rd_res;
 	int64_t rd_used;
@@ -2254,9 +2252,9 @@ static int64_t http_max_body(void) {
 
 // hc_read_one reads a request: 1 when it is ready for the handler, 2
 // when it was answered here (OPTIONS *), 0 when the connection is done.
-// With the parsing in Xo (hc->xo, std/native/llrt/http1.xo) also 3, a
-// request head to parse at the unread input, and 4, a chunked body to
-// decode there: the fiber's Xo code parses and passes the result
+// The parsing is Xo's (std/native/llrt/http1.xo): also 3, a request
+// head to parse at the unread input, and 4, a chunked body to decode
+// there: the fiber's Xo code parses and passes the result
 // (xo_hc_head, xo_hc_chunked), then calls again, which goes on where it
 // stopped (hc->rd_phase).
 static int64_t hc_read_one(xo_hconn *hc) {
@@ -2306,7 +2304,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 		int r;
 		if (peek || skip) {
 			r = HP_NEED;
-		} else if (hc->xo) {
+		} else {
 			if (!hc->rd_have) {
 				hc->rd_phase = RD_HEAD;
 				return 3;
@@ -2314,8 +2312,6 @@ static int64_t hc_read_one(xo_hconn *hc) {
 			hc->rd_have = 0;
 			r = hc->rd_res;
 			used = hc->rd_used;
-		} else {
-			r = hp_head(hc->buf ? hc->buf + hc->off : hc->buf, hc->n - hc->off, hc->eof, &hc->req, &used);
 		}
 		if (r == HP_NEED) {
 			if (hc->eof) {
@@ -2387,18 +2383,13 @@ static int64_t hc_read_one(xo_hconn *hc) {
 			int64_t have = hc->n - hc->off;
 			if (q->chunked) {
 				int64_t used = 0;
-				int b;
-				if (hc->xo) {
-					if (!hc->rd_have) {
-						hc->rd_phase = RD_BODY;
-						return 4;
-					}
-					hc->rd_have = 0;
-					b = hc->rd_res;
-					used = hc->rd_used;
-				} else {
-					b = hb_chunked(hc->buf + hc->off, have, hc->eof, &hc->body, &used);
+				if (!hc->rd_have) {
+					hc->rd_phase = RD_BODY;
+					return 4;
 				}
+				hc->rd_have = 0;
+				int b = hc->rd_res;
+				used = hc->rd_used;
 				if (b == HB_OK) {
 					hc->off += used;
 					break;
@@ -2465,7 +2456,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 // xo_hc_read reads the next request for the handler: 1 when one is
 // ready (its body read), 0 when the connection is done (the end of the
 // stream, an error answered, the server stopping, the task canceled);
-// with the parsing in Xo also 3 and 4 (hc_read_one).
+// also 3 and 4 for the parsing in Xo (hc_read_one).
 int64_t xo_hc_read(xo_hconn *hc) {
 	for (;;) {
 		int64_t r = hc_read_one(hc);
@@ -2475,9 +2466,6 @@ int64_t xo_hc_read(xo_hconn *hc) {
 	}
 }
 
-// xo_hc_xo makes the connection's request heads and chunked bodies parse
-// in Xo (std/native/llrt/http1.xo; decision 0193 step 6).
-void xo_hc_xo(xo_hconn *hc) { hc->xo = 1; }
 
 // xo_hc_input is the unread input (what hc_read stopped at), or a part
 // of it whose parse is the whole's (pipelined requests would otherwise be
@@ -2982,38 +2970,8 @@ xo_rlist *xo_any_get(xo_any *a, const char *tag, int64_t tn) {
 XO_NORETURN void xo_fault_at(const char *msg, int64_t n, const char *loc, int64_t ln) { fault_text(cstr_of(msg, n), cstr_of(loc, ln)); }
 
 // ---------------------------------------------------------------------------
-// Text helpers of std/http
-
-xo_rstr *xo_canonical_key(const char *p, int64_t n, int64_t *len) {
-	xo_rstr *s = nstr(p, n, len);
-	h_canon(s->data, n);
-	return s;
-}
-
-int64_t xo_equal_fold(const char *a, int64_t an, const char *b, int64_t bn) {
-	if (an != bn) {
-		return 0;
-	}
-	for (int64_t i = 0; i < an; i++) {
-		if (h_lower((unsigned char)a[i]) != h_lower((unsigned char)b[i])) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
-// xo_path_unescape is url.PathUnescape: "" when an escape is invalid.
-xo_rstr *xo_path_unescape(const char *p, int64_t n, int64_t *len) {
-	if (!memchr(p, '%', (size_t)n)) {
-		return nstr(p, n, len);
-	}
-	nbuf b = {0};
-	if (!h_unescape(p, n, U_PATH, &b)) {
-		free(b.p);
-		return nstr("", 0, len);
-	}
-	return nbuf_take(&b, len);
-}
+// Text helpers of std/http's client (the server's are
+// std/native/llrt/http1.xo; decision 0198 deleted their C path)
 
 // h_go_quote appends strconv.Quote(s) (printable: ASCII graphic and
 // every rune from U+00A1 but U+00AD; an approximation of IsPrint).
@@ -3072,30 +3030,6 @@ static void h_go_quote(nbuf *o, const char *p, int64_t n) {
 	nbuf_byte(o, '"');
 }
 
-xo_rstr *xo_go_quote(const char *p, int64_t n, int64_t *len) {
-	nbuf b = {0};
-	h_go_quote(&b, p, n);
-	return nbuf_take(&b, len);
-}
-
-// url.QueryEscape
-xo_rstr *xo_query_escape(const char *p, int64_t n, int64_t *len) {
-	nbuf b = {0};
-	for (int64_t i = 0; i < n; i++) {
-		unsigned c = (unsigned char)p[i];
-		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-			nbuf_byte(&b, (char)c);
-		} else if (c == ' ') {
-			nbuf_byte(&b, '+');
-		} else {
-			char t[4];
-			snprintf(t, sizeof t, "%%%02X", c);
-			nbuf_put(&b, t, 3);
-		}
-	}
-	return nbuf_take(&b, len);
-}
-
 // h_escape_path is url.escape(s, encodePath).
 static void h_escape_path(nbuf *b, const char *p, int64_t n) {
 	for (int64_t i = 0; i < n; i++) {
@@ -3110,14 +3044,6 @@ static void h_escape_path(nbuf *b, const char *p, int64_t n) {
 		snprintf(t, sizeof t, "%%%02X", c);
 		nbuf_put(b, t, 3);
 	}
-}
-
-static xo_rlist *strs_list(hstr *xs, int n) {
-	xo_rlist *l = n_str_list_new(n);
-	for (int i = 0; i < n; i++) {
-		l = n_str_list_add(l, xs[i].p ? xs[i].p : "", xs[i].n);
-	}
-	return l;
 }
 
 // h_split_hostport is url's splitHostPort: the hostname (brackets
@@ -3141,66 +3067,6 @@ static void h_split_hostport(hstr host, hstr *name, hstr *port) {
 	} else {
 		*name = hs_dup(p, hn);
 	}
-}
-
-// xo_url_parts is url.Parse (fragment cut) or ParseRequestURI: [] when it
-// fails, else [scheme, hostname, port, path, raw query, host].
-xo_rlist *xo_url_parts(const char *p, int64_t n, int64_t request) {
-	int64_t un = n;
-	if (!request) {
-		const char *h = memchr(p, '#', (size_t)n);
-		if (h) {
-			un = h - p;
-		}
-	}
-	hurl u;
-	char err[200];
-	if (!h_url_parse(p, un, (int)request, &u, err, sizeof err)) {
-		return n_str_list_new(0);
-	}
-	hstr name, port;
-	h_split_hostport(u.host, &name, &port);
-	hstr parts[6] = {u.scheme, name, port, u.path, u.rawquery, u.host};
-	xo_rlist *l = strs_list(parts, 6);
-	hs_free(&name);
-	hs_free(&port);
-	hu_free(&u);
-	return l;
-}
-
-// xo_url_error is the text of url.Parse's error: parse "url": reason.
-xo_rstr *xo_url_error(const char *p, int64_t n, int64_t *len) {
-	int64_t un = n;
-	const char *h = memchr(p, '#', (size_t)n);
-	if (h) {
-		un = h - p;
-	}
-	hurl u;
-	char err[200];
-	nbuf b = {0};
-	if (h_url_parse(p, un, 0, &u, err, sizeof err)) {
-		hu_free(&u);
-		return nstr("", 0, len);
-	}
-	nbuf_str(&b, "parse ");
-	h_go_quote(&b, p, un);
-	nbuf_str(&b, ": ");
-	nbuf_str(&b, err);
-	return nbuf_take(&b, len);
-}
-
-// xo_query_parts is url.ParseQuery as std/rt's urlOf uses it: the keys
-// sorted with their first values.
-xo_rlist *xo_query_parts(const char *p, int64_t n) {
-	hlist q = {0};
-	h_parse_query(p, n, &q);
-	xo_rlist *l = n_str_list_new(q.n * 2);
-	for (int64_t i = 0; i < q.n; i++) {
-		l = n_str_list_add(l, q.a[i].k.p, q.a[i].k.n);
-		l = n_str_list_add(l, q.a[i].v.p, q.a[i].v.n);
-	}
-	hl_free(&q);
-	return l;
 }
 
 // ---------------------------------------------------------------------------

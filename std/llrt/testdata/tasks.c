@@ -9,10 +9,26 @@
 // heaps). Exit status 0 means every test passed.
 
 #define XO_RT_NO_MAIN
-// the C path of Atomic's operations (decision 0200), which this test
-// drives directly
-#define XO_ATOMIC_C
 #include "../xo_rt.c"
+
+// Atomic's operations on the runtime's object, as the generated code
+// does them inline and std/native/llrt/atomic.xo (decision 0200; decision
+// 0198 deleted the C runtime's copies this test used to drive)
+static int64_t t_atomic_get(xo_atomic *a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static int64_t t_atomic_swap(xo_atomic *a, int64_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static int64_t t_atomic_cas(xo_atomic *a, int64_t old, int64_t v) {
+	return __atomic_compare_exchange_n(&a->v, &old, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+static int64_t t_atomic_add(xo_atomic *a, int64_t n) { return __atomic_add_fetch(&a->v, n, __ATOMIC_SEQ_CST); }
+static int64_t t_atomic_max(xo_atomic *a, int64_t n) {
+	int64_t old = __atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
+	while (old < n) {
+		if (__atomic_compare_exchange_n(&a->v, &old, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+			return n;
+		}
+	}
+	return old;
+}
 
 // the tasks of the fan out tests (-DXO_TASKS_N; a plain -DN would reach
 // the Windows headers, which name a union member N)
@@ -171,7 +187,7 @@ static void run_job(xo_rlist *fl, xo_task *t) {
 		break;
 	case J_ADD:
 		for (int64_t i = 0; i < j.arg; i++) {
-			xo_atomic_add(j.obj, 1, LOC);
+			t_atomic_add(j.obj, 1);
 		}
 		break;
 	case J_PING: {
@@ -370,10 +386,10 @@ static void test_mutex(void) {
 	xo_rlist *l = xo_mutex_rlock(m, LOC);
 	CHECK(first(l) == 8 * (N / 8));
 	xo_mutex_runlock(m, l);
-	CHECK(xo_atomic_get(a) == 8 * (N / 8));
-	CHECK(xo_atomic_max(a, 5) == 8 * (N / 8));
-	CHECK(xo_atomic_swap(a, 3) == 8 * (N / 8));
-	CHECK(xo_atomic_cas(a, 3, 4) == 1 && xo_atomic_cas(a, 3, 5) == 0 && xo_atomic_get(a) == 4);
+	CHECK(t_atomic_get(a) == 8 * (N / 8));
+	CHECK(t_atomic_max(a, 5) == 8 * (N / 8));
+	CHECK(t_atomic_swap(a, 3) == 8 * (N / 8));
+	CHECK(t_atomic_cas(a, 3, 4) == 1 && t_atomic_cas(a, 3, 5) == 0 && t_atomic_get(a) == 4);
 	release(m);
 	release(a);
 	fputs("mutex: ok\n", stderr);

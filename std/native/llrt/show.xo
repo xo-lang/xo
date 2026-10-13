@@ -6,9 +6,9 @@
 // build_show.go, selfhost/ssa/show.xo) that calls these for its Rune and
 // UInt64 elements, num.xo for its Ints and Floats, and text.xo for its
 // Str and Bytes. The SSA builder calls them through the native prelude's
-// llrt_append_rune and friends. The C path stays selectable
-// (`XO_LLRT_C=show` loads show_c.xo, and the Go SSA builder calls the C
-// runtime as before) until bench/perf/text meets decision 0180's bar.
+// llrt_append_rune and friends. Decision 0198 deleted the C path
+// (`XO_LLRT_C=show`, show_c.xo, and the Go SSA builder's calls of the
+// C runtime).
 use native/llrt/num
 use native/rt
 

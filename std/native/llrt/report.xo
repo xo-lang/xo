@@ -9,9 +9,8 @@
 // (XO_PROP_BEST), which std/rt skips. The C runtime keeps the generator,
 // the write, and the exit (rttest.gen_choices, test_write, prop_best,
 // test_quit). The failure and log lines (XO-TEST-FAIL, XO-TEST-LOG) stay
-// C: they frame text the generated code made and decide nothing. The C
-// path stays selectable (`XO_LLRT_C=report` loads report_c.xo) until the
-// bar of decision 0180 holds.
+// C: they frame text the generated code made and decide nothing.
+// Decision 0198 deleted the C path (`XO_LLRT_C=report`).
 use native/llrt/scan
 use native/llrt/show
 use native/rt

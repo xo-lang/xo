@@ -9,9 +9,9 @@
 // in the wasm runtime), eight a step through rt.bytes_word, the lowest
 // match by rt.ctz. A range shorter than a step that ends at least a step
 // into its value is read as the step ending at its end, its bytes before
-// the range shifted out; only bytes of the value are ever read. The C
-// path stays selectable (`XO_LLRT_C=scan` loads scan_c.xo) until
-// bench/perf/text meets decision 0180's bar on both native backends.
+// the range shifted out; only bytes of the value are ever read. Decision
+// 0198 deleted the selectable C path (`XO_LLRT_C=scan`); the C functions
+// stay for the C runtime's own callers.
 use native/rt
 
 // Words of eight equal bytes.

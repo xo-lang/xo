@@ -5,196 +5,10 @@
 
 static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
 
-// The C path of the sized integer operations and conversions (the
-// zero-C audit's portable group, decisions 0193 and 0195): compiled
-// only with -DXO_INTS_C (XO_LLRT_C=ints, std/native/llrt/ints_c.xo).
-// By default the SSA builders lower them inline and their faults are
-// std/native/llrt/ints.xo.
-#ifdef XO_INTS_C
-// n_int_name is the Xo name of the integer type of bits and uns.
-static const char *n_int_name(int64_t bits, int64_t uns) {
-	switch (bits) {
-	case 8:
-		return uns ? "UInt8" : "Int8";
-	case 16:
-		return uns ? "UInt16" : "Int16";
-	case 32:
-		return uns ? "UInt32" : "Int32";
-	}
-	return uns ? "UInt64" : "Int";
-}
-
-// n_int_str is the decimal text of v, a value of the type of bits and uns.
-static void n_int_str(char *buf, size_t n, int64_t v, int64_t bits, int64_t uns) {
-	if (uns && bits == 64) {
-		snprintf(buf, n, "%llu", (unsigned long long)v);
-	} else {
-		snprintf(buf, n, "%lld", (long long)v);
-	}
-}
-
-// n_int_fits reports whether v (an exact result) is a value of the type
-// of bits and uns (narrower than 64 bits).
-static int n_int_fits(int64_t v, int64_t bits, int64_t uns) {
-	if (bits >= 64) {
-		return 1;
-	}
-	if (uns) {
-		return v >= 0 && v < ((int64_t)1 << bits);
-	}
-	int64_t lim = (int64_t)1 << (bits - 1);
-	return v >= -lim && v < lim;
-}
-
-XO_NORETURN static void n_int_overflow(int64_t a, const char *op, int64_t b, int64_t bits, int64_t uns, const char *loc, int64_t ln) {
-	char x[32], y[32], m[160];
-	n_int_str(x, sizeof x, a, bits, uns);
-	n_int_str(y, sizeof y, b, bits, uns);
-	snprintf(m, sizeof m, "integer overflow: %s %s %s does not fit %s", x, op, y, n_int_name(bits, uns));
-	fault_at(m, loc, ln);
-}
-
-// xo_int_op is checked arithmetic on a sized integer type (std/rt's AddS,
-// AddU, ..., Shl, Shr, NegS, NegU): op 0 +, 1 -, 2 *, 3 /, 4 %, 5 <<,
-// 6 >>, 7 unary minus of a.
-int64_t xo_int_op(int64_t op, int64_t a, int64_t b, int64_t bits, int64_t uns, const char *loc, int64_t ln) {
-	static const char *ops[] = {"+", "-", "*", "/", "%", "<<", ">>"};
-	char x[32], m[160];
-	if (op == 7) {
-		int bad = uns ? a != 0 : (bits == 64 ? a == INT64_MIN : !n_int_fits(-a, bits, 0));
-		if (bad) {
-			n_int_str(x, sizeof x, a, bits, uns);
-			snprintf(m, sizeof m, "integer overflow: -(%s) does not fit %s", x, n_int_name(bits, uns));
-			fault_at(m, loc, ln);
-		}
-		return -a;
-	}
-	if (op == 5 || op == 6) {
-		if (b < 0 || b >= bits) {
-			snprintf(m, sizeof m, "shift amount %lld out of range for %s", (long long)b, n_int_name(bits, uns));
-			fault_at(m, loc, ln);
-		}
-		if (op == 6) {
-			return uns ? (int64_t)((uint64_t)a >> b) : a >> b;
-		}
-		uint64_t mask = bits == 64 ? ~(uint64_t)0 : (((uint64_t)1 << bits) - 1);
-		uint64_t c = ((uint64_t)a << b) & mask;
-		int64_t r = (int64_t)c;
-		if (!uns && bits < 64 && ((c >> (bits - 1)) & 1)) {
-			r = (int64_t)(c | ~mask); // sign extend
-		}
-		int64_t back = uns ? (int64_t)((uint64_t)r >> b) : r >> b;
-		if (back != a) {
-			n_int_overflow(a, "<<", b, bits, uns, loc, ln);
-		}
-		return r;
-	}
-	if ((op == 3 || op == 4) && b == 0) {
-		n_int_str(x, sizeof x, a, bits, uns);
-		snprintf(m, sizeof m, "division by zero: %s %s 0", x, op == 3 ? "/" : "%");
-		fault_at(m, loc, ln);
-	}
-	if (uns && bits == 64) {
-		uint64_t ua = (uint64_t)a, ub = (uint64_t)b, r;
-		switch (op) {
-		case 0:
-			if (__builtin_add_overflow(ua, ub, &r)) {
-				n_int_overflow(a, "+", b, bits, uns, loc, ln);
-			}
-			return (int64_t)r;
-		case 1:
-			if (ub > ua) {
-				n_int_overflow(a, "-", b, bits, uns, loc, ln);
-			}
-			return (int64_t)(ua - ub);
-		case 2:
-			if (__builtin_mul_overflow(ua, ub, &r)) {
-				n_int_overflow(a, "*", b, bits, uns, loc, ln);
-			}
-			return (int64_t)r;
-		case 3:
-			return (int64_t)(ua / ub);
-		default:
-			return (int64_t)(ua % ub);
-		}
-	}
-	// a narrow type: the exact result fits in 64 bits, except an unsigned
-	// 32 bit product, which is computed unsigned
-	int64_t r;
-	switch (op) {
-	case 0:
-		r = a + b;
-		break;
-	case 1:
-		r = a - b;
-		break;
-	case 2:
-		if (uns) {
-			uint64_t ur;
-			if (__builtin_mul_overflow((uint64_t)a, (uint64_t)b, &ur) || ur > (((uint64_t)1 << bits) - 1)) {
-				n_int_overflow(a, "*", b, bits, uns, loc, ln);
-			}
-			return (int64_t)ur;
-		}
-		r = a * b;
-		break;
-	case 3:
-		r = a / b;
-		break;
-	default:
-		return a % b;
-	}
-	if (!n_int_fits(r, bits, uns)) {
-		n_int_overflow(a, ops[op], b, bits, uns, loc, ln);
-	}
-	return r;
-}
-
-// xo_int_conv converts v (of the type of fbits and funs) to the type of
-// tbits and tuns, faulting out of range (std/rt's Conv).
-int64_t xo_int_conv(int64_t v, int64_t fbits, int64_t funs, int64_t tbits, int64_t tuns, const char *loc, int64_t ln) {
-	int ok;
-	if (funs && fbits == 64 && v < 0) {
-		// a UInt64 above the Int range fits only a UInt64
-		ok = tuns && tbits == 64;
-	} else if (tuns && tbits == 64) {
-		ok = v >= 0;
-	} else {
-		ok = n_int_fits(v, tbits, tuns);
-	}
-	if (!ok) {
-		char x[32], m[160];
-		n_int_str(x, sizeof x, v, fbits, funs);
-		snprintf(m, sizeof m, "%s is out of range for %s", x, n_int_name(tbits, tuns));
-		fault_at(m, loc, ln);
-	}
-	return v;
-}
-
-// xo_int_in_range reports whether the Int v is a value of the type of bits
-// and uns (`Int32.try`).
-int64_t xo_int_in_range(int64_t v, int64_t bits, int64_t uns) {
-	if (uns && bits == 64) {
-		return v >= 0;
-	}
-	return n_int_fits(v, (int)bits, (int)uns);
-}
-
-// xo_rune_valid reports whether v is a Unicode scalar value (`Rune.try`).
-int64_t xo_rune_valid(int64_t v) { return n_rune_valid(v); }
-
-// xo_rune_of is `Rune(n)` (decision 0079).
-int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_t ln) {
-	if ((uns && bits == 64 && v < 0) || !n_rune_valid(v)) {
-		char x[32], m[160];
-		n_int_str(x, sizeof x, v, bits, uns);
-		snprintf(m, sizeof m, "%s is not a Unicode scalar value, so it is not a Rune", x);
-		fault_at(m, loc, ln);
-	}
-	return v;
-}
-#endif
-
+// The C versions of the intrinsics below and further down are compiled
+// only with -DXO_INTS_C, which the drivers add when the generated code
+// calls one. The flag kept its name when decision 0198 deleted the C
+// path of ints (XO_LLRT_C=ints) it also guarded.
 #ifdef XO_INTS_C
 // the C versions of the conversions of UInt64 and Float32 (the native
 // backends lower rt.u64_to_float, rt.f32_round, and rt.i64_to_f32
@@ -205,19 +19,6 @@ double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 // Module.Float32): conversions and arithmetic round through float.
 double xo_f32_round(double v) { return (double)(float)v; }
 double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
-#endif
-
-// The C path of the leaf text of Display and Debug (decision 0193 step
-// 5): compiled only with -DXO_SHOW_C (XO_LLRT_C=show,
-// std/native/llrt/show_c.xo); std/native/llrt/show.xo is the default.
-#ifdef XO_SHOW_C
-// xo_rs_append_u64 is s + the text of a UInt64.
-xo_rstr *xo_rs_append_u64(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
-	char t[32];
-	int n = snprintf(t, sizeof t, "%llu", (unsigned long long)v);
-	*len = an + n;
-	return rs_append(a, an, t, n);
-}
 #endif
 
 // n_rune_utf8 writes the UTF-8 encoding of r (U+FFFD when it is not a
@@ -231,35 +32,6 @@ xo_rstr *xo_rs_append_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
 	*len = an + n;
 	return rs_append(a, an, t, n);
 }
-
-#ifdef XO_SHOW_C
-// xo_rs_append_rune_quote is s + the Debug text of r (std/rt quoteRune).
-xo_rstr *xo_rs_append_rune_quote(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
-	char t[8];
-	int n = 0;
-	t[n++] = '\'';
-	switch (r) {
-	case '\'':
-	case '\\':
-		t[n++] = '\\';
-		t[n++] = (char)r;
-		break;
-	case '\n':
-		t[n++] = '\\';
-		t[n++] = 'n';
-		break;
-	case '\t':
-		t[n++] = '\\';
-		t[n++] = 't';
-		break;
-	default:
-		n += n_rune_utf8(t + n, r);
-	}
-	t[n++] = '\'';
-	*len = an + n;
-	return rs_append(a, an, t, n);
-}
-#endif
 
 // xo_rs_push_byte is a BytesBuilder's write_byte: s + the byte x.
 xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
@@ -441,8 +213,8 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 // rt.u64_mul_hi, the bits of a Float, and rt.bytes_word inline, and
 // Int's checked_ and saturating_ methods are std/native/llrt/ints.xo,
 // so no default build calls these: they are compiled only with
-// -DXO_INTS_C, which IOFlags adds when the generated code calls one
-// (a non-constant op, or the C path XO_LLRT_C=ints).
+// -DXO_INTS_C, which the drivers add when the generated code calls one
+// (a non-constant op of int_wrap).
 #ifdef XO_INTS_C
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
@@ -515,23 +287,6 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 		return !__builtin_mul_overflow(a, b, &r);
 	}
 	return b != 0 && !(b == -1 && a == INT64_MIN);
-}
-#endif
-
-// n_hex_val is the value of a hex digit, or -1 (the crypto C test, which
-// defines XO_DIGEST_C, uses it).
-#ifdef XO_DIGEST_C
-static __attribute__((unused)) int n_hex_val(char c) {
-	if (c >= '0' && c <= '9') {
-		return c - '0';
-	}
-	if (c >= 'a' && c <= 'f') {
-		return c - 'a' + 10;
-	}
-	if (c >= 'A' && c <= 'F') {
-		return c - 'A' + 10;
-	}
-	return -1;
 }
 #endif
 

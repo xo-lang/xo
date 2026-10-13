@@ -19,13 +19,11 @@ fn srv_close(s: Srv)
 
 fn hc_new(s: Srv, c: Conn) -> HConn
 /// The next request is read (its body too): 1, or 0 to close the
-/// connection; with the parsing in Xo (hc_xo) also 3, a request head to
+/// connection; with the parsing in Xo also 3, a request head to
 /// parse at hc_input (the result to hc_head), and 4, a chunked body to
 /// decode there (the result to hc_chunked) (std/native/llrt/http1.xo,
 /// decision 0193 step 6).
 fn hc_read(h: HConn) -> Int
-/// The connection's request heads and chunked bodies parse in Xo.
-fn hc_xo(h: HConn)
 /// The unread input (mode 2), up to the end of its first head (mode 0),
 /// or at most 4 KiB of it (mode 1); its length; whether no more will
 /// come.
@@ -63,12 +61,10 @@ fn hc_close(h: HConn)
 /// from h2_next instead of hc_read.
 fn hc_h2(h: HConn) -> Bool
 /// Runs the HTTP/2 connection until a request is ready for a handler
-/// (1) or the connection is done (0); with HPACK in Xo (h2_xo) also 2,
+/// (1) or the connection is done (0); with HPACK in Xo also 2,
 /// a header block fragment to decode, and 3, response heads to encode
 /// (std/native/llrt/hpack.xo, decision 0193 step 6).
 fn h2_next(h: HConn) -> Int
-/// The connection's header blocks pass through Xo (hpack.xo).
-fn h2_xo(h: HConn)
 /// The fragment to decode (after 2) and whether its block's first
 /// representation is still to come.
 fn h2_block(h: HConn) -> Str
@@ -86,24 +82,6 @@ fn h2_take(h: HConn) -> HConn
 /// The stream's handler is done; a response it did not finish resets
 /// the stream.
 fn h2_end(h: HConn)
-
-/// textproto.CanonicalMIMEHeaderKey.
-fn canonical_key(s: Str) -> Str
-/// strings.EqualFold (ASCII letters).
-fn equal_fold(a: Str, b: Str) -> Bool
-/// url.PathUnescape, "" when the escapes are invalid.
-fn path_unescape(s: Str) -> Str
-/// url.Parse (or ParseRequestURI when request): [] when it fails, else
-/// [scheme, hostname, port, path, raw query, host].
-fn url_parts(s: Str, request: Bool) -> List[Str]
-/// The error text of url.Parse(s).
-fn url_error(s: Str) -> Str
-/// url.ParseQuery: keys sorted with their first values, [k1, v1, ...].
-fn query_parts(raw: Str) -> List[Str]
-/// url.QueryEscape.
-fn query_escape(s: Str) -> Str
-/// strconv.Quote.
-fn go_quote(s: Str) -> Str
 
 /// Client: a request to url (absolute, http or https) with a header of
 /// names and values, a body, a timeout in ns, and the roots https

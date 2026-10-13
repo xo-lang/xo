@@ -16,8 +16,9 @@ fn test_write(s: Str)
 fn prop_best() -> List[Str]
 /// Ends the test binary with the status code at once.
 fn test_quit(code: Int)
-/// The C path of report.xo (XO_LLRT_C=report, compiled only with
-/// -DXO_REPORT_C): report.xo's prop_report in C.
+/// report.xo's prop_report as the runtime call the SSA builder makes
+/// without the native prelude (decision 0198 deleted the C, so no native
+/// runtime has it).
 fn prop_report(g: Int, input: Str)
 
 // The generator's draws (std/native/llrt/gen.xo, decision 0195): the
@@ -29,7 +30,9 @@ fn gen_draw(g: Int, n: Int) -> Int
 fn gen_intn(g: Int, n: Int) -> Int
 /// The nesting depth of the value being generated.
 fn gen_depth(g: Int) -> Int
-/// The C path of gen.xo (XO_LLRT_C=gen, compiled only with -DXO_GEN_C).
+/// gen.xo's values as the runtime calls the SSA builder makes without the
+/// native prelude (decision 0198 deleted the C, so no native runtime has
+/// them).
 fn gen_size(g: Int) -> Int
 fn gen_any_int(g: Int) -> Int
 fn gen_sized(g: Int, kind: Int) -> Int
@@ -98,5 +101,3 @@ fn test_memfs_take() -> List[rt.Any]
 fn test_memfs_put(st: rt.Any)
 /// The test world's virtual now.
 fn test_now() -> Time
-/// Go's path.Match(pattern, name); a bad pattern matches nothing.
-fn test_glob(pattern: Str, name: Str) -> Bool

@@ -62,15 +62,6 @@ static void nbuf_byte(nbuf *b, char c) {
 
 static void nbuf_str(nbuf *b, const char *s) { nbuf_put(b, s, (int64_t)strlen(s)); }
 
-// buf_take turns the buffer into a string object and frees it.
-static xo_rstr *nbuf_take(nbuf *b, int64_t *len) {
-	xo_rstr *s = nstr(b->p, b->n, len);
-	free(b->p);
-	b->p = NULL;
-	b->n = b->cap = 0;
-	return s;
-}
-
 // The UTF-8 helpers of the C code are Xo (std/native/llrt/cabi.xo,
 // decision 0207): utf8_decode is utf8.DecodeRune of the n > 0 bytes at
 // p, an invalid or short sequence U+FFFD of size 1.

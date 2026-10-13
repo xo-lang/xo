@@ -5,10 +5,8 @@
 // sequentially consistent) and call these two through the native
 // prelude. The object itself stays the C runtime's (xo_atomic_new: the
 // allocator is decision 0195's prerequisite 2): its value is slot 13,
-// byte 128, a cache line apart from the count. The C path stays
-// selectable (`XO_LLRT_C=atomic` loads atomic_c.xo, and the Go SSA
-// builder then calls xo_atomic_* for every operation, compiled with
-// -DXO_ATOMIC_C) until the bar of decision 0193 holds.
+// byte 128, a cache line apart from the count. Decision 0198 deleted the
+// C path (`XO_LLRT_C=atomic`).
 use native/rt
 
 /// The cell of the value in the C runtime's object.
