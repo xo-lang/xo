@@ -373,6 +373,24 @@ static int xo_w_shutdown(int fd, int how) { XO_WSA_INT(shutdown((SOCKET)fd, how)
 #define getpeername(fd, a, n) xo_w_getpeername((fd), (a), (n))
 #define shutdown(fd, how) xo_w_shutdown((fd), (how))
 
+// Descriptors and sockets are both ints (stage 5): a socket is its
+// SOCKET handle's value (a multiple of 4), and a C runtime descriptor above
+// the standard three carries XO_W_FD, so the two never share a number. The
+// runtime's descriptors (0 to 2 untagged) only reach the C runtime through
+// these shims, which take the tag off. Before, both were plain small
+// numbers, and with about 550 files open a file's descriptor equaled a
+// socket's handle: closing the file closed the socket.
+#define XO_W_FD 0x40000000
+
+// xo_w_fd tags a C runtime descriptor (negative: an error, as it is).
+static inline int xo_w_fd(int raw) { return raw > 2 ? raw | XO_W_FD : raw; }
+
+// xo_w_raw is the C runtime's number of a descriptor.
+static inline int xo_w_raw(int fd) { return fd > 2 && (fd & XO_W_FD) ? fd & ~XO_W_FD : fd; }
+
+// xo_w_is_sock reports whether fd names a socket.
+static inline int xo_w_is_sock(int fd) { return fd > 2 && !(fd & XO_W_FD); }
+
 // sockets are numbered as ints, like descriptors (a SOCKET is a kernel
 // handle, a multiple of 4 below 2^32 in practice)
 static int xo_w_socket(int af, int type, int proto) {
@@ -440,10 +458,18 @@ static int xo_w_fcntl(int fd, int cmd, ...) {
 
 // close closes a socket or a C runtime descriptor
 static int xo_w_close(int fd) {
-	if (fd > 2 && closesocket((SOCKET)fd) == 0) {
+	if (fd < 0) {
+		errno = EBADF;
+		return -1;
+	}
+	if (xo_w_is_sock(fd)) {
+		if (closesocket((SOCKET)(unsigned)fd) != 0) {
+			errno = xo_wsa_errno();
+			return -1;
+		}
 		return 0;
 	}
-	return _close(fd);
+	return _close(xo_w_raw(fd));
 }
 #define close(fd) xo_w_close(fd)
 
@@ -456,7 +482,14 @@ static int xo_w_close(int fd) {
 #define strtok_r(s, d, p) strtok_s((s), (d), (p))
 #define timegm(tm) _mkgmtime(tm)
 
-static int xo_w_pipe(int p[2]) { return _pipe(p, 1 << 16, _O_BINARY); }
+static int xo_w_pipe(int p[2]) {
+	if (_pipe(p, 1 << 16, _O_BINARY) != 0) {
+		return -1;
+	}
+	p[0] = xo_w_fd(p[0]);
+	p[1] = xo_w_fd(p[1]);
+	return 0;
+}
 #define pipe(p) xo_w_pipe(p)
 
 static int xo_w_fix(const char *path, int e, int isopen);
@@ -487,7 +520,7 @@ static int xo_w_open(const char *path, int flags, ...) {
 	if (fd < 0) {
 		errno = xo_w_fix(path, errno, 1);
 	}
-	return fd;
+	return xo_w_fd(fd);
 }
 #define open(...) xo_w_open(__VA_ARGS__)
 
@@ -497,9 +530,9 @@ static FILE *xo_w_fopen_rb(const char *path) {
 	if (fd < 0) {
 		return NULL;
 	}
-	FILE *f = _fdopen(fd, "rb");
+	FILE *f = _fdopen(xo_w_raw(fd), "rb");
 	if (!f) {
-		_close(fd);
+		_close(xo_w_raw(fd));
 	}
 	return f;
 }
@@ -698,7 +731,7 @@ static int xo_w_stat_path(const char *path, struct xo_wstat *st, int link) {
 }
 
 static int xo_w_fstat(int fd, struct xo_wstat *st) {
-	HANDLE h = (HANDLE)_get_osfhandle(fd);
+	HANDLE h = (HANDLE)_get_osfhandle(xo_w_raw(fd));
 	if (h == INVALID_HANDLE_VALUE) {
 		errno = EBADF;
 		return -1;
@@ -972,7 +1005,7 @@ static ssize_t readlink(const char *path, char *buf, size_t n) {
 #define LOCK_NB 4
 #define LOCK_UN 8
 static int flock(int fd, int op) {
-	HANDLE h = (HANDLE)_get_osfhandle(fd);
+	HANDLE h = (HANDLE)_get_osfhandle(xo_w_raw(fd));
 	OVERLAPPED o;
 	memset(&o, 0, sizeof o);
 	BOOL ok;
@@ -990,8 +1023,8 @@ static int flock(int fd, int op) {
 	return 0;
 }
 
-#define read(fd, p, n) _read((fd), (p), (unsigned)(n))
-#define write(fd, p, n) _write((fd), (p), (unsigned)(n))
+#define read(fd, p, n) _read(xo_w_raw(fd), (p), (unsigned)(n))
+#define write(fd, p, n) _write(xo_w_raw(fd), (p), (unsigned)(n))
 
 // ---------------------------------------------------------------------------
 // Pumps: a handle the poller cannot wait on (a pipe, the console) joined
@@ -1061,8 +1094,8 @@ static int xo_w_pump(HANDLE h, int out, int close_h) {
 	ioctlsocket((SOCKET)sv[1], FIONBIO, &zero); // the thread's end blocks
 	xo_w_pump_t *p = malloc(sizeof *p);
 	if (!p) {
-		closesocket((SOCKET)sv[0]);
-		closesocket((SOCKET)sv[1]);
+		xo_w_close(sv[0]);
+		xo_w_close(sv[1]);
 		return -1;
 	}
 	*p = (xo_w_pump_t){h, (SOCKET)sv[1], out, close_h};
@@ -1074,8 +1107,8 @@ static int xo_w_pump(HANDLE h, int out, int close_h) {
 	int e = pthread_create(&t, &at, xo_w_pump_main, p);
 	pthread_attr_destroy(&at);
 	if (e != 0) {
-		closesocket((SOCKET)sv[0]);
-		closesocket((SOCKET)sv[1]);
+		xo_w_close(sv[0]);
+		xo_w_close(sv[1]);
 		free(p);
 		return -1;
 	}

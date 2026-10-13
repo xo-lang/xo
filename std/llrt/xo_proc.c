@@ -101,8 +101,8 @@ static int pr_pipe2(int p[2], int nb) {
 		return -1;
 	}
 	if (nb < 0) {
-		p[0] = _open_osfhandle((intptr_t)r, _O_RDONLY | _O_BINARY);
-		p[1] = _open_osfhandle((intptr_t)w, _O_WRONLY | _O_BINARY);
+		p[0] = xo_w_fd(_open_osfhandle((intptr_t)r, _O_RDONLY | _O_BINARY));
+		p[1] = xo_w_fd(_open_osfhandle((intptr_t)w, _O_WRONLY | _O_BINARY));
 		return 0;
 	}
 	HANDLE child = nb == 0 ? w : r, pumped = nb == 0 ? r : w;
@@ -113,7 +113,7 @@ static int pr_pipe2(int p[2], int nb) {
 		errno = EMFILE;
 		return -1;
 	}
-	p[1 - nb] = _open_osfhandle((intptr_t)child, (nb == 0 ? _O_WRONLY : _O_RDONLY) | _O_BINARY);
+	p[1 - nb] = xo_w_fd(_open_osfhandle((intptr_t)child, (nb == 0 ? _O_WRONLY : _O_RDONLY) | _O_BINARY));
 	p[nb] = s;
 	return 0;
 }
@@ -1048,7 +1048,7 @@ static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, 
 		} else if (fd == PR_INHERIT) {
 			hs[k] = pr_w_inheritable(GetStdHandle(stds[k]));
 		} else if (fd >= 0) {
-			hs[k] = pr_w_inheritable((HANDLE)_get_osfhandle(fd));
+			hs[k] = pr_w_inheritable((HANDLE)_get_osfhandle(xo_w_raw(fd)));
 		}
 		if (!hs[k]) {
 			hs[k] = pr_w_null(k); // PR_NULL, or no such stream
