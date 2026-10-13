@@ -1332,9 +1332,112 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
   u
 }
 
+/// Makes a List parameter of a loop header unique on the edges into the
+/// loop (hoistReuse, decision 0208): a loop that updates the list itself
+/// on every iteration, and passes it back updated (or unchanged) on every
+/// back edge, then checks and copies it once before the loop instead of
+/// at the update of every iteration. Each edge in must leave a block
+/// that only jumps; the list must not be retained. A loop that runs no
+/// iteration copies a shared list it did not need to.
+fn (var r: Rc) hoist_reuse(var f: Func) {
+  let u = r.unique(f)
+  var idom: List[Int] = []
+  for h in 1..f.blocks.len() {
+    let ps = f.blocks[h].params
+    for (i, p) in ps.indexed() {
+      if f.values[p].ty < 0 || r.types[f.values[p].ty].kind != Kind.List {
+        continue
+      }
+      let pl = Leaf{root: p, path: ""}
+      if u.retained.contains(leaf_key(pl)) || r.uniq(f, u, pl) {
+        continue
+      }
+      if idom.is_empty() {
+        idom = dominators(f)
+      }
+      if idom[h] < 0 {
+        continue
+      }
+      var backs: List[Int] = []
+      var entries: List[Int] = []
+      var ok = true
+      for e in f.blocks[h].preds {
+        let from = f.edges[e].from
+        if from < 0 || idom[from] < 0 {
+          ok = false
+          break
+        }
+        let ea = f.edges[e].args
+        if dominates(idom, h, from) {
+          backs.push(e)
+          let a = ea[i]
+          if a != p && !r.uniq(f, u, r.leaves(f, a)[0]) {
+            ok = false
+          }
+          continue
+        }
+        entries.push(e)
+        let ins = f.blocks[from].instrs
+        if ins.is_empty() || f.values[ins[ins.len() - 1]].op != Op.Jump {
+          ok = false
+        }
+        for (k, a) in ea.indexed() {
+          if k != i && a == ea[i] {
+            ok = false
+          }
+        }
+      }
+      if !ok || backs.is_empty() || entries.is_empty() {
+        continue
+      }
+      // an update of p on every iteration
+      var every = false
+      for b in 0..f.blocks.len() {
+        if every {
+          break
+        }
+        if !dominates(idom, h, b) {
+          continue
+        }
+        var all = true
+        for e in backs {
+          all = all && dominates(idom, b, f.edges[e].from)
+        }
+        if !all {
+          continue
+        }
+        for v in f.blocks[b].instrs {
+          let x = f.values[v]
+          if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args[0] == p {
+            every = true
+          }
+        }
+      }
+      if !every {
+        continue
+      }
+      for e in entries {
+        let a = f.edges[e].args[i]
+        if r.uniq(f, u, r.leaves(f, a)[0]) {
+          continue
+        }
+        let pb = f.edges[e].from
+        let w = new_value(f, pb, Op.Reuse, f.values[a].ty, Aux.None, [a])
+        var ins = f.blocks[pb].instrs
+        let t = ins.pop() ?? -1
+        ins.push(w)
+        ins.push(t)
+        f.blocks[pb].instrs = ins
+        f.edges[e].args[i] = w
+      }
+    }
+  }
+}
+
 /// Puts `reuse` before each list update whose list is not provably
 /// unique (reuse).
 fn (var r: Rc) reuse(var f: Func) {
+  r.hoist_reuse(f)
   let u = r.unique(f)
   for bl in 0..f.blocks.len() {
     var out: List[Int] = []

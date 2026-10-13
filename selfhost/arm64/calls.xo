@@ -156,19 +156,129 @@ fn (var g: G) elem_base1(l: Int, i: Int, es: Int) -> Int {
   g.def1(false, "madd $d0, $u0, $u1, $u2", [i, n, l])
 }
 
-/// Loads the element words at base (as integer registers when as_int).
-fn (var g: G) load_elem(base: Int, et: Int, as_int: Bool) -> List[Int] {
+/// The address of a list element (isel.go elemAt): [base, #off] (idx
+/// 0, off counting the list header), or [base, idx, lsl #sh] for an
+/// element of one word (base the list's data address, its first
+/// element).
+struct ElemAt {
+  base: Int
+  idx: Int = 0
+  off: Int = 0
+  sh: Int = 0
+}
+
+/// The element address b + LIST_HDR.
+fn at_base(b: Int) -> ElemAt {
+  ElemAt{base: b, off: LIST_HDR}
+}
+
+/// The registers of address a.
+fn at_regs(a: ElemAt) -> List[Int] {
+  if a.idx != 0 {
+    return [a.base, a.idx]
+  }
+  [a.base]
+}
+
+/// The memory operand of word k of address a, its registers $u<u> on.
+fn at_operand(a: ElemAt, k: Int, u: Int) -> Str {
+  if a.idx != 0 {
+    if a.sh == 0 {
+      return "[$u${u}, $u${u + 1}]"
+    }
+    return "[$u${u}, $u${u + 1}, lsl #${a.sh}]"
+  }
+  "[$u${u}, #${a.off + 8 * k}]"
+}
+
+/// What loaded records for word k of address a.
+fn at_mem(a: ElemAt, k: Int, epoch: Int) -> MemAt {
+  if a.idx != 0 {
+    return MemAt{base: a.base, off: 0, epoch: epoch, idx: a.idx}
+  }
+  MemAt{base: a.base, off: a.off + 8 * k, epoch: epoch}
+}
+
+/// The address of element i (SSA value iv, or -1) of list l (isel.go
+/// elemAddr, decision 0208): [l, #24 + k * size] for a constant index k,
+/// [b, #24 + c * size] for i = a + c (b the address of element a), [data,
+/// i, lsl #3] for a one word element (data the list's data address, once
+/// per block, or once per loop when the loop cannot move the buffer:
+/// lsr.xo), else [b, #24] with b = l + i * size.
+fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
+  let es = g.esize(et)
+  if es == 0 {
+    return at_base(g.elem_base(l, i, es))
+  }
+  let _mi = g.m_()
+  if let Some(b) = g.cm.bases.get((l, i, es)) {
+    return at_base(b)
+  }
+  let nw = g.layout(et).len()
+  let is_bool = g.kind(et) == ssa.Kind.Bool
+  if iv >= 0 {
+    let (k, kc) = g.const_int(iv)
+    if kc && k >= 0 && k < 4096 {
+      let off = LIST_HDR + k * es
+      if fits_off(off, is_bool, nw) {
+        return ElemAt{base: l, off: off}
+      }
+    }
+  }
+  let o = g.offs.get(i) ?? Offset{a: -1, c: 0}
+  if o.a >= 0 && o.c > -4096 && o.c < 4096 && es < 4096 {
+    let off = LIST_HDR + o.c * es
+    if fits_off(off, is_bool, nw) {
+      return ElemAt{base: g.elem_base(l, o.a, es), off: off}
+    }
+  }
+  if iv >= 0 && (g.off_bases.get(iv) ?? false) {
+    return at_base(g.elem_base(l, i, es))
+  }
+  if is_bool {
+    return ElemAt{base: g.data_addr(l), idx: i}
+  }
+  if es == 8 {
+    return ElemAt{base: g.data_addr(l), idx: i, sh: 3}
+  }
+  at_base(g.elem_base(l, i, es))
+}
+
+/// Whether the element words at offset off (the header counted) are in
+/// reach of one load's immediate.
+fn fits_off(off: Int, is_bool: Bool, nw: Int) -> Bool {
+  if is_bool {
+    return off >= 0 && off <= 4095
+  }
+  off >= 0 && off % 8 == 0 && off + 8 * (nw - 1) <= 32760
+}
+
+/// The address of the first element of list l, once per block (isel.go
+/// dataAddr).
+fn (var g: G) data_addr(l: Int) -> Int {
+  let _mi = g.m_()
+  if let Some(d) = g.cm.bases.get((l, 0, -24)) {
+    return d
+  }
+  let d = g.def1(false, "add $d0, $u0, #${LIST_HDR}", [l])
+  let _mj = g.m_()
+  g.cm.bases[(l, 0, -24)] = d
+  d
+}
+
+/// Loads the element words at a (as integer registers when as_int).
+fn (var g: G) load_elem(a: ElemAt, et: Int, as_int: Bool) -> List[Int] {
   if g.kind(et) == ssa.Kind.Bool {
-    let d = g.def1(false, "ldrb $wd0, [$u0, #${LIST_HDR}]", [base])
+    let d = g.def1(false, "ldrb $wd0, ${at_operand(a, 0, 0)}", at_regs(a))
     let _mi = g.m_()
-    g.cm.loaded[d] = MemAt{base: base, off: LIST_HDR, epoch: g.cm.epoch}
+    g.cm.loaded[d] = at_mem(a, 0, g.cm.epoch)
     return [d]
   }
   var out: List[Int] = []
   for (k, fp) in g.layout(et).indexed() {
-    let d = g.def1(fp && !as_int, "ldr $d0, [$u0, #${LIST_HDR + 8 * k}]", [base])
+    let d = g.def1(fp && !as_int, "ldr $d0, ${at_operand(a, k, 0)}", at_regs(a))
     let _mi = g.m_()
-    g.cm.loaded[d] = MemAt{base: base, off: LIST_HDR + 8 * k, epoch: g.cm.epoch}
+    g.cm.loaded[d] = at_mem(a, k, g.cm.epoch)
     out.push(d)
   }
   out
@@ -195,32 +305,33 @@ fn (var g: G) store_words(v: Int) -> List[Int] {
   g.words(v)
 }
 
-fn (var g: G) store_elem(base: Int, et: Int, ws: List[Int]) {
-  let mi = g.m_()
+fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int]) {
+  let _mi = g.m_()
   if g.kind(et) == ssa.Kind.Bool {
-    if !g.same_loaded(mi, ws[0], base, LIST_HDR) {
-      g.store("strb $wu0, [$u1, #${LIST_HDR}]", [ws[0], base])
+    if !g.same_loaded(ws[0], at_mem(a, 0, g.cm.epoch)) {
+      g.store("strb $wu0, ${at_operand(a, 0, 1)}", [ws[0]] + at_regs(a))
     }
     return
   }
   let lay = g.layout(et)
   var skip: List[Bool] = []
   for k in 0..lay.len() {
-    skip.push(g.same_loaded(mi, ws[k], base, LIST_HDR + 8 * k))
+    let _mk = g.m_()
+    skip.push(g.same_loaded(ws[k], at_mem(a, k, g.cm.epoch)))
   }
   for k in 0..lay.len() {
     if !skip[k] {
-      g.store("str $u0, [$u1, #${LIST_HDR + 8 * k}]", [ws[k], base])
+      g.store("str $u0, ${at_operand(a, k, 1)}", [ws[k]] + at_regs(a))
     }
   }
 }
 
-/// Writes the placeholder list.take leaves in the element at base
-/// (decision 0169; storeHole): the words reference counting reads, so
-/// that retain, release, and share of it do nothing. A Str, List, Box,
-/// or handle points to the empty string's object (immortal), a function
-/// value's environment is null, and an enum's tag is past its variants.
-fn (var g: G) store_hole(base: Int, et: Int) {
+/// Writes the placeholder list.take leaves in the element at a (decision
+/// 0169; storeHole): the words reference counting reads, so that retain,
+/// release, and share of it do nothing. A Str, List, Box, or handle
+/// points to the empty string's object (immortal), a function value's
+/// environment is null, and an enum's tag is past its variants.
+fn (var g: G) store_hole(a: ElemAt, et: Int) {
   var ls: List[Leaf] = []
   g.heap_leaves(et, 0, ls)
   var obj = 0
@@ -237,15 +348,15 @@ fn (var g: G) store_hole(base: Int, et: Int) {
         w = obj
       }
     }
-    g.store("str $u0, [$u1, #${LIST_HDR + 8 * off}]", [w, base])
+    g.store("str $u0, ${at_operand(a, off, 1)}", [w] + at_regs(a))
   }
 }
 
-/// Whether register w holds the word at [base, #off] loaded since the
-/// last store or call (memo mi).
-fn (g: G) same_loaded(mi: Int, w: Int, base: Int, off: Int) -> Bool {
+/// Whether register w holds the word want says, loaded since the last
+/// store or call (the current memo).
+fn (g: G) same_loaded(w: Int, want: MemAt) -> Bool {
   if let Some(at) = g.cm.loaded.get(w) {
-    return at.base == base && at.off == off && at.epoch == g.cm.epoch
+    return at.base == want.base && at.off == want.off && at.epoch == want.epoch && at.idx == want.idx
   }
   false
 }
@@ -256,8 +367,36 @@ fn (var g: G) list_len(l: Int) -> Int {
     return n
   }
   let n = g.def1(false, "ldr $d0, [$u0, #8]", [l])
+  let _mj = g.m_()
   g.cm.lens[l] = n
+  if let Some(a) = g.cm.len_at.get(l) {
+    g.same_facts(a, n)
+  }
   n
+}
+
+/// Gives register n the facts of register a, which holds the same value
+/// (isel.go sameFacts, decision 0208).
+fn (var g: G) same_facts(a: Int, n: Int) {
+  let _mi = g.m_()
+  if let Some(x) = g.cm.lo.get(a) {
+    g.cm.lo[n] = x
+  }
+  if let Some(x) = g.cm.hi.get(a) {
+    g.cm.hi[n] = x
+  }
+  if let Some(x) = g.cm.low_zero.get(a) {
+    g.cm.low_zero[n] = x
+  }
+  var ks: List[((Int, Int), Int)] = []
+  for (k, v) in g.cm.less {
+    if k.1 == a {
+      ks.push((k, v))
+    }
+  }
+  for (k, v) in ks {
+    g.cm.less[(k.0, n)] = v
+  }
 }
 
 /// Loads byte i (SSA value iv, register i) of the Bytes object in
@@ -335,11 +474,11 @@ fn (var g: G) option(ot: Int, text: Str, us: List[Int], cond: Str, extra: List[I
   var pay: List[Int] = []
   var yes_extra: List[Src] = []
   match some {
-    Get(l, i, et) => pay = g.load_elem(g.elem_base(l, i, g.esize(et)), et, true)
+    Get(l, i, iv, et) => pay = g.load_elem(g.elem_addr(l, i, iv, et), et, true)
     Pop(l, n, et) => {
       let n1 = g.def1(false, "sub $d0, $u0, #1", [n])
       g.store("str $u0, [$u1, #8]", [n1, l])
-      pay = g.load_elem(g.elem_base(l, n1, g.esize(et)), et, true)
+      pay = g.load_elem(at_base(g.elem_base(l, n1, g.esize(et))), et, true)
       yes_extra = regs([l, n1])
     }
   }
@@ -369,7 +508,7 @@ fn (var g: G) option(ot: Int, text: Str, us: List[Int], cond: Str, extra: List[I
 /// What the Some path of option loads: element i of list l (list.get),
 /// or the last element of l of length n after shortening it (list.pop).
 enum OptSome {
-  Get(l: Int, i: Int, et: Int)
+  Get(l: Int, i: Int, iv: Int, et: Int)
   Pop(l: Int, n: Int, et: Int)
 }
 
@@ -430,7 +569,7 @@ fn (var g: G) call_op(v: Int) {
       let i = g.word(x.args[1])
       g.bounds_check(v, l, i)
       let et = x.ty
-      let base = g.elem_base(l, i, g.esize(et))
+      let base = g.elem_addr(l, i, x.args[1], et)
       g.set(v, g.load_elem(base, et, false))
     }
     "list.take" => {
@@ -440,7 +579,7 @@ fn (var g: G) call_op(v: Int) {
       let i = g.word(x.args[1])
       g.bounds_check(v, l, i)
       let et = g.m.types[x.ty].elems[1]
-      let base = g.elem_base(l, i, g.esize(et))
+      let base = g.elem_addr(l, i, x.args[1], et)
       let e = g.load_elem(base, et, false)
       g.store_hole(base, et)
       g.set(v, [l] + e)
@@ -450,7 +589,7 @@ fn (var g: G) call_op(v: Int) {
       let i = g.word(x.args[1])
       let et = g.m.types[g.vty(x.args[0])].elems[0]
       let n = g.list_len(l)
-      g.set(v, g.option(x.ty, "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, et: et), []))
+      g.set(v, g.option(x.ty, "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, iv: x.args[1], et: et), []))
     }
     "list.set" => {
       let l = g.word(x.args[0])
@@ -458,7 +597,7 @@ fn (var g: G) call_op(v: Int) {
       let et = g.vty(x.args[2])
       let w = g.store_words(x.args[2])
       g.bounds_check(v, l, i)
-      let base = g.elem_base(l, i, g.esize(et))
+      let base = g.elem_addr(l, i, x.args[1], et)
       if g.heap(et) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
@@ -489,7 +628,7 @@ fn (var g: G) call_op(v: Int) {
       g.inherit(before)
       g.clobber()
       if g.esize(et) > 0 {
-        g.store_elem(g.elem_base(lm, n, g.esize(et)), et, w)
+        g.store_elem(at_base(g.elem_base(lm, n, g.esize(et))), et, w)
       }
       let n1 = g.def1(false, "add $d0, $u0, #1", [n])
       g.store("str $u0, [$u1, #8]", [n1, lm])
@@ -678,6 +817,16 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         }
         return true
       }
+      if op == 2 {
+        let (text, us, ok2) = g.mul_long(x.args[1], x.args[2])
+        if ok2 {
+          g.set(v, [g.def1(false, text, us)])
+          return true
+        }
+      }
+      if op == 0 && g.fused_add(v) {
+        return true
+      }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op >= 3 {
@@ -748,6 +897,103 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     _ => return false
   }
   true
+}
+
+// Long multiplies (isel.go, decision 0208): the product of two values
+// of 32 bits (masked by 0xFFFFFFFF, or `(x << 32) >> 32`, or known in
+// range) is umull (smull) of their low halves, and a wrapping add of it
+// umaddl (smaddl); a wrapping add of a wrapping shift left by a constant
+// is an add with a shifted operand. The mask or the extension, used only
+// there, is then dead.
+
+/// The register whose low 32 bits are v, zero extended (sign extended
+/// when signed), whether that took off a mask or an extension, and
+/// whether there is one (half32).
+fn (var g: G) half32(v: Int, signed: Bool) -> (Int, Bool, Bool) {
+  let x = g.f.values[v]
+  if g.kind(x.ty) != ssa.Kind.Int {
+    return (0, false, false)
+  }
+  if !signed && x.op == ssa.Op.And {
+    for j in 0..2 {
+      let (k, kc) = g.const_int(x.args[j])
+      if kc && k == 0xFFFFFFFF {
+        return (g.word(x.args[1 - j]), true, true)
+      }
+    }
+  }
+  if signed && x.op == ssa.Op.Shr && g.f.values[x.args[0]].op == ssa.Op.Shl {
+    let (k1, ok1) = g.const_int(x.args[1])
+    let (k2, ok2) = g.const_int(g.f.values[x.args[0]].args[1])
+    if ok1 && ok2 && k1 == 32 && k2 == 32 {
+      return (g.word(g.f.values[x.args[0]].args[0]), true, true)
+    }
+  }
+  let (lo, hi) = g.bounds(v)
+  if signed && lo >= -2147483648 && hi <= 2147483647 || !signed && lo >= 0 && hi <= 4294967295 {
+    return (g.word(v), false, true)
+  }
+  (0, false, false)
+}
+
+/// umull or smull of x and y, when both are 32 bit values and one is
+/// masked or extended for it (mulLong).
+fn (var g: G) mul_long(x: Int, y: Int) -> (Str, List[Int], Bool) {
+  for signed in [false, true] {
+    let (a, ea, ok1) = g.half32(x, signed)
+    if !ok1 {
+      continue
+    }
+    let (b, eb, ok2) = g.half32(y, signed)
+    if ok2 && (ea || eb) {
+      if signed {
+        return ("smull $d0, $wu0, $wu1", [a, b], true)
+      }
+      return ("umull $d0, $wu0, $wu1", [a, b], true)
+    }
+  }
+  ("", [], false)
+}
+
+/// The operation of an rt.int_wrap call with a constant operation
+/// (wrapOp).
+fn (g: G) wrap_op(v: Int) -> (Int, Bool) {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.int_wrap" {
+    return (0, false)
+  }
+  g.const_int(x.args[0])
+}
+
+/// Lowers rt.int_wrap(0, a, b) when a or b, used only there, is a long
+/// multiply (umaddl, smaddl) or a shift left by a constant (an add with a
+/// shifted operand; fusedAdd).
+fn (var g: G) fused_add(v: Int) -> Bool {
+  let args = g.f.values[v].args
+  for j in 1..3 {
+    let x = args[j]
+    let o = args[3 - j]
+    let (op, ok) = g.wrap_op(x)
+    if !ok || g.nuses[x] != 1 {
+      continue
+    }
+    let xa = g.f.values[x].args
+    if op == 2 {
+      let (text, us, ok2) = g.mul_long(xa[1], xa[2])
+      if ok2 {
+        let t2 = "${text[0..1]}maddl $d0, $wu0, $wu1, $u2"
+        g.set(v, [g.def1(false, t2, us + [g.word(o)])])
+        return true
+      }
+    } else if op == 3 {
+      let (k, kc) = g.const_int(xa[2])
+      if kc && k & 63 != 0 {
+        g.set(v, [g.def1(false, "add $d0, $u0, $u1, lsl #${k & 63}", [g.word(o), g.word(xa[1])])])
+        return true
+      }
+    }
+  }
+  false
 }
 
 /// The memory order of argument k of value v (decision 0200): its
