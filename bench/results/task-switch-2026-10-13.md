@@ -139,7 +139,23 @@ server per run, 5,500 units minus 500 units over 5,000, the minimum of
 - TestSelfhostWasm: 133 pass, 20 unsupported, 0 fail of 153.
 - `go test -short` over the repository: pass.
 
-Linux (EC2 arm64 and amd64) and Windows runs: below when they report.
+- Windows (scripts/windows-batch.sh through the lead's queue, at
+  0b7308e5): windows/amd64 153 pass of 153 goldens, windows/arm64 153
+  of 153 built (not run: no host), LLVM runtime tests ok, `xo test`
+  LLVM against Go 16 same.
+- Linux arm64 (EC2, at 0b7308e5): internal/llvm and internal/arm64
+  goldens and runtime tests with ThreadSanitizer (TestGoldenThreads
+  included), the C path goldens, TestNoGCTests: pass; xo1 built by the
+  Go `xo`; xo1 goldens with cc 153 pass of 153, with `--backend=llvm`
+  153 of 153. The `--as=macho --ld=macho` step had no linux/arm64
+  runtime pack (not a result), and archive_formats there stops at
+  `svc #0`, which the ELF assembler does not take (rt.sys6, decision
+  0206; not this change).
+- Linux amd64 (EC2, at 94344471, before the fix of
+  gotchas/llvm-thread-local-address-cse.md): TestGoldenThreads failed
+  on clock_timers with a SEGV in xo_x_fiber_park (that bug; the fix is
+  confirmed on the IR, the amd64 rerun is left to the lead's next Linux
+  full tier); the C path goldens passed.
 
 ## Not done
 
