@@ -640,8 +640,14 @@ fn (var g: G) call_op(v: Int) {
 /// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
 /// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
 /// extended, 7 the bytes reversed), rt.u64_mul_hi, the bits of a Float
-/// both ways, and rt.bytes_word (an unchecked load of 8 bytes); whether v
-/// was one (isel.go inlineRT).
+/// both ways, and rt.bytes_word (an unchecked load of 8 bytes);
+/// the scan intrinsics of decision 0201: rt.popcount (cnt and
+/// addv), rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and
+/// rt.bytes_high16 (16 bytes in v30 compared, narrowed by shrn to 4 bits
+/// a byte; v30 and v31 are scratch registers of the emitter), and the
+/// string writes of Bytes.to_hex: rt.rs_put_word (an unchecked store of
+/// 8 bytes into a new string with room) and rt.rs_set_len (the same
+/// object with a new length); whether v was one (isel.go inlineRT).
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -692,6 +698,32 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
       g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
     }
+    "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
+    "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
+    "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
+    "rt.bytes_eq16" | "rt.bytes_high16" => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      var us = [d, g.word(x.args[1])]
+      var cmp = "cmlt v30.16b, v30.16b, #0"
+      if aux_str(x.aux) == "rt.bytes_eq16" {
+        let (c, ok) = g.const_int(x.args[2])
+        if ok {
+          cmp = "movi v31.16b, #${c & 255}\ncmeq v30.16b, v30.16b, v31.16b"
+        } else {
+          cmp = "dup v31.16b, $wu2\ncmeq v30.16b, v30.16b, v31.16b"
+          us.push(g.word(x.args[2]))
+        }
+      }
+      g.set(v, [g.def1(false, "ldr q30, [$u0, $u1]\n${cmp}\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
+    }
+    "rt.rs_put_word" => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, ws)
+    }
+    "rt.rs_set_len" => g.set(v, [g.words(x.args[0])[0], g.word(x.args[1])])
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return false
   }

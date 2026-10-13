@@ -12,6 +12,7 @@
 // C: they frame text the generated code made and decide nothing. The C
 // path stays selectable (`XO_LLRT_C=report` loads report_c.xo) until the
 // bar of decision 0180 holds.
+use native/llrt/scan
 use native/llrt/show
 use native/rt
 use native/rttest
@@ -39,7 +40,7 @@ pub fn prop_report(g: Int, input: Str) {
   let n = b.len()
   var start = 0
   while start < n {
-    var end = rt.str_find(input, "\n", start)
+    var end = scan.find(input, "\n", start)
     if end < 0 {
       end = n
     }

@@ -1604,6 +1604,129 @@ fn rt2_text(var g: Gen) -> Str {
       i32.add
       i64.load offset=8 align=1)
 
+    ;; the scan intrinsics (decision 0201): the runtime does not enable
+    ;; SIMD128, so the 16 byte masks are two words (SWAR)
+    (func $popcount (param $w i64) (result i64)
+      local.get $w
+      i64.popcnt)
+
+    (func $ctz (param $w i64) (result i64)
+      local.get $w
+      i64.ctz)
+
+    (func $clz (param $w i64) (result i64)
+      local.get $w
+      i64.clz)
+
+    ;; bit 4k to 4k + 3 set for each byte k of a word whose high bit is
+    ;; set in t (only high bits set)
+    (func $swar_nib8 (param $t i64) (result i64)
+      local.get $t
+      i64.const 7
+      i64.shr_u
+      local.tee $t
+      local.get $t
+      i64.const 4
+      i64.shr_u
+      i64.or
+      i64.const 0x00FF00FF00FF00FF
+      i64.and
+      local.tee $t
+      local.get $t
+      i64.const 8
+      i64.shr_u
+      i64.or
+      i64.const 0x0000FFFF0000FFFF
+      i64.and
+      local.tee $t
+      local.get $t
+      i64.const 16
+      i64.shr_u
+      i64.or
+      i64.const 0xFFFFFFFF
+      i64.and
+      i64.const 15
+      i64.mul)
+
+    ;; the high bit of each byte of w that is the byte of r (r eight
+    ;; copies of it), exactly
+    (func $swar_eq8 (param $w i64) (param $r i64) (result i64)
+      local.get $w
+      local.get $r
+      i64.xor
+      local.tee $w
+      i64.const 0x7F7F7F7F7F7F7F7F
+      i64.and
+      i64.const 0x7F7F7F7F7F7F7F7F
+      i64.add
+      local.get $w
+      i64.or
+      i64.const -1
+      i64.xor
+      i64.const -9187201950435737472
+      i64.and)
+
+    (func $bytes_eq16 (param $o i32) (param $n i32) (param $i i64) (param $c i64) (result i64) (local $r i64)
+      local.get $c
+      i64.const 255
+      i64.and
+      i64.const 0x0101010101010101
+      i64.mul
+      local.set $r
+      local.get $o
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      local.tee $o
+      i64.load offset=8 align=1
+      local.get $r
+      call $swar_eq8
+      call $swar_nib8
+      local.get $o
+      i64.load offset=16 align=1
+      local.get $r
+      call $swar_eq8
+      call $swar_nib8
+      i64.const 32
+      i64.shl
+      i64.or)
+
+    (func $bytes_high16 (param $o i32) (param $n i32) (param $i i64) (result i64)
+      local.get $o
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      local.tee $o
+      i64.load offset=8 align=1
+      i64.const -9187201950435737472
+      i64.and
+      call $swar_nib8
+      local.get $o
+      i64.load offset=16 align=1
+      i64.const -9187201950435737472
+      i64.and
+      call $swar_nib8
+      i64.const 32
+      i64.shl
+      i64.or)
+
+    ;; s with the 8 bytes of w at i (unchecked: s is new with room), and s
+    ;; with length n (Bytes.to_hex, decision 0201)
+    (func $rs_put_word (param $a i32) (param $an i32) (param $i i64) (param $w i64) (result i32 i32)
+      local.get $a
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      local.get $w
+      i64.store offset=8 align=1
+      local.get $a
+      local.get $an)
+
+    (func $rs_set_len (param $a i32) (param $an i32) (param $n i64) (result i32 i32)
+      local.get $a
+      local.get $n
+      i32.wrap_i64)
+
     ;; the IEEE 754 bits of a Float, and back
     (func $float_bits (param $f f64) (result i64)
       local.get $f
@@ -2225,5 +2348,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word" | "popcount" | "ctz" | "clz" | "bytes_eq16" | "bytes_high16" | "rs_put_word" | "rs_set_len"
 }

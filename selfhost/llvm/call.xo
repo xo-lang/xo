@@ -482,7 +482,14 @@ fn runtime_raises(name: Str) -> Bool {
 /// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
 /// extended, 7 the bytes reversed), rt.u64_mul_hi (an i128 multiply), the
 /// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
-/// bytes); whether v was one (fromssa.go inlineRT).
+/// bytes);
+/// the scan intrinsics of decision 0201:
+/// rt.popcount, rt.ctz, rt.clz (llvm.ctpop, cttz, ctlz), and
+/// rt.bytes_eq16 and rt.bytes_high16 (a <16 x i8> compare narrowed to 4
+/// bits a byte, which arm64 selects as cmeq and shrn), and the string
+/// writes of Bytes.to_hex: rt.rs_put_word (an unchecked store of 8 bytes
+/// into a new string with room) and rt.rs_set_len (the same object with a
+/// new length); whether v was one (fromssa.go inlineRT).
 fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -538,6 +545,39 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       g.set(v, "load i64, ptr ${p}, align 1")
+    }
+    "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
+    "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
+    "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")
+    "rt.bytes_eq16" | "rt.bytes_high16" => {
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let w = g.def("load <16 x i8>, ptr ${p}, align 1")
+      var e = ""
+      if aux_str(x.aux) == "rt.bytes_eq16" {
+        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
+        r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
+        e = g.def("icmp eq <16 x i8> ${w}, ${r}")
+      } else {
+        e = g.def("icmp slt <16 x i8> ${w}, zeroinitializer")
+      }
+      let m = g.def("sext <16 x i1> ${e} to <16 x i8>")
+      var h = g.def("bitcast <16 x i8> ${m} to <8 x i16>")
+      h = g.def("lshr <8 x i16> ${h}, <i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4>")
+      let n = g.def("trunc <8 x i16> ${h} to <8 x i8>")
+      g.set(v, "bitcast <8 x i8> ${n} to i64")
+    }
+    "rt.rs_put_word" => {
+      let x0 = g.op(x.args[0])
+      let (_, d, _) = g.str_parts(x0)
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      g.emit("store i64 ${g.op(x.args[2])}, ptr ${p}, align 1")
+      g.alias(v, x0)
+    }
+    "rt.rs_set_len" => {
+      let obj = g.def("extractvalue %xo.str ${g.op(x.args[0])}, 0")
+      g.mk_str(v, obj, g.op(x.args[1]))
     }
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return false

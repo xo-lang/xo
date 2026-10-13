@@ -10,6 +10,8 @@ const RW = 1
 const RD = 2
 const RS = 3
 const RSP = 4
+/// A 128 bit SIMD and floating point register (q0 to q31).
+const RQ = 5
 
 /// A register operand: its number (31 for xzr, wzr, sp) and kind; kind
 /// -1 when the operand is not a register.
@@ -34,6 +36,7 @@ fn reg(b: Bytes) -> (Int, Int) {
     'w' => RW
     'd' => RD
     's' => RS
+    'q' => RQ
     _ => -1
   }
   if k < 0 {
@@ -341,6 +344,15 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
     "yield" => a.word(0xd503203f)
     "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => a.exclusive(m, ops)
     "fmov" => a.fmov(ops)
+    "rbit" | "clz" => {
+      let (d, sd) = gpr(ops[0], false)
+      let (x, sx) = if n == 2 { gpr(ops[1], false) } else { (-1, 0) }
+      if n != 2 || d < 0 || x < 0 || sd != sx {
+        return a.bad(m, ops)
+      }
+      a.word((if m == "rbit" { 0x5ac00000 } else { 0x5ac01000 }) | (sd * 0x80000000) | (x * 32) | d)
+    }
+    "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" => a.simd(m, ops)
     "fadd" | "fsub" | "fmul" | "fdiv" => {
       let base = match m {
         "fadd" => 0x1e602800
@@ -1061,6 +1073,96 @@ fn (var a: Asm) fmov(ops: List[Bytes]) {
   }
 }
 
+/// A vector register operand `vN.<arrangement>`: (N, the arrangement
+/// text), or (-1, "").
+fn vreg(b: Bytes) -> (Int, Str) {
+  if b.len() < 4 || b[0] != 'v' {
+    return (-1, "")
+  }
+  var n = 0
+  var i = 1
+  while i < b.len() && b[i] >= '0' && b[i] <= '9' {
+    n = n * 10 + Int(b[i] - '0')
+    i += 1
+  }
+  if i == 1 || i > 3 || n > 31 || i >= b.len() || b[i] != '.' {
+    return (-1, "")
+  }
+  (n, bstr(b[i + 1..]))
+}
+
+/// The SIMD instructions of the scan intrinsics (decision 0201), in the
+/// forms the arm64 emitters write: cnt and addv on 8 bytes, dup of a w
+/// register and movi to 16 bytes, cmeq and cmlt #0 on 16 bytes, shrn of
+/// 8 halfwords to 8 bytes.
+fn (var a: Asm) simd(m: Str, ops: List[Bytes]) {
+  let n = ops.len()
+  if n < 2 {
+    return a.bad(m, ops)
+  }
+  let (d, ad) = vreg(ops[0])
+  match m {
+    "addv" => {
+      // addv bD, vN.8b
+      let (x, ax) = vreg(ops[1])
+      let b0 = ops[0]
+      if n != 2 || x < 0 || ax != "8b" || b0.len() < 2 || b0[0] != 'b' {
+        return a.bad(m, ops)
+      }
+      let r = parse_int(b0[1..]) ?? -1
+      if r < 0 || r > 31 {
+        return a.bad(m, ops)
+      }
+      a.word(0x0e31b800 | (x * 32) | r)
+    }
+    "dup" => {
+      let (x, kx) = reg(ops[1])
+      if n != 2 || d < 0 || ad != "16b" || kx != RW {
+        return a.bad(m, ops)
+      }
+      a.word(0x4e010c00 | (x * 32) | d)
+    }
+    "movi" => {
+      let v = imm(ops[1]) ?? -1
+      if n != 2 || d < 0 || ad != "16b" || v < 0 || v > 255 {
+        return a.bad(m, ops)
+      }
+      a.word(0x4f00e400 | ((v >> 5) * 0x10000) | ((v & 31) * 32) | d)
+    }
+    "cnt" => {
+      let (x, ax) = vreg(ops[1])
+      if n != 2 || d < 0 || ad != "8b" || ax != "8b" || x < 0 {
+        return a.bad(m, ops)
+      }
+      a.word(0x0e205800 | (x * 32) | d)
+    }
+    "cmeq" => {
+      let (x, ax) = vreg(ops[1])
+      let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }
+      if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" {
+        return a.bad(m, ops)
+      }
+      a.word(0x6e208c00 | (y * 0x10000) | (x * 32) | d)
+    }
+    "cmlt" => {
+      let (x, ax) = vreg(ops[1])
+      if n != 3 || d < 0 || x < 0 || ad != "16b" || ax != "16b" || (imm(ops[2]) ?? -1) != 0 {
+        return a.bad(m, ops)
+      }
+      a.word(0x4e20a800 | (x * 32) | d)
+    }
+    _ => {
+      // shrn vD.8b, vN.8h, #s (1 to 8)
+      let (x, ax) = vreg(ops[1])
+      let sh = if n == 3 { imm(ops[2]) ?? -1 } else { -1 }
+      if d < 0 || x < 0 || ad != "8b" || ax != "8h" || sh < 1 || sh > 8 {
+        return a.bad(m, ops)
+      }
+      a.word(0x0f008400 | ((16 - sh) * 0x10000) | (x * 32) | d)
+    }
+  }
+}
+
 /// A three register floating point instruction on d registers.
 fn (var a: Asm) fp3(m: Str, ops: List[Bytes], base: Int) {
   if ops.len() != 3 {
@@ -1177,6 +1279,11 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
       } else if kt == RS {
         size = 2
         v = 1
+      } else if kt == RQ {
+        // a 128 bit register: size 0 and opc 2 or 3
+        size = 0
+        v = 1
+        opc = opc + 2
       } else {
         return a.bad(m, ops)
       }
@@ -1203,7 +1310,7 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
     }
   }
   let mo = mem_op(ops, 1)
-  if !mo.ok {
+  if !mo.ok || (kt == RQ && (mo.mode != 3 || mo.sh >= 0)) {
     return a.bad(m, ops)
   }
   let head = (size * 0x40000000) | 0x38000000 | (v * 0x4000000)
