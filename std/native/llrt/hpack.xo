@@ -1,0 +1,622 @@
+// HPACK (RFC 7541) of the native HTTP/2 server, written in Xo (decision
+// 0193 step 6): the decoder of request header blocks (integers, string
+// literals, Huffman codes, the dynamic table and its size updates) and
+// the encoder of response header blocks (hpack.Encoder of Go 1.26: a
+// field the static or dynamic table holds is indexed, else a literal
+// added to the dynamic table, its strings Huffman coded when shorter).
+// They were C (std/llrt/xo_h2.c, which keeps its copy for the client);
+// the semantics are the same, so a peer observes what net/http's
+// bundled HTTP/2 sends. The C path stays selectable (`XO_LLRT_C=hpack`
+// loads hpack_c.xo) until the HTTP/2 workloads meet decision 0180's bar
+// on both native backends.
+//
+// C never calls compiled Xo (decision 0180), and the connection's frames
+// are read and written by C under the connection's lock, which stream
+// tasks share. So the HTTP/2 connection's fiber (std/native/http.xo,
+// serve_conn) calls the C (rthttp.h2_next) until it stops at a header
+// block: 2, a block fragment to decode (rthttp.h2_block gives it,
+// rthttp.h2_fields takes the fields); 3, response heads to encode in the
+// order they go out (rthttp.h2_enc_job, rthttp.h2_encoded; the C holds
+// the connection's lock until they are in, so the order and the table
+// stay the peer's). A 100 Continue is encoded the same way when
+// rthttp.h2_fields asks for one.
+use native/llrt/hpack_tables
+use native/rt
+use native/rthttp
+
+/// A dynamic table (RFC 7541 2.3.2): the entries are names[first..] and
+/// values[first..], the newest last; size counts each entry's name and
+/// value lengths plus 32 (4.1).
+struct Table {
+  names: List[Str]
+  values: List[Str]
+  first: Int
+  size: Int
+  max: Int
+}
+
+fn new_table(max: Int) -> Table { Table{names: [], values: [], first: 0, size: 0, max: max} }
+
+fn (t: Table) count() -> Int { t.names.len() - t.first }
+
+/// Drops the oldest entry.
+fn (var t: Table) evict() {
+  let k = t.first
+  t.size -= t.names[k].len() + t.values[k].len() + 32
+  t.names[k] = ""
+  t.values[k] = ""
+  t.first = k + 1
+  let n = t.names.len()
+  if t.first == n {
+    t.names = []
+    t.values = []
+    t.first = 0
+  } else if t.first >= 32 && 2 * t.first >= n {
+    var ns: List[Str] = []
+    var vs: List[Str] = []
+    var i = t.first
+    while i < n {
+      ns.push(t.names[i])
+      vs.push(t.values[i])
+      i += 1
+    }
+    t.names = ns
+    t.values = vs
+    t.first = 0
+  }
+}
+
+fn (var t: Table) set_max(max: Int) {
+  t.max = max
+  while t.size > t.max {
+    t.evict()
+  }
+}
+
+/// Adds an entry; one larger than the table empties it (4.4).
+fn (var t: Table) add(name: Str, value: Str) {
+  let sz = name.len() + value.len() + 32
+  while t.count() > 0 && t.size + sz > t.max {
+    t.evict()
+  }
+  if sz > t.max {
+    return
+  }
+  t.names.push(name)
+  t.values.push(value)
+  t.size += sz
+}
+
+// ---------------------------------------------------------------------------
+// The static table
+
+/// Where entry k (1 to 61) of the static table is: the offset of its
+/// name, the name's length, the value's length.
+fn static_at(k: Int) -> (Int, Int, Int) {
+  let w = rt.bytes_word(hpack_tables.STATIC_AT, 4 * (k & 63))
+  (w & 0xFFFF, (w >> 16) & 0xFF, (w >> 24) & 0xFF)
+}
+
+/// Whether s equals the len bytes of t from off.
+fn eq_at(s: Bytes, t: Bytes, off: Int, len: Int) -> Bool {
+  if s.len() != len {
+    return false
+  }
+  var i = 0
+  while i < len {
+    if s[i] != t[off + i] {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// The static table's entry for name and value: the index of the entry
+/// with both (0: none) and the index of the last entry with the name, as
+/// hpack's staticTable byNameValue and byName.
+fn static_find(name: Bytes, value: Bytes) -> (Int, Int) {
+  let t = hpack_tables.STATIC_TEXT
+  let nn = name.len()
+  var by_name = 0
+  var k = 1
+  while k <= 61 {
+    let (off, kn, vn) = static_at(k)
+    if kn == nn && eq_at(name, t, off, kn) {
+      if eq_at(value, t, off + kn, vn) {
+        return (k, k)
+      }
+      by_name = k
+    }
+    k += 1
+  }
+  (0, by_name)
+}
+
+// ---------------------------------------------------------------------------
+// Integers and strings (5.1, 5.2)
+
+/// The integer with a prefix of the given bits at b[i]: (1, its value,
+/// the index after it), (-1, ...) when b ends first, (0, ...) when it
+/// overflows (hpack.readVarInt). The value is a UInt64 in an Int: a
+/// negative one is at least 2^63.
+fn get_int(b: Bytes, n: Int, i: Int, prefix: Int) -> (Int, Int, Int) {
+  if i >= n {
+    return (-1, 0, i)
+  }
+  let max = (1 << (prefix & 7)) - 1
+  let v0 = Int(b[i]) & max
+  if v0 < max {
+    return (1, v0, i + 1)
+  }
+  var v = v0
+  var j = i + 1
+  var m = 0
+  while true {
+    if j >= n {
+      return (-1, 0, j)
+    }
+    let c = Int(b[j])
+    j += 1
+    v = rt.int_wrap(0, v, rt.int_wrap(3, c & 127, m))
+    if (c & 128) == 0 {
+      break
+    }
+    m += 7
+    if m >= 63 {
+      return (0, 0, j)
+    }
+  }
+  (1, v, j)
+}
+
+/// out + the Huffman decoding of b[lo..hi]: false when the code is
+/// invalid (EOS, padding longer than 7 bits or not all ones) or the
+/// result longer than max (hpack.huffmanDecode). Two steps of the
+/// nibble state machine a byte (hpack_tables.HUFF_DEC); the bytes go out
+/// seven at a time.
+fn huff_dec(b: Bytes, lo: Int, hi: Int, out0: Str, max: Int) -> (Bool, Str) {
+  let t = hpack_tables.HUFF_DEC
+  var out = out0
+  var s = 0
+  var end = 4
+  var w = 0
+  var wk = 0
+  var n = 0
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    let x = rt.bytes_word(t, ((s << 4) | (c >> 4)) << 2)
+    if (x & 0x20000) != 0 {
+      return (false, out)
+    }
+    if (x & 0x10000) != 0 {
+      w = w | (((x >> 8) & 0xFF) << ((8 * wk) & 63))
+      wk += 1
+      n += 1
+    }
+    s = x & 0xFF
+    let y = rt.bytes_word(t, ((s << 4) | (c & 15)) << 2)
+    if (y & 0x20000) != 0 {
+      return (false, out)
+    }
+    if (y & 0x10000) != 0 {
+      w = w | (((y >> 8) & 0xFF) << ((8 * wk) & 63))
+      wk += 1
+      n += 1
+    }
+    s = y & 0xFF
+    end = y >> 16
+    if wk >= 6 {
+      out = rt.rs_push_word(out, w, wk)
+      w = 0
+      wk = 0
+    }
+    i += 1
+  }
+  if wk > 0 {
+    out = rt.rs_push_word(out, w, wk)
+  }
+  ((end & 4) != 0 && n <= max, out)
+}
+
+/// out + the string literal at b[i]: (1, out, the index after it), (-1,
+/// ...) when b ends first, (0, ...) when it is invalid or longer than max
+/// (hpack.Decoder.readString).
+fn get_str(b: Bytes, n: Int, i: Int, out: Str, max: Int) -> (Int, Str, Int) {
+  if i >= n {
+    return (-1, out, i)
+  }
+  let huff = (Int(b[i]) & 0x80) != 0
+  let (g, len, j) = get_int(b, n, i, 7)
+  if g != 1 {
+    return (g, out, j)
+  }
+  if len < 0 || len > max {
+    return (0, out, j)
+  }
+  if len > n - j {
+    return (-1, out, j)
+  }
+  if huff {
+    let (ok, o) = huff_dec(b, j, j + len, out, max)
+    if !ok {
+      return (0, o, j)
+    }
+    return (1, o, j + len)
+  }
+  (1, rt.rs_append_bytes(out, b, j, j + len, 0), j + len)
+}
+
+// ---------------------------------------------------------------------------
+// The decoder
+
+/// A decoder: the dynamic table and the largest size a table size update
+/// may set (the SETTINGS_HEADER_TABLE_SIZE this side announced).
+pub struct Dec {
+  t: Table
+  limit: Int
+}
+
+pub fn decoder(limit: Int) -> Dec { Dec{t: new_table(limit), limit: limit} }
+
+/// The fields of a block fragment: the bytes of each name then its
+/// value in data, their lengths (4 bytes each, little endian) in lens.
+pub struct Fields {
+  /// 1, or 0 for a decoding error (a COMPRESSION_ERROR).
+  ok: Int
+  /// How far the fragment was decoded: a representation its end cuts
+  /// waits for the next fragment.
+  used: Int
+  data: Str
+  lens: Str
+  /// No representation of the block was decoded yet.
+  first: Bool
+}
+
+/// Decodes the whole field representations of blk, the next part of a
+/// header block (hpack.Decoder.Write, xo_h2.c's hp_decode_part): first
+/// is set while no representation of the block was decoded (a table
+/// size update must come first), maxstr bounds a string.
+pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
+  let b = blk.bytes()
+  let n = b.len()
+  let st = hpack_tables.STATIC_TEXT
+  var first = first0
+  var data = ""
+  var lens = ""
+  var used = 0
+  var i = 0
+  while i < n {
+    let start = i
+    let c = Int(b[i])
+    if (c & 0x80) != 0 {
+      // an indexed field
+      let (g, idx, j) = get_int(b, n, i, 7)
+      if g < 0 {
+        return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
+      }
+      if g == 0 || idx <= 0 {
+        return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+      }
+      if idx <= 61 {
+        let (off, kn, vn) = static_at(idx)
+        data = rt.rs_append_bytes(data, st, off, off + kn + vn, 0)
+        lens = rt.rs_push_word(lens, kn | (vn << 32), 8)
+      } else if idx - 62 < d.t.count() {
+        let e = d.t.names.len() - 1 - (idx - 62)
+        let nm = d.t.names[e]
+        let v = d.t.values[e]
+        data = rt.rs_append(rt.rs_append(data, nm), v)
+        lens = rt.rs_push_word(lens, nm.len() | (v.len() << 32), 8)
+      } else {
+        return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+      }
+      first = false
+      used = j
+      i = j
+      continue
+    }
+    if (c & 0xe0) == 0x20 {
+      // a dynamic table size update: at the start of a block only
+      if !first && d.t.size > 0 {
+        return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+      }
+      let (g, v, j) = get_int(b, n, i, 5)
+      if g < 0 {
+        return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
+      }
+      if g == 0 || v < 0 || v > d.limit {
+        return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+      }
+      d.t.set_max(v)
+      first = false
+      used = j
+      i = j
+      continue
+    }
+    // a literal, with incremental indexing or without (never indexed)
+    let indexing = (c & 0xc0) == 0x40
+    let (g, idx, j0) = get_int(b, n, i, if indexing { 6 } else { 4 })
+    if g < 0 {
+      return Fields{ok: 1, used: start, data: data, lens: lens, first: first}
+    }
+    if g == 0 || idx < 0 {
+      return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+    }
+    let mark = data.len()
+    var j = j0
+    if idx == 0 {
+      let (g2, d2, j2) = get_str(b, n, j, data, maxstr)
+      data = d2
+      if g2 < 0 {
+        return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+      }
+      if g2 == 0 {
+        return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+      }
+      j = j2
+    } else if idx <= 61 {
+      let (off, kn, _) = static_at(idx)
+      data = rt.rs_append_bytes(data, st, off, off + kn, 0)
+    } else if idx - 62 < d.t.count() {
+      data = rt.rs_append(data, d.t.names[d.t.names.len() - 1 - (idx - 62)])
+    } else {
+      return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+    }
+    let nlen = data.len() - mark
+    let (g3, d3, j3) = get_str(b, n, j, data, maxstr)
+    data = d3
+    if g3 < 0 {
+      return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+    }
+    if g3 == 0 {
+      return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
+    }
+    let vlen = data.len() - mark - nlen
+    lens = rt.rs_push_word(lens, nlen | (vlen << 32), 8)
+    if indexing {
+      d.t.add(rt.str_slice(data, mark, mark + nlen), rt.str_slice(data, mark + nlen, mark + nlen + vlen))
+    }
+    first = false
+    used = j3
+    i = j3
+  }
+  Fields{ok: 1, used: used, data: data, lens: lens, first: first}
+}
+
+// ---------------------------------------------------------------------------
+// The encoder
+
+/// An encoder (hpack.Encoder): fields are indexed when the static or the
+/// dynamic table has them, else written as literals added to the
+/// dynamic table, strings Huffman coded when that is shorter.
+pub struct Enc {
+  t: Table
+  min_size: Int
+  update: Bool
+}
+
+/// The table size of the server's encoder (H2_TABLE).
+const TABLE: Int = 4096
+
+const NO_MIN: Int = 4294967295
+
+pub fn encoder() -> Enc { Enc{t: new_table(TABLE), min_size: NO_MIN, update: false} }
+
+/// Applies the peer's SETTINGS_HEADER_TABLE_SIZE (at most TABLE).
+pub fn (var e: Enc) set_max(v0: Int) {
+  let v = if v0 > TABLE { TABLE } else { v0 }
+  if v < e.min_size {
+    e.min_size = v
+  }
+  e.update = true
+  e.t.set_max(v)
+}
+
+/// out + v with a prefix of the given bits whose other bits are first.
+fn put_int(out: Str, first: Int, prefix: Int, v: Int) -> Str {
+  let max = (1 << (prefix & 7)) - 1
+  if v < max {
+    return rt.rs_push_word(out, first | v, 1)
+  }
+  var w = first | max
+  var k = 1
+  var x = v - max
+  while x >= 128 {
+    w = w | (((x & 127) | 128) << ((8 * k) & 63))
+    k += 1
+    x = x >> 7
+  }
+  w = w | (x << ((8 * k) & 63))
+  rt.rs_push_word(out, w, k + 1)
+}
+
+/// The length of the Huffman code of s in bytes.
+fn huff_len(s: Bytes) -> Int {
+  let t = hpack_tables.HUFF_LEN
+  var bits = 0
+  var i = 0
+  let n = s.len()
+  while i < n {
+    bits += Int(t[Int(s[i])])
+    i += 1
+  }
+  (bits + 7) >> 3
+}
+
+/// out + the Huffman code of s, padded with ones.
+fn huff_enc(out0: Str, s: Bytes) -> Str {
+  let code = hpack_tables.HUFF_CODE
+  let lens = hpack_tables.HUFF_LEN
+  var out = out0
+  var acc = 0
+  var bits = 0
+  var w = 0
+  var wk = 0
+  var i = 0
+  let n = s.len()
+  while i < n {
+    let c = Int(s[i])
+    let l = Int(lens[c])
+    acc = (acc << (l & 31)) | (rt.bytes_word(code, 4 * c) & 0xFFFFFFFF)
+    bits += l
+    while bits >= 8 {
+      bits -= 8
+      w = w | (((acc >> (bits & 63)) & 0xFF) << ((8 * wk) & 63))
+      wk += 1
+      if wk == 7 {
+        out = rt.rs_push_word(out, w, 7)
+        w = 0
+        wk = 0
+      }
+    }
+    acc = acc & ((1 << (bits & 7)) - 1)
+    i += 1
+  }
+  if bits > 0 {
+    w = w | ((((acc << ((8 - bits) & 7)) | (0xFF >> (bits & 7))) & 0xFF) << ((8 * wk) & 63))
+    wk += 1
+  }
+  if wk > 0 {
+    out = rt.rs_push_word(out, w, wk)
+  }
+  out
+}
+
+/// out + the string literal of s.
+fn put_str(out: Str, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  let hl = huff_len(b)
+  if hl < n {
+    return huff_enc(put_int(out, 0x80, 7, hl), b)
+  }
+  rt.rs_append(put_int(out, 0, 7, n), s)
+}
+
+/// out + the representation of the field name: value.
+pub fn (var e: Enc) encode(out0: Str, name: Str, value: Str) -> Str {
+  var out = out0
+  if e.update {
+    e.update = false
+    if e.min_size < e.t.max {
+      out = put_int(out, 0x20, 5, e.min_size)
+    }
+    e.min_size = NO_MIN
+    out = put_int(out, 0x20, 5, e.t.max)
+  }
+  let (si, sn) = static_find(name.bytes(), value.bytes())
+  if si > 0 {
+    return put_int(out, 0x80, 7, si)
+  }
+  var di = 0
+  let cnt = e.t.count()
+  let last = e.t.names.len() - 1
+  var k = 0
+  while k < cnt {
+    if e.t.names[last - k] == name {
+      if e.t.values[last - k] == value {
+        return put_int(out, 0x80, 7, 62 + k)
+      }
+      if di == 0 {
+        di = 62 + k
+      }
+    }
+    k += 1
+  }
+  let idx = if sn > 0 { sn } else { di }
+  let indexing = name.len() + value.len() + 32 <= e.t.max
+  out = if indexing { put_int(out, 0x40, 6, idx) } else { put_int(out, 0, 4, idx) }
+  if idx == 0 {
+    out = put_str(out, name)
+  }
+  out = put_str(out, value)
+  if indexing {
+    e.t.add(name, value)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The HTTP/2 server's header blocks (xo_h2.c)
+
+/// The 4 byte little endian number at b[i].
+fn u32_at(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24) }
+
+/// The HPACK state of an HTTP/2 server connection.
+pub struct Conn {
+  h: rthttp.HConn
+  dec: Dec
+  enc: Enc
+}
+
+/// Makes the connection's header blocks pass through Xo (rthttp.h2_xo).
+pub fn conn(h: rthttp.HConn) -> Conn {
+  rthttp.h2_xo(h)
+  Conn{h: h, dec: decoder(TABLE), enc: encoder()}
+}
+
+/// The largest header list (and string) the server takes (H2_MAX_HLIST:
+/// DefaultMaxHeaderBytes plus 10 times 32).
+const MAX_HLIST: Int = 1048896
+
+/// Runs the HTTP/2 connection until a request is ready for a handler
+/// (true; rthttp.h2_take hands it out) or the connection is done.
+pub fn (var c: Conn) next() -> Bool {
+  while true {
+    let r = rthttp.h2_next(c.h)
+    if r == 2 {
+      let f = c.dec.decode_part(rthttp.h2_block(c.h), rthttp.h2_block_first(c.h), MAX_HLIST)
+      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first) {
+        // a 100 Continue goes out after the request's HEADERS
+        rthttp.h2_encoded(c.h, c.encode_job(rthttp.h2_enc_job(c.h)))
+      }
+    } else if r == 3 {
+      rthttp.h2_encoded(c.h, c.encode_job(rthttp.h2_enc_job(c.h)))
+    } else {
+      return r == 1
+    }
+  }
+  false
+}
+
+/// Encodes the response heads of a job of rthttp.h2_enc_job: the peer's
+/// table size settings since the last job (a count, then each, 4 bytes
+/// each), then for each head its number of fields and each field's name
+/// and value with their lengths. The blocks, each after its length.
+fn (var c: Conn) encode_job(job: Str) -> Str {
+  let b = job.bytes()
+  var i = 0
+  let ns = u32_at(b, i)
+  i += 4
+  var k = 0
+  while k < ns {
+    c.enc.set_max(u32_at(b, i))
+    i += 4
+    k += 1
+  }
+  let nh = u32_at(b, i)
+  i += 4
+  var out = ""
+  var h = 0
+  while h < nh {
+    let nf = u32_at(b, i)
+    i += 4
+    var blk = ""
+    var f = 0
+    while f < nf {
+      let nl = u32_at(b, i)
+      let name = rt.str_slice(job, i + 4, i + 4 + nl)
+      i += 4 + nl
+      let vl = u32_at(b, i)
+      let value = rt.str_slice(job, i + 4, i + 4 + vl)
+      i += 4 + vl
+      blk = c.enc.encode(blk, name, value)
+      f += 1
+    }
+    out = rt.rs_append(rt.rs_push_word(out, blk.len(), 4), blk)
+    h += 1
+  }
+  out
+}
