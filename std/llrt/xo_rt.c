@@ -1377,10 +1377,15 @@ static struct {
 	// real-time sections (decision 0133): sections run, frees deferred,
 	// frees done at once because the queue was full
 	int64_t rt_section, rt_defer, rt_overflow;
+	// fiber stacks mapped now (always counted) and at most at once (each
+	// fibers.stack plus a guard page of address space): the measure of a
+	// program's address space need under ThreadSanitizer on Linux
+	// (gotchas/linux-tsan-fiber-stacks.md)
+	int64_t fiber_live, fiber_peak;
 } st;
 static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield",
                                        "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake",
-                                       "rt_section", "rt_defer", "rt_overflow"};
+                                       "rt_section", "rt_defer", "rt_overflow", "fiber_live", "fiber_peak"};
 
 static void stats_init(void) {
 	const char *e = getenv("XO_RTSTATS");
@@ -3805,10 +3810,22 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 #else
 		f->mem = mmap(NULL, f->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
 		if (f->mem == MAP_FAILED) {
+			// out of address space more often than of memory (stacks are
+			// reserved, not committed): say how much the stacks took
+			// (gotchas/linux-tsan-fiber-stacks.md)
+			int en = errno;
+			fprintf(stderr, "xo: fiber stack mmap failed (%s) with %lld stacks of %zu MiB mapped\n", strerror(en),
+			        (long long)__atomic_load_n(&st.fiber_live, __ATOMIC_RELAXED), fibers.stack >> 20);
 			xo_oom();
 		}
 		mprotect(f->mem, page, PROT_NONE);
 #endif
+		int64_t live = __atomic_add_fetch(&st.fiber_live, 1, __ATOMIC_RELAXED);
+		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0, 0)) {
+			int64_t peak = __atomic_load_n(&st.fiber_peak, __ATOMIC_RELAXED);
+			while (live > peak && !__atomic_compare_exchange_n(&st.fiber_peak, &peak, live, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+			}
+		}
 #ifdef XO_TSAN
 		f->tsan = __tsan_create_fiber(0);
 #endif
@@ -3876,6 +3893,7 @@ static void fiber_free(xo_worker *w, xo_fiber *f) {
 	munmap(f->mem, f->size);
 #endif
 	free(f);
+	__atomic_sub_fetch(&st.fiber_live, 1, __ATOMIC_RELAXED);
 }
 
 // fiber_main runs on the fiber: the task, then back to the scheduler for
