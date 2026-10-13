@@ -2274,6 +2274,18 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_restorer":
 		s.g.sigreturn()
 		s.set(v, "ptrtoint ptr @xo_sigreturn to i64")
+	case "rt.call_c2":
+		// a C ABI call of an address (decision 0206 stage 2)
+		p := s.def("inttoptr i64 %s to ptr", s.op(v.Args[0]))
+		s.set(v, "call i64 %s(i64 %s, i64 %s)", p, s.op(v.Args[1]), s.op(v.Args[2]))
+	case "rt.sys_words":
+		// 16 words of process state (decision 0206 stage 2): weak, one
+		// object for every module of a split build
+		if !s.g.emitted["@.xo.sys_words"] {
+			s.g.emitted["@.xo.sys_words"] = true
+			s.g.helpers.WriteString("@.xo.sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
+		}
+		s.set(v, "ptrtoint ptr @.xo.sys_words to i64")
 	case "rt.stack_switch":
 		// a call of the switch (sched.go), defined at the first use
 		s.g.schedSwitch()

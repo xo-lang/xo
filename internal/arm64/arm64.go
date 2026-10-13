@@ -112,6 +112,9 @@ type gen struct {
 	// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
 	// (decision 0206)
 	restorerRef bool
+	// rt.sys_words was used: the 16 words of process state are emitted
+	// (decision 0206 stage 2)
+	wordsRef bool
 	// the task switch or the thread locals were used: sched.go's
 	// functions are emitted (decision 0212)
 	schedRef bool
@@ -187,11 +190,12 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	out.WriteString(g.section("text"))
 	out.WriteString(g.text.String())
 	out.WriteString(g.helpers.String())
-	out.WriteString(g.lsdas.String())
 	if g.restorerRef {
 		// rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
+		// (in the text section: the call site tables after it switch away)
 		fmt.Fprintf(&out, "\t.p2align 2\n%s:\n\tmov x8, #139\n\tsvc #0\n", g.local("xo_sigreturn"))
 	}
+	out.WriteString(g.lsdas.String())
 	if g.schedRef {
 		out.WriteString(schedAsm(g.os))
 	}
@@ -204,6 +208,10 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 			"DW.ref.xo_personality:\n\t.xword xo_personality\n")
 	}
 	g.data(&out)
+	if g.wordsRef {
+		// rt.sys_words (decision 0206 stage 2): 16 words, zero at start
+		fmt.Fprintf(&out, "%s\t.p2align 3\n%s:\n%s", g.section("data"), g.local("xo_sys_words"), strings.Repeat("\t.quad 0\n", 16))
+	}
 	if g.os == Linux {
 		out.WriteString("\t.section .note.GNU-stack,\"\",@progbits\n")
 	}

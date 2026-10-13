@@ -20,6 +20,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   library path. With `XO_NOLIBC=1`, programs that dial or listen now
   link and run with no C library (std/http still needs it until
   decision 0202).
+- Linux: Clock.now calls the kernel's vDSO from Xo instead of the C
+  library (0.864 to 0.967 of the C path's instructions,
+  bench/results/linux-syscalls-2026-10-13.md); `XO_LLRT_C=sysio` keeps
+  the C clock. Static programs (`XO_NOLIBC=1`, decision 0206) take their
+  clock, locks, signal handlers' installation, threads, and thread local
+  storage layout from Xo, and link again with the arm64 backend (they
+  failed on libgcc's atomics helpers). Output is unchanged.
 - Fixed: ThreadSanitizer builds on Linux ran out of address space for
   task stacks under load (`fault: out of memory` in conc_stress, not a
   leak); their task stacks are now 2 MiB (XO_TASK_STACK_MB overrides).

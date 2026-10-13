@@ -37,7 +37,7 @@ for be in "$@"; do
 		(cd "$OUT/src-$be-$v" && env $env "$XO" build --std="$STD" --backend="$be" -o "$OUT/t-$be-$v" . >/dev/null)
 	done
 done
-for w in ${WORKLOADS:-none read read_big write stat clock}; do
+for w in ${WORKLOADS:-none read read_big write stat clock chan}; do
 	for be in "$@"; do
 		for v in ${VARIANTS:-$DEFV}; do
 			bu=""
