@@ -227,6 +227,37 @@ func TestRuntimeThreads(t *testing.T) {
 	runTSan(t, opt, ".")
 }
 
+// TestRuntimeAlloc runs the C stress test of the native heap (decision
+// 0207 stage 3): random sizes over every class and malloc, resizes,
+// frees on other threads, and waves of blocks freed by one thread, with
+// every block's contents checked, for the heap in Xo
+// (std/native/llrt/alloc.xo through the C ABI exports) and for the C
+// path (XO_LLRT_C=alloc's -DXO_ALLOC_C): under ThreadSanitizer, then
+// optimized with more iterations.
+func TestRuntimeAlloc(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
+	src := filepath.Join(rtDir, "testdata", "alloc_threads.c")
+	for _, flags := range [][]string{nil, {"-DXO_ALLOC_C"}} {
+		bin := tsanBuild(t, flags, cOnly(t, src))
+		out := runTSan(t, bin, ".")
+		for _, name := range []string{"solo", "threads", "waves"} {
+			if !strings.Contains(out, name+": ok") {
+				t.Errorf("%v: test %s did not pass:\n%s", flags, name, out)
+			}
+		}
+	}
+	if testing.Short() {
+		return
+	}
+	for _, flags := range [][]string{nil, {"-DXO_ALLOC_C"}} {
+		opt := exe(filepath.Join(t.TempDir(), "opt"))
+		if err := build.CompileC(append([]string{"-O2", "-DITER=30000"}, flags...), cOnly(t, src), opt); err != nil {
+			t.Fatal(err)
+		}
+		runTSan(t, opt, ".")
+	}
+}
+
 // TestRuntimeTasks runs the C stress test of the task runtime (decision
 // 0068): scopes with thousands of tasks, trees of nested scopes, awaits
 // that run tasks not started yet, channels (buffered and not), canceled

@@ -661,6 +661,12 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       let b = g.def("trunc i64 ${g.op(x.args[1])} to i8")
       g.emit("call void @llvm.memset.p0.i64(ptr ${d}, i8 ${b}, i64 ${g.op(x.args[2])}, i1 false)")
     }
+    "rt.prefetch" => {
+      // read, high locality, data (decision 0207 stage 3)
+      g.llvm_decl("@llvm.prefetch.p0", "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)")
+      let p = g.raw_ptr(x.args[0])
+      g.emit("call void @llvm.prefetch.p0(ptr ${p}, i32 0, i32 3, i32 1)")
+    }
     "rt.mem_cmp" => {
       g.llvm_decl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
       let a = g.raw_ptr(x.args[0])
