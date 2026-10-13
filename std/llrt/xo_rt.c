@@ -4896,6 +4896,13 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)
+//
+// The generated code reads and writes the value itself (decision 0200):
+// get, set, swap, and compare_and_swap are one inline atomic each on
+// byte 128 (slot 13 of rt.slot_load and friends, which count a list's
+// three word header), and add and max are std/native/llrt/atomic.xo.
+// The C operations below the allocation are its C path, compiled only
+// with -DXO_ATOMIC_C (XO_LLRT_C=atomic).
 
 typedef struct {
 	xo_hdr h;
@@ -4904,6 +4911,8 @@ typedef struct {
 	char pad[128 - sizeof(xo_hdr)];
 	int64_t v;
 } xo_atomic;
+
+_Static_assert(offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
 static void atomic_free(void *p) { xo_free(p); }
 
@@ -4914,6 +4923,7 @@ xo_atomic *xo_atomic_new(int64_t v) {
 	return a;
 }
 
+#ifdef XO_ATOMIC_C
 int64_t xo_atomic_get(xo_atomic *a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
 
 void xo_atomic_set(xo_atomic *a, int64_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); }
@@ -4950,6 +4960,7 @@ int64_t xo_atomic_max(xo_atomic *a, int64_t n) {
 	}
 	return old;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals

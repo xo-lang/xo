@@ -305,7 +305,27 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       a.word(base | (sf * 0x80000000) | ((sh / 16) * 0x200000) | (v * 32) | r)
     }
-    "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" => a.atomic(m, ops)
+    "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" | "swp" | "swpa" | "swpl" | "swpal" => a.atomic(m, ops)
+    "cas" | "casa" | "casl" | "casal" => a.cas(m, ops)
+    "dmb" => {
+      // the barrier domains the atomics use (decision 0200)
+      let crm = if n == 1 {
+        match bstr(ops[0]) {
+          "ish" => 11
+          "ishld" => 9
+          "ishst" => 10
+          "sy" => 15
+          _ => -1
+        }
+      } else {
+        -1
+      }
+      if crm < 0 {
+        return a.bad(m, ops)
+      }
+      a.word(0xd50330bf | (crm * 0x100))
+    }
+    "yield" => a.word(0xd503203f)
     "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => a.exclusive(m, ops)
     "fmov" => a.fmov(ops)
     "fadd" | "fsub" | "fmul" | "fdiv" => {
@@ -899,7 +919,8 @@ fn (var a: Asm) ccmp(m: Str, ops: List[Bytes]) {
   }
 }
 
-/// The LSE atomics: ldadd{a,l,al} Rs, Rt, [Rn] and stadd{l} Rs, [Rn].
+/// The LSE atomics: ldadd{a,l,al} and swp{a,l,al} Rs, Rt, [Rn], stadd{l}
+/// Rs, [Rn].
 fn (var a: Asm) atomic(m: Str, ops: List[Bytes]) {
   let st = m.starts_with("st")
   let n = ops.len()
@@ -922,10 +943,36 @@ fn (var a: Asm) atomic(m: Str, ops: List[Bytes]) {
   if s < 0 || t < 0 || sft != sf || (kb != RX && kb != RSP) {
     return a.bad(m, ops)
   }
-  let acq = m == "ldadda" || m == "ldaddal"
-  let rel = m == "ldaddl" || m == "ldaddal" || m == "staddl"
+  let swp = m.starts_with("swp")
+  let sfx = m.trim_prefix(if swp { "swp" } else if st { "stadd" } else { "ldadd" })
+  let acq = sfx == "a" || sfx == "al"
+  let rel = sfx == "l" || sfx == "al"
   let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
-  a.word(0x38200000 | size | (if acq { 0x800000 } else { 0 }) | (if rel { 0x400000 } else { 0 }) | (s * 0x10000) | (b * 32) | t)
+  let op = if swp { 0x8000 } else { 0 }
+  a.word(0x38200000 | op | size | (if acq { 0x800000 } else { 0 }) | (if rel { 0x400000 } else { 0 }) | (s * 0x10000) | (b * 32) | t)
+}
+
+/// The LSE compare and swap: cas{a,l,al} Rs, Rt, [Rn] (Rs the expected
+/// value in and the old value out).
+fn (var a: Asm) cas(m: Str, ops: List[Bytes]) {
+  if ops.len() != 3 {
+    return a.bad(m, ops)
+  }
+  let (s, sf) = gpr(ops[0], false)
+  let (t, sft) = gpr(ops[1], false)
+  let mem = ops[2]
+  if mem.len() < 3 || mem[0] != '[' || mem[mem.len() - 1] != ']' {
+    return a.bad(m, ops)
+  }
+  let (b, kb) = reg(trim(mem[1..mem.len() - 1]))
+  if s < 0 || t < 0 || sft != sf || (kb != RX && kb != RSP) {
+    return a.bad(m, ops)
+  }
+  let sfx = m.trim_prefix("cas")
+  let acq = sfx == "a" || sfx == "al"
+  let rel = sfx == "l" || sfx == "al"
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  a.word(0x08a07c00 | size | (if acq { 0x400000 } else { 0 }) | (if rel { 0x8000 } else { 0 }) | (s * 0x10000) | (b * 32) | t)
 }
 
 /// The exclusive and ordered loads and stores: ldxr, ldaxr Rt, [Xn];

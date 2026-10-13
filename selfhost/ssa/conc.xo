@@ -699,21 +699,68 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     }
     "Chan.close" => return b.rt("chan_close", -1, [h])
     "Chan.len" => return b.rt("chan_len", it, [h])
-    "Atomic.get" => return b.rt("atomic_get", et, [h])
-    "Atomic.set" => return b.rt("atomic_set", -1, [h, b.io_arg(fo, es, 0, et)])
-    "Atomic.swap" => return b.rt("atomic_swap", et, [h, b.io_arg(fo, es, 0, et)])
-    "Atomic.compare_and_swap" => {
-      let a0 = b.io_arg(fo, es, 0, et)
-      let a1 = b.io_arg(fo, es, 1, et)
-      return b.rt("atomic_cas", bt, [h, a0, a1])
+    "Atomic.get" | "Atomic.set" | "Atomic.swap" | "Atomic.compare_and_swap" | "Atomic.add" | "Atomic.max" => {
+      if b.atomic_xo() {
+        return b.atomic_op(key, fo, es, h, et, span)
+      }
+      return b.atomic_c(key, fo, es, h, et, span)
     }
-    "Atomic.add" => return b.rt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
-    "Atomic.max" => return b.rt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
     "Mutex.with" | "Mutex.with_read" => return b.mutex_with(x, h, et, fname == "with_read")
     _ => {}
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")
   b.undef(nt)
+}
+
+/// The cell of an Atomic's value: slot 13 (byte 128) of the C runtime's
+/// object (xo_rt.c xo_atomic), for rt.slot_load and friends (decision
+/// 0200; atomicSlot).
+const ATOMIC_SLOT = 13
+/// The sequentially consistent order of the atomics (ordSeqCst).
+const ORD_SEQ_CST = 4
+
+/// Whether Atomic's operations are the inline atomics and
+/// std/native/llrt/atomic.xo (decision 0200): always, with the native
+/// prelude (atomicXo; the self hosted compiler has no C path switch).
+fn (var b: Builder) atomic_xo() -> Bool {
+  b.prelude_impl("llrt_atomic_add") >= 0
+}
+
+/// An Atomic operation as the inline atomics on its cell and Xo's add
+/// and max (decision 0200).
+fn (var b: Builder) atomic_op(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int, span: Span) -> Int {
+  let it = b.int_t()
+  match key {
+    "Atomic.get" => b.rt("slot_load", et, [h, b.cint(ATOMIC_SLOT), b.cint(ORD_SEQ_CST)])
+    "Atomic.set" => b.rt("slot_store", -1, [h, b.cint(ATOMIC_SLOT), b.io_arg(fo, es, 0, et), b.cint(ORD_SEQ_CST)])
+    "Atomic.swap" => b.rt("slot_swap", et, [h, b.cint(ATOMIC_SLOT), b.io_arg(fo, es, 0, et), b.cint(ORD_SEQ_CST)])
+    "Atomic.compare_and_swap" => {
+      let k = b.cint(ATOMIC_SLOT)
+      let a0 = b.io_arg(fo, es, 0, et)
+      let a1 = b.io_arg(fo, es, 1, et)
+      b.rt("slot_cas", b.bool_t(), [h, k, a0, a1, b.cint(ORD_SEQ_CST)])
+    }
+    "Atomic.add" => b.llrt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
+    _ => b.llrt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
+  }
+}
+
+/// An Atomic operation as a call of the C runtime (XO_LLRT_C=atomic in
+/// the Go builder).
+fn (var b: Builder) atomic_c(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int, span: Span) -> Int {
+  let it = b.int_t()
+  match key {
+    "Atomic.get" => b.rt("atomic_get", et, [h])
+    "Atomic.set" => b.rt("atomic_set", -1, [h, b.io_arg(fo, es, 0, et)])
+    "Atomic.swap" => b.rt("atomic_swap", et, [h, b.io_arg(fo, es, 0, et)])
+    "Atomic.compare_and_swap" => {
+      let a0 = b.io_arg(fo, es, 0, et)
+      let a1 = b.io_arg(fo, es, 1, et)
+      b.rt("atomic_cas", b.bool_t(), [h, a0, a1])
+    }
+    "Atomic.add" => b.rt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
+    _ => b.rt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
+  }
 }
 
 /// `m.with(f)` and `m.with_read(f)` (mutexWith, core 5.4): the value is

@@ -90,6 +90,10 @@ type inst struct {
 	// konst: a plain instruction that makes a constant (no uses but
 	// other constants)
 	konst bool
+	// keep: a plain instruction with a memory effect (an atomic,
+	// decision 0200): kept when its definitions are dead, never folded
+	// into a branch
+	keep bool
 	// Go mode (goasm.go): the memory of each definition (iEntry), of each
 	// source (iRet, iCall), and of each result (iCall)
 	gargs, gres []mloc

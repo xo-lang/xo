@@ -134,7 +134,7 @@ fn (var g: G) thread() {
 }
 
 fn removable(inst: Inst) -> Bool {
-  (inst.kind == K_PLAIN && !inst.has_fault && !inst.defs.is_empty()) || inst.kind == K_PMOVE
+  (inst.kind == K_PLAIN && !inst.has_fault && !inst.keep && !inst.defs.is_empty()) || inst.kind == K_PMOVE
 }
 
 /// Deletes instructions without side effects whose definitions nothing
@@ -1036,7 +1036,7 @@ fn (var g: G) thread_cset() {
       continue
     }
     let def = g.blocks[p].insts[np - 3]
-    if def.kind != K_PLAIN || def.defs.len() != 1 || def.defs[0] != src || def.has_fault {
+    if def.kind != K_PLAIN || def.defs.len() != 1 || def.defs[0] != src || def.has_fault || def.keep {
       continue
     }
     let i = last_index(def.text, "\ncset $d0, ")
@@ -1564,7 +1564,7 @@ fn (var g: G) live_dce() {
           ins[i].srcs = srcs
           ins[i].us = us
         }
-      } else if kind == K_PLAIN && !ins[i].has_fault && !ins[i].defs.is_empty() {
+      } else if kind == K_PLAIN && !ins[i].has_fault && !ins[i].keep && !ins[i].defs.is_empty() {
         var all = true
         for d in ins[i].defs {
           all = all && ld_dead(d, live, pad_live)

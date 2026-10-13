@@ -369,6 +369,14 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of Atomic's operations (decision 0200, XO_LLRT_C=atomic); not
+	// xo_atomic_new, which the Xo path calls too
+	for _, sym := range []string{"xo_atomic_get", "xo_atomic_set", "xo_atomic_swap", "xo_atomic_cas", "xo_atomic_add", "xo_atomic_max"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_ATOMIC_C")
+			break
+		}
+	}
 	// and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
 	for _, sym := range []string{"xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"} {
 		if callsSym(code, sym) {

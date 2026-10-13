@@ -109,6 +109,10 @@ struct Inst {
   indirect: Bool = false
   /// a plain instruction that makes a constant (hoistConsts may move it)
   konst: Bool = false
+  /// a plain instruction with a memory effect (an atomic, decision
+  /// 0200): kept when its definitions are dead, never folded into a
+  /// branch
+  keep: Bool = false
   /// the landing pad block of a call or of a fault stub's call (decision
   /// 0085), -1 for none
   pad: Int = -1

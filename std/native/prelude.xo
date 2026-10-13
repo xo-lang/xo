@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/atomic
 use native/llrt/jsontext
 use native/llrt/num
 use native/llrt/report
@@ -2163,6 +2164,15 @@ fn llrt_append_rune(s: Str, r: Int) -> Str { show.append_rune(s, r) }
 fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) }
 
 fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
+
+// Atomic's add and max (decision 0200): in Xo over the runtime's atomics
+// (std/native/llrt/atomic.xo); the SSA builders lower get, set, swap, and
+// compare_and_swap inline. With XO_LLRT_C=atomic the Go SSA builder calls
+// the C runtime for every Atomic operation instead.
+
+fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
+
+fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
 
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
