@@ -2479,8 +2479,34 @@ int64_t xo_hc_read(xo_hconn *hc) {
 // in Xo (std/native/llrt/http1.xo; decision 0193 step 6).
 void xo_hc_xo(xo_hconn *hc) { hc->xo = 1; }
 
-// xo_hc_input is the unread input (what hc_read stopped at).
-xo_rstr *xo_hc_input(xo_hconn *hc, int64_t *len) { return nstr(hc->buf ? hc->buf + hc->off : "", hc->n - hc->off, len); }
+// xo_hc_input is the unread input (what hc_read stopped at), or a part
+// of it whose parse is the whole's (pipelined requests would otherwise be
+// copied again for each): mode 0 up to the end of the first head (the
+// first empty line: \n\n or \n\r\n), mode 1 at most 4 KiB (a chunked
+// body's first try), 2 all.
+xo_rstr *xo_hc_input(xo_hconn *hc, int64_t mode, int64_t *len) {
+	const char *p = hc->buf ? hc->buf + hc->off : "";
+	int64_t n = hc->n - hc->off;
+	if (mode == 0) {
+		for (const char *nl = memchr(p, '\n', (size_t)n); nl; nl = memchr(nl + 1, '\n', (size_t)(n - (nl + 1 - p)))) {
+			int64_t e = nl + 1 - p;
+			if (e < n && p[e] == '\n') {
+				n = e + 1;
+				break;
+			}
+			if (e + 1 < n && p[e] == '\r' && p[e + 1] == '\n') {
+				n = e + 2;
+				break;
+			}
+		}
+	} else if (mode == 1 && n > 4096) {
+		n = 4096;
+	}
+	return nstr(p, n, len);
+}
+
+// xo_hc_avail is the length of the unread input.
+int64_t xo_hc_avail(xo_hconn *hc) { return hc->n - hc->off; }
 
 int64_t xo_hc_eof(xo_hconn *hc) { return hc->eof; }
 

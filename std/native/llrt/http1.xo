@@ -1455,7 +1455,8 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       }
       // the trailer is a MIME header up to its first empty line (a bare
       // LF ends it too)
-      let t = parse_head("GET / HTTP/1.0\r\n" + rt.str_slice(s, i, n), eof)
+      // (up to the empty line found: the rest does not change the parse)
+      let t = parse_head("GET / HTTP/1.0\r\n" + rt.str_slice(s, i, end), eof)
       if t.res == NEED {
         return Chunked{res: HB_NEED, used: 0, body: out}
       }
@@ -1520,7 +1521,8 @@ pub fn (var r: Reader) read() -> Req? {
   while true {
     let k = rthttp.hc_read(r.h)
     if k == 3 {
-      let p = parse_head(rthttp.hc_input(r.h), rthttp.hc_eof(r.h))
+      // up to the end of the head (the rest does not change the parse)
+      let p = parse_head(rthttp.hc_input(r.h, 0), rthttp.hc_eof(r.h))
       let hd = p.head
       var flags = hd.major | (hd.minor << 4)
       if hd.chunked {
@@ -1550,7 +1552,14 @@ pub fn (var r: Reader) read() -> Req? {
       rthttp.hc_head(r.h, p.res, p.used, hd.method, flags, hd.clen, p.status, p.reason)
       r.head = hd
     } else if k == 4 {
-      let c = chunked(rthttp.hc_input(r.h), rthttp.hc_eof(r.h))
+      // the first 4 KiB, then (when they end before the body does) all
+      let s = rthttp.hc_input(r.h, 1)
+      let cut = s.len() < rthttp.hc_avail(r.h)
+      var c = chunked(s, rthttp.hc_eof(r.h) && !cut)
+      // (an error too: a line cut by the window's end looks too long)
+      if c.res != HB_OK && cut {
+        c = chunked(rthttp.hc_input(r.h, 2), rthttp.hc_eof(r.h))
+      }
       rthttp.hc_chunked(r.h, c.res, c.used, c.body)
     } else if k == 1 {
       return Some(req_of(r.head))
