@@ -61,6 +61,12 @@ ldr  w9, [x0]
 - A build with `XO_LLRT_C=sysio` has no darwin.xo function (nm: 0
   symbols) and the default build has them: the parity compares two
   different programs.
+- cmd/xo TestNoGCTests with `XO1=xo1go`: ok (every native test
+  directory on both backends against the Go backend).
+- internal/selfhost TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM
+  (the Xo builders and emitters against the Go ones, byte for byte):
+  pass (a first run failed only because std/native/llrt changed while
+  it ran; the rerun on a fixed tree passed).
 - internal/selfhost TestSelfhostWasm: wasm goldens: 133 pass, 20
   unsupported, 0 fail of 153 (the darwin and windows layers are lowered
   there; their platform calls are faults).
@@ -119,3 +125,28 @@ i-EXAMPLE12, r8g.8xlarge, linux/arm64, kernel 6.18.54, clang
 identical" with xo1go and with the Go driver; sys_files_clock passes
 with xo1go (TestGoldenWant), the Go driver's LLVM (TestGolden) and arm64
 (TestGoldenRun) backends.
+
+## Windows (windows/amd64, the lead's queue)
+
+Run 1: commit 0d923a28 (before the errno ordering fix and the clock
+revert; the files code is otherwise today's), Windows Server 2025 EC2
+instance i-EXAMPLE39 (c7i.4xlarge), clang 23.1.3, xo1 built by
+the Go seed (scripts/windows-batch.sh):
+
+- batch: 2 windows/amd64: golden summary (windows/amd64): 152 pass, 1
+  fail, 0 unsupported, of 153; the one failure is sys_files_clock,
+  which also fails on the C path (`XO_LLRT_C=sysio`) and at main
+  (1e066156, the sharedlock agent's batch): the golden prints `long: Io`
+  without the message on Windows on purpose, and had no want_windows.txt
+  (added, commit 9060e907; gotchas/golden-target-output-needs-want-os.md).
+- batch: 2 windows/arm64: 153 built, 0 fail, 0 unsupported, of 153.
+- batch: 3 LLVM runtime tests: ok. batch: 4 xo test, LLVM against Go:
+  16 same, 0 differ.
+- TestSysioParity with xo1: "windows/amd64: 43 lines identical": the
+  Xo path (CreateFileW and the rest from Xo, _dosmaperr's table, the
+  Microsoft C runtime's strerror texts) gives the C path's errors and
+  messages byte for byte.
+- TestErrnoTables: the probe did not link (`_get_errno_from_oserr` is not
+  exported to lld-link with the Windows SDK); it now prints strerror
+  only (commit 9060e907), and the _dosmaperr table is checked through
+  TestSysioParity's errors.

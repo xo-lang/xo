@@ -12,7 +12,9 @@ selfhost/xo main.xo; mirrored in internal/ssa build_native.go,
 internal/arm64 isel.go, mir.go, regalloc.go, emit.go, and internal/llvm
 fromssa.go. Tests: TestSysioParity and TestErrnoTables (internal/llvm
 sysio_test.go, testdata/sysio_parity, testdata/errno_probe.c), the
-golden sys_files_clock. Evidence:
+golden sys_files_clock (now with want_windows.txt). Byte for byte
+parity with the C path on darwin/arm64, linux/arm64, and windows/amd64
+(TestSysioParity, 43 lines each). Evidence:
 `bench/results/platform-calls-2026-10-13.md` (`bench/perf/sysio`).
 
 ## Context
@@ -112,7 +114,13 @@ on Windows the POSIX shim xo_win.c over the Microsoft C runtime).
   `__ulock_wait`; IOCP and AFD on Windows through ntdll), sockets
   (ws2_32), and C ABI entry points (thread starts, signal and console
   handlers), each against its C path; xo_win.c shrinks as the Windows
-  layer grows.
+  layer grows. Functions of ntdll need its import library on the
+  link line (kernel32, bcrypt, and ws2_32 come with xo_win.c's
+  `#pragma comment(lib)`), once the C runtime no longer names them.
+- The Windows _dosmaperr table is checked only through the errors
+  TestSysioParity provokes (the C runtime does not export its map); a
+  probe that opens paths failing with each Win32 error would cover the
+  rest.
 
 ## Consequences
 
