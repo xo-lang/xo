@@ -330,7 +330,9 @@ NL_USED void free(void *p) {
 	nl_unlock(&nl_mu);
 }
 
-NL_USED void *calloc(size_t n, size_t m) {
+// no_builtin: the optimizer would fold malloc and a zeroing memset back
+// into a call of calloc (itself).
+NL_USED NL_NOBUILTIN void *calloc(size_t n, size_t m) {
 	size_t t;
 	if (__builtin_mul_overflow(n, m, &t)) {
 		nl_errno = ENOMEM;
@@ -338,7 +340,7 @@ NL_USED void *calloc(size_t n, size_t m) {
 	}
 	void *p = malloc(t);
 	if (p) {
-		__builtin_memset(p, 0, t);
+		memset(p, 0, t);
 	}
 	return p;
 }
