@@ -215,7 +215,7 @@ func goInstr(t string) (string, error) {
 	case "tbz", "tbnz":
 		v, _ := goImm(ops[1])
 		out = fmt.Sprintf("%s %s, %s, %s", strings.ToUpper(mn), v, reg(0), ops[2])
-	case "add", "sub", "and", "orr", "eor", "mul", "sdiv", "smulh", "adds", "subs", "lsl", "lsr", "asr":
+	case "add", "sub", "and", "orr", "eor", "mul", "sdiv", "smulh", "umulh", "adds", "subs", "lsl", "lsr", "asr":
 		if len(ops) < 3 {
 			return bad()
 		}

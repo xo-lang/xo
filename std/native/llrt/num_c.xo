@@ -9,3 +9,7 @@ use native/rt
 pub fn append_int(out: Str, v: Int) -> Str { rt.rs_concat_int(out, v) }
 
 pub fn int_text(v: Int) -> Str { rt.rs_concat_int("", v) }
+
+pub fn append_float(out: Str, f: Float) -> Str { rt.rs_concat_float(out, f) }
+
+pub fn float_text(f: Float) -> Str { rt.rs_concat_float("", f) }

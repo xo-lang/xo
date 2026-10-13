@@ -2145,10 +2145,44 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 	return idom
 }
 
+// inlineRT lowers the runtime intrinsics that are an instruction or two
+// (decision 0193 step 3: the word arithmetic of the number text in
+// std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
+// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, and the
+// bits of a Float both ways. It reports whether v was one.
+func (s *fstate) inlineRT(v *ssa.Value) bool {
+	switch v.Aux.(string) {
+	case "rt.int_wrap":
+		op, ok := constInt(v.Args[0])
+		if !ok || op < 0 || op > 4 {
+			return false
+		}
+		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
+		a := s.word(v.Args[1])
+		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
+			return true
+		}
+		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", a, s.word(v.Args[2])))
+	case "rt.u64_mul_hi":
+		s.set(v, s.def1(false, "umulh $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
+	case "rt.float_bits":
+		s.set(v, s.def1(false, "fmov $d0, $u0", s.word(v.Args[0])))
+	case "rt.float_from_bits":
+		s.set(v, s.def1(true, "fmov $d0, $u0", s.word(v.Args[0])))
+	default:
+		return false
+	}
+	return true
+}
+
 // rtCall lowers a call of the task runtime (`rt.name` is the C function
 // xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 // Str its bytes and length; the result is nothing or one word.
 func (s *fstate) rtCall(v *ssa.Value) {
+	if s.inlineRT(v) {
+		return
+	}
 	var args []src
 	// `rt.rs_*` functions take their Str operands as the string object
 	// (the first is consumed, decision 0074); the others its bytes

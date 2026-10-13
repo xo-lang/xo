@@ -2137,11 +2137,48 @@ func (s *sfn) call(v *ssa.Value) {
 	}
 }
 
+// inlineRT lowers the runtime intrinsics that are an instruction or two
+// (decision 0193 step 3: the word arithmetic of the number text in
+// std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
+// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
+// multiply), and the bits of a Float both ways. It reports whether v was
+// one.
+func (s *sfn) inlineRT(v *ssa.Value) bool {
+	switch v.Aux.(string) {
+	case "rt.int_wrap":
+		op, ok := v.Args[0].Aux.(int64)
+		ok = ok && v.Args[0].Op == ssa.OpConst
+		if !ok || op < 0 || op > 4 {
+			return false
+		}
+		a, b := s.op(v.Args[1]), s.op(v.Args[2])
+		if op >= 3 {
+			b = s.def("and i64 %s, 63", b)
+		}
+		s.set(v, "%s i64 %s, %s", [...]string{"add", "sub", "mul", "shl", "lshr"}[op], a, b)
+	case "rt.u64_mul_hi":
+		a := s.def("zext i64 %s to i128", s.op(v.Args[0]))
+		b := s.def("zext i64 %s to i128", s.op(v.Args[1]))
+		p := s.def("mul i128 %s, %s", a, b)
+		s.set(v, "trunc i128 %s to i64", s.def("lshr i128 %s, 64", p))
+	case "rt.float_bits":
+		s.set(v, "bitcast double %s to i64", s.op(v.Args[0]))
+	case "rt.float_from_bits":
+		s.set(v, "bitcast i64 %s to double", s.op(v.Args[0]))
+	default:
+		return false
+	}
+	return true
+}
+
 // rtCall lowers a call of the task runtime (`rt.name` is the C function
 // xo_name, decision 0068): an Int is an i64, a Bool an i64 0 or 1, a
 // List or handle a pointer, a Str its bytes and length; the result is
 // void or one of those.
 func (s *sfn) rtCall(v *ssa.Value) {
+	if s.inlineRT(v) {
+		return
+	}
 	g := s.g
 	sym := "@xo_" + strings.TrimPrefix(v.Aux.(string), "rt.")
 	// `rt.rs_*` functions take their Str operands as the string object

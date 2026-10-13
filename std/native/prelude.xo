@@ -2059,3 +2059,5 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 // C runtime (str.concat_int and friends) instead.
 
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
+
+fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }

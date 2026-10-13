@@ -578,7 +578,10 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 }
 
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
-// 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul.
+// 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
+// shifts of a word by b mod 64 (op 3 left, 4 right logical) for the
+// number text in Xo (std/native/llrt/num.xo, decision 0193). The native
+// backends lower a constant op inline; this is the call otherwise.
 int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 	uint64_t x = (uint64_t)a, y = (uint64_t)b;
 	switch (op) {
@@ -586,8 +589,30 @@ int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 		return (int64_t)(x + y);
 	case 1:
 		return (int64_t)(x - y);
+	case 3:
+		return (int64_t)(x << (y & 63));
+	case 4:
+		return (int64_t)(x >> (y & 63));
 	}
 	return (int64_t)(x * y);
+}
+
+// xo_u64_mul_hi is the high word of the 128 bit product of a and b as
+// unsigned words; xo_float_bits and xo_float_from_bits are a double's
+// IEEE 754 bits and back (std/native/llrt/num.xo, decision 0193; the
+// native backends lower them inline).
+int64_t xo_u64_mul_hi(int64_t a, int64_t b) { return (int64_t)(((unsigned __int128)(uint64_t)a * (uint64_t)b) >> 64); }
+
+int64_t xo_float_bits(double f) {
+	int64_t b;
+	memcpy(&b, &f, 8);
+	return b;
+}
+
+double xo_float_from_bits(int64_t b) {
+	double f;
+	memcpy(&f, &b, 8);
+	return f;
 }
 
 // xo_int_fits reports whether a op b fits an Int (op 0 +, 1 -, 2 *,
