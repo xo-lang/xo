@@ -480,4 +480,3 @@ func writeSCReport(t *testing.T, rs, natives []scResult) {
 	}
 	t.Logf("wrote %s", out)
 }
-

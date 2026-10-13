@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/xotool"
 	"github.com/xo-lang/xo/internal/mod/modtest"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // repoWorld writes module versions ("<module path>@<version>/<file>" ->
