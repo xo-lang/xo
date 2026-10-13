@@ -432,7 +432,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       mode_flags = mode_flags + ["split", split.lto]
     }
     let srcs = lls + lk.srcs
-    let tls = needs_tls(code)
+    // no TLS library with no C library (XO_NOLIBC=1): the runtime's stubs
+    let tls = needs_tls(code) && !nolibc(os, lctx.tgoos)
     let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs, tls)
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
@@ -529,7 +530,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     let srcs = [prog] + lk.srcs
-    let tls = needs_tls(code)
+    let tls = needs_tls(code) && !nolibc(os, tgoos)
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
       let why = macho_link(os, ctx, tgoos, flags, srcs, bin, tls)
@@ -717,8 +718,11 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if no_cc {
       fail(os, "XO_NOLIBC=1 links with cc (--ld=cc): the ELF linker of decision 0182 has no static mode yet (decision 0206)")
     }
-    if needs_tls(code) {
-      fail(os, "XO_NOLIBC=1: std/http's TLS library needs the C library (decision 0206 stage 3)")
+    if code.contains("xo_tls_") || code.contains("xo_srv_tls") {
+      // certificates and roots: Mbed TLS needs the C library until TLS
+      // is Xo (decision 0202); plain HTTP links without it (the
+      // runtime's TLS stubs: https fails at run time)
+      fail(os, "XO_NOLIBC=1: std/http's TLS needs the C library (decision 0202); a program without certificates or roots links without it")
     }
     for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
       if n.trim() == "net" {

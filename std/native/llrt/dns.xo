@@ -23,7 +23,8 @@
 //     single-request) over UDP with an EDNS0 record (1232 bytes), each
 //     server of the list for each attempt (rotate starts at the next
 //     server per lookup); TCP when the answer is truncated (or with
-//     use-vc). A response with another ID, question, or one that does
+//     use-vc; with single-request, the queries after a truncated answer
+//     go over TCP too, as glibc's do). A response with another ID, question, or one that does
 //     not parse is ignored, as Go ignores it. NXDOMAIN or an answer with
 //     no address of the type ends a query type; other failures try the
 //     next server.
@@ -44,7 +45,10 @@
 // given when it was tried first, else EAI_NODATA when a name existed
 // with no address, else EAI_AGAIN when a server failed or did not
 // answer, else the last outcome (EAI_NONAME for a name that does not
-// exist, or one that is not a domain name).
+// exist, or one that is not a domain name); with `hosts: dns files`, a
+// name neither source finds is EAI_NONAME (the last source's answer).
+// Criteria in brackets ([NOTFOUND=return]) are not honoured: glibc's
+// would stop at dns.
 use native/llrt/linux
 use native/llrt/sock
 use native/llrt/tlsname
@@ -1407,10 +1411,22 @@ fn try_name(conf: Config, name: Str, qtypes: List[Int], offset: Int) -> List[(In
           got.push(tcp_round(q, name, server, conf.timeout))
         }
       } else if conf.single_request {
+        // one query at a time; after a truncated answer the rest go over
+        // TCP too (glibc's res_send keeps the stream)
+        var tcp = false
         for q in qs {
+          if tcp {
+            got.push(tcp_round(q, name, server, conf.timeout))
+            continue
+          }
           let deadline = now() + conf.timeout * 1000000000
           let r = udp_round([q], name, server, deadline)[0]
-          got.push(if r.0 == KIND_TRUNC { tcp_round(q, name, server, conf.timeout) } else { r })
+          if r.0 == KIND_TRUNC {
+            tcp = true
+            got.push(tcp_round(q, name, server, conf.timeout))
+          } else {
+            got.push(r)
+          }
         }
       } else {
         let deadline = now() + conf.timeout * 1000000000
@@ -1519,6 +1535,11 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
     let hs = only(hosts_lookup(hosts, host), family)
     if !hs.is_empty() {
       return Found{err: 0, addrs: sort(hs)}
+    }
+    if addrs.is_empty() {
+      // the last source, files, did not find it (glibc's h_errno is
+      // then HOST_NOT_FOUND, whatever DNS said)
+      return Found{err: EAI_NONAME}
     }
   }
   if addrs.is_empty() {
