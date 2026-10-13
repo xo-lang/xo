@@ -124,7 +124,9 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    by the Go seed with the Go backend; built by xo1 it passes 143 of 144
    goldens on windows/amd64 and builds all 144 for windows/arm64.
    Left: xo1 built natively (LLVM) on Windows, so the seed needs no Go
-   there.
+   there: one module with full LTO ran clang out of memory on 32 GiB,
+   16 split modules with 4 jobs did not finish in 50 minutes (results
+   file); next, 16 jobs on 64 GiB, then ThinLTO.
 3. **Stage 3: windows/arm64.** Done on 2026-10-12: the fiber switch for
    Windows on Arm (AAPCS64's callee saved set plus the TEB's stack
    bounds through x18), fault_raise's ARM64 `CONTEXT` fields (Pc, Sp, X0,
