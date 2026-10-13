@@ -126,7 +126,8 @@ Update the knowledgebase in the same change as the work, not later:
   changed: several minutes and several GB, once per source key, shared
   by worktrees in `<user cache>/xo/checkout/<key>`. An earlier xo builds
   it (`XO_SEED`, the earlier bin/xo, the newest cached build, `xo` on
-  PATH, else the xo1 of the go-compiler-final tag, built once with Go).
+  PATH, else the xo1 of the go-compiler-final tag, built once with Go,
+  through the hops of scripts/seed-chain.txt, decision 0216).
   Set `XO_CLI` to a built xo to skip rebuilds while iterating.
 - The TestSelfhost* tests compare each self hosted component with a
   recording (internal/selfhost/testdata/gogoldens, the Go

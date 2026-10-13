@@ -36,6 +36,11 @@
 # compared), s2 and s3 with it. Exit status 0 when every step passes; the log is
 # OUTDIR/log.txt, the timings OUTDIR/times.txt.
 #
+# XO_SEED_CHAIN="COMMIT[:STDCOMMIT] ..." or "file": before s1, the seed
+# builds each hop's selfhost/xo in turn (decision 0216 item 2: a seed
+# older than an intrinsic the sources use builds an intermediate first;
+# "file" takes the hops recorded in scripts/seed-chain.txt).
+#
 # XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
 # lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
 # default linker on darwin is selfhost/macho (decision 0182) and the
@@ -110,6 +115,36 @@ stage() {
     exit 1
   fi
 }
+# the seed chain (decision 0216 item 2): an older seed first builds the
+# intermediate xo of each hop, a commit's selfhost/xo against that
+# commit's std or, with COMMIT:STDCOMMIT, another commit's; the last hop
+# is the seed of s1. XO_SEED_CHAIN="c1 c2:std2 ..." lists the hops, or
+# "file" takes scripts/seed-chain.txt's (internal/xotool reads the same).
+if [ -n "${XO_SEED_CHAIN:-}" ]; then
+  hops=$XO_SEED_CHAIN
+  if [ "$hops" = file ]; then
+    hops=$(sed -e 's/#.*//' -e 's/ std=/:/' scripts/seed-chain.txt | tr -s ' \n' ' ')
+  fi
+  n=0
+  for hop in $hops; do
+    n=$((n + 1))
+    c=${hop%%:*} sc=${hop#*:}
+    [ "$sc" = "$hop" ] && sc=$c
+    mkdir -p "$out/chain$n/tree" "$out/chain$n/std"
+    git archive "$c" | tar -x -C "$out/chain$n/tree" || { say "FAIL: git archive $c"; exit 1; }
+    git archive "$sc" std | tar -x -C "$out/chain$n/std" || { say "FAIL: git archive $sc std"; exit 1; }
+    say "hop $n: $seed builds $c's selfhost/xo against $sc's std"
+    t0=$(date +%s)
+    if (cd "$out/chain$n/tree" && XO_BUILD_DIR="$out/chain$n/build" "$seed" build --backend="$backend" \
+      --std="$out/chain$n/std/std" -o "$out/chain$n/xo" ./selfhost/xo) >> "$log" 2>&1; then
+      echo "hop$n $(( $(date +%s) - t0 )) s" >> "$times"
+      seed=$out/chain$n/xo
+    else
+      say "FAIL: hop $n ($c) (see $log)"
+      exit 1
+    fi
+  done
+fi
 stage 1 "$seed"
 stage 2 "$out/s1/xo"
 stage 3 "$out/s2/xo"

@@ -28,7 +28,15 @@ toolchain that has an Xo twin, in this order, each its own commit:
    slot's recording ("stale", reported, not a failure); a unit with no
    recording at all fails the run by name (no silent skip). The recording
    then held 20,160 units, 9,001,023 bytes (gogoldens_test.go has the
-   format). The Go backend's output of internal/arm64/testdata/run was
+   format). Main moved during the work (syscalls2, then cdel2 deleted 16
+   C path modules of std/native/llrt), so the Go side was recorded again
+   at main's tree 4f792c55 (with the Go compiler still in it) with the
+   same code, merged and indexed into the recording: 1,449 s, 14.4 GB
+   peak RSS, 20,180 units, 9,479,664 bytes. That is the final Go
+   recording; the branch's std (the deleted embed files) and the edited
+   explain_data.xo header then replay as stale units of it, and the
+   byte compared kinds were recorded again from the Xo side for the
+   header's change (rerecord). The Go backend's output of internal/arm64/testdata/run was
    recorded as testdata/runwant/<name>.txt by the go-compiler-final Go
    xo for the golden scripts.
 2. **Scripts and the checkout's xo.** internal/xotool finds the xo the
@@ -134,6 +142,17 @@ with the next step for each:
   selfhost/check, format, and gen, built for wasip1.
 
 ### Gaps the deletion exposed
+
+- The seed: main's syscalls2 merge added intrinsics that xo's own
+  sources use, so no xo older than it (the go-compiler-final tag at
+  87873aa5 included) builds today's selfhost/xo
+  (gotchas/seed-older-than-intrinsics.md). Fixed as decision 0216 item 2
+  proposes: scripts/seed-chain.txt records one hop (main 4f792c55's
+  selfhost/xo against the go-compiler-final std), internal/xotool takes
+  the hops when a seed fails, and scripts/bootstrap-xo.sh takes them with
+  `XO_SEED_CHAIN`; the root stays the go-compiler-final tag. Measured on
+  the Mac: a pre-syscalls2 xo built the hop in 311 s and the hop built
+  the branch's xo in 311 s.
 
 - Programs a native emitter does not lower yet (XO1201) were handed by
   xo1 back to the Go driver under switch point A (XO1_FALLBACK). Now

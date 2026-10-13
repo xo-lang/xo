@@ -3243,7 +3243,7 @@ GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 The bootstrap chain: the first Xo `xo` on a new host is built by the
 previous release's binary (or any self hosted xo1), never by the Go
 compiler again: it was deleted (decision 0215). With no xo at all, the
-seed is the xo1 of the `go-compiler-final` tag (87873aa5): Go builds
+seed is the xo1 of the `go-compiler-final` tag (87873aa5), then the hops of scripts/seed-chain.txt (decision 0216): Go builds
 that commit's cmd/xo, which builds that commit's selfhost/xo with its
 own driver.
 
@@ -3260,13 +3260,31 @@ worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
 the checkout's earlier bin/xo, the newest earlier build in that cache,
 `xo` on PATH, and the go-compiler-final seed (built once into `<user
 cache>/xo/seed/<commit>`, from `git archive` of the tag, or of commit
-87873aa5 in a clone without tags; needs Go and git); a seed that fails
+its commit in a clone without tags; needs Go and git); a seed that fails
 is reported and the next one tried. The backend: arm64 on an arm64
 host, the LLVM backend split into 12 modules without LTO on x86-64, the
 Go backend on Windows. `XO_CHECKOUT_CACHE` moves the cache. The Go tests
 build it on first use unless `XO_CLI` names an xo. On the development
 Mac a build with a cached xo1 as the seed took 391 s and 6.09 GB peak
 RSS (2026-10-13, other agents running). Last verified: 2026-10-13.
+
+The seed chain (decision 0216 item 2): an xo older than an intrinsic
+the sources use cannot build them (gotchas/seed-older-than-intrinsics.md).
+scripts/seed-chain.txt records the hops, `<commit> [std=<commit>]`, in
+order: a hop builds that commit's selfhost/xo with the previous xo,
+against the std of `std=` (default its own), and the last hop builds the
+checkout. internal/xotool applies them when a seed fails (each hop built
+once into `<user cache>/xo/seed/hop-<commit>[-std-<commit>]`), and
+
+    XO_SEED_CHAIN=file scripts/bootstrap-xo.sh SEED [OUTDIR]
+    XO_SEED_CHAIN="COMMIT[:STDCOMMIT] ..." scripts/bootstrap-xo.sh SEED
+
+runs them before s1. A change that makes xo's own sources use something
+an older xo cannot compile records its hop in the same change. The one
+hop today (syscalls2): main 4f792c55's compiler against the
+go-compiler-final std, built by a pre-syscalls2 xo in 311 s, then that
+xo built the branch's xo in 311 s (the Mac, 2026-10-13). Last verified:
+2026-10-13.
 
     scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
     XO_BOOTSTRAP_RTPACK=DIR scripts/bootstrap-xo.sh SEED [OUTDIR]

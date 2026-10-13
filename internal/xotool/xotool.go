@@ -48,12 +48,16 @@ import (
 	"time"
 )
 
-// SeedTag is the git tag of the last commit with the Go compiler
-// (decision 0215), and SeedCommit that commit (an ancestor of every
-// later one, so a clone without tags, such as a git bundle, has it).
+// SeedCommit is the root of the seed chain (decision 0216): the commit
+// tagged go-compiler-final (4fd10d38), whose Go compiler builds its xo1.
+// It is an ancestor of every later commit, so a clone without tags (a
+// git bundle) has it; SeedTag is tried when it is not there. A root
+// older than an intrinsic the sources use reaches them through the
+// recorded hops of scripts/seed-chain.txt (Chain;
+// gotchas/seed-older-than-intrinsics.md).
 const (
-	SeedTag    = "go-compiler-final"
 	SeedCommit = "87873aa5480676efa23c21ae08eb4107bb5d1d80"
+	SeedTag    = "go-compiler-final"
 )
 
 // Root is the repository root: the nearest directory at or above the
@@ -289,10 +293,24 @@ func buildLocked(root, out string, log io.Writer) error {
 		}
 		fmt.Fprintf(log, "xotool: building xo (selfhost/xo of %s) with %s, a few minutes, into %s\n", root, s.Why, out)
 		t0 := time.Now()
-		if err := BuildXo(root, s.Path, out); err != nil {
+		err := BuildXo(root, s.Path, out)
+		if err != nil {
 			fmt.Fprintf(log, "xotool: %s failed: %v\n", s.Why, err)
 			errs = append(errs, s.Why+": "+err.Error())
-			continue
+			// the recorded intermediate hops (decision 0216 item 2),
+			// then the checkout
+			hop, herr := Chain(root, s.Path, log)
+			if herr != nil {
+				errs = append(errs, s.Why+" through the seed chain: "+herr.Error())
+				continue
+			}
+			if hop == s.Path {
+				continue
+			}
+			if err = BuildXo(root, hop, out); err != nil {
+				errs = append(errs, s.Why+" after the seed chain: "+err.Error())
+				continue
+			}
 		}
 		fmt.Fprintf(log, "xotool: built in %.0f s\n", time.Since(t0).Seconds())
 		return nil
@@ -328,19 +346,20 @@ func Seeds(root string) ([]Seed, error) {
 	if p, err := exec.LookPath("xo"); err == nil {
 		add(p, "xo on PATH ("+p+")")
 	}
-	out = append(out, Seed{"", "the " + SeedTag + " seed"})
+	out = append(out, Seed{"", "the seed of the last commit with the Go compiler"})
 	return out, nil
 }
 
-// SeedFromTag is the xo1 of the go-compiler-final tag, built once into
-// <user cache>/xo/seed/<tag commit>/tree/bin/xo: `git archive` of the
-// tag, `go build ./cmd/xo` (the Go compiler at its last commit), and
-// that xo builds the tag's selfhost/xo with its own driver (so the seed
-// is a self hosted xo that takes --std like every later one).
+// SeedFromTag is the xo1 of the last commit with the Go compiler
+// (SeedCommit, else the go-compiler-final tag), built once into
+// <user cache>/xo/seed/<commit>/tree/bin/xo: `git archive` of the
+// commit, `go build ./cmd/xo` (the Go compiler at its last commit), and
+// that xo builds the commit's selfhost/xo with its own driver (so the
+// seed is a self hosted xo that takes --std like every later one).
 func SeedFromTag(root string, log io.Writer) (string, error) {
-	rev, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", SeedTag+"^{commit}").Output()
+	rev, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", SeedCommit+"^{commit}").Output()
 	if err != nil {
-		rev, err = exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", SeedCommit+"^{commit}").Output()
+		rev, err = exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", SeedTag+"^{commit}").Output()
 	}
 	if err != nil {
 		return "", fmt.Errorf("neither the tag %s nor commit %s is in the repository (git fetch origin tag %s)", SeedTag, SeedCommit, SeedTag)

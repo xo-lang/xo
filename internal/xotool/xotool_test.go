@@ -63,6 +63,24 @@ func TestIOFlagsMatchXo(t *testing.T) {
 	}
 }
 
+// TestChainHops reads scripts/seed-chain.txt: full commit hashes, the std
+// of a hop optional.
+func TestChainHops(t *testing.T) {
+	hops, err := ChainHops(repoRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hops) == 0 {
+		t.Fatal("no hops in scripts/seed-chain.txt")
+	}
+	hex := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	for _, h := range hops {
+		if !hex.MatchString(h.Commit) || h.Std != "" && !hex.MatchString(h.Std) {
+			t.Errorf("hop %+v: want full commit hashes", h)
+		}
+	}
+}
+
 var runtimeSym = regexp.MustCompile(`"(xo_[a-z0-9_]+)"`)
 
 // bodySymbols returns the sorted xo_ symbols quoted in the function of

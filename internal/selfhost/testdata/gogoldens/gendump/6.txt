@@ -1,610 +1,574 @@
-gendump 600ebf232b835e93 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 600ebf232b835e93 #decl:m/x_netbench/xo.go 5 0a58070e168272c1
-gendump 600ebf232b835e93 #decl:m/x_netbench/xo_main.go 2 cb4e374daf89a1a3
-gendump 600ebf232b835e93 #decl:main.go 2 2a63be23d8d9b021
-gendump 600ebf232b835e93 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 600ebf232b835e93 #file 5 a8f66a883019ce02
-gendump 600ebf232b835e93 =@slot 38e0cd8c9e4655d1
-gendump 600ebf232b835e93 =head == file go.mod
-gendump 606721cfa08c4458 =@slot f2555be42b3d0116
-gendump 606721cfa08c4458 =head == rejected
-gendump 608be9167415f0d9 =@slot d95c349fc7c2e8df
-gendump 608be9167415f0d9 =head == rejected
-gendump 60967141d84a5373 =@slot fae04be563b0541d
-gendump 60967141d84a5373 =head == rejected
-gendump 60a909e07b46ff76 =@slot f74762fe7e59f9fd
-gendump 60a909e07b46ff76 =head == error no `fn main` found in the modules given
-gendump 60b81ec6c5a829af #decl:go.mod 1 13ef6f66b06c90ff
-gendump 60b81ec6c5a829af #decl:m/x_internal_llvm_testdata_golden_float_order/xo.go 29 adf3dc160a447517
-gendump 60b81ec6c5a829af #decl:m/x_internal_llvm_testdata_golden_float_order/xo_main.go 2 49b5b6f007dd0bf1
-gendump 60b81ec6c5a829af #decl:main.go 2 4d0633f1190ec4bd
-gendump 60b81ec6c5a829af #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 60b81ec6c5a829af #file 5 e957553708d82777
-gendump 60b81ec6c5a829af =@slot 388bf10bad7436cd
-gendump 60b81ec6c5a829af =head == file go.mod
-gendump 60bc0c0f4586b53c #decl:go.mod 1 13ef6f66b06c90ff
-gendump 60bc0c0f4586b53c #decl:m/x_bench_xo_v0_6_09_inventory/xo.go 108 549376c553fc8137
-gendump 60bc0c0f4586b53c #decl:m/x_bench_xo_v0_6_09_inventory/xo_main.go 2 ddd45a9f66d26697
-gendump 60bc0c0f4586b53c #decl:main.go 2 acade58c0c40ae05
-gendump 60bc0c0f4586b53c #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 60bc0c0f4586b53c #file 5 30e0eb53d28c4901
-gendump 60bc0c0f4586b53c =@slot befff66da8b1321c
-gendump 60bc0c0f4586b53c =head == file go.mod
-gendump 60dffcfa12c88412 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 60dffcfa12c88412 #decl:m/x_g0189/xo.go 37 8b0cedcbd39ed6ab
-gendump 60dffcfa12c88412 #decl:m/x_g0189/xo_main.go 2 934f17f2f0705860
-gendump 60dffcfa12c88412 #decl:main.go 2 158d93037e5ca6a1
-gendump 60dffcfa12c88412 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 60dffcfa12c88412 #file 5 6f3c04b023616340
-gendump 60dffcfa12c88412 =@slot 10f6749720d29e0c
-gendump 60dffcfa12c88412 =head == file go.mod
-gendump 6112f0322c7857b4 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6112f0322c7857b4 #decl:m/x_example_com_worker_pool/xo.go 46 3f7029ac882cd8a9
-gendump 6112f0322c7857b4 #decl:main.go 2 3c3f53f447d83c89
-gendump 6112f0322c7857b4 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6112f0322c7857b4 #file 4 b325cdc03b80f0f0
-gendump 6112f0322c7857b4 =@slot f37be23c56dec248
-gendump 6112f0322c7857b4 =head == file go.mod
-gendump 61333593ae13a527 =@slot 8ca5a55c03fde6a3
-gendump 61333593ae13a527 =head == rejected
-gendump 61399e8dd3fe808b #decl:go.mod 1 13ef6f66b06c90ff
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1424 02a28ee92fa5fe74
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 249 ffc02ec6a39ba384
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_cmdhelp/xo.go 43 07ca57ee3b3f75cd
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core/xo.go 262 0261c263e4906e49
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo.go 135 c35d9bdd11bf250f
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_core_format/xo_main.go 2 551a19978bc527fc
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_modules/xo.go 436 8631dc56fb024827
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_cli_semantic/xo.go 402 36aa39da6f2d1ad1
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 701 5ac3bb21609cbd3e
-gendump 61399e8dd3fe808b #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo.go 1134 3e98b9243e30fde6
-gendump 61399e8dd3fe808b #decl:main.go 2 5d1bb3bacfd7fc0b
-gendump 61399e8dd3fe808b #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 61399e8dd3fe808b #file 14 0250a7cb38af6ff0
-gendump 61399e8dd3fe808b =@slot 83c8f7b40fef33fc
-gendump 61399e8dd3fe808b =head == file go.mod
-gendump 6157528b8fa0e3bb #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6157528b8fa0e3bb #decl:m/x_internal_llvm_testdata_golden_var_alias/xo.go 3 c749fe15355fcd60
-gendump 6157528b8fa0e3bb #decl:m/x_internal_llvm_testdata_golden_var_alias/xo_main.go 2 75f793514ccb85a6
-gendump 6157528b8fa0e3bb #decl:main.go 2 df803368bfed5ccc
-gendump 6157528b8fa0e3bb #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6157528b8fa0e3bb #file 5 0b39450a2553fa74
-gendump 6157528b8fa0e3bb =@slot a04a4e926619f6aa
-gendump 6157528b8fa0e3bb =head == file go.mod
-gendump 61600184ef477aed #decl:go.mod 1 13ef6f66b06c90ff
-gendump 61600184ef477aed #decl:m/x_g0047/xo.go 62 01bad069c93891e0
-gendump 61600184ef477aed #decl:m/x_g0047/xo_main.go 2 f7238ab77c77f56d
-gendump 61600184ef477aed #decl:main.go 2 158d93037e5ca6a1
-gendump 61600184ef477aed #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 61600184ef477aed #file 5 c8fd1a29674c93a7
-gendump 61600184ef477aed =@slot 8f8bafad9d84c5ac
-gendump 61600184ef477aed =head == file go.mod
-gendump 6168a5a0b8f04ec7 =@slot aefd504b81274cac
-gendump 6168a5a0b8f04ec7 =head == rejected
-gendump 61b2cd84d92e032d #decl:go.mod 1 13ef6f66b06c90ff
-gendump 61b2cd84d92e032d #decl:m/x_internal_llvm_testdata_golden_http_server/xo.go 50 a2c2801db046cffc
-gendump 61b2cd84d92e032d #decl:m/x_internal_llvm_testdata_golden_http_server/xo_main.go 2 5d2c8198d66d91f0
-gendump 61b2cd84d92e032d #decl:main.go 2 8724fd401a1a3f43
-gendump 61b2cd84d92e032d #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 61b2cd84d92e032d #file 5 7f7a566c2508e6c3
-gendump 61b2cd84d92e032d =@slot b9d601aa6a72ea58
-gendump 61b2cd84d92e032d =head == file go.mod
-gendump 620c6d3a1f6097d5 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1492 877441bc437fe711
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 265 4722ccf19714119e
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_cli_cmdhelp/xo.go 44 15264395ac389d6d
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 739 b37d7b675e84f428
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo.go 1170 01acb31faab8b11d
-gendump 620c6d3a1f6097d5 #decl:m/x_github_com_xo_lang_xo_selfhost_ssa/xo_main.go 2 a2d7fe02d6d8afd2
-gendump 620c6d3a1f6097d5 #decl:main.go 2 fc16a0b34eda4c5b
-gendump 620c6d3a1f6097d5 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 620c6d3a1f6097d5 #file 10 b382c0b9debb7239
-gendump 620c6d3a1f6097d5 =@slot 95ce622611b740fb
-gendump 620c6d3a1f6097d5 =head == file go.mod
-gendump 623f1f4d16fb103a #decl:go.mod 1 13ef6f66b06c90ff
-gendump 623f1f4d16fb103a #decl:m/x_example_com_hybrid_sieve_chunk/xo.go 4 242ac41294870967
-gendump 623f1f4d16fb103a #decl:m/x_example_com_hybrid_sieve_chunk/xo_main.go 2 efcc5f89fe0d6596
-gendump 623f1f4d16fb103a #decl:main.go 2 37bd7885e53d4226
-gendump 623f1f4d16fb103a #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 623f1f4d16fb103a #file 5 ee4730d13e7e5327
-gendump 623f1f4d16fb103a =@slot ffd73b58fe5b0a2a
-gendump 623f1f4d16fb103a =head == file go.mod
-gendump 627394dff8f7eb81 =@slot 1bcc6ce7b27975ba
-gendump 627394dff8f7eb81 =head == rejected
-gendump 6281b9754064df67 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6281b9754064df67 #decl:m/x_internal_check_testdata_golden_realtime_ok/xo.go 15 3e28065574cbe0a9
-gendump 6281b9754064df67 #decl:m/x_internal_check_testdata_golden_realtime_ok/xo_main.go 2 7d656cab635a1a4d
-gendump 6281b9754064df67 #decl:main.go 2 971b04f364d8b90a
-gendump 6281b9754064df67 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6281b9754064df67 #file 5 8311a05a0c9a0d8a
-gendump 6281b9754064df67 =@slot fa8a641c1e566217
-gendump 6281b9754064df67 =head == file go.mod
-gendump 62914675dc02e7df =@slot dc92a0cdf1065a7f
-gendump 62914675dc02e7df =head == rejected
-gendump 62c464de858440bb =@slot d6d9b6fa2924790e
-gendump 62c464de858440bb =head == rejected
-gendump 62e17b5bb5697afe =@slot 89f7d48709ea035d
-gendump 62e17b5bb5697afe =head == rejected
-gendump 632575f0c1ee1b8f #decl:go.mod 1 13ef6f66b06c90ff
-gendump 632575f0c1ee1b8f #decl:m/x_internal_gen_testdata_release_error_args/xo.go 11 1278e03d7953bbe9
-gendump 632575f0c1ee1b8f #decl:m/x_internal_gen_testdata_release_error_args/xo_main.go 2 438f19621a2d60ce
-gendump 632575f0c1ee1b8f #decl:main.go 2 9cd31d4dcc4e7f1f
-gendump 632575f0c1ee1b8f #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 632575f0c1ee1b8f #file 5 734b0cf2268baf99
-gendump 632575f0c1ee1b8f =@slot e2fa0184fda15ab7
-gendump 632575f0c1ee1b8f =head == file go.mod
-gendump 63d0711bc5b86a95 =@slot 17f5df8052235555
-gendump 63d0711bc5b86a95 =head == rejected
-gendump 63f458addcbca9a0 =@slot e15594b3779ddeff
-gendump 63f458addcbca9a0 =head == rejected
-gendump 641c2e205d048238 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 641c2e205d048238 #decl:m/x_internal_arm64_testdata_run_select/xo.go 12 382ce3a09a514b73
-gendump 641c2e205d048238 #decl:m/x_internal_arm64_testdata_run_select/xo_main.go 2 91bdc7662fbf2dcc
-gendump 641c2e205d048238 #decl:main.go 2 dd1b1baae14b3815
-gendump 641c2e205d048238 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 641c2e205d048238 #file 5 bce0d225d21b176b
-gendump 641c2e205d048238 =@slot 9da66b90283d3dd0
-gendump 641c2e205d048238 =head == file go.mod
-gendump 64a64ddf2dcd772f #decl:go.mod 1 13ef6f66b06c90ff
-gendump 64a64ddf2dcd772f #decl:m/x_internal_gen_testdata_golden_std06_helpers/xo.go 11 33834a22474dc274
-gendump 64a64ddf2dcd772f #decl:m/x_internal_gen_testdata_golden_std06_helpers/xo_main.go 2 6b642c8a1c730ac2
-gendump 64a64ddf2dcd772f #decl:main.go 2 00a1db8fcdb0e66b
-gendump 64a64ddf2dcd772f #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 64a64ddf2dcd772f #file 5 7a0b9a5dd1fde2d4
-gendump 64a64ddf2dcd772f =@slot b428bbaeb03085de
-gendump 64a64ddf2dcd772f =head == file go.mod
-gendump 64d938141c6fe387 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 64d938141c6fe387 #decl:m/x_internal_llvm_testdata_golden_conc_mutex/xo.go 23 e479d3914506ae0d
-gendump 64d938141c6fe387 #decl:m/x_internal_llvm_testdata_golden_conc_mutex/xo_main.go 2 77b47f57479809cd
-gendump 64d938141c6fe387 #decl:main.go 2 709918a39daacc9f
-gendump 64d938141c6fe387 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 64d938141c6fe387 #file 5 c8dba93a8e534890
-gendump 64d938141c6fe387 =@slot 5cae0f7dcbfe711f
-gendump 64d938141c6fe387 =head == file go.mod
-gendump 64d9c3d1921b6a4a =@slot a0f6cefa42ebd516
-gendump 64d9c3d1921b6a4a =head == rejected
-gendump 64e03ba8bc4ea259 =@slot b09ebbc6f0f5b73e
-gendump 64e03ba8bc4ea259 =head == rejected
-gendump 64e4c9515cfb7732 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 64e4c9515cfb7732 #decl:m/x_g0008/xo.go 2 689d75b0a3037e72
-gendump 64e4c9515cfb7732 #decl:m/x_g0008/xo_main.go 2 2c39a05b3c310aeb
-gendump 64e4c9515cfb7732 #decl:main.go 2 158d93037e5ca6a1
-gendump 64e4c9515cfb7732 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 64e4c9515cfb7732 #file 5 3f7bebbb0185be91
-gendump 64e4c9515cfb7732 =@slot a6cd4de3a8d40945
-gendump 64e4c9515cfb7732 =head == file go.mod
-gendump 64f05c4bdaec9bfe =@slot 80ea2b44f8529bdb
-gendump 64f05c4bdaec9bfe =head == error no `fn main` found in the modules given
-gendump 650d2ca84a0b6c89 =@slot ada96d6d2bbdb6d4
-gendump 650d2ca84a0b6c89 =head == rejected
-gendump 654f9dcba1a9c1ab =@slot 726a02f130b075d2
-gendump 654f9dcba1a9c1ab =head == rejected
-gendump 6557fc65dfe95804 =@slot 703a154b44fb7ded
-gendump 6557fc65dfe95804 =head == rejected
-gendump 655d3de743ecfaca #decl:go.mod 1 13ef6f66b06c90ff
-gendump 655d3de743ecfaca #decl:m/x_internal_arm64_testdata_run_latch/xo.go 6 2c9ff1cc6b62d607
-gendump 655d3de743ecfaca #decl:m/x_internal_arm64_testdata_run_latch/xo_main.go 2 337228feaf93ecb6
-gendump 655d3de743ecfaca #decl:main.go 2 84360d3ce8b9231d
-gendump 655d3de743ecfaca #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 655d3de743ecfaca #file 5 174b88cec43aaa48
-gendump 655d3de743ecfaca =@slot 4bc7fe662b0979c5
-gendump 655d3de743ecfaca =head == file go.mod
-gendump 656c17b5b2b9b8af #decl:go.mod 1 13ef6f66b06c90ff
-gendump 656c17b5b2b9b8af #decl:m/x_internal_gen_testdata_golden_test_map_until/xo.go 21 264d89eace33299f
-gendump 656c17b5b2b9b8af #decl:main.go 2 f56254a28eaf6921
-gendump 656c17b5b2b9b8af #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 656c17b5b2b9b8af #file 4 08094dc240eb01e8
-gendump 656c17b5b2b9b8af =@slot ec713be7cd3c11f6
-gendump 656c17b5b2b9b8af =head == file go.mod
-gendump 656fb3bbad27f78a =@slot a94eff5a1cfc21a0
-gendump 656fb3bbad27f78a =head == rejected
-gendump 65a0f703bd4d6a1f =@slot 7f9d788f062e875c
-gendump 65a0f703bd4d6a1f =head == error no `fn main` found in the modules given
-gendump 65c5b33f8614e714 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 65c5b33f8614e714 #decl:m/x_internal_gen_testdata_golden_go_callback_deadlock_real/xo.go 2 6cb7c7412a02de30
-gendump 65c5b33f8614e714 #decl:m/x_internal_gen_testdata_golden_go_callback_deadlock_real/xo_main.go 2 8d48e6bb54788536
-gendump 65c5b33f8614e714 #decl:main.go 2 229d2c5e0e39a7ee
-gendump 65c5b33f8614e714 #decl:rt/xo_gobind_sync.go 64 be65109c7514b85c
-gendump 65c5b33f8614e714 #decl:rt/xo_gobind_time.go 102 9c9c69b5d28d9557
-gendump 65c5b33f8614e714 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 65c5b33f8614e714 #file 7 f6916bdd28c1c7ff
-gendump 65c5b33f8614e714 =@slot 4b0add993ac216b4
-gendump 65c5b33f8614e714 =head == file go.mod
-gendump 6612435db9b13cd9 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6612435db9b13cd9 #decl:m/x_internal_llvm_testdata_golden_cli_parse/xo.go 5 98784d71cdcc3d0e
-gendump 6612435db9b13cd9 #decl:m/x_internal_llvm_testdata_golden_cli_parse/xo_main.go 2 1e3223c2db1081b9
-gendump 6612435db9b13cd9 #decl:main.go 2 e74a950d9e25648f
-gendump 6612435db9b13cd9 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6612435db9b13cd9 #file 5 bbd39d9461720b40
-gendump 6612435db9b13cd9 =@slot 4136fa95fe07a16f
-gendump 6612435db9b13cd9 =head == file go.mod
-gendump 661557e645a55323 =@slot 14aa9131c4e6094e
-gendump 661557e645a55323 =head == error no `fn main` found in the modules given
-gendump 66350e3462c340aa =@slot af568f39fa02cd39
-gendump 66350e3462c340aa =head == rejected
-gendump 66353545f8bd1b9b #decl:go.mod 1 13ef6f66b06c90ff
-gendump 66353545f8bd1b9b #decl:m/x_internal_llvm_testdata_golden_str_ops_table/xo.go 2 99b98f229ce20c50
-gendump 66353545f8bd1b9b #decl:m/x_internal_llvm_testdata_golden_str_ops_table/xo_main.go 2 c79fb2b6000a8bd2
-gendump 66353545f8bd1b9b #decl:main.go 2 d68934992562e601
-gendump 66353545f8bd1b9b #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 66353545f8bd1b9b #file 5 b1f1f8c716ee1b7d
-gendump 66353545f8bd1b9b =@slot 51641ff54378959d
-gendump 66353545f8bd1b9b =head == file go.mod
-gendump 663e1fc9fdf254c5 =@slot bf9c1f977072dd72
-gendump 663e1fc9fdf254c5 =head == rejected
-gendump 666a9c7d215af13a =@slot 2054d11ab6bd80e8
-gendump 666a9c7d215af13a =head == error no `fn main` found in the modules given
-gendump 66784e5bb7dc89e4 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 66784e5bb7dc89e4 #decl:m/x_internal_arm64_testdata_run_ranges/xo.go 7 d7a4a1622e97d130
-gendump 66784e5bb7dc89e4 #decl:m/x_internal_arm64_testdata_run_ranges/xo_main.go 2 d62d2c0107f12f61
-gendump 66784e5bb7dc89e4 #decl:main.go 2 d46a16b3fcd63a40
-gendump 66784e5bb7dc89e4 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 66784e5bb7dc89e4 #file 5 b8e5793ab96439ee
-gendump 66784e5bb7dc89e4 =@slot 4ecb8b0d68b9f317
-gendump 66784e5bb7dc89e4 =head == file go.mod
-gendump 66caf1971d2a22cf #decl:go.mod 1 13ef6f66b06c90ff
-gendump 66caf1971d2a22cf #decl:m/x_internal_llvm_testdata_golden_strings/xo.go 3 f5f625b12c620601
-gendump 66caf1971d2a22cf #decl:m/x_internal_llvm_testdata_golden_strings/xo_main.go 2 f708f551a5f4e9c1
-gendump 66caf1971d2a22cf #decl:main.go 2 8a92db11ebba46a9
-gendump 66caf1971d2a22cf #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 66caf1971d2a22cf #file 5 f60e18c89f6d7478
-gendump 66caf1971d2a22cf =@slot da0c7e62cacc004b
-gendump 66caf1971d2a22cf =head == file go.mod
-gendump 675eddcc814f4dce #decl:go.mod 1 95b0fab669c9c9d7
-gendump 675eddcc814f4dce #decl:go.sum 1 635b8ec1feed9451
-gendump 675eddcc814f4dce #decl:m/x_go_uuid/xo.go 2 043e9c6ea0321d79
-gendump 675eddcc814f4dce #decl:m/x_go_uuid/xo_main.go 2 734003a26d1917c2
-gendump 675eddcc814f4dce #decl:main.go 2 756a5d6f75ce12f2
-gendump 675eddcc814f4dce #decl:rt/xo_gobind_github_com_google_uuid.go 108 bd34a3a0975a1e79
-gendump 675eddcc814f4dce #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 675eddcc814f4dce #file 7 83bfe0003912aae1
-gendump 675eddcc814f4dce =@slot f56a5ecc8d23b66c
-gendump 675eddcc814f4dce =head == file go.mod
-gendump 679611b39ad9d424 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 679611b39ad9d424 #decl:m/x_cmd_xo_testdata_nogc_same/xo.go 24 d5c0b589d76b89d2
-gendump 679611b39ad9d424 #decl:main.go 2 e75b082cea918ff9
-gendump 679611b39ad9d424 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 679611b39ad9d424 #file 4 51c73738027bff13
-gendump 679611b39ad9d424 =@slot c0f88d4adffdd9f3
-gendump 679611b39ad9d424 =head == file go.mod
-gendump 67cd12d3975eff81 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 67cd12d3975eff81 #decl:m/x_g0240/xo.go 9 07c8ec7bb5540c66
-gendump 67cd12d3975eff81 #decl:m/x_g0240/xo_main.go 2 c16006ceb17f544d
-gendump 67cd12d3975eff81 #decl:main.go 2 158d93037e5ca6a1
-gendump 67cd12d3975eff81 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 67cd12d3975eff81 #file 5 b7e7258a6baf0897
-gendump 67cd12d3975eff81 =@slot a304d2c7e9f38067
-gendump 67cd12d3975eff81 =head == file go.mod
-gendump 67e68588fe540937 =@slot d43ffb83219aa987
-gendump 67e68588fe540937 =head == rejected
-gendump 67fc3e6364d01e54 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 67fc3e6364d01e54 #decl:m/x_g0245/xo.go 4 e3375b5912e4b2cc
-gendump 67fc3e6364d01e54 #decl:m/x_g0245/xo_main.go 2 ffd8aecd5d676e88
-gendump 67fc3e6364d01e54 #decl:main.go 2 158d93037e5ca6a1
-gendump 67fc3e6364d01e54 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 67fc3e6364d01e54 #file 5 cf56f0f07c542bb1
-gendump 67fc3e6364d01e54 =@slot cfd9f82dc8712558
-gendump 67fc3e6364d01e54 =head == file go.mod
-gendump 68028546f8c4fd0a =@slot e7647cd289a71a6d
-gendump 68028546f8c4fd0a =head == rejected
-gendump 685f913212c43cfa #decl:go.mod 1 13ef6f66b06c90ff
-gendump 685f913212c43cfa #decl:m/x_internal_ssa_testdata_golden_generics/xo.go 16 ace7ace28a3dd5af
-gendump 685f913212c43cfa #decl:m/x_internal_ssa_testdata_golden_generics/xo_main.go 2 821750a60beca3d8
-gendump 685f913212c43cfa #decl:main.go 2 b58a44ca90848d04
-gendump 685f913212c43cfa #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 685f913212c43cfa #file 5 cab8c40a323b7307
-gendump 685f913212c43cfa =@slot 73ea65ce608bf38f
-gendump 685f913212c43cfa =head == file go.mod
-gendump 6879d119c6c6f6a3 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6879d119c6c6f6a3 #decl:m/x_g0237/xo.go 2 8c5659ff49d55d25
-gendump 6879d119c6c6f6a3 #decl:m/x_g0237/xo_main.go 2 0346189f961f5e1b
-gendump 6879d119c6c6f6a3 #decl:main.go 2 158d93037e5ca6a1
-gendump 6879d119c6c6f6a3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6879d119c6c6f6a3 #file 5 77a7cbc73e2e4899
-gendump 6879d119c6c6f6a3 =@slot d1ecd74406556a84
-gendump 6879d119c6c6f6a3 =head == file go.mod
-gendump 689ac25a7747ee57 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 689ac25a7747ee57 #decl:m/x_internal_llvm_testdata_golden_term_stdio/xo.go 2 b56983fff4a86954
-gendump 689ac25a7747ee57 #decl:m/x_internal_llvm_testdata_golden_term_stdio/xo_main.go 2 ab4d538207119844
-gendump 689ac25a7747ee57 #decl:main.go 2 5d2043b99fa48afc
-gendump 689ac25a7747ee57 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 689ac25a7747ee57 #file 5 addc0d9c9c7c306a
-gendump 689ac25a7747ee57 =@slot 1c685c7b210adf58
-gendump 689ac25a7747ee57 =head == file go.mod
-gendump 689e8979f6477de4 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 689e8979f6477de4 #decl:m/x_internal_ssa_testdata_golden_closures/xo.go 12 93a728411078a663
-gendump 689e8979f6477de4 #decl:m/x_internal_ssa_testdata_golden_closures/xo_main.go 2 f836b6101ded4199
-gendump 689e8979f6477de4 #decl:main.go 2 6683713bf545faab
-gendump 689e8979f6477de4 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 689e8979f6477de4 #file 5 b8bbd179068b172f
-gendump 689e8979f6477de4 =@slot 677dc07efa4fe965
-gendump 689e8979f6477de4 =head == file go.mod
-gendump 68b97f548fbc7208 =@slot 102a05fd4603963d
-gendump 68b97f548fbc7208 =head == rejected
-gendump 69201d4e217420bf =@slot 0bb5b99fbc77b1f1
-gendump 69201d4e217420bf =head == rejected
-gendump 6930cad6ca13b206 =@slot ea76381088a8c3d0
-gendump 6930cad6ca13b206 =head == rejected
-gendump 697d6afbd1fcef9b =@slot f67f33a509397a66
-gendump 697d6afbd1fcef9b =head == rejected
-gendump 6988f92f8df55e68 =@slot 00f48ef5433fd0aa
-gendump 6988f92f8df55e68 =head == rejected
-gendump 699b04d755f6d4f7 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 699b04d755f6d4f7 #decl:m/x_internal_gen_testdata_replay_interleave/xo.go 2 00a0f30247303818
-gendump 699b04d755f6d4f7 #decl:m/x_internal_gen_testdata_replay_interleave/xo_main.go 2 6c9d540f3e4a7a19
-gendump 699b04d755f6d4f7 #decl:main.go 2 fe868e702478d1ea
-gendump 699b04d755f6d4f7 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 699b04d755f6d4f7 #file 5 fdec0247e0685080
-gendump 699b04d755f6d4f7 =@slot 6fa01dbf6536fbf9
-gendump 699b04d755f6d4f7 =head == file go.mod
-gendump 69c5c7f36e5320f8 =@slot 32c21c0181fb10e3
-gendump 69c5c7f36e5320f8 =head == rejected
-gendump 69f0a3471bf473b5 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 69f0a3471bf473b5 #decl:m/x_internal_gen_testdata_golden_consts_newtypes/xo.go 18 a5c94de28b10d998
-gendump 69f0a3471bf473b5 #decl:m/x_internal_gen_testdata_golden_consts_newtypes/xo_main.go 2 0c788412ad4b239b
-gendump 69f0a3471bf473b5 #decl:main.go 2 531f985a7f81902c
-gendump 69f0a3471bf473b5 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 69f0a3471bf473b5 #file 5 55bc7bb26279b469
-gendump 69f0a3471bf473b5 =@slot 6cc1d2d118df9f69
-gendump 69f0a3471bf473b5 =head == file go.mod
-gendump 69fe50416e915733 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 69fe50416e915733 #decl:m/x_g0201/xo.go 35 e0d78903133ad167
-gendump 69fe50416e915733 #decl:m/x_g0201/xo_main.go 2 75a77c8f1245b740
-gendump 69fe50416e915733 #decl:main.go 2 158d93037e5ca6a1
-gendump 69fe50416e915733 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 69fe50416e915733 #file 5 b4cda804a2cb0c92
-gendump 69fe50416e915733 =@slot b225c3111587fb60
-gendump 69fe50416e915733 =head == file go.mod
-gendump 6a4519ec8c110869 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6a4519ec8c110869 #decl:m/x_internal_llvm_testdata_golden_http_stream/xo.go 5 948bac615ca52fee
-gendump 6a4519ec8c110869 #decl:m/x_internal_llvm_testdata_golden_http_stream/xo_main.go 2 7b330f9722790bee
-gendump 6a4519ec8c110869 #decl:main.go 2 f1124b7792a0d148
-gendump 6a4519ec8c110869 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6a4519ec8c110869 #file 5 6a3e992b336ef68b
-gendump 6a4519ec8c110869 =@slot a0ca1f242c77000a
-gendump 6a4519ec8c110869 =head == file go.mod
-gendump 6a62062d0879b74c =@slot 567deeec57d02d13
-gendump 6a62062d0879b74c =head == rejected
-gendump 6a6d793413752eb1 =@slot 37e3173875d7bbfd
-gendump 6a6d793413752eb1 =head == error no `fn main` found in the modules given
-gendump 6a7c4b7e7b98fa9b #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6a7c4b7e7b98fa9b #decl:m/x_internal_llvm_testdata_golden_bytes_for/xo.go 4 e2a21b7ecb7ce631
-gendump 6a7c4b7e7b98fa9b #decl:m/x_internal_llvm_testdata_golden_bytes_for/xo_main.go 2 183091669d519630
-gendump 6a7c4b7e7b98fa9b #decl:main.go 2 97a43d1da38747db
-gendump 6a7c4b7e7b98fa9b #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6a7c4b7e7b98fa9b #file 5 6be22dc1e099e89b
-gendump 6a7c4b7e7b98fa9b =@slot 45bc42587e66e7c8
-gendump 6a7c4b7e7b98fa9b =head == file go.mod
-gendump 6a83da37e92f9d23 =@slot 6a22ee654092e290
-gendump 6a83da37e92f9d23 =head == rejected
-gendump 6a958ce13052e8d3 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6a958ce13052e8d3 #decl:m/x_g0058/xo.go 12 0e1ff7d9551c8eae
-gendump 6a958ce13052e8d3 #decl:m/x_g0058/xo_main.go 2 18ecc1ee316a26bb
-gendump 6a958ce13052e8d3 #decl:main.go 2 158d93037e5ca6a1
-gendump 6a958ce13052e8d3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6a958ce13052e8d3 #file 5 af4e623f0ab5d506
-gendump 6a958ce13052e8d3 =@slot 4e469d44d234c932
-gendump 6a958ce13052e8d3 =head == file go.mod
-gendump 6b1d6e9f0cc00f4a =@slot b13683c91ef9ebc4
-gendump 6b1d6e9f0cc00f4a =head == error no `fn main` found in the modules given
-gendump 6b316ef9564c4bfe =@slot eaa8c05d0cada9a5
-gendump 6b316ef9564c4bfe =head == rejected
-gendump 6b36f8fbd4c8bf09 =@slot c58830280316da21
-gendump 6b36f8fbd4c8bf09 =head == rejected
-gendump 6b3bab8038b100d0 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6b3bab8038b100d0 #decl:m/x_bench_xo_v0_6_10_log_pipeline/xo.go 105 dbc22d43a845bcf3
-gendump 6b3bab8038b100d0 #decl:m/x_bench_xo_v0_6_10_log_pipeline/xo_main.go 2 21aff058bdb05650
-gendump 6b3bab8038b100d0 #decl:main.go 2 2c4155312a36b60e
-gendump 6b3bab8038b100d0 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6b3bab8038b100d0 #file 5 0b2519816f57064d
-gendump 6b3bab8038b100d0 =@slot 50ba61a5af933138
-gendump 6b3bab8038b100d0 =head == file go.mod
-gendump 6b43188b12566b13 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6b43188b12566b13 #decl:m/x_internal_gen_testdata_golden_scope_tasks/xo.go 3 aff52ce68cb4c7d7
-gendump 6b43188b12566b13 #decl:m/x_internal_gen_testdata_golden_scope_tasks/xo_main.go 2 c94756c4d4866335
-gendump 6b43188b12566b13 #decl:main.go 2 c75da1a8d434f146
-gendump 6b43188b12566b13 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6b43188b12566b13 #file 5 bad6ce430dd57a20
-gendump 6b43188b12566b13 =@slot 64ca63cff87ff906
-gendump 6b43188b12566b13 =head == file go.mod
-gendump 6b7c9941a9b9df67 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6b7c9941a9b9df67 #decl:m/x_internal_arm64_testdata_run_break_flag_join/xo.go 3 1d4a1dc9d1eee63d
-gendump 6b7c9941a9b9df67 #decl:m/x_internal_arm64_testdata_run_break_flag_join/xo_main.go 2 3965a6918f1684b7
-gendump 6b7c9941a9b9df67 #decl:main.go 2 069fbb553a9fa579
-gendump 6b7c9941a9b9df67 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6b7c9941a9b9df67 #file 5 5cd001a6c5ddb865
-gendump 6b7c9941a9b9df67 =@slot 1964d0e6194b0a91
-gendump 6b7c9941a9b9df67 =head == file go.mod
-gendump 6b7d1966da140b2e #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6b7d1966da140b2e #decl:m/x_g0198/xo.go 35 93af5a9eb6e945fb
-gendump 6b7d1966da140b2e #decl:m/x_g0198/xo_main.go 2 04400c43c73fc0eb
-gendump 6b7d1966da140b2e #decl:main.go 2 158d93037e5ca6a1
-gendump 6b7d1966da140b2e #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6b7d1966da140b2e #file 5 8d90a79dfa2d10f3
-gendump 6b7d1966da140b2e =@slot da64d3ce1a0e086f
-gendump 6b7d1966da140b2e =head == file go.mod
-gendump 6b82bb419697475e #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6b82bb419697475e #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo.go 22 66c34b82f387d066
-gendump 6b82bb419697475e #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo_main.go 2 de93b6ec7be46e31
-gendump 6b82bb419697475e #decl:main.go 2 e92198e0ccdce272
-gendump 6b82bb419697475e #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6b82bb419697475e #file 5 d6c3c6346c850875
-gendump 6b82bb419697475e =@slot 4575193ad0b6d78d
-gendump 6b82bb419697475e =head == file go.mod
-gendump 6be9a18640dfcd65 =@slot aba72020c4b6cfa0
-gendump 6be9a18640dfcd65 =head == rejected
-gendump 6c0ea5527556fde7 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c0ea5527556fde7 #decl:m/x_g0153/xo.go 4 f2c905d1784478e8
-gendump 6c0ea5527556fde7 #decl:m/x_g0153/xo_main.go 2 1a28eac655857d59
-gendump 6c0ea5527556fde7 #decl:main.go 2 158d93037e5ca6a1
-gendump 6c0ea5527556fde7 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c0ea5527556fde7 #file 5 c06da4d19e9eeecf
-gendump 6c0ea5527556fde7 =@slot 1a6a7814ff6de589
-gendump 6c0ea5527556fde7 =head == file go.mod
-gendump 6c108e8cc386be80 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c108e8cc386be80 #decl:m/x_internal_gen_testdata_golden_fs_files/xo.go 9 0fa2d2ef9385967b
-gendump 6c108e8cc386be80 #decl:m/x_internal_gen_testdata_golden_fs_files/xo_main.go 2 7d269d5489c0d102
-gendump 6c108e8cc386be80 #decl:main.go 2 17d47d56b352ed91
-gendump 6c108e8cc386be80 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c108e8cc386be80 #file 5 11d2e4f7679363ae
-gendump 6c108e8cc386be80 =@slot 9754d54d4a5aefc8
-gendump 6c108e8cc386be80 =head == file go.mod
-gendump 6c28a377f06694e8 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c28a377f06694e8 #decl:m/x_g0299/xo.go 2 26529387743a1da2
-gendump 6c28a377f06694e8 #decl:m/x_g0299/xo_main.go 2 e59bf105b4722038
-gendump 6c28a377f06694e8 #decl:main.go 2 158d93037e5ca6a1
-gendump 6c28a377f06694e8 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c28a377f06694e8 #file 5 91c0901335f60e31
-gendump 6c28a377f06694e8 =@slot 1a70e5da9726d608
-gendump 6c28a377f06694e8 =head == file go.mod
-gendump 6c58a521eeaf6e14 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c58a521eeaf6e14 #decl:m/x_internal_llvm_testdata_golden_float_const_overflow/xo.go 2 e07c13f5d35981d9
-gendump 6c58a521eeaf6e14 #decl:m/x_internal_llvm_testdata_golden_float_const_overflow/xo_main.go 2 e33e8824985ff060
-gendump 6c58a521eeaf6e14 #decl:main.go 2 1f6fda369b402fd6
-gendump 6c58a521eeaf6e14 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c58a521eeaf6e14 #file 5 d1e8b10cc48a5bdb
-gendump 6c58a521eeaf6e14 =@slot 7eb937c41c3dff20
-gendump 6c58a521eeaf6e14 =head == file go.mod
-gendump 6c67b8845f99d338 =@slot 3ddbb38abf7d3a4d
-gendump 6c67b8845f99d338 =head == error no `fn main` found in the modules given
-gendump 6c8702f200eed7ac #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c8702f200eed7ac #decl:m/x_internal_gen_testdata_golden_invariant_fault/xo.go 11 8586906ff062c251
-gendump 6c8702f200eed7ac #decl:m/x_internal_gen_testdata_golden_invariant_fault/xo_main.go 2 ea83e0f0a8801d3e
-gendump 6c8702f200eed7ac #decl:main.go 2 c6591a290819c94b
-gendump 6c8702f200eed7ac #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c8702f200eed7ac #file 5 79c35d115a79decd
-gendump 6c8702f200eed7ac =@slot 7bd001664471d914
-gendump 6c8702f200eed7ac =head == file go.mod
-gendump 6c99d52b4fe3b0ba #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6c99d52b4fe3b0ba #decl:m/x_internal_gen_testdata_golden_arena_frames/xo.go 25 96b93c3b224ec153
-gendump 6c99d52b4fe3b0ba #decl:m/x_internal_gen_testdata_golden_arena_frames/xo_main.go 2 a9e5a0ad4b7f793f
-gendump 6c99d52b4fe3b0ba #decl:main.go 2 cac6751d12aa645d
-gendump 6c99d52b4fe3b0ba #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6c99d52b4fe3b0ba #file 5 898d44fef6829ba7
-gendump 6c99d52b4fe3b0ba =@slot af0c6ac90747784d
-gendump 6c99d52b4fe3b0ba =head == file go.mod
-gendump 6cfad5f6e447fb11 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6cfad5f6e447fb11 #decl:m/x_g0244/xo.go 3 c7dc697e23b36586
-gendump 6cfad5f6e447fb11 #decl:m/x_g0244/xo_main.go 2 b1a510348d68129c
-gendump 6cfad5f6e447fb11 #decl:main.go 2 158d93037e5ca6a1
-gendump 6cfad5f6e447fb11 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6cfad5f6e447fb11 #file 5 a5294a1a52cace40
-gendump 6cfad5f6e447fb11 =@slot fc3bd5283b07aa5d
-gendump 6cfad5f6e447fb11 =head == file go.mod
-gendump 6d19d02541c58984 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6d19d02541c58984 #decl:m/x_bench_planted_xo2_04_file_sync_variants_x1/xo.go 39 29f8751d0748c41f
-gendump 6d19d02541c58984 #decl:m/x_bench_planted_xo2_04_file_sync_variants_x1/xo_main.go 2 f259bdda30289851
-gendump 6d19d02541c58984 #decl:main.go 2 b06f6260438109af
-gendump 6d19d02541c58984 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6d19d02541c58984 #file 5 b40dc057441490ed
-gendump 6d19d02541c58984 =@slot 410b49b86ad9bc9a
-gendump 6d19d02541c58984 =head == file go.mod
-gendump 6d2d503fc1bde7f8 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6d2d503fc1bde7f8 #decl:m/x_internal_llvm_testdata_golden_conc_await_canceled/xo.go 2 4e12bfe2824f7c6e
-gendump 6d2d503fc1bde7f8 #decl:m/x_internal_llvm_testdata_golden_conc_await_canceled/xo_main.go 2 ce8d228c3a90e0d4
-gendump 6d2d503fc1bde7f8 #decl:main.go 2 bb3543b0e0cc11be
-gendump 6d2d503fc1bde7f8 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6d2d503fc1bde7f8 #file 5 83e2d10fb01153d3
-gendump 6d2d503fc1bde7f8 =@slot 95f50348f9266147
-gendump 6d2d503fc1bde7f8 =head == file go.mod
-gendump 6d4e4cac918321c1 =@slot 07a4735226c0521f
-gendump 6d4e4cac918321c1 =head == rejected
-gendump 6d82b2ff234e9922 =@slot ec264bb21a9e1c02
-gendump 6d82b2ff234e9922 =head == rejected
-gendump 6d93a87b0c8349a7 =@slot 574f83022f531e51
-gendump 6d93a87b0c8349a7 =head == rejected
-gendump 6dacc67f04d8a6fc =@slot f2b944097597f960
-gendump 6dacc67f04d8a6fc =head == rejected
-gendump 6dcde00c3cbbd749 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6dcde00c3cbbd749 #decl:m/x_bench_paper_v0_3_02_worker_pool/xo.go 53 8e71c33e79b330dd
-gendump 6dcde00c3cbbd749 #decl:main.go 2 bd8214adae4bf839
-gendump 6dcde00c3cbbd749 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6dcde00c3cbbd749 #file 4 66fd89a9aff7eb60
-gendump 6dcde00c3cbbd749 =@slot 723b2926f6e7d0ba
-gendump 6dcde00c3cbbd749 =head == file go.mod
-gendump 6defbdf49b984e8a #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6defbdf49b984e8a #decl:m/x_internal_gen_testdata_golden_loops/xo.go 4 684df033857df1b2
-gendump 6defbdf49b984e8a #decl:m/x_internal_gen_testdata_golden_loops/xo_main.go 2 69bcca3e13e08a68
-gendump 6defbdf49b984e8a #decl:main.go 2 f58dbb9b289ccd6b
-gendump 6defbdf49b984e8a #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6defbdf49b984e8a #file 5 c3f43e64c963bcbb
-gendump 6defbdf49b984e8a =@slot d8172f1f95a16efb
-gendump 6defbdf49b984e8a =head == file go.mod
-gendump 6dfd598ea3d0dcd9 =@slot ae61afda99729559
-gendump 6dfd598ea3d0dcd9 =head == error no `fn main` found in the modules given
-gendump 6e2943535947c426 =@slot ad83d4d501ce7c6a
-gendump 6e2943535947c426 =head == rejected
-gendump 6e53ee5d9fe5316a #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6e53ee5d9fe5316a #decl:m/x_internal_gen_testdata_golden_loops/xo.go 4 3818b690129eb853
-gendump 6e53ee5d9fe5316a #decl:m/x_internal_gen_testdata_golden_loops/xo_main.go 2 69bcca3e13e08a68
-gendump 6e53ee5d9fe5316a #decl:main.go 2 f58dbb9b289ccd6b
-gendump 6e53ee5d9fe5316a #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6e53ee5d9fe5316a #file 5 f2f208ec0a9a27cb
-gendump 6e53ee5d9fe5316a =@slot cbeadf2e9ea2d235
-gendump 6e53ee5d9fe5316a =head == file go.mod
-gendump 6ec296aa2a20f605 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6ec296aa2a20f605 #decl:m/x_internal_gen_testdata_golden_var_receiver_order/xo.go 11 4ad4a2f38a967fac
-gendump 6ec296aa2a20f605 #decl:m/x_internal_gen_testdata_golden_var_receiver_order/xo_main.go 2 e55514a5af4c5c78
-gendump 6ec296aa2a20f605 #decl:main.go 2 69e496db128f21b9
-gendump 6ec296aa2a20f605 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6ec296aa2a20f605 #file 5 05dc5a5f800f846b
-gendump 6ec296aa2a20f605 =@slot 9117873ba2dd73ea
-gendump 6ec296aa2a20f605 =head == file go.mod
-gendump 6edaaa5159b40c05 =@slot 1e6c49a3322be3cf
-gendump 6edaaa5159b40c05 =head == rejected
-gendump 6f4614c49af485ea =@slot 067e9d5350efb0e6
-gendump 6f4614c49af485ea =head == rejected
-gendump 6f5499c763ac3abf =@slot a7a46f69a99b65d3
-gendump 6f5499c763ac3abf =head == rejected
-gendump 6f715157de5821dd #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6f715157de5821dd #decl:m/x_internal_llvm_testdata_golden_map_remove_bytes/xo.go 2 c36796de6731e69a
-gendump 6f715157de5821dd #decl:m/x_internal_llvm_testdata_golden_map_remove_bytes/xo_main.go 2 13fbec8afe7d4eeb
-gendump 6f715157de5821dd #decl:main.go 2 40a35fe43e6f278d
-gendump 6f715157de5821dd #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6f715157de5821dd #file 5 b19c5c2ada36c8f3
-gendump 6f715157de5821dd =@slot ef6f601ee21da672
-gendump 6f715157de5821dd =head == file go.mod
-gendump 6f8d3a52eb70665b #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6f8d3a52eb70665b #decl:m/x_internal_llvm_testdata_golden_contract_requires/xo.go 11 b267d1dc9e284e50
-gendump 6f8d3a52eb70665b #decl:m/x_internal_llvm_testdata_golden_contract_requires/xo_main.go 2 47b38082ceb31971
-gendump 6f8d3a52eb70665b #decl:main.go 2 7330bb005d24f265
-gendump 6f8d3a52eb70665b #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6f8d3a52eb70665b #file 5 141e9ca64efdd400
-gendump 6f8d3a52eb70665b =@slot 79c5fa3df090ebe9
-gendump 6f8d3a52eb70665b =head == file go.mod
-gendump 6f9730dade4e997c #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6f9730dade4e997c #decl:m/x_internal_gen_testdata_golden_json_codec/xo.go 33 d4c94aada07d004e
-gendump 6f9730dade4e997c #decl:m/x_internal_gen_testdata_golden_json_codec/xo_main.go 2 605578e31b66097e
-gendump 6f9730dade4e997c #decl:main.go 2 68c17fabcdfad90f
-gendump 6f9730dade4e997c #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6f9730dade4e997c #file 5 8f25203479ca0155
-gendump 6f9730dade4e997c =@slot bbf2a2ce43bd4291
-gendump 6f9730dade4e997c =head == file go.mod
-gendump 6fa5ff455023b0e1 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6fa5ff455023b0e1 #decl:m/x_internal_gen_testdata_golden_error_frames_borrow/xo.go 12 2c145445ae8aeff6
-gendump 6fa5ff455023b0e1 #decl:m/x_internal_gen_testdata_golden_error_frames_borrow/xo_main.go 2 049d8bb07dffe4ad
-gendump 6fa5ff455023b0e1 #decl:main.go 2 576363694415e01d
-gendump 6fa5ff455023b0e1 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6fa5ff455023b0e1 #file 5 1ac4a95799c8aa02
-gendump 6fa5ff455023b0e1 =@slot 9c4136b5d00da1d7
-gendump 6fa5ff455023b0e1 =head == file go.mod
-gendump 6fb3982838343093 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6fb3982838343093 #decl:m/x_internal_ssa_testdata_golden_recursive/xo.go 28 4d7b7cade43035f7
-gendump 6fb3982838343093 #decl:m/x_internal_ssa_testdata_golden_recursive/xo_main.go 2 5e307191e0421117
-gendump 6fb3982838343093 #decl:main.go 2 5a4de75aca99707d
-gendump 6fb3982838343093 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6fb3982838343093 #file 5 840523bccd6266b5
-gendump 6fb3982838343093 =@slot 6c2a25ca3d3dc9a5
-gendump 6fb3982838343093 =head == file go.mod
-gendump 6fbc4930cd8d8008 #decl:go.mod 1 13ef6f66b06c90ff
-gendump 6fbc4930cd8d8008 #decl:m/x_internal_gen_testdata_golden_contracts/xo.go 20 602c84b99c016b60
-gendump 6fbc4930cd8d8008 #decl:m/x_internal_gen_testdata_golden_contracts/xo_main.go 2 0e743df8f0252f4a
-gendump 6fbc4930cd8d8008 #decl:main.go 2 c9c18d9e6a923b21
-gendump 6fbc4930cd8d8008 #decl:xo_adapt.go 0 e3b0c44298fc1c14
-gendump 6fbc4930cd8d8008 #file 5 52ecf710bbf44adb
-gendump 6fbc4930cd8d8008 =@slot b34d48d4d933f307
-gendump 6fbc4930cd8d8008 =head == file go.mod
-gendump 6fda27475b26799b =@slot 9682023d92f5a1f8
-gendump 6fda27475b26799b =head == rejected
+gendump 6019697d64dee250 =@slot 36a7e273cf10e419
+gendump 6019697d64dee250 =head == error no `fn main` found in the modules given
+gendump 605344edeb0ff8f0 =@slot a68fc13350f4a5d9
+gendump 605344edeb0ff8f0 =head == rejected
+gendump 6066f8e161cecad2 =@slot dc3b253dcb1d480b
+gendump 6066f8e161cecad2 =head == error no `fn main` found in the modules given
+gendump 607a5086c9256bcf #decl:go.mod 1 13ef6f66b06c90ff
+gendump 607a5086c9256bcf #decl:m/x_internal_llvm_testdata_golden_float_int_fault/xo.go 3 17f72ada349bbc4c
+gendump 607a5086c9256bcf #decl:m/x_internal_llvm_testdata_golden_float_int_fault/xo_main.go 2 2368e55dfc943676
+gendump 607a5086c9256bcf #decl:main.go 2 4d011112f196c0de
+gendump 607a5086c9256bcf #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 607a5086c9256bcf #file 5 562eb2dd482ddaec
+gendump 607a5086c9256bcf =@slot 4740523300d1d991
+gendump 607a5086c9256bcf =head == file go.mod
+gendump 608753e581f9f792 =@slot 914360c656ba3dbb
+gendump 608753e581f9f792 =head == rejected
+gendump 60ab652b5e4145dd #decl:go.mod 1 13ef6f66b06c90ff
+gendump 60ab652b5e4145dd #decl:m/x_internal_llvm_testdata_golden_list_with_capacity/xo.go 8 75f3500cd16af5be
+gendump 60ab652b5e4145dd #decl:m/x_internal_llvm_testdata_golden_list_with_capacity/xo_main.go 2 3c137c7e14bac205
+gendump 60ab652b5e4145dd #decl:main.go 2 894d2b9014641e6d
+gendump 60ab652b5e4145dd #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 60ab652b5e4145dd #file 5 6a38cec96405cda6
+gendump 60ab652b5e4145dd =@slot 1ee92aaa7a66691c
+gendump 60ab652b5e4145dd =head == file go.mod
+gendump 60b2292f6ecccc4f #decl:go.mod 1 13ef6f66b06c90ff
+gendump 60b2292f6ecccc4f #decl:m/x_internal_llvm_testdata_golden_native_prelude/xo.go 2 31ac14e5582e6078
+gendump 60b2292f6ecccc4f #decl:m/x_internal_llvm_testdata_golden_native_prelude/xo_main.go 2 32a1596c99eb8ea0
+gendump 60b2292f6ecccc4f #decl:main.go 2 2597705d4a14ab8a
+gendump 60b2292f6ecccc4f #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 60b2292f6ecccc4f #file 5 81963f9ec1d97a96
+gendump 60b2292f6ecccc4f =@slot 5d1c7698fabe7055
+gendump 60b2292f6ecccc4f =head == file go.mod
+gendump 60f0350fbc1b03ba =@slot 5629b4f4959e6eea
+gendump 60f0350fbc1b03ba =head == rejected
+gendump 61072e65c0c6d5b7 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 61072e65c0c6d5b7 #decl:m/x_internal_gen_testdata_golden_test_map_until/xo.go 11 bc0a6535735d19ee
+gendump 61072e65c0c6d5b7 #decl:m/x_internal_gen_testdata_golden_test_map_until/xo_main.go 2 9facc57b174d8de3
+gendump 61072e65c0c6d5b7 #decl:main.go 2 b311bf7c4407129e
+gendump 61072e65c0c6d5b7 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 61072e65c0c6d5b7 #file 5 c0d8a9b06033f4fb
+gendump 61072e65c0c6d5b7 =@slot ad7325278c114b5e
+gendump 61072e65c0c6d5b7 =head == file go.mod
+gendump 6121a9866eb1fb70 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6121a9866eb1fb70 #decl:m/x_internal_gen_testdata_golden_test_once/xo.go 27 fa76e76d0df6a540
+gendump 6121a9866eb1fb70 #decl:main.go 2 8cc45901221b1e1c
+gendump 6121a9866eb1fb70 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6121a9866eb1fb70 #file 4 4ba9cc2ed701a8f5
+gendump 6121a9866eb1fb70 =@slot 1695841901368846
+gendump 6121a9866eb1fb70 =head == file go.mod
+gendump 617283798cd3c307 =@slot f798fc504b570f53
+gendump 617283798cd3c307 =head == rejected
+gendump 6230f16cdca5b57b #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6230f16cdca5b57b #decl:m/x_internal_gen_testdata_golden_time_civil/xo.go 5 6ff2fcb2aa164902
+gendump 6230f16cdca5b57b #decl:m/x_internal_gen_testdata_golden_time_civil/xo_main.go 2 777c6a61d8b264c2
+gendump 6230f16cdca5b57b #decl:main.go 2 b3bf6565000a6e52
+gendump 6230f16cdca5b57b #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6230f16cdca5b57b #file 5 bfa2d45c3149532c
+gendump 6230f16cdca5b57b =@slot 7c95a6fe054fa8a4
+gendump 6230f16cdca5b57b =head == file go.mod
+gendump 623984c18e405a65 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 623984c18e405a65 #decl:m/x_internal_llvm_testdata_golden_nested_update/xo.go 52 9e0bc51671022390
+gendump 623984c18e405a65 #decl:m/x_internal_llvm_testdata_golden_nested_update/xo_main.go 2 4654b62a7eb3bdd6
+gendump 623984c18e405a65 #decl:main.go 2 f955b06650660245
+gendump 623984c18e405a65 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 623984c18e405a65 #file 5 34e628f317719a42
+gendump 623984c18e405a65 =@slot 8eadeea196016633
+gendump 623984c18e405a65 =head == file go.mod
+gendump 6263fca6239795da #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1424 02a28ee92fa5fe74
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 249 ffc02ec6a39ba384
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_cli_cmdhelp/xo.go 43 07ca57ee3b3f75cd
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_gen/xo.go 1015 5c214cf7788772e7
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_gen/xo_main.go 2 c40e8ae8e20fbf5b
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
+gendump 6263fca6239795da #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 701 5ac3bb21609cbd3e
+gendump 6263fca6239795da #decl:main.go 2 2651f242c6892416
+gendump 6263fca6239795da #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6263fca6239795da #file 10 5dbfce28289d686e
+gendump 6263fca6239795da =@slot 2d206dce3aeab5df
+gendump 6263fca6239795da =head == file go.mod
+gendump 629951cad15debf0 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 629951cad15debf0 #decl:m/x_example_com_notes_api/xo.go 32 988ba862d09ac6ce
+gendump 629951cad15debf0 #decl:m/x_example_com_notes_domain/xo.go 78 ca0cfa1c57520545
+gendump 629951cad15debf0 #decl:m/x_example_com_notes_server/xo.go 20 7168b962d83891c0
+gendump 629951cad15debf0 #decl:m/x_example_com_notes_server/xo_main.go 2 dc1da11234c86c26
+gendump 629951cad15debf0 #decl:m/x_example_com_notes_store/xo.go 30 5a78e65590ccf5b2
+gendump 629951cad15debf0 #decl:main.go 2 6a6654b90a572eb2
+gendump 629951cad15debf0 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 629951cad15debf0 #file 8 67539ad22e4e8a0e
+gendump 629951cad15debf0 =@slot 007ad5b2645013d0
+gendump 629951cad15debf0 =head == file go.mod
+gendump 629b86c758e45305 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 629b86c758e45305 #decl:m/x_internal_llvm_testdata_golden_closures/xo.go 7 fa99b7abd2c3cd9c
+gendump 629b86c758e45305 #decl:m/x_internal_llvm_testdata_golden_closures/xo_main.go 2 86165d72ca07b296
+gendump 629b86c758e45305 #decl:main.go 2 3c5f4aeece0c3f9d
+gendump 629b86c758e45305 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 629b86c758e45305 #file 5 a2e3f5a234e26b6f
+gendump 629b86c758e45305 =@slot 7b1c039923cf5742
+gendump 629b86c758e45305 =head == file go.mod
+gendump 62b2c96bd9796378 =@slot f412e4337241449d
+gendump 62b2c96bd9796378 =head == rejected
+gendump 62de82e8199eed0b =@slot 0d531029ed8424fc
+gendump 62de82e8199eed0b =head == rejected
+gendump 634dce241c91896b #decl:go.mod 1 13ef6f66b06c90ff
+gendump 634dce241c91896b #decl:m/x_internal_llvm_testdata_golden_http_stream/xo.go 5 948bac615ca52fee
+gendump 634dce241c91896b #decl:m/x_internal_llvm_testdata_golden_http_stream/xo_main.go 2 7b330f9722790bee
+gendump 634dce241c91896b #decl:main.go 2 f1124b7792a0d148
+gendump 634dce241c91896b #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 634dce241c91896b #file 5 6a3e992b336ef68b
+gendump 634dce241c91896b =@slot 2013fd8bad3f1b93
+gendump 634dce241c91896b =head == file go.mod
+gendump 634f911cb3f04a22 =@slot 062ca4d9d70083ac
+gendump 634f911cb3f04a22 =head == rejected
+gendump 634fc7c9174389e3 =@slot 2e074f1ce10cfe13
+gendump 634fc7c9174389e3 =head == rejected
+gendump 63674e209195e3cd #decl:go.mod 1 13ef6f66b06c90ff
+gendump 63674e209195e3cd #decl:m/x_internal_gen_testdata_golden_int_ops/xo.go 2 693311bc20ad8a2d
+gendump 63674e209195e3cd #decl:m/x_internal_gen_testdata_golden_int_ops/xo_main.go 2 4369892a0d9aa728
+gendump 63674e209195e3cd #decl:main.go 2 2a1e9d203ac15bc8
+gendump 63674e209195e3cd #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 63674e209195e3cd #file 5 e1651e79e0d4414f
+gendump 63674e209195e3cd =@slot 461249eb59826d47
+gendump 63674e209195e3cd =head == file go.mod
+gendump 6369fffaeacc7db3 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6369fffaeacc7db3 #decl:m/x_g0087/xo.go 6 585d7467d1167617
+gendump 6369fffaeacc7db3 #decl:m/x_g0087/xo_main.go 2 612cf09e9a459f5c
+gendump 6369fffaeacc7db3 #decl:main.go 2 158d93037e5ca6a1
+gendump 6369fffaeacc7db3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6369fffaeacc7db3 #file 5 07eb3f04a3e3cb63
+gendump 6369fffaeacc7db3 =@slot 8e4e208117652a15
+gendump 6369fffaeacc7db3 =head == file go.mod
+gendump 636a850c71e44f79 =@slot d87584dd4b935195
+gendump 636a850c71e44f79 =head == rejected
+gendump 6389c776f918e77c =@slot ffdf75f563a26792
+gendump 6389c776f918e77c =head == rejected
+gendump 63c58c580fcb67fa =@slot 500841f7d0b3e131
+gendump 63c58c580fcb67fa =head == rejected
+gendump 63de84206767d471 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 63de84206767d471 #decl:m/x_g0035/xo.go 13 11ea8c0c3f3037c6
+gendump 63de84206767d471 #decl:m/x_g0035/xo_main.go 2 afd716e0578df69c
+gendump 63de84206767d471 #decl:main.go 2 158d93037e5ca6a1
+gendump 63de84206767d471 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 63de84206767d471 #file 5 8a0c64589cfa56c4
+gendump 63de84206767d471 =@slot c9b6822a4be95b62
+gendump 63de84206767d471 =head == file go.mod
+gendump 64242f291189efba =@slot d6d9b6fa2924790e
+gendump 64242f291189efba =head == rejected
+gendump 644ce237bdfc30f3 =@slot 24331f44516567a1
+gendump 644ce237bdfc30f3 =head == rejected
+gendump 64a289dda27df332 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 64a289dda27df332 #decl:m/x_g0078/xo.go 3 9fa73f17a492e6c3
+gendump 64a289dda27df332 #decl:m/x_g0078/xo_main.go 2 d365a2fa1a66e8a3
+gendump 64a289dda27df332 #decl:main.go 2 158d93037e5ca6a1
+gendump 64a289dda27df332 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 64a289dda27df332 #file 5 08bac750d837ce95
+gendump 64a289dda27df332 =@slot b7d3bd7d8c6cbb6c
+gendump 64a289dda27df332 =head == file go.mod
+gendump 64a42f78e3f0d0ef =@slot 1026fb31588f497b
+gendump 64a42f78e3f0d0ef =head == rejected
+gendump 64a7e8d5c9ca7e35 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 64a7e8d5c9ca7e35 #decl:m/x_internal_llvm_testdata_golden_map_remove_bytes/xo.go 2 c36796de6731e69a
+gendump 64a7e8d5c9ca7e35 #decl:m/x_internal_llvm_testdata_golden_map_remove_bytes/xo_main.go 2 13fbec8afe7d4eeb
+gendump 64a7e8d5c9ca7e35 #decl:main.go 2 40a35fe43e6f278d
+gendump 64a7e8d5c9ca7e35 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 64a7e8d5c9ca7e35 #file 5 b19c5c2ada36c8f3
+gendump 64a7e8d5c9ca7e35 =@slot ad341402af0cf6ec
+gendump 64a7e8d5c9ca7e35 =head == file go.mod
+gendump 64fd50e9d08adca3 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 64fd50e9d08adca3 #decl:m/x_internal_llvm_testdata_golden_native_sql/xo.go 37 367b0c2b36a5633e
+gendump 64fd50e9d08adca3 #decl:m/x_internal_llvm_testdata_golden_native_sql/xo_main.go 2 b049cbdcf224c9ff
+gendump 64fd50e9d08adca3 #decl:main.go 2 0ab4c762a1b74df5
+gendump 64fd50e9d08adca3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 64fd50e9d08adca3 #file 5 d63912f4b876a0bf
+gendump 64fd50e9d08adca3 =@slot 35daeb63f4f0a440
+gendump 64fd50e9d08adca3 =head == file go.mod
+gendump 65197537f619334c =@slot 2787f55b6101ecbf
+gendump 65197537f619334c =head == rejected
+gendump 651b44a15da60a5f #decl:go.mod 1 13ef6f66b06c90ff
+gendump 651b44a15da60a5f #decl:m/x_internal_gen_testdata_golden_proc_cmd/xo.go 6 17023a71ea66ec03
+gendump 651b44a15da60a5f #decl:m/x_internal_gen_testdata_golden_proc_cmd/xo_main.go 2 07569b848ef29c77
+gendump 651b44a15da60a5f #decl:main.go 2 828873a7e7874b1c
+gendump 651b44a15da60a5f #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 651b44a15da60a5f #file 5 2b01ca6a051b4545
+gendump 651b44a15da60a5f =@slot cadb2accf694934e
+gendump 651b44a15da60a5f =head == file go.mod
+gendump 65607e3dd1041148 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 65607e3dd1041148 #decl:m/x_g0269/xo.go 2 1953119361974748
+gendump 65607e3dd1041148 #decl:m/x_g0269/xo_main.go 2 9e9fa45fe659fd11
+gendump 65607e3dd1041148 #decl:main.go 2 158d93037e5ca6a1
+gendump 65607e3dd1041148 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 65607e3dd1041148 #file 5 776f7adc6360f520
+gendump 65607e3dd1041148 =@slot d3c9270515ac3003
+gendump 65607e3dd1041148 =head == file go.mod
+gendump 65677b867e7d5d73 =@slot 9bd76998a835c714
+gendump 65677b867e7d5d73 =head == rejected
+gendump 65d1e95b576322cb =@slot 811a39909baa1abb
+gendump 65d1e95b576322cb =head == rejected
+gendump 65fd96857fca4cc0 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 65fd96857fca4cc0 #decl:m/x_internal_gen_testdata_golden_json_fast/xo.go 24 237b46e938de1b29
+gendump 65fd96857fca4cc0 #decl:m/x_internal_gen_testdata_golden_json_fast/xo_main.go 2 9628c1e7e9d7f266
+gendump 65fd96857fca4cc0 #decl:main.go 2 02df1df84df27f66
+gendump 65fd96857fca4cc0 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 65fd96857fca4cc0 #file 5 03233e8f0e9ca4de
+gendump 65fd96857fca4cc0 =@slot 7c1dbcb50f284ba9
+gendump 65fd96857fca4cc0 =head == file go.mod
+gendump 6609b348b7aa8245 =@slot 17d66acacccf2ced
+gendump 6609b348b7aa8245 =head == rejected
+gendump 6639702bb3663f21 =@slot 76e2d2264af63f47
+gendump 6639702bb3663f21 =head == rejected
+gendump 664aa5c7cacc566e #decl:go.mod 1 13ef6f66b06c90ff
+gendump 664aa5c7cacc566e #decl:m/x_g0055/xo.go 3 dc247989d528742b
+gendump 664aa5c7cacc566e #decl:m/x_g0055/xo_main.go 2 5cbd36547c584a73
+gendump 664aa5c7cacc566e #decl:main.go 2 158d93037e5ca6a1
+gendump 664aa5c7cacc566e #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 664aa5c7cacc566e #file 5 a379c185fb24df74
+gendump 664aa5c7cacc566e =@slot bf2f858cd014d4e4
+gendump 664aa5c7cacc566e =head == file go.mod
+gendump 6661060cab96705c =@slot 142e8f51eb648c25
+gendump 6661060cab96705c =head == error no `fn main` found in the modules given
+gendump 6674e15f093eeda8 =@slot 2417705c6c813ce2
+gendump 6674e15f093eeda8 =head == rejected
+gendump 66947f227e69c17d =@slot 9d5ee519c03c3595
+gendump 66947f227e69c17d =head == rejected
+gendump 66af308338369e31 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 66af308338369e31 #decl:m/x_filesync/xo.go 64 a9ea0fe9f9d80996
+gendump 66af308338369e31 #decl:main.go 2 8493ee00dba2a82a
+gendump 66af308338369e31 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 66af308338369e31 #file 4 e272387b4dc335e9
+gendump 66af308338369e31 =@slot a48cf13bc3408238
+gendump 66af308338369e31 =head == file go.mod
+gendump 66f201a6ab05995e #decl:go.mod 1 13ef6f66b06c90ff
+gendump 66f201a6ab05995e #decl:m/x_g0247/xo.go 3 091ecc2da972eeb8
+gendump 66f201a6ab05995e #decl:m/x_g0247/xo_main.go 2 7fc4545ee040121f
+gendump 66f201a6ab05995e #decl:main.go 2 158d93037e5ca6a1
+gendump 66f201a6ab05995e #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 66f201a6ab05995e #file 5 69a3c1ec756de039
+gendump 66f201a6ab05995e =@slot d34a96db12832f7b
+gendump 66f201a6ab05995e =head == file go.mod
+gendump 67131dd1d2099034 =@slot 6f622fa295c72cfe
+gendump 67131dd1d2099034 =head == error no `fn main` found in the modules given
+gendump 671c85e0eb088ea3 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 671c85e0eb088ea3 #decl:m/x_internal_llvm_testdata_golden_net_echo/xo.go 7 e54763fb1c551851
+gendump 671c85e0eb088ea3 #decl:m/x_internal_llvm_testdata_golden_net_echo/xo_main.go 2 7411939b9ab2affd
+gendump 671c85e0eb088ea3 #decl:main.go 2 138baeb68a5f7e97
+gendump 671c85e0eb088ea3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 671c85e0eb088ea3 #file 5 1ad31fcf14a82009
+gendump 671c85e0eb088ea3 =@slot fbfc21e8a212c53b
+gendump 671c85e0eb088ea3 =head == file go.mod
+gendump 671e89813bd09e13 =@slot 35d15345ed8caecc
+gendump 671e89813bd09e13 =head == rejected
+gendump 674696e6671d8488 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 674696e6671d8488 #decl:m/x_example_com_atomicperf/xo.go 11 4f5e9755741433e1
+gendump 674696e6671d8488 #decl:m/x_example_com_atomicperf/xo_main.go 2 8d13ef4e9f359ba9
+gendump 674696e6671d8488 #decl:main.go 2 8ace53263a3113e6
+gendump 674696e6671d8488 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 674696e6671d8488 #file 5 8e67d4aa104556f8
+gendump 674696e6671d8488 =@slot bd4606daeabfa3c1
+gendump 674696e6671d8488 =head == file go.mod
+gendump 675c73e0f6a4baab #decl:go.mod 1 13ef6f66b06c90ff
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo.go 1424 02a28ee92fa5fe74
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_check/xo_main.go 2 720682898d14a5ad
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 249 ffc02ec6a39ba384
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_cli_cmdhelp/xo.go 43 07ca57ee3b3f75cd
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 161 b38bdeb7dafdf933
+gendump 675c73e0f6a4baab #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 701 5ac3bb21609cbd3e
+gendump 675c73e0f6a4baab #decl:main.go 2 1ecc46ce0e5d8f6b
+gendump 675c73e0f6a4baab #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 675c73e0f6a4baab #file 9 89c0a5f5b86f235b
+gendump 675c73e0f6a4baab =@slot f59d369164fef4e7
+gendump 675c73e0f6a4baab =head == file go.mod
+gendump 677ab3334eb101aa =@slot 2769ca39b5471a9d
+gendump 677ab3334eb101aa =head == rejected
+gendump 679c997317d4493b =@slot 7587e29b0f54dfec
+gendump 679c997317d4493b =head == rejected
+gendump 67e4d3fa0e5cb575 =@slot 00f48ef5433fd0aa
+gendump 67e4d3fa0e5cb575 =head == rejected
+gendump 6801afb08641d0d7 =@slot 391c078160e70a31
+gendump 6801afb08641d0d7 =head == rejected
+gendump 682b8a49c8b67752 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 682b8a49c8b67752 #decl:m/x_internal_llvm_testdata_golden_csv_basic/xo.go 3 95c18856b00e7b84
+gendump 682b8a49c8b67752 #decl:m/x_internal_llvm_testdata_golden_csv_basic/xo_main.go 2 40eb79122f9766bc
+gendump 682b8a49c8b67752 #decl:main.go 2 b5aa2be6eb89d988
+gendump 682b8a49c8b67752 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 682b8a49c8b67752 #file 5 0d585e0272c9837e
+gendump 682b8a49c8b67752 =@slot d721b4eb01a19ab7
+gendump 682b8a49c8b67752 =head == file go.mod
+gendump 683339419b64d915 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 683339419b64d915 #decl:m/x_example_com_notes_api/xo.go 31 f953d84a1896425a
+gendump 683339419b64d915 #decl:m/x_example_com_notes_domain/xo.go 73 2e7592dacee8ba8e
+gendump 683339419b64d915 #decl:m/x_example_com_notes_server/xo.go 19 47e731cef754dc08
+gendump 683339419b64d915 #decl:m/x_example_com_notes_server/xo_main.go 2 dc1da11234c86c26
+gendump 683339419b64d915 #decl:m/x_example_com_notes_store/xo.go 29 c607c16e81951614
+gendump 683339419b64d915 #decl:main.go 2 6a6654b90a572eb2
+gendump 683339419b64d915 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 683339419b64d915 #file 8 68f1b970ab9bbc25
+gendump 683339419b64d915 =@slot f7b56b9718db2fbd
+gendump 683339419b64d915 =head == file go.mod
+gendump 6845bdb960e09857 =@slot 031240487ee52629
+gendump 6845bdb960e09857 =head == rejected
+gendump 685b532a57ff9f5b =@slot b1993add51c74f1f
+gendump 685b532a57ff9f5b =head == rejected
+gendump 687a2898ac0c478e #decl:go.mod 1 13ef6f66b06c90ff
+gendump 687a2898ac0c478e #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 187 885796433740b7a8
+gendump 687a2898ac0c478e #decl:m/x_github_com_xo_lang_xo_selfhost_parser/xo.go 801 0b4d71c693734757
+gendump 687a2898ac0c478e #decl:main.go 2 580dab80e160b010
+gendump 687a2898ac0c478e #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 687a2898ac0c478e #file 5 f2c6fae3fbf38ad2
+gendump 687a2898ac0c478e =@slot 55d435b4b6b3b210
+gendump 687a2898ac0c478e =head == file go.mod
+gendump 688286539c5338f1 =@slot 0ce31b05831f3927
+gendump 688286539c5338f1 =head == rejected
+gendump 68cf49d16075b8bf =@slot a4822186d5a5ecc6
+gendump 68cf49d16075b8bf =head == rejected
+gendump 694ccd3053da0f85 =@slot dcd9554ec7794715
+gendump 694ccd3053da0f85 =head == rejected
+gendump 6964d88004fe3c50 =@slot 5c8c141b3a26b615
+gendump 6964d88004fe3c50 =head == rejected
+gendump 69698c058298494a #decl:go.mod 1 13ef6f66b06c90ff
+gendump 69698c058298494a #decl:m/x_internal_gen_testdata_golden_channels/xo.go 2 86f30eb1ea85ed76
+gendump 69698c058298494a #decl:m/x_internal_gen_testdata_golden_channels/xo_main.go 2 d8338bf22232e420
+gendump 69698c058298494a #decl:main.go 2 6bb662ab7664196c
+gendump 69698c058298494a #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 69698c058298494a #file 5 b3e08f8ccd2a6b85
+gendump 69698c058298494a =@slot e7794593a4bac59b
+gendump 69698c058298494a =head == file go.mod
+gendump 6994849dc4619300 =@slot 3cd35240671f1261
+gendump 6994849dc4619300 =head == rejected
+gendump 69c771cd939679bb =@slot 68452f66bf61b1be
+gendump 69c771cd939679bb =head == error no `fn main` found in the modules given
+gendump 69ec397fb20747f6 =@slot de1b4f3463114817
+gendump 69ec397fb20747f6 =head == error no `fn main` found in the modules given
+gendump 6a43d1435559595a =@slot 8d423f6db0876d8e
+gendump 6a43d1435559595a =head == rejected
+gendump 6a6fcf688c577d33 =@slot 86147f88e1c4c828
+gendump 6a6fcf688c577d33 =head == rejected
+gendump 6aa4ab4e4abdcdf8 =@slot 9ba827709e177351
+gendump 6aa4ab4e4abdcdf8 =head == rejected
+gendump 6aa5d2e41413a0e8 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6aa5d2e41413a0e8 #decl:m/x_g0249/xo.go 2 e6738f6409db9f6d
+gendump 6aa5d2e41413a0e8 #decl:m/x_g0249/xo_main.go 2 a9a11c019eff57d0
+gendump 6aa5d2e41413a0e8 #decl:main.go 2 158d93037e5ca6a1
+gendump 6aa5d2e41413a0e8 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6aa5d2e41413a0e8 #file 5 9421511ae77556e0
+gendump 6aa5d2e41413a0e8 =@slot 30cc5c10b90930f7
+gendump 6aa5d2e41413a0e8 =head == file go.mod
+gendump 6aca188a2b99dfb4 =@slot de79c78078e092c9
+gendump 6aca188a2b99dfb4 =head == rejected
+gendump 6acd0c8e1d3a9481 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6acd0c8e1d3a9481 #decl:m/x_example_com_concperf_pingpong/xo.go 2 a5d3ee810483b48e
+gendump 6acd0c8e1d3a9481 #decl:m/x_example_com_concperf_pingpong/xo_main.go 2 c00e0849817e856f
+gendump 6acd0c8e1d3a9481 #decl:main.go 2 c4f106103ceca020
+gendump 6acd0c8e1d3a9481 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6acd0c8e1d3a9481 #file 5 74bfd7e42af3e3b2
+gendump 6acd0c8e1d3a9481 =@slot a34228931be59488
+gendump 6acd0c8e1d3a9481 =head == file go.mod
+gendump 6af466db78c40592 =@slot 468300d577d4739f
+gendump 6af466db78c40592 =head == error no `fn main` found in the modules given
+gendump 6b0c4848028e08df #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6b0c4848028e08df #decl:m/x_github_com_xo_lang_xo_selfhost_macho/xo.go 803 ca794b16abf268a4
+gendump 6b0c4848028e08df #decl:m/x_github_com_xo_lang_xo_selfhost_macho/xo_main.go 2 2c3f32359c48ac02
+gendump 6b0c4848028e08df #decl:main.go 2 37fb43fd35bd10d8
+gendump 6b0c4848028e08df #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6b0c4848028e08df #file 5 5e8a280984536064
+gendump 6b0c4848028e08df =@slot 5e866b647de91630
+gendump 6b0c4848028e08df =head == file go.mod
+gendump 6b2b9ced9770bdfc =@slot 84c326829d81ff61
+gendump 6b2b9ced9770bdfc =head == rejected
+gendump 6b5562c0111c19a1 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6b5562c0111c19a1 #decl:m/x_internal_arm64_testdata_run_switch/xo.go 16 ea48fc7d9d3cbda1
+gendump 6b5562c0111c19a1 #decl:m/x_internal_arm64_testdata_run_switch/xo_main.go 2 28bebdefd27060c4
+gendump 6b5562c0111c19a1 #decl:main.go 2 00084f474edc5511
+gendump 6b5562c0111c19a1 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6b5562c0111c19a1 #file 5 81985b8a81f923d7
+gendump 6b5562c0111c19a1 =@slot 64503748eac4990a
+gendump 6b5562c0111c19a1 =head == file go.mod
+gendump 6b5c47b98876a8e3 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6b5c47b98876a8e3 #decl:m/x_internal_gen_testdata_golden_nested_option_coalesce/xo.go 3 0ae525ac38fd2941
+gendump 6b5c47b98876a8e3 #decl:m/x_internal_gen_testdata_golden_nested_option_coalesce/xo_main.go 2 c5b7e3e63f3669e5
+gendump 6b5c47b98876a8e3 #decl:main.go 2 918f0b21ee540582
+gendump 6b5c47b98876a8e3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6b5c47b98876a8e3 #file 5 346bbcb7308cadc0
+gendump 6b5c47b98876a8e3 =@slot 58ca1b8435350085
+gendump 6b5c47b98876a8e3 =head == file go.mod
+gendump 6b8374ac30982db7 =@slot 0a354318e611b989
+gendump 6b8374ac30982db7 =head == rejected
+gendump 6ba9fb8e2915f6c9 =@slot ada96d6d2bbdb6d4
+gendump 6ba9fb8e2915f6c9 =head == rejected
+gendump 6bad3d91297d1844 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6bad3d91297d1844 #decl:m/x_internal_llvm_testdata_golden_select_arm_order/xo.go 5 5d10b6f6baf0a03d
+gendump 6bad3d91297d1844 #decl:m/x_internal_llvm_testdata_golden_select_arm_order/xo_main.go 2 d3496dbc68a7d74a
+gendump 6bad3d91297d1844 #decl:main.go 2 73a86afec2954c7d
+gendump 6bad3d91297d1844 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6bad3d91297d1844 #file 5 25c8de38bc7f0aab
+gendump 6bad3d91297d1844 =@slot feef5c43efc2bb63
+gendump 6bad3d91297d1844 =head == file go.mod
+gendump 6baefcb619d9a0ea =@slot fbe37e8bab3f5212
+gendump 6baefcb619d9a0ea =head == rejected
+gendump 6bbe6b9c377c482b #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6bbe6b9c377c482b #decl:m/x_internal_gen_testdata_golden_closures/xo.go 8 d94a4856a7ffec48
+gendump 6bbe6b9c377c482b #decl:m/x_internal_gen_testdata_golden_closures/xo_main.go 2 4ad4ac76c5511c36
+gendump 6bbe6b9c377c482b #decl:main.go 2 e4d5475fb13c272d
+gendump 6bbe6b9c377c482b #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6bbe6b9c377c482b #file 5 a5f22538af5eed9a
+gendump 6bbe6b9c377c482b =@slot 25cee7415e72f1b7
+gendump 6bbe6b9c377c482b =head == file go.mod
+gendump 6c00de25feb48b8e =@slot 3d0d1980fa8f933a
+gendump 6c00de25feb48b8e =head == rejected
+gendump 6c1f30d155084664 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6c1f30d155084664 #decl:m/x_example_com_textperf/xo.go 34 3ce9e0a0ecd621ee
+gendump 6c1f30d155084664 #decl:m/x_example_com_textperf/xo_main.go 2 cd10072fc8581694
+gendump 6c1f30d155084664 #decl:main.go 2 0201a0684b4ec5c0
+gendump 6c1f30d155084664 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6c1f30d155084664 #file 5 c0b48dbd65cded47
+gendump 6c1f30d155084664 =@slot b1450ea8312a0e17
+gendump 6c1f30d155084664 =head == file go.mod
+gendump 6c41ab2e284683a1 =@slot 754ad518f5b358f6
+gendump 6c41ab2e284683a1 =head == rejected
+gendump 6c552acaf63309bb #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6c552acaf63309bb #decl:m/x_internal_gen_testdata_golden_hash_keys/xo.go 13 7123d92abff101d2
+gendump 6c552acaf63309bb #decl:m/x_internal_gen_testdata_golden_hash_keys/xo_main.go 2 7d057ff74493b500
+gendump 6c552acaf63309bb #decl:main.go 2 2c4af90eda827111
+gendump 6c552acaf63309bb #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6c552acaf63309bb #file 5 882ef79ac3a358b4
+gendump 6c552acaf63309bb =@slot 8d09493271d1ab20
+gendump 6c552acaf63309bb =head == file go.mod
+gendump 6ca85b480e421456 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6ca85b480e421456 #decl:m/x_internal_ssa_testdata_golden_generics/xo.go 27 24f10f107cb83a57
+gendump 6ca85b480e421456 #decl:m/x_internal_ssa_testdata_golden_generics/xo_main.go 2 821750a60beca3d8
+gendump 6ca85b480e421456 #decl:main.go 2 b58a44ca90848d04
+gendump 6ca85b480e421456 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6ca85b480e421456 #file 5 9baad0c2b0dc83e0
+gendump 6ca85b480e421456 =@slot 577828c1a665fbd5
+gendump 6ca85b480e421456 =head == file go.mod
+gendump 6cbac0ecf35c3116 =@slot 9674f49010e8a96f
+gendump 6cbac0ecf35c3116 =head == rejected
+gendump 6ce4c51608052a2a =@slot 2d90d17c555793e6
+gendump 6ce4c51608052a2a =head == rejected
+gendump 6cf0e6102d67c3b6 =@slot 6488fb12acf81fee
+gendump 6cf0e6102d67c3b6 =head == rejected
+gendump 6d107e6d295bbccf #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6d107e6d295bbccf #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo.go 22 66c34b82f387d066
+gendump 6d107e6d295bbccf #decl:m/x_internal_llvm_testdata_golden_realtime_section/xo_main.go 2 de93b6ec7be46e31
+gendump 6d107e6d295bbccf #decl:main.go 2 e92198e0ccdce272
+gendump 6d107e6d295bbccf #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6d107e6d295bbccf #file 5 d6c3c6346c850875
+gendump 6d107e6d295bbccf =@slot 4575193ad0b6d78d
+gendump 6d107e6d295bbccf =head == file go.mod
+gendump 6d6082070273760c =@slot 78b0afef9a723d56
+gendump 6d6082070273760c =head == rejected
+gendump 6d67b6f3b7e80b71 =@slot 0e11666282824ea2
+gendump 6d67b6f3b7e80b71 =head == rejected
+gendump 6d828f849235a5f0 =@slot 9dab2fa2fbcaecd9
+gendump 6d828f849235a5f0 =head == rejected
+gendump 6db34c69882ee7f3 =@slot a0f6cefa42ebd516
+gendump 6db34c69882ee7f3 =head == rejected
+gendump 6e06be27c0aadb00 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6e06be27c0aadb00 #decl:m/x_internal_gen_testdata_golden_std06_helpers/xo.go 10 0c0c3e42570dbeee
+gendump 6e06be27c0aadb00 #decl:m/x_internal_gen_testdata_golden_std06_helpers/xo_main.go 2 6b642c8a1c730ac2
+gendump 6e06be27c0aadb00 #decl:main.go 2 00a1db8fcdb0e66b
+gendump 6e06be27c0aadb00 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6e06be27c0aadb00 #file 5 6ae64b6fac3a6aae
+gendump 6e06be27c0aadb00 =@slot 672d0f60f33e96d7
+gendump 6e06be27c0aadb00 =head == file go.mod
+gendump 6e28de4e0fabad8b #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6e28de4e0fabad8b #decl:m/x_g0136/xo.go 29 c98ace4e09e85c29
+gendump 6e28de4e0fabad8b #decl:m/x_g0136/xo_main.go 2 bfafe9eb29cb53e0
+gendump 6e28de4e0fabad8b #decl:main.go 2 158d93037e5ca6a1
+gendump 6e28de4e0fabad8b #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6e28de4e0fabad8b #file 5 1bf425ee50131211
+gendump 6e28de4e0fabad8b =@slot 494738449a15920e
+gendump 6e28de4e0fabad8b =head == file go.mod
+gendump 6e41a6a2ff5be02a #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6e41a6a2ff5be02a #decl:m/x_internal_gen_testdata_golden_test_signal_after/xo.go 3 d10c62cc2dd1a288
+gendump 6e41a6a2ff5be02a #decl:m/x_internal_gen_testdata_golden_test_signal_after/xo_main.go 2 292874dc3b3b6e16
+gendump 6e41a6a2ff5be02a #decl:main.go 2 70e159bf76ec63f1
+gendump 6e41a6a2ff5be02a #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6e41a6a2ff5be02a #file 5 2ae433e2cac55071
+gendump 6e41a6a2ff5be02a =@slot cd12b2be51949f53
+gendump 6e41a6a2ff5be02a =head == file go.mod
+gendump 6e48a7471aefeab4 =@slot 1d613ddab7b7b054
+gendump 6e48a7471aefeab4 =head == rejected
+gendump 6e60a206d4f4594c =@slot cb0d3334f4ff0389
+gendump 6e60a206d4f4594c =head == rejected
+gendump 6e65126a8c501ac3 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6e65126a8c501ac3 #decl:m/x_g0100/xo.go 42 f308878c74f0d19d
+gendump 6e65126a8c501ac3 #decl:m/x_g0100/xo_main.go 2 043080a71311a759
+gendump 6e65126a8c501ac3 #decl:main.go 2 158d93037e5ca6a1
+gendump 6e65126a8c501ac3 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6e65126a8c501ac3 #file 5 27583d401f562e4d
+gendump 6e65126a8c501ac3 =@slot cb98eb55215f5468
+gendump 6e65126a8c501ac3 =head == file go.mod
+gendump 6ea60c07fbaaad30 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6ea60c07fbaaad30 #decl:m/x_g0156/xo.go 19 75c9433e95d6a423
+gendump 6ea60c07fbaaad30 #decl:m/x_g0156/xo_main.go 2 bae88e11a7ac2e76
+gendump 6ea60c07fbaaad30 #decl:main.go 2 158d93037e5ca6a1
+gendump 6ea60c07fbaaad30 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6ea60c07fbaaad30 #file 5 ce2d19bccf5b323a
+gendump 6ea60c07fbaaad30 =@slot ef64ca55ae498854
+gendump 6ea60c07fbaaad30 =head == file go.mod
+gendump 6ef69b1c3f138869 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6ef69b1c3f138869 #decl:m/x_internal_llvm_testdata_golden_proc_cmd/xo.go 4 ed17d1bf4f113819
+gendump 6ef69b1c3f138869 #decl:m/x_internal_llvm_testdata_golden_proc_cmd/xo_main.go 2 4880bd8cbee8b381
+gendump 6ef69b1c3f138869 #decl:main.go 2 812dff82954ee621
+gendump 6ef69b1c3f138869 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6ef69b1c3f138869 #file 5 4252dfe83b16ac7a
+gendump 6ef69b1c3f138869 =@slot 182277437e371a3a
+gendump 6ef69b1c3f138869 =head == file go.mod
+gendump 6f29998a5e3b2761 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6f29998a5e3b2761 #decl:m/x_internal_llvm_testdata_golden_fs_native/xo.go 3 17eea3ad063458ee
+gendump 6f29998a5e3b2761 #decl:m/x_internal_llvm_testdata_golden_fs_native/xo_main.go 2 b6fcf474611dc4ab
+gendump 6f29998a5e3b2761 #decl:main.go 2 0167d5f35954bc68
+gendump 6f29998a5e3b2761 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6f29998a5e3b2761 #file 5 b4d524329d14f30d
+gendump 6f29998a5e3b2761 =@slot a3ecee622abbd132
+gendump 6f29998a5e3b2761 =head == file go.mod
+gendump 6f3ae024aadbe9b5 =@slot 5eb1a8e353c53156
+gendump 6f3ae024aadbe9b5 =head == rejected
+gendump 6f7b71ae1d1ab5ec #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6f7b71ae1d1ab5ec #decl:m/x_internal_llvm_testdata_golden_native_ed25519/xo.go 3 96523ce32a45903f
+gendump 6f7b71ae1d1ab5ec #decl:m/x_internal_llvm_testdata_golden_native_ed25519/xo_main.go 2 8509484a8b71332d
+gendump 6f7b71ae1d1ab5ec #decl:main.go 2 c54d11e841886171
+gendump 6f7b71ae1d1ab5ec #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6f7b71ae1d1ab5ec #file 5 a8086fb3768f905f
+gendump 6f7b71ae1d1ab5ec =@slot b2d7c5f1f2d79115
+gendump 6f7b71ae1d1ab5ec =head == file go.mod
+gendump 6f7fed91f5a7204f #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6f7fed91f5a7204f #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind/xo.go 265 4722ccf19714119e
+gendump 6f7fed91f5a7204f #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind_xobind/xo.go 2 25d3c15f3ab8de16
+gendump 6f7fed91f5a7204f #decl:m/x_github_com_xo_lang_xo_selfhost_cli_bind_xobind/xo_main.go 2 d75d29f1dd7ae64d
+gendump 6f7fed91f5a7204f #decl:m/x_github_com_xo_lang_xo_selfhost_cli_cmdhelp/xo.go 44 15264395ac389d6d
+gendump 6f7fed91f5a7204f #decl:m/x_github_com_xo_lang_xo_selfhost_lexer/xo.go 173 e2bc48d3fbd3b0bc
+gendump 6f7fed91f5a7204f #decl:main.go 2 2c0a5cee86745949
+gendump 6f7fed91f5a7204f #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6f7fed91f5a7204f #file 8 c79f0a5974d54c81
+gendump 6f7fed91f5a7204f =@slot 35d02b631e05ed42
+gendump 6f7fed91f5a7204f =head == file go.mod
+gendump 6f89dd1f6c511be4 =@slot 82093849c698f032
+gendump 6f89dd1f6c511be4 =head == rejected
+gendump 6f97148dcee33417 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6f97148dcee33417 #decl:m/x_internal_llvm_testdata_golden_contract_invariant/xo.go 28 9b5a7324df38ba13
+gendump 6f97148dcee33417 #decl:m/x_internal_llvm_testdata_golden_contract_invariant/xo_main.go 2 c13dd27da081b439
+gendump 6f97148dcee33417 #decl:main.go 2 f319e9b0d4370535
+gendump 6f97148dcee33417 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6f97148dcee33417 #file 5 3cf66d10d035b4bc
+gendump 6f97148dcee33417 =@slot 1c45112a30fe9868
+gendump 6f97148dcee33417 =head == file go.mod
+gendump 6fa400a8e94e5cad =@slot 52fd41b8ca06723e
+gendump 6fa400a8e94e5cad =head == rejected
+gendump 6fad6732e0abd776 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6fad6732e0abd776 #decl:m/x_netbench/xo.go 5 f5fcecd96b4e72f8
+gendump 6fad6732e0abd776 #decl:m/x_netbench/xo_main.go 2 cb4e374daf89a1a3
+gendump 6fad6732e0abd776 #decl:main.go 2 2a63be23d8d9b021
+gendump 6fad6732e0abd776 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6fad6732e0abd776 #file 5 0cf37d502408b418
+gendump 6fad6732e0abd776 =@slot a665a5e79a06ecc8
+gendump 6fad6732e0abd776 =head == file go.mod
+gendump 6fb58ca2ca3e71ad =@slot 17f5df8052235555
+gendump 6fb58ca2ca3e71ad =head == rejected
+gendump 6fc1d4e2244a8bff #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6fc1d4e2244a8bff #decl:m/x_internal_gen_testdata_golden_invariant_construct/xo.go 10 a45e7b4ce821ec8a
+gendump 6fc1d4e2244a8bff #decl:m/x_internal_gen_testdata_golden_invariant_construct/xo_main.go 2 141e585192789fe0
+gendump 6fc1d4e2244a8bff #decl:main.go 2 9030bcb64eabcadd
+gendump 6fc1d4e2244a8bff #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6fc1d4e2244a8bff #file 5 c51aae9c7d57570f
+gendump 6fc1d4e2244a8bff =@slot 3583f946ee3df8a0
+gendump 6fc1d4e2244a8bff =head == file go.mod
+gendump 6fe47911aafcc545 #decl:go.mod 1 13ef6f66b06c90ff
+gendump 6fe47911aafcc545 #decl:m/x_internal_gen_testdata_golden_test_stdin_stop/xo.go 2 7cb1b26c57866e35
+gendump 6fe47911aafcc545 #decl:m/x_internal_gen_testdata_golden_test_stdin_stop/xo_main.go 2 9dc7208d3a790ce6
+gendump 6fe47911aafcc545 #decl:main.go 2 5c9d6d70d4e8cfc1
+gendump 6fe47911aafcc545 #decl:xo_adapt.go 0 e3b0c44298fc1c14
+gendump 6fe47911aafcc545 #file 5 880346242ee05d3a
+gendump 6fe47911aafcc545 =@slot 3758ca5b23d6bc2e
+gendump 6fe47911aafcc545 =head == file go.mod
