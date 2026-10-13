@@ -146,19 +146,24 @@ fn statx(dirfd: Int, path_addr: Int, flags: Int) -> (Stat, Int) {
 /// 0206 stage 2), the system call when the process has none.
 pub fn clock_ns(id: Int) -> Int {
   let buf = rt.sys_buf()
-  let r = clock_gettime(id, rt.bytes_addr(buf))
+  let a = rt.obj_addr(buf) + rt.layout(0)
+  let r = clock_gettime(id, a)
   if r < 0 {
     return r
   }
-  rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
+  // a timespec of the clock never overflows: wrapping arithmetic, as C's
+  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
 }
 
 /// clock_gettime(2) of clock id into the timespec at ts: 0, or the
 /// negative errno; the vDSO's function when there is one.
 pub fn clock_gettime(id: Int, ts: Int) -> Int {
-  let f = vdso_clock()
+  let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
   if f > 0 {
     return rt.call_c2(f, id, ts)
+  }
+  if f == 0 && vdso_clock() > 0 {
+    return rt.call_c2(vdso_clock(), id, ts)
   }
   rt.sys6(nr(113, 228), id, ts, 0, 0, 0, 0)
 }
