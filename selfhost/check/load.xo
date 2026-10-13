@@ -583,7 +583,11 @@ fn (var c: Checker) load_imports(m: Int) {
         }
       }
       var dep = -1
-      if p.starts_with("std/") {
+      if p == "std/internal" && !c.internal_visible(m) {
+        // std/internal (decision 0214): only std and the toolchain's own
+        // modules see it
+        dep = -1
+      } else if p.starts_with("std/") {
         dep = c.load_std(p.trim_prefix("std/"))
       } else if p.starts_with("native/") {
         // the intrinsics of the native backends: only their
@@ -625,7 +629,7 @@ fn (var c: Checker) load_imports(m: Int) {
           var cands: List[Str] = []
           let entries = c.fs.read_dir(c.std_dir).ok() ?? []
           for e in entries {
-            if e.name.ends_with(".xo") && e.name != "prelude.xo" {
+            if e.name.ends_with(".xo") && e.name != "prelude.xo" && e.name != "internal.xo" {
               cands.push("std/${e.name.trim_suffix(".xo")}")
             }
           }
@@ -653,6 +657,14 @@ fn (var c: Checker) load_imports(m: Int) {
       c.files[f].imports[key] = Import{module: dep, path: u.path, used: dep < 0, span: u.span}
     }
   }
+}
+
+/// Whether module m may import std/internal (load.go internalVisible,
+/// decision 0214): std modules, their native implementations, and the
+/// toolchain's own modules (github.com/xo-lang/xo and below).
+fn (c: Checker) internal_visible(m: Int) -> Bool {
+  let path = c.mods[m].path
+  c.mods[m].is_std || c.mods[m].native || path == "github.com/xo-lang/xo" || path.starts_with("github.com/xo-lang/xo/")
 }
 
 /// strings.Trim(s, "_").

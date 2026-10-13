@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self-hosted toolchain's Go backend holds the shared lock on the Xo
+  Go cache while go build runs, as the Go implementation does, so a
+  concurrent cache trim no longer removes entries a build is reading
+  (decision 0214). The lock comes from `std/internal`, a module only std
+  and the toolchain can import; Xo's public `fs.lock` is unchanged.
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the
