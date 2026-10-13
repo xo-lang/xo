@@ -140,7 +140,7 @@ Every workload is within 5 percent; checksums equal.
   TestJSONTextDiff, TestIntsDiff, TestNumDiff, TestDigestDiff,
   TestProcSpecDiff: ok (171 s); internal/arm64 TestGoldenRun, TestRun,
   TestBench: ok (34 s), linux/arm64.
-- TestSelfhostWasm: 132 pass, 19 unsupported, 0 fail of 151 goldens.
+- TestSelfhostWasm: 132 pass, 19 unsupported, 0 fail of 151 goldens; after merging origin/main at 28cc2052, 132 pass, 20 unsupported, 0 fail of 152.
 - TestCABIDiff on the Mac: pass (arm64, LLVM). TestTLSDiff and
   TestTZDiff on the Mac: pass.
 - TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM with
