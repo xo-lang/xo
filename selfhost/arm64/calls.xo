@@ -829,6 +829,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
+      if kc && op <= 1 && imm12(k) {
+        // a constant addend is the immediate (decision 0207 stage 3)
+        g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k}", [a])])
+        return true
+      }
       if kc && op >= 3 {
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k & 63}", [a])])
         return true
@@ -918,6 +923,19 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
   match name {
     "rt.mem_load" => {
       let (w, _) = g.const_int(x.args[2])
+      let (off, oc) = g.const_int(x.args[1])
+      if oc && raw_imm_off(off, w) {
+        // a constant offset is the instruction's scaled immediate
+        // (decision 0207 stage 3: the heap record's words)
+        let ins = match w {
+          1 => "ldrb $wd0, [$u0, #${off}]"
+          2 => "ldrh $wd0, [$u0, #${off}]"
+          4 => "ldr $wd0, [$u0, #${off}]"
+          _ => "ldr $d0, [$u0, #${off}]"
+        }
+        g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0]))])])
+        return true
+      }
       let ins = match w {
         1 => "ldrb $wd0, [$u0, $u1]"
         2 => "ldrh $wd0, [$u0, $u1]"
@@ -928,6 +946,18 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     }
     "rt.mem_store" => {
       let (w, _) = g.const_int(x.args[3])
+      let (off, oc) = g.const_int(x.args[1])
+      if oc && raw_imm_off(off, w) {
+        let ins = match w {
+          1 => "strb $wu0, [$u1, #${off}]"
+          2 => "strh $wu0, [$u1, #${off}]"
+          4 => "str $wu0, [$u1, #${off}]"
+          _ => "str $u0, [$u1, #${off}]"
+        }
+        g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0])])
+        g.set(v, [])
+        return true
+      }
       let ins = match w {
         1 => "strb $wu0, [$u1, $u2]"
         2 => "strh $wu0, [$u1, $u2]"
@@ -945,6 +975,11 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       }
       let _r = g.rt(fname, regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [])
       g.clobber()
+      g.set(v, [])
+    }
+    "rt.prefetch" => {
+      // decision 0207 stage 3: the heap's free list pops
+      g.store("prfm pldl1keep, [$u0]", [g.real(g.word(x.args[0]))])
       g.set(v, [])
     }
     "rt.mem_cmp" => {

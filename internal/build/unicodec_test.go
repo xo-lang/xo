@@ -105,6 +105,27 @@ func TestIOFlagsRC(t *testing.T) {
 	}
 }
 
+// TestIOFlagsAlloc checks the C path of the heap (XO_LLRT_C=alloc,
+// decision 0207 stage 3): -DXO_ALLOC_C only when alloc_c.xo's calls are
+// in the code, not for the heap_* exports every program defines nor for
+// the platform calls of alloc.xo (xo_heap_*).
+func TestIOFlagsAlloc(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_alloc_new_c\n", true},
+		{"call void @xo_alloc_free_mt_c(i64 %1, i64 %2)\n", true},
+		{"_xo_x_heap_alloc:\n\tb _xo_f_cabi_2eheap__alloc\nbl _xo_heap_chunk\n", false},
+		{"bl _xo_alloc\nbl _xo_heap_large\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_ALLOC_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_ALLOC_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
 // TestIOFlagsDigestAndGlob checks the C paths of std/crypto's hashes
 // (XO_LLRT_C=digest) and MemFs.fail_next's match (glob, decision 0195):
 // compiled only into programs that call them; crypto.equal

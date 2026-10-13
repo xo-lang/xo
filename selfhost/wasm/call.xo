@@ -78,6 +78,7 @@ fn (var g: Gen) call(v: Int) {
       g.push(v)
       g.e("call ${g.rc_fn("dup", x.ty)}")
     }
+    "rt.prefetch" => {} // a hint; wasm has none (decision 0207 stage 3)
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.slot_op(v)
     "rt.rl_empty" => {
       g.e("i32.const ${g.empty_list}")

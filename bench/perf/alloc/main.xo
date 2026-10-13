@@ -1,0 +1,135 @@
+// Allocation heavy workloads for the native heap (decision 0207 stage 3:
+// the allocator in Xo against its C path, XO_LLRT_C=alloc). Usage:
+// alloc <workload>; prints "<workload> <checksum> <elapsed
+// microseconds>". "none" is the setup alone.
+//
+//   small   short lists made and dropped (the free list pop and push)
+//   mixed   a ring of 4,096 lists of random lengths (0 to 3,000 Ints),
+//           slots replaced at random: every size class, the mid classes,
+//           and malloc'd blocks, freed out of order
+//   grow    lists grown by push from empty (resizes through the classes)
+//   strings strings built by interpolation and append, then dropped
+//   maps    maps of 1 to 64 entries built and dropped
+//   tasks   tasks that allocate on worker threads and hand the lists
+//           back (the threaded paths: magazines, the central lists)
+
+/// A linear congruential step (deterministic sizes).
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn small() -> Int {
+  var sum = 0
+  for i in 0..2000000 {
+    var xs: List[Int] = [i]
+    xs.push(i + 1)
+    sum += xs[1] - xs[0]
+  }
+  sum
+}
+
+fn mixed() -> Int {
+  var ring: List[List[Int]] = []
+  for i in 0..4096 {
+    ring.push([i])
+  }
+  var r = 12345
+  var sum = 0
+  for _ in 0..200000 {
+    r = next(r)
+    let slot = (r >> 8) % 4096
+    r = next(r)
+    var n = (r >> 8) % 100
+    if n >= 98 {
+      n = 3000
+    } else if n >= 90 {
+      n = 300
+    }
+    var xs: List[Int] = []
+    for j in 0..n {
+      xs.push(j)
+    }
+    sum += ring[slot].len()
+    ring[slot] = xs
+  }
+  sum
+}
+
+fn grow() -> Int {
+  var sum = 0
+  for i in 0..2000 {
+    var xs: List[Int] = []
+    for j in 0..(i % 1000) * 4 {
+      xs.push(j)
+    }
+    sum += xs.len()
+  }
+  sum
+}
+
+fn strings() -> Int {
+  var sum = 0
+  for i in 0..200000 {
+    var s = "k${i}"
+    for j in 0..(i % 8) {
+      s = s + "-${j}"
+    }
+    sum += s.len()
+  }
+  sum
+}
+
+fn maps() -> Int {
+  var sum = 0
+  for i in 0..20000 {
+    var m: Map[Int, Int] = {}
+    for j in 0..(i % 64) + 1 {
+      m[j * 7] = j
+    }
+    sum += m.len()
+  }
+  sum
+}
+
+fn tasks() -> Int {
+  var total = 0
+  for r in 0..50 {
+    let got = scope s {
+      var hs: List[Task[List[Int], Never]] = []
+      for k in 0..32 {
+        hs.push(s.spawn(fn() {
+          var keep: List[Int] = []
+          for i in 0..2000 {
+            var xs: List[Int] = [i, k, r]
+            xs.push(i)
+            keep.push(xs.len())
+          }
+          keep
+        }))
+      }
+      var acc = 0
+      for h in hs {
+        acc += h.await.len()
+      }
+      acc
+    }
+    total += got
+  }
+  total
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "small"
+  let t = os.clock.now()
+  let sum = match w {
+    "none" => 0
+    "small" => small()
+    "mixed" => mixed()
+    "grow" => grow()
+    "strings" => strings()
+    "maps" => maps()
+    "tasks" => tasks()
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

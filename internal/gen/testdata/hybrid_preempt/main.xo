@@ -44,5 +44,9 @@ fn main(os: Os) {
     iters += 1
   }
   let total = done.recv() ?? -1
-  os.stdio.println("spin ${total} worst_ms ${worst} iters ${iters} kept ${kept} total_ms ${(clock.now() - start).millis()}")
+  let total_ms = (clock.now() - start).millis()
+  // a GC whose stop the world waited for spin (no polls) ends only now:
+  // give it time to finish and print its trace before the program exits
+  clock.sleep(200ms)
+  os.stdio.println("spin ${total} worst_ms ${worst} iters ${iters} kept ${kept} total_ms ${total_ms}")
 }
