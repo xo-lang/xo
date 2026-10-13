@@ -1,15 +1,15 @@
 // Files and the clock over the system layer of each OS (decisions 0206
-// and 0213, decision 0193's mechanism): os.fs.read, write, and stat (and
-// Clock.now on macOS) make their calls from Xo, with the C runtime's
-// semantics (std/llrt/xo_bytes.c xo_fs_read, xo_fs.c xo_fs_write and
-// xo_fs_stat, xo_rt.c xo_clock_now) and the same messages. This module
-// is the portable policy (Go's os.ReadFile and os.WriteFile loops, the
-// FsErr status and message recorded through rt.fs_set_err); the layer
-// below it is per OS: raw system calls on Linux (linux.xo), libSystem on
-// macOS (darwin.xo), kernel32 on Windows (windows.xo). In a wasm module,
+// and 0213, decision 0193's mechanism): os.fs.read, write, and stat make
+// their calls from Xo, with the C runtime's semantics
+// (std/llrt/xo_bytes.c xo_fs_read, xo_fs.c xo_fs_write and xo_fs_stat)
+// and the same messages. This module is the portable policy (Go's
+// os.ReadFile and os.WriteFile loops, the FsErr status and message
+// recorded through rt.fs_set_err); the layer below it is per OS: raw
+// system calls on Linux (linux.xo), libSystem on macOS (darwin.xo),
+// kernel32 on Windows (windows.xo). In a wasm module, on darwin/amd64,
 // and where a test binary's world fakes the capability, they call the C
-// runtime. `XO_LLRT_C=sysio` loads
-// sysio_c.xo instead (the C runtime everywhere).
+// runtime; Clock.now calls it everywhere for now. `XO_LLRT_C=sysio`
+// loads sysio_c.xo instead (the C runtime everywhere).
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/windows
@@ -29,8 +29,9 @@ pub struct Info {
 /// target that is not a WASI module: a wasm build keeps the host's
 /// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
 /// (macOS on arm64; on x86_64 the stat symbols are the `$INODE64` ones,
-/// not declared), 3 kernel32 (Windows), 0 the C runtime. The SSA passes do not fold a `match`
-/// on `target`, so every arm is lowered; the builders make the platform
+/// not declared, gotchas/darwin-amd64-stat-inode64.md), 3 kernel32
+/// (Windows), 0 the C runtime. The SSA passes do not fold a `match` on
+/// `target`, so every arm is lowered; the builders make the platform
 /// calls of another OS faults, and a native backend's optimizer or a
 /// dead branch leaves the other arms unused.
 fn layer() -> Int {

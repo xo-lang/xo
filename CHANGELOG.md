@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends on macOS (arm64) and Windows: `os.fs` read, write,
+  and stat call libSystem and kernel32 directly from Xo (decision 0213)
+  instead of going through the C runtime, with the same errors and
+  messages byte for byte; on macOS within the C path's instructions
+  (0.562 to 1.013 times, bench/results/platform-calls-2026-10-13.md).
+  `XO_LLRT_C=sysio` builds the C path.
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the

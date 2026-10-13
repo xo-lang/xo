@@ -41,6 +41,12 @@ fn ret(r: Int) -> Int {
   r
 }
 
+/// ret(r) with b (an argument of the call) kept alive until errno is
+/// read: reference counting releases a value after its last use, and a
+/// release between the call and __error() would run the allocator,
+/// which may change errno.
+fn ret_keep(b: Bytes, r: Int) -> Int { keep(b, ret(r)) }
+
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
   let r = ret(sys_darwin.read(fd, rt.bytes_addr(buf) + off, n))
@@ -74,7 +80,8 @@ pub fn write_all(fd: Int, b: Bytes) -> Int {
 /// open(2) of path: the descriptor, or the negative errno. An empty path
 /// is ".", as the C runtime opens it.
 pub fn open(path: Str, flags: Int, mode: Int) -> Int {
-  ret(Int(sys_darwin.open(cpath(path), flags, mode)))
+  let z = cpath(path)
+  ret_keep(z, Int(sys_darwin.open(z, flags, mode)))
 }
 
 /// close(2): 0, or the negative errno.
@@ -97,7 +104,7 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
   let buf = rt.sys_buf()
   let z = cpath(path)
   let r = if follow { sys_darwin.stat(z, rt.bytes_addr(buf)) } else { sys_darwin.lstat(z, rt.bytes_addr(buf)) }
-  facts(buf, ret(Int(r)))
+  facts(buf, ret_keep(z, Int(r)))
 }
 
 /// fstat(2) of the open descriptor fd.
