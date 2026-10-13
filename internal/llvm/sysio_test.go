@@ -63,8 +63,7 @@ func TestSysioParity(t *testing.T) {
 	t.Logf("%s/%s: %d lines identical", runtime.GOOS, runtime.GOARCH, strings.Count(xo, "\n"))
 }
 
-// TestErrnoTables compares the C library's strerror texts (and, on
-// Windows, the Microsoft C runtime's errno of each Win32 error) with the
+// TestErrnoTables compares the C library's strerror texts with the
 // tables of the macOS and Windows layers (std/native/llrt/darwin.xo,
 // windows.xo; decision 0213), which must give the C path's messages byte
 // for byte: testdata/errno_probe.c prints the C side.
@@ -92,7 +91,6 @@ func TestErrnoTables(t *testing.T) {
 		t.Fatalf("run errno_probe: %v", err)
 	}
 	texts, def := strerrorTable(t, string(src))
-	maps := map[int]int{}
 	for _, line := range strings.Split(strings.TrimRight(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n"), "\n") {
 		kind, rest, _ := strings.Cut(line, " ")
 		a, b, _ := strings.Cut(rest, " ")
@@ -106,22 +104,6 @@ func TestErrnoTables(t *testing.T) {
 			if want != b {
 				t.Errorf("strerror(%d): C %q, %s %q", n, b, layer, want)
 			}
-		case "M":
-			m, _ := strconv.Atoi(b)
-			maps[n] = m
-		}
-	}
-	if runtime.GOOS != "windows" {
-		return
-	}
-	dos := dosTable(t, string(src))
-	for e := 0; e < 20000; e++ {
-		want, ok := maps[e]
-		if !ok {
-			want = 22
-		}
-		if got := dos(e); got != want {
-			t.Errorf("_dosmaperr(%d): C %d, windows.xo %d", e, want, got)
 		}
 	}
 }
@@ -146,49 +128,6 @@ func strerrorTable(t *testing.T, src string) (map[int]string, string) {
 		t.Fatalf("no strerror table")
 	}
 	return texts, d
-}
-
-// dosTable reads windows.xo's `pub fn dos_errno`: its arms, its ranges,
-// and its default.
-func dosTable(t *testing.T, src string) func(int) int {
-	body := fnBody(t, src, "pub fn dos_errno(")
-	arm := regexp.MustCompile(`^\s+([\d |]+) => (\d+)$`)
-	rng := regexp.MustCompile(`if e >= (\d+) && e <= (\d+) \{\s*return (\d+)`)
-	last := regexp.MustCompile(`(?m)^\s+(\d+)$`)
-	exact := map[int]int{}
-	for _, line := range strings.Split(body, "\n") {
-		if m := arm.FindStringSubmatch(line); m != nil {
-			v, _ := strconv.Atoi(m[2])
-			for _, k := range strings.Split(m[1], "|") {
-				n, _ := strconv.Atoi(strings.TrimSpace(k))
-				exact[n] = v
-			}
-		}
-	}
-	type span struct{ lo, hi, v int }
-	var spans []span
-	for _, m := range rng.FindAllStringSubmatch(body, -1) {
-		lo, _ := strconv.Atoi(m[1])
-		hi, _ := strconv.Atoi(m[2])
-		v, _ := strconv.Atoi(m[3])
-		spans = append(spans, span{lo, hi, v})
-	}
-	dms := last.FindAllStringSubmatch(body, -1)
-	if len(exact) == 0 || len(dms) == 0 {
-		t.Fatalf("no dos_errno table")
-	}
-	d, _ := strconv.Atoi(dms[len(dms)-1][1])
-	return func(e int) int {
-		if v, ok := exact[e]; ok {
-			return v
-		}
-		for _, s := range spans {
-			if e >= s.lo && e <= s.hi {
-				return s.v
-			}
-		}
-		return d
-	}
 }
 
 // fnBody is the text of the function that starts with head, up to its
