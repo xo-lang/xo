@@ -5,6 +5,7 @@
 // stops at the first argument that is not a flag or after `--`.
 
 use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 /// The kind of a flag's value.
 enum FlagKind {
@@ -168,6 +169,12 @@ fn (f: Flags) fail(os: Os, msg: Str) -> Bool {
 
 /// `Usage of NAME:` and the flags with their usage (flag.PrintDefaults).
 fn (f: Flags) usage(os: Os) {
+  let u = cmdhelp.usage_of(f.name)
+  if !u.is_empty() {
+    // the command's usage (selfhost/cli/cmdhelp)
+    os.stdio.eprint(u)
+    return
+  }
   var b = StrBuilder.new()
   b.write("Usage of ${f.name}:\n")
   for d in f.defs.sort_by(fn(d: FlagDef) -> Str { d.name }) {

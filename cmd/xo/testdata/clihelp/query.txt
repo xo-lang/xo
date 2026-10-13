@@ -1,0 +1,17 @@
+usage: xo query <kind> [--json|--text] [--dir=<dir>] <argument>
+
+kinds:
+  type <file:line:col>     type of the innermost expression or binding there
+  def <name>               declaration of name, Type.member, module.name, module.Type.member
+  callers <module.fn>      calls of the function and uses of it as a value
+  effects <module.fn>      effects the function performs, with the call chain per effect
+  holes                    holes (???) with their expected types
+  api <module path>        exported surface of a module (import path or directory)
+  imports <package>        the package's use lines, with any deny rule that forbids one
+  deps <package>           imports, transitively (std and Go packages are not followed)
+  hash <name>              content hash of a definition of the module (name, Type.method,
+                           pkg.name, or <package path>.name): local names erased,
+                           referenced definitions by their hashes (core 4.3)
+
+--dir (default .) is the directory checked. JSON is the default when stdout
+is not a terminal.

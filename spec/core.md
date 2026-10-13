@@ -2212,6 +2212,29 @@ JSON), `doc`, `explain`, `bind`, and `audit`. `run`, `replay`, `dump`, `serve`, 
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
 
+**Help and usage errors.** `xo help` lists every command with a one line
+purpose; `xo help <command>`, and `-h` or `--help` anywhere before `--`
+(for `xo run`, before its directory), print that command's usage on
+stdout with exit status 0. `xo` alone prints the command list on stderr
+and exits 2. An unknown flag, a missing argument, or an unknown command
+is a usage error: the error and the usage on stderr, exit status 2.
+
+**Directories and `DIR/...`.** A directory argument covers the
+directories below it: `check`, `vet`, `doc`, `test`, `build`, and
+`audit` take every directory with `.xo` files at or below it (one module
+each, or one program for `build` and `test`), skipping `testdata`,
+`vendor/` (with `modules.txt`), and names starting with `.` or `_`;
+`fmt` and `fix` take the files below it, skipping names starting with
+`.` or `_` (and `fix` `testdata`); `parse` takes every file. The package
+pattern `DIR/...` (`./...`, `cmd/...`) is accepted by every command that
+takes directories (`check`, `test`, `build`, `vet`, `doc`, `fmt`,
+`fix`, `parse`, `audit`) and means DIR, so `xo check ./...` and
+`xo check .` agree; an `xo.work` workspace applies to it as to DIR. A
+`DIR/...` with no `.xo` file at or below DIR (with the skips above) is
+an error, `xo CMD: DIR/... matched no directory with .xo files`, exit
+status 1. Other forms (`...` alone, `a/.../b`) and `xo run DIR/...` are
+usage errors (decision 0210).
+
 **Check and fix.** `xo check` is read only. `xo check --fix` first
 applies every unambiguous machine fix, the same set `xo fix` applies
 (without `--from`), round after round until none applies, reformats the

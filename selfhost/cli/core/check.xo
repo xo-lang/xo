@@ -101,7 +101,7 @@ fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str]) -> (
   for e in entries {
     let p = join_path(dir, e.name)
     if e.is_dir {
-      if skip_dot && e.name.starts_with(".") {
+      if skip_dot && (e.name.starts_with(".") || e.name.starts_with("_")) {
         continue
       }
       walk_xo(os, p, false, skip_dot, out)?

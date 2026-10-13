@@ -1,0 +1,33 @@
+usage: xo <command> [arguments]
+
+commands:
+  build     compile to static binaries (the host, or --targets)
+  run       build for the host and run
+  test      run test blocks, property tests, and contract fuzzing
+  check     parse and type check the modules under each directory
+  parse     parse .xo files and report syntax diagnostics
+  fmt       rewrite .xo files in the one canonical layout
+  fix       apply the machine fixes of check diagnostics
+  vet       advisory checks (never errors)
+  query     semantic queries: type, def, callers, effects, holes, api, ...
+  edit      semantic edits: rename, add-field, change-sig
+  doc       Markdown documentation from doc comments
+  explain   long form explanation of a diagnostic code
+  init      write xo.mod for a new module
+  get       require, upgrade, or remove a module
+  mod       tidy, accept-effects, clean, proxy serve
+  vendor    copy every selected module version into vendor/
+  publish   check a release against the previous version tag
+  audit     supply chain report of the dependencies
+  bind      bind Go packages (use go) or C headers (use c)
+  dump      print the task tree of a running Xo program
+  replay    rerun a recorded trace or crash bundle offline
+  lsp       Language Server Protocol server on stdin/stdout
+  mcp       Model Context Protocol server on stdin/stdout
+  serve     keep checked programs in memory for check and query
+  version   print the toolchain version and the host target
+
+Run "xo <command> -h" for a command's usage and flags.
+A command that takes directories also takes DIR/... (xo check ./...).
+Every command accepts --offline (XO_OFFLINE=1: never fetch; a missing
+module is XO1303) and --workspace=off (XO_WORK=off: ignore xo.work).

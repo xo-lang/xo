@@ -1,0 +1,11 @@
+usage: xo mod tidy [--dir=<dir>] [--json]
+       xo mod accept-effects [--dir=<dir>] [--json] [<module path>...]
+       xo mod clean
+       xo mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+
+tidy requires every imported module, drops requirements nothing imports,
+and rewrites xo.lock with exactly the hashes the build uses.
+accept-effects records the current effects of the named modules (all
+when none is named) in xo.lock (decision 0156). clean removes the module
+cache. proxy serve serves a module cache read only over the module proxy
+protocol (decision 0126); --fetch fills it from git on a miss.

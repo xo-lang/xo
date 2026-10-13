@@ -1,0 +1,7 @@
+usage: xo publish [--dir=<dir>] [--check] [--version=vX.Y.Z] [--json]
+
+Compare the exports and effects with the previous vX.Y.Z tag and reject
+a minor or patch release that removes or changes an export or adds an
+effect to one (XO1310). Without --check it also needs a clean working
+tree and a module that checks without a workspace, then prints the git
+tag command to run; it never tags or pushes.

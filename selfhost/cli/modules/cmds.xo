@@ -39,7 +39,7 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) use
   for e in c.os.fs.read_dir(d).ok() ?? [] {
     let p = "${d}/${e.name}"
     if e.is_dir {
-      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || c.exists("${p}/xo.mod") {
+      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
       c.imports_walk(p, main_path, set)

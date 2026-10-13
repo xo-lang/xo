@@ -235,7 +235,7 @@ func sameRuns(t *testing.T, bin string, files map[string]string, steps []sameSte
 			}
 			modData, _ := os.ReadFile(filepath.Join(s.app, "xo.mod"))
 			lockData, _ := os.ReadFile(filepath.Join(s.app, "xo.lock"))
-			got[k] = "exit " + string(rune('0'+code)) + "\n--- stdout\n" + norm(out.String()) + "--- stderr\n" + norm(errOut.String()) + "--- xo.mod\n" + string(modData) + "--- xo.lock\n" + string(lockData)
+			got[k] = "exit " + string(rune('0'+code)) + "\n--- stdout\n" + norm(out.String()) + "--- stderr\n" + norm(dropUsage(st.args[0], errOut.String())) + "--- xo.mod\n" + string(modData) + "--- xo.lock\n" + string(lockData)
 			trees[k] = treeText(filepath.Join(s.app, "vendor")) + "--- cache\n" + cacheText(s.cache)
 		}
 		if os.Getenv("XO_SAME_LOG") != "" {

@@ -1,0 +1,10 @@
+usage: xo get [--dir=<dir>] [--json] [-u] [--accept-effects] <module path>[@version|@latest|@none]...
+
+Require a module (decision 0086): the latest vX.Y.Z tag unless a
+version is given; @none removes the requirement; -u alone upgrades
+every requirement. Fetches with git into the module cache ($XO_MODCACHE
+or <user cache dir>/xo/mod), resolves the graph by minimal version
+selection, rewrites xo.mod and xo.lock, and prints the API and effect
+changes of every version change. --accept-effects records the new
+version's effects in xo.lock even when they are wider than the locked
+ones (else XO1317, nothing written).

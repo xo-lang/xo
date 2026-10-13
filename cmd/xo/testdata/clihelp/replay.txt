@@ -1,0 +1,6 @@
+usage: xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>
+
+Rebuild the recorded program and rerun it offline with every effect
+result and interleaving taken from the trace: same output, same fault.
+A divergence is reported with both locations, exit status 3. Secrets
+are redacted in traces; a replay takes them from the environment.

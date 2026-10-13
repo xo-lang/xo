@@ -1,0 +1,522 @@
+// The help of the `xo` command line: the command list `xo help` prints
+// and each command's usage, which `xo <command> -h` prints on standard
+// output (exit 0) and a usage error (an unknown flag, a missing
+// argument) prints on standard error (exit 2). Every package of the
+// command line (selfhost/cli/*, selfhost/xo) takes its usage from here,
+// so the texts are the same whichever package parses the flags. The
+// texts follow cmd/xo's usage (the Go reference) and spec/core.md 10.1;
+// internal flags (xo1's --std, --wd, --cc, --asm, --go-tree,
+// --phase-times) and hidden commands stay out of them.
+
+/// One user command: its name and the one line purpose of `xo help`.
+pub struct Command {
+  pub name: Str
+  pub purpose: Str
+}
+
+/// The user commands in the order `xo help` lists them.
+pub fn commands() -> List[Command] {
+  [
+    Command{name: "build", purpose: "compile to static binaries (the host, or --targets)"},
+    Command{name: "run", purpose: "build for the host and run"},
+    Command{name: "test", purpose: "run test blocks, property tests, and contract fuzzing"},
+    Command{name: "check", purpose: "parse and type check the modules under each directory"},
+    Command{name: "parse", purpose: "parse .xo files and report syntax diagnostics"},
+    Command{name: "fmt", purpose: "rewrite .xo files in the one canonical layout"},
+    Command{name: "fix", purpose: "apply the machine fixes of check diagnostics"},
+    Command{name: "vet", purpose: "advisory checks (never errors)"},
+    Command{name: "query", purpose: "semantic queries: type, def, callers, effects, holes, api, ..."},
+    Command{name: "edit", purpose: "semantic edits: rename, add-field, change-sig"},
+    Command{name: "doc", purpose: "Markdown documentation from doc comments"},
+    Command{name: "explain", purpose: "long form explanation of a diagnostic code"},
+    Command{name: "init", purpose: "write xo.mod for a new module"},
+    Command{name: "get", purpose: "require, upgrade, or remove a module"},
+    Command{name: "mod", purpose: "tidy, accept-effects, clean, proxy serve"},
+    Command{name: "vendor", purpose: "copy every selected module version into vendor/"},
+    Command{name: "publish", purpose: "check a release against the previous version tag"},
+    Command{name: "audit", purpose: "supply chain report of the dependencies"},
+    Command{name: "bind", purpose: "bind Go packages (use go) or C headers (use c)"},
+    Command{name: "dump", purpose: "print the task tree of a running Xo program"},
+    Command{name: "replay", purpose: "rerun a recorded trace or crash bundle offline"},
+    Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
+    Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
+    Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
+    Command{name: "version", purpose: "print the toolchain version and the host target"},
+  ]
+}
+
+/// Whether name is a user command (help included).
+pub fn is_command(name: Str) -> Bool {
+  if name == "help" {
+    return true
+  }
+  for c in commands() {
+    if c.name == name {
+      return true
+    }
+  }
+  false
+}
+
+/// The text of `xo help` (and, on standard error, of `xo` alone).
+pub fn top() -> Str {
+  var b = StrBuilder.new()
+  b.write("usage: xo <command> [arguments]\n\ncommands:\n")
+  for c in commands() {
+    var name = c.name
+    while name.len() < 9 {
+      name = name + " "
+    }
+    b.write("  ${name} ${c.purpose}\n")
+  }
+  b.write("\n")
+  b.write("Run \"xo <command> -h\" for a command's usage and flags.\n")
+  b.write("A command that takes directories also takes DIR/... (xo check ./...).\n")
+  b.write("Every command accepts --offline (XO_OFFLINE=1: never fetch; a missing\n")
+  b.write("module is XO1303) and --workspace=off (XO_WORK=off: ignore xo.work).\n")
+  b.freeze()
+}
+
+/// The usage of one command ("" for no such command), ending in a
+/// newline.
+pub fn usage(name: Str) -> Str {
+  let t = match name {
+    "build" => build_text()
+    "run" => run_text()
+    "test" => test_text()
+    "check" => check_text()
+    "parse" => parse_text()
+    "fmt" => fmt_text()
+    "fix" => fix_text()
+    "vet" => vet_text()
+    "query" => query_text()
+    "edit" => edit_text()
+    "doc" => doc_text()
+    "explain" => explain_text()
+    "init" => init_text()
+    "get" => get_text()
+    "mod" => mod_text()
+    "vendor" => vendor_text()
+    "publish" => publish_text()
+    "audit" => audit_text()
+    "bind" => bind_text()
+    "dump" => dump_text()
+    "replay" => replay_text()
+    "lsp" => lsp_text()
+    "mcp" => mcp_text()
+    "serve" => serve_text()
+    "version" => version_text()
+    "help" => "usage: xo help\n\nList the commands."
+    _ => ""
+  }
+  if t.is_empty() {
+    return ""
+  }
+  let u = if t.ends_with("\n") { t } else { t + "\n" }
+  if takes_dirs(name) && name != "run" {
+    return u + "\n" + PATTERN_NOTE
+  }
+  u
+}
+
+/// The usage of the command a flag set is named for: its first word
+/// ("mod tidy" is mod's), "" when that is no user command.
+pub fn usage_of(flag_set: Str) -> Str {
+  let words = flag_set.split(" ")
+  if words.is_empty() { "" } else { usage(words[0]) }
+}
+
+/// Whether arg asks for help, as Go's flag package takes it.
+pub fn is_help_flag(arg: Str) -> Bool {
+  arg is "-h" | "--h" | "-help" | "--help"
+}
+
+/// The note on DIR/... of the commands that take directories.
+const PATTERN_NOTE = "A directory covers the directories below it, so DIR/... is DIR (decision\n0210); a DIR/... with no .xo file at or below DIR is an error.\n"
+
+/// Whether the command cmd takes directories, and so the pattern D/...
+/// (decision 0210).
+pub fn takes_dirs(cmd: Str) -> Bool {
+  cmd is "build" | "run" | "test" | "check" | "parse" | "fmt" | "fix" | "vet" | "doc" | "audit"
+}
+
+/// Whether arg is a package pattern in the go command's form: `D/...`
+/// or any other argument with `...` in it (decision 0210).
+pub fn is_pattern(arg: Str) -> Bool {
+  arg.contains("...")
+}
+
+/// The directory D of the pattern D/... ("./..." is ".", "/..." is "/"),
+/// or "" for a pattern of another form (`...` alone, `a/.../b`, `a...`),
+/// which xo does not take.
+pub fn pattern_dir(arg: Str) -> Str {
+  if !arg.ends_with("/...") {
+    return ""
+  }
+  let d = arg.trim_suffix("/...")
+  if d.contains("...") {
+    return ""
+  }
+  if d.is_empty() { "/" } else { d }
+}
+
+/// The usage error for a pattern xo does not take.
+pub fn pattern_error(cmd: Str, arg: Str) -> Str {
+  "xo ${cmd}: ${arg}: only the pattern DIR/... is supported (for example xo ${cmd} ./...), where DIR/... is every directory at or below DIR"
+}
+
+/// The error for a pattern D/... that matches no directory with .xo
+/// files.
+pub fn no_match_error(cmd: Str, arg: Str) -> Str {
+  "xo ${cmd}: ${arg} matched no directory with .xo files"
+}
+
+fn build_text() -> Str {
+  """
+usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
+                [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
+                [--release [--error-args=false]] [--stamp NAME=VALUE]... [--hybrid]
+                [--json] [-o out] <dirs...>
+
+Compile to static binaries (default: the host). The directories are one
+program. --backend=llvm and --backend=arm64 build natively (arm64 is
+emitted as assembly when it is not the host); --no-gc (also on run and
+test) builds without a garbage collector: arm64 on arm64 hosts, llvm
+otherwise (--backend may name one); every construct, std API, or effect
+the native backends do not support is reported as XO1201 before code
+generation (decision 0083). --backend=wasm builds a WASI preview1 module.
+Request scoped arenas for HTTP handlers are on by default (decision
+0066); --no-arenas (also on run and test) turns them off. --ci fails
+before building when a .xo file is not formatted (core 10.5) or dbg(...)
+is left in code (core 11.4). --release is a release build:
+requires(debug) and ensures(debug) compiled out; --error-args=false drops
+parameter values from error frames. --stamp (repeatable, also on run)
+sets a `const NAME: Str` of the main module for this build (XO1501
+otherwise). std/time zone data is embedded per use (decision 0094);
+--tzdata=system (also on run and test) reads the host's database
+instead. --hybrid compiles hot leaf functions of a Go backend build to
+native assembly (decision 0084).
+"""
+}
+
+fn run_text() -> Str {
+  """
+usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
+              [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
+              [--stamp NAME=VALUE]... [dir] [-- args...]
+
+Build for the host and run the program in dir (default .) with args.
+--seed makes task interleavings reproducible. --record writes every
+effect (clock, rand, env, stdin, fs, net, http client responses, server
+requests, signals) and every scheduling decision into the trace (core
+11.3) for xo replay. --holes allows holes (???), which fault when
+evaluated. --seed and --record need the Go backend.
+"""
+}
+
+fn test_text() -> Str {
+  """
+usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
+               [--json] [-v] [--backend=go|llvm|arm64] [--no-gc] <dirs...>
+
+Run test blocks, property tests, and contract fuzzing on the
+deterministic scheduler. --run selects the tests whose name contains
+text; --cases sets the cases per property test and fuzzed function
+(default 100); --explore=N runs each test under N schedules; --real
+gives tests real capabilities for their declared effects. Shrunk
+contract failures are written to the module's regressions_test.xo.
+"""
+}
+
+fn check_text() -> Str {
+  """
+usage: xo check [--json] [--no-gc] [--fix] <dirs...>
+
+Resolve names and type check the modules under each directory (every
+directory holding .xo files is a module; imports are resolved through
+xo.mod and the embedded std). --json prints {"modules": [...],
+"diagnostics": [...]} on stdout. --no-gc also runs the check of native
+builds (XO1201 for what they cannot build yet, or ever; decision 0083).
+--fix first applies every unambiguous machine fix (as xo fix) and
+reformats the changed files, then reports what remains (decision 0096).
+Exit status is 1 when any error is reported (warnings such as holes do
+not count), 2 on usage errors.
+"""
+}
+
+fn parse_text() -> Str {
+  """
+usage: xo parse [--json] [--ast] [--sig] <files or dirs...>
+
+Parse .xo files and report syntax diagnostics. Directories are walked
+recursively. --json prints {"files": [...], "diagnostics": [...]} on
+stdout; --ast includes each file's syntax tree; --sig allows function
+declarations without bodies (signature listings). Exit status is 1 when
+any error is reported, 2 on usage errors.
+"""
+}
+
+fn fmt_text() -> Str {
+  """
+usage: xo fmt [--check] [--json] [files or dirs...]
+
+Rewrite .xo files in the one canonical layout (core 10.5; no options)
+and print the names of the files changed. --check changes nothing, lists
+the unformatted files, and exits 1 if there are any. Files with syntax
+errors are reported and left alone (exit 1). Default: .
+"""
+}
+
+fn fix_text() -> Str {
+  """
+usage: xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]
+
+Apply the machine fixes of check diagnostics, round after round, until
+none apply, then reformat the changed files and print what changed.
+--from runs the migration rewriters for every breaking change after that
+draft first. An xo.mod line edition 2026 becomes edition preview
+(XO1315; the only edition before 1.0, --edition=preview names it).
+--dry-run writes nothing. Exit status 0 even when errors remain (they
+are listed); 2 on usage errors. Default: .
+"""
+}
+
+fn vet_text() -> Str {
+  """
+usage: xo vet [--json] [dirs...]
+
+Advisory checks (never errors, exit 0): the warnings of check, unused
+declared effects (XO0703), x ?? [].f() precedence traps (XO0207), every
+.ignore_err reason (XO0208), use go packages and functions that perform
+go per module (XO1103), dbg(...) left in code (XO0901). Default: .
+"""
+}
+
+fn query_text() -> Str {
+  """
+usage: xo query <kind> [--json|--text] [--dir=<dir>] <argument>
+
+kinds:
+  type <file:line:col>     type of the innermost expression or binding there
+  def <name>               declaration of name, Type.member, module.name, module.Type.member
+  callers <module.fn>      calls of the function and uses of it as a value
+  effects <module.fn>      effects the function performs, with the call chain per effect
+  holes                    holes (???) with their expected types
+  api <module path>        exported surface of a module (import path or directory)
+  imports <package>        the package's use lines, with any deny rule that forbids one
+  deps <package>           imports, transitively (std and Go packages are not followed)
+  hash <name>              content hash of a definition of the module (name, Type.method,
+                           pkg.name, or <package path>.name): local names erased,
+                           referenced definitions by their hashes (core 4.3)
+
+--dir (default .) is the directory checked. JSON is the default when stdout
+is not a terminal.
+"""
+}
+
+fn edit_text() -> Str {
+  """
+usage: xo edit [--dry-run] [--dir=<dir>] <op> <args...>
+
+Semantic edits (core 10.4) through the checker's resolved symbols:
+  rename <name> <new name>           function, method, or constant
+  add-field <Struct> <name: Type = default>
+  change-sig <fn> "(params) -> Result ! Err"
+Every reference is rewritten at once, and the edit is rejected (nothing
+written, exit 1) unless the program checks clean before and after it;
+the JSON summary lists the files, the diagnostics, or the call sites
+that blocked it. Default dir: .
+"""
+}
+
+fn doc_text() -> Str {
+  """
+usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
+
+Markdown documentation from doc comments and signatures, with the
+example code blocks of each doc comment. --all includes declarations
+that are not pub. Default: the modules under .
+"""
+}
+
+fn explain_text() -> Str {
+  """
+usage: xo explain [--json] <code>
+
+Long form explanation of a diagnostic code (for example XO0201), with
+an example and a fix.
+"""
+}
+
+fn init_text() -> Str {
+  """
+usage: xo init [--dir=<dir>] <module path>
+
+Write xo.mod for a new module and add xo.work to .gitignore (unless a
+workspace above already covers the directory).
+"""
+}
+
+fn get_text() -> Str {
+  """
+usage: xo get [--dir=<dir>] [--json] [-u] [--accept-effects] <module path>[@version|@latest|@none]...
+
+Require a module (decision 0086): the latest vX.Y.Z tag unless a
+version is given; @none removes the requirement; -u alone upgrades
+every requirement. Fetches with git into the module cache ($XO_MODCACHE
+or <user cache dir>/xo/mod), resolves the graph by minimal version
+selection, rewrites xo.mod and xo.lock, and prints the API and effect
+changes of every version change. --accept-effects records the new
+version's effects in xo.lock even when they are wider than the locked
+ones (else XO1317, nothing written).
+"""
+}
+
+fn mod_text() -> Str {
+  """
+usage: xo mod tidy [--dir=<dir>] [--json]
+       xo mod accept-effects [--dir=<dir>] [--json] [<module path>...]
+       xo mod clean
+       xo mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+
+tidy requires every imported module, drops requirements nothing imports,
+and rewrites xo.lock with exactly the hashes the build uses.
+accept-effects records the current effects of the named modules (all
+when none is named) in xo.lock (decision 0156). clean removes the module
+cache. proxy serve serves a module cache read only over the module proxy
+protocol (decision 0126); --fetch fills it from git on a miss.
+"""
+}
+
+fn vendor_text() -> Str {
+  """
+usage: xo vendor [--dir=<dir>] [--json]
+
+Copy every selected module version into vendor/ with
+vendor/modules.txt; builds then use vendor/ only (no cache, no network),
+verified against xo.lock.
+"""
+}
+
+fn publish_text() -> Str {
+  """
+usage: xo publish [--dir=<dir>] [--check] [--version=vX.Y.Z] [--json]
+
+Compare the exports and effects with the previous vX.Y.Z tag and reject
+a minor or patch release that removes or changes an export or adds an
+effect to one (XO1310). Without --check it also needs a clean working
+tree and a module that checks without a workspace, then prints the git
+tag command to run; it never tags or pushes.
+"""
+}
+
+fn audit_text() -> Str {
+  """
+usage: xo audit [--dir=<dir>] [--json] [--no-gc] [<dir>]
+
+Supply chain report (decision 0156): per dependency its version, the
+effects its API may reach, its xo.lock effects line, its effect ceiling,
+and its escape hatches (use c, use go of an impure package) with the
+vouch that covers each; this module's attenuations and the capabilities
+it passes into dependencies; and the check's diagnostics. JSON when
+--json or stdout is not a terminal. Exit 1 when the check has errors.
+--no-gc checks as a native build (use c).
+"""
+}
+
+fn bind_text() -> Str {
+  """
+usage: xo bind [--dir=<project dir>] [--json] <go import paths...>
+       xo bind --c [--dir=<module dir>] [--link=<lib>]... [--uses=none|<effects>] [--json] <headers...>
+
+Bind Go packages for use go "<path>" (decision 0041), or with --c C
+headers for use c "<header>" on native builds (decision 0116): write
+the Xo declaration file and the adapter into the binding cache and print
+how much mapped. check, build, and test bind missing packages on their
+own.
+"""
+}
+
+fn dump_text() -> Str {
+  """
+usage: xo dump [--timeout=5s] <pid>
+
+Print the task tree of a running Xo program (core 11.4): sends it
+SIGQUIT and prints the dump it writes to $XO_DUMP_DIR or the system
+temporary directory (xo-dump-<pid>.txt). The program goes on running.
+"""
+}
+
+fn replay_text() -> Str {
+  """
+usage: xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>
+
+Rebuild the recorded program and rerun it offline with every effect
+result and interleaving taken from the trace: same output, same fault.
+A divergence is reported with both locations, exit status 3. Secrets
+are redacted in traces; a replay takes them from the environment.
+"""
+}
+
+fn lsp_text() -> Str {
+  """
+usage: xo lsp
+
+Language Server Protocol server on stdin/stdout (LSP 3.17) for editors:
+diagnostics with quick fixes, hover, definition, references, rename,
+document symbols, semantic tokens, and formatting.
+"""
+}
+
+fn mcp_text() -> Str {
+  """
+usage: xo mcp
+
+Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one message
+per line) with the tools check, query, edit, explain, fmt, test, and
+build, each returning compact JSON.
+"""
+}
+
+fn serve_text() -> Str {
+  """
+usage: xo serve [--socket=path] [stop|status]
+
+Keep checked programs in memory and answer xo check and xo query over a
+unix socket (default $XO_SERVE_SOCKET or <user cache dir>/xo/serve.sock).
+check and query use a running server automatically; XO_NO_SERVE=1 turns
+that off. stop shuts the server down; status prints its cache counters.
+"""
+}
+
+fn version_text() -> Str {
+  """
+usage: xo version
+
+Print the toolchain version and the host target.
+"""
+}
+
+test "every command has a usage" {
+  for c in commands() {
+    let u = usage(c.name)
+    expect(u.starts_with("usage: xo ${c.name}")) == true
+    expect(u.ends_with("\n")) == true
+  }
+  expect(usage("asm")) == ""
+  expect(is_command("help")) == true
+  expect(is_command("keys")) == false
+}
+
+test "package patterns" {
+  expect(is_pattern("./...")) == true
+  expect(is_pattern("...")) == true
+  expect(is_pattern(".")) == false
+  expect(pattern_dir("./...")) == "."
+  expect(pattern_dir("std/...")) == "std"
+  expect(pattern_dir("/...")) == "/"
+  expect(pattern_dir("...")) == ""
+  expect(pattern_dir("a/.../b")) == ""
+  expect(pattern_dir("a/b...")) == ""
+  expect(pattern_dir(".../...")) == ""
+}

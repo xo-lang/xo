@@ -1,0 +1,4 @@
+usage: xo init [--dir=<dir>] <module path>
+
+Write xo.mod for a new module and add xo.work to .gitignore (unless a
+workspace above already covers the directory).

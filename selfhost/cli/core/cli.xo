@@ -10,6 +10,7 @@
 // --offline and --workspace=off|on are taken from anywhere before `--`.
 
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 /// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
 /// them equal).
@@ -51,7 +52,7 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, ne
     std_dir = find_std(os)
   }
   if args.is_empty() {
-    os.stdio.eprint(USAGE)
+    os.stdio.eprint(cmdhelp.top())
     return 2
   }
   var ctx = Ctx{std: std_dir, wd: wd, offline: os.env.get("XO_OFFLINE") ?? "", work: os.env.get("XO_WORK") ?? ""}
@@ -97,11 +98,11 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, ne
     "vet" => run_vet(os, ctx, rest)
     "doc" => run_doc(os, ctx, rest)
     "help" | "-h" | "--help" => {
-      os.stdio.print(USAGE)
+      os.stdio.print(cmdhelp.top())
       0
     }
     _ => {
-      os.stdio.eprint("xo: unknown command ${go_quote(args[0])}\n\n${USAGE}")
+      os.stdio.eprint("xo: unknown command ${go_quote(args[0])}\n\n${cmdhelp.top()}")
       2
     }
   }
@@ -128,7 +129,7 @@ pub fn new_checker(os: Os, ctx: Ctx) -> check.Checker uses fs.read, env {
 
 fn run_version(os: Os, args: List[Str]) -> Int {
   if !args.is_empty() {
-    os.stdio.eprintln("usage: xo version")
+    os.stdio.eprint(cmdhelp.usage("version"))
     return 2
   }
   let goos = match target.os {
@@ -452,16 +453,3 @@ pub fn fs_err(e: FsErr) -> Str {
     Canceled => "canceled"
   }
 }
-
-const USAGE = "usage: xo <command> [arguments]\n" +
-  "\n" +
-  "commands (self hosted: check, parse, explain, version, init, fmt, fix, vet, doc):\n" +
-  "  parse [--json] [--ast] [--sig] <files or dirs...>\n" +
-  "  check [--json] [--no-gc] [--fix] <dirs...>\n" +
-  "  fmt [--check] [--json] [files or dirs...]\n" +
-  "  fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]\n" +
-  "  vet [--json] [dirs...]\n" +
-  "  doc [--json] [--all] [--dir=<dir>] [module dir or import path]\n" +
-  "  explain [--json] <code>\n" +
-  "  init [--dir=<dir>] <module path>\n" +
-  "  version\n"
