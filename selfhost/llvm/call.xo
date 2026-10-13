@@ -574,7 +574,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.fiber_start_addr" => {
       g.sched_switch()
-      g.set(v, "ptrtoint ptr @xo_fiber_start to i64")
+      g.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
     }
     "rt.tlocal_get" | "rt.tlocal_set" => {
       g.sched_tlocal()

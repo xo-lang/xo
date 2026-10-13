@@ -5,7 +5,7 @@ import "strings"
 // The task switch and thread state of decision 0212 (selfhost/arm64
 // sched.xo is the self hosted copy, which this mirrors): rt.stack_switch
 // is a call of xo_stack_switch, rt.fiber_start_addr the address of
-// xo_fiber_start, and rt.tlocal_get and rt.tlocal_set calls of
+// xo_fiber_entry, and rt.tlocal_get and rt.tlocal_set calls of
 // xo_tlocal_get and xo_tlocal_set (the C runtime calls those too), all
 // emitted once in a program that uses them, as instruction sequences:
 // the switch is std/llrt/xo_rt.c's C path's xo_fiber_switch (AAPCS64:
@@ -72,7 +72,7 @@ func schedAsm(os OS) string {
 	fn("xo_stack_switch", true, stackSwitch)
 	// a new fiber's first frame holds its argument in x19 and its
 	// function in x20 (std/native/llrt/sched.xo fiber_frame)
-	fn("xo_fiber_start", false, []string{"mov x0, x19", "blr x20", "brk #1"})
+	fn("xo_fiber_entry", false, []string{"mov x0, x19", "blr x20", "brk #1"})
 	if os == Darwin {
 		// the TLV descriptor's thunk returns the table's address in x0
 		// and keeps every other register but x16 and x17

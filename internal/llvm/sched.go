@@ -8,7 +8,7 @@ import (
 // The task switch and thread state of decision 0212 (selfhost/llvm
 // sched.xo is the self hosted copy, which this mirrors): rt.stack_switch
 // is a call of xo_stack_switch and rt.fiber_start_addr the address of
-// xo_fiber_start, naked functions whose bodies are the instruction
+// xo_fiber_entry, naked functions whose bodies are the instruction
 // sequences std/llrt/xo_rt.c's C path uses (switchAsm); rt.tlocal_get and
 // rt.tlocal_set are calls of xo_tlocal_get and xo_tlocal_set, never inlined (a
 // fiber may go on on another thread after a switch, and a caller must
@@ -16,7 +16,7 @@ import (
 // thread_local global that only xo_tlocal_addr names (a split build,
 // decision 0168, copies a global into each module that uses it).
 
-// schedSwitch defines xo_stack_switch and xo_fiber_start at the first
+// schedSwitch defines xo_stack_switch and xo_fiber_entry at the first
 // use, for the host target (the Go driver's LLVM builds are for the
 // host).
 func (g *sgen) schedSwitch() {
@@ -26,7 +26,7 @@ func (g *sgen) schedSwitch() {
 	g.emitted["@xo_stack_switch"] = true
 	sw, start := switchAsm(runtime.GOOS, g.goarch())
 	g.helpers.WriteString(nakedFn("void @xo_stack_switch(i64 %0, i64 %1)", sw))
-	g.helpers.WriteString(nakedFn("void @xo_fiber_start()", start))
+	g.helpers.WriteString(nakedFn("void @xo_fiber_entry()", start))
 }
 
 // goarch is the target architecture of the module (the host when unset).
@@ -77,8 +77,8 @@ func nakedFn(sig string, asm []string) string {
 	return "define " + sig + " naked noinline nounwind {\n  call void asm sideeffect \"" + body + "\", \"\"()\n  unreachable\n}\n\n"
 }
 
-// switchAsm returns the bodies of xo_stack_switch and xo_fiber_start on
-// goos/goarch: xo_rt.c's xo_fiber_switch and xo_fiber_start.
+// switchAsm returns the bodies of xo_stack_switch and xo_fiber_entry on
+// goos/goarch: xo_rt.c's xo_fiber_switch and xo_fiber_entry.
 //
 // arm64 (AAPCS64): x19 to x28, fp, lr, and d8 to d15 are callee saved
 // (x18 is the platform's on Darwin and Windows, where it points at the

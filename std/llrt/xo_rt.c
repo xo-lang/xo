@@ -3409,7 +3409,7 @@ typedef struct xo_fiber {
 //
 // Decision 0212: the compiler emits these sequences in the program's own
 // code (rt.stack_switch and rt.fiber_start_addr: xo_stack_switch and
-// xo_fiber_start, from selfhost/arm64 sched.xo, selfhost/llvm sched.xo,
+// xo_fiber_entry, from selfhost/arm64 sched.xo, selfhost/llvm sched.xo,
 // and their Go mirrors), and the fiber code that uses them is Xo
 // (std/native/llrt/sched.xo); the copy here and the C fiber code below
 // are the C path (XO_LLRT_C=sched, -DXO_SCHED_C).
@@ -3724,7 +3724,7 @@ static void fiber_main(xo_fiber *f);
 #else
 // The fiber code in Xo (decision 0212): std/native/llrt/sched.xo through
 // the C ABI exports of cabi.xo. xo_x_fiber_main is where a new fiber
-// starts (xo_fiber_start calls it with the fiber).
+// starts (xo_fiber_entry, the emitted start, calls it with the fiber).
 int64_t xo_x_fiber_frame(int64_t f, int64_t mem, int64_t size, int64_t commit, int64_t main);
 void xo_x_fiber_main(int64_t f);
 void xo_x_fiber_park(int64_t f);
@@ -3929,7 +3929,8 @@ static void run_fiber(xo_worker *w, xo_fiber *f) {
 	}
 }
 
-#else
+#endif
+
 // The hooks the Xo fiber code calls around its switches when the
 // worker's hooks word is set (sched_hooks): the sanitizers' fiber calls
 // and the statistics, as the C path's fiber_main, fiber_park, and
@@ -3975,6 +3976,10 @@ XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) {
 // fiber_main): it came from a queue, so its entry and its run end here.
 void xo_sched_run_task(int64_t fa) { run_claimed(((xo_fiber *)(intptr_t)fa)->task, 4); }
 
+// (both are compiled with -DXO_SCHED_C too: the C only tests link that
+// C with the exports of a program built on the default path)
+
+#ifndef XO_SCHED_C
 static void fiber_parking(xo_fiber *f) { xo_x_fiber_parking(XO_ADDR(f)); }
 
 static void fiber_park(xo_fiber *f) { xo_x_fiber_park(XO_ADDR(f)); }

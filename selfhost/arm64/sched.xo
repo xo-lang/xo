@@ -1,6 +1,6 @@
 // The task switch and thread state of decision 0212 (internal/arm64
 // sched.go): rt.stack_switch is a call of xo_stack_switch,
-// rt.fiber_start_addr the address of xo_fiber_start, and rt.tlocal_get
+// rt.fiber_start_addr the address of xo_fiber_entry, and rt.tlocal_get
 // and rt.tlocal_set calls of xo_tlocal_get and xo_tlocal_set (the C
 // runtime calls those too), emitted once in a program that uses them, as
 // instruction sequences: the switch is std/llrt/xo_rt.c's C path's
@@ -46,7 +46,7 @@ fn sched_asm(os: Str) -> Str {
   b.push(sched_fn(os, "xo_stack_switch", true, stack_switch_body()))
   // a new fiber's first frame holds its argument in x19 and its function
   // in x20 (std/native/llrt/sched.xo fiber_frame)
-  b.push(sched_fn(os, "xo_fiber_start", false, ["mov x0, x19", "blr x20", "brk #1"]))
+  b.push(sched_fn(os, "xo_fiber_entry", false, ["mov x0, x19", "blr x20", "brk #1"]))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and
     // keeps every other register but x16 and x17

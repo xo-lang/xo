@@ -1,6 +1,6 @@
 // The task switch and thread state of decision 0212 (internal/llvm
 // sched.go): rt.stack_switch is a call of xo_stack_switch and
-// rt.fiber_start_addr the address of xo_fiber_start, naked functions
+// rt.fiber_start_addr the address of xo_fiber_entry, naked functions
 // whose bodies are the instruction sequences std/llrt/xo_rt.c's C path
 // uses (switch_asm); rt.tlocal_get and rt.tlocal_set are calls of
 // xo_tlocal_get and xo_tlocal_set, never inlined (a fiber may go on on
@@ -9,7 +9,7 @@
 // that only xo_tlocal_addr names (a split build, decision 0168, copies a
 // global into each module that uses it).
 
-/// Defines xo_stack_switch and xo_fiber_start at the first use.
+/// Defines xo_stack_switch and xo_fiber_entry at the first use.
 fn (var g: Gen) sched_switch() {
   if g.emitted.contains("@xo_stack_switch") {
     return
@@ -17,7 +17,7 @@ fn (var g: Gen) sched_switch() {
   g.emitted["@xo_stack_switch"] = true
   let (sw, start) = switch_asm(g.goos, g.arch())
   g.helpers.push(naked_fn("void @xo_stack_switch(i64 %0, i64 %1)", sw))
-  g.helpers.push(naked_fn("void @xo_fiber_start()", start))
+  g.helpers.push(naked_fn("void @xo_fiber_entry()", start))
 }
 
 /// Defines the thread local table and its functions at the first use.
@@ -39,8 +39,8 @@ fn naked_fn(sig: Str, asm: List[Str]) -> Str {
   "define ${sig} naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n"
 }
 
-/// The bodies of xo_stack_switch and xo_fiber_start on goos/goarch
-/// (sched.go switchAsm): xo_rt.c's xo_fiber_switch and xo_fiber_start.
+/// The bodies of xo_stack_switch and xo_fiber_entry on goos/goarch
+/// (sched.go switchAsm): xo_rt.c's xo_fiber_switch and xo_fiber_entry.
 /// arm64 (AAPCS64): x19 to x28, fp, lr, d8 to d15 callee saved (x18 not
 /// touched: the platform's on Darwin, the TEB on Windows, whose stack
 /// bounds switch with the stack). x86_64 System V: rbx, rbp, r12 to r15,

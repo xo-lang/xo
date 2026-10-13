@@ -237,12 +237,17 @@ func TestRuntimeThreads(t *testing.T) {
 func TestRuntimeTasks(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "tasks.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	for _, threads := range []string{"1", "3"} {
-		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"} {
-			if !strings.Contains(out, name+": ok") {
-				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
+	// the scheduler core in Xo (std/native/llrt/sched.xo through the C
+	// ABI exports, decision 0212), then its C path (XO_LLRT_C=sched's
+	// -DXO_SCHED_C)
+	for _, flags := range [][]string{nil, {"-DXO_SCHED_C"}} {
+		bin := tsanBuild(t, flags, cOnly(t, src))
+		for _, threads := range []string{"1", "3"} {
+			out := runTSan(t, bin, ".", "XO_THREADS="+threads)
+			for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"} {
+				if !strings.Contains(out, name+": ok") {
+					t.Errorf("%v XO_THREADS=%s: test %s did not pass:\n%s", flags, threads, name, out)
+				}
 			}
 		}
 	}
@@ -265,12 +270,15 @@ func TestRuntimeTasks(t *testing.T) {
 func TestRuntimeEventLoop(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "evloop.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	for _, threads := range []string{"1", "3"} {
-		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
-			if !strings.Contains(out, name+": ok") {
-				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
+	// the scheduler core in Xo, then its C path (decision 0212)
+	for _, flags := range [][]string{nil, {"-DXO_SCHED_C"}} {
+		bin := tsanBuild(t, flags, cOnly(t, src))
+		for _, threads := range []string{"1", "3"} {
+			out := runTSan(t, bin, ".", "XO_THREADS="+threads)
+			for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
+				if !strings.Contains(out, name+": ok") {
+					t.Errorf("%v XO_THREADS=%s: test %s did not pass:\n%s", flags, threads, name, out)
+				}
 			}
 		}
 	}

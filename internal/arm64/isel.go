@@ -2404,7 +2404,7 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		return false
 	case "rt.fiber_start_addr":
 		s.g.schedRef = true
-		s.set(v, s.symAddr(s.g.sym("xo_fiber_start")))
+		s.set(v, s.symAddr(s.g.sym("xo_fiber_entry")))
 	case "rt.popcount":
 		s.set(v, s.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", s.word(v.Args[0])))
 	case "rt.ctz":

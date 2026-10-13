@@ -2280,7 +2280,7 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		return false
 	case "rt.fiber_start_addr":
 		s.g.schedSwitch()
-		s.set(v, "ptrtoint ptr @xo_fiber_start to i64")
+		s.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
 	case "rt.tlocal_get", "rt.tlocal_set":
 		s.g.schedTlocal()
 		return false

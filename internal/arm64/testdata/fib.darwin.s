@@ -1888,8 +1888,8 @@ Lf21_b1:
 	add x22, x23, x2
 	and x9, x22, #15
 	sub x21, x22, x9
-	adrp x27, _xo_fiber_start@PAGE
-	add x27, x27, _xo_fiber_start@PAGEOFF
+	adrp x27, _xo_fiber_entry@PAGE
+	add x27, x27, _xo_fiber_entry@PAGEOFF
 	mov x9, #1
 	cmp x9, #1
 	b.eq Lf21_b2
@@ -4194,8 +4194,8 @@ Lf55_b0:
 	add x22, x23, x2
 	and x9, x22, #15
 	sub x21, x22, x9
-	adrp x27, _xo_fiber_start@PAGE
-	add x27, x27, _xo_fiber_start@PAGEOFF
+	adrp x27, _xo_fiber_entry@PAGE
+	add x27, x27, _xo_fiber_entry@PAGEOFF
 	mov x9, #1
 	cmp x9, #1
 	b.eq Lf55_b1
@@ -14571,7 +14571,7 @@ _xo_stack_switch:
 	add sp, sp, #160
 	ret
 	.p2align 2
-_xo_fiber_start:
+_xo_fiber_entry:
 	mov x0, x19
 	blr x20
 	brk #1

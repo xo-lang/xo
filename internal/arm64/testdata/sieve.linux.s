@@ -2103,8 +2103,8 @@ xo_f_cabi_2efiber__frame:
 	add x22, x23, x2
 	and x9, x22, #15
 	sub x21, x22, x9
-	adrp x27, xo_fiber_start
-	add x27, x27, :lo12:xo_fiber_start
+	adrp x27, xo_fiber_entry
+	add x27, x27, :lo12:xo_fiber_entry
 	mov x9, #1
 	cmp x9, #1
 	b.eq .Lf21_b2
@@ -4528,8 +4528,8 @@ xo_f_sched_2efiber__frame:
 	add x22, x23, x2
 	and x9, x22, #15
 	sub x21, x22, x9
-	adrp x27, xo_fiber_start
-	add x27, x27, :lo12:xo_fiber_start
+	adrp x27, xo_fiber_entry
+	add x27, x27, :lo12:xo_fiber_entry
 	mov x9, #1
 	cmp x9, #1
 	b.eq .Lf55_b1
@@ -15173,9 +15173,9 @@ xo_stack_switch:
 	ldp d14, d15, [sp, #144]
 	add sp, sp, #160
 	ret
-	.type xo_fiber_start, @function
+	.type xo_fiber_entry, @function
 	.p2align 2
-xo_fiber_start:
+xo_fiber_entry:
 	mov x0, x19
 	blr x20
 	brk #1
