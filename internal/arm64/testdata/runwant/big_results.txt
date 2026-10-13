@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+big a e3 6
+floats 4.0 8.0 18.0
+closure z e2 3
+var 2 ve1 we
+--- stderr

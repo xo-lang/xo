@@ -21,9 +21,9 @@
 #      backend must say Go is missing.
 #   3. with Go: a hello program on the Go backend, a `use go` program
 #      (bin/xo-gobind), then cmd/xo's whole suite (no -short) with XO_CLI
-#      = the archive's bin/xo, no XO_STD (the switch point B gate). With
-#      BASELINE=1 the suite also runs against the Go cmd/xo of the
-#      checkout, so a failure of the host itself is told apart.
+#      = the archive's bin/xo, no XO_STD (the switch point B gate; since
+#      decision 0215 cmd/xo holds only these tests: there is no Go xo to
+#      compare with).
 #
 # Prints "PASS name", "FAIL name", or "UNSUPPORTED name" per check and a
 # summary line; exit status 0 when nothing failed.
@@ -125,7 +125,7 @@ if command -v go >/dev/null 2>&1; then
   check go-backend-run "$xo" run --backend=go "$out/hello"
   check use-go-run "$xo" run --backend=go "$out/usego/app"
   grep -h "hello" "$out/go-backend-run.txt" "$out/use-go-run.txt" 2>/dev/null | sed 's/^/  /'
-  export XO_SELF_DRIVER=0 XO_NO_SERVE=1 GOMAXPROCS=${GOMAXPROCS:-4}
+  export XO_NO_SERVE=1 GOMAXPROCS=${GOMAXPROCS:-4}
   ( cd "$root" && XO_CLI="$xo" go test -count=1 -p 1 -parallel 2 -timeout 120m ./cmd/xo -v ) > "$out/cmdxo.log" 2>&1
   grep -E '^(--- |ok|FAIL|panic)' "$out/cmdxo.log" > "$out/cmdxo.txt"
   p=$(grep -c '^--- PASS' "$out/cmdxo.txt"); f=$(grep -c '^--- FAIL' "$out/cmdxo.txt"); s=$(grep -c '^--- SKIP' "$out/cmdxo.txt")
@@ -135,12 +135,6 @@ if command -v go >/dev/null 2>&1; then
   # full log stays on the instance
   grep -E '^[[:space:]]+[a-z_0-9]+_test\.go:[0-9]+:' "$out/cmdxo.log" | head -80 | cut -c1-400 | sed 's/^[[:space:]]*/    /'
   if [ "$f" = 0 ] && grep -q '^ok' "$out/cmdxo.txt"; then pass cmdxo-gate; else fail cmdxo-gate; fi
-  if [ "${BASELINE:-}" = 1 ]; then
-    ( cd "$root" && go test -count=1 -p 1 -parallel 2 -timeout 120m ./cmd/xo -v ) > "$out/cmdxo-go.log" 2>&1
-    grep -E '^(--- |ok|FAIL|panic)' "$out/cmdxo-go.log" > "$out/cmdxo-go.txt"
-    echo "cmd/xo against the Go cmd/xo (baseline): pass $(grep -c '^--- PASS' "$out/cmdxo-go.txt") fail $(grep -c '^--- FAIL' "$out/cmdxo-go.txt") skip $(grep -c '^--- SKIP' "$out/cmdxo-go.txt")"
-    grep -E '^--- (FAIL|SKIP)' "$out/cmdxo-go.txt" | sed 's/^/  /'
-  fi
 else
   echo "no go on PATH: the Go backend checks and cmd/xo's tests are not run"
   fail go-present

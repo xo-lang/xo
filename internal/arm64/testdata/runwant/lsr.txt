@@ -1,0 +1,12 @@
+exit 70
+--- stdout
+fwd 375229 back 922090
+step 250000 332334 big 22
+scale 637655 125.75
+grow 8665 150
+shrink 3763 50
+swap 42890
+cow 375229
+wide 1495 nested 549632 triples 21252600
+--- stderr
+fault: index 1006 out of range for List of length 1000 at main.xo:182:10

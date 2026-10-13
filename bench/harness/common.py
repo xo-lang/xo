@@ -183,20 +183,18 @@ _xo = None
 
 
 def xo_bin():
-    """The xo binary: $XO_BIN, else built once from this checkout (current toolchain)."""
+    """The xo binary: $XO_BIN, else the checkout's bin/xo made current by
+    `go run ./scripts/xobuild` (decision 0215: an earlier xo builds it)."""
     global _xo
     if _xo:
         return _xo
     if os.environ.get("XO_BIN"):
         _xo = os.environ["XO_BIN"]
         return _xo
-    cache = os.environ.get("XO_HARNESS_CACHE") or os.path.join(tempfile.gettempdir(), "xo-harness")
-    os.makedirs(cache, exist_ok=True)
-    out = os.path.join(cache, "xo")
-    rc, txt = run(["go", "build", "-o", out, "./cmd/xo"], cwd=ROOT)
-    if rc != 0:
-        raise SystemExit("building xo failed:\n" + txt)
-    _xo = out
+    p = subprocess.run(["go", "run", "./scripts/xobuild"], cwd=ROOT, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise SystemExit("building xo failed:\n" + p.stdout + p.stderr)
+    _xo = p.stdout.strip().split("\n")[-1]
     return _xo
 
 

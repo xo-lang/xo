@@ -4,13 +4,16 @@
 #   scripts/release.sh [version]
 #
 # Since switch point B (decision 0178, 2026-10-12) bin/xo is xo1, the self
-# hosted toolchain (selfhost/xo), not the Go cmd/xo. The Go cmd/xo is only
-# the bootstrap seed: it is built for the host and builds the first xo1,
-# which then builds the runtime packs and the other targets' xo1:
+# hosted toolchain (selfhost/xo); since decision 0215 (2026-10-13) the Go
+# implementation of the compiler is gone, so the first xo1 is built by an
+# existing xo (the seed), and it builds the runtime packs and the other
+# targets' xo1:
 #
-#   seed         go build ./cmd/xo (dist/.host/xo, deleted at the end)
-#   darwin/arm64 the seed: xo build --backend=arm64 selfhost/xo (the
-#                build the switch point B gate tested)
+#   seed         $XO_SEED, else the checkout's bin/xo made current by
+#                `go run ./scripts/xobuild` (built by an earlier xo, or
+#                by the xo1 of the go-compiler-final tag:
+#                internal/xotool)
+#   darwin/arm64 the seed: xo build --backend=arm64 selfhost/xo
 #   linux/arm64  the darwin xo1: --backend=arm64 --target=linux/arm64
 #                --ld=macho (decision 0182 stage 3: selfhost/macho's ELF
 #                writer and linker, with the linux pack built just before)
@@ -54,17 +57,18 @@
 #   linux/arm64   zig cc 0.15.1 with glibc 2.31 headers: $ZIG, else zig on PATH
 #                 (https://ziglang.org/download/, check the tarball's SHA-256
 #                 against https://ziglang.org/download/index.json)
-# and Go (the seed, xo-gobind, and the linux/amd64 xo1's go build).
+# and Go (xo-gobind, the linux/amd64 xo1's go build, and building the
+# seed when there is no xo yet).
 #
-# Environment: ZIG (zig binary), XO_RELEASE_ALLOW_DIRTY=1 (build from a
+# Environment: ZIG (zig binary), XO_SEED (the xo that builds the first
+# xo1), XO_RELEASE_ALLOW_DIRTY=1 (build from a
 # modified tree, for trying the script), XO_RELEASE_WINDOWS=1 with
 # XO_WIN_CLANG and XO_WINSYSROOT (the windows/amd64 archive, above).
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
-# the version xo1 prints (selfhost/cli/core VERSION; TestSelfhostVersion
-# keeps cmd/xo's equal to it)
+# the version xo1 prints (selfhost/cli/core VERSION)
 version="${1:-v$(sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p' selfhost/cli/core/cli.xo)}"
 zig_version=0.15.1
 linux_glibc=2.31
@@ -102,11 +106,12 @@ dist="$repo/dist"
 rm -rf "$dist"
 mkdir -p "$dist"
 unset XO_STD XO_RTPACK XO_CLI
-# the seed: the Go cmd/xo with its own driver (not switch point A's exec of
-# an xo1 it would first rebuild from its embedded sources)
-host_xo="$dist/.host/xo"
-go build -trimpath -o "$host_xo" ./cmd/xo
-export XO_SELF_DRIVER=0
+# the seed: an existing xo (decision 0215: no Go compiler to build one)
+if [ -n "${XO_SEED:-}" ]; then
+	host_xo="$XO_SEED"
+else
+	host_xo="$(go run ./scripts/xobuild)"
+fi
 
 stage_of() { echo "$dist/xo-$version-${1%/*}-${1#*/}"; }
 
@@ -137,7 +142,7 @@ linux_arm64=$(stage_of linux/arm64)
 linux_amd64=$(stage_of linux/amd64)
 
 echo "== darwin/arm64: the seed builds xo1" >&2
-"$host_xo" build --backend=arm64 -o "$darwin/bin/xo" selfhost/xo >&2
+"$host_xo" build --backend=arm64 --std="$repo/std" -o "$darwin/bin/xo" selfhost/xo >&2
 xo1="$darwin/bin/xo"
 "$xo1" version >&2
 # the packs, by xo1's `xo rtpack` (the Go command's files, byte for byte:
@@ -170,6 +175,6 @@ for target in $targets; do
 	stage=$(stage_of "$target")
 	go run ./scripts/disttar -o "$stage.tar.gz" "$stage"
 done
-rm -rf "$dist/.host" "$dist/.zig-cache"
+rm -rf "$dist/.zig-cache"
 (cd "$dist" && shasum -a 256 ./*.tar.gz | sed 's| \./| |' >SHA256SUMS)
 cat "$dist/SHA256SUMS"

@@ -1,0 +1,12 @@
+exit 70
+--- stdout
+popped 36 9
+set_join 53 11
+get_or 5 -1 -1
+both 1 2 3 2
+less 5
+sieve 25 1 0
+big 162345674
+popped_fault 6
+--- stderr
+fault: index 2 out of range for List of length 2 at main.xo:30:7

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+wide true true false true
+shape true true false false true false
+bools true false true
+lists true false false true
+shapes true false
+tuples true false
+--- stderr
