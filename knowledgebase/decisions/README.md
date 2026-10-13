@@ -194,3 +194,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0200-runtime-atomics-intrinsics.md](0200-runtime-atomics-intrinsics.md): Proposed (stub): atomics and memory ordering intrinsics, internal to std via native/rt (decision 0195 prerequisite 1).
 - [0201-runtime-scan-intrinsics.md](0201-runtime-scan-intrinsics.md): Proposed (stub): SIMD and word at a time scan intrinsics, internal to std via native/rt (decision 0195 prerequisite 4).
 - [0202-tls-in-xo.md](0202-tls-in-xo.md): Accepted (owner, 2026-10-13): TLS and its crypto written in Xo after Go's design replace Mbed TLS and fiat-crypto, last in decision 0195's order, after constant time support.
+- [0203-linux-without-libc.md](0203-linux-without-libc.md): Accepted (owner, 2026-10-13): Linux programs make raw system calls and link statically with no libc, with an Xo DNS resolver, as Go does; macOS and Windows keep their platform libraries.
