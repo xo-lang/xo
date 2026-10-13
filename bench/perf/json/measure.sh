@@ -20,7 +20,7 @@ for be in "$@"; do
 	cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be/"
 	(cd "$OUT/src-$be" && "$XO" build --backend="$be" -o "$OUT/t-$be" .)
 done
-for w in ${WORKLOADS:-none small ints floats strings maps parse invalid enc_small enc_strings enc_floats}; do
+for w in ${WORKLOADS:-none small ints floats strings maps parse invalid enc_small enc_strings enc_floats bytes}; do
 	for be in "$@"; do
 		best=""
 		bt=""

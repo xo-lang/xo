@@ -182,6 +182,19 @@ fn enc_floats(xs: List[Float]) -> Int {
   h
 }
 
+fn bytes(bs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..20 {
+    let t = json.encode_str(bs)
+    h = mix(h, t)
+    match json.decode_str[List[Bytes]](t) {
+      Ok(back) => h = (h + back.len() + back[back.len() / 2].len()) % 1000000007
+      Err(e) => h = mix(h, e.msg)
+    }
+  }
+  h
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "small"
@@ -194,6 +207,7 @@ fn main(os: Os) {
   var spart: List[Str] = []
   var strs: List[Str] = []
   var fs: List[Float] = []
+  var bs: List[Bytes] = []
   var i = 0
   for v in vs {
     var x = v
@@ -220,6 +234,7 @@ fn main(os: Os) {
     spart.push(str_text(v, i))
     strs.push(if i % 3 == 0 { "plain text ${v}" } else if i % 3 == 1 { "quote \"${v}\"\n\ttab \u{e9} ${v}" } else { "\u{fc}n\u{ef} ${v} \u{65e5}\u{672c}\u{8a9e}\u{1}\u{2028}" })
     fs.push(if i % 3 == 0 { Float(x) } else { Float(v) / Float(1 + i % 97) * [1.0, 0.001, 1e-9, 1e12, 1e-310, 1e300, 0.5, 3.0e-5][i % 8] })
+    bs.push("bytes ${v} \u{1} ${x}".bytes())
     i += 1
   }
   var mdocs: List[Str] = []
@@ -247,6 +262,7 @@ fn main(os: Os) {
     "enc_small" => enc_small(us)
     "enc_strings" => enc_strings(strs)
     "enc_floats" => enc_floats(fs)
+    "bytes" => bytes(bs)
     _ => -1
   }
   let us_ = os.clock.since(t).nanos() / 1000

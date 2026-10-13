@@ -176,7 +176,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {
-    b.retv(b.rt("rs_append_b64_quoted", st, [acc, v]))
+    b.retv(b.json_rt("rs_append_b64_quoted", st, [acc, v]))
     return
   }
   match b.tkind(t) {
@@ -546,10 +546,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   if b.is_prelude_named(ct, ["Bytes"]) {
     b.dec_need(d, JK_STR, "expected base64 string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("b64_ok", bt, [txt])]))
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("b64_ok", bt, [txt])]))
     b.dec_fail(d, "expected base64 string")
     b.if_then_end(no, join)
-    b.dec_ok(d, b.rt("b64_decode", st, [txt]))
+    b.dec_ok(d, b.json_rt("b64_decode", st, [txt]))
     return
   }
   match b.tkind(t) {

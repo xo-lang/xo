@@ -29,6 +29,8 @@ fn json_float(src: Bytes, tape: List[Int], i: Int) -> Float
 fn rs_append_json_str(s: Str, t: Str) -> Str
 /// s + f as JSON.
 fn rs_append_json_float(s: Str, f: Float) -> Str
+/// s + the base64 of b in double quotes (xo_std.c).
+fn rs_append_b64_quoted(s: Str, b: Bytes) -> Str
 
 /// acc + the JSON text of v.
 fn json_enc[T](acc: Str, v: T) -> Str

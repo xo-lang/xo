@@ -1414,9 +1414,15 @@ fn trio(b: Bytes, i: Int) -> Int { (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | In
 /// The standard base64 of b, padded (Bytes.to_base64,
 /// base64.StdEncoding.EncodeToString).
 pub fn to_base64(b: Bytes) -> Str {
+  let m = (b.len() + 2) / 3 * 4
+  append_base64(if m > 64 { rt.rs_with_cap(m + 32) } else { "" }, b)
+}
+
+/// out0 + the standard base64 of b, padded (also std/json's Bytes,
+/// decision 0193 step 4).
+pub fn append_base64(out0: Str, b: Bytes) -> Str {
   let n = b.len()
-  let m = (n + 2) / 3 * 4
-  var out = if m > 64 { rt.rs_with_cap(m + 32) } else { "" }
+  var out = out0
   var i = 0
   // 24 bytes, 32 characters at a time
   while n - i >= 24 {

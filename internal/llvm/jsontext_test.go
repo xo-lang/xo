@@ -17,7 +17,7 @@ import (
 
 // jsonTextDiffProg reads lines of `<op> <arg>` from standard input and
 // prints one line for each: `d` decodes the hex bytes as JSON into
-// fourteen types (the parser's errors, the tape readers: strings with
+// fifteen types (the parser's errors, the tape readers: strings with
 // escapes, Ints, Floats, members with duplicate keys, fields) and encodes
 // what decoded again; `f` encodes Float.parse of the text; `s` encodes
 // the hex bytes as a Str when they are UTF-8 (decision 0193 step 4).
@@ -56,7 +56,7 @@ fn main(os: Os) {
           show[Bool](data), show[List[Str]](data), show[Map[Str, Str]](data), show[List[Float]](data),
           show[List[Int]](data), show[Map[Str, List[Int?]]](data), show[Str](data), show[Float](data),
           show[Int](data), show[Obj](data), show[List[Map[Str, Float?]]](data), show[(Int, Str)](data),
-          show[Map[Str, Bool?]](data), show[List[List[Int]]](data),
+          show[Map[Str, Bool?]](data), show[List[List[Int]]](data), show[List[Bytes]](data),
         ].join(" | ")
       }
       "f" => match Float.parse(arg) {
@@ -107,6 +107,7 @@ func jsonTextCorpus(n int) string {
 		"tru", "fals", "nul", "t", "true", "false", "null", "[true", "[tru", "{\"a\":fal", "[nulll]", "[truex]", "[nul]",
 		"[\"1234567\"]", "[\"12345678\"]", "[\"123456789\"]", "[\"123456789012345\"]", "[\"1234567890123456\"]", "[\"12345678901234567\"]",
 		"\"" + strings.Repeat("x", 100) + "\"", "\"" + strings.Repeat("\u00e9", 50) + "\"", "\"" + strings.Repeat("x", 100),
+		`["", "AA==", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "A===", "Zm9vYg", "\u0041\u0041==", "Zm9v\r\nYmFy", "Zm9v YmFy"]`,
 		"[1,2,3", "[1,2,3,", `{"a":1,"b"`, `{"a"`, `{"a":`, `{"a":1,`, "[\"a\x7fb\"]", "[\"a\x1fb\"]", "\"\\", "\"\\u", "\"\\u00", "\"\\u00e",
 	} {
 		doc(s)

@@ -5,6 +5,7 @@
 // 0180's bar; the SSA builder then calls the C runtime's json_* and
 // rs_append_json_* directly, as before the port. The self hosted
 // compiler always uses jsontext.xo.
+use native/rt
 use native/rtjson
 
 pub fn parse(src: Bytes) -> List[Int] { rtjson.json_parse(src) }
@@ -30,3 +31,9 @@ pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float { rtjson.json_floa
 pub fn append_str(out: Str, s: Str) -> Str { rtjson.rs_append_json_str(out, s) }
 
 pub fn append_float(out: Str, f: Float) -> Str { rtjson.rs_append_json_float(out, f) }
+
+pub fn append_b64(out: Str, b: Bytes) -> Str { rtjson.rs_append_b64_quoted(out, b) }
+
+pub fn b64_ok(s: Str) -> Bool { rt.b64_ok(s) }
+
+pub fn b64_decode(s: Str) -> Bytes { rt.b64_decode(s) }

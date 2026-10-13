@@ -97,7 +97,7 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 			s.retv(lit(s.llrt("append_time", st, at, lit(acc, `"`), v), `"`))
 			return
 		case isPreludeNamed(ct, "Bytes"):
-			s.retv(s.rt("rs_append_b64_quoted", st, acc, v))
+			s.retv(s.jsonRT("rs_append_b64_quoted", st, acc, v))
 			return
 		}
 		switch t.Kind {
@@ -348,8 +348,8 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 		case isPreludeNamed(ct, "Bytes"):
 			need(jkStr, "expected base64 string")
 			txt := jstr(i)
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("b64_ok", boolT, txt)), func() { fail("expected base64 string") })
-			ok(s.rt("b64_decode", st, txt))
+			s.ifThen(s.add(OpNot, boolT, nil, s.jsonRT("b64_ok", boolT, txt)), func() { fail("expected base64 string") })
+			ok(s.jsonRT("b64_decode", st, txt))
 			return
 		}
 		switch t.Kind {

@@ -37,6 +37,9 @@ ok [1.0, -2.5, 1e-07, 1.2345678901234568e+29, 5e-324, 2.225073858507201e-308]
 ok {"a": 4, "b": 2}
 ok {"k0": 11, "k1": 10, "k2": 2, "k3": 3, "k4": 4, "k5": 5, "k6": 6, "k7": 7, "k8": 8, "k9": 9}
 ok ["\u{FFFD}A", "\u{FFFD}", "\u{FFFD}\u{FFFD}", "é", "tab\there", "a long string with no escapes in it at all", "/\x08\x0c\r"]
+ok [b"", b"\0", b"foob", b"foobar"]
+err at $[0]: expected base64 string
+["","Zm9v","AP/+","MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6"]
 {"id":7,"name":"q\"\\\n\u0001é\u2028\u2029","score":0.000001,"tags":["a"],"ok":true,"note":null}
 [1e+21,100000000000000000000,123456.789,1e-7,1.5e-10,0.1,-0,5e-324,1.7976931348623157e+308,12345678.5,0.000123,1234567890123456.8,3,100,null,null]
 --- stderr

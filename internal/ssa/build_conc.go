@@ -165,7 +165,7 @@ func (s *fn) numText(acc, v *Value) *Value {
 }
 
 // jsonRT is a call of std/json's tape reader or text function name
-// (json_str, rs_append_json_str, ...) for the codecs build_json.go
+// (json_str, rs_append_json_str, b64_ok, ...) for the codecs build_json.go
 // generates: the native prelude's llrt_<name> (std/native/llrt/
 // jsontext.xo, decision 0193 step 4), unchecked like the C it replaces;
 // with XO_LLRT_C=jsontext, or without the native prelude, the C

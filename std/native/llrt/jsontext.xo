@@ -958,3 +958,13 @@ pub fn append_str(out: Str, s: Str) -> Str {
 
 /// out + f as std/json writes a Float (num.append_json_float).
 pub fn append_float(out: Str, f: Float) -> Str { num.append_json_float(out, f) }
+
+/// out + b as std/json writes Bytes: its standard base64, padded, in
+/// double quotes.
+pub fn append_b64(out: Str, b: Bytes) -> Str { rt.rs_push_byte(num.append_base64(rt.rs_push_byte(out, 34), b), 34) }
+
+/// Whether s is base64 that std/json decodes into Bytes.
+pub fn b64_ok(s: Str) -> Bool { num.from_base64(s) != None }
+
+/// The Bytes of base64 that b64_ok accepted.
+pub fn b64_decode(s: Str) -> Bytes { num.from_base64(s) ?? b"" }
