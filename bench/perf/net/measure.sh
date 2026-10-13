@@ -9,7 +9,8 @@
 # kernel.perf_event_paranoid <= 1).
 #
 # usage: bench/perf/net/measure.sh <xo1 binary> <std dir> <out dir> <backend...>
-# WORKLOADS overrides the list; VARIANTS the variants.
+# WORKLOADS overrides the list; VARIANTS the variants. A variant that
+# does not build is reported and left out.
 set -e
 XO=$1
 STD=$2
@@ -27,12 +28,16 @@ for be in "$@"; do
 		nolibc) env="XO_NOLIBC=1" ;;
 		*) env="XO_LLRT_C=" ;;
 		esac
-		(cd "$OUT/src-$be-$v" && env $env "$XO" build --std="$STD" --backend="$be" -o "$OUT/t-$be-$v" . >/dev/null)
+		rm -f "$OUT/t-$be-$v"
+		if ! (cd "$OUT/src-$be-$v" && env $env "$XO" build --std="$STD" --backend="$be" -o "$OUT/t-$be-$v" . >"$OUT/b.txt" 2>&1); then
+			echo "build $be $v failed: $(grep -v '^ *$' "$OUT/b.txt" | tail -1)"
+		fi
 	done
 done
 for w in ${WORKLOADS:-none echo dial resolve}; do
 	for be in "$@"; do
 		for v in ${VARIANTS:-xo c nolibc}; do
+			[ -x "$OUT/t-$be-$v" ] || continue
 			bu=""
 			bk=""
 			bt=""
