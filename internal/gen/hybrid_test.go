@@ -150,7 +150,9 @@ func TestHybridRandom(t *testing.T) {
 // polls (its first stop the world waits for the rest of the loop)
 // always misses; the no-poll control at the end checks that. The runs
 // set GOGC=10 so a GC (and its stop the world) always happens while the
-// loop runs, whatever the host's sleep granularity.
+// loop runs, whatever the host's sleep granularity; the program sleeps
+// 200 ms after the loop so a GC that stopped behind it (no polls) prints
+// its trace before the program exits.
 func TestHybridPreemption(t *testing.T) {
 	// not parallel: the other tests of the package would load the host
 	needArm64(t)
