@@ -165,7 +165,9 @@ pub fn rq_nonempty(q: Int) -> Int {
 /// restore takes (rt.stack_switch's sequences, selfhost/arm64 and
 /// selfhost/llvm sched.xo), with f and main in the registers
 /// fiber_start_addr's code calls main(f) with; the stack pointer to
-/// switch to.
+/// switch to. Only the slots the start reads are written, and the frame
+/// pointer's, zero, so a walk of the new fiber's frames ends there (the
+/// other registers start with what the stack held: nothing reads them).
 pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
   let end = rt.int_wrap(0, mem, size)
   let top = rt.int_wrap(1, end, end & 15)
@@ -177,7 +179,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           // x19 to x28, fp, lr, d8 to d15, the TEB's StackBase,
           // StackLimit, and DeallocationStack, a pad
           let fr = rt.int_wrap(1, top, 192)
-          rt.mem_set(fr, 0, 192)
+          rt.mem_store(fr, 80, 0, 8)
           rt.mem_store(fr, 0, f, 8)
           rt.mem_store(fr, 8, main, 8)
           rt.mem_store(fr, 88, start, 8)
@@ -189,7 +191,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
         TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
           // x19 (f), x20 (main), x21 to x28, fp, lr (the start), d8 to d15
           let fr = rt.int_wrap(1, top, 160)
-          rt.mem_set(fr, 0, 160)
+          rt.mem_store(fr, 80, 0, 8)
           rt.mem_store(fr, 0, f, 8)
           rt.mem_store(fr, 8, main, 8)
           rt.mem_store(fr, 88, start, 8)
@@ -204,7 +206,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           // xmm15, the TEB's three words, r15, r14, r13, r12 (main), rsi,
           // rdi, rbx (f), rbp, the return address (the start)
           let fr = rt.int_wrap(1, top, 264)
-          rt.mem_set(fr, 0, 264)
+          rt.mem_store(fr, 248, 0, 8)
           rt.mem_store(fr, 0, 0x1F80, 4)
           rt.mem_store(fr, 4, 0x027F, 2)
           rt.mem_store(fr, 168, top, 8)
@@ -219,7 +221,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           // MXCSR and the x87 control word, r15, r14, r13, r12 (main),
           // rbx (f), rbp, the return address (the start)
           let fr = rt.int_wrap(1, top, 64)
-          rt.mem_set(fr, 0, 64)
+          rt.mem_store(fr, 48, 0, 8)
           rt.mem_store(fr, 0, 0x1F80, 4)
           rt.mem_store(fr, 4, 0x037F, 2)
           rt.mem_store(fr, 32, main, 8)

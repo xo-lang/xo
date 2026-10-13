@@ -27,8 +27,8 @@ fn (var g: Gen) sched_tlocal() {
   }
   g.emitted["@xo_tlocal_get"] = true
   g.emitted["@xo_tlocal_set"] = true
-  g.helpers.push("@.xo_tlocal = internal thread_local global [16 x i64] zeroinitializer, align 8\n\n" +
-    "define internal ptr @xo_tlocal_addr(i64 %k) nounwind {\n  %p = getelementptr [16 x i64], ptr @.xo_tlocal, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +
+  g.helpers.push("@xo_tlocal = hidden thread_local global [16 x i64] zeroinitializer, align 8\n\n" +
+    "define internal ptr @xo_tlocal_addr(i64 %k) nounwind {\n  %p = getelementptr [16 x i64], ptr @xo_tlocal, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +
     "define i64 @xo_tlocal_get(i64 %k) noinline nounwind {\n  %p = call ptr @xo_tlocal_addr(i64 %k)\n  %v = load i64, ptr %p, align 8\n  ret i64 %v\n}\n\n" +
     "define void @xo_tlocal_set(i64 %k, i64 %v) noinline nounwind {\n  %p = call ptr @xo_tlocal_addr(i64 %k)\n  store i64 %v, ptr %p, align 8\n  ret void\n}\n\n")
 }

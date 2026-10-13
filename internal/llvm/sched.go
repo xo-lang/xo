@@ -49,10 +49,10 @@ func (g *sgen) schedTlocal() {
 }
 
 // tlocalIR is the thread local table of decision 0212 in IR.
-const tlocalIR = `@.xo_tlocal = internal thread_local global [16 x i64] zeroinitializer, align 8
+const tlocalIR = `@xo_tlocal = hidden thread_local global [16 x i64] zeroinitializer, align 8
 
 define internal ptr @xo_tlocal_addr(i64 %k) nounwind {
-  %p = getelementptr [16 x i64], ptr @.xo_tlocal, i64 0, i64 %k
+  %p = getelementptr [16 x i64], ptr @xo_tlocal, i64 0, i64 %k
   ret ptr %p
 }
 

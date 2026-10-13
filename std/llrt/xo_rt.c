@@ -1643,18 +1643,18 @@ __attribute__((noinline)) static struct xo_fiber *fib_get(void) { return tls_fib
 __attribute__((noinline)) static void fib_set(struct xo_fiber *f) { tls_fib = f; }
 #else
 // Decision 0212: the thread locals are words of the table the compiler
-// emits for rt.tlocal_get and rt.tlocal_set (std/native/llrt/sched.xo, which
-// reads and writes the same words): xo_tlocal_get and xo_tlocal_set are its
-// functions, emitted in the program's code and never inlined into C.
-int64_t xo_tlocal_get(int64_t k);
-void xo_tlocal_set(int64_t k, int64_t v);
+// emits for rt.tlocal_get and rt.tlocal_set (xo_tlocal, a thread local
+// of the program's code; std/native/llrt/sched.xo reads and writes the
+// same words through the emitted xo_tlocal_get and xo_tlocal_set). The C
+// reads the table itself, through these accessors only (above).
+extern __thread int64_t xo_tlocal[16];
 // the words (sched.xo TLS_*): the current context, the fiber running on
 // the thread, and the thread's worker record
 enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
-__attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal_get(XO_TLS_CUR); }
-__attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal_set(XO_TLS_CUR, (int64_t)(intptr_t)c); }
-__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal_get(XO_TLS_FIB); }
+__attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
+__attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
+__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 #endif
 
 static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
@@ -2479,7 +2479,12 @@ static int rq_put_fast(xo_runq *q, void *x) { return (int)xo_x_rq_put(XO_ADDR(q)
 static void *rq_get(xo_runq *q) { return (void *)(intptr_t)xo_x_rq_get(XO_ADDR(q)); }
 static uint32_t rq_grab(xo_runq *q, void **batch) { return (uint32_t)xo_x_rq_grab(XO_ADDR(q), XO_ADDR(batch)); }
 static void rq_put_batch(xo_runq *q, void **batch, uint32_t n) { xo_x_rq_put_batch(XO_ADDR(q), XO_ADDR(batch), (int64_t)n); }
-static int rq_nonempty(xo_runq *q) { return (int)xo_x_rq_nonempty(XO_ADDR(q)); }
+// the thieves' peek stays inline: it runs in their spin loops (every
+// record, every round), where a call cost the arm64 build 9 percent of
+// a ping pong's instructions (decision 0212's results)
+static int rq_nonempty(xo_runq *q) {
+	return __atomic_load_n(&q->head, __ATOMIC_SEQ_CST) != __atomic_load_n(&q->tail, __ATOMIC_SEQ_CST);
+}
 #endif
 
 static void rq_put(xo_runq *q, void *x) {
@@ -2552,8 +2557,8 @@ static __thread xo_worker *tls_w;
 __attribute__((noinline)) static xo_worker *w_get(void) { return tls_w; }
 __attribute__((noinline)) static void w_set(xo_worker *w) { tls_w = w; }
 #else
-__attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal_get(XO_TLS_W); }
-__attribute__((noinline)) static void w_set(xo_worker *w) { xo_tlocal_set(XO_TLS_W, XO_ADDR(w)); }
+__attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal[XO_TLS_W]; }
+__attribute__((noinline)) static void w_set(xo_worker *w) { xo_tlocal[XO_TLS_W] = XO_ADDR(w); }
 #endif
 
 static void rt_init(void) {}
