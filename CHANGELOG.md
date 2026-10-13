@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
+  build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
+  cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows
+  sysroot (MSVC's C library and the Windows SDK, e.g. made by xwin)
+  and an upstream clang with lld-link is used. xo built this way from
+  Linux runs on Windows, passes the 145 Windows goldens, and builds
+  itself on Windows to the same output. Fixed: on Windows, `xo` started
+  by name from cmd.exe did not find its standard library
+  (`fault: prelude type missing: Str`).
 - Faster: the self hosted compiler (xo1) compiles selfhost/xo 3.6 times
   faster in 37 percent of the memory (588.86 s to 163.83 s, 26.1 GB to
   9.66 GB on the Mac; bench/results/xo1-speed-2026-10-13.md), with the

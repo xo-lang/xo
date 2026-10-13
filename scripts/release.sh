@@ -17,6 +17,20 @@
 #   linux/amd64  the darwin xo1: --backend=go --targets=linux/amd64 (no
 #                native backend for amd64: selfhost/gen and the Go
 #                toolchain)
+#   windows/amd64 (only with XO_RELEASE_WINDOWS=1, decision 0197) the
+#                darwin xo1: --backend=llvm --targets=windows/amd64, split
+#                modules ($XO_RELEASE_WIN_SPLIT, default 16; LTO
+#                $XO_RELEASE_WIN_LTO, default thin; jobs
+#                $XO_RELEASE_WIN_JOBS, default 4), compiled by an upstream
+#                clang and linked by its lld-link ($XO_WIN_CLANG; Apple's
+#                clang has no lld-link) against a Windows sysroot
+#                ($XO_WINSYSROOT: MSVC's C library and the Windows SDK in
+#                clang's /winsysroot layout, made by `xwin --accept-license
+#                splat --use-winsysroot-style --preserve-ms-arch-notation`,
+#                which accepts Microsoft's license for the build tools);
+#                bin/xo.exe and bin/xo-gobind.exe, no runtime pack (LLVM
+#                builds compile the runtime on the user's machine). Not
+#                published yet: the archive is built for trying.
 #
 # Each archive holds
 #
@@ -43,7 +57,8 @@
 # and Go (the seed, xo-gobind, and the linux/amd64 xo1's go build).
 #
 # Environment: ZIG (zig binary), XO_RELEASE_ALLOW_DIRTY=1 (build from a
-# modified tree, for trying the script).
+# modified tree, for trying the script), XO_RELEASE_WINDOWS=1 with
+# XO_WIN_CLANG and XO_WINSYSROOT (the windows/amd64 archive, above).
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,6 +78,17 @@ if [ -n "$(git status --porcelain)" ] && [ "${XO_RELEASE_ALLOW_DIRTY:-}" != 1 ];
 	exit 1
 fi
 zig="${ZIG:-zig}"
+if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
+	win_clang="${XO_WIN_CLANG:-}"
+	if [ -z "$win_clang" ] || ! "$win_clang" --version >/dev/null 2>&1 || [ ! -x "$(dirname "$win_clang")/lld-link" ]; then
+		echo "release.sh: XO_RELEASE_WINDOWS=1 needs XO_WIN_CLANG, an upstream clang with lld-link beside it (LLVM 23.1.3 was measured)" >&2
+		exit 1
+	fi
+	if [ ! -d "${XO_WINSYSROOT:-}/Windows Kits/10/Lib" ]; then
+		echo "release.sh: XO_RELEASE_WINDOWS=1 needs XO_WINSYSROOT, a Windows sysroot (xwin --accept-license splat --use-winsysroot-style --preserve-ms-arch-notation --output DIR)" >&2
+		exit 1
+	fi
+fi
 if ! command -v "$zig" >/dev/null; then
 	echo "release.sh: zig $zig_version not found (set ZIG): it cross compiles the linux/arm64 runtime" >&2
 	exit 1
@@ -94,12 +120,15 @@ layout() {
 	# the zone database std/time embeds (selfhost/xo tz.xo looks here
 	# before `go env GOROOT`)
 	cp "$(go env GOROOT)/lib/time/zoneinfo.zip" "$stage/lib/xo/zoneinfo.zip"
+	local exe=""
+	[ "${target%/*}" = windows ] && exe=.exe
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
-		go build -trimpath -o "$stage/bin/xo-gobind" ./cmd/xo-gobind
+		go build -trimpath -o "$stage/bin/xo-gobind$exe" ./cmd/xo-gobind
 	cp README.md CHANGELOG.md "$stage/"
 }
 
 targets="darwin/arm64 linux/arm64 linux/amd64"
+[ "${XO_RELEASE_WINDOWS:-}" = 1 ] && targets="$targets windows/amd64"
 for target in $targets; do
 	layout "$target"
 done
@@ -126,6 +155,16 @@ XO_RTPACK="$linux_arm64/lib/xo/rtpack" "$xo1" build --backend=arm64 \
 
 echo "== linux/amd64: xo1 builds xo1 with the Go backend" >&2
 "$xo1" build --backend=go --targets=linux/amd64 -o "$linux_amd64/bin/xo" selfhost/xo >&2
+
+if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
+	echo "== windows/amd64: xo1 cross builds xo1 with the LLVM backend" >&2
+	# bench/results/windows-2026-10-12.md, "xo1 built by Xo for Windows"
+	XO_CLANG="$win_clang" XO_AR="$(dirname "$win_clang")/llvm-ar" XO_WINSYSROOT="$XO_WINSYSROOT" \
+		XO_LLVM_SPLIT="${XO_RELEASE_WIN_SPLIT:-16}" XO_LLVM_LTO="${XO_RELEASE_WIN_LTO:-thin}" \
+		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" \
+		"$xo1" build --backend=llvm --targets=windows/amd64 \
+		-o "$(stage_of windows/amd64)/bin/xo.exe" selfhost/xo >&2
+fi
 
 for target in $targets; do
 	stage=$(stage_of "$target")

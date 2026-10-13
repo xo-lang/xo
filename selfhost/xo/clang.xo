@@ -27,11 +27,15 @@ fn clang_target_attrs(os: Os, clang: Str, cross: List[Str]) -> Str {
 
 /// LLVMCrossTriple: the clang target triple of an LLVM build for t on
 /// host ("os/arch"), when it is not the host and clang cross compiles for
-/// it with the host's toolchain: on Windows (decision 0197, stage 3) the
-/// MSVC build tools carry both the x64 and the ARM64 libraries, so
-/// windows/amd64 builds windows/arm64 and the reverse. "" otherwise.
-fn llvm_cross_triple(host: Str, t: Str) -> Str {
-  if !host.starts_with("windows/") || !t.starts_with("windows/") || host == t {
+/// it: on Windows (decision 0197, stage 3) the MSVC build tools carry both
+/// the x64 and the ARM64 libraries, so windows/amd64 builds windows/arm64
+/// and the reverse; on any other host, both Windows targets when winsysroot
+/// (XO_WINSYSROOT) names a Windows sysroot. "" otherwise.
+fn llvm_cross_triple(host: Str, t: Str, winsysroot: Str) -> Str {
+  if !t.starts_with("windows/") || host == t {
+    return ""
+  }
+  if !host.starts_with("windows/") && winsysroot.is_empty() {
     return ""
   }
   match t {
@@ -39,6 +43,18 @@ fn llvm_cross_triple(host: Str, t: Str) -> Str {
     "windows/amd64" => "x86_64-pc-windows-msvc"
     _ => ""
   }
+}
+
+/// The clang flags of a cross build for triple: --target, and from a host
+/// other than Windows the Windows sysroot (MSVC's C library and the
+/// Windows SDK in the layout of clang-cl's /winsysroot, e.g. made by
+/// `xwin splat --use-winsysroot-style`), where clang finds the headers
+/// and lld-link the libraries (decision 0197, cross builds).
+fn llvm_cross_flags(host: Str, triple: Str, winsysroot: Str) -> List[Str] {
+  if host.starts_with("windows/") {
+    return ["--target=${triple}"]
+  }
+  ["--target=${triple}", "-Xmicrosoft-windows-sys-root", winsysroot]
 }
 
 /// parseTargetAttrs: the target CPU and features of the cc1 line.

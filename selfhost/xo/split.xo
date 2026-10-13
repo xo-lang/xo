@@ -394,12 +394,20 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   for ll in lls {
     objs.push(ll.trim_suffix(".ll") + ".o")
   }
+  // a cross build's target (the IR names none, so clang would compile
+  // the modules for the host)
+  var target: List[Str] = []
+  for f in flags {
+    if f.starts_with("--target=") {
+      target.push(f)
+    }
+  }
   var next = 0
   var running: List[(Int, Child)] = []
   var fails: List[Str] = []
   while next < lls.len() || !running.is_empty() {
     while next < lls.len() && running.len() < c.jobs {
-      let args = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
+      let args = ["-O2"] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
       match os.proc.cmd(clang, args).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")
