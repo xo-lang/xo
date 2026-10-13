@@ -1120,6 +1120,12 @@ void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) {
 
 // xo_rl_grow doubles the capacity of a unique full list.
 __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) {
+	if (l->rc == XO_RC_IMMORTAL) {
+		// the shared empty list of an empty literal (xo_rl_empty): the
+		// arm64 backend makes `[]` without allocating, and the first
+		// push (to a list the compiler knows is unique) lands here
+		return xo_rl_new(4, esize);
+	}
 	int64_t cap = l->cap < 4 ? 4 : l->cap * 2;
 	int64_t hdr = (int64_t)sizeof(xo_rlist);
 	xo_rlist *n = xo_resize(l, hdr + l->cap * esize, hdr + cap * esize);
@@ -7162,6 +7168,26 @@ int main(int argc, char **argv) {
 		int64_t live, total;
 		xo_rt_live(&live, &total);
 		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);
+	}
+	if (getenv("XO_HEAPSTATS")) {
+		// where the heap's memory went: the blocks on each class's free
+		// list at exit (every block ever carved, when nothing is live)
+		// and the chunks carved (diagnostics, bench/results/xo1-speed)
+		pthread_mutex_lock(&heaps_mu);
+		int64_t sum = 0;
+		for (int64_t c = 1; c <= XO_NCLASS; c++) {
+			int64_t n = 0;
+			for (xo_heap *h = all_heaps; h; h = h->next) {
+				n += h->nfree[c];
+			}
+			int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
+			if (n > 0) {
+				fprintf(stderr, "xo heapstats: class %lld size %lld free blocks %lld bytes %lld\n", (long long)c, (long long)size, (long long)n, (long long)(n * (size + 8)));
+			}
+			sum += n * (size + 8);
+		}
+		pthread_mutex_unlock(&heaps_mu);
+		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks, (long long)(xo_chunks * (XO_CHUNK >> 20)), (long long)(sum >> 20));
 	}
 	return 0;
 }

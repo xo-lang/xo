@@ -1870,7 +1870,9 @@ native runtime:
 - counts allocations; a section that allocated faults when it ends with
   `XO-F007` (``real-time function `f` allocated n times``), which catches
   what the rules cannot see: a shared List copied on write, the box of a
-  recursive enum, a defaulted field.
+  recursive enum, a defaulted field with a non-empty collection (an
+  empty `[]` allocates nothing until its first push on the native
+  backends).
 
 The Go backend checks the rules and the loop bounds; it has no sections.
 

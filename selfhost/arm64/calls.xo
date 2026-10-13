@@ -419,7 +419,10 @@ fn (var g: G) call_op(v: Int) {
         g.set(v, g.rt("xo_rl_new_n", [rsrc(n), isrc(es)], [false]))
         return
       }
-      g.set(v, g.rt("xo_rl_new", [isrc(4), isrc(es)], [false]))
+      // the shared empty list, immortal: the first push allocates
+      // (xo_rl_grow), so a `[]` that stays empty costs no allocation
+      // (bench/results/xo1-speed-2026-10-13.md)
+      g.set(v, g.rt("xo_rl_empty", [], [false]))
     }
     "list.len" => g.set(v, [g.list_len(g.word(x.args[0]))])
     "list.index" => {

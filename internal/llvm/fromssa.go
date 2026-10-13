@@ -53,6 +53,7 @@ declare ptr @xo_rs_of_int(i64, ptr) #2
 declare ptr @xo_rs_of_float(double, ptr) #2
 declare ptr @xo_rl_new(i64, i64) #2
 declare ptr @xo_rl_new_n(i64, i64) #2
+declare ptr @xo_rl_empty() #2
 declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3
 declare void @xo_rl_share(ptr, i64, ptr) #2
 declare ptr @xo_rl_grow(ptr, i64) #3
@@ -1909,7 +1910,9 @@ func (s *sfn) call(v *ssa.Value) {
 			s.set(v, "call ptr @xo_rl_new_n(i64 %s, i64 %d)", a(0), g.size(et))
 			break
 		}
-		s.set(v, "call ptr @xo_rl_new(i64 4, i64 %d)", g.size(et))
+		// the shared empty list, immortal: the first push allocates
+		// (xo_rl_grow), as on arm64; mirrors selfhost/llvm call.xo
+		s.set(v, "call ptr @xo_rl_empty()")
 	case "list.len":
 		s.alias(v, s.listLen(a(0)))
 	case "list.index":
