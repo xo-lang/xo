@@ -122,6 +122,12 @@ The bootstrap chain, as release.sh runs it:
                                            -> linux/arm64 xo1 (no cc: selfhost/macho's ELF link)
     darwin xo1: --backend=go --targets=linux/amd64
                                            -> linux/amd64 xo1 (Go toolchain)
+    darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
+                                           -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
+                                              XO_WIN_CLANG, an upstream clang with lld-link beside it,
+                                              and XO_WINSYSROOT from xwin; not tried on the Mac yet,
+                                              whose 24 GB is below the 29.5 GB the Linux run used;
+                                              XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
 
 After a release exists, the previous release's xo replaces the Go seed
 (`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
@@ -2950,6 +2956,25 @@ x86_64-pc-windows-msvc by default and finds the build tools itself; the
 link is `-fuse-ld=lld` (LTO bitcode). Results:
 bench/results/windows-2026-10-12.md. Last verified: 2026-10-12
 (instance i-EXAMPLE19).
+
+xo1 for Windows built by Xo (decision 0197 stage 7). Cross, from Linux
+or macOS: an upstream LLVM (clang and lld-link; Apple's clang has no
+lld-link; 23.1.3 measured) and a Windows sysroot,
+`xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style
+--preserve-ms-arch-notation --output DIR` (xwin 0.10.0, 19 s, 1.1 GB;
+without the last flag lld-link finds no .lib,
+gotchas/windows-cross-sysroot.md), then
+`XO_CLANG=<llvm>/bin/clang XO_AR=<llvm>/bin/llvm-ar XO_WINSYSROOT=DIR
+XO_LLVM_SPLIT=16 XO_LLVM_JOBS=16 XO_LLVM_LTO=thin xo build --backend=llvm
+--targets=windows/amd64 -o xo.exe ./selfhost/xo` (1,362 s on 32 vCPU and
+64 GiB, 29.5 GB peak in use; the link alone about 22 GB). Natively on
+Windows: the same without XO_WINSYSROOT, XO_CLANG, XO_AR (1,544 s,
+35 GB peak in use on c7i.8xlarge; use `XO_REMOTE_TYPE=c7i.8xlarge`, 32
+GiB is too little for one module with full LTO and tight for this).
+XO_LLVM_LTO=none is slower here (1,571 s cross: each -O2 module takes
+764 to 1,426 s). Results: bench/results/windows-2026-10-12.md, "xo1
+built by Xo for Windows". Last verified: 2026-10-13 (i-EXAMPLE07,
+i-EXAMPLE03).
 
 
 ## Bootstrapping without Go (decision 0178, stage 7)

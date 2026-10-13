@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
+  build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
+  cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows
+  sysroot (MSVC's C library and the Windows SDK, e.g. made by xwin)
+  and an upstream clang with lld-link is used. xo built this way from
+  Linux runs on Windows, passes the 145 Windows goldens, and builds
+  itself on Windows to the same output. Fixed: on Windows, `xo` started
+  by name from cmd.exe did not find its standard library
+  (`fault: prelude type missing: Str`).
 - Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
   request to an in memory server sent after a stop request waited in
   the listener's backlog instead of failing, and under load could end
