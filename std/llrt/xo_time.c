@@ -5,7 +5,7 @@
 // std/native/rttime.xo declares the intrinsics. The zone rules are Xo
 // (std/native/llrt/tz.xo, decision 0193 step 5): this file finds the
 // TZif data of a name (xo_tz_data) and keeps the zones tz.xo parsed, by
-// name (xo_tz_find, xo_tz_keep, xo_tz_rules). std/native/time.xo does
+// name (xo_tz_find, xo_tz_keep). std/native/time.xo does
 // the rest (civil time, layouts) in Xo.
 //
 // The C path of the rules (XO_TZ_C, std/native/llrt/tz_c.xo with
@@ -904,27 +904,33 @@ xo_rlist *xo_tz_data(const char *p, int64_t n, int64_t host) {
 }
 
 // The zones tz.xo parsed, by id (1..tzx_n): a name always gets the same
-// id, and is parsed once.
+// id and is parsed once. A zone is a List[Int] whose layout only tz.xo
+// knows (its first word is the id); the table holds it shared, so any
+// thread may use it.
 static char *tzx_names[TZ_MAX + 1];
-static xo_any *tzx_zones[TZ_MAX + 1];
+static xo_rlist *tzx_zones[TZ_MAX + 1];
 static int64_t tzx_n;
 static pthread_mutex_t tzx_mu = PTHREAD_MUTEX_INITIALIZER;
 
-static int64_t tzx_find(const char *p, int64_t n) {
+// tzx_get is the zone named p (a reference), or the empty list; tzx_mu
+// is held.
+static xo_rlist *tzx_get(const char *p, int64_t n) {
 	for (int64_t i = 1; i <= tzx_n; i++) {
 		if ((int64_t)strlen(tzx_names[i]) == n && memcmp(tzx_names[i], p, (size_t)n) == 0) {
-			return i;
+			rc_inc(&tzx_zones[i]->rc);
+			return tzx_zones[i];
 		}
 	}
-	return 0;
+	return &empty_list;
 }
 
-// xo_tz_find is the id of the zone named p kept so far, or 0.
-int64_t xo_tz_find(const char *p, int64_t n) {
+// xo_tz_find is the zone named p kept so far (a reference), or the empty
+// list.
+xo_rlist *xo_tz_find(const char *p, int64_t n) {
 	pthread_mutex_lock(&tzx_mu);
-	int64_t id = tzx_find(p, n);
+	xo_rlist *z = tzx_get(p, n);
 	pthread_mutex_unlock(&tzx_mu);
-	return id;
+	return z;
 }
 
 // tzx_free releases the kept zones at exit, so the leak check sees them
@@ -932,7 +938,9 @@ int64_t xo_tz_find(const char *p, int64_t n) {
 static void tzx_free(void) {
 	pthread_mutex_lock(&tzx_mu);
 	for (int64_t i = 1; i <= tzx_n; i++) {
-		h_release(tzx_zones[i]);
+		if (rc_dec(&tzx_zones[i]->rc)) {
+			xo_rl_free(tzx_zones[i], 8, NULL);
+		}
 		free(tzx_names[i]);
 		tzx_zones[i] = NULL;
 		tzx_names[i] = NULL;
@@ -941,31 +949,28 @@ static void tzx_free(void) {
 	pthread_mutex_unlock(&tzx_mu);
 }
 
-// xo_tz_keep keeps the zone z (borrowed) that tz.xo parsed under the name
-// p and returns its id; a zone kept under the name first keeps its id. 0
-// when the table is full.
-int64_t xo_tz_keep(const char *p, int64_t n, xo_any *z) {
+// xo_tz_keep keeps the zone z (a List[Int] of at least one word,
+// borrowed) that tz.xo parsed under the name p, writes its id to its
+// first word, and returns it (a reference); a zone kept under the name
+// first is returned instead. The empty list when the table is full.
+xo_rlist *xo_tz_keep(const char *p, int64_t n, xo_rlist *z) {
 	pthread_mutex_lock(&tzx_mu);
-	int64_t id = tzx_find(p, n);
-	if (id == 0 && tzx_n < TZ_MAX) {
-		id = ++tzx_n;
+	xo_rlist *k = tzx_get(p, n);
+	if (k == &empty_list && tzx_n < TZ_MAX && z->len > 0) {
+		int64_t id = ++tzx_n;
 		tzx_names[id] = cstr_of(p, n);
-		h_retain(z);
-		__atomic_store_n(&tzx_zones[id], z, __ATOMIC_RELEASE);
+		// z is a list of Ints made by the calling thread: written once
+		// here, then shared (its elements hold no references)
+		((int64_t *)rl_data(z))[0] = id;
+		xo_rc_mark(&z->rc);
+		rc_inc(&z->rc);
+		tzx_zones[id] = z;
 		xo_tz_exit_free = tzx_free;
+		rc_inc(&z->rc);
+		k = z;
 	}
 	pthread_mutex_unlock(&tzx_mu);
-	return id;
-}
-
-// xo_tz_rules is the zone kept under id (a reference).
-xo_any *xo_tz_rules(int64_t id) {
-	xo_any *z = id >= 1 && id <= TZ_MAX ? __atomic_load_n(&tzx_zones[id], __ATOMIC_ACQUIRE) : NULL;
-	if (!z) {
-		return xo_h_zero();
-	}
-	h_retain(z);
-	return z;
+	return k;
 }
 
 // xo_tz_now is the wall clock in seconds (the time of a load: Go fills

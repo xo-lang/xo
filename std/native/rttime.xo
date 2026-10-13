@@ -4,7 +4,6 @@
 // Xo, decision 0193 step 5) and its C path tz_c.xo. A zone is an id: 0
 // is UTC, others index the zones loaded so far (the same name always
 // gets the same id). Instants are seconds since the Unix epoch.
-use native/rt
 
 /// The TZif data that may hold the zone with this name, in the order to
 /// try them: from the program's zone data (host false: the TZif data of
@@ -14,14 +13,14 @@ use native/rt
 /// the system directories; "Local" is /etc/localtime). Empty when there
 /// is none.
 fn tz_data(name: Str, host: Bool) -> List[Bytes]
-/// The id of the zone named name loaded so far, or 0.
-fn tz_find(name: Str) -> Int
-/// Keeps the parsed zone z (an rt.Any) under name and returns its id; a
-/// zone already kept under name keeps its id (z is dropped); 0 when the
-/// table is full.
-fn tz_keep(name: Str, z: rt.Any) -> Int
-/// The parsed zone kept under id (tz_keep's).
-fn tz_rules(id: Int) -> rt.Any
+/// The zone named name kept so far (tz.xo's parsed zone, its id in its
+/// first word), or the empty list.
+fn tz_find(name: Str) -> List[Int]
+/// Keeps the parsed zone z under name, its id written to its first word,
+/// and returns it; a zone kept under name first is returned instead (z
+/// is dropped). The empty list when the table is full. The table holds z
+/// shared between threads until exit.
+fn tz_keep(name: Str, z: List[Int]) -> List[Int]
 /// The wall clock in seconds since the Unix epoch (the time of a load,
 /// for Go's cache).
 fn tz_now() -> Int
