@@ -16,6 +16,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tables) take one allocation and a memset instead of a push per
   element. Fixed: the wasm backend reported std code using the raw
   memory intrinsics as unsupported.
+- Added: `./...` and `DIR/...` on every command that takes directories
+  (check, test, build, vet, doc, fmt, fix, parse, audit). It means DIR,
+  which those commands already walk below, so `xo check ./...` equals
+  `xo check .`; a `DIR/...` with no `.xo` file under it is an error
+  (exit 1) (decision 0210).
+- Changed: directories whose name starts with `_` are skipped like
+  `testdata` and `.` names, as the go command skips them (decision 0210).
+- Fixed: `xo help` lists every command with its purpose, and every
+  command takes `-h`/`--help` (usage on stdout, exit 0), also after a
+  subcommand (`xo edit rename --help`); `xo` alone and `xo build -h` no
+  longer print the internal xo1 usage line or its internal flags; an
+  unknown flag exits 2 with the command's usage on stderr.
 - The LLVM backend lowers std's internal spin loop hint to the target's
   pause instruction (`yield` on arm64, `pause` on x86-64) instead of
   nothing (decision 0200).

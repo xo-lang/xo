@@ -5,6 +5,7 @@
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 /// A source position named in a result.
 pub struct Site {
@@ -821,7 +822,7 @@ fn run_edit(os: Os, args: List[Str]) -> Int uses env, fs, proc, stdio {
         }
         break
       } else {
-        os.stdio.eprintln("flag provided but not defined: ${a}")
+        os.stdio.eprint("flag provided but not defined: -${flag.split("=")[0]}\n${cmdhelp.usage("edit")}")
         return 2
       }
       i += 1

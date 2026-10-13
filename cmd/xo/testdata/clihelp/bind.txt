@@ -1,0 +1,8 @@
+usage: xo bind [--dir=<project dir>] [--json] <go import paths...>
+       xo bind --c [--dir=<module dir>] [--link=<lib>]... [--uses=none|<effects>] [--json] <headers...>
+
+Bind Go packages for use go "<path>" (decision 0041), or with --c C
+headers for use c "<header>" on native builds (decision 0116): write
+the Xo declaration file and the adapter into the binding cache and print
+how much mapped. check, build, and test bind missing packages on their
+own.
