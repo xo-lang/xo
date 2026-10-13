@@ -83,11 +83,28 @@ log() { echo "remote-full: $*" >&2; }
 
 # one-time setup
 key=~/.ssh/xo-ci.pem
-if ! aws ec2 describe-key-pairs --key-names xo-ci >/dev/null 2>&1; then
-  [ -n "$DRY" ] && { log "would create key pair xo-ci"; } || {
-    aws ec2 create-key-pair --key-name xo-ci --query KeyMaterial --output text > "$key"
-    chmod 600 "$key"; log "created key pair xo-ci ($key)"; }
-fi
+# The key pair is created only when AWS answers that it does not exist,
+# and the private key is written through a temporary file: on 2026-10-13
+# a run that could not reach AWS took the failed describe for "missing"
+# and redirected create-key-pair's error over the existing key, leaving
+# it empty (gotchas/ec2-key-overwritten.md). An existing key file is
+# never overwritten.
+kp_err=$(aws ec2 describe-key-pairs --key-names xo-ci 2>&1 >/dev/null) || {
+  if ! printf '%s' "$kp_err" | grep -q 'InvalidKeyPair.NotFound'; then
+    log "cannot reach EC2 to check the key pair xo-ci: $kp_err"; exit 1
+  fi
+  if [ -s "$key" ]; then
+    log "the key pair xo-ci is missing on AWS but $key exists; refusing to overwrite it (move it aside to recreate)"; exit 1
+  fi
+  if [ -n "$DRY" ]; then log "would create key pair xo-ci"
+  else
+    tmpkey=$(mktemp)
+    aws ec2 create-key-pair --key-name xo-ci --query KeyMaterial --output text > "$tmpkey"
+    head -1 "$tmpkey" | grep -q 'BEGIN' || { log "create-key-pair returned no key"; rm -f "$tmpkey"; exit 1; }
+    chmod 600 "$tmpkey"; mv "$tmpkey" "$key"; log "created key pair xo-ci ($key)"
+  fi
+}
+[ -n "$DRY" ] || [ -s "$key" ] || { log "$key is empty or missing; recreate the xo-ci key pair (see gotchas/ec2-key-overwritten.md)"; exit 1; }
 vpc=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
 sg=$(aws ec2 describe-security-groups --filters Name=group-name,Values=xo-ci-ssh Name=vpc-id,Values="$vpc" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
 myip=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
