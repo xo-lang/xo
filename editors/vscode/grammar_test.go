@@ -10,9 +10,29 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/token"
 )
+
+// lexerKeywords are the keywords of the lexer: the keys of KEYWORDS in
+// selfhost/lexer/token.xo (internal/token's table until decision 0215).
+func lexerKeywords(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("../../selfhost/lexer/token.xo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	i := strings.Index(s, "const KEYWORDS = {\n")
+	if i < 0 {
+		t.Fatal("no KEYWORDS in selfhost/lexer/token.xo")
+	}
+	s = s[i:]
+	s = s[:strings.Index(s, "\n}\n")]
+	var out []string
+	for _, m := range regexp.MustCompile(`(?m)^  "(\w+)": Kind\.`).FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
 
 type rule struct {
 	Name     string `json:"name"`
@@ -59,11 +79,11 @@ func TestKeywordsMatchLexer(t *testing.T) {
 			got = append(got, alt)
 		}
 	}
-	want := token.Keywords()
+	want := lexerKeywords(t)
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("grammar keywords differ from internal/token\n got: %v\nwant: %v", got, want)
+		t.Errorf("grammar keywords differ from selfhost/lexer\n got: %v\nwant: %v", got, want)
 	}
 }
 
