@@ -607,6 +607,16 @@ int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 		return (int64_t)(x << (y & 63));
 	case 4:
 		return (int64_t)(x >> (y & 63));
+	case 5:
+		// rotate right (decision 0195)
+		return (int64_t)((x >> (y & 63)) | (x << ((64 - (y & 63)) & 63)));
+	case 6: {
+		// the low 32 bits rotated right, zero extended
+		uint32_t w = (uint32_t)x;
+		return (int64_t)(uint32_t)((w >> (y & 31)) | (w << ((32 - (y & 31)) & 31)));
+	}
+	case 7:
+		return (int64_t)__builtin_bswap64(x);
 	}
 	return (int64_t)(x * y);
 }

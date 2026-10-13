@@ -105,6 +105,13 @@ double xo_rand_float(void) { return (double)(cr_rand_u64() >> 11) / (double)(1UL
 // xo_rand_bool is `rand.bool()`.
 int64_t xo_rand_bool(void) { return (int64_t)(cr_rand_u64() & 1); }
 
+// The C path of the hashes (decisions 0193 and 0195): SHA-256, HMAC,
+// PBKDF2, BLAKE2b, Argon2, unpadded base64, and verify_password are
+// std/native/llrt/digest.xo; their C below is compiled only with
+// -DXO_DIGEST_C (XO_LLRT_C=digest, std/native/llrt/digest_c.xo, and
+// std/llrt/testdata/crypto_diff.c). crypto.equal, SHA-512, and Ed25519
+// stay C (constant time).
+#ifdef XO_DIGEST_C
 // ---------------------------------------------------------------------------
 // SHA-256
 
@@ -277,7 +284,9 @@ static void cr_pbkdf2(const uint8_t *pw, int64_t pn, const uint8_t *salt, int64_
 		keylen -= k;
 	}
 }
+#endif
 
+#ifdef XO_DIGEST_C
 // ---------------------------------------------------------------------------
 // BLAKE2b (RFC 7693), unkeyed, digest sizes 1 to 64
 
@@ -308,6 +317,7 @@ static const uint8_t cr_b2b_sigma[12][16] = {
 	{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 	{14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
 };
+#endif
 
 static uint64_t cr_ror64(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }
 
@@ -325,6 +335,7 @@ static void cr_put_le64(uint8_t *p, uint64_t v) {
 	}
 }
 
+#ifdef XO_DIGEST_C
 static void cr_put_le32(uint8_t *p, uint32_t v) {
 	for (int i = 0; i < 4; i++) {
 		p[i] = (uint8_t)(v >> (8 * i));
@@ -773,6 +784,7 @@ xo_rstr *xo_crypto_hmac_sha256(const char *k, int64_t kn, const char *p, int64_t
 	cr_hmac_sum(&m, (const uint8_t *)p, n, NULL, 0, d);
 	return nstr((const char *)d, 32, len);
 }
+#endif
 
 // xo_crypto_equal is `crypto.equal(a, b)`: subtle.ConstantTimeCompare,
 // constant time in the contents (not the lengths).
@@ -787,6 +799,7 @@ int64_t xo_crypto_equal(const char *a, int64_t an, const char *b, int64_t bn) {
 	return d == 0;
 }
 
+#ifdef XO_DIGEST_C
 // xo_crypto_pbkdf2 is PBKDF2-HMAC-SHA256 of the password and salt.
 xo_rstr *xo_crypto_pbkdf2(const char *pw, int64_t pn, const char *salt, int64_t sn, int64_t iter, int64_t keylen, int64_t *len) {
 	xo_rstr *s = rs_new(keylen);
@@ -919,6 +932,7 @@ int64_t xo_crypto_verify_password(const char *pw, int64_t pn, const char *h, int
 	free(want.p);
 	return ok;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // SHA-512 (FIPS 180-4) and Ed25519 (RFC 8032, decision 0189), as Go's

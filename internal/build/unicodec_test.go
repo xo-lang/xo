@@ -150,6 +150,30 @@ func TestIOFlagsInts(t *testing.T) {
 	}
 }
 
+// TestIOFlagsDigestAndGlob checks the C paths of std/crypto's hashes
+// (XO_LLRT_C=digest) and MemFs.fail_next's match (glob, decision 0195):
+// compiled only into programs that call them; crypto.equal and Ed25519,
+// which stay C, turn on nothing.
+func TestIOFlagsDigestAndGlob(t *testing.T) {
+	for _, c := range []struct {
+		code, flag string
+		want       bool
+	}{
+		{"bl _xo_crypto_sha256\n", "-DXO_DIGEST_C", true},
+		{"call ptr @xo_crypto_argon2id(ptr %1, i64 %2)\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_verify_password\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_b64\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_equal\nbl _xo_crypto_ed25519_sign\n", "-DXO_DIGEST_C", false},
+		{"bl _xo_test_glob\n", "-DXO_GLOB_C", true},
+		{"bl _xo_test_memfs_take\n", "-DXO_GLOB_C", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), c.flag)
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has %s: %v, want %v", c.code, c.flag, got, c.want)
+		}
+	}
+}
+
 // TestIOFlagsJSONTextC checks that code calling the C path of std/json's
 // text compiles the runtime with -DXO_JSONTEXT_C (decision 0193 step 4),
 // and that the default (Xo) path, which calls the byte primitives, does

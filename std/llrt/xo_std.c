@@ -1022,7 +1022,7 @@ xo_rstr *xo_b64_encode(const char *p, int64_t n, int64_t *len) {
 }
 #endif
 
-static int b64_val(unsigned c) {
+static __attribute__((unused)) int b64_val(unsigned c) {
 	if (c >= 'A' && c <= 'Z') {
 		return (int)(c - 'A');
 	}

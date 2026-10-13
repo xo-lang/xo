@@ -84,6 +84,9 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
 declare void @llvm.assume(i1)
+declare i64 @llvm.fshr.i64(i64, i64, i64)
+declare i32 @llvm.fshr.i32(i32, i32, i32)
+declare i64 @llvm.bswap.i64(i64)
 
 declare i32 @xo_personality(...)
 
@@ -2140,18 +2143,33 @@ func (s *sfn) call(v *ssa.Value) {
 // inlineRT lowers the runtime intrinsics that are an instruction or two
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
-// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-// multiply), the bits of a Float both ways, and rt.bytes_word (an
-// unchecked load of 8 bytes). It reports whether v was one.
+// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5 rotate
+// right by the amount mod 64, 6 the low 32 bits rotated right by the
+// amount mod 32 and zero extended, 7 the bytes reversed), rt.u64_mul_hi
+// (an i128 multiply), the bits of a Float both ways, and rt.bytes_word
+// (an unchecked load of 8 bytes). It reports whether v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
 		op, ok := v.Args[0].Aux.(int64)
 		ok = ok && v.Args[0].Op == ssa.OpConst
-		if !ok || op < 0 || op > 4 {
+		if !ok || op < 0 || op > 7 {
 			return false
 		}
 		a, b := s.op(v.Args[1]), s.op(v.Args[2])
+		switch op {
+		case 5:
+			s.set(v, "call i64 @llvm.fshr.i64(i64 %s, i64 %s, i64 %s)", a, a, b)
+			return true
+		case 6:
+			x := s.def("trunc i64 %s to i32", a)
+			n := s.def("trunc i64 %s to i32", b)
+			s.set(v, "zext i32 %s to i64", s.def("call i32 @llvm.fshr.i32(i32 %s, i32 %s, i32 %s)", x, x, n))
+			return true
+		case 7:
+			s.set(v, "call i64 @llvm.bswap.i64(i64 %s)", a)
+			return true
+		}
 		if op >= 3 {
 			b = s.def("and i64 %s, 63", b)
 		}

@@ -634,19 +634,42 @@ fn (var g: G) call_op(v: Int) {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the
-/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
-/// bytes); whether v was one (isel.go inlineRT).
+/// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
+/// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+/// extended, 7 the bytes reversed), rt.u64_mul_hi, the bits of a Float
+/// both ways, and rt.bytes_word (an unchecked load of 8 bytes); whether v
+/// was one (isel.go inlineRT).
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
     "rt.int_wrap" => {
       let (op, ok) = g.const_int(x.args[0])
-      if !ok || op < 0 || op > 4 {
+      if !ok || op < 0 || op > 7 {
         return false
       }
-      let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let a = g.word(x.args[1])
+      if op == 7 {
+        g.set(v, [g.def1(false, "rev $d0, $u0", [a])])
+        return true
+      }
+      if op == 5 || op == 6 {
+        let (k, kc) = g.const_int(x.args[2])
+        if kc {
+          if op == 5 {
+            g.set(v, [g.def1(false, "ror $d0, $u0, #${k & 63}", [a])])
+          } else {
+            g.set(v, [g.def1(false, "ror $wd0, $wu0, #${k & 31}", [a])])
+          }
+          return true
+        }
+        if op == 5 {
+          g.set(v, [g.def1(false, "ror $d0, $u0, $u1", [a, g.word(x.args[2])])])
+        } else {
+          g.set(v, [g.def1(false, "ror $wd0, $wu0, $wu1", [a, g.word(x.args[2])])])
+        }
+        return true
+      }
+      let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op >= 3 {
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k & 63}", [a])])

@@ -476,9 +476,11 @@ fn runtime_raises(name: Str) -> Bool {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-/// multiply), the bits of a Float both ways, and rt.bytes_word (an
-/// unchecked load of 8 bytes); whether v was one (fromssa.go inlineRT).
+/// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
+/// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+/// extended, 7 the bytes reversed), rt.u64_mul_hi (an i128 multiply), the
+/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
+/// bytes); whether v was one (fromssa.go inlineRT).
 fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -491,11 +493,25 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         I(n) => n
         _ => -1
       }
-      if op < 0 || op > 4 {
+      if op < 0 || op > 7 {
         return false
       }
       let a = g.op(x.args[1])
       var b = g.op(x.args[2])
+      if op == 5 {
+        g.set(v, "call i64 @llvm.fshr.i64(i64 ${a}, i64 ${a}, i64 ${b})")
+        return true
+      }
+      if op == 6 {
+        let x32 = g.def("trunc i64 ${a} to i32")
+        let n32 = g.def("trunc i64 ${b} to i32")
+        g.set(v, "zext i32 ${g.def("call i32 @llvm.fshr.i32(i32 ${x32}, i32 ${x32}, i32 ${n32})")} to i64")
+        return true
+      }
+      if op == 7 {
+        g.set(v, "call i64 @llvm.bswap.i64(i64 ${a})")
+        return true
+      }
       if op >= 3 {
         b = g.def("and i64 ${b}, 63")
       }
