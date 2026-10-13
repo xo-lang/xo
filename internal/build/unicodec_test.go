@@ -149,3 +149,26 @@ func TestIOFlagsJSONTextC(t *testing.T) {
 		}
 	}
 }
+
+// TestIOFlagsAtomicC checks that code calling the C path of Atomic's
+// operations compiles the runtime with -DXO_ATOMIC_C (decision 0200), and
+// that the default path, which allocates with xo_atomic_new and does the
+// rest inline or in Xo, does not.
+func TestIOFlagsAtomicC(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_atomic_get\n", true},
+		{"call void @xo_atomic_set(ptr %1, i64 %2)\n", true},
+		{"bl _xo_atomic_add\n", true},
+		{"bl xo_atomic_max\n", true},
+		{"bl _xo_atomic_new\n\tldar x0, [x9]\n\tcasal x10, x0, [x9]\n", false},
+		{"call ptr @xo_atomic_new(i64 0)\n%t1 = load atomic i64, ptr %t0 seq_cst, align 8\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_ATOMIC_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_ATOMIC_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
