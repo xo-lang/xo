@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends: the C runtime's reference count operations (retain,
+  release, claim, and marking a value shared between threads) are Xo
+  (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C
+  through C ABI exports; within 5 percent of the C's instructions on
+  both backends (bench/results/raw-memory-2026-10-13.md).
+  `XO_LLRT_C=rc` builds the C path. Lists of zeros made by std's
+  implementation (deflate's tables, regexp's queue, JSON object key
+  tables) take one allocation and a memset instead of a push per
+  element. Fixed: the wasm backend reported std code using the raw
+  memory intrinsics as unsupported.
 - Native backends: more of the C runtime is Xo (decisions 0204, 0207):
   the text of every arithmetic, index, and conversion fault, Int and
   Float text, UTF-8 decoding, white space, Int parsing, Duration and Time

@@ -793,6 +793,18 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
   2026-10-13.
+- `XO_LLRT_C=rc` (2026-10-13, decision 0207 stage 2): the C runtime's
+  own reference counts (rc_inc, rc_dec, rc_claim, xo_rc_mark compiled
+  with -DXO_RC_C, which both drivers add when the generated code calls
+  rc_c.xo's rt.rc_*_c) instead of std/native/llrt/rc.xo through the
+  xo_x_rc_* exports (the default). TestRuntimeThreads runs
+  std/llrt/testdata/rc_threads.c both ways under ThreadSanitizer. The
+  comparison (instructions of bench/perf/nested, xo, text, json, conc)
+  is a scratch script: build each program with and without
+  `XO_LLRT_C=rc`, minimum of 5 runs (conc: 11 or 21, XO_THREADS=1;
+  their counts vary by 10 percent between runs). Results in
+  `bench/results/raw-memory-2026-10-13.md` (stage 2). Last verified:
+  2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
   0195): sized integers, std/crypto's hashes, path.Match, and generated
