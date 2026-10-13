@@ -17,4 +17,6 @@ central lists do.
 Fix: in a test of chunk reuse, allocate on a thread that lives
 through every round (the main thread, as tasks.c's magazines test
 does) and free on the new threads; alloc_threads.c's waves test does
-that and bounds the chunks at 4 over 30 rounds.
+that. Even then each dead freeing heap keeps up to two magazines, so
+the bound must grow with the rounds (n / 10 + 3; a fixed 4 failed at
+300 rounds with 19 chunks).

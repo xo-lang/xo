@@ -304,12 +304,14 @@ static void test_waves(void) {
 			pthread_join(ts[k], NULL);
 		}
 	}
-	// each round allocates 896 KB, about 7 chunks over 30 rounds without
-	// the central lists; a freeing thread keeps at most two magazines
-	// (128 KB) in the heap it leaves behind
+	// each round allocates 896 KB, a chunk every 4.7 rounds without the
+	// central lists; a freeing thread keeps at most two magazines (128
+	// KB) in the heap it leaves behind, a chunk every 16 rounds for the
+	// two (2 in 28 rounds, 19 in 300 measured)
+	int n = rounds - 2;
 	int64_t grew = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED) - before;
-	CHECK(grew <= 4);
-	fprintf(stderr, "waves: %lld chunks carved in %d rounds\n", (long long)grew, rounds - 2);
+	CHECK(grew <= n / 10 + 3);
+	fprintf(stderr, "waves: %lld chunks carved in %d rounds\n", (long long)grew, n);
 }
 
 int main(void) {

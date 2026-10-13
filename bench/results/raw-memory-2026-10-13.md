@@ -473,8 +473,11 @@ alias of the function instead of a branch.
   sizes over every class, the mid classes and malloc, sizes 0 to 7,
   resizes, rs_new's capacity), threads (8 threads, blocks sent to other
   threads' mailboxes, checked, resized, and freed there), waves (one
-  thread allocates, two new threads free, 30 rounds, at most 4 chunks
-  carved). Every block's contents are a pattern of its tag, checked
+  thread allocates, two new threads free, n rounds, at most n / 10 + 3
+  chunks carved where without the central lists a round needs 0.21 of
+  a chunk; the first bound, 4 whatever n, failed the -O2 run on EC2
+  with 19 chunks in 300 rounds, the dead freeing heaps' magazines).
+  Every block's contents are a pattern of its tag, checked
   before each resize and free; every test ends with 0 live. A mutation
   (resize copying half of the kept bytes) fails it with 44 checks.
 - Mac, -short: TestRuntimeAlloc, TestRuntimeThreads, TestRuntimeTasks,
