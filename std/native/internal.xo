@@ -1,4 +1,4 @@
-// std/internal on the native backends (decisions 0074 and 0213). std/rt's
+// std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
 use native/rt
 

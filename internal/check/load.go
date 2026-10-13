@@ -458,7 +458,7 @@ func (c *checker) loadImports(m *Module) error {
 			var dep *Module
 			var err error
 			if p == "std/internal" && !internalVisible(m) {
-				// std/internal (decision 0213): only std and the
+				// std/internal (decision 0214): only std and the
 				// toolchain's own modules see it
 			} else {
 				dep, err = c.resolveImport(p)
@@ -669,7 +669,7 @@ func (c *checker) goSkipped(m *Module, qual string, sp token.Span) bool {
 }
 
 // internalVisible is whether module m may import std/internal (decision
-// 0213): std modules, their native implementations, and the toolchain's
+// 0214): std modules, their native implementations, and the toolchain's
 // own modules (github.com/xo-lang/xo and below).
 func internalVisible(m *Module) bool {
 	return m.IsStd || m.Native || m.Path == "github.com/xo-lang/xo" || strings.HasPrefix(m.Path, "github.com/xo-lang/xo/")

@@ -17,7 +17,7 @@ import (
 
 // TestXo1GoBuildSurvivesTrim is internal/build's TestGoCommandSurvivesTrim
 // for xo1 (gotchas/go-commands-outside-build-race-trim.md, decision
-// 0213): xo1's Go backend runs go build on the Xo Go cache while this
+// 0214): xo1's Go backend runs go build on the Xo Go cache while this
 // process trims it the way internal/build's trimGoCache does (xo-gate.lock
 // and xo-cache.lock exclusive through gotool.LockCacheExclusive, then
 // every entry removed). xo1 must hold the shared lock across go build:

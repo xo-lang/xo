@@ -133,7 +133,13 @@ for _ in $(seq 1 240); do ssh_ 'test -f /c/xo-ready' 2>/dev/null && break; sleep
 ssh_ 'test -f /c/xo-ready'
 
 bundle=$(mktemp -t xo-bundle).bundle
-git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
+# bundle the commit through a temporary ref: git bundle refuses a bare
+# sha, and the old fallback to HEAD silently sent the wrong commit when
+# COMMIT was not the checkout's HEAD (an agent's branch, 2026-10-13)
+tmpref="refs/heads/xo-remote-$(git rev-parse "$commit")"
+git update-ref "$tmpref" "$commit"
+git bundle create "$bundle" "$tmpref" >/dev/null 2>&1 || { git update-ref -d "$tmpref"; log "cannot bundle $commit"; exit 1; }
+git update-ref -d "$tmpref"
 scp -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -q "$bundle" "Administrator@$ip:xo.bundle"
 rm -f "$bundle"
 # LF line endings: Git for Windows converts to CRLF by default, and every

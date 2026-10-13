@@ -356,7 +356,7 @@ func (f *realFs) lockFile(tk *Task, p string, wait bool) Result[Option[FileLock]
 }
 
 // lockFileMode takes the lock exclusively, or shared when shared
-// (std/internal's lock_shared, decision 0213).
+// (std/internal's lock_shared, decision 0214).
 func (f *realFs) lockFileMode(tk *Task, p string, wait, shared bool) Result[Option[FileLock], FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {

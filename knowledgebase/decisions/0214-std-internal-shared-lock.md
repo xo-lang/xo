@@ -1,4 +1,4 @@
-# 0213: std/internal and a shared file lock for the toolchain
+# 0214: std/internal and a shared file lock for the toolchain
 
 Status: Accepted (owner, 2026-10-13: internal only, no public std API
 change; std's public `Fs.lock` stays exclusive only), implemented
@@ -58,7 +58,11 @@ them, and do not exist on the Go backend.
   `TestXo1GoBuildSurvivesTrim` (internal/selfdriver) runs xo1 `build
   --backend=go` three times while trimming the cache every 20 ms through
   `gotool.LockCacheExclusive`, and fails when no trim found the cache
-  held.
+  held. Results at 7a026d68 (2026-10-13): macOS arm64 (this Mac, xo1
+  built by the test) passed with "trims 28, refused while xo1 held the
+  cache 593"; Linux arm64 (EC2, through the lead's queue) passed with
+  "trims 3, refused while xo1 held the cache 626", with
+  TestStdInternalVisibility and TestGoCommandSurvivesTrim.
 - On Windows the Go implementation still takes no cache lock
   (internal/gotool cachelock_other.go) and trims only old entries; xo1's
   shared locks there are harmless and ready for a Go side lock.

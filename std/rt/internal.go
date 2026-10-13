@@ -3,7 +3,7 @@ package rt
 import "strings"
 
 // ---------------------------------------------------------------------------
-// std/internal (decision 0213): primitives for std and the toolchain's own
+// std/internal (decision 0214): primitives for std and the toolchain's own
 // modules, not std's public surface.
 
 // Internal_SharedLock is `internal.SharedLock`: a held shared advisory

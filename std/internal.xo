@@ -1,5 +1,5 @@
 // std/internal: primitives for std's implementation and the Xo
-// toolchain's own modules (decision 0213), not part of std's public
+// toolchain's own modules (decision 0214), not part of std's public
 // surface (spec/std.md does not list it). Declaration file; encoding rules
 // are listed at the top of std/prelude.xo. Only std modules and modules
 // whose path is github.com/xo-lang/xo or below it may import it; for any

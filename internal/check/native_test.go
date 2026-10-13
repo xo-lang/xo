@@ -141,7 +141,7 @@ func TestLLRTCPath(t *testing.T) {
 	}
 }
 
-// TestStdInternalVisibility checks decision 0213: a user module cannot
+// TestStdInternalVisibility checks decision 0214: a user module cannot
 // import std/internal (module not found, as native/rt), a toolchain
 // module (github.com/xo-lang/xo/...) can, and its native implementation
 // loads without diagnostics.

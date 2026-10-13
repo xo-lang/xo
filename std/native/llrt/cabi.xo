@@ -12,6 +12,7 @@
 // stored through a pointer the C caller passes after the parameters).
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
+use native/llrt/alloc
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/raw
@@ -329,3 +330,21 @@ fn rc_dec_shared(p: Int) -> Int { rc.dec_shared(p) }
 fn rc_claim(p: Int) -> Int { rc.claim(p) }
 
 fn rc_mark(p: Int) -> Int { rc.mark(p) }
+
+// ---------------------------------------------------------------------------
+// The heap (decision 0207 stage 3): xo_rt.c alloc_in, free_in, alloc_mt's
+// and free_mt's magazines, and xo_resize, in alloc.xo (alloc_c.xo with
+// XO_LLRT_C=alloc, whose C then calls its own copies). h is the calling
+// thread's heap record (the C finds it), p a block; heap_alloc and
+// heap_free take h last, so xo_alloc and xo_free pass their argument on
+// in place. Nothing here allocates or counts.
+
+fn heap_alloc(n: Int, h: Int) -> Int { alloc.alloc(h, n) }
+
+fn heap_free(p: Int, h: Int) { alloc.free(h, p) }
+
+fn heap_refill(h: Int, n: Int) { alloc.refill(h, n) }
+
+fn heap_free_mt(h: Int, p: Int) { alloc.free_mt(h, p) }
+
+fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(h, p, old, n, mt) }

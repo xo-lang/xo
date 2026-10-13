@@ -2359,6 +2359,10 @@ func (s *sfn) inlineRaw(v *ssa.Value) bool {
 		d := ptr(v.Args[0])
 		b := s.def("trunc i64 %s to i8", s.op(v.Args[1]))
 		s.emit("call void @llvm.memset.p0.i64(ptr %s, i8 %s, i64 %s, i1 false)", d, b, s.op(v.Args[2]))
+	case "rt.prefetch":
+		// read, high locality, data (decision 0207 stage 3)
+		g.llvmDecl("@llvm.prefetch.p0", "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)")
+		s.emit("call void @llvm.prefetch.p0(ptr %s, i32 0, i32 3, i32 1)", ptr(v.Args[0]))
 	case "rt.mem_cmp":
 		g.llvmDecl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
 		a, b := ptr(v.Args[0]), ptr(v.Args[1])

@@ -986,7 +986,7 @@ xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int
 }
 
 // xo_fs_lock_shared is xo_fs_lock's shared lock (std/internal's
-// lock_shared, decision 0213): LOCK_SH, which the Windows flock shim
+// lock_shared, decision 0214): LOCK_SH, which the Windows flock shim
 // takes with LockFileEx without LOCKFILE_EXCLUSIVE_LOCK.
 xo_fslock *xo_fs_lock_shared(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn) {
 	return fs_lock_op(p, n, wait, x, xn, LOCK_SH);

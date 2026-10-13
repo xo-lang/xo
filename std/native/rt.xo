@@ -86,6 +86,31 @@ fn rc_dec_c(p: Int) -> Int
 fn rc_dec_shared_c(p: Int) -> Int
 fn rc_claim_c(p: Int) -> Int
 fn rc_mark_c(p: Int) -> Int
+// The native heap in Xo (decision 0207 stage 3): the platform calls of
+// std/native/llrt/alloc.xo (no fault: out of memory exits with status
+// 70 as the C did), and the C path's copies (compiled only with
+// -DXO_ALLOC_C, called only by alloc_c.xo, XO_LLRT_C=alloc). h is the
+// calling thread's heap record, p a block's address.
+
+/// A block of n bytes from malloc (its prefix minus n): the address
+/// after the prefix.
+fn heap_large(n: Int) -> Int
+/// The malloc'd block at b (the prefix's address) reallocated to n
+/// bytes (its prefix minus n): the address after the prefix.
+fn heap_large_resize(b: Int, n: Int) -> Int
+/// free of the malloc'd block at b (the prefix's address).
+fn heap_release(b: Int)
+/// Gives heap h a new 4 MiB chunk (counted for tasks.c) and returns
+/// alloc.alloc(h, n) again.
+fn heap_grow(h: Int, n: Int) -> Int
+/// Locks and unlocks the central lists' mutex.
+fn heap_lock()
+fn heap_unlock()
+fn alloc_new_c(h: Int, n: Int) -> Int
+fn alloc_free_c(h: Int, p: Int)
+fn alloc_refill_c(h: Int, n: Int)
+fn alloc_free_mt_c(h: Int, p: Int)
+fn alloc_resize_c(h: Int, p: Int, old: Int, n: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
@@ -193,6 +218,11 @@ fn mem_cmp(a: Int, b: Int, n: Int) -> Int
 /// capacity offset, 5 the count's offset in any object, 6 the bytes of
 /// an address, 7 the bytes of a count.
 fn layout(k: Int) -> Int
+/// A hint that the line at address a will be read soon (prfm pldl1keep
+/// on arm64, llvm.prefetch on LLVM, nothing on wasm); never faults, even
+/// for an address that is not mapped (decision 0207 stage 3: the heap's
+/// free list pops).
+fn prefetch(a: Int)
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
@@ -388,7 +418,7 @@ fn fs_read_link(p: Str, x: Str) -> List[Str]
 struct FsLock {}
 fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
 /// fs_lock's shared lock (flock LOCK_SH; LockFileEx without
-/// LOCKFILE_EXCLUSIVE_LOCK on Windows), for std/internal (decision 0213).
+/// LOCKFILE_EXCLUSIVE_LOCK on Windows), for std/internal (decision 0214).
 fn fs_lock_shared(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_held(l: FsLock) -> Bool
 fn fs_unlock(l: FsLock)

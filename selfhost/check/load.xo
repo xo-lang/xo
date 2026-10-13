@@ -584,7 +584,7 @@ fn (var c: Checker) load_imports(m: Int) {
       }
       var dep = -1
       if p == "std/internal" && !c.internal_visible(m) {
-        // std/internal (decision 0213): only std and the toolchain's own
+        // std/internal (decision 0214): only std and the toolchain's own
         // modules see it
         dep = -1
       } else if p.starts_with("std/") {
@@ -660,7 +660,7 @@ fn (var c: Checker) load_imports(m: Int) {
 }
 
 /// Whether module m may import std/internal (load.go internalVisible,
-/// decision 0213): std modules, their native implementations, and the
+/// decision 0214): std modules, their native implementations, and the
 /// toolchain's own modules (github.com/xo-lang/xo and below).
 fn (c: Checker) internal_visible(m: Int) -> Bool {
   let path = c.mods[m].path
