@@ -421,3 +421,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [exports-grow-every-program.md](exports-grow-every-program.md): Observed: the C ABI exports' closure is in every native program (hello +20,720 bytes on arm64, SSA goldens 10x); feature exports go in cabi_<feature>.xo.
 - [arm64-length-after-var-list-call.md](arm64-length-after-var-list-call.md): Observed: reads of a `var` List after calls that take it are bounds checked again (its length is unknown); check the length once after the calls.
 - [ec2-terminate-not-confirmed.md](ec2-terminate-not-confirmed.md): Observed, fixed: remote-full.sh said terminating but the instance kept running; cleanup now retries and confirms the state.
+- [ec2-key-overwritten.md](ec2-key-overwritten.md): Observed, fixed: a sandboxed run overwrote ~/.ssh/xo-ci.pem with nothing; remote-full.sh now only creates the key on NotFound, through a temp file, never over an existing key.
