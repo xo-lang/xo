@@ -1,0 +1,401 @@
+// The name checks of a TLS client and server (crypto/x509's
+// VerifyHostname and HostnameError, net.ParseIP and net.IP.String),
+// formerly xo_tls.c's dns_match, valid_hostname, match_exactly, host_ok,
+// ip_parse, ip_string, and hostname_msg (decision 0207). The C keeps
+// reading the certificate (Mbed TLS) and hands over its names: the DNS
+// names each followed by a zero byte, and the IP addresses as 16 bytes
+// each (IPv4 mapped). Semantics are Go's.
+use native/llrt/raw
+
+/// The bytes of s with ASCII letters lowered (toLowerCaseASCII).
+fn lower(s: Str) -> Str {
+  var b = BytesBuilder.new()
+  for c in s.bytes() {
+    let x = Int(c)
+    b.write_byte(UInt8(if x >= 65 && x <= 90 { x + 32 } else { x }))
+  }
+  b.freeze().to_str() ?? s
+}
+
+/// matchHostnames: the pattern (with a leftmost "*") against host.
+pub fn match_hostnames(pattern0: Str, host0: Str) -> Bool {
+  let pattern = lower(pattern0)
+  let host = lower(host0.trim_suffix("."))
+  if pattern.is_empty() || host.is_empty() {
+    return false
+  }
+  let pp = pattern.split(".")
+  let hp = host.split(".")
+  if pp.len() != hp.len() {
+    return false
+  }
+  for (i, p) in pp.indexed() {
+    if i == 0 && p == "*" {
+      continue
+    }
+    if p != hp[i] {
+      return false
+    }
+  }
+  true
+}
+
+/// validHostname: whether host is a host name (or, as a pattern, one
+/// with a leftmost "*").
+pub fn valid_hostname(host0: Str, pattern: Bool) -> Bool {
+  let host = if pattern { host0 } else { host0.trim_suffix(".") }
+  if host.is_empty() || host == "*" {
+    return false
+  }
+  for (i, part) in host.split(".").indexed() {
+    if part.is_empty() {
+      return false
+    }
+    if pattern && i == 0 && part == "*" {
+      continue
+    }
+    let pb = part.bytes()
+    for j in 0..pb.len() {
+      let x = Int(pb[j])
+      if (x >= 97 && x <= 122) || (x >= 48 && x <= 57) || (x >= 65 && x <= 90) || x == 95 || (x == 45 && j != 0) {
+        continue
+      }
+      return false
+    }
+  }
+  true
+}
+
+/// matchExactly: a and b equal but for ASCII case, neither empty nor ".".
+fn match_exactly(a: Str, b: Str) -> Bool {
+  if a.is_empty() || a == "." || b.is_empty() || b == "." {
+    return false
+  }
+  lower(a) == lower(b)
+}
+
+/// The value of hex digit c, or -1.
+fn hexval(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  -1
+}
+
+/// The four bytes of the IPv4 text of b from lo to hi (netip's
+/// parseIPv4: four decimal fields to 255, no leading zeros), or None.
+fn parse_v4(b: Bytes, lo: Int, hi: Int) -> List[Int]? {
+  var out: List[Int] = []
+  var v = 0
+  var digits = 0
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c >= 48 && c <= 57 {
+      if digits == 1 && v == 0 {
+        // a leading zero
+        return None
+      }
+      v = v * 10 + c - 48
+      digits += 1
+      if v > 255 {
+        return None
+      }
+    } else if c == 46 {
+      if digits == 0 || out.len() == 3 {
+        return None
+      }
+      out.push(v)
+      v = 0
+      digits = 0
+    } else {
+      return None
+    }
+    i += 1
+  }
+  if digits == 0 || out.len() != 3 {
+    return None
+  }
+  out.push(v)
+  Some(out)
+}
+
+/// net.ParseIP: the 16 bytes of the address (IPv4 mapped), or None (a
+/// zone is not an address).
+pub fn parse_ip(s: Str) -> List[Int]? {
+  let b = s.bytes()
+  var dot = false
+  var colon = false
+  for c in b {
+    if c == 46 {
+      dot = true
+    } else if c == 58 {
+      colon = true
+      break
+    }
+  }
+  if !colon {
+    if !dot {
+      return None
+    }
+    if let Some(v4) = parse_v4(b, 0, b.len()) {
+      return Some([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255] + v4)
+    }
+    return None
+  }
+  parse_v6(b)
+}
+
+/// netip's parseIPv6 without a zone.
+fn parse_v6(b: Bytes) -> List[Int]? {
+  var ip: List[Int] = []
+  for _ in 0..16 {
+    ip.push(0)
+  }
+  let n = b.len()
+  var ell = -1
+  var i = 0
+  if n >= 2 && b[0] == 58 && b[1] == 58 {
+    ell = 0
+    i = 2
+    if i == n {
+      return Some(ip)
+    }
+  }
+  var k = 0
+  while k < 16 {
+    // a hex group
+    var off = 0
+    var acc = 0
+    while i + off < n {
+      let h = hexval(Int(b[i + off]))
+      if h < 0 {
+        break
+      }
+      acc = acc * 16 + h
+      off += 1
+      if off > 4 {
+        return None
+      }
+    }
+    if off == 0 {
+      return None
+    }
+    if i + off < n && b[i + off] == 46 {
+      // an embedded IPv4 address in the last four bytes
+      if ell < 0 && k != 12 {
+        return None
+      }
+      if k + 4 > 16 {
+        return None
+      }
+      match parse_v4(b, i, n) {
+        Some(v4) => {
+          ip[k] = v4[0]
+          ip[k + 1] = v4[1]
+          ip[k + 2] = v4[2]
+          ip[k + 3] = v4[3]
+        }
+        None => return None
+      }
+      k += 4
+      i = n
+      break
+    }
+    ip[k] = acc >> 8
+    ip[k + 1] = acc & 0xFF
+    k += 2
+    i += off
+    if i == n {
+      break
+    }
+    if b[i] != 58 || i + 1 == n {
+      return None
+    }
+    i += 1
+    if b[i] == 58 {
+      if ell >= 0 {
+        return None
+      }
+      ell = k
+      i += 1
+      if i == n {
+        break
+      }
+    }
+  }
+  if i != n {
+    return None
+  }
+  if k < 16 {
+    if ell < 0 {
+      return None
+    }
+    let nn = 16 - k
+    var j = k - 1
+    while j >= ell {
+      ip[j + nn] = ip[j]
+      j -= 1
+    }
+    var z = ell + nn - 1
+    while z >= ell {
+      ip[z] = 0
+      z -= 1
+    }
+  } else if ell >= 0 {
+    return None
+  }
+  Some(ip)
+}
+
+/// net.IP.String of 16 bytes: dotted IPv4 when IPv4 mapped, else RFC
+/// 5952 (the longest run of two or more zero groups as "::").
+pub fn ip_string(ip: List[Int]) -> Str {
+  var v4 = true
+  for i in 0..12 {
+    let want = if i >= 10 { 255 } else { 0 }
+    if ip[i] != want {
+      v4 = false
+    }
+  }
+  if v4 {
+    return "${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}"
+  }
+  var best = -1
+  var best_n = 0
+  var g = 0
+  while g < 8 {
+    var e = g
+    while e < 8 && ip[2 * e] == 0 && ip[2 * e + 1] == 0 {
+      e += 1
+    }
+    if e - g >= 2 && e - g > best_n {
+      best = g
+      best_n = e - g
+    }
+    g = if e > g { e } else { g + 1 }
+  }
+  var out = StrBuilder.new()
+  var k = 0
+  while k < 8 {
+    if k == best {
+      out.write("::")
+      k += best_n
+      continue
+    }
+    if k > 0 && k != best + best_n {
+      out.write(":")
+    }
+    out.write(hex_group(ip[2 * k] * 256 + ip[2 * k + 1]))
+    k += 1
+  }
+  out.freeze()
+}
+
+/// The lowercase hex of v without leading zeros.
+fn hex_group(v: Int) -> Str {
+  let digits = "0123456789abcdef".bytes()
+  var b = BytesBuilder.new()
+  var started = false
+  var sh = 12
+  while sh >= 0 {
+    let d = (v >> sh) & 15
+    if d != 0 || started || sh == 0 {
+      b.write_byte(digits[d])
+      started = true
+    }
+    sh -= 4
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// The names of a certificate as the C hands them over.
+pub struct Names {
+  pub dns: List[Str]
+  pub ips: List[List[Int]]
+}
+
+/// The names at the addresses the C gives: dn bytes at dp, the DNS names
+/// each followed by a zero byte, and ni IP addresses of 16 bytes at ip.
+pub fn names_at(dp: Int, dn: Int, ip: Int, ni: Int) -> Names {
+  var dns: List[Str] = []
+  var i = 0
+  while i < dn {
+    var e = i
+    while e < dn && raw.byte_at(dp, e) != 0 {
+      e += 1
+    }
+    dns.push(raw.str_at(dp + i, e - i))
+    i = e + 1
+  }
+  var ips: List[List[Int]] = []
+  for k in 0..ni {
+    var a: List[Int] = []
+    for j in 0..16 {
+      a.push(raw.byte_at(ip, 16 * k + j))
+    }
+    ips.push(a)
+  }
+  Names{dns: dns, ips: ips}
+}
+
+/// x509.Certificate.VerifyHostname: whether host matches the names.
+pub fn host_ok(nm: Names, h: Str) -> Bool {
+  var cand = h
+  if h.len() >= 3 && h.starts_with("[") && h.ends_with("]") {
+    cand = h[1..h.len() - 1]
+  }
+  if let Some(want) = parse_ip(cand) {
+    for got in nm.ips {
+      if got == want {
+        return true
+      }
+    }
+    return false
+  }
+  let name = lower(h)
+  let valid = valid_hostname(name, false)
+  for m in nm.dns {
+    if valid && valid_hostname(m, true) {
+      if match_hostnames(m, name) {
+        return true
+      }
+    } else if match_exactly(m, name) {
+      return true
+    }
+  }
+  false
+}
+
+/// x509.HostnameError's text for host and a certificate with the names,
+/// whether it has the subject alternative name extension, and its
+/// subject's common name.
+pub fn hostname_msg(nm: Names, has_san: Bool, cn: Str, host: Str) -> Str {
+  if !has_san && match_hostnames(cn, host) {
+    return "x509: certificate relies on legacy Common Name field, use SANs instead"
+  }
+  var valid = ""
+  if let Some(_) = parse_ip(host) {
+    if nm.ips.is_empty() {
+      return "x509: cannot validate certificate for ${host} because it doesn't contain any IP SANs"
+    }
+    for ip in nm.ips {
+      if !valid.is_empty() {
+        valid = valid + ", "
+      }
+      valid = valid + ip_string(ip)
+    }
+  } else {
+    valid = nm.dns.join(", ")
+  }
+  if valid.is_empty() {
+    return "x509: certificate is not valid for any names, but wanted to match ${host}"
+  }
+  "x509: certificate is valid for ${valid}, not ${host}"
+}

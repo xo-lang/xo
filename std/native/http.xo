@@ -8,6 +8,7 @@ use std/task
 use native/rt
 use native/llrt/hpack
 use native/llrt/http1
+use native/llrt/netpolicy
 use native/rthttp
 use native/rttest
 
@@ -758,7 +759,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
       Some(p) => "${p}"
       None => if req.url.scheme.to_lower() == "https" { "443" } else { "80" }
     }
-    if !rt.net_admits(c.lists, req.url.host, port) {
+    if !netpolicy.admits(c.lists, req.url.host, port) {
       let hp = if req.url.host.contains(":") { "[${req.url.host}]:${port}" } else { "${req.url.host}:${port}" }
       return Err(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
     }

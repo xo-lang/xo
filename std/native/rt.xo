@@ -346,9 +346,6 @@ fn proc_new(lists: Str) -> Proc
 /// The attenuation lists of a Net, and the Net of lists (decision 0175).
 fn net_lists(n: Net) -> Str
 fn net_new(lists: Str) -> Net
-/// Whether the attenuation lists of a Net admit host and port (std/rt
-/// attenuate.go onlyNet.admits; the C runtime's net_admits).
-fn net_admits(lists: Str, host: Str, port: Str) -> Bool
 fn env_lists(e: Env) -> Str
 fn env_new(lists: Str) -> Env
 /// The value of the variable in a list of one, or the empty list.

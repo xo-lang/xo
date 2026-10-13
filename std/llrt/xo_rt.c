@@ -776,6 +776,10 @@ int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
 int64_t xo_x_fmt_time(int64_t buf, int64_t t);
 int64_t xo_x_b64_val(int64_t c);
 int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
+int64_t xo_x_split_hostport(int64_t a, int64_t host, int64_t hn, int64_t port, int64_t pn);
+int64_t xo_x_port_out_of_range(int64_t p);
+int64_t xo_x_net_admits(int64_t lp, int64_t ln, int64_t hp, int64_t hn, int64_t pp, int64_t pn);
+int64_t xo_x_net_admits_addr(int64_t lp, int64_t ln, int64_t a, int64_t n);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
@@ -6035,211 +6039,25 @@ static void listener_free(void *p) {
 	xo_free(l);
 }
 
-// split_hostport splits "host:port", "[v6]:port", or ":port".
+// The address policy of Net.only (decisions 0156, 0175, 0190; std/rt
+// attenuate.go onlyNet) is Xo (std/native/llrt/netpolicy.xo, through
+// cabi.xo, decision 0207): splitting "host:port", "[v6]:port", or
+// ":port"; a numeric port above 65535 (Darwin's getaddrinfo rejects one,
+// glibc's truncates it: gotchas/glibc-getaddrinfo-port-truncation.md);
+// whether the lists admit a host and port, or a dial or listen address.
+
 static int split_hostport(const char *a, char *host, size_t hn, char *port, size_t pn) {
-	const char *colon = strrchr(a, ':');
-	if (!colon) {
-		return -1;
-	}
-	const char *h = a;
-	size_t hl = (size_t)(colon - a);
-	if (hl >= 2 && h[0] == '[' && h[hl - 1] == ']') {
-		h++;
-		hl -= 2;
-	}
-	if (hl >= hn || strlen(colon + 1) >= pn) {
-		return -1;
-	}
-	memcpy(host, h, hl);
-	host[hl] = 0;
-	strcpy(port, colon + 1);
-	return 0;
+	return (int)xo_x_split_hostport(XO_ADDR(a), XO_ADDR(host), (int64_t)hn, XO_ADDR(port), (int64_t)pn);
 }
 
-// port_out_of_range reports a numeric port above 65535. Darwin's
-// getaddrinfo rejects one; glibc's truncates it to 16 bits and binds
-// another port (gotchas/glibc-getaddrinfo-port-truncation.md).
-static int port_out_of_range(const char *port) {
-	long v = 0;
-	if (!port[0]) {
-		return 0;
-	}
-	for (const char *q = port; *q; q++) {
-		if (*q < '0' || *q > '9') {
-			return 0;
-		}
-		v = v * 10 + (*q - '0');
-		if (v > 65535) {
-			return 1;
-		}
-	}
-	return 0;
-}
+static int port_out_of_range(const char *port) { return (int)xo_x_port_out_of_range(XO_ADDR(port)); }
 
-// Net.only (decisions 0156 and 0175): std/rt attenuate.go's onlyNet. A
-// Net is the lists of its attenuations in one string ("" for none): each
-// list is \1 and then its entries, each followed by \0
-// (std/native/prelude.xo cap_lists_add), already trimmed and lowered by
-// net_only. Every list must admit an address.
-
-// go_split_hostport is Go's net.SplitHostPort over the n bytes at a: 0
-// with the host and the port, or -1 when Go reports an error.
-static int go_split_hostport(const char *a, size_t n, const char **h, size_t *hl, const char **p, size_t *pl) {
-	size_t i = n;
-	for (size_t q = n; q > 0; q--) {
-		if (a[q - 1] == ':') {
-			i = q - 1;
-			break;
-		}
-	}
-	if (i == n) {
-		return -1; // missing port
-	}
-	size_t j = 0, k = 0;
-	if (n > 0 && a[0] == '[') {
-		const char *end = memchr(a, ']', n);
-		if (!end) {
-			return -1;
-		}
-		size_t e = (size_t)(end - a);
-		if (e + 1 != i) {
-			return -1; // missing port, or too many colons
-		}
-		*h = a + 1;
-		*hl = e - 1;
-		j = 1;
-		k = e + 1;
-	} else {
-		*h = a;
-		*hl = i;
-		if (memchr(a, ':', i)) {
-			return -1; // too many colons
-		}
-	}
-	if (memchr(a + j, '[', n - j) || memchr(a + k, ']', n - k)) {
-		return -1;
-	}
-	*p = a + i + 1;
-	*pl = n - i - 1;
-	return 0;
-}
-
-// net_entry_admits is hostAdmits: whether entry e admits host (lowered,
-// without brackets) and port. Entries are a host (any port), `*.domain`
-// (any subdomain, any port), or `host:port`.
-static int net_entry_admits(const char *e, size_t en, const char *h, size_t hn, const char *p, size_t pn) {
-	if (en >= 5 && memcmp(e, "unix:", 5) == 0) {
-		return 0; // admits only its socket (net_admits_addr)
-	}
-	if (en >= 2 && e[0] == '*' && e[1] == '.') {
-		size_t sn = en - 1;
-		return hn > sn && memcmp(h + hn - sn, e + 1, sn) == 0;
-	}
-	int colons = 0;
-	for (size_t i = 0; i < en; i++) {
-		colons += e[i] == ':';
-	}
-	if (colons == 1 || (en > 0 && e[0] == '[')) {
-		const char *eh, *ep;
-		size_t ehl, epl;
-		if (go_split_hostport(e, en, &eh, &ehl, &ep, &epl) < 0) {
-			return 0;
-		}
-		return ehl == hn && memcmp(eh, h, hn) == 0 && epl == pn && memcmp(ep, p, pn) == 0;
-	}
-	size_t s = 0, t = en;
-	while (s < t && (e[s] == '[' || e[s] == ']')) {
-		s++;
-	}
-	while (t > s && (e[t - 1] == '[' || e[t - 1] == ']')) {
-		t--;
-	}
-	return t - s == hn && memcmp(e + s, h, hn) == 0;
-}
-
-// net_admits is onlyNet.admits: whether every list of lists admits host
-// and port (the host is trimmed of brackets and lowered first).
 static int net_admits(const char *lp, size_t ln, const char *hp, size_t hn, const char *pp, size_t pn) {
-	if (ln == 0) {
-		return 1;
-	}
-	while (hn > 0 && (hp[0] == '[' || hp[0] == ']')) {
-		hp++;
-		hn--;
-	}
-	while (hn > 0 && (hp[hn - 1] == '[' || hp[hn - 1] == ']')) {
-		hn--;
-	}
-	char *h = malloc(hn + 1);
-	if (!h) {
-		xo_oom();
-	}
-	for (size_t i = 0; i < hn; i++) {
-		char c = hp[i];
-		h[i] = c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
-	}
-	int all = 1;
-	size_t i = 0;
-	while (all && i < ln) {
-		i++; // the list's \1
-		int ok = 0;
-		while (i < ln && lp[i] != '\1') {
-			const char *z = memchr(lp + i, 0, ln - i);
-			size_t end = z ? (size_t)(z - lp) : ln;
-			if (!ok && net_entry_admits(lp + i, end - i, h, hn, pp, pn)) {
-				ok = 1;
-			}
-			i = end + 1;
-		}
-		all = ok;
-	}
-	free(h);
-	return all;
+	return (int)xo_x_net_admits(XO_ADDR(lp), (int64_t)ln, XO_ADDR(hp), (int64_t)hn, XO_ADDR(pp), (int64_t)pn);
 }
 
-// xo_net_admits is net_admits for std/native/http.xo (a client's
-// requests).
-int64_t xo_net_admits(const char *lp, int64_t ln, const char *hp, int64_t hn, const char *pp, int64_t pn) {
-	return net_admits(lp, (size_t)ln, hp, (size_t)hn, pp, (size_t)pn);
-}
-
-// net_admits_addr is onlyNet.admitsAddr: a dial or listen address; an
-// empty host (`:8080`) is the unspecified address 0.0.0.0.
 static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n) {
-	if (ln == 0) {
-		return 1;
-	}
-	if (n >= 5 && memcmp(a, "unix:", 5) == 0) {
-		// a Unix domain socket: the entry `unix:PATH`, exactly, in every
-		// list (decision 0190)
-		size_t i = 0;
-		while (i < (size_t)ln) {
-			i++; // the list's \1
-			int ok = 0;
-			while (i < (size_t)ln && lp[i] != '\1') {
-				const char *z = memchr(lp + i, 0, (size_t)ln - i);
-				size_t end = z ? (size_t)(z - lp) : (size_t)ln;
-				if (end - i == (size_t)n && memcmp(lp + i, a, (size_t)n) == 0) {
-					ok = 1;
-				}
-				i = end + 1;
-			}
-			if (!ok) {
-				return 0;
-			}
-		}
-		return 1;
-	}
-	const char *h, *p;
-	size_t hl, pl;
-	if (go_split_hostport(a, (size_t)n, &h, &hl, &p, &pl) < 0) {
-		return 0;
-	}
-	if (hl == 0) {
-		h = "0.0.0.0";
-		hl = 7;
-	}
-	return net_admits(lp, (size_t)ln, h, hl, p, pl);
+	return (int)xo_x_net_admits_addr(XO_ADDR(lp), ln, XO_ADDR(a), n);
 }
 
 // net_denied records NetErr.Denied(addr) (tag 6) for the n bytes at a.
