@@ -242,8 +242,10 @@ fn sys_buf() -> Bytes
 /// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
 /// the C runtime, which serves the fake.
 fn tw_fake(real: Int) -> Bool
-/// Whether the test world's virtual clock runs.
-fn clock_virtual() -> Bool
+/// The address of the calling thread's 16 bytes of scratch for Clock.now's
+/// timespec, or 0 while the test world's virtual clock runs (one call on
+/// the clock's path; decision 0206 stage 2).
+fn sys_clock_buf() -> Int
 /// Clock.now of the C runtime (the SSA builders' lowering before
 /// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.
 fn clock_now() -> Int

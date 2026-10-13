@@ -57,9 +57,11 @@ xo_rstr *xo_sys_buf(int64_t *len) {
 // real (TW_REAL_*): the Xo layer then calls the C runtime's fake.
 int64_t xo_tw_fake(int64_t real) { return tw_is_fake((int)real); }
 
-// xo_clock_virtual reports whether the test world's virtual clock runs
-// (Clock.now reads it, xo_clock_now).
-int64_t xo_clock_virtual(void) { return tw.virt ? 1 : 0; }
+// xo_sys_clock_buf is the address of the calling thread's scratch for
+// Clock.now's timespec (Xo calls the vDSO with it), or 0 while the test
+// world's virtual clock runs: one call on the clock's path (decision
+// 0206 stage 2).
+int64_t xo_sys_clock_buf(void) { return tw.virt ? 0 : (int64_t)(uintptr_t)sys_scratch.data; }
 
 // xo_fs_set_err records the outcome of a file operation the Xo layer
 // made (as xo_fs_read and fs_fail do): status st (0 for success, else

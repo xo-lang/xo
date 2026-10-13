@@ -93,11 +93,21 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 /// (linux.clock_ns, decision 0206 stage 2: the system call it replaced
 /// cost 4.3 times the time per call, bench/results/linux-syscalls-2026-10-13.md);
 /// elsewhere, and while the virtual clock runs, the C runtime's.
+/// The target tests are inline (not raw()): this is the clock's hot path.
 pub fn clock_now() -> Int {
-  if !raw() || rt.clock_virtual() {
+  match target.os {
+    TargetOs.Linux => {}
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => return rt.clock_now()
+  }
+  match target.arch {
+    TargetArch.Arm64 | TargetArch.Amd64 => {}
+    TargetArch.Wasm32 => return rt.clock_now()
+  }
+  let a = rt.sys_clock_buf()
+  if a == 0 {
     return rt.clock_now()
   }
-  linux.clock_ns(linux.CLOCK_REALTIME)
+  linux.clock_ns(linux.CLOCK_REALTIME, a)
 }
 
 /// The contents of the file op: os.ReadFile's loop (a buffer of the size

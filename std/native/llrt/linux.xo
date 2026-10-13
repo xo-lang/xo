@@ -144,9 +144,8 @@ fn statx(dirfd: Int, path_addr: Int, flags: Int) -> (Stat, Int) {
 /// clock_gettime(2) of clock id: nanoseconds (Unix time for
 /// CLOCK_REALTIME), or the negative errno. Through the vDSO (decision
 /// 0206 stage 2), the system call when the process has none.
-pub fn clock_ns(id: Int) -> Int {
-  let buf = rt.sys_buf()
-  let a = rt.obj_addr(buf) + rt.layout(0)
+/// a is the address of 16 bytes of scratch for the timespec.
+pub fn clock_ns(id: Int, a: Int) -> Int {
   let r = clock_gettime(id, a)
   if r < 0 {
     return r
