@@ -8,10 +8,6 @@
 // Semantics follow std/rt (Go's strings, strconv, and time packages), so
 // the native backends print what the Go backend prints.
 
-#ifdef XO_UNICODE_C
-#include "xo_unicode.c"
-#endif
-
 // ---------------------------------------------------------------------------
 // Helpers
 
@@ -171,119 +167,6 @@ static int n_is_space(int32_t r) {
 	return r >= 0x2000 && r <= 0x200A;
 }
 
-// The C path of the Unicode operations (decision 0180): compiled only
-// with -DXO_UNICODE_C, which a build adds when its code calls them
-// (XO_UNICODE=c selects std/native/llrt/unicode_c.xo); the default is
-// std/native/llrt/unicode.xo, in Xo.
-#ifdef XO_UNICODE_C
-// to_case maps r like Go's unicode.ToLower (lower) or unicode.ToUpper.
-static int32_t n_to_case(int32_t r, int lower) {
-	if (r < 0x80) {
-		if (lower && r >= 'A' && r <= 'Z') {
-			return r + 32;
-		}
-		if (!lower && r >= 'a' && r <= 'z') {
-			return r - 32;
-		}
-		return r;
-	}
-	int lo = 0, hi = (int)(sizeof xo_case_ranges / sizeof xo_case_ranges[0]);
-	while (lo < hi) {
-		int m = lo + (hi - lo) / 2;
-		const xo_case_range *c = &xo_case_ranges[m];
-		if (r < c->lo) {
-			hi = m;
-		} else if (r > c->hi) {
-			lo = m + 1;
-		} else {
-			int32_t d = lower ? c->low : c->up;
-			if (d == XO_UPPER_LOWER) {
-				return c->lo + (((r - c->lo) & ~1) | (lower ? 1 : 0));
-			}
-			return r + d;
-		}
-	}
-	return r;
-}
-
-// n_case_into appends strings.ToLower (lower) or ToUpper of the n bytes
-// at p to b (strings.Map: an invalid byte becomes U+FFFD).
-static void n_case_into(nbuf *b, const char *p, int64_t n, int lower) {
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n;) {
-		int size;
-		int32_t r = n_utf8_decode(s + i, n - i, &size);
-		char t[4];
-		int k = n_utf8_encode(t, n_to_case(r, lower));
-		nbuf_put(b, t, k);
-		i += size;
-	}
-}
-
-// map_case is strings.ToLower or strings.ToUpper.
-static xo_rstr *n_map_case(const char *p, int64_t n, int lower, int64_t *len) {
-	int ascii = 1;
-	for (int64_t i = 0; i < n; i++) {
-		if ((unsigned char)p[i] >= 0x80) {
-			ascii = 0;
-			break;
-		}
-	}
-	if (ascii) {
-		xo_rstr *s = nstr(p, n, len);
-		for (int64_t i = 0; i < n; i++) {
-			char c = s->data[i];
-			if (lower && c >= 'A' && c <= 'Z') {
-				s->data[i] = (char)(c + 32);
-			} else if (!lower && c >= 'a' && c <= 'z') {
-				s->data[i] = (char)(c - 32);
-			}
-		}
-		return s;
-	}
-	nbuf b = {0};
-	n_case_into(&b, p, n, lower);
-	return nbuf_take(&b, len);
-}
-
-// xo_str_eq_lower is `a.to_lower() == b.to_lower()` without making the
-// lowered strings: ASCII bytes compare lowered in place; from the first
-// non-ASCII byte of either (a rune boundary of both, since everything
-// before is ASCII) the rests are lowered and compared (std/rt's
-// Str_eq_lower on the Go backend).
-int64_t xo_str_eq_lower(const char *p, int64_t n, const char *q, int64_t m) {
-	int64_t i = 0;
-	for (; i < n && i < m; i++) {
-		unsigned a = (unsigned char)p[i], c = (unsigned char)q[i];
-		if (a >= 0x80 || c >= 0x80) {
-			break;
-		}
-		a += (a >= 'A' && a <= 'Z') ? 32 : 0;
-		c += (c >= 'A' && c <= 'Z') ? 32 : 0;
-		if (a != c) {
-			return 0;
-		}
-	}
-	if (i == n && i == m) {
-		return 1;
-	}
-	if (i == n || i == m) {
-		return 0; // a nonempty rest never lowers to nothing
-	}
-	nbuf x = {0}, y = {0};
-	n_case_into(&x, p + i, n - i, 1);
-	n_case_into(&y, q + i, m - i, 1);
-	int64_t eq = x.n == y.n && (x.n == 0 || memcmp(x.p, y.p, (size_t)x.n) == 0);
-	free(x.p);
-	free(y.p);
-	return eq;
-}
-
-xo_rstr *xo_str_lower(const char *p, int64_t n, int64_t *len) { return n_map_case(p, n, 1, len); }
-
-xo_rstr *xo_str_upper(const char *p, int64_t n, int64_t *len) { return n_map_case(p, n, 0, len); }
-#endif
-
 // ---------------------------------------------------------------------------
 // Strings (std.md 2.2)
 
@@ -352,49 +235,6 @@ xo_rstr *xo_str_of_byte(int64_t b, int64_t *len) {
 	char c = (char)b;
 	return nstr(&c, 1, len);
 }
-
-#ifdef XO_STRINGS_C
-// the C path of the Str operations (decision 0193): only
-// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
-// xo_str_trim is strings.TrimSpace (mode 0), TrimLeftFunc (1), or
-// TrimRightFunc (2) with unicode.IsSpace.
-xo_rstr *xo_str_trim(const char *p, int64_t n, int64_t mode, int64_t *len) {
-	const unsigned char *s = (const unsigned char *)p;
-	int64_t lo = 0, hi = n;
-	if (mode != 2) {
-		while (lo < hi) {
-			int size;
-			int32_t r = n_utf8_decode(s + lo, hi - lo, &size);
-			if (!n_is_space(r) || (r == 0xFFFD && size == 1)) {
-				break;
-			}
-			lo += size;
-		}
-	}
-	if (mode != 1) {
-		while (hi > lo) {
-			// the rune ending at hi
-			int64_t st = hi - 1;
-			while (st > lo && hi - st < 4 && (s[st] & 0xC0) == 0x80) {
-				st--;
-			}
-			int size;
-			int32_t r = n_utf8_decode(s + st, hi - st, &size);
-			if (st + size != hi) {
-				// not a whole rune: an invalid byte, never space
-				break;
-			}
-			if (!n_is_space(r) || (r == 0xFFFD && size == 1)) {
-				break;
-			}
-			hi = st;
-		}
-	}
-	return nstr(p + lo, hi - lo, len);
-}
-#endif
-
-
 
 int64_t xo_str_rune_count(const char *p, int64_t n) {
 	const unsigned char *s = (const unsigned char *)p;
@@ -473,43 +313,6 @@ xo_rlist *xo_str_lines(const char *p, int64_t n) {
 	}
 	return l;
 }
-
-
-#ifdef XO_STRINGS_C
-// the C path of the Str operations (decision 0193): only
-// XO_LLRT_C=strings builds call it (std/native/llrt/strings_c.xo)
-// xo_str_replace is strings.ReplaceAll: an empty old inserts new before
-// every UTF-8 sequence and at the end.
-xo_rstr *xo_str_replace(const char *p, int64_t n, const char *o, int64_t on, const char *w, int64_t wn, int64_t *len) {
-	nbuf b = {0};
-	nbuf_grow(&b, n);
-	if (on == 0) {
-		const unsigned char *s = (const unsigned char *)p;
-		nbuf_put(&b, w, wn);
-		for (int64_t i = 0; i < n;) {
-			int size;
-			n_utf8_decode(s + i, n - i, &size);
-			nbuf_put(&b, p + i, size);
-			nbuf_put(&b, w, wn);
-			i += size;
-		}
-		return nbuf_take(&b, len);
-	}
-	int64_t start = 0;
-	for (;;) {
-		int64_t i = n_mem_index(p + start, n - start, o, on);
-		if (i < 0) {
-			break;
-		}
-		nbuf_put(&b, p + start, i);
-		nbuf_put(&b, w, wn);
-		start += i + on;
-	}
-	nbuf_put(&b, p + start, n - start);
-	return nbuf_take(&b, len);
-}
-#endif
-
 
 xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
 	if (k <= 0 || n == 0) {
@@ -600,103 +403,6 @@ int64_t xo_int_parse(const char *p, int64_t n) {
 	n_parse_int(p, n, &v);
 	return v;
 }
-#endif
-
-
-static int n_lower_eq(const char *p, int64_t n, const char *w) {
-	int64_t m = (int64_t)strlen(w);
-	if (n != m) {
-		return 0;
-	}
-	for (int64_t i = 0; i < n; i++) {
-		char c = p[i];
-		if (c >= 'A' && c <= 'Z') {
-			c = (char)(c + 32);
-		}
-		if (c != w[i]) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
-// parse_float is strconv.ParseFloat(s, 64) for decimal forms, inf,
-// infinity, and nan (no hex floats, no underscores): 0 when malformed or
-// out of range.
-static int n_parse_float(const char *p, int64_t n, double *out) {
-	if (n == 0 || n > 4096) {
-		return 0;
-	}
-	int64_t i = 0;
-	int neg = 0;
-	if (p[0] == '+' || p[0] == '-') {
-		neg = p[0] == '-';
-		i++;
-	}
-	if (n_lower_eq(p + i, n - i, "inf") || n_lower_eq(p + i, n - i, "infinity")) {
-		*out = neg ? -INFINITY : INFINITY;
-		return 1;
-	}
-	if (i == 0 && n_lower_eq(p, n, "nan")) {
-		*out = NAN;
-		return 1;
-	}
-	int64_t digits = 0;
-	while (i < n && p[i] >= '0' && p[i] <= '9') {
-		i++;
-		digits++;
-	}
-	if (i < n && p[i] == '.') {
-		i++;
-		while (i < n && p[i] >= '0' && p[i] <= '9') {
-			i++;
-			digits++;
-		}
-	}
-	if (digits == 0) {
-		return 0;
-	}
-	if (i < n && (p[i] == 'e' || p[i] == 'E')) {
-		i++;
-		if (i < n && (p[i] == '+' || p[i] == '-')) {
-			i++;
-		}
-		int64_t ed = 0;
-		while (i < n && p[i] >= '0' && p[i] <= '9') {
-			i++;
-			ed++;
-		}
-		if (ed == 0) {
-			return 0;
-		}
-	}
-	if (i != n) {
-		return 0;
-	}
-	char *c = cstr_of(p, n);
-	double v = strtod(c, NULL);
-	free(c);
-	if (isinf(v)) {
-		return 0;
-	}
-	*out = v;
-	return 1;
-}
-
-#ifdef XO_NUM_C
-// the C path of the number text (decision 0193 step 3): only
-// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
-int64_t xo_float_parse_ok(const char *p, int64_t n) {
-	double v;
-	return n_parse_float(p, n, &v);
-}
-
-double xo_float_parse(const char *p, int64_t n) {
-	double v = 0;
-	n_parse_float(p, n, &v);
-	return v;
-}
-
 #endif
 
 // ---------------------------------------------------------------------------
@@ -971,58 +677,7 @@ void xo_exit(int64_t code) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-#ifdef XO_JSONTEXT_C
-// the C path of std/json's text (decision 0193 step 4): only
-// XO_LLRT_C=jsontext builds call it (std/native/llrt/jsontext_c.xo)
-// xo_rs_append_b64_quoted is s + the standard base64 of t (padded) in
-// double quotes (a Bytes in JSON).
-xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
-	nbuf o = {0};
-	nbuf_byte(&o, '"');
-	const unsigned char *s = (const unsigned char *)b->data;
-	for (int64_t i = 0; i < bn; i += 3) {
-		unsigned v = (unsigned)s[i] << 16;
-		if (i + 1 < bn) {
-			v |= (unsigned)s[i + 1] << 8;
-		}
-		if (i + 2 < bn) {
-			v |= s[i + 2];
-		}
-		char q[4] = {b64_alpha[v >> 18 & 63], b64_alpha[v >> 12 & 63], i + 1 < bn ? b64_alpha[v >> 6 & 63] : '=', i + 2 < bn ? b64_alpha[v & 63] : '='};
-		nbuf_put(&o, q, 4);
-	}
-	nbuf_byte(&o, '"');
-	*len = an + o.n;
-	xo_rstr *r = rs_append(a, an, o.p, o.n);
-	free(o.p);
-	return r;
-}
-#endif
-
-#ifdef XO_NUM_C
-// the C path of the number text (decision 0193 step 3): only
-// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
-// xo_b64_encode is the standard base64 of the bytes, padded
-// (Bytes.to_base64, base64.StdEncoding.EncodeToString).
-xo_rstr *xo_b64_encode(const char *p, int64_t n, int64_t *len) {
-	nbuf o = {0};
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n; i += 3) {
-		unsigned v = (unsigned)s[i] << 16;
-		if (i + 1 < n) {
-			v |= (unsigned)s[i + 1] << 8;
-		}
-		if (i + 2 < n) {
-			v |= s[i + 2];
-		}
-		char q[4] = {b64_alpha[v >> 18 & 63], b64_alpha[v >> 12 & 63], i + 1 < n ? b64_alpha[v >> 6 & 63] : '=', i + 2 < n ? b64_alpha[v & 63] : '='};
-		nbuf_put(&o, q, 4);
-	}
-	return nbuf_take(&o, len);
-}
-#endif
-
-static int b64_val(unsigned c) {
+static __attribute__((unused)) int b64_val(unsigned c) {
 	if (c >= 'A' && c <= 'Z') {
 		return (int)(c - 'A');
 	}
@@ -1040,75 +695,6 @@ static int b64_val(unsigned c) {
 	}
 	return -1;
 }
-
-#ifdef XO_NUM_C
-// n_b64_decode is base64.StdEncoding.DecodeString: padding required,
-// \r and \n ignored; 0 when the text is not valid.
-static int n_b64_decode(const char *p, int64_t n, nbuf *out) {
-	unsigned char q[4];
-	int k = 0, pad = 0;
-	for (int64_t i = 0; i < n; i++) {
-		unsigned c = (unsigned char)p[i];
-		if (c == '\r' || c == '\n') {
-			continue;
-		}
-		if (pad) {
-			// after padding only more padding of the same quantum
-			if (c != '=' || k == 0) {
-				return 0;
-			}
-			q[k++] = 0;
-			pad++;
-		} else if (c == '=') {
-			if (k < 2) {
-				return 0;
-			}
-			pad = 1;
-			q[k++] = 0;
-		} else {
-			int v = b64_val(c);
-			if (v < 0) {
-				return 0;
-			}
-			q[k++] = (unsigned char)v;
-		}
-		if (k == 4) {
-			unsigned v = (unsigned)q[0] << 18 | (unsigned)q[1] << 12 | (unsigned)q[2] << 6 | q[3];
-			char d[3] = {(char)(v >> 16), (char)(v >> 8), (char)v};
-			int keep = pad == 0 ? 3 : pad == 1 ? 2 : 1;
-			if (pad == 2 && k == 4) {
-				keep = 1;
-			}
-			nbuf_put(out, d, keep);
-			if (pad) {
-				// padding ends the text (only \r and \n may follow)
-				for (int64_t j = i + 1; j < n; j++) {
-					if (p[j] != '\r' && p[j] != '\n') {
-						return 0;
-					}
-				}
-				return 1;
-			}
-			k = 0;
-		}
-	}
-	return k == 0 && !pad;
-}
-
-int64_t xo_b64_ok(const char *p, int64_t n) {
-	nbuf o = {0};
-	int ok = n_b64_decode(p, n, &o);
-	free(o.p);
-	return ok;
-}
-
-xo_rstr *xo_b64_decode(const char *p, int64_t n, int64_t *len) {
-	nbuf o = {0};
-	n_b64_decode(p, n, &o);
-	return nbuf_take(&o, len);
-}
-
-#endif
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -1374,13 +960,6 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
-
-#ifdef XO_JSONTEXT_C
-// JSON (std.md 5): the C path of std/json's text (decision 0193 step 4),
-// which only XO_LLRT_C=jsontext builds call (std/native/llrt/
-// jsontext_c.xo); std/native/llrt/jsontext.xo is the default
-#include "xo_json.c"
-#endif
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"

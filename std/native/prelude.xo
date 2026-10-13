@@ -3,7 +3,12 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/atomic
+use native/llrt/fspath
+use native/llrt/gen
+use native/llrt/ints
 use native/llrt/jsontext
+use native/llrt/procspec
 use native/llrt/num
 use native/llrt/report
 use native/llrt/scan
@@ -154,7 +159,7 @@ fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
   var r = 1
   var i = 0
   while i < e {
-    if !rt.int_fits(2, r, n) {
+    if !ints.fits(2, r, n) {
       rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
     }
     r = r * n
@@ -170,13 +175,10 @@ fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
 fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
 
 fn checked(op: Int, n: Int, m: Int) -> Int? {
-  if !rt.int_fits(op, n, m) {
+  if !ints.fits(op, n, m) {
     return None
   }
-  if op == 3 {
-    return Some(n / m)
-  }
-  Some(rt.int_wrap(op, n, m))
+  Some(ints.apply(op, n, m))
 }
 
 fn int_checked_add(n: Int, m: Int) -> Int? { checked(0, n, m) }
@@ -191,8 +193,8 @@ fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
 fn saturated(op: Int, n: Int, m: Int) -> Int {
   let max = 9223372036854775807
   let min = -9223372036854775807 - 1
-  if rt.int_fits(op, n, m) {
-    return rt.int_wrap(op, n, m)
+  if ints.fits(op, n, m) {
+    return ints.apply(op, n, m)
   }
   if op == 0 {
     return if m > 0 { max } else { min }
@@ -686,9 +688,9 @@ fn fs_abs(p: Str) -> Str {
     return fs_clean(p)
   }
   if fs_windows() && fs_slash(p).starts_with("/") {
-    return fs_clean(fs_volume(rt.fs_cwd()) + fs_slash(p))
+    return fs_clean(fs_volume(fspath.cwd()) + fs_slash(p))
   }
-  fs_join(rt.fs_cwd(), p)
+  fs_join(fspath.cwd(), p)
 }
 
 // fs_resolve maps an Xo path to an OS path: os.fs takes it as it is, a
@@ -767,7 +769,7 @@ fn fs_sub(f: Fs, dir: Str) -> Fs {
   }
 }
 
-fn fs_cwd(f: Fs) -> Fs { rt.fs_new(rt.fs_cwd(), 1 | (rt.fs_mode(f) & 6)) }
+fn fs_cwd(f: Fs) -> Fs { rt.fs_new(fspath.cwd(), 1 | (rt.fs_mode(f) & 6)) }
 
 fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
 
@@ -863,7 +865,7 @@ fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 
 fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
   let op = fs_check(f, dir, true)?
-  let name = rt.fs_create_temp(op, prefix, dir)
+  let name = fspath.create_temp(op, prefix, dir)
   if name == "" {
     return Err(fs_err(rt.fs_status(), dir))
   }
@@ -894,7 +896,7 @@ fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
 
 fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_remove_all(op, p)
+  let st = fspath.remove_all(op, p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -902,7 +904,7 @@ fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
 
 fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
   let op = fs_check(f, dir, true)?
-  let st = rt.fs_mkdir_all(op, dir)
+  let st = fspath.mkdir_all(op, dir)
   if st != 0 {
     return Err(fs_err(st, dir))
   }
@@ -1698,21 +1700,8 @@ fn cmd_spec(c: Cmd, var out: List[Str]) {
   if c.merge {
     flags = flags | 4
   }
-  out.push(c.name)
-  out.push(c.dir)
-  out.push("${flags}")
-  out.push("${c.args.len()}")
-  for a in c.args {
-    out.push(a)
-  }
-  out.push("${c.env.len()}")
-  for kv in c.env {
-    out.push(kv)
-  }
-  out.push("${c.extra.len()}")
-  for kv in c.extra {
-    out.push(kv)
-  }
+  // the environment and the Windows command line (decision 0193 step 6)
+  procspec.spec(c.name, c.dir, flags, c.args, c.env, c.extra, out)
 }
 
 /// The ProcErr of a failed outcome (status st, detail d).
@@ -2152,8 +2141,8 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 
 // The number text, as the SSA builder calls it for every interpolation
 // and Display of an Int or Float (decision 0193 step 3): in Xo
-// (std/native/llrt/num.xo). With XO_LLRT_C=num the SSA builder calls the
-// C runtime (str.concat_int and friends) instead.
+// (std/native/llrt/num.xo). Decision 0198 deleted its C path
+// (XO_LLRT_C=num, the C runtime's str.concat_int and friends).
 
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 
@@ -2169,6 +2158,15 @@ fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) 
 
 fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 
+// Atomic's add and max (decision 0200): in Xo over the runtime's atomics
+// (std/native/llrt/atomic.xo); the SSA builders lower get, set, swap, and
+// compare_and_swap inline. With XO_LLRT_C=atomic the Go SSA builder calls
+// the C runtime for every Atomic operation instead.
+
+fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
+
+fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
+
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
 // Go SSA builder calls the C runtime's xo_prop_report instead.
@@ -2177,8 +2175,8 @@ fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo
-// (std/native/llrt/jsontext.xo). With XO_LLRT_C=jsontext the SSA builder
-// calls the C runtime (json_str and friends) instead.
+// (std/native/llrt/jsontext.xo). Decision 0198 deleted its C path
+// (XO_LLRT_C=jsontext, the C runtime's json_str and friends).
 
 fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
 
@@ -2205,3 +2203,41 @@ fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b
 fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
 
 fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
+
+// The integer operations of generated code (the zero-C audit's portable
+// group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The
+// SSA builders lower a sized integer operation inline and call the
+// faults here when its check fails; with XO_LLRT_C=ints the Go SSA
+// builder calls the C runtime (rt.int_op and friends) instead.
+
+fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never { ints.op_fault(op, a, b, bits, uns, at) }
+
+fn llrt_int_conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never { ints.conv_fault(v, fbits, funs, tbits, tuns, at) }
+
+fn llrt_u64_div(a: Int, b: Int) -> Int { ints.u64_div(a, b) }
+
+fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
+
+fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
+
+fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }
+
+// The scalar values of property tests and testing.gen (decision 0195):
+// in Xo (std/native/llrt/gen.xo) over the C generator's draws; with
+// XO_LLRT_C=gen the Go SSA builder calls the C runtime instead.
+
+fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
+
+fn llrt_gen_any_int(g: Int) -> Int { gen.any_int(g) }
+
+fn llrt_gen_sized(g: Int, kind: Int) -> Int { gen.sized(g, kind) }
+
+fn llrt_gen_float(g: Int) -> Float { gen.float(g) }
+
+fn llrt_gen_rune(g: Int) -> Int { gen.rune(g) }
+
+fn llrt_gen_str(g: Int) -> Str { gen.str(g) }
+
+fn llrt_gen_duration(g: Int) -> Int { gen.duration(g) }
+
+fn llrt_gen_time(g: Int) -> Int { gen.time(g) }

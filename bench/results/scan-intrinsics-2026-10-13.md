@@ -80,7 +80,7 @@ debug 1.011x; neither calls scan.xo, so the difference is layout).
    and 0.324x, hex 1.333x and 1.186x, quote 0.938x and 0.865x, replace
    0.960x and 0.851x. The bench program measured the second version
    unchanged at first: `.tools/bin/xo` embeds std/native, so it must be
-   rebuilt after a std edit (gotchas/dev-xo-embeds-std.md).
+   rebuilt after a std edit (gotchas/xo-binary-embeds-std-native.md).
 2. split and lines take every match of a 16 byte step in turn (one scan
    of the text instead of one find per piece), full steps then one tail
    step, and the mask's one bit a byte is `0x1111111111111111` (a

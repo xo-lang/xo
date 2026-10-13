@@ -190,6 +190,11 @@ int64_t xo_fs_remove(const char *p, int64_t n, const char *x, int64_t xn) {
 	return st;
 }
 
+#ifdef XO_FSPATH_C
+// The C path of std/native/llrt/fspath.xo (decision 0193 step 6,
+// XO_LLRT_C=fspath): os.RemoveAll's and os.MkdirAll's walks,
+// os.CreateTemp's names, and the working directory with / separators.
+
 // fs_remove_all is os.RemoveAll: nil for a missing path.
 static int fs_remove_all(const char *path) {
 	struct stat sb;
@@ -298,6 +303,8 @@ int64_t xo_fs_mkdir_all(const char *p, int64_t n, const char *x, int64_t xn) {
 	return st;
 }
 
+#endif // XO_FSPATH_C
+
 // xo_fs_chtimes is os.Chtimes(p, t, t) with t in nanoseconds.
 int64_t xo_fs_chtimes(const char *p, int64_t n, int64_t t, const char *x, int64_t xn) {
 	char *path = cstr_of(p, n);
@@ -322,6 +329,7 @@ int64_t xo_fs_chtimes(const char *p, int64_t n, int64_t t, const char *x, int64_
 	return st;
 }
 
+#ifdef XO_FSPATH_C
 // xo_fs_create_temp is os.CreateTemp(dir, prefix + "*"): the new file's
 // base name (prefix and a random number), empty with the status set on an
 // error (which names x).
@@ -381,6 +389,118 @@ xo_rstr *xo_fs_cwd(int64_t *len) {
 #endif
 	*len = k;
 	return s;
+}
+#endif // XO_FSPATH_C
+
+// ---------------------------------------------------------------------------
+// The system calls under std/native/llrt/fspath.xo (decision 0193 step 6),
+// which walks the paths of os.MkdirAll and os.RemoveAll and names the
+// files of os.CreateTemp in Xo: each takes the OS path and returns 0 or
+// the errno; xo_fs_raw_fail turns an errno into the status of the
+// operation (the error naming the Xo path).
+
+static __thread int64_t n_fs_errno;
+
+int64_t xo_fs_raw_mkdir(const char *p, int64_t n) {
+	char *path = cstr_of(p, n);
+	int r = mkdir(n == 0 ? "." : path, 0755);
+	int e = errno;
+	free(path);
+	return r == 0 ? 0 : e;
+}
+
+int64_t xo_fs_raw_rmdir(const char *p, int64_t n) {
+	char *path = cstr_of(p, n);
+	int r = rmdir(n == 0 ? "." : path);
+	int e = errno;
+	free(path);
+	return r == 0 ? 0 : e;
+}
+
+int64_t xo_fs_raw_unlink(const char *p, int64_t n) {
+	char *path = cstr_of(p, n);
+	int r = unlink(n == 0 ? "." : path);
+	int e = errno;
+	free(path);
+	return r == 0 ? 0 : e;
+}
+
+// xo_fs_raw_kind stats p (lstat unless follow): 1 a directory, 0 another
+// file, minus the errno when it fails.
+int64_t xo_fs_raw_kind(const char *p, int64_t n, int64_t follow) {
+	char *path = cstr_of(p, n);
+	struct stat sb;
+	int r = follow ? stat(n == 0 ? "." : path, &sb) : lstat(n == 0 ? "." : path, &sb);
+	int e = errno;
+	free(path);
+	if (r != 0) {
+		return -(int64_t)(e ? e : EIO);
+	}
+	return S_ISDIR(sb.st_mode) ? 1 : 0;
+}
+
+// xo_fs_raw_names lists the entries of the directory p (not `.` and
+// `..`); xo_fs_raw_errno is 0 or why it could not be read.
+xo_rlist *xo_fs_raw_names(const char *p, int64_t n) {
+	char *path = cstr_of(p, n);
+	DIR *d = opendir(n == 0 ? "." : path);
+	int err = errno;
+	free(path);
+	if (!d) {
+		n_fs_errno = err ? err : EIO;
+		return n_str_list_new(0);
+	}
+	xo_rlist *l = n_str_list_new(8);
+	struct dirent *e;
+	while ((e = readdir(d)) != NULL) {
+		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+			continue;
+		}
+		l = n_str_list_add(l, e->d_name, (int64_t)strlen(e->d_name));
+	}
+	closedir(d);
+	n_fs_errno = 0;
+	return l;
+}
+
+int64_t xo_fs_raw_errno(void) { return n_fs_errno; }
+
+// xo_fs_raw_create creates the file p for os.CreateTemp (O_EXCL, 0600).
+int64_t xo_fs_raw_create(const char *p, int64_t n) {
+	char *path = cstr_of(p, n);
+	int fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+	int e = errno;
+	free(path);
+	if (fd < 0) {
+		return e;
+	}
+	close(fd);
+	return 0;
+}
+
+// xo_fs_raw_rand is a random number below 2^32 (os.CreateTemp's names).
+int64_t xo_fs_raw_rand(void) { return (int64_t)(uint32_t)cr_rand_u64(); }
+
+// xo_fs_raw_getcwd is the working directory as the system gives it.
+xo_rstr *xo_fs_raw_getcwd(int64_t *len) {
+	char buf[4096];
+	const char *w = getcwd(buf, sizeof buf);
+	if (!w) {
+		w = ".";
+	}
+	return nstr(w, (int64_t)strlen(w), len);
+}
+
+// xo_fs_raw_fail records err for the Xo path x: the operation's status;
+// 0 records success.
+int64_t xo_fs_raw_fail(int64_t err, const char *x, int64_t xn) {
+	if (err == 0) {
+		return fs_ok();
+	}
+	char *xp = cstr_of(x, xn);
+	int64_t st = fs_fail((int)err, xp);
+	free(xp);
+	return st;
 }
 
 // xo_fs_case_sensitive is false on macOS and Windows (std/rt).

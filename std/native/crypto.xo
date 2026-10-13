@@ -1,12 +1,15 @@
 // std/crypto on the native backends (decision 0083). std/rt/crypto.go is
-// the reference; the hashes are C (std/llrt/xo_crypto.c), and random
-// bytes come from the Rand capability (the operating system's generator).
+// the reference; SHA-256, HMAC, PBKDF2, and base64 are Xo
+// (std/native/llrt/digest.xo, decision 0195), Argon2id, crypto.equal,
+// and Ed25519 C (std/llrt/xo_crypto.c), and random bytes come from the
+// Rand capability (the operating system's generator).
+use native/llrt/digest
 use native/rt
 use native/rtcrypto
 
-fn sha256(data: Bytes) -> Bytes { rtcrypto.crypto_sha256(data) }
+fn sha256(data: Bytes) -> Bytes { digest.sha256(data) }
 
-fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { rtcrypto.crypto_hmac_sha256(key, msg) }
+fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { digest.hmac_sha256(key, msg) }
 
 fn equal(a: Bytes, b: Bytes) -> Bool { rtcrypto.crypto_equal(a, b) }
 
@@ -17,7 +20,7 @@ fn random_bytes(r: Rand, n: Int, at: rt.Loc) -> Bytes uses rand {
   r.bytes(n)
 }
 
-fn token(r: Rand, n: Int = 32, at: rt.Loc) -> Str uses rand { rtcrypto.crypto_b64(random_bytes(r, n, at), true) }
+fn token(r: Rand, n: Int = 32, at: rt.Loc) -> Str uses rand { digest.b64(random_bytes(r, n, at), true) }
 
 fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, iterations: Int = 2, parallelism: Int = 1, at: rt.Loc) -> Str uses rand {
   let ok = parallelism >= 1 && parallelism <= 255 && memory_kib >= 8 * parallelism && memory_kib <= 4194304 && iterations >= 1 && iterations <= 1000
@@ -25,8 +28,8 @@ fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, itera
     rt.fault_at("crypto.hash_password_argon2id: need parallelism in 1..=255, memory_kib in 8 * parallelism..=4194304, iterations in 1..=1000; got memory_kib ${memory_kib}, iterations ${iterations}, parallelism ${parallelism}", at)
   }
   let salt = random_bytes(r, 16, at)
-  let key = rtcrypto.crypto_argon2id(password, salt, iterations, memory_kib, parallelism, 32)
-  "$argon2id$v=19$m=${memory_kib},t=${iterations},p=${parallelism}$" + rtcrypto.crypto_b64(salt, false) + "$" + rtcrypto.crypto_b64(key, false)
+  let key = rtcrypto.crypto_argon2id(password.bytes(), salt, iterations, memory_kib, parallelism, 32)
+  "$argon2id$v=19$m=${memory_kib},t=${iterations},p=${parallelism}$" + digest.b64(salt, false) + "$" + digest.b64(key, false)
 }
 
 fn hash_password(r: Rand, password: Str, iterations: Int = 600000, at: rt.Loc) -> Str uses rand {
@@ -34,11 +37,11 @@ fn hash_password(r: Rand, password: Str, iterations: Int = 600000, at: rt.Loc) -
     rt.fault_at("crypto.hash_password: iterations must be in 1..=100000000, got ${iterations}", at)
   }
   let salt = random_bytes(r, 16, at)
-  let key = rtcrypto.crypto_pbkdf2(password, salt, iterations, 32)
-  "pbkdf2-sha256$" + "${iterations}$" + rtcrypto.crypto_b64(salt, false) + "$" + rtcrypto.crypto_b64(key, false)
+  let key = digest.pbkdf2(password.bytes(), salt, iterations, 32)
+  "pbkdf2-sha256$" + "${iterations}$" + digest.b64(salt, false) + "$" + digest.b64(key, false)
 }
 
-fn verify_password(password: Str, hash: Str) -> Bool { rtcrypto.crypto_verify_password(password, hash) }
+fn verify_password(password: Str, hash: Str) -> Bool { digest.verify_password(password, hash) }
 
 fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
   if seed.len() != 32 {

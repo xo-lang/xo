@@ -285,7 +285,7 @@ go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared c
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
-go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
+go test ./internal/llvm -run 'TestHTTPParseDiff'   # native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds). TestJSONParseDiff, the C JSON parser's, went with it (decision 0198); TestJSONTextDiff checks the Xo parser (last verified: 2026-10-13)
 go test ./internal/llvm -run TestTLSDiff           # native HTTPS vs the Go backend: client errors, SNI, ALPN, versions, plain HTTP on the TLS port, SIGTERM (decisions 0105, 0106; about 15 s)
 go test ./internal/llvm -run TestH2Diff -count=3    # HTTP/2 (decision 0121): Go vs LLVM vs arm64 backends as client and server, net/http's client with 400 streams at once, 70 raw frame cases h2spec style; repeat to catch racing cases (about 6 s each)
 go test ./internal/llvm -run TestH2Sanitizers      # the TestH2Diff program (LLVM) under ThreadSanitizer and under AddressSanitizer with UBSan (about 10 s)
@@ -763,8 +763,8 @@ Last verified: 2026-10-07
   (2026-10-12, decisions 0180 and 0184): builds bench/perf/unicode with
   each backend and prints `<workload> <backend> <min instructions> <best
   us> <checksum>` over 5 runs of each workload (`/usr/bin/time -l`,
-  darwin); `XO_UNICODE=c` in the environment builds the C path. Run it
-  through the heavy lock. Results in
+  darwin); `XO_UNICODE=c` built the C path until decision 0198 deleted
+  it (2026-10-13). Run it through the heavy lock. Results in
   `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
 - `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
   decision 0193): the same for bench/perf/text (Int parse, Duration and
@@ -772,14 +772,34 @@ Last verified: 2026-10-07
   and since step 3 int_fmt, float_fmt, float_parse, base64, hex, since
   step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load, since
   decision 0201 utf8; `none` is the input setup alone);
-  `XO_LLRT_C=text,strings,num,show,tz,scan` builds the C paths,
-  `WORKLOADS` picks workloads. Run it through the heavy lock with
-  `XO_SELF_DRIVER=0` in the environment for the Go driver, and rebuild
-  the xo binary after a std edit (it embeds std/native,
-  gotchas/dev-xo-embeds-std.md). Results in
+  `XO_LLRT_C=text,show,tz,scan` builds the C paths (strings and num
+  went in decision 0198, 2026-10-13), `WORKLOADS` picks workloads. Run
+  it through the heavy lock with `XO_SELF_DRIVER=0` in the environment
+  for the Go driver, and rebuild the xo binary after a std edit
+  (gotchas/xo-binary-embeds-std-native.md). Results in
   `bench/results/runtime-port-2026-10-12.md`,
   `runtime-port-step3-2026-10-12.md`, `runtime-port-step5-2026-10-13.md`,
   and `scan-intrinsics-2026-10-13.md`. Last verified: 2026-10-13.
+- `bench/perf/portable/measure.sh`, `bench/perf/digest/measure.sh`
+  `<xo> <out dir> <backend...>` (2026-10-13, decision 0195): the same
+  for bench/perf/portable (sized integer arithmetic, conversions, UInt64,
+  Str key hash, Time.unix, checked_ methods, Float32) and bench/perf/digest
+  (SHA-256, HMAC, PBKDF2 and Argon2id verify); `XO_LLRT_C=ints` and
+  `XO_LLRT_C=digest` build the C paths. `bench/perf/glob/measure.sh` and
+  `bench/perf/gen/measure.sh` build a test binary (`xo test --no-gc`) and
+  run each test (`XO_TEST`) 5 times, printing `<test> <backend> <min
+  instructions>`; `XO_LLRT_C=glob`, `gen`. Through the heavy lock with
+  `XO_SELF_DRIVER=0`. Results in
+  `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
+  2026-10-13.
+- `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
+  test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
+  0195): sized integers, std/crypto's hashes, path.Match, and generated
+  values on arm64 and LLVM, Xo and C paths, against the Go backend (or
+  Go's packages); not under -short. `go test ./internal/llvm -run
+  TestDigestTables -golden-update` regenerates
+  std/native/llrt/digest_tables.xo (SHA-256 unrolled). Last verified:
+  2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
@@ -793,12 +813,13 @@ Last verified: 2026-10-07
   of small objects, Int, Float, and string arrays, Map objects, the
   parser alone, invalid texts; encode of structs, strings, Floats; Bytes
   both ways; `none` is the input setup alone); `XO_LLRT_C=jsontext`
-  builds the C path. Run it through the heavy lock with
+  built the C path until decision 0198 (2026-10-13). Run it through the heavy lock with
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-step4-2026-10-13.md`. Last verified:
   2026-10-13.
 - `go test ./internal/llvm -run TestJSONTextDiff` (2026-10-13, decision
-  0193 step 4): std/json on arm64 and LLVM, Xo and C paths, against the
+  0193 step 4): std/json on arm64 and LLVM (the Xo path; the C path's
+  subtests went with it in decision 0198) against the
   Go backend on about 28,000 generated and edge case inputs (not under
   -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
   verified: 2026-10-13.
@@ -809,6 +830,33 @@ Last verified: 2026-10-07
   (needles at every offset, invalid UTF-8; not under -short;
   `XO_SCANDIFF_N` sets the random count, default 3000). Last verified:
   2026-10-13.
+- `bench/perf/httpparse/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): builds the server of
+  bench/perf/httpparse with each backend and, for each workload (h1_get,
+  h1_chunked, h1_url, h2_get, h2_varied; `none` starts and stops it),
+  runs it 5 times under `/usr/bin/time -l` while load/ (a Go client,
+  built into the out dir; it also writes the TLS certificate) sends N
+  requests (default 20000), then stops it with SIGTERM to the server's
+  PID (the child of the time process the script started); prints `<w>
+  <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
+  the C paths; PORT (18090). Through the heavy lock, with
+  `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
+  working directory, and process environments (mkdir, tree, remove,
+  temp, cwd, proc_plain, proc) in a fresh scratch directory per run;
+  `XO_LLRT_C=fspath,procspec` builds the C paths. The counts include the
+  kernel's instructions. Last verified: 2026-10-13.
+- `go test ./internal/llvm -run 'TestHTTP1ParseDiff|TestProcSpecDiff'`
+  (2026-10-13, decision 0193 step 6, not under -short): a server program
+  built with the Go backend, LLVM, and arm64 answers the same raw
+  HTTP/1.1 connections over loopback (`XO_HTTP_DIFF_N` random requests,
+  default 2000, `XO_HTTP_DIFF_SEED`); env(1) and printf(1) children with
+  the environments procspec.xo builds. `XO_LLRT_C=http1` or `procspec`
+  checks the C path. TestH2Diff's probeH2HPACK covers hpack.xo.
+  `-run 'TestHPACKTables|TestHTTP1Tables' -golden-update` regenerates
+  `std/native/llrt/hpack_tables.xo` and `http1_tables.xo`. Last
+  verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1132,7 +1180,7 @@ std/                    std declaration files (prelude.xo, archive.xo, cli.xo, c
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_unicode.c (XO_UNICODE_C only), xo_bytes.c, xo_json.c,
+                        and the files it includes: xo_std.c, xo_bytes.c,
                         xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
@@ -1151,21 +1199,25 @@ std/native/             std implemented in Xo for the native backends (decision 
 std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
                         Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
                         and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
-                        -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
-                        `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
-                        (XO_UNICODE=c at build time: the Go checker loads it instead, the build
-                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
+                        -golden-update`); imported as
+                        `use native/llrt/<name>` by std/native only.
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,
-                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float text,
-                        Float.parse, hex, base64; num_c.xo) and jsontext.xo (std/json's parser,
-                        tape readers, string, Float, and Bytes text; jsontext_c.xo); show.xo
+                        with C path text_c.xo; num.xo (Int and Float text,
+                        Float.parse, hex, base64) and jsontext.xo (std/json's parser,
+                        tape readers, string, Float, and Bytes text); show.xo
                         (Rune and UInt64 text of Display and Debug), tz.xo (std/time's zone
                         rules), report.xo (a property test case's report) with show_c.xo,
                         tz_c.xo, report_c.xo (step 5). `XO_LLRT_C=<name>[,<name>]` (or `all`)
-                        at build time selects a module's C path (-DXO_TEXT_C, -DXO_STRINGS_C,
-                        -DXO_NUM_C, -DXO_JSONTEXT_C, -DXO_SHOW_C, -DXO_TZ_C, -DXO_REPORT_C,
-                        likewise never in a pack); XO_UNICODE=c still works
+                        at build time selects a module's C path (-DXO_TEXT_C, -DXO_SHOW_C,
+                        -DXO_TZ_C, -DXO_REPORT_C, compiled locally, never in a pack). Decision
+                        0198 deleted the C paths of unicode (XO_UNICODE=c), strings, num, and
+                        jsontext; those names now select nothing; ints.xo (sized integer faults, UInt64
+                        division, floor division, Str key hash, Int's checked_ methods), glob.xo
+                        (path.Match), digest.xo (SHA-256 via the generated digest_tables.xo,
+                        HMAC, PBKDF2, base64, verify_password), gen.xo (property test values)
+                        with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195;
+                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C)
                         (Last verified: 2026-10-13)
 ```
 
@@ -1597,6 +1649,18 @@ first, AST based prototype, since deleted) and
   darwin/arm64 `apple-m1` (LSE atomics inline), Linux arm64 `generic`
   with `+outline-atomics` (Debian clang 19), Linux amd64 `x86-64`.
   Check with `otool -tv bin | grep -c ldaxr` (0 on darwin/arm64).
+- Atomics (decision 0200, 2026-10-13): the cell intrinsics `rt.slot_*`
+  lower to `load atomic`, `store atomic`, `atomicrmw xchg|add`, and a
+  strong `cmpxchg` (failure ordering the strongest allowed: acquire for
+  acquire and acq_rel, monotonic for relaxed and release) at object +
+  24 + 8i, `align 8`; relaxed is `monotonic`, a load's release or
+  acq_rel and a store's acquire or acq_rel become `seq_cst`; `rt.fence`
+  is `fence` (relaxed none). The target attributes above decide the
+  machine code (LSE on darwin/arm64, outline atomics on Linux arm64,
+  `lock` instructions and `xchg` on x86-64). `rt.spin_hint` is nothing:
+  the IR is target independent (selfhost/llvm call.xo `atomic`,
+  internal/llvm fromssa.go `atomic`, identical IR) (last verified:
+  2026-10-13).
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
   constants with the immortal count INT64_MIN, never written), List a
@@ -1761,7 +1825,8 @@ first, AST based prototype, since deleted) and
   numbers, durations, times, base64), `xo_bytes.c` (decision 0081: checked arithmetic and
   conversions of sized integers, Rune text and quoting, Bytes slicing and
   decoding, the builders' appends, `fs.read`, `env.args`, and the slots
-  of constants of collection types), `xo_json.c`, and `xo_http.c`;
+  of constants of collection types), and `xo_http.c` (`xo_json.c`
+  until decision 0198);
   builds write every `std/llrt/*.c` next to xo_rt.c and compile only
   xo_rt.c.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
@@ -1849,6 +1914,24 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   templates). Environments are `{rc, drop, share, captures}` (24 byte
   header). Literals are in `__TEXT,__const` / `.rodata`. `iCondBr` with
   `tbz`/`tbnz` tests `inst.bit`.
+- Atomics (decision 0200, 2026-10-13): `rt.slot_load`, `slot_store`,
+  `slot_swap`, `slot_cas`, `slot_add`, `slot_addr` (a cell: element i of
+  a `List[Int]` or an Atomic's value, at object + 24 + 8i), `rt.fence`,
+  `rt.spin_hint` lower inline (selfhost/arm64 calls.xo `atomic`,
+  internal/arm64 isel.go `atomic`, identical output): relaxed loads and
+  stores `ldr`/`str`, the others `ldar`/`stlr`; on Darwin `swp`, `cas`,
+  `ldadd` with the order's `a`/`l`/`al` suffix (a cas is `mov; casal;
+  cmp; cset`), on Linux calls of libgcc's outline atomics
+  `__aarch64_{swp,cas,ldadd}8_{relax,acq,rel,acq_rel}` (what the C
+  runtime's `-moutline-atomics` objects call; selfhost/macho elflink.xo
+  writes them when linking without cc); fences `dmb ishld` (acquire) or
+  `dmb ish`; the spin hint `yield`. The instructions are `keep` (never
+  deleted with a dead result, never folded into a branch) and early
+  (gotchas/arm64-plain-defs-assumed-pure.md). Atomic's get, set, swap,
+  and compare_and_swap are one of these each (seq_cst); add and max are
+  std/native/llrt/atomic.xo; `XO_LLRT_C=atomic` (Go driver) calls
+  xo_atomic_* (compiled with -DXO_ATOMIC_C). Litmus tests:
+  `bench/litmus/run.sh <xo1>` (last verified: 2026-10-13).
 - Unwinding (2026-10-09, decision 0085): every function has `.cfi_*`
   call frame information (leaf functions' fault stubs push a frame record
   first); a function with landing pads (`inst.pad`) gets

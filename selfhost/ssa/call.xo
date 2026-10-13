@@ -1330,7 +1330,14 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
         let some = b.m.variant_index(nt, "Some")
         let to = b.m.types[nt].variants[some].fields[0].ty
         var ok = -1
-        if b.m.types[to].name == "Rune" {
+        if b.sized_inline() {
+          // inline (std/native/llrt/ints.xo, decision 0195)
+          if b.m.types[to].name == "Rune" {
+            ok = b.rune_valid(v)
+          } else {
+            ok = b.in_range(v, to)
+          }
+        } else if b.m.types[to].name == "Rune" {
           ok = b.rt("rune_valid", bt, [v])
         } else {
           var rargs = [v]
@@ -1742,7 +1749,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       let res = b.s.f.add_param(join, nt)
       // the native prelude's llrt_utf8_valid (std/native/llrt/scan.xo,
       // decision 0201), else rt.utf8_valid (fn.scanRT)
-      let (yes, no) = b.branch(b.json_rt("utf8_valid", b.bool_t(), [recv]))
+      let (yes, no) = b.branch(b.scan_rt("utf8_valid", b.bool_t(), [recv]))
       b.s.cur = yes
       b.jump(join, [b.variant(nt, "Some", [recv])])
       b.s.cur = no
@@ -1759,8 +1766,15 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       return Some(b.add(Op.Div, ft, Aux.None, [f, b.add(Op.Const, ft, Aux.F(f: 1000000000.0), [])]))
     }
     "Duration.abs" => return Some(b.call("Int.abs", it, pos, [recv]))
-    "Time.unix" => return Some(b.rt("floor_div", it, [recv, b.cint(1000000000)]))
-    "Time.unix_millis" => return Some(b.rt("floor_div", it, [recv, b.cint(1000000)]))
+    "Time.unix" | "Time.unix_millis" => {
+      let unit = if key == "Time.unix_millis" { 1000000 } else { 1000000000 }
+      let k = b.cint(unit)
+      if b.sized_inline() {
+        // std/native/llrt/ints.xo (decision 0195)
+        return Some(b.llrt_call("floor_div", [recv, k]))
+      }
+      return Some(b.rt("floor_div", it, [recv, k]))
+    }
     _ => {}
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")

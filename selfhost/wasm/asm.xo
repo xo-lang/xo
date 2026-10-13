@@ -903,6 +903,8 @@ fn simple_op(op: Str) -> Int {
     "i64.shl" => 0x86
     "i64.shr_s" => 0x87
     "i64.shr_u" => 0x88
+    "i64.rotl" => 0x89
+    "i64.rotr" => 0x8A
     "f64.abs" => 0x99
     "f64.neg" => 0x9A
     "f64.ceil" => 0x9B

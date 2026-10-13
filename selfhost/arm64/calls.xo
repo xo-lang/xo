@@ -637,9 +637,11 @@ fn (var g: G) call_op(v: Int) {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the
-/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
-/// bytes); the scan intrinsics of decision 0201: rt.popcount (cnt and
+/// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
+/// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+/// extended, 7 the bytes reversed), rt.u64_mul_hi, the bits of a Float
+/// both ways, and rt.bytes_word (an unchecked load of 8 bytes);
+/// the scan intrinsics of decision 0201: rt.popcount (cnt and
 /// addv), rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and
 /// rt.bytes_high16 (16 bytes in v30 compared, narrowed by shrn to 4 bits
 /// a byte; v30 and v31 are scratch registers of the emitter), and the
@@ -651,11 +653,32 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
   match aux_str(x.aux) {
     "rt.int_wrap" => {
       let (op, ok) = g.const_int(x.args[0])
-      if !ok || op < 0 || op > 4 {
+      if !ok || op < 0 || op > 7 {
         return false
       }
-      let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let a = g.word(x.args[1])
+      if op == 7 {
+        g.set(v, [g.def1(false, "rev $d0, $u0", [a])])
+        return true
+      }
+      if op == 5 || op == 6 {
+        let (k, kc) = g.const_int(x.args[2])
+        if kc {
+          if op == 5 {
+            g.set(v, [g.def1(false, "ror $d0, $u0, #${k & 63}", [a])])
+          } else {
+            g.set(v, [g.def1(false, "ror $wd0, $wu0, #${k & 31}", [a])])
+          }
+          return true
+        }
+        if op == 5 {
+          g.set(v, [g.def1(false, "ror $d0, $u0, $u1", [a, g.word(x.args[2])])])
+        } else {
+          g.set(v, [g.def1(false, "ror $wd0, $wu0, $wu1", [a, g.word(x.args[2])])])
+        }
+        return true
+      }
+      let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op >= 3 {
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k & 63}", [a])])
@@ -664,6 +687,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
     }
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    // decision 0195: the conversions of UInt64 and Float32
+    "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
+    "rt.f32_round" => g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
+    "rt.i64_to_f32" => g.set(v, [g.def1(true, "scvtf $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
     "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_word" => {
@@ -697,9 +724,131 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, ws)
     }
     "rt.rs_set_len" => g.set(v, [g.words(x.args[0])[0], g.word(x.args[1])])
+    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return false
   }
   true
+}
+
+/// The memory order of argument k of value v (decision 0200): its
+/// constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst; a
+/// value that is not one of them is seq_cst.
+fn (g: G) ord_arg(v: Int, k: Int) -> Int {
+  let x = g.f.values[v]
+  if k >= x.args.len() {
+    return 4
+  }
+  let (o, ok) = g.const_int(x.args[k])
+  if !ok || o < 0 || o > 4 {
+    return 4
+  }
+  o
+}
+
+/// The address of the cell (container, index) of an atomic: the list's
+/// element, or an Atomic's value (the same layout: a header of three
+/// words, then words).
+fn (var g: G) cell_addr(v: Int) -> Int {
+  let x = g.f.values[v]
+  let l = g.word(x.args[0])
+  let (k, kc) = g.const_int(x.args[1])
+  if kc && k >= 0 && LIST_HDR + 8 * k < 4096 {
+    return g.def1(false, "add $d0, $u0, #${LIST_HDR + 8 * k}", [l])
+  }
+  let b = g.def1(false, "add $d0, $u0, $u1, lsl #3", [l, g.word(x.args[1])])
+  g.def1(false, "add $d0, $u0, #${LIST_HDR}", [b])
+}
+
+/// Adds an atomic instruction defining one register: kept when its
+/// result is dead and never folded into a branch (keep); early, since a
+/// template may write its result before it reads every operand.
+fn (var g: G) atomic_def(text: Str, us: List[Int]) -> Int {
+  let d = g.new_vreg(false)
+  let i = g.plain(text, [d], us)
+  let b = g.cur
+  g.blocks[b].insts[i].early = true
+  g.blocks[b].insts[i].keep = true
+  g.clobber()
+  d
+}
+
+/// Sets v, an Int or a Bool (a Bool cell holds 0 or 1), to register r.
+fn (var g: G) atomic_result(v: Int, r: Int) {
+  let x = g.f.values[v]
+  match g.kind(x.ty) {
+    Int | Bool => g.set(v, [r])
+    _ => {
+      g.fail("the atomic `${aux_str(x.aux)}` returns a `${g.tname(x.ty)}`")
+      g.set(v, g.zeros(x.ty))
+    }
+  }
+}
+
+/// Lowers the atomics and fences of decision 0200 inline: on darwin the
+/// LSE instructions every Apple arm64 CPU has (ldar, stlr, swp, cas,
+/// ldadd with the order's a and l; dmb, yield); on linux, which also runs
+/// on ARMv8.0, loads, stores, and fences inline and the read modify
+/// writes as calls of libgcc's outline atomics (__aarch64_cas8_acq_rel
+/// and friends), as the C runtime's -moutline-atomics objects do
+/// (selfhost/macho elflink.xo writes them when it links without cc).
+fn (var g: G) atomic(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  if name == "rt.spin_hint" {
+    g.store("yield", [])
+    g.set(v, [])
+    return
+  }
+  if name == "rt.fence" {
+    match g.ord_arg(v, 0) {
+      0 => {}
+      1 => g.store("dmb ishld", [])
+      _ => g.store("dmb ish", [])
+    }
+    g.set(v, [])
+    return
+  }
+  if name == "rt.slot_addr" {
+    g.set(v, [g.cell_addr(v)])
+    return
+  }
+  let a = g.cell_addr(v)
+  // the order of a read modify write: none, acquire, release, both
+  let ord = g.ord_arg(v, x.args.len() - 1)
+  let sfx = ["", "a", "l", "al", "al"][ord]
+  let model = ["relax", "acq", "rel", "acq_rel", "acq_rel"][ord]
+  match name {
+    "rt.slot_load" => {
+      let ins = if ord == 0 { "ldr" } else { "ldar" }
+      g.atomic_result(v, g.atomic_def("${ins} $d0, [$u0]", [a]))
+    }
+    "rt.slot_store" => {
+      let ins = if ord == 0 { "str" } else { "stlr" }
+      g.store("${ins} $u0, [$u1]", [g.word(x.args[2]), a])
+      g.set(v, [])
+    }
+    "rt.slot_swap" | "rt.slot_add" => {
+      let val = g.word(x.args[2])
+      let op = if name == "rt.slot_swap" { "swp" } else { "ldadd" }
+      if g.os == "darwin" {
+        g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
+      } else {
+        let r = g.rt("__aarch64_${op}8_${model}", [rsrc(val), rsrc(a)], [false])
+        g.atomic_result(v, r[0])
+      }
+    }
+    _ => {
+      // rt.slot_cas: the old value seen, compared with the expected one
+      let old = g.word(x.args[2])
+      let new = g.word(x.args[3])
+      if g.os == "darwin" {
+        g.set(v, [g.atomic_def("mov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", [old, new, a])])
+      } else {
+        let r = g.rt("__aarch64_cas8_${model}", [rsrc(old), rsrc(new), rsrc(a)], [false])
+        g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, eq", [r[0], old])])
+      }
+    }
+  }
 }
 
 /// Lowers a call of the task runtime (`rt.name` is the C function

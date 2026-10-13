@@ -1,0 +1,25 @@
+// The server of bench/perf/httpparse (decision 0193 step 6): small
+// answers, so the request parsing (HTTP/1.1 heads, chunked bodies, URL
+// targets, HTTP/2 header blocks) is a large part of the server's work.
+// It serves on ADDR (HTTPS with HTTP/2 when TLS_CERT and TLS_KEY hold
+// PEM text) until a stop request (SIGTERM), then returns.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /p/{id}", fn(req) {
+    http.text(200, "${req.param("id")} ${req.headers.len()} ${req.url.query.len()}")
+  })
+  r.handle("POST /u", fn(req) { http.text(200, "${req.body.len()}") })
+  r
+}
+
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? "127.0.0.1:18090"
+  var srv = http.server(os.net.listen(addr)?, routes())
+  if let Some(cert) = os.env.get("TLS_CERT") {
+    srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
+  }
+  os.stdio.println("ready")
+  srv.serve()?
+}

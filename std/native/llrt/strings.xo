@@ -2,9 +2,9 @@
 // rune or per match, written in Xo (decision 0193, step 2): Str.replace
 // and the trims (Unicode white space). They were C (std/llrt/xo_std.c);
 // the semantics are still Go's (strings), so the native backends print
-// what the Go backend prints. The C path stays selectable
-// (`XO_LLRT_C=strings` loads strings_c.xo) until bench/perf/text meets
-// decision 0180's bar on both native backends.
+// what the Go backend prints. Its C path (`XO_LLRT_C=strings`,
+// strings_c.xo) went once bench/perf/text met decision 0180's bar on both
+// native backends (decision 0198).
 //
 // The searches are scan.xo (decision 0201: find, split, lines,
 // rune_count); the copies stay C (rt.str_slice, rt.rs_append_bytes,

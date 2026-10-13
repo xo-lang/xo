@@ -478,9 +478,12 @@ fn runtime_raises(name: Str) -> Bool {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-/// multiply), the bits of a Float both ways, and rt.bytes_word (an
-/// unchecked load of 8 bytes); the scan intrinsics of decision 0201:
+/// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
+/// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+/// extended, 7 the bytes reversed), rt.u64_mul_hi (an i128 multiply), the
+/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
+/// bytes);
+/// the scan intrinsics of decision 0201:
 /// rt.popcount, rt.ctz, rt.clz (llvm.ctpop, cttz, ctlz), and
 /// rt.bytes_eq16 and rt.bytes_high16 (a <16 x i8> compare narrowed to 4
 /// bits a byte, which arm64 selects as cmeq and shrn), and the string
@@ -499,11 +502,28 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         I(n) => n
         _ => -1
       }
-      if op < 0 || op > 4 {
+      if op < 0 || op > 7 {
         return false
       }
       let a = g.op(x.args[1])
       var b = g.op(x.args[2])
+      if op == 5 {
+        g.llvm_decl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
+        g.set(v, "call i64 @llvm.fshr.i64(i64 ${a}, i64 ${a}, i64 ${b})")
+        return true
+      }
+      if op == 6 {
+        g.llvm_decl("@llvm.fshr.i32", "declare i32 @llvm.fshr.i32(i32, i32, i32)")
+        let x32 = g.def("trunc i64 ${a} to i32")
+        let n32 = g.def("trunc i64 ${b} to i32")
+        g.set(v, "zext i32 ${g.def("call i32 @llvm.fshr.i32(i32 ${x32}, i32 ${x32}, i32 ${n32})")} to i64")
+        return true
+      }
+      if op == 7 {
+        g.llvm_decl("@llvm.bswap.i64", "declare i64 @llvm.bswap.i64(i64)")
+        g.set(v, "call i64 @llvm.bswap.i64(i64 ${a})")
+        return true
+      }
       if op >= 3 {
         b = g.def("and i64 ${b}, 63")
       }
@@ -515,6 +535,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
+    // decision 0195: the conversions of UInt64 and Float32
+    "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
+    "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")
+    "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(x.args[0])} to float")} to double")
     "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
     "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
     "rt.bytes_word" => {
@@ -555,9 +579,123 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let obj = g.def("extractvalue %xo.str ${g.op(x.args[0])}, 0")
       g.mk_str(v, obj, g.op(x.args[1]))
     }
+    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return false
   }
   true
+}
+
+/// The memory order of argument k of value v (decision 0200; ordArg):
+/// its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst;
+/// a value that is not one of them is seq_cst.
+fn (var g: Gen) ord_arg(v: Int, k: Int) -> Int {
+  let x = g.f.values[v]
+  if k >= x.args.len() {
+    return 4
+  }
+  let c = g.f.values[x.args[k]]
+  if c.op != ssa.Op.Const {
+    return 4
+  }
+  match c.aux {
+    I(n) => if n >= 0 && n <= 4 { n } else { 4 }
+    _ => 4
+  }
+}
+
+/// The address of the cell (container, index) of an atomic: the list's
+/// element, or an Atomic's value (the same layout: a header of three
+/// words, then words; cellAddr).
+fn (var g: Gen) cell_addr(v: Int) -> Str {
+  let x = g.f.values[v]
+  let l = g.op(x.args[0])
+  let c = g.f.values[x.args[1]]
+  if c.op == ssa.Op.Const {
+    if let I(k) = c.aux {
+      return g.def("getelementptr i8, ptr ${l}, i64 ${24 + 8 * k}")
+    }
+  }
+  let o = g.def("shl i64 ${g.op(x.args[1])}, 3")
+  let o2 = g.def("add i64 ${o}, 24")
+  g.def("getelementptr i8, ptr ${l}, i64 ${o2}")
+}
+
+/// The i64 of an Int or Bool operand (a Bool cell holds 0 or 1).
+fn (var g: Gen) word_of(a: Int) -> Str {
+  let o = g.op(a)
+  if g.kind(g.vty(a)) == ssa.Kind.Bool {
+    return g.def("zext i1 ${o} to i64")
+  }
+  o
+}
+
+/// Sets v, an Int or a Bool, to the i64 r.
+fn (var g: Gen) atomic_result(v: Int, r: Str) {
+  if g.kind(g.vty(v)) == ssa.Kind.Bool {
+    g.set(v, "icmp ne i64 ${r}, 0")
+    return
+  }
+  g.alias(v, r)
+}
+
+/// Lowers the atomics and fences of decision 0200 inline (atomic): load
+/// atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
+/// LLVM ordering (relaxed is monotonic; a load takes no release and a
+/// store no acquire, and a cmpxchg fails with the strongest ordering
+/// allowed there). The spin hint is nothing: the IR is target
+/// independent (clang picks the target), and yield and pause are target
+/// intrinsics.
+fn (var g: Gen) atomic(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  if name == "rt.spin_hint" {
+    return
+  }
+  if name == "rt.fence" {
+    let o = g.ord_arg(v, 0)
+    if o > 0 {
+      g.emit("fence ${["", "acquire", "release", "acq_rel", "seq_cst"][o]}")
+    }
+    return
+  }
+  let p = g.cell_addr(v)
+  if name == "rt.slot_addr" {
+    g.set(v, "ptrtoint ptr ${p} to i64")
+    return
+  }
+  let o = g.ord_arg(v, x.args.len() - 1)
+  let ord = ["monotonic", "acquire", "release", "acq_rel", "seq_cst"][o]
+  match name {
+    "rt.slot_load" => {
+      let lo = if o == 0 { "monotonic" } else if o == 1 { "acquire" } else { "seq_cst" }
+      g.atomic_result(v, g.def("load atomic i64, ptr ${p} ${lo}, align 8"))
+    }
+    "rt.slot_store" => {
+      let so = if o == 0 { "monotonic" } else if o == 2 { "release" } else { "seq_cst" }
+      g.emit("store atomic i64 ${g.word_of(x.args[2])}, ptr ${p} ${so}, align 8")
+    }
+    "rt.slot_swap" | "rt.slot_add" => {
+      let op = if name == "rt.slot_swap" { "xchg" } else { "add" }
+      g.atomic_result(v, g.def("atomicrmw ${op} ptr ${p}, i64 ${g.word_of(x.args[2])} ${ord}, align 8"))
+    }
+    _ => {
+      // rt.slot_cas, strong
+      let old = g.word_of(x.args[2])
+      let new = g.word_of(x.args[3])
+      let fail = ["monotonic", "acquire", "monotonic", "acquire", "seq_cst"][o]
+      let r = g.def("cmpxchg ptr ${p}, i64 ${old}, i64 ${new} ${ord} ${fail}, align 8")
+      g.set(v, "extractvalue { i64, i1 } ${r}, 1")
+    }
+  }
+}
+
+/// Declares the LLVM intrinsic sym once, among the runtime declarations
+/// of the calls used (decision 0195; llvmDecl).
+fn (var g: Gen) llvm_decl(sym: Str, decl: Str) {
+  if !g.emitted.contains(sym) {
+    g.emitted[sym] = true
+    g.rt_decls.push("${decl}\n")
+  }
 }
 
 /// Lowers a call of the task runtime (rtCall): an Int is an i64, a Bool

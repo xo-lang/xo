@@ -1,0 +1,14 @@
+// The C path of the Fs path policy (decision 0193 step 6): the API of
+// fspath.xo over std/llrt/xo_fs.c's functions (compiled with
+// -DXO_FSPATH_C). Loaded in place of fspath.xo when XO_LLRT_C names
+// `fspath`, to compare the two and to fall back while the Xo path misses
+// decision 0180's bar. The self hosted compiler always uses fspath.xo.
+use native/rt
+
+pub fn mkdir_all(op: Str, x: Str) -> Int { rt.fs_mkdir_all(op, x) }
+
+pub fn remove_all(op: Str, x: Str) -> Int { rt.fs_remove_all(op, x) }
+
+pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str { rt.fs_create_temp(op, prefix, x) }
+
+pub fn cwd() -> Str { rt.fs_cwd() }

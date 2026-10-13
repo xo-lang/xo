@@ -20,6 +20,25 @@ fn test_quit(code: Int)
 /// -DXO_REPORT_C): report.xo's prop_report in C.
 fn prop_report(g: Int, input: Str)
 
+// The generator's draws (std/native/llrt/gen.xo, decision 0195): the
+// state, the record, and the replay are C.
+
+/// A choice in 0..n (any UInt64 when n is 0), recorded (gen_draw).
+fn gen_draw(g: Int, n: Int) -> Int
+/// A choice in 0..n, none when n <= 1 (GenRand.Intn).
+fn gen_intn(g: Int, n: Int) -> Int
+/// The nesting depth of the value being generated.
+fn gen_depth(g: Int) -> Int
+/// The C path of gen.xo (XO_LLRT_C=gen, compiled only with -DXO_GEN_C).
+fn gen_size(g: Int) -> Int
+fn gen_any_int(g: Int) -> Int
+fn gen_sized(g: Int, kind: Int) -> Int
+fn gen_float(g: Int) -> Float
+fn gen_rune(g: Int) -> Int
+fn gen_str(g: Int) -> Str
+fn gen_duration(g: Int) -> Int
+fn gen_time(g: Int) -> Int
+
 /// The program runs in the test world (a test binary).
 fn test_on() -> Bool
 

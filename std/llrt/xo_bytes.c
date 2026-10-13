@@ -3,6 +3,14 @@
 // messages are std/rt's (arith.go, str.go, caps.go), so a fault reads the
 // same on every backend.
 
+static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
+
+// The C path of the sized integer operations and conversions (the
+// zero-C audit's portable group, decisions 0193 and 0195): compiled
+// only with -DXO_INTS_C (XO_LLRT_C=ints, std/native/llrt/ints_c.xo).
+// By default the SSA builders lower them inline and their faults are
+// std/native/llrt/ints.xo.
+#ifdef XO_INTS_C
 // n_int_name is the Xo name of the integer type of bits and uns.
 static const char *n_int_name(int64_t bits, int64_t uns) {
 	switch (bits) {
@@ -163,8 +171,6 @@ int64_t xo_int_conv(int64_t v, int64_t fbits, int64_t funs, int64_t tbits, int64
 	return v;
 }
 
-static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
-
 // xo_int_in_range reports whether the Int v is a value of the type of bits
 // and uns (`Int32.try`).
 int64_t xo_int_in_range(int64_t v, int64_t bits, int64_t uns) {
@@ -187,13 +193,19 @@ int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_
 	}
 	return v;
 }
+#endif
 
+#ifdef XO_INTS_C
+// the C versions of the conversions of UInt64 and Float32 (the native
+// backends lower rt.u64_to_float, rt.f32_round, and rt.i64_to_f32
+// inline, decision 0195; compiled only when called)
 double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 
 // Float32 values are doubles holding float32 values (internal/ssa
 // Module.Float32): conversions and arithmetic round through float.
 double xo_f32_round(double v) { return (double)(float)v; }
 double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
+#endif
 
 // The C path of the leaf text of Display and Debug (decision 0193 step
 // 5): compiled only with -DXO_SHOW_C (XO_LLRT_C=show,
@@ -402,162 +414,6 @@ xo_rstr *xo_str_slice_at(const char *p, int64_t n, int64_t lo, int64_t hi, const
 // Xo since decision 0180: std/native/llrt/unicode.xo).
 int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
 
-// The C path of the Unicode operations (decision 0180, XO_UNICODE_C; see
-// xo_std.c).
-#ifdef XO_UNICODE_C
-// n_in_ranges reports whether r is in the sorted inclusive ranges t.
-static int n_in_ranges(const int32_t (*t)[2], int n, int64_t r) {
-	int lo = 0, hi = n;
-	while (lo < hi) {
-		int m = lo + (hi - lo) / 2;
-		if (r < t[m][0]) {
-			hi = m;
-		} else if (r > t[m][1]) {
-			lo = m + 1;
-		} else {
-			return 1;
-		}
-	}
-	return 0;
-}
-
-#define N_RANGES(t) (int)(sizeof t / sizeof t[0])
-
-// Rune classes: unicode.IsLetter, IsDigit, IsSpace, strconv.IsPrint.
-int64_t xo_rune_is_letter(int64_t r) {
-	if (r < 0x80) {
-		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z');
-	}
-	return n_in_ranges(xo_letter_ranges, N_RANGES(xo_letter_ranges), r);
-}
-
-int64_t xo_rune_is_digit(int64_t r) {
-	if (r < 0x80) {
-		return r >= '0' && r <= '9';
-	}
-	return n_in_ranges(xo_digit_ranges, N_RANGES(xo_digit_ranges), r);
-}
-
-// xo_unicode_ranges is the ranges of a Unicode class as a List[Int] of
-// lo, hi pairs, sorted (std/regexp natively, decision 0172): 0 the
-// letters (unicode.L), 1 the decimal digits (unicode.Nd).
-xo_rlist *xo_unicode_ranges(int64_t which) {
-	const int32_t(*t)[2] = which == 0 ? xo_letter_ranges : xo_digit_ranges;
-	int n = which == 0 ? N_RANGES(xo_letter_ranges) : N_RANGES(xo_digit_ranges);
-	xo_rlist *l = xo_rl_new(2 * (int64_t)n + 4, 8);
-	int64_t *d = (int64_t *)rl_data(l);
-	int64_t k = 0;
-	if (which == 0) {
-		d[k++] = 'A';
-		d[k++] = 'Z';
-		d[k++] = 'a';
-		d[k++] = 'z';
-	} else {
-		d[k++] = '0';
-		d[k++] = '9';
-	}
-	for (int i = 0; i < n; i++) {
-		d[k++] = t[i][0];
-		d[k++] = t[i][1];
-	}
-	l->len = k;
-	return l;
-}
-
-static int n_is_print(int64_t r) {
-	if (r < 0x80) {
-		return r >= 0x20 && r < 0x7F;
-	}
-	return n_in_ranges(xo_print_ranges, N_RANGES(xo_print_ranges), r);
-}
-
-int64_t xo_rune_is_print(int64_t r) { return n_is_print(r); }
-
-// xo_rune_to_case is unicode.ToLower (lower) or unicode.ToUpper.
-int64_t xo_rune_to_case(int64_t r, int64_t lower) { return n_to_case((int32_t)r, (int)lower); }
-
-// n_quote_rune appends r (a scalar value) to o as Go's strconv quotes it
-// inside the quote character quote.
-static void n_quote_rune(nbuf *o, int32_t r, char quote) {
-	static const char hex[] = "0123456789abcdef";
-	char t[16];
-	if (r == quote || r == '\\') {
-		nbuf_byte(o, '\\');
-		nbuf_byte(o, (char)r);
-		return;
-	}
-	if (n_is_print(r)) {
-		nbuf_put(o, t, n_utf8_encode(t, r));
-		return;
-	}
-	switch (r) {
-	case '\a':
-		nbuf_str(o, "\\a");
-		return;
-	case '\b':
-		nbuf_str(o, "\\b");
-		return;
-	case '\f':
-		nbuf_str(o, "\\f");
-		return;
-	case '\n':
-		nbuf_str(o, "\\n");
-		return;
-	case '\r':
-		nbuf_str(o, "\\r");
-		return;
-	case '\t':
-		nbuf_str(o, "\\t");
-		return;
-	case '\v':
-		nbuf_str(o, "\\v");
-		return;
-	}
-	int digits = r < ' ' || r == 0x7F ? 2 : (r < 0x10000 ? 4 : 8);
-	t[0] = '\\';
-	t[1] = digits == 2 ? 'x' : (digits == 4 ? 'u' : 'U');
-	for (int i = 0; i < digits; i++) {
-		t[2 + i] = hex[(r >> (4 * (digits - 1 - i))) & 15];
-	}
-	nbuf_put(o, t, 2 + digits);
-}
-
-// xo_rune_quote is strconv.QuoteRune.
-xo_rstr *xo_rune_quote(int64_t r, int64_t *len) {
-	nbuf o = {0};
-	nbuf_byte(&o, '\'');
-	n_quote_rune(&o, n_rune_valid(r) ? (int32_t)r : 0xFFFD, '\'');
-	nbuf_byte(&o, '\'');
-	return nbuf_take(&o, len);
-}
-
-// xo_strconv_quote is strconv.Quote of the n bytes at p (a Str or Bytes): a
-// byte of an invalid sequence is \x of the byte.
-xo_rstr *xo_strconv_quote(const char *p, int64_t n, int64_t *len) {
-	static const char hex[] = "0123456789abcdef";
-	nbuf o = {0};
-	nbuf_byte(&o, '"');
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n;) {
-		int size;
-		int32_t r = n_utf8_decode(s + i, n - i, &size);
-		if (r == 0xFFFD && size == 1) {
-			char t[4] = {'\\', 'x', hex[s[i] >> 4], hex[s[i] & 15]};
-			nbuf_put(&o, t, 4);
-		} else {
-			n_quote_rune(&o, r, '"');
-		}
-		i += size;
-	}
-	nbuf_byte(&o, '"');
-	return nbuf_take(&o, len);
-}
-
-// xo_bytes_quote is strconv.Quote of the bytes.
-xo_rstr *xo_bytes_quote(const char *p, int64_t n, int64_t *len) { return xo_strconv_quote(p, n, len); }
-
-#endif
-
 // xo_bytes_decode is utf8.DecodeRune of the bytes from i: the rune times 8
 // plus its size (U+FFFD and 0 at the end).
 int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
@@ -584,6 +440,14 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+// The C versions of the runtime intrinsics (decisions 0193 and 0195):
+// both native backends lower rt.int_wrap with a constant op,
+// rt.u64_mul_hi, the bits of a Float, and rt.bytes_word inline, and
+// Int's checked_ and saturating_ methods are std/native/llrt/ints.xo,
+// so no default build calls these: they are compiled only with
+// -DXO_INTS_C, which IOFlags adds when the generated code calls one
+// (a non-constant op, or the C path XO_LLRT_C=ints).
+#ifdef XO_INTS_C
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
 // shifts of a word by b mod 64 (op 3 left, 4 right logical) for the
@@ -600,6 +464,16 @@ int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 		return (int64_t)(x << (y & 63));
 	case 4:
 		return (int64_t)(x >> (y & 63));
+	case 5:
+		// rotate right (decision 0195)
+		return (int64_t)((x >> (y & 63)) | (x << ((64 - (y & 63)) & 63)));
+	case 6: {
+		// the low 32 bits rotated right, zero extended
+		uint32_t w = (uint32_t)x;
+		return (int64_t)(uint32_t)((w >> (y & 31)) | (w << ((32 - (y & 31)) & 31)));
+	}
+	case 7:
+		return (int64_t)__builtin_bswap64(x);
 	}
 	return (int64_t)(x * y);
 }
@@ -646,9 +520,11 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	}
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
+#endif
 
-// n_hex_val is the value of a hex digit, or -1 (the C path below and the
-// crypto C test use it).
+// n_hex_val is the value of a hex digit, or -1 (the crypto C test, which
+// defines XO_DIGEST_C, uses it).
+#ifdef XO_DIGEST_C
 static __attribute__((unused)) int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';
@@ -661,35 +537,6 @@ static __attribute__((unused)) int n_hex_val(char c) {
 	}
 	return -1;
 }
-
-#ifdef XO_NUM_C
-// the C path of the number text (decision 0193 step 3): only
-// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
-// xo_bytes_hex_ok reports whether s is hexadecimal that
-// hex.DecodeString accepts (an even number of hex digits, either case).
-int64_t xo_bytes_hex_ok(const char *p, int64_t n) {
-	if (n % 2 != 0) {
-		return 0;
-	}
-	for (int64_t i = 0; i < n; i++) {
-		if (n_hex_val(p[i]) < 0) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
-// xo_bytes_from_hex decodes hexadecimal that xo_bytes_hex_ok accepted
-// (Bytes.from_hex).
-xo_rstr *xo_bytes_from_hex(const char *p, int64_t n, int64_t *len) {
-	xo_rstr *s = rs_new(n / 2);
-	for (int64_t i = 0; i + 1 < n; i += 2) {
-		s->data[i / 2] = (char)(n_hex_val(p[i]) << 4 | n_hex_val(p[i + 1]));
-	}
-	*len = n / 2;
-	return s;
-}
-
 #endif
 
 // The outcome of the last file operation of this thread (fs.read blocks

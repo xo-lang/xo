@@ -1,0 +1,11 @@
+exit 70
+--- stdout
+get -5 swap -5 get 7
+cas true false get 9
+max 9 40 40 get 40
+add 42 -8 -8
+flag false swap false true cas false true false
+tasks 8000 7999 16000
+near 9223372036854775807
+--- stderr
+fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:6

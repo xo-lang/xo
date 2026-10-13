@@ -20,12 +20,9 @@ fn str_find(s: Str, sub: Str, from: Int) -> Int
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 /// The byte at i (0 to 255), or -1 out of range.
 fn str_byte(s: Str, i: Int) -> Int
-/// Unicode white space removed: mode 0 both ends, 1 the start, 2 the end.
-fn str_trim(s: Str, mode: Int) -> Str
 fn str_rune_count(s: Str) -> Int
 fn str_split(s: Str, sep: Str) -> List[Str]
 fn str_lines(s: Str) -> List[Str]
-fn str_replace(s: Str, old: Str, new: Str) -> Str
 fn str_repeat(s: Str, n: Int) -> Str
 fn str_join(xs: List[Str], sep: Str) -> Str
 /// The string of one byte (0 to 255).
@@ -33,15 +30,8 @@ fn str_of_byte(b: Int) -> Str
 /// Whether s parses as an Int (strconv.ParseInt(s, 10, 64)).
 fn int_parse_ok(s: Str) -> Bool
 fn int_parse(s: Str) -> Int
-fn float_parse_ok(s: Str) -> Bool
-fn float_parse(s: Str) -> Float
 /// s + t, appended in place when s is unique.
 fn rs_append(s: Str, t: Str) -> Str
-/// s + the decimal text of v (the C path of std/native/llrt/num.xo,
-/// XO_LLRT_C=num; also the SSA's str.concat_int).
-fn rs_concat_int(s: Str, v: Int) -> Str
-/// s + the text of f (Go's FloatStr; the C path of num.xo).
-fn rs_concat_float(s: Str, f: Float) -> Str
 /// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
 fn rs_append_duration(s: Str, d: Int) -> Str
 /// s + the bytes lo..hi of b (a range of b), their ASCII letters lowered
@@ -73,20 +63,6 @@ fn rs_push_rune(s: Str, r: Int) -> Str
 /// An empty string with room for n bytes (BytesBuilder.with_capacity).
 fn rs_with_cap(n: Int) -> Str
 
-// The C path of the Unicode operations (decision 0180): compiled only
-// with -DXO_UNICODE_C, called only by std/native/llrt/unicode_c.xo
-// (XO_UNICODE=c).
-
-fn str_lower(s: Str) -> Str
-fn str_upper(s: Str) -> Str
-fn str_eq_lower(a: Str, b: Str) -> Bool
-fn rune_is_letter(r: Int) -> Bool
-fn rune_is_digit(r: Int) -> Bool
-fn rune_is_print(r: Int) -> Bool
-fn rune_to_case(r: Int, lower: Bool) -> Int
-fn rune_quote(r: Int) -> Str
-fn bytes_quote(b: Bytes) -> Str
-fn unicode_ranges(which: Int) -> List[Int]
 // The C path of the number and time text (decision 0193): compiled only
 // with -DXO_TEXT_C, called only by std/native/llrt/text_c.xo
 // (XO_LLRT_C=text). int_parse and duration_parse above are the others.
@@ -95,6 +71,12 @@ fn rs_append_time(s: Str, t: Int) -> Str
 fn time_parse_ok(s: Str) -> Bool
 fn time_parse(s: Str) -> Int
 fn rs_append_quote(s: Str, b: Bytes) -> Str
+// The C path of Atomic's add and max (decision 0200): compiled only with
+// -DXO_ATOMIC_C, called only by std/native/llrt/atomic_c.xo
+// (XO_LLRT_C=atomic).
+
+fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
+fn atomic_max(a: Atomic[Int], n: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
@@ -116,7 +98,10 @@ fn bytes_rune_count(b: Bytes) -> Int
 fn bytes_hex(b: Bytes) -> Str
 /// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
 /// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
-/// backends lower a constant op inline (decision 0193 step 3).
+/// backends lower a constant op inline (decision 0193 step 3). Decision
+/// 0195: op 5 a rotated right by b mod 64, op 6 the low 32 bits of a
+/// rotated right by b mod 32 (zero extended), op 7 the bytes of a
+/// reversed (b unused): ror and rev on arm64, fshr and bswap on LLVM.
 fn int_wrap(op: Int, a: Int, b: Int) -> Int
 /// The high word of the 128 bit product of a and b as UInt64s (umulh;
 /// lowered inline).
@@ -153,18 +138,21 @@ fn rs_put_word(s: Str, i: Int, w: Int) -> Str
 /// s with length n (lowered inline: no instruction). Unchecked: the n
 /// bytes are in s's room (rs_put_word wrote them).
 fn rs_set_len(s: Str, n: Int) -> Str
+/// Checked arithmetic on a sized integer type (std/llrt/xo_bytes.c, the
+/// C path of std/native/llrt/ints.xo, XO_LLRT_C=ints): op 0 +, 1 -, 2 *,
+/// 3 /, 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at.
+fn int_op(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Int
+/// v of the type of fbits and funs converted to the type of tbits and
+/// tuns, faulting at at out of range (the C path of ints.xo).
+fn int_conv(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Int
+/// `Rune(v)`, faulting at at (the C path of ints.xo).
+fn rune_of(v: Int, bits: Int, uns: Int, at: Str) -> Int
+/// a / b rounded down, b > 0 (the C path of ints.xo).
+fn floor_div(a: Int, b: Int) -> Int
+/// The hash of a Str Map key (the C path of ints.xo).
+fn str_hash(s: Str) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
-/// The standard base64 of b, padded.
-fn b64_encode(b: Bytes) -> Str
-/// Whether s is standard base64 that base64.StdEncoding accepts.
-fn b64_ok(s: Str) -> Bool
-/// The bytes of base64 that b64_ok accepted.
-fn b64_decode(s: Str) -> Bytes
-/// Whether s is hexadecimal that hex.DecodeString accepts.
-fn bytes_hex_ok(s: Str) -> Bool
-/// The bytes of hexadecimal that bytes_hex_ok accepted.
-fn bytes_from_hex(s: Str) -> Bytes
 
 // ---------------------------------------------------------------------------
 // Generic intrinsics (lowered by internal/ssa, build_native.go)
@@ -196,6 +184,36 @@ fn fault_at(msg: Str, at: Loc) -> Never
 /// Faults with msg at loc, a `file:line` text (a stored fault raised
 /// again, as std/rt re-panics a stored FaultErr).
 fn fault_raise(msg: Str, loc: Str) -> Never
+
+// Atomics and memory ordering (decision 0200), lowered inline by every
+// native emitter. A cell is slot i of xs: a List[Int] made at its final
+// size and never grown or set while shared (these write it in place,
+// with no copy on write; decision 0058's shared count hands it to other
+// threads), or an Atomic, whose value is slot 13 of the C runtime's
+// object (xo_rt.c xo_atomic; the wasm backend maps an Atomic's cell to
+// its own runtime). Unchecked: 0 <= i < xs.len(). ord is a constant: 0
+// relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst (C11's orders); a
+// non constant is seq_cst. A load takes relaxed, acquire, or seq_cst, a
+// store relaxed, release, or seq_cst (another order rounds up to
+// seq_cst).
+
+/// The value of the cell.
+fn slot_load[T](xs: T, i: Int, ord: Int) -> Int
+fn slot_store[T](xs: T, i: Int, v: Int, ord: Int)
+/// Stores v and returns the old value.
+fn slot_swap[T](xs: T, i: Int, v: Int, ord: Int) -> Int
+/// Stores new when the cell holds old; whether it did (strong: never
+/// fails spuriously). ord orders both outcomes.
+fn slot_cas[T](xs: T, i: Int, old: Int, new: Int, ord: Int) -> Bool
+/// Adds d (wrapping) and returns the old value (fetch add).
+fn slot_add[T](xs: T, i: Int, d: Int, ord: Int) -> Int
+/// The address of the cell, for futex style waits (futex, __ulock_wait,
+/// WaitOnAddress; a 32 bit futex word is its low half on every target).
+fn slot_addr[T](xs: T, i: Int) -> Int
+/// A fence of order ord (relaxed is none).
+fn fence(ord: Int)
+/// A spin loop's pause (yield on arm64, pause on x86; nothing on wasm).
+fn spin_hint()
 
 /// Whether a log field value is a number or a Bool (written bare in a
 /// JSON record).
@@ -236,6 +254,25 @@ fn fs_chtimes(p: Str, t: Int, x: Str) -> Int
 /// The base name of a new empty file in dir, "" with the status set.
 fn fs_create_temp(dir: Str, prefix: Str, x: Str) -> Str
 fn fs_cwd() -> Str
+/// The system calls under std/native/llrt/fspath.xo (decision 0193 step
+/// 6): 0 or the errno; fs_remove_all, fs_mkdir_all, fs_create_temp, and
+/// fs_cwd above are its C path (XO_LLRT_C=fspath).
+fn fs_raw_mkdir(p: Str) -> Int
+fn fs_raw_rmdir(p: Str) -> Int
+fn fs_raw_unlink(p: Str) -> Int
+/// 1 a directory, 0 another file, minus the errno.
+fn fs_raw_kind(p: Str, follow: Bool) -> Int
+/// The entries of directory p; fs_raw_errno tells whether it was read.
+fn fs_raw_names(p: Str) -> List[Str]
+fn fs_raw_errno() -> Int
+/// Creates the file p (O_EXCL, 0600).
+fn fs_raw_create(p: Str) -> Int
+/// A random number below 2^32.
+fn fs_raw_rand() -> Int
+/// The working directory as the system gives it.
+fn fs_raw_getcwd() -> Str
+/// Records err (0: success) for the Xo path x: the operation's status.
+fn fs_raw_fail(err: Int, x: Str) -> Int
 fn fs_case_sensitive() -> Bool
 /// Whether an Fs operation reports Canceled (not in deferred code).
 fn fs_canceled() -> Bool
@@ -299,6 +336,10 @@ struct ProcChild {}
 /// of them) with input as the first one's standard input when has_input:
 /// "0", the status, standard output, standard error.
 fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
+/// The program's environment as exec passes it on, and the working
+/// directory (std/native/llrt/procspec.xo, decision 0193 step 6).
+fn proc_environ() -> List[Str]
+fn proc_getcwd() -> Str
 /// Starts the command; proc_child_start tells how that went.
 fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
 fn proc_child_start(c: ProcChild) -> List[Str]

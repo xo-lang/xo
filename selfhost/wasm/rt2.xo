@@ -1475,6 +1475,62 @@ fn rt2_text(var g: Gen) -> Str {
         i64.shr_u
         return
       end
+      ;; decision 0195: 5 rotate right, 6 the low 32 bits rotated right
+      ;; (zero extended), 7 the bytes reversed
+      local.get $op
+      i64.const 5
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.rotr
+        return
+      end
+      local.get $op
+      i64.const 6
+      i64.eq
+      if
+        local.get $a
+        i32.wrap_i64
+        local.get $b
+        i32.wrap_i64
+        i32.rotr
+        i64.extend_i32_u
+        return
+      end
+      local.get $op
+      i64.const 7
+      i64.eq
+      if
+        ;; swap the bytes of each half word, the half words of each word,
+        ;; then the words
+        local.get $a
+        i64.const 8
+        i64.shr_u
+        i64.const 0x00FF00FF00FF00FF
+        i64.and
+        local.get $a
+        i64.const 0x00FF00FF00FF00FF
+        i64.and
+        i64.const 8
+        i64.shl
+        i64.or
+        local.set $a
+        local.get $a
+        i64.const 16
+        i64.shr_u
+        i64.const 0x0000FFFF0000FFFF
+        i64.and
+        local.get $a
+        i64.const 0x0000FFFF0000FFFF
+        i64.and
+        i64.const 16
+        i64.shl
+        i64.or
+        i64.const 32
+        i64.rotl
+        return
+      end
       local.get $a
       local.get $b
       i64.mul)
