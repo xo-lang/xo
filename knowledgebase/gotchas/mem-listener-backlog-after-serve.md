@@ -36,6 +36,17 @@ its listener open for 1s after serve returns: before the fix the late
 request failed only at 3500ms (when the listener closed) instead of at
 1500ms, deterministically.
 
+Counts (2026-10-12, `xo test --no-gc -v` of test_shutdown, Go driver,
+XO_SELF_DRIVER=0): on EC2 Linux arm64 (r8g.4xlarge, 30 runs in a row
+then 8 loops of 10 in parallel) before the fix, llvm failed 31 of 110
+runs and arm64 9 of 110, every failure this XO-F001; on the Mac llvm
+failed 3 of 140 (arm64 0 of 10). After it, no XO-F001 in 700 Linux
+runs (220 on r8g.4xlarge, 480 in 12 parallel loops on c8g.4xlarge), but
+17 of them still failed on a second race, the virtual clock moving
+twice for one idle instant (virtual-clock-double-kick.md, fixed the
+same day); with both fixes 0 of 240 llvm and 0 of 240 arm64 runs
+failed in 12 parallel loops on c8g.4xlarge.
+
 Lesson: a wait in the native test world needs a waker for every way the
 state can stop changing. When porting a std/rt wait to xo_testing.c,
 mirror the Go condition exactly (here, `served` fires once) rather than

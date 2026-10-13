@@ -230,11 +230,27 @@ static void tw_kick(void) {
 // tw_kick_once is one move of the clock; 1 when only callback timers
 // fired (no park was signaled by the clock itself).
 static int tw_kick_once(void) {
-	if (!tw.virt || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
+	if (!tw.virt) {
+		return 0;
+	}
+	int64_t verdict = __atomic_exchange_n(&tw.vpending, 0, __ATOMIC_SEQ_CST);
+	if (!verdict) {
 		return 0;
 	}
 	int parks = 0;
 	pthread_mutex_lock(&ev.mu);
+	if (((verdict - 1) & 1) || verdict - 1 != __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST)) {
+		// stale: two threads can each find every context blocked at
+		// the same instant and both take the verdict (one from the
+		// other's store); the clock moved since (or was moving), and
+		// what it woke may not have run yet
+		// (gotchas/virtual-clock-double-kick.md)
+		pthread_mutex_unlock(&ev.mu);
+		return 0;
+	}
+	// odd while the clock moves: a check that reads the epoch now is
+	// stale too (a signal's callback runs with ev.mu released)
+	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
 	if (ev.n == 0) {
 		pthread_mutex_unlock(&ev.mu);
 		// std/rt's test world names the timers too
@@ -257,6 +273,9 @@ static int tw_kick_once(void) {
 			t->fn(t);
 		}
 	}
+	// what the timers woke is visible (queued, or a root counted
+	// awake): checks that read the epoch from here on see it
+	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
 	pthread_mutex_unlock(&ev.mu);
 	return parks == 0;
 }
