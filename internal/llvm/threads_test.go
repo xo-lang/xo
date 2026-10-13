@@ -55,6 +55,27 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 	return bin
 }
 
+// asanFlags returns flags, without AddressSanitizer where it compiles but
+// cannot start (sanitizerRuns): "-fsanitize=address,undefined" keeps
+// UndefinedBehaviorSanitizer, "-fsanitize=address" is dropped. The
+// program still runs and its output is still compared.
+func asanFlags(flags ...string) []string {
+	if sanitizerRuns("-fsanitize=address") == "" {
+		return flags
+	}
+	var out []string
+	for _, f := range flags {
+		switch f {
+		case "-fsanitize=address":
+			continue
+		case "-fsanitize=address,undefined":
+			f = "-fsanitize=undefined"
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 var sanProbes sync.Map // sanitizer flag -> *sanProbe
 
 type sanProbe struct {
@@ -66,7 +87,10 @@ type sanProbe struct {
 // and returns why it built but did not run, or "". ThreadSanitizer compiles
 // but cannot start under x86-64 emulation on an arm64 host ("memory
 // layout is incompatible", gotchas/tsan-under-x86-emulation.md); such a
-// host skips the sanitizer tests instead of failing them.
+// host skips the sanitizer tests instead of failing them. On the Intel
+// Mac (macOS 26.5.2, Apple clang 17) AddressSanitizer and
+// ThreadSanitizer binaries die with SIGILL in __pthread_init before main
+// (gotchas/darwin-amd64-sanitizers-sigill.md).
 func sanitizerRuns(flag string) string {
 	v, _ := sanProbes.LoadOrStore(flag, &sanProbe{})
 	p := v.(*sanProbe)

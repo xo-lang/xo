@@ -114,6 +114,9 @@ const (
 	StampTarget Code = "XO1501" // `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module
 	GoTooOld    Code = "XO1502" // the go command the Go backend runs is older than the oldest Go Xo supports (decision 0176)
 	GoNotFound  Code = "XO1503" // the Go backend finds no go command ($XO_GO, else go on PATH; decision 0176)
+	// TargetUnsupported: the program uses a std API the native runtime
+	// does not implement on the build's target yet (Windows, decision 0197)
+	TargetUnsupported Code = "XO1504" // std API the native runtime does not support on this target yet (Windows: decision 0197)
 )
 
 // Real-time functions (14xx group, decision 0133). Emitted by the checker
@@ -254,6 +257,7 @@ var Descriptions = map[Code]string{
 	StampTarget:       "`--stamp NAME=VALUE` names no `const NAME: Str = \"...\"` (a plain string literal) of the main module",
 	GoTooOld:          "the go command the Go backend runs is older than the oldest Go Xo supports (decision 0176)",
 	GoNotFound:        "the Go backend finds no go command ($XO_GO, else go on PATH; decision 0176)",
+	TargetUnsupported: "std API the native runtime does not support on this target yet (Windows: decision 0197)",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

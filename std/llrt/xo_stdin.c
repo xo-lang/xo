@@ -6,8 +6,10 @@
 // descriptor (a regular file, /dev/null on Linux), reads go to read(2)
 // directly: they do not block for long.
 
+#ifndef _WIN32
 #include <poll.h>
 #include <sys/stat.h>
+#endif
 
 static struct {
 	int busy;    // a reader holds the turn
@@ -106,16 +108,22 @@ static xo_rstr *tw_stdin_read(int64_t all, int64_t *len) {
 static int sin_fill(xo_ctx *c) {
 	if (!sin_st.init) {
 		sin_st.init = 1;
+#ifndef _WIN32
+		// Windows (decision 0197): WSAPoll watches sockets only, so a
+		// pipe or console is read as a file is (the read blocks its
+		// thread; a reader thread is a later stage)
 		struct stat sb;
 		if (fstat(0, &sb) == 0 && !S_ISREG(sb.st_mode)) {
 			sin_st.pd = pd_new(0, 0);
 		}
+#endif
 	}
 	char t[65536];
 	for (;;) {
 		if (sin_stopped(c)) {
 			return 1;
 		}
+#ifndef _WIN32
 		if (sin_st.pd) {
 			struct pollfd p = {.fd = 0, .events = POLLIN};
 			int r = poll(&p, 1, 0);
@@ -128,6 +136,7 @@ static int sin_fill(xo_ctx *c) {
 				continue;
 			}
 		}
+#endif
 		ssize_t n = read(0, t, sizeof t);
 		if (n < 0) {
 			if (errno == EINTR || errno == EAGAIN) {
@@ -274,8 +283,10 @@ xo_rstr *xo_stdin_read_bytes(int64_t max, int64_t *len) {
 // Terminals (decision 0162). A test binary's streams are terminals only
 // after FakeStdio.set_tty, of the width it gave.
 
+#ifndef _WIN32
 #include <sys/ioctl.h>
 #include <termios.h>
+#endif
 
 static int64_t tw_tty_width;
 
@@ -287,8 +298,60 @@ int64_t xo_isatty(int64_t fd) {
 	if (tw_is_fake(TW_REAL_STDIO)) {
 		return __atomic_load_n(&tw_tty_width, __ATOMIC_RELAXED) > 0;
 	}
+#ifdef _WIN32
+	return _isatty((int)fd) ? 1 : 0;
+#else
 	return isatty((int)fd) ? 1 : 0;
+#endif
 }
+
+#ifdef _WIN32
+// Windows consoles (decision 0197): the window's width and the input
+// mode's echo flag.
+int64_t xo_term_width(void) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		return __atomic_load_n(&tw_tty_width, __ATOMIC_RELAXED);
+	}
+	static const DWORD hs[3] = {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE, STD_INPUT_HANDLE};
+	for (int i = 0; i < 3; i++) {
+		CONSOLE_SCREEN_BUFFER_INFO bi;
+		if (GetConsoleScreenBufferInfo(GetStdHandle(hs[i]), &bi)) {
+			int w = bi.srWindow.Right - bi.srWindow.Left + 1;
+			if (w > 0) {
+				return w;
+			}
+		}
+	}
+	return 0;
+}
+
+static DWORD sin_saved_mode;
+static int sin_echo_off;
+
+int64_t xo_stdin_echo(int64_t on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		return 0;
+	}
+	HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+	if (on) {
+		if (sin_echo_off) {
+			SetConsoleMode(h, sin_saved_mode);
+			sin_echo_off = 0;
+		}
+		return 0;
+	}
+	DWORD m;
+	if (!GetConsoleMode(h, &m)) {
+		return 0;
+	}
+	sin_saved_mode = m;
+	if (!SetConsoleMode(h, m & ~(DWORD)ENABLE_ECHO_INPUT)) {
+		return 0;
+	}
+	sin_echo_off = 1;
+	return 1;
+}
+#else
 
 // xo_term_width is the columns of the terminal on standard output, error,
 // or input (the first that is one), or 0.
@@ -335,3 +398,4 @@ int64_t xo_stdin_echo(int64_t on) {
 	sin_echo_off = 1;
 	return 1;
 }
+#endif

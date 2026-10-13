@@ -19,6 +19,17 @@ fn host_os(os: Os) -> Str {
   "darwin"
 }
 
+/// The host's GOARCH: the architecture this xo was built for (a
+/// linux/amd64 release's xo1 is an amd64 binary, decision 0178 switch
+/// point B). The native backends still build for arm64 only.
+fn host_arch() -> Str {
+  match target.arch {
+    Amd64 => "amd64"
+    Arm64 => "arm64"
+    Wasm32 => "wasm"
+  }
+}
+
 /// os.UserCacheDir: ~/Library/Caches on macOS; $XDG_CACHE_HOME when it is
 /// absolute, else ~/.cache, on Linux. "" when there is no home.
 fn user_cache_dir(os: Os, goos: Str) -> Str {

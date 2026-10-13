@@ -138,7 +138,9 @@ __attribute__((unused)) static void tw_init(void) {
 	}
 	tws.rng_hi = (uint64_t)seed;
 	tws.rng_lo = (uint64_t)seed ^ 0x9e3779b97f4a7c15ULL;
+#ifndef _WIN32
 	signal(SIGPIPE, SIG_IGN);
+#endif
 }
 
 // xo_test_index is the test to run (XO_TEST).

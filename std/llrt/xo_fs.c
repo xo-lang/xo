@@ -6,9 +6,11 @@
 // tag plus one) with the path and message for xo_fs_msg; Go's os package
 // semantics (std/rt caps.go).
 
+#ifndef _WIN32 // Windows: xo_win.c
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#endif
 
 static __thread int64_t n_fs_info[3]; // is_dir, size, modified (ns)
 
@@ -367,7 +369,7 @@ xo_rstr *xo_fs_cwd(int64_t *len) {
 
 // xo_fs_case_sensitive is false on macOS and Windows (std/rt).
 int64_t xo_fs_case_sensitive(void) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 	return 0;
 #else
 	return 1;
@@ -392,7 +394,9 @@ int64_t xo_fs_canceled(void) { return ctx_canceled(ctx()); }
 // bufio.Reader of 64 KiB (a read larger than the buffer goes to the file
 // when nothing is buffered).
 
+#ifndef _WIN32
 #include <sys/file.h>
+#endif
 
 #define FS_BUF (64 << 10)
 

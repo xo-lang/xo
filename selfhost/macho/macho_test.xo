@@ -538,6 +538,24 @@ test "an ELF object has LLVM's sections, symbols, and relocations" {
   expect(syms) == ["f", "$x", "$d", "$d", "$d", "$d", "puts", "DW.ref.xo_personality", "xo_personality"]
 }
 
+test "a .file directive is an STT_FILE symbol first in the symbol table" {
+  // the linux emitter's first line (gotcha linux-arm64-file-symbol)
+  let o = elf_obj("\t.file \"prog.s\"\n\t.text\n\t.globl main\nmain:\n\tret\n")
+  var syms: List[(Str, Int, Int)] = []
+  for s in o.syms {
+    if !s.name.is_empty() {
+      syms.push((bstr(s.name), s.info, s.shndx))
+    }
+  }
+  // prog.s: STB_LOCAL STT_FILE in SHN_ABS; main: STB_GLOBAL, in .text
+  expect(syms[0]) == ("prog.s", 4, 0xfff1)
+  expect(syms[syms.len() - 1].0) == "main"
+  match assemble_elf("\t.file prog.s\n".bytes()) {
+    Ok(_) => fault("an unquoted .file assembled")
+    Err(e) => expect(e.contains(".file takes a quoted name")) == true
+  }
+}
+
 test "numeric labels go back to the last definition and forward to the next" {
   let o = elf_obj("\tb 1f\n1:\n\tb 1b\n1:\n\tb 1b\n")
   let t = sect_named(o, ".text").data
@@ -585,6 +603,20 @@ test "a linked executable loads glibc and binds versioned imports" {
   expect(has(exe, "__libc_start_main")) == true
   expect(has(exe, "GLIBC_2.17")) == true
   expect(has(exe, "libc.so.6")) == true
+}
+
+test "stat, fstat, and lstat call glibc's __xstat family, as libc_nonshared.a does" {
+  let main = "\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tstp x29, x30, [sp, #-16]!\n\tbl stat\n\tbl fstat\n\tbl lstat\n\tmov x0, #0\n\tldp x29, x30, [sp], #16\n\tret\n"
+  let obj = assemble_elf(main.bytes()).or_fault("assemble")
+  let exe = match link_elf([LinkInput{path: "main.o", data: obj}], ElfLinkOpts{}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(has(exe, "__xstat")) == true
+  expect(has(exe, "__fxstat")) == true
+  expect(has(exe, "__lxstat")) == true
+  expect(nonshared("stat")) == Some("\t.globl stat\n\t.p2align 2\n\t.type stat, %function\nstat:\n\tmov x2, x1\n\tmov x1, x0\n\tmov w0, #0\n\tb __xstat\n")
+  expect(nonshared("puts")) == None
 }
 
 /// b holds the bytes of s.

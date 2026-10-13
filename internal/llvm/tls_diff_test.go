@@ -520,7 +520,7 @@ func TestTLSLeaks(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "prog")
-	flags := []string{"-O1", "-g", "-fsanitize=address", "-Wno-override-module"}
+	flags := asanFlags("-O1", "-g", "-fsanitize=address", "-Wno-override-module")
 	if err := build.CompileC(flags, []string{ll, filepath.Join(rtDir, "xo_rt.c")}, bin); err != nil {
 		if strings.Contains(err.Error(), "sanitizer") {
 			t.Skipf("no AddressSanitizer: %v", err)

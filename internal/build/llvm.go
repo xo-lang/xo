@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/llvm"
 )
@@ -56,18 +57,21 @@ var (
 // with LSE atomics, Linux on arm64 the generic CPU with outline atomics
 // when clang's runtime library has them, as the runtime's C does. ""
 // when clang reports neither.
-func ClangTargetAttrs(clang string) string {
+func ClangTargetAttrs(clang string, extra ...string) string {
 	targetMu.Lock()
 	defer targetMu.Unlock()
-	if a, ok := targetAttrs[clang]; ok {
+	memo := strings.Join(append([]string{clang}, extra...), "\x00")
+	if a, ok := targetAttrs[memo]; ok {
 		return a
 	}
-	out, err := exec.Command(clang, "-###", "-c", "-x", "c", os.DevNull, "-o", os.DevNull).CombinedOutput()
+	// extra: a cross build's --target (LLVMCrossTriple)
+	args := append(append([]string{"-###"}, extra...), "-c", "-x", "c", os.DevNull, "-o", os.DevNull)
+	out, err := exec.Command(clang, args...).CombinedOutput()
 	a := ""
 	if err == nil {
 		a = parseTargetAttrs(string(out))
 	}
-	targetAttrs[clang] = a
+	targetAttrs[memo] = a
 	return a
 }
 
@@ -112,10 +116,19 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Mode != gen.Build && opts.Mode != gen.Test {
 		return nil, fmt.Errorf("the LLVM backend builds programs and tests only")
 	}
+	// the host, or one other target clang cross compiles for with the
+	// host's SDK (LLVMCrossTriple: windows/arm64 on windows/amd64)
+	target := Host()
+	var cross []string
 	for _, t := range opts.Targets {
-		if t != Host() {
+		if t == Host() {
+			continue
+		}
+		triple, ok := LLVMCrossTriple(Host(), t)
+		if !ok || len(opts.Targets) > 1 {
 			return nil, fmt.Errorf("the LLVM backend builds for the host (%s) only, not %s", Host(), t)
 		}
+		target, cross = t, []string{"--target=" + triple}
 	}
 	if opts.Race || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race or --holes")
@@ -124,7 +137,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, RealTests: opts.RealTests, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang), IR: opts.LLVMIR})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, RealTests: opts.RealTests, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang, cross...), IR: opts.LLVMIR, GOOS: target.OS, GOARCH: target.Arch})
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +146,9 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 		return nil, err
 	}
 	dir = filepath.Join(dir, "llvm")
+	if target != Host() {
+		dir += "-" + target.OS + "-" + target.Arch
+	}
 	if opts.ShareProbes {
 		dir += "-share"
 	}
@@ -171,7 +187,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 		name += ".test"
 	}
 	out.Name = name
-	bin := binPath(dir, opts.Out, name, Host(), false)
+	bin := binPath(dir, opts.Out, name, target, false)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return nil, err
 	}
@@ -179,7 +195,12 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	flags = append(flags, IOFlags(prog.IR)...)
+	flags = append(append(flags, cross...), IOFlags(prog.IR)...)
+	if ds := TargetUnsupported(target.OS, flags); len(ds) > 0 {
+		out.Diagnostics = append(out.Diagnostics, ds...)
+		out.Failed = true
+		return out, nil
+	}
 	out.Notes = notes
 	srcs := append(append(lls, rt), tzsrcs...)
 	csrcs, cflags, err := cInputs(res, dir)
@@ -200,8 +221,26 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err := withBinCache(key, bin, link); err != nil {
 		return nil, err
 	}
-	out.Binaries[Host()] = bin
+	out.Binaries[target] = bin
 	return out, nil
+}
+
+// LLVMCrossTriple is the clang target triple of an LLVM build for t on
+// host, when it is not the host and clang cross compiles for it with the
+// host's toolchain: on Windows (decision 0197, stage 3) the MSVC build
+// tools carry both the x64 and the ARM64 libraries, so windows/amd64
+// builds windows/arm64 and the reverse.
+func LLVMCrossTriple(host, t Target) (string, bool) {
+	if host.OS != "windows" || t.OS != "windows" || host == t {
+		return "", false
+	}
+	switch t.Arch {
+	case "arm64":
+		return "aarch64-pc-windows-msvc", true
+	case "amd64":
+		return "x86_64-pc-windows-msvc", true
+	}
+	return "", false
 }
 
 // ClangError is a failure of clang on generated IR: a backend bug, or a
@@ -355,7 +394,7 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		args = append(args, srcs...)
 		args = append(args, tlsLink...)
 		args = append(args, libs...)
-		args = append(args, "-lm", "-lpthread")
+		args = append(args, sysLinkArgs(runtime.GOOS)...)
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
@@ -406,6 +445,44 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		}
 	}
 	return &ClangError{Output: first}
+}
+
+// TargetUnsupported is the XO1504 diagnostic of a program, given the
+// runtime defines its build selected (IOFlags), that uses runtime parts
+// not ported to goos yet: on Windows, stage 1 of decision 0197 leaves out
+// processes (XO_PROC: Proc.run and the test world's FakeProc, both in
+// xo_proc.c). Nil when the program builds.
+func TargetUnsupported(goos string, flags []string) []diag.Diagnostic {
+	if goos != "windows" {
+		return nil
+	}
+	var parts []string
+	for _, f := range flags {
+		if f == "-DXO_PROC" {
+			parts = append(parts, "processes (Proc)")
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []diag.Diagnostic{{
+		Code:     string(diag.TargetUnsupported),
+		Severity: diag.Error,
+		Message: fmt.Sprintf("the LLVM backend does not support %s on %s yet (decision 0197); build with the Go backend (the default) instead",
+			strings.Join(parts, ", "), goos),
+	}}
+}
+
+// sysLinkArgs are the system libraries and linker of a native link on
+// goos. Windows (decision 0197): lld-link, which reads the LTO bitcode
+// MSVC's link.exe cannot; the runtime names its import libraries itself
+// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
+// MSVC one clang picks.
+func sysLinkArgs(goos string) []string {
+	if goos == "windows" {
+		return []string{"-fuse-ld=lld"}
+	}
+	return []string{"-lm", "-lpthread"}
 }
 
 // mentionsRuntime reports whether compiler output names a file of the C

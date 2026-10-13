@@ -1319,6 +1319,16 @@ XO_GO=$HOME/sdk/go1.26.1/bin/go xo run .
 # or use a native backend, which does not run Go:
 xo run --backend=arm64 .`,
 	},
+	TargetUnsupported: {
+		Title: "a std API the native runtime does not support on this target yet",
+		Detail: "The LLVM backend's runtime is being ported to Windows in stages (decision 0197). Stage 1 runs programs that compute, print, read standard input, use tasks, channels, timers, faults, files, sockets, HTTP, and TLS; " +
+			"the build stops with this diagnostic, before compiling, when the program uses a part that is not ported yet: processes (`Proc.run`, and a test's `FakeProc`). " +
+			"The message names the parts. The Go backend builds the same program for Windows.",
+		Example: `> xo build --backend=llvm .
+XO1504: the LLVM backend does not support processes (Proc) on windows yet (decision 0197); build with the Go backend (the default) instead`,
+		Fix: `# build with the Go backend, which supports every std API on Windows:
+xo build .`,
+	},
 
 	// ---------------------------------------------------------------
 	// 13xx: modules and dependencies (decision 0086)

@@ -1,6 +1,6 @@
 # Toolchain and layout
 
-Last verified: 2026-10-09
+Last verified: 2026-10-12
 
 ## Host
 
@@ -103,14 +103,56 @@ run the full suite with the full internal/selfhost tier:
 `XO_SELFHOST_TIER=full go test -timeout 120m ./...` (see the TestSelfhost
 tier lines under Commands). Last verified: 2026-10-11.
 
-Release archives (decision 0157, 2026-10-11): `scripts/release.sh
+**What `xo` is (switch point B, decision 0178, 2026-10-12)**: the
+released `xo` is xo1, the self hosted toolchain built from
+`selfhost/xo` (Xo), not the Go `cmd/xo`. The Go `cmd/xo` stays in the
+repository only as the bootstrap seed that builds the first xo1 (and as
+the reference of the differential tests until stage 7); it is frozen
+for language changes after B (stage 7 step 1; the rule goes in CLAUDE.md). The
+version is `selfhost/cli/core` `VERSION` (TestSelfhostVersion keeps
+cmd/xo's equal).
+
+The bootstrap chain, as release.sh runs it:
+
+    go build ./cmd/xo                      -> seed (Go, host only)
+    seed: XO_SELF_DRIVER=0 xo build --backend=arm64 selfhost/xo
+                                           -> darwin/arm64 xo1
+    darwin xo1: xo rtpack (darwin, and linux with zig cc)
+    darwin xo1: --backend=arm64 --target=linux/arm64 --ld=macho
+                                           -> linux/arm64 xo1 (no cc: selfhost/macho's ELF link)
+    darwin xo1: --backend=go --targets=linux/amd64
+                                           -> linux/amd64 xo1 (Go toolchain)
+
+After a release exists, the previous release's xo replaces the Go seed
+(`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
+release layout: `bin/xo` finds std, the pack, and `bin/xo-gobind`
+beside itself (`bin/../lib/xo`, symbolic links followed), so a bare
+copy of bin/xo does not run (`XO_STD` and `XO_RTPACK` override;
+gotchas/xo1-outside-release-layout.md). Building xo1 into a checkout's
+.tools/bin needs `XO_STD=$PWD/std`.
+
+Release archives (decisions 0157 and 0178): `scripts/release.sh
 [version]` on darwin/arm64 writes `dist/xo-<version>-<os>-<arch>.tar.gz`
-for darwin/arm64, linux/arm64, and linux/amd64 (`bin/xo`, README.md,
-CHANGELOG.md, and for the arm64 targets the prebuilt runtime in
-`lib/xo/rtpack/<os>-<arch>/`) and `dist/SHA256SUMS`; it needs zig 0.15.1
-(`$ZIG`) and a clean tree (`XO_RELEASE_ALLOW_DIRTY=1` to try it). Two
-runs print the same SHA256SUMS. Nothing publishes them yet; users still
-build from a checkout. Last verified: 2026-10-11.
+for darwin/arm64, linux/arm64, and linux/amd64: `bin/xo` (xo1, as
+above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
+`lib/xo/third_party` (the tracked files), for the arm64 targets the
+prebuilt runtime in `lib/xo/rtpack/<os>-<arch>/` (built by xo1's `xo
+rtpack`), README.md, CHANGELOG.md; and `dist/SHA256SUMS`. It needs zig
+0.15.1 (`$ZIG`), Go, the host's clang, and a clean tree
+(`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
+the development Mac with other agents running (2026-10-12). Nothing
+publishes them; releases are on hold (owner).
+`scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
+host from a checkout of the same commit: unpacked clean, with no Go on
+PATH `xo version`, `rtpack --status`, `check`, and a hello program on
+arm64 (cc), arm64 `--ld=macho`, and llvm ("UNSUPPORTED" on
+linux/amd64), the missing Go reported by the default backend; with Go a
+hello on the Go backend, a `use go` program, and cmd/xo's whole suite
+with `XO_CLI` = the archive's bin/xo (`BASELINE=1`: also against the
+Go cmd/xo). On EC2: `scripts/remote-full.sh --arch arm64|amd64 --put
+dist/<archive> --cmd 'bash scripts/release-verify.sh ~/<archive>'`.
+Results: bench/results/retire-go-2026-10-12.md "Switch point B: the
+flip". Last verified: 2026-10-12.
 
 ## Commands
 
@@ -126,7 +168,8 @@ go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] <dirs...>   # --fix: apply machine fixes first (decision 0096)
 go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
 xo1 rtpack [same flags]   # the same command in Xo (selfhost/xo rtpack.xo, decision 0178 switch point B): the same pack files byte for byte for the same compiler and sources (cmd/xo TestRTPackXoSame with XO_CLI), so scripts/release.sh can run the self hosted xo (last verified: 2026-10-12)
-scripts/release.sh [version]             # release archives into dist/ (decision 0157; needs zig 0.15.1 as $ZIG; never publishes)
+scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178; needs zig 0.15.1 as $ZIG; never publishes)
+scripts/release-verify.sh ARCHIVE [OUTDIR]   # check a release archive on its host: no-Go native checks, Go backend and use go, cmd/xo's suite with XO_CLI (see "Versions and releases"; last verified 2026-10-12)
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
@@ -220,6 +263,7 @@ go run ./cmd/xo run selfhost/wasm -- [--std=DIR] [--wd=DIR] [--each] [--why] [--
 go run ./cmd/xo build -o xo1 selfhost/xo && ./xo1 build --backend=wasm [-o OUT.wasm] <dir>   # the Xo driver with the WebAssembly backend: OUT (default <name>.wasm) and OUT's .wat beside it; imports only WASI preview1 (decision 0179; last verified: 2026-10-12)
 node --no-warnings selfhost/wasm/run.mjs PROG.wasm [args...]   # runs a module of the wasm backend under Node's WASI preview1 in a worker, the working directory preopened as fd 3 and / as fd 4 (1 GiB stack, single threaded GC: gotchas/node-wasm-concurrent-gc-crash.md; no incremental marking and no lazy wasm compilation: gotchas/wasm-busy-loop-crashes-node.md, wasm-lazy-compile-worker-crash.md); a trap prints `wasm trap:` and exits 134; XO_LEAKCHECK=1 prints the leak check line; Node 22.22.1 (/opt/homebrew/bin/node; no wat2wasm, wasmtime, or wasmer installed; last verified: 2026-10-12)
 go test ./internal/selfhost -run TestSelfhostWasm      # the wasm backend on every LLVM golden (merge and full tiers, not -short; skips without node): each supported golden must match want.txt and free every allocation, unsupported ones are counted, at least wasmMinPass (116 of 134 since stage 2) must pass; task programs run under the single threaded scheduler of selfhost/wasm/rt3.xo (decision 0179; last verified: 2026-10-12)
+go test ./internal/selfhost -run TestSelfhostWasmFsWrite   # rt.fs_write: a program built by selfhost/wasm writes files under Node's WASI and must print what the go backend prints (merge and full tiers; last verified: 2026-10-12)
 go test ./internal/selfhost -run 'TestSelfhostLLVM'     # Xo LLVM emitter vs internal/llvm on every repository run and the test binaries (functions by name with string literals and fault locations by contents, helpers, whole modules byte for byte counted), and mutations (TestSelfhostLLVMMutations); tiers: -short every 25th run and no mutations, merge every third run but the mergeHeavy ones and 30 mutations (73 s plus 115 s for the go subtest in the 1,329 s merge tier of 2026-10-12, which still lowered selfhost/arm64, selfhost/llvm, and selfhost/xo; not remeasured since), full every run, every backend, 400 mutations; XO_SELFHOST_BACKEND, XO_SELFHOST_LLVM_STAGE=N, XO_SELFHOST_LLVM_FUZZ=N, XO_SELFHOST_KEEP=<dir> (llvm-<backend>.txt: counts and why functions were skipped), XO_SELFHOST_DIRS=text,text (the runs whose directory contains one of the texts instead of the tier's, as TestSelfhostArm64; added 2026-10-12, decision 0192) (decision 0166; last verified: 2026-10-12)
 XO_SELFHOST_E2E=lexer|parser|check|ssa|llvm go test ./internal/selfhost -run TestSelfhostLLVMEndToEnd -v   # decision 0166 stage 4: the self hosted pipeline (the selfhost/llvm binary, go build or XO_SELFHOST_BACKEND) lowers selfhost/<component>, the IR must be byte identical to internal/llvm's, clang builds a binary from that IR (build.Options.LLVMIR, XO_BIN_CACHE=off) and its output on a fixed input must equal the go build's; runs in the full tier with lexer (about 3 s); ssa: 27 s to lower, 34 minutes of clang (-O2 -flto on 399 MB of IR) (last verified: 2026-10-11)
 go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm in the full tier; go otherwise, and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), then every pass stage (the merge tier compares only the build stage of the mergeHeavy runs, tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser; 115 s plus 492 s for its go subtest in the 1,329 s merge tier of 2026-10-12, before selfhost/arm64, selfhost/llvm, and selfhost/xo were build only), and 400 code mutations (TestSelfhostSSAMutations: the first 300 in the merge tier, none under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_DIRS=text,text limits it to the runs whose directory contains one of the texts (about 7 s for six runs, 2026-10-11); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
@@ -1443,6 +1487,13 @@ first, AST based prototype, since deleted) and
 - `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
   programs only (not `xo test`), no `--race`, `--holes` (arenas are ignored),
   `--targets` other than the host. `build.Options.Backend`.
+- Hosts (2026-10-12): darwin/arm64, linux/arm64, linux/amd64,
+  darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
+  runtime's Win32 layer is std/llrt/xo_win.c; clang's default
+  x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
+  ported yet, processes as of stage 1; see "Windows runs"). The one
+  cross build: a Windows host builds the other Windows architecture
+  (`--targets=windows/arm64`, `build.LLVMCrossTriple`).
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
   root), verifies, runs `InsertRC`, verifies again (RC balance per
   path), and lowers with `GenerateSSA` (`internal/llvm/fromssa.go`;
@@ -2789,12 +2840,81 @@ $XO_REMOTE_HOLD (default bench/results/remote/hold.addr) and waits until
 the watchdog or until the script is stopped, which terminates the
 instance (debug over `ssh -i ~/.ssh/xo-ci.pem`, copy a working tree with
 rsync). Every log now ends with the per-package durations, slowest
-first. The AMI comes from the SSM alias, else (the agent sandbox cannot
+first. `--arch amd64` launches an x86_64 instance instead (default
+c7i.8xlarge, the AL2023 x86_64 image, Go for linux-amd64); `--put FILE`
+(repeatable) copies a local file to the instance's home directory
+before `--cmd` runs (a release archive for scripts/release-verify.sh).
+`--cmd` runs with /usr/local/go/bin on PATH; a step that must not see Go
+drops it itself. Last verified: 2026-10-12 (release verification runs). The AMI comes from the SSM alias, else (the agent sandbox cannot
 resolve ssm.us-east-1.amazonaws.com) from `ec2 describe-images`, the
 newest `al2023-ami-2023.*-kernel-6.18-arm64`. The image has gcc as `cc`
 (the arm64 backend's assembler and linker driver, CC()), clang 15.0.7,
 and /tmp on a tmpfs apart from the home disk. Last verified: 2026-10-12
 (--hold run on c8g.8xlarge).
+
+## Intel Mac runs (darwin/amd64, decision 0196)
+
+`scripts/intel-mac-test.sh [--clean|--purge] [COMMIT] [-- CMD...]` runs
+CMD (default `go test -count=1 -run 'TestGolden$' ./internal/llvm`) for
+a commit on the owner's Intel Mac, host `$XO_INTEL_HOST` (default
+`user@intel-mac.local`, ssh key auth from the development Mac):
+it bundles the commit (a temporary `refs/xo-intel/<commit>` ref), copies
+the bundle with scp, fetches it into `~/xo-ci/xo`, and runs CMD under
+`caffeinate -i` with go 1.26.1 from `~/xo-ci/go` (unpacked from go.dev
+on first use), GOMAXPROCS=6, XO_SELF_DRIVER=0, and HOME, TMPDIR,
+GOCACHE, GOPATH under `~/xo-ci/state` (so os.UserCacheDir and every xo
+cache stay in ~/xo-ci). The log goes to
+`$XO_INTEL_OUT` (default bench/results/remote/intel-<commit>.log, git
+ignored) and the script exits with CMD's status. It refuses to start on
+battery below `$XO_INTEL_MIN_BATT` percent (default 50). `--clean`
+removes the checkout, state, and logs afterwards (keeps ~/xo-ci/go);
+`--purge` removes ~/xo-ci. CMD runs in the ssh session's foreground, so
+nothing outlives the script. The laptop is the owner's: no sudo, no
+installs outside ~/xo-ci, keep it under 12 GB (the full internal/llvm
+run left 2.9 GB in ~/xo-ci). Host: x86_64 i7-9750H, 12 threads, 16 GB,
+macOS 26.5.2, Apple clang 17.0.0 (clang-1700.3.19.1), about 20 GB free.
+The whole internal/llvm package passes there in 532 s
+(bench/results/intel-mac-2026-10-12.md); ASan and TSan binaries cannot
+start (gotchas/darwin-amd64-sanitizers-sigill.md). The development Mac
+cannot run x86_64 binaries (no Rosetta) and the LLVM backend builds for
+the host only, so darwin/amd64 is built and tested on that Mac.
+Last verified: 2026-10-12.
+
+## Windows runs (windows/amd64, decisions 0196 and 0197)
+
+`scripts/remote-windows.sh [--dry-run] [--hold] [--cmd CMD] [COMMIT]`
+launches an on demand Windows Server 2025 EC2 instance (default
+c7i.4xlarge, 16 vCPU, 32 GiB, owner approved about $1.40 an hour;
+`XO_REMOTE_TYPE`), us-east-1, key pair xo-ci, security group xo-ci-ssh
+(SSH from this host's IP only, no RDP). EC2Launch v2 user data, as
+SYSTEM: first the lifetime (`shutdown /s /f /t` and a scheduled task at
+`XO_REMOTE_MAX_MIN` minutes, default 240; instance-initiated shutdown
+terminates), then OpenSSH Server with the xo-ci public key in
+`C:\ProgramData\ssh\administrators_authorized_keys` and Git Bash as the
+default shell, then Git for Windows (latest release), Go 1.26.1 (msi),
+LLVM (latest release msi: 23.1.3 on 2026-10-12, clang, lld-link,
+llvm-ar), and the VS 2022 Build Tools (VCTools workload, x64 and ARM64
+compilers, the recommended Windows SDK); `C:\xo-ready` marks the end
+(about 11 minutes; the LLVM installer is an .msi since LLVM 23, an .exe
+before). The script starts a local watchdog (PID printed) that
+terminates the instance after the same limit and terminates it on exit.
+It sends the commit as a git bundle and clones it to `~/xo` with
+`core.autocrlf false` (gotchas/windows-git-crlf-goldens.md). `--hold`
+writes `Administrator@<ip>` to `$XO_REMOTE_HOLD` and waits; `--cmd`
+runs one command (Git Bash, in the checkout) and writes the log to
+bench/results/remote/windows-<commit>.log (git ignored).
+
+On the instance: `go build -o ../xo.exe ./cmd/xo`, then
+`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` (xo1 is not used
+on Windows); the golden count is
+`XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
+(the summary line counts pass, fail, unsupported; with
+`XO_GOLDEN_WANT_TARGET=windows/arm64` it cross builds instead and counts
+the programs that build and link). clang targets
+x86_64-pc-windows-msvc by default and finds the build tools itself; the
+link is `-fuse-ld=lld` (LTO bitcode). Results:
+bench/results/windows-2026-10-12.md. Last verified: 2026-10-12
+(instance i-EXAMPLE19).
 
 
 ## Bootstrapping without Go (decision 0178, stage 7)

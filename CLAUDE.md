@@ -106,6 +106,16 @@ Update the knowledgebase in the same change as the work, not later:
   per source change), so a change under selfhost/ changes what native
   builds do. `XO_SELF_DRIVER=0` runs the Go driver; `XO1=<path>` uses a
   prebuilt xo1.
+- Go implementation frozen (decision 0178 stage 7 step 1, switch point
+  B merged 2026-10-13, 730c67a): the shipped `xo` is xo1, and the Xo
+  implementation (selfhost/, std/) plus the spec are the source of truth.
+  No language change lands in the Go compiler packages (internal/lexer,
+  parser, check, ssa, gen, arm64, llvm, build, cmd/xo's compiler paths).
+  Every compiler change (language, backends, targets, driver) lands in
+  selfhost/ first; a Go-side change is allowed only to keep the Go side
+  building the bootstrap seed and passing its tests, or to mirror an Xo
+  change a remaining differential test needs. A new target or backend
+  feature counts as done only when xo1 builds it.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.

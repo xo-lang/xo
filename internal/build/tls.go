@@ -103,11 +103,13 @@ func tlsSourceHash() (string, error) {
 }
 
 // tlsFlavor is the part of a compile's flags the library is built with:
-// sanitizers, so an instrumented runtime links an instrumented library.
+// sanitizers, so an instrumented runtime links an instrumented library,
+// and the target of a cross build.
 func tlsFlavor(flags []string) []string {
 	var out []string
 	for _, f := range flags {
-		if strings.HasPrefix(f, "-fsanitize") || strings.HasPrefix(f, "-fno-sanitize") {
+		// and a cross build's target (LLVMCrossTriple)
+		if strings.HasPrefix(f, "-fsanitize") || strings.HasPrefix(f, "-fno-sanitize") || strings.HasPrefix(f, "--target=") {
 			out = append(out, f)
 		}
 	}
@@ -125,12 +127,35 @@ func tlsArgs(cc string, flags []string, sysroot string) (compile, link []string,
 	}
 	compile = append(compile, "-DXO_TLS")
 	compile = append(compile, mbedtls.Defines...)
-	for _, inc := range mbedtls.IncludeDirs {
+	for _, inc := range tlsIncludeDirs() {
 		compile = append(compile, "-I", filepath.Join(dir, filepath.FromSlash(inc)))
 	}
 	link = append(link, filepath.Join(dir, "libxotls.a"))
 	link = append(link, tlsSystemLibs()...)
 	return compile, link, nil
+}
+
+// tlsIncludeDirs are the library's include directories on this host:
+// Windows (decision 0197) first gets xo/win, the pthread.h subset the
+// library's threading is built on.
+func tlsIncludeDirs() []string {
+	if runtime.GOOS == "windows" {
+		return append([]string{"xo/win"}, mbedtls.IncludeDirs...)
+	}
+	return mbedtls.IncludeDirs
+}
+
+// tlsFileDefines are the extra compile flags of the library file src on
+// this host. Windows (decision 0197): Everest's Curve25519 takes its
+// 128-bit integers from the MSVC branch of kremlib (__m128i, which clang
+// does not convert) once clang reports __int128; without it the file
+// uses the library's portable 128-bit arithmetic.
+func tlsFileDefines(src string) []string {
+	d := mbedtls.FileDefines[src]
+	if runtime.GOOS == "windows" && src == "src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519_joined.c" {
+		d = append(append([]string(nil), d...), "-U__SIZEOF_INT128__")
+	}
+	return d
 }
 
 // tlsSystemLibs are the link arguments of the system libraries TLS needs
@@ -256,7 +281,7 @@ func writeTLSTree(dir string) ([]string, error) {
 // the order of their names, into lib with the archiver command ar.
 func compileTLSArchive(dir string, cc, args, srcs, ar []string, lib string, jobs int) error {
 	args = append(append([]string(nil), args...), mbedtls.Defines...)
-	for _, inc := range mbedtls.IncludeDirs {
+	for _, inc := range tlsIncludeDirs() {
 		args = append(args, "-I", filepath.Join(dir, filepath.FromSlash(inc)))
 	}
 	objDir := filepath.Join(dir, "obj")
@@ -273,7 +298,7 @@ func compileTLSArchive(dir string, cc, args, srcs, ar []string, lib string, jobs
 			defer wg.Done()
 			for i := range work {
 				obj := filepath.Join(objDir, strings.ReplaceAll(strings.TrimSuffix(srcs[i], ".c"), "/", "_")+".o")
-				a := append(append(append([]string(nil), cc[1:]...), args...), mbedtls.FileDefines[srcs[i]]...)
+				a := append(append(append([]string(nil), cc[1:]...), args...), tlsFileDefines(srcs[i])...)
 				a = append(a, "-o", obj, filepath.Join(dir, filepath.FromSlash(srcs[i])))
 				out, err := exec.Command(cc[0], a...).CombinedOutput()
 				if err != nil {

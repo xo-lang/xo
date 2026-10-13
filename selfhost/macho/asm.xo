@@ -191,6 +191,9 @@ pub struct Asm {
   eh_sect: Int = -1
   /// an ELF object (elf.xo) instead of Mach-O
   elf: Bool = false
+  /// ELF: the names of `.file` directives, STT_FILE symbols first in the
+  /// symbol table as LLVM writes them
+  files: List[Bytes] = []
   /// numeric local labels (`1:`, `1b`, `1f`): the last definition of
   /// each, and a forward reference not yet defined
   num_back: Map[Bytes, Int] = {}

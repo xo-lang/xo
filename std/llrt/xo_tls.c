@@ -40,8 +40,10 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/oid.h"
 #include "psa/crypto.h"
+#ifndef _WIN32 // Windows: xo_win.c
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
 #ifdef __APPLE__
 #include <Security/Security.h>
 #endif
@@ -566,6 +568,20 @@ static void sys_roots_load(void) {
 			roots_add_pem(r, b.p ? b.p : "", (size_t)b.n);
 		}
 		free(b.p);
+	}
+#elif defined(_WIN32)
+	// Windows (decision 0197): the certificates of the system's ROOT
+	// store (Go asks CertGetCertificateChain to verify instead, with
+	// the store's policies: a later stage)
+	HCERTSTORE st = CertOpenSystemStoreW(0, L"ROOT");
+	if (st) {
+		PCCERT_CONTEXT c = NULL;
+		while ((c = CertEnumCertificatesInStore(st, c)) != NULL) {
+			if (mbedtls_x509_crt_parse_der(&r->crt, c->pbCertEncoded, c->cbCertEncoded) == 0) {
+				r->n++;
+			}
+		}
+		CertCloseStore(st, 0);
 	}
 #else
 	static const char *files[] = {
@@ -1239,7 +1255,12 @@ static void rfc3339(time_t t, int local, char *out, size_t on) {
 		gmtime_r(&t, &tm);
 	}
 	size_t k = strftime(out, on, "%Y-%m-%dT%H:%M:%S", &tm);
+#ifdef _WIN32
+	// no tm_gmtoff: the local time read back as UTC, minus t
+	long off = local ? (long)(_mkgmtime(&tm) - t) : 0;
+#else
 	long off = local ? tm.tm_gmtoff : 0;
+#endif
 	if (off == 0) {
 		snprintf(out + k, on - k, "Z");
 	} else {
