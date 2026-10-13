@@ -117,7 +117,8 @@ is shared, compiler changes are made twice); the runtime pack (decision
    backends** (bench/results/runtime-pilot-2026-10-12.md, section "LLVM
    value ranges and inlining").
    When (b) holds, unicode_c.xo, the `XO_UNICODE_C` C, and xo_unicode.c
-   are deleted (a new ADR). xo_rt.c itself (6,451 lines: reference
+   are deleted (a new ADR: decision 0198 deleted them, 2026-10-13, and
+   with them `XO_UNICODE`). xo_rt.c itself (6,451 lines: reference
    counts, lists, maps, strings, fibers, the scheduler, faults and
    unwinding) is mostly below what Xo can express (raw memory, atomics,
    stack switching); after (b) the order is the policy code over Xo

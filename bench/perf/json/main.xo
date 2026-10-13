@@ -1,7 +1,7 @@
 // std/json workloads of the native runtime port (decision 0193 step 4):
 // the parser, the tape readers, and the string and Float text in Xo
-// (std/native/llrt/jsontext.xo) against their C path
-// (XO_LLRT_C=jsontext, std/llrt/xo_json.c). Usage: jsonperf <workload>.
+// (std/native/llrt/jsontext.xo; their C path, XO_LLRT_C=jsontext, went
+// in decision 0198). Usage: jsonperf <workload>.
 // Each workload prints "<workload> <checksum> <elapsed microseconds>";
 // the checksum must be the same on every backend (the Go backend is the
 // reference). The documents are built by interpolation, not by

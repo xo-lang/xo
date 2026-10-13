@@ -13,6 +13,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   although xo1's output matched it byte for byte. They now read it with
   `newline=''`; internal/diag's TestScriptsReadWantBytes keeps it so
   (gotcha python-text-mode-want-cr.md). No compiler change.
+- **The C paths of the ported runtime pieces are gone** (decision
+  0198): the Unicode operations (`XO_UNICODE=c`, xo_unicode.c), std/json's
+  text (`XO_LLRT_C=jsontext`, xo_json.c), the number text
+  (`XO_LLRT_C=num`), and the Str operations (`XO_LLRT_C=strings`), 3,373
+  lines of std/llrt. Those settings now select nothing; the Xo versions,
+  the default since decisions 0180 and 0193, are the only ones. No pack
+  object changes (packs never held these paths).
 - **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
   build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
   cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows
