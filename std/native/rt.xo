@@ -116,6 +116,10 @@ fn u64_mul_hi(a: Int, b: Int) -> Int
 fn float_bits(f: Float) -> Int
 /// The Float of the IEEE 754 bits b (lowered inline).
 fn float_from_bits(b: Int) -> Float
+/// The 8 bytes of b from i as a word, the first lowest (lowered inline
+/// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
+/// b.len().
+fn bytes_word(b: Bytes, i: Int) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// The standard base64 of b, padded.

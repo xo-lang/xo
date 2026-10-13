@@ -634,8 +634,9 @@ fn (var g: G) call_op(v: Int) {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, and the
-/// bits of a Float both ways; whether v was one (isel.go inlineRT).
+/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the
+/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
+/// bytes); whether v was one (isel.go inlineRT).
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -656,6 +657,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
     "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
+    "rt.bytes_word" => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
+    }
     _ => return false
   }
   true

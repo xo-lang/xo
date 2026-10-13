@@ -477,8 +477,8 @@ fn runtime_raises(name: Str) -> Bool {
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
 /// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-/// multiply), and the bits of a Float both ways; whether v was one
-/// (fromssa.go inlineRT).
+/// multiply), the bits of a Float both ways, and rt.bytes_word (an
+/// unchecked load of 8 bytes); whether v was one (fromssa.go inlineRT).
 fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -509,6 +509,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
     "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
+    "rt.bytes_word" => {
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      g.set(v, "load i64, ptr ${p}, align 1")
+    }
     _ => return false
   }
   true

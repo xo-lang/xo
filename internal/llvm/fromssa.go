@@ -2141,8 +2141,8 @@ func (s *sfn) call(v *ssa.Value) {
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
 // *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-// multiply), and the bits of a Float both ways. It reports whether v was
-// one.
+// multiply), the bits of a Float both ways, and rt.bytes_word (an
+// unchecked load of 8 bytes). It reports whether v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2165,6 +2165,10 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		s.set(v, "bitcast double %s to i64", s.op(v.Args[0]))
 	case "rt.float_from_bits":
 		s.set(v, "bitcast i64 %s to double", s.op(v.Args[0]))
+	case "rt.bytes_word":
+		_, d, _ := s.strParts(s.op(v.Args[0]))
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
+		s.set(v, "load i64, ptr %s, align 1", p)
 	default:
 		return false
 	}

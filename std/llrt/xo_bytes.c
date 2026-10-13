@@ -614,6 +614,15 @@ int64_t xo_float_bits(double f) {
 	return b;
 }
 
+// xo_bytes_word is the 8 bytes of p from i, little endian (the caller
+// checked the range; the native backends lower it inline).
+int64_t xo_bytes_word(const char *p, int64_t n, int64_t i) {
+	(void)n;
+	int64_t w;
+	memcpy(&w, p + i, 8);
+	return w;
+}
+
 double xo_float_from_bits(int64_t b) {
 	double f;
 	memcpy(&f, &b, 8);

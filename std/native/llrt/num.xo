@@ -158,11 +158,7 @@ fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
 fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
 
 /// The word at byte i of t, little endian.
-fn word_at(t: Bytes, i: Int) -> Int {
-  let lo = Int(t[i]) | (Int(t[i + 1]) << 8) | (Int(t[i + 2]) << 16) | (Int(t[i + 3]) << 24)
-  let hi = Int(t[i + 4]) | (Int(t[i + 5]) << 8) | (Int(t[i + 6]) << 16)
-  lo | (hi << 32) | shl(Int(t[i + 7]), 56)
-}
+fn word_at(t: Bytes, i: Int) -> Int { rt.bytes_word(t, i) }
 
 /// The high word of 10^e's 128 bit mantissa (POW10_MIN <= e <= POW10_MAX).
 fn pow10_hi(e: Int) -> Int { word_at(num_tables.POW10, (e - num_tables.POW10_MIN) * 16) }
@@ -1199,18 +1195,17 @@ fn slow_parse(b: Bytes, n: Int) -> Float? {
 /// The 8 lowercase hex digits of the 4 bytes in the low bytes of v (the
 /// first lowest), two to a byte's 16 bit lane, all lanes at once.
 fn hex4(v: Int) -> Int {
-  let s = (v & 0xFF) | ((v & 0xFF00) << 8) | ((v & 0xFF0000) << 16) | ((v & 0xFF000000) << 24)
+  // each byte to the low byte of a 16 bit lane, in two steps
+  let u = v & 0xFFFFFFFF
+  let p = (u | (u << 16)) & 0xFFFF0000FFFF
+  let s = (p | (p << 8)) & 0xFF00FF00FF00FF
   let hi = (s >> 4) & 0xF000F000F000F
   let lo = s & 0xF000F000F000F
   let nib = hi | (lo << 8)
-  // 'a' - '0' - 10 more for a nibble above 9
-  let alpha = ((nib + 0x606060606060606) >> 4) & 0x101010101010101
-  nib + 0x3030303030303030 + alpha * 39
-}
-
-/// The 4 bytes of b from i in the low bytes of a word, the first lowest.
-fn le4(b: Bytes, i: Int) -> Int {
-  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+  // 'a' - '0' - 10 more for a nibble above 9 (bit 3 and bit 2 or 1);
+  // only logical immediates, and | is + of "0" below 0x10
+  let alpha = (nib >> 3) & ((nib >> 2) | (nib >> 1)) & 0x101010101010101
+  (nib | 0x3030303030303030) + alpha * 39
 }
 
 /// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 16 bytes
@@ -1220,7 +1215,9 @@ pub fn to_hex(b: Bytes) -> Str {
   var out = if n > 32 { rt.rs_with_cap(2 * n + 32) } else { "" }
   var i = 0
   while n - i >= 16 {
-    out = rt.rs_push_words(out, hex4(le4(b, i)), hex4(le4(b, i + 4)), hex4(le4(b, i + 8)), hex4(le4(b, i + 12)), 0x8888)
+    let x = rt.bytes_word(b, i)
+    let y = rt.bytes_word(b, i + 8)
+    out = rt.rs_push_words(out, hex4(x), hex4(shr(x, 32)), hex4(y), hex4(shr(y, 32)), 0x8888)
     i += 16
   }
   if i == n {
@@ -1255,7 +1252,13 @@ fn hex_tail(out: Str, b: Bytes, i: Int, r: Int) -> Str {
   let k1 = (r - 4).max(0).min(4)
   let k2 = (r - 8).max(0).min(4)
   let k3 = (r - 12).max(0)
-  rt.rs_push_words(out, hex4(w0), hex4(w1), hex4(w2), hex4(w3), (2 * k0) | ((2 * k1) << 4) | ((2 * k2) << 8) | ((2 * k3) << 12))
+  if r <= 4 {
+    return rt.rs_push_word(out, hex4(w0), 2 * k0)
+  }
+  if r <= 8 {
+    return rt.rs_push_words(out, hex4(w0), hex4(w1), 0, 0, 8 | ((2 * k1) << 4))
+  }
+  rt.rs_push_words(out, hex4(w0), hex4(w1), hex4(w2), hex4(w3), 0x88 | ((2 * k2) << 8) | ((2 * k3) << 12))
 }
 
 /// The bytes of the 2k hex digits of b from i (k 1 to 8) in a word,
@@ -1276,6 +1279,22 @@ fn unhex(b: Bytes, i: Int, k: Int) -> (Int, Int) {
   (w, bad)
 }
 
+/// The 4 bytes of the 8 hex digits in the word x (the first lowest), and
+/// bits above 0xF in the second result for a byte that is not one.
+fn unhex4(x: Int) -> (Int, Int) {
+  let t = num_tables.HEX_VAL
+  let a0 = Int(t[x & 0xFF])
+  let a1 = Int(t[(x >> 8) & 0xFF])
+  let a2 = Int(t[(x >> 16) & 0xFF])
+  let a3 = Int(t[(x >> 24) & 0xFF])
+  let a4 = Int(t[(x >> 32) & 0xFF])
+  let a5 = Int(t[(x >> 40) & 0xFF])
+  let a6 = Int(t[(x >> 48) & 0xFF])
+  let a7 = Int(t[shr(x, 56)])
+  let w = (((a0 << 4) | a1) & 0xFF) | ((((a2 << 4) | a3) & 0xFF) << 8) | ((((a4 << 4) | a5) & 0xFF) << 16) | ((((a6 << 4) | a7) & 0xFF) << 24)
+  (w, a0 | a1 | a2 | a3 | a4 | a5 | a6 | a7)
+}
+
 /// The bytes of hex text (hex.DecodeString: either case, an even
 /// length), or None.
 pub fn from_hex(s: Str) -> Bytes? {
@@ -1288,9 +1307,10 @@ pub fn from_hex(s: Str) -> Bytes? {
   var bad = 0
   var i = 0
   while n - i >= 16 {
-    let (w, x) = unhex(b, i, 8)
-    bad = bad | x
-    out = rt.rs_push_word(out, w, 8)
+    let (w0, x0) = unhex4(rt.bytes_word(b, i))
+    let (w1, x1) = unhex4(rt.bytes_word(b, i + 8))
+    bad = bad | x0 | x1
+    out = rt.rs_push_word(out, w0 | shl(w1, 32), 8)
     i += 16
   }
   if i < n {
@@ -1314,6 +1334,13 @@ fn b64_quad(v: Int) -> Int {
   Int(t[(v >> 18) & 63]) | (Int(t[(v >> 12) & 63]) << 8) | (Int(t[(v >> 6) & 63]) << 16) | (Int(t[v & 63]) << 24)
 }
 
+/// The 8 base64 characters of the 6 low bytes of v (the first lowest).
+fn six(v: Int) -> Int {
+  let a = ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF)
+  let b = (((v >> 24) & 0xFF) << 16) | (((v >> 32) & 0xFF) << 8) | ((v >> 40) & 0xFF)
+  b64_quad(a) | (b64_quad(b) << 32)
+}
+
 /// The 3 bytes of b from i, the first highest.
 fn trio(b: Bytes, i: Int) -> Int { (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2]) }
 
@@ -1326,10 +1353,14 @@ pub fn to_base64(b: Bytes) -> Str {
   var i = 0
   // 24 bytes, 32 characters at a time
   while n - i >= 24 {
-    let w0 = b64_quad(trio(b, i)) | (b64_quad(trio(b, i + 3)) << 32)
-    let w1 = b64_quad(trio(b, i + 6)) | (b64_quad(trio(b, i + 9)) << 32)
-    let w2 = b64_quad(trio(b, i + 12)) | (b64_quad(trio(b, i + 15)) << 32)
-    let w3 = b64_quad(trio(b, i + 18)) | (b64_quad(trio(b, i + 21)) << 32)
+    // three words, as four pieces of 6 bytes
+    let x0 = rt.bytes_word(b, i)
+    let x1 = rt.bytes_word(b, i + 8)
+    let x2 = rt.bytes_word(b, i + 16)
+    let w0 = six(x0)
+    let w1 = six(shr(x0, 48) | shl(x1, 16))
+    let w2 = six(shr(x1, 32) | shl(x2, 32))
+    let w3 = six(shr(x2, 16))
     out = rt.rs_push_words(out, w0, w1, w2, w3, 0x8888)
     i += 24
   }

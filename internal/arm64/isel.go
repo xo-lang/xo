@@ -2148,8 +2148,9 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // inlineRT lowers the runtime intrinsics that are an instruction or two
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
-// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, and the
-// bits of a Float both ways. It reports whether v was one.
+// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the bits
+// of a Float both ways, and rt.bytes_word (an unchecked load of 8 bytes).
+// It reports whether v was one.
 func (s *fstate) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2170,6 +2171,10 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		s.set(v, s.def1(false, "fmov $d0, $u0", s.word(v.Args[0])))
 	case "rt.float_from_bits":
 		s.set(v, s.def1(true, "fmov $d0, $u0", s.word(v.Args[0])))
+	case "rt.bytes_word":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		s.set(v, s.def1(false, "ldr $d0, [$u0, $u1]", d, s.word(v.Args[1])))
 	default:
 		return false
 	}
