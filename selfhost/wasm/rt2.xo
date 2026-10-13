@@ -1564,7 +1564,7 @@ fn rt2_text(var g: Gen) -> Str {
 
     ;; bit 4k to 4k + 3 set for each byte k of a word whose high bit is
     ;; set in t (only high bits set)
-    (func $nib8 (param $t i64) (result i64)
+    (func $swar_nib8 (param $t i64) (result i64)
       local.get $t
       i64.const 7
       i64.shr_u
@@ -1594,7 +1594,7 @@ fn rt2_text(var g: Gen) -> Str {
 
     ;; the high bit of each byte of w that is the byte of r (r eight
     ;; copies of it), exactly
-    (func $eq8 (param $w i64) (param $r i64) (result i64)
+    (func $swar_eq8 (param $w i64) (param $r i64) (result i64)
       local.get $w
       local.get $r
       i64.xor
@@ -1624,13 +1624,13 @@ fn rt2_text(var g: Gen) -> Str {
       local.tee $o
       i64.load offset=8 align=1
       local.get $r
-      call $eq8
-      call $nib8
+      call $swar_eq8
+      call $swar_nib8
       local.get $o
       i64.load offset=16 align=1
       local.get $r
-      call $eq8
-      call $nib8
+      call $swar_eq8
+      call $swar_nib8
       i64.const 32
       i64.shl
       i64.or)
@@ -1644,12 +1644,12 @@ fn rt2_text(var g: Gen) -> Str {
       i64.load offset=8 align=1
       i64.const -9187201950435737472
       i64.and
-      call $nib8
+      call $swar_nib8
       local.get $o
       i64.load offset=16 align=1
       i64.const -9187201950435737472
       i64.and
-      call $nib8
+      call $swar_nib8
       i64.const 32
       i64.shl
       i64.or)
