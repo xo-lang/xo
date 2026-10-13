@@ -2,6 +2,7 @@ package ssa
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
@@ -78,33 +79,67 @@ func (s *fn) rawGeneric(x *ast.CallExpr, name string, t *Type, es []ast.Expr) (*
 }
 
 // CABIModule is the runtime module whose functions are C ABI exports
-// (decision 0207): every top level function of std/native/llrt/cabi.xo
-// is called by the C runtime as xo_x_<name>, with Int and Float
-// parameters (an address is an Int) and an Int, Float, Str, or no result
-// (a Str is returned as its string object, its length stored through a
-// pointer the C caller adds after the parameters, as the C runtime
-// returns strings). Only std's implementation modules can load it
-// (decision 0074): the marker is the module, not syntax.
+// (decision 0207): every top level function of std/native/llrt/cabi.xo,
+// and of a module cabi_<feature>.xo beside it (exports only the C of a
+// feature calls, imported by that feature's implementation module), is
+// called by the C runtime as xo_x_<name>, with Int and Float parameters
+// (an address is an Int) and an Int, Float, Str, or no result (a Str is
+// returned as its string object, its length stored through a pointer the
+// C caller adds after the parameters, as the C runtime returns strings).
+// Only std's implementation modules can load them (decision 0074): the
+// marker is the module, not syntax.
 const CABIModule = "native/llrt/cabi"
+
+// IsCABIModule reports whether the module path is a marker module of C
+// ABI exports (CABIModule or CABIModule_<feature>).
+func IsCABIModule(path string) bool {
+	return path == CABIModule || strings.HasPrefix(path, CABIModule+"_")
+}
 
 // ExportPrefix is the C symbol prefix of an export.
 const ExportPrefix = "xo_x_"
 
-// declareExports declares every function of the module CABIModule when
-// the program loaded it (the native prelude imports it), in name order,
-// as a root of the build: the C runtime calls them, so every native
-// program has them. A parameter or result outside the C ABI's shapes is
+// declareExports declares every function of the marker modules, in the
+// order of their paths and then of their names, as roots of the build:
+// the C runtime calls them. cabi's always (the native prelude imports
+// it); a cabi_<feature>'s when the program builds code of a module that
+// imports it (std/testing loads std/http into every program, so loading
+// is not the test). A parameter or result outside the C ABI's shapes is
 // unsupported.
 func (b *builder) declareExports() {
-	var mod *check.Module
+	var mods []*check.Module
 	for _, m := range b.info.AllModules() {
-		if m.Path == CABIModule {
-			mod = m
+		if IsCABIModule(m.Path) {
+			mods = append(mods, m)
 		}
 	}
-	if mod == nil {
-		return
+	sort.Slice(mods, func(i, j int) bool { return mods[i].Path < mods[j].Path })
+	for _, mod := range mods {
+		if mod.Path == CABIModule || b.importerBuilt(mod) {
+			b.declareExportsOf(mod)
+		}
 	}
+}
+
+// importerBuilt reports whether the program builds code of a module that
+// imports mod (a feature's marker module: its C runs only then).
+func (b *builder) importerBuilt(mod *check.Module) bool {
+	for _, m := range b.info.AllModules() {
+		if !b.declMods[m.Path] {
+			continue
+		}
+		for _, f := range m.Files {
+			for _, imp := range f.Imports {
+				if imp.Module == mod {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (b *builder) declareExportsOf(mod *check.Module) {
 	var names []string
 	for n, o := range mod.Scope {
 		if fo, ok := o.(*check.FuncObj); ok && fo.Recv == nil && fo.Decl != nil {

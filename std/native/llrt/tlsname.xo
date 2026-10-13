@@ -6,6 +6,7 @@
 // names each followed by a zero byte, and the IP addresses as 16 bytes
 // each (IPv4 mapped). Semantics are Go's.
 use native/llrt/raw
+use native/rt
 
 /// The bytes of s with ASCII letters lowered (toLowerCaseASCII).
 fn lower(s: Str) -> Str {
@@ -398,4 +399,182 @@ pub fn hostname_msg(nm: Names, has_san: Bool, cn: Str, host: Str) -> Str {
     return "x509: certificate is not valid for any names, but wanted to match ${host}"
   }
   "x509: certificate is valid for ${valid}, not ${host}"
+}
+
+/// crypto/tls's alertText: the text of alert a, or "alert(a)".
+pub fn alert_text(a: Int) -> Str {
+  match a {
+    0 => "close notify"
+    10 => "unexpected message"
+    20 => "bad record MAC"
+    21 => "decryption failed"
+    22 => "record overflow"
+    30 => "decompression failure"
+    40 => "handshake failure"
+    42 => "bad certificate"
+    43 => "unsupported certificate"
+    44 => "revoked certificate"
+    45 => "expired certificate"
+    46 => "unknown certificate"
+    47 => "illegal parameter"
+    48 => "unknown certificate authority"
+    49 => "access denied"
+    50 => "error decoding message"
+    51 => "error decrypting message"
+    60 => "export restriction"
+    70 => "protocol version not supported"
+    71 => "insufficient security level"
+    80 => "internal error"
+    86 => "inappropriate fallback"
+    90 => "user canceled"
+    100 => "no renegotiation"
+    109 => "missing extension"
+    110 => "unsupported extension"
+    111 => "certificate unobtainable"
+    112 => "unrecognized name"
+    113 => "bad certificate status response"
+    114 => "bad certificate hash value"
+    115 => "unknown PSK identity"
+    116 => "certificate required"
+    120 => "no application protocol"
+    121 => "encrypted client hello required"
+    _ => "alert(${a})"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PEM (encoding/pem's Decode, as tls.X509KeyPair and
+// CertPool.AppendCertsFromPEM use it), over the n bytes at an address
+
+/// The index of the bytes of s in the memory at p from i to end, or -1.
+fn find_at(p: Int, i0: Int, end: Int, s: Str) -> Int {
+  let k = s.len()
+  let d = raw.data(s)
+  var i = i0
+  while i + k <= end {
+    if raw.mem_eq(p + i, d, k) {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// The value of a base64 digit (the standard alphabet), or -1.
+fn b64(c: Int) -> Int {
+  if c >= 65 && c <= 90 {
+    return c - 65
+  }
+  if c >= 97 && c <= 122 {
+    return c - 71
+  }
+  if c >= 48 && c <= 57 {
+    return c + 4
+  }
+  if c == 43 {
+    return 62
+  }
+  if c == 47 {
+    return 63
+  }
+  -1
+}
+
+/// The next PEM block of the n bytes at p from pos: its end position, its
+/// type, and its decoded bytes written at der (at least n bytes); the
+/// length, or -1 when there is none (the end position is then n). A block
+/// that does not decode is skipped, as pem.Decode does; a type of 80 bytes
+/// or more is one.
+pub fn pem_next(p: Int, n: Int, pos0: Int, der: Int) -> (Int, Str, Int) {
+  var pos = pos0
+  while true {
+    let begin = find_at(p, pos, n, "-----BEGIN ")
+    if begin < 0 {
+      return (n, "", -1)
+    }
+    // pem.Decode requires BEGIN at the start of a line
+    if begin != pos && raw.byte_at(p, begin - 1) != 10 {
+      pos = begin + 11
+      continue
+    }
+    let t = begin + 11
+    let tend = find_at(p, t, n, "-----")
+    pos = begin + 11
+    if tend < 0 || tend - t >= 80 {
+      continue
+    }
+    var nl = tend + 5
+    while nl < n && (raw.byte_at(p, nl) is 32 | 9 | 13) {
+      nl += 1
+    }
+    if nl < n && raw.byte_at(p, nl) != 10 {
+      continue
+    }
+    let ty = raw.str_at(p + t, tend - t)
+    let endline = "-----END ${ty}-----"
+    let body = if nl < n { nl + 1 } else { n }
+    let stop = find_at(p, body, n, endline)
+    if stop < 0 {
+      continue
+    }
+    // headers ("Key: value" lines up to an empty line) are skipped
+    var q = body
+    var line_end = q
+    while line_end < stop && raw.byte_at(p, line_end) != 10 {
+      line_end += 1
+    }
+    if line_end < stop {
+      var colon = false
+      for i in q..line_end {
+        if raw.byte_at(p, i) == 58 {
+          colon = true
+        }
+      }
+      if colon {
+        var blank = find_at(p, q, stop, "\n\n")
+        let blank2 = find_at(p, q, stop, "\n\r\n")
+        if blank2 >= 0 && (blank < 0 || blank2 < blank) {
+          blank = blank2 + 1
+        }
+        if blank < 0 {
+          continue
+        }
+        q = blank + 2
+      }
+    }
+    var out = 0
+    var acc = 0
+    var bits = 0
+    var pad = 0
+    var bad = false
+    var c = q
+    while c < stop {
+      let ch = raw.byte_at(p, c)
+      c += 1
+      if ch is 10 | 13 | 32 | 9 {
+        continue
+      }
+      if ch == 61 {
+        pad += 1
+        continue
+      }
+      let v = b64(ch)
+      if v < 0 || pad > 0 {
+        bad = true
+        break
+      }
+      acc = ((acc << 6) | v) & 0xFFFFFFFF
+      bits += 6
+      if bits >= 8 {
+        bits -= 8
+        rt.mem_store(der, out, acc >> bits, 1)
+        out += 1
+      }
+    }
+    if bad || pad > 2 {
+      continue
+    }
+    return (stop + endline.len(), ty, out)
+  }
+  (n, "", -1)
 }

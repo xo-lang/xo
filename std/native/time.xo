@@ -6,6 +6,7 @@
 // std/llrt/xo_time.c); civil time, layouts, formatting, and parsing are
 // here.
 use std/time
+use native/llrt/cabi_time
 use native/llrt/tz
 use native/rt
 use native/rttest

@@ -544,7 +544,7 @@ func (c *checker) resolveImport(path string) (*Module, error) {
 func (c *checker) checkUnusedImports(f *File) {
 	for _, u := range f.AST.Uses {
 		for _, imp := range f.Imports {
-			if imp.Decl != u || imp.Used || u.Path == "native/llrt/cabi" {
+			if imp.Decl != u || imp.Used || (u.Path == "native/llrt/cabi" || strings.HasPrefix(u.Path, "native/llrt/cabi_")) {
 				// the native prelude imports the C ABI exports for the
 				// C runtime, not for itself (decision 0207)
 				continue

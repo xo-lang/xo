@@ -767,6 +767,7 @@ int64_t xo_x_fault_divzero(int64_t buf, int64_t a, int64_t op);
 int64_t xo_x_fault_neg(int64_t buf, int64_t a);
 int64_t xo_x_fault_abs(int64_t buf, int64_t a);
 int64_t xo_x_fault_index(int64_t buf, int64_t i, int64_t n);
+int64_t xo_x_fault_bytes_index(int64_t buf, int64_t i, int64_t n);
 int64_t xo_x_fault_float_int(int64_t buf, double f);
 int64_t xo_x_utf8_decode(int64_t p, int64_t n);
 int64_t xo_x_utf8_encode(int64_t p, int64_t r);

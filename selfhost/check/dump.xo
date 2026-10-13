@@ -62,7 +62,7 @@ fn (var c: Checker) check_unused_imports(m: Int) {
   for f in c.mods[m].files {
     for u in c.files[f].ast.imports {
       for (_, imp) in c.files[f].imports.entries() {
-        if imp.used || imp.span != u.span || text(u.path) == "native/llrt/cabi" {
+        if imp.used || imp.span != u.span || text(u.path) == "native/llrt/cabi" || text(u.path).starts_with("native/llrt/cabi_") {
           // the native prelude imports the C ABI exports for the C
           // runtime, not for itself (decision 0207)
           continue

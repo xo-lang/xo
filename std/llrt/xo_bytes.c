@@ -661,7 +661,7 @@ xo_rlist *xo_env_program(void) {
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
 XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "index %lld out of range for Bytes of length %lld", (long long)i, (long long)n);
+	xo_x_fault_bytes_index(XO_ADDR(m), i, n);
 	fault_text(m, loc);
 }
 

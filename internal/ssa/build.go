@@ -44,16 +44,19 @@ func (es Errors) Error() string {
 
 // builder lowers a checked program.
 type builder struct {
-	opts   Options
-	info   *check.Info
-	mod    *Module
-	main   *check.Module
-	errs   Errors
-	seen   map[string]bool
-	funcs  map[string]*Func // by instance key (instKey)
-	queue  []func()         // bodies to build
-	nclos  int
-	thunks map[string]*Func // named functions used as values, by instance key
+	opts Options
+	info *check.Info
+	mod  *Module
+	main *check.Module
+	errs Errors
+	seen map[string]bool
+	// declMods are the paths of the modules of the functions declared
+	// (declareExports)
+	declMods map[string]bool
+	funcs    map[string]*Func // by instance key (instKey)
+	queue    []func()         // bodies to build
+	nclos    int
+	thunks   map[string]*Func // named functions used as values, by instance key
 
 	// concurrency (build_conc.go): conc builds with unwinding checks;
 	// needConc records that the program uses a concurrency construct
@@ -189,7 +192,7 @@ func buildWith(res *check.Result, opts Options, see func(b *builder, stage strin
 func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder, stage string)) (*builder, error) {
 	info := res.Info()
 	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{},
-		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{},
+		conc: conc, sites: map[*ast.CallExpr]int{}, declMods: map[string]bool{}, boundTo: map[*ast.CallExpr]*check.VarObj{},
 		faultUnwind: !opts.NoFaultUnwind}
 	if see != nil {
 		b.see = func(stage string) { see(b, stage) }
@@ -222,13 +225,12 @@ func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder
 			b.mainWrapper(mf, et, mainFo.Decl)
 		}
 	}
+	b.drain()
 	if !opts.NoFaultUnwind {
+		// after the program's own code: a feature's exports are built
+		// only when code of a module importing them is
 		b.declareExports()
-	}
-	for len(b.queue) > 0 {
-		next := b.queue[0]
-		b.queue = b.queue[1:]
-		next()
+		b.drain()
 	}
 	b.stage("build")
 	if len(b.errs) > 0 || opts.raw {
@@ -246,6 +248,15 @@ func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder
 	b.mod.TZ = b.tzUse()
 	b.stage("cleanup")
 	return b, nil
+}
+
+// drain builds the queued bodies.
+func (b *builder) drain() {
+	for len(b.queue) > 0 {
+		next := b.queue[0]
+		b.queue = b.queue[1:]
+		next()
+	}
 }
 
 func (b *builder) pos(n ast.Node) string {
@@ -711,6 +722,10 @@ func (b *builder) declare(fo *check.FuncObj, targs []check.Type, at ast.Node) *F
 	f := b.mod.NewFunc(name, params, results)
 	f.VarParams = varIdx
 	b.funcs[key] = f
+	if fo.Module != nil {
+		// the modules the program builds code of (declareExports)
+		b.declMods[fo.Module.Path] = true
+	}
 	b.queue = append(b.queue, func() { b.body(fo, f, sub) })
 	return f
 }

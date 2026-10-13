@@ -129,123 +129,28 @@ typedef struct {
 	size_t n;
 } pem_block;
 
-static int pem_b64(int c) {
-	if (c >= 'A' && c <= 'Z') {
-		return c - 'A';
-	}
-	if (c >= 'a' && c <= 'z') {
-		return c - 'a' + 26;
-	}
-	if (c >= '0' && c <= '9') {
-		return c - '0' + 52;
-	}
-	if (c == '+') {
-		return 62;
-	}
-	if (c == '/') {
-		return 63;
-	}
-	return -1;
-}
+int64_t xo_x_pem_next(int64_t p, int64_t n, int64_t st, int64_t ty, int64_t der);
 
-static const char *pem_find(const char *p, const char *end, const char *s) {
-	size_t k = strlen(s);
-	for (; p + k <= end; p++) {
-		if (memcmp(p, s, k) == 0) {
-			return p;
-		}
-	}
-	return NULL;
-}
-
-// pem_next decodes the next PEM block of [*p, end): 1 and the block (its
-// der to free), 0 when there is none. A block that does not decode is
-// skipped, as pem.Decode does.
+// pem_next decodes the next PEM block of [*p, end) (tlsname.xo's
+// pem_next, decision 0207): 1 and the block (its der to free), 0 when
+// there is none. A block that does not decode is skipped, as pem.Decode
+// does.
 static int pem_next(const char **p, const char *end, pem_block *b) {
-	for (;;) {
-		const char *begin = pem_find(*p, end, "-----BEGIN ");
-		if (!begin) {
-			*p = end;
-			return 0;
-		}
-		// pem.Decode requires BEGIN at the start of a line
-		if (begin != *p && begin[-1] != '\n') {
-			*p = begin + 11;
-			continue;
-		}
-		const char *t = begin + 11;
-		const char *tend = pem_find(t, end, "-----");
-		*p = begin + 11;
-		if (!tend || (size_t)(tend - t) >= sizeof b->type) {
-			continue;
-		}
-		const char *nl = tend + 5;
-		while (nl < end && (*nl == ' ' || *nl == '\t' || *nl == '\r')) {
-			nl++;
-		}
-		if (nl < end && *nl != '\n') {
-			continue;
-		}
-		memcpy(b->type, t, (size_t)(tend - t));
-		b->type[tend - t] = 0;
-		char endline[100];
-		snprintf(endline, sizeof endline, "-----END %s-----", b->type);
-		const char *body = nl < end ? nl + 1 : end;
-		const char *stop = pem_find(body, end, endline);
-		if (!stop) {
-			continue;
-		}
-		// headers ("Key: value" lines up to an empty line) are skipped
-		const char *q = body;
-		const char *line_end = memchr(q, '\n', (size_t)(stop - q));
-		if (line_end && memchr(q, ':', (size_t)(line_end - q))) {
-			const char *blank = pem_find(q, stop, "\n\n");
-			const char *blank2 = pem_find(q, stop, "\n\r\n");
-			if (blank2 && (!blank || blank2 < blank)) {
-				blank = blank2 + 1;
-			}
-			if (!blank) {
-				continue;
-			}
-			q = blank + 2;
-		}
-		size_t cap = (size_t)(stop - q) / 4 * 3 + 3;
-		unsigned char *der = malloc(cap ? cap : 1);
-		if (!der) {
-			xo_oom();
-		}
-		size_t n = 0;
-		uint32_t acc = 0;
-		int bits = 0, pad = 0, bad = 0;
-		for (const char *c = q; c < stop; c++) {
-			if (*c == '\n' || *c == '\r' || *c == ' ' || *c == '\t') {
-				continue;
-			}
-			if (*c == '=') {
-				pad++;
-				continue;
-			}
-			int v = pem_b64((unsigned char)*c);
-			if (v < 0 || pad) {
-				bad = 1;
-				break;
-			}
-			acc = (acc << 6) | (uint32_t)v;
-			bits += 6;
-			if (bits >= 8) {
-				bits -= 8;
-				der[n++] = (unsigned char)(acc >> bits);
-			}
-		}
-		if (bad || pad > 2) {
-			free(der);
-			continue;
-		}
-		b->der = der;
-		b->n = n;
-		*p = stop + strlen(endline);
-		return 1;
+	int64_t n = (int64_t)(end - *p);
+	unsigned char *der = malloc((size_t)n + 1);
+	if (!der) {
+		xo_oom();
 	}
+	int64_t st = 0;
+	int64_t k = xo_x_pem_next(XO_ADDR(*p), n, XO_ADDR(&st), XO_ADDR(b->type), XO_ADDR(der));
+	*p += st;
+	if (k < 0) {
+		free(der);
+		return 0;
+	}
+	b->der = der;
+	b->n = (size_t)k;
+	return 1;
 }
 
 static int ends_with(const char *s, const char *suf) {
@@ -936,6 +841,7 @@ struct tls_srv {
 int64_t xo_x_tls_host_ok(int64_t dp, int64_t dn, int64_t ip, int64_t ni, int64_t hp, int64_t hn);
 int64_t xo_x_tls_hostname_msg(int64_t args, int64_t buf, int64_t bn);
 int64_t xo_x_tls_is_ip(int64_t p, int64_t n);
+int64_t xo_x_tls_alert_msg(int64_t buf, int64_t bn, int64_t a);
 
 // The names of a certificate's subject alternative name extension.
 typedef struct {
@@ -1328,57 +1234,10 @@ static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags
 	return 0;
 }
 
-// alert_text is crypto/tls's alertText.
-static const char *alert_text(int a) {
-	switch (a) {
-	case 0: return "close notify";
-	case 10: return "unexpected message";
-	case 20: return "bad record MAC";
-	case 21: return "decryption failed";
-	case 22: return "record overflow";
-	case 30: return "decompression failure";
-	case 40: return "handshake failure";
-	case 42: return "bad certificate";
-	case 43: return "unsupported certificate";
-	case 44: return "revoked certificate";
-	case 45: return "expired certificate";
-	case 46: return "unknown certificate";
-	case 47: return "illegal parameter";
-	case 48: return "unknown certificate authority";
-	case 49: return "access denied";
-	case 50: return "error decoding message";
-	case 51: return "error decrypting message";
-	case 60: return "export restriction";
-	case 70: return "protocol version not supported";
-	case 71: return "insufficient security level";
-	case 80: return "internal error";
-	case 86: return "inappropriate fallback";
-	case 90: return "user canceled";
-	case 100: return "no renegotiation";
-	case 109: return "missing extension";
-	case 110: return "unsupported extension";
-	case 111: return "certificate unobtainable";
-	case 112: return "unrecognized name";
-	case 113: return "bad certificate status response";
-	case 114: return "bad certificate hash value";
-	case 115: return "unknown PSK identity";
-	case 116: return "certificate required";
-	case 120: return "no application protocol";
-	case 121: return "encrypted client hello required";
-	}
-	return NULL;
-}
-
 // alert_msg is Go's text of the fatal alert t received:
-// "remote error: tls: <alertText>".
+// "remote error: tls: <alertText>" (tlsname.xo's alert_text).
 static void alert_msg(tls_conn *t, char *m, size_t mn) {
-	int a = mbedtls_ssl_get_fatal_alert(&t->ssl);
-	const char *txt = alert_text(a);
-	if (txt) {
-		snprintf(m, mn, "remote error: tls: %s", txt);
-	} else {
-		snprintf(m, mn, "remote error: tls: alert(%d)", a);
-	}
+	xo_x_tls_alert_msg(XO_ADDR(m), (int64_t)mn, mbedtls_ssl_get_fatal_alert(&t->ssl));
 }
 
 // tls_client_start runs the client's handshake on pd for host (the
