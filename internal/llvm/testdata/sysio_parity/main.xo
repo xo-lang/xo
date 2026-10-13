@@ -1,0 +1,58 @@
+// The errors of os.fs read, write, and stat, as std/native/llrt/sysio.xo's
+// OS layers record them (decisions 0206 and 0213): TestSysioParity builds
+// this program with the Xo path and with the C path (XO_LLRT_C=sysio)
+// and requires the same output byte for byte, statuses and messages
+// (strerror's text on each OS) alike.
+
+fn r(x: Result[Bytes, FsErr]) -> Str {
+  match x {
+    Ok(b) => "ok ${b.len()}"
+    Err(e) => "${e}"
+  }
+}
+
+fn w(x: Result[(), FsErr]) -> Str {
+  match x {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn s(x: Result[FileInfo?, FsErr]) -> Str {
+  match x {
+    Ok(Some(fi)) => "ok ${fi.size} ${fi.is_dir}"
+    Ok(None) => "none"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-sysio-parity-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  root.write("f", b"data")?
+  root.create_dir_all("d")?
+  // links and modes where the system allows them (Windows may refuse a
+  // symbolic link to a process without the privilege)
+  out.println("links ${w(root.symlink("loop1", "loop2"))} ${w(root.symlink("loop2", "loop1"))} ${w(root.symlink("nowhere", "dangling"))}")
+  root.write("locked", b"x")?
+  out.println("mode ${w(root.set_mode("locked", 0))}")
+  let long = "y".repeat(300)
+  let deep = "z/".repeat(600) + "f"
+  let paths = ["f", "nope", "f/x", "d", ".", "loop1", "dangling", "locked", long, deep, "d/", "f/", "", "nope/x/y", "d/nope"]
+  for p in paths {
+    let shown = if p.len() > 40 { "long${p.len()}" } else { p }
+    out.println("read ${shown}: ${r(root.read(p))}".replace(long, "L").replace(deep, "D"))
+    out.println("stat ${shown}: ${s(root.stat(p))}".replace(long, "L").replace(deep, "D"))
+  }
+  for p in ["d", "f/x", "nope/x", "locked", long, deep, "loop1", "d/", "new"] {
+    let shown = if p.len() > 40 { "long${p.len()}" } else { p }
+    out.println("write ${shown}: ${w(root.write(p, b"q"))}".replace(long, "L").replace(deep, "D"))
+  }
+  out.println("read new: ${r(root.read("new"))}")
+  root.set_mode("locked", 420)?
+  root.remove_all(".")?
+  out.println("done")
+}

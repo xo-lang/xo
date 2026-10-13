@@ -6,11 +6,13 @@
 // is the portable policy (Go's os.ReadFile and os.WriteFile loops, the
 // FsErr status and message recorded through rt.fs_set_err); the layer
 // below it is per OS: raw system calls on Linux (linux.xo), libSystem on
-// macOS (darwin.xo). Elsewhere, and where a test binary's world fakes
-// the capability, they call the C runtime. `XO_LLRT_C=sysio` loads
+// macOS (darwin.xo), kernel32 on Windows (windows.xo). In a wasm module,
+// and where a test binary's world fakes the capability, they call the C
+// runtime. `XO_LLRT_C=sysio` loads
 // sysio_c.xo instead (the C runtime everywhere).
 use native/llrt/darwin
 use native/llrt/linux
+use native/llrt/windows
 use native/rt
 
 /// The facts of fs_stat: the status (0, or FsErr's tag plus one), and on
@@ -27,7 +29,7 @@ pub struct Info {
 /// target that is not a WASI module: a wasm build keeps the host's
 /// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
 /// (macOS on arm64; on x86_64 the stat symbols are the `$INODE64` ones,
-/// not declared), 0 the C runtime. The SSA passes do not fold a `match`
+/// not declared), 3 kernel32 (Windows), 0 the C runtime. The SSA passes do not fold a `match`
 /// on `target`, so every arm is lowered; the builders make the platform
 /// calls of another OS faults, and a native backend's optimizer or a
 /// dead branch leaves the other arms unused.
@@ -38,13 +40,15 @@ fn layer() -> Int {
       match target.os {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
-        TargetOs.Windows | TargetOs.Wasi => 0
+        TargetOs.Windows => 3
+        TargetOs.Wasi => 0
       }
     }
     TargetArch.Amd64 => {
       match target.os {
         TargetOs.Linux => 1
-        TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => 0
+        TargetOs.Windows => 3
+        TargetOs.Darwin | TargetOs.Wasi => 0
       }
     }
   }
@@ -105,26 +109,35 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. On macOS libSystem's clock_gettime from Xo (as the C
-/// runtime's; the test world's virtual clock still in C). On Linux the C
+/// virtual clock. On macOS libSystem's clock_gettime from Xo, on Windows
+/// GetSystemTimePreciseAsFileTime (as the C runtime's; the test world's
+/// virtual clock stays in C). On Linux the C
 /// runtime's: its clock_gettime goes through the vDSO (glibc's, or
 /// xo_nolibc.c's with XO_NOLIBC=1), and the system call linux.clock_ns
 /// makes cost 4.3 times the time per call on Graviton
 /// (bench/results/linux-syscalls-2026-10-13.md); Xo reaches the vDSO once
 /// it can call a C ABI address (decision 0206, next steps).
 pub fn clock_now() -> Int {
-  if layer() != 2 || rt.clock_virtual() {
+  let l = layer()
+  if l < 2 || rt.clock_virtual() {
     return rt.clock_now()
+  }
+  if l == 3 {
+    return windows.clock_ns()
   }
   darwin.clock_ns(darwin.CLOCK_REALTIME)
 }
 
 // ---------------------------------------------------------------------------
 // The OS layers behind one interface: a call's result >= 0, or a
-// negative errno (EINTR is 4 on Linux and macOS).
+// negative errno (EINTR is 4 on Linux and macOS; Windows never reports
+// it). A Windows descriptor is a HANDLE.
 
 /// A descriptor of op opened for reading (O_RDONLY | O_CLOEXEC).
 fn open_read(l: Int, op: Str) -> Int {
+  if l == 3 {
+    return windows.open_read(op)
+  }
   if l == 2 {
     return darwin.open(op, darwin.O_RDONLY | darwin.O_CLOEXEC, 0)
   }
@@ -133,6 +146,9 @@ fn open_read(l: Int, op: Str) -> Int {
 
 /// A descriptor of op created or truncated for writing, mode 0644.
 fn open_write(l: Int, op: Str) -> Int {
+  if l == 3 {
+    return windows.open_write(op)
+  }
   if l == 2 {
     return darwin.open(op, darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC | darwin.O_CLOEXEC, 420)
   }
@@ -140,6 +156,9 @@ fn open_write(l: Int, op: Str) -> Int {
 }
 
 fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.read(fd, buf, off, n)
+  }
   if l == 2 {
     return darwin.read(fd, buf, off, n)
   }
@@ -148,6 +167,9 @@ fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
 
 /// 0, or the errno of the first failed write.
 fn write_all(l: Int, fd: Int, b: Bytes) -> Int {
+  if l == 3 {
+    return windows.write_all(fd, b)
+  }
   if l == 2 {
     return darwin.write_all(fd, b)
   }
@@ -155,6 +177,9 @@ fn write_all(l: Int, fd: Int, b: Bytes) -> Int {
 }
 
 fn close(l: Int, fd: Int) -> Int {
+  if l == 3 {
+    return windows.close(fd)
+  }
   if l == 2 {
     return darwin.close(fd)
   }
@@ -163,6 +188,9 @@ fn close(l: Int, fd: Int) -> Int {
 
 /// The size of the open file fd, or -1 when it is not known.
 fn file_size(l: Int, fd: Int) -> Int {
+  if l == 3 {
+    return windows.file_size(fd)
+  }
   if l == 2 {
     let (s, e) = darwin.fstat(fd)
     return if e == 0 { s.size } else { -1 }
@@ -173,6 +201,10 @@ fn file_size(l: Int, fd: Int) -> Int {
 
 /// The facts of op (and 0), or the errno.
 fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
+  if l == 3 {
+    let (s, e) = windows.stat(op, follow)
+    return (Info{st: 0, is_dir: s.is_dir, size: s.size, modified: s.mtime}, e)
+  }
   if l == 2 {
     let (s, e) = darwin.stat(op, follow)
     return (Info{st: 0, is_dir: darwin.is_dir(s), size: s.size, modified: s.mtime}, e)
@@ -183,6 +215,9 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
 
 /// The C runtime's message of errno e (strerror, first letter lowered).
 fn err_msg(l: Int, e: Int) -> Str {
+  if l == 3 {
+    return windows.err_msg(e)
+  }
   if l == 2 {
     return darwin.err_msg(e)
   }
@@ -191,6 +226,9 @@ fn err_msg(l: Int, e: Int) -> Str {
 
 /// The FsErr tag plus one of errno e.
 fn fs_status(l: Int, e: Int) -> Int {
+  if l == 3 {
+    return windows.fs_status(e)
+  }
   if l == 2 {
     return darwin.fs_status(e)
   }
