@@ -251,8 +251,15 @@ fn io_flags(code: Str) -> List[Str] {
   }
   // and of the number text (decision 0193 step 3, XO_LLRT_C=num)
   for sym in ["xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_NUM_C")
+      break
+    }
+  }
+  // and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
+  for sym in ["xo_json_", "xo_rs_append_json_"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_JSONTEXT_C")
       break
     }
   }

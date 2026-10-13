@@ -5,6 +5,7 @@
 // runtime's str.concat_int and friends directly, as before the port. The
 // self hosted compiler always uses num.xo.
 use native/rt
+use native/rtjson
 
 pub fn append_int(out: Str, v: Int) -> Str { rt.rs_concat_int(out, v) }
 
@@ -20,6 +21,12 @@ pub fn parse_float(s: Str) -> Float? {
   }
   None
 }
+
+pub fn parse_float_at(b: Bytes, lo: Int, hi: Int) -> Float? { parse_float(rt.rs_append_bytes("", b, lo, hi, 0)) }
+
+/// std/json's text of a Float (xo_json.c, so this builds the runtime
+/// with -DXO_JSONTEXT_C too).
+pub fn append_json_float(out: Str, f: Float) -> Str { rtjson.rs_append_json_float(out, f) }
 
 pub fn from_hex(s: Str) -> Bytes? {
   if !rt.bytes_hex_ok(s) {

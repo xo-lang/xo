@@ -1,0 +1,42 @@
+exit 0
+--- stdout
+ok User{id: 1, name: "aé😀\n", score: 1500.0, tags: ["x", "y"], ok: true, note: None}
+ok User{id: 2, name: "Jörg \"q\"", score: -0.0, tags: [], ok: false, note: None}
+err at $.id: expected integer
+err at $: invalid JSON: invalid character ']' looking for beginning of value
+err at $: invalid JSON: invalid character '1' after object key
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: invalid character 'x' in literal null (expecting 'l')
+err at $: invalid JSON: invalid character 'x' in string escape code
+err at $: invalid JSON: trailing data
+err at $: invalid JSON: trailing data
+err at $: expected object
+err at $: invalid JSON: EOF
+err at $: invalid JSON: EOF
+err at $: invalid JSON: EOF
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: trailing data
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: invalid character '1'
+err at $: invalid JSON: invalid character '2' after array element
+err at $: invalid JSON: invalid character '}' looking for beginning of object key string
+err at $: expected object
+err at $: expected object
+err at $: invalid JSON: invalid character '\x01' in string literal
+err at $: invalid JSON: invalid character 'g' in \u hexadecimal character escape
+err at $: invalid JSON: invalid character 'y' in literal false (expecting 'e')
+err at $: invalid JSON: unexpected EOF
+err at $: invalid JSON: invalid character 'ï' looking for beginning of value
+ok User{id: 3, name: "", score: 1.0, tags: [""], ok: true, note: None}
+ok [1, -2, 9223372036854775807, -9223372036854775808, 0]
+err at $[0]: expected integer
+err at $[0]: expected integer
+ok [1.0, -2.5, 1e-07, 1.2345678901234568e+29, 5e-324, 2.225073858507201e-308]
+ok {"a": 4, "b": 2}
+ok {"k0": 11, "k1": 10, "k2": 2, "k3": 3, "k4": 4, "k5": 5, "k6": 6, "k7": 7, "k8": 8, "k9": 9}
+ok ["\u{FFFD}A", "\u{FFFD}", "\u{FFFD}\u{FFFD}", "é", "tab\there", "a long string with no escapes in it at all", "/\x08\x0c\r"]
+{"id":7,"name":"q\"\\\n\u0001é\u2028\u2029","score":0.000001,"tags":["a"],"ok":true,"note":null}
+[1e+21,100000000000000000000,123456.789,1e-7,1.5e-10,0.1,-0,5e-324,1.7976931348623157e+308,12345678.5,0.000123,1234567890123456.8,3,100,null,null]
+--- stderr
