@@ -86,6 +86,10 @@ type inst struct {
 	// iCall: a Linux system call (rt.sys6, decision 0206): the number is
 	// the seventh argument (x6), moved to x8 for `svc #0`
 	svc bool
+	// iCall: a variadic C function on Apple arm64 (decision 0213): the
+	// arguments from this index on go on the stack, 8 bytes each; 0 for
+	// none (a variadic function has a fixed parameter)
+	vfix int
 	// iCall, Go mode: a preemption poll at a loop's back edge (goasm.go
 	// insertPolls): the call of sym runs only when the goroutine's
 	// stack guard holds Go's preemption request

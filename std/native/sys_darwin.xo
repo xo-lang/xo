@@ -1,0 +1,33 @@
+// The macOS platform library functions the native runtime calls from Xo
+// (decision 0213, decision 0195 prerequisite 3). A declaration file like
+// rt.xo, imported only by runtime modules (`use native/sys_darwin`,
+// decision 0074): each bodiless function is a call of the libSystem
+// symbol of its name with the C ABI. An Int argument is one word (a C
+// int, size_t, or pointer: an address made with rt.bytes_addr), a Bytes
+// argument the address of its data (kept alive across the call), a
+// Float a double; an Int32 result is a C int, sign extended. Parameters
+// from the first one named `va_*` on are the variadic arguments of a C
+// function, which Apple arm64 passes on the stack. The SSA builders make
+// a call for another target OS a fault, so only the macOS arms of
+// std/native/llrt/sysio.xo reach these.
+
+/// open(2): the descriptor, or -1 with errno set.
+fn open(path: Bytes, flags: Int, va_mode: Int) -> Int32
+/// read(2) of at most n bytes to the address buf.
+fn read(fd: Int, buf: Int, n: Int) -> Int
+/// write(2) of n bytes from the address buf.
+fn write(fd: Int, buf: Int, n: Int) -> Int
+fn close(fd: Int) -> Int32
+/// stat(2) into the struct stat at the address buf (144 bytes on arm64).
+fn stat(path: Bytes, buf: Int) -> Int32
+fn lstat(path: Bytes, buf: Int) -> Int32
+fn fstat(fd: Int, buf: Int) -> Int32
+/// clock_gettime(3) into the struct timespec at the address ts.
+fn clock_gettime(clock: Int, ts: Int) -> Int32
+/// getentropy(2): n (at most 256) random bytes to the address buf.
+fn getentropy(buf: Int, n: Int) -> Int32
+/// The address of the calling thread's errno (a C int).
+fn __error() -> Int
+/// clock_gettime_nsec_np(3): the clock's time in nanoseconds (a uint64_t),
+/// 0 with errno set on failure.
+fn clock_gettime_nsec_np(clock: Int) -> Int

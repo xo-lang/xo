@@ -5560,7 +5560,7 @@ b3:  ; preds b1
   v14: Int = call rt.int_wrap, v13, v12, v9
   v15: Int = const 1
   v16: Int = const 1
-  v17: Int = shr v14, v16 @ sched.xo:130:33
+  v17: Int = shr v14, v16 @ sched.xo:132:33
   v18: Int = call rt.int_wrap, v15, v14, v17
   v19: Int = const 0
   v20: Bool = le v18, v19
@@ -5878,7 +5878,7 @@ b0(v0: Int, v1: Int):
   v5: Int = call rt.slot_add, v0, v2, v3, v4
   v6: Int = const 30
   v7: Int = const 2
-  v8: Int = neg v7 @ sched.xo:342:32
+  v8: Int = neg v7 @ sched.xo:344:32
   v9: Int = const 3
   v10: Int = call rt.slot_add, v1, v6, v8, v9
   v11: Int = const 3

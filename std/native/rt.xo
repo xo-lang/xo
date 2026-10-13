@@ -455,6 +455,9 @@ fn fs_read_link(p: Str, x: Str) -> List[Str]
 /// cancellation point: status 8); fs_lock_held tells whether it holds.
 struct FsLock {}
 fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
+/// fs_lock's shared lock (flock LOCK_SH; LockFileEx without
+/// LOCKFILE_EXCLUSIVE_LOCK on Windows), for std/internal (decision 0214).
+fn fs_lock_shared(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_held(l: FsLock) -> Bool
 fn fs_unlock(l: FsLock)
 /// A Time of Unix nanoseconds, and back (both lowered as Int).

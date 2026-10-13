@@ -1,0 +1,21 @@
+// std/internal: primitives for std's implementation and the Xo
+// toolchain's own modules (decision 0214), not part of std's public
+// surface (spec/std.md does not list it). Declaration file; encoding rules
+// are listed at the top of std/prelude.xo. Only std modules and modules
+// whose path is github.com/xo-lang/xo or below it may import it; for any
+// other module `use std/internal` is a module not found (XO0601), as
+// `use native/rt` is.
+
+/// A held shared advisory lock (flock LOCK_SH on Unix, LockFileEx without
+/// LOCKFILE_EXCLUSIVE_LOCK on Windows). A handle.
+struct SharedLock {}
+
+/// A shared advisory lock on the file (created if missing); waits while
+/// someone holds it exclusively (Fs.lock, or another process's exclusive
+/// flock). Many holders may share it. Only the unrestricted root Fs
+/// (`os.fs`) takes it; a sub, read only, write only, or memory Fs is
+/// Denied.
+fn lock_shared(f: Fs, path: Str) -> SharedLock ! FsErr uses fs.write
+
+/// Releases the lock; unlocking again does nothing.
+fn (l: SharedLock) unlock()

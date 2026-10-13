@@ -8,11 +8,15 @@ import (
 	"syscall"
 )
 
-// tryLockFile takes an exclusive flock(2) lock on f without waiting; false
-// when another holder has one.
-func tryLockFile(f *os.File) (bool, error) {
+// tryLockFile takes an exclusive (shared when shared) flock(2) lock on f
+// without waiting; false when another holder has a conflicting one.
+func tryLockFile(f *os.File, shared bool) (bool, error) {
+	how := syscall.LOCK_EX
+	if shared {
+		how = syscall.LOCK_SH
+	}
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 		switch {
 		case err == nil:
 			return true, nil

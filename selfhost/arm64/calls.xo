@@ -1227,6 +1227,10 @@ fn (var g: G) atomic(v: Int) {
 /// xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 /// Str its bytes and length; the result is nothing or one word.
 fn (var g: G) rt_call(v: Int) {
+  if aux_str(g.f.values[v].aux).starts_with("rt.pc.") {
+    g.platform_call(v)
+    return
+  }
   if g.inline_rt(v) {
     return
   }
@@ -1272,4 +1276,95 @@ fn (var g: G) rt_call(v: Int) {
       g.set(v, g.zeros(x.ty))
     }
   }
+}
+
+/// The parts of a platform call's name `rt.pc.<os>.<sym>[/<n>]`
+/// (decision 0213): the OS, the C symbol, and the number of fixed
+/// parameters of a variadic function (-1 when it is not one).
+pub fn platform_parts(name: Str) -> (Str, Str, Int) {
+  let rest = name.trim_prefix("rt.pc.")
+  let parts = rest.split(".")
+  if parts.len() < 2 {
+    return ("", rest, -1)
+  }
+  let sv = parts[1].split("/")
+  var n = -1
+  if sv.len() == 2 {
+    n = Int.parse(sv[1]) ?? -1
+  }
+  (parts[0], sv[0], n)
+}
+
+/// Lowers a call of a platform library function (decision 0213,
+/// std/native/sys_<os>.xo): a call of the bare C symbol with the C ABI,
+/// an Int or Int32 argument one word, a Float a double, Bytes its data
+/// address (the value stays alive across the call as its operand); an
+/// Int32 result sign extended from 32 bits, a UInt32 one zero extended.
+/// Apple arm64 passes the variadic arguments of open, fcntl, and ioctl
+/// on the stack, 8 bytes each. A call for another OS (the arm of a
+/// `match` on `target.os` the passes keep) is a trap.
+fn (var g: G) platform_call(v: Int) {
+  let x = g.f.values[v]
+  let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
+  if os != g.os {
+    g.store("brk #1", [])
+    g.set(v, g.zeros(x.ty))
+    return
+  }
+  var args: List[Src] = []
+  var us: List[Int] = []
+  for a in x.args {
+    let ws = g.words(a)
+    match g.vkind(a) {
+      Int | Float => {
+        args.push(rsrc(ws[0]))
+        us.push(ws[0])
+      }
+      Str => {
+        let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+        args.push(rsrc(d))
+        us.push(d)
+      }
+      _ => {
+        g.fail("the platform call `${sym}` takes a `${g.tname(g.vty(a))}`")
+        g.set(v, g.zeros(x.ty))
+        return
+      }
+    }
+  }
+  var res: List[Bool] = []
+  match g.kind(x.ty) {
+    Unit => {}
+    Int => res = [false]
+    Float => res = [true]
+    _ => {
+      g.fail("the platform call `${sym}` returns a `${g.tname(x.ty)}`")
+      g.set(v, g.zeros(x.ty))
+      return
+    }
+  }
+  var vfix = -1
+  if g.os == "darwin" {
+    vfix = nfixed
+  }
+  let defs = g.new_vregs(res)
+  var real: List[Int] = []
+  for u in us {
+    if u != 0 {
+      real.push(u)
+    }
+  }
+  let _i = g.add(Inst{kind: K_CALL, sym: g.sym(sym), srcs: args, defs: defs, us: real, vfix: vfix})
+  g.clobber()
+  if res.is_empty() {
+    g.set(v, [])
+    return
+  }
+  let t = g.m.types[x.ty]
+  if t.kind == ssa.Kind.Int && t.bits == 32 {
+    let ext = if t.unsigned { "mov $wd0, $wu0" } else { "sxtw $d0, $wu0" }
+    g.set(v, [g.def1(false, ext, [defs[0]])])
+    return
+  }
+  g.set(v, defs)
 }

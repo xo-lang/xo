@@ -455,7 +455,14 @@ func (c *checker) loadImports(m *Module) error {
 					imp.Name = ""
 				}
 			}
-			dep, err := c.resolveImport(p)
+			var dep *Module
+			var err error
+			if p == "std/internal" && !internalVisible(m) {
+				// std/internal (decision 0214): only std and the
+				// toolchain's own modules see it
+			} else {
+				dep, err = c.resolveImport(p)
+			}
 			if strings.HasPrefix(p, "native/") {
 				// the intrinsics of the native backends: only their
 				// implementation modules see them (decision 0074), and
@@ -492,7 +499,7 @@ func (c *checker) loadImports(m *Module) error {
 					entries, _ := fs.ReadDir(std.Files, ".")
 					for _, e := range entries {
 						n := strings.TrimSuffix(e.Name(), ".xo")
-						if n != "prelude" && strings.HasSuffix(e.Name(), ".xo") {
+						if n != "prelude" && n != "internal" && strings.HasSuffix(e.Name(), ".xo") {
 							cands = append(cands, "std/"+n)
 						}
 					}
@@ -659,4 +666,11 @@ func (c *checker) goSkipped(m *Module, qual string, sp token.Span) bool {
 	d := c.errorf(diag.GoNameSkipped, sp, "Go `%s` in `%s` is not bound: %s", qual, m.Go.GoPath, reason)
 	note(d, token.Span{}, "the binding lists skipped names at the top of %s; write a Go wrapper with a mappable signature or use another function", m.Go.DeclPath)
 	return true
+}
+
+// internalVisible is whether module m may import std/internal (decision
+// 0214): std modules, their native implementations, and the toolchain's
+// own modules (github.com/xo-lang/xo and below).
+func internalVisible(m *Module) bool {
+	return m.IsStd || m.Native || m.Path == "github.com/xo-lang/xo" || strings.HasPrefix(m.Path, "github.com/xo-lang/xo/")
 }

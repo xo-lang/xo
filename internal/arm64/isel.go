@@ -2745,6 +2745,10 @@ func (s *fstate) atomic(v *ssa.Value) {
 // xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 // Str its bytes and length; the result is nothing or one word.
 func (s *fstate) rtCall(v *ssa.Value) {
+	if strings.HasPrefix(v.Aux.(string), "rt.pc.") {
+		s.platformCall(v)
+		return
+	}
 	if s.inlineRT(v) {
 		return
 	}
@@ -2785,4 +2789,68 @@ func (s *fstate) rtCall(v *ssa.Value) {
 	default:
 		fail("the runtime call `%s` returns a `%s`", v.Aux, v.Type.Name)
 	}
+}
+
+// platformCall lowers a call of a platform library function (decision
+// 0213, std/native/sys_<os>.xo): a call of the bare C symbol with the C
+// ABI, an Int or Int32 argument one word, a Float a double, Bytes its
+// data address; an Int32 result sign extended from 32 bits, a UInt32 one
+// zero extended. Apple arm64 passes the variadic arguments on the stack.
+// A call for another OS (an arm of a `match` on `target.os` the passes
+// keep) is a trap.
+func (s *fstate) platformCall(v *ssa.Value) {
+	os, sym, nfixed := ssa.PlatformParts(v.Aux.(string))
+	if os != "darwin" || s.g.os != Darwin {
+		s.add(&inst{kind: iPlain, text: "brk #1"})
+		s.clobber()
+		switch v.Type.Kind {
+		case ssa.KInt:
+			s.set(v, 0)
+		case ssa.KFloat:
+			s.set(v, s.konst(s.def1(true, "fmov $d0, xzr")))
+		default:
+			s.set(v)
+		}
+		return
+	}
+	in := &inst{kind: iCall, sym: s.g.sym(sym)}
+	for _, x := range v.Args {
+		ws := s.words(x)
+		switch x.Type.Kind {
+		case ssa.KInt, ssa.KFloat:
+			in.srcs = append(in.srcs, rsrc(ws[0]))
+			if ws[0] != 0 {
+				in.uses = append(in.uses, ws[0])
+			}
+		case ssa.KStr:
+			d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+			in.srcs = append(in.srcs, rsrc(d))
+			in.uses = append(in.uses, d)
+		default:
+			fail("the platform call `%s` takes a `%s`", sym, x.Type.Name)
+		}
+	}
+	switch v.Type.Kind {
+	case ssa.KUnit:
+	case ssa.KInt:
+		in.defs = s.newVregs([]bool{false})
+	case ssa.KFloat:
+		in.defs = s.newVregs([]bool{true})
+	default:
+		fail("the platform call `%s` returns a `%s`", sym, v.Type.Name)
+	}
+	if s.g.os == Darwin && nfixed > 0 {
+		in.vfix = nfixed
+	}
+	s.add(in)
+	s.clobber()
+	if v.Type.Kind == ssa.KInt && v.Type.Bits == 32 {
+		ext := "sxtw $d0, $wu0"
+		if v.Type.Unsigned {
+			ext = "mov $wd0, $wu0"
+		}
+		s.set(v, s.def1(false, ext, in.defs[0]))
+		return
+	}
+	s.set(v, in.defs...)
 }

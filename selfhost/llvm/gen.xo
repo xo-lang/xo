@@ -65,8 +65,9 @@ pub struct Gen {
   /// The target's architecture (`arm64`, `amd64`): the registers of
   /// rt.sys6's inline asm (decision 0206); "" is arm64.
   pub goarch: Str = ""
-  /// The target's OS (`darwin`, `linux`, `windows`): the task switch's
-  /// sequences (decision 0212); "" is a POSIX one.
+  /// The target's OS (`darwin`, `linux`, `windows`): which platform
+  /// calls are made (decision 0213) and the task switch's sequences
+  /// (decision 0212); "" is the compiler's own.
   pub goos: Str = ""
 
   // The function being lowered (sfn).
@@ -999,6 +1000,19 @@ fn rc_mark(var b: H, obj: Str) {
   b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
   b.w("  ${loc} = icmp sgt i64 ${c}, 0\n  br i1 ${loc}, label %mark, label %done\n")
   b.w("mark:\n  ${n} = sub i64 0, ${c}\n  store i64 ${n}, ptr ${obj}${TBAA_RC}\n")
+}
+
+/// The target's OS, the compiler's own when the driver did not say.
+fn (g: Gen) os() -> Str {
+  if !g.goos.is_empty() {
+    return g.goos
+  }
+  match target.os {
+    Darwin => "darwin"
+    Linux => "linux"
+    Windows => "windows"
+    Wasi => "wasip1"
+  }
 }
 
 /// The target's architecture, arm64 when the driver did not say.

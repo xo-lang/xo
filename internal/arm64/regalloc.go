@@ -262,7 +262,7 @@ func (s *fstate) regalloc() {
 				if s.g.goMode {
 					continue // arguments and results go through memory
 				}
-				locs := s.abiLocs(in.srcs)
+				locs := s.callLocs(in.srcs, in.vfix)
 				for k, a := range in.srcs {
 					if a.kind == sReg && a.v != 0 && locs[k].reg >= 0 {
 						fixed[a.v] = append(fixed[a.v], locs[k].reg)
@@ -623,12 +623,20 @@ func (s *fstate) loopDepth() {
 // x0 to x7, floating point words to d0 to d7, the rest to 8 byte stack
 // slots (reg -1, slot k is [sp + 8k] at the call, [x29 + 16 + 8k] in the
 // callee).
-func (s *fstate) abiLocs(srcs []src) []loc {
+func (s *fstate) abiLocs(srcs []src) []loc { return s.callLocs(srcs, 0) }
+
+// callLocs is abiLocs of a call whose arguments from index vfix on are
+// the variadic ones of a C function on Apple arm64, which go on the
+// stack (decision 0213); vfix 0 for none.
+func (s *fstate) callLocs(srcs []src, vfix int) []loc {
 	out := make([]loc, len(srcs))
 	ngp, nfp, nst := 0, 0, 0
 	for k, a := range srcs {
 		fp := a.kind == sReg && s.fp[a.v]
 		switch {
+		case vfix > 0 && k >= vfix:
+			out[k] = loc{reg: -1, slot: nst}
+			nst++
 		case fp && nfp < 8:
 			out[k] = loc{reg: fpBase + nfp}
 			nfp++
