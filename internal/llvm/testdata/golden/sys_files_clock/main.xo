@@ -1,0 +1,89 @@
+// Files and the clock through the Linux system call layer in Xo
+// (decision 0206, std/native/llrt/sysio.xo and linux.xo) against the Go
+// backend: whole file reads (a buffer of the statx size, and on Linux a
+// /proc file whose size statx gives as 0, read past the first buffer),
+// writes, stat and lstat, the errors and their messages, and Clock.now.
+// Elsewhere the same calls go to the C runtime. With XO_NOLIBC=1 on Linux
+// this program links statically with no C library.
+
+fn show(r: Result[(), FsErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-sys-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  root.write("a.txt", b"hello\n")?
+  out.println("read ${root.read_text("a.txt")?.quote()}")
+  root.write("empty.txt", b"")?
+  out.println("empty ${root.read("empty.txt")?.len()}")
+  var big = BytesBuilder.new()
+  var i = 0
+  while i < 5000 {
+    big.write_str("row ${i}\n")
+    i += 1
+  }
+  let data = big.freeze()
+  root.write("big.txt", data)?
+  let back = root.read("big.txt")?
+  out.println("big ${back.len()} ${back == data}")
+  root.write("big.txt", b"short")?
+  out.println("rewritten ${root.read_text("big.txt")?}")
+  match root.stat("big.txt")? {
+    Some(fi) => out.println("stat ${fi.name} ${fi.size} dir ${fi.is_dir}")
+    None => out.println("stat none")
+  }
+  match root.stat(".")? {
+    Some(fi) => out.println("stat dir ${fi.is_dir}")
+    None => out.println("stat none")
+  }
+  out.println("missing ${root.stat("nope.txt")?.is_none()}")
+  match root.read("nope.txt") {
+    Ok(_) => out.println("read nope ok?")
+    Err(e) => out.println("read nope: ${e}")
+  }
+  match root.read("a.txt/x") {
+    Ok(_) => out.println("read through a file ok?")
+    Err(e) => out.println("read through a file: ${e}")
+  }
+  out.println("read dir is an error ${root.read(".").is_err()}")
+  out.println("write into missing dir: ${show(root.write("no/such/x.txt", b"x"))}")
+  // an Io error and its message (Windows words it otherwise)
+  let long = "x".repeat(300)
+  match root.read(long) {
+    Ok(_) => out.println("long ok?")
+    Err(e) => {
+      match target.os {
+        TargetOs.Windows => out.println("long: Io")
+        TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => out.println("long: ${e}".replace(long, "x*300"))
+      }
+    }
+  }
+  // a file whose size statx gives as 0
+  match target.os {
+    TargetOs.Linux => {
+      let st = os.fs.read_text("/proc/self/status")?
+      out.println("proc ok ${st.len() > 512 && st.contains("Name:")}")
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => out.println("proc ok true")
+  }
+  let t0 = os.clock.now()
+  let t1 = os.clock.now()
+  out.println("clock moves ${t1 >= t0} after 2020 ${t0.unix() > 1577836800} since ${os.clock.since(t0).nanos() >= 0}")
+  var names: List[Str] = []
+  for fi in root.read_dir(".")? {
+    names.push("${fi.name}:${fi.size}")
+  }
+  out.println("entries ${names.sort().join(" ")}")
+  root.remove("a.txt")?
+  root.remove("big.txt")?
+  root.remove("empty.txt")?
+  base.remove(name)?
+  out.println("done")
+}
