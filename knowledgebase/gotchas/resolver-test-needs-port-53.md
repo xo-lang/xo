@@ -1,6 +1,6 @@
 # A resolver test needs its own /etc and port 53
 
-Status: Anticipated (2026-10-13, decision 0206 stage 3)
+Status: Observed (2026-10-13, decision 0206 stage 3: the first EC2 runs of TestResolverDiff)
 
 Symptom: a test of the Xo resolver (std/native/llrt/dns.xo) against a
 local DNS server cannot point the resolver at the server: resolv.conf's

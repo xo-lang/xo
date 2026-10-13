@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends on Linux: the network's system calls (socket, bind,
+  listen, accept4, connect, reads, sends with MSG_NOSIGNAL, socket
+  options, names, shutdown, close, and the poller's epoll) are made from
+  Xo (std/native/llrt/sock.xo), and host names are resolved by a
+  resolver written in Xo (std/native/llrt/dns.xo) instead of glibc's
+  getaddrinfo: /etc/nsswitch.conf's files and dns, /etc/hosts,
+  /etc/resolv.conf (nameservers, search, ndots, timeout, attempts,
+  rotate, single-request, use-vc), A and AAAA over UDP with TCP on
+  truncation, and RFC 6724 ordering, following Go's resolver with
+  glibc's error texts (decision 0206 stage 3). Its differences from
+  glibc are listed at the top of dns.xo. `XO_LLRT_C=net` builds the C
+  library path. With `XO_NOLIBC=1`, programs that dial, listen, or
+  serve plain HTTP now link and run with no C library (https needs it
+  until decision 0202).
 - Fixed: ThreadSanitizer builds on Linux ran out of address space for
   task stacks under load (`fault: out of memory` in conc_stress, not a
   leak); their task stacks are now 2 MiB (XO_TASK_STACK_MB overrides).
