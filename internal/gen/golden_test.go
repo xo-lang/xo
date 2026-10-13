@@ -16,6 +16,7 @@ import (
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/gotool"
 	"github.com/xo-lang/xo/internal/testtmp"
 )
 
@@ -256,6 +257,7 @@ func skipOffline(t *testing.T, dir string) {
 		cmd := exec.Command("go", "mod", "download", "github.com/google/uuid@v1.6.0")
 		cmd.Dir = os.TempDir()
 		cmd.Env = append(goVetEnv(), "GOFLAGS=-mod=mod", "GO111MODULE=on")
+		defer gotool.HoldCache()()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			goModErr = fmt.Errorf("%v: %s", err, out)
 		}

@@ -89,6 +89,7 @@ func TestGoSyntaxEncoding(t *testing.T) {
 	// it), so both run on Xo's Go cache (decision 0176)
 	asm := exec.Command("go", "tool", "asm", "-p", "main", "-I", inc, "-o", pobj, ps)
 	asm.Env = append(os.Environ(), "GOWORK=off", gotool.CacheEnv())
+	defer gotool.HoldCache()()
 	if out, err := asm.CombinedOutput(); err != nil {
 		t.Fatalf("go tool asm: %v\n%s\n%s", err, out, gos.String())
 	}

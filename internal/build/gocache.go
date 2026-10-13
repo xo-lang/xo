@@ -52,9 +52,10 @@ func cacheMax() int64 {
 // single test run writes far more than the cap within an hour (each
 // generated program adds about 30 MB: every package instantiates the
 // runtime's generics again), so the trim must be able to remove recent
-// entries: it takes the cache lock exclusively (gocache_lock_unix.go),
-// which waits for running Xo builds and holds new ones off, and then
-// removes any entry. It tries the lock without waiting, and waits for it
+// entries: it takes the cache lock exclusively
+// (internal/gotool/cachelock_unix.go), which waits for running go
+// commands (Xo builds and every other go command on the cache, which hold
+// gotool.HoldCache) and holds new ones off, and then removes any entry. It tries the lock without waiting, and waits for it
 // only once the cache is over twice its cap. Without the lock (another
 // build is running, or no flock) it removes only entries older than
 // keepRecent, restating each file first: Go refreshes an entry's mtime
@@ -95,8 +96,8 @@ func trimGoCache() {
 	if total <= limit {
 		return
 	}
-	lock := lockCacheExclusive(total > 2*limit)
-	defer lock.unlock()
+	lock := gotool.LockCacheExclusive(total > 2*limit)
+	defer lock.Unlock()
 	cutoff := time.Now().Add(-keepRecent)
 	if lock != nil {
 		cutoff = time.Now().Add(time.Hour) // no build is running: anything may go

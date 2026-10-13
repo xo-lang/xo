@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixed: go commands that ran on the Xo Go cache outside an Xo build
+  (`go vet` in tests, the Go binder's `go list`, tool builds) could lose
+  cache entries to a concurrent trim and fail with `could not import
+  strings (... no such file or directory)`; they now hold the cache's
+  shared lock (gotchas/go-commands-outside-build-race-trim.md).
 - Native backends: the C runtime's reference count operations (retain,
   release, claim, and marking a value shared between threads) are Xo
   (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C
