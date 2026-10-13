@@ -156,8 +156,9 @@ fn (var g: G) dce() {
   lists = []
   for b in blocks {
     if dce_dead(g.blocks[b].insts, live) {
-      let out = dce_keep(g.blocks[b].insts, live)
-      g.blocks[b].insts = out
+      var ins = g.take_insts(b)
+      dce_keep(ins, live)
+      g.put_insts(b, ins)
     }
   }
 }
@@ -296,48 +297,68 @@ fn dce_dead(insts: List[Inst], live: List[Bool]) -> Bool {
   false
 }
 
-/// insts without its dead instructions, and its parallel moves without
-/// their dead destinations.
-fn dce_keep(insts: List[Inst], live: List[Bool]) -> List[Inst] {
-  var out: List[Inst] = []
-  for inst in insts {
-    if inst.kind == K_PMOVE {
-      var defs: List[Int] = []
-      var srcs: List[Src] = []
-      for (i, d) in inst.defs.indexed() {
-        if live[d] {
-          defs.push(d)
-          srcs.push(inst.srcs[i])
+/// Drops the dead instructions of insts, and the dead destinations of
+/// its parallel moves. The instructions move out (pop) and back, so a
+/// kept one is not copied: building a new list dup'd every kept
+/// instruction's lists and strings and freeing the old one dropped them
+/// again (bench/results/xo1-speed-2026-10-13.md).
+fn dce_keep(var insts: List[Inst], live: List[Bool]) {
+  // the kept instructions, last first
+  var rev: List[Inst] = List.with_capacity(insts.len())
+  while !insts.is_empty() {
+    match insts.pop() {
+      Some(x0) => {
+        var x = x0
+        if x.kind == K_PMOVE {
+          var all = true
+          for d in x.defs {
+            all = all && live[d]
+          }
+          if !all || x.defs.is_empty() {
+            var defs: List[Int] = []
+            var srcs: List[Src] = []
+            for i in 0..x.defs.len() {
+              if live[x.defs[i]] {
+                defs.push(x.defs[i])
+                srcs.push(x.srcs[i])
+              }
+            }
+            if defs.is_empty() {
+              continue
+            }
+            var us: List[Int] = []
+            for a in srcs {
+              if a.kind == S_REG && a.v != 0 {
+                us.push(a.v)
+              }
+            }
+            x.defs = defs
+            x.srcs = srcs
+            x.us = us
+          }
+          rev.push(x)
+          continue
         }
-      }
-      if defs.is_empty() {
-        continue
-      }
-      var us: List[Int] = []
-      for a in srcs {
-        if a.kind == S_REG && a.v != 0 {
-          us.push(a.v)
+        if removable(x) {
+          var dead = true
+          for d in x.defs {
+            dead = dead && !live[d]
+          }
+          if dead {
+            continue
+          }
         }
+        rev.push(x)
       }
-      var x = inst
-      x.defs = defs
-      x.srcs = srcs
-      x.us = us
-      out.push(x)
-      continue
+      None => {}
     }
-    if removable(inst) {
-      var dead = true
-      for d in inst.defs {
-        dead = dead && !live[d]
-      }
-      if dead {
-        continue
-      }
-    }
-    out.push(inst)
   }
-  out
+  while !rev.is_empty() {
+    match rev.pop() {
+      Some(x) => insts.push(x)
+      None => {}
+    }
+  }
 }
 
 /// Starts the memo of the current block from memo from, of a block that
