@@ -1,6 +1,6 @@
 //go:build windows
 
-package llvm_test
+package llvm
 
 import (
 	"os"
