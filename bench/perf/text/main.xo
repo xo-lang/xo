@@ -178,7 +178,8 @@ fn float_parse(texts: List[Str]) -> Int {
     for t in texts {
       let g = (Float.parse(t) ?? 0.5).abs()
       let big = if g > 1.0 { 7 } else { 3 }
-      h = (h * 31 + Int((g - g.floor()) * 1000000.0) + big) % 1000000007
+      let frac = if g < 1e18 { Int((g - g.floor()) * 1000000.0) } else { 0 }
+      h = (h * 31 + frac + big) % 1000000007
     }
   }
   h

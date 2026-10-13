@@ -209,6 +209,9 @@ func numCorpus(n int) (in, want string) {
 		fl(math.Float64frombits(rng.Uint64()))
 		// random values of every magnitude
 		fl(math.Ldexp(rng.Float64(), rng.IntN(2100)-1075))
+		// subnormals and the least normals, and 19 digit texts there
+		fl(math.Float64frombits(rng.Uint64() & (1<<53 - 1)))
+		f(strconv.FormatUint(rng.Uint64()%9000000000000000000+1000000000000000000, 10) + "e-" + strconv.Itoa(325+rng.IntN(20)))
 		// short decimal texts
 		m := rng.Uint64() >> rng.IntN(64)
 		f(strconv.FormatUint(m, 10) + "e" + strconv.Itoa(rng.IntN(700)-350))
@@ -216,6 +219,9 @@ func numCorpus(n int) (in, want string) {
 		// the halfway point between a Float and the next, exactly, and
 		// just below and above it
 		v := math.Float64frombits(rng.Uint64() >> 1)
+		if rng.IntN(2) == 0 {
+			v = math.Float64frombits(rng.Uint64() & (1<<53 - 1))
+		}
 		if !math.IsInf(v, 0) && !math.IsNaN(v) && v < math.MaxFloat64 {
 			w := math.Nextafter(v, math.Inf(1))
 			h := new(big.Float).SetPrec(2200).SetFloat64(v)
@@ -289,7 +295,12 @@ func TestNumDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds four native programs")
 	}
-	in, want := numCorpus(20000)
+	n := 20000
+	if s := os.Getenv("XO_NUMDIFF_N"); s != "" {
+		// a larger corpus for a one off run
+		n, _ = strconv.Atoi(s)
+	}
+	in, want := numCorpus(n)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(numDiffProg), 0o644); err != nil {
 		t.Fatal(err)
@@ -298,6 +309,7 @@ func TestNumDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantLines := strings.Split(strings.TrimSuffix(want, "\n"), "\n")
+	t.Logf("%d input lines", len(wantLines))
 	inLines := strings.Split(in, "\n")
 	for _, path := range []string{"xo", "c"} {
 		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {

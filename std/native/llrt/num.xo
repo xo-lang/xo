@@ -693,7 +693,7 @@ pub fn parse_float(s: Str) -> Float? {
     }
   }
   let r = eisel_lemire(mant, exp, neg)
-  if r != 1 {
+  if r != -1 {
     if !trunc {
       return Some(rt.float_from_bits(r))
     }
@@ -722,14 +722,14 @@ fn exact_pow10(k: Int) -> Float {
 }
 
 /// The bits of the Float of man * 10^exp10 by Eisel-Lemire
-/// (strconv.eiselLemire64), or 1 (the bits of a subnormal it never
+/// (strconv.eiselLemire64), or -1 (the bits of a NaN it never
 /// returns) when it cannot decide.
 fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
   if man0 == 0 {
     return if neg { MIN_INT } else { 0 }
   }
   if exp10 < num_tables.POW10_MIN || exp10 > num_tables.POW10_MAX {
-    return 1
+    return -1
   }
   let ph = pow10_hi(exp10)
   let pl = pow10_lo(exp10)
@@ -751,7 +751,7 @@ fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
       mhi = addw(mhi, 1)
     }
     if (mhi & 0x1FF) == 0x1FF && mlo == -1 && ult(addw(ylo, man), man) {
-      return 1
+      return -1
     }
     xhi = mhi
     xlo = mlo
@@ -762,7 +762,10 @@ fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
   ret_exp2 -= 1 ^ msb
   // half way ambiguity
   if xlo == 0 && (xhi & 0x1FF) == 0 && (ret_mant & 3) == 1 {
-    return 1
+    return -1
+  }
+  if ret_exp2 <= 0 {
+    return subnormal(ret_mant, 1 - ret_exp2, xhi & subw(shl(1, msb + 9), 1), msb + 9, xlo, neg)
   }
   // from 54 to 53 bits
   ret_mant += ret_mant & 1
@@ -772,10 +775,34 @@ fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
     ret_exp2 += 1
   }
   if ret_exp2 <= 0 || ret_exp2 >= 0x7FF {
-    return 1
+    return -1
   }
   let bits = shl(ret_exp2, 52) | (ret_mant & 0xFFFFFFFFFFFFF)
   if neg { bits | MIN_INT } else { bits }
+}
+
+/// The bits of a subnormal (or zero, or the least normal) Float from
+/// Eisel-Lemire's 54 bit mantissa r (the round bit lowest) when its
+/// exponent is t - 1 binades below the least normal one: r shifted
+/// right by t more bits, rounded half up, or -1 when the product's bits
+/// below the round bit (r's low t bits, then the low kb bits of xhi,
+/// then xlo) are all ones, so the truncated product may be one unit
+/// below a carry into the round bit. Go's ParseFloat takes its big
+/// decimal path here instead (eiselLemire64 rejects subnormals); the
+/// answers are the same (TestNumDiff). An exact tie cannot happen: a
+/// subnormal's halfway points need more than 700 decimal digits, and
+/// the mantissa has at most 19.
+fn subnormal(r: Int, t: Int, below: Int, kb: Int, xlo: Int, neg: Bool) -> Int {
+  let sign = if neg { MIN_INT } else { 0 }
+  if t > 54 {
+    return sign
+  }
+  let low = r & subw(shl(1, t), 1)
+  if low == subw(shl(1, t), 1) && below == subw(shl(1, kb), 1) && xlo == -1 {
+    return -1
+  }
+  let m = shr(r, t)
+  ((m + (m & 1)) >> 1) | sign
 }
 
 /// strconv.atofHex: the Float of the hex mantissa times 2^exp, rounded
@@ -1164,4 +1191,278 @@ fn slow_parse(b: Bytes, n: Int) -> Float? {
     bits = bits | MIN_INT
   }
   Some(rt.float_from_bits(bits))
+}
+
+// ---------------------------------------------------------------------------
+// Hex and base64 of Bytes (encoding/hex, encoding/base64.StdEncoding)
+
+/// The k (0 to 4) bytes of b from i in the low bytes of a word, the
+/// first lowest.
+fn gather4(b: Bytes, i: Int, k: Int) -> Int {
+  if k >= 4 {
+    return Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
+  }
+  var v = 0
+  var j = k - 1
+  while j >= 0 {
+    v = ((v & 0xFFFFFF) << 8) | Int(b[i + j])
+    j -= 1
+  }
+  v
+}
+
+/// The 8 lowercase hex digits of the 4 bytes in the low bytes of v (the
+/// first lowest), two to a byte's 16 bit lane, all lanes at once.
+fn hex4(v: Int) -> Int {
+  let s = (v & 0xFF) | ((v & 0xFF00) << 8) | ((v & 0xFF0000) << 16) | ((v & 0xFF000000) << 24)
+  let hi = (s >> 4) & 0xF000F000F000F
+  let lo = s & 0xF000F000F000F
+  let nib = hi | (lo << 8)
+  // 'a' - '0' - 10 more for a nibble above 9
+  let alpha = ((nib + 0x606060606060606) >> 4) & 0x101010101010101
+  nib + 0x3030303030303030 + alpha * 39
+}
+
+/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString).
+pub fn to_hex(b: Bytes) -> Str {
+  let n = b.len()
+  var out = if n > 16 { rt.rs_with_cap(2 * n + 32) } else { "" }
+  var i = 0
+  while n - i >= 16 {
+    out = rt.rs_push_words(out, hex4(gather4(b, i, 4)), hex4(gather4(b, i + 4, 4)), hex4(gather4(b, i + 8, 4)), hex4(gather4(b, i + 12, 4)), 0x8888)
+    i += 16
+  }
+  let r = n - i
+  if r == 0 {
+    return out
+  }
+  // the rest: up to 15 bytes in four words of up to 4
+  let k0 = if r < 4 { r } else { 4 }
+  let k1 = if r < 8 { (r - k0).max(0) } else { 4 }
+  let k2 = if r < 12 { (r - 8).max(0) } else { 4 }
+  let k3 = (r - 12).max(0)
+  rt.rs_push_words(out, hex4(gather4(b, i, k0)), hex4(gather4(b, i + 4, k1)), hex4(gather4(b, i + 8, k2)), hex4(gather4(b, i + 12, k3)), (2 * k0) | ((2 * k1) << 4) | ((2 * k2) << 8) | ((2 * k3) << 12))
+}
+
+/// The value of a hex digit (either case), or 16 or more for any other
+/// byte.
+fn hex_val(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  let l = c | 32
+  if l >= 97 && l <= 102 {
+    return l - 87
+  }
+  0x100
+}
+
+/// The bytes of hex text (hex.DecodeString: either case, an even
+/// length), or None.
+pub fn from_hex(s: Str) -> Bytes? {
+  let b = s.bytes()
+  let n = b.len()
+  if (n & 1) != 0 {
+    return None
+  }
+  var out = if n > 32 { rt.rs_with_cap(n / 2 + 8) } else { "" }
+  var w = 0
+  var k = 0
+  var bad = 0
+  var i = 0
+  while i < n {
+    let hi = hex_val(Int(b[i]))
+    let lo = hex_val(Int(b[i + 1]))
+    bad = bad | hi | lo
+    w = w | shl(((hi << 4) | lo) & 0xFF, 8 * k)
+    k += 1
+    if k == 8 {
+      if bad > 15 {
+        return None
+      }
+      out = rt.rs_push_word(out, w, 8)
+      w = 0
+      k = 0
+    }
+    i += 2
+  }
+  if bad > 15 {
+    return None
+  }
+  if k > 0 {
+    out = rt.rs_push_word(out, w, k)
+  }
+  Some(out.bytes())
+}
+
+const B64: Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+/// The 4 base64 characters of the 3 bytes in v (the first highest), in a
+/// word, the first lowest.
+fn b64_quad(v: Int) -> Int {
+  let t = B64
+  Int(t[(v >> 18) & 63]) | (Int(t[(v >> 12) & 63]) << 8) | (Int(t[(v >> 6) & 63]) << 16) | (Int(t[v & 63]) << 24)
+}
+
+/// The 3 bytes of b from i, the first highest.
+fn trio(b: Bytes, i: Int) -> Int { (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2]) }
+
+/// The standard base64 of b, padded (Bytes.to_base64,
+/// base64.StdEncoding.EncodeToString).
+pub fn to_base64(b: Bytes) -> Str {
+  let n = b.len()
+  let m = (n + 2) / 3 * 4
+  var out = if m > 32 { rt.rs_with_cap(m + 32) } else { "" }
+  var i = 0
+  // 24 bytes, 32 characters at a time
+  while n - i >= 24 {
+    let w0 = b64_quad(trio(b, i)) | (b64_quad(trio(b, i + 3)) << 32)
+    let w1 = b64_quad(trio(b, i + 6)) | (b64_quad(trio(b, i + 9)) << 32)
+    let w2 = b64_quad(trio(b, i + 12)) | (b64_quad(trio(b, i + 15)) << 32)
+    let w3 = b64_quad(trio(b, i + 18)) | (b64_quad(trio(b, i + 21)) << 32)
+    out = rt.rs_push_words(out, w0, w1, w2, w3, 0x8888)
+    i += 24
+  }
+  // the rest (under 24 bytes): up to 8 quads, two to a word, the last
+  // one padded ("xx==" or "xxx=")
+  let r = n - i
+  if r == 0 {
+    return out
+  }
+  let w0 = quads(b, i, r)
+  let w1 = quads(b, i + 6, r - 6)
+  let w2 = quads(b, i + 12, r - 12)
+  let w3 = quads(b, i + 18, r - 18)
+  let chars = (r + 2) / 3 * 4
+  let k0 = chars.min(8)
+  let k1 = (chars - 8).max(0).min(8)
+  let k2 = (chars - 16).max(0).min(8)
+  let k3 = (chars - 24).max(0)
+  rt.rs_push_words(out, w0, w1, w2, w3, k0 | (k1 << 4) | (k2 << 8) | (k3 << 12))
+}
+
+/// The base64 of the r (up to 6, fewer padded) bytes of b from i: two
+/// quads in a word (0 when r <= 0).
+fn quads(b: Bytes, i: Int, r: Int) -> Int {
+  if r <= 0 {
+    return 0
+  }
+  let lo = quad(b, i, r)
+  if r <= 3 {
+    return lo
+  }
+  lo | (quad(b, i + 3, r - 3) << 32)
+}
+
+/// The base64 quad of the r (1 to 3 or more) bytes of b from i, padded
+/// with "=" when r is 1 or 2.
+fn quad(b: Bytes, i: Int, r: Int) -> Int {
+  if r >= 3 {
+    return b64_quad(trio(b, i))
+  }
+  let v = Int(b[i]) << 16
+  if r == 2 {
+    return (b64_quad(v | (Int(b[i + 1]) << 8)) & 0xFFFFFF) | 0x3D000000
+  }
+  (b64_quad(v) & 0xFFFF) | 0x3D3D0000
+}
+
+/// The value of a base64 character, or -1.
+fn b64_val(c: Int) -> Int {
+  if c >= 65 && c <= 90 {
+    return c - 65
+  }
+  if c >= 97 && c <= 122 {
+    return c - 71
+  }
+  if c >= 48 && c <= 57 {
+    return c + 4
+  }
+  if c == 43 {
+    return 62
+  }
+  if c == 47 {
+    return 63
+  }
+  -1
+}
+
+/// The bytes of standard base64 text (base64.StdEncoding.DecodeString:
+/// padding required, \r and \n ignored), or None.
+pub fn from_base64(s: Str) -> Bytes? {
+  let b = s.bytes()
+  let n = b.len()
+  var out = if n > 40 { rt.rs_with_cap(n / 4 * 3 + 8) } else { "" }
+  // the quantum (k characters, pad of them padding), the output word
+  var acc = 0
+  var k = 0
+  var pad = 0
+  var w = 0
+  var wk = 0
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    i += 1
+    if c == 13 || c == 10 {
+      continue
+    }
+    if pad > 0 {
+      // after padding only more padding of the same quantum
+      if c != 61 {
+        return None
+      }
+      pad += 1
+      acc = acc << 6
+    } else if c == 61 {
+      if k < 2 {
+        return None
+      }
+      pad = 1
+      acc = acc << 6
+    } else {
+      let v = b64_val(c)
+      if v < 0 {
+        return None
+      }
+      acc = (acc << 6) | v
+    }
+    k += 1
+    if k == 4 {
+      let keep = 3 - pad
+      var j = 0
+      while j < keep {
+        w = w | shl((acc >> (16 - 8 * j)) & 0xFF, 8 * wk)
+        wk += 1
+        if wk == 8 {
+          out = rt.rs_push_word(out, w, 8)
+          w = 0
+          wk = 0
+        }
+        j += 1
+      }
+      if pad > 0 {
+        // padding ends the text (only \r and \n may follow)
+        while i < n {
+          let d = Int(b[i])
+          if d != 13 && d != 10 {
+            return None
+          }
+          i += 1
+        }
+        break
+      }
+      acc = 0
+      k = 0
+    }
+  }
+  if k != 0 && pad == 0 {
+    return None
+  }
+  if k != 0 && k != 4 {
+    return None
+  }
+  if wk > 0 {
+    out = rt.rs_push_word(out, w, wk)
+  }
+  Some(out.bytes())
 }

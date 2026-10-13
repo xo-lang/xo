@@ -110,23 +110,13 @@ fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
 fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
-fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
+fn bytes_to_hex(b: Bytes) -> Str { num.to_hex(b) }
 
-fn bytes_from_hex(s: Str) -> Bytes? {
-  if !rt.bytes_hex_ok(s) {
-    return None
-  }
-  Some(rt.bytes_from_hex(s))
-}
+fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 
-fn bytes_to_base64(b: Bytes) -> Str { rt.b64_encode(b) }
+fn bytes_to_base64(b: Bytes) -> Str { num.to_base64(b) }
 
-fn bytes_from_base64(s: Str) -> Bytes? {
-  if !rt.b64_ok(s) {
-    return None
-  }
-  Some(rt.b64_decode(s))
-}
+fn bytes_from_base64(s: Str) -> Bytes? { num.from_base64(s) }
 
 /// []rune(s): an invalid byte is U+FFFD.
 fn str_runes(s: Str) -> List[Rune] {
