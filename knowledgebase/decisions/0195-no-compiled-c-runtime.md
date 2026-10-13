@@ -10,7 +10,10 @@ item 6: 1,040 of its 1,799 lines out of default builds,
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
 under XO_NOLIBC=1); stages 2 and 3 (threads, signals, unwinding,
-sockets, DNS from Xo) open.
+sockets, DNS from Xo) open. Prerequisite 2 (raw memory) stage 1 done
+2026-10-13: decision 0207 (raw memory intrinsics, C ABI exports; the
+"(0) held by C callers" group moved but the test world stores, which
+are (1) and (2); `bench/results/raw-memory-2026-10-13.md`).
 
 ## Context
 

@@ -1,0 +1,314 @@
+// The C ABI exports of the runtime (decisions 0204, 0207): every top
+// level function of this module is called by the C runtime (std/llrt) as
+// xo_x_<name>, with the C calling convention, so the C keeps no copy of
+// what Xo already does. The module is the marker: the SSA builders build
+// every function here in every native program (the native prelude
+// imports it), and the emitters give each a global C symbol; the
+// modules cabi_<feature>.xo are markers too, for exports only the C of a
+// feature calls (cabi_tls.xo, cabi_time.xo), imported by that feature's
+// implementation module so only its programs carry them. Parameters
+// are Int (an address is an Int) or Float; the result is an Int, a
+// Float, nothing, or a Str (returned as its string object, its length
+// stored through a pointer the C caller passes after the parameters).
+// Nothing here may fault: a fault would unwind through the C caller.
+// Helpers live in other runtime modules (raw.xo for memory).
+use native/llrt/netpolicy
+use native/llrt/num
+use native/llrt/raw
+use native/llrt/text
+use native/llrt/unicode
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Number text (std/llrt xo_rt.c fmt_int, fmt_float, fmt_go_g)
+
+/// Writes the decimal text of v and a zero byte at buf (at least 32
+/// bytes); its length.
+fn fmt_int(buf: Int, v: Int) -> Int {
+  // the digits from the end of the first 24 bytes, then moved to buf
+  var i = 24
+  var x = v
+  while true {
+    var d = x % 10
+    if d < 0 {
+      d = 0 - d
+    }
+    i -= 1
+    rt.mem_store(buf, i, 48 + d, 1)
+    x = x / 10
+    if x == 0 {
+      break
+    }
+  }
+  if v < 0 {
+    i -= 1
+    rt.mem_store(buf, i, 45, 1)
+  }
+  let n = 24 - i
+  rt.mem_move(buf, buf + i, n)
+  rt.mem_store(buf, n, 0, 1)
+  n
+}
+
+/// Writes the text of f as the Go backend prints a Float (FloatStr) and
+/// a zero byte at buf (at least 48 bytes); its length.
+fn fmt_float(buf: Int, f: Float) -> Int { raw.put_cstr(buf, num.float_text(f)) }
+
+
+// ---------------------------------------------------------------------------
+// Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero
+// byte at buf (at least 160 bytes) and returns its length; C raises it.
+
+fn fault_overflow(buf: Int, a: Int, op: Int, b: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int")
+}
+
+fn fault_shl(buf: Int, a: Int, b: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: ${a} << ${b} does not fit Int")
+}
+
+fn fault_shift(buf: Int, n: Int) -> Int {
+  raw.put_cstr(buf, "shift amount ${n} out of range for Int")
+}
+
+fn fault_divzero(buf: Int, a: Int, op: Int) -> Int {
+  raw.put_cstr(buf, "division by zero: ${a} ${raw.byte_str(op)} 0")
+}
+
+fn fault_neg(buf: Int, a: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: -(${a}) does not fit Int")
+}
+
+fn fault_abs(buf: Int, a: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: abs(${a}) does not fit Int")
+}
+
+fn fault_index(buf: Int, i: Int, n: Int) -> Int {
+  raw.put_cstr(buf, "index ${i} out of range for List of length ${n}")
+}
+
+fn fault_bytes_index(buf: Int, i: Int, n: Int) -> Int {
+  raw.put_cstr(buf, "index ${i} out of range for Bytes of length ${n}")
+}
+
+fn fault_float_int(buf: Int, f: Float) -> Int {
+  if f != f {
+    return raw.put_cstr(buf, "cannot convert NaN to Int")
+  }
+  raw.put_cstr(buf, "${num.go_g_text(f)} is out of range for Int")
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 (xo_std.c n_utf8_decode, n_utf8_encode, n_is_space)
+
+/// utf8.DecodeRune of the n bytes at p (n > 0): the rune times 8 plus its
+/// size; an invalid or short sequence is U+FFFD of size 1.
+fn utf8_decode(p: Int, n: Int) -> Int {
+  let c = raw.byte_at(p, 0)
+  if c < 0x80 {
+    return (c << 3) | 1
+  }
+  var k = 0
+  var lo = 0x80
+  var hi = 0xBF
+  var r = 0
+  if c >= 0xC2 && c <= 0xDF {
+    k = 1
+    r = c & 0x1F
+  } else if c >= 0xE0 && c <= 0xEF {
+    k = 2
+    r = c & 0x0F
+    if c == 0xE0 {
+      lo = 0xA0
+    } else if c == 0xED {
+      hi = 0x9F
+    }
+  } else if c >= 0xF0 && c <= 0xF4 {
+    k = 3
+    r = c & 0x07
+    if c == 0xF0 {
+      lo = 0x90
+    } else if c == 0xF4 {
+      hi = 0x8F
+    }
+  } else {
+    return (0xFFFD << 3) | 1
+  }
+  if n < k + 1 {
+    return (0xFFFD << 3) | 1
+  }
+  let c1 = raw.byte_at(p, 1)
+  if c1 < lo || c1 > hi {
+    return (0xFFFD << 3) | 1
+  }
+  r = (r << 6) | (c1 & 0x3F)
+  var j = 2
+  while j <= k {
+    let cj = raw.byte_at(p, j)
+    if cj < 0x80 || cj > 0xBF {
+      return (0xFFFD << 3) | 1
+    }
+    r = (r << 6) | (cj & 0x3F)
+    j += 1
+  }
+  (r << 3) | (k + 1)
+}
+
+/// Writes the UTF-8 of the scalar value r at p; its size.
+fn utf8_encode(p: Int, r: Int) -> Int {
+  if r < 0x80 {
+    rt.mem_store(p, 0, r, 1)
+    return 1
+  }
+  if r < 0x800 {
+    rt.mem_store(p, 0, (0xC0 | (r >> 6)) | ((0x80 | (r & 0x3F)) << 8), 2)
+    return 2
+  }
+  if r < 0x10000 {
+    rt.mem_store(p, 0, (0xE0 | (r >> 12)) | ((0x80 | ((r >> 6) & 0x3F)) << 8), 2)
+    rt.mem_store(p, 2, 0x80 | (r & 0x3F), 1)
+    return 3
+  }
+  rt.mem_store(p, 0, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
+  4
+}
+
+/// 1 when r is white space (unicode.IsSpace), else 0.
+fn is_space(r: Int) -> Int {
+  if unicode.is_space(r) {
+    return 1
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Number and time text of the C callers (xo_std.c n_parse_int,
+// n_fmt_duration, n_fmt_time, b64_val, n_days_from_civil)
+
+/// strconv.ParseInt of the n bytes at p, base 10: 1 with the value
+/// stored at out, or 0 (out unchanged).
+fn parse_int(p: Int, n: Int, out: Int) -> Int {
+  if n == 0 {
+    return 0
+  }
+  var i = 0
+  var neg = false
+  let c0 = raw.byte_at(p, 0)
+  if c0 == 43 || c0 == 45 {
+    neg = c0 == 45
+    i = 1
+    if n == 1 {
+      return 0
+    }
+  }
+  var v = 0
+  while i < n {
+    let c = raw.byte_at(p, i) - 48
+    if c < 0 || c > 9 {
+      return 0
+    }
+    if v >= 922337203685477580 {
+      if v > 922337203685477580 || c > 8 || (c == 8 && !neg) {
+        return 0
+      }
+      if c == 8 {
+        // -9223372036854775808, if nothing follows
+        if i + 1 != n {
+          return 0
+        }
+        rt.mem_store(out, 0, -9223372036854775807 - 1, 8)
+        return 1
+      }
+    }
+    v = v * 10 + c
+    i += 1
+  }
+  if neg {
+    v = 0 - v
+  }
+  rt.mem_store(out, 0, v, 8)
+  1
+}
+
+/// Writes the text of a Duration of d nanoseconds (time.Duration.String)
+/// and a zero byte at buf (at least 32 bytes); its length.
+fn fmt_duration(buf: Int, d: Int) -> Int { raw.put_cstr(buf, text.append_duration("", d)) }
+
+/// Writes a Time of t nanoseconds since the Unix epoch as RFC 3339 in UTC
+/// (time.RFC3339Nano) and a zero byte at buf (at least 48 bytes); its
+/// length.
+fn fmt_time(buf: Int, t: Int) -> Int { raw.put_cstr(buf, text.append_time("", t)) }
+
+/// The value of a base64 digit (the standard alphabet), or -1.
+fn b64_val(c: Int) -> Int {
+  if c >= 65 && c <= 90 {
+    return c - 65
+  }
+  if c >= 97 && c <= 122 {
+    return c - 71
+  }
+  if c >= 48 && c <= 57 {
+    return c + 4
+  }
+  if c == 43 {
+    return 62
+  }
+  if c == 47 {
+    return 63
+  }
+  -1
+}
+
+// ---------------------------------------------------------------------------
+// The address policy of Net.only (xo_rt.c's, now netpolicy.xo): the
+// lists, hosts, ports, and addresses are bytes at an address and a length,
+// or zero terminated where the C keeps them so.
+
+/// 1 when every list of the ln bytes at lp admits the host and the port
+/// (onlyNet.admits), else 0.
+fn net_admits(lp: Int, ln: Int, hp: Int, hn: Int, pp: Int, pn: Int) -> Int {
+  if netpolicy.admits(raw.str_at(lp, ln), raw.str_at(hp, hn), raw.str_at(pp, pn)) {
+    return 1
+  }
+  0
+}
+
+/// 1 when the lists admit the dial or listen address of the n bytes at a
+/// (onlyNet.admitsAddr), else 0.
+fn net_admits_addr(lp: Int, ln: Int, a: Int, n: Int) -> Int {
+  if netpolicy.admits_addr(raw.str_at(lp, ln), raw.str_at(a, n)) {
+    return 1
+  }
+  0
+}
+
+/// Splits the zero terminated address at a into its host (brackets
+/// removed) and port, written zero terminated into the buffers of hn and
+/// pn bytes: 0, or -1 without a colon or when one does not fit.
+fn split_hostport(a: Int, host: Int, hn: Int, port: Int, pn: Int) -> Int {
+  let (ok, h, p) = netpolicy.split_hostport(raw.str_at(a, raw.cstr_len(a)))
+  if !ok || h.len() >= hn || p.len() >= pn {
+    return -1
+  }
+  let _h = raw.put_cstr(host, h)
+  let _p = raw.put_cstr(port, p)
+  0
+}
+
+/// 1 when the zero terminated port at p is a number above 65535, else 0.
+fn port_out_of_range(p: Int) -> Int {
+  if netpolicy.port_out_of_range(raw.str_at(p, raw.cstr_len(p))) {
+    return 1
+  }
+  0
+}
+
+/// The days since 1970-01-01 of a date (H. Hinnant's days_from_civil).
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}

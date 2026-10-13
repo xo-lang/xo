@@ -62,7 +62,9 @@ fn (var c: Checker) check_unused_imports(m: Int) {
   for f in c.mods[m].files {
     for u in c.files[f].ast.imports {
       for (_, imp) in c.files[f].imports.entries() {
-        if imp.used || imp.span != u.span {
+        if imp.used || imp.span != u.span || text(u.path) == "native/llrt/cabi" || text(u.path).starts_with("native/llrt/cabi_") {
+          // the native prelude imports the C ABI exports for the C
+          // runtime, not for itself (decision 0207)
           continue
         }
         let d = c.error_at(f, "XO0110", u.span, "import `${text(u.path)}` is never used")

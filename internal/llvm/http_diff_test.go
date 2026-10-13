@@ -357,10 +357,10 @@ func buildHTTPDiff(t *testing.T) (string, bool) {
 	}
 	src := filepath.Join(rtDir, "testdata", "http_diff.c")
 	bin := filepath.Join(t.TempDir(), "http_diff")
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), []string{src}, bin); err == nil {
+	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err == nil {
 		return bin, true
 	}
-	if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err != nil {
+	if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 		t.Fatal(err)
 	}
 	return bin, false
@@ -490,8 +490,8 @@ func startDiffDriver(t *testing.T) {
 			return
 		}
 		bin := filepath.Join(dir, "http_diff")
-		if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), []string{src}, bin); err != nil {
-			if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err != nil {
+		if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
+			if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 				diffDriver.err = err
 				return
 			}
@@ -585,9 +585,9 @@ func TestHTTPFuzz(t *testing.T) {
 	src := filepath.Join(rtDir, "testdata", "http_fuzz.c")
 	bin := filepath.Join(t.TempDir(), "http_fuzz")
 	sanitized := true
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), []string{src}, bin); err != nil {
+	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
 		sanitized = false
-		if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err != nil {
+		if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
 			t.Fatal(err)
 		}
 	}

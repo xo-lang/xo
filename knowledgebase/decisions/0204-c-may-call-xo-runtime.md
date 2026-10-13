@@ -39,6 +39,10 @@ fault ends the program as today).
   the C side shrinks with each step, and the exports go away with the
   C that calls them.
 
+Implemented by decision 0207 (2026-10-13): the marker is the runtime
+module `native/llrt/cabi` (and `cabi_<feature>` modules), the symbols
+are `xo_x_<name>`.
+
 ## Alternatives
 
 - Keep 0180 item 3 (top down only): rejected by the owner; it holds

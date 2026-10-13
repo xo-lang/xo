@@ -1,0 +1,241 @@
+// The address policy of Net.only (decisions 0156, 0175, 0190; std/rt
+// attenuate.go onlyNet), formerly xo_rt.c's (decision 0207): a Net is
+// the lists of its attenuations in one string ("" for none), each list
+// \1 and then its entries, each followed by \0 (std/native/prelude.xo
+// cap_lists_add), already trimmed and lowered by net_only. Every list
+// must admit an address. std/native/http.xo calls `admits` for a
+// client's requests; the C runtime's listen, dial, and redirects call the
+// exports in cabi.xo, which call these.
+
+/// The first index of byte c in b from lo to hi, or -1.
+fn index_in(b: Bytes, lo: Int, hi: Int, c: Int) -> Int {
+  var i = lo
+  while i < hi {
+    if Int(b[i]) == c {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Whether b from lo to hi holds the same bytes as c from clo to chi.
+fn same(b: Bytes, lo: Int, hi: Int, c: Bytes, clo: Int, chi: Int) -> Bool {
+  if hi - lo != chi - clo {
+    return false
+  }
+  var i = 0
+  while i < hi - lo {
+    if b[lo + i] != c[clo + i] {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// Go's net.SplitHostPort of a from lo to hi: whether Go accepts it, and
+/// the host's and the port's ranges in a.
+pub fn split_go(a: Bytes, lo: Int, hi: Int) -> (Bool, Int, Int, Int, Int) {
+  var i = -1
+  var q = hi
+  while q > lo {
+    if a[q - 1] == 58 {
+      i = q - 1
+      break
+    }
+    q -= 1
+  }
+  if i < 0 {
+    // missing port
+    return (false, 0, 0, 0, 0)
+  }
+  var j = lo
+  var k = lo
+  var h0 = lo
+  var h1 = i
+  if hi > lo && a[lo] == 91 {
+    let e = index_in(a, lo, hi, 93)
+    if e < 0 || e + 1 != i {
+      // missing port, or too many colons
+      return (false, 0, 0, 0, 0)
+    }
+    h0 = lo + 1
+    h1 = e
+    j = lo + 1
+    k = e + 1
+  } else if index_in(a, lo, i, 58) >= 0 {
+    // too many colons
+    return (false, 0, 0, 0, 0)
+  }
+  if index_in(a, j, hi, 91) >= 0 || index_in(a, k, hi, 93) >= 0 {
+    return (false, 0, 0, 0, 0)
+  }
+  (true, h0, h1, i + 1, hi)
+}
+
+/// hostAdmits: whether the entry e from lo to hi admits host h (lowered,
+/// without brackets) and port p. Entries are a host (any port),
+/// `*.domain` (any subdomain, any port), or `host:port`.
+fn entry_admits(e: Bytes, lo: Int, hi: Int, h: Bytes, p: Bytes) -> Bool {
+  let en = hi - lo
+  let hn = h.len()
+  if en >= 5 && same(e, lo, lo + 5, "unix:".bytes(), 0, 5) {
+    // admits only its socket (admits_addr)
+    return false
+  }
+  if en >= 2 && e[lo] == 42 && e[lo + 1] == 46 {
+    let sn = en - 1
+    return hn > sn && same(h, hn - sn, hn, e, lo + 1, hi)
+  }
+  var colons = 0
+  var i = lo
+  while i < hi {
+    if e[i] == 58 {
+      colons += 1
+    }
+    i += 1
+  }
+  if colons == 1 || (en > 0 && e[lo] == 91) {
+    let (ok, h0, h1, p0, p1) = split_go(e, lo, hi)
+    return ok && same(e, h0, h1, h, 0, hn) && same(e, p0, p1, p, 0, p.len())
+  }
+  var s = lo
+  var t = hi
+  while s < t && (e[s] == 91 || e[s] == 93) {
+    s += 1
+  }
+  while t > s && (e[t - 1] == 91 || e[t - 1] == 93) {
+    t -= 1
+  }
+  same(e, s, t, h, 0, hn)
+}
+
+/// onlyNet.admits: whether every list of lists admits host and port (the
+/// host trimmed of brackets and lowered first).
+pub fn admits(lists: Str, host: Str, port: Str) -> Bool {
+  let lp = lists.bytes()
+  let ln = lp.len()
+  if ln == 0 {
+    return true
+  }
+  let hb = host.bytes()
+  var a = 0
+  var z = hb.len()
+  while a < z && (hb[a] == 91 || hb[a] == 93) {
+    a += 1
+  }
+  while z > a && (hb[z - 1] == 91 || hb[z - 1] == 93) {
+    z -= 1
+  }
+  var low = BytesBuilder.new()
+  var k = a
+  while k < z {
+    let c = Int(hb[k])
+    low.write_byte(UInt8(if c >= 65 && c <= 90 { c + 32 } else { c }))
+    k += 1
+  }
+  let h = low.freeze()
+  let pb = port.bytes()
+  var i = 0
+  while i < ln {
+    // the list's \1
+    i += 1
+    var ok = false
+    while i < ln && lp[i] != 1 {
+      var end = index_in(lp, i, ln, 0)
+      if end < 0 {
+        end = ln
+      }
+      if !ok && entry_admits(lp, i, end, h, pb) {
+        ok = true
+      }
+      i = end + 1
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// onlyNet.admitsAddr: a dial or listen address; an empty host (`:8080`)
+/// is the unspecified address 0.0.0.0.
+pub fn admits_addr(lists: Str, addr: Str) -> Bool {
+  let lp = lists.bytes()
+  let ln = lp.len()
+  if ln == 0 {
+    return true
+  }
+  let ab = addr.bytes()
+  let n = ab.len()
+  if n >= 5 && same(ab, 0, 5, "unix:".bytes(), 0, 5) {
+    // a Unix domain socket: the entry `unix:PATH`, exactly, in every
+    // list (decision 0190)
+    var i = 0
+    while i < ln {
+      i += 1
+      var ok = false
+      while i < ln && lp[i] != 1 {
+        var end = index_in(lp, i, ln, 0)
+        if end < 0 {
+          end = ln
+        }
+        if same(lp, i, end, ab, 0, n) {
+          ok = true
+        }
+        i = end + 1
+      }
+      if !ok {
+        return false
+      }
+    }
+    return true
+  }
+  let (ok, h0, h1, p0, p1) = split_go(ab, 0, n)
+  if !ok {
+    return false
+  }
+  let host = if h0 == h1 { "0.0.0.0" } else { addr[h0..h1] }
+  admits(lists, host, addr[p0..p1])
+}
+
+/// Splits "host:port", "[v6]:port", or ":port" at the last colon (the
+/// brackets of a host removed): whether there is a colon, the host, and
+/// the port.
+pub fn split_hostport(a: Str) -> (Bool, Str, Str) {
+  let b = a.bytes()
+  var c = b.len() - 1
+  while c >= 0 && b[c] != 58 {
+    c -= 1
+  }
+  if c < 0 {
+    return (false, "", "")
+  }
+  var h0 = 0
+  var h1 = c
+  if c >= 2 && b[0] == 91 && b[c - 1] == 93 {
+    h0 = 1
+    h1 = c - 1
+  }
+  (true, a[h0..h1], a[c + 1..b.len()])
+}
+
+/// Whether port is a number above 65535. Darwin's getaddrinfo rejects
+/// one; glibc's truncates it to 16 bits and binds another port
+/// (gotchas/glibc-getaddrinfo-port-truncation.md).
+pub fn port_out_of_range(port: Str) -> Bool {
+  let b = port.bytes()
+  var v = 0
+  for c in b {
+    let d = Int(c) - 48
+    if d < 0 || d > 9 {
+      return false
+    }
+    v = v * 10 + d
+    if v > 65535 {
+      return true
+    }
+  }
+  false
+}

@@ -231,6 +231,9 @@ func (s *fn) intrinsic(x *ast.CallExpr, ci *check.Call) *Value {
 	for i, p := range fo.Params {
 		args = append(args, s.valueAs(es[i], b.typ(p.Type, x)))
 	}
+	if v, ok := s.rawIntrinsic(x, fo.Name, args); ok {
+		return v
+	}
 	if check.IsNever(fo.Result) {
 		// fault_at: does not return
 		s.rt(fo.Name, nil, args...)
@@ -310,6 +313,9 @@ func (s *fn) genericIntrinsic(x *ast.CallExpr, ci *check.Call, es []ast.Expr) *V
 		v := s.valueAs(es[0], t)
 		drop := s.add(OpFuncAddr, m.Builtin(KInt), b.dropList(t))
 		return s.rt("any_new", nt, s.one(v), drop, s.add(OpConst, m.Builtin(KStr), t.Name))
+	case "obj_addr", "obj_at":
+		v, _ := s.rawGeneric(x, fo.Name, b.typ(targ(0), x), es)
+		return v
 	case "any_get":
 		ct := targ(0)
 		t := b.typ(ct, x)

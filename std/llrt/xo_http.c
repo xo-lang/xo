@@ -3265,7 +3265,7 @@ xo_rstr *xo_log_now(int64_t nano, int64_t *len) {
 	if (!nano) {
 		t -= ((t % 1000000000) + 1000000000) % 1000000000;
 	}
-	int k = n_fmt_time(b, t);
+	int k = (int)xo_x_fmt_time(XO_ADDR(b), t);
 	return nstr(b, k, len);
 }
 

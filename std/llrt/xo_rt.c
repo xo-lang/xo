@@ -753,127 +753,43 @@ void xo_eprintln(const char *p, int64_t n) {
 }
 
 // ---------------------------------------------------------------------------
-// Number formatting (the Go backend's text: strconv.FormatInt and
-// FloatStr, the shortest 'g' form that reads back the same value, with
-// ".0" added to whole numbers)
+// C ABI exports (decisions 0204, 0207): functions of
+// std/native/llrt/cabi.xo that every native program carries, called here
+// by name. Addresses pass as int64_t; each writes its text and a zero
+// byte into the buffer it is given and returns the text's length.
 
-// fmt_int writes the decimal text of v (no snprintf: interpolation of
-// Ints is hot).
-static int fmt_int(char *buf, int64_t v) {
-	char t[24];
-	int n = 0;
-	uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;
-	do {
-		t[n++] = (char)('0' + u % 10);
-		u /= 10;
-	} while (u);
-	int k = 0;
-	if (v < 0) {
-		buf[k++] = '-';
-	}
-	while (n) {
-		buf[k++] = t[--n];
-	}
-	buf[k] = 0;
-	return k;
-}
+int64_t xo_x_fmt_int(int64_t buf, int64_t v);
+int64_t xo_x_fmt_float(int64_t buf, double f);
+int64_t xo_x_fault_overflow(int64_t buf, int64_t a, int64_t op, int64_t b);
+int64_t xo_x_fault_shl(int64_t buf, int64_t a, int64_t b);
+int64_t xo_x_fault_shift(int64_t buf, int64_t n);
+int64_t xo_x_fault_divzero(int64_t buf, int64_t a, int64_t op);
+int64_t xo_x_fault_neg(int64_t buf, int64_t a);
+int64_t xo_x_fault_abs(int64_t buf, int64_t a);
+int64_t xo_x_fault_index(int64_t buf, int64_t i, int64_t n);
+int64_t xo_x_fault_bytes_index(int64_t buf, int64_t i, int64_t n);
+int64_t xo_x_fault_float_int(int64_t buf, double f);
+int64_t xo_x_utf8_decode(int64_t p, int64_t n);
+int64_t xo_x_utf8_encode(int64_t p, int64_t r);
+int64_t xo_x_is_space(int64_t r);
+int64_t xo_x_parse_int(int64_t p, int64_t n, int64_t out);
+int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
+int64_t xo_x_fmt_time(int64_t buf, int64_t t);
+int64_t xo_x_b64_val(int64_t c);
+int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
+int64_t xo_x_split_hostport(int64_t a, int64_t host, int64_t hn, int64_t port, int64_t pn);
+int64_t xo_x_port_out_of_range(int64_t p);
+int64_t xo_x_net_admits(int64_t lp, int64_t ln, int64_t hp, int64_t hn, int64_t pp, int64_t pn);
+int64_t xo_x_net_admits_addr(int64_t lp, int64_t ln, int64_t a, int64_t n);
 
-// fmt_float writes Go's strconv.FormatFloat(f, 'g', -1, 64) to buf.
-static int fmt_go_g(char *buf, double f) {
-	if (isnan(f)) {
-		return snprintf(buf, 40, "NaN");
-	}
-	if (isinf(f)) {
-		return snprintf(buf, 40, f > 0 ? "+Inf" : "-Inf");
-	}
-	if (f == 0) {
-		return snprintf(buf, 40, signbit(f) ? "-0" : "0");
-	}
-	// shortest digits that round trip
-	char e[40];
-	int p;
-	for (p = 0; p < 17; p++) {
-		snprintf(e, sizeof e, "%.*e", p, f);
-		if (strtod(e, NULL) == f) {
-			break;
-		}
-	}
-	// e is [-]d[.ddd]e(+|-)XX
-	int neg = e[0] == '-';
-	char *s = e + neg;
-	char digs[24];
-	int nd = 0;
-	char *q = s;
-	for (; *q && *q != 'e'; q++) {
-		if (*q >= '0' && *q <= '9') {
-			digs[nd++] = *q;
-		}
-	}
-	int x = atoi(q + 1);
-	while (nd > 1 && digs[nd - 1] == '0') {
-		nd--;
-	}
-	digs[nd] = 0;
-	int dp = x + 1; // decimal point position: value = 0.digs * 10^dp
-	int exp = dp - 1;
-	char *o = buf;
-	if (neg) {
-		*o++ = '-';
-	}
-	if (exp < -4 || exp >= 6) {
-		*o++ = digs[0];
-		if (nd > 1) {
-			*o++ = '.';
-			for (int i = 1; i < nd; i++) {
-				*o++ = digs[i];
-			}
-		}
-		*o++ = 'e';
-		int ax = exp;
-		if (ax < 0) {
-			*o++ = '-';
-			ax = -ax;
-		} else {
-			*o++ = '+';
-		}
-		o += snprintf(o, 8, "%02d", ax);
-		*o = 0;
-		return (int)(o - buf);
-	}
-	// %f with max(nd - dp, 0) decimals
-	if (dp <= 0) {
-		*o++ = '0';
-		*o++ = '.';
-		for (int i = 0; i < -dp; i++) {
-			*o++ = '0';
-		}
-		for (int i = 0; i < nd; i++) {
-			*o++ = digs[i];
-		}
-	} else {
-		for (int i = 0; i < dp; i++) {
-			*o++ = i < nd ? digs[i] : '0';
-		}
-		if (nd > dp) {
-			*o++ = '.';
-			for (int i = dp; i < nd; i++) {
-				*o++ = digs[i];
-			}
-		}
-	}
-	*o = 0;
-	return (int)(o - buf);
-}
+#define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
-static int fmt_float(char *buf, double f) {
-	int n = fmt_go_g(buf, f);
-	if (!strpbrk(buf, ".eIN")) {
-		buf[n++] = '.';
-		buf[n++] = '0';
-		buf[n] = 0;
-	}
-	return n;
-}
+// Number text (the Go backend's: strconv.FormatInt, and FloatStr, the
+// shortest 'g' form with ".0" added to whole numbers), in Xo (num.xo):
+// buf holds at least 32 bytes for an Int, 48 for a Float.
+static int fmt_int(char *buf, int64_t v) { return (int)xo_x_fmt_int(XO_ADDR(buf), v); }
+
+static int fmt_float(char *buf, double f) { return (int)xo_x_fmt_float(XO_ADDR(buf), f); }
 
 // ---------------------------------------------------------------------------
 // Faults (core 8): the same messages as std/rt, exit status 70
@@ -896,57 +812,53 @@ XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {
 	fault_text(m, loc);
 }
 
+// The messages of the checked operations are written by cabi.xo.
+
 XO_NORETURN void xo_fault_overflow(int64_t a, int64_t op, int64_t b, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: %lld %c %lld does not fit Int", (long long)a, (char)op, (long long)b);
+	xo_x_fault_overflow(XO_ADDR(m), a, op, b);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_shl(int64_t a, int64_t b, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: %lld << %lld does not fit Int", (long long)a, (long long)b);
+	xo_x_fault_shl(XO_ADDR(m), a, b);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_shift(int64_t n, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "shift amount %lld out of range for Int", (long long)n);
+	xo_x_fault_shift(XO_ADDR(m), n);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_divzero(int64_t a, int64_t op, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "division by zero: %lld %c 0", (long long)a, (char)op);
+	xo_x_fault_divzero(XO_ADDR(m), a, op);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_neg(int64_t a, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: -(%lld) does not fit Int", (long long)a);
+	xo_x_fault_neg(XO_ADDR(m), a);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_abs(int64_t a, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: abs(%lld) does not fit Int", (long long)a);
+	xo_x_fault_abs(XO_ADDR(m), a);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_index(int64_t i, int64_t n, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "index %lld out of range for List of length %lld", (long long)i, (long long)n);
+	xo_x_fault_index(XO_ADDR(m), i, n);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 	char m[160];
-	if (isnan(f)) {
-		snprintf(m, sizeof m, "cannot convert NaN to Int");
-	} else {
-		char b[40];
-		fmt_go_g(b, f);
-		snprintf(m, sizeof m, "%s is out of range for Int", b);
-	}
+	xo_x_fault_float_int(XO_ADDR(m), f);
 	fault_text(m, loc);
 }
 
@@ -2241,7 +2153,6 @@ static void bud_charge(xo_ctx *c, int check) {
 	}
 }
 
-static int n_fmt_duration(char *out, int64_t d);
 
 // bud_twice checks a budget that passed a ceiling while c runs shielded
 // code: past twice the ceiling it faults (XO-F008).
@@ -2253,8 +2164,8 @@ static void bud_twice(xo_budget *b) {
 		if (u <= 2 * b->cpu) {
 			return;
 		}
-		used[n_fmt_duration(used, u)] = 0;
-		limit[n_fmt_duration(limit, b->cpu)] = 0;
+		used[xo_x_fmt_duration(XO_ADDR(used), u)] = 0;
+		limit[xo_x_fmt_duration(XO_ADDR(limit), b->cpu)] = 0;
 		snprintf(msg, sizeof msg, "XO-F008: a budgeted task kept running in shielded code: cpu %s, past twice its ceiling of %s", used, limit);
 		break;
 	}
@@ -6009,7 +5920,7 @@ void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, cons
 	xo_ctx *c = ctx();
 	if (cpu < 0 || alloc < 0 || steps < 0) {
 		char d[64], msg[256];
-		d[n_fmt_duration(d, cpu)] = 0;
+		d[xo_x_fmt_duration(XO_ADDR(d), cpu)] = 0;
 		snprintf(msg, sizeof msg, "task.with_budget: a negative ceiling (cpu %s, alloc %lld, steps %lld)", d, (long long)alloc, (long long)steps);
 		fault_at(msg, loc, n);
 	}
@@ -6140,211 +6051,25 @@ static void listener_free(void *p) {
 	xo_free(l);
 }
 
-// split_hostport splits "host:port", "[v6]:port", or ":port".
+// The address policy of Net.only (decisions 0156, 0175, 0190; std/rt
+// attenuate.go onlyNet) is Xo (std/native/llrt/netpolicy.xo, through
+// cabi.xo, decision 0207): splitting "host:port", "[v6]:port", or
+// ":port"; a numeric port above 65535 (Darwin's getaddrinfo rejects one,
+// glibc's truncates it: gotchas/glibc-getaddrinfo-port-truncation.md);
+// whether the lists admit a host and port, or a dial or listen address.
+
 static int split_hostport(const char *a, char *host, size_t hn, char *port, size_t pn) {
-	const char *colon = strrchr(a, ':');
-	if (!colon) {
-		return -1;
-	}
-	const char *h = a;
-	size_t hl = (size_t)(colon - a);
-	if (hl >= 2 && h[0] == '[' && h[hl - 1] == ']') {
-		h++;
-		hl -= 2;
-	}
-	if (hl >= hn || strlen(colon + 1) >= pn) {
-		return -1;
-	}
-	memcpy(host, h, hl);
-	host[hl] = 0;
-	strcpy(port, colon + 1);
-	return 0;
+	return (int)xo_x_split_hostport(XO_ADDR(a), XO_ADDR(host), (int64_t)hn, XO_ADDR(port), (int64_t)pn);
 }
 
-// port_out_of_range reports a numeric port above 65535. Darwin's
-// getaddrinfo rejects one; glibc's truncates it to 16 bits and binds
-// another port (gotchas/glibc-getaddrinfo-port-truncation.md).
-static int port_out_of_range(const char *port) {
-	long v = 0;
-	if (!port[0]) {
-		return 0;
-	}
-	for (const char *q = port; *q; q++) {
-		if (*q < '0' || *q > '9') {
-			return 0;
-		}
-		v = v * 10 + (*q - '0');
-		if (v > 65535) {
-			return 1;
-		}
-	}
-	return 0;
-}
+static int port_out_of_range(const char *port) { return (int)xo_x_port_out_of_range(XO_ADDR(port)); }
 
-// Net.only (decisions 0156 and 0175): std/rt attenuate.go's onlyNet. A
-// Net is the lists of its attenuations in one string ("" for none): each
-// list is \1 and then its entries, each followed by \0
-// (std/native/prelude.xo cap_lists_add), already trimmed and lowered by
-// net_only. Every list must admit an address.
-
-// go_split_hostport is Go's net.SplitHostPort over the n bytes at a: 0
-// with the host and the port, or -1 when Go reports an error.
-static int go_split_hostport(const char *a, size_t n, const char **h, size_t *hl, const char **p, size_t *pl) {
-	size_t i = n;
-	for (size_t q = n; q > 0; q--) {
-		if (a[q - 1] == ':') {
-			i = q - 1;
-			break;
-		}
-	}
-	if (i == n) {
-		return -1; // missing port
-	}
-	size_t j = 0, k = 0;
-	if (n > 0 && a[0] == '[') {
-		const char *end = memchr(a, ']', n);
-		if (!end) {
-			return -1;
-		}
-		size_t e = (size_t)(end - a);
-		if (e + 1 != i) {
-			return -1; // missing port, or too many colons
-		}
-		*h = a + 1;
-		*hl = e - 1;
-		j = 1;
-		k = e + 1;
-	} else {
-		*h = a;
-		*hl = i;
-		if (memchr(a, ':', i)) {
-			return -1; // too many colons
-		}
-	}
-	if (memchr(a + j, '[', n - j) || memchr(a + k, ']', n - k)) {
-		return -1;
-	}
-	*p = a + i + 1;
-	*pl = n - i - 1;
-	return 0;
-}
-
-// net_entry_admits is hostAdmits: whether entry e admits host (lowered,
-// without brackets) and port. Entries are a host (any port), `*.domain`
-// (any subdomain, any port), or `host:port`.
-static int net_entry_admits(const char *e, size_t en, const char *h, size_t hn, const char *p, size_t pn) {
-	if (en >= 5 && memcmp(e, "unix:", 5) == 0) {
-		return 0; // admits only its socket (net_admits_addr)
-	}
-	if (en >= 2 && e[0] == '*' && e[1] == '.') {
-		size_t sn = en - 1;
-		return hn > sn && memcmp(h + hn - sn, e + 1, sn) == 0;
-	}
-	int colons = 0;
-	for (size_t i = 0; i < en; i++) {
-		colons += e[i] == ':';
-	}
-	if (colons == 1 || (en > 0 && e[0] == '[')) {
-		const char *eh, *ep;
-		size_t ehl, epl;
-		if (go_split_hostport(e, en, &eh, &ehl, &ep, &epl) < 0) {
-			return 0;
-		}
-		return ehl == hn && memcmp(eh, h, hn) == 0 && epl == pn && memcmp(ep, p, pn) == 0;
-	}
-	size_t s = 0, t = en;
-	while (s < t && (e[s] == '[' || e[s] == ']')) {
-		s++;
-	}
-	while (t > s && (e[t - 1] == '[' || e[t - 1] == ']')) {
-		t--;
-	}
-	return t - s == hn && memcmp(e + s, h, hn) == 0;
-}
-
-// net_admits is onlyNet.admits: whether every list of lists admits host
-// and port (the host is trimmed of brackets and lowered first).
 static int net_admits(const char *lp, size_t ln, const char *hp, size_t hn, const char *pp, size_t pn) {
-	if (ln == 0) {
-		return 1;
-	}
-	while (hn > 0 && (hp[0] == '[' || hp[0] == ']')) {
-		hp++;
-		hn--;
-	}
-	while (hn > 0 && (hp[hn - 1] == '[' || hp[hn - 1] == ']')) {
-		hn--;
-	}
-	char *h = malloc(hn + 1);
-	if (!h) {
-		xo_oom();
-	}
-	for (size_t i = 0; i < hn; i++) {
-		char c = hp[i];
-		h[i] = c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
-	}
-	int all = 1;
-	size_t i = 0;
-	while (all && i < ln) {
-		i++; // the list's \1
-		int ok = 0;
-		while (i < ln && lp[i] != '\1') {
-			const char *z = memchr(lp + i, 0, ln - i);
-			size_t end = z ? (size_t)(z - lp) : ln;
-			if (!ok && net_entry_admits(lp + i, end - i, h, hn, pp, pn)) {
-				ok = 1;
-			}
-			i = end + 1;
-		}
-		all = ok;
-	}
-	free(h);
-	return all;
+	return (int)xo_x_net_admits(XO_ADDR(lp), (int64_t)ln, XO_ADDR(hp), (int64_t)hn, XO_ADDR(pp), (int64_t)pn);
 }
 
-// xo_net_admits is net_admits for std/native/http.xo (a client's
-// requests).
-int64_t xo_net_admits(const char *lp, int64_t ln, const char *hp, int64_t hn, const char *pp, int64_t pn) {
-	return net_admits(lp, (size_t)ln, hp, (size_t)hn, pp, (size_t)pn);
-}
-
-// net_admits_addr is onlyNet.admitsAddr: a dial or listen address; an
-// empty host (`:8080`) is the unspecified address 0.0.0.0.
 static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n) {
-	if (ln == 0) {
-		return 1;
-	}
-	if (n >= 5 && memcmp(a, "unix:", 5) == 0) {
-		// a Unix domain socket: the entry `unix:PATH`, exactly, in every
-		// list (decision 0190)
-		size_t i = 0;
-		while (i < (size_t)ln) {
-			i++; // the list's \1
-			int ok = 0;
-			while (i < (size_t)ln && lp[i] != '\1') {
-				const char *z = memchr(lp + i, 0, (size_t)ln - i);
-				size_t end = z ? (size_t)(z - lp) : (size_t)ln;
-				if (end - i == (size_t)n && memcmp(lp + i, a, (size_t)n) == 0) {
-					ok = 1;
-				}
-				i = end + 1;
-			}
-			if (!ok) {
-				return 0;
-			}
-		}
-		return 1;
-	}
-	const char *h, *p;
-	size_t hl, pl;
-	if (go_split_hostport(a, (size_t)n, &h, &hl, &p, &pl) < 0) {
-		return 0;
-	}
-	if (hl == 0) {
-		h = "0.0.0.0";
-		hl = 7;
-	}
-	return net_admits(lp, (size_t)ln, h, hl, p, pl);
+	return (int)xo_x_net_admits_addr(XO_ADDR(lp), ln, XO_ADDR(a), n);
 }
 
 // net_denied records NetErr.Denied(addr) (tag 6) for the n bytes at a.

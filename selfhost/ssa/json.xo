@@ -105,6 +105,10 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let tn = b.const_str(b.m.types[t].name)
     return b.rt("any_new", nt, [l, drop, tn])
   }
+  if name is "obj_addr" | "obj_at" {
+    let (v, _) = b.raw_generic(name, b.typ(b.intrinsic_targ(ci, 0)), es)
+    return v
+  }
   if name == "any_get" {
     let ct = b.intrinsic_targ(ci, 0)
     let t = b.typ(ct)

@@ -25,10 +25,10 @@ func TestRuntimeFaultResume(t *testing.T) {
 	}
 	src := filepath.Join(rtDir, "testdata", "fault_resume.c")
 	plain := exe(filepath.Join(t.TempDir(), "plain"))
-	if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, plain); err != nil {
+	if err := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), plain); err != nil {
 		t.Fatal(err)
 	}
-	bins := map[string]string{"plain": plain, "tsan": tsanBuild(t, nil, []string{src})}
+	bins := map[string]string{"plain": plain, "tsan": tsanBuild(t, nil, cOnly(t, src))}
 	for name, bin := range bins {
 		cmd := exec.Command(bin)
 		cmd.Env = append(os.Environ(), tsanOptions())

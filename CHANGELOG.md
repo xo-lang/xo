@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends: more of the C runtime is Xo (decisions 0204, 0207):
+  the text of every arithmetic, index, and conversion fault, Int and
+  Float text, UTF-8 decoding, white space, Int parsing, Duration and Time
+  text used by the runtime itself, `Net.only`'s address checks, and the
+  TLS client's and server's name checks, PEM decoding, and alert texts.
+  Messages are unchanged byte for byte; TLS name checks now follow Go's
+  `net.ParseIP` exactly. Under the hood the C runtime can call runtime
+  functions written in Xo, and std's implementation gets raw memory
+  intrinsics (internal only). A program built with the arm64 backend is
+  about 20 KB larger (LLVM builds are not).
 - Added: on Linux, the native backends' os.fs.read, write, and stat
   (and read_dir's and walk's stats) make their system calls from Xo
   (std/native/llrt/linux.xo and sysio.xo, decision 0206) with the C

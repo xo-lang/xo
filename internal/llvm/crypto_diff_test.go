@@ -41,8 +41,8 @@ func TestCryptoDiff(t *testing.T) {
 	}
 	src := filepath.Join(rtDir, "testdata", "crypto_diff.c")
 	bin := filepath.Join(t.TempDir(), "crypto_diff")
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), []string{src}, bin); err != nil {
-		if err2 := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err2 != nil {
+	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), cOnly(t, src), bin); err != nil {
+		if err2 := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err2 != nil {
 			t.Fatal(err2)
 		}
 	}
