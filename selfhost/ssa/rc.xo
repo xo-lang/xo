@@ -691,61 +691,72 @@ pub fn (var b: Builder) insert_rc() {
 }
 
 fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
+  // the least fixed point of in(b) = (used(b) | out(b)) without the
+  // leaves whose root b defines, out(b) = the union of the successors'
+  // ins: each leaf added to a block's in set is walked back to the
+  // predecessors once, where passes over every block rebuilt every set
+  // until no size changed (bench/results/xo1-speed-2026-10-13.md). Only
+  // the sets matter: the in sets are read sorted (sorted_leaves), the
+  // out sets not at all.
   let n = f.blocks.len()
-  var used: List[Map[Str, Leaf]] = []
   c.live_in = []
   c.live_out = []
+  var preds: List[List[Int]] = []
+  for _ in 0..n {
+    c.live_in.push({})
+    c.live_out.push({})
+    preds.push([])
+  }
+  for i in 0..n {
+    let t = f.term(i)
+    if t >= 0 {
+      for e in f.values[t].succs {
+        preds[f.edges[e].to].push(i)
+      }
+    }
+  }
+  var wb: List[Int] = []
+  var wl: List[Leaf] = []
   for bi in 0..n {
-    var u: Map[Str, Leaf] = {}
     for v in f.blocks[bi].instrs {
       for x in r.leaf_uses(f, v) {
-        if r.tracked(f, x.l) {
-          u[leaf_key(x.l)] = x.l
+        if r.tracked(f, x.l) && f.values[x.l.root].block != bi {
+          let k = leaf_key(x.l)
+          if !c.live_in[bi].contains(k) {
+            c.live_in[bi][k] = x.l
+            wb.push(bi)
+            wl.push(x.l)
+          }
         }
       }
       for e in f.values[v].succs {
         for l in r.edge_uses(f, e) {
-          if r.tracked(f, l) {
-            u[leaf_key(l)] = l
+          if r.tracked(f, l) && f.values[l.root].block != bi {
+            let k = leaf_key(l)
+            if !c.live_in[bi].contains(k) {
+              c.live_in[bi][k] = l
+              wb.push(bi)
+              wl.push(l)
+            }
           }
         }
       }
     }
-    used.push(u)
-    c.live_in.push({})
-    c.live_out.push({})
   }
-  var changed = true
-  while changed {
-    changed = false
-    var i = n - 1
-    while i >= 0 {
-      var out: Map[Str, Leaf] = {}
-      let t = f.term(i)
-      if t >= 0 {
-        for e in f.values[t].succs {
-          for (k, l) in c.live_in[f.edges[e].to] {
-            out[k] = l
-          }
-        }
+  while !wb.is_empty() {
+    let b = wb.pop() ?? 0
+    let l = wl.pop() ?? Leaf{root: 0, path: ""}
+    let k = leaf_key(l)
+    for p in preds[b] {
+      if c.live_out[p].contains(k) {
+        continue
       }
-      var inn: Map[Str, Leaf] = {}
-      for (k, l) in used[i] {
-        if f.values[l.root].block != i {
-          inn[k] = l
-        }
+      c.live_out[p][k] = l
+      if f.values[l.root].block != p && !c.live_in[p].contains(k) {
+        c.live_in[p][k] = l
+        wb.push(p)
+        wl.push(l)
       }
-      for (k, l) in out {
-        if f.values[l.root].block != i {
-          inn[k] = l
-        }
-      }
-      c.live_out[i] = out
-      if inn.len() != c.live_in[i].len() {
-        changed = true
-      }
-      c.live_in[i] = inn
-      i -= 1
     }
   }
 }
