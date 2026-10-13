@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
+  request to an in memory server sent after a stop request waited in
+  the listener's backlog instead of failing, and under load could end
+  the test with `XO-F001: deadlock`; it now fails at once, as on the Go
+  backend (gotchas/mem-listener-backlog-after-serve.md). Also fixed: on
+  a loaded machine the virtual clock of a native test could move twice
+  for one idle instant, so a task woken by the first move saw the time
+  of the second (gotchas/virtual-clock-double-kick.md).
 - **`xo` is written in Xo** (decision 0178, switch point B): the release
   archives ship the self hosted toolchain as `bin/xo`, with
   `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the

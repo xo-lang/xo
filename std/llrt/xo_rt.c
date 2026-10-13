@@ -594,7 +594,12 @@ int xo_rc_mark(int64_t *p) {
 static struct {
 	int on;
 	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
-	int vpending;    // every context is blocked: advance the clock (atomic)
+	// every context is blocked: advance the clock (atomic): 0, or 1 +
+	// the vepoch the deadlock check that found every context blocked
+	// read first; tw_kick moves the clock only while vepoch is still
+	// that one (gotchas/virtual-clock-double-kick.md)
+	int64_t vpending;
+	int64_t vepoch; // moves of the clock begun and ended, 2 per move (atomic, ev.mu)
 	int in_main;     // testing.run_main is running main
 	// real capabilities of `xo test --real` (decision 0120): the effects
 	// the test declares (TW_REAL_*, from XO_TEST_REAL); virt: the clock
@@ -2841,13 +2846,16 @@ XO_NORETURN static void deadlock(void) {
 // dl_check_locked faults when the program is deadlocked (pool.mu held;
 // see dlk).
 static void dl_check_locked(void) {
+	// read before the counts: a move of the clock in progress or ended
+	// since then makes this check's verdict stale (tw_kick_once)
+	int64_t epoch = __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST);
 	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
 	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
 	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
 		if (tw.virt) {
 			// the test world's clock jumps to the next timer
 			// (tw_kick, after pool.mu is released), or it deadlocked
-			__atomic_store_n(&tw.vpending, 1, __ATOMIC_RELEASE);
+			__atomic_store_n(&tw.vpending, epoch + 1, __ATOMIC_SEQ_CST);
 			return;
 		}
 		deadlock();

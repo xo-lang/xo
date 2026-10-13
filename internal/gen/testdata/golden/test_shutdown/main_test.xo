@@ -82,3 +82,24 @@ test "a server finishes the request in flight after the stop" {
   expect(os.stdio.output()) == "serve returned\n"
   expect(os.clock.since(start)) == 2500ms
 }
+
+test "a request after the stop fails at once while the listener lives on" {
+  let start = os.clock.now()
+  os.proc.signal_after(1s)
+  scope s {
+    let inflight = s.spawn(fn() {
+      os.clock.sleep(500ms)
+      http.client(os.net, timeout: 10s).get("http://127.0.0.1:8081/slow")
+    })
+    let late = s.spawn(fn() {
+      os.clock.sleep(1500ms)
+      let failed = http.client(os.net, timeout: 10s).get("http://127.0.0.1:8081/slow") is Err(_)
+      (failed, os.clock.since(start))
+    })
+    expect(testing.run_main(lingering, os)) == 0
+    expect(inflight.await?.status) == 200
+    expect(late.await) == (true, 1500ms)
+  }
+  expect(os.stdio.output()) == "listener closed\n"
+  expect(os.clock.since(start)) == 3500ms
+}
