@@ -48,6 +48,13 @@ fn rs_append_bytes(s: Str, b: Bytes, lo: Int, hi: Int, mode: Int) -> Str
 fn bytes_span(b: Bytes, i: Int, cls: Int) -> Int
 /// s + the byte x (0 to 255; BytesBuilder.write_byte).
 fn rs_push_byte(s: Str, x: Int) -> Str
+/// s + the n (0 to 8) low bytes of w, the lowest first: short text
+/// assembled in Xo appended with one call (std/native/llrt/text.xo,
+/// decision 0193).
+fn rs_push_word(s: Str, w: Int, n: Int) -> Str
+/// s + four such words, their lengths (0 to 8) in the nibbles of lens,
+/// w0's the lowest (decision 0193).
+fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
 /// (BytesBuilder.write_rune).
 fn rs_push_rune(s: Str, r: Int) -> Str
@@ -68,6 +75,14 @@ fn rune_to_case(r: Int, lower: Bool) -> Int
 fn rune_quote(r: Int) -> Str
 fn bytes_quote(b: Bytes) -> Str
 fn unicode_ranges(which: Int) -> List[Int]
+// The C path of the number and time text (decision 0193): compiled only
+// with -DXO_TEXT_C, called only by std/native/llrt/text_c.xo
+// (XO_LLRT_C=text). int_parse and duration_parse above are the others.
+
+fn rs_append_time(s: Str, t: Int) -> Str
+fn time_parse_ok(s: Str) -> Bool
+fn time_parse(s: Str) -> Int
+fn rs_append_quote(s: Str, b: Bytes) -> Str
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 

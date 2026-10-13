@@ -50,6 +50,9 @@ type Options struct {
 	// test builds a binary from it); the SSA is still built for what the
 	// build needs from it (zone data), and TargetAttrs still apply.
 	IR []byte
+	// GOOS and GOARCH are the build's target (`target`, ssa.Options);
+	// empty: the host. A cross build sets them (build.LLVMCrossTriple).
+	GOOS, GOARCH string
 }
 
 // Program is the generated IR of one Xo program.
@@ -95,7 +98,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 // verified, with reference counting inserted, and verified again
 // (`xo llvmdump --bench` times GenerateSSA alone on it, decision 0166).
 func PrepareSSA(res *check.Result, opts Options) (*ssa.Module, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release, GOOS: opts.GOOS, GOARCH: opts.GOARCH})
 	if err != nil {
 		return nil, err
 	}

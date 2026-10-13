@@ -91,10 +91,10 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 		}
 		switch {
 		case isPreludeNamed(ct, "Duration"):
-			s.retv(lit(s.rt("rs_append_duration", st, lit(acc, `"`), v), `"`))
+			s.retv(lit(s.llrt("append_duration", st, at, lit(acc, `"`), v), `"`))
 			return
 		case isPreludeNamed(ct, "Time"):
-			s.retv(lit(s.rt("rs_append_time", st, lit(acc, `"`), v), `"`))
+			s.retv(lit(s.llrt("append_time", st, at, lit(acc, `"`), v), `"`))
 			return
 		case isPreludeNamed(ct, "Bytes"):
 			s.retv(s.rt("rs_append_b64_quoted", st, acc, v))
@@ -332,18 +332,18 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 		case isPreludeNamed(ct, "Duration"):
 			need(jkStr, "expected duration string")
 			txt := jstr(i)
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("duration_parse_ok", boolT, txt)), func() {
+			s.ifThen(s.add(OpNot, boolT, nil, s.llrt("duration_ok", boolT, at, txt)), func() {
 				fail(`expected duration string such as "1.5s"`)
 			})
-			ok(s.rt("duration_parse", intT, txt))
+			ok(s.llrt("duration", intT, at, txt))
 			return
 		case isPreludeNamed(ct, "Time"):
 			need(jkStr, "expected RFC 3339 time string")
 			txt := jstr(i)
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("time_parse_ok", boolT, txt)), func() {
+			s.ifThen(s.add(OpNot, boolT, nil, s.llrt("time_ok", boolT, at, txt)), func() {
 				fail("expected RFC 3339 time string")
 			})
-			ok(s.rt("time_parse", intT, txt))
+			ok(s.llrt("time", intT, at, txt))
 			return
 		case isPreludeNamed(ct, "Bytes"):
 			need(jkStr, "expected base64 string")

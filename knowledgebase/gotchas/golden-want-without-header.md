@@ -15,3 +15,8 @@ which writes runResult.String(): `exit N`, `--- stdout`, stdout,
 Fix: regenerate with `go test -run 'TestGolden$/^NAME$' -golden-update
 ./internal/llvm` and review the diff (for these three it only added the
 header and the stderr marker). Write new native goldens that way.
+
+Hit again (2026-10-12, decision 0193): text_table and str_ops_table were
+written from a run of the program (stdout only); TestGolden and
+TestGoldenRun failed until `exit 0` and `--- stdout` led the file. Write
+a new golden with `-golden-update`, or copy the header of a neighbor.

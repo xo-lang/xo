@@ -1,0 +1,261 @@
+llvmdump 70b1b5e2dc3c5046 #c 3 e98ce60778bcf7d7
+llvmdump 70b1b5e2dc3c5046 #d 5 f3715af661321088
+llvmdump 70b1b5e2dc3c5046 module 9f1851e75483a658
+llvmdump 70b1b5e2dc3c5046 order 2d80d130e8d7512d
+llvmdump 70b1b5e2dc3c5046 ~rtdecls b458c6c68d19918f
+llvmdump 70b1b5e2dc3c5046 ~types 7f808fe1d1039964
+llvmdump 7105f9c1150703ce =none rejected
+llvmdump 711006e0a01a2a59 #c 153 e6022e3fb2997d34
+llvmdump 711006e0a01a2a59 #d 552 8df2a28b8d8e108c
+llvmdump 711006e0a01a2a59 module 21624ab6f1f7e302
+llvmdump 711006e0a01a2a59 order ab9451b8961002d3
+llvmdump 711006e0a01a2a59 ~rtdecls b7377fed8ff49ca9
+llvmdump 711006e0a01a2a59 ~types b567b89c830df6ee
+llvmdump 711873647fe4296f =none rejected
+llvmdump 712a9fc307add5e4 =none no main
+llvmdump 714da88d935df594 =none no main
+llvmdump 71b16946d17450ad =none "error bench/xo/v0.4/07-cache/cache_test.xo:24:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:42:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:56:12: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:61:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:62:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:66:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:68:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:74:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, ()]`\nbench/xo/v0.4/07-cache/cache_test.xo:94:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:117:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, ()]`\nbench/xo/v0.4/07-cache/cache_test.xo:122:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:125:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:127:10: the SSA builder does not support converting `Cache[Int, Int, TestErr, ()]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:135:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/cache_test.xo:156:15: the SSA builder does not support converting `Cache[Int, Int, TestErr, fx]` to `Cache[Int, Int, TestErr, clock]`\nbench/xo/v0.4/07-cache/service_test.xo:11:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:11:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:30:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:30:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:40:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:40:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:53:30: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service_test.xo:53:18: the SSA builder does not support converting `Service[()]` to `Service[Service.Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:29:66: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:100:32: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:101:33: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:142:64: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/cache_test.xo:164:64: the SSA builder does not support converting `Cache[Int, Int, TestErr, clock]` to `Cache[Int, Int, TestErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service.xo:75:18: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Cache.fx]` to `Cache[Int, Item, UpstreamErr, ()]`\nbench/xo/v0.4/07-cache/service.xo:81:16: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Service.Cache.fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`\nbench/xo/v0.4/07-cache/service.xo:85:5: the SSA builder does not support converting `Cache[Int, Item, UpstreamErr, Service.Cache.fx]` to `Cache[Int, Item, UpstreamErr, Cache.fx]`"
+llvmdump 71f5f1fe2098601d #c 39 410e06d82e3e3023
+llvmdump 71f5f1fe2098601d #d 230 149834cb927d6f2f
+llvmdump 71f5f1fe2098601d module 4ccd675137d581f4
+llvmdump 71f5f1fe2098601d order d3bffe3066748ffc
+llvmdump 71f5f1fe2098601d ~rtdecls 63c7e567ba1f4f91
+llvmdump 71f5f1fe2098601d ~types a7b85395a783f295
+llvmdump 72234f04092af477 =none rejected
+llvmdump 7265c0c9c5d0d7b2 #c 107 9012cedd09a49de7
+llvmdump 7265c0c9c5d0d7b2 #d 356 6637938437f5dff7
+llvmdump 7265c0c9c5d0d7b2 module 2d16e6354f1a0c48
+llvmdump 7265c0c9c5d0d7b2 order 89665e27e728931d
+llvmdump 7265c0c9c5d0d7b2 ~rtdecls 22928eded9d7413a
+llvmdump 7265c0c9c5d0d7b2 ~types c648277cc0412fd5
+llvmdump 7331d8aafa19aed4 =none rejected
+llvmdump 733ae7d7e190d5cf =none rejected
+llvmdump 734dadfa69186130 #c 45 37c1304866e493ca
+llvmdump 734dadfa69186130 #d 161 46b54abb0199c18a
+llvmdump 734dadfa69186130 module 42942dba95331545
+llvmdump 734dadfa69186130 order 56d7849ddd6c224c
+llvmdump 734dadfa69186130 ~rtdecls 5d1014ebbbaff07d
+llvmdump 734dadfa69186130 ~types b0079923f26386db
+llvmdump 73875c7c86a642c5 =none rejected
+llvmdump 738d33dc07a1346b =none rejected
+llvmdump 73a74ea61657023f #c 60 70d2d364e8061de9
+llvmdump 73a74ea61657023f #d 144 d2944b6d6854ebc6
+llvmdump 73a74ea61657023f module 9250165165fe3a87
+llvmdump 73a74ea61657023f order 8b45ac461db0e9ef
+llvmdump 73a74ea61657023f ~rtdecls a7b7ddcff1644ba7
+llvmdump 73a74ea61657023f ~types 0d4c83a7f523163e
+llvmdump 73bfabb50534c03d =none rejected
+llvmdump 73c2c7ea5d8ae157 #c 59 e2b3650bdbc27d39
+llvmdump 73c2c7ea5d8ae157 #d 192 7ab9d8c2cbec475a
+llvmdump 73c2c7ea5d8ae157 module 4b07f0982ed29ae1
+llvmdump 73c2c7ea5d8ae157 order bb1e74ba276c3fb7
+llvmdump 73c2c7ea5d8ae157 ~rtdecls 8521ef5e30042068
+llvmdump 73c2c7ea5d8ae157 ~types 5e95d09cea1fef76
+llvmdump 74023b5c1ad82d39 #c 51 85d7093b41389a8c
+llvmdump 74023b5c1ad82d39 #d 137 f0c2169ef63212be
+llvmdump 74023b5c1ad82d39 module 6ba090514204fe2b
+llvmdump 74023b5c1ad82d39 order 8817f0acf268f667
+llvmdump 74023b5c1ad82d39 ~rtdecls 83ef3c19391e4a72
+llvmdump 74023b5c1ad82d39 ~types db3b721521cf3db8
+llvmdump 7447950656c8b469 =none rejected
+llvmdump 745f2fff80e902df =none error bench/xo/v0.4/02-worker-pool/pool.xo:67:8: the SSA builder does not support this tuple pattern
+llvmdump 7496f533a5b9d8fd #c 19 9853267b22a92f2e
+llvmdump 7496f533a5b9d8fd #d 47 6f55592aed997576
+llvmdump 7496f533a5b9d8fd module df8314127b99bfea
+llvmdump 7496f533a5b9d8fd order 471b08ade93fbe79
+llvmdump 7496f533a5b9d8fd ~rtdecls 990076792cb3c2b9
+llvmdump 7496f533a5b9d8fd ~types e20d5415fb885159
+llvmdump 7530d68bd72c950e #c 1 079fcbe1772a7540
+llvmdump 7530d68bd72c950e #d 3 1c51e0141d7406d3
+llvmdump 7530d68bd72c950e module 7eb240b53c097bba
+llvmdump 7530d68bd72c950e order fcaae7e2a71e59c5
+llvmdump 7530d68bd72c950e ~rtdecls e3b0c44298fc1c14
+llvmdump 7530d68bd72c950e ~types e3b0c44298fc1c14
+llvmdump 755be9df91110e40 #c 14 8970f9c62dbf3996
+llvmdump 755be9df91110e40 #d 81 febc542a2682973d
+llvmdump 755be9df91110e40 module 4c7d61946899f330
+llvmdump 755be9df91110e40 order 49ec829028af564b
+llvmdump 755be9df91110e40 ~rtdecls 8f02f4f6afa85a6c
+llvmdump 755be9df91110e40 ~types 6583d4e00f45f0f8
+llvmdump 75b1fe499a59c7ad =none rejected
+llvmdump 75d73c2221064240 =none rejected
+llvmdump 760c4a3f83a89c92 #c 4 276d1a07e3f18f87
+llvmdump 760c4a3f83a89c92 #d 31 1459402aab81fab7
+llvmdump 760c4a3f83a89c92 module 84087b671036ccb6
+llvmdump 760c4a3f83a89c92 order 03f90cef2b437584
+llvmdump 760c4a3f83a89c92 ~rtdecls 0cf7fb430fde7ff7
+llvmdump 760c4a3f83a89c92 ~types f4df48c78fb8b182
+llvmdump 765c89b3eb808bc3 =none rejected
+llvmdump 766732cb318f6146 #c 2 25c60bd937264a25
+llvmdump 766732cb318f6146 #d 5 1c18a804343f20a9
+llvmdump 766732cb318f6146 module bf8cf293141c5eb5
+llvmdump 766732cb318f6146 order 3b9559031c48f7f8
+llvmdump 766732cb318f6146 ~rtdecls 112643a14f209671
+llvmdump 766732cb318f6146 ~types e3b0c44298fc1c14
+llvmdump 766e45eb3efd8552 #c 3 6a78d35be5c73dff
+llvmdump 766e45eb3efd8552 #d 19 16f0843ee861b1ff
+llvmdump 766e45eb3efd8552 module 86b916b1f0bec0e7
+llvmdump 766e45eb3efd8552 order 9416a37f1db27aef
+llvmdump 766e45eb3efd8552 ~rtdecls 112643a14f209671
+llvmdump 766e45eb3efd8552 ~types 1ab4db77595059de
+llvmdump 76af74d0caba751d #c 3 ea16b63949eea1d5
+llvmdump 76af74d0caba751d #d 13 b32ad451a23ef71b
+llvmdump 76af74d0caba751d module 462b007c98bb7f46
+llvmdump 76af74d0caba751d order e3ba508f3331fb47
+llvmdump 76af74d0caba751d ~rtdecls 9c44c0bdbf1b0962
+llvmdump 76af74d0caba751d ~types fb6d708e498435ab
+llvmdump 76b33bc113b9a5a2 #c 95 c77c7ca01a1f9973
+llvmdump 76b33bc113b9a5a2 #d 176 714fa71e76827722
+llvmdump 76b33bc113b9a5a2 module 0c65d884d0d2e16e
+llvmdump 76b33bc113b9a5a2 order cc89ead7636db44f
+llvmdump 76b33bc113b9a5a2 ~rtdecls 96034bf2447d2014
+llvmdump 76b33bc113b9a5a2 ~types 992e3afef0c17acc
+llvmdump 77400e6384e28c30 =none rejected
+llvmdump 77402ace378acb63 #c 52 8f23c0e25ce3dd68
+llvmdump 77402ace378acb63 #d 168 ea904894311aa468
+llvmdump 77402ace378acb63 module 3148a3ebc8f0344c
+llvmdump 77402ace378acb63 order 94d68c3d18d89a12
+llvmdump 77402ace378acb63 ~rtdecls 102cfbd91d093845
+llvmdump 77402ace378acb63 ~types 6cbb1014d097b8f4
+llvmdump 776bac98356bf7d8 #c 1 5b38400e27ac261d
+llvmdump 776bac98356bf7d8 #d 3 5e9b12093a6b78b5
+llvmdump 776bac98356bf7d8 module e410835d31600114
+llvmdump 776bac98356bf7d8 order fcaae7e2a71e59c5
+llvmdump 776bac98356bf7d8 ~rtdecls e3b0c44298fc1c14
+llvmdump 776bac98356bf7d8 ~types e3b0c44298fc1c14
+llvmdump 783edd3d08cc8c65 #c 1 33f2702d9abeeda9
+llvmdump 783edd3d08cc8c65 #d 28 9cb0980b87704f2b
+llvmdump 783edd3d08cc8c65 module b319532a2a6eaf91
+llvmdump 783edd3d08cc8c65 order 331c15ac1be88500
+llvmdump 783edd3d08cc8c65 ~rtdecls 9c44c0bdbf1b0962
+llvmdump 783edd3d08cc8c65 ~types 1b274b98bb2f77fc
+llvmdump 7861a18af177eb9a #c 58 3ead913e72796435
+llvmdump 7861a18af177eb9a #d 260 e60df56f5cf3f528
+llvmdump 7861a18af177eb9a module b3c6b34f3db63c5f
+llvmdump 7861a18af177eb9a order 4744d2f14125db1e
+llvmdump 7861a18af177eb9a ~rtdecls 9e87cf639e451573
+llvmdump 7861a18af177eb9a ~types d71fcf263da0dc41
+llvmdump 787489616fef970e =none rejected
+llvmdump 78b6145512055eff #c 4 80002ba63488c558
+llvmdump 78b6145512055eff #d 15 23b3568740b9197c
+llvmdump 78b6145512055eff module 7f5f3ada63037a7d
+llvmdump 78b6145512055eff order 70ccced2ce23e122
+llvmdump 78b6145512055eff ~rtdecls 9c44c0bdbf1b0962
+llvmdump 78b6145512055eff ~types 28fb4e745ac474cc
+llvmdump 78f8972c1118c8a9 #c 49 e96f03978e40b906
+llvmdump 78f8972c1118c8a9 #d 162 7f20109503e7c8b3
+llvmdump 78f8972c1118c8a9 module 83a10a47d0aa8d89
+llvmdump 78f8972c1118c8a9 order 59a16f07c7b201ce
+llvmdump 78f8972c1118c8a9 ~rtdecls 9d97103a4d8425fd
+llvmdump 78f8972c1118c8a9 ~types 51cd96662e90b6d8
+llvmdump 78fd212bbf81bef2 #c 4 32b023cfa2c60ae1
+llvmdump 78fd212bbf81bef2 #d 31 c300323a8ca9186d
+llvmdump 78fd212bbf81bef2 module 8c26e3757e44843b
+llvmdump 78fd212bbf81bef2 order 03f90cef2b437584
+llvmdump 78fd212bbf81bef2 ~rtdecls 0cf7fb430fde7ff7
+llvmdump 78fd212bbf81bef2 ~types f4df48c78fb8b182
+llvmdump 791cd4dab4386ea4 =none rejected
+llvmdump 79461e296ceabf7f #c 17 0e206c622002dc19
+llvmdump 79461e296ceabf7f #d 87 50daead7f68b72c7
+llvmdump 79461e296ceabf7f module 7138617c3a39ab0e
+llvmdump 79461e296ceabf7f order 394b0575c767b62c
+llvmdump 79461e296ceabf7f ~rtdecls 661c7e2479f98538
+llvmdump 79461e296ceabf7f ~types 18ed7e8449934e21
+llvmdump 79952537fd2150df #c 3 912e2e43cd82abd8
+llvmdump 79952537fd2150df #d 5 193f0f0bbfad8aed
+llvmdump 79952537fd2150df module 423db96ea8169a70
+llvmdump 79952537fd2150df order 21e04a7ad04492e2
+llvmdump 79952537fd2150df ~rtdecls 112643a14f209671
+llvmdump 79952537fd2150df ~types e3b0c44298fc1c14
+llvmdump 799d00d89ecb43d2 #c 15 8b04664eebffa036
+llvmdump 799d00d89ecb43d2 #d 51 8d1f573e4bdae0a2
+llvmdump 799d00d89ecb43d2 module fb506a9e3ec18bcd
+llvmdump 799d00d89ecb43d2 order 367a690fada6dfaf
+llvmdump 799d00d89ecb43d2 ~rtdecls a7f2654cfcecadd1
+llvmdump 799d00d89ecb43d2 ~types a8cb68530c03f2db
+llvmdump 79a0049cac70eb2e #c 2 0851a01c35677c98
+llvmdump 79a0049cac70eb2e #d 5 d4f741ea990e26b1
+llvmdump 79a0049cac70eb2e module 0bb3829cfa5e0f34
+llvmdump 79a0049cac70eb2e order 462bee62f05a8383
+llvmdump 79a0049cac70eb2e ~rtdecls 9c44c0bdbf1b0962
+llvmdump 79a0049cac70eb2e ~types e3b0c44298fc1c14
+llvmdump 79a015d6e2c28a55 =none rejected
+llvmdump 79e957da939c97ae =none rejected
+llvmdump 79fba6641135ff12 #c 10 54bffd6cd215d5d5
+llvmdump 79fba6641135ff12 #d 31 c73f3ae6e9581a8f
+llvmdump 79fba6641135ff12 module b03afb244207c986
+llvmdump 79fba6641135ff12 order c592a78fc2d94f7b
+llvmdump 79fba6641135ff12 ~rtdecls da4e47784e224f59
+llvmdump 79fba6641135ff12 ~types 610987dd206488f7
+llvmdump 79fda9e07b7ab7aa =none rejected
+llvmdump 7a36815ee5a3dff5 #c 3 a15c1b2636095ff5
+llvmdump 7a36815ee5a3dff5 #d 6 fbcf35fded8ec1e1
+llvmdump 7a36815ee5a3dff5 module 589f11c462d5c3d8
+llvmdump 7a36815ee5a3dff5 order ff7c9f9331b3fa90
+llvmdump 7a36815ee5a3dff5 ~rtdecls ab7cc4d520051211
+llvmdump 7a36815ee5a3dff5 ~types e3b0c44298fc1c14
+llvmdump 7a3c1cf41fbf0a88 #c 146 8f7c38a5944396f6
+llvmdump 7a3c1cf41fbf0a88 #d 547 b6461630f1c5c843
+llvmdump 7a3c1cf41fbf0a88 module c08e32dfbe630f9a
+llvmdump 7a3c1cf41fbf0a88 order c3daf550377e67a6
+llvmdump 7a3c1cf41fbf0a88 ~rtdecls 9ab094259a6724c9
+llvmdump 7a3c1cf41fbf0a88 ~types 67d7073392563b13
+llvmdump 7a827341bfd58a6c =none rejected
+llvmdump 7a979f886578cd9e =none rejected
+llvmdump 7aba52f6086e3de5 =none rejected
+llvmdump 7adaf7e79c8cc6f6 #c 2 e9bde7af44a9dde9
+llvmdump 7adaf7e79c8cc6f6 #d 5 776191dda83fef67
+llvmdump 7adaf7e79c8cc6f6 module 80621c0893d20cf5
+llvmdump 7adaf7e79c8cc6f6 order a00d6fcf4bcefa60
+llvmdump 7adaf7e79c8cc6f6 ~rtdecls b09321562673e660
+llvmdump 7adaf7e79c8cc6f6 ~types 1902a8bbe2c0aa9e
+llvmdump 7b6d9bf55dcb06da =none rejected
+llvmdump 7b7ce1afe962098a #c 47 33c32edd19a0dffa
+llvmdump 7b7ce1afe962098a #d 152 c60deeff06f58e72
+llvmdump 7b7ce1afe962098a module 7ff81ffc19870bb7
+llvmdump 7b7ce1afe962098a order 8ac2042cc80cc41d
+llvmdump 7b7ce1afe962098a ~rtdecls 8521ef5e30042068
+llvmdump 7b7ce1afe962098a ~types ca1931eafb5b7b48
+llvmdump 7c93ab1385363b11 #c 1 0e10ca6b720195f5
+llvmdump 7c93ab1385363b11 #d 2 6fa97399c006262f
+llvmdump 7c93ab1385363b11 module c562cf7c44e25ac5
+llvmdump 7c93ab1385363b11 order af250c7a6537855c
+llvmdump 7c93ab1385363b11 ~rtdecls e3b0c44298fc1c14
+llvmdump 7c93ab1385363b11 ~types e3b0c44298fc1c14
+llvmdump 7c9ade3949c397da #c 48 bcf098008ba2538e
+llvmdump 7c9ade3949c397da #d 161 463eedf29b03c015
+llvmdump 7c9ade3949c397da module 68d5fc403f516c6a
+llvmdump 7c9ade3949c397da order 926a038018ee2d00
+llvmdump 7c9ade3949c397da ~rtdecls 9d97103a4d8425fd
+llvmdump 7c9ade3949c397da ~types 51cd96662e90b6d8
+llvmdump 7cdaac1c72854591 =none no main
+llvmdump 7ce1e0d2cb2af4c6 =none rejected
+llvmdump 7cfc0362558598ce =none rejected
+llvmdump 7d0d87cb2c6d7b27 =none rejected
+llvmdump 7d56de3bce7bd919 #c 3 37856ed6c9f77649
+llvmdump 7d56de3bce7bd919 #d 18 077917ad45942bb5
+llvmdump 7d56de3bce7bd919 module 5d720c54568e7d32
+llvmdump 7d56de3bce7bd919 order 715b86f12a568674
+llvmdump 7d56de3bce7bd919 ~rtdecls 8bfd8b90cdd1fc83
+llvmdump 7d56de3bce7bd919 ~types 019a9c6f93dca8d5
+llvmdump 7dce3ed9eaf69387 #c 2 1d60484805c5de9f
+llvmdump 7dce3ed9eaf69387 #d 19 acf94a23d4d617c9
+llvmdump 7dce3ed9eaf69387 module deed65e230336d9f
+llvmdump 7dce3ed9eaf69387 order 43a568cab77459e8
+llvmdump 7dce3ed9eaf69387 ~rtdecls da46fab9a445d3df
+llvmdump 7dce3ed9eaf69387 ~types e3b0c44298fc1c14
+llvmdump 7def2ecdd4d54929 #c 8 0354f5b4a4a34401
+llvmdump 7def2ecdd4d54929 #d 65 0f7b70cd17fea207
+llvmdump 7def2ecdd4d54929 module a1c6194edbf486b0
+llvmdump 7def2ecdd4d54929 order 236781b176090d26
+llvmdump 7def2ecdd4d54929 ~rtdecls 3c596d4651b19d75
+llvmdump 7def2ecdd4d54929 ~types c0bca254a4fb5aa1
+llvmdump 7e02bfaf12419810 =none rejected
+llvmdump 7f32deffd0ceffad =none rejected
+llvmdump 7f61e907591b5e0c #c 6 ec3d0c2a7cc8f03b
+llvmdump 7f61e907591b5e0c #d 22 f7f81cce88ea8ae5
+llvmdump 7f61e907591b5e0c module 576062e41ba9cd6b
+llvmdump 7f61e907591b5e0c order 46e2cc55befb4d33
+llvmdump 7f61e907591b5e0c ~rtdecls 4190a824a46ea69e
+llvmdump 7f61e907591b5e0c ~types 83fb021c47d77d14
+llvmdump 7fa3d507eba3f93b =none rejected

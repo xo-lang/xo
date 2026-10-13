@@ -234,6 +234,21 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // the C paths of the number and time text and of the Str operations
+  // (decision 0193), which only XO_LLRT_C builds call
+  for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
+    "xo_time_parse"] {
+    if code.contains(sym) {
+      out.push("-DXO_TEXT_C")
+      break
+    }
+  }
+  for sym in ["xo_str_trim", "xo_str_replace"] {
+    if code.contains(sym) {
+      out.push("-DXO_STRINGS_C")
+      break
+    }
+  }
   out
 }
 

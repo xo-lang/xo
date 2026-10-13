@@ -65,23 +65,26 @@ func TestSelfhostArm64(t *testing.T) {
 		}
 		dirs = append(dirs, d)
 	}
-	bins := selfhostBinaries(t, "arm64", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	wants := make([]*goldPieces, len(dirs))
+	// the Go emitter's results, while the builds and the subtests run
+	wait := background(t, func() {
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(root, dirs[i], arm64Flags) })
+	})
+	bins := selfhostBinaries(t, "arm64", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runArm64(t, bin, root, dirs, arm64Flags, "--std=std")
-			var st arm64Stats
-			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareArm64(d, wants[i], got[d], &st)...)
-			}
+			wait()
+			st, fails := compareAll(t, "compare arm64", dirs, func(i int, st *arm64Stats) []string {
+				return compareArm64(dirs[i], wants[i], got[dirs[i]], st)
+			}, (*arm64Stats).add)
 			t.Logf("%s", st)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -161,9 +164,12 @@ func TestSelfhostArm64Mutations(t *testing.T) {
 		}
 		skipRecording(t)
 	}
+	wants := make([]*goldPieces, len(dirs))
+	wait := background(t, func() {
+		parallel(t, "Go arm64 emitter", dirs, func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	})
 	got := runArm64(t, bin, tmp, dirs, arm64Flags, "--std="+stdDir)
-	wants := make([]string, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goAsm(wd, dirs[i], arm64Flags) })
+	wait()
 	var st arm64Stats
 	var fails []string
 	for i, d := range dirs {
@@ -189,16 +195,52 @@ func reportFails(t *testing.T, fails []string) {
 }
 
 // goAsm is what `xo asmdump` prints for dir checked from root: the
-// assembly, or `== rejected`, `== error <why>`. Recorded as the asmdump
+// assembly, or `== rejected`, `== error <why>`, cut into the pieces
+// compareArm64 compares: meta "head" (the first line, when it is one of
+// `== rejected`, `== error <why>`), else "all" (the whole file), and of
+// arm64Pieces "f:<function>", "l:<function>" (its call site table),
+// "h:<helper>", the set "literals", and "entry". Recorded as the asmdump
 // kind (gogoldens_test.go).
-func goAsm(root, dir string, flags []string) string {
-	if goldensMode() == goldensLive {
-		return goAsmLive(root, dir, flags)
-	}
+func goAsm(root, dir string, flags []string) *goldPieces {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, root, dir)
 	o := fmt.Sprintf("flags=%s lineroot=%s", strings.Join(flags, ","), cx.norm(root))
-	return recorded("asmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx, func() string { return goAsmLive(root, dir, flags) })
+	var key []string
+	if goldensMode() != goldensLive {
+		key = []string{o, cx.dirKey(wd, dir, true)}
+	}
+	args := strings.TrimSpace("--each --std=std --wd=" + wd + " " + strings.Join(flags, " "))
+	hint := goldHint("TestSelfhostArm64(Mutations)?", strings.TrimSpace("asmdump "+strings.Join(flags, " ")+" "+dir), "arm64", args+" "+dir, wd)
+	return recordedPieces("asmdump", dir+" "+o, hint, key, cx, func() *goldPieces { return asmGoldPieces(goAsmLive(root, dir, flags)) })
+}
+
+// asmGoldPieces cuts the Go emitter's text into goAsm's pieces.
+func asmGoldPieces(text string) *goldPieces {
+	p := newPieces()
+	if h := firstLine(text); strings.HasPrefix(h, "== ") {
+		p.setMeta("head", h)
+		return p
+	}
+	p.add("all", text)
+	g := arm64Pieces(text)
+	for _, f := range []string{"f", "l", "h"} {
+		p.addFamily(f)
+	}
+	for name, t := range g.funcs {
+		p.addMember("f", name, t)
+	}
+	for name, t := range g.lsdas {
+		p.addMember("l", name, t)
+	}
+	for key, t := range g.helpers {
+		p.addMember("h", key, t)
+	}
+	p.addSet("literals")
+	for lit := range g.literals {
+		p.addSet("literals", lit)
+	}
+	p.add("entry", g.entry)
+	return p
 }
 
 // goAsmLive is goAsm with the Go emitter run.
@@ -229,11 +271,9 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 	out := map[string]string{}
 	const batch = 20
 	args := append(append([]string{"--each", "--wd=" + workDir(t)}, flags...), more...)
-	texts := runXoBatches(t, bin, root, args, dirs, batch)
-	for k, text := range texts {
-		i := k * batch
-		chunk := dirs[i:min(i+batch, len(dirs))]
-		parts := asmHead.Split(text, -1)
+	for _, xb := range runXoBatches(t, bin, root, args, dirs, batch) {
+		chunk := xb.paths
+		parts := asmHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo emitter printed %d runs for %d directories", len(parts)-1, len(chunk))
 		}
@@ -246,6 +286,23 @@ func runArm64(t *testing.T, bin, root string, dirs []string, flags []string, mor
 		}
 	}
 	return out
+}
+
+// add adds the counts of o to s.
+func (s *arm64Stats) add(o arm64Stats) {
+	s.runs += o.runs
+	s.compared += o.compared
+	s.notBuilt += o.notBuilt
+	s.rejected += o.rejected
+	s.byteSame += o.byteSame
+	s.funcs += o.funcs
+	s.same += o.same
+	s.skipped += o.skipped
+	s.helpers += o.helpers
+	s.helpersSame += o.helpersSame
+	s.literals += o.literals
+	addCounts(&s.skips, o.skips)
+	addCounts(&s.notBuiltWhy, o.notBuiltWhy)
 }
 
 type arm64Stats struct {
@@ -279,13 +336,15 @@ func (s arm64Stats) report() string {
 }
 
 // compareArm64 compares one run and returns its differences.
-func compareArm64(dir, want, got string, st *arm64Stats) []string {
+func compareArm64(dir string, want *goldPieces, got string, st *arm64Stats) []string {
 	st.runs++
 	if st.skips == nil {
 		st.skips, st.notBuiltWhy = map[string]int{}, map[string]int{}
 	}
-	gh, xh := firstLine(want), firstLine(got)
+	gh, xh := want.m("head"), firstLine(got)
 	switch {
+	case want.missing:
+		return []string{dir + ": " + want.missingText()}
 	case gh == "== rejected":
 		if xh != "== rejected" && !strings.HasPrefix(xh, "== unsupported") {
 			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + xh}
@@ -313,12 +372,12 @@ func compareArm64(dir, want, got string, st *arm64Stats) []string {
 	}
 	st.compared++
 	body, skipped, _ := strings.Cut(got, "== skipped\n")
-	if body == want {
+	if want.eq("all", body) {
 		st.byteSame++
 	} else if strings.TrimSpace(skipped) == "" {
 		// since stage 4 every run whose functions were all emitted is the
 		// Go emitter's text byte for byte (decision 0158)
-		return []string{fmt.Sprintf("%s: the whole file differs: %s", dir, firstDiff(body, want))}
+		return []string{fmt.Sprintf("%s: the whole file differs: %s", dir, want.diff("all", body))}
 	}
 	skip := map[string]string{}
 	for _, l := range nonEmptyLines(skipped) {
@@ -329,19 +388,24 @@ func compareArm64(dir, want, got string, st *arm64Stats) []string {
 		}
 		skip[l[:i]] = l[i+2:]
 	}
-	g := arm64Pieces(want)
 	x := arm64Pieces(body)
+	lits := make([]string, 0, len(x.literals))
+	for l := range x.literals {
+		lits = append(lits, l)
+	}
+	// the Go side's arm64Pieces (asmGoldPieces)
+	g := want.resolved("f", x.funcs, sortedKeys(skip)).resolved("l", x.lsdas, nil).resolved("h", x.helpers, nil).resolvedSet("literals", lits)
 	var fails []string
-	for name, text := range g.funcs {
+	for _, name := range g.names("f:") {
 		st.funcs++
 		xt, ok := x.funcs[name]
 		switch {
-		case ok && xt == text && x.lsdas[name] == g.lsdas[name]:
+		case ok && g.eq("f:"+name, xt) && g.eq("l:"+name, x.lsdas[name]):
 			st.same++
-		case ok && xt == text:
-			fails = append(fails, fmt.Sprintf("%s: the call site table of %s differs: %s", dir, name, firstDiff(x.lsdas[name], g.lsdas[name])))
+		case ok && g.eq("f:"+name, xt):
+			fails = append(fails, fmt.Sprintf("%s: the call site table of %s differs: %s", dir, name, g.diff("l:"+name, x.lsdas[name])))
 		case ok:
-			fails = append(fails, fmt.Sprintf("%s: %s differs: %s", dir, name, firstDiff(xt, text)))
+			fails = append(fails, fmt.Sprintf("%s: %s differs: %s", dir, name, g.diff("f:"+name, xt)))
 		case skip[name] != "":
 			st.skipped++
 			st.skips[skip[name]]++
@@ -350,28 +414,28 @@ func compareArm64(dir, want, got string, st *arm64Stats) []string {
 		}
 	}
 	for name := range x.funcs {
-		if _, ok := g.funcs[name]; !ok {
+		if !g.has("f:" + name) {
 			fails = append(fails, fmt.Sprintf("%s: the Xo emitter emits %s, the Go emitter does not", dir, name))
 		}
 	}
 	for key, text := range x.helpers {
 		st.helpers++
-		if gt, ok := g.helpers[key]; !ok {
+		if !g.has("h:" + key) {
 			fails = append(fails, fmt.Sprintf("%s: the Xo emitter emits the helper %s, the Go emitter does not", dir, key))
-		} else if gt != text {
-			fails = append(fails, fmt.Sprintf("%s: the helper %s differs: %s", dir, key, firstDiff(text, gt)))
+		} else if !g.eq("h:"+key, text) {
+			fails = append(fails, fmt.Sprintf("%s: the helper %s differs: %s", dir, key, g.diff("h:"+key, text)))
 		} else {
 			st.helpersSame++
 		}
 	}
 	for lit := range x.literals {
 		st.literals++
-		if !g.literals[lit] {
+		if !g.inSet("literals", lit) {
 			fails = append(fails, fmt.Sprintf("%s: the Xo emitter's literal %s is not the Go emitter's", dir, lit))
 		}
 	}
-	if g.entry != x.entry {
-		fails = append(fails, fmt.Sprintf("%s: xo_entry differs: %s", dir, firstDiff(x.entry, g.entry)))
+	if !g.eq("entry", x.entry) {
+		fails = append(fails, fmt.Sprintf("%s: xo_entry differs: %s", dir, g.diff("entry", x.entry)))
 	}
 	sort.Strings(fails)
 	return fails

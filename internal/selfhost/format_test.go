@@ -81,23 +81,35 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 	got := splitFormatDump(string(out))
 	same, errs, bad := 0, 0, 0
 	for _, f := range files {
-		want := goFormat(t, root, f)
+		gp := goFormat(t, root, f)
+		if gp.missing {
+			t.Error(gp.missingText())
+			bad++
+			continue
+		}
+		g, ok := got[f]
+		// replayed, the Go side's text is known when the hashes agree
+		want, known := gp.resolve("-", g)
 		switch {
+		case !known:
 		case strings.HasPrefix(want, " syntax errors "):
 			errs++
 		case strings.HasPrefix(want, "== "):
 			t.Fatalf("%s: %s", f, want)
 		}
-		g, ok := got[f]
 		if !ok {
 			t.Errorf("%s: no output from the self hosted formatter", f)
 			bad++
 			continue
 		}
-		if g != want {
+		if !known || g != want {
 			bad++
 			if bad <= 5 {
-				t.Errorf("%s: formatted differently:\n%s", f, firstLineDiff(want, g))
+				diff := gp.diff("-", g)
+				if known {
+					diff = firstLineDiff(want, g)
+				}
+				t.Errorf("%s: formatted differently:\n%s", f, diff)
 			}
 			continue
 		}
@@ -108,8 +120,9 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 
 // goFormat is internal/format's result for file f (relative to root) as
 // the Xo formatter prints it: "\n" and the text, ` syntax errors <n>\n`,
-// or `== error <why>`. Recorded as the format kind (gogoldens_test.go).
-func goFormat(t *testing.T, root, f string) string {
+// or `== error <why>`. Recorded as the format kind (gogoldens_test.go:
+// the whole text is piece "-").
+func goFormat(t *testing.T, root, f string) *goldPieces {
 	t.Helper()
 	full := filepath.Join(root, f)
 	src, err := os.ReadFile(full)
@@ -117,17 +130,25 @@ func goFormat(t *testing.T, root, f string) string {
 		t.Fatal(err)
 	}
 	cx := newGoldenCtx(full)
-	return recorded("format", f, []string{cx.fileKey(f, src)}, cx, func() string {
-		res, err := format.Source(f, src)
-		var pe *format.ParseError
-		switch {
-		case errors.As(err, &pe):
-			return fmt.Sprintf(" syntax errors %d\n", len(pe.Diagnostics))
-		case err != nil:
-			return "== error " + err.Error()
-		}
-		return "\n" + string(res)
+	hint := goldHint("TestSelfhostFormat", "", "cli/core/format", f, root)
+	return recordedPieces("format", f, hint, []string{cx.fileKey(f, src)}, cx, func() *goldPieces {
+		g := newPieces()
+		g.add("-", goFormatLive(f, src))
+		return g
 	})
+}
+
+// goFormatLive is goFormat with internal/format run.
+func goFormatLive(f string, src []byte) string {
+	res, err := format.Source(f, src)
+	var pe *format.ParseError
+	switch {
+	case errors.As(err, &pe):
+		return fmt.Sprintf(" syntax errors %d\n", len(pe.Diagnostics))
+	case err != nil:
+		return "== error " + err.Error()
+	}
+	return "\n" + string(res)
 }
 
 // splitFormatDump splits the formatter's output into the text after each

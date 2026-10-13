@@ -93,8 +93,10 @@ Update the knowledgebase in the same change as the work, not later:
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
-    `merge` (the default, about 2.5 min), `full` (every backend, about
-    1 h cold, `-timeout 120m`); full runs nightly, before tagging, and
+    `merge` (the default, about 4 min on the Mac), `full` (every backend,
+    58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
+    120m`); `XO_SELFHOST_JOBS` sizes its worker pool (default
+    min(GOMAXPROCS, 4)); full runs nightly, before tagging, and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
 - Native builds (`xo build|run|test` with `--backend=arm64|llvm` or

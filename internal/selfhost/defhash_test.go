@@ -94,12 +94,20 @@ func TestSelfhostDefhash(t *testing.T) {
 	same, defs := 0, 0
 	for _, m := range mods {
 		dir, path, _ := strings.Cut(m, "=")
-		want, n := goDefhash(t, dir, path)
-		defs += n
+		gp := goDefhash(t, dir, path)
 		g, ok := got[m]
+		// replayed, the Go side's text is known when the hashes agree
+		want, known := gp.resolve("-", g)
+		if known {
+			defs += defhashCount(want)
+		}
 		switch {
+		case gp.missing:
+			t.Error(gp.missingText())
 		case !ok:
 			t.Errorf("%s: no output from the Xo port", path)
+		case !known:
+			t.Errorf("%s: the Xo port differs from internal/defhash: %s", path, gp.diff("-", g))
 		case g != want:
 			t.Errorf("%s: the Xo port differs from internal/defhash: %s", path, firstDifference(want, g))
 		default:
@@ -110,33 +118,45 @@ func TestSelfhostDefhash(t *testing.T) {
 }
 
 // goDefhash is internal/defhash's dump of module path in dir, as the Xo
-// port prints it, and the number of definitions. Recorded as the defhash
-// kind (gogoldens_test.go): the module's files are the key.
-func goDefhash(t *testing.T, dir, path string) (string, int) {
+// port prints it. Recorded as the defhash kind (gogoldens_test.go: the
+// whole dump is piece "-"): the module's files are the key.
+func goDefhash(t *testing.T, dir, path string) *goldPieces {
 	t.Helper()
 	cx := newGoldenCtx(dir)
 	key := []string{path, cx.norm(dir), treeSum(dir)}
-	out := recorded("defhash", dir+" "+path, key, cx, func() string {
-		ds, err := defhash.Module(dir, path)
-		if err != nil {
-			return "error " + err.Error() + "\n"
-		}
-		if ds == nil {
-			ds = []defhash.Def{}
-		}
-		var b bytes.Buffer
-		enc := json.NewEncoder(&b)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(ds); err != nil {
-			return "error " + err.Error() + "\n"
-		}
-		return b.String()
+	hint := goldHint("TestSelfhostDefhash", "", "cli/semantic", "defhash "+dir+"="+path, repoRoot(t))
+	return recordedPieces("defhash", dir+" "+path, hint, key, cx, func() *goldPieces {
+		g := newPieces()
+		g.add("-", goDefhashLive(dir, path))
+		return g
 	})
-	if strings.HasPrefix(out, "error ") || strings.HasPrefix(out, missingGolden) {
-		return out, 0
+}
+
+// defhashCount is the number of definitions of a dump of goDefhash.
+func defhashCount(out string) int {
+	if strings.HasPrefix(out, "error ") {
+		return 0
 	}
-	return out, strings.Count(out, "\n  {")
+	return strings.Count(out, "\n  {")
+}
+
+// goDefhashLive is goDefhash with internal/defhash run.
+func goDefhashLive(dir, path string) string {
+	ds, err := defhash.Module(dir, path)
+	if err != nil {
+		return "error " + err.Error() + "\n"
+	}
+	if ds == nil {
+		ds = []defhash.Def{}
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(ds); err != nil {
+		return "error " + err.Error() + "\n"
+	}
+	return b.String()
 }
 
 // splitDefhashDumps splits `semantic defhash` output into module path -> dump.

@@ -1837,6 +1837,20 @@ fn (var b: Builder) rt(name: Str, t0: Int, args: List[Int]) -> Int {
   b.add(Op.Call, t, Aux.S(s: "rt.${name}"), args)
 }
 
+/// A call of the native prelude's llrt_<name>: runtime text written in
+/// Xo (std/native/llrt/text.xo, decision 0193), called where the C
+/// runtime's rt.<name> was (fn.llrt).
+fn (var b: Builder) llrt(name: Str, t: Int, args: List[Int]) -> Int {
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    b.unsupported("the runtime's ${name} without the native prelude")
+    return b.undef(t)
+  }
+  let f = b.declare(impl, [])
+  // unchecked, like the C it replaces (fn.llrt)
+  b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
+}
+
 fn (var b: Builder) jump(to: Int, args: List[Int]) {
   if b.s.pending >= 0 {
     b.flush_landing()

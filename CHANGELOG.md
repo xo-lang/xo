@@ -22,6 +22,49 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   string literals, the predeclared `target` of a cross build (it was the
   compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
   an amd64 host, and paths printed by `xo serve` on Linux.
+- The LLVM backend builds Windows programs (windows/amd64 host, decision
+  0197 stage 1): `xo build --backend=llvm` with LLVM's clang
+  (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's
+  POSIX use maps onto Win32 and Winsock (std/llrt/xo_win.c): threads,
+  tasks on fibers, faults with deferred code, timers, files, sockets,
+  HTTP and TLS, standard input. 140 of 144 LLVM goldens pass on Windows
+  Server 2025. A program using processes (Proc) stops with the new
+  XO1504 (a std API the native runtime does not support on the target
+  yet). A Windows host also cross builds the other Windows architecture
+  (`--targets=windows/arm64`: 141 of 144 goldens build and link; none
+  run yet, for lack of a Windows on Arm host). scripts/remote-windows.sh
+  runs a command on, or holds, a temporary Windows EC2 instance.
+- The LLVM backend builds and passes the golden suite on darwin/amd64
+  (decision 0196): on an Intel Mac with macOS 26.5.2 the whole
+  internal/llvm package passes, TestGolden 143 of 143, with no emitter
+  or runtime change. `scripts/intel-mac-test.sh` runs a test command for
+  a commit on that Mac. The LLVM tests now drop AddressSanitizer where
+  it builds but cannot start, as they did for ThreadSanitizer.
+- The WebAssembly backend (decision 0179) coalesces each function's
+  locals by liveness and lays out reducible functions as structured
+  control flow (block, loop, br) instead of the dispatch loop: the self
+  hosted checker's module is 8.3 MB (8.9 MB), runs seven goldens under
+  Node in about 0.55 s and 340 MB (2.3 s and 2.1 GB), and checks all 144
+  LLVM goldens in a Chrome worker (63 before, the rest overflowed the
+  worker's stack). `os.fs.write` works in wasm (WASI `path_open` and
+  `fd_write`).
+- internal/selfhost scales with cores: every native build, Xo process,
+  and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
+  slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
+  core count), builds and the heavy runs also from
+  `XO_SELFHOST_HEAVY_JOBS` (default one per 8 GiB of memory, 16 GiB in
+  the full tier); heavy runs get a process each, backends and
+  comparisons run at once, and the full tier prebuilds every component.
+  The full tier takes 3,490 s on r8g.8xlarge with 32 jobs (over 3 hours
+  before); scripts/remote-full.sh defaults to r8g.8xlarge (256 GiB).
+  `-short` no longer samples the heavy runs (175 s to 31 to 52 s on the
+  development Mac).
+- The arm64 backend (both emitters) lowers a division or remainder by
+  an Int constant to a multiply high and shifts instead of `sdiv`
+  (decision 0194): faster, with the same faults (only the constants 0
+  and -1 can fault). A negative literal is now a constant there (no
+  overflow check). Duration text in Xo is still 1.171x of the C on
+  arm64 and 1.087x on LLVM in instructions, so it keeps its C path.
 
 - The self hosted `xo` can be bootstrapped without Go:
   `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
@@ -32,7 +75,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   build the TLS library on an empty cache. The selfhost differential
   tests can record their Go side and replay it
   (`XO_SELFHOST_GOLDENS=record|replay`); internal/progen now gives one
-  program per seed.
+  program per seed. The recording is committed as hashes (6 MB:
+  internal/selfhost/testdata/gogoldens), per unit, and per function for
+  the SSA, LLVM, arm64, and Go generator comparisons, so a replayed
+  mismatch names the function; the mutation generators no longer need
+  internal/lexer.
 
 - The self hosted `xo` has `xo rtpack` (decision 0178): the prebuilt
   runtime packs scripts/release.sh ships, byte identical to the Go
@@ -159,6 +206,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with a prebuilt runtime pack into a signed executable, so `xo1 build
   --ld=macho` needs no C compiler at all for programs without `use c`
   sources (decision 0182).
+- The WebAssembly backend's modules are much smaller (decision 0179,
+  stage 3): the self hosted checker went from 43.2 MB to 8.9 MB and
+  runs under Node in 1.9 s and 2.5 GB instead of 10.7 s and 5.9 GB.
+  Large `var` parameters are passed by reference and kept in memory,
+  programs where nothing waits keep no suspension frames, field
+  releases are one call, locals are shared and renumbered.
+  `selfhost/wasm --annotate` attributes a module's bytes to SSA opcodes.
 - A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of
@@ -199,6 +253,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   faster than before; per rune work on arm64 is 1.45 to 1.8 times the
   C's instructions, so `XO_UNICODE=c` at build time still selects the C
   implementation (compiled only then, never in the prebuilt packs).
+- More of the native runtime is Xo (decision 0193, which also orders the
+  rest of the port): `std/native/llrt/text.xo` does Int.parse, a
+  Duration's text and Duration.parse, a Time's RFC 3339 text and
+  std/json's Time parse, and the Debug quoting of Str and Bytes;
+  `strings.xo` does Str.replace and the trims. Output is unchanged on
+  every backend, and the wasm backend runs the Xo versions. Int.parse,
+  Duration.parse, Time text, Debug quoting, and replace retire fewer
+  instructions than the C did (Time text about a quarter); Duration text
+  does not yet meet the 5 percent bar, so `XO_LLRT_C=text,strings` at
+  build time selects the C implementations (`XO_UNICODE=c` still works).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).
