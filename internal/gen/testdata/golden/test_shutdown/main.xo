@@ -91,6 +91,22 @@ fn server(os: Os) ! {
   os.stdio.println("serve returned")
 }
 
+// A server whose listener outlives serve: a request that arrives after
+// the stop fails at once instead of waiting in the backlog for a serve
+// that never comes (gotchas/mem-listener-backlog-after-serve.md).
+fn lingering(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /slow", fn(_req) {
+    os.clock.sleep(2s)
+    http.text(200, "slow done")
+  })
+  let l = os.net.listen("127.0.0.1:8081")?
+  http.server(l, r).serve()?
+  os.clock.sleep(1s)
+  l.close()
+  os.stdio.println("listener closed")
+}
+
 fn main(os: Os) ! {
   pipeline(os)?
 }
