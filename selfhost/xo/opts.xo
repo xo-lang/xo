@@ -8,6 +8,7 @@
 // parsed the same way.
 
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 /// Everything a command line sets.
 struct Opts {
@@ -67,18 +68,167 @@ fn bool_flags() -> List[Str] {
   ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline"]
 }
 
+/// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
+/// build, run, and test print `xo`'s usage (selfhost/cli/cmdhelp), which
+/// leaves out xo1's own flags.
 fn usage_line() -> Str {
   "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --seed=N --explore=N --record=FILE --run=SUB --cases=N --real -v --phase-times"
 }
 
-/// usage prints the usage line with why and exits 2 (flag.ErrHelp and a
-/// bad flag both exit 2 in cmd/xo).
-fn usage(os: Os, why: Str) -> Never {
+/// usage prints why and the usage of the command cmd on standard error
+/// and exits 2 (a usage error).
+fn usage(os: Os, cmd: Str, why: Str) -> Never {
   if !why.is_empty() {
     os.stdio.eprintln(why)
   }
-  os.stdio.eprintln(usage_line())
+  let u = cmdhelp.usage(cmd)
+  if u.is_empty() {
+    os.stdio.eprintln(usage_line())
+  } else {
+    os.stdio.eprint(u)
+  }
   os.proc.exit(2)
+}
+
+/// What front decided: exit with code (code >= 0), or run the command
+/// line args.
+struct Front {
+  code: Int = -1
+  args: List[Str] = []
+}
+
+/// front handles what every command line shares before a command runs:
+/// `xo` alone (the command list on standard error, exit 2), `xo help
+/// [command]` and -h or --help anywhere before `--` (run: before its
+/// directory) on standard output (exit 0), and the package pattern
+/// `D/...` (decision 0210, spec/core.md 10.1), which a command that takes
+/// directories reads as D (each of them already covers the directories
+/// below D) once D/... is known to match a directory with .xo files. The
+/// global --std=DIR and --wd=DIR may come before the command
+/// (selfhost/cli/core).
+fn front(os: Os, args: List[Str]) -> Front {
+  var i = 0
+  while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
+    i += 1
+  }
+  if i >= args.len() {
+    os.stdio.eprint(cmdhelp.top())
+    return Front{code: 2}
+  }
+  let cmd = args[i]
+  if cmd == "help" || cmdhelp.is_help_flag(cmd) {
+    if i + 1 < args.len() {
+      let u = cmdhelp.usage(args[i + 1])
+      if u.is_empty() {
+        os.stdio.eprint("xo help: unknown command ${args[i + 1].quote()}\n\n${cmdhelp.top()}")
+        return Front{code: 2}
+      }
+      os.stdio.print(u)
+      return Front{code: 0}
+    }
+    os.stdio.print(cmdhelp.top())
+    return Front{code: 0}
+  }
+  if !cmdhelp.is_command(cmd) {
+    return Front{args: args}
+  }
+  let dirs = cmdhelp.takes_dirs(cmd)
+  let vals = if cmd is "build" | "run" | "test" { value_flags() } else { [] }
+  let wd = os.env.get("PWD") ?? ""
+  var out: List[Str] = []
+  for k in 0..i + 1 {
+    out.push(args[k])
+  }
+  var j = i + 1
+  var program = false
+  while j < args.len() {
+    let a = args[j]
+    if program || a == "--" {
+      out.push(a)
+      program = true
+      j += 1
+      continue
+    }
+    if cmdhelp.is_help_flag(a) {
+      os.stdio.print(cmdhelp.usage(cmd))
+      return Front{code: 0}
+    }
+    if a.starts_with("-") && a != "-" {
+      out.push(a)
+      // a value flag given without = takes the next argument
+      if !a.contains("=") && vals.contains(a.trim_prefix("-").trim_prefix("-")) && j + 1 < args.len() {
+        j += 1
+        out.push(args[j])
+      }
+      j += 1
+      continue
+    }
+    if dirs && cmdhelp.is_pattern(a) {
+      if cmd == "run" {
+        os.stdio.eprintln("xo run: ${a}: run takes one directory, not a package pattern")
+        return Front{code: 2}
+      }
+      let d = cmdhelp.pattern_dir(a)
+      if d.is_empty() {
+        os.stdio.eprintln(cmdhelp.pattern_error(cmd, a))
+        return Front{code: 2}
+      }
+      if is_dir(os, abs_in(wd, d)) && !has_sources(os, abs_in(wd, d)) {
+        os.stdio.eprintln(cmdhelp.no_match_error(cmd, a))
+        return Front{code: 1}
+      }
+      out.push(d)
+    } else {
+      out.push(a)
+    }
+    if cmd == "run" {
+      // the directory; the program's arguments follow
+      program = true
+    }
+    j += 1
+  }
+  Front{args: out}
+}
+
+/// p against the working directory wd (unless absolute).
+fn abs_in(wd: Str, p: Str) -> Str {
+  if p.starts_with("/") || wd.is_empty() { p } else { "${wd}/${p}" }
+}
+
+fn is_dir(os: Os, p: Str) -> Bool {
+  os.fs.read_dir(p).is_ok()
+}
+
+/// Whether dir or a directory below it holds a .xo file, below the top
+/// skipping what the commands' walks skip: testdata, vendor, and names
+/// starting with . or _ (decision 0210).
+fn has_sources(os: Os, dir: Str) -> Bool {
+  let entries = os.fs.read_dir(dir).ok() ?? []
+  for e in entries {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      return true
+    }
+  }
+  for e in entries {
+    if e.is_dir && !(e.name is "testdata" | "vendor") && !e.name.starts_with(".") && !e.name.starts_with("_") {
+      if has_sources(os, "${dir}/${e.name}") {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// help prints the usage of the command cmd on standard output and exits
+/// 0 (-h, --help).
+fn help(os: Os, cmd: Str) -> Never {
+  let u = cmdhelp.usage(cmd)
+  if u.is_empty() {
+    os.stdio.println(usage_line())
+  } else {
+    os.stdio.print(u)
+  }
+  os.proc.exit(0)
 }
 
 /// parse_args reads the command line (args[0] is the command).
@@ -111,12 +261,12 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
       has_value = true
     }
     if name == "h" || name == "help" {
-      usage(os, "")
+      help(os, o.cmd)
     }
     if vals.contains(name) {
       if !has_value {
         if i + 1 >= args.len() {
-          usage(os, "flag needs an argument: -${name}")
+          usage(os, o.cmd, "flag needs an argument: -${name}")
         }
         value = args[i + 1]
         i += 1
@@ -130,12 +280,12 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
         } else if value is "false" | "0" | "f" | "F" | "FALSE" | "False" {
           on = false
         } else {
-          usage(os, "invalid boolean value \"${value}\" for -${name}: parse error")
+          usage(os, o.cmd, "invalid boolean value \"${value}\" for -${name}: parse error")
         }
       }
       set_bool(os, o, name, on)
     } else {
-      usage(os, "flag provided but not defined: -${name}")
+      usage(os, o.cmd, "flag provided but not defined: -${name}")
     }
     i += 1
   }
@@ -178,7 +328,7 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
   } else if name == "stamp" {
     let parts = v.split("=")
     if parts.len() < 2 || parts[0].is_empty() {
-      usage(os, "invalid value \"${v}\" for flag -stamp: --stamp ${v.quote()}: want NAME=VALUE (NAME is a `const NAME: Str` of the main module)")
+      usage(os, o.cmd, "invalid value \"${v}\" for flag -stamp: --stamp ${v.quote()}: want NAME=VALUE (NAME is a `const NAME: Str` of the main module)")
     }
     var kept: List[(Str, Str)] = []
     for (n, x) in o.stamps {
@@ -189,11 +339,11 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     kept.push((parts[0], parts[1..parts.len()].join("=")))
     o.stamps = kept
   } else if name == "seed" {
-    o.topts.seed = int_flag(os, name, v)
+    o.topts.seed = int_flag(os, o.cmd, name, v)
   } else if name == "explore" {
-    o.explore = int_flag(os, name, v)
+    o.explore = int_flag(os, o.cmd, name, v)
   } else if name == "cases" {
-    o.topts.cases = int_flag(os, name, v)
+    o.topts.cases = int_flag(os, o.cmd, name, v)
   } else if name == "record" {
     o.record = v
   } else if name == "run" {
@@ -266,9 +416,9 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
   }
 }
 
-fn int_flag(os: Os, name: Str, v: Str) -> Int {
+fn int_flag(os: Os, cmd: Str, name: Str, v: Str) -> Int {
   match Int.parse(v) {
     Some(n) => n
-    None => usage(os, "invalid value \"${v}\" for flag -${name}: parse error")
+    None => usage(os, cmd, "invalid value \"${v}\" for flag -${name}: parse error")
   }
 }

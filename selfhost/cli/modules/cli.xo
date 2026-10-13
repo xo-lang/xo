@@ -3,6 +3,7 @@
 // and the human and JSON output of xo get, xo mod, and xo vendor.
 
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
 /// The commands of this package, for the driver's dispatch.
 pub fn is_command(name: Str) -> Bool {
@@ -214,6 +215,12 @@ fn unquote_usage(d: FlagDef) -> (Str, Str) {
 
 /// The usage message: `Usage of <name>:` and flag.PrintDefaults.
 fn (c: ModCtx) print_usage(f: FlagSet) uses stdio {
+  let u = cmdhelp.usage_of(f.name)
+  if !u.is_empty() {
+    // the command's usage (selfhost/cli/cmdhelp)
+    c.os.stdio.eprint(u)
+    return
+  }
   var b = StrBuilder.new()
   b.write("Usage of ${f.name}:\n")
   for d in f.defs.sort_by(fn(x) { x.name }) {
@@ -365,6 +372,7 @@ fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (fs, net, proc, stdio, r
 fn (var c: ModCtx) run_mod(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
   if args.is_empty() {
     c.os.stdio.eprintln("xo mod: want a subcommand: tidy, accept-effects, clean, proxy")
+    c.os.stdio.eprint(cmdhelp.usage("mod"))
     return 2
   }
   let rest = args[1..]
@@ -397,6 +405,7 @@ fn (var c: ModCtx) run_mod(args: List[Str]) -> Int uses (fs, net, proc, stdio, r
     "proxy" => c.run_mod_proxy(rest)
     _ => {
       c.os.stdio.eprintln("xo mod: unknown subcommand ${args[0].quote()} (want tidy, accept-effects, clean, or proxy)")
+      c.os.stdio.eprint(cmdhelp.usage("mod"))
       2
     }
   }

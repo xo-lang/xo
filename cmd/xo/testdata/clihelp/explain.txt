@@ -1,0 +1,4 @@
+usage: xo explain [--json] <code>
+
+Long form explanation of a diagnostic code (for example XO0201), with
+an example and a fix.

@@ -3,6 +3,8 @@
 // same error texts, and the same usage text on standard error, so the
 // commands fail as the Go ones do (exit status 2).
 
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+
 /// A flag: kind is "bool", "string", or "duration"; def is the default
 /// as Go prints it (`5s`, `true`, or a string).
 pub struct Flag {
@@ -36,6 +38,11 @@ pub fn (p: Parsed) get(flags: List[Flag], name: Str) -> Str {
 
 /// flag.FlagSet.PrintDefaults, after "Usage of NAME:".
 fn usage_text(cmd: Str, flags: List[Flag]) -> Str {
+  // the command's usage (selfhost/cli/cmdhelp) when it has one
+  let u = cmdhelp.usage_of(cmd)
+  if !u.is_empty() {
+    return u
+  }
   var out = "Usage of ${cmd}:\n"
   for f in flags.sort_by(fn(f) { f.name }) {
     var line = "  -${f.name}"

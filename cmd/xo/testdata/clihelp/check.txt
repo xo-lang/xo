@@ -1,0 +1,14 @@
+usage: xo check [--json] [--no-gc] [--fix] <dirs...>
+
+Resolve names and type check the modules under each directory (every
+directory holding .xo files is a module; imports are resolved through
+xo.mod and the embedded std). --json prints {"modules": [...],
+"diagnostics": [...]} on stdout. --no-gc also runs the check of native
+builds (XO1201 for what they cannot build yet, or ever; decision 0083).
+--fix first applies every unambiguous machine fix (as xo fix) and
+reformats the changed files, then reports what remains (decision 0096).
+Exit status is 1 when any error is reported (warnings such as holes do
+not count), 2 on usage errors.
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

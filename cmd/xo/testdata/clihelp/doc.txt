@@ -1,0 +1,8 @@
+usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
+
+Markdown documentation from doc comments and signatures, with the
+example code blocks of each doc comment. --all includes declarations
+that are not pub. Default: the modules under .
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

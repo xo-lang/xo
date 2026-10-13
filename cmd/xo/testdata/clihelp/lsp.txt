@@ -1,0 +1,5 @@
+usage: xo lsp
+
+Language Server Protocol server on stdin/stdout (LSP 3.17) for editors:
+diagnostics with quick fixes, hover, definition, references, rename,
+document symbols, semantic tokens, and formatting.

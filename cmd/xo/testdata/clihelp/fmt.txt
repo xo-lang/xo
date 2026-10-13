@@ -1,0 +1,9 @@
+usage: xo fmt [--check] [--json] [files or dirs...]
+
+Rewrite .xo files in the one canonical layout (core 10.5; no options)
+and print the names of the files changed. --check changes nothing, lists
+the unformatted files, and exits 1 if there are any. Files with syntax
+errors are reported and left alone (exit 1). Default: .
+
+A directory covers the directories below it, so DIR/... is DIR (decision
+0210); a DIR/... with no .xo file at or below DIR is an error.

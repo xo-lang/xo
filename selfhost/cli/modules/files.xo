@@ -42,7 +42,7 @@ fn (c: ModCtx) sources_walk(d: Str, top: Bool, var out: List[Str]) uses fs.read 
   for e in c.os.fs.read_dir(d).ok() ?? [] {
     let p = "${d}/${e.name}"
     if e.is_dir {
-      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || c.exists("${p}/xo.mod") {
+      if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
       c.sources_walk(p, false, out)

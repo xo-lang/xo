@@ -1,0 +1,5 @@
+usage: xo dump [--timeout=5s] <pid>
+
+Print the task tree of a running Xo program (core 11.4): sends it
+SIGQUIT and prints the dump it writes to $XO_DUMP_DIR or the system
+temporary directory (xo-dump-<pid>.txt). The program goes on running.

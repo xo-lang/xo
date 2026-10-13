@@ -6,6 +6,8 @@
 // helpers to bind a `use go` package or a `use c` header missing from
 // the binding cache (check_dirs_bound).
 
+use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+
 /// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status.
 pub fn run(os: Os, args: List[Str]) -> Int uses (fs, proc, env, stdio) {
   var fl = Flags{}
@@ -275,6 +277,12 @@ fn (f: Flags) fail(os: Os, msg: Str) -> Bool uses stdio {
 
 /// `Usage of bind:` and the flags (flag.PrintDefaults).
 fn (f: Flags) usage(os: Os) uses stdio {
+  let u = cmdhelp.usage("bind")
+  if !u.is_empty() {
+    // the command's usage (selfhost/cli/cmdhelp)
+    os.stdio.eprint(u)
+    return
+  }
   var b = StrBuilder.new()
   b.write("Usage of bind:\n")
   for d in f.defs.sort_by(fn(d: FlagDef) -> Str { d.name }) {
