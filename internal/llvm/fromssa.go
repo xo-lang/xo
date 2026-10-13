@@ -2361,6 +2361,22 @@ func (s *sfn) inlineRaw(v *ssa.Value) bool {
 	return true
 }
 
+// spinHintAsm is the pause hint of a spin loop on goarch ("" the host),
+// as inline asm (selfhost/llvm spin_hint_asm): yield on arm64, pause on
+// amd64, as the C runtime's spin_relax; "" (nothing) elsewhere.
+func spinHintAsm(goarch string) string {
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	switch goarch {
+	case "arm64":
+		return `call void asm sideeffect "yield", ""()`
+	case "amd64":
+		return `call void asm sideeffect "pause", ""()`
+	}
+	return ""
+}
+
 // sigreturn writes, at its first use, the rt_sigreturn trampoline that
 // rt_sigaction's sa_restorer names (decision 0206): a naked function of
 // the system call, 139 on arm64 and 15 on x86_64.
@@ -2437,13 +2453,15 @@ func (s *sfn) atomicResult(v *ssa.Value, r string) {
 // atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
 // LLVM ordering (relaxed is monotonic; a load takes no release and a
 // store no acquire, and a cmpxchg fails with the strongest ordering
-// allowed there). The spin hint is nothing: the IR is target
-// independent (clang picks the target), and yield and pause are target
-// intrinsics.
+// allowed there). The spin hint is the target's pause hint as inline
+// asm (spinHintAsm), as the C runtime's spin_relax.
 func (s *sfn) atomic(v *ssa.Value) {
 	name := v.Aux.(string)
 	switch name {
 	case "rt.spin_hint":
+		if asm := spinHintAsm(s.g.m.GOARCH); asm != "" {
+			s.emit("%s", asm)
+		}
 		return
 	case "rt.fence":
 		if o := ordArg(v, 0); o > 0 {

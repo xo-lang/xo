@@ -32,4 +32,6 @@ loop: 0.058 ms. Traps when touching this:
   polling functions get a frame of at least 8 bytes.
 - Tests that time a stop the world must not run in parallel with the
   rest of their package, and should retry: a loaded host delayed one to
-  38 ms by itself (TestHybridPreemption retries three times).
+  38 ms by itself (TestHybridPreemption retries three times, and since
+  2026-10-13 compares a missed bound with the same program in Go:
+  hybrid-preemption-stw-under-load.md).

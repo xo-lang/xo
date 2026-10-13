@@ -483,10 +483,13 @@ func TargetUnsupported(goos string, flags []string) []diag.Diagnostic {
 // goos. Windows (decision 0197): lld-link, which reads the LTO bitcode
 // MSVC's link.exe cannot; the runtime names its import libraries itself
 // (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
-// MSVC one clang picks.
+// MSVC one clang picks. /Brepro makes the link deterministic: lld-link
+// writes a hash of the output in the COFF header's time stamp (and the
+// debug directory) instead of the link time, so a rebuild is byte
+// identical (mirrors selfhost/xo/link.xo).
 func sysLinkArgs(goos string) []string {
 	if goos == "windows" {
-		return []string{"-fuse-ld=lld"}
+		return []string{"-fuse-ld=lld", "-Wl,/Brepro"}
 	}
 	return []string{"-lm", "-lpthread"}
 }

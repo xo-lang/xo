@@ -303,6 +303,7 @@ pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release:
     b.conc = true
     b.build()
   }
+  b.m.goarch = goarch
   b
 }
 

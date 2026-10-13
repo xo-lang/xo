@@ -685,6 +685,26 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
   true
 }
 
+/// The pause hint of a spin loop on goarch ("" the compiler's own; the
+/// predeclared `target` of internal/ssa's build_target.go), as inline
+/// asm (spinHintAsm): `yield` on arm64, `pause` on amd64, as the C
+/// runtime's spin_relax; "" (nothing) elsewhere.
+fn spin_hint_asm(goarch: Str) -> Str {
+  var arch = goarch
+  if arch.is_empty() {
+    arch = match target.arch {
+      Arm64 => "arm64"
+      Wasm32 => "wasm"
+      Amd64 => "amd64"
+    }
+  }
+  match arch {
+    "arm64" => "call void asm sideeffect \"yield\", \"\"()"
+    "amd64" => "call void asm sideeffect \"pause\", \"\"()"
+    _ => ""
+  }
+}
+
 /// The memory order of argument k of value v (decision 0200; ordArg):
 /// its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst;
 /// a value that is not one of them is seq_cst.
@@ -748,13 +768,16 @@ fn (var g: Gen) atomic_result(v: Int, r: Str) {
 /// atomic, store atomic, atomicrmw, cmpxchg, and fence with the order's
 /// LLVM ordering (relaxed is monotonic; a load takes no release and a
 /// store no acquire, and a cmpxchg fails with the strongest ordering
-/// allowed there). The spin hint is nothing: the IR is target
-/// independent (clang picks the target), and yield and pause are target
-/// intrinsics.
+/// allowed there). The spin hint is the target's pause hint as inline
+/// asm (spin_hint_asm), as the C runtime's spin_relax.
 fn (var g: Gen) atomic(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
   if name == "rt.spin_hint" {
+    let asm = spin_hint_asm(g.m.goarch)
+    if !asm.is_empty() {
+      g.emit(asm)
+    }
     return
   }
   if name == "rt.fence" {

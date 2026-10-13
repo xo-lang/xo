@@ -16,6 +16,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tables) take one allocation and a memset instead of a push per
   element. Fixed: the wasm backend reported std code using the raw
   memory intrinsics as unsupported.
+- The LLVM backend lowers std's internal spin loop hint to the target's
+  pause instruction (`yield` on arm64, `pause` on x86-64) instead of
+  nothing (decision 0200).
+- Windows builds are deterministic: the link passes lld-link `/Brepro`,
+  so rebuilding the same sources gives a byte identical `.exe` (the COFF
+  time stamp is a hash of the output, not the link time; decision 0197).
 - Native backends: more of the C runtime is Xo (decisions 0204, 0207):
   the text of every arithmetic, index, and conversion fault, Int and
   Float text, UTF-8 decoding, white space, Int parsing, Duration and Time
@@ -57,7 +63,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0201). They retire from 0.32 to 1.01 times the instructions of the C
   they replace (rune_count about a third); `XO_LLRT_C=scan` builds the
   C path for comparison. Output is unchanged.
-
 - Faster: `Atomic[T]` on the native backends no longer calls the C
   runtime: get, set, swap, and compare_and_swap are one inline atomic
   instruction each (get is a single `ldar` on arm64) and add and max are
