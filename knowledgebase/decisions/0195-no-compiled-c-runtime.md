@@ -3,7 +3,10 @@
 Status: Accepted as a direction (owner, 2026-10-12). The audit landed
 (2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`); the per step
 plan below ("Plan") is Proposed until the owner approves it and answers
-owner decisions A to D.
+owner decisions A to D. Prerequisite 3 (system calls) on Linux: stage 1 done (decision
+0206, 2026-10-13: `rt.sys6`, std/native/llrt/linux.xo, files routed,
+static programs with no libc under XO_NOLIBC=1); stages 2 and 3
+(threads, signals, unwinding, sockets, DNS from Xo) open.
 
 ## Context
 

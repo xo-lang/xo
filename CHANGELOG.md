@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Added: on Linux, the native backends' os.fs.read, write, and stat
+  (and read_dir's and walk's stats) make their system calls from Xo
+  (std/native/llrt/linux.xo and sysio.xo, decision 0206) with the C
+  runtime's semantics and messages: reads take 0.45 to 0.67 times the
+  C path's user instructions on Graviton, the rest within 1 percent
+  (bench/results/linux-syscalls-2026-10-13.md). `XO_LLRT_C=sysio`
+  builds the C path. Clock.now stays on the vDSO.
+- Added: `XO_NOLIBC=1` (experimental, Linux, xo1's arm64 and LLVM
+  backends): a static executable with no C library at all (decisions
+  0203, 0206 stage 1); a hello world and a file and clock program run in
+  an empty root on linux/arm64 and linux/amd64. Faults end such a
+  program without running deferred code; sockets past epoll, DNS,
+  std/http's TLS, and `use c` still need the C library.
 - Changed: on the native backends, the HTTP/2 server's HPACK (header
   block decoding and encoding), the HTTP/1.1 server's request parsing
   (request line, header fields, request targets and queries, chunked
