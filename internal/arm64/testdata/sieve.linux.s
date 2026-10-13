@@ -1156,5 +1156,5 @@ DW.ref.xo_personality:
 .Lxo_loc6:
 	.asciz "main.xo:14:9"
 .Lxo_loc7:
-	.asciz "std/native/llrt/num.xo:112:29"
+	.asciz "std/native/llrt/num.xo:113:29"
 	.section .note.GNU-stack,"",@progbits

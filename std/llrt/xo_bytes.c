@@ -266,7 +266,7 @@ xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *
 	}
 	if (an == 0 && c == XO_RC_IMMORTAL) {
 		// the text alone ("${v}" appends to the literal ""): a new string
-		xo_rstr *s = rs_new(16);
+		xo_rstr *s = rs_new(32);
 		memcpy(s->data, t, 8);
 		return s;
 	}
@@ -291,7 +291,7 @@ xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_
 		d = (unsigned char *)a->data + an;
 	} else if (an == 0 && c == XO_RC_IMMORTAL) {
 		// the text alone ("${v}" appends to the literal ""): a new string
-		a = rs_new(32);
+		a = rs_new(64);
 		d = (unsigned char *)a->data;
 		direct = 1;
 	}
@@ -565,6 +565,9 @@ int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
 // xo_bytes_rune_count is utf8.RuneCount (an invalid byte is one rune).
 int64_t xo_bytes_rune_count(const char *p, int64_t n) { return xo_str_rune_count(p, n); }
 
+#ifdef XO_NUM_C
+// the C path of the number text (decision 0193 step 3): only
+// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 // xo_bytes_hex is the lowercase hex of the bytes (Bytes.to_hex).
 xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	static const char hex[] = "0123456789abcdef";
@@ -576,6 +579,8 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	*len = 2 * n;
 	return s;
 }
+
+#endif
 
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
@@ -631,7 +636,9 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
 
-static int n_hex_val(char c) {
+// n_hex_val is the value of a hex digit, or -1 (the C path below and the
+// crypto C test use it).
+static __attribute__((unused)) int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';
 	}
@@ -644,6 +651,9 @@ static int n_hex_val(char c) {
 	return -1;
 }
 
+#ifdef XO_NUM_C
+// the C path of the number text (decision 0193 step 3): only
+// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 // xo_bytes_hex_ok reports whether s is hexadecimal that
 // hex.DecodeString accepts (an even number of hex digits, either case).
 int64_t xo_bytes_hex_ok(const char *p, int64_t n) {
@@ -668,6 +678,8 @@ xo_rstr *xo_bytes_from_hex(const char *p, int64_t n, int64_t *len) {
 	*len = n / 2;
 	return s;
 }
+
+#endif
 
 // The outcome of the last file operation of this thread (fs.read blocks
 // the thread, and its status is read before the task can move): std/rt's

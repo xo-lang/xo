@@ -77,6 +77,29 @@ func numTables() []byte {
 	b.WriteString("/// the high word then the low word, each little endian\n")
 	b.WriteString("/// (strconv.pow10Tab).\n")
 	fmt.Fprintf(&b, "pub const POW10: Bytes = %s\n", xoBytesLit(t))
+	hv := make([]byte, 256)
+	bv := make([]byte, 256)
+	for c := range 256 {
+		hv[c], bv[c] = 0xFF, 0xFF
+		switch {
+		case c >= '0' && c <= '9':
+			hv[c] = byte(c - '0')
+		case c >= 'a' && c <= 'f':
+			hv[c] = byte(c - 'a' + 10)
+		case c >= 'A' && c <= 'F':
+			hv[c] = byte(c - 'A' + 10)
+		}
+		if i := strings.IndexByte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", byte(c)); i >= 0 {
+			bv[c] = byte(i)
+		}
+	}
+	bv['\r'], bv['\n'], bv['='] = 0xFE, 0xFE, 0xFD
+	b.WriteString("\n/// The value of each byte as a hex digit (either case), 0xFF for any\n")
+	b.WriteString("/// other byte.\n")
+	fmt.Fprintf(&b, "pub const HEX_VAL: Bytes = %s\n", xoBytesLit(hv))
+	b.WriteString("\n/// The value of each byte as a standard base64 character, 0xFE for \\r\n")
+	b.WriteString("/// and \\n (skipped), 0xFD for '=', 0xFF for any other byte.\n")
+	fmt.Fprintf(&b, "pub const B64_VAL: Bytes = %s\n", xoBytesLit(bv))
 	return b.Bytes()
 }
 

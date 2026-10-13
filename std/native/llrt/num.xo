@@ -1196,21 +1196,6 @@ fn slow_parse(b: Bytes, n: Int) -> Float? {
 // ---------------------------------------------------------------------------
 // Hex and base64 of Bytes (encoding/hex, encoding/base64.StdEncoding)
 
-/// The k (0 to 4) bytes of b from i in the low bytes of a word, the
-/// first lowest.
-fn gather4(b: Bytes, i: Int, k: Int) -> Int {
-  if k >= 4 {
-    return Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
-  }
-  var v = 0
-  var j = k - 1
-  while j >= 0 {
-    v = ((v & 0xFFFFFF) << 8) | Int(b[i + j])
-    j -= 1
-  }
-  v
-}
-
 /// The 8 lowercase hex digits of the 4 bytes in the low bytes of v (the
 /// first lowest), two to a byte's 16 bit lane, all lanes at once.
 fn hex4(v: Int) -> Int {
@@ -1223,38 +1208,72 @@ fn hex4(v: Int) -> Int {
   nib + 0x3030303030303030 + alpha * 39
 }
 
-/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString).
-pub fn to_hex(b: Bytes) -> Str {
-  let n = b.len()
-  var out = if n > 16 { rt.rs_with_cap(2 * n + 32) } else { "" }
-  var i = 0
-  while n - i >= 16 {
-    out = rt.rs_push_words(out, hex4(gather4(b, i, 4)), hex4(gather4(b, i + 4, 4)), hex4(gather4(b, i + 8, 4)), hex4(gather4(b, i + 12, 4)), 0x8888)
-    i += 16
-  }
-  let r = n - i
-  if r == 0 {
-    return out
-  }
-  // the rest: up to 15 bytes in four words of up to 4
-  let k0 = if r < 4 { r } else { 4 }
-  let k1 = if r < 8 { (r - k0).max(0) } else { 4 }
-  let k2 = if r < 12 { (r - 8).max(0) } else { 4 }
-  let k3 = (r - 12).max(0)
-  rt.rs_push_words(out, hex4(gather4(b, i, k0)), hex4(gather4(b, i + 4, k1)), hex4(gather4(b, i + 8, k2)), hex4(gather4(b, i + 12, k3)), (2 * k0) | ((2 * k1) << 4) | ((2 * k2) << 8) | ((2 * k3) << 12))
+/// The 4 bytes of b from i in the low bytes of a word, the first lowest.
+fn le4(b: Bytes, i: Int) -> Int {
+  Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
 }
 
-/// The value of a hex digit (either case), or 16 or more for any other
-/// byte.
-fn hex_val(c: Int) -> Int {
-  if c >= 48 && c <= 57 {
-    return c - 48
+/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 16 bytes
+/// a call of rt.rs_push_words, then the rest in one more.
+pub fn to_hex(b: Bytes) -> Str {
+  let n = b.len()
+  var out = if n > 32 { rt.rs_with_cap(2 * n + 32) } else { "" }
+  var i = 0
+  while n - i >= 16 {
+    out = rt.rs_push_words(out, hex4(le4(b, i)), hex4(le4(b, i + 4)), hex4(le4(b, i + 8)), hex4(le4(b, i + 12)), 0x8888)
+    i += 16
   }
-  let l = c | 32
-  if l >= 97 && l <= 102 {
-    return l - 87
+  if i == n {
+    return out
   }
-  0x100
+  hex_tail(out, b, i, n - i)
+}
+
+/// out + the hex of the r (1 to 15) bytes of b from i.
+fn hex_tail(out: Str, b: Bytes, i: Int, r: Int) -> Str {
+  // the bytes in four words of 4 (the last ones zero), then their hex
+  var w0 = 0
+  var w1 = 0
+  var w2 = 0
+  var w3 = 0
+  var j = r - 1
+  while j >= 0 {
+    let x = shl(Int(b[i + j]), 8 * (j & 3))
+    let q = j >> 2
+    if q == 0 {
+      w0 = w0 | x
+    } else if q == 1 {
+      w1 = w1 | x
+    } else if q == 2 {
+      w2 = w2 | x
+    } else {
+      w3 = w3 | x
+    }
+    j -= 1
+  }
+  let k0 = r.min(4)
+  let k1 = (r - 4).max(0).min(4)
+  let k2 = (r - 8).max(0).min(4)
+  let k3 = (r - 12).max(0)
+  rt.rs_push_words(out, hex4(w0), hex4(w1), hex4(w2), hex4(w3), (2 * k0) | ((2 * k1) << 4) | ((2 * k2) << 8) | ((2 * k3) << 12))
+}
+
+/// The bytes of the 2k hex digits of b from i (k 1 to 8) in a word,
+/// the first lowest, and bits above 0xF in bad for a byte that is not a
+/// hex digit (num_tables.HEX_VAL).
+fn unhex(b: Bytes, i: Int, k: Int) -> (Int, Int) {
+  let t = num_tables.HEX_VAL
+  var w = 0
+  var bad = 0
+  var j = 2 * k - 2
+  while j >= 0 {
+    let hi = Int(t[Int(b[i + j])])
+    let lo = Int(t[Int(b[i + j + 1])])
+    bad = bad | hi | lo
+    w = shl(w, 8) | (((hi << 4) | lo) & 0xFF)
+    j -= 2
+  }
+  (w, bad)
 }
 
 /// The bytes of hex text (hex.DecodeString: either case, an even
@@ -1265,32 +1284,23 @@ pub fn from_hex(s: Str) -> Bytes? {
   if (n & 1) != 0 {
     return None
   }
-  var out = if n > 32 { rt.rs_with_cap(n / 2 + 8) } else { "" }
-  var w = 0
-  var k = 0
+  var out = if n > 64 { rt.rs_with_cap(n / 2 + 8) } else { "" }
   var bad = 0
   var i = 0
-  while i < n {
-    let hi = hex_val(Int(b[i]))
-    let lo = hex_val(Int(b[i + 1]))
-    bad = bad | hi | lo
-    w = w | shl(((hi << 4) | lo) & 0xFF, 8 * k)
-    k += 1
-    if k == 8 {
-      if bad > 15 {
-        return None
-      }
-      out = rt.rs_push_word(out, w, 8)
-      w = 0
-      k = 0
-    }
-    i += 2
+  while n - i >= 16 {
+    let (w, x) = unhex(b, i, 8)
+    bad = bad | x
+    out = rt.rs_push_word(out, w, 8)
+    i += 16
+  }
+  if i < n {
+    let k = (n - i) / 2
+    let (w, x) = unhex(b, i, k)
+    bad = bad | x
+    out = rt.rs_push_word(out, w, k)
   }
   if bad > 15 {
     return None
-  }
-  if k > 0 {
-    out = rt.rs_push_word(out, w, k)
   }
   Some(out.bytes())
 }
@@ -1312,7 +1322,7 @@ fn trio(b: Bytes, i: Int) -> Int { (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | In
 pub fn to_base64(b: Bytes) -> Str {
   let n = b.len()
   let m = (n + 2) / 3 * 4
-  var out = if m > 32 { rt.rs_with_cap(m + 32) } else { "" }
+  var out = if m > 64 { rt.rs_with_cap(m + 32) } else { "" }
   var i = 0
   // 24 bytes, 32 characters at a time
   while n - i >= 24 {
@@ -1367,33 +1377,15 @@ fn quad(b: Bytes, i: Int, r: Int) -> Int {
   (b64_quad(v) & 0xFFFF) | 0x3D3D0000
 }
 
-/// The value of a base64 character, or -1.
-fn b64_val(c: Int) -> Int {
-  if c >= 65 && c <= 90 {
-    return c - 65
-  }
-  if c >= 97 && c <= 122 {
-    return c - 71
-  }
-  if c >= 48 && c <= 57 {
-    return c + 4
-  }
-  if c == 43 {
-    return 62
-  }
-  if c == 47 {
-    return 63
-  }
-  -1
-}
-
 /// The bytes of standard base64 text (base64.StdEncoding.DecodeString:
 /// padding required, \r and \n ignored), or None.
 pub fn from_base64(s: Str) -> Bytes? {
   let b = s.bytes()
   let n = b.len()
+  let t = num_tables.B64_VAL
   var out = if n > 40 { rt.rs_with_cap(n / 4 * 3 + 8) } else { "" }
   // the quantum (k characters, pad of them padding), the output word
+  // (wk bytes)
   var acc = 0
   var k = 0
   var pad = 0
@@ -1401,64 +1393,58 @@ pub fn from_base64(s: Str) -> Bytes? {
   var wk = 0
   var i = 0
   while i < n {
-    let c = Int(b[i])
+    let v = Int(t[Int(b[i])])
     i += 1
-    if c == 13 || c == 10 {
-      continue
-    }
-    if pad > 0 {
-      // after padding only more padding of the same quantum
-      if c != 61 {
+    if v >= 64 {
+      if v == 0xFE {
+        // \r and \n are skipped
+        continue
+      }
+      if v == 0xFF {
         return None
       }
-      pad += 1
-      acc = acc << 6
-    } else if c == 61 {
-      if k < 2 {
-        return None
+      // '=': after padding only more padding of the same quantum
+      if pad > 0 {
+        pad += 1
+      } else {
+        if k < 2 {
+          return None
+        }
+        pad = 1
       }
-      pad = 1
-      acc = acc << 6
+      acc = (acc & 0x3FFFF) << 6
     } else {
-      let v = b64_val(c)
-      if v < 0 {
+      if pad > 0 {
         return None
       }
-      acc = (acc << 6) | v
+      acc = ((acc & 0x3FFFF) << 6) | v
     }
     k += 1
     if k == 4 {
-      let keep = 3 - pad
-      var j = 0
-      while j < keep {
-        w = w | shl((acc >> (16 - 8 * j)) & 0xFF, 8 * wk)
-        wk += 1
-        if wk == 8 {
-          out = rt.rs_push_word(out, w, 8)
-          w = 0
-          wk = 0
-        }
-        j += 1
+      let x = ((acc >> 16) & 0xFF) | (acc & 0xFF00) | ((acc & 0xFF) << 16)
+      w = w | shl(x, 8 * wk)
+      wk += 3 - pad
+      if wk == 6 {
+        out = rt.rs_push_word(out, w, 6)
+        w = 0
+        wk = 0
       }
       if pad > 0 {
         // padding ends the text (only \r and \n may follow)
         while i < n {
-          let d = Int(b[i])
-          if d != 13 && d != 10 {
+          if Int(t[Int(b[i])]) != 0xFE {
             return None
           }
           i += 1
         }
+        k = 0
         break
       }
       acc = 0
       k = 0
     }
   }
-  if k != 0 && pad == 0 {
-    return None
-  }
-  if k != 0 && k != 4 {
+  if k != 0 {
     return None
   }
   if wk > 0 {
