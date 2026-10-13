@@ -796,7 +796,14 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			some := nt.VariantIndex("Some")
 			to := nt.Variants[some].Fields[0].Type
 			var ok *Value
-			if to.Name == "Rune" {
+			if s.sizedInline() {
+				// inline (std/native/llrt/ints.xo, decision 0195)
+				if to.Name == "Rune" {
+					ok = s.runeValid(v)
+				} else {
+					ok = s.inRange(v, to)
+				}
+			} else if to.Name == "Rune" {
 				ok = s.rt("rune_valid", boolT, v)
 			} else {
 				ok = s.rt("int_in_range", boolT, append([]*Value{v}, s.sizeArgs(to)...)...)

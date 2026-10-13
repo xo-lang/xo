@@ -324,7 +324,12 @@ func (b *builder) hashFunc(t *Type, at ast.Node) string {
 		s.ifThen(v, func() { s.writeVar(hv, s.cint(1)) })
 		h = s.read(hv)
 	case KStr:
-		h = s.rt("str_hash", intT, v)
+		if s.sizedInline() {
+			// std/native/llrt/ints.xo (decision 0195)
+			h = s.llrtCall("str_hash", at, v)
+		} else {
+			h = s.rt("str_hash", intT, v)
+		}
 	case KUnit:
 		h = s.cint(7)
 	case KStruct, KTuple:

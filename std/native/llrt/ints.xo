@@ -1,0 +1,191 @@
+// The integer operations of generated code that were C calls, written in
+// Xo (decision 0193, the zero-C audit's "(0) portable now" group,
+// decision 0195): the faults of sized integer arithmetic and
+// conversions (std/llrt/xo_bytes.c xo_int_op, xo_int_conv, xo_rune_of:
+// std/rt's messages, so a fault reads the same on every backend), UInt64
+// division, floor division (`Time.unix`, xo_rt.c xo_floor_div), and the
+// hash of a Str Map key (xo_rt.c xo_str_hash).
+//
+// The SSA builders (internal/ssa build_int.go, selfhost/ssa show.xo)
+// lower a sized integer operation inline: the word operation, the range
+// check, and on failure a call of op_fault or conv_fault here, which
+// never return. The C path stays selectable (`XO_LLRT_C=ints` loads
+// ints_c.xo, and the Go SSA builder calls the C runtime's rt.int_op and
+// friends as before) until bench/perf/ints meets decision 0180's bar.
+use native/llrt/num
+use native/llrt/show
+use native/rt
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+/// The Xo name of the integer type of bits and uns (n_int_name).
+fn type_name(bits: Int, uns: Int) -> Str {
+  if bits == 8 {
+    return if uns != 0 { "UInt8" } else { "Int8" }
+  }
+  if bits == 16 {
+    return if uns != 0 { "UInt16" } else { "Int16" }
+  }
+  if bits == 32 {
+    return if uns != 0 { "UInt32" } else { "Int32" }
+  }
+  if uns != 0 { "UInt64" } else { "Int" }
+}
+
+/// out + the decimal text of v, a value of the type of bits and uns
+/// (n_int_str).
+fn append_val(out: Str, v: Int, bits: Int, uns: Int) -> Str {
+  if uns != 0 && bits == 64 {
+    return show.append_u64(out, v)
+  }
+  num.append_int(out, v)
+}
+
+/// The text of operator op (0 +, 1 -, 2 *, 3 /, 4 %, 5 <<, 6 >>).
+fn op_text(op: Int) -> Str {
+  ["+", "-", "*", "/", "%", "<<", ">>"][op & 7]
+}
+
+/// The fault message of `a op b` (op 0 to 6 as op_text, 7 unary minus of
+/// a) on the type of bits and uns, which failed (xo_int_op's messages).
+pub fn op_message(op: Int, a: Int, b: Int, bits: Int, uns: Int) -> Str {
+  if op == 7 {
+    return append_val("integer overflow: -(", a, bits, uns) + ") does not fit " + type_name(bits, uns)
+  }
+  if (op == 5 || op == 6) && (b < 0 || b >= bits) {
+    return num.append_int("shift amount ", b) + " out of range for " + type_name(bits, uns)
+  }
+  if (op == 3 || op == 4) && b == 0 {
+    return append_val("division by zero: ", a, bits, uns) + " " + op_text(op) + " 0"
+  }
+  let m = append_val("integer overflow: ", a, bits, uns) + " " + op_text(op) + " "
+  append_val(m, b, bits, uns) + " does not fit " + type_name(bits, uns)
+}
+
+/// Faults at at (`file:line:col`) for `a op b` on a sized integer type
+/// (op_message); the SSA builders call it where the inline check failed.
+pub fn op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never {
+  rt.fault_raise(op_message(op, a, b, bits, uns), at)
+}
+
+/// The fault message of converting v, of the type of fbits and funs, to
+/// the type of tbits and tuns (tbits 0: Rune), which failed
+/// (xo_int_conv's and xo_rune_of's messages).
+pub fn conv_message(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int) -> Str {
+  let x = append_val("", v, fbits, funs)
+  if tbits == 0 {
+    return x + " is not a Unicode scalar value, so it is not a Rune"
+  }
+  x + " is out of range for " + type_name(tbits, tuns)
+}
+
+/// Faults at at for a conversion that failed (conv_message).
+pub fn conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never {
+  rt.fault_raise(conv_message(v, fbits, funs, tbits, tuns), at)
+}
+
+/// a / b as UInt64s (b is not 0): Go's uint64 division. Signed division
+/// when both are below 2^63; else from the quotient of a / 2 (Hacker's
+/// Delight 9-3).
+pub fn u64_div(a: Int, b: Int) -> Int {
+  if b < 0 {
+    // b >= 2^63: the quotient is 1 when a >= b as UInt64s
+    return if (a ^ MIN_INT) >= (b ^ MIN_INT) { 1 } else { 0 }
+  }
+  if a >= 0 {
+    return a / b
+  }
+  let q = rt.int_wrap(3, rt.int_wrap(4, a, 1) / b, 1)
+  let r = rt.int_wrap(1, a, rt.int_wrap(2, q, b))
+  if (r ^ MIN_INT) >= (b ^ MIN_INT) {
+    return q + 1
+  }
+  q
+}
+
+/// a % b as UInt64s (b is not 0).
+pub fn u64_rem(a: Int, b: Int) -> Int {
+  if a >= 0 && b > 0 {
+    return a % b
+  }
+  rt.int_wrap(1, a, rt.int_wrap(2, u64_div(a, b), b))
+}
+
+/// a / b rounded down (b > 0): `Time.unix()` (xo_floor_div).
+pub fn floor_div(a: Int, b: Int) -> Int {
+  let q = a / b
+  if a < 0 && a % b != 0 {
+    return q - 1
+  }
+  q
+}
+
+/// The hash of a Str Map key or Set element (decision 0072): FNV-1a over
+/// the bytes, then a final mix (xo_str_hash), eight bytes a word.
+pub fn str_hash(s: Str) -> Int {
+  let b = s.bytes()
+  let n = b.len()
+  var h = 1469598103934665603
+  var i = 0
+  while i + 8 <= n {
+    let w = rt.bytes_word(b, i)
+    h = rt.int_wrap(2, h ^ (w & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 8) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 16) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 24) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 32) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 40) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 48) & 0xFF), 1099511628211)
+    h = rt.int_wrap(2, h ^ ((w >> 56) & 0xFF), 1099511628211)
+    i += 8
+  }
+  while i < n {
+    h = rt.int_wrap(2, h ^ Int(b[i]), 1099511628211)
+    i += 1
+  }
+  h = h ^ rt.int_wrap(4, h, 31)
+  h = rt.int_wrap(2, h, -7046029254386353131)
+  h ^ rt.int_wrap(4, h, 29)
+}
+
+/// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /: b is not 0 and not
+/// the minimum over -1): the checked_ and saturating_ methods (it was
+/// std/llrt/xo_bytes.c xo_int_fits, a C call).
+pub fn fits(op: Int, a: Int, b: Int) -> Bool {
+  if op == 0 {
+    let r = rt.int_wrap(0, a, b)
+    return ((a ^ r) & (b ^ r)) >= 0
+  }
+  if op == 1 {
+    let r = rt.int_wrap(1, a, b)
+    return ((a ^ b) & (a ^ r)) >= 0
+  }
+  if op == 2 {
+    // the signed high word of the product is the sign of the low one
+    let lo = rt.int_wrap(2, a, b)
+    var hi = rt.u64_mul_hi(a, b)
+    if a < 0 {
+      hi = rt.int_wrap(1, hi, b)
+    }
+    if b < 0 {
+      hi = rt.int_wrap(1, hi, a)
+    }
+    return hi == lo >> 63
+  }
+  b != 0 && !(b == -1 && a == MIN_INT)
+}
+
+/// a op b (op 0 +, 1 -, 2 *, 3 /) where fits(op, a, b): the checked_ and
+/// saturating_ methods' result.
+pub fn apply(op: Int, a: Int, b: Int) -> Int {
+  if op == 0 {
+    return rt.int_wrap(0, a, b)
+  }
+  if op == 1 {
+    return rt.int_wrap(1, a, b)
+  }
+  if op == 2 {
+    return rt.int_wrap(2, a, b)
+  }
+  a / b
+}

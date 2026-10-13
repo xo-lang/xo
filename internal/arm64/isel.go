@@ -528,8 +528,15 @@ func (s *fstate) isel() {
 		if s.pads[b] {
 		} else if p, c, truth, ok := s.joinSource(b); ok {
 			// b is reached from p through a join that only branches on
-			// the Bool p passes (`a && b`, decision 0184)
-			s.inherit(s.endMemo[p])
+			// the Bool p passes (`a && b`, decision 0184): p's facts
+			// hold, but p does not dominate b, so the registers it
+			// computed come only from b's dominator, as below (gotchas/
+			// arm64-vreg-read-before-write-break-flag.md)
+			if d := idom[b]; d != nil && s.endMemo[d] != nil {
+				s.inherit(s.endMemo[d])
+				s.clobber()
+			}
+			s.joinFacts(s.endMemo[p])
 			s.condFacts(c, truth)
 		} else if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds
@@ -2150,18 +2157,40 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // inlineRT lowers the runtime intrinsics that are an instruction or two
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
-// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the bits
-// of a Float both ways, and rt.bytes_word (an unchecked load of 8 bytes).
-// It reports whether v was one.
+// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5 rotate
+// right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+// extended, 7 the bytes reversed), rt.u64_mul_hi, the bits of a Float
+// both ways, and rt.bytes_word (an unchecked load of 8 bytes). It
+// reports whether v was one.
 func (s *fstate) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
 		op, ok := constInt(v.Args[0])
-		if !ok || op < 0 || op > 4 {
+		if !ok || op < 0 || op > 7 {
 			return false
 		}
-		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
 		a := s.word(v.Args[1])
+		if op == 7 {
+			s.set(v, s.def1(false, "rev $d0, $u0", a))
+			return true
+		}
+		if op == 5 || op == 6 {
+			if k, ok := constInt(v.Args[2]); ok {
+				if op == 5 {
+					s.set(v, s.def1(false, fmt.Sprintf("ror $d0, $u0, #%d", k&63), a))
+				} else {
+					s.set(v, s.def1(false, fmt.Sprintf("ror $wd0, $wu0, #%d", k&31), a))
+				}
+				return true
+			}
+			if op == 5 {
+				s.set(v, s.def1(false, "ror $d0, $u0, $u1", a, s.word(v.Args[2])))
+			} else {
+				s.set(v, s.def1(false, "ror $wd0, $wu0, $wu1", a, s.word(v.Args[2])))
+			}
+			return true
+		}
+		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
 		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
 			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
 			return true
@@ -2169,6 +2198,13 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", a, s.word(v.Args[2])))
 	case "rt.u64_mul_hi":
 		s.set(v, s.def1(false, "umulh $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
+	case "rt.u64_to_float":
+		// decision 0195: the conversions of UInt64 and Float32
+		s.set(v, s.def1(true, "ucvtf $d0, $u0", s.word(v.Args[0])))
+	case "rt.f32_round":
+		s.set(v, s.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", s.word(v.Args[0])))
+	case "rt.i64_to_f32":
+		s.set(v, s.def1(true, "scvtf $wd0, $u0\nfcvt $d0, $wd0", s.word(v.Args[0])))
 	case "rt.float_bits":
 		s.set(v, s.def1(false, "fmov $d0, $u0", s.word(v.Args[0])))
 	case "rt.float_from_bits":

@@ -3,6 +3,14 @@
 // messages are std/rt's (arith.go, str.go, caps.go), so a fault reads the
 // same on every backend.
 
+static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
+
+// The C path of the sized integer operations and conversions (the
+// zero-C audit's portable group, decisions 0193 and 0195): compiled
+// only with -DXO_INTS_C (XO_LLRT_C=ints, std/native/llrt/ints_c.xo).
+// By default the SSA builders lower them inline and their faults are
+// std/native/llrt/ints.xo.
+#ifdef XO_INTS_C
 // n_int_name is the Xo name of the integer type of bits and uns.
 static const char *n_int_name(int64_t bits, int64_t uns) {
 	switch (bits) {
@@ -163,8 +171,6 @@ int64_t xo_int_conv(int64_t v, int64_t fbits, int64_t funs, int64_t tbits, int64
 	return v;
 }
 
-static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
-
 // xo_int_in_range reports whether the Int v is a value of the type of bits
 // and uns (`Int32.try`).
 int64_t xo_int_in_range(int64_t v, int64_t bits, int64_t uns) {
@@ -187,13 +193,19 @@ int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_
 	}
 	return v;
 }
+#endif
 
+#ifdef XO_INTS_C
+// the C versions of the conversions of UInt64 and Float32 (the native
+// backends lower rt.u64_to_float, rt.f32_round, and rt.i64_to_f32
+// inline, decision 0195; compiled only when called)
 double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 
 // Float32 values are doubles holding float32 values (internal/ssa
 // Module.Float32): conversions and arithmetic round through float.
 double xo_f32_round(double v) { return (double)(float)v; }
 double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
+#endif
 
 // The C path of the leaf text of Display and Debug (decision 0193 step
 // 5): compiled only with -DXO_SHOW_C (XO_LLRT_C=show,
@@ -428,6 +440,14 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+// The C versions of the runtime intrinsics (decisions 0193 and 0195):
+// both native backends lower rt.int_wrap with a constant op,
+// rt.u64_mul_hi, the bits of a Float, and rt.bytes_word inline, and
+// Int's checked_ and saturating_ methods are std/native/llrt/ints.xo,
+// so no default build calls these: they are compiled only with
+// -DXO_INTS_C, which IOFlags adds when the generated code calls one
+// (a non-constant op, or the C path XO_LLRT_C=ints).
+#ifdef XO_INTS_C
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
 // shifts of a word by b mod 64 (op 3 left, 4 right logical) for the
@@ -444,6 +464,16 @@ int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 		return (int64_t)(x << (y & 63));
 	case 4:
 		return (int64_t)(x >> (y & 63));
+	case 5:
+		// rotate right (decision 0195)
+		return (int64_t)((x >> (y & 63)) | (x << ((64 - (y & 63)) & 63)));
+	case 6: {
+		// the low 32 bits rotated right, zero extended
+		uint32_t w = (uint32_t)x;
+		return (int64_t)(uint32_t)((w >> (y & 31)) | (w << ((32 - (y & 31)) & 31)));
+	}
+	case 7:
+		return (int64_t)__builtin_bswap64(x);
 	}
 	return (int64_t)(x * y);
 }
@@ -490,9 +520,11 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	}
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
+#endif
 
-// n_hex_val is the value of a hex digit, or -1 (the crypto C test uses
-// it).
+// n_hex_val is the value of a hex digit, or -1 (the crypto C test, which
+// defines XO_DIGEST_C, uses it).
+#ifdef XO_DIGEST_C
 static __attribute__((unused)) int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';
@@ -505,6 +537,7 @@ static __attribute__((unused)) int n_hex_val(char c) {
 	}
 	return -1;
 }
+#endif
 
 // The outcome of the last file operation of this thread (fs.read blocks
 // the thread, and its status is read before the task can move): std/rt's

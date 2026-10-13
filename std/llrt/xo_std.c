@@ -677,7 +677,7 @@ void xo_exit(int64_t code) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static int b64_val(unsigned c) {
+static __attribute__((unused)) int b64_val(unsigned c) {
 	if (c >= 'A' && c <= 'Z') {
 		return (int)(c - 'A');
 	}

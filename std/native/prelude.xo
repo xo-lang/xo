@@ -5,6 +5,8 @@
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/atomic
 use native/llrt/fspath
+use native/llrt/gen
+use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/procspec
 use native/llrt/num
@@ -152,7 +154,7 @@ fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
   var r = 1
   var i = 0
   while i < e {
-    if !rt.int_fits(2, r, n) {
+    if !ints.fits(2, r, n) {
       rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
     }
     r = r * n
@@ -168,13 +170,10 @@ fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
 fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
 
 fn checked(op: Int, n: Int, m: Int) -> Int? {
-  if !rt.int_fits(op, n, m) {
+  if !ints.fits(op, n, m) {
     return None
   }
-  if op == 3 {
-    return Some(n / m)
-  }
-  Some(rt.int_wrap(op, n, m))
+  Some(ints.apply(op, n, m))
 }
 
 fn int_checked_add(n: Int, m: Int) -> Int? { checked(0, n, m) }
@@ -189,8 +188,8 @@ fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
 fn saturated(op: Int, n: Int, m: Int) -> Int {
   let max = 9223372036854775807
   let min = -9223372036854775807 - 1
-  if rt.int_fits(op, n, m) {
-    return rt.int_wrap(op, n, m)
+  if ints.fits(op, n, m) {
+    return ints.apply(op, n, m)
   }
   if op == 0 {
     return if m > 0 { max } else { min }
@@ -2199,3 +2198,41 @@ fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b
 fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
 
 fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
+
+// The integer operations of generated code (the zero-C audit's portable
+// group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The
+// SSA builders lower a sized integer operation inline and call the
+// faults here when its check fails; with XO_LLRT_C=ints the Go SSA
+// builder calls the C runtime (rt.int_op and friends) instead.
+
+fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never { ints.op_fault(op, a, b, bits, uns, at) }
+
+fn llrt_int_conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never { ints.conv_fault(v, fbits, funs, tbits, tuns, at) }
+
+fn llrt_u64_div(a: Int, b: Int) -> Int { ints.u64_div(a, b) }
+
+fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
+
+fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
+
+fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }
+
+// The scalar values of property tests and testing.gen (decision 0195):
+// in Xo (std/native/llrt/gen.xo) over the C generator's draws; with
+// XO_LLRT_C=gen the Go SSA builder calls the C runtime instead.
+
+fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
+
+fn llrt_gen_any_int(g: Int) -> Int { gen.any_int(g) }
+
+fn llrt_gen_sized(g: Int, kind: Int) -> Int { gen.sized(g, kind) }
+
+fn llrt_gen_float(g: Int) -> Float { gen.float(g) }
+
+fn llrt_gen_rune(g: Int) -> Int { gen.rune(g) }
+
+fn llrt_gen_str(g: Int) -> Str { gen.str(g) }
+
+fn llrt_gen_duration(g: Int) -> Int { gen.duration(g) }
+
+fn llrt_gen_time(g: Int) -> Int { gen.time(g) }

@@ -777,6 +777,26 @@ Last verified: 2026-10-07
   in `bench/results/runtime-port-2026-10-12.md`,
   `runtime-port-step3-2026-10-12.md`, and
   `runtime-port-step5-2026-10-13.md`. Last verified: 2026-10-13.
+- `bench/perf/portable/measure.sh`, `bench/perf/digest/measure.sh`
+  `<xo> <out dir> <backend...>` (2026-10-13, decision 0195): the same
+  for bench/perf/portable (sized integer arithmetic, conversions, UInt64,
+  Str key hash, Time.unix, checked_ methods, Float32) and bench/perf/digest
+  (SHA-256, HMAC, PBKDF2 and Argon2id verify); `XO_LLRT_C=ints` and
+  `XO_LLRT_C=digest` build the C paths. `bench/perf/glob/measure.sh` and
+  `bench/perf/gen/measure.sh` build a test binary (`xo test --no-gc`) and
+  run each test (`XO_TEST`) 5 times, printing `<test> <backend> <min
+  instructions>`; `XO_LLRT_C=glob`, `gen`. Through the heavy lock with
+  `XO_SELF_DRIVER=0`. Results in
+  `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
+  2026-10-13.
+- `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
+  test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
+  0195): sized integers, std/crypto's hashes, path.Match, and generated
+  values on arm64 and LLVM, Xo and C paths, against the Go backend (or
+  Go's packages); not under -short. `go test ./internal/llvm -run
+  TestDigestTables -golden-update` regenerates
+  std/native/llrt/digest_tables.xo (SHA-256 unrolled). Last verified:
+  2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
@@ -1182,7 +1202,12 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         at build time selects a module's C path (-DXO_TEXT_C, -DXO_SHOW_C,
                         -DXO_TZ_C, -DXO_REPORT_C, compiled locally, never in a pack). Decision
                         0198 deleted the C paths of unicode (XO_UNICODE=c), strings, num, and
-                        jsontext; those names now select nothing
+                        jsontext; those names now select nothing; ints.xo (sized integer faults, UInt64
+                        division, floor division, Str key hash, Int's checked_ methods), glob.xo
+                        (path.Match), digest.xo (SHA-256 via the generated digest_tables.xo,
+                        HMAC, PBKDF2, base64, verify_password), gen.xo (property test values)
+                        with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195;
+                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C)
                         (Last verified: 2026-10-13)
 ```
 

@@ -61,7 +61,11 @@ stay correct: a check is removed only when it is proved.
    under `i + k < n` with k at least 1), or the same base plus the same
    offset value. Blocks entered through the Bool join of `a && b` or
    `a || b` take the facts of the one predecessor that can take their
-   edge (`joinSource`).
+   edge (`joinSource`): its facts only (bounds, relations, passed checks), not the
+   registers it computed, which come from the block's dominator
+   (2026-10-13, gotchas/arm64-vreg-read-before-write-break-flag.md:
+   that predecessor does not dominate the block in the graph, and a
+   register it computed was read on a path that never ran it).
 4. **Midpoints.** The range analysis gives `m = a + (b - a) / 2` (or
    `>> 1`) computed where `a < b` holds (a dominating block entered only
    by that edge) the interval `[a.lo, b.hi - 1]`: binary searches over

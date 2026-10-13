@@ -18,6 +18,8 @@
 // Output, one line per operation: the result in hex, or 0 or 1.
 
 #define XO_RT_NO_MAIN
+// the C path of the hashes (std/native/llrt/digest.xo is the default)
+#define XO_DIGEST_C
 #include "../xo_rt.c"
 
 static uint8_t *unhex(const char *s, int64_t *n) {

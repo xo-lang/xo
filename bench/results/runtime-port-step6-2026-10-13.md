@@ -165,3 +165,29 @@ full tier passes, then a later change deletes them (decision 0198).
 - The arm64 backend fails ("reads virtual register N before it is
   written") on a scan loop that sets a flag and breaks on an `||` of
   `&&` chains; repro in gotchas/arm64-vreg-read-before-write-break-flag.md.
+  Fixed 2026-10-13 (see below). http1.xo keeps `plain_end`: it is not
+  only the workaround, unescape's main loop also calls it to copy runs
+  of 8 bytes or more at once.
+
+## After the arm64 join fix (2026-10-13)
+
+The fix of gotchas/arm64-vreg-read-before-write-break-flag.md: a block
+entered through a Bool join (`a && b`, `a || b`, a flag) takes the
+registers of its dominator only, and the join source's facts. It
+changes 7 functions of the httpparse server's http1 module on arm64 (39
+more instructions in all, `xo asmdump`); LLVM is unchanged. The h1
+workloads again on arm64, the same way (Go driver, minimum of 5 runs,
+20,000 requests), with the compiler before the fix ("old") and after
+("new") in one session; several agents running, so the old/new spread
+(up to 1.6 percent on `h1_url`, the old compiler lower; up to 0.9
+percent on `h1_get`, the new one lower) is the noise level:
+
+| Workload | new Xo | new C | less setup | old Xo | old C | less setup |
+|---|---|---|---|---|---|---|
+| `none` | 28,624,456 | 28,547,274 |  | 28,531,858 | 28,752,887 |  |
+| `h1_get` | 2,148,186,194 | 2,458,636,560 | 0.872 | 2,159,070,058 | 2,445,814,249 | 0.881 |
+| `h1_chunked` | 1,250,756,441 | 1,241,951,524 | 1.007 | 1,261,795,420 | 1,228,299,382 | 1.028 |
+| `h1_url` | 2,930,899,607 | 3,140,541,007 | 0.933 | 2,884,326,281 | 3,108,722,399 | 0.927 |
+
+The bar (1.05) holds; the ratios match the final table's (0.875, 1.003,
+0.934).

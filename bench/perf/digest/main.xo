@@ -1,0 +1,99 @@
+// Workloads of std/crypto's hashes on the native backends (decision
+// 0195): std/native/llrt/digest.xo against its C path
+// (XO_LLRT_C=digest). Usage: digest <workload>. Each workload prints
+// "<workload> <checksum> <elapsed microseconds>"; the checksum must be
+// the same on every backend (the Go backend is the reference). The
+// hashes verified were made by the Go backend.
+use std/crypto
+
+const ARGON = "$argon2id$v=19$m=4096,t=2,p=1$Sq7qcSFHnntGP751Zt8Ssw$vQ40zTV7CHGDXUhZ+Yl813FMSv7jAvWlN7XMlaUQE8U"
+const PBKDF2 = "pbkdf2-sha256$20000$36jtUlKY2Yhch3B2IPw+Ag$XCxoT2tyDjiriwFlom9g9aYS0eNGa3KWiCNJ8bPSFN0"
+
+/// The checksum of the bytes of b.
+fn sum_of(b: Bytes) -> Int {
+  var h = 0
+  for i in 0..b.len() {
+    h = (h * 31 + Int(b[i])) % 1000000007
+  }
+  h
+}
+
+/// SHA-256 of 64 KiB, 200 times (the compression).
+fn sha256_big(data: Bytes) -> Int {
+  var h = 0
+  for _ in 0..200 {
+    h = (h + sum_of(crypto.sha256(data))) % 1000000007
+  }
+  h
+}
+
+/// SHA-256 of 100,000 short messages (the padding and the calls).
+fn sha256_small(msgs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..100 {
+    for m in msgs {
+      h = (h + sum_of(crypto.sha256(m))) % 1000000007
+    }
+  }
+  h
+}
+
+/// HMAC-SHA256 of 50,000 short messages under a short key.
+fn hmac(msgs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..50 {
+    for m in msgs {
+      h = (h + sum_of(crypto.hmac_sha256(b"a key", m))) % 1000000007
+    }
+  }
+  h
+}
+
+/// verify_password of a PBKDF2 hash of 20,000 iterations, 10 times.
+fn pbkdf2() -> Int {
+  var n = 0
+  for k in 0..10 {
+    if crypto.verify_password(if k % 2 == 0 { "correct horse" } else { "wrong horse" }, PBKDF2) {
+      n += 1
+    }
+  }
+  n
+}
+
+/// verify_password of an Argon2id hash (4 MiB, 2 passes), 4 times.
+fn argon2() -> Int {
+  var n = 0
+  for k in 0..4 {
+    if crypto.verify_password(if k % 2 == 0 { "correct horse" } else { "wrong horse" }, ARGON) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "sha256_big"
+  var big = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..65536 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    big.write_byte(UInt8(x % 256))
+  }
+  let data = big.freeze()
+  var msgs: List[Bytes] = []
+  for i in 0..1000 {
+    msgs.push(data[i..(i + i % 120)])
+  }
+  let t = os.clock.now()
+  let sum = match w {
+    "sha256_big" => sha256_big(data)
+    "sha256_small" => sha256_small(msgs)
+    "hmac" => hmac(msgs)
+    "pbkdf2" => pbkdf2()
+    "argon2" => argon2()
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

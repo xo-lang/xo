@@ -13,6 +13,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions (bench/results/atomics-2026-10-13.md; `XO_LLRT_C=atomic`
   restores the C). Under the hood, std's implementation modules get
   atomics with C11 memory orders (decision 0200, internal only).
+- **Sized integers are much faster on the native backends, and more of
+  the runtime is Xo** (decision 0195's portable group): Int8 to UInt64
+  arithmetic, shifts, and conversions are checked inline instead of a C
+  call each (5 to 20 times fewer instructions on bench/perf/portable),
+  Float32 operations round inline, and the faults, UInt64 division,
+  `Time.unix`, the Str Map key hash, Int's checked_ and saturating_
+  methods, MemFs.fail_next's patterns, SHA-256, HMAC, PBKDF2,
+  verify_password's parsing, and the values of property tests are Xo
+  (std/native/llrt/ints.xo, glob.xo, digest.xo, gen.xo). Output is
+  unchanged (TestIntsDiff, TestDigestDiff, TestGlobDiff, TestGenDiff
+  against the Go backend). Argon2id stays C (its Xo version was 2.07
+  times the C's instructions on arm64). `XO_LLRT_C=ints,glob,digest,gen`
+  builds the C paths for comparison
+  (bench/results/runtime-port-portable-2026-10-13.md).
+
 - Changed: on the native backends, the HTTP/2 server's HPACK (header
   block decoding and encoding), the HTTP/1.1 server's request parsing
   (request line, header fields, request targets and queries, chunked
@@ -24,6 +39,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   percent fewer instructions, HTTP/2 within 2 percent;
   bench/results/runtime-port-step6-2026-10-13.md). `XO_LLRT_C=hpack`,
   `http1`, `fspath`, `procspec` build the C paths for comparison.
+- Fixed: `--backend=arm64` (the Go driver and xo1) failed with
+  "internal: reads virtual register N before it is written" on a loop
+  that clears a flag and breaks, followed by a test of the flag and code
+  that goes on from the loop's index; a block entered through a Bool
+  join (`a && b`, `a || b`, such a flag) now reuses only the registers
+  of the block that dominates it (gotchas/arm64-vreg-read-before-write-break-flag.md).
 - Fixed: a chunked request body with a chunk size of 2^63 or more made
   the native HTTP/1.1 server copy a negative length; an IPv6 request
   host with an IPv4 part written with a leading zero is now rejected as

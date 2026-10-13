@@ -83,7 +83,14 @@ fn (var b: Builder) hash_func(t: Int) -> Str {
       b.if_then_end(no, join)
       h = b.read(hv)
     }
-    Str => h = b.rt("str_hash", it, [v])
+    Str => {
+      if b.sized_inline() {
+        // std/native/llrt/ints.xo (decision 0195)
+        h = b.llrt_call("str_hash", [v])
+      } else {
+        h = b.rt("str_hash", it, [v])
+      }
+    }
     Unit => h = b.cint(7)
     Struct | Tuple => {
       h = b.cint(17)
