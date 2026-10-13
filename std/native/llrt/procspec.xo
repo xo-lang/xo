@@ -1,0 +1,248 @@
+// The argument and environment building of the native processes, written
+// in Xo (decision 0193 step 6): os/exec's environment of a command (the
+// program's, or the one set, with PWD for a directory, the variables
+// added, dedupEnv: the last of each name wins, names without case on
+// Windows, and addCriticalEnv's SYSTEMROOT on Windows) and, on Windows,
+// the command line of syscall.EscapeArg (also quoting every space
+// character, for the MSYS2 and Cygwin runtimes). They were C
+// (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote, which the
+// C path still uses); process creation stays C. The C path stays
+// selectable (`XO_LLRT_C=procspec` loads procspec_c.xo) until the process
+// workloads meet decision 0180's bar on both native backends.
+use native/rt
+
+/// Whether the target is Windows.
+fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+}
+
+/// The spec of a command for rt.proc_exec and rt.proc_spawn, appended to
+/// out: name, dir, flags, the arguments, the environment, the variables
+/// added (none: Xo merged them), and the Windows command line. Flag 8
+/// tells xo_proc.c that the environment is final (flag 1: there is one,
+/// else the program's) and the command line follows.
+pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], extra: List[Str], var out: List[Str]) {
+  let win = windows()
+  let env_set = (flags0 & 1) != 0
+  var flags = (flags0 & 6) | 8
+  var final: List[Str] = []
+  // os/exec sets no PWD on Windows; the program's environment as it is
+  // needs none
+  if env_set || !extra.is_empty() || (!win && !dir.is_empty()) {
+    var all: List[Str] = if env_set { env } else { rt.proc_environ() }
+    if !env_set && extra.is_empty() {
+      // Cmd.environ: PWD is the directory when the environment is the
+      // program's
+      all.push("PWD=" + abs(dir))
+    }
+    for kv in extra {
+      all.push(kv)
+    }
+    final = dedup(all, win)
+    if win {
+      final = critical(final)
+    }
+    flags = flags | 1
+  }
+  out.push(name)
+  out.push(dir)
+  out.push("${flags}")
+  out.push("${args.len()}")
+  for a in args {
+    out.push(a)
+  }
+  out.push("${final.len()}")
+  for kv in final {
+    out.push(kv)
+  }
+  out.push("0")
+  if win {
+    var cl = quote(name)
+    for a in args {
+      cl = cl + " " + quote(a)
+    }
+    out.push(cl)
+  } else {
+    out.push("")
+  }
+}
+
+/// The length of the name of a NAME=VALUE entry, or -1 (a leading = is
+/// part of the name, as on Windows).
+fn key_len(kv: Str) -> Int {
+  let b = kv.bytes()
+  var i = 0
+  if b.len() > 0 && b[0] == 61 {
+    i = 1
+  }
+  while i < b.len() {
+    if b[i] == 61 {
+      return i
+    }
+    if b[i] == 0 {
+      return -1
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Whether the first n bytes of a and b are equal (ASCII letters in
+/// either case when fold).
+fn key_eq(a: Bytes, b: Bytes, n: Int, fold: Bool) -> Bool {
+  var i = 0
+  while i < n {
+    var x = Int(a[i])
+    var y = Int(b[i])
+    if fold {
+      if x >= 65 && x <= 90 {
+        x += 32
+      }
+      if y >= 65 && y <= 90 {
+        y += 32
+      }
+    }
+    if x != y {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// os/exec's dedupEnv: the last entry of each name wins, in the order of
+/// the last entries; names compare without case on Windows
+/// (dedupEnvCase); an empty entry goes.
+fn dedup(env: List[Str], fold: Bool) -> List[Str] {
+  var kept: List[Str] = []
+  var lens: List[Int] = []
+  var i = env.len() - 1
+  while i >= 0 {
+    let kv = env[i]
+    let kl = key_len(kv)
+    var seen = false
+    if kl >= 0 {
+      var j = 0
+      while j < kept.len() && !seen {
+        seen = lens[j] == kl && key_eq(kept[j].bytes(), kv.bytes(), kl, fold)
+        j += 1
+      }
+    } else if kv.is_empty() || kv.bytes()[0] == 0 {
+      seen = true
+    }
+    if !seen {
+      kept.push(kv)
+      lens.push(kl)
+    }
+    i -= 1
+  }
+  var out: List[Str] = []
+  var k = kept.len() - 1
+  while k >= 0 {
+    out.push(kept[k])
+    k -= 1
+  }
+  out
+}
+
+/// os/exec's addCriticalEnv (Windows): SYSTEMROOT from the program's
+/// environment when env has none (a child without it cannot start some
+/// system libraries, Winsock among them).
+fn critical(env: List[Str]) -> List[Str] {
+  for kv in env {
+    if key_len(kv) == 10 && key_eq(kv.bytes(), "SYSTEMROOT".bytes(), 10, true) {
+      return env
+    }
+  }
+  for kv in rt.proc_environ() {
+    if key_len(kv) == 10 && key_eq(kv.bytes(), "SYSTEMROOT".bytes(), 10, true) {
+      var out = env
+      out.push("SYSTEMROOT=" + rt.str_slice(kv, 11, kv.len()))
+      return out
+    }
+  }
+  env
+}
+
+/// filepath.Abs of dir: joined to the working directory when relative,
+/// and cleaned (empty and . segments dropped, .. resolved lexically).
+fn abs(dir: Str) -> Str {
+  let full = if dir.starts_with("/") { dir } else { rt.proc_getcwd() + "/" + dir }
+  var segs: List[Str] = []
+  for s in full.split("/") {
+    if s.is_empty() || s == "." {
+      continue
+    }
+    if s == ".." {
+      if !segs.is_empty() {
+        segs.pop()
+      }
+      continue
+    }
+    segs.push(s)
+  }
+  if segs.is_empty() {
+    return "/"
+  }
+  "/" + segs.join("/")
+}
+
+/// s quoted as Go's syscall.EscapeArg (the rules CommandLineToArgvW and
+/// the C runtime parse a command line by), and also when s holds a line
+/// end or another space character.
+fn quote(s: Str) -> Str {
+  let b = s.bytes()
+  var n = 0
+  while n < b.len() && b[n] != 0 {
+    n += 1
+  }
+  if n == 0 {
+    return "\"\""
+  }
+  var bs = false
+  var sp = false
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    bs = bs || c == 34 || c == 92
+    sp = sp || c == 32 || (c >= 9 && c <= 13)
+    i += 1
+  }
+  let t = if n == b.len() { s } else { rt.str_slice(s, 0, n) }
+  if !bs && !sp {
+    return t
+  }
+  if !bs {
+    return "\"" + t + "\""
+  }
+  var out = if sp { "\"" } else { "" }
+  var slashes = 0
+  i = 0
+  while i < n {
+    let c = Int(b[i])
+    if c == 92 {
+      slashes += 1
+    } else if c == 34 {
+      while slashes > 0 {
+        out = rt.rs_push_byte(out, 92)
+        slashes -= 1
+      }
+      out = rt.rs_push_byte(out, 92)
+    } else {
+      slashes = 0
+    }
+    out = rt.rs_push_byte(out, c)
+    i += 1
+  }
+  if sp {
+    while slashes > 0 {
+      out = rt.rs_push_byte(out, 92)
+      slashes -= 1
+    }
+    out = rt.rs_push_byte(out, 34)
+  }
+  out
+}

@@ -14,12 +14,12 @@ import (
 //	xo.json.enc[T](acc: Str, v: T) -> Str
 //	xo.json.dec[T](src: Str, tape: List[Int], i: Int) -> Result[T, json.DecodeErr]
 //
-// A decoder reads the value at tape node i (std/llrt/xo_json.c); its
+// A decoder reads the value at tape node i (std/native/llrt/jsontext.xo); its
 // error's path is relative to that value (`.name`, `[3]`), and each
 // caller puts its own part in front, so the path is only built when
 // decoding fails.
 
-// Tape node kinds (xo_json.c).
+// Tape node kinds (std/native/llrt/jsontext.xo).
 const (
 	jkNull = iota
 	jkFalse

@@ -67,7 +67,11 @@ portable now under decision 0193's bar.
    lines move with their callers); then (3) 3,105, (1) 4,966, (2) 6,574,
    (6) 1,166, (4) 313 (independent, any time), (5) last with 1,719 plus
    the TLS stack. Text's C path (341) stays until Duration text passes
-   (decision 0194).
+   (decision 0194). Done for unicode, jsontext, num, strings, and the
+   82 lines only num and jsontext called (decision 0198, 2026-10-13:
+   3,354 of the 4,313 lines; 3,373 lines of std/llrt with the blank and
+   comment lines around them); tz, report, and show (959) wait for a
+   full tier of decision 0193 step 5.
 3. **Intrinsics**, all internal (declared for `use native/rt` modules,
    decision 0074; no user visible change), lowered in selfhost/arm64,
    selfhost/llvm, selfhost/wasm first and mirrored in internal/arm64 and

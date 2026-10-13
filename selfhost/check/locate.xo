@@ -14,6 +14,11 @@ pub fn executable(env: Env, fs: Fs) -> Str uses (env, fs.read) {
   if p.is_empty() {
     return ""
   }
+  // Windows: argv[0] as typed, with \ separators (cmd.exe passes
+  // C:\x\bin\xo.exe, or xo for a name found on %PATH%)
+  if is_windows_target() {
+    p = p.replace("\\", "/")
+  }
   if !p.contains("/") {
     p = in_path(env, fs, p)
     if p.is_empty() {
@@ -52,25 +57,44 @@ pub fn std_dir(env: Env, fs: Fs) -> Str uses (env, fs.read) {
 }
 
 /// exec.LookPath for a name without a slash: the first file of that name
-/// in a $PATH directory.
+/// in a $PATH directory; on Windows also the name with each extension of
+/// %PATHEXT% when it has none (cmd.exe runs `xo` as xo.exe and passes
+/// `xo` as the program name).
 fn in_path(env: Env, fs: Fs, name: Str) -> Str uses (env, fs.read) {
-  let sep = match target.os {
-    Windows => ";"
-    Darwin | Linux | Wasi => ":"
+  let win = is_windows_target()
+  let sep = if win { ";" } else { ":" }
+  var names = [name]
+  if win && !name.contains(".") {
+    let pe = env.get("PATHEXT") ?? ""
+    for e in (if pe.is_empty() { ".com;.exe;.bat;.cmd" } else { pe }).split(";") {
+      if !e.is_empty() {
+        names.push(name + e.to_lower())
+      }
+    }
   }
   for d0 in (env.get("PATH") ?? "").split(sep) {
-    let d = d0.replace("\\", "/")
-    let p = join(if d.is_empty() { "." } else { d }, name)
-    match fs.stat(p) {
-      Ok(Some(fi)) => {
-        if !fi.is_dir {
-          return p
+    let d = d0.trim_prefix("\"").trim_suffix("\"").replace("\\", "/")
+    for n in names {
+      let p = join(if d.is_empty() { "." } else { d }, n)
+      match fs.stat(p) {
+        Ok(Some(fi)) => {
+          if !fi.is_dir {
+            return p
+          }
         }
+        _ => {}
       }
-      _ => {}
     }
   }
   ""
+}
+
+/// Whether this program was built for Windows.
+fn is_windows_target() -> Bool {
+  match target.os {
+    Windows => true
+    Darwin | Linux | Wasi => false
+  }
 }
 
 /// The path with the links of its last element followed (a release's

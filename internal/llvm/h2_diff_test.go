@@ -211,6 +211,9 @@ fn show(os: Os, label: Str, peer: Str, own: Str, r: Result[http.Response, http.C
 
 fn routes(clock: Clock) -> http.Router uses clock {
   var r = http.router()
+  // RFC 7541's examples request / and /index.html (probeH2HPACK)
+  r.handle("GET /", fn(req) { http.text(200, "${fields(req.headers)} host=${req.url.host} scheme=${req.url.scheme}") })
+  r.handle("GET /index.html", fn(req) { http.text(200, "${fields(req.headers)} host=${req.url.host} scheme=${req.url.scheme}") })
   r.handle("GET /hello", fn(req) { http.text(200, "hello ${req.method} ${req.path} q=${req.query("q") ?? "-"}") })
   r.handle("/any", fn(req) { http.text(200, "any ${req.method}") })
   r.handle("/headers", fn(req) {
@@ -410,6 +413,7 @@ func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string)
 	out.WriteString("--- probes\n")
 	probeH2Client(t, &out, addr, p)
 	probeH2Raw(&out, addr, p)
+	probeH2HPACK(&out, addr, p)
 	// a stop request while a stream is in flight: GOAWAY NO_ERROR, then
 	// the stream's response, then the end of the connection
 	rc, err := h2Dial(addr, p)

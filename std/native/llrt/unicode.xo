@@ -2,7 +2,7 @@
 // 0180, the runtime pilot): the case mapping of Str and Rune, the Rune
 // classes is_letter, is_digit, and is_print, strconv's quoting, and the
 // class ranges of std/regexp's \pL and \p{Nd}. They were C (std/llrt's
-// xo_unicode.c tables and their users in xo_std.c and xo_bytes.c); the
+// xo_unicode.c tables and their users, deleted by decision 0198); the
 // semantics are still Go's (unicode, strings, strconv), so the native
 // backends print what the Go backend prints.
 //

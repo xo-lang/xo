@@ -4,7 +4,9 @@
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/atomic
+use native/llrt/fspath
 use native/llrt/jsontext
+use native/llrt/procspec
 use native/llrt/num
 use native/llrt/report
 use native/llrt/show
@@ -682,9 +684,9 @@ fn fs_abs(p: Str) -> Str {
     return fs_clean(p)
   }
   if fs_windows() && fs_slash(p).starts_with("/") {
-    return fs_clean(fs_volume(rt.fs_cwd()) + fs_slash(p))
+    return fs_clean(fs_volume(fspath.cwd()) + fs_slash(p))
   }
-  fs_join(rt.fs_cwd(), p)
+  fs_join(fspath.cwd(), p)
 }
 
 // fs_resolve maps an Xo path to an OS path: os.fs takes it as it is, a
@@ -763,7 +765,7 @@ fn fs_sub(f: Fs, dir: Str) -> Fs {
   }
 }
 
-fn fs_cwd(f: Fs) -> Fs { rt.fs_new(rt.fs_cwd(), 1 | (rt.fs_mode(f) & 6)) }
+fn fs_cwd(f: Fs) -> Fs { rt.fs_new(fspath.cwd(), 1 | (rt.fs_mode(f) & 6)) }
 
 fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
 
@@ -859,7 +861,7 @@ fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 
 fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
   let op = fs_check(f, dir, true)?
-  let name = rt.fs_create_temp(op, prefix, dir)
+  let name = fspath.create_temp(op, prefix, dir)
   if name == "" {
     return Err(fs_err(rt.fs_status(), dir))
   }
@@ -890,7 +892,7 @@ fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
 
 fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_remove_all(op, p)
+  let st = fspath.remove_all(op, p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -898,7 +900,7 @@ fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
 
 fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
   let op = fs_check(f, dir, true)?
-  let st = rt.fs_mkdir_all(op, dir)
+  let st = fspath.mkdir_all(op, dir)
   if st != 0 {
     return Err(fs_err(st, dir))
   }
@@ -1694,21 +1696,8 @@ fn cmd_spec(c: Cmd, var out: List[Str]) {
   if c.merge {
     flags = flags | 4
   }
-  out.push(c.name)
-  out.push(c.dir)
-  out.push("${flags}")
-  out.push("${c.args.len()}")
-  for a in c.args {
-    out.push(a)
-  }
-  out.push("${c.env.len()}")
-  for kv in c.env {
-    out.push(kv)
-  }
-  out.push("${c.extra.len()}")
-  for kv in c.extra {
-    out.push(kv)
-  }
+  // the environment and the Windows command line (decision 0193 step 6)
+  procspec.spec(c.name, c.dir, flags, c.args, c.env, c.extra, out)
 }
 
 /// The ProcErr of a failed outcome (status st, detail d).
@@ -2148,8 +2137,8 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 
 // The number text, as the SSA builder calls it for every interpolation
 // and Display of an Int or Float (decision 0193 step 3): in Xo
-// (std/native/llrt/num.xo). With XO_LLRT_C=num the SSA builder calls the
-// C runtime (str.concat_int and friends) instead.
+// (std/native/llrt/num.xo). Decision 0198 deleted its C path
+// (XO_LLRT_C=num, the C runtime's str.concat_int and friends).
 
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 
@@ -2182,8 +2171,8 @@ fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo
-// (std/native/llrt/jsontext.xo). With XO_LLRT_C=jsontext the SSA builder
-// calls the C runtime (json_str and friends) instead.
+// (std/native/llrt/jsontext.xo). Decision 0198 deleted its C path
+// (XO_LLRT_C=jsontext, the C runtime's json_str and friends).
 
 fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
 

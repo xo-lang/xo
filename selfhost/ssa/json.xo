@@ -8,7 +8,7 @@
 
 use github.com/xo-lang/xo/selfhost/check
 
-// Tape node kinds (std/llrt/xo_json.c).
+// Tape node kinds (std/native/llrt/jsontext.xo).
 const JK_NULL = 0
 const JK_FALSE = 1
 const JK_TRUE = 2

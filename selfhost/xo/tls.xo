@@ -17,10 +17,11 @@ use std/crypto
 /// mbedtls.Version
 fn tls_version() -> Str { "4.1.1" }
 
-/// mbedtls.IncludeDirs (tlsIncludeDirs): on Windows (decision 0197) xo/win
-/// first, the pthread.h subset the library's threading is built on.
-fn tls_include_dirs() -> List[Str] {
-  let win: List[Str] = if is_windows() { ["xo/win"] } else { [] }
+/// mbedtls.IncludeDirs (tlsIncludeDirs) for the target goos: on Windows
+/// (decision 0197) xo/win first, the pthread.h subset the library's
+/// threading is built on.
+fn tls_include_dirs(goos: Str) -> List[Str] {
+  let win: List[Str] = if goos == "windows" { ["xo/win"] } else { [] }
   win + ["xo", "src/include", "src/tf-psa-crypto/include", "src/tf-psa-crypto/drivers/builtin/include", "src/tf-psa-crypto/drivers/everest/include", "src/tf-psa-crypto/drivers/everest/include/tf-psa-crypto/private/everest", "src/tf-psa-crypto/drivers/everest/include/tf-psa-crypto/private/everest/kremlib", "src/tf-psa-crypto/drivers/p256-m/p256-m/include", "src/tf-psa-crypto/drivers/p256-m/p256-m/include/p256-m", "src/tf-psa-crypto/drivers/p256-m/p256-m_driver_interface", "src/library", "src/tf-psa-crypto/core", "src/tf-psa-crypto/drivers/builtin/src", "src/tf-psa-crypto/dispatch", "src/tf-psa-crypto/extras", "src/tf-psa-crypto/platform", "src/tf-psa-crypto/utilities", "fiat-crypto/src"]
 }
 
@@ -49,14 +50,14 @@ fn tls_file_defines() -> List[(Str, List[Str])] {
 /// tlsFileDefines: mbedtls.FileDefines of src, and on Windows (decision
 /// 0197) Everest's Curve25519 without __int128 (kremlib's MSVC branch
 /// types it as __m128i, which clang does not convert).
-fn tls_file_define(src: Str) -> List[Str] {
+fn tls_file_define(goos: Str, src: Str) -> List[Str] {
   var out: List[Str] = []
   for (f, ds) in tls_file_defines() {
     if f == src {
       out = ds
     }
   }
-  if is_windows() && src == "src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519_joined.c" {
+  if goos == "windows" && src == "src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519_joined.c" {
     out = out + ["-U__SIZEOF_INT128__"]
   }
   out
@@ -121,18 +122,24 @@ struct TLSArgs {
 /// sysroot, built when the cache has none.
 fn tls_args(os: Os, ctx: Ctx, cc: Str, flags: List[Str], sysroot: Str) -> TLSArgs {
   var flavor: List[Str] = []
-  for f in flags {
-    // and a cross build's target (llvm_cross_triple)
+  var i = 0
+  while i < flags.len() {
+    let f = flags[i]
+    // and a cross build's target and Windows sysroot (llvm_cross_flags)
     if f.starts_with("-fsanitize") || f.starts_with("-fno-sanitize") || f.starts_with("--target=") {
       flavor.push(f)
+    } else if f == "-Xmicrosoft-windows-sys-root" && i + 1 < flags.len() {
+      flavor = flavor + [f, flags[i + 1]]
+      i += 1
     }
+    i += 1
   }
   let (dir, err) = tls_library(os, ctx, cc, flavor, sysroot)
   if !err.is_empty() {
     return TLSArgs{err: err}
   }
   var compile = ["-DXO_TLS"] + tls_defines()
-  for inc in tls_include_dirs() {
+  for inc in tls_include_dirs(link_os(ctx)) {
     compile = compile + ["-I", "${dir}/${inc}"]
   }
   TLSArgs{compile: compile, link: ["${dir}/libxotls.a"] + tls_system_libs(ctx.goos)}
@@ -206,7 +213,7 @@ fn build_tls_library(os: Os, ctx: Ctx, dir: Str, cc: Str, flavor: List[Str], sys
       if ar.is_empty() {
         return "the TLS library of std/http needs an archiver: install ar (binutils) or llvm-ar, or set XO_AR"
       }
-      compile_tls_archive(os, dir, [cc], args, srcs, [ar], "${dir}/libxotls.a")
+      compile_tls_archive(os, link_os(ctx), dir, [cc], args, srcs, [ar], "${dir}/libxotls.a")
     }
     Err(e) => "extracting the TLS library: ${e}"
   }
@@ -252,9 +259,9 @@ fn write_tls_tree(os: Os, xo: Str, dir: Str) -> List[Str] ! FsErr {
 /// command cc (its words) with args0 and the library's defines and
 /// include directories (run_jobs), then the objects archived in name
 /// order by the archiver command ar with ZERO_AR_DATE=1.
-fn compile_tls_archive(os: Os, dir: Str, cc: List[Str], args0: List[Str], srcs: List[Str], ar: List[Str], lib: Str) -> Str {
+fn compile_tls_archive(os: Os, goos: Str, dir: Str, cc: List[Str], args0: List[Str], srcs: List[Str], ar: List[Str], lib: Str) -> Str {
   var args = args0 + tls_defines()
-  for inc in tls_include_dirs() {
+  for inc in tls_include_dirs(goos) {
     args = args + ["-I", "${dir}/${inc}"]
   }
   let obj_dir = "${dir}/obj"
@@ -264,7 +271,7 @@ fn compile_tls_archive(os: Os, dir: Str, cc: List[Str], args0: List[Str], srcs: 
   for src in srcs {
     let obj = "${obj_dir}/${src.trim_suffix(".c").replace("/", "_")}.o"
     objs.push(obj)
-    cmds.push(cc + args + tls_file_define(src) + ["-o", obj, "${dir}/${src}"])
+    cmds.push(cc + args + tls_file_define(goos, src) + ["-o", obj, "${dir}/${src}"])
     labels.push("compiling the TLS library (${src})")
   }
   match os.fs.create_dir_all(obj_dir) {

@@ -1,7 +1,7 @@
 // Text workloads of the native runtime port (decision 0193): the number
 // and time text (std/native/llrt/text.xo) against its C path
-// (XO_LLRT_C=text), the Str operations (strings.xo, XO_LLRT_C=strings),
-// the number text (num.xo, XO_LLRT_C=num), the leaf text of Debug
+// (XO_LLRT_C=text), the Str operations (strings.xo) and the number text
+// (num.xo; decision 0198 deleted their C paths), the leaf text of Debug
 // (show.xo, XO_LLRT_C=show), and the zone rules of std/time (tz.xo,
 // XO_LLRT_C=tz). Usage: textperf <workload>. Each workload prints
 // "<workload> <checksum> <elapsed microseconds>"; the checksum must be

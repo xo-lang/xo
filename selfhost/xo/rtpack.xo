@@ -170,7 +170,7 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: Lis
     var args = cc + base + variant_defines(i)
     if i >= 16 {
       args = args + ["-DXO_TLS"] + tls_defines()
-      for inc in tls_include_dirs() {
+      for inc in tls_include_dirs(tos) {
         args = args + ["-I", "${tls_dir}/${inc}"]
       }
     }
@@ -182,7 +182,7 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: Lis
     return ("", failed)
   }
   let lib = "${stage}/libxotls.a"
-  let lerr = compile_tls_archive(os, tls_dir, cc, ["-c"] + base + ["-w"], tls_srcs, ar, lib)
+  let lerr = compile_tls_archive(os, tos, tls_dir, cc, ["-c"] + base + ["-w"], tls_srcs, ar, lib)
   if !lerr.is_empty() {
     return ("", lerr)
   }
