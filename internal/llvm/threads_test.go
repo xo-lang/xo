@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -328,6 +330,21 @@ func TestRuntimeEventLoop(t *testing.T) {
 // own limit, checked 2026-10-08), so they run on four threads without it.
 var deepRecursion = map[string]bool{"recursion": true, "rc_closures": true}
 
+// fiberBound is the most tasks a golden program parks at once (each
+// holds a fiber stack). Four copies of it run at once in
+// TestGoldenThreads, so its fibers at once are at most four times that,
+// plus one running per worker thread, each worker's cache of 8, and the
+// shared cache of 64 (std/llrt/xo_rt.c: XO_FCACHE, XO_FIBER_CACHE).
+// conc_stress parks its 2000 senders on a full channel; the bound is its
+// memory need: under ThreadSanitizer on Linux, whose arm64 programs have
+// 31.8 GiB to map in (about 24 GiB of it left for fiber stacks), the
+// stacks are 2 MiB, so the bound on 32 CPUs (8352 fibers) reserves 16.3
+// GiB (gotchas/linux-tsan-fiber-stacks.md). More than the bound would be
+// a fiber leak.
+var fiberBound = map[string]int{"conc_stress": 2000}
+
+var fiberPeakRE = regexp.MustCompile(`fiber_peak=(\d+)`)
+
 // TestGoldenThreads builds golden programs with share probes (every heap
 // value marked shared) and runs each on four threads at once
 // (-DXO_RT_TEST_THREADS=4) under ThreadSanitizer: the per thread heaps,
@@ -385,9 +402,21 @@ func TestGoldenThreads(t *testing.T) {
 			} else {
 				bin = tsanBuild(t, flags, []string{ll, rt})
 			}
-			out := runTSan(t, bin, dir, "XO_LEAKCHECK=1")
+			out := runTSan(t, bin, dir, "XO_LEAKCHECK=1", "XO_RTSTATS=1")
 			if m := leakRE.FindStringSubmatch(out); m == nil || m[1] != "0" {
 				t.Errorf("leak check: %q", m)
+			}
+			if bound, ok := fiberBound[filepath.Base(dir)]; ok {
+				m := fiberPeakRE.FindStringSubmatch(out)
+				if m == nil {
+					t.Fatalf("no fiber_peak in the run's statistics:\n%s", out)
+				}
+				peak, _ := strconv.Atoi(m[1])
+				max := bound*4 + runtime.NumCPU()*9 + 64
+				t.Logf("fiber_peak %d of at most %d", peak, max)
+				if peak > max {
+					t.Errorf("fiber_peak %d: more fiber stacks at once than the program can park (%d)", peak, max)
+				}
 			}
 		})
 	}
