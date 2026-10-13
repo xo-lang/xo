@@ -108,6 +108,8 @@ fn duration_parse_ok(s: Str) -> Bool
 fn duration_parse(s: Str) -> Int
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
+/// utf8.ValidString (std/native/llrt/jsontext.xo).
+fn utf8_valid(s: Str) -> Bool
 /// utf8.RuneCount.
 fn bytes_rune_count(b: Bytes) -> Int
 /// The lowercase hex of b.

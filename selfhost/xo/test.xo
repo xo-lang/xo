@@ -81,7 +81,7 @@ fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
 }
 
 fn abs_path(wd: Str, p: Str) -> Str {
-  if p.starts_with("/") {
+  if is_abs_path(p) {
     return p
   }
   if p == "." || p.is_empty() {

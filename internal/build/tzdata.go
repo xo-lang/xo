@@ -344,7 +344,7 @@ func IOFlags(code []byte) []string {
 	}
 	// and of the number text (decision 0193 step 3, XO_LLRT_C=num)
 	for _, sym := range []string{"xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_NUM_C")
 			break
 		}
@@ -366,6 +366,13 @@ func IOFlags(code []byte) []string {
 	for _, sym := range []string{"xo_tz_load", "xo_tz_offset", "xo_tz_abbr"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_TZ_C")
+			break
+		}
+	}
+	// and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
+	for _, sym := range []string{"xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_JSONTEXT_C")
 			break
 		}
 	}

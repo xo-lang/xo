@@ -20,7 +20,7 @@ pub fn executable(env: Env, fs: Fs) -> Str uses (env, fs.read) {
       return ""
     }
   }
-  if !p.starts_with("/") {
+  if !is_rooted(p) {
     let wd = env.get("PWD") ?? ""
     if wd.is_empty() {
       return clean(p)
@@ -54,7 +54,12 @@ pub fn std_dir(env: Env, fs: Fs) -> Str uses (env, fs.read) {
 /// exec.LookPath for a name without a slash: the first file of that name
 /// in a $PATH directory.
 fn in_path(env: Env, fs: Fs, name: Str) -> Str uses (env, fs.read) {
-  for d in (env.get("PATH") ?? "").split(":") {
+  let sep = match target.os {
+    Windows => ";"
+    Darwin | Linux | Wasi => ":"
+  }
+  for d0 in (env.get("PATH") ?? "").split(sep) {
+    let d = d0.replace("\\", "/")
     let p = join(if d.is_empty() { "." } else { d }, name)
     match fs.stat(p) {
       Ok(Some(fi)) => {
@@ -79,7 +84,7 @@ fn eval_links(fs: Fs, path: Str) -> Str uses fs.read {
       Ok(Some(t)) => t
       _ => return p
     }
-    p = if target.starts_with("/") { clean(target) } else { join(parent_dir(p), target) }
+    p = if is_rooted(target) { clean(target) } else { join(parent_dir(p), target) }
     n += 1
   }
   p

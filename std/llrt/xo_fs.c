@@ -279,6 +279,14 @@ static int fs_mkdir_all(char *path) {
 
 int64_t xo_fs_mkdir_all(const char *p, int64_t n, const char *x, int64_t xn) {
 	char *path = cstr_of(p, n);
+#ifdef _WIN32
+	// \ separates too (std.md 3.1); the walk to the parents splits at /
+	for (char *c = path; *c; c++) {
+		if (*c == '\\') {
+			*c = '/';
+		}
+	}
+#endif
 	int err = fs_mkdir_all(path);
 	free(path);
 	if (err == 0) {
@@ -363,6 +371,14 @@ xo_rstr *xo_fs_cwd(int64_t *len) {
 	int64_t k = (int64_t)strlen(w);
 	xo_rstr *s = rs_new(k);
 	memcpy(s->data, w, (size_t)k);
+#ifdef _WIN32
+	// paths reach Xo with / separators (std.md 3.1)
+	for (int64_t i = 0; i < k; i++) {
+		if (s->data[i] == '\\') {
+			s->data[i] = '/';
+		}
+	}
+#endif
 	*len = k;
 	return s;
 }

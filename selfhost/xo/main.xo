@@ -291,12 +291,22 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   // host its default is still the arm64 code of the host's OS)
   let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/arm64" }
   let targets = parse_targets(os, o.targets, host)
+  // the LLVM backend: the host, or one other target clang cross
+  // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
+  // windows/amd64, decision 0197)
+  var ltarget = host
+  var cross: List[Str] = []
   for tg in targets {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
     }
     if backend == "llvm" && tg != host {
-      fail(os, "the LLVM backend builds for the host (${host}) only, not ${tg}")
+      let triple = llvm_cross_triple(host, tg)
+      if triple.is_empty() || targets.len() > 1 {
+        fail(os, "the LLVM backend builds for the host (${host}) only, not ${tg}")
+      }
+      ltarget = tg
+      cross = ["--target=${triple}"]
     }
   }
   let tests = o.cmd == "test"
@@ -317,7 +327,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var tgoarch = ""
   if backend == "arm64" || backend == "llvm" {
     tgoos = targets[0].split("/")[0]
-    tgoarch = if backend == "arm64" { "arm64" } else { host_arch() }
+    tgoarch = if backend == "arm64" { "arm64" } else { ltarget.split("/")[1] }
   }
   var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
   t = lo.t
@@ -359,7 +369,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if !g.skipped.is_empty() {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
-    let code = with_target_attrs(ir, clang_target_attrs(os, cc))
+    let code = with_target_attrs(ir, clang_target_attrs(os, cc, cross))
     if o.cmd == "asm" {
       os.stdio.print(code)
       lap(os, phases, "print", t)
@@ -368,6 +378,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let split = split_config(os)
     let parts = split_ir(code, split.modules)
     var dir = "${bdir}/llvm"
+    if ltarget != host {
+      dir = "${dir}-${ltarget.replace("/", "-")}"
+    }
     if parts.len() > 1 {
       // a split build has its own directory (a single module build of
       // the same program may run at the same time)
@@ -384,8 +397,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       write_or_fail(os, dir, o.asm_path, code.bytes())
     }
     t = lap(os, phases, "write", t)
-    let bin = bin_path(dir, out, name, host, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, ctx.goos)
+    let bin = bin_path(dir, out, name, ltarget, false)
+    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, ctx.goos)
+    lk.flags = cross + lk.flags
     var mode_flags = ["llvm", "-O2"]
     if lls.len() > 1 {
       mode_flags = mode_flags + ["split", split.lto]
@@ -408,7 +422,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       store_bin(os, entry, bin)
     }
     lap(os, phases, "cc", t)
-    return finish(os, o, c, root, [(host, bin)], tests)
+    return finish(os, o, c, root, [(ltarget, bin)], tests)
   }
   // arm64: the assembly of each target; the host's is linked
   let dir = "${bdir}/arm64"
@@ -720,7 +734,7 @@ fn line_root(os: Os, wd: Str, dir: Str) -> Str {
   if abs.starts_with("./") {
     abs = abs.trim_prefix("./")
   }
-  if !abs.starts_with("/") {
+  if !is_abs_path(abs) {
     abs = if abs == "." { wd } else { "${wd}/${abs}" }
   }
   var d = abs

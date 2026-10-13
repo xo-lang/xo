@@ -1,0 +1,73 @@
+// std/json's text on the native backends (decision 0193 step 4,
+// std/native/llrt/jsontext.xo): the parser's errors, escapes and
+// surrogates, duplicate keys in small and large objects, Int and Float
+// ranges, and the encoders' string escapes and Float layout, as the Go
+// backend has them.
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  score: Float
+  tags: List[Str]
+  ok: Bool
+  note: Str? = None
+} derive Json
+
+fn show[T: Json](s: Str) -> Str {
+  match json.decode_str[T](s) {
+    Ok(v) => "ok ${v.debug()}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let docs = [
+    "{\"id\": 1, \"name\": \"a\\u00e9\\ud83d\\ude00\\n\", \"score\": 1.5e3, \"tags\": [\"x\", \"y\"], \"ok\": true}",
+    "{\"id\": 1, \"id\": 2, \"name\": \"J\u{f6}rg \\\"q\\\"\", \"score\": -0.0, \"tags\": [], \"ok\": false, \"note\": null}",
+    "{\"id\": 1.5}",
+    "[1,]",
+    "{\"a\" 1}",
+    "tru",
+    "nulx",
+    "\"\\x\"",
+    "1 2",
+    "{} {}",
+    "1 ]",
+    "",
+    "  ",
+    "[",
+    "\"abc",
+    "-",
+    "01",
+    "1.",
+    "1e",
+    "{1:2}",
+    "[1 2]",
+    "{\"a\":1,}",
+    "\"\\ud83d\"",
+    "1e400",
+    "{\"name\": \"\u{1}\"}",
+    "[\"\\u12g4\"]",
+    "falsy",
+    "fals",
+    "\u{feff}{}",
+    "{\"id\": 3, \"name\": \"\", \"score\": 1, \"tags\": [\"\"], \"ok\": true, \"extra\": {\"deep\": [[[]]]}}",
+  ]
+  for d in docs {
+    os.stdio.println(show[User](d))
+  }
+  os.stdio.println(show[List[Int]]("[1, -2, 9223372036854775807, -9223372036854775808, -0]"))
+  os.stdio.println(show[List[Int]]("[9223372036854775808]"))
+  os.stdio.println(show[List[Int]]("[1e2]"))
+  os.stdio.println(show[List[Float]]("[1, -2.5, 1e-7, 123456789012345678901234567890, 5e-324, 2.2250738585072011e-308]"))
+  os.stdio.println(show[Map[Str, Int]]("{\"a\":1,\"b\":2,\"a\":3,\"\\u0061\":4}"))
+  os.stdio.println(show[Map[Str, Int]]("{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k\\u0031\":10,\"k0\":11}"))
+  os.stdio.println(show[List[Str]]("[\"\\ud83d\\u0041\", \"\\ude00\", \"\\ud800\\ud800\", \"\u{e9}\", \"tab\\there\", \"a long string with no escapes in it at all\", \"\\/\\b\\f\\r\"]"))
+  os.stdio.println(show[List[Bytes]]("[\"\", \"AA==\", \"Zm9vYg==\", \"Zm9v\\r\\nYmFy\"]"))
+  os.stdio.println(show[List[Bytes]]("[\"Zm9vYg\"]"))
+  os.stdio.println(json.encode_str([b"", b"foo", b"\x00\xff\xfe", b"0123456789abcdefghijklmnopqrstuvwxyz"]))
+  let u = User{id: 7, name: "q\"\\\n\u{1}\u{e9}\u{2028}\u{2029}\u{7f}", score: 0.000001, tags: ["a"], ok: true}
+  os.stdio.println(json.encode_str(u))
+  os.stdio.println(json.encode_str([1e21, 1e20, 123456.789, 1e-7, 1.5e-10, 0.1, -0.0, 5e-324, 1.7976931348623157e308, 12345678.5, 0.000123, 1234567890123456.7, 3.0, 100.0, 0.0 / 0.0, 1.0 / 0.0]))
+}

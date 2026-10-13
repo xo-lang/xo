@@ -1,0 +1,66 @@
+// winpoll: round trip latency of one loopback connection while IDLE
+// other connections each have a task blocked reading them (decision
+// 0197 stage 5: AFD polls through an I/O completion port against
+// WSAPoll over every waited descriptor, XO_WINPOLL=wsapoll). Prints the
+// idle count, the rounds, and the mean round trip in microseconds.
+//
+//   XO_IDLE=1000 XO_ROUNDS=20000 ./winpoll
+
+fn main(os: Os) ! {
+  let idle = Int.parse(os.env.get("XO_IDLE") ?? "0") ?? 0
+  let rounds = Int.parse(os.env.get("XO_ROUNDS") ?? "20000") ?? 20000
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  var clients: List[Conn] = []
+  scope s {
+    s.spawn(fn() {
+      for i in 0..idle + 1 {
+        let c = match l.accept() {
+          Ok(c) => c
+          Err(e) => {
+            os.stdio.eprintln("accept: ${e}")
+            return
+          }
+        }
+        if i < idle {
+          // a reader parked on an idle connection until it closes
+          s.spawn(fn() {
+            while let Ok(Some(_)) = c.read(16) {
+            }
+            c.close()
+          })
+        } else {
+          // the echo of the measured connection
+          while let Ok(Some(b)) = c.read(16) {
+            if c.write(b).is_err() {
+              break
+            }
+          }
+          c.close()
+        }
+      }
+    })
+    for _ in 0..idle {
+      clients.push(os.net.dial(addr)?)
+    }
+    let c = os.net.dial(addr)?
+    let one = b"x"
+    // warm up, then measure
+    for _ in 0..100 {
+      c.write(one)?
+      c.read(1)?
+    }
+    let t = os.clock.now()
+    for _ in 0..rounds {
+      c.write(one)?
+      c.read(1)?
+    }
+    let d = os.clock.since(t)
+    os.stdio.println("idle ${idle} rounds ${rounds} round trip ${d.nanos() / rounds / 1000}.${(d.nanos() / rounds % 1000) / 100} us")
+    c.close()
+    for x in clients {
+      x.close()
+    }
+  }
+  l.close()
+}

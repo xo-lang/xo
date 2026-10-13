@@ -8,8 +8,8 @@
 //   - the futex: WaitOnAddress and WakeByAddressSingle (xo_rt.c);
 //   - clocks: QueryPerformanceCounter (monotonic) and
 //     GetSystemTimePreciseAsFileTime (wall clock);
-//   - sockets: Winsock 2 (initialized on first use); the poller has no
-//     socket readiness yet (stage 2), so registering a socket fails;
+//   - sockets: Winsock 2 (initialized on first use); readiness comes
+//     from AFD polls on the poller's completion port (xo_rt.c);
 //   - descriptors: the C runtime's _read/_write/_close, in binary mode.
 //
 // Faults unwind with the Windows unwinder (RtlVirtualUnwind, xo_rt.c)
@@ -125,6 +125,7 @@ static inline int pthread_mutex_trylock(pthread_mutex_t *m) { return TryAcquireS
 // third_party/mbedtls/xo/win/pthread.h: the same subset)
 #define XO_WIN_PTHREAD_H 1
 typedef CONDITION_VARIABLE pthread_cond_t;
+#define PTHREAD_COND_INITIALIZER CONDITION_VARIABLE_INIT
 static inline int pthread_cond_init(pthread_cond_t *c, const void *a) {
 	(void)a;
 	InitializeConditionVariable(c);
@@ -160,9 +161,15 @@ typedef struct {
 	void *arg;
 } xo_win_start;
 
+// the stack a thread keeps for its stack overflow handler (on_overflow,
+// xo_rt.c), past the guard page
+#define XO_W_GUARANTEE (64 << 10)
+
 static unsigned __stdcall xo_thread_tramp(void *p) {
 	xo_win_start s = *(xo_win_start *)p;
 	free(p);
+	ULONG g = XO_W_GUARANTEE;
+	SetThreadStackGuarantee(&g);
 	s.fn(s.arg);
 	return 0;
 }
@@ -251,6 +258,14 @@ static int xo_clock_gettime(int clk, struct timespec *ts) {
 	return 0;
 }
 #define clock_gettime(c, t) xo_clock_gettime((c), (t))
+
+// nanosleep sleeps at least ts (millisecond resolution)
+static inline int nanosleep(const struct timespec *ts, struct timespec *rem) {
+	(void)rem;
+	int64_t ms = (int64_t)ts->tv_sec * 1000 + (ts->tv_nsec + 999999) / 1000000;
+	Sleep((DWORD)(ms > 0x7FFFFFFF ? 0x7FFFFFFF : ms));
+	return 0;
+}
 
 static inline struct tm *gmtime_r(const time_t *t, struct tm *out) { return gmtime_s(out, t) == 0 ? out : NULL; }
 static inline struct tm *localtime_r(const time_t *t, struct tm *out) { return localtime_s(out, t) == 0 ? out : NULL; }
@@ -359,6 +374,24 @@ static int xo_w_shutdown(int fd, int how) { XO_WSA_INT(shutdown((SOCKET)fd, how)
 #define getpeername(fd, a, n) xo_w_getpeername((fd), (a), (n))
 #define shutdown(fd, how) xo_w_shutdown((fd), (how))
 
+// Descriptors and sockets are both ints (stage 5): a socket is its
+// SOCKET handle's value (a multiple of 4), and a C runtime descriptor above
+// the standard three carries XO_W_FD, so the two never share a number. The
+// runtime's descriptors (0 to 2 untagged) only reach the C runtime through
+// these shims, which take the tag off. Before, both were plain small
+// numbers, and with about 550 files open a file's descriptor equaled a
+// socket's handle: closing the file closed the socket.
+#define XO_W_FD 0x40000000
+
+// xo_w_fd tags a C runtime descriptor (negative: an error, as it is).
+static inline int xo_w_fd(int raw) { return raw > 2 ? raw | XO_W_FD : raw; }
+
+// xo_w_raw is the C runtime's number of a descriptor.
+static inline int xo_w_raw(int fd) { return fd > 2 && (fd & XO_W_FD) ? fd & ~XO_W_FD : fd; }
+
+// xo_w_is_sock reports whether fd names a socket.
+static inline int xo_w_is_sock(int fd) { return fd > 2 && !(fd & XO_W_FD); }
+
 // sockets are numbered as ints, like descriptors (a SOCKET is a kernel
 // handle, a multiple of 4 below 2^32 in practice)
 static int xo_w_socket(int af, int type, int proto) {
@@ -426,10 +459,18 @@ static int xo_w_fcntl(int fd, int cmd, ...) {
 
 // close closes a socket or a C runtime descriptor
 static int xo_w_close(int fd) {
-	if (fd > 2 && closesocket((SOCKET)fd) == 0) {
+	if (fd < 0) {
+		errno = EBADF;
+		return -1;
+	}
+	if (xo_w_is_sock(fd)) {
+		if (closesocket((SOCKET)(unsigned)fd) != 0) {
+			errno = xo_wsa_errno();
+			return -1;
+		}
 		return 0;
 	}
-	return _close(fd);
+	return _close(xo_w_raw(fd));
 }
 #define close(fd) xo_w_close(fd)
 
@@ -442,7 +483,14 @@ static int xo_w_close(int fd) {
 #define strtok_r(s, d, p) strtok_s((s), (d), (p))
 #define timegm(tm) _mkgmtime(tm)
 
-static int xo_w_pipe(int p[2]) { return _pipe(p, 1 << 16, _O_BINARY); }
+static int xo_w_pipe(int p[2]) {
+	if (_pipe(p, 1 << 16, _O_BINARY) != 0) {
+		return -1;
+	}
+	p[0] = xo_w_fd(p[0]);
+	p[1] = xo_w_fd(p[1]);
+	return 0;
+}
 #define pipe(p) xo_w_pipe(p)
 
 static int xo_w_fix(const char *path, int e, int isopen);
@@ -473,7 +521,7 @@ static int xo_w_open(const char *path, int flags, ...) {
 	if (fd < 0) {
 		errno = xo_w_fix(path, errno, 1);
 	}
-	return fd;
+	return xo_w_fd(fd);
 }
 #define open(...) xo_w_open(__VA_ARGS__)
 
@@ -483,9 +531,9 @@ static FILE *xo_w_fopen_rb(const char *path) {
 	if (fd < 0) {
 		return NULL;
 	}
-	FILE *f = _fdopen(fd, "rb");
+	FILE *f = _fdopen(xo_w_raw(fd), "rb");
 	if (!f) {
-		_close(fd);
+		_close(xo_w_raw(fd));
 	}
 	return f;
 }
@@ -659,6 +707,13 @@ static HANDLE xo_w_open_meta(const char *path, DWORD access, int link) {
 	HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
 		FILE_FLAG_BACKUP_SEMANTICS | (link ? FILE_FLAG_OPEN_REPARSE_POINT : 0), NULL);
 	DWORD e = GetLastError();
+	if (h == INVALID_HANDLE_VALUE && !link && e == ERROR_CANT_ACCESS_FILE) {
+		// a reparse point the system cannot follow (an AF_UNIX socket
+		// file): the point itself, as Go's os.Stat
+		h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+		e = GetLastError();
+	}
 	free(w);
 	if (h == INVALID_HANDLE_VALUE) {
 		errno = xo_w_fix(path, xo_w_errno(e), 0);
@@ -677,7 +732,7 @@ static int xo_w_stat_path(const char *path, struct xo_wstat *st, int link) {
 }
 
 static int xo_w_fstat(int fd, struct xo_wstat *st) {
-	HANDLE h = (HANDLE)_get_osfhandle(fd);
+	HANDLE h = (HANDLE)_get_osfhandle(xo_w_raw(fd));
 	if (h == INVALID_HANDLE_VALUE) {
 		errno = EBADF;
 		return -1;
@@ -907,9 +962,9 @@ typedef struct {
 	WCHAR buf[1];
 } xo_w_reparse;
 
-// readlink reads a symbolic link's target (its print name, with / for \
-// when the target is relative); no link names /etc/localtime, so the
-// local zone is "Local" (xo_time.c)
+// readlink reads a symbolic link's target (its print name, with / for \,
+// as Fs.read_link gives it, std.md 3.1); no link names /etc/localtime,
+// so the local zone is "Local" (xo_time.c)
 static ssize_t readlink(const char *path, char *buf, size_t n) {
 	HANDLE h = xo_w_open_meta(path, 0, 1);
 	if (h == INVALID_HANDLE_VALUE) {
@@ -937,11 +992,9 @@ static ssize_t readlink(const char *path, char *buf, size_t n) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
-	if (u.r.flags & 1) { // SYMLINK_FLAG_RELATIVE
-		for (int i = 0; i < k; i++) {
-			if (buf[i] == '\\') {
-				buf[i] = '/';
-			}
+	for (int i = 0; i < k; i++) {
+		if (buf[i] == '\\') {
+			buf[i] = '/';
 		}
 	}
 	return k;
@@ -953,7 +1006,7 @@ static ssize_t readlink(const char *path, char *buf, size_t n) {
 #define LOCK_NB 4
 #define LOCK_UN 8
 static int flock(int fd, int op) {
-	HANDLE h = (HANDLE)_get_osfhandle(fd);
+	HANDLE h = (HANDLE)_get_osfhandle(xo_w_raw(fd));
 	OVERLAPPED o;
 	memset(&o, 0, sizeof o);
 	BOOL ok;
@@ -971,8 +1024,159 @@ static int flock(int fd, int op) {
 	return 0;
 }
 
-#define read(fd, p, n) _read((fd), (p), (unsigned)(n))
-#define write(fd, p, n) _write((fd), (p), (unsigned)(n))
+#define read(fd, p, n) _read(xo_w_raw(fd), (p), (unsigned)(n))
+#define write(fd, p, n) _write(xo_w_raw(fd), (p), (unsigned)(n))
+
+// ---------------------------------------------------------------------------
+// Pumps: a handle the poller cannot wait on (a pipe, the console) joined
+// to a loopback socket it can, by a thread that copies between them
+
+typedef struct {
+	HANDLE h;
+	SOCKET s;
+	int out, close_h;
+} xo_w_pump_t;
+
+static void *xo_w_pump_main(void *a) {
+	xo_w_pump_t *p = a;
+	char b[65536];
+	if (p->out) {
+		DWORD n;
+		for (;;) {
+			if (!ReadFile(p->h, b, sizeof b, &n, NULL)) {
+				break; // ERROR_BROKEN_PIPE: every writer closed it
+			}
+			if (n == 0 && GetFileType(p->h) == FILE_TYPE_CHAR) {
+				break; // the console's end of input (Ctrl-Z)
+			}
+			int64_t at = 0;
+			while (at < (int64_t)n) {
+				int w = send(p->s, b + at, (int)(n - at), 0);
+				if (w <= 0) {
+					goto done; // the program closed its end
+				}
+				at += w;
+			}
+		}
+	} else {
+		for (;;) {
+			int r = recv(p->s, b, sizeof b, 0);
+			if (r <= 0) {
+				break; // the program closed its end
+			}
+			DWORD at = 0, w;
+			while (at < (DWORD)r) {
+				if (!WriteFile(p->h, b + at, (DWORD)r - at, &w, NULL)) {
+					goto done; // the reader closed it
+				}
+				at += w;
+			}
+		}
+	}
+done:
+	if (p->close_h) {
+		CloseHandle(p->h);
+	}
+	closesocket(p->s);
+	free(p);
+	return NULL;
+}
+
+// xo_w_pump joins h to a loopback socket pair and returns the program's
+// end (nonblocking), -1 when it cannot: out copies what h reads to the
+// socket, else what the socket receives to h. At the end (h's or the
+// program's) the thread closes its socket, and h when close_h.
+static int xo_w_pump(HANDLE h, int out, int close_h) {
+	int sv[2];
+	if (xo_w_socketpair(sv) < 0) {
+		return -1;
+	}
+	u_long zero = 0;
+	ioctlsocket((SOCKET)sv[1], FIONBIO, &zero); // the thread's end blocks
+	xo_w_pump_t *p = malloc(sizeof *p);
+	if (!p) {
+		xo_w_close(sv[0]);
+		xo_w_close(sv[1]);
+		return -1;
+	}
+	*p = (xo_w_pump_t){h, (SOCKET)sv[1], out, close_h};
+	pthread_t t;
+	pthread_attr_t at;
+	pthread_attr_init(&at);
+	pthread_attr_setstacksize(&at, 256 << 10);
+	pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+	int e = pthread_create(&t, &at, xo_w_pump_main, p);
+	pthread_attr_destroy(&at);
+	if (e != 0) {
+		xo_w_close(sv[0]);
+		xo_w_close(sv[1]);
+		free(p);
+		return -1;
+	}
+	return sv[0];
+}
+
+// ---------------------------------------------------------------------------
+// The environment in UTF-8 (stage 5): the C runtime's _environ and getenv
+// are in the ANSI code page, so a value outside it came out as '?'. The
+// runtime reads a UTF-8 copy of GetEnvironmentStringsW, taken once (Xo
+// programs do not set variables), and getenv looks names up in it
+// without case, as Windows does.
+
+static char **xo_w_env;
+static INIT_ONCE xo_w_env_o = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK xo_w_env_init(PINIT_ONCE o, PVOID p, PVOID *c) {
+	(void)o;
+	(void)p;
+	(void)c;
+	WCHAR *block = GetEnvironmentStringsW();
+	size_t n = 0;
+	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
+		n++;
+	}
+	char **env = calloc(n + 1, sizeof(char *));
+	if (!env) {
+		abort();
+	}
+	size_t k = 0;
+	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
+		if (w[0] == L'=') {
+			continue; // the per drive directories (=C:=C:\...)
+		}
+		int u = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+		char *e = u > 0 ? malloc((size_t)u) : NULL;
+		if (!e) {
+			continue;
+		}
+		WideCharToMultiByte(CP_UTF8, 0, w, -1, e, u, NULL, NULL);
+		env[k++] = e;
+	}
+	env[k] = NULL;
+	if (block) {
+		FreeEnvironmentStringsW(block);
+	}
+	xo_w_env = env;
+	return TRUE;
+}
+
+// xo_w_environ is the environment as UTF-8 NAME=VALUE entries.
+static char **xo_w_environ(void) {
+	InitOnceExecuteOnce(&xo_w_env_o, xo_w_env_init, NULL, NULL);
+	return xo_w_env;
+}
+
+// xo_w_getenv is getenv over xo_w_environ (names without case).
+static const char *xo_w_getenv(const char *name) {
+	size_t n = strlen(name);
+	for (char **e = xo_w_environ(); *e; e++) {
+		if (_strnicmp(*e, name, n) == 0 && (*e)[n] == '=') {
+			return *e + n + 1;
+		}
+	}
+	return NULL;
+}
+#define getenv(n) xo_w_getenv(n)
 
 // ---------------------------------------------------------------------------
 // Random bytes

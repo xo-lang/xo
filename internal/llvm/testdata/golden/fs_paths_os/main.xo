@@ -1,0 +1,58 @@
+// Paths the OS gives and takes (std.md 3.1, decision 0197 stage 4): on
+// Windows the separator \ is accepted beside /, a drive path (C:/x or
+// C:\x) is absolute, and the paths std returns (the program, FileInfo
+// paths, read_link) use / only. Elsewhere the same program uses /, so
+// every target prints the same lines.
+
+fn sep() -> Str {
+  match target.os {
+    TargetOs.Windows => "\\"
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => "/"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let p = os.env.program()
+  out.println("program without backslash: ${!p.contains("\\")}")
+  // the temporary directory as the OS writes it (C:\Users\...\Temp)
+  let tmp = os.env.get("TMPDIR") ?? os.env.get("TEMP") ?? "/tmp"
+  let name = "xo-paths-${os.rand.int(0, 1000000000)}"
+  let root = tmp.trim_suffix(sep()) + sep() + name
+  os.fs.create_dir_all(root + sep() + "a" + sep() + "b")?
+  os.fs.write(root + sep() + "a" + sep() + "b" + sep() + "f.txt", b"deep\n")?
+  out.println("exists with the OS separator: ${os.fs.exists(root + sep() + "a" + sep() + "b" + sep() + "f.txt")?}")
+  out.println("exists with /: ${os.fs.exists(root.replace(sep(), "/") + "/a/b/f.txt")?}")
+  match os.fs.stat(root + sep() + "a")? {
+    Some(fi) => out.println("stat name ${fi.name} dir ${fi.is_dir} path without backslash ${!fi.path.contains("\\")}")
+    None => out.println("stat: missing")
+  }
+  // other absolute forms of the same directory: on Windows the UNC path
+  // of the drive's administrative share and the path rooted at the
+  // current drive without its letter (the harness runs on drive C:)
+  let unc = match target.os {
+    TargetOs.Windows => "\\\\localhost\\${root[0..1]}$${root[2..]}"
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => root
+  }
+  let rooted = match target.os {
+    TargetOs.Windows => root[2..].replace("\\", "/")
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => root
+  }
+  out.println("UNC form: ${os.fs.exists(unc + sep() + "a")?} ${os.fs.sub(unc).read_text("a/b/f.txt")?.trim()}")
+  out.println("rooted form: ${os.fs.exists(rooted + "/a")?} ${os.fs.sub(rooted).read_text("a/b/f.txt")?.trim()}")
+  // a sub capability rooted at the OS form; its paths are relative
+  let sub = os.fs.sub(root)
+  out.println("sub read: ${sub.read_text("a/b/f.txt")?.trim()}")
+  for fi in sub.walk("a")? {
+    out.println("walk ${fi.path} ${fi.name}")
+  }
+  let made = sub.create_temp("a", "t-")?
+  out.println("temp under a: ${made.starts_with("a/t-")}")
+  match sub.read_text("../outside") {
+    Ok(_) => out.println("escape: allowed?")
+    Err(e) => out.println("escape: ${e}")
+  }
+  out.println("cwd exists: ${os.fs.cwd().exists(".")?}")
+  os.fs.remove_all(root)?
+  out.println("removed: ${!os.fs.exists(root)?}")
+}

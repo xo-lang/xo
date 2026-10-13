@@ -164,6 +164,21 @@ func (s *fn) numText(acc, v *Value) *Value {
 	return s.call("str.concat_"+k, st, "", acc, v)
 }
 
+// jsonRT is a call of std/json's tape reader or text function name
+// (json_str, rs_append_json_str, b64_ok, ...) for the codecs build_json.go
+// generates: the native prelude's llrt_<name> (std/native/llrt/
+// jsontext.xo, decision 0193 step 4), unchecked like the C it replaces;
+// with XO_LLRT_C=jsontext, or without the native prelude, the C
+// runtime's rt.<name> as before the port.
+func (s *fn) jsonRT(name string, t *Type, args ...*Value) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("jsontext") {
+		f := b.declare(impl, nil, nil)
+		return s.call(f.Name, f.Results[0], "", args...)
+	}
+	return s.rt(name, t, args...)
+}
+
 // loc is the `file:line` of n as a Str constant (for faults the runtime
 // raises, located like the Go backend's).
 func (s *fn) loc(n ast.Node) *Value {

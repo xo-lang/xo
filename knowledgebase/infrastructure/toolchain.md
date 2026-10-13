@@ -777,6 +777,20 @@ Last verified: 2026-10-07
   of the min instructions of 5 runs> <bytes of output>`;
   `XO_LLRT_C=report` builds the C path. Through the heavy lock, with
   `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/json/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
+  decision 0193 step 4): the same for bench/perf/json (std/json decode
+  of small objects, Int, Float, and string arrays, Map objects, the
+  parser alone, invalid texts; encode of structs, strings, Floats; Bytes
+  both ways; `none` is the input setup alone); `XO_LLRT_C=jsontext`
+  builds the C path. Run it through the heavy lock with
+  `XO_SELF_DRIVER=0`. Results in
+  `bench/results/runtime-port-step4-2026-10-13.md`. Last verified:
+  2026-10-13.
+- `go test ./internal/llvm -run TestJSONTextDiff` (2026-10-13, decision
+  0193 step 4): std/json on arm64 and LLVM, Xo and C paths, against the
+  Go backend on about 28,000 generated and edge case inputs (not under
+  -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
+  verified: 2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -1122,13 +1136,14 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,
-                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float
-                        text, Float.parse, hex and base64; num_c.xo, step 3); show.xo
-                        (Rune and UInt64 text of Display and Debug), tz.xo (std/time's
-                        zone rules), report.xo (a property test case's report) with
-                        show_c.xo, tz_c.xo, report_c.xo (step 5). `XO_LLRT_C=<name>[,<name>]`
-                        (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
-                        -DXO_STRINGS_C, -DXO_NUM_C, -DXO_SHOW_C, -DXO_TZ_C, -DXO_REPORT_C,
+                        with C paths text_c.xo and strings_c.xo; num.xo (Int and Float text,
+                        Float.parse, hex, base64; num_c.xo) and jsontext.xo (std/json's parser,
+                        tape readers, string, Float, and Bytes text; jsontext_c.xo); show.xo
+                        (Rune and UInt64 text of Display and Debug), tz.xo (std/time's zone
+                        rules), report.xo (a property test case's report) with show_c.xo,
+                        tz_c.xo, report_c.xo (step 5). `XO_LLRT_C=<name>[,<name>]` (or `all`)
+                        at build time selects a module's C path (-DXO_TEXT_C, -DXO_STRINGS_C,
+                        -DXO_NUM_C, -DXO_JSONTEXT_C, -DXO_SHOW_C, -DXO_TZ_C, -DXO_REPORT_C,
                         likewise never in a pack); XO_UNICODE=c still works
                         (Last verified: 2026-10-13)
 ```
@@ -1517,7 +1532,8 @@ first, AST based prototype, since deleted) and
   darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
   runtime's Win32 layer is std/llrt/xo_win.c; clang's default
   x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
-  ported yet, processes as of stage 1; see "Windows runs"). The one
+  ported yet, none since stage 2 (processes, 2026-10-12); see "Windows
+  runs"). The one
   cross build: a Windows host builds the other Windows architecture
   (`--targets=windows/arm64`, `build.LLVMCrossTriple`).
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
@@ -2933,9 +2949,29 @@ writes `Administrator@<ip>` to `$XO_REMOTE_HOLD` and waits; `--cmd`
 runs one command (Git Bash, in the checkout) and writes the log to
 bench/results/remote/windows-<commit>.log (git ignored).
 
-On the instance: `go build -o ../xo.exe ./cmd/xo`, then
-`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` (xo1 is not used
-on Windows); the golden count is
+On the instance, xo1 (the shipped xo) first: the Go seed builds it with
+the Go backend, `go build -o xo.exe ./cmd/xo && XO_SELF_DRIVER=0
+./xo.exe build -o ../xo1.exe ./selfhost/xo` (48 s), and it runs with
+`XO_STD=C:/Users/Administrator/xo/std` (no release layout there) and
+the `PWD` Git Bash passes (`C:/...`); `../xo1.exe build --backend=llvm
+DIR` builds a Windows program, `--targets=windows/arm64` cross builds.
+The golden count with xo1 building every program is
+`XO_STD=... XO_GOLDEN_WANT=1 XO_GOLDEN_WANT_XO=C:/Users/Administrator/xo1.exe
+go test -count=1 -run TestGoldenWant -v ./internal/llvm` (last
+verified: 2026-10-12, i-EXAMPLE22); without
+`XO_GOLDEN_WANT_XO` the Go driver builds in process
+(`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` by hand). The
+batch of Windows checks (decision 0197 stage 6) is
+`scripts/remote-windows.sh --batch [COMMIT]` (a fresh instance, the
+log's `batch:` lines summarize) or `bash scripts/windows-batch.sh` in a
+held instance's checkout (4 min 13 s warm): xo1 built by the Go seed,
+xo1's goldens for windows/amd64 (run) and windows/arm64 (built), the
+LLVM runtime tests (threads, tasks, event loop, Ctrl-Break shutdown,
+TLS and HTTP/2 diffs), and `xo1 test` LLVM against Go for the 16
+directories of TestNoGCTests; `XO_BATCH_STEPS="2 4"` runs some steps.
+Last verified: 2026-10-12 (i-EXAMPLE22). Runtime knobs there:
+`XO_WINPOLL=wsapoll` (the WSAPoll poller instead of AFD polls). The
+plain golden count is
 `XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
 (the summary line counts pass, fail, unsupported; with
 `XO_GOLDEN_WANT_TARGET=windows/arm64` it cross builds instead and counts

@@ -37,7 +37,7 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
-	bin := filepath.Join(t.TempDir(), "prog")
+	bin := exe(filepath.Join(t.TempDir(), "prog"))
 	san := []string{"-fsanitize=thread"}
 	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
 		// it compiles but cannot start (x86-64 emulation): still run the
@@ -46,6 +46,12 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 		san = nil
 	}
 	err := build.CompileC(append(append([]string{"-O1", "-g"}, san...), flags...), srcs, bin)
+	if err != nil && san != nil && runtime.GOOS == "windows" && strings.Contains(err.Error(), "unsupported option") {
+		// clang has no ThreadSanitizer for the MSVC target (decision
+		// 0197): the threads still run, without it
+		t.Logf("no ThreadSanitizer for this target, testing without it")
+		err = build.CompileC(append([]string{"-O1", "-g"}, flags...), srcs, bin)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 			t.Skipf("no ThreadSanitizer: %v", err)
@@ -102,7 +108,7 @@ func sanitizerRuns(flag string) string {
 		}
 		defer os.RemoveAll(dir)
 		src := filepath.Join(dir, "probe.c")
-		bin := filepath.Join(dir, "probe")
+		bin := exe(filepath.Join(dir, "probe"))
 		if err := os.WriteFile(src, []byte("int main(void) { return 0; }\n"), 0o644); err != nil {
 			p.why = err.Error()
 			return
@@ -171,7 +177,7 @@ func TestRuntimeThreads(t *testing.T) {
 	if testing.Short() {
 		return
 	}
-	opt := filepath.Join(t.TempDir(), "opt")
+	opt := exe(filepath.Join(t.TempDir(), "opt"))
 	if err := build.CompileC([]string{"-O2", "-DITER=20000"}, []string{src}, opt); err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +206,8 @@ func TestRuntimeTasks(t *testing.T) {
 	if testing.Short() {
 		return
 	}
-	opt := filepath.Join(t.TempDir(), "opt")
-	if err := build.CompileC([]string{"-O2", "-DN=20000"}, []string{src}, opt); err != nil {
+	opt := exe(filepath.Join(t.TempDir(), "opt"))
+	if err := build.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, []string{src}, opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -228,7 +234,7 @@ func TestRuntimeEventLoop(t *testing.T) {
 	if testing.Short() {
 		return
 	}
-	opt := filepath.Join(t.TempDir(), "opt")
+	opt := exe(filepath.Join(t.TempDir(), "opt"))
 	if err := build.CompileC([]string{"-O2"}, []string{src}, opt); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +296,7 @@ func TestGoldenThreads(t *testing.T) {
 			flags := append([]string{"-DXO_RT_TEST_THREADS=4", "-Wno-override-module"}, build.IOFlags(prog.IR)...)
 			var bin string
 			if deepRecursion[filepath.Base(dir)] {
-				bin = filepath.Join(t.TempDir(), "prog")
+				bin = exe(filepath.Join(t.TempDir(), "prog"))
 				if err := build.CompileC(append([]string{"-O1"}, flags...), []string{ll, rt}, bin); err != nil {
 					t.Fatal(err)
 				}
@@ -347,7 +353,7 @@ func TestGoldenTasks(t *testing.T) {
 		ran++
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			want, err := os.ReadFile(wantFile(dir))
 			if err != nil {
 				t.Fatal(err)
 			}

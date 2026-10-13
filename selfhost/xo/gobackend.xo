@@ -297,7 +297,7 @@ fn last_slash(s: Str) -> Int {
 /// absolute.
 fn abs_line_root(os: Os, wd: Str, dir: Str) -> Str {
   let rel = line_root(os, wd, dir)
-  if rel.starts_with("/") {
+  if is_abs_path(rel) {
     return rel
   }
   if rel == "." || rel.is_empty() {
@@ -362,7 +362,7 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
     }
     var p = f.path
     var abs = p
-    if !abs.starts_with("/") {
+    if !is_abs_path(abs) {
       abs = "${wd}/${abs}"
     }
     if abs.starts_with("${root}/") {

@@ -19,6 +19,8 @@
 // run. FUZZ_SECONDS (default 3) bounds the time, FUZZ_SEED the inputs.
 
 #define XO_RT_NO_MAIN
+// the C path of std/json's text (decision 0193 step 4)
+#define XO_JSONTEXT_C
 #include "../xo_rt.c"
 
 static const char *seeds[] = {

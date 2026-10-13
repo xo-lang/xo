@@ -8,9 +8,9 @@ import (
 	"github.com/xo-lang/xo/internal/diag"
 )
 
-// TestTargetUnsupported checks XO1504 (decision 0197): on Windows a
-// program whose runtime defines select processes stops; other defines,
-// and every other target, build.
+// TestTargetUnsupported checks XO1504 (decision 0197): since stage 2
+// (processes, 2026-10-12) every runtime part is ported to Windows, so no
+// define stops a build; a part added to unsupportedOnWindows does.
 func TestTargetUnsupported(t *testing.T) {
 	for _, tc := range []struct {
 		goos  string
@@ -19,7 +19,7 @@ func TestTargetUnsupported(t *testing.T) {
 	}{
 		{"windows", nil, ""},
 		{"windows", []string{"-DXO_FS", "-DXO_STDIN", "-DXO_TIME"}, ""},
-		{"windows", []string{"-DXO_FS", "-DXO_PROC"}, "processes (Proc) on windows"},
+		{"windows", []string{"-DXO_FS", "-DXO_PROC"}, ""},
 		{"linux", []string{"-DXO_PROC"}, ""},
 		{"darwin", []string{"-DXO_PROC"}, ""},
 	} {

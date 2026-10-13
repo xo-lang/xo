@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -19,8 +18,10 @@ import (
 
 // The two phase shutdown (core 7.5) on the native backends (decision
 // 0069): testdata/signal is built with each native backend and sent
-// SIGTERM, as internal/gen's TestSignal* do with the Go backend. Only
-// this test's own child is ever signaled, by the PID exec gave it.
+// SIGTERM (on Windows a Ctrl-Break to its own process group,
+// signal_windows_test.go), as internal/gen's TestSignal* do with the Go
+// backend. Only this test's own child is ever signaled, by the PID exec
+// gave it.
 
 func nativeBackends() []string {
 	bs := []string{build.BackendLLVM}
@@ -67,6 +68,7 @@ func startNative(t *testing.T, backend string, env ...string) *nativeChild {
 	bin := signalBinary(t, backend)
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), env...)
+	stopAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +119,7 @@ func (c *nativeChild) expect(want string) {
 
 func (c *nativeChild) signal() {
 	c.t.Helper()
-	if err := c.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := sendStop(c.cmd.Process); err != nil {
 		c.t.Fatal(err)
 	}
 }
