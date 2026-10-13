@@ -29,11 +29,11 @@ import (
 //     with the recorded hashes. A unit with no recording, and a piece
 //     whose hash differs, are named at the end of the run (TestMain) with
 //     how to see the full dumps.
-//   - "record": the Xo side's output is recorded as the reference of
-//     every unit the run computes that has no recording for its very
-//     input (a new input, a changed input or std: the unit replaces the
-//     one recorded for its slot); a unit recorded for its input is kept
-//     and compared. Every test takes the full tier's inputs with the go
+//   - "record": a unit recorded for its very input is kept and compared;
+//     a unit whose input or std changed takes its slot's recording under
+//     its new id (the reference stays, and the comparison says whether
+//     it still holds); only a unit with no recording at all (a new
+//     input) records the Xo side's output. Every test takes the full tier's inputs with the go
 //     backend build of its component (scripts/selfhost-record-goldens.sh).
 //   - "rerecord": as record, but every unit the run computes is recorded
 //     again: after a change that alters the output on purpose. Read the
@@ -94,7 +94,7 @@ const (
 	goldensRecord   = "record"
 	goldensRerecord = "rerecord"
 	goldensReplay   = "replay"
-	goldensRelPath = "testdata/gogoldens"
+	goldensRelPath  = "testdata/gogoldens"
 	// goldSlotPiece is the meta piece of a unit holding its slot
 	// (goldSlot)
 	goldSlotPiece = "@slot"
@@ -771,6 +771,32 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 		if lines, ok := goldUnitLines(kind, id); ok {
 			piecesFromLines(out, lines)
 			return out
+		}
+		// a unit recorded for the slot (the input or std changed):
+		// its lines move to the new id, so the reference stays what it
+		// was (the Go side's) and the comparison says whether it still
+		// holds; rerecord takes the Xo side instead
+		if sid, found := goldSlotUnit(kind, slot); found {
+			if old, ok := goldUnitLines(kind, sid); ok {
+				var lines []goldLine
+				for _, l := range old {
+					if l.name != goldMetaMark+goldSlotPiece {
+						lines = append(lines, goldLine{id, l.name, l.value})
+					}
+				}
+				lines = append(lines, goldLine{id, goldMetaMark + goldSlotPiece, slot})
+				goldens.mu.Lock()
+				if goldens.recorded == nil {
+					goldens.recorded = map[string]map[string][]goldLine{}
+				}
+				if goldens.recorded[kind] == nil {
+					goldens.recorded[kind] = map[string][]goldLine{}
+				}
+				goldens.recorded[kind][id] = lines
+				goldens.mu.Unlock()
+				piecesFromLines(out, lines)
+				return out
+			}
 		}
 	}
 	if compute == nil {
