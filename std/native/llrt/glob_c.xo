@@ -1,0 +1,8 @@
+// The C path of MemFs.fail_next's pattern match (decisions 0193 and
+// 0195): the API of glob.xo over the C runtime's xo_test_glob
+// (std/llrt/xo_testing.c, compiled with -DXO_GLOB_C). Loaded in place of
+// glob.xo when XO_LLRT_C names `glob`. The self hosted compiler always
+// uses glob.xo.
+use native/rttest
+
+pub fn matches(pattern: Str, name: Str) -> Bool { rttest.test_glob(pattern, name) }

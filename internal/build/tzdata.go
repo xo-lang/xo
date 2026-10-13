@@ -356,6 +356,36 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the scalar values of property tests (decision 0195,
+	// XO_LLRT_C=gen; xo_gen_size also names xo_gen_sized)
+	for _, sym := range []string{"xo_gen_size", "xo_gen_any_int", "xo_gen_float", "xo_gen_rune", "xo_gen_str", "xo_gen_duration", "xo_gen_time"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_GEN_C")
+			break
+		}
+	}
+	// and of MemFs.fail_next's pattern match (decision 0195,
+	// XO_LLRT_C=glob)
+	if callsSym(code, "xo_test_glob") {
+		out = append(out, "-DXO_GLOB_C")
+	}
+	// and of the hashes of std/crypto (decision 0195, XO_LLRT_C=digest)
+	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_b64", "xo_crypto_verify_password"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_DIGEST_C")
+			break
+		}
+	}
+	// and of the integer operations of generated code and the intrinsics
+	// (decision 0195, XO_LLRT_C=ints)
+	for _, sym := range []string{"xo_int_op", "xo_int_conv", "xo_int_in_range", "xo_rune_of", "xo_rune_valid", "xo_floor_div", "xo_str_hash",
+		// the C versions of the intrinsics (a non-constant op of int_wrap)
+		"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_INTS_C")
+			break
+		}
+	}
 	return out
 }
 

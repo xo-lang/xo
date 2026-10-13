@@ -591,6 +591,23 @@ fn (var b: Builder) gen_sub(g: Int, xt: Int, want: Int) -> Int {
   b.coerce(v, want)
 }
 
+/// The scalar value name (gen_any_int, gen_sized, ...) of type t from
+/// args, the generator first: the native prelude's llrt_<name>
+/// (std/native/llrt/gen.xo, decision 0195), or without the native
+/// prelude the C runtime's rt.<name> (genRT).
+fn (var b: Builder) gen_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    return b.rt(name, t, args)
+  }
+  let f = b.declare(impl, [])
+  var v = b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
+  if b.vty(v) != t && b.tkind(b.vty(v)) == Kind.Int && b.tkind(t) == Kind.Int {
+    v = b.add(Op.IntConv, t, Aux.None, [v])
+  }
+  v
+}
+
 fn (var b: Builder) gen_intn(g: Int, n: Int) -> Int {
   b.rt("gen_intn", b.int_t(), [g, b.cint(n)])
 }
@@ -628,20 +645,20 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
   }
   let args = b.ty_args(ct)
   if b.is_prelude_named(ct, ["Int", "Int64"]) {
-    b.retv(b.rt("gen_int", t, [g]))
+    b.retv(b.gen_rt("gen_any_int", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Int32", "Int16", "Int8", "UInt64", "UInt32", "UInt16", "UInt8"]) {
     let k = sized_gen_kind(b.obj_name(b.named_obj(ct)))
-    b.retv(b.rt("gen_sized", t, [g, b.cint(k)]))
+    b.retv(b.gen_rt("gen_sized", t, [g, b.cint(k)]))
     return
   }
   if b.is_prelude_named(ct, ["Float"]) {
-    b.retv(b.rt("gen_float", t, [g]))
+    b.retv(b.gen_rt("gen_float", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Float32"]) {
-    let f = b.rt("gen_float", b.float_t(), [g])
+    let f = b.gen_rt("gen_float", b.float_t(), [g])
     b.retv(b.rt("f32_round", t, [f]))
     return
   }
@@ -650,19 +667,19 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_named(ct, ["Str", "Bytes"]) {
-    b.retv(b.rt("gen_str", t, [g]))
+    b.retv(b.gen_rt("gen_str", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Rune"]) {
-    b.retv(b.rt("gen_rune", t, [g]))
+    b.retv(b.gen_rt("gen_rune", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Duration"]) {
-    b.retv(b.rt("gen_duration", t, [g]))
+    b.retv(b.gen_rt("gen_duration", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Time"]) {
-    b.retv(b.rt("gen_time", t, [g]))
+    b.retv(b.gen_rt("gen_time", t, [g]))
     return
   }
   if b.is_prelude_named(ct, ["Secret"]) && b.tkind(t) == Kind.Struct && b.m.types[t].fields.len() == 1 {
@@ -672,7 +689,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
   }
   if b.is_prelude_named(ct, ["List"]) && b.tkind(t) == Kind.List {
     b.rt("gen_enter", -1, [g])
-    let cnt = b.rt("gen_size", it, [g])
+    let cnt = b.gen_rt("gen_size", it, [g])
     let xs = b.local()
     b.write_var(xs, b.call("list.new", t, "", []))
     let iv = b.local()
@@ -690,7 +707,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     // entries put one by one
     let put = b.map_put(t)
     b.rt("gen_enter", -1, [g])
-    let cnt = b.rt("gen_size", it, [g])
+    let cnt = b.gen_rt("gen_size", it, [g])
     let mv = b.local()
     b.write_var(mv, b.empty_map(t))
     let iv = b.local()

@@ -3,7 +3,9 @@
 Status: Accepted as a direction (owner, 2026-10-12). The audit landed
 (2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`); the per step
 plan below ("Plan") is Proposed until the owner approves it and answers
-owner decisions A to D.
+owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
+item 6: 1,040 of its 1,799 lines out of default builds,
+`bench/results/runtime-port-portable-2026-10-13.md`).
 
 ## Context
 
@@ -99,6 +101,43 @@ portable now under decision 0193's bar.
    functions to C (superseding 0180 item 3) instead of the top down
    order; D, whether `use c` programs needing a C toolchain for their
    adapters is outside the goal.
+
+6. **The "(0) portable now" group** (2026-10-13, decision 0193's
+   mechanism and bar; results `bench/results/runtime-port-portable-2026-10-13.md`):
+   - Moved, 1,040 of the group's 1,799 lines out of default builds (996
+     under `XO_INTS_C`, `XO_GLOB_C`, `XO_DIGEST_C`, `XO_GEN_C`, 44 of
+     dead `xo_str_quote` deleted): sized integer operations and
+     conversions lowered inline by both SSA builders, their faults,
+     UInt64 division, floor division, the Str key hash, and Int's
+     checked_ and saturating_ methods in std/native/llrt/ints.xo
+     (`XO_LLRT_C=ints`); the C versions of the intrinsics compiled only
+     when called; the UInt64 and Float32 conversions as inline
+     intrinsics; MemFs.fail_next's path.Match in glob.xo (`glob`);
+     SHA-256 (generated unrolled), HMAC, PBKDF2, unpadded base64, and
+     verify_password's parsing in digest.xo (`digest`); the scalar
+     values of property tests and testing.gen in gen.xo (`gen`). New
+     internal intrinsics: `rt.int_wrap` ops 5 to 7 (rotate, rotate the
+     low 32 bits, byte reverse).
+   - The bar holds on every workload (instructions less setup, Xo over
+     C, arm64 and LLVM): sized arithmetic 0.050 to 0.209, `str_hash`
+     1.038 and 1.032, `unix` 0.578 and 0.797, `checked` 0.752 and 0.507,
+     Float32 0.756 and 0.556 (against the compiler before the
+     intrinsics), SHA-256 0.820 and 0.675, HMAC 0.987 and 0.826, PBKDF2
+     0.932 and 0.755, glob 1.009 and 0.884, generated values 0.946 and
+     0.888.
+   - Stays C, 759 lines: BLAKE2b and Argon2id (an Xo version retired
+     2.071x the C's instructions on arm64 and 1.294x on LLVM and was
+     taken out; the arm64 code shape for List[Int] heavy code is the
+     next step), SHA-512 (held by Ed25519, group (5); decision 0204 now
+     lets the C Ed25519 call an Xo SHA-512), the generator's
+     state, record, and replay (calloc, realloc, getenv: groups (2) and
+     (3)) with the test Rand that crypto's C calls, and file structure
+     (includes and headers, 51).
+   - Found on the way: internal/arm64 read a register before writing it
+     for a function inlined twice under a `&&` loop condition
+     (gotchas/arm64-and-loop-condition-inlined-twice.md, repro inside);
+     a UInt64 shift amount of 2^63 or more shifts on the Go backend and
+     faults natively (gotchas/uint64-shift-amount-above-2-63.md).
 
 ## Consequences
 

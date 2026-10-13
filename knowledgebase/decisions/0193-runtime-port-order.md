@@ -384,6 +384,25 @@ its callers move too.
       (gotchas/http-short-body-close-differs.md) and make TestHTTPParseDiff
       compare with the Go backend instead of plain net/http.
 
+12. **The zero-C audit's portable group** (decision 0195 item 6,
+    2026-10-13, results `bench/results/runtime-port-portable-2026-10-13.md`)
+    used this mechanism for four more modules: `ints` (item 10's next
+    (b): sized integer operations inline in the SSA builders with their
+    faults, UInt64 division, floor division, the Str key hash, Int's
+    checked_ and saturating_ methods in ints.xo), `glob` (MemFs's
+    path.Match), `digest` (SHA-256, HMAC, PBKDF2, base64,
+    verify_password's parsing), and `gen` (the scalar values of property
+    tests). Each has its `<name>_c.xo`, `-DXO_<NAME>_C`, IOFlags and
+    xo1 `io_flags` entries, and a differential test against the Go
+    backend (TestIntsDiff, TestGlobDiff, TestDigestDiff, TestGenDiff).
+    The bar holds for all of them; BLAKE2b and Argon2id missed it (2.071x
+    arm64, 1.294x LLVM) and stay C. Next, ranked: (a) delete the C paths
+    of ints, glob, digest, gen after a full tier (decision 0198's way);
+    (b)
+    the arm64 code shape that cost Argon2id (List element offsets in the
+    load, `umull` for masked products, `eor` with a shifted operand),
+    then Argon2id again; (c) the generator's state in Xo.
+
 ## Consequences
 
 - The wasm backend runs the ported code: str_ops_table, native_display,

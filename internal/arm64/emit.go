@@ -43,6 +43,10 @@ type move struct {
 
 func regName(r int, w bool) string {
 	if r >= fpBase {
+		if w {
+			// the single precision name (`$wd0` of a Float, decision 0195)
+			return "s" + strconv.Itoa(r-fpBase)
+		}
 		return "d" + strconv.Itoa(r-fpBase)
 	}
 	if r == 31 {

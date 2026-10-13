@@ -208,6 +208,19 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.logical("orn", [ops[0], zr.bytes()] + ops[1..])
     }
     "lsl" | "lsr" | "asr" | "ror" => a.shift(m, ops)
+    "rev" => {
+      // the bytes reversed (rt.int_wrap op 7, decision 0195)
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (d, sfd) = gpr(ops[0], false)
+      let (s, sfs) = gpr(ops[1], false)
+      if d < 0 || s < 0 || sfd != sfs {
+        return a.bad(m, ops)
+      }
+      let base = if sfd == 1 { 0xDAC00C00 } else { 0x5AC00800 }
+      a.word(base | (s * 32) | d)
+    }
     "mul" | "madd" | "msub" | "smulh" | "umulh" | "sdiv" | "udiv" | "mneg" => a.muldiv(m, ops)
     "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cneg" => a.csel(m, ops)
     "ccmp" | "ccmn" => a.ccmp(m, ops)
@@ -346,11 +359,30 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       let (d, kd) = reg(ops[0])
       let (s, sf) = gpr(ops[1], false)
-      if kd != RD || s < 0 {
+      if (kd != RD && kd != RS) || s < 0 {
         return a.bad(m, ops)
       }
-      let base = if m == "scvtf" { 0x1e620000 } else { 0x1e630000 }
+      var base = if m == "scvtf" { 0x1e620000 } else { 0x1e630000 }
+      if kd == RS {
+        // to single precision (rt.i64_to_f32, decision 0195)
+        base -= 0x400000
+      }
       a.word(base | (sf * 0x80000000) | (s * 32) | d)
+    }
+    "fcvt" => {
+      // between double and single precision (rt.f32_round, decision 0195)
+      if n != 2 {
+        return a.bad(m, ops)
+      }
+      let (d, kd) = reg(ops[0])
+      let (s, ks) = reg(ops[1])
+      if kd == RS && ks == RD {
+        return a.word(0x1e624000 | (s * 32) | d)
+      }
+      if kd == RD && ks == RS {
+        return a.word(0x1e22c000 | (s * 32) | d)
+      }
+      a.bad(m, ops)
     }
     "fcvtzs" | "fcvtzu" => {
       if n != 2 {

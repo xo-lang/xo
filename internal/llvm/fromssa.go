@@ -2143,18 +2143,36 @@ func (s *sfn) call(v *ssa.Value) {
 // inlineRT lowers the runtime intrinsics that are an instruction or two
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
-// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-// multiply), the bits of a Float both ways, and rt.bytes_word (an
-// unchecked load of 8 bytes). It reports whether v was one.
+// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5 rotate
+// right by the amount mod 64, 6 the low 32 bits rotated right by the
+// amount mod 32 and zero extended, 7 the bytes reversed), rt.u64_mul_hi
+// (an i128 multiply), the bits of a Float both ways, and rt.bytes_word
+// (an unchecked load of 8 bytes). It reports whether v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
 		op, ok := v.Args[0].Aux.(int64)
 		ok = ok && v.Args[0].Op == ssa.OpConst
-		if !ok || op < 0 || op > 4 {
+		if !ok || op < 0 || op > 7 {
 			return false
 		}
 		a, b := s.op(v.Args[1]), s.op(v.Args[2])
+		switch op {
+		case 5:
+			s.g.llvmDecl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
+			s.set(v, "call i64 @llvm.fshr.i64(i64 %s, i64 %s, i64 %s)", a, a, b)
+			return true
+		case 6:
+			s.g.llvmDecl("@llvm.fshr.i32", "declare i32 @llvm.fshr.i32(i32, i32, i32)")
+			x := s.def("trunc i64 %s to i32", a)
+			n := s.def("trunc i64 %s to i32", b)
+			s.set(v, "zext i32 %s to i64", s.def("call i32 @llvm.fshr.i32(i32 %s, i32 %s, i32 %s)", x, x, n))
+			return true
+		case 7:
+			s.g.llvmDecl("@llvm.bswap.i64", "declare i64 @llvm.bswap.i64(i64)")
+			s.set(v, "call i64 @llvm.bswap.i64(i64 %s)", a)
+			return true
+		}
 		if op >= 3 {
 			b = s.def("and i64 %s, 63", b)
 		}
@@ -2164,6 +2182,13 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		b := s.def("zext i64 %s to i128", s.op(v.Args[1]))
 		p := s.def("mul i128 %s, %s", a, b)
 		s.set(v, "trunc i128 %s to i64", s.def("lshr i128 %s, 64", p))
+	case "rt.u64_to_float":
+		// decision 0195: the conversions of UInt64 and Float32
+		s.set(v, "uitofp i64 %s to double", s.op(v.Args[0]))
+	case "rt.f32_round":
+		s.set(v, "fpext float %s to double", s.def("fptrunc double %s to float", s.op(v.Args[0])))
+	case "rt.i64_to_f32":
+		s.set(v, "fpext float %s to double", s.def("sitofp i64 %s to float", s.op(v.Args[0])))
 	case "rt.float_bits":
 		s.set(v, "bitcast double %s to i64", s.op(v.Args[0]))
 	case "rt.float_from_bits":
@@ -2176,6 +2201,16 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		return false
 	}
 	return true
+}
+
+// llvmDecl declares the LLVM intrinsic sym once, among the runtime
+// declarations of the calls used (decision 0195: the module head stays
+// the same for every program).
+func (g *sgen) llvmDecl(sym, decl string) {
+	if !g.emitted[sym] {
+		g.emitted[sym] = true
+		g.rtDecls.WriteString(decl + "\n")
+	}
 }
 
 // rtCall lowers a call of the task runtime (`rt.name` is the C function

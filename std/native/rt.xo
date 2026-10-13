@@ -92,7 +92,10 @@ fn bytes_rune_count(b: Bytes) -> Int
 fn bytes_hex(b: Bytes) -> Str
 /// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
 /// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
-/// backends lower a constant op inline (decision 0193 step 3).
+/// backends lower a constant op inline (decision 0193 step 3). Decision
+/// 0195: op 5 a rotated right by b mod 64, op 6 the low 32 bits of a
+/// rotated right by b mod 32 (zero extended), op 7 the bytes of a
+/// reversed (b unused): ror and rev on arm64, fshr and bswap on LLVM.
 fn int_wrap(op: Int, a: Int, b: Int) -> Int
 /// The high word of the 128 bit product of a and b as UInt64s (umulh;
 /// lowered inline).
@@ -105,6 +108,19 @@ fn float_from_bits(b: Int) -> Float
 /// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
 /// b.len().
 fn bytes_word(b: Bytes, i: Int) -> Int
+/// Checked arithmetic on a sized integer type (std/llrt/xo_bytes.c, the
+/// C path of std/native/llrt/ints.xo, XO_LLRT_C=ints): op 0 +, 1 -, 2 *,
+/// 3 /, 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at.
+fn int_op(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Int
+/// v of the type of fbits and funs converted to the type of tbits and
+/// tuns, faulting at at out of range (the C path of ints.xo).
+fn int_conv(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Int
+/// `Rune(v)`, faulting at at (the C path of ints.xo).
+fn rune_of(v: Int, bits: Int, uns: Int, at: Str) -> Int
+/// a / b rounded down, b > 0 (the C path of ints.xo).
+fn floor_div(a: Int, b: Int) -> Int
+/// The hash of a Str Map key (the C path of ints.xo).
+fn str_hash(s: Str) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 

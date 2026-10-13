@@ -57,6 +57,62 @@ func TestIOFlagsStep5(t *testing.T) {
 	}
 }
 
+// TestIOFlagsInts checks that code calling the C path of the integer
+// operations (XO_LLRT_C=ints, decision 0195) compiles the runtime with
+// -DXO_INTS_C, as does a call of an intrinsic's C version.
+func TestIOFlagsInts(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_int_op\n", true},
+		{"call i64 @xo_int_conv(i64 %1, i64 8, i64 0, i64 8, i64 1, ptr %2, i64 9)\n", true},
+		{"bl _xo_rune_of\n", true},
+		{"bl _xo_int_in_range\n", true},
+		{"bl _xo_rune_valid\n", true},
+		{"bl _xo_floor_div\n", true},
+		{"bl _xo_str_hash\n", true},
+		{"bl _xo_int_wrap\n", true},
+		{"call i64 @xo_int_fits(i64 0, i64 %1, i64 %2)\n", true},
+		{"bl _xo_fault_raise\nbl _xo_rs_push_word\n", false},
+		{".ascii \"xo_int_op\"\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_INTS_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_INTS_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
+// TestIOFlagsDigestAndGlob checks the C paths of std/crypto's hashes
+// (XO_LLRT_C=digest) and MemFs.fail_next's match (glob, decision 0195):
+// compiled only into programs that call them; Argon2id, crypto.equal,
+// and Ed25519, which stay C, turn on nothing.
+func TestIOFlagsDigestAndGlob(t *testing.T) {
+	for _, c := range []struct {
+		code, flag string
+		want       bool
+	}{
+		{"bl _xo_crypto_sha256\n", "-DXO_DIGEST_C", true},
+		{"call ptr @xo_crypto_pbkdf2(ptr %1, i64 %2)\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_argon2id\n", "-DXO_DIGEST_C", false},
+		{"bl _xo_crypto_verify_password\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_b64\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_equal\nbl _xo_crypto_ed25519_sign\n", "-DXO_DIGEST_C", false},
+		{"bl _xo_test_glob\n", "-DXO_GLOB_C", true},
+		{"bl _xo_gen_any_int\n", "-DXO_GEN_C", true},
+		{"bl _xo_gen_sized\n", "-DXO_GEN_C", true},
+		{"call ptr @xo_gen_str(i64 %1, ptr %2)\n", "-DXO_GEN_C", true},
+		{"bl _xo_gen_intn\nbl _xo_gen_draw\nbl _xo_gen_depth\nbl _xo_gen_enter\nbl _xo_gen_deep\n", "-DXO_GEN_C", false},
+		{"bl _xo_test_memfs_take\n", "-DXO_GLOB_C", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), c.flag)
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has %s: %v, want %v", c.code, c.flag, got, c.want)
+		}
+	}
+}
+
 // TestIOFlagsDeletedCPaths checks that the runtime symbols of the C
 // paths decision 0198 deleted (unicode, strings, num, jsontext) turn on
 // no flag: their -DXO_*_C sections are gone from the runtime.

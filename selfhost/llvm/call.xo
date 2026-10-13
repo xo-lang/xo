@@ -478,9 +478,11 @@ fn runtime_raises(name: Str) -> Bool {
 
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
-/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
-/// multiply), the bits of a Float both ways, and rt.bytes_word (an
-/// unchecked load of 8 bytes); whether v was one (fromssa.go inlineRT).
+/// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
+/// rotate right mod 64, 6 the low 32 bits rotated right mod 32 and zero
+/// extended, 7 the bytes reversed), rt.u64_mul_hi (an i128 multiply), the
+/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
+/// bytes); whether v was one (fromssa.go inlineRT).
 fn (var g: Gen) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -493,11 +495,28 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         I(n) => n
         _ => -1
       }
-      if op < 0 || op > 4 {
+      if op < 0 || op > 7 {
         return false
       }
       let a = g.op(x.args[1])
       var b = g.op(x.args[2])
+      if op == 5 {
+        g.llvm_decl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
+        g.set(v, "call i64 @llvm.fshr.i64(i64 ${a}, i64 ${a}, i64 ${b})")
+        return true
+      }
+      if op == 6 {
+        g.llvm_decl("@llvm.fshr.i32", "declare i32 @llvm.fshr.i32(i32, i32, i32)")
+        let x32 = g.def("trunc i64 ${a} to i32")
+        let n32 = g.def("trunc i64 ${b} to i32")
+        g.set(v, "zext i32 ${g.def("call i32 @llvm.fshr.i32(i32 ${x32}, i32 ${x32}, i32 ${n32})")} to i64")
+        return true
+      }
+      if op == 7 {
+        g.llvm_decl("@llvm.bswap.i64", "declare i64 @llvm.bswap.i64(i64)")
+        g.set(v, "call i64 @llvm.bswap.i64(i64 ${a})")
+        return true
+      }
       if op >= 3 {
         b = g.def("and i64 ${b}, 63")
       }
@@ -509,6 +528,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
+    // decision 0195: the conversions of UInt64 and Float32
+    "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
+    "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")
+    "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(x.args[0])} to float")} to double")
     "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
     "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
     "rt.bytes_word" => {
@@ -519,6 +542,15 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     _ => return false
   }
   true
+}
+
+/// Declares the LLVM intrinsic sym once, among the runtime declarations
+/// of the calls used (decision 0195; llvmDecl).
+fn (var g: Gen) llvm_decl(sym: Str, decl: Str) {
+  if !g.emitted.contains(sym) {
+    g.emitted[sym] = true
+    g.rt_decls.push("${decl}\n")
+  }
 }
 
 /// Lowers a call of the task runtime (rtCall): an Int is an i64, a Bool

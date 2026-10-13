@@ -6,6 +6,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Sized integers are much faster on the native backends, and more of
+  the runtime is Xo** (decision 0195's portable group): Int8 to UInt64
+  arithmetic, shifts, and conversions are checked inline instead of a C
+  call each (5 to 20 times fewer instructions on bench/perf/portable),
+  Float32 operations round inline, and the faults, UInt64 division,
+  `Time.unix`, the Str Map key hash, Int's checked_ and saturating_
+  methods, MemFs.fail_next's patterns, SHA-256, HMAC, PBKDF2,
+  verify_password's parsing, and the values of property tests are Xo
+  (std/native/llrt/ints.xo, glob.xo, digest.xo, gen.xo). Output is
+  unchanged (TestIntsDiff, TestDigestDiff, TestGlobDiff, TestGenDiff
+  against the Go backend). Argon2id stays C (its Xo version was 2.07
+  times the C's instructions on arm64). `XO_LLRT_C=ints,glob,digest,gen`
+  builds the C paths for comparison
+  (bench/results/runtime-port-portable-2026-10-13.md).
+
 - Changed: on the native backends, the HTTP/2 server's HPACK (header
   block decoding and encoding), the HTTP/1.1 server's request parsing
   (request line, header fields, request targets and queries, chunked
