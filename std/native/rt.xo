@@ -37,6 +37,11 @@ fn float_parse_ok(s: Str) -> Bool
 fn float_parse(s: Str) -> Float
 /// s + t, appended in place when s is unique.
 fn rs_append(s: Str, t: Str) -> Str
+/// s + the decimal text of v (the C path of std/native/llrt/num.xo,
+/// XO_LLRT_C=num; also the SSA's str.concat_int).
+fn rs_concat_int(s: Str, v: Int) -> Str
+/// s + the text of f (Go's FloatStr; the C path of num.xo).
+fn rs_concat_float(s: Str, f: Float) -> Str
 /// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
 fn rs_append_duration(s: Str, d: Int) -> Str
 /// s + the bytes lo..hi of b (a range of b), their ASCII letters lowered
@@ -100,8 +105,21 @@ fn bytes_decode(b: Bytes, i: Int) -> Int
 fn bytes_rune_count(b: Bytes) -> Int
 /// The lowercase hex of b.
 fn bytes_hex(b: Bytes) -> Str
-/// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *).
+/// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
+/// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
+/// backends lower a constant op inline (decision 0193 step 3).
 fn int_wrap(op: Int, a: Int, b: Int) -> Int
+/// The high word of the 128 bit product of a and b as UInt64s (umulh;
+/// lowered inline).
+fn u64_mul_hi(a: Int, b: Int) -> Int
+/// The IEEE 754 bits of f (lowered inline).
+fn float_bits(f: Float) -> Int
+/// The Float of the IEEE 754 bits b (lowered inline).
+fn float_from_bits(b: Int) -> Float
+/// The 8 bytes of b from i as a word, the first lowest (lowered inline
+/// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
+/// b.len().
+fn bytes_word(b: Bytes, i: Int) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// The standard base64 of b, padded.

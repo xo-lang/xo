@@ -1,6 +1,7 @@
 // Text workloads of the native runtime port (decision 0193): the number
 // and time text (std/native/llrt/text.xo) against its C path
-// (XO_LLRT_C=text), and the Str operations (strings.xo, XO_LLRT_C=strings). Usage: textperf <workload>. Each workload prints
+// (XO_LLRT_C=text), the Str operations (strings.xo, XO_LLRT_C=strings),
+// and the number text (num.xo, XO_LLRT_C=num). Usage: textperf <workload>. Each workload prints
 // "<workload> <checksum> <elapsed microseconds>"; the checksum must be
 // the same on every backend (the Go backend is the reference).
 use std/json
@@ -151,6 +152,63 @@ fn rune_count(strs: List[Str]) -> Int {
   sum
 }
 
+fn int_fmt(xs: List[Int]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for x in xs {
+      h = mix(h, "${x}")
+    }
+  }
+  h
+}
+
+fn float_fmt(fs: List[Float]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for f in fs {
+      h = mix(h, "${f}")
+    }
+  }
+  h
+}
+
+fn float_parse(texts: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for t in texts {
+      let g = (Float.parse(t) ?? 0.5).abs()
+      let big = if g > 1.0 { 7 } else { 3 }
+      let frac = if g < 1e18 { Int((g - g.floor()) * 1000000.0) } else { 0 }
+      h = (h * 31 + frac + big) % 1000000007
+    }
+  }
+  h
+}
+
+fn base64(bs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 2 {
+    for b in bs {
+      let t = b.to_base64()
+      h = mix(h, t)
+      h = h + (Bytes.from_base64(t) ?? b"").len()
+    }
+  }
+  h
+}
+
+fn hex(bs: List[Bytes]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS / 2 {
+    for b in bs {
+      let t = b.to_hex()
+      h = mix(h, t)
+      h = h + (Bytes.from_hex(t) ?? b"").len()
+    }
+  }
+  h
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "parse_int"
@@ -161,6 +219,10 @@ fn main(os: Os) {
   var ts: List[Time] = []
   var strs: List[Str] = []
   var bs: List[Bytes] = []
+  var xs: List[Int] = []
+  var fs: List[Float] = []
+  var ftexts: List[Str] = []
+  let scales = [1.0, 0.001, 0.000000001, 1000000000000.0, 1e-310, 1e300, 0.5, 3.0e-5]
   var i = 0
   for v in vs {
     // magnitudes from 1 to 10 digits, both signs
@@ -180,6 +242,12 @@ fn main(os: Os) {
     ts.push(Time.UNIX_EPOCH + Duration.from_nanos(v * 1700000003 + (if i % 2 == 0 { v } else { 0 })))
     strs.push(if i % 3 == 0 { "plain text ${v}" } else if i % 3 == 1 { "quote \"${v}\"\n\ttab é ${v}" } else { "ünï ${v} 日本語\u{1}\u{fffd}" })
     bs.push("bytes ${v} \u{1}".bytes())
+    // Ints of 1 to 19 digits, both signs
+    xs.push(if i % 4 == 3 { v * 9000000007 } else if i % 2 == 0 { x } else { 0 - x })
+    // Floats from subnormal to 1e308, short and long digit strings
+    let f = if i % 3 == 0 { Float(x) } else { Float(v) / Float(1 + i % 97) }
+    fs.push(f * scales[i % 8])
+    ftexts.push(if i % 5 == 0 { "${x}.${v % 1000}e${i % 40 - 20}" } else { "${f * scales[i % 8]}" })
     i += 1
   }
   let doc = json.encode_str(ts)
@@ -203,6 +271,11 @@ fn main(os: Os) {
     "replace" => replace(strs)
     "trim" => trim(padded)
     "rune_count" => rune_count(strs)
+    "int_fmt" => int_fmt(xs)
+    "float_fmt" => float_fmt(fs)
+    "float_parse" => float_parse(ftexts)
+    "base64" => base64(bs)
+    "hex" => hex(bs)
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

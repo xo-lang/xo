@@ -1437,7 +1437,8 @@ fn rt2_text(var g: Gen) -> Str {
       end
       local.get $q)
 
-    ;; a op b wrapping (op 0 +, 1 -, 2 *)
+    ;; a op b wrapping (op 0 +, 1 -, 2 *), or a shifted by b mod 64 (op 3
+    ;; left, 4 right logical)
     (func $int_wrap (param $op i64) (param $a i64) (param $b i64) (result i64)
       local.get $op
       i64.eqz
@@ -1456,9 +1457,105 @@ fn rt2_text(var g: Gen) -> Str {
         i64.sub
         return
       end
+      local.get $op
+      i64.const 3
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.shl
+        return
+      end
+      local.get $op
+      i64.const 4
+      i64.eq
+      if
+        local.get $a
+        local.get $b
+        i64.shr_u
+        return
+      end
       local.get $a
       local.get $b
       i64.mul)
+
+    ;; the high word of the 128 bit product of a and b as unsigned words,
+    ;; from four 32 bit products (decision 0193)
+    (func $u64_mul_hi (param $a i64) (param $b i64) (result i64) (local $al i64) (local $ah i64) (local $bl i64) (local $bh i64) (local $ll i64) (local $lh i64) (local $hl i64) (local $t i64)
+      local.get $a
+      i64.const 0xffffffff
+      i64.and
+      local.set $al
+      local.get $a
+      i64.const 32
+      i64.shr_u
+      local.set $ah
+      local.get $b
+      i64.const 0xffffffff
+      i64.and
+      local.set $bl
+      local.get $b
+      i64.const 32
+      i64.shr_u
+      local.set $bh
+      local.get $al
+      local.get $bl
+      i64.mul
+      local.set $ll
+      local.get $al
+      local.get $bh
+      i64.mul
+      local.set $lh
+      local.get $ah
+      local.get $bl
+      i64.mul
+      local.set $hl
+      ;; t = (ll >> 32) + (lh & 0xffffffff) + (hl & 0xffffffff)
+      local.get $ll
+      i64.const 32
+      i64.shr_u
+      local.get $lh
+      i64.const 0xffffffff
+      i64.and
+      i64.add
+      local.get $hl
+      i64.const 0xffffffff
+      i64.and
+      i64.add
+      local.set $t
+      ;; ah*bh + (lh >> 32) + (hl >> 32) + (t >> 32)
+      local.get $ah
+      local.get $bh
+      i64.mul
+      local.get $lh
+      i64.const 32
+      i64.shr_u
+      i64.add
+      local.get $hl
+      i64.const 32
+      i64.shr_u
+      i64.add
+      local.get $t
+      i64.const 32
+      i64.shr_u
+      i64.add)
+
+    ;; the 8 bytes of a Bytes at i, little endian (unchecked)
+    (func $bytes_word (param $o i32) (param $n i32) (param $i i64) (result i64)
+      local.get $o
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      i64.load offset=8 align=1)
+
+    ;; the IEEE 754 bits of a Float, and back
+    (func $float_bits (param $f f64) (result i64)
+      local.get $f
+      i64.reinterpret_f64)
+
+    (func $float_from_bits (param $b i64) (result f64)
+      local.get $b
+      f64.reinterpret_i64)
 
     ;; whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /)
     (func $int_fits (param $op i64) (param $a i64) (param $b i64) (result i32) (local $r i64)
@@ -2072,5 +2169,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word"
 }

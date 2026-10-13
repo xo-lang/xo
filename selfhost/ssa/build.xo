@@ -1851,6 +1851,36 @@ fn (var b: Builder) llrt(name: Str, t: Int, args: List[Int]) -> Int {
   b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
 }
 
+/// acc + the text of v, an Int or Float (acc < 0: the text alone), for
+/// interpolation and Display: the native prelude's llrt_concat_int or
+/// llrt_concat_float (std/native/llrt/num.xo, decision 0193 step 3),
+/// unchecked like the C it replaces; without the native prelude, or for
+/// a Float32, the C runtime's str.concat_int and friends (fn.numText).
+fn (var b: Builder) num_text(acc0: Int, v0: Int) -> Int {
+  let st = b.str_t()
+  var v = v0
+  let vt = b.vty(v)
+  let k = b.lower_kind(vt)
+  let impl = b.prelude_impl("llrt_concat_${k}")
+  if impl >= 0 && !b.m.is_f32(vt) {
+    var acc = acc0
+    if acc < 0 {
+      acc = b.const_str("")
+    }
+    let it = b.int_t()
+    if b.tkind(vt) == Kind.Int && vt != it {
+      // a sized integer (not UInt64): the same word as an Int
+      v = b.add(Op.IntConv, it, Aux.None, [v])
+    }
+    let f = b.declare(impl, [])
+    return b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", [acc, v])
+  }
+  if acc0 < 0 {
+    return b.call("str.of_${k}", st, "", [v])
+  }
+  b.call("str.concat_${k}", st, "", [acc0, v])
+}
+
 fn (var b: Builder) jump(to: Int, args: List[Int]) {
   if b.s.pending >= 0 {
     b.flush_landing()

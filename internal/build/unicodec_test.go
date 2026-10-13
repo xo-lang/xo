@@ -76,3 +76,21 @@ func TestIOFlagsStringsC(t *testing.T) {
 		}
 	}
 }
+
+func TestIOFlagsNumC(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"call i64 @xo_float_parse_ok(ptr %1, i64 %2)\n", true},
+		{"bl _xo_b64_decode\n", true},
+		{"bl _xo_bytes_hex_ok\n", true},
+		{"bl _xo_bytes_hex\n", false},
+		{"bl _xo_rs_concat_int\nbl _xo_rs_concat_float\nbl _xo_rs_push_words\nbl _xo_rs_append_b64_quoted\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_NUM_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_NUM_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}

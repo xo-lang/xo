@@ -1465,16 +1465,42 @@ func (s *fstate) bytesLoad(obj vreg, iv *ssa.Value, i vreg) vreg {
 	return s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i)
 }
 
-// onesRun reports whether n > 0 is one run of ones (0b0..01..10..0), a
-// value every logical instruction takes as an immediate.
+// onesRun reports whether n > 0 is a value every logical instruction
+// takes as an immediate: one run of ones (0b0..01..10..0, decision
+// 0184), or the repetition of an element of 2 to 32 bits that is one
+// run of ones, rotated (0x00FF00FF00FF00FF, 0x3030303030303030; decision
+// 0193 step 3).
 func onesRun(n int64) bool {
 	if n <= 0 {
 		return false
 	}
-	for n&1 == 0 {
-		n >>= 1
+	// the smallest element whose repetition is n
+	e := uint(64)
+	for e > 2 {
+		h := e / 2
+		m := int64(1)<<h - 1
+		if n&m != (n>>h)&m {
+			break
+		}
+		e = h
 	}
-	return n == math.MaxInt64 || n&(n+1) == 0
+	if e == 64 {
+		return run1(n)
+	}
+	m := int64(1)<<e - 1
+	x := n & m
+	return run1(x) || run1(^x&m)
+}
+
+// run1 reports whether x > 0 is one run of ones.
+func run1(x int64) bool {
+	if x <= 0 {
+		return false
+	}
+	for x&1 == 0 {
+		x >>= 1
+	}
+	return x == math.MaxInt64 || x&(x+1) == 0
 }
 
 // safeShl reports whether a << k cannot overflow for every k in [0,
@@ -2119,10 +2145,49 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 	return idom
 }
 
+// inlineRT lowers the runtime intrinsics that are an instruction or two
+// (decision 0193 step 3: the word arithmetic of the number text in
+// std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
+// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the bits
+// of a Float both ways, and rt.bytes_word (an unchecked load of 8 bytes).
+// It reports whether v was one.
+func (s *fstate) inlineRT(v *ssa.Value) bool {
+	switch v.Aux.(string) {
+	case "rt.int_wrap":
+		op, ok := constInt(v.Args[0])
+		if !ok || op < 0 || op > 4 {
+			return false
+		}
+		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
+		a := s.word(v.Args[1])
+		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
+			return true
+		}
+		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", a, s.word(v.Args[2])))
+	case "rt.u64_mul_hi":
+		s.set(v, s.def1(false, "umulh $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
+	case "rt.float_bits":
+		s.set(v, s.def1(false, "fmov $d0, $u0", s.word(v.Args[0])))
+	case "rt.float_from_bits":
+		s.set(v, s.def1(true, "fmov $d0, $u0", s.word(v.Args[0])))
+	case "rt.bytes_word":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		s.set(v, s.def1(false, "ldr $d0, [$u0, $u1]", d, s.word(v.Args[1])))
+	default:
+		return false
+	}
+	return true
+}
+
 // rtCall lowers a call of the task runtime (`rt.name` is the C function
 // xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 // Str its bytes and length; the result is nothing or one word.
 func (s *fstate) rtCall(v *ssa.Value) {
+	if s.inlineRT(v) {
+		return
+	}
 	var args []src
 	// `rt.rs_*` functions take their Str operands as the string object
 	// (the first is consumed, decision 0074); the others its bytes

@@ -196,7 +196,7 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 	case KStr:
 		return s.call("str.concat", st, "", acc, v)
 	case KInt, KFloat:
-		return s.call("str.concat_"+lowerKind(v.Type), st, "", acc, v)
+		return s.numText(acc, v)
 	case KBool:
 		return s.call("str.concat", st, "", acc, s.call("str.of_bool", st, "", v))
 	}
@@ -294,7 +294,7 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			s.retv(s.llrt("append_quote", st, at, acc, v))
 			return
 		case KInt, KFloat:
-			s.retv(s.call("str.concat_"+lowerKind(t), st, "", acc, v))
+			s.retv(s.numText(acc, v))
 			return
 		case KBool:
 			s.retv(s.call("str.concat", st, "", acc, s.call("str.of_bool", st, "", v)))
