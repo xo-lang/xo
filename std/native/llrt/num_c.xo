@@ -1,0 +1,11 @@
+// The C path of the number text (decision 0193 step 3): the API of
+// num.xo over the C runtime's functions. Loaded in place of num.xo when
+// XO_LLRT_C names `num`, to compare the two and to fall back while the
+// Xo path misses decision 0180's bar; the SSA builder then calls the C
+// runtime's str.concat_int and friends directly, as before the port. The
+// self hosted compiler always uses num.xo.
+use native/rt
+
+pub fn append_int(out: Str, v: Int) -> Str { rt.rs_concat_int(out, v) }
+
+pub fn int_text(v: Int) -> Str { rt.rs_concat_int("", v) }

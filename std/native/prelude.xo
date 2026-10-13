@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/num
 use native/llrt/strings
 use native/llrt/text
 use native/llrt/unicode
@@ -2051,3 +2052,10 @@ fn llrt_time_ok(s: Str) -> Bool {
 }
 
 fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
+
+// The number text, as the SSA builder calls it for every interpolation
+// and Display of an Int or Float (decision 0193 step 3): in Xo
+// (std/native/llrt/num.xo). With XO_LLRT_C=num the SSA builder calls the
+// C runtime (str.concat_int and friends) instead.
+
+fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }

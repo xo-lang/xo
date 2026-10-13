@@ -37,6 +37,11 @@ fn float_parse_ok(s: Str) -> Bool
 fn float_parse(s: Str) -> Float
 /// s + t, appended in place when s is unique.
 fn rs_append(s: Str, t: Str) -> Str
+/// s + the decimal text of v (the C path of std/native/llrt/num.xo,
+/// XO_LLRT_C=num; also the SSA's str.concat_int).
+fn rs_concat_int(s: Str, v: Int) -> Str
+/// s + the text of f (Go's FloatStr; the C path of num.xo).
+fn rs_concat_float(s: Str, f: Float) -> Str
 /// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
 fn rs_append_duration(s: Str, d: Int) -> Str
 /// s + the bytes lo..hi of b (a range of b), their ASCII letters lowered

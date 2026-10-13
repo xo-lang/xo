@@ -7,27 +7,27 @@ Lf1_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
-	str x19, [sp, #24]
+	str x19, [sp, #16]
 	.cfi_def_cfa w29, 32
 	.cfi_offset w29, -32
 	.cfi_offset w30, -24
-	.cfi_offset w19, -8
+	.cfi_offset w19, -16
 Lf1_b0:
 	mov x0, #40
 	bl _xo_f_fib
 	mov x2, x0
+Lf1_b1:
 	adrp x0, Lxo_str0@PAGE
 	add x0, x0, Lxo_str0@PAGEOFF
 	mov x1, #4
-	add x3, sp, #16
-	bl _xo_rs_concat_int
+	bl _xo_f_num_2eappend__int
 	mov x19, x0
-	ldr x1, [sp, #16]
+Lf1_b2:
 	add x0, x19, #16
 	bl _xo_println
 	mov x0, x19
 	bl Lxo_drop1
-	ldr x19, [sp, #24]
+	ldr x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
 	.cfi_endproc
@@ -72,6 +72,707 @@ Lf2_fault1:
 	brk #1
 	.cfi_endproc
 
+// func prelude.llrt_concat_int
+	.p2align 2
+_xo_f_prelude_2ellrt__concat__int:
+Lf3_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf3_b0:
+	bl _xo_f_num_2eappend__int
+	ldp x29, x30, [sp], #16
+	ret
+	.cfi_endproc
+
+// func num.append_int
+	.p2align 2
+_xo_f_num_2eappend__int:
+Lf4_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-32]!
+	mov x29, sp
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+Lf4_b0:
+	mov x12, x2
+	movn x9, #38527, lsl #0
+	movk x9, #65383, lsl #16
+Lf4_b2:
+	cmp x12, x9
+	b.le Lf4_b74
+Lf4_b3:
+	movz x9, #57600, lsl #0
+	movk x9, #1525, lsl #16
+	cmp x12, x9
+	b.ge Lf4_b74
+Lf4_b6:
+	cmp x12, #0
+	b.ge Lf4_b10
+Lf4_b7:
+	mov x9, #0
+	sub x10, x9, x12
+	b Lf4_b11
+Lf4_b10:
+	mov x10, x12
+Lf4_b11:
+	mov x9, #10000
+	cmp x10, x9
+	b.ge Lf4_b22
+Lf4_b12:
+	cmp x10, #100
+	b.ge Lf4_b17
+Lf4_b13:
+	cmp x10, #10
+	b.ge Lf4_b15
+Lf4_b14:
+	mov x3, #1
+	b Lf4_b32
+Lf4_b15:
+	mov x3, #2
+	b Lf4_b32
+Lf4_b17:
+	cmp x10, #1000
+	b.ge Lf4_b19
+Lf4_b18:
+	mov x3, #3
+	b Lf4_b32
+Lf4_b19:
+	mov x3, #4
+	b Lf4_b32
+Lf4_b22:
+	movz x9, #16960, lsl #0
+	movk x9, #15, lsl #16
+	cmp x10, x9
+	b.ge Lf4_b27
+Lf4_b23:
+	movz x9, #34464, lsl #0
+	movk x9, #1, lsl #16
+	cmp x10, x9
+	b.ge Lf4_b25
+Lf4_b24:
+	mov x3, #5
+	b Lf4_b32
+Lf4_b25:
+	mov x3, #6
+	b Lf4_b32
+Lf4_b27:
+	movz x9, #38528, lsl #0
+	movk x9, #152, lsl #16
+	cmp x10, x9
+	b.ge Lf4_b29
+Lf4_b28:
+	mov x3, #7
+	b Lf4_b32
+Lf4_b29:
+	mov x3, #8
+Lf4_b32:
+	and x11, x10, #134217727
+	movz x9, #22859, lsl #0
+	movk x9, #14470, lsl #16
+	movk x9, #50646, lsl #32
+	movk x9, #13421, lsl #48
+	smulh x9, x11, x9
+	asr x10, x9, #11
+Lf4_b34:
+	mov x9, #10000
+	msub x9, x10, x9, x11
+Lf4_b36:
+	and x10, x10, #16383
+	and x9, x9, #16383
+	lsl x9, x9, #32
+Lf4_b38:
+	orr x11, x10, x9
+	mov x9, #10486
+	mul x9, x11, x9
+Lf4_b40:
+	asr x9, x9, #20
+Lf4_b42:
+	and x10, x9, #545460846719
+	mov x9, #100
+	mul x9, x10, x9
+Lf4_b44:
+	sub x9, x11, x9
+Lf4_b46:
+	lsl x9, x9, #16
+Lf4_b48:
+	orr x9, x10, x9
+	and x11, x9, #35747867511423103
+	mov x9, #103
+	mul x9, x11, x9
+Lf4_b50:
+	asr x9, x9, #10
+Lf4_b52:
+	and x10, x9, #4222189076152335
+	mov x9, #10
+	mul x9, x10, x9
+Lf4_b54:
+	sub x9, x11, x9
+Lf4_b56:
+	and x9, x9, #4222189076152335
+	lsl x9, x9, #8
+Lf4_b58:
+	orr x9, x10, x9
+	orr x11, x9, #3472328296227680304
+	and x10, x3, #15
+	mov x9, #8
+	sub x9, x9, x10
+Lf4_b60:
+	and x9, x9, #7
+	lsl x9, x9, #3
+Lf4_b62:
+	asr x2, x11, x9
+Lf4_b64:
+	cmp x12, #0
+	b.lt Lf4_b67
+Lf4_b65:
+	add x4, sp, #16
+	bl _xo_rs_push_word
+	ldr x1, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+Lf4_b67:
+	and x9, x2, #36028797018963967
+	lsl x10, x9, #8
+Lf4_b69:
+	mov x9, #45
+	orr x2, x10, x9
+	add x3, x3, #1
+Lf4_b72:
+	add x4, sp, #16
+	bl _xo_rs_push_word
+	ldr x1, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+Lf4_b74:
+	mov x2, x12
+	bl _xo_f_num_2eappend__wide
+	ldp x29, x30, [sp], #32
+	ret
+Lf4_b1:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b8:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b33:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b35:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b37:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b39:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b41:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b43:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b45:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b47:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b49:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b51:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b53:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b55:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b57:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b59:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b61:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b63:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b68:
+	bl Lxo_drop1
+	b Lf4_b71
+Lf4_b70:
+	bl Lxo_drop1
+Lf4_b71:
+	bl _xo_fault_continue
+	adrp x0, Lxo_str1@PAGE
+	add x0, x0, Lxo_str1@PAGEOFF
+	mov x1, #0
+	ldp x29, x30, [sp], #32
+	ret
+	.cfi_endproc
+
+// func num.append_wide
+	.p2align 2
+_xo_f_num_2eappend__wide:
+Lf5_begin:
+	.cfi_startproc
+	.cfi_personality 155, _xo_personality
+	.cfi_lsda 16, GCC_except_table_xo5
+	stp x29, x30, [sp, #-32]!
+	mov x29, sp
+	str x19, [sp, #24]
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+	.cfi_offset w19, -8
+Lf5_b0:
+	mov x19, x0
+	cmp x2, #0
+	b.ge Lf5_b13
+Lf5_b1:
+	movz x9, #1, lsl #0
+	movk x9, #32768, lsl #48
+Lf5_b3:
+	sub x9, x9, #1
+Lf5_b5:
+	cmp x2, x9
+	b.ne Lf5_b8
+Lf5_b6:
+	adrp x2, Lxo_str2@PAGE
+	add x2, x2, Lxo_str2@PAGEOFF
+	mov x3, #20
+	mov x0, x19
+	add x4, sp, #16
+	bl _xo_rs_append
+	ldp x1, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+Lf5_b8:
+	mov x9, #0
+	subs x2, x9, x2
+	b.vs Lf5_fault1
+Lf5_b11:
+	mov x3, #1
+	mov x0, x19
+	bl _xo_f_num_2eappend__uint
+	ldr x19, [sp, #24]
+	ldp x29, x30, [sp], #32
+	ret
+Lf5_b13:
+	mov x3, #0
+	mov x0, x19
+	bl _xo_f_num_2eappend__uint
+	ldr x19, [sp, #24]
+	ldp x29, x30, [sp], #32
+	ret
+Lf5_b2:
+	mov x0, x19
+	bl Lxo_drop1
+	b Lf5_b10
+Lf5_b4:
+	mov x0, x19
+	bl Lxo_drop1
+	b Lf5_b10
+Lf5_b9:
+	mov x0, x19
+	bl Lxo_drop1
+Lf5_b10:
+	bl _xo_fault_continue
+	adrp x0, Lxo_str1@PAGE
+	add x0, x0, Lxo_str1@PAGEOFF
+	mov x1, #0
+	ldr x19, [sp, #24]
+	ldp x29, x30, [sp], #32
+	ret
+Lf5_fault1:
+	sub x15, x9, x2
+	mov x0, x9
+	mov x2, x15
+	mov x1, #45
+	adrp x3, Lxo_loc1@PAGE
+	add x3, x3, Lxo_loc1@PAGEOFF
+Lf5_cs1a:
+	bl _xo_fault_overflow
+Lf5_cs1b:
+	brk #1
+	.cfi_endproc
+
+// func num.append_uint
+	.p2align 2
+_xo_f_num_2eappend__uint:
+Lf6_begin:
+	.cfi_startproc
+	.cfi_personality 155, _xo_personality
+	.cfi_lsda 16, GCC_except_table_xo6
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #24]
+	stp x22, x21, [sp, #40]
+	stp x24, x23, [sp, #56]
+	stp x26, x25, [sp, #72]
+	str x27, [sp, #88]
+	.cfi_def_cfa w29, 96
+	.cfi_offset w29, -96
+	.cfi_offset w30, -88
+	.cfi_offset w20, -72
+	.cfi_offset w19, -64
+	.cfi_offset w22, -56
+	.cfi_offset w21, -48
+	.cfi_offset w24, -40
+	.cfi_offset w23, -32
+	.cfi_offset w26, -24
+	.cfi_offset w25, -16
+	.cfi_offset w27, -8
+Lf6_b0:
+	mov x24, x0
+	mov x27, x1
+	mov x19, x2
+	mov x25, x3
+	movz x22, #57600, lsl #0
+	movk x22, #1525, lsl #16
+	cmp x19, x22
+	b.ge Lf6_b9
+Lf6_b1:
+	mov x0, x19
+	bl _xo_f_num_2endigits8
+	mov x20, x0
+Lf6_b2:
+	mov x0, x19
+Lf6_cs2a:
+	bl _xo_f_num_2edigits8
+Lf6_cs2b:
+	and x10, x20, #15
+	mov x9, #8
+	sub x9, x9, x10
+	and x9, x9, #7
+	lsl x9, x9, #3
+	asr x3, x0, x9
+Lf6_b3:
+Lf6_b5:
+	and x9, x20, #15
+	lsl x9, x9, #4
+Lf6_b7:
+	orr x6, x25, x9
+	mov x2, #45
+	mov x4, #0
+	mov x0, x24
+	mov x1, x27
+	mov x5, x4
+	add x7, sp, #16
+	bl _xo_rs_push_words
+	ldr x1, [sp, #16]
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldr x27, [sp, #88]
+	ldp x29, x30, [sp], #96
+	ret
+Lf6_b9:
+	movz x20, #59263, lsl #0
+	movk x20, #49712, lsl #16
+	movk x20, #15240, lsl #32
+	movk x20, #21990, lsl #48
+	smulh x9, x19, x20
+	asr x21, x9, #25
+Lf6_b11:
+	msub x0, x21, x22, x19
+Lf6_b13:
+Lf6_cs3a:
+	bl _xo_f_num_2edigits8
+Lf6_cs3b:
+	mov x26, x0
+Lf6_b15:
+	cmp x21, x22
+	b.ge Lf6_b24
+Lf6_b16:
+	mov x0, x21
+	bl _xo_f_num_2endigits8
+	mov x19, x0
+Lf6_b17:
+	mov x0, x21
+Lf6_cs4a:
+	bl _xo_f_num_2edigits8
+Lf6_cs4b:
+	and x10, x19, #15
+	mov x9, #8
+	sub x9, x9, x10
+	and x9, x9, #7
+	lsl x9, x9, #3
+	asr x3, x0, x9
+Lf6_b18:
+Lf6_b20:
+	and x9, x19, #15
+	lsl x9, x9, #4
+Lf6_b22:
+	orr x9, x25, x9
+	orr x6, x9, #2048
+	mov x2, #45
+	mov x5, #0
+	mov x0, x24
+	mov x1, x27
+	mov x4, x26
+	add x7, sp, #16
+	bl _xo_rs_push_words
+	ldr x1, [sp, #16]
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldr x27, [sp, #88]
+	ldp x29, x30, [sp], #96
+	ret
+Lf6_b24:
+	smulh x9, x21, x20
+	asr x19, x9, #25
+Lf6_b26:
+	mov x0, x19
+	bl _xo_f_num_2endigits8
+	mov x23, x0
+Lf6_b27:
+	mov x0, x19
+Lf6_cs5a:
+	bl _xo_f_num_2edigits8
+Lf6_cs5b:
+	and x10, x23, #15
+	mov x9, #8
+	sub x9, x9, x10
+	and x9, x9, #7
+	lsl x9, x9, #3
+	asr x20, x0, x9
+Lf6_b28:
+Lf6_b30:
+	msub x0, x19, x22, x21
+Lf6_b32:
+Lf6_cs6a:
+	bl _xo_f_num_2edigits8
+Lf6_cs6b:
+Lf6_b34:
+	and x9, x23, #15
+	lsl x9, x9, #4
+Lf6_b37:
+	orr x10, x25, x9
+	mov x9, #34816
+	orr x6, x10, x9
+	mov x2, #45
+	mov x1, x27
+	mov x3, x20
+	mov x4, x0
+	mov x0, x24
+	mov x5, x26
+	add x7, sp, #16
+	bl _xo_rs_push_words
+	ldr x1, [sp, #16]
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldr x27, [sp, #88]
+	ldp x29, x30, [sp], #96
+	ret
+Lf6_b4:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b6:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b10:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b12:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b14:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b19:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b21:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b25:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b29:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b31:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b33:
+	mov x0, x24
+	bl Lxo_drop1
+	b Lf6_b36
+Lf6_b35:
+	mov x0, x24
+	bl Lxo_drop1
+Lf6_b36:
+	bl _xo_fault_continue
+	adrp x0, Lxo_str1@PAGE
+	add x0, x0, Lxo_str1@PAGEOFF
+	mov x1, #0
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldr x27, [sp, #88]
+	ldp x29, x30, [sp], #96
+	ret
+	.cfi_endproc
+
+// func num.ndigits8
+	.p2align 2
+_xo_f_num_2endigits8:
+Lf7_begin:
+	.cfi_startproc
+Lf7_b0:
+	mov x9, #10000
+	cmp x0, x9
+	b.ge Lf7_b12
+Lf7_b1:
+	cmp x0, #100
+	b.ge Lf7_b7
+Lf7_b2:
+	cmp x0, #10
+	b.ge Lf7_b4
+Lf7_b3:
+	mov x0, #1
+	b Lf7_b5
+Lf7_b4:
+	mov x0, #2
+Lf7_b5:
+	ret
+Lf7_b7:
+	cmp x0, #1000
+	b.ge Lf7_b9
+Lf7_b8:
+	mov x0, #3
+	b Lf7_b10
+Lf7_b9:
+	mov x0, #4
+Lf7_b10:
+	ret
+Lf7_b12:
+	movz x9, #16960, lsl #0
+	movk x9, #15, lsl #16
+	cmp x0, x9
+	b.ge Lf7_b18
+Lf7_b13:
+	movz x9, #34464, lsl #0
+	movk x9, #1, lsl #16
+	cmp x0, x9
+	b.ge Lf7_b15
+Lf7_b14:
+	mov x0, #5
+	b Lf7_b16
+Lf7_b15:
+	mov x0, #6
+Lf7_b16:
+	ret
+Lf7_b18:
+	movz x9, #38528, lsl #0
+	movk x9, #152, lsl #16
+	cmp x0, x9
+	b.ge Lf7_b20
+Lf7_b19:
+	mov x0, #7
+	b Lf7_b21
+Lf7_b20:
+	mov x0, #8
+Lf7_b21:
+	ret
+	.cfi_endproc
+
+// func num.digits_k
+	.p2align 2
+_xo_f_num_2edigits__k:
+Lf8_begin:
+	.cfi_startproc
+	stp x29, x30, [sp, #-32]!
+	mov x29, sp
+	str x19, [sp, #16]
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+	.cfi_offset w19, -16
+Lf8_b0:
+	mov x19, x1
+	bl _xo_f_num_2edigits8
+	and x10, x19, #15
+	mov x9, #8
+	sub x9, x9, x10
+	and x9, x9, #7
+	lsl x9, x9, #3
+	asr x0, x0, x9
+	ldr x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+	.cfi_endproc
+
+// func num.digits8
+	.p2align 2
+_xo_f_num_2edigits8:
+Lf9_begin:
+	.cfi_startproc
+Lf9_b0:
+	and x11, x0, #134217727
+	movz x9, #22859, lsl #0
+	movk x9, #14470, lsl #16
+	movk x9, #50646, lsl #32
+	movk x9, #13421, lsl #48
+	smulh x9, x11, x9
+	asr x10, x9, #11
+	mov x9, #10000
+	msub x9, x10, x9, x11
+	and x10, x10, #16383
+	and x9, x9, #16383
+	lsl x9, x9, #32
+	orr x11, x10, x9
+	mov x9, #10486
+	mul x9, x11, x9
+	asr x9, x9, #20
+	and x10, x9, #545460846719
+	mov x9, #100
+	mul x9, x10, x9
+	sub x9, x11, x9
+	lsl x9, x9, #16
+	orr x9, x10, x9
+	and x11, x9, #35747867511423103
+	mov x9, #103
+	mul x9, x11, x9
+	asr x9, x9, #10
+	and x10, x9, #4222189076152335
+	mov x9, #10
+	mul x9, x10, x9
+	sub x9, x11, x9
+	and x9, x9, #4222189076152335
+	lsl x9, x9, #8
+	orr x9, x10, x9
+	orr x0, x9, #3472328296227680304
+	ret
+	.cfi_endproc
+
 	.p2align 2
 	.globl _xo_entry
 _xo_entry:
@@ -107,12 +808,65 @@ Lxo_drop1_kept:
 Lxo_drop1_free:
 	b _xo_rc_free
 
+	.section __TEXT,__gcc_except_tab
+	.p2align 2
+GCC_except_table_xo5:
+	.byte 255
+	.byte 255
+	.byte 1
+	.uleb128 Lf5_cste-Lf5_cst
+Lf5_cst:
+	.uleb128 Lf5_cs1a-Lf5_begin
+	.uleb128 Lf5_cs1b-Lf5_cs1a
+	.uleb128 Lf5_b9-Lf5_begin
+	.byte 0
+Lf5_cste:
+	.section __TEXT,__gcc_except_tab
+	.p2align 2
+GCC_except_table_xo6:
+	.byte 255
+	.byte 255
+	.byte 1
+	.uleb128 Lf6_cste-Lf6_cst
+Lf6_cst:
+	.uleb128 Lf6_cs2a-Lf6_begin
+	.uleb128 Lf6_cs2b-Lf6_cs2a
+	.uleb128 Lf6_b4-Lf6_begin
+	.byte 0
+	.uleb128 Lf6_cs3a-Lf6_begin
+	.uleb128 Lf6_cs3b-Lf6_cs3a
+	.uleb128 Lf6_b14-Lf6_begin
+	.byte 0
+	.uleb128 Lf6_cs4a-Lf6_begin
+	.uleb128 Lf6_cs4b-Lf6_cs4a
+	.uleb128 Lf6_b19-Lf6_begin
+	.byte 0
+	.uleb128 Lf6_cs5a-Lf6_begin
+	.uleb128 Lf6_cs5b-Lf6_cs5a
+	.uleb128 Lf6_b29-Lf6_begin
+	.byte 0
+	.uleb128 Lf6_cs6a-Lf6_begin
+	.uleb128 Lf6_cs6b-Lf6_cs6a
+	.uleb128 Lf6_b33-Lf6_begin
+	.byte 0
+Lf6_cste:
 	.section __TEXT,__const
 	.p2align 3
 Lxo_str0:
 	.quad -9223372036854775808
 	.quad 4
 	.ascii "fib "
+	.p2align 3
+Lxo_str1:
+	.quad -9223372036854775808
+	.quad 0
+	.p2align 3
+Lxo_str2:
+	.quad -9223372036854775808
+	.quad 20
+	.ascii "-9223372036854775808"
 	.section __TEXT,__cstring,cstring_literals
 Lxo_loc0:
 	.asciz "main.xo:3:25"
+Lxo_loc1:
+	.asciz "std/native/llrt/num.xo:112:29"

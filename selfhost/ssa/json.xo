@@ -185,7 +185,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       return
     }
     Int => {
-      b.retv(b.call("str.concat_int", st, "", [acc, v]))
+      b.retv(b.num_text(acc, v))
       return
     }
     Float => {

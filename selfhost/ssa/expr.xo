@@ -742,14 +742,10 @@ fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
           Str => {}
           Int | Float => {
             if acc >= 0 {
-              acc = b.call("str.concat_${b.lower_kind(b.vty(v))}", st, "", [acc, v])
+              acc = b.num_text(acc, v)
               continue
             }
-            if b.tkind(b.vty(v)) == Kind.Int {
-              v = b.call("str.of_int", st, "", [v])
-            } else {
-              v = b.call("str.of_float", st, "", [v])
-            }
+            v = b.num_text(-1, v)
           }
           Bool => v = b.call("str.of_bool", st, "", [v])
           _ => b.unsupported("interpolating a value of type `${b.m.types[b.vty(v)].name}`")

@@ -1,0 +1,136 @@
+// The number text of the native runtime, written in Xo (decision 0193,
+// step 3): the decimal text of an Int (strconv.FormatInt) and of a Float
+// (strconv.FormatFloat(f, 'g', -1, 64) with ".0" on whole numbers, the
+// Go backend's FloatStr), Float.parse (strconv.ParseFloat of decimal
+// text), and the base64 and hex of Bytes. They were C (std/llrt/xo_rt.c
+// fmt_int and fmt_go_g, xo_std.c); the semantics are the Go backend's,
+// so the native backends print what it prints. The SSA builder calls
+// append_int and append_float for every interpolation and Display of an
+// Int or Float (the native prelude's llrt_concat_int and friends). The
+// C path stays selectable (`XO_LLRT_C=num` loads num_c.xo, and the SSA
+// builder calls the C runtime's str.concat_int as before) until
+// bench/perf/text meets decision 0180's bar on both native backends.
+//
+// Nothing here interpolates a number: the interpolation is this code.
+use native/rt
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+// ---------------------------------------------------------------------------
+// Int
+
+/// The 8 decimal digits of v (0 <= v < 10^8) as ASCII in a word, the
+/// first in the low byte, zero padded: two digits at a time in the lanes
+/// of one word (four 16 bit lanes, then eight 8 bit ones), with
+/// multiplies that divide every lane at once (x * 10486 >> 20 is x / 100
+/// below 2^14, x * 103 >> 10 is x / 10 below 100). append_int has a copy
+/// of it, so that its common case calls nothing but the append.
+fn digits8(v: Int) -> Int {
+  // the masks change nothing for 0 <= v < 10^8 but give the native
+  // backends' value ranges what they need to prove no product overflows
+  // (and they are logical immediates on arm64)
+  let x = v & 0x7FFFFFF
+  let hi = x / 10000
+  let lo = x % 10000
+  // hi in the low 32 bit lane, lo in the high one
+  let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
+  let h = ((m * 10486) >> 20) & 0x7F0000007F
+  let l = m - h * 100
+  // four lanes of 16 bits: hi / 100, hi % 100, lo / 100, lo % 100
+  let m2 = (h | (l << 16)) & 0x7F007F007F007F
+  let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
+  let l2 = m2 - h2 * 10
+  // a digit is below 0x10, so | is + of "0"
+  h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+}
+
+/// The number of decimal digits of v (0 <= v < 10^8).
+fn ndigits8(v: Int) -> Int {
+  if v < 10000 {
+    if v < 100 {
+      return if v < 10 { 1 } else { 2 }
+    }
+    return if v < 1000 { 3 } else { 4 }
+  }
+  if v < 1000000 {
+    return if v < 100000 { 5 } else { 6 }
+  }
+  if v < 10000000 { 7 } else { 8 }
+}
+
+/// The k (1 to 8) digits of v (0 <= v < 10^k, no leading zeros) in the
+/// low k bytes of a word, the first lowest.
+fn digits_k(v: Int, k: Int) -> Int {
+  // the masks keep every step in range (no overflow checks)
+  digits8(v) >> (((8 - (k & 15)) & 7) << 3)
+}
+
+/// out + the decimal text of v (strconv.FormatInt(v, 10)). The common
+/// case (-10^7 < v < 10^8) is one word and one append, with digits8 and
+/// ndigits8 written out here so it calls nothing else.
+pub fn append_int(out: Str, v: Int) -> Str {
+  if v > -10000000 && v < 100000000 {
+    var u = v
+    if v < 0 {
+      u = 0 - v
+    }
+    var k = 8
+    if u < 10000 {
+      k = if u < 100 { if u < 10 { 1 } else { 2 } } else if u < 1000 { 3 } else { 4 }
+    } else if u < 1000000 {
+      k = if u < 100000 { 5 } else { 6 }
+    } else if u < 10000000 {
+      k = 7
+    }
+    // digits8(u)
+    let x = u & 0x7FFFFFF
+    let hi = x / 10000
+    let lo = x % 10000
+    let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
+    let h = ((m * 10486) >> 20) & 0x7F0000007F
+    let l = m - h * 100
+    let m2 = (h | (l << 16)) & 0x7F007F007F007F
+    let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
+    let l2 = m2 - h2 * 10
+    let d = h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+    // the k digits, after "-" when v < 0 (k is 7 at most then)
+    let w = d >> (((8 - (k & 15)) & 7) << 3)
+    if v >= 0 {
+      return rt.rs_push_word(out, w, k)
+    }
+    return rt.rs_push_word(out, ((w & 0x7FFFFFFFFFFFFF) << 8) | 45, k + 1)
+  }
+  append_wide(out, v)
+}
+
+/// out + the decimal text of v outside append_int's common case.
+fn append_wide(out: Str, v: Int) -> Str {
+  if v < 0 {
+    if v == MIN_INT {
+      return rt.rs_append(out, "-9223372036854775808")
+    }
+    return append_uint(out, 0 - v, 1)
+  }
+  append_uint(out, v, 0)
+}
+
+/// out + "-" when sk is 1, then the decimal text of u (0 <= u).
+fn append_uint(out: Str, u: Int, sk: Int) -> Str {
+  if u < 100000000 {
+    let k = ndigits8(u)
+    return rt.rs_push_words(out, 45, digits_k(u, k), 0, 0, sk | ((k & 15) << 4))
+  }
+  let q = u / 100000000
+  let lo = digits8(u % 100000000)
+  if q < 100000000 {
+    let k = ndigits8(q)
+    return rt.rs_push_words(out, 45, digits_k(q, k), lo, 0, sk | ((k & 15) << 4) | 0x800)
+  }
+  // q < 10^11: at most 3 digits, then 16
+  let top = q / 100000000
+  let k = ndigits8(top)
+  rt.rs_push_words(out, 45, digits_k(top, k), digits8(q % 100000000), lo, sk | ((k & 15) << 4) | 0x8800)
+}
+
+/// The decimal text of v.
+pub fn int_text(v: Int) -> Str { append_int("", v) }

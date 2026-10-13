@@ -1465,16 +1465,42 @@ func (s *fstate) bytesLoad(obj vreg, iv *ssa.Value, i vreg) vreg {
 	return s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i)
 }
 
-// onesRun reports whether n > 0 is one run of ones (0b0..01..10..0), a
-// value every logical instruction takes as an immediate.
+// onesRun reports whether n > 0 is a value every logical instruction
+// takes as an immediate: one run of ones (0b0..01..10..0, decision
+// 0184), or the repetition of an element of 2 to 32 bits that is one
+// run of ones, rotated (0x00FF00FF00FF00FF, 0x3030303030303030; decision
+// 0193 step 3).
 func onesRun(n int64) bool {
 	if n <= 0 {
 		return false
 	}
-	for n&1 == 0 {
-		n >>= 1
+	// the smallest element whose repetition is n
+	e := uint(64)
+	for e > 2 {
+		h := e / 2
+		m := int64(1)<<h - 1
+		if n&m != (n>>h)&m {
+			break
+		}
+		e = h
 	}
-	return n == math.MaxInt64 || n&(n+1) == 0
+	if e == 64 {
+		return run1(n)
+	}
+	m := int64(1)<<e - 1
+	x := n & m
+	return run1(x) || run1(^x&m)
+}
+
+// run1 reports whether x > 0 is one run of ones.
+func run1(x int64) bool {
+	if x <= 0 {
+		return false
+	}
+	for x&1 == 0 {
+		x >>= 1
+	}
+	return x == math.MaxInt64 || x&(x+1) == 0
 }
 
 // safeShl reports whether a << k cannot overflow for every k in [0,

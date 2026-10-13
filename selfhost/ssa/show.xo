@@ -78,7 +78,7 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
   }
   match b.tkind(vt) {
     Str => return b.call("str.concat", st, "", [acc, v])
-    Int | Float => return b.call("str.concat_${b.lower_kind(vt)}", st, "", [acc, v])
+    Int | Float => return b.num_text(acc, v)
     Bool => return b.call("str.concat", st, "", [acc, b.call("str.of_bool", st, "", [v])])
     _ => {}
   }
@@ -190,7 +190,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
       return
     }
     Int | Float => {
-      b.retv(b.call("str.concat_${b.lower_kind(t)}", st, "", [acc, v]))
+      b.retv(b.num_text(acc, v))
       return
     }
     Bool => {

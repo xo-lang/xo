@@ -259,9 +259,16 @@ xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *
 	unsigned char t[8];
 	memcpy(t, &u, 8);
 	*len = an + n;
-	if (rc_load(&a->rc) == 1 && a->cap - an >= 8) {
+	int64_t c = rc_load(&a->rc);
+	if (c == 1 && a->cap - an >= 8) {
 		memcpy(a->data + an, t, 8);
 		return a;
+	}
+	if (an == 0 && c == XO_RC_IMMORTAL) {
+		// the text alone ("${v}" appends to the literal ""): a new string
+		xo_rstr *s = rs_new(16);
+		memcpy(s->data, t, 8);
+		return s;
 	}
 	return rs_append(a, an, (const char *)t, n);
 }
@@ -276,11 +283,17 @@ xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_
 	*len = an + k;
 	unsigned char t[40];
 	unsigned char *d = t;
-	int direct = rc_load(&a->rc) == 1 && a->cap - an >= 32;
+	int64_t c = rc_load(&a->rc);
+	int direct = c == 1 && a->cap - an >= 32;
 	if (direct) {
 		// in place: whole words stored, each overwriting the slack of the
 		// one before (the bytes past the text are never read)
 		d = (unsigned char *)a->data + an;
+	} else if (an == 0 && c == XO_RC_IMMORTAL) {
+		// the text alone ("${v}" appends to the literal ""): a new string
+		a = rs_new(32);
+		d = (unsigned char *)a->data;
+		direct = 1;
 	}
 	// whole little endian words (every target of the native backends is
 	// little endian)
