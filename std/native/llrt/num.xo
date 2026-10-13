@@ -424,3 +424,744 @@ fn layout(out: Str, neg: Bool, dig: Int, nd: Int, dp: Int) -> Str {
 
 /// The text of f as the Go backend prints a Float.
 pub fn float_text(f: Float) -> Str { append_float("", f) }
+
+// ---------------------------------------------------------------------------
+// Float.parse: strconv.ParseFloat(s, 64) (Go 1.26's internal/strconv
+// atof.go): decimal and hexadecimal text with Go's underscores, inf,
+// infinity, and nan; the exact float path, Eisel-Lemire, and the big
+// decimal fallback. None when the text is malformed or out of range.
+
+/// The byte at i lowered when it is an ASCII letter (0 past the end).
+fn lower_at(b: Bytes, i: Int) -> Int {
+  if i >= b.len() {
+    return 0
+  }
+  let c = Int(b[i])
+  if c >= 65 && c <= 90 { c + 32 } else { c }
+}
+
+/// The length of the common prefix of b from i and the lowercase word
+/// w (b's case ignored): strconv.commonPrefixLenIgnoreCase.
+fn prefix_len(b: Bytes, i: Int, w: Bytes) -> Int {
+  var k = 0
+  while k < w.len() && lower_at(b, i + k) == Int(w[k]) {
+    k += 1
+  }
+  k
+}
+
+/// The number of leading zero bits of x as a UInt64.
+fn clz(x0: Int) -> Int {
+  if x0 == 0 {
+    return 64
+  }
+  var x = x0
+  var n = 0
+  if shr(x, 32) == 0 {
+    n += 32
+    x = shl(x, 32)
+  }
+  if shr(x, 48) == 0 {
+    n += 16
+    x = shl(x, 16)
+  }
+  if shr(x, 56) == 0 {
+    n += 8
+    x = shl(x, 8)
+  }
+  if shr(x, 60) == 0 {
+    n += 4
+    x = shl(x, 4)
+  }
+  if shr(x, 62) == 0 {
+    n += 2
+    x = shl(x, 2)
+  }
+  if x >= 0 {
+    n += 1
+  }
+  n
+}
+
+/// strconv.underscoreOK of b up to n: every underscore between digits
+/// (a base prefix counts as a digit).
+fn underscore_ok(b: Bytes, n: Int) -> Bool {
+  var i = 0
+  let c0 = Int(b[0])
+  if c0 == 45 || c0 == 43 {
+    i = 1
+  }
+  // saw: 0 the start, 1 a digit or base prefix, 2 an underscore, 3 other
+  var saw = 0
+  var hex = false
+  if n - i >= 2 && Int(b[i]) == 48 {
+    let p = lower_at(b, i + 1)
+    if p == 98 || p == 111 || p == 120 {
+      i += 2
+      saw = 1
+      hex = p == 120
+    }
+  }
+  while i < n {
+    let c = lower_at(b, i)
+    if (c >= 48 && c <= 57) || (hex && c >= 97 && c <= 102) {
+      saw = 1
+    } else if c == 95 {
+      if saw != 1 {
+        return false
+      }
+      saw = 2
+    } else {
+      if saw == 2 {
+        return false
+      }
+      saw = 3
+    }
+    i += 1
+  }
+  saw != 2
+}
+
+/// Float.parse (strconv.ParseFloat(s, 64)); None for an error.
+pub fn parse_float(s: Str) -> Float? {
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return None
+  }
+  var i = 0
+  var neg = false
+  let c0 = Int(b[0])
+  if c0 == 43 || c0 == 45 {
+    neg = c0 == 45
+    i = 1
+  }
+  // inf, infinity, nan (strconv.special; nan takes no sign)
+  let ci = lower_at(b, i)
+  if ci == 105 {
+    var k = prefix_len(b, i, b"infinity")
+    if k > 3 && k < 8 {
+      k = 3
+    }
+    if (k == 3 || k == 8) && i + k == n {
+      return Some(if neg { -1.0 / 0.0 } else { 1.0 / 0.0 })
+    }
+    return None
+  }
+  if ci == 110 {
+    if i == 0 && n == 3 && prefix_len(b, 0, b"nan") == 3 {
+      return Some(0.0 / 0.0)
+    }
+    return None
+  }
+  // readFloat: the digits (19 decimal or 16 hex kept in mant), the
+  // decimal point, the exponent
+  var base = 10
+  var max_digits = 19
+  var hex = false
+  if i + 2 < n && Int(b[i]) == 48 && lower_at(b, i + 1) == 120 {
+    base = 16
+    max_digits = 16
+    hex = true
+    i += 2
+  }
+  var underscores = false
+  var sawdot = false
+  var sawdigits = false
+  var nd = 0
+  var nd_mant = 0
+  var dp = 0
+  var mant = 0
+  var trunc = false
+  while i < n {
+    let c = Int(b[i])
+    if c == 95 {
+      underscores = true
+    } else if c == 46 {
+      if sawdot {
+        break
+      }
+      sawdot = true
+      dp = nd
+    } else if c >= 48 && c <= 57 {
+      sawdigits = true
+      if c == 48 && nd == 0 {
+        // a leading zero
+        dp -= 1
+      } else {
+        nd += 1
+        if nd_mant < max_digits {
+          mant = addw(mulw(mant, base), c - 48)
+          nd_mant += 1
+        } else if c != 48 {
+          trunc = true
+        }
+      }
+    } else {
+      let l = c | 32
+      if hex && l >= 97 && l <= 102 {
+        sawdigits = true
+        nd += 1
+        if nd_mant < max_digits {
+          mant = addw(mulw(mant, 16), l - 87)
+          nd_mant += 1
+        } else {
+          trunc = true
+        }
+      } else {
+        break
+      }
+    }
+    i += 1
+  }
+  if !sawdigits {
+    return None
+  }
+  if !sawdot {
+    dp = nd
+  }
+  if hex {
+    dp = dp * 4
+    nd_mant = nd_mant * 4
+  }
+  let ec = if hex { 112 } else { 101 }
+  if i < n && lower_at(b, i) == ec {
+    i += 1
+    if i >= n {
+      return None
+    }
+    var esign = 1
+    let sc = Int(b[i])
+    if sc == 43 {
+      i += 1
+    } else if sc == 45 {
+      i += 1
+      esign = -1
+    }
+    if i >= n || Int(b[i]) < 48 || Int(b[i]) > 57 {
+      return None
+    }
+    var e = 0
+    while i < n {
+      let c = Int(b[i])
+      if c == 95 {
+        underscores = true
+      } else if c >= 48 && c <= 57 {
+        if e < 10000 {
+          e = e * 10 + c - 48
+        }
+      } else {
+        break
+      }
+      i += 1
+    }
+    dp += e * esign
+  } else if hex {
+    // a hex float must have an exponent
+    return None
+  }
+  if i != n {
+    return None
+  }
+  if underscores && !underscore_ok(b, n) {
+    return None
+  }
+  let exp = if mant != 0 { dp - nd_mant } else { 0 }
+  if hex {
+    return atof_hex(mant, exp, neg, trunc)
+  }
+  if !trunc && shr(mant, 52) == 0 {
+    // atof64exact: the integer and the power of ten are exact Floats
+    var f = Float(mant)
+    if neg {
+      f = -f
+    }
+    if exp == 0 {
+      return Some(f)
+    }
+    if exp > 0 && exp <= 37 {
+      var k = exp
+      if k > 22 {
+        f = f * exact_pow10(k - 22)
+        k = 22
+      }
+      if f <= 1e15 && f >= -1e15 {
+        return Some(f * exact_pow10(k))
+      }
+    } else if exp < 0 && exp >= -22 {
+      return Some(f / exact_pow10(0 - exp))
+    }
+  }
+  let r = eisel_lemire(mant, exp, neg)
+  if r != 1 {
+    if !trunc {
+      return Some(rt.float_from_bits(r))
+    }
+    // the mantissa lost digits: right when the next mantissa up gives
+    // the same Float
+    if eisel_lemire(addw(mant, 1), exp, neg) == r {
+      return Some(rt.float_from_bits(r))
+    }
+  }
+  slow_parse(b, n)
+}
+
+/// 10^k as a Float (0 <= k <= 22, exact).
+fn exact_pow10(k: Int) -> Float {
+  var p = 1.0
+  var x = 10.0
+  var j = k
+  while j > 0 {
+    if (j & 1) != 0 {
+      p = p * x
+    }
+    x = x * x
+    j = j >> 1
+  }
+  p
+}
+
+/// The bits of the Float of man * 10^exp10 by Eisel-Lemire
+/// (strconv.eiselLemire64), or 1 (the bits of a subnormal it never
+/// returns) when it cannot decide.
+fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
+  if man0 == 0 {
+    return if neg { MIN_INT } else { 0 }
+  }
+  if exp10 < num_tables.POW10_MIN || exp10 > num_tables.POW10_MAX {
+    return 1
+  }
+  let ph = pow10_hi(exp10)
+  let pl = pow10_lo(exp10)
+  let exp2 = 1 + mul_log2_10(exp10)
+  // normalization
+  let z = clz(man0)
+  let man = shl(man0, z)
+  var ret_exp2 = exp2 + 63 + 1023 - z
+  // multiplication
+  var xhi = rt.u64_mul_hi(man, ph)
+  var xlo = mulw(man, ph)
+  // wider approximation
+  if (xhi & 0x1FF) == 0x1FF && ult(addw(xlo, man), man) {
+    let yhi = rt.u64_mul_hi(man, pl)
+    let ylo = mulw(man, pl)
+    var mhi = xhi
+    let mlo = addw(xlo, yhi)
+    if ult(mlo, xlo) {
+      mhi = addw(mhi, 1)
+    }
+    if (mhi & 0x1FF) == 0x1FF && mlo == -1 && ult(addw(ylo, man), man) {
+      return 1
+    }
+    xhi = mhi
+    xlo = mlo
+  }
+  // shifting to 54 bits
+  let msb = shr(xhi, 63)
+  var ret_mant = shr(xhi, msb + 9)
+  ret_exp2 -= 1 ^ msb
+  // half way ambiguity
+  if xlo == 0 && (xhi & 0x1FF) == 0 && (ret_mant & 3) == 1 {
+    return 1
+  }
+  // from 54 to 53 bits
+  ret_mant += ret_mant & 1
+  ret_mant = ret_mant >> 1
+  if (ret_mant >> 53) > 0 {
+    ret_mant = ret_mant >> 1
+    ret_exp2 += 1
+  }
+  if ret_exp2 <= 0 || ret_exp2 >= 0x7FF {
+    return 1
+  }
+  let bits = shl(ret_exp2, 52) | (ret_mant & 0xFFFFFFFFFFFFF)
+  if neg { bits | MIN_INT } else { bits }
+}
+
+/// strconv.atofHex: the Float of the hex mantissa times 2^exp, rounded
+/// to even; None when it is out of range.
+fn atof_hex(mant0: Int, exp0: Int, neg: Bool, trunc: Bool) -> Float? {
+  // exponents from -1022 to 1023; the mantissa then has 52 bits after
+  // its point
+  var mant = mant0
+  var exp = exp0 + 52
+  while mant != 0 && shr(mant, 54) == 0 {
+    mant = shl(mant, 1)
+    exp -= 1
+  }
+  if trunc {
+    mant = mant | 1
+  }
+  while shr(mant, 55) != 0 {
+    mant = shr(mant, 1) | (mant & 1)
+    exp += 1
+  }
+  // denormalize when the exponent is too small (the 2 is the rounding
+  // bits)
+  while ult(1, mant) && exp < -1024 {
+    mant = shr(mant, 1) | (mant & 1)
+    exp += 1
+  }
+  var round = mant & 3
+  mant = shr(mant, 2)
+  round = round | (mant & 1)
+  exp += 2
+  if round == 3 {
+    mant += 1
+    if mant == 0x20000000000000 {
+      mant = mant >> 1
+      exp += 1
+    }
+  }
+  if (mant >> 52) == 0 {
+    exp = -1023
+  }
+  if exp > 1023 {
+    return None
+  }
+  var bits = (mant & 0xFFFFFFFFFFFFF) | shl((exp + 1023) & 0x7FF, 52)
+  if neg {
+    bits = bits | MIN_INT
+  }
+  Some(rt.float_from_bits(bits))
+}
+
+// ---------------------------------------------------------------------------
+// The big decimal of the slow path (strconv's decimal.go): at most 800
+// digits (ASCII codes), a decimal point, and whether nonzero digits were
+// dropped.
+
+struct Dec {
+  d: List[Int]
+  nd: Int
+  dp: Int
+  neg: Bool
+  trunc: Bool
+}
+
+const DEC_MAX: Int = 800
+
+/// The shift steps of a Dec (strconv.maxShift on 64 bit platforms).
+const MAX_SHIFT: Int = 60
+
+/// The digits that strconv.decimal.set reads from b (n bytes, already
+/// checked by parse_float), into a Dec.
+fn dec_set(b: Bytes, n: Int) -> Dec {
+  var d: List[Int] = List[Int].with_capacity(DEC_MAX)
+  for _ in 0..DEC_MAX {
+    d.push(48)
+  }
+  var a = Dec{d: d, nd: 0, dp: 0, neg: false, trunc: false}
+  var i = 0
+  let c0 = Int(b[0])
+  if c0 == 43 {
+    i = 1
+  } else if c0 == 45 {
+    i = 1
+    a.neg = true
+  }
+  var sawdot = false
+  while i < n {
+    let c = Int(b[i])
+    if c == 95 {
+      i += 1
+      continue
+    }
+    if c == 46 {
+      sawdot = true
+      a.dp = a.nd
+      i += 1
+      continue
+    }
+    if c < 48 || c > 57 {
+      break
+    }
+    if c == 48 && a.nd == 0 {
+      a.dp -= 1
+    } else if a.nd < DEC_MAX {
+      a.d.set(a.nd, c)
+      a.nd += 1
+    } else if c != 48 {
+      a.trunc = true
+    }
+    i += 1
+  }
+  if !sawdot {
+    a.dp = a.nd
+  }
+  if i < n && lower_at(b, i) == 101 {
+    i += 1
+    var esign = 1
+    let sc = Int(b[i])
+    if sc == 43 {
+      i += 1
+    } else if sc == 45 {
+      i += 1
+      esign = -1
+    }
+    var e = 0
+    while i < n {
+      let c = Int(b[i])
+      if c != 95 && e < 10000 {
+        e = e * 10 + c - 48
+      }
+      i += 1
+    }
+    a.dp += e * esign
+  }
+  a
+}
+
+/// Drops the trailing zeros of a (strconv.trim).
+fn dec_trim(var a: Dec) {
+  while a.nd > 0 && a.d[a.nd - 1] == 48 {
+    a.nd -= 1
+  }
+  if a.nd == 0 {
+    a.dp = 0
+  }
+}
+
+/// a / 2^k (k <= MAX_SHIFT; strconv.rightShift). n is a UInt64.
+fn dec_right(var a: Dec, k: Int) {
+  var r = 0
+  var w = 0
+  var n = 0
+  // enough leading digits for the first shift
+  while shr(n, k) == 0 {
+    if r >= a.nd {
+      if n == 0 {
+        a.nd = 0
+        return
+      }
+      while shr(n, k) == 0 {
+        n = mulw(n, 10)
+        r += 1
+      }
+      break
+    }
+    n = addw(mulw(n, 10), a.d[r] - 48)
+    r += 1
+  }
+  a.dp -= r - 1
+  let mask = subw(shl(1, k), 1)
+  while r < a.nd {
+    let c = a.d[r]
+    let dig = shr(n, k)
+    n = n & mask
+    a.d.set(w, dig + 48)
+    w += 1
+    n = addw(mulw(n, 10), c - 48)
+    r += 1
+  }
+  while n != 0 {
+    let dig = shr(n, k)
+    n = n & mask
+    if w < DEC_MAX {
+      a.d.set(w, dig + 48)
+      w += 1
+    } else if dig > 0 {
+      a.trunc = true
+    }
+    n = mulw(n, 10)
+  }
+  a.nd = w
+  dec_trim(a)
+}
+
+/// The number of new digits of a * 2^k: strconv.leftcheats[k], whose
+/// cutoff (the digits of 5^k) gives one fewer when a's digits are below
+/// it.
+fn dec_left_delta(a: Dec, k: Int) -> Int {
+  if k == 0 {
+    return 0
+  }
+  // the digits of 5^k (ASCII codes)
+  var p: List[Int] = [49]
+  for _ in 0..k {
+    var carry = 0
+    var j = p.len() - 1
+    while j >= 0 {
+      let v = (p[j] - 48) * 5 + carry
+      p.set(j, v % 10 + 48)
+      carry = v / 10
+      j -= 1
+    }
+    if carry > 0 {
+      p.insert(0, carry + 48)
+    }
+  }
+  // int(log10(2) * k + 1)
+  let delta = (k * 30103) / 100000 + 1
+  // strconv.prefixIsLessThan(a.d[:nd], cutoff)
+  var i = 0
+  while i < p.len() {
+    if i >= a.nd {
+      return delta - 1
+    }
+    if a.d[i] != p[i] {
+      return if a.d[i] < p[i] { delta - 1 } else { delta }
+    }
+    i += 1
+  }
+  delta
+}
+
+/// a * 2^k (k <= MAX_SHIFT; strconv.leftShift). n is a UInt64.
+fn dec_left(var a: Dec, k: Int) {
+  let delta = dec_left_delta(a, k)
+  var r = a.nd - 1
+  var w = a.nd + delta
+  var n = 0
+  while r >= 0 {
+    n = addw(n, shl(a.d[r] - 48, k))
+    let quo = shr(n, 1) / 5
+    let rem = subw(n, mulw(quo, 10))
+    w -= 1
+    if w < DEC_MAX {
+      a.d.set(w, rem + 48)
+    } else if rem != 0 {
+      a.trunc = true
+    }
+    n = quo
+    r -= 1
+  }
+  while n != 0 {
+    let quo = shr(n, 1) / 5
+    let rem = subw(n, mulw(quo, 10))
+    w -= 1
+    if w < DEC_MAX {
+      a.d.set(w, rem + 48)
+    } else if rem != 0 {
+      a.trunc = true
+    }
+    n = quo
+  }
+  a.nd += delta
+  if a.nd >= DEC_MAX {
+    a.nd = DEC_MAX
+  }
+  a.dp += delta
+  dec_trim(a)
+}
+
+/// a * 2^k (strconv.decimal.Shift).
+fn dec_shift(var a: Dec, k0: Int) {
+  if a.nd == 0 {
+    return
+  }
+  var k = k0
+  if k > 0 {
+    while k > MAX_SHIFT {
+      dec_left(a, MAX_SHIFT)
+      k -= MAX_SHIFT
+    }
+    dec_left(a, k)
+  } else if k < 0 {
+    while k < 0 - MAX_SHIFT {
+      dec_right(a, MAX_SHIFT)
+      k += MAX_SHIFT
+    }
+    dec_right(a, 0 - k)
+  }
+}
+
+/// Whether a chopped at nd digits rounds up (strconv.shouldRoundUp).
+fn dec_round_up(a: Dec, nd: Int) -> Bool {
+  if nd < 0 || nd >= a.nd {
+    return false
+  }
+  if a.d[nd] == 53 && nd + 1 == a.nd {
+    // exactly halfway: to even, or up when digits were dropped
+    if a.trunc {
+      return true
+    }
+    return nd > 0 && (a.d[nd - 1] - 48) % 2 != 0
+  }
+  a.d[nd] >= 53
+}
+
+/// The integer part of a, rounded (strconv.RoundedInteger), as a
+/// UInt64.
+fn dec_rounded(a: Dec) -> Int {
+  if a.dp > 20 {
+    return -1
+  }
+  var i = 0
+  var n = 0
+  while i < a.dp && i < a.nd {
+    n = addw(mulw(n, 10), a.d[i] - 48)
+    i += 1
+  }
+  while i < a.dp {
+    n = mulw(n, 10)
+    i += 1
+  }
+  if dec_round_up(a, a.dp) {
+    n = addw(n, 1)
+  }
+  n
+}
+
+/// The shift that brings a decimal point dp toward [0.5, 1)
+/// (strconv.powtab).
+fn powtab(dp: Int) -> Int {
+  if dp >= 9 {
+    return 27
+  }
+  if dp < 4 {
+    return if dp == 0 { 1 } else { dp * 3 }
+  }
+  if dp == 4 { 13 } else if dp == 5 { 16 } else if dp == 6 { 19 } else if dp == 7 { 23 } else { 26 }
+}
+
+/// The slow path of Float.parse (strconv.decimal.floatBits): the big
+/// decimal scaled by powers of two; None when it overflows.
+fn slow_parse(b: Bytes, n: Int) -> Float? {
+  var a = dec_set(b, n)
+  var exp = -1023
+  var mant = 0
+  if a.nd != 0 && a.dp >= -330 {
+    if a.dp > 310 {
+      return None
+    }
+    exp = 0
+    while a.dp > 0 {
+      let k = powtab(a.dp)
+      dec_shift(a, 0 - k)
+      exp += k
+    }
+    while a.dp < 0 || (a.dp == 0 && a.d[0] < 53) {
+      let k = powtab(0 - a.dp)
+      dec_shift(a, k)
+      exp -= k
+    }
+    // the range is [0.5, 1); a Float's is [1, 2)
+    exp -= 1
+    if exp < -1022 {
+      let k = -1022 - exp
+      dec_shift(a, 0 - k)
+      exp += k
+    }
+    if exp + 1023 >= 0x7FF {
+      return None
+    }
+    dec_shift(a, 53)
+    mant = dec_rounded(a)
+    if mant == 0x20000000000000 {
+      mant = mant >> 1
+      exp += 1
+      if exp + 1023 >= 0x7FF {
+        return None
+      }
+    }
+    if (mant & 0x10000000000000) == 0 {
+      exp = -1023
+    }
+  }
+  var bits = (mant & 0xFFFFFFFFFFFFF) | shl((exp + 1023) & 0x7FF, 52)
+  if a.neg {
+    bits = bits | MIN_INT
+  }
+  Some(rt.float_from_bits(bits))
+}

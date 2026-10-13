@@ -13,3 +13,10 @@ pub fn int_text(v: Int) -> Str { rt.rs_concat_int("", v) }
 pub fn append_float(out: Str, f: Float) -> Str { rt.rs_concat_float(out, f) }
 
 pub fn float_text(f: Float) -> Str { rt.rs_concat_float("", f) }
+
+pub fn parse_float(s: Str) -> Float? {
+  if rt.float_parse_ok(s) {
+    return Some(rt.float_parse(s))
+  }
+  None
+}

@@ -213,12 +213,7 @@ fn int_saturating_mul(n: Int, m: Int) -> Int { saturated(2, n, m) }
 
 fn int_parse(s: Str) -> Int? { text.parse_int(s) }
 
-fn float_parse(s: Str) -> Float? {
-  if rt.float_parse_ok(s) {
-    return Some(rt.float_parse(s))
-  }
-  None
-}
+fn float_parse(s: Str) -> Float? { num.parse_float(s) }
 
 // ---------------------------------------------------------------------------
 // Map[K, V] and Set[T] (std.md 2.4): std/rt map.go's order, the entries

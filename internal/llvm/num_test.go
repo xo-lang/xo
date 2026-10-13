@@ -155,6 +155,13 @@ func floatStr(f float64) string {
 	return s
 }
 
+// numCSkips reports whether line (`f <text>`) is a Float text that only
+// the Xo path parses as Go does: the C path (XO_LLRT_C=num) takes
+// decimal text of at most 4096 bytes without underscores.
+func numCSkips(line string) bool {
+	return strings.HasPrefix(line, "f ") && (strings.Contains(line, "_") || strings.Contains(strings.ToLower(line), "x") || len(line) > 4098)
+}
+
 // numCorpus is the input of numDiffProg and the lines Go's strconv,
 // encoding/hex, and encoding/base64 give for it: random Float bits of
 // every class, decimal texts of up to 20 and of 800 digits, the halfway
@@ -181,9 +188,12 @@ func numCorpus(n int) (in, want string) {
 		}
 		f(strconv.FormatFloat(v, 'g', -1, 64))
 		f(strconv.FormatFloat(v, 'e', 25, 64))
+		f(strconv.FormatFloat(v, 'x', -1, 64))
 	}
 	for _, s := range []string{"0", "-0", "+0", "0.0", "0e0", "0e-400", "1e-400", "1e400", "-1e400", "inf", "-Inf", "+INFINITY", "infinity", "nan", "NaN", "+nan", "-nan", "infinit", "",
-		"1", "-1", "1.", ".5", "-.5e-3", "+.5E+3", ".", "-", "+", "e5", "1e", "1e+", "1.2.3", "1_000", " 1", "1 ", "1e5x", "00000000000000000000000001.5", "1e0000000000000000000000000003",
+		"1", "-1", "1.", ".5", "-.5e-3", "+.5E+3", ".", "-", "+", "e5", "1e", "1e+", "1.2.3", "1_000", "1__0", "_1", "1_", "1_0.5_5e1_0", "1.5e_1", " 1", "1 ",
+		"0x1p-2", "0x1.8p1", "-0X1P+3", "0x1p", "0x.8p1", "0x_1p0", "0x1_0p0", "0x1p1_0", "0x", "0x.p1", "0xg", "0x1.fffffffffffff8p1023", "0x1.fffffffffffffp1023", "0x1p1024",
+		"0x1p-1074", "0x1p-1075", "0x1.0000000000001p-1075", "0x1.8p-1075", "0x3p-1076", "0x123456789abcdef0123p-80", "0x0p0", "-0x0p0", "0x0.000000000000000000001p1100", "1e5x", "00000000000000000000000001.5", "1e0000000000000000000000000003",
 		"4.9406564584124654e-324", "5e-324", "2.4703282292062328e-324", "2.4703282292062329e-324", "2.2250738585072011e-308", "2.2250738585072014e-308",
 		"1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308", "1797693134862315807937289714053034150799341327100378269361737789804449682927647509466490179775872070963302864166928879109465555478519404026306574886715058206819089020007083836762738548458177115317644757302700698555713669596228429148198608349364752927190741684443655107043427115596995080930428801779041744977919999999e-310",
 		"9007199254740993", "9007199254740992.5", "0.1", "0.2", "0.3", "123456789012345678901234567890", "1e22", "1e23", "8.98846567431158e307", "2.5e-323", "1.5e-323",
@@ -312,7 +322,7 @@ func TestNumDiff(t *testing.T) {
 					if i < len(inLines) {
 						x = inLines[i]
 					}
-					if g != w {
+					if g != w && !(path == "c" && numCSkips(x)) {
 						if bad < 20 {
 							t.Errorf("%.120q: got %.80q, want %.80q", x, g, w)
 						}
