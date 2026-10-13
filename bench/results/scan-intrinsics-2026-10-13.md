@@ -119,3 +119,6 @@ debug 1.011x; neither calls scan.xo, so the difference is layout).
   hosted WAT assembler, and newtypes on a `$eq8` helper name the wasm
   backend also generates for type equality;
   gotchas/wasm-rt-name-collides-with-generated.md).
+- After merging origin/main (10e71072, with decision 0200's atomics and
+  the wasm rotates): the same targeted runs pass; TestSelfhostWasm 132
+  pass, 19 unsupported, 0 fail of 151.
