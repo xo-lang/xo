@@ -1,0 +1,495 @@
+// Alias scopes of lists (decision 0211; internal/llvm noalias.go mirrors
+// it).
+//
+// A list is a pointer to its object in the IR, so LLVM cannot tell that
+// the stores to one `var List[Int]` parameter leave alone the elements
+// another one reads, and keeps loops and unrolled code over several
+// lists scalar. Xo's value semantics settle it within one call of a
+// function, for the classes of values below.
+//
+// The facts used, both kept by the SSA's reference counting (selfhost/ssa
+// rc.xo, decisions 0046 and 0058) and relied on by every in place update
+// already: (1) a list is written in place only through a value that holds
+// the only reference to it: every update (list.set, list.push, list.pop,
+// list.take) follows a `reuse`, which copies a list whose count is not 1
+// (or a shared list another thread may hold); (2) a borrowed parameter is
+// backed by a reference its caller holds for the whole call, and every
+// `var` or owned argument is a reference of its own (a caller that passes
+// one list both ways retains it first).
+//
+// Classes (a union-find over the List, Str, and Bytes values):
+//
+//   - U: rooted at the reuse of a parameter, or at a new list (list.new,
+//     rt.rl_empty), and closed under list.set and list.push (the list
+//     they return is their operand's, updated in place or grown into a
+//     new object), a further reuse, the `var` result of a direct call
+//     whose summary says it hands back the object it was given or a new
+//     one, and block parameters. Its objects are the parameter's own
+//     object, when its reuse found the count 1, or objects allocated
+//     during the call (copies, grown lists, new lists; the shared empty
+//     list, which no operation writes: an update of it grows first).
+//   - RO: the borrowed List, Str, and Bytes parameters (not `var`, not
+//     passed by reference), and block parameters joining only them.
+//
+// Any other value (a raw parameter before its reuse, a field, an element,
+// a tuple's part, another call's result) has no class, and a class joined
+// with such a value (a block parameter, a reuse of it) is out
+// (poisoned): its accesses keep no scope, which LLVM takes as possibly
+// aliasing anything. So is a class that holds both RO and U values.
+//
+// Proof that two classes never reach one object during a call:
+//   - two U classes: objects allocated during the call are new. A
+//     parameter's object O is in place in a U class only if its reuse
+//     found the count 1; were O also another parameter's, that parameter
+//     would hold a second reference until its own reuse or release, so
+//     at most one of the two reuses keeps O and the other copied it
+//     before (fact 1). No value from outside the class joins it (a join
+//     with one poisons it), so no other way leads O into a second class;
+//   - U and RO: an RO object exists before the call and its caller's
+//     reference keeps it alive and counted for the whole call (fact 2),
+//     so no reuse finds it unique and no allocation of the call is it;
+//   - the RO class is one scope: its accesses are reads.
+// Objects freed and allocated again at one address are different objects
+// to LLVM, and a call (the release, the allocation) separates them.
+//
+// The summary of a function (same_var, per `var` parameter): every return
+// hands back the parameter itself, a new list, or a value of a U class
+// whose only parameter root is that parameter. Computed from all false
+// until nothing changes (each only turns true; recursion stays false
+// where the induction does not hold).
+//
+// Emission: each class with an access gets a scope (all of RO one), in
+// the order of the accesses; an access (a list operation, a Bytes read)
+// through a value of a class carries !alias.scope of its scope and
+// !noalias of the function's other scopes; writes are scoped only through
+// a U class. The function's entry declares its scopes
+// (llvm.experimental.noalias.scope.decl) so LLVM's inliner gives every
+// inlined call its own. The nodes (a domain, the scopes, their lists)
+// follow the functions, numbered from SCOPE_BASE * (fi + 1). A function
+// with fewer than two scopes gets nothing.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The first metadata id of function 0: function fi's nodes are
+/// SCOPE_BASE * (fi + 1) and up (ids may skip).
+const SCOPE_BASE = 100
+/// The most scopes a function gets: a class past it keeps none.
+const SCOPE_MAX = 32
+
+/// The facts of a class.
+const CL_POISON = 1
+const CL_RO = 2
+const CL_W = 4
+const CL_ROOT = 8
+
+/// The union-find over the List, Str, and Bytes values of one function
+/// (classes): per value its parent (-1 for a value no block defines),
+/// the facts of a root, and the parameter whose reuse a root's class
+/// holds (its index; -1 none, -2 several).
+struct Classes {
+  parent: List[Int] = []
+  flags: List[Int] = []
+  root: List[Int] = []
+}
+
+fn (var c: Classes) find(v: Int) -> Int {
+  if c.parent[v] < 0 {
+    // a value no block defines: no class
+    c.parent[v] = v
+    c.flags[v] = CL_POISON
+    c.root[v] = -1
+    return v
+  }
+  var r = v
+  while c.parent[r] != r {
+    r = c.parent[r]
+  }
+  var x = v
+  while c.parent[x] != r {
+    let nx = c.parent[x]
+    c.parent[x] = r
+    x = nx
+  }
+  r
+}
+
+fn (var c: Classes) union(a: Int, b: Int) {
+  var ra = c.find(a)
+  var rb = c.find(b)
+  if ra == rb {
+    return
+  }
+  // the root with the smaller index stays: the classes do not depend on
+  // the order of the unions
+  if rb < ra {
+    let t = ra
+    ra = rb
+    rb = t
+  }
+  c.parent[rb] = ra
+  c.flags[ra] = c.flags[ra] | c.flags[rb]
+  let x = c.root[ra]
+  let y = c.root[rb]
+  if x == -1 {
+    c.root[ra] = y
+  } else if y != -1 && x != y {
+    c.root[ra] = -2
+  }
+}
+
+fn (var c: Classes) def(v: Int, fl: Int, root: Int) {
+  c.parent[v] = v
+  c.flags[v] = fl
+  c.root[v] = root
+}
+
+/// Whether value v of f has a List, Str, or Bytes type (scoped).
+fn (var g: Gen) scoped(f: ssa.Func, v: Int) -> Bool {
+  if v < 0 {
+    return false
+  }
+  let t = f.values[v].ty
+  t >= 0 && (g.kind(t) is ssa.Kind.List | ssa.Kind.Str)
+}
+
+/// Whether v is list.set or list.push: the list it returns is its first
+/// argument's, updated in place (isUpdate).
+fn (var g: Gen) is_update(f: ssa.Func, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.op != ssa.Op.Call || g.kind(x.ty) != ssa.Kind.List {
+    return false
+  }
+  let n = aux_str(x.aux)
+  n == "list.set" || n == "list.push"
+}
+
+/// Whether v is list.new or rt.rl_empty (the zero list of an unwind
+/// exit): a list allocated here, or the shared empty list, which no
+/// operation writes (isNewList).
+fn (var g: Gen) is_new_list(f: ssa.Func, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.op != ssa.Op.Call || g.kind(x.ty) != ssa.Kind.List {
+    return false
+  }
+  let n = aux_str(x.aux)
+  n == "list.new" || n == "rt.rl_empty"
+}
+
+/// For a `var` result of a direct call (its Field k >= 1), the argument
+/// it hands back when the callee's summary says the result is that
+/// argument's object or a new one; -1 otherwise (handedBack).
+fn (var g: Gen) handed_back(f: ssa.Func, v: Int) -> Int {
+  let x = f.values[v]
+  if x.op != ssa.Op.Field || g.kind(x.ty) != ssa.Kind.List {
+    return -1
+  }
+  let c = f.values[x.args[0]]
+  if c.op != ssa.Op.Call {
+    return -1
+  }
+  let callee = g.by_name.get(aux_str(c.aux)) ?? -1
+  if callee < 0 {
+    return -1
+  }
+  let j = aux_int(x.aux) - 1
+  let same = g.same_var[callee]
+  if j < 0 || j >= same.len() || !same[j] {
+    return -1
+  }
+  let i = g.m.funcs[callee].var_params[j]
+  if i >= c.args.len() {
+    return -1
+  }
+  c.args[i]
+}
+
+/// Groups the values of function fi (classesOf).
+fn (var g: Gen) classes_of(fi: Int) -> Classes {
+  let f = g.m.funcs[fi]
+  var c = Classes{}
+  for _ in 0..f.values.len() {
+    c.parent.push(-1)
+    c.flags.push(0)
+    c.root.push(-1)
+  }
+  let br = g.by_ref_of(fi)
+  let params = f.blocks[0].params
+  // the definitions
+  for (bi, b) in f.blocks.indexed() {
+    for p in b.params {
+      if !g.scoped(f, p) {
+        continue
+      }
+      if bi == 0 {
+        let i = params.index_of(p) ?? -1
+        if i >= 0 && i < f.borrowed.len() && f.borrowed[i] && !f.var_params.contains(i) && (br.is_empty() || !br[i]) {
+          c.def(p, CL_RO, -1)
+        } else {
+          c.def(p, CL_POISON, -1)
+        }
+        continue
+      }
+      c.def(p, 0, -1)
+    }
+    for v in b.instrs {
+      if !g.scoped(f, v) {
+        continue
+      }
+      let x = f.values[v]
+      if x.op == ssa.Op.Reuse {
+        let i = params.index_of(x.args[0]) ?? -1
+        if i >= 0 {
+          c.def(v, CL_W | CL_ROOT, i)
+        } else {
+          c.def(v, CL_W, -1)
+        }
+      } else if g.is_update(f, v) || g.handed_back(f, v) >= 0 {
+        c.def(v, CL_W, -1)
+      } else if g.is_new_list(f, v) {
+        c.def(v, CL_W | CL_ROOT, -1)
+      } else {
+        c.def(v, CL_POISON, -1)
+      }
+    }
+  }
+  // the joins
+  var reuse_of: Map[Int, Int] = {}
+  for (bi, b) in f.blocks.indexed() {
+    if bi > 0 {
+      for (k, p) in b.params.indexed() {
+        if !g.scoped(f, p) {
+          continue
+        }
+        for e in b.preds {
+          let args = f.edges[e].args
+          if k < args.len() && args[k] >= 0 {
+            c.union(p, args[k])
+          } else {
+            let r = c.find(p)
+            c.flags[r] = c.flags[r] | CL_POISON
+          }
+        }
+      }
+    }
+    for v in b.instrs {
+      if !g.scoped(f, v) {
+        continue
+      }
+      let x = f.values[v]
+      if x.op == ssa.Op.Reuse {
+        let a = x.args[0]
+        if params.contains(a) {
+          // the reuses of one parameter are one class
+          if let Some(r) = reuse_of.get(a) {
+            c.union(v, r)
+          } else {
+            reuse_of[a] = v
+          }
+        } else {
+          c.union(v, a)
+        }
+      } else if g.is_update(f, v) {
+        c.union(v, x.args[0])
+      } else {
+        let a = g.handed_back(f, v)
+        if a >= 0 {
+          c.union(v, a)
+        }
+      }
+    }
+  }
+  c
+}
+
+/// The summary of function fi (sameVarOf): per `var` parameter, whether
+/// every return hands back the parameter itself, a new list, or a value
+/// of a U class whose only parameter root is that parameter.
+fn (var g: Gen) same_var_of(fi: Int) -> List[Bool] {
+  var c = g.classes_of(fi)
+  let f = g.m.funcs[fi]
+  let ps = f.blocks[0].params
+  var out: List[Bool] = []
+  for (j, i) in f.var_params.indexed() {
+    let p = ps[i]
+    var ok = g.kind(f.values[p].ty) == ssa.Kind.List
+    for b in 0..f.blocks.len() {
+      let t = f.term(b)
+      if !ok || t < 0 || f.values[t].op != ssa.Op.Return {
+        continue
+      }
+      let targs = f.values[t].args
+      if 1 + j >= targs.len() {
+        ok = false
+        break
+      }
+      let r = targs[1 + j]
+      if r == p || g.is_new_list(f, r) {
+        continue
+      }
+      if !g.scoped(f, r) {
+        ok = false
+        break
+      }
+      let k = c.find(r)
+      if (c.flags[k] & (CL_POISON | CL_RO)) != 0 || c.root[k] != i && c.root[k] != -1 {
+        ok = false
+      }
+    }
+    out.push(ok)
+  }
+  out
+}
+
+/// Computes same_var for every function: from none, until no summary
+/// changes (each only turns true, so it ends) (summarize).
+fn (var g: Gen) summarize() {
+  let nf = g.m.funcs.len()
+  g.same_var = []
+  for _ in 0..nf {
+    g.same_var.push([])
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for fi in 0..nf {
+      let s = g.same_var_of(fi)
+      let old = g.same_var[fi]
+      for j in 0..s.len() {
+        if j >= old.len() || old[j] != s[j] {
+          changed = true
+          break
+        }
+      }
+      g.same_var[fi] = s
+    }
+  }
+}
+
+/// Whether call name reads its list or Bytes operand (Args[0]), and
+/// whether it also writes the list (scopeRead, scopeWrite).
+fn scope_read(name: Str) -> Bool {
+  name is "list.len" | "list.index" | "list.get" | "bytes.index" | "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_high16"
+}
+
+fn scope_write(name: Str) -> Bool {
+  name is "list.set" | "list.push" | "list.pop" | "list.take"
+}
+
+/// Gives the accesses of function fi their scopes (scopesOf): sc_tag per
+/// value (-1 none) and sc_n, 0 when it has fewer than two.
+fn (var g: Gen) scopes_of(fi: Int) {
+  var c = g.classes_of(fi)
+  let f = g.m.funcs[fi]
+  g.sc_tag = []
+  for _ in 0..f.values.len() {
+    g.sc_tag.push(-1)
+  }
+  g.sc_n = 0
+  g.sc_base = SCOPE_BASE * (fi + 1)
+  var scope_of: Map[Int, Int] = {}
+  var ro = -1
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || x.args.is_empty() {
+        continue
+      }
+      let name = aux_str(x.aux)
+      let w = scope_write(name)
+      if !w && !scope_read(name) {
+        continue
+      }
+      let a = x.args[0]
+      if !g.scoped(f, a) {
+        continue
+      }
+      let r = c.find(a)
+      let fl = c.flags[r]
+      var k = -1
+      if (fl & CL_POISON) != 0 {
+        continue
+      } else if (fl & CL_RO) != 0 {
+        if w || (fl & CL_W) != 0 {
+          continue
+        }
+        if ro < 0 {
+          if g.sc_n == SCOPE_MAX {
+            continue
+          }
+          ro = g.sc_n
+          g.sc_n += 1
+        }
+        k = ro
+      } else if (fl & CL_ROOT) != 0 {
+        if let Some(kk) = scope_of.get(r) {
+          k = kk
+        } else {
+          if g.sc_n == SCOPE_MAX {
+            continue
+          }
+          k = g.sc_n
+          scope_of[r] = k
+          g.sc_n += 1
+        }
+      } else {
+        continue
+      }
+      g.sc_tag[v] = k
+    }
+  }
+  if g.sc_n < 2 {
+    g.sc_n = 0
+    for v in 0..g.sc_tag.len() {
+      g.sc_tag[v] = -1
+    }
+  }
+}
+
+/// The metadata suffix of access v: its scope and the others, or "" (md).
+fn (var g: Gen) sc_md(v: Int) -> Str {
+  if g.sc_n == 0 || v < 0 || v >= g.sc_tag.len() {
+    return ""
+  }
+  let k = g.sc_tag[v]
+  if k < 0 {
+    return ""
+  }
+  ", !alias.scope !${g.sc_base + 1 + SCOPE_MAX + k}, !noalias !${g.sc_base + 1 + 2 * SCOPE_MAX + k}"
+}
+
+/// The scope declarations at the entry (decls).
+fn (var g: Gen) sc_decls() -> Str {
+  var out: List[Str] = []
+  for k in 0..g.sc_n {
+    out.push("  call void @llvm.experimental.noalias.scope.decl(metadata !${g.sc_base + 1 + SCOPE_MAX + k})\n")
+  }
+  out.join("")
+}
+
+/// The metadata of the scopes: the domain, each scope, its list, and the
+/// list of the others (nodes).
+fn (var g: Gen) sc_nodes() -> Str {
+  if g.sc_n == 0 {
+    return ""
+  }
+  let d = g.sc_base
+  var out: List[Str] = []
+  out.push("!${d} = distinct !{!${d}}\n")
+  for k in 0..g.sc_n {
+    let s = d + 1 + k
+    out.push("!${s} = distinct !{!${s}, !${d}}\n")
+  }
+  for k in 0..g.sc_n {
+    out.push("!${d + 1 + SCOPE_MAX + k} = !{!${d + 1 + k}}\n")
+  }
+  for k in 0..g.sc_n {
+    var others: List[Str] = []
+    for j in 0..g.sc_n {
+      if j != k {
+        others.push("!${d + 1 + j}")
+      }
+    }
+    out.push("!${d + 1 + 2 * SCOPE_MAX + k} = !{${others.join(", ")}}\n")
+  }
+  out.join("")
+}

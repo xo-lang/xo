@@ -132,8 +132,8 @@ type sgen struct {
 	helpers strings.Builder
 	funcs   strings.Builder
 	// meta holds the alias scopes of the functions (noalias.go)
-	meta  strings.Builder
-	named map[*ssa.Type]bool
+	meta    strings.Builder
+	named   map[*ssa.Type]bool
 	rtDecls strings.Builder // declarations of the rt.* calls used
 	strs    map[string]string
 	locs    map[string]string
@@ -146,6 +146,9 @@ type sgen struct {
 	// the plain convention
 	byRef     map[*ssa.Func][]bool
 	addrTaken map[string]bool
+	// sameVar is, per function and `var` parameter, whether it hands
+	// back its own object or a new list (noalias.go)
+	sameVar map[*ssa.Func][]bool
 }
 
 // byRefMin is the size from which a struct parameter of a direct call
@@ -236,6 +239,7 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 		}
 	}
 	g.inl = inlinableSet(m, g.byName)
+	g.summarize()
 	for fi, f := range m.Funcs {
 		g.fn(f, fi)
 	}
@@ -1239,7 +1243,7 @@ func (g *sgen) fn(f *ssa.Func, fi int) {
 	var loads strings.Builder
 	s.body = &loads
 	br := g.byRefOf(f)
-	s.sc = computeScopes(f, fi, br)
+	s.sc = g.scopesOf(f, fi)
 	if s.sc != nil {
 		g.llvmDecl("@llvm.experimental.noalias.scope.decl", "declare void @llvm.experimental.noalias.scope.decl(metadata)")
 		loads.WriteString(s.sc.decls())
