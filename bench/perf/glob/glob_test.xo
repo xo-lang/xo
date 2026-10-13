@@ -1,13 +1,14 @@
 // MemFs.fail_next's pattern match (path.Match; std/native/llrt/glob.xo,
 // or its C path with XO_LLRT_C=glob; decision 0195). Each write tests
 // every pending fail_next pattern of its op against its path, so with 40
-// patterns that never match, 2,000 writes are 80,000 matches. "writes"
+// patterns that never match (each scans most of the path, stars
+// backtracking), 2,000 writes are 80,000 matches. "writes"
 // is the same writes with no pattern pending (the setup to subtract).
 // measure.sh runs each test of the binary itself and counts its
 // instructions.
 use std/testing
 
-const PATTERNS = ["logs/*.tmp", "data/[0-9]*/x?z", "a*b*c*d*e*/f", "cache/*/[^a-z]*.bin", "*.lock", "q??/*", "[x-z]*[0-9]", "deep/*/*/*/*", "*é*日*", "w\\*x", "spool/*.[ch]", "*/*/*.json", "ab[c-e]?*", "*z", "n[^n]n*", "tmp/*~", "out/??.log", "*.[a-c][a-c][a-c]", "img/*/thumb_*", "*-old"]
+const PATTERNS = ["data/file_*.txq", "data/*_*_*.txt", "data/f*e*l*x", "data/file_[a-z]*", "data/*.tx?x", "data/file_???.txt", "data/*/*", "data/[^f]*", "data/file_[5-9][5-9].txt", "data/*e*e*e*.txt", "data/file_\\*.txt", "*/file_*.tx", "da?a/*.TXT", "data/*_*.t?t?", "d*/f*_*[a-c].txt", "data/file_*[!].txt", "data/??????????????", "*a*a*a*a*", "data/file_*.[a-s]xt", "data/fi[^l]e_*"]
 
 test "writes" {
   for i in 0..2000 {

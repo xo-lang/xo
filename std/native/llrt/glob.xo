@@ -5,11 +5,18 @@
 // glob_c.xo) until bench/perf/portable meets decision 0180's bar.
 use native/rt
 
-/// The rune at i of b times 8 plus its size (utf8.DecodeRune; i < b.len()).
-fn rune_at(b: Bytes, i: Int) -> Int { rt.bytes_decode(b, i) }
+/// The rune at i of b times 8 plus its size (utf8.DecodeRune; i <
+/// b.len()): ASCII here, the rest by the runtime's decoder.
+fn rune_at(b: Bytes, i: Int) -> Int {
+  let c = Int(b[i])
+  if c < 0x80 {
+    return (c << 3) | 1
+  }
+  rt.bytes_decode(b, i)
+}
 
-/// getEsc of the class text at i of p (hi its end): the rune times 8 plus
-/// the bytes it took (its escape included), or -1 on a bad pattern.
+/// getEsc of the class text at i of p (hi its end): the rune times 256
+/// plus the bytes it took (its escape included), or -1 on a bad pattern.
 fn get_esc(p: Bytes, i0: Int, hi: Int) -> Int {
   var i = i0
   // 45 is -, 93 is ], 92 is \
@@ -34,91 +41,120 @@ fn get_esc(p: Bytes, i0: Int, hi: Int) -> Int {
   ((d >> 3) << 8) | (i - i0)
 }
 
+/// The character class of p from i (after its `[`, hi the chunk's end)
+/// against the rune r (-1: none, the match already failed): the index
+/// after its `]` times 2, plus 1 when r is in the class (negation
+/// applied); -1 on a bad pattern.
+fn match_class(p: Bytes, i0: Int, hi: Int, r: Int) -> Int {
+  var i = i0
+  var negated = false
+  // 94 is ^
+  if i < hi && p[i] == 94 {
+    negated = true
+    i += 1
+  }
+  var matched = false
+  var nrange = 0
+  while true {
+    if i < hi && p[i] == 93 && nrange > 0 {
+      i += 1
+      break
+    }
+    let e = get_esc(p, i, hi)
+    if e < 0 {
+      return -1
+    }
+    let rlo = e >> 8
+    var rhi = rlo
+    i += e & 255
+    if p[i] == 45 {
+      let e2 = get_esc(p, i + 1, hi)
+      if e2 < 0 {
+        return -1
+      }
+      rhi = e2 >> 8
+      i += 1 + (e2 & 255)
+    }
+    if rlo <= r && r <= rhi {
+      matched = true
+    }
+    nrange += 1
+  }
+  if matched != negated {
+    return (i << 1) | 1
+  }
+  i << 1
+}
+
+/// The rest of the chunk p[i..hi] once its match failed: -1, or -2 on a
+/// bad pattern (matchChunk goes on checking the pattern).
+fn chunk_failed(p: Bytes, i0: Int, hi: Int) -> Int {
+  var i = i0
+  while i < hi {
+    let c = p[i]
+    // 91 is [, 92 is \
+    if c == 91 {
+      let k = match_class(p, i + 1, hi, -1)
+      if k < 0 {
+        return -2
+      }
+      i = k >> 1
+    } else if c == 92 {
+      if i + 1 >= hi {
+        return -2
+      }
+      i += 2
+    } else {
+      i += 1
+    }
+  }
+  -1
+}
+
 /// matchChunk of the chunk p[lo..hi] against s from si: the index in s
 /// after the match, -1 when it does not match, -2 on a bad pattern.
 fn match_chunk(p: Bytes, lo: Int, hi: Int, s: Bytes, si0: Int) -> Int {
   var i = lo
   var si = si0
   let n = s.len()
-  var failed = false
   while i < hi {
-    if !failed && si >= n {
-      failed = true
+    if si >= n {
+      return chunk_failed(p, i, hi)
     }
     let c = p[i]
-    // 91 is [
+    // 91 is [, 63 is ?, 92 is \, 47 is /
     if c == 91 {
-      var r = 0
-      if !failed {
-        let d = rune_at(s, si)
-        r = d >> 3
-        si += d & 7
+      let d = rune_at(s, si)
+      si += d & 7
+      let k = match_class(p, i + 1, hi, d >> 3)
+      if k < 0 {
+        return -2
       }
-      i += 1
-      var negated = false
-      // 94 is ^
-      if i < hi && p[i] == 94 {
-        negated = true
-        i += 1
-      }
-      var matched = false
-      var nrange = 0
-      while true {
-        if i < hi && p[i] == 93 && nrange > 0 {
-          i += 1
-          break
-        }
-        let e = get_esc(p, i, hi)
-        if e < 0 {
-          return -2
-        }
-        let rlo = e >> 8
-        var rhi = rlo
-        i += e & 255
-        if p[i] == 45 {
-          let e2 = get_esc(p, i + 1, hi)
-          if e2 < 0 {
-            return -2
-          }
-          rhi = e2 >> 8
-          i += 1 + (e2 & 255)
-        }
-        if rlo <= r && r <= rhi {
-          matched = true
-        }
-        nrange += 1
-      }
-      if matched == negated {
-        failed = true
+      i = k >> 1
+      if (k & 1) == 0 {
+        return chunk_failed(p, i, hi)
       }
     } else if c == 63 {
-      // ?
-      if !failed {
-        // 47 is /
-        if s[si] == 47 {
-          failed = true
-        }
-        si += rune_at(s, si) & 7
+      if s[si] == 47 {
+        return chunk_failed(p, i + 1, hi)
       }
+      si += rune_at(s, si) & 7
       i += 1
     } else {
+      var e = c
       if c == 92 {
         i += 1
         if i >= hi {
           return -2
         }
+        e = p[i]
       }
-      if !failed {
-        if p[i] != s[si] {
-          failed = true
-        }
-        si += 1
+      if e != s[si] {
+        return chunk_failed(p, i + 1, hi)
       }
+      si += 1
       i += 1
     }
-  }
-  if failed {
-    return -1
   }
   si
 }
@@ -185,7 +221,13 @@ pub fn matches(pattern: Str, name: Str) -> Bool {
     var next = false
     if star {
       var k = si
-      while k < s.len() && s[k] != 47 {
+      // not `k < s.len() && s[k] != 47`: with match_chunk inlined twice
+      // the arm64 backend read a register before writing it
+      // (gotchas/arm64-and-loop-condition-inlined-twice.md)
+      while k < s.len() {
+        if s[k] == 47 {
+          break
+        }
         let t2 = match_chunk(p, lo, hi, s, k + 1)
         if t2 >= 0 {
           if pi == p.len() && t2 < s.len() {

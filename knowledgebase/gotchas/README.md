@@ -390,3 +390,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [threads-golden-needs-zone-data.md](threads-golden-needs-zone-data.md): Observed: TestGoldenThreads links without -DXO_TIME and the zone data object, so std/time goldens are skipped there.
 - [heavy-log-grep-binary.md](heavy-log-grep-binary.md): Observed: a test log holding a NUL byte (a golden printing U+0000) makes grep print nothing; use grep -a.
 - [when-is-a-keyword.md](when-is-a-keyword.md): Observed: a field or variable named `when` gives an XO0502/XO0406/XO0160 cascade that never names the keyword; rename it.
+- [arm64-and-loop-condition-inlined-twice.md](arm64-and-loop-condition-inlined-twice.md): Observed: a function inlined twice, once under a `k < n && s[k] != c` loop condition, made internal/arm64 read a virtual register before writing it; 41 line repro inside, worked around in glob.xo.
+- [uint64-shift-amount-above-2-63.md](uint64-shift-amount-above-2-63.md): Observed: a UInt64 shift amount of 2^63 or more gives 0 on the Go backend (std/rt tests int64(n)) and faults on the native backends, printing the amount as an Int.
+- [xo-binary-embeds-std-native.md](xo-binary-embeds-std-native.md): Observed: a scratch xo binary built before a std/native edit compiles the old runtime; rebuild it before measuring, and nm the binary when two paths measure the same.
