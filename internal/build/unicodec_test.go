@@ -84,6 +84,27 @@ func TestIOFlagsInts(t *testing.T) {
 	}
 }
 
+// TestIOFlagsRC checks the C path of the reference counts (XO_LLRT_C=rc,
+// decision 0207 stage 2): -DXO_RC_C only when rc_c.xo's calls are in
+// the code, not for the exports every program defines.
+func TestIOFlagsRC(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_rc_inc_c\n", true},
+		{"call i64 @xo_rc_claim_c(i64 %1)\n", true},
+		{"bl _xo_rc_dec_shared_c\n", true},
+		{"_xo_x_rc_inc:\n\tb _xo_rc_inc\nbl _xo_rc_free\n", false},
+		{"define i64 @xo_x_rc_dec(i64 %p)\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_RC_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_RC_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
 // TestIOFlagsDigestAndGlob checks the C paths of std/crypto's hashes
 // (XO_LLRT_C=digest) and MemFs.fail_next's match (glob, decision 0195):
 // compiled only into programs that call them; Argon2id, crypto.equal,

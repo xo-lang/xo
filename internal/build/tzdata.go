@@ -394,6 +394,13 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the reference counts (decision 0207 stage 2, XO_LLRT_C=rc)
+	for _, sym := range []string{"xo_rc_inc_c", "xo_rc_dec_c", "xo_rc_dec_shared_c", "xo_rc_claim_c", "xo_rc_mark_c"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_RC_C")
+			break
+		}
+	}
 	return out
 }
 

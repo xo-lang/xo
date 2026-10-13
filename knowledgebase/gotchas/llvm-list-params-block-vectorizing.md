@@ -1,0 +1,24 @@
+# LLVM keeps Xo's word loops over several Lists scalar
+
+Status: Observed (2026-10-13, decision 0207 stage 2)
+
+Symptom: the Argon2id in Xo (std/native/llrt/digest_tables.xo
+`argon2_g`, `bs`, `t`, `q` three `var List[Int]` parameters) stays at
+1.155 times the C's instructions on LLVM after the zero fill went to
+`raw.zero_ints`, while arm64 reached 0.980
+(bench/results/raw-memory-2026-10-13.md, stage 2). The disassembly of
+the LLVM build of argon2_g has no vector instruction (each word is two
+loads, an eor, and two stores); the C's `cr_argon2` has 115 (`.16b`,
+`.2d`, `q` registers).
+
+Cause: in the IR every List is a pointer to its object and the elements
+are loads and stores through it; LLVM cannot prove that the stores to
+`t` and `q` do not write the words of `bs` it loads next, so the SLP
+vectorizer leaves the unrolled xor loops alone. The C works on separate
+local arrays, which it can.
+
+Fix: none yet. Next experiment: the LLVM emitters (selfhost/llvm first,
+internal/llvm only to mirror) mark distinct `var` List parameters
+`noalias` where the language guarantees two `var` arguments are
+different places (check spec/core.md's exclusivity rule first), then
+rerun `bench/perf/digest/measure.sh` with `WORKLOADS="none argon2"`.

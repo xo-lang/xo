@@ -17,3 +17,8 @@ Fix: after a selfhost change, run cmd/xo's short tests on their own
 with `-timeout 30m` (the xo1 built then is cached for every later run
 with the same sources), or with `XO_SELF_DRIVER=0` when the change is
 not about the switch.
+
+Seen again 2026-10-13 (decision 0207 stage 2) after a change to std
+alone (std/native/llrt): the repository's `go test -short` timed out in
+cmd/xo at 600 s building xo1; with `XO_SELF_DRIVER=0` cmd/xo's short
+tests passed in 29 s.

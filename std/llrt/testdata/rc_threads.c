@@ -422,6 +422,109 @@ static void test_literal(void) {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 8. A model (decision 0207 stage 2): random interleavings of retain,
+// release, claim, and mark of shared objects across threads, checked
+// against what each thread knows of its own references. Each thread
+// holds some references to each of NM shared strings; a release while
+// it holds another must not be the last; a claim must fail while it
+// holds two, and when it succeeds the count is thread local 1 (no other
+// thread holds one), so marking it again must report thread local; a
+// mark of a shared count must report shared. At the end every object
+// is released exactly once as the last reference, on its holder's final
+// release, with its text intact.
+
+#define NM 64
+static str mobj[NM];
+static int64_t mlast, mclaims;
+
+static uint64_t m_rand(uint64_t *x) {
+	*x ^= *x << 13;
+	*x ^= *x >> 7;
+	*x ^= *x << 17;
+	return *x;
+}
+
+static void *t_model(void *arg) {
+	uint64_t seed = 0x9E3779B97F4A7C15ull * (uint64_t)((intptr_t)arg + 1);
+	int held[NM];
+	for (int o = 0; o < NM; o++) {
+		held[o] = 1; // given before the thread starts
+	}
+	for (int i = 0; i < ITER * 8; i++) {
+		uint64_t r = m_rand(&seed);
+		int o = (int)(r % NM);
+		int64_t *rc = &mobj[o].obj->rc;
+		switch ((r >> 32) % 4) {
+		case 0:
+			if (held[o] < 8) {
+				xo_rc_inc(rc);
+				held[o]++;
+			}
+			break;
+		case 1:
+			if (held[o] > 1) {
+				CHECK(!xo_rc_dec(rc)); // another of this thread's references remains
+				held[o]--;
+			}
+			break;
+		case 2: {
+			int c = xo_rc_claim(rc);
+			if (held[o] > 1) {
+				CHECK(!c);
+			}
+			if (c) {
+				// the only reference: thread local again
+				CHECK(__atomic_load_n(rc, __ATOMIC_RELAXED) == 1);
+				__atomic_fetch_add(&mclaims, 1, __ATOMIC_RELAXED);
+				CHECK(xo_rc_mark(rc)); // shared again before others can see it
+			}
+			break;
+		}
+		default:
+			CHECK(!xo_rc_mark(rc)); // already shared
+			break;
+		}
+	}
+	for (int o = 0; o < NM; o++) {
+		CHECK(mobj[o].len >= 3 && memcmp(mobj[o].obj->data, "m-", 2) == 0);
+		while (held[o] > 0) {
+			held[o]--;
+			if (xo_rc_dec(&mobj[o].obj->rc)) {
+				CHECK(held[o] == 0);
+				__atomic_fetch_add(&mlast, 1, __ATOMIC_RELAXED);
+				xo_rc_free(mobj[o].obj);
+			}
+		}
+	}
+	return NULL;
+}
+
+static void test_model(void) {
+	for (int o = 0; o < NM; o++) {
+		char b[32];
+		snprintf(b, sizeof b, "m-%d", o);
+		mobj[o] = mkstr(b);
+		CHECK(xo_rc_mark(&mobj[o].obj->rc));
+		CHECK(mobj[o].obj->rc == -1);
+		for (int i = 1; i < NT; i++) {
+			xo_rc_inc(&mobj[o].obj->rc); // one per thread
+		}
+		CHECK(mobj[o].obj->rc == -NT);
+	}
+	pthread_t ts[NT];
+	for (intptr_t i = 0; i < NT; i++) {
+		if (pthread_create(&ts[i], NULL, t_model, (void *)i) != 0) {
+			fputs("pthread_create failed\n", stderr);
+			exit(1);
+		}
+	}
+	for (int i = 0; i < NT; i++) {
+		pthread_join(ts[i], NULL);
+	}
+	CHECK(mlast == NM);
+}
+
 int main(void) {
 	xo_rt_threads_begin();
 	struct {
@@ -429,7 +532,7 @@ int main(void) {
 		void (*fn)(void);
 	} tests[] = {
 		{"string", test_string}, {"list", test_list}, {"claim", test_claim}, {"append", test_append},
-		{"box", test_box}, {"queue", test_queue}, {"literal", test_literal},
+		{"box", test_box}, {"queue", test_queue}, {"literal", test_literal}, {"model", test_model},
 	};
 	for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
 		int before = failures;

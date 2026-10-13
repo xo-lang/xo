@@ -521,7 +521,11 @@ void xo_rc_defer(void *obj, xo_drop_fn drop) {
 
 static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 
-// xo_rc_inc adds a reference.
+#ifdef XO_RC_C
+// The C path (XO_LLRT_C=rc, decision 0207 stage 2): the C's own copies,
+// which std/native/llrt/rc_c.xo also reaches through xo_rc_*_c below.
+
+// rc_inc adds a reference.
 static inline __attribute__((always_inline)) void rc_inc(int64_t *p) {
 	int64_t c = rc_load(p);
 	if (__builtin_expect(c > 0, 1)) {
@@ -533,8 +537,6 @@ static inline __attribute__((always_inline)) void rc_inc(int64_t *p) {
 	}
 }
 
-void xo_rc_inc(int64_t *p) { rc_inc(p); }
-
 __attribute__((noinline)) static int rc_dec_shared(int64_t *p) {
 	// acquire and release in one: the thread that frees sees every other
 	// thread's writes (a release decrement plus an acquire fence would do
@@ -545,7 +547,7 @@ __attribute__((noinline)) static int rc_dec_shared(int64_t *p) {
 	return 0;
 }
 
-// xo_rc_dec drops a reference and reports whether it was the last one
+// rc_dec drops a reference and reports whether it was the last one
 // (the caller then releases the children and frees the object). The
 // thread local and immortal cases are inline (the slow atomic path is
 // not), so dropping a literal costs a few compares.
@@ -564,9 +566,7 @@ static inline __attribute__((always_inline)) int rc_dec(int64_t *p) {
 	return rc_dec_shared(p);
 }
 
-int xo_rc_dec(int64_t *p) { return rc_dec(p); }
-
-// xo_rc_claim reports whether the caller holds the only reference, so
+// rc_claim reports whether the caller holds the only reference, so
 // the object may be updated in place; a shared object is made thread
 // local again.
 static inline __attribute__((always_inline)) int rc_claim(int64_t *p) {
@@ -581,11 +581,9 @@ static inline __attribute__((always_inline)) int rc_claim(int64_t *p) {
 	return 0;
 }
 
-int xo_rc_claim(int64_t *p) { return rc_claim(p); }
-
-// xo_rc_mark makes the count at p shared and reports whether it was
-// thread local (the caller then marks the object's children).
-int xo_rc_mark(int64_t *p) {
+// rc_mark makes the count at p shared and reports whether it was thread
+// local (the caller then marks the object's children).
+static inline int rc_mark(int64_t *p) {
 	int64_t c = rc_load(p);
 	if (c > 0) {
 		__atomic_store_n(p, -c, __ATOMIC_RELAXED);
@@ -593,6 +591,40 @@ int xo_rc_mark(int64_t *p) {
 	}
 	return 0;
 }
+
+void xo_rc_inc_c(int64_t p) { rc_inc((int64_t *)(intptr_t)p); }
+int64_t xo_rc_dec_c(int64_t p) { return rc_dec((int64_t *)(intptr_t)p); }
+int64_t xo_rc_dec_shared_c(int64_t p) { return rc_dec_shared((int64_t *)(intptr_t)p); }
+int64_t xo_rc_claim_c(int64_t p) { return rc_claim((int64_t *)(intptr_t)p); }
+int64_t xo_rc_mark_c(int64_t p) { return rc_mark((int64_t *)(intptr_t)p); }
+#else
+// The counts in Xo (decision 0207 stage 2): std/native/llrt/rc.xo through
+// the C ABI exports of cabi.xo, the same operations as the C path above.
+void xo_x_rc_inc(int64_t p);
+int64_t xo_x_rc_dec(int64_t p);
+int64_t xo_x_rc_dec_shared(int64_t p);
+int64_t xo_x_rc_claim(int64_t p);
+int64_t xo_x_rc_mark(int64_t p);
+
+static inline __attribute__((always_inline)) void rc_inc(int64_t *p) { xo_x_rc_inc((int64_t)(intptr_t)p); }
+static inline __attribute__((always_inline)) int rc_dec_shared(int64_t *p) { return (int)xo_x_rc_dec_shared((int64_t)(intptr_t)p); }
+static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
+static inline __attribute__((always_inline)) int rc_claim(int64_t *p) { return (int)xo_x_rc_claim((int64_t)(intptr_t)p); }
+static inline __attribute__((always_inline)) int rc_mark(int64_t *p) { return (int)xo_x_rc_mark((int64_t)(intptr_t)p); }
+#endif
+
+// xo_rc_inc adds a reference (rc_threads.c plays generated code with it).
+void xo_rc_inc(int64_t *p) { rc_inc(p); }
+
+// xo_rc_dec drops a reference and reports whether it was the last one.
+int xo_rc_dec(int64_t *p) { return rc_dec(p); }
+
+// xo_rc_claim reports whether the caller holds the only reference.
+int xo_rc_claim(int64_t *p) { return rc_claim(p); }
+
+// xo_rc_mark makes the count at p shared and reports whether it was
+// thread local (the caller then marks the object's children).
+int xo_rc_mark(int64_t *p) { return rc_mark(p); }
 
 // ---------------------------------------------------------------------------
 // The test world (decision 0083, xo_testing.c): a test binary run with
@@ -933,13 +965,10 @@ static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
 	// `"w${i}"` appends to one; tested first, which measured faster), or
 	// it has others, or it is shared and freed here when the others went
 	// meanwhile
-	int64_t c = rc_load(&a->rc);
-	if (c == XO_RC_IMMORTAL) {
+	if (rc_load(&a->rc) == XO_RC_IMMORTAL) {
 		return s;
 	}
-	if (c > 1) {
-		a->rc = c - 1;
-	} else if (c == 1 || rc_dec_shared(&a->rc)) {
+	if (rc_dec(&a->rc)) {
 		xo_free(a);
 	}
 	return s;
