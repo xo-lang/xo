@@ -55,6 +55,8 @@ At 20cc4864:
 | 10:45 | median of 9 | 2,144 / 2,152 | 1.004 | 1,884 / 1,868 | 0.992 |
 | 10:45 | median of 9, XO_SPIN_ROUNDS=0 | 2,006 / 2,150 | 1.072 | 1,918 / 1,855 | 0.967 |
 | 10:46 | median of 9, XO_SPIN_ROUNDS=0 | 2,121 / 2,151 | 1.014 | 1,886 / 1,858 | 0.985 |
+| 11:56, at 94344471 (heap pointer in the table) | median of 9 | 2,125 / 2,195 | 1.033 | 1,924 / 1,867 | 0.970 |
+| 11:57, at 94344471 | median of 9 | 2,123 / 2,154 | 1.015 | | |
 
 | round | statistic | pingpong arm64 C / Xo | ratio | pingpong LLVM C / Xo | ratio |
 |---|---|---|---|---|---|
@@ -64,7 +66,7 @@ At 20cc4864:
 | 10:45 | median of 9, XO_SPIN_ROUNDS=0 | 2,886 / 2,482 | 0.860 | 2,832 / 2,441 | 0.862 |
 | 10:46 | median of 9, XO_SPIN_ROUNDS=0 | 3,243 / 2,867 | 0.884 | 3,345 / 3,341 | 0.999 |
 
-Spawn holds the bar: arm64 1.004 to 1.014 in four rounds of five (one
+Spawn holds the bar: arm64 1.004 to 1.033 in six rounds of seven (one
 1.072 when the C path's run came out low), LLVM 0.967 to 0.992.
 Pingpong's per round trip count moves by 15 to 30 percent between
 rounds for either path (the 1.515 is a C run of 2,206, far below its
@@ -119,8 +121,8 @@ server per run, 5,500 units minus 500 units over 5,000, the minimum of
   change does not touch; native builds refuse those flags.
 - The selfhost differentials on 17 task and fault programs
   (TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM with
-  XO_SELFHOST_DIRS): 17 of 17 runs byte identical, 2,634 arm64 and 2,651
-  LLVM functions identical.
+  XO_SELFHOST_DIRS, at 525dfafe): 17 of 17 runs byte identical, 2,804
+  arm64 and 2,821 LLVM functions identical.
 - selfhost/macho against clang on the empty program and on http_server,
   darwin and linux objects: byte identical (after adding `prfm`, which
   main's heap in Xo had made fail every `--as=macho` build, and `sxtw`).
