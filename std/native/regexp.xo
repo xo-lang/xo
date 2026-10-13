@@ -8,6 +8,7 @@
 // (ErrLarge), and Unicode classes other than \pL, \p{Nd}, \p{Any}, and
 // \p{ASCII} (an error that says so).
 use std/regexp
+use native/llrt/raw
 use native/llrt/scan
 use native/llrt/unicode
 use native/rt
@@ -1705,15 +1706,7 @@ struct Queue {
   sparse: List[Int]
 }
 
-fn new_queue(n: Int) -> Queue {
-  var sparse: List[Int] = []
-  var k = 0
-  while k < n {
-    sparse.push(0)
-    k += 1
-  }
-  Queue{pcs: [], has: [], caps: [], sparse: sparse}
-}
+fn new_queue(n: Int) -> Queue { Queue{pcs: [], has: [], caps: [], sparse: raw.zero_ints(n)} }
 
 fn (var q: Queue) clear() {
   q.pcs = []
