@@ -8,8 +8,9 @@
 // system calls on Linux (linux.xo), libSystem on macOS (darwin.xo),
 // kernel32 on Windows (windows.xo). In a wasm module, on darwin/amd64,
 // and where a test binary's world fakes the capability, they call the C
-// runtime; Clock.now calls it everywhere for now. `XO_LLRT_C=sysio`
-// loads sysio_c.xo instead (the C runtime everywhere).
+// runtime; Clock.now calls it on every OS for now. Decision 0198
+// deleted the selectable C path (`XO_LLRT_C=sysio`); the C functions stay
+// for those cases.
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/windows

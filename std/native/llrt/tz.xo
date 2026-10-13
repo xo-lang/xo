@@ -10,9 +10,7 @@
 // name, the embedded zoneinfo.zip, or the host's files:
 // rttime.tz_data) and the table of the zones loaded so far, so that a
 // name always gets the same id and is parsed once (rttime.tz_find,
-// tz_keep). The C path stays selectable (`XO_LLRT_C=tz` loads tz_c.xo)
-// until bench/perf/text meets decision 0180's bar on both native
-// backends.
+// tz_keep). Decision 0198 deleted the C path (`XO_LLRT_C=tz`).
 //
 // A parsed zone is one List[Int] (the C table holds it, shared between
 // threads, without knowing its layout; a Zone value carries it as one

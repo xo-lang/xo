@@ -305,6 +305,14 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // Decision 0198 deleted the C paths of show, report, tz, atomic,
+  // fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
+  // with their std/native/llrt/<name>_c.xo modules: nothing calls their
+  // symbols below any more, so their entries add no flag, and their -D
+  // flags guard no C. They stay until internal/build's IOFlags goes
+  // (decision 0215), because TestXo1IOFlagsSymbols requires the same
+  // symbols as it; xo_fs_mkdir_all, xo_fs_create_temp, and xo_fs_cwd
+  // above likewise.
   // and of the leaf text of Display and Debug (decision 0193 step 5,
   // XO_LLRT_C=show)
   for sym in ["xo_rs_append_u64", "xo_rs_append_rune_quote"] {

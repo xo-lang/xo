@@ -846,7 +846,7 @@ struct h2s {
 	xo_park *waiter; // the stream's task, waiting for its backlog to drain
 	int dispatched, ended;
 	int rst_late; // the reset follows the output queued before it (a handler's fault)
-	// HPACK in Xo (c->xo): the encoded header block of rh, from Xo
+	// HPACK in Xo: the encoded header block of rh, from Xo
 	nbuf hblk;
 	int hblk_ok;
 };
@@ -856,8 +856,6 @@ struct h2c {
 	xo_hconn *hc;
 	int npreface; // bytes of the client preface seen
 	int got_settings;
-	hp_dec dec;
-	hp_enc enc;
 	// a header block being received (HEADERS and CONTINUATION frames):
 	// its fields so far, and the bytes of a field the last frame cut
 	h2_fields hf;
@@ -895,8 +893,7 @@ struct h2c {
 	uint32_t cur_sid; // the stream of the frame being processed (0 while it is parsed)
 	// HPACK in Xo (decision 0193 step 6, std/native/llrt/hpack.xo): the
 	// fiber's Xo code decodes header blocks and encodes response heads;
-	// C never calls Xo, so h2_next stops at them (h2_xo sets xo)
-	int xo;
+	// C never calls Xo, so h2_next stops at them
 	int phase;        // where h2_next resumes (H2P_*)
 	int dec_pending;  // c->hb holds a fragment for Xo (h2_block)
 	int pend_flags;   // the flags and stream of its frame
@@ -1388,15 +1385,9 @@ static void h2_on_headers(h2c *c, uint32_t sid, int flags, int prio, uint32_t de
 		h2_respond_internal(c, st, 400, &h, b.p, b.n);
 		free(b.p);
 		hl_free(&h);
-	} else if (!end_stream && st->expect100 && st->kind == H2K_APP && c->xo) {
+	} else if (!end_stream && st->expect100 && st->kind == H2K_APP) {
 		// encoded by Xo before the next frame (h2_fields, h2_enc_job)
 		c->want100 = sid;
-	} else if (!end_stream && st->expect100 && st->kind == H2K_APP) {
-		// std/rt reads the body at once: the 100 goes out now
-		nbuf blk = {0};
-		hp_encode(&c->enc, &blk, ":status", 7, "100", 3);
-		h2_put_block(&c->wb, sid, blk.p, blk.n, 0, c->peer_frame);
-		free(blk.p);
 	}
 	if (end_stream) {
 		h2_complete(c, st);
@@ -1527,19 +1518,15 @@ static void h2_on_settings(h2c *c, int flags, const uint8_t *p, int64_t n) {
 		uint32_t v = h2_get32(p + 6 * i + 2);
 		switch (id) {
 		case H2S_HEADER_TABLE:
-			if (c->xo) {
-				// applied by Xo's encoder before its next block
-				if (c->nencset == c->cencset) {
-					c->cencset = c->cencset ? 2 * c->cencset : 4;
-					c->encset = realloc(c->encset, sizeof(uint32_t) * (size_t)c->cencset);
-					if (!c->encset) {
-						xo_oom();
-					}
+			// applied by Xo's encoder before its next block
+			if (c->nencset == c->cencset) {
+				c->cencset = c->cencset ? 2 * c->cencset : 4;
+				c->encset = realloc(c->encset, sizeof(uint32_t) * (size_t)c->cencset);
+				if (!c->encset) {
+					xo_oom();
 				}
-				c->encset[c->nencset++] = v;
-			} else {
-				hp_enc_setmax(&c->enc, v);
 			}
+			c->encset[c->nencset++] = v;
 			break;
 		case H2S_ENABLE_PUSH:
 		case H2S_CONNECT:
@@ -1751,25 +1738,13 @@ static void h2_frame(h2c *c, const uint8_t *h, const uint8_t *p) {
 			h2_conn_err(c, H2E_PROTOCOL);
 			return;
 		}
-		// decode the fields the fragment completes; a field it cuts
-		// waits in c->hb for the next
-		const uint8_t *src = data;
-		int64_t sn = dn;
-		if (c->hb.n > 0 || c->xo) {
-			nbuf_put(&c->hb, (const char *)data, dn);
-			src = (const uint8_t *)c->hb.p;
-			sn = c->hb.n;
-		}
-		if (c->xo) {
-			// Xo decodes c->hb (h2_block), then h2_fields goes on
-			c->dec_pending = 1;
-			c->pend_flags = flags;
-			c->pend_sid = sid;
-			return;
-		}
-		int64_t used = 0;
-		int ok = hp_decode_part(&c->dec, src, sn, &used, &c->hfirst, H2_MAX_HLIST, h2_collect, &c->hf);
-		h2_block_end(c, ok, src == data, data, dn, used, flags);
+		// Xo decodes the fields the fragment completes (c->hb, after the
+		// bytes of a field the last one cut; h2_block), then h2_fields
+		// goes on
+		nbuf_put(&c->hb, (const char *)data, dn);
+		c->dec_pending = 1;
+		c->pend_flags = flags;
+		c->pend_sid = sid;
 		return;
 	}
 	h2_frame_rest(c, type, flags, sid, len, p, data, dn);
@@ -2228,17 +2203,10 @@ static void h2_schedule(h2c *c) {
 			continue;
 		}
 		if (st->rh_ready && !st->rh_sent) {
-			nbuf blk = {0};
-			if (c->xo) {
-				// encoded by Xo under this lock (h2_enc_job, h2_encoded)
-				blk = st->hblk;
-				st->hblk = (nbuf){0};
-				st->hblk_ok = 0;
-			} else {
-				for (int64_t i = 0; i < st->rh.n; i++) {
-					hp_encode(&c->enc, &blk, st->rh.a[i].k.p, st->rh.a[i].k.n, st->rh.a[i].v.p, st->rh.a[i].v.n);
-				}
-			}
+			// encoded by Xo under this lock (h2_enc_job, h2_encoded)
+			nbuf blk = st->hblk;
+			st->hblk = (nbuf){0};
+			st->hblk_ok = 0;
 			int es = st->end && st->off == st->out.n;
 			h2_put_block(&c->wb, st->id, blk.p, blk.n, es, c->peer_frame);
 			free(blk.p);
@@ -2375,8 +2343,6 @@ static h2c *h2c_new(xo_hconn *hc) {
 	}
 	mu_init(&c->mu);
 	c->hc = hc;
-	hp_dec_init(&c->dec, H2_TABLE);
-	hp_enc_init(&c->enc);
 	c->peer_frame = 16384;
 	c->peer_win = 65535;
 	c->win = 65535;
@@ -2402,8 +2368,6 @@ static void h2c_free(h2c *c) {
 	h2_shutdown(c);
 	free(c->tab);
 	free(c->dq);
-	hp_dec_free(&c->dec);
-	hp_tab_free(&c->enc.t);
 	free(c->encset);
 	free(c->encq);
 	free(c->hb.p);
@@ -2656,11 +2620,11 @@ int64_t xo_hc_h2(xo_hconn *hc) {
 }
 
 // h2_enc_needed lists in c->encq the streams whose response heads the
-// next h2_schedule sends (in its order, by its tests), when Xo encodes
-// them (c->xo): whether there is one. Under the connection's lock.
+// next h2_schedule sends (in its order, by its tests), which Xo encodes:
+// whether there is one. Under the connection's lock.
 static int h2_enc_needed(h2c *c) {
 	c->nencq = 0;
-	if (!c->xo || c->failed) {
+	if (c->failed) {
 		return 0;
 	}
 	for (h2s *st = c->rfirst; st; st = st->rnext) {
@@ -2698,8 +2662,8 @@ static int h2_feed(h2c *c, xo_hconn *hc) {
 // xo_h2_next runs the connection until a request is ready for a handler
 // (1; h2_take hands it out) or the connection is done (0): it sends what
 // the streams queued, reads and answers frames, and closes after a
-// GOAWAY once the streams in flight are done. With HPACK in Xo (h2_xo)
-// it also stops when Xo has a header block fragment to decode (2: the
+// GOAWAY once the streams in flight are done. With HPACK in Xo it also
+// stops when Xo has a header block fragment to decode (2: the
 // fiber calls h2_block and h2_fields, then h2_next again) or response
 // heads to encode (3: the connection's lock stays held until the fiber
 // calls h2_enc_job and h2_encoded, then h2_next again, so the heads go
@@ -2799,14 +2763,6 @@ int64_t xo_h2_next(xo_hconn *hc) {
 	h2_shutdown(c);
 	pthread_mutex_unlock(&c->mu);
 	return 0;
-}
-
-// xo_h2_xo makes the connection's header blocks pass through Xo
-// (std/native/llrt/hpack.xo; decision 0193 step 6).
-void xo_h2_xo(xo_hconn *hc) {
-	if (hc->h2) {
-		hc->h2->xo = 1;
-	}
 }
 
 // xo_h2_block is the header block fragment Xo decodes (after h2_next

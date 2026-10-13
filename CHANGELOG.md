@@ -17,6 +17,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and std/rt), as does `use go` (xo-gobind). The playground's compiler
   half (cmd/xoplay) is gone with it: the site builds it from the tag
   until an Xo replacement exists.
+- Native runtime: the C paths of the runtime pieces ported to Xo that
+  passed the 2026-10-13 batch 8 full tier are deleted (decision 0198,
+  second round): tz, report, show, atomic, fspath, gen, glob, digest,
+  ints, rc, alloc, scan, sysio, http1, hpack, and procspec, with their
+  `std/native/llrt/<name>_c.xo` modules and their `-DXO_*_C` C: std/llrt
+  is 3,223 lines shorter. `XO_LLRT_C` naming one of them now selects
+  nothing; only `text`, `sched`, and `net` keep a C path.
 - Native backends on Linux: the network's system calls (socket, bind,
   listen, accept4, connect, reads, sends with MSG_NOSIGNAL, socket
   options, names, shutdown, close, and the poller's epoll) are made from

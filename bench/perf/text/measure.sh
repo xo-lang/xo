@@ -9,6 +9,8 @@
 # XO_LLRT_C=text (or show, tz, report) in the environment builds the C
 # path (decision 0193);
 # WORKLOADS overrides the list; "none" is the setup alone (the inputs).
+# Decision 0198 deleted the C paths of show, tz, and report (2026-10-13;
+# text keeps its): naming them in XO_LLRT_C builds the Xo path.
 set -e
 XO=$1
 OUT=$2

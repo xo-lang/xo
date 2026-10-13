@@ -803,7 +803,8 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
   2026-10-13.
-- `XO_LLRT_C=rc` (2026-10-13, decision 0207 stage 2): the C runtime's
+- `XO_LLRT_C=rc` (deleted 2026-10-13 by decision 0198's second round:
+  the name selects nothing now; kept for the results files): the C runtime's
   own reference counts (rc_inc, rc_dec, rc_claim, xo_rc_mark compiled
   with -DXO_RC_C, which both drivers add when the generated code calls
   rc_c.xo's rt.rc_*_c) instead of std/native/llrt/rc.xo through the
@@ -815,7 +816,8 @@ Last verified: 2026-10-07
   their counts vary by 10 percent between runs). Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 2). Last verified:
   2026-10-13.
-- `XO_LLRT_C=alloc` (2026-10-13, decision 0207 stage 3): the C
+- `XO_LLRT_C=alloc` (deleted 2026-10-13 by decision 0198's second
+  round: the name selects nothing now; kept for the results files): the C
   runtime's own allocator (alloc_in, free_in, alloc_mt, free_mt,
   usable, resize compiled with -DXO_ALLOC_C, which both drivers add
   when the generated code calls alloc_c.xo's rt.alloc_*_c) instead of
@@ -1315,7 +1317,13 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         (path.Match), digest.xo (SHA-256 via the generated digest_tables.xo,
                         HMAC, PBKDF2, base64, verify_password), gen.xo (property test values)
                         with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195;
-                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C)
+                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C).
+                        Decision 0198's second round (2026-10-13) deleted the C paths of
+                        tz, report, show, atomic, fspath, gen, glob, digest, ints, rc,
+                        alloc, scan, sysio, http1, hpack, and procspec with their
+                        <name>_c.xo; only text, sched, and net still have one
+                        (`XO_LLRT_C=text,sched,net`); -DXO_INTS_C now guards only the C
+                        versions of the intrinsics
                         (Last verified: 2026-10-13)
 ```
 
@@ -2027,8 +2035,8 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   deleted with a dead result, never folded into a branch) and early
   (gotchas/arm64-plain-defs-assumed-pure.md). Atomic's get, set, swap,
   and compare_and_swap are one of these each (seq_cst); add and max are
-  std/native/llrt/atomic.xo; `XO_LLRT_C=atomic` (Go driver) calls
-  xo_atomic_* (compiled with -DXO_ATOMIC_C). Litmus tests:
+  std/native/llrt/atomic.xo (decision 0198 deleted `XO_LLRT_C=atomic`
+  and the C xo_atomic_* operations, 2026-10-13). Litmus tests:
   `bench/litmus/run.sh <xo1>` (last verified: 2026-10-13).
 - Unwinding (2026-10-09, decision 0085): every function has `.cfi_*`
   call frame information (leaf functions' fault stubs push a frame record

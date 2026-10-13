@@ -6,9 +6,8 @@
 // added to the dynamic table, its strings Huffman coded when shorter).
 // They were C (std/llrt/xo_h2.c, which keeps its copy for the client);
 // the semantics are the same, so a peer observes what net/http's
-// bundled HTTP/2 sends. The C path stays selectable (`XO_LLRT_C=hpack`
-// loads hpack_c.xo) until the HTTP/2 workloads meet decision 0180's bar
-// on both native backends.
+// bundled HTTP/2 sends. Decision 0198 deleted the C path
+// (`XO_LLRT_C=hpack`).
 //
 // C never calls compiled Xo (decision 0180), and the connection's frames
 // are read and written by C under the connection's lock, which stream
@@ -568,9 +567,9 @@ pub struct Conn {
   enc: Enc
 }
 
-/// Makes the connection's header blocks pass through Xo (rthttp.h2_xo).
+/// The HPACK state of the connection, whose header blocks pass through
+/// Xo.
 pub fn conn(h: rthttp.HConn) -> Conn {
-  rthttp.h2_xo(h)
   Conn{h: h, dec: decoder(TABLE), enc: encoder()}
 }
 
