@@ -574,11 +574,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.sys_words" => {
       // 16 words of process state (decision 0206 stage 2): weak, one
       // object for every module of a split build
-      if !g.emitted.contains("@xo_sys_words") {
-        g.emitted["@xo_sys_words"] = true
-        g.helpers.push("@xo_sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
+      if !g.emitted.contains("@.xo.sys_words") {
+        g.emitted["@.xo.sys_words"] = true
+        g.helpers.push("@.xo.sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
       }
-      g.set(v, "ptrtoint ptr @xo_sys_words to i64")
+      g.set(v, "ptrtoint ptr @.xo.sys_words to i64")
     }
     "rt.sys_clone" => {
       g.clone_tramp()

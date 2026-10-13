@@ -594,7 +594,7 @@ struct Lowered {
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
-  var b = ssa.build_program_for(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm)
+  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, tgoos))
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)

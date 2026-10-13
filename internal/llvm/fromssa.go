@@ -2281,11 +2281,11 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_words":
 		// 16 words of process state (decision 0206 stage 2): weak, one
 		// object for every module of a split build
-		if !s.g.emitted["@xo_sys_words"] {
-			s.g.emitted["@xo_sys_words"] = true
-			s.g.helpers.WriteString("@xo_sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
+		if !s.g.emitted["@.xo.sys_words"] {
+			s.g.emitted["@.xo.sys_words"] = true
+			s.g.helpers.WriteString("@.xo.sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
 		}
-		s.set(v, "ptrtoint ptr @xo_sys_words to i64")
+		s.set(v, "ptrtoint ptr @.xo.sys_words to i64")
 	case "rt.popcount":
 		s.set(v, "call i64 @llvm.ctpop.i64(i64 %s)", s.op(v.Args[0]))
 	case "rt.ctz":

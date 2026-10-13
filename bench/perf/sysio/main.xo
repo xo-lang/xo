@@ -4,8 +4,10 @@
 // Usage: sysio <workload> <scratch dir>, the directory only for this
 // program. Workloads: read (os.fs.read of a 4 KiB file 20,000 times),
 // read_big (a 1 MiB file 300 times), write (20,000 writes of a 100 byte
-// file), stat (50,000 stats), clock (500,000 Clock.now), none (the setup
-// alone). Each prints "<workload> <checksum>".
+// file), stat (50,000 stats), clock (500,000 Clock.now), chan (200,000
+// values from one task to another over an unbuffered channel: the
+// runtime's threads, locks, and futex waits, decision 0206 stage 2),
+// none (the setup alone). Each prints "<workload> <checksum>".
 fn main(os: Os) ! {
   let args = os.env.args()
   let w = args.get(0) ?? "none"
@@ -47,6 +49,21 @@ fn main(os: Os) ! {
       if os.clock.now() >= t0 {
         sum += 1
       }
+    }
+  } else if w == "chan" {
+    let ch = Chan[Int].new()
+    sum = scope s {
+      s.spawn(fn() {
+        for i in 0..200000 {
+          ch.send(i % 7)
+        }
+        ch.close()
+      })
+      var got = 0
+      for v in ch {
+        got += v
+      }
+      got
     }
   }
   os.stdio.println("${w} ${sum}")
