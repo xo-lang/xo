@@ -223,15 +223,18 @@ static void nl_vdso(const char *base) {
 			hash = (const uint32_t *)(bias + dyn->d_un.d_ptr);
 		}
 	}
-	if (!sym || !str || !hash) {
+	if (!sym || !str) {
 		return;
 	}
+	// the symbol count: DT_HASH's, else (arm64's vDSO has only
+	// DT_GNU_HASH) the symbol table runs up to the string table
+	uint32_t n = hash ? hash[1] : (str > (const char *)sym ? (uint32_t)((str - (const char *)sym) / sizeof *sym) : 0);
 #if defined(__aarch64__)
 	const char *want = "__kernel_clock_gettime";
 #else
 	const char *want = "__vdso_clock_gettime";
 #endif
-	for (uint32_t i = 0; i < hash[1]; i++) {
+	for (uint32_t i = 0; i < n; i++) {
 		if (sym[i].st_name && sym[i].st_shndx != SHN_UNDEF && ELF64_ST_TYPE(sym[i].st_info) == STT_FUNC &&
 			__builtin_strcmp(str + sym[i].st_name, want) == 0) {
 			nl_vdso_cgt = (int (*)(clockid_t, struct timespec *))(bias + (long)sym[i].st_value);
