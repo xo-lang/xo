@@ -35,6 +35,12 @@ reported for that reason).
   `memory.fill`), internal/arm64, internal/llvm; memcpy, memmove,
   memset, memcmp are platform library calls on arm64 and LLVM intrinsics
   (memcmp a call) on LLVM. `rs_set_len` is shared with decision 0201.
+- Used at run time by the moved code: mem_load (widths 1, 2, 4, 8),
+  mem_store (1, 2, 4, 8), mem_copy, mem_move (fmt_int), mem_cmp
+  (raw.mem_eq), layout, obj_addr, rs_set_len. mem_set (raw.fill),
+  obj_at, and the atomics at an address are lowered by every emitter,
+  but no runtime module calls them
+  yet, so no test runs them; stage 2 is their first user.
 - `std/native/llrt/raw.xo` (text to and from C memory),
   `netpolicy.xo` (Net.only's address policy), `tlsname.xo` (x509 name
   checks, net.ParseIP and IP.String, PEM decoding, alert text).
@@ -135,7 +141,12 @@ Every workload is within 5 percent; checksums equal.
   TestProcSpecDiff: ok (171 s); internal/arm64 TestGoldenRun, TestRun,
   TestBench: ok (34 s), linux/arm64.
 - TestSelfhostWasm: 132 pass, 19 unsupported, 0 fail of 151 goldens.
-- TestCABIDiff on the Mac: pass (arm64, LLVM).
+- TestCABIDiff on the Mac: pass (arm64, LLVM). TestTLSDiff and
+  TestTZDiff on the Mac: pass.
+- TestSelfhostSSA, TestSelfhostArm64, TestSelfhostLLVM with
+  `XO_SELFHOST_DIRS=net_only,http_tls,tz_table,fault` (30 runs, go
+  backend): the Go SSA builder's 3,728 functions identical, the Go arm64
+  emitter's 3,731 functions identical, every LLVM run byte identical.
 - Selfhost parity by hand (the self hosted emitters' output against
   `xo asmdump`/`xo llvmdump`): identical on hello, the fault program,
   the text program, http_tls, net_only.
