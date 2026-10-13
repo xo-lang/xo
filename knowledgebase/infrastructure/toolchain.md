@@ -821,6 +821,29 @@ Last verified: 2026-10-07
   through the heavy lock. Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
+- `XO_LLRT_C=sched` (2026-10-13, decision 0212): the C runtime's own
+  scheduler core (the fiber switch assembly, `__thread` context and
+  worker, the run queue ring, fiber run, park, wake, start, task
+  states: xo_rt.c compiled with -DXO_SCHED_C, which both drivers add
+  when the generated code calls sched_c.xo's rt.sched_c) instead of
+  std/native/llrt/sched.xo through the xo_x_rq_*, xo_x_fiber_*, and
+  task exports and the emitted xo_stack_switch, xo_fiber_entry, and
+  xo_tlocal_* (the default). TestRuntimeTasks and TestRuntimeEventLoop
+  run tasks.c and evloop.c both ways under ThreadSanitizer. The bar is
+  per operation: two builds of bench/perf/conc spawn (200 and 600
+  rounds) and pingpong (100k and 300k round trips), XO_THREADS=1,
+  median of 9, the difference over the extra operations (whole runs
+  follow the idle thread's spinning,
+  gotchas/scheduler-instruction-counts-spin.md); http: server
+  instructions of bench/perf/http's cycle route, 5,500 minus 500 units,
+  fresh servers. Scratch scripts, through the heavy lock. Results in
+  `bench/results/task-switch-2026-10-13.md`. Last verified: 2026-10-13.
+- Checking selfhost/macho against clang after an arm64 emitter change
+  (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
+  -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without
+  its first line), `clang -c -target arm64-apple-macos11` (or
+  `aarch64-linux-gnu`) and `macho asm [--elf]`, `cmp` the objects; with
+  XO_SELF_DRIVER=0. Last verified: 2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
   0195): sized integers, std/crypto's hashes, path.Match, and generated
@@ -3206,6 +3229,19 @@ embeds time zones reads Go's zoneinfo.zip (a release's xo reads its
 own lib/xo/zoneinfo.zip, 2026-10-12) unless `XO_ZONEINFO` names
 one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
 definition.
+
+`scripts/warm-run.sh ARCH COMMIT CMD` (owner, 2026-10-13; Last verified:
+2026-10-13) runs a targeted command on a warm, reusable on demand
+instance per architecture (tag Name=xo-warm, role arm64 r8g.4xlarge or
+amd64 m7i.4xlarge), created on first use and STOPPED (not terminated)
+after 30 idle minutes (`scripts/warm-run.sh --stop-idle 30`, run by the
+lead's EC2 queue runner), so its toolchain, Go and checkout survive: a
+job on a running warm instance took 15 s end to end and one on a
+stopped instance 32 s to 67 s, against 6 to 10 minutes for a fresh
+remote-full.sh launch (about 5 to 6 minutes of setup). Every boot
+schedules a poweroff after 8 hours; one job at a time per instance (a
+local lock). Full suites still use remote-full.sh's fresh 32 vCPU
+instances.
 
 On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
 launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's

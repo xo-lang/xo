@@ -2286,6 +2286,16 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 			s.g.helpers.WriteString("@.xo.sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
 		}
 		s.set(v, "ptrtoint ptr @.xo.sys_words to i64")
+	case "rt.stack_switch":
+		// a call of the switch (sched.go), defined at the first use
+		s.g.schedSwitch()
+		return false
+	case "rt.fiber_start_addr":
+		s.g.schedSwitch()
+		s.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
+	case "rt.tlocal_get", "rt.tlocal_set", "rt.tlocal_addr":
+		s.g.schedTlocal()
+		return false
 	case "rt.popcount":
 		s.set(v, "call i64 @llvm.ctpop.i64(i64 %s)", s.op(v.Args[0]))
 	case "rt.ctz":

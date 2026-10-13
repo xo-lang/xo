@@ -160,6 +160,9 @@ struct G {
   /// rt.sys_clone was used: the clone trampoline is emitted (decision
   /// 0206 stage 2)
   clone_ref: Bool = false
+  /// the task switch or the thread locals were used: sched.xo's
+  /// functions are emitted (decision 0212)
+  sched_ref: Bool = false
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}

@@ -72,6 +72,9 @@ fn (var g: G) generate() -> Program {
       "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
   }
   out.push(g.lsdas.join(""))
+  if g.sched_ref {
+    out.push(sched_asm(g.os))
+  }
   if g.personality_ref {
     // the personality routine through a data word, as ELF compilers
     // refer to it from the unwind tables

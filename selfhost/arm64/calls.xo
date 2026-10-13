@@ -900,6 +900,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, g.call(g.local("xo_clone"), args, [false]))
     }
+    "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
+      // calls of the functions sched.xo emits (decision 0212)
+      g.sched_ref = true
+      return false
+    }
+    "rt.fiber_start_addr" => {
+      g.sched_ref = true
+      g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
+    }
     "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
     "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])

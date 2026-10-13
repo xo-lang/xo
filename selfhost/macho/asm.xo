@@ -29,6 +29,13 @@ const FX_ADR21 = 5
 const FX_PAGE21 = 6
 const FX_PAGEOFF12 = 7
 const FX_DIFF32 = 8
+/// the thread local accesses of decision 0212: a TLV descriptor's page
+/// and page offset (Mach-O), the local exec offset's high and low 12
+/// bits (ELF)
+const FX_TLVP_PAGE21 = 9
+const FX_TLVP_PAGEOFF12 = 10
+const FX_TPREL_HI12 = 11
+const FX_TPREL_LO12 = 12
 
 /// Relocation types (mach-o/arm64/reloc.h).
 const R_UNSIGNED = 0
@@ -512,6 +519,10 @@ fn (var a: Asm) directive(l: Bytes) {
         flags = S_CSTRING_LITERALS
       } else if t == "regular" {
         flags = S_REGULAR
+      } else if t == "thread_local_regular" {
+        flags = S_THREAD_LOCAL_REGULAR
+      } else if t == "thread_local_variables" {
+        flags = S_THREAD_LOCAL_VARIABLES
       } else {
         a.fail("section type ${t}")
         return
@@ -1050,6 +1061,11 @@ fn (var a: Asm) apply_fixes() {
       // always relocated: pages depend on the final layout
       let typ = if f.kind == FX_PAGE21 { R_PAGE21 } else { R_PAGEOFF12 }
       a.reloc_to(f.sect, pc, typ, f.kind == FX_PAGE21, f.sym)
+      continue
+    }
+    if f.kind == FX_TLVP_PAGE21 || f.kind == FX_TLVP_PAGEOFF12 {
+      let typ = if f.kind == FX_TLVP_PAGE21 { R_TLVP_LOAD_PAGE21 } else { R_TLVP_LOAD_PAGEOFF12 }
+      a.reloc_to(f.sect, pc, typ, f.kind == FX_TLVP_PAGE21, f.sym)
       continue
     }
     if !local {

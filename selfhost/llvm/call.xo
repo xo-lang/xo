@@ -588,6 +588,20 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.set(v, "call i64 @xo_clone(${ops.join(", ")})")
     }
+    // decision 0212 (sched.xo): calls of the switch and the thread
+    // locals, defined at the first use
+    "rt.stack_switch" => {
+      g.sched_switch()
+      return false
+    }
+    "rt.fiber_start_addr" => {
+      g.sched_switch()
+      g.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
+    }
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
+      g.sched_tlocal()
+      return false
+    }
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
     "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")
