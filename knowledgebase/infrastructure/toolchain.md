@@ -3230,6 +3230,19 @@ own lib/xo/zoneinfo.zip, 2026-10-12) unless `XO_ZONEINFO` names
 one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
 definition.
 
+`scripts/warm-run.sh ARCH COMMIT CMD` (owner, 2026-10-13; Last verified:
+2026-10-13) runs a targeted command on a warm, reusable on demand
+instance per architecture (tag Name=xo-warm, role arm64 r8g.4xlarge or
+amd64 m7i.4xlarge), created on first use and STOPPED (not terminated)
+after 30 idle minutes (`scripts/warm-run.sh --stop-idle 30`, run by the
+lead's EC2 queue runner), so its toolchain, Go and checkout survive: a
+job on a running warm instance took 15 s end to end and one on a
+stopped instance 32 s to 67 s, against 6 to 10 minutes for a fresh
+remote-full.sh launch (about 5 to 6 minutes of setup). Every boot
+schedules a poweroff after 8 hours; one job at a time per instance (a
+local lock). Full suites still use remote-full.sh's fresh 32 vCPU
+instances.
+
 On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
 launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's
 xo-ci key pair and security group, a 120 minute self poweroff plus a
