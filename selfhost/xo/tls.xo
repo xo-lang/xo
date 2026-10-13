@@ -122,11 +122,17 @@ struct TLSArgs {
 /// sysroot, built when the cache has none.
 fn tls_args(os: Os, ctx: Ctx, cc: Str, flags: List[Str], sysroot: Str) -> TLSArgs {
   var flavor: List[Str] = []
-  for f in flags {
-    // and a cross build's target (llvm_cross_triple)
+  var i = 0
+  while i < flags.len() {
+    let f = flags[i]
+    // and a cross build's target and Windows sysroot (llvm_cross_flags)
     if f.starts_with("-fsanitize") || f.starts_with("-fno-sanitize") || f.starts_with("--target=") {
       flavor.push(f)
+    } else if f == "-Xmicrosoft-windows-sys-root" && i + 1 < flags.len() {
+      flavor = flavor + [f, flags[i + 1]]
+      i += 1
     }
+    i += 1
   }
   let (dir, err) = tls_library(os, ctx, cc, flavor, sysroot)
   if !err.is_empty() {
