@@ -199,3 +199,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0205-zero-c-scope.md](0205-zero-c-scope.md): Accepted (owner, 2026-10-13): no C toolchain for the runtime and for programs without `use c`; `use c` programs keep needing a C compiler, as with cgo.
 - [0206-linux-raw-syscalls.md](0206-linux-raw-syscalls.md): Proposed (stub): raw Linux system calls as internal intrinsics, static linking without libc (decisions 0195, 0203).
 - [0207-runtime-raw-memory.md](0207-runtime-raw-memory.md): Proposed (stub): raw memory intrinsics and internal C ABI exports so the allocator and reference counts can move to Xo (decisions 0195, 0204).
+- [0208-arm64-list-addressing.md](0208-arm64-list-addressing.md): Proposed (stub): arm64 list element addressing, loop data pointers, long multiplies, SSA reuse hoist out of loops.
