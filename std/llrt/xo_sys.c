@@ -13,13 +13,13 @@ int64_t xo_bytes_addr(const char *p, int64_t n) {
 	return (int64_t)(uintptr_t)p;
 }
 
-// xo_bytes_buf is a unique Bytes of n zero bytes.
+// xo_bytes_buf is a unique Bytes of n bytes for a system call to fill
+// (not zeroed: a 1 MiB read would write every byte twice).
 xo_rstr *xo_bytes_buf(int64_t n, int64_t *len) {
 	if (n < 0) {
 		n = 0;
 	}
 	xo_rstr *s = rs_new(n);
-	memset(s->data, 0, (size_t)n);
 	*len = n;
 	return s;
 }

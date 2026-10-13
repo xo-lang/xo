@@ -119,7 +119,7 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
 
 /// statx(2) of the open descriptor fd.
 pub fn fstat(fd: Int) -> (Stat, Int) {
-  let empty = rt.bytes_buf(1)
+  let empty = b"\0"
   let r = statx(fd, rt.bytes_addr(empty), AT_EMPTY_PATH)
   keep(empty, 0)
   r

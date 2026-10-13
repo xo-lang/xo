@@ -122,7 +122,9 @@ fn sys_restorer() -> Int
 /// The address of b's first byte (valid while b is alive; the kernel may
 /// write there only when b is unique, as bytes_buf's and sys_buf's are).
 fn bytes_addr(b: Bytes) -> Int
-/// A unique Bytes of n zero bytes, for a system call to fill.
+/// A unique Bytes of n bytes for a system call to fill (not zeroed:
+/// what the call does not fill is cut off with rs_bytes_len, or written
+/// first).
 fn bytes_buf(n: Int) -> Bytes
 /// b with its length set to n (0 <= n <= b's capacity), consuming b: the
 /// bytes a read filled, without a copy.
