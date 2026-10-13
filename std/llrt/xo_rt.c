@@ -768,6 +768,14 @@ int64_t xo_x_fault_neg(int64_t buf, int64_t a);
 int64_t xo_x_fault_abs(int64_t buf, int64_t a);
 int64_t xo_x_fault_index(int64_t buf, int64_t i, int64_t n);
 int64_t xo_x_fault_float_int(int64_t buf, double f);
+int64_t xo_x_utf8_decode(int64_t p, int64_t n);
+int64_t xo_x_utf8_encode(int64_t p, int64_t r);
+int64_t xo_x_is_space(int64_t r);
+int64_t xo_x_parse_int(int64_t p, int64_t n, int64_t out);
+int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
+int64_t xo_x_fmt_time(int64_t buf, int64_t t);
+int64_t xo_x_b64_val(int64_t c);
+int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
@@ -2140,7 +2148,6 @@ static void bud_charge(xo_ctx *c, int check) {
 	}
 }
 
-static int n_fmt_duration(char *out, int64_t d);
 
 // bud_twice checks a budget that passed a ceiling while c runs shielded
 // code: past twice the ceiling it faults (XO-F008).
@@ -2152,8 +2159,8 @@ static void bud_twice(xo_budget *b) {
 		if (u <= 2 * b->cpu) {
 			return;
 		}
-		used[n_fmt_duration(used, u)] = 0;
-		limit[n_fmt_duration(limit, b->cpu)] = 0;
+		used[xo_x_fmt_duration(XO_ADDR(used), u)] = 0;
+		limit[xo_x_fmt_duration(XO_ADDR(limit), b->cpu)] = 0;
 		snprintf(msg, sizeof msg, "XO-F008: a budgeted task kept running in shielded code: cpu %s, past twice its ceiling of %s", used, limit);
 		break;
 	}
@@ -5897,7 +5904,7 @@ void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, cons
 	xo_ctx *c = ctx();
 	if (cpu < 0 || alloc < 0 || steps < 0) {
 		char d[64], msg[256];
-		d[n_fmt_duration(d, cpu)] = 0;
+		d[xo_x_fmt_duration(XO_ADDR(d), cpu)] = 0;
 		snprintf(msg, sizeof msg, "task.with_budget: a negative ceiling (cpu %s, alloc %lld, steps %lld)", d, (long long)alloc, (long long)steps);
 		fault_at(msg, loc, n);
 	}

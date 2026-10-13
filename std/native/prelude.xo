@@ -83,7 +83,7 @@ fn rune_is_letter(r: Rune) -> Bool { unicode.is_letter(Int(r)) }
 
 fn rune_is_digit(r: Rune) -> Bool { unicode.is_digit(Int(r)) }
 
-fn rune_is_space(r: Rune) -> Bool { rt.rune_is_space(r) }
+fn rune_is_space(r: Rune) -> Bool { unicode.is_space(Int(r)) }
 
 fn rune_is_print(r: Rune) -> Bool { unicode.is_print(Int(r)) }
 

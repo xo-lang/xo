@@ -77,7 +77,6 @@ fn eprintln(s: Str)
 // ---------------------------------------------------------------------------
 // Runes and Bytes (decisions 0079, 0081; std/llrt/xo_bytes.c)
 
-fn rune_is_space(r: Rune) -> Bool
 /// Whether the text is a duration (std/rt's parseDuration).
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).

@@ -134,6 +134,14 @@ const BYTE: Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x
 /// x (0 to 255) as a UInt8.
 pub fn byte(x: Int) -> UInt8 { BYTE[x] }
 
+/// Whether r is white space (unicode.IsSpace).
+pub fn is_space(r: Int) -> Bool {
+  if r < 0x80 {
+    return r == 32 || (r >= 9 && r <= 13)
+  }
+  r == 0x85 || r == 0xA0 || r == 0x1680 || (r >= 0x2000 && r <= 0x200A) || r == 0x2028 || r == 0x2029 || r == 0x202F || r == 0x205F || r == 0x3000
+}
+
 /// utf8.DecodeRune of b from i (i < b.len()): the rune times 8 plus its
 /// size; an invalid byte is U+FFFD of size 1.
 pub fn decode(b: Bytes, i: Int) -> Int {

@@ -410,10 +410,6 @@ xo_rstr *xo_str_slice_at(const char *p, int64_t n, int64_t lo, int64_t hi, const
 	return nstr(p + lo, hi - lo, len);
 }
 
-// xo_rune_is_space is unicode.IsSpace (the rest of the Rune classes are
-// Xo since decision 0180: std/native/llrt/unicode.xo).
-int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
-
 // xo_bytes_decode is utf8.DecodeRune of the bytes from i: the rune times 8
 // plus its size (U+FFFD and 0 at the end).
 int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
