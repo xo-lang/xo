@@ -1,6 +1,9 @@
 # Trimming the shared Go cache breaks a concurrent build
 
-Status: Observed (2026-10-08, internal/arm64 TestRun, once)
+Status: Observed (2026-10-08, internal/arm64 TestRun, once). Fixed: see
+`go-cache-trim-races-builds.md` (Xo builds lock the cache) and
+`go-commands-outside-build-race-trim.md` (every other go command does
+too, 2026-10-13).
 
 Symptom: a Go backend build in a test failed with `could not import os
 (open .../Library/Caches/xo/gocache/a0/a0a8...-d: no such file or
