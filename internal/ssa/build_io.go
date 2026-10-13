@@ -271,10 +271,17 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.add(OpDiv, floatT, nil, s.add(OpIntToFloat, floatT, nil, recv), s.add(OpConst, floatT, 1e9)), true
 	case "Duration.abs":
 		return s.call("Int.abs", intT, pos, recv), true
-	case "Time.unix":
-		return s.rt("floor_div", intT, recv, s.cint(1e9)), true
-	case "Time.unix_millis":
-		return s.rt("floor_div", intT, recv, s.cint(1e6)), true
+	case "Time.unix", "Time.unix_millis":
+		unit := int64(1e9)
+		if key == "Time.unix_millis" {
+			unit = 1e6
+		}
+		k := s.cint(unit)
+		if s.sizedInline() {
+			// std/native/llrt/ints.xo (decision 0195)
+			return s.llrtCall("floor_div", nil, recv, k), true
+		}
+		return s.rt("floor_div", intT, recv, k), true
 	}
 	b.unsupported(x, "the method `"+fo.DisplayName()+"`")
 	return s.undef(nt), true

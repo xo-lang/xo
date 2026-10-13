@@ -376,6 +376,14 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the integer operations of generated code (decision 0195,
+	// XO_LLRT_C=ints)
+	for _, sym := range []string{"xo_int_op", "xo_int_conv", "xo_int_in_range", "xo_rune_of", "xo_rune_valid", "xo_floor_div", "xo_str_hash"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_INTS_C")
+			break
+		}
+	}
 	return out
 }
 

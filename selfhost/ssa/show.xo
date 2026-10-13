@@ -705,6 +705,9 @@ fn (var b: Builder) sized_arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int
     b.unsupported("this operator")
     return b.undef(t)
   }
+  if b.sized_inline() {
+    return b.sized_op(code, l, r, sp)
+  }
   var args = [b.cint(code), l, r]
   for a in b.size_args(t) {
     args.push(a)
@@ -716,12 +719,231 @@ fn (var b: Builder) sized_arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int
 /// `-v` on a sized integer type (sizedNeg).
 fn (var b: Builder) sized_neg(v: Int, sp: Span) -> Int {
   let t = b.vty(v)
+  if b.sized_inline() {
+    return b.sized_op(7, v, b.add(Op.Const, t, Aux.I(n: 0), []), sp)
+  }
   var args = [b.cint(7), v, b.cint(0)]
   for a in b.size_args(t) {
     args.push(a)
   }
   args.push(b.const_str(b.pos(sp)))
   b.rt("int_op", t, args)
+}
+
+/// Whether sized integer operations are lowered inline, their faults in
+/// Xo (std/native/llrt/ints.xo, decisions 0193 and 0195): with the native
+/// prelude (sizedInline).
+fn (var b: Builder) sized_inline() -> Bool {
+  b.prelude_impl("llrt_int_op_fault") >= 0
+}
+
+/// A call of the native prelude's llrt_<name> with args: its result
+/// (unit when it returns Never; the caller ends the block) (llrtCall).
+fn (var b: Builder) llrt_call(name: Str, args: List[Int]) -> Int {
+  let f = b.declare(b.prelude_impl("llrt_${name}"), [])
+  var t = b.unit_t()
+  if b.m.funcs[f].results.len() > 0 {
+    t = b.m.funcs[f].results[0]
+  }
+  b.call(b.m.funcs[f].name, t, "", args)
+}
+
+/// The value of v when it is an integer constant, through conversions
+/// (constWord).
+fn (var b: Builder) const_word(v0: Int) -> (Int, Bool) {
+  var v = v0
+  while b.vop(v) == Op.IntConv {
+    v = b.s.f.values[v].args[0]
+  }
+  if b.vop(v) != Op.Const {
+    return (0, false)
+  }
+  if let I(n) = b.s.f.values[v].aux {
+    return (n, true)
+  }
+  (0, false)
+}
+
+/// The integer v as an Int, the same word (word).
+fn (var b: Builder) word(v: Int) -> Int {
+  let it = b.int_t()
+  if b.vty(v) != it {
+    return b.add(Op.IntConv, it, Aux.None, [v])
+  }
+  v
+}
+
+/// `x < y` on two Int words as UInt64s (ult).
+fn (var b: Builder) ult(x: Int, y: Int) -> Int {
+  let it = b.int_t()
+  let fx = b.add(Op.Xor, it, Aux.None, [x, b.cint(-9223372036854775807 - 1)])
+  let fy = b.add(Op.Xor, it, Aux.None, [y, b.cint(-9223372036854775807 - 1)])
+  b.add(Op.Lt, b.bool_t(), Aux.None, [fx, fy])
+}
+
+/// Whether the Int word r is not a value of the narrow integer type t
+/// (outOf).
+fn (var b: Builder) out_of(r0: Int, t: Int) -> Int {
+  let it = b.int_t()
+  let bits = b.m.types[t].bits
+  var r = r0
+  if !b.m.types[t].unsigned {
+    r = b.add(Op.Add, it, Aux.None, [r, b.cint(1 << (bits - 1))])
+  }
+  let sh = b.add(Op.Shr, it, Aux.None, [r, b.cint(bits)])
+  b.add(Op.Ne, b.bool_t(), Aux.None, [sh, b.cint(0)])
+}
+
+/// Faults when bad holds, with the fault of `l op r` on l's type
+/// (ints.op_fault) (sizedFailIf).
+fn (var b: Builder) sized_fail_if(bad: Int, code: Int, l: Int, r: Int, sp: Span) {
+  let (no, join) = b.if_then_begin(bad)
+  var args = [b.cint(code), b.word(l), b.word(r)]
+  for a in b.size_args(b.vty(l)) {
+    args.push(a)
+  }
+  args.push(b.const_str(b.pos(sp)))
+  b.llrt_call("int_op_fault", args)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.if_then_end(no, join)
+}
+
+/// `l op r` (code as int_op_code; 7: -l) on a sized integer type, inline:
+/// the word operation and xo_int_op's range check (sizedOp).
+fn (var b: Builder) sized_op(code: Int, l: Int, r: Int, sp: Span) -> Int {
+  let t = b.vty(l)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let u64 = b.m.is_u64(t)
+  let uns = b.m.types[t].unsigned
+  let a = b.word(l)
+  let c = b.word(r)
+  let (kb, bconst) = b.const_word(r)
+  let wrap = Aux.S(s: "wrap")
+  var res = -1
+  if code == 0 || code == 1 {
+    let o = if code == 1 { Op.Sub } else { Op.Add }
+    if u64 {
+      res = b.add(o, it, wrap, [a, c])
+      if code == 0 {
+        b.sized_fail_if(b.ult(res, a), code, l, r, sp)
+      } else {
+        b.sized_fail_if(b.ult(a, c), code, l, r, sp)
+      }
+    } else {
+      res = b.add(o, it, Aux.None, [a, c])
+      b.sized_fail_if(b.out_of(res, t), code, l, r, sp)
+    }
+  } else if code == 2 {
+    if u64 {
+      let hi = b.rt("u64_mul_hi", it, [a, c])
+      b.sized_fail_if(b.add(Op.Ne, bt, Aux.None, [hi, b.cint(0)]), code, l, r, sp)
+      res = b.add(Op.Mul, it, wrap, [a, c])
+    } else {
+      if uns {
+        // a UInt32 product can pass 2^63: it wraps, and is out of range
+        res = b.add(Op.Mul, it, wrap, [a, c])
+      } else {
+        res = b.add(Op.Mul, it, Aux.None, [a, c])
+      }
+      b.sized_fail_if(b.out_of(res, t), code, l, r, sp)
+    }
+  } else if code == 3 || code == 4 {
+    if !bconst || kb == 0 {
+      b.sized_fail_if(b.add(Op.Eq, bt, Aux.None, [c, b.cint(0)]), code, l, r, sp)
+    }
+    if u64 {
+      let name = if code == 4 { "u64_rem" } else { "u64_div" }
+      res = b.llrt_call(name, [a, c])
+    } else if code == 4 {
+      res = b.add(Op.Rem, it, Aux.None, [a, c])
+    } else {
+      res = b.add(Op.Div, it, Aux.None, [a, c])
+      if !uns && (!bconst || kb == -1) {
+        // the minimum over -1
+        b.sized_fail_if(b.out_of(res, t), code, l, r, sp)
+      }
+    }
+  } else if code == 5 || code == 6 {
+    let bits = if u64 { 64 } else { b.m.types[t].bits }
+    if !bconst || kb < 0 || kb >= bits {
+      let neg = b.add(Op.Lt, bt, Aux.None, [c, b.cint(0)])
+      let big = b.add(Op.Ge, bt, Aux.None, [c, b.cint(bits)])
+      b.sized_fail_if(b.add(Op.Or, bt, Aux.None, [neg, big]), code, l, r, sp)
+    }
+    if code == 6 {
+      if u64 {
+        res = b.rt("int_wrap", it, [b.cint(4), a, c])
+      } else {
+        // a narrow unsigned value is not negative
+        res = b.add(Op.Shr, it, Aux.None, [a, c])
+      }
+    } else {
+      res = b.add(Op.Shl, it, Aux.None, [a, c])
+      if u64 {
+        let back = b.rt("int_wrap", it, [b.cint(4), res, c])
+        b.sized_fail_if(b.add(Op.Ne, bt, Aux.None, [back, a]), code, l, r, sp)
+      } else {
+        b.sized_fail_if(b.out_of(res, t), code, l, r, sp)
+      }
+    }
+  } else {
+    if uns {
+      // only 0 negates
+      b.sized_fail_if(b.add(Op.Ne, bt, Aux.None, [a, b.cint(0)]), code, l, r, sp)
+      res = b.cint(0)
+    } else {
+      res = b.add(Op.Sub, it, Aux.None, [b.cint(0), a])
+      b.sized_fail_if(b.out_of(res, t), code, l, r, sp)
+    }
+  }
+  b.add(Op.IntConv, t, Aux.None, [res])
+}
+
+/// Whether the Int word v is a value of the integer type to (inRange).
+fn (var b: Builder) in_range(v: Int, to: Int) -> Int {
+  let bt = b.bool_t()
+  if b.m.is_u64(to) {
+    return b.add(Op.Ge, bt, Aux.None, [v, b.cint(0)])
+  }
+  b.add(Op.Not, bt, Aux.None, [b.out_of(v, to)])
+}
+
+/// Whether the Int word v is a Unicode scalar value (runeValid).
+fn (var b: Builder) rune_valid(v: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let neg = b.add(Op.Lt, bt, Aux.None, [v, b.cint(0)])
+  let big = b.add(Op.Gt, bt, Aux.None, [v, b.cint(0x10FFFF)])
+  let hi = b.add(Op.Shr, it, Aux.None, [v, b.cint(11)])
+  let sur = b.add(Op.Eq, bt, Aux.None, [hi, b.cint(27)])
+  let o1 = b.add(Op.Or, bt, Aux.None, [neg, big])
+  let o2 = b.add(Op.Or, bt, Aux.None, [o1, sur])
+  b.add(Op.Not, bt, Aux.None, [o2])
+}
+
+/// Faults when bad holds, with the fault of converting v to the integer
+/// type to (-1: Rune) (ints.conv_fault) (convFailIf).
+fn (var b: Builder) conv_fail_if(bad: Int, v: Int, to: Int, sp: Span) {
+  let (no, join) = b.if_then_begin(bad)
+  var args = [b.word(v)]
+  for a in b.size_args(b.vty(v)) {
+    args.push(a)
+  }
+  if to < 0 {
+    args.push(b.cint(0))
+    args.push(b.cint(0))
+  } else {
+    for a in b.size_args(to) {
+      args.push(a)
+    }
+  }
+  args.push(b.const_str(b.pos(sp)))
+  b.llrt_call("int_conv_fault", args)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.if_then_end(no, join)
 }
 
 /// `~v` on a sized integer type (sizedNot).
@@ -771,6 +993,13 @@ fn (var b: Builder) int_conv(v: Int, to: Int, sp: Span) -> Int {
     if b.m.types[from].unsigned && b.m.types[from].bits == 8 {
       return b.add(Op.IntConv, to, Aux.None, [v])
     }
+    if b.sized_inline() {
+      // a UInt64 at 2^63 or above is a negative word: not valid
+      let w = b.word(v)
+      let ok = b.rune_valid(w)
+      b.conv_fail_if(b.add(Op.Not, b.bool_t(), Aux.None, [ok]), v, -1, sp)
+      return b.add(Op.IntConv, to, Aux.None, [w])
+    }
     var args = [v]
     for a in b.size_args(from) {
       args.push(a)
@@ -780,6 +1009,24 @@ fn (var b: Builder) int_conv(v: Int, to: Int, sp: Span) -> Int {
   }
   if b.widens(from, to) {
     return b.add(Op.IntConv, to, Aux.None, [v])
+  }
+  if b.sized_inline() {
+    let w = b.word(v)
+    let bt = b.bool_t()
+    var bad = -1
+    if b.m.is_u64(to) || b.m.types[to].bits == 0 {
+      // a UInt64 from a signed type, or an Int from a UInt64
+      bad = b.add(Op.Lt, bt, Aux.None, [w, b.cint(0)])
+    } else {
+      bad = b.out_of(w, to)
+      if b.m.is_u64(from) && !b.m.types[to].unsigned {
+        // a UInt64 at 2^63 or above (a negative word) fits no signed type
+        let neg = b.add(Op.Lt, bt, Aux.None, [w, b.cint(0)])
+        bad = b.add(Op.Or, bt, Aux.None, [neg, bad])
+      }
+    }
+    b.conv_fail_if(bad, v, to, sp)
+    return b.add(Op.IntConv, to, Aux.None, [w])
   }
   var args = [v]
   for a in b.size_args(from) {

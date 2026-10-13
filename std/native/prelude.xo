@@ -3,6 +3,7 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/num
 use native/llrt/report
@@ -2200,3 +2201,21 @@ fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b
 fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
 
 fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
+
+// The integer operations of generated code (the zero-C audit's portable
+// group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The
+// SSA builders lower a sized integer operation inline and call the
+// faults here when its check fails; with XO_LLRT_C=ints the Go SSA
+// builder calls the C runtime (rt.int_op and friends) instead.
+
+fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never { ints.op_fault(op, a, b, bits, uns, at) }
+
+fn llrt_int_conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never { ints.conv_fault(v, fbits, funs, tbits, tuns, at) }
+
+fn llrt_u64_div(a: Int, b: Int) -> Int { ints.u64_div(a, b) }
+
+fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
+
+fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
+
+fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }

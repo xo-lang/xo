@@ -3,6 +3,14 @@
 // messages are std/rt's (arith.go, str.go, caps.go), so a fault reads the
 // same on every backend.
 
+static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
+
+// The C path of the sized integer operations and conversions (the
+// zero-C audit's portable group, decisions 0193 and 0195): compiled
+// only with -DXO_INTS_C (XO_LLRT_C=ints, std/native/llrt/ints_c.xo).
+// By default the SSA builders lower them inline and their faults are
+// std/native/llrt/ints.xo.
+#ifdef XO_INTS_C
 // n_int_name is the Xo name of the integer type of bits and uns.
 static const char *n_int_name(int64_t bits, int64_t uns) {
 	switch (bits) {
@@ -163,8 +171,6 @@ int64_t xo_int_conv(int64_t v, int64_t fbits, int64_t funs, int64_t tbits, int64
 	return v;
 }
 
-static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
-
 // xo_int_in_range reports whether the Int v is a value of the type of bits
 // and uns (`Int32.try`).
 int64_t xo_int_in_range(int64_t v, int64_t bits, int64_t uns) {
@@ -187,6 +193,7 @@ int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_
 	}
 	return v;
 }
+#endif
 
 double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
 

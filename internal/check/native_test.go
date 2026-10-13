@@ -149,8 +149,8 @@ func TestLLRTCPath(t *testing.T) {
 		if files["native/llrt/text"] != c.text || files["native/llrt/unicode"] != c.unicode || files["native/llrt/strings"] != c.strings {
 			t.Errorf("XO_LLRT_C=%q: text from %q, unicode from %q, strings from %q; want %q, %q, %q", c.env, files["native/llrt/text"], files["native/llrt/unicode"], files["native/llrt/strings"], c.text, c.unicode, c.strings)
 		}
-		// decision 0193 step 5: show and report come with the prelude
-		for _, name := range []string{"show", "report"} {
+		// decision 0193 step 5 and 0195: show, report, and ints come with the prelude
+		for _, name := range []string{"show", "report", "ints"} {
 			want := "std/native/llrt/" + name + ".xo"
 			if c.env == "all" {
 				want = "std/native/llrt/" + name + "_c.xo"

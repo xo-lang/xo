@@ -129,6 +129,19 @@ fn float_from_bits(b: Int) -> Float
 /// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
 /// b.len().
 fn bytes_word(b: Bytes, i: Int) -> Int
+/// Checked arithmetic on a sized integer type (std/llrt/xo_bytes.c, the
+/// C path of std/native/llrt/ints.xo, XO_LLRT_C=ints): op 0 +, 1 -, 2 *,
+/// 3 /, 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at.
+fn int_op(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Int
+/// v of the type of fbits and funs converted to the type of tbits and
+/// tuns, faulting at at out of range (the C path of ints.xo).
+fn int_conv(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Int
+/// `Rune(v)`, faulting at at (the C path of ints.xo).
+fn rune_of(v: Int, bits: Int, uns: Int, at: Str) -> Int
+/// a / b rounded down, b > 0 (the C path of ints.xo).
+fn floor_div(a: Int, b: Int) -> Int
+/// The hash of a Str Map key (the C path of ints.xo).
+fn str_hash(s: Str) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// The standard base64 of b, padded.

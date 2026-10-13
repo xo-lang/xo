@@ -125,6 +125,31 @@ func TestIOFlagsStep5(t *testing.T) {
 	}
 }
 
+// TestIOFlagsInts checks that code calling the C path of the integer
+// operations (XO_LLRT_C=ints, decision 0195) compiles the runtime with
+// -DXO_INTS_C, and that the Xo path's intrinsics turn on nothing.
+func TestIOFlagsInts(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_int_op\n", true},
+		{"call i64 @xo_int_conv(i64 %1, i64 8, i64 0, i64 8, i64 1, ptr %2, i64 9)\n", true},
+		{"bl _xo_rune_of\n", true},
+		{"bl _xo_int_in_range\n", true},
+		{"bl _xo_rune_valid\n", true},
+		{"bl _xo_floor_div\n", true},
+		{"bl _xo_str_hash\n", true},
+		{"bl _xo_int_wrap\nbl _xo_u64_mul_hi\nbl _xo_fault_raise\n", false},
+		{".ascii \"xo_int_op\"\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_INTS_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_INTS_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
 // TestIOFlagsJSONTextC checks that code calling the C path of std/json's
 // text compiles the runtime with -DXO_JSONTEXT_C (decision 0193 step 4),
 // and that the default (Xo) path, which calls the byte primitives, does
