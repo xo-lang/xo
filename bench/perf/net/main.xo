@@ -1,0 +1,88 @@
+// Sockets and name resolution over the Linux system call layer in Xo
+// (decision 0206 stage 3): std/native/llrt/sock.xo, dns.xo, and the
+// exports the C runtime's network calls, against their C path
+// (XO_LLRT_C=net: the C library's sockets, epoll, and getaddrinfo), and
+// with XO_NOLIBC=1 against the C library. Usage: netbench <workload>.
+// Workloads: echo (20,000 round trips of 64 bytes on one loopback
+// connection), dial (2,000 connections to 127.0.0.1, each accepted and
+// closed), resolve (2,000 connections to localhost: /etc/hosts and the
+// address sort each time), none (the setup alone). Each prints
+// "<workload> <checksum>".
+
+/// Accepts connections on l until it closes, echoing what each sends.
+fn echo_srv(l: Listener) {
+  while {
+    match l.accept() {
+      Ok(c) => {
+        while {
+          match c.read(4096) {
+            Ok(Some(b)) => {
+              if !c.write(b).is_ok() {
+                break
+              }
+            }
+            Ok(None) => break
+            Err(_) => break
+          }
+        }
+        c.close()
+      }
+      Err(_) => break
+    }
+  }
+}
+
+/// Accepts connections on l until it closes, closing each.
+fn close_srv(l: Listener) {
+  while {
+    match l.accept() {
+      Ok(c) => c.close()
+      Err(_) => break
+    }
+  }
+}
+
+fn port_of(addr: Str) -> Str {
+  let parts = addr.split(":")
+  parts[parts.len() - 1]
+}
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let l4 = os.net.listen("127.0.0.1:0")?
+  let port = port_of(l4.addr())
+  // localhost may be ::1 first (/etc/hosts and the address sort)
+  let l6 = os.net.listen("[::1]:${port}")?
+  var sum = 0
+  scope s {
+    if w == "echo" {
+      s.spawn_background(fn() { echo_srv(l4) })
+      let c = os.net.dial("127.0.0.1:${port}")?
+      let msg = "x".repeat(64).bytes()
+      for _ in 0..20000 {
+        c.write(msg)?
+        var got = 0
+        while got < 64 {
+          match c.read(64 - got)? {
+            Some(b) => got += b.len()
+            None => break
+          }
+        }
+        sum += got
+      }
+      c.close()
+    } else if w == "dial" || w == "resolve" {
+      s.spawn_background(fn() { close_srv(l4) })
+      s.spawn_background(fn() { close_srv(l6) })
+      let host = if w == "dial" { "127.0.0.1" } else { "localhost" }
+      for _ in 0..2000 {
+        let c = os.net.dial("${host}:${port}")?
+        c.close()
+        sum += 1
+      }
+    }
+  }
+  l4.close()
+  l6.close()
+  os.stdio.println("${w} ${sum}")
+}

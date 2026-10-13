@@ -9,6 +9,7 @@ use native/rt
 use native/llrt/hpack
 use native/llrt/http1
 use native/llrt/cabi_tls
+use native/llrt/cabi_net
 use native/llrt/netpolicy
 use native/rthttp
 use native/rttest

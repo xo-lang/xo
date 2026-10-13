@@ -260,7 +260,7 @@ python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; XO1_FLAGS="--as=macho" python3 scripts/selfhost-goldens.py <xo1> runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant (and TLS library); else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
-xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), std/llrt/xo_nolibc.c defining the C library functions the runtime calls, linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs and std/http's TLS; a C library function the program reaches that the shim lacks fails the link naming it (faults end the program without unwinding; no floating point printf; no sockets past epoll, no getaddrinfo). XO_LLRT_C=sysio builds files with the C runtime instead of std/native/llrt/sysio.xo's system calls (xo1 reads XO_LLRT_C since 2026-10-13). Last verified: 2026-10-13
+xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), std/llrt/xo_nolibc.c defining the C library functions the runtime calls, linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C=sysio builds files with the C runtime instead of std/native/llrt/sysio.xo's system calls (xo1 reads XO_LLRT_C since 2026-10-13). Last verified: 2026-10-13
 xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO1_FLAGS=--ld=macho XO1_PATH=/nonexistent XO_RTPACK=DIR python3 scripts/selfhost-goldens.py <xo1> builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
 python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
@@ -918,6 +918,24 @@ Last verified: 2026-10-07
   for the kernel count; `dnf install perf` on AL2023). Ran on EC2 hosts
   (bench/results/linux-syscalls-2026-10-13.md). VARIANTS and WORKLOADS
   override the lists. Last verified: 2026-10-13.
+- `bench/perf/net/measure.sh <xo1> <std dir> <out dir> <backend...>`
+  (2026-10-13, decision 0206 stage 3, Linux only): loopback echo round
+  trips, dials to 127.0.0.1, and dials to localhost (/etc/hosts and the
+  address sort) (echo, dial, resolve, none) built three ways (xo: the Xo
+  path; c: `XO_LLRT_C=net`; nolibc: `XO_NOLIBC=1`), printing the
+  minimum of 5 runs of user and kernel instructions and task-clock ms
+  from `perf stat`; a variant that does not build is reported and left
+  out. Ran on EC2 hosts (bench/results/linux-syscalls-2026-10-13.md,
+  stage 3). Last verified: 2026-10-13.
+- `go test ./internal/llvm -run TestResolverDiff` (2026-10-13, decision
+  0206 stage 3, Linux with user namespaces, not under -short): builds
+  internal/llvm/testdata/resolver with the Xo resolver and with
+  `XO_LLRT_C=net` (glibc's getaddrinfo) and runs both under `unshare -r
+  -n -m` with the test's /etc/resolv.conf, hosts, and nsswitch.conf
+  bind mounted and its own DNS server (TestResolverDNSServer, the test
+  binary re-run, on 127.0.0.1:53, stopped by its PID); outputs and the
+  questions the server saw must be the same. Skips without unshare,
+  user namespaces, or /etc/nsswitch.conf. Last verified: 2026-10-13.
 - `go test ./internal/llvm -run 'TestHTTP1ParseDiff|TestProcSpecDiff'`
   (2026-10-13, decision 0193 step 6, not under -short): a server program
   built with the Go backend, LLVM, and arm64 answers the same raw

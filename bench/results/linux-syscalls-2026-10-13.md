@@ -206,3 +206,103 @@ Threads, signals, and the clock are in xo_nolibc.c (clone with a TLS
 block per thread, rt_sigaction with its own restorer, the vDSO) but in
 C; the Xo runtime's own threads (clone3 from Xo), signal handlers in
 Xo, sockets, and the DNS resolver are the ADR's stages 2 and 3.
+
+## Stage 3: sockets and the DNS resolver in Xo
+
+Date: 2026-10-13, netstage3 agent. Final run: commit 69e507f7 on EC2
+i-EXAMPLE43 (r8g.8xlarge, Graviton4, linux/arm64, kernel
+6.18.54, AL2023, clang 15.0.7, glibc 2.34). linux/amd64: commit
+f95c3103 on EC2 i-EXAMPLE09 (c7i, x86_64, same software),
+before the resolver's performance work; the amd64 run of the final
+commit could not launch (VcpuLimitExceeded) and is left to the lead's
+milestone run.
+
+What was built: std/native/llrt/sock.xo (the socket system calls over
+rt.sys6), cabi_net.xo and cabi_poll.xo (the exports xo_rt.c calls),
+dns.xo (the resolver), net.xo and net_c.xo (`XO_LLRT_C=net`: the C
+library's sockets and getaddrinfo). std/llrt/xo_nolibc.c: 1,851 lines
+(1,859 before; shutdown, epoll_create1, epoll_ctl, epoll_wait removed,
+no socket or resolver function left).
+
+### Bar (decision 0180): bench/perf/net, linux/arm64, commit 69e507f7
+
+Minimum of 5 runs; workload, backend, variant, user instructions,
+kernel instructions, ms, checksum:
+
+```
+echo arm64 xo 171898879 1275077699 2326 1280000
+echo arm64 c 181609061 1272917339 2295 1280000
+echo llvm xo 155251435 1273270786 2302 1280000
+echo llvm c 165904522 1273552607 2301 1280000
+echo llvm nolibc 126139511 1243825396 2289 1280000
+dial arm64 xo 26318365 289473004 190 2000
+dial arm64 c 28071162 290831046 192 2000
+dial llvm xo 23002182 289387104 192 2000
+dial llvm c 26099128 288324214 190 2000
+dial llvm nolibc 17282434 292205133 190 2000
+resolve arm64 xo 50690177 319288936 235 2000
+resolve arm64 c 43134810 340059661 241 2000
+resolve llvm xo 43329833 315631277 227 2000
+resolve llvm c 40685872 339270204 238 2000
+```
+
+| Workload | Backend | xo/c user | xo/c kernel |
+|---|---|---|---|
+| echo | arm64 | 0.947 | 1.002 |
+| echo | llvm | 0.936 | 1.000 |
+| dial | arm64 | 0.938 | 0.995 |
+| dial | llvm | 0.881 | 1.004 |
+| resolve | arm64 | 1.175 | 0.939 |
+| resolve | llvm | 1.065 | 0.930 |
+
+- Sockets and the poller meet the bar (0.88x to 0.95x user
+  instructions). Name resolution of `localhost` (/etc/hosts) misses it
+  by 1.065x (llvm) and 1.175x (arm64) in user instructions while making
+  fewer kernel instructions (0.93x, 0.94x): /etc/hosts is read and
+  scanned on every lookup in Xo, as glibc does, but the scan and the
+  address sort allocate. The arm64 nolibc variant does not build on
+  main (`__aarch64_ldadd8_*`: libgcc's outline atomics, which stage 2
+  provides).
+- Before the performance work (commit f95c3103, linux/amd64 LLVM):
+  echo 0.938, dial 1.228, resolve 13.2x (433,083,541 against 32,750,467
+  user instructions): every lookup parsed nsswitch.conf and built
+  strings per line. Commit bd508607 reads a numeric IPv4 host in place,
+  keeps the nsswitch.conf order in two words the C owns (keyed by the
+  file's statx time and size), scans /etc/hosts as bytes, and sorts with
+  no allocation per comparison.
+- bench/perf/http (commit f95c3103, 3 runs of 5 s, server CPU per
+  request, noisy): linux/arm64 llvm 26.65 µs (Xo) against 27.02 µs
+  (XO_LLRT_C=net), arm64 35.37 against 35.31; linux/amd64 llvm 30.34
+  against 30.51.
+
+### Correctness
+
+- Golden matrix with xo1 (gmatrix, every golden of
+  internal/llvm/testdata/golden): dynamic 153 of 153 on arm64 and llvm
+  (linux/arm64, 69e507f7) and llvm (linux/amd64, f95c3103);
+  `XO_LLRT_C=net` 13 of 13 network goldens; XO_NOLIBC=1 llvm 131 of 153
+  on linux/arm64 (12 fail with exit 70, stage 2's unwinding; 10 do not
+  link: std/http's TLS, waitpid, poll), net_echo among the passes.
+- In an empty chroot (only the binaries, /tmp, /proc): net_echo,
+  conc_select, clock_timers pass static (llvm, linux/arm64 and
+  linux/amd64). std/http goldens are still refused: they reference TLS
+  runtime symbols even without certificates, so the stub path added in
+  selfhost/xo main.xo does not apply to them yet.
+- TestResolverDiff (internal/llvm, Go driver, LLVM) passes on
+  linux/arm64: two configurations (files then dns with search, ndots:2,
+  a CNAME, a truncated answer that needs TCP, NODATA, NXDOMAIN, SERVFAIL;
+  dns then files with domain and single-request), the Xo resolver's
+  output and the questions its server saw identical to glibc's.
+- The resolver program linked with XO_NOLIBC=1 in an empty root holding
+  only it and /etc's three files, against glibc's build with the same
+  files mounted over /etc, one namespace, the test's DNS server: same
+  output, the same 52 questions, on linux/arm64 (llvm) and linux/amd64.
+- Real resolution with the hosts' resolv.conf: example.com,
+  www.amazon.com, aws.amazon.com, ipv4.google.com, github.com connected
+  on port 443, localhost:9 refused, nosuchname.invalid "Name or service
+  not known", the same with the Xo path, the C path, and the static
+  build, on both architectures.
+- TestH2Diff and TestTLSDiff, TestGolden's network goldens (Go
+  driver), TestNoGCTests (xo1, dynamic) pass on linux/arm64 and
+  linux/amd64. TestSelfhostSSA on the network directories (Mac): 1,822
+  and 406 test functions identical between the builders.

@@ -8,6 +8,10 @@ std/llrt/xo_nolibc.c). Threads, signals, unwinding, sockets, and DNS
 in Xo are decision 0206's stages 2 and 3. Unblocks decision 0195
 prerequisite 3 (raw system calls) on Linux.
 
+Decision 0206 stage 3 implemented 2026-10-13: sockets and the poller's
+epoll from Xo, and the DNS resolver in Xo in place of getaddrinfo
+(std/native/llrt/sock.xo, dns.xo), on every Linux build.
+
 ## Context
 
 Decision 0195 allows calling the platform's own libraries where the

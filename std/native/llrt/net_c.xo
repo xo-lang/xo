@@ -1,0 +1,7 @@
+// The C path of the network (decision 0206 stage 3): the API of net.xo,
+// the C library everywhere. Loaded in place of net.xo when XO_LLRT_C
+// names `net`, to compare the two and to fall back while the Xo path
+// misses decision 0180's bar. A program linked with no C library
+// (XO_NOLIBC=1) has no C path: xo1 refuses the combination.
+
+pub fn raw() -> Bool { false }

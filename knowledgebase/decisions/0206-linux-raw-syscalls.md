@@ -134,18 +134,52 @@ mutexes, stdio for faults, malloc, getenv).
     section GC, so XO_NOLIBC=1 needs no cc for arm64 (the runtime
     object from a nolibc pack variant, decision 0157).
 - **Stage 3** (the network):
-  - Sockets from Xo: socket, bind, listen, accept4, connect,
-    getsockopt and setsockopt, getsockname and getpeername, sendto and
-    recvfrom, shutdown, sockaddr structures as Bytes; epoll_create1,
-    epoll_ctl, epoll_pwait and eventfd2 for the poller.
-  - The DNS resolver in Xo: /etc/resolv.conf (nameservers, search,
-    ndots, timeout, attempts, rotate), /etc/hosts first unless
-    nsswitch.conf's hosts line says otherwise (files and dns; other
-    modules such as mdns or ldap documented as unsupported, as Go
-    documents), UDP queries with TCP on truncation, A and AAAA in
-    parallel, the search list and ndots rule; tested against a local
-    server. getaddrinfo leaves xo_rt.c.
-  - TLS in Xo (decision 0202) for std/http without Mbed TLS.
+  - **Implemented 2026-10-13** (bench/results/linux-syscalls-2026-10-13.md,
+    "Stage 3"). Sockets from Xo: std/native/llrt/sock.xo makes socket,
+    bind, listen, accept4, connect, getsockopt (SO_ERROR) and
+    setsockopt, getsockname and getpeername, sendto (MSG_NOSIGNAL) and
+    recvfrom, read, shutdown, close, fcntl, ioctl, epoll_create1,
+    epoll_ctl, epoll_pwait, and ppoll through rt.sys6. The C runtime
+    keeps its structure (the poller thread, poll descriptors, handles,
+    messages) and calls them through C ABI exports (decision 0204):
+    std/native/llrt/cabi_net.xo (sockets and the resolver; built for a
+    program that dials or listens, the SSA builders' uses_net, or that
+    uses std/http, whose implementation imports it) and cabi_poll.xo
+    (epoll, close, nonblocking, shutdown: what the poller reaches in
+    every program, so built in every native program;
+    gotchas/runtime-export-reached-without-feature.md). The C declares
+    cabi_net's exports weak and asks net_raw() once: without them, or
+    with `XO_LLRT_C=net` (net_c.xo, decision 0193's mechanism), it calls
+    the C library as before. With XO_NOLIBC the references are strong
+    and there is no C path (xo1 refuses `XO_LLRT_C=net`).
+  - The DNS resolver in Xo: std/native/llrt/dns.xo does getaddrinfo's
+    job for listen and dial, following Go's pure Go resolver
+    (nsswitch.conf's files and dns, /etc/hosts, resolv.conf's
+    nameserver, domain, search, ndots, timeout, attempts, rotate,
+    single-request, use-vc, trust-ad; A and AAAA in parallel over UDP
+    with EDNS0, TCP on truncation; RFC 6724 ordering) with glibc's error
+    codes and texts; its differences from glibc are listed at the top of
+    dns.xo. A numeric IPv4 host is read in place; the nsswitch.conf
+    order is kept between lookups in two words the C owns, keyed by the
+    file's statx time and size. inet_ntop and inet_pton(AF_INET6) of
+    the HTTP runtime are Xo too. Tested against glibc with a local
+    server in a namespace (internal/llvm TestResolverDiff,
+    gotchas/resolver-test-needs-port-53.md) and against real
+    resolution on EC2.
+  - xo_nolibc.c lost shutdown and the epoll functions; no socket or
+    resolver function is left in it.
+  - Bar: sockets and the poller 0.88x to 0.95x the C path's user
+    instructions; resolving localhost 1.065x (LLVM) and 1.175x (arm64),
+    with 0.93x the kernel instructions (bench/perf/net, linux/arm64).
+  - XO_NOLIBC=1 would link std/http programs that reference no TLS
+    runtime symbol with the runtime's TLS stubs; every std/http golden
+    references some (the client's default roots), so they are still
+    refused until decision 0202.
+  - Left: the resolve bar (an allocation free hosts scan and parse); TLS
+    in Xo (decision 0202) for std/http without Mbed TLS; the
+    poll descriptors and the poller thread move to Xo with stage 2's
+    threads; caching /etc/hosts (Go keeps it 5 seconds) needs runtime
+    state for a list, which the C's two words cannot hold.
 - **Default**: XO_NOLIBC=1 becomes the default for Linux builds
   without `use c` when every golden passes with it on both backends
   and both architectures (stage 3), and decision 0180's bar holds for
@@ -162,7 +196,8 @@ mutexes, stdio for faults, malloc, getenv).
   gotchas/wasm-target-os-is-the-host.md); xo1 now gives wasm builds the
   wasm architecture, which sysio.xo's guard tests, and the wasm emitter
   turns the layer's intrinsics into faults.
-- The C shim adds 1,859 lines of C (std/llrt/xo_nolibc.c, 2026-10-13)
+- The C shim adds 1,851 lines of C (std/llrt/xo_nolibc.c, 2026-10-13,
+  after stage 3; 1,859 in stage 1)
   under `#ifdef XO_NOLIBC`, compiled only into XO_NOLIBC builds; each later port removes some of its
   callers.
 

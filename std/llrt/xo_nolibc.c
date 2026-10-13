@@ -1797,17 +1797,9 @@ NL_USED pthread_t pthread_self(void) { return (pthread_t)(nl_self ? nl_self : &n
 NL_USED int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
 
 // ---------------------------------------------------------------------------
-// Sockets the runtime's event loop touches in every program
-
-NL_USED int shutdown(int fd, int how) { return (int)nl_ret(nl_sys2(SYS_shutdown, fd, how)); }
-
-NL_USED int epoll_create1(int flags) { return (int)nl_ret(nl_sys1(SYS_epoll_create1, flags)); }
-
-NL_USED int epoll_ctl(int ep, int op, int fd, struct epoll_event *ev) { return (int)nl_ret(nl_sys4(SYS_epoll_ctl, ep, op, fd, ev)); }
-
-NL_USED int epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
-	return (int)nl_ret(nl_sys6(SYS_epoll_pwait, ep, (long)evs, n, ms, 0, 8));
-}
+// Sockets, the poller's epoll, and name resolution are not here: the C
+// runtime calls the Xo exports of std/native/llrt/cabi_net.xo and
+// cabi_poll.xo for them (sock.xo, dns.xo; decision 0206 stage 3).
 
 // ---------------------------------------------------------------------------
 // Unwinding is stage 2: the forced unwind of a fault finds no frames, so
