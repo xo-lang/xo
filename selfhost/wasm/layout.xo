@@ -1,0 +1,289 @@
+// The layout of a function's blocks (decision 0179, stage 3). The
+// emitter writes each SSA block's code after a marker (`@block K`) and
+// its jumps as `@edge K` (an edge, the last code of its block) or
+// `@goto K` (a fault's jump to a landing pad, anywhere in the block);
+// a resume point of a function that can suspend is `@resume LABEL`.
+//
+// Structured control flow (Ramsey, "Beyond Relooper", 2022) when the
+// graph is reducible and the function cannot suspend: the blocks are
+// placed in a walk of the dominator tree, each block followed by its
+// children in reverse postorder, each child inside a wasm `block` that
+// ends just before the child's code, and a loop header's code and its
+// children inside a wasm `loop`. A forward jump to K is `br $BK` (out
+// to just before K), a jump back to a loop header K `br $LK`, and a
+// jump to the block whose code comes next is dropped. Otherwise the
+// dispatch loop: a `loop` around one `block` per block, entered by a
+// `br_table` on the block number.
+
+/// Lowers the body as the dispatch loop.
+fn (var g: Gen) dispatch(body: List[Str], nb: Int) {
+  var segs: List[Str] = []
+  for l in body {
+    if l.starts_with("@block ") {
+      segs.push("$B${l[7..l.len()]}")
+    } else if l.starts_with("@resume ") {
+      segs.push(l[8..l.len()])
+    }
+  }
+  g.e("loop $L")
+  var k = segs.len() - 1
+  while k >= 0 {
+    g.e("block ${segs[k]}")
+    k -= 1
+  }
+  g.get(g.pc_local)
+  var labels: List[Str] = []
+  for bi in 0..nb {
+    labels.push("$B${bi}")
+  }
+  for ri in 0..g.nres {
+    labels.push("$R${ri}")
+  }
+  g.e("br_table ${labels.join(" ")} $B0")
+  var bi = -1
+  for l in body {
+    if l.starts_with("@block ") {
+      bi = Int.parse(l[7..l.len()]) ?? 0
+      g.e("end")
+    } else if l.starts_with("@resume ") {
+      g.e("end")
+    } else if l.starts_with("@edge ") {
+      let t = Int.parse(l[6..l.len()]) ?? 0
+      if t != bi + 1 {
+        g.dispatch_jump(t)
+      }
+    } else if l.starts_with("@goto ") {
+      g.dispatch_jump(Int.parse(l[6..l.len()]) ?? 0)
+    } else {
+      g.e(l)
+    }
+  }
+  g.e("end")
+}
+
+fn (var g: Gen) dispatch_jump(t: Int) {
+  g.e("i32.const ${t}")
+  g.set(g.pc_local)
+  g.e("br $L")
+}
+
+/// The block a jump line goes to, -1 for any other line.
+fn jump_target(l: Str) -> Int {
+  if l.starts_with("@edge ") || l.starts_with("@goto ") {
+    return Int.parse(l[6..l.len()]) ?? -1
+  }
+  -1
+}
+
+/// Lowers the body as structured control flow; false (nothing emitted)
+/// when the graph is not reducible.
+fn (var g: Gen) structured(body: List[Str], nb: Int) -> Bool {
+  // the code of each block, and its successors
+  var code: List[List[Str]] = []
+  var succ: List[List[Int]] = []
+  for _ in 0..nb {
+    code.push([])
+    succ.push([])
+  }
+  var cur = -1
+  for l in body {
+    if l.starts_with("@block ") {
+      cur = Int.parse(l[7..l.len()]) ?? -1
+      if cur < 0 || cur >= nb {
+        return false
+      }
+      continue
+    }
+    if l.starts_with("@resume ") || cur < 0 {
+      return false
+    }
+    code[cur].push(l)
+    let t = jump_target(l)
+    if t >= 0 {
+      if t >= nb {
+        return false
+      }
+      if !succ[cur].contains(t) {
+        succ[cur].push(t)
+      }
+    }
+  }
+  // reverse postorder from the entry (an explicit stack: no recursion
+  // as deep as the function's longest path)
+  var rpo: List[Int] = []
+  var post: List[Int] = []
+  var seen: List[Bool] = []
+  for _ in 0..nb {
+    rpo.push(-1)
+    seen.push(false)
+  }
+  var stk: List[Int] = [0]
+  var nexti: List[Int] = [0]
+  seen[0] = true
+  while stk.len() > 0 {
+    let top = stk.len() - 1
+    let b = stk[top]
+    let i = nexti[top]
+    if i < succ[b].len() {
+      nexti[top] = i + 1
+      let s = succ[b][i]
+      if !seen[s] {
+        seen[s] = true
+        stk.push(s)
+        nexti.push(0)
+      }
+    } else {
+      post.push(b)
+      stk.pop()
+      nexti.pop()
+    }
+  }
+  let nr = post.len()
+  var order: List[Int] = []
+  var k = nr - 1
+  while k >= 0 {
+    rpo[post[k]] = order.len()
+    order.push(post[k])
+    k -= 1
+  }
+  var pred: List[List[Int]] = []
+  for _ in 0..nb {
+    pred.push([])
+  }
+  for b in order {
+    for s in succ[b] {
+      pred[s].push(b)
+    }
+  }
+  // dominators (Cooper, Harvey, and Kennedy)
+  var idom: List[Int] = []
+  for _ in 0..nb {
+    idom.push(-1)
+  }
+  idom[0] = 0
+  var changed = true
+  while changed {
+    changed = false
+    for b in order {
+      if b == 0 {
+        continue
+      }
+      var nd = -1
+      for p in pred[b] {
+        if idom[p] < 0 {
+          continue
+        }
+        if nd < 0 {
+          nd = p
+          continue
+        }
+        var a = p
+        var c = nd
+        while a != c {
+          while rpo[a] > rpo[c] {
+            a = idom[a]
+          }
+          while rpo[c] > rpo[a] {
+            c = idom[c]
+          }
+        }
+        nd = a
+      }
+      if nd != idom[b] {
+        idom[b] = nd
+        changed = true
+      }
+    }
+  }
+  // reducible: every retreating edge goes to a block that dominates its
+  // source (a loop header)
+  var header: List[Bool] = []
+  for _ in 0..nb {
+    header.push(false)
+  }
+  for b in order {
+    for s in succ[b] {
+      if rpo[s] <= rpo[b] {
+        var d = b
+        while d != s && d != 0 {
+          d = idom[d]
+        }
+        if d != s {
+          return false
+        }
+        header[s] = true
+      }
+    }
+  }
+  // the children of each block in the dominator tree, in reverse
+  // postorder
+  var kids: List[List[Int]] = []
+  for _ in 0..nb {
+    kids.push([])
+  }
+  for b in order {
+    if b != 0 {
+      kids[idom[b]].push(b)
+    }
+  }
+  // the walk, with an explicit stack of actions (pushed in reverse)
+  var acts: List[Int] = [ACT_TREE]
+  var args: List[Int] = [0]
+  while acts.len() > 0 {
+    let a = acts.pop() ?? 0
+    let x = args.pop() ?? 0
+    if a == ACT_TREE {
+      let ys = kids[x]
+      // pushed last first: [loop] [blocks, outermost first] code
+      // (end, tree) per child [end]
+      if header[x] {
+        acts.push(ACT_END)
+        args.push(x)
+      }
+      var j = ys.len() - 1
+      while j >= 0 {
+        acts.push(ACT_TREE)
+        args.push(ys[j])
+        acts.push(ACT_END)
+        args.push(ys[j])
+        j -= 1
+      }
+      acts.push(ACT_CODE)
+      args.push(x)
+      for y in ys {
+        acts.push(ACT_BLOCK)
+        args.push(y)
+      }
+      if header[x] {
+        acts.push(ACT_LOOP)
+        args.push(x)
+      }
+    } else if a == ACT_LOOP {
+      g.e("loop $L${x}")
+    } else if a == ACT_BLOCK {
+      g.e("block $B${x}")
+    } else if a == ACT_END {
+      g.e("end")
+    } else {
+      let ls = code[x]
+      let next = if kids[x].is_empty() { -1 } else { kids[x][0] }
+      for (i, l) in ls.indexed() {
+        let t = jump_target(l)
+        if t < 0 {
+          g.e(l)
+        } else if rpo[t] <= rpo[x] {
+          g.e("br $L${t}")
+        } else if !(i == ls.len() - 1 && t == next) {
+          g.e("br $B${t}")
+        }
+      }
+    }
+  }
+  true
+}
+
+const ACT_TREE = 0
+const ACT_LOOP = 1
+const ACT_BLOCK = 2
+const ACT_END = 3
+const ACT_CODE = 4

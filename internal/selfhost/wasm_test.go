@@ -112,6 +112,96 @@ func TestSelfhostWasm(t *testing.T) {
 	}
 }
 
+// wasmFsWriteProg writes files through rt.fs_write (WASI path_open and
+// fd_write): create, truncate, a file larger than one write, an empty
+// file, and the errors of a missing directory and of a directory.
+const wasmFsWriteProg = `fn main(os: Os) ! {
+  let out = os.stdio
+  os.fs.write("a.txt", b"hello wasm\n")?
+  os.fs.write("a.txt", b"hi\n")?
+  out.println("read ${os.fs.read_text("a.txt")?.quote()}")
+  var big = BytesBuilder.new()
+  var i = 0
+  while i < 20000 {
+    big.write_str("row ${i}\n")
+    i += 1
+  }
+  let data = big.freeze()
+  os.fs.write("big.txt", data)?
+  let back = os.fs.read("big.txt")?
+  out.println("big ${back.len()} of ${data.len()} same ${back == data}")
+  os.fs.write("d/e.txt", b"")?
+  out.println("empty ${os.fs.read("d/e.txt")?.len()}")
+  match os.fs.write("missing/x.txt", b"x") {
+    Ok(_) => out.println("missing: written")
+    Err(e) => out.println("missing: ${e}")
+  }
+  match os.fs.write("d", b"x") {
+    Ok(_) => out.println("dir: written")
+    Err(e) => out.println("dir: ${e}")
+  }
+}
+`
+
+// wasmFsWriteWant is what the go backend prints for wasmFsWriteProg.
+const wasmFsWriteWant = `read "hi\n"
+big 188890 of 188890 same true
+empty 0
+missing: NotFound(path: "missing/x.txt")
+dir: IsDir(path: "d")
+`
+
+// TestSelfhostWasmFsWrite is stage 3's rt.fs_write (decision 0179): a
+// program built by selfhost/wasm writes files under Node's WASI in its
+// working directory, prints what the go backend prints, and frees every
+// allocation; the files hold what was written.
+func TestSelfhostWasmFsWrite(t *testing.T) {
+	if selfhostTier(t) == tierShort {
+		t.Skip("builds selfhost/wasm (merge and full tiers)")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not found: the wasm goldens run under Node's WASI")
+	}
+	bin, err := selfhostBinary("wasm", "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := repoRoot(t)
+	setModEnv(t, root)
+	src := filepath.Join(t.TempDir(), "fsw")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(wasmFsWriteProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	cmd := exec.Command(bin, "--std="+filepath.Join(root, "std"), "--wd="+src, "--out="+out, ".")
+	cmd.Dir = src
+	res, err := cmd.CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(res), "== ok ") {
+		t.Fatalf("selfhost/wasm: %v\n%s", err, res)
+	}
+	run := t.TempDir()
+	if err := os.Mkdir(filepath.Join(run, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runWasm(t, node, filepath.Join(root, "selfhost", "wasm", "run.mjs"), filepath.Join(out, "fsw.wasm"), run, true)
+	if got.exit != 0 || got.stdout != wasmFsWriteWant {
+		t.Fatalf("got %s\nwant stdout\n%s", got, wasmFsWriteWant)
+	}
+	if m := wasmLeakRE.FindStringSubmatch(got.rawStderr); m == nil || m[1] != "0" {
+		t.Errorf("leak check: %q", got.rawStderr)
+	}
+	if b, err := os.ReadFile(filepath.Join(run, "a.txt")); err != nil || string(b) != "hi\n" {
+		t.Errorf("a.txt: %q %v", b, err)
+	}
+	if st, err := os.Stat(filepath.Join(run, "big.txt")); err != nil || st.Size() != 188890 {
+		t.Errorf("big.txt: %v %v", st, err)
+	}
+}
+
 var wasmLeakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
 // parseWasmRuns maps each run of `selfhost/wasm --each` to its result line.

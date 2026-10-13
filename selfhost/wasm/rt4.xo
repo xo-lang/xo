@@ -11,7 +11,7 @@
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -422,6 +422,97 @@ fn rt4_text(var g: Gen) -> Str {
       i32.const 224
       i64.load
       global.set $fsmod
+      i64.const 0
+      global.set $fsst
+      i64.const 0)
+
+    ;; os.WriteFile(p, data, 0644) (xo_fs_write): the file at the OS
+    ;; path (o, n) created or truncated, then the bytes (d, dn) written
+    ;; with fd_write until all are; 0, or the status of the error with the
+    ;; path x (WASI has no file modes: the host decides them)
+    (func $fs_write (param $o i32) (param $n i32) (param $d i32) (param $dn i32) (param $x i32) (param $xn i32) (result i64) (local $fd i32) (local $p i32) (local $k i32) (local $e i32) (local $off i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $k
+      ;; O_CREAT | O_TRUNC
+      i32.const 9
+      ;; fd_write, fd_seek, fd_tell, fd_filestat_get
+      i64.const 0x200064
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
+      i32.const 16
+      i32.load
+      local.set $fd
+      block $x
+        loop $l
+          local.get $off
+          local.get $dn
+          i32.ge_u
+          br_if $x
+          ;; the iovec at 0
+          i32.const 0
+          local.get $d
+          i32.const 8
+          i32.add
+          local.get $off
+          i32.add
+          i32.store
+          i32.const 4
+          local.get $dn
+          local.get $off
+          i32.sub
+          i32.store
+          local.get $fd
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_write
+          local.tee $e
+          if
+            local.get $fd
+            call $fd_close
+            drop
+            local.get $e
+            local.get $x
+            local.get $xn
+            call $fs_fail
+            return
+          end
+          local.get $off
+          i32.const 8
+          i32.load
+          i32.add
+          local.set $off
+          br $l
+        end
+      end
+      local.get $fd
+      call $fd_close
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
       i64.const 0
       global.set $fsst
       i64.const 0)

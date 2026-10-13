@@ -1,7 +1,7 @@
 # 0179: A WebAssembly backend written only in Xo, from the self hosted SSA to WAT assembled in Xo, with a runtime of its own over WASI
 
-Status: Accepted (2026-10-12), stages 1 and 2 and stage 3's size work implemented in `selfhost/wasm/`
-(gen.xo, func.xo, call.xo, home.xo, rt.xo, rt2.xo, rt3.xo, rt4.xo, asm.xo, main.xo, run.mjs), the driver
+Status: Accepted (2026-10-12), stages 1 and 2 and stage 3 (size, frames, structured control flow, rt.fs_write) implemented in `selfhost/wasm/`
+(gen.xo, func.xo, call.xo, home.xo, coalesce.xo, layout.xo, rt.xo, rt2.xo, rt3.xo, rt4.xo, asm.xo, main.xo, run.mjs), the driver
 path `xo1 build --backend=wasm` (`selfhost/xo/wasm.xo`), and
 `internal/selfhost/wasm_test.go` (`TestSelfhostWasm`). Figures:
 `bench/results/wasm-2026-10-12.md`. Item (5) of decision 0150's amended
@@ -339,6 +339,48 @@ The build of the checker is slower (14 s and 4.0 GB before, about
 value. TestSelfhostWasm still gives 120 pass, 21 unsupported, 0 fail of
 141 (121 of 143 after merging main); `wasmMinPass` stays 116.
 
+## Stage 3, continued: frames, structured control flow, writing files (2026-10-12)
+
+Figures: `bench/results/wasm-2026-10-12.md`, "Stage 3, continued".
+
+- **Locals coalesced by liveness** (`coalesce.xo`). V8's baseline
+  compiler gives every declared local a stack slot, and a Chrome
+  dedicated Worker allows about 0.63 of a 1 MB Node worker
+  (gotchas/wasm-browser-stack-locals.md), so the checker overflowed the
+  worker on 81 of the 144 goldens. After a function (or helper) is
+  lowered, its locals are merged on the emitted wasm code: control flow
+  of block, loop, if, br, br_if, br_table (the dispatch loop's
+  `i32.const K; local.set PC; br $L` read as a jump to the table's K-th
+  target), live locals per basic block, an interference graph (a copy's
+  source does not interfere), a greedy coloring per type; parameters
+  keep their indexes, unused locals go. The checker's expression cycle
+  went from 14,837 parameters and locals to 2,224, and it checks all
+  144 goldens in the Chrome worker as its go backend build does.
+  plan_locals stays (it decides aliasing and in place updates); the
+  coloring only renames.
+- **Structured control flow** (`layout.xo`), Ramsey's algorithm ("Beyond
+  Relooper"): the emitter writes jumps as markers, then a function
+  whose graph is reducible and that cannot suspend is laid out along its
+  dominator tree, children in reverse postorder each inside a `block`,
+  loop headers inside a `loop`, forward jumps `br $BK`, back jumps
+  `br $LK`, a jump to the code that follows dropped; the walk uses an
+  explicit stack. Functions that can suspend (their resume points enter
+  the middle of the function) and irreducible graphs keep the dispatch
+  loop. Every function of the checker is structured; the module is
+  8,291,907 bytes (8,616,940 with the dispatch loop), and the seven
+  goldens run in about 0.55 s and 340 MB under Node (0.7 s and 520 MB
+  with the dispatch loop, 2.3 s and 2.1 GB before either).
+- **rt.fs_write**: `path_open` with O_CREAT and O_TRUNC, then `fd_write`
+  until every byte is written, errors mapped as rt.fs_read maps them
+  (TestSelfhostWasmFsWrite). With it the backend itself builds as wasm
+  except for `rt.float_parse_ok` and `rt.float_parse`; built with
+  `--lax`, the 17.5 MB module under Node writes modules byte identical
+  to the go backend build's for goldens without Float literals.
+
+Next: `rt.float_parse` (exact decimal to binary, in Xo compiled by this
+backend), then the backend as wasm without `--lax`, then the playground
+page running it in a worker on the virtual tree.
+
 ## Consequences
 
 - The playground's path no longer needs the Go compiler and linker in
@@ -349,8 +391,9 @@ value. TestSelfhostWasm still gives 120 pass, 21 unsupported, 0 fail of
   differential comparison.
 - Node is needed to run the goldens (the test skips without it); the
   modules are standard and run under any WASI preview1 runtime.
-- The dispatch loop costs speed (figures in the results file); it is
-  replaced in stage 3.
+- The dispatch loop costs speed (figures in the results file); since
+  stage 3 it remains only for functions that can suspend and
+  irreducible graphs.
 - A module carries its runtime: about 12 KB for the smallest golden,
   16 KB the median (a native arm64 build of the same golden is about
   380 KB with its C runtime).

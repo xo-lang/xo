@@ -92,8 +92,8 @@ fn (var g: Gen) func(fi: Int) {
     }
   }
   for (bi, b) in f.blocks.indexed() {
-    g.e("end")
-    g.segs.push("$B${bi}")
+    // where the block's code starts (layout.xo places it)
+    g.e("@block ${bi}")
     // snapshots of a home's value taken where the block starts (home.xo)
     for prm in b.params {
       g.take_snaps(prm)
@@ -185,25 +185,11 @@ fn (var g: Gen) func(fi: Int) {
   if g.su {
     g.e("block $S")
   }
-  g.e("loop $L")
-  var k = g.segs.len() - 1
-  while k >= 0 {
-    g.e("block ${g.segs[k]}")
-    k -= 1
+  // structured control flow when the graph allows it, else the dispatch
+  // loop (layout.xo)
+  if g.su || !g.structured(body, nb) {
+    g.dispatch(body, nb)
   }
-  g.get(g.pc_local)
-  var labels: List[Str] = []
-  for bi in 0..nb {
-    labels.push("$B${bi}")
-  }
-  for ri in 0..g.nres {
-    labels.push("$R${ri}")
-  }
-  g.e("br_table ${labels.join(" ")} $B0")
-  for l in body {
-    g.e(l)
-  }
-  g.e("end")
   g.e("unreachable")
   if g.su {
     g.e("end")
@@ -225,6 +211,7 @@ fn (var g: Gen) func(fi: Int) {
     g.zero_homes()
     g.push_zeros(rs)
   }
+  g.coalesce_locals(g.pc_local)
   g.renumber_locals()
   var head = "(func $f${fi}"
   if !ps.is_empty() {
@@ -355,8 +342,7 @@ fn (var g: Gen) resume_point() -> Int {
   let id = g.f.blocks.len() + g.nres
   let label = "$R${g.nres}"
   g.nres += 1
-  g.e("end")
-  g.segs.push(label)
+  g.e("@resume ${label}")
   id
 }
 
@@ -713,10 +699,10 @@ fn (var g: Gen) locp(v: Int) -> Str {
   g.litp(g.f.values[v].pos)
 }
 
+/// A jump to block b (layout.xo lowers it: a `br` to b's label, or the
+/// dispatch loop's `i32.const b`, `local.set PC`, `br $L`).
 fn (var g: Gen) goto(b: Int) {
-  g.e("i32.const ${b}")
-  g.set(g.pc_local)
-  g.e("br $L")
+  g.e("@goto ${b}")
 }
 
 /// Leaves the code of v after a fault: to its landing block when it has
@@ -926,9 +912,9 @@ fn (var g: Gen) edge(e: Int, bi: Int) {
     }
     k -= 1
   }
-  if ed.to != bi + 1 {
-    g.goto(ed.to)
-  }
+  // the dispatch loop falls through to the next block (an edge is the
+  // last code of its block)
+  g.e("@edge ${ed.to}")
 }
 
 fn (var g: Gen) binop(v: Int, ins: Str) {
