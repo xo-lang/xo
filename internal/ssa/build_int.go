@@ -59,14 +59,219 @@ func (s *fn) sizedArith(op token.Kind, l, r *Value, at ast.Node) *Value {
 		s.b.unsupported(at, "this operator")
 		return s.undef(t)
 	}
+	if s.sizedInline() {
+		return s.sizedOp(code, l, r, at)
+	}
 	args := append([]*Value{s.cint(code), l, r}, s.sizeArgs(t)...)
 	return s.rt("int_op", t, append(args, s.posStr(at))...)
 }
 
 // sizedNeg is `-v` on a sized integer type.
 func (s *fn) sizedNeg(v *Value, at ast.Node) *Value {
+	if s.sizedInline() {
+		return s.sizedOp(intOpNeg, v, s.add(OpConst, v.Type, int64(0)), at)
+	}
 	args := append([]*Value{s.cint(intOpNeg), v, s.cint(0)}, s.sizeArgs(v.Type)...)
 	return s.rt("int_op", v.Type, append(args, s.posStr(at))...)
+}
+
+// sizedInline reports whether sized integer operations are lowered
+// inline, their faults in Xo (std/native/llrt/ints.xo, decisions 0193 and
+// 0195): with the native prelude, unless XO_LLRT_C names ints (then
+// rt.int_op, rt.int_conv, and rt.rune_of, the C, as before the port).
+func (s *fn) sizedInline() bool {
+	return s.b.preludeImpl("llrt_int_op_fault") != nil && !check.LLRTUsesC("ints")
+}
+
+// llrtCall calls the native prelude's llrt_<name> (a function of
+// std/native/llrt) with args: its result (unit when it returns Never;
+// the caller ends the block).
+func (s *fn) llrtCall(name string, at ast.Node, args ...*Value) *Value {
+	b := s.b
+	f := b.declare(b.preludeImpl("llrt_"+name), nil, at)
+	t := b.mod.Builtin(KUnit)
+	if len(f.Results) > 0 {
+		t = f.Results[0]
+	}
+	return s.call(f.Name, t, "", args...)
+}
+
+// constWord is the value of v when it is an integer constant (through
+// conversions).
+func constWord(v *Value) (int64, bool) {
+	for v.Op == OpIntConv {
+		v = v.Args[0]
+	}
+	if v.Op != OpConst {
+		return 0, false
+	}
+	k, ok := v.Aux.(int64)
+	return k, ok
+}
+
+// word is the integer v as an Int (the same word).
+func (s *fn) word(v *Value) *Value {
+	if it := s.b.mod.Builtin(KInt); v.Type != it {
+		return s.add(OpIntConv, it, nil, v)
+	}
+	return v
+}
+
+// ult is `x < y` on two Int words as UInt64s.
+func (s *fn) ult(x, y *Value) *Value {
+	intT := s.b.mod.Builtin(KInt)
+	fx := s.add(OpXor, intT, nil, x, s.cint(math.MinInt64))
+	fy := s.add(OpXor, intT, nil, y, s.cint(math.MinInt64))
+	return s.add(OpLt, s.b.mod.Builtin(KBool), nil, fx, fy)
+}
+
+// outOf reports whether the Int word r is not a value of the narrow
+// integer type t: r >> bits is not 0 (unsigned), or r + 2^(bits-1) >>
+// bits is not 0 (signed).
+func (s *fn) outOf(r *Value, t *Type) *Value {
+	intT, boolT := s.b.mod.Builtin(KInt), s.b.mod.Builtin(KBool)
+	if !t.Unsigned {
+		r = s.add(OpAdd, intT, nil, r, s.cint(int64(1)<<(t.Bits-1)))
+	}
+	return s.add(OpNe, boolT, nil, s.add(OpShr, intT, nil, r, s.cint(int64(t.Bits))), s.cint(0))
+}
+
+// sizedFailIf faults when bad holds, with the fault of `l op r` (code as
+// intOpCodes, or intOpNeg) on l's type at at (ints.op_fault).
+func (s *fn) sizedFailIf(bad *Value, code int64, l, r *Value, at ast.Node) {
+	s.ifThen(bad, func() {
+		args := append([]*Value{s.cint(code), s.word(l), s.word(r)}, s.sizeArgs(l.Type)...)
+		s.llrtCall("int_op_fault", at, append(args, s.posStr(at))...)
+		s.add(OpUnreachable, nil, nil)
+		s.dead()
+	})
+}
+
+// sizedOp is `l op r` (code as intOpCodes; intOpNeg: -l) on a sized
+// integer type, inline: the word operation and the range check that
+// xo_int_op made (std/rt's AddS, AddU, ..., Shl, Shr, NegS, NegU). A
+// narrow type's exact result fits the word (operands below 2^32, shift
+// amounts below 32), except an unsigned 32 bit product, which wraps and
+// is then out of range. A UInt64 checks the carry, the borrow, the high
+// word of the product, and the shift back; its division is ints.xo's.
+func (s *fn) sizedOp(code int64, l, r *Value, at ast.Node) *Value {
+	m := s.b.mod
+	t := l.Type
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	u64 := t.U64()
+	a, b := s.word(l), s.word(r)
+	kb, bconst := constWord(r)
+	wrap := func(o Op) *Value { return s.add(o, intT, Wrap, a, b) }
+	cmp0 := func(o Op, v *Value) *Value { return s.add(o, boolT, nil, v, s.cint(0)) }
+	var res *Value
+	switch code {
+	case 0, 1: // + -
+		o := OpAdd
+		if code == 1 {
+			o = OpSub
+		}
+		if u64 {
+			res = wrap(o)
+			if code == 0 {
+				s.sizedFailIf(s.ult(res, a), code, l, r, at)
+			} else {
+				s.sizedFailIf(s.ult(a, b), code, l, r, at)
+			}
+			break
+		}
+		res = s.add(o, intT, nil, a, b)
+		s.sizedFailIf(s.outOf(res, t), code, l, r, at)
+	case 2: // *
+		if u64 {
+			s.sizedFailIf(cmp0(OpNe, s.rt("u64_mul_hi", intT, a, b)), code, l, r, at)
+			res = wrap(OpMul)
+			break
+		}
+		if t.Unsigned {
+			// a UInt32 product can pass 2^63: it wraps, and is out of range
+			res = wrap(OpMul)
+		} else {
+			res = s.add(OpMul, intT, nil, a, b)
+		}
+		s.sizedFailIf(s.outOf(res, t), code, l, r, at)
+	case 3, 4: // / %
+		if !bconst || kb == 0 {
+			s.sizedFailIf(cmp0(OpEq, b), code, l, r, at)
+		}
+		if u64 {
+			name := "u64_div"
+			if code == 4 {
+				name = "u64_rem"
+			}
+			res = s.llrtCall(name, at, a, b)
+			break
+		}
+		if code == 4 {
+			res = s.add(OpRem, intT, nil, a, b)
+			break
+		}
+		res = s.add(OpDiv, intT, nil, a, b)
+		if !t.Unsigned && (!bconst || kb == -1) {
+			// the minimum over -1
+			s.sizedFailIf(s.outOf(res, t), code, l, r, at)
+		}
+	case 5, 6: // << >>
+		bits := int64(t.Bits)
+		if u64 {
+			bits = 64
+		}
+		if !bconst || kb < 0 || kb >= bits {
+			bad := s.add(OpOr, boolT, nil, cmp0(OpLt, b), s.add(OpGe, boolT, nil, b, s.cint(bits)))
+			s.sizedFailIf(bad, code, l, r, at)
+		}
+		if code == 6 {
+			if u64 {
+				res = s.rt("int_wrap", intT, s.cint(4), a, b)
+			} else {
+				// a narrow unsigned value is not negative
+				res = s.add(OpShr, intT, nil, a, b)
+			}
+			break
+		}
+		res = s.add(OpShl, intT, nil, a, b)
+		if u64 {
+			back := s.rt("int_wrap", intT, s.cint(4), res, b)
+			s.sizedFailIf(s.add(OpNe, boolT, nil, back, a), code, l, r, at)
+			break
+		}
+		s.sizedFailIf(s.outOf(res, t), code, l, r, at)
+	case intOpNeg:
+		if t.Unsigned {
+			// only 0 negates
+			s.sizedFailIf(cmp0(OpNe, a), code, l, r, at)
+			res = s.cint(0)
+			break
+		}
+		res = s.add(OpSub, intT, nil, s.cint(0), a)
+		s.sizedFailIf(s.outOf(res, t), code, l, r, at)
+	}
+	return s.add(OpIntConv, t, nil, res)
+}
+
+// inRange is whether the Int word v is a value of the integer type to
+// (`Int32.try`, xo_int_in_range): a UInt64 is not negative.
+func (s *fn) inRange(v *Value, to *Type) *Value {
+	boolT := s.b.mod.Builtin(KBool)
+	if to.U64() {
+		return s.add(OpGe, boolT, nil, v, s.cint(0))
+	}
+	return s.add(OpNot, boolT, nil, s.outOf(v, to))
+}
+
+// runeValid is whether the Int word v is a Unicode scalar value
+// (`Rune.try`, xo_rune_valid): 0 to 0x10FFFF but not 0xD800 to 0xDFFF
+// (v >> 11 is 27).
+func (s *fn) runeValid(v *Value) *Value {
+	intT, boolT := s.b.mod.Builtin(KInt), s.b.mod.Builtin(KBool)
+	neg := s.add(OpLt, boolT, nil, v, s.cint(0))
+	big := s.add(OpGt, boolT, nil, v, s.cint(0x10FFFF))
+	sur := s.add(OpEq, boolT, nil, s.add(OpShr, intT, nil, v, s.cint(11)), s.cint(27))
+	return s.add(OpNot, boolT, nil, s.add(OpOr, boolT, nil, s.add(OpOr, boolT, nil, neg, big), sur))
 }
 
 // sizedNot is `~v` on a sized integer type: an unsigned narrow value
@@ -135,14 +340,55 @@ func (s *fn) intConv(v *Value, to *Type, at ast.Node) *Value {
 			// UInt8 is always a scalar value
 			return s.add(OpIntConv, to, nil, v)
 		}
+		if s.sizedInline() {
+			// a UInt64 at 2^63 or above is a negative word: not valid
+			w := s.word(v)
+			s.convFailIf(s.add(OpNot, s.b.mod.Builtin(KBool), nil, s.runeValid(w)), v, nil, at)
+			return s.add(OpIntConv, to, nil, w)
+		}
 		args := append([]*Value{v}, s.sizeArgs(v.Type)...)
 		return s.rt("rune_of", to, append(args, s.posStr(at))...)
 	}
 	if widens(v.Type, to) {
 		return s.add(OpIntConv, to, nil, v)
 	}
+	if s.sizedInline() {
+		w := s.word(v)
+		boolT := s.b.mod.Builtin(KBool)
+		var bad *Value
+		switch {
+		case to.U64(), to.Bits == 0:
+			// a UInt64 from a signed type, or an Int from a UInt64
+			bad = s.add(OpLt, boolT, nil, w, s.cint(0))
+		default:
+			bad = s.outOf(w, to)
+			if v.Type.U64() && !to.Unsigned {
+				// a UInt64 at 2^63 or above (a negative word) fits no
+				// signed type
+				bad = s.add(OpOr, boolT, nil, s.add(OpLt, boolT, nil, w, s.cint(0)), bad)
+			}
+		}
+		s.convFailIf(bad, v, to, at)
+		return s.add(OpIntConv, to, nil, w)
+	}
 	args := append(append([]*Value{v}, s.sizeArgs(v.Type)...), s.sizeArgs(to)...)
 	return s.rt("int_conv", to, append(args, s.posStr(at))...)
+}
+
+// convFailIf faults when bad holds, with the fault of converting v to
+// the integer type to (nil: Rune) at at (ints.conv_fault).
+func (s *fn) convFailIf(bad, v *Value, to *Type, at ast.Node) {
+	s.ifThen(bad, func() {
+		args := append([]*Value{s.word(v)}, s.sizeArgs(v.Type)...)
+		if to == nil {
+			args = append(args, s.cint(0), s.cint(0))
+		} else {
+			args = append(args, s.sizeArgs(to)...)
+		}
+		s.llrtCall("int_conv_fault", at, append(args, s.posStr(at))...)
+		s.add(OpUnreachable, nil, nil)
+		s.dead()
+	})
 }
 
 // intLit is the constant of an integer literal (decimal digits) of type t.

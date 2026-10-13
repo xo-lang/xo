@@ -1,0 +1,26 @@
+// The scalar values of testing.gen and property tests
+// (std/native/llrt/gen.xo, or its C path with XO_LLRT_C=gen; decision
+// 0195): "gen" makes 20,000 values of a tuple of every scalar kind
+// (each from its own seed: a generator, then Int, a sized integer,
+// Float, Str, Rune, Duration, and a List of UInt8), "none" makes the
+// generators alone (the setup to subtract). measure.sh runs each test of
+// the binary itself and counts its instructions.
+use std/testing
+
+test "none" {
+  var n = 0
+  for k in 0..20000 {
+    n += if testing.gen[Bool](k) { 1 } else { 0 }
+  }
+  expect(n > 0)
+}
+
+test "gen" {
+  var n = 0
+  for k in 0..20000 {
+    let (a, b, c, d) = testing.gen[(Int, Int16, Float, Str)](k)
+    let (e, f, g, h) = testing.gen[(Rune, Duration, UInt64, List[UInt8])](k)
+    n += (a % 7 + Int(b) % 7 + d.len() + Int(e) % 7 + f.nanos() % 7 + h.len() + (if c > 0.0 { 1 } else { 0 }) + Int(g % 7)) % 1000
+  }
+  expect(n > 0)
+}

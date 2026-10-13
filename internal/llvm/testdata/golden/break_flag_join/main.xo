@@ -1,0 +1,52 @@
+// A loop that clears a flag and breaks, a test of the flag, and a second
+// loop that goes on from the index (the scan of std/native/llrt/http1.xo
+// unescape). The arm64 backend reused, after the test, a register only
+// the loop's body computed, and failed with "reads virtual register N
+// before it is written" (gotchas/arm64-vreg-read-before-write-break-flag.md).
+fn cls(c: Int) -> Int { c & 3 }
+
+fn unescape(b: Bytes, s: Str, lo: Int, hi: Int, mode: Int) -> (Bool, Str) {
+  var i = lo
+  var plain = true
+  while i < hi {
+    let c = Int(b[i])
+    if c == 37 || (c == 43 && mode == 1) || (mode == 2 && c < 128 && (cls(c) & 2) == 0) {
+      plain = false
+      break
+    }
+    i += 1
+  }
+  if plain {
+    return (true, s)
+  }
+  var out = ""
+  while i < hi {
+    let c = Int(b[i])
+    if c == 37 {
+      if i + 2 >= hi {
+        return (false, "")
+      }
+      out = out + "%"
+      i += 3
+      continue
+    }
+    out = out + "x"
+    i += 1
+  }
+  (true, out)
+}
+
+fn show(os: Os, s: Str, mode: Int) {
+  let (ok, t) = unescape(s.bytes(), s, 0, s.len(), mode)
+  os.stdio.println("${ok} ${t}")
+}
+
+fn main(os: Os) {
+  show(os, "a%41b+c", 1)
+  show(os, "abc+d", 0)
+  show(os, "abc+d", 1)
+  show(os, "", 1)
+  show(os, "ab%4", 0)
+  show(os, "zz", 2)
+  show(os, "zd", 2)
+}

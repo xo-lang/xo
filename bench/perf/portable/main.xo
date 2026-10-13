@@ -1,0 +1,208 @@
+// Workloads of the zero-C audit's portable group (decisions 0193 and
+// 0195): the sized integer operations, conversions, UInt64 division,
+// floor division, Str key hash, and Int's checked_ and saturating_
+// methods of std/native/llrt/ints.xo, and the Float32 conversions now
+// lowered inline, against their C path (XO_LLRT_C=ints). Usage: portable <workload>. Each workload prints
+// "<workload> <checksum> <elapsed microseconds>"; the checksum must be
+// the same on every backend (the Go backend is the reference).
+
+const ROUNDS = 2000
+
+/// n pseudo random values in 0..m (a linear congruential sequence).
+fn values(n: Int, m: Int) -> List[Int] {
+  var out: List[Int] = []
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    out.push(x % m)
+  }
+  out
+}
+
+/// Int32 and Int16 arithmetic: + - * / % of variables.
+fn arith32(xs: List[Int32], ys: List[Int16]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h: Int32 = 1
+    for i in 0..xs.len() {
+      let y = Int32(ys[i])
+      h = (h ^ xs[i]) % 46000 * 3 - y + (xs[i] / (y | 1))
+    }
+    sum = (sum + Int(h)) % 1000000007
+  }
+  sum
+}
+
+/// UInt8 and UInt16 arithmetic: bytes into a running UInt16.
+fn arith8(bs: List[UInt8]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h: UInt16 = 7
+    for b in bs {
+      h = (h % 251) * 13 + UInt16(b) + (h % 7)
+    }
+    sum = (sum + Int(h)) % 1000000007
+  }
+  sum
+}
+
+/// UInt64 arithmetic: + * and % of a polynomial hash, and / and >>.
+fn u64(us: List[UInt64]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h: UInt64 = 14695981039346656037
+    for u in us {
+      h = (h % 4294967291) * 65599 + u
+      h = h + (h >> 7) / 3
+    }
+    sum = (sum + Int(h % 1000000007)) % 1000000007
+  }
+  sum
+}
+
+/// Division and remainder by variables and constants, signed and not.
+fn divmod(xs: List[Int32], ws: List[UInt32]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var a: Int32 = 0
+    var b: UInt32 = 0
+    for i in 0..xs.len() {
+      let d = (xs[i] % 97) | 1
+      a = (a + xs[i] / d + xs[i] % 10 + xs[i] / 7) % 1000000
+      b = (b + ws[i] / 1000 + ws[i] % (UInt32(i) + 1) + ws[i] / UInt32(d * d + 1)) % 1000000
+    }
+    sum = (sum + Int(a) + Int(b)) % 1000000007
+  }
+  sum
+}
+
+/// Shifts by variables and constants.
+fn shift(ws: List[UInt32], xs: List[Int32]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var a: UInt32 = 0
+    var b: Int32 = 0
+    for i in 0..ws.len() {
+      let k = UInt32(i % 8)
+      a = a ^ ((ws[i] >> 8) << k) ^ (ws[i] >> k)
+      b = b ^ ((xs[i] % 1024) << 4) ^ (xs[i] >> Int32(i % 31))
+    }
+    sum = (sum + Int(a) + Int(b)) % 1000000007
+  }
+  sum
+}
+
+/// Conversions that can fail (none here) and the try forms.
+fn conv(vs: List[Int]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h = 0
+    for v in vs {
+      let b = UInt8(v % 256)
+      let s = Int16(v % 30000 - 15000)
+      let w = Int32(v)
+      let u = UInt64(v)
+      let r = Rune(v % 55296)
+      let t = Int32.try(v * 3) ?? 0
+      h = (h + Int(b) + Int(s) + Int(w % 1000) + Int(u % 1000) + Int(r) + Int(t % 5)) % 1000000007
+    }
+    sum = (sum + h) % 1000000007
+  }
+  sum
+}
+
+/// Map[Str, Int] lookups: the Str key hash.
+fn str_hash(keys: List[Str], m: Map[Str, Int]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for k in keys {
+      sum = (sum + (m.get(k) ?? 1)) % 1000000007
+    }
+  }
+  sum
+}
+
+/// Int's checked_ and saturating_ methods (ints.fits and ints.apply).
+fn checked(vs: List[Int]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var h = 1
+    for v in vs {
+      let a = (v.checked_mul(h % 1000 + 3) ?? 1) % 1000000007
+      let b = (v * 9000000).checked_add(9223372036000000000 - h) ?? 5
+      let c = v.saturating_mul(h) % 1000000007
+      h = (h + a + b % 1000000007 + c) % 1000000007
+    }
+    sum = (sum + h) % 1000000007
+  }
+  sum
+}
+
+/// Float32 arithmetic and conversions from Int and UInt64
+/// (rt.f32_round, rt.i64_to_f32, rt.u64_to_float).
+fn float32(vs: List[Int], us: List[UInt64]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    var acc: Float32 = 0.0
+    for i in 0..vs.len() {
+      let x = Float32(vs[i] % 1000) * 0.5 + Float32(us[i] % 7) - acc / 3.0
+      acc = x * 0.75
+    }
+    sum = (sum + Int(acc * 1000.0)) % 1000000007
+  }
+  sum
+}
+
+/// Time.unix and unix_millis (floor division).
+fn unix(ts: List[Time]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for t in ts {
+      sum = (sum + t.unix() + t.unix_millis() % 1000) % 1000000007
+    }
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "arith32"
+  let vs = values(1000, 1000000000)
+  var xs: List[Int32] = []
+  var ys: List[Int16] = []
+  var bs: List[UInt8] = []
+  var us: List[UInt64] = []
+  var ws: List[UInt32] = []
+  var keys: List[Str] = []
+  var m: Map[Str, Int] = {}
+  var ts: List[Time] = []
+  var i = 0
+  for v in vs {
+    xs.push(Int32(v % 2000000000 - 1000000000))
+    ys.push(Int16(v % 60000 - 30000))
+    bs.push(UInt8(v % 256))
+    us.push(UInt64(v) * UInt64(1 + v % 4000000000))
+    ws.push(UInt32(v % 4294967296))
+    let key = if i % 3 == 0 { "k${v}" } else if i % 3 == 1 { "a longer key ${v} with more bytes" } else { "${v % 1000}" }
+    keys.push(key)
+    m.put(key, v)
+    ts.push(Time.UNIX_EPOCH + Duration.from_nanos(v * 1700000003 - 800000000000000000))
+    i += 1
+  }
+  let t = os.clock.now()
+  let sum = match w {
+    "arith32" => arith32(xs, ys)
+    "arith8" => arith8(bs)
+    "u64" => u64(us)
+    "divmod" => divmod(xs, ws)
+    "shift" => shift(ws, xs)
+    "conv" => conv(vs)
+    "str_hash" => str_hash(keys, m)
+    "unix" => unix(ts)
+    "checked" => checked(vs)
+    "float32" => float32(vs, us)
+    _ => -1
+  }
+  let us2 = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us2}")
+}

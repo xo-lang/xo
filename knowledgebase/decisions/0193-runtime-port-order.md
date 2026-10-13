@@ -78,7 +78,12 @@ its callers move too.
    call per piece; rune_count a branchless byte loop) measured 1.02 to
    1.32 times the C's instructions (split 1.09x, lines 1.13x on LLVM,
    rune_count 1.13x on arm64, after a memchr primitive) and were taken
-   out; the wasm backend keeps its WAT versions of them.
+   out; the wasm backend keeps its WAT versions of them. **Superseded
+   for these by decision 0201 (2026-10-13)**: with inline 16 byte
+   compares, popcount, and ctz they are Xo (std/native/llrt/scan.xo,
+   `XO_LLRT_C=scan`) and meet the bar (split 0.858x and 0.977x, lines
+   0.984x and 0.989x, rune_count 0.326x and 0.323x), as do str_find,
+   str_contains, bytes_span, and UTF-8 validity; the copies stay C.
 3. **Mechanism.** A step is a runtime module `std/native/llrt/<name>.xo`
    (decision 0180) and its C path `<name>_c.xo` (the same API over the C
    functions, which move under `#ifdef XO_<NAME>_C` so no pack contains
@@ -177,7 +182,8 @@ its callers move too.
      their IOFlags entry (and xo1's `io_flags`).
    - **What stays C**: Bytes.to_hex (a loop that decides nothing per
      byte: the Xo version, 16 bytes a call, retired 1.09x the C's
-     instructions on arm64); fmt_int and fmt_go_g in xo_rt.c, which the C
+     instructions on arm64; Xo since decision 0201, storing its digits
+     into a new string: 1.011x and 0.942x); fmt_int and fmt_go_g in xo_rt.c, which the C
      runtime itself uses (fault texts, collections' Debug) until step 5
      moves those callers; std/json's Float text and number parse
      (`rs_append_json_float`, `n_parse_float`, step 4); Float32 text;
@@ -377,13 +383,32 @@ its callers move too.
       way hc_read was, so its response parsing and HPACK use http1.xo and
       hpack.xo and the C copies go; (c) the HTTP/2 request checks
       (h2_collect, h2_pseudos_ok, h2_request) in Xo, with the request
-      built in Xo as HTTP/1.1's is; (d) fix the arm64 emitter bug
-      (gotchas/arm64-vreg-read-before-write-break-flag.md: run the repro
-      through xo1, then dump the virtual register code of
-      internal/arm64 before register allocation); (e) find why the Go
+      built in Xo as HTTP/1.1's is; (d) done 2026-10-13: the arm64
+      emitter bug is fixed in both emitters
+      (gotchas/arm64-vreg-read-before-write-break-flag.md; h1 figures
+      again in the step 6 results file); (e) find why the Go
       backend's server keeps a connection open after a body cut short
       (gotchas/http-short-body-close-differs.md) and make TestHTTPParseDiff
       compare with the Go backend instead of plain net/http.
+
+12. **The zero-C audit's portable group** (decision 0195 item 6,
+    2026-10-13, results `bench/results/runtime-port-portable-2026-10-13.md`)
+    used this mechanism for four more modules: `ints` (item 10's next
+    (b): sized integer operations inline in the SSA builders with their
+    faults, UInt64 division, floor division, the Str key hash, Int's
+    checked_ and saturating_ methods in ints.xo), `glob` (MemFs's
+    path.Match), `digest` (SHA-256, HMAC, PBKDF2, base64,
+    verify_password's parsing), and `gen` (the scalar values of property
+    tests). Each has its `<name>_c.xo`, `-DXO_<NAME>_C`, IOFlags and
+    xo1 `io_flags` entries, and a differential test against the Go
+    backend (TestIntsDiff, TestGlobDiff, TestDigestDiff, TestGenDiff).
+    The bar holds for all of them; BLAKE2b and Argon2id missed it (2.071x
+    arm64, 1.294x LLVM) and stay C. Next, ranked: (a) delete the C paths
+    of ints, glob, digest, gen after a full tier (decision 0198's way);
+    (b)
+    the arm64 code shape that cost Argon2id (List element offsets in the
+    load, `umull` for masked products, `eor` with a shifted operand),
+    then Argon2id again; (c) the generator's state in Xo.
 
 ## Consequences
 

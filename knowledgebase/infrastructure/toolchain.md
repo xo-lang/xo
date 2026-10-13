@@ -771,13 +771,36 @@ Last verified: 2026-10-07
   decision 0193): the same for bench/perf/text (Int parse, Duration and
   Time text, Debug quoting, split, lines, replace, trims, rune_count,
   and since step 3 int_fmt, float_fmt, float_parse, base64, hex, since
-  step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load; `none`
-  is the input setup alone); `XO_LLRT_C=text,show,tz` builds the C paths
-  (strings and num went in decision 0198, 2026-10-13), `WORKLOADS` picks workloads. Run it through the heavy lock
-  with `XO_SELF_DRIVER=0` in the environment for the Go driver. Results
-  in `bench/results/runtime-port-2026-10-12.md`,
-  `runtime-port-step3-2026-10-12.md`, and
-  `runtime-port-step5-2026-10-13.md`. Last verified: 2026-10-13.
+  step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load, since
+  decision 0201 utf8; `none` is the input setup alone);
+  `XO_LLRT_C=text,show,tz,scan` builds the C paths (strings and num
+  went in decision 0198, 2026-10-13), `WORKLOADS` picks workloads. Run
+  it through the heavy lock with `XO_SELF_DRIVER=0` in the environment
+  for the Go driver, and rebuild the xo binary after a std edit
+  (gotchas/xo-binary-embeds-std-native.md). Results in
+  `bench/results/runtime-port-2026-10-12.md`,
+  `runtime-port-step3-2026-10-12.md`, `runtime-port-step5-2026-10-13.md`,
+  and `scan-intrinsics-2026-10-13.md`. Last verified: 2026-10-13.
+- `bench/perf/portable/measure.sh`, `bench/perf/digest/measure.sh`
+  `<xo> <out dir> <backend...>` (2026-10-13, decision 0195): the same
+  for bench/perf/portable (sized integer arithmetic, conversions, UInt64,
+  Str key hash, Time.unix, checked_ methods, Float32) and bench/perf/digest
+  (SHA-256, HMAC, PBKDF2 and Argon2id verify); `XO_LLRT_C=ints` and
+  `XO_LLRT_C=digest` build the C paths. `bench/perf/glob/measure.sh` and
+  `bench/perf/gen/measure.sh` build a test binary (`xo test --no-gc`) and
+  run each test (`XO_TEST`) 5 times, printing `<test> <backend> <min
+  instructions>`; `XO_LLRT_C=glob`, `gen`. Through the heavy lock with
+  `XO_SELF_DRIVER=0`. Results in
+  `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
+  2026-10-13.
+- `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
+  test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision
+  0195): sized integers, std/crypto's hashes, path.Match, and generated
+  values on arm64 and LLVM, Xo and C paths, against the Go backend (or
+  Go's packages); not under -short. `go test ./internal/llvm -run
+  TestDigestTables -golden-update` regenerates
+  std/native/llrt/digest_tables.xo (SHA-256 unrolled). Last verified:
+  2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
@@ -801,6 +824,13 @@ Last verified: 2026-10-07
   Go backend on about 28,000 generated and edge case inputs (not under
   -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
   verified: 2026-10-13.
+- `go test ./internal/llvm -run TestScanDiff` (2026-10-13, decision
+  0201): std/native/llrt/scan.xo (find, split, lines, rune_count,
+  to_hex, quoting runs, UTF-8 validity, Bytes rune count) on arm64 and
+  LLVM, Xo and C paths, against the Go backend on about 82,000 inputs
+  (needles at every offset, invalid UTF-8; not under -short;
+  `XO_SCANDIFF_N` sets the random count, default 3000). Last verified:
+  2026-10-13.
 - `bench/perf/httpparse/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): builds the server of
   bench/perf/httpparse with each backend and, for each workload (h1_get,
@@ -1192,7 +1222,12 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         at build time selects a module's C path (-DXO_TEXT_C, -DXO_SHOW_C,
                         -DXO_TZ_C, -DXO_REPORT_C, compiled locally, never in a pack). Decision
                         0198 deleted the C paths of unicode (XO_UNICODE=c), strings, num, and
-                        jsontext; those names now select nothing
+                        jsontext; those names now select nothing; ints.xo (sized integer faults, UInt64
+                        division, floor division, Str key hash, Int's checked_ methods), glob.xo
+                        (path.Match), digest.xo (SHA-256 via the generated digest_tables.xo,
+                        HMAC, PBKDF2, base64, verify_password), gen.xo (property test values)
+                        with ints_c.xo, glob_c.xo, digest_c.xo, gen_c.xo (decision 0195;
+                        -DXO_INTS_C, -DXO_GLOB_C, -DXO_DIGEST_C, -DXO_GEN_C)
                         (Last verified: 2026-10-13)
 ```
 
@@ -1624,6 +1659,18 @@ first, AST based prototype, since deleted) and
   darwin/arm64 `apple-m1` (LSE atomics inline), Linux arm64 `generic`
   with `+outline-atomics` (Debian clang 19), Linux amd64 `x86-64`.
   Check with `otool -tv bin | grep -c ldaxr` (0 on darwin/arm64).
+- Atomics (decision 0200, 2026-10-13): the cell intrinsics `rt.slot_*`
+  lower to `load atomic`, `store atomic`, `atomicrmw xchg|add`, and a
+  strong `cmpxchg` (failure ordering the strongest allowed: acquire for
+  acquire and acq_rel, monotonic for relaxed and release) at object +
+  24 + 8i, `align 8`; relaxed is `monotonic`, a load's release or
+  acq_rel and a store's acquire or acq_rel become `seq_cst`; `rt.fence`
+  is `fence` (relaxed none). The target attributes above decide the
+  machine code (LSE on darwin/arm64, outline atomics on Linux arm64,
+  `lock` instructions and `xchg` on x86-64). `rt.spin_hint` is nothing:
+  the IR is target independent (selfhost/llvm call.xo `atomic`,
+  internal/llvm fromssa.go `atomic`, identical IR) (last verified:
+  2026-10-13).
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
   constants with the immortal count INT64_MIN, never written), List a
@@ -1877,6 +1924,24 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   templates). Environments are `{rc, drop, share, captures}` (24 byte
   header). Literals are in `__TEXT,__const` / `.rodata`. `iCondBr` with
   `tbz`/`tbnz` tests `inst.bit`.
+- Atomics (decision 0200, 2026-10-13): `rt.slot_load`, `slot_store`,
+  `slot_swap`, `slot_cas`, `slot_add`, `slot_addr` (a cell: element i of
+  a `List[Int]` or an Atomic's value, at object + 24 + 8i), `rt.fence`,
+  `rt.spin_hint` lower inline (selfhost/arm64 calls.xo `atomic`,
+  internal/arm64 isel.go `atomic`, identical output): relaxed loads and
+  stores `ldr`/`str`, the others `ldar`/`stlr`; on Darwin `swp`, `cas`,
+  `ldadd` with the order's `a`/`l`/`al` suffix (a cas is `mov; casal;
+  cmp; cset`), on Linux calls of libgcc's outline atomics
+  `__aarch64_{swp,cas,ldadd}8_{relax,acq,rel,acq_rel}` (what the C
+  runtime's `-moutline-atomics` objects call; selfhost/macho elflink.xo
+  writes them when linking without cc); fences `dmb ishld` (acquire) or
+  `dmb ish`; the spin hint `yield`. The instructions are `keep` (never
+  deleted with a dead result, never folded into a branch) and early
+  (gotchas/arm64-plain-defs-assumed-pure.md). Atomic's get, set, swap,
+  and compare_and_swap are one of these each (seq_cst); add and max are
+  std/native/llrt/atomic.xo; `XO_LLRT_C=atomic` (Go driver) calls
+  xo_atomic_* (compiled with -DXO_ATOMIC_C). Litmus tests:
+  `bench/litmus/run.sh <xo1>` (last verified: 2026-10-13).
 - Unwinding (2026-10-09, decision 0085): every function has `.cfi_*`
   call frame information (leaf functions' fault stubs push a frame record
   first); a function with landing pads (`inst.pad`) gets

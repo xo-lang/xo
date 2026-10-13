@@ -1,0 +1,336 @@
+// The hashes of std/crypto on the native backends, written in Xo
+// (decisions 0193 and 0195; they were std/llrt/xo_crypto.c): SHA-256
+// (FIPS 180-4), HMAC-SHA256 (RFC 2104), PBKDF2-HMAC-SHA256 (RFC 8018),
+// unpadded base64, and the parsing and key derivation of
+// verify_password. The results are std/rt's crypto.go (Go's crypto
+// packages). Argon2id and its BLAKE2b stay C (an Xo version, commit
+// a4c9cc2e, measured 2.07 times the C's instructions on arm64 and 1.29
+// on LLVM: bench/results/runtime-port-portable-2026-10-13.md), and so
+// does what must be constant time: crypto.equal (the comparison of
+// verify_password) and Ed25519 with its SHA-512 (the zero-C audit's
+// group (5)). std/native/crypto.xo calls these. The C path stays
+// selectable (`XO_LLRT_C=digest` loads digest_c.xo).
+//
+// Words are Ints: a 32 bit word in the low half (the high half zero);
+// the arithmetic that wraps is rt.int_wrap (0 add, 6 rotate the low 32
+// bits right, 7 reverse the bytes), which the native backends lower to
+// one instruction.
+use native/llrt/digest_tables
+use native/llrt/num_tables
+use native/rtcrypto
+use native/rt
+
+const M32: Int = 0xFFFFFFFF
+
+// ---------------------------------------------------------------------------
+// SHA-256 (the compression is digest_tables.sha256_block and sha256_words)
+
+/// SHA-256's initial state (FIPS 180-4 5.3.3).
+fn sha256_init() -> List[Int] { [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19] }
+
+/// h after the bytes of b from lo to hi with SHA-256's padding for a
+/// message of total bytes (the bytes hashed before lo are total - (hi -
+/// lo), whole blocks).
+fn finish(var h: List[Int], b: Bytes, lo: Int, hi: Int, total: Int) {
+  var i = lo
+  while hi - i >= 64 {
+    digest_tables.sha256_block(h, b, i)
+    i += 64
+  }
+  // the rest, 0x80, zeros, and the length in bits: one or two blocks
+  let r = hi - i
+  var t = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_with_cap(136), b, i, hi, 0), 0x80)
+  var k = if r < 56 { 55 - r } else { 119 - r }
+  while k > 0 {
+    t = rt.rs_push_word(t, 0, if k < 8 { k } else { 8 })
+    k -= 8
+  }
+  t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, total, 3), 0), 8)
+  let tb = t.bytes()
+  digest_tables.sha256_block(h, tb, 0)
+  if tb.len() > 64 {
+    digest_tables.sha256_block(h, tb, 64)
+  }
+}
+
+/// The bytes of the words ws (big endian; an even count).
+fn words_bytes(ws: List[Int]) -> Bytes {
+  var out = rt.rs_with_cap(ws.len() * 4)
+  var k = 0
+  while k + 1 < ws.len() {
+    out = rt.rs_push_word(out, rt.int_wrap(7, rt.int_wrap(3, ws[k], 32) | ws[k + 1], 0), 8)
+    k += 2
+  }
+  out.bytes()
+}
+
+/// SHA-256 of data (crypto.sha256).
+pub fn sha256(data: Bytes) -> Bytes {
+  var h = sha256_init()
+  finish(h, data, 0, data.len(), data.len())
+  words_bytes(h)
+}
+
+// ---------------------------------------------------------------------------
+// HMAC-SHA256 and PBKDF2-HMAC-SHA256
+
+/// HMAC's inner and outer padded keys (the key's SHA-256 when it is
+/// longer than a block): two blocks, in one Bytes.
+fn hmac_pads(key: Bytes) -> Bytes {
+  let k = if key.len() > 64 { sha256(key) } else { key }
+  var kp = rt.rs_append_bytes(rt.rs_with_cap(64), k, 0, k.len(), 0)
+  var z = k.len()
+  while z < 64 {
+    kp = rt.rs_push_word(kp, 0, if 64 - z < 8 { 64 - z } else { 8 })
+    z += 8
+  }
+  let kb = kp.bytes()
+  var pads = rt.rs_with_cap(128)
+  var j = 0
+  while j < 64 {
+    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x3636363636363636, 8)
+    j += 8
+  }
+  j = 0
+  while j < 64 {
+    pads = rt.rs_push_word(pads, rt.bytes_word(kb, j) ^ 0x5c5c5c5c5c5c5c5c, 8)
+    j += 8
+  }
+  pads.bytes()
+}
+
+/// The states after the inner and outer padded key of HMAC: 16 words.
+fn hmac_key(key: Bytes) -> List[Int] {
+  let pads = hmac_pads(key)
+  var st = sha256_init()
+  digest_tables.sha256_block(st, pads, 0)
+  var outer = sha256_init()
+  digest_tables.sha256_block(outer, pads, 64)
+  for x in outer {
+    st.push(x)
+  }
+  st
+}
+
+/// The hash, from the state st[at..at + 8], of one block holding the 8
+/// words d and the padding of a 96 byte message: HMAC's outer hash of an
+/// inner digest, and PBKDF2's inner hash of a U (m is the scratch block).
+fn hash32(st: List[Int], at: Int, d: List[Int], var m: List[Int]) -> List[Int] {
+  var h = st[at..(at + 8)]
+  for j in 0..8 {
+    m[j] = d[j]
+  }
+  digest_tables.sha256_words(h, m)
+  h
+}
+
+/// A block whose words 8 to 15 are the padding of a 96 byte message.
+fn block32() -> List[Int] { [0, 0, 0, 0, 0, 0, 0, 0, 0x80000000, 0, 0, 0, 0, 0, 0, 768] }
+
+/// The MAC of msg (then the nsuffix low bytes of suffix) under the key
+/// states st (hmac_key): 8 words.
+fn hmac_words(st: List[Int], msg: Bytes, suffix: Int, nsuffix: Int) -> List[Int] {
+  var h = st[0..8]
+  if nsuffix == 0 {
+    finish(h, msg, 0, msg.len(), 64 + msg.len())
+  } else {
+    // PBKDF2's first block: the salt then the block index
+    let m = rt.rs_push_word(rt.rs_append_bytes(rt.rs_with_cap(msg.len() + 8), msg, 0, msg.len(), 0), suffix, nsuffix).bytes()
+    finish(h, m, 0, m.len(), 64 + m.len())
+  }
+  var blk = block32()
+  hash32(st, 8, h, blk)
+}
+
+/// HMAC-SHA256 of msg under key (crypto.hmac_sha256).
+pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes {
+  let pads = hmac_pads(key)
+  var inner = sha256_init()
+  digest_tables.sha256_block(inner, pads, 0)
+  finish(inner, msg, 0, msg.len(), 64 + msg.len())
+  // the outer hash of the inner digest: one block, the digest and the
+  // padding of a 96 byte message
+  var outer = sha256_init()
+  digest_tables.sha256_block(outer, pads, 64)
+  inner.push(0x80000000)
+  for _ in 0..6 {
+    inner.push(0)
+  }
+  inner.push(768)
+  digest_tables.sha256_words(outer, inner)
+  words_bytes(outer)
+}
+
+/// PBKDF2-HMAC-SHA256 of the password and salt (crypto/pbkdf2.Key):
+/// key_len bytes.
+pub fn pbkdf2(password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> Bytes {
+  let st = hmac_key(password)
+  var blk = block32()
+  var out = rt.rs_with_cap(key_len + 32)
+  var block = 1
+  var left = key_len
+  while left > 0 {
+    var u = hmac_words(st, salt, rt.int_wrap(7, block << 32, 0), 4)
+    var t = u
+    var i = 1
+    while i < iterations {
+      // U = HMAC(U): the inner hash of U, then the outer one
+      u = hash32(st, 8, hash32(st, 0, u, blk), blk)
+      for j in 0..8 {
+        t[j] = t[j] ^ u[j]
+      }
+      i += 1
+    }
+    let k = if left < 32 { left } else { 32 }
+    out = rt.rs_append_bytes(out, words_bytes(t), 0, k, 0)
+    left -= k
+    block += 1
+  }
+  out.bytes()
+}
+
+// ---------------------------------------------------------------------------
+// Base64 without padding (encoding/base64's RawStdEncoding and
+// RawURLEncoding)
+
+const B64_STD: Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+const B64_URL: Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+/// The unpadded base64 of data: URL safe when url, else standard.
+pub fn b64(data: Bytes, url: Bool) -> Str {
+  let a = if url { B64_URL } else { B64_STD }
+  let n = data.len()
+  var out = rt.rs_with_cap((n + 2) / 3 * 4 + 8)
+  var i = 0
+  while n - i >= 3 {
+    let v = (Int(data[i]) << 16) | (Int(data[i + 1]) << 8) | Int(data[i + 2])
+    out = rt.rs_push_word(out, Int(a[(v >> 18) & 63]) | (Int(a[(v >> 12) & 63]) << 8) | (Int(a[(v >> 6) & 63]) << 16) | (Int(a[v & 63]) << 24), 4)
+    i += 3
+  }
+  if n - i == 1 {
+    let v = Int(data[i]) << 16
+    out = rt.rs_push_word(out, Int(a[(v >> 18) & 63]) | (Int(a[(v >> 12) & 63]) << 8), 2)
+  } else if n - i == 2 {
+    let v = (Int(data[i]) << 16) | (Int(data[i + 1]) << 8)
+    out = rt.rs_push_word(out, Int(a[(v >> 18) & 63]) | (Int(a[(v >> 12) & 63]) << 8) | (Int(a[(v >> 6) & 63]) << 16), 3)
+  }
+  out
+}
+
+/// The bytes of unpadded standard base64 (RawStdEncoding.DecodeString:
+/// \r and \n skipped; `=`, other bytes, and a final group of one symbol
+/// are errors; the unused low bits of a final group are ignored), or None.
+fn b64_decode(s: Bytes) -> Bytes? {
+  let tv = num_tables.B64_VAL
+  var out = rt.rs_with_cap(s.len() / 4 * 3 + 8)
+  var acc = 0
+  var k = 0
+  for i in 0..s.len() {
+    let v = Int(tv[Int(s[i])])
+    if v == 0xFE {
+      // \r or \n
+      continue
+    }
+    if v > 63 {
+      return None
+    }
+    acc = (acc << 6) | v
+    k += 1
+    if k == 4 {
+      out = rt.rs_push_word(out, ((acc >> 16) & 0xFF) | (acc & 0xFF00) | ((acc & 0xFF) << 16), 3)
+      acc = 0
+      k = 0
+    }
+  }
+  if k == 1 {
+    return None
+  }
+  if k == 2 {
+    out = rt.rs_push_byte(out, (acc >> 4) & 0xFF)
+  } else if k == 3 {
+    out = rt.rs_push_word(out, ((acc >> 10) & 0xFF) | (((acc >> 2) & 0xFF) << 8), 2)
+  }
+  Some(out.bytes())
+}
+
+// ---------------------------------------------------------------------------
+// verify_password (std/rt's Crypto_verify_password)
+
+/// strconv.ParseInt(s, 10, 64) of the bytes of b from lo to hi.
+fn parse_int(b: Bytes, lo: Int, hi: Int) -> Int? {
+  let s = rt.rs_append_bytes("", b, lo, hi, 0)
+  Int.parse(s)
+}
+
+/// The fields of b split at every byte c (strings.Split).
+fn split(b: Bytes, c: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  var start = 0
+  for i in 0..(b.len() + 1) {
+    if i == b.len() || Int(b[i]) == c {
+      out.push(rt.rs_append_bytes("", b, start, i, 0).bytes())
+      start = i + 1
+    }
+  }
+  out
+}
+
+/// Whether the password gives the hash, a PHC string of Argon2id or
+/// pbkdf2-sha256$<iterations>$<salt>$<key>; a malformed hash is false.
+/// The derived key is compared with crypto.equal (C, constant time).
+pub fn verify_password(password: Str, hash: Str) -> Bool {
+  let pw = password.bytes()
+  let h = hash.bytes()
+  if hash.starts_with("$argon2id$") {
+    // 36 is $, 44 is ,
+    let f = split(h, 36)
+    if f.len() != 6 || f[0].len() != 0 || f[1] != b"argon2id" || f[2] != b"v=19" {
+      return false
+    }
+    let ps = split(f[3], 44)
+    if ps.len() != 3 {
+      return false
+    }
+    var vals: List[Int] = []
+    let names = [b"m=", b"t=", b"p="]
+    for k in 0..3 {
+      let x = ps[k]
+      let name = names[k]
+      if x.len() < 2 || x[0] != name[0] || x[1] != name[1] {
+        return false
+      }
+      match parse_int(x, 2, x.len()) {
+        Some(v) => vals.push(v)
+        None => return false
+      }
+    }
+    let m = vals[0]
+    let t = vals[1]
+    let p = vals[2]
+    if !(p >= 1 && p <= 255 && m >= 8 * p && m <= 4 * 1024 * 1024 && t >= 1 && t <= 1000) {
+      return false
+    }
+    return match (b64_decode(f[4]), b64_decode(f[5])) {
+      (Some(salt), Some(want)) => salt.len() >= 8 && want.len() >= 4 && want.len() <= 1024 && rtcrypto.crypto_equal(rtcrypto.crypto_argon2id(pw, salt, t, m, p, want.len()), want)
+      _ => false
+    }
+  }
+  let f = split(h, 36)
+  if f.len() != 4 || f[0] != b"pbkdf2-sha256" {
+    return false
+  }
+  let iter = parse_int(f[1], 0, f[1].len()) ?? 0
+  if iter < 1 || iter > 100000000 {
+    return false
+  }
+  match (b64_decode(f[2]), b64_decode(f[3])) {
+    (Some(salt), Some(want)) => {
+      if want.len() == 0 {
+        return false
+      }
+      rtcrypto.crypto_equal(pbkdf2(pw, salt, iter, want.len()), want)
+    }
+    _ => false
+  }
+}

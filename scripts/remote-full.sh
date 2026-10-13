@@ -113,7 +113,7 @@ userdata=$(cat <<EOF
 # fire on AL2023 on 2026-10-12) and the plain shutdown as a second net
 systemd-run --on-active=${MAXMIN}m /usr/sbin/poweroff
 shutdown -h +$MAXMIN
-dnf install -y git clang llvm gcc tar gzip make >/var/log/xo-setup.log 2>&1
+dnf install -y git clang llvm gcc tar gzip make nodejs >/var/log/xo-setup.log 2>&1
 curl -fsSL https://go.dev/dl/go$GOVER.linux-$ARCH.tar.gz | tar -C /usr/local -xz
 touch /var/run/xo-ready
 EOF
@@ -176,7 +176,7 @@ else
 fi
 qrun=$(printf '%q' "$run")
 ssh_ "set -o pipefail; export PATH=/usr/local/go/bin:\$PATH; git clone -q xo.bundle xo && cd xo && git checkout -q $commit && \
-  { uname -a; nproc; free -g; go version; clang --version | head -1; } && \
+  { uname -a; nproc; free -g; go version; clang --version | head -1; echo "node $(node --version 2>/dev/null || echo MISSING: TestSelfhostWasm will skip)"; } && \
   { while sleep 10; do free -m | awk '/^Mem:/ {print \$3}'; done > ../mem.txt 2>/dev/null </dev/null & sampler=\$!; } && \
   { bash -c $qrun 2>&1; kill \$sampler; echo \"remote-full: peak memory in use \$(sort -n ../mem.txt | tail -1) MB\"; }" > "$out" || true
 # per-package durations, slowest first (go test prints one on each ok and

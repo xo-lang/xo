@@ -65,6 +65,7 @@ fn (var g: Gen) call(v: Int) {
       g.e("call $fault_raise")
       g.fault_exit(v)
     }
+    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.slot_op(v)
     "rt.rl_empty" => {
       g.e("i32.const ${g.empty_list}")
       g.def(v)
@@ -567,4 +568,146 @@ fn (var g: Gen) variant_into_at(dst: Int, t: Int, tag: Int, b: Int, el: List[Str
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt_direct(name: Str) -> Bool {
   name is "int_op" | "int_conv" | "int_in_range" | "rune_valid" | "rune_of" | "u64_to_float" | "f32_round" | "i64_to_f32" | "rs_append_u64" | "rs_append_rune" | "rs_push_rune" | "rs_append_rune_quote" | "rs_push_byte" | "rs_push_word" | "rs_push_words" | "rs_with_cap" | "str_find" | "str_split" | "str_lines" | "str_trim" | "bytes_hex" | "env_args" | "env_get" | "rs_append_duration"
+}
+
+// ---------------------------------------------------------------------------
+// Atomics (decision 0200)
+
+/// Module m with the wasm runtime's Atomic in place of decision 0200's
+/// inline atomics on its cell: rt3.xo's object holds the value at byte 8
+/// (not 128), and each of its operations is a scheduling point of the
+/// cooperative scheduler (core 7.4), so get, set, swap, and
+/// compare_and_swap on an Atomic (a handle) become rt.atomic_get and
+/// friends again, and the native prelude's llrt_atomic_add and
+/// llrt_atomic_max rt.atomic_add and rt.atomic_max: the program behaves
+/// as before the port.
+fn atomics_to_runtime(m0: ssa.Module) -> ssa.Module {
+  var m = m0
+  for fi in 0..m.funcs.len() {
+    for vi in 0..m.funcs[fi].values.len() {
+      let x = m.funcs[fi].values[vi]
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      var to = ""
+      var args: List[Int] = []
+      if name is "prelude.llrt_atomic_add" | "prelude.llrt_atomic_max" {
+        to = "rt.${name.trim_prefix("prelude.llrt_")}"
+        args = x.args
+      } else if name is "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" {
+        let ct = m.funcs[fi].values[x.args[0]].ty
+        if ct < 0 || m.types[ct].kind != ssa.Kind.Handle {
+          continue
+        }
+        to = match name {
+          "rt.slot_load" => "rt.atomic_get"
+          "rt.slot_store" => "rt.atomic_set"
+          "rt.slot_swap" => "rt.atomic_swap"
+          _ => "rt.atomic_cas"
+        }
+        // the handle and the values: not the cell's index, not the order
+        args = [x.args[0]] + x.args[2..x.args.len() - 1]
+      }
+      if to.is_empty() {
+        continue
+      }
+      m.funcs[fi].values[vi].aux = ssa.Aux.S(s: to)
+      m.funcs[fi].values[vi].args = args
+    }
+  }
+  m
+}
+
+/// Pushes Int or Bool value a as an i64 (a Bool cell holds 0 or 1).
+fn (var g: Gen) push_word(a: Int) {
+  g.push(a)
+  if g.kind(g.vty(a)) == ssa.Kind.Bool {
+    g.e("i64.extend_i32_u")
+  }
+}
+
+/// Defines v, an Int or a Bool, from the i64 on the stack.
+fn (var g: Gen) def_word(v: Int) {
+  if g.kind(g.vty(v)) == ssa.Kind.Bool {
+    g.e("i32.wrap_i64")
+  }
+  g.def(v)
+}
+
+/// Decision 0200's atomics on a List[Int] cell: plain loads and stores,
+/// the wasm runtime running one thread (an Atomic's cell went to rt3.xo's
+/// functions, atomics_to_runtime); fences and the spin hint are nothing.
+fn (var g: Gen) slot_op(v: Int) {
+  let x = g.f.values[v]
+  let name = match x.aux {
+    S(s) => s
+    _ => ""
+  }
+  if name is "rt.fence" | "rt.spin_hint" {
+    return
+  }
+  if g.kind(g.vty(x.args[0])) != ssa.Kind.List {
+    g.fail("the wasm backend has `${name}` on a List[Int] or an Atomic only")
+    return
+  }
+  let a = g.scratch(["i32"])
+  g.push(x.args[0])
+  g.push(x.args[1])
+  g.e("i32.const 8")
+  g.e("call $elem")
+  g.set(a)
+  match name {
+    "rt.slot_addr" => {
+      g.get(a)
+      g.e("i64.extend_i32_u")
+      g.def(v)
+    }
+    "rt.slot_load" => {
+      g.get(a)
+      g.e("i64.load")
+      g.def_word(v)
+    }
+    "rt.slot_store" => {
+      g.get(a)
+      g.push_word(x.args[2])
+      g.e("i64.store")
+    }
+    "rt.slot_swap" | "rt.slot_add" => {
+      // the old value stays on the stack
+      g.get(a)
+      g.e("i64.load")
+      g.get(a)
+      if name == "rt.slot_add" {
+        g.get(a)
+        g.e("i64.load")
+        g.push_word(x.args[2])
+        g.e("i64.add")
+      } else {
+        g.push_word(x.args[2])
+      }
+      g.e("i64.store")
+      g.def_word(v)
+    }
+    _ => {
+      // rt.slot_cas
+      let ok = g.scratch(["i32"])
+      g.get(a)
+      g.e("i64.load")
+      g.push_word(x.args[2])
+      g.e("i64.eq")
+      g.set(ok)
+      g.get(ok)
+      g.e("if")
+      g.get(a)
+      g.push_word(x.args[3])
+      g.e("i64.store")
+      g.e("end")
+      g.get(ok)
+      g.def(v)
+    }
+  }
 }

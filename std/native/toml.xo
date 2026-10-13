@@ -5,6 +5,7 @@
 // native JSON codec.
 use std/toml
 use std/json as js
+use native/llrt/scan
 use native/rt
 
 enum TomlVal {
@@ -65,7 +66,7 @@ fn (p: TomlParser) at(j: Int) -> Int {
   rt.str_byte(p.s, j)
 }
 
-fn (p: TomlParser) rest_has(prefix: Str) -> Bool { rt.str_starts_with(rt.str_slice(p.s, p.i, p.s.len()), prefix) }
+fn (p: TomlParser) rest_has(prefix: Str) -> Bool { scan.has_at(p.s, p.i, prefix) }
 
 /// The rune at i, quoted.
 fn (p: TomlParser) rune_text() -> Str {

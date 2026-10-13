@@ -4896,6 +4896,13 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)
+//
+// The generated code reads and writes the value itself (decision 0200):
+// get, set, swap, and compare_and_swap are one inline atomic each on
+// byte 128 (slot 13 of rt.slot_load and friends, which count a list's
+// three word header), and add and max are std/native/llrt/atomic.xo.
+// The C operations below the allocation are its C path, compiled only
+// with -DXO_ATOMIC_C (XO_LLRT_C=atomic).
 
 typedef struct {
 	xo_hdr h;
@@ -4904,6 +4911,8 @@ typedef struct {
 	char pad[128 - sizeof(xo_hdr)];
 	int64_t v;
 } xo_atomic;
+
+_Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
 static void atomic_free(void *p) { xo_free(p); }
 
@@ -4914,6 +4923,7 @@ xo_atomic *xo_atomic_new(int64_t v) {
 	return a;
 }
 
+#ifdef XO_ATOMIC_C
 int64_t xo_atomic_get(xo_atomic *a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
 
 void xo_atomic_set(xo_atomic *a, int64_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); }
@@ -4950,6 +4960,7 @@ int64_t xo_atomic_max(xo_atomic *a, int64_t n) {
 	}
 	return old;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals
@@ -6957,6 +6968,10 @@ int64_t xo_utf8_valid(const char *p, int64_t n) {
 	return 1;
 }
 
+// The C path of the Str key hash and floor division (decisions 0193 and
+// 0195): std/native/llrt/ints.xo is the default; compiled only with
+// -DXO_INTS_C (XO_LLRT_C=ints).
+#ifdef XO_INTS_C
 // xo_str_hash hashes the n bytes at p (FNV-1a, then a final mix): Map
 // keys and Set elements (decision 0072).
 int64_t xo_str_hash(const char *p, int64_t n) {
@@ -6970,54 +6985,9 @@ int64_t xo_str_hash(const char *p, int64_t n) {
 	h ^= h >> 29;
 	return (int64_t)h;
 }
+#endif
 
-// xo_str_quote is the text of a Str in double quotes with Go's escapes
-// for quotes, backslashes, and control bytes (the Go backend's Debug of a
-// Str in fault messages), in a list of one.
-xo_rlist *xo_str_quote(const char *p, int64_t n) {
-	char *b = malloc((size_t)n * 4 + 3);
-	if (!b) {
-		xo_oom();
-	}
-	int64_t o = 0;
-	b[o++] = '"';
-	for (int64_t i = 0; i < n; i++) {
-		unsigned char c = (unsigned char)p[i];
-		switch (c) {
-		case '"':
-			b[o++] = '\\';
-			b[o++] = '"';
-			break;
-		case '\\':
-			b[o++] = '\\';
-			b[o++] = '\\';
-			break;
-		case '\n':
-			b[o++] = '\\';
-			b[o++] = 'n';
-			break;
-		case '\t':
-			b[o++] = '\\';
-			b[o++] = 't';
-			break;
-		case '\r':
-			b[o++] = '\\';
-			b[o++] = 'r';
-			break;
-		default:
-			if (c < 0x20 || c == 0x7f) {
-				o += sprintf(b + o, "\\x%02x", c);
-			} else {
-				b[o++] = (char)c;
-			}
-		}
-	}
-	b[o++] = '"';
-	xo_rlist *l = str_list(b, o);
-	free(b);
-	return l;
-}
-
+#ifdef XO_INTS_C
 // xo_floor_div is a / b rounded down (b > 0): `Time.unix()`.
 int64_t xo_floor_div(int64_t a, int64_t b) {
 	int64_t q = a / b;
@@ -7026,6 +6996,7 @@ int64_t xo_floor_div(int64_t a, int64_t b) {
 	}
 	return q;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Environment (std.md 3.5)

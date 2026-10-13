@@ -43,6 +43,10 @@ type move struct {
 
 func regName(r int, w bool) string {
 	if r >= fpBase {
+		if w {
+			// the single precision name (`$wd0` of a Float, decision 0195)
+			return "s" + strconv.Itoa(r-fpBase)
+		}
 		return "d" + strconv.Itoa(r-fpBase)
 	}
 	if r == 31 {
@@ -783,6 +787,20 @@ func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
 		r := gpScratch[0]
 		if s.fp[d] {
 			r = fpScratch[0]
+		}
+		if in.early {
+			// the definition is written while the uses are read: a scratch
+			// register no reloaded use took (decision 0200's cas templates)
+			cls, pool := 0, gpScratch
+			if s.fp[d] {
+				cls, pool = 1, fpScratch
+			}
+			if nscratch[cls] < len(pool) {
+				r = pool[nscratch[cls]]
+				nscratch[cls]++
+			} else if in.keep {
+				panic("arm64: no scratch register for the spilled result of `" + t + "`")
+			}
 		}
 		defReg[k] = r
 		if ok {

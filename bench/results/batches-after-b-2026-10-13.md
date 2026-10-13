@@ -9,3 +9,8 @@ with no regression". Logs are in the lead's scratchpad.
 |---|---|---|---|
 | 2 | 5e25745 | EC2 r8g.12xlarge spot, in two parts (part 1 reclaimed after 27 of 44 packages) | 1 failure: cmd/xo TestNoGCTests/test_shutdown on llvm (XO-F001 deadlock), fixed in afe4aefb (two native test world bugs); does not count |
 | 3 | d2c87ca6 | EC2 r8g.8xlarge on demand, i-EXAMPLE34 (terminated) | **39 packages ok, 0 failed**; internal/selfhost 3,437.9 s, cmd/xo 1,190.8 s; peak memory in use 188,684 MB; counts as clean batch 1 of 2 |
+| 4 | d4a8b548 | EC2 r8g.8xlarge on demand, i-EXAMPLE45 (terminated) | 38 ok, 1 failed: internal/gen TestHybridPreemption (stop the world 14 to 23 ms against a 10 ms bound under load; alone at the same commit 5 of 5 pass, gotchas/hybrid-preemption-stw-under-load.md). TestSelfhostWasm was skipped (no Node on the instance, gotchas/ec2-full-tier-skipped-wasm.md) while main had a wasm regression (fixed in 0c5040eb). Does not count |
+
+Batch 3 also ran without Node (TestSelfhostWasm skipped); the wasm tier
+passed at that commit in the agents' targeted runs, so batch 3 still
+counts, but batch 5 is the first batch that runs the wasm tier on EC2.

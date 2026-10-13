@@ -55,3 +55,16 @@ block the freeze, goldens, or bootstrap steps.
 - Delete Go first and accept losing the targets: rejected by the owner.
 - Keep the Go backend alone after deleting the rest of the Go code: not
   chosen; it keeps the Go toolchain as a dependency.
+
+
+## Correction (lead, 2026-10-13)
+
+The Context above says deleting the Go compiler drops the Go backend.
+That was wrong: stage 7 deletes the Go implementation of the compiler
+(internal/gen and the other compiler packages), but the Go backend
+survives in Xo as selfhost/gen (xo1 `--backend=go`, decision 0178's
+table), with std/rt and the go command as its runtime and toolchain.
+So windows/* and darwin/amd64 stayed buildable through the Go backend.
+The gate still holds as the owner's decision and is now met on LLVM:
+darwin/amd64 golden suite 143 of 143 (bench/results/intel-mac-2026-10-12.md),
+windows/amd64 145 of 145 built by xo1 (bench/results/windows-2026-10-12.md).

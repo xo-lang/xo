@@ -3,11 +3,15 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/atomic
 use native/llrt/fspath
+use native/llrt/gen
+use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/procspec
 use native/llrt/num
 use native/llrt/report
+use native/llrt/scan
 use native/llrt/show
 use native/llrt/strings
 use native/llrt/sysio
@@ -18,25 +22,25 @@ use native/rt
 // ---------------------------------------------------------------------------
 // Str (std.md 2.2)
 
-fn str_rune_count(s: Str) -> Int { rt.str_rune_count(s) }
+fn str_rune_count(s: Str) -> Int { scan.rune_count(s) }
 
-fn str_contains(s: Str, sub: Str) -> Bool { rt.str_contains(s, sub) }
+fn str_contains(s: Str, sub: Str) -> Bool { scan.contains(s, sub) }
 
-fn str_starts_with(s: Str, p: Str) -> Bool { rt.str_starts_with(s, p) }
+fn str_starts_with(s: Str, p: Str) -> Bool { scan.starts_with(s, p) }
 
-fn str_ends_with(s: Str, p: Str) -> Bool { rt.str_ends_with(s, p) }
+fn str_ends_with(s: Str, p: Str) -> Bool { scan.ends_with(s, p) }
 
 fn str_find(s: Str, sub: Str) -> Int? {
-  let i = rt.str_find(s, sub, 0)
+  let i = scan.find(s, sub, 0)
   if i < 0 {
     return None
   }
   Some(i)
 }
 
-fn str_split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
+fn str_split(s: Str, sep: Str) -> List[Str] { scan.split(s, sep) }
 
-fn str_lines(s: Str) -> List[Str] { rt.str_lines(s) }
+fn str_lines(s: Str) -> List[Str] { scan.lines(s) }
 
 fn str_trim(s: Str) -> Str { strings.trim(s, 0) }
 
@@ -45,14 +49,14 @@ fn str_trim_start(s: Str) -> Str { strings.trim(s, 1) }
 fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
-  if rt.str_starts_with(s, p) {
+  if scan.starts_with(s, p) {
     return rt.str_slice(s, p.len(), s.len())
   }
   s
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
-  if rt.str_ends_with(s, p) {
+  if scan.ends_with(s, p) {
     return rt.str_slice(s, 0, s.len() - p.len())
   }
   s
@@ -114,9 +118,13 @@ fn rune_try(x: Int) -> Rune? {
 
 fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
-fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
+fn bytes_rune_count(b: Bytes) -> Int { scan.bytes_rune_count(b) }
 
-fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
+fn bytes_to_hex(b: Bytes) -> Str { scan.to_hex(b) }
+
+/// Whether b is UTF-8 (Bytes.to_str: internal/ssa calls this instead of
+/// rt.utf8_valid, decision 0201).
+fn llrt_utf8_valid(b: Bytes) -> Bool { scan.utf8_valid(b) }
 
 fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 
@@ -152,7 +160,7 @@ fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
   var r = 1
   var i = 0
   while i < e {
-    if !rt.int_fits(2, r, n) {
+    if !ints.fits(2, r, n) {
       rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
     }
     r = r * n
@@ -168,13 +176,10 @@ fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
 fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
 
 fn checked(op: Int, n: Int, m: Int) -> Int? {
-  if !rt.int_fits(op, n, m) {
+  if !ints.fits(op, n, m) {
     return None
   }
-  if op == 3 {
-    return Some(n / m)
-  }
-  Some(rt.int_wrap(op, n, m))
+  Some(ints.apply(op, n, m))
 }
 
 fn int_checked_add(n: Int, m: Int) -> Int? { checked(0, n, m) }
@@ -189,8 +194,8 @@ fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
 fn saturated(op: Int, n: Int, m: Int) -> Int {
   let max = 9223372036854775807
   let min = -9223372036854775807 - 1
-  if rt.int_fits(op, n, m) {
-    return rt.int_wrap(op, n, m)
+  if ints.fits(op, n, m) {
+    return ints.apply(op, n, m)
   }
   if op == 0 {
     return if m > 0 { max } else { min }
@@ -1286,7 +1291,7 @@ fn glob_match(pattern: Str, name: Str) -> Int {
     p = rest
     if star && chunk == "" {
       // a trailing * matches the rest of the name unless it has a /
-      if rt.str_find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
+      if scan.find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
         return 1
       }
       return 0
@@ -2163,6 +2168,15 @@ fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) 
 
 fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 
+// Atomic's add and max (decision 0200): in Xo over the runtime's atomics
+// (std/native/llrt/atomic.xo); the SSA builders lower get, set, swap, and
+// compare_and_swap inline. With XO_LLRT_C=atomic the Go SSA builder calls
+// the C runtime for every Atomic operation instead.
+
+fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
+
+fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
+
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
 // Go SSA builder calls the C runtime's xo_prop_report instead.
@@ -2199,3 +2213,41 @@ fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b
 fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
 
 fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
+
+// The integer operations of generated code (the zero-C audit's portable
+// group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The
+// SSA builders lower a sized integer operation inline and call the
+// faults here when its check fails; with XO_LLRT_C=ints the Go SSA
+// builder calls the C runtime (rt.int_op and friends) instead.
+
+fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Never { ints.op_fault(op, a, b, bits, uns, at) }
+
+fn llrt_int_conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never { ints.conv_fault(v, fbits, funs, tbits, tuns, at) }
+
+fn llrt_u64_div(a: Int, b: Int) -> Int { ints.u64_div(a, b) }
+
+fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
+
+fn llrt_floor_div(a: Int, b: Int) -> Int { ints.floor_div(a, b) }
+
+fn llrt_str_hash(s: Str) -> Int { ints.str_hash(s) }
+
+// The scalar values of property tests and testing.gen (decision 0195):
+// in Xo (std/native/llrt/gen.xo) over the C generator's draws; with
+// XO_LLRT_C=gen the Go SSA builder calls the C runtime instead.
+
+fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
+
+fn llrt_gen_any_int(g: Int) -> Int { gen.any_int(g) }
+
+fn llrt_gen_sized(g: Int, kind: Int) -> Int { gen.sized(g, kind) }
+
+fn llrt_gen_float(g: Int) -> Float { gen.float(g) }
+
+fn llrt_gen_rune(g: Int) -> Int { gen.rune(g) }
+
+fn llrt_gen_str(g: Int) -> Str { gen.str(g) }
+
+fn llrt_gen_duration(g: Int) -> Int { gen.duration(g) }
+
+fn llrt_gen_time(g: Int) -> Int { gen.time(g) }
