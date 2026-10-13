@@ -127,7 +127,7 @@ func (s *fstate) thread() {
 func (s *fstate) dce() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	removable := func(in *inst) bool {
-		return (in.kind == iPlain && in.fault == nil && len(in.defs) > 0) || in.kind == iPmove
+		return (in.kind == iPlain && in.fault == nil && !in.keep && len(in.defs) > 0) || in.kind == iPmove
 	}
 	live := make([]bool, len(s.fp))
 	for changed := true; changed; {
@@ -826,7 +826,7 @@ func (s *fstate) threadCset() {
 			continue
 		}
 		def := p.insts[len(p.insts)-3]
-		if def.kind != iPlain || len(def.defs) != 1 || def.defs[0] != src || def.fault != nil {
+		if def.kind != iPlain || len(def.defs) != 1 || def.defs[0] != src || def.fault != nil || def.keep {
 			continue
 		}
 		i := strings.LastIndex(def.text, "\ncset $d0, ")
@@ -1278,7 +1278,7 @@ func (s *fstate) liveDCE() {
 					}
 				}
 				keep[i] = m > 0
-			case in.kind == iPlain && in.fault == nil && len(in.defs) > 0:
+			case in.kind == iPlain && in.fault == nil && !in.keep && len(in.defs) > 0:
 				all := true
 				for _, d := range in.defs {
 					all = all && dead(d)

@@ -3246,34 +3246,62 @@ Lf35_b1:
 	mov x0, x22
 	bl _xo_f_num_2eappend__float
 	mov x21, x0
-	mov x19, x1
-Lf35_b3:
-	add x0, x21, #16
-	adrp x9, Lxo_str19@PAGE
-	add x9, x9, Lxo_str19@PAGEOFF
-	mov x3, #2
-	add x2, x9, #16
-	mov x1, x19
-	bl _xo_str_ends_with
 Lf35_b4:
-	cbz x0, Lf35_b12
+	adrp x8, Lxo_str19@PAGE
+	add x8, x8, Lxo_str19@PAGEOFF
+	mov x9, #2
+	cmp x9, x1
+	b.gt Lf35_b23
 Lf35_b5:
-	sub x3, x19, #2
-Lf35_b7:
+	mov x13, #2
+	sub x14, x1, x13
+Lf35_b15:
+	mov x11, #0
+Lf35_b16:
+	cmp x11, x13
+	b.ge Lf35_b21
+Lf35_b17:
+	add x10, x14, x11
+	cmp x10, x1
+	b.hs Lf35_fault1
+	add x9, x21, #16
+	ldrb w12, [x9, x10]
+	add x10, x11, #0
+	add x9, x8, #16
+	ldrb w9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf35_b20
+Lf35_b18:
+	mov x9, #0
+	b Lf35_b26
+Lf35_b20:
+	add x11, x11, #1
+	cmp x11, x13
+	b.lt Lf35_b17
+Lf35_b21:
+	mov x9, #1
+	b Lf35_b26
+Lf35_b23:
+	mov x9, #0
+Lf35_b26:
+Lf35_b28:
+	cbz x9, Lf35_b36
+Lf35_b29:
+	sub x3, x1, #2
+Lf35_b31:
 	add x0, x21, #16
 	mov x2, #0
 	adrp x9, Lxo_str20@PAGE
 	add x9, x9, Lxo_str20@PAGEOFF
 	mov x5, #29
 	add x4, x9, #16
-	mov x1, x19
 	add x6, sp, #16
-Lf35_cs46a:
+Lf35_cs47a:
 	bl _xo_str_slice_at
-Lf35_cs46b:
+Lf35_cs47b:
 	mov x20, x0
 	ldr x19, [sp, #16]
-Lf35_b10:
+Lf35_b34:
 	mov x0, x21
 	bl Lxo_drop1
 	mov x0, x20
@@ -3282,21 +3310,24 @@ Lf35_b10:
 	ldp x22, x21, [sp, #40]
 	ldp x29, x30, [sp], #64
 	ret
-Lf35_b12:
+Lf35_b36:
 	mov x0, x21
-	mov x1, x19
 	ldp x20, x19, [sp, #24]
 	ldp x22, x21, [sp, #40]
 	ldp x29, x30, [sp], #64
 	ret
-Lf35_b6:
+Lf35_b27:
 	mov x0, x21
 	bl Lxo_drop1
-	b Lf35_b9
-Lf35_b8:
+	b Lf35_b33
+Lf35_b30:
 	mov x0, x21
 	bl Lxo_drop1
-Lf35_b9:
+	b Lf35_b33
+Lf35_b32:
+	mov x0, x21
+	bl Lxo_drop1
+Lf35_b33:
 	bl _xo_fault_continue
 	mov x1, #0
 	mov x0, x22
@@ -3304,6 +3335,14 @@ Lf35_b9:
 	ldp x22, x21, [sp, #40]
 	ldp x29, x30, [sp], #64
 	ret
+Lf35_fault1:
+	mov x0, x10
+	adrp x2, Lxo_loc24@PAGE
+	add x2, x2, Lxo_loc24@PAGEOFF
+Lf35_cs46a:
+	bl _xo_fault_bytes_index
+Lf35_cs46b:
+	brk #1
 	.cfi_endproc
 
 // func text.append_duration
@@ -3825,184 +3864,184 @@ Lf36_b95:
 Lf36_fault1:
 	neg x15, x19
 	mov x0, x15
-	adrp x1, Lxo_loc22@PAGE
-	add x1, x1, Lxo_loc22@PAGEOFF
-Lf36_cs47a:
+	adrp x1, Lxo_loc25@PAGE
+	add x1, x1, Lxo_loc25@PAGEOFF
+Lf36_cs48a:
 	bl _xo_fault_neg
-Lf36_cs47b:
+Lf36_cs48b:
 	brk #1
 Lf36_fault2:
 	mov x0, x19
 	mov x1, #37
-	adrp x2, Lxo_loc23@PAGE
-	add x2, x2, Lxo_loc23@PAGEOFF
-Lf36_cs48a:
+	adrp x2, Lxo_loc26@PAGE
+	add x2, x2, Lxo_loc26@PAGEOFF
+Lf36_cs49a:
 	bl _xo_fault_divzero
-Lf36_cs48b:
+Lf36_cs49b:
 	brk #1
 Lf36_fault3:
 	mov x0, x19
 	mov x1, #47
-	adrp x2, Lxo_loc24@PAGE
-	add x2, x2, Lxo_loc24@PAGEOFF
-Lf36_cs49a:
+	adrp x2, Lxo_loc27@PAGE
+	add x2, x2, Lxo_loc27@PAGEOFF
+Lf36_cs50a:
 	bl _xo_fault_divzero
-Lf36_cs49b:
+Lf36_cs50b:
 	brk #1
 Lf36_fault4:
 	mov x0, x19
 	mov x2, x10
 	mov x1, #47
-	adrp x3, Lxo_loc24@PAGE
-	add x3, x3, Lxo_loc24@PAGEOFF
-Lf36_cs50a:
+	adrp x3, Lxo_loc27@PAGE
+	add x3, x3, Lxo_loc27@PAGEOFF
+Lf36_cs51a:
 	bl _xo_fault_overflow
-Lf36_cs50b:
+Lf36_cs51b:
 	brk #1
 Lf36_fault5:
 	mov x0, x19
 	mov x1, #47
-	adrp x2, Lxo_loc25@PAGE
-	add x2, x2, Lxo_loc25@PAGEOFF
-Lf36_cs51a:
+	adrp x2, Lxo_loc28@PAGE
+	add x2, x2, Lxo_loc28@PAGEOFF
+Lf36_cs52a:
 	bl _xo_fault_divzero
-Lf36_cs51b:
+Lf36_cs52b:
 	brk #1
 Lf36_fault6:
 	mov x0, x19
 	mov x2, x10
 	mov x1, #47
-	adrp x3, Lxo_loc25@PAGE
-	add x3, x3, Lxo_loc25@PAGEOFF
-Lf36_cs52a:
+	adrp x3, Lxo_loc28@PAGE
+	add x3, x3, Lxo_loc28@PAGEOFF
+Lf36_cs53a:
 	bl _xo_fault_overflow
-Lf36_cs52b:
+Lf36_cs53b:
 	brk #1
 Lf36_fault7:
 	mov x2, x0
 	mov x0, x12
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
-Lf36_cs53a:
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
+Lf36_cs54a:
 	bl _xo_fault_overflow
-Lf36_cs53b:
+Lf36_cs54b:
 	brk #1
 Lf36_fault8:
 	mov x0, x11
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
-Lf36_cs54a:
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
+Lf36_cs55a:
 	bl _xo_fault_shift
-Lf36_cs54b:
+Lf36_cs55b:
 	brk #1
 Lf36_fault9:
 	mov x0, x12
 	mov x1, x11
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
-Lf36_cs55a:
+	adrp x2, Lxo_loc30@PAGE
+	add x2, x2, Lxo_loc30@PAGEOFF
+Lf36_cs56a:
 	bl _xo_fault_shl
-Lf36_cs55b:
+Lf36_cs56b:
 	brk #1
 Lf36_fault10:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc28@PAGE
-	add x3, x3, Lxo_loc28@PAGEOFF
-Lf36_cs56a:
+	adrp x3, Lxo_loc31@PAGE
+	add x3, x3, Lxo_loc31@PAGEOFF
+Lf36_cs57a:
 	bl _xo_fault_overflow
-Lf36_cs56b:
+Lf36_cs57b:
 	brk #1
 Lf36_fault11:
 	mov x2, x0
 	mov x0, x12
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
-Lf36_cs57a:
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
+Lf36_cs58a:
 	bl _xo_fault_overflow
-Lf36_cs57b:
+Lf36_cs58b:
 	brk #1
 Lf36_fault12:
 	mov x0, x11
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
-Lf36_cs58a:
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
+Lf36_cs59a:
 	bl _xo_fault_shift
-Lf36_cs58b:
+Lf36_cs59b:
 	brk #1
 Lf36_fault13:
 	mov x0, x12
 	mov x1, x11
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
-Lf36_cs59a:
+	adrp x2, Lxo_loc30@PAGE
+	add x2, x2, Lxo_loc30@PAGEOFF
+Lf36_cs60a:
 	bl _xo_fault_shl
-Lf36_cs59b:
+Lf36_cs60b:
 	brk #1
 Lf36_fault14:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc29@PAGE
-	add x3, x3, Lxo_loc29@PAGEOFF
-Lf36_cs60a:
+	adrp x3, Lxo_loc32@PAGE
+	add x3, x3, Lxo_loc32@PAGEOFF
+Lf36_cs61a:
 	bl _xo_fault_overflow
-Lf36_cs60b:
+Lf36_cs61b:
 	brk #1
 Lf36_fault15:
 	mov x2, x0
 	mov x0, x12
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
-Lf36_cs61a:
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
+Lf36_cs62a:
 	bl _xo_fault_overflow
-Lf36_cs61b:
+Lf36_cs62b:
 	brk #1
 Lf36_fault16:
 	mov x0, x11
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
-Lf36_cs62a:
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
+Lf36_cs63a:
 	bl _xo_fault_shift
-Lf36_cs62b:
+Lf36_cs63b:
 	brk #1
 Lf36_fault17:
 	mov x0, x12
 	mov x1, x11
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
-Lf36_cs63a:
-	bl _xo_fault_shl
-Lf36_cs63b:
-	brk #1
-Lf36_fault18:
-	mov x0, x19
-	mov x1, #4
 	adrp x2, Lxo_loc30@PAGE
 	add x2, x2, Lxo_loc30@PAGEOFF
 Lf36_cs64a:
 	bl _xo_fault_shl
 Lf36_cs64b:
 	brk #1
+Lf36_fault18:
+	mov x0, x19
+	mov x1, #4
+	adrp x2, Lxo_loc33@PAGE
+	add x2, x2, Lxo_loc33@PAGEOFF
+Lf36_cs65a:
+	bl _xo_fault_shl
+Lf36_cs65b:
+	brk #1
 Lf36_fault19:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc31@PAGE
-	add x3, x3, Lxo_loc31@PAGEOFF
-Lf36_cs65a:
+	adrp x3, Lxo_loc34@PAGE
+	add x3, x3, Lxo_loc34@PAGEOFF
+Lf36_cs66a:
 	bl _xo_fault_overflow
-Lf36_cs65b:
+Lf36_cs66b:
 	brk #1
 Lf36_fault20:
 	mov x0, x10
 	mov x1, #8
-	adrp x2, Lxo_loc32@PAGE
-	add x2, x2, Lxo_loc32@PAGEOFF
-Lf36_cs66a:
+	adrp x2, Lxo_loc35@PAGE
+	add x2, x2, Lxo_loc35@PAGEOFF
+Lf36_cs67a:
 	bl _xo_fault_shl
-Lf36_cs66b:
+Lf36_cs67b:
 	brk #1
 	.cfi_endproc
 
@@ -4917,38 +4956,38 @@ Lf38_b225:
 Lf38_fault1:
 	mov x0, x9
 	mov x1, #40
-	adrp x2, Lxo_loc33@PAGE
-	add x2, x2, Lxo_loc33@PAGEOFF
-Lf38_cs67a:
-	bl _xo_fault_shl
-Lf38_cs67b:
-	brk #1
-Lf38_fault2:
-	mov x0, x9
-	mov x1, #24
-	adrp x2, Lxo_loc34@PAGE
-	add x2, x2, Lxo_loc34@PAGEOFF
+	adrp x2, Lxo_loc36@PAGE
+	add x2, x2, Lxo_loc36@PAGEOFF
 Lf38_cs68a:
 	bl _xo_fault_shl
 Lf38_cs68b:
 	brk #1
-Lf38_fault3:
+Lf38_fault2:
 	mov x0, x9
-	mov x1, #48
-	adrp x2, Lxo_loc35@PAGE
-	add x2, x2, Lxo_loc35@PAGEOFF
+	mov x1, #24
+	adrp x2, Lxo_loc37@PAGE
+	add x2, x2, Lxo_loc37@PAGEOFF
 Lf38_cs69a:
 	bl _xo_fault_shl
 Lf38_cs69b:
 	brk #1
-Lf38_fault4:
+Lf38_fault3:
 	mov x0, x9
-	mov x1, #8
-	adrp x2, Lxo_loc36@PAGE
-	add x2, x2, Lxo_loc36@PAGEOFF
+	mov x1, #48
+	adrp x2, Lxo_loc38@PAGE
+	add x2, x2, Lxo_loc38@PAGEOFF
 Lf38_cs70a:
 	bl _xo_fault_shl
 Lf38_cs70b:
+	brk #1
+Lf38_fault4:
+	mov x0, x9
+	mov x1, #8
+	adrp x2, Lxo_loc39@PAGE
+	add x2, x2, Lxo_loc39@PAGEOFF
+Lf38_cs71a:
+	bl _xo_fault_shl
+Lf38_cs71b:
 	brk #1
 Lf38_fault5:
 	mov x17, #1
@@ -4956,123 +4995,123 @@ Lf38_fault5:
 	mov x0, x15
 	mov x1, #45
 	mov x2, #1
-	adrp x3, Lxo_loc37@PAGE
-	add x3, x3, Lxo_loc37@PAGEOFF
-Lf38_cs71a:
+	adrp x3, Lxo_loc40@PAGE
+	add x3, x3, Lxo_loc40@PAGEOFF
+Lf38_cs72a:
 	bl _xo_fault_overflow
-Lf38_cs71b:
+Lf38_cs72b:
 	brk #1
 Lf38_fault6:
 	mov x0, x11
 	mov x2, x4
 	mov x1, #45
-	adrp x3, Lxo_loc38@PAGE
-	add x3, x3, Lxo_loc38@PAGEOFF
-Lf38_cs72a:
+	adrp x3, Lxo_loc41@PAGE
+	add x3, x3, Lxo_loc41@PAGEOFF
+Lf38_cs73a:
 	bl _xo_fault_overflow
-Lf38_cs72b:
+Lf38_cs73b:
 	brk #1
 Lf38_fault7:
 	mov x0, x14
 	mov x2, x12
 	mov x1, #42
-	adrp x3, Lxo_loc39@PAGE
-	add x3, x3, Lxo_loc39@PAGEOFF
-Lf38_cs73a:
+	adrp x3, Lxo_loc42@PAGE
+	add x3, x3, Lxo_loc42@PAGEOFF
+Lf38_cs74a:
 	bl _xo_fault_overflow
-Lf38_cs73b:
+Lf38_cs74b:
 	brk #1
 Lf38_fault8:
 	mov x0, x5
 	mov x1, #47
-	adrp x2, Lxo_loc40@PAGE
-	add x2, x2, Lxo_loc40@PAGEOFF
-Lf38_cs74a:
+	adrp x2, Lxo_loc43@PAGE
+	add x2, x2, Lxo_loc43@PAGEOFF
+Lf38_cs75a:
 	bl _xo_fault_divzero
-Lf38_cs74b:
+Lf38_cs75b:
 	brk #1
 Lf38_fault9:
 	mov x0, x5
 	mov x2, x14
 	mov x1, #47
-	adrp x3, Lxo_loc40@PAGE
-	add x3, x3, Lxo_loc40@PAGEOFF
-Lf38_cs75a:
+	adrp x3, Lxo_loc43@PAGE
+	add x3, x3, Lxo_loc43@PAGEOFF
+Lf38_cs76a:
 	bl _xo_fault_overflow
-Lf38_cs75b:
+Lf38_cs76b:
 	brk #1
 Lf38_fault10:
 	mov x0, x9
 	mov x1, #32
-	adrp x2, Lxo_loc41@PAGE
-	add x2, x2, Lxo_loc41@PAGEOFF
-Lf38_cs76a:
+	adrp x2, Lxo_loc44@PAGE
+	add x2, x2, Lxo_loc44@PAGEOFF
+Lf38_cs77a:
 	bl _xo_fault_shl
-Lf38_cs76b:
+Lf38_cs77b:
 	brk #1
 Lf38_fault11:
 	mov x0, x5
 	mov x1, #37
-	adrp x2, Lxo_loc42@PAGE
-	add x2, x2, Lxo_loc42@PAGEOFF
-Lf38_cs77a:
+	adrp x2, Lxo_loc45@PAGE
+	add x2, x2, Lxo_loc45@PAGEOFF
+Lf38_cs78a:
 	bl _xo_fault_divzero
-Lf38_cs77b:
+Lf38_cs78b:
 	brk #1
 Lf38_fault12:
 	mov x0, x12
 	mov x2, x6
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
-Lf38_cs78a:
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
+Lf38_cs79a:
 	bl _xo_fault_overflow
-Lf38_cs78b:
+Lf38_cs79b:
 	brk #1
 Lf38_fault13:
 	mov x0, x11
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
-Lf38_cs79a:
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
+Lf38_cs80a:
 	bl _xo_fault_shift
-Lf38_cs79b:
+Lf38_cs80b:
 	brk #1
 Lf38_fault14:
 	mov x0, x12
 	mov x1, x11
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
-Lf38_cs80a:
+	adrp x2, Lxo_loc30@PAGE
+	add x2, x2, Lxo_loc30@PAGEOFF
+Lf38_cs81a:
 	bl _xo_fault_shl
-Lf38_cs80b:
+Lf38_cs81b:
 	brk #1
 Lf38_fault15:
 	mov x0, x10
 	mov x1, #8
-	adrp x2, Lxo_loc43@PAGE
-	add x2, x2, Lxo_loc43@PAGEOFF
-Lf38_cs81a:
+	adrp x2, Lxo_loc46@PAGE
+	add x2, x2, Lxo_loc46@PAGEOFF
+Lf38_cs82a:
 	bl _xo_fault_shl
-Lf38_cs81b:
+Lf38_cs82b:
 	brk #1
 Lf38_fault16:
 	mov x0, x6
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc44@PAGE
-	add x3, x3, Lxo_loc44@PAGEOFF
-Lf38_cs82a:
+	adrp x3, Lxo_loc47@PAGE
+	add x3, x3, Lxo_loc47@PAGEOFF
+Lf38_cs83a:
 	bl _xo_fault_overflow
-Lf38_cs82b:
+Lf38_cs83b:
 	brk #1
 Lf38_fault17:
 	mov x0, x10
 	mov x1, #12
-	adrp x2, Lxo_loc45@PAGE
-	add x2, x2, Lxo_loc45@PAGEOFF
-Lf38_cs83a:
+	adrp x2, Lxo_loc48@PAGE
+	add x2, x2, Lxo_loc48@PAGEOFF
+Lf38_cs84a:
 	bl _xo_fault_shl
-Lf38_cs83b:
+Lf38_cs84b:
 	brk #1
 	.cfi_endproc
 
@@ -5335,9 +5374,9 @@ Lf40_b65:
 	mov x5, x24
 	mov x6, x27
 	mov x7, x28
-Lf40_cs85a:
+Lf40_cs86a:
 	bl _xo_f_netpolicy_2eentry__admits
-Lf40_cs85b:
+Lf40_cs86b:
 Lf40_b69:
 	cbz x0, Lf40_b72
 Lf40_b70:
@@ -5416,28 +5455,28 @@ Lf40_b74:
 Lf40_fault1:
 	mov x0, x9
 	mov x1, x26
-	adrp x2, Lxo_loc46@PAGE
-	add x2, x2, Lxo_loc46@PAGEOFF
+	adrp x2, Lxo_loc49@PAGE
+	add x2, x2, Lxo_loc49@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf40_fault2:
 	mov x0, x20
 	mov x1, x26
-	adrp x2, Lxo_loc47@PAGE
-	add x2, x2, Lxo_loc47@PAGEOFF
-Lf40_cs84a:
+	adrp x2, Lxo_loc50@PAGE
+	add x2, x2, Lxo_loc50@PAGEOFF
+Lf40_cs85a:
 	bl _xo_fault_bytes_index
-Lf40_cs84b:
+Lf40_cs85b:
 	brk #1
 Lf40_fault3:
 	mov x0, x19
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc48@PAGE
-	add x3, x3, Lxo_loc48@PAGEOFF
-Lf40_cs86a:
+	adrp x3, Lxo_loc51@PAGE
+	add x3, x3, Lxo_loc51@PAGEOFF
+Lf40_cs87a:
 	bl _xo_fault_overflow
-Lf40_cs86b:
+Lf40_cs87b:
 	brk #1
 	.cfi_endproc
 
@@ -5497,9 +5536,9 @@ Lf41_fault1:
 	mov x2, #16
 	adrp x3, Lxo_loc9@PAGE
 	add x3, x3, Lxo_loc9@PAGEOFF
-Lf41_cs87a:
+Lf41_cs88a:
 	bl _xo_fault_overflow
-Lf41_cs87b:
+Lf41_cs88b:
 	brk #1
 	.cfi_endproc
 
@@ -5863,9 +5902,9 @@ Lf42_b128:
 	mov x2, x25
 	mov x3, x26
 	add x6, sp, #16
-Lf42_cs88a:
+Lf42_cs89a:
 	bl _xo_str_slice_at
-Lf42_cs88b:
+Lf42_cs89b:
 	mov x20, x0
 	ldr x5, [sp, #16]
 Lf42_b130:
@@ -5874,9 +5913,9 @@ Lf42_b130:
 	mov x2, x24
 	mov x3, x23
 	mov x4, x20
-Lf42_cs89a:
+Lf42_cs90a:
 	bl _xo_f_netpolicy_2eadmits
-Lf42_cs89b:
+Lf42_cs90b:
 	mov x19, x0
 Lf42_b133:
 	mov x0, x24
@@ -5911,67 +5950,67 @@ Lf42_b132:
 Lf42_fault1:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf42_fault2:
 	mov x0, x14
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf42_fault3:
 	mov x0, x10
 	mov x1, x19
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf42_fault4:
-	mov x0, x10
-	mov x1, x20
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
-	bl _xo_fault_bytes_index
-	brk #1
-Lf42_fault5:
-	mov x0, x13
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc52@PAGE
-	add x3, x3, Lxo_loc52@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf42_fault6:
-	mov x0, x10
-	mov x1, x20
-	adrp x2, Lxo_loc53@PAGE
-	add x2, x2, Lxo_loc53@PAGEOFF
-	bl _xo_fault_bytes_index
-	brk #1
-Lf42_fault7:
 	mov x0, x10
 	mov x1, x20
 	adrp x2, Lxo_loc54@PAGE
 	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
-Lf42_fault8:
-	mov x0, x3
+Lf42_fault5:
+	mov x0, x13
 	mov x1, #43
 	mov x2, #1
 	adrp x3, Lxo_loc55@PAGE
 	add x3, x3, Lxo_loc55@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf42_fault9:
+Lf42_fault6:
 	mov x0, x10
 	mov x1, x20
 	adrp x2, Lxo_loc56@PAGE
 	add x2, x2, Lxo_loc56@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
+Lf42_fault7:
+	mov x0, x10
+	mov x1, x20
+	adrp x2, Lxo_loc57@PAGE
+	add x2, x2, Lxo_loc57@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
+Lf42_fault8:
+	mov x0, x3
+	mov x1, #43
+	mov x2, #1
+	adrp x3, Lxo_loc58@PAGE
+	add x3, x3, Lxo_loc58@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf42_fault9:
+	mov x0, x10
+	mov x1, x20
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -6191,9 +6230,9 @@ Lf46_b20:
 	mov x1, x20
 	mov x3, x20
 	add x6, sp, #16
-Lf46_cs90a:
+Lf46_cs91a:
 	bl _xo_str_slice_at
-Lf46_cs90b:
+Lf46_cs91b:
 	mov x3, x0
 	ldr x4, [sp, #16]
 Lf46_b23:
@@ -6228,22 +6267,22 @@ Lf46_b22:
 Lf46_fault1:
 	mov x0, x19
 	mov x1, x20
-	adrp x2, Lxo_loc57@PAGE
-	add x2, x2, Lxo_loc57@PAGEOFF
+	adrp x2, Lxo_loc60@PAGE
+	add x2, x2, Lxo_loc60@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf46_fault2:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, Lxo_loc58@PAGE
-	add x2, x2, Lxo_loc58@PAGEOFF
+	adrp x2, Lxo_loc61@PAGE
+	add x2, x2, Lxo_loc61@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf46_fault3:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, Lxo_loc59@PAGE
-	add x2, x2, Lxo_loc59@PAGEOFF
+	adrp x2, Lxo_loc62@PAGE
+	add x2, x2, Lxo_loc62@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -6279,17 +6318,113 @@ Lf47_fault1:
 _xo_f_prelude_2estr__ends__with:
 Lf48_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
+Lf48_b0:
+Lf48_b1:
+	cmp x3, x1
+	b.gt Lf48_b20
+Lf48_b2:
+	sub x13, x1, x3
+Lf48_b3:
+	cmp x3, #8
+	b.lt Lf48_b12
+Lf48_b4:
+	mov x11, #0
+Lf48_b5:
+	sub x9, x3, x11
+	cmp x9, #8
+	b.le Lf48_b10
+Lf48_b6:
+	adds x10, x13, x11
+	b.vs Lf48_fault1
+	add x9, x0, #16
+	ldr x12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf48_b9
+Lf48_b7:
+	mov x0, #0
+	b Lf48_b22
+Lf48_b9:
+	adds x11, x11, #8
+	b.vs Lf48_fault2
+	b Lf48_b5
+Lf48_b10:
+	add x9, x13, x3
+	sub x10, x9, #8
+	add x9, x0, #16
+	ldr x11, [x9, x10]
+	add x9, x3, #0
+	sub x10, x9, #8
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x11, x9
+	cset x0, eq
+	b Lf48_b22
+Lf48_b12:
+	mov x11, #0
+Lf48_b13:
+	cmp x11, x3
+	b.ge Lf48_b18
+Lf48_b14:
+	add x10, x13, x11
+	cmp x10, x1
+	b.hs Lf48_fault3
+	add x9, x0, #16
+	ldrb w12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldrb w9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf48_b17
+Lf48_b15:
+	mov x0, #0
+	b Lf48_b22
+Lf48_b17:
+	add x11, x11, #1
+	cmp x11, x3
+	b.lt Lf48_b14
+Lf48_b18:
+	mov x0, #1
+	b Lf48_b22
+Lf48_b20:
+	mov x0, #0
+Lf48_b22:
+	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf48_b0:
-	add x0, x0, #16
-	add x2, x2, #16
-	bl _xo_str_ends_with
-	ldp x29, x30, [sp], #16
-	ret
+Lf48_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x13
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc22@PAGE
+	add x3, x3, Lxo_loc22@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf48_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #8
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #8
+	adrp x3, Lxo_loc23@PAGE
+	add x3, x3, Lxo_loc23@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf48_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	adrp x2, Lxo_loc24@PAGE
+	add x2, x2, Lxo_loc24@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
 	.cfi_endproc
 
 // func text.push_num
@@ -6429,47 +6564,47 @@ Lf49_b16:
 Lf49_fault1:
 	mov x2, x20
 	mov x1, #43
-	adrp x3, Lxo_loc60@PAGE
-	add x3, x3, Lxo_loc60@PAGEOFF
-Lf49_cs91a:
+	adrp x3, Lxo_loc63@PAGE
+	add x3, x3, Lxo_loc63@PAGEOFF
+Lf49_cs92a:
 	bl _xo_fault_overflow
-Lf49_cs91b:
+Lf49_cs92b:
 	brk #1
 Lf49_fault2:
 	mov x2, x0
 	mov x0, x11
 	mov x1, #42
-	adrp x3, Lxo_loc61@PAGE
-	add x3, x3, Lxo_loc61@PAGEOFF
-Lf49_cs92a:
+	adrp x3, Lxo_loc64@PAGE
+	add x3, x3, Lxo_loc64@PAGEOFF
+Lf49_cs93a:
 	bl _xo_fault_overflow
-Lf49_cs92b:
+Lf49_cs93b:
 	brk #1
 Lf49_fault3:
 	mov x0, x10
-	adrp x1, Lxo_loc62@PAGE
-	add x1, x1, Lxo_loc62@PAGEOFF
-Lf49_cs93a:
+	adrp x1, Lxo_loc65@PAGE
+	add x1, x1, Lxo_loc65@PAGEOFF
+Lf49_cs94a:
 	bl _xo_fault_shift
-Lf49_cs93b:
+Lf49_cs94b:
 	brk #1
 Lf49_fault4:
 	mov x0, x21
 	mov x1, x10
-	adrp x2, Lxo_loc62@PAGE
-	add x2, x2, Lxo_loc62@PAGEOFF
-Lf49_cs94a:
+	adrp x2, Lxo_loc65@PAGE
+	add x2, x2, Lxo_loc65@PAGEOFF
+Lf49_cs95a:
 	bl _xo_fault_shl
-Lf49_cs94b:
+Lf49_cs95b:
 	brk #1
 Lf49_fault5:
 	mov x2, x20
 	mov x1, #43
-	adrp x3, Lxo_loc63@PAGE
-	add x3, x3, Lxo_loc63@PAGEOFF
-Lf49_cs95a:
+	adrp x3, Lxo_loc66@PAGE
+	add x3, x3, Lxo_loc66@PAGEOFF
+Lf49_cs96a:
 	bl _xo_fault_overflow
-Lf49_cs95b:
+Lf49_cs96b:
 	brk #1
 	.cfi_endproc
 
@@ -6835,215 +6970,215 @@ Lf50_fault1:
 	mov x0, x15
 	mov x1, #45
 	mov x2, #1
-	adrp x3, Lxo_loc64@PAGE
-	add x3, x3, Lxo_loc64@PAGEOFF
-Lf50_cs96a:
+	adrp x3, Lxo_loc67@PAGE
+	add x3, x3, Lxo_loc67@PAGEOFF
+Lf50_cs97a:
 	bl _xo_fault_overflow
-Lf50_cs96b:
+Lf50_cs97b:
 	brk #1
 Lf50_fault2:
 	mov x2, x0
 	mov x0, x9
 	mov x1, #45
-	adrp x3, Lxo_loc65@PAGE
-	add x3, x3, Lxo_loc65@PAGEOFF
-Lf50_cs97a:
+	adrp x3, Lxo_loc68@PAGE
+	add x3, x3, Lxo_loc68@PAGEOFF
+Lf50_cs98a:
 	bl _xo_fault_overflow
-Lf50_cs97b:
+Lf50_cs98b:
 	brk #1
 Lf50_fault3:
 	mov x0, x19
 	mov x2, x6
 	mov x1, #45
-	adrp x3, Lxo_loc66@PAGE
-	add x3, x3, Lxo_loc66@PAGEOFF
-Lf50_cs98a:
+	adrp x3, Lxo_loc69@PAGE
+	add x3, x3, Lxo_loc69@PAGEOFF
+Lf50_cs99a:
 	bl _xo_fault_overflow
-Lf50_cs98b:
+Lf50_cs99b:
 	brk #1
 Lf50_fault4:
 	mov x0, x8
 	mov x2, x12
 	mov x1, #42
-	adrp x3, Lxo_loc39@PAGE
-	add x3, x3, Lxo_loc39@PAGEOFF
-Lf50_cs99a:
+	adrp x3, Lxo_loc42@PAGE
+	add x3, x3, Lxo_loc42@PAGEOFF
+Lf50_cs100a:
 	bl _xo_fault_overflow
-Lf50_cs99b:
+Lf50_cs100b:
 	brk #1
 Lf50_fault5:
 	mov x2, x0
 	mov x0, x11
 	mov x1, #42
-	adrp x3, Lxo_loc67@PAGE
-	add x3, x3, Lxo_loc67@PAGEOFF
-Lf50_cs100a:
+	adrp x3, Lxo_loc70@PAGE
+	add x3, x3, Lxo_loc70@PAGEOFF
+Lf50_cs101a:
 	bl _xo_fault_overflow
-Lf50_cs100b:
+Lf50_cs101b:
 	brk #1
 Lf50_fault6:
 	mov x0, x12
-	adrp x1, Lxo_loc68@PAGE
-	add x1, x1, Lxo_loc68@PAGEOFF
-Lf50_cs101a:
+	adrp x1, Lxo_loc71@PAGE
+	add x1, x1, Lxo_loc71@PAGEOFF
+Lf50_cs102a:
 	bl _xo_fault_shift
-Lf50_cs101b:
+Lf50_cs102b:
 	brk #1
 Lf50_fault7:
 	mov x0, x11
 	mov x1, x12
-	adrp x2, Lxo_loc68@PAGE
-	add x2, x2, Lxo_loc68@PAGEOFF
-Lf50_cs102a:
+	adrp x2, Lxo_loc71@PAGE
+	add x2, x2, Lxo_loc71@PAGEOFF
+Lf50_cs103a:
 	bl _xo_fault_shl
-Lf50_cs102b:
+Lf50_cs103b:
 	brk #1
 Lf50_fault8:
 	mov x0, x20
 	mov x1, #47
-	adrp x2, Lxo_loc69@PAGE
-	add x2, x2, Lxo_loc69@PAGEOFF
-Lf50_cs103a:
+	adrp x2, Lxo_loc72@PAGE
+	add x2, x2, Lxo_loc72@PAGEOFF
+Lf50_cs104a:
 	bl _xo_fault_divzero
-Lf50_cs103b:
+Lf50_cs104b:
 	brk #1
 Lf50_fault9:
 	mov x0, x20
 	mov x2, x8
 	mov x1, #47
-	adrp x3, Lxo_loc69@PAGE
-	add x3, x3, Lxo_loc69@PAGEOFF
-Lf50_cs104a:
+	adrp x3, Lxo_loc72@PAGE
+	add x3, x3, Lxo_loc72@PAGEOFF
+Lf50_cs105a:
 	bl _xo_fault_overflow
-Lf50_cs104b:
+Lf50_cs105b:
 	brk #1
 Lf50_fault10:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc70@PAGE
-	add x3, x3, Lxo_loc70@PAGEOFF
-Lf50_cs105a:
+	adrp x3, Lxo_loc73@PAGE
+	add x3, x3, Lxo_loc73@PAGEOFF
+Lf50_cs106a:
 	bl _xo_fault_overflow
-Lf50_cs105b:
+Lf50_cs106b:
 	brk #1
 Lf50_fault11:
 	mov x0, x12
 	mov x2, x13
 	mov x1, #42
-	adrp x3, Lxo_loc71@PAGE
-	add x3, x3, Lxo_loc71@PAGEOFF
-Lf50_cs106a:
+	adrp x3, Lxo_loc74@PAGE
+	add x3, x3, Lxo_loc74@PAGEOFF
+Lf50_cs107a:
 	bl _xo_fault_overflow
-Lf50_cs106b:
+Lf50_cs107b:
 	brk #1
 Lf50_fault12:
 	mov x0, x11
-	adrp x1, Lxo_loc72@PAGE
-	add x1, x1, Lxo_loc72@PAGEOFF
-Lf50_cs107a:
+	adrp x1, Lxo_loc75@PAGE
+	add x1, x1, Lxo_loc75@PAGEOFF
+Lf50_cs108a:
 	bl _xo_fault_shift
-Lf50_cs107b:
+Lf50_cs108b:
 	brk #1
 Lf50_fault13:
 	mov x0, x9
 	mov x1, x11
-	adrp x2, Lxo_loc72@PAGE
-	add x2, x2, Lxo_loc72@PAGEOFF
-Lf50_cs108a:
+	adrp x2, Lxo_loc75@PAGE
+	add x2, x2, Lxo_loc75@PAGEOFF
+Lf50_cs109a:
 	bl _xo_fault_shl
-Lf50_cs108b:
+Lf50_cs109b:
 	brk #1
 Lf50_fault14:
 	mov x0, x20
 	mov x1, #37
-	adrp x2, Lxo_loc73@PAGE
-	add x2, x2, Lxo_loc73@PAGEOFF
-Lf50_cs109a:
+	adrp x2, Lxo_loc76@PAGE
+	add x2, x2, Lxo_loc76@PAGEOFF
+Lf50_cs110a:
 	bl _xo_fault_divzero
-Lf50_cs109b:
+Lf50_cs110b:
 	brk #1
 Lf50_fault15:
 	mov x0, x12
 	mov x2, x7
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
-Lf50_cs110a:
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
+Lf50_cs111a:
 	bl _xo_fault_overflow
-Lf50_cs110b:
+Lf50_cs111b:
 	brk #1
 Lf50_fault16:
 	mov x0, x11
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
-Lf50_cs111a:
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
+Lf50_cs112a:
 	bl _xo_fault_shift
-Lf50_cs111b:
+Lf50_cs112b:
 	brk #1
 Lf50_fault17:
 	mov x0, x23
 	mov x1, x11
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
-Lf50_cs112a:
-	bl _xo_fault_shl
-Lf50_cs112b:
-	brk #1
-Lf50_fault18:
-	mov x0, x24
-	mov x1, #4
-	adrp x2, Lxo_loc74@PAGE
-	add x2, x2, Lxo_loc74@PAGEOFF
+	adrp x2, Lxo_loc30@PAGE
+	add x2, x2, Lxo_loc30@PAGEOFF
 Lf50_cs113a:
 	bl _xo_fault_shl
 Lf50_cs113b:
 	brk #1
+Lf50_fault18:
+	mov x0, x24
+	mov x1, #4
+	adrp x2, Lxo_loc77@PAGE
+	add x2, x2, Lxo_loc77@PAGEOFF
+Lf50_cs114a:
+	bl _xo_fault_shl
+Lf50_cs114b:
+	brk #1
 Lf50_fault19:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc75@PAGE
-	add x3, x3, Lxo_loc75@PAGEOFF
-Lf50_cs114a:
+	adrp x3, Lxo_loc78@PAGE
+	add x3, x3, Lxo_loc78@PAGEOFF
+Lf50_cs115a:
 	bl _xo_fault_overflow
-Lf50_cs114b:
+Lf50_cs115b:
 	brk #1
 Lf50_fault20:
 	mov x0, x9
 	mov x2, x6
 	mov x1, #43
-	adrp x3, Lxo_loc75@PAGE
-	add x3, x3, Lxo_loc75@PAGEOFF
-Lf50_cs115a:
+	adrp x3, Lxo_loc78@PAGE
+	add x3, x3, Lxo_loc78@PAGEOFF
+Lf50_cs116a:
 	bl _xo_fault_overflow
-Lf50_cs115b:
+Lf50_cs116b:
 	brk #1
 Lf50_fault21:
 	mov x0, x10
 	mov x1, #8
-	adrp x2, Lxo_loc76@PAGE
-	add x2, x2, Lxo_loc76@PAGEOFF
-Lf50_cs116a:
+	adrp x2, Lxo_loc79@PAGE
+	add x2, x2, Lxo_loc79@PAGEOFF
+Lf50_cs117a:
 	bl _xo_fault_shl
-Lf50_cs116b:
+Lf50_cs117b:
 	brk #1
 Lf50_fault22:
 	mov x0, x7
 	mov x2, x26
 	mov x1, #43
-	adrp x3, Lxo_loc77@PAGE
-	add x3, x3, Lxo_loc77@PAGEOFF
-Lf50_cs117a:
+	adrp x3, Lxo_loc80@PAGE
+	add x3, x3, Lxo_loc80@PAGEOFF
+Lf50_cs118a:
 	bl _xo_fault_overflow
-Lf50_cs117b:
+Lf50_cs118b:
 	brk #1
 Lf50_fault23:
 	mov x0, x10
 	mov x1, #12
-	adrp x2, Lxo_loc78@PAGE
-	add x2, x2, Lxo_loc78@PAGEOFF
-Lf50_cs118a:
+	adrp x2, Lxo_loc81@PAGE
+	add x2, x2, Lxo_loc81@PAGEOFF
+Lf50_cs119a:
 	bl _xo_fault_shl
-Lf50_cs118b:
+Lf50_cs119b:
 	brk #1
 	.cfi_endproc
 
@@ -7138,16 +7273,16 @@ Lf52_fault1:
 	mov x0, x11
 	mov x2, x1
 	mov x1, #42
-	adrp x3, Lxo_loc26@PAGE
-	add x3, x3, Lxo_loc26@PAGEOFF
+	adrp x3, Lxo_loc29@PAGE
+	add x3, x3, Lxo_loc29@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf52_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x1, Lxo_loc27@PAGE
-	add x1, x1, Lxo_loc27@PAGEOFF
+	adrp x1, Lxo_loc30@PAGE
+	add x1, x1, Lxo_loc30@PAGEOFF
 	bl _xo_fault_shift
 	brk #1
 Lf52_fault3:
@@ -7155,8 +7290,8 @@ Lf52_fault3:
 	mov x29, sp
 	mov x0, x2
 	mov x1, x10
-	adrp x2, Lxo_loc27@PAGE
-	add x2, x2, Lxo_loc27@PAGEOFF
+	adrp x2, Lxo_loc30@PAGE
+	add x2, x2, Lxo_loc30@PAGEOFF
 	bl _xo_fault_shl
 	brk #1
 	.cfi_endproc
@@ -7314,9 +7449,9 @@ Lf54_b22:
 Lf54_b23:
 	sub x1, x9, #1075
 Lf54_b25:
-Lf54_cs119a:
+Lf54_cs120a:
 	bl _xo_f_num_2edbox
-Lf54_cs119b:
+Lf54_cs120b:
 	mov x19, x0
 	mov x20, x1
 Lf54_b28:
@@ -7326,9 +7461,9 @@ Lf54_b28:
 	b.ge Lf54_b31
 Lf54_b29:
 	mov x0, x19
-Lf54_cs120a:
+Lf54_cs121a:
 	bl _xo_f_num_2endigits8
-Lf54_cs120b:
+Lf54_cs121b:
 	mov x4, x0
 	b Lf54_b38
 Lf54_b31:
@@ -7344,9 +7479,9 @@ Lf54_b32:
 	movk x9, #21990, lsl #48
 	smulh x9, x19, x9
 	asr x0, x9, #25
-Lf54_cs121a:
+Lf54_cs122a:
 	bl _xo_f_num_2endigits8
-Lf54_cs121b:
+Lf54_cs122b:
 	adds x4, x0, #8
 	b.vs Lf54_fault1
 	b Lf54_b38
@@ -7409,21 +7544,21 @@ Lf54_fault1:
 	mov x2, x0
 	mov x0, #8
 	mov x1, #43
-	adrp x3, Lxo_loc79@PAGE
-	add x3, x3, Lxo_loc79@PAGEOFF
-Lf54_cs122a:
+	adrp x3, Lxo_loc82@PAGE
+	add x3, x3, Lxo_loc82@PAGEOFF
+Lf54_cs123a:
 	bl _xo_fault_overflow
-Lf54_cs122b:
+Lf54_cs123b:
 	brk #1
 Lf54_fault2:
 	mov x0, x4
 	mov x2, x20
 	mov x1, #43
-	adrp x3, Lxo_loc80@PAGE
-	add x3, x3, Lxo_loc80@PAGEOFF
-Lf54_cs123a:
+	adrp x3, Lxo_loc83@PAGE
+	add x3, x3, Lxo_loc83@PAGEOFF
+Lf54_cs124a:
 	bl _xo_fault_overflow
-Lf54_cs123b:
+Lf54_cs124b:
 	brk #1
 	.cfi_endproc
 
@@ -7459,8 +7594,8 @@ Lf55_fault1:
 	mov x29, sp
 	mov x2, x12
 	mov x1, #42
-	adrp x3, Lxo_loc39@PAGE
-	add x3, x3, Lxo_loc39@PAGEOFF
+	adrp x3, Lxo_loc42@PAGE
+	add x3, x3, Lxo_loc42@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -7514,8 +7649,8 @@ Lf57_b6:
 Lf57_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -7983,98 +8118,98 @@ Lf58_b177:
 Lf58_fault1:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, Lxo_loc81@PAGE
-	add x3, x3, Lxo_loc81@PAGEOFF
+	adrp x3, Lxo_loc84@PAGE
+	add x3, x3, Lxo_loc84@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault2:
 	mov x0, x2
 	mov x1, #43
 	mov x2, #5
-	adrp x3, Lxo_loc82@PAGE
-	add x3, x3, Lxo_loc82@PAGEOFF
+	adrp x3, Lxo_loc85@PAGE
+	add x3, x3, Lxo_loc85@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault3:
 	mov x0, x14
 	mov x1, #45
-	adrp x3, Lxo_loc83@PAGE
-	add x3, x3, Lxo_loc83@PAGEOFF
+	adrp x3, Lxo_loc86@PAGE
+	add x3, x3, Lxo_loc86@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault4:
 	mov x0, x14
 	mov x1, #45
-	adrp x3, Lxo_loc84@PAGE
-	add x3, x3, Lxo_loc84@PAGEOFF
+	adrp x3, Lxo_loc87@PAGE
+	add x3, x3, Lxo_loc87@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault5:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault6:
 	mov x0, x10
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault7:
 	mov x0, x10
 	mov x1, x13
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault8:
 	mov x0, x2
-	adrp x2, Lxo_loc85@PAGE
-	add x2, x2, Lxo_loc85@PAGEOFF
+	adrp x2, Lxo_loc88@PAGE
+	add x2, x2, Lxo_loc88@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault9:
 	mov x0, x9
-	adrp x2, Lxo_loc86@PAGE
-	add x2, x2, Lxo_loc86@PAGEOFF
+	adrp x2, Lxo_loc89@PAGE
+	add x2, x2, Lxo_loc89@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault10:
 	mov x0, x3
 	mov x2, x13
 	mov x1, #45
-	adrp x3, Lxo_loc87@PAGE
-	add x3, x3, Lxo_loc87@PAGEOFF
+	adrp x3, Lxo_loc90@PAGE
+	add x3, x3, Lxo_loc90@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault11:
 	mov x0, x10
 	mov x1, x5
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault12:
 	mov x0, x13
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc88@PAGE
-	add x3, x3, Lxo_loc88@PAGEOFF
+	adrp x3, Lxo_loc91@PAGE
+	add x3, x3, Lxo_loc91@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault13:
 	mov x0, x10
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault14:
 	mov x0, x11
-	adrp x2, Lxo_loc89@PAGE
-	add x2, x2, Lxo_loc89@PAGEOFF
+	adrp x2, Lxo_loc92@PAGE
+	add x2, x2, Lxo_loc92@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault15:
@@ -8083,185 +8218,185 @@ Lf58_fault15:
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc90@PAGE
-	add x3, x3, Lxo_loc90@PAGEOFF
+	adrp x3, Lxo_loc93@PAGE
+	add x3, x3, Lxo_loc93@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault16:
 	mov x0, x2
-	adrp x2, Lxo_loc91@PAGE
-	add x2, x2, Lxo_loc91@PAGEOFF
+	adrp x2, Lxo_loc94@PAGE
+	add x2, x2, Lxo_loc94@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault17:
 	mov x0, x10
-	adrp x2, Lxo_loc53@PAGE
-	add x2, x2, Lxo_loc53@PAGEOFF
+	adrp x2, Lxo_loc56@PAGE
+	add x2, x2, Lxo_loc56@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault18:
 	mov x0, x2
-	adrp x2, Lxo_loc54@PAGE
-	add x2, x2, Lxo_loc54@PAGEOFF
+	adrp x2, Lxo_loc57@PAGE
+	add x2, x2, Lxo_loc57@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault19:
 	mov x0, x13
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault20:
 	mov x0, x13
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc55@PAGE
-	add x3, x3, Lxo_loc55@PAGEOFF
+	adrp x3, Lxo_loc58@PAGE
+	add x3, x3, Lxo_loc58@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault21:
 	mov x0, x10
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault22:
 	mov x0, x2
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault23:
 	mov x0, x10
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault24:
 	mov x0, x13
 	mov x2, x8
 	mov x1, #45
-	adrp x3, Lxo_loc83@PAGE
-	add x3, x3, Lxo_loc83@PAGEOFF
+	adrp x3, Lxo_loc86@PAGE
+	add x3, x3, Lxo_loc86@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault25:
 	mov x0, x13
 	mov x2, x8
 	mov x1, #45
-	adrp x3, Lxo_loc84@PAGE
-	add x3, x3, Lxo_loc84@PAGEOFF
+	adrp x3, Lxo_loc87@PAGE
+	add x3, x3, Lxo_loc87@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault26:
 	mov x0, x8
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault27:
 	mov x0, x10
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault28:
 	mov x0, x10
 	mov x1, x5
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault29:
 	mov x0, x3
 	mov x2, x14
 	mov x1, #45
-	adrp x3, Lxo_loc83@PAGE
-	add x3, x3, Lxo_loc83@PAGEOFF
+	adrp x3, Lxo_loc86@PAGE
+	add x3, x3, Lxo_loc86@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault30:
 	mov x0, x3
 	mov x2, x14
 	mov x1, #45
-	adrp x3, Lxo_loc84@PAGE
-	add x3, x3, Lxo_loc84@PAGEOFF
+	adrp x3, Lxo_loc87@PAGE
+	add x3, x3, Lxo_loc87@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault31:
 	mov x0, x14
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault32:
 	mov x0, x10
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault33:
 	mov x0, x10
 	mov x1, x7
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault34:
 	mov x0, x2
-	adrp x2, Lxo_loc92@PAGE
-	add x2, x2, Lxo_loc92@PAGEOFF
+	adrp x2, Lxo_loc95@PAGE
+	add x2, x2, Lxo_loc95@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault35:
 	mov x0, x9
-	adrp x2, Lxo_loc93@PAGE
-	add x2, x2, Lxo_loc93@PAGEOFF
+	adrp x2, Lxo_loc96@PAGE
+	add x2, x2, Lxo_loc96@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault36:
 	mov x0, x9
-	adrp x2, Lxo_loc94@PAGE
-	add x2, x2, Lxo_loc94@PAGEOFF
+	adrp x2, Lxo_loc97@PAGE
+	add x2, x2, Lxo_loc97@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault37:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, Lxo_loc83@PAGE
-	add x3, x3, Lxo_loc83@PAGEOFF
+	adrp x3, Lxo_loc86@PAGE
+	add x3, x3, Lxo_loc86@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault38:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, Lxo_loc84@PAGE
-	add x3, x3, Lxo_loc84@PAGEOFF
+	adrp x3, Lxo_loc87@PAGE
+	add x3, x3, Lxo_loc87@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault39:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf58_fault40:
 	mov x0, x10
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf58_fault41:
 	mov x0, x10
 	mov x1, x5
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -8320,8 +8455,8 @@ Lf59_fault1:
 	mov x29, sp
 	mov x0, x3
 	mov x1, #45
-	adrp x3, Lxo_loc83@PAGE
-	add x3, x3, Lxo_loc83@PAGEOFF
+	adrp x3, Lxo_loc86@PAGE
+	add x3, x3, Lxo_loc86@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf59_fault2:
@@ -8330,8 +8465,8 @@ Lf59_fault2:
 	mov x0, x7
 	mov x2, x6
 	mov x1, #45
-	adrp x3, Lxo_loc87@PAGE
-	add x3, x3, Lxo_loc87@PAGEOFF
+	adrp x3, Lxo_loc90@PAGE
+	add x3, x3, Lxo_loc90@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf59_fault3:
@@ -8339,8 +8474,8 @@ Lf59_fault3:
 	mov x29, sp
 	mov x0, x3
 	mov x1, #45
-	adrp x3, Lxo_loc84@PAGE
-	add x3, x3, Lxo_loc84@PAGEOFF
+	adrp x3, Lxo_loc87@PAGE
+	add x3, x3, Lxo_loc87@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf59_fault4:
@@ -8349,16 +8484,16 @@ Lf59_fault4:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc50@PAGE
-	add x3, x3, Lxo_loc50@PAGEOFF
+	adrp x3, Lxo_loc53@PAGE
+	add x3, x3, Lxo_loc53@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf59_fault5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, Lxo_loc49@PAGE
-	add x2, x2, Lxo_loc49@PAGEOFF
+	adrp x2, Lxo_loc52@PAGE
+	add x2, x2, Lxo_loc52@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf59_fault6:
@@ -8367,8 +8502,8 @@ Lf59_fault6:
 	mov x0, x6
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_loc88@PAGE
-	add x3, x3, Lxo_loc88@PAGEOFF
+	adrp x3, Lxo_loc91@PAGE
+	add x3, x3, Lxo_loc91@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf59_fault7:
@@ -8376,8 +8511,8 @@ Lf59_fault7:
 	mov x29, sp
 	mov x0, x10
 	mov x1, x5
-	adrp x2, Lxo_loc51@PAGE
-	add x2, x2, Lxo_loc51@PAGEOFF
+	adrp x2, Lxo_loc54@PAGE
+	add x2, x2, Lxo_loc54@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -8563,24 +8698,24 @@ Lf60_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, Lxo_loc53@PAGE
-	add x2, x2, Lxo_loc53@PAGEOFF
+	adrp x2, Lxo_loc56@PAGE
+	add x2, x2, Lxo_loc56@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf60_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
-	adrp x2, Lxo_loc54@PAGE
-	add x2, x2, Lxo_loc54@PAGEOFF
+	adrp x2, Lxo_loc57@PAGE
+	add x2, x2, Lxo_loc57@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf60_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x2
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf60_fault4:
@@ -8589,32 +8724,145 @@ Lf60_fault4:
 	mov x0, x2
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc55@PAGE
-	add x3, x3, Lxo_loc55@PAGEOFF
+	adrp x3, Lxo_loc58@PAGE
+	add x3, x3, Lxo_loc58@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf60_fault5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf60_fault6:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 Lf60_fault7:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, Lxo_loc56@PAGE
-	add x2, x2, Lxo_loc56@PAGEOFF
+	adrp x2, Lxo_loc59@PAGE
+	add x2, x2, Lxo_loc59@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
+	.cfi_endproc
+
+// func scan.ends_with
+	.p2align 2
+_xo_f_scan_2eends__with:
+Lf61_begin:
+	.cfi_startproc
+Lf61_b0:
+	cmp x3, x1
+	b.gt Lf61_b19
+Lf61_b1:
+	sub x13, x1, x3
+Lf61_b2:
+	cmp x3, #8
+	b.lt Lf61_b11
+Lf61_b3:
+	mov x11, #0
+Lf61_b4:
+	sub x9, x3, x11
+	cmp x9, #8
+	b.le Lf61_b9
+Lf61_b5:
+	adds x10, x13, x11
+	b.vs Lf61_fault1
+	add x9, x0, #16
+	ldr x12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf61_b8
+Lf61_b6:
+	mov x0, #0
+	b Lf61_b20
+Lf61_b8:
+	adds x11, x11, #8
+	b.vs Lf61_fault2
+	b Lf61_b4
+Lf61_b9:
+	add x9, x13, x3
+	sub x10, x9, #8
+	add x9, x0, #16
+	ldr x11, [x9, x10]
+	add x9, x3, #0
+	sub x10, x9, #8
+	add x9, x2, #16
+	ldr x9, [x9, x10]
+	cmp x11, x9
+	cset x0, eq
+	b Lf61_b20
+Lf61_b11:
+	mov x11, #0
+Lf61_b12:
+	cmp x11, x3
+	b.ge Lf61_b17
+Lf61_b13:
+	add x10, x13, x11
+	cmp x10, x1
+	b.hs Lf61_fault3
+	add x9, x0, #16
+	ldrb w12, [x9, x10]
+	add x10, x11, #0
+	add x9, x2, #16
+	ldrb w9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf61_b16
+Lf61_b14:
+	mov x0, #0
+	b Lf61_b20
+Lf61_b16:
+	add x11, x11, #1
+	cmp x11, x3
+	b.lt Lf61_b13
+Lf61_b17:
+	mov x0, #1
+	b Lf61_b20
+Lf61_b19:
+	mov x0, #0
+Lf61_b20:
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf61_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x13
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc22@PAGE
+	add x3, x3, Lxo_loc22@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf61_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #8
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #8
+	adrp x3, Lxo_loc23@PAGE
+	add x3, x3, Lxo_loc23@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf61_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	adrp x2, Lxo_loc24@PAGE
+	add x2, x2, Lxo_loc24@PAGEOFF
 	bl _xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -8622,88 +8870,88 @@ Lf60_fault7:
 // func num.dbox
 	.p2align 2
 _xo_f_num_2edbox:
-Lf61_begin:
+Lf62_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf61_b0:
+Lf62_b0:
 	mov x6, x0
 	movz x9, #16, lsl #48
 	cmp x6, x9
-	b.ne Lf61_b45
-Lf61_b1:
+	b.ne Lf62_b45
+Lf62_b1:
 	eor x9, x2, #1
-Lf61_b3:
-	cbz x9, Lf61_b45
-Lf61_b4:
+Lf62_b3:
+	cbz x9, Lf62_b45
+Lf62_b4:
 	movz x10, #41481, lsl #0
 	movk x10, #9, lsl #16
 	mul x11, x1, x10
 	smulh x9, x1, x10
 	cmp x9, x11, asr #63
-	b.ne Lf61_fault1
+	b.ne Lf62_fault1
 	movz x9, #65055, lsl #0
 	movk x9, #3, lsl #16
 	subs x9, x11, x9
-	b.vs Lf61_fault2
+	b.vs Lf62_fault2
 	asr x10, x9, #21
 	mov x9, #0
 	sub x14, x9, x10
-Lf61_b5:
+Lf62_b5:
 	mov x9, #-348
 	sub x9, x14, x9
 	lsl x10, x9, #4
-Lf61_b6:
+Lf62_b6:
 	adrp x9, Lxo_str29@PAGE
 	add x9, x9, Lxo_str29@PAGEOFF
 	add x9, x9, #16
 	ldr x12, [x9, x10]
-Lf61_b8:
+Lf62_b8:
 	adds x10, x1, #1
-	b.vs Lf61_fault3
-Lf61_b9:
+	b.vs Lf62_fault3
+Lf62_b9:
 	movz x9, #43317, lsl #0
 	movk x9, #1, lsl #16
 	mul x9, x14, x9
 	asr x9, x9, #15
-Lf61_b10:
+Lf62_b10:
 	adds x9, x10, x9
-	b.vs Lf61_fault4
+	b.vs Lf62_fault4
 	subs x13, x9, #1
-	b.vs Lf61_fault5
-Lf61_b11:
+	b.vs Lf62_fault5
+Lf62_b11:
 	lsr x9, x12, #54
-Lf61_b13:
+Lf62_b13:
 	sub x10, x12, x9
-Lf61_b14:
+Lf62_b14:
 	mov x9, #11
 	subs x9, x9, x13
-	b.vs Lf61_fault6
-Lf61_b15:
+	b.vs Lf62_fault6
+Lf62_b15:
 	lsr x11, x10, x9
-Lf61_b17:
+Lf62_b17:
 	lsr x9, x12, #53
-Lf61_b19:
+Lf62_b19:
 	add x10, x12, x9
-Lf61_b20:
+Lf62_b20:
 	mov x9, #11
 	subs x9, x9, x13
-	b.vs Lf61_fault7
-Lf61_b21:
+	b.vs Lf62_fault7
+Lf62_b21:
 	lsr x10, x10, x9
-Lf61_b22:
+Lf62_b22:
 	cmp x1, #2
-	b.eq Lf61_b28
-Lf61_b23:
+	b.eq Lf62_b28
+Lf62_b23:
 	cmp x1, #3
-	b.eq Lf61_b28
-Lf61_b26:
+	b.eq Lf62_b28
+Lf62_b26:
 	adds x11, x11, #1
-	b.vs Lf61_fault8
-Lf61_b28:
+	b.vs Lf62_fault8
+Lf62_b28:
 	movz x9, #26215, lsl #0
 	movk x9, #26214, lsl #16
 	movk x9, #26214, lsl #32
@@ -8714,113 +8962,113 @@ Lf61_b28:
 	mov x9, #10
 	mul x9, x0, x9
 	cmp x11, x9
-	b.gt Lf61_b31
-Lf61_b29:
+	b.gt Lf62_b31
+Lf62_b29:
 	mov x9, #0
 	sub x9, x9, x14
 	add x1, x9, #1
 	bl _xo_f_num_2etrimmed
 	ldp x29, x30, [sp], #16
 	ret
-Lf61_b31:
+Lf62_b31:
 	mov x9, #10
 	subs x9, x9, x13
-	b.vs Lf61_fault9
-Lf61_b32:
+	b.vs Lf62_fault9
+Lf62_b32:
 	lsr x9, x12, x9
-Lf61_b33:
+Lf62_b33:
 	adds x9, x9, #1
-	b.vs Lf61_fault10
+	b.vs Lf62_fault10
 	add x9, x9, x9, lsr #63
 	asr x0, x9, #1
 	mov x9, #-77
 	cmp x1, x9
-	b.ne Lf61_b38
-Lf61_b34:
+	b.ne Lf62_b38
+Lf62_b34:
 	tst x0, #1
-	b.eq Lf61_b38
-Lf61_b37:
+	b.eq Lf62_b38
+Lf62_b37:
 	sub x0, x0, #1
-	b Lf61_b42
-Lf61_b38:
+	b Lf62_b42
+Lf62_b38:
 	cmp x0, x11
-	b.ge Lf61_b42
-Lf61_b39:
+	b.ge Lf62_b42
+Lf62_b39:
 	add x0, x0, #1
-Lf61_b42:
+Lf62_b42:
 	mov x9, #0
 	sub x1, x9, x14
 	ldp x29, x30, [sp], #16
 	ret
-Lf61_b45:
+Lf62_b45:
 	movz x10, #13377, lsl #0
 	movk x10, #1, lsl #16
 	mul x11, x1, x10
 	smulh x9, x1, x10
 	cmp x9, x11, asr #63
-	b.ne Lf61_fault11
+	b.ne Lf62_fault11
 	asr x10, x11, #18
-Lf61_b46:
+Lf62_b46:
 	mov x9, #0
 	sub x4, x9, x10
 	add x12, x4, #2
-Lf61_b47:
+Lf62_b47:
 	mov x9, #-348
 	sub x9, x12, x9
 	lsl x10, x9, #4
-Lf61_b48:
+Lf62_b48:
 	adrp x11, Lxo_str29@PAGE
 	add x11, x11, Lxo_str29@PAGEOFF
 	add x9, x11, #16
 	ldr x5, [x9, x10]
-Lf61_b51:
+Lf62_b51:
 	mov x9, #-348
 	sub x9, x12, x9
 	lsl x9, x9, #4
 	add x10, x9, #8
-Lf61_b52:
+Lf62_b52:
 	add x9, x11, #16
 	ldr x8, [x9, x10]
-Lf61_b54:
+Lf62_b54:
 	cmp x12, #0
-	b.lt Lf61_b59
-Lf61_b56:
+	b.lt Lf62_b59
+Lf62_b56:
 	cmp x12, #55
-	b.le Lf61_b62
-Lf61_b59:
+	b.le Lf62_b62
+Lf62_b59:
 	mov x9, #1
 	add x8, x8, x9
-Lf61_b62:
+Lf62_b62:
 	adds x10, x1, #1
-	b.vs Lf61_fault12
-Lf61_b63:
+	b.vs Lf62_fault12
+Lf62_b63:
 	movz x9, #43317, lsl #0
 	movk x9, #1, lsl #16
 	mul x9, x12, x9
 	asr x9, x9, #15
-Lf61_b64:
+Lf62_b64:
 	adds x9, x10, x9
-	b.vs Lf61_fault13
+	b.vs Lf62_fault13
 	subs x7, x9, #1
-	b.vs Lf61_fault14
+	b.vs Lf62_fault14
 	mov x11, #2
 	lsl x10, x6, #1
 	smulh x9, x6, x11
 	cmp x9, x10, asr #63
-	b.ne Lf61_fault15
+	b.ne Lf62_fault15
 	adds x9, x10, #1
-	b.vs Lf61_fault16
-Lf61_b65:
+	b.vs Lf62_fault16
+Lf62_b65:
 	lsl x9, x9, x7
-Lf61_b66:
+Lf62_b66:
 	umulh x13, x9, x5
-Lf61_b67:
+Lf62_b67:
 	mul x12, x9, x5
-Lf61_b68:
+Lf62_b68:
 	umulh x9, x9, x8
-Lf61_b69:
+Lf62_b69:
 	add x14, x12, x9
-Lf61_b71:
+Lf62_b71:
 	movz x10, #1, lsl #0
 	movk x10, #32768, lsl #48
 	sub x9, x10, #1
@@ -8828,16 +9076,16 @@ Lf61_b71:
 	sub x9, x10, #1
 	eor x9, x12, x9
 	cmp x11, x9
-	b.ge Lf61_b77
-Lf61_b74:
+	b.ge Lf62_b77
+Lf62_b74:
 	mov x9, #1
 	add x13, x13, x9
-Lf61_b77:
+Lf62_b77:
 	cmp x14, #0
 	cset x11, eq
-Lf61_b78:
+Lf62_b78:
 	lsr x10, x13, #3
-Lf61_b79:
+Lf62_b79:
 	movz x9, #63439, lsl #0
 	movk x9, #58195, lsl #16
 	movk x9, #39845, lsl #32
@@ -8845,106 +9093,106 @@ Lf61_b79:
 	smulh x9, x10, x9
 	asr x9, x9, #4
 	add x0, x9, x9, lsr #63
-Lf61_b80:
+Lf62_b80:
 	mov x9, #1000
 	mul x9, x0, x9
-Lf61_b82:
+Lf62_b82:
 	sub x13, x13, x9
-Lf61_b83:
+Lf62_b83:
 	mov x9, #63
 	subs x9, x9, x7
-	b.vs Lf61_fault17
-Lf61_b84:
+	b.vs Lf62_fault17
+Lf62_b84:
 	lsr x14, x5, x9
-Lf61_b85:
+Lf62_b85:
 	cmp x13, x14
-	b.ge Lf61_b96
-Lf61_b86:
+	b.ge Lf62_b96
+Lf62_b86:
 	cmp x13, #0
-	b.ne Lf61_b93
-Lf61_b88:
+	b.ne Lf62_b93
+Lf62_b88:
 	eor x9, x11, #1
-Lf61_b89:
-	cbnz x9, Lf61_b93
-Lf61_b91:
+Lf62_b89:
+	cbnz x9, Lf62_b93
+Lf62_b91:
 	tst x6, #1
-	b.ne Lf61_b95
-Lf61_b93:
+	b.ne Lf62_b95
+Lf62_b93:
 	mov x9, #0
 	sub x9, x9, x4
 	add x1, x9, #1
 	bl _xo_f_num_2etrimmed
 	ldp x29, x30, [sp], #16
 	ret
-Lf61_b95:
+Lf62_b95:
 	sub x0, x0, #1
 	mov x13, #1000
-	b Lf61_b126
-Lf61_b96:
-	b.ne Lf61_b126
-Lf61_b97:
+	b Lf62_b126
+Lf62_b96:
+	b.ne Lf62_b126
+Lf62_b97:
 	mov x11, #2
 	lsl x10, x6, #1
 	smulh x9, x6, x11
 	cmp x9, x10, asr #63
-	b.ne Lf61_fault18
+	b.ne Lf62_fault18
 	subs x10, x10, #1
-	b.vs Lf61_fault19
-Lf61_b98:
+	b.vs Lf62_fault19
+Lf62_b98:
 	umulh x11, x10, x8
-Lf61_b99:
+Lf62_b99:
 	mul x9, x10, x5
-Lf61_b101:
+Lf62_b101:
 	add x11, x9, x11
-Lf61_b103:
+Lf62_b103:
 	mul x12, x10, x8
-Lf61_b104:
+Lf62_b104:
 	mov x9, #64
 	subs x9, x9, x7
-	b.vs Lf61_fault20
-Lf61_b105:
+	b.vs Lf62_fault20
+Lf62_b105:
 	lsr x9, x11, x9
-Lf61_b106:
+Lf62_b106:
 	and x10, x9, #1
-Lf61_b107:
+Lf62_b107:
 	lsl x11, x11, x7
-Lf61_b108:
+Lf62_b108:
 	mov x9, #64
 	subs x9, x9, x7
-	b.vs Lf61_fault21
-Lf61_b109:
+	b.vs Lf62_fault21
+Lf62_b109:
 	lsr x9, x12, x9
-Lf61_b110:
+Lf62_b110:
 	orr x9, x11, x9
 	cmp x9, #0
-	b.ne Lf61_b114
-Lf61_b111:
+	b.ne Lf62_b114
+Lf62_b111:
 	orr x10, x10, #2
-Lf61_b114:
+Lf62_b114:
 	and x9, x10, #1
 	cmp x9, #0
-	b.ne Lf61_b121
-Lf61_b116:
+	b.ne Lf62_b121
+Lf62_b116:
 	and x9, x10, #2
 	cmp x9, #0
-	b.eq Lf61_b126
-Lf61_b117:
+	b.eq Lf62_b126
+Lf62_b117:
 	tst x6, #1
-	b.ne Lf61_b126
-Lf61_b121:
+	b.ne Lf62_b126
+Lf62_b121:
 	mov x9, #0
 	sub x9, x9, x4
 	add x1, x9, #1
 	bl _xo_f_num_2etrimmed
 	ldp x29, x30, [sp], #16
 	ret
-Lf61_b126:
+Lf62_b126:
 	adds x10, x13, #50
-	b.vs Lf61_fault22
+	b.vs Lf62_fault22
 	add x9, x14, x14, lsr #63
 	asr x9, x9, #1
 	subs x13, x10, x9
-	b.vs Lf61_fault23
+	b.vs Lf62_fault23
 	movz x9, #55051, lsl #0
 	movk x9, #28835, lsl #16
 	movk x9, #2621, lsl #32
@@ -8959,138 +9207,110 @@ Lf61_b126:
 	mov x9, #100
 	msub x9, x10, x9, x13
 	cmp x9, #0
-	b.ne Lf61_b155
-Lf61_b127:
+	b.ne Lf62_b155
+Lf62_b127:
 	mov x10, #2
 	lsl x11, x6, #1
 	smulh x9, x6, x10
 	cmp x9, x11, asr #63
-	b.ne Lf61_fault24
-Lf61_b128:
+	b.ne Lf62_fault24
+Lf62_b128:
 	umulh x10, x11, x8
-Lf61_b129:
+Lf62_b129:
 	mul x9, x11, x5
-Lf61_b131:
+Lf62_b131:
 	add x10, x9, x10
-Lf61_b133:
+Lf62_b133:
 	mul x12, x11, x8
-Lf61_b134:
+Lf62_b134:
 	mov x9, #64
 	subs x9, x9, x7
-	b.vs Lf61_fault25
-Lf61_b135:
+	b.vs Lf62_fault25
+Lf62_b135:
 	lsr x9, x10, x9
-Lf61_b136:
+Lf62_b136:
 	and x11, x9, #1
-Lf61_b137:
+Lf62_b137:
 	lsl x10, x10, x7
-Lf61_b138:
+Lf62_b138:
 	mov x9, #64
 	subs x9, x9, x7
-	b.vs Lf61_fault26
-Lf61_b139:
+	b.vs Lf62_fault26
+Lf62_b139:
 	lsr x9, x12, x9
-Lf61_b140:
+Lf62_b140:
 	orr x9, x10, x9
 	cmp x9, #0
-	b.ne Lf61_b144
-Lf61_b141:
+	b.ne Lf62_b144
+Lf62_b141:
 	orr x11, x11, #2
-Lf61_b144:
+Lf62_b144:
 	and x9, x11, #1
 	cmp x9, #0
 	cset x10, ne
 	subs x9, x13, #50
-	b.vs Lf61_fault27
+	b.vs Lf62_fault27
 	tst x9, #1
 	cset x9, ne
 	cmp x10, x9
-	b.ne Lf61_b151
-Lf61_b146:
+	b.ne Lf62_b151
+Lf62_b146:
 	and x9, x11, #2
 	cmp x9, #0
-	b.eq Lf61_b155
-Lf61_b147:
+	b.eq Lf62_b155
+Lf62_b147:
 	tst x0, #1
-	b.eq Lf61_b155
-Lf61_b151:
+	b.eq Lf62_b155
+Lf62_b151:
 	sub x0, x0, #1
-Lf61_b155:
+Lf62_b155:
 	mov x9, #0
 	sub x1, x9, x4
 	ldp x29, x30, [sp], #16
 	ret
-Lf61_fault1:
+Lf62_fault1:
 	mov x0, x1
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc95@PAGE
-	add x3, x3, Lxo_loc95@PAGEOFF
+	adrp x3, Lxo_loc98@PAGE
+	add x3, x3, Lxo_loc98@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault2:
+Lf62_fault2:
 	sub x15, x11, x9
 	mov x0, x11
 	mov x2, x15
-	mov x1, #45
-	adrp x3, Lxo_loc95@PAGE
-	add x3, x3, Lxo_loc95@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault3:
-	mov x0, x1
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc96@PAGE
-	add x3, x3, Lxo_loc96@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault4:
-	sub x15, x9, x10
-	mov x0, x10
-	mov x2, x15
-	mov x1, #43
-	adrp x3, Lxo_loc96@PAGE
-	add x3, x3, Lxo_loc96@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault5:
-	mov x0, x9
-	mov x1, #45
-	mov x2, #1
-	adrp x3, Lxo_loc96@PAGE
-	add x3, x3, Lxo_loc96@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault6:
-	add x15, x9, x13
-	mov x0, x15
-	mov x2, x13
-	mov x1, #45
-	adrp x3, Lxo_loc97@PAGE
-	add x3, x3, Lxo_loc97@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault7:
-	add x15, x9, x13
-	mov x0, x15
-	mov x2, x13
 	mov x1, #45
 	adrp x3, Lxo_loc98@PAGE
 	add x3, x3, Lxo_loc98@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault8:
-	mov x17, #1
-	sub x15, x11, x17
-	mov x0, x15
+Lf62_fault3:
+	mov x0, x1
 	mov x1, #43
 	mov x2, #1
 	adrp x3, Lxo_loc99@PAGE
 	add x3, x3, Lxo_loc99@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault9:
+Lf62_fault4:
+	sub x15, x9, x10
+	mov x0, x10
+	mov x2, x15
+	mov x1, #43
+	adrp x3, Lxo_loc99@PAGE
+	add x3, x3, Lxo_loc99@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault5:
+	mov x0, x9
+	mov x1, #45
+	mov x2, #1
+	adrp x3, Lxo_loc99@PAGE
+	add x3, x3, Lxo_loc99@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault6:
 	add x15, x9, x13
 	mov x0, x15
 	mov x2, x13
@@ -9099,158 +9319,186 @@ Lf61_fault9:
 	add x3, x3, Lxo_loc100@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault10:
+Lf62_fault7:
+	add x15, x9, x13
+	mov x0, x15
+	mov x2, x13
+	mov x1, #45
+	adrp x3, Lxo_loc101@PAGE
+	add x3, x3, Lxo_loc101@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault8:
+	mov x17, #1
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #1
+	adrp x3, Lxo_loc102@PAGE
+	add x3, x3, Lxo_loc102@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault9:
+	add x15, x9, x13
+	mov x0, x15
+	mov x2, x13
+	mov x1, #45
+	adrp x3, Lxo_loc103@PAGE
+	add x3, x3, Lxo_loc103@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault10:
 	mov x17, #1
 	sub x15, x9, x17
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_loc101@PAGE
-	add x3, x3, Lxo_loc101@PAGEOFF
+	adrp x3, Lxo_loc104@PAGE
+	add x3, x3, Lxo_loc104@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault11:
+Lf62_fault11:
 	mov x0, x1
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc102@PAGE
-	add x3, x3, Lxo_loc102@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault12:
-	mov x0, x1
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc103@PAGE
-	add x3, x3, Lxo_loc103@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault13:
-	sub x15, x9, x10
-	mov x0, x10
-	mov x2, x15
-	mov x1, #43
-	adrp x3, Lxo_loc103@PAGE
-	add x3, x3, Lxo_loc103@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault14:
-	mov x0, x9
-	mov x1, #45
-	mov x2, #1
-	adrp x3, Lxo_loc103@PAGE
-	add x3, x3, Lxo_loc103@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault15:
-	mov x0, x6
-	mov x2, x11
-	mov x1, #42
-	adrp x3, Lxo_loc104@PAGE
-	add x3, x3, Lxo_loc104@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault16:
-	mov x0, x10
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc104@PAGE
-	add x3, x3, Lxo_loc104@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault17:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
 	adrp x3, Lxo_loc105@PAGE
 	add x3, x3, Lxo_loc105@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault18:
-	mov x0, x6
-	mov x2, x11
-	mov x1, #42
+Lf62_fault12:
+	mov x0, x1
+	mov x1, #43
+	mov x2, #1
 	adrp x3, Lxo_loc106@PAGE
 	add x3, x3, Lxo_loc106@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault19:
+Lf62_fault13:
+	sub x15, x9, x10
+	mov x0, x10
+	mov x2, x15
+	mov x1, #43
+	adrp x3, Lxo_loc106@PAGE
+	add x3, x3, Lxo_loc106@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault14:
+	mov x0, x9
+	mov x1, #45
+	mov x2, #1
+	adrp x3, Lxo_loc106@PAGE
+	add x3, x3, Lxo_loc106@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault15:
+	mov x0, x6
+	mov x2, x11
+	mov x1, #42
+	adrp x3, Lxo_loc107@PAGE
+	add x3, x3, Lxo_loc107@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault16:
+	mov x0, x10
+	mov x1, #43
+	mov x2, #1
+	adrp x3, Lxo_loc107@PAGE
+	add x3, x3, Lxo_loc107@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault17:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, Lxo_loc108@PAGE
+	add x3, x3, Lxo_loc108@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault18:
+	mov x0, x6
+	mov x2, x11
+	mov x1, #42
+	adrp x3, Lxo_loc109@PAGE
+	add x3, x3, Lxo_loc109@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault19:
 	mov x17, #1
 	add x15, x10, x17
 	mov x0, x15
 	mov x1, #45
 	mov x2, #1
-	adrp x3, Lxo_loc106@PAGE
-	add x3, x3, Lxo_loc106@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault20:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, Lxo_loc107@PAGE
-	add x3, x3, Lxo_loc107@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault21:
-	add x15, x9, x7
-	mov x0, x15
-	mov x2, x7
-	mov x1, #45
-	adrp x3, Lxo_loc108@PAGE
-	add x3, x3, Lxo_loc108@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault22:
-	mov x0, x13
-	mov x1, #43
-	mov x2, #50
 	adrp x3, Lxo_loc109@PAGE
 	add x3, x3, Lxo_loc109@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault23:
-	mov x0, x10
-	mov x2, x9
+Lf62_fault20:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
 	mov x1, #45
-	adrp x3, Lxo_loc109@PAGE
-	add x3, x3, Lxo_loc109@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf61_fault24:
-	mov x0, x6
-	mov x2, x10
-	mov x1, #42
 	adrp x3, Lxo_loc110@PAGE
 	add x3, x3, Lxo_loc110@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault25:
+Lf62_fault21:
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
 	mov x1, #45
-	adrp x3, Lxo_loc107@PAGE
-	add x3, x3, Lxo_loc107@PAGEOFF
+	adrp x3, Lxo_loc111@PAGE
+	add x3, x3, Lxo_loc111@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault26:
+Lf62_fault22:
+	mov x0, x13
+	mov x1, #43
+	mov x2, #50
+	adrp x3, Lxo_loc112@PAGE
+	add x3, x3, Lxo_loc112@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault23:
+	mov x0, x10
+	mov x2, x9
+	mov x1, #45
+	adrp x3, Lxo_loc112@PAGE
+	add x3, x3, Lxo_loc112@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault24:
+	mov x0, x6
+	mov x2, x10
+	mov x1, #42
+	adrp x3, Lxo_loc113@PAGE
+	add x3, x3, Lxo_loc113@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault25:
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
 	mov x1, #45
-	adrp x3, Lxo_loc108@PAGE
-	add x3, x3, Lxo_loc108@PAGEOFF
+	adrp x3, Lxo_loc110@PAGE
+	add x3, x3, Lxo_loc110@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf61_fault27:
+Lf62_fault26:
+	add x15, x9, x7
+	mov x0, x15
+	mov x2, x7
+	mov x1, #45
+	adrp x3, Lxo_loc111@PAGE
+	add x3, x3, Lxo_loc111@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf62_fault27:
 	mov x0, x13
 	mov x1, #45
 	mov x2, #50
-	adrp x3, Lxo_loc111@PAGE
-	add x3, x3, Lxo_loc111@PAGEOFF
+	adrp x3, Lxo_loc114@PAGE
+	add x3, x3, Lxo_loc114@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -9258,29 +9506,29 @@ Lf61_fault27:
 // func num.ndigits
 	.p2align 2
 _xo_f_num_2endigits:
-Lf62_begin:
+Lf63_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf62_b0:
+Lf63_b0:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	cmp x0, x9
-	b.ge Lf62_b3
-Lf62_b1:
+	b.ge Lf63_b3
+Lf63_b1:
 	bl _xo_f_num_2endigits8
 	ldp x29, x30, [sp], #16
 	ret
-Lf62_b3:
+Lf63_b3:
 	movz x9, #28609, lsl #16
 	movk x9, #34546, lsl #32
 	movk x9, #35, lsl #48
 	cmp x0, x9
-	b.ge Lf62_b6
-Lf62_b4:
+	b.ge Lf63_b6
+Lf63_b4:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -9289,31 +9537,31 @@ Lf62_b4:
 	asr x0, x9, #25
 	bl _xo_f_num_2endigits8
 	adds x0, x0, #8
-	b.vs Lf62_fault1
+	b.vs Lf63_fault1
 	ldp x29, x30, [sp], #16
 	ret
-Lf62_b6:
+Lf63_b6:
 	movz x9, #23946, lsl #16
 	movk x9, #17784, lsl #32
 	movk x9, #355, lsl #48
 	cmp x0, x9
-	b.ge Lf62_b8
-Lf62_b7:
+	b.ge Lf63_b8
+Lf63_b7:
 	mov x0, #17
-	b Lf62_b9
-Lf62_b8:
+	b Lf63_b9
+Lf63_b8:
 	mov x0, #18
-Lf62_b9:
+Lf63_b9:
 	ldp x29, x30, [sp], #16
 	ret
-Lf62_fault1:
+Lf63_fault1:
 	mov x17, #8
 	sub x15, x0, x17
 	mov x2, x15
 	mov x0, #8
 	mov x1, #43
-	adrp x3, Lxo_loc79@PAGE
-	add x3, x3, Lxo_loc79@PAGEOFF
+	adrp x3, Lxo_loc82@PAGE
+	add x3, x3, Lxo_loc82@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -9321,10 +9569,10 @@ Lf62_fault1:
 // func num.layout
 	.p2align 2
 _xo_f_num_2elayout:
-Lf63_begin:
+Lf64_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_personality
-	.cfi_lsda 16, GCC_except_table_xo63
+	.cfi_lsda 16, GCC_except_table_xo64
 	stp x29, x30, [sp, #-112]!
 	mov x29, sp
 	stp x20, x19, [sp, #32]
@@ -9345,33 +9593,33 @@ Lf63_begin:
 	.cfi_offset w25, -24
 	.cfi_offset w28, -16
 	.cfi_offset w27, -8
-Lf63_b0:
+Lf64_b0:
 	mov x27, x0
 	str x1, [sp, #24]
 	mov x24, x2
 	mov x20, x3
 	mov x25, x4
 	mov x21, x5
-	cbz x24, Lf63_b2
-Lf63_b1:
+	cbz x24, Lf64_b2
+Lf64_b1:
 	mov x26, #1
-	b Lf63_b3
-Lf63_b2:
+	b Lf64_b3
+Lf64_b2:
 	mov x26, #0
-Lf63_b3:
+Lf64_b3:
 	mov x9, #17
 	subs x0, x9, x25
-	b.vs Lf63_fault1
-Lf63_b5:
-Lf63_cs125a:
+	b.vs Lf64_fault1
+Lf64_b5:
+Lf64_cs126a:
 	bl _xo_f_num_2epow10
-Lf63_cs125b:
-Lf63_b7:
+Lf64_cs126b:
+Lf64_b7:
 	mul x19, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x19, asr #63
-	b.ne Lf63_fault2
-Lf63_b9:
+	b.ne Lf64_fault2
+Lf64_b9:
 	movz x9, #30807, lsl #0
 	movk x9, #45331, lsl #16
 	movk x9, #25903, lsl #32
@@ -9379,99 +9627,99 @@ Lf63_b9:
 	smulh x9, x19, x9
 	asr x9, x9, #51
 	add x10, x9, x9, lsr #63
-Lf63_b11:
+Lf64_b11:
 	movz x9, #28609, lsl #16
 	movk x9, #34546, lsl #32
 	movk x9, #35, lsl #48
 	msub x28, x10, x9, x19
-Lf63_b13:
+Lf64_b13:
 	subs x0, x21, #1
-	b.vs Lf63_fault3
-Lf63_b15:
+	b.vs Lf64_fault3
+Lf64_b15:
 	mov x9, #-4
-Lf63_b17:
+Lf64_b17:
 	cmp x0, x9
-	b.lt Lf63_b21
-Lf63_b19:
+	b.lt Lf64_b21
+Lf64_b19:
 	cmp x0, #6
-	b.lt Lf63_b74
-Lf63_b21:
+	b.lt Lf64_b74
+Lf64_b21:
 	add x22, x10, #48
-Lf63_b23:
+Lf64_b23:
 	cmp x25, #1
-	b.le Lf63_b25
-Lf63_b24:
+	b.le Lf64_b25
+Lf64_b24:
 	mov x9, #11776
 	orr x22, x22, x9
 	mov x23, #2
-	cbnz x24, Lf63_b27
-	b Lf63_b33
-Lf63_b25:
+	cbnz x24, Lf64_b27
+	b Lf64_b33
+Lf64_b25:
 	mov x23, #1
-Lf63_b26:
-	cbz x24, Lf63_b33
-Lf63_b27:
+Lf64_b26:
+	cbz x24, Lf64_b33
+Lf64_b27:
 	lsl x10, x22, #8
 	asr x9, x10, #8
 	cmp x9, x22
-	b.ne Lf63_fault4
-Lf63_b29:
+	b.ne Lf64_fault4
+Lf64_b29:
 	mov x9, #45
 	orr x22, x10, x9
 	add x23, x23, #1
-Lf63_b33:
+Lf64_b33:
 	cmp x0, #0
-	b.ge Lf63_b37
-Lf63_b34:
+	b.ge Lf64_b37
+Lf64_b34:
 	mov x9, #0
 	subs x0, x9, x0
-	b.vs Lf63_fault5
-Lf63_b36:
+	b.vs Lf64_fault5
+Lf64_b36:
 	mov x9, #45
 	cmp x0, #100
-	b.ge Lf63_b39
-	b Lf63_b40
-Lf63_b37:
+	b.ge Lf64_b39
+	b Lf64_b40
+Lf64_b37:
 	mov x9, #43
-Lf63_b38:
+Lf64_b38:
 	cmp x0, #100
-	b.lt Lf63_b40
-Lf63_b39:
+	b.lt Lf64_b40
+Lf64_b39:
 	mov x24, #3
-	b Lf63_b41
-Lf63_b40:
+	b Lf64_b41
+Lf64_b40:
 	mov x24, #2
-Lf63_b41:
+Lf64_b41:
 	lsl x10, x9, #8
-Lf63_b43:
+Lf64_b43:
 	mov x9, #101
 	orr x19, x9, x10
-Lf63_b44:
-Lf63_cs130a:
+Lf64_b44:
+Lf64_cs131a:
 	bl _xo_f_num_2edigits8
-Lf63_cs130b:
+Lf64_cs131b:
 	and x10, x24, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x9, x0, x9
-Lf63_b45:
-Lf63_b48:
+Lf64_b45:
+Lf64_b48:
 	lsl x9, x9, #16
-Lf63_b49:
+Lf64_b49:
 	orr x26, x19, x9
 	subs x21, x25, #1
-	b.vs Lf63_fault6
-Lf63_b51:
+	b.vs Lf64_fault6
+Lf64_b51:
 	cmp x21, #8
-	b.le Lf63_b53
-Lf63_b52:
+	b.le Lf64_b53
+Lf64_b52:
 	mov x20, #8
-	b Lf63_b54
-Lf63_b53:
+	b Lf64_b54
+Lf64_b53:
 	mov x20, x21
-Lf63_b54:
+Lf64_b54:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -9479,40 +9727,40 @@ Lf63_b54:
 	smulh x9, x28, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-Lf63_b56:
+Lf64_b56:
 	mov x0, x19
-Lf63_cs132a:
+Lf64_cs133a:
 	bl _xo_f_num_2edigits8
-Lf63_cs132b:
+Lf64_cs133b:
 	mov x25, x0
-Lf63_b58:
+Lf64_b58:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x28
-Lf63_b60:
-Lf63_cs133a:
+Lf64_b60:
+Lf64_cs134a:
 	bl _xo_f_num_2edigits8
-Lf63_cs133b:
-Lf63_b62:
+Lf64_cs134b:
+Lf64_b62:
 	lsl x10, x20, #4
 	asr x9, x10, #4
 	cmp x9, x20
-	b.ne Lf63_fault7
-Lf63_b64:
+	b.ne Lf64_fault7
+Lf64_b64:
 	orr x12, x23, x10
 	subs x10, x21, x20
-	b.vs Lf63_fault8
-Lf63_b66:
+	b.vs Lf64_fault8
+Lf64_b66:
 	lsl x11, x10, #8
 	asr x9, x11, #8
 	cmp x9, x10
-	b.ne Lf63_fault9
-Lf63_b68:
+	b.ne Lf64_fault9
+Lf64_b68:
 	orr x10, x12, x11
 	add x9, x24, #2
-Lf63_b70:
+Lf64_b70:
 	lsl x9, x9, #12
-Lf63_b72:
+Lf64_b72:
 	orr x6, x10, x9
 	ldr x1, [sp, #24]
 	mov x2, x22
@@ -9530,60 +9778,60 @@ Lf63_b72:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-Lf63_b74:
+Lf64_b74:
 	cmp x21, #0
-	b.gt Lf63_b123
-Lf63_b75:
+	b.gt Lf64_b123
+Lf64_b75:
 	add x11, x10, #48
-Lf63_b77:
+Lf64_b77:
 	lsl x10, x21, #3
-Lf63_b79:
+Lf64_b79:
 	mov x9, #16
 	sub x9, x9, x10
-Lf63_b82:
+Lf64_b82:
 	lsl x10, x11, x9
-Lf63_b83:
+Lf64_b83:
 	mov x9, #11824
 	orr x11, x10, x9
 	mov x9, #-8
-Lf63_b85:
+Lf64_b85:
 	mul x10, x9, x21
-Lf63_b88:
+Lf64_b88:
 	mov x9, #1
 	lsl x9, x9, x10
-Lf63_b89:
+Lf64_b89:
 	subs x10, x9, #1
-	b.vs Lf63_fault10
-Lf63_b91:
+	b.vs Lf64_fault10
+Lf64_b91:
 	movz x9, #12336, lsl #0
 	movk x9, #48, lsl #16
 	and x9, x9, x10
-Lf63_b92:
+Lf64_b92:
 	lsl x9, x9, #16
-Lf63_b93:
+Lf64_b93:
 	orr x23, x11, x9
 	mov x9, #3
 	sub x21, x9, x21
-Lf63_b95:
-	cbz x24, Lf63_b102
-Lf63_b97:
+Lf64_b95:
+	cbz x24, Lf64_b102
+Lf64_b97:
 	lsl x10, x23, #8
-Lf63_b98:
+Lf64_b98:
 	mov x9, #45
 	orr x23, x10, x9
 	add x21, x21, #1
-Lf63_b102:
+Lf64_b102:
 	subs x22, x25, #1
-	b.vs Lf63_fault11
-Lf63_b104:
+	b.vs Lf64_fault11
+Lf64_b104:
 	cmp x22, #8
-	b.le Lf63_b106
-Lf63_b105:
+	b.le Lf64_b106
+Lf64_b105:
 	mov x20, #8
-	b Lf63_b107
-Lf63_b106:
+	b Lf64_b107
+Lf64_b106:
 	mov x20, x22
-Lf63_b107:
+Lf64_b107:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -9591,35 +9839,35 @@ Lf63_b107:
 	smulh x9, x28, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-Lf63_b109:
+Lf64_b109:
 	mov x0, x19
-Lf63_cs139a:
+Lf64_cs140a:
 	bl _xo_f_num_2edigits8
-Lf63_cs139b:
+Lf64_cs140b:
 	mov x24, x0
-Lf63_b111:
+Lf64_b111:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x28
-Lf63_b113:
-Lf63_cs140a:
+Lf64_b113:
+Lf64_cs141a:
 	bl _xo_f_num_2edigits8
-Lf63_cs140b:
-Lf63_b115:
+Lf64_cs141b:
+Lf64_b115:
 	lsl x10, x20, #4
 	asr x9, x10, #4
 	cmp x9, x20
-	b.ne Lf63_fault12
-Lf63_b117:
+	b.ne Lf64_fault12
+Lf64_b117:
 	orr x12, x21, x10
 	subs x10, x22, x20
-	b.vs Lf63_fault13
-Lf63_b119:
+	b.vs Lf64_fault13
+Lf64_b119:
 	lsl x11, x10, #8
 	asr x9, x11, #8
 	cmp x9, x10
-	b.ne Lf63_fault14
-Lf63_b121:
+	b.ne Lf64_fault14
+Lf64_b121:
 	orr x6, x12, x11
 	mov x5, #0
 	ldr x1, [sp, #24]
@@ -9637,40 +9885,40 @@ Lf63_b121:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-Lf63_b123:
+Lf64_b123:
 	cmp x25, x21
-	b.gt Lf63_b140
-Lf63_b124:
+	b.gt Lf64_b140
+Lf64_b124:
 	subs x0, x21, x25
-	b.vs Lf63_fault15
-Lf63_b126:
-Lf63_cs145a:
+	b.vs Lf64_fault15
+Lf64_b126:
+Lf64_cs146a:
 	bl _xo_f_num_2epow10
-Lf63_cs145b:
-Lf63_b128:
+Lf64_cs146b:
+Lf64_b128:
 	mul x10, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x10, asr #63
-	b.ne Lf63_fault16
-Lf63_b131:
+	b.ne Lf64_fault16
+Lf64_b131:
 	mov x0, x10
-Lf63_cs147a:
+Lf64_cs148a:
 	bl _xo_f_num_2edigits8
-Lf63_cs147b:
+Lf64_cs148b:
 	and x10, x21, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x3, x0, x9
-Lf63_b132:
-Lf63_b134:
+Lf64_b132:
+Lf64_b134:
 	lsl x9, x21, #4
-Lf63_b136:
+Lf64_b136:
 	orr x10, x26, x9
 	mov x9, #2
 	lsl x9, x9, #8
-Lf63_b138:
+Lf64_b138:
 	orr x6, x10, x9
 	mov x2, #45
 	mov x4, #12334
@@ -9687,74 +9935,74 @@ Lf63_b138:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-Lf63_b140:
+Lf64_b140:
 	mov x9, #17
 	sub x0, x9, x21
-Lf63_b142:
-Lf63_cs148a:
+Lf64_b142:
+Lf64_cs149a:
 	bl _xo_f_num_2epow10
-Lf63_cs148b:
-Lf63_b144:
+Lf64_cs149b:
+Lf64_b144:
 	cmp x0, #0
-	b.eq Lf63_fault17
-Lf63_b144_c:
+	b.eq Lf64_fault17
+Lf64_b144_c:
 	sdiv x9, x19, x0
 	msub x20, x9, x0, x19
-Lf63_b146:
+Lf64_b146:
 	mov x9, #17
 	sub x0, x9, x21
-Lf63_b148:
-Lf63_cs150a:
+Lf64_b148:
+Lf64_cs151a:
 	bl _xo_f_num_2epow10
-Lf63_cs150b:
-Lf63_b150:
+Lf64_cs151b:
+Lf64_b150:
 	cmp x0, #0
-	b.eq Lf63_fault18
-Lf63_b150_c:
+	b.eq Lf64_fault18
+Lf64_b150_c:
 	movz x9, #32768, lsl #48
 	cmp x19, x9
 	ccmn x0, #1, #0, eq
-	b.eq Lf63_fault19
+	b.eq Lf64_fault19
 	sdiv x19, x19, x0
-Lf63_b152:
+Lf64_b152:
 	sub x0, x21, #1
-Lf63_b154:
-Lf63_cs153a:
+Lf64_b154:
+Lf64_cs154a:
 	bl _xo_f_num_2epow10
-Lf63_cs153b:
-Lf63_b156:
+Lf64_cs154b:
+Lf64_b156:
 	mul x22, x20, x0
 	smulh x9, x20, x0
 	cmp x9, x22, asr #63
-	b.ne Lf63_fault20
-Lf63_b158:
+	b.ne Lf64_fault20
+Lf64_b158:
 	sub x23, x25, x21
-Lf63_b160:
+Lf64_b160:
 	cmp x23, #8
-	b.le Lf63_b162
-Lf63_b161:
+	b.le Lf64_b162
+Lf64_b161:
 	mov x20, #8
-	b Lf63_b164
-Lf63_b162:
+	b Lf64_b164
+Lf64_b162:
 	mov x20, x23
-Lf63_b164:
+Lf64_b164:
 	mov x0, x19
-Lf63_cs155a:
+Lf64_cs156a:
 	bl _xo_f_num_2edigits8
-Lf63_cs155b:
+Lf64_cs156b:
 	and x10, x21, #15
 	mov x9, #8
 	sub x9, x9, x10
 	and x9, x9, #7
 	lsl x9, x9, #3
 	asr x11, x0, x9
-Lf63_b165:
-Lf63_b167:
+Lf64_b165:
+Lf64_b167:
 	lsl x10, x21, #3
-Lf63_b170:
+Lf64_b170:
 	mov x9, #46
 	lsl x9, x9, x10
-Lf63_b171:
+Lf64_b171:
 	orr x25, x11, x9
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
@@ -9763,40 +10011,40 @@ Lf63_b171:
 	smulh x9, x22, x9
 	asr x9, x9, #25
 	add x19, x9, x9, lsr #63
-Lf63_b173:
+Lf64_b173:
 	mov x0, x19
-Lf63_cs156a:
+Lf64_cs157a:
 	bl _xo_f_num_2edigits8
-Lf63_cs156b:
+Lf64_cs157b:
 	mov x24, x0
-Lf63_b175:
+Lf64_b175:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	msub x0, x19, x9, x22
-Lf63_b177:
-Lf63_cs157a:
+Lf64_b177:
+Lf64_cs158a:
 	bl _xo_f_num_2edigits8
-Lf63_cs157b:
-Lf63_b179:
+Lf64_cs158b:
+Lf64_b179:
 	add x9, x21, #1
-Lf63_b181:
+Lf64_b181:
 	lsl x9, x9, #4
-Lf63_b183:
+Lf64_b183:
 	orr x11, x26, x9
 	lsl x10, x20, #8
 	asr x9, x10, #8
 	cmp x9, x20
-	b.ne Lf63_fault21
-Lf63_b185:
+	b.ne Lf64_fault21
+Lf64_b185:
 	orr x12, x11, x10
 	subs x10, x23, x20
-	b.vs Lf63_fault22
-Lf63_b187:
+	b.vs Lf64_fault22
+Lf64_b187:
 	lsl x11, x10, #12
 	asr x9, x11, #12
 	cmp x9, x10
-	b.ne Lf63_fault23
-Lf63_b190:
+	b.ne Lf64_fault23
+Lf64_b190:
 	orr x6, x12, x11
 	mov x2, #45
 	ldr x1, [sp, #24]
@@ -9814,270 +10062,270 @@ Lf63_b190:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-Lf63_b4:
+Lf64_b4:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b6:
+	b Lf64_b189
+Lf64_b6:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b8:
+	b Lf64_b189
+Lf64_b8:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b10:
+	b Lf64_b189
+Lf64_b10:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b12:
+	b Lf64_b189
+Lf64_b12:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b14:
+	b Lf64_b189
+Lf64_b14:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b16:
+	b Lf64_b189
+Lf64_b16:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b22:
+	b Lf64_b189
+Lf64_b22:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b28:
+	b Lf64_b189
+Lf64_b28:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b30:
+	b Lf64_b189
+Lf64_b30:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b35:
+	b Lf64_b189
+Lf64_b35:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b42:
+	b Lf64_b189
+Lf64_b42:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b46:
+	b Lf64_b189
+Lf64_b46:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b50:
+	b Lf64_b189
+Lf64_b50:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b55:
+	b Lf64_b189
+Lf64_b55:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b57:
+	b Lf64_b189
+Lf64_b57:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b59:
+	b Lf64_b189
+Lf64_b59:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b61:
+	b Lf64_b189
+Lf64_b61:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b63:
+	b Lf64_b189
+Lf64_b63:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b65:
+	b Lf64_b189
+Lf64_b65:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b67:
+	b Lf64_b189
+Lf64_b67:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b69:
+	b Lf64_b189
+Lf64_b69:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b71:
+	b Lf64_b189
+Lf64_b71:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b76:
+	b Lf64_b189
+Lf64_b76:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b78:
+	b Lf64_b189
+Lf64_b78:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b80:
+	b Lf64_b189
+Lf64_b80:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b84:
+	b Lf64_b189
+Lf64_b84:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b86:
+	b Lf64_b189
+Lf64_b86:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b90:
+	b Lf64_b189
+Lf64_b90:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b94:
+	b Lf64_b189
+Lf64_b94:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b99:
+	b Lf64_b189
+Lf64_b99:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b103:
+	b Lf64_b189
+Lf64_b103:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b108:
+	b Lf64_b189
+Lf64_b108:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b110:
+	b Lf64_b189
+Lf64_b110:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b112:
+	b Lf64_b189
+Lf64_b112:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b114:
+	b Lf64_b189
+Lf64_b114:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b116:
+	b Lf64_b189
+Lf64_b116:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b118:
+	b Lf64_b189
+Lf64_b118:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b120:
+	b Lf64_b189
+Lf64_b120:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b125:
+	b Lf64_b189
+Lf64_b125:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b127:
+	b Lf64_b189
+Lf64_b127:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b129:
+	b Lf64_b189
+Lf64_b129:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b133:
+	b Lf64_b189
+Lf64_b133:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b135:
+	b Lf64_b189
+Lf64_b135:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b137:
+	b Lf64_b189
+Lf64_b137:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b141:
+	b Lf64_b189
+Lf64_b141:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b143:
+	b Lf64_b189
+Lf64_b143:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b145:
+	b Lf64_b189
+Lf64_b145:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b147:
+	b Lf64_b189
+Lf64_b147:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b149:
+	b Lf64_b189
+Lf64_b149:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b151:
+	b Lf64_b189
+Lf64_b151:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b153:
+	b Lf64_b189
+Lf64_b153:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b155:
+	b Lf64_b189
+Lf64_b155:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b157:
+	b Lf64_b189
+Lf64_b157:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b159:
+	b Lf64_b189
+Lf64_b159:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b166:
+	b Lf64_b189
+Lf64_b166:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b168:
+	b Lf64_b189
+Lf64_b168:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b172:
+	b Lf64_b189
+Lf64_b172:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b174:
+	b Lf64_b189
+Lf64_b174:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b176:
+	b Lf64_b189
+Lf64_b176:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b178:
+	b Lf64_b189
+Lf64_b178:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b180:
+	b Lf64_b189
+Lf64_b180:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b182:
+	b Lf64_b189
+Lf64_b182:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b184:
+	b Lf64_b189
+Lf64_b184:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b186:
+	b Lf64_b189
+Lf64_b186:
 	mov x0, x27
 	bl Lxo_drop1
-	b Lf63_b189
-Lf63_b188:
+	b Lf64_b189
+Lf64_b188:
 	mov x0, x27
 	bl Lxo_drop1
-Lf63_b189:
+Lf64_b189:
 	bl _xo_fault_continue
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
@@ -10089,237 +10337,237 @@ Lf63_b189:
 	ldp x28, x27, [sp, #96]
 	ldp x29, x30, [sp], #112
 	ret
-Lf63_fault1:
+Lf64_fault1:
 	mov x0, x9
 	mov x2, x25
 	mov x1, #45
-	adrp x3, Lxo_loc112@PAGE
-	add x3, x3, Lxo_loc112@PAGEOFF
-Lf63_cs124a:
+	adrp x3, Lxo_loc115@PAGE
+	add x3, x3, Lxo_loc115@PAGEOFF
+Lf64_cs125a:
 	bl _xo_fault_overflow
-Lf63_cs124b:
+Lf64_cs125b:
 	brk #1
-Lf63_fault2:
+Lf64_fault2:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #42
-	adrp x3, Lxo_loc113@PAGE
-	add x3, x3, Lxo_loc113@PAGEOFF
-Lf63_cs126a:
-	bl _xo_fault_overflow
-Lf63_cs126b:
-	brk #1
-Lf63_fault3:
-	mov x0, x21
-	mov x1, #45
-	mov x2, #1
-	adrp x3, Lxo_loc114@PAGE
-	add x3, x3, Lxo_loc114@PAGEOFF
-Lf63_cs127a:
-	bl _xo_fault_overflow
-Lf63_cs127b:
-	brk #1
-Lf63_fault4:
-	mov x0, x22
-	mov x1, #8
-	adrp x2, Lxo_loc115@PAGE
-	add x2, x2, Lxo_loc115@PAGEOFF
-Lf63_cs128a:
-	bl _xo_fault_shl
-Lf63_cs128b:
-	brk #1
-Lf63_fault5:
-	sub x15, x9, x0
-	mov x0, x9
-	mov x2, x15
-	mov x1, #45
 	adrp x3, Lxo_loc116@PAGE
 	add x3, x3, Lxo_loc116@PAGEOFF
-Lf63_cs129a:
+Lf64_cs127a:
 	bl _xo_fault_overflow
-Lf63_cs129b:
+Lf64_cs127b:
 	brk #1
-Lf63_fault6:
-	mov x0, x25
+Lf64_fault3:
+	mov x0, x21
 	mov x1, #45
 	mov x2, #1
 	adrp x3, Lxo_loc117@PAGE
 	add x3, x3, Lxo_loc117@PAGEOFF
-Lf63_cs131a:
+Lf64_cs128a:
 	bl _xo_fault_overflow
-Lf63_cs131b:
+Lf64_cs128b:
 	brk #1
-Lf63_fault7:
-	mov x0, x20
-	mov x1, #4
+Lf64_fault4:
+	mov x0, x22
+	mov x1, #8
 	adrp x2, Lxo_loc118@PAGE
 	add x2, x2, Lxo_loc118@PAGEOFF
-Lf63_cs134a:
+Lf64_cs129a:
 	bl _xo_fault_shl
-Lf63_cs134b:
+Lf64_cs129b:
 	brk #1
-Lf63_fault8:
-	mov x0, x21
-	mov x2, x20
+Lf64_fault5:
+	sub x15, x9, x0
+	mov x0, x9
+	mov x2, x15
 	mov x1, #45
 	adrp x3, Lxo_loc119@PAGE
 	add x3, x3, Lxo_loc119@PAGEOFF
-Lf63_cs135a:
+Lf64_cs130a:
 	bl _xo_fault_overflow
-Lf63_cs135b:
+Lf64_cs130b:
 	brk #1
-Lf63_fault9:
-	mov x0, x10
-	mov x1, #8
-	adrp x2, Lxo_loc120@PAGE
-	add x2, x2, Lxo_loc120@PAGEOFF
-Lf63_cs136a:
-	bl _xo_fault_shl
-Lf63_cs136b:
-	brk #1
-Lf63_fault10:
-	mov x0, x9
-	mov x1, #45
-	mov x2, #1
-	adrp x3, Lxo_loc121@PAGE
-	add x3, x3, Lxo_loc121@PAGEOFF
-Lf63_cs137a:
-	bl _xo_fault_overflow
-Lf63_cs137b:
-	brk #1
-Lf63_fault11:
+Lf64_fault6:
 	mov x0, x25
 	mov x1, #45
 	mov x2, #1
-	adrp x3, Lxo_loc122@PAGE
-	add x3, x3, Lxo_loc122@PAGEOFF
-Lf63_cs138a:
+	adrp x3, Lxo_loc120@PAGE
+	add x3, x3, Lxo_loc120@PAGEOFF
+Lf64_cs132a:
 	bl _xo_fault_overflow
-Lf63_cs138b:
+Lf64_cs132b:
 	brk #1
-Lf63_fault12:
+Lf64_fault7:
 	mov x0, x20
 	mov x1, #4
+	adrp x2, Lxo_loc121@PAGE
+	add x2, x2, Lxo_loc121@PAGEOFF
+Lf64_cs135a:
+	bl _xo_fault_shl
+Lf64_cs135b:
+	brk #1
+Lf64_fault8:
+	mov x0, x21
+	mov x2, x20
+	mov x1, #45
+	adrp x3, Lxo_loc122@PAGE
+	add x3, x3, Lxo_loc122@PAGEOFF
+Lf64_cs136a:
+	bl _xo_fault_overflow
+Lf64_cs136b:
+	brk #1
+Lf64_fault9:
+	mov x0, x10
+	mov x1, #8
 	adrp x2, Lxo_loc123@PAGE
 	add x2, x2, Lxo_loc123@PAGEOFF
-Lf63_cs141a:
+Lf64_cs137a:
 	bl _xo_fault_shl
-Lf63_cs141b:
+Lf64_cs137b:
 	brk #1
-Lf63_fault13:
+Lf64_fault10:
+	mov x0, x9
+	mov x1, #45
+	mov x2, #1
+	adrp x3, Lxo_loc124@PAGE
+	add x3, x3, Lxo_loc124@PAGEOFF
+Lf64_cs138a:
+	bl _xo_fault_overflow
+Lf64_cs138b:
+	brk #1
+Lf64_fault11:
+	mov x0, x25
+	mov x1, #45
+	mov x2, #1
+	adrp x3, Lxo_loc125@PAGE
+	add x3, x3, Lxo_loc125@PAGEOFF
+Lf64_cs139a:
+	bl _xo_fault_overflow
+Lf64_cs139b:
+	brk #1
+Lf64_fault12:
+	mov x0, x20
+	mov x1, #4
+	adrp x2, Lxo_loc126@PAGE
+	add x2, x2, Lxo_loc126@PAGEOFF
+Lf64_cs142a:
+	bl _xo_fault_shl
+Lf64_cs142b:
+	brk #1
+Lf64_fault13:
 	mov x0, x22
 	mov x2, x20
 	mov x1, #45
-	adrp x3, Lxo_loc124@PAGE
-	add x3, x3, Lxo_loc124@PAGEOFF
-Lf63_cs142a:
+	adrp x3, Lxo_loc127@PAGE
+	add x3, x3, Lxo_loc127@PAGEOFF
+Lf64_cs143a:
 	bl _xo_fault_overflow
-Lf63_cs142b:
+Lf64_cs143b:
 	brk #1
-Lf63_fault14:
+Lf64_fault14:
 	mov x0, x10
 	mov x1, #8
-	adrp x2, Lxo_loc125@PAGE
-	add x2, x2, Lxo_loc125@PAGEOFF
-Lf63_cs143a:
+	adrp x2, Lxo_loc128@PAGE
+	add x2, x2, Lxo_loc128@PAGEOFF
+Lf64_cs144a:
 	bl _xo_fault_shl
-Lf63_cs143b:
+Lf64_cs144b:
 	brk #1
-Lf63_fault15:
+Lf64_fault15:
 	mov x0, x21
 	mov x2, x25
 	mov x1, #45
-	adrp x3, Lxo_loc126@PAGE
-	add x3, x3, Lxo_loc126@PAGEOFF
-Lf63_cs144a:
-	bl _xo_fault_overflow
-Lf63_cs144b:
-	brk #1
-Lf63_fault16:
-	mov x2, x0
-	mov x0, x20
-	mov x1, #42
-	adrp x3, Lxo_loc127@PAGE
-	add x3, x3, Lxo_loc127@PAGEOFF
-Lf63_cs146a:
-	bl _xo_fault_overflow
-Lf63_cs146b:
-	brk #1
-Lf63_fault17:
-	mov x0, x19
-	mov x1, #37
-	adrp x2, Lxo_loc128@PAGE
-	add x2, x2, Lxo_loc128@PAGEOFF
-Lf63_cs149a:
-	bl _xo_fault_divzero
-Lf63_cs149b:
-	brk #1
-Lf63_fault18:
-	mov x0, x19
-	mov x1, #47
-	adrp x2, Lxo_loc129@PAGE
-	add x2, x2, Lxo_loc129@PAGEOFF
-Lf63_cs151a:
-	bl _xo_fault_divzero
-Lf63_cs151b:
-	brk #1
-Lf63_fault19:
-	mov x2, x0
-	mov x0, x19
-	mov x1, #47
 	adrp x3, Lxo_loc129@PAGE
 	add x3, x3, Lxo_loc129@PAGEOFF
-Lf63_cs152a:
+Lf64_cs145a:
 	bl _xo_fault_overflow
-Lf63_cs152b:
+Lf64_cs145b:
 	brk #1
-Lf63_fault20:
+Lf64_fault16:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #42
 	adrp x3, Lxo_loc130@PAGE
 	add x3, x3, Lxo_loc130@PAGEOFF
-Lf63_cs154a:
+Lf64_cs147a:
 	bl _xo_fault_overflow
-Lf63_cs154b:
+Lf64_cs147b:
 	brk #1
-Lf63_fault21:
-	mov x0, x20
-	mov x1, #8
+Lf64_fault17:
+	mov x0, x19
+	mov x1, #37
 	adrp x2, Lxo_loc131@PAGE
 	add x2, x2, Lxo_loc131@PAGEOFF
-Lf63_cs158a:
-	bl _xo_fault_shl
-Lf63_cs158b:
+Lf64_cs150a:
+	bl _xo_fault_divzero
+Lf64_cs150b:
 	brk #1
-Lf63_fault22:
+Lf64_fault18:
+	mov x0, x19
+	mov x1, #47
+	adrp x2, Lxo_loc132@PAGE
+	add x2, x2, Lxo_loc132@PAGEOFF
+Lf64_cs152a:
+	bl _xo_fault_divzero
+Lf64_cs152b:
+	brk #1
+Lf64_fault19:
+	mov x2, x0
+	mov x0, x19
+	mov x1, #47
+	adrp x3, Lxo_loc132@PAGE
+	add x3, x3, Lxo_loc132@PAGEOFF
+Lf64_cs153a:
+	bl _xo_fault_overflow
+Lf64_cs153b:
+	brk #1
+Lf64_fault20:
+	mov x2, x0
+	mov x0, x20
+	mov x1, #42
+	adrp x3, Lxo_loc133@PAGE
+	add x3, x3, Lxo_loc133@PAGEOFF
+Lf64_cs155a:
+	bl _xo_fault_overflow
+Lf64_cs155b:
+	brk #1
+Lf64_fault21:
+	mov x0, x20
+	mov x1, #8
+	adrp x2, Lxo_loc134@PAGE
+	add x2, x2, Lxo_loc134@PAGEOFF
+Lf64_cs159a:
+	bl _xo_fault_shl
+Lf64_cs159b:
+	brk #1
+Lf64_fault22:
 	mov x0, x23
 	mov x2, x20
 	mov x1, #45
-	adrp x3, Lxo_loc132@PAGE
-	add x3, x3, Lxo_loc132@PAGEOFF
-Lf63_cs159a:
+	adrp x3, Lxo_loc135@PAGE
+	add x3, x3, Lxo_loc135@PAGEOFF
+Lf64_cs160a:
 	bl _xo_fault_overflow
-Lf63_cs159b:
+Lf64_cs160b:
 	brk #1
-Lf63_fault23:
+Lf64_fault23:
 	mov x0, x10
 	mov x1, #12
-	adrp x2, Lxo_loc133@PAGE
-	add x2, x2, Lxo_loc133@PAGEOFF
-Lf63_cs160a:
+	adrp x2, Lxo_loc136@PAGE
+	add x2, x2, Lxo_loc136@PAGEOFF
+Lf64_cs161a:
 	bl _xo_fault_shl
-Lf63_cs160b:
+Lf64_cs161b:
 	brk #1
 	.cfi_endproc
 
 // func ints.conv_fault
 	.p2align 2
 _xo_f_ints_2econv__fault:
-Lf64_begin:
+Lf65_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_personality
-	.cfi_lsda 16, GCC_except_table_xo64
+	.cfi_lsda 16, GCC_except_table_xo65
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -10334,112 +10582,112 @@ Lf64_begin:
 	.cfi_offset w21, -24
 	.cfi_offset w24, -16
 	.cfi_offset w23, -8
-Lf64_b0:
+Lf65_b0:
 	mov x9, x0
 	mov x19, x3
 	mov x20, x4
 	mov x23, x5
 	mov x24, x6
-Lf64_b2:
+Lf65_b2:
 	cmp x2, #0
-	b.eq Lf64_b8
-Lf64_b3:
+	b.eq Lf65_b8
+Lf65_b3:
 	cmp x1, #64
-	b.ne Lf64_b8
-Lf64_b6:
+	b.ne Lf65_b8
+Lf65_b6:
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
 	mov x1, #0
 	mov x2, x9
 	bl _xo_f_show_2eappend__u64
 	cmp x19, #0
-	b.eq Lf64_b10
-	b Lf64_b12
-Lf64_b8:
+	b.eq Lf65_b10
+	b Lf65_b12
+Lf65_b8:
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
 	mov x1, #0
 	mov x2, x9
 	bl _xo_f_num_2eappend__int
-Lf64_b9:
+Lf65_b9:
 	cmp x19, #0
-	b.ne Lf64_b12
-Lf64_b10:
+	b.ne Lf65_b12
+Lf65_b10:
 	adrp x2, Lxo_str30@PAGE
 	add x2, x2, Lxo_str30@PAGEOFF
 	mov x3, #51
 	add x21, x1, x3
 	bl _xo_rs_concat
 	mov x20, x0
-	b Lf64_b36
-Lf64_b12:
+	b Lf65_b36
+Lf65_b12:
 	adrp x2, Lxo_str31@PAGE
 	add x2, x2, Lxo_str31@PAGEOFF
 	mov x3, #21
 	add x22, x1, x3
 	bl _xo_rs_concat
-Lf64_b13:
+Lf65_b13:
 	cmp x19, #8
-	b.eq Lf64_b14
-Lf64_b19:
+	b.eq Lf65_b14
+Lf65_b19:
 	cmp x19, #16
-	b.eq Lf64_b20
-Lf64_b25:
+	b.eq Lf65_b20
+Lf65_b25:
 	cmp x19, #32
-	b.eq Lf64_b26
-	b Lf64_b31
-Lf64_b14:
+	b.eq Lf65_b26
+	b Lf65_b31
+Lf65_b14:
 	cmp x20, #0
-	b.eq Lf64_b16
-Lf64_b15:
+	b.eq Lf65_b16
+Lf65_b15:
 	adrp x19, Lxo_str32@PAGE
 	add x19, x19, Lxo_str32@PAGEOFF
 	mov x3, #5
-	b Lf64_b35
-Lf64_b16:
+	b Lf65_b35
+Lf65_b16:
 	adrp x19, Lxo_str33@PAGE
 	add x19, x19, Lxo_str33@PAGEOFF
 	mov x3, #4
-	b Lf64_b35
-Lf64_b20:
+	b Lf65_b35
+Lf65_b20:
 	cmp x20, #0
-	b.eq Lf64_b22
-Lf64_b21:
+	b.eq Lf65_b22
+Lf65_b21:
 	adrp x19, Lxo_str34@PAGE
 	add x19, x19, Lxo_str34@PAGEOFF
 	mov x3, #6
-	b Lf64_b35
-Lf64_b22:
+	b Lf65_b35
+Lf65_b22:
 	adrp x19, Lxo_str35@PAGE
 	add x19, x19, Lxo_str35@PAGEOFF
 	mov x3, #5
-	b Lf64_b35
-Lf64_b26:
+	b Lf65_b35
+Lf65_b26:
 	cmp x20, #0
-	b.eq Lf64_b28
-Lf64_b27:
+	b.eq Lf65_b28
+Lf65_b27:
 	adrp x19, Lxo_str36@PAGE
 	add x19, x19, Lxo_str36@PAGEOFF
 	mov x3, #6
-	b Lf64_b35
-Lf64_b28:
+	b Lf65_b35
+Lf65_b28:
 	adrp x19, Lxo_str37@PAGE
 	add x19, x19, Lxo_str37@PAGEOFF
 	mov x3, #5
-	b Lf64_b35
-Lf64_b31:
+	b Lf65_b35
+Lf65_b31:
 	cmp x20, #0
-	b.eq Lf64_b33
-Lf64_b32:
+	b.eq Lf65_b33
+Lf65_b32:
 	adrp x19, Lxo_str38@PAGE
 	add x19, x19, Lxo_str38@PAGEOFF
 	mov x3, #6
-	b Lf64_b35
-Lf64_b33:
+	b Lf65_b35
+Lf65_b33:
 	adrp x19, Lxo_str39@PAGE
 	add x19, x19, Lxo_str39@PAGEOFF
 	mov x3, #3
-Lf64_b35:
+Lf65_b35:
 	add x21, x22, x3
 	mov x1, x22
 	mov x2, x19
@@ -10447,20 +10695,20 @@ Lf64_b35:
 	mov x20, x0
 	mov x0, x19
 	bl Lxo_drop1
-Lf64_b36:
+Lf65_b36:
 	add x0, x20, #16
 	add x2, x23, #16
 	mov x1, x21
 	mov x3, x24
-Lf64_cs161a:
+Lf65_cs162a:
 	bl _xo_fault_raise
-Lf64_cs161b:
-Lf64_b39:
+Lf65_cs162b:
+Lf65_b39:
 	brk #1
-Lf64_b37:
+Lf65_b37:
 	mov x0, x20
 	bl Lxo_drop1
-Lf64_b38:
+Lf65_b38:
 	bl _xo_fault_continue
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -10469,64 +10717,81 @@ Lf64_b38:
 	ret
 	.cfi_endproc
 
-// func num.pow10_hi
+// func scan.eq_at
 	.p2align 2
-_xo_f_num_2epow10__hi:
-Lf65_begin:
-	.cfi_startproc
-Lf65_b0:
-	mov x9, #-348
-	subs x10, x0, x9
-	b.vs Lf65_fault1
-	mov x11, #16
-	lsl x12, x10, #4
-	smulh x9, x10, x11
-	cmp x9, x12, asr #63
-	b.ne Lf65_fault2
-Lf65_b1:
-	adrp x9, Lxo_str29@PAGE
-	add x9, x9, Lxo_str29@PAGEOFF
-	add x9, x9, #16
-	ldr x0, [x9, x12]
-Lf65_b2:
-	ret
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-Lf65_fault1:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x2, x9
-	mov x1, #45
-	adrp x3, Lxo_loc134@PAGE
-	add x3, x3, Lxo_loc134@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf65_fault2:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x0, x10
-	mov x2, x11
-	mov x1, #42
-	adrp x3, Lxo_loc135@PAGE
-	add x3, x3, Lxo_loc135@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-	.cfi_endproc
-
-// func num.mul_log2_10
-	.p2align 2
-_xo_f_num_2emul__log2__10:
+_xo_f_scan_2eeq__at:
 Lf66_begin:
 	.cfi_startproc
 Lf66_b0:
-	movz x10, #43317, lsl #0
-	movk x10, #1, lsl #16
-	mul x11, x0, x10
-	smulh x9, x0, x10
-	cmp x9, x11, asr #63
-	b.ne Lf66_fault1
-	asr x0, x11, #15
+	cmp x6, #8
+	b.lt Lf66_b9
+Lf66_b1:
+	mov x11, #0
+Lf66_b2:
+	sub x9, x6, x11
+	cmp x9, #8
+	b.le Lf66_b7
+Lf66_b3:
+	adds x10, x2, x11
+	b.vs Lf66_fault1
+	add x9, x0, #16
+	ldr x12, [x9, x10]
+	adds x10, x5, x11
+	b.vs Lf66_fault2
+	add x9, x3, #16
+	ldr x9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf66_b6
+Lf66_b4:
+	mov x0, #0
+	ret
+Lf66_b6:
+	adds x11, x11, #8
+	b.vs Lf66_fault3
+	b Lf66_b2
+Lf66_b7:
+	adds x9, x2, x6
+	b.vs Lf66_fault4
+	sub x10, x9, #8
+	add x9, x0, #16
+	ldr x11, [x9, x10]
+	adds x9, x5, x6
+	b.vs Lf66_fault5
+	sub x10, x9, #8
+	add x9, x3, #16
+	ldr x9, [x9, x10]
+	cmp x11, x9
+	cset x0, eq
+	ret
+Lf66_b9:
+	mov x11, #0
+Lf66_b10:
+	cmp x11, x6
+	b.ge Lf66_b15
+Lf66_b11:
+	adds x10, x2, x11
+	b.vs Lf66_fault6
+	cmp x10, x1
+	b.hs Lf66_fault7
+	add x9, x0, #16
+	ldrb w12, [x9, x10]
+	adds x10, x5, x11
+	b.vs Lf66_fault8
+	cmp x10, x4
+	b.hs Lf66_fault9
+	add x9, x3, #16
+	ldrb w9, [x9, x10]
+	cmp x12, x9
+	b.eq Lf66_b14
+Lf66_b12:
+	mov x0, #0
+	ret
+Lf66_b14:
+	add x11, x11, #1
+	cmp x11, x6
+	b.lt Lf66_b11
+Lf66_b15:
+	mov x0, #1
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
@@ -10534,10 +10799,163 @@ Lf66_b0:
 Lf66_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
+	mov x0, x2
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc22@PAGE
+	add x3, x3, Lxo_loc22@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x5
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc137@PAGE
+	add x3, x3, Lxo_loc137@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #8
+	sub x15, x11, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #8
+	adrp x3, Lxo_loc23@PAGE
+	add x3, x3, Lxo_loc23@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault4:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x2
+	mov x2, x6
+	mov x1, #43
+	adrp x3, Lxo_loc138@PAGE
+	add x3, x3, Lxo_loc138@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault5:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x5
+	mov x2, x6
+	mov x1, #43
+	adrp x3, Lxo_loc139@PAGE
+	add x3, x3, Lxo_loc139@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault6:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x2
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc140@PAGE
+	add x3, x3, Lxo_loc140@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault7:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	adrp x2, Lxo_loc24@PAGE
+	add x2, x2, Lxo_loc24@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
+Lf66_fault8:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x5
+	mov x2, x11
+	mov x1, #43
+	adrp x3, Lxo_loc141@PAGE
+	add x3, x3, Lxo_loc141@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf66_fault9:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	mov x1, x4
+	adrp x2, Lxo_loc142@PAGE
+	add x2, x2, Lxo_loc142@PAGEOFF
+	bl _xo_fault_bytes_index
+	brk #1
+	.cfi_endproc
+
+// func num.pow10_hi
+	.p2align 2
+_xo_f_num_2epow10__hi:
+Lf67_begin:
+	.cfi_startproc
+Lf67_b0:
+	mov x9, #-348
+	subs x10, x0, x9
+	b.vs Lf67_fault1
+	mov x11, #16
+	lsl x12, x10, #4
+	smulh x9, x10, x11
+	cmp x9, x12, asr #63
+	b.ne Lf67_fault2
+Lf67_b1:
+	adrp x9, Lxo_str29@PAGE
+	add x9, x9, Lxo_str29@PAGEOFF
+	add x9, x9, #16
+	ldr x0, [x9, x12]
+Lf67_b2:
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf67_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x2, x9
+	mov x1, #45
+	adrp x3, Lxo_loc143@PAGE
+	add x3, x3, Lxo_loc143@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf67_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x10
+	mov x2, x11
+	mov x1, #42
+	adrp x3, Lxo_loc144@PAGE
+	add x3, x3, Lxo_loc144@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+	.cfi_endproc
+
+// func num.mul_log2_10
+	.p2align 2
+_xo_f_num_2emul__log2__10:
+Lf68_begin:
+	.cfi_startproc
+Lf68_b0:
+	movz x10, #43317, lsl #0
+	movk x10, #1, lsl #16
+	mul x11, x0, x10
+	smulh x9, x0, x10
+	cmp x9, x11, asr #63
+	b.ne Lf68_fault1
+	asr x0, x11, #15
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf68_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc136@PAGE
-	add x3, x3, Lxo_loc136@PAGEOFF
+	adrp x3, Lxo_loc145@PAGE
+	add x3, x3, Lxo_loc145@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -10545,9 +10963,9 @@ Lf66_fault1:
 // func num.shr
 	.p2align 2
 _xo_f_num_2eshr:
-Lf67_begin:
+Lf69_begin:
 	.cfi_startproc
-Lf67_b0:
+Lf69_b0:
 	lsr x0, x0, x1
 	ret
 	.cfi_endproc
@@ -10555,9 +10973,9 @@ Lf67_b0:
 // func num.subw
 	.p2align 2
 _xo_f_num_2esubw:
-Lf68_begin:
+Lf70_begin:
 	.cfi_startproc
-Lf68_b0:
+Lf70_b0:
 	sub x0, x0, x1
 	ret
 	.cfi_endproc
@@ -10565,9 +10983,9 @@ Lf68_b0:
 // func num.addw
 	.p2align 2
 _xo_f_num_2eaddw:
-Lf69_begin:
+Lf71_begin:
 	.cfi_startproc
-Lf69_b0:
+Lf71_b0:
 	add x0, x0, x1
 	ret
 	.cfi_endproc
@@ -10575,9 +10993,9 @@ Lf69_b0:
 // func num.trimmed
 	.p2align 2
 _xo_f_num_2etrimmed:
-Lf70_begin:
+Lf72_begin:
 	.cfi_startproc
-Lf70_b0:
+Lf72_b0:
 	movz x9, #59263, lsl #0
 	movk x9, #49712, lsl #16
 	movk x9, #15240, lsl #32
@@ -10589,14 +11007,14 @@ Lf70_b0:
 	movk x9, #1525, lsl #16
 	msub x9, x11, x9, x0
 	cmp x9, #0
-	b.ne Lf70_b2
-Lf70_b1:
+	b.ne Lf72_b2
+Lf72_b1:
 	adds x1, x1, #8
-	b.vs Lf70_fault1
-	b Lf70_b3
-Lf70_b2:
+	b.vs Lf72_fault1
+	b Lf72_b3
+Lf72_b2:
 	mov x11, x0
-Lf70_b3:
+Lf72_b3:
 	movz x9, #22859, lsl #0
 	movk x9, #14470, lsl #16
 	movk x9, #50646, lsl #32
@@ -10607,14 +11025,14 @@ Lf70_b3:
 	mov x9, #10000
 	msub x9, x10, x9, x11
 	cmp x9, #0
-	b.ne Lf70_b5
-Lf70_b4:
+	b.ne Lf72_b5
+Lf72_b4:
 	adds x1, x1, #4
-	b.vs Lf70_fault2
-	b Lf70_b6
-Lf70_b5:
+	b.vs Lf72_fault2
+	b Lf72_b6
+Lf72_b5:
 	mov x10, x11
-Lf70_b6:
+Lf72_b6:
 	movz x9, #55051, lsl #0
 	movk x9, #28835, lsl #16
 	movk x9, #2621, lsl #32
@@ -10626,14 +11044,14 @@ Lf70_b6:
 	mov x9, #100
 	msub x9, x11, x9, x10
 	cmp x9, #0
-	b.ne Lf70_b8
-Lf70_b7:
+	b.ne Lf72_b8
+Lf72_b7:
 	adds x1, x1, #2
-	b.vs Lf70_fault3
-	b Lf70_b9
-Lf70_b8:
+	b.vs Lf72_fault3
+	b Lf72_b9
+Lf72_b8:
 	mov x11, x10
-Lf70_b9:
+Lf72_b9:
 	movz x9, #26215, lsl #0
 	movk x9, #26214, lsl #16
 	movk x9, #26214, lsl #32
@@ -10644,118 +11062,14 @@ Lf70_b9:
 	mov x9, #10
 	msub x9, x0, x9, x11
 	cmp x9, #0
-	b.ne Lf70_b11
-Lf70_b10:
+	b.ne Lf72_b11
+Lf72_b10:
 	adds x1, x1, #1
-	b.vs Lf70_fault4
-	b Lf70_b12
-Lf70_b11:
+	b.vs Lf72_fault4
+	b Lf72_b12
+Lf72_b11:
 	mov x0, x11
-Lf70_b12:
-	ret
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-Lf70_fault1:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x17, #8
-	sub x15, x1, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #8
-	adrp x3, Lxo_loc137@PAGE
-	add x3, x3, Lxo_loc137@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf70_fault2:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x17, #4
-	sub x15, x1, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #4
-	adrp x3, Lxo_loc138@PAGE
-	add x3, x3, Lxo_loc138@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf70_fault3:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x17, #2
-	sub x15, x1, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #2
-	adrp x3, Lxo_loc139@PAGE
-	add x3, x3, Lxo_loc139@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf70_fault4:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x17, #1
-	sub x15, x1, x17
-	mov x0, x15
-	mov x1, #43
-	mov x2, #1
-	adrp x3, Lxo_loc140@PAGE
-	add x3, x3, Lxo_loc140@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-	.cfi_endproc
-
-// func num.mul_log10_2
-	.p2align 2
-_xo_f_num_2emul__log10__2:
-Lf71_begin:
-	.cfi_startproc
-Lf71_b0:
-	movz x10, #13377, lsl #0
-	movk x10, #1, lsl #16
-	mul x11, x0, x10
-	smulh x9, x0, x10
-	cmp x9, x11, asr #63
-	b.ne Lf71_fault1
-	asr x0, x11, #18
-	ret
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
-Lf71_fault1:
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	mov x2, x10
-	mov x1, #42
-	adrp x3, Lxo_loc102@PAGE
-	add x3, x3, Lxo_loc102@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-	.cfi_endproc
-
-// func num.pow10_lo
-	.p2align 2
-_xo_f_num_2epow10__lo:
-Lf72_begin:
-	.cfi_startproc
-Lf72_b0:
-	mov x9, #-348
-	subs x11, x0, x9
-	b.vs Lf72_fault1
-	mov x12, #16
-	lsl x10, x11, #4
-	smulh x9, x11, x12
-	cmp x9, x10, asr #63
-	b.ne Lf72_fault2
-	adds x10, x10, #8
-	b.vs Lf72_fault3
-Lf72_b1:
-	adrp x9, Lxo_str29@PAGE
-	add x9, x9, Lxo_str29@PAGEOFF
-	add x9, x9, #16
-	ldr x0, [x9, x10]
-Lf72_b2:
+Lf72_b12:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
@@ -10763,23 +11077,127 @@ Lf72_b2:
 Lf72_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
-	mov x2, x9
-	mov x1, #45
-	adrp x3, Lxo_loc141@PAGE
-	add x3, x3, Lxo_loc141@PAGEOFF
+	mov x17, #8
+	sub x15, x1, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #8
+	adrp x3, Lxo_loc146@PAGE
+	add x3, x3, Lxo_loc146@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf72_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
-	mov x0, x11
-	mov x2, x12
-	mov x1, #42
-	adrp x3, Lxo_loc142@PAGE
-	add x3, x3, Lxo_loc142@PAGEOFF
+	mov x17, #4
+	sub x15, x1, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #4
+	adrp x3, Lxo_loc147@PAGE
+	add x3, x3, Lxo_loc147@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 Lf72_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #2
+	sub x15, x1, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #2
+	adrp x3, Lxo_loc148@PAGE
+	add x3, x3, Lxo_loc148@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf72_fault4:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x17, #1
+	sub x15, x1, x17
+	mov x0, x15
+	mov x1, #43
+	mov x2, #1
+	adrp x3, Lxo_loc149@PAGE
+	add x3, x3, Lxo_loc149@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+	.cfi_endproc
+
+// func num.mul_log10_2
+	.p2align 2
+_xo_f_num_2emul__log10__2:
+Lf73_begin:
+	.cfi_startproc
+Lf73_b0:
+	movz x10, #13377, lsl #0
+	movk x10, #1, lsl #16
+	mul x11, x0, x10
+	smulh x9, x0, x10
+	cmp x9, x11, asr #63
+	b.ne Lf73_fault1
+	asr x0, x11, #18
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf73_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x2, x10
+	mov x1, #42
+	adrp x3, Lxo_loc105@PAGE
+	add x3, x3, Lxo_loc105@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+	.cfi_endproc
+
+// func num.pow10_lo
+	.p2align 2
+_xo_f_num_2epow10__lo:
+Lf74_begin:
+	.cfi_startproc
+Lf74_b0:
+	mov x9, #-348
+	subs x11, x0, x9
+	b.vs Lf74_fault1
+	mov x12, #16
+	lsl x10, x11, #4
+	smulh x9, x11, x12
+	cmp x9, x10, asr #63
+	b.ne Lf74_fault2
+	adds x10, x10, #8
+	b.vs Lf74_fault3
+Lf74_b1:
+	adrp x9, Lxo_str29@PAGE
+	add x9, x9, Lxo_str29@PAGEOFF
+	add x9, x9, #16
+	ldr x0, [x9, x10]
+Lf74_b2:
+	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+Lf74_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x2, x9
+	mov x1, #45
+	adrp x3, Lxo_loc150@PAGE
+	add x3, x3, Lxo_loc150@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf74_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	mov x0, x11
+	mov x2, x12
+	mov x1, #42
+	adrp x3, Lxo_loc151@PAGE
+	add x3, x3, Lxo_loc151@PAGEOFF
+	bl _xo_fault_overflow
+	brk #1
+Lf74_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x17, #8
@@ -10787,8 +11205,8 @@ Lf72_fault3:
 	mov x0, x15
 	mov x1, #43
 	mov x2, #8
-	adrp x3, Lxo_loc142@PAGE
-	add x3, x3, Lxo_loc142@PAGEOFF
+	adrp x3, Lxo_loc151@PAGE
+	add x3, x3, Lxo_loc151@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -10796,9 +11214,9 @@ Lf72_fault3:
 // func num.shl
 	.p2align 2
 _xo_f_num_2eshl:
-Lf73_begin:
+Lf75_begin:
 	.cfi_startproc
-Lf73_b0:
+Lf75_b0:
 	lsl x0, x0, x1
 	ret
 	.cfi_endproc
@@ -10806,9 +11224,9 @@ Lf73_b0:
 // func num.mulw
 	.p2align 2
 _xo_f_num_2emulw:
-Lf74_begin:
+Lf76_begin:
 	.cfi_startproc
-Lf74_b0:
+Lf76_b0:
 	mul x0, x0, x1
 	ret
 	.cfi_endproc
@@ -10816,9 +11234,9 @@ Lf74_b0:
 // func num.ult
 	.p2align 2
 _xo_f_num_2eult:
-Lf75_begin:
+Lf77_begin:
 	.cfi_startproc
-Lf75_b0:
+Lf77_b0:
 	movz x10, #1, lsl #0
 	movk x10, #32768, lsl #48
 	sub x9, x10, #1
@@ -10833,63 +11251,63 @@ Lf75_b0:
 // func num.parity
 	.p2align 2
 _xo_f_num_2eparity:
-Lf76_begin:
+Lf78_begin:
 	.cfi_startproc
-Lf76_b0:
+Lf78_b0:
 	umulh x10, x0, x2
-Lf76_b1:
+Lf78_b1:
 	mul x9, x0, x1
-Lf76_b3:
+Lf78_b3:
 	add x10, x9, x10
-Lf76_b5:
+Lf78_b5:
 	mul x11, x0, x2
-Lf76_b6:
+Lf78_b6:
 	mov x9, #64
 	subs x9, x9, x3
-	b.vs Lf76_fault1
-Lf76_b7:
+	b.vs Lf78_fault1
+Lf78_b7:
 	lsr x9, x10, x9
-Lf76_b8:
+Lf78_b8:
 	and x0, x9, #1
-Lf76_b9:
+Lf78_b9:
 	lsl x10, x10, x3
-Lf76_b10:
+Lf78_b10:
 	mov x9, #64
 	subs x9, x9, x3
-	b.vs Lf76_fault2
-Lf76_b11:
+	b.vs Lf78_fault2
+Lf78_b11:
 	lsr x9, x11, x9
-Lf76_b12:
+Lf78_b12:
 	orr x9, x10, x9
 	cmp x9, #0
-	b.ne Lf76_b15
-Lf76_b13:
+	b.ne Lf78_b15
+Lf78_b13:
 	orr x0, x0, #2
-Lf76_b15:
+Lf78_b15:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf76_fault1:
+Lf78_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	add x15, x9, x3
 	mov x0, x15
 	mov x2, x3
 	mov x1, #45
-	adrp x3, Lxo_loc107@PAGE
-	add x3, x3, Lxo_loc107@PAGEOFF
+	adrp x3, Lxo_loc110@PAGE
+	add x3, x3, Lxo_loc110@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf76_fault2:
+Lf78_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	add x15, x9, x3
 	mov x0, x15
 	mov x2, x3
 	mov x1, #45
-	adrp x3, Lxo_loc108@PAGE
-	add x3, x3, Lxo_loc108@PAGEOFF
+	adrp x3, Lxo_loc111@PAGE
+	add x3, x3, Lxo_loc111@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -10897,115 +11315,115 @@ Lf76_fault2:
 // func num.pow10
 	.p2align 2
 _xo_f_num_2epow10:
-Lf77_begin:
+Lf79_begin:
 	.cfi_startproc
-Lf77_b0:
+Lf79_b0:
 	and x9, x0, #16
 	cmp x9, #0
-	b.eq Lf77_b2
-Lf77_b1:
+	b.eq Lf79_b2
+Lf79_b1:
 	movz x11, #28609, lsl #16
 	movk x11, #34546, lsl #32
 	movk x11, #35, lsl #48
-	b Lf77_b3
-Lf77_b2:
+	b Lf79_b3
+Lf79_b2:
 	mov x11, #1
-Lf77_b3:
+Lf79_b3:
 	and x9, x0, #8
 	cmp x9, #0
-	b.eq Lf77_b5
-Lf77_b4:
+	b.eq Lf79_b5
+Lf79_b4:
 	movz x10, #57600, lsl #0
 	movk x10, #1525, lsl #16
 	mul x12, x11, x10
 	smulh x9, x11, x10
 	cmp x9, x12, asr #63
-	b.ne Lf77_fault1
-	b Lf77_b6
-Lf77_b5:
+	b.ne Lf79_fault1
+	b Lf79_b6
+Lf79_b5:
 	mov x12, x11
-Lf77_b6:
+Lf79_b6:
 	and x9, x0, #4
 	cmp x9, #0
-	b.eq Lf77_b8
-Lf77_b7:
+	b.eq Lf79_b8
+Lf79_b7:
 	mov x10, #10000
 	mul x11, x12, x10
 	smulh x9, x12, x10
 	cmp x9, x11, asr #63
-	b.ne Lf77_fault2
-	b Lf77_b9
-Lf77_b8:
+	b.ne Lf79_fault2
+	b Lf79_b9
+Lf79_b8:
 	mov x11, x12
-Lf77_b9:
+Lf79_b9:
 	and x9, x0, #2
 	cmp x9, #0
-	b.eq Lf77_b11
-Lf77_b10:
+	b.eq Lf79_b11
+Lf79_b10:
 	mov x10, #100
 	mul x12, x11, x10
 	smulh x9, x11, x10
 	cmp x9, x12, asr #63
-	b.ne Lf77_fault3
-	b Lf77_b12
-Lf77_b11:
+	b.ne Lf79_fault3
+	b Lf79_b12
+Lf79_b11:
 	mov x12, x11
-Lf77_b12:
+Lf79_b12:
 	and x9, x0, #1
 	cmp x9, #0
-	b.eq Lf77_b14
-Lf77_b13:
+	b.eq Lf79_b14
+Lf79_b13:
 	mov x10, #10
 	mul x0, x12, x10
 	smulh x9, x12, x10
 	cmp x9, x0, asr #63
-	b.ne Lf77_fault4
-	b Lf77_b15
-Lf77_b14:
+	b.ne Lf79_fault4
+	b Lf79_b15
+Lf79_b14:
 	mov x0, x12
-Lf77_b15:
+Lf79_b15:
 	ret
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf77_fault1:
+Lf79_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x11
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc143@PAGE
-	add x3, x3, Lxo_loc143@PAGEOFF
+	adrp x3, Lxo_loc152@PAGE
+	add x3, x3, Lxo_loc152@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf77_fault2:
+Lf79_fault2:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc144@PAGE
-	add x3, x3, Lxo_loc144@PAGEOFF
+	adrp x3, Lxo_loc153@PAGE
+	add x3, x3, Lxo_loc153@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf77_fault3:
+Lf79_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x11
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc145@PAGE
-	add x3, x3, Lxo_loc145@PAGEOFF
+	adrp x3, Lxo_loc154@PAGE
+	add x3, x3, Lxo_loc154@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
-Lf77_fault4:
+Lf79_fault4:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
 	mov x2, x10
 	mov x1, #42
-	adrp x3, Lxo_loc146@PAGE
-	add x3, x3, Lxo_loc146@PAGEOFF
+	adrp x3, Lxo_loc155@PAGE
+	add x3, x3, Lxo_loc155@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -11013,7 +11431,7 @@ Lf77_fault4:
 // func ints.conv_message
 	.p2align 2
 _xo_f_ints_2econv__message:
-Lf78_begin:
+Lf80_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -11026,35 +11444,35 @@ Lf78_begin:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-Lf78_b0:
+Lf80_b0:
 	mov x9, x0
 	mov x19, x3
 	mov x20, x4
-Lf78_b1:
+Lf80_b1:
 	cmp x2, #0
-	b.eq Lf78_b7
-Lf78_b2:
+	b.eq Lf80_b7
+Lf80_b2:
 	cmp x1, #64
-	b.ne Lf78_b7
-Lf78_b5:
+	b.ne Lf80_b7
+Lf80_b5:
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
 	mov x1, #0
 	mov x2, x9
 	bl _xo_f_show_2eappend__u64
 	cmp x19, #0
-	b.eq Lf78_b9
-	b Lf78_b11
-Lf78_b7:
+	b.eq Lf80_b9
+	b Lf80_b11
+Lf80_b7:
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
 	mov x1, #0
 	mov x2, x9
 	bl _xo_f_num_2eappend__int
-Lf78_b8:
+Lf80_b8:
 	cmp x19, #0
-	b.ne Lf78_b11
-Lf78_b9:
+	b.ne Lf80_b11
+Lf80_b9:
 	adrp x2, Lxo_str30@PAGE
 	add x2, x2, Lxo_str30@PAGEOFF
 	mov x3, #51
@@ -11065,74 +11483,74 @@ Lf78_b9:
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	ret
-Lf78_b11:
+Lf80_b11:
 	adrp x2, Lxo_str31@PAGE
 	add x2, x2, Lxo_str31@PAGEOFF
 	mov x3, #21
 	add x22, x1, x3
 	bl _xo_rs_concat
-Lf78_b12:
+Lf80_b12:
 	cmp x19, #8
-	b.eq Lf78_b13
-Lf78_b18:
+	b.eq Lf80_b13
+Lf80_b18:
 	cmp x19, #16
-	b.eq Lf78_b19
-Lf78_b24:
+	b.eq Lf80_b19
+Lf80_b24:
 	cmp x19, #32
-	b.eq Lf78_b25
-	b Lf78_b30
-Lf78_b13:
+	b.eq Lf80_b25
+	b Lf80_b30
+Lf80_b13:
 	cmp x20, #0
-	b.eq Lf78_b15
-Lf78_b14:
+	b.eq Lf80_b15
+Lf80_b14:
 	adrp x19, Lxo_str32@PAGE
 	add x19, x19, Lxo_str32@PAGEOFF
 	mov x3, #5
-	b Lf78_b34
-Lf78_b15:
+	b Lf80_b34
+Lf80_b15:
 	adrp x19, Lxo_str33@PAGE
 	add x19, x19, Lxo_str33@PAGEOFF
 	mov x3, #4
-	b Lf78_b34
-Lf78_b19:
+	b Lf80_b34
+Lf80_b19:
 	cmp x20, #0
-	b.eq Lf78_b21
-Lf78_b20:
+	b.eq Lf80_b21
+Lf80_b20:
 	adrp x19, Lxo_str34@PAGE
 	add x19, x19, Lxo_str34@PAGEOFF
 	mov x3, #6
-	b Lf78_b34
-Lf78_b21:
+	b Lf80_b34
+Lf80_b21:
 	adrp x19, Lxo_str35@PAGE
 	add x19, x19, Lxo_str35@PAGEOFF
 	mov x3, #5
-	b Lf78_b34
-Lf78_b25:
+	b Lf80_b34
+Lf80_b25:
 	cmp x20, #0
-	b.eq Lf78_b27
-Lf78_b26:
+	b.eq Lf80_b27
+Lf80_b26:
 	adrp x19, Lxo_str36@PAGE
 	add x19, x19, Lxo_str36@PAGEOFF
 	mov x3, #6
-	b Lf78_b34
-Lf78_b27:
+	b Lf80_b34
+Lf80_b27:
 	adrp x19, Lxo_str37@PAGE
 	add x19, x19, Lxo_str37@PAGEOFF
 	mov x3, #5
-	b Lf78_b34
-Lf78_b30:
+	b Lf80_b34
+Lf80_b30:
 	cmp x20, #0
-	b.eq Lf78_b32
-Lf78_b31:
+	b.eq Lf80_b32
+Lf80_b31:
 	adrp x19, Lxo_str38@PAGE
 	add x19, x19, Lxo_str38@PAGEOFF
 	mov x3, #6
-	b Lf78_b34
-Lf78_b32:
+	b Lf80_b34
+Lf80_b32:
 	adrp x19, Lxo_str39@PAGE
 	add x19, x19, Lxo_str39@PAGEOFF
 	mov x3, #3
-Lf78_b34:
+Lf80_b34:
 	add x21, x22, x3
 	mov x1, x22
 	mov x2, x19
@@ -11151,9 +11569,9 @@ Lf78_b34:
 // func num.word_at
 	.p2align 2
 _xo_f_num_2eword__at:
-Lf79_begin:
+Lf81_begin:
 	.cfi_startproc
-Lf79_b0:
+Lf81_b0:
 	add x9, x0, #16
 	ldr x0, [x9, x2]
 	ret
@@ -11162,24 +11580,24 @@ Lf79_b0:
 // func ints.append_val
 	.p2align 2
 _xo_f_ints_2eappend__val:
-Lf80_begin:
+Lf82_begin:
 	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-Lf80_b0:
+Lf82_b0:
 	cmp x4, #0
-	b.eq Lf80_b6
-Lf80_b1:
+	b.eq Lf82_b6
+Lf82_b1:
 	cmp x3, #64
-	b.ne Lf80_b6
-Lf80_b4:
+	b.ne Lf82_b6
+Lf82_b4:
 	bl _xo_f_show_2eappend__u64
 	ldp x29, x30, [sp], #16
 	ret
-Lf80_b6:
+Lf82_b6:
 	bl _xo_f_num_2eappend__int
 	ldp x29, x30, [sp], #16
 	ret
@@ -11188,83 +11606,83 @@ Lf80_b6:
 // func ints.type_name
 	.p2align 2
 _xo_f_ints_2etype__name:
-Lf81_begin:
+Lf83_begin:
 	.cfi_startproc
-Lf81_b0:
+Lf83_b0:
 	cmp x0, #8
-	b.eq Lf81_b1
-Lf81_b6:
+	b.eq Lf83_b1
+Lf83_b6:
 	cmp x0, #16
-	b.eq Lf81_b7
-Lf81_b12:
+	b.eq Lf83_b7
+Lf83_b12:
 	cmp x0, #32
-	b.eq Lf81_b13
-	b Lf81_b18
-Lf81_b1:
+	b.eq Lf83_b13
+	b Lf83_b18
+Lf83_b1:
 	cmp x1, #0
-	b.eq Lf81_b3
-Lf81_b2:
+	b.eq Lf83_b3
+Lf83_b2:
 	adrp x0, Lxo_str32@PAGE
 	add x0, x0, Lxo_str32@PAGEOFF
 	mov x1, #5
-	b Lf81_b4
-Lf81_b3:
+	b Lf83_b4
+Lf83_b3:
 	adrp x0, Lxo_str33@PAGE
 	add x0, x0, Lxo_str33@PAGEOFF
 	mov x1, #4
-Lf81_b4:
+Lf83_b4:
 	ret
-Lf81_b7:
+Lf83_b7:
 	cmp x1, #0
-	b.eq Lf81_b9
-Lf81_b8:
+	b.eq Lf83_b9
+Lf83_b8:
 	adrp x0, Lxo_str34@PAGE
 	add x0, x0, Lxo_str34@PAGEOFF
 	mov x1, #6
-	b Lf81_b10
-Lf81_b9:
+	b Lf83_b10
+Lf83_b9:
 	adrp x0, Lxo_str35@PAGE
 	add x0, x0, Lxo_str35@PAGEOFF
 	mov x1, #5
-Lf81_b10:
+Lf83_b10:
 	ret
-Lf81_b13:
+Lf83_b13:
 	cmp x1, #0
-	b.eq Lf81_b15
-Lf81_b14:
+	b.eq Lf83_b15
+Lf83_b14:
 	adrp x0, Lxo_str36@PAGE
 	add x0, x0, Lxo_str36@PAGEOFF
 	mov x1, #6
-	b Lf81_b16
-Lf81_b15:
+	b Lf83_b16
+Lf83_b15:
 	adrp x0, Lxo_str37@PAGE
 	add x0, x0, Lxo_str37@PAGEOFF
 	mov x1, #5
-Lf81_b16:
+Lf83_b16:
 	ret
-Lf81_b18:
+Lf83_b18:
 	cmp x1, #0
-	b.eq Lf81_b20
-Lf81_b19:
+	b.eq Lf83_b20
+Lf83_b19:
 	adrp x0, Lxo_str38@PAGE
 	add x0, x0, Lxo_str38@PAGEOFF
 	mov x1, #6
-	b Lf81_b21
-Lf81_b20:
+	b Lf83_b21
+Lf83_b20:
 	adrp x0, Lxo_str39@PAGE
 	add x0, x0, Lxo_str39@PAGEOFF
 	mov x1, #3
-Lf81_b21:
+Lf83_b21:
 	ret
 	.cfi_endproc
 
 // func show.append_u64
 	.p2align 2
 _xo_f_show_2eappend__u64:
-Lf82_begin:
+Lf84_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_personality
-	.cfi_lsda 16, GCC_except_table_xo82
+	.cfi_lsda 16, GCC_except_table_xo84
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #24]
@@ -11273,17 +11691,17 @@ Lf82_begin:
 	.cfi_offset w30, -40
 	.cfi_offset w20, -24
 	.cfi_offset w19, -16
-Lf82_b0:
+Lf84_b0:
 	mov x11, x2
 	cmp x11, #0
-	b.lt Lf82_b3
-Lf82_b1:
+	b.lt Lf84_b3
+Lf84_b1:
 	mov x2, x11
 	bl _xo_f_num_2eappend__int
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-Lf82_b3:
+Lf84_b3:
 	lsr x10, x11, #1
 	movz x9, #26215, lsl #0
 	movk x9, #26214, lsl #16
@@ -11292,15 +11710,15 @@ Lf82_b3:
 	smulh x9, x10, x9
 	asr x9, x9, #1
 	add x2, x9, x9, lsr #63
-Lf82_b5:
+Lf84_b5:
 	mov x9, #10
 	mul x9, x2, x9
 	sub x19, x11, x9
 	bl _xo_f_num_2eappend__int
 	mov x20, x0
 	adds x2, x19, #48
-	b.vs Lf82_fault1
-Lf82_b8:
+	b.vs Lf84_fault1
+Lf84_b8:
 	mov x0, x20
 	add x3, sp, #16
 	bl _xo_rs_push_byte
@@ -11308,13 +11726,13 @@ Lf82_b8:
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-Lf82_b4:
+Lf84_b4:
 	bl Lxo_drop1
-	b Lf82_b7
-Lf82_b6:
+	b Lf84_b7
+Lf84_b6:
 	mov x0, x20
 	bl Lxo_drop1
-Lf82_b7:
+Lf84_b7:
 	bl _xo_fault_continue
 	adrp x0, Lxo_str1@PAGE
 	add x0, x0, Lxo_str1@PAGEOFF
@@ -11322,15 +11740,15 @@ Lf82_b7:
 	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
-Lf82_fault1:
+Lf84_fault1:
 	mov x2, x19
 	mov x0, #48
 	mov x1, #43
-	adrp x3, Lxo_loc147@PAGE
-	add x3, x3, Lxo_loc147@PAGEOFF
-Lf82_cs162a:
+	adrp x3, Lxo_loc156@PAGE
+	add x3, x3, Lxo_loc156@PAGEOFF
+Lf84_cs163a:
 	bl _xo_fault_overflow
-Lf82_cs162b:
+Lf84_cs163b:
 	brk #1
 	.cfi_endproc
 
@@ -11843,9 +12261,13 @@ GCC_except_table_xo35:
 	.byte 1
 	.uleb128 Lf35_cste-Lf35_cst
 Lf35_cst:
+	.uleb128 Lf35_cs47a-Lf35_begin
+	.uleb128 Lf35_cs47b-Lf35_cs47a
+	.uleb128 Lf35_b32-Lf35_begin
+	.byte 0
 	.uleb128 Lf35_cs46a-Lf35_begin
 	.uleb128 Lf35_cs46b-Lf35_cs46a
-	.uleb128 Lf35_b8-Lf35_begin
+	.uleb128 Lf35_b27-Lf35_begin
 	.byte 0
 Lf35_cste:
 	.section __TEXT,__gcc_except_tab
@@ -11856,17 +12278,13 @@ GCC_except_table_xo36:
 	.byte 1
 	.uleb128 Lf36_cste-Lf36_cst
 Lf36_cst:
-	.uleb128 Lf36_cs47a-Lf36_begin
-	.uleb128 Lf36_cs47b-Lf36_cs47a
-	.uleb128 Lf36_b12-Lf36_begin
-	.byte 0
 	.uleb128 Lf36_cs48a-Lf36_begin
 	.uleb128 Lf36_cs48b-Lf36_cs48a
-	.uleb128 Lf36_b23-Lf36_begin
+	.uleb128 Lf36_b12-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs49a-Lf36_begin
 	.uleb128 Lf36_cs49b-Lf36_cs49a
-	.uleb128 Lf36_b26-Lf36_begin
+	.uleb128 Lf36_b23-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs50a-Lf36_begin
 	.uleb128 Lf36_cs50b-Lf36_cs50a
@@ -11874,7 +12292,7 @@ Lf36_cst:
 	.byte 0
 	.uleb128 Lf36_cs51a-Lf36_begin
 	.uleb128 Lf36_cs51b-Lf36_cs51a
-	.uleb128 Lf36_b30-Lf36_begin
+	.uleb128 Lf36_b26-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs52a-Lf36_begin
 	.uleb128 Lf36_cs52b-Lf36_cs52a
@@ -11882,7 +12300,7 @@ Lf36_cst:
 	.byte 0
 	.uleb128 Lf36_cs53a-Lf36_begin
 	.uleb128 Lf36_cs53b-Lf36_cs53a
-	.uleb128 Lf36_b55-Lf36_begin
+	.uleb128 Lf36_b30-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs54a-Lf36_begin
 	.uleb128 Lf36_cs54b-Lf36_cs54a
@@ -11894,11 +12312,11 @@ Lf36_cst:
 	.byte 0
 	.uleb128 Lf36_cs56a-Lf36_begin
 	.uleb128 Lf36_cs56b-Lf36_cs56a
-	.uleb128 Lf36_b57-Lf36_begin
+	.uleb128 Lf36_b55-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs57a-Lf36_begin
 	.uleb128 Lf36_cs57b-Lf36_cs57a
-	.uleb128 Lf36_b72-Lf36_begin
+	.uleb128 Lf36_b57-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs58a-Lf36_begin
 	.uleb128 Lf36_cs58b-Lf36_cs58a
@@ -11910,11 +12328,11 @@ Lf36_cst:
 	.byte 0
 	.uleb128 Lf36_cs60a-Lf36_begin
 	.uleb128 Lf36_cs60b-Lf36_cs60a
-	.uleb128 Lf36_b74-Lf36_begin
+	.uleb128 Lf36_b72-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs61a-Lf36_begin
 	.uleb128 Lf36_cs61b-Lf36_cs61a
-	.uleb128 Lf36_b88-Lf36_begin
+	.uleb128 Lf36_b74-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs62a-Lf36_begin
 	.uleb128 Lf36_cs62b-Lf36_cs62a
@@ -11926,14 +12344,18 @@ Lf36_cst:
 	.byte 0
 	.uleb128 Lf36_cs64a-Lf36_begin
 	.uleb128 Lf36_cs64b-Lf36_cs64a
-	.uleb128 Lf36_b90-Lf36_begin
+	.uleb128 Lf36_b88-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs65a-Lf36_begin
 	.uleb128 Lf36_cs65b-Lf36_cs65a
-	.uleb128 Lf36_b92-Lf36_begin
+	.uleb128 Lf36_b90-Lf36_begin
 	.byte 0
 	.uleb128 Lf36_cs66a-Lf36_begin
 	.uleb128 Lf36_cs66b-Lf36_cs66a
+	.uleb128 Lf36_b92-Lf36_begin
+	.byte 0
+	.uleb128 Lf36_cs67a-Lf36_begin
+	.uleb128 Lf36_cs67b-Lf36_cs67a
 	.uleb128 Lf36_b94-Lf36_begin
 	.byte 0
 Lf36_cste:
@@ -11945,37 +12367,33 @@ GCC_except_table_xo38:
 	.byte 1
 	.uleb128 Lf38_cste-Lf38_cst
 Lf38_cst:
-	.uleb128 Lf38_cs67a-Lf38_begin
-	.uleb128 Lf38_cs67b-Lf38_cs67a
-	.uleb128 Lf38_b110-Lf38_begin
-	.byte 0
 	.uleb128 Lf38_cs68a-Lf38_begin
 	.uleb128 Lf38_cs68b-Lf38_cs68a
-	.uleb128 Lf38_b136-Lf38_begin
+	.uleb128 Lf38_b110-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs69a-Lf38_begin
 	.uleb128 Lf38_cs69b-Lf38_cs69a
-	.uleb128 Lf38_b147-Lf38_begin
+	.uleb128 Lf38_b136-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs70a-Lf38_begin
 	.uleb128 Lf38_cs70b-Lf38_cs70a
-	.uleb128 Lf38_b158-Lf38_begin
+	.uleb128 Lf38_b147-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs71a-Lf38_begin
 	.uleb128 Lf38_cs71b-Lf38_cs71a
-	.uleb128 Lf38_b175-Lf38_begin
+	.uleb128 Lf38_b158-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs72a-Lf38_begin
 	.uleb128 Lf38_cs72b-Lf38_cs72a
-	.uleb128 Lf38_b181-Lf38_begin
+	.uleb128 Lf38_b175-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs73a-Lf38_begin
 	.uleb128 Lf38_cs73b-Lf38_cs73a
-	.uleb128 Lf38_b188-Lf38_begin
+	.uleb128 Lf38_b181-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs74a-Lf38_begin
 	.uleb128 Lf38_cs74b-Lf38_cs74a
-	.uleb128 Lf38_b192-Lf38_begin
+	.uleb128 Lf38_b188-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs75a-Lf38_begin
 	.uleb128 Lf38_cs75b-Lf38_cs75a
@@ -11983,15 +12401,15 @@ Lf38_cst:
 	.byte 0
 	.uleb128 Lf38_cs76a-Lf38_begin
 	.uleb128 Lf38_cs76b-Lf38_cs76a
-	.uleb128 Lf38_b201-Lf38_begin
+	.uleb128 Lf38_b192-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs77a-Lf38_begin
 	.uleb128 Lf38_cs77b-Lf38_cs77a
-	.uleb128 Lf38_b203-Lf38_begin
+	.uleb128 Lf38_b201-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs78a-Lf38_begin
 	.uleb128 Lf38_cs78b-Lf38_cs78a
-	.uleb128 Lf38_b214-Lf38_begin
+	.uleb128 Lf38_b203-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs79a-Lf38_begin
 	.uleb128 Lf38_cs79b-Lf38_cs79a
@@ -12003,14 +12421,18 @@ Lf38_cst:
 	.byte 0
 	.uleb128 Lf38_cs81a-Lf38_begin
 	.uleb128 Lf38_cs81b-Lf38_cs81a
-	.uleb128 Lf38_b220-Lf38_begin
+	.uleb128 Lf38_b214-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs82a-Lf38_begin
 	.uleb128 Lf38_cs82b-Lf38_cs82a
-	.uleb128 Lf38_b222-Lf38_begin
+	.uleb128 Lf38_b220-Lf38_begin
 	.byte 0
 	.uleb128 Lf38_cs83a-Lf38_begin
 	.uleb128 Lf38_cs83b-Lf38_cs83a
+	.uleb128 Lf38_b222-Lf38_begin
+	.byte 0
+	.uleb128 Lf38_cs84a-Lf38_begin
+	.uleb128 Lf38_cs84b-Lf38_cs84a
 	.uleb128 Lf38_b224-Lf38_begin
 	.byte 0
 Lf38_cste:
@@ -12022,16 +12444,16 @@ GCC_except_table_xo40:
 	.byte 1
 	.uleb128 Lf40_cste-Lf40_cst
 Lf40_cst:
-	.uleb128 Lf40_cs85a-Lf40_begin
-	.uleb128 Lf40_cs85b-Lf40_cs85a
-	.uleb128 Lf40_b66-Lf40_begin
-	.byte 0
-	.uleb128 Lf40_cs84a-Lf40_begin
-	.uleb128 Lf40_cs84b-Lf40_cs84a
-	.uleb128 Lf40_b24-Lf40_begin
-	.byte 0
 	.uleb128 Lf40_cs86a-Lf40_begin
 	.uleb128 Lf40_cs86b-Lf40_cs86a
+	.uleb128 Lf40_b66-Lf40_begin
+	.byte 0
+	.uleb128 Lf40_cs85a-Lf40_begin
+	.uleb128 Lf40_cs85b-Lf40_cs85a
+	.uleb128 Lf40_b24-Lf40_begin
+	.byte 0
+	.uleb128 Lf40_cs87a-Lf40_begin
+	.uleb128 Lf40_cs87b-Lf40_cs87a
 	.uleb128 Lf40_b73-Lf40_begin
 	.byte 0
 Lf40_cste:
@@ -12043,8 +12465,8 @@ GCC_except_table_xo41:
 	.byte 1
 	.uleb128 Lf41_cste-Lf41_cst
 Lf41_cst:
-	.uleb128 Lf41_cs87a-Lf41_begin
-	.uleb128 Lf41_cs87b-Lf41_cs87a
+	.uleb128 Lf41_cs88a-Lf41_begin
+	.uleb128 Lf41_cs88b-Lf41_cs88a
 	.uleb128 Lf41_b3-Lf41_begin
 	.byte 0
 Lf41_cste:
@@ -12056,12 +12478,12 @@ GCC_except_table_xo42:
 	.byte 1
 	.uleb128 Lf42_cste-Lf42_cst
 Lf42_cst:
-	.uleb128 Lf42_cs88a-Lf42_begin
-	.uleb128 Lf42_cs88b-Lf42_cs88a
-	.uleb128 Lf42_b129-Lf42_begin
-	.byte 0
 	.uleb128 Lf42_cs89a-Lf42_begin
 	.uleb128 Lf42_cs89b-Lf42_cs89a
+	.uleb128 Lf42_b129-Lf42_begin
+	.byte 0
+	.uleb128 Lf42_cs90a-Lf42_begin
+	.uleb128 Lf42_cs90b-Lf42_cs90a
 	.uleb128 Lf42_b131-Lf42_begin
 	.byte 0
 Lf42_cste:
@@ -12073,8 +12495,8 @@ GCC_except_table_xo46:
 	.byte 1
 	.uleb128 Lf46_cste-Lf46_cst
 Lf46_cst:
-	.uleb128 Lf46_cs90a-Lf46_begin
-	.uleb128 Lf46_cs90b-Lf46_cs90a
+	.uleb128 Lf46_cs91a-Lf46_begin
+	.uleb128 Lf46_cs91b-Lf46_cs91a
 	.uleb128 Lf46_b21-Lf46_begin
 	.byte 0
 Lf46_cste:
@@ -12086,17 +12508,13 @@ GCC_except_table_xo49:
 	.byte 1
 	.uleb128 Lf49_cste-Lf49_cst
 Lf49_cst:
-	.uleb128 Lf49_cs91a-Lf49_begin
-	.uleb128 Lf49_cs91b-Lf49_cs91a
-	.uleb128 Lf49_b8-Lf49_begin
-	.byte 0
 	.uleb128 Lf49_cs92a-Lf49_begin
 	.uleb128 Lf49_cs92b-Lf49_cs92a
-	.uleb128 Lf49_b11-Lf49_begin
+	.uleb128 Lf49_b8-Lf49_begin
 	.byte 0
 	.uleb128 Lf49_cs93a-Lf49_begin
 	.uleb128 Lf49_cs93b-Lf49_cs93a
-	.uleb128 Lf49_b13-Lf49_begin
+	.uleb128 Lf49_b11-Lf49_begin
 	.byte 0
 	.uleb128 Lf49_cs94a-Lf49_begin
 	.uleb128 Lf49_cs94b-Lf49_cs94a
@@ -12104,6 +12522,10 @@ Lf49_cst:
 	.byte 0
 	.uleb128 Lf49_cs95a-Lf49_begin
 	.uleb128 Lf49_cs95b-Lf49_cs95a
+	.uleb128 Lf49_b13-Lf49_begin
+	.byte 0
+	.uleb128 Lf49_cs96a-Lf49_begin
+	.uleb128 Lf49_cs96b-Lf49_cs96a
 	.uleb128 Lf49_b15-Lf49_begin
 	.byte 0
 Lf49_cste:
@@ -12115,29 +12537,25 @@ GCC_except_table_xo50:
 	.byte 1
 	.uleb128 Lf50_cste-Lf50_cst
 Lf50_cst:
-	.uleb128 Lf50_cs96a-Lf50_begin
-	.uleb128 Lf50_cs96b-Lf50_cs96a
-	.uleb128 Lf50_b7-Lf50_begin
-	.byte 0
 	.uleb128 Lf50_cs97a-Lf50_begin
 	.uleb128 Lf50_cs97b-Lf50_cs97a
-	.uleb128 Lf50_b10-Lf50_begin
+	.uleb128 Lf50_b7-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs98a-Lf50_begin
 	.uleb128 Lf50_cs98b-Lf50_cs98a
-	.uleb128 Lf50_b15-Lf50_begin
+	.uleb128 Lf50_b10-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs99a-Lf50_begin
 	.uleb128 Lf50_cs99b-Lf50_cs99a
-	.uleb128 Lf50_b22-Lf50_begin
+	.uleb128 Lf50_b15-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs100a-Lf50_begin
 	.uleb128 Lf50_cs100b-Lf50_cs100a
-	.uleb128 Lf50_b31-Lf50_begin
+	.uleb128 Lf50_b22-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs101a-Lf50_begin
 	.uleb128 Lf50_cs101b-Lf50_cs101a
-	.uleb128 Lf50_b33-Lf50_begin
+	.uleb128 Lf50_b31-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs102a-Lf50_begin
 	.uleb128 Lf50_cs102b-Lf50_cs102a
@@ -12145,7 +12563,7 @@ Lf50_cst:
 	.byte 0
 	.uleb128 Lf50_cs103a-Lf50_begin
 	.uleb128 Lf50_cs103b-Lf50_cs103a
-	.uleb128 Lf50_b35-Lf50_begin
+	.uleb128 Lf50_b33-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs104a-Lf50_begin
 	.uleb128 Lf50_cs104b-Lf50_cs104a
@@ -12153,15 +12571,15 @@ Lf50_cst:
 	.byte 0
 	.uleb128 Lf50_cs105a-Lf50_begin
 	.uleb128 Lf50_cs105b-Lf50_cs105a
-	.uleb128 Lf50_b44-Lf50_begin
+	.uleb128 Lf50_b35-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs106a-Lf50_begin
 	.uleb128 Lf50_cs106b-Lf50_cs106a
-	.uleb128 Lf50_b46-Lf50_begin
+	.uleb128 Lf50_b44-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs107a-Lf50_begin
 	.uleb128 Lf50_cs107b-Lf50_cs107a
-	.uleb128 Lf50_b48-Lf50_begin
+	.uleb128 Lf50_b46-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs108a-Lf50_begin
 	.uleb128 Lf50_cs108b-Lf50_cs108a
@@ -12169,11 +12587,11 @@ Lf50_cst:
 	.byte 0
 	.uleb128 Lf50_cs109a-Lf50_begin
 	.uleb128 Lf50_cs109b-Lf50_cs109a
-	.uleb128 Lf50_b50-Lf50_begin
+	.uleb128 Lf50_b48-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs110a-Lf50_begin
 	.uleb128 Lf50_cs110b-Lf50_cs110a
-	.uleb128 Lf50_b61-Lf50_begin
+	.uleb128 Lf50_b50-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs111a-Lf50_begin
 	.uleb128 Lf50_cs111b-Lf50_cs111a
@@ -12185,26 +12603,30 @@ Lf50_cst:
 	.byte 0
 	.uleb128 Lf50_cs113a-Lf50_begin
 	.uleb128 Lf50_cs113b-Lf50_cs113a
-	.uleb128 Lf50_b63-Lf50_begin
+	.uleb128 Lf50_b61-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs114a-Lf50_begin
 	.uleb128 Lf50_cs114b-Lf50_cs114a
-	.uleb128 Lf50_b65-Lf50_begin
+	.uleb128 Lf50_b63-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs115a-Lf50_begin
 	.uleb128 Lf50_cs115b-Lf50_cs115a
-	.uleb128 Lf50_b67-Lf50_begin
+	.uleb128 Lf50_b65-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs116a-Lf50_begin
 	.uleb128 Lf50_cs116b-Lf50_cs116a
-	.uleb128 Lf50_b69-Lf50_begin
+	.uleb128 Lf50_b67-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs117a-Lf50_begin
 	.uleb128 Lf50_cs117b-Lf50_cs117a
-	.uleb128 Lf50_b71-Lf50_begin
+	.uleb128 Lf50_b69-Lf50_begin
 	.byte 0
 	.uleb128 Lf50_cs118a-Lf50_begin
 	.uleb128 Lf50_cs118b-Lf50_cs118a
+	.uleb128 Lf50_b71-Lf50_begin
+	.byte 0
+	.uleb128 Lf50_cs119a-Lf50_begin
+	.uleb128 Lf50_cs119b-Lf50_cs119a
 	.uleb128 Lf50_b73-Lf50_begin
 	.byte 0
 Lf50_cste:
@@ -12216,13 +12638,9 @@ GCC_except_table_xo54:
 	.byte 1
 	.uleb128 Lf54_cste-Lf54_cst
 Lf54_cst:
-	.uleb128 Lf54_cs119a-Lf54_begin
-	.uleb128 Lf54_cs119b-Lf54_cs119a
-	.uleb128 Lf54_b26-Lf54_begin
-	.byte 0
 	.uleb128 Lf54_cs120a-Lf54_begin
 	.uleb128 Lf54_cs120b-Lf54_cs120a
-	.uleb128 Lf54_b39-Lf54_begin
+	.uleb128 Lf54_b26-Lf54_begin
 	.byte 0
 	.uleb128 Lf54_cs121a-Lf54_begin
 	.uleb128 Lf54_cs121b-Lf54_cs121a
@@ -12234,166 +12652,13 @@ Lf54_cst:
 	.byte 0
 	.uleb128 Lf54_cs123a-Lf54_begin
 	.uleb128 Lf54_cs123b-Lf54_cs123a
+	.uleb128 Lf54_b39-Lf54_begin
+	.byte 0
+	.uleb128 Lf54_cs124a-Lf54_begin
+	.uleb128 Lf54_cs124b-Lf54_cs124a
 	.uleb128 Lf54_b41-Lf54_begin
 	.byte 0
 Lf54_cste:
-	.section __TEXT,__gcc_except_tab
-	.p2align 2
-GCC_except_table_xo63:
-	.byte 255
-	.byte 255
-	.byte 1
-	.uleb128 Lf63_cste-Lf63_cst
-Lf63_cst:
-	.uleb128 Lf63_cs125a-Lf63_begin
-	.uleb128 Lf63_cs125b-Lf63_cs125a
-	.uleb128 Lf63_b6-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs130a-Lf63_begin
-	.uleb128 Lf63_cs130b-Lf63_cs130a
-	.uleb128 Lf63_b46-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs132a-Lf63_begin
-	.uleb128 Lf63_cs132b-Lf63_cs132a
-	.uleb128 Lf63_b57-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs133a-Lf63_begin
-	.uleb128 Lf63_cs133b-Lf63_cs133a
-	.uleb128 Lf63_b61-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs139a-Lf63_begin
-	.uleb128 Lf63_cs139b-Lf63_cs139a
-	.uleb128 Lf63_b110-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs140a-Lf63_begin
-	.uleb128 Lf63_cs140b-Lf63_cs140a
-	.uleb128 Lf63_b114-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs145a-Lf63_begin
-	.uleb128 Lf63_cs145b-Lf63_cs145a
-	.uleb128 Lf63_b127-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs147a-Lf63_begin
-	.uleb128 Lf63_cs147b-Lf63_cs147a
-	.uleb128 Lf63_b133-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs148a-Lf63_begin
-	.uleb128 Lf63_cs148b-Lf63_cs148a
-	.uleb128 Lf63_b143-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs150a-Lf63_begin
-	.uleb128 Lf63_cs150b-Lf63_cs150a
-	.uleb128 Lf63_b149-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs153a-Lf63_begin
-	.uleb128 Lf63_cs153b-Lf63_cs153a
-	.uleb128 Lf63_b155-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs155a-Lf63_begin
-	.uleb128 Lf63_cs155b-Lf63_cs155a
-	.uleb128 Lf63_b166-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs156a-Lf63_begin
-	.uleb128 Lf63_cs156b-Lf63_cs156a
-	.uleb128 Lf63_b174-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs157a-Lf63_begin
-	.uleb128 Lf63_cs157b-Lf63_cs157a
-	.uleb128 Lf63_b178-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs124a-Lf63_begin
-	.uleb128 Lf63_cs124b-Lf63_cs124a
-	.uleb128 Lf63_b4-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs126a-Lf63_begin
-	.uleb128 Lf63_cs126b-Lf63_cs126a
-	.uleb128 Lf63_b8-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs127a-Lf63_begin
-	.uleb128 Lf63_cs127b-Lf63_cs127a
-	.uleb128 Lf63_b14-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs128a-Lf63_begin
-	.uleb128 Lf63_cs128b-Lf63_cs128a
-	.uleb128 Lf63_b28-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs129a-Lf63_begin
-	.uleb128 Lf63_cs129b-Lf63_cs129a
-	.uleb128 Lf63_b35-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs131a-Lf63_begin
-	.uleb128 Lf63_cs131b-Lf63_cs131a
-	.uleb128 Lf63_b50-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs134a-Lf63_begin
-	.uleb128 Lf63_cs134b-Lf63_cs134a
-	.uleb128 Lf63_b63-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs135a-Lf63_begin
-	.uleb128 Lf63_cs135b-Lf63_cs135a
-	.uleb128 Lf63_b65-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs136a-Lf63_begin
-	.uleb128 Lf63_cs136b-Lf63_cs136a
-	.uleb128 Lf63_b67-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs137a-Lf63_begin
-	.uleb128 Lf63_cs137b-Lf63_cs137a
-	.uleb128 Lf63_b90-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs138a-Lf63_begin
-	.uleb128 Lf63_cs138b-Lf63_cs138a
-	.uleb128 Lf63_b103-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs141a-Lf63_begin
-	.uleb128 Lf63_cs141b-Lf63_cs141a
-	.uleb128 Lf63_b116-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs142a-Lf63_begin
-	.uleb128 Lf63_cs142b-Lf63_cs142a
-	.uleb128 Lf63_b118-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs143a-Lf63_begin
-	.uleb128 Lf63_cs143b-Lf63_cs143a
-	.uleb128 Lf63_b120-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs144a-Lf63_begin
-	.uleb128 Lf63_cs144b-Lf63_cs144a
-	.uleb128 Lf63_b125-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs146a-Lf63_begin
-	.uleb128 Lf63_cs146b-Lf63_cs146a
-	.uleb128 Lf63_b129-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs149a-Lf63_begin
-	.uleb128 Lf63_cs149b-Lf63_cs149a
-	.uleb128 Lf63_b145-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs151a-Lf63_begin
-	.uleb128 Lf63_cs151b-Lf63_cs151a
-	.uleb128 Lf63_b151-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs152a-Lf63_begin
-	.uleb128 Lf63_cs152b-Lf63_cs152a
-	.uleb128 Lf63_b151-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs154a-Lf63_begin
-	.uleb128 Lf63_cs154b-Lf63_cs154a
-	.uleb128 Lf63_b157-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs158a-Lf63_begin
-	.uleb128 Lf63_cs158b-Lf63_cs158a
-	.uleb128 Lf63_b184-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs159a-Lf63_begin
-	.uleb128 Lf63_cs159b-Lf63_cs159a
-	.uleb128 Lf63_b186-Lf63_begin
-	.byte 0
-	.uleb128 Lf63_cs160a-Lf63_begin
-	.uleb128 Lf63_cs160b-Lf63_cs160a
-	.uleb128 Lf63_b188-Lf63_begin
-	.byte 0
-Lf63_cste:
 	.section __TEXT,__gcc_except_tab
 	.p2align 2
 GCC_except_table_xo64:
@@ -12402,24 +12667,181 @@ GCC_except_table_xo64:
 	.byte 1
 	.uleb128 Lf64_cste-Lf64_cst
 Lf64_cst:
+	.uleb128 Lf64_cs126a-Lf64_begin
+	.uleb128 Lf64_cs126b-Lf64_cs126a
+	.uleb128 Lf64_b6-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs131a-Lf64_begin
+	.uleb128 Lf64_cs131b-Lf64_cs131a
+	.uleb128 Lf64_b46-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs133a-Lf64_begin
+	.uleb128 Lf64_cs133b-Lf64_cs133a
+	.uleb128 Lf64_b57-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs134a-Lf64_begin
+	.uleb128 Lf64_cs134b-Lf64_cs134a
+	.uleb128 Lf64_b61-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs140a-Lf64_begin
+	.uleb128 Lf64_cs140b-Lf64_cs140a
+	.uleb128 Lf64_b110-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs141a-Lf64_begin
+	.uleb128 Lf64_cs141b-Lf64_cs141a
+	.uleb128 Lf64_b114-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs146a-Lf64_begin
+	.uleb128 Lf64_cs146b-Lf64_cs146a
+	.uleb128 Lf64_b127-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs148a-Lf64_begin
+	.uleb128 Lf64_cs148b-Lf64_cs148a
+	.uleb128 Lf64_b133-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs149a-Lf64_begin
+	.uleb128 Lf64_cs149b-Lf64_cs149a
+	.uleb128 Lf64_b143-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs151a-Lf64_begin
+	.uleb128 Lf64_cs151b-Lf64_cs151a
+	.uleb128 Lf64_b149-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs154a-Lf64_begin
+	.uleb128 Lf64_cs154b-Lf64_cs154a
+	.uleb128 Lf64_b155-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs156a-Lf64_begin
+	.uleb128 Lf64_cs156b-Lf64_cs156a
+	.uleb128 Lf64_b166-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs157a-Lf64_begin
+	.uleb128 Lf64_cs157b-Lf64_cs157a
+	.uleb128 Lf64_b174-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs158a-Lf64_begin
+	.uleb128 Lf64_cs158b-Lf64_cs158a
+	.uleb128 Lf64_b178-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs125a-Lf64_begin
+	.uleb128 Lf64_cs125b-Lf64_cs125a
+	.uleb128 Lf64_b4-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs127a-Lf64_begin
+	.uleb128 Lf64_cs127b-Lf64_cs127a
+	.uleb128 Lf64_b8-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs128a-Lf64_begin
+	.uleb128 Lf64_cs128b-Lf64_cs128a
+	.uleb128 Lf64_b14-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs129a-Lf64_begin
+	.uleb128 Lf64_cs129b-Lf64_cs129a
+	.uleb128 Lf64_b28-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs130a-Lf64_begin
+	.uleb128 Lf64_cs130b-Lf64_cs130a
+	.uleb128 Lf64_b35-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs132a-Lf64_begin
+	.uleb128 Lf64_cs132b-Lf64_cs132a
+	.uleb128 Lf64_b50-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs135a-Lf64_begin
+	.uleb128 Lf64_cs135b-Lf64_cs135a
+	.uleb128 Lf64_b63-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs136a-Lf64_begin
+	.uleb128 Lf64_cs136b-Lf64_cs136a
+	.uleb128 Lf64_b65-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs137a-Lf64_begin
+	.uleb128 Lf64_cs137b-Lf64_cs137a
+	.uleb128 Lf64_b67-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs138a-Lf64_begin
+	.uleb128 Lf64_cs138b-Lf64_cs138a
+	.uleb128 Lf64_b90-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs139a-Lf64_begin
+	.uleb128 Lf64_cs139b-Lf64_cs139a
+	.uleb128 Lf64_b103-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs142a-Lf64_begin
+	.uleb128 Lf64_cs142b-Lf64_cs142a
+	.uleb128 Lf64_b116-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs143a-Lf64_begin
+	.uleb128 Lf64_cs143b-Lf64_cs143a
+	.uleb128 Lf64_b118-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs144a-Lf64_begin
+	.uleb128 Lf64_cs144b-Lf64_cs144a
+	.uleb128 Lf64_b120-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs145a-Lf64_begin
+	.uleb128 Lf64_cs145b-Lf64_cs145a
+	.uleb128 Lf64_b125-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs147a-Lf64_begin
+	.uleb128 Lf64_cs147b-Lf64_cs147a
+	.uleb128 Lf64_b129-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs150a-Lf64_begin
+	.uleb128 Lf64_cs150b-Lf64_cs150a
+	.uleb128 Lf64_b145-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs152a-Lf64_begin
+	.uleb128 Lf64_cs152b-Lf64_cs152a
+	.uleb128 Lf64_b151-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs153a-Lf64_begin
+	.uleb128 Lf64_cs153b-Lf64_cs153a
+	.uleb128 Lf64_b151-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs155a-Lf64_begin
+	.uleb128 Lf64_cs155b-Lf64_cs155a
+	.uleb128 Lf64_b157-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs159a-Lf64_begin
+	.uleb128 Lf64_cs159b-Lf64_cs159a
+	.uleb128 Lf64_b184-Lf64_begin
+	.byte 0
+	.uleb128 Lf64_cs160a-Lf64_begin
+	.uleb128 Lf64_cs160b-Lf64_cs160a
+	.uleb128 Lf64_b186-Lf64_begin
+	.byte 0
 	.uleb128 Lf64_cs161a-Lf64_begin
 	.uleb128 Lf64_cs161b-Lf64_cs161a
-	.uleb128 Lf64_b37-Lf64_begin
+	.uleb128 Lf64_b188-Lf64_begin
 	.byte 0
 Lf64_cste:
 	.section __TEXT,__gcc_except_tab
 	.p2align 2
-GCC_except_table_xo82:
+GCC_except_table_xo65:
 	.byte 255
 	.byte 255
 	.byte 1
-	.uleb128 Lf82_cste-Lf82_cst
-Lf82_cst:
-	.uleb128 Lf82_cs162a-Lf82_begin
-	.uleb128 Lf82_cs162b-Lf82_cs162a
-	.uleb128 Lf82_b6-Lf82_begin
+	.uleb128 Lf65_cste-Lf65_cst
+Lf65_cst:
+	.uleb128 Lf65_cs162a-Lf65_begin
+	.uleb128 Lf65_cs162b-Lf65_cs162a
+	.uleb128 Lf65_b37-Lf65_begin
 	.byte 0
-Lf82_cste:
+Lf65_cste:
+	.section __TEXT,__gcc_except_tab
+	.p2align 2
+GCC_except_table_xo84:
+	.byte 255
+	.byte 255
+	.byte 1
+	.uleb128 Lf84_cste-Lf84_cst
+Lf84_cst:
+	.uleb128 Lf84_cs163a-Lf84_begin
+	.uleb128 Lf84_cs163b-Lf84_cs163a
+	.uleb128 Lf84_b6-Lf84_begin
+	.byte 0
+Lf84_cste:
 	.section __TEXT,__const
 	.p2align 3
 Lxo_str0:
@@ -12666,254 +13088,272 @@ Lxo_loc20:
 Lxo_loc21:
 	.asciz "std/native/llrt/cabi.xo:154:4"
 Lxo_loc22:
-	.asciz "std/native/llrt/text.xo:173:9"
+	.asciz "std/native/llrt/scan.xo:108:27"
 Lxo_loc23:
-	.asciz "std/native/llrt/text.xo:193:13"
+	.asciz "std/native/llrt/scan.xo:111:7"
 Lxo_loc24:
-	.asciz "std/native/llrt/text.xo:195:26"
+	.asciz "std/native/llrt/scan.xo:117:8"
 Lxo_loc25:
-	.asciz "std/native/llrt/text.xo:197:38"
+	.asciz "std/native/llrt/text.xo:174:9"
 Lxo_loc26:
-	.asciz "std/native/llrt/text.xo:71:54"
+	.asciz "std/native/llrt/text.xo:194:13"
 Lxo_loc27:
-	.asciz "std/native/llrt/text.xo:71:47"
+	.asciz "std/native/llrt/text.xo:196:26"
 Lxo_loc28:
-	.asciz "std/native/llrt/text.xo:213:7"
+	.asciz "std/native/llrt/text.xo:198:38"
 Lxo_loc29:
-	.asciz "std/native/llrt/text.xo:218:5"
+	.asciz "std/native/llrt/text.xo:72:54"
 Lxo_loc30:
-	.asciz "std/native/llrt/text.xo:223:82"
+	.asciz "std/native/llrt/text.xo:72:47"
 Lxo_loc31:
-	.asciz "std/native/llrt/text.xo:223:95"
+	.asciz "std/native/llrt/text.xo:214:7"
 Lxo_loc32:
-	.asciz "std/native/llrt/text.xo:223:94"
+	.asciz "std/native/llrt/text.xo:219:5"
 Lxo_loc33:
-	.asciz "std/native/llrt/text.xo:425:46"
+	.asciz "std/native/llrt/text.xo:224:82"
 Lxo_loc34:
-	.asciz "std/native/llrt/text.xo:428:46"
+	.asciz "std/native/llrt/text.xo:224:95"
 Lxo_loc35:
-	.asciz "std/native/llrt/text.xo:428:88"
+	.asciz "std/native/llrt/text.xo:224:94"
 Lxo_loc36:
-	.asciz "std/native/llrt/text.xo:429:18"
+	.asciz "std/native/llrt/text.xo:426:46"
 Lxo_loc37:
-	.asciz "std/native/llrt/text.xo:439:5"
+	.asciz "std/native/llrt/text.xo:429:46"
 Lxo_loc38:
-	.asciz "std/native/llrt/text.xo:445:11"
+	.asciz "std/native/llrt/text.xo:429:88"
 Lxo_loc39:
-	.asciz "std/native/llrt/text.xo:78:5"
+	.asciz "std/native/llrt/text.xo:430:18"
 Lxo_loc40:
-	.asciz "std/native/llrt/text.xo:447:42"
+	.asciz "std/native/llrt/text.xo:440:5"
 Lxo_loc41:
-	.asciz "std/native/llrt/text.xo:447:30"
+	.asciz "std/native/llrt/text.xo:446:11"
 Lxo_loc42:
-	.asciz "std/native/llrt/text.xo:448:52"
+	.asciz "std/native/llrt/text.xo:79:5"
 Lxo_loc43:
-	.asciz "std/native/llrt/text.xo:448:87"
+	.asciz "std/native/llrt/text.xo:448:42"
 Lxo_loc44:
-	.asciz "std/native/llrt/text.xo:448:105"
+	.asciz "std/native/llrt/text.xo:448:30"
 Lxo_loc45:
-	.asciz "std/native/llrt/text.xo:448:104"
+	.asciz "std/native/llrt/text.xo:449:52"
 Lxo_loc46:
-	.asciz "std/native/llrt/netpolicy.xo:128:19"
+	.asciz "std/native/llrt/text.xo:449:87"
 Lxo_loc47:
-	.asciz "std/native/llrt/netpolicy.xo:134:17"
+	.asciz "std/native/llrt/text.xo:449:105"
 Lxo_loc48:
-	.asciz "std/native/llrt/netpolicy.xo:153:11"
+	.asciz "std/native/llrt/text.xo:449:104"
 Lxo_loc49:
-	.asciz "std/native/llrt/netpolicy.xo:29:8"
+	.asciz "std/native/llrt/netpolicy.xo:128:19"
 Lxo_loc50:
-	.asciz "std/native/llrt/netpolicy.xo:29:10"
+	.asciz "std/native/llrt/netpolicy.xo:134:17"
 Lxo_loc51:
-	.asciz "std/native/llrt/netpolicy.xo:29:21"
+	.asciz "std/native/llrt/netpolicy.xo:153:11"
 Lxo_loc52:
-	.asciz "std/native/llrt/netpolicy.xo:187:13"
+	.asciz "std/native/llrt/netpolicy.xo:29:8"
 Lxo_loc53:
-	.asciz "std/native/llrt/netpolicy.xo:43:8"
+	.asciz "std/native/llrt/netpolicy.xo:29:10"
 Lxo_loc54:
-	.asciz "std/native/llrt/netpolicy.xo:57:17"
+	.asciz "std/native/llrt/netpolicy.xo:29:21"
 Lxo_loc55:
-	.asciz "std/native/llrt/netpolicy.xo:59:17"
+	.asciz "std/native/llrt/netpolicy.xo:187:13"
 Lxo_loc56:
-	.asciz "std/native/llrt/netpolicy.xo:14:12"
+	.asciz "std/native/llrt/netpolicy.xo:43:8"
 Lxo_loc57:
-	.asciz "std/native/llrt/netpolicy.xo:209:19"
+	.asciz "std/native/llrt/netpolicy.xo:57:17"
 Lxo_loc58:
-	.asciz "std/native/llrt/netpolicy.xo:217:16"
+	.asciz "std/native/llrt/netpolicy.xo:59:17"
 Lxo_loc59:
-	.asciz "std/native/llrt/netpolicy.xo:217:30"
+	.asciz "std/native/llrt/netpolicy.xo:14:12"
 Lxo_loc60:
-	.asciz "std/native/llrt/text.xo:63:6"
+	.asciz "std/native/llrt/netpolicy.xo:209:19"
 Lxo_loc61:
-	.asciz "std/native/llrt/text.xo:64:45"
+	.asciz "std/native/llrt/netpolicy.xo:217:16"
 Lxo_loc62:
-	.asciz "std/native/llrt/text.xo:64:38"
+	.asciz "std/native/llrt/netpolicy.xo:217:30"
 Lxo_loc63:
-	.asciz "std/native/llrt/text.xo:64:54"
+	.asciz "std/native/llrt/text.xo:64:6"
 Lxo_loc64:
-	.asciz "std/native/llrt/text.xo:94:5"
+	.asciz "std/native/llrt/text.xo:65:45"
 Lxo_loc65:
-	.asciz "std/native/llrt/text.xo:99:11"
+	.asciz "std/native/llrt/text.xo:65:38"
 Lxo_loc66:
-	.asciz "std/native/llrt/text.xo:103:11"
+	.asciz "std/native/llrt/text.xo:65:54"
 Lxo_loc67:
-	.asciz "std/native/llrt/text.xo:105:41"
+	.asciz "std/native/llrt/text.xo:95:5"
 Lxo_loc68:
-	.asciz "std/native/llrt/text.xo:105:34"
+	.asciz "std/native/llrt/text.xo:100:11"
 Lxo_loc69:
-	.asciz "std/native/llrt/text.xo:105:65"
+	.asciz "std/native/llrt/text.xo:104:11"
 Lxo_loc70:
-	.asciz "std/native/llrt/text.xo:105:84"
+	.asciz "std/native/llrt/text.xo:106:41"
 Lxo_loc71:
-	.asciz "std/native/llrt/text.xo:105:79"
+	.asciz "std/native/llrt/text.xo:106:34"
 Lxo_loc72:
-	.asciz "std/native/llrt/text.xo:105:53"
+	.asciz "std/native/llrt/text.xo:106:65"
 Lxo_loc73:
-	.asciz "std/native/llrt/text.xo:106:27"
+	.asciz "std/native/llrt/text.xo:106:84"
 Lxo_loc74:
-	.asciz "std/native/llrt/text.xo:107:43"
+	.asciz "std/native/llrt/text.xo:106:79"
 Lxo_loc75:
-	.asciz "std/native/llrt/text.xo:107:56"
+	.asciz "std/native/llrt/text.xo:106:53"
 Lxo_loc76:
-	.asciz "std/native/llrt/text.xo:107:55"
+	.asciz "std/native/llrt/text.xo:107:27"
 Lxo_loc77:
-	.asciz "std/native/llrt/text.xo:107:78"
+	.asciz "std/native/llrt/text.xo:108:43"
 Lxo_loc78:
-	.asciz "std/native/llrt/text.xo:107:77"
+	.asciz "std/native/llrt/text.xo:108:56"
 Lxo_loc79:
-	.asciz "std/native/llrt/num.xo:202:12"
+	.asciz "std/native/llrt/text.xo:108:55"
 Lxo_loc80:
-	.asciz "std/native/llrt/num.xo:355:12"
+	.asciz "std/native/llrt/text.xo:108:78"
 Lxo_loc81:
-	.asciz "std/native/llrt/netpolicy.xo:81:12"
+	.asciz "std/native/llrt/text.xo:108:77"
 Lxo_loc82:
-	.asciz "std/native/llrt/netpolicy.xo:83:29"
+	.asciz "std/native/llrt/num.xo:202:12"
 Lxo_loc83:
-	.asciz "std/native/llrt/netpolicy.xo:24:6"
+	.asciz "std/native/llrt/num.xo:355:12"
 Lxo_loc84:
-	.asciz "std/native/llrt/netpolicy.xo:28:13"
+	.asciz "std/native/llrt/netpolicy.xo:81:12"
 Lxo_loc85:
-	.asciz "std/native/llrt/netpolicy.xo:87:17"
+	.asciz "std/native/llrt/netpolicy.xo:83:29"
 Lxo_loc86:
-	.asciz "std/native/llrt/netpolicy.xo:87:32"
+	.asciz "std/native/llrt/netpolicy.xo:24:6"
 Lxo_loc87:
-	.asciz "std/native/llrt/netpolicy.xo:24:17"
+	.asciz "std/native/llrt/netpolicy.xo:28:13"
 Lxo_loc88:
-	.asciz "std/native/llrt/netpolicy.xo:29:23"
+	.asciz "std/native/llrt/netpolicy.xo:87:17"
 Lxo_loc89:
-	.asciz "std/native/llrt/netpolicy.xo:94:8"
+	.asciz "std/native/llrt/netpolicy.xo:87:32"
 Lxo_loc90:
-	.asciz "std/native/llrt/netpolicy.xo:95:7"
+	.asciz "std/native/llrt/netpolicy.xo:24:17"
 Lxo_loc91:
-	.asciz "std/native/llrt/netpolicy.xo:99:32"
+	.asciz "std/native/llrt/netpolicy.xo:29:23"
 Lxo_loc92:
-	.asciz "std/native/llrt/netpolicy.xo:105:19"
+	.asciz "std/native/llrt/netpolicy.xo:94:8"
 Lxo_loc93:
-	.asciz "std/native/llrt/netpolicy.xo:108:19"
+	.asciz "std/native/llrt/netpolicy.xo:95:7"
 Lxo_loc94:
-	.asciz "std/native/llrt/netpolicy.xo:108:37"
+	.asciz "std/native/llrt/netpolicy.xo:99:32"
 Lxo_loc95:
-	.asciz "std/native/llrt/num.xo:218:20"
+	.asciz "std/native/llrt/netpolicy.xo:105:19"
 Lxo_loc96:
-	.asciz "std/native/llrt/num.xo:220:16"
+	.asciz "std/native/llrt/netpolicy.xo:108:19"
 Lxo_loc97:
-	.asciz "std/native/llrt/num.xo:221:41"
+	.asciz "std/native/llrt/netpolicy.xo:108:37"
 Lxo_loc98:
-	.asciz "std/native/llrt/num.xo:222:41"
+	.asciz "std/native/llrt/num.xo:218:20"
 Lxo_loc99:
-	.asciz "std/native/llrt/num.xo:224:7"
+	.asciz "std/native/llrt/num.xo:220:16"
 Lxo_loc100:
-	.asciz "std/native/llrt/num.xo:230:24"
+	.asciz "std/native/llrt/num.xo:221:41"
 Lxo_loc101:
-	.asciz "std/native/llrt/num.xo:230:16"
+	.asciz "std/native/llrt/num.xo:222:41"
 Lxo_loc102:
-	.asciz "std/native/llrt/num.xo:170:34"
+	.asciz "std/native/llrt/num.xo:224:7"
 Lxo_loc103:
-	.asciz "std/native/llrt/num.xo:246:14"
+	.asciz "std/native/llrt/num.xo:230:24"
 Lxo_loc104:
-	.asciz "std/native/llrt/num.xo:249:15"
+	.asciz "std/native/llrt/num.xo:230:16"
 Lxo_loc105:
-	.asciz "std/native/llrt/num.xo:259:23"
+	.asciz "std/native/llrt/num.xo:170:34"
 Lxo_loc106:
-	.asciz "std/native/llrt/num.xo:267:21"
+	.asciz "std/native/llrt/num.xo:246:14"
 Lxo_loc107:
-	.asciz "std/native/llrt/num.xo:292:19"
+	.asciz "std/native/llrt/num.xo:249:15"
 Lxo_loc108:
-	.asciz "std/native/llrt/num.xo:293:40"
+	.asciz "std/native/llrt/num.xo:259:23"
 Lxo_loc109:
-	.asciz "std/native/llrt/num.xo:273:11"
+	.asciz "std/native/llrt/num.xo:267:21"
 Lxo_loc110:
-	.asciz "std/native/llrt/num.xo:277:21"
+	.asciz "std/native/llrt/num.xo:292:19"
 Lxo_loc111:
-	.asciz "std/native/llrt/num.xo:278:29"
+	.asciz "std/native/llrt/num.xo:293:40"
 Lxo_loc112:
-	.asciz "std/native/llrt/num.xo:364:23"
+	.asciz "std/native/llrt/num.xo:273:11"
 Lxo_loc113:
-	.asciz "std/native/llrt/num.xo:364:11"
+	.asciz "std/native/llrt/num.xo:277:21"
 Lxo_loc114:
-	.asciz "std/native/llrt/num.xo:367:11"
+	.asciz "std/native/llrt/num.xo:278:29"
 Lxo_loc115:
-	.asciz "std/native/llrt/num.xo:377:12"
+	.asciz "std/native/llrt/num.xo:364:23"
 Lxo_loc116:
-	.asciz "std/native/llrt/num.xo:383:12"
+	.asciz "std/native/llrt/num.xo:364:11"
 Lxo_loc117:
-	.asciz "std/native/llrt/num.xo:388:13"
+	.asciz "std/native/llrt/num.xo:367:11"
 Lxo_loc118:
-	.asciz "std/native/llrt/num.xo:392:55"
+	.asciz "std/native/llrt/num.xo:377:12"
 Lxo_loc119:
-	.asciz "std/native/llrt/num.xo:392:68"
+	.asciz "std/native/llrt/num.xo:383:12"
 Lxo_loc120:
-	.asciz "std/native/llrt/num.xo:392:67"
+	.asciz "std/native/llrt/num.xo:388:13"
 Lxo_loc121:
-	.asciz "std/native/llrt/num.xo:396:68"
+	.asciz "std/native/llrt/num.xo:392:55"
 Lxo_loc122:
-	.asciz "std/native/llrt/num.xo:402:13"
+	.asciz "std/native/llrt/num.xo:392:68"
 Lxo_loc123:
-	.asciz "std/native/llrt/num.xo:404:100"
+	.asciz "std/native/llrt/num.xo:392:67"
 Lxo_loc124:
-	.asciz "std/native/llrt/num.xo:404:113"
+	.asciz "std/native/llrt/num.xo:396:68"
 Lxo_loc125:
-	.asciz "std/native/llrt/num.xo:404:112"
+	.asciz "std/native/llrt/num.xo:402:13"
 Lxo_loc126:
-	.asciz "std/native/llrt/num.xo:408:34"
+	.asciz "std/native/llrt/num.xo:404:100"
 Lxo_loc127:
-	.asciz "std/native/llrt/num.xo:408:22"
+	.asciz "std/native/llrt/num.xo:404:113"
 Lxo_loc128:
-	.asciz "std/native/llrt/num.xo:412:12"
+	.asciz "std/native/llrt/num.xo:404:112"
 Lxo_loc129:
-	.asciz "std/native/llrt/num.xo:413:12"
+	.asciz "std/native/llrt/num.xo:408:34"
 Lxo_loc130:
-	.asciz "std/native/llrt/num.xo:414:13"
+	.asciz "std/native/llrt/num.xo:408:22"
 Lxo_loc131:
-	.asciz "std/native/llrt/num.xo:418:108"
+	.asciz "std/native/llrt/num.xo:412:12"
 Lxo_loc132:
-	.asciz "std/native/llrt/num.xo:418:121"
+	.asciz "std/native/llrt/num.xo:413:12"
 Lxo_loc133:
-	.asciz "std/native/llrt/num.xo:418:120"
+	.asciz "std/native/llrt/num.xo:414:13"
 Lxo_loc134:
-	.asciz "std/native/llrt/num.xo:164:57"
+	.asciz "std/native/llrt/num.xo:418:108"
 Lxo_loc135:
-	.asciz "std/native/llrt/num.xo:164:56"
+	.asciz "std/native/llrt/num.xo:418:121"
 Lxo_loc136:
-	.asciz "std/native/llrt/num.xo:173:34"
+	.asciz "std/native/llrt/num.xo:418:120"
 Lxo_loc137:
-	.asciz "std/native/llrt/num.xo:304:5"
+	.asciz "std/native/llrt/scan.xo:108:55"
 Lxo_loc138:
-	.asciz "std/native/llrt/num.xo:308:5"
+	.asciz "std/native/llrt/scan.xo:113:29"
 Lxo_loc139:
-	.asciz "std/native/llrt/num.xo:312:5"
+	.asciz "std/native/llrt/scan.xo:113:61"
 Lxo_loc140:
-	.asciz "std/native/llrt/num.xo:316:5"
+	.asciz "std/native/llrt/scan.xo:117:10"
 Lxo_loc141:
-	.asciz "std/native/llrt/num.xo:167:57"
+	.asciz "std/native/llrt/scan.xo:117:23"
 Lxo_loc142:
-	.asciz "std/native/llrt/num.xo:167:56"
+	.asciz "std/native/llrt/scan.xo:117:21"
 Lxo_loc143:
-	.asciz "std/native/llrt/num.xo:182:9"
+	.asciz "std/native/llrt/num.xo:164:57"
 Lxo_loc144:
-	.asciz "std/native/llrt/num.xo:185:9"
+	.asciz "std/native/llrt/num.xo:164:56"
 Lxo_loc145:
-	.asciz "std/native/llrt/num.xo:188:9"
+	.asciz "std/native/llrt/num.xo:173:34"
 Lxo_loc146:
-	.asciz "std/native/llrt/num.xo:191:9"
+	.asciz "std/native/llrt/num.xo:304:5"
 Lxo_loc147:
+	.asciz "std/native/llrt/num.xo:308:5"
+Lxo_loc148:
+	.asciz "std/native/llrt/num.xo:312:5"
+Lxo_loc149:
+	.asciz "std/native/llrt/num.xo:316:5"
+Lxo_loc150:
+	.asciz "std/native/llrt/num.xo:167:57"
+Lxo_loc151:
+	.asciz "std/native/llrt/num.xo:167:56"
+Lxo_loc152:
+	.asciz "std/native/llrt/num.xo:182:9"
+Lxo_loc153:
+	.asciz "std/native/llrt/num.xo:185:9"
+Lxo_loc154:
+	.asciz "std/native/llrt/num.xo:188:9"
+Lxo_loc155:
+	.asciz "std/native/llrt/num.xo:191:9"
+Lxo_loc156:
 	.asciz "std/native/llrt/show.xo:75:43"

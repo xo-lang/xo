@@ -2160,8 +2160,14 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5 rotate
 // right mod 64, 6 the low 32 bits rotated right mod 32 and zero
 // extended, 7 the bytes reversed), rt.u64_mul_hi, the bits of a Float
-// both ways, and rt.bytes_word (an unchecked load of 8 bytes). It
-// reports whether v was one.
+// both ways, and rt.bytes_word (an unchecked load of 8 bytes);
+// the scan intrinsics of decision 0201: rt.popcount (cnt and addv),
+// rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and rt.bytes_high16
+// (16 bytes in v30 compared, narrowed by shrn to 4 bits a byte; v30 and
+// v31 are scratch registers of the emitter), and the string writes of
+// Bytes.to_hex: rt.rs_put_word (an unchecked store of 8 bytes into a
+// new string with room) and rt.rs_set_len (the same object with a new
+// length). It reports whether v was one.
 func (s *fstate) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2213,6 +2219,35 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
 		s.set(v, s.def1(false, "ldr $d0, [$u0, $u1]", d, s.word(v.Args[1])))
+	case "rt.popcount":
+		s.set(v, s.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", s.word(v.Args[0])))
+	case "rt.ctz":
+		s.set(v, s.def1(false, "rbit $d0, $u0\nclz $d0, $d0", s.word(v.Args[0])))
+	case "rt.clz":
+		s.set(v, s.def1(false, "clz $d0, $u0", s.word(v.Args[0])))
+	case "rt.bytes_eq16", "rt.bytes_high16":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		uses := []vreg{d, s.word(v.Args[1])}
+		cmp := "cmlt v30.16b, v30.16b, #0"
+		if v.Aux.(string) == "rt.bytes_eq16" {
+			if c, ok := constInt(v.Args[2]); ok {
+				cmp = fmt.Sprintf("movi v31.16b, #%d\ncmeq v30.16b, v30.16b, v31.16b", c&255)
+			} else {
+				cmp = "dup v31.16b, $wu2\ncmeq v30.16b, v30.16b, v31.16b"
+				uses = append(uses, s.word(v.Args[2]))
+			}
+		}
+		s.set(v, s.def1(false, "ldr q30, [$u0, $u1]\n"+cmp+"\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", uses...))
+	case "rt.rs_put_word":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		s.plain("str $u2, [$u0, $u1]", nil, d, s.word(v.Args[1]), s.word(v.Args[2]))
+		s.set(v, ws...)
+	case "rt.rs_set_len":
+		s.set(v, s.words(v.Args[0])[0], s.word(v.Args[1]))
+	case "rt.slot_load", "rt.slot_store", "rt.slot_swap", "rt.slot_cas", "rt.slot_add", "rt.slot_addr", "rt.fence", "rt.spin_hint":
+		s.atomic(v)
 	default:
 		return s.inlineRaw(v)
 	}
@@ -2248,9 +2283,6 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 	case "rt.mem_cmp":
 		r := s.rt("memcmp", regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])), false)
 		s.set(v, s.def1(false, "sxtw $d0, $wu0", r[0]))
-	case "rt.rs_set_len":
-		ws := s.words(v.Args[0])
-		s.set(v, ws[0], s.word(v.Args[1]))
 	case "rt.obj_addr":
 		s.set(v, s.words(v.Args[0])[0])
 	case "rt.obj_at":
@@ -2261,6 +2293,137 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 		return false
 	}
 	return true
+}
+
+// ordArg returns the memory order of argument k of v (decision 0200):
+// its constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst; a
+// value that is not one of them is seq_cst.
+func ordArg(v *ssa.Value, k int) int {
+	if k >= len(v.Args) {
+		return 4
+	}
+	o, ok := constInt(v.Args[k])
+	if !ok || o < 0 || o > 4 {
+		return 4
+	}
+	return int(o)
+}
+
+// cellAddr returns the address of the cell (container, index) of an
+// atomic: the list's element, or an Atomic's value (the same layout: a
+// header of three words, then words).
+//
+// The address form (decision 0207): a container that is an Int is an
+// address, and the cell is word i from it.
+func (s *fstate) cellAddr(v *ssa.Value) vreg {
+	l := s.word(v.Args[0])
+	if v.Args[0].Type.Kind == ssa.KInt {
+		if k, ok := constInt(v.Args[1]); ok && k >= 0 && 8*k < 4096 {
+			return s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", 8*k), s.real(l))
+		}
+		return s.def1(false, "add $d0, $u0, $u1, lsl #3", s.real(l), s.word(v.Args[1]))
+	}
+	if k, ok := constInt(v.Args[1]); ok && k >= 0 && listHdr+8*k < 4096 {
+		return s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", listHdr+8*k), l)
+	}
+	b := s.def1(false, "add $d0, $u0, $u1, lsl #3", l, s.word(v.Args[1]))
+	return s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", listHdr), b)
+}
+
+// atomicDef adds an atomic instruction defining one register: kept when
+// its result is dead and never folded into a branch (keep); early, since
+// a template may write its result before it reads every operand.
+func (s *fstate) atomicDef(text string, uses ...vreg) vreg {
+	d := s.newVreg(false)
+	in := s.plain(text, []vreg{d}, uses...)
+	in.early = true
+	in.keep = true
+	s.clobber()
+	return d
+}
+
+// atomicResult sets v, an Int or a Bool (a Bool cell holds 0 or 1), to
+// register r.
+func (s *fstate) atomicResult(v *ssa.Value, r vreg) {
+	switch v.Type.Kind {
+	case ssa.KInt, ssa.KBool:
+		s.set(v, r)
+	default:
+		fail("the atomic `%s` returns a `%s`", v.Aux.(string), v.Type.Name)
+	}
+}
+
+// atomic lowers the atomics and fences of decision 0200 inline: on
+// darwin the LSE instructions every Apple arm64 CPU has (ldar, stlr,
+// swp, cas, ldadd with the order's a and l; dmb, yield); on linux, which
+// also runs on ARMv8.0, loads, stores, and fences inline and the read
+// modify writes as calls of libgcc's outline atomics
+// (__aarch64_cas8_acq_rel and friends), as the C runtime's
+// -moutline-atomics objects do (selfhost/macho elflink.xo writes them
+// when it links without cc).
+func (s *fstate) atomic(v *ssa.Value) {
+	name := v.Aux.(string)
+	switch name {
+	case "rt.spin_hint":
+		s.store("yield")
+		s.set(v)
+		return
+	case "rt.fence":
+		switch ordArg(v, 0) {
+		case 0:
+		case 1:
+			s.store("dmb ishld")
+		default:
+			s.store("dmb ish")
+		}
+		s.set(v)
+		return
+	case "rt.slot_addr":
+		s.set(v, s.cellAddr(v))
+		return
+	}
+	a := s.cellAddr(v)
+	// the order of a read modify write: none, acquire, release, both
+	ord := ordArg(v, len(v.Args)-1)
+	sfx := [...]string{"", "a", "l", "al", "al"}[ord]
+	model := [...]string{"relax", "acq", "rel", "acq_rel", "acq_rel"}[ord]
+	switch name {
+	case "rt.slot_load":
+		ins := "ldar"
+		if ord == 0 {
+			ins = "ldr"
+		}
+		s.atomicResult(v, s.atomicDef(ins+" $d0, [$u0]", a))
+	case "rt.slot_store":
+		ins := "stlr"
+		if ord == 0 {
+			ins = "str"
+		}
+		s.store(ins+" $u0, [$u1]", s.word(v.Args[2]), a)
+		s.set(v)
+	case "rt.slot_swap", "rt.slot_add":
+		val := s.word(v.Args[2])
+		op := "ldadd"
+		if name == "rt.slot_swap" {
+			op = "swp"
+		}
+		if s.g.os == Darwin {
+			s.atomicResult(v, s.atomicDef(op+sfx+" $u0, $d0, [$u1]", val, a))
+		} else {
+			r := s.rt("__aarch64_"+op+"8_"+model, regs(val, a), false)
+			s.atomicResult(v, r[0])
+		}
+	default:
+		// rt.slot_cas: the old value seen, compared with the expected one
+		old := s.word(v.Args[2])
+		nw := s.word(v.Args[3])
+		if s.g.os == Darwin {
+			s.set(v, s.atomicDef("mov $d0, $u0\ncas"+sfx+" $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", old, nw, a))
+		} else {
+			r := s.rt("__aarch64_cas8_"+model, regs(old, nw, a), false)
+			s.set(v, s.def1(false, "cmp $u0, $u1\ncset $d0, eq", r[0], old))
+		}
+	}
 }
 
 // rtCall lowers a call of the task runtime (`rt.name` is the C function

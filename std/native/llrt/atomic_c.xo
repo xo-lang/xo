@@ -1,0 +1,11 @@
+// The C path of Atomic's add and max (decision 0200): the API of
+// atomic.xo over the C runtime's xo_atomic_add and xo_atomic_max
+// (std/llrt/xo_rt.c, compiled with -DXO_ATOMIC_C). Loaded in place of
+// atomic.xo when XO_LLRT_C names `atomic`; the Go SSA builder then calls
+// the C runtime for every Atomic operation, as before the port. The self
+// hosted compiler always uses atomic.xo.
+use native/rt
+
+pub fn add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { rt.atomic_add(a, n, at) }
+
+pub fn max(a: Atomic[Int], n: Int) -> Int { rt.atomic_max(a, n) }

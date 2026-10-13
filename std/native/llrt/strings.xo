@@ -6,12 +6,10 @@
 // strings_c.xo) went once bench/perf/text met decision 0180's bar on both
 // native backends (decision 0198).
 //
-// The searches, copies, and pure byte scans stay C (decision 0180 item
-// 4): rt.str_find (memchr and memcmp), rt.str_slice, rt.rs_append_bytes,
-// rt.bytes_span, and the operations that are only scans and copies:
-// Str.split, Str.lines, Str.rune_count, Str.repeat, List[Str].join. An Xo
-// split and lines (a C call to find and one to copy per piece) measured
-// 1.02 to 1.32 times the C's instructions (decision 0193).
+// The searches are scan.xo (decision 0201: find, split, lines,
+// rune_count); the copies stay C (rt.str_slice, rt.rs_append_bytes,
+// Str.repeat, List[Str].join).
+use native/llrt/scan
 use native/llrt/unicode
 use native/rt
 
@@ -39,7 +37,7 @@ pub fn replace(s: Str, old: Str, new: Str) -> Str {
     }
     return o
   }
-  var i = rt.str_find(s, old, 0)
+  var i = scan.find(s, old, 0)
   if i < 0 {
     // nothing to replace: a copy, as strings.ReplaceAll makes
     return rt.str_slice(s, 0, n)
@@ -49,7 +47,7 @@ pub fn replace(s: Str, old: Str, new: Str) -> Str {
   while i >= 0 {
     o = rt.rs_append(rt.rs_append_bytes(o, b, start, i, 0), new)
     start = i + m
-    i = rt.str_find(s, old, start)
+    i = scan.find(s, old, start)
   }
   rt.rs_append_bytes(o, b, start, n, 0)
 }

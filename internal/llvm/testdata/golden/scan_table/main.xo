@@ -1,0 +1,53 @@
+// The bulk scans of the native runtime in Xo (decision 0201,
+// std/native/llrt/scan.xo): find, contains, starts_with, ends_with,
+// split, lines, rune_count, Bytes.to_hex, and the runs of quoting, with a
+// needle at every offset of texts of 0 to 40 bytes (every alignment of
+// the 16 and 8 byte steps and of the step that ends at the end),
+// multibyte runes, \r\n, and Bytes that are not UTF-8 (rune_count,
+// to_str). The Go backend's output is the reference; the Xo path and the
+// C path (XO_LLRT_C=scan) print the same.
+
+/// h and the text mixed (so a long table prints one number a row).
+fn mix(h: Int, s: Str) -> Int {
+  var x = h
+  for b in s.bytes() {
+    x = (x * 31 + Int(b)) % 1000000007
+  }
+  x
+}
+
+fn main(os: Os) {
+  let fill = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  let needles = [",", "\n", "zz", "é", "日本", "\r\n", "0123456789abcdefghij", "\u{7f}"]
+  for nd in needles {
+    var h = 0
+    var finds = ""
+    for l in 0..41 {
+      for k in 0..(l + 1) {
+        if k + nd.len() > l {
+          continue
+        }
+        let t = fill[0..k] + nd + fill[k + nd.len()..l]
+        let at = t.find(nd) ?? -1
+        if l == 40 || l == 17 {
+          finds = finds + " ${at}"
+        }
+        h = mix(h, t.split(nd).debug())
+        h = mix(h, t.lines().debug())
+        h = mix(h, "${at} ${t.contains(nd)} ${t.starts_with(nd)} ${t.ends_with(nd)} ${t.rune_count()}")
+        h = mix(h, t.replace(nd, "<>"))
+        h = mix(h, t.bytes().to_hex())
+        h = mix(h, t.debug())
+      }
+    }
+    os.stdio.println("${nd.debug()} ${h}${finds}")
+  }
+  let texts = ["", "a", ",", ",,", "a,b", "\n", "\n\n", "a\r\nb\r\n", "x\r", "\r\n\r\n", "é日本😀,é", "plain text 1234567890 with commas, and more, and more, and more,", "ünï 123 日本語\u{1}\u{fffd}"]
+  for t in texts {
+    os.stdio.println("${t.debug()} ${t.split(",").debug()} ${t.split("").len()} ${t.lines().debug()} ${t.rune_count()} ${t.bytes().to_hex()}")
+  }
+  let raw = [b"", b"\x00", b"\xff\xfe", b"\x80", b"abc\xc3", b"\xe6\x97\xa5\xe6\x9c", b"0123456789abcdef", b"0123456789abcdefg", b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f\x80\xc0\xff"]
+  for b in raw {
+    os.stdio.println("${b.to_hex()} ${b.debug()} ${b.rune_count()} ${(b.to_str() ?? "<not UTF-8>").debug()}")
+  }
+}

@@ -1,0 +1,105 @@
+// Atomic[T] workloads of decision 0200's port: get, set, swap, and
+// compare_and_swap inline, add and max in std/native/llrt/atomic.xo,
+// against the C path (XO_LLRT_C=atomic: a call of xo_atomic_* each).
+// Usage: atomicperf <workload>. Each workload prints "<workload>
+// <checksum> <elapsed microseconds>"; the checksum must be the same on
+// every backend and path. One task, so that the instruction counts are
+// the operations' (no contention); `contended` runs four tasks adding to
+// one Atomic (instructions vary with the interleaving: not part of the
+// bar).
+
+const N = 2000000
+
+fn get(a: Atomic[Int]) -> Int {
+  var s = 0
+  for _ in 0..N {
+    s += a.get()
+  }
+  s
+}
+
+fn set(a: Atomic[Int]) -> Int {
+  for i in 0..N {
+    a.set(i)
+  }
+  a.get()
+}
+
+fn swap(a: Atomic[Int]) -> Int {
+  var s = 0
+  for i in 0..N {
+    s = (s + a.swap(i)) % 1000000007
+  }
+  s
+}
+
+fn cas(a: Atomic[Int]) -> Int {
+  var hits = 0
+  for i in 0..N {
+    if a.compare_and_swap(i, i + 1) {
+      hits += 1
+    }
+  }
+  hits
+}
+
+fn add(a: Atomic[Int]) -> Int {
+  var s = 0
+  for _ in 0..N {
+    s = (s + a.add(3)) % 1000000007
+  }
+  s
+}
+
+fn max(a: Atomic[Int]) -> Int {
+  var s = 0
+  for i in 0..N {
+    s = (s + a.max(i % 1000)) % 1000000007
+  }
+  s
+}
+
+fn flag(b: Atomic[Bool]) -> Int {
+  var n = 0
+  for i in 0..N {
+    b.set(i % 3 == 0)
+    if b.get() {
+      n += 1
+    }
+  }
+  n
+}
+
+fn contended(a: Atomic[Int]) -> Int {
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        for _ in 0..N / 4 {
+          let _ = a.add(1)
+        }
+      })
+    }
+  }
+  a.get()
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "get"
+  let a = Atomic[Int].new(0)
+  let b = Atomic[Bool].new(false)
+  let t = os.clock.now()
+  let ck = match w {
+    "none" => 0
+    "get" => get(a)
+    "set" => set(a)
+    "swap" => swap(a)
+    "cas" => cas(a)
+    "add" => add(a)
+    "max" => max(a)
+    "flag" => flag(b)
+    "contended" => contended(a)
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${ck} ${us}")
+}

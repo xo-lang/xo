@@ -1,0 +1,45 @@
+// std/litmus on the native backends: each function is one of decision
+// 0200's atomics with a constant order (bench/litmus).
+use native/rt
+
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+const SEQ_CST = 4
+
+fn cells(n: Int) -> List[Int] {
+  var xs: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    xs.push(0)
+  }
+  xs
+}
+
+fn load_relaxed(xs: List[Int], i: Int) -> Int { rt.slot_load(xs, i, RELAXED) }
+
+fn load_acquire(xs: List[Int], i: Int) -> Int { rt.slot_load(xs, i, ACQUIRE) }
+
+fn load_seq_cst(xs: List[Int], i: Int) -> Int { rt.slot_load(xs, i, SEQ_CST) }
+
+fn store_relaxed(xs: List[Int], i: Int, v: Int) { rt.slot_store(xs, i, v, RELAXED) }
+
+fn store_release(xs: List[Int], i: Int, v: Int) { rt.slot_store(xs, i, v, RELEASE) }
+
+fn store_seq_cst(xs: List[Int], i: Int, v: Int) { rt.slot_store(xs, i, v, SEQ_CST) }
+
+fn swap_acq_rel(xs: List[Int], i: Int, v: Int) -> Int { rt.slot_swap(xs, i, v, ACQ_REL) }
+
+fn cas_relaxed(xs: List[Int], i: Int, old: Int, new: Int) -> Bool { rt.slot_cas(xs, i, old, new, RELAXED) }
+
+fn cas_seq_cst(xs: List[Int], i: Int, old: Int, new: Int) -> Bool { rt.slot_cas(xs, i, old, new, SEQ_CST) }
+
+fn add_relaxed(xs: List[Int], i: Int, d: Int) -> Int { rt.slot_add(xs, i, d, RELAXED) }
+
+fn add_seq_cst(xs: List[Int], i: Int, d: Int) -> Int { rt.slot_add(xs, i, d, SEQ_CST) }
+
+fn fence_seq_cst() { rt.fence(SEQ_CST) }
+
+fn spin() { rt.spin_hint() }
+
+fn addr(xs: List[Int], i: Int) -> Int { rt.slot_addr(xs, i) }

@@ -165,6 +165,19 @@ fn rune_count(strs: List[Str]) -> Int {
   sum
 }
 
+/// Bytes.rune_count and Bytes.to_str (UTF-8 validity) of text with
+/// multibyte runes (decision 0201).
+fn utf8(strs: List[Str]) -> Int {
+  var sum = 0
+  for _ in 0..ROUNDS {
+    for s in strs {
+      let b = s.bytes()
+      sum += b.rune_count() + (b.to_str() ?? "").len()
+    }
+  }
+  sum
+}
+
 fn int_fmt(xs: List[Int]) -> Int {
   var h = 0
   for _ in 0..ROUNDS {
@@ -379,6 +392,7 @@ fn main(os: Os) {
     "replace" => replace(strs)
     "trim" => trim(padded)
     "rune_count" => rune_count(strs)
+    "utf8" => utf8(strs)
     "int_fmt" => int_fmt(xs)
     "float_fmt" => float_fmt(fs)
     "float_parse" => float_parse(ftexts)

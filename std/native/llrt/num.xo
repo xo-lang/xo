@@ -1334,9 +1334,9 @@ fn slow_parse(b: Bytes, n: Int) -> Float? {
 // ---------------------------------------------------------------------------
 // Hex and base64 of Bytes (encoding/hex, encoding/base64.StdEncoding)
 //
-// Bytes.to_hex stays C (rt.bytes_hex): a loop that decides nothing per
-// byte, and an Xo version (two digits per byte lane, 16 bytes a call)
-// retired 1.09x the C's instructions on arm64 (decision 0193 step 3).
+// Bytes.to_hex is std/native/llrt/scan.xo (decision 0201): an Xo
+// version here (16 bytes a call of rt.rs_push_words) retired 1.09x the
+// C's instructions on arm64 (decision 0193 step 3).
 
 /// The bytes of the 2k hex digits of b from i (k 1 to 8) in a word,
 /// the first lowest, and bits above 0xF in bad for a byte that is not a

@@ -8,6 +8,7 @@
 // (ErrLarge), and Unicode classes other than \pL, \p{Nd}, \p{Any}, and
 // \p{ASCII} (an error that says so).
 use std/regexp
+use native/llrt/scan
 use native/llrt/unicode
 use native/rt
 
@@ -499,7 +500,7 @@ fn (var p: Parser) parse_unicode_class(s: Str, i: Int, r: List[Int]) -> (List[In
     seq = sl(s, i, t)
     name = sl(s, i + 2, t)
   } else {
-    let end = rt.str_find(s, "}", i)
+    let end = scan.find(s, "}", i)
     if end < 0 {
       check_utf8(s, i, n)?
       return Err(perr("invalid character class range", sl(s, i, n)))
@@ -652,7 +653,7 @@ fn (var p: Parser) parse_class(s: Str, i0: Int) -> Int ! PErr {
     first = false
     // POSIX [:alnum:]
     if t + 2 < n && byte_at(s, t) == '[' && byte_at(s, t + 1) == ':' {
-      let e = rt.str_find(s, ":]", t + 2)
+      let e = scan.find(s, ":]", t + 2)
       if e >= 0 {
         let name = sl(s, t, e + 2)
         let (gs, g) = posix_group(name)
@@ -954,7 +955,7 @@ fn (var p: Parser) parse_perl_flags(s: Str, i: Int) -> Int ! PErr {
     if starts_name {
       start = i + 3
     }
-    let end = rt.str_find(s, ">", i)
+    let end = scan.find(s, ">", i)
     if end < 0 {
       check_utf8(s, i, n)?
       return Err(perr("invalid named capture", sl(s, i, n)))
@@ -1141,7 +1142,7 @@ fn (var p: Parser) parse_backslash(s: Str, i: Int) -> Int ! PErr {
       return Err(perr("invalid escape sequence", sl(s, i, i + 2)))
     }
     if c1 == 'Q' {
-      var end = rt.str_find(s, "\\E", i + 2)
+      var end = scan.find(s, "\\E", i + 2)
       var next = end + 2
       if end < 0 {
         end = n
@@ -2054,7 +2055,7 @@ fn (r: Regex) expand(var b: BytesBuilder, tpl: Str, s: Str, m: List[Int]) {
   let n = tpl.len()
   var i = 0
   while i < n {
-    let d = rt.str_find(tpl, "$", i)
+    let d = scan.find(tpl, "$", i)
     if d < 0 {
       break
     }

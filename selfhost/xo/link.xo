@@ -273,6 +273,14 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // and of Atomic's operations (decision 0200, XO_LLRT_C=atomic); not
+  // xo_atomic_new, which the Xo path calls too
+  for sym in ["xo_atomic_get", "xo_atomic_set", "xo_atomic_swap", "xo_atomic_cas", "xo_atomic_add", "xo_atomic_max"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_ATOMIC_C")
+      break
+    }
+  }
   // and of the Fs path policy (decision 0193 step 6, XO_LLRT_C=fspath)
   for sym in ["xo_fs_mkdir_all", "xo_fs_remove_all", "xo_fs_create_temp", "xo_fs_cwd"] {
     if calls_sym(code, sym) {

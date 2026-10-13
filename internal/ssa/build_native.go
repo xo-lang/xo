@@ -280,6 +280,14 @@ func (s *fn) genericIntrinsic(x *ast.CallExpr, ci *check.Call, es []ast.Expr) *V
 		return check.Deep(s.apply(ci.Subst.Type(tps[i])))
 	}
 	switch fo.Name {
+	case "slot_load", "slot_store", "slot_swap", "slot_cas", "slot_add", "slot_addr":
+		// the atomics on a cell (decision 0200): the container as it is,
+		// the rest Ints; the emitters lower them inline
+		args := []*Value{s.valueAs(es[0], b.typ(targ(0), x))}
+		for i := 1; i < len(fo.Params); i++ {
+			args = append(args, s.valueAs(es[i], b.typ(fo.Params[i].Type, x)))
+		}
+		return s.rt(fo.Name, nt, args...)
 	case "launder1", "launder2":
 		// the function itself (only its effects are accounted for here)
 		return s.valueAs(es[0], nt)

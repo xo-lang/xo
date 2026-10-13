@@ -5,7 +5,8 @@ Status: Accepted as a direction (owner, 2026-10-12). The audit landed
 plan below ("Plan") is Proposed until the owner approves it and answers
 owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
 item 6: 1,040 of its 1,799 lines out of default builds,
-`bench/results/runtime-port-portable-2026-10-13.md`).
+`bench/results/runtime-port-portable-2026-10-13.md`). Prerequisite 4 (SIMD and word scans) done
+2026-10-13: decision 0201.
 
 ## Context
 
@@ -30,7 +31,10 @@ on both native backends.
 Prerequisites, each its own decision when started:
 
 1. Atomics and memory ordering intrinsics in the SSA and both backends
-   (unblocks the scheduler).
+   (unblocks the scheduler). **Done** (decision 0200, 2026-10-13):
+   `rt.slot_*`, `rt.fence`, `rt.spin_hint` on List[Int] and Atomic
+   cells in every emitter, litmus tested on arm64 and x86-64; Atomic[T]
+   ported within the bar (its C path behind `XO_LLRT_C=atomic`).
 2. Raw system calls on Linux, and direct libSystem calls on macOS, from
    Xo.
 3. SIMD or word at a time intrinsics so bulk scans can match memchr.
@@ -92,7 +96,12 @@ portable now under decision 0193's bar.
 4. **Lost the bar, rematch**: split and lines by (4) plus (2)'s inline
    copy; rune_count by a popcount over `rt.bytes_word` (possible before
    the rest of (4)); to_hex by (4) or a 32 byte push; Duration text by
-   decision 0194's list, not by these prerequisites.
+   decision 0194's list, not by these prerequisites. **Done for split,
+   lines, rune_count, and to_hex** (decision 0201, 2026-10-13): without
+   (2)'s inline copy (a piece is still one rt.str_slice call), split
+   0.858x and 0.977x, lines 0.984x and 0.989x, rune_count 0.326x and
+   0.323x, hex 1.011x and 0.942x of the C on arm64 and LLVM
+   (bench/results/scan-intrinsics-2026-10-13.md).
 5. **Owner decisions** (open): A, the TLS end state (an Xo TLS stack
    after Go's crypto/tls, or Mbed TLS kept as the one exception, or the
    platform TLS where one exists, which Linux lacks); B, Linux without

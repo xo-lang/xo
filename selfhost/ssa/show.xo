@@ -238,7 +238,11 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
         let et = b.typ(ea)
         if b.tkind(et) is Kind.Int | Kind.Bool | Kind.Float {
           let a = b.lit(acc, "Atomic(")
-          let g = b.rt("atomic_get", et, [v])
+          let g = if b.atomic_xo() {
+            b.rt("slot_load", et, [v, b.cint(ATOMIC_SLOT), b.cint(ORD_SEQ_CST)])
+          } else {
+            b.rt("atomic_get", et, [v])
+          }
           let s2 = b.debug_sub(a, g, ea)
           b.retv(b.lit(s2, ")"))
           return

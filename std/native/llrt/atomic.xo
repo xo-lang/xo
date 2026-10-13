@@ -1,0 +1,47 @@
+// Atomic[T]'s add and max, written in Xo over the runtime's atomics
+// (decision 0200, the pilot port of decision 0195 prerequisite 1). The
+// SSA builders lower Atomic's get, set, swap, and compare_and_swap to
+// one inline atomic each (rt.slot_load and friends on the value's cell,
+// sequentially consistent) and call these two through the native
+// prelude. The object itself stays the C runtime's (xo_atomic_new: the
+// allocator is decision 0195's prerequisite 2): its value is slot 13,
+// byte 128, a cache line apart from the count. The C path stays
+// selectable (`XO_LLRT_C=atomic` loads atomic_c.xo, and the Go SSA
+// builder then calls xo_atomic_* for every operation, compiled with
+// -DXO_ATOMIC_C) until the bar of decision 0193 holds.
+use native/rt
+
+/// The cell of the value in the C runtime's object.
+const SLOT = 13
+/// The orders of rt.slot_load and friends.
+const SEQ_CST = 4
+
+/// `a.add(n)`: the new value; a sum that does not fit an Int faults at
+/// the caller and stores nothing (xo_atomic_add).
+pub fn add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int {
+  var old = rt.slot_load(a, SLOT, SEQ_CST)
+  while {
+    // the wrapped sum overflowed when its sign differs from both
+    // operands' (xo_atomic_add's __builtin_add_overflow)
+    let nv = rt.int_wrap(0, old, n)
+    if ((old ^ nv) & (n ^ nv)) < 0 {
+      rt.fault_at("integer overflow: ${old} + ${n} does not fit Int", at)
+    }
+    if rt.slot_cas(a, SLOT, old, nv, SEQ_CST) {
+      return nv
+    }
+    old = rt.slot_load(a, SLOT, SEQ_CST)
+  }
+}
+
+/// `a.max(n)`: stores the larger value and returns it (xo_atomic_max).
+pub fn max(a: Atomic[Int], n: Int) -> Int {
+  var old = rt.slot_load(a, SLOT, SEQ_CST)
+  while old < n {
+    if rt.slot_cas(a, SLOT, old, n, SEQ_CST) {
+      return n
+    }
+    old = rt.slot_load(a, SLOT, SEQ_CST)
+  }
+  old
+}
