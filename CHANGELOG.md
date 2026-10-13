@@ -15,6 +15,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with no Go on PATH. scripts/bootstrap-xo.sh picks the
   LLVM backend on x86-64 hosts; scripts/remote-xo1-x86.sh and
   scripts/xo1-host-check.sh run the check on EC2 and the Intel Mac.
+- Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
+  request to an in memory server sent after a stop request waited in
+  the listener's backlog instead of failing, and under load could end
+  the test with `XO-F001: deadlock`; it now fails at once, as on the Go
+  backend (gotchas/mem-listener-backlog-after-serve.md). Also fixed: on
+  a loaded machine the virtual clock of a native test could move twice
+  for one idle instant, so a task woken by the first move saw the time
+  of the second (gotchas/virtual-clock-double-kick.md).
+- **A native build on macOS needs no C compiler** (decision 0182 next
+  steps 1 and 2): `xo build --backend=arm64` (and run, test) now
+  assembles and links with Xo's own Mach-O assembler and linker when the
+  release's runtime pack covers the program and no `use c` source is
+  linked; otherwise it uses cc as before. `--ld=cc` keeps cc, `--ld=macho`
+  insists on Xo's linker. Linux hosts keep cc for now. Release archives
+  carry Go's zone database as `lib/xo/zoneinfo.zip`, which `xo` reads
+  before asking `go env GOROOT`, so programs that name time zones build
+  with no Go installed. Fixed on the way: a native build for several
+  targets of different OSes (`--targets=darwin/arm64,linux/arm64`) gave
+  every target the host's predeclared `target`; each OS now gets its
+  own; `xo rtpack --status` on linux/amd64 named linux/arm64.
 - **`xo` is written in Xo** (decision 0178, switch point B): the release
   archives ship the self hosted toolchain as `bin/xo`, with
   `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the
@@ -31,6 +51,39 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   string literals, the predeclared `target` of a cross build (it was the
   compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
   an amd64 host, and paths printed by `xo serve` on Linux.
+- Windows, decision 0197 stages 5 and 6: native programs wait for
+  sockets with AFD polls on a completion port (a round trip stays at
+  44 us with 4000 idle connections, where WSAPoll took 11.9 ms; set
+  `XO_WINPOLL=wsapoll` for the old poller), read standard input from a
+  thread so reads can be cancelled, take the local time zone from the
+  system setting (as the Go backend), read the environment as UTF-8,
+  report a stack overflow as the Go backend does (`fatal error: stack
+  overflow`, status 2), and no longer close a socket when closing one of
+  hundreds of open files. The LLVM runtime tests and `xo test
+  --backend=llvm` run on Windows; `scripts/remote-windows.sh --batch`
+  runs the Windows checks of a batch (scripts/windows-batch.sh). Fixed:
+  a native test's client waiting for an in memory listener that was
+  freed slept forever (test_shutdown deadlocked on Windows).
+- Windows paths (decision 0197 stage 4, std.md 3.1 and 3.5): on
+  Windows `Fs` takes `\` as a separator, drive paths (`C:\x`) and UNC
+  paths (`\\host\share`) as absolute, and a path rooted at `/` on the
+  working directory's drive; `Env.program`, `home`, `config_dir`,
+  `cache_dir`, and every path an `Fs` returns use `/`. Native builds
+  read the home directory from `USERPROFILE` and the user directories
+  from `%AppData%` and `%LocalAppData%` on Windows, as the Go backend
+  did. Other OSes are unchanged. All 145 LLVM goldens pass on Windows
+  built by the self hosted `xo`.
+- Windows, decision 0197 stage 2: native programs run processes
+  (`Proc.run`, `Cmd`, `Child`, pipelines) on Windows through
+  `CreateProcessW` (PATH and PATHEXT lookup, arguments quoted as Go's
+  EscapeArg and on line ends, only the three standard handles
+  inherited); XO1504 no longer stops any Windows build. On Windows
+  `Child.kill`, cancellation, and `Proc.kill(pid, "KILL")` end a process
+  with status 137 on both backends (the Go backend's was 1), and other
+  signal names are an `Io` error. The self hosted `xo` builds Windows
+  programs too (`--backend=llvm` on a windows/amd64 host, and
+  `--targets=windows/arm64` cross builds): 143 of 144 LLVM goldens pass
+  built by it, and all 144 build for windows/arm64.
 - The LLVM backend builds Windows programs (windows/amd64 host, decision
   0197 stage 1): `xo build --backend=llvm` with LLVM's clang
   (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's
@@ -272,6 +325,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions than the C did (Time text about a quarter); Duration text
   does not yet meet the 5 percent bar, so `XO_LLRT_C=text,strings` at
   build time selects the C implementations (`XO_UNICODE=c` still works).
+- Int and Float text, Float.parse, Bytes.from_hex, and base64 on the
+  native backends are Xo (`std/native/llrt/num.xo`, decision 0193 step
+  3), checked line by line against Go's strconv on 336,386 inputs. Float
+  text retires under 1/50 of the instructions it did (the C ran snprintf
+  up to 17 times a Float), Float.parse about 0.28x, Int text 0.73x to
+  0.80x, base64 0.31x to 0.39x. Float.parse on the native backends now
+  takes what the Go backend takes: hex floats (`0x1p-2`), underscores
+  between digits (`1_000`), and any length. `XO_LLRT_C=num` at build time
+  selects the C implementations.
+- std/json on the native backends is Xo (`std/native/llrt/jsontext.xo`,
+  decision 0193 step 4): the parser, the readers the generated decoders
+  use, and the text of strings, Floats, and Bytes, checked against the Go
+  backend on about 28,000 inputs. Decoding takes 0.41x to 0.96x of the
+  instructions it did, encoding strings about 0.9x, structs about 0.12x,
+  and Floats about 1/50 (the C ran snprintf up to 17 times a Float).
+  std/json now also works on the wasm backend. `XO_LLRT_C=jsontext` at
+  build time selects the C implementation.
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

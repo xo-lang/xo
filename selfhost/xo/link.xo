@@ -111,7 +111,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
       }
     }
   }
-  args = args + srcs + tls_link + libs + ["-lm", "-lpthread"]
+  args = args + srcs + tls_link + libs + sys_link_args(ctx.goos)
   match os.proc.run(cc, args) {
     Ok(r) => {
       let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
@@ -121,6 +121,15 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
     }
     Err(e) => ("${cc}: ${e}", false, false)
   }
+}
+
+/// sysLinkArgs: the system libraries and linker of a native link on goos.
+/// Windows (decision 0197): lld-link, which reads the LTO bitcode MSVC's
+/// link.exe cannot; the runtime names its import libraries itself
+/// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
+/// MSVC one clang picks.
+fn sys_link_args(goos: Str) -> List[Str] {
+  if goos == "windows" { ["-fuse-ld=lld"] } else { ["-lm", "-lpthread"] }
 }
 
 /// rtPackHint: the hint of a failed local compile of the runtime.
@@ -238,14 +247,28 @@ fn io_flags(code: Str) -> List[Str] {
   // (decision 0193), which only XO_LLRT_C builds call
   for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
     "xo_time_parse"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_TEXT_C")
       break
     }
   }
   for sym in ["xo_str_trim", "xo_str_replace"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_STRINGS_C")
+      break
+    }
+  }
+  // and of the number text (decision 0193 step 3, XO_LLRT_C=num)
+  for sym in ["xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_NUM_C")
+      break
+    }
+  }
+  // and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
+  for sym in ["xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"] {
+    if calls_sym(code, sym) {
+      out.push("-DXO_JSONTEXT_C")
       break
     }
   }

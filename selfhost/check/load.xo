@@ -718,10 +718,34 @@ fn major_suffix(path: Str) -> Str {
   out.join("/")
 }
 
-/// path.Clean for slash separated relative paths.
+/// The volume of an absolute Windows path with / separators ("C:" of
+/// "C:/x", the form paths reach Xo in there, std.md 3.1); "" for every
+/// other path, and on every other host.
+pub fn path_volume(p: Str) -> Str {
+  let windows = match target.os {
+    Windows => true
+    Darwin | Linux | Wasi => false
+  }
+  if windows && p.len() >= 3 && p[1..2] == ":" && p[2..3] == "/" {
+    return p[0..2]
+  }
+  ""
+}
+
+/// Whether p is absolute: rooted at /, or a Windows drive path (C:/x).
+pub fn is_rooted(p: Str) -> Bool {
+  p.starts_with("/") || !path_volume(p).is_empty()
+}
+
+/// path.Clean for slash separated paths (filepath.Clean with / on
+/// Windows: the drive stays, the rest is cleaned as rooted).
 fn clean(p: Str) -> Str {
   if p.is_empty() {
     return "."
+  }
+  let vol = path_volume(p)
+  if !vol.is_empty() {
+    return vol + clean(p[2..])
   }
   let rooted = p.starts_with("/")
   var out: List[Str] = []

@@ -11,9 +11,12 @@
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 
-#ifndef N
-#define N 2000
+// the tasks of the fan out tests (-DXO_TASKS_N; a plain -DN would reach
+// the Windows headers, which name a union member N)
+#ifndef XO_TASKS_N
+#define XO_TASKS_N 2000
 #endif
+#define N XO_TASKS_N
 
 static int failures;
 
@@ -442,12 +445,13 @@ static void test_prune(void) {
 		unlk(&s->mu);
 	}
 	// without pruning the list holds every task started (total). The bound
-	// is half, not tighter: under load more finished tasks still have their
-	// queue entry pending (gone < 2) when a prune runs, they survive it, and
-	// the next prune waits for the list to double from the survivors
-	// (seen: 11303 of 32000 during a parallel test run; under 1/10 idle).
-	CHECK(maxlist < total / 2);
-	if (maxlist >= total / 2) {
+	// is three quarters, not tighter: under load more finished tasks still
+	// have their queue entry pending (gone < 2) when a prune runs, they
+	// survive it, and the next prune waits for the list to double from the
+	// survivors (seen: 11303 of 32000 during a parallel test run; under
+	// 1/10 idle; 16171 on a 16 vCPU Windows instance, 2026-10-12).
+	CHECK(maxlist < total * 3 / 4);
+	if (maxlist >= total * 3 / 4) {
 		fprintf(stderr, "prune: the scope's list reached %lld of %lld tasks\n", (long long)maxlist, (long long)total);
 	}
 	CHECK(xo_scope_close(s, 0) == 0);

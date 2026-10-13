@@ -19,6 +19,9 @@ static struct {
 	size_t len, cap;
 	int eof;     // the end of input follows buf
 	int err;     // a read error (errno) follows buf
+#ifdef _WIN32
+	int sock; // the pumped socket sin_st.pd watches (Windows)
+#endif
 } sin_st;
 
 static __thread int64_t n_stdin_status;
@@ -108,10 +111,22 @@ static xo_rstr *tw_stdin_read(int64_t all, int64_t *len) {
 static int sin_fill(xo_ctx *c) {
 	if (!sin_st.init) {
 		sin_st.init = 1;
-#ifndef _WIN32
-		// Windows (decision 0197): WSAPoll watches sockets only, so a
-		// pipe or console is read as a file is (the read blocks its
-		// thread; a reader thread is a later stage)
+#ifdef _WIN32
+		// Windows (decision 0197, stage 5): the poller waits on sockets
+		// only, so a pipe or the console is read by a thread of its own
+		// into a loopback socket (xo_w_pump), whose end the reads use and
+		// the poller waits on: reads are cancellation points as on Unix.
+		// A file is read directly.
+		HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+		DWORD ft = h && h != INVALID_HANDLE_VALUE ? GetFileType(h) : FILE_TYPE_UNKNOWN;
+		if (ft == FILE_TYPE_PIPE || ft == FILE_TYPE_CHAR) {
+			int s = xo_w_pump(h, 1, 0);
+			if (s >= 0) {
+				sin_st.pd = pd_new(s, 0);
+				sin_st.sock = s;
+			}
+		}
+#else
 		struct stat sb;
 		if (fstat(0, &sb) == 0 && !S_ISREG(sb.st_mode)) {
 			sin_st.pd = pd_new(0, 0);
@@ -123,7 +138,26 @@ static int sin_fill(xo_ctx *c) {
 		if (sin_stopped(c)) {
 			return 1;
 		}
-#ifndef _WIN32
+#ifdef _WIN32
+		ssize_t n;
+		if (sin_st.pd) {
+			int r = recv((SOCKET)sin_st.sock, t, (int)sizeof t, 0);
+			if (r == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
+				flush_pending();
+				int w = pd_wait_until(sin_st.pd, 0, c, deadline(50000000));
+				if (w == PD_CANCELED) {
+					return 1;
+				}
+				continue;
+			}
+			n = r == SOCKET_ERROR ? -1 : r;
+			if (n < 0) {
+				errno = xo_wsa_errno();
+			}
+		} else {
+			n = read(0, t, sizeof t);
+		}
+#else
 		if (sin_st.pd) {
 			struct pollfd p = {.fd = 0, .events = POLLIN};
 			int r = poll(&p, 1, 0);
@@ -136,8 +170,8 @@ static int sin_fill(xo_ctx *c) {
 				continue;
 			}
 		}
-#endif
 		ssize_t n = read(0, t, sizeof t);
+#endif
 		if (n < 0) {
 			if (errno == EINTR || errno == EAGAIN) {
 				continue;

@@ -2449,7 +2449,18 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 		pd->rready = 0;
 	} else {
 		pd->rwait = &x->park;
+#ifdef XO_WINPOLL
+		// the poller watches what someone waits for (pd_wait_until)
+		if (ev.afd) {
+			pd_arm(pd);
+		}
+#endif
 		pthread_mutex_unlock(&pd->mu);
+#ifdef XO_WINPOLL
+		if (!ev.afd) {
+			ev_poke();
+		}
+#endif
 		xo_timer t = {.when = when, .idx = -1, .fn = h2_timer_fn, .arg = &x->park};
 		if (when) {
 			if (tnow() >= when) {
@@ -2548,6 +2559,15 @@ int64_t xo_hc_h2(xo_hconn *hc) {
 		// rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
 		h2_put_goaway(&c->wb, 0, H2E_INADEQUATE, why);
 		c->failed = c->goaway = c->reject = 1;
+#ifdef _WIN32
+		// Windows resets a connection closed with unread input (the
+		// client's preface, gotchas/windows-shutdown-resets-unread-input.md),
+		// and the reset can overtake the GOAWAY: linger as after a
+		// connection error, dropping input, until the client closes or
+		// a second passes
+		c->reject = 0;
+		c->deadline = deadline((int64_t)1000000000);
+#endif
 	}
 	if (s) {
 		pthread_mutex_lock(&s->mu);

@@ -97,18 +97,18 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 			s.retv(lit(s.llrt("append_time", st, at, lit(acc, `"`), v), `"`))
 			return
 		case isPreludeNamed(ct, "Bytes"):
-			s.retv(s.rt("rs_append_b64_quoted", st, acc, v))
+			s.retv(s.jsonRT("rs_append_b64_quoted", st, acc, v))
 			return
 		}
 		switch t.Kind {
 		case KStr:
-			s.retv(s.rt("rs_append_json_str", st, acc, v))
+			s.retv(s.jsonRT("rs_append_json_str", st, acc, v))
 			return
 		case KInt:
-			s.retv(s.call("str.concat_int", st, "", acc, v))
+			s.retv(s.numText(acc, v))
 			return
 		case KFloat:
-			s.retv(s.rt("rs_append_json_float", st, acc, v))
+			s.retv(s.jsonRT("rs_append_json_float", st, acc, v))
 			return
 		case KBool:
 			s.retv(s.call("str.concat", st, "", acc, s.call("str.of_bool", st, "", v)))
@@ -186,7 +186,7 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 						k := s.call("list.index", K, "", keys, i)
 						var a *Value
 						if obj.Name == "Map" {
-							a = lit(s.rt("rs_append_json_str", st, s.read(av), k), ":")
+							a = lit(s.jsonRT("rs_append_json_str", st, s.read(av), k), ":")
 							a = sub(a, s.call("list.index", V, "", vals, i), n.Args[1])
 						} else {
 							a = sub(s.read(av), k, n.Args[0])
@@ -326,8 +326,8 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 			co := crt.VariantIndex("Ok")
 			return s.add(OpPayload, crt.Variants[co].Fields[0].Type, PayloadRef{co, 0}, r)
 		}
-		next := func(j *Value) *Value { return s.rt("json_next", intT, tape, j) }
-		jstr := func(j *Value) *Value { return s.rt("json_str", st, src, tape, j) }
+		next := func(j *Value) *Value { return s.jsonRT("json_next", intT, tape, j) }
+		jstr := func(j *Value) *Value { return s.jsonRT("json_str", st, src, tape, j) }
 		switch {
 		case isPreludeNamed(ct, "Duration"):
 			need(jkStr, "expected duration string")
@@ -348,8 +348,8 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 		case isPreludeNamed(ct, "Bytes"):
 			need(jkStr, "expected base64 string")
 			txt := jstr(i)
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("b64_ok", boolT, txt)), func() { fail("expected base64 string") })
-			ok(s.rt("b64_decode", st, txt))
+			s.ifThen(s.add(OpNot, boolT, nil, s.jsonRT("b64_ok", boolT, txt)), func() { fail("expected base64 string") })
+			ok(s.jsonRT("b64_decode", st, txt))
 			return
 		}
 		switch t.Kind {
@@ -359,13 +359,13 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 			return
 		case KInt:
 			need(jkNum, "expected integer")
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("json_int_ok", boolT, src, tape, i)), func() { fail("expected integer") })
-			ok(s.rt("json_int", intT, src, tape, i))
+			s.ifThen(s.add(OpNot, boolT, nil, s.jsonRT("json_int_ok", boolT, src, tape, i)), func() { fail("expected integer") })
+			ok(s.jsonRT("json_int", intT, src, tape, i))
 			return
 		case KFloat:
 			need(jkNum, "expected number")
-			s.ifThen(s.add(OpNot, boolT, nil, s.rt("json_float_ok", boolT, src, tape, i)), func() { fail("expected number") })
-			ok(s.rt("json_float", m.Builtin(KFloat), src, tape, i))
+			s.ifThen(s.add(OpNot, boolT, nil, s.jsonRT("json_float_ok", boolT, src, tape, i)), func() { fail("expected number") })
+			ok(s.jsonRT("json_float", m.Builtin(KFloat), src, tape, i))
 			return
 		case KBool:
 			s.ifThen(isKind(jkTrue), func() { ok(s.bool(true)) })
@@ -452,7 +452,7 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 				}
 				mv := local("map")
 				s.writeVar(mv, s.emptyMap(t))
-				mem := s.rt("json_members", listInt, src, tape, i)
+				mem := s.jsonRT("json_members", listInt, src, tape, i)
 				s.forUpTo(s.call("list.len", intT, "", mem), func(k *Value) {
 					s.ifThen(s.add(OpEq, boolT, nil, s.add(OpRem, intT, nil, k, s.cint(2)), s.cint(0)), func() {
 						key := jstr(s.call("list.index", intT, "", mem, k))
@@ -485,7 +485,7 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 		fields := func(o *Value, seg string, fs []fieldSpec, withDefaults bool) []*Value {
 			var out []*Value
 			for _, f := range fs {
-				j := s.rt("json_find", intT, src, tape, o, str(f.name))
+				j := s.jsonRT("json_find", intT, src, tape, o, str(f.name))
 				join := s.newBlock()
 				res := join.AddParam(f.st)
 				found, missing := s.branch(s.add(OpGe, boolT, nil, j, s.cint(0)))

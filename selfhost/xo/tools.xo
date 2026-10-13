@@ -6,8 +6,12 @@
 
 use std/crypto
 
-/// The host's GOOS ("darwin" or "linux"), from `uname -s`.
+/// The host's GOOS ("darwin", "linux", or "windows"): Windows is the OS
+/// this xo was built for (decision 0197), the others from `uname -s`.
 fn host_os(os: Os) -> Str {
+  if is_windows() {
+    return "windows"
+  }
   match os.proc.run("uname", ["-s"]) {
     Ok(r) => {
       if (r.stdout.to_str() ?? "").trim() == "Linux" {
@@ -31,9 +35,36 @@ fn host_arch() -> Str {
   }
 }
 
+/// Whether this xo runs on Windows (the OS it was built for).
+fn is_windows() -> Bool {
+  match target.os {
+    Windows => true
+    Darwin | Linux | Wasi => false
+  }
+}
+
+/// Whether p is absolute: rooted at / on every host, and on Windows a
+/// drive path (C:/x, C:\x; paths reach xo with / separators there,
+/// std.md 3.1).
+fn is_abs_path(p: Str) -> Bool {
+  if p.starts_with("/") {
+    return true
+  }
+  is_windows() && p.len() >= 3 && p[1..2] == ":" && (p[2..3] == "/" || p[2..3] == "\\")
+}
+
+/// The null device for a tool's input or output.
+fn dev_null() -> Str {
+  if is_windows() { "NUL" } else { "/dev/null" }
+}
+
 /// os.UserCacheDir: ~/Library/Caches on macOS; $XDG_CACHE_HOME when it is
-/// absolute, else ~/.cache, on Linux. "" when there is no home.
+/// absolute, else ~/.cache, on Linux; %LocalAppData% on Windows (with /
+/// separators). "" when there is no home.
 fn user_cache_dir(os: Os, goos: Str) -> Str {
+  if goos == "windows" {
+    return (os.env.get("LocalAppData") ?? "").replace("\\", "/")
+  }
   if goos == "linux" {
     let x = os.env.get("XDG_CACHE_HOME") ?? ""
     if x.starts_with("/") {
@@ -54,6 +85,9 @@ fn user_cache_dir(os: Os, goos: Str) -> Str {
 /// else the first executable file name in a directory of $PATH; "" when
 /// there is none.
 fn look_path(os: Os, name: Str) -> Str {
+  if is_windows() {
+    return look_path_windows(os, name)
+  }
   if name.contains("/") {
     return if is_exec(os, name) { name } else { "" }
   }
@@ -62,6 +96,45 @@ fn look_path(os: Os, name: Str) -> Str {
     let p = "${dir}/${name}"
     if is_exec(os, p) {
       return p
+    }
+  }
+  ""
+}
+
+/// exec.LookPath on Windows: a name holding \\, /, or : is a path, tried
+/// as written when it has an extension and with each extension of
+/// %PATHEXT%; else each directory of %PATH% (; separated) in turn. The
+/// result uses / separators.
+fn look_path_windows(os: Os, name: Str) -> Str {
+  let n = name.replace("\\", "/")
+  if n.contains("/") || n.contains(":") {
+    return find_exe_windows(os, n)
+  }
+  for d0 in (os.env.get("PATH") ?? "").split(";") {
+    let d = d0.trim_prefix("\"").trim_suffix("\"").replace("\\", "/").trim_suffix("/")
+    if d.is_empty() {
+      continue
+    }
+    let p = find_exe_windows(os, "${d}/${n}")
+    if !p.is_empty() {
+      return p
+    }
+  }
+  ""
+}
+
+/// exec's findExecutable on Windows: p when its last element has an
+/// extension and it exists, else p with the first extension of %PATHEXT%
+/// that exists; "" when none does.
+fn find_exe_windows(os: Os, p: Str) -> Str {
+  let last = base_name(p)
+  if last.contains(".") && is_exec(os, p) {
+    return p
+  }
+  let pe = os.env.get("PATHEXT") ?? ""
+  for e in (if pe.is_empty() { ".com;.exe;.bat;.cmd" } else { pe }).split(";") {
+    if !e.is_empty() && is_exec(os, p + e.to_lower()) {
+      return p + e.to_lower()
     }
   }
   ""
@@ -119,7 +192,8 @@ fn tool_id(os: Os, goos: Str, name: Str, args: List[Str]) -> Str {
 /// followed by UnixNano), from stat(1): FileInfo.modified is not finer
 /// than a millisecond.
 fn mtime_ns(os: Os, goos: Str, p: Str) -> Str {
-  let args = if goos == "linux" { ["-L", "-c", "%.9Y", p] } else { ["-L", "-f", "%Fm", p] }
+  // GNU stat on Linux and on Windows (Git for Windows' usr/bin)
+  let args = if goos != "darwin" { ["-L", "-c", "%.9Y", p] } else { ["-L", "-f", "%Fm", p] }
   let (out, err) = combined(os, "stat", args)
   if !err.is_empty() {
     return ""

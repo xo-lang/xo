@@ -31,6 +31,11 @@
 # hello program. s1 is built without --asm (a Go `xo` seed has no such
 # flag), s2 and s3 with it. Exit status 0 when every step passes; the log is
 # OUTDIR/log.txt, the timings OUTDIR/times.txt.
+#
+# XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
+# lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
+# default linker on darwin is selfhost/macho (decision 0182) and the
+# stages need no C compiler at all; set PATH without one to show it.
 set -eu
 [ $# -ge 1 ] || { echo "usage: $0 SEED [OUTDIR]" >&2; exit 2; }
 seed=$1
@@ -71,7 +76,7 @@ unset GOROOT GOPATH GOFLAGS GOTOOLCHAIN 2>/dev/null || true
 export XO_GO=/nonexistent/go
 export XO_SELF_DRIVER=1
 export XO_BIN_CACHE=off
-export XO_RTPACK=off
+export XO_RTPACK=${XO_BOOTSTRAP_RTPACK:-off}
 backend=${XO_BOOTSTRAP_BACKEND:-}
 if [ -z "$backend" ]; then
   case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac
@@ -83,7 +88,7 @@ if command -v go >/dev/null 2>&1; then
   say "FAIL: go is still on PATH ($(command -v go))"
   exit 1
 fi
-say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1)"
+say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1); XO_RTPACK=$XO_RTPACK"
 
 # stage N: binary $2 builds selfhost/xo into $out/sN/xo (with the
 # assembly beside it unless N is 1)

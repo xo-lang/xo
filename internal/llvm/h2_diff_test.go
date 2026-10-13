@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -81,6 +80,7 @@ func TestH2Diff(t *testing.T) {
 					t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
 				}
 				outs[i], _ = runH2Diff(t, res.Binaries[build.Host()], pki, be != build.BackendGo)
+				outs[i] = rejectRace(outs[i])
 			})
 		}
 	})
@@ -94,6 +94,25 @@ func TestH2Diff(t *testing.T) {
 			t.Errorf("%s backend differs from the Go backend\n%s", be, lineDiff(want, got))
 		}
 	}
+}
+
+// rejectRace makes the two results of the cbc suite probe one on
+// Windows: a server that rejects the connection writes its GOAWAY and
+// closes with the client's preface unread, which Windows answers with a
+// reset that can overtake the GOAWAY (the Go backend's server loses it
+// now and then; the native one lingers, decision 0197). Elsewhere the
+// output is as it is.
+func rejectRace(out string) string {
+	if runtime.GOOS != "windows" {
+		return out
+	}
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "raw cbc suite: ") && strings.HasSuffix(l, "closed") {
+			lines[i] = "raw cbc suite: GOAWAY INADEQUATE_SECURITY or a reset, closed"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // lineDiff shows the lines of got that differ from want.
@@ -353,6 +372,7 @@ fn main(os: Os) {
 func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string) (string, string) {
 	t.Helper()
 	cmd := exec.Command(bin)
+	stopAttr(cmd) // a stop request reaches it on Windows too
 	cmd.Env = append(os.Environ(), env...)
 	if native {
 		cmd.Env = append(cmd.Env, "XO_LEAKCHECK=1")
@@ -398,7 +418,7 @@ func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string)
 	}
 	rc.headers(1, true, h2Req("GET", "/slow")...)
 	time.Sleep(50 * time.Millisecond)
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := sendStop(cmd.Process); err != nil {
 		t.Fatal(err)
 	}
 	fmt.Fprintf(&out, "stop with a stream in flight: %s\n", rc.events(5*time.Second))
@@ -1143,7 +1163,7 @@ func TestH2Sanitizers(t *testing.T) {
 				bin = tsanBuild(t, flags, srcs)
 				env = []string{tsanOptions()}
 			} else {
-				bin = filepath.Join(t.TempDir(), "prog")
+				bin = exe(filepath.Join(t.TempDir(), "prog"))
 				aflags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), flags...)
 				if err := build.CompileC(aflags, srcs, bin); err != nil {
 					if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {

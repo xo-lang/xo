@@ -683,6 +683,9 @@ static int n_parse_float(const char *p, int64_t n, double *out) {
 	return 1;
 }
 
+#ifdef XO_NUM_C
+// the C path of the number text (decision 0193 step 3): only
+// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 int64_t xo_float_parse_ok(const char *p, int64_t n) {
 	double v;
 	return n_parse_float(p, n, &v);
@@ -693,6 +696,8 @@ double xo_float_parse(const char *p, int64_t n) {
 	n_parse_float(p, n, &v);
 	return v;
 }
+
+#endif
 
 // ---------------------------------------------------------------------------
 // Duration and Time (std.md 2.6)
@@ -966,6 +971,9 @@ void xo_exit(int64_t code) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+#ifdef XO_JSONTEXT_C
+// the C path of std/json's text (decision 0193 step 4): only
+// XO_LLRT_C=jsontext builds call it (std/native/llrt/jsontext_c.xo)
 // xo_rs_append_b64_quoted is s + the standard base64 of t (padded) in
 // double quotes (a Bytes in JSON).
 xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
@@ -989,7 +997,11 @@ xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn,
 	free(o.p);
 	return r;
 }
+#endif
 
+#ifdef XO_NUM_C
+// the C path of the number text (decision 0193 step 3): only
+// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 // xo_b64_encode is the standard base64 of the bytes, padded
 // (Bytes.to_base64, base64.StdEncoding.EncodeToString).
 xo_rstr *xo_b64_encode(const char *p, int64_t n, int64_t *len) {
@@ -1008,6 +1020,7 @@ xo_rstr *xo_b64_encode(const char *p, int64_t n, int64_t *len) {
 	}
 	return nbuf_take(&o, len);
 }
+#endif
 
 static int b64_val(unsigned c) {
 	if (c >= 'A' && c <= 'Z') {
@@ -1028,6 +1041,7 @@ static int b64_val(unsigned c) {
 	return -1;
 }
 
+#ifdef XO_NUM_C
 // n_b64_decode is base64.StdEncoding.DecodeString: padding required,
 // \r and \n ignored; 0 when the text is not valid.
 static int n_b64_decode(const char *p, int64_t n, nbuf *out) {
@@ -1093,6 +1107,8 @@ xo_rstr *xo_b64_decode(const char *p, int64_t n, int64_t *len) {
 	n_b64_decode(p, n, &o);
 	return nbuf_take(&o, len);
 }
+
+#endif
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only
@@ -1359,8 +1375,12 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
 
-// JSON (std.md 5)
+#ifdef XO_JSONTEXT_C
+// JSON (std.md 5): the C path of std/json's text (decision 0193 step 4),
+// which only XO_LLRT_C=jsontext builds call (std/native/llrt/
+// jsontext_c.xo); std/native/llrt/jsontext.xo is the default
 #include "xo_json.c"
+#endif
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"

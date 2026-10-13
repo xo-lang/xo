@@ -58,9 +58,8 @@ curl -fsSL https://go.dev/dl/go$GOVER.linux-arm64.tar.gz | tar -C /usr/local -xz
 touch /var/run/xo-ready
 EOF
 )
-log "launching $TYPE (spot) for $commit, self-terminating after ${MAXMIN} min"
+log "launching $TYPE (on demand) for $commit, self-terminating after ${MAXMIN} min"
 id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-name xo-ci --security-group-ids "$sg" \
-  --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time}' \
   --instance-initiated-shutdown-behavior terminate \
   --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=60,VolumeType=gp3,DeleteOnTermination=true}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=xo-ci},{Key=purpose,Value=xo-remote-bootstrap}]' \

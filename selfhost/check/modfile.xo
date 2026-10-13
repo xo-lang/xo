@@ -140,7 +140,7 @@ pub const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs
 /// p made absolute against the working directory (filepath.Abs); p
 /// itself when the working directory is not known.
 fn (c: Checker) abs(p: Str) -> Str {
-  if p.starts_with("/") || c.deps.wd.is_empty() {
+  if is_rooted(p) || c.deps.wd.is_empty() {
     return clean(p)
   }
   clean("${c.deps.wd}/${p}")
@@ -150,7 +150,7 @@ fn (c: Checker) abs(p: Str) -> Str {
 /// it (check.go relDir).
 fn (c: Checker) rel_dir(p: Str) -> Str {
   let d = clean(p)
-  if !d.starts_with("/") || c.deps.wd.is_empty() {
+  if !is_rooted(d) || c.deps.wd.is_empty() {
     return d
   }
   let wd = clean(c.deps.wd)
@@ -175,6 +175,14 @@ fn (c: Checker) display(p: Str) -> Str {
 /// The directory above d in display form, None at the root (or at the
 /// working directory when it is not known).
 fn (c: Checker) up(d: Str) -> Str? {
+  let vol = path_volume(d)
+  if !vol.is_empty() {
+    // a Windows drive path: its parent, None at the drive's root
+    if d == "${vol}/" {
+      return None
+    }
+    return Some(parent_dir(d))
+  }
   if d.starts_with("/") {
     if d == "/" {
       return None
@@ -769,7 +777,7 @@ pub fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) uses fs.r
         }
       }
       var dir = c.display(join(w.dir, f[1]))
-      if f[1].starts_with("/") {
+      if is_rooted(f[1]) {
         dir = c.display(f[1])
       }
       let (mf0, ps) = c.read_mod_file(dir)
@@ -802,6 +810,14 @@ pub fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) uses fs.r
 /// The directory of a file path.
 fn parent_dir(p: Str) -> Str {
   let d = clean(p)
+  let vol = path_volume(d)
+  if !vol.is_empty() {
+    let i = last_slash(d)
+    if i <= vol.len() {
+      return "${vol}/"
+    }
+    return d[..i]
+  }
   if d.starts_with("/") {
     let i = last_slash(d)
     if i <= 0 {

@@ -37,9 +37,11 @@
 # instance-initiated-shutdown-behavior) after XO_REMOTE_MAX_MIN minutes
 # (default 300) even if this script dies; this script also terminates it
 # on exit. It only ever terminates the instance it launched (by the id
-# run-instances returned). Spot by default (about $0.70 to $0.80 an hour
-# for c8g.16xlarge in us-east-1 on 2026-10-12; $2.55 on demand; the
-# default r8g.8xlarge was $0.47 to $0.52 spot, about c8g.8xlarge's).
+# run-instances returned). On demand only (owner, 2026-10-13: spot
+# instances were reclaimed mid-run three times and spot capacity for
+# r8g/r7g.8xlarge ran out); --on-demand is accepted and does nothing.
+# On demand costs about 3 to 5 times spot (c8g.16xlarge $2.55 an hour
+# against $0.70 to $0.80 spot in us-east-1 on 2026-10-12).
 #
 # Setup made on first use, all named xo-ci: an EC2 key pair (private key
 # at ~/.ssh/xo-ci.pem) and a security group allowing SSH from this host's
@@ -54,7 +56,7 @@ CMD=""
 HOLD=""
 ARCH=arm64
 PUTS=()
-MARKET='--instance-market-options MarketType=spot,SpotOptions={SpotInstanceType=one-time}'
+MARKET=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift;;

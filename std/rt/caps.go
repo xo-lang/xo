@@ -851,7 +851,8 @@ func (realEnv) M_args(tk *Task) List[string] {
 }
 
 func (realEnv) M_program(tk *Task) string {
-	return fx(tk, "env.program", false, nil, func() string { return os.Args[0] })
+	// with / separators on Windows, as every path Xo is given (std.md 3.1)
+	return fx(tk, "env.program", false, nil, func() string { return filepath.ToSlash(os.Args[0]) })
 }
 
 func (realEnv) M_home(tk *Task) Result[string, EnvErr] {
@@ -860,7 +861,7 @@ func (realEnv) M_home(tk *Task) Result[string, EnvErr] {
 		if err != nil {
 			return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "HOME"}})
 		}
-		return Ok[string, EnvErr](h)
+		return Ok[string, EnvErr](filepath.ToSlash(h))
 	})
 }
 

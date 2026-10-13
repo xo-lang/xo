@@ -16,12 +16,29 @@ fn find_clang(os: Os) -> Str {
 /// compiles C for by default (its -target-cpu and -target-feature
 /// arguments, from `clang -###`, decision 0119); "" when clang reports
 /// neither.
-fn clang_target_attrs(os: Os, clang: Str) -> Str {
-  let (out, err) = combined(os, clang, ["-###", "-c", "-x", "c", "/dev/null", "-o", "/dev/null"])
+fn clang_target_attrs(os: Os, clang: Str, cross: List[Str]) -> Str {
+  // cross: a cross build's --target (llvm_cross_triple)
+  let (out, err) = combined(os, clang, ["-###"] + cross + ["-c", "-x", "c", dev_null(), "-o", dev_null()])
   if !err.is_empty() {
     return ""
   }
   parse_target_attrs(out)
+}
+
+/// LLVMCrossTriple: the clang target triple of an LLVM build for t on
+/// host ("os/arch"), when it is not the host and clang cross compiles for
+/// it with the host's toolchain: on Windows (decision 0197, stage 3) the
+/// MSVC build tools carry both the x64 and the ARM64 libraries, so
+/// windows/amd64 builds windows/arm64 and the reverse. "" otherwise.
+fn llvm_cross_triple(host: Str, t: Str) -> Str {
+  if !host.starts_with("windows/") || !t.starts_with("windows/") || host == t {
+    return ""
+  }
+  match t {
+    "windows/arm64" => "aarch64-pc-windows-msvc"
+    "windows/amd64" => "x86_64-pc-windows-msvc"
+    _ => ""
+  }
 }
 
 /// parseTargetAttrs: the target CPU and features of the cc1 line.

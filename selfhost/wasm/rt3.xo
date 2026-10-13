@@ -2811,9 +2811,11 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str]) -> Str {
         drop
       end)
 
-    (func $clock_sleep_or_cancel (param $d i64) (result i32)
+    ;; an Int, as the SSA builder types it (xo_clock_sleep_or_cancel)
+    (func $clock_sleep_or_cancel (param $d i64) (result i64)
       local.get $d
-      call $clock_wait)
+      call $clock_wait
+      i64.extend_i32_u)
 
     ;; ------------------------------------------------------------------
     ;; budgets (task.with_budget, decisions 0173 and 0175): a budget
