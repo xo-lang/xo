@@ -1,7 +1,7 @@
 # 0193: Porting the rest of the native runtime (std/llrt) to Xo: order, what stays C, and the bar per step
 
-Status: Accepted (2026-10-12), steps 1, 2, and 3 implemented (step 3:
-item 8 below):
+Status: Accepted (2026-10-12), steps 1, 2, 3, and 4 implemented (step
+3: item 8 below; step 4, std/json: item 9, 2026-10-13):
 `std/native/llrt/text.xo` and `text_c.xo` (step 1),
 `std/native/llrt/strings.xo` and `strings_c.xo` (step 2),
 `std/native/prelude.xo` (`llrt_*` and the Str methods),
@@ -191,13 +191,66 @@ its callers move too.
      with a 32 byte push primitive, so a call covers 16 input bytes
      without the tail call.
 
+9. **Step 4, std/json** (results
+   `bench/results/runtime-port-step4-2026-10-13.md`, "Final"):
+   `std/native/llrt/jsontext.xo` (and its C path `jsontext_c.xo`,
+   `XO_LLRT_C=jsontext`) replaces std/llrt/xo_json.c: the parser
+   (Decoder.Token's state machine and the scanner, one function, string
+   bodies scanned eight bytes a word; the same tape, with an escape flag
+   and a high byte flag in a string node's length word that only
+   jsontext reads), the tape readers the generated decoders call
+   (`json_str`, `json_find`, `json_members`, `json_int_ok`, `json_int`,
+   `json_float_ok`, `json_float`, `json_next`), and the encoders' text
+   (`rs_append_json_str`, `rs_append_json_float` as num.xo's
+   `append_json_float`, std/json's Bytes as `append_base64` in quotes and
+   `from_base64`). The SSA builders call the native prelude's
+   `llrt_<name>` for each (internal/ssa `jsonRT`, selfhost/ssa
+   `json_rt`); std/native/json.xo calls `jsontext.parse`. num.xo gained
+   `parse_float_at` (a number read in place), `append_json_float`, and
+   `append_base64`.
+   - The bar holds on both backends (instructions less setup, Xo over C,
+     arm64 and LLVM): small objects 0.622x and 0.568x, Int arrays 0.946x
+     and 0.900x, Float arrays 0.660x and 0.614x, strings 0.937x and
+     0.827x, Map objects 0.956x and 0.925x, the parser alone 0.865x and
+     0.725x, invalid texts 0.439x and 0.408x, encoding structs 0.124x
+     and 0.112x, strings 0.938x and 0.900x, Floats 0.021x and 0.016x
+     (the C ran snprintf and strtod up to 17 times a Float), Bytes
+     0.704x and 0.557x. So **nothing of std/json stays C** on the default
+     path: xo_json.c and xo_rs_append_b64_quoted moved under `#ifdef
+     XO_JSONTEXT_C`, with their IOFlags entry (and xo1's `io_flags`); the
+     pack is 4.0 percent smaller. Int arrays first measured 1.111x and
+     1.052x (the digits read twice through an `Int?` helper); `int_ok`
+     and an unchecked `int_at` fixed it.
+   - Correctness: TestJSONTextDiff (27,900 inputs decoded into 15 types
+     and encoded again, the Go backend's output the reference, both
+     native backends and both paths, the LLVM build leak free), golden
+     `json_text`, TestJSONParseDiff (the C path), TestSelfhostSSA over
+     the json programs.
+   - wasm: native_json, text_table, codex_gaps, and json_text now run
+     (128 of 145 goldens); codex_gaps exposed a wasm runtime result type
+     mismatch, fixed (gotchas/wasm-runtime-result-type-mismatch.md).
+   - IOFlags: the XO_NUM_C scan (step 3) used a plain substring search,
+     so xo1's own `io_flags` table (string data naming xo_float_parse)
+     would turn it on for xo1's link; it counts only references now, as
+     the others do.
+   - Next, ranked: (a) delete the C path of jsontext once the lead's full
+     tier passes (jsontext_c.xo, xo_json.c, the guarded
+     xo_rs_append_b64_quoted, the IOFlags entries, `jsonRT`'s C branch,
+     TestJSONParseDiff and std/llrt/testdata/json_diff.c, http_fuzz.c's
+     JSON part, which test only the C); (b) one call per Int or Float
+     element instead of `_ok` then the value (an `llrt_json_int` that
+     returns a flag word, the builders' Int and Float arms), the largest
+     remaining cost of `ints` and `floats`; (c) step 5 (collections' Debug
+     text, the test runner's report, zone rules, sized integer text).
+
 ## Consequences
 
 - The wasm backend runs the ported code: str_ops_table, native_display,
   unicode_table, regexp_table, std_error_display, and misc pass under
   Node with the Xo text (Duration Display and Str Debug through
-  text.xo); text_table and native_json still stop at std/json's C only
-  primitives (`json_parse`, `rs_append_json_str`).
+  text.xo); text_table and native_json, which stopped at std/json's C
+  only primitives (`json_parse`, `rs_append_json_str`), run since step 4
+  (item 9).
 - The C runtime loses the ported code from every pack (338 lines of
   xo_std.c under `XO_TEXT_C`, 74 under `XO_STRINGS_C`); sizes and keys in
   the results file.

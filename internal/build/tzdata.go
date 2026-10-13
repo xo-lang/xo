@@ -350,7 +350,7 @@ func IOFlags(code []byte) []string {
 		}
 	}
 	// and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
-	for _, sym := range []string{"xo_json_", "xo_rs_append_json_"} {
+	for _, sym := range []string{"xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_JSONTEXT_C")
 			break

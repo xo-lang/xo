@@ -257,7 +257,7 @@ fn io_flags(code: Str) -> List[Str] {
     }
   }
   // and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
-  for sym in ["xo_json_", "xo_rs_append_json_"] {
+  for sym in ["xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"] {
     if calls_sym(code, sym) {
       out.push("-DXO_JSONTEXT_C")
       break

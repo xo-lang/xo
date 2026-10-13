@@ -113,7 +113,8 @@ func TestIOFlagsJSONTextC(t *testing.T) {
 		{"bl _xo_rs_append_json_float\n", true},
 		{"\t.ascii \"xo_json_\"\n", false},
 		{"@s = private constant [18 x i8] c\"xo_rs_append_json_\"\n", false},
-		{"bl _xo_rs_push_word\nbl _xo_rs_append_bytes\nbl _xo_utf8_valid\nbl _xo_rs_push_rune\nbl _xo_rs_append_b64_quoted\n", false},
+		{"bl _xo_rs_append_b64_quoted\n", true},
+		{"bl _xo_rs_push_word\nbl _xo_rs_append_bytes\nbl _xo_utf8_valid\nbl _xo_rs_push_rune\nbl _xo_b64_encode\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_JSONTEXT_C")
 		if got != c.want {
