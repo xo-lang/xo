@@ -87,26 +87,36 @@ const (
 	goldensLive    = "live"
 	goldensRecord  = "record"
 	goldensReplay  = "replay"
+	goldensIndex   = "index"
 	goldensRelPath = "testdata/gogoldens"
+	// goldSlotPiece is the meta piece of a unit holding its slot
+	// (goldSlot)
+	goldSlotPiece = "@slot"
 	// goldShards is how many files a kind's units are split into: by
 	// the first hex digit of the unit id.
 	goldShards = 16
 )
 
-// goldensMode is $XO_SELFHOST_GOLDENS (live when unset).
+// goldensMode is $XO_SELFHOST_GOLDENS (replay when unset, decision
+// 0215: the Go side is going away, so the recording is the reference).
 func goldensMode() string {
 	switch v := os.Getenv("XO_SELFHOST_GOLDENS"); v {
-	case "", goldensLive:
-		return goldensLive
-	case goldensRecord, goldensReplay:
+	case "", goldensReplay:
+		return goldensReplay
+	case goldensLive, goldensRecord, goldensIndex:
 		return v
 	default:
-		panic(fmt.Sprintf("XO_SELFHOST_GOLDENS=%q: want live, record, or replay", v))
+		panic(fmt.Sprintf("XO_SELFHOST_GOLDENS=%q: want replay, live, record, or index", v))
 	}
 }
 
-// goldensRecording reports whether this run records the Go side only.
-func goldensRecording() bool { return goldensMode() == goldensRecord }
+// goldensRecording reports whether this run writes the recording
+// (record, or index: the slots of the recorded units) and runs no Xo
+// side.
+func goldensRecording() bool {
+	m := goldensMode()
+	return m == goldensRecord || m == goldensIndex
+}
 
 // goldLine is one line of the recording (without its kind).
 type goldLine struct{ id, name, value string }
@@ -117,7 +127,10 @@ var goldens struct {
 	loaded   map[string]map[string][]goldLine // replay: kind -> unit id -> lines
 	loadErrs []error
 	missing  []string // replay: the units with no recording
+	stale    []string // replay: the units compared with their slot's recording
 	differ   []string // replay: the pieces whose hash differs, with the hint
+	// slots: kind -> slot -> the unit id recorded for it (replay)
+	slots map[string]map[string]string
 	// pool: kind -> the member hashes of every family of every unit
 	// (record: what this run recorded; replay: read)
 	pool map[string]map[string]bool
@@ -162,6 +175,29 @@ func goldID(kind string, key []string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
+
+// goldSlot is the slot of the unit of kind keyed by key: its id without
+// the content of its inputs (the 64 hex digit sums of files and trees,
+// and std's sum, in the parts of fileKey and dirKey), so the units of
+// one input (a path, a run with its options and host) recorded at
+// different times share it. A replay whose unit is not recorded (its
+// input or std changed) compares with the unit recorded for its slot.
+func goldSlot(kind string, key []string) string {
+	stripped := make([]string, len(key))
+	for i, k := range key {
+		var keep []string
+		for _, f := range strings.Split(k, "\x00") {
+			if strings.HasPrefix(f, "std:") || hex64.MatchString(f) {
+				continue
+			}
+			keep = append(keep, f)
+		}
+		stripped[i] = strings.Join(keep, "\x00")
+	}
+	return goldID(kind+" slot", stripped)
+}
+
+var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // goldQuote quotes a piece name or a meta text that a line could not
 // hold as it is.
@@ -341,6 +377,28 @@ func flushGoldens() error {
 		if err != nil {
 			return err
 		}
+		if goldensMode() == goldensIndex {
+			// the units this run computes, no others: the units of
+			// earlier inputs (and of other hosts) go
+			units = map[string][]goldLine{}
+			if err := removeGoldShards(dir, kind); err != nil {
+				return err
+			}
+		} else {
+			// a unit recorded again for its slot replaces the slot's
+			// earlier unit
+			slotOf := map[string]string{}
+			for id, ls := range goldens.recorded[kind] {
+				if s := lineSlot(ls); s != "" {
+					slotOf[s] = id
+				}
+			}
+			for id, ls := range units {
+				if nid, ok := slotOf[lineSlot(ls)]; ok && nid != id {
+					delete(units, id)
+				}
+			}
+		}
 		for id, ls := range goldens.recorded[kind] {
 			units[id] = ls
 		}
@@ -361,6 +419,28 @@ func flushGoldens() error {
 	return nil
 }
 
+// lineSlot is the slot of a unit's lines ("" when it has none).
+func lineSlot(ls []goldLine) string {
+	for _, l := range ls {
+		if l.name == goldMetaMark+goldSlotPiece {
+			return l.value
+		}
+	}
+	return ""
+}
+
+// removeGoldShards removes the unit files of kind in dir (an index run
+// rewrites them).
+func removeGoldShards(dir, kind string) error {
+	files, _ := filepath.Glob(filepath.Join(dir, kind, "[0-9a-f].txt"))
+	for _, f := range files {
+		if err := os.Remove(f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // goldensReport is what a replay run reports at its end (TestMain): the
 // units with no recording and the pieces that differ, and whether the
 // run fails for them.
@@ -372,8 +452,12 @@ func goldensReport() (string, bool) {
 		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %v\n", err)
 	}
 	if n := len(goldens.missing); n > 0 {
-		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units have no recorded Go output (record them with scripts/selfhost-record-goldens.sh --merge while the Go implementation exists), the first: %s\n",
-			n, strings.Join(goldens.missing[:min(10, n)], "; "))
+		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units have no recording, not even of an earlier input (%s), the first: %s\n",
+			n, recordAdvice, strings.Join(goldens.missing[:min(10, n)], "; "))
+	}
+	if n := len(goldens.stale); n > 0 {
+		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units were compared with the recording of an earlier input of theirs (the input or std changed since; not a failure), the first: %s\n",
+			n, strings.Join(goldens.stale[:min(5, n)], "; "))
 	}
 	if n := len(goldens.differ); n > 0 {
 		show := 20
@@ -386,6 +470,32 @@ func goldensReport() (string, bool) {
 		}
 	}
 	return b.String(), len(goldens.loadErrs)+len(goldens.missing) > 0
+}
+
+// recordAdvice is how to record a missing unit.
+const recordAdvice = "record them with scripts/selfhost-record-goldens.sh --merge"
+
+// goldSlotUnit is the unit recorded for slot of kind (replay), from the
+// slot lines of the recording.
+func goldSlotUnit(kind, slot string) (string, bool) {
+	goldUnitLines(kind, "") // loads the kind
+	goldens.mu.Lock()
+	defer goldens.mu.Unlock()
+	if goldens.slots == nil {
+		goldens.slots = map[string]map[string]string{}
+	}
+	m, ok := goldens.slots[kind]
+	if !ok {
+		m = map[string]string{}
+		for id, ls := range goldens.loaded[kind] {
+			if s := lineSlot(ls); s != "" {
+				m[s] = id
+			}
+		}
+		goldens.slots[kind] = m
+	}
+	id, ok := m[slot]
+	return id, ok
 }
 
 // goldUnitLines is the recorded lines of unit id of kind (replay).
@@ -419,6 +529,7 @@ type goldPieces struct {
 	cx      goldenCtx
 	hashed  bool // replay: parts, lists, and sets hold hashes
 	missing bool // replay: the unit is not recorded
+	stale   bool // replay: the recording is its slot's, of an earlier input
 	meta    map[string]string
 	parts   map[string]string   // name -> text, or hash; a member of family f is "<f>:<member>"
 	lists   map[string][]string // live: name -> lines (compared sorted)
@@ -537,7 +648,7 @@ func piecesFromLines(p *goldPieces, lines []goldLine) {
 	p.hashed = true
 	for _, l := range lines {
 		switch {
-		case l.name == goldMetaMark:
+		case l.name == goldMetaMark, l.name == goldMetaMark+goldSlotPiece:
 		case strings.HasPrefix(l.name, goldMetaMark):
 			p.meta[p.cx.denorm(strings.TrimPrefix(l.name, goldMetaMark))] = p.cx.denorm(l.value)
 		case strings.HasPrefix(l.name, goldListMark):
@@ -634,15 +745,29 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 		return p
 	}
 	id := goldID(kind, key)
+	slot := goldSlot(kind, key)
 	if v := os.Getenv("XO_SELFHOST_GOLDENS_DEBUG"); v != "" && strings.Contains(label, v) {
 		// the key of the units whose label holds the text (why a unit
 		// is missing)
-		fmt.Fprintf(os.Stderr, "gogoldens %s %s %s: %q\n", mode, kind, id, key)
+		fmt.Fprintf(os.Stderr, "gogoldens %s %s %s (slot %s): %q\n", mode, kind, id, slot, key)
 	}
 	out := newPieces()
 	out.kind, out.id, out.label, out.hint, out.cx = kind, id, label, hint, cx
 	if mode == goldensReplay {
 		lines, ok := goldUnitLines(kind, id)
+		if !ok {
+			// the input (or std) changed since the recording: compare
+			// with the recording of the slot's earlier input
+			if sid, found := goldSlotUnit(kind, slot); found {
+				lines, ok = goldUnitLines(kind, sid)
+				out.stale = ok
+				if ok {
+					goldens.mu.Lock()
+					goldens.stale = append(goldens.stale, kind+" "+cx.norm(label))
+					goldens.mu.Unlock()
+				}
+			}
+		}
 		if !ok {
 			out.hashed, out.missing = true, true
 			goldens.mu.Lock()
@@ -653,9 +778,29 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 		piecesFromLines(out, lines)
 		return out
 	}
-	live := compute()
-	live.id, live.cx = id, cx
-	lines, pool := live.recordLines()
+	var lines []goldLine
+	var pool []string
+	if mode == goldensIndex {
+		// the recorded unit with its slot line, no Go side
+		rec, ok := goldUnitLines(kind, id)
+		if !ok {
+			goldens.mu.Lock()
+			goldens.errs = append(goldens.errs, fmt.Errorf("index: %s %s (unit %s) is not recorded", kind, cx.norm(label), id))
+			goldens.mu.Unlock()
+			out.hashed, out.missing = true, true
+			return out
+		}
+		for _, l := range rec {
+			if l.name != goldMetaMark+goldSlotPiece {
+				lines = append(lines, l)
+			}
+		}
+	} else {
+		live := compute()
+		live.id, live.cx = id, cx
+		lines, pool = live.recordLines()
+	}
+	lines = append(lines, goldLine{id, goldMetaMark + goldSlotPiece, slot})
 	goldens.mu.Lock()
 	if goldens.pool == nil {
 		goldens.pool = map[string]map[string]bool{}
@@ -785,18 +930,22 @@ func (p *goldPieces) diffList(name string, x []string) string {
 func (p *goldPieces) mismatch(name string) string {
 	what := fmt.Sprintf("%s %s (unit %s), %s", p.kind, p.label, p.id, name)
 	if p.missing {
-		return "no recorded Go output for " + what
+		return "no recording for " + what
+	}
+	stale := ""
+	if p.stale {
+		stale = " of an earlier input (the input or std changed since it was recorded)"
 	}
 	goldens.mu.Lock()
-	goldens.differ = append(goldens.differ, what+": "+p.hint)
+	goldens.differ = append(goldens.differ, what+stale+": "+p.hint)
 	goldens.mu.Unlock()
-	return "the hash differs from the recorded Go output's (" + name + "); the dumps: " + p.hint
+	return "the hash differs from the recorded output's" + stale + " (" + name + "); the dumps: " + p.hint
 }
 
 // missingText is what a comparison reports for a unit with no recording
 // (TestMain fails the run for it too).
 func (p *goldPieces) missingText() string {
-	return fmt.Sprintf("no recorded Go output for %s %s (unit %s): record it with scripts/selfhost-record-goldens.sh --merge while the Go implementation exists", p.kind, p.label, p.id)
+	return fmt.Sprintf("no recording for %s %s (unit %s), not even of an earlier input: %s", p.kind, p.label, p.id, recordAdvice)
 }
 
 // goldHint tells how to see the full dumps of a unit: the Go side with
@@ -945,7 +1094,7 @@ var treeSums sync.Map // directory -> fingerprint, per test binary
 // treeSum fingerprints the files of dir (with a "!" suffix, only its own
 // files; else every file below it but dot directories): names and bytes.
 func treeSum(dir string) string {
-	if goldensMode() == goldensRecord {
+	if goldensRecording() {
 		// a recording run writes no input while it runs: cache
 		if v, ok := treeSums.Load(dir); ok {
 			return v.(string)
@@ -978,7 +1127,7 @@ func treeSum(dir string) string {
 		return nil
 	})
 	s := hex.EncodeToString(h.Sum(nil))
-	if goldensMode() == goldensRecord {
+	if goldensRecording() {
 		treeSums.Store(key, s)
 	}
 	return s

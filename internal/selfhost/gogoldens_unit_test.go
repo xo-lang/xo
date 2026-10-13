@@ -85,3 +85,35 @@ func TestGoldPieces(t *testing.T) {
 		t.Errorf("differing set: %v", s.parts)
 	}
 }
+
+// TestGoldSlot requires the units of one input recorded with different
+// contents (of the file, the run's tree, std) to share a slot, and the
+// units of different paths, options, or hosts not to.
+func TestGoldSlot(t *testing.T) {
+	cx := newGoldenCtx()
+	a := cx.fileKey("x/a.xo", []byte("one"))
+	b := cx.fileKey("x/a.xo", []byte("two"))
+	if goldID("lexdump", []string{a}) == goldID("lexdump", []string{b}) {
+		t.Fatal("different contents share a unit")
+	}
+	if goldSlot("lexdump", []string{a}) != goldSlot("lexdump", []string{b}) {
+		t.Error("one path's contents have different slots")
+	}
+	if goldSlot("lexdump", []string{a}) == goldSlot("lexdump", []string{cx.fileKey("x/b.xo", []byte("one"))}) {
+		t.Error("two paths share a slot")
+	}
+	if goldSlot("lexdump", []string{a}) == goldSlot("astdump", []string{a}) {
+		t.Error("two kinds share a slot")
+	}
+	sum := strings.Repeat("ab", 32)
+	run := func(tree, std, host string) []string {
+		return []string{"tests=false", "@ROOT0@\x00examples/hello\x00" + tree + "\x00std:" + std + "\x00" + host}
+	}
+	other := strings.Repeat("cd", 32)
+	if goldSlot("ssadump", run(sum, sum, "darwin/arm64")) != goldSlot("ssadump", run(other, other, "darwin/arm64")) {
+		t.Error("one run's trees have different slots")
+	}
+	if goldSlot("ssadump", run(sum, sum, "darwin/arm64")) == goldSlot("ssadump", run(sum, sum, "linux/arm64")) {
+		t.Error("two hosts share a slot")
+	}
+}
