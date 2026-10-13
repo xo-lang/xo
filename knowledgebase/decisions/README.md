@@ -198,3 +198,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0204-c-may-call-xo-runtime.md](0204-c-may-call-xo-runtime.md): Accepted (owner, 2026-10-13): the C runtime may call runtime functions compiled from Xo through internal C ABI exports; supersedes decision 0180 item 3.
 - [0205-zero-c-scope.md](0205-zero-c-scope.md): Accepted (owner, 2026-10-13): no C toolchain for the runtime and for programs without `use c`; `use c` programs keep needing a C compiler, as with cgo.
 - [0206-linux-raw-syscalls.md](0206-linux-raw-syscalls.md): Proposed (stub): raw Linux system calls as internal intrinsics, static linking without libc (decisions 0195, 0203).
+- [0207-runtime-raw-memory.md](0207-runtime-raw-memory.md): Proposed (stub): raw memory intrinsics and internal C ABI exports so the allocator and reference counts can move to Xo (decisions 0195, 0204).
