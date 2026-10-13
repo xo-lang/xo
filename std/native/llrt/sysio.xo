@@ -20,66 +20,72 @@ pub struct Info {
   pub modified: Int = 0
 }
 
+/// Whether the build makes Linux system calls from Xo: a Linux target
+/// that is not a WASI module (a wasm build keeps the host's `target.os`,
+/// gotchas/wasm-target-os-is-the-host.md). The SSA passes do not fold a
+/// `match` on `target`, so every arm is lowered; a native backend's
+/// optimizer or a dead branch leaves the other arm unused.
+fn raw() -> Bool {
+  match target.os {
+    TargetOs.Linux => {
+      match target.arch {
+        TargetArch.Wasm32 => false
+        TargetArch.Arm64 | TargetArch.Amd64 => true
+      }
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
 /// os.ReadFile(op): the contents in a list of one, or the empty list
 /// with the status set (the error names the OS path, as xo_fs_read's).
 pub fn fs_read(op: Str) -> List[Bytes] {
-  match target.os {
-    TargetOs.Linux => {
-      if rt.tw_fake(1) {
-        return rt.fs_read(op)
-      }
-      let (b, e) = read_file(op)
-      if e != 0 {
-        rt.fs_set_err(linux.fs_status(e), op, linux.err_msg(e))
-        return []
-      }
-      rt.fs_set_err(0, "", "")
-      [b]
-    }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => rt.fs_read(op)
+  if !raw() || rt.tw_fake(1) {
+    return rt.fs_read(op)
   }
+  let (b, e) = read_file(op)
+  if e != 0 {
+    rt.fs_set_err(linux.fs_status(e), op, linux.err_msg(e))
+    return []
+  }
+  rt.fs_set_err(0, "", "")
+  [b]
 }
 
 /// os.WriteFile(op, data, 0644): the status, an error naming the Xo path
 /// x.
 pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int {
-  match target.os {
-    TargetOs.Linux => {
-      let e = write_file(op, data)
-      if e != 0 {
-        let st = linux.fs_status(e)
-        rt.fs_set_err(st, x, linux.err_msg(e))
-        return st
-      }
-      rt.fs_set_err(0, "", "")
-      0
-    }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => rt.fs_write(op, data, x)
+  if !raw() {
+    return rt.fs_write(op, data, x)
   }
+  let e = write_file(op, data)
+  if e != 0 {
+    let st = linux.fs_status(e)
+    rt.fs_set_err(st, x, linux.err_msg(e))
+    return st
+  }
+  rt.fs_set_err(0, "", "")
+  0
 }
 
 /// os.Stat(op) (os.Lstat unless follow): the facts, an error naming the
 /// Xo path x.
 pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
-  match target.os {
-    TargetOs.Linux => {
-      let (s, e) = linux.stat(op, follow)
-      if e != 0 {
-        let st = linux.fs_status(e)
-        rt.fs_set_err(st, x, linux.err_msg(e))
-        return Info{st: st}
-      }
-      rt.fs_set_err(0, "", "")
-      Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}
+  if !raw() {
+    let st = rt.fs_stat(op, follow, x)
+    if st != 0 {
+      return Info{st: st}
     }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {
-      let st = rt.fs_stat(op, follow, x)
-      if st != 0 {
-        return Info{st: st}
-      }
-      Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
-    }
+    return Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
   }
+  let (s, e) = linux.stat(op, follow)
+  if e != 0 {
+    let st = linux.fs_status(e)
+    rt.fs_set_err(st, x, linux.err_msg(e))
+    return Info{st: st}
+  }
+  rt.fs_set_err(0, "", "")
+  Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's

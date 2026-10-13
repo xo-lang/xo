@@ -340,6 +340,11 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   if backend == "arm64" || backend == "llvm" {
     tgoos = targets[0].split("/")[0]
     tgoarch = if backend == "arm64" { "arm64" } else { ltarget.split("/")[1] }
+  } else if backend == "wasm" {
+    // the architecture of a WASI module: std/native/llrt/sysio.xo's
+    // Linux system calls are not for it (decision 0206); `target.os`
+    // stays the host's (gotchas/wasm-target-os-is-the-host.md)
+    tgoarch = "wasm"
   }
   var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
   t = lo.t

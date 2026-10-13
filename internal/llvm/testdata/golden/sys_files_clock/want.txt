@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 read "hello\n"
 empty 0
 big 43890 true
@@ -14,3 +16,4 @@ proc ok true
 clock moves true after 2020 true since true
 entries a.txt:6 big.txt:5 empty.txt:0
 done
+--- stderr
