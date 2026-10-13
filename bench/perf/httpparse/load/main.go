@@ -9,7 +9,8 @@
 // 50 at a time on one connection), h1_chunked (POSTs of a chunked body of
 // 8 chunks and a trailer), h1_url (GETs of escaped targets with 20 query
 // parameters), h2_get (HTTP/2 over TLS, the same fields every request,
-// 8 workers on one connection: HPACK indexes them), h2_varied (fields
+// one request at a time on one connection, so the server does the same
+// work every run: HPACK indexes them), h2_varied (fields
 // whose values change per request: literals, Huffman, table churn).
 package main
 
@@ -138,8 +139,8 @@ func readAnswer(br *bufio.Reader) error {
 	return err
 }
 
-// h2 sends n requests as streams of one HTTP/2 connection from 8
-// workers.
+// h2 sends n requests as streams of one HTTP/2 connection, one at a
+// time.
 func h2(addr, w string, n int) error {
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, MaxConnsPerHost: 1}
 	tr.Protocols = new(http.Protocols)
@@ -149,7 +150,7 @@ func h2(addr, w string, n int) error {
 	var wg sync.WaitGroup
 	var first error
 	var mu sync.Mutex
-	for range 8 {
+	for range 1 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
