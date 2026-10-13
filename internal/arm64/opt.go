@@ -250,6 +250,38 @@ func (s *fstate) inherit(from *memo) {
 	s.mm = m
 }
 
+// joinFacts adds the facts of memo from (bounds, relations, passed
+// checks) to the current memo, for a block that from's block reaches
+// it on every path that runs but does not dominate in the control flow
+// graph (joinSource). The registers from's block computed (constants,
+// lengths, addresses, loads, quotients) are not taken: a path the graph
+// has but execution never takes would read them before they are
+// written (gotchas/arm64-vreg-read-before-write-break-flag.md).
+func (s *fstate) joinFacts(from *memo) {
+	m := s.m()
+	for k, v := range from.less {
+		m.less[k] = v
+	}
+	for k, v := range from.checked {
+		m.checked[k] = v
+	}
+	for k, v := range from.lo {
+		if o, ok := m.lo[k]; !ok || v > o {
+			m.lo[k] = v
+		}
+	}
+	for k, v := range from.hi {
+		if o, ok := m.hi[k]; !ok || v < o {
+			m.hi[k] = v
+		}
+	}
+	for k, v := range from.lowZero {
+		if o, ok := m.lowZero[k]; !ok || v > o {
+			m.lowZero[k] = v
+		}
+	}
+}
+
 // forgetLen drops what is known about the length of list l (a pop
 // changed it).
 func (s *fstate) forgetLen(l vreg) {

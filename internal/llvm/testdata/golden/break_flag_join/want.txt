@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+true %xxx
+true abc+d
+true xx
+true 
+false 
+true zz
+true x
+--- stderr
