@@ -128,7 +128,18 @@ id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-
   --user-data "$userdata" --query 'Instances[0].InstanceId' --output text 2>&1) || {
   if [ -n "$DRY" ] && echo "$id" | grep -q DryRunOperation; then log "dry run OK: the launch would succeed"; exit 0; fi
   log "launch failed: $id"; exit 1; }
-cleanup() { log "terminating $id"; aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true; [ -n "${wd:-}" ] && kill "$wd" 2>/dev/null || true; }
+# terminate and confirm: a failed terminate call once left an on demand
+# instance running after the script said "terminating" (2026-10-13)
+cleanup() {
+  log "terminating $id"
+  for _ in 1 2 3 4 5; do
+    aws ec2 terminate-instances --instance-ids "$id" >/dev/null 2>&1 || true
+    st=$(aws ec2 describe-instances --instance-ids "$id" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
+    case "$st" in shutting-down|terminated) log "instance $id $st"; break ;; esac
+    log "instance $id still $st; retrying terminate"; sleep 10
+  done
+  [ -n "${wd:-}" ] && kill "$wd" 2>/dev/null || true
+}
 trap cleanup EXIT
 # local watchdog: terminates the instance after MAXMIN minutes even if this
 # script hangs waiting on ssh (2026-10-12: neither the instance's shutdown nor

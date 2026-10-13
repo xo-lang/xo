@@ -420,3 +420,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [c-only-runtime-tests-need-exports.md](c-only-runtime-tests-need-exports.md): Observed: std/llrt/testdata C tests no longer link alone; internal/llvm cOnly adds an empty program's IR, which defines the xo_x_ exports.
 - [exports-grow-every-program.md](exports-grow-every-program.md): Observed: the C ABI exports' closure is in every native program (hello +20,720 bytes on arm64, SSA goldens 10x); feature exports go in cabi_<feature>.xo.
 - [arm64-length-after-var-list-call.md](arm64-length-after-var-list-call.md): Observed: reads of a `var` List after calls that take it are bounds checked again (its length is unknown); check the length once after the calls.
+- [ec2-terminate-not-confirmed.md](ec2-terminate-not-confirmed.md): Observed, fixed: remote-full.sh said terminating but the instance kept running; cleanup now retries and confirms the state.
