@@ -720,6 +720,14 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if needs_tls(code) {
       fail(os, "XO_NOLIBC=1: std/http's TLS library needs the C library (decision 0206 stage 3)")
     }
+    for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
+      if n.trim() == "net" {
+        // the C path of the network is the C library's sockets and
+        // getaddrinfo (std/native/llrt/net_c.xo); `all` leaves the
+        // network on Xo's, the only path with no C library
+        fail(os, "XO_NOLIBC=1: XO_LLRT_C=net selects the C library's sockets and getaddrinfo (decision 0206 stage 3)")
+      }
+    }
     let arch = if o.backend == "llvm" { host_arch() } else { "arm64" }
     lk.flags = lk.flags + nolibc_flags(arch)
   }

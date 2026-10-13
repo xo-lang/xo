@@ -66,6 +66,10 @@ type builder struct {
 	// budgets: the program calls task.with_budget, so the code of its
 	// own modules polls the budget (build_budget.go)
 	budgets bool
+	// usesNet: the program dials or listens, so the C runtime's network
+	// runs and native/llrt/cabi_net's exports are built (decision 0206
+	// stage 3)
+	usesNet bool
 	// faultUnwind: faults unwind to landings (decision 0085, landing.go)
 	faultUnwind bool
 	sites       map[*ast.CallExpr]int           // spawns that can fail a scope

@@ -1,4 +1,7 @@
 type Rec = struct { key: Int, id: Int, weight: Float }
+type Target = struct { os: TargetOs, arch: TargetArch }
+type TargetOs = enum { Linux | Darwin | Windows | Wasi }
+type TargetArch = enum { Amd64 | Arm64 | Wasm32 }
 
 func main(v0: Os) -> () {
 b0(v0: Os):
@@ -2348,6 +2351,43 @@ b8:  ; preds b4
 b9:  ; preds b4
   v98: () = tuple
   jump b7()
+}
+
+func cabi_poll.fd_close(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sock.close, v0
+  ret v1
+}
+
+func cabi_poll.fd_nonblock(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sock.nonblock, v0
+  ret v1
+}
+
+func cabi_poll.fd_shutdown(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sock.shutdown, v0, v1
+  ret v2
+}
+
+func cabi_poll.poll_create() -> Int {
+b0:
+  v0: Int = const 524288
+  v1: Int = call sock.epoll_create, v0
+  ret v1
+}
+
+func cabi_poll.poll_ctl(v0: Int, v1: Int, v2: Int, v3: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int):
+  v4: Int = call sock.epoll_ctl, v0, v1, v2, v3
+  ret v4
+}
+
+func cabi_poll.poll_wait(v0: Int, v1: Int, v2: Int, v3: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int):
+  v4: Int = call sock.epoll_wait, v0, v1, v2, v3
+  ret v4
 }
 
 func raw.put_cstr(v0: Int, borrow v1: Str) -> Int {
@@ -5350,6 +5390,104 @@ b23:  ; preds b20
   jump b19()
 }
 
+func sock.close(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 57
+  v2: Int = const 3
+  v3: Int = call sock.nr, v1, v2
+  v4: Int = const 0
+  v5: Int = const 0
+  v6: Int = const 0
+  v7: Int = const 0
+  v8: Int = const 0
+  v9: Int = call rt.sys6, v3, v0, v4, v5, v6, v7, v8
+  ret v9
+}
+
+func sock.nonblock(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 3
+  v2: Int = const 0
+  v3: Int = call sock.fcntl, v0, v1, v2
+  v4: Int = const 0
+  v5: Bool = lt v3, v4
+  br v5, b2(), b3()
+b1:  ; preds b3
+  v7: () = tuple
+  v8: Int = const 4
+  v9: Int = const 2048
+  v10: Int = or v3, v9
+  v11: Int = call sock.fcntl, v0, v8, v10
+  v12: Int = const 0
+  v13: Bool = lt v11, v12
+  br v13, b5(), b6()
+b2:  ; preds b0
+  ret v3
+b3:  ; preds b0
+  v16: () = tuple
+  jump b1()
+b4:  ; preds b6
+  v18: () = tuple
+  v19: Int = const 2
+  v20: Int = const 1
+  v21: Int = call sock.fcntl, v0, v19, v20
+  ret v21
+b5:  ; preds b1
+  ret v11
+b6:  ; preds b1
+  v24: () = tuple
+  jump b4()
+}
+
+func sock.shutdown(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 210
+  v3: Int = const 48
+  v4: Int = call sock.nr, v2, v3
+  v5: Int = const 0
+  v6: Int = const 0
+  v7: Int = const 0
+  v8: Int = const 0
+  v9: Int = call rt.sys6, v4, v0, v1, v5, v6, v7, v8
+  ret v9
+}
+
+func sock.epoll_create(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 20
+  v2: Int = const 291
+  v3: Int = call sock.nr, v1, v2
+  v4: Int = const 0
+  v5: Int = const 0
+  v6: Int = const 0
+  v7: Int = const 0
+  v8: Int = const 0
+  v9: Int = call rt.sys6, v3, v0, v4, v5, v6, v7, v8
+  ret v9
+}
+
+func sock.epoll_ctl(v0: Int, v1: Int, v2: Int, v3: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int):
+  v4: Int = const 21
+  v5: Int = const 233
+  v6: Int = call sock.nr, v4, v5
+  v7: Int = const 0
+  v8: Int = const 0
+  v9: Int = call rt.sys6, v6, v0, v1, v2, v3, v7, v8
+  ret v9
+}
+
+func sock.epoll_wait(v0: Int, v1: Int, v2: Int, v3: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int):
+  v4: Int = const 22
+  v5: Int = const 281
+  v6: Int = call sock.nr, v4, v5
+  v7: Int = const 0
+  v8: Int = const 8
+  v9: Int = call rt.sys6, v6, v0, v1, v2, v3, v7, v8
+  ret v9
+}
+
 func raw.data(borrow v0: Str) -> Int {
 b0(v0: Str):
   v1: Int = call rt.obj_addr, v0
@@ -6357,6 +6495,52 @@ b29:  ; preds b26
 b30:  ; preds b26
   v128: () = tuple
   jump b25()
+}
+
+func sock.nr(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: TargetOs = variant 1
+  v3: TargetArch = variant 1
+  v4: Target = struct v2, v3
+  v5: TargetArch = field 1, v4
+  v6: Int = tag v5
+  v7: Int = const 1
+  v8: Bool = eq v6, v7
+  br v8, b3(), b2()
+b1(v10: Int):  ; preds b3, b5, b7
+  ret v10
+b2:  ; preds b0
+  v12: Int = tag v5
+  v13: Int = const 0
+  v14: Bool = eq v12, v13
+  br v14, b5(), b4()
+b3:  ; preds b0
+  jump b1(v0)
+b4:  ; preds b2
+  v17: Int = tag v5
+  v18: Int = const 2
+  v19: Bool = eq v17, v18
+  br v19, b7(), b6()
+b5:  ; preds b2
+  jump b1(v1)
+b6:  ; preds b4
+  unreachable
+b7:  ; preds b4
+  v23: Int = const 1
+  v24: Int = neg v23 @ sock.xo:36:26
+  jump b1(v24)
+}
+
+func sock.fcntl(v0: Int, v1: Int, v2: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int):
+  v3: Int = const 25
+  v4: Int = const 72
+  v5: Int = call sock.nr, v3, v4
+  v6: Int = const 0
+  v7: Int = const 0
+  v8: Int = const 0
+  v9: Int = call rt.sys6, v5, v0, v1, v2, v6, v7, v8
+  ret v9
 }
 
 func scan.ends_with(borrow v0: Str, borrow v1: Str) -> Bool {

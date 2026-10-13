@@ -448,7 +448,7 @@ static int h_parse_host(const char *h, int64_t n, hstr *out) {
 		if (zone) {
 			*zone = 0;
 		}
-		int ok = inet_pton(AF_INET6, hb.p, &a6) == 1;
+		int ok = nx_pton6(hb.p, &a6) == 1;
 		free(hb.p);
 		if (!ok) {
 			return 0;
@@ -2120,11 +2120,11 @@ xo_hconn *xo_hc_new(xo_srv *s, xo_conn *cn) {
 	struct sockaddr_storage ss;
 	socklen_t sl = sizeof ss;
 	strcpy(hc->ip, "");
-	if (getpeername(cn->pd->fd, (struct sockaddr *)&ss, &sl) == 0) {
+	if (nx_getpeername(cn->pd->fd, (struct sockaddr *)&ss, &sl) == 0) {
 		if (ss.ss_family == AF_INET) {
-			inet_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, hc->ip, sizeof hc->ip);
+			nx_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, hc->ip, sizeof hc->ip);
 		} else if (ss.ss_family == AF_INET6) {
-			inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&ss)->sin6_addr, hc->ip, sizeof hc->ip);
+			nx_ntop(AF_INET6, &((struct sockaddr_in6 *)&ss)->sin6_addr, hc->ip, sizeof hc->ip);
 		}
 	}
 	pthread_mutex_lock(&s->mu);
@@ -2358,7 +2358,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 			hc_send(hc, o.p, o.n);
 			free(o.p);
 			if (r == HP_TOO_LARGE && hc->conn) {
-				shutdown(hc->conn->pd->fd, SHUT_WR);
+				nx_shutdown(hc->conn->pd->fd, SHUT_WR);
 			}
 			return 0;
 		}

@@ -1,0 +1,1745 @@
+// The host name resolver of the native runtime on Linux, written in Xo
+// (decision 0206 stage 3, decision 0203): getaddrinfo's job for the C
+// runtime's listen and dial (std/llrt/xo_rt.c), with no C library.
+// It follows Go's pure Go resolver (net/conf.go, nss.go, hosts.go,
+// dnsconfig_unix.go, dnsclient_unix.go, addrselect.go):
+//
+//   - /etc/nsswitch.conf's `hosts` line orders the sources: `files`
+//     (/etc/hosts) and `dns`, in the order given; with no file or no
+//     hosts line, files then dns. Other sources (myhostname, mdns,
+//     resolve, ldap, ...) are not consulted; one counts as dns only when
+//     the line names no dns (Go without cgo). Criteria in brackets are
+//     ignored.
+//   - /etc/resolv.conf: up to three `nameserver` IP addresses (none:
+//     127.0.0.1 and ::1), `domain` and `search` (none: the domain of the
+//     host name), and `options` ndots (0 to 15), timeout (seconds, at
+//     least 1), attempts (at least 1), rotate, single-request and
+//     single-request-reopen, use-vc (TCP only), trust-ad, edns0; read on
+//     every lookup (no cache to go stale).
+//   - Names with at least ndots dots are tried as given first, then with
+//     each search domain, then as given; a rooted name only as given;
+//     ".onion" names never go to DNS.
+//   - A and AAAA queries in parallel (one after the other with
+//     single-request) over UDP with an EDNS0 record (1232 bytes), each
+//     server of the list for each attempt (rotate starts at the next
+//     server per lookup); TCP when the answer is truncated (or with
+//     use-vc). A response with another ID, question, or one that does
+//     not parse is ignored, as Go ignores it. NXDOMAIN or an answer with
+//     no address of the type ends a query type; other failures try the
+//     next server.
+//   - The addresses are sorted by RFC 6724's destination address rules
+//     (Go's sortByRFC6724: the source address of each found by
+//     connecting a UDP socket, then rules 1, 2, 5, 6, 8, and 9 for IPv6),
+//     as glibc sorts them.
+//
+// Differences from glibc's getaddrinfo (as Go documents its own):
+// nsswitch modules other than files and dns, the LOCALDOMAIN and
+// RES_OPTIONS environment variables, /etc/host.conf, /etc/gai.conf, and
+// IPv4 forms other than four decimal fields (inet_aton's "127.1") are
+// not supported; resolv.conf's `sortlist` and `options inet6`,
+// `no-check-names`, and `ndots` above 15 are ignored; the IPv6 zone of a
+// numeric address names an interface or its index. A failure reports
+// glibc's codes: EAI_NONAME for a name that does not exist (or one that
+// is not a domain name), EAI_NODATA when the last name tried exists
+// with no address, EAI_AGAIN when a server failed or did not answer.
+use native/llrt/linux
+use native/llrt/sock
+use native/llrt/tlsname
+use native/rt
+
+// glibc's getaddrinfo error codes
+pub const EAI_NONAME: Int = -2
+pub const EAI_AGAIN: Int = -3
+pub const EAI_FAIL: Int = -4
+pub const EAI_NODATA: Int = -5
+pub const EAI_FAMILY: Int = -6
+pub const EAI_SERVICE: Int = -8
+pub const EAI_SYSTEM: Int = -11
+
+/// glibc's gai_strerror text of code.
+pub fn gai_text(code: Int) -> Str {
+  match code {
+    -1 => "Bad value for ai_flags"
+    -2 => "Name or service not known"
+    -3 => "Temporary failure in name resolution"
+    -4 => "Non-recoverable failure in name resolution"
+    -5 => "No address associated with hostname"
+    -6 => "ai_family not supported"
+    -7 => "ai_socktype not supported"
+    -8 => "Servname not supported for ai_socktype"
+    -9 => "Address family for hostname not supported"
+    -10 => "Memory allocation failure"
+    -11 => "System error"
+    _ => "Unknown error"
+  }
+}
+
+/// An address: 4 or 16 bytes, and the scope (zone) id of an IPv6 one.
+pub struct Addr {
+  pub ip: Bytes
+  pub zone: Int = 0
+}
+
+/// The outcome of a lookup: 0 and the addresses (sorted), or an EAI
+/// code.
+pub struct Found {
+  pub err: Int
+  pub addrs: List[Addr] = []
+}
+
+// ---------------------------------------------------------------------------
+// Files
+
+/// The bytes of the file at path, or None (at most 16 MiB are read).
+fn read_file(path: Str) -> Bytes? {
+  var fd = linux.open(path, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+  while fd == -linux.EINTR {
+    fd = linux.open(path, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+  }
+  if fd < 0 {
+    return None
+  }
+  var out = BytesBuilder.new()
+  let buf = rt.bytes_buf(4096)
+  while out.len() < 16777216 {
+    let r = linux.read(fd, buf, 0, 4096)
+    if r < 0 {
+      if -r == linux.EINTR {
+        continue
+      }
+      let _c = linux.close(fd)
+      return None
+    }
+    if r == 0 {
+      break
+    }
+    out.write(buf[0..r])
+  }
+  let _c = linux.close(fd)
+  Some(out.freeze())
+}
+
+/// The lines of the file at path (bytes that are not ASCII become "?";
+/// names and addresses are ASCII), or None.
+fn file_lines(path: Str) -> List[Str]? {
+  let b = read_file(path)?
+  var s = BytesBuilder.with_capacity(b.len())
+  for c in b {
+    if Int(c) < 128 {
+      s.write_byte(c)
+    } else {
+      s.write_byte(UInt8(63))
+    }
+  }
+  Some((s.freeze().to_str() ?? "").split("\n"))
+}
+
+/// Whether byte c is white space in these files (space, tab, CR, VT,
+/// FF).
+fn is_space(c: Int) -> Bool { c == 32 || c == 9 || c == 13 || c == 11 || c == 12 }
+
+/// The fields of line separated by white space.
+fn fields(line: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = line.bytes()
+  var i = 0
+  let n = b.len()
+  while i < n {
+    while i < n && is_space(Int(b[i])) {
+      i += 1
+    }
+    let start = i
+    while i < n && !is_space(Int(b[i])) {
+      i += 1
+    }
+    if i > start {
+      out.push(line[start..i])
+    }
+  }
+  out
+}
+
+/// s without the part from its first byte c on.
+fn cut_at(s: Str, c: Str) -> Str {
+  match s.find(c) {
+    Some(i) => s[0..i]
+    None => s
+  }
+}
+
+/// s with ASCII letters lowered.
+fn lower(s: Str) -> Str {
+  var b = BytesBuilder.with_capacity(s.len())
+  for c in s.bytes() {
+    let x = Int(c)
+    b.write_byte(UInt8(if x >= 65 && x <= 90 { x + 32 } else { x }))
+  }
+  b.freeze().to_str() ?? s
+}
+
+/// name with a trailing dot (absDomainName, ensureRooted).
+fn rooted(name: Str) -> Str { if name.ends_with(".") { name } else { name + "." } }
+
+/// The decimal value of the digits s starts with (dtoi), capped at
+/// 16777215; 0 when it starts with none.
+fn dtoi(s: Str) -> Int {
+  var v = 0
+  for c in s.bytes() {
+    let d = Int(c) - 48
+    if d < 0 || d > 9 {
+      break
+    }
+    v = v * 10 + d
+    if v >= 16777215 {
+      return 16777215
+    }
+  }
+  v
+}
+
+// ---------------------------------------------------------------------------
+// Addresses
+
+/// The address of the text s with an optional IPv6 zone ("fe80::1%eth0",
+/// "fe80::1%2"): None when s is not one (netip.ParseAddr: four decimal
+/// fields for IPv4), or a zone names no interface.
+pub fn parse_addr(s: Str) -> Addr? {
+  var text = s
+  var zone = ""
+  if let Some(i) = s.find("%") {
+    text = s[0..i]
+    zone = s[i + 1..s.len()]
+    if zone.is_empty() || !text.contains(":") {
+      return None
+    }
+  }
+  let ip = tlsname.parse_ip(text)?
+  let is4 = !text.contains(":")
+  var b = BytesBuilder.with_capacity(16)
+  let from = if is4 { 12 } else { 0 }
+  for i in from..16 {
+    b.write_byte(UInt8(ip[i] & 255))
+  }
+  let bytes = b.freeze()
+  if zone.is_empty() {
+    return Some(Addr{ip: bytes})
+  }
+  let zi = zone_index(zone)
+  if zi < 0 {
+    return None
+  }
+  Some(Addr{ip: bytes, zone: zi})
+}
+
+/// The interface index of zone: its decimal value, or the index of the
+/// interface it names (ioctl SIOCGIFINDEX); -1 when there is none.
+fn zone_index(zone: Str) -> Int {
+  var numeric = true
+  for c in zone.bytes() {
+    if Int(c) < 48 || Int(c) > 57 {
+      numeric = false
+    }
+  }
+  if numeric && zone.len() <= 9 {
+    return dtoi(zone)
+  }
+  if zone.len() >= 16 {
+    return -1
+  }
+  let fd = sock.socket(sock.AF_INET, sock.SOCK_DGRAM | sock.SOCK_CLOEXEC, 0)
+  if fd < 0 {
+    return -1
+  }
+  // struct ifreq: the name (16 bytes, zero padded), then ifr_ifindex
+  let req = rt.bytes_buf(40)
+  let a = rt.bytes_addr(req)
+  rt.mem_set(a, 0, 40)
+  let zb = zone.bytes()
+  for i in 0..zb.len() {
+    rt.mem_store(a, i, Int(zb[i]), 1)
+  }
+  let r = sock.ioctl(fd, 35123, a)
+  let _c = sock.close(fd)
+  let idx = rt.mem_load(a, 16, 4)
+  let _k = sock.keep(req, r)
+  if r < 0 {
+    return -1
+  }
+  idx
+}
+
+/// The 16 byte form of ip (IPv4 mapped).
+fn to16(ip: Bytes) -> Bytes {
+  if ip.len() == 16 {
+    return ip
+  }
+  var b = BytesBuilder.with_capacity(16)
+  for _ in 0..10 {
+    b.write_byte(UInt8(0))
+  }
+  b.write_byte(UInt8(255))
+  b.write_byte(UInt8(255))
+  b.write(ip)
+  b.freeze()
+}
+
+/// The 4 byte form of an IPv4 mapped ip, or ip.
+fn to4(ip: Bytes) -> Bytes {
+  if ip.len() != 16 {
+    return ip
+  }
+  for i in 0..10 {
+    if ip[i] != 0 {
+      return ip
+    }
+  }
+  if ip[10] != 255 || ip[11] != 255 {
+    return ip
+  }
+  ip[12..16]
+}
+
+/// glibc's inet_ntop text of the 4 or 16 bytes of ip (RFC 5952 for
+/// IPv6, with the IPv4 forms ::a.b.c.d and ::ffff:a.b.c.d).
+pub fn ntop(ip: Bytes) -> Str {
+  if ip.len() == 4 {
+    return "${Int(ip[0])}.${Int(ip[1])}.${Int(ip[2])}.${Int(ip[3])}"
+  }
+  if ip.len() != 16 {
+    return ""
+  }
+  var words: List[Int] = []
+  for i in 0..8 {
+    words.push(Int(ip[2 * i]) * 256 + Int(ip[2 * i + 1]))
+  }
+  // the first longest run of two or more zero words
+  var best = -1
+  var best_len = 0
+  var cur = -1
+  var cur_len = 0
+  for i in 0..8 {
+    if words[i] == 0 {
+      if cur < 0 {
+        cur = i
+        cur_len = 1
+      } else {
+        cur_len += 1
+      }
+    } else if cur >= 0 {
+      if best < 0 || cur_len > best_len {
+        best = cur
+        best_len = cur_len
+      }
+      cur = -1
+    }
+  }
+  if cur >= 0 && (best < 0 || cur_len > best_len) {
+    best = cur
+    best_len = cur_len
+  }
+  if best >= 0 && best_len < 2 {
+    best = -1
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  var v4_tail = false
+  while i < 8 {
+    if best >= 0 && i >= best && i < best + best_len {
+      if i == best {
+        out.write(":")
+      }
+      i += 1
+      continue
+    }
+    if i != 0 {
+      out.write(":")
+    }
+    if i == 6 && best == 0 && (best_len == 6 || (best_len == 5 && words[5] == 65535)) {
+      out.write("${Int(ip[12])}.${Int(ip[13])}.${Int(ip[14])}.${Int(ip[15])}")
+      v4_tail = true
+      break
+    }
+    out.write(hex(words[i]))
+    i += 1
+  }
+  if !v4_tail && best >= 0 && best + best_len == 8 {
+    out.write(":")
+  }
+  out.freeze()
+}
+
+/// The lowercase hexadecimal text of v (0 to 65535), no leading zeros.
+fn hex(v: Int) -> Str {
+  let digits = "0123456789abcdef"
+  if v == 0 {
+    return "0"
+  }
+  var s = ""
+  var x = v
+  while x > 0 {
+    let d = x % 16
+    s = digits[d..d + 1] + s
+    x = x / 16
+  }
+  s
+}
+
+/// glibc's inet_pton(AF_INET6) of s: the 16 bytes, or None.
+pub fn pton6(s: Str) -> Bytes? {
+  let b = s.bytes()
+  let n = b.len()
+  var out: List[Int] = []
+  for _ in 0..16 {
+    out.push(0)
+  }
+  var tp = 0
+  var colonp = -1
+  var i = 0
+  if n > 0 && b[0] == 58 {
+    if n < 2 || b[1] != 58 {
+      return None
+    }
+    i = 1
+  }
+  var curtok = i
+  var saw_xdigit = false
+  var val = 0
+  var ndig = 0
+  while i < n {
+    let c = Int(b[i])
+    i += 1
+    var h = -1
+    if c >= 48 && c <= 57 {
+      h = c - 48
+    } else if c >= 97 && c <= 102 {
+      h = c - 87
+    } else if c >= 65 && c <= 70 {
+      h = c - 55
+    }
+    if h >= 0 {
+      if ndig == 4 {
+        return None
+      }
+      val = val * 16 + h
+      ndig += 1
+      saw_xdigit = true
+      continue
+    }
+    if c == 58 {
+      curtok = i
+      if !saw_xdigit {
+        if colonp >= 0 {
+          return None
+        }
+        colonp = tp
+        continue
+      } else if i == n {
+        return None
+      }
+      if tp + 2 > 16 {
+        return None
+      }
+      out[tp] = (val >> 8) & 255
+      out[tp + 1] = val & 255
+      tp += 2
+      saw_xdigit = false
+      ndig = 0
+      val = 0
+      continue
+    }
+    if c == 46 && tp + 4 <= 16 {
+      // an IPv4 address in the last four bytes (inet_pton4: decimal
+      // fields to 255, no leading zeros)
+      match v4_fields(b, curtok, n) {
+        Some(v4) => {
+          for k in 0..4 {
+            out[tp + k] = v4[k]
+          }
+          tp += 4
+          saw_xdigit = false
+          i = n
+          break
+        }
+        None => return None
+      }
+    }
+    return None
+  }
+  if saw_xdigit {
+    if tp + 2 > 16 {
+      return None
+    }
+    out[tp] = (val >> 8) & 255
+    out[tp + 1] = val & 255
+    tp += 2
+  }
+  if colonp >= 0 {
+    if tp == 16 {
+      return None
+    }
+    let nmove = tp - colonp
+    var k = 1
+    while k <= nmove {
+      out[16 - k] = out[colonp + nmove - k]
+      out[colonp + nmove - k] = 0
+      k += 1
+    }
+    tp = 16
+  }
+  if tp != 16 {
+    return None
+  }
+  var r = BytesBuilder.with_capacity(16)
+  for v in out {
+    r.write_byte(UInt8(v & 255))
+  }
+  Some(r.freeze())
+}
+
+/// The four fields of the dotted IPv4 text of b from lo to hi
+/// (inet_pton4), or None.
+fn v4_fields(b: Bytes, lo: Int, hi: Int) -> List[Int]? {
+  var out: List[Int] = []
+  var v = 0
+  var digits = 0
+  var i = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c >= 48 && c <= 57 {
+      if digits > 0 && v == 0 {
+        return None
+      }
+      v = v * 10 + c - 48
+      digits += 1
+      if v > 255 {
+        return None
+      }
+    } else if c == 46 && digits > 0 && out.len() < 3 {
+      out.push(v)
+      v = 0
+      digits = 0
+    } else {
+      return None
+    }
+    i += 1
+  }
+  if digits == 0 || out.len() != 3 {
+    return None
+  }
+  out.push(v)
+  Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+
+/// The resolver configuration of /etc/resolv.conf (dnsConfig).
+pub struct Config {
+  pub servers: List[Addr] = []
+  pub search: List[Str] = []
+  pub ndots: Int = 1
+  pub timeout: Int = 5
+  pub attempts: Int = 2
+  pub rotate: Bool = false
+  pub single_request: Bool = false
+  pub use_tcp: Bool = false
+  pub trust_ad: Bool = false
+}
+
+/// The configuration of the resolv.conf text lines (dnsReadConfig); a
+/// missing file is None.
+pub fn parse_resolv(lines0: List[Str]?, hostname: Str) -> Config {
+  var conf = Config{}
+  if let Some(lines) = lines0 {
+    for line in lines {
+      if line.starts_with(";") || line.starts_with("#") {
+        continue
+      }
+      let f = fields(line)
+      if f.is_empty() {
+        continue
+      }
+      if f[0] == "nameserver" {
+        if f.len() > 1 && conf.servers.len() < 3 {
+          if let Some(a) = parse_addr(f[1]) {
+            conf.servers.push(a)
+          }
+        }
+      } else if f[0] == "domain" {
+        if f.len() > 1 {
+          conf.search = [rooted(f[1])]
+        }
+      } else if f[0] == "search" {
+        conf.search = []
+        for i in 1..f.len() {
+          let name = rooted(f[i])
+          if name != "." {
+            conf.search.push(name)
+          }
+        }
+      } else if f[0] == "options" {
+        for i in 1..f.len() {
+          let s = f[i]
+          if s.starts_with("ndots:") {
+            let n = dtoi(s[6..s.len()])
+            conf.ndots = if n > 15 { 15 } else { n }
+          } else if s.starts_with("timeout:") {
+            let n = dtoi(s[8..s.len()])
+            conf.timeout = if n < 1 { 1 } else { n }
+          } else if s.starts_with("attempts:") {
+            let n = dtoi(s[9..s.len()])
+            conf.attempts = if n < 1 { 1 } else { n }
+          } else if s == "rotate" {
+            conf.rotate = true
+          } else if s == "single-request" || s == "single-request-reopen" {
+            conf.single_request = true
+          } else if s == "use-vc" || s == "usevc" || s == "tcp" {
+            conf.use_tcp = true
+          } else if s == "trust-ad" {
+            conf.trust_ad = true
+          }
+        }
+      }
+    }
+  }
+  if conf.servers.is_empty() {
+    // defaultNS
+    conf.servers = [Addr{ip: b"\x7f\x00\x00\x01"}, Addr{ip: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"}]
+  }
+  if conf.search.is_empty() {
+    // dnsDefaultSearch: the domain of the host name
+    if let Some(i) = hostname.find(".") {
+      if i < hostname.len() - 1 {
+        conf.search = [rooted(hostname[i + 1..hostname.len()])]
+      }
+    }
+  }
+  conf
+}
+
+/// The host name (uname's nodename), or "".
+fn hostname() -> Str {
+  let buf = rt.bytes_buf(390)
+  let a = rt.bytes_addr(buf)
+  rt.mem_set(a, 0, 390)
+  // uname: 160 on arm64, 63 on x86_64
+  let nrv = match target.arch {
+    TargetArch.Arm64 => 160
+    TargetArch.Amd64 => 63
+    TargetArch.Wasm32 => -1
+  }
+  let r = rt.sys6(nrv, a, 0, 0, 0, 0, 0)
+  if r < 0 {
+    return ""
+  }
+  // struct utsname: six fields of 65 bytes, the node name second
+  var n = 0
+  while n < 64 && rt.mem_load(a, 65 + n, 1) != 0 {
+    n += 1
+  }
+  let s = buf[65..65 + n].to_str() ?? ""
+  let _k = sock.keep(buf, 0)
+  s
+}
+
+/// The order of the host lookup sources (hostLookupOrder without cgo).
+pub enum Order {
+  FilesDns
+  DnsFiles
+  Files
+  Dns
+}
+
+/// The order of nsswitch.conf's lines (None: no file).
+pub fn parse_nsswitch(lines0: List[Str]?) -> Order {
+  let lines = match lines0 {
+    Some(l) => l
+    None => return Order.FilesDns
+  }
+  var srcs: List[Str] = []
+  var seen = false
+  for line0 in lines {
+    let line = cut_at(line0, "#").trim()
+    let colon = match line.find(":") {
+      Some(c) => c
+      None => continue
+    }
+    if line[0..colon].trim() != "hosts" {
+      continue
+    }
+    seen = true
+    var rest = line[colon + 1..line.len()]
+    while true {
+      rest = rest.trim()
+      if rest.is_empty() {
+        break
+      }
+      if rest.starts_with("[") {
+        // a criteria block: ignored (an unclosed one: Go's parse error,
+        // whose order is files then dns)
+        match rest.find("]") {
+          Some(e) => {
+            rest = rest[e + 1..rest.len()]
+            continue
+          }
+          None => return Order.FilesDns
+        }
+      }
+      let f = fields(rest)
+      if f.is_empty() {
+        break
+      }
+      var src = f[0]
+      if let Some(bi) = src.find("[") {
+        src = src[0..bi]
+      }
+      srcs.push(src)
+      rest = rest[src.len()..rest.len()]
+    }
+  }
+  if !seen || srcs.is_empty() {
+    return Order.FilesDns
+  }
+  var files = false
+  var dns = false
+  var first = ""
+  var has_dns = false
+  for s in srcs {
+    if s == "dns" {
+      has_dns = true
+    }
+  }
+  for s in srcs {
+    if s == "files" || s == "dns" {
+      if s == "files" {
+        files = true
+      } else {
+        dns = true
+      }
+      if first.is_empty() {
+        first = s
+      }
+      continue
+    }
+    // a source Go cannot use without cgo counts as dns when the line
+    // names no dns
+    if !has_dns {
+      dns = true
+      if first.is_empty() {
+        first = "dns"
+      }
+    }
+  }
+  if files && dns {
+    return if first == "files" { Order.FilesDns } else { Order.DnsFiles }
+  }
+  if files {
+    return Order.Files
+  }
+  if dns {
+    return Order.Dns
+  }
+  Order.FilesDns
+}
+
+/// The addresses /etc/hosts' lines give name (lookupStaticHost: the
+/// lowered rooted name, in the order of the file).
+pub fn hosts_lookup(lines0: List[Str]?, name: Str) -> List[Addr] {
+  var out: List[Addr] = []
+  let lines = match lines0 {
+    Some(l) => l
+    None => return out
+  }
+  let key = rooted(lower(name))
+  for line in lines {
+    let f = fields(cut_at(line, "#"))
+    if f.len() < 2 {
+      continue
+    }
+    let a = match parse_addr(f[0]) {
+      Some(x) => x
+      None => continue
+    }
+    for i in 1..f.len() {
+      if rooted(lower(f[i])) == key {
+        out.push(a)
+        break
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Names
+
+/// Whether s is a domain name Go looks up (isDomainName).
+pub fn is_domain_name(s: Str) -> Bool {
+  if s == "." {
+    return true
+  }
+  let b = s.bytes()
+  let l = b.len()
+  if l == 0 || l > 254 || (l == 254 && b[l - 1] != 46) {
+    return false
+  }
+  var last = 46
+  var non_numeric = false
+  var partlen = 0
+  for i in 0..l {
+    let c = Int(b[i])
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95 {
+      non_numeric = true
+      partlen += 1
+    } else if c >= 48 && c <= 57 {
+      partlen += 1
+    } else if c == 45 {
+      if last == 46 {
+        return false
+      }
+      partlen += 1
+      non_numeric = true
+    } else if c == 46 {
+      if last == 46 || last == 45 {
+        return false
+      }
+      if partlen > 63 || partlen == 0 {
+        return false
+      }
+      partlen = 0
+    } else {
+      return false
+    }
+    last = c
+  }
+  if last == 45 || partlen > 63 {
+    return false
+  }
+  non_numeric
+}
+
+/// Whether name must not go to DNS (avoidDNS: .onion names).
+fn avoid_dns(name: Str) -> Bool {
+  if name.is_empty() {
+    return true
+  }
+  let n = if name.ends_with(".") { name[0..name.len() - 1] } else { name }
+  lower(n).ends_with(".onion")
+}
+
+/// The names to query for name (nameList).
+pub fn name_list(conf: Config, name: Str) -> List[Str] {
+  var out: List[Str] = []
+  let l = name.len()
+  let is_rooted = l > 0 && name.ends_with(".")
+  if l > 254 || (l == 254 && !is_rooted) {
+    return out
+  }
+  if is_rooted {
+    if !avoid_dns(name) {
+      out.push(name)
+    }
+    return out
+  }
+  var dots = 0
+  for c in name.bytes() {
+    if c == 46 {
+      dots += 1
+    }
+  }
+  let has_ndots = dots >= conf.ndots
+  let fq = name + "."
+  if has_ndots && !avoid_dns(fq) {
+    out.push(fq)
+  }
+  for suffix in conf.search {
+    let full = fq + suffix
+    if !avoid_dns(full) && full.len() <= 254 {
+      out.push(full)
+    }
+  }
+  if !has_ndots && !avoid_dns(fq) {
+    out.push(fq)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+
+pub const TYPE_A: Int = 1
+pub const TYPE_CNAME: Int = 5
+pub const TYPE_AAAA: Int = 28
+const TYPE_OPT: Int = 41
+/// Go's maxDNSPacketSize: the EDNS0 UDP size offered and the read buffer.
+const MAX_PACKET: Int = 1232
+
+/// The wire form of the rooted name (labels, then a zero byte), lowered
+/// when low.
+fn wire_name(name: Str, low: Bool) -> Bytes {
+  var b = BytesBuilder.with_capacity(name.len() + 2)
+  let n = if low { lower(name) } else { name }
+  if n != "." {
+    for label in n.split(".") {
+      if label.is_empty() {
+        continue
+      }
+      b.write_byte(UInt8(label.len() & 255))
+      b.write_str(label)
+    }
+  }
+  b.write_byte(UInt8(0))
+  b.freeze()
+}
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8(v & 255))
+}
+
+/// A query (newRequest): the header (ID, recursion desired, AD when ad),
+/// the question of the rooted name and type in class IN, and an EDNS0
+/// record offering MAX_PACKET bytes.
+pub fn query(id: Int, name: Str, qtype: Int, ad: Bool) -> Bytes {
+  var b = BytesBuilder.with_capacity(name.len() + 40)
+  put16(b, id)
+  put16(b, if ad { 288 } else { 256 })
+  put16(b, 1)
+  put16(b, 0)
+  put16(b, 0)
+  put16(b, 1)
+  b.write(wire_name(name, false))
+  put16(b, qtype)
+  put16(b, 1)
+  // OPT: the root name, the type, the UDP size as the class, TTL 0, no
+  // data
+  b.write_byte(UInt8(0))
+  put16(b, TYPE_OPT)
+  put16(b, MAX_PACKET)
+  put16(b, 0)
+  put16(b, 0)
+  put16(b, 0)
+  b.freeze()
+}
+
+fn u16(b: Bytes, i: Int) -> Int { Int(b[i]) * 256 + Int(b[i + 1]) }
+
+/// The end of the (compressed) name at off in message m and its lowered
+/// wire form (labels expanded); end -1 when it does not parse.
+fn read_name(m: Bytes, off: Int) -> (Int, Bytes) {
+  var out = BytesBuilder.new()
+  var i = off
+  var end = -1
+  var jumps = 0
+  while true {
+    if i >= m.len() {
+      return (-1, b"")
+    }
+    let c = Int(m[i])
+    if c == 0 {
+      if end < 0 {
+        end = i + 1
+      }
+      break
+    }
+    if c >= 192 {
+      if i + 1 >= m.len() {
+        return (-1, b"")
+      }
+      if end < 0 {
+        end = i + 2
+      }
+      jumps += 1
+      if jumps > 10 {
+        return (-1, b"")
+      }
+      i = (c - 192) * 256 + Int(m[i + 1])
+      continue
+    }
+    if c >= 64 {
+      return (-1, b"")
+    }
+    if i + 1 + c > m.len() {
+      return (-1, b"")
+    }
+    out.write_byte(UInt8(c))
+    for k in 0..c {
+      let x = Int(m[i + 1 + k])
+      out.write_byte(UInt8(if x >= 65 && x <= 90 { x + 32 } else { x }))
+    }
+    i += 1 + c
+    if out.len() > 255 {
+      return (-1, b"")
+    }
+  }
+  out.write_byte(UInt8(0))
+  (end, out.freeze())
+}
+
+/// The end of the resource record at off (name, type, class, TTL,
+/// length, data) and its type, TTL word, data offset, and data length;
+/// end -1 when it does not parse.
+fn read_rr(m: Bytes, off: Int) -> (Int, Int, Int, Int, Int) {
+  let (e, _n) = read_name(m, off)
+  if e < 0 || e + 10 > m.len() {
+    return (-1, 0, 0, 0, 0)
+  }
+  let ty = u16(m, e)
+  let ttl = u16(m, e + 4) * 65536 + u16(m, e + 6)
+  let rdlen = u16(m, e + 8)
+  if e + 10 + rdlen > m.len() {
+    return (-1, 0, 0, 0, 0)
+  }
+  (e + 10 + rdlen, ty, ttl, e + 10, rdlen)
+}
+
+/// What one response says for a query type: KIND_OK and the addresses,
+/// KIND_NOTFOUND (NXDOMAIN, or no record of the type: no other server
+/// is asked), KIND_NODATA (the name exists without one), or a failure to
+/// try the next server with: KIND_TEMP (SERVFAIL, timeouts, socket
+/// errors), KIND_FAIL (other).
+pub const KIND_OK: Int = 0
+pub const KIND_NOTFOUND: Int = 1
+pub const KIND_NODATA: Int = 2
+pub const KIND_TEMP: Int = 3
+pub const KIND_FAIL: Int = 4
+/// An answer to ignore (another ID or question, or one that does not
+/// parse): the UDP read waits on (Go's dnsPacketRoundTrip).
+const KIND_IGNORE: Int = 5
+/// A truncated answer: TCP next.
+const KIND_TRUNC: Int = 6
+
+/// The meaning of response m to the query id, name (rooted), qtype:
+/// (kind, addresses) as checkResponse, checkHeader, skipToAnswer, and
+/// the answer loop of goLookupIPCNAMEOrder read it.
+pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
+  var addrs: List[Addr] = []
+  if m.len() < 12 {
+    return (KIND_IGNORE, addrs)
+  }
+  let flags = u16(m, 2)
+  let qd = u16(m, 4)
+  let an = u16(m, 6)
+  let ns = u16(m, 8)
+  let ar = u16(m, 10)
+  if (flags & 32768) == 0 || u16(m, 0) != id || qd == 0 {
+    return (KIND_IGNORE, addrs)
+  }
+  // the question: the name, type, and class sent
+  let (qe, qn) = read_name(m, 12)
+  if qe < 0 || qe + 4 > m.len() {
+    return (KIND_IGNORE, addrs)
+  }
+  if u16(m, qe) != qtype || u16(m, qe + 2) != 1 || qn != wire_name(name, true) {
+    return (KIND_IGNORE, addrs)
+  }
+  var off = qe + 4
+  // more questions: skipped (SkipQuestion)
+  var k = 1
+  while k < qd {
+    let (e, _q) = read_name(m, off)
+    if e < 0 || e + 4 > m.len() {
+      return (KIND_FAIL, addrs)
+    }
+    off = e + 4
+    k += 1
+  }
+  if (flags & 512) != 0 {
+    return (KIND_TRUNC, addrs)
+  }
+  // the answers, then the authorities, then the additional records for
+  // the extended RCODE (extractExtendedRCode)
+  let ans_off = off
+  var i = 0
+  while i < an + ns {
+    let (e, _t, _l, _d, _n) = read_rr(m, off)
+    if e < 0 {
+      return (KIND_FAIL, addrs)
+    }
+    off = e
+    i += 1
+  }
+  var rcode = flags & 15
+  var has_add = false
+  var j = 0
+  while j < ar {
+    let (e, ty, ttl, _d, _n) = read_rr(m, off)
+    if e < 0 {
+      break
+    }
+    has_add = true
+    if ty == TYPE_OPT {
+      rcode = ((ttl >> 24) & 255) * 16 + rcode
+      break
+    }
+    off = e
+    j += 1
+  }
+  if rcode == 3 {
+    return (KIND_NOTFOUND, addrs)
+  }
+  let aa = (flags & 1024) != 0
+  let ra = (flags & 128) != 0
+  if rcode == 0 && !aa && !ra && an == 0 && !has_add {
+    // a lame referral: the next server (libresolv's behaviour)
+    return (KIND_FAIL, addrs)
+  }
+  if rcode == 2 {
+    return (KIND_TEMP, addrs)
+  }
+  if rcode != 0 {
+    return (KIND_FAIL, addrs)
+  }
+  // the first answer of the type, then every address from it on
+  off = ans_off
+  var found = false
+  var a = 0
+  while a < an {
+    let (e, ty, _l, d, n) = read_rr(m, off)
+    if e < 0 {
+      return (KIND_FAIL, addrs)
+    }
+    if ty == qtype {
+      found = true
+    }
+    if found && ty == TYPE_A {
+      if n != 4 {
+        return (KIND_FAIL, addrs)
+      }
+      addrs.push(Addr{ip: m[d..d + 4]})
+    } else if found && ty == TYPE_AAAA {
+      if n != 16 {
+        return (KIND_FAIL, addrs)
+      }
+      addrs.push(Addr{ip: m[d..d + 16]})
+    }
+    off = e
+    a += 1
+  }
+  if !found {
+    return (KIND_NODATA, addrs)
+  }
+  (KIND_OK, addrs)
+}
+
+// ---------------------------------------------------------------------------
+// Exchanges
+
+/// The monotonic clock in nanoseconds.
+fn now() -> Int { linux.clock_ns(linux.CLOCK_MONOTONIC) }
+
+/// A random query ID (getrandom; the clock when it fails).
+fn new_id() -> Int {
+  let (b, e) = linux.random(2)
+  if e != 0 || b.len() != 2 {
+    return now() & 65535
+  }
+  u16(b, 0)
+}
+
+/// Waits until one of the descriptors fds is ready for events (POLLIN 1,
+/// POLLOUT 4) or the monotonic deadline passes: the ready flags (revents)
+/// per descriptor, all zero at the deadline; None on a poll failure.
+fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
+  let n = fds.len()
+  let pb = rt.bytes_buf(8 * n + 16)
+  let p = rt.bytes_addr(pb)
+  let ts = p + 8 * n
+  while true {
+    for i in 0..n {
+      rt.mem_store(p, 8 * i, fds[i], 4)
+      rt.mem_store(p, 8 * i + 4, events, 2)
+      rt.mem_store(p, 8 * i + 6, 0, 2)
+    }
+    var left = deadline - now()
+    if left < 0 {
+      left = 0
+    }
+    rt.mem_store(ts, 0, left / 1000000000, 8)
+    rt.mem_store(ts, 8, left % 1000000000, 8)
+    let r = sock.ppoll(p, n, ts)
+    if r == -sock.EINTR {
+      continue
+    }
+    if r < 0 {
+      let _k = sock.keep(pb, r)
+      return None
+    }
+    var out: List[Int] = []
+    for i in 0..n {
+      out.push(if r == 0 { 0 } else { rt.mem_load(p, 8 * i + 6, 2) })
+    }
+    let _k = sock.keep(pb, r)
+    return Some(out)
+  }
+  None
+}
+
+/// One query of a lookup: its type, ID, and bytes.
+struct Q {
+  qtype: Int
+  id: Int
+  msg: Bytes
+}
+
+/// The UDP exchange of the queries qs with server (in parallel, one
+/// socket each, until the deadline): per query, its kind and addresses
+/// (dnsPacketRoundTrip, then the meaning); KIND_TRUNC for one to repeat
+/// over TCP.
+fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int, List[Addr])] {
+  var out: List[(Int, List[Addr])] = []
+  var fds: List[Int] = []
+  let fam = if server.len() == 16 { sock.AF_INET } else { sock.AF_INET6 }
+  for q in qs {
+    out.push((KIND_TEMP, []))
+    let fd = sock.socket(fam, sock.SOCK_DGRAM | sock.SOCK_NONBLOCK | sock.SOCK_CLOEXEC, 0)
+    if fd < 0 {
+      fds.push(-1)
+      continue
+    }
+    var c = sock.connect_to(fd, server)
+    while c == -sock.EINTR {
+      c = sock.connect_to(fd, server)
+    }
+    var s = if c < 0 { c } else { sock.send_bytes(fd, q.msg) }
+    while s == -sock.EINTR {
+      s = sock.send_bytes(fd, q.msg)
+    }
+    if s < 0 {
+      let _c = sock.close(fd)
+      fds.push(-1)
+      continue
+    }
+    fds.push(fd)
+  }
+  let buf = rt.bytes_buf(MAX_PACKET)
+  while true {
+    var live: List[Int] = []
+    var idx: List[Int] = []
+    for (i, fd) in fds.indexed() {
+      if fd >= 0 {
+        live.push(fd)
+        idx.push(i)
+      }
+    }
+    if live.is_empty() {
+      break
+    }
+    let ready = match wait(live, 1, deadline) {
+      Some(r) => r
+      None => break
+    }
+    var any = false
+    for (k, rv) in ready.indexed() {
+      if rv == 0 {
+        continue
+      }
+      any = true
+      let i = idx[k]
+      let fd = fds[i]
+      let r = sock.recv(fd, rt.bytes_addr(buf), MAX_PACKET, 0)
+      if r == -sock.EAGAIN || r == -sock.EINTR {
+        continue
+      }
+      if r < 0 {
+        // a socket error (ICMP refused): temporary
+        out[i] = (KIND_TEMP, [])
+        let _c = sock.close(fd)
+        fds[i] = -1
+        continue
+      }
+      let m = buf[0..r]
+      let (kind, addrs) = answer(m, qs[i].id, name, qs[i].qtype)
+      if kind == KIND_IGNORE {
+        continue
+      }
+      out[i] = (kind, addrs)
+      let _c = sock.close(fd)
+      fds[i] = -1
+    }
+    if !any {
+      // the deadline: the rest time out (temporary)
+      break
+    }
+  }
+  for fd in fds {
+    if fd >= 0 {
+      let _c = sock.close(fd)
+    }
+  }
+  let _k = sock.keep(buf, 0)
+  out
+}
+
+/// The TCP exchange of query q with server until a deadline timeout
+/// seconds from now (dnsStreamRoundTrip): its kind and addresses.
+fn tcp_round(q: Q, name: Str, server: Bytes, timeout: Int) -> (Int, List[Addr]) {
+  let deadline = now() + timeout * 1000000000
+  let fam = if server.len() == 16 { sock.AF_INET } else { sock.AF_INET6 }
+  let fd = sock.socket(fam, sock.SOCK_STREAM | sock.SOCK_NONBLOCK | sock.SOCK_CLOEXEC, 0)
+  if fd < 0 {
+    return (KIND_TEMP, [])
+  }
+  let r = tcp_talk(fd, q, name, server, deadline)
+  let _c = sock.close(fd)
+  r
+}
+
+fn tcp_talk(fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+  var c = sock.connect_to(fd, server)
+  while c == -sock.EINTR {
+    c = sock.connect_to(fd, server)
+  }
+  if c == -sock.EINPROGRESS || c == -sock.EAGAIN {
+    let rv = wait([fd], 4, deadline) ?? [0]
+    if rv[0] == 0 {
+      return (KIND_TEMP, [])
+    }
+    c = sock.sock_err(fd)
+  }
+  if c < 0 {
+    return (KIND_TEMP, [])
+  }
+  // the query with its two byte length
+  var w = BytesBuilder.with_capacity(q.msg.len() + 2)
+  put16(w, q.msg.len())
+  w.write(q.msg)
+  let msg = w.freeze()
+  var off = 0
+  while off < msg.len() {
+    let s = sock.send_bytes(fd, msg[off..msg.len()])
+    if s == -sock.EINTR {
+      continue
+    }
+    if s == -sock.EAGAIN {
+      let rv = wait([fd], 4, deadline) ?? [0]
+      if rv[0] == 0 {
+        return (KIND_TEMP, [])
+      }
+      continue
+    }
+    if s < 0 {
+      return (KIND_TEMP, [])
+    }
+    off += s
+  }
+  let head = read_full(fd, 2, deadline)
+  if head.len() != 2 {
+    return (KIND_TEMP, [])
+  }
+  let body = read_full(fd, u16(head, 0), deadline)
+  if body.len() != u16(head, 0) {
+    return (KIND_TEMP, [])
+  }
+  let (kind, addrs) = answer(body, q.id, name, q.qtype)
+  if kind == KIND_IGNORE || kind == KIND_TRUNC {
+    // errInvalidDNSResponse
+    return (KIND_FAIL, [])
+  }
+  (kind, addrs)
+}
+
+/// n bytes read from fd before the deadline, or fewer when the stream
+/// ends, fails, or the time is up.
+fn read_full(fd: Int, n: Int, deadline: Int) -> Bytes {
+  if n == 0 {
+    return b""
+  }
+  let buf = rt.bytes_buf(n)
+  let a = rt.bytes_addr(buf)
+  var got = 0
+  while got < n {
+    let r = sock.recv(fd, a + got, n - got, 0)
+    if r == -sock.EINTR {
+      continue
+    }
+    if r == -sock.EAGAIN {
+      let rv = wait([fd], 1, deadline) ?? [0]
+      if rv[0] == 0 {
+        break
+      }
+      continue
+    }
+    if r <= 0 {
+      break
+    }
+    got += r
+  }
+  rt.rs_bytes_len(buf, got)
+}
+
+/// The sockaddr of server port 53.
+fn server_addr(a: Addr) -> Bytes { sock.sockaddr(a.ip, 53, a.zone) }
+
+/// The lookup of the rooted name for the query types (tryOneName for
+/// each, in parallel unless single): per type, its final kind and
+/// addresses.
+fn try_name(conf: Config, name: Str, qtypes: List[Int], offset: Int) -> List[(Int, List[Addr])] {
+  var res: List[(Int, List[Addr])] = []
+  var done: List[Bool] = []
+  for _ in qtypes {
+    res.push((KIND_TEMP, []))
+    done.push(false)
+  }
+  let ns = conf.servers.len()
+  for _ in 0..conf.attempts {
+    for j in 0..ns {
+      let server = server_addr(conf.servers[(offset + j) % ns])
+      // the query types still open, each with a fresh ID
+      var qs: List[Q] = []
+      var which: List[Int] = []
+      for (i, t) in qtypes.indexed() {
+        if !done[i] {
+          let id = new_id()
+          qs.push(Q{qtype: t, id: id, msg: query(id, name, t, conf.trust_ad)})
+          which.push(i)
+        }
+      }
+      if qs.is_empty() {
+        return res
+      }
+      var got: List[(Int, List[Addr])] = []
+      if conf.use_tcp {
+        for q in qs {
+          got.push(tcp_round(q, name, server, conf.timeout))
+        }
+      } else if conf.single_request {
+        for q in qs {
+          let deadline = now() + conf.timeout * 1000000000
+          let r = udp_round([q], name, server, deadline)[0]
+          got.push(if r.0 == KIND_TRUNC { tcp_round(q, name, server, conf.timeout) } else { r })
+        }
+      } else {
+        let deadline = now() + conf.timeout * 1000000000
+        let rs = udp_round(qs, name, server, deadline)
+        for (k, r) in rs.indexed() {
+          got.push(if r.0 == KIND_TRUNC { tcp_round(qs[k], name, server, conf.timeout) } else { r })
+        }
+      }
+      for (k, r) in got.indexed() {
+        let i = which[k]
+        res[i] = r
+        if r.0 == KIND_OK || r.0 == KIND_NOTFOUND || r.0 == KIND_NODATA {
+          done[i] = true
+        }
+      }
+    }
+  }
+  res
+}
+
+// ---------------------------------------------------------------------------
+// Lookups
+
+/// The addresses of host for a listen (passive) or a dial, of family
+/// (0 any, sock.AF_INET, sock.AF_INET6): getaddrinfo's results, sorted.
+/// seq starts rotate's server list (a counter of the caller's).
+pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
+  if host.is_empty() {
+    // getaddrinfo(NULL, ...): the wildcard address to listen on, the
+    // loopback address to dial
+    var out: List[Addr] = []
+    if family != sock.AF_INET {
+      out.push(Addr{ip: if passive { zeros(16) } else { loopback6() }})
+    }
+    if family != sock.AF_INET6 {
+      out.push(Addr{ip: if passive { zeros(4) } else { b"\x7f\x00\x00\x01" }})
+    }
+    return Found{err: 0, addrs: out}
+  }
+  if let Some(a) = parse_addr(host) {
+    if (family == sock.AF_INET && a.ip.len() != 4) || (family == sock.AF_INET6 && a.ip.len() != 16) {
+      return Found{err: EAI_NONAME}
+    }
+    return Found{err: 0, addrs: [a]}
+  }
+  let order = parse_nsswitch(file_lines("/etc/nsswitch.conf"))
+  var hosts: List[Str]? = None
+  let use_files = order is Order.FilesDns | Order.DnsFiles | Order.Files
+  if use_files {
+    hosts = file_lines("/etc/hosts")
+  }
+  if order is Order.FilesDns | Order.Files {
+    let hs = only(hosts_lookup(hosts, host), family)
+    if !hs.is_empty() {
+      return Found{err: 0, addrs: sort(hs)}
+    }
+    if order is Order.Files {
+      return Found{err: EAI_NONAME}
+    }
+  }
+  if !is_domain_name(host) {
+    return Found{err: EAI_NONAME}
+  }
+  let conf = parse_resolv(file_lines("/etc/resolv.conf"), hostname())
+  var qtypes: List[Int] = []
+  if family != sock.AF_INET6 {
+    qtypes.push(TYPE_A)
+  }
+  if family != sock.AF_INET {
+    qtypes.push(TYPE_AAAA)
+  }
+  let ns = conf.servers.len()
+  let offset = if conf.rotate && ns > 0 { (seq & 1073741823) % ns } else { 0 }
+  var temp = false
+  var nodata = false
+  var addrs: List[Addr] = []
+  for fq in name_list(conf, host) {
+    nodata = true
+    for r in try_name(conf, fq, qtypes, offset) {
+      if r.0 == KIND_OK {
+        addrs = addrs + r.1
+      } else if r.0 == KIND_TEMP {
+        temp = true
+      }
+      if r.0 != KIND_NODATA && r.0 != KIND_OK {
+        nodata = false
+      }
+    }
+    if !addrs.is_empty() {
+      break
+    }
+  }
+  if addrs.is_empty() && order is Order.DnsFiles {
+    let hs = only(hosts_lookup(hosts, host), family)
+    if !hs.is_empty() {
+      return Found{err: 0, addrs: sort(hs)}
+    }
+  }
+  if addrs.is_empty() {
+    if temp {
+      return Found{err: EAI_AGAIN}
+    }
+    return Found{err: if nodata { EAI_NODATA } else { EAI_NONAME }}
+  }
+  Found{err: 0, addrs: sort(only(addrs, family))}
+}
+
+/// The addresses of xs of family (0: all).
+fn only(xs: List[Addr], family: Int) -> List[Addr] {
+  if family == 0 {
+    return xs
+  }
+  var out: List[Addr] = []
+  for a in xs {
+    if (family == sock.AF_INET) == (a.ip.len() == 4) {
+      out.push(a)
+    }
+  }
+  out
+}
+
+fn zeros(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for _ in 0..n {
+    b.write_byte(UInt8(0))
+  }
+  b.freeze()
+}
+
+fn loopback6() -> Bytes {
+  var b = BytesBuilder.with_capacity(16)
+  for _ in 0..15 {
+    b.write_byte(UInt8(0))
+  }
+  b.write_byte(UInt8(1))
+  b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// RFC 6724 destination address selection (Go's addrselect.go)
+
+/// An address's attributes: scope, precedence, label.
+struct Attr {
+  sc: Int
+  prec: Int
+  label: Int
+}
+
+/// Whether the first bits of the 16 bytes ip are those of prefix p.
+fn has_prefix(ip: Bytes, p: List[Int], bits: Int) -> Bool {
+  var i = 0
+  var left = bits
+  while left > 0 {
+    let mask = if left >= 8 { 255 } else { (65280 >> left) & 255 }
+    if (Int(ip[i]) & mask) != (p[i] & mask) {
+      return false
+    }
+    left -= 8
+    i += 1
+  }
+  true
+}
+
+/// The RFC 6724 attributes of ip (4 or 16 bytes), from the default
+/// policy table; zero attributes for an empty (unknown) one.
+fn attr_of(ip0: Bytes) -> Attr {
+  if ip0.is_empty() {
+    return Attr{sc: 0, prec: 0, label: 0}
+  }
+  let ip = to16(ip0)
+  let v4 = to4(ip).len() == 4
+  // the policy table, longest prefix first
+  var prec = 40
+  var label = 1
+  if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128) {
+    prec = 50
+    label = 0
+  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255], 96) {
+    prec = 35
+    label = 4
+  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 96) {
+    prec = 1
+    label = 3
+  } else if has_prefix(ip, [32, 1, 0, 0], 32) {
+    prec = 5
+    label = 5
+  } else if has_prefix(ip, [32, 2], 16) {
+    prec = 30
+    label = 2
+  } else if has_prefix(ip, [63, 254], 16) {
+    prec = 1
+    label = 12
+  } else if has_prefix(ip, [254, 192], 10) {
+    prec = 1
+    label = 11
+  } else if has_prefix(ip, [252], 7) {
+    prec = 3
+    label = 13
+  }
+  // classifyScope
+  var sc = 14
+  let b0 = Int(ip[0])
+  let b1 = Int(ip[1])
+  if v4 {
+    let a = Int(ip[12])
+    if a == 127 || (a == 169 && Int(ip[13]) == 254) {
+      sc = 2
+    }
+  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128) || (b0 == 254 && (b1 & 192) == 128) {
+    sc = 2
+  } else if b0 == 255 {
+    sc = b1 & 15
+  } else if b0 == 254 && (b1 & 192) == 192 {
+    sc = 5
+  }
+  Attr{sc: sc, prec: prec, label: label}
+}
+
+/// The common prefix length of a source and a destination (both IPv6:
+/// at most their first 64 bits).
+fn common_prefix(src: Bytes, dst: Bytes) -> Int {
+  if src.len() != dst.len() {
+    return 0
+  }
+  let n = if src.len() > 8 { 8 } else { src.len() }
+  var cpl = 0
+  for i in 0..n {
+    let x = Int(src[i]) ^ Int(dst[i])
+    if x == 0 {
+      cpl += 8
+      continue
+    }
+    var bit = 128
+    while (x & bit) == 0 {
+      cpl += 1
+      bit = bit >> 1
+    }
+    return cpl
+  }
+  cpl
+}
+
+/// The source address the kernel picks for a destination (a UDP
+/// socket connected to its port 9), or empty when there is none.
+fn source_of(a: Addr) -> Bytes {
+  let fam = if a.ip.len() == 4 { sock.AF_INET } else { sock.AF_INET6 }
+  let fd = sock.socket(fam, sock.SOCK_DGRAM | sock.SOCK_CLOEXEC, 0)
+  if fd < 0 {
+    return b""
+  }
+  let c = sock.connect_to(fd, sock.sockaddr(a.ip, 9, a.zone))
+  var src = b""
+  if c == 0 {
+    src = sock.sockaddr_ip(sock.local_addr(fd))
+  }
+  let _c = sock.close(fd)
+  src
+}
+
+/// Whether destination a (source sa) goes before b (source sb): RFC
+/// 6724's rules 1, 2, 5, 6, 8, and 9 (IPv6 only), as Go applies them.
+fn before(a: Bytes, sa: Bytes, b: Bytes, sb: Bytes) -> Bool {
+  if sa.is_empty() && sb.is_empty() {
+    return false
+  }
+  if sb.is_empty() {
+    return true
+  }
+  if sa.is_empty() {
+    return false
+  }
+  let da = attr_of(a)
+  let db = attr_of(b)
+  let xa = attr_of(sa)
+  let xb = attr_of(sb)
+  // rule 2: matching scope
+  if da.sc == xa.sc && db.sc != xb.sc {
+    return true
+  }
+  if da.sc != xa.sc && db.sc == xb.sc {
+    return false
+  }
+  // rule 5: matching label
+  if xa.label == da.label && xb.label != db.label {
+    return true
+  }
+  if xa.label != da.label && xb.label == db.label {
+    return false
+  }
+  // rule 6: higher precedence
+  if da.prec != db.prec {
+    return da.prec > db.prec
+  }
+  // rule 8: smaller scope
+  if da.sc != db.sc {
+    return da.sc < db.sc
+  }
+  // rule 9: the longest matching prefix, IPv6 only
+  if to4(a).len() == 16 && to4(b).len() == 16 {
+    let ca = common_prefix(to16(sa), to16(a))
+    let cb = common_prefix(to16(sb), to16(b))
+    if ca != cb {
+      return ca > cb
+    }
+  }
+  false
+}
+
+/// xs sorted stably by RFC 6724 (sortByRFC6724).
+pub fn sort(xs: List[Addr]) -> List[Addr] {
+  if xs.len() < 2 {
+    return xs
+  }
+  var srcs: List[Bytes] = []
+  for a in xs {
+    srcs.push(source_of(a))
+  }
+  var out = xs
+  // a stable insertion sort (the lists are short)
+  var i = 1
+  while i < out.len() {
+    var j = i
+    while j > 0 && before(out[j].ip, srcs[j], out[j - 1].ip, srcs[j - 1]) {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      let s = srcs[j]
+      srcs[j] = srcs[j - 1]
+      srcs[j - 1] = s
+      j -= 1
+    }
+    i += 1
+  }
+  out
+}

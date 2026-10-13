@@ -186,6 +186,10 @@ pub struct Builder {
   /// The walk of uses_os_tasks looks for task.with_budget calls instead
   /// (uses_budgets).
   scan_budget: Bool = false
+  /// The program dials or listens (Net.dial, Net.listen): the C runtime's
+  /// network runs, so native/llrt/cabi_net's exports are built (decision
+  /// 0206 stage 3, usesNet).
+  uses_net: Bool = false
   /// Why the run cannot be built here (no main, concurrency), or "".
   pub why: Str = ""
   /// Every construct recorded as unsupported (build.go errs): the no GC
@@ -393,6 +397,13 @@ fn (var b: Builder) declare_exports() {
 /// Whether the program builds code of a module that imports module mi
 /// (importerBuilt): a feature's marker module, whose C runs only then.
 fn (var b: Builder) importer_built(mi: Int) -> Bool {
+  let path = b.c.mods[mi].path
+  if path == "native/llrt/cabi_poll" || (b.uses_net && path == "native/llrt/cabi_net") {
+    // the poller's exports, which every program may run, and the
+    // network's: a program that dials or listens runs the C runtime's
+    // network, which calls them (decision 0206 stage 3)
+    return true
+  }
   for m in b.c.mods {
     if !b.decl_mods.contains(m.path) {
       continue

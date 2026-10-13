@@ -1,0 +1,146 @@
+// The C ABI exports of the network on Linux (decisions 0204, 0206 stage
+// 3, 0207): like cabi.xo, every top level function here is called by the
+// C runtime as xo_x_<name>. std/llrt/xo_rt.c's listen, dial, accept,
+// reads and writes (and xo_http.c's) make their socket system calls and
+// resolve names through them when net_raw() is 1. A program carries
+// them when it dials or listens (the SSA builders' uses_net) or uses
+// std/http (std/native/http.xo imports this module); the C declares
+// them weak, and without them (or with `XO_LLRT_C=net`, whose net_c.xo
+// says 0) calls the C library. A program linked with no C library
+// (XO_NOLIBC=1) always takes this path. Nothing here may fault.
+use native/llrt/dns
+use native/llrt/net
+use native/llrt/raw
+use native/llrt/sock
+use native/rt
+
+/// 1 when the network's system calls and name resolution are these
+/// (net.raw: Linux, and not `XO_LLRT_C=net`), else 0.
+fn net_raw() -> Int {
+  if net.raw() {
+    return 1
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// System calls: the kernel's result, a negative errno on failure.
+
+fn net_socket(family: Int, ty: Int, proto: Int) -> Int { sock.socket(family, ty, proto) }
+
+fn net_bind(fd: Int, sa: Int, n: Int) -> Int { sock.bind(fd, sa, n) }
+
+fn net_listen(fd: Int, backlog: Int) -> Int { sock.listen(fd, backlog) }
+
+/// accept4 with flags, no peer address.
+fn net_accept(fd: Int, flags: Int) -> Int { sock.accept(fd, flags) }
+
+fn net_connect(fd: Int, sa: Int, n: Int) -> Int { sock.connect(fd, sa, n) }
+
+/// The pending error of a connecting socket (SO_ERROR) as a negative
+/// errno, 0 for none.
+fn net_sock_err(fd: Int) -> Int { sock.sock_err(fd) }
+
+/// setsockopt of a C int value.
+fn net_setsockopt(fd: Int, level: Int, opt: Int, v: Int) -> Int { sock.set_int(fd, level, opt, v) }
+
+/// getsockname into the buffer at sa of the size in the 32 bit word at
+/// lenp.
+fn net_sockname(fd: Int, sa: Int, lenp: Int) -> Int { sock.sockname(fd, sa, lenp) }
+
+/// getpeername, as net_sockname.
+fn net_peername(fd: Int, sa: Int, lenp: Int) -> Int { sock.peername(fd, sa, lenp) }
+
+/// read(2) of at most n bytes into p.
+fn net_read(fd: Int, p: Int, n: Int) -> Int { sock.read(fd, p, n) }
+
+/// send(2) of n bytes at p with MSG_NOSIGNAL (a peer gone is EPIPE, not
+/// SIGPIPE).
+fn net_send(fd: Int, p: Int, n: Int) -> Int { sock.send(fd, p, n, 16384) }
+
+// ---------------------------------------------------------------------------
+// Names and addresses
+
+/// getaddrinfo of the host of hn bytes at hp and the numeric port of pn
+/// bytes at pp (AI_NUMERICSERV), of family (0 AF_UNSPEC, AF_INET,
+/// AF_INET6), passive (AI_PASSIVE) when 1; seq starts resolv.conf's
+/// rotate. Writes at most cap entries of 32 bytes at out, each a
+/// sockaddr_in or sockaddr_in6 (by its family) zero padded, in the order
+/// to try; their count, or a negative EAI code (dns.xo).
+fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, seq: Int, out: Int, cap: Int) -> Int {
+  let port = raw.str_at(pp, pn)
+  var pv = 0
+  for c in port.bytes() {
+    let d = Int(c) - 48
+    if d < 0 || d > 9 || pv > 65535 {
+      // not a number (AI_NUMERICSERV)
+      return dns.EAI_NONAME
+    }
+    pv = pv * 10 + d
+  }
+  if pv > 65535 {
+    return dns.EAI_SERVICE
+  }
+  let f = dns.lookup(raw.str_at(hp, hn), family, passive == 1, seq)
+  if f.err != 0 {
+    return f.err
+  }
+  var n = 0
+  for a in f.addrs {
+    if n == cap {
+      break
+    }
+    let sa = sock.sockaddr(a.ip, pv, a.zone)
+    let at = out + 32 * n
+    rt.mem_set(at, 0, 32)
+    rt.mem_copy(at, rt.bytes_addr(sa), sa.len())
+    let _k = sock.keep(sa, 0)
+    n += 1
+  }
+  if n == 0 {
+    return dns.EAI_NONAME
+  }
+  n
+}
+
+/// inet_ntop of the address at src (4 bytes for family AF_INET, 16 for
+/// AF_INET6), written zero terminated into the buffer of bn bytes at buf
+/// (cut to fit); its length, -1 for another family.
+fn net_ntop(family: Int, src: Int, buf: Int, bn: Int) -> Int {
+  let n = if family == sock.AF_INET { 4 } else if family == sock.AF_INET6 { 16 } else { 0 }
+  if n == 0 || bn < 1 {
+    return -1
+  }
+  let s = dns.ntop(raw.str_at(src, n).bytes())
+  let k = if s.len() < bn { s.len() } else { bn - 1 }
+  rt.mem_copy(buf, raw.data(s), k)
+  rt.mem_store(buf, k, 0, 1)
+  k
+}
+
+/// inet_pton(AF_INET6) of the zero terminated text at p: 1 with the 16
+/// bytes written at dst, else 0.
+fn net_pton6(p: Int, dst: Int) -> Int {
+  match dns.pton6(raw.str_at(p, raw.cstr_len(p))) {
+    Some(b) => {
+      for i in 0..16 {
+        rt.mem_store(dst, i, Int(b[i]), 1)
+      }
+      1
+    }
+    None => 0
+  }
+}
+
+/// glibc's gai_strerror text of code, written zero terminated into the
+/// buffer of bn bytes at buf (cut to fit); its length.
+fn net_gai_text(code: Int, buf: Int, bn: Int) -> Int {
+  if bn < 1 {
+    return 0
+  }
+  let s = dns.gai_text(code)
+  let k = if s.len() < bn { s.len() } else { bn - 1 }
+  rt.mem_copy(buf, raw.data(s), k)
+  rt.mem_store(buf, k, 0, 1)
+  k
+}

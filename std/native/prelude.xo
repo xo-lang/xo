@@ -16,6 +16,7 @@ use native/llrt/scan
 use native/llrt/show
 use native/llrt/strings
 use native/llrt/sysio
+use native/llrt/cabi_poll
 use native/llrt/text
 use native/llrt/unicode
 use native/rt

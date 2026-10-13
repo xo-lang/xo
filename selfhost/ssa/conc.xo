@@ -1274,12 +1274,14 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       return Some(res)
     }
     "Net.listen" => {
+      b.uses_net = true
       // the Net's attenuation lists first (Net.only, decision 0175)
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
       let h = b.rt("net_listen", b.m.handle("Listener", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Net.dial" => {
+      b.uses_net = true
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
       let h = b.rt("net_dial", b.m.handle("Conn", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))

@@ -222,10 +222,12 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		s.rt("set_grace", nil, arg(0, intT))
 		return s.unit(), true
 	case "Net.listen":
+		s.b.usesNet = true
 		// the Net's attenuation lists first (Net.only, decision 0175)
 		h := s.rt("net_listen", m.Handle("Listener"), s.add(OpField, strT, 0, recv), arg(0, strT))
 		return s.netResult(h, nt), true
 	case "Net.dial":
+		s.b.usesNet = true
 		h := s.rt("net_dial", m.Handle("Conn"), s.add(OpField, strT, 0, recv), arg(0, strT))
 		return s.netResult(h, nt), true
 	case "Listener.addr":

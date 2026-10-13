@@ -1,0 +1,231 @@
+// The socket system calls of the native runtime on Linux, written in Xo
+// (decision 0206 stage 3): raw system calls through rt.sys6, as
+// std/native/llrt/linux.xo makes the file ones. The C runtime's network
+// (std/llrt/xo_rt.c: listen, dial, accept, reads and writes, the
+// poller's epoll) calls them through the exports of cabi_net.xo and
+// cabi.xo when the Xo path is on (net.xo), and the resolver (dns.xo)
+// makes its queries with them. Addresses are Ints: the C's buffers, or
+// rt.bytes_addr of a Bytes kept alive past the call. A call returns
+// what the kernel returns: a result >= 0, or a negative errno.
+//
+// Only the Linux arms of the callers reach this module; on other
+// targets it is dead code (core 12.2).
+use native/rt
+
+// Address families and socket types (the same on arm64 and x86_64).
+pub const AF_UNIX: Int = 1
+pub const AF_INET: Int = 2
+pub const AF_INET6: Int = 10
+pub const SOCK_STREAM: Int = 1
+pub const SOCK_DGRAM: Int = 2
+pub const SOCK_NONBLOCK: Int = 2048
+pub const SOCK_CLOEXEC: Int = 524288
+
+// errno values the callers test
+pub const EINTR: Int = 4
+pub const EAGAIN: Int = 11
+pub const EINPROGRESS: Int = 115
+pub const ECONNREFUSED: Int = 111
+
+/// The system call number of the target's architecture: arm64 (the
+/// asm-generic table) or x86_64.
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+/// socket(2).
+pub fn socket(family: Int, ty: Int, proto: Int) -> Int { rt.sys6(nr(198, 41), family, ty, proto, 0, 0, 0) }
+
+/// bind(2) of the n bytes of sockaddr at sa.
+pub fn bind(fd: Int, sa: Int, n: Int) -> Int { rt.sys6(nr(200, 49), fd, sa, n, 0, 0, 0) }
+
+/// listen(2).
+pub fn listen(fd: Int, backlog: Int) -> Int { rt.sys6(nr(201, 50), fd, backlog, 0, 0, 0, 0) }
+
+/// accept4(2) with no peer address wanted.
+pub fn accept(fd: Int, flags: Int) -> Int { rt.sys6(nr(242, 288), fd, 0, 0, flags, 0, 0) }
+
+/// connect(2) to the n bytes of sockaddr at sa.
+pub fn connect(fd: Int, sa: Int, n: Int) -> Int { rt.sys6(nr(203, 42), fd, sa, n, 0, 0, 0) }
+
+/// getsockname(2) into the buffer at sa, whose size is the 32 bit word
+/// at lenp (updated to the address's length).
+pub fn sockname(fd: Int, sa: Int, lenp: Int) -> Int { rt.sys6(nr(204, 51), fd, sa, lenp, 0, 0, 0) }
+
+/// getpeername(2), as sockname.
+pub fn peername(fd: Int, sa: Int, lenp: Int) -> Int { rt.sys6(nr(205, 52), fd, sa, lenp, 0, 0, 0) }
+
+/// sendto(2) of n bytes at p with flags, to the connected peer.
+pub fn send(fd: Int, p: Int, n: Int, flags: Int) -> Int { rt.sys6(nr(206, 44), fd, p, n, flags, 0, 0) }
+
+/// recvfrom(2) of at most n bytes into p, from the connected peer.
+pub fn recv(fd: Int, p: Int, n: Int, flags: Int) -> Int { rt.sys6(nr(207, 45), fd, p, n, flags, 0, 0) }
+
+/// read(2) of at most n bytes into p.
+pub fn read(fd: Int, p: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, p, n, 0, 0, 0) }
+
+/// setsockopt(2) of the n bytes at v.
+pub fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int {
+  rt.sys6(nr(208, 54), fd, level, opt, v, n, 0)
+}
+
+/// getsockopt(2) into the buffer at v, whose size is the 32 bit word at
+/// lenp.
+pub fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int {
+  rt.sys6(nr(209, 55), fd, level, opt, v, lenp, 0)
+}
+
+/// shutdown(2).
+pub fn shutdown(fd: Int, how: Int) -> Int { rt.sys6(nr(210, 48), fd, how, 0, 0, 0, 0) }
+
+/// close(2).
+pub fn close(fd: Int) -> Int { rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0) }
+
+/// fcntl(2) with an integer argument.
+pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { rt.sys6(nr(25, 72), fd, cmd, arg, 0, 0, 0) }
+
+/// ioctl(2) with an address argument.
+pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int { rt.sys6(nr(29, 16), fd, req, arg, 0, 0, 0) }
+
+/// epoll_create1(2).
+pub fn epoll_create(flags: Int) -> Int { rt.sys6(nr(20, 291), flags, 0, 0, 0, 0, 0) }
+
+/// epoll_ctl(2) with the struct epoll_event at ev (the C's layout).
+pub fn epoll_ctl(ep: Int, op: Int, fd: Int, ev: Int) -> Int { rt.sys6(nr(21, 233), ep, op, fd, ev, 0, 0) }
+
+/// epoll_pwait(2) with no signal mask (epoll_wait, which arm64 lacks).
+pub fn epoll_wait(ep: Int, evs: Int, n: Int, ms: Int) -> Int { rt.sys6(nr(22, 281), ep, evs, n, ms, 0, 8) }
+
+/// ppoll(2) of the n struct pollfd at fds, with the timespec at ts (0:
+/// no limit) and no signal mask.
+pub fn ppoll(fds: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(73, 271), fds, n, ts, 0, 8, 0) }
+
+/// Sets O_NONBLOCK on fd and FD_CLOEXEC (the C runtime's set_nonblock):
+/// 0, or the negative errno.
+pub fn nonblock(fd: Int) -> Int {
+  // F_GETFL 3, F_SETFL 4, F_SETFD 2; O_NONBLOCK 2048, FD_CLOEXEC 1
+  let fl = fcntl(fd, 3, 0)
+  if fl < 0 {
+    return fl
+  }
+  let r = fcntl(fd, 4, fl | 2048)
+  if r < 0 {
+    return r
+  }
+  fcntl(fd, 2, 1)
+}
+
+/// The pending error of a socket (getsockopt SO_ERROR) as a negative
+/// errno, 0 for none; the negative errno of getsockopt itself when it
+/// fails.
+pub fn sock_err(fd: Int) -> Int {
+  let buf = rt.sys_buf()
+  let a = rt.bytes_addr(buf)
+  rt.mem_store(a, 0, 0, 4)
+  rt.mem_store(a, 8, 4, 4)
+  // SOL_SOCKET 1, SO_ERROR 4
+  let r = getsockopt(fd, 1, 4, a, a + 8)
+  if r < 0 {
+    return r
+  }
+  0 - rt.mem_load(a, 0, 4)
+}
+
+/// setsockopt(2) of a C int value v: 0, or the negative errno.
+pub fn set_int(fd: Int, level: Int, opt: Int, v: Int) -> Int {
+  let buf = rt.sys_buf()
+  let a = rt.bytes_addr(buf)
+  rt.mem_store(a, 0, v, 4)
+  setsockopt(fd, level, opt, a, 4)
+}
+
+// ---------------------------------------------------------------------------
+// Socket addresses as Bytes: struct sockaddr_in (16 bytes: the family,
+// the port in network order, the address) and struct sockaddr_in6 (28
+// bytes: the family, the port, the flow information, the address, the
+// scope id).
+
+/// A sockaddr of the 4 or 16 address bytes ip, the port, and (IPv6) the
+/// zone (scope id).
+pub fn sockaddr(ip: Bytes, port: Int, zone: Int) -> Bytes {
+  let n = if ip.len() == 4 { 16 } else { 28 }
+  var b = BytesBuilder.with_capacity(n)
+  let fam = if ip.len() == 4 { AF_INET } else { AF_INET6 }
+  b.write_byte(UInt8(fam & 255))
+  b.write_byte(UInt8(fam >> 8))
+  b.write_byte(UInt8((port >> 8) & 255))
+  b.write_byte(UInt8(port & 255))
+  if ip.len() == 4 {
+    b.write(ip)
+    for _ in 0..8 {
+      b.write_byte(UInt8(0))
+    }
+  } else {
+    for _ in 0..4 {
+      b.write_byte(UInt8(0))
+    }
+    b.write(ip)
+    for i in 0..4 {
+      b.write_byte(UInt8((zone >> (8 * i)) & 255))
+    }
+  }
+  b.freeze()
+}
+
+/// The address bytes of a sockaddr (4 for AF_INET, 16 for AF_INET6), or
+/// empty for another family.
+pub fn sockaddr_ip(sa: Bytes) -> Bytes {
+  if sa.len() >= 8 && Int(sa[0]) + 256 * Int(sa[1]) == AF_INET {
+    return sa[4..8]
+  }
+  if sa.len() >= 24 && Int(sa[0]) + 256 * Int(sa[1]) == AF_INET6 {
+    return sa[8..24]
+  }
+  b""
+}
+
+/// The local address a connected socket fd has (getsockname), as a
+/// sockaddr, or empty.
+pub fn local_addr(fd: Int) -> Bytes {
+  let buf = rt.bytes_buf(128)
+  let a = rt.bytes_addr(buf)
+  let lens = rt.sys_buf()
+  let lp = rt.bytes_addr(lens)
+  rt.mem_store(lp, 0, 128, 4)
+  let r = sockname(fd, a, lp)
+  if r < 0 {
+    return b""
+  }
+  var n = rt.mem_load(lp, 0, 4)
+  if n > 128 {
+    n = 128
+  }
+  rt.rs_bytes_len(buf, n)
+}
+
+/// Sends the bytes of b on the connected socket fd: the count sent, or
+/// the negative errno.
+pub fn send_bytes(fd: Int, b: Bytes) -> Int {
+  // MSG_NOSIGNAL 0x4000
+  let r = send(fd, rt.bytes_addr(b), b.len(), 16384)
+  keep(b, r)
+}
+
+/// connect(2) to the sockaddr sa.
+pub fn connect_to(fd: Int, sa: Bytes) -> Int {
+  let r = connect(fd, rt.bytes_addr(sa), sa.len())
+  keep(sa, r)
+}
+
+/// r, after b (whose address a system call used) is known alive up to
+/// here: reference counting releases a value after its last use.
+pub fn keep(b: Bytes, r: Int) -> Int {
+  if b.len() < 0 {
+    return -1
+  }
+  r
+}

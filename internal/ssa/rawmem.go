@@ -124,6 +124,12 @@ func (b *builder) declareExports() {
 // importerBuilt reports whether the program builds code of a module that
 // imports mod (a feature's marker module: its C runs only then).
 func (b *builder) importerBuilt(mod *check.Module) bool {
+	if mod.Path == CABIModule+"_poll" || (b.usesNet && mod.Path == CABIModule+"_net") {
+		// the poller's exports, which every program may run, and the
+		// network's: a program that dials or listens runs the C runtime's
+		// network, which calls them (decision 0206 stage 3)
+		return true
+	}
 	for _, m := range b.info.AllModules() {
 		if !b.declMods[m.Path] {
 			continue
