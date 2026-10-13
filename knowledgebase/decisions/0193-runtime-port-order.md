@@ -1,6 +1,7 @@
 # 0193: Porting the rest of the native runtime (std/llrt) to Xo: order, what stays C, and the bar per step
 
-Status: Accepted (2026-10-12), steps 1 and 2 implemented:
+Status: Accepted (2026-10-12), steps 1, 2, and 3 implemented (step 3:
+item 8 below):
 `std/native/llrt/text.xo` and `text_c.xo` (step 1),
 `std/native/llrt/strings.xo` and `strings_c.xo` (step 2),
 `std/native/prelude.xo` (`llrt_*` and the Str methods),
@@ -133,6 +134,62 @@ its callers move too.
    `XO_LLRT_C=text` stays. The next experiments are decision 0194's
    ranked list (wide constants as logical immediates, ranges of call
    results for the checked shifts).
+
+8. **Step 3, Float and Int text** (results
+   `bench/results/runtime-port-step3-2026-10-12.md`, "Final"):
+   `std/native/llrt/num.xo` (and its C path `num_c.xo`, `XO_LLRT_C=num`)
+   does the decimal text of an Int (eight digits a word by lane
+   multiplies), a Float's text (Dragonbox, Go 1.26's ftoadbox.go, with
+   Go's 'g' layout and FloatStr's `.0`), Float.parse (Go 1.26's atof.go
+   whole: special values, decimal and hex text with underscores, the
+   exact path, Eisel-Lemire, the 800 digit decimal, atofHex; subnormal
+   results rounded in Eisel-Lemire instead of the big decimal), and
+   Bytes.from_hex, to_base64, from_base64; the 128 bit powers of ten and
+   the decode tables are generated (`num_tables.xo`, TestNumTables).
+   - The SSA builders (internal/ssa `numText`, selfhost/ssa `num_text`)
+     route every interpolation, Display, and Debug of an Int or Float and
+     std/json's Int to the prelude's `llrt_concat_int` and
+     `llrt_concat_float`; with `XO_LLRT_C=num` (or without the native
+     prelude) they emit `str.concat_int` and friends as before. A Float32
+     and the cold fault messages keep the C call.
+   - **Intrinsics**, lowered inline by both arm64 emitters, both LLVM
+     emitters, and the wasm runtime (C versions in xo_bytes.c for any
+     other call): `rt.int_wrap` with a constant op (add, sub, mul, and two
+     new ops, 3 shift left and 4 logical shift right by the amount mod
+     64), `rt.u64_mul_hi` (umulh; an i128 multiply on LLVM; four 32 bit
+     products in WAT; the 64 by 64 to 128 multiply step 3 needed),
+     `rt.float_bits`, `rt.float_from_bits`, and `rt.bytes_word` (an
+     unchecked 8 byte load; the callers check the range).
+   - arm64 takes every positive logical immediate (repeating patterns)
+     in `and`, `orr`, `eor`; `rs_push_word` and `rs_push_words` make a
+     new string with room when appending to the literal `""`.
+   - Float.parse on the native backends now parses what the Go backend
+     parses (the C took neither underscores nor hex floats nor texts
+     over 4096 bytes; gotchas/native-float-parse-differed-from-go.md).
+   - The bar holds on both backends (instructions less setup, Xo over
+     C, arm64 and LLVM): Int text 0.800x and 0.734x, Float text 0.019x
+     and 0.014x (the C ran snprintf up to 17 times a Float), Float.parse
+     0.282x and 0.273x, base64 0.385x and 0.310x, hex (from_hex in Xo,
+     to_hex in C) 1.003x and 0.942x. The C Float.parse, hex decode and
+     check, and base64 functions moved under `#ifdef XO_NUM_C`, with
+     their IOFlags entry (and xo1's `io_flags`).
+   - **What stays C**: Bytes.to_hex (a loop that decides nothing per
+     byte: the Xo version, 16 bytes a call, retired 1.09x the C's
+     instructions on arm64); fmt_int and fmt_go_g in xo_rt.c, which the C
+     runtime itself uses (fault texts, collections' Debug) until step 5
+     moves those callers; std/json's Float text and number parse
+     (`rs_append_json_float`, `n_parse_float`, step 4); Float32 text;
+     std/json's base64 of Bytes (`rs_append_b64_quoted`, step 4).
+   - Correctness: TestNumDiff (336,386 lines, Go's strconv and encoding
+     packages as the reference) on arm64 and LLVM, both paths; the LLVM
+     and arm64 goldens; TestSelfhostSSA, Arm64, LLVM, and Wasm.
+   - Next, ranked: (a) std/json's Float text and number parse on num.xo
+     (step 4, the same Dragonbox digits in Go's json layout); (b) delete
+     the C path of num once the lead's full tier passes (num_c.xo, the
+     XO_NUM_C C, the IOFlags entry, `numText`'s C branch); (c) a Float32
+     text through `float_bits` of the widened double; (d) to_hex again
+     with a 32 byte push primitive, so a call covers 16 input bytes
+     without the tail call.
 
 ## Consequences
 

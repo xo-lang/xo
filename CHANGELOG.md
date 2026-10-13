@@ -263,6 +263,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions than the C did (Time text about a quarter); Duration text
   does not yet meet the 5 percent bar, so `XO_LLRT_C=text,strings` at
   build time selects the C implementations (`XO_UNICODE=c` still works).
+- Int and Float text, Float.parse, Bytes.from_hex, and base64 on the
+  native backends are Xo (`std/native/llrt/num.xo`, decision 0193 step
+  3), checked line by line against Go's strconv on 336,386 inputs. Float
+  text retires under 1/50 of the instructions it did (the C ran snprintf
+  up to 17 times a Float), Float.parse about 0.28x, Int text 0.73x to
+  0.80x, base64 0.31x to 0.39x. Float.parse on the native backends now
+  takes what the Go backend takes: hex floats (`0x1p-2`), underscores
+  between digits (`1_000`), and any length. `XO_LLRT_C=num` at build time
+  selects the C implementations.
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

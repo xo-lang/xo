@@ -751,11 +751,13 @@ Last verified: 2026-10-07
   `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
 - `bench/perf/text/measure.sh <xo> <out dir> <backend...>` (2026-10-12,
   decision 0193): the same for bench/perf/text (Int parse, Duration and
-  Time text, Debug quoting, split, lines, replace, trims, rune_count;
-  `none` is the input setup alone); `XO_LLRT_C=text,strings` builds the
-  C paths, `WORKLOADS` picks workloads. Run it through the heavy lock.
-  Results in `bench/results/runtime-port-2026-10-12.md`. Last verified:
-  2026-10-12.
+  Time text, Debug quoting, split, lines, replace, trims, rune_count,
+  and since step 3 int_fmt, float_fmt, float_parse, base64, hex; `none`
+  is the input setup alone); `XO_LLRT_C=text,strings,num` builds the C
+  paths, `WORKLOADS` picks workloads. Run it through the heavy lock with
+  `XO_SELF_DRIVER=0` in the environment for the Go driver. Results in
+  `bench/results/runtime-port-2026-10-12.md` and
+  `runtime-port-step3-2026-10-12.md`. Last verified: 2026-10-12.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point

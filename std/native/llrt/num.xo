@@ -1,8 +1,8 @@
 // The number text of the native runtime, written in Xo (decision 0193,
 // step 3): the decimal text of an Int (strconv.FormatInt) and of a Float
 // (strconv.FormatFloat(f, 'g', -1, 64) with ".0" on whole numbers, the
-// Go backend's FloatStr), Float.parse (strconv.ParseFloat of decimal
-// text), and the base64 and hex of Bytes. They were C (std/llrt/xo_rt.c
+// Go backend's FloatStr), Float.parse (strconv.ParseFloat, hex floats
+// and underscores too), Bytes.from_hex, and base64. They were C (std/llrt/xo_rt.c
 // fmt_int and fmt_go_g, xo_std.c); the semantics are the Go backend's,
 // so the native backends print what it prints. The SSA builder calls
 // append_int and append_float for every interpolation and Display of an
