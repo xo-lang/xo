@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixed: ThreadSanitizer builds on Linux ran out of address space for
+  task stacks under load (`fault: out of memory` in conc_stress, not a
+  leak); their task stacks are now 2 MiB (XO_TASK_STACK_MB overrides).
+  `XO_RTSTATS=1` reports `fiber_live` and `fiber_peak`, and a failing
+  task stack mapping says how many stacks were mapped
+  (knowledgebase/gotchas/linux-tsan-fiber-stacks.md).
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the

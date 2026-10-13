@@ -3757,13 +3757,16 @@ static void fibers_init(void) {
 	// recursion in a task behaves the same); XO_TASK_STACK_MB overrides
 	size_t mb = 64;
 #if defined(XO_TSAN) && defined(__linux__)
-	// ThreadSanitizer on Linux confines the program to its application
-	// ranges, about 96 GiB of address space on arm64 with 48 bit
-	// addresses (the rest is shadow, reserved PROT_NONE): 64 MiB stacks
-	// ran out after about 880 fibers, and the 2000 parked tasks of
-	// conc_stress and evloop.c faulted "out of memory" (2026-10-12,
-	// gotcha linux-tsan-fiber-stacks). 8 MiB leaves room for thousands.
-	mb = 8;
+	// ThreadSanitizer on Linux confines the program's mmaps to its
+	// application ranges (the rest is shadow, reserved PROT_NONE): 31.8
+	// GiB on arm64 with 48 bit addresses (508 stacks of 64 MiB, clang 15,
+	// 2026-10-13), which ThreadSanitizer's own mappings share. 64 MiB
+	// stacks ran out after about 880 fibers (2026-10-12); 8 MiB ones
+	// after 2988 to 3150 (23.3 to 24.6 GiB), and conc_stress run four
+	// times at once (TestGoldenThreads) had up to 5378 fibers under load
+	// and can park 8000 (2026-10-13, gotcha linux-tsan-fiber-stacks).
+	// 2 MiB stacks hold its bound of 8352 fibers on 32 CPUs in 16.3 GiB.
+	mb = 2;
 #endif
 	const char *e = getenv("XO_TASK_STACK_MB");
 	if (e && atoi(e) > 0) {
