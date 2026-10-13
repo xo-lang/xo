@@ -2155,8 +2155,10 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // the scan intrinsics of decision 0201: rt.popcount (cnt and addv),
 // rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and rt.bytes_high16
 // (16 bytes in v30 compared, narrowed by shrn to 4 bits a byte; v30 and
-// v31 are scratch registers of the emitter). It reports whether v was
-// one.
+// v31 are scratch registers of the emitter), and the string writes of
+// Bytes.to_hex: rt.rs_put_word (an unchecked store of 8 bytes into a
+// new string with room) and rt.rs_set_len (the same object with a new
+// length). It reports whether v was one.
 func (s *fstate) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2201,6 +2203,13 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 			}
 		}
 		s.set(v, s.def1(false, "ldr q30, [$u0, $u1]\n"+cmp+"\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", uses...))
+	case "rt.rs_put_word":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		s.plain("str $u2, [$u0, $u1]", nil, d, s.word(v.Args[1]), s.word(v.Args[2]))
+		s.set(v, ws...)
+	case "rt.rs_set_len":
+		s.set(v, s.words(v.Args[0])[0], s.word(v.Args[1]))
 	default:
 		return false
 	}

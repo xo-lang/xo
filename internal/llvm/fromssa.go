@@ -2151,8 +2151,10 @@ func (s *sfn) call(v *ssa.Value) {
 // unchecked load of 8 bytes); the scan intrinsics of decision 0201:
 // rt.popcount, rt.ctz, rt.clz (llvm.ctpop, cttz, ctlz), and
 // rt.bytes_eq16 and rt.bytes_high16 (a <16 x i8> compare narrowed to 4
-// bits a byte, which arm64 selects as cmeq and shrn). It reports whether
-// v was one.
+// bits a byte, which arm64 selects as cmeq and shrn), and the string
+// writes of Bytes.to_hex: rt.rs_put_word (an unchecked store of 8 bytes
+// into a new string with room) and rt.rs_set_len (the same object with
+// a new length). It reports whether v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2203,6 +2205,15 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		h = s.def("lshr <8 x i16> %s, <i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4>", h)
 		n := s.def("trunc <8 x i16> %s to <8 x i8>", h)
 		s.set(v, "bitcast <8 x i8> %s to i64", n)
+	case "rt.rs_put_word":
+		x := s.op(v.Args[0])
+		_, d, _ := s.strParts(x)
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
+		s.emit("store i64 %s, ptr %s, align 1", s.op(v.Args[2]), p)
+		s.alias(v, x)
+	case "rt.rs_set_len":
+		obj := s.def("extractvalue %%xo.str %s, 0", s.op(v.Args[0]))
+		s.mkStr(v, obj, s.op(v.Args[1]))
 	default:
 		return false
 	}

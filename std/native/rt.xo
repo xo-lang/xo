@@ -146,6 +146,13 @@ fn bytes_eq16(b: Bytes, i: Int, c: Int) -> Int
 /// The 16 bytes of b from i: bits 4k to 4k + 3 of the result are all
 /// set when byte i + k is 0x80 or above, else clear (as bytes_eq16).
 fn bytes_high16(b: Bytes, i: Int) -> Int
+/// s with the 8 bytes of w (the lowest first) at i, in place (lowered
+/// inline to one store; decision 0201). Unchecked: s is a new string of
+/// rs_with_cap (unique) with room for i + 8 bytes.
+fn rs_put_word(s: Str, i: Int, w: Int) -> Str
+/// s with length n (lowered inline: no instruction). Unchecked: the n
+/// bytes are in s's room (rs_put_word wrote them).
+fn rs_set_len(s: Str, n: Int) -> Str
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// The standard base64 of b, padded.

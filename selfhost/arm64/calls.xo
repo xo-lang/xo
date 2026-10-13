@@ -642,8 +642,10 @@ fn (var g: G) call_op(v: Int) {
 /// bytes); the scan intrinsics of decision 0201: rt.popcount (cnt and
 /// addv), rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and
 /// rt.bytes_high16 (16 bytes in v30 compared, narrowed by shrn to 4 bits
-/// a byte; v30 and v31 are scratch registers of the emitter); whether v
-/// was one (isel.go inlineRT).
+/// a byte; v30 and v31 are scratch registers of the emitter), and the
+/// string writes of Bytes.to_hex: rt.rs_put_word (an unchecked store of
+/// 8 bytes into a new string with room) and rt.rs_set_len (the same
+/// object with a new length); whether v was one (isel.go inlineRT).
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
@@ -688,6 +690,13 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "ldr q30, [$u0, $u1]\n${cmp}\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
     }
+    "rt.rs_put_word" => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, ws)
+    }
+    "rt.rs_set_len" => g.set(v, [g.words(x.args[0])[0], g.word(x.args[1])])
     _ => return false
   }
   true

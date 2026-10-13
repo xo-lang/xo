@@ -371,44 +371,38 @@ fn hex4(v: Int) -> Int {
 /// in two words.
 fn hex8(x: Int) -> (Int, Int) { (hex4(x), hex4(shr(x, 32))) }
 
-/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 16 bytes a
-/// call of rt.rs_push_words, the last (1 to 16) read as words too.
+/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 8 bytes a
+/// step, their 16 digits stored as two words into a new string with
+/// room (rt.rs_put_word); the last 1 to 7 bytes read as the word ending
+/// at the end.
 pub fn to_hex(b: Bytes) -> Str {
   let n = b.len()
-  var out = if n > 32 { rt.rs_with_cap(2 * n) } else { "" }
+  if n == 0 {
+    return ""
+  }
+  var out = rt.rs_with_cap(addw(shl(n, 1), 16))
   var i = 0
-  while i < n {
-    let r = n - i
+  let last = n - 8
+  while i <= last {
+    let (h0, h1) = hex8(rt.bytes_word(b, i))
+    out = rt.rs_put_word(out, shl(i, 1), h0)
+    out = rt.rs_put_word(out, addw(shl(i, 1), 8), h1)
+    i = addw(i, 8)
+  }
+  if i < n {
     var x = 0
-    var y = 0
-    var lens = 0x8888
-    if r >= 16 {
-      x = rt.bytes_word(b, i)
-      y = rt.bytes_word(b, i + 8)
+    if n >= 8 {
+      x = shr(rt.bytes_word(b, last), shl(i - last, 3))
     } else {
-      if r >= 8 {
-        x = rt.bytes_word(b, i)
-        if r > 8 {
-          // the last r - 8 bytes, from the word ending at n
-          y = shr(rt.bytes_word(b, n - 8), shl(16 - r, 3))
-        }
-      } else if n >= 8 {
-        x = shr(rt.bytes_word(b, n - 8), shl(8 - r, 3))
-      } else {
-        var j = n - 1
-        while j >= i {
-          x = shl(x, 8) | Int(b[j])
-          j -= 1
-        }
+      var j = n - 1
+      while j >= i {
+        x = shl(x, 8) | Int(b[j])
+        j -= 1
       }
-      // 2r digits: whole pieces of 8, then the rest
-      let f = shl(r >> 2, 2)
-      lens = (0x8888 & subw(shl(1, f), 1)) | shl(shl(r & 3, 1), f)
     }
     let (h0, h1) = hex8(x)
-    let (h2, h3) = if r > 8 { hex8(y) } else { (0, 0) }
-    out = rt.rs_push_words(out, h0, h1, h2, h3, lens)
-    i += 16
+    out = rt.rs_put_word(out, shl(i, 1), h0)
+    out = rt.rs_put_word(out, addw(shl(i, 1), 8), h1)
   }
-  out
+  rt.rs_set_len(out, shl(n, 1))
 }
