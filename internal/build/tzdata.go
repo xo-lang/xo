@@ -370,7 +370,7 @@ func IOFlags(code []byte) []string {
 		out = append(out, "-DXO_GLOB_C")
 	}
 	// and of the hashes of std/crypto (decision 0195, XO_LLRT_C=digest)
-	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_argon2id", "xo_crypto_b64", "xo_crypto_verify_password"} {
+	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_b64", "xo_crypto_verify_password"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_DIGEST_C")
 			break

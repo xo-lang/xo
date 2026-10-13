@@ -106,11 +106,14 @@ double xo_rand_float(void) { return (double)(cr_rand_u64() >> 11) / (double)(1UL
 int64_t xo_rand_bool(void) { return (int64_t)(cr_rand_u64() & 1); }
 
 // The C path of the hashes (decisions 0193 and 0195): SHA-256, HMAC,
-// PBKDF2, BLAKE2b, Argon2, unpadded base64, and verify_password are
-// std/native/llrt/digest.xo; their C below is compiled only with
-// -DXO_DIGEST_C (XO_LLRT_C=digest, std/native/llrt/digest_c.xo, and
-// std/llrt/testdata/crypto_diff.c). crypto.equal, SHA-512, and Ed25519
-// stay C (constant time).
+// PBKDF2, unpadded base64, and verify_password are
+// std/native/llrt/digest.xo; their C (under XO_DIGEST_C below) is
+// compiled only with -DXO_DIGEST_C (XO_LLRT_C=digest,
+// std/native/llrt/digest_c.xo, and std/llrt/testdata/crypto_diff.c).
+// BLAKE2b and Argon2 stay C: their Xo version measured 2.07 times the
+// C's instructions on arm64 and 1.29 on LLVM (bench/results/
+// runtime-port-portable-2026-10-13.md). crypto.equal, SHA-512, and
+// Ed25519 stay C (constant time).
 #ifdef XO_DIGEST_C
 // ---------------------------------------------------------------------------
 // SHA-256
@@ -286,7 +289,6 @@ static void cr_pbkdf2(const uint8_t *pw, int64_t pn, const uint8_t *salt, int64_
 }
 #endif
 
-#ifdef XO_DIGEST_C
 // ---------------------------------------------------------------------------
 // BLAKE2b (RFC 7693), unkeyed, digest sizes 1 to 64
 
@@ -317,7 +319,6 @@ static const uint8_t cr_b2b_sigma[12][16] = {
 	{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 	{14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
 };
-#endif
 
 static uint64_t cr_ror64(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }
 
@@ -335,7 +336,6 @@ static void cr_put_le64(uint8_t *p, uint64_t v) {
 	}
 }
 
-#ifdef XO_DIGEST_C
 static void cr_put_le32(uint8_t *p, uint32_t v) {
 	for (int i = 0; i < 4; i++) {
 		p[i] = (uint8_t)(v >> (8 * i));
@@ -674,6 +674,7 @@ static void cr_argon2(int mode, const uint8_t *pw, int64_t pn, const uint8_t *sa
 	cr_argon2_hash(out, keylen, block0, 1024);
 }
 
+#ifdef XO_DIGEST_C
 // ---------------------------------------------------------------------------
 // Base64 without padding (encoding/base64's RawStdEncoding and
 // RawURLEncoding)
@@ -808,6 +809,8 @@ xo_rstr *xo_crypto_pbkdf2(const char *pw, int64_t pn, const char *salt, int64_t 
 	return s;
 }
 
+#endif
+
 // xo_crypto_argon2id is Argon2id of the password and salt (no secret, no
 // associated data), as std/rt's argon2Key(argon2ModeID, ...).
 xo_rstr *xo_crypto_argon2id(const char *pw, int64_t pn, const char *salt, int64_t sn, int64_t t, int64_t m, int64_t p, int64_t keylen, int64_t *len) {
@@ -817,6 +820,7 @@ xo_rstr *xo_crypto_argon2id(const char *pw, int64_t pn, const char *salt, int64_
 	return s;
 }
 
+#ifdef XO_DIGEST_C
 // xo_crypto_b64 is the unpadded base64 of the bytes: URL safe when url
 // is set (RawURLEncoding), else standard (RawStdEncoding).
 xo_rstr *xo_crypto_b64(const char *p, int64_t n, int64_t url, int64_t *len) {

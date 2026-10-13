@@ -86,7 +86,7 @@ func TestIOFlagsInts(t *testing.T) {
 
 // TestIOFlagsDigestAndGlob checks the C paths of std/crypto's hashes
 // (XO_LLRT_C=digest) and MemFs.fail_next's match (glob, decision 0195):
-// compiled only into programs that call them; crypto.equal
+// compiled only into programs that call them; Argon2id, crypto.equal,
 // and Ed25519, which stay C, turn on nothing.
 func TestIOFlagsDigestAndGlob(t *testing.T) {
 	for _, c := range []struct {
@@ -95,7 +95,7 @@ func TestIOFlagsDigestAndGlob(t *testing.T) {
 	}{
 		{"bl _xo_crypto_sha256\n", "-DXO_DIGEST_C", true},
 		{"call ptr @xo_crypto_pbkdf2(ptr %1, i64 %2)\n", "-DXO_DIGEST_C", true},
-		{"bl _xo_crypto_argon2id\n", "-DXO_DIGEST_C", true},
+		{"bl _xo_crypto_argon2id\n", "-DXO_DIGEST_C", false},
 		{"bl _xo_crypto_verify_password\n", "-DXO_DIGEST_C", true},
 		{"bl _xo_crypto_b64\n", "-DXO_DIGEST_C", true},
 		{"bl _xo_crypto_equal\nbl _xo_crypto_ed25519_sign\n", "-DXO_DIGEST_C", false},
