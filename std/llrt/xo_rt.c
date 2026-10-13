@@ -1883,6 +1883,7 @@ enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
 __attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
+__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 #endif
 
 static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
@@ -3097,7 +3098,7 @@ static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
 int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t);
-void xo_x_scope_join(int64_t pl, int64_t s, int64_t c);
+void xo_x_scope_join(int64_t pl, int64_t s, int64_t c, int64_t f, int64_t rw);
 void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
@@ -3266,12 +3267,23 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	bud_resume(c);
 }
 #else
-void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted);
+void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted, int64_t f, int64_t rw);
+
+// wait_where finds the fiber the current context runs on, or the record
+// of its root thread when that helps while it waits (a root helps once
+// the pool exists: a program that only sleeps stays single threaded).
+static void wait_where(int64_t *f, int64_t *rw) {
+	*f = XO_ADDR(fib_get());
+	*rw = *f || !__atomic_load_n(&pool.ncpu, __ATOMIC_ACQUIRE) ? 0 : XO_ADDR(root_worker());
+}
+
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
 	bud_pause(c); // waiting is not running time (decision 0175)
+	int64_t f, rw;
+	wait_where(&f, &rw);
 	// in the test world nothing outside the program ends a wait
-	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted || tw.virt);
+	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted || tw.virt, f, rw);
 	TSAN_ACQUIRE(&c->park);
 	bud_resume(c);
 }
@@ -4391,8 +4403,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		munmap((void *)(intptr_t)a, (size_t)b);
 		return 0;
 #endif
-	case 15: // the calling root thread's record
-		return XO_ADDR(root_worker());
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
@@ -4805,7 +4815,9 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 	// every queue entry
 	flush_pending();
 	bud_pause(c); // helping and waiting are not the closer's running time
-	xo_x_scope_join(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(c));
+	int64_t f, rw;
+	wait_where(&f, &rw);
+	xo_x_scope_join(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(c), f, rw);
 	TSAN_ACQUIRE(&c->park);
 	bud_resume(c);
 #endif

@@ -382,7 +382,7 @@ fn park_reset(p: Int) { pool.park_reset(p) }
 
 fn park_signal(pl: Int, p: Int) { pool.park_signal(pl, p) }
 
-fn park_wait(pl: Int, c: Int, cancelable: Int, counted: Int) { pool.park_wait(pl, c, cancelable, counted) }
+fn park_wait(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, rw: Int) { pool.park_wait(pl, c, cancelable, counted, f, rw) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 
@@ -392,4 +392,4 @@ fn node_cancel(pl: Int, n: Int) { pool.node_cancel(pl, n) }
 
 fn scope_add(pl: Int, s: Int, t: Int) -> Int { pool.scope_add(pl, s, t) }
 
-fn scope_join(pl: Int, s: Int, c: Int) { pool.scope_join(pl, s, c) }
+fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) { pool.scope_join(pl, s, c, f, rw) }

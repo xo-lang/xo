@@ -114,7 +114,6 @@ const WIN_COMMIT = 65536
 /// record, and a scratch word for the platform calls that take the
 /// address of a value (WaitOnAddress, SetThreadStackGuarantee).
 const TLS_CUR = 0
-const TLS_FIB = 1
 const TLS_W = 2
 const TLS_SCRATCH_AT = 32
 
@@ -132,7 +131,6 @@ const RT_OOM = 9
 const RT_DEQUEUED = 10
 const RT_MAP = 11
 const RT_UNMAP = 12
-const RT_ROOT_WORKER = 15
 const RT_RUN_CLAIMED = 16
 
 /// The statistics' counters (xo_rt.c st, in its order).
@@ -166,6 +164,15 @@ fn layer() -> Int {
         TargetOs.Wasi => 0
       }
     }
+  }
+}
+
+/// The monotonic clock in nanoseconds (xo_rt.c mono_ns): libSystem's
+/// CLOCK_MONOTONIC on macOS, else the C's.
+fn now() -> Int {
+  match layer() {
+    2 => sys_darwin.clock_gettime_nsec_np(6)
+    _ => rt.sched_rt(RT_NOW, 0, 0)
   }
 }
 
@@ -490,7 +497,7 @@ pub fn pool_push(p: Int, t: Int) {
   if w == 0 {
     inject_add(p, 0, 0, t)
   } else if (t & 1) != 0 && rt.mem_load(w, W_NONEXT, 8) == 0 {
-    rt.slot_store(w, W_NEXT_AT / 8, rt.sched_rt(RT_NOW, 0, 0), RELAXED)
+    rt.slot_store(w, W_NEXT_AT / 8, now(), RELAXED)
     let old = rt.slot_swap(w, W_NEXT_I, t, SEQ_CST)
     if old != 0 {
       rq_put(p, w, old)
@@ -546,7 +553,7 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
     }
     if t == 0 && last != 0 {
       let x = rt.slot_load(v, W_NEXT_I, ACQUIRE)
-      if x != 0 && rt.int_wrap(1, rt.sched_rt(RT_NOW, 0, 0), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
+      if x != 0 && rt.int_wrap(1, now(), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
         t = x
       }
     }
@@ -601,8 +608,18 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
       t = inject_pop(p, w)
     }
     if t == 0 && r < rounds {
+      // 32 pauses, unrolled by 8 (clang unrolls the C's loop): a
+      // spinning worker's loop overhead was most of a ping pong's
+      // difference on arm64 (gotchas/scheduler-instruction-counts-spin.md)
       var i = 0
-      while i < 32 {
+      while i < 4 {
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
         rt.spin_hint()
         i = rt.int_wrap(0, i, 1)
       }
@@ -1067,8 +1084,11 @@ pub fn node_set_waiter(n: Int, p: Int) {
 /// a signal can end does not. The C caller flushes pending output and
 /// pauses c's budget around it (waiting is not running time, decision
 /// 0175), and in the test world counts every wait (timers are virtual:
-/// nothing outside the program ends one).
-pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int) {
+/// nothing outside the program ends one). f is the fiber running c (0:
+/// none), rw the record of c's root thread when it helps (0: none; a
+/// root helps once the pool exists, so a program that only sleeps stays
+/// single threaded), both found by the C.
+pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: Int) {
   var cancelable = cancelable0
   if rt.mem_load(c, C_SHIELD, 4) != 0 {
     cancelable = 0
@@ -1077,13 +1097,6 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int) {
   let p = rt.int_wrap(0, c, C_PARK)
   if cancelable != 0 {
     node_set_waiter(node, p)
-  }
-  let f = rt.tlocal_get(TLS_FIB)
-  // a root thread helps once the pool exists (a program that only
-  // sleeps stays single threaded)
-  var rw = 0
-  if f == 0 && rt.slot_load(pl, 1, ACQUIRE) != 0 {
-    rw = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
   }
   let dlk = rt.mem_load(pl, P_DLK, 8)
   if counted == 0 {
@@ -1256,8 +1269,8 @@ fn scope_prune(s: Int) -> Int {
 /// list), then waits (not a cancellation point: a canceled body still
 /// waits) until every task ended and every queue entry was taken: it sets
 /// bit 0 of pending while that is not zero, and the last unit signals
-/// its park.
-pub fn scope_join(pl: Int, s: Int, c: Int) {
+/// its park. f and rw are park_wait's.
+pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
   let m = rt.int_wrap(0, s, S_MU)
   var found = true
   while found {
@@ -1287,6 +1300,6 @@ pub fn scope_join(pl: Int, s: Int, c: Int) {
     if (v & 1) == 0 && !rt.slot_cas(s, S_PENDING, v, v | 1, 3) {
       continue
     }
-    park_wait(pl, c, 0, 1)
+    park_wait(pl, c, 0, 1, f, rw)
   }
 }
