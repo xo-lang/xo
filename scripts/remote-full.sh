@@ -173,7 +173,13 @@ for _ in $(seq 1 90); do ssh_ test -f /var/run/xo-ready 2>/dev/null && break; sl
 ssh_ test -f /var/run/xo-ready
 
 bundle=$(mktemp -t xo-bundle).bundle
-git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
+# bundle the commit through a temporary ref: git bundle refuses a bare
+# sha, and the old fallback to HEAD silently sent the wrong commit when
+# COMMIT was not the checkout's HEAD (an agent's branch, 2026-10-13)
+tmpref="refs/heads/xo-remote-$(git rev-parse "$commit")"
+git update-ref "$tmpref" "$commit"
+git bundle create "$bundle" "$tmpref" >/dev/null 2>&1 || { git update-ref -d "$tmpref"; log "cannot bundle $commit"; exit 1; }
+git update-ref -d "$tmpref"
 scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$bundle" "ec2-user@$ip:xo.bundle"
 rm -f "$bundle"
 for f in "${PUTS[@]+"${PUTS[@]}"}"; do

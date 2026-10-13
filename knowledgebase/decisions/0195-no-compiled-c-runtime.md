@@ -11,15 +11,24 @@ stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
 under XO_NOLIBC=1); stage 2 partly done 2026-10-13 (the vDSO clock,
 futex locks, signals, threads, and the TLS layout in Xo, xo_nolibc.c
-1,859 to 1,622 lines); unwinding and stage 3 (sockets, DNS) open. Prerequisite 2 (raw memory) stage 1 done
+1,859 to 1,622 lines); unwinding and stage 3 (sockets, DNS) open.
+Prerequisite 3 on macOS and Windows:
+stage 1 done (decision 0213, 2026-10-13: platform library calls from
+Xo through std/native/sys_darwin.xo and sys_windows.xo, the libSystem
+and kernel32 layers darwin.xo and windows.xo, files routed on
+darwin/arm64 and Windows with the C path's messages byte for byte;
+Clock.now stays C until the arm64 emitter folds a `match` on `target`).
+Prerequisite 2 (raw memory) stage 1 done
 2026-10-13: decision 0207 (raw memory intrinsics, C ABI exports; the
 "(0) held by C callers" group moved but the test world stores, which
 are (1) and (2); `bench/results/raw-memory-2026-10-13.md`); stage 2's
 reference counts moved to Xo (std/native/llrt/rc.xo, XO_LLRT_C=rc for
-the C) and lists of zeros take one allocation (raw.zero_ints), the
-allocator not started; Argon2id and BLAKE2b stayed C (1.155 of the C on
-LLVM, 0.980 on arm64) until decision 0211's alias scopes brought LLVM to
-1.043 (2026-10-13): they are Xo by default, the C under
+the C) and lists of zeros take one allocation (raw.zero_ints); stage 3
+moved the allocator (std/native/llrt/alloc.xo, XO_LLRT_C=alloc for the
+C; the heap pointer stays a C thread local, (6), with the intrinsics
+designed in decision 0207). Argon2id and BLAKE2b stayed C (1.155 of the
+C on LLVM, 0.980 on arm64) until decision 0211's alias scopes brought
+LLVM to 1.043 (2026-10-13): they are Xo by default, the C under
 `XO_LLRT_C=digest`.
 
 ## Context

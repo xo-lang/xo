@@ -114,6 +114,10 @@ struct Inst {
   /// (rt.call_c2, decision 0206 stage 2): `blr x<n>` after the n
   /// arguments
   cptr: Bool = false
+  /// K_CALL: a variadic C function on Apple arm64 (decision 0213): the
+  /// arguments from this index on go on the stack, 8 bytes each; -1 for
+  /// none
+  vfix: Int = -1
   /// a plain instruction that makes a constant (hoistConsts may move it)
   konst: Bool = false
   /// a plain instruction with a memory effect (an atomic, decision

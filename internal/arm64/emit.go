@@ -101,7 +101,7 @@ func (s *fstate) outArgBytes() int {
 		for _, in := range b.insts {
 			if in.kind == iCall {
 				n := 0
-				for _, l := range append(s.abiLocs(in.srcs), s.abiLocs(regs(in.defs...))...) {
+				for _, l := range append(s.callLocs(in.srcs, in.vfix), s.abiLocs(regs(in.defs...))...) {
 					if l.reg < 0 {
 						n = max(n, l.slot+1)
 					}
@@ -539,8 +539,14 @@ func (s *fstate) msrcOf(a src, fr *frameInfo) msrc {
 // callMoves returns the moves that put srcs in their ABI locations
 // (stack slots at [base, #off0 + 8k]).
 func (s *fstate) callMoves(srcs []src, fr *frameInfo, base string, off0 int) []move {
+	return s.callMovesV(srcs, fr, base, off0, 0)
+}
+
+// callMovesV is callMoves with the variadic arguments from index vfix on
+// the stack (callLocs).
+func (s *fstate) callMovesV(srcs []src, fr *frameInfo, base string, off0, vfix int) []move {
 	var ms []move
-	for k, l := range s.abiLocs(srcs) {
+	for k, l := range s.callLocs(srcs, vfix) {
 		dst := mloc{reg: l.reg}
 		if l.reg < 0 {
 			dst = mloc{reg: -1, base: base, off: off0 + 8*l.slot}
@@ -569,7 +575,7 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			s.goEmitCall(b, in, fr)
 			return
 		}
-		s.parallel(b, s.callMoves(in.srcs, fr, "sp", 0), fr)
+		s.parallel(b, s.callMovesV(in.srcs, fr, "sp", 0, in.vfix), fr)
 		var csTo string
 		if in.pad != nil {
 			from, to := s.callSiteLabels()

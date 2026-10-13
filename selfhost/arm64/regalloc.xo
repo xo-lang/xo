@@ -372,7 +372,7 @@ fn (var g: G) regalloc() {
           }
         }
       } else if inst.kind == K_CALL {
-        let locs = g.abi_locs(inst.srcs)
+        let locs = g.call_locs(inst.srcs, inst.vfix)
         for (k, a) in inst.srcs.indexed() {
           if a.kind == S_REG && a.v != 0 && locs[k].reg >= 0 {
             push_int(fixed, a.v, locs[k].reg)
@@ -811,14 +811,22 @@ fn (var g: G) loop_depth() {
 /// AAPCS64 locations of call operands: integer words to x0 to x7,
 /// floating point words to d0 to d7, the rest to 8 byte stack slots (reg
 /// -1, slot k is [sp + 8k] at the call, [x29 + 16 + 8k] in the callee).
-fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
+fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] { g.call_locs(srcs, -1) }
+
+/// abi_locs of a call whose arguments from index vfix on are the
+/// variadic ones of a C function on Apple arm64, which go on the stack
+/// (decision 0213); vfix -1 for none.
+fn (g: G) call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
   var out: List[Loc] = []
   var ngp = 0
   var nfp = 0
   var nst = 0
-  for a in srcs {
+  for (k, a) in srcs.indexed() {
     let fp = a.kind == S_REG && g.fp[a.v]
-    if fp && nfp < 8 {
+    if vfix >= 0 && k >= vfix {
+      out.push(Loc{reg: -1, slot: nst})
+      nst += 1
+    } else if fp && nfp < 8 {
       out.push(Loc{reg: FP_BASE + nfp, slot: 0})
       nfp += 1
     } else if !fp && ngp < 8 {

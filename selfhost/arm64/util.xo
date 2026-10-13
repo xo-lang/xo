@@ -160,6 +160,12 @@ fn imm12(n: Int) -> Bool {
   n >= 0 && n < 4096
 }
 
+/// Whether off is the scaled unsigned immediate of a load or store of w
+/// bytes (1, 2, 4, or 8): a multiple of w below 4096 * w (rawImmOff).
+fn raw_imm_off(off: Int, w: Int) -> Bool {
+  w > 0 && off >= 0 && off % w == 0 && off / w < 4096
+}
+
 fn align16(n: Int) -> Int {
   (n + 15) & ~15
 }

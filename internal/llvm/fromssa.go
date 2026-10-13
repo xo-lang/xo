@@ -2371,6 +2371,10 @@ func (s *sfn) inlineRaw(v *ssa.Value) bool {
 		d := ptr(v.Args[0])
 		b := s.def("trunc i64 %s to i8", s.op(v.Args[1]))
 		s.emit("call void @llvm.memset.p0.i64(ptr %s, i8 %s, i64 %s, i1 false)", d, b, s.op(v.Args[2]))
+	case "rt.prefetch":
+		// read, high locality, data (decision 0207 stage 3)
+		g.llvmDecl("@llvm.prefetch.p0", "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)")
+		s.emit("call void @llvm.prefetch.p0(ptr %s, i32 0, i32 3, i32 1)", ptr(v.Args[0]))
 	case "rt.mem_cmp":
 		g.llvmDecl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
 		a, b := ptr(v.Args[0]), ptr(v.Args[1])
@@ -2555,6 +2559,10 @@ func (g *sgen) llvmDecl(sym, decl string) {
 // List or handle a pointer, a Str its bytes and length; the result is
 // void or one of those.
 func (s *sfn) rtCall(v *ssa.Value) {
+	if strings.HasPrefix(v.Aux.(string), "rt.pc.") {
+		s.platformCall(v)
+		return
+	}
 	if s.inlineRT(v) {
 		return
 	}
@@ -2631,5 +2639,77 @@ func (s *sfn) rtCall(v *ssa.Value) {
 		s.mkStr(v, o, n)
 	default:
 		s.raise(vname(v), c)
+	}
+}
+
+// platformCall lowers a call of a platform library function (decision
+// 0213, std/native/sys_<os>.xo; the builder made calls for another OS
+// faults): a call of the bare C symbol, declared with the C types of the
+// declaration (an Int i64, an Int32 or UInt32 i32, a Float double, Bytes
+// the pointer to its data; `...` after the fixed parameters of a
+// variadic function), `dllimport` on Windows.
+func (s *sfn) platformCall(v *ssa.Value) {
+	g := s.g
+	os, sym, nfixed := ssa.PlatformParts(v.Aux.(string))
+	var params, args []string
+	for _, x := range v.Args {
+		switch x.Type.Kind {
+		case ssa.KInt:
+			if x.Type.Bits == 32 {
+				params = append(params, "i32")
+				args = append(args, "i32 "+s.def("trunc i64 %s to i32", s.op(x)))
+			} else {
+				params = append(params, "i64")
+				args = append(args, "i64 "+s.op(x))
+			}
+		case ssa.KFloat:
+			params = append(params, "double")
+			args = append(args, "double "+s.op(x))
+		case ssa.KStr:
+			_, d, _ := s.strParts(s.op(x))
+			params = append(params, "ptr")
+			args = append(args, "ptr "+d)
+		default:
+			fail("the platform call `%s` takes a `%s`", sym, x.Type.Name)
+		}
+	}
+	i32 := v.Type.Kind == ssa.KInt && v.Type.Bits == 32
+	ret := "void"
+	switch v.Type.Kind {
+	case ssa.KUnit:
+	case ssa.KInt:
+		ret = "i64"
+		if i32 {
+			ret = "i32"
+		}
+	case ssa.KFloat:
+		ret = "double"
+	default:
+		fail("the platform call `%s` returns a `%s`", sym, v.Type.Name)
+	}
+	declParams := strings.Join(params, ", ")
+	fty := ""
+	if nfixed >= 0 && nfixed <= len(params) {
+		declParams = strings.Join(append(append([]string(nil), params[:nfixed]...), "..."), ", ")
+		fty = "(" + declParams + ") "
+	}
+	dll := ""
+	if os == "windows" {
+		dll = "dllimport "
+	}
+	g.llvmDecl("@"+sym, fmt.Sprintf("declare %s%s @%s(%s) nounwind", dll, ret, sym, declParams))
+	c := fmt.Sprintf("call %s %s@%s(%s)", ret, fty, sym, strings.Join(args, ", "))
+	switch {
+	case v.Type.Kind == ssa.KUnit:
+		s.emit("%s", c)
+	case i32:
+		r := s.def("%s", c)
+		ext := "sext"
+		if v.Type.Unsigned {
+			ext = "zext"
+		}
+		s.set(v, "%s i32 %s to i64", ext, r)
+	default:
+		s.set(v, "%s", c)
 	}
 }

@@ -298,7 +298,7 @@ XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # 
 go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
-XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09) and real-time sections (rt_section, rt_defer, rt_overflow; decision 0133)
+XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09) and real-time sections (rt_section, rt_defer, rt_overflow; decision 0133) and fiber stacks mapped now and at most at once (fiber_live, fiber_peak; 2026-10-13, gotchas/linux-tsan-fiber-stacks.md)
 sample <pid> 5 -mayDie -file prof.txt                 # native server under load: macOS sampling profiler, no root; read "Sort by top of stack" (idle threads show as __ulock_wait and kevent); the llvm build has Xo function names (x.<fn>), arm64 folds some into xo_entry (last verified 2026-10-09)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
@@ -805,6 +805,21 @@ Last verified: 2026-10-07
   `XO_LLRT_C=rc`, minimum of 5 runs (conc: 11 or 21, XO_THREADS=1;
   their counts vary by 10 percent between runs). Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 2). Last verified:
+  2026-10-13.
+- `XO_LLRT_C=alloc` (2026-10-13, decision 0207 stage 3): the C
+  runtime's own allocator (alloc_in, free_in, alloc_mt, free_mt,
+  usable, resize compiled with -DXO_ALLOC_C, which both drivers add
+  when the generated code calls alloc_c.xo's rt.alloc_*_c) instead of
+  std/native/llrt/alloc.xo through the xo_x_heap_* exports (the
+  default). `go test ./internal/llvm -run TestRuntimeAlloc` runs
+  std/llrt/testdata/alloc_threads.c both ways under ThreadSanitizer
+  (about 5 s; -O2 with ITER 30000 without -short).
+  `bench/perf/alloc/compare.sh <xo> <out> <program dir> <workload...>`
+  builds a program both ways on arm64 and LLVM and prints the minimum
+  instructions of 5 runs and their ratio (bench/perf/alloc: none small
+  mixed grow strings maps tasks; also nested, xo, text, json, conc);
+  through the heavy lock. Results in
+  `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
 - `go test ./internal/llvm -run 'TestIntsDiff|TestDigestDiff'` and `go
   test ./cmd/xo -run 'TestGlobDiff|TestGenDiff'` (2026-10-13, decision

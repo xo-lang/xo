@@ -401,6 +401,13 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the heap (decision 0207 stage 3, XO_LLRT_C=alloc)
+	for _, sym := range []string{"xo_alloc_new_c", "xo_alloc_free_c", "xo_alloc_refill_c", "xo_alloc_free_mt_c", "xo_alloc_resize_c"} {
+		if callsSym(code, sym) {
+			out = append(out, "-DXO_ALLOC_C")
+			break
+		}
+	}
 	return out
 }
 

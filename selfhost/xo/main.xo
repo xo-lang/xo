@@ -386,6 +386,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     var g = llvm.new_gen(b.m)
     g.goarch = tgoarch
+    g.goos = tgoos
     let ir = g.generate()
     t = lap(os, phases, "emit", t)
     if !g.err.is_empty() {

@@ -94,7 +94,7 @@ fn (g: G) out_arg_bytes() -> Int {
     for inst in g.blocks[b].insts {
       if inst.kind == K_CALL {
         var n = 0
-        for l in g.abi_locs(inst.srcs) + g.abi_locs(regs(inst.defs)) {
+        for l in g.call_locs(inst.srcs, inst.vfix) + g.abi_locs(regs(inst.defs)) {
           if l.reg < 0 {
             n = imax(n, l.slot + 1)
           }
@@ -566,9 +566,13 @@ fn (g: G) msrc_of(a: Src) -> MSrc {
 
 /// The moves that put srcs in their ABI locations (stack slots at [base,
 /// #off0 + 8k]).
-fn (g: G) call_moves(srcs: List[Src], base: Str, off0: Int) -> List[Move] {
+fn (g: G) call_moves(srcs: List[Src], base: Str, off0: Int) -> List[Move] { g.call_moves_v(srcs, base, off0, -1) }
+
+/// call_moves with the variadic arguments from index vfix on the stack
+/// (call_locs).
+fn (g: G) call_moves_v(srcs: List[Src], base: Str, off0: Int, vfix: Int) -> List[Move] {
   var ms: List[Move] = []
-  for (k, l) in g.abi_locs(srcs).indexed() {
+  for (k, l) in g.call_locs(srcs, vfix).indexed() {
     var dst = MLoc{reg: l.reg}
     if l.reg < 0 {
       dst = MLoc{reg: -1, base: base, off: off0 + 8 * l.slot}
@@ -592,7 +596,7 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
     }
     g.parallel(b, ms)
   } else if inst.kind == K_CALL {
-    g.parallel(b, g.call_moves(inst.srcs, "sp", 0))
+    g.parallel(b, g.call_moves_v(inst.srcs, "sp", 0, inst.vfix))
     var cs_to = ""
     if inst.pad >= 0 {
       let (from, to) = g.call_site_labels()

@@ -413,6 +413,11 @@ func negConst(v *ssa.Value) (int64, bool) {
 
 func imm12(n int64) bool { return n >= 0 && n < 4096 }
 
+// rawImmOff reports whether off is the scaled unsigned immediate of a
+// load or store of w bytes (1, 2, 4, or 8): a multiple of w below 4096 *
+// w.
+func rawImmOff(off, w int64) bool { return w > 0 && off >= 0 && off%w == 0 && off/w < 4096 }
+
 // ---------------------------------------------------------------------------
 // Functions and blocks
 
@@ -2361,6 +2366,11 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 			return true
 		}
 		ins := [...]string{"add", "sub", "mul", "lsl", "lsr"}[op]
+		if k, ok := constInt(v.Args[2]); ok && op <= 1 && imm12(k) {
+			// a constant addend is the immediate (decision 0207 stage 3)
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k), a))
+			return true
+		}
 		if k, ok := constInt(v.Args[2]); ok && op >= 3 {
 			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, k&63), a))
 			return true
@@ -2456,6 +2466,16 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.mem_load":
 		w, _ := constInt(v.Args[2])
+		if off, ok := constInt(v.Args[1]); ok && rawImmOff(off, w) {
+			// a constant offset is the instruction's scaled immediate
+			// (decision 0207 stage 3: the heap record's words)
+			ins := map[int64]string{1: "ldrb $wd0, [$u0, #%d]", 2: "ldrh $wd0, [$u0, #%d]", 4: "ldr $wd0, [$u0, #%d]"}[w]
+			if ins == "" {
+				ins = "ldr $d0, [$u0, #%d]"
+			}
+			s.set(v, s.def1(false, fmt.Sprintf(ins, off), s.real(s.word(v.Args[0]))))
+			break
+		}
 		ins := map[int64]string{1: "ldrb $wd0, [$u0, $u1]", 2: "ldrh $wd0, [$u0, $u1]", 4: "ldr $wd0, [$u0, $u1]"}[w]
 		if ins == "" {
 			ins = "ldr $d0, [$u0, $u1]"
@@ -2463,6 +2483,15 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 		s.set(v, s.def1(false, ins, s.real(s.word(v.Args[0])), s.real(s.word(v.Args[1]))))
 	case "rt.mem_store":
 		w, _ := constInt(v.Args[3])
+		if off, ok := constInt(v.Args[1]); ok && rawImmOff(off, w) {
+			ins := map[int64]string{1: "strb $wu0, [$u1, #%d]", 2: "strh $wu0, [$u1, #%d]", 4: "str $wu0, [$u1, #%d]"}[w]
+			if ins == "" {
+				ins = "str $u0, [$u1, #%d]"
+			}
+			s.store(fmt.Sprintf(ins, off), s.real(s.word(v.Args[2])), s.word(v.Args[0]))
+			s.set(v)
+			break
+		}
 		ins := map[int64]string{1: "strb $wu0, [$u1, $u2]", 2: "strh $wu0, [$u1, $u2]", 4: "str $wu0, [$u1, $u2]"}[w]
 		if ins == "" {
 			ins = "str $u0, [$u1, $u2]"
@@ -2473,6 +2502,10 @@ func (s *fstate) inlineRaw(v *ssa.Value) bool {
 		fn := map[string]string{"rt.mem_copy": "memcpy", "rt.mem_move": "memmove", "rt.mem_set": "memset"}[v.Aux.(string)]
 		s.rt(fn, regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])))
 		s.clobber()
+		s.set(v)
+	case "rt.prefetch":
+		// decision 0207 stage 3: the heap's free list pops
+		s.store("prfm pldl1keep, [$u0]", s.real(s.word(v.Args[0])))
 		s.set(v)
 	case "rt.mem_cmp":
 		r := s.rt("memcmp", regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])), false)
@@ -2720,6 +2753,10 @@ func (s *fstate) atomic(v *ssa.Value) {
 // xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 // Str its bytes and length; the result is nothing or one word.
 func (s *fstate) rtCall(v *ssa.Value) {
+	if strings.HasPrefix(v.Aux.(string), "rt.pc.") {
+		s.platformCall(v)
+		return
+	}
 	if s.inlineRT(v) {
 		return
 	}
@@ -2760,4 +2797,68 @@ func (s *fstate) rtCall(v *ssa.Value) {
 	default:
 		fail("the runtime call `%s` returns a `%s`", v.Aux, v.Type.Name)
 	}
+}
+
+// platformCall lowers a call of a platform library function (decision
+// 0213, std/native/sys_<os>.xo): a call of the bare C symbol with the C
+// ABI, an Int or Int32 argument one word, a Float a double, Bytes its
+// data address; an Int32 result sign extended from 32 bits, a UInt32 one
+// zero extended. Apple arm64 passes the variadic arguments on the stack.
+// A call for another OS (an arm of a `match` on `target.os` the passes
+// keep) is a trap.
+func (s *fstate) platformCall(v *ssa.Value) {
+	os, sym, nfixed := ssa.PlatformParts(v.Aux.(string))
+	if os != "darwin" || s.g.os != Darwin {
+		s.add(&inst{kind: iPlain, text: "brk #1"})
+		s.clobber()
+		switch v.Type.Kind {
+		case ssa.KInt:
+			s.set(v, 0)
+		case ssa.KFloat:
+			s.set(v, s.konst(s.def1(true, "fmov $d0, xzr")))
+		default:
+			s.set(v)
+		}
+		return
+	}
+	in := &inst{kind: iCall, sym: s.g.sym(sym)}
+	for _, x := range v.Args {
+		ws := s.words(x)
+		switch x.Type.Kind {
+		case ssa.KInt, ssa.KFloat:
+			in.srcs = append(in.srcs, rsrc(ws[0]))
+			if ws[0] != 0 {
+				in.uses = append(in.uses, ws[0])
+			}
+		case ssa.KStr:
+			d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+			in.srcs = append(in.srcs, rsrc(d))
+			in.uses = append(in.uses, d)
+		default:
+			fail("the platform call `%s` takes a `%s`", sym, x.Type.Name)
+		}
+	}
+	switch v.Type.Kind {
+	case ssa.KUnit:
+	case ssa.KInt:
+		in.defs = s.newVregs([]bool{false})
+	case ssa.KFloat:
+		in.defs = s.newVregs([]bool{true})
+	default:
+		fail("the platform call `%s` returns a `%s`", sym, v.Type.Name)
+	}
+	if s.g.os == Darwin && nfixed > 0 {
+		in.vfix = nfixed
+	}
+	s.add(in)
+	s.clobber()
+	if v.Type.Kind == ssa.KInt && v.Type.Bits == 32 {
+		ext := "sxtw $d0, $wu0"
+		if v.Type.Unsigned {
+			ext = "mov $wd0, $wu0"
+		}
+		s.set(v, s.def1(false, ext, in.defs[0]))
+		return
+	}
+	s.set(v, in.defs...)
 }
