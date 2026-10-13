@@ -264,6 +264,11 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // and of the report of a property test's case (decision 0193 step 5,
+  // XO_LLRT_C=report)
+  if calls_sym(code, "xo_prop_report") {
+    out.push("-DXO_REPORT_C")
+  }
   // and of the zone rules (decision 0193 step 5, XO_LLRT_C=tz)
   for sym in ["xo_tz_load", "xo_tz_offset", "xo_tz_abbr"] {
     if calls_sym(code, sym) {

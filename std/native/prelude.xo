@@ -4,6 +4,7 @@
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/num
+use native/llrt/report
 use native/llrt/show
 use native/llrt/strings
 use native/llrt/text
@@ -2057,3 +2058,9 @@ fn llrt_append_rune(s: Str, r: Int) -> Str { show.append_rune(s, r) }
 fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) }
 
 fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
+
+// The report of a property test's case to the harness (decision 0193
+// step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
+// Go SSA builder calls the C runtime's xo_prop_report instead.
+
+fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }

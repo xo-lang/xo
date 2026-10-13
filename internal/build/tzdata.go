@@ -357,6 +357,11 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the report of a property test's case (decision 0193 step 5,
+	// XO_LLRT_C=report)
+	if callsSym(code, "xo_prop_report") {
+		out = append(out, "-DXO_REPORT_C")
+	}
 	// and of the zone rules (decision 0193 step 5, XO_LLRT_C=tz)
 	for _, sym := range []string{"xo_tz_load", "xo_tz_offset", "xo_tz_abbr"} {
 		if callsSym(code, sym) {
