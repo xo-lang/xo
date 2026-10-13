@@ -1183,6 +1183,10 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     return b.generic_intrinsic(x, ci, es)
   }
   let name = b.obj_name(fo)
+  let mpath = b.c.mods[b.obj_mod(fo)].path
+  if mpath is "native/sys_darwin" | "native/sys_windows" {
+    return b.platform_call(x, fo, mpath.trim_prefix("native/sys_"), name, es)
+  }
   if name is "fs_root" | "fs_mode" {
     let v = b.expr(es[0] ?? fault("arg"))
     if !b.is_fs(b.vty(v)) {
@@ -1238,6 +1242,70 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     return b.undef(nt)
   }
   b.rt(name, nt, vs)
+}
+
+/// A call of a platform library function declared in
+/// std/native/sys_<os>.xo (decision 0213): the call `rt.pc.<os>.<sym>`,
+/// with `/<n>` when the function is variadic after its first n
+/// parameters (those before the first one named `va_*`). The emitters
+/// lower it to a call of the bare C symbol with the C ABI (an Int is a
+/// word, an Int32 or UInt32 a C int, a Float a double, Bytes its data
+/// address). For another OS, or a wasm module, the call is a fault: the
+/// passes keep every arm of a `match` on `target`, and the symbol may not
+/// exist there.
+fn (var b: Builder) platform_call(x: Expr, fo: Int, os: Str, name: Str, es: List[Expr?]) -> Int {
+  if b.wasm || os != b.target_os() {
+    let (span, _, _) = call_parts(x)
+    b.fault(b.const_str("the platform call `${name}` of ${os} on another OS"), b.pos_line(span))
+    b.dead()
+    return b.undef(b.typ(b.c.objs[fo].result))
+  }
+  var vs: List[Int] = []
+  var nfixed = -1
+  for (i, p) in b.c.objs[fo].params.indexed() {
+    if nfixed < 0 && check.text(p.name).starts_with("va_") {
+      nfixed = i
+    }
+    let pt = b.typ(p.ty)
+    match b.tkind(pt) {
+      Int | Float | Str => {}
+      _ => {
+        b.unsupported("a platform call taking a `${b.m.types[pt].name}`")
+        return b.undef(b.typ(b.c.objs[fo].result))
+      }
+    }
+    vs.push(b.value_as(es[i] ?? fault("arg"), pt))
+  }
+  var aux = "rt.pc.${os}.${name}"
+  if nfixed >= 0 {
+    aux = "${aux}/${nfixed}"
+  }
+  let rt0 = b.typ(b.c.objs[fo].result)
+  match b.tkind(rt0) {
+    Unit => {
+      b.add(Op.Call, b.unit_t(), Aux.S(s: aux), vs)
+      b.unit()
+    }
+    Int | Float => b.add(Op.Call, rt0, Aux.S(s: aux), vs)
+    _ => {
+      b.unsupported("a platform call returning a `${b.m.types[rt0].name}`")
+      b.undef(rt0)
+    }
+  }
+}
+
+/// The OS of the build's target (`darwin`, `linux`, `windows`,
+/// `wasip1`): goos, or the builder's own.
+fn (b: Builder) target_os() -> Str {
+  if !b.goos.is_empty() {
+    return b.goos
+  }
+  match target.os {
+    Darwin => "darwin"
+    Linux => "linux"
+    Windows => "windows"
+    Wasi => "wasip1"
+  }
 }
 
 // ---------------------------------------------------------------------------

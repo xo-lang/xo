@@ -1,0 +1,306 @@
+// The macOS layer of the native runtime, written in Xo (decision 0213,
+// decision 0195 prerequisite 3): libSystem's functions called with the C
+// ABI through std/native/sys_darwin.xo (the kernel interface of macOS is
+// not stable; Go calls libSystem too). Its API is linux.xo's: a call
+// returns its result (>= 0), or a negative errno (read from __error()
+// right after the call, on the same thread). Structures are Bytes
+// buffers (rt.bytes_buf, rt.sys_buf) read by word.
+//
+// Only the macOS arms of std/native/llrt/sysio.xo call this module; the
+// SSA builders make its platform calls faults on another OS.
+use native/rt
+use native/sys_darwin
+
+// errno values (sys/errno.h)
+pub const EINTR: Int = 4
+pub const ENOENT: Int = 2
+pub const EEXIST: Int = 17
+pub const ENOTDIR: Int = 20
+pub const EISDIR: Int = 21
+pub const EACCES: Int = 13
+pub const EPERM: Int = 1
+pub const ENOTEMPTY: Int = 66
+
+// open flags (sys/fcntl.h)
+pub const O_RDONLY: Int = 0
+pub const O_WRONLY: Int = 1
+pub const O_CREAT: Int = 512
+pub const O_TRUNC: Int = 1024
+pub const O_CLOEXEC: Int = 16777216
+
+pub const CLOCK_REALTIME: Int = 0
+
+/// The calling thread's errno.
+fn errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
+
+/// r, or the negative errno when r is -1 (a failed call).
+fn ret(r: Int) -> Int {
+  if r == -1 {
+    return -errno()
+  }
+  r
+}
+
+/// read(2) into the bytes of buf from off on (at most n of them).
+pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
+  let r = ret(sys_darwin.read(fd, rt.bytes_addr(buf) + off, n))
+  keep(buf, r)
+}
+
+/// write(2) of the bytes lo..hi of b.
+pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
+  let r = ret(sys_darwin.write(fd, rt.bytes_addr(b) + lo, hi - lo))
+  keep(b, r)
+}
+
+/// Writes all of b (retrying after EINTR and short writes): 0, or the
+/// errno.
+pub fn write_all(fd: Int, b: Bytes) -> Int {
+  var off = 0
+  let n = b.len()
+  while off < n {
+    let w = write(fd, b, off, n)
+    if w < 0 {
+      if -w == EINTR {
+        continue
+      }
+      return -w
+    }
+    off += w
+  }
+  0
+}
+
+/// open(2) of path: the descriptor, or the negative errno. An empty path
+/// is ".", as the C runtime opens it.
+pub fn open(path: Str, flags: Int, mode: Int) -> Int {
+  ret(Int(sys_darwin.open(cpath(path), flags, mode)))
+}
+
+/// close(2): 0, or the negative errno.
+pub fn close(fd: Int) -> Int { ret(Int(sys_darwin.close(fd))) }
+
+/// The facts of a stat(2): the kind and permission bits (st_mode), the
+/// size, and the modification time in Unix nanoseconds.
+pub struct Stat {
+  pub mode: Int
+  pub size: Int
+  pub mtime: Int
+}
+
+/// Whether st is a directory (S_IFDIR).
+pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
+
+/// stat(2) of path (lstat(2) unless follow): the facts and 0, or the
+/// errno.
+pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
+  let buf = rt.sys_buf()
+  let z = cpath(path)
+  let r = if follow { sys_darwin.stat(z, rt.bytes_addr(buf)) } else { sys_darwin.lstat(z, rt.bytes_addr(buf)) }
+  facts(buf, ret(Int(r)))
+}
+
+/// fstat(2) of the open descriptor fd.
+pub fn fstat(fd: Int) -> (Stat, Int) {
+  let buf = rt.sys_buf()
+  facts(buf, ret(Int(sys_darwin.fstat(fd, rt.bytes_addr(buf)))))
+}
+
+/// The facts of the struct stat in buf (st_mode a 16 bit field at 4,
+/// st_mtimespec at 48, st_size at 96), or the errno of r < 0.
+fn facts(buf: Bytes, r: Int) -> (Stat, Int) {
+  if r < 0 {
+    return (Stat{mode: 0, size: 0, mtime: 0}, -r)
+  }
+  let mode = (rt.bytes_word(buf, 0) >> 32) & 65535
+  let size = rt.bytes_word(buf, 96)
+  let sec = rt.bytes_word(buf, 48)
+  let nsec = rt.bytes_word(buf, 56)
+  (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec}, 0)
+}
+
+/// clock_gettime(3) of clock id: nanoseconds (Unix time for
+/// CLOCK_REALTIME), or the negative errno.
+pub fn clock_ns(id: Int) -> Int {
+  let buf = rt.sys_buf()
+  let r = ret(Int(sys_darwin.clock_gettime(id, rt.bytes_addr(buf))))
+  if r < 0 {
+    return r
+  }
+  rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
+}
+
+/// getentropy(2) of n bytes, 256 at a time (as the C runtime's
+/// cr_entropy): the bytes and 0, or the errno.
+pub fn random(n: Int) -> (Bytes, Int) {
+  let buf = rt.bytes_buf(n)
+  var off = 0
+  while off < n {
+    let k = if n - off > 256 { 256 } else { n - off }
+    let r = ret(Int(sys_darwin.getentropy(rt.bytes_addr(buf) + off, k)))
+    if r < 0 {
+      return (b"", -r)
+    }
+    off += k
+  }
+  (buf, 0)
+}
+
+/// path and a NUL byte, as libSystem takes a path ("." for "").
+fn cpath(path: Str) -> Bytes {
+  let p = if path.is_empty() { "." } else { path }
+  var s = BytesBuilder.with_capacity(p.len() + 1)
+  s.write(p.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
+}
+
+/// r, after b (whose address a call used) is known alive up to here:
+/// reference counting releases a value after its last use.
+fn keep(b: Bytes, r: Int) -> Int {
+  if b.len() < 0 {
+    return -1
+  }
+  r
+}
+
+/// libSystem's strerror text of errno e (macOS 26, ELAST 107; the C
+/// runtime's messages on macOS), "Unknown error: N" past the table.
+pub fn strerror(e: Int) -> Str {
+  match e {
+    0 => "Undefined error: 0"
+    1 => "Operation not permitted"
+    2 => "No such file or directory"
+    3 => "No such process"
+    4 => "Interrupted system call"
+    5 => "Input/output error"
+    6 => "Device not configured"
+    7 => "Argument list too long"
+    8 => "Exec format error"
+    9 => "Bad file descriptor"
+    10 => "No child processes"
+    11 => "Resource deadlock avoided"
+    12 => "Cannot allocate memory"
+    13 => "Permission denied"
+    14 => "Bad address"
+    15 => "Block device required"
+    16 => "Resource busy"
+    17 => "File exists"
+    18 => "Cross-device link"
+    19 => "Operation not supported by device"
+    20 => "Not a directory"
+    21 => "Is a directory"
+    22 => "Invalid argument"
+    23 => "Too many open files in system"
+    24 => "Too many open files"
+    25 => "Inappropriate ioctl for device"
+    26 => "Text file busy"
+    27 => "File too large"
+    28 => "No space left on device"
+    29 => "Illegal seek"
+    30 => "Read-only file system"
+    31 => "Too many links"
+    32 => "Broken pipe"
+    33 => "Numerical argument out of domain"
+    34 => "Result too large"
+    35 => "Resource temporarily unavailable"
+    36 => "Operation now in progress"
+    37 => "Operation already in progress"
+    38 => "Socket operation on non-socket"
+    39 => "Destination address required"
+    40 => "Message too long"
+    41 => "Protocol wrong type for socket"
+    42 => "Protocol not available"
+    43 => "Protocol not supported"
+    44 => "Socket type not supported"
+    45 => "Operation not supported"
+    46 => "Protocol family not supported"
+    47 => "Address family not supported by protocol family"
+    48 => "Address already in use"
+    49 => "Can't assign requested address"
+    50 => "Network is down"
+    51 => "Network is unreachable"
+    52 => "Network dropped connection on reset"
+    53 => "Software caused connection abort"
+    54 => "Connection reset by peer"
+    55 => "No buffer space available"
+    56 => "Socket is already connected"
+    57 => "Socket is not connected"
+    58 => "Can't send after socket shutdown"
+    59 => "Too many references: can't splice"
+    60 => "Operation timed out"
+    61 => "Connection refused"
+    62 => "Too many levels of symbolic links"
+    63 => "File name too long"
+    64 => "Host is down"
+    65 => "No route to host"
+    66 => "Directory not empty"
+    67 => "Too many processes"
+    68 => "Too many users"
+    69 => "Disc quota exceeded"
+    70 => "Stale NFS file handle"
+    71 => "Too many levels of remote in path"
+    72 => "RPC struct is bad"
+    73 => "RPC version wrong"
+    74 => "RPC prog. not avail"
+    75 => "Program version wrong"
+    76 => "Bad procedure for program"
+    77 => "No locks available"
+    78 => "Function not implemented"
+    79 => "Inappropriate file type or format"
+    80 => "Authentication error"
+    81 => "Need authenticator"
+    82 => "Device power is off"
+    83 => "Device error"
+    84 => "Value too large to be stored in data type"
+    85 => "Bad executable (or shared library)"
+    86 => "Bad CPU type in executable"
+    87 => "Shared library version mismatch"
+    88 => "Malformed Mach-o file"
+    89 => "Operation canceled"
+    90 => "Identifier removed"
+    91 => "No message of desired type"
+    92 => "Illegal byte sequence"
+    93 => "Attribute not found"
+    94 => "Bad message"
+    95 => "EMULTIHOP (Reserved)"
+    96 => "No message available on STREAM"
+    97 => "ENOLINK (Reserved)"
+    98 => "No STREAM resources"
+    99 => "Not a STREAM"
+    100 => "Protocol error"
+    101 => "STREAM ioctl timeout"
+    102 => "Operation not supported on socket"
+    103 => "Policy not found"
+    104 => "State not recoverable"
+    105 => "Previous owner died"
+    106 => "Interface output queue is full"
+    107 => "Capabilities insufficient"
+    _ => "Unknown error: ${e}"
+  }
+}
+
+/// The message of errno e as the C runtime records a file error: the
+/// strerror text with its first letter lowered.
+pub fn err_msg(e: Int) -> Str {
+  let s = strerror(e)
+  let b = s.bytes()
+  if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
+    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+  }
+  s
+}
+
+/// The FsErr tag plus one of errno e (std/rt's mapFsErr): 1 NotFound, 2
+/// Exists, 3 NotEmpty, 4 NotDir, 5 IsDir, 6 Permission, 7 Io.
+pub fn fs_status(e: Int) -> Int {
+  match e {
+    2 => 1
+    17 => 2
+    66 => 3
+    20 => 4
+    21 => 5
+    13 | 1 => 6
+    _ => 7
+  }
+}

@@ -1,12 +1,15 @@
-// Files and the clock over the Linux system call layer (decision 0206,
-// decision 0193's mechanism): on Linux, os.fs.read, write, and stat and
-// Clock.now make their system calls from Xo (std/native/llrt/linux.xo),
-// with the C runtime's semantics (std/llrt/xo_bytes.c xo_fs_read,
-// xo_fs.c xo_fs_write and xo_fs_stat, xo_rt.c xo_clock_now) and the same
-// messages; elsewhere, and where a test binary's world fakes the
-// capability, they call the C runtime. `XO_LLRT_C=sysio` loads
-// sysio_c.xo instead (the C runtime everywhere) until bench/perf/sysio
-// meets decision 0180's bar on both native backends.
+// Files and the clock over the system layer of each OS (decisions 0206
+// and 0213, decision 0193's mechanism): os.fs.read, write, and stat (and
+// Clock.now on macOS) make their calls from Xo, with the C runtime's
+// semantics (std/llrt/xo_bytes.c xo_fs_read, xo_fs.c xo_fs_write and
+// xo_fs_stat, xo_rt.c xo_clock_now) and the same messages. This module
+// is the portable policy (Go's os.ReadFile and os.WriteFile loops, the
+// FsErr status and message recorded through rt.fs_set_err); the layer
+// below it is per OS: raw system calls on Linux (linux.xo), libSystem on
+// macOS (darwin.xo). Elsewhere, and where a test binary's world fakes
+// the capability, they call the C runtime. `XO_LLRT_C=sysio` loads
+// sysio_c.xo instead (the C runtime everywhere).
+use native/llrt/darwin
 use native/llrt/linux
 use native/rt
 
@@ -20,32 +23,43 @@ pub struct Info {
   pub modified: Int = 0
 }
 
-/// Whether the build makes Linux system calls from Xo: a Linux target
-/// that is not a WASI module (a wasm build keeps the host's `target.os`,
-/// gotchas/wasm-target-os-is-the-host.md). The SSA passes do not fold a
-/// `match` on `target`, so every arm is lowered; a native backend's
-/// optimizer or a dead branch leaves the other arm unused.
-fn raw() -> Bool {
-  match target.os {
-    TargetOs.Linux => {
-      match target.arch {
-        TargetArch.Wasm32 => false
-        TargetArch.Arm64 | TargetArch.Amd64 => true
+/// The OS layer the build calls from Xo: 1 Linux system calls (a Linux
+/// target that is not a WASI module: a wasm build keeps the host's
+/// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
+/// (macOS on arm64; on x86_64 the stat symbols are the `$INODE64` ones,
+/// not declared), 0 the C runtime. The SSA passes do not fold a `match`
+/// on `target`, so every arm is lowered; the builders make the platform
+/// calls of another OS faults, and a native backend's optimizer or a
+/// dead branch leaves the other arms unused.
+fn layer() -> Int {
+  match target.arch {
+    TargetArch.Wasm32 => 0
+    TargetArch.Arm64 => {
+      match target.os {
+        TargetOs.Linux => 1
+        TargetOs.Darwin => 2
+        TargetOs.Windows | TargetOs.Wasi => 0
       }
     }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+    TargetArch.Amd64 => {
+      match target.os {
+        TargetOs.Linux => 1
+        TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => 0
+      }
+    }
   }
 }
 
 /// os.ReadFile(op): the contents in a list of one, or the empty list
 /// with the status set (the error names the OS path, as xo_fs_read's).
 pub fn fs_read(op: Str) -> List[Bytes] {
-  if !raw() || rt.tw_fake(1) {
+  let l = layer()
+  if l == 0 || rt.tw_fake(1) {
     return rt.fs_read(op)
   }
-  let (b, e) = read_file(op)
+  let (b, e) = read_file(l, op)
   if e != 0 {
-    rt.fs_set_err(linux.fs_status(e), op, linux.err_msg(e))
+    rt.fs_set_err(fs_status(l, e), op, err_msg(l, e))
     return []
   }
   rt.fs_set_err(0, "", "")
@@ -55,13 +69,14 @@ pub fn fs_read(op: Str) -> List[Bytes] {
 /// os.WriteFile(op, data, 0644): the status, an error naming the Xo path
 /// x.
 pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int {
-  if !raw() {
+  let l = layer()
+  if l == 0 {
     return rt.fs_write(op, data, x)
   }
-  let e = write_file(op, data)
+  let e = write_file(l, op, data)
   if e != 0 {
-    let st = linux.fs_status(e)
-    rt.fs_set_err(st, x, linux.err_msg(e))
+    let st = fs_status(l, e)
+    rt.fs_set_err(st, x, err_msg(l, e))
     return st
   }
   rt.fs_set_err(0, "", "")
@@ -71,58 +86,145 @@ pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int {
 /// os.Stat(op) (os.Lstat unless follow): the facts, an error naming the
 /// Xo path x.
 pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
-  if !raw() {
+  let l = layer()
+  if l == 0 {
     let st = rt.fs_stat(op, follow, x)
     if st != 0 {
       return Info{st: st}
     }
     return Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
   }
-  let (s, e) = linux.stat(op, follow)
+  let (i, e) = stat(l, op, follow)
   if e != 0 {
-    let st = linux.fs_status(e)
-    rt.fs_set_err(st, x, linux.err_msg(e))
+    let st = fs_status(l, e)
+    rt.fs_set_err(st, x, err_msg(l, e))
     return Info{st: st}
   }
   rt.fs_set_err(0, "", "")
-  Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}
+  i
 }
 
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. The C runtime's on every target for now: its
-/// clock_gettime goes through the vDSO (glibc's, or xo_nolibc.c's with
-/// XO_NOLIBC=1), and the system call linux.clock_ns makes cost 4.3 times
-/// the time per call on Graviton (bench/results/linux-syscalls-2026-10-13.md).
-/// Xo reaches the vDSO once it can call a C ABI address and keep the
-/// address (decision 0206, next steps); then the Linux arm is
-/// linux.clock_ns(linux.CLOCK_REALTIME) when not rt.clock_virtual().
-pub fn clock_now() -> Int { rt.clock_now() }
+/// virtual clock. On macOS libSystem's clock_gettime from Xo (as the C
+/// runtime's; the test world's virtual clock still in C). On Linux the C
+/// runtime's: its clock_gettime goes through the vDSO (glibc's, or
+/// xo_nolibc.c's with XO_NOLIBC=1), and the system call linux.clock_ns
+/// makes cost 4.3 times the time per call on Graviton
+/// (bench/results/linux-syscalls-2026-10-13.md); Xo reaches the vDSO once
+/// it can call a C ABI address (decision 0206, next steps).
+pub fn clock_now() -> Int {
+  if layer() != 2 || rt.clock_virtual() {
+    return rt.clock_now()
+  }
+  darwin.clock_ns(darwin.CLOCK_REALTIME)
+}
+
+// ---------------------------------------------------------------------------
+// The OS layers behind one interface: a call's result >= 0, or a
+// negative errno (EINTR is 4 on Linux and macOS).
+
+/// A descriptor of op opened for reading (O_RDONLY | O_CLOEXEC).
+fn open_read(l: Int, op: Str) -> Int {
+  if l == 2 {
+    return darwin.open(op, darwin.O_RDONLY | darwin.O_CLOEXEC, 0)
+  }
+  linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+}
+
+/// A descriptor of op created or truncated for writing, mode 0644.
+fn open_write(l: Int, op: Str) -> Int {
+  if l == 2 {
+    return darwin.open(op, darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC | darwin.O_CLOEXEC, 420)
+  }
+  linux.open(op, linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC | linux.O_CLOEXEC, 420)
+}
+
+fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
+  if l == 2 {
+    return darwin.read(fd, buf, off, n)
+  }
+  linux.read(fd, buf, off, n)
+}
+
+/// 0, or the errno of the first failed write.
+fn write_all(l: Int, fd: Int, b: Bytes) -> Int {
+  if l == 2 {
+    return darwin.write_all(fd, b)
+  }
+  linux.write_all(fd, b)
+}
+
+fn close(l: Int, fd: Int) -> Int {
+  if l == 2 {
+    return darwin.close(fd)
+  }
+  linux.close(fd)
+}
+
+/// The size of the open file fd, or -1 when it is not known.
+fn file_size(l: Int, fd: Int) -> Int {
+  if l == 2 {
+    let (s, e) = darwin.fstat(fd)
+    return if e == 0 { s.size } else { -1 }
+  }
+  let (s, e) = linux.fstat(fd)
+  if e == 0 { s.size } else { -1 }
+}
+
+/// The facts of op (and 0), or the errno.
+fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
+  if l == 2 {
+    let (s, e) = darwin.stat(op, follow)
+    return (Info{st: 0, is_dir: darwin.is_dir(s), size: s.size, modified: s.mtime}, e)
+  }
+  let (s, e) = linux.stat(op, follow)
+  (Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}, e)
+}
+
+/// The C runtime's message of errno e (strerror, first letter lowered).
+fn err_msg(l: Int, e: Int) -> Str {
+  if l == 2 {
+    return darwin.err_msg(e)
+  }
+  linux.err_msg(e)
+}
+
+/// The FsErr tag plus one of errno e.
+fn fs_status(l: Int, e: Int) -> Int {
+  if l == 2 {
+    return darwin.fs_status(e)
+  }
+  linux.fs_status(e)
+}
+
+// ---------------------------------------------------------------------------
+// The portable policy
 
 /// The contents of the file op: os.ReadFile's loop (a buffer of the size
-/// statx gives plus one byte, at least 512, grown while the file has
+/// fstat gives plus one byte, at least 512, grown while the file has
 /// more) and 0, or the errno.
-fn read_file(op: Str) -> (Bytes, Int) {
-  var fd = linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+fn read_file(l: Int, op: Str) -> (Bytes, Int) {
+  var fd = open_read(l, op)
   while fd == -linux.EINTR {
-    fd = linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+    fd = open_read(l, op)
   }
   if fd < 0 {
     return (b"", -fd)
   }
-  let (s, se) = linux.fstat(fd)
+  let size = file_size(l, fd)
   var cap = 512
-  if se == 0 && s.size >= 512 {
-    cap = s.size + 1
+  if size >= 512 {
+    cap = size + 1
   }
   var buf = rt.bytes_buf(cap)
   var n = 0
   while true {
-    let r = linux.read(fd, buf, n, cap - n)
+    let r = read(l, fd, buf, n, cap - n)
     if r < 0 {
       if -r == linux.EINTR {
         continue
       }
-      linux.close(fd)
+      close(l, fd)
       return (b"", -r)
     }
     if r == 0 {
@@ -138,23 +240,22 @@ fn read_file(op: Str) -> (Bytes, Int) {
       buf = rt.rs_bytes_len(g.freeze(), cap)
     }
   }
-  linux.close(fd)
+  close(l, fd)
   (rt.rs_bytes_len(buf, n), 0)
 }
 
-/// os.WriteFile's system calls: 0, or the errno (of the open, the first
-/// failed write, or the close).
-fn write_file(op: Str, data: Bytes) -> Int {
-  let flags = linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC | linux.O_CLOEXEC
-  var fd = linux.open(op, flags, 420)
+/// os.WriteFile's calls: 0, or the errno (of the open, the first failed
+/// write, or the close).
+fn write_file(l: Int, op: Str, data: Bytes) -> Int {
+  var fd = open_write(l, op)
   while fd == -linux.EINTR {
-    fd = linux.open(op, flags, 420)
+    fd = open_write(l, op)
   }
   if fd < 0 {
     return -fd
   }
-  let e = linux.write_all(fd, data)
-  let c = linux.close(fd)
+  let e = write_all(l, fd, data)
+  let c = close(l, fd)
   if e != 0 {
     return e
   }

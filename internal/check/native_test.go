@@ -26,7 +26,8 @@ func TestNativeModules(t *testing.T) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".xo")
-		if name == "prelude" || strings.HasPrefix(name, "rt") {
+		if name == "prelude" || strings.HasPrefix(name, "rt") || strings.HasPrefix(name, "sys_") {
+			// the intrinsics and the platform declarations (decision 0213)
 			continue
 		}
 		uses = append(uses, "use std/"+name)
