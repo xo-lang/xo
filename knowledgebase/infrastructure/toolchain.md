@@ -770,13 +770,16 @@ Last verified: 2026-10-07
   decision 0193): the same for bench/perf/text (Int parse, Duration and
   Time text, Debug quoting, split, lines, replace, trims, rune_count,
   and since step 3 int_fmt, float_fmt, float_parse, base64, hex, since
-  step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load; `none`
-  is the input setup alone); `XO_LLRT_C=text,strings,num,show,tz` builds
-  the C paths, `WORKLOADS` picks workloads. Run it through the heavy lock
-  with `XO_SELF_DRIVER=0` in the environment for the Go driver. Results
-  in `bench/results/runtime-port-2026-10-12.md`,
-  `runtime-port-step3-2026-10-12.md`, and
-  `runtime-port-step5-2026-10-13.md`. Last verified: 2026-10-13.
+  step 5 debug, zone_offset, zone_fmt, zone_civil, zone_load, since
+  decision 0201 utf8; `none` is the input setup alone);
+  `XO_LLRT_C=text,strings,num,show,tz,scan` builds the C paths,
+  `WORKLOADS` picks workloads. Run it through the heavy lock with
+  `XO_SELF_DRIVER=0` in the environment for the Go driver, and rebuild
+  the xo binary after a std edit (it embeds std/native,
+  gotchas/dev-xo-embeds-std.md). Results in
+  `bench/results/runtime-port-2026-10-12.md`,
+  `runtime-port-step3-2026-10-12.md`, `runtime-port-step5-2026-10-13.md`,
+  and `scan-intrinsics-2026-10-13.md`. Last verified: 2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
@@ -799,6 +802,13 @@ Last verified: 2026-10-07
   Go backend on about 28,000 generated and edge case inputs (not under
   -short; `XO_JSONDIFF_N` sets the random count, default 6000). Last
   verified: 2026-10-13.
+- `go test ./internal/llvm -run TestScanDiff` (2026-10-13, decision
+  0201): std/native/llrt/scan.xo (find, split, lines, rune_count,
+  to_hex, quoting runs, UTF-8 validity, Bytes rune count) on arm64 and
+  LLVM, Xo and C paths, against the Go backend on about 82,000 inputs
+  (needles at every offset, invalid UTF-8; not under -short;
+  `XO_SCANDIFF_N` sets the random count, default 3000). Last verified:
+  2026-10-13.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point

@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster on the native backends: Str.split, Str.lines, Str.rune_count,
+  Str.find and contains, Bytes.to_hex, Bytes.rune_count, and
+  Bytes.to_str (UTF-8 validity) are now Xo in the runtime, scanning 16
+  bytes a step with NEON on arm64 and vector compares on LLVM (decision
+  0201). They retire from 0.32 to 1.01 times the instructions of the C
+  they replace (rune_count about a third); `XO_LLRT_C=scan` builds the
+  C path for comparison. Output is unchanged.
+
 - **xo for Windows can be built by Xo** (decision 0197 stage 7): `xo
   build --backend=llvm --targets=windows/amd64` (or windows/arm64) now
   cross builds from Linux or macOS when `XO_WINSYSROOT` names a Windows

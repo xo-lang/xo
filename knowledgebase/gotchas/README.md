@@ -393,3 +393,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [threads-golden-needs-zone-data.md](threads-golden-needs-zone-data.md): Observed: TestGoldenThreads links without -DXO_TIME and the zone data object, so std/time goldens are skipped there.
 - [heavy-log-grep-binary.md](heavy-log-grep-binary.md): Observed: a test log holding a NUL byte (a golden printing U+0000) makes grep print nothing; use grep -a.
 - [when-is-a-keyword.md](when-is-a-keyword.md): Observed: a field or variable named `when` gives an XO0502/XO0406/XO0160 cascade that never names the keyword; rename it.
+- [dev-xo-embeds-std.md](dev-xo-embeds-std.md): Observed: a `go build` of cmd/xo embeds std/native, so a measurement with a binary built before a std edit measures the old code; rebuild first.
+- [wasm-rt-name-collides-with-generated.md](wasm-rt-name-collides-with-generated.md): Observed: a WAT runtime helper `$eq8` collided with the wasm backend's generated type equality `$eq8`; prefix runtime helpers.
+- [uses-is-a-keyword.md](uses-is-a-keyword.md): Observed: a local named `uses` is a parse error (effect clauses); name it `us`.
+- [module-shadowed-by-function.md](module-shadowed-by-function.md): Observed: `use native/llrt/scan` in a module with a function `scan` gives XO0407 at its calls; import with `as`.

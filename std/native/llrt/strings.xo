@@ -6,12 +6,9 @@
 // (`XO_LLRT_C=strings` loads strings_c.xo) until bench/perf/text meets
 // decision 0180's bar on both native backends.
 //
-// The searches, copies, and pure byte scans stay C (decision 0180 item
-// 4): rt.str_find (memchr and memcmp), rt.str_slice, rt.rs_append_bytes,
-// rt.bytes_span, and the operations that are only scans and copies:
-// Str.split, Str.lines, Str.rune_count, Str.repeat, List[Str].join. An Xo
-// split and lines (a C call to find and one to copy per piece) measured
-// 1.02 to 1.32 times the C's instructions (decision 0193).
+// The searches are scan.xo (decision 0201: find, split, lines,
+// rune_count); the copies stay C (rt.str_slice, rt.rs_append_bytes,
+// Str.repeat, List[Str].join).
 use native/llrt/scan
 use native/llrt/unicode
 use native/rt

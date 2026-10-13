@@ -204,7 +204,7 @@ fn ascii_mode(lower: Bool) -> Int {
 
 /// strings.ToLower (lower) or strings.ToUpper of the bytes from i of b
 /// appended to out (strings.Map: an invalid byte becomes U+FFFD). Runs of
-/// ASCII bytes (found by rt.bytes_span) and of runes that do not change
+/// ASCII bytes (found by scan.span) and of runes that do not change
 /// are appended at once.
 fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   let n = b.len()
