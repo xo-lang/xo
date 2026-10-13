@@ -95,13 +95,10 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
 /// elsewhere, and while the virtual clock runs, the C runtime's.
 /// This is the clock's hot path, written for the arm64 emitter, which
 /// neither folds `target` nor inlines across modules: rt.sys_clock_buf
-/// answers 0 off Linux as under the virtual clock (so only the wasm
-/// architecture is tested here), and the vDSO call is inline.
+/// answers 0 off Linux and in a WASI module (the wasm emitter lowers it
+/// to 0) as under the virtual clock, so no target is tested here, and
+/// the vDSO call is inline.
 pub fn clock_now() -> Int {
-  match target.arch {
-    TargetArch.Arm64 | TargetArch.Amd64 => {}
-    TargetArch.Wasm32 => return rt.clock_now()
-  }
   let a = rt.sys_clock_buf()
   if a == 0 {
     return rt.clock_now()
