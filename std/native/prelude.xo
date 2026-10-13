@@ -110,7 +110,7 @@ fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
 fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
-fn bytes_to_hex(b: Bytes) -> Str { num.to_hex(b) }
+fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
 
 fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 

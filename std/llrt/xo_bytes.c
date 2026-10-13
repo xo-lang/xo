@@ -565,9 +565,6 @@ int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
 // xo_bytes_rune_count is utf8.RuneCount (an invalid byte is one rune).
 int64_t xo_bytes_rune_count(const char *p, int64_t n) { return xo_str_rune_count(p, n); }
 
-#ifdef XO_NUM_C
-// the C path of the number text (decision 0193 step 3): only
-// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 // xo_bytes_hex is the lowercase hex of the bytes (Bytes.to_hex).
 xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	static const char hex[] = "0123456789abcdef";
@@ -579,8 +576,6 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	*len = 2 * n;
 	return s;
 }
-
-#endif
 
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
 // 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the

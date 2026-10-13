@@ -1191,75 +1191,10 @@ fn slow_parse(b: Bytes, n: Int) -> Float? {
 
 // ---------------------------------------------------------------------------
 // Hex and base64 of Bytes (encoding/hex, encoding/base64.StdEncoding)
-
-/// The 8 lowercase hex digits of the 4 bytes in the low bytes of v (the
-/// first lowest), two to a byte's 16 bit lane, all lanes at once.
-fn hex4(v: Int) -> Int {
-  // each byte to the low byte of a 16 bit lane, in two steps
-  let u = v & 0xFFFFFFFF
-  let p = (u | (u << 16)) & 0xFFFF0000FFFF
-  let s = (p | (p << 8)) & 0xFF00FF00FF00FF
-  let hi = (s >> 4) & 0xF000F000F000F
-  let lo = s & 0xF000F000F000F
-  let nib = hi | (lo << 8)
-  // 'a' - '0' - 10 more for a nibble above 9 (bit 3 and bit 2 or 1);
-  // only logical immediates, and | is + of "0" below 0x10
-  let alpha = (nib >> 3) & ((nib >> 2) | (nib >> 1)) & 0x101010101010101
-  (nib | 0x3030303030303030) + alpha * 39
-}
-
-/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 16 bytes
-/// a call of rt.rs_push_words, then the rest in one more.
-pub fn to_hex(b: Bytes) -> Str {
-  let n = b.len()
-  var out = if n > 32 { rt.rs_with_cap(2 * n + 32) } else { "" }
-  var i = 0
-  while n - i >= 16 {
-    let x = rt.bytes_word(b, i)
-    let y = rt.bytes_word(b, i + 8)
-    out = rt.rs_push_words(out, hex4(x), hex4(shr(x, 32)), hex4(y), hex4(shr(y, 32)), 0x8888)
-    i += 16
-  }
-  if i == n {
-    return out
-  }
-  hex_tail(out, b, i, n - i)
-}
-
-/// out + the hex of the r (1 to 15) bytes of b from i.
-fn hex_tail(out: Str, b: Bytes, i: Int, r: Int) -> Str {
-  // the bytes in four words of 4 (the last ones zero), then their hex
-  var w0 = 0
-  var w1 = 0
-  var w2 = 0
-  var w3 = 0
-  var j = r - 1
-  while j >= 0 {
-    let x = shl(Int(b[i + j]), 8 * (j & 3))
-    let q = j >> 2
-    if q == 0 {
-      w0 = w0 | x
-    } else if q == 1 {
-      w1 = w1 | x
-    } else if q == 2 {
-      w2 = w2 | x
-    } else {
-      w3 = w3 | x
-    }
-    j -= 1
-  }
-  let k0 = r.min(4)
-  let k1 = (r - 4).max(0).min(4)
-  let k2 = (r - 8).max(0).min(4)
-  let k3 = (r - 12).max(0)
-  if r <= 4 {
-    return rt.rs_push_word(out, hex4(w0), 2 * k0)
-  }
-  if r <= 8 {
-    return rt.rs_push_words(out, hex4(w0), hex4(w1), 0, 0, 8 | ((2 * k1) << 4))
-  }
-  rt.rs_push_words(out, hex4(w0), hex4(w1), hex4(w2), hex4(w3), 0x88 | ((2 * k2) << 8) | ((2 * k3) << 12))
-}
+//
+// Bytes.to_hex stays C (rt.bytes_hex): a loop that decides nothing per
+// byte, and an Xo version (two digits per byte lane, 16 bytes a call)
+// retired 1.09x the C's instructions on arm64 (decision 0193 step 3).
 
 /// The bytes of the 2k hex digits of b from i (k 1 to 8) in a word,
 /// the first lowest, and bits above 0xF in bad for a byte that is not a

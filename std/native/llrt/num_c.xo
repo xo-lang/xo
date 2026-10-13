@@ -21,8 +21,6 @@ pub fn parse_float(s: Str) -> Float? {
   None
 }
 
-pub fn to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
-
 pub fn from_hex(s: Str) -> Bytes? {
   if !rt.bytes_hex_ok(s) {
     return None
