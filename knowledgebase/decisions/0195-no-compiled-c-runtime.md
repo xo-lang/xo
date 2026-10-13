@@ -6,7 +6,10 @@ plan below ("Plan") is Proposed until the owner approves it and answers
 owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
 item 6: 1,040 of its 1,799 lines out of default builds,
 `bench/results/runtime-port-portable-2026-10-13.md`). Prerequisite 4 (SIMD and word scans) done
-2026-10-13: decision 0201.
+2026-10-13: decision 0201. Prerequisite 2 (raw memory) stage 1 done
+2026-10-13: decision 0207 (raw memory intrinsics, C ABI exports; the
+"(0) held by C callers" group moved but the test world stores, which
+are (1) and (2); `bench/results/raw-memory-2026-10-13.md`).
 
 ## Context
 

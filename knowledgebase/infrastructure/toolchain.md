@@ -800,6 +800,16 @@ Last verified: 2026-10-07
   TestDigestTables -golden-update` regenerates
   std/native/llrt/digest_tables.xo (SHA-256 unrolled). Last verified:
   2026-10-13.
+- `go test ./internal/llvm -run TestCABIDiff` (2026-10-13, decision 0207):
+  the C runtime's pieces that call Xo through the C ABI exports of
+  std/native/llrt/cabi.xo (fault texts, Float to Int and Float32 text,
+  UTF-8, Net.only on loopback) on arm64 and LLVM against the Go backend,
+  about 5 s warm; not under -short. A C only runtime test (a file of
+  std/llrt/testdata that includes xo_rt.c) links the exports through
+  `cOnly` in internal/llvm threads_test.go. `go test ./internal/ssa -run
+  'TestGolden|TestBench' -update` and `go test ./internal/arm64 -run
+  TestGoldenAsm -update` rewrite the SSA and assembly goldens, which
+  carry the exports. Last verified: 2026-10-13.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each
