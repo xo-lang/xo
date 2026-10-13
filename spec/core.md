@@ -1107,6 +1107,12 @@ use github.com/acme/billing/invoice
   (`example.com`, `.github`, `v1.2`).
 - Imports are explicit. There is no dot import or glob import.
 - Cyclic module imports are an error.
+- `std/internal` holds primitives for std's implementation and the Xo
+  toolchain's own modules (decision 0213) and is not part of std (std.md
+  does not list it): only std modules and modules whose path is
+  `github.com/xo-lang/xo` or below it may import it. For any other module
+  `use std/internal` is `XO0601` (module not found), as the native
+  backends' intrinsics (`native/...`) are.
 
 ### 4.2 xo.mod
 

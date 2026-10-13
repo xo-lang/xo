@@ -932,7 +932,7 @@ static void fslock_free(void *p) {
 // wait (polling every 10 ms, a cancellation point). The handle holds the
 // lock when xo_fs_lock_held says so; else the status tells an error
 // (8: canceled) or 0 (try_lock found it held).
-xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn) {
+static xo_fslock *fs_lock_op(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn, int op) {
 	xo_fslock *l = xo_alloc(sizeof(xo_fslock));
 	memset(l, 0, sizeof *l);
 	h_init(l, fslock_free);
@@ -948,7 +948,7 @@ xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int
 	}
 	xo_ctx *c = ctx();
 	for (;;) {
-		if (flock(l->fd, LOCK_EX | LOCK_NB) == 0) {
+		if (flock(l->fd, op | LOCK_NB) == 0) {
 			l->held = 1;
 			fs_ok();
 			return l;
@@ -979,6 +979,17 @@ xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int
 			return l;
 		}
 	}
+}
+
+xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn) {
+	return fs_lock_op(p, n, wait, x, xn, LOCK_EX);
+}
+
+// xo_fs_lock_shared is xo_fs_lock's shared lock (std/internal's
+// lock_shared, decision 0213): LOCK_SH, which the Windows flock shim
+// takes with LockFileEx without LOCKFILE_EXCLUSIVE_LOCK.
+xo_fslock *xo_fs_lock_shared(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn) {
+	return fs_lock_op(p, n, wait, x, xn, LOCK_SH);
 }
 
 int64_t xo_fs_lock_held(xo_fslock *l) { return l->held; }

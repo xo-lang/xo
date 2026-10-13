@@ -352,6 +352,12 @@ func (f *realFs) M_glob(tk *Task, pattern string) Result[List[string], FsErr] {
 const lockPoll = 10 * time.Millisecond
 
 func (f *realFs) lockFile(tk *Task, p string, wait bool) Result[Option[FileLock], FsErr] {
+	return f.lockFileMode(tk, p, wait, false)
+}
+
+// lockFileMode takes the lock exclusively, or shared when shared
+// (std/internal's lock_shared, decision 0213).
+func (f *realFs) lockFileMode(tk *Task, p string, wait, shared bool) Result[Option[FileLock], FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Option[FileLock]](*e)
@@ -361,7 +367,7 @@ func (f *realFs) lockFile(tk *Task, p string, wait bool) Result[Option[FileLock]
 		return Err[Option[FileLock]](mapFsErr(err, p))
 	}
 	for {
-		ok, err := tryLockFile(osf)
+		ok, err := tryLockFile(osf, shared)
 		if err != nil {
 			osf.Close()
 			return Err[Option[FileLock]](mapFsErr(err, p))

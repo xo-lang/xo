@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self-hosted toolchain's Go backend holds the shared lock on the Xo
+  Go cache while go build runs, as the Go implementation does, so a
+  concurrent cache trim no longer removes entries a build is reading
+  (decision 0213). The lock comes from `std/internal`, a module only std
+  and the toolchain can import; Xo's public `fs.lock` is unchanged.
+
 - Faster list code on the LLVM backend (decision 0211): the compiler
   tells LLVM which lists cannot share storage (a `var` list once made
   unique, a new list, the borrowed parameters, as Xo's value semantics

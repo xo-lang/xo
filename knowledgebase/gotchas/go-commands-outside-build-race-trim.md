@@ -43,7 +43,12 @@ failed in both runs with "no GC ran during the loop", unrelated.)
 Never hold the lock around something that itself runs an Xo build: a
 trim waiting at the gate would deadlock with the nested shared lock.
 
-Still open: the self-hosted driver's Go backend (`go_build` in
-`selfhost/xo/gobackend.xo`) runs go build on the same cache without the
-lock, because Xo's `fs.lock` is exclusive only. It needs a shared lock
-in std (`fs.lock_shared` or similar) or a trim that knows about xo1.
+Fixed for xo1 too (2026-10-13, decision 0213): the self-hosted
+driver's Go backend (`go_build` in `selfhost/xo/gobackend.xo`) holds the
+same lock with the same protocol (`hold_go_cache`: `xo-gate.lock`
+shared, then `xo-cache.lock` shared, the gate released) through
+`std/internal`'s `lock_shared`, a shared flock that only std and the
+toolchain's modules can import (Xo's public `fs.lock` stays exclusive
+only). `TestXo1GoBuildSurvivesTrim` (internal/selfdriver) runs xo1 go
+builds while trimming the cache every 20 ms and fails when no trim found
+the cache held. On Windows the Go side still takes no lock.
