@@ -554,7 +554,7 @@ fn nonshared(name: Str) -> Str? {
 /// exclusive loops: cas (x0 expected, x1 desired, x2 address), swp and
 /// ldadd, ldclr, ldeor, ldset (x0 operand, x1 address); the old value in
 /// x0. Sizes 4 and 8; models relax, acq, rel, acq_rel.
-fn outline_atomic(name: Str) -> Str? {
+pub fn outline_atomic(name: Str) -> Str? {
   let rest = name.trim_prefix("__aarch64_")
   var op = ""
   for o in ["cas", "swp", "ldadd", "ldclr", "ldeor", "ldset"] {
