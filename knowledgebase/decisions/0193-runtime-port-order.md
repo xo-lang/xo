@@ -95,7 +95,8 @@ its callers move too.
    (Display and Debug of Duration, Time, Str, Bytes; std/json's Duration
    and Time), it calls the native prelude's `llrt_<name>` instead
    (`fn.llrt`, mirrored as `Builder.llrt` in selfhost/ssa), unchecked
-   like the C call it replaces. The self hosted compiler has no switch.
+   like the C call it replaces. The self hosted compiler has no switch
+   (until decision 0206, 2026-10-13: xo1's checker reads XO_LLRT_C too).
 4. **Primitives added.** `rt.rs_push_word(s, w, n)` (s plus the n low
    bytes of an Int, the lowest first) and `rt.rs_push_words(s, w0, w1,
    w2, w3, lens)` (four such pieces, lengths in nibbles): short text is

@@ -151,6 +151,9 @@ struct G {
   lsdas: List[Str] = []
   ncs: Int = 0
   personality_ref: Bool = false
+  /// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
+  /// (decision 0206)
+  restorer_ref: Bool = false
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}

@@ -1,0 +1,26 @@
+// The C path of files and the clock (decision 0206): the API of sysio.xo
+// over the C runtime's functions on every target. Loaded in place of
+// sysio.xo when XO_LLRT_C names `sysio`, to compare the two and to fall
+// back while the Xo path misses decision 0180's bar.
+use native/rt
+
+pub struct Info {
+  pub st: Int
+  pub is_dir: Bool = false
+  pub size: Int = 0
+  pub modified: Int = 0
+}
+
+pub fn fs_read(op: Str) -> List[Bytes] { rt.fs_read(op) }
+
+pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int { rt.fs_write(op, data, x) }
+
+pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
+  let st = rt.fs_stat(op, follow, x)
+  if st != 0 {
+    return Info{st: st}
+  }
+  Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
+}
+
+pub fn clock_now() -> Int { rt.clock_now() }

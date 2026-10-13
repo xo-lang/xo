@@ -1,7 +1,12 @@
 # 0203: Linux programs without libc
 
-Status: Accepted (owner, 2026-10-13); not started. Unblocks decision
-0195 prerequisite 3 (raw system calls) on Linux.
+Status: Accepted (owner, 2026-10-13); stage 1 implemented (decision
+0206, 2026-10-13): raw system calls from Xo for files, and Linux
+programs linked statically with no libc under XO_NOLIBC=1 (opt in;
+the C runtime's remaining C library calls served by
+std/llrt/xo_nolibc.c). Threads, signals, unwinding, sockets, and DNS
+in Xo are decision 0206's stages 2 and 3. Unblocks decision 0195
+prerequisite 3 (raw system calls) on Linux.
 
 ## Context
 

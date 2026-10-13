@@ -341,8 +341,10 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax {
-        // --lax: the call faults when it runs
+      if g.lax || op is "sys6" | "sys_restorer" | "bytes_addr" | "bytes_buf" | "rs_bytes_len" | "sys_buf" | "tw_fake" | "clock_virtual" | "fs_set_err" {
+        // --lax: the call faults when it runs; so do the Linux system
+        // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
+        // in `target.os` arms the passes may leave in a WASI module
         let msg = "the wasm backend does not support the call `${name}`"
         g.e("i32.const ${g.str_obj(msg.bytes())}")
         g.e("i32.const ${msg.len()}")
