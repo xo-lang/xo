@@ -9,6 +9,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // TestGeneratedGoVets builds every golden program and checks the Go it
@@ -130,6 +131,7 @@ func run(dir, name string, args ...string) (string, error) {
 	cmd.Dir = dir
 	if name == "go" {
 		cmd.Env = goVetEnv()
+		defer gotool.HoldCache()()
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err

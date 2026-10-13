@@ -13,6 +13,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions on both backends and below it on LLVM
   (bench/results/raw-memory-2026-10-13.md, bench/perf/alloc).
   `XO_LLRT_C=alloc` builds the C path.
+- Faster list code on the LLVM backend (decision 0211): the compiler
+  tells LLVM which lists cannot share storage (a `var` list once made
+  unique, a new list, the borrowed parameters, as Xo's value semantics
+  guarantee), so it keeps lengths, drops index checks, and vectorizes
+  code that writes one list while reading another. Argon2id and
+  BLAKE2b in std/crypto are Xo again on the native backends, at 1.043
+  times the C's instructions on LLVM and 0.980 on arm64
+  (bench/results/llvm-noalias-2026-10-13.md); `XO_LLRT_C=digest` builds
+  the C. Output is unchanged.
+- Fixed: go commands that ran on the Xo Go cache outside an Xo build
+  (`go vet` in tests, the Go binder's `go list`, tool builds) could lose
+  cache entries to a concurrent trim and fail with `could not import
+  strings (... no such file or directory)`; they now hold the cache's
+  shared lock (gotchas/go-commands-outside-build-race-trim.md).
 - Native backends: the C runtime's reference count operations (retain,
   release, claim, and marking a value shared between threads) are Xo
   (std/native/llrt/rc.xo, decision 0207 stage 2), called from the C

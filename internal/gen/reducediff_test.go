@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // The tests of scripts/reduce-diff.py, the reducer of backend
@@ -81,7 +82,10 @@ func TestReduceDiffFake(t *testing.T) {
 	xo := filepath.Join(t.TempDir(), "fakexo")
 	gob := exec.Command("go", "build", "-o", xo, "./testdata/reduce/fakexo")
 	gob.Env = goVetEnv()
-	if out, err := gob.CombinedOutput(); err != nil {
+	release := gotool.HoldCache()
+	out, err := gob.CombinedOutput()
+	release()
+	if err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	min := reduceDiff(t, xo, "testdata/reduce/p197.xo")
@@ -105,7 +109,10 @@ func TestReduceDiffReal(t *testing.T) {
 		xo = filepath.Join(t.TempDir(), "xo")
 		gob := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo")
 		gob.Env = goVetEnv()
-		if out, err := gob.CombinedOutput(); err != nil {
+		release := gotool.HoldCache()
+		out, err := gob.CombinedOutput()
+		release()
+		if err != nil {
 			t.Fatalf("go build: %v\n%s", err, out)
 		}
 	}

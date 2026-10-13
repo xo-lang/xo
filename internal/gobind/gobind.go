@@ -342,6 +342,7 @@ func runGo(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command(goTool(), args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod", gotool.CacheEnv())
+	defer gotool.HoldCache()()
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

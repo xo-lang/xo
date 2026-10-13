@@ -131,6 +131,8 @@ type sgen struct {
 	globals strings.Builder
 	helpers strings.Builder
 	funcs   strings.Builder
+	// meta holds the alias scopes of the functions (noalias.go)
+	meta    strings.Builder
 	named   map[*ssa.Type]bool
 	rtDecls strings.Builder // declarations of the rt.* calls used
 	strs    map[string]string
@@ -144,6 +146,9 @@ type sgen struct {
 	// the plain convention
 	byRef     map[*ssa.Func][]bool
 	addrTaken map[string]bool
+	// sameVar is, per function and `var` parameter, whether it hands
+	// back its own object or a new list (noalias.go)
+	sameVar map[*ssa.Func][]bool
 }
 
 // byRefMin is the size from which a struct parameter of a direct call
@@ -234,8 +239,9 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 		}
 	}
 	g.inl = inlinableSet(m, g.byName)
-	for _, f := range m.Funcs {
-		g.fn(f)
+	g.summarize()
+	for fi, f := range m.Funcs {
+		g.fn(f, fi)
 	}
 	main := g.byName["main"]
 	if main == nil {
@@ -257,6 +263,7 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 	out.WriteString("\n")
 	out.WriteString(g.helpers.String())
 	out.WriteString(g.funcs.String())
+	out.WriteString(g.meta.String())
 	return &Program{IR: []byte(out.String()), Funcs: len(m.Funcs)}, nil
 }
 
@@ -1066,6 +1073,8 @@ type sfn struct {
 	uses       map[*ssa.Value][]*ssa.Value
 	// rng holds the value ranges of the function (ranges.go)
 	rng *rangeInfo
+	// sc holds the alias scopes of its list accesses (noalias.go), or nil
+	sc *scopeInfo
 }
 
 // isAgg reports a struct, enum, or tuple type.
@@ -1226,7 +1235,7 @@ func (s *sfn) op(v *ssa.Value) string {
 
 func (s *sfn) typed(v *ssa.Value) string { return s.g.ll(v.Type) + " " + s.op(v) }
 
-func (g *sgen) fn(f *ssa.Func) {
+func (g *sgen) fn(f *ssa.Func, fi int) {
 	s := &sfn{g: g, f: f, end: map[*ssa.Block]string{}, text: map[*ssa.Block]*strings.Builder{}, names: map[*ssa.Value]string{},
 		home: map[string]string{}, spare: map[string][]string{}, addr: map[*ssa.Value]string{},
 		stableMemo: map[*ssa.Value]bool{}, lazy: map[*ssa.Value]int{}}
@@ -1234,6 +1243,12 @@ func (g *sgen) fn(f *ssa.Func) {
 	var loads strings.Builder
 	s.body = &loads
 	br := g.byRefOf(f)
+	s.sc = g.scopesOf(f, fi)
+	if s.sc != nil {
+		g.llvmDecl("@llvm.experimental.noalias.scope.decl", "declare void @llvm.experimental.noalias.scope.decl(metadata)")
+		loads.WriteString(s.sc.decls())
+		g.meta.WriteString(s.sc.nodes())
+	}
 	var mems []heldMem
 	for i, p := range f.Params() {
 		if br != nil && br[i] {
@@ -1368,9 +1383,11 @@ func (s *sfn) elemPtr(et *ssa.Type, l, i string) string {
 	return s.def("getelementptr %s, ptr %s, i64 %s", s.g.ll(et), data, i)
 }
 
-func (s *sfn) listLen(l string) string {
+// listLen loads the length of list l; md is the access's alias scopes
+// (noalias.go), or "".
+func (s *sfn) listLen(l, md string) string {
 	p := s.def("getelementptr %%xo.rlist, ptr %s, i32 0, i32 1", l)
-	return s.def("load i64, ptr %s%s", p, tbaaHdr)
+	return s.def("load i64, ptr %s%s", p, tbaaHdr+md)
 }
 
 // variant builds variant tag of enum t from field operands.
@@ -1850,6 +1867,8 @@ func (s *sfn) call(v *ssa.Value) {
 	g := s.g
 	name := v.Aux.(string)
 	a := func(i int) string { return s.op(v.Args[i]) }
+	// the alias scopes of a list access (decision 0211)
+	md := s.sc.md(v)
 	if callee := g.byName[name]; callee != nil {
 		br := g.byRefOf(callee)
 		var args []string
@@ -1949,11 +1968,11 @@ func (s *sfn) call(v *ssa.Value) {
 		// (xo_rl_grow), as on arm64; mirrors selfhost/llvm call.xo
 		s.set(v, "call ptr @xo_rl_empty()")
 	case "list.len":
-		s.alias(v, s.listLen(a(0)))
+		s.alias(v, s.listLen(a(0), md))
 	case "list.index":
 		et := v.Type
 		if v.Pos != "" {
-			n := s.listLen(a(0))
+			n := s.listLen(a(0), md)
 			bad := s.def("icmp uge i64 %s, %s", a(1), n)
 			s.faultIf(bad, "@xo_fault_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
 		}
@@ -1964,20 +1983,20 @@ func (s *sfn) call(v *ssa.Value) {
 		if isAgg(et) && s.rootBorrowed(v.Args[0]) {
 			s.addr[v] = p
 		}
-		s.set(v, "load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+		s.set(v, "load %s, ptr %s%s", g.ll(et), p, tbaaElem+md)
 	case "list.take":
 		// element i moves out (decision 0169); its slot gets a
 		// placeholder that releasing ignores until list.set stores back
 		et := v.Type.Elems[1]
 		l := a(0)
 		if v.Pos != "" {
-			n := s.listLen(l)
+			n := s.listLen(l, md)
 			bad := s.def("icmp uge i64 %s, %s", a(1), n)
 			s.faultIf(bad, "@xo_fault_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
 		}
 		p := s.elemPtr(et, l, a(1))
-		ev := s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem)
-		s.emit("store %s %s, ptr %s%s", g.ll(et), g.hole(et), p, tbaaElem)
+		ev := s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem+md)
+		s.emit("store %s %s, ptr %s%s", g.ll(et), g.hole(et), p, tbaaElem+md)
 		rt := g.ll(v.Type)
 		t := s.def("insertvalue %s undef, ptr %s, 0", rt, l)
 		s.set(v, "insertvalue %s %s, %s %s, 1", rt, t, g.ll(et), ev)
@@ -1985,7 +2004,7 @@ func (s *sfn) call(v *ssa.Value) {
 		ot := v.Type
 		et := v.Args[0].Type.Elems[0]
 		some, none := ot.VariantIndex("Some"), ot.VariantIndex("None")
-		n := s.listLen(a(0))
+		n := s.listLen(a(0), md)
 		in := s.def("icmp ult i64 %s, %s", a(1), n)
 		yes, no, end := s.newLabel("get"), s.newLabel("none"), s.newLabel("gend")
 		s.emit("br i1 %s, label %%%s, label %%%s", in, yes, no)
@@ -1993,7 +2012,7 @@ func (s *sfn) call(v *ssa.Value) {
 		p := s.elemPtr(et, a(0), a(1))
 		ev := "zeroinitializer"
 		if et.Kind != ssa.KUnit {
-			ev = s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+			ev = s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem+md)
 		}
 		sv := s.variant(ot, some, []string{ev})
 		yesEnd := s.label
@@ -2008,25 +2027,25 @@ func (s *sfn) call(v *ssa.Value) {
 		et := v.Args[2].Type
 		l := a(0)
 		if v.Pos != "" {
-			n := s.listLen(l)
+			n := s.listLen(l, md)
 			bad := s.def("icmp uge i64 %s, %s", a(1), n)
 			s.faultIf(bad, "@xo_fault_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
 		}
 		p := s.elemPtr(et, l, a(1))
 		if et.Heap() {
-			old := s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+			old := s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem+md)
 			s.emit("call void %s(%s %s)", g.rcFn("drop", et), g.ll(et), old)
 		}
 		if et.Kind != ssa.KUnit {
-			s.emit("store %s, ptr %s%s", s.typed(v.Args[2]), p, tbaaElem)
+			s.emit("store %s, ptr %s%s", s.typed(v.Args[2]), p, tbaaElem+md)
 		}
 		s.alias(v, l)
 	case "list.push":
 		et := v.Args[1].Type
 		l := a(0)
-		n := s.listLen(l)
+		n := s.listLen(l, md)
 		cp := s.def("getelementptr %%xo.rlist, ptr %s, i32 0, i32 2", l)
-		c := s.def("load i64, ptr %s%s", cp, tbaaHdr)
+		c := s.def("load i64, ptr %s%s", cp, tbaaHdr+md)
 		full := s.def("icmp eq i64 %s, %s", n, c)
 		from := s.label
 		grow, room := s.newLabel("grow"), s.newLabel("room")
@@ -2038,11 +2057,11 @@ func (s *sfn) call(v *ssa.Value) {
 		lm := s.def("phi ptr [ %s, %%%s ], [ %s, %%%s ]", l, from, l2, grow)
 		if et.Kind != ssa.KUnit {
 			p := s.elemPtr(et, lm, n)
-			s.emit("store %s, ptr %s%s", s.typed(v.Args[1]), p, tbaaElem)
+			s.emit("store %s, ptr %s%s", s.typed(v.Args[1]), p, tbaaElem+md)
 		}
 		n1 := s.def("add nuw nsw i64 %s, 1", n)
 		lp := s.def("getelementptr %%xo.rlist, ptr %s, i32 0, i32 1", lm)
-		s.emit("store i64 %s, ptr %s%s", n1, lp, tbaaHdr)
+		s.emit("store i64 %s, ptr %s%s", n1, lp, tbaaHdr+md)
 		s.alias(v, lm)
 	case "list.pop":
 		lt := v.Args[0].Type
@@ -2050,18 +2069,18 @@ func (s *sfn) call(v *ssa.Value) {
 		ot := v.Type.Elems[1]
 		some, none := ot.VariantIndex("Some"), ot.VariantIndex("None")
 		l := a(0)
-		n := s.listLen(l)
+		n := s.listLen(l, md)
 		c := s.def("icmp sgt i64 %s, 0", n)
 		yes, no, end := s.newLabel("pop"), s.newLabel("empty"), s.newLabel("pend")
 		s.emit("br i1 %s, label %%%s, label %%%s", c, yes, no)
 		s.start(yes)
 		n1 := s.def("sub i64 %s, 1", n)
 		lp := s.def("getelementptr %%xo.rlist, ptr %s, i32 0, i32 1", l)
-		s.emit("store i64 %s, ptr %s%s", n1, lp, tbaaHdr)
+		s.emit("store i64 %s, ptr %s%s", n1, lp, tbaaHdr+md)
 		ev := "zeroinitializer"
 		if et.Kind != ssa.KUnit {
 			p := s.elemPtr(et, l, n1)
-			ev = s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem)
+			ev = s.def("load %s, ptr %s%s", g.ll(et), p, tbaaElem+md)
 		}
 		sv := s.variant(ot, some, []string{ev})
 		yesEnd := s.label
@@ -2163,7 +2182,7 @@ func (s *sfn) call(v *ssa.Value) {
 			s.faultIf(bad, "@xo_fault_bytes_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
 		}
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, a(1))
-		c := s.def("load i8, ptr %s", p)
+		c := s.def("load i8, ptr %s%s", p, md)
 		s.set(v, "zext i8 %s to i64", c)
 	case "Str.len":
 		s.set(v, "extractvalue %%xo.str %s, 1", a(0))
@@ -2238,7 +2257,7 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 	case "rt.bytes_word":
 		_, d, _ := s.strParts(s.op(v.Args[0]))
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
-		s.set(v, "load i64, ptr %s, align 1", p)
+		s.set(v, "load i64, ptr %s, align 1%s", p, s.sc.md(v))
 	case "rt.sys6":
 		// a Linux system call (decision 0206): inline asm with the number
 		// and six arguments in the registers of the host's convention (the
@@ -2264,7 +2283,7 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 	case "rt.bytes_eq16", "rt.bytes_high16":
 		_, d, _ := s.strParts(s.op(v.Args[0]))
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
-		x := s.def("load <16 x i8>, ptr %s, align 1", p)
+		x := s.def("load <16 x i8>, ptr %s, align 1%s", p, s.sc.md(v))
 		var e string
 		if v.Aux.(string) == "rt.bytes_eq16" {
 			c := s.def("trunc i64 %s to i8", s.op(v.Args[2]))
