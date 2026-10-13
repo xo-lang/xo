@@ -74,4 +74,8 @@
 // are on by default), as do the precomputed tables of the curves'
 // generators (MBEDTLS_ECP_FIXED_POINT_OPTIM). Decision 0117.
 #define MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT
+// not on Windows on Arm: the library has no SHA-512 detection there (its
+// branch warns and leaves the detection function undeclared; decision 0197)
+#if !(defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64)))
 #define MBEDTLS_SHA512_USE_A64_CRYPTO_IF_PRESENT
+#endif

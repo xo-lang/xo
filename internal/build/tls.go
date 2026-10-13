@@ -103,11 +103,13 @@ func tlsSourceHash() (string, error) {
 }
 
 // tlsFlavor is the part of a compile's flags the library is built with:
-// sanitizers, so an instrumented runtime links an instrumented library.
+// sanitizers, so an instrumented runtime links an instrumented library,
+// and the target of a cross build.
 func tlsFlavor(flags []string) []string {
 	var out []string
 	for _, f := range flags {
-		if strings.HasPrefix(f, "-fsanitize") || strings.HasPrefix(f, "-fno-sanitize") {
+		// and a cross build's target (LLVMCrossTriple)
+		if strings.HasPrefix(f, "-fsanitize") || strings.HasPrefix(f, "-fno-sanitize") || strings.HasPrefix(f, "--target=") {
 			out = append(out, f)
 		}
 	}

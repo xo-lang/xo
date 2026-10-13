@@ -38,6 +38,17 @@ func TestGoldenWant(t *testing.T) {
 		t.Fatalf("no golden programs: %v", err)
 	}
 	strict := os.Getenv("XO_GOLDEN_WANT_STRICT") == "1"
+	// XO_GOLDEN_WANT_TARGET=os/arch: build for that target instead
+	// (a cross build, build.LLVMCrossTriple) and stop there; "built"
+	// counts the programs that compiled and linked
+	target := build.Host()
+	if v := os.Getenv("XO_GOLDEN_WANT_TARGET"); v != "" {
+		goos, goarch, ok := strings.Cut(v, "/")
+		if !ok {
+			t.Fatalf("XO_GOLDEN_WANT_TARGET=%q: want os/arch", v)
+		}
+		target = build.Target{OS: goos, Arch: goarch}
+	}
 	var mu sync.Mutex
 	outcome := map[string]string{}
 	t.Cleanup(func() {
@@ -50,6 +61,11 @@ func TestGoldenWant(t *testing.T) {
 		sort.Strings(names)
 		for _, n := range names {
 			t.Logf("golden %s: %s", n, outcome[n])
+		}
+		if target != build.Host() {
+			t.Logf("golden summary (%s/%s built on %s/%s, not run): %d built, %d fail, %d unsupported, of %d",
+				target.OS, target.Arch, build.Host().OS, build.Host().Arch, count["built"], count["fail"], count["unsupported"], len(names))
+			return
 		}
 		t.Logf("golden summary (%s/%s): %d pass, %d fail, %d unsupported, of %d",
 			build.Host().OS, build.Host().Arch, count["pass"], count["fail"], count["unsupported"], len(names))
@@ -74,7 +90,11 @@ func TestGoldenWant(t *testing.T) {
 				set("fail (no want.txt)")
 				return
 			}
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			opts := build.Options{Mode: gen.Build, Backend: build.BackendLLVM}
+			if target != build.Host() {
+				opts.Targets = []build.Target{target}
+			}
+			res, err := build.Build([]string{dir}, opts)
 			if err != nil {
 				set("fail (build: " + firstLine(err.Error()) + ")")
 				if strict {
@@ -97,6 +117,14 @@ func TestGoldenWant(t *testing.T) {
 				if strict {
 					t.Errorf("check failed: %s", b.String())
 				}
+				return
+			}
+			if target != build.Host() {
+				if _, err := os.Stat(res.Binaries[target]); err != nil {
+					set("fail (no binary: " + err.Error() + ")")
+					return
+				}
+				set("built")
 				return
 			}
 			got, err := runBinary(res.Binaries[build.Host()], dir)

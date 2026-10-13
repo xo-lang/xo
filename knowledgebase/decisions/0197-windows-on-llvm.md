@@ -1,8 +1,8 @@
 # 0197: Windows on the LLVM backend
 
 Status: Accepted (2026-10-12, windows agent, on the lead's task for
-decision 0196); stage 1 implemented for windows/amd64. Later stages
-Proposed.
+decision 0196); stage 1 implemented for windows/amd64, stage 3's builds
+for windows/arm64 (not run: no host). Other stages Proposed.
 
 ## Context
 
@@ -75,29 +75,40 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
    golden with the LLVM backend alone and compares with
    `want_<goos>.txt` when the program's output is target dependent
    (`target.os`, permission bits), else `want.txt`, plus the leak check.
+   `XO_GOLDEN_WANT_TARGET=windows/arm64` builds for that target instead
+   and counts the programs that build and link.
+6. **Cross builds between the Windows architectures:** the LLVM backend
+   still builds for the host, except that a windows host builds the
+   other Windows architecture (`--targets=windows/arm64`), since the MSVC
+   build tools and the SDK carry both (`build.LLVMCrossTriple`).
 
 ## Staged plan (ranked by likelihood of working)
 
 1. **Stage 1 (this decision, done):** hello world, then threads, fibers,
    faults, timers, files, sockets, HTTP and TLS, standard input on
-   windows/amd64: 139 of 143 goldens pass (bench/results/windows-2026-10-12.md).
+   windows/amd64: 140 of 144 goldens pass, 1 fails (env_program, stage
+   4), 3 are XO1504 (processes) (bench/results/windows-2026-10-12.md).
 2. **Stage 2: processes.** xo_proc.c on `CreateProcessW` (proc_cmd,
    net_only, unix_kill goldens: XO1504 today). Next experiment: port
    `xo_proc_run` first behind `#ifdef _WIN32` (quote argv as Go's
    `syscall.EscapeArg`, `STARTUPINFOEXW` with an explicit handle list for
    the pipes), run `XO_GOLDEN_WANT=1 go test -run 'TestGoldenWant/proc_cmd'
    ./internal/llvm` on the instance.
-3. **Stage 3: windows/arm64.** The fiber switch for arm64 Windows (x19 to
-   x28, fp, lr, d8 to d15, and the TEB's stack bounds at x18), the
-   `CONTEXT` fields already used by fault_raise (Pc, Sp, X0, X1), and a
-   host: EC2 has no Windows arm64 image (`describe-images` with
-   platform windows and architecture arm64 returned 0 on 2026-10-12), so
-   cross build from windows/amd64 with `--target=aarch64-pc-windows-msvc`
-   and the VC ARM64 tools, and run on an Azure Cobalt VM or a Windows on
-   Arm machine (the owner's choice). Next experiment: cross
-   compile the runtime with `clang --target=aarch64-pc-windows-msvc -c
-   std/llrt/xo_rt.c` on the instance (the VC ARM64 component is
-   installed by scripts/remote-windows.sh).
+3. **Stage 3: windows/arm64.** Done on 2026-10-12: the fiber switch for
+   Windows on Arm (AAPCS64's callee saved set plus the TEB's stack
+   bounds through x18), fault_raise's ARM64 `CONTEXT` fields (Pc, Sp, X0,
+   X1), and cross builds: `xo build --backend=llvm
+   --targets=windows/arm64` on windows/amd64 (`build.LLVMCrossTriple`:
+   clang `--target=aarch64-pc-windows-msvc` for the IR's target
+   attributes, the runtime, the TLS library, and the link; the SSA's
+   `target` is the cross target); 141 of 144 goldens build and link (the
+   3 others are XO1504). Left: running them. EC2 has no Windows arm64
+   image (`describe-images` with platform windows and architecture arm64
+   returned 0 on 2026-10-12), so the binaries run on an Azure Cobalt VM
+   or a Windows on Arm machine (the owner's choice). Next experiment:
+   copy the cross built goldens and their want.txt to such a host and
+   run them with a script that compares output (TestGoldenWant's run
+   step without the build).
 4. **Stage 4: paths.** Absolute Windows paths (`C:\...`) in std's path
    handling: env_program fails on both backends because std/native and
    std/rt join the working directory with a drive path (the Go backend
@@ -128,8 +139,11 @@ instance (`go build ./cmd/xo`); native builds do not run xo1 there
   (gotchas/windows-shutdown-resets-unread-input.md).
 - No prebuilt runtime pack for Windows: LLVM builds compile the runtime
   locally (as on every LLVM host, decision 0157).
-- The TLS library's key changes (xo/win/pthread.h is part of its tree),
-  so every host rebuilds it once.
+- The TLS library's key changes (xo/win/pthread.h is part of its tree,
+  and xo_crypto_config.h leaves SHA-512's ARMv8 path out on Windows on
+  Arm), so every host rebuilds it once.
+- Mbed TLS on Windows: Everest's Curve25519 compiles without `__int128`
+  (`tlsFileDefines`), SHA-512 uses the portable C on Windows on Arm.
 
 ## Alternatives
 

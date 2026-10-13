@@ -1447,7 +1447,9 @@ first, AST based prototype, since deleted) and
   darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
   runtime's Win32 layer is std/llrt/xo_win.c; clang's default
   x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
-  ported yet, processes as of stage 1; see "Windows runs").
+  ported yet, processes as of stage 1; see "Windows runs"). The one
+  cross build: a Windows host builds the other Windows architecture
+  (`--targets=windows/arm64`, `build.LLVMCrossTriple`).
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
   root), verifies, runs `InsertRC`, verifies again (RC balance per
   path), and lowers with `GenerateSSA` (`internal/llvm/fromssa.go`;
@@ -2857,7 +2859,9 @@ On the instance: `go build -o ../xo.exe ./cmd/xo`, then
 `XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` (xo1 is not used
 on Windows); the golden count is
 `XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
-(the summary line counts pass, fail, unsupported). clang targets
+(the summary line counts pass, fail, unsupported; with
+`XO_GOLDEN_WANT_TARGET=windows/arm64` it cross builds instead and counts
+the programs that build and link). clang targets
 x86_64-pc-windows-msvc by default and finds the build tools itself; the
 link is `-fuse-ld=lld` (LTO bitcode). Results:
 bench/results/windows-2026-10-12.md. Last verified: 2026-10-12

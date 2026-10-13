@@ -36,6 +36,27 @@ func TestTargetUnsupported(t *testing.T) {
 	}
 }
 
+// TestLLVMCrossTriple checks the cross builds of the LLVM backend
+// (decision 0197): between the two Windows architectures only.
+func TestLLVMCrossTriple(t *testing.T) {
+	for _, tc := range []struct {
+		host, t Target
+		want    string
+	}{
+		{Target{"windows", "amd64"}, Target{"windows", "arm64"}, "aarch64-pc-windows-msvc"},
+		{Target{"windows", "arm64"}, Target{"windows", "amd64"}, "x86_64-pc-windows-msvc"},
+		{Target{"windows", "amd64"}, Target{"windows", "amd64"}, ""},
+		{Target{"windows", "amd64"}, Target{"linux", "arm64"}, ""},
+		{Target{"darwin", "arm64"}, Target{"darwin", "amd64"}, ""},
+		{Target{"linux", "amd64"}, Target{"windows", "amd64"}, ""},
+	} {
+		got, ok := LLVMCrossTriple(tc.host, tc.t)
+		if got != tc.want || ok != (tc.want != "") {
+			t.Errorf("%v on %v: got %q %v, want %q", tc.t, tc.host, got, ok, tc.want)
+		}
+	}
+}
+
 // TestSysLinkArgs checks the system part of a native link: lld on
 // Windows (LTO bitcode; the runtime names its import libraries), libm and
 // pthreads elsewhere.

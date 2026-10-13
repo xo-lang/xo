@@ -3372,7 +3372,55 @@ void xo_fiber_start(void);
 #define XO_ASM_FN(n) ".globl " n "\n.hidden " n "\n.type " n ", @function\n.p2align 4\n" n ":\n"
 #endif
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(_WIN32)
+// Windows on Arm (decision 0197, stage 3): AAPCS64's callee saved set as
+// below; x18 points at the thread's TEB (never touched), whose stack
+// bounds (StackBase [x18, #8], StackLimit [x18, #16], DeallocationStack
+// [x18, #0x1478]) switch with the stack, as on x64. The frame: the
+// registers (160), the three TEB words, a pad.
+__asm__(".text\n" XO_ASM_FN("xo_fiber_switch")
+	"sub sp, sp, #192\n"
+	"stp x19, x20, [sp, #0]\n"
+	"stp x21, x22, [sp, #16]\n"
+	"stp x23, x24, [sp, #32]\n"
+	"stp x25, x26, [sp, #48]\n"
+	"stp x27, x28, [sp, #64]\n"
+	"stp x29, x30, [sp, #80]\n"
+	"stp d8, d9, [sp, #96]\n"
+	"stp d10, d11, [sp, #112]\n"
+	"stp d12, d13, [sp, #128]\n"
+	"stp d14, d15, [sp, #144]\n"
+	"ldr x9, [x18, #8]\n"
+	"ldr x10, [x18, #16]\n"
+	"stp x9, x10, [sp, #160]\n"
+	"ldr x9, [x18, #0x1478]\n"
+	"str x9, [sp, #176]\n"
+	"mov x9, sp\n"
+	"str x9, [x0]\n"
+	"mov sp, x1\n"
+	"ldp x9, x10, [sp, #160]\n"
+	"str x9, [x18, #8]\n"
+	"str x10, [x18, #16]\n"
+	"ldr x9, [sp, #176]\n"
+	"str x9, [x18, #0x1478]\n"
+	"ldp x19, x20, [sp, #0]\n"
+	"ldp x21, x22, [sp, #16]\n"
+	"ldp x23, x24, [sp, #32]\n"
+	"ldp x25, x26, [sp, #48]\n"
+	"ldp x27, x28, [sp, #64]\n"
+	"ldp x29, x30, [sp, #80]\n"
+	"ldp d8, d9, [sp, #96]\n"
+	"ldp d10, d11, [sp, #112]\n"
+	"ldp d12, d13, [sp, #128]\n"
+	"ldp d14, d15, [sp, #144]\n"
+	"add sp, sp, #192\n"
+	"ret\n"
+	XO_ASM_FN("xo_fiber_start")
+	"mov x0, x19\n"
+	"blr x20\n"
+	"brk #1\n");
+#define XO_FRAME 192
+#elif defined(__aarch64__)
 // AAPCS64: x19 to x28, the frame pointer, the link register, and d8 to
 // d15 are callee saved (x18 is the platform's on Darwin: not touched).
 __asm__(".text\n" XO_ASM_FN("xo_fiber_switch")
@@ -3650,7 +3698,14 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 	uintptr_t top = ((uintptr_t)f->mem + f->size) & ~(uintptr_t)15;
 	void **fr = (void **)(top - XO_FRAME);
 	memset(fr, 0, XO_FRAME);
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(_WIN32)
+	fr[0] = f;                     // x19
+	fr[1] = (void *)fiber_main;    // x20
+	fr[11] = (void *)xo_fiber_start; // x30
+	fr[20] = (void *)top;                                      // StackBase
+	fr[21] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
+	fr[22] = (void *)f->mem;                                   // DeallocationStack
+#elif defined(__aarch64__)
 	fr[0] = f;                     // x19
 	fr[1] = (void *)fiber_main;    // x20
 	fr[11] = (void *)xo_fiber_start; // x30
