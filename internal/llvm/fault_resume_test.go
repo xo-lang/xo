@@ -24,7 +24,7 @@ func TestRuntimeFaultResume(t *testing.T) {
 		t.Skip("clang not found")
 	}
 	src := filepath.Join(rtDir, "testdata", "fault_resume.c")
-	plain := filepath.Join(t.TempDir(), "plain")
+	plain := exe(filepath.Join(t.TempDir(), "plain"))
 	if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, plain); err != nil {
 		t.Fatal(err)
 	}

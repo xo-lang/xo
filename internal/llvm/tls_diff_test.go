@@ -23,7 +23,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -109,8 +108,18 @@ func TestTLSDiff(t *testing.T) {
 func abruptClose(out string) string {
 	lines := strings.Split(out, "\n")
 	for i, l := range lines {
-		if strings.HasPrefix(l, "eof: ") && (strings.HasSuffix(l, ": EOF)") || strings.HasSuffix(l, "connection reset by peer)")) {
+		// Windows words a reset and an abort (WSAECONNRESET,
+		// WSAECONNABORTED) as below
+		if strings.HasPrefix(l, "eof: ") && (strings.HasSuffix(l, ": EOF)") || strings.HasSuffix(l, "connection reset by peer)") ||
+			strings.HasSuffix(l, "forcibly closed by the remote host.)") || strings.HasSuffix(l, "aborted by the software in your host machine.)")) {
 			lines[i] = "eof: closed by the peer (EOF or connection reset)"
+		}
+		// the clientcert peer sends its alert and closes with the
+		// client's request unread, which Windows answers with a reset
+		// that can overtake the alert (either backend, decision 0197)
+		if runtime.GOOS == "windows" && strings.HasPrefix(l, "clientcert: ") &&
+			(strings.Contains(l, "certificate required") || strings.HasSuffix(l, ": EOF)") || strings.Contains(l, "forcibly closed")) {
+			lines[i] = "clientcert: refused (the alert, or a reset that overtook it)"
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -342,6 +351,7 @@ fn main(os: Os) {
 func runTLSDiff(t *testing.T, bin string, p *testPKI, native bool) string {
 	t.Helper()
 	cmd := exec.Command(bin)
+	stopAttr(cmd) // a stop request reaches it on Windows too
 	if native {
 		cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 	}
@@ -382,7 +392,7 @@ func runTLSDiff(t *testing.T, bin string, p *testPKI, native bool) string {
 	if err != nil {
 		fmt.Fprintf(&out, "idle dial: %v\n", err)
 	}
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := sendStop(cmd.Process); err != nil {
 		t.Fatal(err)
 	}
 	rest, _ := io.ReadAll(rd)
@@ -519,7 +529,7 @@ func TestTLSLeaks(t *testing.T) {
 	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(t.TempDir(), "prog")
+	bin := exe(filepath.Join(t.TempDir(), "prog"))
 	flags := asanFlags("-O1", "-g", "-fsanitize=address", "-Wno-override-module")
 	if err := build.CompileC(flags, []string{ll, filepath.Join(rtDir, "xo_rt.c")}, bin); err != nil {
 		if strings.Contains(err.Error(), "sanitizer") {

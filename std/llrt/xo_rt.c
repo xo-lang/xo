@@ -7027,6 +7027,7 @@ xo_rlist *xo_env_get(const char *p, int64_t n) {
 // std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
 // FakeEnv in the order of its variables.
 #ifdef _WIN32
+#undef environ // the C runtime's (stdlib.h)
 #define environ (xo_w_environ()) // UTF-8 (xo_win.c)
 #else
 extern char **environ;

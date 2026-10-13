@@ -125,6 +125,7 @@ static inline int pthread_mutex_trylock(pthread_mutex_t *m) { return TryAcquireS
 // third_party/mbedtls/xo/win/pthread.h: the same subset)
 #define XO_WIN_PTHREAD_H 1
 typedef CONDITION_VARIABLE pthread_cond_t;
+#define PTHREAD_COND_INITIALIZER CONDITION_VARIABLE_INIT
 static inline int pthread_cond_init(pthread_cond_t *c, const void *a) {
 	(void)a;
 	InitializeConditionVariable(c);

@@ -46,7 +46,6 @@ typedef struct tw_ml {
 	int closed;
 	int inflight;
 	int draining;
-	xo_wl waiters; // accept, clients waiting for serve, drain
 	struct tw_ml *next;
 } tw_ml;
 
@@ -72,6 +71,11 @@ static struct {
 	tw_rec *recs;
 	int nrec;
 	tw_ml *mls;
+	// accepts, clients waiting for a listener to be served, drains: one
+	// list for every in memory listener, so a listener freed while a
+	// client waits for it wakes the client (which finds it gone) and no
+	// waiter is left on the freed listener's memory
+	xo_wl ml_waiters;
 	int next_port;
 	tw_fake *handlers, *fails;
 	int nhandlers, nfails;
@@ -916,6 +920,9 @@ __attribute__((unused)) static void tw_listener_free(xo_listener *l) {
 			break;
 		}
 	}
+	// a client waiting for it to be served finds it gone (decision
+	// 0197: on Windows the free came after a waiter's last check)
+	wl_wake(&tws.ml_waiters);
 	unlk(&tws.mu);
 	if (ml->router) {
 		h_release(ml->router);
@@ -928,7 +935,7 @@ __attribute__((unused)) static void tw_listener_close(xo_listener *l) {
 	tw_ml *ml = tw_ml_of(l);
 	lk(&tws.mu);
 	ml->closed = 1;
-	wl_wake(&ml->waiters);
+	wl_wake(&tws.ml_waiters);
 	unlk(&tws.mu);
 }
 
@@ -939,7 +946,7 @@ __attribute__((unused)) static xo_conn *tw_listener_accept(xo_ctx *c, xo_listene
 	tw_ml *ml = tw_ml_of(l);
 	lk(&tws.mu);
 	while (!ml->closed) {
-		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
+		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
 			unlk(&tws.mu);
 			net_fail(c, 5, "");
 			return xo_h_zero();
@@ -961,7 +968,7 @@ void xo_test_mem_serve(xo_listener *l, xo_any *r) {
 	lk(&tws.mu);
 	xo_any *old = ml->router;
 	ml->router = r;
-	wl_wake(&ml->waiters);
+	wl_wake(&tws.ml_waiters);
 	unlk(&tws.mu);
 	if (old) {
 		h_release(old);
@@ -974,7 +981,7 @@ void xo_test_mem_unserve(xo_listener *l) {
 	lk(&tws.mu);
 	xo_any *old = ml->router;
 	ml->router = NULL;
-	wl_wake(&ml->waiters);
+	wl_wake(&tws.ml_waiters);
 	unlk(&tws.mu);
 	if (old) {
 		h_release(old);
@@ -988,7 +995,7 @@ void xo_test_mem_drain(xo_listener *l) {
 	xo_ctx *c = ctx();
 	lk(&tws.mu);
 	while (ml->inflight > 0) {
-		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
+		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
 			break;
 		}
 	}
@@ -1034,7 +1041,7 @@ xo_rlist *xo_test_mem_begin(const char *hp, int64_t n) {
 		if (ml->closed) {
 			break;
 		}
-		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
+		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
 			break;
 		}
 	}
@@ -1058,7 +1065,7 @@ void xo_test_mem_end(const char *hp, int64_t n) {
 	if (ml && ml->inflight > 0) {
 		ml->inflight--;
 		if (ml->inflight == 0) {
-			wl_wake(&ml->waiters);
+			wl_wake(&tws.ml_waiters);
 		}
 	}
 	unlk(&tws.mu);
