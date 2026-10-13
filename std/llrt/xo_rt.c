@@ -92,6 +92,11 @@
 #define XO_CHUNK (4 << 20)
 #define XO_SMALL_MAX 1024
 #define XO_MID_MAX (256 << 10)
+// the largest block the size classes serve (the rest is malloc's): at
+// most XO_MID_MAX, lowered by XO_HEAP_MID_MAX (an experiment of the xo1
+// speed work: blocks on a class's free list are never reused for another
+// class nor returned, so growing lists leave their old blocks behind)
+static int64_t xo_mid_max = XO_MID_MAX;
 #define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
 
 typedef void (*xo_drop_fn)(void *);
@@ -268,7 +273,7 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	if (__builtin_expect(h->rt_depth != 0, 0)) {
 		h->rt_allocs++; // a real-time section allocated: XO-F007 when it ends
 	}
-	if (n > XO_MID_MAX) {
+	if (n > xo_mid_max) {
 		return xo_alloc_large(n);
 	}
 	int64_t size;
@@ -346,7 +351,7 @@ __attribute__((noinline)) static void *central_take(int64_t c) {
 // list, so moving blocks between threads costs O(1) per magazine.
 __attribute__((noinline)) static void *alloc_mt(int64_t n) {
 	xo_heap *h = heap_slow();
-	if (n <= XO_MID_MAX) {
+	if (n <= xo_mid_max) {
 		int64_t size;
 		int64_t c = size_class(n, &size);
 		if (!h->free_lists[c]) {
@@ -399,7 +404,7 @@ void xo_free(void *p) {
 // block of old bytes, which is freed).
 static void *xo_resize(void *p, int64_t old, int64_t n) {
 	int64_t *b = (int64_t *)p - 1;
-	if (b[0] < 0 && n > XO_MID_MAX) {
+	if (b[0] < 0 && n > xo_mid_max) {
 		if (n > old) {
 			heap()->abytes += n - old; // grown in place: counted for budgets
 		}
@@ -412,7 +417,7 @@ static void *xo_resize(void *p, int64_t old, int64_t n) {
 	}
 	if (b[0] > 0) {
 		int64_t size;
-		if (n <= XO_MID_MAX && size_class(n, &size) == b[0]) {
+		if (n <= xo_mid_max && size_class(n, &size) == b[0]) {
 			return p;
 		}
 	}
@@ -967,7 +972,7 @@ typedef struct {
 // usable returns the bytes a block requested with n bytes really has
 // (its size class), so strings can grow into the slack.
 static int64_t usable(int64_t n) {
-	if (n > XO_MID_MAX) {
+	if (n > xo_mid_max) {
 		return n;
 	}
 	int64_t size;
@@ -7119,6 +7124,10 @@ int main(int argc, char **argv) {
 #endif
 	xo_argc = argc;
 	xo_argv = argv;
+	const char *mid = getenv("XO_HEAP_MID_MAX");
+	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
+		xo_mid_max = atoll(mid);
+	}
 	if (getenv("XO_TEST")) {
 		// a test binary runs one test in the test world (xo_testing.c)
 		tw_init();
