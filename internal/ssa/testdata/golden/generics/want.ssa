@@ -3303,97 +3303,100 @@ b29:  ; preds b15
 
 func sched.fiber_main(v0: Int) -> () {
 b0(v0: Int):
-  v1: Int = const 2
-  v2: Int = call rt.tlocal_get, v1
-  v3: Int = const 2216
-  v4: Int = const 8
-  v5: Int = call rt.mem_load, v2, v3, v4
-  v6: Int = const 0
-  v7: Bool = ne v5, v6
-  br v7, b2(), b3()
+  v1: Int = const 80
+  v2: Int = const 8
+  v3: Int = call rt.mem_load, v0, v1, v2
+  v4: Int = const 0
+  v5: Bool = ne v3, v4
+  br v5, b2(), b3()
 b1:  ; preds b2, b3
-  v9: () = tuple
-  v10: () = call rt.sched_run_task, v0
-  v11: Int = const 48
-  v12: Int = const 1
-  v13: Int = const 8
-  v14: () = call rt.mem_store, v0, v11, v12, v13
-  v15: Int = const 2
-  v16: Int = call rt.tlocal_get, v15
-  v17: Int = const 2216
-  v18: Int = const 8
-  v19: Int = call rt.mem_load, v16, v17, v18
-  v20: Int = const 0
-  v21: Bool = ne v19, v20
-  br v21, b5(), b6()
+  v7: () = tuple
+  v8: () = call rt.sched_run_task, v0
+  v9: Int = const 48
+  v10: Int = const 1
+  v11: Int = const 8
+  v12: () = call rt.mem_store, v0, v9, v10, v11
+  v13: Int = call rt.tlocal_addr
+  v14: Int = const 16
+  v15: Int = const 8
+  v16: Int = call rt.mem_load, v13, v14, v15
+  v17: Int = const 0
+  v18: Bool = ne v3, v17
+  br v18, b5(), b6()
 b2:  ; preds b0
-  v23: Int = const 0
-  v24: () = call rt.sched_hook, v23, v2, v0
+  v20: Int = const 0
+  v21: Int = call rt.tlocal_addr
+  v22: Int = const 16
+  v23: Int = const 8
+  v24: Int = call rt.mem_load, v21, v22, v23
+  v25: () = call rt.sched_hook, v20, v24, v0
   jump b1()
 b3:  ; preds b0
-  v26: () = tuple
+  v27: () = tuple
   jump b1()
 b4:  ; preds b5, b6
-  v28: () = tuple
-  v29: Int = const 2208
-  v30: Int = const 8
-  v31: Int = call rt.mem_load, v16, v29, v30
-  v32: () = call rt.stack_switch, v0, v31
-  ret v32
+  v29: () = tuple
+  v30: Int = const 2208
+  v31: Int = const 8
+  v32: Int = call rt.mem_load, v16, v30, v31
+  v33: () = call rt.stack_switch, v0, v32
+  ret v33
 b5:  ; preds b1
-  v34: Int = const 1
-  v35: () = call rt.sched_hook, v34, v16, v0
+  v35: Int = const 1
+  v36: () = call rt.sched_hook, v35, v16, v0
   jump b4()
 b6:  ; preds b1
-  v37: () = tuple
+  v38: () = tuple
   jump b4()
 }
 
 func sched.fiber_park(v0: Int) -> () {
 b0(v0: Int):
-  v1: Int = const 32
-  v2: Int = const 0
-  v3: Int = call rt.tlocal_get, v2
+  v1: Int = call rt.tlocal_addr
+  v2: Int = const 32
+  v3: Int = const 0
   v4: Int = const 8
-  v5: () = call rt.mem_store, v0, v1, v3, v4
-  v6: Int = const 2
-  v7: Int = call rt.tlocal_get, v6
-  v8: Int = const 2216
+  v5: Int = call rt.mem_load, v1, v3, v4
+  v6: Int = const 8
+  v7: () = call rt.mem_store, v0, v2, v5, v6
+  v8: Int = const 16
   v9: Int = const 8
-  v10: Int = call rt.mem_load, v7, v8, v9
-  v11: Int = const 0
-  v12: Bool = ne v10, v11
-  br v12, b2(), b3()
+  v10: Int = call rt.mem_load, v1, v8, v9
+  v11: Int = const 80
+  v12: Int = const 8
+  v13: Int = call rt.mem_load, v0, v11, v12
+  v14: Int = const 0
+  v15: Bool = ne v13, v14
+  br v15, b2(), b3()
 b1:  ; preds b2, b3
-  v14: () = tuple
-  v15: Int = const 2208
-  v16: Int = const 8
-  v17: Int = call rt.mem_load, v7, v15, v16
-  v18: () = call rt.stack_switch, v0, v17
-  v19: Int = const 2
-  v20: Int = call rt.tlocal_get, v19
-  v21: Int = const 2216
-  v22: Int = const 8
-  v23: Int = call rt.mem_load, v20, v21, v22
-  v24: Int = const 0
-  v25: Bool = ne v23, v24
-  br v25, b5(), b6()
+  v17: () = tuple
+  v18: Int = const 2208
+  v19: Int = const 8
+  v20: Int = call rt.mem_load, v10, v18, v19
+  v21: () = call rt.stack_switch, v0, v20
+  v22: Int = const 0
+  v23: Bool = ne v13, v22
+  br v23, b5(), b6()
 b2:  ; preds b0
-  v27: Int = const 2
-  v28: () = call rt.sched_hook, v27, v7, v0
+  v25: Int = const 2
+  v26: () = call rt.sched_hook, v25, v10, v0
   jump b1()
 b3:  ; preds b0
-  v30: () = tuple
+  v28: () = tuple
   jump b1()
 b4:  ; preds b5, b6
-  v32: () = tuple
-  ret v32
+  v30: () = tuple
+  ret v30
 b5:  ; preds b1
-  v34: Int = const 3
-  v35: () = call rt.sched_hook, v34, v20, v0
+  v32: Int = const 3
+  v33: Int = call rt.tlocal_addr
+  v34: Int = const 16
+  v35: Int = const 8
+  v36: Int = call rt.mem_load, v33, v34, v35
+  v37: () = call rt.sched_hook, v32, v36, v0
   jump b4()
 b6:  ; preds b1
-  v37: () = tuple
+  v39: () = tuple
   jump b4()
 }
 
@@ -3408,94 +3411,100 @@ b0(v0: Int):
 
 func sched.fiber_run(v0: Int, v1: Int) -> Int {
 b0(v0: Int, v1: Int):
-  v2: Int = const 0
-  v3: Int = call rt.tlocal_get, v2
-  v4: Int = const 2216
-  v5: Int = const 8
-  v6: Int = call rt.mem_load, v0, v4, v5
+  v2: Int = call rt.tlocal_addr
+  v3: Int = const 0
+  v4: Int = const 8
+  v5: Int = call rt.mem_load, v2, v3, v4
+  v6: Int = const 2216
+  v7: Int = const 8
+  v8: Int = call rt.mem_load, v0, v6, v7
   jump b1()
 b1:  ; preds b0, b13
-  v8: Bool = const true
-  br v8, b3(), b2()
+  v10: Bool = const true
+  br v10, b3(), b2()
 b2:  ; preds b1
-  v10: Int = const 0
-  ret v10
+  v12: Int = const 0
+  ret v12
 b3:  ; preds b1
-  v12: Int = const 5
-  v13: Int = const 0
-  v14: Int = const 0
-  v15: () = call rt.slot_store, v1, v12, v13, v14
-  v16: Int = const 1
-  v17: () = call rt.tlocal_set, v16, v1
-  v18: Int = const 0
-  v19: Int = const 32
-  v20: Int = const 8
-  v21: Int = call rt.mem_load, v1, v19, v20
-  v22: () = call rt.tlocal_set, v18, v21
-  v23: Int = const 0
-  v24: Bool = ne v6, v23
-  br v24, b5(), b6()
-b4:  ; preds b5, b6
-  v26: () = tuple
+  v14: Int = const 5
+  v15: Int = const 0
+  v16: Int = const 0
+  v17: () = call rt.slot_store, v1, v14, v15, v16
+  v18: Int = const 8
+  v19: Int = const 8
+  v20: () = call rt.mem_store, v2, v18, v1, v19
+  v21: Int = const 0
+  v22: Int = const 32
+  v23: Int = const 8
+  v24: Int = call rt.mem_load, v1, v22, v23
+  v25: Int = const 8
+  v26: () = call rt.mem_store, v2, v21, v24, v25
   v27: Int = const 0
-  v28: Int = const 2208
-  v29: Int = call rt.int_wrap, v27, v0, v28
-  v30: Int = const 0
-  v31: Int = const 8
-  v32: Int = call rt.mem_load, v1, v30, v31
-  v33: () = call rt.stack_switch, v29, v32
+  v28: Bool = ne v8, v27
+  br v28, b5(), b6()
+b4:  ; preds b5, b6
+  v30: () = tuple
+  v31: Int = const 0
+  v32: Int = const 2208
+  v33: Int = call rt.int_wrap, v31, v0, v32
   v34: Int = const 0
-  v35: Bool = ne v6, v34
-  br v35, b8(), b9()
+  v35: Int = const 8
+  v36: Int = call rt.mem_load, v1, v34, v35
+  v37: () = call rt.stack_switch, v33, v36
+  v38: Int = const 0
+  v39: Bool = ne v8, v38
+  br v39, b8(), b9()
 b5:  ; preds b3
-  v37: Int = const 4
-  v38: () = call rt.sched_hook, v37, v0, v1
+  v41: Int = const 4
+  v42: () = call rt.sched_hook, v41, v0, v1
   jump b4()
 b6:  ; preds b3
-  v40: () = tuple
+  v44: () = tuple
   jump b4()
 b7:  ; preds b8, b9
-  v42: () = tuple
-  v43: Int = const 1
-  v44: Int = const 0
-  v45: () = call rt.tlocal_set, v43, v44
-  v46: Int = const 0
-  v47: () = call rt.tlocal_set, v46, v3
-  v48: Int = const 48
+  v46: () = tuple
+  v47: Int = const 8
+  v48: Int = const 0
   v49: Int = const 8
-  v50: Int = call rt.mem_load, v1, v48, v49
+  v50: () = call rt.mem_store, v2, v47, v48, v49
   v51: Int = const 0
-  v52: Bool = ne v50, v51
-  br v52, b11(), b12()
+  v52: Int = const 8
+  v53: () = call rt.mem_store, v2, v51, v5, v52
+  v54: Int = const 48
+  v55: Int = const 8
+  v56: Int = call rt.mem_load, v1, v54, v55
+  v57: Int = const 0
+  v58: Bool = ne v56, v57
+  br v58, b11(), b12()
 b8:  ; preds b4
-  v54: Int = const 5
-  v55: () = call rt.sched_hook, v54, v0, v1
+  v60: Int = const 5
+  v61: () = call rt.sched_hook, v60, v0, v1
   jump b7()
 b9:  ; preds b4
-  v57: () = tuple
+  v63: () = tuple
   jump b7()
 b10:  ; preds b12
-  v59: () = tuple
-  v60: Int = const 5
-  v61: Int = const 1
-  v62: Int = const 2
-  v63: Int = const 3
-  v64: Bool = call rt.slot_cas, v1, v60, v61, v62, v63
-  br v64, b14(), b15()
+  v65: () = tuple
+  v66: Int = const 5
+  v67: Int = const 1
+  v68: Int = const 2
+  v69: Int = const 3
+  v70: Bool = call rt.slot_cas, v1, v66, v67, v68, v69
+  br v70, b14(), b15()
 b11:  ; preds b7
-  v66: Int = const 1
-  ret v66
+  v72: Int = const 1
+  ret v72
 b12:  ; preds b7
-  v68: () = tuple
+  v74: () = tuple
   jump b10()
 b13:  ; preds b15
-  v70: () = tuple
+  v76: () = tuple
   jump b1()
 b14:  ; preds b10
-  v72: Int = const 0
-  ret v72
+  v78: Int = const 0
+  ret v78
 b15:  ; preds b10
-  v74: () = tuple
+  v80: () = tuple
   jump b13()
 }
 
@@ -6460,7 +6469,7 @@ b3:  ; preds b1
   v14: Int = call rt.int_wrap, v13, v12, v9
   v15: Int = const 1
   v16: Int = const 1
-  v17: Int = shr v14, v16 @ sched.xo:123:33 lands v18
+  v17: Int = shr v14, v16 @ sched.xo:130:33 lands v18
   v18: Bool = call rt.landing
   br v18, b17(), b16()
 b4:  ; preds b6
@@ -6821,7 +6830,7 @@ b0(v0: Int, v1: Int):
   v5: Int = call rt.slot_add, v0, v2, v3, v4
   v6: Int = const 30
   v7: Int = const 2
-  v8: Int = neg v7 @ sched.xo:331:32 lands v9
+  v8: Int = neg v7 @ sched.xo:342:32 lands v9
   v9: Bool = call rt.landing
   br v9, b5(), b4()
 b1(v11: Int):  ; preds b2, b3

@@ -1966,24 +1966,25 @@ Lf21_b31:
 _xo_f_cabi_2efiber__main:
 Lf22_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-32]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
-	.cfi_def_cfa w29, 32
-	.cfi_offset w29, -32
-	.cfi_offset w30, -24
-	.cfi_offset w20, -16
-	.cfi_offset w19, -8
+	str x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w21, -16
 Lf22_b0:
 	mov x20, x0
 Lf22_b1:
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x1, x0
-	ldr x9, [x1, #2216]
-	cmp x9, #0
+	ldr x21, [x20, #80]
+	cmp x21, #0
 	b.eq Lf22_b4
 Lf22_b2:
+	bl _xo_tlocal_addr
+	ldr x1, [x0, #16]
 	mov x0, #0
 	mov x2, x20
 	bl _xo_sched_hook
@@ -1992,11 +1993,9 @@ Lf22_b4:
 	bl _xo_sched_run_task
 	mov x9, #1
 	str x9, [x20, #48]
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x19, x0
-	ldr x9, [x19, #2216]
-	cmp x9, #0
+	bl _xo_tlocal_addr
+	ldr x19, [x0, #16]
+	cmp x21, #0
 	b.eq Lf22_b7
 Lf22_b5:
 	mov x0, #1
@@ -2009,7 +2008,8 @@ Lf22_b7:
 	bl _xo_stack_switch
 Lf22_b8:
 	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
 	ret
 	.cfi_endproc
 
@@ -2018,48 +2018,47 @@ Lf22_b8:
 _xo_f_cabi_2efiber__park:
 Lf23_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-32]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
-	.cfi_def_cfa w29, 32
-	.cfi_offset w29, -32
-	.cfi_offset w30, -24
-	.cfi_offset w20, -16
-	.cfi_offset w19, -8
+	str x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w21, -16
 Lf23_b0:
-	mov x20, x0
+	mov x21, x0
 Lf23_b1:
-	mov x0, #0
-	bl _xo_tlocal_get
-	str x0, [x20, #32]
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x19, x0
-	ldr x9, [x19, #2216]
-	cmp x9, #0
+	bl _xo_tlocal_addr
+	ldr x9, [x0, #0]
+	str x9, [x21, #32]
+	ldr x19, [x0, #16]
+	ldr x20, [x21, #80]
+	cmp x20, #0
 	b.eq Lf23_b4
 Lf23_b2:
 	mov x0, #2
 	mov x1, x19
-	mov x2, x20
+	mov x2, x21
 	bl _xo_sched_hook
 Lf23_b4:
 	ldr x1, [x19, #2208]
-	mov x0, x20
+	mov x0, x21
 	bl _xo_stack_switch
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x1, x0
-	ldr x9, [x1, #2216]
-	cmp x9, #0
+	cmp x20, #0
 	b.eq Lf23_b8
 Lf23_b5:
+	bl _xo_tlocal_addr
+	ldr x1, [x0, #16]
 	mov x0, #3
-	mov x2, x20
+	mov x2, x21
 	bl _xo_sched_hook
 Lf23_b8:
 	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
 	ret
 	.cfi_endproc
 
@@ -2097,56 +2096,49 @@ Lf25_begin:
 	.cfi_offset w23, -16
 Lf25_b0:
 	mov x21, x0
-	mov x20, x1
+	mov x19, x1
 Lf25_b1:
-	mov x0, #0
-	bl _xo_tlocal_get
-	mov x23, x0
+	bl _xo_tlocal_addr
+	mov x20, x0
+	ldr x23, [x20, #0]
 	ldr x22, [x21, #2216]
 Lf25_b3:
-	add x9, x20, #40
-	mov x19, #0
-	str x19, [x9]
-	mov x0, #1
-	mov x1, x20
-	bl _xo_tlocal_set
-	ldr x1, [x20, #32]
-	mov x0, x19
-	bl _xo_tlocal_set
+	add x10, x19, #40
+	mov x9, #0
+	str x9, [x10]
+	str x19, [x20, #8]
+	ldr x9, [x19, #32]
+	str x9, [x20, #0]
 	cmp x22, #0
 	b.eq Lf25_b6
 Lf25_b4:
 	mov x0, #4
 	mov x1, x21
-	mov x2, x20
+	mov x2, x19
 	bl _xo_sched_hook
 Lf25_b6:
 	add x0, x21, #2208
-	ldr x1, [x20, #0]
+	ldr x1, [x19, #0]
 	bl _xo_stack_switch
 	cmp x22, #0
 	b.eq Lf25_b9
 Lf25_b7:
 	mov x0, #5
 	mov x1, x21
-	mov x2, x20
+	mov x2, x19
 	bl _xo_sched_hook
 Lf25_b9:
-	mov x0, #1
-	mov x19, #0
-	mov x1, x19
-	bl _xo_tlocal_set
-	mov x0, x19
-	mov x1, x23
-	bl _xo_tlocal_set
-	ldr x9, [x20, #48]
+	mov x9, #0
+	str x9, [x20, #8]
+	str x23, [x20, #0]
+	ldr x9, [x19, #48]
 	cmp x9, #0
 	b.eq Lf25_b12
 Lf25_b10:
 	mov x0, #1
 	b Lf25_b17
 Lf25_b12:
-	add x12, x20, #40
+	add x12, x19, #40
 	mov x11, #1
 	mov x9, #2
 	mov x10, x11
@@ -4671,23 +4663,24 @@ Lf60_b29:
 _xo_f_sched_2efiber__main:
 Lf61_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-32]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
-	.cfi_def_cfa w29, 32
-	.cfi_offset w29, -32
-	.cfi_offset w30, -24
-	.cfi_offset w20, -16
-	.cfi_offset w19, -8
+	str x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w21, -16
 Lf61_b0:
 	mov x20, x0
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x1, x0
-	ldr x9, [x1, #2216]
-	cmp x9, #0
+	ldr x21, [x20, #80]
+	cmp x21, #0
 	b.eq Lf61_b3
 Lf61_b1:
+	bl _xo_tlocal_addr
+	ldr x1, [x0, #16]
 	mov x0, #0
 	mov x2, x20
 	bl _xo_sched_hook
@@ -4696,11 +4689,9 @@ Lf61_b3:
 	bl _xo_sched_run_task
 	mov x9, #1
 	str x9, [x20, #48]
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x19, x0
-	ldr x9, [x19, #2216]
-	cmp x9, #0
+	bl _xo_tlocal_addr
+	ldr x19, [x0, #16]
+	cmp x21, #0
 	b.eq Lf61_b6
 Lf61_b4:
 	mov x0, #1
@@ -4712,7 +4703,8 @@ Lf61_b6:
 	mov x0, x20
 	bl _xo_stack_switch
 	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
 	ret
 	.cfi_endproc
 
@@ -4721,47 +4713,46 @@ Lf61_b6:
 _xo_f_sched_2efiber__park:
 Lf62_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-32]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
-	.cfi_def_cfa w29, 32
-	.cfi_offset w29, -32
-	.cfi_offset w30, -24
-	.cfi_offset w20, -16
-	.cfi_offset w19, -8
+	str x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w21, -16
 Lf62_b0:
-	mov x20, x0
-	mov x0, #0
-	bl _xo_tlocal_get
-	str x0, [x20, #32]
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x19, x0
-	ldr x9, [x19, #2216]
-	cmp x9, #0
+	mov x21, x0
+	bl _xo_tlocal_addr
+	ldr x9, [x0, #0]
+	str x9, [x21, #32]
+	ldr x19, [x0, #16]
+	ldr x20, [x21, #80]
+	cmp x20, #0
 	b.eq Lf62_b3
 Lf62_b1:
 	mov x0, #2
 	mov x1, x19
-	mov x2, x20
+	mov x2, x21
 	bl _xo_sched_hook
 Lf62_b3:
 	ldr x1, [x19, #2208]
-	mov x0, x20
+	mov x0, x21
 	bl _xo_stack_switch
-	mov x0, #2
-	bl _xo_tlocal_get
-	mov x1, x0
-	ldr x9, [x1, #2216]
-	cmp x9, #0
+	cmp x20, #0
 	b.eq Lf62_b6
 Lf62_b4:
+	bl _xo_tlocal_addr
+	ldr x1, [x0, #16]
 	mov x0, #3
-	mov x2, x20
+	mov x2, x21
 	bl _xo_sched_hook
 Lf62_b6:
 	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
 	ret
 	.cfi_endproc
 
@@ -4797,48 +4788,41 @@ Lf64_begin:
 	.cfi_offset w23, -16
 Lf64_b0:
 	mov x21, x0
-	mov x20, x1
-	mov x0, #0
-	bl _xo_tlocal_get
-	mov x23, x0
+	mov x19, x1
+	bl _xo_tlocal_addr
+	mov x20, x0
+	ldr x23, [x20, #0]
 	ldr x22, [x21, #2216]
 Lf64_b2:
-	add x9, x20, #40
-	mov x19, #0
-	str x19, [x9]
-	mov x0, #1
-	mov x1, x20
-	bl _xo_tlocal_set
-	ldr x1, [x20, #32]
-	mov x0, x19
-	bl _xo_tlocal_set
+	add x10, x19, #40
+	mov x9, #0
+	str x9, [x10]
+	str x19, [x20, #8]
+	ldr x9, [x19, #32]
+	str x9, [x20, #0]
 	cmp x22, #0
 	b.eq Lf64_b5
 Lf64_b3:
 	mov x0, #4
 	mov x1, x21
-	mov x2, x20
+	mov x2, x19
 	bl _xo_sched_hook
 Lf64_b5:
 	add x0, x21, #2208
-	ldr x1, [x20, #0]
+	ldr x1, [x19, #0]
 	bl _xo_stack_switch
 	cmp x22, #0
 	b.eq Lf64_b8
 Lf64_b6:
 	mov x0, #5
 	mov x1, x21
-	mov x2, x20
+	mov x2, x19
 	bl _xo_sched_hook
 Lf64_b8:
-	mov x0, #1
-	mov x19, #0
-	mov x1, x19
-	bl _xo_tlocal_set
-	mov x0, x19
-	mov x1, x23
-	bl _xo_tlocal_set
-	ldr x9, [x20, #48]
+	mov x9, #0
+	str x9, [x20, #8]
+	str x23, [x20, #0]
+	ldr x9, [x19, #48]
 	cmp x9, #0
 	b.eq Lf64_b11
 Lf64_b9:
@@ -4849,7 +4833,7 @@ Lf64_b9:
 	ldp x29, x30, [sp], #64
 	ret
 Lf64_b11:
-	add x12, x20, #40
+	add x12, x19, #40
 	mov x11, #1
 	mov x9, #2
 	mov x10, x11
@@ -15473,6 +15457,15 @@ _xo_tlocal_set:
 	ldr x8, [x0]
 	blr x8
 	str x11, [x0, x9, lsl #3]
+	ret x10
+	.globl _xo_tlocal_addr
+	.p2align 2
+_xo_tlocal_addr:
+	mov x10, x30
+	adrp x0, _xo_tlocal@TLVPPAGE
+	ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]
+	ldr x8, [x0]
+	blr x8
 	ret x10
 	.section __DATA,__thread_data,thread_local_regular
 	.p2align 3
