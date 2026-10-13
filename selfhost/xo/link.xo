@@ -10,6 +10,14 @@ struct Ctx {
   std: Str
   xo: Str
   cache: Str
+  // the OS a link targets when it is not goos (an LLVM cross build for
+  // Windows, decision 0197); "" for the host
+  tgoos: Str = ""
+}
+
+/// The OS the link of ctx targets: the host unless a cross build set it.
+fn link_os(ctx: Ctx) -> Str {
+  if ctx.tgoos.is_empty() { ctx.goos } else { ctx.tgoos }
 }
 
 /// ccBuild: compiles and links srcs into bin with cc and flags; returns
@@ -86,7 +94,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
   if !sobj.is_empty() {
     srcs[rti] = sobj
     if tls {
-      tls_link = [slib] + tls_system_libs(ctx.goos)
+      tls_link = [slib] + tls_system_libs(link_os(ctx))
     }
   } else {
     var tls_compile: List[Str] = []
@@ -111,7 +119,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
       }
     }
   }
-  args = args + srcs + tls_link + libs + sys_link_args(ctx.goos)
+  args = args + srcs + tls_link + libs + sys_link_args(link_os(ctx))
   match os.proc.run(cc, args) {
     Ok(r) => {
       let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
@@ -158,7 +166,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
   if !env_root.is_empty() {
     return [env_root]
   }
-  if ctx.goos != "darwin" {
+  if link_os(ctx) != "darwin" {
     return [""]
   }
   var out = [""]
@@ -189,7 +197,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
 /// sysrootMemo: the file remembering the SDK that linked last time, ""
 /// with $XO_SYSROOT.
 fn sysroot_memo(os: Os, ctx: Ctx) -> Str {
-  if !(os.env.get("XO_SYSROOT") ?? "").is_empty() || ctx.cache.is_empty() {
+  if !(os.env.get("XO_SYSROOT") ?? "").is_empty() || ctx.cache.is_empty() || link_os(ctx) != ctx.goos {
     return ""
   }
   "${ctx.cache}/xo/llvm-sysroot"

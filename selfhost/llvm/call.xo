@@ -47,7 +47,9 @@ fn (var g: Gen) call(v: Int) {
         g.set(v, "call ptr @xo_rl_new_n(i64 ${a0}, i64 ${g.size(et)})")
         return
       }
-      g.set(v, "call ptr @xo_rl_new(i64 4, i64 ${g.size(et)})")
+      // the shared empty list, immortal: the first push allocates
+      // (xo_rl_grow), as on arm64
+      g.set(v, "call ptr @xo_rl_empty()")
     }
     "list.len" => {
       let a0 = g.op(args[0])

@@ -136,6 +136,9 @@ struct G {
   nhelp: Int = 0
   nfunc: Int = 0
   text: List[Str] = []
+  /// word_text's strings by offset / 8
+  ldr_texts: List[Str] = []
+  str_texts: List[Str] = []
   lsdas: List[Str] = []
   ncs: Int = 0
   personality_ref: Bool = false

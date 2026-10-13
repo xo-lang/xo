@@ -122,6 +122,12 @@ The bootstrap chain, as release.sh runs it:
                                            -> linux/arm64 xo1 (no cc: selfhost/macho's ELF link)
     darwin xo1: --backend=go --targets=linux/amd64
                                            -> linux/amd64 xo1 (Go toolchain)
+    darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
+                                           -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
+                                              XO_WIN_CLANG, an upstream clang with lld-link beside it,
+                                              and XO_WINSYSROOT from xwin; not tried on the Mac yet,
+                                              whose 24 GB is below the 29.5 GB the Linux run used;
+                                              XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
 
 After a release exists, the previous release's xo replaces the Go seed
 (`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
@@ -216,6 +222,8 @@ go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc,verify,mutants
 go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--test] [--stages] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder: the build stage of xo ssadump for the functions it completes, then (--stages, when it skipped nothing) the stages unwind, landings, cleanup, rc, verify, and mutants, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
 go run ./cmd/xo asmdump [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # hidden: the arm64 assembly of internal/arm64 (build.Arm64AsmDump: the SSA as xo ssadump builds it, verified, InsertRC, generated, again without inlining when the inlined module does not verify); --each prints === asm <dir> before each run; --bench=N times arm64.Generate alone (decision 0158; last verified: 2026-10-11)
 XO_PHASE_TIMES=1 xo asmdump <dir>  /  xo1 asm|build|test --phase-times <dir>   # per phase wall clock on stderr as `phase NAME MS ms` (Go: check, ssa, verify, insert_rc, verify, inline, emit, print; xo1: check, ssa, tz, prune_unwind, add_landings, cleanup, insert_rc, inline, emit, print or write, cc); bench/results/xo1-perf-2026-10-12.md (last verified: 2026-10-12)
+XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
+xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>   # xo1, the self hosted compiler driver of decision 0158's switch-over experiment: selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) assembles and links with std/llrt (copied next to OUT as OUT.rt), trying the macOS SDKs internal/build tries ($XO_SYSROOT, the remembered one, none, xcrun's, Xcode's); fault positions relative to the program's line root (the nearest xo.mod); refuses programs that need time zone data (std/time), TLS (std/http), or `use c` sources; not the released xo (last verified: 2026-10-11)
 go run ./cmd/xo gendump [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--each] <dirs...>   # hidden: the files gen.Generate makes for the Go backend (build.GoGenDump), == file <path> before each; --fmt reads the Xo generator's output and puts its Go files through gen.FormatFile (only gofmt after == prepped) (decision 0167; last verified: 2026-10-11)
@@ -244,7 +252,7 @@ python3 scripts/selfhost-gogoldens.py <xo1>          # every internal/gen/testda
 xo1 build|run|test [flags] [dir ...]                 # decision 0178 stage 1: xo build|run|test's flags with Go's flag rules (--targets, -o, --json, --release, --error-args, --stamp, --no-mono, --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore, --record, --run, --cases, -v, --offline, --workspace) plus --std --wd --cc --asm --go-tree --phase-times; several directories are one program; the check's diagnostics printed as xo prints them (human, or --json's indented object); the build goes to the Go driver's build directory (<user cache>/xo/build/<hash>/arm64|llvm|..., XO_BIN_CACHE shared with xo under the same keys), prints `os/arch: path`; XO_LLVM_SPLIT/JOBS/LTO split LLVM builds; `run DIR -- ARGS` execs the program, its exit status passed through; not in xo1 yet: --ci, --hybrid, --real on native tests, XO1201 diagnostics (last verified: 2026-10-12)
 XO1_CMD=run python3 scripts/selfhost-goldens.py <xo1>   # the arm64 goldens through `xo1 run` (build and run in one command, in the program's directory); combine with XO1_BACKEND (decision 0178 stage 1; last verified: 2026-10-12)
 XO_SELF_DRIVER_ALL=1 XO1=<xo1> go test ./cmd/xo -run ...    # cmd/xo's tests with `build`, `run`, and `test` routed through xo1 (cmd/xo/selfdriver_test.go: --std of the repository, --wd, --backend=go when none is named); off by default (decision 0178 stage 1; last verified: 2026-10-12)
-xo build|run|test --backend=arm64|llvm|--no-gc ...       # decision 0178 switch point A: runs xo1 (internal/selfdriver), built once per embedded source set into <user cache>/xo/xo1/<key>/bin/xo1 (XO1_CACHE moves it; the first build takes about 5 to 12 minutes on Apple silicon and prints a line); on darwin/amd64 and linux/amd64 hosts only --backend=llvm and --no-gc (LLVM there) run xo1, which is built by the LLVM backend split into 12 modules without LTO (about 34 minutes and 16.5 GB on a 16 vCPU EC2 host, 86 minutes with ThinLTO on the 16 GB Intel Mac; XO_LLVM_SPLIT, XO_LLVM_LTO override; bench/results/xo1-x86-2026-10-12.md); XO1=<path> uses a prebuilt one; XO_SELF_DRIVER=0 runs the Go driver; programs xo1 cannot lower yet fall back to the Go driver (XO1201 diagnostics); --ci, --hybrid, --real, and workspace tests stay on the Go driver (last verified: 2026-10-12)
+xo build|run|test --backend=arm64|llvm|--no-gc ...       # decision 0178 switch point A: runs xo1 (internal/selfdriver), its sources and std written to <user cache>/xo/xo1/<key> per embedded source set, the binary built once per set of its own inputs (selfhost/, the std modules it uses, the xo version, the host) into <user cache>/xo/xo1/bin/<binkey>/xo1, so a change to another std module, std/llrt, or third_party reuses it (decision 0199; XO1_CACHE moves both; a build takes about 5 to 12 minutes on Apple silicon and prints a line; last verified: 2026-10-13); on darwin/amd64 and linux/amd64 hosts only --backend=llvm and --no-gc (LLVM there) run xo1, which is built by the LLVM backend split into 12 modules without LTO (about 34 minutes and 16.5 GB on a 16 vCPU EC2 host, 86 minutes with ThinLTO on the 16 GB Intel Mac; XO_LLVM_SPLIT, XO_LLVM_LTO override; bench/results/xo1-x86-2026-10-12.md); XO1=<path> uses a prebuilt one; XO_SELF_DRIVER=0 runs the Go driver; programs xo1 cannot lower yet fall back to the Go driver (XO1201 diagnostics); --ci, --hybrid, --real, and workspace tests stay on the Go driver (last verified: 2026-10-12)
 python3 scripts/selfhost-samebin.py <xo1> [DIR]        # every arm64 golden built by xo1 and by `xo build --backend=arm64` under the same file name, compared: identical, same code and data (otool -s), or different; DIR default .tools/samebin (decision 0174; last verified: 2026-10-12)
 (cd selfhost && go run ../cmd/xo build --backend=arm64 -o macho ./macho) && ./macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s   # the self hosted Mach-O assembler (decision 0182): the arm64 emitter's assembly into an MH_OBJECT with the sections, relocations, compact unwind entries, and eh_frame of `cc -c`; LC_BUILD_VERSION minos default 11.0 (last verified: 2026-10-12)
 python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c on each file: identical objects, functions, sections, relocation tables (symbols by name), sizes, time; MACHO_KEEP=1 keeps the objects; inputs from `xo asmdump <dir>` (decision 0182; last verified: 2026-10-12)
@@ -2984,6 +2992,25 @@ x86_64-pc-windows-msvc by default and finds the build tools itself; the
 link is `-fuse-ld=lld` (LTO bitcode). Results:
 bench/results/windows-2026-10-12.md. Last verified: 2026-10-12
 (instance i-EXAMPLE19).
+
+xo1 for Windows built by Xo (decision 0197 stage 7). Cross, from Linux
+or macOS: an upstream LLVM (clang and lld-link; Apple's clang has no
+lld-link; 23.1.3 measured) and a Windows sysroot,
+`xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style
+--preserve-ms-arch-notation --output DIR` (xwin 0.10.0, 19 s, 1.1 GB;
+without the last flag lld-link finds no .lib,
+gotchas/windows-cross-sysroot.md), then
+`XO_CLANG=<llvm>/bin/clang XO_AR=<llvm>/bin/llvm-ar XO_WINSYSROOT=DIR
+XO_LLVM_SPLIT=16 XO_LLVM_JOBS=16 XO_LLVM_LTO=thin xo build --backend=llvm
+--targets=windows/amd64 -o xo.exe ./selfhost/xo` (1,362 s on 32 vCPU and
+64 GiB, 29.5 GB peak in use; the link alone about 22 GB). Natively on
+Windows: the same without XO_WINSYSROOT, XO_CLANG, XO_AR (1,544 s,
+35 GB peak in use on c7i.8xlarge; use `XO_REMOTE_TYPE=c7i.8xlarge`, 32
+GiB is too little for one module with full LTO and tight for this).
+XO_LLVM_LTO=none is slower here (1,571 s cross: each -O2 module takes
+764 to 1,426 s). Results: bench/results/windows-2026-10-12.md, "xo1
+built by Xo for Windows". Last verified: 2026-10-13 (i-EXAMPLE07,
+i-EXAMPLE03).
 
 
 ### xo1 on x86-64 hosts

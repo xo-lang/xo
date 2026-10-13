@@ -11,7 +11,9 @@ enum Tree {
 
 struct Cfg {
   gain: Int = 1,
-  tags: List[Int] = [],
+  // not `[]`: an empty list literal shares one immortal list and
+  // allocates nothing until its first push (xo1-speed, 2026-10-13)
+  tags: List[Int] = [0],
 }
 
 fn bump(var xs: List[Int], i: Int) uses realtime {
