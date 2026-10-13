@@ -434,3 +434,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-call-noalias-spills.md](llvm-call-noalias-spills.md): Observed, not kept: `!noalias` on calls lets GVN keep stored words in registers across them; 128 words across 16 calls spilled (Argon2id 1.093x against 1.044x).
 - [ssa-unwind-exit-returns-rl-empty.md](ssa-unwind-exit-returns-rl-empty.md): Observed: an unwind exit returns `rt.rl_empty`, not `list.new`, for each `var` List, so an analysis of returns must treat both as new lists.
 - [ec2-bundle-sent-head.md](ec2-bundle-sent-head.md): Observed, fixed: the EC2 scripts bundled HEAD instead of a non-HEAD commit; they now bundle through a temporary branch ref.
+- [shipped-xo-test-needs-release-layout.md](shipped-xo-test-needs-release-layout.md): Observed, fixed: xo1 built into a bare temp directory found no std and the checker faulted on `Int`; tests use a release layout, and a missing or short prelude is now an error (exit 2).

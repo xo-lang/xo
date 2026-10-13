@@ -30,12 +30,28 @@ func shippedXo(t *testing.T) []string {
 	if testing.Short() {
 		t.Skip("builds xo1 (selfhost/xo); set XO_CLI to run it with -short")
 	}
-	bin := filepath.Join(t.TempDir(), "xo")
+	// a release layout (bin/xo, lib/xo/std): xo1 finds std beside itself
+	// through Env.program, since commands that check (TestCLIPattern) run
+	// with no $XO_STD from a directory with no std/ (gotcha
+	// shipped-xo-test-needs-release-layout)
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin", "xo")
+	std, err := filepath.Abs(filepath.Join("..", "..", "std"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(root, "lib", "xo"), 0o755)
+	os.MkdirAll(filepath.Join(root, "bin"), 0o755)
+	if err := os.Symlink(std, filepath.Join(root, "lib", "xo", "std")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	var out, errOut bytes.Buffer
 	if code := runXo([]string{"build", "-o", bin, filepath.Join("..", "..", "selfhost", "xo")}, &out, &errOut); code != 0 {
 		t.Fatalf("building xo1: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
+	// unset for the runs (the build above is the Go driver's)
+	t.Setenv("XO_STD", "")
 	return []string{bin}
 }
 
@@ -163,6 +179,40 @@ func TestCLIHelp(t *testing.T) {
 	}
 	if out, stderr, code := xo("run", "./..."); code != 2 || out != "" || stderr != "xo run: ./...: run takes one directory, not a package pattern\n" {
 		t.Errorf("xo run ./...: exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+}
+
+// TestCLINoStd checks that the shipped xo reports a std directory it
+// cannot check against as a load error (exit 2) instead of faulting in the
+// checker (exit 70, "prelude type missing: Int"): no prelude.xo there,
+// or a prelude lacking a core type.
+func TestCLINoStd(t *testing.T) {
+	cli := shippedXo(t)
+	root := t.TempDir()
+	for name, src := range map[string]string{
+		"m/xo.mod":         "module example.com/m\nedition preview\n",
+		"m/a.xo":           "pub fn f() -> Int {\n  1\n}\n",
+		"empty/notes.txt":  "no prelude\n",
+		"short/prelude.xo": "struct Str {}\nstruct Bool {}\n",
+		"short/testing.xo": "",
+	} {
+		p := filepath.Join(root, name)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(filepath.Join(root, "m"))
+	for _, c := range []struct{ std, want string }{
+		{"empty", "xo check: std library not found: no " + filepath.ToSlash(filepath.Join(root, "empty")) + "/prelude.xo"},
+		{"short", "prelude.xo lacks Int, Never, Option, Result"},
+	} {
+		t.Setenv("XO_STD", filepath.ToSlash(filepath.Join(root, c.std)))
+		var out, errOut bytes.Buffer
+		code := execCLI(cli, []string{"check", "."}, &out, &errOut)
+		if code != 2 || !strings.Contains(errOut.String(), c.want) || strings.Contains(errOut.String(), "fault") {
+			t.Errorf("XO_STD=%s xo check .: exit %d, stdout %q, stderr %q; want exit 2 and %q", c.std, code, out.String(), errOut.String(), c.want)
+		}
 	}
 }
 
