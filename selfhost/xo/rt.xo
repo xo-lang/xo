@@ -257,7 +257,7 @@ fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str
     b.write(data)
   }
   let src = tls_source_hash(os, ctx.xo)?
-  b.write_str("tls ${tls_version()} ${src} ${go_q(tls_defines())} ${go_q(tls_include_dirs())} ${tls_file_defines_v()}\n")
+  b.write_str("tls ${tls_version()} ${src} ${go_q(tls_defines())} ${go_q(tls_include_dirs(goos))} ${tls_file_defines_v()}\n")
   Ok(crypto.sha256(b.freeze()).to_hex())
 }
 
