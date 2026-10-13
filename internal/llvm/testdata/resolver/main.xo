@@ -1,0 +1,90 @@
+// The resolver's test program (internal/llvm resolver_linux_test.go,
+// decision 0206 stage 3): listens on 127.0.0.1 and [::1] on one port,
+// dials each name of its arguments on that port, and prints which
+// listener answered ("4" or "6") or the error, the port replaced by
+// PORT. An argument NAME@PORT dials that port instead and prints "ok"
+// when the connection is made (real resolution).
+
+fn describe(e: NetErr, port: Str) -> Str {
+  match e {
+    NetErr.InvalidAddr(m) => "InvalidAddr ${m.replace(port, "PORT")}"
+    NetErr.Refused => "Refused"
+    NetErr.Timeout => "Timeout"
+    NetErr.Io(m) => "Io ${m.replace(port, "PORT")}"
+    NetErr.Canceled => "Canceled"
+    NetErr.Denied(_) => "Denied"
+  }
+}
+
+/// Accepts connections on l until it closes, writing tag on each.
+fn answer(l: Listener, tag: Str) {
+  while {
+    match l.accept() {
+      Ok(c) => {
+        let _ = c.write(tag.bytes()).is_ok()
+        c.close()
+      }
+      Err(_) => break
+    }
+  }
+}
+
+/// The port of a listener address ("127.0.0.1:41234").
+fn port_of(addr: Str) -> Str {
+  let parts = addr.split(":")
+  parts[parts.len() - 1]
+}
+
+fn dial_one(os: Os, name: Str, port: Str) {
+  if let Some(at) = name.find("@") {
+    let host = name[0..at]
+    let p = name[at + 1..name.len()]
+    match os.net.dial("${host}:${p}") {
+      Ok(c) => {
+        os.stdio.println("${name}: ok")
+        c.close()
+      }
+      Err(e) => os.stdio.println("${name}: ${describe(e, p)}")
+    }
+    return
+  }
+  let addr = if name.contains(":") { "[${name}]:${port}" } else { "${name}:${port}" }
+  match os.net.dial(addr) {
+    Ok(c) => {
+      match c.read(1) {
+        Ok(Some(b)) => os.stdio.println("${name}: ${b.to_str() ?? "?"}")
+        Ok(None) => os.stdio.println("${name}: closed")
+        Err(e) => os.stdio.println("${name}: read ${describe(e, port)}")
+      }
+      c.close()
+    }
+    Err(e) => os.stdio.println("${name}: ${describe(e, port)}")
+  }
+}
+
+fn main(os: Os) {
+  let l4 = match os.net.listen("127.0.0.1:0") {
+    Ok(l) => l
+    Err(e) => {
+      os.stdio.println("listen 127.0.0.1: ${describe(e, "")}")
+      return
+    }
+  }
+  let port = port_of(l4.addr())
+  let l6 = match os.net.listen("[::1]:${port}") {
+    Ok(l) => l
+    Err(e) => {
+      os.stdio.println("listen [::1]: ${describe(e, port)}")
+      return
+    }
+  }
+  scope s {
+    s.spawn_background(fn() { answer(l4, "4") })
+    s.spawn_background(fn() { answer(l6, "6") })
+    for name in os.env.args() {
+      dial_one(os, name, port)
+    }
+  }
+  l4.close()
+  l6.close()
+}

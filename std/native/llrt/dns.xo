@@ -38,10 +38,13 @@
 // IPv4 forms other than four decimal fields (inet_aton's "127.1") are
 // not supported; resolv.conf's `sortlist` and `options inet6`,
 // `no-check-names`, and `ndots` above 15 are ignored; the IPv6 zone of a
-// numeric address names an interface or its index. A failure reports
-// glibc's codes: EAI_NONAME for a name that does not exist (or one that
-// is not a domain name), EAI_NODATA when the last name tried exists
-// with no address, EAI_AGAIN when a server failed or did not answer.
+// numeric address names an interface or its index; a timeout does not
+// end the search list (glibc's does). A failure reports glibc's codes,
+// chosen as glibc's res_search chooses: the outcome of the name as
+// given when it was tried first, else EAI_NODATA when a name existed
+// with no address, else EAI_AGAIN when a server failed or did not
+// answer, else the last outcome (EAI_NONAME for a name that does not
+// exist, or one that is not a domain name).
 use native/llrt/linux
 use native/llrt/sock
 use native/llrt/tlsname
@@ -1481,24 +1484,36 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
   }
   let ns = conf.servers.len()
   let offset = if conf.rotate && ns > 0 { (seq & 1073741823) % ns } else { 0 }
-  var temp = false
+  // the failure to report (glibc's res_search): that of the name as
+  // given when it was tried first, else no data when a name had none,
+  // else a temporary failure when there was one, else the last
+  let names = name_list(conf, host)
+  let as_is_first = !host.ends_with(".") && !names.is_empty() && names[0] == host + "."
+  var first = KIND_OK
   var nodata = false
+  var temp = false
+  var last = KIND_NOTFOUND
   var addrs: List[Addr] = []
-  for fq in name_list(conf, host) {
-    nodata = true
+  for (k, fq) in names.indexed() {
+    var kind = KIND_NOTFOUND
     for r in try_name(conf, fq, qtypes, offset) {
       if r.0 == KIND_OK {
         addrs = addrs + r.1
-      } else if r.0 == KIND_TEMP {
-        temp = true
-      }
-      if r.0 != KIND_NODATA && r.0 != KIND_OK {
-        nodata = false
+      } else if r.0 == KIND_TEMP || r.0 == KIND_FAIL {
+        kind = KIND_TEMP
+      } else if r.0 == KIND_NODATA && kind != KIND_TEMP {
+        kind = KIND_NODATA
       }
     }
     if !addrs.is_empty() {
       break
     }
+    if k == 0 && as_is_first {
+      first = kind
+    }
+    nodata = nodata || kind == KIND_NODATA
+    temp = temp || kind == KIND_TEMP
+    last = kind
   }
   if addrs.is_empty() && order is Order.DnsFiles {
     let hs = only(hosts_lookup(hosts, host), family)
@@ -1507,10 +1522,18 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
     }
   }
   if addrs.is_empty() {
-    if temp {
+    var kind = last
+    if first != KIND_OK {
+      kind = first
+    } else if nodata {
+      kind = KIND_NODATA
+    } else if temp {
+      kind = KIND_TEMP
+    }
+    if kind == KIND_TEMP {
       return Found{err: EAI_AGAIN}
     }
-    return Found{err: if nodata { EAI_NODATA } else { EAI_NONAME }}
+    return Found{err: if kind == KIND_NODATA { EAI_NODATA } else { EAI_NONAME }}
   }
   Found{err: 0, addrs: sort(only(addrs, family))}
 }
