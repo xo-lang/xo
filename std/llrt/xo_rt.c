@@ -1505,6 +1505,7 @@ static void rt_fault_leave(void) {
 	}
 }
 
+#ifdef XO_SCHED_C
 static inline void spin_relax(void) {
 #if defined(__aarch64__)
 	__asm__ volatile("yield");
@@ -1512,6 +1513,7 @@ static inline void spin_relax(void) {
 	__asm__ volatile("pause");
 #endif
 }
+#endif
 
 // Futexes (decision 0077): wait while a 32 bit word holds a value, and
 // wake the threads waiting on a word. Darwin has no public futex; its
@@ -1552,10 +1554,8 @@ __attribute__((noinline)) static void futex_wake(void *a) {
 }
 #endif
 #else
-void xo_x_futex_wait(int64_t a, int64_t v);
 void xo_x_futex_wake(int64_t a);
 void xo_x_lock_slow(int64_t l);
-static void futex_wait(void *a, uint32_t v) { xo_x_futex_wait(XO_ADDR(a), (int64_t)v); }
 static void futex_wake(void *a) { xo_x_futex_wake(XO_ADDR(a)); }
 #endif
 
@@ -1739,7 +1739,6 @@ static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __AT
 static void node_link(xo_node *n, xo_node *parent);
 static void node_unlink(xo_node *n);
 static void node_cancel(xo_node *n);
-static void node_set_waiter(xo_node *n, xo_park *p);
 #else
 // node_link adds n below parent (canceled at once when parent is).
 static void node_link(xo_node *n, xo_node *parent) {
@@ -1884,7 +1883,6 @@ enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
 __attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
-__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 #endif
 
 static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
@@ -3091,17 +3089,10 @@ static void *find_work(xo_worker *w, int spinning) {
 // root threads' records, and the deadlock check; the Xo code calls back
 // for the services in xo_sched_rt.
 void xo_x_register_worker(int64_t p, int64_t w);
-void xo_x_pool_push(int64_t p, int64_t t);
-int64_t xo_x_find_work(int64_t p, int64_t w, int64_t spinning);
-int64_t xo_x_steal_round(int64_t p, int64_t w, int64_t last);
 int64_t xo_x_any_work(int64_t p);
-void xo_x_run_item(int64_t p, int64_t w, int64_t it);
 int64_t xo_x_worker_main(int64_t w);
 
 static void register_worker(xo_worker *w) { xo_x_register_worker(XO_ADDR(&pool), XO_ADDR(w)); }
-static void pool_push(void *t) { xo_x_pool_push(XO_ADDR(&pool), XO_ADDR(t)); }
-static void *find_work(xo_worker *w, int spinning) { return (void *)(intptr_t)xo_x_find_work(XO_ADDR(&pool), XO_ADDR(w), spinning); }
-static void *steal_round(xo_worker *w, int last) { return (void *)(intptr_t)xo_x_steal_round(XO_ADDR(&pool), XO_ADDR(w), last); }
 static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
@@ -3111,7 +3102,6 @@ void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
 void xo_x_node_cancel(int64_t pl, int64_t n);
-void xo_x_node_set_waiter(int64_t n, int64_t p);
 
 static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
 static void park_signal(xo_park *p) {
@@ -3121,7 +3111,6 @@ static void park_signal(xo_park *p) {
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
-static void node_set_waiter(xo_node *n, xo_park *p) { xo_x_node_set_waiter(XO_ADDR(n), XO_ADDR(p)); }
 #endif
 
 XO_NORETURN static void deadlock(void) {
@@ -3152,9 +3141,11 @@ static void dl_check_locked(void) {
 
 static void tw_kick(void);
 
+#ifdef XO_SCHED_C
 static void fiber_park(struct xo_fiber *f);
 static void fiber_parking(struct xo_fiber *f);
 static void run_item(xo_worker *w, void *it);
+#endif
 static void tsan_worker(xo_worker *w);
 static void sched_hooks(xo_worker *w);
 
@@ -4018,9 +4009,6 @@ static void fiber_main(xo_fiber *f);
 // the C ABI exports of cabi.xo. xo_x_fiber_main is where a new fiber
 // starts (xo_fiber_entry, the emitted start, calls it with the fiber).
 void xo_x_fiber_main(int64_t f);
-void xo_x_fiber_park(int64_t f);
-void xo_x_fiber_parking(int64_t f);
-int64_t xo_x_fiber_wake(int64_t f);
 #endif
 
 // fibers_setup reads the stacks' settings when the pool starts (before
@@ -4307,19 +4295,6 @@ void xo_sched_run_task(int64_t fa) {
 // (both are compiled with -DXO_SCHED_C too: the C only tests link that
 // C with the exports of a program built on the default path)
 
-#ifndef XO_SCHED_C
-static void fiber_parking(xo_fiber *f) { xo_x_fiber_parking(XO_ADDR(f)); }
-
-static void fiber_park(xo_fiber *f) { xo_x_fiber_park(XO_ADDR(f)); }
-
-static void fiber_wake(xo_fiber *f) {
-	if (xo_x_fiber_wake(XO_ADDR(f))) {
-		pool_push((void *)((uintptr_t)f | 1));
-	}
-}
-
-#endif
-
 #ifdef XO_SCHED_C
 // run_item runs a queue item on w's thread: resumes a fiber, or starts a
 // task on a new fiber unless a helper ran it already.
@@ -4338,8 +4313,6 @@ static void run_item(xo_worker *w, void *it) {
 	// on the scope instead of two)
 	run_fiber(w, fiber_new(w, t));
 }
-#else
-static void run_item(xo_worker *w, void *it) { xo_x_run_item(XO_ADDR(&pool), XO_ADDR(w), XO_ADDR(it)); }
 #endif
 
 // xo_sched_rt is the C runtime's services for std/native/llrt/pool.xo

@@ -362,12 +362,6 @@ fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(
 
 fn fiber_main(f: Int) { sched.fiber_main(f) }
 
-fn fiber_parking(f: Int) { sched.fiber_parking(f) }
-
-fn fiber_park(f: Int) { sched.fiber_park(f) }
-
-fn fiber_wake(f: Int) -> Int { sched.fiber_wake(f) }
-
 fn task_claim(t: Int) -> Int { sched.task_claim(t) }
 
 fn scope_units_done(s: Int, units: Int) -> Int { sched.scope_units_done(s, units) }
@@ -376,17 +370,7 @@ fn task_dequeued(t: Int, s: Int) -> Int { sched.task_dequeued(t, s) }
 
 fn lock_slow(l: Int) { pool.lock_slow(l) }
 
-fn futex_wait(a: Int, v: Int) { pool.futex_wait(a, v) }
-
 fn futex_wake(a: Int) { pool.futex_wake(a) }
-
-fn pool_push(p: Int, t: Int) { pool.pool_push(p, t) }
-
-fn find_work(p: Int, w: Int, spinning: Int) -> Int { pool.find_work(p, w, spinning) }
-
-fn steal_round(p: Int, w: Int, last: Int) -> Int { pool.steal_round(p, w, last) }
-
-fn run_item(p: Int, w: Int, it: Int) { pool.run_item(p, w, it) }
 
 fn any_work(p: Int) -> Int { pool.any_work(p) }
 
@@ -405,8 +389,6 @@ fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 fn node_unlink(n: Int) { pool.node_unlink(n) }
 
 fn node_cancel(pl: Int, n: Int) { pool.node_cancel(pl, n) }
-
-fn node_set_waiter(n: Int, p: Int) { pool.node_set_waiter(n, p) }
 
 fn scope_add(pl: Int, s: Int, t: Int) -> Int { pool.scope_add(pl, s, t) }
 
