@@ -187,7 +187,8 @@ its callers move too.
    - Next, ranked: (a) std/json's Float text and number parse on num.xo
      (step 4, the same Dragonbox digits in Go's json layout); (b) delete
      the C path of num once the lead's full tier passes (num_c.xo, the
-     XO_NUM_C C, the IOFlags entry, `numText`'s C branch); (c) a Float32
+     XO_NUM_C C, the IOFlags entry, `numText`'s C branch; done by
+     decision 0198, 2026-10-13); (c) a Float32
      text through `float_bits` of the widened double; (d) to_hex again
      with a 32 byte push primitive, so a call covers 16 input bytes
      without the tail call.
@@ -238,7 +239,8 @@ its callers move too.
      tier passes (jsontext_c.xo, xo_json.c, the guarded
      xo_rs_append_b64_quoted, the IOFlags entries, `jsonRT`'s C branch,
      TestJSONParseDiff and std/llrt/testdata/json_diff.c, http_fuzz.c's
-     JSON part, which test only the C); (b) one call per Int or Float
+     JSON part, which test only the C; done by decision 0198,
+     2026-10-13); (b) one call per Int or Float
      element instead of `_ok` then the value (an `llrt_json_int` that
      returns a flag word, the builders' Int and Float arms), the largest
      remaining cost of `ints` and `floats`; (c) step 5 (collections' Debug
@@ -393,6 +395,11 @@ its callers move too.
 - The C runtime loses the ported code from every pack (338 lines of
   xo_std.c under `XO_TEXT_C`, 74 under `XO_STRINGS_C`); sizes and keys in
   the results file.
+- Decision 0198 (2026-10-13) deleted the C paths of strings (step 2),
+  num (step 3), and jsontext (step 4) with decision 0180's unicode path:
+  3,373 lines of std/llrt (xo_unicode.c 1,783, xo_json.c 983, xo_std.c
+  421, xo_bytes.c 186), their `<name>_c.xo`, IOFlags entries, and the SSA
+  builders' C branches. `XO_LLRT_C` keeps text, show, tz, and report.
 - A Display or Debug of these types is a call of a compiled function
   instead of a C call, so callers get landing checks for faults the
   code cannot raise (the SSA goldens grew); measured within the

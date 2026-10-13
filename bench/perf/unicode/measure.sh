@@ -6,7 +6,7 @@
 #
 # usage: bench/perf/unicode/measure.sh <xo binary> <out dir> <backend...>
 # example: bench/perf/unicode/measure.sh .tools/bin/xo /tmp/u arm64 llvm
-# XO_UNICODE=c in the environment builds the C path (decision 0180).
+# (XO_UNICODE=c, the C path of decision 0180, went in decision 0198.)
 set -e
 XO=$1
 OUT=$2

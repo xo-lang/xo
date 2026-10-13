@@ -2,8 +2,8 @@
 // replace and the trims, written in Xo, and split, lines, and rune_count,
 // which stay C, over their edge cases (empty separators and patterns,
 // U+FFFD, Unicode white space, \r\n). The Go backend's output is the
-// reference; the Xo path (std/native/llrt/strings.xo) and the C path
-// (XO_LLRT_C=strings) print the same.
+// reference; the Xo path (std/native/llrt/strings.xo) prints the same
+// (decision 0198 deleted the C path).
 
 fn main(os: Os) {
   let texts = ["", "a", "a,b,c", ",a,,b,", "abc", "ünï,cödé", "日本,語", "a\u{fffd}b", "x--y--z", "----", "a\r\nb\nc\r\n", "\n", "\n\n", "\r\n", "one\rtwo", "no newline", "trail\n", " \t padded \n ", "\u{a0}\u{3000}wide\u{2000}\u{85}", "\u{fffd} x \u{fffd}", "  ", "é"]

@@ -320,34 +320,12 @@ func IOFlags(code []byte) []string {
 		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
 		out = append(out, "-DXO_PROC")
 	}
-	// the C path of the Unicode operations (decision 0180), which only
-	// XO_UNICODE=c builds call: no pack has it, so the runtime is compiled
-	// locally
-	for _, sym := range []string{"xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit", "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_UNICODE_C")
-			break
-		}
-	}
 	// the C path of the number and time text (decision 0193), which only
-	// XO_LLRT_C=text builds call: likewise compiled locally
+	// XO_LLRT_C=text builds call: no pack has it, so the runtime is
+	// compiled locally
 	for _, sym := range []string{"xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse", "xo_time_parse"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_TEXT_C")
-			break
-		}
-	}
-	// and of the Str operations (decision 0193, XO_LLRT_C=strings)
-	for _, sym := range []string{"xo_str_trim", "xo_str_replace"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_STRINGS_C")
-			break
-		}
-	}
-	// and of the number text (decision 0193 step 3, XO_LLRT_C=num)
-	for _, sym := range []string{"xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_NUM_C")
 			break
 		}
 	}
@@ -378,13 +356,6 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
-	// and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
-	for _, sym := range []string{"xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_JSONTEXT_C")
-			break
-		}
-	}
 	return out
 }
 
@@ -394,7 +365,8 @@ func IOFlags(code []byte) []string {
 // tab), not by the quote of a string literal (`.ascii "xo_f"`, `c"xo_f"`),
 // which is the program's data. The self hosted compiler's own tables of
 // these names (selfhost/xo link.xo io_flags, which does the same) turned
-// on -DXO_UNICODE_C for xo1, which no pack variant has
+// on -DXO_UNICODE_C (decision 0180's C path, deleted by decision 0198)
+// for xo1, which no pack variant has
 // (gotchas/runtime-flags-from-string-literals.md).
 func callsSym(code []byte, sym string) bool {
 	for _, p := range symRefPrefixes {
