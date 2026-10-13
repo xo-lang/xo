@@ -120,7 +120,11 @@ writes one list while reading another it was given or made.
   TestIOFlags.
 - TestSelfhostLLVM on noalias_lists, var_alias, rc_aliasing, lists,
   value_semantics, closures, native_crypto, and bench/perf/digest: every
-  module byte identical.
+  module byte identical. Then on every internal/llvm golden program and
+  bench/perf directory (1f147c2c): 182 runs compared, 25,450 functions
+  identical, 182 modules byte identical.
+- TestGolden (internal/llvm, all programs, LLVM against the Go backend
+  and want.txt) passes on 1f147c2c.
 - The recorded LLVM goldens (gogoldens/llvmdump) change with the IR and
   need a new recording (scripts/selfhost-record-goldens.sh with
   `RUN='^TestSelfhostLLVM(Mutations)?$'`).
