@@ -130,6 +130,9 @@ fn read_file(path: Str) -> Bytes? {
 /// names and addresses are ASCII), or None.
 fn file_lines(path: Str) -> List[Str]? {
   let b = read_file(path)?
+  if let Some(t) = b.to_str() {
+    return Some(t.split("\n"))
+  }
   var s = BytesBuilder.with_capacity(b.len())
   for c in b {
     if Int(c) < 128 {
@@ -275,35 +278,39 @@ fn zone_index(zone: Str) -> Int {
   idx
 }
 
-/// The 16 byte form of ip (IPv4 mapped).
-fn to16(ip: Bytes) -> Bytes {
-  if ip.len() == 16 {
-    return ip
-  }
-  var b = BytesBuilder.with_capacity(16)
-  for _ in 0..10 {
-    b.write_byte(UInt8(0))
-  }
-  b.write_byte(UInt8(255))
-  b.write_byte(UInt8(255))
-  b.write(ip)
-  b.freeze()
-}
-
-/// The 4 byte form of an IPv4 mapped ip, or ip.
-fn to4(ip: Bytes) -> Bytes {
-  if ip.len() != 16 {
-    return ip
-  }
-  for i in 0..10 {
-    if ip[i] != 0 {
-      return ip
+/// The IPv4 address of the n bytes at address p as a word (the first
+/// field in the high byte), or -1 when they are not four decimal fields
+/// to 255 with no leading zeros (netip.ParseAddr's IPv4): the resolver's
+/// numeric fast path, reading the C's text in place.
+pub fn v4_at(p: Int, n: Int) -> Int {
+  var word = 0
+  var v = 0
+  var digits = 0
+  var dots = 0
+  for i in 0..n {
+    let c = rt.mem_load(p, i, 1)
+    if c >= 48 && c <= 57 {
+      if digits > 0 && v == 0 {
+        return -1
+      }
+      v = v * 10 + c - 48
+      digits += 1
+      if v > 255 {
+        return -1
+      }
+    } else if c == 46 && digits > 0 && dots < 3 {
+      word = word * 256 + v
+      v = 0
+      digits = 0
+      dots += 1
+    } else {
+      return -1
     }
   }
-  if ip[10] != 255 || ip[11] != 255 {
-    return ip
+  if digits == 0 || dots != 3 {
+    return -1
   }
-  ip[12..16]
+  word * 256 + v
 }
 
 /// glibc's inet_ntop text of the 4 or 16 bytes of ip (RFC 5952 for
@@ -749,32 +756,112 @@ pub fn parse_nsswitch(lines0: List[Str]?) -> Order {
   Order.FilesDns
 }
 
-/// The addresses /etc/hosts' lines give name (lookupStaticHost: the
-/// lowered rooted name, in the order of the file).
-pub fn hosts_lookup(lines0: List[Str]?, name: Str) -> List[Addr] {
-  var out: List[Addr] = []
-  let lines = match lines0 {
-    Some(l) => l
-    None => return out
+/// The order of /etc/nsswitch.conf, kept in the word at state + 8 with
+/// the key of the file (its modification time and size, from statx):
+/// the file is read and parsed again only when the key changes (as
+/// glibc reloads it), and the word is one aligned store (threads may
+/// look up at once).
+fn order_of(state: Int) -> Order {
+  let (st, e) = linux.stat("/etc/nsswitch.conf", true)
+  // the key: 1 for no file, else from the time and size (below 2^60)
+  var key = 1
+  if e == 0 {
+    key = ((st.mtime & 1152921504606846975) ^ ((st.size & 1048575) * 1000003)) | 2
   }
-  let key = rooted(lower(name))
-  for line in lines {
-    let f = fields(cut_at(line, "#"))
-    if f.len() < 2 {
-      continue
-    }
-    let a = match parse_addr(f[0]) {
-      Some(x) => x
-      None => continue
-    }
-    for i in 1..f.len() {
-      if rooted(lower(f[i])) == key {
-        out.push(a)
-        break
+  if state != 0 {
+    let w = rt.slot_load(state, 1, 0)
+    if w != 0 && w / 8 == key {
+      return match w % 8 {
+        1 => Order.FilesDns
+        2 => Order.DnsFiles
+        3 => Order.Files
+        _ => Order.Dns
       }
     }
   }
+  let order = if e != 0 { Order.FilesDns } else { parse_nsswitch(file_lines("/etc/nsswitch.conf")) }
+  if state != 0 {
+    let code = match order {
+      Order.FilesDns => 1
+      Order.DnsFiles => 2
+      Order.Files => 3
+      Order.Dns => 4
+    }
+    rt.slot_store(state, 1, key * 8 + code, 0)
+  }
+  order
+}
+
+/// Whether b[i] is white space in these files.
+fn space_at(b: Bytes, i: Int) -> Bool { is_space(Int(b[i])) }
+
+/// The addresses the hosts file text b gives the name key (lowered, no
+/// trailing dot), in the order of the file (lookupStaticHost): one pass
+/// over the bytes, an address parsed only on a line that names key.
+pub fn hosts_find(b: Bytes, key: Bytes) -> List[Addr] {
+  var out: List[Addr] = []
+  let n = b.len()
+  var i = 0
+  while i < n {
+    var e = i
+    while e < n && b[e] != 10 {
+      e += 1
+    }
+    // the line without its comment
+    var le = i
+    while le < e && b[le] != 35 {
+      le += 1
+    }
+    var j = i
+    while j < le && space_at(b, j) {
+      j += 1
+    }
+    let a0 = j
+    while j < le && !space_at(b, j) {
+      j += 1
+    }
+    let a1 = j
+    var hit = false
+    while a1 > a0 && !hit && j < le {
+      while j < le && space_at(b, j) {
+        j += 1
+      }
+      let f0 = j
+      while j < le && !space_at(b, j) {
+        j += 1
+      }
+      hit = j > f0 && name_is(b, f0, j, key)
+    }
+    if hit {
+      if let Some(a) = parse_addr(b[a0..a1].to_str() ?? "") {
+        out.push(a)
+      }
+    }
+    i = e + 1
+  }
   out
+}
+
+/// Whether b[lo..hi] is the name key but for ASCII case and a trailing
+/// dot.
+fn name_is(b: Bytes, lo: Int, hi0: Int, key: Bytes) -> Bool {
+  var hi = hi0
+  if hi - lo == key.len() + 1 && b[hi - 1] == 46 {
+    hi -= 1
+  }
+  if hi - lo != key.len() {
+    return false
+  }
+  for k in 0..key.len() {
+    var c = Int(b[lo + k])
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    if c != Int(key[k]) {
+      return false
+    }
+  }
+  true
 }
 
 // ---------------------------------------------------------------------------
@@ -1453,7 +1540,10 @@ fn try_name(conf: Config, name: Str, qtypes: List[Int], offset: Int) -> List[(In
 /// The addresses of host for a listen (passive) or a dial, of family
 /// (0 any, sock.AF_INET, sock.AF_INET6): getaddrinfo's results, sorted.
 /// seq starts rotate's server list (a counter of the caller's).
-pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
+/// state is the address of two words the caller keeps for the process
+/// (0: none): a counter for rotate, and the order of nsswitch.conf with
+/// the key of the file it was read from (order_of).
+pub fn lookup(host: Str, family: Int, passive: Bool, state: Int) -> Found {
   if host.is_empty() {
     // getaddrinfo(NULL, ...): the wildcard address to listen on, the
     // loopback address to dial
@@ -1472,14 +1562,14 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
     }
     return Found{err: 0, addrs: [a]}
   }
-  let order = parse_nsswitch(file_lines("/etc/nsswitch.conf"))
-  var hosts: List[Str]? = None
-  let use_files = order is Order.FilesDns | Order.DnsFiles | Order.Files
-  if use_files {
-    hosts = file_lines("/etc/hosts")
+  let order = order_of(state)
+  var hosts = b""
+  if order is Order.FilesDns | Order.DnsFiles | Order.Files {
+    hosts = read_file("/etc/hosts") ?? b""
   }
+  let key = lower(host.trim_suffix(".")).bytes()
   if order is Order.FilesDns | Order.Files {
-    let hs = only(hosts_lookup(hosts, host), family)
+    let hs = only(hosts_find(hosts, key), family)
     if !hs.is_empty() {
       return Found{err: 0, addrs: sort(hs)}
     }
@@ -1499,7 +1589,10 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
     qtypes.push(TYPE_AAAA)
   }
   let ns = conf.servers.len()
-  let offset = if conf.rotate && ns > 0 { (seq & 1073741823) % ns } else { 0 }
+  var offset = 0
+  if conf.rotate && ns > 1 && state != 0 {
+    offset = (rt.slot_add(state, 0, 1, 0) & 1073741823) % ns
+  }
   // the failure to report (glibc's res_search): that of the name as
   // given when it was tried first, else no data when a name had none,
   // else a temporary failure when there was one, else the last
@@ -1532,7 +1625,7 @@ pub fn lookup(host: Str, family: Int, passive: Bool, seq: Int) -> Found {
     last = kind
   }
   if addrs.is_empty() && order is Order.DnsFiles {
-    let hs = only(hosts_lookup(hosts, host), family)
+    let hs = only(hosts_find(hosts, key), family)
     if !hs.is_empty() {
       return Found{err: 0, addrs: sort(hs)}
     }
@@ -1600,67 +1693,61 @@ struct Attr {
   label: Int
 }
 
-/// Whether the first bits of the 16 bytes ip are those of prefix p.
-fn has_prefix(ip: Bytes, p: List[Int], bits: Int) -> Bool {
-  var i = 0
-  var left = bits
-  while left > 0 {
-    let mask = if left >= 8 { 255 } else { (65280 >> left) & 255 }
-    if (Int(ip[i]) & mask) != (p[i] & mask) {
+/// Whether the bytes of ip below k are zero.
+fn zero_to(ip: Bytes, k: Int) -> Bool {
+  for i in 0..k {
+    if ip[i] != 0 {
       return false
     }
-    left -= 8
-    i += 1
   }
   true
 }
 
-/// The RFC 6724 attributes of ip (4 or 16 bytes), from the default
-/// policy table; zero attributes for an empty (unknown) one.
-fn attr_of(ip0: Bytes) -> Attr {
-  if ip0.is_empty() {
+/// Whether the 16 bytes ip are an IPv4 mapped address (::ffff:0:0/96).
+fn mapped(ip: Bytes) -> Bool { ip.len() == 16 && zero_to(ip, 10) && ip[10] == 255 && ip[11] == 255 }
+
+/// The RFC 6724 attributes of ip (4 or 16 bytes; IPv4 as IPv4 mapped),
+/// from the default policy table (the longest prefix that matches) and
+/// classifyScope; zero attributes for an empty (unknown) one.
+fn attr_of(ip: Bytes) -> Attr {
+  if ip.len() != 4 && ip.len() != 16 {
     return Attr{sc: 0, prec: 0, label: 0}
   }
-  let ip = to16(ip0)
-  let v4 = to4(ip).len() == 4
-  // the policy table, longest prefix first
+  if ip.len() == 4 || mapped(ip) {
+    let o = if ip.len() == 4 { 0 } else { 12 }
+    let a = Int(ip[o])
+    let link = a == 127 || (a == 169 && Int(ip[o + 1]) == 254)
+    return Attr{sc: if link { 2 } else { 14 }, prec: 35, label: 4}
+  }
+  let b0 = Int(ip[0])
+  let b1 = Int(ip[1])
+  let is_lo = zero_to(ip, 15) && ip[15] == 1
   var prec = 40
   var label = 1
-  if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128) {
+  if is_lo {
     prec = 50
     label = 0
-  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255], 96) {
-    prec = 35
-    label = 4
-  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 96) {
+  } else if zero_to(ip, 12) {
     prec = 1
     label = 3
-  } else if has_prefix(ip, [32, 1, 0, 0], 32) {
+  } else if b0 == 32 && b1 == 1 && ip[2] == 0 && ip[3] == 0 {
     prec = 5
     label = 5
-  } else if has_prefix(ip, [32, 2], 16) {
+  } else if b0 == 32 && b1 == 2 {
     prec = 30
     label = 2
-  } else if has_prefix(ip, [63, 254], 16) {
+  } else if b0 == 63 && b1 == 254 {
     prec = 1
     label = 12
-  } else if has_prefix(ip, [254, 192], 10) {
+  } else if b0 == 254 && (b1 & 192) == 192 {
     prec = 1
     label = 11
-  } else if has_prefix(ip, [252], 7) {
+  } else if (b0 & 254) == 252 {
     prec = 3
     label = 13
   }
-  // classifyScope
   var sc = 14
-  let b0 = Int(ip[0])
-  let b1 = Int(ip[1])
-  if v4 {
-    let a = Int(ip[12])
-    if a == 127 || (a == 169 && Int(ip[13]) == 254) {
-      sc = 2
-    }
-  } else if has_prefix(ip, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128) || (b0 == 254 && (b1 & 192) == 128) {
+  if is_lo || (b0 == 254 && (b1 & 192) == 128) {
     sc = 2
   } else if b0 == 255 {
     sc = b1 & 15
@@ -1670,8 +1757,8 @@ fn attr_of(ip0: Bytes) -> Attr {
   Attr{sc: sc, prec: prec, label: label}
 }
 
-/// The common prefix length of a source and a destination (both IPv6:
-/// at most their first 64 bits).
+/// The common prefix length in bits of a source and a destination of the
+/// same length, at most their first 64 bits.
 fn common_prefix(src: Bytes, dst: Bytes) -> Int {
   if src.len() != dst.len() {
     return 0
@@ -1711,50 +1798,49 @@ fn source_of(a: Addr) -> Bytes {
   src
 }
 
-/// Whether destination a (source sa) goes before b (source sb): RFC
-/// 6724's rules 1, 2, 5, 6, 8, and 9 (IPv6 only), as Go applies them.
-fn before(a: Bytes, sa: Bytes, b: Bytes, sb: Bytes) -> Bool {
-  if sa.is_empty() && sb.is_empty() {
-    return false
+/// A destination with what the rules read: its source address (empty
+/// for none), both attributes, and whether both are IPv6 (not mapped).
+struct Cand {
+  a: Addr
+  src: Bytes
+  da: Attr
+  sa: Attr
+  v6: Bool
+}
+
+/// Whether x goes before y: RFC 6724's rules 1, 2, 5, 6, 8, and 9 (IPv6
+/// only), as Go applies them.
+fn before(x: Cand, y: Cand) -> Bool {
+  // rule 1: a destination with a source first
+  if x.src.is_empty() || y.src.is_empty() {
+    return !x.src.is_empty() && y.src.is_empty()
   }
-  if sb.is_empty() {
-    return true
-  }
-  if sa.is_empty() {
-    return false
-  }
-  let da = attr_of(a)
-  let db = attr_of(b)
-  let xa = attr_of(sa)
-  let xb = attr_of(sb)
   // rule 2: matching scope
-  if da.sc == xa.sc && db.sc != xb.sc {
-    return true
-  }
-  if da.sc != xa.sc && db.sc == xb.sc {
-    return false
+  let xm = x.da.sc == x.sa.sc
+  let ym = y.da.sc == y.sa.sc
+  if xm != ym {
+    return xm
   }
   // rule 5: matching label
-  if xa.label == da.label && xb.label != db.label {
-    return true
-  }
-  if xa.label != da.label && xb.label == db.label {
-    return false
+  let xl = x.sa.label == x.da.label
+  let yl = y.sa.label == y.da.label
+  if xl != yl {
+    return xl
   }
   // rule 6: higher precedence
-  if da.prec != db.prec {
-    return da.prec > db.prec
+  if x.da.prec != y.da.prec {
+    return x.da.prec > y.da.prec
   }
   // rule 8: smaller scope
-  if da.sc != db.sc {
-    return da.sc < db.sc
+  if x.da.sc != y.da.sc {
+    return x.da.sc < y.da.sc
   }
   // rule 9: the longest matching prefix, IPv6 only
-  if to4(a).len() == 16 && to4(b).len() == 16 {
-    let ca = common_prefix(to16(sa), to16(a))
-    let cb = common_prefix(to16(sb), to16(b))
-    if ca != cb {
-      return ca > cb
+  if x.v6 && y.v6 {
+    let cx = common_prefix(x.src, x.a.ip)
+    let cy = common_prefix(y.src, y.a.ip)
+    if cx != cy {
+      return cx > cy
     }
   }
   false
@@ -1765,25 +1851,27 @@ pub fn sort(xs: List[Addr]) -> List[Addr] {
   if xs.len() < 2 {
     return xs
   }
-  var srcs: List[Bytes] = []
+  var cs: List[Cand] = []
   for a in xs {
-    srcs.push(source_of(a))
+    let src = source_of(a)
+    let v6 = a.ip.len() == 16 && !mapped(a.ip)
+    cs.push(Cand{a: a, src: src, da: attr_of(a.ip), sa: attr_of(src), v6: v6 && src.len() == 16 && !mapped(src)})
   }
-  var out = xs
   // a stable insertion sort (the lists are short)
   var i = 1
-  while i < out.len() {
+  while i < cs.len() {
     var j = i
-    while j > 0 && before(out[j].ip, srcs[j], out[j - 1].ip, srcs[j - 1]) {
-      let t = out[j]
-      out[j] = out[j - 1]
-      out[j - 1] = t
-      let s = srcs[j]
-      srcs[j] = srcs[j - 1]
-      srcs[j - 1] = s
+    while j > 0 && before(cs[j], cs[j - 1]) {
+      let t = cs[j]
+      cs[j] = cs[j - 1]
+      cs[j - 1] = t
       j -= 1
     }
     i += 1
+  }
+  var out: List[Addr] = []
+  for c in cs {
+    out.push(c.a)
   }
   out
 }

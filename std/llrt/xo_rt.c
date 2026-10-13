@@ -5256,7 +5256,7 @@ XO_NX_REF int64_t xo_x_net_sockname(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_read(int64_t fd, int64_t p, int64_t n);
 XO_NX_REF int64_t xo_x_net_send(int64_t fd, int64_t p, int64_t n);
-XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t pn, int64_t family, int64_t passive, int64_t seq,
+XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t pn, int64_t family, int64_t passive, int64_t state,
 	int64_t out, int64_t cap);
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
 XO_NX_REF int64_t xo_x_net_pton6(int64_t p, int64_t dst);
@@ -5352,15 +5352,15 @@ static int nx_epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
 // nx_getaddrinfo is getaddrinfo(host, port, hints) for the runtime's
 // hints (a numeric port, AI_PASSIVE or not, AF_UNSPEC or one family):
 // dns.xo's lookup, at most 32 addresses in one block that
-// nx_freeaddrinfo frees.
+// nx_freeaddrinfo frees. nx_dns is the resolver's state: resolv.conf's
+// rotate counter and the order of nsswitch.conf with its file's key.
 static int nx_getaddrinfo(const char *host, const char *port, const struct addrinfo *hints, struct addrinfo **res) {
 	NX_LIBC(getaddrinfo(host, port, hints, res));
 	enum { NX_MAX = 32, NX_SA = 32 };
-	static uint64_t seq;
+	static int64_t nx_dns[2];
 	unsigned char buf[NX_MAX * NX_SA];
 	int64_t n = xo_x_net_resolve(XO_ADDR(host ? host : ""), host ? (int64_t)strlen(host) : 0, XO_ADDR(port), (int64_t)strlen(port),
-		hints->ai_family, (hints->ai_flags & AI_PASSIVE) ? 1 : 0, (int64_t)(__atomic_fetch_add(&seq, 1, __ATOMIC_RELAXED) & 0x3fffffff),
-		XO_ADDR(buf), NX_MAX);
+		hints->ai_family, (hints->ai_flags & AI_PASSIVE) ? 1 : 0, XO_ADDR(nx_dns), XO_ADDR(buf), NX_MAX);
 	if (n <= 0) {
 		return n < 0 ? (int)n : EAI_NONAME;
 	}
