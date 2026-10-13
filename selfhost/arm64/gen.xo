@@ -59,6 +59,10 @@ fn (var g: G) generate() -> Program {
   out.push(g.text.join(""))
   out.push(g.helpers.join(""))
   out.push(g.lsdas.join(""))
+  if g.restorer_ref {
+    // rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
+    out.push("\t.p2align 2\n${g.local("xo_sigreturn")}:\n\tmov x8, #139\n\tsvc #0\n")
+  }
   if g.personality_ref {
     // the personality routine through a data word, as ELF compilers
     // refer to it from the unwind tables

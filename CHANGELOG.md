@@ -16,6 +16,29 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   functions written in Xo, and std's implementation gets raw memory
   intrinsics (internal only). A program built with the arm64 backend is
   about 20 KB larger (LLVM builds are not).
+- Added: on Linux, the native backends' os.fs.read, write, and stat
+  (and read_dir's and walk's stats) make their system calls from Xo
+  (std/native/llrt/linux.xo and sysio.xo, decision 0206) with the C
+  runtime's semantics and messages: reads take 0.45 to 0.67 times the
+  C path's user instructions on Graviton, the rest within 1 percent
+  (bench/results/linux-syscalls-2026-10-13.md). `XO_LLRT_C=sysio`
+  builds the C path. Clock.now stays on the vDSO.
+- Added: `XO_NOLIBC=1` (experimental, Linux, xo1's arm64 and LLVM
+  backends): a static executable with no C library at all (decisions
+  0203, 0206 stage 1); a hello world and a file and clock program run in
+  an empty root on linux/arm64 and linux/amd64. Faults end such a
+  program without running deferred code; sockets past epoll, DNS,
+  std/http's TLS, and `use c` still need the C library.
+- Faster list code on arm64 (decision 0208): an element access is one
+  load or store with an immediate or a scaled register offset (the
+  list's data address computed once per loop when the loop cannot move
+  the list), bounds checks a guard before an `a || b` proved stay
+  removed, 32 by 32 bit products of masked values are `umull` and
+  `umaddl`, and a loop that stores into a list it received shared makes
+  it unique once before the loop instead of checking at every store
+  (all native backends). Argon2id written in Xo went from 2.21 to 1.13
+  times the C's instructions on arm64 (1.29 to 1.25 on LLVM); it stays
+  C. Output is unchanged.
 
 - Faster on the native backends: Str.split, Str.lines, Str.rune_count,
   Str.find and contains, Bytes.to_hex, Bytes.rune_count, and

@@ -25,6 +25,7 @@ import (
 
 type memAt struct {
 	base  vreg
+	idx   vreg // a register offset, or zero
 	off   int
 	epoch int
 }
@@ -50,6 +51,10 @@ type memo struct {
 	// and `x / c` multiply once (inherited: a division that may fault
 	// ends its SSA block, so the two are often in successive blocks)
 	quo map[[2]int64]vreg
+	// lenAt: the length register of list l in a block that reaches this
+	// one through a join (joinFacts): not a register to read here, but
+	// the facts about it hold of l's length (decision 0208)
+	lenAt map[vreg]vreg
 }
 
 // m returns the memo of the current block.
@@ -57,7 +62,7 @@ func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
 			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
-			less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}}
+			less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}, lenAt: map[vreg]vreg{}}
 	}
 	return s.mm
 }
@@ -201,7 +206,10 @@ func (s *fstate) dce() {
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
 		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{},
-		less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}}
+		less: map[[2]vreg]*ssa.Value{}, quo: map[[2]int64]vreg{}, lenAt: map[vreg]vreg{}}
+	for k, v := range from.lenAt {
+		m.lenAt[k] = v
+	}
 	for k, v := range from.less {
 		m.less[k] = v
 	}
@@ -280,6 +288,17 @@ func (s *fstate) joinFacts(from *memo) {
 			m.lowZero[k] = v
 		}
 	}
+	// a list's length is the same here (the join only branches)
+	for l, n := range from.lenAt {
+		if _, ok := m.lens[l]; !ok {
+			m.lenAt[l] = n
+		}
+	}
+	for l, n := range from.lens {
+		if _, ok := m.lens[l]; !ok {
+			m.lenAt[l] = n
+		}
+	}
 }
 
 // forgetLen drops what is known about the length of list l (a pop
@@ -287,6 +306,7 @@ func (s *fstate) joinFacts(from *memo) {
 func (s *fstate) forgetLen(l vreg) {
 	m := s.m()
 	delete(m.lens, l)
+	delete(m.lenAt, l)
 	for k := range m.checked {
 		if k[0] == l {
 			delete(m.checked, k)
@@ -427,6 +447,9 @@ func (s *fstate) provedIndex(i *ssa.Value, n vreg, k int64) bool {
 		return false
 	}
 	if k >= 0 && hi < k {
+		return true
+	}
+	if nlo, ok := s.m().lo[n]; ok && hi < nlo {
 		return true
 	}
 	fi := s.addForms(i)

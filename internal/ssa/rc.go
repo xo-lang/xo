@@ -1123,10 +1123,129 @@ func (r *rcInfo) unique(f *Func) func(l leaf) bool {
 	return uniq
 }
 
+// hoistReuse makes a List parameter of a loop header unique on the
+// edges into the loop (decision 0208): a loop that updates the list
+// itself on every iteration, and passes it back updated (or unchanged)
+// on every back edge, then checks and copies it once before the loop
+// instead of at the update of every iteration (the count load, compare,
+// and branch, and the length that the reuse made unknown). Each edge in
+// must leave a block that only jumps; the list must not be retained.
+// A loop that runs no iteration copies a shared list it did not need
+// to.
+func (c *rcFunc) hoistReuse() {
+	f, r := c.f, c.r
+	uniq := r.unique(f)
+	retained := map[*Value]bool{}
+	for _, b := range f.Blocks {
+		for _, v := range b.Instrs {
+			if v.Op == OpRetain {
+				for _, l := range r.leaves(v.Args[0]) {
+					if l.path == "" {
+						retained[l.root] = true
+					}
+				}
+			}
+		}
+	}
+	var idom map[*Block]*Block
+	dominates := func(a, b *Block) bool {
+		for b != nil {
+			if a == b {
+				return true
+			}
+			d, ok := idom[b]
+			if !ok || d == b {
+				return false
+			}
+			b = d
+		}
+		return false
+	}
+	for _, h := range f.Blocks[1:] {
+		for i, p := range h.Params {
+			if p.Type.Kind != KList || retained[p] || uniq(leaf{p, ""}) {
+				continue
+			}
+			if idom == nil {
+				idom = dominators(f)
+			}
+			if _, ok := idom[h]; !ok {
+				continue
+			}
+			var backs, entries []*Edge
+			ok := true
+			for _, e := range h.Preds {
+				if _, reach := idom[e.From]; !reach {
+					ok = false
+					break
+				}
+				if dominates(h, e.From) {
+					backs = append(backs, e)
+					a := e.Args[i]
+					if a != p && !uniq(r.leaves(a)[0]) {
+						ok = false
+					}
+					continue
+				}
+				entries = append(entries, e)
+				t := e.From.Term()
+				if t == nil || t.Op != OpJump {
+					ok = false
+				}
+				for k, a := range e.Args {
+					if k != i && a == e.Args[i] {
+						ok = false
+					}
+				}
+			}
+			if !ok || len(backs) == 0 || len(entries) == 0 {
+				continue
+			}
+			// an update of p on every iteration
+			every := false
+			for _, b := range f.Blocks {
+				if every {
+					break
+				}
+				if !dominates(h, b) {
+					continue
+				}
+				all := true
+				for _, e := range backs {
+					all = all && dominates(b, e.From)
+				}
+				if !all {
+					continue
+				}
+				for _, v := range b.Instrs {
+					if v.Op == OpCall && updateCalls[v.Aux.(string)] && v.Args[0] == p {
+						every = true
+					}
+				}
+			}
+			if !every {
+				continue
+			}
+			for _, e := range entries {
+				a := e.Args[i]
+				if uniq(r.leaves(a)[0]) {
+					continue
+				}
+				pb := e.From
+				u := c.mk(pb, OpReuse, a.Type, nil, a)
+				n := len(pb.Instrs)
+				pb.Instrs = append(pb.Instrs[:n-1:n-1], u, pb.Instrs[n-1])
+				e.Args[i] = u
+			}
+		}
+	}
+}
+
 // reuse puts `reuse` before each list update whose list is not provably
 // unique.
 func (c *rcFunc) reuse() {
 	r := c.r
+	c.hoistReuse()
 	uniq := r.unique(c.f)
 	for _, b := range c.f.Blocks {
 		var out []*Value

@@ -5653,27 +5653,25 @@ xo_f_netpolicy_2eadmits__addr:
 	cmp x10, x9
 	b.ne .Lf42_b58
 .Lf42_b8:
-	mov x12, #0
+	mov x11, #0
 	mov x14, #5
 	adrp x13, .Lxo_str23
 	add x13, x13, :lo12:.Lxo_str23
 .Lf42_b9:
 	sub x9, x14, #0
-	cmp x12, x9
+	cmp x11, x9
 	b.ge .Lf42_b18
 .Lf42_b10:
-	add x10, x12, #0
-	cmp x10, x20
-	b.hs .Lf42_fault1
+	add x10, x11, #0
 	add x9, x22, #16
-	ldrb w11, [x9, x10]
-	add x10, x12, #0
+	ldrb w12, [x9, x10]
+	add x10, x11, #0
 	add x9, x13, #16
 	ldrb w9, [x9, x10]
-	cmp x11, x9
+	cmp x12, x9
 	b.ne .Lf42_b58
 .Lf42_b13:
-	add x12, x12, #1
+	add x11, x11, #1
 	b .Lf42_b9
 .Lf42_b18:
 	mov x14, #0
@@ -5724,14 +5722,14 @@ xo_f_netpolicy_2eadmits__addr:
 	b.ge .Lf42_b48
 .Lf42_b42:
 	adds x10, x14, x11
-	b.vs .Lf42_fault2
+	b.vs .Lf42_fault1
 	cmp x10, x19
-	b.hs .Lf42_fault3
+	b.hs .Lf42_fault2
 	add x9, x21, #16
 	ldrb w12, [x9, x10]
 	add x10, x11, #0
 	cmp x10, x20
-	b.hs .Lf42_fault4
+	b.hs .Lf42_fault3
 	add x9, x22, #16
 	ldrb w9, [x9, x10]
 	cmp x12, x9
@@ -5743,7 +5741,7 @@ xo_f_netpolicy_2eadmits__addr:
 	mov x8, #1
 .Lf42_b50:
 	adds x14, x13, #1
-	b.vs .Lf42_fault5
+	b.vs .Lf42_fault4
 	cmp x14, x19
 	b.lt .Lf42_b22
 .Lf42_b51:
@@ -5774,7 +5772,7 @@ xo_f_netpolicy_2eadmits__addr:
 .Lf42_b61:
 	sub x10, x11, #1
 	cmp x10, x20
-	b.hs .Lf42_fault6
+	b.hs .Lf42_fault5
 	add x9, x22, #16
 	ldrb w9, [x9, x10]
 	cmp x9, #58
@@ -5803,8 +5801,6 @@ xo_f_netpolicy_2eadmits__addr:
 	b.le .Lf42_b88
 .Lf42_b69:
 	mov x10, #0
-	cmp x10, x20
-	b.hs .Lf42_fault7
 	add x9, x22, #16
 	ldrb w9, [x9, x10]
 	cmp x9, #91
@@ -5829,7 +5825,7 @@ xo_f_netpolicy_2eadmits__addr:
 	b.lt .Lf42_b84
 .Lf42_b82:
 	adds x9, x3, #1
-	b.vs .Lf42_fault8
+	b.vs .Lf42_fault6
 	cmp x9, x12
 	b.eq .Lf42_b86
 .Lf42_b84:
@@ -5854,7 +5850,7 @@ xo_f_netpolicy_2eadmits__addr:
 	b.ge .Lf42_b98
 .Lf42_b90:
 	cmp x10, x20
-	b.hs .Lf42_fault9
+	b.hs .Lf42_fault7
 .Lf42_b90_c:
 	add x9, x22, #16
 	ldrb w9, [x9, x10]
@@ -6010,35 +6006,28 @@ xo_f_netpolicy_2eadmits__addr:
 	ldp x29, x30, [sp], #96
 	ret
 .Lf42_fault1:
-	mov x0, x10
-	mov x1, x20
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
-	bl xo_fault_bytes_index
-	brk #1
-.Lf42_fault2:
 	mov x0, x14
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
-.Lf42_fault3:
+.Lf42_fault2:
 	mov x0, x10
 	mov x1, x19
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
-.Lf42_fault4:
+.Lf42_fault3:
 	mov x0, x10
 	mov x1, x20
 	adrp x2, .Lxo_loc54
 	add x2, x2, :lo12:.Lxo_loc54
 	bl xo_fault_bytes_index
 	brk #1
-.Lf42_fault5:
+.Lf42_fault4:
 	mov x0, x13
 	mov x1, #43
 	mov x2, #1
@@ -6046,33 +6035,26 @@ xo_f_netpolicy_2eadmits__addr:
 	add x3, x3, :lo12:.Lxo_loc55
 	bl xo_fault_overflow
 	brk #1
-.Lf42_fault6:
+.Lf42_fault5:
 	mov x0, x10
 	mov x1, x20
 	adrp x2, .Lxo_loc56
 	add x2, x2, :lo12:.Lxo_loc56
 	bl xo_fault_bytes_index
 	brk #1
-.Lf42_fault7:
-	mov x0, x10
-	mov x1, x20
-	adrp x2, .Lxo_loc57
-	add x2, x2, :lo12:.Lxo_loc57
-	bl xo_fault_bytes_index
-	brk #1
-.Lf42_fault8:
+.Lf42_fault6:
 	mov x0, x3
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc58
-	add x3, x3, :lo12:.Lxo_loc58
+	adrp x3, .Lxo_loc57
+	add x3, x3, :lo12:.Lxo_loc57
 	bl xo_fault_overflow
 	brk #1
-.Lf42_fault9:
+.Lf42_fault7:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -6333,22 +6315,22 @@ xo_f_netpolicy_2esplit__hostport:
 .Lf46_fault1:
 	mov x0, x19
 	mov x1, x20
-	adrp x2, .Lxo_loc60
-	add x2, x2, :lo12:.Lxo_loc60
+	adrp x2, .Lxo_loc59
+	add x2, x2, :lo12:.Lxo_loc59
 	bl xo_fault_bytes_index
 	brk #1
 .Lf46_fault2:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, .Lxo_loc61
-	add x2, x2, :lo12:.Lxo_loc61
+	adrp x2, .Lxo_loc60
+	add x2, x2, :lo12:.Lxo_loc60
 	bl xo_fault_bytes_index
 	brk #1
 .Lf46_fault3:
 	mov x0, x10
 	mov x1, x20
-	adrp x2, .Lxo_loc62
-	add x2, x2, :lo12:.Lxo_loc62
+	adrp x2, .Lxo_loc61
+	add x2, x2, :lo12:.Lxo_loc61
 	bl xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -6633,8 +6615,8 @@ xo_f_text_2epush__num:
 .Lf49_fault1:
 	mov x2, x20
 	mov x1, #43
-	adrp x3, .Lxo_loc63
-	add x3, x3, :lo12:.Lxo_loc63
+	adrp x3, .Lxo_loc62
+	add x3, x3, :lo12:.Lxo_loc62
 .Lf49_cs92a:
 	bl xo_fault_overflow
 .Lf49_cs92b:
@@ -6643,16 +6625,16 @@ xo_f_text_2epush__num:
 	mov x2, x0
 	mov x0, x11
 	mov x1, #42
-	adrp x3, .Lxo_loc64
-	add x3, x3, :lo12:.Lxo_loc64
+	adrp x3, .Lxo_loc63
+	add x3, x3, :lo12:.Lxo_loc63
 .Lf49_cs93a:
 	bl xo_fault_overflow
 .Lf49_cs93b:
 	brk #1
 .Lf49_fault3:
 	mov x0, x10
-	adrp x1, .Lxo_loc65
-	add x1, x1, :lo12:.Lxo_loc65
+	adrp x1, .Lxo_loc64
+	add x1, x1, :lo12:.Lxo_loc64
 .Lf49_cs94a:
 	bl xo_fault_shift
 .Lf49_cs94b:
@@ -6660,8 +6642,8 @@ xo_f_text_2epush__num:
 .Lf49_fault4:
 	mov x0, x21
 	mov x1, x10
-	adrp x2, .Lxo_loc65
-	add x2, x2, :lo12:.Lxo_loc65
+	adrp x2, .Lxo_loc64
+	add x2, x2, :lo12:.Lxo_loc64
 .Lf49_cs95a:
 	bl xo_fault_shl
 .Lf49_cs95b:
@@ -6669,8 +6651,8 @@ xo_f_text_2epush__num:
 .Lf49_fault5:
 	mov x2, x20
 	mov x1, #43
-	adrp x3, .Lxo_loc66
-	add x3, x3, :lo12:.Lxo_loc66
+	adrp x3, .Lxo_loc65
+	add x3, x3, :lo12:.Lxo_loc65
 .Lf49_cs96a:
 	bl xo_fault_overflow
 .Lf49_cs96b:
@@ -7040,8 +7022,8 @@ xo_f_text_2efrac__words:
 	mov x0, x15
 	mov x1, #45
 	mov x2, #1
-	adrp x3, .Lxo_loc67
-	add x3, x3, :lo12:.Lxo_loc67
+	adrp x3, .Lxo_loc66
+	add x3, x3, :lo12:.Lxo_loc66
 .Lf50_cs97a:
 	bl xo_fault_overflow
 .Lf50_cs97b:
@@ -7050,8 +7032,8 @@ xo_f_text_2efrac__words:
 	mov x2, x0
 	mov x0, x9
 	mov x1, #45
-	adrp x3, .Lxo_loc68
-	add x3, x3, :lo12:.Lxo_loc68
+	adrp x3, .Lxo_loc67
+	add x3, x3, :lo12:.Lxo_loc67
 .Lf50_cs98a:
 	bl xo_fault_overflow
 .Lf50_cs98b:
@@ -7060,8 +7042,8 @@ xo_f_text_2efrac__words:
 	mov x0, x19
 	mov x2, x6
 	mov x1, #45
-	adrp x3, .Lxo_loc69
-	add x3, x3, :lo12:.Lxo_loc69
+	adrp x3, .Lxo_loc68
+	add x3, x3, :lo12:.Lxo_loc68
 .Lf50_cs99a:
 	bl xo_fault_overflow
 .Lf50_cs99b:
@@ -7080,16 +7062,16 @@ xo_f_text_2efrac__words:
 	mov x2, x0
 	mov x0, x11
 	mov x1, #42
-	adrp x3, .Lxo_loc70
-	add x3, x3, :lo12:.Lxo_loc70
+	adrp x3, .Lxo_loc69
+	add x3, x3, :lo12:.Lxo_loc69
 .Lf50_cs101a:
 	bl xo_fault_overflow
 .Lf50_cs101b:
 	brk #1
 .Lf50_fault6:
 	mov x0, x12
-	adrp x1, .Lxo_loc71
-	add x1, x1, :lo12:.Lxo_loc71
+	adrp x1, .Lxo_loc70
+	add x1, x1, :lo12:.Lxo_loc70
 .Lf50_cs102a:
 	bl xo_fault_shift
 .Lf50_cs102b:
@@ -7097,8 +7079,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault7:
 	mov x0, x11
 	mov x1, x12
-	adrp x2, .Lxo_loc71
-	add x2, x2, :lo12:.Lxo_loc71
+	adrp x2, .Lxo_loc70
+	add x2, x2, :lo12:.Lxo_loc70
 .Lf50_cs103a:
 	bl xo_fault_shl
 .Lf50_cs103b:
@@ -7106,8 +7088,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault8:
 	mov x0, x20
 	mov x1, #47
-	adrp x2, .Lxo_loc72
-	add x2, x2, :lo12:.Lxo_loc72
+	adrp x2, .Lxo_loc71
+	add x2, x2, :lo12:.Lxo_loc71
 .Lf50_cs104a:
 	bl xo_fault_divzero
 .Lf50_cs104b:
@@ -7116,8 +7098,8 @@ xo_f_text_2efrac__words:
 	mov x0, x20
 	mov x2, x8
 	mov x1, #47
-	adrp x3, .Lxo_loc72
-	add x3, x3, :lo12:.Lxo_loc72
+	adrp x3, .Lxo_loc71
+	add x3, x3, :lo12:.Lxo_loc71
 .Lf50_cs105a:
 	bl xo_fault_overflow
 .Lf50_cs105b:
@@ -7125,8 +7107,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault10:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc73
-	add x3, x3, :lo12:.Lxo_loc73
+	adrp x3, .Lxo_loc72
+	add x3, x3, :lo12:.Lxo_loc72
 .Lf50_cs106a:
 	bl xo_fault_overflow
 .Lf50_cs106b:
@@ -7135,16 +7117,16 @@ xo_f_text_2efrac__words:
 	mov x0, x12
 	mov x2, x13
 	mov x1, #42
-	adrp x3, .Lxo_loc74
-	add x3, x3, :lo12:.Lxo_loc74
+	adrp x3, .Lxo_loc73
+	add x3, x3, :lo12:.Lxo_loc73
 .Lf50_cs107a:
 	bl xo_fault_overflow
 .Lf50_cs107b:
 	brk #1
 .Lf50_fault12:
 	mov x0, x11
-	adrp x1, .Lxo_loc75
-	add x1, x1, :lo12:.Lxo_loc75
+	adrp x1, .Lxo_loc74
+	add x1, x1, :lo12:.Lxo_loc74
 .Lf50_cs108a:
 	bl xo_fault_shift
 .Lf50_cs108b:
@@ -7152,8 +7134,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault13:
 	mov x0, x9
 	mov x1, x11
-	adrp x2, .Lxo_loc75
-	add x2, x2, :lo12:.Lxo_loc75
+	adrp x2, .Lxo_loc74
+	add x2, x2, :lo12:.Lxo_loc74
 .Lf50_cs109a:
 	bl xo_fault_shl
 .Lf50_cs109b:
@@ -7161,8 +7143,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault14:
 	mov x0, x20
 	mov x1, #37
-	adrp x2, .Lxo_loc76
-	add x2, x2, :lo12:.Lxo_loc76
+	adrp x2, .Lxo_loc75
+	add x2, x2, :lo12:.Lxo_loc75
 .Lf50_cs110a:
 	bl xo_fault_divzero
 .Lf50_cs110b:
@@ -7197,8 +7179,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault18:
 	mov x0, x24
 	mov x1, #4
-	adrp x2, .Lxo_loc77
-	add x2, x2, :lo12:.Lxo_loc77
+	adrp x2, .Lxo_loc76
+	add x2, x2, :lo12:.Lxo_loc76
 .Lf50_cs114a:
 	bl xo_fault_shl
 .Lf50_cs114b:
@@ -7206,8 +7188,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault19:
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc78
-	add x3, x3, :lo12:.Lxo_loc78
+	adrp x3, .Lxo_loc77
+	add x3, x3, :lo12:.Lxo_loc77
 .Lf50_cs115a:
 	bl xo_fault_overflow
 .Lf50_cs115b:
@@ -7216,8 +7198,8 @@ xo_f_text_2efrac__words:
 	mov x0, x9
 	mov x2, x6
 	mov x1, #43
-	adrp x3, .Lxo_loc78
-	add x3, x3, :lo12:.Lxo_loc78
+	adrp x3, .Lxo_loc77
+	add x3, x3, :lo12:.Lxo_loc77
 .Lf50_cs116a:
 	bl xo_fault_overflow
 .Lf50_cs116b:
@@ -7225,8 +7207,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault21:
 	mov x0, x10
 	mov x1, #8
-	adrp x2, .Lxo_loc79
-	add x2, x2, :lo12:.Lxo_loc79
+	adrp x2, .Lxo_loc78
+	add x2, x2, :lo12:.Lxo_loc78
 .Lf50_cs117a:
 	bl xo_fault_shl
 .Lf50_cs117b:
@@ -7235,8 +7217,8 @@ xo_f_text_2efrac__words:
 	mov x0, x7
 	mov x2, x26
 	mov x1, #43
-	adrp x3, .Lxo_loc80
-	add x3, x3, :lo12:.Lxo_loc80
+	adrp x3, .Lxo_loc79
+	add x3, x3, :lo12:.Lxo_loc79
 .Lf50_cs118a:
 	bl xo_fault_overflow
 .Lf50_cs118b:
@@ -7244,8 +7226,8 @@ xo_f_text_2efrac__words:
 .Lf50_fault23:
 	mov x0, x10
 	mov x1, #12
-	adrp x2, .Lxo_loc81
-	add x2, x2, :lo12:.Lxo_loc81
+	adrp x2, .Lxo_loc80
+	add x2, x2, :lo12:.Lxo_loc80
 .Lf50_cs119a:
 	bl xo_fault_shl
 .Lf50_cs119b:
@@ -7618,8 +7600,8 @@ xo_f_num_2eappend__float:
 	mov x2, x0
 	mov x0, #8
 	mov x1, #43
-	adrp x3, .Lxo_loc82
-	add x3, x3, :lo12:.Lxo_loc82
+	adrp x3, .Lxo_loc81
+	add x3, x3, :lo12:.Lxo_loc81
 .Lf54_cs123a:
 	bl xo_fault_overflow
 .Lf54_cs123b:
@@ -7628,8 +7610,8 @@ xo_f_num_2eappend__float:
 	mov x0, x4
 	mov x2, x20
 	mov x1, #43
-	adrp x3, .Lxo_loc83
-	add x3, x3, :lo12:.Lxo_loc83
+	adrp x3, .Lxo_loc82
+	add x3, x3, :lo12:.Lxo_loc82
 .Lf54_cs124a:
 	bl xo_fault_overflow
 .Lf54_cs124b:
@@ -7726,8 +7708,8 @@ xo_f_netpolicy_2eindex__in:
 .Lf57_fault1:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -8196,44 +8178,44 @@ xo_f_netpolicy_2eentry__admits:
 .Lf58_fault1:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, .Lxo_loc84
-	add x3, x3, :lo12:.Lxo_loc84
+	adrp x3, .Lxo_loc83
+	add x3, x3, :lo12:.Lxo_loc83
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault2:
 	mov x0, x2
 	mov x1, #43
 	mov x2, #5
+	adrp x3, .Lxo_loc84
+	add x3, x3, :lo12:.Lxo_loc84
+	bl xo_fault_overflow
+	brk #1
+.Lf58_fault3:
+	mov x0, x14
+	mov x1, #45
 	adrp x3, .Lxo_loc85
 	add x3, x3, :lo12:.Lxo_loc85
 	bl xo_fault_overflow
 	brk #1
-.Lf58_fault3:
+.Lf58_fault4:
 	mov x0, x14
 	mov x1, #45
 	adrp x3, .Lxo_loc86
 	add x3, x3, :lo12:.Lxo_loc86
 	bl xo_fault_overflow
 	brk #1
-.Lf58_fault4:
-	mov x0, x14
-	mov x1, #45
-	adrp x3, .Lxo_loc87
-	add x3, x3, :lo12:.Lxo_loc87
-	bl xo_fault_overflow
-	brk #1
 .Lf58_fault5:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault6:
 	mov x0, x10
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault7:
@@ -8245,37 +8227,37 @@ xo_f_netpolicy_2eentry__admits:
 	brk #1
 .Lf58_fault8:
 	mov x0, x2
-	adrp x2, .Lxo_loc88
-	add x2, x2, :lo12:.Lxo_loc88
+	adrp x2, .Lxo_loc87
+	add x2, x2, :lo12:.Lxo_loc87
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault9:
 	mov x0, x9
-	adrp x2, .Lxo_loc89
-	add x2, x2, :lo12:.Lxo_loc89
+	adrp x2, .Lxo_loc88
+	add x2, x2, :lo12:.Lxo_loc88
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault10:
 	mov x0, x3
 	mov x2, x13
 	mov x1, #45
-	adrp x3, .Lxo_loc90
-	add x3, x3, :lo12:.Lxo_loc90
+	adrp x3, .Lxo_loc89
+	add x3, x3, :lo12:.Lxo_loc89
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault11:
 	mov x0, x10
 	mov x1, x5
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault12:
 	mov x0, x13
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc91
-	add x3, x3, :lo12:.Lxo_loc91
+	adrp x3, .Lxo_loc90
+	add x3, x3, :lo12:.Lxo_loc90
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault13:
@@ -8286,8 +8268,8 @@ xo_f_netpolicy_2eentry__admits:
 	brk #1
 .Lf58_fault14:
 	mov x0, x11
-	adrp x2, .Lxo_loc92
-	add x2, x2, :lo12:.Lxo_loc92
+	adrp x2, .Lxo_loc91
+	add x2, x2, :lo12:.Lxo_loc91
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault15:
@@ -8296,14 +8278,14 @@ xo_f_netpolicy_2eentry__admits:
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc93
-	add x3, x3, :lo12:.Lxo_loc93
+	adrp x3, .Lxo_loc92
+	add x3, x3, :lo12:.Lxo_loc92
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault16:
 	mov x0, x2
-	adrp x2, .Lxo_loc94
-	add x2, x2, :lo12:.Lxo_loc94
+	adrp x2, .Lxo_loc93
+	add x2, x2, :lo12:.Lxo_loc93
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault17:
@@ -8314,43 +8296,51 @@ xo_f_netpolicy_2eentry__admits:
 	brk #1
 .Lf58_fault18:
 	mov x0, x2
-	adrp x2, .Lxo_loc57
-	add x2, x2, :lo12:.Lxo_loc57
+	adrp x2, .Lxo_loc94
+	add x2, x2, :lo12:.Lxo_loc94
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault19:
 	mov x0, x13
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault20:
 	mov x0, x13
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc58
-	add x3, x3, :lo12:.Lxo_loc58
+	adrp x3, .Lxo_loc57
+	add x3, x3, :lo12:.Lxo_loc57
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault21:
 	mov x0, x10
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault22:
 	mov x0, x2
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault23:
 	mov x0, x10
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault24:
+	mov x0, x13
+	mov x2, x8
+	mov x1, #45
+	adrp x3, .Lxo_loc85
+	add x3, x3, :lo12:.Lxo_loc85
+	bl xo_fault_overflow
+	brk #1
+.Lf58_fault25:
 	mov x0, x13
 	mov x2, x8
 	mov x1, #45
@@ -8358,26 +8348,18 @@ xo_f_netpolicy_2eentry__admits:
 	add x3, x3, :lo12:.Lxo_loc86
 	bl xo_fault_overflow
 	brk #1
-.Lf58_fault25:
-	mov x0, x13
-	mov x2, x8
-	mov x1, #45
-	adrp x3, .Lxo_loc87
-	add x3, x3, :lo12:.Lxo_loc87
-	bl xo_fault_overflow
-	brk #1
 .Lf58_fault26:
 	mov x0, x8
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault27:
 	mov x0, x10
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault28:
@@ -8391,30 +8373,30 @@ xo_f_netpolicy_2eentry__admits:
 	mov x0, x3
 	mov x2, x14
 	mov x1, #45
-	adrp x3, .Lxo_loc86
-	add x3, x3, :lo12:.Lxo_loc86
+	adrp x3, .Lxo_loc85
+	add x3, x3, :lo12:.Lxo_loc85
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault30:
 	mov x0, x3
 	mov x2, x14
 	mov x1, #45
-	adrp x3, .Lxo_loc87
-	add x3, x3, :lo12:.Lxo_loc87
+	adrp x3, .Lxo_loc86
+	add x3, x3, :lo12:.Lxo_loc86
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault31:
 	mov x0, x14
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault32:
 	mov x0, x10
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault33:
@@ -8445,29 +8427,29 @@ xo_f_netpolicy_2eentry__admits:
 .Lf58_fault37:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, .Lxo_loc86
-	add x3, x3, :lo12:.Lxo_loc86
+	adrp x3, .Lxo_loc85
+	add x3, x3, :lo12:.Lxo_loc85
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault38:
 	mov x0, x3
 	mov x1, #45
-	adrp x3, .Lxo_loc87
-	add x3, x3, :lo12:.Lxo_loc87
+	adrp x3, .Lxo_loc86
+	add x3, x3, :lo12:.Lxo_loc86
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault39:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
 .Lf58_fault40:
 	mov x0, x10
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf58_fault41:
@@ -8534,8 +8516,8 @@ xo_f_netpolicy_2esame:
 	mov x29, sp
 	mov x0, x3
 	mov x1, #45
-	adrp x3, .Lxo_loc86
-	add x3, x3, :lo12:.Lxo_loc86
+	adrp x3, .Lxo_loc85
+	add x3, x3, :lo12:.Lxo_loc85
 	bl xo_fault_overflow
 	brk #1
 .Lf59_fault2:
@@ -8544,8 +8526,8 @@ xo_f_netpolicy_2esame:
 	mov x0, x7
 	mov x2, x6
 	mov x1, #45
-	adrp x3, .Lxo_loc90
-	add x3, x3, :lo12:.Lxo_loc90
+	adrp x3, .Lxo_loc89
+	add x3, x3, :lo12:.Lxo_loc89
 	bl xo_fault_overflow
 	brk #1
 .Lf59_fault3:
@@ -8553,8 +8535,8 @@ xo_f_netpolicy_2esame:
 	mov x29, sp
 	mov x0, x3
 	mov x1, #45
-	adrp x3, .Lxo_loc87
-	add x3, x3, :lo12:.Lxo_loc87
+	adrp x3, .Lxo_loc86
+	add x3, x3, :lo12:.Lxo_loc86
 	bl xo_fault_overflow
 	brk #1
 .Lf59_fault4:
@@ -8563,16 +8545,16 @@ xo_f_netpolicy_2esame:
 	mov x0, x2
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc53
-	add x3, x3, :lo12:.Lxo_loc53
+	adrp x3, .Lxo_loc52
+	add x3, x3, :lo12:.Lxo_loc52
 	bl xo_fault_overflow
 	brk #1
 .Lf59_fault5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, .Lxo_loc52
-	add x2, x2, :lo12:.Lxo_loc52
+	adrp x2, .Lxo_loc53
+	add x2, x2, :lo12:.Lxo_loc53
 	bl xo_fault_bytes_index
 	brk #1
 .Lf59_fault6:
@@ -8581,8 +8563,8 @@ xo_f_netpolicy_2esame:
 	mov x0, x6
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_loc91
-	add x3, x3, :lo12:.Lxo_loc91
+	adrp x3, .Lxo_loc90
+	add x3, x3, :lo12:.Lxo_loc90
 	bl xo_fault_overflow
 	brk #1
 .Lf59_fault7:
@@ -8786,16 +8768,16 @@ xo_f_netpolicy_2esplit__go:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
-	adrp x2, .Lxo_loc57
-	add x2, x2, :lo12:.Lxo_loc57
+	adrp x2, .Lxo_loc94
+	add x2, x2, :lo12:.Lxo_loc94
 	bl xo_fault_bytes_index
 	brk #1
 .Lf60_fault3:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x2
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf60_fault4:
@@ -8804,32 +8786,32 @@ xo_f_netpolicy_2esplit__go:
 	mov x0, x2
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_loc58
-	add x3, x3, :lo12:.Lxo_loc58
+	adrp x3, .Lxo_loc57
+	add x3, x3, :lo12:.Lxo_loc57
 	bl xo_fault_overflow
 	brk #1
 .Lf60_fault5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf60_fault6:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x12
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 .Lf60_fault7:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	mov x0, x10
-	adrp x2, .Lxo_loc59
-	add x2, x2, :lo12:.Lxo_loc59
+	adrp x2, .Lxo_loc58
+	add x2, x2, :lo12:.Lxo_loc58
 	bl xo_fault_bytes_index
 	brk #1
 	.cfi_endproc
@@ -9643,8 +9625,8 @@ xo_f_num_2endigits:
 	mov x2, x15
 	mov x0, #8
 	mov x1, #43
-	adrp x3, .Lxo_loc82
-	add x3, x3, :lo12:.Lxo_loc82
+	adrp x3, .Lxo_loc81
+	add x3, x3, :lo12:.Lxo_loc81
 	bl xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -13287,9 +13269,9 @@ DW.ref.xo_personality:
 .Lxo_loc51:
 	.asciz "std/native/llrt/netpolicy.xo:153:11"
 .Lxo_loc52:
-	.asciz "std/native/llrt/netpolicy.xo:29:8"
-.Lxo_loc53:
 	.asciz "std/native/llrt/netpolicy.xo:29:10"
+.Lxo_loc53:
+	.asciz "std/native/llrt/netpolicy.xo:29:8"
 .Lxo_loc54:
 	.asciz "std/native/llrt/netpolicy.xo:29:21"
 .Lxo_loc55:
@@ -13297,81 +13279,81 @@ DW.ref.xo_personality:
 .Lxo_loc56:
 	.asciz "std/native/llrt/netpolicy.xo:43:8"
 .Lxo_loc57:
-	.asciz "std/native/llrt/netpolicy.xo:57:17"
-.Lxo_loc58:
 	.asciz "std/native/llrt/netpolicy.xo:59:17"
-.Lxo_loc59:
+.Lxo_loc58:
 	.asciz "std/native/llrt/netpolicy.xo:14:12"
-.Lxo_loc60:
+.Lxo_loc59:
 	.asciz "std/native/llrt/netpolicy.xo:209:19"
-.Lxo_loc61:
+.Lxo_loc60:
 	.asciz "std/native/llrt/netpolicy.xo:217:16"
-.Lxo_loc62:
+.Lxo_loc61:
 	.asciz "std/native/llrt/netpolicy.xo:217:30"
-.Lxo_loc63:
+.Lxo_loc62:
 	.asciz "std/native/llrt/text.xo:64:6"
-.Lxo_loc64:
+.Lxo_loc63:
 	.asciz "std/native/llrt/text.xo:65:45"
-.Lxo_loc65:
+.Lxo_loc64:
 	.asciz "std/native/llrt/text.xo:65:38"
-.Lxo_loc66:
+.Lxo_loc65:
 	.asciz "std/native/llrt/text.xo:65:54"
-.Lxo_loc67:
+.Lxo_loc66:
 	.asciz "std/native/llrt/text.xo:95:5"
-.Lxo_loc68:
+.Lxo_loc67:
 	.asciz "std/native/llrt/text.xo:100:11"
-.Lxo_loc69:
+.Lxo_loc68:
 	.asciz "std/native/llrt/text.xo:104:11"
-.Lxo_loc70:
+.Lxo_loc69:
 	.asciz "std/native/llrt/text.xo:106:41"
-.Lxo_loc71:
+.Lxo_loc70:
 	.asciz "std/native/llrt/text.xo:106:34"
-.Lxo_loc72:
+.Lxo_loc71:
 	.asciz "std/native/llrt/text.xo:106:65"
-.Lxo_loc73:
+.Lxo_loc72:
 	.asciz "std/native/llrt/text.xo:106:84"
-.Lxo_loc74:
+.Lxo_loc73:
 	.asciz "std/native/llrt/text.xo:106:79"
-.Lxo_loc75:
+.Lxo_loc74:
 	.asciz "std/native/llrt/text.xo:106:53"
-.Lxo_loc76:
+.Lxo_loc75:
 	.asciz "std/native/llrt/text.xo:107:27"
-.Lxo_loc77:
+.Lxo_loc76:
 	.asciz "std/native/llrt/text.xo:108:43"
-.Lxo_loc78:
+.Lxo_loc77:
 	.asciz "std/native/llrt/text.xo:108:56"
-.Lxo_loc79:
+.Lxo_loc78:
 	.asciz "std/native/llrt/text.xo:108:55"
-.Lxo_loc80:
+.Lxo_loc79:
 	.asciz "std/native/llrt/text.xo:108:78"
-.Lxo_loc81:
+.Lxo_loc80:
 	.asciz "std/native/llrt/text.xo:108:77"
-.Lxo_loc82:
+.Lxo_loc81:
 	.asciz "std/native/llrt/num.xo:202:12"
-.Lxo_loc83:
+.Lxo_loc82:
 	.asciz "std/native/llrt/num.xo:355:12"
-.Lxo_loc84:
+.Lxo_loc83:
 	.asciz "std/native/llrt/netpolicy.xo:81:12"
-.Lxo_loc85:
+.Lxo_loc84:
 	.asciz "std/native/llrt/netpolicy.xo:83:29"
-.Lxo_loc86:
+.Lxo_loc85:
 	.asciz "std/native/llrt/netpolicy.xo:24:6"
-.Lxo_loc87:
+.Lxo_loc86:
 	.asciz "std/native/llrt/netpolicy.xo:28:13"
-.Lxo_loc88:
+.Lxo_loc87:
 	.asciz "std/native/llrt/netpolicy.xo:87:17"
-.Lxo_loc89:
+.Lxo_loc88:
 	.asciz "std/native/llrt/netpolicy.xo:87:32"
-.Lxo_loc90:
+.Lxo_loc89:
 	.asciz "std/native/llrt/netpolicy.xo:24:17"
-.Lxo_loc91:
+.Lxo_loc90:
 	.asciz "std/native/llrt/netpolicy.xo:29:23"
-.Lxo_loc92:
+.Lxo_loc91:
 	.asciz "std/native/llrt/netpolicy.xo:94:8"
-.Lxo_loc93:
+.Lxo_loc92:
 	.asciz "std/native/llrt/netpolicy.xo:95:7"
-.Lxo_loc94:
+.Lxo_loc93:
 	.asciz "std/native/llrt/netpolicy.xo:99:32"
+.Lxo_loc94:
+	.asciz "std/native/llrt/netpolicy.xo:57:17"
 .Lxo_loc95:
 	.asciz "std/native/llrt/netpolicy.xo:105:19"
 .Lxo_loc96:

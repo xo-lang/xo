@@ -1,0 +1,53 @@
+// Files and the clock over the Linux system call layer in Xo (decision
+// 0206): std/native/llrt/sysio.xo and linux.xo against their C path
+// (XO_LLRT_C=sysio), and with XO_NOLIBC=1 against the C library.
+// Usage: sysio <workload> <scratch dir>, the directory only for this
+// program. Workloads: read (os.fs.read of a 4 KiB file 20,000 times),
+// read_big (a 1 MiB file 300 times), write (20,000 writes of a 100 byte
+// file), stat (50,000 stats), clock (500,000 Clock.now), none (the setup
+// alone). Each prints "<workload> <checksum>".
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let w = args.get(0) ?? "none"
+  let fs = os.fs.sub(args.get(1) ?? "sysio-scratch")
+  var small = BytesBuilder.new()
+  for i in 0..4096 {
+    small.write_byte(UInt8(97 + i % 26))
+  }
+  fs.write("small", small.freeze())?
+  var sum = 0
+  if w == "read" {
+    for _ in 0..20000 {
+      sum += fs.read("small")?.len()
+    }
+  } else if w == "read_big" {
+    var big = BytesBuilder.new()
+    for i in 0..(1 << 20) {
+      big.write_byte(UInt8(i % 251))
+    }
+    fs.write("big", big.freeze())?
+    for _ in 0..300 {
+      sum += fs.read("big")?.len()
+    }
+  } else if w == "write" {
+    let data = "x".repeat(100).bytes()
+    for i in 0..20000 {
+      fs.write("w${i % 8}", data)?
+      sum += 1
+    }
+  } else if w == "stat" {
+    for _ in 0..50000 {
+      if let Some(fi) = fs.stat("small")? {
+        sum += fi.size
+      }
+    }
+  } else if w == "clock" {
+    let t0 = os.clock.now()
+    for _ in 0..500000 {
+      if os.clock.now() >= t0 {
+        sum += 1
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

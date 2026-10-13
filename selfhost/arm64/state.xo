@@ -55,6 +55,8 @@ struct MemAt {
   base: Int
   off: Int
   epoch: Int
+  /// a register offset, or 0
+  idx: Int = 0
 }
 
 /// The per block memo (opt.xo memo).
@@ -80,6 +82,10 @@ struct Memo {
   /// the quotient register of (dividend register, constant divisor) of a
   /// division by a constant (decision 0194), inherited like the others
   quo: Map[(Int, Int), Int] = {}
+  /// the length register of list l in a block that reaches this one
+  /// through a join (join_facts): not a register to read here, but the
+  /// facts about it hold of l's length (decision 0208)
+  len_at: Map[Int, Int] = {}
 }
 
 /// A pointer induction variable of a loop (lsr.xo lsrPlan).
@@ -92,6 +98,9 @@ struct LsrPlan {
   /// the loop header: body is its loop's
   head: Int
   p: Int = 0
+  /// p is the list's data address instead (iv unused), for [p, i, lsl
+  /// #3] (decision 0208)
+  data: Bool = false
 }
 
 /// What is known of a loop header (lsr.xo lsrLoop).
@@ -142,6 +151,9 @@ struct G {
   lsdas: List[Str] = []
   ncs: Int = 0
   personality_ref: Bool = false
+  /// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
+  /// (decision 0206)
+  restorer_ref: Bool = false
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}
@@ -189,6 +201,10 @@ struct G {
   has_range: List[Bool] = []
   /// registers that are another plus a constant (lsr.xo)
   offs: Map[Int, Offset] = {}
+  /// the Int values a list index adds a constant to (xs[i] beside xs[i +
+  /// 1]): their elements are addressed from xs + i * size (elem_addr,
+  /// decision 0208)
+  off_bases: Map[Int, Bool] = {}
   /// moved latches copied at a branch into them (lsr.xo dup_latch)
   dup_ok: Map[Int, Bool] = {}
   // register allocation results
@@ -275,6 +291,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.ranges = []
   g.has_range = []
   g.offs = {}
+  g.off_bases = {}
   g.dup_ok = {}
   g.loc = []
   g.order = []

@@ -1794,9 +1794,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "Rand.float" => return Some(b.rt("rand_float", b.float_t(), []))
     "Rand.bool" => return Some(b.rt("rand_bool", b.bool_t(), []))
     "Rand.bytes" => return Some(b.rt("rand_bytes", st, [b.io_arg(fo, es, 0, it)]))
-    "Clock.now" => return Some(b.rt("clock_now", it, []))
+    "Clock.now" => return Some(b.clock_now())
     "Clock.since" => {
-      let now = b.rt("clock_now", it, [])
+      let now = b.clock_now()
       let a = b.io_arg(fo, es, 0, it)
       let v = b.add(Op.Sub, it, Aux.None, [now, a])
       b.set_pos(v, pos)

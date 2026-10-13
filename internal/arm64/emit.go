@@ -189,7 +189,10 @@ func (s *fstate) emit() {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
 	b := &strings.Builder{}
-	defer func() { g.text.WriteString(s.farTests(s.farSlots(pairLoads(b.String())))) }()
+	lsdaAt := g.lsdas.Len()
+	defer func() {
+		g.text.WriteString(s.farTests(s.farSlots(pairMem(b.String(), g.lsdas.String()[lsdaAt:]))))
+	}()
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
 	pads := false
@@ -576,6 +579,8 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		if in.indirect {
 			b.WriteString("\tblr x0\n")
+		} else if in.svc {
+			b.WriteString("\tmov x8, x6\n\tsvc #0\n")
 		} else {
 			fmt.Fprintf(b, "\tbl %s\n", in.sym)
 		}

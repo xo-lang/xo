@@ -194,9 +194,9 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	case "Rand.bytes":
 		return s.rt("rand_bytes", strT, arg(0, intT)), true
 	case "Clock.now":
-		return s.rt("clock_now", intT), true
+		return s.clockNow(x), true
 	case "Clock.since":
-		r := s.add(OpSub, intT, nil, s.rt("clock_now", intT), arg(0, intT))
+		r := s.add(OpSub, intT, nil, s.clockNow(x), arg(0, intT))
 		r.Pos = pos
 		return r, true
 	case "Clock.sleep":
@@ -704,4 +704,15 @@ func (s *fn) procRun(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		}
 	}
 	return nil, false
+}
+
+// clockNow is Clock.now: the native prelude's llrt_clock_now, which
+// makes the system call from Xo on Linux (std/native/llrt/sysio.xo,
+// decision 0206), or the C runtime's clock_now without the prelude.
+func (s *fn) clockNow(at ast.Node) *Value {
+	intT := s.b.mod.Builtin(KInt)
+	if s.b.preludeImpl("llrt_clock_now") == nil {
+		return s.rt("clock_now", intT)
+	}
+	return s.llrt("clock_now", intT, at)
 }

@@ -111,7 +111,10 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
     }
   }
   let root = line_root(os, wd, dirs[0])
-  var b = ssa.build_program_for(c, root, false, false, false, "", "", true)
+  // the host's `target.os` (want.txt is the host's run), WASI's
+  // architecture, as xo1 --backend=wasm builds (decision 0206); no C ABI
+  // exports (decision 0207)
+  var b = ssa.build_program_for(c, root, false, false, false, "", "wasm", true)
   if !b.why.is_empty() {
     return "== unsupported ${b.why}"
   }
