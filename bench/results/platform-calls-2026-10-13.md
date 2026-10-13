@@ -150,3 +150,14 @@ the Go seed (scripts/windows-batch.sh):
   exported to lld-link with the Windows SDK); it now prints strerror
   only (commit 9060e907), and the _dosmaperr table is checked through
   TestSysioParity's errors.
+
+Run 2: commit 9060e907, through the queue: batch: 2 windows/amd64:
+golden summary (windows/amd64): 153 pass, 0 fail, 0 unsupported, of
+153 (sys_files_clock passes with want_windows.txt, and on the C path);
+windows/arm64 153 built; TestSysioParity "windows/amd64: 43 lines
+identical" again. TestErrnoTables compared windows.xo's strerror with
+the Microsoft C runtime's for errno 0 to 160: two texts differed,
+strerror(137) "stream timeout" (windows.xo had "timed out") and
+strerror(138) "timed out" (it had "connection timed out"); fixed from
+the probe's output in the next commit, not rerun on Windows (ETIME and
+ETIMEDOUT, which no file operation reports).
