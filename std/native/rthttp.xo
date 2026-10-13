@@ -18,8 +18,23 @@ fn srv_wait(s: Srv)
 fn srv_close(s: Srv)
 
 fn hc_new(s: Srv, c: Conn) -> HConn
-/// The next request is read (its body too); false: close the connection.
-fn hc_read(h: HConn) -> Bool
+/// The next request is read (its body too): 1, or 0 to close the
+/// connection; with the parsing in Xo (hc_xo) also 3, a request head to
+/// parse at hc_input (the result to hc_head), and 4, a chunked body to
+/// decode there (the result to hc_chunked) (std/native/llrt/http1.xo,
+/// decision 0193 step 6).
+fn hc_read(h: HConn) -> Int
+/// The connection's request heads and chunked bodies parse in Xo.
+fn hc_xo(h: HConn)
+/// The unread input, and whether no more will come.
+fn hc_input(h: HConn) -> Str
+fn hc_eof(h: HConn) -> Bool
+/// The parse of a head (http1.Parse): its result and length; for the C,
+/// the method, the version and flags (http1.Reader.read), the
+/// Content-Length, and a status error's code and text.
+fn hc_head(h: HConn, res: Int, used: Int, method: Str, flags: Int, clen: Int, status: Int, reason: Str)
+/// The decoding of a chunked body (http1.Chunked).
+fn hc_chunked(h: HConn, res: Int, used: Int, body: Str)
 fn hc_method(h: HConn) -> Str
 fn hc_path(h: HConn) -> Str
 fn hc_scheme(h: HConn) -> Str
