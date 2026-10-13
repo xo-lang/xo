@@ -118,7 +118,8 @@ func abruptClose(out string) string {
 		// client's request unread, which Windows answers with a reset
 		// that can overtake the alert (either backend, decision 0197)
 		if runtime.GOOS == "windows" && strings.HasPrefix(l, "clientcert: ") &&
-			(strings.Contains(l, "certificate required") || strings.HasSuffix(l, ": EOF)") || strings.Contains(l, "forcibly closed")) {
+			(strings.Contains(l, "certificate required") || strings.HasSuffix(l, ": EOF)") || strings.Contains(l, "forcibly closed") ||
+				strings.Contains(l, "aborted by the software")) {
 			lines[i] = "clientcert: refused (the alert, or a reset that overtook it)"
 		}
 	}

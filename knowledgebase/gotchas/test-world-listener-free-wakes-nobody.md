@@ -1,0 +1,23 @@
+# A freed in memory listener woke no waiting client (test world)
+
+Status: Observed (2026-10-12, on Windows), fixed in std/llrt/xo_testing.c.
+
+Symptom: `xo test --no-gc --backend=llvm` of
+internal/gen/testdata/golden/test_shutdown failed "a server finishes the
+request in flight after the stop" with `XO-F001: deadlock: every task
+is blocked and no timer is pending` in most runs on Windows with more
+than one worker (1 of 10 with 2 workers, 0 of 10 with 4); always fine
+with one worker, and on macOS (100 of 100).
+
+Cause: a client request to an in memory listener that is not served
+waits on the listener's waiter list until it is served or closed. A
+server that stops releases its listener; the listener's free unlinked it
+but woke nobody (only an explicit close did). When the free came after
+the late client's last check, the client slept forever on memory that
+was then freed, and nothing else was left to run. Windows' scheduling
+made that order common.
+
+Fix: one waiter list for every in memory listener (tws.ml_waiters); the
+free wakes it, the client looks the listener up again and finds it gone
+(`NotFound`-like failure, as before). A wait on an object's own list must
+end before the object can be freed, or be on a list that outlives it.

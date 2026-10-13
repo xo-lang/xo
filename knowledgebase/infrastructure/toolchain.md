@@ -2917,6 +2917,16 @@ go test -count=1 -run TestGoldenWant -v ./internal/llvm` (last
 verified: 2026-10-12, i-EXAMPLE22); without
 `XO_GOLDEN_WANT_XO` the Go driver builds in process
 (`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` by hand). The
+batch of Windows checks (decision 0197 stage 6) is
+`scripts/remote-windows.sh --batch [COMMIT]` (a fresh instance, the
+log's `batch:` lines summarize) or `bash scripts/windows-batch.sh` in a
+held instance's checkout (4 min 13 s warm): xo1 built by the Go seed,
+xo1's goldens for windows/amd64 (run) and windows/arm64 (built), the
+LLVM runtime tests (threads, tasks, event loop, Ctrl-Break shutdown,
+TLS and HTTP/2 diffs), and `xo1 test` LLVM against Go for the 16
+directories of TestNoGCTests; `XO_BATCH_STEPS="2 4"` runs some steps.
+Last verified: 2026-10-12 (i-EXAMPLE22). Runtime knobs there:
+`XO_WINPOLL=wsapoll` (the WSAPoll poller instead of AFD polls). The
 plain golden count is
 `XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
 (the summary line counts pass, fail, unsupported; with

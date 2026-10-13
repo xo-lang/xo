@@ -22,6 +22,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   string literals, the predeclared `target` of a cross build (it was the
   compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
   an amd64 host, and paths printed by `xo serve` on Linux.
+- Windows, decision 0197 stages 5 and 6: native programs wait for
+  sockets with AFD polls on a completion port (a round trip stays at
+  44 us with 4000 idle connections, where WSAPoll took 11.9 ms; set
+  `XO_WINPOLL=wsapoll` for the old poller), read standard input from a
+  thread so reads can be cancelled, take the local time zone from the
+  system setting (as the Go backend), read the environment as UTF-8,
+  report a stack overflow as the Go backend does (`fatal error: stack
+  overflow`, status 2), and no longer close a socket when closing one of
+  hundreds of open files. The LLVM runtime tests and `xo test
+  --backend=llvm` run on Windows; `scripts/remote-windows.sh --batch`
+  runs the Windows checks of a batch (scripts/windows-batch.sh). Fixed:
+  a native test's client waiting for an in memory listener that was
+  freed slept forever (test_shutdown deadlocked on Windows).
 - Windows paths (decision 0197 stage 4, std.md 3.1 and 3.5): on
   Windows `Fs` takes `\` as a separator, drive paths (`C:\x`) and UNC
   paths (`\\host\share`) as absolute, and a path rooted at `/` on the
