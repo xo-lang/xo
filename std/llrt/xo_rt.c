@@ -1651,17 +1651,46 @@ static void mu_init(pthread_mutex_t *m) {
 // instead (decision 0069). All zero is a fresh park.
 typedef struct {
 	xo_lock mu;
-	uint32_t signaled; // written under mu, read atomically
-	int sleeping;      // a thread sleeps on signaled
-	int counted;       // a root asleep here counts in dlk.blocked
+	int64_t signaled; // written under mu, read atomically (the futex word: its low half)
+	int sleeping;     // a thread sleeps on signaled
+	int counted;      // a root asleep here counts in dlk.blocked
 	// the fiber parked here (decision 0069): a signal makes it runnable
 	struct xo_fiber *fiber;
 } xo_park;
+
+// ThreadSanitizer does not see the synchronization of the Xo code (it is
+// not instrumented): the C around the parks of std/native/llrt/pool.xo
+// tells it that a signal releases the park and a wait that returns
+// acquires it (decision 0212 stage 2).
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define XO_TSAN_ANN 1
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+#define XO_TSAN_ANN 1
+#endif
+#ifdef XO_TSAN_ANN
+void __tsan_acquire(void *addr);
+void __tsan_release(void *addr);
+#define TSAN_ACQUIRE(a) __tsan_acquire(a)
+#define TSAN_RELEASE(a) __tsan_release(a)
+#else
+#define TSAN_ACQUIRE(a) ((void)(a))
+#define TSAN_RELEASE(a) ((void)(a))
+#endif
 
 static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
 
 static void park_destroy(xo_park *p) { (void)p; }
 
+// The parks and the cancellation tree in Xo (decision 0212 stage 2):
+// std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
+// record; the C path keeps the copies here.
+#ifndef XO_SCHED_C
+static void park_reset(xo_park *p);
+static void park_signal(xo_park *p);
+#else
 static void park_reset(xo_park *p) {
 	lk(&p->mu);
 	__atomic_store_n(&p->signaled, 0, __ATOMIC_RELAXED);
@@ -1690,6 +1719,7 @@ static void park_signal(xo_park *p) {
 	}
 	unlk(&p->mu);
 }
+#endif
 
 // The cancellation tree: every node has a lock for its list of children
 // and its waiter. A walk that cancels a subtree holds the locks from the
@@ -1698,13 +1728,19 @@ static void park_signal(xo_park *p) {
 // one lock for the whole tree serialized every spawn and every wait).
 typedef struct xo_node {
 	struct xo_node *parent, *child, *prev, *next;
-	int canceled;    // atomic reads; written under the parent's and its own lock
+	int64_t canceled; // atomic reads; written under the parent's and its own lock
 	xo_park *waiter; // the park of a context blocked at this node (mu)
 	xo_lock mu;      // child, the children's prev and next, waiter
 } xo_node;
 
-static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __ATOMIC_ACQUIRE); }
+static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __ATOMIC_ACQUIRE) != 0; }
 
+#ifndef XO_SCHED_C
+static void node_link(xo_node *n, xo_node *parent);
+static void node_unlink(xo_node *n);
+static void node_cancel(xo_node *n);
+static void node_set_waiter(xo_node *n, xo_park *p);
+#else
 // node_link adds n below parent (canceled at once when parent is).
 static void node_link(xo_node *n, xo_node *parent) {
 	lk(&parent->mu);
@@ -1771,6 +1807,7 @@ static void node_set_waiter(xo_node *n, xo_park *p) {
 	n->waiter = p;
 	unlk(&n->mu);
 }
+#endif
 
 typedef struct {
 	void *m;
@@ -2734,10 +2771,10 @@ static struct {
 	int64_t ihead, ilen, icap; // ilen read atomically to skip it
 	void *fibers;              // the fiber cache's record (pool.xo)
 	int64_t worker_main;       // where a worker thread starts (pool.xo)
-	int64_t pad;
+	void *dlk;                 // the deadlock counts (pool.xo's parks)
 	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
 	pthread_once_t once;
-} pool = {.once = PTHREAD_ONCE_INIT};
+} pool = {.once = PTHREAD_ONCE_INIT, .dlk = &dlk}; // a root waits before the pool starts
 
 #ifdef XO_SCHED_C
 static __thread xo_worker *tls_w;
@@ -3066,6 +3103,23 @@ static void pool_push(void *t) { xo_x_pool_push(XO_ADDR(&pool), XO_ADDR(t)); }
 static void *find_work(xo_worker *w, int spinning) { return (void *)(intptr_t)xo_x_find_work(XO_ADDR(&pool), XO_ADDR(w), spinning); }
 static void *steal_round(xo_worker *w, int last) { return (void *)(intptr_t)xo_x_steal_round(XO_ADDR(&pool), XO_ADDR(w), last); }
 static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
+
+void xo_x_park_reset(int64_t p);
+void xo_x_park_signal(int64_t pl, int64_t p);
+void xo_x_node_link(int64_t n, int64_t parent);
+void xo_x_node_unlink(int64_t n);
+void xo_x_node_cancel(int64_t pl, int64_t n);
+void xo_x_node_set_waiter(int64_t n, int64_t p);
+
+static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
+static void park_signal(xo_park *p) {
+	TSAN_RELEASE(p);
+	xo_x_park_signal(XO_ADDR(&pool), XO_ADDR(p));
+}
+static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
+static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
+static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
+static void node_set_waiter(xo_node *n, xo_park *p) { xo_x_node_set_waiter(XO_ADDR(n), XO_ADDR(p)); }
 #endif
 
 XO_NORETURN static void deadlock(void) {
@@ -3133,6 +3187,7 @@ static xo_worker *root_worker(void) {
 // (decision 0077). counted tells that the wait counts as blocked for
 // deadlock detection; a wait that a timer, the network, or a signal can
 // end does not.
+#ifdef XO_SCHED_C
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
 	bud_pause(c); // waiting is not running time (decision 0175)
@@ -3217,6 +3272,13 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	}
 	bud_resume(c);
 }
+#else
+void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted);
+static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
+	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted);
+	TSAN_ACQUIRE(&c->park);
+}
+#endif
 
 static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1); }
 
@@ -4331,6 +4393,28 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 10: // a worker took the queue entry of task a, which a helper ran
 		dequeued((xo_task *)(intptr_t)a);
 		return 0;
+#ifndef _WIN32
+	case 11: { // a fiber stack of a bytes, a guard page of b, from the C library's mmap
+		void *m = mmap(NULL, (size_t)a, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
+		if (m == MAP_FAILED) {
+			fiber_map_failed(errno);
+		}
+		mprotect(m, (size_t)b, PROT_NONE);
+		return XO_ADDR(m);
+	}
+	case 12:
+		munmap((void *)(intptr_t)a, (size_t)b);
+		return 0;
+#endif
+	case 13: // context a starts to wait: whether the test world's clock runs
+		flush_pending();
+		bud_pause((xo_ctx *)(intptr_t)a); // waiting is not running time (decision 0175)
+		return tw.virt != 0;
+	case 14: // context a's wait ended
+		bud_resume((xo_ctx *)(intptr_t)a);
+		return 0;
+	case 15: // the calling root thread's record
+		return XO_ADDR(root_worker());
 	}
 	(void)b;
 	return 0;
@@ -4346,6 +4430,12 @@ _Static_assert(offsetof(xo_scope, pending) == 240, "sched.xo S_PENDING");
 _Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
 // and std/native/llrt/pool.xo (decision 0212 stage 2)
 _Static_assert(sizeof(xo_lock) == 8, "pool.xo's locks are words");
+_Static_assert(offsetof(xo_park, signaled) == 8 && offsetof(xo_park, sleeping) == 16 && offsetof(xo_park, counted) == 20 && offsetof(xo_park, fiber) == 24, "pool.xo PK_*");
+_Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 && offsetof(xo_node, prev) == 16 && offsetof(xo_node, next) == 24 &&
+                   offsetof(xo_node, canceled) == 32 && offsetof(xo_node, waiter) == 40 && offsetof(xo_node, mu) == 48,
+               "pool.xo N_*");
+_Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
+_Static_assert(offsetof(__typeof__(dlk), blocked) == 8 && offsetof(__typeof__(dlk), uncounted) == 16 && offsetof(__typeof__(pool), dlk) == 120, "pool.xo DLK_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
                    offsetof(xo_worker, fcache) == 2264 && offsetof(xo_worker, nfcache) == 2328 && offsetof(xo_worker, pool) == 2360 &&

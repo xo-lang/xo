@@ -393,3 +393,17 @@ fn any_work(p: Int) -> Int { pool.any_work(p) }
 fn register_worker(p: Int, w: Int) { pool.register_worker(p, w) }
 
 fn worker_main(w: Int) -> Int { pool.worker_main(w) }
+
+fn park_reset(p: Int) { pool.park_reset(p) }
+
+fn park_signal(pl: Int, p: Int) { pool.park_signal(pl, p) }
+
+fn park_wait(pl: Int, c: Int, cancelable: Int, counted: Int) { pool.park_wait(pl, c, cancelable, counted) }
+
+fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
+
+fn node_unlink(n: Int) { pool.node_unlink(n) }
+
+fn node_cancel(pl: Int, n: Int) { pool.node_cancel(pl, n) }
+
+fn node_set_waiter(n: Int, p: Int) { pool.node_set_waiter(n, p) }
