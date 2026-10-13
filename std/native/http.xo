@@ -6,6 +6,8 @@ use std/json as js
 use std/log
 use std/task
 use native/rt
+use native/llrt/hpack
+use native/llrt/http1
 use native/rthttp
 use native/rttest
 
@@ -268,7 +270,7 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   // unescaped once for every route (was per route and segment)
   var uparts: List[Str] = []
   for p in parts {
-    uparts.push(rthttp.path_unescape(p))
+    uparts.push(http1.path_unescape(p))
   }
   let method = req.method.to_upper()
   var best = -1
@@ -342,19 +344,19 @@ fn request_param_int(r: Request, name: Str, at: rt.Loc) -> Int {
   let s = request_param(r, name, at)
   match Int.parse(s) {
     Some(n) => n
-    None => rt.fault_at("path parameter `${name}` is not an Int: ${rthttp.go_quote(s)} (declare it as {${name}:Int})", at)
+    None => rt.fault_at("path parameter `${name}` is not an Int: ${http1.go_quote(s)} (declare it as {${name}:Int})", at)
   }
 }
 
 fn request_query(r: Request, name: Str) -> Str? { r.url.query.get(name) }
 
 fn header_get(h: Map[Str, Str], name: Str) -> Str? {
-  match h.get(rthttp.canonical_key(name)) {
+  match h.get(http1.canonical_key(name)) {
     Some(v) => return Some(v)
     None => ()
   }
   for (k, v) in h {
-    if rthttp.equal_fold(k, name) {
+    if http1.equal_fold(k, name) {
       return Some(v)
     }
   }
@@ -367,7 +369,7 @@ fn request_json[T: Json](r: Request) -> T ! js.DecodeErr { js.decode(r.body) }
 
 fn request_with_header(r: Request, name: Str, value: Str) -> Request {
   var h = r.headers
-  h.put(rthttp.canonical_key(name), value)
+  h.put(http1.canonical_key(name), value)
   r with {headers: h}
 }
 
@@ -399,7 +401,7 @@ fn (k: Key[T]) name() -> Str { k.key_name }
 /// url.Parse of an absolute or path only URL; a URL that does not parse
 /// is its text as the path (std/rt's parseURLLoose).
 fn parse_url_loose(raw: Str) -> http.Url {
-  let parts = rthttp.url_parts(raw, false)
+  let parts = http1.url_parts(raw, false)
   if parts.is_empty() {
     return http.Url{scheme: "", host: "", port: None, path: raw, query: {}}
   }
@@ -410,7 +412,7 @@ fn parse_url_loose(raw: Str) -> http.Url {
   }
   var query: Map[Str, Str] = {}
   if !parts[4].is_empty() {
-    let q = rthttp.query_parts(parts[4])
+    let q = http1.query_parts(parts[4])
     var i = 0
     while i + 1 < q.len() {
       query.put(q[i], q[i + 1])
@@ -424,17 +426,17 @@ fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes =
   let u = parse_url_loose(url)
   var h: Map[Str, Str] = {}
   for (k, v) in headers {
-    h.put(rthttp.canonical_key(k), v)
+    h.put(http1.canonical_key(k), v)
   }
-  let parts = rthttp.url_parts(url, false)
+  let parts = http1.url_parts(url, false)
   let path = if parts.is_empty() { url } else { parts[3] }
   Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1"}
 }
 
 fn parse_url(s: Str) -> http.Url ! http.UrlErr {
-  let parts = rthttp.url_parts(s, false)
+  let parts = http1.url_parts(s, false)
   if parts.is_empty() {
-    return Err(http.UrlErr{msg: rthttp.url_error(s)})
+    return Err(http.UrlErr{msg: http1.url_error(s)})
   }
   if parts[0] != "http" && parts[0] != "https" {
     return Err(http.UrlErr{msg: "scheme must be http or https: ${s}"})
@@ -457,7 +459,7 @@ fn empty(status: Int) -> http.Response { http.Response{status: status, headers: 
 
 fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Response {
   var h = r.headers
-  h.put(rthttp.canonical_key(name), value)
+  h.put(http1.canonical_key(name), value)
   r with {headers: h}
 }
 
@@ -597,17 +599,24 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
     // HTTP/2 (decision 0121): each request is a task of its own, as
     // net/http runs a handler per stream; the scope ends when the
     // connection does
+    var hp = hpack.conn(hc)
     scope s {
-      while rthttp.h2_next(hc) {
+      while hp.next() {
         let st = rthttp.h2_take(hc)
         s.spawn(fn() { serve_stream(st, r) })
       }
     }
     return
   }
-  while rthttp.hc_read(hc) {
-    if !respond(hc, r) {
-      break
+  var rd = http1.reader(hc)
+  while true {
+    match rd.read() {
+      Some(q) => {
+        if !respond(hc, head_request(hc, q), r) {
+          break
+        }
+      }
+      None => break
     }
   }
 }
@@ -617,12 +626,12 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
 /// connection's other streams go on.
 fn serve_stream(st: rthttp.HConn, r: Router) {
   defer rthttp.h2_end(st)
-  task.isolate(fn() -> Bool ! () { respond(st, r) }).ignore_err("a fault resets the stream (h2_end)")
+  task.isolate(fn() -> Bool ! () { respond(st, conn_request(st), r) }).ignore_err("a fault resets the stream (h2_end)")
 }
 
-/// Answers the request read on hc: whether the connection stays open.
-fn respond(hc: rthttp.HConn, r: Router) -> Bool {
-  let resp = rt.cast[http.Response, Response](call_raw(r, conn_request(hc)))
+/// Answers req, read on hc: whether the connection stays open.
+fn respond(hc: rthttp.HConn, req: Request, r: Router) -> Bool {
+  let resp = rt.cast[http.Response, Response](call_raw(r, req))
   for (k, v) in resp.headers {
     rthttp.hc_header(hc, k, v)
   }
@@ -640,7 +649,33 @@ fn respond(hc: rthttp.HConn, r: Router) -> Bool {
   rthttp.hc_respond(hc, resp.status, resp.body)
 }
 
-/// The request read from the connection (std/rt's serve).
+/// The request of an HTTP/1.1 head read on hc (std/rt's serve).
+fn head_request(hc: rthttp.HConn, q: http1.Req) -> Request {
+  var headers: Map[Str, Str] = {}
+  var i = 0
+  while i + 1 < q.headers.len() {
+    headers.put(q.headers[i], q.headers[i + 1])
+    i += 2
+  }
+  var query: Map[Str, Str] = {}
+  i = 0
+  while i + 1 < q.query.len() {
+    query.put(q.query[i], q.query[i + 1])
+    i += 2
+  }
+  var upath = q.path
+  if upath.is_empty() {
+    upath = "/"
+  }
+  var port: Int? = None
+  if q.port >= 0 {
+    port = Some(q.port)
+  }
+  let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
+}
+
+/// The request of an HTTP/2 stream (std/rt's serve).
 fn conn_request(hc: rthttp.HConn) -> Request {
   var headers: Map[Str, Str] = {}
   for i in 0..rthttp.hc_nheaders(hc) {
@@ -704,7 +739,7 @@ fn url_string(u: http.Url) -> Str {
     } else {
       s = s + "&"
     }
-    s = s + rthttp.query_escape(k) + "=" + rthttp.query_escape(v)
+    s = s + http1.query_escape(k) + "=" + http1.query_escape(v)
   }
   s
 }
@@ -820,7 +855,7 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   let parts = split_path(req.path)
   var uparts: List[Str] = []
   for p in parts {
-    uparts.push(rthttp.path_unescape(p))
+    uparts.push(http1.path_unescape(p))
   }
   let (ok, _) = match_parts(route, uparts)
   if !ok {

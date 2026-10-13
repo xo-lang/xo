@@ -1,0 +1,26 @@
+// The C path of the processes' argument and environment building
+// (decision 0193 step 6): the spec procspec.xo builds, in the form
+// std/llrt/xo_proc.c's pr_parse merges itself (the environment set or
+// the program's, the variables added, PWD, dedupEnv, SYSTEMROOT, the
+// Windows command line). Loaded in place of procspec.xo when XO_LLRT_C
+// names `procspec`. The self hosted compiler always uses procspec.xo.
+
+/// The spec of a command for rt.proc_exec and rt.proc_spawn, appended to
+/// out.
+pub fn spec(name: Str, dir: Str, flags: Int, args: List[Str], env: List[Str], extra: List[Str], var out: List[Str]) {
+  out.push(name)
+  out.push(dir)
+  out.push("${flags}")
+  out.push("${args.len()}")
+  for a in args {
+    out.push(a)
+  }
+  out.push("${env.len()}")
+  for kv in env {
+    out.push(kv)
+  }
+  out.push("${extra.len()}")
+  for kv in extra {
+    out.push(kv)
+  }
+}

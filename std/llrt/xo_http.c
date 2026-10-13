@@ -1381,7 +1381,8 @@ static int hb_chunked(const char *b, int64_t n, int eof, nbuf *out, int64_t *use
 		}
 		if (size > (uint64_t)(n - i) || (uint64_t)(n - i) - size < 2) {
 			// copy what is there: an error later still delivers it
-			int64_t have = n - i < (int64_t)size ? n - i : (int64_t)size;
+			// (a size of 2^63 or more is not negative here)
+			int64_t have = (uint64_t)(n - i) < size ? n - i : (int64_t)size;
 			nbuf_put(out, b + i, have);
 			return eof ? HB_ERR : HB_NEED;
 		}
@@ -1916,7 +1917,17 @@ typedef struct xo_hconn {
 	struct h2c *h2;
 	struct h2s *h2s;
 	struct xo_hconn *h2owner;
+	// the parsing in Xo (decision 0193 step 6, xo_hc_xo): where
+	// hc_read_one goes on, and the result Xo passed (xo_hc_head,
+	// xo_hc_chunked)
+	int xo;
+	int rd_phase;
+	int rd_have, rd_res;
+	int64_t rd_used;
+	char *rd_reason;
 } xo_hconn;
+
+enum { RD_START, RD_HEAD, RD_BODY };
 
 // HTTP/2 (xo_h2.c, included at the end of this file)
 static void h2c_free(struct h2c *c);
@@ -1974,6 +1985,7 @@ static void hconn_free(void *p) {
 	if (hc->have_req) {
 		hr_free(&hc->req);
 	}
+	free(hc->rd_reason);
 	free(hc->body.p);
 	free(hc->out.p);
 	hl_free(&hc->resp);
@@ -2242,23 +2254,39 @@ static int64_t http_max_body(void) {
 
 // hc_read_one reads a request: 1 when it is ready for the handler, 2
 // when it was answered here (OPTIONS *), 0 when the connection is done.
+// With the parsing in Xo (hc->xo, std/native/llrt/http1.xo) also 3, a
+// request head to parse at the unread input, and 4, a chunked body to
+// decode there: the fiber's Xo code parses and passes the result
+// (xo_hc_head, xo_hc_chunked), then calls again, which goes on where it
+// stopped (hc->rd_phase).
 static int64_t hc_read_one(xo_hconn *hc) {
 	xo_srv *s = hc->srv;
-	if (hc->have_req) {
-		hr_free(&hc->req);
-		hc->have_req = 0;
+	int64_t max = http_max_body();
+	int skip = 0, peek = 0, short_body = 0;
+	hreq *q = &hc->req;
+	int phase = hc->rd_phase;
+	hc->rd_phase = RD_START;
+	if (phase == RD_BODY) {
+		goto body;
 	}
-	hc->body.n = 0;
-	hc->body_bad = 0;
-	hc->too_big = 0;
-	hc->expect_unread = 0;
-	hl_clear(&hc->resp);
-	// after a POST, up to 4 CR or LF bytes before the next request
-	// (conn.readRequest's tolerance for old clients)
-	int skip = hc->last_post;
-	// after a response, conn.serve peeks 4 bytes before it reads the next
-	// request: fewer at the end of the stream close the connection
-	int peek = hc->served;
+	if (phase == RD_START) {
+		if (hc->have_req) {
+			hr_free(&hc->req);
+			hc->have_req = 0;
+		}
+		hc->body.n = 0;
+		hc->body_bad = 0;
+		hc->too_big = 0;
+		hc->expect_unread = 0;
+		hl_clear(&hc->resp);
+		// after a POST, up to 4 CR or LF bytes before the next request
+		// (conn.readRequest's tolerance for old clients)
+		skip = hc->last_post;
+		// after a response, conn.serve peeks 4 bytes before it reads the
+		// next request: fewer at the end of the stream close the
+		// connection
+		peek = hc->served;
+	}
 	for (;;) {
 		int64_t have = hc->n - hc->off;
 		if (peek) {
@@ -2275,7 +2303,20 @@ static int64_t hc_read_one(xo_hconn *hc) {
 			skip = 0;
 		}
 		int64_t used = 0;
-		int r = peek || skip ? HP_NEED : hp_head(hc->buf ? hc->buf + hc->off : hc->buf, hc->n - hc->off, hc->eof, &hc->req, &used);
+		int r;
+		if (peek || skip) {
+			r = HP_NEED;
+		} else if (hc->xo) {
+			if (!hc->rd_have) {
+				hc->rd_phase = RD_HEAD;
+				return 3;
+			}
+			hc->rd_have = 0;
+			r = hc->rd_res;
+			used = hc->rd_used;
+		} else {
+			r = hp_head(hc->buf ? hc->buf + hc->off : hc->buf, hc->n - hc->off, hc->eof, &hc->req, &used);
+		}
 		if (r == HP_NEED) {
 			if (hc->eof) {
 				skip = 0;
@@ -2325,7 +2366,6 @@ static int64_t hc_read_one(xo_hconn *hc) {
 		hc->off += used;
 		break;
 	}
-	hreq *q = &hc->req;
 	hc->last_post = hs_eq(q->method, "POST");
 	if (q->expect_other) {
 		// sendExpectationFailed
@@ -2342,13 +2382,23 @@ static int64_t hc_read_one(xo_hconn *hc) {
 		if (q->expect100) {
 			hc_send(hc, "HTTP/1.1 100 Continue\r\n\r\n", 25);
 		}
-		int64_t max = http_max_body();
-		int short_body = 0;
+	body:
 		for (;;) {
 			int64_t have = hc->n - hc->off;
 			if (q->chunked) {
 				int64_t used = 0;
-				int b = hb_chunked(hc->buf + hc->off, have, hc->eof, &hc->body, &used);
+				int b;
+				if (hc->xo) {
+					if (!hc->rd_have) {
+						hc->rd_phase = RD_BODY;
+						return 4;
+					}
+					hc->rd_have = 0;
+					b = hc->rd_res;
+					used = hc->rd_used;
+				} else {
+					b = hb_chunked(hc->buf + hc->off, have, hc->eof, &hc->body, &used);
+				}
 				if (b == HB_OK) {
 					hc->off += used;
 					break;
@@ -2414,7 +2464,8 @@ static int64_t hc_read_one(xo_hconn *hc) {
 
 // xo_hc_read reads the next request for the handler: 1 when one is
 // ready (its body read), 0 when the connection is done (the end of the
-// stream, an error answered, the server stopping, the task canceled).
+// stream, an error answered, the server stopping, the task canceled);
+// with the parsing in Xo also 3 and 4 (hc_read_one).
 int64_t xo_hc_read(xo_hconn *hc) {
 	for (;;) {
 		int64_t r = hc_read_one(hc);
@@ -2422,6 +2473,87 @@ int64_t xo_hc_read(xo_hconn *hc) {
 			return r;
 		}
 	}
+}
+
+// xo_hc_xo makes the connection's request heads and chunked bodies parse
+// in Xo (std/native/llrt/http1.xo; decision 0193 step 6).
+void xo_hc_xo(xo_hconn *hc) { hc->xo = 1; }
+
+// xo_hc_input is the unread input (what hc_read stopped at), or a part
+// of it whose parse is the whole's (pipelined requests would otherwise be
+// copied again for each): mode 0 up to the end of the first head (the
+// first empty line: \n\n or \n\r\n), mode 1 at most 4 KiB (a chunked
+// body's first try), 2 all.
+xo_rstr *xo_hc_input(xo_hconn *hc, int64_t mode, int64_t *len) {
+	const char *p = hc->buf ? hc->buf + hc->off : "";
+	int64_t n = hc->n - hc->off;
+	if (mode == 0) {
+		for (const char *nl = memchr(p, '\n', (size_t)n); nl; nl = memchr(nl + 1, '\n', (size_t)(n - (nl + 1 - p)))) {
+			int64_t e = nl + 1 - p;
+			if (e < n && p[e] == '\n') {
+				n = e + 1;
+				break;
+			}
+			if (e + 1 < n && p[e] == '\r' && p[e + 1] == '\n') {
+				n = e + 2;
+				break;
+			}
+		}
+	} else if (mode == 1 && n > 4096) {
+		n = 4096;
+	}
+	return nstr(p, n, len);
+}
+
+// xo_hc_avail is the length of the unread input.
+int64_t xo_hc_avail(xo_hconn *hc) { return hc->n - hc->off; }
+
+int64_t xo_hc_eof(xo_hconn *hc) { return hc->eof; }
+
+// xo_hc_head takes the parse of a head: its result (HP_*) and length,
+// and for HP_OK what the C reads the body and answers with (the method,
+// the version in the low 8 bits of flags, then chunked, close,
+// wants10ka, wantsclose, expect100, expect_other, h2up, and a target of
+// "*" from bit 8 on; the Content-Length), for HP_STATUS the code and
+// text.
+void xo_hc_head(xo_hconn *hc, int64_t res, int64_t used, const char *m, int64_t mn, int64_t flags, int64_t clen, int64_t status, const char *rs, int64_t rn) {
+	hreq *r = &hc->req;
+	hr_free(r);
+	free(hc->rd_reason);
+	hc->rd_reason = NULL;
+	hc->rd_res = (int)res;
+	hc->rd_used = used;
+	hc->rd_have = 1;
+	if (res == HP_STATUS) {
+		r->status = (int)status;
+		hc->rd_reason = cstr_of(rs, rn);
+		r->reason = hc->rd_reason;
+	}
+	if (res != HP_OK) {
+		return;
+	}
+	r->method = hs_dup(m, mn);
+	r->target = flags & 0x8000 ? hs_dup("*", 1) : hs_dup("", 0);
+	r->major = (int)(flags & 15);
+	r->minor = (int)((flags >> 4) & 15);
+	r->chunked = (flags & 0x100) != 0;
+	r->close = (flags & 0x200) != 0;
+	r->wants10ka = (flags & 0x400) != 0;
+	r->wantsclose = (flags & 0x800) != 0;
+	r->expect100 = (flags & 0x1000) != 0;
+	r->expect_other = (flags & 0x2000) != 0;
+	r->h2up = (flags & 0x4000) != 0;
+	r->clen = clen;
+}
+
+// xo_hc_chunked takes the decoding of a chunked body: its result (HB_*),
+// its length, and the data decoded (before an error too).
+void xo_hc_chunked(xo_hconn *hc, int64_t res, int64_t used, const char *p, int64_t n) {
+	hc->body.n = 0;
+	nbuf_put(&hc->body, p, n);
+	hc->rd_res = (int)res;
+	hc->rd_used = used;
+	hc->rd_have = 1;
 }
 
 static xo_rstr *hstr_out(hstr s, int64_t *len) { return nstr(s.p ? s.p : "", s.n, len); }

@@ -178,6 +178,25 @@ fn fs_chtimes(p: Str, t: Int, x: Str) -> Int
 /// The base name of a new empty file in dir, "" with the status set.
 fn fs_create_temp(dir: Str, prefix: Str, x: Str) -> Str
 fn fs_cwd() -> Str
+/// The system calls under std/native/llrt/fspath.xo (decision 0193 step
+/// 6): 0 or the errno; fs_remove_all, fs_mkdir_all, fs_create_temp, and
+/// fs_cwd above are its C path (XO_LLRT_C=fspath).
+fn fs_raw_mkdir(p: Str) -> Int
+fn fs_raw_rmdir(p: Str) -> Int
+fn fs_raw_unlink(p: Str) -> Int
+/// 1 a directory, 0 another file, minus the errno.
+fn fs_raw_kind(p: Str, follow: Bool) -> Int
+/// The entries of directory p; fs_raw_errno tells whether it was read.
+fn fs_raw_names(p: Str) -> List[Str]
+fn fs_raw_errno() -> Int
+/// Creates the file p (O_EXCL, 0600).
+fn fs_raw_create(p: Str) -> Int
+/// A random number below 2^32.
+fn fs_raw_rand() -> Int
+/// The working directory as the system gives it.
+fn fs_raw_getcwd() -> Str
+/// Records err (0: success) for the Xo path x: the operation's status.
+fn fs_raw_fail(err: Int, x: Str) -> Int
 fn fs_case_sensitive() -> Bool
 /// Whether an Fs operation reports Canceled (not in deferred code).
 fn fs_canceled() -> Bool
@@ -241,6 +260,10 @@ struct ProcChild {}
 /// of them) with input as the first one's standard input when has_input:
 /// "0", the status, standard output, standard error.
 fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
+/// The program's environment as exec passes it on, and the working
+/// directory (std/native/llrt/procspec.xo, decision 0193 step 6).
+fn proc_environ() -> List[Str]
+fn proc_getcwd() -> Str
 /// Starts the command; proc_child_start tells how that went.
 fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
 fn proc_child_start(c: ProcChild) -> List[Str]
