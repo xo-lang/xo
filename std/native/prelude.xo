@@ -5,6 +5,8 @@
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/jsontext
 use native/llrt/num
+use native/llrt/report
+use native/llrt/show
 use native/llrt/strings
 use native/llrt/text
 use native/llrt/unicode
@@ -2151,6 +2153,22 @@ fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
 fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
 
 fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }
+
+// The leaf text of Display and Debug (decision 0193 step 5): a Rune's
+// Display and Debug, a UInt64's text. In Xo (std/native/llrt/show.xo);
+// with XO_LLRT_C=show the Go SSA builder calls the C runtime instead.
+
+fn llrt_append_rune(s: Str, r: Int) -> Str { show.append_rune(s, r) }
+
+fn llrt_append_rune_quote(s: Str, r: Int) -> Str { show.append_rune_quote(s, r) }
+
+fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
+
+// The report of a property test's case to the harness (decision 0193
+// step 5): in Xo (std/native/llrt/report.xo); with XO_LLRT_C=report the
+// Go SSA builder calls the C runtime's xo_prop_report instead.
+
+fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo

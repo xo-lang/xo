@@ -1,0 +1,76 @@
+// The Debug text of nested collections and the leaf text the native
+// runtime writes in Xo (decision 0193 step 5, std/native/llrt/show.xo):
+// Rune Display and Debug, UInt64 text, sized integers at their bounds.
+
+struct Point {
+  x: Int8
+  y: UInt64
+  tag: Rune
+}
+
+enum Shape {
+  Dot
+  Line(from: Point, to: Point)
+  Many(pts: List[Point])
+}
+
+const U_MAX: UInt64 = 18446744073709551615
+const U_19_NINES: UInt64 = 9999999999999999999
+
+fn main(os: Os) {
+  // UInt64 at its bounds and around 2^63 and the powers of ten
+  var us: List[UInt64] = [0, 1, 9, 10, 99, 100, 9999999, 10000000, 99999999, 100000000]
+  us.push(UInt64(9223372036854775807))
+  us.push(UInt64(9223372036854775807) + 1)
+  us.push(UInt64(9223372036854775807) + 2)
+  us.push(U_19_NINES)
+  us.push(U_19_NINES + 1)
+  us.push(U_19_NINES + 2)
+  us.push(U_MAX - 1)
+  us.push(U_MAX)
+  var p: UInt64 = 1
+  for _ in 0..19 {
+    p = p * 10
+    us.push(p - 1)
+    us.push(p)
+  }
+  for u in us {
+    os.stdio.println("${u} ${u.debug()}")
+  }
+  os.stdio.println(us.debug())
+  // every sized integer at its bounds
+  let i8s: List[Int8] = [-128, -1, 0, 127]
+  let i16s: List[Int16] = [-32768, -1, 0, 32767]
+  let i32s: List[Int32] = [-2147483648, -1, 0, 2147483647]
+  let u8s: List[UInt8] = [0, 1, 255]
+  let u16s: List[UInt16] = [0, 1, 65535]
+  let u32s: List[UInt32] = [0, 1, 4294967295]
+  let i64s: List[Int64] = [-9223372036854775807 - 1, -1, 0, 9223372036854775807]
+  os.stdio.println("${i8s.debug()} ${i16s.debug()} ${i32s.debug()} ${i64s.debug()}")
+  os.stdio.println("${u8s.debug()} ${u16s.debug()} ${u32s.debug()}")
+  os.stdio.println("${i8s[0]} ${i16s[0]} ${i32s[0]} ${i64s[0]} ${u8s[2]} ${u16s[2]} ${u32s[2]} ${i64s[3]}")
+  // Runes: ASCII, the escapes, two, three, and four byte UTF-8, the ends
+  // of each range
+  let rs: List[Rune] = ['a', 'Z', ' ', '\'', '\\', '\n', '\t', '"', '\u{0}', '\u{7f}', '\u{80}', 'é', '\u{7ff}', '\u{800}', 'λ', '€', '\u{d7ff}', '\u{e000}', '\u{fffd}', '\u{ffff}', '\u{10000}', '😀', '\u{10ffff}', '\r']
+  for r in rs {
+    os.stdio.println("[${r}] ${r.debug()} ${Int(r)}")
+  }
+  os.stdio.println(rs.debug())
+  // nested collections of every kind
+  let m: Map[Str, List[Rune]] = {"a": ['x', 'é'], "b": [], "c\"": ['\n']}
+  let s: Set[UInt64] = #{U_MAX, 0, 7}
+  let t = (U_MAX, 'q', [Some(UInt8(255)), None], "s")
+  os.stdio.println(m.debug())
+  os.stdio.println(s.debug())
+  os.stdio.println(t.debug())
+  let pts = [Point{x: -128, y: U_MAX, tag: '€'}, Point{x: 127, y: 0, tag: '\''}]
+  let shapes = [Shape.Dot, Shape.Line(from: pts[0], to: pts[1]), Shape.Many(pts: pts)]
+  os.stdio.println(shapes.debug())
+  let nested: Map[Rune, Map[UInt64, List[(Rune, UInt16)]]] = {'k': {U_MAX: [('a', 65535), ('😀', 0)]}, '\t': {}}
+  os.stdio.println(nested.debug())
+  let opts: List[Option[Rune]] = [Some('\\'), None]
+  let res: List[Result[UInt64, Str]] = [Ok(U_MAX), Err("no")]
+  os.stdio.println("${opts.debug()} ${res.debug()}")
+  let lists: List[List[List[UInt32]]] = [[[4294967295], []], [], [[0, 1]]]
+  os.stdio.println(lists.debug())
+}

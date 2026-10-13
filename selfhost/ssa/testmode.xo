@@ -481,7 +481,16 @@ fn (var b: Builder) prop_inputs(params: List[Int]) -> List[Int] {
     text = b.append_debug(text, vals[k], b.c.objs[vo].ty)
     text = b.call("str.concat", st, "", [text, b.const_str("\n")])
   }
-  b.rt("prop_report", -1, [g, text])
+  let impl = b.prelude_impl("llrt_prop_report")
+  if impl >= 0 {
+    // in Xo (std/native/llrt/report.xo, decision 0193 step 5), unchecked
+    // like the C it replaces
+    let f = b.declare(impl, [])
+    let rs = b.m.funcs[f].results
+    b.call(b.m.funcs[f].name, if rs.len() > 0 { rs[0] } else { -1 }, "", [g, text])
+  } else {
+    b.rt("prop_report", -1, [g, text])
+  }
   vals
 }
 

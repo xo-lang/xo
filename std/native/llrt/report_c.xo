@@ -1,0 +1,9 @@
+// The C path of the report text of native test binaries (decision 0193
+// step 5): the API of report.xo over the C runtime's xo_prop_report
+// (std/llrt/xo_testing.c, compiled with -DXO_REPORT_C). Loaded in place
+// of report.xo when XO_LLRT_C names `report`, to compare the two and to
+// fall back while the Xo path misses decision 0180's bar. The self
+// hosted compiler always uses report.xo.
+use native/rttest
+
+pub fn prop_report(g: Int, input: Str) { rttest.prop_report(g, input) }

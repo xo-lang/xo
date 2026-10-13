@@ -1,0 +1,808 @@
+// The zone rules of std/time on the native backends, written in Xo
+// (decision 0193 step 5): a zone is Go's time.Location, read from TZif
+// data as LoadLocationFromTZData reads it and looked up as
+// Location.lookup does (the transitions, then the POSIX TZ rule of the
+// footer, tzset; the first standard zone for times before the first
+// transition; the cache of the zone in effect at load time, which Go
+// fills too), so offsets and abbreviations match the Go backend's for
+// every instant. They were C (std/llrt/xo_time.c). The C runtime keeps
+// what is below Xo: the zone data (the program's TZif data per constant
+// name, the embedded zoneinfo.zip, or the host's files:
+// rttime.tz_data) and the table of the zones loaded so far, so that a
+// name always gets the same id and is parsed once (rttime.tz_find,
+// tz_keep). The C path stays selectable (`XO_LLRT_C=tz` loads tz_c.xo)
+// until bench/perf/text meets decision 0180's bar on both native
+// backends.
+//
+// A parsed zone is one List[Int] (the C table holds it, shared between
+// threads, without knowing its layout; a Zone value carries it as one
+// word): the header below, then the transitions (time and zone, ntx
+// pairs), the zones (offset and the position of the abbreviation, nzone
+// pairs), and the names (each its length and its bytes, eight to a
+// word, the first in the low byte).
+use native/rt
+use native/rttime
+
+/// Go's alpha and omega: the ends of time for zone ranges.
+const ALPHA: Int = -9223372036854775807 - 1
+
+const OMEGA: Int = 9223372036854775807
+
+// The header of a parsed zone.
+/// The id the C table gave it (rttime.tz_keep writes it).
+const H_ID: Int = 0
+/// The number of transitions (at least one).
+const H_NTX: Int = 1
+/// The number of zones.
+const H_NZONE: Int = 2
+/// The zone of times before the first transition (lookupFirstZone).
+const H_FIRST: Int = 3
+/// Go's cache: 1 when filled, its range, offset, and name.
+const H_CACHE: Int = 4
+const H_CSTART: Int = 5
+const H_CEND: Int = 6
+const H_COFF: Int = 7
+const H_CNAME: Int = 8
+/// The footer: 0 none (or one tzset rejects), 1 standard time only, 2
+/// with daylight saving rules; the offsets and names of both.
+const H_EXT: Int = 9
+const H_STD_OFF: Int = 10
+const H_DST_OFF: Int = 11
+const H_STD_NAME: Int = 12
+const H_DST_NAME: Int = 13
+/// The start and end rules (Go's rule: kind 0 Julian `Jn`, 1 zero based
+/// day of the year `n`, 2 `Mm.w.d`; day, week, month, time of day).
+const H_START: Int = 14
+const H_END: Int = 19
+const R_KIND: Int = 0
+const R_DAY: Int = 1
+const R_WEEK: Int = 2
+const R_MON: Int = 3
+const R_TIME: Int = 4
+/// The transitions start here.
+const H_LEN: Int = 24
+
+/// No zone data: UTC and fixed zones.
+const NONE: List[Int] = []
+
+/// The zone of a name, or of no name (UTC and fixed zones: id 0, no
+/// data). The id is the C table's: the same name always gets the same id
+/// and the same data, so `==` on a Zone compares what the Go backend
+/// compares.
+pub struct Rules {
+  id: Int
+  w: List[Int]
+}
+
+// ---------------------------------------------------------------------------
+// Zones by name
+
+/// The rules of UTC and of fixed zones.
+pub fn none() -> Rules { Rules{id: 0, w: NONE} }
+
+/// The zone with this IANA name from the program's zone data (host
+/// false) or the host's database (host true; "Local" is /etc/localtime),
+/// or None (Go's LoadLocation; std/rt's loadZone).
+pub fn load(name: Str, host: Bool) -> Rules? {
+  // the table holds only names that passed the check below, and "Local"
+  // from the host's database
+  var w = rttime.tz_find(name)
+  if w.len() != 0 && !host && name.len() == 5 && name == "Local" {
+    return None
+  }
+  if w.len() == 0 {
+    if !valid_name(name) && !(host && name == "Local") {
+      return None
+    }
+    let now = rttime.tz_now()
+    for data in rttime.tz_data(name, host) {
+      match parse(data, now) {
+        Some(p) => {
+          w = rttime.tz_keep(name, p)
+          break
+        }
+        None => {}
+      }
+    }
+    if w.len() == 0 {
+      return None
+    }
+  }
+  Some(Rules{id: w[H_ID], w: w})
+}
+
+/// The machine's zone name from the /etc/localtime link, or "Local".
+pub fn local_name() -> Str { rttime.tz_local_name() }
+
+/// Whether name may be an IANA zone name (std/rt's validZoneName).
+fn valid_name(name: Str) -> Bool {
+  let b = name.bytes()
+  let n = b.len()
+  if n == 0 || n > 255 || name == "Local" || b[0] == 47 {
+    return false
+  }
+  var i = 0
+  while i < n {
+    let c = b[i]
+    // \, NUL, ..
+    if c == 92 || c == 0 || (c == 46 && i + 1 < n && b[i + 1] == 46) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// Lookup (Go's Location.lookup)
+
+/// The offset from UTC in seconds of the zone at sec.
+pub fn offset(r: Rules, sec: Int) -> Int {
+  let w = r.w
+  if w.len() == 0 {
+    return 0
+  }
+  if w[H_CACHE] != 0 && w[H_CSTART] <= sec && sec < w[H_CEND] {
+    return w[H_COFF]
+  }
+  let i = tx_at(w, sec)
+  if i < 0 {
+    return w[zone_at(w, w[H_FIRST])]
+  }
+  if i == w[H_NTX] - 1 && w[H_EXT] != 0 {
+    let (_, off, _, _) = tzset(w, w[H_LEN + 2 * i], sec)
+    return off
+  }
+  w[zone_at(w, w[H_LEN + 2 * i + 1])]
+}
+
+/// The abbreviation of the zone at sec ("CET", "-05").
+pub fn abbr(r: Rules, sec: Int) -> Str {
+  let w = r.w
+  if w.len() == 0 {
+    return "UTC"
+  }
+  if w[H_CACHE] != 0 && w[H_CSTART] <= sec && sec < w[H_CEND] {
+    return name_at(w, w[H_CNAME])
+  }
+  let i = tx_at(w, sec)
+  if i < 0 {
+    return name_at(w, w[zone_at(w, w[H_FIRST]) + 1])
+  }
+  if i == w[H_NTX] - 1 && w[H_EXT] != 0 {
+    let (name, _, _, _) = tzset(w, w[H_LEN + 2 * i], sec)
+    return name_at(w, name)
+  }
+  name_at(w, w[zone_at(w, w[H_LEN + 2 * i + 1]) + 1])
+}
+
+/// The position of zone z's offset (its name's position follows).
+fn zone_at(w: List[Int], z: Int) -> Int { H_LEN + 2 * w[H_NTX] + 2 * z }
+
+/// The name at position p: its length, then its bytes in words.
+fn name_at(w: List[Int], p: Int) -> Str {
+  let n = w[p]
+  if n == 0 {
+    return ""
+  }
+  if n <= 8 {
+    return rt.rs_push_word("", w[p + 1], n)
+  }
+  var s = ""
+  var k = 0
+  while k < n {
+    let m = if n - k < 8 { n - k } else { 8 }
+    s = rt.rs_push_word(s, w[p + 1 + k / 8], m)
+    k += 8
+  }
+  s
+}
+
+/// The last transition at or before sec, or -1 when sec is before the
+/// first (Go's binary search).
+fn tx_at(w: List[Int], sec: Int) -> Int {
+  if sec < w[H_LEN] {
+    return -1
+  }
+  var lo = 0
+  var hi = 0 + w[H_NTX]
+  while hi - lo > 1 {
+    let m = (lo + hi) >> 1
+    if sec < w[H_LEN + 2 * m] {
+      hi = m
+    } else {
+      lo = m
+    }
+  }
+  lo
+}
+
+/// Go's lookupFirstZone: the zone of times before the first
+/// transition, from the zone of each transition and whether each zone
+/// is daylight saving time.
+fn first_zone(idx: List[Int], dst: List[Bool]) -> Int {
+  var used = false
+  for k in idx {
+    if k == 0 {
+      used = true
+      break
+    }
+  }
+  if !used {
+    return 0
+  }
+  if idx.len() > 0 && dst[idx[0]] {
+    var zi = idx[0] - 1
+    while zi >= 0 {
+      if !dst[zi] {
+        return zi
+      }
+      zi -= 1
+    }
+  }
+  var zi = 0
+  while zi < dst.len() {
+    if !dst[zi] {
+      return zi
+    }
+    zi += 1
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// The POSIX TZ rule of the footer (Go's tzset)
+
+fn is_leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in(m: Int, y: Int) -> Int {
+  if m == 2 {
+    return if is_leap(y) { 29 } else { 28 }
+  }
+  30 + ((m + (m >> 3)) & 1)
+}
+
+/// The days of the year before month m (1 to 12).
+fn days_before(m: Int) -> Int {
+  match m {
+    1 => 0
+    2 => 31
+    3 => 59
+    4 => 90
+    5 => 120
+    6 => 151
+    7 => 181
+    8 => 212
+    9 => 243
+    10 => 273
+    11 => 304
+    _ => 334
+  }
+}
+
+fn floor_div(a: Int, b: Int) -> Int {
+  let q = a / b
+  if a % b != 0 && ((a < 0) != (b < 0)) {
+    return q - 1
+  }
+  q
+}
+
+/// The days from 1970-01-01 to y-m-d (H. Hinnant's days_from_civil).
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  var y = year
+  if m <= 2 {
+    y -= 1
+  }
+  let era = floor_div(y, 400)
+  let yoe = y - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// The year of the day that holds sec and the day of the year (1 based).
+fn year_yday(sec: Int) -> (Int, Int) {
+  let days = floor_div(sec, 86400)
+  let z = days + 719468
+  let era = floor_div(z, 146097)
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  var y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  if m <= 2 {
+    y += 1
+  }
+  (y, days - days_from_civil(y, 1, 1) + 1)
+}
+
+/// The seconds since the start of the year of the rule at r (the start
+/// or the end rule in w) in year, less off (Go's tzruleTime).
+fn rule_time(year: Int, w: List[Int], r: Int, off: Int) -> Int {
+  let kind = w[r + R_KIND]
+  let day = w[r + R_DAY]
+  var s = 0
+  if kind == 0 {
+    s = (day - 1) * 86400
+    if is_leap(year) && day >= 60 {
+      s += 86400
+    }
+  } else if kind == 1 {
+    s = day * 86400
+  } else {
+    let mon = w[r + R_MON]
+    let m1 = (mon + 9) % 12 + 1
+    var yy0 = year
+    if mon <= 2 {
+      yy0 -= 1
+    }
+    let yy1 = yy0 / 100
+    let yy2 = yy0 % 100
+    var dow = ((26 * m1 - 2) / 10 + 1 + yy2 + yy2 / 4 + yy1 / 4 - 2 * yy1) % 7
+    if dow < 0 {
+      dow += 7
+    }
+    var d = day - dow
+    if d < 0 {
+      d += 7
+    }
+    let week = w[r + R_WEEK]
+    var i = 1
+    while i < week {
+      if d + 7 >= days_in(mon, year) {
+        break
+      }
+      d += 7
+      i += 1
+    }
+    d += days_before(mon)
+    if is_leap(year) && mon > 2 {
+      d += 1
+    }
+    s = d * 86400
+  }
+  s + w[r + R_TIME] - off
+}
+
+/// Go's tzset of the parsed footer of w (kind 1 or 2): the zone at sec,
+/// after the last transition at last, as the position of its name, its
+/// offset, and the range it holds over.
+fn tzset(w: List[Int], last: Int, sec: Int) -> (Int, Int, Int, Int) {
+  if w[H_EXT] == 1 {
+    return (w[H_STD_NAME], w[H_STD_OFF], last, OMEGA)
+  }
+  let (year, yday) = year_yday(sec)
+  let ysec = (yday - 1) * 86400 + sec % 86400
+  let ystart = sec - ysec
+  let s0 = rule_time(year, w, H_START, w[H_STD_OFF])
+  let e0 = rule_time(year, w, H_END, w[H_DST_OFF])
+  // the rules of the southern hemisphere: the names and offsets swap
+  let swap = e0 < s0
+  let start_sec = if swap { e0 } else { s0 }
+  let end_sec = if swap { s0 } else { e0 }
+  let std_name = if swap { w[H_DST_NAME] } else { w[H_STD_NAME] }
+  let dst_name = if swap { w[H_STD_NAME] } else { w[H_DST_NAME] }
+  let std_off = if swap { w[H_DST_OFF] } else { w[H_STD_OFF] }
+  let dst_off = if swap { w[H_STD_OFF] } else { w[H_DST_OFF] }
+  if ysec < start_sec {
+    return (std_name, std_off, ystart, start_sec + ystart)
+  }
+  if ysec >= end_sec {
+    return (std_name, std_off, end_sec + ystart, ystart + 365 * 86400)
+  }
+  (dst_name, dst_off, start_sec + ystart, end_sec + ystart)
+}
+
+// ---------------------------------------------------------------------------
+// Parsing the footer (Go's tzsetName, tzsetOffset, tzsetRule)
+
+/// A cursor over the footer's text.
+struct Cur {
+  b: Bytes
+  i: Int
+}
+
+fn at(c: Cur) -> Int {
+  if c.i < c.b.len() {
+    return Int(c.b[c.i])
+  }
+  -1
+}
+
+fn rest(c: Cur) -> Int { c.b.len() - c.i }
+
+/// A zone name of the rule at c (Go's tzsetName): its start and end in
+/// the text, or (-1, -1).
+fn set_name(var c: Cur) -> (Int, Int) {
+  let n = rest(c)
+  if n == 0 {
+    return (-1, -1)
+  }
+  let s = c.i
+  if at(c) != 60 {
+    // not <
+    var i = 0
+    while i < n {
+      let ch = Int(c.b[s + i])
+      // a digit , - +
+      if (ch >= 48 && ch <= 57) || ch == 44 || ch == 45 || ch == 43 {
+        if i < 3 {
+          return (-1, -1)
+        }
+        c.i += i
+        return (s, s + i)
+      }
+      i += 1
+    }
+    if n < 3 {
+      return (-1, -1)
+    }
+    c.i += n
+    return (s, s + n)
+  }
+  var i = 0
+  while i < n {
+    if Int(c.b[s + i]) == 62 {
+      // >
+      c.i += i + 1
+      return (s + 1, s + i)
+    }
+    i += 1
+  }
+  (-1, -1)
+}
+
+/// A number from min to max at c (Go's tzsetNum), or -1.
+fn set_num(var c: Cur, min: Int, max: Int) -> Int {
+  let n = rest(c)
+  if n == 0 {
+    return -1
+  }
+  var v = 0
+  var i = 0
+  while i < n {
+    let ch = Int(c.b[c.i + i])
+    if ch < 48 || ch > 57 {
+      if i == 0 || v < min {
+        return -1
+      }
+      c.i += i
+      return v
+    }
+    v = v * 10 + (ch - 48)
+    if v > max {
+      return -1
+    }
+    i += 1
+  }
+  if v < min {
+    return -1
+  }
+  c.i += n
+  v
+}
+
+/// An offset `[+-]hh[:mm[:ss]]` at c in seconds (Go's tzsetOffset), or
+/// None.
+fn set_offset(var c: Cur) -> Int? {
+  if rest(c) == 0 {
+    return None
+  }
+  var neg = false
+  if at(c) == 43 {
+    c.i += 1
+  } else if at(c) == 45 {
+    c.i += 1
+    neg = true
+  }
+  let hours = set_num(c, 0, 24 * 7)
+  if hours < 0 {
+    return None
+  }
+  var o = hours * 3600
+  if at(c) == 58 {
+    c.i += 1
+    let mins = set_num(c, 0, 59)
+    if mins < 0 {
+      return None
+    }
+    o += mins * 60
+    if at(c) == 58 {
+      c.i += 1
+      let secs = set_num(c, 0, 59)
+      if secs < 0 {
+        return None
+      }
+      o += secs
+    }
+  }
+  if neg {
+    return Some(-o)
+  }
+  Some(o)
+}
+
+/// A rule `Jn`, `n`, or `Mm.w.d`, then `/time`, at c written to w from
+/// r (Go's tzsetRule); false when tzset rejects it.
+fn set_rule(var c: Cur, var w: List[Int], r: Int) -> Bool {
+  if rest(c) == 0 {
+    return false
+  }
+  if at(c) == 74 {
+    // J
+    c.i += 1
+    let d = set_num(c, 1, 365)
+    if d < 0 {
+      return false
+    }
+    w[r + R_KIND] = 0
+    w[r + R_DAY] = d
+  } else if at(c) == 77 {
+    // M
+    c.i += 1
+    let m = set_num(c, 1, 12)
+    if m < 0 || at(c) != 46 {
+      return false
+    }
+    c.i += 1
+    let wk = set_num(c, 1, 5)
+    if wk < 0 || at(c) != 46 {
+      return false
+    }
+    c.i += 1
+    let d = set_num(c, 0, 6)
+    if d < 0 {
+      return false
+    }
+    w[r + R_KIND] = 2
+    w[r + R_MON] = m
+    w[r + R_WEEK] = wk
+    w[r + R_DAY] = d
+  } else {
+    let d = set_num(c, 0, 365)
+    if d < 0 {
+      return false
+    }
+    w[r + R_KIND] = 1
+    w[r + R_DAY] = d
+  }
+  if at(c) != 47 {
+    // no /: 02:00
+    w[r + R_TIME] = 2 * 3600
+    return true
+  }
+  c.i += 1
+  match set_offset(c) {
+    Some(t) => {
+      w[r + R_TIME] = t
+      true
+    }
+    None => false
+  }
+}
+
+/// Appends the bytes lo..hi of b to w as a name (its length, then eight
+/// bytes a word) and returns its position.
+fn add_name(var w: List[Int], b: Bytes, lo: Int, hi: Int) -> Int {
+  let p = w.len()
+  w.push(hi - lo)
+  var k = lo
+  while k < hi {
+    var x = 0
+    var j = 0
+    while j < 8 && k + j < hi {
+      x = x | rt.int_wrap(3, Int(b[k + j]), 8 * j)
+      j += 1
+    }
+    w.push(x)
+    k += 8
+  }
+  p
+}
+
+/// Parses the footer rule f as tzset does before it reads the time, into
+/// the header of w (and its names after w's): H_EXT stays 0 when tzset
+/// would fail.
+fn parse_ext(var w: List[Int], f: Bytes) {
+  var c = Cur{b: f, i: 0}
+  let (s0, s1) = set_name(c)
+  if s0 < 0 {
+    return
+  }
+  var std_off = 0
+  match set_offset(c) {
+    Some(o) => std_off = -o
+    None => return
+  }
+  if rest(c) == 0 || at(c) == 44 {
+    w[H_STD_NAME] = add_name(w, f, s0, s1)
+    w[H_STD_OFF] = std_off
+    w[H_EXT] = 1
+    return
+  }
+  let (d0, d1) = set_name(c)
+  if d0 < 0 {
+    return
+  }
+  var dst_off = std_off + 3600
+  if rest(c) != 0 && at(c) != 44 {
+    match set_offset(c) {
+      Some(o) => dst_off = -o
+      None => return
+    }
+  }
+  if rest(c) == 0 {
+    c = Cur{b: b",M3.2.0,M11.1.0", i: 0}
+  }
+  if at(c) != 44 && at(c) != 59 {
+    return
+  }
+  c.i += 1
+  if !set_rule(c, w, H_START) || at(c) != 44 {
+    return
+  }
+  c.i += 1
+  if !set_rule(c, w, H_END) || rest(c) > 0 {
+    return
+  }
+  w[H_STD_NAME] = add_name(w, f, s0, s1)
+  w[H_DST_NAME] = add_name(w, f, d0, d1)
+  w[H_STD_OFF] = std_off
+  w[H_DST_OFF] = dst_off
+  w[H_EXT] = 2
+}
+
+// ---------------------------------------------------------------------------
+// TZif (Go's LoadLocationFromTZData)
+
+/// The big endian 32 bit word of b at i (i + 4 <= b.len()).
+fn big4(b: Bytes, i: Int) -> Int { (Int(b[i]) << 24) | (Int(b[i + 1]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 3]) }
+
+/// The 32 bit word as a signed Int.
+fn signed32(v: Int) -> Int {
+  if v >= 0x80000000 {
+    return v - 0x100000000
+  }
+  v
+}
+
+/// The zone of the TZif data, now being the time of the load in seconds
+/// (Go fills its cache with the zone in effect then), or None when the
+/// data is not TZif.
+fn parse(data: Bytes, now: Int) -> List[Int]? {
+  let len = data.len()
+  if len < 44 || data[0] != 84 || data[1] != 90 || data[2] != 105 || data[3] != 102 {
+    // not "TZif" and a header
+    return None
+  }
+  let v = data[4]
+  if v != 0 && v != 50 && v != 51 {
+    return None
+  }
+  // the counts: isutcnt, isstdcnt, leapcnt, timecnt, typecnt, charcnt
+  var p = 20
+  var nutc = big4(data, p)
+  var nstd = big4(data, p + 4)
+  var nleap = big4(data, p + 8)
+  var ntime = big4(data, p + 12)
+  var nzone = big4(data, p + 16)
+  var nchar = big4(data, p + 20)
+  p += 24
+  var size = 4
+  if v != 0 {
+    // skip the version 1 data and the second header
+    let skip = ntime * 4 + ntime + nzone * 6 + nchar + nleap * 8 + nstd + nutc + 4 + 16
+    if len - p < skip + 24 {
+      return None
+    }
+    p += skip
+    nutc = big4(data, p)
+    nstd = big4(data, p + 4)
+    nleap = big4(data, p + 8)
+    ntime = big4(data, p + 12)
+    nzone = big4(data, p + 16)
+    nchar = big4(data, p + 20)
+    p += 24
+    size = 8
+  }
+  let txtimes = p
+  let txzones = txtimes + ntime * size
+  let zonedata = txzones + ntime
+  let abbrev = zonedata + nzone * 6
+  let end = abbrev + nchar + nleap * (size + 4) + nstd + nutc
+  if end > len || nzone == 0 {
+    return None
+  }
+  let ntx = if ntime == 0 { 1 } else { ntime }
+  var w: List[Int] = []
+  var k = 0
+  while k < H_LEN {
+    w.push(0)
+    k += 1
+  }
+  w[H_NTX] = ntx
+  w[H_NZONE] = nzone
+  // the transitions
+  var idx: List[Int] = []
+  var i = 0
+  while i < ntime {
+    var t = 0
+    if size == 4 {
+      t = signed32(big4(data, txtimes + i * 4))
+    } else {
+      let q = txtimes + i * 8
+      t = rt.int_wrap(3, big4(data, q), 32) | big4(data, q + 4)
+    }
+    let z = Int(data[txzones + i])
+    if z >= nzone {
+      return None
+    }
+    w.push(t)
+    w.push(z)
+    idx.push(z)
+    i += 1
+  }
+  if ntime == 0 {
+    w.push(ALPHA)
+    w.push(0)
+  }
+  // the zones, their names after them
+  var dst: List[Bool] = []
+  var z = 0
+  while z < nzone {
+    let q = zonedata + z * 6
+    if Int(data[q + 5]) >= nchar {
+      return None
+    }
+    w.push(signed32(big4(data, q)))
+    w.push(0)
+    dst.push(data[q + 4] != 0)
+    z += 1
+  }
+  z = 0
+  while z < nzone {
+    let q = zonedata + z * 6
+    let a = abbrev + Int(data[q + 5])
+    var e = a
+    while e < abbrev + nchar && data[e] != 0 {
+      e += 1
+    }
+    let zp = H_LEN + 2 * ntx + 2 * z
+    w[zp + 1] = add_name(w, data, a, e)
+    z += 1
+  }
+  w[H_FIRST] = first_zone(idx, dst)
+  // the footer: "\n" rule "\n"
+  if len - end > 2 && data[end] == 10 && data[len - 1] == 10 {
+    parse_ext(w, data[end + 1..len - 1])
+  }
+  // Go fills a cache with the zone in effect now; lookups inside its
+  // range return it
+  var j = 0
+  while j < ntx {
+    let tj = w[H_LEN + 2 * j]
+    if tj <= now && (j + 1 == ntx || now < w[H_LEN + 2 * j + 2]) {
+      let zp = zone_at(w, w[H_LEN + 2 * j + 1])
+      w[H_CACHE] = 1
+      w[H_CSTART] = tj
+      w[H_CEND] = OMEGA
+      w[H_COFF] = w[zp]
+      w[H_CNAME] = w[zp + 1]
+      if j + 1 < ntx {
+        w[H_CEND] = w[H_LEN + 2 * j + 2]
+      } else if w[H_EXT] != 0 {
+        let (cn, co, cs, ce) = tzset(w, tj, now)
+        w[H_CSTART] = cs
+        w[H_CEND] = ce
+        w[H_COFF] = co
+        w[H_CNAME] = cn
+      }
+      break
+    }
+    j += 1
+  }
+  Some(w)
+}

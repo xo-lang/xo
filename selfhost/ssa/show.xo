@@ -71,10 +71,10 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
     return b.append_debug(acc, v, ct)
   }
   if b.is_prelude_named(ct, ["UInt64"]) {
-    return b.rt("rs_append_u64", st, [acc, v])
+    return b.show_text("append_u64", acc, v)
   }
   if b.is_prelude_named(ct, ["Rune"]) {
-    return b.rt("rs_append_rune", st, [acc, v])
+    return b.show_text("append_rune", acc, v)
   }
   match b.tkind(vt) {
     Str => return b.call("str.concat", st, "", [acc, v])
@@ -88,6 +88,26 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
     return b.call("str.concat", st, "", [acc, r])
   }
   b.append_debug(acc, v, ct)
+}
+
+/// acc + the leaf text name (append_rune, append_rune_quote, append_u64)
+/// of v, a Rune or UInt64: the native prelude's llrt_<name>
+/// (std/native/llrt/show.xo, decision 0193 step 5), unchecked like the C
+/// it replaces; without the native prelude, the C runtime's rs_<name>
+/// (showText).
+fn (var b: Builder) show_text(name: Str, acc: Int, v0: Int) -> Int {
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    return b.rt("rs_${name}", b.str_t(), [acc, v0])
+  }
+  var v = v0
+  let it = b.int_t()
+  if b.vty(v) != it {
+    // the same word as an Int
+    v = b.add(Op.IntConv, it, Aux.None, [v])
+  }
+  let f = b.declare(impl, [])
+  b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", [acc, v])
 }
 
 /// acc + the Debug text of v of checker type ct (appendDebug).
@@ -177,11 +197,11 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_named(ct, ["UInt64"]) {
-    b.retv(b.rt("rs_append_u64", st, [acc, v]))
+    b.retv(b.show_text("append_u64", acc, v))
     return
   }
   if b.is_prelude_named(ct, ["Rune"]) {
-    b.retv(b.rt("rs_append_rune_quote", st, [acc, v]))
+    b.retv(b.show_text("append_rune_quote", acc, v))
     return
   }
   match b.tkind(t) {

@@ -4,7 +4,9 @@
 //
 // Which commands: build, run, and test whose backend is native
 // (--backend=arm64 or llvm, or --no-gc without a backend) on a
-// darwin/arm64 or linux/arm64 host. Everything else, the Go backend
+// darwin/arm64 or linux/arm64 host, and whose backend is LLVM
+// (--backend=llvm, or --no-gc without a backend, which is LLVM there) on
+// a darwin/amd64 or linux/amd64 host. Everything else, the Go backend
 // included, stays with the Go driver. So do the flags xo1 does not
 // implement yet (--ci, --hybrid, --real) and a test of a workspace (the
 // Go driver takes its modules as one program).
@@ -13,12 +15,13 @@
 // this xo (package selfhost, std, third_party) are written under
 // <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file),
 // xo1 reads std and third_party from there, and xo1 itself is built once
-// by this xo with the arm64 backend, under a file lock, into
-// <user cache>/xo/xo1/bin/<binkey>/xo1. The binary's key covers only its
-// own inputs (BinaryInputs: the xo version, selfhost/, and the Xo files
-// of the std modules selfhost reaches through `use`), so a change to
-// another std module, the C runtime, or third_party writes a new source
-// tree but reuses the built xo1.
+// by this xo, under a file lock (with the arm64 backend on an arm64 host,
+// with the LLVM backend split into modules on an amd64 host:
+// xo1Backend), into <user cache>/xo/xo1/bin/<binkey>/xo1. The binary's
+// key covers only its own inputs (BinaryInputs: the xo version, the host,
+// selfhost/, and the Xo files of the std modules selfhost reaches
+// through `use`), so a change to another std module, the C runtime, or
+// third_party writes a new source tree but reuses the built xo1.
 //
 // Rollback: XO_SELF_DRIVER=0 (or off) runs every command with the Go
 // driver, as before the switch.
@@ -74,10 +77,15 @@ var unsupported = map[string]bool{"ci": true, "hybrid": true, "real": true}
 // Wants reports whether cmd with args (after the command, module flags
 // such as --offline already taken out) runs through xo1.
 func Wants(cmd string, args []string) bool {
+	return wantsOn(runtime.GOOS, runtime.GOARCH, cmd, args)
+}
+
+// wantsOn is Wants on a goos/goarch host.
+func wantsOn(goos, goarch, cmd string, args []string) bool {
 	if Off() || (cmd != "build" && cmd != "run" && cmd != "test") {
 		return false
 	}
-	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+	if (goarch != "arm64" && goarch != "amd64") || (goos != "darwin" && goos != "linux") {
 		return false
 	}
 	backend, noGC, ok := "", false, true
@@ -107,6 +115,11 @@ func Wants(cmd string, args []string) bool {
 		}
 	}
 	native := backend == "arm64" || backend == "llvm" || (backend == "" && noGC)
+	if goarch == "amd64" {
+		// xo1 is built by the LLVM backend there and runs LLVM builds;
+		// --backend=arm64 (a cross build) stays with the Go driver
+		native = backend == "llvm" || (backend == "" && noGC)
+	}
 	if !native || !ok {
 		return false
 	}
@@ -312,9 +325,30 @@ func sources(files map[string][]byte) (string, error) {
 	return root, nil
 }
 
-// buildXo1 builds selfhost/xo of root into bin with this xo's arm64
-// backend, once across processes (a file lock; a waiting process finds
-// the binary when it gets the lock).
+// xo1Backend is how this xo builds xo1 on a goarch host: the arm64
+// backend on arm64; elsewhere (amd64) the LLVM backend, split into 12
+// modules without LTO (decision 0168) unless XO_LLVM_SPLIT and
+// XO_LLVM_LTO say otherwise: one module of selfhost/xo takes clang over
+// half an hour, and the ThinLTO link of the 12 modules held 18.8 GB on
+// linux/amd64 (bench/results/xo1-x86-2026-10-12.md), more than a 16 GB
+// laptop has.
+func xo1Backend(goarch string) (string, *build.SplitConfig) {
+	if goarch == "arm64" {
+		return build.BackendArm64, nil
+	}
+	c := build.LLVMSplitConfig()
+	if os.Getenv("XO_LLVM_SPLIT") == "" {
+		c.Modules = 12
+	}
+	if os.Getenv("XO_LLVM_LTO") == "" {
+		c.LTO = "none"
+	}
+	return build.BackendLLVM, &c
+}
+
+// buildXo1 builds selfhost/xo of root into bin with this xo's native
+// backend for the host (xo1Backend), once across processes (a file lock;
+// a waiting process finds the binary when it gets the lock).
 func buildXo1(root, bin string) error {
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return err
@@ -332,7 +366,8 @@ func buildXo1(root, bin string) error {
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return err
 	}
-	res, err := build.Build([]string{filepath.Join(root, "selfhost", "xo")}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, Out: tmp})
+	backend, split := xo1Backend(runtime.GOARCH)
+	res, err := build.Build([]string{filepath.Join(root, "selfhost", "xo")}, build.Options{Mode: gen.Build, Backend: backend, LLVMSplit: split, Out: tmp})
 	if err != nil {
 		return fmt.Errorf("building xo1: %v", err)
 	}

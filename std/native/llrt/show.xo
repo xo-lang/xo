@@ -1,0 +1,76 @@
+// The leaf text of Display and Debug that was still C (decision 0193
+// step 5): a Rune's Display and Debug text and a UInt64's decimal text
+// (std/llrt/xo_bytes.c's xo_rs_append_rune, xo_rs_append_rune_quote,
+// and xo_rs_append_u64, the last an snprintf). The Debug text of
+// collections, structs, enums, and tuples is generated code (internal/ssa
+// build_show.go, selfhost/ssa/show.xo) that calls these for its Rune and
+// UInt64 elements, num.xo for its Ints and Floats, and text.xo for its
+// Str and Bytes. The SSA builder calls them through the native prelude's
+// llrt_append_rune and friends. The C path stays selectable
+// (`XO_LLRT_C=show` loads show_c.xo, and the Go SSA builder calls the C
+// runtime as before) until bench/perf/text meets decision 0180's bar.
+use native/llrt/num
+use native/rt
+
+/// The UTF-8 of r in the low bytes of a word, the first lowest, times 8
+/// plus its size: U+FFFD when r is not a scalar value (utf8.AppendRune).
+fn utf8_word(r: Int) -> Int {
+  if r >= 0 && r < 0x80 {
+    return (r << 3) | 1
+  }
+  if r >= 0x80 && r < 0x800 {
+    let w = (0xC0 | (r >> 6)) | ((0x80 | (r & 0x3F)) << 8)
+    return (w << 3) | 2
+  }
+  var c = r
+  if r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
+    c = 0xFFFD
+  }
+  if c < 0x10000 {
+    let w = (0xE0 | (c >> 12)) | ((0x80 | ((c >> 6) & 0x3F)) << 8) | ((0x80 | (c & 0x3F)) << 16)
+    return (w << 3) | 3
+  }
+  let w = (0xF0 | (c >> 18)) | ((0x80 | ((c >> 12) & 0x3F)) << 8) | ((0x80 | ((c >> 6) & 0x3F)) << 16) | ((0x80 | (c & 0x3F)) << 24)
+  (w << 3) | 4
+}
+
+/// out + the character r (a Rune's Display).
+pub fn append_rune(out: Str, r: Int) -> Str {
+  if r >= 0 && r < 0x80 {
+    return rt.rs_push_word(out, r, 1)
+  }
+  let u = utf8_word(r)
+  rt.rs_push_word(out, u >> 3, u & 7)
+}
+
+/// out + the Debug text of r (std/rt's quoteRune): `'a'`, with `\'`,
+/// `\\`, `\n`, and `\t` escaped.
+pub fn append_rune_quote(out: Str, r: Int) -> Str {
+  // 39 is ', 92 is \
+  if r == 39 || r == 92 {
+    return rt.rs_push_word(out, 39 | (92 << 8) | (r << 16) | (39 << 24), 4)
+  }
+  if r == 10 {
+    // '\n'
+    return rt.rs_push_word(out, 39 | (92 << 8) | (110 << 16) | (39 << 24), 4)
+  }
+  if r == 9 {
+    // '\t'
+    return rt.rs_push_word(out, 39 | (92 << 8) | (116 << 16) | (39 << 24), 4)
+  }
+  let u = utf8_word(r)
+  let k = u & 7
+  rt.rs_push_word(out, 39 | ((u >> 3) << 8) | (39 << (8 * (k + 1))), k + 2)
+}
+
+/// out + the decimal text of v as a UInt64 (strconv.FormatUint).
+pub fn append_u64(out: Str, v: Int) -> Str {
+  if v >= 0 {
+    return num.append_int(out, v)
+  }
+  // 2^63 <= v < 2^64: v / 10 is (v >> 1) / 5 with a logical shift, and
+  // the last digit is v - q * 10 (wrapping)
+  let q = rt.int_wrap(4, v, 1) / 5
+  let d = rt.int_wrap(1, v, rt.int_wrap(2, q, 10))
+  rt.rs_push_byte(num.append_int(out, q), 48 + d)
+}

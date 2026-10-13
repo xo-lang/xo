@@ -1,0 +1,76 @@
+// The zone rules of std/time in Xo (decision 0193 step 5,
+// std/native/llrt/tz.xo): zones named by constants (the build embeds the
+// TZif data of each), looked up from 1880 to 2240 (historical rules,
+// transitions, and the POSIX TZ footer past the last), across daylight
+// saving gaps and overlaps, with zones of odd offsets and negative DST.
+use std/time
+
+const NAMES: List[Str] = ["Europe/Berlin", "America/New_York", "Australia/Lord_Howe", "Asia/Kathmandu", "America/Sao_Paulo", "Pacific/Apia", "Africa/Casablanca", "Europe/Dublin", "America/St_Johns", "Antarctica/Troll", "Asia/Tehran", "Pacific/Chatham", "America/Santiago", "Europe/London"]
+
+fn zone_of(name: Str) -> time.Zone {
+  match name {
+    "Europe/Berlin" => time.zone("Europe/Berlin")
+    "America/New_York" => time.zone("America/New_York")
+    "Australia/Lord_Howe" => time.zone("Australia/Lord_Howe")
+    "Asia/Kathmandu" => time.zone("Asia/Kathmandu")
+    "America/Sao_Paulo" => time.zone("America/Sao_Paulo")
+    "Pacific/Apia" => time.zone("Pacific/Apia")
+    "Africa/Casablanca" => time.zone("Africa/Casablanca")
+    "Europe/Dublin" => time.zone("Europe/Dublin")
+    "America/St_Johns" => time.zone("America/St_Johns")
+    "Antarctica/Troll" => time.zone("Antarctica/Troll")
+    "Asia/Tehran" => time.zone("Asia/Tehran")
+    "Pacific/Chatham" => time.zone("Pacific/Chatham")
+    "America/Santiago" => time.zone("America/Santiago")
+    _ => time.zone("Europe/London")
+  }.ok() ?? time.utc()
+}
+
+fn at(z: time.Zone, y: Int, m: Int, d: Int, h: Int) -> Str {
+  match time.instant(time.Date{year: y, month: m, day: d}, time.ClockTime{hour: h, minute: 30, second: 0, nanos: 0}, z, time.Ambiguity.Earlier) {
+    Ok(t) => "${z.offset_at(t)}/${z.abbreviation_at(t)}"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) {
+  for name in NAMES {
+    let z = zone_of(name)
+    os.stdio.println("== ${z} ${z == zone_of(name)} ${z == time.utc()}")
+    var y = 1880
+    while y <= 2240 {
+      os.stdio.println("${y}: ${at(z, y, 1, 15, 12)} ${at(z, y, 4, 1, 12)} ${at(z, y, 7, 15, 12)} ${at(z, y, 10, 31, 12)}")
+      y += if y < 1960 { 8 } else if y < 2040 { 3 } else { 25 }
+    }
+    // the gaps and overlaps of 2026: each civil hour of the days the
+    // offset changes, with each ambiguity
+    var t = Time.UNIX_EPOCH + Duration.from_secs_int(1767225600)
+    var last = z.offset_at(t)
+    for _ in 0..(365 * 4) {
+      let next = t + 6h
+      let off = z.offset_at(next)
+      if off != last {
+        let c = time.civil(next, z)
+        os.stdio.println("  change ${time.format(next, z, time.RFC1123)} ${last} -> ${off}")
+        for dh in [-2, -1, 0, 1, 2] {
+          let h = (c.time.hour + dh + 24) % 24
+          let ct = time.ClockTime{hour: h, minute: 30, second: 0, nanos: 0}
+          for a in [time.Ambiguity.Reject, time.Ambiguity.Earlier, time.Ambiguity.Later] {
+            match time.instant(c.date, ct, z, a) {
+              Ok(i) => os.stdio.println("    ${h}:30 ${time.format(i, z, time.RFC3339)} ${z.abbreviation_at(i)}")
+              Err(e) => os.stdio.println("    ${h}:30 ${e}")
+            }
+          }
+        }
+        last = off
+      }
+      t = next
+    }
+  }
+  let f = time.fixed("UTC+5:45", 5h + 45m)
+  os.stdio.println("${f} ${f.offset_at(Time.UNIX_EPOCH)} ${f.abbreviation_at(Time.UNIX_EPOCH)} ${f == time.fixed("UTC+5:45", 5h + 45m)} ${f == zone_of("Asia/Kathmandu")}")
+  match time.zone("Not/AZone") {
+    Ok(z) => os.stdio.println("${z}")
+    Err(e) => os.stdio.println("${e}")
+  }
+}

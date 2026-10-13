@@ -25,7 +25,8 @@ fn host_os(os: Os) -> Str {
 
 /// The host's GOARCH: the architecture this xo was built for (a
 /// linux/amd64 release's xo1 is an amd64 binary, decision 0178 switch
-/// point B). The native backends still build for arm64 only.
+/// point B; built by the LLVM backend on an x86-64 host, where xo1's
+/// LLVM builds target the host and --no-gc defaults to LLVM).
 fn host_arch() -> Str {
   match target.arch {
     Amd64 => "amd64"
