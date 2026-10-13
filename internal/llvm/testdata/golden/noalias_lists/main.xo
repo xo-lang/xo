@@ -1,0 +1,212 @@
+// Decision 0211: the LLVM emitters give list accesses alias scopes (a
+// `var` list once made unique, a new list, the borrowed parameters), so
+// LLVM may reorder and vectorize loads and stores of different lists.
+// Every case below passes one list where the scopes would be wrong if a
+// copy were missing: the same list to two parameters, a list that is
+// also in a map, a closure, or a slice, lists handed back by calls, and
+// lists rotated between calls in a loop. Each backend prints the same.
+
+// xors a into b and b into a, word by word: wrong if a and b were one
+// object written in place
+fn cross(var a: List[Int], var b: List[Int]) -> Int {
+  var s = 0
+  for i in 0..a.len() {
+    let x = a[i]
+    let y = b[i]
+    a[i] = x ^ y
+    b[i] = x + y
+    s += a[i] * 3 + b[i]
+  }
+  s
+}
+
+// reads src while writing dst; src may be the caller's dst
+fn mix(var dst: List[Int], src: List[Int]) -> Int {
+  var s = 0
+  for i in 0..src.len() {
+    dst[i] = dst[i] * 2 + 1
+    s += src[i]
+  }
+  s
+}
+
+// the unrolled shape of Argon2id's G: r into two scratch lists, then
+// back into bs
+fn g4(var bs: List[Int], var t: List[Int], var q: List[Int], o: Int, a: Int) {
+  if o < 0 || a < 0 || o + 3 >= bs.len() || a + 3 >= bs.len() || 3 >= t.len() || 3 >= q.len() {
+    return
+  }
+  let r0 = bs[a] ^ bs[o]
+  q[0] = r0
+  t[0] = r0 + 1
+  let r1 = bs[a + 1] ^ bs[o + 1]
+  q[1] = r1
+  t[1] = r1 + 1
+  let r2 = bs[a + 2] ^ bs[o + 2]
+  q[2] = r2
+  t[2] = r2 + 1
+  let r3 = bs[a + 3] ^ bs[o + 3]
+  q[3] = r3
+  t[3] = r3 + 1
+  bs[o] = t[0] ^ q[1]
+  bs[o + 1] = t[1] ^ q[2]
+  bs[o + 2] = t[2] ^ q[3]
+  bs[o + 3] = t[3] ^ q[0]
+}
+
+// hands back its own list, updated
+fn bump(var xs: List[Int], k: Int) {
+  for i in 0..xs.len() {
+    xs[i] = xs[i] + k
+  }
+}
+
+// hands back another list: the caller's two lists then share one object
+fn take_other(var xs: List[Int], ys: List[Int]) {
+  xs = ys
+}
+
+// hands back a new list on one path
+fn maybe_fresh(var xs: List[Int], fresh: Bool) {
+  if fresh {
+    xs = [7, 7, 7, 7]
+  } else {
+    xs[0] = xs[0] + 100
+  }
+}
+
+// recursion through a `var` list
+fn fill(var xs: List[Int], i: Int) {
+  if i >= xs.len() {
+    return
+  }
+  xs[i] = i * i
+  fill(xs, i + 1)
+}
+
+// a borrowed Bytes and a list written in place
+fn sum_into(var acc: List[Int], data: Bytes) -> Int {
+  for i in 0..data.len() {
+    acc[i % acc.len()] = acc[i % acc.len()] + Int(data[i])
+  }
+  acc[0] + acc[1]
+}
+
+fn total(xs: List[Int]) -> Int {
+  var s = 0
+  for x in xs {
+    s += x
+  }
+  s
+}
+
+fn show(xs: List[Int]) -> Str {
+  var out = ""
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      out = out + ","
+    }
+    out = out + "${x}"
+  }
+  out
+}
+
+fn main(os: Os) {
+  // one list to a `var` and a borrowed parameter
+  var xs = [1, 2, 3, 4]
+  let s1 = mix(xs, xs)
+  os.stdio.println("mix ${s1} ${show(xs)}")
+
+  // two variables that share one object, to two `var` parameters
+  var a = [1, 2, 3, 4, 5]
+  var b = a
+  let s2 = cross(a, b)
+  os.stdio.println("cross ${s2} ${show(a)} ${show(b)}")
+
+  // the same, after the copies split
+  let s3 = cross(a, b)
+  os.stdio.println("cross2 ${s3} ${show(a)} ${show(b)}")
+
+  // Argon2id's shape, scratch lists that start as one object
+  var bs: List[Int] = []
+  for i in 0..16 {
+    bs.push(i * 7 + 1)
+  }
+  var t = [0, 0, 0, 0]
+  var q = t
+  for k in 0..6 {
+    g4(bs, t, q, (k % 3) * 4, ((k + 1) % 3) * 4 + 1)
+  }
+  os.stdio.println("g4 ${show(bs)} ${show(t)} ${show(q)}")
+
+  // rotating the roles of the lists between calls in a loop
+  var p0 = [1, 2, 3, 4]
+  var p1 = [5, 6, 7, 8]
+  var p2 = [9, 10, 11, 12]
+  for k in 0..5 {
+    g4(p0, p1, p2, 0, 0)
+    let tmp = p0
+    p0 = p1
+    p1 = p2
+    p2 = tmp
+    bump(p0, k)
+  }
+  os.stdio.println("rotate ${show(p0)} ${show(p1)} ${show(p2)}")
+
+  // a list also held by a map
+  var m: Map[Str, List[Int]] = {}
+  var ys = [3, 1, 4, 1]
+  m.put("ys", ys)
+  bump(ys, 10)
+  let held = m.get("ys") ?? []
+  let s4 = mix(ys, held)
+  m.put("ys2", ys)
+  os.stdio.println("map ${s4} ${show(ys)} ${show(held)} ${m.len()}")
+
+  // a list captured by a closure, then updated
+  var zs = [2, 4, 6, 8]
+  let f = fn(i: Int) -> Int { zs[i] * 10 }
+  bump(zs, 1)
+  os.stdio.println("closure ${f(1)} ${show(zs)}")
+
+  // a list a closure holds, given to a `var` and a borrowed parameter
+  var ws = [1, 1, 2, 3]
+  let g = fn(i: Int) -> Int { ws[i] + 100 }
+  let s5 = mix(ws, ws) + g(3)
+  os.stdio.println("closure_var ${s5} ${show(ws)} ${g(0)}")
+
+  // slices: copies of a range, updated apart from the list
+  var vs = [1, 2, 3, 4, 5, 6]
+  var head = vs[0..3]
+  let s6 = cross(head, vs)
+  os.stdio.println("slice ${s6} ${show(head)} ${show(vs)}")
+
+  // calls that hand back their list, another list, or a new one
+  var u = [1, 2, 3, 4]
+  var w = [9, 9, 9, 9]
+  take_other(u, w)
+  bump(u, 1)
+  os.stdio.println("other ${show(u)} ${show(w)}")
+  maybe_fresh(u, false)
+  maybe_fresh(w, true)
+  let s7 = cross(u, w)
+  os.stdio.println("fresh ${s7} ${show(u)} ${show(w)}")
+
+  // recursion
+  var r = [0, 0, 0, 0, 0]
+  let keep = r
+  fill(r, 0)
+  os.stdio.println("fill ${show(r)} ${show(keep)}")
+
+  // a borrowed Bytes
+  var acc = [0, 0, 0]
+  let s8 = sum_into(acc, b"\x01\x02\x03\x04\x05\x06\x07")
+  os.stdio.println("bytes ${s8} ${show(acc)}")
+
+  // a list of lists: the inner lists are not scoped
+  var grid = [[1, 2], [3, 4]]
+  var row = grid[0]
+  row[1] = 20
+  grid[1] = row
+  os.stdio.println("grid ${total(grid[0])} ${total(grid[1])} ${total(row)}")
+}

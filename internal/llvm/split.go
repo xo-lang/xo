@@ -14,6 +14,9 @@ type IRParts struct {
 	RTDecls []string
 	Types   []string
 	Globals []string
+	// Meta holds the metadata nodes after the definitions (the alias
+	// scopes of decision 0211), one a line.
+	Meta []string
 	// Defs maps a definition's name (`xo.dup.Str`, `x.main`, `xo_entry`)
 	// to its text, from `define` to the line `}`.
 	Defs  map[string]string
@@ -39,6 +42,8 @@ func SplitIR(ir string) (IRParts, error) {
 			p.RTDecls = append(p.RTDecls, l)
 		case strings.HasPrefix(l, "%"):
 			p.Types = append(p.Types, l)
+		case strings.HasPrefix(l, "!"):
+			p.Meta = append(p.Meta, l)
 		case strings.HasPrefix(l, "@."):
 			p.Globals = append(p.Globals, l)
 		case strings.HasPrefix(l, "define "):

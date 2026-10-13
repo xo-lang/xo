@@ -21,6 +21,8 @@ pub struct Gen {
   globals: List[Str] = []
   helpers: List[Str] = []
   funcs: List[Str] = []
+  /// The alias scopes of the functions (noalias.xo).
+  meta: List[Str] = []
   rt_decls: List[Str] = []
   /// The text of runtime_decls (the runtime calls declared there are not
   /// declared again).
@@ -49,6 +51,9 @@ pub struct Gen {
   by_ref_done: List[Bool] = []
   /// The functions used as values (they keep the plain convention).
   addr_taken: Map[Str, Bool] = {}
+  /// Per function and `var` parameter: whether it hands back its own
+  /// object or a new list (noalias.xo summarize).
+  same_var: List[List[Bool]] = []
   /// The first construct the lowering does not support (fail): the
   /// program fails, as GenerateSSA returns an error.
   pub err: Str = ""
@@ -121,6 +126,12 @@ pub struct Gen {
   rng_mid: List[Bool] = []
   facts: List[Fact] = []
   fact_at: List[Int] = []
+  /// The alias scopes of the function (noalias.xo): per value the scope
+  /// of its access (-1 none), the number of scopes (0: none emitted),
+  /// and the first metadata id.
+  sc_tag: List[Int] = []
+  sc_n: Int = 0
+  sc_base: Int = 0
 }
 
 /// The emitter for module m.
@@ -278,6 +289,7 @@ pub fn (var g: Gen) generate() -> Str {
     }
   }
   g.inlinable_set()
+  g.summarize()
   for fi in 0..nf {
     g.lower_func(fi)
     if !g.err.is_empty() {
@@ -309,6 +321,7 @@ pub fn (var g: Gen) generate() -> Str {
   out.push("\n")
   out.push(g.helpers.join(""))
   out.push(g.funcs.join(""))
+  out.push(g.meta.join(""))
   out.join("")
 }
 
