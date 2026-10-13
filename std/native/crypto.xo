@@ -1,8 +1,8 @@
 // std/crypto on the native backends (decision 0083). std/rt/crypto.go is
-// the reference; SHA-256, HMAC, PBKDF2, and base64 are Xo
-// (std/native/llrt/digest.xo, decision 0195), Argon2id, crypto.equal,
-// and Ed25519 C (std/llrt/xo_crypto.c), and random bytes come from the
-// Rand capability (the operating system's generator).
+// the reference; the hashes are Xo (std/native/llrt/digest.xo, decision
+// 0195), crypto.equal and Ed25519 C (std/llrt/xo_crypto.c, constant
+// time), and random bytes come from the Rand capability (the operating
+// system's generator).
 use native/llrt/digest
 use native/rt
 use native/rtcrypto
@@ -28,7 +28,7 @@ fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, itera
     rt.fault_at("crypto.hash_password_argon2id: need parallelism in 1..=255, memory_kib in 8 * parallelism..=4194304, iterations in 1..=1000; got memory_kib ${memory_kib}, iterations ${iterations}, parallelism ${parallelism}", at)
   }
   let salt = random_bytes(r, 16, at)
-  let key = rtcrypto.crypto_argon2id(password.bytes(), salt, iterations, memory_kib, parallelism, 32)
+  let key = digest.argon2id(password.bytes(), salt, iterations, memory_kib, parallelism, 32)
   "$argon2id$v=19$m=${memory_kib},t=${iterations},p=${parallelism}$" + digest.b64(salt, false) + "$" + digest.b64(key, false)
 }
 

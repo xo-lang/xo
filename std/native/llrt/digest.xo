@@ -1,22 +1,22 @@
 // The hashes of std/crypto on the native backends, written in Xo
 // (decisions 0193 and 0195; they were std/llrt/xo_crypto.c): SHA-256
 // (FIPS 180-4), HMAC-SHA256 (RFC 2104), PBKDF2-HMAC-SHA256 (RFC 8018),
+// BLAKE2b (RFC 7693) and Argon2id (RFC 9106) as x/crypto computes them,
 // unpadded base64, and the parsing and key derivation of
 // verify_password. The results are std/rt's crypto.go (Go's crypto
-// packages). Argon2id and its BLAKE2b stay C (an Xo version, commit
-// a4c9cc2e, measured 2.07 times the C's instructions on arm64 and 1.29
-// on LLVM: bench/results/runtime-port-portable-2026-10-13.md), and so
-// does what must be constant time: crypto.equal (the comparison of
-// verify_password) and Ed25519 with its SHA-512 (the zero-C audit's
-// group (5)). std/native/crypto.xo calls these. The C path stays
-// selectable (`XO_LLRT_C=digest` loads digest_c.xo).
+// packages). What must be constant time stays C: crypto.equal (the
+// comparison of verify_password) and Ed25519 with its SHA-512 (the
+// zero-C audit's group (5)). std/native/crypto.xo calls these. The C
+// path stays selectable (`XO_LLRT_C=digest` loads digest_c.xo) until
+// bench/perf/digest meets decision 0180's bar.
 //
-// Words are Ints: a 32 bit word in the low half (the high half zero);
-// the arithmetic that wraps is rt.int_wrap (0 add, 6 rotate the low 32
-// bits right, 7 reverse the bytes), which the native backends lower to
-// one instruction.
+// Words are Ints: a 32 bit word in the low half (the high half zero), a
+// 64 bit word as the Int of the same bits; the arithmetic that wraps is
+// rt.int_wrap (0 add, 5 rotate right, 6 rotate the low 32 bits right, 7
+// reverse the bytes), which the native backends lower to one instruction.
 use native/llrt/digest_tables
 use native/llrt/num_tables
+use native/llrt/raw
 use native/rtcrypto
 use native/rt
 
@@ -190,6 +190,216 @@ pub fn pbkdf2(password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> By
 }
 
 // ---------------------------------------------------------------------------
+// BLAKE2b (RFC 7693), unkeyed, digest sizes 1 to 64
+
+/// The first size bytes of the words of h, little endian.
+fn le_bytes(h: List[Int], size: Int) -> Bytes {
+  var out = rt.rs_with_cap(size + 8)
+  var k = 0
+  while 8 * k < size {
+    let n = if size - 8 * k < 8 { size - 8 * k } else { 8 }
+    out = rt.rs_push_word(out, h[k], n)
+    k += 1
+  }
+  out.bytes()
+}
+
+/// The BLAKE2b digest of b, size (1 to 64) bytes.
+fn blake2b(b: Bytes, size: Int) -> Bytes {
+  var h = digest_tables.blake2b_iv()
+  h[0] = h[0] ^ (0x01010000 ^ size)
+  let n = b.len()
+  // a full block is compressed as not final only when more data follows
+  var i = 0
+  while n - i > 128 {
+    digest_tables.blake2b_compress(h, b, i, i + 128, false)
+    i += 128
+  }
+  // the last block (0 to 128 bytes), zero padded
+  var t = rt.rs_append_bytes(rt.rs_with_cap(136), b, i, n, 0)
+  var k = n - i
+  while k < 128 {
+    t = rt.rs_push_word(t, 0, if 128 - k < 8 { 128 - k } else { 8 })
+    k += 8
+  }
+  digest_tables.blake2b_compress(h, t.bytes(), 0, n, true)
+  le_bytes(h, size)
+}
+
+// ---------------------------------------------------------------------------
+// Argon2id (RFC 9106), as x/crypto's argon2 package computes it
+
+/// The 4 bytes of v, little endian, after s.
+fn le32(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
+
+/// H' of RFC 9106 3.3: outn bytes from input.
+fn argon2_hash(input: Bytes, outn: Int) -> Bytes {
+  let first = rt.rs_append_bytes(le32(rt.rs_with_cap(input.len() + 4), outn), input, 0, input.len(), 0).bytes()
+  if outn <= 64 {
+    return blake2b(first, outn)
+  }
+  var buf = blake2b(first, 64)
+  var out = rt.rs_append_bytes(rt.rs_with_cap(outn), buf, 0, 32, 0)
+  var left = outn - 32
+  while left > 64 {
+    buf = blake2b(buf, 64)
+    out = rt.rs_append_bytes(out, buf, 0, 32, 0)
+    left -= 32
+  }
+  buf = blake2b(buf, left)
+  rt.rs_append_bytes(out, buf, 0, buf.len(), 0).bytes()
+}
+
+/// P on the 128 words of t: the rows, then the columns.
+fn permute(var t: List[Int]) {
+  var i = 0
+  while i < 128 {
+    digest_tables.blamka_row(t, i)
+    i += 16
+  }
+  i = 0
+  while i < 16 {
+    digest_tables.blamka_column(t, i)
+    i += 2
+  }
+}
+
+/// G(zero, x) twice: the next block of addresses from the input block x
+/// (RFC 9106 3.4.1.2); t is scratch.
+fn addresses(x: List[Int], var t: List[Int]) -> List[Int] {
+  var a = x
+  for _ in 0..2 {
+    for k in 0..128 {
+      t[k] = a[k]
+    }
+    permute(t)
+    for k in 0..128 {
+      a[k] = a[k] ^ t[k]
+    }
+  }
+  a
+}
+
+/// The block that block index of the segment refers to (x/crypto's
+/// indexAlpha and phi).
+fn index_alpha(rnd: Int, lanes: Int, segments: Int, threads: Int, n: Int, slice: Int, lane: Int, index: Int) -> Int {
+  var r = (rnd >> 32 & M32) % threads
+  if n == 0 && slice == 0 {
+    r = lane
+  }
+  var m = 3 * segments
+  var s = ((slice + 1) % 4) * segments
+  if lane == r {
+    m += index
+  }
+  if n == 0 {
+    m = slice * segments
+    s = 0
+    if slice == 0 || lane == r {
+      m += index
+    }
+  }
+  if index == 0 || lane == r {
+    m -= 1
+  }
+  // phi: m - 1 - (m * (lo(rnd)^2 >> 32) >> 32)
+  let p0 = rnd & M32
+  let p1 = rt.int_wrap(4, rt.int_wrap(2, p0, p0), 32)
+  let p2 = rt.int_wrap(4, rt.int_wrap(2, p1, m & M32), 32)
+  r * lanes + (s + m - (p2 + 1)) % lanes
+}
+
+/// Argon2id of the password and salt (no secret, no associated data):
+/// key_len bytes (x/crypto's IDKey; the lanes of a slice run one after
+/// another, as x/crypto's goroutines give the same result).
+pub fn argon2id(password: Bytes, salt: Bytes, time: Int, memory0: Int, threads: Int, key_len: Int) -> Bytes {
+  // H0 of the parameters, the password, and the salt (mode 2, version 0x13)
+  var p = rt.rs_with_cap(64 + password.len() + salt.len())
+  p = le32(le32(le32(le32(le32(le32(p, threads), key_len), memory0), time), 0x13), 2)
+  p = rt.rs_append_bytes(le32(p, password.len()), password, 0, password.len(), 0)
+  p = rt.rs_append_bytes(le32(p, salt.len()), salt, 0, salt.len(), 0)
+  p = le32(le32(p, 0), 0)
+  let h0 = blake2b(p.bytes(), 64)
+  var memory = memory0 / (4 * threads) * (4 * threads)
+  if memory < 2 * 4 * threads {
+    memory = 2 * 4 * threads
+  }
+  let lanes = memory / threads
+  let segments = lanes / 4
+  var bs = raw.zero_ints(memory * 128)
+  var t = raw.zero_ints(128)
+  var q = t
+  for lane in 0..threads {
+    for k in 0..2 {
+      let b0 = argon2_hash(le32(le32(rt.rs_append_bytes(rt.rs_with_cap(72), h0, 0, 64, 0), k), lane).bytes(), 1024)
+      let o = (lane * lanes + k) * 128
+      for i in 0..128 {
+        bs[o + i] = rt.bytes_word(b0, 8 * i)
+      }
+    }
+  }
+  var input = t
+  var addr = t
+  for n in 0..time {
+    for slice in 0..4 {
+      for lane in 0..threads {
+        let indep = n == 0 && slice < 2
+        if indep {
+          for k in 0..128 {
+            input[k] = 0
+          }
+          input[0] = n
+          input[1] = lane
+          input[2] = slice
+          input[3] = memory
+          input[4] = time
+          input[5] = 2
+        }
+        var index = 0
+        if n == 0 && slice == 0 {
+          index = 2
+          input[6] = input[6] + 1
+          addr = addresses(input, t)
+        }
+        var offset = lane * lanes + slice * segments + index
+        while index < segments {
+          var prev = offset - 1
+          if index == 0 && slice == 0 {
+            prev += lanes
+          }
+          var rnd = 0
+          if indep {
+            if index % 128 == 0 {
+              input[6] = input[6] + 1
+              addr = addresses(input, t)
+            }
+            rnd = addr[index % 128]
+          } else {
+            rnd = bs[prev * 128]
+          }
+          let r = index_alpha(rnd, lanes, segments, threads, n, slice, lane, index)
+          digest_tables.argon2_g(bs, t, q, offset * 128, prev * 128, r * 128, true)
+          index += 1
+          offset += 1
+        }
+      }
+    }
+  }
+  let last = (memory - 1) * 128
+  for lane in 0..(threads - 1) {
+    let o = (lane * lanes + lanes - 1) * 128
+    for i in 0..128 {
+      bs[last + i] = bs[last + i] ^ bs[o + i]
+    }
+  }
+  var b = rt.rs_with_cap(1024)
+  for i in 0..128 {
+    b = rt.rs_push_word(b, bs[last + i], 8)
+  }
+  argon2_hash(b.bytes(), key_len)
+}
+
+// ---------------------------------------------------------------------------
 // Base64 without padding (encoding/base64's RawStdEncoding and
 // RawURLEncoding)
 
@@ -312,7 +522,7 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
       return false
     }
     return match (b64_decode(f[4]), b64_decode(f[5])) {
-      (Some(salt), Some(want)) => salt.len() >= 8 && want.len() >= 4 && want.len() <= 1024 && rtcrypto.crypto_equal(rtcrypto.crypto_argon2id(pw, salt, t, m, p, want.len()), want)
+      (Some(salt), Some(want)) => salt.len() >= 8 && want.len() >= 4 && want.len() <= 1024 && rtcrypto.crypto_equal(argon2id(pw, salt, t, m, p, want.len()), want)
       _ => false
     }
   }
