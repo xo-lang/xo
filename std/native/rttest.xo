@@ -1,7 +1,24 @@
 // Intrinsics of the test world of native test binaries (decision 0083),
 // implemented in std/llrt/xo_testing.c; imported by std/native/testing.xo,
-// log.xo, and http.xo as `use native/rttest`.
+// log.xo, http.xo, and llrt/report.xo as `use native/rttest`.
 use native/rt
+
+// The report of a property test's case (std/native/llrt/report.xo,
+// decision 0193 step 5).
+
+/// The choices the generator g made so far (UInt64s), in order.
+fn gen_choices(g: Int) -> List[Int]
+/// Writes s on the real standard output (the harness reads it; the
+/// program's own output is captured).
+fn test_write(s: Str)
+/// $XO_PROP_BEST (the best choices so far while shrinking) in a list of
+/// one, or the empty list.
+fn prop_best() -> List[Str]
+/// Ends the test binary with the status code at once.
+fn test_quit(code: Int)
+/// The C path of report.xo (XO_LLRT_C=report, compiled only with
+/// -DXO_REPORT_C): report.xo's prop_report in C.
+fn prop_report(g: Int, input: Str)
 
 /// The program runs in the test world (a test binary).
 fn test_on() -> Bool

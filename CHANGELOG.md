@@ -6,6 +6,40 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster: the self hosted compiler (xo1) compiles selfhost/xo 3.6 times
+  faster in 37 percent of the memory (588.86 s to 163.83 s, 26.1 GB to
+  9.66 GB on the Mac; bench/results/xo1-speed-2026-10-13.md), with the
+  same assembly: liveness and dce by worklists over sparse sets, fewer
+  allocations per instruction, insert_rc's liveness and borrow sites
+  without per pass maps. On the native backends an empty list literal
+  `[]` allocates nothing until its first push (decision 0199), and the
+  heap prefetches on each allocation from a free list. `XO_HEAPSTATS=1`
+  prints a native program's heap by size class at exit.
+- Changed: the xo1 that native builds of the development `xo` run
+  (switch point A) is cached on its own inputs (selfhost/, the std
+  modules it uses, the `xo` version) in `<user cache>/xo/xo1/bin/<key>`,
+  so a change to another std module, the C runtime (std/llrt), or
+  third_party no longer rebuilds it (5 to 12 minutes); the std beside it
+  is still written from the full embedded set.
+- The self hosted toolchain runs on x86-64 hosts: on darwin/amd64 and
+  linux/amd64, `xo build|run|test --backend=llvm` (and `--no-gc`, whose
+  default backend is LLVM there) go through xo1, which `xo` builds with
+  the LLVM backend split into 12 modules without LTO (decision 0178
+  stage 7, decision 0196). That xo1 passes the LLVM goldens on both
+  hosts and rebuilds itself to a byte identical fixed point on both
+  with no Go on PATH. scripts/bootstrap-xo.sh picks the
+  LLVM backend on x86-64 hosts; scripts/remote-xo1-x86.sh and
+  scripts/xo1-host-check.sh run the check on EC2 and the Intel Mac.
+- **More of the native runtime is Xo** (decision 0193 step 5): std/time's
+  zone rules (TZif parsing, the POSIX TZ footer, the lookup and Go's
+  cache) are std/native/llrt/tz.xo, the C keeping only the zone data
+  and the table of loaded zones; a Rune's Display and Debug text and a
+  UInt64's text (the leaves of the Debug text of collections) are
+  show.xo; the report of a property test's case to the harness is
+  report.xo. Output is unchanged (TestTZDiff over every zone of Go's
+  database, the new goldens show_table and tz_table, TestNoGCTests).
+  `XO_LLRT_C=show,tz,report` builds the C paths for comparison
+  (bench/results/runtime-port-step5-2026-10-13.md).
 - Fixed: in a native test (`xo test --no-gc`, arm64 and llvm), an http
   request to an in memory server sent after a stop request waited in
   the listener's backlog instead of failing, and under load could end

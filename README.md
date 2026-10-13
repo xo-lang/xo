@@ -95,7 +95,18 @@ go build -o .tools/bin/xo-seed ./cmd/xo
 XO_SELF_DRIVER=0 .tools/bin/xo-seed build --backend=arm64 -o .tools/bin/xo selfhost/xo
 ```
 
-which needs `XO_STD=$PWD/std` (or the release layout) to run; after
+on an arm64 host (Apple Silicon, arm64 Linux). On an x86-64 host the
+seed builds `xo` with the LLVM backend (clang needed):
+
+```
+go build -o .tools/bin/xo-seed ./cmd/xo
+XO_SELF_DRIVER=0 XO_LLVM_SPLIT=12 XO_LLVM_LTO=none \
+  .tools/bin/xo-seed build --backend=llvm -o .tools/bin/xo selfhost/xo
+```
+
+(about 36 minutes and 10 GB of memory on a 16 vCPU Linux machine,
+bench/results/xo1-x86-2026-10-12.md "The README seed path on x86-64"). Either
+needs `XO_STD=$PWD/std` (or the release layout) to run; after
 that, any Xo `xo` rebuilds itself without Go
 (`scripts/bootstrap-xo.sh`).
 

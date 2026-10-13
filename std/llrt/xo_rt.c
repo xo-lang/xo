@@ -92,6 +92,11 @@
 #define XO_CHUNK (4 << 20)
 #define XO_SMALL_MAX 1024
 #define XO_MID_MAX (256 << 10)
+// the largest block the size classes serve (the rest is malloc's): at
+// most XO_MID_MAX, lowered by XO_HEAP_MID_MAX (an experiment of the xo1
+// speed work: blocks on a class's free list are never reused for another
+// class nor returned, so growing lists leave their old blocks behind)
+static int64_t xo_mid_max = XO_MID_MAX;
 #define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
 
 typedef void (*xo_drop_fn)(void *);
@@ -268,15 +273,20 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	if (__builtin_expect(h->rt_depth != 0, 0)) {
 		h->rt_allocs++; // a real-time section allocated: XO-F007 when it ends
 	}
-	if (n > XO_MID_MAX) {
+	if (n > xo_mid_max) {
 		return xo_alloc_large(n);
 	}
 	int64_t size;
 	int64_t c = size_class(n, &size);
 	void *p = h->free_lists[c];
 	if (p) {
-		h->free_lists[c] = *(void **)p;
+		void *next = *(void **)p;
+		h->free_lists[c] = next;
 		h->nfree[c]--;
+		// the next pop reads the new head's link: start loading it now,
+		// so a list freed long ago (cold) costs overlapped misses rather
+		// than one stall per allocation (bench/results/xo1-speed)
+		__builtin_prefetch(next);
 		return p;
 	}
 	int64_t need = size + 8;
@@ -346,7 +356,7 @@ __attribute__((noinline)) static void *central_take(int64_t c) {
 // list, so moving blocks between threads costs O(1) per magazine.
 __attribute__((noinline)) static void *alloc_mt(int64_t n) {
 	xo_heap *h = heap_slow();
-	if (n <= XO_MID_MAX) {
+	if (n <= xo_mid_max) {
 		int64_t size;
 		int64_t c = size_class(n, &size);
 		if (!h->free_lists[c]) {
@@ -399,7 +409,7 @@ void xo_free(void *p) {
 // block of old bytes, which is freed).
 static void *xo_resize(void *p, int64_t old, int64_t n) {
 	int64_t *b = (int64_t *)p - 1;
-	if (b[0] < 0 && n > XO_MID_MAX) {
+	if (b[0] < 0 && n > xo_mid_max) {
 		if (n > old) {
 			heap()->abytes += n - old; // grown in place: counted for budgets
 		}
@@ -412,7 +422,7 @@ static void *xo_resize(void *p, int64_t old, int64_t n) {
 	}
 	if (b[0] > 0) {
 		int64_t size;
-		if (n <= XO_MID_MAX && size_class(n, &size) == b[0]) {
+		if (n <= xo_mid_max && size_class(n, &size) == b[0]) {
 			return p;
 		}
 	}
@@ -967,7 +977,7 @@ typedef struct {
 // usable returns the bytes a block requested with n bytes really has
 // (its size class), so strings can grow into the slack.
 static int64_t usable(int64_t n) {
-	if (n > XO_MID_MAX) {
+	if (n > xo_mid_max) {
 		return n;
 	}
 	int64_t size;
@@ -1120,6 +1130,12 @@ void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) {
 
 // xo_rl_grow doubles the capacity of a unique full list.
 __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) {
+	if (l->rc == XO_RC_IMMORTAL) {
+		// the shared empty list of an empty literal (xo_rl_empty): the
+		// arm64 backend makes `[]` without allocating, and the first
+		// push (to a list the compiler knows is unique) lands here
+		return xo_rl_new(4, esize);
+	}
 	int64_t cap = l->cap < 4 ? 4 : l->cap * 2;
 	int64_t hdr = (int64_t)sizeof(xo_rlist);
 	xo_rlist *n = xo_resize(l, hdr + l->cap * esize, hdr + cap * esize);
@@ -7294,6 +7310,10 @@ static char **xo_argv;
 // constants of collection types (xo_bytes.c)
 void xo_consts_free(void);
 
+// xo_tz_exit_free releases the zones std/native/llrt/tz.xo kept
+// (xo_time.c), set when one is kept: the leak check sees them freed.
+__attribute__((unused)) static void (*xo_tz_exit_free)(void);
+
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
@@ -7354,6 +7374,10 @@ int main(int argc, char **argv) {
 #endif
 	xo_argc = argc;
 	xo_argv = argv;
+	const char *mid = getenv("XO_HEAP_MID_MAX");
+	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
+		xo_mid_max = atoll(mid);
+	}
 	if (getenv("XO_TEST")) {
 		// a test binary runs one test in the test world (xo_testing.c)
 		tw_init();
@@ -7400,9 +7424,32 @@ int main(int argc, char **argv) {
 	}
 	if (getenv("XO_LEAKCHECK")) {
 		xo_consts_free();
+		if (xo_tz_exit_free) {
+			xo_tz_exit_free();
+		}
 		int64_t live, total;
 		xo_rt_live(&live, &total);
 		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);
+	}
+	if (getenv("XO_HEAPSTATS")) {
+		// where the heap's memory went: the blocks on each class's free
+		// list at exit (every block ever carved, when nothing is live)
+		// and the chunks carved (diagnostics, bench/results/xo1-speed)
+		pthread_mutex_lock(&heaps_mu);
+		int64_t sum = 0;
+		for (int64_t c = 1; c <= XO_NCLASS; c++) {
+			int64_t n = 0;
+			for (xo_heap *h = all_heaps; h; h = h->next) {
+				n += h->nfree[c];
+			}
+			int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
+			if (n > 0) {
+				fprintf(stderr, "xo heapstats: class %lld size %lld free blocks %lld bytes %lld\n", (long long)c, (long long)size, (long long)n, (long long)(n * (size + 8)));
+			}
+			sum += n * (size + 8);
+		}
+		pthread_mutex_unlock(&heaps_mu);
+		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks, (long long)(xo_chunks * (XO_CHUNK >> 20)), (long long)(sum >> 20));
 	}
 	return 0;
 }

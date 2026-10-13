@@ -82,9 +82,7 @@ xo_f_sieve:
 	.cfi_offset w23, -8
 .Lf2_b0:
 	mov x22, x0
-	mov x0, #4
-	mov x1, #1
-	bl xo_rl_new
+	bl xo_rl_empty
 	mov x20, x0
 	adds x24, x22, #1
 	b.vs .Lf2_fault1

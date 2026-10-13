@@ -45,11 +45,132 @@ struct Rng {
 const BW = 62
 
 fn new_bits(n: Int) -> List[Int] {
-  var out: List[Int] = []
-  for _ in 0..(n + BW - 1) / BW {
+  let nw = (n + BW - 1) / BW
+  var out: List[Int] = List.with_capacity(nw)
+  for _ in 0..nw {
     out.push(0)
   }
   out
+}
+
+/// The registers live into (ins) and out of (outs) each block, each a
+/// list in increasing order.
+struct Live {
+  ins: List[List[Int]]
+  outs: List[List[Int]]
+}
+
+/// Lists of block numbers by register: the blocks of register v are
+/// items[start[v] .. start[v + 1]], in increasing order.
+struct ByReg {
+  start: List[Int]
+  items: List[Int]
+}
+
+/// The registers of each list of lists (a list per block) grouped by
+/// register.
+fn by_reg(lists: List[List[Int]], n: Int) -> ByReg {
+  var start: List[Int] = List.with_capacity(n + 1)
+  for _ in 0..n + 1 {
+    start.push(0)
+  }
+  for l in lists {
+    for v in l {
+      start[v + 1] = start[v + 1] + 1
+    }
+  }
+  for v in 0..n {
+    start[v + 1] = start[v + 1] + start[v]
+  }
+  var fill: List[Int] = List.with_capacity(n)
+  for v in 0..n {
+    fill.push(start[v])
+  }
+  var items: List[Int] = List.with_capacity(start[n])
+  for _ in 0..start[n] {
+    items.push(0)
+  }
+  for k in 0..lists.len() {
+    by_reg_fill(lists[k], k, fill, items)
+  }
+  ByReg{start: start, items: items}
+}
+
+fn by_reg_fill(l: List[Int], k: Int, var fill: List[Int], var items: List[Int]) {
+  for v in l {
+    items[fill[v]] = k
+    fill[v] = fill[v] + 1
+  }
+}
+
+/// Backward liveness by path exploration, one register at a time: each
+/// block where register v is an upward exposed use (gens[k], the
+/// registers block k reads before writing them, each once) is walked
+/// back through the predecessors until a block that writes v (kills[k])
+/// or one v is already live into. The result is the least fixed point
+/// of in = gen | (out &^ kill), out = the union of the successors' ins,
+/// which the round robin iteration over whole bit sets per block
+/// computed in time and memory of blocks times registers; here both are
+/// proportional to the live sets (bench/results/xo1-speed-2026-10-13.md).
+fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[Int]], n: Int) -> Live {
+  let nb = succs.len()
+  var preds: List[List[Int]] = List.with_capacity(nb)
+  var ins: List[List[Int]] = List.with_capacity(nb)
+  var outs: List[List[Int]] = List.with_capacity(nb)
+  // the register (plus one) each block was last marked for
+  var in_m: List[Int] = List.with_capacity(nb)
+  var out_m: List[Int] = List.with_capacity(nb)
+  var kill_m: List[Int] = List.with_capacity(nb)
+  for _ in 0..nb {
+    preds.push([])
+    ins.push([])
+    outs.push([])
+    in_m.push(0)
+    out_m.push(0)
+    kill_m.push(0)
+  }
+  for k in 0..nb {
+    for t in succs[k] {
+      preds[t].push(k)
+    }
+  }
+  let gb = by_reg(gens, n)
+  let kb = by_reg(kills, n)
+  var stack: List[Int] = []
+  for v in 0..n {
+    let g0 = gb.start[v]
+    let g1 = gb.start[v + 1]
+    if g0 == g1 {
+      continue
+    }
+    let st = v + 1
+    for j in kb.start[v]..kb.start[v + 1] {
+      kill_m[kb.items[j]] = st
+    }
+    for j in g0..g1 {
+      let k = gb.items[j]
+      in_m[k] = st
+      ins[k].push(v)
+      stack.push(k)
+    }
+    while !stack.is_empty() {
+      let k = stack.pop() ?? 0
+      for p in preds[k] {
+        if out_m[p] == st {
+          continue
+        }
+        out_m[p] = st
+        outs[p].push(v)
+        if kill_m[p] == st || in_m[p] == st {
+          continue
+        }
+        in_m[p] = st
+        ins[p].push(v)
+        stack.push(p)
+      }
+    }
+  }
+  Live{ins: ins, outs: outs}
 }
 
 fn bits_has(b: List[Int], i: Int) -> Bool {
@@ -58,23 +179,6 @@ fn bits_has(b: List[Int], i: Int) -> Bool {
 
 fn bit_mask(i: Int) -> Int {
   1 << (i % BW)
-}
-
-/// The members of a bit set in increasing order.
-fn bits_members(b: List[Int]) -> List[Int] {
-  var out: List[Int] = []
-  for (w, x0) in b.indexed() {
-    var x = x0
-    var bit = 0
-    while x != 0 {
-      if x & 1 != 0 {
-        out.push(w * BW + bit)
-      }
-      x = x >> 1
-      bit += 1
-    }
-  }
-  out
 }
 
 /// A pair of registers joined by a move.
@@ -111,64 +215,44 @@ fn (var g: G) regalloc() {
   }
   g.ninst = i
   let n = g.fp.len()
-  let nb = g.order.len()
 
   // liveness
   var idx: List[Int] = []
   for _ in 0..g.blocks.len() {
     idx.push(-1)
   }
-  var gen: List[List[Int]] = []
-  var kill: List[List[Int]] = []
-  var live_in: List[List[Int]] = []
-  var live_out: List[List[Int]] = []
   for (k, b) in g.order.indexed() {
     idx[b] = k
-    var gk = new_bits(n)
-    var kk = new_bits(n)
-    for inst in g.blocks[b].insts {
-      for u in inst.us {
-        if u != 0 && !bits_has(kk, u) {
-          gk[u / BW] = gk[u / BW] | bit_mask(u)
-        }
-      }
-      for d in inst.defs {
-        if d != 0 {
-          kk[d / BW] = kk[d / BW] | bit_mask(d)
-        }
-      }
-    }
-    gen.push(gk)
-    kill.push(kk)
-    live_in.push(new_bits(n))
-    live_out.push(new_bits(n))
   }
-  let nw = (n + BW - 1) / BW
-  var changed = true
-  while changed {
-    changed = false
-    var k = nb - 1
-    while k >= 0 {
-      let b = g.order[k]
-      var out = live_out[k]
-      live_out[k] = []
-      for t in g.blocks[b].succs {
-        or_into(out, live_in[idx[t]], nw)
-      }
-      var li = live_in[k]
-      live_in[k] = []
-      if transfer(li, gen[k], out, kill[k], nw) {
-        changed = true
-      }
-      live_in[k] = li
-      live_out[k] = out
-      k -= 1
-    }
+  var gens: List[List[Int]] = []
+  var kills: List[List[Int]] = []
+  var succs: List[List[Int]] = []
+  var kst: List[Int] = List.with_capacity(n)
+  var ust: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    kst.push(0)
+    ust.push(0)
   }
+  for k in 0..g.order.len() {
+    let b = g.order[k]
+    var gl: List[Int] = []
+    var kl: List[Int] = []
+    gen_kill(g.blocks[b].insts, k + 1, gl, kl, kst, ust)
+    gens.push(gl)
+    kills.push(kl)
+    var ss: List[Int] = []
+    for t in g.blocks[b].succs {
+      ss.push(idx[t])
+    }
+    succs.push(ss)
+  }
+  let lv = solve_live(succs, gens, kills, n)
+  let live_in = lv.ins
+  let live_out = lv.outs
 
   // a register live into the entry is read before anything writes it
   // (gotchas/arm64-mir-param-without-moves.md)
-  let early = bits_members(live_in[0])
+  let early = live_in[0]
   if !early.is_empty() {
     g.fail("internal: ${g.f.name} reads virtual register ${early[0]} before it is written")
   }
@@ -177,15 +261,21 @@ fn (var g: G) regalloc() {
   // registers of the faulting point and the others lost (decision 0085):
   // what it reads lives in callee saved registers or slots
   var no_caller = new_bits(n)
+  // each landing pad's registers once (a pad has many faulting points)
+  var pad_done: List[Bool] = List.with_capacity(g.order.len())
+  for _ in 0..g.order.len() {
+    pad_done.push(false)
+  }
   for b in g.order {
     for inst in g.blocks[b].insts {
       if inst.pad < 0 || inst.kind == K_CALL {
         continue
       }
       let pk = idx[g.pad_of(inst.pad)]
-      if pk >= 0 {
-        for w in 0..nw {
-          no_caller[w] = no_caller[w] | live_in[pk][w]
+      if pk >= 0 && !pad_done[pk] {
+        pad_done[pk] = true
+        for v in live_in[pk] {
+          no_caller[v / BW] = no_caller[v / BW] | bit_mask(v)
         }
       }
     }
@@ -204,11 +294,15 @@ fn (var g: G) regalloc() {
     end.push(0)
   }
   var calls: List[Int] = []
-  for (k, b) in g.order.indexed() {
-    var live = live_out[k]
+  // the registers live at the point of the backward walk of a block: from
+  // the block's live out set to its live in set, which clears it again
+  var live = new_bits(n)
+  for k in 0..g.order.len() {
+    let b = g.order[k]
     let bend = g.blocks[b].end
     let bstart = g.blocks[b].start
-    for v in bits_members(live) {
+    for v in live_out[k] {
+      live[v / BW] = live[v / BW] | bit_mask(v)
       end[v] = bend
     }
     let first = bstart / 4
@@ -249,8 +343,9 @@ fn (var g: G) regalloc() {
       }
       j -= 1
     }
-    for v in bits_members(live) {
+    for v in live_in[k] {
       push_rng(ranges, v, Rng{s: bstart, e: end[v]})
+      live[v / BW] = live[v / BW] & ~bit_mask(v)
     }
   }
   for v in 0..n {
@@ -413,7 +508,8 @@ fn (var g: G) regalloc() {
     var slot_occ: List[List[Rng]] = []
     for v in by_prio {
       let fp = g.fp[v]
-      var cands: List[Int] = []
+      // one allocation per register (concatenating made three)
+      var cands: List[Int] = List.with_capacity(fixed[v].len() + partners[v].len() + gp_c.len() + gp_e.len() + fp_c.len() + fp_e.len())
       for r in fixed[v] {
         if (r >= FP_BASE) == fp {
           cands.push(r)
@@ -426,21 +522,31 @@ fn (var g: G) regalloc() {
         }
       }
       if fp {
-        cands = cands + fp_c + fp_e
+        for r in fp_c {
+          cands.push(r)
+        }
+        for r in fp_e {
+          cands.push(r)
+        }
       } else {
-        cands = cands + gp_c + gp_e
+        for r in gp_c {
+          cands.push(r)
+        }
+        for r in gp_e {
+          cands.push(r)
+        }
       }
       let nc = bits_has(no_caller, v)
       var chosen = -1
       for r0 in cands {
         var r = r0
-        if overlaps(occ[r], ranges[v]) || (nc && !is_callee(r)) {
+        if overlaps_sorted(occ[r], ranges[v]) || (nc && !is_callee(r)) {
           continue
         }
         if is_callee(r) && !used_callee[r] {
           // a callee saved register already saved before a fresh one
           for r2 in cands {
-            if is_callee(r2) && used_callee[r2] && !overlaps(occ[r2], ranges[v]) {
+            if is_callee(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) {
               r = r2
               break
             }
@@ -453,16 +559,14 @@ fn (var g: G) regalloc() {
         // a spill slot no value live at the same time holds (first fit,
         // like the registers; gotchas/arm64-large-frame.md)
         var k = 0
-        while k < slot_occ.len() && overlaps(slot_occ[k], ranges[v]) {
+        while k < slot_occ.len() && overlaps_sorted(slot_occ[k], ranges[v]) {
           k += 1
         }
         if k == slot_occ.len() {
           slot_occ.push([])
           g.slots += 1
         }
-        let so = slot_occ[k]
-        slot_occ[k] = []
-        slot_occ[k] = merge_sorted(so, ranges[v])
+        insert_ranges(slot_occ, k, ranges[v])
         g.loc[v] = Loc{reg: -1, slot: k}
         continue
       }
@@ -471,9 +575,7 @@ fn (var g: G) regalloc() {
         used_callee[chosen] = true
         ncallee += 1
       }
-      let oc = occ[chosen]
-      occ[chosen] = []
-      occ[chosen] = merge_sorted(oc, ranges[v])
+      insert_ranges(occ, chosen, ranges[v])
     }
     // a frame past the reach of an sp relative ldr or str: allocate again
     // with x28 kept free, for the addresses of the far slots
@@ -496,28 +598,25 @@ fn (var g: G) regalloc() {
   }
 }
 
-/// out |= src over the first nw words. The bit sets are parameters, so
-/// they are borrowed: `out[w] | live_in[ti][w]` in regalloc's loop
-/// copied (a dup and a drop of) the inner list per word
-/// (bench/results/xo1-perf).
-fn or_into(var out: List[Int], src: List[Int], nw: Int) {
-  for w in 0..nw {
-    out[w] = out[w] | src[w]
-  }
-}
-
-/// li = gen | (out &^ kill) over the first nw words; reports whether li
-/// changed.
-fn transfer(var li: List[Int], gen: List[Int], out: List[Int], kill: List[Int], nw: Int) -> Bool {
-  var changed = false
-  for w in 0..nw {
-    let nv = gen[w] | (out[w] & ~kill[w])
-    if nv != li[w] {
-      li[w] = nv
-      changed = true
+/// Adds a block's upward exposed uses (the registers its instructions
+/// read before writing them) to gl and the registers it writes to kl,
+/// each once: kst[v] and ust[v] are stamp when v was written, or added
+/// to gl, earlier in this block (stamp is unique per block).
+fn gen_kill(insts: List[Inst], stamp: Int, var gl: List[Int], var kl: List[Int], var kst: List[Int], var ust: List[Int]) {
+  for inst in insts {
+    for u in inst.us {
+      if u != 0 && kst[u] != stamp && ust[u] != stamp {
+        ust[u] = stamp
+        gl.push(u)
+      }
+    }
+    for d in inst.defs {
+      if d != 0 && kst[d] != stamp {
+        kst[d] = stamp
+        kl.push(d)
+      }
     }
   }
-  changed
 }
 
 /// The leader of v's coalesced group (with path halving, as the Go
@@ -550,6 +649,53 @@ fn merge_ranges(rs: List[Rng]) -> List[Rng] {
     out.push(r)
   }
   out
+}
+
+/// Adds the ranges of rs (sorted and disjoint, none overlapping a range
+/// of lists[i]) to lists[i], kept sorted by start. The allocator's
+/// occupancy lists are only asked overlaps_sorted, so adjacent ranges
+/// stay apart: merge_sorted joined them and rebuilt the whole list per
+/// assignment, quadratic in the ranges a register or slot holds
+/// (bench/results/xo1-speed-2026-10-13.md).
+fn insert_ranges(var lists: List[List[Rng]], i: Int, rs: List[Rng]) {
+  for q in rs {
+    // the first range starting after q
+    var lo = 0
+    var hi = lists[i].len()
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if lists[i][mid].s <= q.s {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+    lists[i].insert(lo, q)
+  }
+}
+
+/// Whether a range of rs overlaps one of occ, whose ranges are disjoint
+/// and sorted by start (so by end as well): a binary search per range of
+/// rs instead of overlaps' walk over all of occ.
+fn overlaps_sorted(occ: List[Rng], rs: List[Rng]) -> Bool {
+  let n = occ.len()
+  for q in rs {
+    // the first range of occ ending at or after q's start
+    var lo = 0
+    var hi = n
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if occ[mid].e < q.s {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+    if lo < n && occ[lo].s <= q.e {
+      return true
+    }
+  }
+  false
 }
 
 /// Merges two sorted, merged range lists (mergeSorted).
@@ -690,15 +836,9 @@ fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
 /// list inside a list element copies it on the native backends,
 /// gotchas/xo-native-nested-element-update.md).
 fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
-  var l = lists[i]
-  lists[i] = []
-  l.push(r)
-  lists[i] = l
+  lists[i].push(r)
 }
 
 fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
-  var l = lists[i]
-  lists[i] = []
-  l.push(x)
-  lists[i] = l
+  lists[i].push(x)
 }

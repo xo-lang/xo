@@ -63,11 +63,11 @@ fn (var g: G) add(inst: Inst) -> Int {
   if x.kind == K_CALL && g.cur_pad >= 0 {
     x.pad = g.cur_pad
   }
-  var ins = g.take_insts(g.cur)
-  ins.push(x)
-  let n = ins.len()
-  g.blocks[g.cur].insts = ins
-  n - 1
+  // in place (decision 0169); take_insts allocated an empty list per
+  // instruction (bench/results/xo1-speed-2026-10-13.md)
+  let b = g.cur
+  g.blocks[b].insts.push(x)
+  g.blocks[b].insts.len() - 1
 }
 
 /// Takes the instructions of block b out of it, for an update in place:
@@ -95,6 +95,16 @@ fn (var g: G) real(u: Int) -> Int {
 
 /// Adds an instruction with a template; returns its index in the block.
 fn (var g: G) plain(text: Str, defs: List[Int], us: List[Int]) -> Int {
+  // the uses as given unless one is xzr: no copy per instruction
+  var has_zero = false
+  for u in us {
+    if u == 0 {
+      has_zero = true
+    }
+  }
+  if !has_zero {
+    return g.add(Inst{kind: K_PLAIN, text: text, defs: defs, us: us})
+  }
   var rs: List[Int] = []
   for u in us {
     rs.push(g.real(u))
@@ -114,20 +124,16 @@ fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
   let sym = g.sym(fname)
   let pad = g.cur_pad
   let b = g.cur
-  var ins = g.take_insts(b)
-  var x = ins[i]
-  x.has_fault = true
-  x.fcond = cond
-  x.ffn = sym
-  x.fargs = args
-  x.pad = pad
+  g.blocks[b].insts[i].has_fault = true
+  g.blocks[b].insts[i].fcond = cond
+  g.blocks[b].insts[i].ffn = sym
+  g.blocks[b].insts[i].fargs = args
+  g.blocks[b].insts[i].pad = pad
   for a in args {
     if a.kind == S_REG && a.v != 0 {
-      x.us.push(a.v)
+      g.blocks[b].insts[i].us.push(a.v)
     }
   }
-  ins[i] = x
-  g.put_insts(b, ins)
 }
 
 /// Adds a flag setting instruction with a fault side exit.
@@ -144,14 +150,13 @@ fn (var g: G) check(text: Str, us: List[Int], cond: Str, fname: Str, args: List[
 fn (var g: G) checked(fp: Bool, text: Str, us: List[Int], recover: Str, cond: Str, fname: Str, args: List[Src]) -> Int {
   let d = g.new_vreg(fp)
   let i = g.plain(text, [d], us)
-  let rs = g.blocks[g.cur].insts[i].us
-  var ins = g.take_insts(g.cur)
+  let b = g.cur
+  let rs = g.blocks[b].insts[i].us
   if recover.is_empty() || (rs.len() == 2 && rs[0] == rs[1]) {
-    ins[i].early = true
+    g.blocks[b].insts[i].early = true
   } else {
-    ins[i].recover = recover
+    g.blocks[b].insts[i].recover = recover
   }
-  g.put_insts(g.cur, ins)
   g.set_fault(i, cond, fname, args)
   d
 }
@@ -186,10 +191,9 @@ fn (var g: G) imm(n: Int) -> Int {
 /// Marks the instruction that just defined d as a constant (loop
 /// invariant: hoist_consts may move it out of a loop).
 fn (var g: G) konst(d: Int) -> Int {
-  let n = g.blocks[g.cur].insts.len()
-  var ins = g.take_insts(g.cur)
-  ins[n - 1].konst = true
-  g.put_insts(g.cur, ins)
+  let b = g.cur
+  let n = g.blocks[b].insts.len()
+  g.blocks[b].insts[n - 1].konst = true
   d
 }
 

@@ -1,9 +1,34 @@
 // Intrinsics of std/time on the native backends (decision 0094),
 // implemented in std/llrt/xo_time.c, which only programs that use
-// std/time compile; imported by std/native/time.xo as `use native/rttime`.
-// A zone is an id: 0 is UTC, others index the zones loaded so far (the
-// same name always gets the same id). Instants are seconds since the Unix
-// epoch.
+// std/time compile; imported by std/native/llrt/tz.xo (the zone rules in
+// Xo, decision 0193 step 5) and its C path tz_c.xo. A zone is an id: 0
+// is UTC, others index the zones loaded so far (the same name always
+// gets the same id). Instants are seconds since the Unix epoch.
+
+/// The TZif data that may hold the zone with this name, in the order to
+/// try them: from the program's zone data (host false: the TZif data of
+/// each constant name, the whole embedded database, or with
+/// --tzdata=system the host's), or from the host's database (host true,
+/// as time.LoadLocation reads it: $ZONEINFO as a directory or a zip, then
+/// the system directories; "Local" is /etc/localtime). Empty when there
+/// is none.
+fn tz_data(name: Str, host: Bool) -> List[Bytes]
+/// The zone named name kept so far (tz.xo's parsed zone, its id in its
+/// first word), or the empty list.
+fn tz_find(name: Str) -> List[Int]
+/// Keeps the parsed zone z under name, its id written to its first word,
+/// and returns it; a zone kept under name first is returned instead (z
+/// is dropped). The empty list when the table is full. The table holds z
+/// shared between threads until exit.
+fn tz_keep(name: Str, z: List[Int]) -> List[Int]
+/// The wall clock in seconds since the Unix epoch (the time of a load,
+/// for Go's cache).
+fn tz_now() -> Int
+/// The machine's zone name from the /etc/localtime link, or "Local".
+fn tz_local_name() -> Str
+
+// The C path of the zone rules (decision 0193 step 5): compiled only
+// with -DXO_TZ_C, called only by std/native/llrt/tz_c.xo (XO_LLRT_C=tz).
 
 /// The zone with this IANA name from the program's zone data (the TZif
 /// data of each constant name, the whole embedded database, or the host's
@@ -13,8 +38,6 @@ fn tz_load(name: Str) -> Int
 /// The zone from the host's database, as time.LoadLocation reads it
 /// ("Local" is /etc/localtime), or 0.
 fn tz_load_host(name: Str) -> Int
-/// The machine's zone name from the /etc/localtime link, or "Local".
-fn tz_local_name() -> Str
 /// The offset from UTC in seconds of the zone at sec.
 fn tz_offset(id: Int, sec: Int) -> Int
 /// The abbreviation of the zone at sec ("CET", "-05").

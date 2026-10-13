@@ -1,26 +1,28 @@
 // std/time on the native backends (decisions 0074 and 0094). std/rt's
 // timezone.go, timecivil.go, and timefmt.go are the reference: the same
 // rules, texts, and faults. Zone rules (TZif data and its POSIX TZ
-// footer) are looked up by the C runtime (std/llrt/xo_time.c, intrinsics
-// in rttime.xo) as Go's time package does; civil time, layouts,
-// formatting, and parsing are here.
+// footer) are read and looked up as Go's time package does by
+// std/native/llrt/tz.xo (decision 0193 step 5; its C path tz_c.xo over
+// std/llrt/xo_time.c); civil time, layouts, formatting, and parsing are
+// here.
 use std/time
+use native/llrt/tz
 use native/rt
-use native/rttime
 use native/rttest
 
 // ---------------------------------------------------------------------------
 // Zones (std.md 13.1)
 
-/// time.Zone: a named zone is the C runtime's zone `id` (0 is UTC); a
-/// fixed zone has `fixed` set and its offset in seconds. A name always
-/// gets the same id, so `==` compares what the Go backend compares: the
-/// name, whether the zone is fixed, and the fixed offset.
+/// time.Zone: a named zone has the rules of tz.xo (whose id the C
+/// runtime gives: 0 for UTC); a fixed zone has `fixed` set and its offset
+/// in seconds. A name always gets the same id and the same rules, so `==`
+/// compares what the Go backend compares: the name, whether the zone is
+/// fixed, and the fixed offset.
 struct Zone {
   label: Str
   fixed: Bool
   secs: Int
-  id: Int
+  rules: tz.Rules
 }
 
 fn (z: Zone) display() -> Str { z.label }
@@ -41,24 +43,32 @@ fn zoneerr_display(e: time.ZoneErr) -> Str {
   }
 }
 
-fn utc() -> Zone { Zone{label: "UTC", fixed: false, secs: 0, id: 0} }
+fn utc() -> Zone { Zone{label: "UTC", fixed: false, secs: 0, rules: tz.none()} }
 
 fn zone(name: Str) -> Zone ! time.ZoneErr {
   if name == "UTC" {
     return Ok(utc())
   }
-  let id = rttime.tz_load(name)
-  if id == 0 {
-    return Err(time.ZoneErr.Unknown(name: name))
+  match tz.load(name, false) {
+    Some(r) => Ok(Zone{label: name, fixed: false, secs: 0, rules: r})
+    None => Err(time.ZoneErr.Unknown(name: name))
   }
-  Ok(Zone{label: name, fixed: false, secs: 0, id: id})
 }
 
 fn fixed(name: Str, offset: Duration, at: rt.Loc) -> Zone {
   if offset > 24h || offset < -24h {
     rt.fault_at("time.fixed: offset ${offset} is past 24h", at)
   }
-  Zone{label: name, fixed: true, secs: offset.nanos() / 1000000000, id: 0}
+  Zone{label: name, fixed: true, secs: offset.nanos() / 1000000000, rules: tz.none()}
+}
+
+/// The zone named name from the program's zone data, else from the
+/// host's database.
+fn load_either(name: Str) -> tz.Rules? {
+  match tz.load(name, false) {
+    Some(r) => Some(r)
+    None => tz.load(name, true)
+  }
 }
 
 fn local(env: Env) -> Zone ! time.ZoneErr uses env {
@@ -68,34 +78,31 @@ fn local(env: Env) -> Zone ! time.ZoneErr uses env {
       if name == "" || name == "UTC" {
         return Ok(utc())
       }
-      var id = rttime.tz_load(name)
-      if id == 0 {
-        // the machine's own zone is host dependent anyway: the host
-        // database is the fallback
-        id = rttime.tz_load_host(name)
+      // the machine's own zone is host dependent anyway: the host
+      // database is the fallback
+      match load_either(name) {
+        Some(r) => Ok(Zone{label: name, fixed: false, secs: 0, rules: r})
+        None => Err(time.ZoneErr.Unknown(name: name))
       }
-      if id == 0 {
-        return Err(time.ZoneErr.Unknown(name: name))
-      }
-      Ok(Zone{label: name, fixed: false, secs: 0, id: id})
     }
     None => {
       if rttest.test_fake(16) {
         // a test's Env is a fake one: without TZ it gives UTC
         return Ok(utc())
       }
-      let name = rttime.tz_local_name()
+      let name = tz.local_name()
       if name != "Local" {
-        var id = rttime.tz_load(name)
-        if id == 0 {
-          id = rttime.tz_load_host(name)
-        }
-        if id != 0 {
-          return Ok(Zone{label: name, fixed: false, secs: 0, id: id})
+        match load_either(name) {
+          Some(r) => return Ok(Zone{label: name, fixed: false, secs: 0, rules: r})
+          None => {}
         }
       }
       // Go's time.Local: /etc/localtime, else UTC
-      Ok(Zone{label: name, fixed: false, secs: 0, id: rttime.tz_load_host("Local")})
+      let r = match tz.load("Local", true) {
+        Some(r) => r
+        None => tz.none()
+      }
+      Ok(Zone{label: name, fixed: false, secs: 0, rules: r})
     }
   }
 }
@@ -120,20 +127,14 @@ fn offset_secs(z: Zone, sec: Int) -> Int {
   if z.fixed {
     return z.secs
   }
-  if z.id == 0 {
-    return 0
-  }
-  rttime.tz_offset(z.id, sec)
+  tz.offset(z.rules, sec)
 }
 
 fn abbr_at(z: Zone, sec: Int) -> Str {
   if z.fixed {
     return z.label
   }
-  if z.id == 0 {
-    return "UTC"
-  }
-  rttime.tz_abbr(z.id, sec)
+  tz.abbr(z.rules, sec)
 }
 
 // ---------------------------------------------------------------------------

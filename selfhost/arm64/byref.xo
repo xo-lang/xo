@@ -480,19 +480,51 @@ fn (var g: G) mem_at(base: Int, off: Int) -> (Int, Int) {
 /// Loads the words of layout lay starting at word w0 of the memory at
 /// base.
 fn (var g: G) load_words(base: Int, w0: Int, lay: List[Bool]) -> List[Int] {
-  var out: List[Int] = []
-  for (k, fp) in lay.indexed() {
+  var out: List[Int] = List.with_capacity(lay.len())
+  for k in 0..lay.len() {
     let (b, off) = g.mem_at(base, 8 * (w0 + k))
-    out.push(g.def1(fp, "ldr $d0, [$u0, #${off}]", [b]))
+    let text = g.word_text(true, off)
+    out.push(g.def1(lay[k], text, [b]))
   }
   out
+}
+
+/// "ldr $d0, [$u0, #off]" (load) or "str $u0, [$u1, #off]", made once per
+/// offset (off a multiple of 8 up to 32760, mem_at's): a string per
+/// load or store was one of the emitter's most frequent allocations
+/// (bench/results/xo1-speed-2026-10-13.md).
+fn (var g: G) word_text(load: Bool, off: Int) -> Str {
+  if off < 0 || off % 8 != 0 || off > 32760 {
+    if load {
+      return "ldr $d0, [$u0, #${off}]"
+    }
+    return "str $u0, [$u1, #${off}]"
+  }
+  let i = off / 8
+  if load {
+    while g.ldr_texts.len() <= i {
+      g.ldr_texts.push("")
+    }
+    if g.ldr_texts[i].is_empty() {
+      g.ldr_texts[i] = "ldr $d0, [$u0, #${off}]"
+    }
+    return g.ldr_texts[i]
+  }
+  while g.str_texts.len() <= i {
+    g.str_texts.push("")
+  }
+  if g.str_texts[i].is_empty() {
+    g.str_texts[i] = "str $u0, [$u1, #${off}]"
+  }
+  g.str_texts[i]
 }
 
 /// Stores ws as words w0, w0+1, ... of the memory at base.
 fn (var g: G) store_words_at(base: Int, w0: Int, ws: List[Int]) {
   for (k, w) in ws.indexed() {
     let (b, off) = g.mem_at(base, 8 * (w0 + k))
-    g.store("str $u0, [$u1, #${off}]", [w, b])
+    let text = g.word_text(false, off)
+    g.store(text, [w, b])
   }
 }
 
