@@ -181,13 +181,10 @@ func (c *checker) loadRuntimeModule(path string) (*Module, error) {
 
 // LLRTUsesC reports whether the runtime module native/llrt/<name> is
 // built from its C path, std/native/llrt/<name>_c.xo (decisions 0180,
-// 0193): XO_LLRT_C is a comma separated list of module names, or `all`;
-// XO_UNICODE=c (decision 0180) still selects unicode's. A module without
-// a C path ignores it.
+// 0193): XO_LLRT_C is a comma separated list of module names, or `all`.
+// A module without a C path ignores it (decision 0198 deleted those of
+// unicode, strings, num, and jsontext, and XO_UNICODE).
 func LLRTUsesC(name string) bool {
-	if name == "unicode" && os.Getenv("XO_UNICODE") == "c" {
-		return true
-	}
 	for _, n := range strings.Split(os.Getenv("XO_LLRT_C"), ",") {
 		if n = strings.TrimSpace(n); n == name || n == "all" {
 			_, err := fs.ReadFile(std.NativeFiles, "native/llrt/"+name+"_c.xo")

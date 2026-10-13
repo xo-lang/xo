@@ -234,34 +234,12 @@ fn io_flags(code: Str) -> List[Str] {
   if calls_sym(code, "xo_proc_") {
     out.push("-DXO_PROC")
   }
-  // the C path of the Unicode operations (decision 0180), which only
-  // XO_UNICODE=c builds call
-  for sym in ["xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit",
-    "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_UNICODE_C")
-      break
-    }
-  }
-  // the C paths of the number and time text and of the Str operations
-  // (decision 0193), which only XO_LLRT_C builds call
+  // the C path of the number and time text (decision 0193), which only
+  // XO_LLRT_C=text builds call
   for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
     "xo_time_parse"] {
     if calls_sym(code, sym) {
       out.push("-DXO_TEXT_C")
-      break
-    }
-  }
-  for sym in ["xo_str_trim", "xo_str_replace"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_STRINGS_C")
-      break
-    }
-  }
-  // and of the number text (decision 0193 step 3, XO_LLRT_C=num)
-  for sym in ["xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_NUM_C")
       break
     }
   }
@@ -282,13 +260,6 @@ fn io_flags(code: Str) -> List[Str] {
   for sym in ["xo_tz_load", "xo_tz_offset", "xo_tz_abbr"] {
     if calls_sym(code, sym) {
       out.push("-DXO_TZ_C")
-      break
-    }
-  }
-  // and of std/json's text (decision 0193 step 4, XO_LLRT_C=jsontext)
-  for sym in ["xo_json_", "xo_rs_append_json_", "xo_rs_append_b64_quoted"] {
-    if calls_sym(code, sym) {
-      out.push("-DXO_JSONTEXT_C")
       break
     }
   }
