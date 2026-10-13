@@ -33,6 +33,14 @@ thin Go test per harness calls it, so the existing tiers and batches
 keep running it. The Python scripts run beside it until both agree on a
 full batch, then they are deleted.
 
+The same work gathers xo's hidden developer commands (cmd/xo/main.go:
+lexdump, astdump, typedump, ssadump, asmdump, llvmdump, gendump, rtpack)
+under `xo dev` in xo1: `xo dev goldens`, `xo dev dump
+lex|ast|types|ssa|asm|llvm|go`, `xo dev rtpack`, `xo dev record`; xo1
+gains the dumps it lacks today (ssadump and llvmdump, the two commands
+the switch point B gate exempted). The Go compiler's dump commands go
+with stage 7's deletion.
+
 ## Consequences
 
 - The harness dogfoods Xo's std (files, processes, text) on every run
