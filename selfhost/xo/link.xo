@@ -247,14 +247,21 @@ fn io_flags(code: Str) -> List[Str] {
   // (decision 0193), which only XO_LLRT_C builds call
   for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
     "xo_time_parse"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_TEXT_C")
       break
     }
   }
   for sym in ["xo_str_trim", "xo_str_replace"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_STRINGS_C")
+      break
+    }
+  }
+  // and of the number text (decision 0193 step 3, XO_LLRT_C=num)
+  for sym in ["xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"] {
+    if code.contains(sym) {
+      out.push("-DXO_NUM_C")
       break
     }
   }

@@ -105,7 +105,7 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 			s.retv(s.rt("rs_append_json_str", st, acc, v))
 			return
 		case KInt:
-			s.retv(s.call("str.concat_int", st, "", acc, v))
+			s.retv(s.numText(acc, v))
 			return
 		case KFloat:
 			s.retv(s.rt("rs_append_json_float", st, acc, v))

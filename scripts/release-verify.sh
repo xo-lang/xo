@@ -11,8 +11,11 @@
 #   2. without Go: every directory holding `go` is dropped from PATH,
 #      GOROOT unset, XO_GO pointing at nothing, empty caches. `xo
 #      version`, `xo rtpack --status`, `xo check`, and a hello program
-#      with `xo run` on each native backend: arm64 (cc link), arm64 with
-#      --ld=macho (no cc), llvm (clang). On a host with no native backend
+#      with `xo run` on each native backend: arm64 with the default
+#      linker (selfhost/macho on darwin with the pack, decision 0182; cc
+#      on linux), arm64 with --ld=cc, arm64 with --ld=macho (no cc), llvm
+#      (clang); and the time zone golden on arm64, its zone data from the
+#      archive's lib/xo/zoneinfo.zip (decision 0157). On a host with no native backend
 #      (linux/amd64) these are expected to fail and are reported as
 #      "unsupported", not as failures; `xo build` with the default (Go)
 #      backend must say Go is missing.
@@ -33,7 +36,8 @@ root=$(pwd)
 out=${2:-.tools/release-verify}
 case "$out" in /*) ;; *) out=$root/$out ;; esac
 rm -rf "$out"
-mkdir -p "$out/unpack" "$out/shim" "$out/hello" "$out/usego/app"
+mkdir -p "$out/unpack" "$out/shim" "$out/hello" "$out/usego/app" "$out/tz"
+cp internal/gen/testdata/golden/time_zones/main.xo "$out/tz/main.xo"
 tar -xzf "$archive" -C "$out/unpack" || { echo "FAIL unpack"; exit 1; }
 rel=$(echo "$out"/unpack/*)
 xo=$rel/bin/xo
@@ -85,9 +89,21 @@ done
   cat "$out/rtpack-status.txt"
   check check "$xo" check "$out/hello"
   check native-arm64-run "$xo" run --backend=arm64 "$out/hello"
+  check native-arm64-ld-cc-run "$xo" run --backend=arm64 --ld=cc "$out/hello"
   check native-arm64-ld-macho-run "$xo" run --backend=arm64 --ld=macho "$out/hello"
   check native-llvm-run "$xo" run --backend=llvm "$out/hello"
-  for f in native-arm64-run native-arm64-ld-macho-run native-llvm-run; do
+  check native-arm64-tz-run "$xo" build --backend=arm64 -o "$out/tz/tz" "$out/tz"
+  if [ "$native" = 1 ]; then
+    # want.txt is "exit 0", "--- stdout", the output, "--- stderr"
+    sed -n '/^--- stdout$/,/^--- stderr$/p' internal/gen/testdata/golden/time_zones/want.txt | sed '1d;$d' > "$out/tz/want.txt"
+    "$out/tz/tz" > "$out/tz/got.txt" 2>&1
+    if cmp -s "$out/tz/got.txt" "$out/tz/want.txt"; then
+      pass native-arm64-tz-output
+    else
+      fail native-arm64-tz-output; diff "$out/tz/got.txt" "$out/tz/want.txt" | head -5 | sed 's/^/  /'
+    fi
+  fi
+  for f in native-arm64-run native-arm64-ld-cc-run native-arm64-ld-macho-run native-llvm-run; do
     grep -q "hello from the released xo" "$out/$f.txt" 2>/dev/null && echo "  $f: $(head -1 "$out/$f.txt")"
   done
   # the default backend is Go: with no Go it must say so, not crash

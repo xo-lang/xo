@@ -44,8 +44,12 @@ typedef struct tw_ml {
 	char *alias;    // localhost:<port> for a listener on 127.0.0.1
 	xo_any *router; // served: http.Router as an Any, or NULL
 	int closed;
+	int served; // serve started once (std/rt's memListener.served)
 	int inflight;
 	int draining;
+	int nbegin; // clients waiting in xo_test_mem_begin (they hold no reference)
+	int freed;  // the listener is gone: the last waiting client frees this
+	xo_wl waiters; // accept, clients waiting for serve, drain
 	struct tw_ml *next;
 } tw_ml;
 
@@ -71,11 +75,6 @@ static struct {
 	tw_rec *recs;
 	int nrec;
 	tw_ml *mls;
-	// accepts, clients waiting for a listener to be served, drains: one
-	// list for every in memory listener, so a listener freed while a
-	// client waits for it wakes the client (which finds it gone) and no
-	// waiter is left on the freed listener's memory
-	xo_wl ml_waiters;
 	int next_port;
 	tw_fake *handlers, *fails;
 	int nhandlers, nfails;
@@ -231,11 +230,27 @@ static void tw_kick(void) {
 // tw_kick_once is one move of the clock; 1 when only callback timers
 // fired (no park was signaled by the clock itself).
 static int tw_kick_once(void) {
-	if (!tw.virt || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
+	if (!tw.virt) {
+		return 0;
+	}
+	int64_t verdict = __atomic_exchange_n(&tw.vpending, 0, __ATOMIC_SEQ_CST);
+	if (!verdict) {
 		return 0;
 	}
 	int parks = 0;
 	pthread_mutex_lock(&ev.mu);
+	if (((verdict - 1) & 1) || verdict - 1 != __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST)) {
+		// stale: two threads can each find every context blocked at
+		// the same instant and both take the verdict (one from the
+		// other's store); the clock moved since (or was moving), and
+		// what it woke may not have run yet
+		// (gotchas/virtual-clock-double-kick.md)
+		pthread_mutex_unlock(&ev.mu);
+		return 0;
+	}
+	// odd while the clock moves: a check that reads the epoch now is
+	// stale too (a signal's callback runs with ev.mu released)
+	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
 	if (ev.n == 0) {
 		pthread_mutex_unlock(&ev.mu);
 		// std/rt's test world names the timers too
@@ -258,6 +273,9 @@ static int tw_kick_once(void) {
 			t->fn(t);
 		}
 	}
+	// what the timers woke is visible (queued, or a root counted
+	// awake): checks that read the epoch from here on see it
+	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
 	pthread_mutex_unlock(&ev.mu);
 	return parks == 0;
 }
@@ -920,22 +938,30 @@ __attribute__((unused)) static void tw_listener_free(xo_listener *l) {
 			break;
 		}
 	}
-	// a client waiting for it to be served finds it gone (decision
-	// 0197: on Windows the free came after a waiter's last check)
-	wl_wake(&tws.ml_waiters);
+	xo_any *r = ml->router;
+	ml->router = NULL;
+	ml->closed = 1;
+	ml->l = NULL;
+	// a client still waiting for a serve that never came wakes and
+	// fails; it frees ml when it leaves (gotchas/mem-listener-backlog-after-serve.md)
+	wl_wake(&ml->waiters);
+	int keep = ml->nbegin > 0;
+	ml->freed = keep;
 	unlk(&tws.mu);
-	if (ml->router) {
-		h_release(ml->router);
+	if (r) {
+		h_release(r);
 	}
-	free(ml->alias);
-	free(ml);
+	if (!keep) {
+		free(ml->alias);
+		free(ml);
+	}
 }
 
 __attribute__((unused)) static void tw_listener_close(xo_listener *l) {
 	tw_ml *ml = tw_ml_of(l);
 	lk(&tws.mu);
 	ml->closed = 1;
-	wl_wake(&tws.ml_waiters);
+	wl_wake(&ml->waiters);
 	unlk(&tws.mu);
 }
 
@@ -946,7 +972,7 @@ __attribute__((unused)) static xo_conn *tw_listener_accept(xo_ctx *c, xo_listene
 	tw_ml *ml = tw_ml_of(l);
 	lk(&tws.mu);
 	while (!ml->closed) {
-		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
+		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
 			unlk(&tws.mu);
 			net_fail(c, 5, "");
 			return xo_h_zero();
@@ -968,7 +994,8 @@ void xo_test_mem_serve(xo_listener *l, xo_any *r) {
 	lk(&tws.mu);
 	xo_any *old = ml->router;
 	ml->router = r;
-	wl_wake(&tws.ml_waiters);
+	ml->served = 1;
+	wl_wake(&ml->waiters);
 	unlk(&tws.mu);
 	if (old) {
 		h_release(old);
@@ -981,7 +1008,7 @@ void xo_test_mem_unserve(xo_listener *l) {
 	lk(&tws.mu);
 	xo_any *old = ml->router;
 	ml->router = NULL;
-	wl_wake(&tws.ml_waiters);
+	wl_wake(&ml->waiters);
 	unlk(&tws.mu);
 	if (old) {
 		h_release(old);
@@ -995,7 +1022,7 @@ void xo_test_mem_drain(xo_listener *l) {
 	xo_ctx *c = ctx();
 	lk(&tws.mu);
 	while (ml->inflight > 0) {
-		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
+		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
 			break;
 		}
 	}
@@ -1017,33 +1044,41 @@ static tw_ml *tw_ml_find(const char *hp, int64_t n) {
 
 // xo_test_mem_begin starts a client request to host:port hp: the router
 // serving it (an Any, a reference) in a list of one, or the empty list
-// when nothing serves it. A listener that exists but is not served yet
+// when nothing serves it. A listener that exists but was never served
 // keeps the request waiting, as a real backlog does, until it is served
-// or closed (canceled: the empty list).
+// or closed (canceled: the empty list). Once serve started, a request
+// while it is not served (stopped, draining, returned) fails at once, as
+// std/rt's memListener: a waiter there would be woken by nothing
+// (gotchas/mem-listener-backlog-after-serve.md).
 xo_rlist *xo_test_mem_begin(const char *hp, int64_t n) {
 	xo_ctx *c = ctx();
 	lk(&tws.mu);
-	for (;;) {
-		tw_ml *ml = tw_ml_find(hp, n);
-		if (!ml) {
+	tw_ml *ml = tw_ml_find(hp, n);
+	while (ml && !ml->router && !ml->served && !ml->closed) {
+		ml->nbegin++;
+		int ok = wl_wait(c, &tws.mu, &ml->waiters, 1);
+		ml->nbegin--;
+		if (ml->freed) {
+			if (ml->nbegin == 0) {
+				free(ml->alias);
+				free(ml);
+			}
+			ml = NULL;
 			break;
 		}
-		if (ml->router) {
-			ml->inflight++;
-			xo_any *r = ml->router;
-			h_retain(r);
-			unlk(&tws.mu);
-			xo_rlist *l = xo_rl_new(4, 8);
-			((xo_any **)rl_data(l))[0] = r;
-			l->len = 1;
-			return l;
+		if (!ok) {
+			ml = NULL;
 		}
-		if (ml->closed) {
-			break;
-		}
-		if (!wl_wait(c, &tws.mu, &tws.ml_waiters, 1)) {
-			break;
-		}
+	}
+	if (ml && ml->router) {
+		ml->inflight++;
+		xo_any *r = ml->router;
+		h_retain(r);
+		unlk(&tws.mu);
+		xo_rlist *l = xo_rl_new(4, 8);
+		((xo_any **)rl_data(l))[0] = r;
+		l->len = 1;
+		return l;
 	}
 	unlk(&tws.mu);
 	return xo_rl_new(4, 8);
@@ -1065,7 +1100,7 @@ void xo_test_mem_end(const char *hp, int64_t n) {
 	if (ml && ml->inflight > 0) {
 		ml->inflight--;
 		if (ml->inflight == 0) {
-			wl_wake(&tws.ml_waiters);
+			wl_wake(&ml->waiters);
 		}
 	}
 	unlk(&tws.mu);

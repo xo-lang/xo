@@ -330,15 +330,22 @@ func IOFlags(code []byte) []string {
 	// the C path of the number and time text (decision 0193), which only
 	// XO_LLRT_C=text builds call: likewise compiled locally
 	for _, sym := range []string{"xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse", "xo_time_parse"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_TEXT_C")
 			break
 		}
 	}
 	// and of the Str operations (decision 0193, XO_LLRT_C=strings)
 	for _, sym := range []string{"xo_str_trim", "xo_str_replace"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_STRINGS_C")
+			break
+		}
+	}
+	// and of the number text (decision 0193 step 3, XO_LLRT_C=num)
+	for _, sym := range []string{"xo_float_parse", "xo_b64_encode", "xo_b64_ok", "xo_b64_decode", "xo_bytes_hex_ok", "xo_bytes_from_hex"} {
+		if bytes.Contains(code, []byte(sym)) {
+			out = append(out, "-DXO_NUM_C")
 			break
 		}
 	}

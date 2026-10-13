@@ -43,6 +43,9 @@ func TestIOFlagsTextC(t *testing.T) {
 		{"call ptr @xo_rs_append_quote(ptr %1, i64 %2, ptr %3, i64 %4, ptr %5)\n", true},
 		{"bl _xo_int_parse_ok\n", true},
 		{"bl _xo_time_parse\n", true},
+		// a string literal naming it (xo1's own io_flags table) is no call
+		{"\t.ascii \"xo_int_parse\"\n", false},
+		{"@s = private constant [12 x i8] c\"xo_int_parse\"\n", false},
 		{"bl _xo_rs_push_word\nbl _xo_rs_append_bytes\nbl _xo_bytes_span\nbl _xo_int_wrap\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_TEXT_C")
@@ -63,11 +66,31 @@ func TestIOFlagsStringsC(t *testing.T) {
 	}{
 		{"call ptr @xo_str_trim(ptr %1, i64 %2, i64 0, ptr %3)\n", true},
 		{"bl _xo_str_replace\n", true},
+		{"\t.ascii \"xo_str_trim\"\n", false},
+		{"@s = private constant [14 x i8] c\"xo_str_replace\"\n", false},
 		{"bl _xo_str_find\nbl _xo_str_slice\nbl _xo_str_split\nbl _xo_str_lines\nbl _xo_str_repeat\nbl _xo_str_join\nbl _xo_str_rune_count\n", false},
 	} {
 		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_STRINGS_C")
 		if got != c.want {
 			t.Errorf("IOFlags(%q) has -DXO_STRINGS_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
+func TestIOFlagsNumC(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"call i64 @xo_float_parse_ok(ptr %1, i64 %2)\n", true},
+		{"bl _xo_b64_decode\n", true},
+		{"bl _xo_bytes_hex_ok\n", true},
+		{"bl _xo_bytes_hex\n", false},
+		{"bl _xo_rs_concat_int\nbl _xo_rs_concat_float\nbl _xo_rs_push_words\nbl _xo_rs_append_b64_quoted\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_NUM_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_NUM_C: %v, want %v", c.code, got, c.want)
 		}
 	}
 }

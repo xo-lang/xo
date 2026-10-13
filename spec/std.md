@@ -95,6 +95,15 @@ fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sq
 fn (f: Float) is_nan() -> Bool
 ```
 
+`Int.parse(s)` is Go's `strconv.ParseInt(s, 10, 64)` and `Float.parse(s)`
+is `strconv.ParseFloat(s, 64)`, None where they return an error: decimal
+and hexadecimal (`0x1.8p1`) text, underscores between digits (`1_000`),
+`inf`, `infinity` (either sign), and `nan`, any case; None when the
+value is out of range. The text of a Float (interpolation, Display,
+Debug) is the shortest that reads back the same value
+(`strconv.FormatFloat(f, 'g', -1, 64)`) with `.0` added to whole
+numbers: `1.0`, `0.1`, `1e+21`, `-0.0`, `+Inf`, `NaN`.
+
 A conversion is a call on the type name, `Float(n)`, not an associated
 function: there is no `Float.from(n)`. XO0601 for an unknown associated
 function of a numeric type called with one numeric argument (`Float.from(n)`,

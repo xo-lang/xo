@@ -1,0 +1,1420 @@
+// The number text of the native runtime, written in Xo (decision 0193,
+// step 3): the decimal text of an Int (strconv.FormatInt) and of a Float
+// (strconv.FormatFloat(f, 'g', -1, 64) with ".0" on whole numbers, the
+// Go backend's FloatStr), Float.parse (strconv.ParseFloat, hex floats
+// and underscores too), Bytes.from_hex, and base64. They were C (std/llrt/xo_rt.c
+// fmt_int and fmt_go_g, xo_std.c); the semantics are the Go backend's,
+// so the native backends print what it prints. The SSA builder calls
+// append_int and append_float for every interpolation and Display of an
+// Int or Float (the native prelude's llrt_concat_int and friends). The
+// C path stays selectable (`XO_LLRT_C=num` loads num_c.xo, and the SSA
+// builder calls the C runtime's str.concat_int as before) until
+// bench/perf/text meets decision 0180's bar on both native backends.
+//
+// Nothing here interpolates a number: the interpolation is this code.
+use native/llrt/num_tables
+use native/rt
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+// ---------------------------------------------------------------------------
+// Int
+
+/// The 8 decimal digits of v (0 <= v < 10^8) as ASCII in a word, the
+/// first in the low byte, zero padded: two digits at a time in the lanes
+/// of one word (four 16 bit lanes, then eight 8 bit ones), with
+/// multiplies that divide every lane at once (x * 10486 >> 20 is x / 100
+/// below 2^14, x * 103 >> 10 is x / 10 below 100). append_int has a copy
+/// of it, so that its common case calls nothing but the append.
+fn digits8(v: Int) -> Int {
+  // the masks change nothing for 0 <= v < 10^8 but give the native
+  // backends' value ranges what they need to prove no product overflows
+  // (and they are logical immediates on arm64)
+  let x = v & 0x7FFFFFF
+  let hi = x / 10000
+  let lo = x % 10000
+  // hi in the low 32 bit lane, lo in the high one
+  let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
+  let h = ((m * 10486) >> 20) & 0x7F0000007F
+  let l = m - h * 100
+  // four lanes of 16 bits: hi / 100, hi % 100, lo / 100, lo % 100
+  let m2 = (h | (l << 16)) & 0x7F007F007F007F
+  let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
+  let l2 = m2 - h2 * 10
+  // a digit is below 0x10, so | is + of "0"
+  h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+}
+
+/// The number of decimal digits of v (0 <= v < 10^8).
+fn ndigits8(v: Int) -> Int {
+  if v < 10000 {
+    if v < 100 {
+      return if v < 10 { 1 } else { 2 }
+    }
+    return if v < 1000 { 3 } else { 4 }
+  }
+  if v < 1000000 {
+    return if v < 100000 { 5 } else { 6 }
+  }
+  if v < 10000000 { 7 } else { 8 }
+}
+
+/// The k (1 to 8) digits of v (0 <= v < 10^k, no leading zeros) in the
+/// low k bytes of a word, the first lowest.
+fn digits_k(v: Int, k: Int) -> Int {
+  // the masks keep every step in range (no overflow checks)
+  digits8(v) >> (((8 - (k & 15)) & 7) << 3)
+}
+
+/// out + the decimal text of v (strconv.FormatInt(v, 10)). The common
+/// case (-10^7 < v < 10^8) is one word and one append, with digits8 and
+/// ndigits8 written out here so it calls nothing else.
+pub fn append_int(out: Str, v: Int) -> Str {
+  if v > -10000000 && v < 100000000 {
+    var u = v
+    if v < 0 {
+      u = 0 - v
+    }
+    var k = 8
+    if u < 10000 {
+      k = if u < 100 { if u < 10 { 1 } else { 2 } } else if u < 1000 { 3 } else { 4 }
+    } else if u < 1000000 {
+      k = if u < 100000 { 5 } else { 6 }
+    } else if u < 10000000 {
+      k = 7
+    }
+    // digits8(u)
+    let x = u & 0x7FFFFFF
+    let hi = x / 10000
+    let lo = x % 10000
+    let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
+    let h = ((m * 10486) >> 20) & 0x7F0000007F
+    let l = m - h * 100
+    let m2 = (h | (l << 16)) & 0x7F007F007F007F
+    let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
+    let l2 = m2 - h2 * 10
+    let d = h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+    // the k digits, after "-" when v < 0 (k is 7 at most then)
+    let w = d >> (((8 - (k & 15)) & 7) << 3)
+    if v >= 0 {
+      return rt.rs_push_word(out, w, k)
+    }
+    return rt.rs_push_word(out, ((w & 0x7FFFFFFFFFFFFF) << 8) | 45, k + 1)
+  }
+  append_wide(out, v)
+}
+
+/// out + the decimal text of v outside append_int's common case.
+fn append_wide(out: Str, v: Int) -> Str {
+  if v < 0 {
+    if v == MIN_INT {
+      return rt.rs_append(out, "-9223372036854775808")
+    }
+    return append_uint(out, 0 - v, 1)
+  }
+  append_uint(out, v, 0)
+}
+
+/// out + "-" when sk is 1, then the decimal text of u (0 <= u).
+fn append_uint(out: Str, u: Int, sk: Int) -> Str {
+  if u < 100000000 {
+    let k = ndigits8(u)
+    return rt.rs_push_words(out, 45, digits_k(u, k), 0, 0, sk | ((k & 15) << 4))
+  }
+  let q = u / 100000000
+  let lo = digits8(u % 100000000)
+  if q < 100000000 {
+    let k = ndigits8(q)
+    return rt.rs_push_words(out, 45, digits_k(q, k), lo, 0, sk | ((k & 15) << 4) | 0x800)
+  }
+  // q < 10^11: at most 3 digits, then 16
+  let top = q / 100000000
+  let k = ndigits8(top)
+  rt.rs_push_words(out, 45, digits_k(top, k), digits8(q % 100000000), lo, sk | ((k & 15) << 4) | 0x8800)
+}
+
+/// The decimal text of v.
+pub fn int_text(v: Int) -> Str { append_int("", v) }
+
+// ---------------------------------------------------------------------------
+// Words as UInt64 (the arithmetic of Dragonbox and Eisel-Lemire)
+//
+// An Int holds a UInt64's bits. The native backends lower these
+// intrinsics inline: wrapping +, -, *, the shifts, and umulh.
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+/// a << k (k mod 64), wrapping.
+fn shl(a: Int, k: Int) -> Int { rt.int_wrap(3, a, k) }
+
+/// a >> k (k mod 64) as a UInt64 (zeros shifted in).
+fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+
+/// a < b as UInt64s.
+fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
+
+/// The word at byte i of t, little endian.
+fn word_at(t: Bytes, i: Int) -> Int { rt.bytes_word(t, i) }
+
+/// The high word of 10^e's 128 bit mantissa (POW10_MIN <= e <= POW10_MAX).
+fn pow10_hi(e: Int) -> Int { word_at(num_tables.POW10, (e - num_tables.POW10_MIN) * 16) }
+
+/// The low word of 10^e's 128 bit mantissa.
+fn pow10_lo(e: Int) -> Int { word_at(num_tables.POW10, (e - num_tables.POW10_MIN) * 16 + 8) }
+
+/// floor(x * log10(2)) for -1600 <= x <= 1600 (strconv.mulLog10_2).
+fn mul_log10_2(x: Int) -> Int { (x * 78913) >> 18 }
+
+/// floor(x * log2(10)) for -500 <= x <= 500 (strconv.mulLog2_10).
+fn mul_log2_10(x: Int) -> Int { (x * 108853) >> 15 }
+
+/// 10^k (0 <= k <= 18).
+fn pow10(k: Int) -> Int {
+  var p = 1
+  if (k & 16) != 0 {
+    p = 10000000000000000
+  }
+  if (k & 8) != 0 {
+    p = p * 100000000
+  }
+  if (k & 4) != 0 {
+    p = p * 10000
+  }
+  if (k & 2) != 0 {
+    p = p * 100
+  }
+  if (k & 1) != 0 {
+    p = p * 10
+  }
+  p
+}
+
+/// The number of decimal digits of v (1 <= v < 10^18).
+fn ndigits(v: Int) -> Int {
+  if v < 100000000 {
+    return ndigits8(v)
+  }
+  if v < 10000000000000000 {
+    return 8 + ndigits8(v / 100000000)
+  }
+  if v < 100000000000000000 { 17 } else { 18 }
+}
+
+// ---------------------------------------------------------------------------
+// Float text: Dragonbox (strconv.FormatFloat(f, 'g', -1, 64), Go 1.26's
+// internal/strconv/ftoadbox.go), then Go's 'g' layout
+
+/// Dragonbox's shortest digits of a finite nonzero Float of significand
+/// mant and binary exponent e2 (value mant * 2^e2): the digits as an Int
+/// and the decimal exponent of its last digit (strconv.dboxFtoa64; the
+/// trailing zeros trimmed where it trims them).
+fn dbox(mant: Int, e2: Int, denorm: Bool) -> (Int, Int) {
+  if mant == 0x10000000000000 && !denorm {
+    // Algorithm 5.6: the lower neighbor is closer
+    let k0 = 0 - ((e2 * 631305 - 261663) >> 21)
+    let ph = pow10_hi(k0)
+    let beta = e2 + 1 + mul_log2_10(k0) - 1
+    var xi = shr(subw(ph, shr(ph, 54)), 11 - beta)
+    let zi = shr(addw(ph, shr(ph, 53)), 11 - beta)
+    if e2 != 2 && e2 != 3 {
+      xi += 1
+    }
+    let q = zi / 10
+    if xi <= q * 10 {
+      return trimmed(q, 0 - k0 + 1)
+    }
+    var yru = (shr(ph, 10 - beta) + 1) / 2
+    if e2 == -77 && yru % 2 != 0 {
+      yru -= 1
+    } else if yru < xi {
+      yru += 1
+    }
+    return (yru, 0 - k0)
+  }
+  // Algorithm 5.2, kappa 2
+  let k0 = 0 - mul_log10_2(e2)
+  let k = 2 + k0
+  let ph = pow10_hi(k)
+  var pl = pow10_lo(k)
+  if k < 0 || k > 55 {
+    pl = addw(pl, 1)
+  }
+  let beta = e2 + 1 + mul_log2_10(k) - 1
+  // zi, exact: the upper 128 bits of the 192 bit (2 mant + 1) << beta
+  // times phi
+  let u = shl(mant * 2 + 1, beta)
+  let rhi = rt.u64_mul_hi(u, ph)
+  let rlo = mulw(u, ph)
+  let t = rt.u64_mul_hi(u, pl)
+  let lo = addw(rlo, t)
+  let zi = if ult(lo, rlo) { addw(rhi, 1) } else { rhi }
+  let exact = lo == 0
+  // s, r = zi / 1000, zi % 1000 as UInt64s (1000 is 8 times 125)
+  var s = shr(zi, 3) / 125
+  var r = subw(zi, mulw(s, 1000))
+  let delta = shr(ph, 63 - beta)
+  if r < delta {
+    if r != 0 || !exact || mant % 2 == 0 {
+      return trimmed(s, 0 - k0 + 1)
+    }
+    s -= 1
+    r = 1000
+  } else if r == delta {
+    let pe = parity(mant * 2 - 1, ph, pl, beta)
+    if (pe & 1) != 0 || ((pe & 2) != 0 && mant % 2 == 0) {
+      return trimmed(s, 0 - k0 + 1)
+    }
+  }
+  // Algorithm 5.4
+  let d = r + 50 - delta / 2
+  let tq = d / 100
+  var yru = 10 * s + tq
+  if d % 100 == 0 {
+    let pe = parity(mant * 2, ph, pl, beta)
+    if ((pe & 1) != 0) != ((d - 50) % 2 != 0) || ((pe & 2) != 0 && yru % 2 != 0) {
+      yru -= 1
+    }
+  }
+  (yru, 0 - k0)
+}
+
+/// The parity (bit 0) and integrality (bit 1) of m times phi at beta
+/// (strconv.dboxParity64).
+fn parity(m: Int, ph: Int, pl: Int, beta: Int) -> Int {
+  // the lower 128 bits of the 192 bit m * phi
+  let hl_hi = rt.u64_mul_hi(m, pl)
+  let hi = addw(mulw(m, ph), hl_hi)
+  let lo = mulw(m, pl)
+  let p = shr(hi, 64 - beta) & 1
+  let whole = (shl(hi, beta) | shr(lo, 64 - beta)) == 0
+  if whole { p | 2 } else { p }
+}
+
+/// x without its trailing zeros and the exponent of its last digit (exp
+/// is x's): strconv.trimZeros.
+fn trimmed(x0: Int, exp0: Int) -> (Int, Int) {
+  var x = x0
+  var exp = exp0
+  if x % 100000000 == 0 {
+    x = x / 100000000
+    exp += 8
+  }
+  if x % 10000 == 0 {
+    x = x / 10000
+    exp += 4
+  }
+  if x % 100 == 0 {
+    x = x / 100
+    exp += 2
+  }
+  if x % 10 == 0 {
+    x = x / 10
+    exp += 1
+  }
+  (x, exp)
+}
+
+/// out + the text of f as the Go backend prints a Float (std/rt
+/// FloatStr: strconv.FormatFloat(f, 'g', -1, 64), with ".0" added when
+/// the text has no '.', 'e', "Inf", or "NaN").
+pub fn append_float(out: Str, f: Float) -> Str {
+  let bits = rt.float_bits(f)
+  let neg = bits < 0
+  let be = (bits >> 52) & 0x7FF
+  var mant = bits & 0xFFFFFFFFFFFFF
+  if be == 0x7FF {
+    if mant != 0 {
+      // "NaN"
+      return rt.rs_push_word(out, 0x4E614E, 3)
+    }
+    // "-Inf" or "+Inf"
+    return rt.rs_push_word(out, if neg { 0x666E492D } else { 0x666E492B }, 4)
+  }
+  if be == 0 && mant == 0 {
+    // "-0.0" or "0.0"
+    if neg {
+      return rt.rs_push_word(out, 0x302E302D, 4)
+    }
+    return rt.rs_push_word(out, 0x302E30, 3)
+  }
+  var e = be
+  var denorm = false
+  if be == 0 {
+    e = 1
+    denorm = true
+  } else {
+    mant = mant | 0x10000000000000
+  }
+  let (dig, dexp) = dbox(mant, e - 1075, denorm)
+  let nd = ndigits(dig)
+  // the decimal point is after digit dp (value 0.digits * 10^dp)
+  let dp = nd + dexp
+  layout(out, neg, dig, nd, dp)
+}
+
+/// out + Go's 'g' layout of the shortest digits dig (nd of them, no
+/// trailing zeros, value 0.dig * 10^dp), with FloatStr's ".0".
+fn layout(out: Str, neg: Bool, dig: Int, nd: Int, dp: Int) -> Str {
+  let sk = if neg { 1 } else { 0 }
+  // the digits padded to 17: a lead digit, then 16 in two words
+  let p = dig * pow10(17 - nd)
+  let lead = p / 10000000000000000
+  let rest = p % 10000000000000000
+  let x = dp - 1
+  if x < -4 || x >= 6 {
+    // d[.ddd]e(+|-)xx
+    var a = 48 + lead
+    var ak = 1
+    if nd > 1 {
+      a = a | 0x2E00
+      ak = 2
+    }
+    if neg {
+      a = (a << 8) | 45
+      ak += 1
+    }
+    var ex = x
+    var es = 0x2B
+    if x < 0 {
+      ex = 0 - x
+      es = 0x2D
+    }
+    let ek = if ex >= 100 { 3 } else { 2 }
+    let ew = 0x65 | (es << 8) | shl(digits_k(ex, ek), 16)
+    let r = nd - 1
+    let r1 = if r > 8 { 8 } else { r }
+    let w1 = digits8(rest / 100000000)
+    let w2 = digits8(rest % 100000000)
+    return rt.rs_push_words(out, a, w1, w2, ew, ak | (r1 << 4) | ((r - r1) << 8) | ((2 + ek) << 12))
+  }
+  if dp <= 0 {
+    // 0.[000]ddd: "0." then -dp zeros (at most 3) and the lead digit
+    var a = shl(48 + lead, 16 - 8 * dp) | 0x2E30 | shl(0x303030 & (shl(1, -8 * dp) - 1), 16)
+    var ak = 3 - dp
+    if neg {
+      a = shl(a, 8) | 45
+      ak += 1
+    }
+    let r = nd - 1
+    let r1 = if r > 8 { 8 } else { r }
+    return rt.rs_push_words(out, a, digits8(rest / 100000000), digits8(rest % 100000000), 0, ak | (r1 << 4) | ((r - r1) << 8))
+  }
+  if nd <= dp {
+    // the digits, dp - nd zeros, then ".0" (dp at most 6)
+    let w = digits_k(dig * pow10(dp - nd), dp)
+    return rt.rs_push_words(out, 45, w, 0x302E, 0, sk | (dp << 4) | (2 << 8))
+  }
+  // ddd.ddd: dp digits (1 to 6), '.', then nd - dp
+  let fr = p % pow10(17 - dp)
+  let ip = p / pow10(17 - dp)
+  let f16 = fr * pow10(dp - 1)
+  let r = nd - dp
+  let r1 = if r > 8 { 8 } else { r }
+  let a = digits_k(ip, dp) | shl(0x2E, 8 * dp)
+  rt.rs_push_words(out, 45, a, digits8(f16 / 100000000), digits8(f16 % 100000000), sk | ((dp + 1) << 4) | (r1 << 8) | ((r - r1) << 12))
+}
+
+/// The text of f as the Go backend prints a Float.
+pub fn float_text(f: Float) -> Str { append_float("", f) }
+
+// ---------------------------------------------------------------------------
+// Float.parse: strconv.ParseFloat(s, 64) (Go 1.26's internal/strconv
+// atof.go): decimal and hexadecimal text with Go's underscores, inf,
+// infinity, and nan; the exact float path, Eisel-Lemire, and the big
+// decimal fallback. None when the text is malformed or out of range.
+
+/// The byte at i lowered when it is an ASCII letter (0 past the end).
+fn lower_at(b: Bytes, i: Int) -> Int {
+  if i >= b.len() {
+    return 0
+  }
+  let c = Int(b[i])
+  if c >= 65 && c <= 90 { c + 32 } else { c }
+}
+
+/// The length of the common prefix of b from i and the lowercase word
+/// w (b's case ignored): strconv.commonPrefixLenIgnoreCase.
+fn prefix_len(b: Bytes, i: Int, w: Bytes) -> Int {
+  var k = 0
+  while k < w.len() && lower_at(b, i + k) == Int(w[k]) {
+    k += 1
+  }
+  k
+}
+
+/// The number of leading zero bits of x as a UInt64.
+fn clz(x0: Int) -> Int {
+  if x0 == 0 {
+    return 64
+  }
+  var x = x0
+  var n = 0
+  if shr(x, 32) == 0 {
+    n += 32
+    x = shl(x, 32)
+  }
+  if shr(x, 48) == 0 {
+    n += 16
+    x = shl(x, 16)
+  }
+  if shr(x, 56) == 0 {
+    n += 8
+    x = shl(x, 8)
+  }
+  if shr(x, 60) == 0 {
+    n += 4
+    x = shl(x, 4)
+  }
+  if shr(x, 62) == 0 {
+    n += 2
+    x = shl(x, 2)
+  }
+  if x >= 0 {
+    n += 1
+  }
+  n
+}
+
+/// strconv.underscoreOK of b up to n: every underscore between digits
+/// (a base prefix counts as a digit).
+fn underscore_ok(b: Bytes, n: Int) -> Bool {
+  var i = 0
+  let c0 = Int(b[0])
+  if c0 == 45 || c0 == 43 {
+    i = 1
+  }
+  // saw: 0 the start, 1 a digit or base prefix, 2 an underscore, 3 other
+  var saw = 0
+  var hex = false
+  if n - i >= 2 && Int(b[i]) == 48 {
+    let p = lower_at(b, i + 1)
+    if p == 98 || p == 111 || p == 120 {
+      i += 2
+      saw = 1
+      hex = p == 120
+    }
+  }
+  while i < n {
+    let c = lower_at(b, i)
+    if (c >= 48 && c <= 57) || (hex && c >= 97 && c <= 102) {
+      saw = 1
+    } else if c == 95 {
+      if saw != 1 {
+        return false
+      }
+      saw = 2
+    } else {
+      if saw == 2 {
+        return false
+      }
+      saw = 3
+    }
+    i += 1
+  }
+  saw != 2
+}
+
+/// Float.parse (strconv.ParseFloat(s, 64)); None for an error.
+pub fn parse_float(s: Str) -> Float? {
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return None
+  }
+  var i = 0
+  var neg = false
+  let c0 = Int(b[0])
+  if c0 == 43 || c0 == 45 {
+    neg = c0 == 45
+    i = 1
+  }
+  // inf, infinity, nan (strconv.special; nan takes no sign)
+  let ci = lower_at(b, i)
+  if ci == 105 {
+    var k = prefix_len(b, i, b"infinity")
+    if k > 3 && k < 8 {
+      k = 3
+    }
+    if (k == 3 || k == 8) && i + k == n {
+      return Some(if neg { -1.0 / 0.0 } else { 1.0 / 0.0 })
+    }
+    return None
+  }
+  if ci == 110 {
+    if i == 0 && n == 3 && prefix_len(b, 0, b"nan") == 3 {
+      return Some(0.0 / 0.0)
+    }
+    return None
+  }
+  // readFloat: the digits (19 decimal or 16 hex kept in mant), the
+  // decimal point, the exponent
+  var base = 10
+  var max_digits = 19
+  var hex = false
+  if i + 2 < n && Int(b[i]) == 48 && lower_at(b, i + 1) == 120 {
+    base = 16
+    max_digits = 16
+    hex = true
+    i += 2
+  }
+  var underscores = false
+  var sawdot = false
+  var sawdigits = false
+  var nd = 0
+  var nd_mant = 0
+  var dp = 0
+  var mant = 0
+  var trunc = false
+  while i < n {
+    let c = Int(b[i])
+    if c == 95 {
+      underscores = true
+    } else if c == 46 {
+      if sawdot {
+        break
+      }
+      sawdot = true
+      dp = nd
+    } else if c >= 48 && c <= 57 {
+      sawdigits = true
+      if c == 48 && nd == 0 {
+        // a leading zero
+        dp -= 1
+      } else {
+        nd += 1
+        if nd_mant < max_digits {
+          mant = addw(mulw(mant, base), c - 48)
+          nd_mant += 1
+        } else if c != 48 {
+          trunc = true
+        }
+      }
+    } else {
+      let l = c | 32
+      if hex && l >= 97 && l <= 102 {
+        sawdigits = true
+        nd += 1
+        if nd_mant < max_digits {
+          mant = addw(mulw(mant, 16), l - 87)
+          nd_mant += 1
+        } else {
+          trunc = true
+        }
+      } else {
+        break
+      }
+    }
+    i += 1
+  }
+  if !sawdigits {
+    return None
+  }
+  if !sawdot {
+    dp = nd
+  }
+  if hex {
+    dp = dp * 4
+    nd_mant = nd_mant * 4
+  }
+  let ec = if hex { 112 } else { 101 }
+  if i < n && lower_at(b, i) == ec {
+    i += 1
+    if i >= n {
+      return None
+    }
+    var esign = 1
+    let sc = Int(b[i])
+    if sc == 43 {
+      i += 1
+    } else if sc == 45 {
+      i += 1
+      esign = -1
+    }
+    if i >= n || Int(b[i]) < 48 || Int(b[i]) > 57 {
+      return None
+    }
+    var e = 0
+    while i < n {
+      let c = Int(b[i])
+      if c == 95 {
+        underscores = true
+      } else if c >= 48 && c <= 57 {
+        if e < 10000 {
+          e = e * 10 + c - 48
+        }
+      } else {
+        break
+      }
+      i += 1
+    }
+    dp += e * esign
+  } else if hex {
+    // a hex float must have an exponent
+    return None
+  }
+  if i != n {
+    return None
+  }
+  if underscores && !underscore_ok(b, n) {
+    return None
+  }
+  let exp = if mant != 0 { dp - nd_mant } else { 0 }
+  if hex {
+    return atof_hex(mant, exp, neg, trunc)
+  }
+  if !trunc && shr(mant, 52) == 0 {
+    // atof64exact: the integer and the power of ten are exact Floats
+    var f = Float(mant)
+    if neg {
+      f = -f
+    }
+    if exp == 0 {
+      return Some(f)
+    }
+    if exp > 0 && exp <= 37 {
+      var k = exp
+      if k > 22 {
+        f = f * exact_pow10(k - 22)
+        k = 22
+      }
+      if f <= 1e15 && f >= -1e15 {
+        return Some(f * exact_pow10(k))
+      }
+    } else if exp < 0 && exp >= -22 {
+      return Some(f / exact_pow10(0 - exp))
+    }
+  }
+  let r = eisel_lemire(mant, exp, neg)
+  if r != -1 {
+    if !trunc {
+      return Some(rt.float_from_bits(r))
+    }
+    // the mantissa lost digits: right when the next mantissa up gives
+    // the same Float
+    if eisel_lemire(addw(mant, 1), exp, neg) == r {
+      return Some(rt.float_from_bits(r))
+    }
+  }
+  slow_parse(b, n)
+}
+
+/// 10^k as a Float (0 <= k <= 22, exact).
+fn exact_pow10(k: Int) -> Float {
+  var p = 1.0
+  var x = 10.0
+  var j = k
+  while j > 0 {
+    if (j & 1) != 0 {
+      p = p * x
+    }
+    x = x * x
+    j = j >> 1
+  }
+  p
+}
+
+/// The bits of the Float of man * 10^exp10 by Eisel-Lemire
+/// (strconv.eiselLemire64), or -1 (the bits of a NaN it never
+/// returns) when it cannot decide.
+fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
+  if man0 == 0 {
+    return if neg { MIN_INT } else { 0 }
+  }
+  if exp10 < num_tables.POW10_MIN || exp10 > num_tables.POW10_MAX {
+    return -1
+  }
+  let ph = pow10_hi(exp10)
+  let pl = pow10_lo(exp10)
+  let exp2 = 1 + mul_log2_10(exp10)
+  // normalization
+  let z = clz(man0)
+  let man = shl(man0, z)
+  var ret_exp2 = exp2 + 63 + 1023 - z
+  // multiplication
+  var xhi = rt.u64_mul_hi(man, ph)
+  var xlo = mulw(man, ph)
+  // wider approximation
+  if (xhi & 0x1FF) == 0x1FF && ult(addw(xlo, man), man) {
+    let yhi = rt.u64_mul_hi(man, pl)
+    let ylo = mulw(man, pl)
+    var mhi = xhi
+    let mlo = addw(xlo, yhi)
+    if ult(mlo, xlo) {
+      mhi = addw(mhi, 1)
+    }
+    if (mhi & 0x1FF) == 0x1FF && mlo == -1 && ult(addw(ylo, man), man) {
+      return -1
+    }
+    xhi = mhi
+    xlo = mlo
+  }
+  // shifting to 54 bits
+  let msb = shr(xhi, 63)
+  var ret_mant = shr(xhi, msb + 9)
+  ret_exp2 -= 1 ^ msb
+  // half way ambiguity
+  if xlo == 0 && (xhi & 0x1FF) == 0 && (ret_mant & 3) == 1 {
+    return -1
+  }
+  if ret_exp2 <= 0 {
+    return subnormal(ret_mant, 1 - ret_exp2, xhi & subw(shl(1, msb + 9), 1), msb + 9, xlo, neg)
+  }
+  // from 54 to 53 bits
+  ret_mant += ret_mant & 1
+  ret_mant = ret_mant >> 1
+  if (ret_mant >> 53) > 0 {
+    ret_mant = ret_mant >> 1
+    ret_exp2 += 1
+  }
+  if ret_exp2 <= 0 || ret_exp2 >= 0x7FF {
+    return -1
+  }
+  let bits = shl(ret_exp2, 52) | (ret_mant & 0xFFFFFFFFFFFFF)
+  if neg { bits | MIN_INT } else { bits }
+}
+
+/// The bits of a subnormal (or zero, or the least normal) Float from
+/// Eisel-Lemire's 54 bit mantissa r (the round bit lowest) when its
+/// exponent is t - 1 binades below the least normal one: r shifted
+/// right by t more bits, rounded half up, or -1 when the product's bits
+/// below the round bit (r's low t bits, then the low kb bits of xhi,
+/// then xlo) are all ones, so the truncated product may be one unit
+/// below a carry into the round bit. Go's ParseFloat takes its big
+/// decimal path here instead (eiselLemire64 rejects subnormals); the
+/// answers are the same (TestNumDiff). An exact tie cannot happen: a
+/// subnormal's halfway points need more than 700 decimal digits, and
+/// the mantissa has at most 19.
+fn subnormal(r: Int, t: Int, below: Int, kb: Int, xlo: Int, neg: Bool) -> Int {
+  let sign = if neg { MIN_INT } else { 0 }
+  if t > 54 {
+    return sign
+  }
+  let low = r & subw(shl(1, t), 1)
+  if low == subw(shl(1, t), 1) && below == subw(shl(1, kb), 1) && xlo == -1 {
+    return -1
+  }
+  let m = shr(r, t)
+  ((m + (m & 1)) >> 1) | sign
+}
+
+/// strconv.atofHex: the Float of the hex mantissa times 2^exp, rounded
+/// to even; None when it is out of range.
+fn atof_hex(mant0: Int, exp0: Int, neg: Bool, trunc: Bool) -> Float? {
+  // exponents from -1022 to 1023; the mantissa then has 52 bits after
+  // its point
+  var mant = mant0
+  var exp = exp0 + 52
+  while mant != 0 && shr(mant, 54) == 0 {
+    mant = shl(mant, 1)
+    exp -= 1
+  }
+  if trunc {
+    mant = mant | 1
+  }
+  while shr(mant, 55) != 0 {
+    mant = shr(mant, 1) | (mant & 1)
+    exp += 1
+  }
+  // denormalize when the exponent is too small (the 2 is the rounding
+  // bits)
+  while ult(1, mant) && exp < -1024 {
+    mant = shr(mant, 1) | (mant & 1)
+    exp += 1
+  }
+  var round = mant & 3
+  mant = shr(mant, 2)
+  round = round | (mant & 1)
+  exp += 2
+  if round == 3 {
+    mant += 1
+    if mant == 0x20000000000000 {
+      mant = mant >> 1
+      exp += 1
+    }
+  }
+  if (mant >> 52) == 0 {
+    exp = -1023
+  }
+  if exp > 1023 {
+    return None
+  }
+  var bits = (mant & 0xFFFFFFFFFFFFF) | shl((exp + 1023) & 0x7FF, 52)
+  if neg {
+    bits = bits | MIN_INT
+  }
+  Some(rt.float_from_bits(bits))
+}
+
+// ---------------------------------------------------------------------------
+// The big decimal of the slow path (strconv's decimal.go): at most 800
+// digits (ASCII codes), a decimal point, and whether nonzero digits were
+// dropped.
+
+struct Dec {
+  d: List[Int]
+  nd: Int
+  dp: Int
+  neg: Bool
+  trunc: Bool
+}
+
+const DEC_MAX: Int = 800
+
+/// The shift steps of a Dec (strconv.maxShift on 64 bit platforms).
+const MAX_SHIFT: Int = 60
+
+/// The digits that strconv.decimal.set reads from b (n bytes, already
+/// checked by parse_float), into a Dec.
+fn dec_set(b: Bytes, n: Int) -> Dec {
+  var d: List[Int] = List[Int].with_capacity(DEC_MAX)
+  for _ in 0..DEC_MAX {
+    d.push(48)
+  }
+  var a = Dec{d: d, nd: 0, dp: 0, neg: false, trunc: false}
+  var i = 0
+  let c0 = Int(b[0])
+  if c0 == 43 {
+    i = 1
+  } else if c0 == 45 {
+    i = 1
+    a.neg = true
+  }
+  var sawdot = false
+  while i < n {
+    let c = Int(b[i])
+    if c == 95 {
+      i += 1
+      continue
+    }
+    if c == 46 {
+      sawdot = true
+      a.dp = a.nd
+      i += 1
+      continue
+    }
+    if c < 48 || c > 57 {
+      break
+    }
+    if c == 48 && a.nd == 0 {
+      a.dp -= 1
+    } else if a.nd < DEC_MAX {
+      a.d.set(a.nd, c)
+      a.nd += 1
+    } else if c != 48 {
+      a.trunc = true
+    }
+    i += 1
+  }
+  if !sawdot {
+    a.dp = a.nd
+  }
+  if i < n && lower_at(b, i) == 101 {
+    i += 1
+    var esign = 1
+    let sc = Int(b[i])
+    if sc == 43 {
+      i += 1
+    } else if sc == 45 {
+      i += 1
+      esign = -1
+    }
+    var e = 0
+    while i < n {
+      let c = Int(b[i])
+      if c != 95 && e < 10000 {
+        e = e * 10 + c - 48
+      }
+      i += 1
+    }
+    a.dp += e * esign
+  }
+  a
+}
+
+/// Drops the trailing zeros of a (strconv.trim).
+fn dec_trim(var a: Dec) {
+  while a.nd > 0 && a.d[a.nd - 1] == 48 {
+    a.nd -= 1
+  }
+  if a.nd == 0 {
+    a.dp = 0
+  }
+}
+
+/// a / 2^k (k <= MAX_SHIFT; strconv.rightShift). n is a UInt64.
+fn dec_right(var a: Dec, k: Int) {
+  var r = 0
+  var w = 0
+  var n = 0
+  // enough leading digits for the first shift
+  while shr(n, k) == 0 {
+    if r >= a.nd {
+      if n == 0 {
+        a.nd = 0
+        return
+      }
+      while shr(n, k) == 0 {
+        n = mulw(n, 10)
+        r += 1
+      }
+      break
+    }
+    n = addw(mulw(n, 10), a.d[r] - 48)
+    r += 1
+  }
+  a.dp -= r - 1
+  let mask = subw(shl(1, k), 1)
+  while r < a.nd {
+    let c = a.d[r]
+    let dig = shr(n, k)
+    n = n & mask
+    a.d.set(w, dig + 48)
+    w += 1
+    n = addw(mulw(n, 10), c - 48)
+    r += 1
+  }
+  while n != 0 {
+    let dig = shr(n, k)
+    n = n & mask
+    if w < DEC_MAX {
+      a.d.set(w, dig + 48)
+      w += 1
+    } else if dig > 0 {
+      a.trunc = true
+    }
+    n = mulw(n, 10)
+  }
+  a.nd = w
+  dec_trim(a)
+}
+
+/// The number of new digits of a * 2^k: strconv.leftcheats[k], whose
+/// cutoff (the digits of 5^k) gives one fewer when a's digits are below
+/// it.
+fn dec_left_delta(a: Dec, k: Int) -> Int {
+  if k == 0 {
+    return 0
+  }
+  // the digits of 5^k (ASCII codes)
+  var p: List[Int] = [49]
+  for _ in 0..k {
+    var carry = 0
+    var j = p.len() - 1
+    while j >= 0 {
+      let v = (p[j] - 48) * 5 + carry
+      p.set(j, v % 10 + 48)
+      carry = v / 10
+      j -= 1
+    }
+    if carry > 0 {
+      p.insert(0, carry + 48)
+    }
+  }
+  // int(log10(2) * k + 1)
+  let delta = (k * 30103) / 100000 + 1
+  // strconv.prefixIsLessThan(a.d[:nd], cutoff)
+  var i = 0
+  while i < p.len() {
+    if i >= a.nd {
+      return delta - 1
+    }
+    if a.d[i] != p[i] {
+      return if a.d[i] < p[i] { delta - 1 } else { delta }
+    }
+    i += 1
+  }
+  delta
+}
+
+/// a * 2^k (k <= MAX_SHIFT; strconv.leftShift). n is a UInt64.
+fn dec_left(var a: Dec, k: Int) {
+  let delta = dec_left_delta(a, k)
+  var r = a.nd - 1
+  var w = a.nd + delta
+  var n = 0
+  while r >= 0 {
+    n = addw(n, shl(a.d[r] - 48, k))
+    let quo = shr(n, 1) / 5
+    let rem = subw(n, mulw(quo, 10))
+    w -= 1
+    if w < DEC_MAX {
+      a.d.set(w, rem + 48)
+    } else if rem != 0 {
+      a.trunc = true
+    }
+    n = quo
+    r -= 1
+  }
+  while n != 0 {
+    let quo = shr(n, 1) / 5
+    let rem = subw(n, mulw(quo, 10))
+    w -= 1
+    if w < DEC_MAX {
+      a.d.set(w, rem + 48)
+    } else if rem != 0 {
+      a.trunc = true
+    }
+    n = quo
+  }
+  a.nd += delta
+  if a.nd >= DEC_MAX {
+    a.nd = DEC_MAX
+  }
+  a.dp += delta
+  dec_trim(a)
+}
+
+/// a * 2^k (strconv.decimal.Shift).
+fn dec_shift(var a: Dec, k0: Int) {
+  if a.nd == 0 {
+    return
+  }
+  var k = k0
+  if k > 0 {
+    while k > MAX_SHIFT {
+      dec_left(a, MAX_SHIFT)
+      k -= MAX_SHIFT
+    }
+    dec_left(a, k)
+  } else if k < 0 {
+    while k < 0 - MAX_SHIFT {
+      dec_right(a, MAX_SHIFT)
+      k += MAX_SHIFT
+    }
+    dec_right(a, 0 - k)
+  }
+}
+
+/// Whether a chopped at nd digits rounds up (strconv.shouldRoundUp).
+fn dec_round_up(a: Dec, nd: Int) -> Bool {
+  if nd < 0 || nd >= a.nd {
+    return false
+  }
+  if a.d[nd] == 53 && nd + 1 == a.nd {
+    // exactly halfway: to even, or up when digits were dropped
+    if a.trunc {
+      return true
+    }
+    return nd > 0 && (a.d[nd - 1] - 48) % 2 != 0
+  }
+  a.d[nd] >= 53
+}
+
+/// The integer part of a, rounded (strconv.RoundedInteger), as a
+/// UInt64.
+fn dec_rounded(a: Dec) -> Int {
+  if a.dp > 20 {
+    return -1
+  }
+  var i = 0
+  var n = 0
+  while i < a.dp && i < a.nd {
+    n = addw(mulw(n, 10), a.d[i] - 48)
+    i += 1
+  }
+  while i < a.dp {
+    n = mulw(n, 10)
+    i += 1
+  }
+  if dec_round_up(a, a.dp) {
+    n = addw(n, 1)
+  }
+  n
+}
+
+/// The shift that brings a decimal point dp toward [0.5, 1)
+/// (strconv.powtab).
+fn powtab(dp: Int) -> Int {
+  if dp >= 9 {
+    return 27
+  }
+  if dp < 4 {
+    return if dp == 0 { 1 } else { dp * 3 }
+  }
+  if dp == 4 { 13 } else if dp == 5 { 16 } else if dp == 6 { 19 } else if dp == 7 { 23 } else { 26 }
+}
+
+/// The slow path of Float.parse (strconv.decimal.floatBits): the big
+/// decimal scaled by powers of two; None when it overflows.
+fn slow_parse(b: Bytes, n: Int) -> Float? {
+  var a = dec_set(b, n)
+  var exp = -1023
+  var mant = 0
+  if a.nd != 0 && a.dp >= -330 {
+    if a.dp > 310 {
+      return None
+    }
+    exp = 0
+    while a.dp > 0 {
+      let k = powtab(a.dp)
+      dec_shift(a, 0 - k)
+      exp += k
+    }
+    while a.dp < 0 || (a.dp == 0 && a.d[0] < 53) {
+      let k = powtab(0 - a.dp)
+      dec_shift(a, k)
+      exp -= k
+    }
+    // the range is [0.5, 1); a Float's is [1, 2)
+    exp -= 1
+    if exp < -1022 {
+      let k = -1022 - exp
+      dec_shift(a, 0 - k)
+      exp += k
+    }
+    if exp + 1023 >= 0x7FF {
+      return None
+    }
+    dec_shift(a, 53)
+    mant = dec_rounded(a)
+    if mant == 0x20000000000000 {
+      mant = mant >> 1
+      exp += 1
+      if exp + 1023 >= 0x7FF {
+        return None
+      }
+    }
+    if (mant & 0x10000000000000) == 0 {
+      exp = -1023
+    }
+  }
+  var bits = (mant & 0xFFFFFFFFFFFFF) | shl((exp + 1023) & 0x7FF, 52)
+  if a.neg {
+    bits = bits | MIN_INT
+  }
+  Some(rt.float_from_bits(bits))
+}
+
+// ---------------------------------------------------------------------------
+// Hex and base64 of Bytes (encoding/hex, encoding/base64.StdEncoding)
+//
+// Bytes.to_hex stays C (rt.bytes_hex): a loop that decides nothing per
+// byte, and an Xo version (two digits per byte lane, 16 bytes a call)
+// retired 1.09x the C's instructions on arm64 (decision 0193 step 3).
+
+/// The bytes of the 2k hex digits of b from i (k 1 to 8) in a word,
+/// the first lowest, and bits above 0xF in bad for a byte that is not a
+/// hex digit (num_tables.HEX_VAL).
+fn unhex(b: Bytes, i: Int, k: Int) -> (Int, Int) {
+  let t = num_tables.HEX_VAL
+  var w = 0
+  var bad = 0
+  var j = 2 * k - 2
+  while j >= 0 {
+    let hi = Int(t[Int(b[i + j])])
+    let lo = Int(t[Int(b[i + j + 1])])
+    bad = bad | hi | lo
+    w = shl(w, 8) | (((hi << 4) | lo) & 0xFF)
+    j -= 2
+  }
+  (w, bad)
+}
+
+/// The 4 bytes of the 8 hex digits in the word x (the first lowest), and
+/// bits above 0xF in the second result for a byte that is not one.
+fn unhex4(x: Int) -> (Int, Int) {
+  let t = num_tables.HEX_VAL
+  let a0 = Int(t[x & 0xFF])
+  let a1 = Int(t[(x >> 8) & 0xFF])
+  let a2 = Int(t[(x >> 16) & 0xFF])
+  let a3 = Int(t[(x >> 24) & 0xFF])
+  let a4 = Int(t[(x >> 32) & 0xFF])
+  let a5 = Int(t[(x >> 40) & 0xFF])
+  let a6 = Int(t[(x >> 48) & 0xFF])
+  let a7 = Int(t[shr(x, 56)])
+  let w = (((a0 << 4) | a1) & 0xFF) | ((((a2 << 4) | a3) & 0xFF) << 8) | ((((a4 << 4) | a5) & 0xFF) << 16) | ((((a6 << 4) | a7) & 0xFF) << 24)
+  (w, a0 | a1 | a2 | a3 | a4 | a5 | a6 | a7)
+}
+
+/// The bytes of hex text (hex.DecodeString: either case, an even
+/// length), or None.
+pub fn from_hex(s: Str) -> Bytes? {
+  let b = s.bytes()
+  let n = b.len()
+  if (n & 1) != 0 {
+    return None
+  }
+  var out = if n > 64 { rt.rs_with_cap(n / 2 + 8) } else { "" }
+  var bad = 0
+  var i = 0
+  while n - i >= 16 {
+    let (w0, x0) = unhex4(rt.bytes_word(b, i))
+    let (w1, x1) = unhex4(rt.bytes_word(b, i + 8))
+    bad = bad | x0 | x1
+    out = rt.rs_push_word(out, w0 | shl(w1, 32), 8)
+    i += 16
+  }
+  if i < n {
+    let k = (n - i) / 2
+    let (w, x) = unhex(b, i, k)
+    bad = bad | x
+    out = rt.rs_push_word(out, w, k)
+  }
+  if bad > 15 {
+    return None
+  }
+  Some(out.bytes())
+}
+
+const B64: Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+/// The 4 base64 characters of the 3 bytes in v (the first highest), in a
+/// word, the first lowest.
+fn b64_quad(v: Int) -> Int {
+  let t = B64
+  Int(t[(v >> 18) & 63]) | (Int(t[(v >> 12) & 63]) << 8) | (Int(t[(v >> 6) & 63]) << 16) | (Int(t[v & 63]) << 24)
+}
+
+/// The 8 base64 characters of the 6 low bytes of v (the first lowest).
+fn six(v: Int) -> Int {
+  let a = ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF)
+  let b = (((v >> 24) & 0xFF) << 16) | (((v >> 32) & 0xFF) << 8) | ((v >> 40) & 0xFF)
+  b64_quad(a) | (b64_quad(b) << 32)
+}
+
+/// The 3 bytes of b from i, the first highest.
+fn trio(b: Bytes, i: Int) -> Int { (Int(b[i]) << 16) | (Int(b[i + 1]) << 8) | Int(b[i + 2]) }
+
+/// The standard base64 of b, padded (Bytes.to_base64,
+/// base64.StdEncoding.EncodeToString).
+pub fn to_base64(b: Bytes) -> Str {
+  let n = b.len()
+  let m = (n + 2) / 3 * 4
+  var out = if m > 64 { rt.rs_with_cap(m + 32) } else { "" }
+  var i = 0
+  // 24 bytes, 32 characters at a time
+  while n - i >= 24 {
+    // three words, as four pieces of 6 bytes
+    let x0 = rt.bytes_word(b, i)
+    let x1 = rt.bytes_word(b, i + 8)
+    let x2 = rt.bytes_word(b, i + 16)
+    let w0 = six(x0)
+    let w1 = six(shr(x0, 48) | shl(x1, 16))
+    let w2 = six(shr(x1, 32) | shl(x2, 32))
+    let w3 = six(shr(x2, 16))
+    out = rt.rs_push_words(out, w0, w1, w2, w3, 0x8888)
+    i += 24
+  }
+  // the rest (under 24 bytes): up to 8 quads, two to a word, the last
+  // one padded ("xx==" or "xxx=")
+  let r = n - i
+  if r == 0 {
+    return out
+  }
+  let w0 = quads(b, i, r)
+  let w1 = quads(b, i + 6, r - 6)
+  let w2 = quads(b, i + 12, r - 12)
+  let w3 = quads(b, i + 18, r - 18)
+  let chars = (r + 2) / 3 * 4
+  let k0 = chars.min(8)
+  let k1 = (chars - 8).max(0).min(8)
+  let k2 = (chars - 16).max(0).min(8)
+  let k3 = (chars - 24).max(0)
+  rt.rs_push_words(out, w0, w1, w2, w3, k0 | (k1 << 4) | (k2 << 8) | (k3 << 12))
+}
+
+/// The base64 of the r (up to 6, fewer padded) bytes of b from i: two
+/// quads in a word (0 when r <= 0).
+fn quads(b: Bytes, i: Int, r: Int) -> Int {
+  if r <= 0 {
+    return 0
+  }
+  let lo = quad(b, i, r)
+  if r <= 3 {
+    return lo
+  }
+  lo | (quad(b, i + 3, r - 3) << 32)
+}
+
+/// The base64 quad of the r (1 to 3 or more) bytes of b from i, padded
+/// with "=" when r is 1 or 2.
+fn quad(b: Bytes, i: Int, r: Int) -> Int {
+  if r >= 3 {
+    return b64_quad(trio(b, i))
+  }
+  let v = Int(b[i]) << 16
+  if r == 2 {
+    return (b64_quad(v | (Int(b[i + 1]) << 8)) & 0xFFFFFF) | 0x3D000000
+  }
+  (b64_quad(v) & 0xFFFF) | 0x3D3D0000
+}
+
+/// The bytes of standard base64 text (base64.StdEncoding.DecodeString:
+/// padding required, \r and \n ignored), or None.
+pub fn from_base64(s: Str) -> Bytes? {
+  let b = s.bytes()
+  let n = b.len()
+  let t = num_tables.B64_VAL
+  var out = if n > 40 { rt.rs_with_cap(n / 4 * 3 + 8) } else { "" }
+  // the quantum (k characters, pad of them padding), the output word
+  // (wk bytes)
+  var acc = 0
+  var k = 0
+  var pad = 0
+  var w = 0
+  var wk = 0
+  var i = 0
+  while i < n {
+    let v = Int(t[Int(b[i])])
+    i += 1
+    if v >= 64 {
+      if v == 0xFE {
+        // \r and \n are skipped
+        continue
+      }
+      if v == 0xFF {
+        return None
+      }
+      // '=': after padding only more padding of the same quantum
+      if pad > 0 {
+        pad += 1
+      } else {
+        if k < 2 {
+          return None
+        }
+        pad = 1
+      }
+      acc = (acc & 0x3FFFF) << 6
+    } else {
+      if pad > 0 {
+        return None
+      }
+      acc = ((acc & 0x3FFFF) << 6) | v
+    }
+    k += 1
+    if k == 4 {
+      let x = ((acc >> 16) & 0xFF) | (acc & 0xFF00) | ((acc & 0xFF) << 16)
+      w = w | shl(x, 8 * wk)
+      wk += 3 - pad
+      if wk == 6 {
+        out = rt.rs_push_word(out, w, 6)
+        w = 0
+        wk = 0
+      }
+      if pad > 0 {
+        // padding ends the text (only \r and \n may follow)
+        while i < n {
+          if Int(t[Int(b[i])]) != 0xFE {
+            return None
+          }
+          i += 1
+        }
+        k = 0
+        break
+      }
+      acc = 0
+      k = 0
+    }
+  }
+  if k != 0 {
+    return None
+  }
+  if wk > 0 {
+    out = rt.rs_push_word(out, w, wk)
+  }
+  Some(out.bytes())
+}

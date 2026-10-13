@@ -354,14 +354,10 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 		case KInt, KFloat:
 			if acc != nil {
 				// append the number's text without a temporary string
-				acc = s.call("str.concat_"+lowerKind(v.Type), st, "", acc, v)
+				acc = s.numText(acc, v)
 				continue
 			}
-			if v.Type.Kind == KInt {
-				v = s.call("str.of_int", st, "", v)
-			} else {
-				v = s.call("str.of_float", st, "", v)
-			}
+			v = s.numText(nil, v)
 		case KBool:
 			v = s.call("str.of_bool", st, "", v)
 		default:

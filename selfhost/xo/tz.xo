@@ -5,8 +5,9 @@
 // each constant zone name `time.zone` is called with, 1 with the whole
 // zoneinfo.zip when a name is known only at run time, 2 with
 // --tzdata=system (the host's database). The data comes from Go's
-// lib/time/zoneinfo.zip ($XO_ZONEINFO, else `go env GOROOT`), as the Go
-// driver's does.
+// lib/time/zoneinfo.zip: $XO_ZONEINFO, else the copy a release ships
+// beside the runtime pack (lib/xo/zoneinfo.zip, decision 0157 next step
+// 1), else `go env GOROOT`'s, as the Go driver's does.
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
@@ -232,26 +233,52 @@ fn tz_select(os: Os, tu: TZUse, tzdata: Str) -> TZSel {
   sel
 }
 
-/// zoneinfoZip: $XO_ZONEINFO, else the zoneinfo.zip of `go env GOROOT`;
-/// the data and an error text.
+/// zoneinfoZip: $XO_ZONEINFO, else the zoneinfo.zip a release ships
+/// (shipped_zoneinfo), else the one of `go env GOROOT`; the data and an
+/// error text.
 fn zoneinfo_zip(os: Os) -> (Bytes, Str) {
   var path = os.env.get("XO_ZONEINFO") ?? ""
+  if path.is_empty() {
+    path = shipped_zoneinfo(os)
+  }
   if path.is_empty() {
     let gocmd = os.env.get("XO_GO") ?? "go"
     match os.proc.run(gocmd, ["env", "GOROOT"]) {
       Ok(r) => {
         if r.code != 0 {
-          return (b"", "zone data: cannot find GOROOT: exit status ${r.code}")
+          return (b"", "zone data: cannot find GOROOT: exit status ${r.code} (a release has lib/xo/zoneinfo.zip; set XO_ZONEINFO to a zoneinfo.zip, or build with --tzdata=system)")
         }
         path = "${(r.stdout.to_str() ?? "").trim()}/lib/time/zoneinfo.zip"
       }
-      Err(e) => return (b"", "zone data: cannot find GOROOT: ${e}")
+      Err(e) => return (b"", "zone data: cannot find GOROOT: ${e} (a release has lib/xo/zoneinfo.zip; set XO_ZONEINFO to a zoneinfo.zip, or build with --tzdata=system)")
     }
   }
   match os.fs.read(path) {
     Ok(d) => (d, "")
     Err(e) => (b"", "zone data: ${e} (set XO_ZONEINFO to a zoneinfo.zip)")
   }
+}
+
+/// The zone database of a release (scripts/release.sh copies Go's
+/// zoneinfo.zip to lib/xo/zoneinfo.zip, beside the pack root
+/// lib/xo/rtpack): beside the running binary's lib/xo, else beside a
+/// pack root named by $XO_RTPACK; "" when neither exists.
+fn shipped_zoneinfo(os: Os) -> Str {
+  var cands: List[Str] = []
+  let exe = check.executable(os.env, os.fs)
+  if !exe.is_empty() {
+    cands.push("${dir_name(dir_name(exe))}/lib/xo/zoneinfo.zip")
+  }
+  let pack = os.env.get("XO_RTPACK") ?? ""
+  if !pack.is_empty() && pack != "off" {
+    cands.push("${dir_name(pack.trim_suffix("/"))}/zoneinfo.zip")
+  }
+  for c in cands {
+    if os.fs.exists(c).ok() ?? false {
+      return c
+    }
+  }
+  ""
 }
 
 fn le16(b: Bytes, i: Int) -> Int {

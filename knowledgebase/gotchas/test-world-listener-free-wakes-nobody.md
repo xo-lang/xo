@@ -1,6 +1,6 @@
 # A freed in memory listener woke no waiting client (test world)
 
-Status: Observed (2026-10-12, on Windows), fixed in std/llrt/xo_testing.c.
+Status: Observed (2026-10-12, on Windows), fixed on main (mem-listener-backlog-after-serve.md).
 
 Symptom: `xo test --no-gc --backend=llvm` of
 internal/gen/testdata/golden/test_shutdown failed "a server finishes the
@@ -17,7 +17,10 @@ the late client's last check, the client slept forever on memory that
 was then freed, and nothing else was left to run. Windows' scheduling
 made that order common.
 
-Fix: one waiter list for every in memory listener (tws.ml_waiters); the
-free wakes it, the client looks the listener up again and finds it gone
-(`NotFound`-like failure, as before). A wait on an object's own list must
-end before the object can be freed, or be on a list that outlives it.
+Fix: the branch's own fix (one waiter list for every listener, woken by
+the free) was dropped in the merge for main's (afe4aefb, 5626ecc7):
+the listener records `served`, and its free wakes its waiters and keeps
+the listener's memory until the last waiting client leaves
+(mem-listener-backlog-after-serve.md). Both cover the free after a
+waiter's last check. A wait on an object's own list must end before the
+object can be freed.
