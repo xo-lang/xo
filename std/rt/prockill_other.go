@@ -17,5 +17,5 @@ func sendSignal(pid int, sig string) error {
 	if err != nil {
 		return err
 	}
-	return p.Kill()
+	return killProcess(p)
 }

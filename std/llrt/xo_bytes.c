@@ -259,9 +259,16 @@ xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *
 	unsigned char t[8];
 	memcpy(t, &u, 8);
 	*len = an + n;
-	if (rc_load(&a->rc) == 1 && a->cap - an >= 8) {
+	int64_t c = rc_load(&a->rc);
+	if (c == 1 && a->cap - an >= 8) {
 		memcpy(a->data + an, t, 8);
 		return a;
+	}
+	if (an == 0 && c == XO_RC_IMMORTAL) {
+		// the text alone ("${v}" appends to the literal ""): a new string
+		xo_rstr *s = rs_new(32);
+		memcpy(s->data, t, 8);
+		return s;
 	}
 	return rs_append(a, an, (const char *)t, n);
 }
@@ -276,11 +283,17 @@ xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_
 	*len = an + k;
 	unsigned char t[40];
 	unsigned char *d = t;
-	int direct = rc_load(&a->rc) == 1 && a->cap - an >= 32;
+	int64_t c = rc_load(&a->rc);
+	int direct = c == 1 && a->cap - an >= 32;
 	if (direct) {
 		// in place: whole words stored, each overwriting the slack of the
 		// one before (the bytes past the text are never read)
 		d = (unsigned char *)a->data + an;
+	} else if (an == 0 && c == XO_RC_IMMORTAL) {
+		// the text alone ("${v}" appends to the literal ""): a new string
+		a = rs_new(64);
+		d = (unsigned char *)a->data;
+		direct = 1;
 	}
 	// whole little endian words (every target of the native backends is
 	// little endian)
@@ -565,7 +578,10 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 }
 
 // xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
-// 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul.
+// 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul; and the
+// shifts of a word by b mod 64 (op 3 left, 4 right logical) for the
+// number text in Xo (std/native/llrt/num.xo, decision 0193). The native
+// backends lower a constant op inline; this is the call otherwise.
 int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 	uint64_t x = (uint64_t)a, y = (uint64_t)b;
 	switch (op) {
@@ -573,8 +589,39 @@ int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
 		return (int64_t)(x + y);
 	case 1:
 		return (int64_t)(x - y);
+	case 3:
+		return (int64_t)(x << (y & 63));
+	case 4:
+		return (int64_t)(x >> (y & 63));
 	}
 	return (int64_t)(x * y);
+}
+
+// xo_u64_mul_hi is the high word of the 128 bit product of a and b as
+// unsigned words; xo_float_bits and xo_float_from_bits are a double's
+// IEEE 754 bits and back (std/native/llrt/num.xo, decision 0193; the
+// native backends lower them inline).
+int64_t xo_u64_mul_hi(int64_t a, int64_t b) { return (int64_t)(((unsigned __int128)(uint64_t)a * (uint64_t)b) >> 64); }
+
+int64_t xo_float_bits(double f) {
+	int64_t b;
+	memcpy(&b, &f, 8);
+	return b;
+}
+
+// xo_bytes_word is the 8 bytes of p from i, little endian (the caller
+// checked the range; the native backends lower it inline).
+int64_t xo_bytes_word(const char *p, int64_t n, int64_t i) {
+	(void)n;
+	int64_t w;
+	memcpy(&w, p + i, 8);
+	return w;
+}
+
+double xo_float_from_bits(int64_t b) {
+	double f;
+	memcpy(&f, &b, 8);
+	return f;
 }
 
 // xo_int_fits reports whether a op b fits an Int (op 0 +, 1 -, 2 *,
@@ -593,7 +640,9 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
 
-static int n_hex_val(char c) {
+// n_hex_val is the value of a hex digit, or -1 (the C path below and the
+// crypto C test use it).
+static __attribute__((unused)) int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';
 	}
@@ -606,6 +655,9 @@ static int n_hex_val(char c) {
 	return -1;
 }
 
+#ifdef XO_NUM_C
+// the C path of the number text (decision 0193 step 3): only
+// XO_LLRT_C=num builds call it (std/native/llrt/num_c.xo)
 // xo_bytes_hex_ok reports whether s is hexadecimal that
 // hex.DecodeString accepts (an even number of hex digits, either case).
 int64_t xo_bytes_hex_ok(const char *p, int64_t n) {
@@ -630,6 +682,8 @@ xo_rstr *xo_bytes_from_hex(const char *p, int64_t n, int64_t *len) {
 	*len = n / 2;
 	return s;
 }
+
+#endif
 
 // The outcome of the last file operation of this thread (fs.read blocks
 // the thread, and its status is read before the task can move): std/rt's
@@ -736,7 +790,22 @@ xo_rlist *xo_env_program(void) {
 		return n_str_list_add(l, "test", 4);
 	}
 	const char *p = xo_argc > 0 ? xo_argv[0] : "";
+#ifdef _WIN32
+	// with / separators, as every path Xo is given (std.md 3.1, 3.5)
+	size_t pn = strlen(p);
+	char *q = malloc(pn + 1);
+	if (!q) {
+		xo_oom();
+	}
+	for (size_t i = 0; i <= pn; i++) {
+		q[i] = p[i] == '\\' ? '/' : p[i];
+	}
+	l = n_str_list_add(l, q, (int64_t)pn);
+	free(q);
+	return l;
+#else
 	return n_str_list_add(l, p, (int64_t)strlen(p));
+#endif
 }
 
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).

@@ -1,0 +1,39 @@
+// The C path of std/json's text (decision 0193 step 4): the API of
+// jsontext.xo over the C runtime's functions (std/llrt/xo_json.c).
+// Loaded in place of jsontext.xo when XO_LLRT_C names `jsontext`, to
+// compare the two and to fall back while the Xo path misses decision
+// 0180's bar; the SSA builder then calls the C runtime's json_* and
+// rs_append_json_* directly, as before the port. The self hosted
+// compiler always uses jsontext.xo.
+use native/rt
+use native/rtjson
+
+pub fn parse(src: Bytes) -> List[Int] { rtjson.json_parse(src) }
+
+pub fn parse_err(src: Bytes) -> Str { rtjson.json_parse_err(src) }
+
+pub fn next(tape: List[Int], i: Int) -> Int { rtjson.json_next(tape, i) }
+
+pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str { rtjson.json_str(src, tape, i) }
+
+pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { rtjson.json_find(src, tape, i, key) }
+
+pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] { rtjson.json_members(src, tape, i) }
+
+pub fn int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { rtjson.json_int_ok(src, tape, i) }
+
+pub fn int_at(src: Bytes, tape: List[Int], i: Int) -> Int { rtjson.json_int(src, tape, i) }
+
+pub fn float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { rtjson.json_float_ok(src, tape, i) }
+
+pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float { rtjson.json_float(src, tape, i) }
+
+pub fn append_str(out: Str, s: Str) -> Str { rtjson.rs_append_json_str(out, s) }
+
+pub fn append_float(out: Str, f: Float) -> Str { rtjson.rs_append_json_float(out, f) }
+
+pub fn append_b64(out: Str, b: Bytes) -> Str { rtjson.rs_append_b64_quoted(out, b) }
+
+pub fn b64_ok(s: Str) -> Bool { rt.b64_ok(s) }
+
+pub fn b64_decode(s: Str) -> Bytes { rt.b64_decode(s) }

@@ -1381,17 +1381,41 @@ fn (var g: G) shift(v: Int) {
   g.set(v, [r])
 }
 
-/// Whether n > 0 is one run of ones, a value every logical instruction
-/// takes as an immediate (isel.go onesRun).
-fn ones_run(n0: Int) -> Bool {
-  if n0 <= 0 {
+/// Whether n > 0 is a value every logical instruction takes as an
+/// immediate: one run of ones, or the repetition of an element of 2 to
+/// 32 bits that is one run of ones, rotated (isel.go onesRun).
+fn ones_run(n: Int) -> Bool {
+  if n <= 0 {
     return false
   }
-  var n = n0
-  while (n & 1) == 0 {
-    n = n >> 1
+  // the smallest element whose repetition is n
+  var e = 64
+  while e > 2 {
+    let h = e / 2
+    let m = (1 << h) - 1
+    if (n & m) != ((n >> h) & m) {
+      break
+    }
+    e = h
   }
-  n == MAX_INT || (n & (n + 1)) == 0
+  if e == 64 {
+    return run1(n)
+  }
+  let m = (1 << e) - 1
+  let x = n & m
+  run1(x) || run1(~x & m)
+}
+
+/// Whether x > 0 is one run of ones (isel.go run1).
+fn run1(x0: Int) -> Bool {
+  if x0 <= 0 {
+    return false
+  }
+  var x = x0
+  while (x & 1) == 0 {
+    x = x >> 1
+  }
+  x == MAX_INT || (x & (x + 1)) == 0
 }
 
 /// Whether a << k cannot overflow for every k in [0, khi] (khi <= 63):

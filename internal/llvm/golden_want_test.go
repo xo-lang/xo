@@ -26,6 +26,8 @@ import (
 // count of programs that pass, fail, and are unsupported (the build stops
 // with XO1504); unsupported programs do not fail the test, and failures
 // fail it only with XO_GOLDEN_WANT_STRICT=1, so one run counts them all.
+// XO_GOLDEN_WANT_XO=path builds with that xo binary (xo1) instead of the
+// Go driver.
 func TestGoldenWant(t *testing.T) {
 	if os.Getenv("XO_GOLDEN_WANT") != "1" {
 		t.Skip("set XO_GOLDEN_WANT=1 to compare LLVM builds with want.txt alone")
@@ -38,6 +40,9 @@ func TestGoldenWant(t *testing.T) {
 		t.Fatalf("no golden programs: %v", err)
 	}
 	strict := os.Getenv("XO_GOLDEN_WANT_STRICT") == "1"
+	// XO_GOLDEN_WANT_XO=path: build with that xo (the shipped xo1)
+	// instead of the Go driver in process
+	xo1 := os.Getenv("XO_GOLDEN_WANT_XO")
 	// XO_GOLDEN_WANT_TARGET=os/arch: build for that target instead
 	// (a cross build, build.LLVMCrossTriple) and stop there; "built"
 	// counts the programs that compiled and linked
@@ -90,6 +95,28 @@ func TestGoldenWant(t *testing.T) {
 				set("fail (no want.txt)")
 				return
 			}
+			if xo1 != "" {
+				// the shipped xo builds it (decision 0178's frozen Go
+				// compiler: a target counts as done when xo1 builds it)
+				bin, out, err := xo1Build(xo1, dir, name, target)
+				switch {
+				case err != nil && strings.Contains(out, string(diag.TargetUnsupported)):
+					set("unsupported (" + firstLine(out) + ")")
+					return
+				case err != nil:
+					set("fail (build: " + firstLine(out) + ")")
+					if strict {
+						t.Errorf("xo1 build: %v\n%s", err, out)
+					}
+					return
+				}
+				if target != build.Host() {
+					set("built")
+					return
+				}
+				runAndCompare(t, bin, dir, want, strict, set)
+				return
+			}
 			opts := build.Options{Mode: gen.Build, Backend: build.BackendLLVM}
 			if target != build.Host() {
 				opts.Targets = []build.Target{target}
@@ -127,38 +154,68 @@ func TestGoldenWant(t *testing.T) {
 				set("built")
 				return
 			}
-			got, err := runBinary(res.Binaries[build.Host()], dir)
-			if err != nil {
-				set("fail (run: " + err.Error() + ")")
-				if strict {
-					t.Errorf("run: %v", err)
-				}
-				return
-			}
-			if got.String() != string(want) {
-				set(fmt.Sprintf("fail (output differs: exit %d)", got.exit))
-				if strict {
-					t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
-				} else {
-					t.Logf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
-				}
-				return
-			}
-			if got.exit == 0 {
-				// every allocation freed at exit, as TestGolden requires
-				lc, err := runBinary(res.Binaries[build.Host()], dir, "XO_LEAKCHECK=1")
-				m := leakRE.FindStringSubmatch(lc.stderr)
-				if err != nil || m == nil || m[1] != "0" {
-					set(fmt.Sprintf("fail (leak check: %v %q)", err, m))
-					if strict {
-						t.Errorf("leak check: %v %q", err, m)
-					}
-					return
-				}
-			}
-			set("pass")
+			runAndCompare(t, res.Binaries[build.Host()], dir, want, strict, set)
 		})
 	}
+}
+
+// runAndCompare runs a golden program's binary, compares its run with
+// want, and runs the leak check when it exits 0, recording the outcome.
+func runAndCompare(t *testing.T, bin, dir string, want []byte, strict bool, set func(string)) {
+	got, err := runBinary(bin, dir)
+	if err != nil {
+		set("fail (run: " + err.Error() + ")")
+		if strict {
+			t.Errorf("run: %v", err)
+		}
+		return
+	}
+	if got.String() != string(want) {
+		set(fmt.Sprintf("fail (output differs: exit %d)", got.exit))
+		if strict {
+			t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
+		} else {
+			t.Logf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
+		}
+		return
+	}
+	if got.exit == 0 {
+		// every allocation freed at exit, as TestGolden requires
+		lc, err := runBinary(bin, dir, "XO_LEAKCHECK=1")
+		m := leakRE.FindStringSubmatch(lc.stderr)
+		if err != nil || m == nil || m[1] != "0" {
+			set(fmt.Sprintf("fail (leak check: %v %q)", err, m))
+			if strict {
+				t.Errorf("leak check: %v %q", err, m)
+			}
+			return
+		}
+	}
+	set("pass")
+}
+
+// xo1Build builds the golden program dir with the xo binary xo1
+// (XO_GOLDEN_WANT_XO) and the LLVM backend for target: the binary, the
+// build's output, and its error. xo1 reads the working directory from
+// PWD, with / separators on Windows (std.md 3.1).
+func xo1Build(xo1, dir, name string, target build.Target) (string, string, error) {
+	out, err := os.MkdirTemp("", "xo-golden-want-")
+	if err != nil {
+		return "", "", err
+	}
+	bin := filepath.Join(out, name)
+	if target.OS == "windows" {
+		bin += ".exe"
+	}
+	args := []string{"build", "--backend=llvm", "-o", filepath.ToSlash(bin)}
+	if target != build.Host() {
+		args = append(args, "--targets="+target.OS+"/"+target.Arch)
+	}
+	cmd := exec.Command(xo1, append(args, filepath.ToSlash(dir))...)
+	wd, _ := os.Getwd()
+	cmd.Env = append(os.Environ(), "PWD="+filepath.ToSlash(wd))
+	b, err := cmd.CombinedOutput()
+	return bin, string(b), err
 }
 
 // runBinary runs a golden program's binary as buildRun does, killing it

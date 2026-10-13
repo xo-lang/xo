@@ -1,0 +1,970 @@
+// std/json's text on the native backends, written in Xo (decision 0193,
+// step 4): the parser that reads a JSON text into a tape, the readers of
+// the tape that the decoders internal/ssa generates per type call
+// (build_json.go, through the native prelude's llrt_json_*), and the
+// escaping of a Str and the text of a Float that its encoders call. They
+// were C (std/llrt/xo_json.c); the semantics are still std/rt's (the Go
+// backend's), so the native backends accept, reject, and print what it
+// does. The C path stays selectable (`XO_LLRT_C=jsontext` loads
+// jsontext_c.xo, and the SSA builder calls the C runtime's json_* as
+// before) until bench/perf/json meets decision 0180's bar on both native
+// backends.
+//
+// The tape is a List[Int] of nodes of three words each, as xo_json.c
+// builds it:
+//
+//	kind  0 null, 1 false, 2 true, 3 number, 4 string, 5 array, 6 object
+//	a     number, string: offset of the text in the source (a string's
+//	      after its opening quote); array: elements; object: members
+//	b     number: length of the text; string: length of the raw text
+//	      (escapes included), with STR_ESC set when it has an escape and
+//	      STR_HIGH when it has a byte from 0x80; array, object: the tape
+//	      index after its last node
+//
+// An object's members are a key (a string node) and a value each, in the
+// order of the text, duplicates included (the Go backend keeps the first
+// position and the last value of a key: members, find). The C tape has
+// no string flags; nothing but this module reads a string's b.
+use native/llrt/num
+use native/llrt/unicode
+use native/rt
+
+// node kinds
+const K_NULL: Int = 0
+const K_FALSE: Int = 1
+const K_TRUE: Int = 2
+const K_NUM: Int = 3
+const K_STR: Int = 4
+const K_ARR: Int = 5
+const K_OBJ: Int = 6
+
+/// A string node's b: it has an escape.
+const STR_ESC: Int = 4611686018427387904
+/// A string node's b: it has a byte from 0x80 (maybe invalid UTF-8).
+const STR_HIGH: Int = 2305843009213693952
+/// A string node's b: the length of its raw text.
+const LEN_MASK: Int = 2305843009213693951
+
+// The states of encoding/json's Decoder.Token (stream.go tokenState).
+const S_TOP: Int = 0
+const S_ARR_START: Int = 1
+const S_ARR_VALUE: Int = 2
+const S_ARR_COMMA: Int = 3
+const S_OBJ_START: Int = 4
+const S_OBJ_KEY: Int = 5
+const S_OBJ_COLON: Int = 6
+const S_OBJ_VALUE: Int = 7
+const S_OBJ_COMMA: Int = 8
+
+/// The states in which a value may start, as bits.
+const VALUE_STATES: Int = 0x87
+
+// Errors: 0 none, E_UEOF "unexpected EOF", E_EOF "EOF", E_TRAILING
+// "trailing data", or (context << 8) | byte for "invalid character
+// <byte> <context>" (contexts below; C_LIT + 8 * literal + k is "in
+// literal <true, false, null> (expecting '<its byte k>')").
+const E_UEOF: Int = 1
+const E_EOF: Int = 2
+const E_TRAILING: Int = 3
+
+const C_VALUE: Int = 1
+const C_ARR_ELEM: Int = 2
+const C_OBJ_KEY: Int = 3
+const C_AFTER_KEY: Int = 4
+const C_AFTER_PAIR: Int = 5
+const C_NONE: Int = 6
+const C_HEX: Int = 7
+const C_ESCAPE: Int = 8
+const C_STRING: Int = 9
+const C_NUM: Int = 10
+const C_DOT: Int = 11
+const C_EXP: Int = 12
+const C_LIT: Int = 16
+
+/// Decoder.tokenError's context per state (0 to 8). encoding/json has
+/// none for tokenObjectStart.
+const STATE_CTX: Bytes = b"\x01\x01\x01\x02\x06\x03\x04\x01\x05"
+
+// Words of eight equal bytes, for the scans eight bytes at a time.
+const ONES: Int = 72340172838076673
+const HIGHS: Int = -9187201950435737472
+const SPACES: Int = 2314885530818453536
+const QUOTES: Int = 2459565876494606882
+const BACKSLASHES: Int = 6655295901103053916
+/// Byte k of BYTE_INDEX is 7 - k: the index of the lowest flagged byte
+/// is the top byte of BYTE_INDEX times 256^index.
+const BYTE_INDEX: Int = 283686952306183
+
+const HEX: Bytes = b"0123456789abcdef"
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+
+/// The high bit of each byte of w that is 0 (and maybe of bytes above
+/// a 0 one: the lowest is exact).
+fn zero_bytes(w: Int) -> Int { subw(w, ONES) & (w ^ -1) & HIGHS }
+
+/// The high bit of each byte of w, as a JSON string's body has it, that
+/// ends a run of plain bytes: below 0x20, `"`, or `\` (the lowest
+/// exact).
+fn str_stops(w: Int) -> Int {
+  let q = w ^ QUOTES
+  let s = w ^ BACKSLASHES
+  (subw(w, SPACES) | subw(q, ONES) | subw(s, ONES)) & ((w & q & s) ^ -1) & HIGHS
+}
+
+/// The index (0 to 7) of the byte of the lowest bit set in m.
+fn low_byte(m: Int) -> Int { shr(mulw(shr(m & subw(0, m), 7), BYTE_INDEX), 56) }
+
+// ---------------------------------------------------------------------------
+// Parsing: what std/rt's jsonParse accepts, with the text of its errors.
+// rt reads values with encoding/json's Decoder.Token, whose state machine
+// (stream.go) decides most errors and whose scanner (scanner.go) reads
+// each scalar; the tape is built while the tokens are read.
+
+/// The end of the string whose body starts at i (the index of its
+/// closing quote), with STR_ESC and STR_HIGH, or minus the error.
+fn str_end(b: Bytes, i0: Int, n: Int) -> Int {
+  var i = i0
+  var high = 0
+  var esc = 0
+  while true {
+    if i + 8 <= n {
+      let w = rt.bytes_word(b, i)
+      let m = str_stops(w)
+      if m == 0 {
+        high = high | w
+        i += 8
+        continue
+      }
+      let low = m & subw(0, m)
+      high = high | (w & subw(low, 1))
+      i += low_byte(m)
+    } else if i >= n {
+      return 0 - E_UEOF
+    }
+    let c = Int(b[i])
+    if c == 34 {
+      if (high & HIGHS) != 0 {
+        return i | esc | STR_HIGH
+      }
+      return i | esc
+    }
+    if c == 92 {
+      esc = STR_ESC
+      i += 1
+      if i >= n {
+        return 0 - E_UEOF
+      }
+      let e = Int(b[i])
+      if e == 117 {
+        // \u and four hex digits
+        var k = 0
+        while k < 4 {
+          i += 1
+          if i >= n {
+            return 0 - E_UEOF
+          }
+          let h = Int(b[i])
+          if hex_val(h) < 0 {
+            return 0 - ((C_HEX << 8) | h)
+          }
+          k += 1
+        }
+        i += 1
+        continue
+      }
+      if e == 34 || e == 92 || e == 47 || e == 98 || e == 102 || e == 110 || e == 114 || e == 116 {
+        i += 1
+        continue
+      }
+      return 0 - ((C_ESCAPE << 8) | e)
+    }
+    if c < 32 {
+      return 0 - ((C_STRING << 8) | c)
+    }
+    if c >= 128 {
+      high = HIGHS
+    }
+    i += 1
+  }
+  0
+}
+
+/// The value of the hex digit c, or -1.
+fn hex_val(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  let l = c | 32
+  if l >= 97 && l <= 102 {
+    return l - 87
+  }
+  -1
+}
+
+/// Whether c is a decimal digit.
+fn digit(c: UInt8) -> Bool { c >= 48 && c <= 57 }
+
+/// The end of the number or literal that starts at i with the byte c (not
+/// a string), or minus the error.
+fn scalar_end(b: Bytes, i0: Int, n: Int, c: Int) -> Int {
+  if c == 116 || c == 102 || c == 110 {
+    return lit_end(b, i0, n, c)
+  }
+  // a number: - (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?
+  var i = i0
+  if c == 45 {
+    i += 1
+    if i >= n {
+      return 0 - E_UEOF
+    }
+    let d = Int(b[i])
+    if d < 48 || d > 57 {
+      return 0 - ((C_NUM << 8) | d)
+    }
+  } else if c < 48 || c > 57 {
+    return 0 - ((C_VALUE << 8) | c)
+  }
+  if b[i] == 48 {
+    i += 1
+  } else {
+    while i < n && digit(b[i]) {
+      i += 1
+    }
+  }
+  if i < n && b[i] == 46 {
+    i += 1
+    if i >= n {
+      return 0 - E_UEOF
+    }
+    if !digit(b[i]) {
+      return 0 - ((C_DOT << 8) | Int(b[i]))
+    }
+    while i < n && digit(b[i]) {
+      i += 1
+    }
+  }
+  if i < n && (b[i] == 101 || b[i] == 69) {
+    i += 1
+    if i < n && (b[i] == 43 || b[i] == 45) {
+      i += 1
+    }
+    if i >= n {
+      return 0 - E_UEOF
+    }
+    if !digit(b[i]) {
+      return 0 - ((C_EXP << 8) | Int(b[i]))
+    }
+    while i < n && digit(b[i]) {
+      i += 1
+    }
+  }
+  i
+}
+
+/// The end of the literal true, false, or null that starts at i with c,
+/// or minus the error.
+fn lit_end(b: Bytes, i: Int, n: Int, c: Int) -> Int {
+  var w = 0x6C6C756E
+  var l = 4
+  var lit = 2
+  if c == 116 {
+    w = 0x65757274
+    lit = 0
+  } else if c == 102 {
+    w = 0x65736C6166
+    l = 5
+    lit = 1
+  }
+  if i + 8 <= n && (rt.bytes_word(b, i) & ((1 << (8 * l)) - 1)) == w {
+    return i + l
+  }
+  var k = 1
+  while k < l {
+    if i + k >= n {
+      return 0 - E_UEOF
+    }
+    let x = Int(b[i + k])
+    if x != ((w >> (8 * k)) & 255) {
+      return 0 - (((C_LIT + 8 * lit + k) << 8) | x)
+    }
+    k += 1
+  }
+  i + l
+}
+
+/// The tape of the JSON text b, and 0, or the error.
+fn scan(b: Bytes) -> (List[Int], Int) {
+  let n = b.len()
+  var tape = List[Int].with_capacity(48)
+  // the open containers around the innermost: its tape index and its
+  // values so far, from stack[0] to stack[sp - 1]
+  var stack: List[Int] = []
+  var sp = 0
+  var p = 0
+  var state = S_TOP
+  // the innermost open container: its tape index (-1 at the top level),
+  // whether it is an array, its values so far
+  var top = -1
+  var arr = false
+  var cnt = 0
+  while true {
+    // Decoder.peek: the next byte that is not white space
+    var c = 0
+    while true {
+      if p >= n {
+        return (tape, E_EOF)
+      }
+      c = Int(b[p])
+      if c > 32 || (c != 32 && c != 10 && c != 13 && c != 9) {
+        break
+      }
+      p += 1
+    }
+    if c == 34 {
+      let key = state == S_OBJ_START || state == S_OBJ_KEY
+      if !key && ((VALUE_STATES >> state) & 1) == 0 {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      let r = str_end(b, p + 1, n)
+      if r < 0 {
+        return (tape, 0 - r)
+      }
+      let e = r & LEN_MASK
+      tape.push(K_STR)
+      tape.push(p + 1)
+      tape.push(r - p - 1)
+      p = e + 1
+      if key {
+        state = S_OBJ_COLON
+        continue
+      }
+    } else if c == 44 {
+      if state == S_ARR_COMMA {
+        state = S_ARR_VALUE
+      } else if state == S_OBJ_COMMA {
+        state = S_OBJ_KEY
+      } else {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      p += 1
+      continue
+    } else if c == 58 {
+      if state != S_OBJ_COLON {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      state = S_OBJ_VALUE
+      p += 1
+      continue
+    } else if c == 91 || c == 123 {
+      if ((VALUE_STATES >> state) & 1) == 0 {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      if sp < stack.len() {
+        stack.set(sp, top)
+        stack.set(sp + 1, cnt)
+      } else {
+        stack.push(top)
+        stack.push(cnt)
+      }
+      sp += 2
+      top = tape.len()
+      arr = c == 91
+      tape.push(if arr { K_ARR } else { K_OBJ })
+      tape.push(0)
+      tape.push(0)
+      cnt = 0
+      state = if arr { S_ARR_START } else { S_OBJ_START }
+      p += 1
+      continue
+    } else if c == 93 || c == 125 {
+      if c == 93 {
+        if state != S_ARR_START && state != S_ARR_COMMA {
+          return (tape, (Int(STATE_CTX[state]) << 8) | c)
+        }
+      } else if state != S_OBJ_START && state != S_OBJ_COMMA {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      p += 1
+      tape.set(top + 1, cnt)
+      tape.set(top + 2, tape.len())
+      sp -= 2
+      top = stack[sp]
+      cnt = stack[sp + 1]
+      arr = top >= 0 && tape[top] == K_ARR
+    } else {
+      if ((VALUE_STATES >> state) & 1) == 0 {
+        return (tape, (Int(STATE_CTX[state]) << 8) | c)
+      }
+      let e = scalar_end(b, p, n, c)
+      if e < 0 {
+        return (tape, 0 - e)
+      }
+      let at = p
+      tape.push(if c == 116 { K_TRUE } else if c == 102 { K_FALSE } else if c == 110 { K_NULL } else { K_NUM })
+      tape.push(at)
+      tape.push(e - at)
+      p = e
+    }
+    // a value ended
+    if top < 0 {
+      break
+    }
+    cnt += 1
+    state = if arr { S_ARR_COMMA } else { S_OBJ_COMMA }
+  }
+  // std/rt rejects a token after the value ("trailing data"), but not an
+  // error or the end
+  while p < n {
+    let c = Int(b[p])
+    if c > 32 || (c != 32 && c != 10 && c != 13 && c != 9) {
+      break
+    }
+    p += 1
+  }
+  if p >= n {
+    return (tape, 0)
+  }
+  let c = Int(b[p])
+  if c == 91 || c == 123 {
+    return (tape, E_TRAILING)
+  }
+  if c == 93 || c == 125 || c == 58 || c == 44 {
+    return (tape, 0)
+  }
+  let e = if c == 34 { str_end(b, p + 1, n) } else { scalar_end(b, p, n, c) }
+  if e >= 0 {
+    return (tape, E_TRAILING)
+  }
+  (tape, 0)
+}
+
+/// The tape of the JSON text src, or the empty list when it is not valid
+/// (parse_err tells why).
+pub fn parse(src: Bytes) -> List[Int] {
+  let (tape, err) = scan(src)
+  if err != 0 {
+    return []
+  }
+  tape
+}
+
+/// Why src is not valid JSON (the text after "invalid JSON: "), or "".
+pub fn parse_err(src: Bytes) -> Str {
+  let (_, err) = scan(src)
+  err_text(err)
+}
+
+/// The text of an error of scan.
+fn err_text(e: Int) -> Str {
+  if e == 0 {
+    return ""
+  }
+  if e == E_UEOF {
+    return "unexpected EOF"
+  }
+  if e == E_EOF {
+    return "EOF"
+  }
+  if e == E_TRAILING {
+    return "trailing data"
+  }
+  let ctx = e >> 8
+  let m = "invalid character " + quote_char(e & 255)
+  if ctx >= C_LIT {
+    let lit = (ctx - C_LIT) >> 3
+    let k = (ctx - C_LIT) & 7
+    let word = if lit == 0 { "true" } else if lit == 1 { "false" } else { "null" }
+    let want = rt.rs_push_byte("", Int(word.bytes()[k]))
+    return m + " in literal " + word + " (expecting '" + want + "')"
+  }
+  let s = match ctx {
+    1 => "looking for beginning of value"
+    2 => "after array element"
+    3 => "looking for beginning of object key string"
+    4 => "after object key"
+    5 => "after object key:value pair"
+    7 => "in \\u hexadecimal character escape"
+    8 => "in string escape code"
+    9 => "in string literal"
+    10 => "in numeric literal"
+    11 => "after decimal point in numeric literal"
+    12 => "in exponent of numeric literal"
+    _ => ""
+  }
+  if s == "" {
+    return m
+  }
+  m + " " + s
+}
+
+/// encoding/json's quoteChar: the byte c as a rune in single quotes,
+/// escaped like strconv.Quote.
+fn quote_char(c: Int) -> Str {
+  if c == 39 {
+    return "'\\''"
+  }
+  if c == 34 {
+    return "'\"'"
+  }
+  let e = match c {
+    7 => "a"
+    8 => "b"
+    12 => "f"
+    10 => "n"
+    13 => "r"
+    9 => "t"
+    11 => "v"
+    92 => "\\"
+    _ => ""
+  }
+  if e != "" {
+    return "'\\" + e + "'"
+  }
+  if c < 32 || c == 127 {
+    return rt.rs_push_word("'\\x", Int(HEX[c >> 4]) | (Int(HEX[c & 15]) << 8) | (39 << 16), 3)
+  }
+  if c < 128 {
+    return rt.rs_push_word("'", c | (39 << 8), 2)
+  }
+  // a byte from 0x80 is the rune U+0080 to U+00FF: strconv.IsPrint is
+  // false for the C1 controls, U+00A0, and U+00AD
+  if c <= 0xA0 || c == 0xAD {
+    return rt.rs_push_word("'\\u00", Int(HEX[c >> 4]) | (Int(HEX[c & 15]) << 8) | (39 << 16), 3)
+  }
+  rt.rs_push_byte(rt.rs_push_rune("'", c), 39)
+}
+
+// ---------------------------------------------------------------------------
+// Reading the tape (the decoders of build_json.go)
+
+/// The tape index after the value at i.
+pub fn next(tape: List[Int], i: Int) -> Int {
+  if tape[i] >= K_ARR {
+    return tape[i + 2]
+  }
+  i + 3
+}
+
+/// The value of the string node at i: encoding/json's unquote (escapes
+/// decoded, surrogate pairs combined, a lone surrogate and invalid UTF-8
+/// U+FFFD).
+pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str {
+  let lo = tape[i + 1]
+  let raw = tape[i + 2]
+  let n = raw & LEN_MASK
+  if raw == n {
+    // ASCII without escapes
+    return rt.rs_append_bytes("", src, lo, lo + n, 0)
+  }
+  if (raw & STR_ESC) == 0 {
+    let s = rt.rs_append_bytes("", src, lo, lo + n, 0)
+    if rt.utf8_valid(s) {
+      return s
+    }
+  }
+  unquote(src, lo, lo + n)
+}
+
+/// The bytes lo..hi of b (a string's raw text) unquoted.
+fn unquote(b: Bytes, lo: Int, hi: Int) -> Str {
+  var o = rt.rs_with_cap(hi - lo)
+  var i = lo
+  var start = lo
+  while i < hi {
+    let c = Int(b[i])
+    if c < 128 && c != 92 {
+      i += 1
+      continue
+    }
+    if c == 92 {
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      let e = Int(b[i + 1])
+      if e == 117 {
+        var r = hex4(b, i + 2)
+        i += 6
+        if r >= 0xD800 && r < 0xDC00 {
+          // a high surrogate: a low one must follow
+          var r2 = -1
+          if i + 6 <= hi && b[i] == 92 && b[i + 1] == 117 {
+            r2 = hex4(b, i + 2)
+          }
+          if r2 >= 0xDC00 && r2 < 0xE000 {
+            r = 0x10000 + ((r - 0xD800) << 10) + (r2 - 0xDC00)
+            i += 6
+          } else {
+            r = 0xFFFD
+          }
+        } else if r >= 0xDC00 && r < 0xE000 {
+          r = 0xFFFD
+        }
+        o = rt.rs_push_rune(o, r)
+      } else {
+        let x = if e == 98 { 8 } else if e == 102 { 12 } else if e == 110 { 10 } else if e == 114 { 13 } else if e == 116 { 9 } else { e }
+        o = rt.rs_push_byte(o, x)
+        i += 2
+      }
+      start = i
+      continue
+    }
+    let p = unicode.decode(b, i)
+    let size = p & 7
+    if (p >> 3) == 0xFFFD && size == 1 {
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      o = rt.rs_push_word(o, 0xBDBFEF, 3)
+      i += 1
+      start = i
+      continue
+    }
+    i += size
+  }
+  if hi > start {
+    o = rt.rs_append_bytes(o, b, start, hi, 0)
+  }
+  o
+}
+
+/// The value of the four hex digits of b from i, or -1.
+fn hex4(b: Bytes, i: Int) -> Int {
+  var r = 0
+  var k = 0
+  while k < 4 {
+    let h = hex_val(Int(b[i + k]))
+    if h < 0 {
+      return -1
+    }
+    r = r * 16 + h
+    k += 1
+  }
+  r
+}
+
+/// Whether the n bytes of a from ai are the n bytes of b from bi.
+fn range_eq(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
+  var t = 0
+  while t + 8 <= n {
+    if rt.bytes_word(a, ai + t) != rt.bytes_word(b, bi + t) {
+      return false
+    }
+    t += 8
+  }
+  while t < n {
+    if a[ai + t] != b[bi + t] {
+      return false
+    }
+    t += 1
+  }
+  true
+}
+
+/// The tape index of the value of the last member of the object at i
+/// whose key is key, or -1 (std/rt keeps the last value).
+pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
+  let m = tape[i + 1]
+  let kb = key.bytes()
+  let kn = kb.len()
+  var j = i + 3
+  var found = -1
+  var k = 0
+  while k < m {
+    let v = j + 3
+    let raw = tape[j + 2]
+    if raw == kn {
+      if range_eq(src, tape[j + 1], kb, 0, kn) {
+        found = v
+      }
+    } else if raw > LEN_MASK {
+      if str_at(src, tape, j) == key {
+        found = v
+      }
+    }
+    j = next(tape, v)
+    k += 1
+  }
+  found
+}
+
+/// Whether the string nodes at a and j have the same value.
+fn same_key(src: Bytes, tape: List[Int], a: Int, j: Int) -> Bool {
+  let ra = tape[a + 2]
+  let rj = tape[j + 2]
+  if (ra | rj) <= LEN_MASK {
+    return ra == rj && range_eq(src, tape[a + 1], src, tape[j + 1], ra)
+  }
+  str_at(src, tape, a) == str_at(src, tape, j)
+}
+
+/// FNV-1a of the n bytes of b from i.
+fn hash_bytes(b: Bytes, i: Int, n: Int) -> Int {
+  var h = -3750763034362895579
+  var k = 0
+  while k < n {
+    h = mulw(h ^ Int(b[i + k]), 1099511628211)
+    k += 1
+  }
+  h
+}
+
+/// The hash of the value of the string node at j.
+fn key_hash(src: Bytes, tape: List[Int], j: Int) -> Int {
+  let raw = tape[j + 2]
+  if raw <= LEN_MASK {
+    return hash_bytes(src, tape[j + 1], raw)
+  }
+  let s = str_at(src, tape, j).bytes()
+  hash_bytes(s, 0, s.len())
+}
+
+/// The members of the object at i as std/rt's jsonObj has them: each key
+/// once, at its first position, with its last value: (key node, value
+/// node) pairs of tape indexes. Small objects compare each key with the
+/// ones before it; larger ones find keys again through a hash table.
+pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
+  let m = tape[i + 1]
+  var out = List[Int].with_capacity(if m < 2 { 4 } else { 2 * m })
+  var j = i + 3
+  var cnt = 0
+  if m <= 8 {
+    var k = 0
+    while k < m {
+      let v = j + 3
+      var dup = -1
+      var e = 0
+      while e < cnt {
+        if same_key(src, tape, out[2 * e], j) {
+          dup = e
+          break
+        }
+        e += 1
+      }
+      if dup >= 0 {
+        out.set(2 * dup + 1, v)
+      } else {
+        out.push(j)
+        out.push(v)
+        cnt += 1
+      }
+      j = next(tape, v)
+      k += 1
+    }
+    return out
+  }
+  var slots = 16
+  while slots < 2 * m {
+    slots = slots * 2
+  }
+  // entry + 1, 0 empty
+  var tab = List[Int].with_capacity(slots)
+  for _ in 0..slots {
+    tab.push(0)
+  }
+  var k = 0
+  while k < m {
+    let v = j + 3
+    var s = key_hash(src, tape, j) & (slots - 1)
+    var dup = -1
+    while true {
+      let t = tab[s]
+      if t == 0 {
+        break
+      }
+      if same_key(src, tape, out[2 * (t - 1)], j) {
+        dup = t - 1
+        break
+      }
+      s = (s + 1) & (slots - 1)
+    }
+    if dup >= 0 {
+      out.set(2 * dup + 1, v)
+    } else {
+      out.push(j)
+      out.push(v)
+      tab.set(s, cnt + 1)
+      cnt += 1
+    }
+    j = next(tape, v)
+    k += 1
+  }
+  out
+}
+
+/// Whether the number node at i is an Int (strconv.ParseInt of its
+/// text: digits only, in range). JSON numbers have no leading zeros, so
+/// an Int has at most 19 digits, and 18 cannot overflow.
+pub fn int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool {
+  let lo = tape[i + 1]
+  let end = lo + tape[i + 2]
+  let neg = src[lo] == 45
+  var p = if neg { lo + 1 } else { lo }
+  let nd = end - p
+  if nd > 19 {
+    return false
+  }
+  let stop = if nd == 19 { end - 1 } else { end }
+  var v = 0
+  while p < stop {
+    let c = Int(src[p]) - 48
+    if c < 0 || c > 9 {
+      return false
+    }
+    v = addw(mulw(v, 10), c)
+    p += 1
+  }
+  if nd < 19 {
+    return true
+  }
+  let c = Int(src[stop]) - 48
+  if c < 0 || c > 9 {
+    return false
+  }
+  v < 922337203685477580 || (v == 922337203685477580 && c <= (if neg { 8 } else { 7 }))
+}
+
+/// The Int of the number node at i, which int_ok accepted (the digits
+/// wrap like a UInt64 so that -9223372036854775808 comes out).
+pub fn int_at(src: Bytes, tape: List[Int], i: Int) -> Int {
+  let lo = tape[i + 1]
+  let end = lo + tape[i + 2]
+  let neg = src[lo] == 45
+  var p = if neg { lo + 1 } else { lo }
+  var v = 0
+  while p < end {
+    v = addw(mulw(v, 10), Int(src[p]) - 48)
+    p += 1
+  }
+  if neg { subw(0, v) } else { v }
+}
+
+/// Whether the number node at i is a Float (strconv.ParseFloat: not
+/// out of range).
+pub fn float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool {
+  let lo = tape[i + 1]
+  num.parse_float_at(src, lo, lo + tape[i + 2]) != None
+}
+
+/// The Float of the number node at i (0.0 when it is not one).
+pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float {
+  let lo = tape[i + 1]
+  num.parse_float_at(src, lo, lo + tape[i + 2]) ?? 0.0
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+
+/// The high bit of each byte of w that a JSON string cannot keep as it
+/// is: below 0x20, `"`, `\`, or from 0x80 (checked for invalid UTF-8 and
+/// U+2028, U+2029); the lowest exact.
+fn enc_stops(w: Int) -> Int { str_stops(w) | (w & HIGHS) }
+
+/// The two byte escape of the ASCII byte c (`\"`, `\\`, `\b`, `\f`,
+/// `\n`, `\r`, `\t`), or 0.
+fn short_escape(c: Int) -> Int {
+  match c {
+    34 => 0x225C
+    92 => 0x5C5C
+    8 => 0x625C
+    12 => 0x665C
+    10 => 0x6E5C
+    13 => 0x725C
+    9 => 0x745C
+    _ => 0
+  }
+}
+
+/// out + s as a JSON string: std/rt's appendJSONString (encoding/json
+/// without HTML escaping): `"`, `\`, and control bytes escaped, invalid
+/// UTF-8 as �, U+2028 and U+2029 as   and  .
+pub fn append_str(out: Str, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  // the first byte to escape or check
+  var i = 0
+  while i + 8 <= n {
+    let m = enc_stops(rt.bytes_word(b, i))
+    if m != 0 {
+      i += low_byte(m)
+      break
+    }
+    i += 8
+  }
+  if i + 8 > n {
+    while i < n {
+      let c = Int(b[i])
+      if c < 32 || c == 34 || c == 92 || c >= 128 {
+        break
+      }
+      i += 1
+    }
+  }
+  var o = rt.rs_push_byte(out, 34)
+  if i >= n {
+    // nothing to escape
+    o = rt.rs_append_bytes(o, b, 0, n, 0)
+    return rt.rs_push_byte(o, 34)
+  }
+  var start = 0
+  while i < n {
+    let c = Int(b[i])
+    if c < 128 {
+      if c >= 32 && c != 34 && c != 92 {
+        i += 1
+        continue
+      }
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      let e = short_escape(c)
+      if e != 0 {
+        o = rt.rs_push_word(o, e, 2)
+      } else {
+        // \u00XX
+        o = rt.rs_push_word(o, 0x3030755C | (Int(HEX[c >> 4]) << 32) | (Int(HEX[c & 15]) << 40), 6)
+      }
+      i += 1
+      start = i
+      continue
+    }
+    let p = unicode.decode(b, i)
+    let r = p >> 3
+    let size = p & 7
+    if (r == 0xFFFD && size == 1) || r == 0x2028 || r == 0x2029 {
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      // �,  ,
+      let w = if r == 0xFFFD { 0x64666666755C } else if r == 0x2028 { 0x38323032755C } else { 0x39323032755C }
+      o = rt.rs_push_word(o, w, 6)
+      i += size
+      start = i
+      continue
+    }
+    i += size
+  }
+  if n > start {
+    o = rt.rs_append_bytes(o, b, start, n, 0)
+  }
+  rt.rs_push_byte(o, 34)
+}
+
+/// out + f as std/json writes a Float (num.append_json_float).
+pub fn append_float(out: Str, f: Float) -> Str { num.append_json_float(out, f) }
+
+/// out + b as std/json writes Bytes: its standard base64, padded, in
+/// double quotes.
+pub fn append_b64(out: Str, b: Bytes) -> Str { rt.rs_push_byte(num.append_base64(rt.rs_push_byte(out, 34), b), 34) }
+
+/// Whether s is base64 that std/json decodes into Bytes.
+pub fn b64_ok(s: Str) -> Bool { num.from_base64(s) != None }
+
+/// The Bytes of base64 that b64_ok accepted.
+pub fn b64_decode(s: Str) -> Bytes { num.from_base64(s) ?? b"" }

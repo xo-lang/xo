@@ -476,10 +476,58 @@ fn runtime_raises(name: Str) -> Bool {
   ssa.faulting_rt(name) || name == "rt.fault_continue"
 }
 
+/// Lowers the runtime intrinsics that are an instruction or two
+/// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
+/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
+/// multiply), the bits of a Float both ways, and rt.bytes_word (an
+/// unchecked load of 8 bytes); whether v was one (fromssa.go inlineRT).
+fn (var g: Gen) inline_rt(v: Int) -> Bool {
+  let x = g.f.values[v]
+  match aux_str(x.aux) {
+    "rt.int_wrap" => {
+      let c = g.f.values[x.args[0]]
+      if c.op != ssa.Op.Const {
+        return false
+      }
+      let op = match c.aux {
+        I(n) => n
+        _ => -1
+      }
+      if op < 0 || op > 4 {
+        return false
+      }
+      let a = g.op(x.args[1])
+      var b = g.op(x.args[2])
+      if op >= 3 {
+        b = g.def("and i64 ${b}, 63")
+      }
+      g.set(v, "${["add", "sub", "mul", "shl", "lshr"][op]} i64 ${a}, ${b}")
+    }
+    "rt.u64_mul_hi" => {
+      let a = g.def("zext i64 ${g.op(x.args[0])} to i128")
+      let b = g.def("zext i64 ${g.op(x.args[1])} to i128")
+      let p = g.def("mul i128 ${a}, ${b}")
+      g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
+    }
+    "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
+    "rt.float_from_bits" => g.set(v, "bitcast i64 ${g.op(x.args[0])} to double")
+    "rt.bytes_word" => {
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      g.set(v, "load i64, ptr ${p}, align 1")
+    }
+    _ => return false
+  }
+  true
+}
+
 /// Lowers a call of the task runtime (rtCall): an Int is an i64, a Bool
 /// an i64 0 or 1, a List or handle a pointer, a Str its bytes and length;
 /// the result is void or one of those.
 fn (var g: Gen) rt_call(v: Int) {
+  if g.inline_rt(v) {
+    return
+  }
   let x = g.f.values[v]
   let name = aux_str(x.aux)
   let sym = "@xo_${name.trim_prefix("rt.")}"

@@ -25,6 +25,8 @@
 #   xo-<version>-<os>-<arch>/lib/xo/std/                 std (with llrt and rt)
 #   xo-<version>-<os>-<arch>/lib/xo/third_party/         the TLS library's sources
 #   xo-<version>-<os>-<arch>/lib/xo/rtpack/<os>-<arch>/  the prebuilt C runtime (arm64 targets)
+#   xo-<version>-<os>-<arch>/lib/xo/zoneinfo.zip         Go's zone database, for std/time
+#                                                        (decision 0157 next step 1: no Go needed)
 #   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md
 #
 # xo1 finds std, the pack, and xo-gobind beside itself (bin/../lib/xo), so
@@ -89,6 +91,9 @@ layout() {
 	stage=$(stage_of "$target")
 	mkdir -p "$stage/bin" "$stage/lib/xo"
 	git ls-files -z std third_party | rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
+	# the zone database std/time embeds (selfhost/xo tz.xo looks here
+	# before `go env GOROOT`)
+	cp "$(go env GOROOT)/lib/time/zoneinfo.zip" "$stage/lib/xo/zoneinfo.zip"
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
 		go build -trimpath -o "$stage/bin/xo-gobind" ./cmd/xo-gobind
 	cp README.md CHANGELOG.md "$stage/"

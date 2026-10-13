@@ -111,7 +111,7 @@ func TestRuntimeRealtime(t *testing.T) {
 	if testing.Short() {
 		return
 	}
-	opt := filepath.Join(t.TempDir(), "opt")
+	opt := exe(filepath.Join(t.TempDir(), "opt"))
 	if err := build.CompileC([]string{"-O2"}, []string{src}, opt); err != nil {
 		t.Fatal(err)
 	}

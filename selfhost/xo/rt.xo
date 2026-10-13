@@ -290,21 +290,27 @@ struct Pack {
   key: Str = ""
 }
 
-/// loadRTPack for the host; None when there is no pack root.
+/// loadRTPack of ctx.goos/arm64, the pack an arm64 link uses; None when
+/// there is no pack root.
 fn load_rtpack(os: Os, ctx: Ctx, std_dir: Str) -> Pack? {
+  load_rtpack_for(os, ctx, std_dir, "arm64")
+}
+
+/// loadRTPack of ctx.goos/arch.
+fn load_rtpack_for(os: Os, ctx: Ctx, std_dir: Str, arch: Str) -> Pack? {
   let root = rtpack_root(os)
   if root.is_empty() {
     return None
   }
-  let target = "${ctx.goos}/arm64"
-  let dir = "${root}/${ctx.goos}-arm64"
+  let target = "${ctx.goos}/${arch}"
+  let dir = "${root}/${ctx.goos}-${arch}"
   let text = match os.fs.read_text("${dir}/rtpack.json") {
     Ok(t) => t
     Err(FsErr.NotFound(..)) => return Some(Pack{dir: dir, why: "no prebuilt runtime for ${target} in ${root}"})
     Err(e) => return Some(Pack{dir: dir, why: "${e}"})
   }
   let m = parse_manifest(text)
-  let key = match rtpack_key(os, ctx, std_dir, ctx.goos) {
+  let key = match rtpack_key_for(os, ctx, std_dir, ctx.goos, arch) {
     Ok(k) => k
     Err(e) => return Some(Pack{dir: dir, why: "${e}"})
   }
@@ -441,12 +447,19 @@ fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str], tls: Bool) 
   (obj, lib)
 }
 
-/// RTPackStatus: the pack xo1 uses for the host, or why none is used.
+/// RTPackStatus: the pack xo1 uses for the host (its OS and
+/// architecture, as loadRTPack(Host())), or why none is used.
 fn rtpack_status(os: Os, ctx: Ctx, std_dir: Str) -> Str {
+  rtpack_status_for(os, ctx, std_dir, host_arch())
+}
+
+/// The status of the pack of ctx.goos/arch (an arm64 link's on any
+/// host).
+fn rtpack_status_for(os: Os, ctx: Ctx, std_dir: Str, arch: Str) -> Str {
   if (os.env.get("XO_RTPACK") ?? "") == "off" {
     return "prebuilt runtime: off (XO_RTPACK=off); the runtime is compiled locally"
   }
-  match load_rtpack(os, ctx, std_dir) {
+  match load_rtpack_for(os, ctx, std_dir, arch) {
     None => "prebuilt runtime: none; the runtime is compiled locally"
     Some(p) => {
       if !p.why.is_empty() {

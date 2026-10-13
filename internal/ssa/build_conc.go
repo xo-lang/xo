@@ -133,6 +133,52 @@ func (s *fn) llrt(name string, t *Type, at ast.Node, args ...*Value) *Value {
 	return s.call(f.Name, f.Results[0], "", args...)
 }
 
+// numText is acc + the text of v, an Int or Float (acc nil: the text
+// alone), for interpolation and Display: the native prelude's
+// llrt_concat_int or llrt_concat_float (std/native/llrt/num.xo, decision
+// 0193 step 3), unchecked like the C it replaces. With XO_LLRT_C=num, or
+// without the native prelude, the C runtime's str.concat_int and friends
+// as before the port. A Float32 keeps the C (its text is its double's,
+// and no operation views it as a Float for free); the fault messages
+// (slice bounds, std/json's errors, a missing Map key) keep
+// str.concat_int: they are cold.
+func (s *fn) numText(acc, v *Value) *Value {
+	b := s.b
+	st := b.mod.Builtin(KStr)
+	k := lowerKind(v.Type)
+	if impl := b.preludeImpl("llrt_concat_" + k); impl != nil && !check.LLRTUsesC("num") && !v.Type.F32() {
+		if acc == nil {
+			acc = s.add(OpConst, st, "")
+		}
+		if it := b.mod.Builtin(KInt); v.Type.Kind == KInt && v.Type != it {
+			// a sized integer (not UInt64, which has its own text): the
+			// same word as an Int
+			v = s.add(OpIntConv, it, nil, v)
+		}
+		f := b.declare(impl, nil, nil)
+		return s.call(f.Name, f.Results[0], "", acc, v)
+	}
+	if acc == nil {
+		return s.call("str.of_"+k, st, "", v)
+	}
+	return s.call("str.concat_"+k, st, "", acc, v)
+}
+
+// jsonRT is a call of std/json's tape reader or text function name
+// (json_str, rs_append_json_str, b64_ok, ...) for the codecs build_json.go
+// generates: the native prelude's llrt_<name> (std/native/llrt/
+// jsontext.xo, decision 0193 step 4), unchecked like the C it replaces;
+// with XO_LLRT_C=jsontext, or without the native prelude, the C
+// runtime's rt.<name> as before the port.
+func (s *fn) jsonRT(name string, t *Type, args ...*Value) *Value {
+	b := s.b
+	if impl := b.preludeImpl("llrt_" + name); impl != nil && !check.LLRTUsesC("jsontext") {
+		f := b.declare(impl, nil, nil)
+		return s.call(f.Name, f.Results[0], "", args...)
+	}
+	return s.rt(name, t, args...)
+}
+
 // loc is the `file:line` of n as a Str constant (for faults the runtime
 // raises, located like the Go backend's).
 func (s *fn) loc(n ast.Node) *Value {

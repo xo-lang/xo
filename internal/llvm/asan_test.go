@@ -53,7 +53,7 @@ func TestGoldenASan(t *testing.T) {
 			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := filepath.Join(t.TempDir(), "prog")
+			bin := exe(filepath.Join(t.TempDir(), "prog"))
 			flags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module"), build.IOFlags(prog.IR)...)
 			if err := build.CompileC(flags, []string{ll, rt}, bin); err != nil {
 				if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {

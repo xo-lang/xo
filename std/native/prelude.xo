@@ -3,6 +3,8 @@
 // lowering of its own for to the function `T_name` here, whose first
 // parameter is the receiver and whose type parameters are those of the
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/llrt/jsontext
+use native/llrt/num
 use native/llrt/strings
 use native/llrt/text
 use native/llrt/unicode
@@ -111,21 +113,11 @@ fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
 fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
 
-fn bytes_from_hex(s: Str) -> Bytes? {
-  if !rt.bytes_hex_ok(s) {
-    return None
-  }
-  Some(rt.bytes_from_hex(s))
-}
+fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 
-fn bytes_to_base64(b: Bytes) -> Str { rt.b64_encode(b) }
+fn bytes_to_base64(b: Bytes) -> Str { num.to_base64(b) }
 
-fn bytes_from_base64(s: Str) -> Bytes? {
-  if !rt.b64_ok(s) {
-    return None
-  }
-  Some(rt.b64_decode(s))
-}
+fn bytes_from_base64(s: Str) -> Bytes? { num.from_base64(s) }
 
 /// []rune(s): an invalid byte is U+FFFD.
 fn str_runes(s: Str) -> List[Rune] {
@@ -212,12 +204,7 @@ fn int_saturating_mul(n: Int, m: Int) -> Int { saturated(2, n, m) }
 
 fn int_parse(s: Str) -> Int? { text.parse_int(s) }
 
-fn float_parse(s: Str) -> Float? {
-  if rt.float_parse_ok(s) {
-    return Some(rt.float_parse(s))
-  }
-  None
-}
+fn float_parse(s: Str) -> Float? { num.parse_float(s) }
 
 // ---------------------------------------------------------------------------
 // Map[K, V] and Set[T] (std.md 2.4): std/rt map.go's order, the entries
@@ -549,8 +536,81 @@ fn fs_err(st: Int, p: Str) -> FsErr {
   }
 }
 
-// fs_clean is Go's path.Clean.
+// fs_windows is whether paths follow Windows' rules (std.md 3.1): the
+// build's target, resolved at compile time.
+fn fs_windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+}
+
+// fs_slash is p with \ as / on Windows (filepath.ToSlash), p elsewhere.
+fn fs_slash(p: Str) -> Str {
+  if fs_windows() {
+    return p.replace("\\", "/")
+  }
+  p
+}
+
+// fs_volume is the volume of a slash separated Windows path
+// (filepath.VolumeName): "C:" of "C:/x" or "C:x", "//host/share" of a
+// UNC path; "" for others and on every other OS.
+fn fs_volume(p: Str) -> Str {
+  if !fs_windows() {
+    return ""
+  }
+  let b = p.bytes()
+  if b.len() >= 2 && b[1] == ':' && ((b[0] >= 'a' && b[0] <= 'z') || (b[0] >= 'A' && b[0] <= 'Z')) {
+    return p[0..2]
+  }
+  if p.starts_with("//") && !p.starts_with("///") {
+    let parts = p[2..].split("/")
+    if parts.len() >= 2 && parts[0] != "" && parts[1] != "" {
+      return "//${parts[0]}/${parts[1]}"
+    }
+  }
+  ""
+}
+
+// fs_is_abs is filepath.IsAbs of a slash separated path: rooted at / on
+// Unix; on Windows a drive with a root (C:/x) or a UNC path.
+fn fs_is_abs(p: Str) -> Bool {
+  if !fs_windows() {
+    return p.starts_with("/")
+  }
+  let q = fs_slash(p)
+  let v = fs_volume(q)
+  if v == "" {
+    return false
+  }
+  v.starts_with("//") || q[v.len()..].starts_with("/")
+}
+
+// fs_clean is Go's path.Clean; on Windows (filepath.Clean with /) \ is
+// a separator too and a volume stays in front.
 fn fs_clean(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  if fs_windows() {
+    let q = fs_slash(p)
+    let v = fs_volume(q)
+    if v != "" {
+      let rest = q[v.len()..]
+      if rest == "" {
+        return if v.starts_with("//") { v + "/" } else { v + "." }
+      }
+      let c = fs_clean_slash(rest)
+      return v + c
+    }
+    return fs_clean_slash(q)
+  }
+  fs_clean_slash(p)
+}
+
+// fs_clean_slash is Go's path.Clean of a slash separated path.
+fn fs_clean_slash(p: Str) -> Str {
   if p == "" {
     return "."
   }
@@ -596,12 +656,12 @@ fn fs_join(a: Str, b: Str) -> Str {
   fs_clean(a + "/" + b)
 }
 
-// fs_base is Go's path.Base.
+// fs_base is Go's path.Base (of the slash form on Windows).
 fn fs_base(p: Str) -> Str {
   if p == "" {
     return "."
   }
-  var s = p
+  var s = fs_slash(p)
   while s.len() > 1 && s.ends_with("/") {
     s = s[0..s.len() - 1]
   }
@@ -612,10 +672,14 @@ fn fs_base(p: Str) -> Str {
   parts[parts.len() - 1]
 }
 
-// fs_abs is filepath.Abs.
+// fs_abs is filepath.Abs (with / on Windows: a path rooted at / is on
+// the working directory's drive).
 fn fs_abs(p: Str) -> Str {
-  if p.starts_with("/") {
+  if fs_is_abs(p) {
     return fs_clean(p)
+  }
+  if fs_windows() && fs_slash(p).starts_with("/") {
+    return fs_clean(fs_volume(rt.fs_cwd()) + fs_slash(p))
   }
   fs_join(rt.fs_cwd(), p)
 }
@@ -651,7 +715,7 @@ fn fs_resolve(f: Fs, p: Str) -> Str? {
 // for os.fs).
 fn fs_rel(f: Fs, op: Str, given: Str) -> Str {
   if (rt.fs_mode(f) & 1) == 0 {
-    return op
+    return fs_slash(op)
   }
   let root = fs_clean(rt.fs_root(f))
   let c = fs_clean(op)
@@ -660,6 +724,9 @@ fn fs_rel(f: Fs, op: Str, given: Str) -> Str {
   }
   if root == "/" {
     return c[1..]
+  }
+  if root.ends_with("/") && c.starts_with(root) {
+    return c[root.len()..] // a Windows drive's root, C:/
   }
   if c.starts_with(root + "/") {
     return c[root.len() + 1..]
@@ -1512,8 +1579,23 @@ fn env_vars(e: Env) -> Map[Str, Str] uses env {
   m
 }
 
-/// os.UserHomeDir: $HOME, or Missing("HOME").
+/// os.UserHomeDir: $HOME (on Windows %USERPROFILE% with / separators,
+/// read when the Env admits HOME), or Missing("HOME").
 fn env_home(e: Env) -> Str ! EnvErr uses env {
+  if fs_windows() {
+    if !cap_admits(rt.env_lists(e), "HOME") {
+      return Err(EnvErr.Missing(name: "HOME"))
+    }
+    match rt.env_get("USERPROFILE").get(0) {
+      Some(h) => {
+        if h != "" {
+          return fs_slash(h)
+        }
+      }
+      None => ()
+    }
+    return Err(EnvErr.Missing(name: "HOME"))
+  }
   match env_get(e, "HOME") {
     Some(h) => {
       if h != "" {
@@ -1796,11 +1878,20 @@ fn env_user_dir(e: Env, cache: Bool) -> Str ! EnvErr uses env {
   }
   match e.get(xdg) {
     Some(v) => {
-      if v.starts_with("/") {
-        return v
+      if v.starts_with("/") || (v.len() >= 3 && v[1..2] == ":") {
+        return fs_slash(v)
       }
     }
     None => ()
+  }
+  if fs_windows() {
+    // %AppData% and %LocalAppData% (std/rt userDir)
+    let win = if cache { "LocalAppData" } else { "AppData" }
+    let v = e.get(win) ?? ""
+    if v == "" {
+      return Err(EnvErr.Missing(name: win))
+    }
+    return v.replace("\\", "/")
   }
   let home = match e.get("HOME") {
     Some(h) => h
@@ -2051,3 +2142,43 @@ fn llrt_time_ok(s: Str) -> Bool {
 }
 
 fn llrt_time(s: Str) -> Int { text.parse_time(s) ?? 0 }
+
+// The number text, as the SSA builder calls it for every interpolation
+// and Display of an Int or Float (decision 0193 step 3): in Xo
+// (std/native/llrt/num.xo). With XO_LLRT_C=num the SSA builder calls the
+// C runtime (str.concat_int and friends) instead.
+
+fn llrt_concat_int(s: Str, v: Int) -> Str { num.append_int(s, v) }
+
+fn llrt_concat_float(s: Str, f: Float) -> Str { num.append_float(s, f) }
+
+// std/json's tape readers and text, as the decoders and encoders the SSA
+// builder generates per type call them (decision 0193 step 4): in Xo
+// (std/native/llrt/jsontext.xo). With XO_LLRT_C=jsontext the SSA builder
+// calls the C runtime (json_str and friends) instead.
+
+fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
+
+fn llrt_json_str(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.str_at(src, tape, i) }
+
+fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
+
+fn llrt_json_members(src: Bytes, tape: List[Int], i: Int) -> List[Int] { jsontext.members(src, tape, i) }
+
+fn llrt_json_int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.int_ok(src, tape, i) }
+
+fn llrt_json_int(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.int_at(src, tape, i) }
+
+fn llrt_json_float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.float_ok(src, tape, i) }
+
+fn llrt_json_float(src: Bytes, tape: List[Int], i: Int) -> Float { jsontext.float_at(src, tape, i) }
+
+fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
+
+fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }
+
+fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b) }
+
+fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
+
+fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }

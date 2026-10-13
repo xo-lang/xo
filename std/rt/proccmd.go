@@ -555,7 +555,7 @@ func (c Child) M_kill(*Task) {
 	if c.c.fake != nil || c.c.x.Process == nil {
 		return
 	}
-	c.c.x.Process.Kill()
+	killProcess(c.c.x.Process)
 }
 
 func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
@@ -594,7 +594,7 @@ func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
 		if err := x.Start(); err != nil {
 			startFail = err
 			for _, y := range xs[:i] {
-				y.Process.Kill()
+				killProcess(y.Process)
 			}
 			break
 		}

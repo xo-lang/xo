@@ -635,10 +635,48 @@ fn (var g: G) call_op(v: Int) {
   }
 }
 
+/// Lowers the runtime intrinsics that are an instruction or two
+/// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
+/// *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the
+/// bits of a Float both ways, and rt.bytes_word (an unchecked load of 8
+/// bytes); whether v was one (isel.go inlineRT).
+fn (var g: G) inline_rt(v: Int) -> Bool {
+  let x = g.f.values[v]
+  match aux_str(x.aux) {
+    "rt.int_wrap" => {
+      let (op, ok) = g.const_int(x.args[0])
+      if !ok || op < 0 || op > 4 {
+        return false
+      }
+      let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
+      let a = g.word(x.args[1])
+      let (k, kc) = g.const_int(x.args[2])
+      if kc && op >= 3 {
+        g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k & 63}", [a])])
+        return true
+      }
+      g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
+    }
+    "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
+    "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
+    "rt.bytes_word" => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
+    }
+    _ => return false
+  }
+  true
+}
+
 /// Lowers a call of the task runtime (`rt.name` is the C function
 /// xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
 /// Str its bytes and length; the result is nothing or one word.
 fn (var g: G) rt_call(v: Int) {
+  if g.inline_rt(v) {
+    return
+  }
   let x = g.f.values[v]
   let name0 = aux_str(x.aux)
   var args: List[Src] = []
