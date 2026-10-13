@@ -11,6 +11,10 @@ fn clean_path(p: Str) -> Str {
   if p.is_empty() {
     return "."
   }
+  if is_windows() && is_abs_path(p) && !p.starts_with("/") {
+    // a drive path: the drive, then the rest cleaned as rooted
+    return p[0..2] + clean_path("/" + p[3..].replace("\\", "/"))
+  }
   let rooted = p.starts_with("/")
   var out: List[Str] = []
   for e in p.split("/") {
@@ -38,7 +42,7 @@ fn clean_path(p: Str) -> Str {
 /// filepath.Abs: p joined to the working directory wd when relative,
 /// cleaned.
 fn abs_of(wd: Str, p: Str) -> Str {
-  if p.starts_with("/") {
+  if is_abs_path(p) {
     return clean_path(p)
   }
   clean_path("${wd}/${p}")

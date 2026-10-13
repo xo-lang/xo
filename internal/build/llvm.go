@@ -447,6 +447,12 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 	return &ClangError{Output: first}
 }
 
+// unsupportedOnWindows names the runtime parts (by their IOFlags define)
+// the Windows port of the native runtime leaves out. Empty since stage 2
+// of decision 0197 (processes, 2026-10-12): the check stays for the next
+// part that is not ported.
+var unsupportedOnWindows = map[string]string{}
+
 // TargetUnsupported is the XO1504 diagnostic of a program, given the
 // runtime defines its build selected (IOFlags), that uses runtime parts
 // not ported to goos yet: on Windows, stage 1 of decision 0197 leaves out
@@ -458,8 +464,8 @@ func TargetUnsupported(goos string, flags []string) []diag.Diagnostic {
 	}
 	var parts []string
 	for _, f := range flags {
-		if f == "-DXO_PROC" {
-			parts = append(parts, "processes (Proc)")
+		if unsupportedOnWindows[f] != "" {
+			parts = append(parts, unsupportedOnWindows[f])
 		}
 	}
 	if len(parts) == 0 {

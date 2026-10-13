@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+program without backslash: true
+exists with the OS separator: true
+exists with /: true
+stat name a dir true path without backslash true
+UNC form: true deep
+rooted form: true deep
+sub read: deep
+walk a/b b
+walk a/b/f.txt f.txt
+temp under a: true
+escape: Denied(path: "../outside")
+cwd exists: true
+removed: true
+--- stderr

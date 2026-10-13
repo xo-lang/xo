@@ -12,8 +12,10 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#ifndef _WIN32
 #include <spawn.h>
 #include <sys/wait.h>
+#endif
 
 static int failures;
 
@@ -306,6 +308,12 @@ static void test_wakeups(void) {
 // invalid mutex" in pd_ready, linux/arm64, 2026-10-12, gotcha
 // linux-epoll-inherited-socket). Sockets and process pipes share the path.
 static void test_inherited(void) {
+#ifdef _WIN32
+	// Windows (decision 0197): pipes are not polled (a pump thread joins
+	// them to a socket, xo_proc.c), and the AFD poll of a socket ends when
+	// the socket closes; there is no registration to outlive it
+	fputs("inherited: ok (nothing to test on Windows)\n", stderr);
+#else
 	int p[2];
 	CHECK(pipe(p) == 0);
 	// the child inherits both ends: neither is close-on-exec yet
@@ -330,6 +338,7 @@ static void test_inherited(void) {
 	}
 	close(p[1]);
 	fputs("inherited: ok\n", stderr);
+#endif
 }
 
 static void leaks(const char *name) {

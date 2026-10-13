@@ -812,10 +812,244 @@ static unsigned char *tz_read_file(const char *path, int64_t *n) {
 	return buf;
 }
 
+#ifdef _WIN32
+// tz_win_abbrs: the abbreviations of the Windows time zones by key name
+// (Go 1.26's time/zoneinfo_abbrs_windows.go, from CLDR windowsZones.xml;
+// the IANA zone each stands for in the comment), as Go's time.Local
+// names its zones on Windows.
+static const struct {
+	const char *key, *std, *dst;
+} tz_win_abbrs[] = {
+	{"Egypt Standard Time", "EET", "EEST"}, // Africa/Cairo
+	{"Morocco Standard Time", "+00", "+01"}, // Africa/Casablanca
+	{"South Africa Standard Time", "SAST", "SAST"}, // Africa/Johannesburg
+	{"South Sudan Standard Time", "CAT", "CAT"}, // Africa/Juba
+	{"Sudan Standard Time", "CAT", "CAT"}, // Africa/Khartoum
+	{"W. Central Africa Standard Time", "WAT", "WAT"}, // Africa/Lagos
+	{"E. Africa Standard Time", "EAT", "EAT"}, // Africa/Nairobi
+	{"Sao Tome Standard Time", "GMT", "GMT"}, // Africa/Sao_Tome
+	{"Libya Standard Time", "EET", "EET"}, // Africa/Tripoli
+	{"Namibia Standard Time", "CAT", "CAT"}, // Africa/Windhoek
+	{"Aleutian Standard Time", "HST", "HDT"}, // America/Adak
+	{"Alaskan Standard Time", "AKST", "AKDT"}, // America/Anchorage
+	{"Tocantins Standard Time", "-03", "-03"}, // America/Araguaina
+	{"Paraguay Standard Time", "-04", "-03"}, // America/Asuncion
+	{"Bahia Standard Time", "-03", "-03"}, // America/Bahia
+	{"SA Pacific Standard Time", "-05", "-05"}, // America/Bogota
+	{"Argentina Standard Time", "-03", "-03"}, // America/Buenos_Aires
+	{"Eastern Standard Time (Mexico)", "EST", "EST"}, // America/Cancun
+	{"Venezuela Standard Time", "-04", "-04"}, // America/Caracas
+	{"SA Eastern Standard Time", "-03", "-03"}, // America/Cayenne
+	{"Central Standard Time", "CST", "CDT"}, // America/Chicago
+	{"Central Brazilian Standard Time", "-04", "-04"}, // America/Cuiaba
+	{"Mountain Standard Time", "MST", "MDT"}, // America/Denver
+	{"Greenland Standard Time", "-02", "-01"}, // America/Godthab
+	{"Turks And Caicos Standard Time", "EST", "EDT"}, // America/Grand_Turk
+	{"Central America Standard Time", "CST", "CST"}, // America/Guatemala
+	{"Atlantic Standard Time", "AST", "ADT"}, // America/Halifax
+	{"Cuba Standard Time", "CST", "CDT"}, // America/Havana
+	{"US Eastern Standard Time", "EST", "EDT"}, // America/Indianapolis
+	{"SA Western Standard Time", "-04", "-04"}, // America/La_Paz
+	{"Pacific Standard Time", "PST", "PDT"}, // America/Los_Angeles
+	{"Mountain Standard Time (Mexico)", "MST", "MST"}, // America/Mazatlan
+	{"Central Standard Time (Mexico)", "CST", "CST"}, // America/Mexico_City
+	{"Saint Pierre Standard Time", "-03", "-02"}, // America/Miquelon
+	{"Montevideo Standard Time", "-03", "-03"}, // America/Montevideo
+	{"Eastern Standard Time", "EST", "EDT"}, // America/New_York
+	{"US Mountain Standard Time", "MST", "MST"}, // America/Phoenix
+	{"Haiti Standard Time", "EST", "EDT"}, // America/Port-au-Prince
+	{"Magallanes Standard Time", "-03", "-03"}, // America/Punta_Arenas
+	{"Canada Central Standard Time", "CST", "CST"}, // America/Regina
+	{"Pacific SA Standard Time", "-04", "-03"}, // America/Santiago
+	{"E. South America Standard Time", "-03", "-03"}, // America/Sao_Paulo
+	{"Newfoundland Standard Time", "NST", "NDT"}, // America/St_Johns
+	{"Pacific Standard Time (Mexico)", "PST", "PDT"}, // America/Tijuana
+	{"Yukon Standard Time", "MST", "MST"}, // America/Whitehorse
+	{"Jordan Standard Time", "+03", "+03"}, // Asia/Amman
+	{"Arabic Standard Time", "+03", "+03"}, // Asia/Baghdad
+	{"Azerbaijan Standard Time", "+04", "+04"}, // Asia/Baku
+	{"SE Asia Standard Time", "+07", "+07"}, // Asia/Bangkok
+	{"Altai Standard Time", "+07", "+07"}, // Asia/Barnaul
+	{"Middle East Standard Time", "EET", "EEST"}, // Asia/Beirut
+	{"Central Asia Standard Time", "+06", "+06"}, // Asia/Bishkek
+	{"India Standard Time", "IST", "IST"}, // Asia/Calcutta
+	{"Transbaikal Standard Time", "+09", "+09"}, // Asia/Chita
+	{"Sri Lanka Standard Time", "+0530", "+0530"}, // Asia/Colombo
+	{"Syria Standard Time", "+03", "+03"}, // Asia/Damascus
+	{"Bangladesh Standard Time", "+06", "+06"}, // Asia/Dhaka
+	{"Arabian Standard Time", "+04", "+04"}, // Asia/Dubai
+	{"West Bank Standard Time", "EET", "EEST"}, // Asia/Hebron
+	{"W. Mongolia Standard Time", "+07", "+07"}, // Asia/Hovd
+	{"North Asia East Standard Time", "+08", "+08"}, // Asia/Irkutsk
+	{"Israel Standard Time", "IST", "IDT"}, // Asia/Jerusalem
+	{"Afghanistan Standard Time", "+0430", "+0430"}, // Asia/Kabul
+	{"Russia Time Zone 11", "+12", "+12"}, // Asia/Kamchatka
+	{"Pakistan Standard Time", "PKT", "PKT"}, // Asia/Karachi
+	{"Nepal Standard Time", "+0545", "+0545"}, // Asia/Katmandu
+	{"North Asia Standard Time", "+07", "+07"}, // Asia/Krasnoyarsk
+	{"Magadan Standard Time", "+11", "+11"}, // Asia/Magadan
+	{"N. Central Asia Standard Time", "+07", "+07"}, // Asia/Novosibirsk
+	{"Omsk Standard Time", "+06", "+06"}, // Asia/Omsk
+	{"North Korea Standard Time", "KST", "KST"}, // Asia/Pyongyang
+	{"Qyzylorda Standard Time", "+05", "+05"}, // Asia/Qyzylorda
+	{"Myanmar Standard Time", "+0630", "+0630"}, // Asia/Rangoon
+	{"Arab Standard Time", "+03", "+03"}, // Asia/Riyadh
+	{"Sakhalin Standard Time", "+11", "+11"}, // Asia/Sakhalin
+	{"Korea Standard Time", "KST", "KST"}, // Asia/Seoul
+	{"China Standard Time", "CST", "CST"}, // Asia/Shanghai
+	{"Singapore Standard Time", "+08", "+08"}, // Asia/Singapore
+	{"Russia Time Zone 10", "+11", "+11"}, // Asia/Srednekolymsk
+	{"Taipei Standard Time", "CST", "CST"}, // Asia/Taipei
+	{"West Asia Standard Time", "+05", "+05"}, // Asia/Tashkent
+	{"Georgian Standard Time", "+04", "+04"}, // Asia/Tbilisi
+	{"Iran Standard Time", "+0330", "+0330"}, // Asia/Tehran
+	{"Tokyo Standard Time", "JST", "JST"}, // Asia/Tokyo
+	{"Tomsk Standard Time", "+07", "+07"}, // Asia/Tomsk
+	{"Ulaanbaatar Standard Time", "+08", "+08"}, // Asia/Ulaanbaatar
+	{"Vladivostok Standard Time", "+10", "+10"}, // Asia/Vladivostok
+	{"Yakutsk Standard Time", "+09", "+09"}, // Asia/Yakutsk
+	{"Ekaterinburg Standard Time", "+05", "+05"}, // Asia/Yekaterinburg
+	{"Caucasus Standard Time", "+04", "+04"}, // Asia/Yerevan
+	{"Azores Standard Time", "-01", "+00"}, // Atlantic/Azores
+	{"Cape Verde Standard Time", "-01", "-01"}, // Atlantic/Cape_Verde
+	{"Greenwich Standard Time", "GMT", "GMT"}, // Atlantic/Reykjavik
+	{"Cen. Australia Standard Time", "ACST", "ACDT"}, // Australia/Adelaide
+	{"E. Australia Standard Time", "AEST", "AEST"}, // Australia/Brisbane
+	{"AUS Central Standard Time", "ACST", "ACST"}, // Australia/Darwin
+	{"Aus Central W. Standard Time", "+0845", "+0845"}, // Australia/Eucla
+	{"Tasmania Standard Time", "AEST", "AEDT"}, // Australia/Hobart
+	{"Lord Howe Standard Time", "+1030", "+11"}, // Australia/Lord_Howe
+	{"W. Australia Standard Time", "AWST", "AWST"}, // Australia/Perth
+	{"AUS Eastern Standard Time", "AEST", "AEDT"}, // Australia/Sydney
+	{"UTC-11", "-11", "-11"}, // Etc/GMT+11
+	{"Dateline Standard Time", "-12", "-12"}, // Etc/GMT+12
+	{"UTC-02", "-02", "-02"}, // Etc/GMT+2
+	{"UTC-08", "-08", "-08"}, // Etc/GMT+8
+	{"UTC-09", "-09", "-09"}, // Etc/GMT+9
+	{"UTC+12", "+12", "+12"}, // Etc/GMT-12
+	{"UTC+13", "+13", "+13"}, // Etc/GMT-13
+	{"UTC", "UTC", "UTC"}, // Etc/UTC
+	{"Astrakhan Standard Time", "+04", "+04"}, // Europe/Astrakhan
+	{"W. Europe Standard Time", "CET", "CEST"}, // Europe/Berlin
+	{"GTB Standard Time", "EET", "EEST"}, // Europe/Bucharest
+	{"Central Europe Standard Time", "CET", "CEST"}, // Europe/Budapest
+	{"E. Europe Standard Time", "EET", "EEST"}, // Europe/Chisinau
+	{"Turkey Standard Time", "+03", "+03"}, // Europe/Istanbul
+	{"Kaliningrad Standard Time", "EET", "EET"}, // Europe/Kaliningrad
+	{"FLE Standard Time", "EET", "EEST"}, // Europe/Kiev
+	{"GMT Standard Time", "GMT", "BST"}, // Europe/London
+	{"Belarus Standard Time", "+03", "+03"}, // Europe/Minsk
+	{"Russian Standard Time", "MSK", "MSK"}, // Europe/Moscow
+	{"Romance Standard Time", "CET", "CEST"}, // Europe/Paris
+	{"Russia Time Zone 3", "+04", "+04"}, // Europe/Samara
+	{"Saratov Standard Time", "+04", "+04"}, // Europe/Saratov
+	{"Volgograd Standard Time", "MSK", "MSK"}, // Europe/Volgograd
+	{"Central European Standard Time", "CET", "CEST"}, // Europe/Warsaw
+	{"Mauritius Standard Time", "+04", "+04"}, // Indian/Mauritius
+	{"Samoa Standard Time", "+13", "+13"}, // Pacific/Apia
+	{"New Zealand Standard Time", "NZST", "NZDT"}, // Pacific/Auckland
+	{"Bougainville Standard Time", "+11", "+11"}, // Pacific/Bougainville
+	{"Chatham Islands Standard Time", "+1245", "+1345"}, // Pacific/Chatham
+	{"Easter Island Standard Time", "-06", "-05"}, // Pacific/Easter
+	{"Fiji Standard Time", "+12", "+12"}, // Pacific/Fiji
+	{"Central Pacific Standard Time", "+11", "+11"}, // Pacific/Guadalcanal
+	{"Hawaiian Standard Time", "HST", "HST"}, // Pacific/Honolulu
+	{"Line Islands Standard Time", "+14", "+14"}, // Pacific/Kiritimati
+	{"Marquesas Standard Time", "-0930", "-0930"}, // Pacific/Marquesas
+	{"Norfolk Standard Time", "+11", "+12"}, // Pacific/Norfolk
+	{"West Pacific Standard Time", "+10", "+10"}, // Pacific/Port_Moresby
+	{"Tonga Standard Time", "+13", "+13"}, // Pacific/Tongatapu
+	{NULL, NULL, NULL},
+};
+
+// tz_win_caps writes the capitals of a Windows zone name ("Pacific
+// Standard Time": "PST"), the abbreviation Go's time.Local makes of it
+// when its table has none, into b (size n).
+static void tz_win_caps(const WCHAR *w, char *b, size_t n) {
+	size_t k = 0;
+	for (; *w && k + 1 < n; w++) {
+		if (*w >= L'A' && *w <= L'Z') {
+			b[k++] = (char)*w;
+		}
+	}
+	b[k] = 0;
+	if (k == 0) {
+		snprintf(b, n, "LT");
+	}
+}
+
+// tz_win_offset appends a POSIX TZ offset of bias minutes (west positive,
+// as Windows' Bias) to b.
+static void tz_win_offset(char *b, size_t n, LONG bias) {
+	size_t k = strlen(b);
+	long a = bias < 0 ? -bias : bias;
+	snprintf(b + k, n - k, "%s%ld:%02ld", bias < 0 ? "-" : "", a / 60, a % 60);
+}
+
+// tz_win_date appends a POSIX TZ rule date (Mm.w.d/h:mm:ss) of a
+// SYSTEMTIME in Windows' recurring form (wYear 0: wDay is the week, 5 the
+// last) to b.
+static void tz_win_date(char *b, size_t n, const SYSTEMTIME *t) {
+	size_t k = strlen(b);
+	snprintf(b + k, n - k, ",M%d.%d.%d/%d:%02d:%02d", t->wMonth, t->wDay, t->wDayOfWeek, t->wHour, t->wMinute, t->wSecond);
+}
+
+// tz_windows is "Local" on Windows (decision 0197, stage 5): the system's
+// time zone setting (GetDynamicTimeZoneInformation, the registry's
+// TimeZoneInformation), as Go's time.Local builds it there: the standard
+// offset and abbreviation, and the daylight saving rule when there is
+// one, as a POSIX TZ rule the lookups extend to every year.
+static tz_loc *tz_windows(void) {
+	DYNAMIC_TIME_ZONE_INFORMATION z;
+	if (GetDynamicTimeZoneInformation(&z) == TIME_ZONE_ID_INVALID) {
+		return NULL;
+	}
+	char sa[32], da[32], rule[160], key[128], sn[128];
+	tz_win_caps(z.StandardName, sa, sizeof sa);
+	tz_win_caps(z.DaylightName, da, sizeof da);
+	// Go's abbreviations by the zone's key name, then its standard name
+	int kn = xo_w_utf8(z.TimeZoneKeyName, -1, key, sizeof key);
+	int snn = xo_w_utf8(z.StandardName, -1, sn, sizeof sn);
+	for (int i = 0; tz_win_abbrs[i].key; i++) {
+		if ((kn > 0 && strcmp(tz_win_abbrs[i].key, key) == 0) || (snn > 0 && strcmp(tz_win_abbrs[i].key, sn) == 0)) {
+			snprintf(sa, sizeof sa, "%s", tz_win_abbrs[i].std);
+			snprintf(da, sizeof da, "%s", tz_win_abbrs[i].dst);
+			break;
+		}
+	}
+	snprintf(rule, sizeof rule, "<%s>", sa);
+	tz_win_offset(rule, sizeof rule, z.Bias + z.StandardBias);
+	if (z.DaylightDate.wMonth != 0 && z.StandardDate.wMonth != 0 && z.DaylightDate.wYear == 0 && z.StandardDate.wYear == 0) {
+		size_t k = strlen(rule);
+		snprintf(rule + k, sizeof rule - k, "<%s>", da);
+		tz_win_offset(rule, sizeof rule, z.Bias + z.DaylightBias);
+		tz_win_date(rule, sizeof rule, &z.DaylightDate);
+		tz_win_date(rule, sizeof rule, &z.StandardDate);
+	}
+	tz_loc *l = tz_malloc(sizeof *l);
+	l->name = tz_strndup("Local", 5);
+	l->nzone = 1;
+	l->zone = tz_malloc(sizeof(tz_zone));
+	l->zone[0].off = -(int64_t)(z.Bias + z.StandardBias) * 60;
+	l->zone[0].abbr = tz_strndup(sa, (int64_t)strlen(sa));
+	l->ntx = 1;
+	l->tx = tz_malloc(sizeof(tz_tx));
+	l->tx[0].when = TZ_ALPHA;
+	l->tx[0].idx = 0;
+	l->extend = tz_strndup(rule, (int64_t)strlen(rule));
+	return l;
+}
+#endif
+
 // tz_host loads a zone from the host's database as time.LoadLocation
 // does: $ZONEINFO (a directory or a zip), then the system directories.
-// "Local" is /etc/localtime.
+// "Local" is /etc/localtime (on Windows the system's setting).
 static tz_loc *tz_host(const char *name) {
+#ifdef _WIN32
+	if (strcmp(name, "Local") == 0) {
+		return tz_windows();
+	}
+#endif
 	if (strcmp(name, "Local") == 0) {
 		int64_t n;
 		unsigned char *data = tz_read_file("/etc/localtime", &n);

@@ -5,13 +5,19 @@
 # 0197). Owner-approved 2026-10-12: Windows x86 on demand, about $1.40 an
 # hour for 16 vCPUs, terminated after each run.
 #
-# Usage: scripts/remote-windows.sh [--dry-run] [--hold] [--cmd CMD] [COMMIT]
+# Usage: scripts/remote-windows.sh [--dry-run] [--hold] [--batch] [--cmd CMD] [COMMIT]
 #   COMMIT defaults to HEAD; it is sent as a git bundle and checked out at
 #   ~/xo (C:\Users\Administrator\xo). Commands run in Git Bash (the
 #   instance's OpenSSH default shell) with go, clang, and git on PATH.
 #   --cmd CMD  runs CMD in the checkout; output goes to $XO_REMOTE_OUT
 #              (default bench/results/remote/windows-<commit>.log, not
 #              committed by this script).
+#   --batch    runs scripts/windows-batch.sh (xo1 built by the Go seed;
+#              the LLVM goldens built by xo1 for windows/amd64, run, and
+#              for windows/arm64; the LLVM runtime tests; xo test LLVM
+#              against Go), the Windows checks of a batch of merges; the
+#              log's "batch:" lines are the summary (about 25 minutes
+#              with setup, 2026-10-12)
 #   --hold     after setup writes the address to $XO_REMOTE_HOLD (default
 #              bench/results/remote/windows-hold.addr) and waits until the
 #              lifetime ends or this script is stopped (which terminates
@@ -41,6 +47,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY="--dry-run"; shift;;
     --cmd) CMD="$2"; shift 2;;
     --hold) HOLD=1; shift;;
+    --batch) CMD="bash scripts/windows-batch.sh"; shift;;
     *) break;;
   esac
 done

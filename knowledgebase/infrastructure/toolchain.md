@@ -1502,7 +1502,8 @@ first, AST based prototype, since deleted) and
   darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
   runtime's Win32 layer is std/llrt/xo_win.c; clang's default
   x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
-  ported yet, processes as of stage 1; see "Windows runs"). The one
+  ported yet, none since stage 2 (processes, 2026-10-12); see "Windows
+  runs"). The one
   cross build: a Windows host builds the other Windows architecture
   (`--targets=windows/arm64`, `build.LLVMCrossTriple`).
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
@@ -2918,9 +2919,29 @@ writes `Administrator@<ip>` to `$XO_REMOTE_HOLD` and waits; `--cmd`
 runs one command (Git Bash, in the checkout) and writes the log to
 bench/results/remote/windows-<commit>.log (git ignored).
 
-On the instance: `go build -o ../xo.exe ./cmd/xo`, then
-`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` (xo1 is not used
-on Windows); the golden count is
+On the instance, xo1 (the shipped xo) first: the Go seed builds it with
+the Go backend, `go build -o xo.exe ./cmd/xo && XO_SELF_DRIVER=0
+./xo.exe build -o ../xo1.exe ./selfhost/xo` (48 s), and it runs with
+`XO_STD=C:/Users/Administrator/xo/std` (no release layout there) and
+the `PWD` Git Bash passes (`C:/...`); `../xo1.exe build --backend=llvm
+DIR` builds a Windows program, `--targets=windows/arm64` cross builds.
+The golden count with xo1 building every program is
+`XO_STD=... XO_GOLDEN_WANT=1 XO_GOLDEN_WANT_XO=C:/Users/Administrator/xo1.exe
+go test -count=1 -run TestGoldenWant -v ./internal/llvm` (last
+verified: 2026-10-12, i-EXAMPLE22); without
+`XO_GOLDEN_WANT_XO` the Go driver builds in process
+(`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` by hand). The
+batch of Windows checks (decision 0197 stage 6) is
+`scripts/remote-windows.sh --batch [COMMIT]` (a fresh instance, the
+log's `batch:` lines summarize) or `bash scripts/windows-batch.sh` in a
+held instance's checkout (4 min 13 s warm): xo1 built by the Go seed,
+xo1's goldens for windows/amd64 (run) and windows/arm64 (built), the
+LLVM runtime tests (threads, tasks, event loop, Ctrl-Break shutdown,
+TLS and HTTP/2 diffs), and `xo1 test` LLVM against Go for the 16
+directories of TestNoGCTests; `XO_BATCH_STEPS="2 4"` runs some steps.
+Last verified: 2026-10-12 (i-EXAMPLE22). Runtime knobs there:
+`XO_WINPOLL=wsapoll` (the WSAPoll poller instead of AFD polls). The
+plain golden count is
 `XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
 (the summary line counts pass, fail, unsupported; with
 `XO_GOLDEN_WANT_TARGET=windows/arm64` it cross builds instead and counts

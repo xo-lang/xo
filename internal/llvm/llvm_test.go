@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -166,6 +167,25 @@ func progStdin(dir string) io.Reader {
 		return nil
 	}
 	return bytes.NewReader(data)
+}
+
+// wantFile is a golden program's expected run: want_<goos>.txt when its
+// output depends on the target (TestGoldenWant), else want.txt.
+func wantFile(dir string) string {
+	p := filepath.Join(dir, "want_"+runtime.GOOS+".txt")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return filepath.Join(dir, "want.txt")
+}
+
+// exe is the path of a binary the tests compile themselves: with .exe on
+// Windows, where exec finds a program by its extension (decision 0197).
+func exe(p string) string {
+	if runtime.GOOS == "windows" {
+		return p + ".exe"
+	}
+	return p
 }
 
 var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)

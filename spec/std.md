@@ -404,6 +404,16 @@ the working directory. In a sub capability, paths are relative to its root,
 `"."` and `"/"` both mean the root, and a path that escapes it (`..`) fails
 with `Denied`.
 
+On Windows (decision 0197, stage 4) `os.fs`, `sub`, and the other
+operations also take the forms the OS writes, so a path read from a
+variable or an argument works as it is: `\` separates as `/` does; a
+drive path (`C:/data`, `C:\data`) and a UNC path (`//server/share/x`,
+`\\server\share\x`) are absolute; a path rooted at `/` without a drive
+is on the working directory's drive. Every path std gives back uses `/`
+only: `FileInfo.path`, `create_temp`, `read_link`, `glob`, and
+`Env.program`, `home`, `config_dir`, and `cache_dir` (3.5). On other OSes
+`\` is an ordinary character of a name, as before.
+
 ```
 enum FsErr {
   NotFound(path: Str)
@@ -647,9 +657,14 @@ fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
 fn (e: Env) cache_dir() -> Str ! EnvErr
 ```
 
+`program()` is the name the program was started with (argv[0]), and
+`home()` the home directory (`HOME`; on Windows `USERPROFILE`, read when
+the `Env` admits `HOME`); on Windows both use `/` separators (3.1).
+
 `config_dir()` and `cache_dir()` (decision 0163) are read through the
 `Env`, so attenuation and fakes apply: `XDG_CONFIG_HOME` (or
-`XDG_CACHE_HOME`) when it holds an absolute path, on every OS; else
+`XDG_CACHE_HOME`) when it holds an absolute path (`/x`, or `C:/x`), on
+every OS; else
 `<home>/.config` (`<home>/.cache`) on Linux and other Unix systems,
 `<home>/Library/Application Support` (`<home>/Library/Caches`) on macOS,
 `%AppData%` (`%LocalAppData%`) on Windows, with `/` separators. A
@@ -737,7 +752,9 @@ failure is `Io` with the system's text (`no such process`, `operation
 not permitted`). An attenuated `Proc` sends signals only when every list
 names `"kill"` (`os.proc.only(["kill"])`), else `Denied("kill")`. Record
 and replay record it (`proc.kill`). Where the system has no signals
-(Windows), only `KILL` is sent. Used by `xo dump` (core 11.4) to ask a
+(Windows), only `KILL` is sent: it ends the process with the status
+137 (128 plus SIGKILL's number, as on Unix), and another name is
+`Io("signal NAME is not supported on this system")`. Used by `xo dump` (core 11.4) to ask a
 running program for its task tree.
 
 `p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
@@ -746,8 +763,14 @@ running program for its task tree.
 unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
 Native builds have it too (decision 0172).
 
-The native backends run commands with `posix_spawn`, reading the output
-on the event loop; cancelling the task kills the command (decision 0107).
+The native backends run commands with `posix_spawn` (on Windows
+`CreateProcessW`, decision 0197), reading the output on the event loop;
+cancelling the task kills the command (decision 0107). On Windows a
+command name without `\`, `/`, or `:` is looked up in `PATH` (`;`
+separated) with the extensions of `PATHEXT`, as Go's exec.LookPath; the
+arguments are quoted for the command line as Go's syscall.EscapeArg
+does, and also when they hold a line end or another space character
+(the MSYS2 and Cygwin runtimes split there).
 
 Returning `Err` from `main` prints the error with its frames to standard error
 and exits with status 1. Prefer that over `exit` for failures.
@@ -817,7 +840,8 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
   and `read_err` for `spawn`. `merge_stderr` sends the error stream
   into the output stream (`output`'s `stderr` is then empty).
 - Exit status: the child's exit code; a child ended by a signal is 128
-  plus the signal number.
+  plus the signal number. On Windows `Child.kill` (and cancellation)
+  ends the child with the status 137, as SIGKILL does on Unix.
 - `read` returns at most `max` bytes (at most 1 MiB) as they arrive and
   `None` at the end of the stream; `read_line` strips `\n` and `\r\n`.
   Reads and `wait` are cancellation points; cancelling the task that
