@@ -206,3 +206,138 @@ Threads, signals, and the clock are in xo_nolibc.c (clone with a TLS
 block per thread, rt_sigaction with its own restorer, the vDSO) but in
 C; the Xo runtime's own threads (clone3 from Xo), signal handlers in
 Xo, sockets, and the DNS resolver are the ADR's stages 2 and 3.
+
+## Stage 2: the clock, locks, signals, and threads in Xo (decision 0206)
+
+Branch of the syscalls2 agent. Hosts: EC2 r8g.8xlarge (Graviton4,
+linux/arm64) and c7i.8xlarge (Xeon, linux/amd64), on demand, through the
+lead's queue (instances i-EXAMPLE26, i-EXAMPLE41,
+i-EXAMPLE30 arm64; i-EXAMPLE23 amd64, among others; each
+terminated by the runner). The baseline is main 40b08de1 (stage 1 with
+decision 0207 stage 2); xo1 is selfhost/xo built by the Go backend, as in
+stage 1.
+
+### What moved
+
+- New intrinsics (std/native/rt.xo; selfhost/arm64, selfhost/llvm,
+  internal/arm64, internal/llvm; the wasm emitter faults or, for
+  `sys_clock_buf`, answers 0): `rt.call_c2(f, a, b)` (a C ABI call of an
+  address: `blr`, an LLVM indirect call), `rt.sys_words()` (16 words of
+  process state the emitters write: `.quad`s in the data section on
+  arm64, a weak `@.xo.sys_words` on LLVM), `rt.sys_clone(flags, sp, tid,
+  tls)` (clone through a trampoline each selfhost emitter writes at its
+  first use: the child takes a C function and its argument from its new
+  stack, calls it, and exits the thread; not mirrored in the Go
+  emitters, which never build it), and the C accessors `rt.auxval`
+  (getauxval) and `rt.sys_clock_buf` (the thread's timespec scratch, 0
+  under the virtual clock and off Linux).
+- The vDSO from Xo (std/native/llrt/linux.xo `vdso_clock`,
+  `elf_dynsym`): AT_SYSINFO_EHDR, the PT_LOAD bias, PT_DYNAMIC's symbol,
+  string, and hash tables, `__kernel_clock_gettime` /
+  `__vdso_clock_gettime`, the address kept in word 0 of `rt.sys_words`.
+  Clock.now on Linux (sysio.clock_now) calls it inline; `XO_LLRT_C=sysio`
+  keeps the C runtime's clock.
+- std/native/llrt/cabi_nolibc.xo, C ABI exports built only into
+  XO_NOLIBC=1 builds (`build_program_libc`): clock_gettime, the futex
+  mutex (lock, unlock, trylock, also malloc's lock), pthread_once (a 32
+  bit word, its 0 to 1 step under a process lock in `rt.sys_words`),
+  sigaction, signal, sigprocmask (the kernel's structure with the
+  emitters' `rt.sys_restorer`), the TLS block's size and layout (from
+  AT_PHDR's PT_TLS, the main thread's too), thread_create (one mapping:
+  guard page, stack, record, TLS block; clone through `rt.sys_clone`)
+  and thread_join (futex wait on the cleared tid). xo_nolibc.c keeps
+  one line forwards for these C library names.
+- **std/llrt/xo_nolibc.c: 1,859 lines before, 1,622 after** (the vDSO
+  lookup, TLS layout, mutex, once, sigaction, restorer, clone and thread
+  code gone; the job logs print `xo_nolibc.c lines: base 1859 new
+  1622`).
+- Found and fixed on the way: XO_NOLIBC=1 arm64-backend links failed for
+  every program on main (libgcc's outline atomics, called by the arm64
+  emitter's read modify writes since decision 0207 stage 2's rc.xo);
+  the driver now writes them (gotchas/nolibc-arm64-outline-atomics.md).
+
+### The clock against the C path (decision 0180)
+
+bench/perf/sysio, user instructions (min of 5), 500,000 Clock.now; `c`
+is `XO_LLRT_C=sysio` (the C runtime's clock_gettime through glibc).
+
+| Host | Backend | commit | xo | c | xo/c | ms xo/c |
+|---|---|---|---|---|---|---|
+| linux/arm64 | llvm | a8d91e73 | 34,483,478 | 40,986,411 | 0.841 | 16/16 |
+| linux/arm64 | arm64 | a8d91e73 | 47,591,459 | 46,093,375 | 1.033 | 17/16 |
+| linux/amd64 | llvm | a8d91e73 | 43,058,948 | 45,561,288 | 0.945 | 12/12 |
+
+The arm64 emitter neither folds `target` nor inlines across modules; the
+path went from 80,091,066 (f265985c: four calls, a Bytes drop, checked
+arithmetic) to 49,091,460 (a5cb8785) to the row above (a8d91e73: one C
+call, the vDSO call inline). 830e9255 drops the remaining `target.arch`
+test (the wasm emitter lowers `rt.sys_clock_buf` to 0); see "arm64 at
+830e9255" below.
+
+### Static (XO_NOLIBC=1) against stage 1's static
+
+| Workload | Backend | base nolibc | stage 2 nolibc | ratio |
+|---|---|---|---|---|
+| clock | llvm amd64 | 41,384,262 | 42,885,093 | 1.036 |
+| chan | llvm amd64 | 144,382,836 | 144,930,146 | 1.004 |
+| stat | llvm amd64 | 613,916,486 | 613,967,317 | 1.000 |
+| read | llvm amd64 | 115,074,143 | 115,094,974 | 1.000 |
+
+(xb3, amd64, a8d91e73; the base's arm64 static builds do not link, so
+there is no arm64 base.) `chan` is new: 200,000 values from one task to
+another over an unbuffered channel (the runtime's threads, locks, and
+futex waits). The static clock now runs Xo's path (one C call, the
+vDSO) where stage 1's shim called the vDSO from C. Process start (`none`)
+is 384,978 user instructions static against 384,148 (amd64).
+
+### Golden matrix (internal/llvm/testdata/golden, 153 programs, xo1)
+
+Built and run as buildRun does, compared with want.txt (scratch
+gmatrix.py, one XO_BUILD_DIR per program):
+
+| Host | Backend | dynamic | static (new) | static (base 40b08de1) |
+|---|---|---|---|---|
+| linux/arm64 (a8d91e73) | arm64 | 153 pass | 129 pass, 12 fail, 12 refused or unlinked | 0 (153 fail to link) |
+| linux/arm64 (a8d91e73) | llvm | 153 pass | 130 pass, 12 fail, 11 | 130 pass, the same 12 fail |
+| linux/amd64 (a5cb8785) | llvm | 153 pass | 121 pass, 12 fail, 20 | 121 pass, the same 12 fail |
+
+The 12 static failures are the same programs on every backend and in
+the base: faults that must run deferred code or be caught
+(fault_unwind, fault_tasks, fault_defer_chain, fault_exit,
+fault_task_exit, fault_audit, byref_held, iface_eq, native_gaps,
+nested_update, realtime_section, task_native): no unwinder without
+libgcc (stage 2's remaining item). The rest do not build static: std/http
+TLS refused (7), sockets, termios, posix_spawn and fmod not in the shim
+(stage 3).
+
+Threads, mutexes, once, and signals of the static runtime are Xo now and
+every program that passed before passes (conc_*, task_*, the signal
+goldens, unix_kill excepted: sockets).
+
+### Go tests on Linux, and TestNoGCTests
+
+- internal/llvm TestGolden and TestGoldenThreads (TSan, four threads,
+  the vDSO clock through the Go emitters' `rt.call_c2`) and
+  internal/arm64 TestGoldenRun: ok on linux/arm64 (a8d91e73) and
+  linux/amd64 (a5cb8785, internal/arm64 skips there).
+- cmd/xo TestNoGCTests (xo1 via XO1): dynamic ok on both hosts. With
+  XO_NOLIBC=1: linux/arm64 8 of 18 subtests pass (base: 0, link
+  failures), among them test_signal_after, test_run_main_void, real,
+  prop, test_cli; linux/amd64 7 of 18, the same 11 failing as the base.
+  The failures: std/http's TLS refused (test_net_only, test_fakes,
+  test_shutdown, same, notes-service), `poll`, `tcsetattr`,
+  posix_spawn and sockets not in the shim (test_stdin_stop, test_term,
+  test_proc_cmd, test_unix_kill), and a fault in a test (test_once: no
+  unwinding).
+- On the Mac: -short of the repository, TestSelfhostWasm (133 pass, 20
+  unsupported, 0 fail of 153), hello world with the Go driver and xo1 on
+  both native backends (darwin/arm64).
+
+### Left
+
+Unwinding without libgcc (the 12 failures above), floating point text
+without the C library, the remaining xo_nolibc.c system call wrappers
+through linux.xo, `rt.sys_clock_buf` and `rt.sys_buf` as thread local
+storage the emitters address (no C), and the arm64 emitter's constant
+folding of `target`, mem_load offsets, and cross module inlining (the
+clock's last 3 percent there). Stage 3 as planned.

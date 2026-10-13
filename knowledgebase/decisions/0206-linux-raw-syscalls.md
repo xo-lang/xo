@@ -9,7 +9,10 @@ in both checkers now), std/llrt/xo_sys.c (the layer's buffers),
 std/llrt/xo_nolibc.c and selfhost/xo link.xo and main.xo (`XO_NOLIBC=1`).
 Tests: golden `sys_files_clock`. Evidence:
 `bench/results/linux-syscalls-2026-10-13.md` (`bench/perf/sysio`).
-Stages 2 and 3 below are not started.
+Stage 2 partly implemented (2026-10-13, "Stage 2 as built" below): the
+vDSO clock, futex locks and once, signals, thread creation, and the TLS
+layout in Xo; unwinding and floating point text remain. Stage 3 is not
+started.
 
 ## Context
 
@@ -152,6 +155,54 @@ mutexes, stdio for faults, malloc, getenv).
   bench/perf/sysio's nolibc variant (stat and amd64 reads miss it in
   stage 1: 1.08x to 1.26x user instructions, the shim's memcpy and
   friends against glibc's).
+
+### Stage 2 as built (2026-10-13)
+
+Evidence: `bench/results/linux-syscalls-2026-10-13.md`, "Stage 2".
+
+- **Intrinsics** (internal): `rt.call_c2(f, a, b)` calls the C function
+  at address f (`blr`; an LLVM indirect call); `rt.sys_words()` is the
+  address of 16 zeroed words of process state each native emitter
+  writes at its first use (a local data object on arm64, a weak
+  `@.xo.sys_words` on LLVM, one per split build); `rt.sys_clone(flags,
+  sp, tid, tls)` makes clone(2) through a trampoline the selfhost
+  emitters write (the child loads a C function and its argument from
+  its stack, calls it, exits the thread; the Go emitters do not have it:
+  only XO_NOLIBC builds, which the Go driver does not make, reach it).
+  C accessors until the emitters address thread local storage:
+  `rt.auxval` (getauxval) and `rt.sys_clock_buf` (the thread's timespec
+  scratch, 0 under the test world's virtual clock and off Linux; the
+  wasm emitter lowers it to 0). `rt.clock_virtual` is gone.
+- **The vDSO**: linux.xo finds `__kernel_clock_gettime` /
+  `__vdso_clock_gettime` in the vDSO's dynamic symbols and keeps its
+  address in word 0 of `rt.sys_words`; Clock.now on Linux calls it from
+  Xo (sysio.clock_now, one C call on the path). Against the C path:
+  0.841 of the user instructions on LLVM arm64, 0.945 on LLVM x86_64,
+  1.033 on the arm64 backend (above decision 0180's 1.009: the emitter
+  does not fold `target` or inline across modules; 830e9255 removed the
+  last target test). `XO_LLRT_C=sysio` keeps the C clock. The Go
+  backend's assembly mode keeps the C clock (no `target` there).
+- **The static runtime's clock, locks, signals, threads**:
+  std/native/llrt/cabi_nolibc.xo, exports (decisions 0204, 0207) that
+  the SSA builders build only for an XO_NOLIBC build
+  (`ssa.build_program_libc`; the Go builder skips the module):
+  clock_gettime, the futex mutex (Drepper's, on the first word of
+  pthread_mutex_t, and malloc's lock), pthread_once (32 bits: its 0 to 1
+  step under a once lock in `rt.sys_words`), sigaction, signal,
+  sigprocmask (the kernel's structure with `rt.sys_restorer`), the TLS
+  block's size and layout from AT_PHDR's PT_TLS (also for the main
+  thread: C sets the thread pointer only), thread_create and
+  thread_join. xo_nolibc.c keeps a one line forward per C library name:
+  1,859 lines to 1,622. The C runtime with glibc (no XO_NOLIBC) is
+  unchanged.
+- **XO_NOLIBC arm64 links** write libgcc's outline atomics themselves
+  (the arm64 emitter calls them; `macho.outline_atomic`).
+- Still C in xo_nolibc.c: entry and the thread pointer, malloc, strings,
+  printf, files, directories, epoll, getrandom, and unwinding stubs
+  (faults in static programs end the program without deferred code: 12
+  goldens). Next: an unwinder over .eh_frame in Xo, the remaining system
+  call wrappers forwarded to linux.xo, and thread local storage from the
+  emitters (replacing `rt.sys_buf` and `rt.sys_clock_buf`).
 
 ## Consequences
 
