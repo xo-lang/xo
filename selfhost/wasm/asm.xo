@@ -946,6 +946,7 @@ fn mem_op(op: Str) -> (Int, Int) {
     "i32.load8_s" => (0x2C, 0)
     "i32.load16_u" => (0x2F, 1)
     "i64.load8_u" => (0x31, 0)
+    "i64.load16_u" => (0x33, 1)
     "i64.load32_u" => (0x35, 2)
     "i32.store" => (0x36, 2)
     "i64.store" => (0x37, 3)
@@ -953,6 +954,7 @@ fn mem_op(op: Str) -> (Int, Int) {
     "i32.store8" => (0x3A, 0)
     "i32.store16" => (0x3B, 1)
     "i64.store8" => (0x3C, 0)
+    "i64.store16" => (0x3D, 1)
     "i64.store32" => (0x3E, 2)
     _ => (-1, 0)
   }

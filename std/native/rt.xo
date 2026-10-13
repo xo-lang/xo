@@ -125,6 +125,41 @@ fn str_hash(s: Str) -> Int
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 
 // ---------------------------------------------------------------------------
+// Raw memory (decision 0207): an address is an Int. Unchecked and
+// internal: only the runtime modules (std/native/llrt) use them, for
+// memory the C runtime hands over and for objects whose layout the
+// table of `layout` gives. Every native emitter lowers them inline
+// (memcpy, memmove, memset, memcmp are platform library calls); none
+// has a C version. The width w of mem_load and mem_store must be a
+// constant 1, 2, 4, or 8 (the SSA builders check it, as int_wrap's op).
+// The atomics of decision 0200 get address forms (atomic_*_at) here when
+// they land.
+
+/// The w bytes at address a + off, little endian, zero extended.
+fn mem_load(a: Int, off: Int, w: Int) -> Int
+/// Stores the w low bytes of v at address a + off.
+fn mem_store(a: Int, off: Int, v: Int, w: Int)
+/// Copies n bytes from src to dst (the ranges do not overlap).
+fn mem_copy(dst: Int, src: Int, n: Int)
+/// Copies n bytes from src to dst (the ranges may overlap).
+fn mem_move(dst: Int, src: Int, n: Int)
+/// Sets the n bytes at dst to the low byte of b.
+fn mem_set(dst: Int, b: Int, n: Int)
+/// Compares n bytes at a and b as unsigned bytes: below zero, zero, or
+/// above zero (memcmp).
+fn mem_cmp(a: Int, b: Int, n: Int) -> Int
+/// A layout constant of the target's runtime objects, k a constant (the
+/// SSA builders fold it from their one table, ssa layout): 0 the data
+/// offset of a string object, 1 the capacity offset of a string object,
+/// 2 the element offset of a list object, 3 its length offset, 4 its
+/// capacity offset, 5 the count's offset in any object, 6 the bytes of
+/// an address, 7 the bytes of a count.
+fn layout(k: Int) -> Int
+/// s with its length set to n, the same object (consumed; unchecked: n
+/// is at most its capacity, and the bytes up to n were written).
+fn rs_set_len(s: Str, n: Int) -> Str
+
+// ---------------------------------------------------------------------------
 // Generic intrinsics (lowered by internal/ssa, build_native.go)
 
 /// A value of any type, which remembers its type (a request value).
@@ -132,6 +167,14 @@ struct Any {}
 fn any_of[T](v: T) -> Any
 /// The value if it has type T.
 fn any_get[T](a: Any) -> T?
+
+/// The address of the object x refers to (decision 0207): a Str's string
+/// object, a List's list object, a handle's record; no count changes.
+fn obj_addr[T](x: T) -> Int
+/// The List or handle of type T whose object is at address a, counted
+/// once more (the reference counting of the result releases it, so the
+/// object's count is unchanged once the value is dead; decision 0207).
+fn obj_at[T](a: Int) -> T
 
 /// a as a B: a std type and its implementation type (http.Response and
 /// the implementation's Response), which lower to one type (decision

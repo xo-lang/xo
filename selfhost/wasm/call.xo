@@ -65,6 +65,25 @@ fn (var g: Gen) call(v: Int) {
       g.e("call $fault_raise")
       g.fault_exit(v)
     }
+    // raw memory (decision 0207); the loads, stores, and copies are rt2.xo's
+    "rt.rs_set_len" => {
+      g.push_part(x.args[0], 0, 1)
+      g.push(x.args[1])
+      g.e("i32.wrap_i64")
+      g.def(v)
+    }
+    "rt.obj_addr" => {
+      g.push_part(x.args[0], 0, 1)
+      g.e("i64.extend_i32_u")
+      g.def(v)
+    }
+    "rt.obj_at" => {
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.def(v)
+      g.push(v)
+      g.e("call ${g.rc_fn("dup", x.ty)}")
+    }
     "rt.rl_empty" => {
       g.e("i32.const ${g.empty_list}")
       g.def(v)

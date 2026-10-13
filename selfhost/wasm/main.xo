@@ -111,7 +111,7 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
     }
   }
   let root = line_root(os, wd, dirs[0])
-  var b = ssa.build_program(c, root, false)
+  var b = ssa.build_program_for(c, root, false, false, false, "", "", true)
   if !b.why.is_empty() {
     return "== unsupported ${b.why}"
   }

@@ -222,6 +222,9 @@ func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder
 			b.mainWrapper(mf, et, mainFo.Decl)
 		}
 	}
+	if !opts.NoFaultUnwind {
+		b.declareExports()
+	}
 	for len(b.queue) > 0 {
 		next := b.queue[0]
 		b.queue = b.queue[1:]

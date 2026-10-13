@@ -539,6 +539,92 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       g.set(v, "load i64, ptr ${p}, align 1")
     }
+    _ => return g.inline_raw(v)
+  }
+  true
+}
+
+/// The pointer of the address operand a (inlineRaw's ptr).
+fn (var g: Gen) raw_ptr(a: Int) -> Str { g.def("inttoptr i64 ${g.op(a)} to ptr") }
+
+/// The pointer of address a plus off (inlineRaw's at).
+fn (var g: Gen) raw_at(a: Int, off: Int) -> Str {
+  let p = g.raw_ptr(a)
+  g.def("getelementptr i8, ptr ${p}, i64 ${g.op(off)}")
+}
+
+/// Lowers the raw memory intrinsics (decision 0207, fromssa.go
+/// inlineRaw): loads and stores of a constant width at an address,
+/// llvm.memcpy, llvm.memmove, llvm.memset, the platform's memcmp, a
+/// string with its length set, and an object's address both ways;
+/// whether v was one.
+fn (var g: Gen) inline_raw(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  match name {
+    "rt.mem_load" => {
+      let w = match g.f.values[x.args[2]].aux {
+        I(n) => n
+        _ => 8
+      }
+      let p = g.raw_at(x.args[0], x.args[1])
+      if w == 8 {
+        g.set(v, "load i64, ptr ${p}, align 1")
+      } else {
+        let it = "i${8 * w}"
+        g.set(v, "zext ${it} ${g.def("load ${it}, ptr ${p}, align 1")} to i64")
+      }
+    }
+    "rt.mem_store" => {
+      let w = match g.f.values[x.args[3]].aux {
+        I(n) => n
+        _ => 8
+      }
+      let p = g.raw_at(x.args[0], x.args[1])
+      let y = g.op(x.args[2])
+      if w == 8 {
+        g.emit("store i64 ${y}, ptr ${p}, align 1")
+      } else {
+        let it = "i${8 * w}"
+        g.emit("store ${it} ${g.def("trunc i64 ${y} to ${it}")}, ptr ${p}, align 1")
+      }
+    }
+    "rt.mem_copy" | "rt.mem_move" => {
+      let f = if name == "rt.mem_move" { "@llvm.memmove.p0.p0.i64" } else { "@llvm.memcpy.p0.p0.i64" }
+      g.llvm_decl(f, "declare void ${f}(ptr, ptr, i64, i1)")
+      let d = g.raw_ptr(x.args[0])
+      let s = g.raw_ptr(x.args[1])
+      g.emit("call void ${f}(ptr ${d}, ptr ${s}, i64 ${g.op(x.args[2])}, i1 false)")
+    }
+    "rt.mem_set" => {
+      g.llvm_decl("@llvm.memset.p0.i64", "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+      let d = g.raw_ptr(x.args[0])
+      let b = g.def("trunc i64 ${g.op(x.args[1])} to i8")
+      g.emit("call void @llvm.memset.p0.i64(ptr ${d}, i8 ${b}, i64 ${g.op(x.args[2])}, i1 false)")
+    }
+    "rt.mem_cmp" => {
+      g.llvm_decl("@memcmp", "declare i32 @memcmp(ptr, ptr, i64)")
+      let a = g.raw_ptr(x.args[0])
+      let b = g.raw_ptr(x.args[1])
+      let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(x.args[2])})")
+      g.set(v, "sext i32 ${r} to i64")
+    }
+    "rt.rs_set_len" => {
+      let o = g.def("extractvalue %xo.str ${g.op(x.args[0])}, 0")
+      g.mk_str(v, o, g.op(x.args[1]))
+    }
+    "rt.obj_addr" => {
+      var o = g.op(x.args[0])
+      if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {
+        o = g.def("extractvalue %xo.str ${o}, 0")
+      }
+      g.set(v, "ptrtoint ptr ${o} to i64")
+    }
+    "rt.obj_at" => {
+      let p = g.raw_ptr(x.args[0])
+      g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${p})")
+      g.alias(v, p)
+    }
     _ => return false
   }
   true

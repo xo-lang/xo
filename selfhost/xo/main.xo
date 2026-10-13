@@ -335,7 +335,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     tgoos = targets[0].split("/")[0]
     tgoarch = if backend == "arm64" { "arm64" } else { ltarget.split("/")[1] }
   }
-  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, t)
+  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", t)
   t = lo.t
   let b = lo.b
   let tu = lo.tu
@@ -444,7 +444,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", t)
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", false, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -572,8 +572,8 @@ struct Lowered {
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
-fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, t0: Time) -> Lowered {
-  var b = ssa.build_program_target(c, root, tests, release, tests && o.real, tgoos, tgoarch)
+fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
+  var b = ssa.build_program_for(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)

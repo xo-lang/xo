@@ -753,127 +753,30 @@ void xo_eprintln(const char *p, int64_t n) {
 }
 
 // ---------------------------------------------------------------------------
-// Number formatting (the Go backend's text: strconv.FormatInt and
-// FloatStr, the shortest 'g' form that reads back the same value, with
-// ".0" added to whole numbers)
+// C ABI exports (decisions 0204, 0207): functions of
+// std/native/llrt/cabi.xo that every native program carries, called here
+// by name. Addresses pass as int64_t; each writes its text and a zero
+// byte into the buffer it is given and returns the text's length.
 
-// fmt_int writes the decimal text of v (no snprintf: interpolation of
-// Ints is hot).
-static int fmt_int(char *buf, int64_t v) {
-	char t[24];
-	int n = 0;
-	uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;
-	do {
-		t[n++] = (char)('0' + u % 10);
-		u /= 10;
-	} while (u);
-	int k = 0;
-	if (v < 0) {
-		buf[k++] = '-';
-	}
-	while (n) {
-		buf[k++] = t[--n];
-	}
-	buf[k] = 0;
-	return k;
-}
+int64_t xo_x_fmt_int(int64_t buf, int64_t v);
+int64_t xo_x_fmt_float(int64_t buf, double f);
+int64_t xo_x_fault_overflow(int64_t buf, int64_t a, int64_t op, int64_t b);
+int64_t xo_x_fault_shl(int64_t buf, int64_t a, int64_t b);
+int64_t xo_x_fault_shift(int64_t buf, int64_t n);
+int64_t xo_x_fault_divzero(int64_t buf, int64_t a, int64_t op);
+int64_t xo_x_fault_neg(int64_t buf, int64_t a);
+int64_t xo_x_fault_abs(int64_t buf, int64_t a);
+int64_t xo_x_fault_index(int64_t buf, int64_t i, int64_t n);
+int64_t xo_x_fault_float_int(int64_t buf, double f);
 
-// fmt_float writes Go's strconv.FormatFloat(f, 'g', -1, 64) to buf.
-static int fmt_go_g(char *buf, double f) {
-	if (isnan(f)) {
-		return snprintf(buf, 40, "NaN");
-	}
-	if (isinf(f)) {
-		return snprintf(buf, 40, f > 0 ? "+Inf" : "-Inf");
-	}
-	if (f == 0) {
-		return snprintf(buf, 40, signbit(f) ? "-0" : "0");
-	}
-	// shortest digits that round trip
-	char e[40];
-	int p;
-	for (p = 0; p < 17; p++) {
-		snprintf(e, sizeof e, "%.*e", p, f);
-		if (strtod(e, NULL) == f) {
-			break;
-		}
-	}
-	// e is [-]d[.ddd]e(+|-)XX
-	int neg = e[0] == '-';
-	char *s = e + neg;
-	char digs[24];
-	int nd = 0;
-	char *q = s;
-	for (; *q && *q != 'e'; q++) {
-		if (*q >= '0' && *q <= '9') {
-			digs[nd++] = *q;
-		}
-	}
-	int x = atoi(q + 1);
-	while (nd > 1 && digs[nd - 1] == '0') {
-		nd--;
-	}
-	digs[nd] = 0;
-	int dp = x + 1; // decimal point position: value = 0.digs * 10^dp
-	int exp = dp - 1;
-	char *o = buf;
-	if (neg) {
-		*o++ = '-';
-	}
-	if (exp < -4 || exp >= 6) {
-		*o++ = digs[0];
-		if (nd > 1) {
-			*o++ = '.';
-			for (int i = 1; i < nd; i++) {
-				*o++ = digs[i];
-			}
-		}
-		*o++ = 'e';
-		int ax = exp;
-		if (ax < 0) {
-			*o++ = '-';
-			ax = -ax;
-		} else {
-			*o++ = '+';
-		}
-		o += snprintf(o, 8, "%02d", ax);
-		*o = 0;
-		return (int)(o - buf);
-	}
-	// %f with max(nd - dp, 0) decimals
-	if (dp <= 0) {
-		*o++ = '0';
-		*o++ = '.';
-		for (int i = 0; i < -dp; i++) {
-			*o++ = '0';
-		}
-		for (int i = 0; i < nd; i++) {
-			*o++ = digs[i];
-		}
-	} else {
-		for (int i = 0; i < dp; i++) {
-			*o++ = i < nd ? digs[i] : '0';
-		}
-		if (nd > dp) {
-			*o++ = '.';
-			for (int i = dp; i < nd; i++) {
-				*o++ = digs[i];
-			}
-		}
-	}
-	*o = 0;
-	return (int)(o - buf);
-}
+#define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
-static int fmt_float(char *buf, double f) {
-	int n = fmt_go_g(buf, f);
-	if (!strpbrk(buf, ".eIN")) {
-		buf[n++] = '.';
-		buf[n++] = '0';
-		buf[n] = 0;
-	}
-	return n;
-}
+// Number text (the Go backend's: strconv.FormatInt, and FloatStr, the
+// shortest 'g' form with ".0" added to whole numbers), in Xo (num.xo):
+// buf holds at least 32 bytes for an Int, 48 for a Float.
+static int fmt_int(char *buf, int64_t v) { return (int)xo_x_fmt_int(XO_ADDR(buf), v); }
+
+static int fmt_float(char *buf, double f) { return (int)xo_x_fmt_float(XO_ADDR(buf), f); }
 
 // ---------------------------------------------------------------------------
 // Faults (core 8): the same messages as std/rt, exit status 70
@@ -896,57 +799,53 @@ XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {
 	fault_text(m, loc);
 }
 
+// The messages of the checked operations are written by cabi.xo.
+
 XO_NORETURN void xo_fault_overflow(int64_t a, int64_t op, int64_t b, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: %lld %c %lld does not fit Int", (long long)a, (char)op, (long long)b);
+	xo_x_fault_overflow(XO_ADDR(m), a, op, b);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_shl(int64_t a, int64_t b, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: %lld << %lld does not fit Int", (long long)a, (long long)b);
+	xo_x_fault_shl(XO_ADDR(m), a, b);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_shift(int64_t n, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "shift amount %lld out of range for Int", (long long)n);
+	xo_x_fault_shift(XO_ADDR(m), n);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_divzero(int64_t a, int64_t op, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "division by zero: %lld %c 0", (long long)a, (char)op);
+	xo_x_fault_divzero(XO_ADDR(m), a, op);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_neg(int64_t a, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: -(%lld) does not fit Int", (long long)a);
+	xo_x_fault_neg(XO_ADDR(m), a);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_abs(int64_t a, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "integer overflow: abs(%lld) does not fit Int", (long long)a);
+	xo_x_fault_abs(XO_ADDR(m), a);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_index(int64_t i, int64_t n, const char *loc) {
 	char m[160];
-	snprintf(m, sizeof m, "index %lld out of range for List of length %lld", (long long)i, (long long)n);
+	xo_x_fault_index(XO_ADDR(m), i, n);
 	fault_text(m, loc);
 }
 
 XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 	char m[160];
-	if (isnan(f)) {
-		snprintf(m, sizeof m, "cannot convert NaN to Int");
-	} else {
-		char b[40];
-		fmt_go_g(b, f);
-		snprintf(m, sizeof m, "%s is out of range for Int", b);
-	}
+	xo_x_fault_float_int(XO_ADDR(m), f);
 	fault_text(m, loc);
 }
 

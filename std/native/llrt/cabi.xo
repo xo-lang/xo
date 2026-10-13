@@ -1,0 +1,89 @@
+// The C ABI exports of the runtime (decisions 0204, 0207): every top
+// level function of this module is called by the C runtime (std/llrt) as
+// xo_x_<name>, with the C calling convention, so the C keeps no copy of
+// what Xo already does. The module is the marker: the SSA builders build
+// every function here in every native program (the native prelude
+// imports it), and the emitters give each a global C symbol. Parameters
+// are Int (an address is an Int) or Float; the result is an Int, a
+// Float, nothing, or a Str (returned as its string object, its length
+// stored through a pointer the C caller passes after the parameters).
+// Nothing here may fault: a fault would unwind through the C caller.
+// Helpers live in other runtime modules (raw.xo for memory).
+use native/llrt/num
+use native/llrt/raw
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Number text (std/llrt xo_rt.c fmt_int, fmt_float, fmt_go_g)
+
+/// Writes the decimal text of v and a zero byte at buf (at least 32
+/// bytes); its length.
+fn fmt_int(buf: Int, v: Int) -> Int {
+  // the digits from the end of the first 24 bytes, then moved to buf
+  var i = 24
+  var x = v
+  while true {
+    var d = x % 10
+    if d < 0 {
+      d = 0 - d
+    }
+    i -= 1
+    rt.mem_store(buf, i, 48 + d, 1)
+    x = x / 10
+    if x == 0 {
+      break
+    }
+  }
+  if v < 0 {
+    i -= 1
+    rt.mem_store(buf, i, 45, 1)
+  }
+  let n = 24 - i
+  rt.mem_move(buf, buf + i, n)
+  rt.mem_store(buf, n, 0, 1)
+  n
+}
+
+/// Writes the text of f as the Go backend prints a Float (FloatStr) and
+/// a zero byte at buf (at least 48 bytes); its length.
+fn fmt_float(buf: Int, f: Float) -> Int { raw.put_cstr(buf, num.float_text(f)) }
+
+
+// ---------------------------------------------------------------------------
+// Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero
+// byte at buf (at least 160 bytes) and returns its length; C raises it.
+
+fn fault_overflow(buf: Int, a: Int, op: Int, b: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int")
+}
+
+fn fault_shl(buf: Int, a: Int, b: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: ${a} << ${b} does not fit Int")
+}
+
+fn fault_shift(buf: Int, n: Int) -> Int {
+  raw.put_cstr(buf, "shift amount ${n} out of range for Int")
+}
+
+fn fault_divzero(buf: Int, a: Int, op: Int) -> Int {
+  raw.put_cstr(buf, "division by zero: ${a} ${raw.byte_str(op)} 0")
+}
+
+fn fault_neg(buf: Int, a: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: -(${a}) does not fit Int")
+}
+
+fn fault_abs(buf: Int, a: Int) -> Int {
+  raw.put_cstr(buf, "integer overflow: abs(${a}) does not fit Int")
+}
+
+fn fault_index(buf: Int, i: Int, n: Int) -> Int {
+  raw.put_cstr(buf, "index ${i} out of range for List of length ${n}")
+}
+
+fn fault_float_int(buf: Int, f: Float) -> Int {
+  if f != f {
+    return raw.put_cstr(buf, "cannot convert NaN to Int")
+  }
+  raw.put_cstr(buf, "${num.go_g_text(f)} is out of range for Int")
+}

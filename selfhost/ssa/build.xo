@@ -174,6 +174,10 @@ pub struct Builder {
   /// A test binary (Options.Tests, testmode.xo).
   pub tests: Bool = false
   pub conc: Bool = false
+  /// The program is lowered for the wasm backend (decision 0207): rt.layout
+  /// folds to the wasm runtime's layout, and no C ABI export is built (no
+  /// C calls them).
+  pub wasm: Bool = false
   /// The program calls task.with_budget: the code of its own modules
   /// polls the budget (build_budget.go).
   budgets: Bool = false
@@ -272,12 +276,19 @@ pub fn build_program_opts(c: check.Checker, line_root: Str, tests: Bool, release
 /// each target's, so a cross build's `match target.os` keeps the
 /// target's arm, not the compiler's).
 pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str) -> Builder {
+  build_program_for(c, line_root, tests, release, real_tests, goos, goarch, false)
+}
+
+/// build_program_target for the wasm backend when wasm is set (decision
+/// 0207: the wasm runtime's layout, no C ABI exports).
+pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool) -> Builder {
   var b = new_builder(c, line_root)
   b.tests = tests
   b.release = release
   b.real_tests = real_tests
   b.goos = goos
   b.goarch = goarch
+  b.wasm = wasm
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
@@ -286,6 +297,7 @@ pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, relea
     b.real_tests = real_tests
     b.goos = goos
     b.goarch = goarch
+    b.wasm = wasm
     b.conc = true
     b.build()
   }
@@ -312,6 +324,7 @@ pub fn (var b: Builder) build() {
   if b.tests {
     // a test binary (testmode.xo): its main runs one test
     b.build_tests()
+    b.declare_exports()
     b.run_queue()
     return
   }
@@ -341,7 +354,55 @@ pub fn (var b: Builder) build() {
       b.main_wrapper(mf, et)
     }
   }
+  b.declare_exports()
   b.run_queue()
+}
+
+/// Declares every function of the runtime module native/llrt/cabi, in
+/// name order, as a root of the build: the C ABI exports of decision
+/// 0207, which the C runtime calls as xo_x_<name> (declareExports). Not
+/// for the wasm backend, which links no C.
+fn (var b: Builder) declare_exports() {
+  if b.wasm {
+    return
+  }
+  var mi = -1
+  for (i, m) in b.c.mods.indexed() {
+    if m.path == "native/llrt/cabi" {
+      mi = i
+    }
+  }
+  if mi < 0 {
+    return
+  }
+  var names: List[Str] = []
+  for (n, o) in b.c.mods[mi].members {
+    if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
+      names.push(n.to_str() ?? "")
+    }
+  }
+  for n in names.sort() {
+    let o = b.c.mods[mi].members.get(n.bytes()) ?? -1
+    if !b.type_params(o).is_empty() {
+      b.unsupported("a generic C ABI export")
+      continue
+    }
+    let fi = b.declare(o, [])
+    b.m.funcs[fi].entry = true
+    b.m.funcs[fi].export = "xo_x_${n}"
+    for p in b.m.funcs[fi].blocks[0].params {
+      let t = b.m.funcs[fi].values[p].ty
+      if !(b.tkind(t) is Kind.Int | Kind.Float) {
+        b.unsupported("a C ABI export with a `${b.m.types[t].name}` parameter")
+      }
+    }
+    let rs = b.m.funcs[fi].results
+    if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
+      b.unsupported("a C ABI export with `var` parameters")
+    } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Str | Kind.Unit) {
+      b.unsupported("a C ABI export with a `${b.m.types[rs[0]].name}` result")
+    }
+  }
 }
 
 /// Builds the queued bodies (and the generated functions they ask for).
@@ -1314,7 +1375,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   s.sealed[0] = true
   let saved = b.s

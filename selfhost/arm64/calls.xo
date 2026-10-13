@@ -692,6 +692,64 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
       g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
     }
+    _ => return g.inline_raw(v)
+  }
+  true
+}
+
+/// Lowers the raw memory intrinsics (decision 0207, isel.go inlineRaw):
+/// loads and stores of a constant width, memcpy, memmove, memset, and
+/// memcmp of the platform library, a string with its length set, and an
+/// object's address both ways; whether v was one.
+fn (var g: G) inline_raw(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  match name {
+    "rt.mem_load" => {
+      let (w, _) = g.const_int(x.args[2])
+      let ins = match w {
+        1 => "ldrb $wd0, [$u0, $u1]"
+        2 => "ldrh $wd0, [$u0, $u1]"
+        4 => "ldr $wd0, [$u0, $u1]"
+        _ => "ldr $d0, [$u0, $u1]"
+      }
+      g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])])
+    }
+    "rt.mem_store" => {
+      let (w, _) = g.const_int(x.args[3])
+      let ins = match w {
+        1 => "strb $wu0, [$u1, $u2]"
+        2 => "strh $wu0, [$u1, $u2]"
+        4 => "str $wu0, [$u1, $u2]"
+        _ => "str $u0, [$u1, $u2]"
+      }
+      g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0]), g.word(x.args[1])])
+      g.set(v, [])
+    }
+    "rt.mem_copy" | "rt.mem_move" | "rt.mem_set" => {
+      let fname = match name {
+        "rt.mem_copy" => "memcpy"
+        "rt.mem_move" => "memmove"
+        _ => "memset"
+      }
+      let _r = g.rt(fname, regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [])
+      g.clobber()
+      g.set(v, [])
+    }
+    "rt.mem_cmp" => {
+      let r = g.rt("memcmp", regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [false])
+      g.set(v, [g.def1(false, "sxtw $d0, $wu0", [r[0]])])
+    }
+    "rt.rs_set_len" => {
+      let ws = g.words(x.args[0])
+      g.set(v, [ws[0], g.word(x.args[1])])
+    }
+    "rt.obj_addr" => g.set(v, [g.words(x.args[0])[0]])
+    "rt.obj_at" => {
+      let a = g.real(g.word(x.args[0]))
+      g.retain(x.ty, [a])
+      g.set(v, [a])
+    }
     _ => return false
   }
   true

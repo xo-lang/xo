@@ -229,6 +229,8 @@ pub struct Func {
   pub captures: List[Int] = []
   /// Called by the runtime.
   pub entry: Bool = false
+  /// The C symbol of a C ABI export (Func.Export, decision 0207), or "".
+  pub export: Str = ""
   /// A fault in it returns (a closure given to Map.update): its unwind
   /// block does not go on to the caller (Func.Catches).
   pub catches: Bool = false

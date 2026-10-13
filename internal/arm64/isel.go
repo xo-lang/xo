@@ -2214,6 +2214,50 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
 		s.set(v, s.def1(false, "ldr $d0, [$u0, $u1]", d, s.word(v.Args[1])))
 	default:
+		return s.inlineRaw(v)
+	}
+	return true
+}
+
+// inlineRaw lowers the raw memory intrinsics (decision 0207): loads and
+// stores of a constant width, memcpy, memmove, memset, and memcmp of the
+// platform library, a string with its length set, and an object's
+// address both ways. It reports whether v was one.
+func (s *fstate) inlineRaw(v *ssa.Value) bool {
+	switch v.Aux.(string) {
+	case "rt.mem_load":
+		w, _ := constInt(v.Args[2])
+		ins := map[int64]string{1: "ldrb $wd0, [$u0, $u1]", 2: "ldrh $wd0, [$u0, $u1]", 4: "ldr $wd0, [$u0, $u1]"}[w]
+		if ins == "" {
+			ins = "ldr $d0, [$u0, $u1]"
+		}
+		s.set(v, s.def1(false, ins, s.real(s.word(v.Args[0])), s.real(s.word(v.Args[1]))))
+	case "rt.mem_store":
+		w, _ := constInt(v.Args[3])
+		ins := map[int64]string{1: "strb $wu0, [$u1, $u2]", 2: "strh $wu0, [$u1, $u2]", 4: "str $wu0, [$u1, $u2]"}[w]
+		if ins == "" {
+			ins = "str $u0, [$u1, $u2]"
+		}
+		s.store(ins, s.real(s.word(v.Args[2])), s.word(v.Args[0]), s.word(v.Args[1]))
+		s.set(v)
+	case "rt.mem_copy", "rt.mem_move", "rt.mem_set":
+		fn := map[string]string{"rt.mem_copy": "memcpy", "rt.mem_move": "memmove", "rt.mem_set": "memset"}[v.Aux.(string)]
+		s.rt(fn, regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])))
+		s.clobber()
+		s.set(v)
+	case "rt.mem_cmp":
+		r := s.rt("memcmp", regs(s.word(v.Args[0]), s.word(v.Args[1]), s.word(v.Args[2])), false)
+		s.set(v, s.def1(false, "sxtw $d0, $wu0", r[0]))
+	case "rt.rs_set_len":
+		ws := s.words(v.Args[0])
+		s.set(v, ws[0], s.word(v.Args[1]))
+	case "rt.obj_addr":
+		s.set(v, s.words(v.Args[0])[0])
+	case "rt.obj_at":
+		a := s.real(s.word(v.Args[0]))
+		s.retain(v.Type, []vreg{a})
+		s.set(v, a)
+	default:
 		return false
 	}
 	return true
