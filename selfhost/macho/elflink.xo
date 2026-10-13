@@ -503,6 +503,11 @@ fn (var l: ELinker) synthesize_start() {
           return
         }
       }
+    } else {
+      match nonshared(n) {
+        Some(body) => src.write_str(body)
+        None => {}
+      }
     }
   }
   match assemble_elf(src.freeze()) {
@@ -517,6 +522,32 @@ fn (var l: ELinker) synthesize_start() {
     }
     Err(e) => l.fail("internal: the start code does not assemble: ${e}")
   }
+}
+
+/// glibc 2.31's libc_nonshared.a, which cc links and libc.so.6 does not
+/// export before 2.33: `stat`, `fstat`, `lstat`, `fstatat` (and their
+/// 64 names) call `__xstat`, `__fxstat`, `__lxstat`, `__fxstatat` with
+/// the structure version first (0 on arm64), so a binary binds on glibc
+/// 2.31 and, through the GLIBC_2.17 compatibility symbols, on 2.33 and
+/// later (gotchas/glibc-nonshared-stat.md). None for other names.
+fn nonshared(name: Str) -> Str? {
+  let (target, args) = match name {
+    "stat" | "stat64" => ("__xstat", 2)
+    "lstat" | "lstat64" => ("__lxstat", 2)
+    "fstat" | "fstat64" => ("__fxstat", 2)
+    "fstatat" | "fstatat64" => ("__fxstatat", 4)
+    _ => return None
+  }
+  var b = StrBuilder.new()
+  b.write("\t.globl ${name}\n\t.p2align 2\n\t.type ${name}, %function\n${name}:\n")
+  // shift the arguments up one register, the version (0) in w0
+  var i = args
+  while i > 0 {
+    b.write("\tmov x${i}, x${i - 1}\n")
+    i -= 1
+  }
+  b.write("\tmov w0, #0\n\tb ${target}\n")
+  Some(b.freeze())
 }
 
 /// libgcc's lse.S helper `__aarch64_OPSIZE_MODEL` with load and store

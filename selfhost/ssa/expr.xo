@@ -404,16 +404,33 @@ fn (var b: Builder) target_value(e: Expr) -> Int {
   if b.tkind(ot) != Kind.Enum || b.tkind(at) != Kind.Enum {
     return -1
   }
-  let os_name = match target.os {
+  var os_name = match target.os {
     Darwin => "Darwin"
     Windows => "Windows"
     Wasi => "Wasi"
     Linux => "Linux"
   }
-  let arch_name = match target.arch {
+  var arch_name = match target.arch {
     Arm64 => "Arm64"
     Wasm32 => "Wasm32"
     Amd64 => "Amd64"
+  }
+  // the build's target when given (Options.GOOS, GOARCH): an unknown OS
+  // is Linux, an unknown architecture Amd64, as build_target.go
+  if !b.goos.is_empty() {
+    os_name = match b.goos {
+      "darwin" => "Darwin"
+      "windows" => "Windows"
+      "wasip1" | "wasi" => "Wasi"
+      _ => "Linux"
+    }
+  }
+  if !b.goarch.is_empty() {
+    arch_name = match b.goarch {
+      "arm64" => "Arm64"
+      "wasm" => "Wasm32"
+      _ => "Amd64"
+    }
   }
   let oi = b.m.variant_index(ot, os_name)
   let ai = b.m.variant_index(at, arch_name)

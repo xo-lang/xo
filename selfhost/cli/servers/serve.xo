@@ -18,6 +18,8 @@
 // modules outside the directories (imports through xo.mod) are not
 // stamped: their changes are seen after a change under the directories.
 
+use github.com/xo-lang/xo/selfhost/check
+
 /// The environment variable that overrides the socket path.
 const SOCKET_ENV = "XO_SERVE_SOCKET"
 
@@ -472,7 +474,12 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
     }
     var c = os.proc.cmd(ex.program, args)
     if !dir.is_empty() {
-      c = c.dir(dir)
+      // and PWD (the server's otherwise: the runtime adds PWD only when no
+      // variable is added, and XO_NO_SERVE is), as what the Go server's
+      // os.Getwd returns after its Chdir: the directory's real path, so
+      // paths print relative on Linux and, from macOS's /var/folders,
+      // absolute, as the Go server prints them
+      c = c.dir(dir).set_env("PWD", check.real_path(os.fs, dir))
     }
     for (k, v) in ex.env {
       c = c.set_env(k, v)

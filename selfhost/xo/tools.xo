@@ -6,17 +6,6 @@
 
 use std/crypto
 
-/// The host's GOARCH: the architecture this xo1 was built for ("arm64"
-/// on Apple silicon and Graviton, "amd64" on x86-64 hosts, where xo1 is
-/// built by the LLVM backend), as runtime.GOARCH is the Go driver's.
-fn host_arch() -> Str {
-  match target.arch {
-    Arm64 => "arm64"
-    Amd64 => "amd64"
-    Wasm32 => "wasm"
-  }
-}
-
 /// The host's GOOS ("darwin" or "linux"), from `uname -s`.
 fn host_os(os: Os) -> Str {
   match os.proc.run("uname", ["-s"]) {
@@ -28,6 +17,18 @@ fn host_os(os: Os) -> Str {
     Err(_) => {}
   }
   "darwin"
+}
+
+/// The host's GOARCH: the architecture this xo was built for (a
+/// linux/amd64 release's xo1 is an amd64 binary, decision 0178 switch
+/// point B; built by the LLVM backend on an x86-64 host, where xo1's
+/// LLVM builds target the host and --no-gc defaults to LLVM).
+fn host_arch() -> Str {
+  match target.arch {
+    Amd64 => "amd64"
+    Arm64 => "arm64"
+    Wasm32 => "wasm"
+  }
 }
 
 /// os.UserCacheDir: ~/Library/Caches on macOS; $XDG_CACHE_HOME when it is

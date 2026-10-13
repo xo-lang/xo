@@ -30,6 +30,9 @@ const STT_OBJECT = 1
 const STT_FUNC = 2
 const STT_SECTION = 3
 const STT_TLS = 6
+const STT_FILE = 4
+/// SHN_ABS (elflink.xo has its own)
+const SHN_ABS_E = 0xfff1
 const STB_LOCAL = 0
 const STB_GLOBAL = 1
 const STB_WEAK = 2
@@ -110,6 +113,19 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
     }
     ".text" => {
       a.text()
+      true
+    }
+    ".file" => {
+      // `.file "NAME"`: an STT_FILE symbol (the emitter's fixed name
+      // keeps linked binaries reproducible)
+      match unquote(rest) {
+        Some(n) => {
+          if !a.files.contains(n) {
+            a.files.push(n)
+          }
+        }
+        None => a.fail(".file takes a quoted name")
+      }
       true
     }
     ".globl" | ".global" | ".weak" | ".hidden" => {
@@ -595,10 +611,15 @@ fn (var a: Asm) write_elf() -> Bytes {
     }
   }
   let order = locals + exts
+  // the file symbols come first (after the null symbol)
+  let nf = a.files.len()
   for (k, i) in order.indexed() {
-    a.syms[i].index = k + 1
+    a.syms[i].index = nf + k + 1
   }
   var names: List[Bytes] = []
+  for f in a.files {
+    names.push(f)
+  }
   for i in order {
     if !a.syms[i].secsym {
       names.push(a.syms[i].name)
@@ -640,6 +661,15 @@ fn (var a: Asm) write_elf() -> Bytes {
   o.pad(8)
   hdrs[symtab_idx].off = o.n
   o.zeros(24)
+  for f in a.files {
+    // STB_LOCAL, STT_FILE, SHN_ABS
+    o.u32(stroff.get(f) ?? 0)
+    o.u8(STT_FILE)
+    o.u8(0)
+    o.u16(SHN_ABS_E)
+    o.u64(0)
+    o.u64(0)
+  }
   for i in order {
     let s = a.syms[i]
     o.u32(if s.secsym { 0 } else { stroff.get(s.name) ?? 0 })
@@ -650,8 +680,8 @@ fn (var a: Asm) write_elf() -> Bytes {
     o.u64(if s.secsym { 0 } else { s.off })
     o.u64(s.size)
   }
-  hdrs[symtab_idx].size = 24 * (order.len() + 1)
-  hdrs[symtab_idx].info = locals.len() + 1
+  hdrs[symtab_idx].size = 24 * (nf + order.len() + 1)
+  hdrs[symtab_idx].info = nf + locals.len() + 1
   for (h, sig, _) in groups {
     // the group's signature symbol
     hdrs[h].info = a.syms[sig].index

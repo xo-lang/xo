@@ -6,12 +6,48 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **`xo` is written in Xo** (decision 0178, switch point B): the release
+  archives ship the self hosted toolchain as `bin/xo`, with
+  `bin/xo-gobind` (for `use go`) and `lib/xo/` (std, third_party, the
+  prebuilt runtime) beside it; keep that layout, `bin/xo` alone does not
+  run. The Go `cmd/xo` only builds the first one: scripts/release.sh
+  builds it, it builds the darwin/arm64 `xo`, and that `xo` builds the
+  runtime packs, the linux/arm64 `xo` (linked by its own ELF linker, no C
+  compiler), and the linux/amd64 `xo` (Go backend).
+  `scripts/release-verify.sh` checks an archive on its host; cmd/xo's
+  suite passes against the archive's `xo` on darwin/arm64 and
+  linux/arm64. Fixed on the way: the ELF assembler's `.file`, glibc's
+  `stat` family for binaries linked without cc (glibc before 2.33 has no
+  `stat` in libc.so.6), runtime flags turned on by symbol names inside
+  string literals, the predeclared `target` of a cross build (it was the
+  compiler's), the Go backend and `--no-gc` of the self hosted `xo` on
+  an amd64 host, and paths printed by `xo serve` on Linux.
+- The LLVM backend builds Windows programs (windows/amd64 host, decision
+  0197 stage 1): `xo build --backend=llvm` with LLVM's clang
+  (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's
+  POSIX use maps onto Win32 and Winsock (std/llrt/xo_win.c): threads,
+  tasks on fibers, faults with deferred code, timers, files, sockets,
+  HTTP and TLS, standard input. 140 of 144 LLVM goldens pass on Windows
+  Server 2025. A program using processes (Proc) stops with the new
+  XO1504 (a std API the native runtime does not support on the target
+  yet). A Windows host also cross builds the other Windows architecture
+  (`--targets=windows/arm64`: 141 of 144 goldens build and link; none
+  run yet, for lack of a Windows on Arm host). scripts/remote-windows.sh
+  runs a command on, or holds, a temporary Windows EC2 instance.
 - The LLVM backend builds and passes the golden suite on darwin/amd64
   (decision 0196): on an Intel Mac with macOS 26.5.2 the whole
   internal/llvm package passes, TestGolden 143 of 143, with no emitter
   or runtime change. `scripts/intel-mac-test.sh` runs a test command for
   a commit on that Mac. The LLVM tests now drop AddressSanitizer where
   it builds but cannot start, as they did for ThreadSanitizer.
+- The WebAssembly backend (decision 0179) coalesces each function's
+  locals by liveness and lays out reducible functions as structured
+  control flow (block, loop, br) instead of the dispatch loop: the self
+  hosted checker's module is 8.3 MB (8.9 MB), runs seven goldens under
+  Node in about 0.55 s and 340 MB (2.3 s and 2.1 GB), and checks all 144
+  LLVM goldens in a Chrome worker (63 before, the rest overflowed the
+  worker's stack). `os.fs.write` works in wasm (WASI `path_open` and
+  `fd_write`).
 - internal/selfhost scales with cores: every native build, Xo process,
   and Go side comparison draws from one pool of `XO_SELFHOST_JOBS`
   slots (default min(GOMAXPROCS, 4); scripts/remote-full.sh passes the
