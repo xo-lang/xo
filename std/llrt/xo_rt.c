@@ -507,10 +507,11 @@ int64_t xo_x_heap_resize(int64_t h, int64_t p, int64_t old, int64_t n, int64_t m
 // inlined as the C's alloc_in and free_in were (always_inline on the
 // call: LLVM's own cost model kept the Xo function out of line in the
 // hot string builders, bench/results/raw-memory-2026-10-13.md stage 3).
-#if defined(__has_c_attribute)
-#if __has_c_attribute(clang::always_inline)
+// The statement form needs clang 17 (LLVM; Apple clang 16): older ones,
+// such as Amazon Linux's clang 15, fail on `[[` in C and even on
+// `__has_c_attribute(clang::always_inline)`.
+#if defined(__clang__) && ((defined(__apple_build_version__) && __clang_major__ >= 16) || (!defined(__apple_build_version__) && __clang_major__ >= 17))
 #define XO_INLINE_CALL [[clang::always_inline]]
-#endif
 #endif
 #ifndef XO_INLINE_CALL
 #define XO_INLINE_CALL
