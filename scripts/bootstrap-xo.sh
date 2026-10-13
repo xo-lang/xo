@@ -10,8 +10,9 @@
 # the previous release's binary, or a self hosted xo1. The backend is
 # $XO_BOOTSTRAP_BACKEND, by default arm64 on an arm64 host and llvm on
 # an x86-64 host (where xo1 is built by the LLVM backend; the LLVM
-# builds are split into $XO_LLVM_SPLIT modules, default 12, decision
-# 0168, with --asm writing the LLVM IR). OUTDIR defaults to
+# builds are split into $XO_LLVM_SPLIT modules, default 12, without LTO
+# unless $XO_LLVM_LTO says thin, as internal/selfdriver builds xo1,
+# decision 0168; --asm writes the LLVM IR). OUTDIR defaults to
 # .tools/bootstrap. The stages, each with an empty build directory,
 # runtime object cache, and binary cache (so nothing is reused from an
 # earlier build):
@@ -76,7 +77,7 @@ if [ -z "$backend" ]; then
   case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac
 fi
 if [ "$backend" = llvm ]; then
-  export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12}
+  export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none}
 fi
 if command -v go >/dev/null 2>&1; then
   say "FAIL: go is still on PATH ($(command -v go))"

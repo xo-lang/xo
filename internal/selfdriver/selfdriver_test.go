@@ -66,15 +66,17 @@ func TestWants(t *testing.T) {
 // by the split LLVM build elsewhere.
 func TestXo1Backend(t *testing.T) {
 	t.Setenv("XO_LLVM_SPLIT", "")
+	t.Setenv("XO_LLVM_LTO", "")
 	if b, s := xo1Backend("arm64"); b != "arm64" || s != nil {
 		t.Errorf("arm64 host: %s %v", b, s)
 	}
 	b, s := xo1Backend("amd64")
-	if b != "llvm" || s == nil || s.Modules != 12 || s.LTO != "thin" {
+	if b != "llvm" || s == nil || s.Modules != 12 || s.LTO != "none" {
 		t.Errorf("amd64 host: %s %+v", b, s)
 	}
 	t.Setenv("XO_LLVM_SPLIT", "4")
-	if _, s := xo1Backend("amd64"); s == nil || s.Modules != 4 {
+	t.Setenv("XO_LLVM_LTO", "thin")
+	if _, s := xo1Backend("amd64"); s == nil || s.Modules != 4 || s.LTO != "thin" {
 		t.Errorf("amd64 host, XO_LLVM_SPLIT=4: %+v", s)
 	}
 }

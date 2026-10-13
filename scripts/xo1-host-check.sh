@@ -39,7 +39,8 @@ os=$(uname -s)
 arch=$(uname -m)
 backend=llvm
 case "$arch" in arm64|aarch64) backend=arm64 ;; esac
-export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12}
+# as internal/selfdriver builds xo1 on an x86-64 host (xo1Backend)
+export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none}
 
 sampler=""
 start_sampler() {

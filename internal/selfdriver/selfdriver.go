@@ -16,8 +16,9 @@
 // <user cache>/xo/xo1/<key> (key: the SHA-256 of every embedded file)
 // and xo1 is built there once by this xo, under a file lock (with the
 // arm64 backend on an arm64 host, with the LLVM backend split into
-// modules on an amd64 host: xo1Backend); later runs reuse it. xo1 reads std and third_party from the
-// same directory, so the build is a function of the embedded sources.
+// modules on an amd64 host: xo1Backend); later runs reuse it. xo1 reads
+// std and third_party from the same directory, so the build is a
+// function of the embedded sources.
 //
 // Rollback: XO_SELF_DRIVER=0 (or off) runs every command with the Go
 // driver, as before the switch.
@@ -310,9 +311,11 @@ func Sources() (string, error) {
 
 // xo1Backend is how this xo builds xo1 on a goarch host: the arm64
 // backend on arm64; elsewhere (amd64) the LLVM backend, split into 12
-// modules with thin LTO (decision 0168) unless XO_LLVM_SPLIT says
-// otherwise, since one module of selfhost/xo takes clang over half an
-// hour.
+// modules without LTO (decision 0168) unless XO_LLVM_SPLIT and
+// XO_LLVM_LTO say otherwise: one module of selfhost/xo takes clang over
+// half an hour, and the ThinLTO link of the 12 modules held 18.8 GB on
+// linux/amd64 (bench/results/xo1-x86-2026-10-12.md), more than a 16 GB
+// laptop has.
 func xo1Backend(goarch string) (string, *build.SplitConfig) {
 	if goarch == "arm64" {
 		return build.BackendArm64, nil
@@ -320,6 +323,9 @@ func xo1Backend(goarch string) (string, *build.SplitConfig) {
 	c := build.LLVMSplitConfig()
 	if os.Getenv("XO_LLVM_SPLIT") == "" {
 		c.Modules = 12
+	}
+	if os.Getenv("XO_LLVM_LTO") == "" {
+		c.LTO = "none"
 	}
 	return build.BackendLLVM, &c
 }
