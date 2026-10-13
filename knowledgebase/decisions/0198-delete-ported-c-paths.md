@@ -2,7 +2,8 @@
 
 Status: Accepted (2026-10-13, by the lead under the owner's decision
 0195 direction). Implemented for unicode, strings, num, and jsontext;
-tz, report, and show wait (see Decision).
+the second round (2026-10-13, below) deleted tz, report, show, and the
+C paths added since; text, sched, and net keep theirs.
 
 ## Context
 
@@ -113,7 +114,144 @@ it predates this change); bench/perf/unicode, json, and
 text built on both native backends with the Go driver and with xo1,
 the unicode workloads' checksums equal to the Go backend's.
 
-## Consequences
+## Second round (2026-10-13, after batch 8)
+
+### Context
+
+The lead's batch 8 full tier passed clean on main 99c5443d
+(bench/results/batches-after-b-2026-10-13.md, 39 packages ok). It
+covers decision 0193 steps 3 to 6 (tz, report, show, http1, hpack,
+fspath, procspec), the portable group of decision 0195 (ints, glob,
+digest, gen), the scan intrinsics (decision 0201), Atomic[T] (0200),
+the reference counts and the allocator (0207), and the Linux and
+platform layers under sysio (0206, 0213). Each of those kept a C path
+behind `XO_LLRT_C=<name>`.
+
+### Decision
+
+Delete, as the first round did, the C path of every piece batch 8
+covered: tz, report, show, atomic, fspath, gen, glob, digest, ints, rc,
+alloc, scan, sysio, http1, hpack, and procspec. For each:
+`std/native/llrt/<name>_c.xo`; the `-DXO_<NAME>_C` sections of std/llrt
+(`XO_TZ_C`, `XO_REPORT_C`, `XO_SHOW_C`, `XO_ATOMIC_C`, `XO_FSPATH_C`,
+`XO_GEN_C`, `XO_GLOB_C`, `XO_DIGEST_C`, `XO_RC_C`, `XO_ALLOC_C`, and
+`XO_INTS_C`'s integer operations, floor division, and Str key hash);
+the C only the C path reached without a flag (http1: the C parse
+branches of hc_read_one, `xo_hc_xo` and the connection's `xo` field,
+the server's text helpers `xo_url_parts`, `xo_url_error`,
+`xo_query_parts`, `xo_path_unescape`, `xo_query_escape`, `xo_go_quote`,
+`xo_canonical_key`, `xo_equal_fold`; hpack: the server's C HPACK calls,
+`xo_h2_xo`, and its `dec` and `enc`; procspec: pr_parse's merge,
+pr_dedup, pr_abs, pr_key_len, pr_w_quote); and the declarations in
+std/native/rt.xo, rttime.xo, rtcrypto.xo, rttest.xo, and rthttp.xo
+that only the deleted modules called.
+
+Kept:
+
+- **text**: Duration text misses the bar (decision 0194).
+- **sched** (decision 0212) and **net** (decision 0206 stage 3): they
+  merged after 99c5443d and have not passed a full tier.
+- The C versions of the intrinsics (`int_wrap`, `u64_mul_hi`,
+  `float_bits`, `float_from_bits`, `bytes_word`, `int_fits`,
+  `u64_to_float`, `f32_round`, `i64_to_f32`), still compiled only with
+  `-DXO_INTS_C` when an emitter calls one; the flag keeps its name.
+- The C functions other C still calls: scan's (the C runtime's own
+  string code), sysio's (wasm, darwin/amd64, the test world, and
+  **Clock.now on every OS**, sysio.xo `clock_now`), the HTTP/1.1
+  request parser (hp_head, hb_chunked) and the C HPACK, which the
+  client uses, and the bytes_hex of to_hex.
+- Declarations the SSA builders' calls without the native prelude
+  still name (rt.int_op and friends, rt.gen_*, rt.prop_report,
+  rt.rs_append_u64, rt.atomic_add, rt.crypto_sha256, rt.crypto_b64):
+  the wasm runtime implements several; no native runtime has them now.
+- Go side, left alone because decision 0215 deletes it: internal/build
+  `IOFlags` and its tests, internal/check `LLRTUsesC` (it already
+  ignores a name without `<name>_c.xo`), the SSA builder's C branches,
+  and the Go tests that set `XO_LLRT_C` (they now build the Xo path
+  twice). xo1's `io_flags` (selfhost/xo/link.xo) keeps the deleted
+  entries, which add no flag now, because TestXo1IOFlagsSymbols
+  requires the same symbols as `IOFlags`; both go with internal/build.
+
+### Results
+
+Lines (git numstat of commit 2fdcb1f7):
+
+| File | Deleted | Added |
+|---|---|---|
+| std/llrt/xo_time.c | 880 | 3 |
+| std/llrt/xo_crypto.c | 799 | 4 |
+| std/llrt/xo_testing.c | 365 | 2 |
+| std/llrt/xo_rt.c | 354 | 8 |
+| std/llrt/xo_bytes.c | 251 | 6 |
+| std/llrt/xo_proc.c | 244 | 12 |
+| std/llrt/xo_fs.c | 178 | 0 |
+| std/llrt/xo_http.c | 149 | 15 |
+| std/llrt/xo_h2.c | 70 | 26 |
+| std/llrt/xo_std.c | 9 | 0 |
+| **std/llrt, runtime** | **3,299** | **76** |
+| std/native/llrt `*_c.xo` (16 files) | 373 | 0 |
+
+std/llrt's 15 files went from 29,916 to 26,693 lines. By piece, the
+guarded sections (each `-DXO_*_C` applied to the parent alone): tz
+868, digest 804 (xo_crypto.c 790, xo_bytes.c 14), ints 210 of 294,
+glob 200, alloc 197, fspath 176, gen 99, rc 78, report 54, atomic 38,
+show 37; unguarded: procspec 232, http1 134, hpack 44 (net of what
+replaced them). The parent's sched and text sections are 481 and 514
+lines.
+
+Pack: the darwin/arm64 runtime pack (`xo rtpack`, Go built `xo`) went
+from 15,020,450 to 14,752,778 bytes; its 32 runtime objects from
+14,319,520 to 14,051,848 bytes (rt.o 397,896 to 390,816;
+rt-time-fs-stdin-proc-tls.o 497,016 to 487,360), libxotls.a byte
+identical. Unlike the first round the objects shrink: the http1, hpack,
+and procspec C paths had no flag, so every pack compiled them. Each
+pack built twice from two work directories is byte identical. The Go
+built `xo` binary went from 31,818,434 to 31,719,202 bytes.
+
+Tests, on the Mac (Apple M4 Pro, darwin/arm64, through the heavy
+lock, commit 2fdcb1f7 plus the C test drivers fixed after it):
+`go test -short` over the repository; internal/llvm TestNumDiff,
+TestJSONTextDiff, TestTZDiff, TestIntsDiff, TestScanDiff,
+TestDigestDiff, TestDigestTables, TestHPACKTables, TestHTTP1ParseDiff,
+TestHTTPParseDiff, TestHTTPFuzz, TestH2Diff, TestProcSpecDiff,
+TestSysioParity, TestTimeDiff, TestCABIDiff, TestRuntimeTasks,
+TestRuntimeAlloc, TestRuntimeThreads pass; cmd/xo TestGlobDiff and
+TestGenDiff pass; internal/llvm TestGolden and internal/arm64
+TestGoldenRun and TestRun pass; xo1 built from these sources (87,285,784
+bytes) passes scripts/selfhost-goldens.py with `--backend=arm64` (179
+of 179) and `--backend=llvm` (179 of 179); internal/selfhost
+TestSelfhostWasm passes; TestCryptoDiff passes after the change below.
+
+Two Go tests needed the deleted C, and decision 0215 deletes both
+packages, so the changes are the smallest that keep `go test -short`
+green: TestCryptoDiff (internal/llvm, run in -short) feeds
+crypto_diff.c SHA-256, HMAC, PBKDF2, Argon2, base64, and
+verify_password lines, so the deleted digest C moved to
+std/llrt/testdata/crypto_ref.c (804 lines), which only crypto_diff.c
+includes and no runtime build compiles; it goes with that test.
+internal/check TestLLRTCPath expected `XO_LLRT_C=all` to load show_c.xo
+and six more; it now expects the Xo modules.
+
+Found on the way: TestHTTPParseDiff failed and TestHTTPFuzz passed
+while testing almost nothing, because their C drivers
+(std/llrt/testdata/http_diff.c, http_fuzz.c) called xo_hc_read, which
+now stops at every head for Xo's parser; they now play http1.xo's part
+with the C parser the client keeps. A comment that changed the line
+count of show.xo or prelude.xo broke internal/ssa's goldens
+(gotchas/ssa-goldens-hold-llrt-line-numbers.md).
+
+### Consequences
+
+- `XO_LLRT_C` selects only text, sched, and net; any other name selects
+  nothing. bench/perf scripts that compared a deleted C path now build
+  the Xo path twice (a note in each); the results files keep the
+  comparisons.
+- The http1 and hpack servers have no C fallback; the client keeps the
+  C parser and HPACK until it moves.
+- A TestXo1IOFlagsSymbols cleanup (the dead io_flags entries) is due
+  when internal/build goes.
+
+## Consequences (first round)
 
 - One implementation of each ported piece; nothing selects the deleted
   C, so the Xo path is the only one tested and shipped.

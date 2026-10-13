@@ -126,12 +126,10 @@ func TestLLRTCPath(t *testing.T) {
 		}
 		// decision 0193 steps 5 and 6 and decision 0195: show, report,
 		// fspath, procspec, ints, and gen come with the prelude, as does
-		// decision 0200's atomic
+		// decision 0200's atomic; decision 0198's second round deleted
+		// their C paths, so `all` loads the Xo modules too
 		for _, name := range []string{"show", "report", "fspath", "procspec", "ints", "gen", "atomic"} {
 			want := "std/native/llrt/" + name + ".xo"
-			if c.env == "all" {
-				want = "std/native/llrt/" + name + "_c.xo"
-			}
 			if files["native/llrt/"+name] != want {
 				t.Errorf("XO_LLRT_C=%q: %s from %q, want %q", c.env, name, files["native/llrt/"+name], want)
 			}
