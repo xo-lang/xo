@@ -27,6 +27,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   layout beside the binary), or with a std whose prelude lacks a core
   type, now says so (`std library not found: ...`, exit 2) instead of
   faulting in the checker with `prelude type missing: Int`.
+- Native backends: the task switch is emitted by the compiler (no
+  assembly left in the C runtime's default build), and the scheduler's
+  core (each worker's run queue, starting, parking, and waking fibers,
+  task states) is Xo (std/native/llrt/sched.xo, decision 0212), called
+  from the C runtime through C ABI exports; thread local state lives in
+  a table the compiler emits. Within the 5 percent bar on both backends
+  (bench/results/task-switch-2026-10-13.md); `XO_LLRT_C=sched` builds the
+  C path. Fixed on the way: `--as=macho` builds failed on `prfm` (since
+  the heap moved to Xo) and on `sxtw` (http programs).
 - Native backends: the memory allocator (size classes, free lists,
   chunks, and the magazines that hand freed blocks between threads) is
   Xo (std/native/llrt/alloc.xo, decision 0207 stage 3), called from the

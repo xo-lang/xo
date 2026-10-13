@@ -1,0 +1,72 @@
+// The task switch and thread state of decision 0212 (internal/arm64
+// sched.go): rt.stack_switch is a call of xo_stack_switch,
+// rt.fiber_start_addr the address of xo_fiber_entry, and rt.tlocal_get
+// and rt.tlocal_set calls of xo_tlocal_get and xo_tlocal_set (the C
+// runtime calls those too), emitted once in a program that uses them, as
+// instruction sequences: the switch is std/llrt/xo_rt.c's C path's
+// xo_fiber_switch (AAPCS64: x19 to x28, fp, lr, d8 to d15 saved on the
+// stack, whose pointer is stored at the first argument, then restored
+// from the second); the thread locals are 16 words in the thread's
+// static TLS block, reached through a TLV descriptor on Darwin and the
+// local exec model on Linux.
+
+/// The body of xo_stack_switch.
+fn stack_switch_body() -> List[Str] {
+  ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]",
+    "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]",
+    "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]",
+    "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]",
+    "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
+}
+
+/// One function of sched_asm: its symbol (global or not) and body.
+fn sched_fn(os: Str, name: Str, global: Bool, body: List[Str]) -> Str {
+  var b: List[Str] = []
+  if os == "darwin" {
+    if global {
+      b.push("\t.globl _${name}\n")
+    }
+    b.push("\t.p2align 2\n_${name}:\n")
+  } else {
+    if global {
+      b.push("\t.globl ${name}\n\t.hidden ${name}\n")
+    }
+    b.push("\t.type ${name}, @function\n\t.p2align 2\n${name}:\n")
+  }
+  for l in body {
+    b.push("\t${l}\n")
+  }
+  b.join("")
+}
+
+/// The text of the functions and the thread local table on os.
+fn sched_asm(os: Str) -> Str {
+  var b: List[Str] = []
+  b.push(if os == "darwin" { "\t.section __TEXT,__text,regular,pure_instructions\n" } else { "\t.text\n" })
+  b.push(sched_fn(os, "xo_stack_switch", true, stack_switch_body()))
+  // a new fiber's first frame holds its argument in x19 and its function
+  // in x20 (std/native/llrt/sched.xo fiber_frame)
+  b.push(sched_fn(os, "xo_fiber_entry", false, ["mov x0, x19", "blr x20", "brk #1"]))
+  if os == "darwin" {
+    // the TLV descriptor's thunk returns the table's address in x0 and
+    // keeps every register but x0, x16, x17, and lr (Darwin's TLV
+    // convention): the index and the return address wait in x9 and x10,
+    // with no frame
+    let tlv = ["mov x10, x30", "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "ldr x8, [x0]", "blr x8"]
+    b.push(sched_fn(os, "xo_tlocal_get", true, ["mov x9, x0"] + tlv + ["ldr x0, [x0, x9, lsl #3]", "ret x10"]))
+    b.push(sched_fn(os, "xo_tlocal_set", true, ["mov x9, x0", "mov x11, x1"] + tlv + ["str x11, [x0, x9, lsl #3]", "ret x10"]))
+    b.push(sched_fn(os, "xo_tlocal_addr", true, tlv + ["ret x10"]))
+    b.push("\t.section __DATA,__thread_data,thread_local_regular\n\t.p2align 3\n_xo_tlocal_init:\n")
+    b.push("\t.quad 0\n".repeat(16))
+    b.push("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
+    b.push("\t.quad __tlv_bootstrap\n\t.quad 0\n\t.quad _xo_tlocal_init\n")
+    return b.join("")
+  }
+  let tp = ["mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"]
+  b.push(sched_fn(os, "xo_tlocal_get", true, tp + ["ldr x0, [x9, x0, lsl #3]", "ret"]))
+  b.push(sched_fn(os, "xo_tlocal_set", true, tp + ["str x1, [x9, x0, lsl #3]", "ret"]))
+  b.push(sched_fn(os, "xo_tlocal_addr", true, tp + ["mov x0, x9", "ret"]))
+  b.push("\t.section .tdata,\"awT\",@progbits\n\t.globl xo_tlocal\n\t.hidden xo_tlocal\n\t.p2align 3\n\t.type xo_tlocal, @tls_object\n\t.size xo_tlocal, 128\nxo_tlocal:\n")
+  b.push("\t.xword 0\n".repeat(16))
+  b.join("")
+}

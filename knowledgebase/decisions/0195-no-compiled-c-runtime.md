@@ -27,7 +27,13 @@ C; the heap pointer stays a C thread local, (6), with the intrinsics
 designed in decision 0207). Argon2id and BLAKE2b stayed C (1.155 of the
 C on LLVM, 0.980 on arm64) until decision 0211's alias scopes brought
 LLVM to 1.043 (2026-10-13): they are Xo by default, the C under
-`XO_LLRT_C=digest`.
+`XO_LLRT_C=digest`. Prerequisite (6) stage 1 done 2026-10-13: decision
+0212 (the fiber switch and thread locals emitted by the compiler, the
+scheduler core in std/native/llrt/sched.xo, `XO_LLRT_C=sched` for the C;
+xo_rt.c's default build 156 lines shorter, no assembly;
+`bench/results/task-switch-2026-10-13.md`); spawn, join, the pool's
+locks, fiber stacks, and threads wait for platform calls and
+`rt.call_addr` (0212 stage 2).
 
 ## Context
 

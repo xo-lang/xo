@@ -1,0 +1,44 @@
+// The C path of the scheduler core (decision 0212): the API of sched.xo
+// over the C runtime's own scheduler (std/llrt/xo_rt.c compiled with
+// -DXO_SCHED_C, which both drivers add when the generated code calls
+// rt.sched_c: the C then keeps its fiber switch, thread locals, ring,
+// and fiber code, and calls none of cabi.xo's scheduler exports). Loaded
+// in place of sched.xo when XO_LLRT_C names `sched`. An operation with a
+// follow up (a push, a signal, a free) does it in C and returns 0.
+use native/rt
+
+pub fn rq_put(q: Int, x: Int) -> Int { rt.sched_c(0, q, x, 0) }
+
+pub fn rq_get(q: Int) -> Int { rt.sched_c(1, q, 0, 0) }
+
+pub fn rq_grab(q: Int, batch: Int) -> Int { rt.sched_c(2, q, batch, 0) }
+
+pub fn rq_put_batch(q: Int, batch: Int, n: Int) {
+  let _r = rt.sched_c(3, q, batch, n)
+}
+
+pub fn rq_nonempty(q: Int) -> Int { rt.sched_c(4, q, 0, 0) }
+
+pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int { rt.sched_c(5, f, 0, 0) }
+
+pub fn fiber_main(f: Int) {
+  let _r = rt.sched_c(6, f, 0, 0)
+}
+
+pub fn fiber_parking(f: Int) {
+  let _r = rt.sched_c(8, f, 0, 0)
+}
+
+pub fn fiber_park(f: Int) {
+  let _r = rt.sched_c(7, f, 0, 0)
+}
+
+pub fn fiber_wake(f: Int) -> Int { rt.sched_c(9, f, 0, 0) }
+
+pub fn fiber_run(w: Int, f: Int) -> Int { rt.sched_c(10, w, f, 0) }
+
+pub fn task_claim(t: Int) -> Int { rt.sched_c(12, t, 0, 0) }
+
+pub fn scope_units_done(s: Int, units: Int) -> Int { rt.sched_c(11, s, units, 0) }
+
+pub fn task_dequeued(t: Int, s: Int) -> Int { rt.sched_c(13, t, 0, 0) }

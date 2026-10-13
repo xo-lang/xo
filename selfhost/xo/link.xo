@@ -361,6 +361,10 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
+  // and of the scheduler core (decision 0212, XO_LLRT_C=sched)
+  if calls_sym(code, "xo_sched_c") {
+    out.push("-DXO_SCHED_C")
+  }
   out
 }
 
