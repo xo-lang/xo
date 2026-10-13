@@ -1,0 +1,330 @@
+// The scheduler core in Xo (decision 0212, decision 0195 prerequisite
+// 6): the task switch, the fibers' life (first frame, run, park, wake,
+// start), the run queue ring of every worker, and the task states, over
+// the switch and thread local intrinsics of std/native/rt.xo, the slot
+// atomics (decision 0200), and raw memory (decision 0207). The C runtime
+// (std/llrt/xo_rt.c) calls them through cabi.xo (xo_x_rq_put and
+// friends) and keeps what needs locks, system calls, or allocation: the
+// inject queue, idle workers, fiber stacks, spawning and joining. The C
+// path is sched_c.xo (XO_LLRT_C=sched), which calls xo_rt.c's own copies.
+//
+// The layouts are xo_rt.c's (xo_runq, xo_worker, xo_fiber, xo_task,
+// xo_scope), asserted there with _Static_assert against the constants
+// below. The no allocation, no counting rule of rc.xo holds here too
+// (selfhost/ssa contract.xo check_no_alloc): Int words only, wrapping
+// arithmetic (rt.int_wrap; a checked add could fault), and calls only of
+// intrinsics and of the C hooks below, so this code runs on any stack,
+// with or without a current context, and never unwinds.
+use native/rt
+
+/// C11's orders of the slot atomics.
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+const SEQ_CST = 4
+
+/// The words of the thread local table (rt.tlocal_get; xo_rt.c XO_TLS_*):
+/// the current context, the fiber running on the thread, the thread's
+/// worker record.
+pub const TLS_CUR: Int = 0
+pub const TLS_FIB: Int = 1
+pub const TLS_W: Int = 2
+
+/// xo_runq: head (word 0), tail (word 16), then the ring of RUNQ slots
+/// (from word 17).
+const RUNQ = 256
+const RQ_TAIL = 16
+const RQ_TAIL_AT = 128
+const RUNQ_MASK = 255
+const RUNQ_HALF = 128
+const RQ_SLOT = 17
+
+/// xo_worker: its ring first (xo_runq), the scheduler's saved stack
+/// pointer, and whether the fiber code calls xo_sched_hook (byte
+/// offsets).
+const W_SCHED_SP = 2208
+const W_HOOKS = 2216
+
+/// xo_fiber: the saved stack pointer (byte 0), the task, the context
+/// running on it, the state (word 5), whether it ended.
+const F_TASK = 24
+const F_CUR = 32
+const F_STATE = 5
+const F_DONE = 48
+
+/// The fiber states (xo_rt.c F_*): a parking handshake, so a wake up is
+/// never lost and a fiber never runs on two workers.
+const F_RUNNING = 0
+const F_PARKING = 1
+const F_PARKED = 2
+const F_WOKEN = 3
+
+/// xo_task's state (word 10: 0 queued, 1 running, 2 done) and gone (word
+/// 22); xo_scope's pending count (word 30).
+const T_STATE = 10
+const T_GONE = 22
+const S_PENDING = 30
+
+/// The kinds of xo_sched_hook: a fiber starts, it ends, it parks, it was
+/// resumed, a worker switches to it, the worker is back.
+const HOOK_START = 0
+const HOOK_END = 1
+const HOOK_PARK = 2
+const HOOK_RESUMED = 3
+const HOOK_RUN = 4
+const HOOK_BACK = 5
+
+// ---------------------------------------------------------------------------
+// The run queue (Go's runq; xo_rt.c "The worker pool"): a ring of RUNQ
+// items that only its owner adds to; the owner takes from the head with
+// a compare and swap, a thief takes half with one. Head and tail count
+// every item ever added and taken.
+
+/// Adds x at the tail of the ring at q (the owner): 1, or 0 when it is
+/// full (the C then moves half of it to the inject queue).
+pub fn rq_put(q: Int, x: Int) -> Int {
+  let h = rt.slot_load(q, 0, ACQUIRE)
+  let t = rt.mem_load(q, RQ_TAIL_AT, 8)
+  if rt.int_wrap(1, t, h) < RUNQ {
+    rt.slot_store(q, rt.int_wrap(0, RQ_SLOT, t & RUNQ_MASK), x, RELAXED)
+    // sequentially consistent: ordered before the pusher's look at the
+    // spinning and idle counts (xo_rt.c wakep), as a worker going idle
+    // counts itself idle before it looks at the queues again
+    rt.slot_store(q, RQ_TAIL, rt.int_wrap(0, t, 1), SEQ_CST)
+    return 1
+  }
+  0
+}
+
+/// Takes the item at the head of the ring at q (the owner), or 0.
+pub fn rq_get(q: Int) -> Int {
+  while true {
+    let h = rt.slot_load(q, 0, ACQUIRE)
+    let t = rt.mem_load(q, RQ_TAIL_AT, 8)
+    if t == h {
+      return 0
+    }
+    let x = rt.slot_load(q, rt.int_wrap(0, RQ_SLOT, h & RUNQ_MASK), RELAXED)
+    if rt.slot_cas(q, 0, h, rt.int_wrap(0, h, 1), RELEASE) {
+      return x
+    }
+  }
+  0
+}
+
+/// Takes half of the items of the ring at q (rounded up) into the words
+/// at batch (a thief); how many.
+pub fn rq_grab(q: Int, batch: Int) -> Int {
+  while true {
+    let h = rt.slot_load(q, 0, ACQUIRE)
+    let t = rt.slot_load(q, RQ_TAIL, ACQUIRE)
+    let all = rt.int_wrap(1, t, h)
+    let n = rt.int_wrap(1, all, all >> 1)
+    if n <= 0 {
+      return 0
+    }
+    if n > RUNQ_HALF {
+      // h and t read at different times: again
+      continue
+    }
+    var i = 0
+    while i < n {
+      rt.slot_store(batch, i, rt.slot_load(q, rt.int_wrap(0, RQ_SLOT, rt.int_wrap(0, h, i) & RUNQ_MASK), RELAXED), RELAXED)
+      i = rt.int_wrap(0, i, 1)
+    }
+    if rt.slot_cas(q, 0, h, rt.int_wrap(0, h, n), RELEASE) {
+      return n
+    }
+  }
+  0
+}
+
+/// Adds the n words at batch to the empty ring at q (the owner).
+pub fn rq_put_batch(q: Int, batch: Int, n: Int) {
+  let t = rt.mem_load(q, RQ_TAIL_AT, 8)
+  var i = 0
+  while i < n {
+    rt.slot_store(q, rt.int_wrap(0, RQ_SLOT, rt.int_wrap(0, t, i) & RUNQ_MASK), rt.slot_load(batch, i, RELAXED), RELAXED)
+    i = rt.int_wrap(0, i, 1)
+  }
+  rt.slot_store(q, RQ_TAIL, rt.int_wrap(0, t, n), SEQ_CST)
+}
+
+/// Whether the ring at q holds an item: 1 or 0.
+pub fn rq_nonempty(q: Int) -> Int {
+  if rt.slot_load(q, 0, SEQ_CST) != rt.slot_load(q, RQ_TAIL, SEQ_CST) { 1 } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Fibers (decision 0069): every task a worker starts runs on a stack of
+// its own; a task that waits parks, and its worker runs other work.
+
+/// The first frame of fiber f, whose stack is the size bytes at mem (on
+/// Windows the top commit bytes committed): the frame the switch's
+/// restore takes (rt.stack_switch's sequences, selfhost/arm64 and
+/// selfhost/llvm sched.xo), with f and main in the registers
+/// fiber_start_addr's code calls main(f) with; the stack pointer to
+/// switch to.
+pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
+  let end = rt.int_wrap(0, mem, size)
+  let top = rt.int_wrap(1, end, end & 15)
+  let start = rt.fiber_start_addr()
+  match target.arch {
+    TargetArch.Arm64 => {
+      match target.os {
+        TargetOs.Windows => {
+          // x19 to x28, fp, lr, d8 to d15, the TEB's StackBase,
+          // StackLimit, and DeallocationStack, a pad
+          let fr = rt.int_wrap(1, top, 192)
+          rt.mem_set(fr, 0, 192)
+          rt.mem_store(fr, 0, f, 8)
+          rt.mem_store(fr, 8, main, 8)
+          rt.mem_store(fr, 88, start, 8)
+          rt.mem_store(fr, 160, top, 8)
+          rt.mem_store(fr, 168, rt.int_wrap(1, end, commit), 8)
+          rt.mem_store(fr, 176, mem, 8)
+          fr
+        }
+        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
+          // x19 (f), x20 (main), x21 to x28, fp, lr (the start), d8 to d15
+          let fr = rt.int_wrap(1, top, 160)
+          rt.mem_set(fr, 0, 160)
+          rt.mem_store(fr, 0, f, 8)
+          rt.mem_store(fr, 8, main, 8)
+          rt.mem_store(fr, 88, start, 8)
+          fr
+        }
+      }
+    }
+    TargetArch.Amd64 => {
+      match target.os {
+        TargetOs.Windows => {
+          // MXCSR and the x87 control word (53 bit precision), xmm6 to
+          // xmm15, the TEB's three words, r15, r14, r13, r12 (main), rsi,
+          // rdi, rbx (f), rbp, the return address (the start)
+          let fr = rt.int_wrap(1, top, 264)
+          rt.mem_set(fr, 0, 264)
+          rt.mem_store(fr, 0, 0x1F80, 4)
+          rt.mem_store(fr, 4, 0x027F, 2)
+          rt.mem_store(fr, 168, top, 8)
+          rt.mem_store(fr, 176, rt.int_wrap(1, end, commit), 8)
+          rt.mem_store(fr, 184, mem, 8)
+          rt.mem_store(fr, 216, main, 8)
+          rt.mem_store(fr, 240, f, 8)
+          rt.mem_store(fr, 256, start, 8)
+          fr
+        }
+        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
+          // MXCSR and the x87 control word, r15, r14, r13, r12 (main),
+          // rbx (f), rbp, the return address (the start)
+          let fr = rt.int_wrap(1, top, 64)
+          rt.mem_set(fr, 0, 64)
+          rt.mem_store(fr, 0, 0x1F80, 4)
+          rt.mem_store(fr, 4, 0x037F, 2)
+          rt.mem_store(fr, 32, main, 8)
+          rt.mem_store(fr, 40, f, 8)
+          rt.mem_store(fr, 56, start, 8)
+          fr
+        }
+      }
+    }
+    TargetArch.Wasm32 => 0
+  }
+}
+
+/// Where fiber f starts (its frame's main): its task, then back to the
+/// scheduler for good.
+pub fn fiber_main(f: Int) {
+  let w0 = rt.tlocal_get(TLS_W)
+  if rt.mem_load(w0, W_HOOKS, 8) != 0 {
+    rt.sched_hook(HOOK_START, w0, f)
+  }
+  rt.sched_run_task(f)
+  rt.mem_store(f, F_DONE, 1, 8)
+  // the task may have parked and gone on on another worker
+  let w = rt.tlocal_get(TLS_W)
+  if rt.mem_load(w, W_HOOKS, 8) != 0 {
+    rt.sched_hook(HOOK_END, w, f)
+  }
+  rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
+}
+
+/// Marks fiber f about to park (its park's lock held).
+pub fn fiber_parking(f: Int) { rt.slot_store(f, F_STATE, F_PARKING, RELEASE) }
+
+/// Switches from fiber f to the scheduler of the worker running it; it
+/// returns when a worker resumes f.
+pub fn fiber_park(f: Int) {
+  rt.mem_store(f, F_CUR, rt.tlocal_get(TLS_CUR), 8)
+  let w = rt.tlocal_get(TLS_W)
+  if rt.mem_load(w, W_HOOKS, 8) != 0 {
+    rt.sched_hook(HOOK_PARK, w, f)
+  }
+  rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
+  // resumed, maybe by another worker
+  let w2 = rt.tlocal_get(TLS_W)
+  if rt.mem_load(w2, W_HOOKS, 8) != 0 {
+    rt.sched_hook(HOOK_RESUMED, w2, f)
+  }
+}
+
+/// Makes a parked (or parking) fiber f run again: 1 when the caller must
+/// queue it (it had parked), else 0 (its scheduler sees F_WOKEN).
+pub fn fiber_wake(f: Int) -> Int {
+  if rt.slot_swap(f, F_STATE, F_WOKEN, ACQ_REL) == F_PARKED { 1 } else { 0 }
+}
+
+/// Runs fiber f on worker w until it parks (0) or ends (1: the caller
+/// frees it). The thread's current context is restored after (a root
+/// thread runs fibers while it waits).
+pub fn fiber_run(w: Int, f: Int) -> Int {
+  let saved = rt.tlocal_get(TLS_CUR)
+  let hooks = rt.mem_load(w, W_HOOKS, 8)
+  while true {
+    rt.slot_store(f, F_STATE, F_RUNNING, RELAXED)
+    rt.tlocal_set(TLS_FIB, f)
+    rt.tlocal_set(TLS_CUR, rt.mem_load(f, F_CUR, 8))
+    if hooks != 0 {
+      rt.sched_hook(HOOK_RUN, w, f)
+    }
+    rt.stack_switch(rt.int_wrap(0, w, W_SCHED_SP), rt.mem_load(f, 0, 8))
+    if hooks != 0 {
+      rt.sched_hook(HOOK_BACK, w, f)
+    }
+    rt.tlocal_set(TLS_FIB, 0)
+    rt.tlocal_set(TLS_CUR, saved)
+    if rt.mem_load(f, F_DONE, 8) != 0 {
+      return 1
+    }
+    if rt.slot_cas(f, F_STATE, F_PARKING, F_PARKED, ACQ_REL) {
+      // a waker queues it
+      return 0
+    }
+    // woken while it parked: run it again
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Task states (xo_rt.c "Scopes and tasks")
+
+/// Whether the caller is the one to run task t (nobody started it): 1
+/// or 0.
+pub fn task_claim(t: Int) -> Int {
+  if rt.slot_cas(t, T_STATE, 0, 1, ACQ_REL) { 1 } else { 0 }
+}
+
+/// Records that units of scope s's pending count are over (2: a task
+/// ended or one of its queue entries was taken, 4: both): 1 when the
+/// caller must signal the joiner (the last one while it waits).
+pub fn scope_units_done(s: Int, units: Int) -> Int {
+  if rt.slot_add(s, S_PENDING, rt.int_wrap(1, 0, units), ACQ_REL) == rt.int_wrap(0, units, 1) { 1 } else { 0 }
+}
+
+/// Records that a worker took task t's queue entry (t's last touch),
+/// for its scope s: 1 when the caller must signal s's joiner.
+pub fn task_dequeued(t: Int, s: Int) -> Int {
+  rt.slot_add(t, T_GONE, 1, RELEASE)
+  if rt.slot_add(s, S_PENDING, -2, ACQ_REL) == 3 { 1 } else { 0 }
+}

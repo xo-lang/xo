@@ -302,6 +302,38 @@ fn fence(ord: Int)
 /// A spin loop's pause (yield on arm64, pause on x86; nothing on wasm).
 fn spin_hint()
 
+// The task switch and thread state (decision 0212), for
+// std/native/llrt/sched.xo only. The native emitters put the functions
+// in the program's code at their first use, as instruction sequences
+// per target (none on wasm): rt.stack_switch is a call of
+// xo_stack_switch, rt.tlocal_get and rt.tlocal_set calls of xo_tlocal_get and
+// xo_tlocal_set, which the C runtime calls too (never inlined: a fiber may
+// go on on another thread after a switch).
+
+/// Saves the callee saved registers (and on Windows the TEB's stack
+/// bounds) on the current stack, stores the stack pointer at address
+/// save, and goes on on the stack at to (saved by an earlier switch, or
+/// a frame fiber_start_addr starts); returns when something switches
+/// back to the stack saved.
+fn stack_switch(save: Int, to: Int)
+/// The address where a fiber's first frame starts: the code calls the
+/// function in the frame's second register slot with the first as its
+/// argument (the slots of std/native/llrt/sched.xo's fiber_frame).
+fn fiber_start_addr() -> Int
+/// Word k (0 to 15, a constant) of the calling thread's table of
+/// runtime thread locals; zero in a new thread.
+fn tlocal_get(k: Int) -> Int
+/// Sets word k of the calling thread's table.
+fn tlocal_set(k: Int, v: Int)
+/// The C path of sched.xo (XO_LLRT_C=sched, -DXO_SCHED_C): operation op
+/// of the C runtime's own scheduler (std/llrt/xo_rt.c xo_sched_c).
+fn sched_c(op: Int, a: Int, b: Int, c: Int) -> Int
+/// A hook of the C runtime around a switch of sched.xo's fiber code
+/// (sanitizers and statistics; xo_rt.c xo_sched_hook).
+fn sched_hook(kind: Int, w: Int, f: Int)
+/// Runs the task of fiber f, which just started (xo_rt.c run_claimed).
+fn sched_run_task(f: Int)
+
 /// Whether a log field value is a number or a Bool (written bare in a
 /// JSON record).
 fn dyn_raw(v: Debug) -> Bool

@@ -401,6 +401,10 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
+	// and of the scheduler core (decision 0212, XO_LLRT_C=sched)
+	if callsSym(code, "xo_sched_c") {
+		out = append(out, "-DXO_SCHED_C")
+	}
 	return out
 }
 

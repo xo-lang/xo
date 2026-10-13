@@ -16,6 +16,7 @@ use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sched
 use native/llrt/text
 use native/llrt/unicode
 use native/rt
@@ -329,3 +330,37 @@ fn rc_dec_shared(p: Int) -> Int { rc.dec_shared(p) }
 fn rc_claim(p: Int) -> Int { rc.claim(p) }
 
 fn rc_mark(p: Int) -> Int { rc.mark(p) }
+
+// ---------------------------------------------------------------------------
+// The scheduler core (decision 0212): xo_rt.c's run queue ring, fiber
+// code, and task states, in sched.xo (sched_c.xo with XO_LLRT_C=sched,
+// whose C then calls its own copies). Addresses are of the C runtime's
+// records; nothing here allocates, counts, or faults.
+
+fn rq_put(q: Int, x: Int) -> Int { sched.rq_put(q, x) }
+
+fn rq_get(q: Int) -> Int { sched.rq_get(q) }
+
+fn rq_grab(q: Int, batch: Int) -> Int { sched.rq_grab(q, batch) }
+
+fn rq_put_batch(q: Int, batch: Int, n: Int) { sched.rq_put_batch(q, batch, n) }
+
+fn rq_nonempty(q: Int) -> Int { sched.rq_nonempty(q) }
+
+fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int { sched.fiber_frame(f, mem, size, commit, main) }
+
+fn fiber_main(f: Int) { sched.fiber_main(f) }
+
+fn fiber_parking(f: Int) { sched.fiber_parking(f) }
+
+fn fiber_park(f: Int) { sched.fiber_park(f) }
+
+fn fiber_wake(f: Int) -> Int { sched.fiber_wake(f) }
+
+fn fiber_run(w: Int, f: Int) -> Int { sched.fiber_run(w, f) }
+
+fn task_claim(t: Int) -> Int { sched.task_claim(t) }
+
+fn scope_units_done(s: Int, units: Int) -> Int { sched.scope_units_done(s, units) }
+
+fn task_dequeued(t: Int, s: Int) -> Int { sched.task_dequeued(t, s) }

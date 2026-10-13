@@ -112,6 +112,9 @@ type gen struct {
 	// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
 	// (decision 0206)
 	restorerRef bool
+	// the task switch or the thread locals were used: sched.go's
+	// functions are emitted (decision 0212)
+	schedRef bool
 	place       Layout
 	// Go mode (goasm.go): functions as Go assembler for Go backend builds
 	goMode   bool
@@ -188,6 +191,9 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	if g.restorerRef {
 		// rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
 		fmt.Fprintf(&out, "\t.p2align 2\n%s:\n\tmov x8, #139\n\tsvc #0\n", g.local("xo_sigreturn"))
+	}
+	if g.schedRef {
+		out.WriteString(schedAsm(g.os))
 	}
 	if g.personalityRef {
 		// the personality routine through a data word, as ELF compilers
