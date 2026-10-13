@@ -369,6 +369,12 @@ fn sched_c(op: Int, a: Int, b: Int, c: Int) -> Int
 fn sched_hook(kind: Int, w: Int, f: Int)
 /// Runs the task of fiber f, which just started (xo_rt.c run_claimed).
 fn sched_run_task(f: Int)
+/// A service of the C runtime for std/native/llrt/pool.xo (decision 0212
+/// stage 2; xo_rt.c xo_sched_rt): op names it (pool.xo RT_*), a and b
+/// are its arguments; the statistics, the deadlock check, the test
+/// world's clock, the monotonic clock, the sanitizers' fiber records,
+/// and on Linux the C library's thread start.
+fn sched_rt(op: Int, a: Int, b: Int) -> Int
 
 /// Whether a log field value is a number or a Bool (written bare in a
 /// JSON record).

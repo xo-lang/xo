@@ -28,3 +28,21 @@ fn GetFileType(h: Int) -> UInt32
 fn GetSystemTimePreciseAsFileTime(ft: Int)
 /// BCryptGenRandom (bcrypt.dll): 0 (STATUS_SUCCESS), or an NTSTATUS.
 fn BCryptGenRandom(alg: Int, buf: Int, n: Int, flags: Int) -> Int32
+
+// The scheduler's platform calls (decision 0212 stage 2,
+// std/native/llrt/pool.xo): fiber stacks, the waits of the runtime's
+// locks (synchronization.lib), and worker threads.
+
+/// VirtualAlloc: the address, or 0.
+fn VirtualAlloc(addr: Int, size: Int, kind: Int, protect: Int) -> Int
+fn VirtualFree(addr: Int, size: Int, kind: Int) -> Int32
+/// WaitOnAddress: sleeps while the size bytes at addr equal those at
+/// cmp (ms INFINITE: 0xFFFFFFFF).
+fn WaitOnAddress(addr: Int, cmp: Int, size: Int, ms: Int) -> Int32
+fn WakeByAddressSingle(addr: Int)
+/// CreateThread: the thread's handle, or 0; it runs the C function at f
+/// with arg.
+fn CreateThread(security: Int, stack: Int, f: Int, arg: Int, flags: Int, tid: Int) -> Int
+/// SetThreadStackGuarantee: the stack the calling thread keeps for its
+/// stack overflow handler (a ULONG at the address size).
+fn SetThreadStackGuarantee(size: Int) -> Int32
