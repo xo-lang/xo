@@ -10,7 +10,13 @@ item 6: 1,040 of its 1,799 lines out of default builds,
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
 under XO_NOLIBC=1); stages 2 and 3 (threads, signals, unwinding,
-sockets, DNS from Xo) open. Prerequisite 2 (raw memory) stage 1 done
+sockets, DNS from Xo) open. Prerequisite 3 on macOS and Windows:
+stage 1 done (decision 0213, 2026-10-13: platform library calls from
+Xo through std/native/sys_darwin.xo and sys_windows.xo, the libSystem
+and kernel32 layers darwin.xo and windows.xo, files routed on
+darwin/arm64 and Windows with the C path's messages byte for byte;
+Clock.now stays C until the arm64 emitter folds a `match` on `target`).
+Prerequisite 2 (raw memory) stage 1 done
 2026-10-13: decision 0207 (raw memory intrinsics, C ABI exports; the
 "(0) held by C callers" group moved but the test world stores, which
 are (1) and (2); `bench/results/raw-memory-2026-10-13.md`); stage 2's

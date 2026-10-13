@@ -26,7 +26,8 @@ func TestNativeModules(t *testing.T) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".xo")
-		if name == "prelude" || strings.HasPrefix(name, "rt") || name == "internal" {
+		if name == "prelude" || strings.HasPrefix(name, "rt") || strings.HasPrefix(name, "sys_") || name == "internal" {
+			// the intrinsics and the platform declarations (decision 0213);
 			// std/internal: only std and the toolchain see it
 			// (TestStdInternalVisibility)
 			continue
