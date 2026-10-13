@@ -73,6 +73,11 @@ fn main(os: Os) {
 }
 ```
 
+Likely the same defect as gotchas/arm64-vreg-read-before-write-break-flag.md
+(decision 0193 step 6, found the same day in http1.xo): both have a
+`&&` or `||` condition at a loop's exit next to a `break`, and both
+build on LLVM; one fix should cover both repros.
+
 Fix (workaround): test the second operand as a `break` in the body
 (`while k < s.len() { if s[k] == 47 { break } ... }`), as glob.xo does.
 Next: build the program above with `XO_SELF_DRIVER=0 xo build

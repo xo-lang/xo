@@ -211,8 +211,9 @@ scalar kind.
    each in selfhost/arm64 first, mirrored in internal/arm64; then
    remeasure bench/perf/digest `argon2` from commit b54614f2's digest.xo.
 2. SHA-512 in Xo (the unrolled generator of digest_tables.xo with
-   64 bit words and `int_wrap` op 5) once Ed25519 leaves C, or as the
-   C's caller's replacement in the same step.
+   64 bit words and `int_wrap` op 5), called by the C Ed25519 through
+   decision 0204's export (owner, 2026-10-13: C may call Xo runtime
+   functions), which also frees `tw_rand_u64` for the generator's state.
 3. The generator's state in Xo: a List[Int] owned by the generated test
    code, passed `var` through the `xo.gen[T]` functions, with
    `XO_PROP_REPLAY` and `XO_PROP_SEED` read through the env primitives;
