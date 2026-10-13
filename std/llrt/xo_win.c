@@ -160,9 +160,15 @@ typedef struct {
 	void *arg;
 } xo_win_start;
 
+// the stack a thread keeps for its stack overflow handler (on_overflow,
+// xo_rt.c), past the guard page
+#define XO_W_GUARANTEE (64 << 10)
+
 static unsigned __stdcall xo_thread_tramp(void *p) {
 	xo_win_start s = *(xo_win_start *)p;
 	free(p);
+	ULONG g = XO_W_GUARANTEE;
+	SetThreadStackGuarantee(&g);
 	s.fn(s.arg);
 	return 0;
 }

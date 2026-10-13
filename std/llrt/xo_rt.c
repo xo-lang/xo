@@ -7170,9 +7170,37 @@ static BOOL WINAPI on_console(DWORD kind) {
 	return FALSE;
 }
 
+// on_overflow reports a stack overflow (decision 0197, stage 5): not a
+// fault (decision 0085), so nothing unwinds; the program ends as the Go
+// backend's does, with "fatal error: stack overflow" and status 2, where
+// Windows would end it silently (0xC00000FD). It runs on what is left of
+// the overflowed stack (the guarantee SetThreadStackGuarantee keeps for
+// the thread), so it only writes and exits.
+static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
+	if (e->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	static const char m[] = "fatal error: stack overflow\n";
+	DWORD w;
+	// the program's buffered output first, unless a writer holds it
+	if (TryAcquireSRWLockExclusive(&out_mu)) {
+		if (olen > 0) {
+			WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), obuf, (DWORD)olen, &w, NULL);
+			olen = 0;
+		}
+		ReleaseSRWLockExclusive(&out_mu);
+	}
+	WriteFile(GetStdHandle(STD_ERROR_HANDLE), m, sizeof m - 1, &w, NULL);
+	TerminateProcess(GetCurrentProcess(), 2);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
 __attribute__((unused)) static void xo_signals_init(void) {
 	ev_start();
 	SetConsoleCtrlHandler(on_console, TRUE);
+	AddVectoredExceptionHandler(1, on_overflow);
+	ULONG g = XO_W_GUARANTEE;
+	SetThreadStackGuarantee(&g);
 }
 #else
 // xo_signals_init installs the handlers (main, before the program runs).
