@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestHarness runs bench/harness/test_harness.py. It needs python3 and the
@@ -26,7 +26,7 @@ func TestHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	build.EnableTestBinCache()
+	xotool.EnableTestBinCache()
 	cmd := exec.Command(py, "-I", script)
 	cmd.Env = os.Environ()
 	if _, ok := os.LookupEnv("GORACE"); !ok {
