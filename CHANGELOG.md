@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM backend builds Windows programs (windows/amd64 host, decision
+  0197 stage 1): `xo build --backend=llvm` with LLVM's clang
+  (x86_64-pc-windows-msvc, lld) and the MSVC build tools. The runtime's
+  POSIX use maps onto Win32 and Winsock (std/llrt/xo_win.c): threads,
+  tasks on fibers, faults with deferred code, timers, files, sockets,
+  HTTP and TLS, standard input. 140 of 144 LLVM goldens pass on Windows
+  Server 2025. A program using processes (Proc) stops with the new
+  XO1504 (a std API the native runtime does not support on the target
+  yet). A Windows host also cross builds the other Windows architecture
+  (`--targets=windows/arm64`: 141 of 144 goldens build and link; none
+  run yet, for lack of a Windows on Arm host). scripts/remote-windows.sh
+  runs a command on, or holds, a temporary Windows EC2 instance.
 - The LLVM backend builds and passes the golden suite on darwin/amd64
   (decision 0196): on an Intel Mac with macOS 26.5.2 the whole
   internal/llvm package passes, TestGolden 143 of 143, with no emitter

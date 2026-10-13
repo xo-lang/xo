@@ -1,6 +1,6 @@
 # Toolchain and layout
 
-Last verified: 2026-10-09
+Last verified: 2026-10-12
 
 ## Host
 
@@ -1443,6 +1443,13 @@ first, AST based prototype, since deleted) and
 - `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
   programs only (not `xo test`), no `--race`, `--holes` (arenas are ignored),
   `--targets` other than the host. `build.Options.Backend`.
+- Hosts (2026-10-12): darwin/arm64, linux/arm64, linux/amd64,
+  darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
+  runtime's Win32 layer is std/llrt/xo_win.c; clang's default
+  x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
+  ported yet, processes as of stage 1; see "Windows runs"). The one
+  cross build: a Windows host builds the other Windows architecture
+  (`--targets=windows/arm64`, `build.LLVMCrossTriple`).
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
   root), verifies, runs `InsertRC`, verifies again (RC balance per
   path), and lowers with `GenerateSSA` (`internal/llvm/fromssa.go`;
@@ -2823,6 +2830,42 @@ start (gotchas/darwin-amd64-sanitizers-sigill.md). The development Mac
 cannot run x86_64 binaries (no Rosetta) and the LLVM backend builds for
 the host only, so darwin/amd64 is built and tested on that Mac.
 Last verified: 2026-10-12.
+
+## Windows runs (windows/amd64, decisions 0196 and 0197)
+
+`scripts/remote-windows.sh [--dry-run] [--hold] [--cmd CMD] [COMMIT]`
+launches an on demand Windows Server 2025 EC2 instance (default
+c7i.4xlarge, 16 vCPU, 32 GiB, owner approved about $1.40 an hour;
+`XO_REMOTE_TYPE`), us-east-1, key pair xo-ci, security group xo-ci-ssh
+(SSH from this host's IP only, no RDP). EC2Launch v2 user data, as
+SYSTEM: first the lifetime (`shutdown /s /f /t` and a scheduled task at
+`XO_REMOTE_MAX_MIN` minutes, default 240; instance-initiated shutdown
+terminates), then OpenSSH Server with the xo-ci public key in
+`C:\ProgramData\ssh\administrators_authorized_keys` and Git Bash as the
+default shell, then Git for Windows (latest release), Go 1.26.1 (msi),
+LLVM (latest release msi: 23.1.3 on 2026-10-12, clang, lld-link,
+llvm-ar), and the VS 2022 Build Tools (VCTools workload, x64 and ARM64
+compilers, the recommended Windows SDK); `C:\xo-ready` marks the end
+(about 11 minutes; the LLVM installer is an .msi since LLVM 23, an .exe
+before). The script starts a local watchdog (PID printed) that
+terminates the instance after the same limit and terminates it on exit.
+It sends the commit as a git bundle and clones it to `~/xo` with
+`core.autocrlf false` (gotchas/windows-git-crlf-goldens.md). `--hold`
+writes `Administrator@<ip>` to `$XO_REMOTE_HOLD` and waits; `--cmd`
+runs one command (Git Bash, in the checkout) and writes the log to
+bench/results/remote/windows-<commit>.log (git ignored).
+
+On the instance: `go build -o ../xo.exe ./cmd/xo`, then
+`XO_SELF_DRIVER=0 ../xo.exe build --backend=llvm DIR` (xo1 is not used
+on Windows); the golden count is
+`XO_GOLDEN_WANT=1 go test -count=1 -run TestGoldenWant -v ./internal/llvm`
+(the summary line counts pass, fail, unsupported; with
+`XO_GOLDEN_WANT_TARGET=windows/arm64` it cross builds instead and counts
+the programs that build and link). clang targets
+x86_64-pc-windows-msvc by default and finds the build tools itself; the
+link is `-fuse-ld=lld` (LTO bitcode). Results:
+bench/results/windows-2026-10-12.md. Last verified: 2026-10-12
+(instance i-EXAMPLE19).
 
 
 ## Bootstrapping without Go (decision 0178, stage 7)

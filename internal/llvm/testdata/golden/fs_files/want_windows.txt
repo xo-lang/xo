@@ -1,0 +1,52 @@
+exit 0
+--- stdout
+line "one"
+line "two"
+line ""
+line "last without newline"
+after true
+closed Io(path: "lines.txt", msg: "file already closed")
+first "row 0"
+big 188890 of 188890 in 3 reads
+zero true
+mixed row 0 "row 1\nr" ow 2
+writer read Io(path: "w.txt", msg: "file is open for writing")
+after close Io(path: "w.txt", msg: "file already closed")
+appended "alpha\nbeta\ngamma\ndelta\n" "made\n"
+reader write Io(path: "w.txt", msg: "file is open for reading")
+open dir IsDir(path: "d")
+open missing NotFound(path: "missing.txt")
+create missing dir NotFound(path: "nope/x.txt")
+ro create Denied(path: "ro.txt")
+mode 438
+copy 23 mode 438
+copy over 438 30
+copy dir IsDir(path: "d") missing NotFound(path: "zz")
+mode missing NotFound(path: "zz")
+links lines.txt ../w.txt true
+through 23
+escape Denied(path: "d/bad") Denied(path: "abs") Denied(path: "up2")
+exists Exists(path: "link.txt")
+read_link missing NotFound(path: "zz")
+glob *.txt big.txt lines.txt link.txt new.txt w.txt
+glob d/*.log d/a1.log d/b2.log
+glob d/[ab]?.log d/a1.log d/b2.log
+glob d/[^a]* d/b2.log d/copy.txt d/e d/up.txt
+glob **/*.txt big.txt d/copy.txt d/e/deep.txt d/up.txt lines.txt link.txt new.txt w.txt
+glob d/** d d/e
+glob **/e/* d/e/deep.txt
+glob .* .top.txt
+glob d/e/.* d/e/.hidden.txt
+glob nope/* 
+glob w.txt w.txt
+glob zz.txt 
+glob d/*/deep.txt d/e/deep.txt
+glob */ big.txt d lines.txt link.txt new.txt w.txt
+glob [ Io(path: "[", msg: "bad pattern: syntax error in pattern")
+glob d/[a- Io(path: "d/[a-", msg: "bad pattern: syntax error in pattern")
+glob a\ ok? 0
+try while held true
+try after unlock got it
+lock exists true
+ro lock Denied(path: "x.lock")
+--- stderr
