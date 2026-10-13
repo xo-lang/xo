@@ -2151,8 +2151,12 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // (decision 0193 step 3: the word arithmetic of the number text in
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
 // *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi, the bits
-// of a Float both ways, and rt.bytes_word (an unchecked load of 8 bytes).
-// It reports whether v was one.
+// of a Float both ways, and rt.bytes_word (an unchecked load of 8 bytes);
+// the scan intrinsics of decision 0201: rt.popcount (cnt and addv),
+// rt.ctz (rbit and clz), rt.clz, and rt.bytes_eq16 and rt.bytes_high16
+// (16 bytes in v30 compared, narrowed by shrn to 4 bits a byte; v30 and
+// v31 are scratch registers of the emitter). It reports whether v was
+// one.
 func (s *fstate) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2177,6 +2181,26 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
 		s.set(v, s.def1(false, "ldr $d0, [$u0, $u1]", d, s.word(v.Args[1])))
+	case "rt.popcount":
+		s.set(v, s.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", s.word(v.Args[0])))
+	case "rt.ctz":
+		s.set(v, s.def1(false, "rbit $d0, $u0\nclz $d0, $d0", s.word(v.Args[0])))
+	case "rt.clz":
+		s.set(v, s.def1(false, "clz $d0, $u0", s.word(v.Args[0])))
+	case "rt.bytes_eq16", "rt.bytes_high16":
+		ws := s.words(v.Args[0])
+		d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+		uses := []vreg{d, s.word(v.Args[1])}
+		cmp := "cmlt v30.16b, v30.16b, #0"
+		if v.Aux.(string) == "rt.bytes_eq16" {
+			if c, ok := constInt(v.Args[2]); ok {
+				cmp = fmt.Sprintf("movi v31.16b, #%d\ncmeq v30.16b, v30.16b, v31.16b", c&255)
+			} else {
+				cmp = "dup v31.16b, $wu2\ncmeq v30.16b, v30.16b, v31.16b"
+				uses = append(uses, s.word(v.Args[2]))
+			}
+		}
+		s.set(v, s.def1(false, "ldr q30, [$u0, $u1]\n"+cmp+"\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", uses...))
 	default:
 		return false
 	}

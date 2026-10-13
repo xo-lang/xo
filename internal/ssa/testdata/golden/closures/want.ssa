@@ -914,159 +914,164 @@ b0(v0: Str, v1: Str):
   v4: Str = call rt.rs_push_byte, v0, v3
   v5: Int = const 0
   jump b1(v5, v4)
-b1(v7: Int, v8: Str):  ; preds b0, b42, b27
+b1(v7: Int, v8: Str):  ; preds b0, b44, b29
   v9: Bool = lt v7, v2
   br v9, b3(), b2(v8)
-b2(v11: Str):  ; preds b1, b8
+b2(v11: Str):  ; preds b1, b11
   v12: Int = const 34
   v13: Str = call rt.rs_push_byte, v11, v12
   ret v13
 b3:  ; preds b1
   v15: Int = const 1
-  v16: Int = call rt.bytes_span, v1, v7, v15
-  v17: Bool = gt v16, v7
-  br v17, b5(), b6()
-b4(v19: Int, v20: Str):  ; preds b7, b6
-  v21: () = tuple
-  v22: UInt8 = call bytes.index, v1, v19 @ text.xo:594:17 lands v23
-  v23: Bool = call rt.landing
-  br v23, b31(), b30()
+  v16: Int = call scan.span, v1, v7, v15 lands v17
+  v17: Bool = call rt.landing
+  br v17, b4(), b5()
+b4:  ; preds b3
+  jump b6()
 b5:  ; preds b3
-  v25: Int = const 0
-  v26: Str = call rt.rs_append_bytes, v8, v1, v7, v16, v25
-  v27: Bool = ge v16, v2
-  br v27, b8(), b9()
-b6:  ; preds b3
-  v29: () = tuple
-  jump b4(v7, v8)
-b7:  ; preds b9
-  v31: () = tuple
-  jump b4(v16, v26)
+  v20: Bool = gt v16, v7
+  br v20, b8(), b9()
+b6:  ; preds b4, b16, b24, b33, b35, b37, b39, b41, b43, b45
+  v22: () = call rt.fault_continue
+  v23: Str = const ""
+  ret v23
+b7(v25: Int, v26: Str):  ; preds b10, b9
+  v27: () = tuple
+  v28: UInt8 = call bytes.index, v1, v25 @ text.xo:595:17 lands v29
+  v29: Bool = call rt.landing
+  br v29, b33(), b32()
 b8:  ; preds b5
-  jump b2(v26)
+  v31: Int = const 0
+  v32: Str = call rt.rs_append_bytes, v8, v1, v7, v16, v31
+  v33: Bool = ge v16, v2
+  br v33, b11(), b12()
 b9:  ; preds b5
-  v34: () = tuple
-  jump b7()
+  v35: () = tuple
+  jump b7(v7, v8)
 b10:  ; preds b12
-  v36: () = tuple
-  v37: Int = const 0
-  jump b16(v19)
-b11:  ; preds b30
-  v39: Int = call text.escape_word, v100 lands v40
-  v40: Bool = call rt.landing
-  br v40, b13(), b14()
-b12:  ; preds b30
-  v42: () = tuple
+  v37: () = tuple
+  jump b7(v16, v32)
+b11:  ; preds b8
+  jump b2(v32)
+b12:  ; preds b8
+  v40: () = tuple
   jump b10()
-b13:  ; preds b11
-  jump b15()
-b14:  ; preds b11
-  v45: Int = const 4294967295
-  v46: Int = and v39, v45
-  v47: Int = const 60
-  v48: Int = shr v39, v47 @ text.xo:597:46 lands v49
-  v49: Bool = call rt.landing
-  br v49, b33(), b32()
-b15:  ; preds b13, b22, b31, b33, b35, b37, b39, b41, b43
-  v51: () = call rt.fault_continue
-  v52: Str = const ""
-  ret v52
-b16(v54: Int):  ; preds b10, b38
-  v55: Bool = lt v54, v2
-  br v55, b19(), b20()
-b17(v57: Int):  ; preds b18, b25
-  v58: Bool = gt v54, v19
-  br v58, b28(), b29()
-b18(v60: Bool):  ; preds b20, b34
-  br v60, b21(), b17(v37)
-b19:  ; preds b16
-  v62: UInt8 = call bytes.index, v1, v54 @ text.xo:604:20 lands v63
-  v63: Bool = call rt.landing
-  br v63, b35(), b34()
-b20:  ; preds b16
-  v65: Bool = const false
-  jump b18(v65)
+b13:  ; preds b15
+  v42: () = tuple
+  v43: Int = const 0
+  jump b18(v25)
+b14:  ; preds b32
+  v45: Int = call text.escape_word, v103 lands v46
+  v46: Bool = call rt.landing
+  br v46, b16(), b17()
+b15:  ; preds b32
+  v48: () = tuple
+  jump b13()
+b16:  ; preds b14
+  jump b6()
+b17:  ; preds b14
+  v51: Int = const 4294967295
+  v52: Int = and v45, v51
+  v53: Int = const 60
+  v54: Int = shr v45, v53 @ text.xo:598:46 lands v55
+  v55: Bool = call rt.landing
+  br v55, b35(), b34()
+b18(v57: Int):  ; preds b13, b40
+  v58: Bool = lt v57, v2
+  br v58, b21(), b22()
+b19(v60: Int):  ; preds b20, b27
+  v61: Bool = gt v57, v25
+  br v61, b30(), b31()
+b20(v63: Bool):  ; preds b22, b36
+  br v63, b23(), b19(v43)
 b21:  ; preds b18
-  v67: Int = call unicode.decode, v1, v54 lands v68
-  v68: Bool = call rt.landing
-  br v68, b22(), b23()
-b22:  ; preds b21
-  jump b15()
-b23:  ; preds b21
-  v71: Int = const 3
-  v72: Int = shr v67, v71 @ text.xo:606:11 lands v73
-  v73: Bool = call rt.landing
-  br v73, b37(), b36()
-b24:  ; preds b26
-  v75: () = tuple
-  v76: Int = const 7
-  v77: Int = and v67, v76
-  v78: Int = add v54, v77 @ text.xo:610:7 lands v79
-  v79: Bool = call rt.landing
-  br v79, b39(), b38()
-b25:  ; preds b36
-  v81: Int = const 7
-  v82: Int = and v67, v81
-  jump b17(v82)
-b26:  ; preds b36
-  v84: () = tuple
-  jump b24()
-b27(v86: Int, v87: Str):  ; preds b28, b40
-  v88: () = tuple
-  jump b1(v86, v87)
-b28:  ; preds b17
-  v90: Int = const 0
-  v91: Str = call rt.rs_append_bytes, v20, v1, v19, v54, v90
-  v92: () = tuple
-  jump b27(v54, v91)
-b29:  ; preds b17
-  v94: Int = const 9026416820801467740
-  v95: Int = const 8
-  v96: Str = call rt.rs_push_word, v20, v94, v95
-  v97: Int = add v19, v57 @ text.xo:618:7 lands v98
-  v98: Bool = call rt.landing
-  br v98, b41(), b40()
-b30:  ; preds b4
-  v100: Int = iconv v22
-  v101: Int = const 128
-  v102: Bool = lt v100, v101
-  br v102, b11(), b12()
-b31:  ; preds b4
-  jump b15()
-b32:  ; preds b14
-  v105: Str = call rt.rs_push_word, v20, v46, v48
-  v106: Int = const 1
-  v107: Int = add v19, v106 @ text.xo:598:7 lands v108
-  v108: Bool = call rt.landing
-  br v108, b43(), b42()
-b33:  ; preds b14
-  jump b15()
-b34:  ; preds b19
-  v111: UInt8 = const 128
-  v112: Bool = ge v62, v111
-  jump b18(v112)
-b35:  ; preds b19
-  jump b15()
-b36:  ; preds b23
-  v115: Int = const 65533
-  v116: Bool = eq v72, v115
-  br v116, b25(), b26()
-b37:  ; preds b23
-  jump b15()
-b38:  ; preds b24
-  v119: () = tuple
-  jump b16(v78)
-b39:  ; preds b24
-  jump b15()
-b40:  ; preds b29
+  v65: UInt8 = call bytes.index, v1, v57 @ text.xo:605:20 lands v66
+  v66: Bool = call rt.landing
+  br v66, b37(), b36()
+b22:  ; preds b18
+  v68: Bool = const false
+  jump b20(v68)
+b23:  ; preds b20
+  v70: Int = call unicode.decode, v1, v57 lands v71
+  v71: Bool = call rt.landing
+  br v71, b24(), b25()
+b24:  ; preds b23
+  jump b6()
+b25:  ; preds b23
+  v74: Int = const 3
+  v75: Int = shr v70, v74 @ text.xo:607:11 lands v76
+  v76: Bool = call rt.landing
+  br v76, b39(), b38()
+b26:  ; preds b28
+  v78: () = tuple
+  v79: Int = const 7
+  v80: Int = and v70, v79
+  v81: Int = add v57, v80 @ text.xo:611:7 lands v82
+  v82: Bool = call rt.landing
+  br v82, b41(), b40()
+b27:  ; preds b38
+  v84: Int = const 7
+  v85: Int = and v70, v84
+  jump b19(v85)
+b28:  ; preds b38
+  v87: () = tuple
+  jump b26()
+b29(v89: Int, v90: Str):  ; preds b30, b42
+  v91: () = tuple
+  jump b1(v89, v90)
+b30:  ; preds b19
+  v93: Int = const 0
+  v94: Str = call rt.rs_append_bytes, v26, v1, v25, v57, v93
+  v95: () = tuple
+  jump b29(v57, v94)
+b31:  ; preds b19
+  v97: Int = const 9026416820801467740
+  v98: Int = const 8
+  v99: Str = call rt.rs_push_word, v26, v97, v98
+  v100: Int = add v25, v60 @ text.xo:619:7 lands v101
+  v101: Bool = call rt.landing
+  br v101, b43(), b42()
+b32:  ; preds b7
+  v103: Int = iconv v28
+  v104: Int = const 128
+  v105: Bool = lt v103, v104
+  br v105, b14(), b15()
+b33:  ; preds b7
+  jump b6()
+b34:  ; preds b17
+  v108: Str = call rt.rs_push_word, v26, v52, v54
+  v109: Int = const 1
+  v110: Int = add v25, v109 @ text.xo:599:7 lands v111
+  v111: Bool = call rt.landing
+  br v111, b45(), b44()
+b35:  ; preds b17
+  jump b6()
+b36:  ; preds b21
+  v114: UInt8 = const 128
+  v115: Bool = ge v65, v114
+  jump b20(v115)
+b37:  ; preds b21
+  jump b6()
+b38:  ; preds b25
+  v118: Int = const 65533
+  v119: Bool = eq v75, v118
+  br v119, b27(), b28()
+b39:  ; preds b25
+  jump b6()
+b40:  ; preds b26
   v122: () = tuple
-  jump b27(v97, v96)
-b41:  ; preds b29
-  jump b15()
-b42:  ; preds b32
-  jump b1(v107, v105)
-b43:  ; preds b32
-  jump b15()
+  jump b18(v81)
+b41:  ; preds b26
+  jump b6()
+b42:  ; preds b31
+  v125: () = tuple
+  jump b29(v100, v99)
+b43:  ; preds b31
+  jump b6()
+b44:  ; preds b34
+  jump b1(v110, v108)
+b45:  ; preds b34
+  jump b6()
 }
 
 func num.append_uint(v0: Str, v1: Int, v2: Int) -> Str {
@@ -1208,6 +1213,270 @@ b34:  ; preds b21
   jump b5()
 }
 
+func scan.span(v0: Str, v1: Int, v2: Int) -> Int {
+b0(v0: Str, v1: Int, v2: Int):
+  v3: Int = call Str.len, v0
+  v4: Int = const 0
+  v5: Bool = eq v2, v4
+  br v5, b2(), b3()
+b1:  ; preds b3
+  v7: () = tuple
+  jump b22(v1)
+b2:  ; preds b0
+  jump b4(v1)
+b3:  ; preds b0
+  v10: () = tuple
+  jump b1()
+b4(v12: Int):  ; preds b2, b48
+  v13: Int = sub v3, v12 @ scan.xo:209:11 lands v14
+  v14: Bool = call rt.landing
+  br v14, b47(), b46()
+b5:  ; preds b46
+  jump b10(v12)
+b6:  ; preds b46
+  v17: Int = call rt.bytes_high16, v0, v12
+  v18: Int = const 0
+  v19: Bool = ne v17, v18
+  br v19, b8(), b9()
+b7:  ; preds b9
+  v21: () = tuple
+  v22: Int = const 16
+  v23: Int = add v12, v22 @ scan.xo:214:7 lands v24
+  v24: Bool = call rt.landing
+  br v24, b49(), b48()
+b8:  ; preds b6
+  v26: Int = call rt.ctz, v17
+  v27: Int = const 2
+  v28: Int = shr v26, v27 @ scan.xo:212:21 lands v29
+  v29: Bool = call rt.landing
+  br v29, b51(), b50()
+b9:  ; preds b6
+  v31: () = tuple
+  jump b7()
+b10(v33: Int):  ; preds b5, b56
+  v34: Int = sub v3, v33 @ scan.xo:216:11 lands v35
+  v35: Bool = call rt.landing
+  br v35, b53(), b52()
+b11:  ; preds b52
+  jump b16(v33)
+b12:  ; preds b52
+  v38: Int = call rt.bytes_word, v0, v33
+  v39: Int = const 9187201950435737472
+  v40: Int = neg v39 @ scan.xo:19:20 lands v41
+  v41: Bool = call rt.landing
+  br v41, b55(), b54()
+b13:  ; preds b15
+  v43: () = tuple
+  v44: Int = const 8
+  v45: Int = add v33, v44 @ scan.xo:221:7 lands v46
+  v46: Bool = call rt.landing
+  br v46, b57(), b56()
+b14:  ; preds b54
+  v48: Int = call rt.ctz, v149
+  v49: Int = const 3
+  v50: Int = shr v48, v49 @ scan.xo:219:21 lands v51
+  v51: Bool = call rt.landing
+  br v51, b59(), b58()
+b15:  ; preds b54
+  v53: () = tuple
+  jump b13()
+b16(v55: Int):  ; preds b11, b62
+  v56: Bool = lt v55, v3
+  br v56, b19(), b20()
+b17:  ; preds b18
+  ret v55
+b18(v59: Bool):  ; preds b20, b60
+  br v59, b21(), b17()
+b19:  ; preds b16
+  v61: UInt8 = call bytes.index, v0, v55 @ scan.xo:223:20 lands v62
+  v62: Bool = call rt.landing
+  br v62, b61(), b60()
+b20:  ; preds b16
+  v64: Bool = const false
+  jump b18(v64)
+b21:  ; preds b18
+  v66: Int = const 1
+  v67: Int = add v55, v66 @ scan.xo:224:7 lands v68
+  v68: Bool = call rt.landing
+  br v68, b63(), b62()
+b22(v70: Int):  ; preds b1, b66
+  v71: Int = sub v3, v70 @ scan.xo:228:9 lands v72
+  v72: Bool = call rt.landing
+  br v72, b65(), b64()
+b23:  ; preds b64
+  jump b31(v70)
+b24:  ; preds b64
+  v75: Int = call rt.bytes_word, v0, v70
+  v76: Int = call scan.stops8, v75 lands v77
+  v77: Bool = call rt.landing
+  br v77, b25(), b26()
+b25:  ; preds b24
+  jump b27()
+b26:  ; preds b24
+  v80: Int = const 0
+  v81: Bool = ne v76, v80
+  br v81, b29(), b30()
+b27:  ; preds b25, b47, b49, b51, b53, b55, b57, b59, b61, b63, b65, b67, b69, b71, b73, b75, b77, b79
+  v83: () = call rt.fault_continue
+  v84: Int = const 0
+  ret v84
+b28:  ; preds b30
+  v86: () = tuple
+  v87: Int = const 8
+  v88: Int = add v70, v87 @ scan.xo:233:5 lands v89
+  v89: Bool = call rt.landing
+  br v89, b67(), b66()
+b29:  ; preds b26
+  v91: Int = call rt.ctz, v76
+  v92: Int = const 3
+  v93: Int = shr v91, v92 @ scan.xo:231:19 lands v94
+  v94: Bool = call rt.landing
+  br v94, b69(), b68()
+b30:  ; preds b26
+  v96: () = tuple
+  jump b28()
+b31(v98: Int):  ; preds b23, b72
+  v99: Bool = lt v98, v3
+  br v99, b33(), b32()
+b32:  ; preds b31
+  ret v98
+b33:  ; preds b31
+  v102: UInt8 = call bytes.index, v0, v98 @ scan.xo:236:17 lands v103
+  v103: Bool = call rt.landing
+  br v103, b71(), b70()
+b34:  ; preds b45
+  v105: () = tuple
+  v106: Int = const 1
+  v107: Int = add v98, v106 @ scan.xo:240:5 lands v108
+  v108: Bool = call rt.landing
+  br v108, b73(), b72()
+b35(v110: Bool):  ; preds b36, b37
+  br v110, b39(), b40()
+b36:  ; preds b70
+  v112: Bool = const true
+  jump b35(v112)
+b37:  ; preds b70
+  v114: Int = const 127
+  v115: Bool = ge v179, v114
+  jump b35(v115)
+b38(v117: Bool):  ; preds b39, b40
+  br v117, b42(), b43()
+b39:  ; preds b35
+  v119: Bool = const true
+  jump b38(v119)
+b40:  ; preds b35
+  v121: Int = const 34
+  v122: Bool = eq v179, v121
+  jump b38(v122)
+b41(v124: Bool):  ; preds b42, b43
+  br v124, b44(), b45()
+b42:  ; preds b38
+  v126: Bool = const true
+  jump b41(v126)
+b43:  ; preds b38
+  v128: Int = const 92
+  v129: Bool = eq v179, v128
+  jump b41(v129)
+b44:  ; preds b41
+  ret v98
+b45:  ; preds b41
+  v132: () = tuple
+  jump b34()
+b46:  ; preds b4
+  v134: Int = const 16
+  v135: Bool = ge v13, v134
+  br v135, b6(), b5()
+b47:  ; preds b4
+  jump b27()
+b48:  ; preds b7
+  v138: () = tuple
+  jump b4(v23)
+b49:  ; preds b7
+  jump b27()
+b50:  ; preds b8
+  v141: Int = add v12, v28 @ scan.xo:212:16 lands v142
+  v142: Bool = call rt.landing
+  br v142, b75(), b74()
+b51:  ; preds b8
+  jump b27()
+b52:  ; preds b10
+  v145: Int = const 8
+  v146: Bool = ge v34, v145
+  br v146, b12(), b11()
+b53:  ; preds b10
+  jump b27()
+b54:  ; preds b12
+  v149: Int = and v38, v40
+  v150: Int = const 0
+  v151: Bool = ne v149, v150
+  br v151, b14(), b15()
+b55:  ; preds b12
+  jump b27()
+b56:  ; preds b13
+  v154: () = tuple
+  jump b10(v45)
+b57:  ; preds b13
+  jump b27()
+b58:  ; preds b14
+  v157: Int = add v33, v50 @ scan.xo:219:16 lands v158
+  v158: Bool = call rt.landing
+  br v158, b77(), b76()
+b59:  ; preds b14
+  jump b27()
+b60:  ; preds b19
+  v161: UInt8 = const 128
+  v162: Bool = lt v61, v161
+  jump b18(v162)
+b61:  ; preds b19
+  jump b27()
+b62:  ; preds b21
+  v165: () = tuple
+  jump b16(v67)
+b63:  ; preds b21
+  jump b27()
+b64:  ; preds b22
+  v168: Int = const 8
+  v169: Bool = ge v71, v168
+  br v169, b24(), b23()
+b65:  ; preds b22
+  jump b27()
+b66:  ; preds b28
+  v172: () = tuple
+  jump b22(v88)
+b67:  ; preds b28
+  jump b27()
+b68:  ; preds b29
+  v175: Int = add v70, v93 @ scan.xo:231:14 lands v176
+  v176: Bool = call rt.landing
+  br v176, b79(), b78()
+b69:  ; preds b29
+  jump b27()
+b70:  ; preds b33
+  v179: Int = iconv v102
+  v180: Int = const 32
+  v181: Bool = lt v179, v180
+  br v181, b36(), b37()
+b71:  ; preds b33
+  jump b27()
+b72:  ; preds b34
+  v184: () = tuple
+  jump b31(v107)
+b73:  ; preds b34
+  jump b27()
+b74:  ; preds b50
+  ret v141
+b75:  ; preds b50
+  jump b27()
+b76:  ; preds b58
+  ret v157
+b77:  ; preds b58
+  jump b27()
+b78:  ; preds b68
+  ret v175
+b79:  ; preds b68
+  jump b27()
+}
+
 func text.escape_word(v0: Int) -> Int {
 b0(v0: Int):
   v1: Int = const 34
@@ -1223,7 +1492,7 @@ b3:  ; preds b0
   v9: Int = const 8796
   v10: Int = const 2
   v11: Int = const 60
-  v12: Int = shl v10, v11 @ text.xo:566:21 lands v13
+  v12: Int = shl v10, v11 @ text.xo:567:21 lands v13
   v13: Bool = call rt.landing
   br v13, b15(), b14()
 b4:  ; preds b2
@@ -1234,7 +1503,7 @@ b5:  ; preds b2
   v18: Int = const 23644
   v19: Int = const 2
   v20: Int = const 60
-  v21: Int = shl v19, v20 @ text.xo:567:21 lands v22
+  v21: Int = shl v19, v20 @ text.xo:568:21 lands v22
   v22: Bool = call rt.landing
   br v22, b18(), b17()
 b6:  ; preds b4
@@ -1245,7 +1514,7 @@ b7:  ; preds b4
   v27: Int = const 28252
   v28: Int = const 2
   v29: Int = const 60
-  v30: Int = shl v28, v29 @ text.xo:568:21 lands v31
+  v30: Int = shl v28, v29 @ text.xo:569:21 lands v31
   v31: Bool = call rt.landing
   br v31, b20(), b19()
 b8:  ; preds b6
@@ -1256,7 +1525,7 @@ b9:  ; preds b6
   v36: Int = const 29788
   v37: Int = const 2
   v38: Int = const 60
-  v39: Int = shl v37, v38 @ text.xo:569:20 lands v40
+  v39: Int = shl v37, v38 @ text.xo:570:20 lands v40
   v40: Bool = call rt.landing
   br v40, b22(), b21()
 b10:  ; preds b8
@@ -1267,21 +1536,21 @@ b11:  ; preds b8
   v45: Int = const 29276
   v46: Int = const 2
   v47: Int = const 60
-  v48: Int = shl v46, v47 @ text.xo:570:21 lands v49
+  v48: Int = shl v46, v47 @ text.xo:571:21 lands v49
   v49: Bool = call rt.landing
   br v49, b24(), b23()
 b12:  ; preds b10
   v51: Int = const 30812
   v52: Str = const "0123456789abcdef"
   v53: Int = const 4
-  v54: Int = shr v0, v53 @ text.xo:572:28 lands v55
+  v54: Int = shr v0, v53 @ text.xo:573:28 lands v55
   v55: Bool = call rt.landing
   br v55, b26(), b25()
 b13:  ; preds b10
   v57: Int = const 12380
   v58: Int = const 2
   v59: Int = const 60
-  v60: Int = shl v58, v59 @ text.xo:571:20 lands v61
+  v60: Int = shl v58, v59 @ text.xo:572:20 lands v61
   v61: Bool = call rt.landing
   br v61, b28(), b27()
 b14:  ; preds b3
@@ -1314,7 +1583,7 @@ b23:  ; preds b11
 b24:  ; preds b11
   jump b16()
 b25:  ; preds b12
-  v81: UInt8 = call bytes.index, v52, v54 @ text.xo:572:24 lands v82
+  v81: UInt8 = call bytes.index, v52, v54 @ text.xo:573:24 lands v82
   v82: Bool = call rt.landing
   br v82, b30(), b29()
 b26:  ; preds b12
@@ -1327,7 +1596,7 @@ b28:  ; preds b13
 b29:  ; preds b25
   v88: Int = iconv v81
   v89: Int = const 16
-  v90: Int = shl v88, v89 @ text.xo:572:20 lands v91
+  v90: Int = shl v88, v89 @ text.xo:573:20 lands v91
   v91: Bool = call rt.landing
   br v91, b32(), b31()
 b30:  ; preds b25
@@ -1337,7 +1606,7 @@ b31:  ; preds b29
   v95: Str = const "0123456789abcdef"
   v96: Int = const 15
   v97: Int = and v0, v96
-  v98: UInt8 = call bytes.index, v95, v97 @ text.xo:572:51 lands v99
+  v98: UInt8 = call bytes.index, v95, v97 @ text.xo:573:51 lands v99
   v99: Bool = call rt.landing
   br v99, b34(), b33()
 b32:  ; preds b29
@@ -1345,7 +1614,7 @@ b32:  ; preds b29
 b33:  ; preds b31
   v102: Int = iconv v98
   v103: Int = const 24
-  v104: Int = shl v102, v103 @ text.xo:572:47 lands v105
+  v104: Int = shl v102, v103 @ text.xo:573:47 lands v105
   v105: Bool = call rt.landing
   br v105, b36(), b35()
 b34:  ; preds b31
@@ -1354,7 +1623,7 @@ b35:  ; preds b33
   v108: Int = or v94, v104
   v109: Int = const 4
   v110: Int = const 60
-  v111: Int = shl v109, v110 @ text.xo:572:74 lands v112
+  v111: Int = shl v109, v110 @ text.xo:573:74 lands v112
   v112: Bool = call rt.landing
   br v112, b38(), b37()
 b36:  ; preds b33
@@ -1369,7 +1638,7 @@ b38:  ; preds b35
 func unicode.decode(v0: Str, v1: Int) -> Int {
 b0(v0: Str, v1: Int):
   v2: Int = call Str.len, v0
-  v3: UInt8 = call bytes.index, v0, v1 @ unicode.xo:141:15 lands v4
+  v3: UInt8 = call bytes.index, v0, v1 @ unicode.xo:142:15 lands v4
   v4: Bool = call rt.landing
   br v4, b53(), b52()
 b1:  ; preds b3
@@ -1383,7 +1652,7 @@ b1:  ; preds b3
   br v12, b6(), b7()
 b2:  ; preds b52
   v14: Int = const 3
-  v15: Int = shl v181, v14 @ unicode.xo:143:13 lands v16
+  v15: Int = shl v181, v14 @ unicode.xo:144:13 lands v16
   v16: Bool = call rt.landing
   br v16, b56(), b55()
 b3:  ; preds b52
@@ -1391,7 +1660,7 @@ b3:  ; preds b52
   jump b1()
 b4(v20: Int, v21: Int, v22: Int, v23: Int):  ; preds b8, b10
   v24: () = tuple
-  v25: Int = add v1, v20 @ unicode.xo:171:6 lands v26
+  v25: Int = add v1, v20 @ unicode.xo:172:6 lands v26
   v26: Bool = call rt.landing
   br v26, b58(), b57()
 b5(v28: Bool):  ; preds b7, b6
@@ -1479,7 +1748,7 @@ b26:  ; preds b23
 b27:  ; preds b23
   v98: Int = const 65533
   v99: Int = const 3
-  v100: Int = shl v98, v99 @ unicode.xo:169:13 lands v101
+  v100: Int = shl v98, v99 @ unicode.xo:170:13 lands v101
   v101: Bool = call rt.landing
   br v101, b60(), b59()
 b28(v103: Int, v104: Int):  ; preds b29, b31
@@ -1506,13 +1775,13 @@ b33:  ; preds b30
 b34:  ; preds b36
   v121: () = tuple
   v122: Int = const 1
-  v123: Int = add v1, v122 @ unicode.xo:174:18 lands v124
+  v123: Int = add v1, v122 @ unicode.xo:175:18 lands v124
   v124: Bool = call rt.landing
   br v124, b62(), b61()
 b35:  ; preds b57
   v126: Int = const 65533
   v127: Int = const 3
-  v128: Int = shl v126, v127 @ unicode.xo:172:13 lands v129
+  v128: Int = shl v126, v127 @ unicode.xo:173:13 lands v129
   v129: Bool = call rt.landing
   br v129, b64(), b63()
 b36:  ; preds b57
@@ -1521,7 +1790,7 @@ b36:  ; preds b57
 b37:  ; preds b42
   v133: () = tuple
   v134: Int = const 6
-  v135: Int = shl v23, v134 @ unicode.xo:178:8 lands v136
+  v135: Int = shl v23, v134 @ unicode.xo:179:8 lands v136
   v136: Bool = call rt.landing
   br v136, b66(), b65()
 b38(v138: Bool):  ; preds b39, b40
@@ -1535,7 +1804,7 @@ b40:  ; preds b77
 b41:  ; preds b38
   v144: Int = const 65533
   v145: Int = const 3
-  v146: Int = shl v144, v145 @ unicode.xo:176:13 lands v147
+  v146: Int = shl v144, v145 @ unicode.xo:177:13 lands v147
   v147: Bool = call rt.landing
   br v147, b68(), b67()
 b42:  ; preds b38
@@ -1546,17 +1815,17 @@ b43(v151: Int, v152: Int):  ; preds b65, b83
   br v153, b45(), b44()
 b44:  ; preds b43
   v155: Int = const 3
-  v156: Int = shl v152, v155 @ unicode.xo:188:4 lands v157
+  v156: Int = shl v152, v155 @ unicode.xo:189:4 lands v157
   v157: Bool = call rt.landing
   br v157, b70(), b69()
 b45:  ; preds b43
-  v159: Int = add v1, v151 @ unicode.xo:181:20 lands v160
+  v159: Int = add v1, v151 @ unicode.xo:182:20 lands v160
   v160: Bool = call rt.landing
   br v160, b72(), b71()
 b46:  ; preds b51
   v162: () = tuple
   v163: Int = const 6
-  v164: Int = shl v152, v163 @ unicode.xo:185:10 lands v165
+  v164: Int = shl v152, v163 @ unicode.xo:186:10 lands v165
   v165: Bool = call rt.landing
   br v165, b74(), b73()
 b47(v167: Bool):  ; preds b48, b49
@@ -1571,7 +1840,7 @@ b49:  ; preds b81
 b50:  ; preds b47
   v174: Int = const 65533
   v175: Int = const 3
-  v176: Int = shl v174, v175 @ unicode.xo:183:15 lands v177
+  v176: Int = shl v174, v175 @ unicode.xo:184:15 lands v177
   v177: Bool = call rt.landing
   br v177, b76(), b75()
 b51:  ; preds b47
@@ -1606,7 +1875,7 @@ b59:  ; preds b27
 b60:  ; preds b27
   jump b54()
 b61:  ; preds b34
-  v200: UInt8 = call bytes.index, v0, v123 @ unicode.xo:174:16 lands v201
+  v200: UInt8 = call bytes.index, v0, v123 @ unicode.xo:175:16 lands v201
   v201: Bool = call rt.landing
   br v201, b78(), b77()
 b62:  ; preds b34
@@ -1633,13 +1902,13 @@ b68:  ; preds b41
   jump b54()
 b69:  ; preds b44
   v218: Int = const 1
-  v219: Int = add v20, v218 @ unicode.xo:188:15 lands v220
+  v219: Int = add v20, v218 @ unicode.xo:189:15 lands v220
   v220: Bool = call rt.landing
   br v220, b80(), b79()
 b70:  ; preds b44
   jump b54()
 b71:  ; preds b45
-  v223: UInt8 = call bytes.index, v0, v159 @ unicode.xo:181:18 lands v224
+  v223: UInt8 = call bytes.index, v0, v159 @ unicode.xo:182:18 lands v224
   v224: Bool = call rt.landing
   br v224, b82(), b81()
 b72:  ; preds b45
@@ -1649,7 +1918,7 @@ b73:  ; preds b46
   v228: Int = and v246, v227
   v229: Int = or v164, v228
   v230: Int = const 1
-  v231: Int = add v151, v230 @ unicode.xo:186:5 lands v232
+  v231: Int = add v151, v230 @ unicode.xo:187:5 lands v232
   v232: Bool = call rt.landing
   br v232, b84(), b83()
 b74:  ; preds b46
@@ -1914,4 +2183,114 @@ b26:  ; preds b24
   ret v84
 b27:  ; preds b24
   jump b3()
+}
+
+func scan.stops8(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 2459565876494606882
+  v2: Int = xor v0, v1
+  v3: Int = const 6655295901103053916
+  v4: Int = xor v0, v3
+  v5: Int = const 2314885530818453536
+  v6: Int = call scan.subw, v0, v5
+  jump b1()
+b1:  ; preds b0
+  v8: Int = const 72340172838076673
+  v9: Int = call scan.subw, v2, v8
+  jump b3()
+b2:  ; preds b5, b8, b10, b12
+  v11: () = call rt.fault_continue
+  v12: Int = const 0
+  ret v12
+b3:  ; preds b1
+  v14: Int = or v6, v9
+  v15: Int = const 72340172838076673
+  v16: Int = call scan.subw, v4, v15
+  jump b4()
+b4:  ; preds b3
+  v18: Int = or v14, v16
+  v19: Int = and v0, v2
+  v20: Int = and v19, v4
+  v21: Int = const 1
+  v22: Int = neg v21 @ scan.xo:198:80 lands v23
+  v23: Bool = call rt.landing
+  br v23, b8(), b7()
+b5:  ; preds b11
+  jump b2()
+b6:  ; preds b11
+  v26: Int = or v42, v44
+  ret v26
+b7:  ; preds b4
+  v28: Int = xor v20, v22
+  v29: Int = and v18, v28
+  v30: Int = const 9187201950435737472
+  v31: Int = neg v30 @ scan.xo:19:20 lands v32
+  v32: Bool = call rt.landing
+  br v32, b10(), b9()
+b8:  ; preds b4
+  jump b2()
+b9:  ; preds b7
+  v35: Int = and v29, v31
+  v36: Int = const 9187201950435737472
+  v37: Int = neg v36 @ scan.xo:19:20 lands v38
+  v38: Bool = call rt.landing
+  br v38, b12(), b11()
+b10:  ; preds b7
+  jump b2()
+b11:  ; preds b9
+  v41: Int = and v0, v37
+  v42: Int = or v35, v41
+  v43: Int = const 9187201950435737471
+  v44: Int = call scan.eq8, v0, v43 lands v45
+  v45: Bool = call rt.landing
+  br v45, b5(), b6()
+b12:  ; preds b9
+  jump b2()
+}
+
+func scan.subw(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 1
+  v3: Int = call rt.int_wrap, v2, v0, v1
+  ret v3
+}
+
+func scan.eq8(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = xor v0, v1
+  v3: Int = const 9187201950435737471
+  v4: Int = and v2, v3
+  v5: Int = const 9187201950435737471
+  v6: Int = call scan.addw, v4, v5
+  jump b1()
+b1:  ; preds b0
+  v8: Int = or v6, v2
+  v9: Int = const 1
+  v10: Int = neg v9 @ scan.xo:39:35 lands v11
+  v11: Bool = call rt.landing
+  br v11, b4(), b3()
+b2:  ; preds b4, b6
+  v13: () = call rt.fault_continue
+  v14: Int = const 0
+  ret v14
+b3:  ; preds b1
+  v16: Int = xor v8, v10
+  v17: Int = const 9187201950435737472
+  v18: Int = neg v17 @ scan.xo:19:20 lands v19
+  v19: Bool = call rt.landing
+  br v19, b6(), b5()
+b4:  ; preds b1
+  jump b2()
+b5:  ; preds b3
+  v22: Int = and v16, v18
+  ret v22
+b6:  ; preds b3
+  jump b2()
+}
+
+func scan.addw(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 0
+  v3: Int = call rt.int_wrap, v2, v0, v1
+  ret v3
 }

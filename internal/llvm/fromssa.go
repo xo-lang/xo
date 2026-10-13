@@ -85,6 +85,9 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
 declare void @llvm.assume(i1)
+declare i64 @llvm.ctpop.i64(i64)
+declare i64 @llvm.cttz.i64(i64, i1)
+declare i64 @llvm.ctlz.i64(i64, i1)
 
 declare i32 @xo_personality(...)
 
@@ -2145,7 +2148,11 @@ func (s *sfn) call(v *ssa.Value) {
 // std/native/llrt/num.xo): rt.int_wrap with a constant op (0 +, 1 -, 2
 // *, 3 << and 4 >> logical by the amount mod 64), rt.u64_mul_hi (an i128
 // multiply), the bits of a Float both ways, and rt.bytes_word (an
-// unchecked load of 8 bytes). It reports whether v was one.
+// unchecked load of 8 bytes); the scan intrinsics of decision 0201:
+// rt.popcount, rt.ctz, rt.clz (llvm.ctpop, cttz, ctlz), and
+// rt.bytes_eq16 and rt.bytes_high16 (a <16 x i8> compare narrowed to 4
+// bits a byte, which arm64 selects as cmeq and shrn). It reports whether
+// v was one.
 func (s *sfn) inlineRT(v *ssa.Value) bool {
 	switch v.Aux.(string) {
 	case "rt.int_wrap":
@@ -2172,6 +2179,30 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		_, d, _ := s.strParts(s.op(v.Args[0]))
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
 		s.set(v, "load i64, ptr %s, align 1", p)
+	case "rt.popcount":
+		s.set(v, "call i64 @llvm.ctpop.i64(i64 %s)", s.op(v.Args[0]))
+	case "rt.ctz":
+		s.set(v, "call i64 @llvm.cttz.i64(i64 %s, i1 false)", s.op(v.Args[0]))
+	case "rt.clz":
+		s.set(v, "call i64 @llvm.ctlz.i64(i64 %s, i1 false)", s.op(v.Args[0]))
+	case "rt.bytes_eq16", "rt.bytes_high16":
+		_, d, _ := s.strParts(s.op(v.Args[0]))
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
+		x := s.def("load <16 x i8>, ptr %s, align 1", p)
+		var e string
+		if v.Aux.(string) == "rt.bytes_eq16" {
+			c := s.def("trunc i64 %s to i8", s.op(v.Args[2]))
+			r := s.def("insertelement <16 x i8> poison, i8 %s, i64 0", c)
+			r = s.def("shufflevector <16 x i8> %s, <16 x i8> poison, <16 x i32> zeroinitializer", r)
+			e = s.def("icmp eq <16 x i8> %s, %s", x, r)
+		} else {
+			e = s.def("icmp slt <16 x i8> %s, zeroinitializer", x)
+		}
+		m := s.def("sext <16 x i1> %s to <16 x i8>", e)
+		h := s.def("bitcast <16 x i8> %s to <8 x i16>", m)
+		h = s.def("lshr <8 x i16> %s, <i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4, i16 4>", h)
+		n := s.def("trunc <8 x i16> %s to <8 x i8>", h)
+		s.set(v, "bitcast <8 x i8> %s to i64", n)
 	default:
 		return false
 	}

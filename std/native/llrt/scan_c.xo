@@ -1,0 +1,24 @@
+// The C path of the bulk byte scans (decision 0201): the API of scan.xo
+// over the C runtime's functions (std/llrt/xo_std.c and xo_bytes.c, which
+// every build compiles). Loaded in place of scan.xo when XO_LLRT_C names
+// `scan`, to compare the two and to fall back while the Xo path misses
+// decision 0180's bar. The self hosted compiler always uses scan.xo.
+use native/rt
+
+pub fn find(s: Str, sub: Str, from: Int) -> Int { rt.str_find(s, sub, from) }
+
+pub fn contains(s: Str, sub: Str) -> Bool { rt.str_contains(s, sub) }
+
+pub fn starts_with(s: Str, p: Str) -> Bool { rt.str_starts_with(s, p) }
+
+pub fn ends_with(s: Str, p: Str) -> Bool { rt.str_ends_with(s, p) }
+
+pub fn rune_count(s: Str) -> Int { rt.str_rune_count(s) }
+
+pub fn span(b: Bytes, from: Int, cls: Int) -> Int { rt.bytes_span(b, from, cls) }
+
+pub fn split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
+
+pub fn lines(s: Str) -> List[Str] { rt.str_lines(s) }
+
+pub fn to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }

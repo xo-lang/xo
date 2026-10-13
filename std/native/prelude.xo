@@ -6,6 +6,7 @@
 use native/llrt/jsontext
 use native/llrt/num
 use native/llrt/report
+use native/llrt/scan
 use native/llrt/show
 use native/llrt/strings
 use native/llrt/text
@@ -15,25 +16,25 @@ use native/rt
 // ---------------------------------------------------------------------------
 // Str (std.md 2.2)
 
-fn str_rune_count(s: Str) -> Int { rt.str_rune_count(s) }
+fn str_rune_count(s: Str) -> Int { scan.rune_count(s) }
 
-fn str_contains(s: Str, sub: Str) -> Bool { rt.str_contains(s, sub) }
+fn str_contains(s: Str, sub: Str) -> Bool { scan.contains(s, sub) }
 
-fn str_starts_with(s: Str, p: Str) -> Bool { rt.str_starts_with(s, p) }
+fn str_starts_with(s: Str, p: Str) -> Bool { scan.starts_with(s, p) }
 
-fn str_ends_with(s: Str, p: Str) -> Bool { rt.str_ends_with(s, p) }
+fn str_ends_with(s: Str, p: Str) -> Bool { scan.ends_with(s, p) }
 
 fn str_find(s: Str, sub: Str) -> Int? {
-  let i = rt.str_find(s, sub, 0)
+  let i = scan.find(s, sub, 0)
   if i < 0 {
     return None
   }
   Some(i)
 }
 
-fn str_split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
+fn str_split(s: Str, sep: Str) -> List[Str] { scan.split(s, sep) }
 
-fn str_lines(s: Str) -> List[Str] { rt.str_lines(s) }
+fn str_lines(s: Str) -> List[Str] { scan.lines(s) }
 
 fn str_trim(s: Str) -> Str { strings.trim(s, 0) }
 
@@ -42,14 +43,14 @@ fn str_trim_start(s: Str) -> Str { strings.trim(s, 1) }
 fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
-  if rt.str_starts_with(s, p) {
+  if scan.starts_with(s, p) {
     return rt.str_slice(s, p.len(), s.len())
   }
   s
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
-  if rt.str_ends_with(s, p) {
+  if scan.ends_with(s, p) {
     return rt.str_slice(s, 0, s.len() - p.len())
   }
   s
@@ -113,7 +114,7 @@ fn bytes_quote(b: Bytes) -> Str { unicode.quote(b) }
 
 fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
-fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
+fn bytes_to_hex(b: Bytes) -> Str { scan.to_hex(b) }
 
 fn bytes_from_hex(s: Str) -> Bytes? { num.from_hex(s) }
 

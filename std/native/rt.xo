@@ -129,6 +129,23 @@ fn float_from_bits(b: Int) -> Float
 /// to one load). Unchecked: the caller makes sure 0 <= i and i + 8 <=
 /// b.len().
 fn bytes_word(b: Bytes, i: Int) -> Int
+/// The number of bits set in w (lowered inline: arm64 cnt, LLVM ctpop,
+/// wasm i64.popcnt; decision 0201).
+fn popcount(w: Int) -> Int
+/// The number of zero bits below the lowest set bit of w, 64 for 0
+/// (lowered inline: arm64 rbit and clz, LLVM cttz, wasm i64.ctz).
+fn ctz(w: Int) -> Int
+/// The number of zero bits above the highest set bit of w, 64 for 0
+/// (lowered inline: arm64 clz, LLVM ctlz, wasm i64.clz).
+fn clz(w: Int) -> Int
+/// The 16 bytes of b from i compared with the byte c (0 to 255): bits
+/// 4k to 4k + 3 of the result are all set when byte i + k is c, else
+/// clear (lowered inline: arm64 cmeq and shrn, LLVM a <16 x i8> compare;
+/// decision 0201). Unchecked: 0 <= i and i + 16 <= b.len().
+fn bytes_eq16(b: Bytes, i: Int, c: Int) -> Int
+/// The 16 bytes of b from i: bits 4k to 4k + 3 of the result are all
+/// set when byte i + k is 0x80 or above, else clear (as bytes_eq16).
+fn bytes_high16(b: Bytes, i: Int) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// The standard base64 of b, padded.

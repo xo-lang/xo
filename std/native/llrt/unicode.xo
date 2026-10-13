@@ -10,6 +10,7 @@
 // `use native/llrt/<name>`) is compiled with the program like the
 // implementation modules; only those and other runtime modules may
 // import it. The tables are generated (unicode_tables.xo).
+use native/llrt/scan
 use native/llrt/unicode_tables
 use native/rt
 
@@ -210,7 +211,7 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   let mode = ascii_mode(lower)
   var o = out
   var run = from
-  var i = rt.bytes_span(b, from, 0)
+  var i = scan.span(b, from, 0)
   while i < n {
     let p = decode(b, i)
     let r = p >> 3
@@ -225,7 +226,7 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
     }
     i += size
     if i < n && b[i] < 0x80 {
-      i = rt.bytes_span(b, i, 0)
+      i = scan.span(b, i, 0)
     }
   }
   if run < n {
@@ -345,7 +346,7 @@ pub fn quote(b: Bytes) -> Str {
   var run = 0
   var i = 0
   while i < n {
-    i = rt.bytes_span(b, i, 1)
+    i = scan.span(b, i, 1)
     if i >= n {
       break
     }

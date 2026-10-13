@@ -1,0 +1,360 @@
+// The bulk byte scans of the native runtime, written in Xo over the scan
+// intrinsics of decision 0201 (decision 0195 prerequisite 4): searches
+// for a byte and for a text, comparisons of ranges, the count of UTF-8
+// continuation bytes, the runs of std/native/llrt/unicode.xo's quoting,
+// and the Str and Bytes operations that are only such scans and copies
+// (Str.split, Str.lines, Str.rune_count, Bytes.to_hex), which decision
+// 0193 kept C. Sixteen bytes a step through rt.bytes_eq16 and
+// rt.bytes_high16 (NEON on arm64, a <16 x i8> compare on LLVM, two words
+// in the wasm runtime), eight a step through rt.bytes_word, the lowest
+// match by rt.ctz. A range shorter than a step that ends at least a step
+// into its value is read as the step ending at its end, its bytes before
+// the range shifted out; only bytes of the value are ever read. The C
+// path stays selectable (`XO_LLRT_C=scan` loads scan_c.xo) until
+// bench/perf/text meets decision 0180's bar on both native backends.
+use native/rt
+
+// Words of eight equal bytes.
+const ONES: Int = 72340172838076673
+const HIGHS: Int = -9187201950435737472
+const LOW7S: Int = 9187201950435737471
+const SPACES: Int = 2314885530818453536
+const QUOTES: Int = 2459565876494606882
+const BACKSLASHES: Int = 6655295901103053916
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+fn shl(a: Int, k: Int) -> Int { rt.int_wrap(3, a, k) }
+
+fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+
+/// The high bit of each byte of w that is the byte of r (eight copies of
+/// one byte), exactly.
+fn eq8(w: Int, r: Int) -> Int {
+  let y = w ^ r
+  ((addw(y & LOW7S, LOW7S) | y) ^ -1) & HIGHS
+}
+
+/// The index of the first byte c (0 to 255) of b from `from` to `to`
+/// (to <= b.len()), or -1.
+pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
+  var i = from
+  while to - i >= 16 {
+    let m = rt.bytes_eq16(b, i, c)
+    if m != 0 {
+      return i + (rt.ctz(m) >> 2)
+    }
+    i += 16
+  }
+  if i >= to {
+    return -1
+  }
+  if to >= 16 {
+    // the 16 bytes ending at to; those before i were searched
+    let k = to - 16
+    let m = shr(rt.bytes_eq16(b, k, c), 4 * (i - k))
+    if m == 0 {
+      return -1
+    }
+    return i + (rt.ctz(m) >> 2)
+  }
+  find_short(b, i, to, c)
+}
+
+/// find_byte from i to `to` < 16 (fewer than 16 bytes).
+fn find_short(b: Bytes, from: Int, to: Int, c: Int) -> Int {
+  var i = from
+  let r = mulw(c, ONES)
+  if to - i >= 8 {
+    let m = eq8(rt.bytes_word(b, i), r)
+    if m != 0 {
+      return i + (rt.ctz(m) >> 3)
+    }
+    i += 8
+    if i == to {
+      return -1
+    }
+  }
+  if to >= 8 {
+    let k = to - 8
+    let m = shr(eq8(rt.bytes_word(b, k), r), 8 * (i - k))
+    if m == 0 {
+      return -1
+    }
+    return i + (rt.ctz(m) >> 3)
+  }
+  while i < to {
+    if Int(b[i]) == c {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Whether the n bytes of a from ai are the n bytes of b from bi (both
+/// ranges inside their values).
+pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
+  if n >= 8 {
+    var t = 0
+    while n - t > 8 {
+      if rt.bytes_word(a, ai + t) != rt.bytes_word(b, bi + t) {
+        return false
+      }
+      t += 8
+    }
+    return rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
+  }
+  var t = 0
+  while t < n {
+    if a[ai + t] != b[bi + t] {
+      return false
+    }
+    t += 1
+  }
+  true
+}
+
+/// strings.Index of sub in s from `from` (rt.str_find): from below 0 is
+/// 0, from past the end finds nothing, an empty sub is found at from.
+pub fn find(s: Str, sub: Str, from: Int) -> Int {
+  let n = s.len()
+  let m = sub.len()
+  let f = if from < 0 { 0 } else { from }
+  if f > n {
+    return -1
+  }
+  if m == 0 {
+    return f
+  }
+  if m > n - f {
+    return -1
+  }
+  let b = s.bytes()
+  let p = sub.bytes()
+  let c = Int(p[0])
+  // the starts that leave room for sub
+  let last = n - m + 1
+  var i = f
+  while true {
+    i = find_byte(b, i, last, c)
+    if i < 0 {
+      return -1
+    }
+    if m == 1 || eq_at(b, i + 1, p, 1, m - 1) {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+pub fn contains(s: Str, sub: Str) -> Bool { find(s, sub, 0) >= 0 }
+
+pub fn starts_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), 0, p.bytes(), 0, p.len()) }
+
+pub fn ends_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), s.len() - p.len(), p.bytes(), 0, p.len()) }
+
+/// The number of UTF-8 continuation bytes (0x80 to 0xBF) in w.
+fn cont8(w: Int) -> Int { rt.popcount(w & (shl(w, 1) ^ -1) & HIGHS) }
+
+/// The number of continuation bytes of b from `from` to `to`.
+pub fn count_cont(b: Bytes, from: Int, to: Int) -> Int {
+  var c = 0
+  var i = from
+  while to - i >= 8 {
+    c += cont8(rt.bytes_word(b, i))
+    i += 8
+  }
+  if i < to {
+    if to >= 8 {
+      // the word ending at to, its bytes before i shifted out
+      let k = to - 8
+      return c + cont8(shr(rt.bytes_word(b, k), 8 * (i - k)))
+    }
+    while i < to {
+      if (Int(b[i]) & 0xC0) == 0x80 {
+        c += 1
+      }
+      i += 1
+    }
+  }
+  c
+}
+
+/// utf8.RuneCountInString: a Str is valid UTF-8 (core 2.2), so its runes
+/// are its bytes other than continuation bytes.
+pub fn rune_count(s: Str) -> Int { s.len() - count_cont(s.bytes(), 0, s.len()) }
+
+/// The high bit of each byte of w that ends a run of class 1 of span
+/// (below 0x20, 0x7F and above, `"`, `\`; the lowest exact).
+fn stops8(w: Int) -> Int {
+  let q = w ^ QUOTES
+  let s = w ^ BACKSLASHES
+  let low = (subw(w, SPACES) | subw(q, ONES) | subw(s, ONES)) & ((w & q & s) ^ -1) & HIGHS
+  low | (w & HIGHS) | eq8(w, LOW7S)
+}
+
+/// The end of the run of bytes of b from i in the class cls
+/// (rt.bytes_span): 0 ASCII (below 0x80), 1 printable ASCII other than
+/// `"` and `\` (what strconv.Quote keeps).
+pub fn span(b: Bytes, from: Int, cls: Int) -> Int {
+  let n = b.len()
+  var i = from
+  if cls == 0 {
+    while n - i >= 16 {
+      let m = rt.bytes_high16(b, i)
+      if m != 0 {
+        return i + (rt.ctz(m) >> 2)
+      }
+      i += 16
+    }
+    while n - i >= 8 {
+      let m = rt.bytes_word(b, i) & HIGHS
+      if m != 0 {
+        return i + (rt.ctz(m) >> 3)
+      }
+      i += 8
+    }
+    while i < n && b[i] < 0x80 {
+      i += 1
+    }
+    return i
+  }
+  while n - i >= 8 {
+    let m = stops8(rt.bytes_word(b, i))
+    if m != 0 {
+      return i + (rt.ctz(m) >> 3)
+    }
+    i += 8
+  }
+  while i < n {
+    let c = Int(b[i])
+    if c < 0x20 || c >= 0x7F || c == 34 || c == 92 {
+      return i
+    }
+    i += 1
+  }
+  i
+}
+
+/// strings.Split: an empty separator splits into UTF-8 sequences (an
+/// invalid byte alone).
+pub fn split(s: Str, sep: Str) -> List[Str] {
+  var out: List[Str] = []
+  let n = s.len()
+  let m = sep.len()
+  let b = s.bytes()
+  var start = 0
+  if m == 0 {
+    while start < n {
+      let k = if b[start] < 0x80 { 1 } else { rt.bytes_decode(b, start) & 7 }
+      out.push(rt.str_slice(s, start, start + k))
+      start += k
+    }
+    return out
+  }
+  if m == 1 {
+    let c = Int(sep.bytes()[0])
+    while true {
+      let i = find_byte(b, start, n, c)
+      if i < 0 {
+        break
+      }
+      out.push(rt.str_slice(s, start, i))
+      start = i + 1
+    }
+  } else {
+    while true {
+      let i = find(s, sep, start)
+      if i < 0 {
+        break
+      }
+      out.push(rt.str_slice(s, start, i))
+      start = i + m
+    }
+  }
+  out.push(rt.str_slice(s, start, n))
+  out
+}
+
+/// The lines of s: split on \n, a trailing \r of each removed, and no
+/// empty last line after a final newline.
+pub fn lines(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let n = s.len()
+  let b = s.bytes()
+  var start = 0
+  while start < n {
+    var end = find_byte(b, start, n, 10)
+    if end < 0 {
+      end = n
+    }
+    var e = end
+    if e > start && b[e - 1] == 13 {
+      e -= 1
+    }
+    out.push(rt.str_slice(s, start, e))
+    start = end + 1
+  }
+  out
+}
+
+/// The 8 lowercase hex digits of the 4 bytes in the low bytes of v (the
+/// first lowest), two to a byte's 16 bit lane, all lanes at once.
+fn hex4(v: Int) -> Int {
+  // each byte to the low byte of a 16 bit lane, in two steps
+  let u = v & 0xFFFFFFFF
+  let p = (u | shl(u, 16)) & 0xFFFF0000FFFF
+  let s = (p | shl(p, 8)) & 0xFF00FF00FF00FF
+  let nib = (shr(s, 4) & 0xF000F000F000F) | shl(s & 0xF000F000F000F, 8)
+  // 'a' - '0' - 10 more for a nibble above 9 (bit 3 and bit 2 or 1);
+  // | is + of "0" below 0x10
+  let alpha = shr(nib, 3) & (shr(nib, 2) | shr(nib, 1)) & ONES
+  addw(nib | 0x3030303030303030, mulw(alpha, 39))
+}
+
+/// The lowercase hex of b (Bytes.to_hex, hex.EncodeToString): 16 bytes a
+/// call of rt.rs_push_words, the rest (read as words) in one more.
+pub fn to_hex(b: Bytes) -> Str {
+  let n = b.len()
+  var out = if n > 16 { rt.rs_with_cap(2 * n) } else { "" }
+  var i = 0
+  while n - i >= 16 {
+    let x = rt.bytes_word(b, i)
+    let y = rt.bytes_word(b, i + 8)
+    out = rt.rs_push_words(out, hex4(x), hex4(shr(x, 32)), hex4(y), hex4(shr(y, 32)), 0x8888)
+    i += 16
+  }
+  let r = n - i
+  if r == 0 {
+    return out
+  }
+  // the last r (1 to 15) bytes: the first 8 of them in x, the rest in y
+  var x = 0
+  var y = 0
+  if r >= 8 {
+    x = rt.bytes_word(b, i)
+    if r > 8 {
+      y = shr(rt.bytes_word(b, n - 8), 8 * (16 - r))
+    }
+  } else if n >= 8 {
+    x = shr(rt.bytes_word(b, n - 8), 8 * (8 - r))
+  } else {
+    var j = n - 1
+    while j >= i {
+      x = shl(x, 8) | Int(b[j])
+      j -= 1
+    }
+  }
+  let k = 2 * r
+  let k0 = k.min(8)
+  let k1 = (k - 8).max(0).min(8)
+  let k2 = (k - 16).max(0).min(8)
+  let k3 = (k - 24).max(0)
+  rt.rs_push_words(out, hex4(x), hex4(shr(x, 32)), hex4(y), hex4(shr(y, 32)), k0 | (k1 << 4) | (k2 << 8) | (k3 << 12))
+}
