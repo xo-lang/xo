@@ -2408,6 +2408,13 @@ func (s *fstate) inlineRT(v *ssa.Value) bool {
 	case "rt.sys_restorer":
 		s.g.restorerRef = true
 		s.set(v, s.symAddr(s.g.local("xo_sigreturn")))
+	case "rt.stack_switch", "rt.tlocal_get", "rt.tlocal_set", "rt.tlocal_addr":
+		// calls of the functions sched.go emits (decision 0212)
+		s.g.schedRef = true
+		return false
+	case "rt.fiber_start_addr":
+		s.g.schedRef = true
+		s.set(v, s.symAddr(s.g.sym("xo_fiber_entry")))
 	case "rt.popcount":
 		s.set(v, s.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", s.word(v.Args[0])))
 	case "rt.ctz":

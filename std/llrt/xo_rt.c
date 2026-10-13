@@ -59,6 +59,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #endif
+#include <stddef.h>
 #include <unwind.h>
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
@@ -171,7 +172,14 @@ static int xo_threaded; // set once, before a second thread runs Xo code
 // solo_heap is main_heap while one thread runs, null after (one load
 // both tells the case and gives the heap)
 static xo_heap *solo_heap = &main_heap;
+#ifdef XO_SCHED_C
 static __thread xo_heap *tls_heap;
+#else
+// the calling thread's heap is word 3 of the thread local table the
+// compiler emits (decision 0212; std/native/llrt/sched.xo TLS_HEAP)
+extern __thread int64_t xo_tlocal[16];
+#define tls_heap (*(xo_heap **)&xo_tlocal[3])
+#endif
 static xo_heap *all_heaps = &main_heap;
 // spare_heaps are the heaps of worker threads that exited (decision
 // 0068): a new thread takes one before it makes a heap, so a program that
@@ -1790,18 +1798,34 @@ typedef struct xo_ctx {
 	int bud_paused; // bud_pause depth
 } xo_ctx;
 
-static __thread xo_ctx *cur;
-static __thread struct xo_fiber *tls_fib;
-
 // Thread locals are read and written only through these functions, which
 // are never inlined (decision 0069): a task on a fiber may go on on
 // another thread after it parks, and within one function the compiler may
 // keep a thread local's address (it treats it as a constant, also after
 // link time inlining), which would then be the old thread's.
+#ifdef XO_SCHED_C
+static __thread xo_ctx *cur;
+static __thread struct xo_fiber *tls_fib;
+
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return cur; }
 __attribute__((noinline)) static void cur_set(xo_ctx *c) { cur = c; }
 __attribute__((noinline)) static struct xo_fiber *fib_get(void) { return tls_fib; }
 __attribute__((noinline)) static void fib_set(struct xo_fiber *f) { tls_fib = f; }
+#else
+// Decision 0212: the thread locals are words of the table the compiler
+// emits for rt.tlocal_get and rt.tlocal_set (xo_tlocal, a thread local
+// of the program's code; std/native/llrt/sched.xo reads and writes the
+// same words through the emitted xo_tlocal_get and xo_tlocal_set). The C
+// reads the table itself, through these accessors only (above).
+extern __thread int64_t xo_tlocal[16];
+// the words (sched.xo TLS_*): the current context, the fiber running on
+// the thread, and the thread's worker record
+enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
+
+__attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
+__attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
+__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
+#endif
 
 static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
 
@@ -2533,40 +2557,40 @@ static void held_del(xo_ctx *c, void *m) {
 
 #define XO_RUNQ 256
 
+// The ring's head and tail count every item ever added and taken (64 bit:
+// they never wrap). std/native/llrt/sched.xo works on this layout
+// (decision 0212; the offsets are asserted below).
 typedef struct {
-	uint32_t head; // atomic: consumers (the owner and thieves) CAS it
-	char pad[124];
-	uint32_t tail;        // atomic: only the owner writes it
+	int64_t head; // atomic: consumers (the owner and thieves) CAS it
+	char pad[120];
+	int64_t tail;        // atomic: only the owner writes it
 	void *slot[XO_RUNQ]; // atomic accesses: a thief may read a stale one
 } xo_runq;
 
 // rq_put adds x (the owner); a full ring moves half of itself and x to
 // the inject queue.
-static int rq_put_slow(xo_runq *q, void *x, uint32_t h, uint32_t t);
+static int rq_put_slow(xo_runq *q, void *x, int64_t h, int64_t t);
 
-static void rq_put(xo_runq *q, void *x) {
-	for (;;) {
-		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
-		uint32_t t = q->tail;
-		if (t - h < XO_RUNQ) {
-			__atomic_store_n(&q->slot[t % XO_RUNQ], x, __ATOMIC_RELAXED);
-			// sequentially consistent: ordered before the pusher's look at
-			// the spinning and idle counts (wakep), as a worker going idle
-			// counts itself idle before it looks at the queues again
-			__atomic_store_n(&q->tail, t + 1, __ATOMIC_SEQ_CST);
-			return;
-		}
-		if (rq_put_slow(q, x, h, t)) {
-			return;
-		}
+#ifdef XO_SCHED_C
+static int rq_put_fast(xo_runq *q, void *x) {
+	int64_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+	int64_t t = q->tail;
+	if (t - h < XO_RUNQ) {
+		__atomic_store_n(&q->slot[t % XO_RUNQ], x, __ATOMIC_RELAXED);
+		// sequentially consistent: ordered before the pusher's look at
+		// the spinning and idle counts (wakep), as a worker going idle
+		// counts itself idle before it looks at the queues again
+		__atomic_store_n(&q->tail, t + 1, __ATOMIC_SEQ_CST);
+		return 1;
 	}
+	return 0;
 }
 
 // rq_get takes the item at the head (the owner).
 static void *rq_get(xo_runq *q) {
 	for (;;) {
-		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
-		uint32_t t = q->tail;
+		int64_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		int64_t t = q->tail;
 		if (t == h) {
 			return NULL;
 		}
@@ -2581,28 +2605,28 @@ static void *rq_get(xo_runq *q) {
 // returns how many.
 static uint32_t rq_grab(xo_runq *q, void **batch) {
 	for (;;) {
-		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
-		uint32_t t = __atomic_load_n(&q->tail, __ATOMIC_ACQUIRE);
-		uint32_t n = t - h;
+		int64_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		int64_t t = __atomic_load_n(&q->tail, __ATOMIC_ACQUIRE);
+		int64_t n = t - h;
 		n -= n / 2;
-		if (n == 0) {
+		if (n <= 0) {
 			return 0;
 		}
 		if (n > XO_RUNQ / 2) {
 			continue; // h and t read at different times: again
 		}
-		for (uint32_t i = 0; i < n; i++) {
+		for (int64_t i = 0; i < n; i++) {
 			batch[i] = __atomic_load_n(&q->slot[(h + i) % XO_RUNQ], __ATOMIC_RELAXED);
 		}
 		if (__atomic_compare_exchange_n(&q->head, &h, h + n, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
-			return n;
+			return (uint32_t)n;
 		}
 	}
 }
 
 // rq_put_batch adds n items to an empty ring (the owner).
 static void rq_put_batch(xo_runq *q, void **batch, uint32_t n) {
-	uint32_t t = q->tail;
+	int64_t t = q->tail;
 	for (uint32_t i = 0; i < n; i++) {
 		__atomic_store_n(&q->slot[(t + i) % XO_RUNQ], batch[i], __ATOMIC_RELAXED);
 	}
@@ -2611,6 +2635,42 @@ static void rq_put_batch(xo_runq *q, void **batch, uint32_t n) {
 
 static int rq_nonempty(xo_runq *q) {
 	return __atomic_load_n(&q->head, __ATOMIC_SEQ_CST) != __atomic_load_n(&q->tail, __ATOMIC_SEQ_CST);
+}
+#else
+// The ring in Xo (decision 0212): std/native/llrt/sched.xo through the C
+// ABI exports of cabi.xo, the same operations as the C path above.
+int64_t xo_x_rq_put(int64_t q, int64_t x);
+int64_t xo_x_rq_get(int64_t q);
+int64_t xo_x_rq_grab(int64_t q, int64_t batch);
+void xo_x_rq_put_batch(int64_t q, int64_t batch, int64_t n);
+int64_t xo_x_rq_nonempty(int64_t q);
+
+static int rq_put_fast(xo_runq *q, void *x) { return (int)xo_x_rq_put(XO_ADDR(q), XO_ADDR(x)); }
+static void *rq_get(xo_runq *q) { return (void *)(intptr_t)xo_x_rq_get(XO_ADDR(q)); }
+static uint32_t rq_grab(xo_runq *q, void **batch) { return (uint32_t)xo_x_rq_grab(XO_ADDR(q), XO_ADDR(batch)); }
+static void rq_put_batch(xo_runq *q, void **batch, uint32_t n) { xo_x_rq_put_batch(XO_ADDR(q), XO_ADDR(batch), (int64_t)n); }
+// the thieves' peek stays inline: it runs in their spin loops (every
+// record, every round), where a call cost the arm64 build 9 percent of
+// a ping pong's instructions (decision 0212's results)
+static int rq_nonempty(xo_runq *q) {
+	return __atomic_load_n(&q->head, __ATOMIC_SEQ_CST) != __atomic_load_n(&q->tail, __ATOMIC_SEQ_CST);
+}
+#endif
+
+static void rq_put(xo_runq *q, void *x) {
+	for (;;) {
+		if (rq_put_fast(q, x)) {
+			return;
+		}
+		int64_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		int64_t t = q->tail;
+		if (t - h < XO_RUNQ) {
+			continue; // thieves took some meanwhile
+		}
+		if (rq_put_slow(q, x, h, t)) {
+			return;
+		}
+	}
 }
 
 #define XO_MAXW 4096
@@ -2625,7 +2685,11 @@ typedef struct xo_worker {
 	int live;
 	int root;       // the record of a root thread that helps while it waits
 	void *sched_sp; // the scheduler's stack pointer while a fiber runs
-	void *tsan;     // the scheduler's ThreadSanitizer fiber
+	// nonzero when the fiber code in Xo (sched.xo, decision 0212) calls
+	// xo_sched_hook around each switch: the sanitizers' fiber calls, and
+	// the statistics (sched_hooks)
+	int64_t hooks;
+	void *tsan; // the scheduler's ThreadSanitizer fiber
 	uint32_t wakew; // futex word: set to 1 to wake the idle worker
 	struct xo_worker *idle_next;
 	uint64_t rng;
@@ -2657,10 +2721,15 @@ static struct {
 	int64_t ihead, ilen, icap; // ilen read atomically to skip it
 } pool = {.once = PTHREAD_ONCE_INIT};
 
+#ifdef XO_SCHED_C
 static __thread xo_worker *tls_w;
 
 __attribute__((noinline)) static xo_worker *w_get(void) { return tls_w; }
 __attribute__((noinline)) static void w_set(xo_worker *w) { tls_w = w; }
+#else
+__attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal[XO_TLS_W]; }
+__attribute__((noinline)) static void w_set(xo_worker *w) { xo_tlocal[XO_TLS_W] = XO_ADDR(w); }
+#endif
 
 static void rt_init(void) {}
 
@@ -2784,10 +2853,10 @@ static void inject_push_batch(void **items, int64_t n) {
 
 static void inject_push(void *t) { inject_push_batch(&t, 1); }
 
-static int rq_put_slow(xo_runq *q, void *x, uint32_t h, uint32_t t) {
+static int rq_put_slow(xo_runq *q, void *x, int64_t h, int64_t t) {
 	void *batch[XO_RUNQ / 2 + 1];
-	uint32_t n = (t - h) / 2;
-	for (uint32_t i = 0; i < n; i++) {
+	int64_t n = (t - h) / 2;
+	for (int64_t i = 0; i < n; i++) {
 		batch[i] = __atomic_load_n(&q->slot[(h + i) % XO_RUNQ], __ATOMIC_RELAXED);
 	}
 	if (!__atomic_compare_exchange_n(&q->head, &h, h + n, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
@@ -2987,6 +3056,7 @@ static void fiber_park(struct xo_fiber *f);
 static void fiber_parking(struct xo_fiber *f);
 static void run_item(xo_worker *w, void *it);
 static void tsan_worker(xo_worker *w);
+static void sched_hooks(xo_worker *w);
 
 // root_worker returns the record of the calling root thread, made on
 // first use: its spawns go to its deque, and while it waits it runs work
@@ -3004,6 +3074,7 @@ static xo_worker *root_worker(void) {
 	w->live = 1;
 	w->root = 1;
 	tsan_worker(w);
+	sched_hooks(w);
 	lk(&pool.mu);
 	register_worker(w);
 	unlk(&pool.mu);
@@ -3221,7 +3292,7 @@ typedef struct xo_task {
 	xo_lock mu; // waiters
 	xo_wl waiters;
 	struct xo_task *snext;
-	int gone; // atomic: 2 when its run and its queue entry are over (scope_prune)
+	int64_t gone; // atomic: 2 when its run and its queue entry are over (scope_prune)
 	// the fault that ended it (decision 0085), malloc'd (last: the fields
 	// above keep their places)
 	char *fault_msg, *fault_loc, *fault_detail;
@@ -3341,6 +3412,7 @@ static void task_free(void *p) {
 // joiner if it waits. It is
 // the caller's last touch of s (decision 0077: the counts were under the
 // scope's mutex, which every worker took twice per task).
+#ifdef XO_SCHED_C
 static void scope_units_done(xo_scope *s, int64_t units) {
 	if (__atomic_sub_fetch(&s->pending, units, __ATOMIC_ACQ_REL) == 1) {
 		// the joiner waits for this signal, so s is still there
@@ -3354,6 +3426,21 @@ static int claim_task(xo_task *t) {
 	int64_t q = T_QUEUED;
 	return __atomic_compare_exchange_n(&t->state, &q, T_RUNNING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
+#else
+// The task states in Xo (decision 0212, std/native/llrt/sched.xo).
+int64_t xo_x_scope_units_done(int64_t s, int64_t units);
+int64_t xo_x_task_claim(int64_t t);
+int64_t xo_x_task_dequeued(int64_t t, int64_t s);
+
+static void scope_units_done(xo_scope *s, int64_t units) {
+	if (xo_x_scope_units_done(XO_ADDR(s), units)) {
+		// the joiner waits for this signal, so s is still there
+		park_signal(s->joiner);
+	}
+}
+
+static int claim_task(xo_task *t) { return (int)xo_x_task_claim(XO_ADDR(t)); }
+#endif
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
 // or a thread that helps).
@@ -3411,8 +3498,14 @@ static void run_task(xo_task *t) {
 // queue holds a task the scope frees.
 static void dequeued(xo_task *t) {
 	xo_scope *s = t->scope;
+#ifdef XO_SCHED_C
 	__atomic_fetch_add(&t->gone, 1, __ATOMIC_RELEASE); // the last touch of t
 	scope_units_done(s, 2);
+#else
+	if (xo_x_task_dequeued(XO_ADDR(t), XO_ADDR(s))) {
+		park_signal(s->joiner);
+	}
+#endif
 }
 
 // scope_prune takes the tasks that are over and that only s's list
@@ -3477,10 +3570,11 @@ typedef struct xo_fiber {
 	xo_task *task;
 	xo_ctx *cur;   // the context running on it (a task it helps is nested)
 	int64_t state; // F_* (atomic)
-	int done;
+	int64_t done; // read by sched.xo (decision 0212)
 	void *tsan;
 	struct xo_fiber *next; // the cache
 	void *asan_fake;       // AddressSanitizer: its fake stack while switched out
+	int64_t hooks;         // its worker's hooks (sched.xo, decision 0212)
 } xo_fiber;
 
 // xo_fiber_switch saves the callee saved registers on the current stack,
@@ -3488,6 +3582,14 @@ typedef struct xo_fiber {
 // by an earlier switch, or made by fiber_new). xo_fiber_start is where a
 // new fiber starts: it calls the function in the second register slot
 // with the first as its argument.
+//
+// Decision 0212: the compiler emits these sequences in the program's own
+// code (rt.stack_switch and rt.fiber_start_addr: xo_stack_switch and
+// xo_fiber_entry, from selfhost/arm64 sched.xo, selfhost/llvm sched.xo,
+// and their Go mirrors), and the fiber code that uses them is Xo
+// (std/native/llrt/sched.xo); the copy here and the C fiber code below
+// are the C path (XO_LLRT_C=sched, -DXO_SCHED_C).
+#ifdef XO_SCHED_C
 void xo_fiber_switch(void **save, void *to);
 void xo_fiber_start(void);
 
@@ -3688,6 +3790,7 @@ __asm__(".text\n" XO_ASM_FN("xo_fiber_switch")
 #else
 #error "xo_rt.c: fibers support arm64 and x86_64"
 #endif
+#endif // XO_SCHED_C
 
 // ThreadSanitizer must be told about every switch (its fiber API).
 #if defined(__has_feature)
@@ -3733,6 +3836,26 @@ void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_
 #define ASAN_FINISH(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
 #endif
 
+#if defined(__has_attribute)
+#if __has_attribute(disable_sanitizer_instrumentation)
+#define XO_NO_SANITIZE __attribute__((disable_sanitizer_instrumentation))
+#endif
+#endif
+#ifndef XO_NO_SANITIZE
+#define XO_NO_SANITIZE
+#endif
+
+// sched_hooks tells whether the fibers w runs call xo_sched_hook around
+// their switches (decision 0212): in sanitizer builds, and with the
+// statistics on (XO_RTSTATS).
+static void sched_hooks(xo_worker *w) {
+#if defined(XO_TSAN) || defined(XO_ASAN)
+	w->hooks = 1;
+#else
+	w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0;
+#endif
+}
+
 #ifdef MAP_NORESERVE
 #define XO_MAP_NORESERVE MAP_NORESERVE
 #else
@@ -3775,7 +3898,57 @@ static void fibers_init(void) {
 	fibers.stack = mb << 20;
 }
 
+#ifdef XO_SCHED_C
 static void fiber_main(xo_fiber *f);
+#else
+// The fiber code in Xo (decision 0212): std/native/llrt/sched.xo through
+// the C ABI exports of cabi.xo. xo_x_fiber_main is where a new fiber
+// starts (xo_fiber_entry, the emitted start, calls it with the fiber).
+int64_t xo_x_fiber_frame(int64_t f, int64_t mem, int64_t size, int64_t commit, int64_t main);
+void xo_x_fiber_main(int64_t f);
+void xo_x_fiber_park(int64_t f);
+void xo_x_fiber_parking(int64_t f);
+int64_t xo_x_fiber_wake(int64_t f);
+int64_t xo_x_fiber_run(int64_t w, int64_t f);
+#endif
+
+#ifdef XO_SCHED_C
+// fiber_frame makes f's first frame, which xo_fiber_start's sequence
+// starts: f's stack pointer.
+static void *fiber_frame(xo_fiber *f) {
+	uintptr_t top = ((uintptr_t)f->mem + f->size) & ~(uintptr_t)15;
+	void **fr = (void **)(top - XO_FRAME);
+	memset(fr, 0, XO_FRAME);
+#if defined(__aarch64__) && defined(_WIN32)
+	fr[0] = f;                     // x19
+	fr[1] = (void *)fiber_main;    // x20
+	fr[11] = (void *)xo_fiber_start; // x30
+	fr[20] = (void *)top;                                      // StackBase
+	fr[21] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
+	fr[22] = (void *)f->mem;                                   // DeallocationStack
+#elif defined(__aarch64__)
+	fr[0] = f;                     // x19
+	fr[1] = (void *)fiber_main;    // x20
+	fr[11] = (void *)xo_fiber_start; // x30
+#elif defined(_WIN32)
+	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
+	((uint16_t *)fr)[2] = 0x027F; // x87 control word (Windows: 53 bit precision)
+	fr[21] = (void *)top;                                  // StackBase
+	fr[22] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
+	fr[23] = (void *)f->mem;                               // DeallocationStack
+	fr[27] = (void *)fiber_main;    // r12
+	fr[30] = f;                     // rbx
+	fr[32] = (void *)xo_fiber_start; // return address
+#else
+	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
+	((uint16_t *)fr)[2] = 0x037F; // x87 control word
+	fr[4] = (void *)fiber_main;    // r12
+	fr[5] = f;                     // rbx
+	fr[7] = (void *)xo_fiber_start; // return address
+#endif
+	return fr;
+}
+#endif
 
 // fiber_new returns a fiber that starts running t (claimed) when it is
 // first switched to.
@@ -3836,39 +4009,16 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 	f->task = t;
 	f->cur = NULL;
 	f->done = 0;
+	f->hooks = w->hooks;
 	__atomic_store_n(&f->state, F_RUNNING, __ATOMIC_RELAXED);
-	uintptr_t top = ((uintptr_t)f->mem + f->size) & ~(uintptr_t)15;
-	void **fr = (void **)(top - XO_FRAME);
-	memset(fr, 0, XO_FRAME);
-#if defined(__aarch64__) && defined(_WIN32)
-	fr[0] = f;                     // x19
-	fr[1] = (void *)fiber_main;    // x20
-	fr[11] = (void *)xo_fiber_start; // x30
-	fr[20] = (void *)top;                                      // StackBase
-	fr[21] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
-	fr[22] = (void *)f->mem;                                   // DeallocationStack
-#elif defined(__aarch64__)
-	fr[0] = f;                     // x19
-	fr[1] = (void *)fiber_main;    // x20
-	fr[11] = (void *)xo_fiber_start; // x30
-#elif defined(_WIN32)
-	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
-	((uint16_t *)fr)[2] = 0x027F; // x87 control word (Windows: 53 bit precision)
-	fr[21] = (void *)top;                                  // StackBase
-	fr[22] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
-	fr[23] = (void *)f->mem;                               // DeallocationStack
-	fr[27] = (void *)fiber_main;    // r12
-	fr[30] = f;                     // rbx
-	fr[32] = (void *)xo_fiber_start; // return address
-#else
-	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
-	((uint16_t *)fr)[2] = 0x037F; // x87 control word
-	fr[4] = (void *)fiber_main;    // r12
-	fr[5] = f;                     // rbx
-	fr[7] = (void *)xo_fiber_start; // return address
-#endif
-	f->sp = fr;
+#ifndef XO_SCHED_C
+	// the first frame, for the switch the compiler emits (sched.xo)
+	f->sp = (void *)(intptr_t)xo_x_fiber_frame(XO_ADDR(f), XO_ADDR(f->mem), (int64_t)f->size, (int64_t)XO_WIN_FIBER_COMMIT, XO_ADDR(xo_x_fiber_main));
 	return f;
+#else
+	f->sp = fiber_frame(f);
+	return f;
+#endif
 }
 
 // fiber_free keeps f's stack for reuse: in its worker's cache, else the
@@ -3899,6 +4049,7 @@ static void fiber_free(xo_worker *w, xo_fiber *f) {
 	__atomic_sub_fetch(&st.fiber_live, 1, __ATOMIC_RELAXED);
 }
 
+#ifdef XO_SCHED_C
 // fiber_main runs on the fiber: the task, then back to the scheduler for
 // good.
 static void fiber_main(xo_fiber *f) {
@@ -3971,6 +4122,74 @@ static void run_fiber(xo_worker *w, xo_fiber *f) {
 	}
 }
 
+#endif
+
+// The hooks the Xo fiber code calls around its switches when the
+// worker's hooks word is set (sched_hooks): the sanitizers' fiber calls
+// and the statistics, as the C path's fiber_main, fiber_park, and
+// run_fiber make them. kind (sched.xo HOOK_*): 0 a fiber starts (on its
+// stack), 1 it ends, 2 it parks, 3 it was resumed after parking, 4 a
+// worker switches to it, 5 the worker is back. Not instrumented by the
+// sanitizers: its __tsan_switch_to_fiber changes ThreadSanitizer's
+// shadow stack, so an instrumented function's exit here would pop the
+// other fiber's entry (gotchas/tsan-fiber-switch-in-callee.md); the
+// callers' entries and exits pair up as the C path's run_fiber and
+// fiber_park do.
+XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) {
+	xo_worker *w = (xo_worker *)(intptr_t)wa;
+	xo_fiber *f = (xo_fiber *)(intptr_t)fa;
+	(void)w, (void)f;
+	switch (kind) {
+	case 0:
+		ASAN_FINISH(NULL, &w->asan_bottom, &w->asan_size);
+		break;
+	case 1:
+		TSAN_SWITCH(w->tsan);
+		ASAN_START(NULL, w->asan_bottom, w->asan_size); // for good
+		break;
+	case 2:
+		STAT(fiber_park);
+		TSAN_SWITCH(w->tsan);
+		ASAN_START(&f->asan_fake, w->asan_bottom, w->asan_size);
+		break;
+	case 3:
+		ASAN_FINISH(f->asan_fake, &w->asan_bottom, &w->asan_size);
+		break;
+	case 4:
+		TSAN_SWITCH(f->tsan);
+		ASAN_START(&w->asan_fake, f->mem + (f->size - fibers.stack), fibers.stack);
+		break;
+	case 5:
+		ASAN_FINISH(w->asan_fake, NULL, NULL);
+		break;
+	}
+}
+
+// xo_sched_run_task runs the task of the fiber that just started (Xo's
+// fiber_main): it came from a queue, so its entry and its run end here.
+void xo_sched_run_task(int64_t fa) { run_claimed(((xo_fiber *)(intptr_t)fa)->task, 4); }
+
+// (both are compiled with -DXO_SCHED_C too: the C only tests link that
+// C with the exports of a program built on the default path)
+
+#ifndef XO_SCHED_C
+static void fiber_parking(xo_fiber *f) { xo_x_fiber_parking(XO_ADDR(f)); }
+
+static void fiber_park(xo_fiber *f) { xo_x_fiber_park(XO_ADDR(f)); }
+
+static void fiber_wake(xo_fiber *f) {
+	if (xo_x_fiber_wake(XO_ADDR(f))) {
+		pool_push((void *)((uintptr_t)f | 1));
+	}
+}
+
+static void run_fiber(xo_worker *w, xo_fiber *f) {
+	if (xo_x_fiber_run(XO_ADDR(w), XO_ADDR(f))) {
+		fiber_free(w, f);
+	}
+}
+#endif
+
 // run_item runs a queue item on w's thread: resumes a fiber, or starts a
 // task on a new fiber unless a helper ran it already.
 static void run_item(xo_worker *w, void *it) {
@@ -3988,6 +4207,64 @@ static void run_item(xo_worker *w, void *it) {
 	// on the scope instead of two)
 	run_fiber(w, fiber_new(w, t));
 }
+
+// The layout std/native/llrt/sched.xo reads and writes (decision 0212:
+// its constants are these offsets).
+_Static_assert(offsetof(xo_runq, head) == 0 && offsetof(xo_runq, tail) == 128 && offsetof(xo_runq, slot) == 136, "sched.xo RQ_*");
+_Static_assert(offsetof(xo_worker, q) == 0 && offsetof(xo_worker, sched_sp) == 2208 && offsetof(xo_worker, hooks) == 2216, "sched.xo W_*");
+_Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48 && offsetof(xo_fiber, hooks) == 80, "sched.xo F_*");
+_Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
+_Static_assert(offsetof(xo_scope, pending) == 240, "sched.xo S_PENDING");
+_Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
+
+#ifdef XO_SCHED_C
+// xo_sched_c is the C path of sched.xo's operations for its exports
+// (std/native/llrt/sched_c.xo, XO_LLRT_C=sched): op is the operation's
+// number there. The C above calls its own copies, so only the exports
+// reach this; an operation with a follow up (a push, a signal, a free)
+// does it here and returns 0.
+int64_t xo_sched_c(int64_t op, int64_t a, int64_t b, int64_t c) {
+	switch (op) {
+	case 0:
+		return rq_put_fast((xo_runq *)(intptr_t)a, (void *)(intptr_t)b);
+	case 1:
+		return XO_ADDR(rq_get((xo_runq *)(intptr_t)a));
+	case 2:
+		return rq_grab((xo_runq *)(intptr_t)a, (void **)(intptr_t)b);
+	case 3:
+		rq_put_batch((xo_runq *)(intptr_t)a, (void **)(intptr_t)b, (uint32_t)c);
+		return 0;
+	case 4:
+		return rq_nonempty((xo_runq *)(intptr_t)a);
+	case 5:
+		return XO_ADDR(fiber_frame((xo_fiber *)(intptr_t)a));
+	case 6:
+		fiber_main((xo_fiber *)(intptr_t)a);
+		return 0;
+	case 7:
+		fiber_park((xo_fiber *)(intptr_t)a);
+		return 0;
+	case 8:
+		fiber_parking((xo_fiber *)(intptr_t)a);
+		return 0;
+	case 9:
+		fiber_wake((xo_fiber *)(intptr_t)a);
+		return 0;
+	case 10:
+		run_fiber((xo_worker *)(intptr_t)a, (xo_fiber *)(intptr_t)b);
+		return 0;
+	case 11:
+		scope_units_done((xo_scope *)(intptr_t)a, b);
+		return 0;
+	case 12:
+		return claim_task((xo_task *)(intptr_t)a);
+	case 13:
+		dequeued((xo_task *)(intptr_t)a);
+		return 0;
+	}
+	return 0;
+}
+#endif
 
 // go_idle puts w on the idle list and sleeps until wakep takes it off;
 // it returns 0 instead when work showed up meanwhile (w is then off the
@@ -4030,6 +4307,7 @@ static void *worker_main(void *arg) {
 	xo_worker *w = arg;
 	w_set(w);
 	tsan_worker(w);
+	sched_hooks(w);
 	int spinning = 1; // wakep started it as a spinning worker
 	for (;;) {
 		void *it = find_work(w, spinning);

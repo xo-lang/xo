@@ -44,7 +44,8 @@ func SplitIR(ir string) (IRParts, error) {
 			p.Types = append(p.Types, l)
 		case strings.HasPrefix(l, "!"):
 			p.Meta = append(p.Meta, l)
-		case strings.HasPrefix(l, "@."):
+		case strings.HasPrefix(l, "@.") || strings.HasPrefix(l, "@xo_tlocal "):
+			// constants, and decision 0212's thread local table
 			p.Globals = append(p.Globals, l)
 		case strings.HasPrefix(l, "define "):
 			name := DefName(l)

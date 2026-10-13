@@ -220,3 +220,24 @@ func TestIOFlagsAtomicC(t *testing.T) {
 		}
 	}
 }
+
+// TestIOFlagsSched checks the C path of the scheduler core
+// (XO_LLRT_C=sched, decision 0212): -DXO_SCHED_C only when sched_c.xo's
+// calls are in the code, not for the scheduler's exports, the hooks, or
+// the emitted switch every program defines.
+func TestIOFlagsSched(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		want bool
+	}{
+		{"bl _xo_sched_c\n", true},
+		{"call i64 @xo_sched_c(i64 0, i64 %1, i64 %2, i64 0)\n", true},
+		{"_xo_x_rq_put:\n\tb _xo_f_cabi_2erq__put\nbl _xo_sched_hook\nbl _xo_sched_run_task\n", false},
+		{"bl _xo_stack_switch\nbl _xo_tlocal_get\n", false},
+	} {
+		got := slices.Contains(IOFlags([]byte(c.code)), "-DXO_SCHED_C")
+		if got != c.want {
+			t.Errorf("IOFlags(%q) has -DXO_SCHED_C: %v, want %v", c.code, got, c.want)
+		}
+	}
+}

@@ -785,7 +785,7 @@ b4:  ; preds b0
   jump b2(v13)
 b5:  ; preds b2
   v15: Int = const 65
-  v16: Int = sub v0, v15 @ cabi.xo:247:12
+  v16: Int = sub v0, v15 @ cabi.xo:248:12
   ret v16
 b6:  ; preds b2
   v18: () = tuple
@@ -806,7 +806,7 @@ b10:  ; preds b1
   jump b8(v29)
 b11:  ; preds b8
   v31: Int = const 71
-  v32: Int = sub v0, v31 @ cabi.xo:250:12
+  v32: Int = sub v0, v31 @ cabi.xo:251:12
   ret v32
 b12:  ; preds b8
   v34: () = tuple
@@ -827,7 +827,7 @@ b16:  ; preds b7
   jump b14(v45)
 b17:  ; preds b14
   v47: Int = const 4
-  v48: Int = add v0, v47 @ cabi.xo:253:12
+  v48: Int = add v0, v47 @ cabi.xo:254:12
   ret v48
 b18:  ; preds b14
   v50: () = tuple
@@ -846,7 +846,7 @@ b21:  ; preds b13
 b22:  ; preds b24
   v60: () = tuple
   v61: Int = const 1
-  v62: Int = neg v61 @ cabi.xo:261:3
+  v62: Int = neg v61 @ cabi.xo:262:3
   ret v62
 b23:  ; preds b19
   v64: Int = const 63
@@ -867,16 +867,16 @@ b1(v6: Int):  ; preds b2, b3
   br v8, b5(), b6()
 b2:  ; preds b0
   v10: Int = const 1
-  v11: Int = sub v0, v10 @ cabi.xo:310:23
+  v11: Int = sub v0, v10 @ cabi.xo:311:23
   jump b1(v11)
 b3:  ; preds b0
   jump b1(v0)
 b4(v14: Int):  ; preds b5, b6
   v15: Int = const 400
-  v16: Int = div v14, v15 @ cabi.xo:311:13
+  v16: Int = div v14, v15 @ cabi.xo:312:13
   v17: Int = const 400
-  v18: Int = mul v16, v17 @ cabi.xo:312:17
-  v19: Int = sub v6, v18 @ cabi.xo:312:13
+  v18: Int = mul v16, v17 @ cabi.xo:313:17
+  v19: Int = sub v6, v18 @ cabi.xo:313:13
   v20: Int = const 153
   v21: Int = const 2
   v22: Bool = gt v1, v21
@@ -885,39 +885,39 @@ b5:  ; preds b1
   jump b4(v6)
 b6:  ; preds b1
   v25: Int = const 399
-  v26: Int = sub v6, v25 @ cabi.xo:311:37
+  v26: Int = sub v6, v25 @ cabi.xo:312:37
   jump b4(v26)
 b7(v28: Int):  ; preds b8, b9
-  v29: Int = mul v20, v28 @ cabi.xo:313:14
+  v29: Int = mul v20, v28 @ cabi.xo:314:14
   v30: Int = const 2
-  v31: Int = add v29, v30 @ cabi.xo:313:14
+  v31: Int = add v29, v30 @ cabi.xo:314:14
   v32: Int = const 5
-  v33: Int = div v31, v32 @ cabi.xo:313:13
-  v34: Int = add v33, v2 @ cabi.xo:313:13
+  v33: Int = div v31, v32 @ cabi.xo:314:13
+  v34: Int = add v33, v2 @ cabi.xo:314:13
   v35: Int = const 1
-  v36: Int = sub v34, v35 @ cabi.xo:313:13
+  v36: Int = sub v34, v35 @ cabi.xo:314:13
   v37: Int = const 365
-  v38: Int = mul v19, v37 @ cabi.xo:314:13
+  v38: Int = mul v19, v37 @ cabi.xo:315:13
   v39: Int = const 4
-  v40: Int = div v19, v39 @ cabi.xo:314:25
-  v41: Int = add v38, v40 @ cabi.xo:314:13
+  v40: Int = div v19, v39 @ cabi.xo:315:25
+  v41: Int = add v38, v40 @ cabi.xo:315:13
   v42: Int = const 100
-  v43: Int = div v19, v42 @ cabi.xo:314:35
-  v44: Int = sub v41, v43 @ cabi.xo:314:13
-  v45: Int = add v44, v36 @ cabi.xo:314:13
+  v43: Int = div v19, v42 @ cabi.xo:315:35
+  v44: Int = sub v41, v43 @ cabi.xo:315:13
+  v45: Int = add v44, v36 @ cabi.xo:315:13
   v46: Int = const 146097
-  v47: Int = mul v16, v46 @ cabi.xo:315:3
-  v48: Int = add v47, v45 @ cabi.xo:315:3
+  v47: Int = mul v16, v46 @ cabi.xo:316:3
+  v48: Int = add v47, v45 @ cabi.xo:316:3
   v49: Int = const 719468
-  v50: Int = sub v48, v49 @ cabi.xo:315:3
+  v50: Int = sub v48, v49 @ cabi.xo:316:3
   ret v50
 b8:  ; preds b4
   v52: Int = const 3
-  v53: Int = sub v1, v52 @ cabi.xo:313:32
+  v53: Int = sub v1, v52 @ cabi.xo:314:32
   jump b7(v53)
 b9:  ; preds b4
   v55: Int = const 9
-  v56: Int = add v1, v55 @ cabi.xo:313:47
+  v56: Int = add v1, v55 @ cabi.xo:314:47
   jump b7(v56)
 }
 
@@ -1158,6 +1158,42 @@ b3:  ; preds b1
   ret v19
 }
 
+func cabi.fiber_frame(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int):
+  v5: Int = call sched.fiber_frame, v0, v1, v2, v3, v4
+  ret v5
+}
+
+func cabi.fiber_main(v0: Int) -> () {
+b0(v0: Int):
+  v1: () = call sched.fiber_main, v0
+  ret v1
+}
+
+func cabi.fiber_park(v0: Int) -> () {
+b0(v0: Int):
+  v1: () = call sched.fiber_park, v0
+  ret v1
+}
+
+func cabi.fiber_parking(v0: Int) -> () {
+b0(v0: Int):
+  v1: () = call sched.fiber_parking, v0
+  ret v1
+}
+
+func cabi.fiber_run(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sched.fiber_run, v0, v1
+  ret v2
+}
+
+func cabi.fiber_wake(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sched.fiber_wake, v0
+  ret v1
+}
+
 func cabi.fmt_duration(v0: Int, v1: Int) -> Int {
 b0(v0: Int, v1: Int):
   v2: Str = const ""
@@ -1209,26 +1245,26 @@ b2(v8: Int):  ; preds b1, b8
   br v10, b11(), b12()
 b3:  ; preds b1
   v12: Int = const 10
-  v13: Int = rem v4, v12 @ cabi.xo:34:13
+  v13: Int = rem v4, v12 @ cabi.xo:35:13
   v14: Int = const 0
   v15: Bool = lt v13, v14
   br v15, b5(), b6()
 b4(v17: Int):  ; preds b5, b6
   v18: () = tuple
   v19: Int = const 1
-  v20: Int = sub v5, v19 @ cabi.xo:38:5
+  v20: Int = sub v5, v19 @ cabi.xo:39:5
   v21: Int = const 48
-  v22: Int = add v21, v17 @ cabi.xo:39:26
+  v22: Int = add v21, v17 @ cabi.xo:40:26
   v23: Int = const 1
   v24: () = call rt.mem_store, v0, v20, v22, v23
   v25: Int = const 10
-  v26: Int = div v4, v25 @ cabi.xo:40:9
+  v26: Int = div v4, v25 @ cabi.xo:41:9
   v27: Int = const 0
   v28: Bool = eq v26, v27
   br v28, b8(), b9()
 b5:  ; preds b3
   v30: Int = const 0
-  v31: Int = sub v30, v13 @ cabi.xo:36:11
+  v31: Int = sub v30, v13 @ cabi.xo:37:11
   v32: () = tuple
   jump b4(v31)
 b6:  ; preds b3
@@ -1245,8 +1281,8 @@ b9:  ; preds b4
 b10(v41: Int):  ; preds b11, b12
   v42: () = tuple
   v43: Int = const 24
-  v44: Int = sub v43, v41 @ cabi.xo:49:11
-  v45: Int = add v0, v41 @ cabi.xo:50:20
+  v44: Int = sub v43, v41 @ cabi.xo:50:11
+  v45: Int = add v0, v41 @ cabi.xo:51:20
   v46: () = call rt.mem_move, v0, v45, v44
   v47: Int = const 0
   v48: Int = const 1
@@ -1254,7 +1290,7 @@ b10(v41: Int):  ; preds b11, b12
   ret v44
 b11:  ; preds b2
   v51: Int = const 1
-  v52: Int = sub v8, v51 @ cabi.xo:46:5
+  v52: Int = sub v8, v51 @ cabi.xo:47:5
   v53: Int = const 45
   v54: Int = const 1
   v55: () = call rt.mem_store, v0, v52, v53, v54
@@ -1474,7 +1510,7 @@ b14:  ; preds b13
 b15:  ; preds b13
   v49: Int = call raw.byte_at, v0, v44
   v50: Int = const 48
-  v51: Int = sub v49, v50 @ cabi.xo:208:13
+  v51: Int = sub v49, v50 @ cabi.xo:209:13
   v52: Int = const 0
   v53: Bool = lt v51, v52
   br v53, b18(), b19()
@@ -1501,10 +1537,10 @@ b21:  ; preds b17
 b22:  ; preds b37, b24
   v70: () = tuple
   v71: Int = const 10
-  v72: Int = mul v45, v71 @ cabi.xo:225:9
-  v73: Int = add v72, v51 @ cabi.xo:225:9
+  v72: Int = mul v45, v71 @ cabi.xo:226:9
+  v73: Int = add v72, v51 @ cabi.xo:226:9
   v74: Int = const 1
-  v75: Int = add v44, v74 @ cabi.xo:226:5
+  v75: Int = add v44, v74 @ cabi.xo:227:5
   v76: () = tuple
   jump b13(v75, v73)
 b23:  ; preds b16
@@ -1556,7 +1592,7 @@ b37:  ; preds b39
   jump b22()
 b38:  ; preds b25
   v113: Int = const 1
-  v114: Int = add v44, v113 @ cabi.xo:218:12
+  v114: Int = add v44, v113 @ cabi.xo:219:12
   v115: Bool = ne v114, v1
   br v115, b41(), b42()
 b39:  ; preds b25
@@ -1566,9 +1602,9 @@ b40:  ; preds b42
   v119: () = tuple
   v120: Int = const 0
   v121: Int = const 9223372036854775807
-  v122: Int = neg v121 @ cabi.xo:221:30
+  v122: Int = neg v121 @ cabi.xo:222:30
   v123: Int = const 1
-  v124: Int = sub v122, v123 @ cabi.xo:221:30
+  v124: Int = sub v122, v123 @ cabi.xo:222:30
   v125: Int = const 8
   v126: () = call rt.mem_store, v2, v120, v124, v125
   v127: Int = const 1
@@ -1588,7 +1624,7 @@ b43(v133: Int):  ; preds b44, b45
   ret v138
 b44:  ; preds b14
   v140: Int = const 0
-  v141: Int = sub v140, v45 @ cabi.xo:229:9
+  v141: Int = sub v140, v45 @ cabi.xo:230:9
   v142: () = tuple
   jump b43(v141)
 b45:  ; preds b14
@@ -1655,6 +1691,42 @@ b0(v0: Int):
   ret v1
 }
 
+func cabi.rq_get(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sched.rq_get, v0
+  ret v1
+}
+
+func cabi.rq_grab(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sched.rq_grab, v0, v1
+  ret v2
+}
+
+func cabi.rq_nonempty(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sched.rq_nonempty, v0
+  ret v1
+}
+
+func cabi.rq_put(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sched.rq_put, v0, v1
+  ret v2
+}
+
+func cabi.rq_put_batch(v0: Int, v1: Int, v2: Int) -> () {
+b0(v0: Int, v1: Int, v2: Int):
+  v3: () = call sched.rq_put_batch, v0, v1, v2
+  ret v3
+}
+
+func cabi.scope_units_done(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sched.scope_units_done, v0, v1
+  ret v2
+}
+
 func cabi.split_hostport(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int) -> Int {
 b0(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int):
   v5: Int = call raw.cstr_len, v0
@@ -1705,7 +1777,7 @@ b11:  ; preds b8
   v41: Str = field 2, v7
   release v41
   v43: Int = const 1
-  v44: Int = neg v43 @ cabi.xo:293:12
+  v44: Int = neg v43 @ cabi.xo:294:12
   ret v44
 b12:  ; preds b8
   v46: () = tuple
@@ -1733,6 +1805,18 @@ b16:  ; preds b14
   ret v63
 }
 
+func cabi.task_claim(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = call sched.task_claim, v0
+  ret v1
+}
+
+func cabi.task_dequeued(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call sched.task_dequeued, v0, v1
+  ret v2
+}
+
 func cabi.utf8_decode(v0: Int, v1: Int) -> Int {
 b0(v0: Int, v1: Int):
   v2: Int = const 0
@@ -1751,7 +1835,7 @@ b1:  ; preds b3
   br v13, b6(), b7()
 b2:  ; preds b0
   v15: Int = const 3
-  v16: Int = shl v3, v15 @ cabi.xo:111:13
+  v16: Int = shl v3, v15 @ cabi.xo:112:13
   v17: Int = const 1
   v18: Int = or v16, v17
   ret v18
@@ -1761,7 +1845,7 @@ b3:  ; preds b0
 b4(v22: Int, v23: Int, v24: Int, v25: Int):  ; preds b8, b10
   v26: () = tuple
   v27: Int = const 1
-  v28: Int = add v22, v27 @ cabi.xo:139:10
+  v28: Int = add v22, v27 @ cabi.xo:140:10
   v29: Bool = lt v1, v28
   br v29, b35(), b36()
 b5(v31: Bool):  ; preds b7, b6
@@ -1849,7 +1933,7 @@ b26:  ; preds b23
 b27:  ; preds b23
   v101: Int = const 65533
   v102: Int = const 3
-  v103: Int = shl v101, v102 @ cabi.xo:137:13
+  v103: Int = shl v101, v102 @ cabi.xo:138:13
   v104: Int = const 1
   v105: Int = or v103, v104
   ret v105
@@ -1883,7 +1967,7 @@ b34:  ; preds b36
 b35:  ; preds b4
   v130: Int = const 65533
   v131: Int = const 3
-  v132: Int = shl v130, v131 @ cabi.xo:140:13
+  v132: Int = shl v130, v131 @ cabi.xo:141:13
   v133: Int = const 1
   v134: Int = or v132, v133
   ret v134
@@ -1893,7 +1977,7 @@ b36:  ; preds b4
 b37:  ; preds b42
   v138: () = tuple
   v139: Int = const 6
-  v140: Int = shl v25, v139 @ cabi.xo:146:8
+  v140: Int = shl v25, v139 @ cabi.xo:147:8
   v141: Int = const 63
   v142: Int = and v127, v141
   v143: Int = or v140, v142
@@ -1910,7 +1994,7 @@ b40:  ; preds b34
 b41:  ; preds b38
   v152: Int = const 65533
   v153: Int = const 3
-  v154: Int = shl v152, v153 @ cabi.xo:144:13
+  v154: Int = shl v152, v153 @ cabi.xo:145:13
   v155: Int = const 1
   v156: Int = or v154, v155
   ret v156
@@ -1922,9 +2006,9 @@ b43(v160: Int, v161: Int):  ; preds b37, b46
   br v162, b45(), b44()
 b44:  ; preds b43
   v164: Int = const 3
-  v165: Int = shl v161, v164 @ cabi.xo:156:4
+  v165: Int = shl v161, v164 @ cabi.xo:157:4
   v166: Int = const 1
-  v167: Int = add v22, v166 @ cabi.xo:156:15
+  v167: Int = add v22, v166 @ cabi.xo:157:15
   v168: Int = or v165, v167
   ret v168
 b45:  ; preds b43
@@ -1935,12 +2019,12 @@ b45:  ; preds b43
 b46:  ; preds b51
   v174: () = tuple
   v175: Int = const 6
-  v176: Int = shl v161, v175 @ cabi.xo:153:10
+  v176: Int = shl v161, v175 @ cabi.xo:154:10
   v177: Int = const 63
   v178: Int = and v170, v177
   v179: Int = or v176, v178
   v180: Int = const 1
-  v181: Int = add v160, v180 @ cabi.xo:154:5
+  v181: Int = add v160, v180 @ cabi.xo:155:5
   v182: () = tuple
   jump b43(v181, v179)
 b47(v184: Bool):  ; preds b48, b49
@@ -1955,7 +2039,7 @@ b49:  ; preds b45
 b50:  ; preds b47
   v191: Int = const 65533
   v192: Int = const 3
-  v193: Int = shl v191, v192 @ cabi.xo:151:15
+  v193: Int = shl v191, v192 @ cabi.xo:152:15
   v194: Int = const 1
   v195: Int = or v193, v194
   ret v195
@@ -1992,14 +2076,14 @@ b5:  ; preds b1
   v20: Int = const 0
   v21: Int = const 192
   v22: Int = const 6
-  v23: Int = shr v1, v22 @ cabi.xo:166:33
+  v23: Int = shr v1, v22 @ cabi.xo:167:33
   v24: Int = or v21, v23
   v25: Int = const 128
   v26: Int = const 63
   v27: Int = and v1, v26
   v28: Int = or v25, v27
   v29: Int = const 8
-  v30: Int = shl v28, v29 @ cabi.xo:166:45
+  v30: Int = shl v28, v29 @ cabi.xo:167:45
   v31: Int = or v24, v30
   v32: Int = const 2
   v33: () = call rt.mem_store, v0, v20, v31, v32
@@ -2013,32 +2097,32 @@ b7:  ; preds b9
   v39: Int = const 0
   v40: Int = const 240
   v41: Int = const 18
-  v42: Int = shr v1, v41 @ cabi.xo:174:31
+  v42: Int = shr v1, v41 @ cabi.xo:175:31
   v43: Int = or v40, v42
   v44: Int = const 128
   v45: Int = const 12
-  v46: Int = shr v1, v45 @ cabi.xo:174:54
+  v46: Int = shr v1, v45 @ cabi.xo:175:54
   v47: Int = const 63
   v48: Int = and v46, v47
   v49: Int = or v44, v48
   v50: Int = const 8
-  v51: Int = shl v49, v50 @ cabi.xo:174:44
+  v51: Int = shl v49, v50 @ cabi.xo:175:44
   v52: Int = or v43, v51
   v53: Int = const 128
   v54: Int = const 6
-  v55: Int = shr v1, v54 @ cabi.xo:174:91
+  v55: Int = shr v1, v54 @ cabi.xo:175:91
   v56: Int = const 63
   v57: Int = and v55, v56
   v58: Int = or v53, v57
   v59: Int = const 16
-  v60: Int = shl v58, v59 @ cabi.xo:174:81
+  v60: Int = shl v58, v59 @ cabi.xo:175:81
   v61: Int = or v52, v60
   v62: Int = const 128
   v63: Int = const 63
   v64: Int = and v1, v63
   v65: Int = or v62, v64
   v66: Int = const 24
-  v67: Int = shl v65, v66 @ cabi.xo:174:118
+  v67: Int = shl v65, v66 @ cabi.xo:175:118
   v68: Int = or v61, v67
   v69: Int = const 4
   v70: () = call rt.mem_store, v0, v39, v68, v69
@@ -2048,16 +2132,16 @@ b8:  ; preds b4
   v73: Int = const 0
   v74: Int = const 224
   v75: Int = const 12
-  v76: Int = shr v1, v75 @ cabi.xo:170:33
+  v76: Int = shr v1, v75 @ cabi.xo:171:33
   v77: Int = or v74, v76
   v78: Int = const 128
   v79: Int = const 6
-  v80: Int = shr v1, v79 @ cabi.xo:170:56
+  v80: Int = shr v1, v79 @ cabi.xo:171:56
   v81: Int = const 63
   v82: Int = and v80, v81
   v83: Int = or v78, v82
   v84: Int = const 8
-  v85: Int = shl v83, v84 @ cabi.xo:170:46
+  v85: Int = shl v83, v84 @ cabi.xo:171:46
   v86: Int = or v77, v85
   v87: Int = const 2
   v88: () = call rt.mem_store, v0, v73, v86, v87
@@ -2191,6 +2275,450 @@ b9:  ; preds b7
 b10:  ; preds b7
   release v1
   jump b1()
+}
+
+func sched.fiber_frame(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int) -> Int {
+b0(v0: Int, v1: Int, v2: Int, v3: Int, v4: Int):
+  v5: Int = const 0
+  v6: Int = call rt.int_wrap, v5, v1, v2
+  v7: Int = const 1
+  v8: Int = const 15
+  v9: Int = and v6, v8
+  v10: Int = call rt.int_wrap, v7, v6, v9
+  v11: Int = call rt.fiber_start_addr
+  v12: TargetOs = variant 1
+  v13: TargetArch = variant 1
+  v14: Target = struct v12, v13
+  v15: TargetArch = field 1, v14
+  v16: Int = tag v15
+  v17: Int = const 1
+  v18: Bool = eq v16, v17
+  br v18, b3(), b2()
+b1(v20: Int):  ; preds b4, b17, b29
+  ret v20
+b2:  ; preds b0
+  v22: Int = tag v15
+  v23: Int = const 0
+  v24: Bool = eq v22, v23
+  br v24, b16(), b15()
+b3:  ; preds b0
+  v26: TargetOs = variant 1
+  v27: TargetArch = variant 1
+  v28: Target = struct v26, v27
+  v29: TargetOs = field 0, v28
+  v30: Int = tag v29
+  v31: Int = const 2
+  v32: Bool = eq v30, v31
+  br v32, b6(), b5()
+b4(v34: Int):  ; preds b6, b8
+  jump b1(v34)
+b5:  ; preds b3
+  v36: Int = tag v29
+  v37: Int = const 1
+  v38: Bool = eq v36, v37
+  br v38, b10(), b9()
+b6:  ; preds b3
+  v40: Int = const 1
+  v41: Int = const 192
+  v42: Int = call rt.int_wrap, v40, v10, v41
+  v43: Int = const 80
+  v44: Int = const 0
+  v45: Int = const 8
+  v46: () = call rt.mem_store, v42, v43, v44, v45
+  v47: Int = const 0
+  v48: Int = const 8
+  v49: () = call rt.mem_store, v42, v47, v0, v48
+  v50: Int = const 8
+  v51: Int = const 8
+  v52: () = call rt.mem_store, v42, v50, v4, v51
+  v53: Int = const 88
+  v54: Int = const 8
+  v55: () = call rt.mem_store, v42, v53, v11, v54
+  v56: Int = const 160
+  v57: Int = const 8
+  v58: () = call rt.mem_store, v42, v56, v10, v57
+  v59: Int = const 168
+  v60: Int = const 1
+  v61: Int = call rt.int_wrap, v60, v6, v3
+  v62: Int = const 8
+  v63: () = call rt.mem_store, v42, v59, v61, v62
+  v64: Int = const 176
+  v65: Int = const 8
+  v66: () = call rt.mem_store, v42, v64, v1, v65
+  jump b4(v42)
+b7:  ; preds b13
+  unreachable
+b8:  ; preds b10, b12, b14
+  v69: Int = const 1
+  v70: Int = const 160
+  v71: Int = call rt.int_wrap, v69, v10, v70
+  v72: Int = const 80
+  v73: Int = const 0
+  v74: Int = const 8
+  v75: () = call rt.mem_store, v71, v72, v73, v74
+  v76: Int = const 0
+  v77: Int = const 8
+  v78: () = call rt.mem_store, v71, v76, v0, v77
+  v79: Int = const 8
+  v80: Int = const 8
+  v81: () = call rt.mem_store, v71, v79, v4, v80
+  v82: Int = const 88
+  v83: Int = const 8
+  v84: () = call rt.mem_store, v71, v82, v11, v83
+  jump b4(v71)
+b9:  ; preds b5
+  v86: Int = tag v29
+  v87: Int = const 0
+  v88: Bool = eq v86, v87
+  br v88, b12(), b11()
+b10:  ; preds b5
+  jump b8()
+b11:  ; preds b9
+  v91: Int = tag v29
+  v92: Int = const 3
+  v93: Bool = eq v91, v92
+  br v93, b14(), b13()
+b12:  ; preds b9
+  jump b8()
+b13:  ; preds b11
+  jump b7()
+b14:  ; preds b11
+  jump b8()
+b15:  ; preds b2
+  v98: Int = tag v15
+  v99: Int = const 2
+  v100: Bool = eq v98, v99
+  br v100, b29(), b28()
+b16:  ; preds b2
+  v102: TargetOs = variant 1
+  v103: TargetArch = variant 1
+  v104: Target = struct v102, v103
+  v105: TargetOs = field 0, v104
+  v106: Int = tag v105
+  v107: Int = const 2
+  v108: Bool = eq v106, v107
+  br v108, b19(), b18()
+b17(v110: Int):  ; preds b19, b21
+  jump b1(v110)
+b18:  ; preds b16
+  v112: Int = tag v105
+  v113: Int = const 1
+  v114: Bool = eq v112, v113
+  br v114, b23(), b22()
+b19:  ; preds b16
+  v116: Int = const 1
+  v117: Int = const 264
+  v118: Int = call rt.int_wrap, v116, v10, v117
+  v119: Int = const 248
+  v120: Int = const 0
+  v121: Int = const 8
+  v122: () = call rt.mem_store, v118, v119, v120, v121
+  v123: Int = const 0
+  v124: Int = const 8064
+  v125: Int = const 4
+  v126: () = call rt.mem_store, v118, v123, v124, v125
+  v127: Int = const 4
+  v128: Int = const 639
+  v129: Int = const 2
+  v130: () = call rt.mem_store, v118, v127, v128, v129
+  v131: Int = const 168
+  v132: Int = const 8
+  v133: () = call rt.mem_store, v118, v131, v10, v132
+  v134: Int = const 176
+  v135: Int = const 1
+  v136: Int = call rt.int_wrap, v135, v6, v3
+  v137: Int = const 8
+  v138: () = call rt.mem_store, v118, v134, v136, v137
+  v139: Int = const 184
+  v140: Int = const 8
+  v141: () = call rt.mem_store, v118, v139, v1, v140
+  v142: Int = const 216
+  v143: Int = const 8
+  v144: () = call rt.mem_store, v118, v142, v4, v143
+  v145: Int = const 240
+  v146: Int = const 8
+  v147: () = call rt.mem_store, v118, v145, v0, v146
+  v148: Int = const 256
+  v149: Int = const 8
+  v150: () = call rt.mem_store, v118, v148, v11, v149
+  jump b17(v118)
+b20:  ; preds b26
+  unreachable
+b21:  ; preds b23, b25, b27
+  v153: Int = const 1
+  v154: Int = const 64
+  v155: Int = call rt.int_wrap, v153, v10, v154
+  v156: Int = const 48
+  v157: Int = const 0
+  v158: Int = const 8
+  v159: () = call rt.mem_store, v155, v156, v157, v158
+  v160: Int = const 0
+  v161: Int = const 8064
+  v162: Int = const 4
+  v163: () = call rt.mem_store, v155, v160, v161, v162
+  v164: Int = const 4
+  v165: Int = const 895
+  v166: Int = const 2
+  v167: () = call rt.mem_store, v155, v164, v165, v166
+  v168: Int = const 32
+  v169: Int = const 8
+  v170: () = call rt.mem_store, v155, v168, v4, v169
+  v171: Int = const 40
+  v172: Int = const 8
+  v173: () = call rt.mem_store, v155, v171, v0, v172
+  v174: Int = const 56
+  v175: Int = const 8
+  v176: () = call rt.mem_store, v155, v174, v11, v175
+  jump b17(v155)
+b22:  ; preds b18
+  v178: Int = tag v105
+  v179: Int = const 0
+  v180: Bool = eq v178, v179
+  br v180, b25(), b24()
+b23:  ; preds b18
+  jump b21()
+b24:  ; preds b22
+  v183: Int = tag v105
+  v184: Int = const 3
+  v185: Bool = eq v183, v184
+  br v185, b27(), b26()
+b25:  ; preds b22
+  jump b21()
+b26:  ; preds b24
+  jump b20()
+b27:  ; preds b24
+  jump b21()
+b28:  ; preds b15
+  unreachable
+b29:  ; preds b15
+  v191: Int = const 0
+  jump b1(v191)
+}
+
+func sched.fiber_main(v0: Int) -> () {
+b0(v0: Int):
+  v1: Int = const 80
+  v2: Int = const 8
+  v3: Int = call rt.mem_load, v0, v1, v2
+  v4: Int = const 0
+  v5: Bool = ne v3, v4
+  br v5, b2(), b3()
+b1:  ; preds b2, b3
+  v7: () = tuple
+  v8: () = call rt.sched_run_task, v0
+  v9: Int = const 48
+  v10: Int = const 1
+  v11: Int = const 8
+  v12: () = call rt.mem_store, v0, v9, v10, v11
+  v13: Int = call rt.tlocal_addr
+  v14: Int = const 16
+  v15: Int = const 8
+  v16: Int = call rt.mem_load, v13, v14, v15
+  v17: Int = const 0
+  v18: Bool = ne v3, v17
+  br v18, b5(), b6()
+b2:  ; preds b0
+  v20: Int = const 0
+  v21: Int = call rt.tlocal_addr
+  v22: Int = const 16
+  v23: Int = const 8
+  v24: Int = call rt.mem_load, v21, v22, v23
+  v25: () = call rt.sched_hook, v20, v24, v0
+  jump b1()
+b3:  ; preds b0
+  v27: () = tuple
+  jump b1()
+b4:  ; preds b5, b6
+  v29: () = tuple
+  v30: Int = const 2208
+  v31: Int = const 8
+  v32: Int = call rt.mem_load, v16, v30, v31
+  v33: () = call rt.stack_switch, v0, v32
+  ret v33
+b5:  ; preds b1
+  v35: Int = const 1
+  v36: () = call rt.sched_hook, v35, v16, v0
+  jump b4()
+b6:  ; preds b1
+  v38: () = tuple
+  jump b4()
+}
+
+func sched.fiber_park(v0: Int) -> () {
+b0(v0: Int):
+  v1: Int = call rt.tlocal_addr
+  v2: Int = const 32
+  v3: Int = const 0
+  v4: Int = const 8
+  v5: Int = call rt.mem_load, v1, v3, v4
+  v6: Int = const 8
+  v7: () = call rt.mem_store, v0, v2, v5, v6
+  v8: Int = const 16
+  v9: Int = const 8
+  v10: Int = call rt.mem_load, v1, v8, v9
+  v11: Int = const 80
+  v12: Int = const 8
+  v13: Int = call rt.mem_load, v0, v11, v12
+  v14: Int = const 0
+  v15: Bool = ne v13, v14
+  br v15, b2(), b3()
+b1:  ; preds b2, b3
+  v17: () = tuple
+  v18: Int = const 2208
+  v19: Int = const 8
+  v20: Int = call rt.mem_load, v10, v18, v19
+  v21: () = call rt.stack_switch, v0, v20
+  v22: Int = const 0
+  v23: Bool = ne v13, v22
+  br v23, b5(), b6()
+b2:  ; preds b0
+  v25: Int = const 2
+  v26: () = call rt.sched_hook, v25, v10, v0
+  jump b1()
+b3:  ; preds b0
+  v28: () = tuple
+  jump b1()
+b4:  ; preds b5, b6
+  v30: () = tuple
+  ret v30
+b5:  ; preds b1
+  v32: Int = const 3
+  v33: Int = call rt.tlocal_addr
+  v34: Int = const 16
+  v35: Int = const 8
+  v36: Int = call rt.mem_load, v33, v34, v35
+  v37: () = call rt.sched_hook, v32, v36, v0
+  jump b4()
+b6:  ; preds b1
+  v39: () = tuple
+  jump b4()
+}
+
+func sched.fiber_parking(v0: Int) -> () {
+b0(v0: Int):
+  v1: Int = const 5
+  v2: Int = const 1
+  v3: Int = const 2
+  v4: () = call rt.slot_store, v0, v1, v2, v3
+  ret v4
+}
+
+func sched.fiber_run(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = call rt.tlocal_addr
+  v3: Int = const 0
+  v4: Int = const 8
+  v5: Int = call rt.mem_load, v2, v3, v4
+  v6: Int = const 2216
+  v7: Int = const 8
+  v8: Int = call rt.mem_load, v0, v6, v7
+  jump b1()
+b1:  ; preds b0, b13
+  v10: Bool = const true
+  br v10, b3(), b2()
+b2:  ; preds b1
+  v12: Int = const 0
+  ret v12
+b3:  ; preds b1
+  v14: Int = const 5
+  v15: Int = const 0
+  v16: Int = const 0
+  v17: () = call rt.slot_store, v1, v14, v15, v16
+  v18: Int = const 8
+  v19: Int = const 8
+  v20: () = call rt.mem_store, v2, v18, v1, v19
+  v21: Int = const 0
+  v22: Int = const 32
+  v23: Int = const 8
+  v24: Int = call rt.mem_load, v1, v22, v23
+  v25: Int = const 8
+  v26: () = call rt.mem_store, v2, v21, v24, v25
+  v27: Int = const 0
+  v28: Bool = ne v8, v27
+  br v28, b5(), b6()
+b4:  ; preds b5, b6
+  v30: () = tuple
+  v31: Int = const 0
+  v32: Int = const 2208
+  v33: Int = call rt.int_wrap, v31, v0, v32
+  v34: Int = const 0
+  v35: Int = const 8
+  v36: Int = call rt.mem_load, v1, v34, v35
+  v37: () = call rt.stack_switch, v33, v36
+  v38: Int = const 0
+  v39: Bool = ne v8, v38
+  br v39, b8(), b9()
+b5:  ; preds b3
+  v41: Int = const 4
+  v42: () = call rt.sched_hook, v41, v0, v1
+  jump b4()
+b6:  ; preds b3
+  v44: () = tuple
+  jump b4()
+b7:  ; preds b8, b9
+  v46: () = tuple
+  v47: Int = const 8
+  v48: Int = const 0
+  v49: Int = const 8
+  v50: () = call rt.mem_store, v2, v47, v48, v49
+  v51: Int = const 0
+  v52: Int = const 8
+  v53: () = call rt.mem_store, v2, v51, v5, v52
+  v54: Int = const 48
+  v55: Int = const 8
+  v56: Int = call rt.mem_load, v1, v54, v55
+  v57: Int = const 0
+  v58: Bool = ne v56, v57
+  br v58, b11(), b12()
+b8:  ; preds b4
+  v60: Int = const 5
+  v61: () = call rt.sched_hook, v60, v0, v1
+  jump b7()
+b9:  ; preds b4
+  v63: () = tuple
+  jump b7()
+b10:  ; preds b12
+  v65: () = tuple
+  v66: Int = const 5
+  v67: Int = const 1
+  v68: Int = const 2
+  v69: Int = const 3
+  v70: Bool = call rt.slot_cas, v1, v66, v67, v68, v69
+  br v70, b14(), b15()
+b11:  ; preds b7
+  v72: Int = const 1
+  ret v72
+b12:  ; preds b7
+  v74: () = tuple
+  jump b10()
+b13:  ; preds b15
+  v76: () = tuple
+  jump b1()
+b14:  ; preds b10
+  v78: Int = const 0
+  ret v78
+b15:  ; preds b10
+  v80: () = tuple
+  jump b13()
+}
+
+func sched.fiber_wake(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 5
+  v2: Int = const 3
+  v3: Int = const 3
+  v4: Int = call rt.slot_swap, v0, v1, v2, v3
+  v5: Int = const 2
+  v6: Bool = eq v4, v5
+  br v6, b2(), b3()
+b1(v8: Int):  ; preds b2, b3
+  ret v8
+b2:  ; preds b0
+  v10: Int = const 1
+  jump b1(v10)
+b3:  ; preds b0
+  v12: Int = const 0
+  jump b1(v12)
 }
 
 func text.append_duration(v0: Str, v1: Int) -> Str {
@@ -4999,6 +5527,255 @@ b3:  ; preds b0
   jump b1()
 }
 
+func sched.rq_get(v0: Int) -> Int {
+b0(v0: Int):
+  jump b1()
+b1:  ; preds b0, b7
+  v2: Bool = const true
+  br v2, b3(), b2()
+b2:  ; preds b1
+  v4: Int = const 0
+  ret v4
+b3:  ; preds b1
+  v6: Int = const 0
+  v7: Int = const 1
+  v8: Int = call rt.slot_load, v0, v6, v7
+  v9: Int = const 128
+  v10: Int = const 8
+  v11: Int = call rt.mem_load, v0, v9, v10
+  v12: Bool = eq v11, v8
+  br v12, b5(), b6()
+b4:  ; preds b6
+  v14: () = tuple
+  v15: Int = const 0
+  v16: Int = const 17
+  v17: Int = const 255
+  v18: Int = and v8, v17
+  v19: Int = call rt.int_wrap, v15, v16, v18
+  v20: Int = const 0
+  v21: Int = call rt.slot_load, v0, v19, v20
+  v22: Int = const 0
+  v23: Int = const 0
+  v24: Int = const 1
+  v25: Int = call rt.int_wrap, v23, v8, v24
+  v26: Int = const 2
+  v27: Bool = call rt.slot_cas, v0, v22, v8, v25, v26
+  br v27, b8(), b9()
+b5:  ; preds b3
+  v29: Int = const 0
+  ret v29
+b6:  ; preds b3
+  v31: () = tuple
+  jump b4()
+b7:  ; preds b9
+  v33: () = tuple
+  jump b1()
+b8:  ; preds b4
+  ret v21
+b9:  ; preds b4
+  v36: () = tuple
+  jump b7()
+}
+
+func sched.rq_grab(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  jump b1()
+b1:  ; preds b0, b8, b13
+  v3: Bool = const true
+  br v3, b3(), b2()
+b2:  ; preds b1
+  v5: Int = const 0
+  ret v5
+b3:  ; preds b1
+  v7: Int = const 0
+  v8: Int = const 1
+  v9: Int = call rt.slot_load, v0, v7, v8
+  v10: Int = const 16
+  v11: Int = const 1
+  v12: Int = call rt.slot_load, v0, v10, v11
+  v13: Int = const 1
+  v14: Int = call rt.int_wrap, v13, v12, v9
+  v15: Int = const 1
+  v16: Int = const 1
+  v17: Int = shr v14, v16 @ sched.xo:132:33
+  v18: Int = call rt.int_wrap, v15, v14, v17
+  v19: Int = const 0
+  v20: Bool = le v18, v19
+  br v20, b5(), b6()
+b4:  ; preds b6
+  v22: () = tuple
+  v23: Int = const 128
+  v24: Bool = gt v18, v23
+  br v24, b8(), b9()
+b5:  ; preds b3
+  v26: Int = const 0
+  ret v26
+b6:  ; preds b3
+  v28: () = tuple
+  jump b4()
+b7:  ; preds b9
+  v30: () = tuple
+  v31: Int = const 0
+  jump b10(v31)
+b8:  ; preds b4
+  jump b1()
+b9:  ; preds b4
+  v34: () = tuple
+  jump b7()
+b10(v36: Int):  ; preds b7, b12
+  v37: Bool = lt v36, v18
+  br v37, b12(), b11()
+b11:  ; preds b10
+  v39: Int = const 0
+  v40: Int = const 0
+  v41: Int = call rt.int_wrap, v40, v9, v18
+  v42: Int = const 2
+  v43: Bool = call rt.slot_cas, v0, v39, v9, v41, v42
+  br v43, b14(), b15()
+b12:  ; preds b10
+  v45: Int = const 0
+  v46: Int = const 17
+  v47: Int = const 0
+  v48: Int = call rt.int_wrap, v47, v9, v36
+  v49: Int = const 255
+  v50: Int = and v48, v49
+  v51: Int = call rt.int_wrap, v45, v46, v50
+  v52: Int = const 0
+  v53: Int = call rt.slot_load, v0, v51, v52
+  v54: Int = const 0
+  v55: () = call rt.slot_store, v1, v36, v53, v54
+  v56: Int = const 0
+  v57: Int = const 1
+  v58: Int = call rt.int_wrap, v56, v36, v57
+  v59: () = tuple
+  jump b10(v58)
+b13:  ; preds b15
+  v61: () = tuple
+  jump b1()
+b14:  ; preds b11
+  ret v18
+b15:  ; preds b11
+  v64: () = tuple
+  jump b13()
+}
+
+func sched.rq_nonempty(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 0
+  v2: Int = const 4
+  v3: Int = call rt.slot_load, v0, v1, v2
+  v4: Int = const 16
+  v5: Int = const 4
+  v6: Int = call rt.slot_load, v0, v4, v5
+  v7: Bool = ne v3, v6
+  br v7, b2(), b3()
+b1(v9: Int):  ; preds b2, b3
+  ret v9
+b2:  ; preds b0
+  v11: Int = const 1
+  jump b1(v11)
+b3:  ; preds b0
+  v13: Int = const 0
+  jump b1(v13)
+}
+
+func sched.rq_put(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 0
+  v3: Int = const 1
+  v4: Int = call rt.slot_load, v0, v2, v3
+  v5: Int = const 128
+  v6: Int = const 8
+  v7: Int = call rt.mem_load, v0, v5, v6
+  v8: Int = const 1
+  v9: Int = call rt.int_wrap, v8, v7, v4
+  v10: Int = const 256
+  v11: Bool = lt v9, v10
+  br v11, b2(), b3()
+b1:  ; preds b3
+  v13: () = tuple
+  v14: Int = const 0
+  ret v14
+b2:  ; preds b0
+  v16: Int = const 0
+  v17: Int = const 17
+  v18: Int = const 255
+  v19: Int = and v7, v18
+  v20: Int = call rt.int_wrap, v16, v17, v19
+  v21: Int = const 0
+  v22: () = call rt.slot_store, v0, v20, v1, v21
+  v23: Int = const 16
+  v24: Int = const 0
+  v25: Int = const 1
+  v26: Int = call rt.int_wrap, v24, v7, v25
+  v27: Int = const 4
+  v28: () = call rt.slot_store, v0, v23, v26, v27
+  v29: Int = const 1
+  ret v29
+b3:  ; preds b0
+  v31: () = tuple
+  jump b1()
+}
+
+func sched.rq_put_batch(v0: Int, v1: Int, v2: Int) -> () {
+b0(v0: Int, v1: Int, v2: Int):
+  v3: Int = const 128
+  v4: Int = const 8
+  v5: Int = call rt.mem_load, v0, v3, v4
+  v6: Int = const 0
+  jump b1(v6)
+b1(v8: Int):  ; preds b0, b3
+  v9: Bool = lt v8, v2
+  br v9, b3(), b2()
+b2:  ; preds b1
+  v11: Int = const 16
+  v12: Int = const 0
+  v13: Int = call rt.int_wrap, v12, v5, v2
+  v14: Int = const 4
+  v15: () = call rt.slot_store, v0, v11, v13, v14
+  ret v15
+b3:  ; preds b1
+  v17: Int = const 0
+  v18: Int = const 17
+  v19: Int = const 0
+  v20: Int = call rt.int_wrap, v19, v5, v8
+  v21: Int = const 255
+  v22: Int = and v20, v21
+  v23: Int = call rt.int_wrap, v17, v18, v22
+  v24: Int = const 0
+  v25: Int = call rt.slot_load, v1, v8, v24
+  v26: Int = const 0
+  v27: () = call rt.slot_store, v0, v23, v25, v26
+  v28: Int = const 0
+  v29: Int = const 1
+  v30: Int = call rt.int_wrap, v28, v8, v29
+  v31: () = tuple
+  jump b1(v30)
+}
+
+func sched.scope_units_done(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 30
+  v3: Int = const 1
+  v4: Int = const 0
+  v5: Int = call rt.int_wrap, v3, v4, v1
+  v6: Int = const 3
+  v7: Int = call rt.slot_add, v0, v2, v5, v6
+  v8: Int = const 0
+  v9: Int = const 1
+  v10: Int = call rt.int_wrap, v8, v1, v9
+  v11: Bool = eq v7, v10
+  br v11, b2(), b3()
+b1(v13: Int):  ; preds b2, b3
+  ret v13
+b2:  ; preds b0
+  v15: Int = const 1
+  jump b1(v15)
+b3:  ; preds b0
+  v17: Int = const 0
+  jump b1(v17)
+}
+
 func netpolicy.split_hostport(borrow v0: Str) -> (Bool, Str, Str) {
 b0(v0: Str):
   v1: Int = call Str.len, v0
@@ -5110,6 +5887,48 @@ b22:  ; preds b20
 b23:  ; preds b20
   release v43
   jump b19()
+}
+
+func sched.task_claim(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 10
+  v2: Int = const 0
+  v3: Int = const 1
+  v4: Int = const 3
+  v5: Bool = call rt.slot_cas, v0, v1, v2, v3, v4
+  br v5, b2(), b3()
+b1(v7: Int):  ; preds b2, b3
+  ret v7
+b2:  ; preds b0
+  v9: Int = const 1
+  jump b1(v9)
+b3:  ; preds b0
+  v11: Int = const 0
+  jump b1(v11)
+}
+
+func sched.task_dequeued(v0: Int, v1: Int) -> Int {
+b0(v0: Int, v1: Int):
+  v2: Int = const 22
+  v3: Int = const 1
+  v4: Int = const 2
+  v5: Int = call rt.slot_add, v0, v2, v3, v4
+  v6: Int = const 30
+  v7: Int = const 2
+  v8: Int = neg v7 @ sched.xo:344:32
+  v9: Int = const 3
+  v10: Int = call rt.slot_add, v1, v6, v8, v9
+  v11: Int = const 3
+  v12: Bool = eq v10, v11
+  br v12, b2(), b3()
+b1(v14: Int):  ; preds b2, b3
+  ret v14
+b2:  ; preds b0
+  v16: Int = const 1
+  jump b1(v16)
+b3:  ; preds b0
+  v18: Int = const 0
+  jump b1(v18)
 }
 
 func sock.close(v0: Int) -> Int {

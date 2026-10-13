@@ -81,7 +81,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     let v = b.block(body)
     b.ret_at(v, Some(Expr.Block(b: body)))
   }
-  if om >= 0 && b.c.mods[om].path is "native/llrt/rc" | "native/llrt/alloc" {
+  if om >= 0 && b.c.mods[om].path is "native/llrt/rc" | "native/llrt/alloc" | "native/llrt/sched" {
     b.check_no_alloc()
   }
   b.finish_fn()
@@ -104,7 +104,9 @@ fn (var b: Builder) check_no_alloc() {
     return
   }
   for v in b.s.f.values {
-    if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) {
+    // `target`'s fields (a compile time match, sched.xo fiber_frame) are
+    // scalar tags too
+    if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) && !(b.m.types[v.ty].name is "Target" | "TargetOs" | "TargetArch") {
       b.unsupported("a `${b.m.types[v.ty].name}` value in a reference count or heap function (decision 0207: no allocation, no counting)")
       return
     }
@@ -129,11 +131,17 @@ fn (var b: Builder) check_no_alloc() {
 /// rt.alloc_*_c, and the heap's platform calls rt.heap_* (malloc,
 /// realloc, free, a new chunk, the central lists' mutex: they exit on
 /// out of memory, never fault).
+/// In the scheduler core (sched.xo, decision 0212) also the task
+/// switch, the thread locals, mem_set, and the C runtime's scheduler
+/// hooks, which neither allocate nor fault.
 fn rc_callee_ok(n: Str) -> Bool {
   if (n.starts_with("rt.rc_") || n.starts_with("rt.alloc_")) && n.ends_with("_c") {
     return true
   }
   if n.starts_with("rt.heap_") {
+    return true
+  }
+  if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" | "rt.sched_c" {
     return true
   }
   n is "rt.prefetch" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint"
