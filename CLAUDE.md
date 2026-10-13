@@ -92,6 +92,16 @@ Update the knowledgebase in the same change as the work, not later:
     merges each report (`-short` and vet after each merge) and runs the
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
+  - platform runs at milestones (owner, 2026-10-13): agents verify on
+    the Mac only (targeted heavy runs, `-short`); Linux and Windows runs
+    happen at milestones (after a stage of runtime or compiler work),
+    run by the lead on EC2, and failures are bisected over the
+    milestone's merges (one targeted test per probe). Code that cannot
+    run on the Mac (Linux-only, Windows-only paths) gets one batched
+    platform run per agent before it reports. Every merge touching the
+    compiler or the runtime also passes the self rebuild fixed point
+    (scripts/bootstrap-xo.sh, s2 and s3 identical) on the Mac, so a
+    miscompile cannot build the next compiler.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
     58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
