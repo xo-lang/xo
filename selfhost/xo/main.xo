@@ -596,7 +596,7 @@ struct Lowered {
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
-  var b = ssa.build_program_for(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm)
+  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, tgoos))
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -735,6 +735,14 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     }
     let arch = if o.backend == "llvm" { host_arch() } else { "arm64" }
     lk.flags = lk.flags + nolibc_flags(arch)
+    if arch == "arm64" {
+      // the arm64 emitter's read modify writes call libgcc's outline
+      // atomics on Linux, which a link with no C library lacks
+      match nolibc_atomics(os, dir) {
+        Ok(p) => lk.srcs.push(p)
+        Err(e) => fail(os, "${e}")
+      }
+    }
   }
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs

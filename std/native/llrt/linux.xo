@@ -9,6 +9,7 @@
 //
 // Only the Linux arms of std/native/llrt/sysio.xo call this module, so it
 // is code generated only for Linux targets (core 12.2).
+use native/llrt/raw
 use native/rt
 
 // The errno values the callers test (asm-generic, the same on arm64 and
@@ -141,15 +142,136 @@ fn statx(dirfd: Int, path_addr: Int, flags: Int) -> (Stat, Int) {
 }
 
 /// clock_gettime(2) of clock id: nanoseconds (Unix time for
-/// CLOCK_REALTIME), or the negative errno. A system call: the vDSO's
-/// entry needs a C ABI call of an address (decision 0206).
-pub fn clock_ns(id: Int) -> Int {
-  let buf = rt.sys_buf()
-  let r = rt.sys6(nr(113, 228), id, rt.bytes_addr(buf), 0, 0, 0, 0)
+/// CLOCK_REALTIME), or the negative errno. Through the vDSO (decision
+/// 0206 stage 2), the system call when the process has none.
+/// a is the address of 16 bytes of scratch for the timespec.
+pub fn clock_ns(id: Int, a: Int) -> Int {
+  let r = clock_gettime(id, a)
   if r < 0 {
     return r
   }
-  rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
+  // a timespec of the clock never overflows: wrapping arithmetic, as C's
+  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+}
+
+/// clock_gettime(2) of clock id into the timespec at ts: 0, or the
+/// negative errno; the vDSO's function when there is one.
+pub fn clock_gettime(id: Int, ts: Int) -> Int {
+  let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  if f > 0 {
+    return rt.call_c2(f, id, ts)
+  }
+  if f == 0 && vdso_clock() > 0 {
+    return rt.call_c2(vdso_clock(), id, ts)
+  }
+  rt.sys6(nr(113, 228), id, ts, 0, 0, 0, 0)
+}
+
+// ---------------------------------------------------------------------------
+// The vDSO (decision 0206 stage 2): the kernel maps a small shared object
+// into every process (the auxiliary vector's AT_SYSINFO_EHDR) whose
+// clock_gettime reads the clock without entering the kernel.
+
+pub const AT_PHDR: Int = 3
+pub const AT_PHNUM: Int = 5
+pub const AT_PAGESZ: Int = 6
+const AT_SYSINFO_EHDR: Int = 33
+
+/// The address of the vDSO's clock_gettime, or -1 when the process has
+/// none: looked up once and kept in word 0 of rt.sys_words (a lookup
+/// racing another stores the same address).
+pub fn vdso_clock() -> Int {
+  let w = rt.sys_words()
+  let f = rt.slot_load[Int](w, 0, 0)
+  if f != 0 {
+    return f
+  }
+  let name = match target.arch {
+    TargetArch.Arm64 => "__kernel_clock_gettime"
+    TargetArch.Amd64 | TargetArch.Wasm32 => "__vdso_clock_gettime"
+  }
+  var g = elf_dynsym(rt.auxval(AT_SYSINFO_EHDR), name)
+  if g == 0 {
+    g = -1
+  }
+  rt.slot_store[Int](w, 0, g, 0)
+  g
+}
+
+/// The address of the defined function named name in the dynamic symbol
+/// table of the ELF image mapped at base (the vDSO), or 0: the first
+/// PT_LOAD gives the load bias, PT_DYNAMIC the symbol and string tables;
+/// the symbol count is DT_HASH's, else (arm64's vDSO has only
+/// DT_GNU_HASH) the symbols up to the string table.
+fn elf_dynsym(base: Int, name: Str) -> Int {
+  if base == 0 {
+    return 0
+  }
+  // Elf64_Ehdr: e_phoff at 32, e_phentsize at 54, e_phnum at 56
+  let phoff = rt.mem_load(base, 32, 8)
+  let phent = rt.mem_load(base, 54, 2)
+  let phnum = rt.mem_load(base, 56, 2)
+  var bias = 0
+  var loaded = false
+  var dyn = 0
+  for i in 0..phnum {
+    // Elf64_Phdr: p_type at 0, p_offset at 8, p_vaddr at 16
+    let ph = base + phoff + i * phent
+    let ty = rt.mem_load(ph, 0, 4)
+    if ty == 1 && !loaded {
+      bias = base + rt.mem_load(ph, 8, 8) - rt.mem_load(ph, 16, 8)
+      loaded = true
+    } else if ty == 2 {
+      dyn = base + rt.mem_load(ph, 8, 8)
+    }
+  }
+  if dyn == 0 || !loaded {
+    return 0
+  }
+  var sym = 0
+  var str = 0
+  var hash = 0
+  var d = dyn
+  while true {
+    // Elf64_Dyn: d_tag, d_val; DT_HASH 4, DT_STRTAB 5, DT_SYMTAB 6
+    let tag = rt.mem_load(d, 0, 8)
+    if tag == 0 {
+      break
+    }
+    let val = rt.mem_load(d, 8, 8)
+    if tag == 4 {
+      hash = bias + val
+    } else if tag == 5 {
+      str = bias + val
+    } else if tag == 6 {
+      sym = bias + val
+    }
+    d += 16
+  }
+  if sym == 0 || str == 0 {
+    return 0
+  }
+  var n = 0
+  if hash != 0 {
+    n = rt.mem_load(hash, 4, 4)
+  } else if str > sym {
+    n = (str - sym) / 24
+  }
+  let want = raw.data(name)
+  let wn = name.len()
+  for i in 0..n {
+    // Elf64_Sym: st_name at 0, st_info at 4, st_shndx at 6, st_value at
+    // 8; 24 bytes; a function (STT_FUNC 2) that is defined
+    let s = sym + 24 * i
+    let sn = rt.mem_load(s, 0, 4)
+    if sn != 0 && rt.mem_load(s, 6, 2) != 0 && (rt.mem_load(s, 4, 1) & 15) == 2 {
+      let at = str + sn
+      if raw.mem_eq(at, want, wn) && rt.mem_load(at, wn, 1) == 0 {
+        return bias + rt.mem_load(s, 8, 8)
+      }
+    }
+  }
+  0
 }
 
 /// mmap(2): the address, or the negative errno.
@@ -159,6 +281,16 @@ pub fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> In
 
 /// munmap(2).
 pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(nr(215, 11), addr, len, 0, 0, 0, 0) }
+
+/// mprotect(2).
+pub fn mprotect(addr: Int, len: Int, prot: Int) -> Int { rt.sys6(nr(226, 10), addr, len, prot, 0, 0, 0) }
+
+/// rt_sigaction(2) with the kernel's structures at the addresses act
+/// (0 for none) and old (0 for none): 0, or the negative errno.
+pub fn rt_sigaction(sig: Int, act: Int, old: Int) -> Int { rt.sys6(nr(134, 13), sig, act, old, 8, 0, 0) }
+
+/// rt_sigprocmask(2) of the calling thread's 64 bit signal mask.
+pub fn rt_sigprocmask(how: Int, set: Int, old: Int) -> Int { rt.sys6(nr(135, 14), how, set, old, 8, 0, 0) }
 
 /// futex(2) on the 32 bit word at addr: op (FUTEX_WAIT 0, FUTEX_WAKE 1,
 /// plus FUTEX_PRIVATE_FLAG 128), val, and the address of a timespec or

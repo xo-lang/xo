@@ -57,9 +57,18 @@ xo_rstr *xo_sys_buf(int64_t *len) {
 // real (TW_REAL_*): the Xo layer then calls the C runtime's fake.
 int64_t xo_tw_fake(int64_t real) { return tw_is_fake((int)real); }
 
-// xo_clock_virtual reports whether the test world's virtual clock runs
-// (Clock.now reads it, xo_clock_now).
-int64_t xo_clock_virtual(void) { return tw.virt ? 1 : 0; }
+// xo_sys_clock_buf is the address of the calling thread's scratch for
+// Clock.now's timespec (Xo calls the vDSO with it), or 0 while the test
+// world's virtual clock runs: one call on the clock's path (decision
+// 0206 stage 2).
+// Off Linux it is 0 too (Clock.now is the C runtime's there).
+int64_t xo_sys_clock_buf(void) {
+#if defined(__linux__)
+	return tw.virt ? 0 : (int64_t)(uintptr_t)sys_scratch.data;
+#else
+	return 0;
+#endif
+}
 
 // xo_fs_set_err records the outcome of a file operation the Xo layer
 // made (as xo_fs_read and fs_fail do): status st (0 for success, else
@@ -82,3 +91,16 @@ void xo_fs_set_err(int64_t st, const char *p, int64_t pn, const char *m, int64_t
 	memcpy(n_fs_err, m, (size_t)mn);
 	n_fs_err[mn] = 0;
 }
+
+// xo_auxval is getauxval(k) (decision 0206 stage 2: the vDSO's address,
+// the program headers for the TLS image), 0 off Linux; with XO_NOLIBC,
+// xo_nolibc.c's getauxval reads the vector _start found.
+#if defined(__linux__)
+#include <sys/auxv.h>
+int64_t xo_auxval(int64_t k) { return (int64_t)getauxval((unsigned long)k); }
+#else
+int64_t xo_auxval(int64_t k) {
+	(void)k;
+	return 0;
+}
+#endif

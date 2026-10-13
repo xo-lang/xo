@@ -178,6 +178,9 @@ pub struct Builder {
   /// folds to the wasm runtime's layout, and no C ABI export is built (no
   /// C calls them).
   pub wasm: Bool = false
+  /// The program links with no C library (XO_NOLIBC=1, decision 0206
+  /// stage 2): native/llrt/cabi_nolibc's exports are built, and only then.
+  pub nolibc: Bool = false
   /// The paths of the modules of the functions declared (declMods).
   decl_mods: Map[Str, Bool] = {}
   /// The program calls task.with_budget: the code of its own modules
@@ -288,7 +291,15 @@ pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, relea
 /// build_program_target for the wasm backend when wasm is set (decision
 /// 0207: the wasm runtime's layout, no C ABI exports).
 pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool) -> Builder {
+  build_program_libc(c, line_root, tests, release, real_tests, goos, goarch, wasm, false)
+}
+
+/// build_program_for, for a program linked with no C library when nolibc
+/// is set (XO_NOLIBC=1, decision 0206 stage 2): the exports of
+/// native/llrt/cabi_nolibc, which std/llrt/xo_nolibc.c calls, are built.
+pub fn build_program_libc(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool) -> Builder {
   var b = new_builder(c, line_root)
+  b.nolibc = nolibc
   b.tests = tests
   b.release = release
   b.real_tests = real_tests
@@ -304,6 +315,7 @@ pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release:
     b.goos = goos
     b.goarch = goarch
     b.wasm = wasm
+    b.nolibc = nolibc
     b.conc = true
     b.build()
   }
@@ -388,7 +400,12 @@ fn (var b: Builder) declare_exports() {
   }
   for p in paths.sort() {
     let mi = by_path.get(p) ?? -1
-    if p == "native/llrt/cabi" || b.importer_built(mi) {
+    if p == "native/llrt/cabi_nolibc" {
+      // the C that calls them is compiled only into XO_NOLIBC builds
+      if b.nolibc {
+        b.declare_exports_of(mi)
+      }
+    } else if p == "native/llrt/cabi" || b.importer_built(mi) {
       b.declare_exports_of(mi)
     }
   }
