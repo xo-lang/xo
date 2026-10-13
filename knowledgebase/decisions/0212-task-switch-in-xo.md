@@ -60,7 +60,10 @@ its heap pointer left a C thread local until thread locals exist.
      MXCSR and the x87 control word; Windows x64 also rdi, rsi, xmm6 to
      xmm15, and the TEB), and a `hidden thread_local` global that one
      internal function names (a split build, decision 0168, copies a
-     global into each module that uses it). Not module asm: the split
+     global into each module that uses it). Each thread local function
+     starts with an empty asm that clobbers memory, or LLVM infers
+     `xo_tlocal_addr` readnone and merges its calls across a switch
+     (gotchas/llvm-thread-local-address-cse.md). Not module asm: the split
      copies the module header to every module.
    - wasm: none (no exports, no fibers; its runtime runs tasks to
      completion).

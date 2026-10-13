@@ -13,7 +13,11 @@ import (
 // rt.tlocal_set are calls of xo_tlocal_get and xo_tlocal_set, never inlined (a
 // fiber may go on on another thread after a switch, and a caller must
 // not keep a thread local's address), over a table of 16 words in a
-// thread_local global that only xo_tlocal_at names (a split build,
+// thread_local global that only xo_tlocal_at names. Each function
+// starts with an empty asm that clobbers memory: without it LLVM infers
+// xo_tlocal_addr readnone (a thread local's address is a constant to it)
+// and merges two calls across a fiber's switch, which then reads the old
+// thread's table (gotchas/llvm-thread-local-address-cse.md) (a split build,
 // decision 0168, copies a global into each module that uses it).
 
 // schedSwitch defines xo_stack_switch and xo_fiber_entry at the first
@@ -58,18 +62,21 @@ define internal ptr @xo_tlocal_at(i64 %k) nounwind {
 }
 
 define i64 @xo_tlocal_get(i64 %k) noinline nounwind {
+  call void asm sideeffect "", "~{memory}"()
   %p = call ptr @xo_tlocal_at(i64 %k)
   %v = load i64, ptr %p, align 8
   ret i64 %v
 }
 
 define void @xo_tlocal_set(i64 %k, i64 %v) noinline nounwind {
+  call void asm sideeffect "", "~{memory}"()
   %p = call ptr @xo_tlocal_at(i64 %k)
   store i64 %v, ptr %p, align 8
   ret void
 }
 
 define i64 @xo_tlocal_addr() noinline nounwind {
+  call void asm sideeffect "", "~{memory}"()
   %p = call ptr @xo_tlocal_at(i64 0)
   %a = ptrtoint ptr %p to i64
   ret i64 %a
