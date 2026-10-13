@@ -109,6 +109,43 @@ fn bytes_word(b: Bytes, i: Int) -> Int
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 
 // ---------------------------------------------------------------------------
+// Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
+// caller, in its `target.os` Linux arms.
+
+/// The Linux system call nr with six arguments: the kernel's result, a
+/// negative errno on failure (lowered inline: `svc #0` with the number
+/// in x8 on arm64, `syscall` on x86_64).
+fn sys6(nr: Int, a0: Int, a1: Int, a2: Int, a3: Int, a4: Int, a5: Int) -> Int
+/// The address of the rt_sigreturn trampoline that rt_sigaction's
+/// sa_restorer names (emitted with the first use).
+fn sys_restorer() -> Int
+/// The address of b's first byte (valid while b is alive; the kernel may
+/// write there only when b is unique, as bytes_buf's and sys_buf's are).
+fn bytes_addr(b: Bytes) -> Int
+/// A unique Bytes of n zero bytes, for a system call to fill.
+fn bytes_buf(n: Int) -> Bytes
+/// b with its length set to n (0 <= n <= b's capacity), consuming b: the
+/// bytes a read filled, without a copy.
+fn rs_bytes_len(b: Bytes, n: Int) -> Bytes
+/// The calling thread's 256 byte scratch buffer for the structures of
+/// system calls (timespec, statx): never freed, valid until the thread's
+/// next system call through it.
+fn sys_buf() -> Bytes
+/// Whether a test binary's world fakes the capability bits real (1
+/// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
+/// the C runtime, which serves the fake.
+fn tw_fake(real: Int) -> Bool
+/// Whether the test world's virtual clock runs.
+fn clock_virtual() -> Bool
+/// Clock.now of the C runtime (the SSA builders' lowering before
+/// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.
+fn clock_now() -> Int
+/// Records the outcome of a file operation as fs_status and fs_msg
+/// report it: st 0 for success, else FsErr's tag plus one, the path, and
+/// the message.
+fn fs_set_err(st: Int, path: Str, msg: Str)
+
+// ---------------------------------------------------------------------------
 // Generic intrinsics (lowered by internal/ssa, build_native.go)
 
 /// A value of any type, which remembers its type (a request value).

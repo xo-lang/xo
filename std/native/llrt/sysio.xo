@@ -1,0 +1,163 @@
+// Files and the clock over the Linux system call layer (decision 0206,
+// decision 0193's mechanism): on Linux, os.fs.read, write, and stat and
+// Clock.now make their system calls from Xo (std/native/llrt/linux.xo),
+// with the C runtime's semantics (std/llrt/xo_bytes.c xo_fs_read,
+// xo_fs.c xo_fs_write and xo_fs_stat, xo_rt.c xo_clock_now) and the same
+// messages; elsewhere, and where a test binary's world fakes the
+// capability, they call the C runtime. `XO_LLRT_C=sysio` loads
+// sysio_c.xo instead (the C runtime everywhere) until bench/perf/sysio
+// meets decision 0180's bar on both native backends.
+use native/llrt/linux
+use native/rt
+
+/// The facts of fs_stat: the status (0, or FsErr's tag plus one), and on
+/// success whether it is a directory, its size, and its modification time
+/// (Unix nanoseconds).
+pub struct Info {
+  pub st: Int
+  pub is_dir: Bool = false
+  pub size: Int = 0
+  pub modified: Int = 0
+}
+
+/// os.ReadFile(op): the contents in a list of one, or the empty list
+/// with the status set (the error names the OS path, as xo_fs_read's).
+pub fn fs_read(op: Str) -> List[Bytes] {
+  match target.os {
+    TargetOs.Linux => {
+      if rt.tw_fake(1) {
+        return rt.fs_read(op)
+      }
+      let (b, e) = read_file(op)
+      if e != 0 {
+        rt.fs_set_err(linux.fs_status(e), op, linux.err_msg(e))
+        return []
+      }
+      rt.fs_set_err(0, "", "")
+      [b]
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => rt.fs_read(op)
+  }
+}
+
+/// os.WriteFile(op, data, 0644): the status, an error naming the Xo path
+/// x.
+pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int {
+  match target.os {
+    TargetOs.Linux => {
+      let e = write_file(op, data)
+      if e != 0 {
+        let st = linux.fs_status(e)
+        rt.fs_set_err(st, x, linux.err_msg(e))
+        return st
+      }
+      rt.fs_set_err(0, "", "")
+      0
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => rt.fs_write(op, data, x)
+  }
+}
+
+/// os.Stat(op) (os.Lstat unless follow): the facts, an error naming the
+/// Xo path x.
+pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
+  match target.os {
+    TargetOs.Linux => {
+      let (s, e) = linux.stat(op, follow)
+      if e != 0 {
+        let st = linux.fs_status(e)
+        rt.fs_set_err(st, x, linux.err_msg(e))
+        return Info{st: st}
+      }
+      rt.fs_set_err(0, "", "")
+      Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {
+      let st = rt.fs_stat(op, follow, x)
+      if st != 0 {
+        return Info{st: st}
+      }
+      Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
+    }
+  }
+}
+
+/// Clock.now: Unix nanoseconds of the wall clock (clock_gettime's
+/// CLOCK_REALTIME), or the test world's virtual clock.
+pub fn clock_now() -> Int {
+  match target.os {
+    TargetOs.Linux => {
+      if rt.clock_virtual() {
+        return rt.clock_now()
+      }
+      linux.clock_ns(linux.CLOCK_REALTIME)
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => rt.clock_now()
+  }
+}
+
+/// The contents of the file op: os.ReadFile's loop (a buffer of the size
+/// statx gives plus one byte, at least 512, grown while the file has
+/// more) and 0, or the errno.
+fn read_file(op: Str) -> (Bytes, Int) {
+  var fd = linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+  while fd == -linux.EINTR {
+    fd = linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
+  }
+  if fd < 0 {
+    return (b"", -fd)
+  }
+  let (s, se) = linux.fstat(fd)
+  var cap = 512
+  if se == 0 && s.size >= 512 {
+    cap = s.size + 1
+  }
+  var buf = rt.bytes_buf(cap)
+  var n = 0
+  while true {
+    let r = linux.read(fd, buf, n, cap - n)
+    if r < 0 {
+      if -r == linux.EINTR {
+        continue
+      }
+      linux.close(fd)
+      return (b"", -r)
+    }
+    if r == 0 {
+      break
+    }
+    n += r
+    if n == cap {
+      // the file has more: a buffer twice as large, the bytes so far
+      // copied once
+      cap *= 2
+      var g = BytesBuilder.with_capacity(cap)
+      g.write(buf)
+      buf = rt.rs_bytes_len(g.freeze(), cap)
+    }
+  }
+  linux.close(fd)
+  (rt.rs_bytes_len(buf, n), 0)
+}
+
+/// os.WriteFile's system calls: 0, or the errno (of the open, the first
+/// failed write, or the close).
+fn write_file(op: Str, data: Bytes) -> Int {
+  let flags = linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC | linux.O_CLOEXEC
+  var fd = linux.open(op, flags, 420)
+  while fd == -linux.EINTR {
+    fd = linux.open(op, flags, 420)
+  }
+  if fd < 0 {
+    return -fd
+  }
+  let e = linux.write_all(fd, data)
+  let c = linux.close(fd)
+  if e != 0 {
+    return e
+  }
+  if c < 0 {
+    return -c
+  }
+  0
+}

@@ -1851,6 +1851,17 @@ fn (var b: Builder) llrt(name: Str, t: Int, args: List[Int]) -> Int {
   b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
 }
 
+/// Clock.now: the native prelude's llrt_clock_now, which makes the
+/// system call from Xo on Linux (std/native/llrt/sysio.xo, decision
+/// 0206), or the C runtime's clock_now without the prelude (fn.clockNow).
+fn (var b: Builder) clock_now() -> Int {
+  let it = b.int_t()
+  if b.prelude_impl("llrt_clock_now") < 0 {
+    return b.rt("clock_now", it, [])
+  }
+  b.llrt("clock_now", it, [])
+}
+
 /// A call of std/json's tape reader or text function name (json_str,
 /// rs_append_json_str, b64_ok, ...) for the codecs json.xo generates:
 /// the native prelude's llrt_<name> (std/native/llrt/jsontext.xo,

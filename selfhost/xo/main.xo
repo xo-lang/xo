@@ -233,6 +233,12 @@ fn core_ctx(os: Os, o: Opts) -> core.Ctx {
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
   c.native = native
+  // the C paths of ported runtime modules (decisions 0193, 0206)
+  for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
+    if !n.trim().is_empty() {
+      c.llrt_c.push(n.trim())
+    }
+  }
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"
@@ -367,6 +373,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     var g = llvm.new_gen(b.m)
+    g.goarch = tgoarch
     let ir = g.generate()
     t = lap(os, phases, "emit", t)
     if !g.err.is_empty() {

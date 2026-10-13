@@ -1,0 +1,416 @@
+// The Linux system call layer of the native runtime, written in Xo
+// (decision 0206, stage 1 of decision 0203): raw system calls through
+// rt.sys6, which the emitters lower inline (`svc #0` on arm64, `syscall`
+// on x86_64), with no C library between the program and the kernel. A
+// call returns what the kernel returns: a result >= 0, or a negative
+// errno. The structures the kernel reads or writes are Bytes buffers
+// (rt.bytes_buf, rt.sys_buf) read by word (rt.bytes_word); memory
+// intrinsics replace them later (decision 0195 prerequisite 2).
+//
+// Only the Linux arms of std/native/llrt/sysio.xo call this module, so it
+// is code generated only for Linux targets (core 12.2).
+use native/rt
+
+// The errno values the callers test (asm-generic, the same on arm64 and
+// x86_64).
+pub const EINTR: Int = 4
+pub const EAGAIN: Int = 11
+pub const ENOENT: Int = 2
+pub const EEXIST: Int = 17
+pub const ENOTDIR: Int = 20
+pub const EISDIR: Int = 21
+pub const EACCES: Int = 13
+pub const EPERM: Int = 1
+pub const ENOTEMPTY: Int = 39
+
+/// openat's directory for paths relative to the working directory.
+pub const AT_FDCWD: Int = -100
+
+// open flags: the same on arm64 and x86_64 (O_DIRECTORY and O_NOFOLLOW
+// differ, and are not used here)
+pub const O_RDONLY: Int = 0
+pub const O_WRONLY: Int = 1
+pub const O_RDWR: Int = 2
+pub const O_CREAT: Int = 64
+pub const O_EXCL: Int = 128
+pub const O_TRUNC: Int = 512
+pub const O_APPEND: Int = 1024
+pub const O_CLOEXEC: Int = 524288
+
+pub const CLOCK_REALTIME: Int = 0
+pub const CLOCK_MONOTONIC: Int = 1
+
+const AT_SYMLINK_NOFOLLOW: Int = 256
+const AT_EMPTY_PATH: Int = 4096
+const STATX_BASIC_STATS: Int = 2047
+
+/// The system call number of the target's architecture: arm64 (the
+/// asm-generic table) or x86_64.
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+/// read(2) into the bytes of buf from off on (at most n of them).
+pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
+  let r = rt.sys6(nr(63, 0), fd, rt.bytes_addr(buf) + off, n, 0, 0, 0)
+  keep(buf, r)
+}
+
+/// write(2) of the bytes lo..hi of b.
+pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
+  let r = rt.sys6(nr(64, 1), fd, rt.bytes_addr(b) + lo, hi - lo, 0, 0, 0)
+  keep(b, r)
+}
+
+/// Writes all of b (retrying after EINTR and short writes): 0, or the
+/// errno.
+pub fn write_all(fd: Int, b: Bytes) -> Int {
+  var off = 0
+  let n = b.len()
+  while off < n {
+    let w = write(fd, b, off, n)
+    if w < 0 {
+      if -w == EINTR {
+        continue
+      }
+      return -w
+    }
+    off += w
+  }
+  0
+}
+
+/// openat(2) of path (relative to the working directory unless absolute):
+/// the descriptor, or the negative errno. An empty path is ".", as the C
+/// runtime opens it.
+pub fn open(path: Str, flags: Int, mode: Int) -> Int {
+  let z = cpath(path)
+  let r = rt.sys6(nr(56, 257), AT_FDCWD, rt.bytes_addr(z), flags, mode, 0, 0)
+  keep(z, r)
+}
+
+/// close(2).
+pub fn close(fd: Int) -> Int { rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0) }
+
+/// The facts of a statx(2): the kind and permission bits (st_mode), the
+/// size, and the modification time in Unix nanoseconds.
+pub struct Stat {
+  pub mode: Int
+  pub size: Int
+  pub mtime: Int
+}
+
+/// Whether st is a directory (S_IFDIR).
+pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
+
+/// statx(2) of path (following a final symbolic link when follow): the
+/// facts and 0, or the errno.
+pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
+  let z = cpath(path)
+  let flags = if follow { 0 } else { AT_SYMLINK_NOFOLLOW }
+  let r = statx(AT_FDCWD, rt.bytes_addr(z), flags)
+  keep(z, 0)
+  r
+}
+
+/// statx(2) of the open descriptor fd.
+pub fn fstat(fd: Int) -> (Stat, Int) {
+  let empty = rt.bytes_buf(1)
+  let r = statx(fd, rt.bytes_addr(empty), AT_EMPTY_PATH)
+  keep(empty, 0)
+  r
+}
+
+/// statx into the thread's scratch buffer (struct statx: stx_mode at
+/// 28, stx_size at 40, stx_mtime at 112).
+fn statx(dirfd: Int, path_addr: Int, flags: Int) -> (Stat, Int) {
+  let buf = rt.sys_buf()
+  let r = rt.sys6(nr(291, 332), dirfd, path_addr, flags, STATX_BASIC_STATS, rt.bytes_addr(buf), 0)
+  if r < 0 {
+    return (Stat{mode: 0, size: 0, mtime: 0}, -r)
+  }
+  let mode = (rt.bytes_word(buf, 24) >> 32) & 65535
+  let size = rt.bytes_word(buf, 40)
+  let sec = rt.bytes_word(buf, 112)
+  let nsec = rt.bytes_word(buf, 120) & 4294967295
+  (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec}, 0)
+}
+
+/// clock_gettime(2) of clock id: nanoseconds (Unix time for
+/// CLOCK_REALTIME), or the negative errno. A system call: the vDSO's
+/// entry needs a C ABI call of an address (decision 0206).
+pub fn clock_ns(id: Int) -> Int {
+  let buf = rt.sys_buf()
+  let r = rt.sys6(nr(113, 228), id, rt.bytes_addr(buf), 0, 0, 0, 0)
+  if r < 0 {
+    return r
+  }
+  rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
+}
+
+/// mmap(2): the address, or the negative errno.
+pub fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int {
+  rt.sys6(nr(222, 9), addr, len, prot, flags, fd, off)
+}
+
+/// munmap(2).
+pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(nr(215, 11), addr, len, 0, 0, 0, 0) }
+
+/// futex(2) on the 32 bit word at addr: op (FUTEX_WAIT 0, FUTEX_WAKE 1,
+/// plus FUTEX_PRIVATE_FLAG 128), val, and the address of a timespec or
+/// 0.
+pub fn futex(addr: Int, op: Int, val: Int, timeout: Int) -> Int {
+  rt.sys6(nr(98, 202), addr, op, val, timeout, 0, 0)
+}
+
+/// exit_group(2): ends the process with status code.
+pub fn exit_group(code: Int) -> Int { rt.sys6(nr(94, 231), code, 0, 0, 0, 0, 0) }
+
+/// getrandom(2) of n bytes (blocking until the pool is ready, as the C
+/// runtime's getentropy and getrandom): the bytes and 0, or the errno.
+pub fn random(n: Int) -> (Bytes, Int) {
+  let buf = rt.bytes_buf(n)
+  var off = 0
+  while off < n {
+    let r = rt.sys6(nr(278, 318), rt.bytes_addr(buf) + off, n - off, 0, 0, 0, 0)
+    if r < 0 {
+      if -r == EINTR {
+        continue
+      }
+      return (b"", -r)
+    }
+    off += r
+  }
+  (buf, 0)
+}
+
+/// rt_sigaction(2) of signal sig with handler (an address, 0 SIG_DFL, 1
+/// SIG_IGN), flags (SA_RESTORER is added), and the runtime's
+/// rt_sigreturn trampoline (rt.sys_restorer): the previous handler, or
+/// the negative errno. Stage 1 sets dispositions only; handlers written
+/// in Xo need a C ABI entry (decision 0206, stage 2).
+pub fn sigaction(sig: Int, handler: Int, flags: Int) -> Int {
+  // struct sigaction of the kernel: handler, flags, restorer, mask
+  // (SA_RESTORER is 0x04000000)
+  let act = words([handler, flags | 67108864, rt.sys_restorer(), 0])
+  let old = rt.bytes_buf(32)
+  let r = rt.sys6(nr(134, 13), sig, rt.bytes_addr(act), rt.bytes_addr(old), 8, 0, 0)
+  keep(act, r)
+  if r < 0 {
+    return r
+  }
+  rt.bytes_word(old, 0)
+}
+
+/// The restorer the kernel would return through for signal sig (0 when
+/// none is set): rt_sigaction's sa_restorer read back.
+pub fn sig_restorer(sig: Int) -> Int {
+  let old = rt.bytes_buf(32)
+  let r = rt.sys6(nr(134, 13), sig, 0, rt.bytes_addr(old), 8, 0, 0)
+  if r < 0 {
+    return r
+  }
+  rt.bytes_word(old, 16)
+}
+
+/// The bytes of the words ws, the lowest byte first.
+fn words(ws: List[Int]) -> Bytes {
+  var s = BytesBuilder.with_capacity(8 * ws.len())
+  for w in ws {
+    var i = 0
+    while i < 8 {
+      s.write_byte(UInt8((w >> (8 * i)) & 255))
+      i += 1
+    }
+  }
+  s.freeze()
+}
+
+/// path and a NUL byte, as the kernel takes a path ("." for "").
+fn cpath(path: Str) -> Bytes {
+  let p = if path.is_empty() { "." } else { path }
+  var s = BytesBuilder.with_capacity(p.len() + 1)
+  s.write(p.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
+}
+
+/// r, after b (whose address a system call used) is known alive up to
+/// here: reference counting releases a value after its last use.
+fn keep(b: Bytes, r: Int) -> Int {
+  if b.len() < 0 {
+    return -1
+  }
+  r
+}
+
+/// glibc's strerror text of errno e (glibc 2.34; the C runtime's
+/// messages on Linux), "Unknown error N" past the table.
+pub fn strerror(e: Int) -> Str {
+  match e {
+    0 => "Success"
+    1 => "Operation not permitted"
+    2 => "No such file or directory"
+    3 => "No such process"
+    4 => "Interrupted system call"
+    5 => "Input/output error"
+    6 => "No such device or address"
+    7 => "Argument list too long"
+    8 => "Exec format error"
+    9 => "Bad file descriptor"
+    10 => "No child processes"
+    11 => "Resource temporarily unavailable"
+    12 => "Cannot allocate memory"
+    13 => "Permission denied"
+    14 => "Bad address"
+    15 => "Block device required"
+    16 => "Device or resource busy"
+    17 => "File exists"
+    18 => "Invalid cross-device link"
+    19 => "No such device"
+    20 => "Not a directory"
+    21 => "Is a directory"
+    22 => "Invalid argument"
+    23 => "Too many open files in system"
+    24 => "Too many open files"
+    25 => "Inappropriate ioctl for device"
+    26 => "Text file busy"
+    27 => "File too large"
+    28 => "No space left on device"
+    29 => "Illegal seek"
+    30 => "Read-only file system"
+    31 => "Too many links"
+    32 => "Broken pipe"
+    33 => "Numerical argument out of domain"
+    34 => "Numerical result out of range"
+    35 => "Resource deadlock avoided"
+    36 => "File name too long"
+    37 => "No locks available"
+    38 => "Function not implemented"
+    39 => "Directory not empty"
+    40 => "Too many levels of symbolic links"
+    41 => "Unknown error 41"
+    42 => "No message of desired type"
+    43 => "Identifier removed"
+    44 => "Channel number out of range"
+    45 => "Level 2 not synchronized"
+    46 => "Level 3 halted"
+    47 => "Level 3 reset"
+    48 => "Link number out of range"
+    49 => "Protocol driver not attached"
+    50 => "No CSI structure available"
+    51 => "Level 2 halted"
+    52 => "Invalid exchange"
+    53 => "Invalid request descriptor"
+    54 => "Exchange full"
+    55 => "No anode"
+    56 => "Invalid request code"
+    57 => "Invalid slot"
+    58 => "Unknown error 58"
+    59 => "Bad font file format"
+    60 => "Device not a stream"
+    61 => "No data available"
+    62 => "Timer expired"
+    63 => "Out of streams resources"
+    64 => "Machine is not on the network"
+    65 => "Package not installed"
+    66 => "Object is remote"
+    67 => "Link has been severed"
+    68 => "Advertise error"
+    69 => "Srmount error"
+    70 => "Communication error on send"
+    71 => "Protocol error"
+    72 => "Multihop attempted"
+    73 => "RFS specific error"
+    74 => "Bad message"
+    75 => "Value too large for defined data type"
+    76 => "Name not unique on network"
+    77 => "File descriptor in bad state"
+    78 => "Remote address changed"
+    79 => "Can not access a needed shared library"
+    80 => "Accessing a corrupted shared library"
+    81 => ".lib section in a.out corrupted"
+    82 => "Attempting to link in too many shared libraries"
+    83 => "Cannot exec a shared library directly"
+    84 => "Invalid or incomplete multibyte or wide character"
+    85 => "Interrupted system call should be restarted"
+    86 => "Streams pipe error"
+    87 => "Too many users"
+    88 => "Socket operation on non-socket"
+    89 => "Destination address required"
+    90 => "Message too long"
+    91 => "Protocol wrong type for socket"
+    92 => "Protocol not available"
+    93 => "Protocol not supported"
+    94 => "Socket type not supported"
+    95 => "Operation not supported"
+    96 => "Protocol family not supported"
+    97 => "Address family not supported by protocol"
+    98 => "Address already in use"
+    99 => "Cannot assign requested address"
+    100 => "Network is down"
+    101 => "Network is unreachable"
+    102 => "Network dropped connection on reset"
+    103 => "Software caused connection abort"
+    104 => "Connection reset by peer"
+    105 => "No buffer space available"
+    106 => "Transport endpoint is already connected"
+    107 => "Transport endpoint is not connected"
+    108 => "Cannot send after transport endpoint shutdown"
+    109 => "Too many references: cannot splice"
+    110 => "Connection timed out"
+    111 => "Connection refused"
+    112 => "Host is down"
+    113 => "No route to host"
+    114 => "Operation already in progress"
+    115 => "Operation now in progress"
+    116 => "Stale file handle"
+    117 => "Structure needs cleaning"
+    118 => "Not a XENIX named type file"
+    119 => "No XENIX semaphores available"
+    120 => "Is a named type file"
+    121 => "Remote I/O error"
+    122 => "Disk quota exceeded"
+    123 => "No medium found"
+    124 => "Wrong medium type"
+    125 => "Operation canceled"
+    126 => "Required key not available"
+    127 => "Key has expired"
+    128 => "Key has been revoked"
+    129 => "Key was rejected by service"
+    130 => "Owner died"
+    131 => "State not recoverable"
+    132 => "Operation not possible due to RF-kill"
+    133 => "Memory page has hardware error"
+    _ => "Unknown error ${e}"
+  }
+}
+
+/// The message of errno e as the C runtime records a file error: the
+/// strerror text with its first letter lowered.
+pub fn err_msg(e: Int) -> Str {
+  let s = strerror(e)
+  let b = s.bytes()
+  if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
+    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+  }
+  s
+}
+
+/// The FsErr tag plus one of errno e (std/rt's mapFsErr): 1 NotFound, 2
+/// Exists, 3 NotEmpty, 4 NotDir, 5 IsDir, 6 Permission, 7 Io.
+pub fn fs_status(e: Int) -> Int {
+  match e {
+    2 => 1
+    17 => 2
+    39 => 3
+    20 => 4
+    21 => 5
+    13 | 1 => 6
+    _ => 7
+  }
+}

@@ -961,6 +961,9 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
 
+// the buffers of the Linux system call layer in Xo (decision 0206)
+#include "xo_sys.c"
+
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
 

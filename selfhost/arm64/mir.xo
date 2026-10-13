@@ -107,6 +107,9 @@ struct Inst {
   noret: Bool = false
   /// K_CALL: through the code word of a closure, in x0 (`blr x0`)
   indirect: Bool = false
+  /// K_CALL: a Linux system call (rt.sys6, decision 0206): the number is
+  /// the seventh argument (x6), moved to x8 for `svc #0`
+  svc: Bool = false
   /// a plain instruction that makes a constant (hoistConsts may move it)
   konst: Bool = false
   /// the landing pad block of a call or of a fault stub's call (decision

@@ -516,6 +516,24 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
       g.set(v, "load i64, ptr ${p}, align 1")
     }
+    "rt.sys6" => {
+      // a Linux system call (decision 0206): inline asm with the number
+      // and six arguments in the registers of the target's convention
+      var ops: List[Str] = []
+      for a in x.args {
+        ops.push("i64 ${g.op(a)}")
+      }
+      let cons = if g.arch() == "amd64" {
+        "\"syscall\", \"={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}\""
+      } else {
+        "\"svc #0\", \"={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}\""
+      }
+      g.set(v, "call i64 asm sideeffect ${cons}(${ops.join(", ")})")
+    }
+    "rt.sys_restorer" => {
+      g.sigreturn()
+      g.set(v, "ptrtoint ptr @xo_sigreturn to i64")
+    }
     _ => return false
   }
   true

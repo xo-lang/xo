@@ -109,7 +109,10 @@ type gen struct {
 	lsdas          strings.Builder
 	ncs            int
 	personalityRef bool
-	place          Layout
+	// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
+	// (decision 0206)
+	restorerRef bool
+	place       Layout
 	// Go mode (goasm.go): functions as Go assembler for Go backend builds
 	goMode   bool
 	noPoll   bool               // GoOptions.NoPoll
@@ -181,6 +184,10 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	out.WriteString(g.text.String())
 	out.WriteString(g.helpers.String())
 	out.WriteString(g.lsdas.String())
+	if g.restorerRef {
+		// rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
+		fmt.Fprintf(&out, "\t.p2align 2\n%s:\n\tmov x8, #139\n\tsvc #0\n", g.local("xo_sigreturn"))
+	}
 	if g.personalityRef {
 		// the personality routine through a data word, as ELF compilers
 		// refer to it from the unwind tables

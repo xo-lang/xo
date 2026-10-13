@@ -3,6 +3,7 @@ package llvm
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -2172,10 +2173,42 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		_, d, _ := s.strParts(s.op(v.Args[0]))
 		p := s.def("getelementptr i8, ptr %s, i64 %s", d, s.op(v.Args[1]))
 		s.set(v, "load i64, ptr %s, align 1", p)
+	case "rt.sys6":
+		// a Linux system call (decision 0206): inline asm with the number
+		// and six arguments in the registers of the host's convention (the
+		// Go driver's LLVM builds are for the host)
+		var ops []string
+		for _, a := range v.Args {
+			ops = append(ops, "i64 "+s.op(a))
+		}
+		cons := `"svc #0", "={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}"`
+		if runtime.GOARCH == "amd64" {
+			cons = `"syscall", "={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}"`
+		}
+		s.set(v, "%s", "call i64 asm sideeffect "+cons+"("+strings.Join(ops, ", ")+")")
+	case "rt.sys_restorer":
+		s.g.sigreturn()
+		s.set(v, "ptrtoint ptr @xo_sigreturn to i64")
 	default:
 		return false
 	}
 	return true
+}
+
+// sigreturn writes, at its first use, the rt_sigreturn trampoline that
+// rt_sigaction's sa_restorer names (decision 0206): a naked function of
+// the system call, 139 on arm64 and 15 on x86_64.
+func (g *sgen) sigreturn() {
+	name := "@xo_sigreturn"
+	if g.emitted[name] {
+		return
+	}
+	g.emitted[name] = true
+	body := `mov x8, #139\0Asvc #0`
+	if runtime.GOARCH == "amd64" {
+		body = `movl $$15, %eax\0Asyscall`
+	}
+	g.helpers.WriteString("define internal void " + name + "() naked noinline nounwind {\n  call void asm sideeffect \"" + body + "\", \"\"()\n  unreachable\n}\n\n")
 }
 
 // rtCall lowers a call of the task runtime (`rt.name` is the C function

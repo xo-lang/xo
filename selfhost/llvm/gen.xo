@@ -57,6 +57,9 @@ pub struct Gen {
   pub skipped: List[Str] = []
   /// The stages of decision 0166 this emitter does (1 to 3).
   pub stage: Int = 3
+  /// The target's architecture (`arm64`, `amd64`): the registers of
+  /// rt.sys6's inline asm (decision 0206); "" is arm64.
+  pub goarch: Str = ""
 
   // The function being lowered (sfn).
   f: ssa.Func = ssa.Func{name: ""}
@@ -946,6 +949,24 @@ fn rc_mark(var b: H, obj: Str) {
   b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
   b.w("  ${loc} = icmp sgt i64 ${c}, 0\n  br i1 ${loc}, label %mark, label %done\n")
   b.w("mark:\n  ${n} = sub i64 0, ${c}\n  store i64 ${n}, ptr ${obj}${TBAA_RC}\n")
+}
+
+/// The target's architecture, arm64 when the driver did not say.
+fn (g: Gen) arch() -> Str {
+  if g.goarch.is_empty() { "arm64" } else { g.goarch }
+}
+
+/// The rt_sigreturn trampoline that rt_sigaction's sa_restorer names
+/// (decision 0206), written at its first use: a naked function of the
+/// system call, 139 on arm64 and 15 on x86_64.
+fn (var g: Gen) sigreturn() {
+  let name = "@xo_sigreturn"
+  if g.emitted.contains(name) {
+    return
+  }
+  g.emitted[name] = true
+  let body = if g.arch() == "amd64" { "movl $$15, %eax\\0Asyscall" } else { "mov x8, #139\\0Asvc #0" }
+  g.helpers.push("define internal void ${name}() naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n")
 }
 
 /// The runtime callback that retains or releases a list element through

@@ -28,6 +28,10 @@ pub struct Checker {
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
+  /// $XO_LLRT_C: the runtime modules (or `all`) loaded from their C path,
+  /// std/native/llrt/<name>_c.xo, where they have one (load.go
+  /// LLRTUsesC; decisions 0193, 0206).
+  pub llrt_c: List[Str] = []
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
@@ -338,14 +342,27 @@ fn (var c: Checker) load_runtime_module(path: Str) -> Int {
   if let Some(m) = c.mod_index.get(path) {
     return m
   }
-  let src = c.fs.read("${c.std_dir}/${path}.xo").ok() ?? None
+  let name = path.trim_prefix("native/llrt/")
+  var file = "${path}.xo"
+  var src: Bytes? = None
+  if c.llrt_c.contains(name) || c.llrt_c.contains("all") {
+    // the C path of a ported part of the runtime, kept selectable until
+    // the Xo one meets the bar (decisions 0180, 0193)
+    src = c.fs.read("${c.std_dir}/${path}_c.xo").ok()
+    if src.is_some() {
+      file = "${path}_c.xo"
+    }
+  }
+  if src.is_none() {
+    src = c.fs.read("${c.std_dir}/${file}").ok()
+  }
   let data = match src {
     Some(b) => b
     None => return -1
   }
-  let m = c.new_module(path, path.trim_prefix("native/llrt/"), "std/native/llrt", false)
+  let m = c.new_module(path, name, "std/native/llrt", false)
   c.mods[m].native = true
-  c.parse_into(m, "std/${path}.xo", data, false)
+  c.parse_into(m, "std/${file}", data, false)
   c.mods[m].state = 1
   c.load_imports(m)
   c.mods[m].state = 2
