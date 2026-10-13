@@ -58,10 +58,10 @@ func TestLLVMCrossTriple(t *testing.T) {
 }
 
 // TestSysLinkArgs checks the system part of a native link: lld on
-// Windows (LTO bitcode; the runtime names its import libraries), libm and
-// pthreads elsewhere.
+// Windows (LTO bitcode; the runtime names its import libraries) with
+// /Brepro (a deterministic COFF time stamp), libm and pthreads elsewhere.
 func TestSysLinkArgs(t *testing.T) {
-	if got := sysLinkArgs("windows"); !reflect.DeepEqual(got, []string{"-fuse-ld=lld"}) {
+	if got := sysLinkArgs("windows"); !reflect.DeepEqual(got, []string{"-fuse-ld=lld", "-Wl,/Brepro"}) {
 		t.Errorf("windows: %v", got)
 	}
 	if got := sysLinkArgs("linux"); !reflect.DeepEqual(got, []string{"-lm", "-lpthread"}) {
