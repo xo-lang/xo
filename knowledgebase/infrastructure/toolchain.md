@@ -2821,8 +2821,10 @@ path by `go test` (31 of the 46 files over 20 MB written after
 
 `scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
 full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
-Graviton instance (default r8g.8xlarge, 32 vCPU, 256 GiB, spot,
-us-east-1, $0.47 to $0.52 an hour spot on 2026-10-12, since 2026-10-12:
+Graviton instance (default r8g.8xlarge, 32 vCPU, 256 GiB, on demand
+only since 2026-10-13 (owner: spot instances were reclaimed mid-run three
+times and spot capacity ran out; Last verified: 2026-10-13), us-east-1,
+since 2026-10-12:
 c8g.8xlarge's 64 GiB ran out in the full tier, where one Xo arm64 emitter
 process on a self hosted component holds up to 13 GB,
 gotchas/selfhost-heavy-runs-memory.md; XO_REMOTE_TYPE picks another;
@@ -2954,7 +2956,7 @@ one (selfhost/xo tz.xo), and the Go backend needs the Go toolchain by
 definition.
 
 On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
-launches one EC2 Graviton instance (c8g.4xlarge spot, remote-full.sh's
+launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's
 xo-ci key pair and security group, a 120 minute self poweroff plus a
 local watchdog, terminated on exit), makes the seed there (Go builds
 cmd/xo, which builds selfhost/xo with the Go driver), deletes the Go
