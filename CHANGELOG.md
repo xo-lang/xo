@@ -7,7 +7,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - Linux: Clock.now calls the kernel's vDSO from Xo instead of the C
-  library (0.841 to 1.033 of the C path's instructions,
+  library (0.864 to 0.967 of the C path's instructions,
   bench/results/linux-syscalls-2026-10-13.md); `XO_LLRT_C=sysio` keeps
   the C clock. Static programs (`XO_NOLIBC=1`, decision 0206) take their
   clock, locks, signal handlers' installation, threads, and thread local

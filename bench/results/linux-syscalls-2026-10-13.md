@@ -263,6 +263,9 @@ is `XO_LLRT_C=sysio` (the C runtime's clock_gettime through glibc).
 
 | Host | Backend | commit | xo | c | xo/c | ms xo/c |
 |---|---|---|---|---|---|---|
+| linux/arm64 | arm64 | 7b4d0755 (final) | 44,591,655 | 46,093,528 | 0.967 | 16/16 |
+| linux/arm64 | llvm | 7b4d0755 (final) | 34,990,943 | 40,493,815 | 0.864 | 16/16 |
+| linux/amd64 | llvm | 7b4d0755 (final) | 43,542,026 | 45,544,447 | 0.956 | 11/11 |
 | linux/arm64 | llvm | a8d91e73 | 34,483,478 | 40,986,411 | 0.841 | 16/16 |
 | linux/arm64 | arm64 | a8d91e73 | 47,591,459 | 46,093,375 | 1.033 | 17/16 |
 | linux/amd64 | llvm | a8d91e73 | 43,058,948 | 45,561,288 | 0.945 | 12/12 |
@@ -270,9 +273,12 @@ is `XO_LLRT_C=sysio` (the C runtime's clock_gettime through glibc).
 The arm64 emitter neither folds `target` nor inlines across modules; the
 path went from 80,091,066 (f265985c: four calls, a Bytes drop, checked
 arithmetic) to 49,091,460 (a5cb8785) to the row above (a8d91e73: one C
-call, the vDSO call inline). 830e9255 drops the remaining `target.arch`
-test (the wasm emitter lowers `rt.sys_clock_buf` to 0); see "arm64 at
-830e9255" below.
+call, the vDSO call inline) to 44,591,655 (830e9255, in the final
+7b4d0755: no `target` test left, the wasm emitter lowers
+`rt.sys_clock_buf` to 0), under the C path on every backend. The final
+rows are from the last batched runs (instances i-EXAMPLE55
+arm64, i-EXAMPLE20 amd64), which also repeated the golden
+matrix and the tests below with the same results.
 
 ### Static (XO_NOLIBC=1) against stage 1's static
 

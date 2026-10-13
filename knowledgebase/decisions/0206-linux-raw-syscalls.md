@@ -176,11 +176,10 @@ Evidence: `bench/results/linux-syscalls-2026-10-13.md`, "Stage 2".
 - **The vDSO**: linux.xo finds `__kernel_clock_gettime` /
   `__vdso_clock_gettime` in the vDSO's dynamic symbols and keeps its
   address in word 0 of `rt.sys_words`; Clock.now on Linux calls it from
-  Xo (sysio.clock_now, one C call on the path). Against the C path:
-  0.841 of the user instructions on LLVM arm64, 0.945 on LLVM x86_64,
-  1.033 on the arm64 backend (above decision 0180's 1.009: the emitter
-  does not fold `target` or inline across modules; 830e9255 removed the
-  last target test). `XO_LLRT_C=sysio` keeps the C clock. The Go
+  Xo (sysio.clock_now, one C call on the path, no `target` test, which
+  the arm64 emitter would not fold). Against the C path (7b4d0755):
+  0.967 of the user instructions on the arm64 backend, 0.864 on LLVM
+  arm64, 0.956 on LLVM x86_64, within decision 0180's bar. `XO_LLRT_C=sysio` keeps the C clock. The Go
   backend's assembly mode keeps the C clock (no `target` there).
 - **The static runtime's clock, locks, signals, threads**:
   std/native/llrt/cabi_nolibc.xo, exports (decisions 0204, 0207) that
