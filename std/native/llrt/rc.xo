@@ -4,8 +4,8 @@
 // atomics (decision 0200) at an address. The C runtime calls them
 // through cabi.xo (xo_x_rc_inc and friends: std/llrt/xo_rt.c rc_inc,
 // rc_dec, rc_dec_shared, rc_claim, xo_rc_mark); generated code keeps
-// its own inline copies (the emitters' retain and release). The C path
-// is rc_c.xo (XO_LLRT_C=rc), which calls xo_rt.c's C copies.
+// its own inline copies (the emitters' retain and release). Decision
+// 0198 deleted the C path (`XO_LLRT_C=rc`).
 //
 // The count c of the object at address p:
 //

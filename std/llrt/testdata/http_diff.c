@@ -18,6 +18,29 @@
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 
+// read_req is xo_hc_read with the C request parser (hp_head, hb_chunked,
+// which the client keeps) in the part std/native/llrt/http1.xo plays in
+// a program: decision 0198 deleted the server's own C path, so
+// xo_hc_read returns 3 for a head and 4 for a chunked body to parse.
+static int64_t read_req(xo_hconn *hc) {
+	for (;;) {
+		int64_t r = xo_hc_read(hc);
+		if (r == 3) {
+			int64_t used = 0;
+			hc->rd_res = hp_head(hc->buf ? hc->buf + hc->off : hc->buf, hc->n - hc->off, hc->eof, &hc->req, &used);
+			hc->rd_used = used;
+			hc->rd_have = 1;
+		} else if (r == 4) {
+			int64_t used = 0;
+			hc->rd_res = hb_chunked(hc->buf + hc->off, hc->n - hc->off, hc->eof, &hc->body, &used);
+			hc->rd_used = used;
+			hc->rd_have = 1;
+		} else {
+			return r;
+		}
+	}
+}
+
 static void hexs(nbuf *b, const char *p, int64_t n) {
 	for (int64_t i = 0; i < n; i++) {
 		char h[3];
@@ -46,7 +69,7 @@ static void serve(const char *in, int64_t n, nbuf *out) {
 	hc.n = hc.cap = n;
 	hc.eof = 1;
 	hc.sink = out;
-	while (xo_hc_read(&hc) == 1) {
+	while (read_req(&hc) == 1) {
 		hreq *r = &hc.req;
 		// the description std/rt's handler builds
 		nbuf d = {0};

@@ -1,7 +1,8 @@
 // alloc_threads.c: a stress test of the native heap (decision 0207 stage
-// 3: std/native/llrt/alloc.xo through the C ABI exports, or the C path
-// with -DXO_ALLOC_C), run by internal/llvm's TestRuntimeAlloc under
-// ThreadSanitizer (clang -fsanitize=thread) and optimized without it.
+// 3: std/native/llrt/alloc.xo through the C ABI exports; decision 0198
+// deleted the C path, -DXO_ALLOC_C), run by internal/llvm's
+// TestRuntimeAlloc under ThreadSanitizer (clang -fsanitize=thread) and
+// optimized without it.
 // It includes the runtime and calls its entry points the way the rest of
 // the C runtime does: xo_alloc, xo_free, xo_resize, rs_new.
 //

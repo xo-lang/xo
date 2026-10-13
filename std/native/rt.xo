@@ -50,12 +50,12 @@ fn rs_push_word(s: Str, w: Int, n: Int) -> Str
 /// s + four such words, their lengths (0 to 8) in the nibbles of lens,
 /// w0's the lowest (decision 0193).
 fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
-/// s + the character r, U+FFFD when r is not a scalar value (the C path
-/// of std/native/llrt/show.xo, XO_LLRT_C=show; also the SSA's).
+/// s + the character r, U+FFFD when r is not a scalar value (the SSA's).
 fn rs_append_rune(s: Str, r: Int) -> Str
-/// s + the Debug text of the Rune r (the C path of show.xo).
+/// s + the Debug text of the Rune r, and s + the decimal text of v as a
+/// UInt64: std/native/llrt/show.xo's, as runtime calls only the wasm
+/// runtime has (decision 0198 deleted the C).
 fn rs_append_rune_quote(s: Str, r: Int) -> Str
-/// s + the decimal text of v as a UInt64 (the C path of show.xo).
 fn rs_append_u64(s: Str, v: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
 /// (BytesBuilder.write_rune).
@@ -71,26 +71,16 @@ fn rs_append_time(s: Str, t: Int) -> Str
 fn time_parse_ok(s: Str) -> Bool
 fn time_parse(s: Str) -> Int
 fn rs_append_quote(s: Str, b: Bytes) -> Str
-// The C path of Atomic's add and max (decision 0200): compiled only with
-// -DXO_ATOMIC_C, called only by std/native/llrt/atomic_c.xo
-// (XO_LLRT_C=atomic).
+// Atomic's add and max as runtime calls: only the wasm runtime has them
+// (selfhost/wasm/rt3.xo); the native backends use
+// std/native/llrt/atomic.xo (decision 0200; decision 0198 deleted the C).
 
 fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
 fn atomic_max(a: Atomic[Int], n: Int) -> Int
-// The C path of the reference counts (decision 0207 stage 2): compiled
-// only with -DXO_RC_C, called only by std/native/llrt/rc_c.xo
-// (XO_LLRT_C=rc); p is the object's address.
-
-fn rc_inc_c(p: Int)
-fn rc_dec_c(p: Int) -> Int
-fn rc_dec_shared_c(p: Int) -> Int
-fn rc_claim_c(p: Int) -> Int
-fn rc_mark_c(p: Int) -> Int
 // The native heap in Xo (decision 0207 stage 3): the platform calls of
 // std/native/llrt/alloc.xo (no fault: out of memory exits with status
-// 70 as the C did), and the C path's copies (compiled only with
-// -DXO_ALLOC_C, called only by alloc_c.xo, XO_LLRT_C=alloc). h is the
-// calling thread's heap record, p a block's address.
+// 70 as the C did). h is the calling thread's heap record, p a block's
+// address.
 
 /// A block of n bytes from malloc (its prefix minus n): the address
 /// after the prefix.
@@ -106,11 +96,6 @@ fn heap_grow(h: Int, n: Int) -> Int
 /// Locks and unlocks the central lists' mutex.
 fn heap_lock()
 fn heap_unlock()
-fn alloc_new_c(h: Int, n: Int) -> Int
-fn alloc_free_c(h: Int, p: Int)
-fn alloc_refill_c(h: Int, n: Int)
-fn alloc_free_mt_c(h: Int, p: Int)
-fn alloc_resize_c(h: Int, p: Int, old: Int, n: Int) -> Int
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
@@ -171,18 +156,20 @@ fn rs_put_word(s: Str, i: Int, w: Int) -> Str
 /// s with length n (lowered inline: no instruction). Unchecked: the n
 /// bytes are in s's room (rs_put_word wrote them).
 fn rs_set_len(s: Str, n: Int) -> Str
-/// Checked arithmetic on a sized integer type (std/llrt/xo_bytes.c, the
-/// C path of std/native/llrt/ints.xo, XO_LLRT_C=ints): op 0 +, 1 -, 2 *,
-/// 3 /, 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at.
+/// Checked arithmetic on a sized integer type: op 0 +, 1 -, 2 *, 3 /,
+/// 4 %, 5 <<, 6 >>, 7 unary minus of a; faults at at. This and the four
+/// below are std/native/llrt/ints.xo's operations as runtime calls
+/// without the native prelude, which only the wasm runtime has (decision
+/// 0198 deleted the C).
 fn int_op(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> Int
 /// v of the type of fbits and funs converted to the type of tbits and
-/// tuns, faulting at at out of range (the C path of ints.xo).
+/// tuns, faulting at at out of range.
 fn int_conv(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Int
-/// `Rune(v)`, faulting at at (the C path of ints.xo).
+/// `Rune(v)`, faulting at at.
 fn rune_of(v: Int, bits: Int, uns: Int, at: Str) -> Int
-/// a / b rounded down, b > 0 (the C path of ints.xo).
+/// a / b rounded down, b > 0.
 fn floor_div(a: Int, b: Int) -> Int
-/// The hash of a Str Map key (the C path of ints.xo).
+/// The hash of a Str Map key.
 fn str_hash(s: Str) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
@@ -425,15 +412,9 @@ fn fs_names(p: Str, x: Str) -> List[Str]
 fn fs_write(p: Str, data: Bytes, x: Str) -> Int
 fn fs_rename(a: Str, b: Str, x: Str) -> Int
 fn fs_remove(p: Str, x: Str) -> Int
-fn fs_remove_all(p: Str, x: Str) -> Int
-fn fs_mkdir_all(p: Str, x: Str) -> Int
 fn fs_chtimes(p: Str, t: Int, x: Str) -> Int
-/// The base name of a new empty file in dir, "" with the status set.
-fn fs_create_temp(dir: Str, prefix: Str, x: Str) -> Str
-fn fs_cwd() -> Str
 /// The system calls under std/native/llrt/fspath.xo (decision 0193 step
-/// 6): 0 or the errno; fs_remove_all, fs_mkdir_all, fs_create_temp, and
-/// fs_cwd above are its C path (XO_LLRT_C=fspath).
+/// 6): 0 or the errno.
 fn fs_raw_mkdir(p: Str) -> Int
 fn fs_raw_rmdir(p: Str) -> Int
 fn fs_raw_unlink(p: Str) -> Int

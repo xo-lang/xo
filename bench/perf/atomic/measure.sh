@@ -9,6 +9,8 @@
 # XO_LLRT_C=atomic in the environment builds the C
 # path (decision 0200);
 # WORKLOADS overrides the list; "none" is the setup alone (the inputs).
+# Decision 0198 deleted the C path of atomic (2026-10-13): naming it in
+# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
 set -e
 XO=$1
 OUT=$2

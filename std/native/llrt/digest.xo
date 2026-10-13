@@ -6,9 +6,8 @@
 // verify_password. The results are std/rt's crypto.go (Go's crypto
 // packages). What must be constant time stays C: crypto.equal (the
 // comparison of verify_password) and Ed25519 with its SHA-512 (the
-// zero-C audit's group (5)). std/native/crypto.xo calls these. The C
-// path stays selectable (`XO_LLRT_C=digest` loads digest_c.xo) until
-// bench/perf/digest meets decision 0180's bar.
+// zero-C audit's group (5)). std/native/crypto.xo calls these.
+// Decision 0198 deleted the C path (`XO_LLRT_C=digest`).
 //
 // Words are Ints: a 32 bit word in the low half (the high half zero), a
 // 64 bit word as the Int of the same bits; the arithmetic that wraps is

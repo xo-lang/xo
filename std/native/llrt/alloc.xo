@@ -7,7 +7,7 @@
 // calls these through cabi.xo's `heap_*` exports with the calling
 // thread's heap record; finding that record (a thread local, decision
 // 0195 prerequisite (6)) stays C until `rt.tls_get` exists (ADR 0207,
-// stage 3). The C path is alloc_c.xo (XO_LLRT_C=alloc).
+// stage 3). Decision 0198 deleted the C path (`XO_LLRT_C=alloc`).
 //
 // Every block has an 8 byte prefix before the address handed out: its
 // size class (1 to 72) or, for a block from malloc, minus its size.
