@@ -21,4 +21,10 @@ between values: `let want = if rs.len() > 1 { m.tuple(rs) } else {
 rs[0] }`, or copy through a `let` first as core 5.2 says for scratch
 copies (`let first = rs[0]; var want = first`).
 
+Seen again (2026-10-13, std/native/llrt/digest_tables.xo, decision
+0195): the generated rounds start sixteen `var`s from `t[i + k]`; `0 +
+t[i + k]` passed the check but cost an `add #0` per load on arm64 (the
+backend does not fold it), so the generator writes `let x = t[i + k]`
+then `var v = x`, which costs nothing.
+
 Seen again (2026-10-13, std/native/llrt/tz.xo, decision 0193 step 5): `var hi = w[H_NTX]` in a binary search and four `var`s of tzset started from `w[...]` and swapped; fixed with `0 + w[H_NTX]` and with `let`s chosen by `if` expressions.

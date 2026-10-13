@@ -84,9 +84,6 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
 declare void @llvm.assume(i1)
-declare i64 @llvm.fshr.i64(i64, i64, i64)
-declare i32 @llvm.fshr.i32(i32, i32, i32)
-declare i64 @llvm.bswap.i64(i64)
 
 declare i32 @xo_personality(...)
 
@@ -2159,14 +2156,17 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		a, b := s.op(v.Args[1]), s.op(v.Args[2])
 		switch op {
 		case 5:
+			s.g.llvmDecl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
 			s.set(v, "call i64 @llvm.fshr.i64(i64 %s, i64 %s, i64 %s)", a, a, b)
 			return true
 		case 6:
+			s.g.llvmDecl("@llvm.fshr.i32", "declare i32 @llvm.fshr.i32(i32, i32, i32)")
 			x := s.def("trunc i64 %s to i32", a)
 			n := s.def("trunc i64 %s to i32", b)
 			s.set(v, "zext i32 %s to i64", s.def("call i32 @llvm.fshr.i32(i32 %s, i32 %s, i32 %s)", x, x, n))
 			return true
 		case 7:
+			s.g.llvmDecl("@llvm.bswap.i64", "declare i64 @llvm.bswap.i64(i64)")
 			s.set(v, "call i64 @llvm.bswap.i64(i64 %s)", a)
 			return true
 		}
@@ -2198,6 +2198,16 @@ func (s *sfn) inlineRT(v *ssa.Value) bool {
 		return false
 	}
 	return true
+}
+
+// llvmDecl declares the LLVM intrinsic sym once, among the runtime
+// declarations of the calls used (decision 0195: the module head stays
+// the same for every program).
+func (g *sgen) llvmDecl(sym, decl string) {
+	if !g.emitted[sym] {
+		g.emitted[sym] = true
+		g.rtDecls.WriteString(decl + "\n")
+	}
 }
 
 // rtCall lowers a call of the task runtime (`rt.name` is the C function

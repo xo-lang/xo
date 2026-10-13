@@ -499,16 +499,19 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let a = g.op(x.args[1])
       var b = g.op(x.args[2])
       if op == 5 {
+        g.llvm_decl("@llvm.fshr.i64", "declare i64 @llvm.fshr.i64(i64, i64, i64)")
         g.set(v, "call i64 @llvm.fshr.i64(i64 ${a}, i64 ${a}, i64 ${b})")
         return true
       }
       if op == 6 {
+        g.llvm_decl("@llvm.fshr.i32", "declare i32 @llvm.fshr.i32(i32, i32, i32)")
         let x32 = g.def("trunc i64 ${a} to i32")
         let n32 = g.def("trunc i64 ${b} to i32")
         g.set(v, "zext i32 ${g.def("call i32 @llvm.fshr.i32(i32 ${x32}, i32 ${x32}, i32 ${n32})")} to i64")
         return true
       }
       if op == 7 {
+        g.llvm_decl("@llvm.bswap.i64", "declare i64 @llvm.bswap.i64(i64)")
         g.set(v, "call i64 @llvm.bswap.i64(i64 ${a})")
         return true
       }
@@ -537,6 +540,15 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     _ => return false
   }
   true
+}
+
+/// Declares the LLVM intrinsic sym once, among the runtime declarations
+/// of the calls used (decision 0195; llvmDecl).
+fn (var g: Gen) llvm_decl(sym: Str, decl: Str) {
+  if !g.emitted.contains(sym) {
+    g.emitted[sym] = true
+    g.rt_decls.push("${decl}\n")
+  }
 }
 
 /// Lowers a call of the task runtime (rtCall): an Int is an i64, a Bool
