@@ -25,7 +25,7 @@ import (
 // (xo/bin/xo and xo/std; xo finds std at bin/../std), packed by
 // scripts/seed-pack.sh and kept in a private S3 bucket:
 //
-//	seeds/latest.txt                               the newest seed, one line (0.9.0-9b6cd014)
+//	seeds/latest.txt                               the newest seed, one line (0.10.0-4ab09c25)
 //	seeds/<seed>/<goos>-<goarch>.tar.gz            the tree
 //	seeds/<seed>/<goos>-<goarch>.tar.gz.sha256     "<hex>  <goos>-<goarch>.tar.gz"
 //	seeds/<seed>/manifest.txt                      version, commit, date, sha256s
