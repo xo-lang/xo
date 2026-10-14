@@ -1,6 +1,11 @@
 # ThreadSanitizer resumes a fault's unwind after its frame is gone
 
-Status: Observed (2026-10-09)
+Status: Superseded (2026-10-14) by decision 0221 stage 3 and
+[tsan-func-exit-pads.md](tsan-func-exit-pads.md): TSan builds no longer
+add the cleanup pads, and on Linux arm64 the Xo unwinder passes C
+frames over. The exception object still lives in `xo_ctx`, since
+macOS's libunwind and glibc linux/amd64's libgcc still resume it from a
+C cleanup. Observed (2026-10-09).
 
 Symptom: on real Linux machines (EC2 c7g and c7i, Ubuntu 24.04, clang 18;
 also Docker arm64 with clang 19) every golden that raises a fault failed
