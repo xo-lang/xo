@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -305,5 +306,60 @@ func TestSeedPackHello(t *testing.T) {
 	o, err = run.CombinedOutput()
 	if err != nil || !strings.Contains(string(o), "hello from the seed") {
 		t.Fatalf("unpacked seed running hello: %v\n%s", err, o)
+	}
+}
+
+// TestAncestorBuild: the newest earlier build is used as a seed only
+// when its recorded commit is an ancestor of the checkout's HEAD; a
+// newer build of another branch (its xo can need runtime exports this
+// checkout's std lacks, run 38632539643) and a build with no record are
+// skipped.
+func TestAncestorBuild(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "a")
+	a := git("rev-parse", "HEAD")
+	git("checkout", "-q", "-b", "other")
+	git("commit", "-q", "--allow-empty", "-m", "b")
+	b := git("rev-parse", "HEAD")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-m", "c")
+	cache := t.TempDir()
+	build := func(name, commit string) string {
+		d := filepath.Join(cache, name)
+		os.MkdirAll(d, 0o755)
+		p := filepath.Join(d, exeName("xo"))
+		os.WriteFile(p, []byte("x"), 0o755)
+		if commit != "" {
+			os.WriteFile(filepath.Join(d, "commit"), []byte(commit+"\n"), 0o644)
+		}
+		return p
+	}
+	norecord := build("k0", "")
+	other := build("k1", b)
+	mine := build("k2", a)
+	if got := ancestorBuild(root, []string{norecord, other, mine}); got != mine {
+		t.Errorf("ancestorBuild = %q, want the main ancestor %q", got, mine)
+	}
+	if got := ancestorBuild(root, []string{norecord, other}); got != "" {
+		t.Errorf("no ancestor: ancestorBuild = %q", got)
+	}
+	if got := ancestorBuild(t.TempDir(), []string{mine}); got != "" {
+		t.Errorf("outside git: ancestorBuild = %q", got)
+	}
+	if s := summary(errors.New("exit status 1\nld: one\nld: two")); s != "exit status 1; 2 more lines" {
+		t.Errorf("summary %q", s)
 	}
 }
