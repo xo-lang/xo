@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B16, part 2): on Windows the Fs
+  operations past read, write, and stat (directory names, rename,
+  remove, set_modified, file handles, copy, modes, links, locks) call
+  kernel32 from Xo (std/native/llrt/windows.xo under fsops.xo), with
+  the C path's errors and messages. xo_win.c's POSIX shims for them are
+  deleted (260 lines); xo_fs.c's operations stay only for darwin/amd64.
+  macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
 - Native runtime: the C the 0.10.0 seed still called is deleted now that
   seed 0.11.0 is out (xo_static_word, xo_ct_barrier and xo_crypto.c,
   the print, exit, env, and rune count forwards; about 200 lines), and
