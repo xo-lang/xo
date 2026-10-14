@@ -70,7 +70,8 @@ const S_HAS_EXIT = 288
 const S_EXIT = 296
 const S_IN = 304
 const S_IN_OFF = 312
-const S_SIZE = 320
+const S_DROPPED = 320
+const S_SIZE = 344
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -242,12 +243,13 @@ pub fn hand_str(s: Str) -> Int {
 /// The value kept at a, counted once more for the caller.
 fn kept(a: Int) -> rt.Any { rt.obj_at[rt.Any](a) }
 
-/// Drops the reference kept at a (h_release: the value goes when it was
-/// the last one).
+/// Drops the reference kept at a: the C releases it when the test ends
+/// (cleanup), as the values still kept then (a release from Xo of a
+/// value kept by address left it live: gotchas/test-world-drop-from-xo.md).
 fn drop_kept(a: Int) {
-  let v = rt.obj_at[rt.Any](a)
-  let _last = rc.dec(a)
-  let _v = v
+  lock()
+  vec_push(st() + S_DROPPED, a)
+  unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,7 +1157,8 @@ pub fn cleanup() -> Int {
   let hv = s + S_HANDLERS
   let fv = s + S_FAILS
   let rv = s + S_REQS
-  let n = vec_len(hv) + vec_len(fv) + vec_len(rv) + 1
+  let dv = s + S_DROPPED
+  let n = vec_len(hv) + vec_len(fv) + vec_len(rv) + vec_len(dv) + 1
   let d = rt.heap_large(8 * (n + 1))
   var k = cleanup_fakes(hv, d, 0)
   k = cleanup_fakes(fv, d, k)
@@ -1164,6 +1167,11 @@ pub fn cleanup() -> Int {
     rt.mem_store(d, 8 * k, vec_at(rv, i), 8)
   }
   vec_free(rv)
+  for i in 0..vec_len(dv) {
+    k += 1
+    rt.mem_store(d, 8 * k, vec_at(dv, i), 8)
+  }
+  vec_free(dv)
   unlock()
   let ml = rt.static_word(W_MEMFS_LOCK)
   lock_at(ml)
