@@ -73,41 +73,48 @@ func writeArith(t *testing.T, seed int64) (string, string) {
 // checks without a diagnostic. Fast; also under -short.
 func TestArithChecks(t *testing.T) {
 	t.Parallel() // temporary directories only
-	// one xo check per program, GOMAXPROCS at a time (in turn they took
-	// about 4 s)
+	// one xo check of 25 programs (each its own module) at a time, in
+	// parallel; a batch with a diagnostic is checked again one program at
+	// a time to name the seed (one check per program in turn took about
+	// 4 s)
 	seeds := arithSeeds(t, 300)
 	type prog struct {
 		seed     int64
 		dir, src string
 	}
-	progs := make([]prog, len(seeds))
+	var batches [][]prog
 	for i, seed := range seeds {
 		dir, src := writeArith(t, seed)
-		progs[i] = prog{seed, dir, src}
+		if i%25 == 0 {
+			batches = append(batches, nil)
+		}
+		batches[len(batches)-1] = append(batches[len(batches)-1], prog{seed, dir, src})
 	}
-	work := make(chan prog)
+	checkOne := func(p prog) {
+		ds, err := xotool.Check([]string{p.dir})
+		if err != nil {
+			t.Errorf("seed %d: %v", p.seed, err)
+		} else if len(ds) > 0 {
+			t.Errorf("seed %d: the program does not check:\n%s--- program\n%s", p.seed, diagText(&xotool.Result{Diagnostics: ds}), numbered(p.src))
+		}
+	}
 	var wg sync.WaitGroup
-	for range runtime.GOMAXPROCS(0) {
+	for _, b := range batches {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for p := range work {
-				ds, err := xotool.Check([]string{p.dir})
-				if err != nil {
-					t.Errorf("seed %d: %v", p.seed, err)
-				} else if len(ds) > 0 {
-					t.Errorf("seed %d: the program does not check:\n%s--- program\n%s", p.seed, diagText(&xotool.Result{Diagnostics: ds}), numbered(p.src))
-				}
+			var dirs []string
+			for _, p := range b {
+				dirs = append(dirs, p.dir)
+			}
+			if ds, err := xotool.Check(dirs); err == nil && len(ds) == 0 {
+				return
+			}
+			for _, p := range b {
+				checkOne(p)
 			}
 		}()
 	}
-	for _, p := range progs {
-		if t.Failed() {
-			break
-		}
-		work <- p
-	}
-	close(work)
 	wg.Wait()
 }
 
