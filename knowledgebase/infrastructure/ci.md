@@ -411,8 +411,12 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
      Administrator path and the SYSTEM service printed
      `/c/Windows/system32/config/systemprofile`. The echo no longer
      prints HOME.
-   - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
-     forces the cross built xo.exe; once fixed, xcross can go and the
-     job builds xo itself.
+   - XO1306 on Windows (gotchas/windows-seed-xo1306-module-not-required.md):
+     fixed 2026-10-14 in internal/xotool (/ paths to xo); a Windows
+     runner now builds xo from the 0.11.0 seed in 56 s
+     (scripts/ci/xobuild.sh, run 38629916521). Next: drop the plan
+     job's xo.exe cross build (`suite.sh xcross`) and let the windows
+     and script jobs build xo on the runner.
+   - `suite=windows` passes in full: run 38630848188.
 4. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.
