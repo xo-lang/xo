@@ -721,11 +721,12 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
 // XO_RT_NO_MAIN's constructor).
-void xo_x_ctx_init(int64_t root);
+void xo_x_ctx_init(int64_t root, int64_t pl);
 static int64_t ctx_root(int64_t a, int64_t b);
+static int64_t pool_addr(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	xo_x_ctx_init(XO_ADDR(ctx_root));
+	xo_x_ctx_init(XO_ADDR(ctx_root), pool_addr());
 }
 
 // ---------------------------------------------------------------------------
@@ -1751,196 +1752,45 @@ static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_
 // point. A task started under a budget works under it (xo_task_spawn).
 
 #define BUD_QUANTUM 1024
-#define BUD_NONE ((int64_t)1 << 62) // polls between looks for a budget when there is none
 
+// The budget record; std/native/llrt/budget.xo reads and writes it
+// (decision 0229), the C only takes and drops references.
 typedef struct xo_budget {
 	struct xo_budget *parent; // a reference
 	int64_t refs;             // atomic: the contexts and tasks under it, its children
 	int64_t cpu, alloc, steps; // ceilings, 0: none
 	int64_t used_cpu, used_alloc, used_steps; // atomic
-	int over;                  // atomic: the resource passed first, 1 cpu 2 alloc 3 steps
+	int64_t over;              // atomic: the resource passed first, 1 cpu 2 alloc 3 steps
 	xo_lock mu;                // node
 	xo_node *node;             // the scope body a passed ceiling cancels (NULL once with_budget returned)
 	char *loc;                 // the with_budget call (the location of XO-F008)
 } xo_budget;
 
-static void bud_retain(xo_budget *b) {
-	if (b) {
-		__atomic_fetch_add(&b->refs, 1, __ATOMIC_RELAXED);
-	}
-}
+_Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 && offsetof(xo_budget, used_cpu) == 40 &&
+                   offsetof(xo_budget, over) == 64 && offsetof(xo_budget, mu) == 72 && offsetof(xo_budget, node) == 80 &&
+                   offsetof(xo_budget, loc) == 88 && sizeof(xo_budget) == 96,
+               "budget.xo B_*");
 
-static void bud_release(xo_budget *b) {
-	while (b && __atomic_sub_fetch(&b->refs, 1, __ATOMIC_ACQ_REL) == 0) {
-		xo_budget *p = b->parent;
-		free(b->loc);
-		free(b);
-		b = p;
-	}
-}
+void xo_x_budget_tick(void);
+void xo_x_budget_open(int64_t s, int64_t cpu, int64_t alloc, int64_t steps, int64_t lp, int64_t ln);
+int64_t xo_x_budget_end(int64_t s);
+void xo_x_budget_retain(int64_t b);
+void xo_x_budget_release(int64_t b);
+void xo_x_budget_mark(int64_t c);
+void xo_x_budget_charge(int64_t c, int64_t check);
+void xo_x_budget_pause(int64_t c);
+void xo_x_budget_resume(int64_t c);
 
-// bud_pass records that resource r passed its ceiling and cancels the
-// budget's scope.
-static void bud_pass(xo_budget *b, int r) {
-	int zero = 0;
-	if (__atomic_compare_exchange_n(&b->over, &zero, r, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-		lk(&b->mu);
-		if (b->node) {
-			node_cancel(b->node);
-		}
-		unlk(&b->mu);
-	}
-}
+static void bud_retain(xo_budget *b) { xo_x_budget_retain(XO_ADDR(b)); }
+static void bud_release(xo_budget *b) { xo_x_budget_release(XO_ADDR(b)); }
+static void bud_mark(xo_ctx *c) { xo_x_budget_mark(XO_ADDR(c)); }
+static void bud_charge(xo_ctx *c, int check) { xo_x_budget_charge(XO_ADDR(c), check); }
+static void bud_pause(xo_ctx *c) { xo_x_budget_pause(XO_ADDR(c)); }
+static void bud_resume(xo_ctx *c) { xo_x_budget_resume(XO_ADDR(c)); }
 
-// bud_exceeded is the innermost budget of b's chain that passed a
-// ceiling.
-static xo_budget *bud_exceeded(xo_budget *b) {
-	for (; b; b = b->parent) {
-		if (__atomic_load_n(&b->over, __ATOMIC_ACQUIRE)) {
-			return b;
-		}
-	}
-	return NULL;
-}
-
-static int canceled(xo_ctx *c);
-
-// bud_mark starts c's stretch: running time and allocation count from
-// now, on this thread.
-static void bud_mark(xo_ctx *c) {
-	xo_heap *h = heap();
-	c->bud_run = mono_ns();
-	c->bud_heap = h;
-	c->bud_amark = h->abytes;
-}
-
-// bud_charge charges c's steps, running time, and allocation since the
-// last charge to every budget of its chain; check tells to check the
-// ceilings (and refill the steps up to the next charge), else the
-// stretch only ends (a wait, the end of a budget).
-static void bud_charge(xo_ctx *c, int check) {
-	xo_budget *bd = c->bud;
-	int64_t steps = c->bud_q - c->bud_left;
-	int64_t now = mono_ns();
-	int64_t run = now - c->bud_run;
-	xo_heap *h = heap();
-	int64_t alloc = h == c->bud_heap ? h->abytes - c->bud_amark : 0;
-	c->bud_run = now;
-	c->bud_heap = h;
-	c->bud_amark = h->abytes;
-	int64_t q = BUD_QUANTUM;
-	for (xo_budget *b = bd; b; b = b->parent) {
-		int64_t us = __atomic_add_fetch(&b->used_steps, steps, __ATOMIC_RELAXED);
-		int64_t uc = __atomic_add_fetch(&b->used_cpu, run, __ATOMIC_RELAXED);
-		int64_t ua = __atomic_add_fetch(&b->used_alloc, alloc, __ATOMIC_RELAXED);
-		if (!check) {
-			continue;
-		}
-		if (b->cpu > 0 && uc > b->cpu) {
-			bud_pass(b, 1);
-		} else if (b->steps > 0 && us > b->steps) {
-			bud_pass(b, 3);
-		} else if (b->alloc > 0 && ua > b->alloc) {
-			bud_pass(b, 2);
-		}
-		if (b->steps > 0) {
-			int64_t left = b->steps - us;
-			if (left < q) {
-				q = left > 1 ? left : 1;
-			}
-		}
-	}
-	if (check) {
-		c->bud_q = c->bud_left = q;
-	} else {
-		c->bud_q = c->bud_left;
-	}
-}
-
-
-// bud_twice checks a budget that passed a ceiling while c runs shielded
-// code: past twice the ceiling it faults (XO-F008).
-static void bud_twice(xo_budget *b) {
-	char used[64], limit[64], msg[256];
-	switch (__atomic_load_n(&b->over, __ATOMIC_ACQUIRE)) {
-	case 1: {
-		int64_t u = __atomic_load_n(&b->used_cpu, __ATOMIC_RELAXED);
-		if (u <= 2 * b->cpu) {
-			return;
-		}
-		used[xo_x_fmt_duration(XO_ADDR(used), u)] = 0;
-		limit[xo_x_fmt_duration(XO_ADDR(limit), b->cpu)] = 0;
-		snprintf(msg, sizeof msg, "XO-F008: a budgeted task kept running in shielded code: cpu %s, past twice its ceiling of %s", used, limit);
-		break;
-	}
-	case 3: {
-		int64_t u = __atomic_load_n(&b->used_steps, __ATOMIC_RELAXED);
-		if (u <= 2 * b->steps) {
-			return;
-		}
-		snprintf(msg, sizeof msg, "XO-F008: a budgeted task kept running in shielded code: steps %lld, past twice its ceiling of %lld", (long long)u, (long long)b->steps);
-		break;
-	}
-	case 2: {
-		int64_t u = __atomic_load_n(&b->used_alloc, __ATOMIC_RELAXED);
-		if (u <= 2 * b->alloc) {
-			return;
-		}
-		snprintf(msg, sizeof msg, "XO-F008: a budgeted task kept running in shielded code: alloc %lld bytes, past twice its ceiling of %lld bytes", (long long)u, (long long)b->alloc);
-		break;
-	}
-	default:
-		return;
-	}
-	fault_text(msg, strdup(b->loc ? b->loc : "?"));
-}
-
-__attribute__((noinline)) static void bud_tick_slow(xo_ctx *c) {
-	if (!c->bud) {
-		c->bud_q = c->bud_left = BUD_NONE;
-		return;
-	}
-	bud_charge(c, 1);
-	xo_budget *x = bud_exceeded(c->bud);
-	if (x) {
-		if (!c->shield) {
-			c->unwinding = 1;
-			return;
-		}
-		// deferred code runs shielded and cannot be unwound; one that
-		// keeps working past twice the ceiling faults
-		bud_twice(x);
-		return;
-	}
-	// under a budget a pure loop is a cancellation point too
-	canceled(c);
-}
-
-// xo_tick is the budget poll of generated code: a step of the current
-// context under a budget; a look for one every BUD_NONE steps without.
-void xo_tick(void) {
-	xo_ctx *c = ctx();
-	if (__builtin_expect(--c->bud_left > 0, 1)) {
-		return;
-	}
-	bud_tick_slow(c);
-}
-
-// bud_pause and bud_resume bracket a stretch in which c does not run (a
-// wait, a task run inline on its thread): its time and that task's
-// allocations are not c's. They nest (a waiting root thread runs tasks
-// inline): only the outermost pair charges and marks.
-static void bud_pause(xo_ctx *c) {
-	if (c && c->bud && c->bud_paused++ == 0) {
-		bud_charge(c, 0);
-	}
-}
-
-static void bud_resume(xo_ctx *c) {
-	if (c && c->bud && --c->bud_paused == 0) {
-		bud_mark(c);
-	}
-}
+// xo_tick is the budget poll of generated code (budget.xo tick, which
+// arm64 code calls directly).
+void xo_tick(void) { xo_x_budget_tick(); }
 
 // The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
 // (decision 0229), which arm64 generated code calls through its exports;
@@ -2151,6 +2001,10 @@ static void park_signal(xo_park *p) {
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
+
+// pool_addr is the pool record's address for ctx.xo (budget.xo cancels
+// a scope's node through pool.xo).
+static int64_t pool_addr(void) { return XO_ADDR(&pool); }
 
 XO_NORETURN static void deadlock(void) {
 	xo_flush();
@@ -2894,6 +2748,7 @@ _Static_assert(offsetof(xo_worker, q) == 0 && offsetof(xo_worker, sched_sp) == 2
 _Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48 && offsetof(xo_fiber, hooks) == 80, "sched.xo F_*");
 _Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
 _Static_assert(offsetof(xo_scope, pending) == 240, "sched.xo S_PENDING");
+_Static_assert(offsetof(xo_scope, body) == 16 && offsetof(xo_scope, bud) == 456, "budget.xo S_BODY, S_BUD");
 _Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
 // and std/native/llrt/pool.xo (decision 0212 stage 2)
 _Static_assert(sizeof(xo_lock) == 8, "pool.xo's locks are words");
@@ -5200,71 +5055,13 @@ int64_t xo_scope_timed_out(xo_scope *s) {
 	return 1;
 }
 
-// xo_budget_open starts the budget of task.with_budget (std.md 7,
-// decision 0175) on scope s, just opened, whose body runs the budgeted
-// closure: cpu (ns), alloc (bytes), and steps ceilings, 0 for none. What
-// the context ran so far is its own; from here it charges the new budget
-// and the ones around it. A negative ceiling faults at the call (loc).
+// xo_budget_open and xo_budget_end are budget.xo open and end (which
+// arm64 code calls directly).
 void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	if (cpu < 0 || alloc < 0 || steps < 0) {
-		char d[64], msg[256];
-		d[xo_x_fmt_duration(XO_ADDR(d), cpu)] = 0;
-		snprintf(msg, sizeof msg, "task.with_budget: a negative ceiling (cpu %s, alloc %lld, steps %lld)", d, (long long)alloc, (long long)steps);
-		fault_at(msg, loc, n);
-	}
-	if (c->bud) {
-		bud_charge(c, 0);
-	}
-	xo_budget *b = calloc(1, sizeof(xo_budget));
-	if (!b) {
-		xo_oom();
-	}
-	b->refs = 2; // the scope's and the context's
-	b->parent = c->bud; // the context's reference moves to the new budget
-	b->cpu = cpu;
-	b->alloc = alloc;
-	b->steps = steps;
-	b->node = &s->body;
-	b->loc = cstr_of(loc, n);
-	s->bud = b;
-	c->bud = b;
-	c->bud_q = c->bud_left = 1; // charge at the first poll
-	bud_mark(c);
+	xo_x_budget_open(XO_ADDR(s), cpu, alloc, steps, XO_ADDR(loc), n);
 }
 
-// xo_budget_end ends the budget of scope s, closed: the context works
-// under the budgets around it again. It returns the resource whose
-// ceiling was passed (1 cpu, 2 alloc, 3 steps), the unwinding stopped,
-// or 0; when a ceiling was passed but the code around is canceled (or a
-// fault unwinds) the context unwinds and the result is 0.
-int64_t xo_budget_end(xo_scope *s) {
-	xo_ctx *c = ctx();
-	xo_budget *b = s->bud;
-	s->bud = NULL;
-	if (c->bud == b) {
-		bud_charge(c, 0);
-		c->bud = b->parent;
-		bud_retain(c->bud);
-		bud_release(b); // the context's reference
-		c->bud_q = c->bud_left = c->bud ? 1 : 0;
-		bud_mark(c);
-	}
-	lk(&b->mu);
-	b->node = NULL; // the scope is over: a task still under b cancels nothing
-	unlk(&b->mu);
-	int64_t r = __atomic_load_n(&b->over, __ATOMIC_ACQUIRE);
-	bud_release(b); // the scope's reference
-	if (r == 0 || c->faulting) {
-		return 0;
-	}
-	if (ctx_canceled(c)) {
-		c->unwinding = 1;
-		return 0;
-	}
-	c->unwinding = 0;
-	return r;
-}
+int64_t xo_budget_end(xo_scope *s) { return xo_x_budget_end(XO_ADDR(s)); }
 
 // ---------------------------------------------------------------------------
 // Network (std.md 3.2): TCP listeners and connections. Each operation

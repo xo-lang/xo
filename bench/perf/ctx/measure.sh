@@ -29,7 +29,7 @@ count() {
 		awk -F, '/instructions/{print $1}' "$OUT/t.txt"
 	fi
 }
-for w in ${WORKLOADS:-none defer mutex spawn}; do
+for w in ${WORKLOADS:-none defer mutex spawn budget}; do
 	for be in "$@"; do
 		best=""
 		for k in 1 2 3 4 5; do

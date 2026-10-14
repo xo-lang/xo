@@ -238,7 +238,14 @@ pub fn lock_slow(l: Int) {
   }
 }
 
-fn unlock(l: Int) {
+/// Takes the lock word l (xo_rt.c lk).
+pub fn lock(l: Int) {
+  if !rt.slot_cas[Int](l, 0, 0, 1, ACQUIRE) {
+    lock_slow(l)
+  }
+}
+
+pub fn unlock(l: Int) {
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     futex_wake(l)
   }

@@ -13,6 +13,7 @@
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
+use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/netpolicy
@@ -524,5 +525,28 @@ fn ctx_shield_end(tok: Int, lp: Int, ln: Int) { ctx.shield_end(tok, lp, ln) }
 
 fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 
-/// The address of xo_rt.c ctx_root, at start (ctx.xo init).
-fn ctx_init(root: Int) { ctx.init(root) }
+/// The addresses of xo_rt.c ctx_root and its pool record, at start
+/// (ctx.xo init).
+fn ctx_init(root: Int, pl: Int) { ctx.init(root, pl) }
+
+// Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
+// open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and
+// its scheduler calls the rest (c a context, b a budget record).
+
+fn budget_tick() { budget.tick() }
+
+fn budget_open(s: Int, cpu: Int, alloc: Int, steps: Int, lp: Int, ln: Int) { budget.open(s, cpu, alloc, steps, lp, ln) }
+
+fn budget_end(s: Int) -> Int { budget.end(s) }
+
+fn budget_retain(b: Int) { budget.retain(b) }
+
+fn budget_release(b: Int) { budget.release(b) }
+
+fn budget_mark(c: Int) { budget.mark(c) }
+
+fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
+
+fn budget_pause(c: Int) { budget.pause(c) }
+
+fn budget_resume(c: Int) { budget.resume(c) }

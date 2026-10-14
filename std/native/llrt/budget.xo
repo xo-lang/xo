@@ -1,0 +1,341 @@
+// Resource budgets (std.md 7, decisions 0173 and 0175; the zero-C
+// audit's B17, decision 0229): `task.with_budget(clock, b, f)` runs f as
+// the body of a scope whose budget (open) every context working in it
+// charges. The generated code of a program that calls with_budget polls
+// (tick) at the start of every loop iteration and at the entry of every
+// function of the program's own modules. Every QUANTUM polls a context
+// charges its steps, its running time (monotonic time outside waits:
+// pause and resume bracket them), and the bytes its thread's heap
+// allocated to its budget and the budgets enclosing it; a passed ceiling
+// cancels the budget's scope, and the poll unwinds the context like a
+// cancellation point. A task started under a budget works under it (the
+// C's xo_task_spawn takes a reference).
+//
+// The budget record is malloc'd (the C releases the references of
+// scopes and tasks, release below through cabi.xo); the context's
+// fields are ctx.xo's C_BUD_*.
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/obj
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/sysio
+use native/llrt/text
+use native/rt
+
+/// The budget record (xo_rt.c xo_budget, 96 bytes, asserted): the
+/// enclosing budget (a reference), the references (atomic: the contexts
+/// and tasks under it, its children), the ceilings (0: none), what was
+/// used (atomic), the resource that passed first (atomic: 1 cpu, 2
+/// alloc, 3 steps), the lock of node, the scope body a passed ceiling
+/// cancels (0 once with_budget returned), and the with_budget call's
+/// zero terminated location (malloc'd).
+const B_PARENT = 0
+const B_REFS = 8
+const B_CPU = 16
+const B_ALLOC = 24
+const B_STEPS = 32
+const B_USED_CPU = 40
+const B_USED_ALLOC = 48
+const B_USED_STEPS = 56
+const B_OVER = 64
+const B_MU = 72
+const B_NODE = 80
+const B_LOC = 88
+const B_SIZE = 96
+
+/// xo_scope's body node and budget (the scope record stays C).
+const S_BODY = 16
+const S_BUD = 456
+
+/// The heap record's count of allocated bytes (alloc.xo ABYTES).
+const H_ABYTES = 16
+
+/// A cancellation node's canceled word (pool.xo N_CANCELED).
+const N_CANCELED = 32
+
+const QUANTUM = 1024
+/// Polls between looks for a budget when there is none.
+const NONE = 4611686018427387904
+
+const RELAXED = 0
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The word at p + off, atomically.
+fn aload(p: Int, off: Int, ord: Int) -> Int { rt.slot_load[Int](p + off, 0, ord) }
+
+pub fn retain(b: Int) {
+  if b != 0 {
+    let _o = rt.slot_add[Int](b + B_REFS, 0, 1, RELAXED)
+  }
+}
+
+/// Drops a reference to b: the last one frees it and drops its
+/// reference to the enclosing budget.
+pub fn release(b0: Int) {
+  var b = b0
+  while b != 0 && rt.slot_add[Int](b + B_REFS, 0, -1, ACQ_REL) == 1 {
+    let p = ld(b, B_PARENT)
+    let l = ld(b, B_LOC)
+    if l != 0 {
+      rt.heap_release(l)
+    }
+    rt.heap_release(b)
+    b = p
+  }
+}
+
+/// Records that resource r passed its ceiling and cancels the budget's
+/// scope.
+fn pass(b: Int, r: Int) {
+  if rt.slot_cas[Int](b + B_OVER, 0, 0, r, ACQ_REL) {
+    pool.lock(b + B_MU)
+    let n = ld(b, B_NODE)
+    if n != 0 {
+      pool.node_cancel(ctx.pool(), n)
+    }
+    pool.unlock(b + B_MU)
+  }
+}
+
+/// The innermost budget of b's chain that passed a ceiling, or 0.
+fn exceeded(b0: Int) -> Int {
+  var b = b0
+  while b != 0 {
+    if aload(b, B_OVER, ACQUIRE) != 0 {
+      return b
+    }
+    b = ld(b, B_PARENT)
+  }
+  0
+}
+
+/// Starts the context c's stretch: running time and allocation count from
+/// now, on this thread.
+pub fn mark(c: Int) {
+  let h = obj.heap()
+  st(c, ctx.C_BUD_RUN, sysio.mono_ns())
+  st(c, ctx.C_BUD_HEAP, h)
+  st(c, ctx.C_BUD_AMARK, ld(h, H_ABYTES))
+}
+
+/// Charges c's steps, running time, and allocation since the last charge
+/// to every budget of its chain; check tells to check the ceilings (and
+/// refill the steps up to the next charge), else the stretch only ends
+/// (a wait, the end of a budget).
+pub fn charge(c: Int, check: Bool) {
+  let steps = ld(c, ctx.C_BUD_Q) - ld(c, ctx.C_BUD_LEFT)
+  let now = sysio.mono_ns()
+  let run = now - ld(c, ctx.C_BUD_RUN)
+  let h = obj.heap()
+  let alloc = if h == ld(c, ctx.C_BUD_HEAP) { ld(h, H_ABYTES) - ld(c, ctx.C_BUD_AMARK) } else { 0 }
+  st(c, ctx.C_BUD_RUN, now)
+  st(c, ctx.C_BUD_HEAP, h)
+  st(c, ctx.C_BUD_AMARK, ld(h, H_ABYTES))
+  var q = QUANTUM
+  var b = ld(c, ctx.C_BUD)
+  while b != 0 {
+    let us = rt.slot_add[Int](b + B_USED_STEPS, 0, steps, RELAXED) + steps
+    let uc = rt.slot_add[Int](b + B_USED_CPU, 0, run, RELAXED) + run
+    let ua = rt.slot_add[Int](b + B_USED_ALLOC, 0, alloc, RELAXED) + alloc
+    if check {
+      if ld(b, B_CPU) > 0 && uc > ld(b, B_CPU) {
+        pass(b, 1)
+      } else if ld(b, B_STEPS) > 0 && us > ld(b, B_STEPS) {
+        pass(b, 3)
+      } else if ld(b, B_ALLOC) > 0 && ua > ld(b, B_ALLOC) {
+        pass(b, 2)
+      }
+      if ld(b, B_STEPS) > 0 {
+        let left = ld(b, B_STEPS) - us
+        if left < q {
+          q = if left > 1 { left } else { 1 }
+        }
+      }
+    }
+    b = ld(b, B_PARENT)
+  }
+  if check {
+    st(c, ctx.C_BUD_Q, q)
+    st(c, ctx.C_BUD_LEFT, q)
+  } else {
+    st(c, ctx.C_BUD_Q, ld(c, ctx.C_BUD_LEFT))
+  }
+}
+
+/// Checks a budget b that passed a ceiling while the context runs
+/// shielded code: past twice the ceiling it faults (XO-F008).
+fn twice(b: Int) {
+  let pre = "XO-F008: a budgeted task kept running in shielded code: "
+  var m = ""
+  let over = aload(b, B_OVER, ACQUIRE)
+  if over == 1 {
+    let u = aload(b, B_USED_CPU, RELAXED)
+    if u <= 2 * ld(b, B_CPU) {
+      return
+    }
+    m = text.append_duration(text.append_duration(pre + "cpu ", u) + ", past twice its ceiling of ", ld(b, B_CPU))
+  } else if over == 3 {
+    let u = aload(b, B_USED_STEPS, RELAXED)
+    if u <= 2 * ld(b, B_STEPS) {
+      return
+    }
+    m = "${pre}steps ${u}, past twice its ceiling of ${ld(b, B_STEPS)}"
+  } else if over == 2 {
+    let u = aload(b, B_USED_ALLOC, RELAXED)
+    if u <= 2 * ld(b, B_ALLOC) {
+      return
+    }
+    m = "${pre}alloc ${u} bytes, past twice its ceiling of ${ld(b, B_ALLOC)} bytes"
+  } else {
+    return
+  }
+  let l = ld(b, B_LOC)
+  if l == 0 {
+    let q = "?"
+    fault.raise_str_at(m, raw.data(q), 1)
+  }
+  fault.raise_str_at(m, l, raw.cstr_len(l))
+}
+
+/// Whether the context c is canceled and not shielded (xo_rt.c
+/// ctx_canceled).
+pub fn canceled(c: Int) -> Bool {
+  rt.mem_load(c, ctx.C_SHIELD, 4) == 0 && aload(ld(c, ctx.C_NODE), N_CANCELED, ACQUIRE) != 0
+}
+
+/// The budget poll of generated code (xo_tick): a step of the current
+/// context under a budget; a look for one every NONE steps without.
+pub fn tick() {
+  let c = ctx.cur()
+  let left = ld(c, ctx.C_BUD_LEFT) - 1
+  st(c, ctx.C_BUD_LEFT, left)
+  if left > 0 {
+    return
+  }
+  tick_slow(c)
+}
+
+fn tick_slow(c: Int) {
+  if ld(c, ctx.C_BUD) == 0 {
+    st(c, ctx.C_BUD_Q, NONE)
+    st(c, ctx.C_BUD_LEFT, NONE)
+    return
+  }
+  charge(c, true)
+  let x = exceeded(ld(c, ctx.C_BUD))
+  if x != 0 {
+    if rt.mem_load(c, ctx.C_SHIELD, 4) == 0 {
+      rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
+      return
+    }
+    // deferred code runs shielded and cannot be unwound; one that keeps
+    // working past twice the ceiling faults
+    twice(x)
+    return
+  }
+  // under a budget a pure loop is a cancellation point too
+  if canceled(c) {
+    rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
+  }
+}
+
+/// Starts a stretch in which the context c does not run (a wait, a task
+/// run inline on its thread): its time and that task's allocations are
+/// not c's. They nest: only the outermost pair charges and marks.
+pub fn pause(c: Int) {
+  if c != 0 && ld(c, ctx.C_BUD) != 0 {
+    let d = rt.mem_load(c, ctx.C_BUD_PAUSED, 4)
+    rt.mem_store(c, ctx.C_BUD_PAUSED, d + 1, 4)
+    if d == 0 {
+      charge(c, false)
+    }
+  }
+}
+
+pub fn resume(c: Int) {
+  if c != 0 && ld(c, ctx.C_BUD) != 0 {
+    let d = rt.mem_load(c, ctx.C_BUD_PAUSED, 4) - 1
+    rt.mem_store(c, ctx.C_BUD_PAUSED, d, 4)
+    if d == 0 {
+      mark(c)
+    }
+  }
+}
+
+/// Starts the budget of task.with_budget (xo_budget_open) on scope s,
+/// just opened, whose body runs the budgeted closure: cpu (ns), alloc
+/// (bytes), and steps ceilings, 0 for none. What the context ran so far
+/// is its own; from here it charges the new budget and the ones around
+/// it. A negative ceiling faults at the call (the ln bytes at lp).
+pub fn open(s: Int, cpu: Int, alloc: Int, steps: Int, lp: Int, ln: Int) {
+  let c = ctx.cur()
+  if cpu < 0 || alloc < 0 || steps < 0 {
+    let m = text.append_duration("task.with_budget: a negative ceiling (cpu ", cpu) + ", alloc ${alloc}, steps ${steps})"
+    fault.raise_str_at(m, lp, ln)
+  }
+  if ld(c, ctx.C_BUD) != 0 {
+    charge(c, false)
+  }
+  // malloc'd at the block's own address: the C frees it (heap_large's
+  // prefix, gotchas/heap-large-prefix-not-malloc-address.md)
+  let b = rt.heap_large(B_SIZE) - 8
+  rt.mem_set(b, 0, B_SIZE)
+  st(b, B_REFS, 2)
+  st(b, B_PARENT, ld(c, ctx.C_BUD))
+  st(b, B_CPU, cpu)
+  st(b, B_ALLOC, alloc)
+  st(b, B_STEPS, steps)
+  st(b, B_NODE, s + S_BODY)
+  let l = rt.heap_large(ln + 1) - 8
+  rt.mem_copy(l, lp, ln)
+  rt.mem_store(l, ln, 0, 1)
+  st(b, B_LOC, l)
+  st(s, S_BUD, b)
+  st(c, ctx.C_BUD, b)
+  st(c, ctx.C_BUD_Q, 1)
+  st(c, ctx.C_BUD_LEFT, 1)
+  mark(c)
+}
+
+/// Ends the budget of scope s, closed (xo_budget_end): the context works
+/// under the budgets around it again. The resource whose ceiling was
+/// passed (1 cpu, 2 alloc, 3 steps), the unwinding stopped, or 0; when a
+/// ceiling was passed but the code around is canceled (or a fault
+/// unwinds) the context unwinds and the result is 0.
+pub fn end(s: Int) -> Int {
+  let c = ctx.cur()
+  let b = ld(s, S_BUD)
+  st(s, S_BUD, 0)
+  if ld(c, ctx.C_BUD) == b {
+    charge(c, false)
+    let p = ld(b, B_PARENT)
+    st(c, ctx.C_BUD, p)
+    retain(p)
+    release(b)
+    let q = if p != 0 { 1 } else { 0 }
+    st(c, ctx.C_BUD_Q, q)
+    st(c, ctx.C_BUD_LEFT, q)
+    mark(c)
+  }
+  pool.lock(b + B_MU)
+  // the scope is over: a task still under b cancels nothing
+  st(b, B_NODE, 0)
+  pool.unlock(b + B_MU)
+  let r = aload(b, B_OVER, ACQUIRE)
+  release(b)
+  if r == 0 || rt.mem_load(c, ctx.C_FAULTING, 4) != 0 {
+    return 0
+  }
+  if canceled(c) {
+    rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
+    return 0
+  }
+  rt.mem_store(c, ctx.C_UNWINDING, 0, 4)
+  r
+}

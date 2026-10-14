@@ -267,6 +267,9 @@ pub fn rc_defer_n(obj: Int, drop: Int) {
 /// (work item B02; was the C thread local sys_scratch of xo_sys.c).
 pub fn scratch() -> Int { addw(heap_word() & -2, H_SCRATCH) }
 
+/// The calling thread's heap record (xo_rt.c heap).
+pub fn heap() -> Int { heap_word() & -2 }
+
 /// The calling thread's heap word (xo_rt.c hw): the single threaded heap
 /// record, else the thread's heap record (thread local TLS_HEAP, which the
 /// C sets on the thread's first allocation, heap_slow) plus 1.

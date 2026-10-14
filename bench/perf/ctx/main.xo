@@ -3,13 +3,25 @@
 // in a program that runs tasks (so its deferred code is shielded).
 // Usage: ctx <workload>. Workloads: defer (2,000,000 calls of a function
 // with a defer), mutex (2,000,000 uncontended Mutex.with), spawn (20,000
-// tasks spawned and joined in scopes of 10), none (the setup alone).
+// tasks spawned and joined in scopes of 10), budget (a loop of 20,000,000
+// iterations under task.with_budget, which polls the budget at each:
+// rt.tick), none (the setup alone).
 // Each prints "<workload> <checksum>".
+use std/task
+
 fn bump(a: Atomic[Int], i: Int) -> Int {
   defer {
     let _ = a.add(1)
   }
   i + 1
+}
+
+fn count(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += i & 3
+  }
+  s
 }
 
 fn main(os: Os) {
@@ -27,6 +39,11 @@ fn main(os: Os) {
       m.with(fn(var c) { c += 1 })
     }
     sum = m.with_read(fn(c) { c })
+  } else if w == "budget" {
+    match task.with_budget(os.clock, task.budget(steps: 1000000000), fn() -> Int { count(20000000) }) {
+      Ok(v) => sum = v
+      Err(_) => sum = -1
+    }
   } else if w == "spawn" {
     for _ in 0..2000 {
       scope s {
