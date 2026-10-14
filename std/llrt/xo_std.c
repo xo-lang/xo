@@ -158,10 +158,11 @@ xo_rstr *xo_str_join(xo_rlist *l, const char *sep, int64_t sn, int64_t *len) {
 	return s;
 }
 
-// xo_rs_append is s + t (consumes s; appended in place when unique).
+// xo_rs_append is s + t (consumes s; appended in place when unique):
+// obj.xo's (zero-C audit B13), as the builders of xo_bytes.c.
+int64_t xo_x_obj_rs_append(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t lenp);
 xo_rstr *xo_rs_append(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
-	*len = an + bn;
-	return rs_append(a, an, b->data, bn);
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append(XO_ADDR(a), an, XO_ADDR(b), bn, XO_ADDR(len));
 }
 
 // ---------------------------------------------------------------------------

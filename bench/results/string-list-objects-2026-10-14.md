@@ -261,3 +261,112 @@ both 0 live of 28,270,317 allocations; the outputs byte identical.
   sites, or the Xo functions by name).
 - The string objects (rs_new, rs_append, the builders): the same
   shape, with generated code calling Xo entries directly.
+
+## Stage 3: the string objects (branch b13-strings)
+
+obj.xo makes and grows the string objects: `rs_append` (the body of
+`a + b`, xo_rs_concat, xo_rs_append, and the C's rs_append), and the
+builders `rs_push_byte`, `rs_push_word`, `rs_push_words`,
+`rs_append_bytes` (with the ASCII case fold), and `rs_with_cap`, through
+cabi.xo's `obj_rs_*` exports with the C ABI (the string object and
+length in, the new length stored through a pointer). arm64 generated
+code calls the exports directly: `a + b` and the runtime calls
+`rt.rs_append`, `rt.rs_push_byte`, `rt.rs_push_word`,
+`rt.rs_push_words`, `rt.rs_append_bytes`, and `rt.rs_with_cap` from
+std/native. The C entries forward to them (for LLVM and the seed), and
+the C's own rs_append (xo_rs_append_rune, xo_rs_concat_int and _float)
+too. Every append goes through `reserve`: a unique string with the room
+is returned as it is (no call, no frame: the arm64 code of
+xo_x_obj_rs_push_byte's fast path is eleven instructions), the rest is
+reserve_slow, out of line (in place growth by doubling, or a copy and
+the release of the old one). The C's rs_new stays for the C creators
+(xo_str_slice, the number text, standard input): forwarding it to Xo
+took text lines to 1.054 and split to 1.049 on LLVM, since clang no
+longer inlined the allocation into xo_str_slice
+(gotchas/c-helper-forwarded-to-xo-loses-inlining.md).
+
+Method: as stage 2. A is main c0f1de3a (its xo, built by seed 0.11.0,
+and its std); B is the branch (its xo, built by the same seed, and its
+std). Same program sources, every checksum equal, min of 5 instructions
+retired, net of the none row; two rounds:
+
+| Workload | Backend | A round 1 | B round 1 | B / A | A round 2 | B round 2 | B / A |
+|---|---|---|---|---|---|---|---|
+| text split | arm64 | 96,887,124 | 96,380,907 | 0.998 | 96,822,356 | 96,371,078 | 0.996 |
+| text lines | arm64 | 153,977,473 | 153,684,017 | 1.000 | 153,859,979 | 153,657,655 | 1.000 |
+| text int_fmt | arm64 | 81,153,711 | 80,017,505 | 0.986 | 81,113,753 | 80,009,904 | 0.984 |
+| text quote | arm64 | 144,923,464 | 130,613,220 | 0.884 | 144,850,211 | 130,574,924 | 0.883 |
+| text replace | arm64 | 88,808,252 | 82,642,038 | 0.910 | 88,786,758 | 82,631,985 | 0.908 |
+| text debug | arm64 | 277,891,705 | 227,139,218 | 0.801 | 277,851,775 | 227,114,810 | 0.801 |
+| text float_fmt | arm64 | 148,950,680 | 147,499,655 | 0.991 | 148,968,911 | 147,443,879 | 0.989 |
+| text trim | arm64 | 154,961,395 | 154,712,987 | 1.001 | 154,971,966 | 154,647,777 | 0.999 |
+| text split | llvm | 79,884,504 | 79,317,796 | 0.996 | 79,828,038 | 79,310,937 | 0.994 |
+| text lines | llvm | 130,148,217 | 129,931,661 | 1.001 | 130,093,452 | 129,919,637 | 1.000 |
+| text int_fmt | llvm | 65,009,187 | 64,933,970 | 1.005 | 65,010,176 | 64,853,180 | 1.000 |
+| text quote | llvm | 119,576,104 | 112,735,943 | 0.934 | 119,526,798 | 112,602,896 | 0.932 |
+| text replace | llvm | 67,627,615 | 65,459,063 | 0.961 | 67,560,090 | 65,432,565 | 0.959 |
+| text debug | llvm | 235,396,698 | 201,379,872 | 0.843 | 235,391,968 | 201,355,577 | 0.843 |
+| text float_fmt | llvm | 108,769,642 | 108,771,626 | 1.004 | 108,747,043 | 108,740,920 | 1.002 |
+| text trim | llvm | 143,717,207 | 143,459,783 | 1.000 | 143,666,896 | 143,479,451 | 1.000 |
+| json small | arm64 | 348,431,313 | 344,921,749 | 0.997 | 348,407,668 | 344,852,211 | 0.997 |
+| json ints | arm64 | 234,570,029 | 234,337,742 | 1.013 | 234,534,003 | 234,271,361 | 1.012 |
+| json strings | arm64 | 376,535,432 | 360,913,169 | 0.961 | 376,509,247 | 360,766,439 | 0.961 |
+| json maps | arm64 | 335,042,361 | 337,736,708 | 1.018 | 334,963,483 | 337,698,168 | 1.018 |
+| json parse | arm64 | 287,994,161 | 285,378,444 | 1.000 | 287,970,086 | 285,317,882 | 1.000 |
+| json enc_small | arm64 | 185,504,825 | 150,869,420 | 0.777 | 185,486,782 | 150,839,937 | 0.776 |
+| json enc_strings | arm64 | 233,438,221 | 191,900,273 | 0.797 | 233,422,831 | 191,874,384 | 0.796 |
+| json small | llvm | 304,369,613 | 304,950,681 | 1.010 | 304,343,547 | 304,900,524 | 1.009 |
+| json ints | llvm | 210,318,030 | 210,833,470 | 1.015 | 210,279,812 | 210,780,979 | 1.014 |
+| json strings | llvm | 309,683,036 | 304,413,117 | 0.988 | 309,632,460 | 304,311,090 | 0.988 |
+| json maps | llvm | 298,831,821 | 307,171,262 | 1.040 | 298,838,538 | 307,109,657 | 1.039 |
+| json parse | llvm | 253,198,581 | 251,097,107 | 1.000 | 253,135,474 | 251,047,850 | 0.999 |
+| json enc_small | llvm | 155,019,754 | 133,792,078 | 0.839 | 154,942,121 | 133,842,520 | 0.839 |
+| json enc_strings | llvm | 208,997,141 | 182,753,367 | 0.860 | 208,976,517 | 182,698,859 | 0.859 |
+| alloc small | arm64 | 292,157,166 | 292,203,822 | 1.000 | 292,126,153 | 292,162,589 | 1.000 |
+| alloc strings | arm64 | 328,771,856 | 301,408,937 | 0.912 | 328,704,087 | 301,364,750 | 0.913 |
+| alloc maps | arm64 | 301,850,513 | 303,588,038 | 1.006 | 301,816,237 | 303,523,982 | 1.006 |
+| alloc mixed | arm64 | 470,964,384 | 472,579,552 | 1.003 | 470,909,566 | 472,544,596 | 1.004 |
+| alloc grow | arm64 | 67,107,108 | 67,144,108 | 0.998 | 67,074,492 | 67,101,115 | 1.000 |
+| alloc tasks | arm64 | 877,785,814 | 879,088,073 | 1.001 | 879,981,768 | 878,382,701 | 0.998 |
+| alloc small | llvm | 245,936,719 | 247,911,876 | 1.009 | 245,894,990 | 247,890,480 | 1.009 |
+| alloc strings | llvm | 308,542,136 | 284,994,174 | 0.920 | 308,482,720 | 284,910,345 | 0.920 |
+| alloc maps | llvm | 268,285,557 | 267,127,537 | 0.996 | 268,278,683 | 267,128,092 | 0.996 |
+| alloc mixed | llvm | 463,703,041 | 462,349,765 | 0.997 | 463,703,565 | 462,306,775 | 0.997 |
+| alloc grow | llvm | 64,529,087 | 64,486,724 | 1.000 | 64,503,872 | 64,457,764 | 0.999 |
+| alloc tasks | llvm | 782,169,134 | 783,162,679 | 1.001 | 777,764,612 | 777,628,616 | 1.000 |
+| nested push | arm64 | 18,052,697 | 18,031,476 | 0.999 | 18,003,257 | 17,975,119 | 0.998 |
+| nested strappend | arm64 | 19,076,833 | 18,936,538 | 0.993 | 19,145,336 | 18,915,455 | 0.988 |
+| nested walk | arm64 | 31,721,711 | 31,721,830 | 1.000 | 31,679,409 | 31,705,161 | 1.001 |
+| nested push | llvm | 14,997,946 | 15,131,751 | 1.009 | 15,057,582 | 15,057,475 | 1.000 |
+| nested strappend | llvm | 16,062,199 | 15,985,431 | 0.995 | 16,049,835 | 15,908,298 | 0.991 |
+| nested walk | llvm | 27,609,584 | 27,708,899 | 1.004 | 27,566,686 | 27,658,986 | 1.003 |
+
+Every row is within decision 0180's bar: 0.776 to 1.040 (json maps on
+LLVM, 1.039 and 1.040, its map encoding's strings; arm64 1.018). The
+builders' callers gain most: json enc_small 0.776 (arm64) and 0.839
+(LLVM), text debug 0.801 and 0.843, alloc strings 0.912 and 0.920:
+the C's push_word and push_words went through a temporary buffer and
+rs_append's claim, the Xo stores whole words into the unique string.
+
+The self build (as stage 2, but each xo first rebuilt by itself so its
+own code runs its std's objects; then each builds main's selfhost/xo
+with main's std, XO_EMIT_JOBS=8, fresh build dir, caches off): A
+106,490,249,251 and 106,814,699,400, B 106,260,312,041 and
+106,757,715,666 instructions (0.998 and 0.999); the two outputs byte
+identical. No leak count: xo ends with os.proc.exit, which skips the
+report (it runs only when main returns).
+
+Behavior on the Mac: internal/arm64 TestGoldenRun and internal/llvm
+TestGolden (every golden program, LLVM against the Go backend and
+want.txt, with the leak check), TestRuntime*, TestCABIDiff,
+TestLeakCheck, TestHTTP1*.
+
+### Next
+
+- The other C creators of strings (xo_str_slice, xo_str_of_byte,
+  xo_str_repeat, xo_str_join, the number text, xo_rs_append_rune and
+  xo_rs_push_rune) as obj.xo exports called by generated code and
+  std/native directly, then the C rs_new and its alloc_usable go.
+- Delete the C forwarders (xo_rs_concat, xo_rs_append, the builders)
+  once a seed emits the export calls and LLVM generated code calls the
+  exports.

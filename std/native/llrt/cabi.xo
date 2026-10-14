@@ -391,6 +391,48 @@ fn obj_rl_free(hw: Int, l: Int, esize: Int, drop: Int) { obj.rl_free(hw, l, esiz
 
 fn obj_rc_defer(h: Int, o: Int, drop: Int) { obj.rc_defer(h, o, drop) }
 
+// Strings (zero-C audit B13): xo_rt.c xo_rs_concat and xo_rs_append,
+// xo_bytes.c's builders, in obj.xo, called by arm64 generated code
+// directly and by the C entries (for LLVM and the seed). a and b are
+// string (or Bytes) objects, an and bn their lengths; the result is the
+// string object, its length stored at lenp (a Str result's convention).
+
+/// a + the n bytes at p: the C runtime's rs_append.
+fn obj_rs_append_at(a: Int, an: Int, p: Int, n: Int) -> Int { obj.rs_append(a, an, p, n) }
+
+fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.rs_append(a, an, rt.int_wrap(0, b, 16), bn) }
+
+fn obj_rs_append(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, bn), 8)
+  obj.rs_append(a, an, rt.int_wrap(0, b, 16), bn)
+}
+
+fn obj_rs_push_byte(a: Int, an: Int, x: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, 1), 8)
+  obj.rs_push_byte(a, an, x)
+}
+
+fn obj_rs_push_word(a: Int, an: Int, w: Int, n: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, n), 8)
+  obj.rs_push_word(a, an, w)
+}
+
+fn obj_rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int, lenp: Int) -> Int {
+  let k = rt.int_wrap(0, rt.int_wrap(0, lens & 15, (lens >> 4) & 15), rt.int_wrap(0, (lens >> 8) & 15, (lens >> 12) & 15))
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, k), 8)
+  obj.rs_push_words(a, an, w0, w1, w2, w3, lens)
+}
+
+fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, rt.int_wrap(1, hi, lo)), 8)
+  obj.rs_append_bytes(a, an, b, lo, hi, mode)
+}
+
+fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, 0, 8)
+  obj.rs_with_cap(n)
+}
+
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task
 // states, in sched.xo, and the worker pool, the locks' slow paths, and

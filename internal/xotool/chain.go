@@ -108,7 +108,7 @@ func Chain(root, seed string, log io.Writer) (string, error) {
 		t0 := time.Now()
 		backend, env := hostBackend()
 		tmp := bin + ".tmp"
-		if out, err := runIn(tree, env, cur, "build", "--backend="+backend, "--std="+std, "-o", tmp, filepath.Join(tree, "selfhost", "xo")); err != nil {
+		if out, err := runIn(tree, env, cur, "build", "--backend="+backend, "--std="+xoPath(std), "-o", xoPath(tmp), xoPath(filepath.Join(tree, "selfhost", "xo"))); err != nil {
 			return "", fmt.Errorf("hop %s: %v\n%s", h.Commit, err, lastLines(out, 20))
 		}
 		if err := os.Rename(tmp, bin); err != nil {

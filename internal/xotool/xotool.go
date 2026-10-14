@@ -553,7 +553,7 @@ func BuildXo(root, seed, out string) error {
 	backend, env := hostBackend()
 	tmp := fmt.Sprintf("%s.%d.tmp", out, os.Getpid())
 	defer os.Remove(tmp)
-	o, err := runIn(root, env, seed, "build", "--backend="+backend, "--std="+filepath.Join(root, "std"), "-o", tmp, filepath.Join(root, "selfhost", "xo"))
+	o, err := runIn(root, env, seed, "build", "--backend="+backend, "--std="+xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp), xoPath(filepath.Join(root, "selfhost", "xo")))
 	if err != nil {
 		return fmt.Errorf("%v\n%s", err, lastLines(o, 20))
 	}
@@ -563,10 +563,17 @@ func BuildXo(root, seed, out string) error {
 	return os.Rename(tmp, out)
 }
 
+// xoPath is p as xo takes paths: with / separators on Windows (std.md
+// 3.1). xo's checker splits paths only at /, so a C:\ path from
+// filepath.Join never reaches the module root's xo.mod and every import
+// between the module's packages fails with XO1306
+// (gotchas/windows-seed-xo1306-module-not-required.md).
+func xoPath(p string) string { return filepath.ToSlash(p) }
+
 func runIn(dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "PWD="+dir), env...)
+	cmd.Env = append(append(os.Environ(), "PWD="+xoPath(dir)), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

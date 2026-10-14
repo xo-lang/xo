@@ -4,8 +4,7 @@
 # (Git Bash, in the checkout): `scripts/remote-windows.sh --batch [COMMIT]`
 # runs it there and fetches the log.
 #
-#   1. $XO_CLI when set (CI sets it to a cross built xo.exe), else
-#      go run ./scripts/xobuild: an earlier xo, normally the prebuilt
+#   1. go run ./scripts/xobuild: an earlier xo, normally the prebuilt
 #      windows-amd64 seed (decision 0216; the go-compiler-final chain only
 #      when XO_SEED_FALLBACK=chain is set), builds xo1, the shipped xo,
 #      from selfhost/xo with the Go backend;
@@ -33,14 +32,9 @@ want() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
 if want 1; then
   # an xo1 left by an earlier run must not stand in for this one
   rm -f "$xo1"
-  if [ -n "${XO_CLI:-}" ]; then
-    # an xo.exe built elsewhere (CI's cross build, scripts/ci/suite.sh
-    # xcross): the windows-amd64 seed cannot build xo on Windows
-    # (gotchas/windows-seed-xo1306-module-not-required.md)
-    cp "$XO_CLI" "$xo1" && say "1 xo1 from XO_CLI: $XO_CLI" || { say "1 FAIL: copying $XO_CLI"; failed=$((failed + 1)); }
   # decision 0215: an earlier xo (else the go-compiler-final seed, built
   # with Go) builds bin/xo.exe with the Go backend (internal/xotool)
-  elif built=$(go run ./scripts/xobuild) && cp "$built" "$xo1"; then
+  if built=$(go run ./scripts/xobuild) && cp "$built" "$xo1"; then
     say "1 xo1 built: $xo1"
   else
     say "1 FAIL: building xo1"; failed=$((failed + 1))
@@ -55,6 +49,8 @@ if want 2; then
       go test -count=1 -timeout 60m -run 'TestGoldenWant$' -v ./internal/llvm 2>&1 | tee "$HOME/batch-goldens-${t#*/}.log" | grep 'golden summary')
     say "2 $t: ${line#*: }"
     grep -E 'golden [^ ]+: fail' "$HOME/batch-goldens-${t#*/}.log" | sed 's/^ */batch:   /'
+    # TestGoldenWant logs want and got of each differing program: print them
+    awk '/output differs from want.txt/ {p=1} /^ *--- (PASS|FAIL|SKIP)|^=== / {p=0} p' "$HOME/batch-goldens-${t#*/}.log"
     case "$line" in *" 0 fail"*) ;; *) failed=$((failed + 1)) ;; esac
   done
 fi

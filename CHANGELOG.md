@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B13, stage 3): the string objects'
+  appends and builders are Xo (std/native/llrt/obj.xo): `a + b`, and
+  the runtime's rs_append, push_byte, push_word, push_words,
+  append_bytes, and with_cap. arm64 generated code and std/native call
+  them with no C level, and a unique string with room is appended to
+  without a call. bench/perf text, json, alloc, and nested are 0.776 to
+  1.040 of main's instructions on arm64 and LLVM (json enc_small 0.776,
+  text debug 0.801), the self build 0.998 and 0.999
+  (bench/results/string-list-objects-2026-10-14.md). The C rs_new stays
+  for the C's own string creators.
+- bench/perf/sysio/windows-ci.sh runs the sysio Windows measurement on
+  CI's Windows runner (`-f suite=script -f runner=xo-windows`).
+- `XO_LEAKCHECK=1` on a native program that ends with `os.proc.exit` (or
+  whose main returns an error) prints `xo leakcheck: skipped
+  (os.proc.exit)` instead of nothing: the report runs only when main
+  returns (gotchas/leakcheck-skipped-at-exit.md).
 - Native code generation (decision 0228, zero-C audit item B06 part 2):
   a failed check (overflow, division by zero, an index out of range, a
   shift, a Float to Int conversion) and `fault(msg)` call the runtime's

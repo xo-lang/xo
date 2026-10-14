@@ -15,6 +15,8 @@ param(
 	[string[]]$Workloads = @('none', 'dir', 'lines', 'handle', 'rename', 'lock', 'tree', 'copy', 'mode')
 )
 $ErrorActionPreference = 'Stop'
+# -File passes "a,b" as one string: split a comma separated list
+if ($Workloads.Count -eq 1) { $Workloads = $Workloads[0] -split ',' }
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;

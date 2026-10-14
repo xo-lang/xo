@@ -14,14 +14,19 @@
 #   merge        the full tests of PACKAGE... (default: the touched ones)
 #   fixed-point  scripts/bootstrap-xo.sh with the checkout's xo (s2 == s3)
 #   full         every package with XO_SELFHOST_TIER=full
-#   windows      scripts/windows-batch.sh (xo1 from the Windows seed, the
+#   windows      scripts/windows-batch.sh (xo1 built from the seed, the
 #                LLVM goldens for windows/amd64 and arm64, the runtime
 #                tests, xo test LLVM against Go); on the xo-windows runner
-#   xcross DEST  cross builds xo.exe for windows/amd64 with the Go backend
-#                from the checkout and copies it to DEST (an s3:// URL):
-#                the plan job does this for a windows job, since the
-#                windows-amd64 seed cannot build xo on Windows (XO1306,
-#                gotchas/windows-seed-xo1306-module-not-required.md)
+#   script PATH [ARG...]
+#                runs PATH from the checkout (.sh with bash, .ps1 with
+#                Windows PowerShell, anything else as an executable) with
+#                ARG..., on the runner the workflow picks (xo-arm64 unless
+#                -f runner=...). Its environment: XO_CLI (the checkout's
+#                xo, built on the runner by scripts/xobuild),
+#                XO_CI_STD (the checkout's std), XO_CI_BASE_STD (std of
+#                $XO_CI_BASE, main by default, from a worktree), XO_CI_OUT
+#                (a directory the workflow uploads as the run's artifact
+#                script-out), all native paths on Windows
 #   measure DIR  bench/perf/DIR/measure.sh with main's xo and std, then
 #                with the checkout's; both outputs and new/base ratios
 #   plan SUITE [PACKAGE...]
@@ -187,21 +192,29 @@ case "$suite" in
   merge) if [ $# -gt 0 ]; then run_merge "$@"; else load_changed; run_merge $(touched_pkgs); fi ;;
   fixed-point) run_fixed_point ;;
   measure) run_measure "$@" ;;
-  xcross)
-    dest=${1:?xcross: DEST}
-    step "xo.exe for windows/amd64 (Go backend, cross built)"
-    xo=$(go run ./scripts/xobuild)
-    out=$PWD/.tools/xcross; rm -rf "$out"; mkdir -p "$out"
-    "$xo" build --backend=go --targets=windows/amd64 --std="$PWD/std" -o "$out/xo.exe" selfhost/xo
-    aws s3 cp --only-show-errors "$out/xo.exe" "$dest"
-    end ;;
+  script)
+    sc=${1:?script: PATH}; shift
+    [ -f "$sc" ] || { echo "script: no $sc in the checkout"; exit 2; }
+    np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
+    step "xo (scripts/xobuild)"; XO_CLI=$(np "$(go run ./scripts/xobuild)"); end
+    "$XO_CLI" version
+    step "std of $base"
+    bt=$PWD/.tools/base-tree
+    git worktree remove --force "$bt" 2>/dev/null || rm -rf "$bt"
+    git worktree add -q --detach "$bt" "$base"; end
+    out=$PWD/.tools/script-out; rm -rf "$out"; mkdir -p "$out"
+    export XO_CLI XO_CI_STD XO_CI_BASE_STD XO_CI_OUT
+    XO_CI_STD=$(np "$PWD/std") XO_CI_BASE_STD=$(np "$bt/std") XO_CI_OUT=$(np "$out")
+    step "$sc $*"; rc=0
+    case "$sc" in
+      *.ps1) powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(np "$PWD/$sc")" "$@" || rc=$? ;;
+      *.sh) bash "$sc" "$@" || rc=$? ;;
+      *) "./$sc" "$@" || rc=$? ;;
+    esac
+    end
+    git worktree remove --force "$bt"
+    exit $rc ;;
   windows)
-    # the plan job's cross built xo.exe ($XO_CI_XO_EXE), in bin/ so it
-    # finds std at bin/../std; XO_CLI makes xobuild use it as is
-    if [ -n "${XO_CI_XO_EXE:-}" ]; then
-      step "fetch xo.exe"; mkdir -p bin; aws s3 cp --only-show-errors "$XO_CI_XO_EXE" bin/xo.exe
-      export XO_CLI=$PWD/bin/xo.exe; "$XO_CLI" version; end
-    fi
     step "scripts/windows-batch.sh"; rc=0; scripts/windows-batch.sh || rc=$?; end; exit $rc ;;
   plan)
     what=${1:?plan: SUITE}; shift
@@ -210,6 +223,7 @@ case "$suite" in
       full) echo '{"include":[{"name":"full tier","runner":"xo-arm64-big","args":"full"}]}' ;;
       measure) echo "{\"include\":[{\"name\":\"measure $*\",\"runner\":\"xo-arm64-big\",\"args\":\"measure $*\"}]}" ;;
       windows) echo '{"include":[{"name":"windows","runner":"xo-windows","args":"windows"}]}' ;;
+      script) echo "{\"include\":[{\"name\":\"script $*\",\"runner\":\"xo-arm64\",\"args\":\"script $*\"}]}" ;;
       merge) echo "{\"include\":[{\"name\":\"merge $*\",\"runner\":\"xo-arm64-big\",\"args\":\"merge $*\"}]}" ;;
       *) echo "{\"include\":[{\"name\":\"$what\",\"runner\":\"xo-arm64\",\"args\":\"$what\"}]}" ;;
     esac ;;
