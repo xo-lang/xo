@@ -36,7 +36,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the build chosen once into a word so the hot path tests no target.
   The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
   exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
-  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions,
+  on Windows (LLVM) 0.928 to 0.952 times its CPU cycles
   (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
   workload.
 - Native runtime: the C with no caller is deleted (zero-C audit item
