@@ -7,6 +7,12 @@
 // it into a runtime. Included by crypto_diff.c after ../xo_rt.c (it uses
 // xo_crypto.c's static helpers).
 
+// b64_alpha and b64_val were xo_std.c's, which only this C used after
+// the runtime's base64 moved to Xo (num.xo, digest.xo).
+static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
+
 // nbuf_take turns the buffer into a string object and frees it (it was
 // xo_std.c's, which only this C used).
 static xo_rstr *nbuf_take(nbuf *b, int64_t *len) {

@@ -39,7 +39,7 @@ fn main(os: Os) ! {
 // TestProcSpecDiff runs procSpecProgram built with the Go backend (Go's
 // os/exec) and the native backends and requires the same output: the
 // children's environments in their order (dedupEnv, PWD, set and added
-// variables) and their arguments. XO_LLRT_C=procspec checks the C path.
+// variables) and their arguments.
 func TestProcSpecDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program with three backends")

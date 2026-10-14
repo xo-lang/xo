@@ -1240,6 +1240,7 @@ func (v FileInfo) M_debug(*Task) string { return Debug(v) }
 type Fs interface {
 	M_sub(tk *Task, p0 string) Fs
 	M_cwd(tk *Task) Fs
+	M_cwd_path(tk *Task) Result[string, FsErr]
 	M_read_only(tk *Task) Fs
 	M_write_only(tk *Task) Fs
 	M_case_sensitive(tk *Task) bool

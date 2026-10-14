@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: the C with no caller is deleted (zero-C audit item
+  W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
+  lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
+  their std/native/rt.xo declarations), and the -D flags of deleted C
+  paths that xo's io_flags still added. A build with an `XO_LLRT_C`
+  name that has no C path (no `std/native/llrt/<name>_c.xo`; `all`
+  aside) now fails with `XO_LLRT_C=<name>: no C path named <name>`
+  instead of silently building the Xo path; the live names are net,
+  sched, and text.
 - Faster native builds (decision 0220 stage 1): the arm64 backend
   generates a large program's functions in parts on parallel tasks and
   assembles the parts apart before one link; reference counting and the
@@ -25,6 +34,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   help shows the callee and its active parameter. A dangling `.` or an
   open call no longer needs to parse: the server checks a copy patched
   at the cursor.
+- std: `Fs.cwd_path()` is the working directory's absolute path from the
+  OS (decision 0218), on the Go, arm64, and LLVM backends; a test's MemFs
+  gives `/`. The toolchain uses it instead of `$PWD`, so `xo lsp` started
+  without a shell (VS Code from the macOS Dock passes `PWD=/`) resolves
+  std paths again and Go to Definition into std works.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop

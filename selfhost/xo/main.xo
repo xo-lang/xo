@@ -70,7 +70,7 @@ fn main(os: Os) ! {
     os.proc.exit(fr.code)
   }
   let args = fr.args
-  if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.env.get("PWD") ?? "", args)) }
+  if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", args)) }
   if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run(os, args)) }
   if let Some(code) = servers.forward_cli(os, args) {
     // a running `xo serve` answered check or query
@@ -232,6 +232,26 @@ fn core_ctx(os: Os, o: Opts) -> core.Ctx {
   core.Ctx{std: o.std, wd: o.wd, offline: offline, work: work}
 }
 
+/// The names in $XO_LLRT_C (comma separated; `all` selects every C
+/// path). A name with no std/native/llrt/<name>_c.xo fails the build:
+/// decision 0198 deleted most C paths, and a deleted name that was
+/// ignored built the Xo path while claiming to test the C one
+/// (knowledgebase/gotchas/deleted-llrt-switch-still-set.md).
+fn llrt_c_names(os: Os, std: Str) -> List[Str] {
+  var names: List[Str] = []
+  for n0 in (os.env.get("XO_LLRT_C") ?? "").split(",") {
+    let n = n0.trim()
+    if n.is_empty() {
+      continue
+    }
+    if n != "all" && os.fs.read("${std}/native/llrt/${n}_c.xo").is_err() {
+      fail(os, "XO_LLRT_C=${n}: no C path named ${n} (std/native/llrt/${n}_c.xo); the C paths left are the std/native/llrt/*_c.xo files, decision 0198 deleted the others")
+    }
+    names.push(n)
+  }
+  names
+}
+
 /// The checker of a build: the native implementation modules when
 /// native, the module environment, and the check of dirs; a check that
 /// fails prints its diagnostics (or, with --json on build, the JSON
@@ -240,11 +260,7 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
   c.native = native
   // the C paths of ported runtime modules (decisions 0193, 0206)
-  for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
-    if !n.trim().is_empty() {
-      c.llrt_c.push(n.trim())
-    }
-  }
+  c.llrt_c = llrt_c_names(os, o.std)
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"

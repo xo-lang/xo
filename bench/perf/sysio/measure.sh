@@ -10,7 +10,7 @@
 # /usr/bin/time -l's: "instructions retired" of the process in the user
 # column, "-" for kernel, and user plus system milliseconds.
 # Decision 0198 deleted the C path of sysio (2026-10-13): naming it in
-# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
+# A deleted XO_LLRT_C name now fails the build; earlier results files keep the comparisons.
 #
 # usage: bench/perf/sysio/measure.sh <xo1 binary> <std dir> <out dir> <backend...>
 # WORKLOADS overrides the list; VARIANTS the variants.

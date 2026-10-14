@@ -775,6 +775,65 @@ fn fs_sub(f: Fs, dir: Str) -> Fs {
 
 fn fs_cwd(f: Fs) -> Fs { rt.fs_new(fspath.cwd(), 1 | (rt.fs_mode(f) & 6)) }
 
+// fs_cwd_path is the working directory as os.Getwd gives it (decision
+// 0218): $PWD when it names the same directory as getcwd (its links
+// kept, the path the shell shows), else getcwd itself (std/llrt/xo_fs.c:
+// libc on Darwin, the system call on Linux, GetCurrentDirectoryW on
+// Windows, where $PWD is not consulted). Io when getcwd fails.
+fn fs_cwd_path(_f: Fs) -> Str ! FsErr {
+  let wasi = match target.os {
+    TargetOs.Wasi => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows => false
+  }
+  if wasi {
+    return Err(FsErr.Io(path: ".", msg: "no working directory under WASI"))
+  }
+  let w = fspath.cwd()
+  if w.is_empty() || w == "." {
+    return Err(FsErr.Io(path: ".", msg: "getcwd failed"))
+  }
+  if fs_windows() {
+    return w
+  }
+  let pwd = rt.env_get("PWD").get(0) ?? ""
+  if pwd.starts_with("/") && pwd != w && fs_real_path(pwd) == w {
+    return pwd
+  }
+  w
+}
+
+// fs_real_path is the absolute path p with the links of every element
+// followed (filepath.EvalSymlinks; what getcwd reports in that
+// directory); p cleaned after more than 40 links.
+fn fs_real_path(p: Str) -> Str {
+  var parts = fs_clean(p).split("/")
+  var out = ""
+  var i = 0
+  var hops = 0
+  while i < parts.len() {
+    let part = parts[i]
+    i += 1
+    if part.is_empty() {
+      continue
+    }
+    let q = "${out}/${part}"
+    match rt.fs_read_link(q, q).get(0) {
+      Some(t) => {
+        hops += 1
+        if hops > 40 {
+          return fs_clean(p)
+        }
+        let next = if t.starts_with("/") { t } else { "${if out.is_empty() { "/" } else { out }}/${t}" }
+        parts = fs_clean(next).split("/") + parts[i..]
+        out = ""
+        i = 0
+      }
+      None => out = q
+    }
+  }
+  if out.is_empty() { "/" } else { out }
+}
+
 fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
 
 fn fs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }

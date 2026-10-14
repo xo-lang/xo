@@ -174,6 +174,17 @@ func (f *realFs) M_cwd(*Task) Fs {
 	return &realFs{root: wd, sub: true, readOnly: f.readOnly, writeOnly: f.writeOnly}
 }
 
+// M_cwd_path is the working directory as os.Getwd gives it (decision
+// 0218): $PWD only when it names the same directory, else the OS's
+// getcwd; / separators on Windows.
+func (f *realFs) M_cwd_path(*Task) Result[string, FsErr] {
+	wd, err := os.Getwd()
+	if err != nil {
+		return Err[string](fsIo(".", err.Error()))
+	}
+	return Ok[string, FsErr](filepath.ToSlash(wd))
+}
+
 func (f *realFs) M_read_only(*Task) Fs {
 	c := *f
 	c.readOnly = true

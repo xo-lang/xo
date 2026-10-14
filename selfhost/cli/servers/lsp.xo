@@ -859,7 +859,7 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
     }
   }
   let _ = ex
-  var s = Session{version: version, std_dir: std_dir(os), wd: os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
+  var s = Session{version: version, std_dir: std_dir(os), wd: os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
   let events: Chan[Ev] = Chan.new(16)
   var code = 0
   scope sc {

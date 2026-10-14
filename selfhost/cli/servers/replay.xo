@@ -264,7 +264,7 @@ fn abs_path(os: Os, p: Str) -> Str uses env {
   if p.starts_with("/") {
     return p
   }
-  join(os.env.get("PWD") ?? "", p.trim_prefix("./"))
+  join(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", p.trim_prefix("./"))
 }
 
 pub fn run_replay(os: Os, ex: Exec, args: List[Str]) -> Int uses (stdio, proc, env, fs, rand) {

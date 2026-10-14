@@ -38,7 +38,7 @@ pub fn is_command(args: List[Str]) -> Bool {
 /// status.
 pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, net, rand {
   var std_dir = os.env.get("XO_STD") ?? ""
-  var wd = os.env.get("PWD") ?? ""
+  var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var args = args0
   while !args.is_empty() && (args[0].starts_with("--std=") || args[0].starts_with("--wd=")) {
     if args[0].starts_with("--std=") {

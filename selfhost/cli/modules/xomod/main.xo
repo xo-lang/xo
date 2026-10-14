@@ -10,7 +10,7 @@ use github.com/xo-lang/xo/selfhost/cli/modules
 
 fn main(os: Os) uses (fs, net, proc, env, stdio, rand) {
   let args = os.env.args()
-  let wd = os.env.get("PWD") ?? ""
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   if !args.is_empty() && modules.is_command(args[0]) {
     os.proc.exit(modules.run(os, wd, args))
   }
