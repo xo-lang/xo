@@ -30,10 +30,6 @@ on:
         options: [xo-arm64, xo-arm64-big]
         default: xo-arm64
 
-concurrency:
-  group: ci-${{ inputs.ref }}-${{ inputs.suite }}
-  cancel-in-progress: true
-
 jobs:
   test:
     runs-on: [self-hosted, "${{ inputs.runner }}"]

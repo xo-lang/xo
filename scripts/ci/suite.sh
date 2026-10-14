@@ -3,8 +3,10 @@
 # CI workflow (.github/workflows/ci.yml, decision 0225). Runs the same on
 # any machine with Go and clang, from anywhere in the checkout.
 #
-#   auto         short, then the touched Go packages' full tests, the
-#                internal/selfhost merge tier when selfhost/ or std/
+#   auto         short, then the touched Go packages' full tests (a
+#                changed file belongs to its nearest directory with .go
+#                files), the internal/selfhost merge tier when selfhost/ or
+#                std/ changed, internal/gen, llvm, and arm64 when std/
 #                changed, and the fixed point when the change touches what
 #                the self build compiles (the CLAUDE.md test policy)
 #   short        go vet and go test -short over every package but runs/
@@ -27,16 +29,28 @@ end() { echo "::endgroup::"; }
 all_pkgs() { go list -e ./... | grep -v /runs/; }
 changed() { git diff --name-only "$base...HEAD"; }
 
-# Go packages with a changed file (deleted directories are skipped).
+# The changed paths, listed once: a pipeline into `grep -q` would fail
+# under pipefail on a long list (gotchas/grep-q-pipefail-long-input.md).
+files=""
+load_changed() { files=$(changed); }
+has() { grep -qE "$@" <<<"$files"; }
+
+# Go packages with a changed file: each changed path maps to its nearest
+# directory holding .go files (so a testdata golden or .xo fixture tests
+# its package); deleted directories are skipped.
 touched_pkgs() {
-  changed | grep '\.go$' | xargs -r -n1 dirname | sort -u |
-    while read -r d; do [ -d "$d" ] && ls "$d"/*.go >/dev/null 2>&1 && echo "./$d"; done
+  [ -n "$files" ] || return 0
+  while read -r f; do
+    d=$(dirname "$f")
+    while [ "$d" != . ] && ! ls "$d"/*.go >/dev/null 2>&1; do d=$(dirname "$d"); done
+    if [ "$d" != . ]; then echo "./$d"; fi
+  done <<<"$files" | sort -u
 }
 
 # The CLAUDE.md fixed point rule: what the self build compiles or runs.
 needs_fixed_point() {
-  changed | grep -E '^(selfhost/|std/native/|std/llrt/|internal/xotool/(xotool|chain|seed|lock_[^/]*)\.go$|scripts/xobuild/|scripts/seed-chain\.txt$)' |
-    grep -vE '^selfhost/(macho|wasm)/|_test\.xo$' | grep -q .
+  grep -E '^(selfhost/|std/native/|std/llrt/|internal/xotool/(xotool|chain|seed|lock_[^/]*)\.go$|scripts/xobuild/|scripts/seed-chain\.txt$)' <<<"$files" |
+    grep -vE '^selfhost/(macho|wasm)/|_test\.xo$' >/dev/null
 }
 
 run_short() {
@@ -61,14 +75,18 @@ run_fixed_point() {
 case "$suite" in
   short) run_short ;;
   vet) step "go vet"; go vet $(all_pkgs); end ;;
-  merge) if [ $# -gt 0 ]; then run_merge "$@"; else run_merge $(touched_pkgs); fi ;;
+  merge) if [ $# -gt 0 ]; then run_merge "$@"; else load_changed; run_merge $(touched_pkgs); fi ;;
   fixed-point) run_fixed_point ;;
   full) step "full tier"; XO_SELFHOST_TIER=full go test -timeout 120m $(all_pkgs); end ;;
   auto)
-    echo "changed since $base:"; changed | sed 's/^/  /'
+    load_changed
+    echo "changed since $base:"; sed 's/^/  /' <<<"$files"
     run_short
     pkgs=$(touched_pkgs)
-    if changed | grep -qE '^(selfhost|std)/'; then pkgs="$pkgs ./internal/selfhost"; fi
+    if has '^(selfhost|std)/'; then pkgs="$pkgs ./internal/selfhost"; fi
+    # std/ changes reach every backend's program output goldens
+    if has '^std/'; then pkgs="$pkgs ./internal/gen ./internal/llvm ./internal/arm64"; fi
+    echo "packages for the full tests:" $pkgs
     run_merge $(echo $pkgs | tr ' ' '\n' | sort -u)
     if needs_fixed_point; then run_fixed_point; else echo "fixed point: not needed for these paths"; fi
     ;;

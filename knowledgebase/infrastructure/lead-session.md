@@ -71,7 +71,9 @@ bar on arm64 only):
 
 - Test on arm64 only (CLAUDE.md); a fix for an x86 or Windows only bug
   gets one targeted job on a warm machine of that platform.
-- Agents' pass/fail runs go to the EC2 queue as two parallel arm64 jobs;
-  the Mac's two heavy slots are for measurements.
+- Agents' pass/fail runs go to on demand CI (`gh workflow run ci.yml
+  -f ref=BRANCH -f suite=auto`, decision 0225, ci.md); the EC2 queue
+  scripts are retired (scripts/lead/README.md). The Mac's two heavy
+  slots are for measurements.
 - Merge reports in batches with one gate; never run two agents on the
   same C file at once.

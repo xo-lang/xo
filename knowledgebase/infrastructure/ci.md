@@ -29,13 +29,15 @@ Inputs of `.github/workflows/ci.yml`:
 | input | default | meaning |
 |---|---|---|
 | `ref` | `main` | branch, tag, or commit to test (push it first) |
-| `suite` | `auto` | what to run, see [Suites](#suites) |
+| `suite` | `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package); `./internal/selfhost` (merge tier) when anything under `selfhost/` or `std/` changed; `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). The log prints the changed paths and the package list |
 | `packages` | empty | for `suite=merge`: space separated packages (`./cmd/xo ./internal/llvm`); empty means the touched ones |
 | `merge_main` | true | test REF merged with the current main, without pushing anything; a conflict fails in seconds and lists the files |
 | `runner` | `xo-arm64` | runner label; `xo-arm64-big` for heavy runs (the full tier) |
 
-Starting the same REF and suite again cancels the earlier run
-(concurrency group `ci-REF-SUITE`). Inputs reach the shell through
+Runs never cancel each other: a concurrency group on REF and suite let an
+agent's run cancel the lead's gate on the same ref, and every dispatch is
+the same GitHub user, so it cannot be keyed per caller (removed
+2026-10-14). Stop a duplicate by hand with `gh run cancel RUN_ID`. Inputs reach the shell through
 environment variables, never pasted into the script. The checkout step is
 `actions/checkout@v7` (Node 24; v4 printed a Node 20 deprecation warning).
 
