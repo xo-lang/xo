@@ -177,6 +177,20 @@ After every deletion: `go build ./...`, `go vet` of every package, and
 179 of 179 (arm64) and 179 of 179 (XO1_BACKEND=llvm),
 scripts/selfhost-gogoldens.py 136 of 136 (the Go backend).
 
+On EC2 Linux arm64 (r8g.8xlarge, Go installed, no xo; commit b61a3b0f,
+2026-10-13): xobuild from the go-compiler-final root through the seed
+chain 1,936 s; hello; the Xo side of this host's native units recorded
+(2,307 s, committed); cmd/xo, internal/llvm, gen, arm64, repotest, and
+xotool -short pass; the goldens 179 of 179 (arm64), 179 of 179 (LLVM),
+136 of 136 (Go backend); scripts/bootstrap-xo.sh with no Go on PATH:
+s1 437 s, s2 419 s, s3 419 s, s2 and s3 assembly (446,762,419 bytes)
+and binaries (87,444,112 bytes) identical, s1 equal too, s3 runs hello.
+The selfhost replay there found three units with no Linux recording,
+the checker's `--native` runs of the `use c` directories (typedump
+keys on the host for them); a second batch (fa201b2f) recorded them
+(21 s) and the selfhost merge tier then passed on Linux (623 s), its
+xobuild taking the chain first: 1,491 s against 1,936 s.
+
 ## Consequences
 
 - Every compiler change lands in selfhost/ alone. A change that alters

@@ -748,6 +748,8 @@ typedump eda6b7b27938a7b9 =run accepted=true onlyStaged=true staged=0 other=
 typedump eda6b7b27938a7b9 dump 5ff10f861cb473c3
 typedump eda6b7b27938a7b9 full e3b0c44298fc1c14
 typedump eda6b7b27938a7b9 staged e3b0c44298fc1c14
+typedump edbf1dccd5687317 =@slot c9d9f76b459071dd
+typedump edbf1dccd5687317 =error == unsupported use c without the binding of rtclock.h in examples/realtime-control/.xo/cbind (a Go build or `xo bind --c` writes it) in examples/realtime-control/main.xo
 typedump edc6647a6bf8e1c7 =@slot 689bc2ce076541ae
 typedump edc6647a6bf8e1c7 =run accepted=false onlyStaged=true staged=2 other=
 typedump edc6647a6bf8e1c7 dump 3b10c098c0a2b01a

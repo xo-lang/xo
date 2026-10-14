@@ -143,6 +143,8 @@ typedump f1b53660389d80cb =run accepted=false onlyStaged=true staged=1 other=
 typedump f1b53660389d80cb dump bd22ff19c3566c87
 typedump f1b53660389d80cb full bde32f04883e4fc1
 typedump f1b53660389d80cb staged 10d9922e4a091e1c
+typedump f1b572feb02fbb68 =@slot 03e793e2a6d2f0f1
+typedump f1b572feb02fbb68 =error == unsupported use c without the binding of tiny.h in internal/selfhost/testdata/ssa/stage6c/.xo/cbind (a Go build or `xo bind --c` writes it) in internal/selfhost/testdata/ssa/stage6c/main.xo
 typedump f1cc49d474e0aaf6 =@slot ec0bfda590fac936
 typedump f1cc49d474e0aaf6 =run accepted=false onlyStaged=true staged=5 other=
 typedump f1cc49d474e0aaf6 dump 5bacb972596d7ac2
