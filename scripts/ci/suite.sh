@@ -14,6 +14,21 @@
 #   merge        the full tests of PACKAGE... (default: the touched ones)
 #   fixed-point  scripts/bootstrap-xo.sh with the checkout's xo (s2 == s3)
 #   full         every package with XO_SELFHOST_TIER=full
+#   measure DIR  bench/perf/DIR/measure.sh with main's xo and std, then
+#                with the checkout's; both outputs and new/base ratios
+#   plan SUITE [PACKAGE...]
+#                the workflow's job list for SUITE as JSON (one line,
+#                {"include": [{"name", "runner", "args"}]}): auto fans out
+#                to `short` on the small runner and the full tests, split
+#                by weight, plus the fixed point, on the big runners
+#   job ARGS     runs one planned job (ARGS: short, merge PACKAGE...,
+#                fixed-point, or merge-fp PACKAGE...: merge then the fixed
+#                point)
+#
+# auto's full tests: the touched packages, ./internal/selfhost and
+# ./cmd/xo when selfhost/ or std/ changed, ./internal/gen, llvm, and
+# arm64 when std/ changed, and PACKAGE... (the workflow's packages input)
+# on top.
 #
 # "Touched" means changed between $XO_CI_BASE (default origin/main) and
 # HEAD, from their merge base.
@@ -72,22 +87,113 @@ run_fixed_point() {
   end; return $rc
 }
 
+# auto's package list for the full tests (PACKAGE... added).
+auto_pkgs() {
+  local pkgs
+  pkgs="$(touched_pkgs) $*"
+  if has '^(selfhost|std)/'; then pkgs="$pkgs ./internal/selfhost ./cmd/xo"; fi
+  # std/ changes reach every backend's program output goldens
+  if has '^std/'; then pkgs="$pkgs ./internal/gen ./internal/llvm ./internal/arm64"; fi
+  echo $pkgs | tr ' ' '\n' | grep . | sort -u | tr '\n' ' '
+}
+
+# Seconds a package's full tests take on a big runner (2026-10-14
+# measurements, ci.md "Measurements"); the planner balances jobs by it.
+weight() {
+  case "$1" in
+    ./internal/llvm) echo 320 ;; ./internal/selfhost) echo 190 ;;
+    ./cmd/xo) echo 100 ;; ./internal/gen | ./internal/arm64) echo 90 ;;
+    ./internal/xotool) echo 45 ;; *) echo 30 ;;
+  esac
+}
+
+# plan_auto [PACKAGE...]: short on the small runner; the full tests
+# spread over the three big runners by weight (longest first, each to
+# the least loaded), the fixed point (150 s) counted as one more load.
+plan_auto() {
+  load_changed
+  local fp=0 p args=""
+  if needs_fixed_point; then fp=1; fi
+  for p in $(auto_pkgs "$@"); do args="$args $p=$(weight "$p")"; done
+  python3 - "$fp" $args <<'PY'
+import json, sys
+fp = sys.argv[1] == "1"
+w = {a.split("=")[0]: int(a.split("=")[1]) for a in sys.argv[2:]}
+pkgs = list(w)
+bins = [{"load": 0, "pkgs": [], "fp": False} for _ in range(3)]
+items = sorted(pkgs, key=lambda p: -w[p])
+if fp:
+    items = ["@fp"] + items
+for it in items:
+    b = min(bins, key=lambda b: b["load"])
+    if it == "@fp":
+        b["fp"] = True; b["load"] += 150
+    else:
+        b["pkgs"].append(it); b["load"] += w[it]
+jobs = [{"name": "short", "runner": "xo-arm64", "args": "short"}]
+for b in bins:
+    if not b["pkgs"] and not b["fp"]:
+        continue
+    if b["pkgs"] and b["fp"]:
+        jobs.append({"name": "full " + " ".join(p[2:] for p in b["pkgs"]) + " + fixed point", "runner": "xo-arm64-big", "args": "merge-fp " + " ".join(b["pkgs"])})
+    elif b["fp"]:
+        jobs.append({"name": "fixed point", "runner": "xo-arm64-big", "args": "fixed-point"})
+    else:
+        jobs.append({"name": "full " + " ".join(p[2:] for p in b["pkgs"]), "runner": "xo-arm64-big", "args": "merge " + " ".join(b["pkgs"])})
+print(json.dumps({"include": jobs}))
+PY
+}
+
+# measure DIR: main's xo (built from a worktree of $base) against the
+# checkout's, each with its own std, through bench/perf/DIR/measure.sh
+# <xo> <out> <backend...> (arm64 and llvm).
+run_measure() {
+  local dir=${1:?measure: bench/perf directory}
+  local m=bench/perf/$dir/measure.sh
+  [ -f "$m" ] || { echo "no $m"; return 2; }
+  head -20 "$m" | grep -q 'usage: .*<xo binary> <out dir> <backend' || { echo "$m does not take <xo> <out> <backend...>"; return 2; }
+  local out=$PWD/.tools/measure; rm -rf "$out"; mkdir -p "$out"
+  step "xo of $base"
+  git worktree remove --force "$out/base-tree" 2>/dev/null || true
+  git worktree add -q --detach "$out/base-tree" "$base"
+  local bx; bx=$(cd "$out/base-tree" && go run ./scripts/xobuild); echo "$bx"; end
+  step "xo of the checkout"; local nx; nx=$(go run ./scripts/xobuild); echo "$nx"; end
+  step "base"; sh "$out/base-tree/$m" "$bx" "$out/base" arm64 llvm | tee "$out/base.txt"; end
+  step "new"; sh "$m" "$nx" "$out/new" arm64 llvm | tee "$out/new.txt"; end
+  echo "new/base (instructions:u, minimum of the runs):"
+  awk 'FNR==NR{b[$1" "$2]=$3; next} ($1" "$2) in b && b[$1" "$2] > 0 {printf "  %s %s base %s new %s ratio %.3f\n", $1, $2, b[$1" "$2], $3, $3/b[$1" "$2]}' "$out/base.txt" "$out/new.txt"
+  git worktree remove --force "$out/base-tree"
+}
+
 case "$suite" in
   short) run_short ;;
   vet) step "go vet"; go vet $(all_pkgs); end ;;
   merge) if [ $# -gt 0 ]; then run_merge "$@"; else load_changed; run_merge $(touched_pkgs); fi ;;
   fixed-point) run_fixed_point ;;
+  measure) run_measure "$@" ;;
+  plan)
+    what=${1:?plan: SUITE}; shift
+    case "$what" in
+      auto) plan_auto "$@" ;;
+      full) echo '{"include":[{"name":"full tier","runner":"xo-arm64-big","args":"full"}]}' ;;
+      measure) echo "{\"include\":[{\"name\":\"measure $*\",\"runner\":\"xo-arm64-big\",\"args\":\"measure $*\"}]}" ;;
+      merge) echo "{\"include\":[{\"name\":\"merge $*\",\"runner\":\"xo-arm64-big\",\"args\":\"merge $*\"}]}" ;;
+      *) echo "{\"include\":[{\"name\":\"$what\",\"runner\":\"xo-arm64\",\"args\":\"$what\"}]}" ;;
+    esac ;;
+  job)
+    kind=${1:?job: ARGS}; shift
+    case "$kind" in
+      merge-fp) run_merge "$@"; run_fixed_point ;;
+      *) exec "$0" "$kind" "$@" ;;
+    esac ;;
   full) step "full tier"; XO_SELFHOST_TIER=full go test -timeout 120m $(all_pkgs); end ;;
   auto)
     load_changed
     echo "changed since $base:"; sed 's/^/  /' <<<"$files"
     run_short
-    pkgs=$(touched_pkgs)
-    if has '^(selfhost|std)/'; then pkgs="$pkgs ./internal/selfhost"; fi
-    # std/ changes reach every backend's program output goldens
-    if has '^std/'; then pkgs="$pkgs ./internal/gen ./internal/llvm ./internal/arm64"; fi
+    pkgs=$(auto_pkgs "$@")
     echo "packages for the full tests:" $pkgs
-    run_merge $(echo $pkgs | tr ' ' '\n' | sort -u)
+    run_merge $pkgs
     if needs_fixed_point; then run_fixed_point; else echo "fixed point: not needed for these paths"; fi
     ;;
   *) echo "unknown suite $suite" >&2; exit 2 ;;
