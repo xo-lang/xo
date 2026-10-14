@@ -1020,6 +1020,18 @@ fn (g: Gen) arch() -> Str {
   if g.goarch.is_empty() { "arm64" } else { g.goarch }
 }
 
+/// The personality routine the unwind tables name (decision 0221): the
+/// runtime's export xo_x_personality (std/native/llrt/cabi.xo, defined
+/// in the module), but the C xo_personality on Windows (decision 0197)
+/// and on linux/amd64, whose C library builds still unwind with libgcc
+/// until decision 0221's stage 2.
+fn (g: Gen) personality() -> Str {
+  if g.os() == "windows" || (g.os() == "linux" && g.arch() == "amd64") {
+    return "xo_personality"
+  }
+  "xo_x_personality"
+}
+
 /// The rt_sigreturn trampoline that rt_sigaction's sa_restorer names
 /// (decision 0206), written at its first use: a naked function of the
 /// system call, 139 on arm64 and 15 on x86_64.

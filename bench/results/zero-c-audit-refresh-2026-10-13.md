@@ -414,8 +414,10 @@ frees the 533 (a) lines.)
   reader for Windows, so no C lines are deleted yet (xo_rt.c +77 -16,
   most of it comments and the macOS and Linux fault_raise): they go with
   stage 2, which needs an amd64 machine to verify on. A 3 line C
-  forwarder xo_personality stays until the emitters name
-  xo_x_personality and a seed has them. The original note follows.
+  forwarder xo_personality stays until a seed's emitters name
+  xo_x_personality (the emitters do since 2026-10-14, decision 0221
+  point 7; the next seed after that lets it go). The original note
+  follows.
   MISSING: a DWARF CFI unwinder over .eh_frame and
   .eh_frame_hdr in Xo, and a register restore and resume intrinsic;
   the personality routine (1974-2021) and LSDA reader (1880-1927) as a

@@ -1555,7 +1555,8 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	fault_exit(c);
 }
 #elif !defined(XO_UNWIND_LIBGCC)
-int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers);
+int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old);
+int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #ifdef XO_NOLIBC
 int xo_personality(void); // the link's --defsym of xo_x_personality
 #else
@@ -1565,13 +1566,15 @@ int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
 // fault_raise on Linux (decision 0221): the unwinder is Xo
 // (std/native/llrt/unwind.xo over the .eh_frame_hdr tables of the
 // program and its shared objects), which runs the first landing pad of
-// a frame of generated code (its personality is xo_personality) below
-// the context's boundary, and returns when nothing catches the fault.
+// a frame of generated code (its personality is xo_x_personality, or
+// the forwarder xo_personality that an xo before decision 0221's
+// emitter change names) below the context's boundary, and returns when
+// nothing catches the fault.
 XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_personality));
+	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality));
 	fault_exit(c);
 }
 #else
@@ -1722,11 +1725,13 @@ xo_rstr *xo_fault_loc(int64_t *len) {
 // specific data is GCC's: an LPStart and a TType encoding (omitted), the
 // call site encoding, and the call sites (start, length, landing pad,
 // action), offsets from the function's start. It is Xo (decision 0221:
-// unwind.xo darwin_personality, the export xo_x_personality) but on
-// Windows and glibc linux/amd64; on Linux the Xo unwinder only compares
-// a frame's personality with its address. With no C library the link
-// defines xo_personality as the export; otherwise it is the forwarder
-// below, until the emitters name the export and a seed has them.
+// unwind.xo darwin_personality, the export xo_x_personality, which the
+// emitters name) but on Windows and glibc linux/amd64; on Linux the Xo
+// unwinder only compares a frame's personality with its address. With
+// no C library the link defines xo_personality as the export; otherwise
+// it is the forwarder below, for code from an xo whose emitters still
+// name xo_personality (the seed 0.11.0 builds the next xo with them):
+// delete it once the seed names the export.
 #if !defined(_WIN32) && !defined(XO_UNWIND_LIBGCC) && !defined(XO_NOLIBC)
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 

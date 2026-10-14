@@ -4,7 +4,7 @@
 _xo_f_main:
 Lf1_begin:
 	.cfi_startproc
-	.cfi_personality 155, _xo_personality
+	.cfi_personality 155, _xo_x_personality
 	.cfi_lsda 16, GCC_except_table_xo1
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
@@ -162,7 +162,7 @@ Lf1_cs1b:
 _xo_f_sieve:
 Lf2_begin:
 	.cfi_startproc
-	.cfi_personality 155, _xo_personality
+	.cfi_personality 155, _xo_x_personality
 	.cfi_lsda 16, GCC_except_table_xo2
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
