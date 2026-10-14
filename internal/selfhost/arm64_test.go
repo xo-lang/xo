@@ -36,6 +36,7 @@ func arm64Heavy(d string) bool { return mergeHeavy(d) || d == "selfhost/parser" 
 // XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_KEEP=<dir> writes arm64-<backend>.txt (the counts).
 func TestSelfhostArm64(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		backends = []string{v}
@@ -95,6 +96,7 @@ func TestSelfhostArm64(t *testing.T) {
 // tier, none with -short; XO_SELFHOST_ARM64_FUZZ=N and XO_SELFHOST_SEED
 // override. The go backend, or the one XO_SELFHOST_BACKEND names.
 func TestSelfhostArm64Mutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources")
 	}

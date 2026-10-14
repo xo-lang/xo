@@ -50,6 +50,7 @@ var genHeavy = map[string]bool{
 // one backend, XO_SELFHOST_KEEP=<dir> writes gen-<backend>.txt (the
 // counts).
 func TestSelfhostGen(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		backends = []string{v}
@@ -113,6 +114,7 @@ func TestSelfhostGen(t *testing.T) {
 // TestSelfhostSSAMutations): 300 in the full tier, 60 in the merge tier,
 // none with -short; XO_SELFHOST_GEN_FUZZ=N and XO_SELFHOST_SEED override.
 func TestSelfhostGenMutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources")
 	}

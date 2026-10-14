@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"unicode/utf8"
 )
 
@@ -102,6 +103,21 @@ const (
 	// the first hex digit of the unit id.
 	goldShards = 16
 )
+
+// skipDumpReplay skips a test whose only check is the recorded replay of
+// a back end or mutation dump (SSA, arm64, LLVM, Go generator, defhash,
+// checker mutations and hatches) unless XO_SELFHOST_DUMPS=all or the run
+// records (decision 0217): an intended compiler change would otherwise
+// need a 25 to 40 minute re-recording. Program output goldens, the fixed
+// point, and the front end replays (lexer, parser, format, checker) stay
+// on.
+func skipDumpReplay(t *testing.T) {
+	t.Helper()
+	if os.Getenv("XO_SELFHOST_DUMPS") == "all" || goldensRecording() {
+		return
+	}
+	t.Skip("recorded back end dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it")
+}
 
 // goldensMode is $XO_SELFHOST_GOLDENS (replay when unset).
 func goldensMode() string {

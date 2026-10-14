@@ -36,6 +36,7 @@ var modFixtures = []string{
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerModuleMutations(t *testing.T) {
+	skipDumpReplay(t)
 	n := byTier(t, 40, 400, 400)
 	if v := os.Getenv("XO_SELFHOST_MOD_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)

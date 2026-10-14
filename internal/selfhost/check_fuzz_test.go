@@ -39,6 +39,7 @@ import (
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerMutations(t *testing.T) {
+	skipDumpReplay(t)
 	n := byTier(t, 150, 1000, 1000)
 	if v := os.Getenv("XO_SELFHOST_CHECK_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
