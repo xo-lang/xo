@@ -39,7 +39,7 @@ jobs:
     runs-on: [self-hosted, "${{ inputs.runner }}"]
     timeout-minutes: ${{ inputs.suite == 'full' && 150 || 90 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
