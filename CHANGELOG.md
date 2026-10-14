@@ -11,6 +11,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   gives `/`. The toolchain uses it instead of `$PWD`, so `xo lsp` started
   without a shell (VS Code from the macOS Dock passes `PWD=/`) resolves
   std paths again and Go to Definition into std works.
+- Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
+  the newest seed (release N-1) from a private S3 bucket with the aws
+  CLI, checks its sha256, and builds its xo in one hop
+  (internal/xotool); a failed fetch is an error naming the cause, and
+  the go-compiler-final root and the seed chain run only when asked for
+  (`XO_SEED_FALLBACK=chain`, `go run ./scripts/xobuild --from-source`). `scripts/seed-pack.sh XO OUTDIR` packs a built xo as a
+  seed. `XO_SEED_BUCKET` and `XO_SEED_URL` choose the location.
 - The Go implementation of the compiler is deleted (decision 0215): Go
   cmd/xo, the hidden comparison dumps, and the Go compiler packages
   (lexer, parser, checker, SSA builder, Go, arm64, and LLVM emitters,

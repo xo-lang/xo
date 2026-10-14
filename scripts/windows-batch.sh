@@ -5,8 +5,10 @@
 # runs it there and fetches the log.
 #
 #   1. go run ./scripts/xobuild: an earlier xo, or the xo1 of the
-#      go-compiler-final commit, builds xo1, the shipped xo, from selfhost/xo
-#      with the Go backend;
+#      go-compiler-final commit through the seed chain (opted in with
+#      XO_SEED_FALLBACK=chain: there is no Windows seed yet, decision
+#      0216), builds xo1, the shipped xo, from selfhost/xo with the Go
+#      backend;
 #   2. xo1 builds every LLVM golden for windows/amd64 and runs it
 #      (TestGoldenWant with XO_GOLDEN_WANT_XO), then cross builds them all
 #      for windows/arm64 (not run: no host);
@@ -31,7 +33,7 @@ want() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
 if want 1; then
   # decision 0215: an earlier xo (else the go-compiler-final seed, built
   # with Go) builds bin/xo.exe with the Go backend (internal/xotool)
-  if built=$(go run ./scripts/xobuild) && cp "$built" "$xo1"; then
+  if built=$(XO_SEED_FALLBACK=${XO_SEED_FALLBACK:-chain} go run ./scripts/xobuild) && cp "$built" "$xo1"; then
     say "1 xo1 built: $xo1"
   else
     say "1 FAIL: building xo1"; failed=$((failed + 1))

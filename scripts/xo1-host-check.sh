@@ -14,7 +14,7 @@
 # Steps, each logged with its wall clock time and peak memory
 # (/usr/bin/time: the largest process's maximum resident set; on Linux
 # also the machine's peak memory in use, sampled every 5 s):
-#   1. go run ./scripts/xobuild with a fresh XO_CHECKOUT_CACHE: the xo1
+#   1. go run ./scripts/xobuild --from-source with a fresh XO_CHECKOUT_CACHE: the xo1
 #      of the go-compiler-final commit (built with Go) builds the
 #      checkout's selfhost/xo
 #   2. that xo1 builds a hello program with the native backend; the
@@ -85,7 +85,7 @@ say "cpus $( (sysctl -n hw.ncpu || nproc) 2>/dev/null), memory $( (sysctl -n hw.
 say "commit $(git rev-parse --short HEAD 2>/dev/null)"
 
 export XO_CHECKOUT_CACHE=$out/cache
-timed xo1build go run ./scripts/xobuild || { tail -30 "$out/xo1build.err" >&2; exit 1; }
+timed xo1build go run ./scripts/xobuild --from-source || { tail -30 "$out/xo1build.err" >&2; exit 1; }
 xo1=$(tail -1 "$out/xo1build.log")
 [ -x "$xo1" ] || { say "FAIL: no xo1 ($xo1)"; exit 1; }
 mkdir -p "$out/hello"
