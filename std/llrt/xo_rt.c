@@ -101,10 +101,6 @@ static int64_t xo_mid_max = XO_MID_MAX;
 #define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
 
 typedef void (*xo_drop_fn)(void *);
-typedef struct {
-	void *obj;
-	xo_drop_fn drop;
-} xo_deferred;
 
 // A free deferred by a real-time section (decision 0133, "Real-time
 // sections" below): what reached a count of zero and how to free it.
@@ -146,10 +142,11 @@ typedef struct xo_heap {
 	void *free_lists[XO_NCLASS + 1];
 	int64_t nfree[XO_NCLASS + 1]; // blocks on each free list (about: a magazine taken counts as full)
 	void *mag[XO_NCLASS + 1];     // a full magazine per class (threaded: free_mt)
-	// the worklist of xo_rc_defer
-	xo_deferred *defer_q;
+	// the worklist of xo_rc_defer (std/native/llrt/obj.xo rc_defer):
+	// pairs of words {object, drop}, from malloc
+	void *defer_q;
 	int64_t defer_n, defer_cap;
-	int defer_busy;
+	int64_t defer_busy;
 	struct xo_heap *next;  // all heaps, for the leak check
 	struct xo_heap *spare; // the list of heaps of exited threads
 	// the frees deferred by real-time sections (a fixed queue, so
@@ -161,6 +158,7 @@ typedef struct xo_heap {
 #include <stddef.h>
 _Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) == 56 && offsetof(xo_heap, central) == 64 && offsetof(xo_heap, last_size) == 72, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second
@@ -394,6 +392,29 @@ static void *xo_resize(void *p, int64_t old, int64_t n) {
 
 void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 
+// The lists in Xo (zero-C audit B13): std/native/llrt/obj.xo
+// through cabi.xo's obj_* exports. hw is the heap word they take: the
+// calling thread's heap record, plus 1 when other threads run (obj.xo
+// then takes alloc_mt's, free_mt's, and xo_resize's paths).
+int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
+int64_t xo_x_obj_rl_copy(int64_t hw, int64_t l, int64_t esize, int64_t dup, int64_t drop);
+void xo_x_obj_rl_share(int64_t l, int64_t esize, int64_t share);
+int64_t xo_x_obj_rl_grow(int64_t hw, int64_t l, int64_t esize);
+void xo_x_obj_rl_free(int64_t hw, int64_t l, int64_t esize, int64_t drop);
+void xo_x_obj_rc_defer(int64_t h, int64_t obj, int64_t drop);
+
+__attribute__((noinline)) static int64_t hw_slow(void) { return (int64_t)(intptr_t)heap_slow() | 1; }
+
+static inline __attribute__((always_inline)) int64_t hw(void) {
+	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
+	if (__builtin_expect(!h, 0)) {
+		return hw_slow();
+	}
+	return (int64_t)(intptr_t)h;
+}
+
+#define XO_HW_HEAP(w) ((xo_heap *)(intptr_t)((w) & ~(int64_t)1))
+
 // rt_defer queues a free in the calling thread's real-time section; it
 // returns 0 when no section runs or the queue is full (the caller frees
 // at once).
@@ -416,32 +437,13 @@ void xo_rc_free(void *p) {
 // closures capturing closures) uses a worklist, not the C stack. Marking
 // a value shared uses the same worklist (drop is then the function that
 // marks the children of a box or an environment). The worklist is the
-// calling thread's.
+// calling thread's (obj.xo rc_defer).
 void xo_rc_defer(void *obj, xo_drop_fn drop) {
 	xo_heap *h = heap();
 	if (__builtin_expect(h->rt_depth != 0, 0) && !h->defer_busy && rt_defer(h, RT_DEFER, obj, 0, (void *)drop)) {
 		return;
 	}
-	if (h->defer_busy) {
-		if (h->defer_n == h->defer_cap) {
-			h->defer_cap = h->defer_cap < 64 ? 64 : h->defer_cap * 2;
-			h->defer_q = realloc(h->defer_q, (size_t)h->defer_cap * sizeof(xo_deferred));
-			if (!h->defer_q) {
-				xo_oom();
-			}
-		}
-		h->defer_q[h->defer_n].obj = obj;
-		h->defer_q[h->defer_n].drop = drop;
-		h->defer_n++;
-		return;
-	}
-	h->defer_busy = 1;
-	drop(obj);
-	while (h->defer_n > 0) {
-		h->defer_n--;
-		h->defer_q[h->defer_n].drop(h->defer_q[h->defer_n].obj);
-	}
-	h->defer_busy = 0;
+	XO_INLINE_CALL xo_x_obj_rc_defer((int64_t)(intptr_t)h, (int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop);
 }
 
 // ---------------------------------------------------------------------------
@@ -827,12 +829,11 @@ typedef void (*xo_elem_fn)(void *);
 
 static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
 
+// xo_rl_new is an empty list with room for cap elements (obj.xo rl_new).
 xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
-	xo_rlist *l = xo_alloc((int64_t)sizeof(xo_rlist) + cap * esize);
-	l->rc = 1;
-	l->len = 0;
-	l->cap = cap;
-	return l;
+	int64_t l;
+	XO_INLINE_CALL l = xo_x_obj_rl_new(hw(), cap, esize);
+	return (xo_rlist *)(intptr_t)l;
 }
 
 // xo_rl_new_n is an empty list with room for n elements (at least 4):
@@ -841,68 +842,38 @@ xo_rlist *xo_rl_new_n(int64_t n, int64_t esize) { return xo_rl_new(n < 4 ? 4 : n
 
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
 
-// xo_rl_copy is the slow path of `reuse`: l's count is not 1. A shared
-// list held only by the caller (xo_rc_claim) is updated in place.
-// Otherwise the update goes to a copy, which holds its own references to
-// the elements (dup), and l loses the one the caller gave up (freed with
-// drop when the other references went meanwhile).
+#define XO_A(p) ((int64_t)(intptr_t)(p))
+
+// xo_rl_copy is the slow path of `reuse`: l's count is not 1 (obj.xo
+// rl_copy).
 __attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup, xo_elem_fn drop) {
-	if (xo_rc_claim(&l->rc)) {
-		return l;
-	}
-	int64_t cap = l->len < 4 ? 4 : l->len;
-	xo_rlist *n = xo_rl_new(cap, esize);
-	n->len = l->len;
-	memcpy(rl_data(n), rl_data(l), (size_t)(l->len * esize));
-	if (dup) {
-		for (int64_t i = 0; i < l->len; i++) {
-			dup(rl_data(n) + i * esize);
-		}
-	}
-	if (xo_rc_dec(&l->rc)) {
-		xo_rl_free(l, esize, drop);
-	}
-	return n;
+	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy(hw(), XO_A(l), esize, XO_A(dup), XO_A(drop));
 }
 
 // xo_rl_share marks the elements of a list that was just marked shared
-// (share is the generated element callback; boxes and environments
-// below go through xo_rc_defer's worklist, so the C stack is bounded by
-// the nesting of types, not of values).
-void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) {
-	for (int64_t i = 0; i < l->len; i++) {
-		share(rl_data(l) + i * esize);
-	}
-}
+// (obj.xo rl_share; boxes and environments below go through
+// xo_rc_defer's worklist, so the stack is bounded by the nesting of
+// types, not of values).
+void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) { xo_x_obj_rl_share(XO_A(l), esize, XO_A(share)); }
 
-// xo_rl_grow doubles the capacity of a unique full list.
-__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) {
-	if (l->rc == XO_RC_IMMORTAL) {
-		// the shared empty list of an empty literal (xo_rl_empty): the
-		// arm64 backend makes `[]` without allocating, and the first
-		// push (to a list the compiler knows is unique) lands here
-		return xo_rl_new(4, esize);
-	}
-	int64_t cap = l->cap < 4 ? 4 : l->cap * 2;
-	int64_t hdr = (int64_t)sizeof(xo_rlist);
-	xo_rlist *n = xo_resize(l, hdr + l->cap * esize, hdr + cap * esize);
-	n->cap = cap;
-	return n;
-}
+// xo_rl_grow doubles the capacity of a unique full list (obj.xo rl_grow).
+__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow(hw(), XO_A(l), esize); }
 
 // xo_rl_free frees a list whose count reached zero, releasing its
-// elements first.
+// elements first (obj.xo rl_free); a real-time section defers it.
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
-	xo_heap *h = heap();
+	int64_t w = hw();
+	xo_heap *h = XO_HW_HEAP(w);
 	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_LIST, l, esize, (void *)drop)) {
 		return;
 	}
-	if (drop) {
-		for (int64_t i = 0; i < l->len; i++) {
-			drop(rl_data(l) + i * esize);
-		}
+	if (!drop) {
+		// no elements to release: the free alone (obj.xo's loop would
+		// save its registers on this path too)
+		xo_free(l);
+		return;
 	}
-	xo_free(l);
+	xo_x_obj_rl_free(w, XO_A(l), esize, XO_A(drop));
 }
 
 // ---------------------------------------------------------------------------
