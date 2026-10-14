@@ -723,10 +723,10 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 // XO_RT_NO_MAIN's constructor).
 void xo_x_ctx_init(int64_t root, int64_t pl);
 static int64_t ctx_root(int64_t a, int64_t b);
-static int64_t pool_addr(void);
+static int64_t svc_addr(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	xo_x_ctx_init(XO_ADDR(ctx_root), pool_addr());
+	xo_x_ctx_init(XO_ADDR(ctx_root), svc_addr());
 }
 
 // ---------------------------------------------------------------------------
@@ -2019,9 +2019,32 @@ static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), 
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
 
-// pool_addr is the pool record's address for ctx.xo (budget.xo cancels
-// a scope's node through pool.xo).
-static int64_t pool_addr(void) { return XO_ADDR(&pool); }
+static void task_free(void *p);
+static void scope_free(void *p);
+
+// The services record of ctx.xo (SV_*): the pool record (budget.xo and
+// tasks.xo reach pool.xo through it), the free functions of a task and a
+// scope (tasks.xo makes them), whether ThreadSanitizer is on, and the
+// statistics' switch.
+static struct {
+	void *pool;
+	void (*task_free)(void *);
+	void (*scope_free)(void *);
+	int64_t tsan;
+	int *stats;
+} svc = {&pool, task_free, scope_free,
+#ifdef XO_TSAN_ANN
+	1,
+#else
+	0,
+#endif
+	&rtstats};
+
+_Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
+                   offsetof(__typeof__(svc), stats) == 32,
+               "ctx.xo SV_*");
+
+static int64_t svc_addr(void) { return XO_ADDR(&svc); }
 
 XO_NORETURN static void deadlock(void) {
 	xo_flush();
@@ -2248,22 +2271,6 @@ static void scope_free(void *p) {
 	xo_free(s);
 }
 
-xo_scope *xo_scope_open(void) {
-	xo_ctx *c = ctx();
-	xo_scope *s = xo_alloc(sizeof(xo_scope));
-	memset(s, 0, sizeof *s);
-	h_init(s, scope_free);
-	s->prune_at = 64;
-	s->parent_node = c->node;
-	node_link(&s->body, c->node);
-	s->tasks = calloc(1, sizeof(xo_node));
-	if (!s->tasks) {
-		xo_oom();
-	}
-	node_link(s->tasks, &s->body);
-	c->node = &s->body;
-	return s;
-}
 
 // xo_scope_group is `s.group()` (tasks.xo scope_group).
 int64_t xo_x_scope_group(int64_t s);
@@ -2392,16 +2399,6 @@ static void dequeued(xo_task *t) {
 // close never prunes (its helpers walk the list without the lock), and a
 // spawn prunes only when the list doubled since the last time.
 
-// scope_drop_pruned unlinks the pruned tasks' nodes and drops the list's
-// references (without s->mu: a task's result may run drop code).
-static void scope_drop_pruned(xo_task *dead) {
-	while (dead) {
-		xo_task *next = dead->snext;
-		node_unlink(&dead->node);
-		h_release(dead);
-		dead = next;
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2723,6 +2720,27 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 19: // drop a reference to handle a (h_release)
 		h_release((void *)(intptr_t)a);
 		return 0;
+	case 20: // the pool's setup, once (tasks.xo's first spawn)
+		pthread_once(&pool.once, pool_init);
+		return 0;
+	case 21: // the calling root thread's worker record, made on first use
+		return XO_ADDR(root_worker());
+	case 22:
+		TSAN_RELEASE((void *)(intptr_t)a);
+		return 0;
+	case 23:
+		TSAN_ACQUIRE((void *)(intptr_t)a);
+		return 0;
+	case 24: { // scope a closes: its deadline's timer goes
+		xo_scope *s = (xo_scope *)(intptr_t)a;
+		timer_del(s->deadline);
+		free(s->deadline);
+		s->deadline = NULL;
+		return 0;
+	}
+	case 25: // free handle a, whose last reference went (tasks.xo h_release)
+		xo_h_free((void *)(intptr_t)a);
+		return 0;
 	}
 	(void)b;
 	return 0;
@@ -2768,50 +2786,29 @@ _Static_assert(offsetof(xo_fiber, mem) == 8 && offsetof(xo_fiber, size) == 16 &&
                    XO_FCACHE == 8 && XO_FIBER_CACHE == 64 && XO_WIN_FIBER_COMMIT == 65536,
                "pool.xo F_*");
 
-// xo_task_spawn starts a task in scope s (`s.spawn(f)`, flags bit 0:
-// background, bit 1: its handle is bound and awaited, so its error does
-// not fail the scope). fl is the closure in a list of one (consumed);
-// run is the entry function that calls it, drop the one that releases
-// its result list, fdrop the one that releases fl (a spawn on a scope
-// that has ended faults and gives it back, decision 0085). site tells the
-// scope which spawn failed.
+// The spawn and the scope's open and close are tasks.xo's (B18 part 2),
+// which generated code calls through its exports; these forward for
+// older xo's code.
+int64_t xo_x_task_spawn(int64_t s, int64_t fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, int64_t lp, int64_t ln);
+int64_t xo_x_scope_open(void);
+int64_t xo_x_scope_close(int64_t s, int64_t mode);
+
 xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, const char *loc, int64_t n) {
-	pthread_once(&pool.once, pool_init);
-	STAT(spawn);
-	xo_worker *w = w_get();
-	if (!w) {
-		w = root_worker();
-	}
-	xo_task *t = xo_alloc(sizeof(xo_task));
-	memset(t, 0, sizeof *t);
-	h_init(t, task_free);
-	// references: the handle returned, and the scope's list (which keeps
-	// t alive while a queue holds it)
-	t->h.rc = -2;
-	t->run = (xo_run_fn)run;
-	t->drop = (xo_ldrop)drop;
-	t->fl = fl;
-	t->background = (int)(flags & 1);
-	t->consumed = (int)((flags >> 1) & 1);
-	t->site = site;
-	// the spawning context's budget (decision 0175)
-	t->bud = ctx()->bud;
-	bud_retain(t->bud);
-	// linked into s, counted, and queued in Xo (decision 0212 stage 2,
-	// pool.xo scope_add): the tasks it pruned from s's list, or -1 when s
-	// has ended
-	TSAN_RELEASE(t);
-	int64_t r = xo_x_scope_add(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(t), XO_ADDR(w));
-	if (r == -1) {
-		bud_release(t->bud);
-		xo_free(t);
-		list_release(fl, (xo_ldrop)fdrop);
-		fault_at("a task was started on a scope that has ended", loc, n);
-	}
-	xo_task *dead = (xo_task *)(intptr_t)r;
-	scope_drop_pruned(dead);
-	return t;
+	return (xo_task *)(intptr_t)xo_x_task_spawn(XO_ADDR(s), XO_ADDR(fl), run, drop, fdrop, flags, site, XO_ADDR(loc), n);
 }
+
+xo_scope *xo_scope_open(void) { return (xo_scope *)(intptr_t)xo_x_scope_open(); }
+
+int64_t xo_scope_close(xo_scope *s, int64_t mode) { return xo_x_scope_close(XO_ADDR(s), mode); }
+
+_Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && offsetof(xo_task, fl) == 104 &&
+                   offsetof(xo_task, background) == 124 && offsetof(xo_task, snext) == 168 && offsetof(xo_task, bud) == 208 &&
+                   sizeof(xo_task) == 216 && offsetof(xo_hdr, free) == 8,
+               "tasks.xo T_*, H_FREE");
+_Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list) == 384 && offsetof(xo_scope, closed) == 400 &&
+                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
+                   sizeof(xo_scope) == 464 && offsetof(__typeof__(pool), ncpu) == 8,
+               "tasks.xo S_*, P_NCPU");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
 // (B18), which generated code calls through its exports; these forward
@@ -2849,78 +2846,6 @@ _Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 11
                "tasks.xo T_*");
 _Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 && offsetof(xo_scope, fault) == 424, "tasks.xo S_*");
 
-// xo_scope_close ends scope s (core 7.1 exit rules). mode 0: the body
-// completed (background tasks are canceled); 1: it exits early (return,
-// break, an error: every task is canceled); 2: it unwinds (canceled).
-// It runs the tasks nobody started, waits for every task, and returns 1
-// when a child failed and its error must propagate out of the scope (an
-// unwinding body then stops unwinding), else 0.
-int64_t xo_scope_close(xo_scope *s, int64_t mode) {
-	xo_ctx *c = ctx();
-	if (s->deadline) {
-		timer_del(s->deadline);
-		free(s->deadline);
-		s->deadline = NULL;
-	}
-	lk(&s->mu);
-	s->closing = 1; // no pruning from here: the helpers below walk the list unlocked
-	if (mode == 0) {
-		for (xo_task *t = s->list; t; t = t->snext) {
-			if (t->background) {
-				node_cancel(&t->node);
-			}
-		}
-	} else {
-		node_cancel(s->tasks);
-	}
-	unlk(&s->mu);
-	// in Xo (decision 0212 stage 2, pool.xo scope_join): the same help,
-	// then the wait (not a cancellation point) for every task's end and
-	// every queue entry
-	flush_pending();
-	bud_pause(c); // helping and waiting are not the closer's running time
-	int64_t f, rw;
-	wait_where(&f, &rw);
-	xo_x_scope_join(XO_ADDR(&pool), XO_ADDR(s), XO_ADDR(c), f, rw);
-	TSAN_ACQUIRE(&c->park);
-	bud_resume(c);
-	lk(&s->mu);
-	s->closed = 1;
-	xo_task *list = s->list;
-	s->list = NULL;
-	unlk(&s->mu);
-	// the tasks' nodes hang below s->tasks (and the nodes s.cancel()
-	// replaced): unlink those before the tasks go
-	node_unlink(s->tasks);
-	for (int i = 0; i < s->nold; i++) {
-		node_unlink(s->old[i]);
-	}
-	node_unlink(&s->body);
-	while (list) {
-		xo_task *next = list->snext;
-		h_release(list);
-		list = next;
-	}
-	c->node = s->parent_node;
-	if (c->faulting) {
-		// the body's own fault goes on (decision 0085)
-		return 0;
-	}
-	if (s->fault) {
-		// a task faulted: the caller raises its fault here
-		return 3;
-	}
-	if (!s->fail) {
-		return 0;
-	}
-	if (mode == 2) {
-		if (node_canceled(s->parent_node)) {
-			return 0; // canceled from outside: keep unwinding
-		}
-		c->unwinding = 0;
-	}
-	return 1;
-}
 
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)

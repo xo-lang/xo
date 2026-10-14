@@ -528,9 +528,9 @@ fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 
 fn ctx_unwinding() -> Int { ctx.unwinding() }
 
-/// The addresses of xo_rt.c ctx_root and its pool record, at start
+/// The addresses of xo_rt.c ctx_root and its services record, at start
 /// (ctx.xo init).
-fn ctx_init(root: Int, pl: Int) { ctx.init(root, pl) }
+fn ctx_init(root: Int, svc: Int) { ctx.init(root, svc) }
 
 // Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
 // open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and
@@ -582,3 +582,9 @@ fn prog_group_set(s: Int) { tasks.prog_group_set(s) }
 fn prog_group_clear() { tasks.prog_group_set(0) }
 
 fn prog_group() -> Int { tasks.prog_group() }
+
+fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { tasks.task_spawn(s, fl, run, drop, fdrop, flags, site, lp, ln) }
+
+fn scope_open() -> Int { tasks.scope_open() }
+
+fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
