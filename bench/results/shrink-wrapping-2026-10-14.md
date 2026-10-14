@@ -51,9 +51,9 @@ rt.heap_grow are tail calls, so it has no frame).
 
 ## B13's stage 2 on top of the change (std/native/llrt/obj.xo)
 
-B13's method: one xo, two std trees through `XO_STD`, A at 12a9408f (the
-C list objects) and B at b6ad4e82 (the Xo list objects). The xo is
-b6ad4e82's (no change) or b6ad4e82 with this change cherry-picked
+B13's method: one xo, two std trees through `XO_STD`, A at 5733ae10 (the
+C list objects) and B at 3da29c8b (the Xo list objects). The xo is
+3da29c8b's (no change) or 3da29c8b with this change cherry-picked
 (scratch worktree; the branches are not merged). B / A:
 
 | Workload | B13's xo | with shrink wrapping |
@@ -109,3 +109,13 @@ neither inlined), so there is no frameless path to wrap.
    the call (it is stored from the argument).
 3. Shrink wrapping with landing pads (excluded now): a pad's block needs
    the frame; its region could include the pads' blocks.
+
+## Verification (linux/arm64, EC2 queue, commit a7f05222 after merging main)
+
+Warm r8g (i-EXAMPLE06), seed 0.10.0-23ce8ce2: `xo dev goldens
+--force` 182 of 182 on arm64 and 182 of 182 on LLVM, internal/arm64
+TestGoldenAsm. Warm r8g.8xlarge (i-EXAMPLE01): go vet and
+`go test -short` clean, scripts/bootstrap-xo.sh: s2 and s3 assembly
+identical (297,336,303 bytes) and binaries identical (53,485,152 bytes).
+On the Mac: the 29 fault, unwind, contract, and task goldens on arm64
+(`--only`, darwin's compact unwind) pass.
