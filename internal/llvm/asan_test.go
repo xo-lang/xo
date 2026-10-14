@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -9,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestGoldenASan builds the network goldens (net_echo and the http_*
@@ -23,7 +22,7 @@ func TestGoldenASan(t *testing.T) {
 		t.Skip("builds golden programs with AddressSanitizer")
 	}
 	t.Parallel() // builds nothing in the shared build directory
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "http_*"))
@@ -40,22 +39,17 @@ func TestGoldenASan(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, ok, err := build.CheckNative([]string{dir}, false)
-			if err != nil || !ok {
-				t.Fatalf("check: %v", err)
-			}
-			abs, _ := filepath.Abs(dir)
-			prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
+			ir, err := xotool.LLVMIR(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			ll := filepath.Join(t.TempDir(), "prog.ll")
-			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+			if err := os.WriteFile(ll, ir, 0o644); err != nil {
 				t.Fatal(err)
 			}
 			bin := exe(filepath.Join(t.TempDir(), "prog"))
-			flags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module"), build.IOFlags(prog.IR)...)
-			if err := build.CompileC(flags, []string{ll, rt}, bin); err != nil {
+			flags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module"), xotool.IOFlags(ir)...)
+			if err := xotool.CompileC(flags, []string{ll, rt}, bin); err != nil {
 				if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 					t.Skipf("no AddressSanitizer: %v", err)
 				}

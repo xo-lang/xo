@@ -6,8 +6,12 @@
 #
 #   scripts/bootstrap-xo.sh SEED [OUTDIR]
 #
-# SEED is an xo that builds selfhost/xo with the host's native backend:
-# the previous release's binary, or a self hosted xo1. The backend is
+# SEED is a self hosted xo that builds selfhost/xo with the host's native
+# backend: the previous release's bin/xo, an earlier build of the
+# checkout's bin/xo, or, with no xo at all, the xo1 of the
+# go-compiler-final tag (decision 0215: the last commit with the Go
+# compiler; `go run ./scripts/xobuild` builds it once with Go and caches
+# it, internal/xotool). Every stage gets the checkout's std (--std). The backend is
 # $XO_BOOTSTRAP_BACKEND, by default arm64 on an arm64 host and llvm on
 # an x86-64 host (where xo1 is built by the LLVM backend; the LLVM
 # builds are split into $XO_LLVM_SPLIT modules, default 12, without LTO
@@ -28,9 +32,14 @@
 # their other programs), GOROOT unset, and XO_GO pointing at nothing, so
 # a step that still needs Go fails instead of finding it. The C compiler
 # (clang, or $XO_CC) is the one tool needed. Last: s3 builds and runs a
-# hello program. s1 is built without --asm (a Go `xo` seed has no such
-# flag), s2 and s3 with it. Exit status 0 when every step passes; the log is
+# hello program. s1 is built without --asm (the seed's assembly is not
+# compared), s2 and s3 with it. Exit status 0 when every step passes; the log is
 # OUTDIR/log.txt, the timings OUTDIR/times.txt.
+#
+# XO_SEED_CHAIN="COMMIT[:STDCOMMIT] ..." or "file": before s1, the seed
+# builds each hop's selfhost/xo in turn (decision 0216 item 2: a seed
+# older than an intrinsic the sources use builds an intermediate first;
+# "file" takes the hops recorded in scripts/seed-chain.txt).
 #
 # XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
 # lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
@@ -74,7 +83,6 @@ IFS=$oldifs
 export PATH=$newpath
 unset GOROOT GOPATH GOFLAGS GOTOOLCHAIN 2>/dev/null || true
 export XO_GO=/nonexistent/go
-export XO_SELF_DRIVER=1
 export XO_BIN_CACHE=off
 export XO_RTPACK=${XO_BOOTSTRAP_RTPACK:-off}
 backend=${XO_BOOTSTRAP_BACKEND:-}
@@ -100,13 +108,43 @@ stage() {
   say "s$n: $bin builds selfhost/xo"
   t0=$(date +%s)
   if XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" XO_TLS_CACHE="$out/cache-s$n/tls" \
-    "$bin" build --backend="$backend" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
+    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else
     say "FAIL: stage s$n (see $log)"
     exit 1
   fi
 }
+# the seed chain (decision 0216 item 2): an older seed first builds the
+# intermediate xo of each hop, a commit's selfhost/xo against that
+# commit's std or, with COMMIT:STDCOMMIT, another commit's; the last hop
+# is the seed of s1. XO_SEED_CHAIN="c1 c2:std2 ..." lists the hops, or
+# "file" takes scripts/seed-chain.txt's (internal/xotool reads the same).
+if [ -n "${XO_SEED_CHAIN:-}" ]; then
+  hops=$XO_SEED_CHAIN
+  if [ "$hops" = file ]; then
+    hops=$(sed -e 's/#.*//' -e 's/ std=/:/' scripts/seed-chain.txt | tr -s ' \n' ' ')
+  fi
+  n=0
+  for hop in $hops; do
+    n=$((n + 1))
+    c=${hop%%:*} sc=${hop#*:}
+    [ "$sc" = "$hop" ] && sc=$c
+    mkdir -p "$out/chain$n/tree" "$out/chain$n/std"
+    git archive "$c" | tar -x -C "$out/chain$n/tree" || { say "FAIL: git archive $c"; exit 1; }
+    git archive "$sc" std | tar -x -C "$out/chain$n/std" || { say "FAIL: git archive $sc std"; exit 1; }
+    say "hop $n: $seed builds $c's selfhost/xo against $sc's std"
+    t0=$(date +%s)
+    if (cd "$out/chain$n/tree" && XO_BUILD_DIR="$out/chain$n/build" "$seed" build --backend="$backend" \
+      --std="$out/chain$n/std/std" -o "$out/chain$n/xo" ./selfhost/xo) >> "$log" 2>&1; then
+      echo "hop$n $(( $(date +%s) - t0 )) s" >> "$times"
+      seed=$out/chain$n/xo
+    else
+      say "FAIL: hop $n ($c) (see $log)"
+      exit 1
+    fi
+  done
+fi
 stage 1 "$seed"
 stage 2 "$out/s1/xo"
 stage 3 "$out/s2/xo"
@@ -131,7 +169,7 @@ say "s3 version: $("$out/s3/xo" version 2>&1 | head -1)"
 mkdir -p "$out/hello"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the bootstrapped xo")\n}\n' > "$out/hello/main.xo"
 if XO_BUILD_DIR="$out/cache-s3/build" XO_RTOBJ_CACHE="$out/cache-s3/rtobj" \
-  "$out/s3/xo" run --backend="$backend" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
+  "$out/s3/xo" run --backend="$backend" --std="$root/std" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
   say "s3 builds and runs a hello program: $(head -1 "$out/hello.txt")"
 else
   say "FAIL: s3 cannot build and run a hello program"

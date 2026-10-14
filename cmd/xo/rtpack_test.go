@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
 )
 
 // TestRTPackCommand: `xo rtpack --key` prints the key of a target's pack,
@@ -16,9 +16,10 @@ func TestRTPackCommand(t *testing.T) {
 	if code := run([]string{"rtpack", "--key", "--target=linux/arm64"}, &out, &errb); code != 0 {
 		t.Fatalf("--key: exit %d: %s", code, errb.String())
 	}
-	want, _ := build.RTPackKey(build.Target{OS: "linux", Arch: "arm64"})
-	if strings.TrimSpace(out.String()) != want {
-		t.Errorf("--key printed %q, want %q", out.String(), want)
+	// the key itself is the pack manifest's (selfhost/xo rtpack.xo); the
+	// Go command it was compared with went with decision 0215
+	if !regexp.MustCompile(`^[0-9a-f]{16,64}\n$`).MatchString(out.String()) {
+		t.Errorf("--key printed %q, want a hex key", out.String())
 	}
 	t.Setenv("XO_RTPACK", "off")
 	out.Reset()
@@ -29,12 +30,12 @@ func TestRTPackCommand(t *testing.T) {
 	if code := run([]string{"rtpack", "--target=plan9/mips", "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "prebuilt runtimes are built for") {
 		t.Errorf("bad target: exit %d: %s", code, errb.String())
 	}
-	other := build.Target{OS: "linux", Arch: "arm64"}
-	if build.Host() == other {
-		other = build.Target{OS: "darwin", Arch: "arm64"}
+	other := "linux/arm64"
+	if runtime.GOOS+"/"+runtime.GOARCH == other {
+		other = "darwin/arm64"
 	}
 	errb.Reset()
-	if code := run([]string{"rtpack", "--target=" + other.String(), "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "needs a cross compiler") {
+	if code := run([]string{"rtpack", "--target=" + other, "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "needs a cross compiler") {
 		t.Errorf("cross without --cc: exit %d: %s", code, errb.String())
 	}
 }

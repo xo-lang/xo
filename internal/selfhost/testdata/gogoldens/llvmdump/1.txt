@@ -1,353 +1,646 @@
-llvmdump 10a2f31dc18cdcdc #c 47 93fe89c3a00c3bf9
-llvmdump 10a2f31dc18cdcdc #d 90 f86d4e08479495a2
-llvmdump 10a2f31dc18cdcdc module 483265d67bf8d19c
-llvmdump 10a2f31dc18cdcdc order d7d4b942e1ac8197
-llvmdump 10a2f31dc18cdcdc ~rtdecls 1b851956d8663c94
-llvmdump 10a2f31dc18cdcdc ~types aae65d39211c538d
-llvmdump 10dced0870b6c0f8 =none rejected
-llvmdump 1125de6b7df1d0a1 #c 80 38212878a4134178
-llvmdump 1125de6b7df1d0a1 #d 220 8f681c739f74ae54
-llvmdump 1125de6b7df1d0a1 module 27b4636ed8c3b0ab
-llvmdump 1125de6b7df1d0a1 order 56a28695e385da17
-llvmdump 1125de6b7df1d0a1 ~rtdecls 822be4f192d0afa9
-llvmdump 1125de6b7df1d0a1 ~types 6d15dcdae92d4996
-llvmdump 1154c7e7e44bb0be #c 7 e39446a20fa8d142
-llvmdump 1154c7e7e44bb0be #d 27 6ecf4e304d560fd7
-llvmdump 1154c7e7e44bb0be module 038cf1a90209dbeb
-llvmdump 1154c7e7e44bb0be order 8e1dfecd05454fde
-llvmdump 1154c7e7e44bb0be ~rtdecls 6b6205f97551d8ff
-llvmdump 1154c7e7e44bb0be ~types e3b0c44298fc1c14
-llvmdump 11a4c283fe533480 =none rejected
-llvmdump 11a769c6d9151b07 =none rejected
-llvmdump 12081430d8d6b241 =none rejected
-llvmdump 122c027781956e80 #c 19 088496574c053b74
-llvmdump 122c027781956e80 #d 118 bfbf094689c4e074
-llvmdump 122c027781956e80 module d275971e56645568
-llvmdump 122c027781956e80 order aca4ed2ed338cf6e
-llvmdump 122c027781956e80 ~rtdecls e2adb475f5da92fc
-llvmdump 122c027781956e80 ~types c8c3c4cdde49461f
-llvmdump 123a034767027ce7 #c 40 1c85c58ae55363a3
-llvmdump 123a034767027ce7 #d 116 3d55e635548e8a56
-llvmdump 123a034767027ce7 module 487e81e78580bb96
-llvmdump 123a034767027ce7 order 018023730ab3fff0
-llvmdump 123a034767027ce7 ~rtdecls 76b5d7028734921d
-llvmdump 123a034767027ce7 ~types fe5fdf7e41de1272
-llvmdump 125b836f27e1bb42 =none rejected
-llvmdump 1269031faa473a2f #c 34 1635967be0af0db9
-llvmdump 1269031faa473a2f #d 62 c3f0c88c7b23dd77
-llvmdump 1269031faa473a2f module b4f02c09d6c238fb
-llvmdump 1269031faa473a2f order 894a36327557513b
-llvmdump 1269031faa473a2f ~rtdecls b7dc8b098e02844e
-llvmdump 1269031faa473a2f ~types ff38b42581668817
-llvmdump 12713eb0df1eb5ef =none rejected
-llvmdump 127c38c9a0370e0f #c 26 4b45f25d31579f5a
-llvmdump 127c38c9a0370e0f #d 66 3e13ea8fcc333c58
-llvmdump 127c38c9a0370e0f module 02f5f94e2bcd4822
-llvmdump 127c38c9a0370e0f order 22e52f2bb0fcc1e2
-llvmdump 127c38c9a0370e0f ~rtdecls 88fd4be0076ad527
-llvmdump 127c38c9a0370e0f ~types 09ad8121dc5f1458
-llvmdump 12868334a82ed398 #c 6 0d94687247ce51b7
-llvmdump 12868334a82ed398 #d 28 6e35a43d3dbfc5ac
-llvmdump 12868334a82ed398 module 36abb822ba12a9a7
-llvmdump 12868334a82ed398 order e9dcf350d70d4d8d
-llvmdump 12868334a82ed398 ~rtdecls f723a2faecc13386
-llvmdump 12868334a82ed398 ~types b166169490cb6dbc
-llvmdump 12a7d5f72d02ee51 #c 16 b6bc7df81038746b
-llvmdump 12a7d5f72d02ee51 #d 122 d18ff4e4af0a057e
-llvmdump 12a7d5f72d02ee51 module 4f8843e993fd685f
-llvmdump 12a7d5f72d02ee51 order b4bc172fe2ffebc0
-llvmdump 12a7d5f72d02ee51 ~rtdecls c76bb2c7b0255a07
-llvmdump 12a7d5f72d02ee51 ~types 2a47e7f370043b1f
-llvmdump 12ec1a8c5c3f5fdb #c 20 430d8b2acd8aa22e
-llvmdump 12ec1a8c5c3f5fdb #d 109 3624bff058d6c828
-llvmdump 12ec1a8c5c3f5fdb module 5f225acaf7f8fa96
-llvmdump 12ec1a8c5c3f5fdb order c54a40a5f3b42253
-llvmdump 12ec1a8c5c3f5fdb ~rtdecls 38053e29b69c6843
-llvmdump 12ec1a8c5c3f5fdb ~types fbea599498760759
-llvmdump 132178732fd4df41 =none "error internal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:13:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:38:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:39:17: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:40:3: the SSA builder does not support `sync.WaitGroup.add` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:47:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:24:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:30:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:15:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:16:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:42:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support `time.after_func` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:43:5: the SSA builder does not support the type `time.Timer` of the Go package `time` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:44:5: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:26:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)\ninternal/gen/testdata/golden/test_go_callback_deadlock/main.xo:27:5: the SSA builder does not support `time.sleep` of the Go package `time` (`use go`)"
-llvmdump 1365dc3f726b5a33 #c 10 1efd59421a05f57a
-llvmdump 1365dc3f726b5a33 #d 36 e4066141e957f4b1
-llvmdump 1365dc3f726b5a33 module aa5fd93fa9c76fe1
-llvmdump 1365dc3f726b5a33 order 94e2752fc943c9a7
-llvmdump 1365dc3f726b5a33 ~rtdecls f723a2faecc13386
-llvmdump 1365dc3f726b5a33 ~types 8fe7ee93c69d2529
-llvmdump 1377faff0247d4c9 =none rejected
-llvmdump 13a260d45b461eed #c 24 258ee7ed18ed942d
-llvmdump 13a260d45b461eed #d 59 32adec23d9712ebd
-llvmdump 13a260d45b461eed module 884812daf0e14c7b
-llvmdump 13a260d45b461eed order 58b80644a90576b2
-llvmdump 13a260d45b461eed ~rtdecls e68024d73510ac64
-llvmdump 13a260d45b461eed ~types 5b1e7571f166a2db
-llvmdump 1469652d366e25e5 =none rejected
-llvmdump 149df6669ee0f69b #c 12 de5de8b612c6b890
-llvmdump 149df6669ee0f69b #d 57 9bcd86876af2244a
-llvmdump 149df6669ee0f69b module 1df120fee458bf87
-llvmdump 149df6669ee0f69b order da03ea6f22afb6ca
-llvmdump 149df6669ee0f69b ~rtdecls 5068fec0af625313
-llvmdump 149df6669ee0f69b ~types 081784d6f06b2fea
-llvmdump 14acdbfe63cb9633 =none rejected
-llvmdump 14b81d2ab6add6ed =none "error internal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_url/main.xo:8:23: the SSA builder does not support `url.URL.scheme` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:37: the SSA builder does not support `url.URL.host` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:49: the SSA builder does not support `url.URL.hostname` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:65: the SSA builder does not support `url.URL.port` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:77: the SSA builder does not support `url.URL.path` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:89: the SSA builder does not support `url.URL.fragment` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:8:105: the SSA builder does not support `url.URL.raw_query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support `url.URL.query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:37: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:10:51: the SSA builder does not support `url.Values.has` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:11:3: the SSA builder does not support `url.Values.set` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:12:3: the SSA builder does not support `url.Values.add` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:13:20: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support `url.URL.user` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support the type `url.Userinfo` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:16:23: the SSA builder does not support `url.Userinfo.password` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:17:32: the SSA builder does not support `url.Userinfo.username` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:21:23: the SSA builder does not support `url.query_escape` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:21:52: the SSA builder does not support `url.path_escape` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:22:9: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:24:48: the SSA builder does not support the std function `go.Error.go_type`\ninternal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support `url.URL.resolve_reference` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:28:33: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support `url.URL.new` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:32:3: the SSA builder does not support `url.URL.set_scheme` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:33:3: the SSA builder does not support `url.URL.set_host` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:34:3: the SSA builder does not support `url.URL.set_path` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:35:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support `url.parse_query` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_url/main.xo:37:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:37:40: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`)\ninternal/gen/testdata/golden/go_url/main.xo:39:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)"
-llvmdump 14be96a942b2cb7b =none rejected
-llvmdump 14c2270f21d220a7 #c 7 cd7fb26fac98e74c
-llvmdump 14c2270f21d220a7 #d 13 de0ce3a7d68b4acb
-llvmdump 14c2270f21d220a7 module 1e6577ceea0b7c4e
-llvmdump 14c2270f21d220a7 order b6ad8cdd57e725a0
-llvmdump 14c2270f21d220a7 ~rtdecls f723a2faecc13386
-llvmdump 14c2270f21d220a7 ~types e3b0c44298fc1c14
-llvmdump 14f78d00fe52562f #c 80 ce00298f072639fb
-llvmdump 14f78d00fe52562f #d 148 884266dd6d0ea53e
-llvmdump 14f78d00fe52562f module 712b052a096c1b8d
-llvmdump 14f78d00fe52562f order 9e1e9fb1d797b484
-llvmdump 14f78d00fe52562f ~rtdecls 05cfd999d19c57cf
-llvmdump 14f78d00fe52562f ~types c03fc142bdebfe95
-llvmdump 153b453c747850b3 #c 1385 a525e187907599d4
-llvmdump 153b453c747850b3 #d 2764 643fa7ca705d0845
-llvmdump 153b453c747850b3 module d4fd8468434a48c8
-llvmdump 153b453c747850b3 order ddee1ec3ec42eb63
-llvmdump 153b453c747850b3 ~rtdecls 4fba2fcbecdd3039
-llvmdump 153b453c747850b3 ~types d3d72e9143b8c95e
-llvmdump 157e9ccff17a7c21 =none rejected
-llvmdump 15d6b7b32e5cf89b #c 187 a05e976e63848840
-llvmdump 15d6b7b32e5cf89b #d 456 58ab84556a6101f2
-llvmdump 15d6b7b32e5cf89b module 1d114622395df6b0
-llvmdump 15d6b7b32e5cf89b order 76af2ab582906a9a
-llvmdump 15d6b7b32e5cf89b ~rtdecls 96b6b4c4c4c76ce4
-llvmdump 15d6b7b32e5cf89b ~types 42f4ebe1ecb73515
-llvmdump 15e870ea9cee18c4 #c 20 2ab39f32ac3faecb
-llvmdump 15e870ea9cee18c4 #d 51 6c123b528105355a
-llvmdump 15e870ea9cee18c4 module f964a687a3b31a71
-llvmdump 15e870ea9cee18c4 order d4f068fd1f900087
-llvmdump 15e870ea9cee18c4 ~rtdecls 76779dd3dbe9f861
-llvmdump 15e870ea9cee18c4 ~types 0299981981bf8848
-llvmdump 15fd2cdc31a9d5ba #c 13 a8d876688f212662
-llvmdump 15fd2cdc31a9d5ba #d 45 4bed5cbe860fcb4a
-llvmdump 15fd2cdc31a9d5ba module 4973e42ac9a0f4d3
-llvmdump 15fd2cdc31a9d5ba order d2b4557105257849
-llvmdump 15fd2cdc31a9d5ba ~rtdecls f723a2faecc13386
-llvmdump 15fd2cdc31a9d5ba ~types e3b0c44298fc1c14
-llvmdump 167056f8e41585b8 #c 73 628b626c77f90eb3
-llvmdump 167056f8e41585b8 #d 128 55a722501458cb67
-llvmdump 167056f8e41585b8 module a71ad2c425969dbc
-llvmdump 167056f8e41585b8 order b8e54230a868d145
-llvmdump 167056f8e41585b8 ~rtdecls 8208e165be9a9ed5
-llvmdump 167056f8e41585b8 ~types eab91e27501babbc
-llvmdump 1682b0f0ec852e2e #c 15 9faff737993b1b62
-llvmdump 1682b0f0ec852e2e #d 75 008266e261d44aff
-llvmdump 1682b0f0ec852e2e module d827a4e87d19ee78
-llvmdump 1682b0f0ec852e2e order 8f8a99c50a095530
-llvmdump 1682b0f0ec852e2e ~rtdecls 2ffb60bbba40f059
-llvmdump 1682b0f0ec852e2e ~types c922c5c9e7fe47f3
-llvmdump 16c60c32ee99ed54 #c 18 daf6e92b3801877a
-llvmdump 16c60c32ee99ed54 #d 108 322a6fdd7f96adc9
-llvmdump 16c60c32ee99ed54 module 9a30a30c95e47ce2
-llvmdump 16c60c32ee99ed54 order 5ed35cce32d48111
-llvmdump 16c60c32ee99ed54 ~rtdecls 886608078ebecde4
-llvmdump 16c60c32ee99ed54 ~types c56cabf6c5178a9d
-llvmdump 16e8e5d8e7b6ff1f =none rejected
-llvmdump 170f56010e71a42f =none rejected
-llvmdump 176423928f0c0393 #c 7 ebf2188615ab87df
-llvmdump 176423928f0c0393 #d 13 69317e63551218e0
-llvmdump 176423928f0c0393 module 0f69be7003cb76cb
-llvmdump 176423928f0c0393 order 88de2b9686d0bb65
-llvmdump 176423928f0c0393 ~rtdecls f723a2faecc13386
-llvmdump 176423928f0c0393 ~types 735a6a12a0e95471
-llvmdump 1778a0911e8d11bf =none rejected
-llvmdump 1786b20a122a36be #c 19 f1bc0eef97d8e25a
-llvmdump 1786b20a122a36be #d 37 0ce9271278e7d1d3
-llvmdump 1786b20a122a36be module ce3936c12eeb27a0
-llvmdump 1786b20a122a36be order a9cf63bc880c3119
-llvmdump 1786b20a122a36be ~rtdecls a230623ea914a7f6
-llvmdump 1786b20a122a36be ~types 0237031e228ed2ea
-llvmdump 17a6303eecb31a29 #c 64 95a0aedde9f9d234
-llvmdump 17a6303eecb31a29 #d 192 aa2d88ea9bed9013
-llvmdump 17a6303eecb31a29 module fa694c27be1544f6
-llvmdump 17a6303eecb31a29 order e246163510c07671
-llvmdump 17a6303eecb31a29 ~rtdecls c4107114e6f39c6b
-llvmdump 17a6303eecb31a29 ~types b0079923f26386db
-llvmdump 17b0f6bd1fa4f5f7 =none no main
-llvmdump 180d982c858289c8 #c 7 8465a373771e98c9
-llvmdump 180d982c858289c8 #d 22 bf72eab7a4163d5b
-llvmdump 180d982c858289c8 module df7f0d90dad2b325
-llvmdump 180d982c858289c8 order 422699bf9015573b
-llvmdump 180d982c858289c8 ~rtdecls f723a2faecc13386
-llvmdump 180d982c858289c8 ~types ab1a0eef0231b9b6
-llvmdump 1855a34ec6bef68a =none rejected
-llvmdump 18a2258d80b0212d #c 44 9bbca0735101b5fe
-llvmdump 18a2258d80b0212d #d 86 27da5c79e6f1db7a
-llvmdump 18a2258d80b0212d module e7c94e507137ebf0
-llvmdump 18a2258d80b0212d order 403896548b78c7c4
-llvmdump 18a2258d80b0212d ~rtdecls 8fb169713278d000
-llvmdump 18a2258d80b0212d ~types e20d5415fb885159
-llvmdump 1910c5c3ac0ec6af =none rejected
-llvmdump 1946792b36bcd56a =none rejected
-llvmdump 1980c1cb926d4bf3 #c 22 d0cc209be73246bf
-llvmdump 1980c1cb926d4bf3 #d 55 a18a751027492dbe
-llvmdump 1980c1cb926d4bf3 module b91f3d50b4076167
-llvmdump 1980c1cb926d4bf3 order 77e2b9eb0089d817
-llvmdump 1980c1cb926d4bf3 ~rtdecls f723a2faecc13386
-llvmdump 1980c1cb926d4bf3 ~types 8631121b4d61c60d
-llvmdump 199b3c13d318cb6b =none rejected
-llvmdump 19d71fdd8996710f #c 11 e40da6bf6b1876b0
-llvmdump 19d71fdd8996710f #d 44 5bc2bb77c84f3fe9
-llvmdump 19d71fdd8996710f module 4f3190633b5123ca
-llvmdump 19d71fdd8996710f order 6e46b2e0d47864db
-llvmdump 19d71fdd8996710f ~rtdecls d1eeaa2e6a0434a2
-llvmdump 19d71fdd8996710f ~types f4df48c78fb8b182
-llvmdump 19f04a167908d994 =none no main
-llvmdump 19f844da51ff7ffa #c 1 62df428fbf0bd39b
-llvmdump 19f844da51ff7ffa #d 3 4a7d550af0e18704
-llvmdump 19f844da51ff7ffa module 772ef62ec79dd169
-llvmdump 19f844da51ff7ffa order fcaae7e2a71e59c5
-llvmdump 19f844da51ff7ffa ~rtdecls 1fbc10166ae43a21
-llvmdump 19f844da51ff7ffa ~types e3b0c44298fc1c14
-llvmdump 1a0c5ed4640f8bd6 #c 299 23cd33c6a911eb29
-llvmdump 1a0c5ed4640f8bd6 #d 745 bc9583508f623ba4
-llvmdump 1a0c5ed4640f8bd6 module d98c670f39e80f5e
-llvmdump 1a0c5ed4640f8bd6 order c1ee66b201f06fe3
-llvmdump 1a0c5ed4640f8bd6 ~rtdecls 1b775527a43ce280
-llvmdump 1a0c5ed4640f8bd6 ~types 0365af1bcb71c116
-llvmdump 1a22f3f51f23b0ce =none rejected
-llvmdump 1a2440afce97100e #c 7 f4ac351e61677494
-llvmdump 1a2440afce97100e #d 11 ad34eff439c7126e
-llvmdump 1a2440afce97100e module bdde940748199122
-llvmdump 1a2440afce97100e order 0b7c12a6c2047080
-llvmdump 1a2440afce97100e ~rtdecls f723a2faecc13386
-llvmdump 1a2440afce97100e ~types 0e5fb43ba4fb0843
-llvmdump 1a250877b834b15f #c 47 41db257bd241ae97
-llvmdump 1a250877b834b15f #d 145 01e6ddc4718a3cfd
-llvmdump 1a250877b834b15f module 9031b7b58ab342f1
-llvmdump 1a250877b834b15f order ed80b006007b5a96
-llvmdump 1a250877b834b15f ~rtdecls 4bfe35a8e8eabd25
-llvmdump 1a250877b834b15f ~types 245284321e9443a4
-llvmdump 1a7477a1d92a435b #c 6 87f901f94c52bea9
-llvmdump 1a7477a1d92a435b #d 32 2b372f8fbe8e44a2
-llvmdump 1a7477a1d92a435b module 12fb8a5f2aa465d4
-llvmdump 1a7477a1d92a435b order 7c560a88387c5103
-llvmdump 1a7477a1d92a435b ~rtdecls f723a2faecc13386
-llvmdump 1a7477a1d92a435b ~types 123658251fde0934
-llvmdump 1aae239d2a388c88 #c 15 c563dffa1cd4295b
-llvmdump 1aae239d2a388c88 #d 25 f4efce6714a16f5f
-llvmdump 1aae239d2a388c88 module a9b6b95dac8e7306
-llvmdump 1aae239d2a388c88 order 97cad1ae236d68c6
-llvmdump 1aae239d2a388c88 ~rtdecls 6ac896141bb3894c
-llvmdump 1aae239d2a388c88 ~types e3b0c44298fc1c14
-llvmdump 1abf8fa603cbe822 #c 6 d60c3ecac9e4fb33
-llvmdump 1abf8fa603cbe822 #d 11 8a94b882f7c980a2
-llvmdump 1abf8fa603cbe822 module ab1abb9e60589ac0
-llvmdump 1abf8fa603cbe822 order 9b7c1bde8467ea45
-llvmdump 1abf8fa603cbe822 ~rtdecls e68024d73510ac64
-llvmdump 1abf8fa603cbe822 ~types ebe45a5ad5b0c2ac
-llvmdump 1af35b43652148d0 #c 159 427c43c435cab36f
-llvmdump 1af35b43652148d0 #d 353 20cbd33367d27b24
-llvmdump 1af35b43652148d0 module dd2561a8f9191dc2
-llvmdump 1af35b43652148d0 order c8cde9897aabb819
-llvmdump 1af35b43652148d0 ~rtdecls 43279d005f48a7cb
-llvmdump 1af35b43652148d0 ~types e54c298f54044977
-llvmdump 1b2e30225d70fa21 #c 32 90823a8d53ca8bfe
-llvmdump 1b2e30225d70fa21 #d 76 afe9b385189eab64
-llvmdump 1b2e30225d70fa21 module 5f516f23664e4428
-llvmdump 1b2e30225d70fa21 order 0cef32b1fedb72a4
-llvmdump 1b2e30225d70fa21 ~rtdecls 5fde9dd9ef31e83a
-llvmdump 1b2e30225d70fa21 ~types 8177259390d4846f
-llvmdump 1b876e925d921d30 =none rejected
-llvmdump 1b9caaa04d156306 #c 8 83b0273c8838d970
-llvmdump 1b9caaa04d156306 #d 25 283ea1123684d526
-llvmdump 1b9caaa04d156306 module 730a8fc1572da7d5
-llvmdump 1b9caaa04d156306 order f8018d7b5c377dce
-llvmdump 1b9caaa04d156306 ~rtdecls e2be0858360ddb91
-llvmdump 1b9caaa04d156306 ~types 019a9c6f93dca8d5
-llvmdump 1b9eb3539ac83a4e =none rejected
-llvmdump 1bab3456b2232a4d =none rejected
-llvmdump 1bcaa30edb1a210b #c 13 aec393afd0045107
-llvmdump 1bcaa30edb1a210b #d 32 dc8397951f456121
-llvmdump 1bcaa30edb1a210b module c6508ba47071fca0
-llvmdump 1bcaa30edb1a210b order cf81524dee461c69
-llvmdump 1bcaa30edb1a210b ~rtdecls 886608078ebecde4
-llvmdump 1bcaa30edb1a210b ~types 07bbe8e4f8f2a9f1
-llvmdump 1be37b4aa43e828f =none rejected
-llvmdump 1bf9b99820de8be3 =none rejected
-llvmdump 1c449d86200a42b6 #c 32 952f4aa13c4d0145
-llvmdump 1c449d86200a42b6 #d 58 0371d724592e15bb
-llvmdump 1c449d86200a42b6 module bfa84461bc5bfc6b
-llvmdump 1c449d86200a42b6 order 8a70b9e05bfb0f1e
-llvmdump 1c449d86200a42b6 ~rtdecls bbe3595a10505efc
-llvmdump 1c449d86200a42b6 ~types e3b0c44298fc1c14
-llvmdump 1c5200ee94474056 #c 14 64ffeb3990d5a2ca
-llvmdump 1c5200ee94474056 #d 33 c938d0b87691bbb8
-llvmdump 1c5200ee94474056 module 90b3a9960fe6f2e3
-llvmdump 1c5200ee94474056 order 6bd2cb61bd06730b
-llvmdump 1c5200ee94474056 ~rtdecls 88fd4be0076ad527
-llvmdump 1c5200ee94474056 ~types 57bd974da8e1312d
-llvmdump 1c7b4683d80cca1a #c 21 eeb097b336ee3c93
-llvmdump 1c7b4683d80cca1a #d 95 cb4c213cdd3b500f
-llvmdump 1c7b4683d80cca1a module f6e3ded3d80bcd74
-llvmdump 1c7b4683d80cca1a order 4b2e683ae3e24ddf
-llvmdump 1c7b4683d80cca1a ~rtdecls fc5427e78d68ca29
-llvmdump 1c7b4683d80cca1a ~types bb1dd679331f315c
-llvmdump 1c877f0d9afdf9f0 =none rejected
-llvmdump 1c8e3cbfcddeecf8 #c 51 e3272c364c8bebe8
-llvmdump 1c8e3cbfcddeecf8 #d 120 4624bb7878f9ab90
-llvmdump 1c8e3cbfcddeecf8 module d47f51a3d36563c4
-llvmdump 1c8e3cbfcddeecf8 order c64fa839f86a95f4
-llvmdump 1c8e3cbfcddeecf8 ~rtdecls fae5ee5ef38b417a
-llvmdump 1c8e3cbfcddeecf8 ~types f42da384d74820c2
-llvmdump 1cc37e66febd85f2 =none no main
-llvmdump 1d00b785123da14f =none rejected
-llvmdump 1d4838ff64c95012 #c 1488 d51b7ab9a9f39249
-llvmdump 1d4838ff64c95012 #d 2885 5dc985ee1d3f10fe
-llvmdump 1d4838ff64c95012 module da6526003bcb083d
-llvmdump 1d4838ff64c95012 order 9e0c17fb5ea5e0bc
-llvmdump 1d4838ff64c95012 ~rtdecls d14f31d4a31458f1
-llvmdump 1d4838ff64c95012 ~types f636938701177a6d
-llvmdump 1d853361f1c98b60 #c 23 fc8fe446d3896c98
-llvmdump 1d853361f1c98b60 #d 75 8981203d369fd569
-llvmdump 1d853361f1c98b60 module af1151624baa279f
-llvmdump 1d853361f1c98b60 order 59267321b77658a7
-llvmdump 1d853361f1c98b60 ~rtdecls 0a573c95e27fd63e
-llvmdump 1d853361f1c98b60 ~types ed582236964654e2
-llvmdump 1dea3b3bd1340aa2 #c 10 2ebb52bdf2d669de
-llvmdump 1dea3b3bd1340aa2 #d 15 0d0e513e3bcf7375
-llvmdump 1dea3b3bd1340aa2 module d4049eab7e6a6ab8
-llvmdump 1dea3b3bd1340aa2 order 638915edd2021847
-llvmdump 1dea3b3bd1340aa2 ~rtdecls e68024d73510ac64
-llvmdump 1dea3b3bd1340aa2 ~types c99c1f9aed300a4f
-llvmdump 1e085bd53196fd2e #c 18 67e5dd1355f9bca5
-llvmdump 1e085bd53196fd2e #d 52 439ff1aaa3fae65d
-llvmdump 1e085bd53196fd2e module aca27f2101cbb1c5
-llvmdump 1e085bd53196fd2e order b650f364646be3c1
-llvmdump 1e085bd53196fd2e ~rtdecls 822be4f192d0afa9
-llvmdump 1e085bd53196fd2e ~types b4c1a8575f36affc
-llvmdump 1e1ee0612130ee62 #c 15 faefc6dd5c744efd
-llvmdump 1e1ee0612130ee62 #d 75 e185dbdbdd855583
-llvmdump 1e1ee0612130ee62 module 83985f27dcc13320
-llvmdump 1e1ee0612130ee62 order 8f8a99c50a095530
-llvmdump 1e1ee0612130ee62 ~rtdecls 2ffb60bbba40f059
-llvmdump 1e1ee0612130ee62 ~types c922c5c9e7fe47f3
-llvmdump 1eba8f1fc2fb3ffe #c 88 c14b61b034a34170
-llvmdump 1eba8f1fc2fb3ffe #d 157 c5e4833438de772f
-llvmdump 1eba8f1fc2fb3ffe module c81bb3806b4b2d53
-llvmdump 1eba8f1fc2fb3ffe order 0447b38b94c14200
-llvmdump 1eba8f1fc2fb3ffe ~rtdecls 05cfd999d19c57cf
-llvmdump 1eba8f1fc2fb3ffe ~types ba30916886602de5
-llvmdump 1ebee31278fcac89 =none rejected
-llvmdump 1ecadf9a025ea0d9 #c 183 d5abfd26fabf4bb8
-llvmdump 1ecadf9a025ea0d9 #d 448 5ea3266d68b6486d
-llvmdump 1ecadf9a025ea0d9 module 8e660d23687b95cf
-llvmdump 1ecadf9a025ea0d9 order e4e30602c6d64c0a
-llvmdump 1ecadf9a025ea0d9 ~rtdecls 96b6b4c4c4c76ce4
-llvmdump 1ecadf9a025ea0d9 ~types 898b1a0ddfcf78e2
-llvmdump 1ee01992ec783d28 =none "error internal/gen/testdata/golden/go_strings/main.xo:7:20: the SSA builder does not support `strings.to_upper` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:8:32: the SSA builder does not support `strings.cut` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:10:20: the SSA builder does not support `strings.join` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:11:20: the SSA builder does not support `strings.map` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:12:23: the SSA builder does not support `strings.index` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:12:58: the SSA builder does not support `strings.count` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:12:90: the SSA builder does not support `strings.equal_fold` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:13:20: the SSA builder does not support `strings.join` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:14:20: the SSA builder does not support `strings.join` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:15:23: the SSA builder does not support `strings.lines` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:16:11: the SSA builder does not support `strings.new_replacer` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:16:11: the SSA builder does not support the type `strings.Replacer` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:17:20: the SSA builder does not support `strings.Replacer.replace` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:18:11: the SSA builder does not support `strings.Builder.new` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:18:11: the SSA builder does not support the type `strings.Builder` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:19:11: the SSA builder does not support `strings.Builder.write_string` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:19:11: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strings/main.xo:20:3: the SSA builder does not support `strings.Builder.write_rune` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:21:23: the SSA builder does not support `strings.Builder.string` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:21:37: the SSA builder does not support `strings.Builder.len` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:22:12: the SSA builder does not support `strings.new_reader` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:22:12: the SSA builder does not support the type `strings.Reader` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:23:20: the SSA builder does not support `strings.Reader.read_rune` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:23:20: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_strings/main.xo:24:42: the SSA builder does not support `strings.Reader.len` of the Go package `strings` (`use go`)\ninternal/gen/testdata/golden/go_strings/main.xo:25:20: the SSA builder does not support `strings.repeat` of the Go package `strings` (`use go`)"
-llvmdump 1f001b96bebe9660 =none rejected
-llvmdump 1f28bb99f2e548ee #c 9 abe2829c4e6ac366
-llvmdump 1f28bb99f2e548ee #d 46 b73a95d19894feca
-llvmdump 1f28bb99f2e548ee module 0f9721239171512e
-llvmdump 1f28bb99f2e548ee order 6f69ac949f7ebcfa
-llvmdump 1f28bb99f2e548ee ~rtdecls e268f886d9082a7f
-llvmdump 1f28bb99f2e548ee ~types 0d793057d88d5b5c
-llvmdump 1fcbc8734172e414 #c 86 7808d40b394ab1bb
-llvmdump 1fcbc8734172e414 #d 192 1b9995e0d7e66655
-llvmdump 1fcbc8734172e414 module 64a3910f2f736bfd
-llvmdump 1fcbc8734172e414 order 2fc63a90c5c6fd41
-llvmdump 1fcbc8734172e414 ~rtdecls 69f779bf021cd534
-llvmdump 1fcbc8734172e414 ~types 7bd49f0b299c91b5
-llvmdump 1fe044449506e654 =none rejected
+llvmdump 101dde30ea5eac88 #c 247 d73fba8c41b70ef1
+llvmdump 101dde30ea5eac88 #d 662 acacefa213791805
+llvmdump 101dde30ea5eac88 =@slot 017da4e6ec42b98a
+llvmdump 101dde30ea5eac88 module 1baf8fc3eecffedd
+llvmdump 101dde30ea5eac88 order 16a6ffd3222e55c3
+llvmdump 101dde30ea5eac88 ~rtdecls 0f5b208a8d9f1fc0
+llvmdump 101dde30ea5eac88 ~types df119ab6724e99cf
+llvmdump 103168f0752c5c16 #c 198 026c4e9a5cf73f52
+llvmdump 103168f0752c5c16 #d 623 2a4477b73aff6d7e
+llvmdump 103168f0752c5c16 =@slot df1d9c0bf9ff44bf
+llvmdump 103168f0752c5c16 module 131fe29e8bc3d229
+llvmdump 103168f0752c5c16 order 0340cd85441a1e99
+llvmdump 103168f0752c5c16 ~rtdecls 5ef55795efa94fe4
+llvmdump 103168f0752c5c16 ~types c35f5522f6f2f7cb
+llvmdump 10559a04ba054d2e #c 72 6af06468a4be4bd2
+llvmdump 10559a04ba054d2e #d 212 670b700575ad6f36
+llvmdump 10559a04ba054d2e =@slot 07386194d5b3c568
+llvmdump 10559a04ba054d2e module 0720db357c0b1f46
+llvmdump 10559a04ba054d2e order 0827eee8daffe2a1
+llvmdump 10559a04ba054d2e ~rtdecls 95345576c7a96edf
+llvmdump 10559a04ba054d2e ~types 2e691c085bb6fdb5
+llvmdump 107be1e8b61ff138 =@slot a4c41ec349271247
+llvmdump 107be1e8b61ff138 =none rejected
+llvmdump 108adbc94353472c =@slot 45c472022209198c
+llvmdump 108adbc94353472c =none rejected
+llvmdump 10a549b71ba6410d =@slot e768e7dc54dbf5f8
+llvmdump 10a549b71ba6410d =none rejected
+llvmdump 10a5ed7e094ac1c9 =@slot 86b832a51e3c9d7c
+llvmdump 10a5ed7e094ac1c9 =none rejected
+llvmdump 10d3b5ce4116d45b #c 129 563329f2264de5d1
+llvmdump 10d3b5ce4116d45b #d 317 1b5902c34f5be2ba
+llvmdump 10d3b5ce4116d45b =@slot 8ca94eb7108bee15
+llvmdump 10d3b5ce4116d45b module 782d8ca4aabbbb08
+llvmdump 10d3b5ce4116d45b order 4fe6024d9ec8829d
+llvmdump 10d3b5ce4116d45b ~rtdecls 54f7cefb192063db
+llvmdump 10d3b5ce4116d45b ~types c895204f391d0ef5
+llvmdump 112e4830c3a74be6 #c 75 f8dcd03c6bf80d39
+llvmdump 112e4830c3a74be6 #d 219 72179903411f7e05
+llvmdump 112e4830c3a74be6 =@slot 52f3397bad130b92
+llvmdump 112e4830c3a74be6 module 9a2c9911c7f19c4d
+llvmdump 112e4830c3a74be6 order 1d7a50d81c6e1f3f
+llvmdump 112e4830c3a74be6 ~rtdecls 9dce7dde52778e4a
+llvmdump 112e4830c3a74be6 ~types 6c2a7ac6b4182382
+llvmdump 114f05742aca938f =@slot 8362fec419494b4e
+llvmdump 114f05742aca938f =none rejected
+llvmdump 1160b3123c27d266 =@slot 018a3de74d0734c8
+llvmdump 1160b3123c27d266 =none rejected
+llvmdump 117c99fa7a69587e #c 72 0bf05a0d78c3ba47
+llvmdump 117c99fa7a69587e #d 230 3a7d98c5a77ddf67
+llvmdump 117c99fa7a69587e =@slot 53a553dabccb53f3
+llvmdump 117c99fa7a69587e module dec20be6598deedd
+llvmdump 117c99fa7a69587e order fab07a7b73668061
+llvmdump 117c99fa7a69587e ~rtdecls 8f37617fcc3bd6fc
+llvmdump 117c99fa7a69587e ~types 2e691c085bb6fdb5
+llvmdump 1199d7b2b319fe05 #c 84 3872579ca1fd1a35
+llvmdump 1199d7b2b319fe05 #d 313 895dc2e1fdb8068f
+llvmdump 1199d7b2b319fe05 =@slot 319ae154f9e61324
+llvmdump 1199d7b2b319fe05 module afa153c95fbaf429
+llvmdump 1199d7b2b319fe05 order 6caff24c0ecf1aec
+llvmdump 1199d7b2b319fe05 ~rtdecls 36f12f3157d896b1
+llvmdump 1199d7b2b319fe05 ~types 6bb6e81cde5675c1
+llvmdump 11ab36fb12bf7362 #c 69 afbb1658c4c5e4e3
+llvmdump 11ab36fb12bf7362 #d 207 f379191a4fb2ab79
+llvmdump 11ab36fb12bf7362 =@slot 4f8a3b88c0a76694
+llvmdump 11ab36fb12bf7362 module 884c49f4626f4d03
+llvmdump 11ab36fb12bf7362 order d271a2dbbdb6ec5b
+llvmdump 11ab36fb12bf7362 ~rtdecls 95345576c7a96edf
+llvmdump 11ab36fb12bf7362 ~types 2e691c085bb6fdb5
+llvmdump 11c5831c3558e759 #c 88 17ba268ea9d41ed9
+llvmdump 11c5831c3558e759 #d 257 661e5fe238bece0a
+llvmdump 11c5831c3558e759 =@slot fe67e476ea6bdbc7
+llvmdump 11c5831c3558e759 module bc452bbd3c7ae309
+llvmdump 11c5831c3558e759 order 4b5963fbab82c024
+llvmdump 11c5831c3558e759 ~rtdecls 082ba008e2febc49
+llvmdump 11c5831c3558e759 ~types ecb6b59d2cde460a
+llvmdump 11eb4900b296fdf6 #c 91 d923f83a4e3b6291
+llvmdump 11eb4900b296fdf6 #d 262 2fc70b430c2ef120
+llvmdump 11eb4900b296fdf6 =@slot ddedae19a242f734
+llvmdump 11eb4900b296fdf6 module aa754de00df0908f
+llvmdump 11eb4900b296fdf6 order 6db84dafbb6c069e
+llvmdump 11eb4900b296fdf6 ~rtdecls d9cf66afbdebea4e
+llvmdump 11eb4900b296fdf6 ~types 83fb23baee3ec929
+llvmdump 11ec7926a6006e0e #c 87 3ae2a61115ba91b8
+llvmdump 11ec7926a6006e0e #d 302 19eb16aa43201781
+llvmdump 11ec7926a6006e0e =@slot 96a7e19d3a1ae15c
+llvmdump 11ec7926a6006e0e module 4a4b570f26a78088
+llvmdump 11ec7926a6006e0e order ad73ab1ae813c671
+llvmdump 11ec7926a6006e0e ~rtdecls 6cd1ea680f8fab2d
+llvmdump 11ec7926a6006e0e ~types b558a061ebb3f23d
+llvmdump 11f2b17c938a150e #c 78 8167f155093452c0
+llvmdump 11f2b17c938a150e #d 279 c31c1cba8b8b5313
+llvmdump 11f2b17c938a150e =@slot 74e6fedf63792b78
+llvmdump 11f2b17c938a150e module 64d2b0a6e6b87f11
+llvmdump 11f2b17c938a150e order 5b3dfb0cf036f68f
+llvmdump 11f2b17c938a150e ~rtdecls 413205efafa5bc02
+llvmdump 11f2b17c938a150e ~types 4663ed9848e6bb99
+llvmdump 1224de580aaddc9c =@slot 6f8efe496423aad9
+llvmdump 1224de580aaddc9c =none rejected
+llvmdump 1227c26c47c8841d #c 260 88a53ee035009390
+llvmdump 1227c26c47c8841d #d 680 6408276218324930
+llvmdump 1227c26c47c8841d =@slot 570faec5a43f9777
+llvmdump 1227c26c47c8841d module 5d40a2331dc31d26
+llvmdump 1227c26c47c8841d order 2c939ecd192d1d46
+llvmdump 1227c26c47c8841d ~rtdecls 98c1700de7a58b1f
+llvmdump 1227c26c47c8841d ~types 2262fd4ad446298a
+llvmdump 1237c08d0a786090 =@slot 83ad1601f559a5ef
+llvmdump 1237c08d0a786090 =none rejected
+llvmdump 12585e84b4bcb0c1 =@slot 43d5db950d0bc0f5
+llvmdump 12585e84b4bcb0c1 =none rejected
+llvmdump 1265efc4200d2bbc =@slot a869ed909db3a7c3
+llvmdump 1265efc4200d2bbc =none rejected
+llvmdump 1272c10ab01fe186 #c 82 f1ab02eed5da8de9
+llvmdump 1272c10ab01fe186 #d 225 40c83c1d8e59904c
+llvmdump 1272c10ab01fe186 =@slot 495a4f4470f35df4
+llvmdump 1272c10ab01fe186 module 8c53698913c5ac04
+llvmdump 1272c10ab01fe186 order 4b63b94c2ad693ef
+llvmdump 1272c10ab01fe186 ~rtdecls 95345576c7a96edf
+llvmdump 1272c10ab01fe186 ~types d157313fa8014625
+llvmdump 128592ace140c9e5 =@slot e9b3e3944a50af6a
+llvmdump 128592ace140c9e5 =none rejected
+llvmdump 129dd3518468434f =@slot d9d579acd2db9c76
+llvmdump 129dd3518468434f =none rejected
+llvmdump 12b074a47717924c =@slot cd3ed5c0d596b798
+llvmdump 12b074a47717924c =none rejected
+llvmdump 12b8edb9358e46df #c 165 ad0981fe8e994214
+llvmdump 12b8edb9358e46df #d 393 cdf01972e8eb2085
+llvmdump 12b8edb9358e46df =@slot 4637c9b9ee0ea017
+llvmdump 12b8edb9358e46df module a90ccdc83e3b8e3e
+llvmdump 12b8edb9358e46df order d4d2c35e8768de35
+llvmdump 12b8edb9358e46df ~rtdecls a9b509c0b4202916
+llvmdump 12b8edb9358e46df ~types 3eeaf7af42f89847
+llvmdump 12e718b44a8f4a84 =@slot 02907c235dd4b46d
+llvmdump 12e718b44a8f4a84 =none no main
+llvmdump 12f36bc4212c533a =@slot 352cda2c3ae6ba9d
+llvmdump 12f36bc4212c533a =none no main
+llvmdump 130f527ccacb9398 =@slot ef16d1e123ddbd4b
+llvmdump 130f527ccacb9398 =none rejected
+llvmdump 132d0f528e96240a =@slot 560095be993d48f4
+llvmdump 132d0f528e96240a =none unsupported
+llvmdump 1335ce0de120c05f =@slot 66d931676486dce6
+llvmdump 1335ce0de120c05f =none rejected
+llvmdump 1349f4a7eb277e68 =@slot b856879454ee93e8
+llvmdump 1349f4a7eb277e68 =none rejected
+llvmdump 134e23f22dcb2c20 #c 115 33b34d49fe37ddba
+llvmdump 134e23f22dcb2c20 #d 365 bb320a6352147e71
+llvmdump 134e23f22dcb2c20 =@slot fdd363b7b438fdc9
+llvmdump 134e23f22dcb2c20 module ff1c3e152de48283
+llvmdump 134e23f22dcb2c20 order 2e99635852b45a07
+llvmdump 134e23f22dcb2c20 ~rtdecls 71f1984af73da4d3
+llvmdump 134e23f22dcb2c20 ~types dfb411818907d214
+llvmdump 135bf92a8ba616d8 #c 82 e4bc7ee2d418e761
+llvmdump 135bf92a8ba616d8 #d 305 ad76402483a17b5d
+llvmdump 135bf92a8ba616d8 =@slot 569950d658a32cb5
+llvmdump 135bf92a8ba616d8 module 0578038b2c8da207
+llvmdump 135bf92a8ba616d8 order 9c2c0ef346f248a1
+llvmdump 135bf92a8ba616d8 ~rtdecls db829b11aeee72bc
+llvmdump 135bf92a8ba616d8 ~types 06b5e6ea621f58cd
+llvmdump 136e7546330f5bfa #c 85 066411e09996d805
+llvmdump 136e7546330f5bfa #d 252 bf0169c46795bc7c
+llvmdump 136e7546330f5bfa =@slot baf46373531258ca
+llvmdump 136e7546330f5bfa module d957fd9783684c5c
+llvmdump 136e7546330f5bfa order e5ea95aca148fd05
+llvmdump 136e7546330f5bfa ~rtdecls 9eb49bcf86cac66c
+llvmdump 136e7546330f5bfa ~types d6a35d81f2dcd731
+llvmdump 136ed727b95b9e88 =@slot 9ffb69d7899c2111
+llvmdump 136ed727b95b9e88 =none no main
+llvmdump 13817a734db5edc0 =@slot d2209d2d8e23d008
+llvmdump 13817a734db5edc0 =none rejected
+llvmdump 14451208e1f4b762 #c 79 c80a16ddb48b2b25
+llvmdump 14451208e1f4b762 #d 256 fd9113137ed9c1d0
+llvmdump 14451208e1f4b762 =@slot 69dc3321c2e7411c
+llvmdump 14451208e1f4b762 module 820c8a2262963172
+llvmdump 14451208e1f4b762 order 5c22b944df888a89
+llvmdump 14451208e1f4b762 ~rtdecls 8cd0e86a7e816f5d
+llvmdump 14451208e1f4b762 ~types 7ee8fd2223a9bf9b
+llvmdump 145341d052e7eaca #c 177 8d03b32e2181747c
+llvmdump 145341d052e7eaca #d 455 68a2060f2c3074e7
+llvmdump 145341d052e7eaca =@slot 249131329bbd981d
+llvmdump 145341d052e7eaca module a46e73931d24920b
+llvmdump 145341d052e7eaca order 134bf0b57d4fb961
+llvmdump 145341d052e7eaca ~rtdecls 37362596defe9194
+llvmdump 145341d052e7eaca ~types 214db6a009527822
+llvmdump 145352f3f14ac75b #c 72 9d2f17b476573bd3
+llvmdump 145352f3f14ac75b #d 219 667386ff1b81f1ab
+llvmdump 145352f3f14ac75b =@slot f298587aa1275a26
+llvmdump 145352f3f14ac75b module 36be64da47e366bb
+llvmdump 145352f3f14ac75b order 448f2f62f986cd16
+llvmdump 145352f3f14ac75b ~rtdecls 9dce7dde52778e4a
+llvmdump 145352f3f14ac75b ~types f0daf101d7671036
+llvmdump 146f46474062c3a2 #c 156 8cd0a2fd3214898f
+llvmdump 146f46474062c3a2 #d 380 5b0f2d93072e2721
+llvmdump 146f46474062c3a2 =@slot 09606643b270e5ad
+llvmdump 146f46474062c3a2 module 4bd6383df6dbf913
+llvmdump 146f46474062c3a2 order 06a7fdb81de86f20
+llvmdump 146f46474062c3a2 ~rtdecls d0ccc5398cc9ab54
+llvmdump 146f46474062c3a2 ~types f6eed153dd5357a3
+llvmdump 14857e0902233004 #c 171 a7f3d1656fb5bc83
+llvmdump 14857e0902233004 #d 454 dd22ae169b3c6d81
+llvmdump 14857e0902233004 =@slot bab3c47daccd156c
+llvmdump 14857e0902233004 module 07e6af35d9f44744
+llvmdump 14857e0902233004 order d38640f427fac0d0
+llvmdump 14857e0902233004 ~rtdecls 4f8b8c0a10e0c7c2
+llvmdump 14857e0902233004 ~types 214db6a009527822
+llvmdump 14afeaa21c5c9c75 #c 303 c6a586b7ace4ec55
+llvmdump 14afeaa21c5c9c75 #d 793 68254900a1a3d427
+llvmdump 14afeaa21c5c9c75 =@slot d4fb07f7bfed15dc
+llvmdump 14afeaa21c5c9c75 module d3435fe0d70f845a
+llvmdump 14afeaa21c5c9c75 order 898cd323553c5605
+llvmdump 14afeaa21c5c9c75 ~rtdecls 7b260ec16f159244
+llvmdump 14afeaa21c5c9c75 ~types fc43b1aba992cf84
+llvmdump 14cf770fe4d747d6 =@slot f5d9d7a6a32514fb
+llvmdump 14cf770fe4d747d6 =none rejected
+llvmdump 15056cf398cd05b3 #c 71 3e8fbacca9cb875e
+llvmdump 15056cf398cd05b3 #d 247 1a7fbbf45a4070fa
+llvmdump 15056cf398cd05b3 =@slot a188ab588423cbb3
+llvmdump 15056cf398cd05b3 module f614b2b1446d233e
+llvmdump 15056cf398cd05b3 order 8bcf4ac6b805c824
+llvmdump 15056cf398cd05b3 ~rtdecls 60b2beaf5d324b32
+llvmdump 15056cf398cd05b3 ~types 57c9f687d74ffc0f
+llvmdump 150dff4fd0e0fa96 =@slot df09b2ae3fe1d5af
+llvmdump 150dff4fd0e0fa96 =none rejected
+llvmdump 15178e8b26c3e53d #c 279 b5fe2dac211dbe9b
+llvmdump 15178e8b26c3e53d #d 795 5f63fde719af36da
+llvmdump 15178e8b26c3e53d =@slot a818913efeb8058e
+llvmdump 15178e8b26c3e53d module be558f4643bcc3f8
+llvmdump 15178e8b26c3e53d order eac3b4313ab93949
+llvmdump 15178e8b26c3e53d ~rtdecls a3fcfd06e9cf4d5e
+llvmdump 15178e8b26c3e53d ~types 32e7eaf11ba694be
+llvmdump 153a7be6d8d94384 =@slot 76a7c993873ba0bc
+llvmdump 153a7be6d8d94384 =none rejected
+llvmdump 1540bf28415145e1 #c 272 1dff36058e60d877
+llvmdump 1540bf28415145e1 #d 728 ed1955a7d31da8d9
+llvmdump 1540bf28415145e1 =@slot 5a452273253b19ec
+llvmdump 1540bf28415145e1 module f9e1aaf0f693cd8d
+llvmdump 1540bf28415145e1 order 89b75854d74cbb9b
+llvmdump 1540bf28415145e1 ~rtdecls 4a648fa01ca0ef20
+llvmdump 1540bf28415145e1 ~types 3c5f66e0f47d99bd
+llvmdump 155868a686ecb64f =@slot de59037efa47db6c
+llvmdump 155868a686ecb64f =none rejected
+llvmdump 156a85189472b3aa =@slot 281c7847e582d481
+llvmdump 156a85189472b3aa =none rejected
+llvmdump 158bf736f720180a =@slot b0d82b116b4a9853
+llvmdump 158bf736f720180a =none rejected
+llvmdump 15950fcaf23389b9 =@slot 822d708d1db61169
+llvmdump 15950fcaf23389b9 =none rejected
+llvmdump 15a116aac9ba66b9 #c 87 131df2613eb6768a
+llvmdump 15a116aac9ba66b9 #d 279 cc4d02d58d9abc2e
+llvmdump 15a116aac9ba66b9 =@slot 334010c905365d97
+llvmdump 15a116aac9ba66b9 module ab6c99189f4422db
+llvmdump 15a116aac9ba66b9 order cfa2fe6459436907
+llvmdump 15a116aac9ba66b9 ~rtdecls fd597edadf41391f
+llvmdump 15a116aac9ba66b9 ~types ce154f0eac71b9e8
+llvmdump 15fdb4dcec4aac73 #c 83 949c2f5e5bbfdf95
+llvmdump 15fdb4dcec4aac73 #d 285 1ac8fb3dcb4a9d17
+llvmdump 15fdb4dcec4aac73 =@slot d96aac2cecff498a
+llvmdump 15fdb4dcec4aac73 module bfc4ca3fade94bb3
+llvmdump 15fdb4dcec4aac73 order d0174e747ed22de2
+llvmdump 15fdb4dcec4aac73 ~rtdecls f4f8276a2d9740bd
+llvmdump 15fdb4dcec4aac73 ~types bacdc3412b38782a
+llvmdump 16212985a1c2f6e2 =@slot f4815d9a8cb8d412
+llvmdump 16212985a1c2f6e2 =none unsupported
+llvmdump 162466486498908f =@slot a87de26285ea7bd1
+llvmdump 162466486498908f =none rejected
+llvmdump 162c98a0d1f3dfd1 =@slot 4709172a60fd58fe
+llvmdump 162c98a0d1f3dfd1 =none holes
+llvmdump 1644bfe6ddd5ca35 =@slot 0f7b81910c1180a1
+llvmdump 1644bfe6ddd5ca35 =none error bench/xo/v0.4/02-worker-pool/pool.xo:67:8: the SSA builder does not support this tuple pattern
+llvmdump 167c1155462f2b62 =@slot ca13a43f12ec9c33
+llvmdump 167c1155462f2b62 =none rejected
+llvmdump 16812c40bb50bd19 =@slot 303aa6c827138ebd
+llvmdump 16812c40bb50bd19 =none "error internal/gen/testdata/golden/go_regexp/main.xo:7:12: the SSA builder does not support `regexp.must_compile` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:7:12: the SSA builder does not support the type `regexp.Regexp` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:9:20: the SSA builder does not support `regexp.Regexp.find_string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:10:12: the SSA builder does not support `regexp.Regexp.find_all_string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:13:12: the SSA builder does not support `regexp.Regexp.find_all_string_submatch` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:16:13: the SSA builder does not support `regexp.Regexp.find_string_index` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:18:20: the SSA builder does not support `regexp.Regexp.replace_all_string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:20:15: the SSA builder does not support `regexp.Regexp.replace_all_string_func` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:22:23: the SSA builder does not support `regexp.Regexp.match_string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:22:53: the SSA builder does not support `regexp.Regexp.match_string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:22:80: the SSA builder does not support `regexp.Regexp.num_subexp` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:22:99: the SSA builder does not support `regexp.Regexp.string` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support `regexp.compile` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support the type `regexp.Regexp` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:23:9: the SSA builder does not support the type `go.Error`\ninternal/gen/testdata/golden/go_regexp/main.xo:27:20: the SSA builder does not support `regexp.quote_meta` of the Go package `regexp` (`use go`)\ninternal/gen/testdata/golden/go_regexp/main.xo:30:20: the SSA builder does not support `regexp.Regexp.string` of the Go package `regexp` (`use go`)"
+llvmdump 1696f2f45e42d09e =@slot a31cade3ad03b341
+llvmdump 1696f2f45e42d09e =none no main
+llvmdump 16b13c4213e73ca4 #c 68 9411e3d95ecb3792
+llvmdump 16b13c4213e73ca4 #d 231 8acdb52c950c26ef
+llvmdump 16b13c4213e73ca4 =@slot 0021eb19b73044ec
+llvmdump 16b13c4213e73ca4 module 67be349bf13fc7b5
+llvmdump 16b13c4213e73ca4 order 043c80837f3ff5b0
+llvmdump 16b13c4213e73ca4 ~rtdecls 9dce7dde52778e4a
+llvmdump 16b13c4213e73ca4 ~types f8f650de67160c67
+llvmdump 170190c7bbdb2e1e #c 70 dce0f2e89088888a
+llvmdump 170190c7bbdb2e1e #d 209 e7b7aae0c1f3e7d5
+llvmdump 170190c7bbdb2e1e =@slot a45a9b2a1115c2f5
+llvmdump 170190c7bbdb2e1e module 931184ca03be5118
+llvmdump 170190c7bbdb2e1e order cfe1cf7f1d266606
+llvmdump 170190c7bbdb2e1e ~rtdecls 14d1a69fbf420348
+llvmdump 170190c7bbdb2e1e ~types 2e691c085bb6fdb5
+llvmdump 170a49b597097f61 =@slot 3fc89a240f4af88d
+llvmdump 170a49b597097f61 =none rejected
+llvmdump 171c45652cd44697 =@slot e5401506b483cf81
+llvmdump 171c45652cd44697 =none no main
+llvmdump 173944f250526afc #c 75 7f72b85b0aa4b0a4
+llvmdump 173944f250526afc #d 219 b388364f6b7a175d
+llvmdump 173944f250526afc =@slot f2e93b2cf3d76ed9
+llvmdump 173944f250526afc module 4ca5a7ba03c40071
+llvmdump 173944f250526afc order 1d7a50d81c6e1f3f
+llvmdump 173944f250526afc ~rtdecls 9dce7dde52778e4a
+llvmdump 173944f250526afc ~types 6c2a7ac6b4182382
+llvmdump 17404af427d6b9e0 #c 70 ceb1a3c794a19455
+llvmdump 17404af427d6b9e0 #d 232 73d8638666bb03ca
+llvmdump 17404af427d6b9e0 =@slot 85a7573e64545d43
+llvmdump 17404af427d6b9e0 module 8146a909a803949f
+llvmdump 17404af427d6b9e0 order 88da35a00e1de4c0
+llvmdump 17404af427d6b9e0 ~rtdecls 9a2242dec1736d7f
+llvmdump 17404af427d6b9e0 ~types 83fb23baee3ec929
+llvmdump 174e1650311cbb61 =@slot 6e245520ecb9c646
+llvmdump 174e1650311cbb61 =none rejected
+llvmdump 1759fa288688ebec #c 334 9b1579e59bbf2b92
+llvmdump 1759fa288688ebec #d 904 5e813ecbe8cddac7
+llvmdump 1759fa288688ebec =@slot 40203bb4be41aa34
+llvmdump 1759fa288688ebec module 97ff21b1fd975714
+llvmdump 1759fa288688ebec order 5c72d40177a180a4
+llvmdump 1759fa288688ebec ~rtdecls d90e51e4406c45f0
+llvmdump 1759fa288688ebec ~types e6f45da32658aaeb
+llvmdump 17635d8e5365e88e =@slot 8dd9f5e679fad9fc
+llvmdump 17635d8e5365e88e =none rejected
+llvmdump 17887f05b5f60b1b =@slot 6df4c5b823a3a3a8
+llvmdump 17887f05b5f60b1b =none rejected
+llvmdump 1789e1f4649c7be8 #c 75 ca0158df5d8b0431
+llvmdump 1789e1f4649c7be8 #d 242 040f0005084bea1f
+llvmdump 1789e1f4649c7be8 =@slot d6de5db0e36e2fcf
+llvmdump 1789e1f4649c7be8 module ad7c44473dc448e1
+llvmdump 1789e1f4649c7be8 order e32f9b0b67813ccb
+llvmdump 1789e1f4649c7be8 ~rtdecls 0442a1ab574922df
+llvmdump 1789e1f4649c7be8 ~types 3db4241bb3a21762
+llvmdump 17ab771c19538d50 #c 164 33b26d4699befe9f
+llvmdump 17ab771c19538d50 #d 495 cb76081f0cefcb84
+llvmdump 17ab771c19538d50 =@slot f7bffeb45302c7c2
+llvmdump 17ab771c19538d50 module 3a74bc83448c405a
+llvmdump 17ab771c19538d50 order cd21555af9e1f866
+llvmdump 17ab771c19538d50 ~rtdecls 2d0364429e2eda9c
+llvmdump 17ab771c19538d50 ~types 893ffd215ca2a377
+llvmdump 17c7e472e647579b =@slot df571b490d3e8d36
+llvmdump 17c7e472e647579b =none rejected
+llvmdump 17d32d933e5ce89d #c 78 8c828e2510da78a5
+llvmdump 17d32d933e5ce89d #d 235 62c7c8a18ff07c7a
+llvmdump 17d32d933e5ce89d =@slot 0ac04c3917bfbdf3
+llvmdump 17d32d933e5ce89d module c5343eb3c76140a0
+llvmdump 17d32d933e5ce89d order 9c99b9ca8c2d029e
+llvmdump 17d32d933e5ce89d ~rtdecls 9dce7dde52778e4a
+llvmdump 17d32d933e5ce89d ~types 99180f1b13e69ae2
+llvmdump 17e1e1b2618b9df8 #c 68 96b694302c939ded
+llvmdump 17e1e1b2618b9df8 #d 206 d7d6b819b46ab168
+llvmdump 17e1e1b2618b9df8 =@slot cfce6eb693989f09
+llvmdump 17e1e1b2618b9df8 module e0143b011fe9cacd
+llvmdump 17e1e1b2618b9df8 order ca4613e6b7c47ea3
+llvmdump 17e1e1b2618b9df8 ~rtdecls 95345576c7a96edf
+llvmdump 17e1e1b2618b9df8 ~types 2e691c085bb6fdb5
+llvmdump 17eb4c915c7bcfbd =@slot b4a27c747d3dfaa2
+llvmdump 17eb4c915c7bcfbd =none no main
+llvmdump 17efdf9a9ce8c763 #c 152 d81c762f78d7d155
+llvmdump 17efdf9a9ce8c763 #d 365 b62f3cc77b0bb6f4
+llvmdump 17efdf9a9ce8c763 =@slot be90ee09d24fa27d
+llvmdump 17efdf9a9ce8c763 module 89306f8ddc42aa35
+llvmdump 17efdf9a9ce8c763 order 0776d9ac1cb02870
+llvmdump 17efdf9a9ce8c763 ~rtdecls aa5d07285d7ea142
+llvmdump 17efdf9a9ce8c763 ~types fd3a07c8a031cc47
+llvmdump 17fea4bd7ba4e2d5 =@slot eb5a015a840421ab
+llvmdump 17fea4bd7ba4e2d5 =none rejected
+llvmdump 1820223178243391 #c 113 09195ef251c41225
+llvmdump 1820223178243391 #d 281 ce4bc47678eeb5a2
+llvmdump 1820223178243391 =@slot 216a19451bcfee0f
+llvmdump 1820223178243391 module 1786f54fb70ae64f
+llvmdump 1820223178243391 order eddc19f92a593bc9
+llvmdump 1820223178243391 ~rtdecls 805ca61f57351235
+llvmdump 1820223178243391 ~types b2eb2225af638739
+llvmdump 1823a4e7a2246e2a =@slot 8f81706e9ee5ec16
+llvmdump 1823a4e7a2246e2a =none rejected
+llvmdump 18325e6005847ace #c 77 bef59bfe23977757
+llvmdump 18325e6005847ace #d 278 7791f4bc8b437d95
+llvmdump 18325e6005847ace =@slot 44a322081a9dd7cb
+llvmdump 18325e6005847ace module 5ee4106a96695769
+llvmdump 18325e6005847ace order 2102d409e20af90a
+llvmdump 18325e6005847ace ~rtdecls d3f08daba12b3c1d
+llvmdump 18325e6005847ace ~types 1e766c10d74ebaec
+llvmdump 183e6006f91a43d4 #c 290 729c94658026df12
+llvmdump 183e6006f91a43d4 #d 759 43a8f85e3b6bdde1
+llvmdump 183e6006f91a43d4 =@slot 1e5019f5b8cffad5
+llvmdump 183e6006f91a43d4 module 118f82445a0610c5
+llvmdump 183e6006f91a43d4 order ad57d700a4ba9e2b
+llvmdump 183e6006f91a43d4 ~rtdecls 681794df2511a695
+llvmdump 183e6006f91a43d4 ~types 7157683d6cd5fd5a
+llvmdump 1854107232d2168e #c 68 9d2f3764150e704d
+llvmdump 1854107232d2168e #d 206 4c7c917fa7ef168e
+llvmdump 1854107232d2168e =@slot 0401d8f997fe676f
+llvmdump 1854107232d2168e module 17fb54452063875b
+llvmdump 1854107232d2168e order ca4613e6b7c47ea3
+llvmdump 1854107232d2168e ~rtdecls 95345576c7a96edf
+llvmdump 1854107232d2168e ~types 2e691c085bb6fdb5
+llvmdump 187689717019d5e6 #c 74 23e71dca3a9e0ae5
+llvmdump 187689717019d5e6 #d 242 39d4041f6d395ce9
+llvmdump 187689717019d5e6 =@slot 923e21254fa76390
+llvmdump 187689717019d5e6 module d463c2806ed02358
+llvmdump 187689717019d5e6 order 4cf01aa69e7d1dc9
+llvmdump 187689717019d5e6 ~rtdecls 37ee386e7f6c3913
+llvmdump 187689717019d5e6 ~types 9d4758138692b7d3
+llvmdump 1880c8866512d866 =@slot 5ae9ce22e9d82022
+llvmdump 1880c8866512d866 =none rejected
+llvmdump 18bf75da5ba9724b #c 76 f2a8697cdeff0525
+llvmdump 18bf75da5ba9724b #d 231 750ec993bb25d0a3
+llvmdump 18bf75da5ba9724b =@slot 480b0830e7f3c649
+llvmdump 18bf75da5ba9724b module 319b0bd45347b2da
+llvmdump 18bf75da5ba9724b order 71f652bdfa59be90
+llvmdump 18bf75da5ba9724b ~rtdecls c691f4d3d1146103
+llvmdump 18bf75da5ba9724b ~types b93396b7b8525a58
+llvmdump 18e2b54d0955f5f9 =@slot 8d404a72271bd295
+llvmdump 18e2b54d0955f5f9 =none rejected
+llvmdump 18fc59ee5af3e029 #c 70 e1140b4698693565
+llvmdump 18fc59ee5af3e029 #d 216 85af816922ad3050
+llvmdump 18fc59ee5af3e029 =@slot 4f45a96924f3a986
+llvmdump 18fc59ee5af3e029 module 631d9c06c938f695
+llvmdump 18fc59ee5af3e029 order f90525255235f5bb
+llvmdump 18fc59ee5af3e029 ~rtdecls c8d9399259f63e22
+llvmdump 18fc59ee5af3e029 ~types 2e691c085bb6fdb5
+llvmdump 19014bd3033a00e7 =@slot 5061df015196d967
+llvmdump 19014bd3033a00e7 =none rejected
+llvmdump 190ba30ca29ba90e #c 68 0f07b1a93723ff4e
+llvmdump 190ba30ca29ba90e #d 218 838d1b51af9ef2b7
+llvmdump 190ba30ca29ba90e =@slot 6addfe55c40345b7
+llvmdump 190ba30ca29ba90e module b73fd3403060adf9
+llvmdump 190ba30ca29ba90e order e7b623768fa7cb63
+llvmdump 190ba30ca29ba90e ~rtdecls 80db61bbd6591287
+llvmdump 190ba30ca29ba90e ~types 57c9f687d74ffc0f
+llvmdump 1927715ed955d1c0 =@slot a138060c659b019f
+llvmdump 1927715ed955d1c0 =none no main
+llvmdump 19290feced861dbf #c 80 b4406df9fb95f0e1
+llvmdump 19290feced861dbf #d 239 444da6c841b2e3ce
+llvmdump 19290feced861dbf =@slot b0189ab589115ad3
+llvmdump 19290feced861dbf module 81e740c0785cb591
+llvmdump 19290feced861dbf order f9b1d8578dc9b534
+llvmdump 19290feced861dbf ~rtdecls 9eb49bcf86cac66c
+llvmdump 19290feced861dbf ~types 223158a65eb341e7
+llvmdump 192d9bdc19663f53 #c 69 dcd13d82c881024e
+llvmdump 192d9bdc19663f53 #d 208 1d60a317f7f29774
+llvmdump 192d9bdc19663f53 =@slot 8d71d23c29ff0237
+llvmdump 192d9bdc19663f53 module 2b4389370cfedfb8
+llvmdump 192d9bdc19663f53 order f7db460305b81255
+llvmdump 192d9bdc19663f53 ~rtdecls 95345576c7a96edf
+llvmdump 192d9bdc19663f53 ~types 2e691c085bb6fdb5
+llvmdump 19451c5e7cb1173e #c 88 0f3163bbc10e03b2
+llvmdump 19451c5e7cb1173e #d 254 05df684456b2091c
+llvmdump 19451c5e7cb1173e =@slot 5620b060df6c1fce
+llvmdump 19451c5e7cb1173e module e9f7664a1accd8d6
+llvmdump 19451c5e7cb1173e order f51354a9f067557a
+llvmdump 19451c5e7cb1173e ~rtdecls ce6461fbc12e92ba
+llvmdump 19451c5e7cb1173e ~types 73674586db6a0c08
+llvmdump 1955df65ed38335c #c 72 9f77fb17d451e14b
+llvmdump 1955df65ed38335c #d 226 3de0f17d6485e9e3
+llvmdump 1955df65ed38335c =@slot 0a88b808b217faf1
+llvmdump 1955df65ed38335c module e6f7f186a1fa2332
+llvmdump 1955df65ed38335c order 3542d5491d34b57d
+llvmdump 1955df65ed38335c ~rtdecls 9dce7dde52778e4a
+llvmdump 1955df65ed38335c ~types 9d6000f6c1908747
+llvmdump 1984c39442d9706a =@slot 3477fe7f1ab17194
+llvmdump 1984c39442d9706a =none rejected
+llvmdump 19aaba6faf0363b3 =@slot 6d12de9a55e51e7a
+llvmdump 19aaba6faf0363b3 =none rejected
+llvmdump 19aceadc89bc35cc =@slot 5938fed678875416
+llvmdump 19aceadc89bc35cc =none rejected
+llvmdump 19cb4d16572eeb1b =@slot bdfc0fe75f42dbc5
+llvmdump 19cb4d16572eeb1b =none no main
+llvmdump 19e5f7c4ac1311ed =@slot df0459ace01fbff7
+llvmdump 19e5f7c4ac1311ed =none rejected
+llvmdump 19f1a5bc61501e1f =@slot 8e660cb7ea0d22f1
+llvmdump 19f1a5bc61501e1f =none rejected
+llvmdump 1a0c8202135d7760 =@slot d50ff421a40e50cb
+llvmdump 1a0c8202135d7760 =none no main
+llvmdump 1a110ad8ee39d186 =@slot 9a81203391f06c46
+llvmdump 1a110ad8ee39d186 =none rejected
+llvmdump 1a3e6c222bd26695 =@slot f974208cf7686355
+llvmdump 1a3e6c222bd26695 =none rejected
+llvmdump 1a423b9997ad9c27 =@slot a3c0bd5d9327b9da
+llvmdump 1a423b9997ad9c27 =none rejected
+llvmdump 1a660ef2bb637788 #c 74 0ba067e41b6dbe21
+llvmdump 1a660ef2bb637788 #d 237 a594f76de68caa3f
+llvmdump 1a660ef2bb637788 =@slot 413ab3732d182a62
+llvmdump 1a660ef2bb637788 module 502e5b0a70270a0c
+llvmdump 1a660ef2bb637788 order be72f9b5600625b0
+llvmdump 1a660ef2bb637788 ~rtdecls 95345576c7a96edf
+llvmdump 1a660ef2bb637788 ~types b89be1743a796fdb
+llvmdump 1a7ae54f6845318d =@slot aca4f1d5109e180e
+llvmdump 1a7ae54f6845318d =none rejected
+llvmdump 1a8185ae7ec3d1e6 =@slot 48b410e7c9bb6f47
+llvmdump 1a8185ae7ec3d1e6 =none rejected
+llvmdump 1a8b3b1064105128 =@slot 2cf7871b82466aa0
+llvmdump 1a8b3b1064105128 =none rejected
+llvmdump 1ad6b51947ead163 =@slot af50b791c03f4b4a
+llvmdump 1ad6b51947ead163 =none rejected
+llvmdump 1b15078f285ec069 =@slot a9f40debddc79304
+llvmdump 1b15078f285ec069 =none rejected
+llvmdump 1b60d645c32d1a70 =@slot ea6734b4529859e9
+llvmdump 1b60d645c32d1a70 =none rejected
+llvmdump 1b7639a93a951ae6 #c 111 badc036da988b391
+llvmdump 1b7639a93a951ae6 #d 280 c6ee3b5f66b75937
+llvmdump 1b7639a93a951ae6 =@slot 012f54b0d0a485c2
+llvmdump 1b7639a93a951ae6 module a26234364918e166
+llvmdump 1b7639a93a951ae6 order 8c9769e2d63c9f75
+llvmdump 1b7639a93a951ae6 ~rtdecls 801a92274562331d
+llvmdump 1b7639a93a951ae6 ~types d1c0386bbd3e997c
+llvmdump 1b86f0d801db1161 =@slot a065c5e44ce52837
+llvmdump 1b86f0d801db1161 =none rejected
+llvmdump 1bbc4ae8234a7d6a #c 74 3c386970aa49091d
+llvmdump 1bbc4ae8234a7d6a #d 218 cc35d01d74db17be
+llvmdump 1bbc4ae8234a7d6a =@slot d82aa6c9bafd12a7
+llvmdump 1bbc4ae8234a7d6a module 489abaefe93de8ec
+llvmdump 1bbc4ae8234a7d6a order 93e889f6e78e7a87
+llvmdump 1bbc4ae8234a7d6a ~rtdecls 95345576c7a96edf
+llvmdump 1bbc4ae8234a7d6a ~types 9678fa7980674cea
+llvmdump 1bccf56b572c4a02 #c 77 afc61b65c3d4002b
+llvmdump 1bccf56b572c4a02 #d 271 7590689d0b4f65ec
+llvmdump 1bccf56b572c4a02 =@slot 1cb3842f46f00a07
+llvmdump 1bccf56b572c4a02 module 82305f64f1a97ee8
+llvmdump 1bccf56b572c4a02 order 8617ef58fda2504b
+llvmdump 1bccf56b572c4a02 ~rtdecls d235e92af99749a8
+llvmdump 1bccf56b572c4a02 ~types 83fb23baee3ec929
+llvmdump 1becdf555fbc9b6e #c 70 6c6785574dffb314
+llvmdump 1becdf555fbc9b6e #d 214 02827d1580002c36
+llvmdump 1becdf555fbc9b6e =@slot ac208b2380f157b5
+llvmdump 1becdf555fbc9b6e module 2909ec12417bd3cd
+llvmdump 1becdf555fbc9b6e order 56a0a5afb29561f5
+llvmdump 1becdf555fbc9b6e ~rtdecls 9dce7dde52778e4a
+llvmdump 1becdf555fbc9b6e ~types f6e5af412e403baa
+llvmdump 1bf3c5c46de7ffbf #c 68 dafb13874a053f7c
+llvmdump 1bf3c5c46de7ffbf #d 207 1324b54f0f2f6d40
+llvmdump 1bf3c5c46de7ffbf =@slot ce10fb626647548a
+llvmdump 1bf3c5c46de7ffbf module b60e6df790e282f7
+llvmdump 1bf3c5c46de7ffbf order 9937b0a31d83779d
+llvmdump 1bf3c5c46de7ffbf ~rtdecls 95345576c7a96edf
+llvmdump 1bf3c5c46de7ffbf ~types 2e691c085bb6fdb5
+llvmdump 1ceed5ba00ddef13 =@slot 156b676c7e479015
+llvmdump 1ceed5ba00ddef13 =none no main
+llvmdump 1cf427c6eb3c5ed5 #c 76 298f8a939863e0b4
+llvmdump 1cf427c6eb3c5ed5 #d 241 9f3540e598a366e7
+llvmdump 1cf427c6eb3c5ed5 =@slot 0e2b6efae03ec8c2
+llvmdump 1cf427c6eb3c5ed5 module e4b33e6e0f089838
+llvmdump 1cf427c6eb3c5ed5 order 473892777757056d
+llvmdump 1cf427c6eb3c5ed5 ~rtdecls 9dce7dde52778e4a
+llvmdump 1cf427c6eb3c5ed5 ~types 2e691c085bb6fdb5
+llvmdump 1d079d922b917a29 =@slot 31f44372ca952a3b
+llvmdump 1d079d922b917a29 =none "error bench/xo/v0.4/08-notes-service/api/api.xo:77:75: the SSA builder does not support the name `domain` here\nbench/xo/v0.4/08-notes-service/api/api.xo:77:75: the SSA builder does not support the selector `.encode_cursor`"
+llvmdump 1d197b610276bc6e =@slot 8b67568b88300dff
+llvmdump 1d197b610276bc6e =none rejected
+llvmdump 1d344146c1496fe0 #c 68 b6ae83a2e83e728b
+llvmdump 1d344146c1496fe0 #d 212 e769ad254b46abb4
+llvmdump 1d344146c1496fe0 =@slot 3bbfc87d87f74cb1
+llvmdump 1d344146c1496fe0 module bdc698e012d865fe
+llvmdump 1d344146c1496fe0 order 779a877a7ccfe82c
+llvmdump 1d344146c1496fe0 ~rtdecls 9dce7dde52778e4a
+llvmdump 1d344146c1496fe0 ~types a396f26dbcd17036
+llvmdump 1d4aec7fa57ac36f =@slot 81d8612682aaabe3
+llvmdump 1d4aec7fa57ac36f =none rejected
+llvmdump 1d4ce950662ffe78 #c 171 7890501cc28fff4a
+llvmdump 1d4ce950662ffe78 #d 454 581086b1646b44f6
+llvmdump 1d4ce950662ffe78 =@slot 051600cae8c6978c
+llvmdump 1d4ce950662ffe78 module fc43561fb7e24768
+llvmdump 1d4ce950662ffe78 order d38640f427fac0d0
+llvmdump 1d4ce950662ffe78 ~rtdecls 4f8b8c0a10e0c7c2
+llvmdump 1d4ce950662ffe78 ~types 214db6a009527822
+llvmdump 1d6715513e391dd1 #c 69 0f6bcf62a5144218
+llvmdump 1d6715513e391dd1 #d 225 8707d4a863464d32
+llvmdump 1d6715513e391dd1 =@slot b5adcf711110eef9
+llvmdump 1d6715513e391dd1 module 6a5b03a50cb1b0b0
+llvmdump 1d6715513e391dd1 order 78193a990e4a3397
+llvmdump 1d6715513e391dd1 ~rtdecls 9c3d538bc08e363b
+llvmdump 1d6715513e391dd1 ~types 83fb23baee3ec929
+llvmdump 1d90f087bb7a560f =@slot 1ec2b7adc67cef5c
+llvmdump 1d90f087bb7a560f =none rejected
+llvmdump 1d91a578478b7625 #c 68 a49eac7842d1dbdb
+llvmdump 1d91a578478b7625 #d 209 2fdce1e5de9c87ef
+llvmdump 1d91a578478b7625 =@slot 4f1eadad1beb6694
+llvmdump 1d91a578478b7625 module 7b98fe03d67e223a
+llvmdump 1d91a578478b7625 order cb9de379b1436929
+llvmdump 1d91a578478b7625 ~rtdecls 95345576c7a96edf
+llvmdump 1d91a578478b7625 ~types a0c85b07945131be
+llvmdump 1d945776f61d287f #c 72 51e235f2fca6f490
+llvmdump 1d945776f61d287f #d 238 5e075994e304953e
+llvmdump 1d945776f61d287f =@slot df8157b3f3744ee5
+llvmdump 1d945776f61d287f module b4ac7108853c3cf3
+llvmdump 1d945776f61d287f order aee94a672b9ea4a0
+llvmdump 1d945776f61d287f ~rtdecls f83b6613cc3d140d
+llvmdump 1d945776f61d287f ~types 33518a0428651a45
+llvmdump 1da1ee7ec852953e =@slot a3400d6a27969f4b
+llvmdump 1da1ee7ec852953e =none rejected
+llvmdump 1da5ffc823ceb774 #c 70 4ee7e1fb7300c480
+llvmdump 1da5ffc823ceb774 #d 209 1b6fcf702bbae299
+llvmdump 1da5ffc823ceb774 =@slot 973bd96e0cbf6caa
+llvmdump 1da5ffc823ceb774 module 25488399afcf50af
+llvmdump 1da5ffc823ceb774 order b7de48f099767cc6
+llvmdump 1da5ffc823ceb774 ~rtdecls 95345576c7a96edf
+llvmdump 1da5ffc823ceb774 ~types 2e691c085bb6fdb5
+llvmdump 1dec440287e51a04 =@slot 9b943b76c26e017f
+llvmdump 1dec440287e51a04 =none rejected
+llvmdump 1e21a04b429c1dfd =@slot ea8f6771d26979c3
+llvmdump 1e21a04b429c1dfd =none rejected
+llvmdump 1e3ed9d36c68d808 =@slot 704b57317686ea7f
+llvmdump 1e3ed9d36c68d808 =none rejected
+llvmdump 1e671a73b67bce35 #c 70 302fd0a00b1e4107
+llvmdump 1e671a73b67bce35 #d 214 e59420361e1e2cb3
+llvmdump 1e671a73b67bce35 =@slot 3db2328273e18db6
+llvmdump 1e671a73b67bce35 module a07f1ff9b2ef50ba
+llvmdump 1e671a73b67bce35 order 68313940b3f7a505
+llvmdump 1e671a73b67bce35 ~rtdecls 9dce7dde52778e4a
+llvmdump 1e671a73b67bce35 ~types a0c85b07945131be
+llvmdump 1e91077bd162698e =@slot 9f8cfb74b1bd9795
+llvmdump 1e91077bd162698e =none rejected
+llvmdump 1e96bfe2fea4a933 =@slot 77e0097fe2d60fa1
+llvmdump 1e96bfe2fea4a933 =none rejected
+llvmdump 1e9bfb6698ae86fb #c 72 b38f23f7e4a78f73
+llvmdump 1e9bfb6698ae86fb #d 276 222942e08287d634
+llvmdump 1e9bfb6698ae86fb =@slot 6d4cd7c4e5a15488
+llvmdump 1e9bfb6698ae86fb module 98eb30ae48cbf276
+llvmdump 1e9bfb6698ae86fb order 655f576166ef50ae
+llvmdump 1e9bfb6698ae86fb ~rtdecls a2d7e930a5d0eb59
+llvmdump 1e9bfb6698ae86fb ~types 4e6871a1925f3daa
+llvmdump 1f1726d5a546ce62 =@slot 9139ed6bb2c27502
+llvmdump 1f1726d5a546ce62 =none rejected
+llvmdump 1f2dd9440b72a052 #c 72 2c9689135770e8ab
+llvmdump 1f2dd9440b72a052 #d 232 cb53ab47a697b54a
+llvmdump 1f2dd9440b72a052 =@slot d174be2c1025c1e1
+llvmdump 1f2dd9440b72a052 module 914684978df1f1db
+llvmdump 1f2dd9440b72a052 order 1cdab49207744755
+llvmdump 1f2dd9440b72a052 ~rtdecls 95345576c7a96edf
+llvmdump 1f2dd9440b72a052 ~types 2aa59ad3652f80dc
+llvmdump 1f37ed6f55d13a36 #c 69 e5c17034baa96a86
+llvmdump 1f37ed6f55d13a36 #d 219 d1b62d017c0896ce
+llvmdump 1f37ed6f55d13a36 =@slot 71f365cc431c0ac2
+llvmdump 1f37ed6f55d13a36 module 26a65f2d93bba084
+llvmdump 1f37ed6f55d13a36 order 9c1210d04252d185
+llvmdump 1f37ed6f55d13a36 ~rtdecls 95345576c7a96edf
+llvmdump 1f37ed6f55d13a36 ~types 5e5b9319c1eb2d07
+llvmdump 1faf1f3a49352be6 #c 311 67c0e919cffdbd1e
+llvmdump 1faf1f3a49352be6 #d 891 2b6719b0cc699223
+llvmdump 1faf1f3a49352be6 =@slot c0a0b9e35b2d58a9
+llvmdump 1faf1f3a49352be6 module 9c5630fdd4226568
+llvmdump 1faf1f3a49352be6 order 8202edf7366f6c68
+llvmdump 1faf1f3a49352be6 ~rtdecls f28a0cb2795ac71e
+llvmdump 1faf1f3a49352be6 ~types 880b8fc95a42e90a
+llvmdump 1fb08b55f55a7fff =@slot f194b02e5a709d24
+llvmdump 1fb08b55f55a7fff =none rejected
+llvmdump 1fc18440c89b4157 #c 188 a2cee606236dca16
+llvmdump 1fc18440c89b4157 #d 547 6de83092d7af53e1
+llvmdump 1fc18440c89b4157 =@slot e6c6c6f83d1dee23
+llvmdump 1fc18440c89b4157 module 665870a8cf1b991b
+llvmdump 1fc18440c89b4157 order c0268d38a4440f3e
+llvmdump 1fc18440c89b4157 ~rtdecls 86eb615468448dac
+llvmdump 1fc18440c89b4157 ~types 0afc105d6fdcdfb6

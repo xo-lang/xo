@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // The resolver of decision 0206 stage 3 (std/native/llrt/dns.xo) against
@@ -146,14 +146,14 @@ exit 0
 func resolverBuild(t *testing.T, dir, llrtC string) string {
 	t.Helper()
 	t.Setenv("XO_LLRT_C", llrtC)
-	res, err := build.Build([]string{dir}, build.Options{Backend: build.BackendLLVM, Out: filepath.Join(t.TempDir(), "resolver")})
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Out: filepath.Join(t.TempDir(), "resolver")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Failed {
 		t.Fatalf("build failed: %v", res.Diagnostics)
 	}
-	return res.Binaries[build.Host()]
+	return res.Binaries[xotool.Host()]
 }
 
 // resolverQuestions is the distinct lines of a server log, sorted.

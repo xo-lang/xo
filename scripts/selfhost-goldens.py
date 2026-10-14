@@ -2,10 +2,11 @@
 # The arm64 goldens with a compiler binary (decision 0158 switch-over),
 # scripts/selfhost-goldens.py <compiler> builds every internal/llvm/testdata/golden
 # program (TestGoldenRun: want.txt, no allocation live at exit) and every
-# internal/arm64/testdata/run program (TestRun: the Go backend's output)
-# with `<compiler> build`, runs it with XO_LEAKCHECK=1, and compares
-# (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
-# XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
+# internal/arm64/testdata/run program (TestRun: the Go backend's output,
+# recorded in internal/arm64/testdata/runwant by the Go `xo` of the
+# go-compiler-final tag, decision 0215) with `<compiler> build`, runs it
+# with XO_LEAKCHECK=1, and compares
+# (XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
 # the --backend= to pass the compiler, default arm64 (xo1 defaults to go
 # as xo does), or llvm, decision 0178;
 # XO1_FLAGS: more flags for `<compiler> build`, split at spaces, such as
@@ -13,9 +14,7 @@
 # /nonexistent to show a build needs no external tool, decision 0182;
 # XO1_CMD=run: `<compiler> run` builds and runs each program in one
 # command, in the program's directory, its output compared the same way,
-# decision 0178 stage 1; XO_GOLD_NO_GO=1: only the want.txt goldens,
-# skipping internal/arm64/testdata/run, whose reference needs the Go
-# `xo`, for a host without Go).
+# decision 0178 stage 1).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -126,12 +125,10 @@ def want_golden(d):
 
 
 def want_go(d):
-    name = d.replace('/', '_') + '.go'
-    bin = os.path.join(out, name)
-    subprocess.run([os.environ.get('XO_GO_XO', os.path.join(root, '.tools/xo')), 'build', '-o', bin, d], check=True, capture_output=True)
-    args, env, stdin = harness(d)
-    p = subprocess.run([bin] + args, cwd=d, capture_output=True, env=env, input=stdin)
-    return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, p.stdout.decode('utf-8', 'replace'), stable(p.stderr.decode('utf-8', 'replace')))
+    # the Go backend's output recorded by the Go `xo` of the
+    # go-compiler-final tag (decision 0215)
+    p = os.path.join('internal/arm64/testdata/runwant', os.path.basename(d) + '.txt')
+    return open(p, encoding='utf-8', newline='').read()
 
 
 jobs = []
@@ -139,7 +136,7 @@ for d in sorted(glob.glob('internal/llvm/testdata/golden/*')):
     if os.path.isdir(d):
         jobs.append((d, want_golden))
 for d in sorted(glob.glob('internal/arm64/testdata/run/*')):
-    if os.path.isdir(d) and os.environ.get('XO_GOLD_NO_GO') != '1':
+    if os.path.isdir(d):
         jobs.append((d, want_go))
 ok = 0
 fails = []

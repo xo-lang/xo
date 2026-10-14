@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+f3 -4
+--- stderr

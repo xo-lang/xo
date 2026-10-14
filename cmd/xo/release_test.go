@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
@@ -23,7 +22,7 @@ func TestEffectCeilings(t *testing.T) {
 		"github.com/acme/tick@v1.1.0/xo.mod":  "module github.com/acme/tick\nedition preview\n",
 		"github.com/acme/tick@v1.1.0/tick.xo": "pub fn now() -> Int uses env { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
 	})
-	env := modtest.Setup(t, src, mod.Compare)
+	env := modtest.Setup(t, src, modtest.Compare)
 	v2 := t.TempDir()
 	modtest.WriteFiles(t, v2, map[string]string{
 		"xo.mod":  "module github.com/acme/tick/v2\nedition preview\n",

@@ -95,8 +95,8 @@ Last verified: 2026-10-12
 
 ## Versions and releases
 
-`xo version` prints the toolchain version (`cmd/xo/version.go`), the
-git revision, and the host. The toolchain minor equals the spec draft;
+`xo version` prints the toolchain version (`selfhost/cli/core` `VERSION`),
+the git revision, and the host. The toolchain minor equals the spec draft;
 releases are git tags `v0.N.0` with a `CHANGELOG.md` entry, and only the
 owner declares 1.0 (decision 0089). First tag: v0.7.0. Before tagging,
 run the full suite with the full internal/selfhost tier:
@@ -105,17 +105,18 @@ tier lines under Commands). Last verified: 2026-10-11.
 
 **What `xo` is (switch point B, decision 0178, 2026-10-12)**: the
 released `xo` is xo1, the self hosted toolchain built from
-`selfhost/xo` (Xo), not the Go `cmd/xo`. The Go `cmd/xo` stays in the
-repository only as the bootstrap seed that builds the first xo1 (and as
-the reference of the differential tests until stage 7); it is frozen
-for language changes after B (stage 7 step 1; the rule goes in CLAUDE.md). The
-version is `selfhost/cli/core` `VERSION` (TestSelfhostVersion keeps
-cmd/xo's equal).
+`selfhost/xo` (Xo). Since decision 0215 (2026-10-13) the Go
+implementation of the compiler (cmd/xo's Go code and the compiler
+packages) is deleted: the last commit with it is tagged
+`go-compiler-final` (87873aa5), and xo1 is the only compiler. The
+version is `selfhost/cli/core` `VERSION`.
 
 The bootstrap chain, as release.sh runs it:
 
-    go build ./cmd/xo                      -> seed (Go, host only)
-    seed: XO_SELF_DRIVER=0 xo build --backend=arm64 selfhost/xo
+    $XO_SEED, else `go run ./scripts/xobuild`
+                                           -> seed (an earlier xo, or the
+                                              go-compiler-final xo1; internal/xotool)
+    seed: xo build --backend=arm64 --std=std selfhost/xo
                                            -> darwin/arm64 xo1
     darwin xo1: xo rtpack (darwin, and linux with zig cc)
     darwin xo1: --backend=arm64 --target=linux/arm64 --ld=macho
@@ -129,13 +130,13 @@ The bootstrap chain, as release.sh runs it:
                                               whose 24 GB is below the 29.5 GB the Linux run used;
                                               XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
 
-After a release exists, the previous release's xo replaces the Go seed
-(`scripts/bootstrap-xo.sh SEED`, below; stage 7 step 4). xo1 needs its
+After a release exists, the previous release's xo is the seed
+(`XO_SEED`, or `scripts/bootstrap-xo.sh SEED`, below). xo1 needs its
 release layout: `bin/xo` finds std, the pack, and `bin/xo-gobind`
 beside itself (`bin/../lib/xo`, symbolic links followed), so a bare
 copy of bin/xo does not run (`XO_STD` and `XO_RTPACK` override;
-gotchas/xo1-outside-release-layout.md). Building xo1 into a checkout's
-.tools/bin needs `XO_STD=$PWD/std`.
+gotchas/xo1-outside-release-layout.md). A checkout's `bin/xo` (`go run
+./scripts/xobuild`) finds `std` at `bin/../std`.
 
 Release archives (decisions 0157 and 0178): `scripts/release.sh
 [version]` on darwin/arm64 writes `dist/xo-<version>-<os>-<arch>.tar.gz`
@@ -158,13 +159,27 @@ arm64 (the default linker: macho on darwin, cc on linux), arm64
 linux/amd64), the time_zones golden on arm64 against its want.txt
 (zone data from the archive's lib/xo/zoneinfo.zip), the missing Go reported by the default backend; with Go a
 hello on the Go backend, a `use go` program, and cmd/xo's whole suite
-with `XO_CLI` = the archive's bin/xo (`BASELINE=1`: also against the
-Go cmd/xo). On EC2: `scripts/remote-full.sh --arch arm64|amd64 --put
+with `XO_CLI` = the archive's bin/xo. On EC2: `scripts/remote-full.sh --arch arm64|amd64 --put
 dist/<archive> --cmd 'bash scripts/release-verify.sh ~/<archive>'`.
 Results: bench/results/retire-go-2026-10-12.md "Switch point B: the
 flip". Last verified: 2026-10-12.
 
 ## Commands
+
+Since decision 0215 (2026-10-13) there is no Go `xo`: read every `go run
+./cmd/xo X` and `.tools/xo X` below as `xo X` with the checkout's
+`bin/xo` (`go run ./scripts/xobuild`, internal/xotool) or a release's;
+the hidden comparison dumps of the Go implementation (lexdump, astdump,
+typedump, ssadump, asmdump, llvmdump, gendump), switch point A's
+internal/selfdriver, and the tests of the deleted Go packages are gone
+(the lines naming them are history). The TestSelfhost* tests compare
+each self hosted component with the recording (internal/selfhost
+gogoldens_test.go). The packages that keep tests, all through the xo
+binary: cmd/xo (the CLI), internal/llvm, internal/gen, internal/arm64
+(the backends and runtimes, test only), internal/selfhost,
+internal/repotest, internal/xotool, internal/gobind, internal/gotool,
+internal/progen, internal/testtmp, std/rt, third_party, editors/vscode,
+scripts/disttar, internal/benchharness. Last verified: 2026-10-13.
 
 Run from the repo root.
 
@@ -229,10 +244,8 @@ go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-
 go run ./cmd/xo gendump [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--each] <dirs...>   # hidden: the files gen.Generate makes for the Go backend (build.GoGenDump), == file <path> before each; --fmt reads the Xo generator's output and puts its Go files through gen.FormatFile (only gofmt after == prepped) (decision 0167; last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/gen -- [--std=DIR] [--wd=DIR] [--each] [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--prep] <dirs...>   # the self hosted (Xo) Go code generator: checks with selfhost/check, prints the text of each package before internal/gen's last step (with --prep after it but gofmt), then == skipped (last verified: 2026-10-11)
 go run ./cmd/xo build -o xo1 selfhost/xo && ./xo1 build --backend=go [-o OUT] [--go-tree=DIR] <dir>   # the Xo driver with the Go backend: selfhost/gen, format_prep, gofmt of go env GOROOT, runtime copied from std/rt, zone data from go env GOROOT's zoneinfo.zip (or XO_ZONEINFO), go build -trimpath (decision 0167; last verified: 2026-10-11)
-scripts/selfhost-switchover.sh [DIR]                   # the switch-over experiment: A (selfhost/xo built by the Go compiler, --backend=arm64) builds B, B builds C, assembly compared with xo asmdump's, then B runs the arm64 goldens (scripts/selfhost-goldens.py <compiler>: internal/llvm/testdata/golden want.txt and no live allocation, internal/arm64/testdata/run against the Go backend); DIR default .tools/sw, log in DIR/log.txt; about 20 minutes (last verified: 2026-10-11)
 go test ./internal/selfhost -run 'TestSelfhostGen'    # Xo Go code generator vs internal/gen, declaration by declaration (temporaries renumbered) and whole files after gofmt, on every repository run as a program and, with test blocks, as a test binary; every fourth run also with --no-mono --no-ranges --release --no-error-args; the merge tier without the five largest runs, the full tier every run and variant (go, arm64, llvm builds), every 25th with -short (merge tier with mutations about 30 s); TestSelfhostGenMutations: 60 code mutations (merge), 300 (full); XO_SELFHOST_BACKEND, XO_SELFHOST_GEN_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes gen-<backend>.txt); decision 0167 (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=darwin/arm64|linux/arm64] [-o OUT] [--asm=PATH] [--run=SUB --seed=N --cases=N --json -v] <dir>   # xo1, the self hosted compiler driver (decisions 0158, 0174): selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) links as internal/build does: the runtime from a prebuilt pack ($XO_RTPACK, else lib/xo/rtpack beside the binary named by $_) or the runtime object cache (<user cache>/xo/rtobj, $XO_RTOBJ_CACHE), the TLS library of std/http (<user cache>/xo/mbedtls, $XO_TLS_CACHE; sources from DIR/../third_party), the zone data of std/time (xo_tzdata.c; $XO_ZONEINFO or go env GOROOT), `use c` adapters from cbind's cache, the macOS SDKs internal/build tries; every key equal to the Go driver's, so both share the caches and link byte identical binaries; --target=linux/arm64 writes the assembly only (as internal/build); `test` builds and runs a native test binary as `xo test --no-gc` (no --real, no contract fuzz listing, no time limit); `keys` prints the pack keys and the TLS directory; `--backend=llvm` (build, test, asm) lowers with selfhost/llvm and compiles the IR (OUT.ll, or --asm) with clang ($XO_CLANG, else clang, or --cc) as buildLLVM does with one module: clang's target attributes, -O2 -flto -Wno-override-module, no XO_LLVM_SPLIT (decision 0178); not the released xo (last verified: 2026-10-12)
-scripts/selfhost-switchover.sh [DIR]                   # the switch-over experiment: A (selfhost/xo built by the Go compiler, --backend=arm64) builds B, B builds C, assembly compared with xo asmdump's, then B runs the arm64 goldens (scripts/selfhost-goldens.py <compiler>: internal/llvm/testdata/golden want.txt and no live allocation, with each golden's args.txt, env.txt, stdin.txt, internal/arm64/testdata/run against the Go backend); DIR default .tools/sw, log in DIR/log.txt; about 20 minutes (last verified: 2026-10-11)
 XO_CLI=/abs/xo1 go test ./cmd/xo -run TestX     # cmd/xo's tests against another xo binary (decision 0178 stage 2): the tests' run() execs `$XO_CLI <args>` in the current directory and environment instead of the in process runXo (cmd/xo/cli_test.go; the value is split on spaces, so it may carry flags) (last verified: 2026-10-12)
 xo build --backend=arm64 -o xomod selfhost/cli/modules/xomod && XO_CLI=$PWD/xomod XOMOD_FALLBACK=/abs/xo go test -short ./cmd/xo -run TestModules   # the module commands in Xo (selfhost/cli/modules, decision 0178 stage 4) on their own: xomod runs get, mod, vendor, publish, audit and hands every other command to the Go xo named by $XOMOD_FALLBACK (not XO_GO, which names the go command); xo1 dispatches the same commands to the same package (last verified: 2026-10-12)
 xo1 query|edit <args...>  /  xo build -o semantic selfhost/cli/semantic && ./semantic query|edit|defhash <args...>   # the semantic tools in Xo (decision 0178 stage 3, selfhost/cli/semantic): `xo query` (every kind, hash included) and `xo edit`, with the Go tool's flags, exit codes, and JSON; std from $XO_STD, else lib/xo/std beside the binary named by $_, else the std/ of the repository above the working directory; `semantic defhash DIR=PATH...` prints every definition hash of each module for TestSelfhostDefhash (last verified: 2026-10-12)
@@ -247,14 +260,10 @@ XO_CLI=/abs/xo1 XO_STD=$PWD/std go test ./cmd/xo -run 'TestXo'   # stage 5 (deci
 XO_CLI=/abs/xo go test ./cmd/xo -run 'TestCLIHelp|TestCLIPattern' [-update-help]   # the shipped xo's help (selfhost/cli/cmdhelp: xo help, every command's -h/--help on stdout exit 0, unknown flags exit 2 with the usage on stderr, goldens in cmd/xo/testdata/clihelp) and its DIR/... pattern (decision 0210); without XO_CLI and without -short the test builds xo1 with the Go backend (about 20 s); the differential tests drop the usage after a usage error (dropUsage), the help being xo1's (last verified: 2026-10-13)
 go test ./internal/selfhost -run TestSelfhostFormat     # the formatter of selfhost/cli/core/format against internal/format on every .xo file of the repository and on copies with changed blanks, byte for byte (go backend, about 10 s) (last verified: 2026-10-12)
 go test ./internal/diag -run TestSelfhostExplainData [-update-explain]   # selfhost/cli/core/explain_data.xo is generated from explain.go and codes.go; rewrite it after changing a text (last verified: 2026-10-12)
-python3 scripts/selfhost-cli.py <xo1>                  # check --json, check, vet --json, doc --all --json, fmt --check --json, parse --json on every directory with .xo files, by xo1 and the Go xo (XO_GO_XO, default .tools/xo), compared byte for byte (exit, stdout, stderr); CLI_CMDS, CLI_STRIDE, JOBS (last verified: 2026-10-12)
-XO1_BACKEND=llvm python3 scripts/selfhost-goldens.py <xo1>   # the same arm64 golden set built with xo1 --backend=llvm (XO1_BACKEND passes any --backend=; XO_GOLD_NO_GO=1 keeps only the want.txt goldens, for a host without Go; decision 0178; last verified: 2026-10-12)
+XO1_BACKEND=llvm python3 scripts/selfhost-goldens.py <xo1>   # the same arm64 golden set built with xo1 --backend=llvm (XO1_BACKEND passes any --backend=; the internal/arm64/testdata/run references are recorded in testdata/runwant since decision 0215, so no Go xo is needed; last verified: 2026-10-12)
 python3 scripts/selfhost-gogoldens.py <xo1>          # every internal/gen/testdata/golden program built by xo1 --backend=go (test_ programs with xo1 test --backend=go) and run as TestGolden runs it, compared with want.txt (Go frames dropped); XO_GOLD_DIR default .tools/gogold, JOBS default 4 (decision 0178; last verified: 2026-10-12)
 xo1 build|run|test [flags] [dir ...]                 # decision 0178 stage 1: xo build|run|test's flags with Go's flag rules (--targets, -o, --json, --release, --error-args, --stamp, --no-mono, --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore, --record, --run, --cases, -v, --offline, --workspace) plus --std --wd --cc --asm --go-tree --phase-times; several directories are one program; the check's diagnostics printed as xo prints them (human, or --json's indented object); the build goes to the Go driver's build directory (<user cache>/xo/build/<hash>/arm64|llvm|..., XO_BIN_CACHE shared with xo under the same keys), prints `os/arch: path`; XO_LLVM_SPLIT/JOBS/LTO split LLVM builds; `run DIR -- ARGS` execs the program, its exit status passed through; not in xo1 yet: --ci, --hybrid, --real on native tests, XO1201 diagnostics (last verified: 2026-10-12)
 XO1_CMD=run python3 scripts/selfhost-goldens.py <xo1>   # the arm64 goldens through `xo1 run` (build and run in one command, in the program's directory); combine with XO1_BACKEND (decision 0178 stage 1; last verified: 2026-10-12)
-XO_SELF_DRIVER_ALL=1 XO1=<xo1> go test ./cmd/xo -run ...    # cmd/xo's tests with `build`, `run`, and `test` routed through xo1 (cmd/xo/selfdriver_test.go: --std of the repository, --wd, --backend=go when none is named); off by default (decision 0178 stage 1; last verified: 2026-10-12)
-xo build|run|test --backend=arm64|llvm|--no-gc ...       # decision 0178 switch point A: runs xo1 (internal/selfdriver), its sources and std written to <user cache>/xo/xo1/<key> per embedded source set, the binary built once per set of its own inputs (selfhost/, the std modules it uses, the xo version, the host) into <user cache>/xo/xo1/bin/<binkey>/xo1, so a change to another std module, std/llrt, or third_party reuses it (decision 0199; XO1_CACHE moves both; a build takes about 5 to 12 minutes on Apple silicon and prints a line; last verified: 2026-10-13); on darwin/amd64 and linux/amd64 hosts only --backend=llvm and --no-gc (LLVM there) run xo1, which is built by the LLVM backend split into 12 modules without LTO (about 34 minutes and 16.5 GB on a 16 vCPU EC2 host, 86 minutes with ThinLTO on the 16 GB Intel Mac; XO_LLVM_SPLIT, XO_LLVM_LTO override; bench/results/xo1-x86-2026-10-12.md); XO1=<path> uses a prebuilt one; XO_SELF_DRIVER=0 runs the Go driver; programs xo1 cannot lower yet fall back to the Go driver (XO1201 diagnostics); --ci, --hybrid, --real, and workspace tests stay on the Go driver (last verified: 2026-10-12)
-python3 scripts/selfhost-samebin.py <xo1> [DIR]        # every arm64 golden built by xo1 and by `xo build --backend=arm64` under the same file name, compared: identical, same code and data (otool -s), or different; DIR default .tools/samebin (decision 0174; last verified: 2026-10-12)
 (cd selfhost && go run ../cmd/xo build --backend=arm64 -o macho ./macho) && ./macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s   # the self hosted Mach-O assembler (decision 0182): the arm64 emitter's assembly into an MH_OBJECT with the sections, relocations, compact unwind entries, and eh_frame of `cc -c`; LC_BUILD_VERSION minos default 11.0 (last verified: 2026-10-12)
 python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c on each file: identical objects, functions, sections, relocation tables (symbols by name), sizes, time; MACHO_KEEP=1 keeps the objects; inputs from `xo asmdump <dir>` (decision 0182; last verified: 2026-10-12)
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
@@ -3046,7 +3055,7 @@ intended exception carries a `//xo:default-gocache` comment with the
 reason. On the default cache by design: the repo's own `go test` and
 `go vet` (bench/nightly.sh, bench/go/strict-check.sh, developers) and
 the scripts that `go build` cmd/xo or one Go comparison program
-(scripts/release.sh, selfhost-switchover.sh, bench/size, bench/perf):
+(bench/perf, and before decision 0215 scripts/release.sh and bench/size):
 they hold no Xo cache lock, so on Xo's cache a trim could delete an
 entry they are linking. Go trims the default cache after 5 days unused.
 The default cache held 20,461,608 KiB on 2026-10-12: 235 identical
@@ -3212,9 +3221,11 @@ i-EXAMPLE03).
     scripts/remote-xo1-x86.sh [--dry-run] [COMMIT]   # the same on EC2 linux/amd64
     scripts/intel-mac-test.sh --clean COMMIT -- 'XO_LLVM_JOBS=4 scripts/xo1-host-check.sh $HOME/out; cat $HOME/out/summary.txt'
 
-xo1-host-check.sh builds xo1 as `xo` does on the host (switch point A:
-arm64 backend on arm64, LLVM split into 12 modules without LTO on
-x86-64), runs scripts/selfhost-goldens.py with it (`XO1_BACKEND=llvm`),
+xo1-host-check.sh builds xo1 as a checkout does (`go run
+./scripts/xobuild` with a fresh cache: arm64 backend on arm64, LLVM
+split into 12 modules without LTO on x86-64; before decision 0215, as
+switch point A's Go driver did), runs scripts/selfhost-goldens.py with
+it (`XO1_BACKEND=llvm`),
 runs bootstrap-xo.sh with it as the seed, and the want.txt goldens with
 s3 and no Go; each step's wall clock and peak memory go to
 OUTDIR/summary.txt. remote-xo1-x86.sh launches one on demand
@@ -3227,10 +3238,61 @@ bootstrap s1 1,957 s, s2 1,923 s, s3 1,923 s, s1 = s2 = s3, s3 goldens
 while the bootstrap's three build directories exist (more than the 12
 GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 
-## Bootstrapping without Go (decision 0178, stage 7)
+## Bootstrapping without Go (decision 0178 stage 7, decision 0215)
 
 The bootstrap chain: the first Xo `xo` on a new host is built by the
-previous release's binary (or any self hosted xo1), never by Go again.
+previous release's binary (or any self hosted xo1), never by the Go
+compiler again: it was deleted (decision 0215). With no xo at all, the
+seed is the xo1 of the `go-compiler-final` tag (87873aa5), then the hops of scripts/seed-chain.txt (decision 0216): Go builds
+that commit's cmd/xo, which builds that commit's selfhost/xo with its
+own driver.
+
+A checkout's xo (the one the Go tests run, internal/xotool):
+
+    go run ./scripts/xobuild                  # prints <repo>/bin/xo
+    XO_SEED=/path/to/xo go run ./scripts/xobuild
+
+builds `bin/xo` (git ignored, with `bin/xo.key`) when the key of the
+checkout's sources changed (the host, selfhost/, and the std modules it
+reaches through `use`; xotool.Inputs). The build goes into `<user
+cache>/xo/checkout/<key>/xo` once per key, under a file lock, shared by
+worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
+the checkout's earlier bin/xo, the newest earlier build in that cache,
+`xo` on PATH, and the go-compiler-final seed (built once into `<user
+cache>/xo/seed/<commit>`, from `git archive` of the tag, or of commit
+its commit in a clone without tags; needs Go and git); a seed that fails
+is reported and the next one tried. The backend: arm64 on an arm64
+host, the LLVM backend split into 12 modules without LTO on x86-64, the
+Go backend on Windows. `XO_CHECKOUT_CACHE` moves the cache. The Go tests
+build it on first use unless `XO_CLI` names an xo. On the development
+Mac a build with a cached xo1 as the seed took 391 s and 6.09 GB peak
+RSS (2026-10-13, other agents running). Last verified: 2026-10-13.
+
+The seed chain (decision 0216 item 2): an xo older than an intrinsic
+the sources use cannot build them (gotchas/seed-older-than-intrinsics.md).
+scripts/seed-chain.txt records the hops, `<commit> [std=<commit>]`, in
+order: a hop builds that commit's selfhost/xo with the previous xo,
+against the std of `std=` (default its own), and the last hop builds the
+checkout. internal/xotool applies them when a seed fails (each hop built
+once into `<user cache>/xo/seed/hop-<commit>[-std-<commit>]`), and
+
+    XO_SEED_CHAIN=file scripts/bootstrap-xo.sh SEED [OUTDIR]
+    XO_SEED_CHAIN="COMMIT[:STDCOMMIT] ..." scripts/bootstrap-xo.sh SEED
+
+runs them before s1. A change that makes xo's own sources use something
+an older xo cannot compile records its hop in the same change. The one
+hop today (syscalls2): main 4f792c55's compiler against the
+go-compiler-final std, built by a pre-syscalls2 xo in 311 s, then that
+xo built the branch's xo in 311 s (the Mac, 2026-10-13). On EC2 Linux
+arm64 (r8g.8xlarge, no xo at all, 2026-10-13) `go run ./scripts/xobuild`
+took 1,936 s: the go-compiler-final root seed (Go, then its xo1) about
+685 s, then 1,251 s for a direct build from the root that failed
+(undefined xo_call_c2), the hop (411 s), and the final build. The root
+seed now goes through the recorded hops first (an existing xo is still
+tried directly first), which saves the failed direct build, about one
+build of selfhost/xo (an estimate: the remainder of the 1,251 s after
+the hop, split between the failed build and the final one). Last
+verified: 2026-10-13.
 
     scripts/bootstrap-xo.sh SEED [OUTDIR]     # OUTDIR: .tools/bootstrap
     XO_BOOTSTRAP_RTPACK=DIR scripts/bootstrap-xo.sh SEED [OUTDIR]
@@ -3272,9 +3334,10 @@ instances.
 On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
 launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's
 xo-ci key pair and security group, a 120 minute self poweroff plus a
-local watchdog, terminated on exit), makes the seed there (Go builds
-cmd/xo, which builds selfhost/xo with the Go driver), deletes the Go
-toolchain and caches from the machine, and runs bootstrap-xo.sh. The
+local watchdog, terminated on exit), makes the seed there (`go run
+./scripts/xobuild`: the go-compiler-final xo1 builds the commit's
+selfhost/xo), deletes the Go toolchain and caches from the machine, and
+runs bootstrap-xo.sh. The
 log goes to bench/results/remote/bootstrap-<commit>.log (git ignored).
 
 Result on 2026-10-12 (commit 30dfd24, Amazon Linux 2023 arm64, 16

@@ -96,7 +96,7 @@ git -C \$X/xo fetch -q \$X/xo.bundle '+refs/xo-intel/*:refs/xo-intel/*'
 git -C \$X/xo checkout -q -f $full
 cd \$X/xo
 export HOME=\$X/state/home TMPDIR=\$X/state/tmp/ GOCACHE=\$X/state/gocache GOPATH=\$X/state/gopath
-export PATH=\$X/go/bin:\$PATH GOMAXPROCS=6 XO_SELF_DRIVER=0 GOTOOLCHAIN=local GOFLAGS=
+export PATH=\$X/go/bin:\$PATH GOMAXPROCS=6 GOTOOLCHAIN=local GOFLAGS=
 cmd=\$(echo $cmd64 | base64 -D)
 { echo "# intel-mac-test $commit \$(date -u +%FT%TZ) \$(sw_vers -productVersion) \$(uname -m) \$(clang --version | head -1)"; echo "# \$cmd"; } > \$X/logs/$commit.log
 set +e

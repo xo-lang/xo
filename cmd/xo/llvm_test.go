@@ -8,14 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestBuildRunLLVM drives `xo build --backend=llvm` and `xo run
-// --backend=llvm` (internal/llvm).
+// --backend=llvm` (selfhost/llvm).
 func TestBuildRunLLVM(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dir := t.TempDir()
@@ -62,11 +61,11 @@ func TestBuildRunLLVM(t *testing.T) {
 // report what it cannot build as XO1201 at the site, and --backend=go
 // is rejected.
 func TestNoGC(t *testing.T) {
-	if build.NativeBackend() == build.BackendLLVM {
-		if _, err := build.Clang(); err != nil {
+	if xotool.NativeBackend() == xotool.BackendLLVM {
+		if _, err := xotool.Clang(); err != nil {
 			t.Skip("clang not found")
 		}
-	} else if _, err := build.CC(); err != nil {
+	} else if _, err := xotool.CC(); err != nil {
 		t.Skip("cc not found")
 	}
 	dir := t.TempDir()
@@ -94,7 +93,7 @@ func TestNoGC(t *testing.T) {
 	}
 	var got struct {
 		Ok          bool
-		Diagnostics []diag.Diagnostic
+		Diagnostics []diagnostic
 	}
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("%v: %s", err, out.String())

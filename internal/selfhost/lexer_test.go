@@ -18,9 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/lexer"
+	"github.com/xo-lang/xo/internal/testtmp"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // repoRoot is the repository root, two levels up from this package.
@@ -40,12 +39,25 @@ var (
 	binaries    = map[string]*binEntry{}
 )
 
-// TestMain turns on the binary cache (a component is rebuilt only when
-// its generated code or the toolchain changes), checks XO_SELFHOST_JOBS,
-// and in a whole full tier run starts the native builds (prebuildFull).
+// binDir holds the self hosted components the tests build (TestMain
+// makes and removes it).
+var binDir string
+
+// TestMain turns on xo's binary cache (a component is relinked only when
+// its code or the toolchain changes), checks XO_SELFHOST_JOBS, and in a
+// whole full tier run starts the native builds (prebuildFull). The
+// components are built by the xo binary (internal/xotool: $XO_CLI, else
+// the checkout's bin/xo), decision 0215.
 func TestMain(m *testing.M) {
-	build.EnableTestBinCache()
+	xotool.EnableTestBinCache()
 	flag.Parse()
+	if d, err := testtmp.Dir("xo-selfhost-test-"); err == nil {
+		binDir = d
+		defer os.RemoveAll(d)
+	} else {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if d, err := filepath.Abs(filepath.Join("..", "..", "selfhost")); err == nil {
 		selfhostDir = d
 	}
@@ -54,9 +66,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, jobsErr)
 		os.Exit(2)
 	}
-	// the clang compiles of every LLVM build of the process share
-	// XO_LLVM_JOBS slots (internal/build/llvmsplit.go): EnableTestLLVMSplit's
-	// 4 held a 32 core run to a load of 4 for its first 18 minutes
+	// the clang compiles of an LLVM build share XO_LLVM_JOBS slots: 4
+	// held a 32 core run to a load of 4 for its first 18 minutes
 	// (2026-10-12), so scale them with the pool, at most one per 2 GiB
 	// (a clang on a part of selfhost/ssa holds about 1.1 GB)
 	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
@@ -66,7 +77,13 @@ func TestMain(m *testing.M) {
 		}
 		os.Setenv("XO_LLVM_JOBS", strconv.Itoa(n))
 	}
-	build.EnableTestLLVMSplit()
+	// LLVM builds of the components split into modules without LTO (the
+	// test settings of the Go driver before decision 0215)
+	for _, kv := range [][2]string{{"XO_LLVM_SPLIT", "12"}, {"XO_LLVM_LTO", "none"}} {
+		if _, ok := os.LookupEnv(kv[0]); !ok {
+			os.Setenv(kv[0], kv[1])
+		}
+	}
 	prebuildFull()
 	code := m.Run()
 	if err := flushGoldens(); err != nil {
@@ -78,6 +95,9 @@ func TestMain(m *testing.M) {
 		if fail {
 			code = 1
 		}
+	}
+	if binDir != "" {
+		os.RemoveAll(binDir)
 	}
 	os.Exit(code)
 }
@@ -114,9 +134,6 @@ func binEntryFor(component, backend string) *binEntry {
 func buildBinary(e *binEntry, component, backend string, slot bool) {
 	e.once.Do(func() {
 		e.started.Store(true)
-		if goldensRecording() {
-			return // the Xo side is not run
-		}
 		if slot {
 			defer acquireJob(true)()
 		}
@@ -125,14 +142,14 @@ func buildBinary(e *binEntry, component, backend string, slot bool) {
 		dir := filepath.Join(selfhostDir, component)
 		t0 := time.Now()
 		defer func() { e.took = time.Since(t0) }()
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: backend, Out: filepath.Join(binDir, component+"-"+backend)})
 		switch {
 		case err != nil:
 			e.err = err
 		case res.Failed:
-			e.err = fmt.Errorf("check failed: %+v", res.Diagnostics)
+			e.err = fmt.Errorf("xo build --backend=%s selfhost/%s failed:\n%s", backend, component, res.Output)
 		default:
-			e.bin = res.Binaries[build.Host()]
+			e.bin = res.Binaries[xotool.Host()]
 		}
 	})
 }
@@ -150,9 +167,6 @@ type binEntry struct {
 func selfhostBinaries(t *testing.T, component string, backends []string) map[string]string {
 	t.Helper()
 	bins := map[string]string{}
-	if goldensRecording() {
-		return bins // the Xo side is not run
-	}
 	errs := map[string]error{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -186,7 +200,7 @@ func selfhostBinaries(t *testing.T, component string, backends []string) map[str
 
 // nativeSkip is why a native backend cannot build on this host, or "".
 func nativeSkip(backend string) string {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		return err.Error()
 	}
 	if backend == "arm64" && (runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux")) {
@@ -196,8 +210,25 @@ func nativeSkip(backend string) string {
 }
 
 // repoXoFiles lists every .xo file under root, relative to it, skipping
-// dot directories (.git, .tools, .xo, .claude).
+// dot directories (.git, .tools, .xo, .claude). In a git checkout it lists
+// the files git knows (tracked, or untracked and not ignored), so ignored
+// local trees (runs/, output/, bin/) never reach the recorded replay,
+// which has no recording for them (decision 0215).
 func repoXoFiles(t testing.TB, root string) []string {
+	if out, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.xo").Output(); err == nil {
+		var files []string
+		for _, f := range strings.Split(string(out), "\x00") {
+			if f == "" || strings.HasPrefix(f, ".") || strings.Contains(f, "/.") {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, f)); err != nil {
+				continue // deleted in the working tree
+			}
+			files = append(files, f)
+		}
+		sort.Strings(files)
+		return files
+	}
 	var files []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -389,9 +420,10 @@ func runXo(t testing.TB, bin, root string, paths []string) string {
 	return stdout.String()
 }
 
-// goDump is the Go lexer's dump of each of paths (recorded as the
-// lexdump kind, gogoldens_test.go: the whole dump is piece "-").
-func goDump(t testing.TB, root string, paths []string) []*goldPieces {
+// goDump is the recorded lexer dump of each of paths (the lexdump kind,
+// gogoldens_test.go: the whole dump is piece "-"); xo are the Xo lexer's
+// dumps of paths, which XO_SELFHOST_GOLDENS=record records.
+func goDump(t testing.TB, root string, paths, xo []string) []*goldPieces {
 	out := make([]*goldPieces, len(paths))
 	for i, p := range paths {
 		full := p
@@ -403,10 +435,11 @@ func goDump(t testing.TB, root string, paths []string) []*goldPieces {
 			t.Fatal(err)
 		}
 		cx := newGoldenCtx(full)
-		hint := goldHint("TestSelfhostDifferential", "lexdump "+p, "lexer", p, root)
+		hint := goldHint("TestSelfhostDifferential", "lexer", p, root)
+		x := xo[i]
 		out[i] = recordedPieces("lexdump", p, hint, []string{cx.fileKey(p, src)}, cx, func() *goldPieces {
 			g := newPieces()
-			g.add("-", lexer.Dump(p, src))
+			g.add("-", x)
 			return g
 		})
 	}
@@ -439,19 +472,15 @@ func firstDiff(got, want string) string {
 // difference.
 func compare(t *testing.T, bin, root string, paths []string) {
 	const batch = 200
-	if goldensRecording() {
-		goDump(t, root, paths)
-		skipRecording(t)
-	}
 	for i := 0; i < len(paths); i += batch {
 		chunk := paths[i:min(i+batch, len(paths))]
 		got := splitDumps(t, runXo(t, bin, root, chunk), chunk)
-		for j, want := range goDump(t, root, chunk) {
+		for j, want := range goDump(t, root, chunk, got) {
 			switch {
 			case want.missing:
 				t.Fatal(want.missingText())
 			case !want.eq("-", got[j]):
-				t.Fatalf("Xo and Go lexers differ: %s", want.diff("-", got[j]))
+				t.Fatalf("the Xo lexer differs from the recording: %s", want.diff("-", got[j]))
 			}
 		}
 	}
@@ -470,7 +499,7 @@ func TestSelfhostDifferential(t *testing.T) {
 			t.Parallel()
 			if backend != "go" {
 				if goldensRecording() {
-					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records the Go side")
+					t.Skip("XO_SELFHOST_GOLDENS=record: the go backend's run records")
 				}
 				if why := nativeSkip(backend); why != "" {
 					t.Skip(why)
@@ -530,19 +559,27 @@ func TestSelfhostXoTests(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
-	dir := filepath.Join("..", "..", "selfhost", "lexer")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
+	runXoTests(t, "lexer")
+}
+
+// runXoTests builds the test binary of selfhost/<component> (`xo test`,
+// the go backend), runs it in the component's directory, and requires
+// every test to pass.
+func runXoTests(t *testing.T, component string) {
+	t.Helper()
+	dir := filepath.Join(selfhostDir, component)
+	res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, Out: filepath.Join(t.TempDir(), component+".test")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Failed {
-		t.Fatalf("check failed: %+v", res.Diagnostics)
+		t.Fatalf("xo test selfhost/%s built no test binary:\n%s", component, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[xotool.Host()])
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("xo test selfhost/lexer: %v\n%s", err, out)
+		t.Fatalf("xo test selfhost/%s: %v\n%s", component, err, out)
 	}
 	if !strings.Contains(string(out), "0 failed") {
 		t.Fatalf("unexpected test output:\n%s", out)

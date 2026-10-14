@@ -1,12 +1,12 @@
-package llvm_test
+package llvm
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestRangeFacts checks the IR of the golden range_facts (decision
@@ -15,25 +15,17 @@ import (
 // of inlinable functions are alwaysinline.
 func TestRangeFacts(t *testing.T) {
 	dir := filepath.Join("testdata", "golden", "range_facts")
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil || !ok {
-		t.Fatalf("check failed: %v", err)
-	}
-	abs, _ := filepath.Abs(dir)
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts, err := llvm.SplitIR(string(prog.IR))
+	ir, err := xotool.LLVMIR(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	def := func(name string) string {
-		d, ok := parts.Defs[name]
-		if !ok {
+		// `define ... @<name>(` to the closing brace
+		m := regexp.MustCompile(`(?ms)^define [^\n]*@"?` + regexp.QuoteMeta(name) + `"?\(.*?^\}$`).Find(ir)
+		if m == nil {
 			t.Fatalf("no definition of %s", name)
 		}
-		return d
+		return string(m)
 	}
 	for _, c := range []struct {
 		fn                string

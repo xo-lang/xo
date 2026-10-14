@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bufio"
@@ -26,9 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestTLSDiff runs the same HTTPS program (std.md 4.6, decision 0105)
@@ -55,7 +53,7 @@ func TestTLSDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds an HTTPS program with three backends")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	pki := newTestPKI(t)
@@ -64,9 +62,9 @@ func TestTLSDiff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(tlsDiffProgram(pki, peers)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	backends := []string{build.BackendGo, build.BackendLLVM}
+	backends := []string{xotool.BackendGo, xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	// the backends build and run in parallel (each build has its own
 	// directory, each run its own server port); the group returns when
@@ -77,14 +75,14 @@ func TestTLSDiff(t *testing.T) {
 			i, be := i, be
 			t.Run(be, func(t *testing.T) {
 				t.Parallel()
-				res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 				if err != nil {
 					t.Fatalf("build (%s): %v", be, err)
 				}
 				if res.Failed {
-					t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
+					t.Fatalf("build (%s) failed: %v", be, res.Output)
 				}
-				outs[i] = abruptClose(runTLSDiff(t, res.Binaries[build.Host()], pki, be != build.BackendGo))
+				outs[i] = abruptClose(runTLSDiff(t, res.Binaries[xotool.Host()], pki, be != xotool.BackendGo))
 			})
 		}
 	})
@@ -507,32 +505,31 @@ func probeTLSServer(t *testing.T, out *strings.Builder, addr string, p *testPKI)
 // configurations) must be freed or reachable at exit, which the runtime's
 // XO_LEAKCHECK count does not cover.
 func TestTLSLeaks(t *testing.T) {
+	// the TLS library built with sanitizer flags came from the Go build
+	// package (tls.go); xo builds it without them, and this test links
+	// it itself: port pending (decision 0215, "Tests not carried over")
+	t.Skip("decision 0215: needs a sanitizer build of the TLS library")
 	if testing.Short() {
 		t.Skip("builds a golden with AddressSanitizer")
 	}
 	if runtime.GOOS != "linux" {
 		t.Skip("LeakSanitizer runs on Linux only")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dir := filepath.Join("testdata", "golden", "http_tls")
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil || !ok {
-		t.Fatalf("check: %v", err)
-	}
-	abs, _ := filepath.Abs(dir)
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
+	ir, err := xotool.LLVMIR(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ll := filepath.Join(t.TempDir(), "prog.ll")
-	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := exe(filepath.Join(t.TempDir(), "prog"))
 	flags := asanFlags("-O1", "-g", "-fsanitize=address", "-Wno-override-module")
-	if err := build.CompileC(flags, []string{ll, filepath.Join(rtDir, "xo_rt.c")}, bin); err != nil {
+	if err := xotool.CompileC(flags, []string{ll, filepath.Join(rtDir, "xo_rt.c")}, bin); err != nil {
 		if strings.Contains(err.Error(), "sanitizer") {
 			t.Skipf("no AddressSanitizer: %v", err)
 		}

@@ -1,4 +1,4 @@
-package gen_test
+package gen
 
 import (
 	"bufio"
@@ -20,8 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // concurrentGolden are the golden programs that start tasks; they are also
@@ -55,11 +54,11 @@ func testGoldenRace(t *testing.T, names []string, noArenas bool) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("testdata", "golden", name)
-			mode := gen.Build
+			mode := xotool.ModeBuild
 			if strings.HasPrefix(name, "test_") {
-				mode = gen.Test
+				mode = xotool.ModeTest
 			}
-			res, err := build.Build([]string{dir}, build.Options{Mode: mode, Race: true, NoArenas: noArenas})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Mode: mode, Race: true, NoArenas: noArenas})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
@@ -67,7 +66,7 @@ func testGoldenRace(t *testing.T, names []string, noArenas bool) {
 			if data, err := os.ReadFile(filepath.Join(dir, "args.txt")); err == nil {
 				args = strings.Fields(string(data))
 			}
-			cmd := exec.Command(res.Binaries[build.Host()], args...)
+			cmd := exec.Command(res.Binaries[xotool.Host()], args...)
 			cmd.Dir = dir
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -94,11 +93,8 @@ func TestCrossCompile(t *testing.T) {
 	}
 	dir := filepath.Join("testdata", "golden", "scope_tasks")
 	out := t.TempDir()
-	targets, err := build.ParseTargets("linux/amd64,darwin/arm64,windows/amd64,wasi/wasm32")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Targets: targets, Out: out})
+	targets := []string{"linux/amd64", "darwin/arm64", "windows/amd64", "wasi/wasm32"}
+	res, err := xotool.Build([]string{dir}, xotool.Options{Targets: strings.Join(targets, ","), Out: out})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -118,7 +114,7 @@ func TestCrossCompile(t *testing.T) {
 // .xo file and line of every Xo frame (core 11.5, //line directives).
 func TestFaultStackPointsAtXo(t *testing.T) {
 	dir := filepath.Join("testdata", "golden", "arith_overflow")
-	got, _ := buildAndRun(t, dir, gen.Build)
+	got, _ := buildAndRun(t, dir, xotool.ModeBuild)
 	if got.exit != 70 {
 		t.Fatalf("exit %d, want 70", got.exit)
 	}
@@ -135,14 +131,14 @@ func TestFaultStackPointsAtXo(t *testing.T) {
 
 // signalBinary builds testdata/signal once for the real signal tests.
 var signalBinary = sync.OnceValues(func() (string, error) {
-	res, err := build.Build([]string{filepath.Join("testdata", "signal")}, build.Options{Mode: gen.Build})
+	res, err := xotool.Build([]string{filepath.Join("testdata", "signal")}, xotool.Options{})
 	if err != nil {
 		return "", err
 	}
 	if res.Failed {
-		return "", fmt.Errorf("check failed: %+v", res.Diagnostics)
+		return "", fmt.Errorf("build failed:\n%s", res.Output)
 	}
-	return res.Binaries[build.Host()], nil
+	return res.Binaries[xotool.Host()], nil
 })
 
 // signalChild is a started testdata/signal process. Only this test's own
@@ -413,18 +409,18 @@ func TestSignalHTTPInFlight(t *testing.T) {
 // rejected.
 func TestHoles(t *testing.T) {
 	dir := filepath.Join("testdata", "holes")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build})
+	res, err := xotool.Build([]string{dir}, xotool.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Failed {
 		t.Fatalf("a program with a hole built without --holes")
 	}
-	res, err = build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: true})
+	res, err = xotool.Build([]string{dir}, xotool.Options{Holes: true})
 	if err != nil || res.Failed {
 		t.Fatalf("build --holes: %v %+v", err, res)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[xotool.Host()])
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -450,11 +446,11 @@ func TestRunSeedReproduces(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds Go")
 	}
-	res, err := build.Build([]string{filepath.Join("testdata", "sched_run")}, build.Options{Mode: gen.Build})
+	res, err := xotool.Build([]string{filepath.Join("testdata", "sched_run")}, xotool.Options{})
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %+v", err, res)
 	}
-	bin := res.Binaries[build.Host()]
+	bin := res.Binaries[xotool.Host()]
 	runSeed := func(seed int) string {
 		cmd := exec.Command(bin)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("XO_SEED=%d", seed))
@@ -489,11 +485,11 @@ func TestTestSeedReproduces(t *testing.T) {
 		t.Skip("builds Go")
 	}
 	dir := filepath.Join("testdata", "golden", "test_explore")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
+	res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest})
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %+v", err, res)
 	}
-	bin := res.Binaries[build.Host()]
+	bin := res.Binaries[xotool.Host()]
 	runSeed := func(seed string) string {
 		cmd := exec.Command(bin, "-seed", seed, "-run", "lost update", "-v")
 		cmd.Dir = dir

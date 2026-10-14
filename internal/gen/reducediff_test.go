@@ -1,4 +1,4 @@
-package gen_test
+package gen
 
 import (
 	"os"
@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/gotool"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // The tests of scripts/reduce-diff.py, the reducer of backend
@@ -102,19 +102,11 @@ func TestReduceDiffReal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("about a minute of builds; run without -short")
 	}
-	// $XO_CLI names another xo (the self hosted one, decision 0178's
-	// switch point B gate); else this repository's is built
-	xo := os.Getenv("XO_CLI")
-	if xo == "" {
-		xo = filepath.Join(t.TempDir(), "xo")
-		gob := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo")
-		gob.Env = goVetEnv()
-		release := gotool.HoldCache()
-		out, err := gob.CombinedOutput()
-		release()
-		if err != nil {
-			t.Fatalf("go build: %v\n%s", err, out)
-		}
+	// the xo the tests run (internal/xotool: $XO_CLI, else the
+	// checkout's bin/xo)
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
 	}
 	min := reduceDiff(t, writeScript(t, "xo-wrap", realXo), "testdata/reduce/p197.xo", "XO_REAL="+xo)
 	if !strings.Contains(min, " ^ ") || strings.Count(min, "\n") > 12 {
@@ -123,8 +115,8 @@ func TestReduceDiffReal(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/min\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "main.xo"), []byte(min), 0o644)
-	res, err := check.Check([]string{dir})
-	if err != nil || len(res.Diagnostics) > 0 {
-		t.Errorf("the result does not check: %v %v\n%s", err, res.Diagnostics, min)
+	ds, err := xotool.Check([]string{dir})
+	if err != nil || len(ds) > 0 {
+		t.Errorf("the result does not check: %v %v\n%s", err, ds, min)
 	}
 }

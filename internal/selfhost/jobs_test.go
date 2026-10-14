@@ -22,8 +22,8 @@ import (
 // a development Mac does not swap; scripts/remote-full.sh sets the core
 // count): a native build of a component (selfhostBinary), a process of
 // a self hosted binary on a batch of runs (runXoBatches), and a Go side
-// item of parallel (the Go checker, SSA builder, or emitter on one
-// run). The backends' subtests run at the same time and the Go side
+// item of parallel (the recording, SSA builder, or emitter on one
+// run). The backends' subtests run at the same time and the recorded side
 // results are computed while the Xo processes run (background), all
 // drawing from the pool. A heavy unit (a build, or a mergeHeavy run:
 // the self hosted compiler's components, from 1 to about 6 GB each)
@@ -126,7 +126,7 @@ func runUnits(order []int, heavy func(i int) bool, f func(i int)) {
 }
 
 // parallel runs f(i) for each of dirs, each call in a slot of the pools
-// (mergeHeavy dirs in a heavy one): the runs of the Go checker, SSA
+// (mergeHeavy dirs in a heavy one): the runs of the recording, SSA
 // builder, and emitters (what, in the log line) are independent. f must
 // not take a slot itself. It logs the time and the longest item.
 func parallel(t testing.TB, what string, dirs []string, f func(i int)) {
@@ -156,7 +156,7 @@ func parallel(t testing.TB, what string, dirs []string, f func(i int)) {
 	}
 }
 
-// background runs f (the Go side results of a test, which use the
+// background runs f (the recorded side results of a test, which use the
 // working directory the test set) while the test goes on to its
 // subtests, and returns the wait for it; t's cleanup also waits, before
 // the working directory is restored.
