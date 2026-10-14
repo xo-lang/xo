@@ -3380,6 +3380,16 @@ then come from the checkout's third_party). From the next seed on, each
 seed bumps the minor version (`selfhost/cli/core` `VERSION`, the lead's
 commit on main; 0.11.0 next).
 
+Each version bump gets an annotated git tag `v<version>` on that commit
+(owner, 2026-10-14, from 0.11.0 on), pushed to GitHub, whose message is
+the summary of what the version brings over the previous one: a first
+line `Xo v<version>`, then what it unblocks, what landed since the last
+seed (zero-C items and the C lines deleted, compiler and backend
+changes with figures from bench/results, build and tooling changes),
+and whether the language or spec changed. `git tag -a v0.11.0 -F
+notes.txt <commit> && git push origin v0.11.0`. A tag is not a GitHub
+release: no release is published (owner).
+
 Seeds uploaded: 0.9.0-5e21dc31 (2026-10-13, built natively and through
 the chain, Windows cross built) and 0.10.0-23ce8ce2 (2026-10-14, the
 version bump 23ce8ce2 on main after fast builds round 2: darwin-arm64
