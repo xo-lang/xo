@@ -37,7 +37,7 @@ pub struct Info {
 /// `target`, so every arm is lowered; the builders make the platform
 /// calls of another OS faults, and a native backend's optimizer or a
 /// dead branch leaves the other arms unused.
-fn layer() -> Int {
+pub fn layer() -> Int {
   match target.arch {
     TargetArch.Wasm32 => 0
     TargetArch.Arm64 => {
@@ -316,7 +316,7 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
 }
 
 /// The C runtime's message of errno e (strerror, first letter lowered).
-fn err_msg(l: Int, e: Int) -> Str {
+pub fn err_msg(l: Int, e: Int) -> Str {
   if l == 3 {
     return windows.err_msg(e)
   }
@@ -327,7 +327,7 @@ fn err_msg(l: Int, e: Int) -> Str {
 }
 
 /// The FsErr tag plus one of errno e.
-fn fs_status(l: Int, e: Int) -> Int {
+pub fn fs_status(l: Int, e: Int) -> Int {
   if l == 3 {
     return windows.fs_status(e)
   }

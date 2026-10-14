@@ -15,6 +15,7 @@ import (
 // --accept-effects`; a narrowing is recorded; a lock without effect lines
 // is not checked and `xo mod tidy` adds them.
 func TestEffectLock(t *testing.T) {
+	t.Parallel()
 	tick := func(extra string) string {
 		return "pub fn pure() -> Int { 1 }\n" + extra
 	}

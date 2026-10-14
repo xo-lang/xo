@@ -10,6 +10,7 @@ import (
 )
 
 func TestFmt(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{
 		"a.xo":          "fn f(a:Int)->Int{\n    a+1\n}\n",
 		"b.xo":          "fn g() -> Int { 2 }\n",
@@ -18,7 +19,7 @@ func TestFmt(t *testing.T) {
 		"notes/read.md": "not xo\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"fmt", "--check", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"fmt", "--check", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("--check exit %d, want 1: %s", code, errOut.String())
 	}
 	if got := out.String(); !strings.Contains(got, "a.xo") || !strings.Contains(got, "c.xo") || strings.Contains(got, "b.xo") || strings.Contains(got, "skip.xo") {
@@ -28,7 +29,7 @@ func TestFmt(t *testing.T) {
 		t.Errorf("--check changed a file")
 	}
 	out.Reset()
-	if code := run([]string{"fmt", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"fmt", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("fmt exit %d: %s", code, errOut.String())
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "a.xo")); string(data) != "fn f(a: Int) -> Int {\n  a + 1\n}\n" {
@@ -38,15 +39,16 @@ func TestFmt(t *testing.T) {
 		t.Errorf("dot directory was formatted")
 	}
 	out.Reset()
-	if code := run([]string{"fmt", "--check", dir}, &out, &errOut); code != 0 || out.Len() != 0 {
+	if code := run(t, []string{"fmt", "--check", dir}, &out, &errOut); code != 0 || out.Len() != 0 {
 		t.Errorf("second --check: exit %d, out %q", code, out.String())
 	}
 }
 
 func TestFmtSyntaxError(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f( {\n", "ok.xo": "fn g()  {}\n"})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"fmt", "--json", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"fmt", "--json", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	var res struct {
@@ -104,9 +106,10 @@ pub fn twice(c: Counter) -> Counter {
 `
 
 func TestVetCLI(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"main.xo": toolsProg})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	var res struct {
@@ -136,7 +139,7 @@ func TestVetCLI(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"vet", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "warning XO0703") || !strings.Contains(errOut.String(), "1 module(s)") {
+	if code := run(t, []string{"vet", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "warning XO0703") || !strings.Contains(errOut.String(), "1 module(s)") {
 		t.Errorf("human output: exit %d\n%s\n%s", code, out.String(), errOut.String())
 	}
 }
@@ -146,7 +149,7 @@ func queryJSON(t *testing.T, dir string, args ...string) map[string]any {
 	var out, errOut bytes.Buffer
 	args = append([]string{"query"}, args...)
 	args = append(args, "--dir="+dir)
-	if code := run(args, &out, &errOut); code != 0 {
+	if code := run(t, args, &out, &errOut); code != 0 {
 		t.Fatalf("%v: exit %d: %s", args, code, errOut.String())
 	}
 	var v any
@@ -160,6 +163,7 @@ func queryJSON(t *testing.T, dir string, args ...string) map[string]any {
 }
 
 func TestQueryCLI(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"main.xo": toolsProg})
 	file := filepath.Join(dir, "main.xo")
 
@@ -217,22 +221,23 @@ func TestQueryCLI(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if code := run([]string{"query", "callers", "nosuch", "--dir=" + dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"query", "callers", "nosuch", "--dir=" + dir}, &out, &errOut); code != 1 {
 		t.Errorf("unknown name: exit %d", code)
 	}
-	if code := run([]string{"query", "bogus", "x"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"query", "bogus", "x"}, &out, &errOut); code != 2 {
 		t.Errorf("unknown kind: exit %d", code)
 	}
 	out.Reset()
-	if code := run([]string{"query", "effects", "load", "--text", "--dir=" + dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "performs fs.read") {
+	if code := run(t, []string{"query", "effects", "load", "--text", "--dir=" + dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "performs fs.read") {
 		t.Errorf("text output: %s", out.String())
 	}
 }
 
 func TestDocCLI(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"main.xo": toolsProg})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"doc", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"doc", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	md := out.String()
@@ -245,7 +250,7 @@ func TestDocCLI(t *testing.T) {
 		t.Errorf("non pub declarations documented:\n%s", md)
 	}
 	out.Reset()
-	if code := run([]string{"doc", "--all", "--json", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"doc", "--all", "--json", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), `"read_it"`) || !strings.Contains(out.String(), `"examples": [`) {
@@ -254,22 +259,23 @@ func TestDocCLI(t *testing.T) {
 }
 
 func TestExplainCLI(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := run([]string{"explain", "xo0201"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "XO0201: ") || !strings.Contains(out.String(), "Fix:") {
+	if code := run(t, []string{"explain", "xo0201"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "XO0201: ") || !strings.Contains(out.String(), "Fix:") {
 		t.Errorf("exit %d:\n%s", code, out.String())
 	}
 	out.Reset()
-	if code := run([]string{"explain", "--json", "XO0703"}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"explain", "--json", "XO0703"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	var e map[string]string
 	if err := json.Unmarshal(out.Bytes(), &e); err != nil || e["severity"] != "warning" || e["example"] == "" {
 		t.Errorf("json = %v (%v)", e, err)
 	}
-	if code := run([]string{"explain", "XO9999"}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"explain", "XO9999"}, &out, &errOut); code != 1 {
 		t.Errorf("unknown code: exit %d", code)
 	}
-	if code := run([]string{"explain"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"explain"}, &out, &errOut); code != 2 {
 		t.Errorf("no code: exit %d", code)
 	}
 }

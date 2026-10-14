@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -49,8 +48,8 @@ var dumpHeader = regexp.MustCompile(`^xo dump: pid \d+, 3 tasks\n`)
 
 // dumpPath is the file a program writes its dump to for `xo dump`:
 // $XO_DUMP_DIR (else the temporary directory)/xo-dump-<pid>.txt.
-func dumpPath(pid int) string {
-	dir := os.Getenv("XO_DUMP_DIR")
+func dumpPath(t testing.TB, pid int) string {
+	dir := getenv(t, "XO_DUMP_DIR")
 	if dir == "" {
 		dir = os.TempDir()
 	}
@@ -79,6 +78,7 @@ func (l *lockedBuffer) String() string {
 // (core 11.4): the program prints the task tree on SIGQUIT, writes it for
 // `xo dump`, and goes on running. Only this test's own child is signaled.
 func TestDump(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds Go")
 	}
@@ -86,8 +86,8 @@ func TestDump(t *testing.T) {
 		t.Skip("no SIGQUIT on windows")
 	}
 	dir := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
-	t.Setenv("XO_DUMP_DIR", dir)
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	setenv(t, "XO_DUMP_DIR", dir)
 	src := filepath.Join(dir, "app")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
@@ -97,10 +97,10 @@ func TestDump(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	bin := filepath.Join(dir, "app.bin")
-	if code := run([]string{"build", "-o", bin, src}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"build", "-o", bin, src}, &out, &errOut); code != 0 {
 		t.Fatalf("build: exit %d: %s", code, errOut.String())
 	}
-	cmd := exec.Command(bin)
+	cmd := command(t, bin)
 	cmd.Dir = src
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -125,7 +125,7 @@ func TestDump(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		out.Reset()
 		errOut.Reset()
-		if code := run([]string{"dump", pid}, &out, &errOut); code != 0 {
+		if code := run(t, []string{"dump", pid}, &out, &errOut); code != 0 {
 			t.Fatalf("xo dump: exit %d: %s", code, errOut.String())
 		}
 		got = out.String()
@@ -144,17 +144,18 @@ func TestDump(t *testing.T) {
 	if cmd.ProcessState != nil {
 		t.Errorf("the program exited after the dump")
 	}
-	if _, err := os.Stat(dumpPath(cmd.Process.Pid)); err == nil {
-		t.Errorf("xo dump left %s behind", dumpPath(cmd.Process.Pid))
+	if _, err := os.Stat(dumpPath(t, cmd.Process.Pid)); err == nil {
+		t.Errorf("xo dump left %s behind", dumpPath(t, cmd.Process.Pid))
 	}
 }
 
 func TestDumpUsage(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := run([]string{"dump"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"dump"}, &out, &errOut); code != 2 {
 		t.Errorf("no pid: exit %d", code)
 	}
-	if code := run([]string{"dump", "abc"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"dump", "abc"}, &out, &errOut); code != 2 {
 		t.Errorf("bad pid: exit %d", code)
 	}
 }

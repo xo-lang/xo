@@ -4,6 +4,7 @@
 // processes, before one link.
 
 use github.com/xo-lang/xo/selfhost/macho
+use std/crypto
 
 /// The objects of the assembly files srcs (ELF when elf, else Mach-O) by
 /// selfhost/macho, on up to jobs tasks, in the order of srcs.
@@ -72,12 +73,7 @@ fn memo_sysroot(os: Os, ctx: Ctx) -> List[Str] {
 /// the link's), at most jobs processes at once: the objects beside them,
 /// and the output of the first failure ("" when none failed).
 fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) -> (List[Str], Str) {
-  var cflags: List[Str] = []
-  for f in flags {
-    if !(f.starts_with("-l") || f.starts_with("-L") || f.starts_with("-Wl,") || f.ends_with(".a") || f.ends_with(".o")) {
-      cflags.push(f)
-    }
-  }
+  let cflags = asm_cflags(flags)
   var objs: List[Str] = []
   for s in srcs {
     objs.push(s.trim_suffix(".s") + ".o")
@@ -120,4 +116,148 @@ fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) ->
     return (objs, fails[0])
   }
   (objs, "")
+}
+
+/// The back-end cache keys of srcs (bcache.xo): the SHA-256 of prefix,
+/// tags[i] (when given), and each source, on up to jobs tasks, in the
+/// order of srcs.
+fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[Str] {
+  let n = srcs.len()
+  let w = jobs.min(n).max(1)
+  let next = Atomic[Int].new(0)
+  let done = scope sc {
+    var ts = []
+    for _ in 0..w {
+      ts.push(sc.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          var b = BytesBuilder.new()
+          b.write_str(prefix)
+          b.write_str("\x00")
+          if i < tags.len() {
+            b.write_str(tags[i])
+          }
+          b.write_str("\x00")
+          b.write_str(srcs[i])
+          mine.push((i, crypto.sha256(b.freeze()).to_hex()))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[Str] = []
+  for _ in 0..n {
+    out.push("")
+  }
+  for (i, k) in done {
+    out[i] = k
+  }
+  out
+}
+
+/// macho_objects through the back-end cache (decision 0220 addendum): a
+/// part whose assembly the cache holds is not assembled again. A program
+/// of one file does not use the cache.
+fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int) {
+  let dir = backend_cache_dir(os, ctx)
+  if dir.is_empty() || srcs.len() < 2 {
+    return (macho_objects(srcs, elf, jobs), srcs.len())
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return (macho_objects(srcs, elf, jobs), srcs.len())
+  }
+  let keys = part_keys("xo backend v1 obj macho elf=${elf} ${id}", [], srcs, jobs)
+  var out: List[Result[Bytes, Str]] = []
+  var miss: List[Int] = []
+  var msrcs: List[Str] = []
+  for (i, k) in keys.indexed() {
+    match cache_get(os, entry_path(dir, "obj", k)) {
+      Some(b) => out.push(Ok(b))
+      None => {
+        out.push(Err("not assembled"))
+        miss.push(i)
+        msrcs.push(srcs[i])
+      }
+    }
+  }
+  if miss.is_empty() {
+    return (out, 0)
+  }
+  for (j, r) in macho_objects(msrcs, elf, jobs).indexed() {
+    let i = miss[j]
+    out[i] = r
+    match r {
+      Ok(b) => cache_put(os, entry_path(dir, "obj", keys[i]), b)
+      Err(_) => {}
+    }
+  }
+  prune_backend_cache(os, dir)
+  (out, miss.len())
+}
+
+/// The flags of a `cc -c` of assembly: the link's flags without the
+/// libraries, library directories, linker flags, and inputs.
+fn asm_cflags(flags: List[Str]) -> List[Str] {
+  var cflags: List[Str] = []
+  for f in flags {
+    if !(f.starts_with("-l") || f.starts_with("-L") || f.starts_with("-Wl,") || f.ends_with(".a") || f.ends_with(".o")) {
+      cflags.push(f)
+    }
+  }
+  cflags
+}
+
+/// cc_assemble through the back-end cache (decision 0220 addendum): the
+/// object of a part the cache holds (keyed by the C compiler's identity,
+/// the flags, the source's path, which an ELF object names, and its
+/// assembly texts[i]) is written beside it, the others assembled by cc.
+fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[Str], texts: List[Str], jobs: Int) -> (List[Str], Str, Int) {
+  let dir = backend_cache_dir(os, ctx)
+  if dir.is_empty() || srcs.len() < 2 || texts.len() != srcs.len() {
+    let (objs, why) = cc_assemble(os, cc, flags, srcs, jobs)
+    return (objs, why, srcs.len())
+  }
+  let prefix = "xo backend v1 obj cc\x00${tool_id(os, ctx.goos, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
+  let keys = part_keys(prefix, srcs, texts, jobs)
+  var objs: List[Str] = []
+  var miss: List[Int] = []
+  var msrcs: List[Str] = []
+  for (i, s) in srcs.indexed() {
+    let obj = s.trim_suffix(".s") + ".o"
+    objs.push(obj)
+    var hit = false
+    match cache_get(os, entry_path(dir, "obj", keys[i])) {
+      Some(b) => hit = os.fs.write(obj, b).is_ok()
+      None => {}
+    }
+    if !hit {
+      miss.push(i)
+      msrcs.push(s)
+    }
+  }
+  if miss.is_empty() {
+    return (objs, "", 0)
+  }
+  let (_, why) = cc_assemble(os, cc, flags, msrcs, jobs)
+  if !why.is_empty() {
+    return (objs, why, miss.len())
+  }
+  for i in miss {
+    match os.fs.read(objs[i]) {
+      Ok(b) => cache_put(os, entry_path(dir, "obj", keys[i]), b)
+      Err(_) => {}
+    }
+  }
+  prune_backend_cache(os, dir)
+  (objs, "", miss.len())
 }

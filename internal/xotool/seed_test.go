@@ -258,7 +258,7 @@ func TestSeedPackHello(t *testing.T) {
 	loc := t.TempDir()
 	out := filepath.Join(loc, "seeds", "pack")
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", "seed-pack.sh"), xo, out)
-	cmd.Env = append(os.Environ(), "XO_SEED_ALLOW_DIRTY=1")
+	cmd.Env = append(os.Environ(), "XO_SEED_ALLOW_DIRTY=1", "XO_SEED_GZIP_LEVEL=1") // the level does not matter here
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	o, err := cmd.Output()

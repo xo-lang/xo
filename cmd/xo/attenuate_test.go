@@ -14,9 +14,10 @@ import (
 // native test builds (decision 0175). internal/gen's cap_attenuation
 // golden and internal/llvm's net_only cover the real capabilities.
 func TestAttenuationFakes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, ".build"))
-	t.Setenv("XO_WORK", "off")
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, ".build"))
+	setenv(t, "XO_WORK", "off")
 	modtest.WriteFiles(t, dir, map[string]string{
 		"xo.mod": "module example.com/att\nedition preview\n",
 		"lib.xo": "use std/http\n\npub fn fetch(n: Net, url: Str) -> Int uses net.dial {\n  match http.client(n).get(url) {\n    Ok(r) => r.status\n    Err(_) => 0\n  }\n}\n",

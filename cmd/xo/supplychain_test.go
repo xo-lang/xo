@@ -24,14 +24,22 @@ import (
 // npm/PyPI packages Flix replicated (those are language specific); see
 // the result file's caveats on comparability.
 func TestSupplyChainAttacks(t *testing.T) {
-	results := []scResult{}
-	for _, a := range scAttacks {
-		stage, detail := a.run(t)
-		results = append(results, scResult{Attack: a.name, Class: a.class, Stage: stage, Detail: detail, Want: a.want})
-		if stage != a.want {
-			t.Errorf("%s: blocked at %q, expected %q (%s)", a.name, stage, a.want, detail)
+	t.Parallel()
+	// each attack in its own world, in parallel (the attacks in turn took
+	// about 6 s of the package's -short run)
+	results := make([]scResult, len(scAttacks))
+	t.Run("attacks", func(t *testing.T) {
+		for i, a := range scAttacks {
+			t.Run(a.name, func(t *testing.T) {
+				t.Parallel()
+				stage, detail := a.run(t)
+				results[i] = scResult{Attack: a.name, Class: a.class, Stage: stage, Detail: detail, Want: a.want}
+				if stage != a.want {
+					t.Errorf("%s: blocked at %q, expected %q (%s)", a.name, stage, a.want, detail)
+				}
+			})
 		}
-	}
+	})
 	// the run time rows again on the native backends (decision 0175):
 	// reported apart, they are the same scenarios
 	var natives []scResult
@@ -81,7 +89,7 @@ func scWorld(t *testing.T, repos map[string]string, consumer map[string]string) 
 	t.Helper()
 	repoWorld(t, repos)
 	ws := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, consumer)
 	return app

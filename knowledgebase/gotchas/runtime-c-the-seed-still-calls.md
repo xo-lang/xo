@@ -8,6 +8,9 @@ which seed 0.10.0-23ce8ce2 lowers as a call of `xo_ct_barrier`, keeps
 that function in xo_crypto.c until a seed has 0222: selfhost/xo
 reaches Ed25519 through sumdb's ed25519_verify, and the seed built it
 (2026-10-14, 37 s and 44 s on the Mac) with that function present.
+Again for zero-C audit B13 (2026-10-14): the stack trace's padding
+moved from `rt.str_rune_count` to the native prelude's str_rune_count,
+so xo_std.c's `xo_str_rune_count` stays, labeled, until a seed has B13.
 
 Symptom: after Rand moved to std/native/llrt/rand.xo (the SSA builders
 call the native prelude's llrt_rand_* instead of rt.rand_*) and
@@ -31,3 +34,13 @@ operation's lowering (C that only other C calls, such as SHA-512 for
 Ed25519) can delete the C at once. Check with `go run
 ./scripts/xobuild` (it builds with the seed) before deleting runtime
 C that generated code calls.
+
+Open seed shims (delete each with the first seed that has its item):
+xo_sys.c `xo_static_word` (B02); xo_rt.c `xo_print`, `xo_println`,
+`xo_eprint`, `xo_eprintln` (B03 stage 1, 2026-10-14: one line forwards
+to cabi.xo's exports, since seed 0.10.0 lowers Stdio.print and the SSA
+builder's rt.eprintln to them); xo_std.c `xo_exit` (B03 stage 2, a one
+line forward); xo_rt.c `xo_env_get`, `xo_env_vars` and xo_bytes.c
+`xo_env_args`, `xo_env_program` (B03 stage 3, whole: the seed lowers
+Env.args and the prelude's rt.env_get to them). Before deleting, check
+with nm that a program built by the new xo references none of them.

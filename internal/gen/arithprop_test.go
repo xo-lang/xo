@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/progen"
@@ -71,16 +72,50 @@ func writeArith(t *testing.T, seed int64) (string, string) {
 // TestArithChecks holds progen.Arith to its promise: every program
 // checks without a diagnostic. Fast; also under -short.
 func TestArithChecks(t *testing.T) {
-	for _, seed := range arithSeeds(t, 300) {
+	t.Parallel() // temporary directories only
+	// one xo check of 25 programs (each its own module) at a time, in
+	// parallel; a batch with a diagnostic is checked again one program at
+	// a time to name the seed (one check per program in turn took about
+	// 4 s)
+	seeds := arithSeeds(t, 300)
+	type prog struct {
+		seed     int64
+		dir, src string
+	}
+	var batches [][]prog
+	for i, seed := range seeds {
 		dir, src := writeArith(t, seed)
-		ds, err := xotool.Check([]string{dir})
-		if err != nil {
-			t.Fatalf("seed %d: %v", seed, err)
+		if i%25 == 0 {
+			batches = append(batches, nil)
 		}
-		if len(ds) > 0 {
-			t.Fatalf("seed %d: the program does not check:\n%s--- program\n%s", seed, diagText(&xotool.Result{Diagnostics: ds}), numbered(src))
+		batches[len(batches)-1] = append(batches[len(batches)-1], prog{seed, dir, src})
+	}
+	checkOne := func(p prog) {
+		ds, err := xotool.Check([]string{p.dir})
+		if err != nil {
+			t.Errorf("seed %d: %v", p.seed, err)
+		} else if len(ds) > 0 {
+			t.Errorf("seed %d: the program does not check:\n%s--- program\n%s", p.seed, diagText(&xotool.Result{Diagnostics: ds}), numbered(p.src))
 		}
 	}
+	var wg sync.WaitGroup
+	for _, b := range batches {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var dirs []string
+			for _, p := range b {
+				dirs = append(dirs, p.dir)
+			}
+			if ds, err := xotool.Check(dirs); err == nil && len(ds) == 0 {
+				return
+			}
+			for _, p := range b {
+				checkOne(p)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // TestArithProperty is a differential test of the backends on

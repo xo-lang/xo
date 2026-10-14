@@ -19,12 +19,26 @@ instructions; `bench/results/http-client-2026-10-14.md`). Work item
 B11 done 2026-10-14 (the HTTP/2 client's HPACK in Xo, xo_h2.c's C HPACK
 deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
 to 1.009 of the C's instructions;
-`bench/results/http2-client-hpack-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
+`bench/results/http2-client-hpack-2026-10-14.md`). Work item B13 stage 1 done 2026-10-14 (http1.xo's searches
+through scan.xo, xo_str_find deleted; the string and list objects
+measured in Xo and kept C: arm64 1.27 times the C on bench/perf/alloc
+small without shrink wrapping; `bench/results/string-list-objects-2026-10-14.md`).
+Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
-`bench/results/http-writer-2026-10-14.md`). Prerequisite 5
+`bench/results/http-writer-2026-10-14.md`). Work item B16 part 1
+done 2026-10-14 (the Fs operations past read, write, and stat in Xo
+on Linux and darwin/arm64, std/native/llrt/fsops.xo, with the flock
+wait through `rt.clock_sleep_or_cancel`; 0.683 to 1.003 of the C's
+instructions; no C deleted until part 2, Windows;
+`bench/results/fs-ops-2026-10-14.md`). Prerequisite 5
 (constant time) done 2026-10-14: decision 0222 (`rt.ct_barrier`,
 std/native/llrt/ct.xo; crypto.equal and Ed25519 in Xo, work item B09,
 below the C's instructions on both backends). Prerequisite 4 (SIMD and word scans) done
+`bench/results/http-writer-2026-10-14.md`). Work item B03 done 2026-10-14
+(standard output's buffer and standard error in Xo,
+std/native/llrt/stdio.xo, 0.788 to 1.005 of the C's instructions;
+exit, env, and args in std/native/llrt/process.xo; the C they replace
+goes with the next seed; `bench/results/stdio-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
 2026-10-13: decision 0201. Prerequisite 3 (system calls) on Linux:
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc

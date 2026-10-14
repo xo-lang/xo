@@ -1,0 +1,187 @@
+// The process on the native backends, written in Xo (the zero-C audit's
+// work item B03): its arguments and environment (this was xo_rt.c's
+// xo_env_get and xo_env_vars and xo_bytes.c's xo_env_args and
+// xo_env_program) and its end (xo_std.c's xo_exit). The C entry (main)
+// hands argc, argv, and the environment's NAME=VALUE array (`environ`;
+// on Windows the C runtime's UTF-8 copy of GetEnvironmentStringsW,
+// xo_win.c) to cabi.xo's `proc_start` before the program runs; they
+// are kept in process globals (rt.static_word words 7 to 9). The entry
+// in Xo (work item B26) will take them from the entry stack. A test
+// binary whose world fakes env (decision 0120) asks the C runtime's
+// test world instead (rt.tw_env_*). The
+// SSA builders call the native prelude's llrt_exit for os.proc.exit and
+// for the end of a program whose main returned an error (after its
+// message); the C runtime's xo_exit, which compilers before B03 call,
+// forwards to cabi.xo's `exit`. In a test binary the test world records
+// the code instead (FakeProc.exit_code, the C runtime's tw_exit), and in
+// testing.run_main the call returns with the context unwinding (decision
+// 0108).
+use native/llrt/linux
+use native/llrt/raw
+use native/llrt/stdio
+use native/rt
+use native/rttest
+use native/sys_darwin
+use native/sys_windows
+
+/// Ends the process with status code, standard output flushed: exit_group
+/// on Linux (no C library's exit: nothing registers atexit handlers),
+/// libSystem's exit on macOS, ExitProcess on Windows. In a test binary
+/// the test world's tw_exit, which returns inside testing.run_main.
+pub fn exit(code: Int) {
+  if rttest.test_on() {
+    rt.tw_exit(code)
+    return
+  }
+  stdio.flush()
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.exit_group(code)
+    }
+    TargetOs.Darwin => sys_darwin.exit(code)
+    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Wasi => {}
+  }
+}
+
+/// rt.static_word: the first of the three process words (rt.xo's table):
+/// argc, the address of argv, and the address of the environment's
+/// NULL ended array of NAME=VALUE strings (0 until proc_start).
+const WORDS = 7
+const ARGC = 0
+const ARGV = 8
+const ENVP = 16
+
+/// The test world's capability bit of env (xo_testing.c TW_REAL_ENV).
+const TW_ENV = 16
+
+/// Keeps the arguments and the environment (C main, before the program
+/// runs).
+pub fn start(argc: Int, argv: Int, envp: Int) {
+  let w = rt.static_word(WORDS)
+  rt.mem_store(w, ARGC, argc, 8)
+  rt.mem_store(w, ARGV, argv, 8)
+  rt.mem_store(w, ENVP, envp, 8)
+}
+
+/// The zero terminated string at address a.
+fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
+
+/// argv[i] (0 <= i < argc).
+fn arg(i: Int) -> Str { cstr(rt.mem_load(rt.mem_load(rt.static_word(WORDS), ARGV, 8), 8 * i, 8)) }
+
+/// env.args(): the arguments after the program name.
+pub fn args() -> List[Str] {
+  if rt.tw_fake(TW_ENV) {
+    return rt.tw_env_args()
+  }
+  let n = rt.mem_load(rt.static_word(WORDS), ARGC, 8)
+  var out: List[Str] = []
+  for i in 1..n {
+    out.push(arg(i))
+  }
+  out
+}
+
+/// env.program(): the program's name as it was run (argv[0], os.Args[0]
+/// on the Go backend), with / separators on Windows (std.md 3.1, 3.5);
+/// "test" in a test whose world fakes env.
+pub fn program() -> Str {
+  if rt.tw_fake(TW_ENV) {
+    return "test"
+  }
+  if rt.mem_load(rt.static_word(WORDS), ARGC, 8) <= 0 {
+    return ""
+  }
+  let p = arg(0)
+  match target.os {
+    TargetOs.Windows => p.replace("\\", "/")
+    _ => p
+  }
+}
+
+/// Whether the entry at address e is NAME=... for name (the n bytes at
+/// p): byte for byte, or without ASCII case on Windows, as its getenv.
+fn entry_is(e: Int, p: Int, n: Int, fold: Bool) -> Bool {
+  var i = 0
+  while i < n {
+    var a = rt.mem_load(e, i, 1)
+    var b = rt.mem_load(p, i, 1)
+    if a == 0 {
+      return false
+    }
+    if fold {
+      if a >= 65 && a <= 90 {
+        a = rt.int_wrap(0, a, 32)
+      }
+      if b >= 65 && b <= 90 {
+        b = rt.int_wrap(0, b, 32)
+      }
+    }
+    if a != b {
+      return false
+    }
+    i = rt.int_wrap(0, i, 1)
+  }
+  rt.mem_load(e, n, 1) == 61
+}
+
+/// Whether names compare without case (Windows).
+fn fold_case() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    _ => false
+  }
+}
+
+/// env.get(name): the value in a list of one, or the empty list when it
+/// is not set.
+pub fn env_get(name: Str) -> List[Str] {
+  if rt.tw_fake(TW_ENV) {
+    return rt.tw_env_get(name)
+  }
+  let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
+  if envp == 0 {
+    return []
+  }
+  let fold = fold_case()
+  let p = raw.data(name)
+  let n = name.len()
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    if entry_is(e, p, n, fold) {
+      let v = rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
+      return [cstr(v)]
+    }
+    k = rt.int_wrap(0, k, 1)
+  }
+  []
+}
+
+/// env.vars(): the NAME=VALUE entries of the environment, sorted as
+/// std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
+/// FakeEnv in the order of its variables.
+pub fn env_vars() -> List[Str] {
+  if rt.tw_fake(TW_ENV) {
+    return rt.tw_env_vars()
+  }
+  let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
+  var out: List[Str] = []
+  if envp == 0 {
+    return out
+  }
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    out.push(cstr(e))
+    k = rt.int_wrap(0, k, 1)
+  }
+  out.sort()
+}

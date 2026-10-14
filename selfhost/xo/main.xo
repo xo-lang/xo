@@ -504,8 +504,21 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
     let jobs = emit_jobs(os)
-    let p = if inl { arm64.generate_parallel(mi, tgoos, jobs) } else { arm64.generate_parallel(cur.m, tgoos, jobs) }
+    // with the per-function cache (decision 0220 addendum stage B)
+    let gm = if inl { mi } else { cur.m }
+    let (fc, fdir) = fn_cache_load(os, ctx, gm, tgoos, jobs, release)
+    if !fdir.is_empty() {
+      t = lap(os, phases, "fn_keys", t)
+    }
+    let p = arm64.generate_cached(gm, tgoos, jobs, fc)
     t = lap(os, phases, "emit", t)
+    if !fdir.is_empty() {
+      fn_cache_store(os, fdir, p.stores)
+      cache_note(os, phases, "functions", p.reused, fc.keys.len())
+      if !p.mismatches.is_empty() {
+        fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")
+      }
+    }
     if !p.err.is_empty() {
       fail(os, p.err)
     }
@@ -565,7 +578,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       // tasks for the parts
       let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
       var objs: List[Str] = []
-      for (i, r) in macho_objects(srcs, tgoos == "linux", jobs).indexed() {
+      let (assembled, nasm) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", jobs)
+      for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
           Ok(b) => write_or_fail(os, dir, obj, b)
@@ -575,6 +589,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
       progs = objs
       t = lap(os, phases, "assemble", t)
+      cache_note(os, phases, "objects", srcs.len() - nasm, srcs.len())
     }
     let srcs = progs + lk.srcs
     let tls = needs_tls(code) && !nolibc(os, tgoos)
@@ -595,13 +610,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let (objs, why) = cc_assemble(os, cc, flags + memo_sysroot(os, ctx), progs, jobs)
+        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, p.parts, jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail(os, "${cc} failed")
         }
         lsrcs = objs + lk.srcs
         t = lap(os, phases, "assemble", t)
+        cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
       let msg = cc_build(os, ctx, cc, flags, lsrcs, bin, tls)
       if !msg.is_empty() {
@@ -702,7 +718,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "add_landings", t)
   b.cleanup_all()
   t = lap(os, o.phases, "cleanup", t)
-  b.insert_rc_jobs(emit_jobs(os))
+  rc_cached(os, b, release, emit_jobs(os), o.phases)
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t}
 }

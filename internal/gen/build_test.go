@@ -263,6 +263,7 @@ func (c *signalChild) wait() (int, string) {
 // first signal only requests a stop, the second cancels main's root scope
 // (defer blocks run, main returns normally).
 func TestSignalTwoPhase(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t)
 	c.expect("ready")
 	c.signal()
@@ -291,6 +292,7 @@ func TestSignalTwoPhase(t *testing.T) {
 // TestSignalDrain: a program that finishes its work after the stop
 // request exits 0 without being canceled.
 func TestSignalDrain(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=drain")
 	c.expect("ready")
 	c.signal()
@@ -305,6 +307,7 @@ func TestSignalDrain(t *testing.T) {
 // TestSignalGrace: `os.proc.set_grace(300ms)` cancels a program that
 // ignores the stop 300ms after the first signal.
 func TestSignalGrace(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=grace")
 	c.expect("ready")
 	start := time.Now()
@@ -323,6 +326,7 @@ func TestSignalGrace(t *testing.T) {
 // TestSignalThirdExits: a program stuck in cleanup that ignores
 // cancellation exits with status 130 at the third signal.
 func TestSignalThirdExits(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=hung")
 	c.expect("ready")
 	c.signal()
@@ -340,6 +344,7 @@ func TestSignalThirdExits(t *testing.T) {
 // standard input with IoErr.Canceled (core 7.5, decision 0088); the
 // lines before it are read.
 func TestSignalStopsReadLine(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=stdin", "STDIN=pipe")
 	c.expect("ready")
 	io.WriteString(c.stdin, "a\nb\n")
@@ -354,6 +359,7 @@ func TestSignalStopsReadLine(t *testing.T) {
 // TestCancelStopsReadLine: cancelling the scope of a task blocked in
 // read_line ends it with IoErr.Canceled (core 7.2, decision 0088).
 func TestCancelStopsReadLine(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=stdin_cancel", "STDIN=pipe")
 	c.expect("ready")
 	c.expect("read_line: Canceled after 0 lines")
@@ -365,6 +371,7 @@ func TestCancelStopsReadLine(t *testing.T) {
 // TestSignalHTTPInFlight: after SIGTERM, `serve` stops accepting, finishes
 // the request in flight, and returns Ok.
 func TestSignalHTTPInFlight(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -409,6 +416,7 @@ func TestSignalHTTPInFlight(t *testing.T) {
 // hole is evaluated, which faults (core 3.7). Without --holes the build is
 // rejected.
 func TestHoles(t *testing.T) {
+	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	dir := filepath.Join("testdata", "holes")
 	res, err := xotool.Build([]string{dir}, xotool.Options{})
 	if err != nil {

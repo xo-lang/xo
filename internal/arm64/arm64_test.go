@@ -34,6 +34,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
