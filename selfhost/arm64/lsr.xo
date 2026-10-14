@@ -554,7 +554,7 @@ fn (g: G) check_head(b: Int) -> Bool {
 /// with a check, as the check and a branch past it; false when it does
 /// not apply.
 fn (var g: G) rotate_jump(var b: List[Str], t: Int) -> Bool {
-  if !g.check_head(t) {
+  if !g.check_head(t) || !g.same_frame(t) {
     return false
   }
   var back = false
@@ -670,7 +670,9 @@ fn label_def(l: Str) -> Str {
 }
 
 fn is_label_byte(c: UInt8) -> Bool {
-  c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
+  // 1 delimits the tokens of a canonical text (fcache.xo FP_TOKEN), which
+  // stand for letters, digits, and `_`
+  c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == 1
 }
 
 /// The labels the lines of text and ext refer to (every `L` and the
@@ -1017,7 +1019,7 @@ fn (g: G) copyable(b: Int) -> Bool {
 fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
   for l in [t, f] {
     let o = if l == t { f } else { t }
-    if g.dup_ok.contains(l) && o == next && l != next && l != g.cur {
+    if g.dup_ok.contains(l) && o == next && l != next && l != g.cur && g.same_frame(l) {
       return l
     }
   }
@@ -1027,6 +1029,9 @@ fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
 /// Emits a copy of latch t (after the branch to its other target).
 fn (var g: G) emit_latch(var b: List[Str], t: Int, next: Int) {
   for inst in g.blocks[t].insts {
+    if g.ended {
+      break
+    }
     g.emit_inst(b, inst, next)
   }
 }

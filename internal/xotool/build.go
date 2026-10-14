@@ -133,7 +133,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 	res := &Result{Binaries: map[string]string{}}
 	out := o.Out
 	if out == "" {
-		d, err := os.MkdirTemp("", "xo-build-")
+		d, err := TempDir("xo-build-")
 		if err != nil {
 			return nil, err
 		}

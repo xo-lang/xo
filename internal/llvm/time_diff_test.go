@@ -31,6 +31,7 @@ import (
 // function value (the embedded database).
 // The native programs must free every allocation.
 func TestTimeDiff(t *testing.T) {
+	t.Parallel() // its programs build in t.TempDir()
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}

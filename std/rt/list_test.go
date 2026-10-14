@@ -38,6 +38,7 @@ func checkList(t *testing.T, where string, l List[int64], want []int64) {
 // copies, slices, and concatenations over a pool of list values and
 // checks every value against a deep copied reference after each step.
 func TestListModel(t *testing.T) {
+	t.Parallel() // local values only
 	for seed := range uint64(60) {
 		rng := rand.New(rand.NewPCG(seed, 11))
 		pool := make([]List[int64], 5)
@@ -102,6 +103,7 @@ func TestListModel(t *testing.T) {
 // marking of inner lists (markElems on a copy) must keep every copy
 // intact.
 func TestListNested(t *testing.T) {
+	t.Parallel() // local values only
 	rng := rand.New(rand.NewPCG(3, 5))
 	type ref = [][]int64
 	clone := func(g ref) ref {

@@ -58,6 +58,8 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
     }
     testworld.log(level, msg, from, keys, vals, "")
   }
+  // the native backends' SSA builders call std/native/llrt/stdio.xo for
+  // it (the native prelude's llrt_eprintln, work item B03)
   rt.eprintln(line)
 }
 

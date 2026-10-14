@@ -1,0 +1,626 @@
+// The per-function cache of insert_rc (decision 0220 addendum stage C):
+// after borrow inference, a function's reference counting reads only its
+// own SSA, the types, and the borrowed parameters of the functions it
+// names, so its result is cached under the hash of those (rc_key) and,
+// on a hit, read back (decode_func) instead of computed. Also the type
+// keys (a type's name and the hash of every type it reaches) the arm64
+// emitter's cache (selfhost/arm64 fcache.xo) uses. selfhost/xo reads and
+// writes the entries (XO_BACKEND_CACHE=on|verify|off, bcache.xo).
+
+use std/crypto
+
+/// The version of the entries and keys.
+const RC_CACHE_VERSION = "xo rc cache v1"
+
+/// What insert_rc_plan computed for the cache: the key of each function
+/// ("" for one not cached), and the pass's state after borrow inference.
+pub struct RcPlan {
+  pub keys: List[Str] = []
+  r: Rc = Rc{types: []}
+  ready: Bool = false
+}
+
+/// What insert_rc_apply did with the cache: the entries to store (key,
+/// entry), the functions read from entries, and the functions whose
+/// computed result differs from their entry (verify).
+pub struct RcOut {
+  pub stores: List[(Str, Bytes)] = []
+  pub reused: Int = 0
+  pub mismatches: List[Str] = []
+}
+
+/// The first half of insert_rc_jobs with the cache: the `var` List
+/// parameters made unique, borrow inference, and the key of every
+/// function (on up to jobs tasks) for the compiler of identity id.
+pub fn (var b: Builder) insert_rc_plan(id: Str, jobs: Int) -> RcPlan {
+  var r = b.rc_prepare()
+  let tk = type_keys(b.m)
+  let m = b.m
+  let n = m.funcs.len()
+  let rr = r
+  let w = jobs.min(n).max(1)
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..w {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for fi in i..(i + 64).min(n) {
+            mine.push((fi, rc_key(m, fi, rr, tk, id)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var keys: List[Str] = []
+  for _ in 0..n {
+    keys.push("")
+  }
+  for (fi, k) in done {
+    keys[fi] = k
+  }
+  RcPlan{keys: keys, r: r, ready: true}
+}
+
+/// The second half: every function's reference counting, read from its
+/// entry when the cache holds one (and not verify), else computed and
+/// encoded for the cache (verify: compared with the entry).
+pub fn (var b: Builder) insert_rc_apply(plan: RcPlan, entries: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
+  b.rc_run(plan.r, plan.keys, entries, verify, jobs)
+}
+
+/// The key of function fi (before its reference counting): the SHA-256
+/// of the compiler's identity, the target, the function in full with its
+/// types by key, its borrowed parameters, and those of every function it
+/// names.
+fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
+  let f = m.funcs[fi]
+  var b = BytesBuilder.new()
+  b.write_str("${RC_CACHE_VERSION}\n${id}\n${m.goarch}\n")
+  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi}\n")
+  key_func(b, f, tk)
+  var seen: Map[Str, Bool] = {}
+  for x in f.values {
+    if let S(s) = x.aux {
+      if !seen.contains(s) {
+        seen[s] = true
+        let ci = r.fidx.get(s) ?? -1
+        let bs = if ci >= 0 { bools_text(r.borrowed[ci]) } else { "none" }
+        b.write_str("callee ${s.len()}:${s} ${bs}\n")
+      }
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+fn bools_text(xs: List[Bool]) -> Str {
+  var b = StrBuilder.new()
+  b.write("[")
+  for x in xs {
+    b.write(if x { "1" } else { "0" })
+  }
+  b.write("]")
+  b.freeze()
+}
+
+fn ints_line(xs: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      b.write(" ")
+    }
+    b.write("${x}")
+  }
+  b.freeze()
+}
+
+fn tkey(tk: List[Str], t: Int) -> Str {
+  if t < 0 || t >= tk.len() { "-" } else { tk[t] }
+}
+
+/// Function f in full for a key: every field, its types by key.
+fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
+  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)}\n")
+  b.write_str("results")
+  for t in f.results {
+    b.write_str(" ${tkey(tk, t)}")
+  }
+  b.write_str("\ncaptures")
+  for t in f.captures {
+    b.write_str(" ${tkey(tk, t)}")
+  }
+  var lr: List[Int] = []
+  for (k, _) in f.land_rest {
+    lr.push(k)
+  }
+  b.write_str("\nland_rest [${ints_line(lr.sort())}]\n")
+  for (bi, bl) in f.blocks.indexed() {
+    b.write_str("b${bi} [${ints_line(bl.params)}] [${ints_line(bl.instrs)}] [${ints_line(bl.preds)}]\n")
+  }
+  for (vi, x) in f.values.indexed() {
+    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, x.ty)} [${ints_line(x.args)}] ")
+    key_aux(b, x.aux)
+    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.pos.len()}:${x.pos}\n")
+  }
+  for (ei, e) in f.edges.indexed() {
+    b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
+  }
+}
+
+fn key_aux(var b: BytesBuilder, a: Aux) {
+  match a {
+    None => b.write_str("n")
+    I(n) => b.write_str("i${n}")
+    F(x) => b.write_str("f${x}")
+    B(x) => b.write_str("b${x}")
+    S(s) => b.write_str("s${s.len()}:${s}")
+    Bs(x) => {
+      b.write_str("y${x.len()}:")
+      b.write(x)
+    }
+    P(tag, field) => b.write_str("p${tag},${field}")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entries: a function after its reference counting, types by name
+
+/// Every opcode, for reading an entry back (an opcode missing here only
+/// makes its functions miss the cache).
+fn all_ops() -> List[Op] {
+  [Op.Param, Op.Const, Op.Add, Op.Sub, Op.Mul, Op.Div, Op.Rem, Op.Neg, Op.And, Op.Or, Op.Xor, Op.Not, Op.Shl, Op.Shr, Op.Eq, Op.Ne, Op.Lt, Op.Le, Op.Gt, Op.Ge, Op.IntToFloat, Op.FloatToInt, Op.IntConv, Op.Struct, Op.Tuple, Op.Variant, Op.Field, Op.SetField, Op.Tag, Op.Payload, Op.Cap, Op.Undef, Op.Closure, Op.Capture, Op.CallValue, Op.Box, Op.Unbox, Op.FuncAddr, Op.Rebind, Op.Call, Op.Fault, Op.Retain, Op.Release, Op.Drop, Op.Reuse, Op.Share, Op.Jump, Op.Branch, Op.Return, Op.Unreachable]
+}
+
+fn put(var b: BytesBuilder, d: Bytes) {
+  b.write_str("${d.len()}:")
+  b.write(d)
+}
+
+fn put_s(var b: BytesBuilder, s: Str) {
+  put(b, s.bytes())
+}
+
+/// The name of type t, "" for none; false when the name does not lead
+/// back to t (two types of one name): the function is not cached.
+fn type_name_of(m: Module, t: Int) -> (Str, Bool) {
+  if t < 0 {
+    return ("", true)
+  }
+  let n = m.types[t].name
+  (n, (m.type_at.get(n) ?? -1) == t)
+}
+
+fn put_types(var b: BytesBuilder, m: Module, ts: List[Int]) -> Bool {
+  put_s(b, "${ts.len()}")
+  for t in ts {
+    let (n, ok) = type_name_of(m, t)
+    if !ok {
+      return false
+    }
+    put_s(b, n)
+  }
+  true
+}
+
+/// Function f (after its reference counting) as an entry; none when it
+/// holds what an entry cannot (a Float constant, a type whose name is
+/// not its own).
+fn encode_func(m: Module, f: Func) -> Option[Bytes] {
+  var b = BytesBuilder.new()
+  put_s(b, RC_CACHE_VERSION)
+  put_s(b, f.name)
+  if !put_types(b, m, f.results) {
+    return None
+  }
+  put_s(b, ints_line(f.var_params))
+  put_s(b, "${f.indirect} ${f.entry} ${f.catches} ${f.unwind_exit}")
+  if !put_types(b, m, f.captures) {
+    return None
+  }
+  put_s(b, f.export)
+  var lr: List[Int] = []
+  for (k, _) in f.land_rest {
+    lr.push(k)
+  }
+  put_s(b, ints_line(lr))
+  put_s(b, bools_text(f.borrowed))
+  put_s(b, f.skip)
+  put_s(b, "${f.blocks.len()}")
+  for bl in f.blocks {
+    put_s(b, ints_line(bl.params))
+    put_s(b, ints_line(bl.instrs))
+    put_s(b, ints_line(bl.preds))
+  }
+  put_s(b, "${f.values.len()}")
+  for x in f.values {
+    put_s(b, op_name(x.op))
+    let (tn, ok) = type_name_of(m, x.ty)
+    if !ok {
+      return None
+    }
+    put_s(b, if x.ty < 0 { "-" } else { "t${tn}" })
+    put_s(b, ints_line(x.args))
+    match x.aux {
+      None => put_s(b, "n")
+      I(n) => put_s(b, "i${n}")
+      F(_) => return None
+      B(v) => put_s(b, if v { "b1" } else { "b0" })
+      S(s) => put_s(b, "s${s}")
+      Bs(v) => {
+        put_s(b, "y")
+        put(b, v)
+      }
+      P(tag, field) => put_s(b, "p${tag} ${field}")
+    }
+    put_s(b, "${x.block} ${x.pad}")
+    put_s(b, ints_line(x.succs))
+    put_s(b, x.pos)
+  }
+  put_s(b, "${f.edges.len()}")
+  for e in f.edges {
+    put_s(b, "${e.from} ${e.to}")
+    put_s(b, ints_line(e.args))
+  }
+  Some(b.freeze())
+}
+
+/// A reader of length prefixed fields; ok turns false on a malformed
+/// entry.
+struct Fields {
+  d: Bytes
+  at: Int = 0
+  ok: Bool = true
+}
+
+fn (var r: Fields) raw() -> Bytes {
+  var n = 0
+  var i = r.at
+  while i < r.d.len() && r.d[i] != 58 {
+    let c = Int(r.d[i])
+    if c < 48 || c > 57 {
+      r.ok = false
+      return b""
+    }
+    n = n * 10 + c - 48
+    i += 1
+  }
+  if i >= r.d.len() || i + 1 + n > r.d.len() {
+    r.ok = false
+    return b""
+  }
+  let out = r.d[i + 1..i + 1 + n]
+  r.at = i + 1 + n
+  out
+}
+
+fn (var r: Fields) str() -> Str {
+  match r.raw().to_str() {
+    Some(s) => s
+    None => {
+      r.ok = false
+      ""
+    }
+  }
+}
+
+fn (var r: Fields) int() -> Int {
+  match Int.parse(r.str()) {
+    Some(n) => n
+    None => {
+      r.ok = false
+      0
+    }
+  }
+}
+
+fn (var r: Fields) ints() -> List[Int] {
+  let s = r.str()
+  var out: List[Int] = []
+  if s.is_empty() {
+    return out
+  }
+  for p in s.split(" ") {
+    match Int.parse(p) {
+      Some(n) => out.push(n)
+      None => r.ok = false
+    }
+  }
+  out
+}
+
+fn (var r: Fields) types(m: Module) -> List[Int] {
+  let n = r.int()
+  var out: List[Int] = []
+  for _ in 0..n {
+    if !r.ok {
+      return out
+    }
+    let t = m.type_at.get(r.str()) ?? -1
+    if t < 0 {
+      r.ok = false
+    }
+    out.push(t)
+  }
+  out
+}
+
+/// The function of an entry with this module's type ids; none for a
+/// malformed entry, another version, or a type or opcode not known.
+fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
+  var r = Fields{d: d}
+  if r.str() != RC_CACHE_VERSION {
+    return None
+  }
+  var f = Func{name: r.str()}
+  f.results = r.types(m)
+  f.var_params = r.ints()
+  let flags = r.str().split(" ")
+  if flags.len() != 4 {
+    return None
+  }
+  f.indirect = flags[0] == "true"
+  f.entry = flags[1] == "true"
+  f.catches = flags[2] == "true"
+  f.unwind_exit = Int.parse(flags[3]) ?? -1
+  f.captures = r.types(m)
+  f.export = r.str()
+  for k in r.ints() {
+    f.land_rest[k] = true
+  }
+  let bs = r.str()
+  if bs.len() < 2 {
+    return None
+  }
+  for c in bs[1..bs.len() - 1].bytes() {
+    f.borrowed.push(c == 49)
+  }
+  f.skip = r.str()
+  let nb = r.int()
+  for _ in 0..nb {
+    if !r.ok {
+      return None
+    }
+    let ps = r.ints()
+    let ins = r.ints()
+    let pr = r.ints()
+    f.blocks.push(Block{params: ps, instrs: ins, preds: pr})
+  }
+  let nv = r.int()
+  for _ in 0..nv {
+    if !r.ok {
+      return None
+    }
+    let op = match ops.get(r.str()) {
+      Some(o) => o
+      None => return None
+    }
+    let tn = r.str()
+    var ty = -1
+    if tn != "-" {
+      ty = m.type_at.get(tn[1..tn.len()]) ?? -1
+      if ty < 0 {
+        return None
+      }
+    }
+    let args = r.ints()
+    let a = r.str()
+    var aux = Aux.None
+    if a.starts_with("i") {
+      aux = Aux.I(n: Int.parse(a[1..a.len()]) ?? 0)
+    } else if a == "b1" || a == "b0" {
+      aux = Aux.B(b: a == "b1")
+    } else if a.starts_with("s") {
+      aux = Aux.S(s: a[1..a.len()])
+    } else if a == "y" {
+      aux = Aux.Bs(b: r.raw())
+    } else if a.starts_with("p") {
+      let tf = a[1..a.len()].split(" ")
+      if tf.len() != 2 {
+        return None
+      }
+      aux = Aux.P(tag: Int.parse(tf[0]) ?? 0, field: Int.parse(tf[1]) ?? 0)
+    } else if a != "n" {
+      return None
+    }
+    let bp = r.str().split(" ")
+    if bp.len() != 2 {
+      return None
+    }
+    let succs = r.ints()
+    let pos = r.str()
+    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1})
+  }
+  let ne = r.int()
+  for _ in 0..ne {
+    if !r.ok {
+      return None
+    }
+    let ft = r.str().split(" ")
+    if ft.len() != 2 {
+      return None
+    }
+    let args = r.ints()
+    f.edges.push(Edge{from: Int.parse(ft[0]) ?? -1, to: Int.parse(ft[1]) ?? -1, args: args})
+  }
+  if !r.ok || r.at != d.len() {
+    return None
+  }
+  Some(f)
+}
+
+/// The opcodes by name.
+fn ops_by_name() -> Map[Str, Op] {
+  var out: Map[Str, Op] = {}
+  for o in all_ops() {
+    out[op_name(o)] = o
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Type keys
+
+fn kind_text(k: Kind) -> Str {
+  match k {
+    Unit => "unit"
+    Int => "int"
+    Float => "float"
+    Bool => "bool"
+    Str => "str"
+    Struct => "struct"
+    Enum => "enum"
+    Tuple => "tuple"
+    List => "list"
+    Cap => "cap"
+    Func => "func"
+    Box => "box"
+    Handle => "handle"
+    Bad => "bad"
+  }
+}
+
+/// The types type x names directly.
+fn type_refs(x: SType) -> List[Int] {
+  var out: List[Int] = []
+  for f in x.fields {
+    out.push(f.ty)
+  }
+  for v in x.variants {
+    for f in v.fields {
+      out.push(f.ty)
+    }
+  }
+  for e in x.elems {
+    out.push(e)
+  }
+  if x.ret >= 0 {
+    out.push(x.ret)
+  }
+  out
+}
+
+/// Type t one level deep: its kind, name, flags, and fields, the types
+/// it names by name.
+fn type_desc(m: Module, t: Int) -> Str {
+  let x = m.types[t]
+  var b = StrBuilder.new()
+  b.write("${kind_text(x.kind)} ${x.name.len()}:${x.name} ${x.coll} ${x.bits} ${x.unsigned} ret=")
+  b.write(if x.ret >= 0 { m.types[x.ret].name } else { "-" })
+  b.write(" fields")
+  for f in x.fields {
+    b.write(" ${f.name.len()}:${f.name}=${m.types[f.ty].name.len()}:${m.types[f.ty].name}")
+  }
+  b.write(" variants")
+  for v in x.variants {
+    b.write(" ${v.name.len()}:${v.name}(")
+    for f in v.fields {
+      b.write(" ${f.name.len()}:${f.name}=${m.types[f.ty].name.len()}:${m.types[f.ty].name}")
+    }
+    b.write(")")
+  }
+  b.write(" elems")
+  for e in x.elems {
+    b.write(" ${m.types[e].name.len()}:${m.types[e].name}")
+  }
+  b.freeze()
+}
+
+/// Tarjan's strongly connected components over the types, each given
+/// the hash of its members' descriptions and the hashes of the
+/// components it reaches: a type's hash covers every type reachable from
+/// it, and stays when an unrelated type is added.
+struct TypeHasher {
+  m: Module
+  index: List[Int] = []
+  low: List[Int] = []
+  on: List[Bool] = []
+  stack: List[Int] = []
+  next: Int = 0
+  hash: List[Str] = []
+}
+
+fn (var h: TypeHasher) visit(t: Int) {
+  h.index[t] = h.next
+  h.low[t] = h.next
+  h.next += 1
+  h.stack.push(t)
+  h.on[t] = true
+  for u in type_refs(h.m.types[t]) {
+    if h.index[u] < 0 {
+      h.visit(u)
+      h.low[t] = h.low[t].min(h.low[u])
+    } else if h.on[u] {
+      h.low[t] = h.low[t].min(h.index[u])
+    }
+  }
+  if h.low[t] != h.index[t] {
+    return
+  }
+  var members: List[Int] = []
+  while true {
+    let u = h.stack.pop() ?? t
+    h.on[u] = false
+    members.push(u)
+    if u == t {
+      break
+    }
+  }
+  var inside: Map[Int, Bool] = {}
+  for u in members {
+    inside[u] = true
+  }
+  var descs: List[Str] = []
+  var outs: List[Str] = []
+  for u in members {
+    descs.push(type_desc(h.m, u))
+    for v in type_refs(h.m.types[u]) {
+      if !inside.contains(v) {
+        outs.push(h.hash[v])
+      }
+    }
+  }
+  var b = StrBuilder.new()
+  for d in descs.sort() {
+    b.write("${d.len()}:${d}\n")
+  }
+  b.write("reaches\n")
+  for o in outs.sort() {
+    b.write("${o}\n")
+  }
+  let sum = crypto.sha256(b.freeze().bytes()).to_hex()[0..32]
+  for u in members {
+    h.hash[u] = sum
+  }
+}
+
+/// Each type's key: its name and the hash of every type it reaches.
+pub fn type_keys(m: Module) -> List[Str] {
+  var h = TypeHasher{m: m}
+  for _ in 0..m.types.len() {
+    h.index.push(-1)
+    h.low.push(0)
+    h.on.push(false)
+    h.hash.push("")
+  }
+  for t in 0..m.types.len() {
+    if h.index[t] < 0 {
+      h.visit(t)
+    }
+  }
+  var out: List[Str] = []
+  for (t, x) in m.types.indexed() {
+    out.push("${x.name.len()}:${x.name}#${h.hash[t]}")
+  }
+  out
+}

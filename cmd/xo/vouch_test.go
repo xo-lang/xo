@@ -17,7 +17,7 @@ func repoWorld(t *testing.T, files map[string]string) *modtest.Env {
 	t.Helper()
 	src := t.TempDir()
 	modtest.WriteFiles(t, src, files)
-	return modtest.Setup(t, src, modtest.Compare)
+	return modSetup(t, src)
 }
 
 // TestVouches checks decision 0156 item 1: a dependency's `use go` of an
@@ -25,6 +25,7 @@ func repoWorld(t *testing.T, files map[string]string) *modtest.Env {
 // consuming module for that exact version (XO1316); pure Go packages
 // need none.
 func TestVouches(t *testing.T) {
+	t.Parallel()
 	repoWorld(t, map[string]string{
 		"github.com/acme/osx@v1.0.0/xo.mod":   "module github.com/acme/osx\nedition preview\n",
 		"github.com/acme/osx@v1.0.0/osx.xo":   "use go \"os\"\n\npub fn pid() -> Int uses go { os.getpid() }\n",
@@ -34,7 +35,7 @@ func TestVouches(t *testing.T) {
 		"github.com/acme/strx@v1.0.0/strx.xo": "use go \"strings\"\n\npub fn up(s: Str) -> Str uses go { strings.to_upper(s) }\n",
 	})
 	ws := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	xomod := "module example.com/app\nedition preview\n\nrequire github.com/acme/osx v1.0.0\nrequire github.com/acme/strx v1.0.0\n"
 	modtest.WriteFiles(t, app, map[string]string{
@@ -92,10 +93,11 @@ func TestVouches(t *testing.T) {
 // its pure pub function is XO0701); the consumer's vouch decides the
 // binding's effects.
 func TestVouchesC(t *testing.T) {
+	t.Parallel()
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip(err)
 	}
-	t.Setenv("XO_CBIND_DIR", "")
+	setenv(t, "XO_CBIND_DIR", "")
 	repoWorld(t, map[string]string{
 		"github.com/acme/cz@v1.0.0/xo.mod": "module github.com/acme/cz\nedition preview\n",
 		"github.com/acme/cz@v1.0.0/tiny.h": "int tiny_add(int a, int b);\n",
@@ -103,7 +105,7 @@ func TestVouchesC(t *testing.T) {
 		"github.com/acme/cz@v1.0.0/cz.xo":  "use c \"tiny.h\" link \"tiny.c\" uses none\n\npub fn add(a: Int32, b: Int32) -> Int32 { tiny.tiny_add(a, b) }\n",
 	})
 	ws := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	xomod := "module example.com/app\nedition preview\n\nrequire github.com/acme/cz v1.0.0\n"
 	modtest.WriteFiles(t, app, map[string]string{

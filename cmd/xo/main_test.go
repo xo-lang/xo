@@ -25,13 +25,14 @@ func writeFiles(t *testing.T, files map[string]string) string {
 }
 
 func TestParseOK(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{
 		"a.xo":       "fn main(os: Os) ! {}\n",
 		"sub/b.xo":   "struct S { a: Int }\n",
 		"ignored.go": "package x\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"parse", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"parse", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "2 file(s), 0 error(s)") {
@@ -40,9 +41,10 @@ func TestParseOK(t *testing.T) {
 }
 
 func TestParseErrorsHuman(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f() {\n  let = 1\n}\nlet y = 2\n"})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"parse", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"parse", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	s := errOut.String()
@@ -52,9 +54,10 @@ func TestParseErrorsHuman(t *testing.T) {
 }
 
 func TestParseJSON(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f() {\n  g(\n    a\n  )\n}\n"})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"parse", "--json", "--ast", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"parse", "--json", "--ast", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	var res struct {
@@ -81,9 +84,10 @@ func TestParseJSON(t *testing.T) {
 }
 
 func TestParseASTOnly(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"a.xo": "const X = 1\n"})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"parse", "--ast", filepath.Join(dir, "a.xo")}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"parse", "--ast", filepath.Join(dir, "a.xo")}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), `"kind": "ConstDecl"`) {
@@ -92,27 +96,29 @@ func TestParseASTOnly(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := run(nil, &out, &errOut); code != 2 {
+	if code := run(t, nil, &out, &errOut); code != 2 {
 		t.Errorf("no args: exit %d", code)
 	}
-	if code := run([]string{"parse"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"parse"}, &out, &errOut); code != 2 {
 		t.Errorf("parse without files: exit %d", code)
 	}
-	if code := run([]string{"frobnicate"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"frobnicate"}, &out, &errOut); code != 2 {
 		t.Errorf("unknown command: exit %d", code)
 	}
-	if code := run([]string{"parse", "/does/not/exist"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"parse", "/does/not/exist"}, &out, &errOut); code != 2 {
 		t.Errorf("missing path: exit %d", code)
 	}
 }
 
 func TestCheckJSON(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{
 		"app/main.xo": "enum E { A }\nfn g() -> Int ! E { 1 }\nfn main(os: Os) {\n  g()\n}\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"check", "--json", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"check", "--json", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1: %s", code, errOut.String())
 	}
 	var res struct {
@@ -134,12 +140,13 @@ func TestCheckJSON(t *testing.T) {
 }
 
 func TestCheckOK(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{
 		"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
 		"app/x.go":    "package x\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"check", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "1 module(s), 0 error(s), 0 warning(s)") {
@@ -148,11 +155,12 @@ func TestCheckOK(t *testing.T) {
 }
 
 func TestCheckUsage(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := run([]string{"check"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"check"}, &out, &errOut); code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
-	if code := run([]string{"check", "/does/not/exist"}, &out, &errOut); code != 2 {
+	if code := run(t, []string{"check", "/does/not/exist"}, &out, &errOut); code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
 }
@@ -160,11 +168,12 @@ func TestCheckUsage(t *testing.T) {
 // TestBuildRunTest drives `xo build`, `xo run`, and `xo test` on a small
 // program.
 func TestBuildRunTest(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds Go")
 	}
 	dir := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
 	src := filepath.Join(dir, "app")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
@@ -175,7 +184,7 @@ func TestBuildRunTest(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	bin := filepath.Join(dir, "app.bin")
-	if code := run([]string{"build", "-o", bin, src}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"build", "-o", bin, src}, &out, &errOut); code != 0 {
 		t.Fatalf("build: exit %d: %s", code, errOut.String())
 	}
 	if _, err := os.Stat(bin); err != nil {
@@ -183,15 +192,15 @@ func TestBuildRunTest(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"run", src, "--", "a", "b"}, &out, &errOut); code != 0 || out.String() != "42 a,b\n" {
+	if code := run(t, []string{"run", src, "--", "a", "b"}, &out, &errOut); code != 0 || out.String() != "42 a,b\n" {
 		t.Fatalf("run: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
 	out.Reset()
-	if code := run([]string{"test", src}, &out, &errOut); code != 1 || !strings.Contains(out.String(), "FAIL: 1 passed, 1 failed") {
+	if code := run(t, []string{"test", src}, &out, &errOut); code != 1 || !strings.Contains(out.String(), "FAIL: 1 passed, 1 failed") {
 		t.Fatalf("test: exit %d stdout %s", code, out.String())
 	}
 	out.Reset()
-	if code := run([]string{"test", "--run", "double", src}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"test", "--run", "double", src}, &out, &errOut); code != 0 {
 		t.Fatalf("test --run: exit %d stdout %s", code, out.String())
 	}
 }

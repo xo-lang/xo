@@ -154,6 +154,7 @@ func (c *nativeChild) wait() (int, string) {
 // second cancels main's root context (deferred code runs, main returns
 // normally).
 func TestNativeSignalTwoPhase(t *testing.T) {
+	t.Parallel() // testdata/signal builds once per backend (signalBinary)
 	for _, bk := range nativeBackends() {
 		t.Run(bk, func(t *testing.T) {
 			t.Parallel()
@@ -182,6 +183,7 @@ func TestNativeSignalTwoPhase(t *testing.T) {
 // TestNativeSignalDrain: a program that finishes its work after the stop
 // request exits 0 without being canceled.
 func TestNativeSignalDrain(t *testing.T) {
+	t.Parallel() // testdata/signal builds once per backend (signalBinary)
 	for _, bk := range nativeBackends() {
 		t.Run(bk, func(t *testing.T) {
 			t.Parallel()
@@ -201,6 +203,7 @@ func TestNativeSignalDrain(t *testing.T) {
 // TestNativeSignalGrace: `os.proc.set_grace(300ms)` cancels a program
 // that ignores the stop 300ms after the first signal.
 func TestNativeSignalGrace(t *testing.T) {
+	t.Parallel() // testdata/signal builds once per backend (signalBinary)
 	for _, bk := range nativeBackends() {
 		t.Run(bk, func(t *testing.T) {
 			t.Parallel()
@@ -224,6 +227,7 @@ func TestNativeSignalGrace(t *testing.T) {
 // TestNativeSignalThirdExits: a program stuck in shielded cleanup exits
 // with status 130 at the third signal.
 func TestNativeSignalThirdExits(t *testing.T) {
+	t.Parallel() // testdata/signal builds once per backend (signalBinary)
 	for _, bk := range nativeBackends() {
 		t.Run(bk, func(t *testing.T) {
 			t.Parallel()

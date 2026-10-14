@@ -65,6 +65,9 @@ xo_rstr *xo_sys_buf(int64_t *len) {
 // real (TW_REAL_*): the Xo layer then calls the C runtime's fake.
 int64_t xo_tw_fake(int64_t real) { return tw_is_fake((int)real); }
 
+// xo_tw_exit is os.proc.exit in a test binary (std/native/llrt/process.xo).
+void xo_tw_exit(int64_t code) { tw_exit(code); }
+
 // xo_sys_clock_buf is the address of the calling thread's scratch for
 // Clock.now's timespec (Xo calls the vDSO with it), or 0 while the test
 // world's virtual clock runs: one call on the clock's path (decision

@@ -164,7 +164,7 @@ fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
     b.push("\tsub x17, ${idx}, #${lo}\n")
     idx = "x17"
   }
-  let tab = g.local("f${g.nfunc}_jt${g.blocks[g.cur].id}")
+  let tab = g.local("${g.lbl_prefix()}_jt${g.blocks[g.cur].id}")
   b.push("\tcmp ${idx}, #${n - 1}\n")
   b.push("\tb.hi ${g.label(g.fwd(inst.targets[n]))}\n")
   b.push("\tadr x16, ${tab}\n")

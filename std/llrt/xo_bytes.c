@@ -340,6 +340,9 @@ xo_rlist *xo_fs_msg(void) {
 	return n_str_list_add(l, m, (int64_t)strlen(m));
 }
 
+// Seed compatibility (xo_rt.c xo_env_get): env.args and env.program are
+// Xo (std/native/llrt/process.xo, B03 stage 3).
+//
 // xo_env_args is `env.args()`: the arguments after the program name.
 static xo_rlist *tw_env_args(void);
 

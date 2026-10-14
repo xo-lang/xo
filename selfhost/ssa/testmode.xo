@@ -205,9 +205,9 @@ fn (var b: Builder) root_scope_end(h: Int, sc: Int, sites: List[SpawnSite], mode
       if in_test {
         b.test_fail(msg)
       } else {
-        b.rt("eprintln", -1, [msg])
+        b.eprintln_rt(msg)
         b.print_trace(b.err_trace(tr, ei))
-        b.rt("exit", -1, [b.cint(1)])
+        b.exit_rt(b.cint(1))
         b.add(Op.Unreachable, -1, Aux.None, [])
       }
       b.dead()
@@ -312,6 +312,9 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
       let r = b.expr(ci.recv[0])
       let a = b.tc_arg(es, 0, st)
+      if b.stdio_llrt(key.trim_prefix("Stdio."), a) {
+        return Some(b.unit())
+      }
       return Some(b.call(key, b.unit_t(), "", [r, a]))
     }
     "Stdio.set_input" | "Stdio.set_input_bytes" => {

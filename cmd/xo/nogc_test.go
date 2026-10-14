@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -42,7 +41,7 @@ func nativeBackends(t *testing.T) []string {
 func xoTest(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(append([]string{"test"}, args...), &out, &errOut)
+	code := run(t, append([]string{"test"}, args...), &out, &errOut)
 	return code, out.String() + errOut.String()
 }
 
@@ -52,13 +51,14 @@ func xoTest(t *testing.T, args ...string) (int, string) {
 // traces, fault frames, and deadlock details, which native builds do not
 // record) matches its want.txt.
 func TestNoGCTests(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs test binaries on every backend")
 	}
 	backends := nativeBackends(t)
 	// one build directory for the parallel subtests (each builds its own
 	// program; t.Setenv is not allowed in parallel tests)
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_unix_kill")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
@@ -131,11 +131,12 @@ func testBlocks(t *testing.T, dir string) int {
 // TestNoGCTestLeaks runs every passing test of the native test binaries
 // with XO_LEAKCHECK=1: no allocation may be live at exit.
 func TestNoGCTestLeaks(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs test binaries")
 	}
 	backends := nativeBackends(t)
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service")} {
 		n := testBlocks(t, dir)
 		for _, be := range backends {
@@ -152,9 +153,9 @@ func TestNoGCTestLeaks(t *testing.T) {
 				// one process per test: they run in parallel
 				t.Run(fmt.Sprintf("%s/%s/%d", filepath.Base(dir), be, index), func(t *testing.T) {
 					t.Parallel()
-					cmd := exec.Command(bin)
+					cmd := command(t, bin)
 					cmd.Dir = tdir
-					cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
+					cmd.Env = append(cmd.Env, "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
 					var errb bytes.Buffer
 					cmd.Stdout, cmd.Stderr = io.Discard, &errb
 					if cmd.Run() != nil {
@@ -225,11 +226,12 @@ func notesSmoke(t *testing.T, base string) string {
 // stops it with SIGTERM, and requires the same answers and a clean
 // shutdown (exit 0 after "stopped").
 func TestNoGCNotesServer(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs the service")
 	}
 	backends := append([]string{xotool.BackendGo}, nativeBackends(t)...)
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := filepath.Join("..", "..", "examples", "notes-service")
 	var want string
 	for _, be := range backends {
@@ -238,8 +240,8 @@ func TestNoGCNotesServer(t *testing.T) {
 		if err != nil || res.Failed {
 			t.Fatalf("%s: %v %s", be, err, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
-		cmd.Env = append(os.Environ(), "NOTES_TOKEN=t0p", "NOTES_PASSWORD=correct horse", "NOTES_ADDR=127.0.0.1:0")
+		cmd := command(t, res.Binaries[xotool.Host()])
+		cmd.Env = append(cmd.Env, "NOTES_TOKEN=t0p", "NOTES_PASSWORD=correct horse", "NOTES_ADDR=127.0.0.1:0")
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
 			t.Fatal(err)

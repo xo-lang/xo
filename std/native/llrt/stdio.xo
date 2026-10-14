@@ -1,0 +1,248 @@
+// Standard output and error on the native backends, written in Xo (the
+// zero-C audit's work item B03; this was std/llrt/xo_rt.c's "Output":
+// obuf, print_locked, xo_flush). Standard output goes through a 64 KiB
+// buffer, flushed when it fills, before anything goes to standard error,
+// when a context is about to wait (decision 0069), at exit, and before a
+// fault's message; standard error is not buffered. A text larger than
+// half the buffer is written at once. The state is process globals
+// (rt.static_word, decision 0207's design): the buffer's address, the
+// bytes in it, its lock (taken once the runtime runs several threads, so
+// one print's text stays together), and the mode. The SSA builders call
+// the native prelude's llrt_print, llrt_println, llrt_eprint, and
+// llrt_eprintln for Stdio.print and friends; the C runtime flushes
+// through cabi.xo's exports (xo_x_flush, xo_x_flush_try) and sets the
+// threaded mode (xo_x_stdio_threads), and its older entry points
+// (xo_print and friends, which compilers before B03 call) forward to
+// them. In a test binary whose world fakes stdio (decision 0083), the
+// text goes to the test world's buffers in the C runtime instead.
+//
+// Nothing here may fault: cabi.xo's exports call it from C. Sums use
+// rt.int_wrap (no overflow check: sizes are far below the Int range).
+use native/llrt/darwin
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/testworld
+use native/llrt/windows
+use native/rt
+
+/// rt.static_word: the first of the four stdio words (rt.xo's table of
+/// the words). Their byte offsets: the buffer's address (0 before the
+/// first print), the bytes in it, the lock (pool.xo's lock word: 0 free,
+/// 1 held, 2 held with a thread that may sleep on it), and the mode.
+const WORDS = 3
+const BUF = 0
+const LEN = 8
+const LOCK = 16
+const MODE = 24
+
+/// The mode's bits: the test world was asked whether stdio is a fake (it
+/// is set up before the program runs, so once is enough); stdio is a
+/// fake; the runtime runs several threads (the lock is taken). SOLO is
+/// the common mode: asked, real, one thread.
+const ASKED = 1
+const FAKE = 2
+const THREADS = 4
+const SOLO = 1
+
+/// The buffer's size, and the largest text it takes (a larger one is
+/// written at once, after what the buffer holds).
+const CAP = 65536
+const HALF = 32768
+
+/// The test world's capability bit of stdio (xo_testing.c TW_REAL_STDIO).
+const TW_STDIO = 32
+
+/// The memory orders of the slot atomics (rt.xo).
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn add(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+/// The mode, asking the test world first when it was not asked yet.
+fn mode(w: Int) -> Int {
+  let m = rt.mem_load(w, MODE, 8)
+  if m & ASKED != 0 {
+    return m
+  }
+  // before the first print, while one thread runs, or from several
+  // threads that all store the same answer
+  let k = m | ASKED | (if testworld.fake(TW_STDIO) { FAKE } else { 0 })
+  rt.mem_store(w, MODE, k, 8)
+  k
+}
+
+/// Sets the threaded mode: the C runtime's xo_rt_threads_begin, before a
+/// second thread runs Xo code.
+pub fn threads() {
+  let w = rt.static_word(WORDS)
+  rt.mem_store(w, MODE, rt.mem_load(w, MODE, 8) | THREADS, 8)
+}
+
+/// Takes the lock when several threads run (m is the mode).
+fn lock(w: Int, m: Int) {
+  if m & THREADS != 0 && !rt.slot_cas[Int](w, 2, 0, 1, ACQUIRE) {
+    pool.lock_slow(add(w, LOCK))
+  }
+}
+
+fn unlock(w: Int, m: Int) {
+  if m & THREADS != 0 && rt.slot_swap[Int](w, 2, 0, RELEASE) == 2 {
+    pool.futex_wake(add(w, LOCK))
+  }
+}
+
+/// Writes the n bytes at p to the descriptor fd (1 or 2), retrying after
+/// a short write or EINTR; it gives up at the first other error (as the
+/// C runtime's write_all did: output that cannot be written is lost).
+fn write_all(fd: Int, p: Int, n: Int) {
+  var off = 0
+  while off < n {
+    let w = write(fd, add(p, off), rt.int_wrap(1, n, off))
+    if w <= 0 {
+      if w == 0 - linux.EINTR {
+        continue
+      }
+      return
+    }
+    off = add(off, w)
+  }
+}
+
+/// write(2) of the n bytes at p: the bytes written, or a negative errno
+/// (EINTR is 4 on Linux and macOS; Windows reports no EINTR).
+fn write(fd: Int, p: Int, n: Int) -> Int {
+  match target.os {
+    TargetOs.Linux => linux.write_at(fd, p, n)
+    TargetOs.Darwin => darwin.write_at(fd, p, n)
+    TargetOs.Windows => windows.std_write_at(fd, p, n)
+    TargetOs.Wasi => -1
+  }
+}
+
+/// Writes out what the buffer holds (the lock held).
+fn flush_locked(w: Int) {
+  let n = rt.mem_load(w, LEN, 8)
+  if n > 0 {
+    write_all(1, rt.mem_load(w, BUF, 8), n)
+    rt.mem_store(w, LEN, 0, 8)
+  }
+}
+
+/// Adds the n bytes at p to the buffer (the lock held).
+fn put_locked(w: Int, p: Int, n: Int) {
+  if n > HALF {
+    flush_locked(w)
+    write_all(1, p, n)
+    return
+  }
+  var buf = rt.mem_load(w, BUF, 8)
+  if buf == 0 {
+    buf = rt.heap_large(CAP)
+    rt.mem_store(w, BUF, buf, 8)
+  }
+  var len = rt.mem_load(w, LEN, 8)
+  if add(len, n) > CAP {
+    flush_locked(w)
+    len = 0
+  }
+  rt.mem_copy(add(buf, len), p, n)
+  rt.mem_store(w, LEN, add(len, n), 8)
+}
+
+/// The rest of out: the first print, a full buffer, a large text, or a
+/// fake (m is the mode).
+fn out_slow(w: Int, m: Int, p: Int, n: Int, nl: Bool) {
+  if m & FAKE != 0 {
+    testworld.write_raw(false, p, n)
+    if nl {
+      testworld.write_raw(false, raw.data("\n"), 1)
+    }
+    return
+  }
+  lock(w, m)
+  put_locked(w, p, n)
+  if nl {
+    put_locked(w, raw.data("\n"), 1)
+  }
+  unlock(w, m)
+}
+
+/// Stdio.print (nl false) or println (nl true) of the n bytes at p. The
+/// common case (one thread, room in the buffer) is a copy and a store.
+pub fn out(p: Int, n: Int, nl: Bool) {
+  let w = rt.static_word(WORDS)
+  let m = rt.mem_load(w, MODE, 8)
+  if m == SOLO {
+    let buf = rt.mem_load(w, BUF, 8)
+    let len = rt.mem_load(w, LEN, 8)
+    let end = add(len, n)
+    if buf != 0 && n <= HALF && end < CAP {
+      rt.mem_copy(add(buf, len), p, n)
+      if nl {
+        rt.mem_store(buf, end, 10, 1)
+        rt.mem_store(w, LEN, add(end, 1), 8)
+      } else {
+        rt.mem_store(w, LEN, end, 8)
+      }
+      return
+    }
+  }
+  out_slow(w, mode(w), p, n, nl)
+}
+
+/// Stdio.eprint (nl false) or eprintln (nl true) of the n bytes at p:
+/// standard output's buffer first, then the text, unbuffered.
+pub fn err(p: Int, n: Int, nl: Bool) {
+  let w = rt.static_word(WORDS)
+  let m = mode(w)
+  if m & FAKE != 0 {
+    testworld.write_raw(true, p, n)
+    if nl {
+      testworld.write_raw(true, raw.data("\n"), 1)
+    }
+    return
+  }
+  lock(w, m)
+  flush_locked(w)
+  write_all(2, p, n)
+  if nl {
+    write_all(2, raw.data("\n"), 1)
+  }
+  unlock(w, m)
+}
+
+/// Stdio.print or println of s.
+pub fn print(s: Str, nl: Bool) { out(raw.data(s), s.len(), nl) }
+
+/// Stdio.eprint or eprintln of s.
+pub fn eprint(s: Str, nl: Bool) { err(raw.data(s), s.len(), nl) }
+
+/// Writes out the buffer: before a wait (decision 0069), at exit, before
+/// a fault's message. Nothing to do (no lock taken) when it is empty.
+pub fn flush() {
+  let w = rt.static_word(WORDS)
+  if rt.slot_load[Int](w, 1, 0) == 0 {
+    return
+  }
+  let m = rt.mem_load(w, MODE, 8)
+  lock(w, m)
+  flush_locked(w)
+  unlock(w, m)
+}
+
+/// flush, unless another thread holds the buffer's lock (a handler that
+/// must not wait: Windows' stack overflow handler, on what is left of
+/// the overflowed stack).
+pub fn flush_try() {
+  let w = rt.static_word(WORDS)
+  let m = rt.mem_load(w, MODE, 8)
+  if m & THREADS == 0 {
+    flush_locked(w)
+    return
+  }
+  if rt.slot_cas[Int](w, 2, 0, 1, ACQUIRE) {
+    flush_locked(w)
+    unlock(w, m)
+  }
+}

@@ -163,7 +163,7 @@ func runAndCompare(t *testing.T, bin, dir string, want []byte, strict bool, set 
 // build's output, and its error. xo1 reads the working directory from
 // PWD, with / separators on Windows (std.md 3.1).
 func xo1Build(xo1, dir, name, target string) (string, string, error) {
-	out, err := os.MkdirTemp("", "xo-golden-want-")
+	out, err := xotool.TempDir("xo-golden-want-") // removed with the test binary's root
 	if err != nil {
 		return "", "", err
 	}

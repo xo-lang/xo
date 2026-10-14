@@ -16,9 +16,11 @@ use native/llrt/alloc
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
+use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/text
 use native/llrt/unicode
@@ -58,6 +60,36 @@ fn fmt_int(buf: Int, v: Int) -> Int {
 /// Writes the text of f as the Go backend prints a Float (FloatStr) and
 /// a zero byte at buf (at least 48 bytes); its length.
 fn fmt_float(buf: Int, f: Float) -> Int { raw.put_cstr(buf, num.float_text(f)) }
+
+// ---------------------------------------------------------------------------
+// Standard output and error (stdio.xo, the zero-C audit's work item B03):
+// the n bytes at p. The C runtime's xo_print and friends (for compilers
+// before B03) forward to the first four; it flushes standard output with
+// flush before a wait, at exit, and before a fault's message, and with
+// flush_try in Windows' stack overflow handler; xo_rt_threads_begin
+// calls stdio_threads before a second thread runs Xo code.
+
+fn print(p: Int, n: Int) { stdio.out(p, n, false) }
+
+fn println(p: Int, n: Int) { stdio.out(p, n, true) }
+
+fn eprint(p: Int, n: Int) { stdio.err(p, n, false) }
+
+fn eprintln(p: Int, n: Int) { stdio.err(p, n, true) }
+
+fn flush() { stdio.flush() }
+
+fn flush_try() { stdio.flush_try() }
+
+fn stdio_threads() { stdio.threads() }
+
+/// The end of the process (process.xo, B03 stage 2): the C runtime's
+/// xo_exit forwards here for compilers before B03.
+fn exit(code: Int) { process.exit(code) }
+
+/// The program's arguments and environment (C main, before the program
+/// runs; process.xo).
+fn proc_start(argc: Int, argv: Int, envp: Int) { process.start(argc, argv, envp) }
 
 // ---------------------------------------------------------------------------
 // Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero

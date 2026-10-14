@@ -1,0 +1,60 @@
+# On demand CI on the self-hosted EC2 runners (decision 0225,
+# infra/ci-runners). Nothing runs on push or pull request: start it with
+#   gh workflow run ci.yml -f ref=BRANCH -f suite=auto
+# then `gh run watch --exit-status` (knowledgebase/infrastructure/ci.md).
+name: ci
+run-name: "ci ${{ inputs.suite }} ${{ inputs.ref }}${{ inputs.merge_main && ' +main' || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to test
+        required: true
+        default: main
+      suite:
+        description: What to run (scripts/ci/suite.sh)
+        type: choice
+        options: [auto, short, vet, merge, fixed-point, full]
+        default: auto
+      packages:
+        description: "Packages for suite=merge, space separated (default: the touched ones)"
+        default: ""
+      merge_main:
+        description: Test REF merged with the current main (fails fast on a conflict)
+        type: boolean
+        default: true
+      runner:
+        description: Runner label
+        type: choice
+        options: [xo-arm64, xo-arm64-big]
+        default: xo-arm64
+
+jobs:
+  test:
+    runs-on: [self-hosted, "${{ inputs.runner }}"]
+    timeout-minutes: ${{ inputs.suite == 'full' && 150 || 90 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Merge main
+        if: inputs.merge_main
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          git fetch -q origin main
+          if ! git -c user.name=xo-ci -c user.email=xo-ci@localhost merge -q --no-edit origin/main; then
+            echo "::error::$REF does not merge cleanly with main"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          git log --oneline -1
+      - name: Suite ${{ inputs.suite }}
+        env:
+          XO_CI_BASE: origin/main
+          SUITE: ${{ inputs.suite }}
+          PACKAGES: ${{ inputs.packages }}
+        # inputs reach the shell through env, never pasted into the script
+        run: scripts/ci/suite.sh "$SUITE" $PACKAGES

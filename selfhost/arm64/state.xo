@@ -244,6 +244,18 @@ struct G {
   saved: List[Int] = []
   /// the frame of the function being emitted
   fr: Frame = Frame{}
+  /// shrink wrapping (shrink.xo): planned before register allocation,
+  /// kept by emission when it holds; the blocks that run without the
+  /// frame, and the one block whose head makes it
+  shrink: Bool = false
+  fl: List[Bool] = []
+  pro: Int = -1
+  /// per block: 1 a save block, 2 a restore block, 0 neither; and
+  /// whether it is in the framed region (shrink.xo)
+  fedge: List[Int] = []
+  region: List[Bool] = []
+  /// the current block's code ended at a tail call
+  ended: Bool = false
   stubs: List[Str] = []
   nstub: Int = 0
   /// the memos (a block's memo is an index into them)
@@ -267,6 +279,18 @@ struct G {
   lazy_res: Map[(Int, Int), Bool] = {}
   /// read only parameters passed by reference: their address
   stable: Map[Int, Int] = {}
+
+  // ---- a part's canonical function texts (fcache.xo, decision 0220
+  // addendum): the function's labels, strings, positions, and helpers as
+  // tokens, put in place by place_text
+  canon: Bool = false
+  cstrs: List[Bytes] = []
+  cstr_at: Map[Bytes, Int] = {}
+  clocs: List[Str] = []
+  cloc_at: Map[Str, Int] = {}
+  cwants: List[(Str, Want)] = []
+  /// the helpers the part wants (place_text)
+  wanted: Map[Str, Bool] = {}
 }
 
 /// Records a failure: the program cannot be generated (the Go emitter's
@@ -327,8 +351,19 @@ fn (var g: G) begin_func(fi: Int) {
   g.base = 0
   g.saved = []
   g.fr = Frame{}
+  g.shrink = false
+  g.fl = []
+  g.pro = -1
+  g.fedge = []
+  g.region = []
   g.stubs = []
   g.nstub = 0
+  if g.split {
+    // the call site labels numbered per function, so a function's
+    // assembly in a part does not depend on the functions before it
+    // (decision 0220 addendum)
+    g.ncs = 0
+  }
   g.memos = []
   g.mm = -1
   g.cm = Memo{blk: -1}

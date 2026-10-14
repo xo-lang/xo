@@ -5,7 +5,9 @@
 // os.CreateTemp (the prefix and a random number, tried until one is new),
 // and the working directory with / separators on Windows (std.md 3.1).
 // They were C (std/llrt/xo_fs.c; decision 0198 deleted that C path,
-// `XO_LLRT_C=fspath`); the system calls stay C (rt.fs_raw_*).
+// `XO_LLRT_C=fspath`); the system calls are std/native/llrt/fsops.xo's
+// raw_* (Xo on Linux and darwin/arm64, the C runtime's elsewhere).
+use native/llrt/fsops
 use native/llrt/rand
 use native/rt
 
@@ -27,12 +29,12 @@ fn windows() -> Bool {
 pub fn mkdir_all(op: Str, x: Str) -> Int {
   // \ separates too on Windows (std.md 3.1); the walk splits at /
   let p = if windows() { op.replace("\\", "/") } else { op }
-  rt.fs_raw_fail(mkdir_walk(p), x)
+  fsops.raw_fail(mkdir_walk(p), x)
 }
 
 /// MkdirAll's walk: 0 or the errno.
 fn mkdir_walk(path: Str) -> Int {
-  let k = rt.fs_raw_kind(path, true)
+  let k = fsops.raw_kind(path, true)
   if k >= 0 {
     return if k == 1 { 0 } else { ENOTDIR }
   }
@@ -51,9 +53,9 @@ fn mkdir_walk(path: Str) -> Int {
       return r
     }
   }
-  let e = rt.fs_raw_mkdir(path)
+  let e = fsops.raw_mkdir(path)
   if e != 0 {
-    if rt.fs_raw_kind(path, true) == 1 {
+    if fsops.raw_kind(path, true) == 1 {
       return 0
     }
     return e
@@ -62,20 +64,19 @@ fn mkdir_walk(path: Str) -> Int {
 }
 
 /// os.RemoveAll(op): the status, an error naming the Xo path x.
-pub fn remove_all(op: Str, x: Str) -> Int { rt.fs_raw_fail(remove_walk(if op.is_empty() { "." } else { op }), x) }
+pub fn remove_all(op: Str, x: Str) -> Int { fsops.raw_fail(remove_walk(if op.is_empty() { "." } else { op }), x) }
 
 /// RemoveAll's walk: 0 or the errno (the first of the children's).
 fn remove_walk(path: Str) -> Int {
-  let k = rt.fs_raw_kind(path, false)
+  let k = fsops.raw_kind(path, false)
   if k < 0 {
     return if -k == ENOENT { 0 } else { -k }
   }
   if k == 0 {
-    let e = rt.fs_raw_unlink(path)
+    let e = fsops.raw_unlink(path)
     return if e == 0 || e == ENOENT { 0 } else { e }
   }
-  let names = rt.fs_raw_names(path)
-  let oe = rt.fs_raw_errno()
+  let (names, oe) = fsops.raw_names(path)
   if oe != 0 {
     return oe
   }
@@ -86,7 +87,7 @@ fn remove_walk(path: Str) -> Int {
       first = r
     }
   }
-  let e = rt.fs_raw_rmdir(path)
+  let e = fsops.raw_rmdir(path)
   if e != 0 && e != ENOENT {
     return if first != 0 { first } else { e }
   }
@@ -103,10 +104,10 @@ pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str {
   var i = 0
   while i < 10000 && err == EEXIST {
     name = prefix + "${rand.next_u64() & 0xFFFFFFFF}"
-    err = rt.fs_raw_create(dir + "/" + name)
+    err = fsops.raw_create(dir + "/" + name)
     i += 1
   }
-  rt.fs_raw_fail(err, x)
+  fsops.raw_fail(err, x)
   if err != 0 {
     return ""
   }
@@ -115,7 +116,7 @@ pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str {
 
 /// The working directory, with / separators on Windows (std.md 3.1).
 pub fn cwd() -> Str {
-  let w = rt.fs_raw_getcwd()
+  let w = fsops.raw_getcwd()
   if windows() {
     return w.replace("\\", "/")
   }

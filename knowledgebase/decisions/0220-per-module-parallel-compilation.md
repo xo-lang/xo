@@ -183,9 +183,12 @@ run time (bench/ three-arm suite) besides build time.
   around queries. Stage 2's per module keys get most of the rebuild
   benefit with far less change.
 
-## Addendum (Proposed, 2026-10-14): a per-function back-end cache before stage 2
+## Addendum (Accepted, 2026-10-14): a per-function back-end cache before stage 2
 
-Status: Proposed (fastbuild agent, 2026-10-14); the lead decides.
+Status: Accepted (proposed by the fastbuild agent; accepted by the lead,
+to whom the owner delegated 0220, 2026-10-14). Built in stages: A, the
+objects per part (item 3); B, the per-function assembly cache (items 1
+and 2); C, insert_rc per function (item 4), reported on first.
 
 Stage 2 measured (bench/results/fast-builds-2026-10-13.md, "Stage 2
 measured"): the front end is 3.3 s of the 37 s self build on the Mac
@@ -228,3 +231,93 @@ function and compares it with the cached text (XO_BACKEND_CACHE=verify).
 
 Alternatives: stage 2 first (smaller gain, measured above); stage 3 per
 module code generation (largest gain, largest change).
+
+### Addendum stage A: objects per part (implemented 2026-10-14)
+
+- The parts of a split arm64 assembly are cut by their contents, not by
+  equal sizes: a part ends after a function whose name's FNV-1a hash is
+  0 modulo 128 once it has 64 functions, or at 512; a module under 256
+  functions stays one part (selfhost/arm64 parallel.xo part_bounds). An
+  inserted or grown function moves the cuts of its own part at most.
+- A part's labels are in a namespace named by the hash of its first
+  function's name (`p<6 base 62 digits>_`), its functions numbered from
+  0, and call site labels numbered per function, so a part's assembly
+  depends only on its own functions (and the program wide facts they
+  read). A one-part program is generated as before.
+- Each part's object is cached in <user cache>/xo/backend/obj
+  ($XO_BACKEND_CACHE_DIR) by the SHA-256 of the assembler's identity
+  (cc's `--version` output and file, the compile flags, the source's
+  path, which an ELF object names; for selfhost/macho the running xo's
+  executable) and the part's text (selfhost/xo asmparts.xo, bcache.xo).
+  XO_BACKEND_CACHE=off turns it off. A store prunes, at most once an
+  hour, entries unused for a week, then the least recently used past
+  XO_BACKEND_CACHE_MAX (8 GiB): selfhost/prune since stage B (decision
+  0223; XO_CACHE_MAX_AGE and XO_CACHE_MAX_GB apply).
+- Measured (bench/results/fast-builds-2026-10-13.md, "Back-end cache
+  stage A"): the self build's assemble phase 6.17 s to 0.75 to 0.90 s
+  when every part is reused and 1.49 to 1.53 s after a one-constant or
+  one-statement edit (42 of 43 objects reused); user CPU about 130 s to
+  about 90 s; the binary with the cache on and off is the same file.
+
+### Addendum stage B: the assembly per function (implemented 2026-10-14)
+
+- In a split generation (a module of 256 or more functions) each
+  function is generated as a canonical text: its label prefix
+  (`<ns>f<n>`) and Mach-O call site table number are tokens, its
+  string literals and fault positions are lists it refers to by index,
+  and the helpers it names are a list (selfhost/arm64 fcache.xo). The
+  part then places the text: the strings and positions interned in the
+  part, the helpers wanted, the program wide flags set, the tokens
+  replaced. Placing gives byte for byte what the plain generation
+  writes, so the text does not depend on the functions before it in
+  its part, and XO_BACKEND_CACHE=off (the plain generation), on, and
+  verify give the same binary.
+- The key: the SHA-256 of the running xo executable, the target, the
+  function's SSA after inlining and reference counting printed in full
+  (every field of the function, its blocks, values, and edges), each
+  type by name and the hash of every type it reaches (one hash per
+  strongly connected component of the type graph, so adding an
+  unrelated type changes no key), and the signature of the function
+  itself and of every function it names (parameter, result, and
+  capture types, `var` parameters, borrowed flags, address taken,
+  indirect, entry, export, first of its name). A helper names its type
+  or function by name in the entry; a function whose names do not lead
+  back to its ids is not cached.
+- XO_BACKEND_CACHE=verify generates every function and fails the build
+  when an entry differs; it is the test of the key's completeness
+  (clean on the self build after a constant, a statement, and a struct
+  field edit, on the goldens, and on the fixed point). --release builds
+  do not use the per-function cache (the objects' cache still applies,
+  keyed by the full text). Default on for every other build.
+- Measured (bench/results/fast-builds-2026-10-13.md, "Back-end cache
+  stage B"): with every function cached the emit phase of the self
+  build is 0.15 to 0.25 s (9.71 s with the cache off), the keys 0.4 to
+  1.9 s; after a one-module edit user CPU is 62 to 68 s against about
+  90 s with stage A alone and about 140 s without the cache. insert_rc
+  (8 to 12 s) is now the largest phase after an edit: stage C (item 4).
+
+### Addendum stage C: insert_rc per function (implemented 2026-10-14)
+
+- insert_rc splits into its whole-program part (the `var` List
+  parameters made unique, borrow inference), run every build, and the
+  per-function part, cached (selfhost/ssa rccache.xo, rc.xo rc_run) in
+  <user cache>/xo/backend/rc for every native backend (lower in
+  selfhost/xo), for modules of 256 or more functions, not --release.
+- The key: the SHA-256 of the xo executable, the target architecture,
+  the function before the pass printed in full with its types by name
+  and reach hash (the type keys moved to selfhost/ssa and serve the
+  emitter's cache too), its own borrowed flags and whether it is the
+  last function of its name, and the borrowed flags of every function
+  it names. The entry: the function after the pass, its types by name
+  (mapped back to the module's ids on a hit), its opcodes by name. A
+  function with a Float constant (no exact text form without float bit
+  casts) or a type whose name is not its own is not cached.
+- XO_BACKEND_CACHE=verify computes every function and fails on a
+  difference; clean on the self build after the three edits, the
+  goldens, and the fixed point. off, on, and verify give one binary.
+- Measured (bench/results/fast-builds-2026-10-13.md, "Back-end cache
+  stage C"): a one-module edit of xo rebuilds in 11.28 to 12.10 s and
+  20.42 to 25.30 s of CPU (30.60 s and 131.33 s with the cache off);
+  insert_rc 9.25 s to 3.6 s. Left after an edit: check and ssa (3.3 s,
+  stage 2), borrow inference and inlining (whole program), the keys,
+  the assembly of the changed parts, the link.

@@ -15,6 +15,64 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   unchanged (TestNoGCTests, TestNoGCTestLeaks on both native backends);
   instructions in bench/results/test-world-2026-10-14.md. The virtual
   clock, in memory listeners, and testing.run_main stay C (B15).
+- arm64 backend (decision 0224): shrink wrapping and tail calls. A
+  function makes its frame (frame record, callee saved registers) only
+  on the paths that need it, and a call whose results are returned as
+  they are is a branch after the epilogue. The self build of xo runs
+  0.985 of the instructions; bench/perf 0.963 to 1.004 of before; the
+  Xo list objects of B13 move from 1.242 to 1.201 (alloc small) of the
+  C's instructions on the Mac (bench/results/shrink-wrapping-2026-10-14.md).
+- Tests: `go test -short` over the repository 2.2 times faster (35.0 s
+  to 15.7 s on the shared Mac) and `./cmd/xo -short` 4.3 times (24.6 s
+  to 5.7 s): every cmd/xo test is parallel (a per test environment for
+  the xo processes, cmd/xo/env_test.go), internal/llvm caches its C
+  compiles by content (XO_CC_CACHE), internal/gen keeps `use go`
+  bindings and generated programs across runs, the harness self test
+  runs per method in parallel; scripts/seed-pack.sh takes
+  XO_SEED_GZIP_LEVEL (bench/results/short-tests-2026-10-14.md).
+- Faster native rebuilds, reference counting per function (decision
+  0220 addendum stage C): each function's reference counting is cached
+  beside its assembly, keyed by the function before the pass, the types
+  it reaches, and the borrowed parameters it calls with; verify checks
+  it too. A one-module edit of xo now rebuilds in about 12 s (31 s
+  without the cache) and 20 to 25 s of CPU (131 s) on the Mac.
+- Faster arm64 rebuilds, per function (decision 0220 addendum stage B):
+  each function's assembly is cached in <user cache>/xo/backend under
+  the hash of its SSA, the types it reaches, the signatures of the
+  functions it names, and the compiler, so a rebuild generates only the
+  functions an edit changed; `XO_BACKEND_CACHE=verify` generates every
+  function and fails on a cached text that differs, `off` turns the
+  cache off, and all three give the same binary. After a one-module
+  edit of xo the emit phase drops from 6 to 9.5 s to about 0.2 s and
+  the build's CPU time from about 140 s to about 65 s on the Mac.
+  --release builds do not use it.
+- Faster arm64 rebuilds (decision 0220 addendum stage A): the parts of a
+  large program's assembly are cut by their contents and named by their
+  first function, and each part's object is cached in
+  <user cache>/xo/backend (`XO_BACKEND_CACHE=off` turns it off), so an
+  unchanged part is not assembled again: after a one-module edit of xo
+  the assemble phase drops from about 6 s to 1.5 s on the Mac, and the
+  binary is the same as without the cache
+  (bench/results/fast-builds-2026-10-13.md).
+- Native runtime (zero-C work item B16, part 1): on Linux and
+  darwin/arm64 every Fs operation past read, write, and stat (read_dir,
+  walk, rename, remove, remove_all, create_dir_all, create_temp,
+  cwd_path, set_modified, file handles, copy, modes, links, and locks,
+  with lock's 10 ms polled wait) makes its system calls from Xo
+  (std/native/llrt/fsops.xo over linux.xo and darwin.xo); results and
+  messages are unchanged, read_line costs 0.68 to 0.82 of the C's
+  instructions, the rest within noise
+  (bench/results/fs-ops-2026-10-14.md). Windows and darwin/amd64 still
+  use the C runtime's xo_fs.c.
+- Native runtime (zero-C audit item B13, stage 1): std/http's parser
+  and client search text with std/native/llrt/scan.xo (SIMD) instead of
+  the C `xo_str_find`, which is deleted; single byte searches scan only
+  their range. The stack trace's padding counts runes in Xo. HTTP/1.1
+  server 0.961 to 1.013 of the C's instructions
+  (bench/results/string-list-objects-2026-10-14.md). The string and
+  list objects were ported to Xo and measured, and stay C: on arm64
+  they took up to 1.27 times the C's instructions (no shrink wrapping
+  in the arm64 emitters); the results file ranks the next steps.
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in
@@ -44,6 +102,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`XO_CACHE_MAX_AGE`, e.g. `6h`, `0` off), then the least recently used
   past 20 GiB per cache (`XO_CACHE_MAX_GB`); nothing used within two
   hours is removed, and a prune runs at most once an hour.
+- Native runtime (zero-C audit item B03, stage 1): standard output's
+  64 KiB buffer, its flush, and standard error are Xo
+  (std/native/llrt/stdio.xo, process globals in rt.static_word);
+  Stdio.print and friends call it through the native prelude, and the C
+  runtime flushes through cabi.xo's exports. 1,000,000 println cost
+  0.788 (arm64) and 0.859 (LLVM) of the C path's instructions
+  (bench/results/stdio-2026-10-14.md). os.proc.exit, env.get, env.vars,
+  env.args, and env.program are Xo too (std/native/llrt/process.xo).
 - Runtime process globals (zero-C work item B02, decision 0207): an
   internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
   LLVM, and wasm emitters; std/log's state (log.configure's level,

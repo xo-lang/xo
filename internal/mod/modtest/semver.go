@@ -91,10 +91,10 @@ func CacheDir() string {
 	return filepath.Join(os.TempDir(), "xo-mod")
 }
 
-// VersionDir is the cache directory of a module version (it may not
+// VersionDir is the directory of a module version in e's cache (it may not
 // exist): upper case letters of the path escaped as `!` and the lower
 // case letter.
-func VersionDir(path, version string) string {
+func (e *Env) VersionDir(path, version string) string {
 	var b strings.Builder
 	for _, r := range path {
 		if r >= 'A' && r <= 'Z' {
@@ -104,13 +104,13 @@ func VersionDir(path, version string) string {
 			b.WriteRune(r)
 		}
 	}
-	return filepath.Join(CacheDir(), filepath.FromSlash(b.String())+"@"+version)
+	return filepath.Join(e.Cache, filepath.FromSlash(b.String())+"@"+version)
 }
 
-// CleanCache removes the module cache (read only trees made writable
+// CleanCache removes e's module cache (read only trees made writable
 // first).
-func CleanCache() error {
-	dir := CacheDir()
+func (e *Env) CleanCache() error {
+	dir := e.Cache
 	MakeWritable(dir)
 	return os.RemoveAll(dir)
 }

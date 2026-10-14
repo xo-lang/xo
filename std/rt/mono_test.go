@@ -27,6 +27,7 @@ func outcome(f func() int64) (v int64, fault string) {
 // `xo build --mono` agree with the generic checked operations: same
 // results, same faults, same messages.
 func TestTypedIntArith(t *testing.T) {
+	t.Parallel() // local values only
 	edge := []int64{0, 1, -1, 2, -2, 3, 7, -7, 1 << 31, -(1 << 31), 1<<31 - 1, -(1 << 31) - 1,
 		1 << 32, 1<<32 + 1, -(1 << 32), 3037000499, 3037000500, -3037000500,
 		math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1, math.MaxInt32, math.MinInt32}
@@ -64,6 +65,7 @@ func TestTypedIntArith(t *testing.T) {
 // checked operations on every value of TestTypedIntArith's kind and every
 // constant the generator gives each form.
 func TestConstIntArith(t *testing.T) {
+	t.Parallel() // local values only
 	ks := []int64{1, 2, 3, 7, 1000000, 1103515245, 1 << 31, 1<<32 + 1, 3037000499, 3037000500, math.MaxInt64 / 2, math.MaxInt64 - 1, math.MaxInt64}
 	var all []int64
 	for _, k := range ks {

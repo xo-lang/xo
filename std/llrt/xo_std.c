@@ -80,37 +80,6 @@ static inline int n_is_space(int32_t r) { return (int)xo_x_is_space(r); }
 // ---------------------------------------------------------------------------
 // Strings (std.md 2.2)
 
-static int64_t n_mem_index(const char *p, int64_t n, const char *q, int64_t m) {
-	if (m == 0) {
-		return 0;
-	}
-	if (m > n) {
-		return -1;
-	}
-	const char *end = p + n - m;
-	for (const char *s = p; s <= end; s++) {
-		s = memchr(s, q[0], (size_t)(end - s + 1));
-		if (!s) {
-			return -1;
-		}
-		if (memcmp(s, q, (size_t)m) == 0) {
-			return s - p;
-		}
-	}
-	return -1;
-}
-
-int64_t xo_str_find(const char *p, int64_t n, const char *q, int64_t m, int64_t from) {
-	if (from < 0) {
-		from = 0;
-	}
-	if (from > n) {
-		return -1;
-	}
-	int64_t i = n_mem_index(p + from, n - from, q, m);
-	return i < 0 ? -1 : i + from;
-}
-
 xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t *len) {
 	if (lo < 0) {
 		lo = 0;
@@ -136,6 +105,11 @@ xo_rstr *xo_str_of_byte(int64_t b, int64_t *len) {
 	return nstr(&c, 1, len);
 }
 
+// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): the
+// SSA builders lower the stack trace's padding to the native prelude's
+// str_rune_count (scan.rune_count, zero-C audit B13); seed
+// 0.10.0-4ab09c25 still emits rt.str_rune_count. Delete with a seed
+// that has B13.
 int64_t xo_str_rune_count(const char *p, int64_t n) {
 	const unsigned char *s = (const unsigned char *)p;
 	int64_t c = 0;
@@ -496,19 +470,16 @@ xo_rstr *xo_rs_append_quote(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 #endif
 
 
-// xo_exit flushes standard output and exits with status code (main
-// returned an error: status 1, after "error: <text>" on standard error).
+// The test world's os.proc.exit (xo_testing.c; xo_tw_exit, xo_sys.c).
 static void tw_exit(int64_t code);
 
-void xo_exit(int64_t code) {
-	if (tw.on) {
-		// returns only inside testing.run_main, to unwind main
-		tw_exit(code);
-		return;
-	}
-	xo_flush();
-	exit((int)code);
-}
+void xo_x_exit(int64_t code);
+
+// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): an xo
+// before B03 stage 2 lowers os.proc.exit to this; the end of the process
+// is std/native/llrt/process.xo. Delete it with the first seed that has
+// B03.
+void xo_exit(int64_t code) { xo_x_exit(code); }
 
 // ---------------------------------------------------------------------------
 // Conversions for std/json: durations, RFC 3339 times

@@ -19,6 +19,7 @@ fn twice() -> Int {
 `
 
 func TestEditCLI(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		args []string
@@ -36,7 +37,7 @@ func TestEditCLI(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := writeFiles(t, map[string]string{"main.xo": editProg})
 			var out, errOut bytes.Buffer
-			code := run(append([]string{"edit", "--dir=" + dir}, c.args...), &out, &errOut)
+			code := run(t, append([]string{"edit", "--dir=" + dir}, c.args...), &out, &errOut)
 			if code != c.code {
 				t.Fatalf("exit %d, want %d: %s %s", code, c.code, out.String(), errOut.String())
 			}

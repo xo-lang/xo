@@ -11,7 +11,9 @@
 // ---------------------------------------------------------------------------
 // Strings
 
-/// The byte index of the first sub at or after from, or -1.
+/// The byte index of the first sub at or after from, or -1: only the
+/// wasm runtime has it (selfhost/wasm/rt.xo); the native backends use
+/// std/native/llrt/scan.xo's find (zero-C audit B13 deleted the C).
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
@@ -208,10 +210,13 @@ fn prefetch(a: Int)
 /// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
 /// static address on wasm; reached with mem_load/mem_store or the slot
 /// atomics. The words: 0 to 2 std/native/llrt/logstate.xo (the level,
-/// format, and output of log.configure); 32 to 39 the test world's
-/// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
-/// real, its lock, Rand's PCG state, the MemFs lock and state, the state
-/// record); 3 to 31 and 40 to 63 unused.
+/// format, and output of log.configure); 3 to 6 std/native/llrt/stdio.xo
+/// (standard output's buffer, its length, its lock, and the mode: whether
+/// the test world fakes stdio, whether several threads run); 7 to 9
+/// std/native/llrt/process.xo (argc, argv, the environment); 32 to 39 the
+/// test world's (std/native/llrt/testworld.xo W_*: whether it runs, the
+/// effects made real, its lock, Rand's PCG state, the MemFs lock and
+/// state, the state record); 10 to 31 and 40 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
@@ -276,6 +281,10 @@ fn sys_buf() -> Bytes
 /// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
 /// the C runtime, which serves the fake.
 fn tw_fake(real: Int) -> Bool
+/// os.proc.exit in a test binary (the test world's tw_exit): the code is
+/// recorded; inside testing.run_main it returns with the context
+/// unwinding, else the test ends (std/native/llrt/process.xo).
+fn tw_exit(code: Int)
 /// The address of the calling thread's 16 bytes of scratch for Clock.now's
 /// timespec, or 0 while the test world's virtual clock runs (one call on
 /// the clock's path; decision 0206 stage 2; on every OS since work item
@@ -482,6 +491,18 @@ fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_shared(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_held(l: FsLock) -> Bool
 fn fs_unlock(l: FsLock)
+/// The handles of std/native/llrt/fsops.xo (work item B16): the C
+/// runtime's records of a descriptor fd (fsops.xo reads and writes their
+/// words through obj_addr), which close fd when freed. A file handle
+/// owns a 64 KiB read buffer when buffered; a lock handle holds fd's
+/// flock when held (fd -1: none).
+fn fs_raw_file(fd: Int, buffered: Bool) -> FsFile
+fn fs_raw_lock(fd: Int, held: Bool) -> FsLock
+/// `clock.sleep_or_cancel(d)` for the runtime's polls: 1 when the task
+/// was canceled before or during the sleep, else 0 (the fs lock's wait).
+fn clock_sleep_or_cancel(d: Int) -> Int
+/// Writes what standard output holds buffered.
+fn flush()
 /// A Time of Unix nanoseconds, and back (both lowered as Int).
 fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int

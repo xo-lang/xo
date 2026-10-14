@@ -40,3 +40,9 @@ infra/ci-aws/xo-ci-key.pem
 infra/ci-aws/logs/
 bench/results/remote/
 .metadata_never_index
+# infra/state and infra/ci-runners: Terraform working files (state lives in S3)
+infra/state/.terraform/
+infra/state/tfplan
+infra/ci-runners/.terraform/
+infra/ci-runners/tfplan
+infra/ci-runners/lambda/*.zip
