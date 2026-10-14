@@ -72,6 +72,19 @@ fn find(s: Str, c: Str, from: Int, to: Int) -> Int {
   k
 }
 
+/// The index of the first byte c of b in [from, to), or -1: a short
+/// range (rt.str_find would search on to the end of the string).
+fn bfind(b: Bytes, c: Int, from: Int, to: Int) -> Int {
+  var i = from
+  while i < to {
+    if Int(b[i]) == c {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
 /// The index of the last byte c of b in [0, to), or -1.
 fn rfind(b: Bytes, c: Int, to: Int) -> Int {
   var i = to - 1
@@ -1391,7 +1404,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
     }
     let e = nl
     // CRLF required, no other CR
-    let cr = find(s, "\r", i, e + 1)
+    let cr = bfind(b, 13, i, e + 1)
     if cr < 0 || cr != e - 1 {
       return Chunked{res: HB_ERR, used: 0, body: out}
     }
@@ -1404,7 +1417,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
     while z > i && is_sp(Int(b[z - 1])) {
       z -= 1
     }
-    let semi = find(s, ";", i, z)
+    let semi = bfind(b, 59, i, z)
     if semi >= 0 {
       z = semi
     }
