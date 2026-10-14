@@ -20,6 +20,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (clang -O2 keeps the barriers; no branch or select in the masks) and
   TestCryptoXoDiff (crypto.equal and Ed25519 against Go on both native
   backends).
+- xo prunes its caches by age and size again (decision 0223): the build
+  directories and the Go backend's cache (whose trims went away with the
+  Go driver), the binary cache, and the test harness's xo builds
+  (`checkout/<key>`, the newest 4 kept). Entries unused for 24 hours go
+  (`XO_CACHE_MAX_AGE`, e.g. `6h`, `0` off), then the least recently used
+  past 20 GiB per cache (`XO_CACHE_MAX_GB`); nothing used within two
+  hours is removed, and a prune runs at most once an hour.
 - Runtime process globals (zero-C work item B02, decision 0207): an
   internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
   LLVM, and wasm emitters; std/log's state (log.configure's level,
