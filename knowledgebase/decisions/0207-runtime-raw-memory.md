@@ -215,7 +215,7 @@ Not implemented; the order and the rules for the step after this one.
   seed; stress test alloc_threads.c (TestRuntimeAlloc) under
   ThreadSanitizer for both paths.
 
-### Design: thread local state for the runtime (next, not implemented)
+### Design: thread local state for the runtime (implemented: below and decision 0212)
 
 Xo has no way to name a thread local or a mutable global word, so the
 C still finds the heap record (`solo_heap`, `__thread tls_heap`) and
@@ -243,6 +243,60 @@ visible (only std's implementation modules load native/rt, decision
    creation moves with the rest of the thread start (decision 0195
    prerequisite (6): the fiber switch and the current context use the
    same `tls_get`).
+
+### Process globals as implemented (2026-10-14, work item B02)
+
+Item 2 landed as decision 0212's `rt.tlocal_get/tlocal_set/tlocal_addr`
+(16 words). Item 1 as designed, with these details:
+
+- **`rt.static_word(k) -> Int`** (std/native/rt.xo): k a constant 0 to
+  63, checked by the self hosted SSA builder (selfhost/ssa call.xo
+  raw_intrinsic, "`rt.static_word` of a word that is not a constant 0
+  to 63"); allowed in the no allocation modules (contract.xo).
+  Lowering: selfhost/arm64 `adrp`/`add` of the 64 word table
+  `xo_static` (a local label, a hidden global in a split build, emitted
+  in the data section at the first use like `xo_sys_words`) plus one
+  `add #8k`; selfhost/llvm a `weak global [64 x i64]` `@.xo.static`
+  (one object for every module of a split build) and a getelementptr;
+  selfhost/wasm a static address after the data (the memory starts
+  zeroed, so no segment). The Go backend needs none: std/native is not
+  compiled there (std/rt is Go). The words are read and written with
+  `mem_load`/`mem_store` or the slot atomics. The table of words is
+  rt.xo's doc comment (0 to 2 std/log, 3 to 63 unused).
+- **wasm thread locals**: selfhost/wasm now lowers `rt.tlocal_get`,
+  `tlocal_set`, and `tlocal_addr` too, as a second static table of 16
+  words (one thread), so runtime modules that keep thread state work in
+  a WASI module (decision 0212 said "none").
+- **Seed shim**: the seed that builds selfhost/xo against the checkout's
+  std (0.10.0-23ce8ce2 on 2026-10-14) does not know the intrinsic and
+  compiles it as a call of `xo_static_word`, so std/llrt/xo_sys.c keeps
+  a 2 line C definition over a C table until the first seed with B02
+  (gotchas/seed-older-than-intrinsics.md). Programs built by an xo
+  with B02 never call it.
+- **First user**: std/log's state (std/native/llrt/logstate.xo):
+  log.configure's level, format, and output in static words 0 to 2
+  (acquire loads, release stores, as the C's atomics), the attribution
+  of decision 0173 in thread local words 7 and 8 (the address and
+  length of the string constant the SSA builder passes to the native
+  prelude's `llrt_log_from`), and the record time as text.append_time
+  of sysio.clock_now. The 66 line logging section of std/llrt/xo_http.c
+  (`xlog`, `__thread xlog_from`, xo_log_level, json, configured,
+  configure, from, from_take, now) is deleted. Golden
+  internal/llvm/testdata/golden/log_state.
+- **Verified** on linux/arm64 (EC2 r8g.8xlarge, commit 1636a998, seed
+  0.10.0-23ce8ce2): the bootstrap fixed point (s2 and s3 identical, s1
+  through the seed shim), `xo dev goldens` 181 of 181 on arm64 and on
+  LLVM and 137 of 137 on the Go backend, TestSelfhostWasm 134 pass, 21
+  unsupported, 0 fail of 155 (log_state passes on wasm), and
+  TestLogAttribution.
+- **Not moved yet** (xo_sys.c): `sys_scratch` (a per thread immortal
+  Bytes object behind `rt.sys_buf`), `xo_bytes_addr`, `xo_bytes_buf`,
+  and `xo_rs_bytes_len` need a Bytes form of `obj_addr`/`obj_at` (the
+  SSA builder accepts Str, List, and handles), which the seed's SSA
+  builder would reject in std code, so they wait for the next seed;
+  `xo_tw_fake`, `xo_fs_set_err` (the `n_fs_*` thread locals shared with
+  xo_fs.c and xo_bytes.c), and `xo_auxval` move with their items (B14,
+  B16, B04/B26).
 
 ## Consequences
 

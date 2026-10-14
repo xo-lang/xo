@@ -196,6 +196,13 @@ fn layout(k: Int) -> Int
 /// for an address that is not mapped (decision 0207 stage 3: the heap's
 /// free list pops).
 fn prefetch(a: Int)
+/// The address of word k (a constant, 0 to 63) of the program's table of
+/// process globals, zero at start (decision 0207's design, work item
+/// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
+/// static address on wasm; reached with mem_load/mem_store or the slot
+/// atomics. The words: 0 to 2 std/native/llrt/logstate.xo (the level,
+/// format, and output of log.configure); 3 to 63 unused.
+fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
