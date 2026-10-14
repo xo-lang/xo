@@ -149,6 +149,9 @@ func buildAndRunOpts(t *testing.T, dir string, opts xotool.Options, extra ...str
 // Programs with test blocks are run with `xo test` semantics when the
 // directory name starts with "test_".
 func TestGolden(t *testing.T) {
+	// alongside the other parallel tests, none of which builds a golden
+	// program (the serial ones, which may, run before)
+	t.Parallel()
 	if *updateGolden {
 		t.Skip("want.txt is written by TestGoldenNoMono")
 	}
