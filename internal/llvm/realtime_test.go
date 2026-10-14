@@ -27,6 +27,7 @@ var rtStatsRE = regexp.MustCompile(`rt_section=(\d+) rt_defer=(\d+) rt_overflow=
 //   - the realtime_section golden: frees are deferred inside sections
 //     (XO_RTSTATS counts them) and none overflows the queue.
 func TestRealtimeNative(t *testing.T) {
+	t.Parallel()
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
@@ -36,8 +37,13 @@ func TestRealtimeNative(t *testing.T) {
 	}
 	for _, be := range backends {
 		t.Run(be, func(t *testing.T) {
+			t.Parallel()
+			// its own build directory: TestGolden builds realtime_section
+			// at the same time, and two builds of one program into the
+			// shared directory (TestMain's XO_BUILD_DIR) would race
+			opts := xotool.Options{Backend: be, Env: []string{"XO_BUILD_DIR=" + filepath.Join(t.TempDir(), "build")}}
 			dir := filepath.Join("testdata", "realtime", "alloc")
-			r, b := buildRun(t, dir, xotool.Options{Backend: be})
+			r, b := buildRun(t, dir, opts)
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -48,7 +54,7 @@ func TestRealtimeNative(t *testing.T) {
 			leakCheck(t, b.Binaries[xotool.Host()], dir)
 
 			dir = filepath.Join("testdata", "golden", "realtime_section")
-			_, b = buildRun(t, dir, xotool.Options{Backend: be})
+			_, b = buildRun(t, dir, opts)
 			cmd := exec.Command(b.Binaries[xotool.Host()])
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_RTSTATS=1")
@@ -71,7 +77,7 @@ func TestRealtimeNative(t *testing.T) {
 			// the demo (bench/results/realtime-2026-10-10.md), each tick
 			// version briefly, every allocation freed
 			dir = filepath.Join("..", "..", "examples", "realtime-control")
-			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+			res, err := xotool.Build([]string{dir}, opts)
 			if err != nil || res.Failed {
 				t.Fatalf("build the demo: %v %v", err, res.Output)
 			}

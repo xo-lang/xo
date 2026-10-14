@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,7 +16,7 @@ func emptyCache(t *testing.T) {
 	t.Helper()
 	c := t.TempDir()
 	t.Cleanup(func() { modtest.MakeWritable(c) })
-	t.Setenv("XO_MODCACHE", c)
+	setenv(t, "XO_MODCACHE", c)
 }
 
 // startProxy starts `xo mod proxy serve --fetch root` on a free loopback
@@ -31,7 +30,7 @@ func startProxy(t *testing.T, root string) string {
 	}
 	addr := ln.Addr().String()
 	ln.Close()
-	cmd := exec.Command(xoBin(t), "mod", "proxy", "serve", "--addr="+addr, "--fetch", root)
+	cmd := command(t, xoBin(t), "mod", "proxy", "serve", "--addr="+addr, "--fetch", root)
 	var errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &errOut, &errOut
 	if err := cmd.Start(); err != nil {
@@ -57,7 +56,8 @@ func startProxy(t *testing.T, root string) string {
 // proxy (decision 0126, `xo mod proxy serve --fetch`) on loopback, never
 // from git themselves.
 func TestModProxy(t *testing.T) {
-	modtest.Setup(t, "../../internal/mod/testdata/repos", modtest.Compare)
+	t.Parallel()
+	modSetup(t, "../../internal/mod/testdata/repos")
 	ws := t.TempDir()
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
@@ -69,17 +69,17 @@ func TestModProxy(t *testing.T) {
 	srv := startProxy(t, root)
 
 	emptyCache(t)
-	t.Setenv("XO_PROXY", srv)
+	setenv(t, "XO_PROXY", srv)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	xo(t, "check", app).want(0)
 	xo(t, "get", "--dir", app, "github.com/acme/money@v1.3.0").want(0)
 	// a second client with an empty cache and no repositories in reach:
 	// everything comes through the proxy
 	emptyCache(t)
-	t.Setenv("XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
+	setenv(t, "XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
 	xo(t, "check", app).want(0)
 
-	t.Setenv("XO_PROXY", "nonsense")
+	setenv(t, "XO_PROXY", "nonsense")
 	emptyCache(t)
 	r := xo(t, "check", "--json", app).want(1)
 	if got := diagCodes(t, r.out); got == "" || got[:6] != "XO1314" {

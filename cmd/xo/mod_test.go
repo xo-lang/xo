@@ -21,7 +21,7 @@ type modRun struct {
 func xo(t *testing.T, args ...string) modRun {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, &out, &errOut)
+	code := run(t, args, &out, &errOut)
 	return modRun{t, code, out.String(), errOut.String()}
 }
 
@@ -56,9 +56,10 @@ const appMain = "use github.com/acme/billing/invoice\n\nfn main(os: Os) {\n  os.
 // require, xo.lock verification, xo mod tidy, xo get, offline builds,
 // vendoring, and workspaces, with local git repositories.
 func TestModules(t *testing.T) {
-	modtest.Setup(t, "../../internal/mod/testdata/repos", modtest.Compare)
+	t.Parallel()
+	env := modSetup(t, "../../internal/mod/testdata/repos")
 	ws := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
 		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
@@ -95,7 +96,7 @@ func TestModules(t *testing.T) {
 
 	// offline: from the cache; an empty cache is XO1303
 	xo(t, "check", "--offline", app).want(0)
-	if err := modtest.CleanCache(); err != nil {
+	if err := env.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
 	r = xo(t, "check", "--offline", "--json", app).want(1)
@@ -108,7 +109,7 @@ func TestModules(t *testing.T) {
 
 	// vendor: builds use vendor/ with no cache and no network
 	xo(t, "vendor", "--dir", app).want(0)
-	if err := modtest.CleanCache(); err != nil {
+	if err := env.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
 	xo(t, "check", "--offline", app).want(0)

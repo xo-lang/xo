@@ -85,6 +85,7 @@ func TestMain(m *testing.M) {
 	}
 	prebuildFull()
 	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	if err := flushGoldens(); err != nil {
 		fmt.Fprintln(os.Stderr, "gogoldens:", err)
 		code = 1

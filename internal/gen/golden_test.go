@@ -38,11 +38,17 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
-	// `use go` bindings (decision 0041) go to a shared temporary cache,
-	// not into testdata
-	os.Setenv("XO_GOBIND_DIR", filepath.Join(dir, "gobind"))
+	// `use go` bindings (decision 0041) go to a cache the tests share, not
+	// into testdata, kept across runs under a key of the xo binary
+	// (xotool.TestGobindDir; a temporary one when there is no key)
+	gobind, err := xotool.TestGobindDir()
+	if err != nil {
+		gobind = filepath.Join(dir, "gobind")
+	}
+	os.Setenv("XO_GOBIND_DIR", gobind)
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
 	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -144,6 +150,9 @@ func buildAndRunOpts(t *testing.T, dir string, opts xotool.Options, extra ...str
 // Programs with test blocks are run with `xo test` semantics when the
 // directory name starts with "test_".
 func TestGolden(t *testing.T) {
+	// alongside the other parallel tests, none of which builds a golden
+	// program (the serial ones, which may, run before)
+	t.Parallel()
 	if *updateGolden {
 		t.Skip("want.txt is written by TestGoldenNoMono")
 	}

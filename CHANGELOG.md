@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Tests: `go test -short` over the repository 2.2 times faster (35.0 s
+  to 15.7 s on the shared Mac) and `./cmd/xo -short` 4.3 times (24.6 s
+  to 5.7 s): every cmd/xo test is parallel (a per test environment for
+  the xo processes, cmd/xo/env_test.go), internal/llvm caches its C
+  compiles by content (XO_CC_CACHE), internal/gen keeps `use go`
+  bindings and generated programs across runs, the harness self test
+  runs per method in parallel; scripts/seed-pack.sh takes
+  XO_SEED_GZIP_LEVEL (bench/results/short-tests-2026-10-14.md).
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in

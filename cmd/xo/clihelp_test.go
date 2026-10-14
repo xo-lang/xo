@@ -31,7 +31,7 @@ func shippedXo(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("no xo to run: %v", err)
 	}
-	t.Setenv("XO_STD", "")
+	setenv(t, "XO_STD", "")
 	return cli
 }
 
@@ -75,11 +75,12 @@ func dropUsage(cmd, s string) string {
 // standard error and exits 2; an unknown flag exits 2 with the error and
 // the command's usage on standard error.
 func TestCLIHelp(t *testing.T) {
+	t.Parallel()
 	cli := shippedXo(t)
-	t.Chdir(t.TempDir())
+	chdir(t, t.TempDir())
 	xo := func(args ...string) (string, string, int) {
 		var out, errOut bytes.Buffer
-		code := execCLI(cli, args, &out, &errOut)
+		code := execCLI(t, cli, args, &out, &errOut)
 		return out.String(), errOut.String(), code
 	}
 	top, stderr, code := xo("help")
@@ -167,6 +168,7 @@ func TestCLIHelp(t *testing.T) {
 // checker (exit 70, "prelude type missing: Int"): no prelude.xo there,
 // or a prelude lacking a core type.
 func TestCLINoStd(t *testing.T) {
+	t.Parallel()
 	cli := shippedXo(t)
 	root := t.TempDir()
 	for name, src := range map[string]string{
@@ -182,14 +184,14 @@ func TestCLINoStd(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Chdir(filepath.Join(root, "m"))
+	chdir(t, filepath.Join(root, "m"))
 	for _, c := range []struct{ std, want string }{
 		{"empty", "xo check: std library not found: no " + filepath.ToSlash(filepath.Join(root, "empty")) + "/prelude.xo"},
 		{"short", "prelude.xo lacks Int, Never, Option, Result"},
 	} {
-		t.Setenv("XO_STD", filepath.ToSlash(filepath.Join(root, c.std)))
+		setenv(t, "XO_STD", filepath.ToSlash(filepath.Join(root, c.std)))
 		var out, errOut bytes.Buffer
-		code := execCLI(cli, []string{"check", "."}, &out, &errOut)
+		code := execCLI(t, cli, []string{"check", "."}, &out, &errOut)
 		if code != 2 || !strings.Contains(errOut.String(), c.want) || strings.Contains(errOut.String(), "fault") {
 			t.Errorf("XO_STD=%s xo check .: exit %d, stdout %q, stderr %q; want exit 2 and %q", c.std, code, out.String(), errOut.String(), c.want)
 		}
@@ -203,6 +205,7 @@ func TestCLINoStd(t *testing.T) {
 // are skipped; a DIR/... with no .xo file at or below DIR is an error
 // (exit 1).
 func TestCLIPattern(t *testing.T) {
+	t.Parallel()
 	cli := shippedXo(t)
 	root := t.TempDir()
 	bad := "pub fn f() -> Int {\n  \"x\"\n}\n"
@@ -224,11 +227,11 @@ func TestCLIPattern(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Chdir(filepath.Join(root, "m"))
-	t.Setenv("XO_BUILD_DIR", filepath.Join(root, "build"))
+	chdir(t, filepath.Join(root, "m"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(root, "build"))
 	xo := func(args ...string) string {
 		var out, errOut bytes.Buffer
-		code := execCLI(cli, args, &out, &errOut)
+		code := execCLI(t, cli, args, &out, &errOut)
 		return fmt.Sprintf("exit %d\n--- stdout\n%s--- stderr\n%s", code, out.String(), errOut.String())
 	}
 	for _, c := range [][]string{

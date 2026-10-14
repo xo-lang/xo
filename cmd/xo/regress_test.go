@@ -11,6 +11,7 @@ import (
 // TestRegressionWritten checks that a shrunk contract fuzz failure becomes a
 // regression test in the module (core 9.2), once, and that it fails.
 func TestRegressionWritten(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs a test binary")
 	}
@@ -23,7 +24,7 @@ func TestRegressionWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runTest([]string{dir}, &out, &errb); code == 0 {
+	if code := runTest(t, []string{dir}, &out, &errb); code == 0 {
 		t.Fatalf("want the contract fuzz to fail\n%s%s", out.String(), errb.String())
 	}
 	got, err := os.ReadFile(filepath.Join(dir, regressFile))
@@ -34,7 +35,7 @@ func TestRegressionWritten(t *testing.T) {
 		t.Fatalf("unexpected regression file:\n%s", got)
 	}
 	out.Reset()
-	if code := runTest([]string{dir}, &out, &errb); code == 0 || !strings.Contains(out.String(), "--- FAIL: regression: halver.half") {
+	if code := runTest(t, []string{dir}, &out, &errb); code == 0 || !strings.Contains(out.String(), "--- FAIL: regression: halver.half") {
 		t.Fatalf("want the regression test to fail\n%s", out.String())
 	}
 	again, _ := os.ReadFile(filepath.Join(dir, regressFile))

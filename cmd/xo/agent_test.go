@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestMain keeps a developer's running `xo serve` (built from other code)
@@ -26,7 +28,9 @@ func TestMain(m *testing.M) {
 			os.Setenv("XO_BIN_CACHE", filepath.Join(c, "xo", "testbin"))
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
+	os.Exit(code)
 }
 
 // The `xo serve` protocol (decision 0086): one JSON request per
@@ -86,7 +90,7 @@ func serveCall(path string, req serveRequest) (*serveResponse, error) {
 // startServe starts `xo serve --socket=sock` and waits until it answers.
 func startServe(t *testing.T, sock string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(xoBin(t), "serve", "--socket="+sock)
+	cmd := command(t, xoBin(t), "serve", "--socket="+sock)
 	var errOut bytes.Buffer
 	cmd.Stderr = &errOut
 	if err := cmd.Start(); err != nil {
@@ -108,7 +112,7 @@ func startServe(t *testing.T, sock string) *exec.Cmd {
 // its exit status and standard error.
 func startMCP(t *testing.T) (c *mcpClient, wait func() (int, string)) {
 	t.Helper()
-	cmd := exec.Command(xoBin(t), "mcp")
+	cmd := command(t, xoBin(t), "mcp")
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -204,6 +208,7 @@ func (c *mcpClient) tool(name string, args map[string]any) (map[string]any, bool
 }
 
 func TestMCPSession(t *testing.T) {
+	t.Parallel()
 	dir := writeFiles(t, map[string]string{"app/main.xo": knownErrorModule})
 	c, wait := startMCP(t)
 
@@ -286,6 +291,7 @@ func TestMCPSession(t *testing.T) {
 }
 
 func TestMCPTestTool(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a test binary")
 	}
@@ -294,7 +300,7 @@ func TestMCPTestTool(t *testing.T) {
 		"m/m_test.xo": "test \"adds\" {\n  expect(add(1, 2)) == 3\n}\n\ntest \"wrong\" {\n  expect(add(1, 1)) == 3\n}\n",
 	})
 	var out, errOut bytes.Buffer
-	cmd := exec.Command(xoBin(t), "mcp")
+	cmd := command(t, xoBin(t), "mcp")
 	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test","arguments":{"dirs":["` + filepath.Join(dir, "m") + `"]}}}` + "\n")
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
@@ -327,6 +333,7 @@ func TestMCPTestTool(t *testing.T) {
 }
 
 func TestServe(t *testing.T) {
+	t.Parallel()
 	sockDir, err := os.MkdirTemp("", "xs")
 	if err != nil {
 		t.Fatal(err)
@@ -350,8 +357,8 @@ func TestServe(t *testing.T) {
 			t.Error("server did not stop")
 		}
 	}()
-	t.Setenv(serveSocketEnv, sock)
-	t.Setenv(serveDisableEnv, "")
+	setenv(t, serveSocketEnv, sock)
+	setenv(t, serveDisableEnv, "")
 
 	dir := writeFiles(t, map[string]string{"app/main.xo": knownErrorModule})
 	app := filepath.Join(dir, "app")
@@ -359,7 +366,7 @@ func TestServe(t *testing.T) {
 		t.Helper()
 		var out, errOut bytes.Buffer
 		start := time.Now()
-		run([]string{"check", "--json", app}, &out, &errOut)
+		run(t, []string{"check", "--json", app}, &out, &errOut)
 		return out.String(), time.Since(start)
 	}
 	stats := func() serveStats {
@@ -407,7 +414,7 @@ func TestServe(t *testing.T) {
 
 	// query goes through the same cache
 	var out, errOut bytes.Buffer
-	if code := run([]string{"query", "def", "--json", "--dir=" + app, "g"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "fn g()") {
+	if code := run(t, []string{"query", "def", "--json", "--dir=" + app, "g"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "fn g()") {
 		t.Errorf("query = %d %s %s", code, out.String(), errOut.String())
 	}
 	if s := stats(); s.Hits < 2 {

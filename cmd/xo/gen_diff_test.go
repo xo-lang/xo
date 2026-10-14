@@ -37,6 +37,7 @@ func genDiffFile() string {
 // path): every test fails, printing its values, and the reports are the
 // same.
 func TestGenDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds test binaries on every backend")
 	}
@@ -48,7 +49,7 @@ func TestGenDiff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gen_test.xo"), []byte(genDiffFile()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	goCode, goOut := xoTest(t, "-v", dir)
 	// a few pairs are equal (two empty lists)
 	if goCode == 0 || strings.Count(goOut, "--- FAIL") < 550 {
