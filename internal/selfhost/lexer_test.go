@@ -494,6 +494,7 @@ func compare(t *testing.T, bin, root string, paths []string) {
 // -short uses a smaller fuzz corpus, and so do the arm64 and LLVM
 // lexers in the merge tier (their native smoke test; tier_test.go).
 func TestSelfhostDifferential(t *testing.T) {
+	skipDumpReplay(t)
 	for _, backend := range []string{"go", "arm64", "llvm"} {
 		t.Run(backend, func(t *testing.T) {
 			t.Parallel()

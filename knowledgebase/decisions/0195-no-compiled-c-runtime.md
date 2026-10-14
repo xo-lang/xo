@@ -1,7 +1,11 @@
 # 0195: No compiled C in the runtime
 
 Status: Accepted as a direction (owner, 2026-10-12). The audit landed
-(2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`); the per step
+(2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`), refreshed at
+d79ad79b as a finite checklist with an order of agent sized items
+(`bench/results/zero-c-audit-refresh-2026-10-13.md`: std/llrt 26,743
+lines, (a) 2,060, (b) 24,678 in 31 items, (c) 5, third party
+200,915); the per step
 plan below ("Plan") is Proposed until the owner approves it and answers
 owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
 item 6: 1,040 of its 1,799 lines out of default builds,
@@ -33,9 +37,13 @@ LLVM to 1.043 (2026-10-13): they are Xo by default, the C under
 0212 (the fiber switch and thread locals emitted by the compiler, the
 scheduler core in std/native/llrt/sched.xo, `XO_LLRT_C=sched` for the C;
 xo_rt.c's default build 156 lines shorter, no assembly;
-`bench/results/task-switch-2026-10-13.md`); spawn, join, the pool's
-locks, fiber stacks, and threads wait for platform calls and
-`rt.call_addr` (0212 stage 2).
+`bench/results/task-switch-2026-10-13.md`); stage 2 done 2026-10-13:
+the worker pool, the locks' slow paths and futex waits, worker threads,
+fiber stacks, parks, the cancellation tree, a spawn's queueing, and a
+scope's join (std/native/llrt/pool.xo; the default build of xo_rt.c 523
+lines shorter than main's at 4f792c55, 7,088 to 6,565); await, the wait
+lists, the task's record and end, contexts, and budgets are 0212's
+stage 3.
 
 ## Context
 

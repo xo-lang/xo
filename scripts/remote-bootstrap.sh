@@ -82,10 +82,10 @@ bundle=$(mktemp -t xo-bundle).bundle
 git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
 scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$bundle" "ec2-user@$ip:xo.bundle"
 rm -f "$bundle"
-log "phase 1: the seed (go run ./scripts/xobuild: the go-compiler-final xo1 builds selfhost/xo)"
+log "phase 1: the seed (go run ./scripts/xobuild --from-source: the go-compiler-final xo1 and the seed chain build selfhost/xo)"
 ssh_ "set -eo pipefail; export PATH=/usr/local/go/bin:\$PATH; git clone -q xo.bundle xo && cd xo && git checkout -q $commit && \
   { uname -a; nproc; free -g; go version; clang --version | head -1; } && \
-  mkdir -p \$HOME/seed && t0=\$(date +%s) && cp \$(go run ./scripts/xobuild) \$HOME/seed/xo && \
+  mkdir -p \$HOME/seed && t0=\$(date +%s) && cp \$(go run ./scripts/xobuild --from-source) \$HOME/seed/xo && \
   echo \"seed built in \$(( \$(date +%s) - t0 )) s\"" > "$out" 2>&1 || { log "phase 1 failed: $out"; tail -20 "$out" >&2; exit 1; }
 log "phase 2: delete Go, then scripts/bootstrap-xo.sh"
 ssh_ "set -o pipefail; sudo rm -rf /usr/local/go \$HOME/go \$HOME/.cache/go-build; \

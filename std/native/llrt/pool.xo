@@ -1,0 +1,1308 @@
+// The worker pool in Xo (decision 0212 stage 2, decision 0195
+// prerequisite 6): the runtime's locks and their futex style waits, the
+// worker records and the inject queue, waking and idling workers, the
+// steal rounds, the run loop of a worker thread and its start, and the
+// fiber stacks (mapped with a guard page, kept in caches). The C runtime
+// (std/llrt/xo_rt.c) calls them through cabi.xo (xo_x_pool_push and
+// friends); sched.xo below them is the run queue ring and the fibers'
+// switches. With XO_LLRT_C=sched the C keeps its own copies (compiled
+// with -DXO_SCHED_C) and calls none of these.
+//
+// The records are xo_rt.c's (the pool, xo_worker, the fiber cache, the
+// lock), asserted there with _Static_assert against the constants
+// below. The code keeps sched.xo's discipline without its check (it
+// calls its own functions, which selfhost/ssa contract.xo's check does
+// not allow): Int words only, wrapping arithmetic, nothing allocated
+// from the heap of Xo values (records come from rt.heap_large, the C's
+// malloc), and no fault, so it runs on a worker's own stack with no
+// current context and never unwinds into its C callers.
+use native/llrt/linux
+use native/llrt/sched
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// C11's orders of the slot atomics.
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+const SEQ_CST = 4
+
+/// The pool record (xo_rt.c `pool`; word indexes for the slot atomics
+/// and byte offsets for loads): its lock (pool.mu: the idle list,
+/// starting workers), the CPUs, the spin rounds, the records used, the
+/// worker threads alive, idle, and spinning, the idle list, the inject
+/// queue's lock, buffer, head, length, and capacity, the fiber cache's
+/// record, the address of xo_x_worker_main, and the records from word 16.
+const P_MU = 0
+const P_NCPU = 8
+const P_SPIN_ROUNDS = 16
+const P_NW = 3
+const P_ALIVE = 4
+const P_NIDLE = 5
+const P_SPINNING = 6
+const P_IDLE = 56
+const P_IMU = 64
+const P_IBUF = 72
+const P_IHEAD = 80
+const P_ILEN = 11
+const P_ILEN_AT = 88
+const P_ICAP = 96
+const P_FIBERS = 104
+const P_WORKER_MAIN = 112
+const P_DLK = 120
+const P_WS = 128
+const MAXW = 4096
+
+/// xo_worker (byte offsets): the ring (sched.xo), next and when it was
+/// put there, live, the hooks word, the idle futex word (word 279), the
+/// idle list's link, the steal rounds' random state, nonext, the fiber
+/// cache and its count, the pool, and a scratch batch of RUNQ / 2 + 1
+/// words (a steal's, the inject queue's share, a full ring's half).
+const W_NEXT = 2184
+const W_NEXT_I = 273
+const W_NEXT_AT = 2192
+const W_LIVE = 2200
+const W_HOOKS = 2216
+const W_WAKEW = 2232
+const W_WAKEW_I = 279
+const W_IDLE_NEXT = 2240
+const W_RNG = 2248
+const W_NONEXT = 2256
+const W_FCACHE = 2264
+const W_NFCACHE = 2328
+const W_POOL = 2360
+const W_BATCH = 2368
+const W_SIZE = 3400
+const FCACHE = 8
+
+/// xo_runq: head (word 0), tail (word 16).
+const RQ_TAIL = 16
+const RQ_TAIL_AT = 128
+const RUNQ = 256
+const RUNQ_HALF = 128
+
+/// The fiber cache record (xo_rt.c `fibers`): its lock, the list, its
+/// length, the stack size (without the guard page), the page size, the
+/// address of xo_x_fiber_main (where a fiber starts).
+const FS_MU = 0
+const FS_LIST = 1
+const FS_LIST_AT = 8
+const FS_N = 16
+const FS_STACK = 24
+const FS_PAGE = 32
+const FS_MAIN = 40
+const FIBER_CACHE = 64
+
+/// xo_fiber (sched.xo): the mapping and its size, the task, the context,
+/// the state (word 5), the end flag, the cache's link, the hooks word.
+const F_SP = 0
+const F_MEM = 8
+const F_SIZE = 16
+const F_TASK = 24
+const F_CUR = 32
+const F_STATE = 5
+const F_DONE = 48
+const F_NEXT = 64
+const F_HOOKS = 80
+const F_RECORD = 88
+
+/// The part of a fiber's stack committed up front on Windows.
+const WIN_COMMIT = 65536
+
+/// The words of the thread local table (sched.xo TLS_*): the worker
+/// record, and a scratch word for the platform calls that take the
+/// address of a value (WaitOnAddress, SetThreadStackGuarantee).
+const TLS_CUR = 0
+const TLS_W = 2
+const TLS_SCRATCH_AT = 32
+
+/// The services of the C runtime (rt.sched_rt, xo_rt.c xo_sched_rt).
+const RT_STAT = 0
+const RT_DL_CHECK = 1
+const RT_TW_KICK = 2
+const RT_NOW = 3
+const RT_FIBER_MAPPED = 4
+const RT_FIBER_UNMAPPED = 5
+const RT_MAP_FAILED = 6
+const RT_WORKER_START = 7
+const RT_THREAD = 8
+const RT_OOM = 9
+const RT_DEQUEUED = 10
+const RT_MAP = 11
+const RT_UNMAP = 12
+const RT_RUN_CLAIMED = 16
+
+/// The statistics' counters (xo_rt.c st, in its order).
+const ST_STEAL = 1
+const ST_INJECT = 2
+const ST_WAKE = 3
+const ST_IDLE_SLEEP = 4
+const ST_SPIN_ROUND = 5
+const ST_FIBER_NEW = 7
+const ST_THREAD_WAIT = 8
+const ST_THREAD_WAKE = 9
+const ST_LOCK_SLOW = 10
+
+/// How long a fiber stays in its waker's next before a thief may take
+/// it (xo_rt.c XO_NEXT_GRACE_NS).
+const NEXT_GRACE_NS = 50000
+
+/// The stack a worker thread reserves (as the threads before fibers).
+const THREAD_STACK = 67108864
+
+/// The OS layer of the build (sysio.xo layer): 1 Linux system calls, 2
+/// libSystem, 3 kernel32, 0 none (a wasm module has no pool).
+fn layer() -> Int {
+  match target.arch {
+    TargetArch.Wasm32 => 0
+    TargetArch.Arm64 | TargetArch.Amd64 => {
+      match target.os {
+        TargetOs.Linux => 1
+        TargetOs.Darwin => 2
+        TargetOs.Windows => 3
+        TargetOs.Wasi => 0
+      }
+    }
+  }
+}
+
+/// The monotonic clock in nanoseconds (xo_rt.c mono_ns): libSystem's
+/// CLOCK_MONOTONIC on macOS, else the C's.
+fn now() -> Int {
+  match layer() {
+    2 => sys_darwin.clock_gettime_nsec_np(6)
+    _ => rt.sched_rt(RT_NOW, 0, 0)
+  }
+}
+
+fn stat(k: Int) {
+  let _r = rt.sched_rt(RT_STAT, k, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Futexes (decision 0077): wait while the 32 bit word at an address (the
+// low half of a lock or futex word) holds a value, and wake a thread
+// waiting on it. Darwin has no public futex: its __ulock calls are what
+// libc++ uses for std::atomic::wait.
+
+/// Sleeps while the 32 bit word at a holds v (or until a wake up, or
+/// spuriously).
+pub fn futex_wait(a: Int, v: Int) {
+  match layer() {
+    1 => {
+      // FUTEX_WAIT_PRIVATE
+      let _r = linux.futex(a, 128, v, 0)
+    }
+    2 => {
+      // UL_COMPARE_AND_WAIT | ULF_NO_ERRNO
+      let _r = sys_darwin.__ulock_wait(16777217, a, v, 0)
+    }
+    3 => {
+      let cmp = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+      rt.mem_store(cmp, 0, v, 4)
+      let _r = sys_windows.WaitOnAddress(a, cmp, 4, 4294967295)
+    }
+    _ => {}
+  }
+}
+
+/// Wakes a thread sleeping on the word at a.
+pub fn futex_wake(a: Int) {
+  match layer() {
+    1 => {
+      // FUTEX_WAKE_PRIVATE
+      let _r = linux.futex(a, 129, 1, 0)
+    }
+    2 => {
+      let _r = sys_darwin.__ulock_wake(16777217, a, 0)
+    }
+    3 => sys_windows.WakeByAddressSingle(a)
+    _ => {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Locks (xo_rt.c xo_lock, decision 0077): a word that is 0 (free), 1
+// (held), or 2 (held, a thread may sleep on it). A contended lock spins
+// a little, then sleeps on the word; an unlock makes a system call only
+// when someone may sleep. The C takes and releases the word inline and
+// calls lock_slow and futex_wake for the rest; so does the code here
+// (`if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) { lock_slow(l) }` at each site:
+// a call of a lock function cost arm64 builds a call per lock).
+
+/// Takes the lock at l after its first try failed.
+pub fn lock_slow(l: Int) {
+  stat(ST_LOCK_SLOW)
+  var i = 0
+  while i < 100 {
+    rt.spin_hint()
+    if rt.slot_load(l, 0, RELAXED) == 0 && rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+      return
+    }
+    i = rt.int_wrap(0, i, 1)
+  }
+  while rt.slot_swap(l, 0, 2, ACQUIRE) != 0 {
+    futex_wait(l, 2)
+  }
+}
+
+fn unlock(l: Int) {
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    futex_wake(l)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Worker threads
+
+/// Adds worker record w to the records thieves look at (the pool's lock
+/// held).
+pub fn register_worker(p: Int, w: Int) {
+  let n = rt.mem_load(p, P_NW * 8, 8)
+  if n >= MAXW {
+    let _r = rt.sched_rt(RT_OOM, 0, 0)
+  }
+  rt.mem_store(w, W_RNG, rt.int_wrap(2, w, -7046029254386353131) | 1, 8)
+  rt.mem_store(w, W_POOL, p, 8)
+  rt.mem_store(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, n, 3)), w, 8)
+  rt.slot_store(p, P_NW, rt.int_wrap(0, n, 1), SEQ_CST)
+}
+
+/// Starts a thread running the C function at f with arg (detached, a 64
+/// MiB stack reserved): whether it started.
+fn thread_start(f: Int, arg: Int) -> Bool {
+  match layer() {
+    2 => {
+      // pthread_attr_t (64 bytes) and the pthread_t
+      let a = rt.heap_large(80)
+      var ok = Int(sys_darwin.pthread_attr_init(a)) == 0
+      if ok {
+        let _s = sys_darwin.pthread_attr_setstacksize(a, THREAD_STACK)
+        // PTHREAD_CREATE_DETACHED
+        let _d = sys_darwin.pthread_attr_setdetachstate(a, 2)
+        ok = Int(sys_darwin.pthread_create(rt.int_wrap(0, a, 64), a, f, arg)) == 0
+        let _x = sys_darwin.pthread_attr_destroy(a)
+      }
+      rt.heap_release(rt.int_wrap(1, a, 8))
+      ok
+    }
+    3 => {
+      // STACK_SIZE_PARAM_IS_A_RESERVATION: Windows commits the stack as
+      // it grows (guard page)
+      let h = sys_windows.CreateThread(0, THREAD_STACK, f, arg, 65536, 0)
+      if h == 0 {
+        return false
+      }
+      let _c = sys_windows.CloseHandle(h)
+      true
+    }
+    _ => rt.sched_rt(RT_THREAD, f, arg) != 0
+  }
+}
+
+/// Starts a worker thread, which starts spinning (the pool's lock held, a
+/// spinning count already taken for it): whether it started.
+fn start_worker(p: Int) -> Bool {
+  let w = rt.heap_large(W_SIZE)
+  rt.mem_set(w, 0, W_SIZE)
+  rt.mem_store(w, W_LIVE, 1, 4)
+  register_worker(p, w)
+  rt.slot_store(p, P_ALIVE, rt.int_wrap(0, rt.slot_load(p, P_ALIVE, SEQ_CST), 1), SEQ_CST)
+  if thread_start(rt.mem_load(p, P_WORKER_MAIN, 8), w) {
+    return true
+  }
+  rt.mem_store(w, W_LIVE, 0, 4)
+  rt.slot_store(p, P_ALIVE, rt.int_wrap(1, rt.slot_load(p, P_ALIVE, SEQ_CST), 1), SEQ_CST)
+  false
+}
+
+/// Makes sure queued work gets a worker: unless one is spinning, an idle
+/// worker is woken (or a new one started while fewer than one per CPU
+/// run) as a spinning worker.
+fn wakep(p: Int) {
+  if rt.slot_load(p, P_SPINNING, SEQ_CST) != 0 {
+    return
+  }
+  let ncpu = rt.mem_load(p, P_NCPU, 8)
+  if rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && rt.slot_load(p, P_ALIVE, SEQ_CST) >= ncpu {
+    return
+  }
+  if !rt.slot_cas(p, P_SPINNING, 0, 1, SEQ_CST) {
+    return
+  }
+  if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    lock_slow(p)
+  }
+  let w = rt.mem_load(p, P_IDLE, 8)
+  if w != 0 {
+    rt.mem_store(p, P_IDLE, rt.mem_load(w, W_IDLE_NEXT, 8), 8)
+    rt.mem_store(w, W_IDLE_NEXT, 0, 8)
+    rt.slot_add(p, P_NIDLE, -1, SEQ_CST)
+    unlock(p)
+    stat(ST_WAKE)
+    rt.slot_store(w, W_WAKEW_I, 1, RELEASE)
+    futex_wake(rt.int_wrap(0, w, W_WAKEW))
+    return
+  }
+  let started = rt.slot_load(p, P_ALIVE, SEQ_CST) < ncpu && start_worker(p)
+  unlock(p)
+  if !started {
+    rt.slot_add(p, P_SPINNING, -1, SEQ_CST)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The inject queue: items from threads without a record (the poller), and
+// half of a ring that was full.
+
+/// Adds the n items at src, then x unless it is 0, to the inject queue.
+fn inject_add(p: Int, src: Int, n: Int, x: Int) {
+  let im = rt.int_wrap(0, p, P_IMU)
+  let all = if x != 0 { rt.int_wrap(0, n, 1) } else { n }
+  if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    lock_slow(im)
+  }
+  let len = rt.mem_load(p, P_ILEN_AT, 8)
+  var cap = rt.mem_load(p, P_ICAP, 8)
+  var head = rt.mem_load(p, P_IHEAD, 8)
+  var buf = rt.mem_load(p, P_IBUF, 8)
+  if rt.int_wrap(0, len, all) > cap {
+    var nc = if cap != 0 { rt.int_wrap(3, cap, 1) } else { 64 }
+    while nc < rt.int_wrap(0, len, all) {
+      nc = rt.int_wrap(3, nc, 1)
+    }
+    let nb = rt.heap_large(rt.int_wrap(3, nc, 3))
+    var i = 0
+    while i < len {
+      rt.mem_store(nb, rt.int_wrap(3, i, 3), rt.mem_load(buf, rt.int_wrap(3, rt.int_wrap(0, head, i) % cap, 3), 8), 8)
+      i = rt.int_wrap(0, i, 1)
+    }
+    if buf != 0 {
+      rt.heap_release(rt.int_wrap(1, buf, 8))
+    }
+    buf = nb
+    head = 0
+    cap = nc
+    rt.mem_store(p, P_IBUF, buf, 8)
+    rt.mem_store(p, P_IHEAD, 0, 8)
+    rt.mem_store(p, P_ICAP, cap, 8)
+  }
+  var i = 0
+  while i < all {
+    let it = if i < n { rt.mem_load(src, rt.int_wrap(3, i, 3), 8) } else { x }
+    rt.mem_store(buf, rt.int_wrap(3, rt.int_wrap(0, rt.int_wrap(0, head, len), i) % cap, 3), it, 8)
+    i = rt.int_wrap(0, i, 1)
+  }
+  rt.slot_store(p, P_ILEN, rt.int_wrap(0, len, all), SEQ_CST)
+  unlock(im)
+}
+
+/// Takes a share of the inject queue for w (0: a thread without a
+/// record, which takes one item): one item to run, the rest into w's
+/// empty ring; 0 when it is empty.
+fn inject_pop(p: Int, w: Int) -> Int {
+  if rt.slot_load(p, P_ILEN, SEQ_CST) == 0 {
+    return 0
+  }
+  let im = rt.int_wrap(0, p, P_IMU)
+  var n = 0
+  var first = 0
+  if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    lock_slow(im)
+  }
+  let len = rt.mem_load(p, P_ILEN_AT, 8)
+  if len > 0 {
+    n = rt.int_wrap(0, len / rt.int_wrap(0, rt.mem_load(p, P_NCPU, 8), 1), 1)
+    if n > len {
+      n = len
+    }
+    if n > RUNQ_HALF {
+      n = RUNQ_HALF
+    }
+    if w == 0 {
+      n = 1
+    }
+    let buf = rt.mem_load(p, P_IBUF, 8)
+    let cap = rt.mem_load(p, P_ICAP, 8)
+    var head = rt.mem_load(p, P_IHEAD, 8)
+    var i = 0
+    while i < n {
+      let it = rt.mem_load(buf, rt.int_wrap(3, head, 3), 8)
+      if i == 0 {
+        first = it
+      } else {
+        rt.mem_store(w, rt.int_wrap(0, W_BATCH, rt.int_wrap(3, rt.int_wrap(1, i, 1), 3)), it, 8)
+      }
+      head = rt.int_wrap(0, head, 1) % cap
+      i = rt.int_wrap(0, i, 1)
+    }
+    rt.mem_store(p, P_IHEAD, head, 8)
+    rt.slot_store(p, P_ILEN, rt.int_wrap(1, len, n), RELAXED)
+  }
+  unlock(im)
+  if n == 0 {
+    return 0
+  }
+  if w != 0 {
+    if rt.mem_load(w, W_HOOKS, 8) != 0 {
+      stat(ST_INJECT)
+    }
+    if n > 1 {
+      sched.rq_put_batch(w, rt.int_wrap(0, w, W_BATCH), rt.int_wrap(1, n, 1))
+    }
+  }
+  first
+}
+
+// ---------------------------------------------------------------------------
+// Queues
+
+/// Adds x to the ring of w (the owner); a full ring moves half of itself
+/// and x to the inject queue.
+fn rq_put(p: Int, w: Int, x: Int) {
+  while true {
+    if sched.rq_put(w, x) != 0 {
+      return
+    }
+    let h = rt.slot_load(w, 0, ACQUIRE)
+    let t = rt.mem_load(w, RQ_TAIL_AT, 8)
+    if rt.int_wrap(1, t, h) < RUNQ {
+      // thieves took some meanwhile
+      continue
+    }
+    // half of the ring into w's batch, taken with one compare and swap
+    let n = rt.int_wrap(1, t, h) >> 1
+    let batch = rt.int_wrap(0, w, W_BATCH)
+    var i = 0
+    while i < n {
+      rt.mem_store(batch, rt.int_wrap(3, i, 3), rt.slot_load(w, rt.int_wrap(0, 17, rt.int_wrap(0, h, i) & 255), RELAXED), 8)
+      i = rt.int_wrap(0, i, 1)
+    }
+    if rt.slot_cas(w, 0, h, rt.int_wrap(0, h, n), RELEASE) {
+      inject_add(p, batch, n, x)
+      return
+    }
+    // thieves took some: the ring has room again
+  }
+}
+
+/// Queues t (a task, or a fiber's address with the low bit set): a woken
+/// fiber goes to the waking thread's next (the one there before moves to
+/// its ring) unless the thread asked for its ring (nonext), a new task
+/// to its ring, and either from a thread without a record to the inject
+/// queue.
+pub fn pool_push(p: Int, t: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w == 0 {
+    inject_add(p, 0, 0, t)
+  } else if (t & 1) != 0 && rt.mem_load(w, W_NONEXT, 8) == 0 {
+    rt.slot_store(w, W_NEXT_AT / 8, now(), RELAXED)
+    let old = rt.slot_swap(w, W_NEXT_I, t, SEQ_CST)
+    if old != 0 {
+      rq_put(p, w, old)
+    }
+  } else {
+    rq_put(p, w, t)
+  }
+  wakep(p)
+}
+
+/// Takes w's own work: next, then the head of its ring.
+fn take_local(w: Int) -> Int {
+  var t = 0
+  if rt.slot_load(w, W_NEXT_I, RELAXED) != 0 {
+    t = rt.slot_swap(w, W_NEXT_I, 0, SEQ_CST)
+  }
+  if t == 0 {
+    t = sched.rq_get(w)
+  }
+  t
+}
+
+/// Looks once at every other record, from a random one, and takes half of
+/// the first ring it finds items in: one to run, the rest into w's
+/// (empty) ring; next only when last is not 0 and it waited there longer
+/// than the grace.
+pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
+  let n = rt.slot_load(p, P_NW, SEQ_CST)
+  if n == 0 {
+    return 0
+  }
+  var r = rt.mem_load(w, W_RNG, 8)
+  r = r ^ rt.int_wrap(3, r, 13)
+  r = r ^ rt.int_wrap(4, r, 7)
+  r = r ^ rt.int_wrap(3, r, 17)
+  rt.mem_store(w, W_RNG, r, 8)
+  let start = rt.int_wrap(4, r, 1) % n
+  let batch = rt.int_wrap(0, w, W_BATCH)
+  var i = 0
+  while i < n {
+    let v = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, rt.int_wrap(0, start, i) % n, 3)), 8)
+    i = rt.int_wrap(0, i, 1)
+    if v == w {
+      continue
+    }
+    var t = 0
+    let got = if rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) { sched.rq_grab(v, batch) } else { 0 }
+    if got > 0 {
+      t = rt.mem_load(batch, rt.int_wrap(3, rt.int_wrap(1, got, 1), 3), 8)
+      if got > 1 {
+        sched.rq_put_batch(w, batch, rt.int_wrap(1, got, 1))
+      }
+    }
+    if t == 0 && last != 0 {
+      let x = rt.slot_load(v, W_NEXT_I, ACQUIRE)
+      if x != 0 && rt.int_wrap(1, now(), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
+        t = x
+      }
+    }
+    if t != 0 {
+      if rt.mem_load(w, W_HOOKS, 8) != 0 {
+        stat(ST_STEAL)
+      }
+      return t
+    }
+  }
+  0
+}
+
+/// Whether some queue holds an item (a worker about to sleep looks again
+/// after it counted itself idle): 1 or 0.
+pub fn any_work(p: Int) -> Int {
+  if rt.slot_load(p, P_ILEN, SEQ_CST) > 0 {
+    return 1
+  }
+  let n = rt.slot_load(p, P_NW, SEQ_CST)
+  var i = 0
+  while i < n {
+    let v = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
+    if rt.slot_load(v, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) {
+      return 1
+    }
+    i = rt.int_wrap(0, i, 1)
+  }
+  0
+}
+
+/// Looks for an item for w: its own, the inject queue, then, if spinning
+/// (not 0), steals for a few rounds (the last one also takes next); 0
+/// when it found none.
+pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
+  var t = take_local(w)
+  if t == 0 {
+    t = inject_pop(p, w)
+  }
+  if t != 0 || spinning == 0 {
+    return t
+  }
+  let rounds = rt.mem_load(p, P_SPIN_ROUNDS, 8)
+  let hooks = rt.mem_load(w, W_HOOKS, 8)
+  var r = 0
+  while r <= rounds && t == 0 {
+    if hooks != 0 {
+      stat(ST_SPIN_ROUND)
+    }
+    t = steal_round(p, w, if r == rounds { 1 } else { 0 })
+    if t == 0 {
+      t = inject_pop(p, w)
+    }
+    if t == 0 && r < rounds {
+      // 32 pauses, unrolled by 8 (clang unrolls the C's loop): a
+      // spinning worker's loop overhead was most of a ping pong's
+      // difference on arm64 (gotchas/scheduler-instruction-counts-spin.md)
+      var i = 0
+      while i < 4 {
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        rt.spin_hint()
+        i = rt.int_wrap(0, i, 1)
+      }
+    }
+    r = rt.int_wrap(0, r, 1)
+  }
+  t
+}
+
+/// Puts w on the idle list and sleeps until wakep takes it off: 1, or 0
+/// when work showed up meanwhile (w is then off the list again and not
+/// spinning).
+fn go_idle(p: Int, w: Int) -> Int {
+  if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    lock_slow(p)
+  }
+  rt.slot_store(w, W_WAKEW_I, 0, RELAXED)
+  rt.mem_store(w, W_IDLE_NEXT, rt.mem_load(p, P_IDLE, 8), 8)
+  rt.mem_store(p, P_IDLE, w, 8)
+  rt.slot_add(p, P_NIDLE, 1, SEQ_CST)
+  let _d = rt.sched_rt(RT_DL_CHECK, 0, 0)
+  unlock(p)
+  let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+  // a push before the count went up was not seen by its wakep: look
+  if any_work(p) != 0 {
+    if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+      lock_slow(p)
+    }
+    var prev = 0
+    var x = rt.mem_load(p, P_IDLE, 8)
+    while x != 0 && x != w {
+      prev = x
+      x = rt.mem_load(x, W_IDLE_NEXT, 8)
+    }
+    if x != 0 {
+      let next = rt.mem_load(w, W_IDLE_NEXT, 8)
+      if prev == 0 {
+        rt.mem_store(p, P_IDLE, next, 8)
+      } else {
+        rt.mem_store(prev, W_IDLE_NEXT, next, 8)
+      }
+      rt.mem_store(w, W_IDLE_NEXT, 0, 8)
+      rt.slot_add(p, P_NIDLE, -1, SEQ_CST)
+      unlock(p)
+      return 0
+    }
+    unlock(p)
+    // wakep took it off the list and counted it spinning: wait for its
+    // wake up
+  }
+  while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+    stat(ST_IDLE_SLEEP)
+    futex_wait(rt.int_wrap(0, w, W_WAKEW), 0)
+  }
+  1
+}
+
+/// The run loop of a worker thread (the C function its thread starts
+/// with record w): looks for work, runs it, spins, and sleeps.
+pub fn worker_main(w: Int) -> Int {
+  let p = rt.mem_load(w, W_POOL, 8)
+  rt.tlocal_set(TLS_W, w)
+  if layer() == 3 {
+    // the stack the thread keeps for its stack overflow handler
+    // (xo_rt.c on_overflow), past the guard page
+    let g = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+    rt.mem_store(g, 0, 65536, 4)
+    let _g = sys_windows.SetThreadStackGuarantee(g)
+  }
+  // the sanitizers' record of the thread, the hooks word
+  let _s = rt.sched_rt(RT_WORKER_START, w, 0)
+  // wakep started it as a spinning worker
+  var spinning = 1
+  while true {
+    let it = find_work(p, w, spinning)
+    if it != 0 {
+      if spinning != 0 {
+        spinning = 0
+        // the last spinner found work: another one looks for more
+        if rt.slot_add(p, P_SPINNING, -1, SEQ_CST) == 1 {
+          wakep(p)
+        }
+      }
+      run_item(p, w, it)
+      continue
+    }
+    if spinning != 0 {
+      spinning = 0
+      rt.slot_add(p, P_SPINNING, -1, SEQ_CST)
+    } else if rt.int_wrap(3, rt.slot_load(p, P_SPINNING, SEQ_CST), 1) < rt.int_wrap(1, rt.slot_load(p, P_ALIVE, SEQ_CST), rt.slot_load(p, P_NIDLE, SEQ_CST)) {
+      // at most half the busy workers spin (Go's rule)
+      rt.slot_add(p, P_SPINNING, 1, SEQ_CST)
+      spinning = 1
+      continue
+    }
+    if go_idle(p, w) == 0 {
+      rt.slot_add(p, P_SPINNING, 1, SEQ_CST)
+    }
+    // wakep counted it spinning, or it counted itself
+    spinning = 1
+  }
+  0
+}
+
+/// Runs a queue item on w's thread: resumes a fiber, or starts a task on
+/// a new fiber unless a helper ran it already.
+pub fn run_item(p: Int, w: Int, it: Int) {
+  if (it & 1) != 0 {
+    run_fiber(p, w, it ^ 1)
+    return
+  }
+  if sched.task_claim(it) == 0 {
+    // run by a thread that helped: its queue entry is over
+    let _d = rt.sched_rt(RT_DEQUEUED, it, 0)
+    return
+  }
+  // claimed: the entry is counted taken when the task ends (one atomic
+  // on the scope instead of two)
+  run_fiber(p, w, fiber_new(rt.mem_load(p, P_FIBERS, 8), w, it))
+}
+
+/// Runs fiber f on w until it parks or ends (then its stack is kept).
+fn run_fiber(p: Int, w: Int, f: Int) {
+  if sched.fiber_run(w, f) != 0 {
+    fiber_free(rt.mem_load(p, P_FIBERS, 8), w, f)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fiber stacks (decision 0069): every task a worker starts runs on a
+// stack of its own, mapped with a guard page below (on Windows reserved,
+// its top committed, and a guard page below that: the system grows it as
+// a thread's), kept in its worker's cache, then in a shared one.
+
+/// The mapping of a fiber stack of size bytes with a guard page of page
+/// bytes at its bottom: its address, or 0 (out of address space, the
+/// error in the scratch word of the thread's table). On Linux with hooks
+/// (a sanitizer build, or the statistics) the C library maps it:
+/// ThreadSanitizer keeps a program's mappings in its application ranges
+/// through its mmap interceptor, which a system call bypasses.
+fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
+  match layer() {
+    1 => {
+      if hooks != 0 {
+        return rt.sched_rt(RT_MAP, size, page)
+      }
+      // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
+      let m = linux.mmap(0, size, 3, 16418, -1, 0)
+      if m < 0 && m > -4096 {
+        rt.tlocal_set(4, rt.int_wrap(1, 0, m))
+        return 0
+      }
+      // mprotect(PROT_NONE)
+      let _r = rt.sys6(if layer_arch() == 1 { 226 } else { 10 }, m, page, 0, 0, 0, 0)
+      m
+    }
+    2 => {
+      // MAP_PRIVATE | MAP_ANON | MAP_NORESERVE
+      let m = sys_darwin.mmap(0, size, 3, 4162, -1, 0)
+      if m == -1 {
+        rt.tlocal_set(4, rt.mem_load(sys_darwin.__error(), 0, 4))
+        return 0
+      }
+      let _r = sys_darwin.mprotect(m, page, 0)
+      m
+    }
+    3 => {
+      // MEM_RESERVE, then MEM_COMMIT of the top and of a PAGE_GUARD page
+      // below it (PAGE_READWRITE)
+      let m = sys_windows.VirtualAlloc(0, size, 8192, 4)
+      if m == 0 {
+        rt.tlocal_set(4, 0)
+        return 0
+      }
+      let top = rt.int_wrap(1, rt.int_wrap(0, m, size), WIN_COMMIT)
+      if sys_windows.VirtualAlloc(top, WIN_COMMIT, 4096, 4) == 0 || sys_windows.VirtualAlloc(rt.int_wrap(1, top, page), page, 4096, 260) == 0 {
+        rt.tlocal_set(4, 0)
+        return 0
+      }
+      m
+    }
+    _ => 0
+  }
+}
+
+/// 1 on arm64, 2 on x86_64.
+fn layer_arch() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => 1
+    TargetArch.Amd64 => 2
+    TargetArch.Wasm32 => 0
+  }
+}
+
+/// Unmaps a fiber stack (mapped by map_stack with the same hooks).
+fn unmap_stack(m: Int, size: Int, hooks: Int) {
+  match layer() {
+    1 => {
+      if hooks != 0 {
+        let _u = rt.sched_rt(RT_UNMAP, m, size)
+      } else {
+        let _r = linux.munmap(m, size)
+      }
+    }
+    2 => {
+      let _r = sys_darwin.munmap(m, size)
+    }
+    3 => {
+      // MEM_RELEASE
+      let _r = sys_windows.VirtualFree(m, 0, 32768)
+    }
+    _ => {}
+  }
+}
+
+/// A fiber for w that starts running task t (claimed) when it is first
+/// switched to: from w's cache, the shared one (the record at fs), or a
+/// new mapping.
+fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
+  var f = 0
+  let nc = rt.mem_load(w, W_NFCACHE, 8)
+  if nc > 0 {
+    let k = rt.int_wrap(1, nc, 1)
+    rt.mem_store(w, W_NFCACHE, k, 8)
+    f = rt.mem_load(w, rt.int_wrap(0, W_FCACHE, rt.int_wrap(3, k, 3)), 8)
+  } else if rt.slot_load(fs, FS_LIST, RELAXED) != 0 {
+    if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
+      lock_slow(fs)
+    }
+    f = rt.mem_load(fs, FS_LIST_AT, 8)
+    if f != 0 {
+      rt.slot_store(fs, FS_LIST, rt.mem_load(f, F_NEXT, 8), RELAXED)
+      rt.mem_store(fs, FS_N, rt.int_wrap(1, rt.mem_load(fs, FS_N, 8), 1), 8)
+    }
+    unlock(fs)
+  }
+  if f == 0 {
+    stat(ST_FIBER_NEW)
+    let page = rt.mem_load(fs, FS_PAGE, 8)
+    let size = rt.int_wrap(0, rt.mem_load(fs, FS_STACK, 8), page)
+    let m = map_stack(size, page, rt.mem_load(w, W_HOOKS, 8))
+    if m == 0 {
+      // out of address space more often than of memory: the C says how
+      // much the stacks took, and exits
+      let _r = rt.sched_rt(RT_MAP_FAILED, rt.tlocal_get(4), 0)
+    }
+    f = rt.heap_large(F_RECORD)
+    rt.mem_set(f, 0, F_RECORD)
+    rt.mem_store(f, F_MEM, m, 8)
+    rt.mem_store(f, F_SIZE, size, 8)
+    // counted, and its ThreadSanitizer fiber
+    let _c = rt.sched_rt(RT_FIBER_MAPPED, f, 0)
+  }
+  rt.mem_store(f, F_TASK, t, 8)
+  rt.mem_store(f, F_CUR, 0, 8)
+  rt.mem_store(f, F_DONE, 0, 8)
+  rt.mem_store(f, F_HOOKS, rt.mem_load(w, W_HOOKS, 8), 8)
+  rt.slot_store(f, F_STATE, 0, RELAXED)
+  // the first frame, for the switch the compiler emits
+  rt.mem_store(f, F_SP, sched.fiber_frame(f, rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), WIN_COMMIT, rt.mem_load(fs, FS_MAIN, 8)), 8)
+  f
+}
+
+/// Keeps f's stack for reuse: in w's cache, else the shared one
+/// (decision 0077: a shared cache only took a lock per task), else
+/// unmaps it.
+fn fiber_free(fs: Int, w: Int, f: Int) {
+  let nc = rt.mem_load(w, W_NFCACHE, 8)
+  if nc < FCACHE {
+    rt.mem_store(w, rt.int_wrap(0, W_FCACHE, rt.int_wrap(3, nc, 3)), f, 8)
+    rt.mem_store(w, W_NFCACHE, rt.int_wrap(0, nc, 1), 8)
+    return
+  }
+  if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
+    lock_slow(fs)
+  }
+  let n = rt.mem_load(fs, FS_N, 8)
+  if n < FIBER_CACHE {
+    rt.mem_store(f, F_NEXT, rt.mem_load(fs, FS_LIST_AT, 8), 8)
+    rt.slot_store(fs, FS_LIST, f, RELAXED)
+    rt.mem_store(fs, FS_N, rt.int_wrap(0, n, 1), 8)
+    unlock(fs)
+    return
+  }
+  unlock(fs)
+  let _u = rt.sched_rt(RT_FIBER_UNMAPPED, f, 0)
+  unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
+  rt.heap_release(rt.int_wrap(1, f, 8))
+}
+
+// ---------------------------------------------------------------------------
+// Parks (xo_rt.c xo_park): where one context waits. signaled is also the
+// futex word of a thread (a root context) that sleeps on it; a fiber
+// that waits parks instead (decision 0069). All zero is a fresh park.
+
+/// xo_park (byte offsets; signaled is word 1): its lock, signaled, a
+/// thread sleeps on it (a C int), a root asleep here counts in the
+/// blocked roots (a C int), the fiber parked here.
+const PK_SIGNALED = 1
+const PK_SIGNALED_AT = 8
+const PK_SLEEPING = 16
+const PK_COUNTED = 20
+const PK_FIBER = 24
+
+/// The deadlock counts (xo_rt.c dlk, words): roots made, roots asleep in
+/// a counted wait, contexts in a wait a timer, the network, or a signal
+/// can end.
+const DLK_BLOCKED = 1
+const DLK_UNCOUNTED = 2
+
+/// xo_node (byte offsets; canceled is word 4): parent, child, prev,
+/// next, canceled, the waiter's park, its lock.
+const N_PARENT = 0
+const N_CHILD = 8
+const N_PREV = 16
+const N_NEXT = 24
+const N_CANCELED = 4
+const N_CANCELED_AT = 32
+const N_WAITER = 40
+const N_MU = 48
+
+/// xo_ctx (byte offsets): its innermost node, the shield count (a C
+/// int), its park.
+const C_NODE = 0
+const C_SHIELD = 12
+const C_PARK = 16
+
+/// Makes the park at p unsignaled.
+pub fn park_reset(p: Int) {
+  if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    lock_slow(p)
+  }
+  rt.slot_store(p, PK_SIGNALED, 0, RELAXED)
+  unlock(p)
+}
+
+/// Wakes the context waiting at p. The waiter takes p's lock before it
+/// returns, so p stays valid until the unlock here.
+pub fn park_signal(pl: Int, p: Int) {
+  if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    lock_slow(p)
+  }
+  rt.slot_store(p, PK_SIGNALED, 1, RELEASE)
+  if rt.mem_load(p, PK_COUNTED, 4) != 0 {
+    rt.mem_store(p, PK_COUNTED, 0, 4)
+    rt.slot_add(rt.mem_load(pl, P_DLK, 8), DLK_BLOCKED, -1, SEQ_CST)
+  }
+  let f = rt.mem_load(p, PK_FIBER, 8)
+  if f != 0 {
+    rt.mem_store(p, PK_FIBER, 0, 8)
+    if sched.fiber_wake(f) != 0 {
+      pool_push(pl, f | 1)
+    }
+  } else if rt.mem_load(p, PK_SLEEPING, 4) != 0 {
+    stat(ST_THREAD_WAKE)
+    futex_wake(rt.int_wrap(0, p, PK_SIGNALED_AT))
+  }
+  unlock(p)
+}
+
+/// Whether node n is canceled.
+fn node_canceled(n: Int) -> Bool { rt.slot_load(n, N_CANCELED, ACQUIRE) != 0 }
+
+/// Adds n below parent (canceled at once when parent is).
+pub fn node_link(n: Int, parent: Int) {
+  let pm = rt.int_wrap(0, parent, N_MU)
+  if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
+    lock_slow(pm)
+  }
+  rt.mem_store(n, N_PARENT, parent, 8)
+  rt.mem_store(n, N_PREV, 0, 8)
+  let c = rt.mem_load(parent, N_CHILD, 8)
+  rt.mem_store(n, N_NEXT, c, 8)
+  if c != 0 {
+    rt.mem_store(c, N_PREV, n, 8)
+  }
+  rt.mem_store(parent, N_CHILD, n, 8)
+  if rt.mem_load(parent, N_CANCELED_AT, 8) != 0 {
+    rt.slot_store(n, N_CANCELED, 1, RELEASE)
+  }
+  unlock(pm)
+}
+
+/// Takes n out of its parent's children. A task's node is not unlinked
+/// when the task ends: it goes with its scope's node of tasks.
+pub fn node_unlink(n: Int) {
+  let p = rt.mem_load(n, N_PARENT, 8)
+  if p == 0 {
+    return
+  }
+  let pm = rt.int_wrap(0, p, N_MU)
+  if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
+    lock_slow(pm)
+  }
+  let prev = rt.mem_load(n, N_PREV, 8)
+  let next = rt.mem_load(n, N_NEXT, 8)
+  if prev != 0 {
+    rt.mem_store(prev, N_NEXT, next, 8)
+  } else {
+    rt.mem_store(p, N_CHILD, next, 8)
+  }
+  if next != 0 {
+    rt.mem_store(next, N_PREV, prev, 8)
+  }
+  rt.mem_store(n, N_PARENT, 0, 8)
+  rt.mem_store(n, N_PREV, 0, 8)
+  rt.mem_store(n, N_NEXT, 0, 8)
+  unlock(pm)
+}
+
+/// Cancels n and its subtree (n's lock held): a walk holds the locks
+/// from the node down to the one it visits, so locks are always taken
+/// parent first.
+fn cancel_locked(pl: Int, n: Int) {
+  if rt.mem_load(n, N_CANCELED_AT, 8) == 0 {
+    rt.slot_store(n, N_CANCELED, 1, RELEASE)
+  }
+  // a canceled node's subtree may have gained children since: walk it
+  let w = rt.mem_load(n, N_WAITER, 8)
+  if w != 0 {
+    park_signal(pl, w)
+  }
+  var c = rt.mem_load(n, N_CHILD, 8)
+  while c != 0 {
+    let cm = rt.int_wrap(0, c, N_MU)
+    if !rt.slot_cas(cm, 0, 0, 1, ACQUIRE) {
+      lock_slow(cm)
+    }
+    cancel_locked(pl, c)
+    unlock(cm)
+    c = rt.mem_load(c, N_NEXT, 8)
+  }
+}
+
+/// Cancels n and its subtree (core 7.2) and wakes every context blocked
+/// in it.
+pub fn node_cancel(pl: Int, n: Int) {
+  let m = rt.int_wrap(0, n, N_MU)
+  if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
+    lock_slow(m)
+  }
+  cancel_locked(pl, n)
+  unlock(m)
+}
+
+/// Sets the park of the context blocked at node n (0: none).
+pub fn node_set_waiter(n: Int, p: Int) {
+  let m = rt.int_wrap(0, n, N_MU)
+  if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
+    lock_slow(m)
+  }
+  rt.mem_store(n, N_WAITER, p, 8)
+  unlock(m)
+}
+
+/// Blocks context c until its park is signaled or, when cancelable is
+/// not 0, its node is canceled (xo_rt.c park_wait_n). A task on a fiber
+/// parks: its worker runs other work meanwhile (decision 0069). A root
+/// thread runs queued work while it waits, and sleeps only when it finds
+/// none (decision 0077). counted (not 0) tells that the wait counts as
+/// blocked for deadlock detection; a wait that a timer, the network, or
+/// a signal can end does not. The C caller flushes pending output and
+/// pauses c's budget around it (waiting is not running time, decision
+/// 0175), and in the test world counts every wait (timers are virtual:
+/// nothing outside the program ends one). f is the fiber running c (0:
+/// none), rw the record of c's root thread when it helps (0: none; a
+/// root helps once the pool exists, so a program that only sleeps stays
+/// single threaded), both found by the C.
+pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: Int) {
+  var cancelable = cancelable0
+  if rt.mem_load(c, C_SHIELD, 4) != 0 {
+    cancelable = 0
+  }
+  let node = rt.mem_load(c, C_NODE, 8)
+  let p = rt.int_wrap(0, c, C_PARK)
+  if cancelable != 0 {
+    node_set_waiter(node, p)
+  }
+  let dlk = rt.mem_load(pl, P_DLK, 8)
+  if counted == 0 {
+    rt.slot_add(dlk, DLK_UNCOUNTED, 1, SEQ_CST)
+  }
+  if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    lock_slow(p)
+  }
+  while rt.slot_load(p, PK_SIGNALED, ACQUIRE) == 0 && !(cancelable != 0 && node_canceled(node)) {
+    if f != 0 {
+      rt.mem_store(p, PK_FIBER, f, 8)
+      sched.fiber_parking(f)
+      unlock(p)
+      sched.fiber_park(f)
+      if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+        lock_slow(p)
+      }
+      rt.mem_store(p, PK_FIBER, 0, 8)
+      continue
+    }
+    unlock(p)
+    var it = 0
+    if rw != 0 {
+      it = find_work(pl, rw, 0)
+      if it == 0 {
+        it = steal_round(pl, rw, 0)
+      }
+    }
+    if it != 0 {
+      run_item(pl, rw, it)
+      rt.tlocal_set(TLS_CUR, c)
+      if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+        lock_slow(p)
+      }
+      continue
+    }
+    if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+      lock_slow(p)
+    }
+    if rt.slot_load(p, PK_SIGNALED, ACQUIRE) != 0 || (cancelable != 0 && node_canceled(node)) {
+      break
+    }
+    rt.mem_store(p, PK_SLEEPING, 1, 4)
+    rt.mem_store(p, PK_COUNTED, counted, 4)
+    unlock(p)
+    if counted != 0 {
+      // a signal meanwhile cleared counted and took one off
+      if !rt.slot_cas(pl, 0, 0, 1, ACQUIRE) {
+        lock_slow(pl)
+      }
+      rt.slot_add(dlk, DLK_BLOCKED, 1, SEQ_CST)
+      let _d = rt.sched_rt(RT_DL_CHECK, 0, 0)
+      unlock(pl)
+      let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+    }
+    stat(ST_THREAD_WAIT)
+    futex_wait(rt.int_wrap(0, p, PK_SIGNALED_AT), 0)
+    if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+      lock_slow(p)
+    }
+    rt.mem_store(p, PK_SLEEPING, 0, 4)
+    if rt.mem_load(p, PK_COUNTED, 4) != 0 {
+      // not signaled (a spurious wake up)
+      rt.mem_store(p, PK_COUNTED, 0, 4)
+      rt.slot_add(dlk, DLK_BLOCKED, -1, SEQ_CST)
+    }
+  }
+  rt.slot_store(p, PK_SIGNALED, 0, RELAXED)
+  unlock(p)
+  if counted == 0 {
+    rt.slot_add(dlk, DLK_UNCOUNTED, -1, SEQ_CST)
+  }
+  if cancelable != 0 {
+    node_set_waiter(node, 0)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scopes (xo_rt.c "Scopes and tasks", core 7.1): a spawn links its task
+// into the scope and queues it; the close helps with the tasks nobody
+// started and waits for the rest. The records are made, counted, and
+// freed by the C (the task's closure and result, faults, budgets).
+
+/// xo_scope (byte offsets; pending is word 30): the node of its tasks,
+/// its lock, the joiner's park, every task (each a reference, linked by
+/// snext), closed (a C int), the list's length and the length at which a
+/// spawn prunes it next, closing (a C int).
+const S_TASKS = 72
+const S_MU = 104
+const S_PENDING = 30
+const S_JOINER = 248
+const S_LIST = 384
+const S_CLOSED = 400
+const S_NLIST = 432
+const S_PRUNE_AT = 440
+const S_CLOSING = 448
+
+/// xo_task (byte offsets; state is word 10, gone word 22): the count of
+/// its header, its node, its scope, its link in the scope's list.
+const T_RC = 0
+const T_NODE = 16
+const T_SCOPE = 72
+const T_STATE = 10
+const T_SNEXT = 168
+const T_GONE = 22
+
+/// Links task t into scope s and queues it in the ring of w, the
+/// spawning thread's record (s.spawn): the tasks it
+/// pruned from s's list (linked by snext, for the C to release), 0, or -1
+/// when s has ended (nothing done).
+pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
+  let m = rt.int_wrap(0, s, S_MU)
+  if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
+    lock_slow(m)
+  }
+  if rt.mem_load(s, S_CLOSED, 4) != 0 {
+    unlock(m)
+    return -1
+  }
+  rt.mem_store(t, T_SCOPE, s, 8)
+  // counted before a helper can find it in the list: the task runs and
+  // its queue entry is taken (two units of two)
+  rt.slot_add(s, S_PENDING, 4, 3)
+  node_link(rt.int_wrap(0, t, T_NODE), rt.mem_load(s, S_TASKS, 8))
+  rt.mem_store(t, T_SNEXT, rt.mem_load(s, S_LIST, 8), 8)
+  rt.mem_store(s, S_LIST, t, 8)
+  let n = rt.int_wrap(0, rt.mem_load(s, S_NLIST, 8), 1)
+  rt.mem_store(s, S_NLIST, n, 8)
+  var dead = 0
+  if n >= rt.mem_load(s, S_PRUNE_AT, 8) && rt.mem_load(s, S_CLOSING, 4) == 0 {
+    dead = scope_prune(s)
+  }
+  unlock(m)
+  // a new task goes to the spawning thread's ring (w, its record)
+  rq_put(pl, w, t)
+  wakep(pl)
+  dead
+}
+
+/// Takes the tasks that are over and that only s's list holds out of the
+/// list (s's lock held), linked by snext. A task is over when its run
+/// ended and its queue entry was taken (gone 2); with a count of one
+/// (shared: -1) nobody else has it (decision 0118: a long lived scope of
+/// a server kept every connection's task).
+fn scope_prune(s: Int) -> Int {
+  var dead = 0
+  var pp = rt.int_wrap(0, s, S_LIST)
+  var n = rt.mem_load(s, S_NLIST, 8)
+  while true {
+    let u = rt.mem_load(pp, 0, 8)
+    if u == 0 {
+      break
+    }
+    if rt.slot_load(u, T_GONE, ACQUIRE) == 2 && rt.slot_load(u, T_RC, ACQUIRE) == -1 {
+      rt.mem_store(pp, 0, rt.mem_load(u, T_SNEXT, 8), 8)
+      rt.mem_store(u, T_SNEXT, dead, 8)
+      dead = u
+      n = rt.int_wrap(1, n, 1)
+    } else {
+      pp = rt.int_wrap(0, u, T_SNEXT)
+    }
+  }
+  rt.mem_store(s, S_NLIST, n, 8)
+  let twice = rt.int_wrap(3, n, 1)
+  rt.mem_store(s, S_PRUNE_AT, if twice > 64 { twice } else { 64 }, 8)
+  dead
+}
+
+/// The close of scope s by context c after its tasks were canceled as
+/// the mode asks: runs the tasks that have not started on this thread
+/// (tasks spawned meanwhile go to the head of the list: it looks again
+/// until a pass finds none; a task's link is fixed once it is in the
+/// list), then waits (not a cancellation point: a canceled body still
+/// waits) until every task ended and every queue entry was taken: it sets
+/// bit 0 of pending while that is not zero, and the last unit signals
+/// its park. f and rw are park_wait's.
+pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
+  let m = rt.int_wrap(0, s, S_MU)
+  var found = true
+  while found {
+    found = false
+    if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
+      lock_slow(m)
+    }
+    var t = rt.mem_load(s, S_LIST, 8)
+    unlock(m)
+    while t != 0 {
+      if rt.slot_load(t, T_STATE, ACQUIRE) == 0 && sched.task_claim(t) != 0 {
+        // claimed: it runs here, its queue entry still queued
+        let _r = rt.sched_rt(RT_RUN_CLAIMED, t, 2)
+        found = true
+      }
+      t = rt.mem_load(t, T_SNEXT, 8)
+    }
+  }
+  let p = rt.int_wrap(0, c, C_PARK)
+  rt.mem_store(s, S_JOINER, p, 8)
+  while true {
+    park_reset(p)
+    let v = rt.slot_load(s, S_PENDING, ACQUIRE)
+    if (v >> 1) == 0 {
+      break
+    }
+    if (v & 1) == 0 && !rt.slot_cas(s, S_PENDING, v, v | 1, 3) {
+      continue
+    }
+    park_wait(pl, c, 0, 1, f, rw)
+  }
+}

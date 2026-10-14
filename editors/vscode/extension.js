@@ -11,6 +11,9 @@ const vscode = require("vscode");
 const { LanguageClient, RevealOutputChannelOn } = require("vscode-languageclient/node");
 
 let client;
+// output is the one "Xo" output channel; each LanguageClient would
+// otherwise open its own, one more per restart.
+let output;
 
 function isFile(p) {
   try {
@@ -105,15 +108,21 @@ async function start(context) {
     );
     return;
   }
+  // xo takes its working directory from $PWD, not the OS, so PWD must
+  // match cwd: VS Code started from the Dock passes PWD=/, and the server
+  // then cannot place std files, so definitions in std came back empty.
+  const folders = vscode.workspace.workspaceFolders || [];
+  const cwd = folders.length > 0 ? folders[0].uri.fsPath : require("os").homedir();
   client = new LanguageClient(
     "xo",
     "Xo",
-    { command, args: ["lsp"] },
+    { command, args: ["lsp"], options: { cwd, env: { ...process.env, PWD: cwd } } },
     {
       documentSelector: [{ scheme: "file", language: "xo" }],
       // A failed request (hover over a package whose xo.mod does not load)
       // goes to the output channel, not a popup per mouse move.
       revealOutputChannelOn: RevealOutputChannelOn.Never,
+      outputChannel: output,
       synchronize: {
         fileEvents: vscode.workspace.createFileSystemWatcher("**/{*.xo,xo.mod,xo.work}"),
       },
@@ -133,12 +142,14 @@ async function stop() {
   if (client) {
     const c = client;
     client = undefined;
-    await c.stop();
+    await c.dispose();
   }
 }
 
 function activate(context) {
+  output = vscode.window.createOutputChannel("Xo");
   context.subscriptions.push(
+    output,
     vscode.commands.registerCommand("xo.restartServer", async () => {
       await stop();
       await start(context);

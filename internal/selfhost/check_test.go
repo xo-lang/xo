@@ -35,6 +35,7 @@ import (
 // logged. The go backend only, except in the full tier (tier_test.go).
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
 func TestSelfhostChecker(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)

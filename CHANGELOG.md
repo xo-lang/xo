@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
+  the newest seed (release N-1) from a private S3 bucket with the aws
+  CLI, checks its sha256, and builds its xo in one hop
+  (internal/xotool); a failed fetch is an error naming the cause, and
+  the go-compiler-final root and the seed chain run only when asked for
+  (`XO_SEED_FALLBACK=chain`, `go run ./scripts/xobuild --from-source`). `scripts/seed-pack.sh XO OUTDIR` packs a built xo as a
+  seed. `XO_SEED_BUCKET` and `XO_SEED_URL` choose the location.
 - The Go implementation of the compiler is deleted (decision 0215): Go
   cmd/xo, the hidden comparison dumps, and the Go compiler packages
   (lexer, parser, checker, SSA builder, Go, arm64, and LLVM emitters,
@@ -66,6 +73,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   layout beside the binary), or with a std whose prelude lacks a core
   type, now says so (`std library not found: ...`, exit 2) instead of
   faulting in the checker with `prelude type missing: Int`.
+- Native backends: the rest of the task scheduler's machinery is Xo
+  (std/native/llrt/pool.xo, decision 0212 stage 2): the worker pool
+  (waking, idling, stealing, the inject queue), the runtime locks' slow
+  paths and their futex waits (libSystem's __ulock, WaitOnAddress,
+  futex(2)), worker thread starts (pthread_create from Xo on macOS,
+  CreateThread on Windows), task stacks with their guard pages and
+  caches, parks, the cancellation tree, a spawn's queueing, and a
+  scope's join. Within the 5 percent bar on both backends
+  (bench/results/task-switch-2026-10-13.md, Stage 2); `XO_LLRT_C=sched`
+  builds the C path. The C runtime's default build is 523 lines shorter.
 - Native backends: the task switch is emitted by the compiler (no
   assembly left in the C runtime's default build), and the scheduler's
   core (each worker's run queue, starting, parking, and waking fibers,

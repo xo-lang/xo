@@ -103,10 +103,15 @@ Update the knowledgebase in the same change as the work, not later:
     run by the lead on EC2, and failures are bisected over the
     milestone's merges (one targeted test per probe). Code that cannot
     run on the Mac (Linux-only, Windows-only paths) gets one batched
-    platform run per agent before it reports. Every merge touching the
-    compiler or the runtime also passes the self rebuild fixed point
-    (scripts/bootstrap-xo.sh, s2 and s3 identical) on the Mac, so a
-    miscompile cannot build the next compiler.
+    platform run per agent before it reports. Every merge touching what
+    the self build compiles or runs also passes the self rebuild fixed
+    point (scripts/bootstrap-xo.sh, s2 and s3 identical) on the Mac, so
+    a miscompile cannot build the next compiler: selfhost/ (but not
+    selfhost/macho or selfhost/wasm, which the bootstrap never uses,
+    and not `_test.xo` files), std/native/, std/llrt/, and the xo build
+    code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
+    scripts/xobuild, scripts/seed-chain.txt). Other merges (tests, docs,
+    test-only tooling) need vet and -short only (owner, 2026-10-13).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
     58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
@@ -133,14 +138,35 @@ Update the knowledgebase in the same change as the work, not later:
   PATH, else the xo1 of the go-compiler-final tag, built once with Go,
   through the hops of scripts/seed-chain.txt, decision 0216).
   Set `XO_CLI` to a built xo to skip rebuilds while iterating.
-- The TestSelfhost* tests compare each self hosted component with a
-  recording (internal/selfhost/testdata/gogoldens, the Go
-  implementation's output until decision 0215). A change that alters a
-  component's output on purpose, or a new or changed input with no
-  recording, needs `scripts/selfhost-record-goldens.sh` (record: units
-  with no recording of their input; `XO_SELFHOST_GOLDENS=rerecord` for
-  every unit a run computes) and a look at the recording's diff in the
-  same change.
+- Seeds (decision 0216, owner 2026-10-13): release N builds with release
+  N-1. Prebuilt seeds (a tarball of bin/xo plus its std, since xo finds
+  std at bin/../std, per goos-goarch, with a .sha256) live in the PRIVATE
+  S3 bucket `xo-seeds-ACCOUNT_ID` (us-east-1, public access blocked,
+  versioned): `seeds/<version>/<goos>-<goarch>.tar.gz`,
+  `seeds/<version>/manifest.txt`, `seeds/latest.txt`. Seeds are not
+  public releases. This Mac's AWS user and EC2 instances (instance
+  profile `xo-ci-seed-read`, read only on that bucket) download them
+  with the aws CLI; xobuild fetches the newest seed before falling back
+  to the go-compiler-final root and its chain. When a change lands that
+  older seeds cannot build (new runtime intrinsics the compiler's own
+  code uses, gotchas/seed-older-than-intrinsics.md), the lead bumps the
+  minor version (`xo version`) and cuts a new seed for every platform
+  instead of adding a chain hop. Only the lead uploads seeds and changes
+  IAM; agents never do. If a seed cannot be fetched, stop and report the
+  error (owner, 2026-10-13): never fall back to rebuilding from
+  go-compiler-final through the chain (25 to 37 minutes); that path is
+  opt in, for the replay from source and a brand new platform. Unpack a
+  seed into its own directory (its top directory is xo/, the EC2
+  checkout is ~/xo).
+- The TestSelfhost* dump replays (lexer, parser, format, checker, SSA,
+  arm64, LLVM, gen, defhash, mutations; recordings in
+  internal/selfhost/testdata/gogoldens) are skipped by default
+  (decision 0217, owner 2026-10-13: no more 25 to 40 minute
+  re-recordings); `XO_SELFHOST_DUMPS=all` runs them for a deliberate
+  audit. The compiler is verified by behavior: program output goldens
+  on every backend, the fixed point, error check and codegen pattern
+  tests, progen across backends, and xo unit tests. Never re-record
+  dumps to get a change merged.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.
