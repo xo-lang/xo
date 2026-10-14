@@ -191,6 +191,12 @@ keys on the host for them); a second batch (fa201b2f) recorded them
 (21 s) and the selfhost merge tier then passed on Linux (623 s), its
 xobuild taking the chain first: 1,491 s against 1,936 s.
 
+After the merge (main 5e21dc31, 2026-10-13, the Mac): `go run
+./scripts/xobuild` gave bin/xo, which built and ran hello with the arm64
+backend; scripts/bootstrap-xo.sh with it as the seed: s1 330 s, s2 341 s,
+s3 368 s, s2 and s3 binaries identical (87,368,784 bytes), s1 equal too,
+s3 runs hello.
+
 ## Consequences
 
 - Every compiler change lands in selfhost/ alone. A change that alters

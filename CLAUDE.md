@@ -94,7 +94,11 @@ Update the knowledgebase in the same change as the work, not later:
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
   - platform runs at milestones (owner, 2026-10-13): agents verify on
-    the Mac only (targeted heavy runs, `-short`); Linux and Windows runs
+    the Mac only for Linux and Windows coverage (targeted heavy runs,
+    `-short`; long pass/fail runs such as package suites, xo1 goldens,
+    replays, and fixed points go to the lead's EC2 queue, warm machines,
+    not the Mac's single heavy slot; the Mac keeps short runs,
+    instruction counts, and steps that write into the worktree); Linux and Windows runs
     happen at milestones (after a stage of runtime or compiler work),
     run by the lead on EC2, and failures are bisected over the
     milestone's merges (one targeted test per probe). Code that cannot
