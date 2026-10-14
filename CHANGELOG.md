@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend (decision 0224): shrink wrapping and tail calls. A
+  function makes its frame (frame record, callee saved registers) only
+  on the paths that need it, and a call whose results are returned as
+  they are is a branch after the epilogue. The self build of xo runs
+  0.985 of the instructions; bench/perf 0.963 to 1.004 of before; the
+  Xo list objects of B13 move from 1.242 to 1.201 (alloc small) of the
+  C's instructions on the Mac (bench/results/shrink-wrapping-2026-10-14.md).
 - Tests: `go test -short` over the repository 2.2 times faster (35.0 s
   to 15.7 s on the shared Mac) and `./cmd/xo -short` 4.3 times (24.6 s
   to 5.7 s): every cmd/xo test is parallel (a per test environment for
