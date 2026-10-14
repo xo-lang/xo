@@ -702,6 +702,17 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
     if g.shrink && g.fedge[g.cur] == 2 {
       // a way out of the blocks that need the frame (shrink.xo)
       g.unframe(b)
+      let r = g.fwd(inst.targets[0])
+      if g.only_return(r) {
+        // the return copied here, past the frame (no branch back to it)
+        let cur = g.cur
+        g.cur = r
+        for x in g.blocks[r].insts {
+          g.emit_inst(b, x, -1)
+        }
+        g.cur = cur
+        return
+      }
     }
     let t = g.fwd(inst.targets[0])
     if t == next {

@@ -556,3 +556,19 @@ fn (g: G) tail_call(b: Int, k: Int) -> Bool {
   }
   false
 }
+
+/// Whether block r is parallel moves and a return (a restore block
+/// copies it instead of branching to it).
+fn (g: G) only_return(r: Int) -> Bool {
+  let ins = g.blocks[r].insts
+  let n = ins.len()
+  if n == 0 || ins[n - 1].kind != K_RET {
+    return false
+  }
+  for k in 0..n - 1 {
+    if ins[k].kind != K_PMOVE {
+      return false
+    }
+  }
+  true
+}
