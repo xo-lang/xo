@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item W1): the scheduler's C fallback,
+  `XO_LLRT_C=sched`, is deleted: 1,284 lines of std/llrt/xo_rt.c (its
+  fiber switch assembly, thread locals, run queue ring, worker pool,
+  parks, fiber stacks, spawn and join copies), std/native/llrt/sched_c.xo,
+  `rt.sched_c`, and -DXO_SCHED_C. The scheduler is sched.xo and pool.xo
+  only; `XO_LLRT_C=sched` now fails the build. The live C path names
+  are net and text.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's
