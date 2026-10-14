@@ -14,6 +14,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   text, json, alloc, and nested are 0.973 to 1.029 of main's
   instructions, the self build 0.997 and 0.996
   (bench/results/heap-platform-2026-10-14.md).
+- Native runtime (zero-C audit item B27): std/time's zone data and the
+  table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
+  program's zone data through a `xo_tz_table` accessor the build writes
+  beside it, the host's zone files, and Windows' local zone from
+  GetDynamicTimeZoneInformation. std/llrt/xo_time.c (519 lines) is
+  deleted.
 - Native runtime (zero-C audit item B13, stage 3): the string objects'
   appends and builders are Xo (std/native/llrt/obj.xo): `a + b`, and
   the runtime's rs_append, push_byte, push_word, push_words,

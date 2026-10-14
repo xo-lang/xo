@@ -310,7 +310,7 @@ MISSING.
 | B24 standard input (stdin.xo) | 387 | PORT 387 | xo_stdin.c 1-58, 107-435 |
 | B25 processes (proc.xo) | 1,764 | PORT 1,681, GLUE 83 | xo_proc.c 1-147, 222-1200, 1274-1911 |
 | B26 signals, shutdown, entry | 475 | PORT 372, SHIM 103 | xo_rt.c 7455-7826; xo_nolibc.c 120-222 |
-| B27 zone data host side (tz.xo) | 512 | PORT 453, GLUE 59 | xo_time.c 1-499, 508-520 |
+| B27 zone data host side (tz.xo) (**done 2026-10-14**: std/native/llrt/tzhost.xo, xo_time.c deleted, 519 lines; notes) | 512 | PORT 453, GLUE 59 | xo_time.c 1-499, 508-520 |
 | B28 HTTP/1.1 server loop, HTTP/2 server | 3,278 | PORT 2,705, GLUE 573 | xo_http.c 1867-2930; xo_h2.c 1-86, 670-1182, 1285-2899 |
 | B29 HTTP client loops, HTTP/2 client | 1,288 | PORT 1,274, GLUE 14 | xo_http.c 3138-3278, 3458-3920; xo_h2.c 2900-3583 |
 | B30 TLS boundary pre-work | 573 | PORT 522, GLUE 51 | xo_tls.c 122-559, 1036-1170 |
@@ -591,6 +591,32 @@ frees the 533 (a) lines.)
   readlink in sys_darwin.xo, GetDynamicTimeZoneInformation in
   sys_windows.xo (the Windows table, xo_time.c 82-344, needs a Windows
   run). Xo about 380 lines, medium.
+  **Done 2026-10-14**: no intrinsic was needed. The zone data the build
+  writes beside the program (selfhost/xo tz.xo tz_source for C, ld.xo
+  tz_object for Mach-O and ELF) now also defines `xo_tz_table`, a
+  function returning the address of a four word table (mode, zip, its
+  length, blobs), which rttime.xo declares (a bodiless rttime function
+  is a call of `xo_<name>`). std/native/llrt/tzhost.xo has the rest in
+  Xo: the zone data per mode, the host's files ($ZONEINFO as a directory
+  or a zip, the system directories, /etc/localtime), the table of kept
+  zones (static words 18 to 21, a lock, a vector of name blocks and
+  shared List[Int] zones), the exit free for the leak check (cabi_time.xo
+  `tz_free`, hooked in xo_std.c under XO_TIME), the /etc/localtime link
+  name, and Windows' "Local" from GetDynamicTimeZoneInformation with Go's
+  abbreviation table. std/llrt/xo_time.c (519 lines) is deleted. The
+  compiler does not use std/time, so the 0.11.0 seed was unaffected.
+  Verified: TestTZDiff (embedded, system, zoneinfo) on arm64 and LLVM,
+  the goldens on both, a leak check of a zone loading program (0 live),
+  CI auto and windows (runs 38638196744, 38638200760), and Windows'
+  "Local" against the Go backend's time.Local under six system zones
+  (scripts/ci/tzlocal-windows.sh, run 38640206795): every sample is the
+  same except times before the first of Go's transitions in zones with
+  daylight saving (Pacific, Morocco at 1906): Go's initLocalFromTZI
+  writes transitions for the years now - 100 to now + 100 and uses the
+  first standard zone before them, while the TZif made here (as
+  xo_time.c's did) has none and extends the rule to every year. A known
+  difference that predates B27; next: write Go's transitions into the
+  TZif.
 - **B28 and B29 HTTP loops.** The HTTP/2 frame reader, writer, and
   sending (xo_h2.c 670-2335) are bytes only and can move before the
   loops; the connection loops need await (B18), the poller (B22),

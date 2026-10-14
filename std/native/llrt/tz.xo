@@ -5,21 +5,21 @@
 // footer, tzset; the first standard zone for times before the first
 // transition; the cache of the zone in effect at load time, which Go
 // fills too), so offsets and abbreviations match the Go backend's for
-// every instant. They were C (std/llrt/xo_time.c). The C runtime keeps
-// what is below Xo: the zone data (the program's TZif data per constant
-// name, the embedded zoneinfo.zip, or the host's files:
-// rttime.tz_data) and the table of the zones loaded so far, so that a
-// name always gets the same id and is parsed once (rttime.tz_find,
-// tz_keep). Decision 0198 deleted the C path (`XO_LLRT_C=tz`).
+// every instant. They were C (std/llrt/xo_time.c). The zone data (the
+// program's TZif data per constant name, the embedded zoneinfo.zip, or
+// the host's files: tzhost.data) and the table of the zones loaded so
+// far, so that a name always gets the same id and is parsed once
+// (tzhost.find, keep), are std/native/llrt/tzhost.xo (work item B27).
+// Decision 0198 deleted the C path (`XO_LLRT_C=tz`).
 //
-// A parsed zone is one List[Int] (the C table holds it, shared between
+// A parsed zone is one List[Int] (tzhost.xo's table holds it, shared between
 // threads, without knowing its layout; a Zone value carries it as one
 // word): the header below, then the transitions (time and zone, ntx
 // pairs), the zones (offset and the position of the abbreviation, nzone
 // pairs), and the names (each its length and its bytes, eight to a
 // word, the first in the low byte).
 use native/rt
-use native/rttime
+use native/llrt/tzhost
 
 /// Go's alpha and omega: the ends of time for zone ranges.
 const ALPHA: Int = -9223372036854775807 - 1
@@ -27,7 +27,7 @@ const ALPHA: Int = -9223372036854775807 - 1
 const OMEGA: Int = 9223372036854775807
 
 // The header of a parsed zone.
-/// The id the C table gave it (rttime.tz_keep writes it).
+/// The id the table gave it (tzhost.keep writes it).
 const H_ID: Int = 0
 /// The number of transitions (at least one).
 const H_NTX: Int = 1
@@ -64,7 +64,7 @@ const H_LEN: Int = 24
 const NONE: List[Int] = []
 
 /// The zone of a name, or of no name (UTC and fixed zones: id 0, no
-/// data). The id is the C table's: the same name always gets the same id
+/// data). The id is tzhost.xo's table's: the same name always gets the same id
 /// and the same data, so `==` on a Zone compares what the Go backend
 /// compares.
 pub struct Rules {
@@ -84,7 +84,7 @@ pub fn none() -> Rules { Rules{id: 0, w: NONE} }
 pub fn load(name: Str, host: Bool) -> Rules? {
   // the table holds only names that passed the check below, and "Local"
   // from the host's database
-  var w = rttime.tz_find(name)
+  var w = tzhost.find(name)
   if w.len() != 0 && !host && name.len() == 5 && name == "Local" {
     return None
   }
@@ -92,11 +92,11 @@ pub fn load(name: Str, host: Bool) -> Rules? {
     if !valid_name(name) && !(host && name == "Local") {
       return None
     }
-    let now = rttime.tz_now()
-    for data in rttime.tz_data(name, host) {
+    let now = tzhost.now()
+    for data in tzhost.data(name, host) {
       match parse(data, now) {
         Some(p) => {
-          w = rttime.tz_keep(name, p)
+          w = tzhost.keep(name, p)
           break
         }
         None => {}
@@ -110,7 +110,7 @@ pub fn load(name: Str, host: Bool) -> Rules? {
 }
 
 /// The machine's zone name from the /etc/localtime link, or "Local".
-pub fn local_name() -> Str { rttime.tz_local_name() }
+pub fn local_name() -> Str { tzhost.local_name() }
 
 /// Whether name may be an IANA zone name (std/rt's validZoneName).
 fn valid_name(name: Str) -> Bool {

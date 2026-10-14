@@ -1,0 +1,587 @@
+// The host side of std/time's zones on the native backends, written in
+// Xo (work item B27 of bench/results/zero-c-audit-refresh-2026-10-13.md;
+// it was std/llrt/xo_time.c): the TZif data that may hold a zone name
+// (the program's zone data, which the build writes beside the program
+// and rttime.tz_table addresses, or the host's database), the table of
+// the zones std/native/llrt/tz.xo parsed so far (a name always gets the
+// same id and is parsed once), and the machine's zone name. On Windows
+// "Local" is the system's setting (GetDynamicTimeZoneInformation) made
+// into TZif data, as Go's time.Local makes it.
+use native/llrt/darwin
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sysio
+use native/llrt/windows
+use native/rt
+use native/rttime
+
+// The table of kept zones in the program's static words (rt.xo
+// static_word): its lock, then a vector (the address of its entries
+// from rt.heap_large, its length, its capacity) of entries of two words,
+// the name (a block: its length, then its bytes) and the zone (the
+// address of its List[Int], shared, holding one reference).
+const W_LOCK = 18
+const W_VEC = 19
+const W_LEN = 20
+const W_CAP = 21
+
+/// The most zones the table keeps (xo_time.c's TZ_MAX).
+const TZ_MAX = 4096
+
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 3
+
+// ---------------------------------------------------------------------------
+// Zone data
+
+/// The TZif data that may hold the zone named name, in the order to try
+/// them: from the program's zone data (the data of its constant name,
+/// the whole embedded zoneinfo.zip, or with --tzdata=system the
+/// host's), or with host set from the host's database. tz.xo checks the
+/// name first and parses each until one is TZif.
+pub fn data(name: Str, host: Bool) -> List[Bytes] {
+  let t = rttime.tz_table()
+  let mode = rt.mem_load(t, 0, 8)
+  if host || mode == 2 {
+    return host_data(name)
+  }
+  if mode == 1 {
+    return zip_entry(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8), name)
+  }
+  let p = raw.data(name)
+  let n = name.len()
+  var b = rt.mem_load(t, 24, 8)
+  while true {
+    let np = rt.mem_load(b, 0, 8)
+    if np == 0 {
+      break
+    }
+    if cstr_is(np, p, n) {
+      return [raw.str_at(rt.mem_load(b, 8, 8), rt.mem_load(b, 16, 8)).bytes()]
+    }
+    b += 24
+  }
+  []
+}
+
+/// Whether the C string at c is the n bytes at p.
+fn cstr_is(c: Int, p: Int, n: Int) -> Bool { rt.mem_load(c, n, 1) == 0 && raw.mem_eq(c, p, n) && no_zero(c, n) }
+
+/// Whether the n bytes at c hold no zero byte (so the C string is n long).
+fn no_zero(c: Int, n: Int) -> Bool {
+  for i in 0..n {
+    if rt.mem_load(c, i, 1) == 0 {
+      return false
+    }
+  }
+  true
+}
+
+/// The stored entry named name of the zip archive of zn bytes at z, in a
+/// list of one, or the empty list.
+fn zip_entry(z: Int, zn: Int, name: Str) -> List[Bytes] {
+  let (start, size) = zip_find(z, zn, raw.data(name), name.len())
+  if start < 0 {
+    return []
+  }
+  [raw.str_at(z + start, size).bytes()]
+}
+
+/// The offset and size of the stored entry of the zip archive of zn
+/// bytes at z named by the nn bytes at name (std/rt's zipEntry), or -1
+/// and 0.
+fn zip_find(z: Int, zn: Int, name: Int, nn: Int) -> (Int, Int) {
+  if zn < 22 {
+    return (-1, 0)
+  }
+  let end = zn - 22
+  if rt.mem_load(z, end, 4) != 0x06054b50 {
+    return (-1, 0)
+  }
+  let n = rt.mem_load(z, end + 10, 2)
+  var off = rt.mem_load(z, end + 16, 4)
+  for _ in 0..n {
+    if off + 46 > zn || rt.mem_load(z, off, 4) != 0x02014b50 {
+      return (-1, 0)
+    }
+    let method = rt.mem_load(z, off + 10, 2)
+    let size = rt.mem_load(z, off + 24, 4)
+    let namelen = rt.mem_load(z, off + 28, 2)
+    let extralen = rt.mem_load(z, off + 30, 2)
+    let commentlen = rt.mem_load(z, off + 32, 2)
+    let local = rt.mem_load(z, off + 42, 4)
+    if off + 46 + namelen > zn {
+      return (-1, 0)
+    }
+    let entry = off + 46
+    off += 46 + namelen + extralen + commentlen
+    if namelen != nn || !raw.mem_eq(z + entry, name, nn) {
+      continue
+    }
+    if method != 0 || local + 30 > zn || rt.mem_load(z, local, 4) != 0x04034b50 {
+      return (-1, 0)
+    }
+    let start = local + 30 + rt.mem_load(z, local + 26, 2) + rt.mem_load(z, local + 28, 2)
+    if start + size > zn {
+      return (-1, 0)
+    }
+    return (start, size)
+  }
+  (-1, 0)
+}
+
+/// The whole file at path, in a list of one, or the empty list.
+fn read(path: Str) -> List[Bytes] {
+  let (b, e) = sysio.read_whole(path)
+  if e != 0 {
+    return []
+  }
+  [b]
+}
+
+/// The TZif data that may hold the zone name in the host's database, in
+/// the order time.LoadLocation tries them: $ZONEINFO (a directory or a
+/// zip), then the system directories; "Local" is /etc/localtime (on
+/// Windows the system's setting).
+fn host_data(name: Str) -> List[Bytes] {
+  if name == "Local" {
+    if sysio.layer() == 3 {
+      return windows_local()
+    }
+    return read("/etc/localtime")
+  }
+  var out: List[Bytes] = []
+  let zi = process.env_get("ZONEINFO")
+  let dirs = [if zi.is_empty() { "" } else { zi[0] }, "/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"]
+  for (i, d) in dirs.indexed() {
+    if d.is_empty() {
+      continue
+    }
+    let path = if d.ends_with("/") { d + name } else { d + "/" + name }
+    let got = read(path)
+    if got.is_empty() && i == 0 {
+      // $ZONEINFO may be a zip
+      for zip in read(d) {
+        for e in zip_entry(raw.bytes_addr(zip), zip.len(), name) {
+          out.push(e)
+        }
+      }
+      continue
+    }
+    for b in got {
+      out.push(b)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The kept zones
+
+fn lock() {
+  let l = rt.static_word(W_LOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlock() {
+  let l = rt.static_word(W_LOCK)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+/// The address of the zone kept under name, or 0; the lock is held.
+fn get(name: Str) -> Int {
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  let p = raw.data(name)
+  let n = name.len()
+  for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
+    let b = rt.mem_load(v, 16 * i, 8)
+    if rt.mem_load(b, 0, 8) == n && raw.mem_eq(b + 8, p, n) {
+      return rt.mem_load(v, 16 * i + 8, 8)
+    }
+  }
+  0
+}
+
+/// The zone named name kept so far, or the empty list.
+pub fn find(name: Str) -> List[Int] {
+  lock()
+  let a = get(name)
+  if a == 0 {
+    unlock()
+    return []
+  }
+  // counted once more before the lock goes: the table's reference keeps
+  // it alive until then
+  let z = rt.obj_at[List[Int]](a)
+  unlock()
+  z
+}
+
+/// Keeps the zone z (at least one word) that tz.xo parsed under name,
+/// its id written to its first word, and returns it; a zone kept under
+/// the name first is returned instead. The empty list when the table is
+/// full. The table holds z shared between threads until exit (free).
+pub fn keep(name: Str, z: List[Int]) -> List[Int] {
+  lock()
+  let a = get(name)
+  if a != 0 {
+    let k = rt.obj_at[List[Int]](a)
+    unlock()
+    return k
+  }
+  let n = rt.mem_load(rt.static_word(W_LEN), 0, 8)
+  if n >= TZ_MAX || z.is_empty() {
+    unlock()
+    return []
+  }
+  var w = z
+  w[0] = n + 1
+  let wa = rt.obj_addr(w)
+  // a List[Int] holds no references: marking its count is all of it
+  let _m = rc.mark(wa + rt.layout(5))
+  rc.inc(wa + rt.layout(5))
+  if n == rt.mem_load(rt.static_word(W_CAP), 0, 8) {
+    let c = if n == 0 { 16 } else { 2 * n }
+    let old = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+    let v = if old == 0 { rt.heap_large(16 * c) } else { rt.heap_large_resize(old - 8, 16 * c) }
+    rt.mem_store(rt.static_word(W_VEC), 0, v, 8)
+    rt.mem_store(rt.static_word(W_CAP), 0, c, 8)
+  }
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  let b = rt.heap_large(name.len() + 8)
+  rt.mem_store(b, 0, name.len(), 8)
+  rt.mem_copy(b + 8, raw.data(name), name.len())
+  rt.mem_store(v, 16 * n, b, 8)
+  rt.mem_store(v, 16 * n + 8, wa, 8)
+  rt.mem_store(rt.static_word(W_LEN), 0, n + 1, 8)
+  unlock()
+  w
+}
+
+/// Releases the kept zones at exit, so the leak check sees them freed
+/// (xo_rt.c calls it through cabi_time.xo's tz_free).
+pub fn free() {
+  lock()
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
+    let a = rt.mem_load(v, 16 * i + 8, 8)
+    // a value of the zone (one more reference), the table's reference
+    // dropped, then the value's at the end of the iteration
+    let z = rt.obj_at[List[Int]](a)
+    let _d = rc.dec_shared(a + rt.layout(5))
+    rt.heap_release(rt.mem_load(v, 16 * i, 8) - 8)
+    let _k = z.len()
+  }
+  if v != 0 {
+    rt.heap_release(v - 8)
+  }
+  rt.mem_store(rt.static_word(W_VEC), 0, 0, 8)
+  rt.mem_store(rt.static_word(W_LEN), 0, 0, 8)
+  rt.mem_store(rt.static_word(W_CAP), 0, 0, 8)
+  unlock()
+}
+
+/// The wall clock in seconds (the time of a load: Go fills its cache
+/// with the zone in effect then).
+pub fn now() -> Int { sysio.real_ns() / 1000000000 }
+
+/// The machine's zone name from the /etc/localtime link, or "Local"
+/// (always "Local" on Windows, where no link names it).
+pub fn local_name() -> Str {
+  let (t, e) = match sysio.layer() {
+    1 => linux.readlink("/etc/localtime")
+    2 => darwin.readlink("/etc/localtime")
+    _ => ("", 1)
+  }
+  if e == 0 {
+    match t.find("zoneinfo/") {
+      Some(k) => return rt.str_slice(t, k + 9, t.len())
+      None => {}
+    }
+  }
+  "Local"
+}
+
+// ---------------------------------------------------------------------------
+// Windows: "Local" is the system's setting
+
+/// The abbreviations of the Windows time zones by key name (Go 1.26's
+/// time/zoneinfo_abbrs_windows.go, from CLDR windowsZones.xml): `key|std|dst`
+/// lines, as Go's time.Local names its zones on Windows.
+const WIN_ABBRS: Str =
+  "Egypt Standard Time|EET|EEST\n" +
+  "Morocco Standard Time|+00|+01\n" +
+  "South Africa Standard Time|SAST|SAST\n" +
+  "South Sudan Standard Time|CAT|CAT\n" +
+  "Sudan Standard Time|CAT|CAT\n" +
+  "W. Central Africa Standard Time|WAT|WAT\n" +
+  "E. Africa Standard Time|EAT|EAT\n" +
+  "Sao Tome Standard Time|GMT|GMT\n" +
+  "Libya Standard Time|EET|EET\n" +
+  "Namibia Standard Time|CAT|CAT\n" +
+  "Aleutian Standard Time|HST|HDT\n" +
+  "Alaskan Standard Time|AKST|AKDT\n" +
+  "Tocantins Standard Time|-03|-03\n" +
+  "Paraguay Standard Time|-04|-03\n" +
+  "Bahia Standard Time|-03|-03\n" +
+  "SA Pacific Standard Time|-05|-05\n" +
+  "Argentina Standard Time|-03|-03\n" +
+  "Eastern Standard Time (Mexico)|EST|EST\n" +
+  "Venezuela Standard Time|-04|-04\n" +
+  "SA Eastern Standard Time|-03|-03\n" +
+  "Central Standard Time|CST|CDT\n" +
+  "Central Brazilian Standard Time|-04|-04\n" +
+  "Mountain Standard Time|MST|MDT\n" +
+  "Greenland Standard Time|-02|-01\n" +
+  "Turks And Caicos Standard Time|EST|EDT\n" +
+  "Central America Standard Time|CST|CST\n" +
+  "Atlantic Standard Time|AST|ADT\n" +
+  "Cuba Standard Time|CST|CDT\n" +
+  "US Eastern Standard Time|EST|EDT\n" +
+  "SA Western Standard Time|-04|-04\n" +
+  "Pacific Standard Time|PST|PDT\n" +
+  "Mountain Standard Time (Mexico)|MST|MST\n" +
+  "Central Standard Time (Mexico)|CST|CST\n" +
+  "Saint Pierre Standard Time|-03|-02\n" +
+  "Montevideo Standard Time|-03|-03\n" +
+  "Eastern Standard Time|EST|EDT\n" +
+  "US Mountain Standard Time|MST|MST\n" +
+  "Haiti Standard Time|EST|EDT\n" +
+  "Magallanes Standard Time|-03|-03\n" +
+  "Canada Central Standard Time|CST|CST\n" +
+  "Pacific SA Standard Time|-04|-03\n" +
+  "E. South America Standard Time|-03|-03\n" +
+  "Newfoundland Standard Time|NST|NDT\n" +
+  "Pacific Standard Time (Mexico)|PST|PDT\n" +
+  "Yukon Standard Time|MST|MST\n" +
+  "Jordan Standard Time|+03|+03\n" +
+  "Arabic Standard Time|+03|+03\n" +
+  "Azerbaijan Standard Time|+04|+04\n" +
+  "SE Asia Standard Time|+07|+07\n" +
+  "Altai Standard Time|+07|+07\n" +
+  "Middle East Standard Time|EET|EEST\n" +
+  "Central Asia Standard Time|+06|+06\n" +
+  "India Standard Time|IST|IST\n" +
+  "Transbaikal Standard Time|+09|+09\n" +
+  "Sri Lanka Standard Time|+0530|+0530\n" +
+  "Syria Standard Time|+03|+03\n" +
+  "Bangladesh Standard Time|+06|+06\n" +
+  "Arabian Standard Time|+04|+04\n" +
+  "West Bank Standard Time|EET|EEST\n" +
+  "W. Mongolia Standard Time|+07|+07\n" +
+  "North Asia East Standard Time|+08|+08\n" +
+  "Israel Standard Time|IST|IDT\n" +
+  "Afghanistan Standard Time|+0430|+0430\n" +
+  "Russia Time Zone 11|+12|+12\n" +
+  "Pakistan Standard Time|PKT|PKT\n" +
+  "Nepal Standard Time|+0545|+0545\n" +
+  "North Asia Standard Time|+07|+07\n" +
+  "Magadan Standard Time|+11|+11\n" +
+  "N. Central Asia Standard Time|+07|+07\n" +
+  "Omsk Standard Time|+06|+06\n" +
+  "North Korea Standard Time|KST|KST\n" +
+  "Qyzylorda Standard Time|+05|+05\n" +
+  "Myanmar Standard Time|+0630|+0630\n" +
+  "Arab Standard Time|+03|+03\n" +
+  "Sakhalin Standard Time|+11|+11\n" +
+  "Korea Standard Time|KST|KST\n" +
+  "China Standard Time|CST|CST\n" +
+  "Singapore Standard Time|+08|+08\n" +
+  "Russia Time Zone 10|+11|+11\n" +
+  "Taipei Standard Time|CST|CST\n" +
+  "West Asia Standard Time|+05|+05\n" +
+  "Georgian Standard Time|+04|+04\n" +
+  "Iran Standard Time|+0330|+0330\n" +
+  "Tokyo Standard Time|JST|JST\n" +
+  "Tomsk Standard Time|+07|+07\n" +
+  "Ulaanbaatar Standard Time|+08|+08\n" +
+  "Vladivostok Standard Time|+10|+10\n" +
+  "Yakutsk Standard Time|+09|+09\n" +
+  "Ekaterinburg Standard Time|+05|+05\n" +
+  "Caucasus Standard Time|+04|+04\n" +
+  "Azores Standard Time|-01|+00\n" +
+  "Cape Verde Standard Time|-01|-01\n" +
+  "Greenwich Standard Time|GMT|GMT\n" +
+  "Cen. Australia Standard Time|ACST|ACDT\n" +
+  "E. Australia Standard Time|AEST|AEST\n" +
+  "AUS Central Standard Time|ACST|ACST\n" +
+  "Aus Central W. Standard Time|+0845|+0845\n" +
+  "Tasmania Standard Time|AEST|AEDT\n" +
+  "Lord Howe Standard Time|+1030|+11\n" +
+  "W. Australia Standard Time|AWST|AWST\n" +
+  "AUS Eastern Standard Time|AEST|AEDT\n" +
+  "UTC-11|-11|-11\n" +
+  "Dateline Standard Time|-12|-12\n" +
+  "UTC-02|-02|-02\n" +
+  "UTC-08|-08|-08\n" +
+  "UTC-09|-09|-09\n" +
+  "UTC+12|+12|+12\n" +
+  "UTC+13|+13|+13\n" +
+  "UTC|UTC|UTC\n" +
+  "Astrakhan Standard Time|+04|+04\n" +
+  "W. Europe Standard Time|CET|CEST\n" +
+  "GTB Standard Time|EET|EEST\n" +
+  "Central Europe Standard Time|CET|CEST\n" +
+  "E. Europe Standard Time|EET|EEST\n" +
+  "Turkey Standard Time|+03|+03\n" +
+  "Kaliningrad Standard Time|EET|EET\n" +
+  "FLE Standard Time|EET|EEST\n" +
+  "GMT Standard Time|GMT|BST\n" +
+  "Belarus Standard Time|+03|+03\n" +
+  "Russian Standard Time|MSK|MSK\n" +
+  "Romance Standard Time|CET|CEST\n" +
+  "Russia Time Zone 3|+04|+04\n" +
+  "Saratov Standard Time|+04|+04\n" +
+  "Volgograd Standard Time|MSK|MSK\n" +
+  "Central European Standard Time|CET|CEST\n" +
+  "Mauritius Standard Time|+04|+04\n" +
+  "Samoa Standard Time|+13|+13\n" +
+  "New Zealand Standard Time|NZST|NZDT\n" +
+  "Bougainville Standard Time|+11|+11\n" +
+  "Chatham Islands Standard Time|+1245|+1345\n" +
+  "Easter Island Standard Time|-06|-05\n" +
+  "Fiji Standard Time|+12|+12\n" +
+  "Central Pacific Standard Time|+11|+11\n" +
+  "Hawaiian Standard Time|HST|HST\n" +
+  "Line Islands Standard Time|+14|+14\n" +
+  "Marquesas Standard Time|-0930|-0930\n" +
+  "Norfolk Standard Time|+11|+12\n" +
+  "West Pacific Standard Time|+10|+10\n" +
+  "Tonga Standard Time|+13|+13\n"
+
+/// "Local" on Windows as TZif data for tz.xo: no transitions, one zone
+/// (the standard offset and abbreviation), and the system's POSIX TZ rule
+/// as the footer, which the lookups extend to every year; empty when the
+/// system has no setting.
+fn windows_local() -> List[Bytes] {
+  // DYNAMIC_TIME_ZONE_INFORMATION (432 bytes): Bias at 0, StandardName
+  // at 4, StandardDate at 68, StandardBias at 84, DaylightName at 88,
+  // DaylightDate at 152, DaylightBias at 168, TimeZoneKeyName at 172
+  let zb = raw.bytes_buf(432)
+  let za = raw.bytes_addr(zb)
+  if !windows.zone_info(za) {
+    return []
+  }
+  let bias = i32(rt.mem_load(za, 0, 4))
+  let std_bias = i32(rt.mem_load(za, 84, 4))
+  let dst_bias = i32(rt.mem_load(za, 168, 4))
+  var sa = caps(za + 4)
+  var da = caps(za + 88)
+  let key = ascii(za + 172, 128)
+  let sn = ascii(za + 4, 32)
+  for line in WIN_ABBRS.lines() {
+    let f = line.split("|")
+    if f.len() == 3 && ((!key.is_empty() && f[0] == key) || (!sn.is_empty() && f[0] == sn)) {
+      sa = f[1]
+      da = f[2]
+      break
+    }
+  }
+  var rule = "<${sa}>" + offset(bias + std_bias)
+  let dd = za + 152
+  let sd = za + 68
+  if rt.mem_load(dd, 2, 2) != 0 && rt.mem_load(sd, 2, 2) != 0 && rt.mem_load(dd, 0, 2) == 0 && rt.mem_load(sd, 0, 2) == 0 {
+    rule = rule + "<${da}>" + offset(bias + dst_bias) + date(dd) + date(sd)
+  }
+  let off = -(bias + std_bias) * 60
+  let r = [tzif(sa, rule, off)]
+  // zb's bytes were read through its address: alive until here
+  let _k = zb.len()
+  r
+}
+
+/// The low 32 bits of v as a signed C LONG.
+fn i32(v: Int) -> Int { if v >= 2147483648 { v - 4294967296 } else { v } }
+
+/// The capitals of the UTF-16 zone name at a (32 units at most: "Pacific
+/// Standard Time": "PST"), the abbreviation Go's time.Local makes of it
+/// when its table has none; "LT" when there are none.
+fn caps(a: Int) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..32 {
+    let c = rt.mem_load(a, 2 * i, 2)
+    if c == 0 {
+      break
+    }
+    if c >= 65 && c <= 90 {
+      b.write_byte(UInt8(c))
+    }
+  }
+  let s = b.freeze().to_str() ?? ""
+  if s.is_empty() { "LT" } else { s }
+}
+
+/// The UTF-16 text at a (n units at most, to its zero) as ASCII; empty
+/// when a unit is not ASCII (no key name in the table has one).
+fn ascii(a: Int, n: Int) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    let c = rt.mem_load(a, 2 * i, 2)
+    if c == 0 {
+      break
+    }
+    if c >= 128 {
+      return ""
+    }
+    b.write_byte(UInt8(c))
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// A POSIX TZ offset of bias minutes (west positive, as Windows' Bias).
+fn offset(bias: Int) -> Str {
+  let a = if bias < 0 { -bias } else { bias }
+  let sign = if bias < 0 { "-" } else { "" }
+  "${sign}${a / 60}:${pad2(a % 60)}"
+}
+
+/// A POSIX TZ rule date (`,Mm.w.d/h:mm:ss`) of the SYSTEMTIME at t in
+/// Windows' recurring form (wYear 0: wDay is the week, 5 the last).
+fn date(t: Int) -> Str {
+  let mi = rt.mem_load(t, 10, 2)
+  let se = rt.mem_load(t, 12, 2)
+  ",M${rt.mem_load(t, 2, 2)}.${rt.mem_load(t, 6, 2)}.${rt.mem_load(t, 4, 2)}/${rt.mem_load(t, 8, 2)}:${pad2(mi)}:${pad2(se)}"
+}
+
+fn pad2(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
+
+/// TZif data of one zone (offset off seconds east, abbreviation sa) with
+/// rule as the footer: a version 2 header and an empty version 1 block,
+/// the version 2 header (no transitions, one zone, sa's length plus one
+/// characters), the zone, the abbreviation, then the footer.
+fn tzif(sa: Str, rule: Str, off: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  header(b, 0, 0)
+  header(b, 1, sa.len() + 1)
+  let u = off & 4294967295
+  b.write_byte(UInt8((u >> 24) & 255))
+  b.write_byte(UInt8((u >> 16) & 255))
+  b.write_byte(UInt8((u >> 8) & 255))
+  b.write_byte(UInt8(u & 255))
+  b.write_byte(UInt8(0))
+  b.write_byte(UInt8(0))
+  b.write_str(sa)
+  b.write_byte(UInt8(0))
+  b.write_byte(UInt8(10))
+  b.write_str(rule)
+  b.write_byte(UInt8(10))
+  b.freeze()
+}
+
+/// A 44 byte TZif header of version 2 with typecnt and charcnt (each one
+/// byte, the low one of its big endian word) and every other count 0.
+fn header(var b: BytesBuilder, typecnt: Int, charcnt: Int) {
+  b.write_str("TZif2")
+  for i in 5..44 {
+    let v = if i == 39 { typecnt } else if i == 43 { charcnt } else { 0 }
+    b.write_byte(UInt8(v))
+  }
+}

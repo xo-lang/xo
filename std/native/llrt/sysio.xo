@@ -342,6 +342,17 @@ pub fn fs_status(l: Int, e: Int) -> Int {
 // ---------------------------------------------------------------------------
 // The portable policy
 
+/// The contents of the file at path and 0, or the errno, without the
+/// status fs_read sets and without the test world's fakes (the host's
+/// zone files, std/native/llrt/tzhost.xo); the errno 1 on wasm.
+pub fn read_whole(path: Str) -> (Bytes, Int) {
+  let l = layer()
+  if l == 0 {
+    return (b"", 1)
+  }
+  read_file(l, path)
+}
+
 /// The contents of the file op: os.ReadFile's loop (a buffer of the size
 /// fstat gives plus one byte, at least 512, grown while the file has
 /// more) and 0, or the errno.

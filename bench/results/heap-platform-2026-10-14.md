@@ -34,8 +34,9 @@ bar: within 5 percent of main's instructions on arm64 and LLVM).
   1.091 (arm64) and 1.106 (LLVM) times main's instructions: every big
   list was mapped, faulted in, and unmapped again, where malloc reused
   its large frees (gotchas/large-blocks-need-a-cache.md).
-- The chunks mapped are a static word (rt.xo's table: words 15 to 19 are
-  heapos.xo's; 14 is fault.xo's since decision 0228), read through
+- The chunks mapped are a static word (rt.xo's table: words 15 to 17, 22,
+  and 23 are heapos.xo's; 14 is fault.xo's since decision 0228, 18 to
+  21 tzhost.xo's), read through
   cabi.xo by the heap statistics and std/llrt/testdata tasks.c and
   alloc_threads.c.
 - A sanitizer build (XO_TSAN, XO_ASAN) maps through the C library (the

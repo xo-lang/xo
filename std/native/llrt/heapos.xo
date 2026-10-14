@@ -41,8 +41,8 @@ use native/sys_windows
 const W_LOCK = 15
 const W_CHUNKS = 16
 const W_LIBC = 17
-const W_CLOCK = 18
-const W_CACHE = 19
+const W_CLOCK = 22
+const W_CACHE = 23
 
 /// The cache's table (a mapping of GRAIN bytes): its own size (word 0),
 /// the bytes of the mappings it holds (word 1), their number (word 2),

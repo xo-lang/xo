@@ -16,6 +16,10 @@ fn CreateFileW(name: Bytes, access: Int, share: Int, security: Int, disposition:
 fn ReadFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
 fn WriteFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
 fn CloseHandle(h: Int) -> Int32
+/// GetDynamicTimeZoneInformation into the DYNAMIC_TIME_ZONE_INFORMATION
+/// at the address z (432 bytes): the zone id, or TIME_ZONE_ID_INVALID
+/// (-1 as an Int32) on failure (std/native/llrt/tzhost.xo).
+fn GetDynamicTimeZoneInformation(z: Int) -> Int32
 /// GetStdHandle: the handle of standard input, output, or error (n is
 /// STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, or STD_ERROR_HANDLE), or 0 or
 /// INVALID_HANDLE_VALUE.
