@@ -1,6 +1,6 @@
 # A Go test that runs xo from the repository root must also set PWD
 
-Status: Observed (2026-10-14, decision 0209).
+Status: Observed (2026-10-14, decision 0209); decision 0218 (merged the same day) makes xo take its working directory from Fs.cwd_path() instead of $PWD, which removes the cause; the wrapper keeps setting PWD.
 
 Symptom: `xo dev goldens --backend=go internal/gen/testdata/golden` passed
 136 of 136 from a shell, but the same command run by
