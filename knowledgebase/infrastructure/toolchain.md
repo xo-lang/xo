@@ -1279,6 +1279,8 @@ selfhost/arm64/         the arm64 emitter in Xo (decision 0158): state.xo (the e
                         slots and branches), rc.xo (counting helpers), closures.xo (closures, boxes,
                         equality), byref.xo (decisions 0151, 0153), inline.xo, stages.xo (what a stage
                         of the port does not emit yet), main.xo (CLI)
+selfhost/prune/         age and size pruning of xo's caches (decision 0223): prune.xo (run, mark_used,
+                        Policy, from_env), prune_test.xo (MemFs and the fake clock; last verified: 2026-10-14)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)
@@ -3071,10 +3073,36 @@ before); the runtime itself is about 13 MB per variant (with and without
 `xo_nohttp`). Last verified: 2026-10-09.
 
 Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
-`<user cache>/xo/gocache`, `gotool.CacheDir`), trimmed by least recent use to stay under
-`XO_GOCACHE_MAX` bytes (default 8 GiB). Entries younger than 2 hours are never trimmed, so concurrent builds keep their files. See `gotchas/go-build-cache-growth.md` and `gotchas/go-cache-trim-races-builds.md`.
+`<user cache>/xo/gocache`, `gotool.CacheDir`), pruned as "Cache pruning"
+below describes. See `gotchas/go-build-cache-growth.md`.
 
-Per program build directories (`<user cache>/xo/build/<hash>`) are trimmed the same way to `XO_BUILD_DIR_MAX` bytes (default 4 GiB), least recently used first, skipping any used in the last 2 hours; a directory chosen with `XO_BUILD_DIR` is never trimmed (gotchas/build-dir-growth.md). Last verified: 2026-10-10.
+### Cache pruning (decision 0223)
+
+One routine, `selfhost/prune`, prunes xo's caches; internal/xotool
+prunes its own `checkout/<key>` with the same stamp format. An entry's
+time is its last use (refreshed on a hit when over an hour old); a
+cache's last prune is the time of `DIR/prune-stamp`. A prune removes
+entries unused for longer than the age limit, then the least recently
+used until the cache is under its cap. Nothing used within the last two
+hours is removed, so a cache can sit above its cap by that much.
+
+| Cache | Entry | When | Age | Cap |
+|---|---|---|---|---|
+| `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory | build_dir, at most hourly | `XO_CACHE_MAX_AGE` | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |
+| `$XO_GOCACHE` (`<user cache>/xo/gocache`) | each file below the top level | after a go build, at most hourly | `XO_CACHE_MAX_AGE` | `XO_GOCACHE_MAX` bytes, else `XO_CACHE_MAX_GB` |
+| `$XO_BIN_CACHE` (`testbin/` in tests) | each file below the top level | after a store, at most once a minute | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else 6 GiB |
+| `<cache base>/checkout/<key>` (xotool) | each key directory | xotool Ensure, at most hourly | `XO_CACHE_MAX_AGE`, past the newest `XO_CHECKOUT_KEEP` (default 4) | none |
+
+- `XO_CACHE_MAX_AGE`: a Go duration (`6h`, `90m`), default `24h`; `0`
+  turns age pruning off (and the checkout pruning).
+- `XO_CACHE_MAX_GB`: GiB, a decimal, default `20`; `0` turns the size cap
+  off for `build/` and `gocache/`.
+- `rtobj/` keeps its own 512 MiB size trim; `dev/`, `mbedtls/`, `seed/`,
+  and `seeds/` are not pruned.
+- Tests: `xo test selfhost/prune` (TestSelfhostPruneXoTests, merge tier;
+  MemFs and the fake clock), `go test -run Prune ./internal/xotool`.
+
+Last verified: 2026-10-14.
 
 Every go command the repo runs (tests, cmd/xo, scripts) uses Xo's cache
 or has a listed reason not to (decision 0176, audit of 2026-10-12): tests
