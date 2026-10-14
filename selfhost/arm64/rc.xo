@@ -73,6 +73,9 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 0, kind: kind, t: t, fi: -1}) {
+    return g.helped.get(key) ?? ""
+  }
   g.nhelp += 1
   // id names this helper's labels: helpers of the leaves are generated
   // while this one is, and advance nhelp
@@ -80,7 +83,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   let sym = g.local("xo_${g.ns}${kind}${id}")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// ${kind} ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  b.push("// ${kind} ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   match g.kind(t) {
     Func => g.func_rc(b, kind, sym)
     Box => g.box_rc(b, kind, sym, t)
@@ -262,12 +265,15 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 1, kind: kind, t: t, fi: -1}) {
+    return g.helped.get(key) ?? ""
+  }
   g.nhelp += 1
   let sym = g.local("xo_${g.ns}${kind}p${g.nhelp}")
   g.helped[key] = sym
   let inner = g.rc_helper(kind, t)
   var b: List[Str] = []
-  b.push("// ${kind}p ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  b.push("// ${kind}p ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   let n = g.leaf_words(t)
   if n > 8 {
     // the words past x7 go on the stack: no tail call
@@ -446,10 +452,13 @@ fn (var g: G) box_share(t: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 5, kind: "", t: t, fi: -1}) {
+    return g.helped.get(key) ?? ""
+  }
   let sym = g.helper_label("boxshare")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// boxshare ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  b.push("// boxshare ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "share", ls, BOX_HDR, "")
@@ -464,10 +473,13 @@ fn (var g: G) box_drop(t: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 6, kind: "", t: t, fi: -1}) {
+    return g.helped.get(key) ?? ""
+  }
   let sym = g.helper_label("boxdrop")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// boxdrop ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  b.push("// boxdrop ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_rc_free"))

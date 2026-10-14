@@ -144,6 +144,13 @@ struct G {
   /// the functions and the system call trampolines are global symbols
   /// with hidden visibility, so the other files reach them
   split: Bool = false
+  /// a part of a split generation: the reference counting, equality,
+  /// box, and closure helpers are only named (helper_ext) and wanted,
+  /// and the last file generates each once
+  defer_helpers: Bool = false
+  wants: List[Want] = []
+  /// the last file of a split generation: the helper of each global name
+  ext_keys: Map[Str, Str] = {}
   strs: Map[Bytes, Str] = {}
   str_ord: List[Bytes] = []
   locs: Map[Str, Str] = {}
