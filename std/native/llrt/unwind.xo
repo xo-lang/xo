@@ -153,6 +153,10 @@ const EXC_CLASS = 6363304799676486988
 /// named the export refers to): never returns then. 0 when nothing
 /// catches the fault.
 pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
+  match target.os {
+    TargetOs.Windows => return win_raise(exc, boundary, pers, pers_old)
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+  }
   match target.arch {
     TargetArch.Arm64 => {}
     TargetArch.Amd64 | TargetArch.Wasm32 => return 0
@@ -683,6 +687,91 @@ fn restore_pairs(regs: Int, enc: Int, top: Int) {
       rt.mem_store(regs, 8 * (r + 1), rt.mem_load(loc, 0, 8), 8)
     }
   }
+}
+
+// Windows (decision 0197): the system's unwinder walks the frames (the
+// .pdata and .xdata every function has; LLVM writes the GCC call site
+// table as the handler data of a function whose handler is
+// xo_personality), as xo_rt.c's fault_raise did in C until B06.
+
+/// The Windows CONTEXT records of win_raise in the scratch record (16
+/// byte aligned, where the DWARF walk's rule sets are on other OSes):
+/// the frame being unwound and a copy from before its unwind, then the
+/// image base, handler data, and establisher frame words.
+const W_CX = 1808
+const W_HERE = 3040
+const W_BASE = 4288
+const W_DATA = 4296
+const W_EST = 4304
+/// sizeof(CONTEXT) on x86_64 (1232) and arm64 (912), and the offsets of
+/// its pc, stack pointer, and the two registers a landing pad receives
+/// (Rip, Rsp, Rax, Rdx; Pc, Sp, X0, X1).
+const WX_SIZE = 1232
+const WX_PC = 248
+const WX_SP = 152
+const WX_R0 = 120
+const WX_R1 = 136
+const WA_SIZE = 912
+const WA_PC = 264
+const WA_SP = 256
+const WA_R0 = 8
+const WA_R1 = 16
+
+/// raise on Windows: from the caller's context (RtlCaptureContext), each
+/// frame's function (RtlLookupFunctionEntry) is unwound
+/// (RtlVirtualUnwind with UNW_FLAG_UHANDLER, which returns its handler
+/// and handler data); a frame of generated code (handler pers or
+/// pers_old) whose call site has a landing pad is resumed there with the
+/// exception in the first register (RtlRestoreContext, which does not
+/// return). 0 when nothing catches the fault: past the boundary, or a
+/// frame with no unwind data (the end of the stack).
+fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
+  let s = scratch()
+  if s == 0 {
+    return 0
+  }
+  let arm = match target.arch {
+    TargetArch.Arm64 => true
+    TargetArch.Amd64 | TargetArch.Wasm32 => false
+  }
+  let size = if arm { WA_SIZE } else { WX_SIZE }
+  let o_pc = if arm { WA_PC } else { WX_PC }
+  let o_sp = if arm { WA_SP } else { WX_SP }
+  let cx = s + W_CX
+  let here = s + W_HERE
+  sys_windows.RtlCaptureContext(cx)
+  while true {
+    let pc = rt.mem_load(cx, o_pc, 8)
+    if pc == 0 {
+      return 0
+    }
+    let f = sys_windows.RtlLookupFunctionEntry(pc, s + W_BASE, 0)
+    if f == 0 {
+      return 0
+    }
+    rt.mem_copy(here, cx, size)
+    rt.mem_store(s, W_DATA, 0, 8)
+    let base = rt.mem_load(s, W_BASE, 8)
+    // UNW_FLAG_UHANDLER
+    let h = sys_windows.RtlVirtualUnwind(2, base, pc, f, cx, s + W_DATA, s + W_EST, 0)
+    if boundary != 0 && rt.mem_load(cx, o_sp, 8) > boundary {
+      return 0
+    }
+    let data = rt.mem_load(s, W_DATA, 8)
+    if h != 0 && data != 0 && (h == pers || h == pers_old) {
+      // RUNTIME_FUNCTION's BeginAddress: the function's offset from the
+      // image base
+      let lp = landing(data, base + rt.mem_load(f, 0, 4), pc - 1)
+      if lp != 0 {
+        rt.mem_store(here, o_pc, lp, 8)
+        rt.mem_store(here, if arm { WA_R0 } else { WX_R0 }, exc, 8)
+        rt.mem_store(here, if arm { WA_R1 } else { WX_R1 }, 0, 8)
+        sys_windows.RtlRestoreContext(here, 0)
+        return 0
+      }
+    }
+  }
+  0
 }
 
 /// v, the low bits bits of a two's complement number, sign extended.
