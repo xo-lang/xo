@@ -419,6 +419,12 @@ fn fs_root(f: Fs) -> Str
 fn fs_mode(f: Fs) -> Int
 /// The Fs value with root and mode.
 fn fs_new(root: Str, mode: Int) -> Fs
+// fs_read through fs_unlock below (not fs_status, fs_msg, fs_canceled,
+// fs_raw_file, fs_raw_lock): the calls of sysio.xo's and fsops.xo's
+// layer 0 arms, which only a wasm module takes (its runtime serves or
+// faults them); on the native targets they are faulting stubs (work item
+// B16).
+
 /// The contents of the file in a list of one, or empty with the status set.
 fn fs_read(path: Str) -> List[Bytes]
 /// 0, or FsErr's tag plus one of the last operation's error.

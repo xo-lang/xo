@@ -18,10 +18,13 @@ fn read(fd: Int, buf: Int, n: Int) -> Int
 /// write(2) of n bytes from the address buf.
 fn write(fd: Int, buf: Int, n: Int) -> Int
 fn close(fd: Int) -> Int32
-/// stat(2) into the struct stat at the address buf (144 bytes on arm64).
-fn stat(path: Bytes, buf: Int) -> Int32
-fn lstat(path: Bytes, buf: Int) -> Int32
-fn fstat(fd: Int, buf: Int) -> Int32
+/// stat(2) into the struct stat at the address buf (144 bytes): the 64
+/// bit inode structure under a plain name on arm64 and x86_64 alike (on
+/// x86_64 `stat` is the old structure and the headers call
+/// `stat$INODE64`, gotchas/darwin-amd64-stat-inode64.md).
+fn stat64(path: Bytes, buf: Int) -> Int32
+fn lstat64(path: Bytes, buf: Int) -> Int32
+fn fstat64(fd: Int, buf: Int) -> Int32
 /// clock_gettime(3) into the struct timespec at the address ts.
 fn clock_gettime(clock: Int, ts: Int) -> Int32
 /// getentropy(2): n (at most 256) random bytes to the address buf.
@@ -53,11 +56,11 @@ fn utimensat(fd: Int, path: Bytes, ts: Int, flags: Int) -> Int32
 /// getcwd(3) into n bytes at the address buf: buf, or 0.
 fn getcwd(buf: Int, n: Int) -> Int
 fn flock(fd: Int, op: Int) -> Int32
-/// opendir(3): the DIR, or 0.
-fn opendir(path: Bytes) -> Int
-/// readdir(3): the address of the next struct dirent, or 0 at the end.
-fn readdir(dir: Int) -> Int
-fn closedir(dir: Int) -> Int32
+/// __getdirentries64 (what readdir(3) calls): the next entries of the
+/// directory fd as struct dirent (64 bit inodes) records into n bytes at
+/// the address buf, 0 at the end, or -1; the position goes to the int64
+/// at base. readdir and opendir are `$INODE64` symbols on x86_64.
+fn __getdirentries64(fd: Int, buf: Int, n: Int, base: Int) -> Int
 
 // The scheduler's platform calls (decision 0212 stage 2,
 // std/native/llrt/pool.xo): fiber stacks, the futex style waits of the

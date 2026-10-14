@@ -20,5 +20,6 @@ make a call for another OS a fault.
 
 Fix: on the OS that no longer uses them, compile the C bodies out and
 keep one line stubs that fault if ever run (std/llrt/xo_fs.c's FS_DEAD
-block on Windows). To delete the stubs too, fold `match target` in the
+block, on every native target since darwin/amd64 left layer 0, and
+xo_bytes.c's xo_fs_read). To delete the stubs too, fold `match target` in the
 SSA builders and make the layer choice a constant the builders see.
