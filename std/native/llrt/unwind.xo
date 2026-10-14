@@ -1,14 +1,20 @@
-// The fault unwinder of programs linked with no C library (XO_NOLIBC=1,
-// decision 0221; the zero-C audit's item B05): what libgcc's
-// _Unwind_ForcedUnwind, xo_rt.c's fault_stop, and its xo_personality do
-// for a fault, in Xo over raw memory. The C runtime's fault_raise calls
-// raise (cabi_nolibc.xo unwind_fault) with the context's exception object
-// and boundary; raise walks the frames from its own up through the
-// program's .eh_frame_hdr table and the DWARF call frame information of
-// .eh_frame, and at the first frame of generated code whose call site has
-// a landing pad it restores that frame's registers and jumps there
+// The fault unwinder of the native runtime on Linux (decision 0221; the
+// zero-C audit's item B05): what libgcc's _Unwind_ForcedUnwind, a stop
+// function at the context's boundary, and a personality routine do for a
+// fault, in Xo over raw memory, for programs linked with glibc (stage 3)
+// and with no C library (XO_NOLIBC=1, stage 1). The C runtime's
+// fault_raise calls raise (cabi.xo unwind_fault) with the context's
+// exception object, boundary, and the address of xo_personality; raise
+// walks the frames from its own up through the .eh_frame_hdr tables of
+// the program and of the shared objects it loaded (ld.so's link_map) and
+// the DWARF call frame information of .eh_frame, and at the first frame
+// of generated code (its CIE names xo_personality) whose call site has a
+// landing pad it restores that frame's registers and jumps there
 // (rt.unwind_resume), with the exception in x0 as the personality
-// routine's protocol sets it. The landing pad runs the cleanups and calls
+// routine's protocol sets it. Frames with another personality (C
+// cleanups, C++) are passed over: their cleanups do not run, as with C's
+// longjmp (`use c` cannot call back into Xo, so only the runtime's own C
+// sits between a fault and its catch). The landing pad runs the cleanups and calls
 // xo_fault_continue, which raises again from there. raise returns 0 when
 // nothing catches the fault: past the boundary (the runtime's frames),
 // at the end of the stack, or on unwind information it does not read
@@ -16,13 +22,20 @@
 // it and ends the program, as before this module.
 //
 // linux/arm64 only for now: on x86_64 raise returns 0 at once (the
-// registers and the trampolines are arm64's).
+// registers and the trampolines are arm64's), and glibc linux/amd64 keeps
+// libgcc's forced unwind (stage 2). macOS keeps libunwind (a platform
+// library, decision 0195; it reads the compact unwind of __unwind_info):
+// there only the personality routine is Xo (darwin_personality); the
+// stop function stays in xo_rt.c, since it must end the program itself:
+// libunwind's _Unwind_Resume (a C cleanup resuming the unwind) aborts
+// when the stop function returns.
 //
 // Nothing here allocates, faults, or keeps a counted value: the scratch
 // record is one mapping per thread, kept in thread local word UNW_TLS;
 // arithmetic that could overflow on bad tables wraps (rt.int_wrap).
 use native/llrt/linux
 use native/rt
+use native/sys_darwin
 
 /// The thread local word holding the thread's scratch record
 /// (std/native/llrt/sched.xo lists the table's words).
@@ -58,6 +71,8 @@ const H_HDR = 104
 const H_CUR = 112
 /// The depth of the remember_state stack.
 const H_DEPTH = 120
+/// The CIE's personality routine (its 'P' augmentation), or 0.
+const H_PERS = 128
 /// The register sets: word n is DWARF register n (x0 to x30, sp 31, v0
 /// to v31 at 64 to 95), word 96 the frame's pc (its return address).
 const REGS_A = 256
@@ -103,9 +118,10 @@ const EXC_CLASS = 6363304799676486988
 
 /// Unwinds the calling thread's frames for the fault whose exception
 /// object is at exc, running the first landing pad it finds below the
-/// boundary (a stack address; 0: none): never returns then. 0 when
-/// nothing catches the fault.
-pub fn raise(exc: Int, boundary: Int) -> Int {
+/// boundary (a stack address; 0: none) in a frame whose personality
+/// routine is pers (xo_personality's address): never returns then. 0
+/// when nothing catches the fault.
+pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
   match target.arch {
     TargetArch.Arm64 => {}
     TargetArch.Amd64 | TargetArch.Wasm32 => return 0
@@ -139,7 +155,9 @@ pub fn raise(exc: Int, boundary: Int) -> Int {
       if boundary != 0 && rt.mem_load(cur, SP, 8) > boundary {
         return 0
       }
-      if rt.mem_load(s, H_LSDA, 8) != 0 {
+      // a frame of generated code with a call site table; another
+      // personality's frame is passed over
+      if rt.mem_load(s, H_LSDA, 8) != 0 && rt.mem_load(s, H_PERS, 8) == pers {
         rt.mem_store(s, H_CUR, cur, 8)
         if personality(1, UA_CLEANUP_PHASE | UA_FORCE_UNWIND, EXC_CLASS, exc, s) == URC_INSTALL_CONTEXT {
           rt.unwind_resume(cur)
@@ -158,15 +176,11 @@ pub fn raise(exc: Int, boundary: Int) -> Int {
   0
 }
 
-/// The personality routine of generated code (xo_rt.c xo_personality,
-/// which the link names xo_personality with no C library): every landing
-/// pad is a cleanup, entered on the second phase. The language specific
-/// data is GCC's: an LPStart and a TType encoding (omitted), the call
-/// site encoding, and the call sites (start, length, landing pad,
-/// action), offsets from the function's start. ctx is raise's record: at
-/// a landing pad the frame's registers get the exception in x0, 0 in x1,
+/// The personality routine of generated code over raise's record ctx:
+/// every landing pad is a cleanup, entered on the second phase. At a
+/// landing pad the frame's registers get the exception in x0, 0 in x1,
 /// and the pad as the pc (_URC_INSTALL_CONTEXT).
-pub fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int {
+fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int {
   if (version & 4294967295) != 1 {
     return URC_FATAL_PHASE1_ERROR
   }
@@ -179,7 +193,22 @@ pub fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> 
   }
   let regs = rt.mem_load(ctx, H_CUR, 8)
   let func = rt.mem_load(ctx, H_BEGIN, 8)
-  let ip = rt.mem_load(regs, PC, 8) - 1
+  let lp = landing(lsda, func, rt.mem_load(regs, PC, 8) - 1)
+  if lp == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  rt.mem_store(regs, 0, exc, 8)
+  rt.mem_store(regs, 8, 0, 8)
+  rt.mem_store(regs, PC, lp, 8)
+  URC_INSTALL_CONTEXT
+}
+
+/// The landing pad of the call site holding ip in the language specific
+/// data at lsda of the function starting at func, or 0. The data is
+/// GCC's: an LPStart and a TType encoding (omitted), the call site
+/// encoding, and the call sites (start, length, landing pad, action),
+/// offsets from the function's start.
+fn landing(lsda: Int, func: Int, ip: Int) -> Int {
   var p = lsda
   let lpenc = rt.mem_load(p, 0, 1)
   p += 1
@@ -204,19 +233,47 @@ pub fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> 
     let (_, p5) = uleb(p4)
     p = p5
     if ip < func + start {
-      break
+      return 0
     }
     if ip < func + start + len {
       if lp == 0 {
-        return URC_CONTINUE_UNWIND
+        return 0
       }
-      rt.mem_store(regs, 0, exc, 8)
-      rt.mem_store(regs, 8, 0, 8)
-      rt.mem_store(regs, PC, func + lp, 8)
-      return URC_INSTALL_CONTEXT
+      return func + lp
     }
   }
-  URC_CONTINUE_UNWIND
+  0
+}
+
+/// The personality routine of generated code on macOS (xo_personality,
+/// called by libunwind's _Unwind_ForcedUnwind with its context uc): the
+/// protocol of personality, through libunwind's accessors. version and
+/// actions are C ints (their high bits are not defined).
+pub fn darwin_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => {}
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => return URC_CONTINUE_UNWIND
+  }
+  if (version & 4294967295) != 1 {
+    return URC_FATAL_PHASE1_ERROR
+  }
+  if (actions & UA_CLEANUP_PHASE) == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  let lsda = sys_darwin._Unwind_GetLanguageSpecificData(uc)
+  if lsda == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  let lp = landing(lsda, sys_darwin._Unwind_GetRegionStart(uc), sys_darwin._Unwind_GetIP(uc) - 1)
+  if lp == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  // __builtin_eh_return_data_regno(0) and (1): x0 and x1 on arm64, rax
+  // and rdx on x86_64, numbers 0 and 1 on both
+  sys_darwin._Unwind_SetGR(uc, 0, exc)
+  sys_darwin._Unwind_SetGR(uc, 1, 0)
+  sys_darwin._Unwind_SetIP(uc, lp)
+  URC_INSTALL_CONTEXT
 }
 
 /// The calling thread's scratch record, mapped at its first use; 0 when
@@ -261,6 +318,92 @@ fn eh_frame_hdr() -> Int {
     return 0
   }
   hdr + bias
+}
+
+/// The .eh_frame_hdr of the shared object holding pc, or 0: the objects
+/// are ld.so's link_map list (the program's PT_DYNAMIC, its DT_DEBUG
+/// entry, r_debug's r_map), each one's program headers read from its ELF
+/// header at its base (l_addr; a shared object is linked at 0). Not
+/// _dl_find_object (glibc 2.35, past the 2.31 builds support) nor
+/// dl_iterate_phdr (a callback); the list is read without ld.so's lock,
+/// so a dlopen racing a fault could be missed (the walk then ends and the
+/// fault is reported). 0 with no dynamic linker (a static program).
+fn object_hdr(pc: Int) -> Int {
+  let ph = rt.auxval(linux.AT_PHDR)
+  let n = rt.auxval(linux.AT_PHNUM)
+  if ph == 0 {
+    return 0
+  }
+  var bias = 0
+  var dynv = 0
+  for i in 0..n {
+    // PT_PHDR 6, PT_DYNAMIC 2
+    let p = ph + 56 * i
+    let t = rt.mem_load(p, 0, 4)
+    if t == 6 {
+      bias = ph - rt.mem_load(p, 16, 8)
+    } else if t == 2 {
+      dynv = rt.mem_load(p, 16, 8)
+    }
+  }
+  if dynv == 0 {
+    return 0
+  }
+  // Elf64_Dyn: d_tag, d_val; DT_NULL 0, DT_DEBUG 21
+  var d = dynv + bias
+  var dbg = 0
+  while rt.mem_load(d, 0, 8) != 0 {
+    if rt.mem_load(d, 0, 8) == 21 {
+      dbg = rt.mem_load(d, 8, 8)
+    }
+    d += 16
+  }
+  if dbg == 0 {
+    return 0
+  }
+  // struct r_debug: r_version, then r_map; struct link_map: l_addr,
+  // l_name, l_ld, l_next
+  var lm = rt.mem_load(dbg, 8, 8)
+  var left = 4096
+  while lm != 0 && left > 0 {
+    left -= 1
+    let base = rt.mem_load(lm, 0, 8)
+    // l_addr 0: a program not built position independent (the program
+    // is read through AT_PHDR); "\x7fELF"
+    if base != 0 && rt.mem_load(base, 0, 4) == 1179403647 {
+      let h = object_hdr_of(base, pc)
+      if h != 0 {
+        return h
+      }
+    }
+    lm = rt.mem_load(lm, 24, 8)
+  }
+  0
+}
+
+/// The .eh_frame_hdr of the object loaded at base when one of its PT_LOAD
+/// segments holds pc, else 0.
+fn object_hdr_of(base: Int, pc: Int) -> Int {
+  // Elf64_Ehdr: e_phoff at 32, e_phnum at 56
+  let ph = base + rt.mem_load(base, 32, 8)
+  let n = rt.mem_load(base, 56, 2)
+  var holds = false
+  var hdr = 0
+  for i in 0..n {
+    // Elf64_Phdr: p_type 0, p_vaddr 16, p_memsz 40; PT_LOAD 1
+    let p = ph + 56 * i
+    let t = rt.mem_load(p, 0, 4)
+    let at = base + rt.mem_load(p, 16, 8)
+    if t == 1 && pc >= at && pc < at + rt.mem_load(p, 40, 8) {
+      holds = true
+    } else if t == 1685382480 {
+      hdr = at
+    }
+  }
+  if !holds {
+    return 0
+  }
+  hdr
 }
 
 /// v, the low bits bits of a two's complement number, sign extended.
@@ -362,9 +505,18 @@ fn read_ptr(p: Int, enc: Int, data: Int) -> (Int, Int) {
 /// into s: its FDE (through .eh_frame_hdr's sorted table) and CIE, and
 /// the rules of the row that holds at pc - 1. Whether there is one.
 fn frame(s: Int, pc: Int) -> Bool {
-  let fde = find_fde(rt.mem_load(s, H_HDR, 8), pc - 1)
+  let hdr = rt.mem_load(s, H_HDR, 8)
+  let fde = find_fde(hdr, pc - 1)
   if fde == 0 || !read_fde(s, fde, pc - 1) {
-    return false
+    // not the program's: a shared object's
+    let h2 = object_hdr(pc - 1)
+    if h2 == 0 || h2 == hdr {
+      return false
+    }
+    let f2 = find_fde(h2, pc - 1)
+    if f2 == 0 || !read_fde(s, f2, pc - 1) {
+      return false
+    }
   }
   let st = s + ST_CUR
   rt.mem_set(st, 0, ST_BYTES)
@@ -484,6 +636,7 @@ fn read_cie(s: Int, cie: Int) -> Bool {
   var fenc = 0
   var lenc = 255
   var augz = 0
+  var pers = 0
   if rt.mem_load(aug, 0, 1) == 122 {
     // 'z': the augmentation data's length, then a field per letter
     augz = 1
@@ -502,9 +655,10 @@ fn read_cie(s: Int, cie: Int) -> Bool {
         fenc = rt.mem_load(p, 0, 1)
         p += 1
       } else if c == 80 {
-        // 'P': the personality routine (raise does not call it: every
-        // frame with a call site table is generated code's)
-        let (_, q2) = read_ptr(p + 1, rt.mem_load(p, 0, 1), 0)
+        // 'P': the personality routine (raise compares it with
+        // xo_personality's address and does not call it)
+        let (pv, q2) = read_ptr(p + 1, rt.mem_load(p, 0, 1), 0)
+        pers = pv
         p = q2
       } else if c != 83 && c != 66 && c != 71 {
         // not 'S' (a signal frame), 'B' or 'G' (arm64's pointer
@@ -523,6 +677,7 @@ fn read_cie(s: Int, cie: Int) -> Bool {
   rt.mem_store(s, H_FENC, fenc, 8)
   rt.mem_store(s, H_LENC, lenc, 8)
   rt.mem_store(s, H_AUGZ, augz, 8)
+  rt.mem_store(s, H_PERS, pers, 8)
   rt.mem_store(s, H_CIE, p, 8)
   rt.mem_store(s, H_CIE_END, end, 8)
   true

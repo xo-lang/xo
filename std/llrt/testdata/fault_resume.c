@@ -7,9 +7,11 @@
 // (gotchas/tsan-resumes-fault-unwind.md). Here the cleanup itself fills
 // the dead frames' stack, so the bug is deterministic without a sanitizer.
 //
-// Expected: "cleanup ran" on stderr, then the runtime's report of the
-// fault past the boundary ("fault: boom at fault_resume.xo:3:5") and exit
-// status 70.
+// Expected: "cleanup ran" on stderr where libunwind or libgcc unwinds
+// (macOS, glibc linux/amd64; on Linux arm64 the Xo unwinder of decision
+// 0221 passes the C frame over and the cleanup does not run), then the
+// runtime's report of the fault past the boundary ("fault: boom at
+// fault_resume.xo:3:5") and exit status 70.
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
