@@ -14,7 +14,8 @@
 // function of the program's root module: its symbol is the bare name).
 // `xo asm --backend=B DIR` prints the code: arm64 functions start at a
 // `// func NAME` line, LLVM ones at `define ... @"x.NAME"(` and end at a
-// line `}`.
+// line `}`. A line `// func MOD.NAME` names a function of another
+// module (a std runtime module's) for the patterns below it.
 
 use std/regexp
 use std/task
@@ -43,6 +44,12 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       None => {}
     }
     let t = l.trim()
+    if t.starts_with("// func ") {
+      // a function of another module (a std runtime module's, as `xo
+      // asm` names it: ct.pick), whose code the program pulls in
+      cur = t.trim_prefix("// func ").trim()
+      continue
+    }
     for be in ["arm64", "llvm"] {
       let head = "// ${be}: "
       if !t.starts_with(head) {
@@ -75,6 +82,8 @@ test "patterns" {
   expect(ps[0].func == "a" && ps[0].re == "lsl\tx" && !ps[0].negate && ps[0].backend == "arm64")
   expect(ps[1].negate && ps[1].re == "mul")
   expect(ps[2].func == "b" && ps[2].backend == "llvm" && ps[2].line == 6)
+  let other = patterns("m.xo", "fn main() {}\n// func ct.pick\n// arm64: -\"csel\"\n")
+  expect(other.len() == 1 && other[0].func == "ct.pick" && other[0].negate)
 }
 
 /// functions cuts the output of `xo asm` into functions by name.

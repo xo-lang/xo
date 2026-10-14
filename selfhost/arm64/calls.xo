@@ -841,6 +841,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
     }
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    // decision 0222: the value barrier is the operand itself (this
+    // emitter neither folds through a call's result nor turns masks
+    // into branches; test/codegen/consttime checks it)
+    "rt.ct_barrier" => g.set(v, [g.word(x.args[0])])
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
     "rt.f32_round" => g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])

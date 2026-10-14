@@ -21,7 +21,10 @@ deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
 to 1.009 of the C's instructions;
 `bench/results/http2-client-hpack-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
-`bench/results/http-writer-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
+`bench/results/http-writer-2026-10-14.md`). Prerequisite 5
+(constant time) done 2026-10-14: decision 0222 (`rt.ct_barrier`,
+std/native/llrt/ct.xo; crypto.equal and Ed25519 in Xo, work item B09,
+below the C's instructions on both backends). Prerequisite 4 (SIMD and word scans) done
 2026-10-13: decision 0201. Prerequisite 3 (system calls) on Linux:
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
