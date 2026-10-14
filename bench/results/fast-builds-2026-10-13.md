@@ -449,3 +449,11 @@ MB in all, on 8 tasks) and copying its object; one edited part costs one
 `cc -c`. What a one-module edit still pays: check and ssa (about 3.5 s),
 insert_rc (8 to 11 s), inline (1.3 s), and emit (6 to 9.5 s) of every
 function, which stage B (the per-function assembly cache) attacks.
+
+Verified on linux/arm64 (warm r8g, 78892100, EC2 queue jobs fb2cA-a and
+fb2cA-b, 2026-10-14): the goldens 180/180 on arm64 with a cold cache and
+again with the cache warm (81 objects cached), 180/180 on LLVM; go vet
+and go test -short clean; scripts/bootstrap-xo.sh fixed point (s2 and s3
+identical) with a cold cache, then again into the same directory with
+the cache warm, and the second run's s2, s3, and s3 assembly the same
+files as the first's.
