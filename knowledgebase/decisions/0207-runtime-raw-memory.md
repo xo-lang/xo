@@ -276,7 +276,7 @@ Item 2 landed as decision 0212's `rt.tlocal_get/tlocal_set/tlocal_addr`
 - **First user**: std/log's state (std/native/llrt/logstate.xo):
   log.configure's level, format, and output in static words 0 to 2
   (acquire loads, release stores, as the C's atomics), the attribution
-  of decision 0173 in thread local words 7 and 8 (the address and
+  of decision 0173 in thread local words 8 and 9 (the address and
   length of the string constant the SSA builder passes to the native
   prelude's `llrt_log_from`), and the record time as text.append_time
   of sysio.clock_now. The 66 line logging section of std/llrt/xo_http.c
