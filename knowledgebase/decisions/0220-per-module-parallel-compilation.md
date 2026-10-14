@@ -74,6 +74,25 @@ stages:
    32 with 32), about 11,200 s of -O2 CPU on 1.11 GB of IR, so the
    arm64 build's 88 s class needs smaller IR or a lower -O level for
    development builds, not only more jobs.
+6. **Development builds of xo at clang -O0** (decided 2026-10-14 by
+   the per-change time, bench/results/fast-builds-2026-10-13.md):
+   `XO_LLVM_OPT` sets clang's level for the program's IR; `go run
+   ./scripts/xobuild` and scripts/bootstrap-xo.sh build xo at -O0 on the
+   LLVM path; releases and `xo build --release` stay at -O2. On
+   c7i.8xlarge the -O0 xo rebuilds itself in 3:45 against 18:51 at -O2
+   (-O1: 17:31) and compiles about 1.5 times slower; the fixed point
+   holds within each level.
+7. **Smaller output at the source**: one release of a root in place of
+   one per heap leaf when all its leaves die together (ssa
+   group_releases), and on arm64 a release of a struct of many words
+   from memory (mem_drop): arm64 assembly 22.8 to 18.9 million lines,
+   calls 4.64 to 1.27 million, LLVM IR 1.12 GB to 313 MB; the arm64
+   self build 49.83 s to 34.15 s on r8g.8xlarge, the x86 -O0 self build
+   3:45 to 1:23.
+8. **Jobs by physical cores and memory**: the emitter's tasks default to
+   the physical cores, at most 16 and a third of the memory in GB;
+   clang's jobs to the physical cores, at most a quarter of the memory
+   in GB.
 
 ### Stage 2: per-module caching of front end results
 
