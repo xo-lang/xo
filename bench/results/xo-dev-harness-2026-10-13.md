@@ -254,3 +254,92 @@ tests (about 130 s), then the fixed point; about 7 to 12 minutes plus
 the fixed point, against the 3 to 5 minutes decision 0217 estimates
 without the xo1 rebuild. The levers of decision 0209 apply to items 1
 and 3; item 1 is where per function parallelism pays most.
+
+## Phase 2: `xo dev` beside the Python scripts (Mac, 2026-10-13)
+
+The same xo for both (bin/xo of this branch at 2d327cb0, built by
+scripts/xobuild in 348 s), the shared Mac under the heavy lock (load
+average 3.1 at the start), one run each, 23:47 to 23:55 (after the disk
+full of 22:55 to 23:10; the first comparison at 22:49 finished at
+22:55:30 with the same verdicts). `/usr/bin/time -l` counts the children
+in user and sys.
+
+### Agreement
+
+Both report every program passing, the same set: arm64 179 of 179, LLVM
+179 of 179, Go backend 136 of 136. `xo dev errorcheck test/errorcheck`:
+15 of 15; `xo dev codegen test/codegen`: 4 builds, 11 patterns, all
+pass. A wrong expectation fails as it should (a scratch `// ERROR
+XO0601` on an unused binding reports the missing XO0601 and the
+unexpected XO0110; a `#4` shift pattern reports the mismatch), and a
+failing build inside a worker fails that program only.
+
+### Wall time and CPU (Python = the scripts, 4 workers)
+
+| harness | Python | xo dev -j 4 | xo dev -j 8 | xo dev -j 12 |
+|---|---|---|---|---|
+| arm64, one `xo build` per program (--no-each) | 49.74 s (122.43 s CPU) | 35.37 s (123.18 s CPU) | 17.10 s (119.96 s CPU) | |
+| arm64, build-each workers (static shares) | | 36.00 s (108.44 s CPU) | 18.05 s (115.46 s CPU) | 19.43 s |
+| LLVM, --no-each | 61.84 s (188.32 s CPU) | 51.49 s | 27.46 s | |
+| LLVM, build-each workers (static shares) | | 65.18 s | 33.35 s | |
+| Go backend | 16.79 s | 14.72 s | 8.77 s | |
+| arm64, pass cache warm (-j 8) | | | 0.21 s | |
+
+(CPU = user + sys.)
+
+### Lever 3: in-process workers, largest first
+
+At 4 workers, like the scripts, xo dev takes 35.37 s against Python's
+49.74 s on arm64 and 51.49 s against 61.84 s on LLVM, with the same CPU:
+the difference is the order (huge_frame, 15.8 s, starts first instead
+of last in path order). At 8 workers: 17.10 s arm64 (2.9 times
+faster than Python), 27.46 s LLVM (2.25 times), 8.77 s Go (1.9 times).
+12 workers is slower than 8 on the shared Mac (19.43 s).
+
+### Lever 2: passes skipped by input hash
+
+With every program passing and nothing changed, the run is 0.21 s (179
+cached) against 17.27 s with --force. The key is checked: a copy of the
+xo binary with one byte appended reruns every program (0 cached), the
+same binary skips them; hashing the 83 MB binary and std costs 0.2 s.
+
+### Lever 1: std parsed once per worker
+
+Where the per program check goes (126 ms native on arith): parsing the
+68 std/native files is 67 ms of it (`xo dev dump ast --bench=10`: 671
+ms for 10), lexing 16 ms; without the native modules the check is 4 ms.
+The checker now keeps the parses of std files (check.Checker
+parse_cache) for the next checker of the process:
+
+- `check --native --bench=20` of arith: 2,449, 2,380, and 2,406 ms
+  without the cache, 1,595, 1,593, and 1,606 ms with it (-34 percent);
+- `check --native --each` of all 179 goldens: 23.35 s and 245.4 billion
+  instructions without, 14.64 s and 154.3 billion with (-37 percent of
+  the instructions), dumps byte identical (5,838,680 bytes).
+
+In the harness the native builds go to `xo dev build-each` workers that
+carry the cache from build to build. With the programs dealt into
+static shares it saved CPU (arm64 -j 4: 123.18 to 108.44 s) but not
+wall time, and LLVM got slower (27.46 to 33.35 s at -j 8): fixed shares
+cannot balance builds whose times vary 100 times. The workers now take
+the next program from a queue (`build-each --stdin`); figures below.
+
+With the queue (bin/xo at 8ea018be, 2026-10-14 00:41 to 00:45, load
+average 1.5 at the start), one `xo build` per program against
+build-each workers, no cache:
+
+| backend, workers | --no-each: wall, CPU | build-each queue: wall, CPU |
+|---|---|---|
+| arm64, -j 4 | 33.27 s, 115.55 s | 31.00 s, 107.27 s |
+| arm64, -j 8 | 16.93 s, 118.82 s | 17.26 s, 112.79 s |
+| LLVM, -j 4 | 51.52 s, 190.31 s | 49.44 s, 182.07 s |
+| LLVM, -j 8 | 28.75 s, 210.95 s | 26.62 s, 198.71 s |
+
+The std parse once per worker saves 4 to 7 percent of the CPU (about 6
+s of arm64's 119 s, 12 s of LLVM's 211 s at -j 8), in line with the
+check figures above: of the 20.7 s of check per backend run, the parse
+of std/native is about half, and the other half (checking the native
+modules' bodies again for each program) is not shared yet. Wall time
+moves within the run to run noise at -j 8 on arm64 and gains 2 s on
+LLVM. Build-each is the default for the native backends; `--no-each`
+keeps one `xo build` per program.
