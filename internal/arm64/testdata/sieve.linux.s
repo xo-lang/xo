@@ -52,18 +52,16 @@ xo_f_main:
 .Lf1_b12:
 .Lf1_b15:
 	mov x0, x19
-	bl .Lxo_drop1
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
-	ret
+	b .Lxo_drop1
 .Lf1_b13:
 	mov x0, x19
 	bl .Lxo_drop1
 .Lf1_b14:
-	bl xo_fault_continue
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
-	ret
+	b xo_fault_continue
 .Lf1_fault1:
 	sub x15, x20, x0
 	mov x2, x0
@@ -301,15 +299,8 @@ xo_f_sieve:
 xo_f_prelude_2ellrt__concat__int:
 .Lf3_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf3_b0:
-	bl xo_f_num_2eappend__int
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2eappend__int
 	.cfi_endproc
 
 // func prelude.llrt_println
@@ -318,22 +309,21 @@ xo_f_prelude_2ellrt__concat__int:
 xo_f_prelude_2ellrt__println:
 .Lf4_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf4_b0:
 .Lf4_b2:
 	adds x0, x0, #16
 	b.vs .Lf4_fault1
 .Lf4_b3:
 	mov x2, #1
-	bl xo_f_stdio_2eout
+	b xo_f_stdio_2eout
 .Lf4_b4:
-	ldp x29, x30, [sp], #16
 	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 .Lf4_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x17, #16
 	sub x15, x0, x17
 	mov x0, x15
@@ -585,20 +575,18 @@ xo_f_num_2eappend__int:
 xo_f_stdio_2eprint:
 .Lf6_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf6_b0:
 .Lf6_b1:
 	adds x0, x0, #16
 	b.vs .Lf6_fault1
 .Lf6_b2:
-	bl xo_f_stdio_2eout
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_stdio_2eout
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 .Lf6_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x17, #16
 	sub x15, x0, x17
 	mov x0, x15
@@ -703,6 +691,63 @@ xo_f_num_2eappend__wide:
 xo_f_stdio_2eout:
 .Lf8_begin:
 	.cfi_startproc
+.Lf8_b0:
+	mov x3, x1
+	mov x4, x2
+	mov x2, x0
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x0, x9, #24
+	ldr x9, [x0, #24]
+	cmp x9, #1
+	b.ne .Lf8_b22
+.Lf8_b1:
+	ldp x11, x12, [x0, #0]
+.Lf8_b2:
+	add x10, x12, x3
+.Lf8_b3:
+	cmp x11, #0
+	b.eq .Lf8_b22
+.Lf8_b4:
+	mov x9, #32768
+	cmp x3, x9
+	b.gt .Lf8_b22
+.Lf8_b7:
+	movz x9, #1, lsl #16
+	cmp x10, x9
+	b.ge .Lf8_b22
+.Lf8_b11:
+	add x9, x11, x12
+	b .Lf8_b30
+.Lf8_b13:
+	mov x9, #10
+	strb w9, [x11, x10]
+.Lf8_b14:
+	add x9, x10, #1
+.Lf8_b15:
+	str x9, [x0, #8]
+	b .Lf8_b17
+.Lf8_b16:
+	str x10, [x0, #8]
+.Lf8_b17:
+	ret
+.Lf8_b22:
+	ldr x1, [x0, #24]
+	and x9, x1, #1
+	cmp x9, #0
+	b.ne .Lf8_b29
+	b .Lf8_b33
+.Lf8_b26:
+	mov x9, #2
+	b .Lf8_b28
+.Lf8_b27:
+	mov x9, #0
+.Lf8_b28:
+	orr x1, x10, x9
+	str x1, [x0, #24]
+.Lf8_b29:
+	b xo_f_stdio_2eout__slow
+.Lf8_b30:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -717,83 +762,73 @@ xo_f_stdio_2eout:
 	.cfi_offset w21, -24
 	.cfi_offset w24, -16
 	.cfi_offset w23, -8
-.Lf8_b0:
-	mov x23, x0
-	mov x22, x1
-	mov x24, x2
-	adrp x9, .Lxo_static
-	add x9, x9, :lo12:.Lxo_static
-	add x21, x9, #24
-	ldr x9, [x21, #24]
-	cmp x9, #1
-	b.ne .Lf8_b22
-.Lf8_b1:
-	ldp x20, x10, [x21, #0]
-.Lf8_b2:
-	add x19, x10, x22
-.Lf8_b3:
-	cmp x20, #0
-	b.eq .Lf8_b22
-.Lf8_b4:
-	mov x9, #32768
-	cmp x22, x9
-	b.gt .Lf8_b22
-.Lf8_b7:
-	movz x9, #1, lsl #16
-	cmp x19, x9
-	b.ge .Lf8_b22
-.Lf8_b11:
-	add x0, x20, x10
+	mov x19, x10
+	mov x20, x2
+	mov x21, x3
+	mov x23, x4
+	mov x22, x0
+	mov x0, x9
+	mov x24, x11
 .Lf8_b12:
-	mov x1, x23
-	mov x2, x22
+	mov x1, x20
+	mov x2, x21
 	bl memcpy
-	cbz x24, .Lf8_b16
-.Lf8_b13:
-	mov x9, #10
-	strb w9, [x20, x19]
-.Lf8_b14:
-	add x9, x19, #1
-.Lf8_b15:
-	str x9, [x21, #8]
-	b .Lf8_b17
-.Lf8_b16:
-	str x19, [x21, #8]
-.Lf8_b17:
+	cbz x23, .Lf8_b32
+.Lf8_b31:
+	mov x10, x19
+	mov x0, x22
+	mov x11, x24
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
-.Lf8_b22:
-	ldr x1, [x21, #24]
-	and x9, x1, #1
-	cmp x9, #0
-	b.ne .Lf8_b29
+	b .Lf8_b13
+.Lf8_b32:
+	mov x10, x19
+	mov x0, x22
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b .Lf8_b16
+.Lf8_b33:
+	stp x29, x30, [sp, #-64]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	mov x20, x2
+	mov x21, x3
+	mov x23, x4
+	mov x22, x0
+	mov x9, x1
 .Lf8_b25:
-	orr x19, x1, #1
+	orr x19, x9, #1
 	mov x0, #32
 	bl xo_tw_fake
-	cbz x0, .Lf8_b27
-.Lf8_b26:
-	mov x9, #2
-	b .Lf8_b28
-.Lf8_b27:
-	mov x9, #0
-.Lf8_b28:
-	orr x1, x19, x9
-	str x1, [x21, #24]
-.Lf8_b29:
-	mov x0, x21
-	mov x2, x23
-	mov x3, x22
-	mov x4, x24
-	bl xo_f_stdio_2eout__slow
+	cbz x0, .Lf8_b35
+.Lf8_b34:
+	mov x2, x20
+	mov x3, x21
+	mov x4, x23
+	mov x0, x22
+	mov x10, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
+	b .Lf8_b26
+.Lf8_b35:
+	mov x2, x20
+	mov x3, x21
+	mov x4, x23
+	mov x0, x22
+	mov x10, x19
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b .Lf8_b27
 	.cfi_endproc
 
 // func raw.data
@@ -1114,7 +1149,12 @@ xo_f_stdio_2eout__slow:
 .Lf12_b4:
 	mov x0, #0
 	mov x2, #1
-	bl xo_tw_write
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldr x25, [sp, #64]
+	ldp x29, x30, [sp], #80
+	b xo_tw_write
 .Lf12_b6:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -1281,7 +1321,12 @@ xo_f_stdio_2eout__slow:
 .Lf12_b83:
 	add x0, x21, #16
 .Lf12_b84:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldr x25, [sp, #64]
+	ldp x29, x30, [sp], #80
+	b xo_f_pool_2efutex__wake
 .Lf12_b87:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -1313,6 +1358,24 @@ xo_f_stdio_2eout__slow:
 xo_f_stdio_2emode:
 .Lf13_begin:
 	.cfi_startproc
+.Lf13_b0:
+	mov x10, x0
+	ldr x0, [x10, #24]
+	and x9, x0, #1
+	cmp x9, #0
+	b.eq .Lf13_b7
+.Lf13_b1:
+	ret
+.Lf13_b4:
+	mov x9, #2
+	b .Lf13_b6
+.Lf13_b5:
+	mov x9, #0
+.Lf13_b6:
+	orr x0, x11, x9
+	str x0, [x10, #24]
+	ret
+.Lf13_b7:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -1321,32 +1384,25 @@ xo_f_stdio_2emode:
 	.cfi_offset w30, -24
 	.cfi_offset w20, -16
 	.cfi_offset w19, -8
-.Lf13_b0:
-	mov x19, x0
-	ldr x0, [x19, #24]
-	and x9, x0, #1
-	cmp x9, #0
-	b.eq .Lf13_b3
-.Lf13_b1:
-	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
-	ret
+	mov x20, x10
+	mov x9, x0
 .Lf13_b3:
-	orr x20, x0, #1
+	orr x19, x9, #1
 	mov x0, #32
 	bl xo_tw_fake
-	cbz x0, .Lf13_b5
-.Lf13_b4:
-	mov x9, #2
-	b .Lf13_b6
-.Lf13_b5:
-	mov x9, #0
-.Lf13_b6:
-	orr x0, x20, x9
-	str x0, [x19, #24]
+	cbz x0, .Lf13_b9
+.Lf13_b8:
+	mov x10, x20
+	mov x11, x19
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
-	ret
+	b .Lf13_b4
+.Lf13_b9:
+	mov x10, x20
+	mov x11, x19
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	b .Lf13_b5
 	.cfi_endproc
 
 // func num.ndigits8
@@ -1490,6 +1546,20 @@ xo_f_num_2edigits8:
 xo_f_stdio_2elock:
 .Lf17_begin:
 	.cfi_startproc
+.Lf17_b0:
+	and x9, x1, #4
+	cmp x9, #0
+	b.ne .Lf17_b9
+	b .Lf17_b8
+.Lf17_b3:
+	cbz x9, .Lf17_b8
+.Lf17_b5:
+	add x0, x0, #16
+.Lf17_b6:
+	b xo_f_pool_2elock__slow
+.Lf17_b8:
+	ret
+.Lf17_b9:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -1498,11 +1568,7 @@ xo_f_stdio_2elock:
 	.cfi_offset w30, -24
 	.cfi_offset w20, -16
 	.cfi_offset w19, -8
-.Lf17_b0:
 	mov x20, x0
-	and x9, x1, #4
-	cmp x9, #0
-	b.eq .Lf17_b8
 .Lf17_b1:
 	add x2, x20, #16
 	mov x19, #0
@@ -1512,16 +1578,11 @@ xo_f_stdio_2elock:
 	cmp x0, x19
 	cset x9, eq
 	eor x9, x9, #1
-.Lf17_b3:
-	cbz x9, .Lf17_b8
-.Lf17_b5:
-	add x0, x20, #16
-.Lf17_b6:
-	bl xo_f_pool_2elock__slow
-.Lf17_b8:
+.Lf17_b10:
+	mov x0, x20
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
-	ret
+	b .Lf17_b3
 	.cfi_endproc
 
 // func stdio.put_locked
@@ -1530,6 +1591,28 @@ xo_f_stdio_2elock:
 xo_f_stdio_2eput__locked:
 .Lf18_begin:
 	.cfi_startproc
+.Lf18_b0:
+	mov x9, #32768
+	cmp x2, x9
+	b.le .Lf18_b8
+.Lf18_b2:
+	ldr x9, [x0, #8]
+	cmp x9, #0
+	b.gt .Lf18_b26
+.Lf18_b6:
+	mov x0, #1
+	b xo_f_stdio_2ewrite__all
+.Lf18_b8:
+	ldr x9, [x0, #0]
+	cmp x9, #0
+	b.eq .Lf18_b28
+	b .Lf18_b29
+.Lf18_b24:
+	add x9, x9, x2
+.Lf18_b25:
+	str x9, [x0, #8]
+	ret
+.Lf18_b26:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -1543,44 +1626,51 @@ xo_f_stdio_2eput__locked:
 	.cfi_offset w22, -32
 	.cfi_offset w21, -24
 	.cfi_offset w23, -16
-.Lf18_b0:
-	mov x21, x0
+	mov x20, x0
 	mov x23, x1
 	mov x22, x2
-	mov x9, #32768
-	cmp x22, x9
-	b.le .Lf18_b8
-.Lf18_b2:
-	ldr x2, [x21, #8]
-	cmp x2, #0
-	b.le .Lf18_b6
+	mov x2, x9
 .Lf18_b3:
-	ldr x1, [x21, #0]
+	ldr x1, [x20, #0]
 	mov x0, #1
 	bl xo_f_stdio_2ewrite__all
 	mov x9, #0
-	str x9, [x21, #8]
-.Lf18_b6:
-	mov x0, #1
+	str x9, [x20, #8]
+.Lf18_b27:
 	mov x1, x23
 	mov x2, x22
-	bl xo_f_stdio_2ewrite__all
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
-.Lf18_b8:
-	ldr x20, [x21, #0]
-	cmp x20, #0
-	b.ne .Lf18_b11
+	b .Lf18_b6
+.Lf18_b28:
+	stp x29, x30, [sp, #-64]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	str x23, [sp, #48]
+	mov x20, x0
+	mov x23, x1
+	mov x22, x2
 .Lf18_b9:
 	movz x0, #1, lsl #16
 	bl xo_heap_large
+	mov x21, x0
+	str x21, [x20, #0]
+	b .Lf18_b11
+.Lf18_b29:
+	stp x29, x30, [sp, #-64]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	str x23, [sp, #48]
+	mov x21, x9
 	mov x20, x0
-	str x20, [x21, #0]
+	mov x23, x1
+	mov x22, x2
 .Lf18_b11:
-	ldr x19, [x21, #8]
+	ldr x19, [x20, #8]
 .Lf18_b12:
 	add x10, x19, x22
 .Lf18_b13:
@@ -1588,32 +1678,32 @@ xo_f_stdio_2eput__locked:
 	cmp x10, x9
 	b.le .Lf18_b22
 .Lf18_b15:
-	ldr x2, [x21, #8]
+	ldr x2, [x20, #8]
 	cmp x2, #0
 	b.le .Lf18_b19
 .Lf18_b16:
-	ldr x1, [x21, #0]
+	ldr x1, [x20, #0]
 	mov x0, #1
 	bl xo_f_stdio_2ewrite__all
 	mov x9, #0
-	str x9, [x21, #8]
+	str x9, [x20, #8]
 .Lf18_b19:
 	mov x19, #0
 .Lf18_b22:
-	add x0, x20, x19
+	add x0, x21, x19
 .Lf18_b23:
 	mov x1, x23
 	mov x2, x22
 	bl memcpy
-.Lf18_b24:
-	add x9, x19, x22
-.Lf18_b25:
-	str x9, [x21, #8]
+.Lf18_b30:
+	mov x9, x19
+	mov x0, x20
+	mov x2, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
+	b .Lf18_b24
 	.cfi_endproc
 
 // func stdio.unlock
@@ -1622,6 +1712,18 @@ xo_f_stdio_2eput__locked:
 xo_f_stdio_2eunlock:
 .Lf19_begin:
 	.cfi_startproc
+.Lf19_b0:
+	and x9, x1, #4
+	cmp x9, #0
+	b.ne .Lf19_b9
+	b .Lf19_b8
+.Lf19_b5:
+	add x0, x0, #16
+.Lf19_b6:
+	b xo_f_pool_2efutex__wake
+.Lf19_b8:
+	ret
+.Lf19_b9:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	str x19, [sp, #16]
@@ -1629,22 +1731,19 @@ xo_f_stdio_2eunlock:
 	.cfi_offset w29, -32
 	.cfi_offset w30, -24
 	.cfi_offset w19, -16
-.Lf19_b0:
 	mov x19, x0
-	and x9, x1, #4
-	cmp x9, #0
-	b.eq .Lf19_b8
 .Lf19_b1:
 	add x1, x19, #16
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf19_b8
-.Lf19_b5:
-	add x0, x19, #16
-.Lf19_b6:
-	bl xo_f_pool_2efutex__wake
-.Lf19_b8:
+	b.ne .Lf19_b11
+.Lf19_b10:
+	mov x0, x19
+	ldr x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	b .Lf19_b5
+.Lf19_b11:
 	ldr x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
@@ -1726,6 +1825,13 @@ xo_f_pool_2elock__slow:
 xo_f_stdio_2eflush__locked:
 .Lf21_begin:
 	.cfi_startproc
+.Lf21_b0:
+	ldr x9, [x0, #8]
+	cmp x9, #0
+	b.gt .Lf21_b4
+.Lf21_b3:
+	ret
+.Lf21_b4:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	str x19, [sp, #16]
@@ -1733,18 +1839,15 @@ xo_f_stdio_2eflush__locked:
 	.cfi_offset w29, -32
 	.cfi_offset w30, -24
 	.cfi_offset w19, -16
-.Lf21_b0:
 	mov x19, x0
-	ldr x2, [x19, #8]
-	cmp x2, #0
-	b.le .Lf21_b3
+	mov x2, x9
 .Lf21_b1:
 	ldr x1, [x19, #0]
 	mov x0, #1
 	bl xo_f_stdio_2ewrite__all
 	mov x9, #0
 	str x9, [x19, #8]
-.Lf21_b3:
+.Lf21_b5:
 	ldr x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
@@ -2075,21 +2178,16 @@ xo_f_pool_2efutex__wait:
 xo_f_stdio_2ewrite:
 .Lf26_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf26_b0:
 	mov x9, #0
 	cmp x9, #0
 	b.eq .Lf26_b3
 .Lf26_b13:
 	cmp x9, #1
-	b.eq .Lf26_b15
+	b.eq .Lf26_b23
 .Lf26_b16:
 	cmp x9, #2
-	b.eq .Lf26_b18
+	b.eq .Lf26_b24
 .Lf26_b19:
 	cmp x9, #3
 	b.eq .Lf26_b20
@@ -2106,22 +2204,41 @@ xo_f_stdio_2ewrite:
 	b.eq .Lf26_b8
 	b .Lf26_b12
 .Lf26_b4:
-	mov x6, #64
-	b .Lf26_b10
+	mov x9, #64
+	b .Lf26_b25
 .Lf26_b6:
-	mov x6, #1
-	b .Lf26_b10
+	mov x9, #1
+	b .Lf26_b25
 .Lf26_b8:
-	mov x6, #-1
+	mov x9, #-1
+	b .Lf26_b25
+.Lf26_b12:
+	brk #1
+.Lf26_b20:
+	mov x0, #-1
+.Lf26_b21:
+	ret
+.Lf26_b22:
+	brk #1
+.Lf26_b25:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x6, x9
 .Lf26_b10:
 	mov x3, #0
 	mov x4, x3
 	mov x5, x3
 	mov x8, x6
 	svc #0
-	b .Lf26_b21
-.Lf26_b12:
-	brk #1
+.Lf26_b26:
+	ldp x29, x30, [sp], #16
+	ret
+.Lf26_b23:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 .Lf26_b15:
 	adrp x9, .Lxo_str4
 	add x9, x9, :lo12:.Lxo_str4
@@ -2133,6 +2250,9 @@ xo_f_stdio_2ewrite:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
+.Lf26_b24:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 .Lf26_b18:
 	adrp x9, .Lxo_str6
 	add x9, x9, :lo12:.Lxo_str6
@@ -2143,13 +2263,6 @@ xo_f_stdio_2ewrite:
 	mov x3, #30
 	add x2, x9, #16
 	bl xo_fault_raise
-	brk #1
-.Lf26_b20:
-	mov x0, #-1
-.Lf26_b21:
-	ldp x29, x30, [sp], #16
-	ret
-.Lf26_b22:
 	brk #1
 	.cfi_endproc
 
@@ -2373,15 +2486,18 @@ xo_f_linux_2enr:
 xo_f_darwin_2eret:
 .Lf33_begin:
 	.cfi_startproc
+.Lf33_b0:
+	mov x9, #-1
+	cmp x0, x9
+	b.eq .Lf33_b5
+.Lf33_b4:
+	ret
+.Lf33_b5:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf33_b0:
-	mov x9, #-1
-	cmp x0, x9
-	b.ne .Lf33_b4
 .Lf33_b2:
 	adrp x9, .Lxo_str16
 	add x9, x9, :lo12:.Lxo_str16
@@ -2393,9 +2509,6 @@ xo_f_darwin_2eret:
 	add x2, x9, #16
 	bl xo_fault_raise
 	brk #1
-.Lf33_b4:
-	ldp x29, x30, [sp], #16
-	ret
 	.cfi_endproc
 
 // func windows.keep
@@ -3113,8 +3226,11 @@ xo_f_cabi_2eeprint:
 	mov x0, #1
 	mov x1, x22
 	mov x2, x23
-	bl xo_tw_write
-	b .Lf40_b48
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_tw_write
 .Lf40_b18:
 	and x9, x20, #4
 	cmp x9, #0
@@ -3162,7 +3278,11 @@ xo_f_cabi_2eeprint:
 .Lf40_b43:
 	add x0, x21, #16
 .Lf40_b44:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_f_pool_2efutex__wake
 .Lf40_b48:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -3232,8 +3352,11 @@ xo_f_cabi_2eeprintln:
 .Lf41_b13:
 	mov x0, #1
 	mov x2, x0
-	bl xo_tw_write
-	b .Lf41_b48
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_tw_write
 .Lf41_b18:
 	and x9, x20, #4
 	cmp x9, #0
@@ -3290,7 +3413,11 @@ xo_f_cabi_2eeprintln:
 .Lf41_b43:
 	add x0, x21, #16
 .Lf41_b44:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_f_pool_2efutex__wake
 .Lf41_b48:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -3339,8 +3466,10 @@ xo_f_cabi_2eexit:
 	cbz x0, .Lf42_b5
 .Lf42_b2:
 	mov x0, x22
-	bl xo_tw_exit
-	b .Lf42_b54
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_tw_exit
 .Lf42_b5:
 	adrp x9, .Lxo_static
 	add x9, x9, :lo12:.Lxo_static
@@ -4319,7 +4448,10 @@ xo_f_cabi_2efiber__main:
 .Lf52_b7:
 	ldr x1, [x19, #2208]
 	mov x0, x20
-	bl xo_stack_switch
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_stack_switch
 .Lf52_b8:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -4333,6 +4465,29 @@ xo_f_cabi_2efiber__main:
 xo_f_cabi_2eflush:
 .Lf53_begin:
 	.cfi_startproc
+.Lf53_b0:
+.Lf53_b1:
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x11, x9, #24
+	add x9, x11, #8
+	ldr x10, [x9]
+	cmp x10, #0
+	b.eq .Lf53_b30
+.Lf53_b4:
+	ldr x10, [x11, #24]
+.Lf53_b5:
+	and x9, x10, #4
+	cmp x9, #0
+	b.ne .Lf53_b31
+	b .Lf53_b32
+.Lf53_b25:
+	add x0, x11, #16
+.Lf53_b26:
+	b xo_f_pool_2efutex__wake
+.Lf53_b30:
+	ret
+.Lf53_b31:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -4343,21 +4498,8 @@ xo_f_cabi_2eflush:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf53_b0:
-.Lf53_b1:
-	adrp x9, .Lxo_static
-	add x9, x9, :lo12:.Lxo_static
-	add x20, x9, #24
-	add x9, x20, #8
-	ldr x10, [x9]
-	cmp x10, #0
-	b.eq .Lf53_b30
-.Lf53_b4:
-	ldr x21, [x20, #24]
-.Lf53_b5:
-	and x9, x21, #4
-	cmp x9, #0
-	b.eq .Lf53_b15
+	mov x20, x11
+	mov x21, x10
 .Lf53_b6:
 	add x2, x20, #16
 	mov x19, #0
@@ -4373,6 +4515,14 @@ xo_f_cabi_2eflush:
 	add x0, x20, #16
 .Lf53_b11:
 	bl xo_f_pool_2elock__slow
+	b .Lf53_b15
+.Lf53_b32:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x11
+	mov x21, x10
 .Lf53_b15:
 	ldr x2, [x20, #8]
 	cmp x2, #0
@@ -4386,18 +4536,25 @@ xo_f_cabi_2eflush:
 .Lf53_b20:
 	and x9, x21, #4
 	cmp x9, #0
-	b.eq .Lf53_b30
+	b.ne .Lf53_b21
+.Lf53_b33:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
 .Lf53_b21:
 	add x1, x20, #16
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf53_b30
-.Lf53_b25:
-	add x0, x20, #16
-.Lf53_b26:
-	bl xo_f_pool_2efutex__wake
-.Lf53_b30:
+	b.ne .Lf53_b35
+.Lf53_b34:
+	mov x11, x20
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b .Lf53_b25
+.Lf53_b35:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -4472,7 +4629,10 @@ xo_f_cabi_2eflush__try:
 .Lf54_b21:
 	add x0, x20, #16
 .Lf54_b22:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf54_b28:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -4797,15 +4957,8 @@ xo_f_cabi_2efmt__time:
 xo_f_cabi_2efutex__wake:
 .Lf59_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf59_b0:
-	bl xo_f_pool_2efutex__wake
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_pool_2efutex__wake
 	.cfi_endproc
 
 // func cabi.heap_alloc
@@ -4814,11 +4967,6 @@ xo_f_cabi_2efutex__wake:
 xo_f_cabi_2eheap__alloc:
 .Lf60_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf60_b0:
 	mov x14, x0
 .Lf60_b1:
@@ -4842,8 +4990,7 @@ xo_f_cabi_2eheap__alloc:
 .Lf60_b5:
 	str x14, [x1, #72]
 	mov x0, x14
-	bl xo_heap_large
-	b .Lf60_b26
+	b xo_heap_large
 .Lf60_b7:
 	cmp x14, #1024
 	b.gt .Lf60_b12
@@ -4890,8 +5037,7 @@ xo_f_cabi_2eheap__alloc:
 .Lf60_b19:
 	mov x0, x1
 	mov x1, x14
-	bl xo_heap_grow
-	b .Lf60_b26
+	b xo_heap_grow
 .Lf60_b21:
 	add x11, x12, x13
 	str x11, [x1, #24]
@@ -4913,7 +5059,6 @@ xo_f_cabi_2eheap__alloc:
 	add x9, x9, #1
 	str x9, [x1, #48]
 .Lf60_b26:
-	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
 
@@ -4923,11 +5068,6 @@ xo_f_cabi_2eheap__alloc:
 xo_f_cabi_2eheap__free:
 .Lf61_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf61_b0:
 	mov x11, x0
 .Lf61_b1:
@@ -4939,8 +5079,7 @@ xo_f_cabi_2eheap__free:
 	cmp x9, #0
 	b.ge .Lf61_b4
 .Lf61_b2:
-	bl xo_heap_release
-	b .Lf61_b5
+	b xo_heap_release
 .Lf61_b4:
 	add x10, x1, x9, lsl #3
 	ldr x9, [x10, #80]
@@ -4950,7 +5089,6 @@ xo_f_cabi_2eheap__free:
 	add x9, x9, #1
 	str x9, [x10, #664]
 .Lf61_b5:
-	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
 
@@ -4960,6 +5098,55 @@ xo_f_cabi_2eheap__free:
 xo_f_cabi_2eheap__free__mt:
 .Lf62_begin:
 	.cfi_startproc
+.Lf62_b0:
+	mov x14, x0
+.Lf62_b1:
+	ldr x9, [x14, #8]
+	add x9, x9, #1
+	str x9, [x14, #8]
+	sub x0, x1, #8
+	ldr x13, [x0, #0]
+	cmp x13, #0
+	b.ge .Lf62_b4
+.Lf62_b2:
+	b xo_heap_release
+.Lf62_b4:
+	add x11, x14, x13, lsl #3
+	ldr x9, [x11, #80]
+	str x9, [x1, #0]
+	str x1, [x11, #80]
+	ldr x9, [x11, #664]
+	add x12, x9, #1
+	str x12, [x11, #664]
+	cmp x12, #8
+	b.lt .Lf62_b17
+.Lf62_b7:
+	lsl x10, x13, #4
+	cmp x13, #64
+	b.le .Lf62_b10
+.Lf62_b8:
+	sub x10, x13, #65
+	mov x9, #2048
+	lsl x10, x9, x10
+.Lf62_b10:
+	add x9, x12, #1
+	mul x10, x9, x10
+	movz x9, #1, lsl #16
+	cmp x10, x9
+	b.le .Lf62_b17
+.Lf62_b13:
+	ldr x9, [x11, #1248]
+	cmp x9, #0
+	b.ne .Lf62_b18
+.Lf62_b16:
+	ldr x9, [x11, #80]
+	str x9, [x11, #1248]
+	mov x9, #0
+	str x9, [x11, #80]
+	str x9, [x11, #664]
+.Lf62_b17:
+	ret
+.Lf62_b18:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -4971,67 +5158,25 @@ xo_f_cabi_2eheap__free__mt:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf62_b0:
-	mov x12, x0
-.Lf62_b1:
-	ldr x9, [x12, #8]
-	add x9, x9, #1
-	str x9, [x12, #8]
-	sub x0, x1, #8
-	ldr x22, [x0, #0]
-	cmp x22, #0
-	b.ge .Lf62_b4
-.Lf62_b2:
-	bl xo_heap_release
-	b .Lf62_b17
-.Lf62_b4:
-	add x21, x12, x22, lsl #3
-	ldr x9, [x21, #80]
-	str x9, [x1, #0]
-	str x1, [x21, #80]
-	ldr x9, [x21, #664]
-	add x11, x9, #1
-	str x11, [x21, #664]
-	cmp x11, #8
-	b.lt .Lf62_b17
-.Lf62_b7:
-	lsl x10, x22, #4
-	cmp x22, #64
-	b.le .Lf62_b10
-.Lf62_b8:
-	sub x10, x22, #65
-	mov x9, #2048
-	lsl x10, x9, x10
-.Lf62_b10:
-	add x9, x11, #1
-	mul x10, x9, x10
-	movz x9, #1, lsl #16
-	cmp x10, x9
-	b.le .Lf62_b17
-.Lf62_b13:
-	ldr x20, [x21, #1248]
-	cmp x20, #0
-	b.eq .Lf62_b16
+	mov x20, x13
+	mov x22, x11
+	mov x21, x9
+	mov x9, x14
 .Lf62_b14:
-	ldr x19, [x12, #64]
+	ldr x19, [x9, #64]
 	bl xo_heap_lock
-	add x9, x19, x22, lsl #3
+	add x9, x19, x20, lsl #3
 	ldr x10, [x9]
-	str x10, [x20, #8]
-	add x9, x19, x22, lsl #3
-	str x20, [x9]
+	str x10, [x21, #8]
+	add x9, x19, x20, lsl #3
+	str x21, [x9]
 	bl xo_heap_unlock
-.Lf62_b16:
-	ldr x9, [x21, #80]
-	str x9, [x21, #1248]
-	mov x9, #0
-	str x9, [x21, #80]
-	str x9, [x21, #664]
-.Lf62_b17:
+.Lf62_b19:
+	mov x11, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b .Lf62_b16
 	.cfi_endproc
 
 // func cabi.heap_refill
@@ -5040,6 +5185,87 @@ xo_f_cabi_2eheap__free__mt:
 xo_f_cabi_2eheap__refill:
 .Lf63_begin:
 	.cfi_startproc
+.Lf63_b0:
+.Lf63_b1:
+	ldr x9, [x0, #56]
+	cmp x1, x9
+	b.gt .Lf63_b38
+.Lf63_b4:
+	cmp x1, #1024
+	b.gt .Lf63_b9
+.Lf63_b5:
+	add x9, x1, #15
+	lsr x9, x9, #4
+	cmp x9, #0
+	b.ne .Lf63_b8
+.Lf63_b6:
+	mov x9, #1
+.Lf63_b8:
+	lsl x13, x9, #4
+	b .Lf63_b13
+.Lf63_b9:
+	mov x13, #2048
+	mov x9, #65
+.Lf63_b10:
+	cmp x13, x1
+	b.ge .Lf63_b13
+.Lf63_b11:
+	lsl x13, x13, #1
+	add x9, x9, #1
+	cmp x13, x1
+	b.lt .Lf63_b11
+.Lf63_b13:
+	add x8, x0, x9, lsl #3
+	ldr x10, [x8, #80]
+	cmp x10, #0
+	b.ne .Lf63_b38
+.Lf63_b16:
+	ldr x10, [x8, #1248]
+	cmp x10, #0
+	b.eq .Lf63_b18
+.Lf63_b17:
+	mov x9, #0
+	str x9, [x8, #1248]
+	b .Lf63_b28
+.Lf63_b18:
+	ldr x12, [x0, #64]
+	add x10, x12, x9, lsl #3
+	ldr x11, [x10]
+	cmp x11, #0
+	b.eq .Lf63_b38
+	b .Lf63_b39
+.Lf63_b28:
+	str x10, [x8, #80]
+	mov x12, #12
+	movz x10, #1, lsl #16
+	mov x11, #0
+	mov x14, #1
+	b .Lf63_b30
+.Lf63_b29:
+	cmp x12, #0
+	b.lt .Lf63_b34
+.Lf63_b30:
+	lsl x9, x13, x12
+	cmp x9, x10
+	b.gt .Lf63_b33
+.Lf63_b31:
+	sub x10, x10, x9
+	lsl x9, x14, x12
+	orr x11, x11, x9
+.Lf63_b33:
+	sub x12, x12, #1
+	cmp x12, #0
+	b.ge .Lf63_b30
+.Lf63_b34:
+	cmp x11, #8
+	b.ge .Lf63_b37
+.Lf63_b35:
+	mov x11, #8
+.Lf63_b37:
+	str x11, [x8, #664]
+.Lf63_b38:
+	ret
+.Lf63_b39:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -5053,103 +5279,39 @@ xo_f_cabi_2eheap__refill:
 	.cfi_offset w22, -32
 	.cfi_offset w21, -24
 	.cfi_offset w23, -16
-.Lf63_b0:
-.Lf63_b1:
-	ldr x9, [x0, #56]
-	cmp x1, x9
-	b.gt .Lf63_b38
-.Lf63_b4:
-	cmp x1, #1024
-	b.gt .Lf63_b9
-.Lf63_b5:
-	add x9, x1, #15
-	lsr x19, x9, #4
-	cmp x19, #0
-	b.ne .Lf63_b8
-.Lf63_b6:
-	mov x19, #1
-.Lf63_b8:
-	lsl x20, x19, #4
-	b .Lf63_b13
-.Lf63_b9:
-	mov x20, #2048
-	mov x19, #65
-.Lf63_b10:
-	cmp x20, x1
-	b.ge .Lf63_b13
-.Lf63_b11:
-	lsl x20, x20, #1
-	add x19, x19, #1
-	cmp x20, x1
-	b.lt .Lf63_b11
-.Lf63_b13:
-	add x23, x0, x19, lsl #3
-	ldr x9, [x23, #80]
-	cmp x9, #0
-	b.ne .Lf63_b38
-.Lf63_b16:
-	ldr x21, [x23, #1248]
-	cmp x21, #0
-	b.eq .Lf63_b18
-.Lf63_b17:
-	mov x9, #0
-	str x9, [x23, #1248]
-	b .Lf63_b28
-.Lf63_b18:
-	ldr x22, [x0, #64]
-	add x9, x22, x19, lsl #3
-	ldr x10, [x9]
-	cmp x10, #0
-	b.eq .Lf63_b38
+	mov x20, x9
+	mov x22, x13
+	mov x23, x8
+	mov x21, x12
 .Lf63_b21:
 	bl xo_heap_lock
-	add x9, x22, x19, lsl #3
-	ldr x21, [x9]
-	cmp x21, #0
+	add x9, x21, x20, lsl #3
+	ldr x19, [x9]
+	cmp x19, #0
 	b.eq .Lf63_b24
 .Lf63_b22:
-	ldr x10, [x21, #8]
-	add x9, x22, x19, lsl #3
+	ldr x10, [x19, #8]
+	add x9, x21, x20, lsl #3
 	str x10, [x9]
 .Lf63_b24:
 	bl xo_heap_unlock
-	cmp x21, #0
-	b.eq .Lf63_b38
-.Lf63_b28:
-	str x21, [x23, #80]
-	mov x12, #12
-	movz x10, #1, lsl #16
-	mov x11, #0
-	mov x13, #1
-	b .Lf63_b30
-.Lf63_b29:
-	cmp x12, #0
-	b.lt .Lf63_b34
-.Lf63_b30:
-	lsl x9, x20, x12
-	cmp x9, x10
-	b.gt .Lf63_b33
-.Lf63_b31:
-	sub x10, x10, x9
-	lsl x9, x13, x12
-	orr x11, x11, x9
-.Lf63_b33:
-	sub x12, x12, #1
-	cmp x12, #0
-	b.ge .Lf63_b30
-.Lf63_b34:
-	cmp x11, #8
-	b.ge .Lf63_b37
-.Lf63_b35:
-	mov x11, #8
-.Lf63_b37:
-	str x11, [x23, #664]
-.Lf63_b38:
+	cmp x19, #0
+	b.ne .Lf63_b41
+.Lf63_b40:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
+.Lf63_b41:
+	mov x13, x22
+	mov x8, x23
+	mov x10, x19
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b .Lf63_b28
 	.cfi_endproc
 
 // func cabi.heap_resize
@@ -5158,25 +5320,12 @@ xo_f_cabi_2eheap__refill:
 xo_f_cabi_2eheap__resize:
 .Lf64_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	stp x22, x21, [sp, #32]
-	.cfi_def_cfa w29, 48
-	.cfi_offset w29, -48
-	.cfi_offset w30, -40
-	.cfi_offset w20, -32
-	.cfi_offset w19, -24
-	.cfi_offset w22, -16
-	.cfi_offset w21, -8
 .Lf64_b0:
-	mov x19, x0
-	mov x21, x1
 .Lf64_b1:
-	sub x0, x21, #8
-	ldr x22, [x0, #0]
-	ldr x9, [x19, #56]
-	cmp x22, #0
+	sub x11, x1, #8
+	ldr x14, [x11, #0]
+	ldr x9, [x0, #56]
+	cmp x14, #0
 	b.ge .Lf64_b10
 .Lf64_b2:
 	cmp x3, x9
@@ -5185,24 +5334,23 @@ xo_f_cabi_2eheap__resize:
 	cmp x3, x2
 	b.le .Lf64_b8
 .Lf64_b6:
-	ldr x10, [x19, #16]
+	ldr x10, [x0, #16]
 	sub x9, x3, x2
 	add x9, x10, x9
-	str x9, [x19, #16]
+	str x9, [x0, #16]
 .Lf64_b8:
-	str x3, [x19, #72]
+	str x3, [x0, #72]
+	mov x0, x11
 	mov x1, x3
-	bl xo_heap_large_resize
-	mov x21, x0
-	b .Lf64_b44
+	b xo_heap_large_resize
 .Lf64_b10:
-	cmp x22, #0
+	cmp x14, #0
 	b.le .Lf64_b14
 .Lf64_b12:
 	cmp x3, x9
 	b.le .Lf64_b16
 .Lf64_b14:
-	mov x21, #0
+	mov x1, #0
 	b .Lf64_b44
 .Lf64_b16:
 	cmp x3, #1024
@@ -5216,7 +5364,7 @@ xo_f_cabi_2eheap__resize:
 	mov x9, #1
 .Lf64_b20:
 	lsl x11, x9, #4
-	cmp x9, x22
+	cmp x9, x14
 	b.eq .Lf64_b26
 	b .Lf64_b28
 .Lf64_b21:
@@ -5231,24 +5379,24 @@ xo_f_cabi_2eheap__resize:
 	cmp x11, x3
 	b.lt .Lf64_b23
 .Lf64_b25:
-	cmp x9, x22
+	cmp x9, x14
 	b.ne .Lf64_b28
 .Lf64_b26:
-	str x11, [x19, #72]
+	str x11, [x0, #72]
 	b .Lf64_b44
 .Lf64_b28:
 	cmp x4, #0
 	b.eq .Lf64_b31
 .Lf64_b29:
-	mov x21, #0
+	mov x1, #0
 	b .Lf64_b44
 .Lf64_b31:
-	add x10, x19, x9, lsl #3
-	ldr x20, [x10, #80]
-	cmp x20, #0
+	add x10, x0, x9, lsl #3
+	ldr x13, [x10, #80]
+	cmp x13, #0
 	b.eq .Lf64_b33
 .Lf64_b32:
-	ldr x12, [x20, #0]
+	ldr x12, [x13, #0]
 	str x12, [x10, #80]
 	ldr x9, [x10, #664]
 	sub x9, x9, #1
@@ -5257,58 +5405,88 @@ xo_f_cabi_2eheap__resize:
 	b .Lf64_b37
 .Lf64_b33:
 	add x13, x11, #8
-	ldp x12, x10, [x19, #24]
+	ldp x12, x10, [x0, #24]
 	sub x10, x10, x12
 	cmp x10, x13
 	b.ge .Lf64_b36
 .Lf64_b34:
-	mov x21, #0
+	mov x1, #0
 	b .Lf64_b44
 .Lf64_b36:
 	add x10, x12, x13
-	str x10, [x19, #24]
+	str x10, [x0, #24]
 	str x9, [x12, #0]
-	add x20, x12, #8
+	add x13, x12, #8
 .Lf64_b37:
-	ldr x9, [x19, #0]
+	ldr x9, [x0, #0]
 	add x9, x9, #1
-	str x9, [x19, #0]
-	ldr x9, [x19, #16]
+	str x9, [x0, #0]
+	ldr x9, [x0, #16]
 	add x9, x9, x3
-	str x9, [x19, #16]
-	ldr x9, [x19, #40]
+	str x9, [x0, #16]
+	ldr x9, [x0, #40]
 	cmp x9, #0
 	b.eq .Lf64_b40
 .Lf64_b38:
-	ldr x9, [x19, #48]
+	ldr x9, [x0, #48]
 	add x9, x9, #1
-	str x9, [x19, #48]
+	str x9, [x0, #48]
 .Lf64_b40:
-	str x11, [x19, #72]
+	str x11, [x0, #72]
 	cmp x2, x3
-	b.lt .Lf64_b43
+	b.lt .Lf64_b45
 .Lf64_b42:
 	mov x2, x3
+	b .Lf64_b46
+.Lf64_b44:
+	mov x0, x1
+	ret
+.Lf64_b45:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w22, -16
+	.cfi_offset w21, -8
+	mov x22, x13
+	mov x19, x0
+	mov x20, x1
+	mov x21, x14
+	b .Lf64_b43
+.Lf64_b46:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	mov x22, x13
+	mov x19, x0
+	mov x20, x1
+	mov x21, x14
 .Lf64_b43:
-	mov x0, x20
-	mov x1, x21
+	mov x0, x22
+	mov x1, x20
 	bl memcpy
 	ldr x9, [x19, #8]
 	add x9, x9, #1
 	str x9, [x19, #8]
-	add x10, x19, x22, lsl #3
+	add x10, x19, x21, lsl #3
 	ldr x9, [x10, #80]
-	str x9, [x21, #0]
-	str x21, [x10, #80]
+	str x9, [x20, #0]
+	str x20, [x10, #80]
 	ldr x9, [x10, #664]
 	add x9, x9, #1
 	str x9, [x10, #664]
-	mov x21, x20
-.Lf64_b44:
-	mov x0, x21
+.Lf64_b47:
+	mov x1, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
+	mov x0, x1
 	ret
 	.cfi_endproc
 
@@ -5390,15 +5568,8 @@ xo_f_cabi_2eis__space:
 xo_f_cabi_2elock__slow:
 .Lf66_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf66_b0:
-	bl xo_f_pool_2elock__slow
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_pool_2elock__slow
 	.cfi_endproc
 
 // func cabi.mono_ns
@@ -5407,15 +5578,8 @@ xo_f_cabi_2elock__slow:
 xo_f_cabi_2emono__ns:
 .Lf67_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf67_b0:
-	bl xo_f_sysio_2emono__ns
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_sysio_2emono__ns
 	.cfi_endproc
 
 // func cabi.net_admits_addr
@@ -5540,7 +5704,10 @@ xo_f_cabi_2enode__cancel:
 	b.ne .Lf69_b10
 .Lf69_b6:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf69_b10:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -5609,7 +5776,10 @@ xo_f_cabi_2enode__link:
 	b.ne .Lf70_b16
 .Lf70_b12:
 	mov x0, x22
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf70_b16:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -5623,6 +5793,17 @@ xo_f_cabi_2enode__link:
 xo_f_cabi_2enode__unlink:
 .Lf71_begin:
 	.cfi_startproc
+.Lf71_b0:
+.Lf71_b1:
+	ldr x9, [x0, #0]
+	cmp x9, #0
+	b.eq .Lf71_b19
+	b .Lf71_b20
+.Lf71_b15:
+	b xo_f_pool_2efutex__wake
+.Lf71_b19:
+	ret
+.Lf71_b20:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -5634,14 +5815,10 @@ xo_f_cabi_2enode__unlink:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf71_b0:
-	mov x21, x0
-.Lf71_b1:
-	ldr x20, [x21, #0]
-	cmp x20, #0
-	b.eq .Lf71_b19
+	mov x20, x0
+	mov x21, x9
 .Lf71_b4:
-	add x22, x20, #48
+	add x22, x21, #48
 	add x2, x22, #0
 	mov x19, #0
 	mov x1, #1
@@ -5655,7 +5832,7 @@ xo_f_cabi_2enode__unlink:
 	mov x0, x22
 	bl xo_f_pool_2elock__slow
 .Lf71_b7:
-	ldp x10, x9, [x21, #16]
+	ldp x10, x9, [x20, #16]
 	cmp x10, #0
 	b.eq .Lf71_b9
 .Lf71_b8:
@@ -5664,7 +5841,7 @@ xo_f_cabi_2enode__unlink:
 	b.ne .Lf71_b11
 	b .Lf71_b13
 .Lf71_b9:
-	str x9, [x20, #8]
+	str x9, [x21, #8]
 .Lf71_b10:
 	cmp x9, #0
 	b.eq .Lf71_b13
@@ -5672,18 +5849,21 @@ xo_f_cabi_2enode__unlink:
 	str x10, [x9, #16]
 .Lf71_b13:
 	mov x9, #0
-	str x9, [x21, #0]
-	stp x9, x9, [x21, #16]
+	str x9, [x20, #0]
+	stp x9, x9, [x20, #16]
 .Lf71_b14:
 	add x1, x22, #0
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf71_b19
-.Lf71_b15:
+	b.ne .Lf71_b22
+.Lf71_b21:
 	mov x0, x22
-	bl xo_f_pool_2efutex__wake
-.Lf71_b19:
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b .Lf71_b15
+.Lf71_b22:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -5731,7 +5911,9 @@ xo_f_cabi_2epark__reset:
 	b.ne .Lf72_b10
 .Lf72_b6:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	b xo_f_pool_2efutex__wake
 .Lf72_b10:
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
@@ -5744,15 +5926,8 @@ xo_f_cabi_2epark__reset:
 xo_f_cabi_2epark__signal:
 .Lf73_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf73_b0:
-	bl xo_f_pool_2epark__signal
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_pool_2epark__signal
 	.cfi_endproc
 
 // func cabi.park_wait
@@ -5761,15 +5936,8 @@ xo_f_cabi_2epark__signal:
 xo_f_cabi_2epark__wait:
 .Lf74_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf74_b0:
-	bl xo_f_pool_2epark__wait
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_pool_2epark__wait
 	.cfi_endproc
 
 // func cabi.parse_int
@@ -6059,16 +6227,9 @@ xo_f_cabi_2eport__out__of__range:
 xo_f_cabi_2eprint:
 .Lf77_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf77_b0:
 	mov x2, #0
-	bl xo_f_stdio_2eout
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_stdio_2eout
 	.cfi_endproc
 
 // func cabi.println
@@ -6077,16 +6238,9 @@ xo_f_cabi_2eprint:
 xo_f_cabi_2eprintln:
 .Lf78_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf78_b0:
 	mov x2, #1
-	bl xo_f_stdio_2eout
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_stdio_2eout
 	.cfi_endproc
 
 // func cabi.proc_start
@@ -6148,11 +6302,6 @@ xo_f_cabi_2erc__claim:
 xo_f_cabi_2erc__dec:
 .Lf81_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf81_b0:
 .Lf81_b1:
 	add x9, x0, #0
@@ -6172,25 +6321,37 @@ xo_f_cabi_2erc__dec:
 .Lf81_b7:
 	and x9, x10, #4611686018427387904
 	cmp x9, #0
-	b.ne .Lf81_b10
+	b.ne .Lf81_b15
 .Lf81_b8:
 	mov x0, #0
 	b .Lf81_b14
-.Lf81_b10:
-	add x1, x0, #0
-	mov x0, #1
-	bl __aarch64_ldadd8_acq_rel
-	mov x9, #-1
-	cmp x0, x9
-	b.ne .Lf81_b12
 .Lf81_b11:
 	mov x0, #1
 	b .Lf81_b14
 .Lf81_b12:
 	mov x0, #0
 .Lf81_b14:
-	ldp x29, x30, [sp], #16
 	ret
+.Lf81_b15:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x9, x0
+.Lf81_b10:
+	add x1, x9, #0
+	mov x0, #1
+	bl __aarch64_ldadd8_acq_rel
+	mov x9, #-1
+	cmp x0, x9
+	b.ne .Lf81_b17
+.Lf81_b16:
+	ldp x29, x30, [sp], #16
+	b .Lf81_b11
+.Lf81_b17:
+	ldp x29, x30, [sp], #16
+	b .Lf81_b12
 	.cfi_endproc
 
 // func cabi.rc_dec_shared
@@ -6228,31 +6389,34 @@ xo_f_cabi_2erc__dec__shared:
 xo_f_cabi_2erc__inc:
 .Lf83_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf83_b0:
-	mov x11, x0
 .Lf83_b1:
-	add x9, x11, #0
+	add x9, x0, #0
 	ldr x10, [x9]
 	cmp x10, #0
 	b.le .Lf83_b4
 .Lf83_b2:
 	add x9, x10, #1
-	str x9, [x11, #0]
+	str x9, [x0, #0]
 	b .Lf83_b8
 .Lf83_b4:
 	and x9, x10, #4611686018427387904
 	cmp x9, #0
-	b.eq .Lf83_b8
+	b.ne .Lf83_b9
+.Lf83_b8:
+	ret
+.Lf83_b9:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x9, x0
 .Lf83_b5:
 	mov x0, #-1
-	add x1, x11, #0
+	add x1, x9, #0
 	bl __aarch64_ldadd8_relax
-.Lf83_b8:
+.Lf83_b10:
 	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
@@ -6458,6 +6622,32 @@ xo_f_cabi_2ereal__ns:
 xo_f_cabi_2eregister__worker:
 .Lf86_begin:
 	.cfi_startproc
+.Lf86_b0:
+.Lf86_b1:
+	mov x9, #8
+	add x9, x9, x9, lsl #1
+	ldr x10, [x0, x9]
+	mov x9, #4096
+	cmp x10, x9
+	b.ge .Lf86_b6
+.Lf86_b4:
+	movz x9, #31765, lsl #0
+	movk x9, #32586, lsl #16
+	movk x9, #31161, lsl #32
+	movk x9, #40503, lsl #48
+	mul x9, x1, x9
+	orr x9, x9, #1
+	str x9, [x1, #2248]
+	str x0, [x1, #2360]
+	mov x9, #128
+	add x9, x9, x10, lsl #3
+	str x1, [x0, x9]
+	add x10, x10, #1
+	add x9, x0, #24
+	stlr x10, [x9]
+.Lf86_b5:
+	ret
+.Lf86_b6:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -6468,41 +6658,22 @@ xo_f_cabi_2eregister__worker:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf86_b0:
-	mov x21, x0
-	mov x19, x1
-.Lf86_b1:
-	mov x9, #8
-	add x9, x9, x9, lsl #1
-	ldr x20, [x21, x9]
-	mov x9, #4096
-	cmp x20, x9
-	b.lt .Lf86_b4
+	mov x19, x0
+	mov x20, x1
+	mov x21, x10
 .Lf86_b2:
 	mov x0, #9
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-.Lf86_b4:
-	movz x9, #31765, lsl #0
-	movk x9, #32586, lsl #16
-	movk x9, #31161, lsl #32
-	movk x9, #40503, lsl #48
-	mul x9, x19, x9
-	orr x9, x9, #1
-	str x9, [x19, #2248]
-	str x21, [x19, #2360]
-	mov x9, #128
-	add x9, x9, x20, lsl #3
-	str x19, [x21, x9]
-	add x10, x20, #1
-	add x9, x21, #24
-	stlr x10, [x9]
-.Lf86_b5:
+.Lf86_b7:
+	mov x0, x19
+	mov x1, x20
+	mov x10, x21
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b .Lf86_b4
 	.cfi_endproc
 
 // func cabi.scope_add
@@ -7416,15 +7587,8 @@ xo_f_cabi_2eutf8__encode:
 xo_f_cabi_2eworker__main:
 .Lf96_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf96_b0:
-	bl xo_f_pool_2eworker__main
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_pool_2eworker__main
 	.cfi_endproc
 
 // func cabi_poll.fd_close
@@ -7880,7 +8044,11 @@ xo_f_stdio_2eerr:
 .Lf104_b12:
 	mov x0, #1
 	mov x2, x0
-	bl xo_tw_write
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_tw_write
 .Lf104_b14:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -7944,7 +8112,11 @@ xo_f_stdio_2eerr:
 .Lf104_b42:
 	add x0, x21, #16
 .Lf104_b43:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b xo_f_pool_2efutex__wake
 .Lf104_b46:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -7992,11 +8164,10 @@ xo_f_process_2eexit:
 	cbz x0, .Lf105_b4
 .Lf105_b1:
 	mov x0, x22
-	bl xo_tw_exit
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b xo_tw_exit
 .Lf105_b4:
 	adrp x9, .Lxo_static
 	add x9, x9, :lo12:.Lxo_static
@@ -8399,11 +8570,10 @@ xo_f_sched_2efiber__main:
 .Lf109_b6:
 	ldr x1, [x19, #2208]
 	mov x0, x20
-	bl xo_stack_switch
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b xo_stack_switch
 	.cfi_endproc
 
 // func stdio.flush
@@ -8412,6 +8582,30 @@ xo_f_sched_2efiber__main:
 xo_f_stdio_2eflush:
 .Lf110_begin:
 	.cfi_startproc
+.Lf110_b0:
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x11, x9, #24
+	add x9, x11, #8
+	ldr x10, [x9]
+	cmp x10, #0
+	b.ne .Lf110_b3
+.Lf110_b1:
+	ret
+.Lf110_b3:
+	ldr x10, [x11, #24]
+.Lf110_b4:
+	and x9, x10, #4
+	cmp x9, #0
+	b.ne .Lf110_b29
+	b .Lf110_b30
+.Lf110_b24:
+	add x0, x11, #16
+.Lf110_b25:
+	b xo_f_pool_2efutex__wake
+.Lf110_b28:
+	ret
+.Lf110_b29:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -8422,25 +8616,8 @@ xo_f_stdio_2eflush:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf110_b0:
-	adrp x9, .Lxo_static
-	add x9, x9, :lo12:.Lxo_static
-	add x20, x9, #24
-	add x9, x20, #8
-	ldr x10, [x9]
-	cmp x10, #0
-	b.ne .Lf110_b3
-.Lf110_b1:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf110_b3:
-	ldr x21, [x20, #24]
-.Lf110_b4:
-	and x9, x21, #4
-	cmp x9, #0
-	b.eq .Lf110_b14
+	mov x20, x11
+	mov x21, x10
 .Lf110_b5:
 	add x2, x20, #16
 	mov x19, #0
@@ -8456,6 +8633,14 @@ xo_f_stdio_2eflush:
 	add x0, x20, #16
 .Lf110_b10:
 	bl xo_f_pool_2elock__slow
+	b .Lf110_b14
+.Lf110_b30:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x11
+	mov x21, x10
 .Lf110_b14:
 	ldr x2, [x20, #8]
 	cmp x2, #0
@@ -8469,18 +8654,25 @@ xo_f_stdio_2eflush:
 .Lf110_b19:
 	and x9, x21, #4
 	cmp x9, #0
-	b.eq .Lf110_b28
+	b.ne .Lf110_b20
+.Lf110_b31:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
 .Lf110_b20:
 	add x1, x20, #16
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf110_b28
-.Lf110_b24:
-	add x0, x20, #16
-.Lf110_b25:
-	bl xo_f_pool_2efutex__wake
-.Lf110_b28:
+	b.ne .Lf110_b33
+.Lf110_b32:
+	mov x11, x20
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b .Lf110_b24
+.Lf110_b33:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -8558,7 +8750,10 @@ xo_f_stdio_2eflush__try:
 .Lf111_b20:
 	add x0, x20, #16
 .Lf111_b21:
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf111_b26:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -9273,18 +9468,11 @@ xo_f_text_2eappend__duration:
 xo_f_num_2efloat__text:
 .Lf113_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf113_b0:
 	adrp x0, .Lxo_str1
 	add x0, x0, :lo12:.Lxo_str1
 	mov x1, #0
-	bl xo_f_num_2eappend__float
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2eappend__float
 	.cfi_endproc
 
 // func text.append_time
@@ -10345,11 +10533,6 @@ xo_f_text_2eappend__time:
 xo_f_alloc_2ealloc:
 .Lf115_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf115_b0:
 	mov x14, x0
 	ldr x9, [x14, #56]
@@ -10372,9 +10555,7 @@ xo_f_alloc_2ealloc:
 .Lf115_b4:
 	str x1, [x14, #72]
 	mov x0, x1
-	bl xo_heap_large
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_heap_large
 .Lf115_b6:
 	cmp x1, #1024
 	b.gt .Lf115_b11
@@ -10420,9 +10601,7 @@ xo_f_alloc_2ealloc:
 	b.ge .Lf115_b20
 .Lf115_b18:
 	mov x0, x14
-	bl xo_heap_grow
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_heap_grow
 .Lf115_b20:
 	add x11, x12, x13
 	str x11, [x14, #24]
@@ -10444,7 +10623,6 @@ xo_f_alloc_2ealloc:
 	add x9, x9, #1
 	str x9, [x14, #48]
 .Lf115_b24:
-	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
 
@@ -10454,11 +10632,6 @@ xo_f_alloc_2ealloc:
 xo_f_alloc_2efree:
 .Lf116_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf116_b0:
 	mov x10, x0
 	ldr x9, [x10, #8]
@@ -10469,9 +10642,7 @@ xo_f_alloc_2efree:
 	cmp x9, #0
 	b.ge .Lf116_b3
 .Lf116_b1:
-	bl xo_heap_release
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_heap_release
 .Lf116_b3:
 	add x10, x10, x9, lsl #3
 	ldr x9, [x10, #80]
@@ -10480,7 +10651,6 @@ xo_f_alloc_2efree:
 	ldr x9, [x10, #664]
 	add x9, x9, #1
 	str x9, [x10, #664]
-	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
 
@@ -10490,6 +10660,57 @@ xo_f_alloc_2efree:
 xo_f_alloc_2efree__mt:
 .Lf117_begin:
 	.cfi_startproc
+.Lf117_b0:
+	mov x14, x0
+	ldr x9, [x14, #8]
+	add x9, x9, #1
+	str x9, [x14, #8]
+	sub x0, x1, #8
+	ldr x13, [x0, #0]
+	cmp x13, #0
+	b.ge .Lf117_b3
+.Lf117_b1:
+	b xo_heap_release
+.Lf117_b3:
+	add x11, x14, x13, lsl #3
+	ldr x9, [x11, #80]
+	str x9, [x1, #0]
+	str x1, [x11, #80]
+	ldr x9, [x11, #664]
+	add x12, x9, #1
+	str x12, [x11, #664]
+	cmp x12, #8
+	b.ge .Lf117_b6
+.Lf117_b4:
+	ret
+.Lf117_b6:
+	lsl x10, x13, #4
+	cmp x13, #64
+	b.le .Lf117_b9
+.Lf117_b7:
+	sub x10, x13, #65
+	mov x9, #2048
+	lsl x10, x9, x10
+.Lf117_b9:
+	add x9, x12, #1
+	mul x10, x9, x10
+	movz x9, #1, lsl #16
+	cmp x10, x9
+	b.gt .Lf117_b12
+.Lf117_b10:
+	ret
+.Lf117_b12:
+	ldr x9, [x11, #1248]
+	cmp x9, #0
+	b.ne .Lf117_b16
+.Lf117_b15:
+	ldr x9, [x11, #80]
+	str x9, [x11, #1248]
+	mov x9, #0
+	str x9, [x11, #80]
+	str x9, [x11, #664]
+	ret
+.Lf117_b16:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -10501,78 +10722,25 @@ xo_f_alloc_2efree__mt:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf117_b0:
-	mov x12, x0
-	ldr x9, [x12, #8]
-	add x9, x9, #1
-	str x9, [x12, #8]
-	sub x0, x1, #8
-	ldr x22, [x0, #0]
-	cmp x22, #0
-	b.ge .Lf117_b3
-.Lf117_b1:
-	bl xo_heap_release
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf117_b3:
-	add x21, x12, x22, lsl #3
-	ldr x9, [x21, #80]
-	str x9, [x1, #0]
-	str x1, [x21, #80]
-	ldr x9, [x21, #664]
-	add x11, x9, #1
-	str x11, [x21, #664]
-	cmp x11, #8
-	b.ge .Lf117_b6
-.Lf117_b4:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf117_b6:
-	lsl x10, x22, #4
-	cmp x22, #64
-	b.le .Lf117_b9
-.Lf117_b7:
-	sub x10, x22, #65
-	mov x9, #2048
-	lsl x10, x9, x10
-.Lf117_b9:
-	add x9, x11, #1
-	mul x10, x9, x10
-	movz x9, #1, lsl #16
-	cmp x10, x9
-	b.gt .Lf117_b12
-.Lf117_b10:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf117_b12:
-	ldr x20, [x21, #1248]
-	cmp x20, #0
-	b.eq .Lf117_b15
+	mov x20, x13
+	mov x22, x11
+	mov x21, x9
+	mov x9, x14
 .Lf117_b13:
-	ldr x19, [x12, #64]
+	ldr x19, [x9, #64]
 	bl xo_heap_lock
-	add x9, x19, x22, lsl #3
+	add x9, x19, x20, lsl #3
 	ldr x10, [x9]
-	str x10, [x20, #8]
-	add x9, x19, x22, lsl #3
-	str x20, [x9]
+	str x10, [x21, #8]
+	add x9, x19, x20, lsl #3
+	str x21, [x9]
 	bl xo_heap_unlock
-.Lf117_b15:
-	ldr x9, [x21, #80]
-	str x9, [x21, #1248]
-	mov x9, #0
-	str x9, [x21, #80]
-	str x9, [x21, #664]
+.Lf117_b17:
+	mov x11, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b .Lf117_b15
 	.cfi_endproc
 
 // func alloc.refill
@@ -10581,6 +10749,92 @@ xo_f_alloc_2efree__mt:
 xo_f_alloc_2erefill:
 .Lf118_begin:
 	.cfi_startproc
+.Lf118_b0:
+	ldr x9, [x0, #56]
+	cmp x1, x9
+	b.le .Lf118_b3
+.Lf118_b1:
+	ret
+.Lf118_b3:
+	cmp x1, #1024
+	b.gt .Lf118_b8
+.Lf118_b4:
+	add x9, x1, #15
+	lsr x9, x9, #4
+	cmp x9, #0
+	b.ne .Lf118_b7
+.Lf118_b5:
+	mov x9, #1
+.Lf118_b7:
+	lsl x13, x9, #4
+	b .Lf118_b12
+.Lf118_b8:
+	mov x13, #2048
+	mov x9, #65
+.Lf118_b9:
+	cmp x13, x1
+	b.ge .Lf118_b12
+.Lf118_b10:
+	lsl x13, x13, #1
+	add x9, x9, #1
+	cmp x13, x1
+	b.lt .Lf118_b10
+.Lf118_b12:
+	add x8, x0, x9, lsl #3
+	ldr x10, [x8, #80]
+	cmp x10, #0
+	b.eq .Lf118_b15
+.Lf118_b13:
+	ret
+.Lf118_b15:
+	ldr x10, [x8, #1248]
+	cmp x10, #0
+	b.eq .Lf118_b17
+.Lf118_b16:
+	mov x9, #0
+	str x9, [x8, #1248]
+	b .Lf118_b27
+.Lf118_b17:
+	ldr x12, [x0, #64]
+	add x10, x12, x9, lsl #3
+	ldr x11, [x10]
+	cmp x11, #0
+	b.ne .Lf118_b37
+.Lf118_b18:
+	ret
+.Lf118_b24:
+	ret
+.Lf118_b27:
+	str x10, [x8, #80]
+	mov x12, #12
+	movz x10, #1, lsl #16
+	mov x11, #0
+	mov x14, #1
+	b .Lf118_b29
+.Lf118_b28:
+	cmp x12, #0
+	b.lt .Lf118_b33
+.Lf118_b29:
+	lsl x9, x13, x12
+	cmp x9, x10
+	b.gt .Lf118_b32
+.Lf118_b30:
+	sub x10, x10, x9
+	lsl x9, x14, x12
+	orr x11, x11, x9
+.Lf118_b32:
+	sub x12, x12, #1
+	cmp x12, #0
+	b.ge .Lf118_b29
+.Lf118_b33:
+	cmp x11, #8
+	b.ge .Lf118_b36
+.Lf118_b34:
+	mov x11, #8
+.Lf118_b36:
+	str x11, [x8, #664]
+	ret
+.Lf118_b37:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -10594,125 +10848,39 @@ xo_f_alloc_2erefill:
 	.cfi_offset w22, -32
 	.cfi_offset w21, -24
 	.cfi_offset w23, -16
-.Lf118_b0:
-	ldr x9, [x0, #56]
-	cmp x1, x9
-	b.le .Lf118_b3
-.Lf118_b1:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldr x23, [sp, #48]
-	ldp x29, x30, [sp], #64
-	ret
-.Lf118_b3:
-	cmp x1, #1024
-	b.gt .Lf118_b8
-.Lf118_b4:
-	add x9, x1, #15
-	lsr x19, x9, #4
-	cmp x19, #0
-	b.ne .Lf118_b7
-.Lf118_b5:
-	mov x19, #1
-.Lf118_b7:
-	lsl x20, x19, #4
-	b .Lf118_b12
-.Lf118_b8:
-	mov x20, #2048
-	mov x19, #65
-.Lf118_b9:
-	cmp x20, x1
-	b.ge .Lf118_b12
-.Lf118_b10:
-	lsl x20, x20, #1
-	add x19, x19, #1
-	cmp x20, x1
-	b.lt .Lf118_b10
-.Lf118_b12:
-	add x23, x0, x19, lsl #3
-	ldr x9, [x23, #80]
-	cmp x9, #0
-	b.eq .Lf118_b15
-.Lf118_b13:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldr x23, [sp, #48]
-	ldp x29, x30, [sp], #64
-	ret
-.Lf118_b15:
-	ldr x21, [x23, #1248]
-	cmp x21, #0
-	b.eq .Lf118_b17
-.Lf118_b16:
-	mov x9, #0
-	str x9, [x23, #1248]
-	b .Lf118_b27
-.Lf118_b17:
-	ldr x22, [x0, #64]
-	add x9, x22, x19, lsl #3
-	ldr x10, [x9]
-	cmp x10, #0
-	b.ne .Lf118_b20
-.Lf118_b18:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldr x23, [sp, #48]
-	ldp x29, x30, [sp], #64
-	ret
+	mov x20, x9
+	mov x22, x13
+	mov x23, x8
+	mov x21, x12
 .Lf118_b20:
 	bl xo_heap_lock
-	add x9, x22, x19, lsl #3
-	ldr x21, [x9]
-	cmp x21, #0
+	add x9, x21, x20, lsl #3
+	ldr x19, [x9]
+	cmp x19, #0
 	b.eq .Lf118_b23
 .Lf118_b21:
-	ldr x10, [x21, #8]
-	add x9, x22, x19, lsl #3
+	ldr x10, [x19, #8]
+	add x9, x21, x20, lsl #3
 	str x10, [x9]
 .Lf118_b23:
 	bl xo_heap_unlock
-	cmp x21, #0
-	b.ne .Lf118_b27
-.Lf118_b24:
+	cmp x19, #0
+	b.ne .Lf118_b39
+.Lf118_b38:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf118_b27:
-	str x21, [x23, #80]
-	mov x12, #12
-	movz x10, #1, lsl #16
-	mov x11, #0
-	mov x13, #1
-	b .Lf118_b29
-.Lf118_b28:
-	cmp x12, #0
-	b.lt .Lf118_b33
-.Lf118_b29:
-	lsl x9, x20, x12
-	cmp x9, x10
-	b.gt .Lf118_b32
-.Lf118_b30:
-	sub x10, x10, x9
-	lsl x9, x13, x12
-	orr x11, x11, x9
-.Lf118_b32:
-	sub x12, x12, #1
-	cmp x12, #0
-	b.ge .Lf118_b29
-.Lf118_b33:
-	cmp x11, #8
-	b.ge .Lf118_b36
-.Lf118_b34:
-	mov x11, #8
-.Lf118_b36:
-	str x11, [x23, #664]
+.Lf118_b39:
+	mov x13, x22
+	mov x8, x23
+	mov x10, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
+	b .Lf118_b27
 	.cfi_endproc
 
 // func alloc.resize
@@ -10721,24 +10889,11 @@ xo_f_alloc_2erefill:
 xo_f_alloc_2eresize:
 .Lf119_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	stp x22, x21, [sp, #32]
-	.cfi_def_cfa w29, 48
-	.cfi_offset w29, -48
-	.cfi_offset w30, -40
-	.cfi_offset w20, -32
-	.cfi_offset w19, -24
-	.cfi_offset w22, -16
-	.cfi_offset w21, -8
 .Lf119_b0:
-	mov x19, x0
-	mov x21, x1
-	sub x0, x21, #8
-	ldr x22, [x0, #0]
-	ldr x9, [x19, #56]
-	cmp x22, #0
+	sub x11, x1, #8
+	ldr x14, [x11, #0]
+	ldr x9, [x0, #56]
+	cmp x14, #0
 	b.ge .Lf119_b9
 .Lf119_b1:
 	cmp x3, x9
@@ -10747,29 +10902,23 @@ xo_f_alloc_2eresize:
 	cmp x3, x2
 	b.le .Lf119_b7
 .Lf119_b5:
-	ldr x10, [x19, #16]
+	ldr x10, [x0, #16]
 	sub x9, x3, x2
 	add x9, x10, x9
-	str x9, [x19, #16]
+	str x9, [x0, #16]
 .Lf119_b7:
-	str x3, [x19, #72]
+	str x3, [x0, #72]
+	mov x0, x11
 	mov x1, x3
-	bl xo_heap_large_resize
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
+	b xo_heap_large_resize
 .Lf119_b9:
-	cmp x22, #0
+	cmp x14, #0
 	b.le .Lf119_b13
 .Lf119_b11:
 	cmp x3, x9
 	b.le .Lf119_b15
 .Lf119_b13:
 	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
 	ret
 .Lf119_b15:
 	cmp x3, #1024
@@ -10783,7 +10932,7 @@ xo_f_alloc_2eresize:
 	mov x9, #1
 .Lf119_b19:
 	lsl x11, x9, #4
-	cmp x9, x22
+	cmp x9, x14
 	b.eq .Lf119_b25
 	b .Lf119_b27
 .Lf119_b20:
@@ -10798,31 +10947,25 @@ xo_f_alloc_2eresize:
 	cmp x11, x3
 	b.lt .Lf119_b22
 .Lf119_b24:
-	cmp x9, x22
+	cmp x9, x14
 	b.ne .Lf119_b27
 .Lf119_b25:
-	str x11, [x19, #72]
-	mov x0, x21
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
+	str x11, [x0, #72]
+	mov x0, x1
 	ret
 .Lf119_b27:
 	cmp x4, #0
 	b.eq .Lf119_b30
 .Lf119_b28:
 	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
 	ret
 .Lf119_b30:
-	add x10, x19, x9, lsl #3
-	ldr x20, [x10, #80]
-	cmp x20, #0
+	add x10, x0, x9, lsl #3
+	ldr x13, [x10, #80]
+	cmp x13, #0
 	b.eq .Lf119_b32
 .Lf119_b31:
-	ldr x12, [x20, #0]
+	ldr x12, [x13, #0]
 	str x12, [x10, #80]
 	ldr x9, [x10, #664]
 	sub x9, x9, #1
@@ -10831,56 +10974,80 @@ xo_f_alloc_2eresize:
 	b .Lf119_b36
 .Lf119_b32:
 	add x13, x11, #8
-	ldp x12, x10, [x19, #24]
+	ldp x12, x10, [x0, #24]
 	sub x10, x10, x12
 	cmp x10, x13
 	b.ge .Lf119_b35
 .Lf119_b33:
 	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
 	ret
 .Lf119_b35:
 	add x10, x12, x13
-	str x10, [x19, #24]
+	str x10, [x0, #24]
 	str x9, [x12, #0]
-	add x20, x12, #8
+	add x13, x12, #8
 .Lf119_b36:
-	ldr x9, [x19, #0]
+	ldr x9, [x0, #0]
 	add x9, x9, #1
-	str x9, [x19, #0]
-	ldr x9, [x19, #16]
+	str x9, [x0, #0]
+	ldr x9, [x0, #16]
 	add x9, x9, x3
-	str x9, [x19, #16]
-	ldr x9, [x19, #40]
+	str x9, [x0, #16]
+	ldr x9, [x0, #40]
 	cmp x9, #0
 	b.eq .Lf119_b39
 .Lf119_b37:
-	ldr x9, [x19, #48]
+	ldr x9, [x0, #48]
 	add x9, x9, #1
-	str x9, [x19, #48]
+	str x9, [x0, #48]
 .Lf119_b39:
-	str x11, [x19, #72]
+	str x11, [x0, #72]
 	cmp x2, x3
-	b.lt .Lf119_b42
+	b.lt .Lf119_b43
 .Lf119_b41:
 	mov x2, x3
+	b .Lf119_b44
+.Lf119_b43:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w22, -16
+	.cfi_offset w21, -8
+	mov x22, x13
+	mov x19, x0
+	mov x20, x1
+	mov x21, x14
+	b .Lf119_b42
+.Lf119_b44:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	mov x22, x13
+	mov x19, x0
+	mov x20, x1
+	mov x21, x14
 .Lf119_b42:
-	mov x0, x20
-	mov x1, x21
+	mov x0, x22
+	mov x1, x20
 	bl memcpy
 	ldr x9, [x19, #8]
 	add x9, x9, #1
 	str x9, [x19, #8]
-	add x10, x19, x22, lsl #3
+	add x10, x19, x21, lsl #3
 	ldr x9, [x10, #80]
-	str x9, [x21, #0]
-	str x21, [x10, #80]
+	str x9, [x20, #0]
+	str x20, [x10, #80]
 	ldr x9, [x10, #664]
 	add x9, x9, #1
 	str x9, [x10, #664]
-	mov x0, x20
+	mov x0, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -11760,7 +11927,10 @@ xo_f_pool_2enode__cancel:
 	b.ne .Lf124_b8
 .Lf124_b5:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf124_b8:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -11828,7 +11998,10 @@ xo_f_pool_2enode__link:
 	b.ne .Lf125_b14
 .Lf125_b11:
 	mov x0, x22
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf125_b14:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -11842,6 +12015,17 @@ xo_f_pool_2enode__link:
 xo_f_pool_2enode__unlink:
 .Lf126_begin:
 	.cfi_startproc
+.Lf126_b0:
+	ldr x9, [x0, #0]
+	cmp x9, #0
+	b.ne .Lf126_b18
+.Lf126_b1:
+	ret
+.Lf126_b14:
+	b xo_f_pool_2efutex__wake
+.Lf126_b17:
+	ret
+.Lf126_b18:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -11853,16 +12037,8 @@ xo_f_pool_2enode__unlink:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf126_b0:
 	mov x20, x0
-	ldr x21, [x20, #0]
-	cmp x21, #0
-	b.ne .Lf126_b3
-.Lf126_b1:
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
+	mov x21, x9
 .Lf126_b3:
 	add x22, x21, #48
 	add x2, x22, #0
@@ -11902,11 +12078,14 @@ xo_f_pool_2enode__unlink:
 	mov x0, #0
 	bl __aarch64_swp8_rel
 	cmp x0, #2
-	b.ne .Lf126_b17
-.Lf126_b14:
+	b.ne .Lf126_b20
+.Lf126_b19:
 	mov x0, x22
-	bl xo_f_pool_2efutex__wake
-.Lf126_b17:
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b .Lf126_b14
+.Lf126_b20:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -11953,7 +12132,9 @@ xo_f_pool_2epark__reset:
 	b.ne .Lf127_b8
 .Lf127_b5:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	b xo_f_pool_2efutex__wake
 .Lf127_b8:
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
@@ -12215,7 +12396,13 @@ xo_f_pool_2epark__signal:
 	b.ne .Lf128_b75
 .Lf128_b72:
 	mov x0, x28
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldp x28, x27, [sp, #88]
+	ldp x29, x30, [sp], #112
+	b xo_f_pool_2efutex__wake
 .Lf128_b75:
 	ldp x20, x19, [sp, #24]
 	ldp x22, x21, [sp, #40]
@@ -12652,7 +12839,13 @@ xo_f_pool_2epark__wait:
 	b.ne .Lf129_b143
 .Lf129_b137:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #24]
+	ldp x22, x21, [sp, #40]
+	ldp x24, x23, [sp, #56]
+	ldp x26, x25, [sp, #72]
+	ldp x28, x27, [sp, #88]
+	ldp x29, x30, [sp], #112
+	b xo_f_pool_2efutex__wake
 .Lf129_b143:
 	ldp x20, x19, [sp, #24]
 	ldp x22, x21, [sp, #40]
@@ -12835,11 +13028,6 @@ xo_f_rc_2eclaim:
 xo_f_rc_2edec:
 .Lf135_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf135_b0:
 	add x9, x0, #0
 	ldr x10, [x9]
@@ -12849,37 +13037,46 @@ xo_f_rc_2edec:
 	sub x9, x10, #1
 	str x9, [x0, #0]
 	mov x0, #0
-	ldp x29, x30, [sp], #16
 	ret
 .Lf135_b3:
 	b.ne .Lf135_b6
 .Lf135_b4:
 	mov x0, #1
-	ldp x29, x30, [sp], #16
 	ret
 .Lf135_b6:
 	and x9, x10, #4611686018427387904
 	cmp x9, #0
-	b.ne .Lf135_b9
+	b.ne .Lf135_b13
 .Lf135_b7:
 	mov x0, #0
-	ldp x29, x30, [sp], #16
 	ret
-.Lf135_b9:
-	add x1, x0, #0
-	mov x0, #1
-	bl __aarch64_ldadd8_acq_rel
-	mov x9, #-1
-	cmp x0, x9
-	b.ne .Lf135_b11
 .Lf135_b10:
 	mov x0, #1
 	b .Lf135_b12
 .Lf135_b11:
 	mov x0, #0
 .Lf135_b12:
-	ldp x29, x30, [sp], #16
 	ret
+.Lf135_b13:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x9, x0
+.Lf135_b9:
+	add x1, x9, #0
+	mov x0, #1
+	bl __aarch64_ldadd8_acq_rel
+	mov x9, #-1
+	cmp x0, x9
+	b.ne .Lf135_b15
+.Lf135_b14:
+	ldp x29, x30, [sp], #16
+	b .Lf135_b10
+.Lf135_b15:
+	ldp x29, x30, [sp], #16
+	b .Lf135_b11
 	.cfi_endproc
 
 // func rc.dec_shared
@@ -12916,31 +13113,33 @@ xo_f_rc_2edec__shared:
 xo_f_rc_2einc:
 .Lf137_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf137_b0:
-	mov x11, x0
-	add x9, x11, #0
+	add x9, x0, #0
 	ldr x10, [x9]
 	cmp x10, #0
 	b.le .Lf137_b3
 .Lf137_b1:
 	add x9, x10, #1
-	str x9, [x11, #0]
-	ldp x29, x30, [sp], #16
+	str x9, [x0, #0]
 	ret
 .Lf137_b3:
 	and x9, x10, #4611686018427387904
 	cmp x9, #0
-	b.eq .Lf137_b6
+	b.ne .Lf137_b7
+.Lf137_b6:
+	ret
+.Lf137_b7:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x9, x0
 .Lf137_b4:
 	mov x0, #-1
-	add x1, x11, #0
+	add x1, x9, #0
 	bl __aarch64_ldadd8_relax
-.Lf137_b6:
+.Lf137_b8:
 	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
@@ -13143,6 +13342,30 @@ xo_f_sysio_2ereal__ns:
 xo_f_pool_2eregister__worker:
 .Lf140_begin:
 	.cfi_startproc
+.Lf140_b0:
+	mov x9, #8
+	add x9, x9, x9, lsl #1
+	ldr x10, [x0, x9]
+	mov x9, #4096
+	cmp x10, x9
+	b.ge .Lf140_b4
+.Lf140_b3:
+	movz x9, #31765, lsl #0
+	movk x9, #32586, lsl #16
+	movk x9, #31161, lsl #32
+	movk x9, #40503, lsl #48
+	mul x9, x1, x9
+	orr x9, x9, #1
+	str x9, [x1, #2248]
+	str x0, [x1, #2360]
+	mov x9, #128
+	add x9, x9, x10, lsl #3
+	str x1, [x0, x9]
+	add x10, x10, #1
+	add x9, x0, #24
+	stlr x10, [x9]
+	ret
+.Lf140_b4:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -13153,39 +13376,22 @@ xo_f_pool_2eregister__worker:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf140_b0:
-	mov x21, x0
-	mov x19, x1
-	mov x9, #8
-	add x9, x9, x9, lsl #1
-	ldr x20, [x21, x9]
-	mov x9, #4096
-	cmp x20, x9
-	b.lt .Lf140_b3
+	mov x19, x0
+	mov x20, x1
+	mov x21, x10
 .Lf140_b1:
 	mov x0, #9
 	mov x1, #0
 	mov x2, x1
 	bl xo_sched_rt
-.Lf140_b3:
-	movz x9, #31765, lsl #0
-	movk x9, #32586, lsl #16
-	movk x9, #31161, lsl #32
-	movk x9, #40503, lsl #48
-	mul x9, x19, x9
-	orr x9, x9, #1
-	str x9, [x19, #2248]
-	str x21, [x19, #2360]
-	mov x9, #128
-	add x9, x9, x20, lsl #3
-	str x19, [x21, x9]
-	add x10, x20, #1
-	add x9, x21, #24
-	stlr x10, [x9]
+.Lf140_b5:
+	mov x0, x19
+	mov x1, x20
+	mov x10, x21
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b .Lf140_b3
 	.cfi_endproc
 
 // func pool.scope_add
@@ -16795,7 +17001,9 @@ xo_f_pool_2eunlock:
 	b.ne .Lf170_b3
 .Lf170_b1:
 	mov x0, x19
-	bl xo_f_pool_2efutex__wake
+	ldr x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	b xo_f_pool_2efutex__wake
 .Lf170_b3:
 	ldr x19, [sp, #16]
 	ldp x29, x30, [sp], #32
@@ -17017,14 +17225,13 @@ xo_f_pool_2epool__push:
 	bl xo_f_pool_2erq__put
 .Lf172_b46:
 	mov x0, x27
-	bl xo_f_pool_2ewakep
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x26, x25, [sp, #64]
 	ldp x28, x27, [sp, #80]
 	ldp x29, x30, [sp], #96
-	ret
+	b xo_f_pool_2ewakep
 .Lf172_fault1:
 	mov x0, x10
 	mov x1, #37
@@ -17084,7 +17291,10 @@ xo_f_pool_2enode__set__waiter:
 	b.ne .Lf173_b8
 .Lf173_b5:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf173_b8:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -17160,7 +17370,10 @@ xo_f_sched_2efiber__park:
 	ldr x1, [x0, #16]
 	mov x0, #3
 	mov x2, x21
-	bl xo_sched_hook
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_sched_hook
 .Lf176_b6:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
@@ -17673,6 +17886,37 @@ xo_f_pool_2efind__work:
 xo_f_pool_2esteal__round:
 .Lf178_begin:
 	.cfi_startproc
+.Lf178_b0:
+	add x9, x0, #24
+	ldar x12, [x9]
+	cmp x12, #0
+	b.ne .Lf178_b3
+.Lf178_b1:
+	mov x0, #0
+	ret
+.Lf178_b3:
+	ldr x10, [x1, #2248]
+	lsl x9, x10, #13
+	eor x10, x10, x9
+	lsr x9, x10, #7
+	eor x10, x10, x9
+	lsl x9, x10, #17
+	eor x9, x10, x9
+	str x9, [x1, #2248]
+	lsr x10, x9, #1
+	cmp x12, #0
+	b.eq .Lf178_fault1
+	sdiv x9, x10, x12
+	msub x11, x9, x12, x10
+	add x10, x1, #2368
+	mov x9, #0
+	b .Lf178_b64
+.Lf178_b60:
+	ret
+.Lf178_b63:
+	mov x0, #0
+	ret
+.Lf178_b64:
 	stp x29, x30, [sp, #-96]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -17693,51 +17937,33 @@ xo_f_pool_2esteal__round:
 	.cfi_offset w25, -24
 	.cfi_offset w28, -16
 	.cfi_offset w27, -8
-.Lf178_b0:
-	mov x27, x0
+	mov x23, x9
+	mov x26, x0
 	mov x25, x1
 	mov x28, x2
-	add x9, x27, #24
-	ldar x24, [x9]
-	cmp x24, #0
-	b.ne .Lf178_b3
-.Lf178_b1:
-	mov x0, #0
+	mov x24, x12
+	mov x27, x11
+	mov x22, x10
+.Lf178_b4:
+	cmp x23, x24
+	b.lt .Lf178_b5
+.Lf178_b65:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x26, x25, [sp, #64]
 	ldp x28, x27, [sp, #80]
 	ldp x29, x30, [sp], #96
-	ret
-.Lf178_b3:
-	ldr x10, [x25, #2248]
-	lsl x9, x10, #13
-	eor x10, x10, x9
-	lsr x9, x10, #7
-	eor x10, x10, x9
-	lsl x9, x10, #17
-	eor x9, x10, x9
-	str x9, [x25, #2248]
-	lsr x10, x9, #1
-	cmp x24, #0
-	b.eq .Lf178_fault1
-	sdiv x9, x10, x24
-	msub x26, x9, x24, x10
-	add x22, x25, #2368
-	mov x23, #0
-.Lf178_b4:
-	cmp x23, x24
-	b.ge .Lf178_b63
+	b .Lf178_b63
 .Lf178_b5:
-	add x10, x26, x23
+	add x10, x27, x23
 	cmp x24, #0
 	b.eq .Lf178_fault2
 	sdiv x9, x10, x24
 	msub x10, x9, x24, x10
 	mov x9, #128
 	add x9, x9, x10, lsl #3
-	ldr x21, [x27, x9]
+	ldr x21, [x26, x9]
 	add x23, x23, #1
 	cmp x21, x25
 	b.eq .Lf178_b4
@@ -17868,13 +18094,8 @@ xo_f_pool_2esteal__round:
 .Lf178_b55:
 	ldr x9, [x25, #2216]
 	cmp x9, #0
-	b.eq .Lf178_b60
-.Lf178_b57:
-	mov x0, #0
-	mov x1, #1
-	mov x2, x0
-	bl xo_sched_rt
-.Lf178_b60:
+	b.ne .Lf178_b57
+.Lf178_b66:
 	mov x0, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -17883,8 +18104,13 @@ xo_f_pool_2esteal__round:
 	ldp x28, x27, [sp, #80]
 	ldp x29, x30, [sp], #96
 	ret
-.Lf178_b63:
+.Lf178_b57:
 	mov x0, #0
+	mov x1, #1
+	mov x2, x0
+	bl xo_sched_rt
+.Lf178_b67:
+	mov x0, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
@@ -17893,6 +18119,13 @@ xo_f_pool_2esteal__round:
 	ldp x29, x30, [sp], #96
 	ret
 .Lf178_fault1:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	stp x28, x27, [sp, #80]
 	mov x0, x10
 	mov x1, #37
 	adrp x2, .Lxo_loc98
@@ -17914,6 +18147,14 @@ xo_f_pool_2esteal__round:
 xo_f_pool_2erun__item:
 .Lf179_begin:
 	.cfi_startproc
+.Lf179_b0:
+	and x9, x2, #1
+	cmp x9, #0
+	b.eq .Lf179_b12
+.Lf179_b1:
+	eor x2, x2, #1
+	b xo_f_pool_2erun__fiber
+.Lf179_b12:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -17925,22 +18166,9 @@ xo_f_pool_2erun__item:
 	.cfi_offset w19, -24
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
-.Lf179_b0:
 	mov x21, x0
 	mov x22, x1
 	mov x20, x2
-	and x9, x20, #1
-	cmp x9, #0
-	b.eq .Lf179_b4
-.Lf179_b1:
-	eor x2, x20, #1
-	mov x0, x21
-	mov x1, x22
-	bl xo_f_pool_2erun__fiber
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
 .Lf179_b4:
 	add x2, x20, #80
 	mov x19, #0
@@ -17967,11 +18195,10 @@ xo_f_pool_2erun__item:
 	mov x1, x22
 	mov x2, x0
 	mov x0, x21
-	bl xo_f_pool_2erun__fiber
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b xo_f_pool_2erun__fiber
 	.cfi_endproc
 
 // func pool.scope_prune
@@ -18244,7 +18471,13 @@ xo_f_pool_2erq__put:
 	b.ne .Lf181_b51
 .Lf181_b47:
 	ldr x0, [sp, #24]
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #32]
+	ldp x22, x21, [sp, #48]
+	ldp x24, x23, [sp, #64]
+	ldp x26, x25, [sp, #80]
+	ldp x28, x27, [sp, #96]
+	ldp x29, x30, [sp], #112
+	b xo_f_pool_2efutex__wake
 .Lf181_b51:
 	ldp x20, x19, [sp, #32]
 	ldp x22, x21, [sp, #48]
@@ -18275,6 +18508,37 @@ xo_f_pool_2erq__put:
 xo_f_pool_2ewakep:
 .Lf182_begin:
 	.cfi_startproc
+.Lf182_b0:
+	add x9, x0, #48
+	ldar x10, [x9]
+	cmp x10, #0
+	b.eq .Lf182_b3
+.Lf182_b1:
+	ret
+.Lf182_b3:
+	ldr x11, [x0, #8]
+	add x9, x0, #40
+	ldar x10, [x9]
+	cmp x10, #0
+	b.ne .Lf182_b55
+.Lf182_b4:
+	add x9, x0, #32
+	ldar x10, [x9]
+	cmp x10, x11
+	b.lt .Lf182_b54
+.Lf182_b7:
+	ret
+.Lf182_b10:
+	ret
+.Lf182_b23:
+	add x10, x11, #2232
+	mov x9, #1
+	stlr x9, [x10]
+	add x0, x11, #2232
+	b xo_f_pool_2efutex__wake
+.Lf182_b53:
+	ret
+.Lf182_b54:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -18285,33 +18549,16 @@ xo_f_pool_2ewakep:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-.Lf182_b0:
 	mov x20, x0
-	add x9, x20, #48
-	ldar x10, [x9]
-	cmp x10, #0
-	b.eq .Lf182_b3
-.Lf182_b1:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
-.Lf182_b3:
-	ldr x21, [x20, #8]
-	add x9, x20, #40
-	ldar x10, [x9]
-	cmp x10, #0
-	b.ne .Lf182_b9
-.Lf182_b4:
-	add x9, x20, #32
-	ldar x10, [x9]
-	cmp x10, x21
-	b.lt .Lf182_b9
-.Lf182_b7:
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	ret
+	mov x21, x11
+	b .Lf182_b9
+.Lf182_b55:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x0
+	mov x21, x11
 .Lf182_b9:
 	add x2, x20, #48
 	mov x19, #0
@@ -18322,7 +18569,7 @@ xo_f_pool_2ewakep:
 	cset x9, eq
 	eor x9, x9, #1
 	cbz x9, .Lf182_b12
-.Lf182_b10:
+.Lf182_b56:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -18366,16 +18613,12 @@ xo_f_pool_2ewakep:
 	mov x1, #3
 	mov x2, x0
 	bl xo_sched_rt
-.Lf182_b23:
-	add x10, x19, #2232
-	mov x9, #1
-	stlr x9, [x10]
-	add x0, x19, #2232
-	bl xo_f_pool_2efutex__wake
+.Lf182_b57:
+	mov x11, x19
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b .Lf182_b23
 .Lf182_b25:
 	add x9, x20, #32
 	ldar x10, [x9]
@@ -18492,12 +18735,17 @@ xo_f_pool_2ewakep:
 	bl xo_f_pool_2efutex__wake
 .Lf182_b50:
 	eor x9, x19, #1
-	cbz x9, .Lf182_b53
+	cbnz x9, .Lf182_b51
+.Lf182_b58:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
 .Lf182_b51:
 	mov x0, #-1
 	add x1, x20, #48
 	bl __aarch64_ldadd8_acq_rel
-.Lf182_b53:
+.Lf182_b59:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -18882,11 +19130,6 @@ xo_f_scan_2eends__with:
 xo_f_num_2edbox:
 .Lf187_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf187_b0:
 	mov x6, x0
 	movz x9, #16, lsl #48
@@ -18977,9 +19220,7 @@ xo_f_num_2edbox:
 	mov x9, #0
 	sub x9, x9, x14
 	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2etrimmed
 .Lf187_b31:
 	mov x9, #10
 	subs x9, x9, x13
@@ -19008,7 +19249,6 @@ xo_f_num_2edbox:
 .Lf187_b42:
 	mov x9, #0
 	sub x1, x9, x14
-	ldp x29, x30, [sp], #16
 	ret
 .Lf187_b45:
 	movz x10, #13377, lsl #0
@@ -19129,9 +19369,7 @@ xo_f_num_2edbox:
 	mov x9, #0
 	sub x9, x9, x4
 	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2etrimmed
 .Lf187_b95:
 	sub x0, x0, #1
 	mov x13, #1000
@@ -19191,9 +19429,7 @@ xo_f_num_2edbox:
 	mov x9, #0
 	sub x9, x9, x4
 	add x1, x9, #1
-	bl xo_f_num_2etrimmed
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2etrimmed
 .Lf187_b126:
 	adds x10, x13, #50
 	b.vs .Lf187_fault22
@@ -19274,9 +19510,13 @@ xo_f_num_2edbox:
 .Lf187_b155:
 	mov x9, #0
 	sub x1, x9, x4
-	ldp x29, x30, [sp], #16
 	ret
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 .Lf187_fault1:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x1
 	mov x2, x10
 	mov x1, #42
@@ -19285,6 +19525,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault2:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	sub x15, x11, x9
 	mov x0, x11
 	mov x2, x15
@@ -19294,6 +19536,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault3:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x1
 	mov x1, #43
 	mov x2, #1
@@ -19302,6 +19546,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault4:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	sub x15, x9, x10
 	mov x0, x10
 	mov x2, x15
@@ -19311,6 +19557,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault5:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x9
 	mov x1, #45
 	mov x2, #1
@@ -19319,6 +19567,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault6:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x13
 	mov x0, x15
 	mov x2, x13
@@ -19328,6 +19578,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault7:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x13
 	mov x0, x15
 	mov x2, x13
@@ -19337,6 +19589,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault8:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x17, #1
 	sub x15, x11, x17
 	mov x0, x15
@@ -19347,6 +19601,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault9:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x13
 	mov x0, x15
 	mov x2, x13
@@ -19356,6 +19612,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault10:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x17, #1
 	sub x15, x9, x17
 	mov x0, x15
@@ -19366,6 +19624,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault11:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x1
 	mov x2, x10
 	mov x1, #42
@@ -19374,6 +19634,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault12:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x1
 	mov x1, #43
 	mov x2, #1
@@ -19382,6 +19644,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault13:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	sub x15, x9, x10
 	mov x0, x10
 	mov x2, x15
@@ -19391,6 +19655,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault14:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x9
 	mov x1, #45
 	mov x2, #1
@@ -19399,6 +19665,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault15:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x6
 	mov x2, x11
 	mov x1, #42
@@ -19407,6 +19675,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault16:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x10
 	mov x1, #43
 	mov x2, #1
@@ -19415,6 +19685,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault17:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
@@ -19424,6 +19696,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault18:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x6
 	mov x2, x11
 	mov x1, #42
@@ -19432,6 +19706,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault19:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x17, #1
 	add x15, x10, x17
 	mov x0, x15
@@ -19442,6 +19718,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault20:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
@@ -19451,6 +19729,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault21:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
@@ -19460,6 +19740,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault22:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x13
 	mov x1, #43
 	mov x2, #50
@@ -19468,6 +19750,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault23:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x10
 	mov x2, x9
 	mov x1, #45
@@ -19476,6 +19760,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault24:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x6
 	mov x2, x10
 	mov x1, #42
@@ -19484,6 +19770,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault25:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
@@ -19493,6 +19781,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault26:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	add x15, x9, x7
 	mov x0, x15
 	mov x2, x7
@@ -19502,6 +19792,8 @@ xo_f_num_2edbox:
 	bl xo_fault_overflow
 	brk #1
 .Lf187_fault27:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
 	mov x0, x13
 	mov x1, #45
 	mov x2, #50
@@ -19517,38 +19809,19 @@ xo_f_num_2edbox:
 xo_f_num_2endigits:
 .Lf188_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf188_b0:
 	movz x9, #57600, lsl #0
 	movk x9, #1525, lsl #16
 	cmp x0, x9
 	b.ge .Lf188_b3
 .Lf188_b1:
-	bl xo_f_num_2endigits8
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2endigits8
 .Lf188_b3:
 	movz x9, #28609, lsl #16
 	movk x9, #34546, lsl #32
 	movk x9, #35, lsl #48
 	cmp x0, x9
-	b.ge .Lf188_b6
-.Lf188_b4:
-	movz x9, #59263, lsl #0
-	movk x9, #49712, lsl #16
-	movk x9, #15240, lsl #32
-	movk x9, #21990, lsl #48
-	smulh x9, x0, x9
-	asr x0, x9, #25
-	bl xo_f_num_2endigits8
-	adds x0, x0, #8
-	b.vs .Lf188_fault1
-	ldp x29, x30, [sp], #16
-	ret
+	b.lt .Lf188_b10
 .Lf188_b6:
 	movz x9, #23946, lsl #16
 	movk x9, #17784, lsl #32
@@ -19561,6 +19834,24 @@ xo_f_num_2endigits:
 .Lf188_b8:
 	mov x0, #18
 .Lf188_b9:
+	ret
+.Lf188_b10:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
+	mov x10, x0
+.Lf188_b4:
+	movz x9, #59263, lsl #0
+	movk x9, #49712, lsl #16
+	movk x9, #15240, lsl #32
+	movk x9, #21990, lsl #48
+	smulh x9, x10, x9
+	asr x0, x9, #25
+	bl xo_f_num_2endigits8
+	adds x0, x0, #8
+	b.vs .Lf188_fault1
 	ldp x29, x30, [sp], #16
 	ret
 .Lf188_fault1:
@@ -20577,11 +20868,6 @@ xo_f_num_2elayout:
 xo_f_sysio_2eclock__choose:
 .Lf190_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf190_b0:
 	mov x9, #0
 	cmp x9, #1
@@ -20603,15 +20889,12 @@ xo_f_sysio_2eclock__choose:
 	mov x0, #-3
 	b .Lf190_b12
 .Lf190_b10:
-	bl xo_f_linux_2evdso__clock
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_linux_2evdso__clock
 .Lf190_b12:
 	adrp x9, .Lxo_sys_words
 	add x9, x9, :lo12:.Lxo_sys_words
 	add x9, x9, #0
 	str x0, [x9]
-	ldp x29, x30, [sp], #16
 	ret
 .Lf190_b14:
 	brk #1
@@ -21693,7 +21976,13 @@ xo_f_pool_2einject__add:
 	b.ne .Lf196_b32
 .Lf196_b29:
 	ldr x0, [sp, #24]
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #32]
+	ldp x22, x21, [sp, #48]
+	ldp x24, x23, [sp, #64]
+	ldp x26, x25, [sp, #80]
+	ldp x28, x27, [sp, #96]
+	ldp x29, x30, [sp], #112
+	b xo_f_pool_2efutex__wake
 .Lf196_b32:
 	ldp x20, x19, [sp, #32]
 	ldp x22, x21, [sp, #48]
@@ -21784,6 +22073,48 @@ xo_f_pool_2etake__local:
 xo_f_pool_2einject__pop:
 .Lf198_begin:
 	.cfi_startproc
+.Lf198_b0:
+	add x9, x0, #88
+	ldar x10, [x9]
+	cmp x10, #0
+	b.ne .Lf198_b49
+.Lf198_b1:
+	mov x0, #0
+	ret
+.Lf198_b30:
+	mov x0, #0
+	ret
+.Lf198_b38:
+	cmp x9, #1
+	b.le .Lf198_b48
+.Lf198_b39:
+	add x7, x1, #2368
+	sub x8, x9, #1
+.Lf198_b40:
+	ldr x14, [x1, #128]
+	mov x12, #0
+	mov x13, #17
+.Lf198_b41:
+	cmp x12, x8
+	b.ge .Lf198_b43
+.Lf198_b42:
+	add x9, x14, x12
+	and x9, x9, #255
+	add x11, x13, x9
+	add x9, x7, x12, lsl #3
+	ldr x10, [x9]
+	add x9, x1, x11, lsl #3
+	str x10, [x9]
+	add x12, x12, #1
+	cmp x12, x8
+	b.lt .Lf198_b42
+.Lf198_b43:
+	add x10, x14, x8
+	add x9, x1, #128
+	stlr x10, [x9]
+.Lf198_b48:
+	ret
+.Lf198_b49:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -21797,20 +22128,8 @@ xo_f_pool_2einject__pop:
 	.cfi_offset w22, -32
 	.cfi_offset w21, -24
 	.cfi_offset w23, -16
-.Lf198_b0:
 	mov x22, x0
 	mov x21, x1
-	add x9, x22, #88
-	ldar x10, [x9]
-	cmp x10, #0
-	b.ne .Lf198_b3
-.Lf198_b1:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldr x23, [sp, #48]
-	ldp x29, x30, [sp], #64
-	ret
 .Lf198_b3:
 	add x23, x22, #64
 	add x2, x23, #0
@@ -21839,30 +22158,30 @@ xo_f_pool_2einject__pop:
 	ccmn x10, #1, #0, eq
 	b.eq .Lf198_fault2
 	sdiv x9, x7, x10
-	add x19, x9, #1
-	cmp x19, x7
+	add x20, x9, #1
+	cmp x20, x7
 	b.le .Lf198_b10
 .Lf198_b8:
-	mov x19, x7
+	mov x20, x7
 .Lf198_b10:
-	cmp x19, #128
+	cmp x20, #128
 	b.le .Lf198_b13
 .Lf198_b11:
-	mov x19, #128
+	mov x20, #128
 .Lf198_b13:
 	cmp x21, #0
 	b.ne .Lf198_b16
 .Lf198_b14:
-	mov x19, #1
+	mov x20, #1
 .Lf198_b16:
 	ldr x8, [x22, #72]
 	ldr x13, [x22, #96]
 	ldr x10, [x22, #80]
 	mov x12, #0
-	mov x20, x12
+	mov x19, x12
 	mov x14, #2368
 .Lf198_b17:
-	cmp x12, x19
+	cmp x12, x20
 	b.ge .Lf198_b22
 .Lf198_b18:
 	lsl x9, x10, #3
@@ -21873,7 +22192,7 @@ xo_f_pool_2einject__pop:
 	sub x9, x12, #1
 	add x9, x14, x9, lsl #3
 	str x11, [x21, x9]
-	mov x11, x20
+	mov x11, x19
 .Lf198_b21:
 	add x10, x10, #1
 	cmp x13, #0
@@ -21881,18 +22200,18 @@ xo_f_pool_2einject__pop:
 	sdiv x9, x10, x13
 	msub x10, x9, x13, x10
 	add x12, x12, #1
-	mov x20, x11
-	cmp x12, x19
+	mov x19, x11
+	cmp x12, x20
 	b.lt .Lf198_b18
 .Lf198_b22:
 	str x10, [x22, #80]
-	sub x10, x7, x19
+	sub x10, x7, x20
 	add x9, x22, #88
 	str x10, [x9]
 	b .Lf198_b25
 .Lf198_b23:
-	mov x19, #0
-	mov x20, x19
+	mov x20, #0
+	mov x19, x20
 .Lf198_b25:
 	add x1, x23, #0
 	mov x0, #0
@@ -21903,62 +22222,51 @@ xo_f_pool_2einject__pop:
 	mov x0, x23
 	bl xo_f_pool_2efutex__wake
 .Lf198_b29:
-	cmp x19, #0
+	cmp x20, #0
 	b.ne .Lf198_b32
-.Lf198_b30:
-	mov x0, #0
+.Lf198_b50:
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b .Lf198_b30
+.Lf198_b32:
+	cmp x21, #0
+	b.ne .Lf198_b33
+.Lf198_b51:
+	mov x0, x19
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf198_b32:
-	cmp x21, #0
-	b.eq .Lf198_b48
 .Lf198_b33:
 	ldr x9, [x21, #2216]
 	cmp x9, #0
-	b.eq .Lf198_b38
+	b.ne .Lf198_b35
+.Lf198_b52:
+	mov x9, x20
+	mov x0, x19
+	mov x1, x21
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	b .Lf198_b38
 .Lf198_b35:
 	mov x0, #0
 	mov x1, #2
 	mov x2, x0
 	bl xo_sched_rt
-.Lf198_b38:
-	cmp x19, #1
-	b.le .Lf198_b48
-.Lf198_b39:
-	add x7, x21, #2368
-	sub x8, x19, #1
-.Lf198_b40:
-	ldr x14, [x21, #128]
-	mov x12, #0
-	mov x13, #17
-.Lf198_b41:
-	cmp x12, x8
-	b.ge .Lf198_b43
-.Lf198_b42:
-	add x9, x14, x12
-	and x9, x9, #255
-	add x11, x13, x9
-	add x9, x7, x12, lsl #3
-	ldr x10, [x9]
-	add x9, x21, x11, lsl #3
-	str x10, [x9]
-	add x12, x12, #1
-	cmp x12, x8
-	b.lt .Lf198_b42
-.Lf198_b43:
-	add x10, x14, x8
-	add x9, x21, #128
-	stlr x10, [x9]
-.Lf198_b48:
-	mov x0, x20
+.Lf198_b53:
+	mov x9, x20
+	mov x0, x19
+	mov x1, x21
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
+	b .Lf198_b38
 .Lf198_fault1:
 	mov x0, x7
 	mov x1, #47
@@ -22204,8 +22512,12 @@ xo_f_pool_2erun__fiber:
 	b.ne .Lf201_b64
 .Lf201_b28:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
-	b .Lf201_b64
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldr x25, [sp, #64]
+	ldp x29, x30, [sp], #80
+	b xo_f_pool_2efutex__wake
 .Lf201_b34:
 	add x1, x20, #0
 	mov x0, #0
@@ -22297,7 +22609,12 @@ xo_f_pool_2erun__fiber:
 	brk #1
 .Lf201_b61:
 	sub x0, x21, #8
-	bl xo_heap_release
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldr x25, [sp, #64]
+	ldp x29, x30, [sp], #80
+	b xo_heap_release
 .Lf201_b64:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -24000,6 +24317,21 @@ xo_f_linux_2evdso__clock:
 xo_f_linux_2eclock__gettime:
 .Lf220_begin:
 	.cfi_startproc
+.Lf220_b0:
+	adrp x9, .Lxo_sys_words
+	add x9, x9, :lo12:.Lxo_sys_words
+	add x9, x9, #0
+	ldr x2, [x9]
+	cmp x2, #0
+	b.le .Lf220_b3
+.Lf220_b1:
+	br x2
+.Lf220_b3:
+	b.eq .Lf220_b19
+	b .Lf220_b20
+.Lf220_b18:
+	brk #1
+.Lf220_b19:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -24008,24 +24340,8 @@ xo_f_linux_2eclock__gettime:
 	.cfi_offset w30, -24
 	.cfi_offset w20, -16
 	.cfi_offset w19, -8
-.Lf220_b0:
 	mov x19, x0
 	mov x20, x1
-	adrp x9, .Lxo_sys_words
-	add x9, x9, :lo12:.Lxo_sys_words
-	add x9, x9, #0
-	ldr x2, [x9]
-	cmp x2, #0
-	b.le .Lf220_b3
-.Lf220_b1:
-	mov x0, x19
-	mov x1, x20
-	blr x2
-	ldp x20, x19, [sp, #16]
-	ldp x29, x30, [sp], #32
-	ret
-.Lf220_b3:
-	b.ne .Lf220_b10
 .Lf220_b4:
 	bl xo_f_linux_2evdso__clock
 	cmp x0, #0
@@ -24035,10 +24351,15 @@ xo_f_linux_2eclock__gettime:
 	mov x1, x20
 	mov x2, x0
 	mov x0, x19
-	blr x2
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
-	ret
+	br x2
+.Lf220_b20:
+	stp x29, x30, [sp, #-32]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	mov x19, x0
+	mov x20, x1
 .Lf220_b10:
 	mov x9, #1
 	cmp x9, #1
@@ -24049,6 +24370,9 @@ xo_f_linux_2eclock__gettime:
 .Lf220_b14:
 	cmp x9, #2
 	b.eq .Lf220_b15
+.Lf220_b21:
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
 	b .Lf220_b18
 .Lf220_b11:
 	mov x6, #113
@@ -24070,8 +24394,6 @@ xo_f_linux_2eclock__gettime:
 	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
-.Lf220_b18:
-	brk #1
 	.cfi_endproc
 
 // func ints.conv_fault
@@ -24223,12 +24545,11 @@ xo_f_ints_2econv__fault:
 	mov x0, x20
 	bl .Lxo_drop1
 .Lf221_b38:
-	bl xo_fault_continue
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
-	ret
+	b xo_fault_continue
 	.cfi_endproc
 
 // func sched.rq_get
@@ -24431,7 +24752,10 @@ xo_f_pool_2efiber__free:
 	b.ne .Lf224_b12
 .Lf224_b9:
 	mov x0, x20
-	bl xo_f_pool_2efutex__wake
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b xo_f_pool_2efutex__wake
 .Lf224_b12:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -24528,11 +24852,10 @@ xo_f_pool_2efiber__free:
 	brk #1
 .Lf224_b42:
 	sub x0, x21, #8
-	bl xo_heap_release
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b xo_heap_release
 	.cfi_endproc
 
 // func pool.map_stack
@@ -24572,11 +24895,10 @@ xo_f_pool_2emap__stack:
 	mov x0, #11
 	mov x1, x20
 	mov x2, x21
-	bl xo_sched_rt
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	ret
+	b xo_sched_rt
 .Lf225_b4:
 	mov x4, #-1
 .Lf225_b6:
@@ -24871,6 +25193,149 @@ xo_f_num_2eword__at:
 xo_f_linux_2eelf__dynsym:
 .Lf229_begin:
 	.cfi_startproc
+.Lf229_b0:
+	cmp x0, #0
+	b.ne .Lf229_b3
+.Lf229_b1:
+	mov x0, #0
+	ret
+.Lf229_b3:
+	ldr x6, [x0, #32]
+	ldrh w7, [x0, #54]
+	ldrh w5, [x0, #56]
+	mov x14, #0
+	mov x13, x14
+	mov x12, x14
+	mov x8, x14
+.Lf229_b4:
+	cmp x14, x5
+	b.ge .Lf229_b16
+.Lf229_b5:
+	adds x11, x0, x6
+	b.vs .Lf229_fault1
+	mul x10, x14, x7
+	smulh x9, x14, x7
+	cmp x9, x10, asr #63
+	b.ne .Lf229_fault2
+	adds x11, x11, x10
+	b.vs .Lf229_fault3
+	ldr w10, [x11, #0]
+	cmp x10, #1
+	b.ne .Lf229_b10
+.Lf229_b6:
+	eor x9, x13, #1
+.Lf229_b8:
+	cbz x9, .Lf229_b10
+.Lf229_b9:
+	ldr x9, [x11, #8]
+	adds x10, x0, x9
+	b.vs .Lf229_fault4
+	ldr x9, [x11, #16]
+	subs x8, x10, x9
+	b.vs .Lf229_fault5
+	mov x13, #1
+	b .Lf229_b15
+.Lf229_b10:
+	cmp x10, #2
+	b.ne .Lf229_b15
+.Lf229_b11:
+	ldr x9, [x11, #8]
+	adds x12, x0, x9
+	b.vs .Lf229_fault6
+.Lf229_b15:
+	add x14, x14, #1
+	cmp x14, x5
+	b.lt .Lf229_b5
+.Lf229_b16:
+	cmp x12, #0
+	b.eq .Lf229_b20
+.Lf229_b18:
+	eor x9, x13, #1
+.Lf229_b19:
+	cbz x9, .Lf229_b22
+.Lf229_b20:
+	mov x0, #0
+	ret
+.Lf229_b22:
+	mov x11, #0
+	mov x14, x11
+	mov x13, x11
+.Lf229_b24:
+	ldr x10, [x12, #0]
+	cmp x10, #0
+	b.eq .Lf229_b37
+.Lf229_b27:
+	ldr x9, [x12, #8]
+	cmp x10, #4
+	b.eq .Lf229_b28
+.Lf229_b29:
+	cmp x10, #5
+	b.eq .Lf229_b30
+.Lf229_b31:
+	cmp x10, #6
+	b.eq .Lf229_b32
+	b .Lf229_b36
+.Lf229_b28:
+	adds x13, x8, x9
+	b.vs .Lf229_fault7
+	b .Lf229_b36
+.Lf229_b30:
+	adds x14, x8, x9
+	b.vs .Lf229_fault8
+	b .Lf229_b36
+.Lf229_b32:
+	adds x11, x8, x9
+	b.vs .Lf229_fault9
+.Lf229_b36:
+	adds x12, x12, #16
+	b.vs .Lf229_fault10
+	b .Lf229_b24
+.Lf229_b37:
+	cmp x11, #0
+	b.eq .Lf229_b41
+.Lf229_b39:
+	cmp x14, #0
+	b.ne .Lf229_b43
+.Lf229_b41:
+	mov x0, #0
+	ret
+.Lf229_b43:
+	cmp x13, #0
+	b.eq .Lf229_b45
+.Lf229_b44:
+	ldr w10, [x13, #4]
+	b .Lf229_b50
+.Lf229_b45:
+	cmp x14, x11
+	b.le .Lf229_b47
+.Lf229_b46:
+	subs x10, x14, x11
+	b.vs .Lf229_fault11
+	movz x9, #43691, lsl #0
+	movk x9, #43690, lsl #16
+	movk x9, #43690, lsl #32
+	movk x9, #10922, lsl #48
+	smulh x9, x10, x9
+	asr x9, x9, #2
+	add x10, x9, x9, lsr #63
+	b .Lf229_b50
+.Lf229_b47:
+	mov x10, #0
+.Lf229_b50:
+	adds x12, x1, #16
+	b.vs .Lf229_fault12
+.Lf229_b51:
+	mov x9, #0
+	b .Lf229_b76
+.Lf229_b69:
+	ldr x9, [x9, #8]
+	adds x0, x8, x9
+	b.vs .Lf229_fault13
+	ret
+.Lf229_b75:
+	mov x0, #0
+	ret
+.Lf229_b76:
 	stp x29, x30, [sp, #-96]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -24890,169 +25355,32 @@ xo_f_linux_2eelf__dynsym:
 	.cfi_offset w26, -32
 	.cfi_offset w25, -24
 	.cfi_offset w27, -16
-.Lf229_b0:
-	mov x27, x2
-	cmp x0, #0
-	b.ne .Lf229_b3
-.Lf229_b1:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x24, x23, [sp, #48]
-	ldp x26, x25, [sp, #64]
-	ldr x27, [sp, #80]
-	ldp x29, x30, [sp], #96
-	ret
-.Lf229_b3:
-	ldr x7, [x0, #32]
-	ldrh w8, [x0, #54]
-	ldrh w6, [x0, #56]
-	mov x14, #0
-	mov x13, x14
-	mov x12, x14
+	mov x27, x8
+	mov x23, x11
 	mov x24, x14
-.Lf229_b4:
-	cmp x14, x6
-	b.ge .Lf229_b16
-.Lf229_b5:
-	adds x11, x0, x7
-	b.vs .Lf229_fault1
-	mul x10, x14, x8
-	smulh x9, x14, x8
-	cmp x9, x10, asr #63
-	b.ne .Lf229_fault2
-	adds x11, x11, x10
-	b.vs .Lf229_fault3
-	ldr w10, [x11, #0]
-	cmp x10, #1
-	b.ne .Lf229_b10
-.Lf229_b6:
-	eor x9, x13, #1
-.Lf229_b8:
-	cbz x9, .Lf229_b10
-.Lf229_b9:
-	ldr x9, [x11, #8]
-	adds x10, x0, x9
-	b.vs .Lf229_fault4
-	ldr x9, [x11, #16]
-	subs x24, x10, x9
-	b.vs .Lf229_fault5
-	mov x13, #1
-	b .Lf229_b15
-.Lf229_b10:
-	cmp x10, #2
-	b.ne .Lf229_b15
-.Lf229_b11:
-	ldr x9, [x11, #8]
-	adds x12, x0, x9
-	b.vs .Lf229_fault6
-.Lf229_b15:
-	add x14, x14, #1
-	cmp x14, x6
-	b.lt .Lf229_b5
-.Lf229_b16:
-	cmp x12, #0
-	b.eq .Lf229_b20
-.Lf229_b18:
-	eor x9, x13, #1
-.Lf229_b19:
-	cbz x9, .Lf229_b22
-.Lf229_b20:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x24, x23, [sp, #48]
-	ldp x26, x25, [sp, #64]
-	ldr x27, [sp, #80]
-	ldp x29, x30, [sp], #96
-	ret
-.Lf229_b22:
-	mov x22, #0
-	mov x23, x22
-	mov x11, x22
-.Lf229_b24:
-	ldr x10, [x12, #0]
-	cmp x10, #0
-	b.eq .Lf229_b37
-.Lf229_b27:
-	ldr x9, [x12, #8]
-	cmp x10, #4
-	b.eq .Lf229_b28
-.Lf229_b29:
-	cmp x10, #5
-	b.eq .Lf229_b30
-.Lf229_b31:
-	cmp x10, #6
-	b.eq .Lf229_b32
-	b .Lf229_b36
-.Lf229_b28:
-	adds x11, x24, x9
-	b.vs .Lf229_fault7
-	b .Lf229_b36
-.Lf229_b30:
-	adds x23, x24, x9
-	b.vs .Lf229_fault8
-	b .Lf229_b36
-.Lf229_b32:
-	adds x22, x24, x9
-	b.vs .Lf229_fault9
-.Lf229_b36:
-	adds x12, x12, #16
-	b.vs .Lf229_fault10
-	b .Lf229_b24
-.Lf229_b37:
-	cmp x22, #0
-	b.eq .Lf229_b41
-.Lf229_b39:
-	cmp x23, #0
-	b.ne .Lf229_b43
-.Lf229_b41:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x24, x23, [sp, #48]
-	ldp x26, x25, [sp, #64]
-	ldr x27, [sp, #80]
-	ldp x29, x30, [sp], #96
-	ret
-.Lf229_b43:
-	cmp x11, #0
-	b.eq .Lf229_b45
-.Lf229_b44:
-	ldr w25, [x11, #4]
-	b .Lf229_b50
-.Lf229_b45:
-	cmp x23, x22
-	b.le .Lf229_b47
-.Lf229_b46:
-	subs x10, x23, x22
-	b.vs .Lf229_fault11
-	movz x9, #43691, lsl #0
-	movk x9, #43690, lsl #16
-	movk x9, #43690, lsl #32
-	movk x9, #10922, lsl #48
-	smulh x9, x10, x9
-	asr x9, x9, #2
-	add x25, x9, x9, lsr #63
-	b .Lf229_b50
-.Lf229_b47:
-	mov x25, #0
-.Lf229_b50:
-	adds x26, x1, #16
-	b.vs .Lf229_fault12
-.Lf229_b51:
-	mov x20, #0
+	mov x25, x10
+	mov x26, x12
+	mov x20, x9
+	mov x22, x2
 .Lf229_b52:
 	cmp x20, x25
-	b.ge .Lf229_b75
+	b.lt .Lf229_b53
+.Lf229_b77:
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x26, x25, [sp, #64]
+	ldr x27, [sp, #80]
+	ldp x29, x30, [sp], #96
+	b .Lf229_b75
 .Lf229_b53:
 	mov x10, #24
 	mul x11, x10, x20
 	smulh x9, x10, x20
 	cmp x9, x11, asr #63
-	b.ne .Lf229_fault13
-	adds x21, x22, x11
-	b.vs .Lf229_fault14
+	b.ne .Lf229_fault14
+	adds x21, x23, x11
+	b.vs .Lf229_fault15
 	ldr w10, [x21, #0]
 	cmp x10, #0
 	b.eq .Lf229_b74
@@ -25066,63 +25394,75 @@ xo_f_linux_2eelf__dynsym:
 	cmp x9, #2
 	b.ne .Lf229_b74
 .Lf229_b60:
-	adds x19, x23, x10
-	b.vs .Lf229_fault15
+	adds x19, x24, x10
+	b.vs .Lf229_fault16
 .Lf229_b61:
-	cmp x27, #0
+	cmp x22, #0
 	b.eq .Lf229_b66
 .Lf229_b63:
 	mov x0, x19
 	mov x1, x26
-	mov x2, x27
+	mov x2, x22
 	bl memcmp
 	sxtw x9, w0
 	cmp x9, #0
 	b.ne .Lf229_b74
 .Lf229_b66:
-	ldrb w9, [x19, x27]
+	ldrb w9, [x19, x22]
 	cmp x9, #0
 	b.ne .Lf229_b74
-.Lf229_b69:
-	ldr x9, [x21, #8]
-	adds x0, x24, x9
-	b.vs .Lf229_fault16
+.Lf229_b78:
+	mov x8, x27
+	mov x9, x21
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x26, x25, [sp, #64]
 	ldr x27, [sp, #80]
 	ldp x29, x30, [sp], #96
-	ret
+	b .Lf229_b69
 .Lf229_b74:
 	add x20, x20, #1
 	cmp x20, x25
 	b.lt .Lf229_b53
-.Lf229_b75:
-	mov x0, #0
-	ldp x20, x19, [sp, #16]
-	ldp x22, x21, [sp, #32]
-	ldp x24, x23, [sp, #48]
-	ldp x26, x25, [sp, #64]
-	ldr x27, [sp, #80]
-	ldp x29, x30, [sp], #96
-	ret
+	b .Lf229_b77
 .Lf229_fault1:
-	mov x2, x7
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x2, x6
 	mov x1, #43
 	adrp x3, .Lxo_loc168
 	add x3, x3, :lo12:.Lxo_loc168
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault2:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x0, x14
-	mov x2, x8
+	mov x2, x7
 	mov x1, #42
 	adrp x3, .Lxo_loc169
 	add x3, x3, :lo12:.Lxo_loc169
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault3:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	sub x15, x11, x10
 	mov x0, x15
 	mov x2, x10
@@ -25132,6 +25472,13 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault4:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x2, x9
 	mov x1, #43
 	adrp x3, .Lxo_loc170
@@ -25139,6 +25486,13 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault5:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x0, x10
 	mov x2, x9
 	mov x1, #45
@@ -25147,6 +25501,13 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault6:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x2, x9
 	mov x1, #43
 	adrp x3, .Lxo_loc171
@@ -25154,7 +25515,14 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault7:
-	mov x0, x24
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x0, x8
 	mov x2, x9
 	mov x1, #43
 	adrp x3, .Lxo_loc172
@@ -25162,7 +25530,14 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault8:
-	mov x0, x24
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x0, x8
 	mov x2, x9
 	mov x1, #43
 	adrp x3, .Lxo_loc173
@@ -25170,7 +25545,14 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault9:
-	mov x0, x24
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x0, x8
 	mov x2, x9
 	mov x1, #43
 	adrp x3, .Lxo_loc174
@@ -25178,6 +25560,13 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault10:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x17, #16
 	sub x15, x12, x17
 	mov x0, x15
@@ -25188,14 +25577,28 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault11:
-	mov x0, x23
-	mov x2, x22
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x0, x14
+	mov x2, x11
 	mov x1, #45
 	adrp x3, .Lxo_loc176
 	add x3, x3, :lo12:.Lxo_loc176
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault12:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
 	mov x0, x1
 	mov x1, #43
 	mov x2, #16
@@ -25204,6 +25607,21 @@ xo_f_linux_2eelf__dynsym:
 	bl xo_fault_overflow
 	brk #1
 .Lf229_fault13:
+	stp x29, x30, [sp, #-96]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	stp x24, x23, [sp, #48]
+	stp x26, x25, [sp, #64]
+	str x27, [sp, #80]
+	mov x0, x8
+	mov x2, x9
+	mov x1, #43
+	adrp x3, .Lxo_loc180
+	add x3, x3, :lo12:.Lxo_loc180
+	bl xo_fault_overflow
+	brk #1
+.Lf229_fault14:
 	mov x0, x10
 	mov x2, x20
 	mov x1, #42
@@ -25211,28 +25629,20 @@ xo_f_linux_2eelf__dynsym:
 	add x3, x3, :lo12:.Lxo_loc177
 	bl xo_fault_overflow
 	brk #1
-.Lf229_fault14:
-	mov x0, x22
+.Lf229_fault15:
+	mov x0, x23
 	mov x2, x11
 	mov x1, #43
 	adrp x3, .Lxo_loc178
 	add x3, x3, :lo12:.Lxo_loc178
 	bl xo_fault_overflow
 	brk #1
-.Lf229_fault15:
-	mov x0, x23
+.Lf229_fault16:
+	mov x0, x24
 	mov x2, x10
 	mov x1, #43
 	adrp x3, .Lxo_loc179
 	add x3, x3, :lo12:.Lxo_loc179
-	bl xo_fault_overflow
-	brk #1
-.Lf229_fault16:
-	mov x0, x24
-	mov x2, x9
-	mov x1, #43
-	adrp x3, .Lxo_loc180
-	add x3, x3, :lo12:.Lxo_loc180
 	bl xo_fault_overflow
 	brk #1
 	.cfi_endproc
@@ -25552,23 +25962,26 @@ xo_f_pool_2elayer__arch:
 xo_f_raw_2emem__eq:
 .Lf234_begin:
 	.cfi_startproc
+.Lf234_b0:
+	cmp x2, #0
+	b.ne .Lf234_b4
+.Lf234_b1:
+	mov x0, #1
+.Lf234_b3:
+	ret
+.Lf234_b4:
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
 	.cfi_def_cfa w29, 16
 	.cfi_offset w30, -8
 	.cfi_offset w29, -16
-.Lf234_b0:
-	cmp x2, #0
-	b.ne .Lf234_b2
-.Lf234_b1:
-	mov x0, #1
-	b .Lf234_b3
 .Lf234_b2:
 	bl memcmp
 	sxtw x9, w0
 	cmp x9, #0
-	cset x0, eq
-.Lf234_b3:
+	cset x9, eq
+.Lf234_b5:
+	mov x0, x9
 	ldp x29, x30, [sp], #16
 	ret
 	.cfi_endproc
@@ -25579,11 +25992,6 @@ xo_f_raw_2emem__eq:
 xo_f_ints_2eappend__val:
 .Lf235_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-16]!
-	mov x29, sp
-	.cfi_def_cfa w29, 16
-	.cfi_offset w30, -8
-	.cfi_offset w29, -16
 .Lf235_b0:
 	cmp x4, #0
 	b.eq .Lf235_b6
@@ -25591,13 +25999,9 @@ xo_f_ints_2eappend__val:
 	cmp x3, #64
 	b.ne .Lf235_b6
 .Lf235_b4:
-	bl xo_f_show_2eappend__u64
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_show_2eappend__u64
 .Lf235_b6:
-	bl xo_f_num_2eappend__int
-	ldp x29, x30, [sp], #16
-	ret
+	b xo_f_num_2eappend__int
 	.cfi_endproc
 
 // func ints.type_name
