@@ -1,0 +1,95 @@
+// The Rand capability on the native backends (decision 0083), written in
+// Xo (the zero-C audit's B08; it was std/llrt/xo_crypto.c): the
+// operating system's generator, as Go's crypto/rand (getrandom on Linux,
+// getentropy on macOS, BCryptGenRandom on Windows, through linux.xo,
+// darwin.xo, windows.xo), or in a test binary the test world's seeded
+// generator (std/rt's seededRand: the C runtime's PCG, tw_rand_u64,
+// whose state the test world owns). The SSA builders call these as the
+// native prelude's llrt_rand_*; a WASI module keeps the wasm runtime's
+// rand (selfhost/wasm/rt2.xo).
+use native/llrt/darwin
+use native/llrt/ints
+use native/llrt/linux
+use native/llrt/windows
+use native/rt
+
+/// The generator of the target: 1 Linux getrandom, 2 macOS getentropy,
+/// 3 Windows BCryptGenRandom, 0 none (wasm32: a WASI module's Rand is
+/// the wasm runtime's, gotchas/wasm-target-os-is-the-host.md).
+fn source() -> Int {
+  match target.arch {
+    TargetArch.Wasm32 => 0
+    TargetArch.Arm64 | TargetArch.Amd64 => {
+      match target.os {
+        TargetOs.Linux => 1
+        TargetOs.Darwin => 2
+        TargetOs.Windows => 3
+        TargetOs.Wasi => 0
+      }
+    }
+  }
+}
+
+/// n bytes of the system's generator; faults when it fails or there is
+/// none (as the C runtime's cr_entropy did).
+fn entropy(n: Int) -> Bytes {
+  let (b, e) = match source() {
+    1 => linux.random(n)
+    2 => darwin.random(n)
+    3 => windows.random(n)
+    _ => (b"", -1)
+  }
+  if e != 0 {
+    rt.fault_raise("the system random number generator failed", "")
+  }
+  b
+}
+
+/// A random word: the test world's seeded generator in a test binary,
+/// else 8 bytes of the system's, the first lowest.
+pub fn next_u64() -> Int {
+  if rt.tw_seeded() {
+    return rt.tw_rand_u64()
+  }
+  rt.bytes_word(entropy(8), 0)
+}
+
+/// `rand.bytes(n)`: n random bytes (none when n <= 0); seeded, one draw
+/// per byte (its low byte), as std/rt's seededRand.M_bytes.
+pub fn next_bytes(n0: Int) -> Bytes {
+  let n = if n0 < 0 { 0 } else { n0 }
+  if !rt.tw_seeded() {
+    return entropy(n)
+  }
+  var s = rt.rs_with_cap(n)
+  for _ in 0..n {
+    s = rt.rs_push_byte(s, rt.tw_rand_u64() & 0xFF)
+  }
+  s.bytes()
+}
+
+/// `rand.int(lo, hi)`: uniform in [lo, hi) by rejection (std/rt's
+/// randRange); faults on an empty range at the position at.
+pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
+  if hi <= lo {
+    rt.fault_raise("rand.int(${lo}, ${hi}): the range is empty", at)
+  }
+  // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
+  // above limit are rejected
+  let span = rt.int_wrap(1, hi, lo)
+  let limit = rt.int_wrap(1, -1, ints.u64_rem(-1, span))
+  let flip = -9223372036854775807 - 1
+  while true {
+    let v = next_u64()
+    if (v ^ flip) < (limit ^ flip) {
+      return rt.int_wrap(0, lo, ints.u64_rem(v, span))
+    }
+  }
+  0
+}
+
+/// `rand.float()`: uniform in [0, 1) with 53 bits.
+pub fn next_float() -> Float { Float(rt.int_wrap(4, next_u64(), 11)) / 9007199254740992.0 }
+
+/// `rand.bool()`.
+pub fn next_bool() -> Bool { (next_u64() & 1) == 1 }

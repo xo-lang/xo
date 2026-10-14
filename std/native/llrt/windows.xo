@@ -200,7 +200,7 @@ pub fn clock_ns() -> Int {
 }
 
 /// BCryptGenRandom of n bytes, 256 at a time (as the C runtime's
-/// cr_entropy): the bytes and 0, or EIO.
+/// cr_entropy did): the bytes and 0, or EIO.
 pub fn random(n: Int) -> (Bytes, Int) {
   let buf = rt.bytes_buf(n)
   var off = 0

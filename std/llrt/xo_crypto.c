@@ -1,116 +1,17 @@
-// xo_crypto.c: std/crypto and the Rand capability on the native backends
-// (decision 0083), included by xo_std.c. The results are those of std/rt's
-// crypto.go (Go's crypto/sha256, crypto/hmac, crypto/pbkdf2,
-// crypto/subtle, encoding/base64, and the Argon2id and BLAKE2b vendored
-// from golang.org/x/crypto, decision 0059): SHA-256 (FIPS 180-4), HMAC
-// (RFC 2104), PBKDF2 (RFC 8018), BLAKE2b (RFC 7693), and Argon2 (RFC 9106)
-// written here from the specifications and x/crypto's portable code.
-// std/llrt/testdata/crypto_diff.c checks them against Go
-// (internal/llvm's TestCryptoDiff) and the RFC test vectors.
+// xo_crypto.c: what stays C of std/crypto on the native backends
+// (decision 0083), included by xo_std.c: crypto.equal and Ed25519, which
+// must be constant time (the zero-C audit's B09). The results are those
+// of std/rt's crypto.go (Go's crypto/subtle and crypto/ed25519).
+// std/llrt/testdata/crypto_diff.c checks them against Go (internal/llvm's
+// TestCryptoDiff) and the RFC 8032 vectors. The Rand capability is
+// std/native/llrt/rand.xo (B08).
 //
 // Static helpers are prefixed cr_ (gotchas/llrt-static-names-in-tests.md).
 
-#if defined(__APPLE__)
-#include <sys/random.h>
-#elif defined(__linux__)
-#include <sys/random.h>
-#endif
-
-// ---------------------------------------------------------------------------
-// Random bytes (the operating system's generator, as crypto/rand)
-
-// cr_entropy fills p with n bytes from getentropy (macOS) or getrandom
-// (Linux); faults when the system has none.
-static void cr_entropy(uint8_t *p, int64_t n) {
-	while (n > 0) {
-		size_t k = n > 256 ? 256 : (size_t)n;
-#if defined(__linux__)
-		ssize_t got = getrandom(p, k, 0);
-		if (got < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			fault_text("the system random number generator failed", "");
-		}
-		k = (size_t)got;
-#elif defined(_WIN32)
-		if (xo_w_entropy(p, k) != 0) {
-			fault_text("the system random number generator failed", "");
-		}
-#else
-		if (getentropy(p, k) != 0) {
-			fault_text("the system random number generator failed", "");
-		}
-#endif
-		p += k;
-		n -= (int64_t)k;
-	}
-}
-
-static uint64_t tw_rand_u64(void);
-
-static uint64_t cr_rand_u64(void) {
-	if (tw.on) {
-		// a test's Rand is seeded (std/rt's seededRand)
-		return tw_rand_u64();
-	}
-	uint8_t b[8];
-	cr_entropy(b, 8);
-	uint64_t v = 0;
-	for (int i = 0; i < 8; i++) {
-		v |= (uint64_t)b[i] << (8 * i);
-	}
-	return v;
-}
-
-// xo_rand_bytes is `rand.bytes(n)`: n random bytes (none when n <= 0).
-xo_rstr *xo_rand_bytes(int64_t n, int64_t *len) {
-	if (n < 0) {
-		n = 0;
-	}
-	xo_rstr *s = rs_new(n);
-	if (tw.on) {
-		// seeded: one draw per byte, as std/rt's seededRand.M_bytes
-		for (int64_t i = 0; i < n; i++) {
-			s->data[i] = (char)(uint8_t)tw_rand_u64();
-		}
-	} else {
-		cr_entropy((uint8_t *)s->data, n);
-	}
-	*len = n;
-	return s;
-}
-
-// xo_rand_int is `rand.int(lo, hi)`: uniform in [lo, hi) (std/rt's
-// randRange); faults on an empty range.
-int64_t xo_rand_int(int64_t lo, int64_t hi, const char *loc, int64_t ln) {
-	if (hi <= lo) {
-		char m[128];
-		snprintf(m, sizeof m, "rand.int(%lld, %lld): the range is empty", (long long)lo, (long long)hi);
-		fault_at(m, loc, ln);
-	}
-	uint64_t span = (uint64_t)hi - (uint64_t)lo;
-	uint64_t limit = UINT64_MAX - (UINT64_MAX % span);
-	for (;;) {
-		uint64_t v = cr_rand_u64();
-		if (v < limit) {
-			return (int64_t)((uint64_t)lo + v % span);
-		}
-	}
-}
-
-// xo_rand_float is `rand.float()`: uniform in [0, 1) with 53 bits.
-double xo_rand_float(void) { return (double)(cr_rand_u64() >> 11) / (double)(1ULL << 53); }
-
-// xo_rand_bool is `rand.bool()`.
-int64_t xo_rand_bool(void) { return (int64_t)(cr_rand_u64() & 1); }
-
 // SHA-256, HMAC, PBKDF2, BLAKE2b, Argon2, unpadded base64, and
 // verify_password are std/native/llrt/digest.xo (decisions 0193 and
-// 0195; decision 0198 deleted their C path). crypto.equal, SHA-512, and
-// Ed25519 stay C (constant time).
-
-static uint64_t cr_ror64(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }
+// 0195; decision 0198 deleted their C path), SHA-512 too (B08).
+// crypto.equal and Ed25519 stay C (constant time).
 
 static uint64_t cr_le64(const uint8_t *p) {
 	uint64_t v = 0;
@@ -140,7 +41,7 @@ int64_t xo_crypto_equal(const char *a, int64_t an, const char *b, int64_t bn) {
 }
 
 // ---------------------------------------------------------------------------
-// SHA-512 (FIPS 180-4) and Ed25519 (RFC 8032, decision 0189), as Go's
+// Ed25519 (RFC 8032, decision 0189), as Go's
 // crypto/ed25519: a 32 byte seed is the private key; verification
 // rejects a non canonical S, accepts the encodings of A that Go's
 // edwards25519 accepts (y not reduced, x = 0 with the sign bit), and
@@ -150,141 +51,19 @@ int64_t xo_crypto_equal(const char *a, int64_t an, const char *b, int64_t bn) {
 // addition law (it doubles too); scalar multiplication is a double and
 // always add ladder with masked selection (constant time in the scalar).
 
-typedef struct {
-	uint64_t h[8];
-	uint8_t buf[128];
-	uint64_t len; // bytes hashed so far
-	int n;        // bytes in buf
-} cr_sha512;
-
-static const uint64_t cr_sha512_k[80] = {
-	0x428A2F98D728AE22ULL, 0x7137449123EF65CDULL, 0xB5C0FBCFEC4D3B2FULL, 0xE9B5DBA58189DBBCULL,
-	0x3956C25BF348B538ULL, 0x59F111F1B605D019ULL, 0x923F82A4AF194F9BULL, 0xAB1C5ED5DA6D8118ULL,
-	0xD807AA98A3030242ULL, 0x12835B0145706FBEULL, 0x243185BE4EE4B28CULL, 0x550C7DC3D5FFB4E2ULL,
-	0x72BE5D74F27B896FULL, 0x80DEB1FE3B1696B1ULL, 0x9BDC06A725C71235ULL, 0xC19BF174CF692694ULL,
-	0xE49B69C19EF14AD2ULL, 0xEFBE4786384F25E3ULL, 0x0FC19DC68B8CD5B5ULL, 0x240CA1CC77AC9C65ULL,
-	0x2DE92C6F592B0275ULL, 0x4A7484AA6EA6E483ULL, 0x5CB0A9DCBD41FBD4ULL, 0x76F988DA831153B5ULL,
-	0x983E5152EE66DFABULL, 0xA831C66D2DB43210ULL, 0xB00327C898FB213FULL, 0xBF597FC7BEEF0EE4ULL,
-	0xC6E00BF33DA88FC2ULL, 0xD5A79147930AA725ULL, 0x06CA6351E003826FULL, 0x142929670A0E6E70ULL,
-	0x27B70A8546D22FFCULL, 0x2E1B21385C26C926ULL, 0x4D2C6DFC5AC42AEDULL, 0x53380D139D95B3DFULL,
-	0x650A73548BAF63DEULL, 0x766A0ABB3C77B2A8ULL, 0x81C2C92E47EDAEE6ULL, 0x92722C851482353BULL,
-	0xA2BFE8A14CF10364ULL, 0xA81A664BBC423001ULL, 0xC24B8B70D0F89791ULL, 0xC76C51A30654BE30ULL,
-	0xD192E819D6EF5218ULL, 0xD69906245565A910ULL, 0xF40E35855771202AULL, 0x106AA07032BBD1B8ULL,
-	0x19A4C116B8D2D0C8ULL, 0x1E376C085141AB53ULL, 0x2748774CDF8EEB99ULL, 0x34B0BCB5E19B48A8ULL,
-	0x391C0CB3C5C95A63ULL, 0x4ED8AA4AE3418ACBULL, 0x5B9CCA4F7763E373ULL, 0x682E6FF3D6B2B8A3ULL,
-	0x748F82EE5DEFB2FCULL, 0x78A5636F43172F60ULL, 0x84C87814A1F0AB72ULL, 0x8CC702081A6439ECULL,
-	0x90BEFFFA23631E28ULL, 0xA4506CEBDE82BDE9ULL, 0xBEF9A3F7B2C67915ULL, 0xC67178F2E372532BULL,
-	0xCA273ECEEA26619CULL, 0xD186B8C721C0C207ULL, 0xEADA7DD6CDE0EB1EULL, 0xF57D4F7FEE6ED178ULL,
-	0x06F067AA72176FBAULL, 0x0A637DC5A2C898A6ULL, 0x113F9804BEF90DAEULL, 0x1B710B35131C471BULL,
-	0x28DB77F523047D84ULL, 0x32CAAB7B40C72493ULL, 0x3C9EBE0A15C9BEBCULL, 0x431D67C49C100D4CULL,
-	0x4CC5D4BECB3E42B6ULL, 0x597F299CFC657E2AULL, 0x5FCB6FAB3AD6FAECULL, 0x6C44198C4A475817ULL,
-};
-
-static uint64_t cr_be64(const uint8_t *p) {
-	uint64_t v = 0;
-	for (int i = 0; i < 8; i++) {
-		v = v << 8 | p[i];
-	}
-	return v;
-}
-
-static void cr_sha512_block(uint64_t h[8], const uint8_t *p) {
-	uint64_t w[80];
-	for (int i = 0; i < 16; i++) {
-		w[i] = cr_be64(p + 8 * i);
-	}
-	for (int i = 16; i < 80; i++) {
-		uint64_t s0 = cr_ror64(w[i - 15], 1) ^ cr_ror64(w[i - 15], 8) ^ (w[i - 15] >> 7);
-		uint64_t s1 = cr_ror64(w[i - 2], 19) ^ cr_ror64(w[i - 2], 61) ^ (w[i - 2] >> 6);
-		w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-	}
-	uint64_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
-	for (int i = 0; i < 80; i++) {
-		uint64_t s1 = cr_ror64(e, 14) ^ cr_ror64(e, 18) ^ cr_ror64(e, 41);
-		uint64_t ch = (e & f) ^ (~e & g);
-		uint64_t t1 = hh + s1 + ch + cr_sha512_k[i] + w[i];
-		uint64_t s0 = cr_ror64(a, 28) ^ cr_ror64(a, 34) ^ cr_ror64(a, 39);
-		uint64_t maj = (a & b) ^ (a & c) ^ (b & c);
-		uint64_t t2 = s0 + maj;
-		hh = g;
-		g = f;
-		f = e;
-		e = d + t1;
-		d = c;
-		c = b;
-		b = a;
-		a = t1 + t2;
-	}
-	h[0] += a;
-	h[1] += b;
-	h[2] += c;
-	h[3] += d;
-	h[4] += e;
-	h[5] += f;
-	h[6] += g;
-	h[7] += hh;
-}
-
-static void cr_sha512_init(cr_sha512 *s) {
-	static const uint64_t iv[8] = {
-		0x6A09E667F3BCC908ULL, 0xBB67AE8584CAA73BULL, 0x3C6EF372FE94F82BULL, 0xA54FF53A5F1D36F1ULL,
-		0x510E527FADE682D1ULL, 0x9B05688C2B3E6C1FULL, 0x1F83D9ABFB41BD6BULL, 0x5BE0CD19137E2179ULL,
-	};
-	memcpy(s->h, iv, sizeof iv);
-	s->len = 0;
-	s->n = 0;
-}
-
-static void cr_sha512_write(cr_sha512 *s, const uint8_t *p, int64_t n) {
-	s->len += (uint64_t)n;
-	while (n > 0) {
-		if (s->n == 0 && n >= 128) {
-			cr_sha512_block(s->h, p);
-			p += 128;
-			n -= 128;
-			continue;
-		}
-		int k = 128 - s->n;
-		if (k > n) {
-			k = (int)n;
-		}
-		memcpy(s->buf + s->n, p, (size_t)k);
-		s->n += k;
-		p += k;
-		n -= k;
-		if (s->n == 128) {
-			cr_sha512_block(s->h, s->buf);
-			s->n = 0;
-		}
-	}
-}
-
-static void cr_sha512_sum(const cr_sha512 *s0, uint8_t out[64]) {
-	cr_sha512 s = *s0;
-	uint64_t bits = s.len * 8;
-	uint8_t pad[144] = {0x80};
-	int padn = (s.n < 112 ? 112 : 240) - s.n;
-	cr_sha512_write(&s, pad, padn);
-	uint8_t lenb[16] = {0};
-	for (int i = 0; i < 8; i++) {
-		lenb[15 - i] = (uint8_t)(bits >> (8 * i));
-	}
-	cr_sha512_write(&s, lenb, 16);
-	for (int i = 0; i < 8; i++) {
-		for (int j = 0; j < 8; j++) {
-			out[8 * i + j] = (uint8_t)(s.h[i] >> (56 - 8 * j));
-		}
-	}
+// SHA-512 is std/native/llrt/digest.xo (the zero-C audit's B08), through
+// the C ABI export of std/native/llrt/cabi_crypto.xo, which a program
+// carries when it uses std/crypto. A program without std/crypto never
+// reaches Ed25519 but links this C: the weak definition here keeps it
+// linking, and faults if it ever ran.
+__attribute__((weak)) void xo_x_sha512_3(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t c, int64_t cn, int64_t out) {
+	(void)a, (void)an, (void)b, (void)bn, (void)c, (void)cn, (void)out;
+	fault_text("SHA-512 without std/crypto's exports", "");
 }
 
 // SHA-512 of up to three byte strings one after the other.
 static void cr_sha512_3(const uint8_t *a, int64_t an, const uint8_t *b, int64_t bn, const uint8_t *c, int64_t cn, uint8_t out[64]) {
-	cr_sha512 s;
-	cr_sha512_init(&s);
-	cr_sha512_write(&s, a, an);
-	cr_sha512_write(&s, b, bn);
-	cr_sha512_write(&s, c, cn);
-	cr_sha512_sum(&s, out);
+	xo_x_sha512_3(XO_ADDR(a), an, XO_ADDR(b), bn, XO_ADDR(c), cn, XO_ADDR(out));
 }
 
 typedef unsigned __int128 cr_u128;
