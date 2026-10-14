@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/time on Windows: `time.local` builds the zone as Go's time.Local
+  does (transitions for 100 years each side of now, no rule past them,
+  Go's abbreviations), so times before 1926 and after 2125 match the Go
+  backend; the C before it extended the current rule to every year.
 - Native runtime (zero-C audit item B27): std/time's zone data and the
   table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
   program's zone data through a `xo_tz_table` accessor the build writes

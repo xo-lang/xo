@@ -620,9 +620,14 @@ frees the 533 (a) lines.)
   daylight saving (Pacific, Morocco at 1906): Go's initLocalFromTZI
   writes transitions for the years now - 100 to now + 100 and uses the
   first standard zone before them, while the TZif made here (as
-  xo_time.c's did) has none and extends the rule to every year. A known
-  difference that predates B27; next: write Go's transitions into the
-  TZif.
+  xo_time.c's did) has none and extends the rule to every year. Fixed
+  the same day (branch tz-win-local): tzhost.xo writes Go's two
+  transitions a year for the 100 years each side of now with no footer,
+  and takes the abbreviations in Go 1.26's order (the standard name,
+  then the key name for Go's registry lookup, then the capitals without
+  a default); scripts/ci/tzlocal-windows.sh run 38642276054: eight
+  system zones (both hemispheres, half hour, no daylight saving) the
+  same as the Go backend at nine times from 1843 to 2128.
 - **B28 and B29 HTTP loops.** The HTTP/2 frame reader, writer, and
   sending (xo_h2.c 670-2335) are bytes only and can move before the
   loops; the connection loops need await (B18), the poller (B22),
