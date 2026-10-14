@@ -153,8 +153,7 @@ typedef struct xo_heap {
 	// the thread's scratch for the structures of system calls (timespec,
 	// statx, sigaction; obj.xo scratch, work item B02)
 	char scratch[256];
-	struct xo_heap *next;  // all heaps, for the leak check
-	struct xo_heap *spare; // the list of heaps of exited threads
+	struct xo_heap *next; // all heaps, for the leak check (heapos.xo's list)
 	// the frees deferred by real-time sections (a fixed queue, so
 	// deferring never allocates)
 	int64_t rt_n;
@@ -166,6 +165,7 @@ _Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) =
 _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872 && offsetof(xo_heap, scratch) == 1880, "obj.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, next) == 2136, "heapos.xo's heap record offsets");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second
@@ -181,45 +181,22 @@ static xo_heap *solo_heap = &main_heap;
 // compiler emits (decision 0212; std/native/llrt/sched.xo TLS_HEAP)
 extern __thread int64_t xo_tlocal[16];
 #define tls_heap (*(xo_heap **)&xo_tlocal[3])
-static xo_heap *all_heaps = &main_heap;
-// spare_heaps are the heaps of worker threads that exited (decision
-// 0068): a new thread takes one before it makes a heap, so a program that
-// starts and ends many threads does not keep a heap per thread
-static xo_heap *spare_heaps;
-static pthread_mutex_t heaps_mu = PTHREAD_MUTEX_INITIALIZER;
 
 XO_NORETURN static void xo_oom(void) {
 	fputs("fault: out of memory\n", stderr);
 	exit(70);
 }
 
+// heap_slow is the calling thread's heap: its thread local, else a new
+// record that std/native/llrt/heapos.xo maps and links into the list of
+// every record (work item B21 part 2).
+int64_t xo_x_heap_thread(void);
 __attribute__((noinline)) static xo_heap *heap_slow(void) {
 	xo_heap *h = tls_heap;
 	if (h) {
 		return h;
 	}
-	pthread_mutex_lock(&heaps_mu);
-	h = spare_heaps;
-	if (h) {
-		spare_heaps = h->spare;
-		h->spare = NULL;
-		pthread_mutex_unlock(&heaps_mu);
-		tls_heap = h;
-		return h;
-	}
-	pthread_mutex_unlock(&heaps_mu);
-	h = calloc(1, sizeof(xo_heap));
-	if (!h) {
-		xo_oom();
-	}
-	h->mid_max = xo_mid_max;
-	h->central = central;
-	pthread_mutex_lock(&heaps_mu);
-	h->next = all_heaps;
-	all_heaps = h;
-	pthread_mutex_unlock(&heaps_mu);
-	tls_heap = h;
-	return h;
+	return (xo_heap *)(intptr_t)xo_x_heap_thread();
 }
 
 // heap returns the calling thread's heap.
@@ -234,7 +211,9 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt, int64_t libc);
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt, int64_t libc, int64_t hsize);
+void xo_x_heap_live(int64_t lp, int64_t tp);
+int64_t xo_x_heap_nfree(int64_t c);
 
 // heap_libc tells heapos.xo to map the heap's memory through the C
 // library: ThreadSanitizer and AddressSanitizer see the mappings
@@ -260,7 +239,7 @@ static int64_t rl_free_rt(int64_t l, int64_t h);
 static int64_t rc_defer_rt(int64_t obj, int64_t drop);
 
 static void obj_heap_init(xo_heap *h) {
-	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt, heap_libc);
+	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt, heap_libc, (int64_t)sizeof(xo_heap));
 }
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
@@ -293,15 +272,7 @@ void xo_rt_threads_begin(void) {
 // allocated, over all heaps (for the leak check, when no other thread
 // runs).
 void xo_rt_live(int64_t *live, int64_t *total) {
-	int64_t l = 0, t = 0;
-	pthread_mutex_lock(&heaps_mu);
-	for (xo_heap *h = all_heaps; h; h = h->next) {
-		l += h->allocs - h->frees;
-		t += h->allocs;
-	}
-	pthread_mutex_unlock(&heaps_mu);
-	*live = l;
-	*total = t;
+	xo_x_heap_live((int64_t)(intptr_t)live, (int64_t)(intptr_t)total);
 }
 
 // The runtime's records from malloc (std/native rt.heap_large): the C
@@ -6021,20 +5992,15 @@ int main(int argc, char **argv) {
 		// where the heap's memory went: the blocks on each class's free
 		// list at exit (every block ever carved, when nothing is live)
 		// and the chunks carved (diagnostics, bench/results/xo1-speed)
-		pthread_mutex_lock(&heaps_mu);
 		int64_t sum = 0;
 		for (int64_t c = 1; c <= XO_NCLASS; c++) {
-			int64_t n = 0;
-			for (xo_heap *h = all_heaps; h; h = h->next) {
-				n += h->nfree[c];
-			}
+			int64_t n = xo_x_heap_nfree(c);
 			int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
 			if (n > 0) {
 				fprintf(stderr, "xo heapstats: class %lld size %lld free blocks %lld bytes %lld\n", (long long)c, (long long)size, (long long)n, (long long)(n * (size + 8)));
 			}
 			sum += n * (size + 8);
 		}
-		pthread_mutex_unlock(&heaps_mu);
 		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks_now(), (long long)(xo_chunks_now() * (XO_CHUNK >> 20)), (long long)(sum >> 20));
 	}
 	return 0;

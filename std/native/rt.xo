@@ -230,7 +230,7 @@ fn prefetch(a: Int)
 ///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
 ///   15-17 std/native/llrt/ctx.xo: the addresses of ctx_root and the pool record, the program's task group (os.tasks; decision 0229)
 ///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)
-///   22-26 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library
+///   22-29 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library, the list of heap records, its lock, a record's size
 ///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
 fn static_word(k: Int) -> Int
 
