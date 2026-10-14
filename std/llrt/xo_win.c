@@ -232,33 +232,6 @@ static long xo_sysconf(int name) {
 }
 #define sysconf(n) xo_sysconf(n)
 
-#define CLOCK_REALTIME 0
-#define CLOCK_MONOTONIC 1
-
-static int xo_clock_gettime(int clk, struct timespec *ts) {
-	if (clk == CLOCK_MONOTONIC) {
-		static LARGE_INTEGER freq;
-		LARGE_INTEGER c;
-		if (freq.QuadPart == 0) {
-			QueryPerformanceFrequency(&freq);
-		}
-		QueryPerformanceCounter(&c);
-		int64_t s = c.QuadPart / freq.QuadPart;
-		int64_t r = c.QuadPart % freq.QuadPart;
-		ts->tv_sec = (time_t)s;
-		ts->tv_nsec = (long)(r * 1000000000 / freq.QuadPart);
-		return 0;
-	}
-	FILETIME ft;
-	GetSystemTimePreciseAsFileTime(&ft);
-	// 100 ns intervals since 1601-01-01
-	int64_t t = (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000LL;
-	ts->tv_sec = (time_t)(t / 10000000);
-	ts->tv_nsec = (long)((t % 10000000) * 100);
-	return 0;
-}
-#define clock_gettime(c, t) xo_clock_gettime((c), (t))
-
 // nanosleep sleeps at least ts (millisecond resolution)
 static inline int nanosleep(const struct timespec *ts, struct timespec *rem) {
 	(void)rem;

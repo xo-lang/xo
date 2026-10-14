@@ -4,7 +4,8 @@ Status: Accepted (2026-10-13), stage 1 implemented: the platform call
 mechanism (decision 0195 prerequisite 3 for macOS and Windows; decision
 0206 is Linux's), std/native/sys_darwin.xo and sys_windows.xo,
 std/native/llrt/darwin.xo and windows.xo, and std/native/llrt/sysio.xo
-over the three OS layers. Files: the declarations above; selfhost/ssa
+over the three OS layers; the clocks moved to Xo on every OS on
+2026-10-14 (work item B01, item 6). Files: the declarations above; selfhost/ssa
 call.xo (platform_call, target_os); selfhost/arm64 calls.xo
 (platform_call), mir.xo, regalloc.xo, emit.xo (variadic arguments on
 the stack); selfhost/llvm call.xo, gen.xo (goos); selfhost/wasm call.xo;
@@ -92,18 +93,32 @@ on Windows the POSIX shim xo_win.c over the Microsoft C runtime).
    TestErrnoTables). darwin/amd64 stays on the C runtime: its plain
    `stat` symbols are the old structure
    (gotchas/darwin-amd64-stat-inode64.md).
-6. **Clock.now stays on the C runtime** on every OS: from Xo on macOS
+6. **Clock.now stays on the C runtime** on every OS (superseded by the
+   move below): from Xo on macOS
    it took 0.934 times the C path's instructions on LLVM but 1.042 on
    arm64, whose emitter does not fold the `match` on `target` that
    chooses the layer (gotchas/arm64-match-target-not-folded.md).
    darwin.realtime_ns (clock_gettime_nsec_np) and windows.clock_ns are
    in place for when it moves.
+   **Moved (2026-10-14, work item B01)**: sysio.xo chooses the clock of
+   the build once into word 0 of rt.sys_words (the vDSO address on
+   Linux, a negative code for libSystem or kernel32), so Clock.now tests
+   no `target`; macOS calls clock_gettime_nsec_np inline and Windows
+   windows.clock_ns (GetSystemTimePreciseAsFileTime). The monotonic
+   clock is sysio.mono_ns on every OS (CLOCK_MONOTONIC through the vDSO
+   or libSystem, QueryPerformanceCounter on Windows), read by pool.xo
+   and, through cabi.xo's mono_ns and real_ns, by the C runtime
+   (mono_ns, xo_clock_now's real time, xo_tz_now); xo_win.c's
+   clock_gettime shim is deleted. The virtual clock of the test world
+   stays the C runtime's (rt.sys_clock_buf answers 0 while it runs).
+   Clock.now on macOS: see bench/results/clocks-2026-10-14.md.
 
 ### Next steps
 
-- Fold a branch or switch on a constant in selfhost/arm64 (and
-  internal/arm64 while the differential tests compare them), then move
-  Clock.now (`WORKLOADS=clock bench/perf/sysio/measure.sh`).
+- Fold a branch or switch on a constant in selfhost/arm64 (Clock.now
+  no longer waits for it: it moved with a word chosen once, item 6;
+  pool.xo's other `match layer()` calls and sysio's file layers still
+  pay the compares).
 - rand.bytes and rand.int from Xo: darwin.random (getentropy) and
   windows.random (BCryptGenRandom) exist; the C runtime's seeded test
   world (tw.on) needs a test intrinsic as rt.tw_fake is for files.

@@ -61,12 +61,15 @@ int64_t xo_tw_fake(int64_t real) { return tw_is_fake((int)real); }
 // Clock.now's timespec (Xo calls the vDSO with it), or 0 while the test
 // world's virtual clock runs: one call on the clock's path (decision
 // 0206 stage 2).
-// Off Linux it is 0 too (Clock.now is the C runtime's there).
+// Off Linux since work item B01 (Clock.now is Xo there too): on macOS it
+// is 1, not an address, since clock_gettime_nsec_np takes no structure
+// and a thread local's address costs a call of the TLV getter there
+// (bench/results/clocks-2026-10-14.md).
 int64_t xo_sys_clock_buf(void) {
-#if defined(__linux__)
-	return tw.virt ? 0 : (int64_t)(uintptr_t)sys_scratch.data;
+#if defined(__APPLE__)
+	return tw.virt ? 0 : 1;
 #else
-	return 0;
+	return tw.virt ? 0 : (int64_t)(uintptr_t)sys_scratch.data;
 #endif
 }
 

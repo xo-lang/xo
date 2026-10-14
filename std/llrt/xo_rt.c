@@ -2021,11 +2021,10 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
-static int64_t mono_ns(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
-}
+// mono_ns is the monotonic clock in nanoseconds, read in Xo
+// (std/native/llrt/sysio.xo mono_ns through cabi.xo; work item B01).
+int64_t xo_x_mono_ns(void);
+static inline int64_t mono_ns(void) { return xo_x_mono_ns(); }
 
 // tnow is the time of timers: monotonic ns, or the virtual clock in the
 // test world.
@@ -4071,8 +4070,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 2:
 		tw_kick();
 		return 0;
-	case 3:
-		return mono_ns();
 	case 4: { // fiber a got a new stack
 		xo_fiber *f = (xo_fiber *)(intptr_t)a;
 		(void)f;
@@ -6532,13 +6529,16 @@ static void *poller_main(void *arg) {
 
 static void tw_sleep_record(int64_t d);
 
+// xo_clock_now is the test world's virtual clock while it runs, else the
+// wall clock read in Xo (sysio.xo real_ns through cabi.xo; work item
+// B01). Clock.now itself is sysio.xo's clock_now, which calls this only
+// for the virtual clock.
+int64_t xo_x_real_ns(void);
 int64_t xo_clock_now(void) {
 	if (tw.virt) {
 		return __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE);
 	}
-	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+	return xo_x_real_ns();
 }
 
 // clock_wait sleeps d unless the task is or becomes canceled; it returns

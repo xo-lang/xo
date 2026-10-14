@@ -14,6 +14,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   or the test world's seeded draws, the same values as before). The C
   SHA-512 is deleted; the C Rand functions stay until the seed is a
   release with this change (gotchas/runtime-c-the-seed-still-calls.md).
+- The clocks are read from Xo on every OS (work item B01, decision
+  0213 item 6): Clock.now on macOS (clock_gettime_nsec_np) and Windows
+  (GetSystemTimePreciseAsFileTime), and the monotonic clock of the
+  scheduler, timers, and budgets everywhere (the vDSO on Linux,
+  libSystem on macOS, QueryPerformanceCounter on Windows), the clock of
+  the build chosen once into a word so the hot path tests no target.
+  The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
+  exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
+  workload.
 - Native runtime: the C with no caller is deleted (zero-C audit item
   W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
   lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,

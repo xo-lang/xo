@@ -26,6 +26,12 @@ fn GetFileAttributesW(name: Bytes) -> UInt32
 fn GetFileType(h: Int) -> UInt32
 /// GetSystemTimePreciseAsFileTime into the FILETIME at the address ft.
 fn GetSystemTimePreciseAsFileTime(ft: Int)
+/// QueryPerformanceCounter into the LARGE_INTEGER at the address c:
+/// nonzero (it never fails on Windows XP and later).
+fn QueryPerformanceCounter(c: Int) -> Int32
+/// QueryPerformanceFrequency into the LARGE_INTEGER at the address f:
+/// counts per second, fixed at boot.
+fn QueryPerformanceFrequency(f: Int) -> Int32
 /// BCryptGenRandom (bcrypt.dll): 0 (STATUS_SUCCESS), or an NTSTATUS.
 fn BCryptGenRandom(alg: Int, buf: Int, n: Int, flags: Int) -> Int32
 
