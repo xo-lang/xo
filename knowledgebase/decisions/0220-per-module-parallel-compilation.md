@@ -88,7 +88,12 @@ stages:
    from memory (mem_drop): arm64 assembly 22.8 to 18.9 million lines,
    calls 4.64 to 1.27 million, LLVM IR 1.12 GB to 313 MB; the arm64
    self build 49.83 s to 34.15 s on r8g.8xlarge, the x86 -O0 self build
-   3:45 to 1:23.
+   3:45 to 1:23. The releases of a call's results are joined one
+   result at a time (ff12d428): a release of the whole call made the
+   arm64 emitter load every word of a written back `var` state (5.6
+   percent more instructions in the self build). Final (chain L, r8g):
+   13.6 million lines, binary 52.0 MB, s2 33.84 s, the compiler's code
+   as fast as before (1,260 against 1,259 billion instructions).
 8. **Jobs by physical cores and memory**: the emitter's tasks default to
    the physical cores, at most 16 and a third of the memory in GB;
    clang's jobs to the physical cores, at most a quarter of the memory
@@ -177,3 +182,49 @@ run time (bench/ three-arm suite) besides build time.
   grained reuse within a module, at the cost of restructuring every pass
   around queries. Stage 2's per module keys get most of the rebuild
   benefit with far less change.
+
+## Addendum (Proposed, 2026-10-14): a per-function back-end cache before stage 2
+
+Status: Proposed (fastbuild agent, 2026-10-14); the lead decides.
+
+Stage 2 measured (bench/results/fast-builds-2026-10-13.md, "Stage 2
+measured"): the front end is 3.3 s of the 37 s self build on the Mac
+(check 1.15 s, ssa 2.1 s) and 0.45 s of a 1.2 s service build, so
+caching it per module saves at most 9 percent of a self build. After an
+edit to one module, the back end still does all the work: insert_rc
+7.8 s, inline 2.1 s, emit 15.4 s, assemble 7.5 s on the Mac.
+
+Proposal: cache the back end per function inside the whole-program
+model, before stage 2.
+
+1. **Key**: a function's SSA after inlining and reference counting,
+   printed canonically (value numbers, types by name), plus what its code
+   depends on outside its body: the borrow signatures and by-reference
+   flags of its callees, the layouts of the types it touches, the target,
+   and the compiler's identity. Equal keys mean equal assembly, because
+   the emitter's output for a function depends only on these (its
+   labels are numbered per part, which the cache keys by the function's
+   index in its part, or the emitter numbers labels per function).
+2. **Value**: the function's assembly text and the helpers it names
+   (already hashed names, decision 0220 stage 1). On a hit the emitter
+   skips isel, the MIR passes, and register allocation for it.
+3. **Objects per part**: each part's object is cached by the hash of its
+   assembly, so an unchanged part is not assembled again.
+4. **Then reference counting per function**: insert_rc's per-function
+   work (after borrow inference) is cached the same way, keyed by the
+   function's SSA before it and the borrow facts it reads.
+
+Expected after a one-module edit of the compiler: check and ssa (3.3 s)
+and borrow inference and inlining (about 3 s) still run; the emit and
+assemble work of unchanged functions (most of 23 s) is skipped. Stage 2
+(front end per module) then attacks the remaining 3.3 s, and stage 3
+the rest.
+
+Consequences: the output stays byte identical (a hit returns what the
+emitter would write); the cache costs disk (about the assembly's size
+per version kept, 350 MB for the compiler, pruned by age); the key's
+completeness is the risk, guarded by a check mode that emits every
+function and compares it with the cached text (XO_BACKEND_CACHE=verify).
+
+Alternatives: stage 2 first (smaller gain, measured above); stage 3 per
+module code generation (largest gain, largest change).
