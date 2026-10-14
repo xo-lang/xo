@@ -457,3 +457,48 @@ and go test -short clean; scripts/bootstrap-xo.sh fixed point (s2 and s3
 identical) with a cold cache, then again into the same directory with
 the cache warm, and the second run's s2, s3, and s3 assembly the same
 files as the first's.
+
+## Back-end cache stage B: the assembly per function (the Mac, 2026-10-14)
+
+Decision 0220 addendum items 1 and 2. In a split generation each
+function is generated as a canonical text, in which its label prefix,
+its call site table's number, its string literals, its fault positions,
+and the helpers it names are tokens and lists, then placed in its part
+(the tokens replaced by the part's labels, the strings interned, the
+helpers wanted) exactly as the plain generation writes it. The text is
+cached in <user cache>/xo/backend/fn under the SHA-256 of the compiler's
+executable, the target, the function's SSA after inlining and reference
+counting printed in full (types by name and the hash of every type they
+reach, a strongly connected component at a time), and the signatures of
+itself and of every function it names (parameter, result, and capture
+types, `var` parameters, borrowed flags, address taken, indirect, entry,
+export). `XO_BACKEND_CACHE=verify` generates every function and fails
+the build when a cached text differs; `off` runs the plain generation.
+--release builds do not use it.
+
+Steps: scratchpad stageb.sh (a fresh XO_BACKEND_CACHE_DIR) then
+editb.sh, `xo build --backend=arm64 --phase-times selfhost/xo` with
+4a6300ba's xo (75d98265 for the edit runs); the edits as in stage A plus
+a new field of fix.xo's FixResult. 6,703 functions (6,686 at 75d98265),
+43 files. Ten agents shared the machine; user CPU is the steadier figure.
+
+| build | functions reused | fn_keys | emit | wall | user CPU |
+|---|---|---|---|---|---|
+| XO_BACKEND_CACHE=off | | | 9.71 s | 35.72 s | 150.89 s |
+| on, cold cache | 0/6703 | 0.42 s | 6.90 s | 31.37 s | 140.95 s |
+| on, warm | 6703/6703 | 1.87 s | 0.25 s | 40.20 s | 68.68 s |
+| verify, warm | 0/6703 | 0.87 s | 13.21 s | 35.80 s | 115.31 s |
+| on, warm (75d98265) | 6686/6686 | 0.67 to 1.49 s | 0.15 to 0.16 s | 15.18 to 24.78 s | 56.02 to 65.46 s |
+| constant edit | 6685/6686 | 1.78 s | 0.23 s | 32.50 s | 67.74 s |
+| statement edit | 6671/6686 | 1.30 s | 0.16 s | 29.23 s | 62.40 s |
+| new struct field | 6669/6686 | 1.43 s | 0.16 s | 27.28 s | 64.98 s |
+
+The binaries of off, on (cold and warm), and verify are the same file
+(c1935c09...), and each edit's verify rebuild found no function whose
+cached text differs and gave the edit's binary. Against stage A's
+one-module edit (user CPU 89.82 to 93.63 s, emit 6 to 9.5 s), an edit
+now costs about 62 to 68 s of CPU: the emitter's work drops to the
+placing of cached texts (0.15 to 0.25 s) plus the keys (0.4 to 1.9 s).
+What is left after an edit: check and ssa (about 3.5 s), insert_rc (8
+to 12 s, now the largest phase), inline (1.3 to 2 s), and the parts'
+hashing and link. The cache holds 331 MB for one version of xo.

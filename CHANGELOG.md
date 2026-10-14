@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster arm64 rebuilds, per function (decision 0220 addendum stage B):
+  each function's assembly is cached in <user cache>/xo/backend under
+  the hash of its SSA, the types it reaches, the signatures of the
+  functions it names, and the compiler, so a rebuild generates only the
+  functions an edit changed; `XO_BACKEND_CACHE=verify` generates every
+  function and fails on a cached text that differs, `off` turns the
+  cache off, and all three give the same binary. After a one-module
+  edit of xo the emit phase drops from 6 to 9.5 s to about 0.2 s and
+  the build's CPU time from about 140 s to about 65 s on the Mac.
+  --release builds do not use it.
 - Faster arm64 rebuilds (decision 0220 addendum stage A): the parts of a
   large program's assembly are cut by their contents and named by their
   first function, and each part's object is cached in
