@@ -290,7 +290,7 @@ MISSING.
 | B03 stdio, exit, env, args, stats (done 2026-10-14 in Xo: stdio-2026-10-14.md; the seed forwards and the env C go with the next seed; notes) | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
 | B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; stage 3 done 2026-10-14 for glibc linux/arm64 and macOS, the libgcc path compiled only for glibc linux/amd64 until stage 2; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
-| B06 fault record, fault exit, Windows unwind (part 1 done 2026-10-14: the record and fault_exit in fault.xo, fault-record-2026-10-14.md; the entry points stay C glue, the Windows walk waits for the Windows runner) | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
+| B06 fault record, fault exit, Windows unwind (done 2026-10-14: part 1 the record and fault_exit in fault.xo; part 2 the entry points as Xo exports, decision 0228, C forwarders until a seed; part 3 the Windows walk in unwind.xo win_raise; fault-record-2026-10-14.md) | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
@@ -440,7 +440,13 @@ frees the 533 (a) lines.)
   the Windows walk. Part 2 done 2026-10-14 (decision 0228): generated
   code calls cabi.xo's xo_x_fault_raise_*, fault.xo writes the message
   and raises through fault_raise_msg; the C xo_fault_* are 3 line
-  forwarders until the next seed. The original note follows.
+  forwarders until the next seed. Part 3 done 2026-10-14: the Windows
+  walk is unwind.xo win_raise (RtlVirtualUnwind through sys_windows.xo),
+  the C walk and lsda_landing deleted; Windows wall clock 0.94 to 1.10
+  of the C walk with a function entry cache. What B06 leaves in C:
+  fault_raise (rt_fault_leave, the flags, the call of the unwinder),
+  fault_raise_msg, xo_fault_msg and xo_fault_loc, the Windows
+  personality stub, and the forwarders. The original note follows.
   The fault record (1778-1879), fault_exit (1644-1673),
   the Windows frame walk over RtlVirtualUnwind (1674-1736) through
   sys_windows.xo, its personality stub (1928-1973). Xo about 250 lines,
@@ -614,9 +620,14 @@ frees the 533 (a) lines.)
   daylight saving (Pacific, Morocco at 1906): Go's initLocalFromTZI
   writes transitions for the years now - 100 to now + 100 and uses the
   first standard zone before them, while the TZif made here (as
-  xo_time.c's did) has none and extends the rule to every year. A known
-  difference that predates B27; next: write Go's transitions into the
-  TZif.
+  xo_time.c's did) has none and extends the rule to every year. Fixed
+  the same day (branch tz-win-local): tzhost.xo writes Go's two
+  transitions a year for the 100 years each side of now with no footer,
+  and takes the abbreviations in Go 1.26's order (the standard name,
+  then the key name for Go's registry lookup, then the capitals without
+  a default); scripts/ci/tzlocal-windows.sh run 38642276054: eight
+  system zones (both hemispheres, half hour, no daylight saving) the
+  same as the Go backend at nine times from 1843 to 2128.
 - **B28 and B29 HTTP loops.** The HTTP/2 frame reader, writer, and
   sending (xo_h2.c 670-2335) are bytes only and can move before the
   loops; the connection loops need await (B18), the poller (B22),

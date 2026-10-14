@@ -457,14 +457,18 @@ const WIN_ABBRS: Str =
   "West Pacific Standard Time|+10|+10\n" +
   "Tonga Standard Time|+13|+13\n"
 
-/// "Local" on Windows as TZif data for tz.xo: no transitions, one zone
-/// (the standard offset and abbreviation), and the system's POSIX TZ rule
-/// as the footer, which the lookups extend to every year; empty when the
-/// system has no setting.
+/// "Local" on Windows as TZif data for tz.xo, as Go's time.Local makes
+/// it (zoneinfo_windows.go initLocal, initLocalFromTZI): one zone when the
+/// system has no daylight saving date, else the standard and daylight
+/// zones and two transitions a year for the 100 years before and after
+/// this one (pseudoUnix), and no footer, so times outside them take the
+/// first standard zone or the last transition's zone, as Go's do; empty
+/// when the system has no setting.
 fn windows_local() -> List[Bytes] {
-  // DYNAMIC_TIME_ZONE_INFORMATION (432 bytes): Bias at 0, StandardName
-  // at 4, StandardDate at 68, StandardBias at 84, DaylightName at 88,
-  // DaylightDate at 152, DaylightBias at 168, TimeZoneKeyName at 172
+  // DYNAMIC_TIME_ZONE_INFORMATION (432 bytes), whose start is Go's
+  // TIME_ZONE_INFORMATION: Bias at 0, StandardName at 4, StandardDate
+  // at 68, StandardBias at 84, DaylightName at 88, DaylightDate at 152,
+  // DaylightBias at 168; TimeZoneKeyName at 172
   let zb = raw.bytes_buf(432)
   let za = raw.bytes_addr(zb)
   if !windows.zone_info(za) {
@@ -473,26 +477,36 @@ fn windows_local() -> List[Bytes] {
   let bias = i32(rt.mem_load(za, 0, 4))
   let std_bias = i32(rt.mem_load(za, 84, 4))
   let dst_bias = i32(rt.mem_load(za, 168, 4))
-  var sa = caps(za + 4)
-  var da = caps(za + 88)
-  let key = ascii(za + 172, 128)
-  let sn = ascii(za + 4, 32)
-  for line in WIN_ABBRS.lines() {
-    let f = line.split("|")
-    if f.len() == 3 && ((!key.is_empty() && f[0] == key) || (!sn.is_empty() && f[0] == sn)) {
-      sa = f[1]
-      da = f[2]
-      break
-    }
-  }
-  var rule = "<${sa}>" + offset(bias + std_bias)
-  let dd = za + 152
+  let (sa, da) = abbrev(za)
   let sd = za + 68
-  if rt.mem_load(dd, 2, 2) != 0 && rt.mem_load(sd, 2, 2) != 0 && rt.mem_load(dd, 0, 2) == 0 && rt.mem_load(sd, 0, 2) == 0 {
-    rule = rule + "<${da}>" + offset(bias + dst_bias) + date(dd) + date(sd)
+  let dd = za + 152
+  var r: List[Bytes] = []
+  if rt.mem_load(sd, 2, 2) == 0 {
+    // no daylight saving: the bias alone (Go ignores StandardBias here)
+    r = [tzif([-bias * 60], [false], [sa], [], [])]
+  } else {
+    let offs = [-(bias + std_bias) * 60, -(bias + dst_bias) * 60]
+    var d0 = sd
+    var d1 = dd
+    var i0 = 0
+    var i1 = 1
+    if rt.mem_load(d0, 2, 2) > rt.mem_load(d1, 2, 2) {
+      d0 = dd
+      d1 = sd
+      i0 = 1
+      i1 = 0
+    }
+    let year = year_of(now())
+    var times: List[Int] = []
+    var idx: List[Int] = []
+    for y in year - 100..year + 100 {
+      times.push(pseudo_unix(y, d0) - offs[i1])
+      idx.push(i0)
+      times.push(pseudo_unix(y, d1) - offs[i0])
+      idx.push(i1)
+    }
+    r = [tzif(offs, [false, true], [sa, da], times, idx)]
   }
-  let off = -(bias + std_bias) * 60
-  let r = [tzif(sa, rule, off)]
   // zb's bytes were read through its address: alive until here
   let _k = zb.len()
   r
@@ -501,9 +515,29 @@ fn windows_local() -> List[Bytes] {
 /// The low 32 bits of v as a signed C LONG.
 fn i32(v: Int) -> Int { if v >= 2147483648 { v - 4294967296 } else { v } }
 
+/// Go's abbrev: the abbreviations of the zone by its standard name (the
+/// key name for a standard name that is not English, in place of Go's
+/// registry lookup of the English name), else the capitals of the
+/// standard and daylight names.
+fn abbrev(za: Int) -> (Str, Str) {
+  let sn = ascii(za + 4, 32)
+  let key = ascii(za + 172, 128)
+  for want in [sn, key] {
+    if want.is_empty() {
+      continue
+    }
+    for line in WIN_ABBRS.lines() {
+      let f = line.split("|")
+      if f.len() == 3 && f[0] == want {
+        return (f[1], f[2])
+      }
+    }
+  }
+  (caps(za + 4), caps(za + 88))
+}
+
 /// The capitals of the UTF-16 zone name at a (32 units at most: "Pacific
-/// Standard Time": "PST"), the abbreviation Go's time.Local makes of it
-/// when its table has none; "LT" when there are none.
+/// Standard Time": "PST"), Go's extractCAPS.
 fn caps(a: Int) -> Str {
   var b = BytesBuilder.new()
   for i in 0..32 {
@@ -515,12 +549,11 @@ fn caps(a: Int) -> Str {
       b.write_byte(UInt8(c))
     }
   }
-  let s = b.freeze().to_str() ?? ""
-  if s.is_empty() { "LT" } else { s }
+  b.freeze().to_str() ?? ""
 }
 
 /// The UTF-16 text at a (n units at most, to its zero) as ASCII; empty
-/// when a unit is not ASCII (no key name in the table has one).
+/// when a unit is not ASCII (no name in the table has one).
 fn ascii(a: Int, n: Int) -> Str {
   var b = BytesBuilder.new()
   for i in 0..n {
@@ -536,52 +569,114 @@ fn ascii(a: Int, n: Int) -> Str {
   b.freeze().to_str() ?? ""
 }
 
-/// A POSIX TZ offset of bias minutes (west positive, as Windows' Bias).
-fn offset(bias: Int) -> Str {
-  let a = if bias < 0 { -bias } else { bias }
-  let sign = if bias < 0 { "-" } else { "" }
-  "${sign}${a / 60}:${pad2(a % 60)}"
+/// Go's pseudoUnix: the Unix time of the SYSTEMTIME at d in year, in
+/// Windows' recurring form (wMonth, wDayOfWeek, wDay the week, 5 the
+/// last; the time of day absolute).
+fn pseudo_unix(year: Int, d: Int) -> Int {
+  let m = rt.mem_load(d, 2, 2)
+  let first = days_from_civil(year, m, 1)
+  var i = rt.mem_load(d, 4, 2) - (((first % 7) + 11) % 7)
+  if i < 0 {
+    i += 7
+  }
+  var day = 1 + i
+  let week = rt.mem_load(d, 6, 2) - 1
+  if week < 4 {
+    day += week * 7
+  } else {
+    day += 28
+    if day > days_in(year, m) {
+      day -= 7
+    }
+  }
+  (first + day - 1) * 86400 + rt.mem_load(d, 8, 2) * 3600 + rt.mem_load(d, 10, 2) * 60 + rt.mem_load(d, 12, 2)
 }
 
-/// A POSIX TZ rule date (`,Mm.w.d/h:mm:ss`) of the SYSTEMTIME at t in
-/// Windows' recurring form (wYear 0: wDay is the week, 5 the last).
-fn date(t: Int) -> Str {
-  let mi = rt.mem_load(t, 10, 2)
-  let se = rt.mem_load(t, 12, 2)
-  ",M${rt.mem_load(t, 2, 2)}.${rt.mem_load(t, 6, 2)}.${rt.mem_load(t, 4, 2)}/${rt.mem_load(t, 8, 2)}:${pad2(mi)}:${pad2(se)}"
+/// The days of month m of year.
+fn days_in(year: Int, m: Int) -> Int {
+  if m == 2 {
+    return if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 29 } else { 28 }
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 { 30 } else { 31 }
 }
 
-fn pad2(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
+/// Days since 1970-01-01 of the proleptic Gregorian date (Hinnant's
+/// days_from_civil).
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
 
-/// TZif data of one zone (offset off seconds east, abbreviation sa) with
-/// rule as the footer: a version 2 header and an empty version 1 block,
-/// the version 2 header (no transitions, one zone, sa's length plus one
-/// characters), the zone, the abbreviation, then the footer.
-fn tzif(sa: Str, rule: Str, off: Int) -> Bytes {
+/// The UTC year of the Unix time t (seconds; Hinnant's civil_from_days).
+fn year_of(t: Int) -> Int {
+  let z0 = (if t >= 0 { t } else { t - 86399 }) / 86400 + 719468
+  let era = (if z0 >= 0 { z0 } else { z0 - 146096 }) / 146097
+  let doe = z0 - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  yoe + era * 400 + (if m <= 2 { 1 } else { 0 })
+}
+
+/// TZif data (version 2, an empty version 1 block) of the zones (offsets
+/// in seconds east, whether daylight saving, abbreviations) and the
+/// transitions (times and zone indexes), with an empty footer.
+fn tzif(offs: List[Int], dst: List[Bool], names: List[Str], times: List[Int], idx: List[Int]) -> Bytes {
+  var chars = BytesBuilder.new()
+  var at: List[Int] = []
+  for n in names {
+    at.push(chars.len())
+    chars.write_str(n)
+    chars.write_byte(UInt8(0))
+  }
+  let cb = chars.freeze()
   var b = BytesBuilder.new()
-  header(b, 0, 0)
-  header(b, 1, sa.len() + 1)
-  let u = off & 4294967295
-  b.write_byte(UInt8((u >> 24) & 255))
-  b.write_byte(UInt8((u >> 16) & 255))
-  b.write_byte(UInt8((u >> 8) & 255))
-  b.write_byte(UInt8(u & 255))
-  b.write_byte(UInt8(0))
-  b.write_byte(UInt8(0))
-  b.write_str(sa)
-  b.write_byte(UInt8(0))
+  header(b, 0, 0, 0)
+  header(b, times.len(), offs.len(), cb.len())
+  for w in times {
+    be(b, w, 8)
+  }
+  for i in idx {
+    b.write_byte(UInt8(i))
+  }
+  for (k, o) in offs.indexed() {
+    be(b, o & 4294967295, 4)
+    b.write_byte(UInt8(if dst[k] { 1 } else { 0 }))
+    b.write_byte(UInt8(at[k]))
+  }
+  b.write(cb)
   b.write_byte(UInt8(10))
-  b.write_str(rule)
   b.write_byte(UInt8(10))
   b.freeze()
 }
 
-/// A 44 byte TZif header of version 2 with typecnt and charcnt (each one
-/// byte, the low one of its big endian word) and every other count 0.
-fn header(var b: BytesBuilder, typecnt: Int, charcnt: Int) {
-  b.write_str("TZif2")
-  for i in 5..44 {
-    let v = if i == 39 { typecnt } else if i == 43 { charcnt } else { 0 }
-    b.write_byte(UInt8(v))
+/// The n low bytes of v, big endian.
+fn be(var b: BytesBuilder, v: Int, n: Int) {
+  var k = n - 1
+  while k >= 0 {
+    b.write_byte(UInt8((v >> (8 * k)) & 255))
+    k -= 1
   }
+}
+
+/// A 44 byte TZif header of version 2: the magic and version, 15 reserved
+/// bytes, then the six counts (isutcnt, isstdcnt, leapcnt, timecnt,
+/// typecnt, charcnt), four bytes each, big endian.
+fn header(var b: BytesBuilder, timecnt: Int, typecnt: Int, charcnt: Int) {
+  b.write_str("TZif2")
+  for _ in 5..20 {
+    b.write_byte(UInt8(0))
+  }
+  be(b, 0, 4)
+  be(b, 0, 4)
+  be(b, 0, 4)
+  be(b, timecnt, 4)
+  be(b, typecnt, 4)
+  be(b, charcnt, 4)
 }

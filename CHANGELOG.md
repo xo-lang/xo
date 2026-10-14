@@ -14,12 +14,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   text, json, alloc, and nested are 0.973 to 1.029 of main's
   instructions, the self build 0.997 and 0.996
   (bench/results/heap-platform-2026-10-14.md).
+- std/time on Windows: `time.local` builds the zone as Go's time.Local
+  does (transitions for 100 years each side of now, no rule past them,
+  Go's abbreviations), so times before 1926 and after 2125 match the Go
+  backend; the C before it extended the current rule to every year.
 - Native runtime (zero-C audit item B27): std/time's zone data and the
   table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
   program's zone data through a `xo_tz_table` accessor the build writes
   beside it, the host's zone files, and Windows' local zone from
   GetDynamicTimeZoneInformation. std/llrt/xo_time.c (519 lines) is
   deleted.
+- Native runtime (zero-C audit item B06, part 3): a fault on Windows
+  unwinds through the Xo walker (std/native/llrt/unwind.xo win_raise,
+  over RtlVirtualUnwind) instead of xo_rt.c's C walk, which is deleted
+  with its LSDA reader. Windows goldens 157 of 157. The walk starts at
+  the C fault_raise's captured context, and the unwind tables name the
+  Xo personality export on Windows too; fault paths about 0.97 to 1.02
+  of the C walk's wall clock time on windows/amd64.
 - Native runtime (zero-C audit item B13, stage 3): the string objects'
   appends and builders are Xo (std/native/llrt/obj.xo): `a + b`, and
   the runtime's rs_append, push_byte, push_word, push_words,

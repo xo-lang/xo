@@ -199,6 +199,22 @@ as do TestRuntimeFaultResume, TestRuntimeTasks, and TestRuntimeThreads.
 For bench/perf/fault, bench/results/unwinder-glibc-2026-10-14.md has the
 Mac instruction counts and Linux CI's, against the C path.
 
+11. **Windows (B06 part 3, 2026-10-14; decision 0197's walk)**:
+   unwind.xo `win_raise` replaces xo_rt.c's C walk over the same system
+   calls (RtlCaptureContext, RtlLookupFunctionEntry, RtlVirtualUnwind,
+   RtlRestoreContext; x64 and arm64 CONTEXT offsets), with the shared
+   LSDA reader, and a 256 entry cache of the function entry lookup by pc
+   in the scratch record (on Windows, the scratch record is VirtualAlloc'd).
+   Windows reaches it through the common fault_raise; the C
+   xo_personality stub stays as the handler the walk compares
+   (bench/results/fault-record-2026-10-14.md, "Part 3"). Then (branch
+   b06-win2) the C fault_raise captures its CONTEXT and the walk starts
+   there (unwind_fault's `wcx`), and the emitters name xo_x_personality
+   on Windows too: the export returns ExceptionContinueSearch to the
+   system's dispatcher, and the C stub stays only for older xo's code
+   (delete after a seed). Only x86_64 Linux and macOS still name
+   xo_personality (stage 2).
+
 ## Consequences
 
 - XO_NOLIBC programs run deferred code and landing pads on a fault and
