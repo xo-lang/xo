@@ -1,0 +1,139 @@
+#!/bin/bash
+# seed-cut.sh VERSION NOTES WORKDIR: cut seed VERSION (decision 0216;
+# knowledgebase/infrastructure/toolchain.md "Cutting a seed"). Run on the
+# development Mac (darwin/arm64, with Go, clang, git, and push access),
+# only with the owner's approval of this version. It uploads nothing:
+# scripts/seed-upload.sh WORKDIR does that after it succeeds.
+#
+#   VERSION  the new minor version, X.Y.0, greater than the current one
+#   NOTES    a file with the v<VERSION> tag's message: "Xo vX.Y.0", then
+#            what the version brings over the previous seed (owner,
+#            2026-10-14; toolchain.md says what goes in it)
+#   WORKDIR  an empty or missing directory outside the repository
+#
+# Steps, each stopping the script on failure:
+#   1. a worktree of origin/main at WORKDIR/tree; VERSION in
+#      selfhost/cli/core/cli.xo and selfhost/cli/servers/servers.xo, one
+#      commit
+#   2. go test -short of internal/xotool and cmd/xo
+#   3. the gate: xo built from the bump (go run ./scripts/xobuild) builds
+#      and runs hello, and the self rebuild fixed point holds
+#      (scripts/bootstrap-xo.sh, s2 and s3 identical)
+#   4. push the commit to main (refused if main moved: rerun), then the
+#      annotated tag vVERSION with NOTES, pushed (a tag, not a release)
+#   5. darwin-arm64: xo at clang -O2, packed by scripts/seed-pack.sh
+#   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64: cross built
+#      by that xo with the Go backend, packed with the checkout's std
+#   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
+#      and SEED (the seed's name, VERSION-<commit, 8 hex>)
+#
+# XO_SEED_DRY_RUN=1 does every step but the pushes (no commit reaches
+# main, no tag is made): a rehearsal; seed-upload.sh refuses its output.
+# XO_HEAVY, when set, prefixes the heavy steps (the lead's slot lock,
+# e.g. XO_HEAVY="$XO_LEAD_SCRATCH/agents/heavy.sh seed").
+set -euo pipefail
+
+die() { echo "seed-cut: $*" >&2; exit 1; }
+step() { echo "== $(date +%H:%M:%S) $*"; }
+# heavy LOG CMD...: CMD with its output in LOG, under $XO_HEAVY when set
+# (heavy.sh sends a command's output to its own log, so the redirect is
+# made inside it)
+heavy() {
+  local l=$1; shift
+  if [ -n "${XO_HEAVY:-}" ]; then $XO_HEAVY sh -c 'l=$1; shift; exec "$@" > "$l" 2>&1' sh "$l" "$@"; else "$@" > "$l" 2>&1; fi
+}
+
+[ $# -eq 3 ] || die "usage: seed-cut.sh VERSION NOTES WORKDIR"
+version=$1
+notes=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+work=$3
+dry=${XO_SEED_DRY_RUN:-0}
+
+echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.0$' || die "version $version: want X.Y.0"
+[ -s "$notes" ] || die "$notes: write the tag's message first"
+head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
+[ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "run on the development Mac (darwin/arm64): the darwin-arm64 seed is built natively"
+command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
+
+repo=$(git rev-parse --show-toplevel)
+case "$work" in "$repo"/*) die "WORKDIR must be outside the repository" ;; esac
+mkdir -p "$work"
+work=$(cd "$work" && pwd)
+[ -z "$(ls -A "$work")" ] || die "$work is not empty"
+log=$work/logs
+mkdir -p "$log"
+
+git -C "$repo" fetch -q origin --tags
+if git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+  die "tag v$version exists"
+fi
+cur=$(git -C "$repo" show origin/main:selfhost/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
+[ -n "$cur" ] || die "no VERSION in origin/main's selfhost/cli/core/cli.xo"
+newest=$(printf '%s\n%s\n' "$cur" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+[ "$version" != "$cur" ] && [ "$newest" = "$version" ] || die "version $version is not above main's $cur"
+
+step "1. worktree of origin/main, version $cur to $version"
+tree=$work/tree
+git -C "$repo" worktree add -q --detach "$tree" origin/main
+cd "$tree"
+sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" selfhost/cli/core/cli.xo
+sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" selfhost/cli/servers/servers.xo
+[ "$(git diff --name-only | sort | tr '\n' ' ')" = "selfhost/cli/core/cli.xo selfhost/cli/servers/servers.xo " ] ||
+  die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo and servers.xo)"
+git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
+commit=$(git rev-parse HEAD)
+
+step "2. go test -short ./internal/xotool ./cmd/xo"
+XO_SELF_DRIVER=0 GOMAXPROCS=4 go test -short -p 2 ./internal/xotool ./cmd/xo > "$log/short.log" 2>&1 ||
+  { grep -E '^(FAIL|--- FAIL)' "$log/short.log" | head; die "-short failed ($log/short.log)"; }
+
+step "3. gate: xobuild, hello, fixed point"
+heavy "$log/xobuild.log" go run ./scripts/xobuild || { tail "$log/xobuild.log"; die "xobuild failed"; }
+hello=$work/hello
+mkdir -p "$hello"
+printf 'module example.com/hello\nedition preview\n' > "$hello/xo.mod"
+printf 'fn main(os: Os) {\n  os.stdio.println("hi")\n}\n' > "$hello/main.xo"
+( cd "$hello" && "$tree/bin/xo" run --backend=arm64 . ) > "$log/hello.log" 2>&1 || { tail "$log/hello.log"; die "hello failed"; }
+grep -qx hi "$log/hello.log" || die "hello printed no hi ($log/hello.log)"
+GOMAXPROCS=6 heavy "$log/boot.log" sh scripts/bootstrap-xo.sh "$tree/bin/xo" "$work/boot" ||
+  { tail -20 "$log/boot.log"; die "fixed point failed"; }
+grep -q 'fixed point: s2 and s3 binaries identical' "$log/boot.log" || die "fixed point not reached ($log/boot.log)"
+
+if [ "$dry" = 1 ]; then
+  step "4. dry run: not pushing $commit, no tag"
+else
+  step "4. push $commit to main, tag v$version"
+  git push -q origin HEAD:main || die "push refused (main moved?): rerun with a new WORKDIR"
+  git tag -a "v$version" -F "$notes" "$commit"
+  git push -q origin "v$version"
+fi
+
+step "5. darwin-arm64 at -O2"
+out=$work/out
+mkdir -p "$out"
+XO_LLVM_OPT=O2 heavy "$log/xobuild-o2.log" go run ./scripts/xobuild || { tail "$log/xobuild-o2.log"; die "xobuild -O2 failed"; }
+[ "$(bin/xo version | awk '{print $2}')" = "$version" ] || die "bin/xo version: $(bin/xo version), want xo $version"
+XO_SEED_COMMIT=$commit XO_SEED_NOTE="native darwin/arm64 build at -O2, fixed point ok (seed-cut.sh)" \
+  bash scripts/seed-pack.sh bin/xo "$out" > "$log/pack-darwin-arm64.log"
+
+step "6. cross builds"
+for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
+  plat=${p/\//-}; exe=xo; [ "$plat" = windows-amd64 ] && exe=xo.exe
+  d=$work/cross/$plat
+  mkdir -p "$d/bin"
+  bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" selfhost/xo > "$log/cross-$plat.log" 2>&1 ||
+    { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
+  (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
+  XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
+    XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=go --targets=$p (seed-cut.sh)" \
+    bash scripts/seed-pack.sh "$d/bin/$exe" "$out" > "$log/pack-$plat.log"
+  echo "   $plat ok"
+done
+
+seed=$version-${commit:0:8}
+n=$(ls "$out"/*.tar.gz | wc -l | tr -d ' ')
+[ "$n" = 5 ] || die "$n tarballs in $out, want 5"
+echo "$seed" > "$out/SEED"
+[ "$dry" = 1 ] && echo dry-run > "$out/DRY_RUN"
+cat "$out/manifest.txt"
+echo "SEED PACKED: $seed ($out)"

@@ -3379,9 +3379,9 @@ first seed, 0.9.0-5e21dc31 from main 5e21dc31, uploaded by the lead on
 
 A seed carries no rtpack, xo-gobind, third_party, or zone data: it only
 builds selfhost/xo, against the checkout's `--std` (the TLS sources
-then come from the checkout's third_party). From the next seed on, each
-seed bumps the minor version (`selfhost/cli/core` `VERSION`, the lead's
-commit on main; 0.11.0 next).
+then come from the checkout's third_party). Each seed bumps the minor
+version (`selfhost/cli/core` `VERSION` and `selfhost/cli/servers`
+`XO_VERSION`; 0.12.0 next).
 
 Each version bump gets an annotated git tag `v<version>` on that commit
 (owner, 2026-10-14, from 0.11.0 on), pushed to GitHub, whose message is
@@ -3390,8 +3390,48 @@ line `Xo v<version>`, then what it unblocks, what landed since the last
 seed (zero-C items and the C lines deleted, compiler and backend
 changes with figures from bench/results, build and tooling changes),
 and whether the language or spec changed. `git tag -a v0.11.0 -F
-notes.txt <commit> && git push origin v0.11.0`. A tag is not a GitHub
-release: no release is published (owner).
+notes.txt <commit> && git push origin v0.11.0` (seed-cut.sh does it).
+A tag is not a GitHub release: no release is published (owner).
+
+#### Cutting a seed
+
+Only after the owner approves the version; then any session may run it
+(owner, 2026-10-14), on the development Mac (darwin/arm64: Go, clang,
+push access to main, and the AWS user that may write the bucket), from
+a checkout of the repository, in two steps:
+
+    # 1. write the tag's message: first line "Xo vX.Y.0", then the summary
+    #    above (what it unblocks, what landed, tooling, language changes)
+    $EDITOR /tmp/notes-X.Y.0.txt
+    # 2. bump, gate, push, tag, build, pack (about 15 minutes); WORKDIR
+    #    must be empty and outside the repository
+    scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
+    # 3. upload, latest.txt last (a minute)
+    scripts/seed-upload.sh WORKDIR
+
+seed-cut.sh stops at the first failure, before anything is pushed when
+the failure is in the bump, `-short` (internal/xotool, cmd/xo), or the
+gate (the bump's xo builds and runs hello, and the fixed point holds).
+After the push and tag it builds darwin-arm64 natively at clang -O2 and
+cross builds linux-arm64, linux-amd64, windows-amd64, and darwin-amd64
+with that xo and the Go backend (about 25 s each), packs all five with
+seed-pack.sh into WORKDIR/out, and writes WORKDIR/out/SEED. Logs are in
+WORKDIR/logs. A failure after the push (a build or pack) is fixed and
+the packing redone by hand from WORKDIR/tree; the tag and the version
+commit stay. `XO_SEED_DRY_RUN=1` rehearses every step without the push
+and tag (seed-upload.sh refuses its output); `XO_HEAVY` prefixes the
+heavy steps with a lock (the lead's agents/heavy.sh).
+
+seed-upload.sh checks every tarball against its .sha256 and the
+manifest, refuses a seed already in the bucket, uploads the five
+tarballs, their .sha256, and manifest.txt, checks the listing (11
+objects), then writes seeds/latest.txt and reads it back. Hosts pick the
+new seed up on their next build that needs one (no local xo).
+
+Verified: 0.11.0-ae2587fd was cut by the same steps (the lead's script
+those were taken from) and uploaded by seed-upload.sh, and a dry run of
+seed-cut.sh (0.12.0, no push) passed end to end on 2026-10-14. Last
+verified: 2026-10-14.
 
 Seeds uploaded: 0.9.0-5e21dc31 (2026-10-13, built natively and through
 the chain, Windows cross built) and 0.10.0-23ce8ce2 (2026-10-14, the
@@ -3401,7 +3441,10 @@ linux-amd64, windows-amd64, and darwin-amd64 cross built on the Mac by
 that xo with `--backend=go --targets=<os>/<arch>`, 16 to 24 s each;
 tarballs 14 to 16 MB, darwin-arm64 35 MB). The owner had 0.10.0 uploaded
 without a separate verification run; the next builds from it are its
-check (owner, 2026-10-14). Last verified: 2026-10-14.
+check (owner, 2026-10-14); 0.11.0-ae2587fd (2026-10-14, version bump
+ae2587fd after B13 stage 2 and B14, tag v0.11.0; the same five
+platforms the same way, cross builds 25 to 27 s). Last verified:
+2026-10-14.
 
 internal/xotool (seed.go) fetches a seed when no local xo is found:
 seeds/latest.txt, then `<host>.tar.gz.sha256` and `<host>.tar.gz` with
@@ -3454,39 +3497,22 @@ TestSeedPackHello packs the checkout's bin/xo, fetches it from a local
 directory, and runs hello with the unpacked xo (no XO_STD, a working
 directory without std); it skips without a built xo.
 
-Packing and uploading a seed (the lead, after the version bump
-commit on main, from a clean checkout of it; OUTDIR outside the repo,
-since release.sh deletes dist/):
-
-    c=$(git rev-parse HEAD); s=0.10.0-${c:0:8}; out=$HOME/xo-seeds/$s
-    # darwin/arm64, on the Mac
-    go run ./scripts/xobuild && scripts/seed-pack.sh bin/xo "$out"
-    # linux/arm64 and linux/amd64, natively (the backends xobuild uses there:
-    # arm64; LLVM split 12 on amd64): on an instance of that arch
-    #   cd ~/xo && go run ./scripts/xobuild && bash scripts/seed-pack.sh bin/xo ~/seed
-    # then copy ~/seed/linux-*.tar.gz, .tar.gz.sha256 and .info into "$out";
-    # or cross built on the Mac with the Go backend (how 0.10.0 was made,
-    # 16 to 24 s per platform; std from `git ls-files std` beside bin/):
-    #   bin/xo build --backend=go --targets=linux/arm64 --std=$PWD/std -o X/bin/xo selfhost/xo
-    # or by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
-    scripts/release.sh 0.10.0
-    XO_SEED_VERSION=0.10.0 XO_SEED_PLATFORM=linux-arm64 XO_SEED_COMMIT=$c \
-      scripts/seed-pack.sh dist/xo-0.10.0-linux-arm64/bin/xo "$out"
-    XO_SEED_VERSION=0.10.0 XO_SEED_PLATFORM=linux-amd64 XO_SEED_COMMIT=$c \
-      scripts/seed-pack.sh dist/xo-0.10.0-linux-amd64/bin/xo "$out"
-    scripts/seed-pack.sh --manifest "$out"
-    aws s3 cp --recursive "$out" s3://xo-seeds-ACCOUNT_ID/seeds/$s/ \
-      --exclude '*' --include '*.tar.gz' --include '*.tar.gz.sha256' --include manifest.txt
-    echo $s > "$out/latest.txt"
-    aws s3 cp "$out/latest.txt" s3://xo-seeds-ACCOUNT_ID/seeds/latest.txt
-    aws s3 ls s3://xo-seeds-ACCOUNT_ID/seeds/$s/
+Packing a seed by hand (a platform seed-cut.sh does not build, or a
+redo after a failure): from a clean checkout of the version commit,
+`scripts/seed-pack.sh bin/xo OUT` for the host's xo, and for an xo of
+another platform `XO_SEED_VERSION=X.Y.0 XO_SEED_PLATFORM=<os>-<arch>
+XO_SEED_COMMIT=<full hash> scripts/seed-pack.sh <dir>/bin/xo OUT` with
+the checkout's tracked std/ beside its bin/; then
+`scripts/seed-pack.sh --manifest OUT`. A natively built linux xo (`go
+run ./scripts/xobuild` on an EC2 machine of that arch) packs the same
+way.
 
 Upload latest.txt last, after every platform of the seed is in place: a
 host whose platform is missing from the newest seed fails (or, opted
 in, takes the chain). release.sh's linux/amd64 xo is built by the Go
 backend and its linux/arm64 xo by selfhost/macho's ELF link (both passed
-release-verify.sh on EC2, 2026-10-12). There is no Windows seed yet: a
-Windows host needs `XO_SEED`, or `XO_SEED_FALLBACK=chain`. In an EC2
+release-verify.sh on EC2, 2026-10-12). Seeds include windows-amd64 since
+0.10.0. In an EC2
 queue command the lead's prefix unpacks the seed into $HOME/xo-seed and
 sets XO_SEED (UPDATE 13 of 2026-10-13); with this change `go run
 ./scripts/xobuild` fetches it into the user cache by itself on an

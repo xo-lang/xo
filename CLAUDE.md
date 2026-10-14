@@ -166,10 +166,13 @@ Update the knowledgebase in the same change as the work, not later:
   with the aws CLI; xobuild fetches the newest seed before falling back
   to the go-compiler-final root and its chain. When a change lands that
   older seeds cannot build (new runtime intrinsics the compiler's own
-  code uses, gotchas/seed-older-than-intrinsics.md), the lead bumps the
-  minor version (`xo version`) and cuts a new seed for every platform
-  instead of adding a chain hop. Only the lead uploads seeds and changes
-  IAM; agents never do. If a seed cannot be fetched, stop and report the
+  code uses, gotchas/seed-older-than-intrinsics.md), the minor version
+  (`xo version`) is bumped and a new seed cut for every platform instead
+  of adding a chain hop: `scripts/seed-cut.sh VERSION NOTES WORKDIR`
+  then `scripts/seed-upload.sh WORKDIR` on the development Mac
+  (toolchain.md "Cutting a seed"). Any session may run them, but only
+  after the owner approves that version (owner, 2026-10-14); IAM changes
+  stay with the lead, agents never make them. If a seed cannot be fetched, stop and report the
   error (owner, 2026-10-13): never fall back to rebuilding from
   go-compiler-final through the chain (25 to 37 minutes); that path is
   opt in, for the replay from source and a brand new platform. Unpack a
