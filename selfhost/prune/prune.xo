@@ -1,0 +1,222 @@
+// Age and size pruning of xo's caches under <user cache>/xo, shared by
+// every cache the driver writes: the build directories (build/), the Go
+// backend's GOCACHE (gocache/), the linked binary cache ($XO_BIN_CACHE),
+// and the back-end cache of decision 0220's addendum.
+//
+// The stamp format, the same for every cache:
+//
+// - An entry's last use is its modification time. A reader marks an
+//   entry used with mark_used, which refreshes the time only when it is
+//   over TOUCH (an hour) old, so a hit costs one stat (Go's own cache
+//   does the same, hourly). A writer stores an entry under a temporary
+//   name and renames it into place, so its time is the store's.
+// - A cache's last prune is the modification time of DIR/prune-stamp.
+//
+// run removes, at most once per Policy.every, the entries unused for
+// longer than Policy.max_age, then the least recently used ones while the
+// cache is over Policy.max_bytes. An entry used within KEEP (two hours)
+// is never removed: mark_used may leave a time up to an hour old while a
+// process is using the entry, and Go refreshes its entries hourly, so
+// the margin covers a build of up to an hour after a refresh. Each entry
+// is restated just before it is removed, so one used since the walk
+// stays. Removal tolerates failures: another process may remove the same
+// entry. Decision 0223.
+
+/// An entry used within KEEP is never removed.
+pub const KEEP: Duration = 2h
+
+/// mark_used refreshes an entry's time once it is older than TOUCH.
+pub const TOUCH: Duration = 1h
+
+/// The bytes of a GiB.
+pub const GB: Int = 1024 * 1024 * 1024
+
+/// What a prune removes.
+pub struct Policy {
+  /// Entries unused for longer go; zero keeps entries of any age.
+  pub max_age: Duration = 24h
+  /// The size cap in bytes; zero or less is no cap.
+  pub max_bytes: Int = 20 * 1024 * 1024 * 1024
+  /// The least time between two prunes of one cache (the stamp's age).
+  pub every: Duration = 1h
+  /// true: each directory at the top of the cache is one entry (its
+  /// time is the directory's, its size every file below it); false:
+  /// each file below the top level is an entry (files at the top, such
+  /// as the stamp and lock files, are never entries).
+  pub dirs: Bool = false
+}
+
+/// What one run did: whether it ran (the stamp allowed it), the paths it
+/// removed, and the bytes the cache held afterwards.
+pub struct Stats {
+  pub ran: Bool = false
+  pub removed: List[Str] = []
+  pub bytes: Int = 0
+}
+
+struct Entry {
+  path: Str
+  size: Int
+  used: Time
+}
+
+/// The policy base with $XO_CACHE_MAX_AGE (a Go duration such as 6h or
+/// 90m; 0 turns age pruning off) and $XO_CACHE_MAX_GB (GiB, a decimal
+/// such as 20 or 0.5; 0 turns the size cap off) applied when set and
+/// valid.
+pub fn from_env(env: Env, base: Policy) -> Policy uses env {
+  var p = base
+  let age = (env.get("XO_CACHE_MAX_AGE") ?? "").trim()
+  if !age.is_empty() {
+    match Duration.parse(age) {
+      Ok(d) => {
+        if d.nanos() >= 0 {
+          p.max_age = d
+        }
+      }
+      Err(_) => {}
+    }
+  }
+  let gb = (env.get("XO_CACHE_MAX_GB") ?? "").trim()
+  if !gb.is_empty() {
+    if let Some(f) = Float.parse(gb) {
+      if f >= 0.0 {
+        p.max_bytes = Int(f * Float(GB))
+      }
+    }
+  }
+  p
+}
+
+/// Marks the entry at path used: its modification time is set to now
+/// when it is over TOUCH old (one stat otherwise).
+pub fn mark_used(fs: Fs, clock: Clock, path: Str) uses (fs.read, fs.write, clock) {
+  match fs.stat(path) {
+    Ok(Some(fi)) => {
+      if clock.since(fi.modified) >= TOUCH {
+        fs.set_modified(path, clock.now()).ignore_err("only the prune order")
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Prunes the cache in dir by p (see the file comment).
+pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs.write, clock) {
+  var st = Stats{}
+  if p.max_age.nanos() <= 0 && p.max_bytes <= 0 {
+    return st
+  }
+  match fs.stat(dir) {
+    Ok(Some(fi)) => {
+      if !fi.is_dir {
+        return st
+      }
+    }
+    _ => return st
+  }
+  let stamp = "${dir}/prune-stamp"
+  match fs.stat(stamp) {
+    Ok(Some(fi)) => {
+      if clock.since(fi.modified) < p.every {
+        return st
+      }
+    }
+    _ => {}
+  }
+  // the stamp first: a concurrent process sees it and skips the walk
+  match fs.write(stamp, b"") {
+    Ok(_) => fs.set_modified(stamp, clock.now()).ignore_err("the stamp only limits prunes")
+    Err(_) => {}
+  }
+  st.ran = true
+  var kept: List[Entry] = []
+  var total = 0
+  for e in entries(fs, clock, dir, p.dirs) {
+    let idle = clock.since(e.used)
+    if p.max_age.nanos() > 0 && idle > p.max_age && idle >= KEEP && remove(fs, clock, e.path, p.dirs) {
+      st.removed.push(e.path)
+      continue
+    }
+    kept.push(e)
+    total += e.size
+  }
+  if p.max_bytes > 0 && total > p.max_bytes {
+    for e in kept.sort_by(fn(x) { x.used.unix_millis() }) {
+      if total <= p.max_bytes || clock.since(e.used) < KEEP {
+        // oldest first: everything left was used within KEEP
+        break
+      }
+      if remove(fs, clock, e.path, p.dirs) {
+        st.removed.push(e.path)
+        total -= e.size
+      }
+    }
+  }
+  st.bytes = total
+  st
+}
+
+/// The entries of the cache in dir; files left under a temporary name
+/// (".tmp" in the name) for over KEEP are removed on the way.
+fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool) -> List[Entry] uses (fs.read, fs.write, clock) {
+  var out: List[Entry] = []
+  if dirs {
+    let top = match fs.read_dir(dir) {
+      Ok(l) => l
+      Err(_) => return out
+    }
+    for fi in top {
+      if !fi.is_dir {
+        continue
+      }
+      let path = "${dir}/${fi.name}"
+      var size = 0
+      match fs.walk(path) {
+        Ok(all) => {
+          for f in all {
+            if !f.is_dir {
+              size += f.size
+            }
+          }
+        }
+        Err(_) => {}
+      }
+      out.push(Entry{path: path, size: size, used: fi.modified})
+    }
+    return out
+  }
+  let all = match fs.walk(dir) {
+    Ok(l) => l
+    Err(_) => return out
+  }
+  for fi in all {
+    if fi.is_dir || !fi.path.trim_prefix("${dir}/").contains("/") {
+      continue
+    }
+    if fi.name.contains(".tmp") {
+      if clock.since(fi.modified) > KEEP {
+        fs.remove(fi.path).ignore_err("another process may own it")
+      }
+      continue
+    }
+    out.push(Entry{path: fi.path, size: fi.size, used: fi.modified})
+  }
+  out
+}
+
+/// Removes the entry at path unless it was used within KEEP (restated
+/// now: a process may have marked it since the walk); true when it is
+/// gone.
+fn remove(fs: Fs, clock: Clock, path: Str, dir: Bool) -> Bool uses (fs.read, fs.write, clock) {
+  match fs.stat(path) {
+    Ok(Some(fi)) => {
+      if clock.since(fi.modified) < KEEP {
+        return false
+      }
+    }
+    _ => return false
+  }
+  let r = if dir { fs.remove_all(path) } else { fs.remove(path) }
+  r.is_ok()
+}
