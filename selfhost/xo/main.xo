@@ -612,13 +612,16 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
 
 /// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
 /// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
-/// the cores, at most 8. The output does not depend on it.
+/// the physical cores, at most 16 and a third of the memory in GB. The
+/// output does not depend on it.
 fn emit_jobs(os: Os) -> Int {
   let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
   if j > 0 {
     return j
   }
-  ncpu(os).min(8)
+  // the physical cores; each task holds about 1.2 GB of the self build
+  // at its peak (bench/results/fast-builds-2026-10-13.md)
+  ncores(os).min(16).min(mem_gb(os) / 3).max(1)
 }
 
 /// The linker of a host link with no --ld (decision 0182 next step 1):

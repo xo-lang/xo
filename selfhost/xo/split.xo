@@ -18,7 +18,8 @@ struct SplitConfig {
 
 /// LLVMSplitConfig from the environment.
 fn split_config(os: Os) -> SplitConfig {
-  var c = SplitConfig{jobs: min(ncpu(os), 6)}
+  // a clang of a 90 MB module takes about 3.5 GB (bench/results/fast-builds-2026-10-13.md)
+  var c = SplitConfig{jobs: ncores(os).min(mem_gb(os) / 4).max(1)}
   let n = Int.parse(os.env.get("XO_LLVM_SPLIT") ?? "") ?? 0
   if n > 1 {
     c.modules = n
@@ -53,6 +54,59 @@ fn ncpu(os: Os) -> Int {
     }
   }
   1
+}
+
+/// The physical cores (decision 0220: parallel jobs by cores, not
+/// hardware threads): sysctl hw.physicalcpu, else the distinct (core,
+/// socket) pairs of lscpu, else ncpu.
+fn ncores(os: Os) -> Int {
+  let (out, err) = combined(os, "sysctl", ["-n", "hw.physicalcpu"])
+  if err.is_empty() {
+    if let Some(n) = Int.parse(out.trim()) {
+      if n > 0 {
+        return n
+      }
+    }
+  }
+  let (out2, err2) = combined(os, "lscpu", ["-p=Core,Socket"])
+  if err2.is_empty() {
+    var seen: Set[Str] = #{}
+    for l in out2.split("\n") {
+      let t = l.trim()
+      if !t.is_empty() && !t.starts_with("#") {
+        seen.add(t)
+      }
+    }
+    if seen.len() > 0 {
+      return seen.len()
+    }
+  }
+  ncpu(os)
+}
+
+/// The machine's memory in GB (hw.memsize, else /proc/meminfo's
+/// MemTotal), 16 when neither answers.
+fn mem_gb(os: Os) -> Int {
+  let (out, err) = combined(os, "sysctl", ["-n", "hw.memsize"])
+  if err.is_empty() {
+    if let Some(n) = Int.parse(out.trim()) {
+      return n / 1000000000
+    }
+  }
+  match os.fs.read_text("/proc/meminfo") {
+    Ok(t) => {
+      for l in t.split("\n") {
+        if l.starts_with("MemTotal:") {
+          let f = l.trim_prefix("MemTotal:").trim().trim_suffix("kB").trim()
+          if let Some(kb) = Int.parse(f) {
+            return kb / 1000000
+          }
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  16
 }
 
 /// ltoFlags of a split build.
