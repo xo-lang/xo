@@ -2206,8 +2206,8 @@ fn rfc_days(year: Int, m: Int, d: Int) -> Int {
 // ---------------------------------------------------------------------------
 // The runtime's text, as the SSA builder calls it (decision 0193):
 // Display and Debug of Duration, Time, Str, and Bytes, and std/json's
-// Duration and Time. In Xo (std/native/llrt/text.xo), or the C with
-// XO_LLRT_C=text.
+// Duration and Time, in Xo (std/native/llrt/text.xo; decision 0227
+// deleted the C path).
 
 fn llrt_append_duration(s: Str, d: Int) -> Str { text.append_duration(s, d) }
 

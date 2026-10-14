@@ -297,18 +297,11 @@ fn io_flags(code: Str) -> List[Str] {
   if has_sym(syms, "xo_proc_") {
     out.push("-DXO_PROC")
   }
-  // the C path of the number and time text (decision 0193), which only
-  // XO_LLRT_C=text builds call
-  for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse", "xo_time_parse"] {
-    if has_sym(syms, sym) {
-      out.push("-DXO_TEXT_C")
-      break
-    }
-  }
   // Decision 0198 deleted the C paths of show, report, tz, atomic,
   // fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
   // with their -D flags, and no C defines xo_fs_mkdir_all,
-  // xo_fs_create_temp, or xo_fs_cwd any more.
+  // xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
+  // the C path of text (-DXO_TEXT_C).
   // The C versions of the intrinsics (a non-constant op of int_wrap;
   // decision 0195)
   for sym in ["xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {

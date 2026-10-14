@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0227): the C path of the number and time text
+  (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
+  std/llrt/xo_std.c) is deleted; the owner accepted Duration text at
+  1.112 of the C's instructions on arm64 with 0.925 on LLVM.
+  `XO_LLRT_C=text` now fails the build.
 - Native runtime (decision 0221 point 10): a fault on macOS arm64
   unwinds through the Xo walker, which reads the compact unwind of
   `__unwind_info` itself, instead of libunwind. bench/perf/fault is

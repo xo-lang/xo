@@ -57,9 +57,10 @@ fn rs_push_rune(s: Str, r: Int) -> Str
 /// An empty string with room for n bytes (BytesBuilder.with_capacity).
 fn rs_with_cap(n: Int) -> Str
 
-// The C path of the number and time text (decision 0193): compiled only
-// with -DXO_TEXT_C, called only by std/native/llrt/text_c.xo
-// (XO_LLRT_C=text). int_parse and duration_parse above are the others.
+// The number and time text of the wasm runtime (selfhost/wasm rt2.xo
+// implements them); native builds use std/native/llrt/text.xo, and the
+// C path of text (XO_LLRT_C=text) went in decision 0227. int_parse and
+// duration_parse above are the others.
 
 fn rs_append_time(s: Str, t: Int) -> Str
 fn time_parse_ok(s: Str) -> Bool

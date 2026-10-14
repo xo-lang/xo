@@ -45,19 +45,11 @@ func IOFlags(code []byte) []string {
 		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
 		out = append(out, "-DXO_PROC")
 	}
-	// the C path of the number and time text (decision 0193), which only
-	// XO_LLRT_C=text builds call: no pack has it, so the runtime is
-	// compiled locally
-	for _, sym := range []string{"xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse", "xo_time_parse"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_TEXT_C")
-			break
-		}
-	}
 	// Decision 0198 deleted the C paths of show, report, tz, atomic,
 	// fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
 	// with their -D flags, and no C defines xo_fs_mkdir_all,
-	// xo_fs_create_temp, or xo_fs_cwd any more.
+	// xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
+	// the C path of text (-DXO_TEXT_C).
 	// The C versions of the intrinsics (a non-constant op of int_wrap;
 	// decision 0195)
 	for _, sym := range []string{"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
