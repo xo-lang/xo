@@ -101,7 +101,31 @@ gh workflow run ──> GitHub queues job (runs-on: self-hosted, xo-arm64)
   ones). If every fitting machine is busy the job waits for the first
   free runner. Two webhooks handled at once can start one machine too
   many; it stops itself after the idle time
-  (gotchas/lambda-reserved-concurrency-account-minimum.md).
+  (gotchas/lambda-reserved-concurrency-account-minimum.md). The webhook
+  makes a start immediate (17 s from queued to running, measured); the
+  sweep is the backstop for a lost delivery or a machine that was still
+  stopping, and costs up to a minute (it alone gave the 75 s start of
+  the first test, while the webhook was broken:
+  gotchas/lambda-function-url-403-permissions.md).
+- **Webhook security**: GitHub signs every delivery with HMAC-SHA256 of
+  the body, keyed with the secret of this repository's webhook; the
+  handler recomputes it with `/xo-ci/webhook-secret` and compares in
+  constant time, so an unsigned or wrongly signed request gets 401
+  (checked 2026-10-14). Only holders of the secret can sign: GitHub (for
+  this repository's webhook only; other repositories, users, and apps
+  cannot), and anyone who can read SSM `/xo-ci/webhook-secret` or the
+  Terraform state (AWS account admins and the Lambda role). The handler
+  does not act on the payload's contents: a signed delivery only means
+  "look now", and it asks GitHub's API which jobs are really queued, so
+  even a replayed or forged request can start a machine only for a real
+  queued job (which needs repository write access to create), and that
+  machine stops itself when idle. The function URL's resource policy
+  allows the public `lambda:InvokeFunctionUrl` and
+  `lambda:InvokeFunction` only with `lambda:InvokedViaFunctionUrl`, so
+  the function cannot be invoked directly from outside the account
+  (AWS provider 6.x). Rotate the secret with `terraform apply
+  -replace=random_password.webhook` in infra/ci-runners (updates GitHub
+  and SSM together).
 - **Registration** (`lambda/register.mjs`): a machine calls it at boot
   with its runner name; it answers whether GitHub still knows that
   runner and a fresh registration token. The GitHub App key stays in
@@ -161,8 +185,8 @@ Account ACCOUNT_ID, us-east-1. Everything below is Terraform managed
 | runner machines | `xo-ci-*` | tags `purpose=xo-ci`, `ci-runner`, `ci-labels`, `ci-arch`; instance metadata tags enabled; IMDSv2 required |
 | runner role | `xo-ci-runner` (+ instance profile) | s3 read on the seed bucket, s3 put on `dev/*`, invoke xo-ci-register |
 | Lambda role | `xo-ci-lambda` | ssm:GetParameter on `/xo-ci/*`, ec2:DescribeInstances, ec2:StartInstances only on `purpose=xo-ci` |
-| Lambdas | `xo-ci-register`, `xo-ci-autostart` | Node.js 22; code `infra/ci-runners/lambda/`; logs `/aws/lambda/<name>`, 14 days |
-| function URL | xo-ci-autostart | auth NONE; the handler checks GitHub's `X-Hub-Signature-256` |
+| Lambdas | `xo-ci-register`, `xo-ci-autostart` | Node.js 22; code `infra/ci-runners/lambda/`; autostart 256 MB (128 MB ran at 121 MB); logs `/aws/lambda/<name>`, 14 days |
+| function URL | xo-ci-autostart | auth NONE; resource policy: public InvokeFunctionUrl and InvokeFunction only via the URL; the handler checks GitHub's `X-Hub-Signature-256` |
 | schedule | EventBridge rule `xo-ci-autostart-sweep` | `rate(1 minute)`, input `{"sweep": true}` |
 | boot script | `s3://xo-seeds-ACCOUNT_ID/ci/boot/linux.sh` | rendered from boot/linux.sh |
 | webhook secret | SSM `/xo-ci/webhook-secret` (SecureString) | random, 48 characters |
@@ -221,8 +245,11 @@ after the idle time.
 - **A machine never stops**: `journalctl -u xo-ci-idle`; the 8 hour cap
   powers it off regardless.
 - **Webhook deliveries**: GitHub, repository Settings, Webhooks (or
-  `gh api repos/josephspurrier/xo/hooks/697891712/deliveries`). A missed
-  delivery only delays a start until the next sweep.
+  `gh api repos/josephspurrier/xo/hooks/697891712/deliveries`): every
+  delivery should be 200. A 403 means the function URL's permissions
+  (gotchas/lambda-function-url-403-permissions.md), a 401 a wrong secret;
+  redeliver one with `gh api -X POST .../deliveries/ID/attempts`. A
+  missed delivery only delays a start until the next sweep.
 - **Rotating the App key**: GitHub, Settings, Developer settings, GitHub
   Apps, xo-lang-ci, generate a private key; store it with `aws ssm
   put-parameter --name /xo-ci/github-app/private-key --type
@@ -246,14 +273,16 @@ pattern on a runner or on the Mac; the idle script only looks for
 
 ## Measurements
 
-From the first runs on main, 2026-10-14
-(runs 38595689932, 38596682112, 38597216716, 38597341138):
+From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
+38597216716, 38597341138, 38599119717, 38600224256):
 
 | what | time |
 |---|---|
 | `short` (vet and `go test -short`, every package) on xo-ci-arm64 | 51 s step, 81 s queued to done |
-| stopped machine to job running (webhook, start, boot, runner online) | 75 s |
+| stopped machine to job running, through the webhook (delivery 5 s, Lambda starts xo-ci-arm64-big2, runner online and job assigned 12 s later) | 17 s |
+| the same through the one minute sweep only (webhook broken at the time) | 75 s |
 | idle stop after the last job | 5 min 24 s |
+| `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
 | `fixed-point` on xo-ci-arm64-big | 2 min 24 s job: s1 36 s, s2 36 s, s3 24 s; s2 and s3 assembly (297,336,303 bytes) and binaries (53,485,152 bytes) identical |
 
 Earlier figures for comparison (from the knowledgebase): one self build
@@ -301,8 +330,9 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
 - A GitHub App (owner) over a personal token: no expiry, permissions on
   this repository only.
 - S3 state (owner): any session can run `runners.sh`.
-- Webhook plus a one minute sweep over polling alone: starts in about a
-  minute, and a lost webhook costs at most a minute.
+- Webhook plus a one minute sweep over polling alone: the webhook starts
+  a machine at once (17 s to a running job), and a lost delivery costs at
+  most a minute.
 - The machines stop themselves: no outside system can stop a machine in
   the middle of a job, and nothing depends on the Mac.
 - It replaces the lead's Mac-side EC2 queue (ec2q-runner4, warm-run2,
