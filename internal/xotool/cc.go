@@ -25,7 +25,7 @@ import (
 // (decision 0102), so programs without them do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
-	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
+	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
 		// handles, copies, modes, links, locks (decision 0172)
 		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock",
 		// the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
@@ -54,82 +54,15 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
-	// and of the leaf text of Display and Debug (decision 0193 step 5,
-	// XO_LLRT_C=show)
-	for _, sym := range []string{"xo_rs_append_u64", "xo_rs_append_rune_quote"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_SHOW_C")
-			break
-		}
-	}
-	// and of the report of a property test's case (decision 0193 step 5,
-	// XO_LLRT_C=report)
-	if callsSym(code, "xo_prop_report") {
-		out = append(out, "-DXO_REPORT_C")
-	}
-	// and of the zone rules (decision 0193 step 5, XO_LLRT_C=tz)
-	for _, sym := range []string{"xo_tz_load", "xo_tz_offset", "xo_tz_abbr"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_TZ_C")
-			break
-		}
-	}
-	// and of Atomic's operations (decision 0200, XO_LLRT_C=atomic); not
-	// xo_atomic_new, which the Xo path calls too
-	for _, sym := range []string{"xo_atomic_get", "xo_atomic_set", "xo_atomic_swap", "xo_atomic_cas", "xo_atomic_add", "xo_atomic_max"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_ATOMIC_C")
-			break
-		}
-	}
-	// and of the Fs path policy (decision 0193 step 6, XO_LLRT_C=fspath)
-	for _, sym := range []string{"xo_fs_mkdir_all", "xo_fs_remove_all", "xo_fs_create_temp", "xo_fs_cwd"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_FSPATH_C")
-			break
-		}
-	}
-	// and of the scalar values of property tests (decision 0195,
-	// XO_LLRT_C=gen; xo_gen_size also names xo_gen_sized)
-	for _, sym := range []string{"xo_gen_size", "xo_gen_any_int", "xo_gen_float", "xo_gen_rune", "xo_gen_str", "xo_gen_duration", "xo_gen_time"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_GEN_C")
-			break
-		}
-	}
-	// and of MemFs.fail_next's pattern match (decision 0195,
-	// XO_LLRT_C=glob)
-	if callsSym(code, "xo_test_glob") {
-		out = append(out, "-DXO_GLOB_C")
-	}
-	// and of the hashes of std/crypto (decision 0195, XO_LLRT_C=digest)
-	for _, sym := range []string{"xo_crypto_sha256", "xo_crypto_hmac_sha256", "xo_crypto_pbkdf2", "xo_crypto_argon2id", "xo_crypto_b64", "xo_crypto_verify_password"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_DIGEST_C")
-			break
-		}
-	}
-	// and of the integer operations of generated code and the intrinsics
-	// (decision 0195, XO_LLRT_C=ints)
-	for _, sym := range []string{"xo_int_op", "xo_int_conv", "xo_int_in_range", "xo_rune_of", "xo_rune_valid", "xo_floor_div", "xo_str_hash",
-		// the C versions of the intrinsics (a non-constant op of int_wrap)
-		"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
+	// Decision 0198 deleted the C paths of show, report, tz, atomic,
+	// fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
+	// with their -D flags, and no C defines xo_fs_mkdir_all,
+	// xo_fs_create_temp, or xo_fs_cwd any more.
+	// The C versions of the intrinsics (a non-constant op of int_wrap;
+	// decision 0195)
+	for _, sym := range []string{"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_INTS_C")
-			break
-		}
-	}
-	// and of the reference counts (decision 0207 stage 2, XO_LLRT_C=rc)
-	for _, sym := range []string{"xo_rc_inc_c", "xo_rc_dec_c", "xo_rc_dec_shared_c", "xo_rc_claim_c", "xo_rc_mark_c"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_RC_C")
-			break
-		}
-	}
-	// and of the heap (decision 0207 stage 3, XO_LLRT_C=alloc)
-	for _, sym := range []string{"xo_alloc_new_c", "xo_alloc_free_c", "xo_alloc_refill_c", "xo_alloc_free_mt_c", "xo_alloc_resize_c"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_ALLOC_C")
 			break
 		}
 	}

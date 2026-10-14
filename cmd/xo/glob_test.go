@@ -113,9 +113,8 @@ func globTestFile() (string, int) {
 // TestGlobDiff checks MemFs.fail_next's pattern match (path.Match, std/
 // native/llrt/glob.xo, decision 0195) against Go's path.Match: one test
 // per case expects the write to fail exactly when path.Match matches,
-// on the Go backend and on both native backends with the Xo path and the
-// C path (XO_LLRT_C=glob); every test passes and the reports are the
-// same.
+// on the Go backend and on both native backends (decision 0198 deleted
+// the C path); every test passes and the reports are the same.
 func TestGlobDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds test binaries on every backend")
@@ -135,13 +134,10 @@ func TestGlobDiff(t *testing.T) {
 	if goCode != 0 {
 		t.Fatalf("go backend: exit %d\n%s", goCode, goOut)
 	}
-	for _, p := range []string{"", "glob"} {
-		t.Setenv("XO_LLRT_C", p)
-		for _, be := range backends {
-			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
-			if code != goCode || out != goOut {
-				t.Errorf("XO_LLRT_C=%q on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", p, be, goCode, code, goOut, be, out)
-			}
+	for _, be := range backends {
+		code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
+		if code != goCode || out != goOut {
+			t.Errorf("%s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", be, goCode, code, goOut, be, out)
 		}
 	}
 }

@@ -145,8 +145,8 @@ func scanCorpus(n int) string {
 
 // TestScanDiff runs scanDiffProg over scanCorpus on the Go backend (the
 // reference: Go's strings and encoding/hex) and on both native backends
-// with the scans in Xo (std/native/llrt/scan.xo) and with their C path
-// (XO_LLRT_C=scan), and requires the Go backend's lines; the LLVM build
+// with the scans in Xo (std/native/llrt/scan.xo; decision 0198 deleted
+// the C path), and requires the Go backend's lines; the LLVM build
 // of the Xo path also frees every allocation (decision 0201).
 func TestScanDiff(t *testing.T) {
 	if testing.Short() {
@@ -174,12 +174,9 @@ func TestScanDiff(t *testing.T) {
 	if len(want) != len(inLines) {
 		t.Fatalf("go backend: %d lines for %d inputs", len(want), len(inLines))
 	}
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "scan")
-				}
 				r, res := buildRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)

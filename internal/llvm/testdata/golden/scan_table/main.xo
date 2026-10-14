@@ -4,8 +4,8 @@
 // needle at every offset of texts of 0 to 40 bytes (every alignment of
 // the 16 and 8 byte steps and of the step that ends at the end),
 // multibyte runes, \r\n, and Bytes that are not UTF-8 (rune_count,
-// to_str). The Go backend's output is the reference; the Xo path and the
-// C path (XO_LLRT_C=scan) print the same.
+// to_str). The Go backend's output is the reference; both native
+// backends print the same (decision 0198 deleted the C path).
 
 /// h and the text mixed (so a long table prints one number a row).
 fn mix(h: Int, s: Str) -> Int {

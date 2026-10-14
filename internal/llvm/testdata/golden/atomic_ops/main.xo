@@ -1,7 +1,7 @@
 // Atomic[T]'s operations (std.md 2.7) as decision 0200 lowers them on
 // the native backends: get, set, swap, compare_and_swap inline on the
-// value's cell, add and max in std/native/llrt/atomic.xo; the C path is
-// XO_LLRT_C=atomic. A sum that does not fit an Int faults at the call.
+// value's cell, add and max in std/native/llrt/atomic.xo (decision
+// 0198 deleted the C path). A sum that does not fit an Int faults.
 fn bump(a: Atomic[Int], n: Int) -> Int {
   a.add(n)
 }
