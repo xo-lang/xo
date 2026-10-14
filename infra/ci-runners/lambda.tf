@@ -30,6 +30,7 @@ resource "aws_lambda_function" "autostart" {
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
   timeout          = 60
+  memory_size      = 256 # 128 MB ran at 121 MB used
   # No reserved concurrency: the account's limit is 10 and Lambda keeps 10
   # unreserved (gotchas/lambda-reserved-concurrency-account-minimum.md).
   # Two webhooks at once can start one machine too many; it stops itself
@@ -42,6 +43,20 @@ resource "aws_lambda_function" "autostart" {
 resource "aws_lambda_function_url" "autostart" {
   function_name      = aws_lambda_function.autostart.function_name
   authorization_type = "NONE" # GitHub's HMAC signature is checked in the handler
+}
+
+# GitHub calls the function URL (auth NONE; the handler rejects any
+# request without GitHub's HMAC signature). Since AWS's 2025 change a
+# public function URL needs both permissions; the second is limited to
+# calls through the URL, so the function cannot be invoked directly from
+# outside the account. Without them every delivery got 403
+# (gotchas/lambda-function-url-403-permissions.md).
+resource "aws_lambda_permission" "url_invoke" {
+  statement_id             = "function-url-invoke"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.autostart.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 }
 
 resource "aws_cloudwatch_event_rule" "sweep" {
