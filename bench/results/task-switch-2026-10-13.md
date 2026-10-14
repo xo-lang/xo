@@ -318,3 +318,12 @@ TestGoldenTasks run is three thread counts per golden:
   3 of 3; TestGoldenASan (the http goldens, net_echo, net_only) passes.
 - Mac (kqueue through the C library, never affected): the three goldens
   under TSan and TestGoldenASan pass at 450a3aee.
+
+Linux amd64 (EC2 warm c7i.8xlarge class, 32 vCPUs, i-EXAMPLE02,
+at d2311546, 2026-10-14), the same steps as arm64 at 450a3aee: with the
+fix the three goldens and TestRuntimeRawPoll clean 3 of 3 and
+TestGoldenASan passes; without it TestRuntimeRawPoll reports the race and
+net_echo, http_wire, and net_only race 3 of 3 runs each; with
+XO_LLRT_C=net and no fix all three are clean 3 of 3. So the blind spot
+and the fix are the same on both Linux architectures. (xobuild from the
+linux-amd64 seed took 2414 s on that instance.)
