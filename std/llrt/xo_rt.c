@@ -1419,9 +1419,12 @@ int64_t xo_unwinding(void) {
 // ---------------------------------------------------------------------------
 // Fault unwinding (core 8, decision 0085)
 //
-// A fault is raised as a forced unwind of the platform unwinder
-// (_Unwind_ForcedUnwind; libunwind on macOS, libgcc on Linux): every
-// frame of generated code has unwind tables, and its landing pads (the
+// A fault is raised as a forced unwind (decision 0221): on Linux the Xo
+// unwinder walks the frames (std/native/llrt/unwind.xo raise), on macOS
+// libunwind's _Unwind_ForcedUnwind with an Xo stop function and
+// personality, on Windows the system's unwinder (decision 0197); glibc
+// linux/amd64 keeps libgcc's forced unwind until decision 0221's stage 2.
+// Every frame of generated code has unwind tables, and its landing pads (the
 // cleanup paths of internal/ssa's checks, landing.go) run the deferred
 // code of the blocks the fault leaves, close their scopes, unlock their
 // Mutexes, and release what the frame owns, then hand the fault on
@@ -1432,6 +1435,14 @@ int64_t xo_unwinding(void) {
 // reported and the process exits with status 70. The personality routine
 // (xo_personality) reads the call site table of the language specific
 // data area that both backends emit (the GCC format for cleanups).
+// Frames of C with cleanups between a fault and its catch are passed
+// over on Linux, their cleanups not run (the runtime's C has none).
+
+// XO_UNWIND_LIBGCC: glibc linux/amd64, which still raises a fault with
+// libgcc's _Unwind_ForcedUnwind and the C personality below.
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(XO_NOLIBC) && !defined(__aarch64__)
+#define XO_UNWIND_LIBGCC 1
+#endif
 
 #define XO_EXC_CLASS 0x584f00004641554cULL // "XO\0\0FAUL"
 
@@ -1509,19 +1520,58 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	}
 	fault_exit(c);
 }
-#elif defined(XO_NOLIBC)
-int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary);
+#elif defined(__APPLE__)
+// fault_stop is the stop function of a fault's forced unwind on macOS
+// (libunwind; it reads the compact unwind of __unwind_info, a platform
+// library under decision 0195): the frames past the context's boundary
+// are the runtime's, where nothing catches a fault. It ends the program
+// itself: returning would make a C cleanup's _Unwind_Resume abort.
+static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
+	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
+	(void)version;
+	(void)cls;
+	(void)e;
+	xo_ctx *c = arg;
+	if ((actions & _UA_END_OF_STACK) || (c->boundary && (uintptr_t)_Unwind_GetCFA(uc) > c->boundary)) {
+		fault_exit(c);
+	}
+	return _URC_NO_REASON;
+}
 
-// fault_raise with no C library (decision 0221): the unwinder is Xo
-// (std/native/llrt/unwind.xo over the program's .eh_frame_hdr), which
-// does what the forced unwind below does, fault_stop's boundary and
-// xo_personality's landing pads included, and returns when nothing
-// catches the fault.
+// fault_raise on macOS: libunwind's forced unwind with fault_stop and
+// the Xo personality (unwind.xo darwin_personality). The exception
+// object is the context's: generated landing pads never resume it
+// (xo_fault_continue raises anew, reusing it), but a C cleanup does,
+// after the frame of this call is gone.
 XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary);
+	struct _Unwind_Exception *exc = &c->fault_exc;
+	memset(exc, 0, sizeof *exc);
+	exc->exception_class = XO_EXC_CLASS;
+	_Unwind_ForcedUnwind(exc, fault_stop, c);
+	// the unwinder found no way up
+	fault_exit(c);
+}
+#elif !defined(XO_UNWIND_LIBGCC)
+int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers);
+#ifdef XO_NOLIBC
+int xo_personality(void); // the link's --defsym of xo_x_personality
+#else
+int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
+#endif
+
+// fault_raise on Linux (decision 0221): the unwinder is Xo
+// (std/native/llrt/unwind.xo over the .eh_frame_hdr tables of the
+// program and its shared objects), which runs the first landing pad of
+// a frame of generated code (its personality is xo_personality) below
+// the context's boundary, and returns when nothing catches the fault.
+XO_NORETURN static void fault_raise(xo_ctx *c) {
+	rt_fault_leave();
+	c->faulting = 1;
+	c->unwinding = 1;
+	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_personality));
 	fault_exit(c);
 }
 #else
@@ -1671,10 +1721,21 @@ xo_rstr *xo_fault_loc(int64_t *len) {
 // landing pad is a cleanup, entered on the second phase. The language
 // specific data is GCC's: an LPStart and a TType encoding (omitted), the
 // call site encoding, and the call sites (start, length, landing pad,
-// action), offsets from the function's start. With no C library it is
-// Xo (decision 0221: unwind.xo personality; the link defines
-// xo_personality as its export).
-#ifndef XO_NOLIBC
+// action), offsets from the function's start. It is Xo (decision 0221:
+// unwind.xo darwin_personality, the export xo_x_personality) but on
+// Windows and glibc linux/amd64; on Linux the Xo unwinder only compares
+// a frame's personality with its address. With no C library the link
+// defines xo_personality as the export; otherwise it is the forwarder
+// below, until the emitters name the export and a seed has them.
+#if !defined(_WIN32) && !defined(XO_UNWIND_LIBGCC) && !defined(XO_NOLIBC)
+int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
+
+int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc) {
+	return (int)xo_x_personality(version, actions, (int64_t)cls, XO_ADDR(e), XO_ADDR(uc));
+}
+#endif
+
+#if defined(_WIN32) || defined(XO_UNWIND_LIBGCC)
 static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
 	const uint8_t *q = *p;
 	uintptr_t v = 0;
@@ -1811,7 +1872,7 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 	return _URC_CONTINUE_UNWIND;
 }
 #endif
-#endif // XO_NOLIBC
+#endif // _WIN32 || XO_UNWIND_LIBGCC
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
