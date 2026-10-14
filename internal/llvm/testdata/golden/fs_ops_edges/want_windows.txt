@@ -1,0 +1,53 @@
+exit 0
+--- stdout
+line 70000 false abcde
+line 65533 false AAAAA
+line 5 false short
+line 0 false 
+line 0 false 
+line 4 false last
+after end: none
+reads 10 65526 70014
+rest 0
+mixed 70000 AAA
+read_dir of a file: NotDir(path: "long.txt")
+read_dir missing: NotFound(path: "nope")
+remove non empty: NotEmpty(path: "d")
+remove missing: NotFound(path: "nope")
+rename missing: NotFound(path: "nope")
+copy a dir: IsDir(path: "d")
+copy to missing dir: NotFound(path: "nodir/z")
+mode missing: NotFound(path: "nope")
+set_mode missing: NotFound(path: "nope")
+read_link missing: NotFound(path: "nope")
+set_modified missing: NotFound(path: "nope")
+modified -1500
+modified 1700000000123
+entry e true 0
+entry w false 3
+entry y false 1
+walk d
+walk d/e
+walk d/w
+walk d/y
+walk long.txt
+symlink over a file: Exists(path: "d/w")
+read_link w
+open missing: NotFound(path: "nodir/f")
+create in missing dir: NotFound(path: "nodir/f")
+append to a dir: IsDir(path: "d")
+read a write handle: Io(path: "w.txt", msg: "file is open for writing")
+read_line a write handle: Io(path: "w.txt", msg: "file is open for writing")
+write after close: Io(path: "w.txt", msg: "file already closed")
+w.txt abc
+mode 292
+write read only: Denied(path: "ro.txt")
+copied mode 292
+d exists false
+temp true 0
+while held: held
+after unlock: acquired
+lock in missing dir: NotFound(path: "nodir/l")
+lock of the root: IsDir(path: "")
+waited for the lock: true
+--- stderr

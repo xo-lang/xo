@@ -27,7 +27,7 @@ $Exe = (Resolve-Path $Exe).Path
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 foreach ($w in $Workloads) {
-	$best = [ulong]::MaxValue
+	$best = [UInt64]::MaxValue
 	$bestMs = [double]::MaxValue
 	$sum = ''
 	for ($k = 0; $k -lt $N; $k++) {
@@ -46,7 +46,7 @@ foreach ($w in $Workloads) {
 		$p.WaitForExit()
 		$sw.Stop()
 		if ($p.ExitCode -ne 0) { throw "$w exited $($p.ExitCode)" }
-		$c = [ulong]0
+		$c = [UInt64]0
 		if (-not [XoCycles]::QueryProcessCycleTime($p.Handle, [ref]$c)) { throw 'QueryProcessCycleTime failed' }
 		$p.Dispose()
 		if ($c -lt $best) { $best = $c }

@@ -785,9 +785,14 @@ pub fn readlink(path: Str) -> (Str, Int) {
 /// LOCK_UN 8) over the whole file: LockFileEx or UnlockFileEx. 0, or the
 /// negative errno (EWOULDBLOCK when another handle holds it).
 pub fn flock(h: Int, op: Int) -> Int {
-  // a zeroed OVERLAPPED (32 bytes)
+  // a zeroed OVERLAPPED (32 bytes: the offset 0 and no event; bytes_buf
+  // is not zeroed, and a stale hEvent fails the call)
   let o = rt.bytes_buf(32)
   let a = rt.bytes_addr(o)
+  rt.mem_store(a, 0, 0, 8)
+  rt.mem_store(a, 8, 0, 8)
+  rt.mem_store(a, 16, 0, 8)
+  rt.mem_store(a, 24, 0, 8)
   let ok = if (op & 8) != 0 {
     Int(sys_windows.UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, a))
   } else {
