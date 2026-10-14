@@ -718,7 +718,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "add_landings", t)
   b.cleanup_all()
   t = lap(os, o.phases, "cleanup", t)
-  b.insert_rc_jobs(emit_jobs(os))
+  rc_cached(os, b, release, emit_jobs(os), o.phases)
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t}
 }

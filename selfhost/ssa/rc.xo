@@ -672,6 +672,13 @@ const RC_MAX_CHUNKS = 64
 /// passes read only the whole-program facts (the borrowed parameters,
 /// the types), so the module is the same for any number of jobs.
 pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
+  let r = b.rc_prepare()
+  let _o = b.rc_run(r, [], {}, false, jobs)
+}
+
+/// The whole-program half of insert_rc: the `var` List parameters made
+/// unique, then borrow inference.
+fn (var b: Builder) rc_prepare() -> Rc {
   var r = Rc{types: b.m.types}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
@@ -684,16 +691,75 @@ pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
     b.m.funcs[fi] = f
   }
   r.infer_borrows(b.m.funcs)
+  r
+}
+
+/// The reference counting of function fi (f) through the cache
+/// (rccache.xo): read from the entry of its key when there is one (and
+/// not verify), else computed; returns the entry to store ("" key for
+/// none), whether it was read, and whether it differs from its entry.
+fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[Str, Bytes], verify: Bool, ops: Map[Str, Op]) -> (Func, Str, Bytes, Bool, Bool) {
+  var f = f0
+  if key.is_empty() {
+    r.rc_func(f, fi)
+    return (f, "", b"", false, false)
+  }
+  let entry = entries.get(key)
+  if !verify {
+    if let Some(e) = entry {
+      if let Some(g) = decode_func(m, e, ops) {
+        return (g, "", b"", true, false)
+      }
+    }
+  }
+  r.rc_func(f, fi)
+  match encode_func(m, f) {
+    Some(enc) => {
+      match entry {
+        Some(e) => return (f, "", b"", false, e != enc)
+        None => return (f, key, enc, false, false)
+      }
+    }
+    None => (f, "", b"", false, false)
+  }
+}
+
+/// The per-function half of insert_rc on up to jobs tasks
+/// (bench/results/fast-builds-2026-10-13.md): each function's passes
+/// read only the whole-program facts (the borrowed parameters, the
+/// types), so the module is the same for any number of jobs. With keys
+/// (insert_rc_plan), through the cache.
+fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
+  var r = r0
+  let n = b.m.funcs.len()
+  // the module without its functions, for the cache's codec (types)
+  let mt = Module{types: b.m.types, type_at: b.m.type_at, goarch: b.m.goarch}
+  let ops = ops_by_name()
+  var out = RcOut{}
   let nc = (n / RC_CHUNK_FUNCS).min(RC_MAX_CHUNKS)
   if jobs <= 1 || nc <= 1 {
     for fi in 0..n {
       var f = b.m.funcs[fi]
       b.m.funcs[fi] = Func{name: ""}
-      r.rc_func(f, fi)
-      b.m.funcs[fi] = f
+      if keys.is_empty() {
+        r.rc_func(f, fi)
+        b.m.funcs[fi] = f
+        continue
+      }
+      let (g, sk, se, hit, diff) = r.rc_cached(mt, f, fi, keys[fi], entries, verify, ops)
+      b.m.funcs[fi] = g
+      if hit {
+        out.reused += 1
+      }
+      if diff {
+        out.mismatches.push(g.name)
+      }
+      if !sk.is_empty() {
+        out.stores.push((sk, se))
+      }
     }
     r.bproj = {}
-    return
+    return out
   }
   // chunks of about equal size (values), moved out of the module and
   // handed to the tasks through a channel, so each holds its functions
@@ -726,34 +792,54 @@ pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
   let done = scope s {
     var ts = []
     for _ in 0..jobs.min(bounds.len() - 1) {
-      ts.push(s.spawn(fn() -> List[(Int, List[Func])] {
-        var mine: List[(Int, List[Func])] = []
+      ts.push(s.spawn(fn() -> List[(Int, List[Func], RcOut)] {
+        var mine: List[(Int, List[Func], RcOut)] = []
         var rc = base
         for item in work {
           let k = item.0
           var cl = item.1
+          var o = RcOut{}
           for i in 0..cl.len() {
             var f = cl[i]
             cl[i] = Func{name: ""}
-            rc.rc_func(f, starts[k] + i)
-            cl[i] = f
+            let fi = starts[k] + i
+            if keys.is_empty() {
+              rc.rc_func(f, fi)
+              cl[i] = f
+              continue
+            }
+            let (g, sk, se, hit, diff) = rc.rc_cached(mt, f, fi, keys[fi], entries, verify, ops)
+            cl[i] = g
+            if hit {
+              o.reused += 1
+            }
+            if diff {
+              o.mismatches.push(g.name)
+            }
+            if !sk.is_empty() {
+              o.stores.push((sk, se))
+            }
           }
-          mine.push((k, cl))
+          mine.push((k, cl, o))
         }
         mine
       }))
     }
-    var all: List[(Int, List[Func])] = []
+    var all: List[(Int, List[Func], RcOut)] = []
     for t in ts {
       all = all + t.await
     }
     all
   }
-  for (k, cl) in done {
+  for (k, cl, o) in done {
     for (i, f) in cl.indexed() {
       b.m.funcs[starts[k] + i] = f
     }
+    out.reused += o.reused
+    out.mismatches = out.mismatches + o.mismatches
+    out.stores = out.stores + o.stores
   }
+  out
 }
 
 /// The reference counting of function fi (f), after borrow inference.
