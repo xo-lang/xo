@@ -61,6 +61,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`XO_CACHE_MAX_AGE`, e.g. `6h`, `0` off), then the least recently used
   past 20 GiB per cache (`XO_CACHE_MAX_GB`); nothing used within two
   hours is removed, and a prune runs at most once an hour.
+- Native runtime (zero-C audit item B03, stage 1): standard output's
+  64 KiB buffer, its flush, and standard error are Xo
+  (std/native/llrt/stdio.xo, process globals in rt.static_word);
+  Stdio.print and friends call it through the native prelude, and the C
+  runtime flushes through cabi.xo's exports. 1,000,000 println cost
+  0.788 (arm64) and 0.859 (LLVM) of the C path's instructions
+  (bench/results/stdio-2026-10-14.md). os.proc.exit, env.get, env.vars,
+  env.args, and env.program are Xo too (std/native/llrt/process.xo).
 - Runtime process globals (zero-C work item B02, decision 0207): an
   internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
   LLVM, and wasm emitters; std/log's state (log.configure's level,

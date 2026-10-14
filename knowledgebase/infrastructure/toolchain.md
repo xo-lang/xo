@@ -951,6 +951,15 @@ Last verified: 2026-10-07
   temp, cwd, proc_plain, proc) in a fresh scratch directory per run;
   `XO_LLRT_C=fspath,procspec` builds the C paths. The counts include the
   kernel's instructions. Last verified: 2026-10-13.
+- `bench/perf/stdio/measure.sh <xo> <out dir> <label=std dir>... -- <backend...>`
+  (2026-10-14, zero-C work item B03): standard output and error (lines,
+  ints, small, big, err, mixed, none) built by one xo against each std
+  dir given (`c=` an archive of an earlier commit's std/ tree, whose
+  prelude has no llrt_print, so the compiler calls the C runtime's
+  xo_print; `xo=` the checkout's std), output to /dev/null; prints the
+  minimum of 5 runs of user instructions (/usr/bin/time -l on macOS,
+  perf stat on Linux) and ms. WORKLOADS overrides the list. Last
+  verified: 2026-10-14.
 - `bench/perf/sysio/measure.sh <xo1> <std dir> <out dir> <backend...>`
   (2026-10-13, decision 0206; macOS mode with `/usr/bin/time -l`,
   decision 0213): os.fs.read, write, stat, Clock.now, channels, and

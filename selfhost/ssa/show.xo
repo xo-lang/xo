@@ -618,7 +618,7 @@ fn (var b: Builder) print_trace(tr: Int) {
   b.if_then_end(no, join)
   let out = b.call("str.concat", st, "", [b.read(line), b.const_str(" ")])
   let loc = b.add(Op.Field, st, Aux.I(n: 1), [fr])
-  b.rt("eprintln", -1, [b.call("str.concat", st, "", [out, loc])])
+  b.eprintln_rt(b.call("str.concat", st, "", [out, loc]))
   b.for_up_to_end(i, iv, head, exit)
 }
 

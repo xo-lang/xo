@@ -60,6 +60,9 @@ pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
   keep(b, r)
 }
 
+/// write(2) of the n bytes at the address a (std/native/llrt/stdio.xo).
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.write(fd, a, n)) }
+
 /// Writes all of b (retrying after EINTR and short writes): 0, or the
 /// errno.
 pub fn write_all(fd: Int, b: Bytes) -> Int {
