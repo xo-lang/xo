@@ -344,24 +344,66 @@ void xo_x_heap_lock(void);
 void xo_x_heap_unlock(void);
 int64_t xo_x_heap_chunks(void);
 
+// TEMPORARY (B21 diagnosis): XO_B21_C's bits send a part back to the C:
+// 2 big blocks to malloc, 4 chunks to malloc, 8 the lock to a mutex.
+static int b21_c = -1;
+static int b21(int bit) {
+	if (b21_c < 0) {
+		const char *e = getenv("XO_B21_C");
+		b21_c = e ? atoi(e) : 0;
+	}
+	return b21_c & bit;
+}
+static pthread_mutex_t b21_mu = PTHREAD_MUTEX_INITIALIZER;
+int64_t xo_x_heap_alloc(int64_t n, int64_t h);
+
 // xo_heap_big returns a big block of n bytes (its prefix minus n): the
 // address after the prefix.
-int64_t xo_heap_big(int64_t n) { return xo_x_heap_big(n); }
+int64_t xo_heap_big(int64_t n) { return b21(2) ? xo_heap_large(n) : xo_x_heap_big(n); }
 
 // xo_heap_big_resize makes the big block whose prefix is at b n bytes.
-int64_t xo_heap_big_resize(int64_t b, int64_t n) { return xo_x_heap_big_resize(b, n); }
+int64_t xo_heap_big_resize(int64_t b, int64_t n) { return b21(2) ? xo_heap_large_resize(b, n) : xo_x_heap_big_resize(b, n); }
 
 // xo_heap_big_release gives back the big block whose prefix is at b.
-void xo_heap_big_release(int64_t b) { xo_x_heap_big_release(b); }
+void xo_heap_big_release(int64_t b) {
+	if (b21(2)) {
+		xo_heap_release(b);
+		return;
+	}
+	xo_x_heap_big_release(b);
+}
 
 // xo_heap_grow gives heap h a new chunk and allocates n bytes again (the
 // heap in Xo calls it last, so its arm64 code keeps no register across
 // a call).
-int64_t xo_heap_grow(int64_t h, int64_t n) { return xo_x_heap_grow(h, n); }
+int64_t xo_heap_grow(int64_t h, int64_t n) {
+	if (b21(4)) {
+		char *c = malloc(XO_CHUNK);
+		if (!c) {
+			xo_oom();
+		}
+		((xo_heap *)(intptr_t)h)->bump_cur = c;
+		((xo_heap *)(intptr_t)h)->bump_end = c + XO_CHUNK;
+		return xo_x_heap_alloc(n, h);
+	}
+	return xo_x_heap_grow(h, n);
+}
 
-void xo_heap_lock(void) { xo_x_heap_lock(); }
+void xo_heap_lock(void) {
+	if (b21(8)) {
+		pthread_mutex_lock(&b21_mu);
+		return;
+	}
+	xo_x_heap_lock();
+}
 
-void xo_heap_unlock(void) { xo_x_heap_unlock(); }
+void xo_heap_unlock(void) {
+	if (b21(8)) {
+		pthread_mutex_unlock(&b21_mu);
+		return;
+	}
+	xo_x_heap_unlock();
+}
 
 // xo_chunks is the chunks mapped so far (std/llrt/testdata/tasks.c and
 // alloc_threads.c check that blocks freed on another thread come back
