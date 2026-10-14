@@ -13,6 +13,7 @@
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
+use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/netpolicy
 use native/llrt/num
@@ -511,3 +512,17 @@ fn fault_record_take(c: Int) -> Int { fault.take(c) }
 
 /// Reports the fault of c and ends the process with status 70.
 fn fault_record_exit(c: Int) { fault.exit(c) }
+
+// ---------------------------------------------------------------------------
+// Contexts (std/native/llrt/ctx.xo, decision 0229; the zero-C audit's
+// B17): arm64 generated code calls the shields directly; xo_rt.c's
+// xo_shield_* forward to them.
+
+fn ctx_shield_begin() -> Int { ctx.shield_begin() }
+
+fn ctx_shield_end(tok: Int, lp: Int, ln: Int) { ctx.shield_end(tok, lp, ln) }
+
+fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
+
+/// The address of xo_rt.c ctx_root, at start (ctx.xo init).
+fn ctx_init(root: Int) { ctx.init(root) }

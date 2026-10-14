@@ -718,9 +718,15 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 	__builtin_unreachable();
 }
 
-// fault_init gives fault.xo the address of fault_raise_msg (with the heap
-// words: first in main, or in XO_RT_NO_MAIN's constructor).
-static void fault_init(void) { xo_x_fault_init(XO_ADDR(fault_raise_msg)); }
+// fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
+// that of ctx_root (with the heap words: first in main, or in
+// XO_RT_NO_MAIN's constructor).
+void xo_x_ctx_init(int64_t root);
+static int64_t ctx_root(int64_t a, int64_t b);
+static void fault_init(void) {
+	xo_x_fault_init(XO_ADDR(fault_raise_msg));
+	xo_x_ctx_init(XO_ADDR(ctx_root));
+}
 
 // ---------------------------------------------------------------------------
 // Strings
@@ -1380,6 +1386,25 @@ static xo_ctx *ctx(void) {
 	return c;
 }
 
+// The context record's layout, which ctx.xo's C_* name (decision 0229).
+_Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 && offsetof(xo_ctx, shield) == 12 &&
+                   offsetof(xo_ctx, park) == 16 && offsetof(xo_ctx, held) == 48 && offsetof(xo_ctx, nheld) == 56 &&
+                   offsetof(xo_ctx, capheld) == 60 && offsetof(xo_ctx, net_status) == 64 && offsetof(xo_ctx, net_msg) == 72 &&
+                   offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 && offsetof(xo_ctx, fault_loc) == 96 &&
+                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 128,
+               "ctx.xo C_*");
+_Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
+                   offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
+                   offsetof(xo_ctx, bud_paused) == 208 && sizeof(xo_ctx) == 224,
+               "ctx.xo C_BUD_*");
+
+// ctx_root is ctx for ctx.xo cur (its address in rt.static_word 15).
+static int64_t ctx_root(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	return XO_ADDR(ctx());
+}
+
 int64_t xo_unwinding(void) {
 	xo_ctx *c = cur_get();
 	return c ? c->unwinding : 0;
@@ -1917,44 +1942,18 @@ static void bud_resume(xo_ctx *c) {
 	}
 }
 
-// xo_shield_begin starts deferred code (core 3.5, decision 0022): it is
-// shielded from cancellation, and on the unwind path the unwinding flag
-// is clear while it runs. The result is the token xo_shield_end takes:
-// the start time and the flag.
-int64_t xo_shield_begin(void) {
-	xo_ctx *c = ctx();
-	int64_t tok = (mono_ns() << 1) | (c->unwinding & 1);
-	c->unwinding = 0;
-	c->shield++;
-	return tok;
-}
+// The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
+// (decision 0229), which arm64 generated code calls through its exports;
+// these forward to them for LLVM code and older xo's code.
+int64_t xo_x_ctx_shield_begin(void);
+void xo_x_ctx_shield_end(int64_t tok, int64_t lp, int64_t ln);
+void xo_x_ctx_shield_abort(int64_t tok);
 
-// xo_shield_end ends deferred code started with token tok: the flag is
-// set again, and deferred code that ran longer than 5 seconds faults
-// (XO-F005, as the Go backend checks it when the code returns).
-void xo_shield_end(int64_t tok, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	c->shield--;
-	c->unwinding = (int)(tok & 1);
-	int64_t el = mono_ns() - (tok >> 1);
-	if (el > 5000000000LL) {
-		char msg[128];
-		snprintf(msg, sizeof msg, "XO-F005: a shielded defer ran for %.3gs, longer than 5s", (double)el / 1e9);
-		fault_at(msg, loc, n);
-	}
-}
+int64_t xo_shield_begin(void) { return xo_x_ctx_shield_begin(); }
 
-// xo_shield_abort ends deferred code started with token tok that faulted
-// (decision 0085): the shield ends and the flag is set again as
-// xo_shield_end does, without its time check; the rest of the cleanup
-// runs on (internal/ssa faultCont). Without it the context stayed
-// shielded, and a task that caught the fault (task.isolate) never saw
-// cancellation again.
-void xo_shield_abort(int64_t tok) {
-	xo_ctx *c = ctx();
-	c->shield--;
-	c->unwinding = (int)(tok & 1);
-}
+void xo_shield_end(int64_t tok, const char *loc, int64_t n) { xo_x_ctx_shield_end(tok, XO_ADDR(loc), n); }
+
+void xo_shield_abort(int64_t tok) { xo_x_ctx_shield_abort(tok); }
 
 // ctx_canceled reports whether c is canceled and not shielded.
 static int ctx_canceled(xo_ctx *c) { return !c->shield && node_canceled(c->node); }

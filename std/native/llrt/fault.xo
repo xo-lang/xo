@@ -187,3 +187,12 @@ pub fn raise_float_int(f: Float, loc: Int) {
   }
   fire(text("${num.go_g_text(f)} is out of range for Int"), loc)
 }
+
+/// Raises the fault m at the ln bytes at lp (a location that is not zero
+/// terminated; its copy is never freed, as the raise does not return).
+pub fn raise_str_at(m: Str, lp: Int, ln: Int) {
+  let l = rt.heap_large(ln + 1)
+  rt.mem_copy(l, lp, ln)
+  rt.mem_store(l, ln, 0, 1)
+  fire(text(m), l)
+}
