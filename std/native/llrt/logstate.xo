@@ -1,0 +1,80 @@
+// The state of std/log on the native backends (std.md 6; the zero-C
+// audit's work item B02): log.configure's level, format, and output are
+// process globals (rt.static_word, decision 0207's design), the
+// dependency that writes the next record (decision 0173) a thread local
+// (rt.tlocal_get, decision 0212's table). This was std/llrt/xo_http.c's
+// `xlog` and its `__thread` xlog_from.
+use native/llrt/raw
+use native/llrt/sysio
+use native/llrt/text
+use native/rt
+
+/// rt.static_word: the first of the three words (rt.xo's table of the
+/// words), and their slots: the level (0 not configured: Info), the
+/// format (1 JSON), whether log.configure was called (records go to
+/// standard error, the fake one in a test, instead of the test's buffer).
+const WORDS = 0
+const LEVEL = 0
+const JSON = 1
+const OUT = 2
+
+/// The words of the thread local table (sched.xo TLS_*): the address and
+/// the length of the attribution's bytes, a string constant of the
+/// program (immortal), or 0.
+const TLS_FROM = 7
+const TLS_FROM_N = 8
+
+/// The memory orders of the slot atomics (rt.xo).
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// The level below which records are dropped: 1 Debug to 4 Error.
+pub fn level() -> Int {
+  let l = rt.slot_load[Int](rt.static_word(WORDS), LEVEL, ACQUIRE)
+  if l == 0 { 2 } else { l }
+}
+
+/// Whether records are JSON objects.
+pub fn json() -> Bool { rt.slot_load[Int](rt.static_word(WORDS), JSON, ACQUIRE) != 0 }
+
+/// Whether log.configure was called.
+pub fn configured() -> Bool { rt.slot_load[Int](rt.static_word(WORDS), OUT, ACQUIRE) != 0 }
+
+/// log.configure's level (1 to 4) and format.
+pub fn configure(level: Int, json: Bool) {
+  let w = rt.static_word(WORDS)
+  rt.slot_store[Int](w, OUT, 1, RELEASE)
+  rt.slot_store[Int](w, JSON, if json { 1 } else { 0 }, RELEASE)
+  rt.slot_store[Int](w, LEVEL, level, RELEASE)
+}
+
+/// Sets the dependency that writes the next record: s is a string
+/// constant (the SSA builder's, before a dependency's call of
+/// log.debug, info, warn, or error), so its bytes live as long as the
+/// program and only their address is kept.
+pub fn set_from(s: Str) {
+  rt.tlocal_set(TLS_FROM, raw.data(s))
+  rt.tlocal_set(TLS_FROM_N, s.len())
+}
+
+/// The dependency set_from set on this thread, cleared; "" for none. The
+/// log functions take it at entry: no task switch comes between the two.
+pub fn take_from() -> Str {
+  let a = rt.tlocal_get(TLS_FROM)
+  if a == 0 {
+    return ""
+  }
+  rt.tlocal_set(TLS_FROM, 0)
+  raw.str_at(a, rt.tlocal_get(TLS_FROM_N))
+}
+
+/// The time now in UTC as RFC 3339, with nanoseconds when nano (Go's
+/// time.RFC3339Nano), else whole seconds; the test world's virtual clock
+/// in a test.
+pub fn now(nano: Bool) -> Str {
+  var t = sysio.clock_now()
+  if !nano {
+    t -= (t % 1000000000 + 1000000000) % 1000000000
+  }
+  text.append_time("", t)
+}

@@ -1061,7 +1061,13 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
     name = b.real_fs_wrapper(callee, b.declare(real, []))
   }
   if !log_from.is_empty() {
-    b.rt("log_from", -1, [b.const_str(log_from)])
+    // the native prelude's llrt_log_from keeps the constant's address in
+    // a thread local word (std/native/llrt/logstate.xo, work item B02)
+    let impl = b.prelude_impl("llrt_log_from")
+    if impl >= 0 {
+      let f = b.declare(impl, [])
+      b.call(b.m.funcs[f].name, -1, "", [b.const_str(log_from)])
+    }
   }
   // a call of a real-time function from code that is not real-time is a
   // real-time section (core 6.5, decision 0133)
@@ -1334,6 +1340,15 @@ fn (var b: Builder) raw_intrinsic(name: Str, vs: List[Int]) -> (Int, Bool) {
       return (b.undef(b.int_t()), true)
     }
     return (b.cint(n), true)
+  }
+  if name == "static_word" {
+    // word k of the process globals (decision 0207, work item B02): the
+    // emitters add 8 * k to the table's address
+    let (k, ok) = b.const_word(vs[0])
+    if !ok || k < 0 || k >= 64 {
+      b.unsupported("`rt.static_word` of a word that is not a constant 0 to 63")
+      return (b.undef(b.int_t()), true)
+    }
   }
   if name is "mem_load" | "mem_store" {
     let (w, ok) = b.const_word(vs[vs.len() - 1])
