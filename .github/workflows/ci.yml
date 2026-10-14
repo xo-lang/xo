@@ -15,7 +15,7 @@ on:
       suite:
         description: What to run (scripts/ci/suite.sh)
         type: choice
-        options: [auto, short, vet, merge, fixed-point, full, measure]
+        options: [auto, short, vet, merge, fixed-point, full, measure, windows]
         default: auto
       packages:
         description: "suite=auto: packages added to the full tests; merge: the packages (default: the touched ones); measure: the bench/perf directory"
@@ -25,9 +25,9 @@ on:
         type: boolean
         default: true
       runner:
-        description: "Runner label for a single job suite; planned: auto plans its own jobs, others take xo-arm64-big for full, merge, and measure, else xo-arm64"
+        description: "Runner label for a single job suite; planned: auto plans its own jobs, others take xo-arm64-big for full, merge, and measure, xo-windows for windows, else xo-arm64"
         type: choice
-        options: [planned, xo-arm64, xo-arm64-big]
+        options: [planned, xo-arm64, xo-arm64-big, xo-windows]
         default: planned
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
   # runners, and the run passes only when every job does.
   plan:
     runs-on: [self-hosted, xo-arm64]
-    timeout-minutes: 10
+    timeout-minutes: 30
     outputs:
       ref_sha: ${{ steps.plan.outputs.ref_sha }}
       main_sha: ${{ steps.plan.outputs.main_sha }}
@@ -55,6 +55,7 @@ jobs:
           PACKAGES: ${{ inputs.packages }}
           RUNNER: ${{ inputs.runner }}
           MERGE_MAIN: ${{ inputs.merge_main }}
+          XO_EXE: s3://xo-seeds-ACCOUNT_ID/dev/ci/${{ github.run_id }}/xo.exe
         # inputs reach the shell through env, never pasted into the script
         run: |
           git fetch -q origin main
@@ -78,6 +79,10 @@ jobs:
           fi
           echo "$jobs"
           echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          # a Windows job gets xo.exe cross built here (scripts/ci/suite.sh xcross)
+          if grep -q xo-windows <<<"$jobs"; then
+            scripts/ci/suite.sh xcross "$XO_EXE"
+          fi
 
   test:
     needs: plan
@@ -87,6 +92,10 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.jobs) }}
     runs-on: [self-hosted, "${{ matrix.runner }}"]
     timeout-minutes: ${{ startsWith(matrix.args, 'full') && 150 || 90 }}
+    # Git Bash on the Windows runner (its default shell is PowerShell)
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,5 +112,6 @@ jobs:
       - name: ${{ matrix.args }}
         env:
           XO_CI_BASE: ${{ needs.plan.outputs.main_sha }}
+          XO_CI_XO_EXE: ${{ matrix.runner == 'xo-windows' && format('s3://xo-seeds-ACCOUNT_ID/dev/ci/{0}/xo.exe', github.run_id) || '' }}
           ARGS: ${{ matrix.args }}
         run: scripts/ci/suite.sh job $ARGS
