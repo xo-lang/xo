@@ -531,6 +531,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.set(v, "${["add", "sub", "mul", "shl", "lshr"][op]} i64 ${a}, ${b}")
     }
+    // decision 0222: a value barrier, as BoringSSL's value_barrier_w: an
+    // empty asm the optimizer cannot see through, with no side effect
+    // (it may still be merged or dropped when unused)
+    "rt.ct_barrier" => g.set(v, "call i64 asm \"\", \"=r,0\"(i64 ${g.op(x.args[0])})")
     "rt.u64_mul_hi" => {
       let a = g.def("zext i64 ${g.op(x.args[0])} to i128")
       let b = g.def("zext i64 ${g.op(x.args[1])} to i128")

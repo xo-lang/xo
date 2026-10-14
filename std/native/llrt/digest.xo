@@ -5,19 +5,19 @@
 // unpadded base64, the parsing and key derivation of verify_password,
 // and SHA-512 (FIPS 180-4) for the C Ed25519 (through cabi_crypto.xo,
 // the zero-C audit's B08). The results are std/rt's crypto.go (Go's
-// crypto packages). What must be constant time stays C: crypto.equal
-// (the comparison of verify_password) and Ed25519 (the zero-C audit's
-// B09). std/native/crypto.xo calls these.
+// crypto packages). verify_password compares with ct.bytes_equal
+// (constant time, decision 0222); Ed25519 stays C until the zero-C
+// audit's B09 step 3. std/native/crypto.xo calls these.
 // Decision 0198 deleted the C path (`XO_LLRT_C=digest`).
 //
 // Words are Ints: a 32 bit word in the low half (the high half zero), a
 // 64 bit word as the Int of the same bits; the arithmetic that wraps is
 // rt.int_wrap (0 add, 5 rotate right, 6 rotate the low 32 bits right, 7
 // reverse the bytes), which the native backends lower to one instruction.
+use native/llrt/ct
 use native/llrt/digest_tables
 use native/llrt/num_tables
 use native/llrt/raw
-use native/rtcrypto
 use native/rt
 
 const M32: Int = 0xFFFFFFFF
@@ -488,7 +488,7 @@ fn split(b: Bytes, c: Int) -> List[Bytes] {
 
 /// Whether the password gives the hash, a PHC string of Argon2id or
 /// pbkdf2-sha256$<iterations>$<salt>$<key>; a malformed hash is false.
-/// The derived key is compared with crypto.equal (C, constant time).
+/// The derived key is compared in constant time (ct.bytes_equal).
 pub fn verify_password(password: Str, hash: Str) -> Bool {
   let pw = password.bytes()
   let h = hash.bytes()
@@ -522,7 +522,7 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
       return false
     }
     return match (b64_decode(f[4]), b64_decode(f[5])) {
-      (Some(salt), Some(want)) => salt.len() >= 8 && want.len() >= 4 && want.len() <= 1024 && rtcrypto.crypto_equal(argon2id(pw, salt, t, m, p, want.len()), want)
+      (Some(salt), Some(want)) => salt.len() >= 8 && want.len() >= 4 && want.len() <= 1024 && ct.bytes_equal(argon2id(pw, salt, t, m, p, want.len()), want)
       _ => false
     }
   }
@@ -539,7 +539,7 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
       if want.len() == 0 {
         return false
       }
-      rtcrypto.crypto_equal(pbkdf2(pw, salt, iter, want.len()), want)
+      ct.bytes_equal(pbkdf2(pw, salt, iter, want.len()), want)
     }
     _ => false
   }

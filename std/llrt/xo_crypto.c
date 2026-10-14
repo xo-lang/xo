@@ -1,6 +1,6 @@
 // xo_crypto.c: what stays C of std/crypto on the native backends
-// (decision 0083), included by xo_std.c: crypto.equal and Ed25519, which
-// must be constant time (the zero-C audit's B09). The results are those
+// (decision 0083), included by xo_std.c: Ed25519, which must be constant
+// time (the zero-C audit's B09; crypto.equal moved to Xo, decision 0222). The results are those
 // of std/rt's crypto.go (Go's crypto/subtle and crypto/ed25519).
 // std/llrt/testdata/crypto_diff.c checks them against Go (internal/llvm's
 // TestCryptoDiff) and the RFC 8032 vectors. The Rand capability is
@@ -132,17 +132,13 @@ static void cr_put_le64(uint8_t *p, uint64_t v) {
 	}
 }
 
-// xo_crypto_equal is `crypto.equal(a, b)`: subtle.ConstantTimeCompare,
-// constant time in the contents (not the lengths).
-int64_t xo_crypto_equal(const char *a, int64_t an, const char *b, int64_t bn) {
-	if (an != bn) {
-		return 0;
-	}
-	volatile uint8_t d = 0;
-	for (int64_t i = 0; i < an; i++) {
-		d |= (uint8_t)(a[i] ^ b[i]);
-	}
-	return d == 0;
+// crypto.equal is std/native/llrt/ct.xo (decision 0222). The prebuilt
+// seed (0.10.0-4ab09c25) does not lower rt.ct_barrier inline and calls this
+// instead (gotchas/runtime-c-the-seed-still-calls.md): an empty asm, as
+// the LLVM emitters' barrier. Delete it once the seed has decision 0222.
+int64_t xo_ct_barrier(int64_t x) {
+	__asm__("" : "+r"(x));
+	return x;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,22 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the constant time
+// code of the native runtime (decision 0222, std/native/llrt/ct.xo)
+// keeps no branch on a secret, and rt.ct_barrier reaches the LLVM IR as
+// an empty asm. internal/llvm's TestConstantTimeLLVM checks what clang
+// -O2 makes of it.
+use std/crypto
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${crypto.equal(b"abcdefghij", "abcdefghi${n}".bytes())}")
+}
+
+// The comparison's accumulator goes through the barrier in both loops
+// (no early exit), and the result is one compare after them.
+// func ct.bytes_equal
+// llvm: "(?s)call i64 asm \"\", \"=r,0\".*call i64 asm \"\", \"=r,0\""
+// arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+\n\torr x[0-9]+, x[0-9]+, x[0-9]+" -"csel" -"cbn?z" -"tbn?z"
+
+// A mask is arithmetic only: no branch, no conditional select.
+// func ct.mask_nonzero
+// llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select" -"icmp"
+// arm64: "lsr x[0-9]+, x[0-9]+, #63" -"\tb\." -"cbn?z" -"tbn?z" -"csel" -"cset"

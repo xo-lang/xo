@@ -11,7 +11,6 @@
 //   argon2 <mode 0 d, 1 i, 2 id> <password> <salt> <secret> <data> <t> <m> <p> <key length>
 //   b64 <url 0 or 1> <data>
 //   verify <password> <hash>
-//   equal <a> <b>
 //   sha512 <data>
 //   edpub <seed>
 //   edsign <seed> <msg>
@@ -113,11 +112,6 @@ int main(void) {
 		} else if (strcmp(f[0], "verify") == 0 && nf == 3) {
 			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
 			printf("%lld\n", (long long)xo_crypto_verify_password((const char *)a, an, (const char *)b, bn));
-			free(a);
-			free(b);
-		} else if (strcmp(f[0], "equal") == 0 && nf == 3) {
-			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
-			printf("%lld\n", (long long)xo_crypto_equal((const char *)a, an, (const char *)b, bn));
 			free(a);
 			free(b);
 		} else if (strcmp(f[0], "sha512") == 0 && nf == 2) {

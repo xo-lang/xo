@@ -8,7 +8,6 @@ import (
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/sha512"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -32,7 +31,8 @@ import (
 // against the RFC 9106 section 5 vectors (Argon2d, Argon2i, Argon2id
 // with a secret and associated data) and the x/crypto outputs of
 // std/rt/testdata/argon2id_xcrypto.txt; verify_password on valid and
-// mutated PHC and PBKDF2 strings against std/rt's.
+// mutated PHC and PBKDF2 strings against std/rt's. crypto.equal is Xo
+// (decision 0222): TestCryptoXoDiff.
 // SHA-512 (std/native/llrt/digest.xo through its C ABI export, the
 // zero-C audit's B08) and Ed25519 against Go and RFC 8032
 // (ed25519Cases).
@@ -89,11 +89,6 @@ func TestCryptoDiff(t *testing.T) {
 			enc = base64.RawURLEncoding
 		}
 		cs = append(cs, kase{fmt.Sprintf("b64 %d %s", url, hx(data)), hx([]byte(enc.EncodeToString(data)))})
-		other := append([]byte(nil), data...)
-		if len(other) > 0 && r.Intn(2) == 0 {
-			other[r.Intn(len(other))] ^= byte(1 + r.Intn(255))
-		}
-		cs = append(cs, kase{"equal " + hx(data) + " " + hx(other), bit(subtle.ConstantTimeCompare(data, other) == 1)})
 	}
 	for i := 0; i < n/10; i++ {
 		pw, salt := rb(r.Intn(100)), rb(r.Intn(40))

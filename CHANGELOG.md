@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B09, decision 0222): a value barrier
+  for constant time runtime code (`rt.ct_barrier`, internal: no
+  instruction on arm64, an empty asm on LLVM) and constant time masks in
+  std/native/llrt/ct.xo; `crypto.equal` and verify_password's comparison
+  are Xo (the C deleted), the same results. `xo dev codegen` patterns can
+  name another module's function with a `// func MOD.NAME` line
+  (test/codegen/consttime). Tests: internal/llvm TestConstantTimeLLVM
+  (clang -O2 keeps the barriers; no branch or select in the masks) and
+  TestCryptoXoDiff (crypto.equal and Ed25519 against Go on both native
+  backends).
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's

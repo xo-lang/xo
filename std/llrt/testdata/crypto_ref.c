@@ -13,6 +13,19 @@
 // digest.xo (the zero-C audit's B08).
 static uint64_t cr_ror64(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }
 
+// ref_equal was xo_crypto.c's xo_crypto_equal (crypto.equal), which moved
+// to std/native/llrt/ct.xo (decision 0222); only this C uses it.
+static int64_t ref_equal(const char *a, int64_t an, const char *b, int64_t bn) {
+	if (an != bn) {
+		return 0;
+	}
+	volatile uint8_t d = 0;
+	for (int64_t i = 0; i < an; i++) {
+		d |= (uint8_t)(a[i] ^ b[i]);
+	}
+	return d == 0;
+}
+
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
@@ -772,7 +785,7 @@ static int cr_verify_argon2id(const char *pw, int64_t pn, const char *h, int64_t
 			xo_oom();
 		}
 		cr_argon2(CR_ARGON2ID, (const uint8_t *)pw, pn, (const uint8_t *)salt.p, salt.n, NULL, 0, NULL, 0, (uint32_t)vals[1], (uint32_t)vals[0], (uint32_t)vals[2], got, (uint32_t)want.n);
-		ok = (int)xo_crypto_equal((const char *)got, want.n, want.p, want.n);
+		ok = (int)ref_equal((const char *)got, want.n, want.p, want.n);
 		free(got);
 	}
 	free(salt.p);
@@ -805,7 +818,7 @@ int64_t xo_crypto_verify_password(const char *pw, int64_t pn, const char *h, int
 			xo_oom();
 		}
 		cr_pbkdf2((const uint8_t *)pw, pn, (const uint8_t *)salt.p, salt.n, iter, got, want.n);
-		ok = (int)xo_crypto_equal((const char *)got, want.n, want.p, want.n);
+		ok = (int)ref_equal((const char *)got, want.n, want.p, want.n);
 		free(got);
 	}
 	free(salt.p);
