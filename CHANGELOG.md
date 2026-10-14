@@ -12,6 +12,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Xo exports `xo_x_fault_raise_*` directly; the C entry points forward
   to them until the next seed. The fault paths on the Mac are 0.962 to
   1.036 of main's instructions.
+- Native runtime (decision 0227): the C path of the number and time text
+  (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
+  std/llrt/xo_std.c) is deleted; the owner accepted Duration text at
+  1.112 of the C's instructions on arm64 with 0.925 on LLVM.
+  `XO_LLRT_C=text` now fails the build.
 - Native runtime (zero-C audit item B06, part 1): a context's fault
   record and the report of an uncaught fault are Xo
   (std/native/llrt/fault.xo); xo_rt.c loses 57 lines and gains 23. The

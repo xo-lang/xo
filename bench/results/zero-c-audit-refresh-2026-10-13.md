@@ -190,7 +190,7 @@ goes. Then, to delete the branches: make nx_on's poll and descriptor
 calls unconditional (cabi_poll.xo is in every native program), and keep
 the socket branches only until B23.
 
-### `XO_LLRT_C=text`: 533 lines of xo_std.c, waits on the bar, not on a run
+### `XO_LLRT_C=text`: 533 lines of xo_std.c (**deleted 2026-10-14**, decision 0227: the owner accepted Duration text at arm64 1.112 with LLVM 0.925; 514 lines of xo_std.c and text_c.xo deleted)
 
 | xo_std.c | Lines | What |
 |---|---|---|
@@ -702,7 +702,7 @@ nothing new.
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
 | 7 | B12 response writer | 537 | nothing | **Done 2026-10-14** (http-writer-2026-10-14.md): http1w.xo through cabi_http.xo; the C wrappers (112 lines) go with B10's and the connection code's ports |
 | 8 | B13 string and list objects (two items; stage 1 done 2026-10-14) | 816 | 2 | stage 1 done (string-list-objects-2026-10-14.md: xo_str_find deleted, xo_str_rune_count a seed shim until a seed has B13); stage 2 lists done (decision 0226: 0.883 to 1.021 of the C, arm64 and LLVM); next the string objects the same way, and deleting the C list entries once a seed emits the direct calls and LLVM calls the exports |
-| 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
+| 9 | Duration text bar, then the (a) text path (**done 2026-10-14**, decision 0227: bar accepted by the owner, the C path deleted) | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |
 | 11 | B05 unwinder (three items; stage 1 done 2026-10-14, XO_NOLIBC linux/arm64, decision 0221) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
 | 12 | B06 faults in Xo | 319 | 3, 11 | the fault record and fault_exit; then Windows RtlVirtualUnwind through sys_windows.xo |
