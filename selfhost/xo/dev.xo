@@ -1,0 +1,64 @@
+// `xo dev` (decision 0209): the hidden developer commands. `dump` runs a
+// compiler component's own command line (its dump_main) in this
+// process, `rtpack` builds the release's prebuilt runtime (rtpack.xo),
+// and the rest (goldens, errorcheck, codegen) are selfhost/cli/dev's.
+//
+//   xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH...
+//   xo dev rtpack [flags]
+//   xo dev goldens|errorcheck|codegen [flags] DIR...
+
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/llvm
+use github.com/xo-lang/xo/selfhost/gen
+use github.com/xo-lang/xo/selfhost/cli/dev
+
+fn dev_cmd(os: Os, args: List[Str]) -> Int {
+  if args.is_empty() {
+    os.stdio.eprintln(dev.usage())
+    return 2
+  }
+  match args[0] {
+    "dump" => dump_cmd(os, args[1..])
+    "rtpack" => rtpack_cmd(os, args[1..])
+    _ => {
+      let goos = host_os(os)
+      let h = dev.Host{
+        xo: check.executable(os.env, os.fs),
+        std: check.std_dir(os.env, os.fs),
+        cache: user_cache_dir(os, goos),
+        host: "${goos}/${host_arch()}",
+      }
+      dev.run(os, h, args)
+    }
+  }
+}
+
+/// dump_cmd is `xo dev dump KIND args...`: the component's command line,
+/// with --std of this xo unless args name one.
+fn dump_cmd(os: Os, args: List[Str]) -> Int {
+  if args.is_empty() {
+    os.stdio.eprintln("usage: xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH...")
+    return 2
+  }
+  var rest = args[1..]
+  if args[0] != "lex" && args[0] != "ast" && !rest.any(fn(a: Str) { a.starts_with("--std=") }) {
+    rest = ["--std=${check.std_dir(os.env, os.fs)}"] + rest
+  }
+  match args[0] {
+    "lex" => lexer.dump_main(os, rest)
+    "ast" => parser.dump_main(os, rest)
+    "types" => check.dump_main(os, rest)
+    "ssa" => ssa.dump_main(os, rest)
+    "asm" => arm64.dump_main(os, rest)
+    "llvm" => llvm.dump_main(os, rest)
+    "go" => gen.dump_main(os, rest)
+    _ => {
+      os.stdio.eprintln("xo dev dump: unknown kind ${args[0].quote()} (lex, ast, types, ssa, asm, llvm, go)")
+      2
+    }
+  }
+}

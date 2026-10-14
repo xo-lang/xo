@@ -1,0 +1,105 @@
+// `xo dev`: the hidden developer commands (decision 0209), not in `xo
+// help` or spec/core.md. This module holds the ones that need no
+// compiler component (goldens, errorcheck, codegen drive an xo
+// binary); selfhost/xo dispatches `xo dev dump`, `rtpack`, and `record`
+// itself and the rest here.
+//
+//   xo dev goldens [flags] DIR...     build, run, and compare golden programs
+//   xo dev errorcheck [flags] DIR...  diagnostics against // ERROR comments
+//   xo dev codegen [flags] DIR...     assembly or IR against // arm64: patterns
+
+use github.com/xo-lang/xo/selfhost/cli/core
+
+/// What the caller (selfhost/xo) knows about the running xo.
+pub struct Host {
+  /// This xo's binary.
+  pub xo: Str
+  /// The std directory it uses.
+  pub std: Str
+  /// The user cache directory ("" when there is none).
+  pub cache: Str
+  /// GOOS/GOARCH of the host.
+  pub host: Str
+}
+
+pub fn usage() -> Str {
+  "usage: xo dev goldens|errorcheck|codegen|dump|rtpack|record [flags] ..."
+}
+
+/// run runs `xo dev <args>` for the commands of this module and returns
+/// the exit status.
+pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  if args.is_empty() {
+    os.stdio.eprintln(usage())
+    return 2
+  }
+  match args[0] {
+    "goldens" => goldens_cmd(os, h, args[1..])
+    "errorcheck" => errorcheck_cmd(os, h, args[1..])
+    "codegen" => codegen_cmd(os, h, args[1..])
+    _ => {
+      os.stdio.eprintln("xo dev: unknown command ${args[0].quote()}\n${usage()}")
+      2
+    }
+  }
+}
+
+fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  var fl = core.new_flags("dev goldens")
+  fl.str_flag("backend", "arm64", "arm64, llvm, go, or wasm")
+  fl.str_flag("xo", "", "the xo that builds the programs (default this one)")
+  fl.str_flag("flags", "", "more build flags, separated by spaces (--target=linux/arm64 --ld=macho)")
+  fl.int_flag("j", 4, "programs at once")
+  fl.bool_flag("force", "ignore the pass cache")
+  fl.bool_flag("json", "one JSON object per program, then a summary")
+  fl.int_flag("sample", 1, "every nth program only")
+  fl.str_flag("only", "", "programs whose directory contains one of these comma separated texts")
+  fl.str_flag("out", "", "where binaries go (default under the cache)")
+  fl.int_flag("timeout", 120, "seconds a build or a run may take")
+  fl.bool_flag("build-only", "build, do not run (a cross target)")
+  fl.bool_flag("no-cache", "neither read nor write the pass cache")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("usage: xo dev goldens [--backend=B] [--flags='...'] [-j N] [--force] [--json] DIR...")
+    return 2
+  }
+  let base = if h.cache.is_empty() { "/tmp/xo-dev" } else { "${h.cache}/xo/dev/goldens" }
+  var out = fl.get_str("out")
+  if out.is_empty() {
+    out = "${base}/bin-${fl.get_str("backend")}"
+  }
+  var only: List[Str] = []
+  for o in fl.get_str("only").split(",") {
+    if !o.trim().is_empty() {
+      only.push(o.trim())
+    }
+  }
+  var flags: List[Str] = []
+  for f in fl.get_str("flags").split(" ") {
+    if !f.is_empty() {
+      flags.push(f)
+    }
+  }
+  let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
+  let cfg = Config{
+    xo: xo,
+    std: h.std,
+    backend: fl.get_str("backend"),
+    flags: flags,
+    jobs: fl.get_int("j"),
+    force: fl.get_bool("force"),
+    json: fl.get_bool("json"),
+    sample: fl.get_int("sample"),
+    only: only,
+    out: out,
+    cache: if fl.get_bool("no-cache") { "" } else { base },
+    timeout: 1s * fl.get_int("timeout"),
+    build_only: fl.get_bool("build-only"),
+    host: h.host,
+  }
+  let t0 = os.clock.now()
+  let outs = run_goldens(os, cfg, fl.args)
+  report(os, cfg, outs, os.clock.since(t0))
+}

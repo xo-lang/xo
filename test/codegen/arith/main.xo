@@ -1,0 +1,27 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): integer arithmetic
+// by constants.
+
+// A multiply by a power of two is a shift; the overflow check stays.
+fn times8(x: Int) -> Int {
+  // arm64: "lsl x[0-9]+, x[0-9]+, #3" "smulh" -"\tmul "
+  // llvm: "llvm.smul.with.overflow.i64\(i64 %v0, i64 8\)"
+  x * 8
+}
+
+// A signed division by a power of two is shifts, with the rounding
+// toward zero; no divide instruction.
+fn div4(x: Int) -> Int {
+  // arm64: "asr x[0-9]+, x[0-9]+, #2" -"sdiv"
+  x / 4
+}
+
+// A multiply by 3 is an add of a shifted register.
+fn fold() -> Int {
+  // arm64: "add x[0-9]+, x[0-9]+, x[0-9]+, lsl #1" -"\tmul "
+  3 * 7 + 1
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()}")
+}

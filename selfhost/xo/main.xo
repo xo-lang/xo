@@ -87,8 +87,13 @@ fn main(os: Os) ! {
     os.proc.exit(core.run(os, args))
   }
   if !args.is_empty() && args[0] == "rtpack" {
-    // hidden: the release's prebuilt runtime (rtpack.xo)
+    // hidden: the release's prebuilt runtime (rtpack.xo); also `xo dev
+    // rtpack`
     os.proc.exit(rtpack_cmd(os, args[1..]))
+  }
+  if !args.is_empty() && args[0] == "dev" {
+    // hidden: the developer commands (dev.xo, decision 0209)
+    os.proc.exit(dev_cmd(os, args[1..]))
   }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
     os.stdio.eprint("xo: unknown command ${(if args.is_empty() { "" } else { args[0] }).quote()}\n\n${cmdhelp.top()}")

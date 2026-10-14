@@ -16,7 +16,7 @@
 // prints absolute and for xo.mod and xo.work files above it; XO_MODCACHE,
 // XO_OFFLINE, and XO_WORK are read as internal/mod reads them.
 
-fn main(os: Os) ! {
+fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0
   var each = false
   var native = false
@@ -28,7 +28,7 @@ fn main(os: Os) ! {
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
-  for a in os.env.args() {
+  for a in args {
     if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
     } else if a.starts_with("--section=") {
@@ -110,4 +110,21 @@ fn main(os: Os) ! {
     }
   }
   os.stdio.print(out.freeze())
+}
+
+/// dump_main is this component's command line with args, for `xo dev
+/// dump` (decision 0209) as for the component's own binary; the exit
+/// status.
+pub fn dump_main(os: Os, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  match dump_body(os, args) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("${e.debug()}")
+      1
+    }
+  }
+}
+
+fn main(os: Os) {
+  os.proc.exit(dump_main(os, os.env.args()))
 }
