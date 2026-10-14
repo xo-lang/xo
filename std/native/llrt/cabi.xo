@@ -58,7 +58,6 @@ fn fmt_int(buf: Int, v: Int) -> Int {
 /// a zero byte at buf (at least 48 bytes); its length.
 fn fmt_float(buf: Int, f: Float) -> Int { raw.put_cstr(buf, num.float_text(f)) }
 
-
 // ---------------------------------------------------------------------------
 // Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero
 // byte at buf (at least 160 bytes) and returns its length; C raises it.
