@@ -32,6 +32,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_EMIT_JOBS=16` (was 496.82 s), the output byte identical for any
   job count. `XO_EMIT_JOBS` sets the tasks (default the cores, at most
   8); `--phase-times` prints the `assemble` phase.
+- Developer tooling (decision 0209): hidden `xo dev goldens|errorcheck|
+  codegen|dump|rtpack|build-each` in xo. Golden programs are built,
+  run, and compared byte for byte by xo itself, in parallel workers,
+  largest first, with passes cached by input hash (arm64 set: 49.74 s
+  with the Python script, 16.93 s with `-j 8`, 0.21 s cached). Error
+  check and codegen pattern suites start in test/ (decision 0217).
+  selfhost/macho assembles `svc`, so linux/arm64 `--ld=macho` builds
+  work again.
 - `xo lsp` answers `textDocument/completion` and
   `textDocument/signatureHelp` (decision 0219): fields and methods
   after `x.` (prelude methods included), variants and statics after a

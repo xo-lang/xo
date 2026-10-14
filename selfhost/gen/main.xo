@@ -20,14 +20,14 @@
 
 use github.com/xo-lang/xo/selfhost/check
 
-fn main(os: Os) ! {
+fn dump_body(os: Os, args: List[Str]) ! {
   var each = false
   var prep = false
   var opts = Opts{arenas: true}
   var std_dir = "std"
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
-  for a in os.env.args() {
+  for a in args {
     if a.starts_with("--std=") {
       std_dir = a.trim_prefix("--std=")
     } else if a.starts_with("--wd=") {
@@ -226,4 +226,21 @@ fn byte_size(s: Str) -> Int {
     }
   }
   Int.parse(s) ?? -1
+}
+
+/// dump_main is this component's command line with args, for `xo dev
+/// dump` (decision 0209) as for the component's own binary; the exit
+/// status.
+pub fn dump_main(os: Os, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  match dump_body(os, args) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("${e.debug()}")
+      1
+    }
+  }
+}
+
+fn main(os: Os) {
+  os.proc.exit(dump_main(os, os.env.args()))
 }

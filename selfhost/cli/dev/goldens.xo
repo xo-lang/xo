@@ -1,0 +1,547 @@
+// `xo dev goldens` (decision 0209): build every golden program with an
+// xo, run it as the old harnesses did (args.txt, env.txt, stdin.txt, the
+// program's directory as the working directory, XO_LEAKCHECK=1 on the
+// native backends), and compare with its want.txt byte for byte
+// (compare.xo). A program directory holds .xo files and want.txt, or its
+// want is runwant/<name>.txt beside its parent directory (the
+// internal/arm64/testdata/run layout of decision 0215).
+//
+// The levers of decision 0209: workers in this process (task
+// map_concurrent, -j), the largest program first (by its last build
+// time, else its source size), and a pass cached under the hash of
+// everything it depends on (key.xo), skipped on the next run unless
+// --force. Each child (the build, the program) runs under a timeout:
+// cancelling the task that waits on a child kills it (std.md 3.8).
+
+use std/task
+
+/// One golden program.
+pub struct Prog {
+  pub dir: Str
+  pub name: Str
+  /// The want file's path.
+  pub want: Str
+  /// The bytes of its .xo sources (the order without timings).
+  pub size: Int
+}
+
+/// What a run of `xo dev goldens` does.
+pub struct Config {
+  /// The xo that builds the programs.
+  pub xo: Str
+  /// The std directory passed to it.
+  pub std: Str
+  pub backend: Str = "arm64"
+  /// More flags for `xo build` (--target=, --ld=macho, ...).
+  pub flags: List[Str] = []
+  pub jobs: Int = 4
+  pub force: Bool = false
+  pub json: Bool = false
+  /// Run every nth program only (the -short tier), 1 for all.
+  pub sample: Int = 1
+  pub only: List[Str] = []
+  /// Where binaries go.
+  pub out: Str
+  /// The pass cache, "" for none.
+  pub cache: Str = ""
+  pub timeout: Duration = 120s
+  /// Only build, do not run (a cross target).
+  pub build_only: Bool = false
+  /// The host, keyed in.
+  pub host: Str = ""
+  /// Build the native programs in `xo dev build-each` worker processes
+  /// (std parsed once per worker) instead of one `xo build` each.
+  pub each: Bool = true
+  /// Build and run each program with one `xo run` in its directory.
+  pub run_cmd: Bool = false
+  /// The PATH of the build command, "" to keep the harness's.
+  pub build_path: Str = ""
+}
+
+/// The result of one program.
+pub struct Outcome {
+  pub name: Str
+  pub dir: Str
+  /// "pass", "cached", or "fail".
+  pub status: Str
+  pub why: Str = ""
+  pub build_ms: Int = 0
+  pub run_ms: Int = 0
+}
+
+/// programs lists the golden programs under each of dirs (a program
+/// directory itself, or a directory of them), sorted by path.
+pub fn programs(fs: Fs, dirs: List[Str]) -> List[Prog] uses fs.read {
+  var out: List[Prog] = []
+  for d0 in dirs {
+    let d = d0.trim_suffix("/")
+    if has_xo(fs, d) {
+      if let Some(p) = program(fs, d) {
+        out.push(p)
+      }
+      continue
+    }
+    let ents = fs.read_dir(d).ok() ?? []
+    for e in ents.sort_by(fn(e: FileInfo) { e.name }) {
+      if e.is_dir && has_xo(fs, "${d}/${e.name}") {
+        if let Some(p) = program(fs, "${d}/${e.name}") {
+          out.push(p)
+        }
+      }
+    }
+  }
+  out
+}
+
+fn has_xo(fs: Fs, d: Str) -> Bool uses fs.read {
+  for e in fs.read_dir(d).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      return true
+    }
+  }
+  false
+}
+
+fn base_name(p: Str) -> Str {
+  let parts = p.trim_suffix("/").split("/")
+  parts[parts.len() - 1]
+}
+
+fn parent(p: Str) -> Str {
+  let parts = p.trim_suffix("/").split("/")
+  if parts.len() <= 1 {
+    return "."
+  }
+  parts[0..parts.len() - 1].join("/")
+}
+
+fn program(fs: Fs, d: Str) -> Prog? uses fs.read {
+  let name = base_name(d)
+  var want = "${d}/want.txt"
+  if !(fs.exists(want).ok() ?? false) {
+    want = "${parent(parent(d))}/${base_name(parent(d))}want/${name}.txt"
+    if !(fs.exists(want).ok() ?? false) {
+      return None
+    }
+  }
+  var size = 0
+  for e in fs.read_dir(d).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      size += e.size
+    }
+  }
+  Some(Prog{dir: d, name: name, want: want, size: size})
+}
+
+/// The files of the run harness: args.txt (fields), env.txt (NAME=VALUE
+/// fields), stdin.txt.
+struct Harness {
+  args: List[Str] = []
+  env: List[(Str, Str)] = []
+  stdin: Bytes
+}
+
+fn fields(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  for f in s.replace("\t", " ").replace("\r", " ").replace("\n", " ").split(" ") {
+    if !f.is_empty() {
+      out.push(f)
+    }
+  }
+  out
+}
+
+test "fields" {
+  expect(fields(" a  b\tc\n") == ["a", "b", "c"])
+  expect(fields("") == [])
+}
+
+fn harness(fs: Fs, d: Str) -> Harness uses fs.read {
+  let read = fn(n: Str) -> Bytes { fs.read("${d}/${n}").ok() ?? "".bytes() }
+  var env: List[(Str, Str)] = []
+  for kv in fields(read("env.txt").to_str() ?? "") {
+    match kv.find("=") {
+      Some(i) => env.push((kv[0..i], kv[i + 1..]))
+      None => env.push((kv, ""))
+    }
+  }
+  Harness{args: fields(read("args.txt").to_str() ?? ""), env: env, stdin: read("stdin.txt")}
+}
+
+fn rules(backend: Str) -> Rules {
+  if backend == "go" {
+    return Rules{go_frames: true, drop_leak: false}
+  }
+  Rules{}
+}
+
+/// order puts the programs largest first: by the build time of the last
+/// run (times, in ms), else by source size.
+pub fn order(progs: List[Prog], times: Map[Str, Int]) -> List[Prog] {
+  progs.sort_by(fn(p: Prog) {
+    let t = times.get(p.dir) ?? 0
+    (-t, -p.size, p.dir)
+  })
+}
+
+test "order puts the slow first" {
+  let ps = [Prog{dir: "a", name: "a", want: "", size: 10}, Prog{dir: "b", name: "b", want: "", size: 5}, Prog{dir: "c", name: "c", want: "", size: 1}]
+  let o = order(ps, {"c": 900})
+  expect(o.map(fn(p: Prog) { p.dir }) == ["c", "a", "b"])
+}
+
+/// one builds, runs, and compares program p.
+fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
+  if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
+    return Outcome{name: p.name, dir: p.dir, status: "cached"}
+  }
+  if cfg.run_cmd {
+    return run_one(os, cfg, key, p)
+  }
+  let bin = bin_path(cfg, p)
+  os.fs.remove(bin).ok()
+  let test_prog = cfg.backend == "go" && p.name.starts_with("test_")
+  let cmd = if test_prog { "test" } else { "build" }
+  var args = [cmd, "--backend=${cfg.backend}"]
+  for f in cfg.flags {
+    args.push(f)
+  }
+  args.push("--std=${cfg.std}")
+  args.push("-o")
+  args.push(bin)
+  args.push(p.dir)
+  let had_regress = os.fs.exists("${p.dir}/regressions_test.xo").ok() ?? false
+  let t0 = os.clock.now()
+  let b = task.with_timeout(os.clock, cfg.timeout, fn() { with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).output() })
+  let build_ms = os.clock.since(t0).millis()
+  if !had_regress {
+    // `xo test` writes shrunk contract fuzz failures into the module
+    // (core 9.2); a golden directory must stay as committed
+    os.fs.remove("${p.dir}/regressions_test.xo").ok()
+  }
+  let fail = fn(why: Str) -> Outcome { Outcome{name: p.name, dir: p.dir, status: "fail", why: why, build_ms: build_ms} }
+  match b {
+    Ok(out) => {
+      let built = os.fs.exists(bin).ok() ?? false
+      if out.code != 0 && !(test_prog && built) {
+        let lines = (out.stderr.to_str() ?? "").trim().split("\n")
+        return fail("build: ${lines[lines.len() - 1]}")
+      }
+    }
+    Err(task.Timed.TimedOut) => return fail("build: timed out after ${cfg.timeout.seconds()} s")
+    Err(task.Timed.Failed(e)) => return fail("build: ${e}")
+  }
+  finish(os, cfg, key, p, build_ms)
+}
+
+fn bin_path(cfg: Config, p: Prog) -> Str {
+  "${cfg.out}/${p.dir.replace("/", "_")}"
+}
+
+/// finish runs the built program p and compares its run with its want.
+fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
+  let bin = bin_path(cfg, p)
+  if cfg.build_only {
+    if !key.is_empty() {
+      mark(os.fs, cfg.cache, key)
+    }
+    return Outcome{name: p.name, dir: p.dir, status: "pass", build_ms: build_ms}
+  }
+  let h = harness(os.fs, p.dir)
+  var c = os.proc.cmd(bin, h.args).dir(p.dir).stdin(h.stdin)
+  if cfg.backend == "go" {
+    c = c.env(os.env.only(os.env.vars().keys().filter(fn(k: Str) { !(k is "GOGC" | "GOMEMLIMIT" | "XO_GC_MIN_HEAP") })))
+  } else {
+    c = c.set_env("XO_LEAKCHECK", "1")
+  }
+  for (k, v) in h.env {
+    c = c.set_env(k, v)
+  }
+  let t1 = os.clock.now()
+  let r = task.with_timeout(os.clock, cfg.timeout, fn() { c.output() })
+  let run_ms = os.clock.since(t1).millis()
+  let out = match r {
+    Ok(o) => o
+    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", build_ms: build_ms, run_ms: run_ms}
+    Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", build_ms: build_ms, run_ms: run_ms}
+  }
+  judge(os, cfg, key, p, out, build_ms, run_ms)
+}
+
+/// judge compares a run of p with its want, checks for leaks, and caches
+/// a pass.
+fn judge(os: Os, cfg: Config, key: Str, p: Prog, out: ProcOutput, build_ms: Int, run_ms: Int) -> Outcome {
+  let rl = rules(cfg.backend)
+  let got = layout(out.code, out.stdout, out.stderr, rl)
+  let want = os.fs.read(p.want).ok() ?? "".bytes()
+  if !same(got, want, rl) {
+    return Outcome{name: p.name, dir: p.dir, status: "fail", why: "differs: ${first_diff(got, want)}", build_ms: build_ms, run_ms: run_ms}
+  }
+  if cfg.backend != "go" && cfg.backend != "wasm" && out.code == 0 {
+    let lp = leak_problem(out.stderr)
+    if !lp.is_empty() {
+      return Outcome{name: p.name, dir: p.dir, status: "fail", why: lp, build_ms: build_ms, run_ms: run_ms}
+    }
+  }
+  if !key.is_empty() {
+    mark(os.fs, cfg.cache, key)
+  }
+  Outcome{name: p.name, dir: p.dir, status: "pass", build_ms: build_ms, run_ms: run_ms}
+}
+
+/// with_path gives the build command the PATH of --build-path when set
+/// (/nonexistent shows a build needs no external tool, decision 0182).
+fn with_path(cfg: Config, c: Cmd) -> Cmd {
+  if cfg.build_path.is_empty() { c } else { c.set_env("PATH", cfg.build_path) }
+}
+
+/// run_one is p through `xo run` in its own directory (--cmd=run): the
+/// build and the run in one command, its output compared as a run's.
+fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
+  let h = harness(os.fs, p.dir)
+  var args = ["run", "--backend=${cfg.backend}"]
+  for f in cfg.flags {
+    args.push(f)
+  }
+  args.push("--std=${cfg.std}")
+  args.push(".")
+  args.push("--")
+  for a in h.args {
+    args.push(a)
+  }
+  let wd = os.env.get("PWD") ?? "."
+  let abs = if p.dir.starts_with("/") { p.dir } else { "${wd}/${p.dir}" }
+  var c = os.proc.cmd(cfg.xo, args).dir(p.dir).stdin(h.stdin).set_env("XO_LEAKCHECK", "1").set_env("PWD", abs)
+  // env.txt is the program's environment, and xo sees it too: a HOME such
+  // as env_dirs' /home/test has no user cache to build in
+  c = c.set_env("XO_BUILD_DIR", "${cfg.out}/runbuild")
+  for (k, v) in h.env {
+    c = c.set_env(k, v)
+  }
+  let t0 = os.clock.now()
+  let r = task.with_timeout(os.clock, cfg.timeout, fn() { c.output() })
+  let ms = os.clock.since(t0).millis()
+  let out = match r {
+    Ok(o) => o
+    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", run_ms: ms}
+    Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", run_ms: ms}
+  }
+  let se = out.stderr.to_str() ?? ""
+  if out.code != 0 && (se.starts_with("xo: ") || se.starts_with("xo1: ")) {
+    let lines = se.trim().split("\n")
+    return Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${lines[lines.len() - 1]}", run_ms: ms}
+  }
+  judge(os, cfg, key, p, out, 0, ms)
+}
+
+/// run_goldens runs every program of dirs and returns the outcomes in
+/// path order.
+pub fn run_goldens(os: Os, cfg: Config, dirs: List[Str]) -> List[Outcome] uses (clock, env, fs.read, fs.write, proc) {
+  var progs = programs(os.fs, dirs)
+  if !cfg.only.is_empty() {
+    progs = progs.filter(fn(p: Prog) { cfg.only.any(fn(o: Str) { p.dir.contains(o) }) })
+  }
+  if cfg.sample > 1 {
+    var some: List[Prog] = []
+    for (i, p) in progs.indexed() {
+      if i % cfg.sample == 0 {
+        some.push(p)
+      }
+    }
+    progs = some
+  }
+  os.fs.create_dir_all(cfg.out).ok()
+  let times_path = if cfg.cache.is_empty() { "" } else { "${cfg.cache}/times-${cfg.backend}.txt" }
+  let times = read_times(os.fs, times_path)
+  let base = if cfg.cache.is_empty() { "" } else { base_key(os.fs, cfg) }
+  let ordered = order(progs, times)
+  var outs: List[Outcome] = []
+  if cfg.each && !cfg.run_cmd && (cfg.backend is "arm64" | "llvm") {
+    // worker processes that each build a share of the programs, so std
+    // is parsed once per worker (xo dev build-each); the cached passes
+    // are done first
+    var keys: Map[Str, Str] = {}
+    var todo: List[Prog] = []
+    for p in ordered {
+      let key = if base.is_empty() { "" } else { prog_key(os.fs, base, p) }
+      keys[p.dir] = key
+      if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "cached"})
+      } else {
+        todo.push(p)
+      }
+    }
+    let queue = Chan[Prog].new(cap: todo.len().max(1))
+    for p in todo {
+      queue.send(p)
+    }
+    queue.close()
+    var ws: List[Int] = []
+    for i in 0..cfg.jobs.max(1).min(todo.len().max(1)) {
+      ws.push(i)
+    }
+    let results = task.map_concurrent(ws, ws.len(), fn(_w: Int) { worker(os, cfg, keys, queue) })
+    for r in results {
+      match r {
+        Ok(os2) => outs = outs + os2
+        Err(_) => {}
+      }
+    }
+  } else {
+    let results = task.map_concurrent(ordered, cfg.jobs.max(1), fn(p: Prog) {
+      let key = if base.is_empty() { "" } else { prog_key(os.fs, base, p) }
+      one(os, cfg, key, p)
+    })
+    for r in results {
+      match r {
+        Ok(o) => outs.push(o)
+        Err(_) => {}
+      }
+    }
+  }
+  if !times_path.is_empty() {
+    write_times(os.fs, times_path, times, outs)
+  }
+  outs.sort_by(fn(o: Outcome) { o.dir })
+}
+
+/// worker builds the programs it takes from queue, one after another, in
+/// one `xo dev build-each --stdin` process (std parsed once per worker),
+/// and runs and compares each built one. The process reads `OUT<tab>DIR`
+/// lines and answers `== built DIR MS` per build on its output (its
+/// errors merged in); a build that fails ends it, as `xo build` does, so
+/// the next program starts another. Workers take programs as they free
+/// up, so a slow build does not hold back the others.
+fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[Outcome] {
+  var outs: List[Outcome] = []
+  var args = ["dev", "build-each", "--stdin", "--backend=${cfg.backend}"]
+  for f in cfg.flags {
+    args.push(f)
+  }
+  args.push("--std=${cfg.std}")
+  let cmd = with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).merge_stderr()
+  var child: Child? = None
+  while let Some(p) = queue.recv() {
+    let bin = bin_path(cfg, p)
+    os.fs.remove(bin).ok()
+    if child.is_none() {
+      child = match cmd.spawn() {
+        Ok(c) => Some(c)
+        Err(e) => {
+          outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${e}"})
+          continue
+        }
+      }
+    }
+    let ch = child ?? fault("a worker was just started")
+    let t0 = os.clock.now()
+    let r = task.with_timeout(os.clock, cfg.timeout, fn() -> (Int, Str) ! ProcErr {
+      ch.write("${bin}\t${p.dir}\n".bytes())?
+      var last = ""
+      while let Some(l) = ch.read_line()? {
+        if l.starts_with("== built ") {
+          return Ok((Int.parse(l.split(" ")[3]) ?? 0, ""))
+        }
+        if !l.starts_with("== build ") && !l.trim().is_empty() {
+          last = l
+        }
+      }
+      // the process ended: this build failed
+      Ok((-1, last))
+    })
+    match r {
+      Ok((ms, last)) => {
+        if ms >= 0 {
+          outs.push(finish(os, cfg, keys.get(p.dir) ?? "", p, ms))
+        } else {
+          ch.wait().ok()
+          child = None
+          outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${last}", build_ms: os.clock.since(t0).millis()})
+        }
+      }
+      Err(task.Timed.TimedOut) => {
+        ch.kill()
+        child = None
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: timed out after ${cfg.timeout.seconds()} s"})
+      }
+      Err(task.Timed.Failed(e)) => {
+        ch.kill()
+        child = None
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${e}"})
+      }
+    }
+  }
+  if let Some(ch) = child {
+    ch.close_stdin()
+    ch.wait().ok()
+  }
+  outs
+}
+
+fn read_times(fs: Fs, path: Str) -> Map[Str, Int] uses fs.read {
+  var m: Map[Str, Int] = {}
+  if path.is_empty() {
+    return m
+  }
+  for l in (fs.read_text(path).ok() ?? "").split("\n") {
+    let f = l.split(" ")
+    if f.len() == 2 {
+      if let Some(n) = Int.parse(f[1]) {
+        m[f[0]] = n
+      }
+    }
+  }
+  m
+}
+
+fn write_times(fs: Fs, path: Str, old: Map[Str, Int], outs: List[Outcome]) uses fs.write {
+  var m = old
+  for o in outs {
+    if o.status != "cached" {
+      m[o.dir] = o.build_ms
+    }
+  }
+  var b = StrBuilder.new()
+  for k in m.keys().sort() {
+    b.write("${k} ${m.get_or_fault(k, "a key of m")}\n")
+  }
+  fs.write(path, b.freeze().bytes()).ok()
+}
+
+/// report prints the outcomes as the old scripts did (or JSON lines) and
+/// returns the exit status: 0 when every program passed.
+pub fn report(os: Os, cfg: Config, outs: List[Outcome], wall: Duration) -> Int uses stdio {
+  var pass = 0
+  var cachedn = 0
+  var fails: List[Outcome] = []
+  for o in outs {
+    match o.status {
+      "pass" => pass += 1
+      "cached" => {
+        pass += 1
+        cachedn += 1
+      }
+      _ => fails.push(o)
+    }
+  }
+  if cfg.json {
+    for o in outs {
+      os.stdio.println("{\"name\":${json_str(o.name)},\"dir\":${json_str(o.dir)},\"status\":${json_str(o.status)},\"why\":${json_str(o.why)},\"build_ms\":${o.build_ms},\"run_ms\":${o.run_ms}}")
+    }
+    os.stdio.println("{\"programs\":${outs.len()},\"pass\":${pass},\"cached\":${cachedn},\"fail\":${fails.len()},\"wall_ms\":${wall.millis()}}")
+  } else {
+    os.stdio.println("${outs.len()} programs: ${pass} pass, ${fails.len()} fail (${cachedn} cached, ${wall.millis()} ms)")
+    var reasons: Map[Str, Int] = {}
+    for o in fails {
+      let k = if o.why.len() > 90 { o.why[0..90] } else { o.why }
+      reasons[k] = (reasons.get(k) ?? 0) + 1
+    }
+    for k in reasons.keys().sort() {
+      os.stdio.println("${reasons.get_or_fault(k, "a key of reasons")} ${k}")
+    }
+    for o in fails {
+      os.stdio.println("FAIL ${o.dir} ${o.why}")
+    }
+  }
+  if fails.is_empty() { 0 } else { 1 }
+}

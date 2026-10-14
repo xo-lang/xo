@@ -218,7 +218,7 @@ func repoXoFiles(t testing.TB, root string) []string {
 	if out, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.xo").Output(); err == nil {
 		var files []string
 		for _, f := range strings.Split(string(out), "\x00") {
-			if f == "" || strings.HasPrefix(f, ".") || strings.Contains(f, "/.") {
+			if f == "" || strings.HasPrefix(f, ".") || strings.Contains(f, "/.") || strings.HasPrefix(f, "test/") {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(root, f)); err != nil {

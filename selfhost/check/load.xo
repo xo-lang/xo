@@ -188,6 +188,9 @@ pub struct Checker {
   /// Sources that replace the files on disk, by absolute path
   /// (check.CheckOverlay: `xo fix` checks rewritten sources unwritten).
   pub overlay: Map[Str, Bytes] = {}
+  /// The parses of std files to reuse (parse_cached): empty in a fresh
+  /// checker; a caller checking several programs passes it on.
+  pub parse_cache: Map[Str, ParseEntry] = {}
 }
 
 /// A fresh checker reading std declarations from std_dir.
@@ -437,11 +440,38 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 /// decision 0087, and resynchronization after hard ones), which is
 /// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
-  let r = parser.parse_file(path.bytes(), src, sig)
+  let r = c.parse_cached(path, src, sig)
   c.diags = c.diags + parse_diags(path, r.diags)
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
+}
+
+/// One parse of a std file kept for the next checker of the process
+/// (decision 0209, std once per process).
+pub struct ParseEntry {
+  src: Bytes
+  sig: Bool
+  r: parser.ParseResult
+}
+
+/// parse_cached parses src, reusing the parse of a std or std/native
+/// file with the same bytes from parse_cache (a parse is a function of
+/// the path, the bytes, and sig) and adding new ones to it. A process that
+/// checks many programs (xo dev goldens' builds, check --each, check
+/// --bench) carries parse_cache from one checker to the next.
+fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.ParseResult {
+  if !path.starts_with("std/") {
+    return parser.parse_file(path.bytes(), src, sig)
+  }
+  if let Some(e) = c.parse_cache.get(path) {
+    if e.sig == sig && e.src == src {
+      return e.r
+    }
+  }
+  let r = parser.parse_file(path.bytes(), src, sig)
+  c.parse_cache[path] = ParseEntry{src: src, sig: sig, r: r}
+  r
 }
 
 /// The diagnostics of the parse of the file at path, as the checker

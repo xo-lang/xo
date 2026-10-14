@@ -1,0 +1,204 @@
+// `xo dev errorcheck` (decisions 0209, 0217): the checker verified by the
+// diagnostics it reports, as Go's test/ `// errorcheck` files are. Each
+// program directory's .xo files carry their expected diagnostics as
+// comments on the line the diagnostic points at:
+//
+//   let x = 1    // ERROR XO0110
+//   f(y)         // ERROR XO0601 "name `y` not found"
+//
+// A comment holds one or more codes, each optionally followed by a
+// quoted regular expression the message must match. The run passes when
+// every expected diagnostic is reported and every reported error or
+// warning is expected. `xo check --json` reports them.
+
+use std/json
+use std/regexp
+use std/task
+use github.com/xo-lang/xo/selfhost/cli/core
+
+/// One expected diagnostic.
+pub struct Expect {
+  pub file: Str
+  pub line: Int
+  pub code: Str
+  /// The message pattern, "" for any.
+  pub pattern: Str = ""
+}
+
+struct JSpan {
+  file: Str = ""
+  line: Int = 0
+} derive Json
+
+struct JDiag {
+  code: Str = ""
+  severity: Str = ""
+  message: Str = ""
+  span: JSpan = JSpan{}
+} derive Json
+
+struct JCheck {
+  diagnostics: List[JDiag] = []
+} derive Json
+
+/// expectations parses the `// ERROR` comments of one file.
+pub fn expectations(file: Str, src: Str) -> List[Expect] {
+  var out: List[Expect] = []
+  let item = regexp.must("(XO[0-9]{4})(\\s+\"((?:[^\"\\\\]|\\\\.)*)\")?")
+  for (i, l) in src.split("\n").indexed() {
+    let at = match l.find("// ERROR ") {
+      Some(k) => k
+      None => continue
+    }
+    let rest = l[at + 9..]
+    for m in item.find_all(rest) {
+      match item.captures(m) {
+        Some(c) => {
+          let code = c[1] ?? ""
+          let pat = (c[3] ?? "").replace("\\\"", "\"")
+          out.push(Expect{file: file, line: i + 1, code: code, pattern: pat})
+        }
+        None => {}
+      }
+    }
+  }
+  out
+}
+
+test "expectations" {
+  let src = "fn main() {\n  let x = 1 // ERROR XO0110\n  g(y) // ERROR XO0601 \"name `y`\" XO0110\n}\n"
+  let es = expectations("m.xo", src)
+  expect(es.len() == 3)
+  expect(es[0].line == 2 && es[0].code == "XO0110" && es[0].pattern == "")
+  expect(es[1].line == 3 && es[1].code == "XO0601" && es[1].pattern == "name `y`")
+  expect(es[2].code == "XO0110")
+}
+
+fn base(p: Str) -> Str {
+  let parts = p.split("/")
+  parts[parts.len() - 1]
+}
+
+/// verdict compares the expected with the reported diagnostics (by file
+/// base name and line) and lists what is missing or unexpected.
+pub fn verdict(want: List[Expect], got: List[(Str, Int, Str, Str, Str)]) -> List[Str] {
+  var problems: List[Str] = []
+  var used: List[Bool] = []
+  for _ in got {
+    used.push(false)
+  }
+  for w in want {
+    var found = false
+    for (i, g) in got.indexed() {
+      let (file, line, code, _sev, msg) = g
+      if used[i] || base(file) != base(w.file) || line != w.line || code != w.code {
+        continue
+      }
+      if !w.pattern.is_empty() && !(regexp.compile(w.pattern).ok().map(fn(r: regexp.Regex) { r.is_match(msg) }) ?? false) {
+        continue
+      }
+      used.set(i, true)
+      found = true
+      break
+    }
+    if !found {
+      let p = if w.pattern.is_empty() { "" } else { " ${w.pattern.quote()}" }
+      problems.push("${base(w.file)}:${w.line}: missing ${w.code}${p}")
+    }
+  }
+  for (i, g) in got.indexed() {
+    let (file, line, code, sev, msg) = g
+    if !used[i] && (sev == "error" || sev == "warning") {
+      problems.push("${base(file)}:${line}: unexpected ${code}: ${msg}")
+    }
+  }
+  problems
+}
+
+test "verdict" {
+  let want = [Expect{file: "a/m.xo", line: 2, code: "XO0110"}, Expect{file: "a/m.xo", line: 3, code: "XO0601", pattern: "`y`"}]
+  expect(verdict(want, [("/x/a/m.xo", 2, "XO0110", "error", "`x` is never used"), ("/x/a/m.xo", 3, "XO0601", "error", "name `y` not found")]).is_empty())
+  let p = verdict(want, [("/x/a/m.xo", 3, "XO0601", "error", "name `z` not found"), ("/x/a/m.xo", 9, "XO0401", "error", "bad")])
+  expect(p.len() == 4)
+}
+
+fn errorcheck_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  var fl = core.new_flags("dev errorcheck")
+  fl.str_flag("xo", "", "the xo that checks (default this one)")
+  fl.int_flag("j", 4, "programs at once")
+  fl.str_flag("flags", "", "more check flags")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("usage: xo dev errorcheck [-j N] DIR...")
+    return 2
+  }
+  let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
+  var extra: List[Str] = []
+  for f in fl.get_str("flags").split(" ") {
+    if !f.is_empty() {
+      extra.push(f)
+    }
+  }
+  let dirs = module_dirs(os.fs, fl.args)
+  let t0 = os.clock.now()
+  let res = task.map_concurrent(dirs, fl.get_int("j").max(1), fn(d: Str) { check_one(os, h, xo, extra, d) })
+  var fails = 0
+  for (i, r) in res.indexed() {
+    let ps = match r {
+      Ok(p) => p
+      Err(_) => ["internal error"]
+    }
+    if !ps.is_empty() {
+      fails += 1
+      for p in ps {
+        os.stdio.println("FAIL ${dirs[i]} ${p}")
+      }
+    }
+  }
+  os.stdio.println("${dirs.len()} programs: ${dirs.len() - fails} pass, ${fails} fail (${os.clock.since(t0).millis()} ms)")
+  if fails == 0 { 0 } else { 1 }
+}
+
+/// module_dirs is each of dirs that holds .xo files, else its
+/// subdirectories that do, sorted.
+fn module_dirs(fs: Fs, dirs: List[Str]) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  for d0 in dirs {
+    let d = d0.trim_suffix("/")
+    if has_xo(fs, d) {
+      out.push(d)
+      continue
+    }
+    for e in (fs.read_dir(d).ok() ?? []).sort_by(fn(e: FileInfo) { e.name }) {
+      if e.is_dir && has_xo(fs, "${d}/${e.name}") {
+        out.push("${d}/${e.name}")
+      }
+    }
+  }
+  out
+}
+
+fn check_one(os: Os, h: Host, xo: Str, extra: List[Str], d: Str) -> List[Str] uses (env, fs.read, proc) {
+  var want: List[Expect] = []
+  for e in os.fs.read_dir(d).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      want = want + expectations("${d}/${e.name}", os.fs.read_text("${d}/${e.name}").ok() ?? "")
+    }
+  }
+  let args = ["check", "--json"] + extra + [d]
+  let out = match os.proc.cmd(xo, args).set_env("XO_STD", h.std).output() {
+    Ok(o) => o
+    Err(e) => return ["xo check: ${e}"]
+  }
+  let jc = match json.decode[JCheck](out.stdout) {
+    Ok(j) => j
+    Err(e) => return ["xo check --json: ${e}: ${(out.stderr.to_str() ?? "").trim()}"]
+  }
+  var got: List[(Str, Int, Str, Str, Str)] = []
+  for g in jc.diagnostics {
+    got.push((g.span.file, g.span.line, g.code, g.severity, g.message))
+  }
+  verdict(want, got)
+}

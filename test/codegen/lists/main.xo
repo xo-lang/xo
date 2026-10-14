@@ -1,0 +1,19 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): list loops.
+
+// A loop over 0..xs.len() needs no bounds check on arm64 (the length
+// fact of the loop), and reads by a scaled register offset (decision
+// 0208). The LLVM emitter types the loads for alias analysis (tbaa).
+fn sum(xs: List[Int]) -> Int {
+  // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"_xo_fault_index"
+  // llvm: "load i64, ptr %t[0-9]+, !tbaa"
+  var s = 0
+  for i in 0..xs.len() {
+    s += xs[i]
+  }
+  s
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${sum([1, 2, n])}")
+}
