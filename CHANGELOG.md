@@ -7,12 +7,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - Native runtime (zero-C audit item B21, part 1): the heap's 4 MiB chunks
-  and its large blocks are mapped from Xo (std/native/llrt/heapos.xo:
-  mmap, VirtualAlloc) instead of the C library's malloc, with a cache of
-  given back large mappings, and the central lists' lock is a lock word
-  instead of a pthread mutex. bench/perf text, json, alloc, and nested
-  are 0.973 to 1.030 of main's instructions, the self build 1.005 and
-  1.012 (bench/results/heap-platform-2026-10-14.md).
+  and its big blocks (above 256 KiB) are mapped from Xo
+  (std/native/llrt/heapos.xo: mmap, VirtualAlloc) instead of the C
+  library's malloc, with a cache of given back mappings, and the central
+  lists' lock is a lock word instead of a pthread mutex. bench/perf
+  text, json, alloc, and nested are 0.973 to 1.029 of main's
+  instructions, the self build 0.997 and 0.996
+  (bench/results/heap-platform-2026-10-14.md).
 - Native runtime (zero-C audit item B13, stage 3): the string objects'
   appends and builders are Xo (std/native/llrt/obj.xo): `a + b`, and
   the runtime's rs_append, push_byte, push_word, push_words,

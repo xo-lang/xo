@@ -1,6 +1,7 @@
 // The heap's platform calls in Xo (the zero-C audit's work item B21):
 // the memory of std/native/llrt/alloc.xo's 4 MiB chunks and of its
-// large blocks (above mid_max), mapped from the system (mmap on Linux
+// big blocks (above mid_max; rt.heap_large stays the C library's malloc
+// for the runtime's records, some of which the C frees), mapped from the system (mmap on Linux
 // and macOS, VirtualAlloc on Windows) in place of the C library's malloc,
 // realloc, and free, and the lock of the central lists (a lock word, as
 // pool.xo's) in place of a pthread mutex. alloc.xo calls them as rt.heap_*

@@ -304,27 +304,55 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 	*total = t;
 }
 
+// The runtime's records from malloc (std/native rt.heap_large): the C
+// frees some of them with free (xo_testing.c, task_free), so these stay
+// the C library's until the runtime has an allocator of its own for them.
+//
+// xo_heap_large returns a block of n bytes from malloc (the prefix is
+// minus its size).
+__attribute__((noinline)) int64_t xo_heap_large(int64_t n) {
+	int64_t *b = malloc((size_t)n + 8);
+	if (!b) {
+		xo_oom();
+	}
+	b[0] = -n;
+	return (int64_t)(intptr_t)(b + 1);
+}
+
+// xo_heap_large_resize reallocates the malloc'd block at b (its prefix)
+// to n bytes.
+int64_t xo_heap_large_resize(int64_t b, int64_t n) {
+	int64_t *nb = realloc((void *)(intptr_t)b, (size_t)n + 8);
+	if (!nb) {
+		xo_oom();
+	}
+	nb[0] = -n;
+	return (int64_t)(intptr_t)(nb + 1);
+}
+
+void xo_heap_release(int64_t b) { free((void *)(intptr_t)b); }
+
 // The heap's platform calls (zero-C audit B21): std/native/llrt/heapos.xo
-// maps the chunks and the large blocks from the system and locks the
-// central lists; alloc.xo calls these as rt.heap_*, which forward to
-// cabi.xo's exports.
-int64_t xo_x_heap_large(int64_t n);
-int64_t xo_x_heap_large_resize(int64_t b, int64_t n);
-void xo_x_heap_release(int64_t b);
+// maps the chunks and alloc.xo's big blocks (above mid_max) from the
+// system and locks the central lists; alloc.xo calls these as rt.heap_*,
+// which forward to cabi.xo's exports.
+int64_t xo_x_heap_big(int64_t n);
+int64_t xo_x_heap_big_resize(int64_t b, int64_t n);
+void xo_x_heap_big_release(int64_t b);
 int64_t xo_x_heap_grow(int64_t h, int64_t n);
 void xo_x_heap_lock(void);
 void xo_x_heap_unlock(void);
 int64_t xo_x_heap_chunks(void);
 
-// xo_heap_large returns a large block of n bytes (its prefix minus n):
-// the address after the prefix.
-int64_t xo_heap_large(int64_t n) { return xo_x_heap_large(n); }
+// xo_heap_big returns a big block of n bytes (its prefix minus n): the
+// address after the prefix.
+int64_t xo_heap_big(int64_t n) { return xo_x_heap_big(n); }
 
-// xo_heap_large_resize makes the large block whose prefix is at b n bytes.
-int64_t xo_heap_large_resize(int64_t b, int64_t n) { return xo_x_heap_large_resize(b, n); }
+// xo_heap_big_resize makes the big block whose prefix is at b n bytes.
+int64_t xo_heap_big_resize(int64_t b, int64_t n) { return xo_x_heap_big_resize(b, n); }
 
-// xo_heap_release gives back the large block whose prefix is at b.
-void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
+// xo_heap_big_release gives back the big block whose prefix is at b.
+void xo_heap_big_release(int64_t b) { xo_x_heap_big_release(b); }
 
 // xo_heap_grow gives heap h a new chunk and allocates n bytes again (the
 // heap in Xo calls it last, so its arm64 code keeps no register across
@@ -2533,12 +2561,9 @@ static void task_free(void *p) {
 	}
 	if (t->fault_msg) {
 		// large blocks of fault.xo (the address after the prefix)
-		char *fs[3] = {t->fault_msg, t->fault_loc, t->fault_detail};
-		for (int i = 0; i < 3; i++) {
-			if (fs[i]) {
-				xo_heap_release(XO_ADDR(fs[i]) - 8);
-			}
-		}
+		free(t->fault_msg);
+		free(t->fault_loc);
+		free(t->fault_detail);
 	}
 	xo_free(t);
 }

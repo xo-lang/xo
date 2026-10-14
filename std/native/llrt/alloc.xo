@@ -10,10 +10,11 @@
 // stage 3). Decision 0198 deleted the C path (`XO_LLRT_C=alloc`).
 //
 // Every block has an 8 byte prefix before the address handed out: its
-// size class (1 to 72) or, for a block from malloc, minus its size.
+// size class (1 to 72) or, for a big block, minus its size.
 // Classes 1 to 64 are 16 to 1,024 bytes by 16, classes 65 to 72 are
 // 2 KiB to 256 KiB by powers of two; blocks above the heap's mid_max
-// (at most 256 KiB, lowered by XO_HEAP_MID_MAX) come from malloc. A free
+// (at most 256 KiB, lowered by XO_HEAP_MID_MAX) are big blocks, mapped
+// from the system by heapos.xo (work item B21). A free
 // block of a class is on that class's free list (the next address is
 // its first word); new blocks are carved from 4 MiB chunks.
 //
@@ -22,7 +23,7 @@
 // Str, List, Map, closure, or interpolation, no arithmetic that can
 // fault (rt.int_wrap: op 0 add, 1 subtract, 2 multiply, 3 shift left, 4
 // shift right), and calls only inline intrinsics and the platform calls
-// rt.heap_* (malloc, realloc, free, a new chunk, the central lists'
+// rt.heap_* (heapos.xo's big blocks, a new chunk, the central lists'
 // mutex); selfhost/ssa contract.xo check_no_alloc checks it on every
 // function here. The single threaded paths (alloc, free) make
 // their calls last, with nothing live after them, so the arm64 code
@@ -36,7 +37,7 @@ use native/rt
 // real-time section depth and its allocations (decision 0133), the
 // largest block the classes serve, the address of the central lists
 // (one word per class), the usable bytes of the block alloc or resize
-// returned last (its class's size, or n from malloc: the C reads it for
+// returned last (its class's size, or n for a big block: the C reads it for
 // a string's capacity, where it called usable before), then per class
 // (at h + 8 * c) the free list's head, its length (about: a magazine
 // taken counts as full), and the spare full magazine.
@@ -62,7 +63,7 @@ const MAG_BYTES = 65536
 const RELAXED = 0
 
 /// A block of n bytes from heap h (xo_rt.c alloc_in): the head of its
-/// class's free list, else carved from the chunk, or from malloc above
+/// class's free list, else carved from the chunk, or a big block above
 /// the classes. Counts the allocation, its bytes, and an allocation in a
 /// real-time section. A chunk that runs out is replaced by rt.heap_grow,
 /// which calls this again.
@@ -74,7 +75,7 @@ pub fn alloc(h: Int, n: Int) -> Int {
       rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
     }
     rt.mem_store(h, LAST, n, 8)
-    return rt.heap_large(n)
+    return rt.heap_big(n)
   }
   // the size class (size_class)
   var c = 65
@@ -161,13 +162,13 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
 }
 
 /// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
-/// list, or to free for a block from malloc. Counts the free.
+/// list, or to heapos.xo for a big block. Counts the free.
 pub fn free(h: Int, p: Int) {
   rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
   let b = rt.int_wrap(1, p, 8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
-    rt.heap_release(b)
+    rt.heap_big_release(b)
     return
   }
   let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
@@ -250,7 +251,7 @@ pub fn free_mt(h: Int, p: Int) {
   let b = rt.int_wrap(1, p, 8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
-    rt.heap_release(b)
+    rt.heap_big_release(b)
     return
   }
   let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
@@ -285,14 +286,14 @@ pub fn free_mt(h: Int, p: Int) {
 }
 
 /// Resizes block p of old bytes to n bytes (xo_rt.c xo_resize): a block
-/// from malloc that stays above the classes is reallocated (its growth
+/// that stays big is resized by heapos.xo (its growth
 /// counted for budgets), a block whose class also serves n is kept, and
 /// a block of a class moves to one of n's class when that class has a
 /// free block or the chunk has room (copied, then p freed: alloc's and
 /// free's single threaded paths, written out here because this module
 /// calls no functions). The new address, or 0 when the caller must move
 /// it (xo_alloc, copy, xo_free: a program with threads, mt not 0, or a
-/// block from or to malloc, or a chunk to replace). A block it returns
+/// block from or to a big one, or a chunk to replace). A block it returns
 /// sets LAST.
 pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   let b = rt.int_wrap(1, p, 8)
@@ -303,7 +304,7 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
       rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
     }
     rt.mem_store(h, LAST, n, 8)
-    return rt.heap_large_resize(b, n)
+    return rt.heap_big_resize(b, n)
   }
   if hdr <= 0 || n > mid {
     return 0

@@ -364,15 +364,15 @@ fn heap_free_mt(h: Int, p: Int) { alloc.free_mt(h, p) }
 fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(h, p, old, n, mt) }
 
 // The heap's platform calls (zero-C audit B21, heapos.xo): the C's
-// xo_heap_large, xo_heap_large_resize, xo_heap_release, xo_heap_grow,
+// xo_heap_big, xo_heap_big_resize, xo_heap_big_release, xo_heap_grow,
 // xo_heap_lock, and xo_heap_unlock forward to these (alloc.xo calls
-// those as rt.heap_*). b is a large block's prefix address.
+// those as rt.heap_*). b is a big block's prefix address.
 
-fn heap_large(n: Int) -> Int { heapos.large(n) }
+fn heap_big(n: Int) -> Int { heapos.large(n) }
 
-fn heap_large_resize(b: Int, n: Int) -> Int { heapos.large_resize(b, n) }
+fn heap_big_resize(b: Int, n: Int) -> Int { heapos.large_resize(b, n) }
 
-fn heap_release(b: Int) { heapos.release(b) }
+fn heap_big_release(b: Int) { heapos.release(b) }
 
 /// Gives heap h a new chunk and allocates n bytes again.
 fn heap_grow(h: Int, n: Int) -> Int {

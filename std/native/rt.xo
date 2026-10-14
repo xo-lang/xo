@@ -77,15 +77,22 @@ fn atomic_max(a: Atomic[Int], n: Int) -> Int
 // 70 as the C did). h is the calling thread's heap record, p a block's
 // address.
 
-/// A large block of n bytes mapped from the system (its prefix minus n):
-/// the address after the prefix (std/native/llrt/heapos.xo through the
-/// C runtime's xo_heap_* forwarders, work item B21).
+/// A block of n bytes from malloc (its prefix minus n): the address
+/// after the prefix. The runtime's records (testworld.xo, pool.xo,
+/// fault.xo, stdio.xo); the C frees some of them with free.
 fn heap_large(n: Int) -> Int
-/// The large block whose prefix is at b made n bytes (a new mapping with
-/// its first bytes): the address after the new prefix.
+/// The malloc'd block at b (the prefix's address) reallocated to n
+/// bytes (its prefix minus n): the address after the prefix.
 fn heap_large_resize(b: Int, n: Int) -> Int
-/// Gives back the large block whose prefix is at b.
+/// free of the malloc'd block at b (the prefix's address).
 fn heap_release(b: Int)
+/// alloc.xo's big blocks (above mid_max): n bytes mapped from the system
+/// (its prefix minus n), the address after the prefix; resized; given
+/// back (std/native/llrt/heapos.xo through the C runtime's forwarders,
+/// work item B21).
+fn heap_big(n: Int) -> Int
+fn heap_big_resize(b: Int, n: Int) -> Int
+fn heap_big_release(b: Int)
 /// Gives heap h a new 4 MiB chunk (counted) and returns
 /// alloc.alloc(h, n) again.
 fn heap_grow(h: Int, n: Int) -> Int

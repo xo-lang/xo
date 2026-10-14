@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-14, work item B21)
 
-Symptom: with the heap's large blocks (above 256 KiB) mapped with mmap
+Symptom: with the heap's big blocks (above 256 KiB) mapped with mmap
 and unmapped on free (std/native/llrt/heapos.xo), bench/perf json parse
 took 1.091 (arm64) and 1.106 (LLVM) times the instructions of the
 malloc version; every other workload was within 1 percent.
