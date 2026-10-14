@@ -35,6 +35,7 @@
 use native/llrt/linux
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// The thread local word holding the thread's scratch record
 /// (std/native/llrt/sched.xo lists the table's words).
@@ -313,9 +314,12 @@ fn scratch() -> Int {
   // Linux, 0x1000 on macOS)
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, SCRATCH, 3, 2 | 4096, -1, 0)
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE; 0 on failure (decision
+    // 0228's message buffer is here on every OS)
+    TargetOs.Windows => sys_windows.VirtualAlloc(0, SCRATCH, 12288, 4)
+    TargetOs.Linux | TargetOs.Wasi => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
   }
-  if m < 0 && m > -4096 {
+  if m == 0 || (m < 0 && m > -4096) {
     return 0
   }
   rt.tlocal_set(UNW_TLS, m)
