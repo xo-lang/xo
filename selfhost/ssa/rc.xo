@@ -765,6 +765,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.insert(f, c)
   r.cancel(f)
   r.reuse(f)
+  r.group_releases(f)
   r.sink_landings(f)
   prune_landings(f)
   renumber(f)
@@ -1243,6 +1244,99 @@ fn (var r: Rc) cancel(var f: Func) {
 }
 
 /// Deletes field reads whose result is unused (removeDeadFields).
+/// The least heap leaves of a root whose separate releases group_releases
+/// joins into one release of the root.
+const GROUP_LEAVES = 2
+
+/// Joins the releases of every heap leaf of one root into one release of
+/// the root, where they sit together in a run of field reads and
+/// releases (bench/results/fast-builds-2026-10-13.md: the self build of
+/// xo released large structs leaf by leaf, 3.4 million calls and 38
+/// percent of its assembly). The root's drop helper releases the same
+/// leaves; the verifier counts a release of the root as one of each.
+fn (var r: Rc) group_releases(var f: Func) {
+  var any = false
+  for bl in 0..f.blocks.len() {
+    let ins = f.blocks[bl].instrs
+    var out: List[Int] = []
+    var i = 0
+    while i < ins.len() {
+      let o = f.values[ins[i]].op
+      if !(o is Op.Field | Op.Release) {
+        out.push(ins[i])
+        i += 1
+        continue
+      }
+      // a run of field reads and releases
+      var j = i
+      while j < ins.len() && (f.values[ins[j]].op is Op.Field | Op.Release) {
+        j += 1
+      }
+      // the leaves released in the run, by root
+      var by_root: Map[Int, List[Str]] = {}
+      var roots: List[Int] = []
+      for k in i..j {
+        let v = ins[k]
+        if f.values[v].op != Op.Release {
+          continue
+        }
+        let a = f.values[v].args[0]
+        let root = r.base(f, a).root
+        if !by_root.contains(root) {
+          by_root[root] = []
+          roots.push(root)
+        }
+        var ks = by_root.get(root) ?? []
+        for l in r.leaves(f, a) {
+          ks.push(leaf_key(l))
+        }
+        by_root[root] = ks
+      }
+      var joined: Map[Int, Bool] = {}
+      for root in roots {
+        let ks = by_root.get(root) ?? []
+        let all = r.leaves(f, root)
+        if all.len() < GROUP_LEAVES || ks.len() != all.len() {
+          continue
+        }
+        var want: Set[Str] = #{}
+        for l in all {
+          want.add(leaf_key(l))
+        }
+        var got: Set[Str] = #{}
+        for s in ks {
+          got.add(s)
+        }
+        if got.len() == want.len() && got.len() == ks.len() && got.difference(want).is_empty() {
+          joined[root] = true
+        }
+      }
+      var placed: Set[Int] = #{}
+      for k in i..j {
+        let v = ins[k]
+        if f.values[v].op == Op.Release {
+          let root = r.base(f, f.values[v].args[0]).root
+          if joined.contains(root) {
+            if !placed.contains(root) {
+              placed.add(root)
+              out.push(new_value(f, bl, Op.Release, -1, Aux.None, [root]))
+              any = true
+            }
+            continue
+          }
+        }
+        out.push(v)
+      }
+      i = j
+    }
+    f.blocks[bl].instrs = out
+  }
+  if any {
+    // the field reads only the joined releases used
+    remove_dead_fields(f)
+  }
+}
+
 fn remove_dead_fields(var f: Func) {
   var changed = true
   while changed {
