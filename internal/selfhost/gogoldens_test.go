@@ -113,11 +113,19 @@ const (
 // goldens and the fixed point stay on.
 func skipDumpReplay(t *testing.T) {
 	t.Helper()
-	if os.Getenv("XO_SELFHOST_DUMPS") == "all" || goldensRecording() {
+	if dumpReplayOn() {
 		return
 	}
-	t.Skip("recorded dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it")
+	t.Skip(dumpReplayOff)
 }
+
+// dumpReplayOn reports whether recorded dump replays run (skipDumpReplay),
+// for a test that has other checks and leaves only its replay out.
+func dumpReplayOn() bool {
+	return os.Getenv("XO_SELFHOST_DUMPS") == "all" || goldensRecording()
+}
+
+const dumpReplayOff = "recorded dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it"
 
 // goldensMode is $XO_SELFHOST_GOLDENS (replay when unset).
 func goldensMode() string {

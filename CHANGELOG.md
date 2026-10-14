@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
+  links every object of a program whose assembly was split into parts
+  (decision 0220; it took only the first and rejected the runtime's
+  source); `xo bind` finds or builds the Go binder xo-gobind from the
+  std beside xo instead of "std" in the working directory. Tests:
+  TestDevGoldensELF builds the linux/arm64 runtime pack it links with
+  (`xo dev rtpack`, cached by pack key); TestCrossCompile looks up the
+  wasm binary by xo's name, wasip1/wasm (xotool.Target);
+  TestSelfhostLLVMEndToEnd compares its IR with the recording only when
+  dump replays are on (decision 0217) and keeps its build and output
+  check.
 - Native runtime (zero-C audit item B08): SHA-512 is Xo
   (std/native/llrt/digest.xo, called by the C Ed25519 through
   cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
