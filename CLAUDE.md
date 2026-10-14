@@ -147,7 +147,12 @@ Update the knowledgebase in the same change as the work, not later:
   code uses, gotchas/seed-older-than-intrinsics.md), the lead bumps the
   minor version (`xo version`) and cuts a new seed for every platform
   instead of adding a chain hop. Only the lead uploads seeds and changes
-  IAM; agents never do.
+  IAM; agents never do. If a seed cannot be fetched, stop and report the
+  error (owner, 2026-10-13): never fall back to rebuilding from
+  go-compiler-final through the chain (25 to 37 minutes); that path is
+  opt in, for the replay from source and a brand new platform. Unpack a
+  seed into its own directory (its top directory is xo/, the EC2
+  checkout is ~/xo).
 - The TestSelfhost* dump replays (lexer, parser, format, checker, SSA,
   arm64, LLVM, gen, defhash, mutations; recordings in
   internal/selfhost/testdata/gogoldens) are skipped by default
