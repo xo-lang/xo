@@ -141,11 +141,14 @@ pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
   if s == 0 {
     return 0
   }
-  let hdr = eh_frame_hdr()
-  if hdr == 0 {
-    return 0
+  // the program's table, found at the thread's first fault
+  if rt.mem_load(s, H_HDR, 8) == 0 {
+    let hdr = eh_frame_hdr()
+    if hdr == 0 {
+      return 0
+    }
+    rt.mem_store(s, H_HDR, hdr, 8)
   }
-  rt.mem_store(s, H_HDR, hdr, 8)
   let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
   rt.unwind_save(cur)
