@@ -3,7 +3,7 @@
 // unwinding a context, and the report of a fault nothing caught. The
 // record lives in the C runtime's xo_ctx (std/llrt/xo_rt.c asserts the
 // offsets below): `faulting`, and three zero terminated strings in
-// malloc'd blocks (rt.heap_large), which the C scheduler hands from a
+// large blocks (rt.heap_large), which the C scheduler hands from a
 // faulted task to the scope that joins it. The C calls these through
 // cabi.xo (fault_record_*); raising stays C (fault_raise), and the
 // messages of the checked operations are cabi.xo's fault_* writers.
@@ -22,12 +22,12 @@ const C_MSG = 88
 const C_LOC = 96
 const C_DETAIL = 104
 
-/// A zero terminated copy of the n bytes at p in a block from malloc,
-/// at the block's own address (rt.heap_large returns the address after
-/// its 8 byte prefix; the C frees these strings with free, so the string
-/// starts where the prefix was).
+/// A zero terminated copy of the n bytes at p in a large block
+/// (rt.heap_large: the address after its 8 byte prefix, which
+/// rt.heap_release takes; the C's task_free gives these back through
+/// xo_heap_release too).
 fn dup(p: Int, n: Int) -> Int {
-  let b = rt.heap_large(n + 1) - 8
+  let b = rt.heap_large(n + 1)
   rt.mem_copy(b, p, n)
   rt.mem_store(b, n, 0, 1)
   b
@@ -37,7 +37,7 @@ fn dup(p: Int, n: Int) -> Int {
 fn drop(c: Int, off: Int) {
   let b = rt.mem_load(c, off, 8)
   if b != 0 {
-    rt.heap_release(b)
+    rt.heap_release(b - 8)
     rt.mem_store(c, off, 0, 8)
   }
 }

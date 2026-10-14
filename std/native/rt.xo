@@ -77,18 +77,19 @@ fn atomic_max(a: Atomic[Int], n: Int) -> Int
 // 70 as the C did). h is the calling thread's heap record, p a block's
 // address.
 
-/// A block of n bytes from malloc (its prefix minus n): the address
-/// after the prefix.
+/// A large block of n bytes mapped from the system (its prefix minus n):
+/// the address after the prefix (std/native/llrt/heapos.xo through the
+/// C runtime's xo_heap_* forwarders, work item B21).
 fn heap_large(n: Int) -> Int
-/// The malloc'd block at b (the prefix's address) reallocated to n
-/// bytes (its prefix minus n): the address after the prefix.
+/// The large block whose prefix is at b made n bytes (a new mapping with
+/// its first bytes): the address after the new prefix.
 fn heap_large_resize(b: Int, n: Int) -> Int
-/// free of the malloc'd block at b (the prefix's address).
+/// Gives back the large block whose prefix is at b.
 fn heap_release(b: Int)
-/// Gives heap h a new 4 MiB chunk (counted for tasks.c) and returns
+/// Gives heap h a new 4 MiB chunk (counted) and returns
 /// alloc.alloc(h, n) again.
 fn heap_grow(h: Int, n: Int) -> Int
-/// Locks and unlocks the central lists' mutex.
+/// Locks and unlocks the central lists' lock word.
 fn heap_lock()
 fn heap_unlock()
 /// Writes s and a newline to standard error.
@@ -216,10 +217,13 @@ fn prefetch(a: Int)
 /// the test world fakes stdio, whether several threads run); 7 to 9
 /// std/native/llrt/process.xo (argc, argv, the environment); 10 to 13
 /// std/native/llrt/obj.xo (the single threaded heap record and three C
-/// functions' addresses); 32 to 39 the test world's
+/// functions' addresses); 14 to 18 std/native/llrt/heapos.xo (the
+/// central lists' lock, the chunks mapped, whether to map through the C
+/// library, the large block cache's lock and table); 32 to 39 the test
+/// world's
 /// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
 /// real, its lock, Rand's PCG state, the MemFs lock and state, the state
-/// record); 14 to 31 and 40 to 63 unused.
+/// record); 19 to 31 and 40 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

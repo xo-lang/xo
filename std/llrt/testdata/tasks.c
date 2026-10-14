@@ -497,7 +497,7 @@ static void test_magazines(void) {
 	int64_t before = 0;
 	for (int round = 0; round < ROUNDS; round++) {
 		if (round == WARM) {
-			before = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED);
+			before = xo_chunks_now();
 		}
 		for (int i = 0; i < MAG_BLOCKS; i++) {
 			mag_blocks[i] = xo_alloc(56);
@@ -509,7 +509,7 @@ static void test_magazines(void) {
 	// each round allocates 3.2 MB: without magazines about one chunk a
 	// round (36 here); a freeing thread keeps less than two magazines
 	// (128 KB) in the heap it leaves behind
-	int64_t grew = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED) - before;
+	int64_t grew = xo_chunks_now() - before;
 	CHECK(grew <= 6);
 	if (grew > 6) {
 		fprintf(stderr, "magazines: %lld chunks carved in %d rounds\n", (long long)grew, ROUNDS - WARM);

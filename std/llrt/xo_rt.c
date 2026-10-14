@@ -234,7 +234,16 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt);
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt, int64_t libc);
+
+// heap_libc tells heapos.xo to map the heap's memory through the C
+// library: ThreadSanitizer and AddressSanitizer see the mappings
+// through their mmap interceptors, which a system call bypasses.
+#if defined(XO_TSAN) || defined(XO_ASAN)
+#define heap_libc 1
+#else
+#define heap_libc 0
+#endif
 
 // hw_slow_c is the calling thread's heap record for obj.xo's heap_word
 // (called through rt.call_c2: two Int arguments, unused).
@@ -251,7 +260,7 @@ static int64_t rl_free_rt(int64_t l, int64_t h);
 static int64_t rc_defer_rt(int64_t obj, int64_t drop);
 
 static void obj_heap_init(xo_heap *h) {
-	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt);
+	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt, heap_libc);
 }
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
@@ -291,64 +300,41 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 	*total = t;
 }
 
-// xo_chunks counts the chunks carved (std/llrt/testdata/tasks.c checks
-// that blocks freed on another thread come back instead, decision 0118).
-static int64_t xo_chunks;
+// The heap's platform calls (zero-C audit B21): std/native/llrt/heapos.xo
+// maps the chunks and the large blocks from the system and locks the
+// central lists; alloc.xo calls these as rt.heap_*, which forward to
+// cabi.xo's exports.
+int64_t xo_x_heap_large(int64_t n);
+int64_t xo_x_heap_large_resize(int64_t b, int64_t n);
+void xo_x_heap_release(int64_t b);
+int64_t xo_x_heap_grow(int64_t h, int64_t n);
+void xo_x_heap_lock(void);
+void xo_x_heap_unlock(void);
+int64_t xo_x_heap_chunks(void);
 
-// central_mu guards the central lists' stacks (alloc.xo's free_mt and
-// refill through xo_heap_lock).
-static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
+// xo_heap_large returns a large block of n bytes (its prefix minus n):
+// the address after the prefix.
+int64_t xo_heap_large(int64_t n) { return xo_x_heap_large(n); }
 
-// The platform calls of the heap in Xo (decision 0207 stage 3,
-// std/native/rt.xo heap_*).
+// xo_heap_large_resize makes the large block whose prefix is at b n bytes.
+int64_t xo_heap_large_resize(int64_t b, int64_t n) { return xo_x_heap_large_resize(b, n); }
 
-// xo_heap_large returns a block of n bytes from malloc (the prefix is
-// minus its size).
-__attribute__((noinline)) int64_t xo_heap_large(int64_t n) {
-	int64_t *b = malloc((size_t)n + 8);
-	if (!b) {
-		xo_oom();
-	}
-	b[0] = -n;
-	return (int64_t)(intptr_t)(b + 1);
-}
-
-// xo_heap_large_resize reallocates the malloc'd block at b (its prefix)
-// to n bytes.
-int64_t xo_heap_large_resize(int64_t b, int64_t n) {
-	int64_t *nb = realloc((void *)(intptr_t)b, (size_t)n + 8);
-	if (!nb) {
-		xo_oom();
-	}
-	nb[0] = -n;
-	return (int64_t)(intptr_t)(nb + 1);
-}
-
-void xo_heap_release(int64_t b) { free((void *)(intptr_t)b); }
-
-// heap_chunk gives heap h a new chunk to carve blocks from.
-__attribute__((noinline)) static void heap_chunk(xo_heap *h) {
-	char *c = malloc(XO_CHUNK);
-	if (!c) {
-		xo_oom();
-	}
-	__atomic_fetch_add(&xo_chunks, 1, __ATOMIC_RELAXED);
-	h->bump_cur = c;
-	h->bump_end = c + XO_CHUNK;
-}
+// xo_heap_release gives back the large block whose prefix is at b.
+void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
 
 // xo_heap_grow gives heap h a new chunk and allocates n bytes again (the
 // heap in Xo calls it last, so its arm64 code keeps no register across
 // a call).
-int64_t xo_x_heap_alloc(int64_t n, int64_t h);
-__attribute__((noinline)) int64_t xo_heap_grow(int64_t h, int64_t n) {
-	heap_chunk((xo_heap *)(intptr_t)h);
-	return xo_x_heap_alloc(n, h);
-}
+int64_t xo_heap_grow(int64_t h, int64_t n) { return xo_x_heap_grow(h, n); }
 
-void xo_heap_lock(void) { pthread_mutex_lock(&central_mu); }
+void xo_heap_lock(void) { xo_x_heap_lock(); }
 
-void xo_heap_unlock(void) { pthread_mutex_unlock(&central_mu); }
+void xo_heap_unlock(void) { xo_x_heap_unlock(); }
+
+// xo_chunks is the chunks mapped so far (std/llrt/testdata/tasks.c and
+// alloc_threads.c check that blocks freed on another thread come back
+// instead, decision 0118).
+#define xo_chunks_now() xo_x_heap_chunks()
 
 // The heap in Xo (decision 0207 stage 3): std/native/llrt/alloc.xo
 // through the C ABI exports of cabi.xo (its C path was deleted by
@@ -2550,9 +2536,13 @@ static void task_free(void *p) {
 		list_release(t->result, t->drop);
 	}
 	if (t->fault_msg) {
-		free(t->fault_msg);
-		free(t->fault_loc);
-		free(t->fault_detail);
+		// large blocks of fault.xo (the address after the prefix)
+		char *fs[3] = {t->fault_msg, t->fault_loc, t->fault_detail};
+		for (int i = 0; i < 3; i++) {
+			if (fs[i]) {
+				xo_heap_release(XO_ADDR(fs[i]) - 8);
+			}
+		}
 	}
 	xo_free(t);
 }
@@ -6391,7 +6381,7 @@ int main(int argc, char **argv) {
 			sum += n * (size + 8);
 		}
 		pthread_mutex_unlock(&heaps_mu);
-		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks, (long long)(xo_chunks * (XO_CHUNK >> 20)), (long long)(sum >> 20));
+		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks_now(), (long long)(xo_chunks_now() * (XO_CHUNK >> 20)), (long long)(sum >> 20));
 	}
 	return 0;
 }

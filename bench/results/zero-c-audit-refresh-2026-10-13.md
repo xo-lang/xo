@@ -304,7 +304,7 @@ MISSING.
 | B18 wait lists, await, task record and end, scopes (0212 stage 3) | 588 | PORT 571, GLUE 17 | xo_rt.c 3018-3248, 3284-3349, 3379-3390, 3986-4037, 4304-4332, 4357-4505, 4538-4586 |
 | B19 channels, select, Mutex[T], Atomic object | 775 | PORT 775 | xo_rt.c 4587-5310, 6567-6617 |
 | B20 pool and fiber remnants | 707 | GLUE 532, PORT 175 | xo_rt.c 1280-1298, 1313-1417, 1447-1466, 2320-2355, 2442-2501, 2507-2539, 2810-2868, 2874-2900, 2993-3017, 3268-3283, 3391-3420, 3635-3765, 3804-3829, 4058-4177 |
-| B21 heap platform calls, C entry points | 389 | GLUE 262, PORT 127 | xo_rt.c 67-174, 178-394, 447-510 |
+| B21 heap platform calls, C entry points (part 1 2026-10-14: chunks and large blocks mapped from heapos.xo with a cache, the central lists' lock word, the C entries forwarding; heap_slow and the C entry points remain; heap-platform-2026-10-14.md) | 389 | GLUE 262, PORT 127 | xo_rt.c 67-174, 178-394, 447-510 |
 | B22 poller (poll.xo) | 920 | PORT 831, SHIM 89 | xo_rt.c 5311-5451, 5822-6511; xo_win.c 1030-1118 |
 | B23 sockets off Linux, net API (netio.xo) | 1,304 | PORT 817, SHIM 269, GLUE 218 | xo_rt.c 5452-5821, 6684-7348; xo_win.c 273-541 |
 | B24 standard input (stdin.xo) | 387 | PORT 387 | xo_stdin.c 1-58, 107-435 |

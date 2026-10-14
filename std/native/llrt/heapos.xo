@@ -1,0 +1,273 @@
+// The heap's platform calls in Xo (the zero-C audit's work item B21):
+// the memory of std/native/llrt/alloc.xo's 4 MiB chunks and of its
+// large blocks (above mid_max), mapped from the system (mmap on Linux
+// and macOS, VirtualAlloc on Windows) in place of the C library's malloc,
+// realloc, and free, and the lock of the central lists (a lock word, as
+// pool.xo's) in place of a pthread mutex. alloc.xo calls them as rt.heap_*
+// (its no allocation rule allows only those calls); the C runtime's
+// xo_heap_* entry points forward to cabi.xo's exports of these.
+//
+// A large block is a mapping of a word with the mapping's size, its 8
+// byte prefix (minus its size n), and at least n bytes; the address
+// handed out is after the prefix. A large block given back goes to a
+// cache of mappings (at most CACHE_N of them, CACHE_MAX bytes) that later
+// large blocks reuse, as malloc keeps its large frees: a program that
+// makes and drops big lists or strings again and again would otherwise
+// map, fault in, and unmap their pages every time (json parse took 1.1
+// times the instructions); a resize within the mapping stays in place.
+// A sanitizer build
+// maps through the C library (the C runtime's xo_sched_rt services 11 and
+// 12): ThreadSanitizer keeps a program's mappings in its application
+// ranges through its mmap interceptor, which a system call bypasses
+// (as pool.xo's fiber stacks).
+//
+// Nothing here allocates Xo values or faults: out of memory ends the
+// process as the C's xo_oom did (status 70).
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/stdio
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// rt.static_word: the central lists' lock word, the chunks mapped (the
+/// C runtime's heap statistics and its tests read it through cabi.xo),
+/// whether to map through the C library (a sanitizer build, set by
+/// obj.heap_init), the large block cache's lock word, and the cache's
+/// table (0 until the first large block is given back).
+const W_LOCK = 14
+const W_CHUNKS = 15
+const W_LIBC = 16
+const W_CLOCK = 17
+const W_CACHE = 18
+
+/// The cache's table (a mapping of GRAIN bytes): its own size (word 0),
+/// the bytes of the mappings it holds (word 1), their number (word 2),
+/// then their addresses.
+const CACHE_N = 16
+const CACHE_MAX = 67108864
+
+/// A large mapping's size is a multiple of this (16 KiB pages on Apple
+/// silicon, 64 KiB the Windows allocation granularity).
+const GRAIN = 65536
+
+/// The bytes of a chunk (xo_rt.c XO_CHUNK).
+const CHUNK = 4194304
+
+// slot atomics' orders (rt.xo)
+const RELAXED = 0
+const ACQUIRE = 2
+const RELEASE = 3
+
+/// Whether the build maps through the C library.
+pub fn set_libc(on: Int) { rt.mem_store(rt.static_word(W_LIBC), 0, on, 8) }
+
+/// size bytes of zeroed memory, readable and writable, from the system:
+/// its address. Out of memory ends the process.
+fn map(size: Int) -> Int {
+  if rt.mem_load(rt.static_word(W_LIBC), 0, 8) != 0 {
+    return rt.sched_rt(11, size, 0)
+  }
+  var m = 0
+  match target.os {
+    TargetOs.Linux => {
+      // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+      m = linux.mmap(0, size, 3, 34, -1, 0)
+      if m < 0 && m > -4096 {
+        m = 0
+      }
+    }
+    TargetOs.Darwin => {
+      // MAP_PRIVATE | MAP_ANON
+      m = sys_darwin.mmap(0, size, 3, 4098, -1, 0)
+      if m == -1 {
+        m = 0
+      }
+    }
+    TargetOs.Windows => {
+      // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+      m = sys_windows.VirtualAlloc(0, size, 12288, 4)
+    }
+    TargetOs.Wasi => {}
+  }
+  if m == 0 {
+    oom()
+  }
+  m
+}
+
+/// Gives back the mapping of size bytes at m.
+fn unmap(m: Int, size: Int) {
+  if rt.mem_load(rt.static_word(W_LIBC), 0, 8) != 0 {
+    let _u = rt.sched_rt(12, m, size)
+    return
+  }
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.munmap(m, size)
+    }
+    TargetOs.Darwin => {
+      let _r = sys_darwin.munmap(m, size)
+    }
+    TargetOs.Windows => {
+      // MEM_RELEASE
+      let _r = sys_windows.VirtualFree(m, 0, 32768)
+    }
+    TargetOs.Wasi => {}
+  }
+}
+
+/// "fault: out of memory" and the end of the process (status 70).
+fn oom() {
+  let m = "fault: out of memory"
+  stdio.err(raw.data(m), m.len(), true)
+  process.os_exit(70)
+}
+
+/// A large block of n bytes: the address after its prefix (minus n).
+pub fn large(n: Int) -> Int { large_room(n, n) }
+
+/// A large block of n bytes in a mapping with room for at least room
+/// (at least n) bytes.
+fn large_room(n: Int, room: Int) -> Int {
+  // the size word, the prefix, the bytes, rounded up to GRAIN
+  let need = rt.int_wrap(0, n, 16)
+  var m = take(need)
+  if m == 0 {
+    let size = rt.int_wrap(0, rt.int_wrap(0, room, 16), GRAIN - 1) & (0 - GRAIN)
+    m = map(size)
+    rt.mem_store(m, 0, size, 8)
+  }
+  rt.mem_store(m, 8, rt.int_wrap(1, 0, n), 8)
+  rt.int_wrap(0, m, 16)
+}
+
+/// The large block whose prefix is at b, made n bytes: in place when its
+/// mapping has the room, else a new block with its first bytes (the
+/// smaller size's), the old one given back.
+pub fn large_resize(b: Int, n: Int) -> Int {
+  let m = rt.int_wrap(1, b, 8)
+  if rt.int_wrap(0, n, 16) <= rt.mem_load(m, 0, 8) {
+    rt.mem_store(b, 0, rt.int_wrap(1, 0, n), 8)
+    return rt.int_wrap(0, b, 8)
+  }
+  let old = rt.int_wrap(1, 0, rt.mem_load(b, 0, 8))
+  // a growing block (a list's or a string's doubling) gets room for
+  // twice n, so its next growth stays in place: the pages past what is
+  // written are reserved, not used (realloc grows a large block in place
+  // or remaps its pages)
+  let p = large_room(n, if n > old { rt.int_wrap(3, n, 1) } else { n })
+  rt.mem_copy(p, rt.int_wrap(0, b, 8), if old < n { old } else { n })
+  release(b)
+  p
+}
+
+/// Gives back the large block whose prefix is at b: to the cache, or to
+/// the system when the cache is full.
+pub fn release(b: Int) {
+  let m = rt.int_wrap(1, b, 8)
+  let size = rt.mem_load(m, 0, 8)
+  if !keep(m, size) {
+    unmap(m, size)
+  }
+}
+
+/// Puts the mapping m of size bytes in the cache: whether it went there.
+fn keep(m: Int, size: Int) -> Bool {
+  let w = rt.static_word(W_CACHE)
+  clock_take()
+  var t = rt.mem_load(w, 0, 8)
+  if t == 0 {
+    // the table: a mapping of its own, kept for good
+    t = map(GRAIN)
+    rt.mem_store(t, 0, GRAIN, 8)
+    rt.mem_store(w, 0, t, 8)
+  }
+  let bytes = rt.mem_load(t, 8, 8)
+  let k = rt.mem_load(t, 16, 8)
+  if k >= CACHE_N || rt.int_wrap(0, bytes, size) > CACHE_MAX {
+    clock_give()
+    return false
+  }
+  rt.mem_store(t, rt.int_wrap(0, 24, rt.int_wrap(3, k, 3)), m, 8)
+  rt.mem_store(t, 16, rt.int_wrap(0, k, 1), 8)
+  rt.mem_store(t, 8, rt.int_wrap(0, bytes, size), 8)
+  clock_give()
+  true
+}
+
+/// A cached mapping of at least need bytes and at most four times that
+/// (so a small block does not hold a huge mapping), the latest given
+/// back first; 0 when there is none.
+fn take(need: Int) -> Int {
+  let w = rt.static_word(W_CACHE)
+  if rt.mem_load(w, 0, 8) == 0 {
+    return 0
+  }
+  clock_take()
+  let t = rt.mem_load(w, 0, 8)
+  var k = rt.mem_load(t, 16, 8)
+  let most = rt.int_wrap(3, need, 2)
+  while k > 0 {
+    k = rt.int_wrap(1, k, 1)
+    let at = rt.int_wrap(0, 24, rt.int_wrap(3, k, 3))
+    let m = rt.mem_load(t, at, 8)
+    let size = rt.mem_load(m, 0, 8)
+    if size >= need && size <= most {
+      // the last entry fills the gap
+      let n = rt.int_wrap(1, rt.mem_load(t, 16, 8), 1)
+      rt.mem_store(t, at, rt.mem_load(t, rt.int_wrap(0, 24, rt.int_wrap(3, n, 3)), 8), 8)
+      rt.mem_store(t, 16, n, 8)
+      rt.mem_store(t, 8, rt.int_wrap(1, rt.mem_load(t, 8, 8), size), 8)
+      clock_give()
+      return m
+    }
+  }
+  clock_give()
+  0
+}
+
+/// Takes and releases the cache's lock.
+fn clock_take() {
+  let l = rt.static_word(W_CLOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn clock_give() {
+  let l = rt.static_word(W_CLOCK)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+/// Gives heap record h a new chunk to carve blocks from (its bump words
+/// at 24 and 32, alloc.xo BUMP_CUR and BUMP_END).
+pub fn chunk(h: Int) {
+  let c = map(CHUNK)
+  let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
+  rt.mem_store(h, 24, c, 8)
+  rt.mem_store(h, 32, rt.int_wrap(0, c, CHUNK), 8)
+}
+
+/// The chunks mapped so far.
+pub fn chunks() -> Int { rt.slot_load(rt.static_word(W_CHUNKS), 0, RELAXED) }
+
+/// Takes the central lists' lock.
+pub fn lock() {
+  let l = rt.static_word(W_LOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+/// Releases it.
+pub fn unlock() {
+  let l = rt.static_word(W_LOCK)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}

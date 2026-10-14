@@ -288,7 +288,7 @@ static void test_waves(void) {
 	int64_t before = 0;
 	for (int r = 0; r < rounds; r++) {
 		if (r == 2) {
-			before = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED);
+			before = xo_chunks_now();
 		}
 		for (int k = 0; k < 2; k++) {
 			for (int i = 0; i < WAVE; i++) {
@@ -310,7 +310,7 @@ static void test_waves(void) {
 	// KB) in the heap it leaves behind, a chunk every 16 rounds for the
 	// two (2 in 28 rounds, 19 in 300 measured)
 	int n = rounds - 2;
-	int64_t grew = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED) - before;
+	int64_t grew = xo_chunks_now() - before;
 	CHECK(grew <= n / 10 + 3);
 	fprintf(stderr, "waves: %lld chunks carved in %d rounds\n", (long long)grew, n);
 }

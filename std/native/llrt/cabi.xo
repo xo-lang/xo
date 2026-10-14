@@ -14,6 +14,7 @@
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
 use native/llrt/fault
+use native/llrt/heapos
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/obj
@@ -376,6 +377,30 @@ fn heap_free_mt(h: Int, p: Int) { alloc.free_mt(h, p) }
 
 fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(h, p, old, n, mt) }
 
+// The heap's platform calls (zero-C audit B21, heapos.xo): the C's
+// xo_heap_large, xo_heap_large_resize, xo_heap_release, xo_heap_grow,
+// xo_heap_lock, and xo_heap_unlock forward to these (alloc.xo calls
+// those as rt.heap_*). b is a large block's prefix address.
+
+fn heap_large(n: Int) -> Int { heapos.large(n) }
+
+fn heap_large_resize(b: Int, n: Int) -> Int { heapos.large_resize(b, n) }
+
+fn heap_release(b: Int) { heapos.release(b) }
+
+/// Gives heap h a new chunk and allocates n bytes again.
+fn heap_grow(h: Int, n: Int) -> Int {
+  heapos.chunk(h)
+  alloc.alloc(h, n)
+}
+
+fn heap_lock() { heapos.lock() }
+
+fn heap_unlock() { heapos.unlock() }
+
+/// The chunks mapped so far (the heap statistics and tests).
+fn heap_chunks() -> Int { heapos.chunks() }
+
 // ---------------------------------------------------------------------------
 // Lists (zero-C audit B13): xo_rt.c xo_rl_new, xo_rl_copy, xo_rl_share, xo_rl_grow, xo_rl_free's work, and
 // xo_rc_defer's worklist, in obj.xo. hw is the calling thread's heap
@@ -397,7 +422,10 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
-fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int) { obj.heap_init(h, slow, rl_free_rt, rc_defer_rt) }
+fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int, libc: Int) {
+  obj.heap_init(h, slow, rl_free_rt, rc_defer_rt)
+  heapos.set_libc(libc)
+}
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
 
