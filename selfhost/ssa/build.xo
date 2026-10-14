@@ -405,7 +405,7 @@ fn (var b: Builder) declare_exports() {
       if b.nolibc {
         b.declare_exports_of(mi)
       }
-    } else if p == "native/llrt/cabi_test" {
+    } else if p == "native/llrt/cabi_tw" {
       // the test world's (std/native/llrt/testworld.xo, the zero-C
       // audit's B14): the C calls them only in a test binary, and other
       // programs link its weak definitions

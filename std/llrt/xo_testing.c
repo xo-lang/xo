@@ -13,7 +13,7 @@
 //     error are captured, the file system is empty, log records are kept
 //     for testing.logs() and echoed to the harness, FakeNet's handlers
 //     and failures are kept: that is std/native/llrt/testworld.xo (the
-//     zero-C audit's B14), which the C reaches through cabi_test.xo's
+//     zero-C audit's B14), which the C reaches through cabi_tw.xo's
 //     exports (xo_x_tw_*).
 //   - FakeNet.listen gives an in memory listener; http.server serves it
 //     by registering its router here, and the http client of the test
@@ -58,7 +58,7 @@ static struct {
 	int exiting; // os.proc.exit unwinds main to testing.run_main
 } tws;
 
-// The exports of std/native/llrt/cabi_test.xo, which test binaries carry;
+// The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
 // the weak definitions keep other programs linking (they never reach
 // them: the C calls them only in the test world).
 #define TW_WEAK __attribute__((weak))
@@ -71,7 +71,7 @@ TW_WEAK int64_t xo_x_tw_env_args(void) { return (int64_t)(intptr_t)&empty_list; 
 TW_WEAK void xo_x_tw_set_args(int64_t l) { (void)l; }
 TW_WEAK void xo_x_tw_set_exit(int64_t code) { (void)code; }
 TW_WEAK int64_t xo_x_tw_exit_value(void) { return 0; }
-TW_WEAK void xo_x_tw_cleanup(void) {}
+TW_WEAK int64_t xo_x_tw_cleanup(void) { return 0; }
 
 static void *tw_grow(void *p, int n, size_t size) {
 	// room for element n (doubling at powers of two)
@@ -515,7 +515,15 @@ int64_t xo_test_now(void) { return xo_clock_now(); }
 // tw_cleanup releases the values the test world keeps (testworld.xo's,
 // and the routers served) when the test ends, for the leak check.
 __attribute__((unused)) static void tw_cleanup(void) {
-	xo_x_tw_cleanup();
+	// testworld.xo hands over its values (a malloc'd block: the count,
+	// then the objects); they are released here, on the C main thread
+	int64_t *kept = (int64_t *)(intptr_t)xo_x_tw_cleanup();
+	if (kept) {
+		for (int64_t i = 1; i <= kept[0]; i++) {
+			h_release((void *)(intptr_t)kept[i]);
+		}
+		free(kept - 1);
+	}
 	lk(&tws.mu);
 	xo_any *routers[64];
 	int nrouters = 0;

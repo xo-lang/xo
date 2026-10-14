@@ -35,7 +35,7 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
-	for _, sym := range []string{"xo_stdin_", "xo_tw_set_input", "xo_tw_set_tty", "xo_isatty", "xo_term_width"} {
+	for _, sym := range []string{"xo_stdin_", "xo_tw_set_tty", "xo_isatty", "xo_term_width"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_STDIN")
 			break

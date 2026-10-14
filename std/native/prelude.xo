@@ -6,7 +6,7 @@
 use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/cabi_nolibc
-use native/llrt/cabi_test
+use native/llrt/cabi_tw
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -1535,7 +1535,13 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if !cap_admits(rt.proc_lists(p), cmd) {
     return Err(ProcErr.Denied(cmd))
   }
-  let r = rt.proc_run(cmd, args)
+  var r: List[Str] = []
+  if testworld.fake(testworld.REAL_PROC) {
+    // FakeProc.on_run's outputs (std/native/llrt/testworld.xo)
+    r = if rt.fs_canceled() { ["3", ""] } else { testworld.proc_run(cmd) }
+  } else {
+    r = rt.proc_run(cmd, args)
+  }
   let st = r.get(0) ?? "2"
   let detail = r.get(1) ?? ""
   if st == "1" {
@@ -1792,6 +1798,22 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
   ProcOutput{code: text.parse_int(d) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
 }
 
+/// rt.proc_exec of the specs, or in the test world the outputs
+/// FakeProc.on_run registered (std/native/llrt/testworld.xo): canceled,
+/// no command, or std/rt's fakeProc output, runTerm, and pipeline.
+fn proc_exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
+  if !testworld.fake(testworld.REAL_PROC) {
+    return rt.proc_exec(spec, input, has_input, mode)
+  }
+  if rt.fs_canceled() {
+    return ["3", ""]
+  }
+  if spec.is_empty() {
+    return ["0", "0", "", ""]
+  }
+  testworld.proc_exec(spec, mode)
+}
+
 /// Denied or Canceled before c runs (std/rt Cmd.M_output).
 fn cmd_check(c: Cmd) -> () ! ProcErr {
   if !cap_admits(c.lists, c.name) {
@@ -1806,14 +1828,14 @@ fn cmd_output(c: Cmd) -> ProcOutput ! ProcErr uses proc {
   cmd_check(c)?
   var spec: List[Str] = []
   cmd_spec(c, spec)
-  proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 0))
+  proc_outcome(proc_exec(spec, c.input, c.has_input, 0))
 }
 
 fn cmd_run(c: Cmd) -> Int ! ProcErr uses proc {
   cmd_check(c)?
   var spec: List[Str] = []
   cmd_spec(c, spec)
-  let out = proc_outcome(rt.proc_exec(spec, c.input, c.has_input, 1))?
+  let out = proc_outcome(proc_exec(spec, c.input, c.has_input, 1))?
   out.code
 }
 
@@ -1850,7 +1872,7 @@ fn proc_pipeline(p: Proc, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc {
   if rt.fs_canceled() {
     return Err(ProcErr.Canceled)
   }
-  proc_outcome(rt.proc_exec(spec, cmds[0].input, cmds[0].has_input, 2))
+  proc_outcome(proc_exec(spec, cmds[0].input, cmds[0].has_input, 2))
 }
 
 fn child_pid(c: Child) -> Int { rt.proc_child_pid(c.h) }
@@ -2358,6 +2380,10 @@ fn llrt_test_set_args(args: List[Str]) { testworld.set_args(args) }
 fn llrt_test_exit_code() -> List[Int] { testworld.exit_code() }
 
 fn llrt_test_fs_real() -> Int { testworld.fs_real() }
+
+fn llrt_tw_set_input(text: Str) { testworld.set_input(text) }
+
+fn llrt_proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes) { testworld.proc_on_run(cmd, code, stdout, stderr) }
 
 fn llrt_gen_new(seed: Int) -> Int { testworld.gen_new(seed) }
 

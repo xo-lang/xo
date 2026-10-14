@@ -315,9 +315,9 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.call(key, b.unit_t(), "", [r, a]))
     }
     "Stdio.set_input" | "Stdio.set_input_bytes" => {
-      // reads take the text (std/llrt/xo_stdin.c)
+      // reads take the text (std/native/llrt/testworld.xo)
       b.expr(ci.recv[0])
-      b.rt("tw_set_input", -1, [b.tc_arg(es, 0, st)])
+      b.tw_rt("tw_set_input", -1, [b.tc_arg(es, 0, st)])
       return Some(b.unit())
     }
     "Stdio.set_tty" => {
@@ -365,7 +365,8 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.rt("proc_killed", b.m.list(st), []))
     }
     "Proc.on_run" => {
-      // the outputs a later run of the command gives (std/llrt/xo_proc.c)
+      // the outputs a later run of the command gives
+      // (std/native/llrt/testworld.xo)
       b.expr(ci.recv[0])
       let cmd = b.tc_arg(es, 0, st)
       let out = b.expr(es[1] ?? fault("on_run"))
@@ -377,7 +378,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       let f0 = b.add(Op.Field, b.m.types[ot].fields[0].ty, Aux.I(n: 0), [out])
       let f1 = b.add(Op.Field, b.m.types[ot].fields[1].ty, Aux.I(n: 1), [out])
       let f2 = b.add(Op.Field, b.m.types[ot].fields[2].ty, Aux.I(n: 2), [out])
-      b.rt("proc_on_run", -1, [cmd, f0, f1, f2])
+      b.tw_rt("proc_on_run", -1, [cmd, f0, f1, f2])
       return Some(b.unit())
     }
     _ => {}

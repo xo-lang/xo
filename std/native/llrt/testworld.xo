@@ -21,7 +21,7 @@
 // Generated code reaches this module through the native prelude's
 // llrt_test_* and llrt_gen_* (selfhost/ssa testmode.xo), std/native's
 // testing.xo, log.xo, and http.xo directly, and the C runtime through
-// cabi_test.xo's exports (xo_x_tw_*).
+// cabi_tw.xo's exports (xo_x_tw_*).
 use native/llrt/ints
 use native/llrt/pool
 use native/llrt/raw
@@ -223,10 +223,18 @@ fn keep(v: rt.Any) -> Int {
   a
 }
 
-/// The list l handed to a C caller (cabi_test.xo): its object's
+/// The list l handed to a C caller (cabi_tw.xo): its object's
 /// address, one reference.
 pub fn hand(l: List[Str]) -> Int {
   let a = rt.obj_addr(l)
+  rc.inc(a)
+  a
+}
+
+/// The string s handed to a C caller: its object's address, one
+/// reference.
+pub fn hand_str(s: Str) -> Int {
+  let a = rt.obj_addr(s)
   rc.inc(a)
   a
 }
@@ -1118,11 +1126,45 @@ pub fn memfs_put(s: rt.Any) {
 // ---------------------------------------------------------------------------
 // The end of a test
 
-/// Releases the values the test world keeps (handlers, failures,
-/// requests, the MemFs) when the test ends, for the leak check; the C
-/// releases the routers its listeners serve.
-pub fn cleanup() {
-  fake_clear()
+/// Moves the values of the FakeNet entries of the vector at v to d
+/// after its k addresses, frees the entries; the new count.
+fn cleanup_fakes(v: Int, d: Int, k0: Int) -> Int {
+  var k = k0
+  for i in 0..vec_len(v) {
+    let e = vec_at(v, i)
+    k += 1
+    rt.mem_store(d, 8 * k, rt.mem_load(e, 24, 8), 8)
+    blk_free(rt.mem_load(e, 0, 8))
+    blk_free(rt.mem_load(e, 8, 8))
+    blk_free(rt.mem_load(e, 16, 8))
+    rt.heap_release(e - 8)
+  }
+  vec_free(v)
+  k
+}
+
+/// The values the test world keeps (handlers, failures, requests, the
+/// MemFs) when the test ends, for the leak check: their objects'
+/// addresses in a malloc'd block (the count, then the addresses), which
+/// the C releases (h_release) and frees. It runs on the C main thread
+/// after main's thread ended, so it allocates nothing from the heap of
+/// Xo values; the C releases the routers its listeners serve too.
+pub fn cleanup() -> Int {
+  let s = st()
+  lock()
+  let hv = s + S_HANDLERS
+  let fv = s + S_FAILS
+  let rv = s + S_REQS
+  let n = vec_len(hv) + vec_len(fv) + vec_len(rv) + 1
+  let d = rt.heap_large(8 * (n + 1))
+  var k = cleanup_fakes(hv, d, 0)
+  k = cleanup_fakes(fv, d, k)
+  for i in 0..vec_len(rv) {
+    k += 1
+    rt.mem_store(d, 8 * k, vec_at(rv, i), 8)
+  }
+  vec_free(rv)
+  unlock()
   let ml = rt.static_word(W_MEMFS_LOCK)
   lock_at(ml)
   let w = rt.static_word(W_MEMFS)
@@ -1130,22 +1172,9 @@ pub fn cleanup() {
   rt.mem_store(w, 0, 0, 8)
   unlock_at(ml)
   if m != 0 {
-    drop_kept(m)
+    k += 1
+    rt.mem_store(d, 8 * k, m, 8)
   }
-  lock()
-  let hs = fake_take(0)
-  let v = st() + S_REQS
-  let n = vec_len(v)
-  var rs = List[Int].with_capacity(n)
-  for i in 0..n {
-    rs.push(vec_at(v, i))
-  }
-  vec_free(v)
-  unlock()
-  for e in hs {
-    fake_free(e)
-  }
-  for r in rs {
-    drop_kept(r)
-  }
+  rt.mem_store(d, 0, k, 8)
+  d
 }

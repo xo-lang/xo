@@ -56,52 +56,21 @@ static xo_rstr *sin_take(size_t n, size_t skip, int64_t *len) {
 
 static int sin_stopped(xo_ctx *c) { return ctx_canceled(c) || xo_stop_requested(); }
 
-// A test's standard input (FakeStdio.set_input, std.md 8.4): the text and
-// how much of it was read; std/rt's FakeStdio.
-static struct {
-	pthread_mutex_t mu;
-	char *text;
-	size_t len, off;
-} tw_in = {.mu = PTHREAD_MUTEX_INITIALIZER};
-
-// xo_tw_set_input is `stdio.set_input(text)`: reads start over on text.
-void xo_tw_set_input(const char *p, int64_t n) {
-	char *t = malloc((size_t)n + 1);
-	if (!t) {
-		xo_oom();
-	}
-	memcpy(t, p, (size_t)n);
-	pthread_mutex_lock(&tw_in.mu);
-	free(tw_in.text);
-	tw_in.text = t;
-	tw_in.len = (size_t)n;
-	tw_in.off = 0;
-	pthread_mutex_unlock(&tw_in.mu);
+// A test's standard input (FakeStdio.set_input, std.md 8.4) is
+// std/native/llrt/testworld.xo's (the zero-C audit's B14), reached
+// through cabi_tw.xo's export, which test binaries carry (the weak
+// definition keeps other programs linking: they never read it). A read
+// takes mode 0 a line, 1 the rest, 2 at most max bytes.
+__attribute__((weak)) int64_t xo_x_tw_stdin_read(int64_t mode, int64_t max, int64_t out) {
+	(void)mode, (void)max, (void)out;
+	return (int64_t)(intptr_t)rs_new(0);
 }
 
-static xo_rstr *tw_stdin_read(int64_t all, int64_t *len) {
-	pthread_mutex_lock(&tw_in.mu);
-	const char *rest = tw_in.text ? tw_in.text + tw_in.off : "";
-	size_t n = tw_in.len - tw_in.off, take = n, skip = 0;
-	if (!all) {
-		if (n == 0) {
-			pthread_mutex_unlock(&tw_in.mu);
-			n_stdin_status = 1;
-			return rs_new(0);
-		}
-		const char *nl = memchr(rest, '\n', n);
-		if (nl) {
-			take = (size_t)(nl - rest);
-			skip = 1;
-		}
-	}
-	size_t k = !all && take > 0 && rest[take - 1] == '\r' ? take - 1 : take;
-	xo_rstr *s = rs_new((int64_t)k);
-	memcpy(s->data, rest, k);
-	tw_in.off += take + skip;
-	pthread_mutex_unlock(&tw_in.mu);
-	*len = (int64_t)k;
-	n_stdin_status = 0;
+static xo_rstr *tw_stdin_read(int64_t mode, int64_t max, int64_t *len) {
+	int64_t r[2] = {0, 1};
+	xo_rstr *s = (xo_rstr *)(intptr_t)xo_x_tw_stdin_read(mode, max, (int64_t)(intptr_t)r);
+	*len = r[0];
+	n_stdin_status = r[1];
 	return s;
 }
 
@@ -200,7 +169,7 @@ xo_rstr *xo_stdin_read(int64_t all, int64_t *len) {
 		return rs_new(0);
 	}
 	if (tw_is_fake(TW_REAL_STDIO)) {
-		return tw_stdin_read(all, len);
+		return tw_stdin_read(all ? 1 : 0, 0, len);
 	}
 	// take the turn
 	while (__atomic_exchange_n(&sin_st.busy, 1, __ATOMIC_ACQUIRE)) {
@@ -268,20 +237,7 @@ xo_rstr *xo_stdin_read_bytes(int64_t max, int64_t *len) {
 		return rs_new(0);
 	}
 	if (tw_is_fake(TW_REAL_STDIO)) {
-		pthread_mutex_lock(&tw_in.mu);
-		size_t n = tw_in.len - tw_in.off;
-		if (n > (size_t)max) {
-			n = (size_t)max;
-		}
-		xo_rstr *s = rs_new((int64_t)n);
-		if (n > 0) {
-			memcpy(s->data, tw_in.text + tw_in.off, n);
-		}
-		tw_in.off += n;
-		pthread_mutex_unlock(&tw_in.mu);
-		*len = (int64_t)n;
-		n_stdin_status = n > 0 ? 0 : 1;
-		return s;
+		return tw_stdin_read(2, max, len);
 	}
 	while (__atomic_exchange_n(&sin_st.busy, 1, __ATOMIC_ACQUIRE)) {
 		if (clock_wait(c, 1000000) || xo_stop_requested()) {

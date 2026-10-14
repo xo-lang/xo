@@ -493,8 +493,6 @@ fn time_ns(t: Time) -> Int
 /// "3" canceled), the exit code in decimal or the error's message, and
 /// when it ran standard output and error.
 fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
-/// FakeProc.on_run: a later run of cmd in the test gives these outputs.
-fn proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes)
 /// Proc.kill (decision 0190): sends signal number sig of the list HUP,
 /// INT, QUIT, KILL, TERM, USR1, USR2, CONT, STOP to pid; the empty list,
 /// or the error's message. A test's FakeProc records it instead.

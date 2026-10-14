@@ -146,49 +146,17 @@ static void pr_release(pid_t pid) {
 #endif
 
 
-// the outputs FakeProc.on_run registered, by command
-typedef struct {
-	char *cmd;
-	int64_t code;
-	char *out, *err;
-	int64_t outn, errn;
-} pr_fake;
-
-static struct {
-	xo_lock mu;
-	pr_fake *v;
-	int n;
-} pr_fakes;
-
-// xo_proc_on_run is `FakeProc.on_run(cmd, out)`: a later run of cmd in the
-// test gives out (the last registration wins).
-void xo_proc_on_run(const char *c, int64_t cn, int64_t code, const char *o, int64_t on, const char *e, int64_t en) {
-	char *cmd = cstr_of(c, cn);
-	char *out = malloc((size_t)on + 1), *err = malloc((size_t)en + 1);
-	if (!out || !err) {
-		xo_oom();
-	}
-	memcpy(out, o, (size_t)on);
-	memcpy(err, e, (size_t)en);
-	lk(&pr_fakes.mu);
-	for (int i = 0; i < pr_fakes.n; i++) {
-		pr_fake *f = &pr_fakes.v[i];
-		if (strcmp(f->cmd, cmd) == 0) {
-			free(f->out);
-			free(f->err);
-			free(cmd);
-			f->code = code;
-			f->out = out;
-			f->err = err;
-			f->outn = on;
-			f->errn = en;
-			unlk(&pr_fakes.mu);
-			return;
-		}
-	}
-	pr_fakes.v = tw_grow(pr_fakes.v, pr_fakes.n, sizeof(pr_fake));
-	pr_fakes.v[pr_fakes.n++] = (pr_fake){cmd, code, out, err, on, en};
-	unlk(&pr_fakes.mu);
+// FakeProc.on_run's outputs are std/native/llrt/testworld.xo's (the
+// zero-C audit's B14): Proc.run, Cmd.output and run, and pipelines in a
+// test give them from Xo (the native prelude), and a fake child reads the
+// entry testworld.xo keeps for its command until the test ends (words:
+// the command, the status, the output, and the error, each text a block
+// of its length and then the bytes), through cabi_tw.xo's export,
+// which test binaries carry (the weak definition keeps other programs
+// linking: they never run a fake).
+__attribute__((weak)) int64_t xo_x_tw_proc_find(int64_t p, int64_t n) {
+	(void)p, (void)n;
+	return 0;
 }
 
 static xo_rlist *pr_outputs(int64_t code, const char *o, int64_t on, const char *e, int64_t en) {
@@ -391,21 +359,6 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 		return pr_fail('3', "");
 	}
 	char *cmd = cstr_of(c, cn);
-	if (tw_is_fake(TW_REAL_PROC)) {
-		lk(&pr_fakes.mu);
-		for (int i = 0; i < pr_fakes.n; i++) {
-			pr_fake *f = &pr_fakes.v[i];
-			if (strcmp(f->cmd, cmd) == 0) {
-				xo_rlist *l = pr_outputs(f->code, f->out, f->outn, f->err, f->errn);
-				unlk(&pr_fakes.mu);
-				free(cmd);
-				return l;
-			}
-		}
-		unlk(&pr_fakes.mu);
-		free(cmd);
-		return pr_fail('1', "");
-	}
 	char *file = cmd;
 	if (!strchr(cmd, '/')) {
 		file = pr_look_path(cmd);
@@ -1198,21 +1151,6 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 		return pr_fail('3', "");
 	}
 	char *cmd = cstr_of(c, cn);
-	if (tw_is_fake(TW_REAL_PROC)) {
-		lk(&pr_fakes.mu);
-		for (int i = 0; i < pr_fakes.n; i++) {
-			pr_fake *f = &pr_fakes.v[i];
-			if (strcmp(f->cmd, cmd) == 0) {
-				xo_rlist *l = pr_outputs(f->code, f->out, f->outn, f->err, f->errn);
-				unlk(&pr_fakes.mu);
-				free(cmd);
-				return l;
-			}
-		}
-		unlk(&pr_fakes.mu);
-		free(cmd);
-		return pr_fail('1', "");
-	}
 	pr_cmd pc;
 	memset(&pc, 0, sizeof pc);
 	pc.name = cmd;
@@ -1267,57 +1205,6 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 }
 #endif
 
-// pr_fake_find is the output FakeProc.on_run registered for name (with
-// pr_fakes.mu held), or NULL.
-static pr_fake *pr_fake_find(const char *name) {
-	for (int i = 0; i < pr_fakes.n; i++) {
-		if (strcmp(pr_fakes.v[i].cmd, name) == 0) {
-			return &pr_fakes.v[i];
-		}
-	}
-	return NULL;
-}
-
-// pr_fake_exec is std/rt's fakeProc output, runTerm, and pipeline.
-static xo_rlist *pr_fake_exec(pr_cmd *cs, int n, int64_t mode) {
-	nbuf out = {0}, errs = {0};
-	int64_t code = 0;
-	lk(&pr_fakes.mu);
-	for (int i = 0; i < n; i++) {
-		pr_fake *f = pr_fake_find(cs[i].name);
-		if (!f) {
-			unlk(&pr_fakes.mu);
-			free(out.p);
-			free(errs.p);
-			return pr_fail('1', cs[i].name);
-		}
-		int merge = cs[i].flags & 4;
-		if (mode == 1) {
-			tw_write(0, f->out, f->outn);
-			tw_write(merge ? 0 : 1, f->err, f->errn);
-			code = f->code;
-			break;
-		}
-		out.n = 0;
-		nbuf_put(&out, f->out, f->outn);
-		if (merge) {
-			nbuf_put(&out, f->err, f->errn);
-		} else {
-			nbuf_put(&errs, f->err, f->errn);
-		}
-		if (mode == 0) {
-			code = f->code;
-		} else if (f->code != 0) {
-			code = f->code;
-		}
-	}
-	unlk(&pr_fakes.mu);
-	xo_rlist *l = pr_outputs(code, out.p ? out.p : "", out.n, errs.p ? errs.p : "", errs.n);
-	free(out.p);
-	free(errs.p);
-	return l;
-}
-
 // pr_specs parses every command of specs (*n of them, malloc'd).
 static pr_cmd *pr_specs(xo_rlist *specs, int *n) {
 	pr_cmd *cs = NULL;
@@ -1355,11 +1242,6 @@ xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has
 	if (n == 0) {
 		free(cs);
 		return pr_outputs(0, "", 0, "", 0);
-	}
-	if (tw_is_fake(TW_REAL_PROC)) {
-		xo_rlist *l = pr_fake_exec(cs, n, mode);
-		pr_specs_free(cs, n);
-		return l;
 	}
 	int total = n;
 	if (mode != 2) {
@@ -1557,18 +1439,17 @@ xo_child *xo_proc_spawn(xo_rlist *spec, const char *in, int64_t inn, int64_t has
 	pr_cmd *c = &cs[0];
 	int inherit = c->flags & 2, merge = c->flags & 4;
 	if (tw_is_fake(TW_REAL_PROC)) {
-		lk(&pr_fakes.mu);
-		pr_fake *f = pr_fake_find(c->name);
+		const int64_t *f = (const int64_t *)(intptr_t)xo_x_tw_proc_find((int64_t)(intptr_t)c->name, (int64_t)strlen(c->name));
 		if (!f) {
 			ch->st = '1';
 			ch->msg = cstr_of(c->name, (int64_t)strlen(c->name));
 		} else {
+			const int64_t *o = (const int64_t *)(intptr_t)f[2], *e = (const int64_t *)(intptr_t)f[3];
 			ch->fake = 1;
-			ch->code = f->code;
-			nbuf_put(&ch->fbuf[0], f->out, f->outn);
-			nbuf_put(&ch->fbuf[merge ? 0 : 1], f->err, f->errn);
+			ch->code = f[1];
+			nbuf_put(&ch->fbuf[0], (const char *)(o + 1), o[0]);
+			nbuf_put(&ch->fbuf[merge ? 0 : 1], (const char *)(e + 1), e[0]);
 		}
-		unlk(&pr_fakes.mu);
 		pr_specs_free(cs, n);
 		return ch;
 	}
