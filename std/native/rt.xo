@@ -110,6 +110,13 @@ fn int_wrap(op: Int, a: Int, b: Int) -> Int
 /// The high word of the 128 bit product of a and b as UInt64s (umulh;
 /// lowered inline).
 fn u64_mul_hi(a: Int, b: Int) -> Int
+/// x, which the compiler may not reason about (decision 0222, constant
+/// time code: std/native/llrt/ct.xo): no instruction on arm64, an empty
+/// inline asm with x in and out of one register on LLVM (`asm "" :
+/// "+r"`), so the optimizer can neither fold the value nor learn that a
+/// mask is 0 or all ones and turn a masked select into a branch; a
+/// call of an identity function on wasm.
+fn ct_barrier(x: Int) -> Int
 /// The IEEE 754 bits of f (lowered inline).
 fn float_bits(f: Float) -> Int
 /// The Float of the IEEE 754 bits b (lowered inline).

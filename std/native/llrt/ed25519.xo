@@ -1,0 +1,813 @@
+// Ed25519 (RFC 8032, decision 0189) on the native backends, as Go's
+// crypto/ed25519, in constant time Xo (decision 0222; the zero-C audit's
+// B09 step 3; it was std/llrt/xo_crypto.c): a 32 byte seed is the
+// private key; verification rejects a non canonical S, accepts the
+// encodings of A that Go's edwards25519 accepts (y not reduced, x = 0
+// with the sign bit), and compares the encoding of [S]B - [k]A with R
+// byte for byte. Field elements are five 51 bit limbs modulo p = 2^255 -
+// 19; points are extended twisted Edwards coordinates (X:Y:Z:T) with the
+// complete addition law (it doubles too); scalar multiplication is a
+// double and always add ladder with masked selection (ct.pick), constant
+// time in the scalar. The rules of ct.xo hold for every secret value:
+// wrapping arithmetic (rt.int_wrap: 0 add, 1 subtract, 2 multiply, 3
+// shift left, 4 shift right logical), no branch or index on a secret.
+// Verification's inputs are public, and it branches on them.
+//
+// The field elements and points of one operation live in one List[Int],
+// the workspace, reached through raw memory (decision 0207): `m` is the
+// address of its first element, an element is 5 words (40 bytes) at an
+// address, a point 4 elements (X, Y, Z, T at +0, +40, +80, +120). The
+// workspace is unique and alive for the whole operation (sign, verify,
+// public_key hold it), and every offset is a constant below WSIZE.
+use native/llrt/ct
+use native/llrt/digest
+use native/llrt/raw
+use native/rt
+
+const M51: Int = 0x7FFFFFFFFFFFF
+
+// byte offsets in the workspace: the constants, then the temporaries
+const D: Int = 0
+const D2: Int = 40
+const SQRTM1: Int = 80
+const BASE: Int = 120
+// ge_add's a, b, c, d, e, f, g, h, t
+const TA: Int = 280
+// ge_mul's accumulator and the point it selects
+const ACC: Int = 640
+const SEL: Int = 800
+// fe_pow250's z2, z9, t, a, b, c and its results z250, z11; fe_inv's t
+const PZ2: Int = 960
+const PZ9: Int = 1000
+const PT: Int = 1040
+const PA: Int = 1080
+const PB: Int = 1120
+const PC: Int = 1160
+const Z250: Int = 1200
+const Z11: Int = 1240
+const IT: Int = 1280
+// ge_bytes's 1/z, x, y
+const BZ: Int = 1320
+const BX: Int = 1360
+const BY: Int = 1400
+// ge_from_words's y, u, v, v3, v7, x, t, chk, one
+const FY: Int = 1440
+const FU: Int = 1480
+const FV: Int = 1520
+const FV3: Int = 1560
+const FV7: Int = 1600
+const FX: Int = 1640
+const FT: Int = 1680
+const FCHK: Int = 1720
+const FONE: Int = 1760
+// the points of sign and verify
+const P1: Int = 1800
+const P2: Int = 1960
+const P3: Int = 2120
+const P4: Int = 2280
+// fe_bytes's copy, then the four words of a 32 byte encoding
+const FB: Int = 2440
+const BW: Int = 2480
+// ge_mul's table of [0]p to [15]p
+const TABLE: Int = 2512
+// the workspace in words
+const WSIZE: Int = 634
+
+fn at(m: Int, off: Int) -> Int { rt.int_wrap(0, m, off) }
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// A new workspace with the curve's constants: d = -121665/121666, 2d,
+/// sqrt(-1) = 2^((p-1)/4), and the base point (y = 4/5, x even, Z = 1, T
+/// = xy), each reduced.
+fn workspace() -> List[Int] {
+  let w = raw.zero_ints(WSIZE)
+  let m = base(w)
+  set5(at(m, D), 0x34dca135978a3, 0x1a8283b156ebd, 0x5e7a26001c029, 0x739c663a03cbb, 0x52036cee2b6ff)
+  set5(at(m, D2), 0x69b9426b2f159, 0x35050762add7a, 0x3cf44c0038052, 0x6738cc7407977, 0x2406d9dc56dff)
+  set5(at(m, SQRTM1), 0x61b274a0ea0b0, 0xd5a5fc8f189d, 0x7ef5e9cbd0c60, 0x78595a6804c9e, 0x2b8324804fc1d)
+  set5(at(m, BASE), 0x62d608f25d51a, 0x412a4b4f6592a, 0x75b7171a4b31d, 0x1ff60527118fe, 0x216936d3cd6e5)
+  set5(at(m, BASE + 40), 0x6666666666658, 0x4cccccccccccc, 0x1999999999999, 0x3333333333333, 0x6666666666666)
+  set5(at(m, BASE + 80), 1, 0, 0, 0, 0)
+  set5(at(m, BASE + 120), 0x68ab3a5b7dda3, 0xeea2a5eadbb, 0x2af8df483c27e, 0x332b375274732, 0x67875f0fd78b7)
+  w
+}
+
+/// The address of the workspace's first word.
+fn base(w: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(w), rt.layout(2)) }
+
+fn set5(h: Int, a: Int, b: Int, c: Int, d: Int, e: Int) {
+  st(h, 0, a)
+  st(h, 8, b)
+  st(h, 16, c)
+  st(h, 24, d)
+  st(h, 32, e)
+}
+
+/// Copies n words from f to h.
+fn copy(h: Int, f: Int, n: Int) { rt.mem_copy(h, f, 8 * n) }
+
+// ---------------------------------------------------------------------------
+// Field elements (each argument the address of one)
+
+/// Stores v0 to v4 at h with each limb carried below 2^51 but limb 1, a
+/// little above (the carry out of the top wraps times 19).
+fn carry_store(h: Int, a0: Int, a1: Int, a2: Int, a3: Int, a4: Int) {
+  let v1 = rt.int_wrap(0, a1, rt.int_wrap(4, a0, 51))
+  let v2 = rt.int_wrap(0, a2, rt.int_wrap(4, v1, 51))
+  let v3 = rt.int_wrap(0, a3, rt.int_wrap(4, v2, 51))
+  let v4 = rt.int_wrap(0, a4, rt.int_wrap(4, v3, 51))
+  let v0 = rt.int_wrap(0, a0 & M51, rt.int_wrap(2, rt.int_wrap(4, v4, 51), 19))
+  st(h, 0, v0 & M51)
+  st(h, 8, rt.int_wrap(0, v1 & M51, rt.int_wrap(4, v0, 51)))
+  st(h, 16, v2 & M51)
+  st(h, 24, v3 & M51)
+  st(h, 32, v4 & M51)
+}
+
+fn fe_set(h: Int, x: Int) { set5(h, x, 0, 0, 0, 0) }
+
+/// h = f + g, carried.
+fn fe_add(h: Int, f: Int, g: Int) {
+  let a0 = rt.int_wrap(0, ld(f, 0), ld(g, 0))
+  let a1 = rt.int_wrap(0, ld(f, 8), ld(g, 8))
+  let a2 = rt.int_wrap(0, ld(f, 16), ld(g, 16))
+  let a3 = rt.int_wrap(0, ld(f, 24), ld(g, 24))
+  let a4 = rt.int_wrap(0, ld(f, 32), ld(g, 32))
+  let v1 = rt.int_wrap(0, a1, rt.int_wrap(4, a0, 51))
+  let v2 = rt.int_wrap(0, a2, rt.int_wrap(4, v1, 51))
+  let v3 = rt.int_wrap(0, a3, rt.int_wrap(4, v2, 51))
+  let v4 = rt.int_wrap(0, a4, rt.int_wrap(4, v3, 51))
+  let v0 = rt.int_wrap(0, a0 & M51, rt.int_wrap(2, rt.int_wrap(4, v4, 51), 19))
+  st(h, 0, v0 & M51)
+  st(h, 8, rt.int_wrap(0, v1 & M51, rt.int_wrap(4, v0, 51)))
+  st(h, 16, v2 & M51)
+  st(h, 24, v3 & M51)
+  st(h, 32, v4 & M51)
+}
+
+/// h = f - g, carried: f + 4p - g limb by limb, so that no limb goes
+/// below zero (g carried).
+fn fe_sub(h: Int, f: Int, g: Int) {
+  let a0 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 0), 0x1FFFFFFFFFFFB4), ld(g, 0))
+  let a1 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 8), 0x1FFFFFFFFFFFFC), ld(g, 8))
+  let a2 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 16), 0x1FFFFFFFFFFFFC), ld(g, 16))
+  let a3 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 24), 0x1FFFFFFFFFFFFC), ld(g, 24))
+  let a4 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 32), 0x1FFFFFFFFFFFFC), ld(g, 32))
+  let v1 = rt.int_wrap(0, a1, rt.int_wrap(4, a0, 51))
+  let v2 = rt.int_wrap(0, a2, rt.int_wrap(4, v1, 51))
+  let v3 = rt.int_wrap(0, a3, rt.int_wrap(4, v2, 51))
+  let v4 = rt.int_wrap(0, a4, rt.int_wrap(4, v3, 51))
+  let v0 = rt.int_wrap(0, a0 & M51, rt.int_wrap(2, rt.int_wrap(4, v4, 51), 19))
+  st(h, 0, v0 & M51)
+  st(h, 8, rt.int_wrap(0, v1 & M51, rt.int_wrap(4, v0, 51)))
+  st(h, 16, v2 & M51)
+  st(h, 24, v3 & M51)
+  st(h, 32, v4 & M51)
+}
+
+/// h = -f (z, a zero element, is the workspace's).
+fn fe_neg(h: Int, f: Int, z: Int) {
+  fe_set(z, 0)
+  fe_sub(h, z, f)
+}
+
+/// h = f * g (h may be f or g). Limbs of f are below 2^51 but limb 1,
+/// below 2^52; of g below 2^52 (every stored element is so). A product p of limb i of f and a limb of
+/// g (times 19 where it wraps past 2^255) is taken as (f << 13) * g,
+/// whose high word is p >> 51 and whose low word shifted right 13 is p
+/// mod 2^51 (limb 1: shifts of 12, then p >> 52 counts twice); the low
+/// parts add to their column, the high parts to the next, and the top
+/// column's wrap to limbs 0 and 1 times 19.
+fn fe_mul(h: Int, f: Int, g: Int) {
+  let e0 = rt.int_wrap(3, ld(f, 0), 13)
+  let e1 = rt.int_wrap(3, ld(f, 8), 12)
+  let e2 = rt.int_wrap(3, ld(f, 16), 13)
+  let e3 = rt.int_wrap(3, ld(f, 24), 13)
+  let e4 = rt.int_wrap(3, ld(f, 32), 13)
+  let g0 = ld(g, 0)
+  let g1 = ld(g, 8)
+  let g2 = ld(g, 16)
+  let g3 = ld(g, 24)
+  let g4 = ld(g, 32)
+  let g1_19 = rt.int_wrap(2, g1, 19)
+  let g2_19 = rt.int_wrap(2, g2, 19)
+  let g3_19 = rt.int_wrap(2, g3, 19)
+  let g4_19 = rt.int_wrap(2, g4, 19)
+  var l0 = rt.int_wrap(4, rt.int_wrap(2, e0, g0), 13)
+  var h0 = rt.u64_mul_hi(e0, g0)
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e1, g4_19), 12))
+  h0 = rt.int_wrap(0, h0, rt.int_wrap(3, rt.u64_mul_hi(e1, g4_19), 1))
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e2, g3_19), 13))
+  h0 = rt.int_wrap(0, h0, rt.u64_mul_hi(e2, g3_19))
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e3, g2_19), 13))
+  h0 = rt.int_wrap(0, h0, rt.u64_mul_hi(e3, g2_19))
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e4, g1_19), 13))
+  h0 = rt.int_wrap(0, h0, rt.u64_mul_hi(e4, g1_19))
+  var l1 = rt.int_wrap(4, rt.int_wrap(2, e0, g1), 13)
+  var h1 = rt.u64_mul_hi(e0, g1)
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e1, g0), 12))
+  h1 = rt.int_wrap(0, h1, rt.int_wrap(3, rt.u64_mul_hi(e1, g0), 1))
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e2, g4_19), 13))
+  h1 = rt.int_wrap(0, h1, rt.u64_mul_hi(e2, g4_19))
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e3, g3_19), 13))
+  h1 = rt.int_wrap(0, h1, rt.u64_mul_hi(e3, g3_19))
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e4, g2_19), 13))
+  h1 = rt.int_wrap(0, h1, rt.u64_mul_hi(e4, g2_19))
+  var l2 = rt.int_wrap(4, rt.int_wrap(2, e0, g2), 13)
+  var h2 = rt.u64_mul_hi(e0, g2)
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e1, g1), 12))
+  h2 = rt.int_wrap(0, h2, rt.int_wrap(3, rt.u64_mul_hi(e1, g1), 1))
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e2, g0), 13))
+  h2 = rt.int_wrap(0, h2, rt.u64_mul_hi(e2, g0))
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e3, g4_19), 13))
+  h2 = rt.int_wrap(0, h2, rt.u64_mul_hi(e3, g4_19))
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e4, g3_19), 13))
+  h2 = rt.int_wrap(0, h2, rt.u64_mul_hi(e4, g3_19))
+  var l3 = rt.int_wrap(4, rt.int_wrap(2, e0, g3), 13)
+  var h3 = rt.u64_mul_hi(e0, g3)
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e1, g2), 12))
+  h3 = rt.int_wrap(0, h3, rt.int_wrap(3, rt.u64_mul_hi(e1, g2), 1))
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e2, g1), 13))
+  h3 = rt.int_wrap(0, h3, rt.u64_mul_hi(e2, g1))
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e3, g0), 13))
+  h3 = rt.int_wrap(0, h3, rt.u64_mul_hi(e3, g0))
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e4, g4_19), 13))
+  h3 = rt.int_wrap(0, h3, rt.u64_mul_hi(e4, g4_19))
+  var l4 = rt.int_wrap(4, rt.int_wrap(2, e0, g4), 13)
+  var h4 = rt.u64_mul_hi(e0, g4)
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e1, g3), 12))
+  h4 = rt.int_wrap(0, h4, rt.int_wrap(3, rt.u64_mul_hi(e1, g3), 1))
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e2, g2), 13))
+  h4 = rt.int_wrap(0, h4, rt.u64_mul_hi(e2, g2))
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e3, g1), 13))
+  h4 = rt.int_wrap(0, h4, rt.u64_mul_hi(e3, g1))
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e4, g0), 13))
+  h4 = rt.int_wrap(0, h4, rt.u64_mul_hi(e4, g0))
+  // the columns' values below 2^60, carried
+  let v1 = rt.int_wrap(0, rt.int_wrap(0, l1, h0), rt.int_wrap(4, l0, 51))
+  let v2 = rt.int_wrap(0, rt.int_wrap(0, l2, h1), rt.int_wrap(4, v1, 51))
+  let v3 = rt.int_wrap(0, rt.int_wrap(0, l3, h2), rt.int_wrap(4, v2, 51))
+  let v4 = rt.int_wrap(0, rt.int_wrap(0, l4, h3), rt.int_wrap(4, v3, 51))
+  let top = rt.int_wrap(0, h4, rt.int_wrap(4, v4, 51))
+  let w0 = rt.int_wrap(0, l0 & M51, rt.int_wrap(2, top & M51, 19))
+  let w1 = rt.int_wrap(0, v1 & M51, rt.int_wrap(2, rt.int_wrap(4, top, 51), 19))
+  st(h, 0, w0 & M51)
+  st(h, 8, rt.int_wrap(0, w1, rt.int_wrap(4, w0, 51)))
+  st(h, 16, v2 & M51)
+  st(h, 24, v3 & M51)
+  st(h, 32, v4 & M51)
+}
+
+/// h = f * f (h may be f; limbs as fe_mul's f): fe_mul's products, each
+/// pair once and doubled.
+fn fe_sq(h: Int, f: Int) {
+  let f0 = ld(f, 0)
+  let f1 = ld(f, 8)
+  let f2 = ld(f, 16)
+  let f3 = ld(f, 24)
+  let f4 = ld(f, 32)
+  let e0 = rt.int_wrap(3, f0, 13)
+  let e1 = rt.int_wrap(3, f1, 12)
+  let e2 = rt.int_wrap(3, f2, 13)
+  let e3 = rt.int_wrap(3, f3, 13)
+  let e4 = rt.int_wrap(3, f4, 13)
+  let f1_2 = rt.int_wrap(3, f1, 1)
+  let f2_2 = rt.int_wrap(3, f2, 1)
+  let f3_2 = rt.int_wrap(3, f3, 1)
+  let f4_2 = rt.int_wrap(3, f4, 1)
+  let f3_19 = rt.int_wrap(2, f3, 19)
+  let f4_19 = rt.int_wrap(2, f4, 19)
+  let f3_38 = rt.int_wrap(3, f3_19, 1)
+  let f4_38 = rt.int_wrap(3, f4_19, 1)
+  var l0 = rt.int_wrap(4, rt.int_wrap(2, e0, f0), 13)
+  var h0 = rt.u64_mul_hi(e0, f0)
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e1, f4_38), 12))
+  h0 = rt.int_wrap(0, h0, rt.int_wrap(3, rt.u64_mul_hi(e1, f4_38), 1))
+  l0 = rt.int_wrap(0, l0, rt.int_wrap(4, rt.int_wrap(2, e2, f3_38), 13))
+  h0 = rt.int_wrap(0, h0, rt.u64_mul_hi(e2, f3_38))
+  var l1 = rt.int_wrap(4, rt.int_wrap(2, e0, f1_2), 13)
+  var h1 = rt.u64_mul_hi(e0, f1_2)
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e2, f4_38), 13))
+  h1 = rt.int_wrap(0, h1, rt.u64_mul_hi(e2, f4_38))
+  l1 = rt.int_wrap(0, l1, rt.int_wrap(4, rt.int_wrap(2, e3, f3_19), 13))
+  h1 = rt.int_wrap(0, h1, rt.u64_mul_hi(e3, f3_19))
+  var l2 = rt.int_wrap(4, rt.int_wrap(2, e0, f2_2), 13)
+  var h2 = rt.u64_mul_hi(e0, f2_2)
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e1, f1), 12))
+  h2 = rt.int_wrap(0, h2, rt.int_wrap(3, rt.u64_mul_hi(e1, f1), 1))
+  l2 = rt.int_wrap(0, l2, rt.int_wrap(4, rt.int_wrap(2, e3, f4_38), 13))
+  h2 = rt.int_wrap(0, h2, rt.u64_mul_hi(e3, f4_38))
+  var l3 = rt.int_wrap(4, rt.int_wrap(2, e0, f3_2), 13)
+  var h3 = rt.u64_mul_hi(e0, f3_2)
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e1, f2_2), 12))
+  h3 = rt.int_wrap(0, h3, rt.int_wrap(3, rt.u64_mul_hi(e1, f2_2), 1))
+  l3 = rt.int_wrap(0, l3, rt.int_wrap(4, rt.int_wrap(2, e4, f4_19), 13))
+  h3 = rt.int_wrap(0, h3, rt.u64_mul_hi(e4, f4_19))
+  var l4 = rt.int_wrap(4, rt.int_wrap(2, e0, f4_2), 13)
+  var h4 = rt.u64_mul_hi(e0, f4_2)
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e1, f3_2), 12))
+  h4 = rt.int_wrap(0, h4, rt.int_wrap(3, rt.u64_mul_hi(e1, f3_2), 1))
+  l4 = rt.int_wrap(0, l4, rt.int_wrap(4, rt.int_wrap(2, e2, f2), 13))
+  h4 = rt.int_wrap(0, h4, rt.u64_mul_hi(e2, f2))
+  // the columns' values below 2^60, carried
+  let v1 = rt.int_wrap(0, rt.int_wrap(0, l1, h0), rt.int_wrap(4, l0, 51))
+  let v2 = rt.int_wrap(0, rt.int_wrap(0, l2, h1), rt.int_wrap(4, v1, 51))
+  let v3 = rt.int_wrap(0, rt.int_wrap(0, l3, h2), rt.int_wrap(4, v2, 51))
+  let v4 = rt.int_wrap(0, rt.int_wrap(0, l4, h3), rt.int_wrap(4, v3, 51))
+  let top = rt.int_wrap(0, h4, rt.int_wrap(4, v4, 51))
+  let w0 = rt.int_wrap(0, l0 & M51, rt.int_wrap(2, top & M51, 19))
+  let w1 = rt.int_wrap(0, v1 & M51, rt.int_wrap(2, rt.int_wrap(4, top, 51), 19))
+  st(h, 0, w0 & M51)
+  st(h, 8, rt.int_wrap(0, w1, rt.int_wrap(4, w0, 51)))
+  st(h, 16, v2 & M51)
+  st(h, 24, v3 & M51)
+  st(h, 32, v4 & M51)
+}
+
+/// h = f^(2^k), k >= 1.
+fn fe_sqn(h: Int, f: Int, k: Int) {
+  fe_sq(h, f)
+  for _ in 1..k {
+    fe_sq(h, h)
+  }
+}
+
+/// Z250 = z^(2^250 - 1) and Z11 = z^11 (ref10's chain), shared by
+/// inversion and the square root exponent.
+fn fe_pow250(m: Int, z: Int) {
+  let z2 = at(m, PZ2)
+  let z9 = at(m, PZ9)
+  let t = at(m, PT)
+  let a = at(m, PA)
+  let b = at(m, PB)
+  let c = at(m, PC)
+  let z11 = at(m, Z11)
+  fe_sq(z2, z)
+  fe_sqn(t, z2, 2)
+  fe_mul(z9, t, z)
+  fe_mul(z11, z9, z2)
+  fe_sq(t, z11)
+  fe_mul(a, t, z9) // 2^5 - 1
+  fe_sqn(t, a, 5)
+  fe_mul(b, t, a) // 2^10 - 1
+  fe_sqn(t, b, 10)
+  fe_mul(c, t, b) // 2^20 - 1
+  fe_sqn(t, c, 20)
+  fe_mul(t, t, c) // 2^40 - 1
+  fe_sqn(t, t, 10)
+  fe_mul(a, t, b) // 2^50 - 1
+  fe_sqn(t, a, 50)
+  fe_mul(b, t, a) // 2^100 - 1
+  fe_sqn(t, b, 100)
+  fe_mul(t, t, b) // 2^200 - 1
+  fe_sqn(t, t, 50)
+  fe_mul(at(m, Z250), t, a) // 2^250 - 1
+}
+
+/// h = z^(p - 2) = 1/z.
+fn fe_inv(m: Int, h: Int, z: Int) {
+  fe_pow250(m, z)
+  fe_sqn(at(m, IT), at(m, Z250), 5)
+  fe_mul(h, at(m, IT), at(m, Z11))
+}
+
+/// h = z^((p - 5) / 8) = z^(2^252 - 3).
+fn fe_pow22523(m: Int, h: Int, z: Int) {
+  fe_pow250(m, z)
+  fe_sqn(at(m, IT), at(m, Z250), 2)
+  fe_mul(h, at(m, IT), z)
+}
+
+/// The canonical encoding of f (reduced below p) as four little endian
+/// words at BW.
+fn fe_bytes(m: Int, f: Int) {
+  let c = at(m, FB)
+  copy(c, f, 5)
+  carry_store(c, ld(c, 0), ld(c, 8), ld(c, 16), ld(c, 24), ld(c, 32))
+  carry_store(c, ld(c, 0), ld(c, 8), ld(c, 16), ld(c, 24), ld(c, 32))
+  var v0 = ld(c, 0)
+  var v1 = ld(c, 8)
+  var v2 = ld(c, 16)
+  var v3 = ld(c, 24)
+  var v4 = ld(c, 32)
+  // q = 1 when f >= p (f + 19 carries out of bit 255)
+  var q = rt.int_wrap(4, rt.int_wrap(0, v0, 19), 51)
+  q = rt.int_wrap(4, rt.int_wrap(0, v1, q), 51)
+  q = rt.int_wrap(4, rt.int_wrap(0, v2, q), 51)
+  q = rt.int_wrap(4, rt.int_wrap(0, v3, q), 51)
+  q = rt.int_wrap(4, rt.int_wrap(0, v4, q), 51)
+  v0 = rt.int_wrap(0, v0, rt.int_wrap(2, 19, q))
+  v1 = rt.int_wrap(0, v1, rt.int_wrap(4, v0, 51))
+  v0 = v0 & M51
+  v2 = rt.int_wrap(0, v2, rt.int_wrap(4, v1, 51))
+  v1 = v1 & M51
+  v3 = rt.int_wrap(0, v3, rt.int_wrap(4, v2, 51))
+  v2 = v2 & M51
+  v4 = rt.int_wrap(0, v4, rt.int_wrap(4, v3, 51))
+  v3 = v3 & M51
+  v4 = v4 & M51
+  let o = at(m, BW)
+  st(o, 0, v0 | rt.int_wrap(3, v1, 51))
+  st(o, 8, rt.int_wrap(4, v1, 13) | rt.int_wrap(3, v2, 38))
+  st(o, 16, rt.int_wrap(4, v2, 26) | rt.int_wrap(3, v3, 25))
+  st(o, 24, rt.int_wrap(4, v3, 39) | rt.int_wrap(3, v4, 12))
+}
+
+/// The four words at BW.
+fn bw(m: Int) -> List[Int] {
+  let o = at(m, BW)
+  [ld(o, 0), ld(o, 8), ld(o, 16), ld(o, 24)]
+}
+
+/// h = the 255 low bits of the little endian words s (not reduced: a
+/// value of p or more is kept, as edwards25519's SetBytes).
+fn fe_from_words(h: Int, s: List[Int]) {
+  st(h, 0, s[0] & M51)
+  st(h, 8, (rt.int_wrap(4, s[0], 51) | rt.int_wrap(3, s[1], 13)) & M51)
+  st(h, 16, (rt.int_wrap(4, s[1], 38) | rt.int_wrap(3, s[2], 26)) & M51)
+  st(h, 24, (rt.int_wrap(4, s[2], 25) | rt.int_wrap(3, s[3], 39)) & M51)
+  st(h, 32, rt.int_wrap(4, s[3], 12) & M51)
+}
+
+/// -1 when f is 0 modulo p, else 0.
+fn fe_zero_mask(m: Int, f: Int) -> Int {
+  fe_bytes(m, f)
+  let o = at(m, BW)
+  ct.mask_eq(ld(o, 0) | ld(o, 8) | ld(o, 16) | ld(o, 24), 0)
+}
+
+/// The low bit of f's canonical encoding (its sign).
+fn fe_odd(m: Int, f: Int) -> Int {
+  fe_bytes(m, f)
+  ld(at(m, BW), 0) & 1
+}
+
+// ---------------------------------------------------------------------------
+// Points (each argument the address of one)
+
+fn ge_identity(p: Int) {
+  fe_set(p, 0)
+  fe_set(at(p, 40), 1)
+  fe_set(at(p, 80), 1)
+  fe_set(at(p, 120), 0)
+}
+
+/// r = p + q (add-2008-hwcd-3; complete for a = -1, so it also doubles;
+/// r may be p or q).
+fn ge_add(m: Int, r: Int, p: Int, q: Int) {
+  let a = at(m, TA)
+  let b = at(m, TA + 40)
+  let c = at(m, TA + 80)
+  let d = at(m, TA + 120)
+  let e = at(m, TA + 160)
+  let f = at(m, TA + 200)
+  let g = at(m, TA + 240)
+  let h = at(m, TA + 280)
+  let t = at(m, TA + 320)
+  fe_sub(a, at(p, 40), p)
+  fe_sub(t, at(q, 40), q)
+  fe_mul(a, a, t)
+  fe_add(b, at(p, 40), p)
+  fe_add(t, at(q, 40), q)
+  fe_mul(b, b, t)
+  fe_mul(c, at(p, 120), at(q, 120))
+  fe_mul(c, c, at(m, D2))
+  fe_mul(d, at(p, 80), at(q, 80))
+  fe_add(d, d, d)
+  fe_sub(e, b, a)
+  fe_sub(f, d, c)
+  fe_add(g, d, c)
+  fe_add(h, b, a)
+  fe_mul(r, e, f)
+  fe_mul(at(r, 40), g, h)
+  fe_mul(at(r, 120), e, h)
+  fe_mul(at(r, 80), f, g)
+}
+
+/// r = 2p (dbl-2008-hwcd for a = -1, every coordinate negated, which is
+/// the same point: A = X^2, B = Y^2, C = 2Z^2, H = A + B, E = (X + Y)^2 -
+/// H, G = B - A, F = C - G; X = EF, Y = GH, T = EH, Z = FG; r may be p).
+fn ge_dbl(m: Int, r: Int, p: Int) {
+  let a = at(m, TA)
+  let b = at(m, TA + 40)
+  let c = at(m, TA + 80)
+  let e = at(m, TA + 160)
+  let f = at(m, TA + 200)
+  let g = at(m, TA + 240)
+  let h = at(m, TA + 280)
+  fe_sq(a, p)
+  fe_sq(b, at(p, 40))
+  fe_sq(c, at(p, 80))
+  fe_add(c, c, c)
+  fe_add(h, a, b)
+  fe_add(e, p, at(p, 40))
+  fe_sq(e, e)
+  fe_sub(e, e, h)
+  fe_sub(g, b, a)
+  fe_sub(f, c, g)
+  fe_mul(r, e, f)
+  fe_mul(at(r, 40), g, h)
+  fe_mul(at(r, 120), e, h)
+  fe_mul(at(r, 80), f, g)
+}
+
+/// p = q when mask is -1, unchanged when 0, without a branch on mask.
+fn ge_cmov(p: Int, q: Int, mask: Int) {
+  st(p, 0, ct.pick(mask, ld(q, 0), ld(p, 0)))
+  st(p, 8, ct.pick(mask, ld(q, 8), ld(p, 8)))
+  st(p, 16, ct.pick(mask, ld(q, 16), ld(p, 16)))
+  st(p, 24, ct.pick(mask, ld(q, 24), ld(p, 24)))
+  st(p, 32, ct.pick(mask, ld(q, 32), ld(p, 32)))
+  st(p, 40, ct.pick(mask, ld(q, 40), ld(p, 40)))
+  st(p, 48, ct.pick(mask, ld(q, 48), ld(p, 48)))
+  st(p, 56, ct.pick(mask, ld(q, 56), ld(p, 56)))
+  st(p, 64, ct.pick(mask, ld(q, 64), ld(p, 64)))
+  st(p, 72, ct.pick(mask, ld(q, 72), ld(p, 72)))
+  st(p, 80, ct.pick(mask, ld(q, 80), ld(p, 80)))
+  st(p, 88, ct.pick(mask, ld(q, 88), ld(p, 88)))
+  st(p, 96, ct.pick(mask, ld(q, 96), ld(p, 96)))
+  st(p, 104, ct.pick(mask, ld(q, 104), ld(p, 104)))
+  st(p, 112, ct.pick(mask, ld(q, 112), ld(p, 112)))
+  st(p, 120, ct.pick(mask, ld(q, 120), ld(p, 120)))
+  st(p, 128, ct.pick(mask, ld(q, 128), ld(p, 128)))
+  st(p, 136, ct.pick(mask, ld(q, 136), ld(p, 136)))
+  st(p, 144, ct.pick(mask, ld(q, 144), ld(p, 144)))
+  st(p, 152, ct.pick(mask, ld(q, 152), ld(p, 152)))
+}
+
+/// r = [k]p for the 256 bit scalar k (four little endian words), a fixed
+/// window of 4 bits from the top: four doublings, then the add of the
+/// table entry of the window's digit, which a scan of all 16 entries with
+/// masks selects (constant time in k). p is in none of ACC, SEL, TABLE.
+fn ge_mul(m: Int, r: Int, k: List[Int], p: Int) {
+  let tab = at(m, TABLE)
+  ge_identity(tab)
+  copy(at(tab, 160), p, 20)
+  for i in 2..16 {
+    ge_add(m, at(tab, 160 * i), at(tab, 160 * (i - 1)), p)
+  }
+  let acc = at(m, ACC)
+  let sel = at(m, SEL)
+  ge_identity(acc)
+  var w = 63
+  while w >= 0 {
+    ge_dbl(m, acc, acc)
+    ge_dbl(m, acc, acc)
+    ge_dbl(m, acc, acc)
+    ge_dbl(m, acc, acc)
+    let digit = rt.int_wrap(4, k[w / 16], 4 * (w % 16)) & 15
+    copy(sel, tab, 20)
+    for i in 1..16 {
+      ge_cmov(sel, at(tab, 160 * i), ct.mask_eq(i, digit))
+    }
+    ge_add(m, acc, acc, sel)
+    w -= 1
+  }
+  copy(r, acc, 20)
+}
+
+/// The encoding of p as four words at BW.
+fn ge_bytes(m: Int, p: Int) {
+  fe_inv(m, at(m, BZ), at(p, 80))
+  fe_mul(at(m, BX), p, at(m, BZ))
+  fe_mul(at(m, BY), at(p, 40), at(m, BZ))
+  let odd = fe_odd(m, at(m, BX))
+  fe_bytes(m, at(m, BY))
+  let o = at(m, BW)
+  st(o, 24, ld(o, 24) ^ rt.int_wrap(3, odd, 63))
+}
+
+/// p = the point encoded by the words s; false when they encode no point
+/// of the curve (public input: this branches).
+fn ge_from_words(m: Int, p: Int, s: List[Int]) -> Bool {
+  let one = at(m, FONE)
+  let y = at(m, FY)
+  let u = at(m, FU)
+  let v = at(m, FV)
+  let v3 = at(m, FV3)
+  let v7 = at(m, FV7)
+  let x = at(m, FX)
+  let t = at(m, FT)
+  let chk = at(m, FCHK)
+  fe_set(one, 1)
+  fe_from_words(y, s)
+  fe_mul(u, y, y)
+  fe_mul(v, u, at(m, D))
+  fe_sub(u, u, one)
+  fe_add(v, v, one)
+  fe_mul(v3, v, v)
+  fe_mul(v3, v3, v)
+  fe_mul(v7, v3, v3)
+  fe_mul(v7, v7, v)
+  fe_mul(t, u, v7)
+  fe_pow22523(m, t, t)
+  fe_mul(x, u, v3)
+  fe_mul(x, x, t)
+  fe_mul(chk, x, x)
+  fe_mul(chk, chk, v)
+  fe_sub(t, chk, u)
+  if fe_zero_mask(m, t) == 0 {
+    fe_add(t, chk, u)
+    if fe_zero_mask(m, t) == 0 {
+      return false
+    }
+    fe_mul(x, x, at(m, SQRTM1))
+  }
+  if fe_odd(m, x) != rt.int_wrap(4, s[3], 63) {
+    fe_neg(x, x, t)
+  }
+  copy(p, x, 5)
+  carry_store(at(p, 40), ld(y, 0), ld(y, 8), ld(y, 16), ld(y, 24), ld(y, 32))
+  fe_set(at(p, 80), 1)
+  fe_mul(at(p, 120), x, at(p, 40))
+  true
+}
+
+// ---------------------------------------------------------------------------
+// Scalars modulo the group order L = 2^252 +
+// 27742317777372353535851937790883648493, as little endian words
+
+const L0: Int = 0x5812631a5cf5d3ed
+const L1: Int = 0x14def9dea2f79cd6
+const L3: Int = 0x1000000000000000
+
+/// x + y + c and the carry out (0 or 1), as Go's bits.Add64.
+fn add64(x: Int, y: Int, c: Int) -> (Int, Int) {
+  let s = rt.int_wrap(0, rt.int_wrap(0, x, y), c)
+  (s, rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63))
+}
+
+/// The little endian words of x modulo L, bit by bit from the top
+/// (constant time in x): r = 2r + bit, then r - L when that does not
+/// borrow. r < L < 2^253 before a step and below 2^254 after the
+/// doubling, so four words hold it.
+fn sc_reduce(x: List[Int]) -> List[Int] {
+  var r0 = 0
+  var r1 = 0
+  var r2 = 0
+  var r3 = 0
+  var wi = x.len() - 1
+  while wi >= 0 {
+    let xw = x[wi]
+    var b = 63
+    while b >= 0 {
+      r3 = rt.int_wrap(3, r3, 1) | rt.int_wrap(4, r2, 63)
+      r2 = rt.int_wrap(3, r2, 1) | rt.int_wrap(4, r1, 63)
+      r1 = rt.int_wrap(3, r1, 1) | rt.int_wrap(4, r0, 63)
+      r0 = rt.int_wrap(3, r0, 1) | (rt.int_wrap(4, xw, b) & 1)
+      // t = r - L with the borrows of Go's bits.Sub64
+      let t0 = rt.int_wrap(1, r0, L0)
+      let c0 = rt.int_wrap(4, (~r0 & L0) | (~(r0 ^ L0) & t0), 63)
+      let t1 = rt.int_wrap(1, rt.int_wrap(1, r1, L1), c0)
+      let c1 = rt.int_wrap(4, (~r1 & L1) | (~(r1 ^ L1) & t1), 63)
+      let t2 = rt.int_wrap(1, r2, c1)
+      let c2 = rt.int_wrap(4, ~r2 & t2, 63)
+      let t3 = rt.int_wrap(1, rt.int_wrap(1, r3, L3), c2)
+      let c3 = rt.int_wrap(4, (~r3 & L3) | (~(r3 ^ L3) & t3), 63)
+      // all ones when r >= L (no borrow)
+      let mask = ct.mask_bit(rt.int_wrap(1, 1, c3))
+      r0 = ct.pick(mask, t0, r0)
+      r1 = ct.pick(mask, t1, r1)
+      r2 = ct.pick(mask, t2, r2)
+      r3 = ct.pick(mask, t3, r3)
+      b -= 1
+    }
+    wi -= 1
+  }
+  [r0, r1, r2, r3]
+}
+
+/// (r + k * a) modulo L.
+fn sc_muladd(k: List[Int], a: List[Int], r: List[Int]) -> List[Int] {
+  var x = raw.zero_ints(9)
+  for i in 0..4 {
+    var carry = 0
+    for j in 0..4 {
+      let lo = rt.int_wrap(2, k[i], a[j])
+      let hi = rt.u64_mul_hi(k[i], a[j])
+      let (s1, c1) = add64(lo, x[i + j], 0)
+      let (s2, c2) = add64(s1, carry, 0)
+      x[i + j] = s2
+      carry = rt.int_wrap(0, rt.int_wrap(0, hi, c1), c2)
+    }
+    x[i + 4] = carry
+  }
+  var c = 0
+  for i in 0..9 {
+    let (s, co) = add64(x[i], if i < 4 { r[i] } else { 0 }, c)
+    x[i] = s
+    c = co
+  }
+  sc_reduce(x)
+}
+
+/// Whether the scalar s (public) is below L.
+fn sc_canonical(s: List[Int]) -> Bool {
+  let l = [L0, L1, 0, L3]
+  let top = rt.int_wrap(3, 1, 63)
+  var i = 3
+  while i >= 0 {
+    if s[i] != l[i] {
+      // unsigned: compare with the top bits flipped
+      return (s[i] ^ top) < (l[i] ^ top)
+    }
+    i -= 1
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// Bytes
+
+fn words(b: Bytes, from: Int) -> List[Int] { [rt.bytes_word(b, from), rt.bytes_word(b, from + 8), rt.bytes_word(b, from + 16), rt.bytes_word(b, from + 24)] }
+
+fn words_bytes(ws: List[Int]) -> Bytes {
+  var s = rt.rs_with_cap(8 * ws.len())
+  for x in ws {
+    s = rt.rs_push_word(s, x, 8)
+  }
+  s.bytes()
+}
+
+/// The secret scalar (clamped), the nonce prefix, and the public key (four
+/// words each) of a 32 byte seed.
+fn expand(m: Int, seed: Bytes) -> (List[Int], List[Int], List[Int]) {
+  let h = digest.sha512_le(seed, b"", b"")
+  let top = rt.int_wrap(3, 1, 63)
+  let a = [h[0] & ~7, h[1], h[2], (h[3] & ~top) | rt.int_wrap(3, 1, 62)]
+  ge_mul(m, at(m, P1), a, at(m, BASE))
+  ge_bytes(m, at(m, P1))
+  (a, [h[4], h[5], h[6], h[7]], bw(m))
+}
+
+/// crypto.ed25519_public_key: seed is 32 bytes (crypto.xo checks it).
+pub fn public_key(seed: Bytes) -> Bytes {
+  let w = workspace()
+  let (_, _, pk) = expand(base(w), seed)
+  keep(w)
+  words_bytes(pk)
+}
+
+/// crypto.ed25519_sign: seed is 32 bytes (crypto.xo checks it).
+pub fn sign(seed: Bytes, msg: Bytes) -> Bytes {
+  let w = workspace()
+  let m = base(w)
+  let (a, prefix, pk) = expand(m, seed)
+  let r = sc_reduce(digest.sha512_le(words_bytes(prefix), msg, b""))
+  ge_mul(m, at(m, P1), r, at(m, BASE))
+  ge_bytes(m, at(m, P1))
+  var sig = bw(m)
+  keep(w)
+  let k = sc_reduce(digest.sha512_le(words_bytes(sig), words_bytes(pk), msg))
+  for x in sc_muladd(k, a, r) {
+    sig.push(x)
+  }
+  words_bytes(sig)
+}
+
+/// crypto.ed25519_verify: false for a key or signature of the wrong
+/// length. Every input is public.
+pub fn verify(pk: Bytes, msg: Bytes, sig: Bytes) -> Bool {
+  if pk.len() != 32 || sig.len() != 64 {
+    return false
+  }
+  let s = words(sig, 32)
+  if !sc_canonical(s) {
+    return false
+  }
+  let w = workspace()
+  let m = base(w)
+  let p1 = at(m, P1)
+  let p2 = at(m, P2)
+  let p3 = at(m, P3)
+  let p4 = at(m, P4)
+  if !ge_from_words(m, p1, words(pk, 0)) {
+    keep(w)
+    return false
+  }
+  // p2 = -A
+  fe_neg(p2, p1, at(m, FT))
+  copy(at(p2, 40), at(p1, 40), 10)
+  fe_neg(at(p2, 120), at(p1, 120), at(m, FT))
+  let k = sc_reduce(digest.sha512_le(sig[0..32], pk, msg))
+  ge_mul(m, p3, s, at(m, BASE))
+  ge_mul(m, p4, k, p2)
+  ge_add(m, p3, p3, p4)
+  ge_bytes(m, p3)
+  let got = bw(m)
+  keep(w)
+  let r = words(sig, 0)
+  got[0] == r[0] && got[1] == r[1] && got[2] == r[2] && got[3] == r[3]
+}
+
+/// A use of the workspace after its last raw access, so that reference
+/// counting keeps it alive until there (digest.xo's sha512_state keeps
+/// its buffer so).
+fn keep(w: List[Int]) {
+  if w.len() < 0 {
+    return
+  }
+}
