@@ -1949,8 +1949,9 @@ static int hp_cmp_key(const void *a, const void *b) {
 // h (canonical names) as writeChunk sends it with p, the first bytes of
 // the body (all of it when done): :status, the fields sorted by name in
 // lower case (invalid ones, Connection, and Content-Length left out),
-// then content-type (sniffed), content-length, and date. *close is set
-// when the handler asked for Connection: close.
+// then content-type (sniffed), content-length, and date (the sniffing
+// and the Date are the HTTP/1.1 writer's, std/native/llrt/http1w.xo).
+// *close is set when the handler asked for Connection: close.
 static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64_t pn, int done, hlist *out, int *close) {
 	char st[24];
 	h2_status_text(st, status);
@@ -1958,7 +1959,7 @@ static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64
 	int allowed = h_body_allowed(status);
 	hstr clen = {NULL, 0};
 	int64_t ci = hl_find(h, "Content-Length");
-	char cbuf[24];
+	char cbuf[32];
 	if (ci >= 0) {
 		int64_t v;
 		if (h2_parse_uint63(h->a[ci].v.p, h->a[ci].v.n, &v)) {
@@ -1966,13 +1967,14 @@ static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64
 		}
 	}
 	if (!clen.p && done && allowed && (pn > 0 || !head_req)) {
-		int cn = h_itoa(cbuf, pn);
+		int cn = fmt_int(cbuf, pn);
 		clen = (hstr){cbuf, cn};
 	}
 	const char *ctype = NULL;
+	char ctbuf[64];
 	int64_t cei = hl_find(h, "Content-Encoding");
 	if (hl_find(h, "Content-Type") < 0 && !(cei >= 0 && h->a[cei].v.n > 0) && allowed && pn > 0) {
-		ctype = h_sniff((const unsigned char *)p, pn);
+		ctype = h_sniff(p, pn, ctbuf);
 	}
 	int64_t ki = hl_find(h, "Connection");
 	if (ki >= 0 && hs_eq(h->a[ki].v, "close")) {
@@ -2071,8 +2073,8 @@ static int64_t h2_respond(xo_hconn *hc, int64_t status, const char *body, int64_
 	h2c *c = st->c;
 	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
 		// std/rt: Content-Length on a body over net/http's 2048 bytes
-		char cl[24];
-		int cn = h_itoa(cl, bn);
+		char cl[32];
+		int cn = fmt_int(cl, bn);
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
 	int head = hs_eq(hc->req.method, "HEAD");
@@ -3433,8 +3435,8 @@ static int h2cc_exchange(h2cc *pc, const char *method, hurl *u, hstr host, hlist
 		hs_free(&lk);
 	}
 	if (bn > 0 || strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0) {
-		char cl[24];
-		int cn = h_itoa(cl, bn);
+		char cl[32];
+		int cn = fmt_int(cl, bn);
 		hp_encode(&pc->enc, &blk, "content-length", 14, cl, cn);
 	}
 	if (hl_find(hdr, "Accept-Encoding") < 0 && hl_find(hdr, "Range") < 0 && strcmp(method, "HEAD") != 0) {
