@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +50,44 @@ func TestCCCache(t *testing.T) {
 	runIt("2\n")
 	if n := entries(); n != 2 {
 		t.Fatalf("%d cache entries after the header changed, want 2", n)
+	}
+}
+
+// TestBuildTempCleaned: a Build without Options.Out puts its binary under
+// the process's temporary root, and CleanupTemp (TestMain, after m.Run)
+// leaves nothing in $TMPDIR; before, every such build left an
+// xo-build-* directory there (about 70 GB on 2026-10-14).
+func TestBuildTempCleaned(t *testing.T) {
+	if _, err := Path(); err != nil {
+		t.Skipf("no xo: %v", err)
+	}
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	tempMu.Lock()
+	saved := tempRoot
+	tempRoot = ""
+	tempMu.Unlock()
+	t.Cleanup(func() {
+		tempMu.Lock()
+		tempRoot = saved
+		tempMu.Unlock()
+	})
+	res, err := Build([]string{src}, Options{})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %+v", err, res)
+	}
+	if !strings.HasPrefix(res.Dir, tmp) || !strings.Contains(res.Dir, tempPrefix) {
+		t.Errorf("build directory %s is not under this process's root in %s", res.Dir, tmp)
+	}
+	if !isFile(res.Binaries[Host()]) {
+		t.Fatalf("no binary at %s", res.Binaries[Host()])
+	}
+	CleanupTemp()
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Errorf("CleanupTemp left %d entries in $TMPDIR (first %s)", len(left), left[0].Name())
 	}
 }

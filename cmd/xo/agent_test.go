@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestMain keeps a developer's running `xo serve` (built from other code)
@@ -26,7 +28,9 @@ func TestMain(m *testing.M) {
 			os.Setenv("XO_BIN_CACHE", filepath.Join(c, "xo", "testbin"))
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
+	os.Exit(code)
 }
 
 // The `xo serve` protocol (decision 0086): one JSON request per

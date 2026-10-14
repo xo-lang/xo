@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("XO_GOBIND_DIR", gobind)
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
 	code := m.Run()
+	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)
 	os.Exit(code)
 }

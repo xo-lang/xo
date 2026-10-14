@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 // Caches the test binaries keep across runs (bench/results/short-tests-2026-10-14.md):
@@ -383,6 +385,47 @@ func writeAtomicUnique(p string, data []byte) error {
 	}
 	os.Chmod(f.Name(), 0o644)
 	return os.Rename(f.Name(), p)
+}
+
+// The fresh directories Build makes for a binary without Options.Out,
+// and TempDir's: callers never removed them, and on 2026-10-14 $TMPDIR
+// held 19,201 xo-build-* directories (about 70 GB). They now live under
+// one directory per process (testtmp.Dir("xo-builds-"), which records
+// its owner): CleanupTemp removes it (TestMain, after m.Run), and a run
+// killed before that leaves it to the next sweep, which removes the
+// directories of processes that have exited
+// (gotchas/xotool-build-temp-leak.md).
+var (
+	tempMu   sync.Mutex
+	tempRoot string
+)
+
+const tempPrefix = "xo-builds-"
+
+// TempDir makes a new directory prefix* under this process's temporary
+// root (created on first use).
+func TempDir(prefix string) (string, error) {
+	tempMu.Lock()
+	defer tempMu.Unlock()
+	if tempRoot == "" {
+		d, err := testtmp.Dir(tempPrefix)
+		if err != nil {
+			return "", err
+		}
+		tempRoot = d
+	}
+	return os.MkdirTemp(tempRoot, prefix)
+}
+
+// CleanupTemp removes this process's temporary root with everything
+// Build and TempDir made in it.
+func CleanupTemp() {
+	tempMu.Lock()
+	defer tempMu.Unlock()
+	if tempRoot != "" {
+		os.RemoveAll(tempRoot)
+		tempRoot = ""
+	}
 }
 
 // testCacheAge is how long an unused entry of these caches stays:
