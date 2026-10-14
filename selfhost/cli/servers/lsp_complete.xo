@@ -1,0 +1,790 @@
+// `xo lsp` completion and signature help (decision 0219), modeled on
+// gopls (gopls/internal/golang/completion): what the checker knows at the
+// cursor, from a check of the open documents in which the text near the
+// cursor is patched so it parses (gopls's source fixing in
+// gopls/internal/cache/parsego):
+//
+//   - a `.` or an empty name at the cursor gets a placeholder name
+//     (PLACEHOLDER), so `r.` followed by the next line parses as the
+//     selector `r.xo_complete_` and the next statement survives;
+//   - a call left open at the cursor gets its `)`.
+//
+// The patched check is private to the request: the session's published
+// diagnostics and resolution stay those of the real text.
+//
+// Completion after `x.` lists the fields and methods of x's type (its
+// constraint's for a type parameter, an interface's methods), the
+// variants and static functions after a type name (`Color.`), and the
+// public members after a `use`d package name (`http.`). Elsewhere it
+// lists the bindings in scope at the cursor, the module's top level
+// names, the imported package names, the prelude's public names, and the
+// keywords. Items whose type is the type expected at the cursor (a typed
+// `let` or `var`, an argument, a `return`) sort first.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/lexer
+
+/// The name inserted at the cursor so the text parses (never offered).
+const PLACEHOLDER = "xo_complete_"
+
+// LSP CompletionItemKind values
+const CK_METHOD = 2
+const CK_FUNCTION = 3
+const CK_FIELD = 5
+const CK_VARIABLE = 6
+const CK_CLASS = 7
+const CK_INTERFACE = 8
+const CK_MODULE = 9
+const CK_ENUM = 13
+const CK_KEYWORD = 14
+const CK_ENUM_MEMBER = 20
+const CK_CONSTANT = 21
+const CK_STRUCT = 22
+
+/// A completion item before it is encoded.
+struct Item {
+  label: Str
+  kind: Int
+  detail: Str = ""
+  doc: Str = ""
+  /// The sort group: 0 for an item of the expected type, then by
+  /// closeness (locals and members, the module, imports, the prelude,
+  /// keywords).
+  rank: Int = 5
+  /// The item's type, -1 when it has none (for the expected type).
+  ty: Int = -1
+}
+
+fn is_ident_byte(b: UInt8) -> Bool {
+  (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b >= 0x80
+}
+
+/// The context of the cursor: where the name being typed starts, and
+/// whether it follows a `.`.
+struct Cursor {
+  /// byte offset of the cursor
+  off: Int
+  /// byte offset where the typed name starts (off when none is typed)
+  start: Int
+  prefix: Str
+  member: Bool
+}
+
+fn cursor_at(src: Bytes, off: Int) -> Cursor {
+  var a = off
+  while a > 0 && is_ident_byte(src[a - 1]) {
+    a -= 1
+  }
+  // a member after `.`, not a range `..` and not a number `1.`
+  var member = a > 0 && src[a - 1] == '.' && !(a > 1 && src[a - 2] == '.')
+  if member && a > 1 {
+    var d = a - 1
+    var digits = true
+    var any = false
+    while d > 0 && is_ident_byte(src[d - 1]) {
+      any = true
+      if !(src[d - 1] >= '0' && src[d - 1] <= '9') {
+        digits = false
+      }
+      d -= 1
+    }
+    if any && digits {
+      member = false
+    }
+  }
+  Cursor{off: off, start: a, prefix: src[a..off].to_str() ?? "", member: member}
+}
+
+/// An open bracket of the text before the cursor.
+struct Open {
+  ch: UInt8
+  off: Int
+  commas: Int
+}
+
+/// The brackets open at off, innermost last, skipping strings, runes,
+/// and comments.
+fn open_brackets(src: Bytes, off: Int) -> List[Open] {
+  var st: List[Open] = []
+  var i = 0
+  let end = if off < src.len() { off } else { src.len() }
+  while i < end {
+    let c = src[i]
+    if c == '/' && i + 1 < end && src[i + 1] == '/' {
+      while i < end && src[i] != '\n' {
+        i += 1
+      }
+      continue
+    }
+    if c == '"' || c == '\'' || c == '`' {
+      i += 1
+      while i < end && src[i] != c {
+        if src[i] == '\\' {
+          i += 1
+        } else if c == '\'' && src[i] == '\n' {
+          break
+        }
+        i += 1
+      }
+      i += 1
+      continue
+    }
+    if c == '(' || c == '[' || c == '{' {
+      st.push(Open{ch: c, off: i, commas: 0})
+    } else if c == ')' || c == ']' || c == '}' {
+      if !st.is_empty() {
+        st = st[0..st.len() - 1]
+      }
+    } else if c == ',' && !st.is_empty() {
+      var top = st[st.len() - 1]
+      top.commas += 1
+      st[st.len() - 1] = top
+    }
+    i += 1
+  }
+  st
+}
+
+/// Whether the bracket open at off is still open at the end of the text.
+fn unclosed(src: Bytes, off: Int) -> Bool {
+  for o in open_brackets(src, src.len()) {
+    if o.off == off {
+      return true
+    }
+  }
+  false
+}
+
+/// A check of the open documents with path's text replaced by src: the
+/// resolution and path's file index, or None when the check fails.
+fn (s: Session) check_patched(os: Os, path: Str, src: Bytes) -> (Res, Int)? uses (fs, env) {
+  var overlay: Map[Str, Bytes] = {}
+  var dirs: List[Str] = []
+  for (p, text) in s.docs {
+    if s.is_std_copy(p) {
+      continue
+    }
+    overlay[p] = if p == path { src } else { text }
+    let d = dir_of(p)
+    if !dirs.contains(d) {
+      dirs.push(d)
+    }
+  }
+  if dirs.is_empty() {
+    return None
+  }
+  var c = check.new_checker(os.fs, s.std_dir)
+  c.overlay = overlay
+  c.set_mod_env(s.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  if c.check_dirs(dirs.sort()).is_err() {
+    return None
+  }
+  for (i, f) in c.files.indexed() {
+    let std = f.module >= 0 && c.mods[f.module].is_std
+    if !std && abs_of(s.wd, f.path) == path {
+      return Some((new_res(c), i))
+    }
+  }
+  None
+}
+
+/// The resolution to answer a request at path from: the session's when
+/// the text needs no patch, else a patched check's. The returned session
+/// is a view whose res is that resolution (for describe).
+fn (var s: Session) view_for(os: Os, path: Str, src: Bytes, patched: Bytes?) -> (Session, Int)? uses (stdio, fs, env) {
+  match patched {
+    None => {
+      s.fresh(os)
+      if s.res.is_empty() {
+        return None
+      }
+      let f = s.file_at(path)
+      if f < 0 {
+        return None
+      }
+      Some((s, f))
+    }
+    Some(text) => {
+      let _ = src
+      match s.check_patched(os, path, text) {
+        Some((r, f)) => {
+          var v = s
+          v.res = [r]
+          v.sites = {}
+          v.keys = {}
+          Some((v, f))
+        }
+        None => None
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// completion
+
+fn (var s: Session) completion(os: Os, params: J) -> J uses (stdio, fs, env) {
+  let path = uri_to_path(uri_of(params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
+    None => return J.Null
+  }
+  let t = new_text(src)
+  let (pl, pc) = pos_of(get(params, "position"))
+  let cur = cursor_at(src, t.offset(pl, pc))
+  // an empty name gets the placeholder, so `x.` and `let y = ` parse
+  let patched: Bytes? = if cur.prefix.is_empty() { Some(src[0..cur.off] + PLACEHOLDER.bytes() + src[cur.off..src.len()]) } else { None }
+  let (v0, f) = match s.view_for(os, path, src, patched) {
+    Some(x) => x
+    None => return jobj(["isIncomplete", "items"], [jbool(false), jarr([])])
+  }
+  var v = v0
+  var items: List[Item] = []
+  var site: List[Site] = []
+  for st in v.sites_of(f) {
+    if st.id.span.start.offset == cur.start && !st.id.name.is_empty() {
+      site = [st]
+      break
+    }
+  }
+  if cur.member {
+    for st in site {
+      if let Selector(x, _) = st.ctx {
+        if let SelectorExpr(_, xx, _) = x {
+          items = v.member_items(f, xx)
+        }
+      }
+    }
+  } else {
+    items = v.scope_items(f, cur.start)
+  }
+  let want = v.expected_type(f, cur.start, site)
+  var out: List[J] = []
+  var seen: Map[Str, Bool] = {}
+  for it in items {
+    if it.label.is_empty() || it.label == PLACEHOLDER || seen.contains(it.label) {
+      continue
+    }
+    if !cur.prefix.is_empty() && !it.label.to_lower().starts_with(cur.prefix.to_lower()) {
+      continue
+    }
+    seen[it.label] = true
+    var rank = it.rank
+    if want >= 0 && it.ty >= 0 && v.res[0].c.show(it.ty) == v.res[0].c.show(want) {
+      rank = 0
+    }
+    var keys = ["label", "kind"]
+    var vals = [jstr(it.label), jint(it.kind)]
+    if !it.detail.is_empty() {
+      keys.push("detail")
+      vals.push(jstr(it.detail))
+    }
+    if !it.doc.is_empty() {
+      keys.push("documentation")
+      vals.push(jobj(["kind", "value"], [jstr("markdown"), jstr(it.doc)]))
+    }
+    keys.push("sortText")
+    vals.push(jstr("${rank}${it.label}"))
+    out.push(jobj(keys, vals))
+  }
+  jobj(["isIncomplete", "items"], [jbool(false), jarr(out)])
+}
+
+/// An item for what tg names, with the hover's declaration line as its
+/// detail and the doc comment as its documentation.
+fn (s: Session) item(label: Str, kind: Int, tg: LspTarget, rank: Int, ty: Int) -> Item {
+  let (sig, doc) = s.describe(tg)
+  Item{label: label, kind: kind, detail: sig, doc: doc, rank: rank, ty: ty}
+}
+
+/// The item of a top level object o (a function, type, or constant).
+fn (var s: Session) obj_item(o: Int, rank: Int) -> Item {
+  var r = s.res[0]
+  let tg = r.obj_target(o)
+  s.res[0] = r
+  let ob = r.c.objs[o]
+  let name = check.text(ob.name)
+  match ob.kind {
+    Func => s.item(name, CK_FUNCTION, tg, rank, ob.result)
+    Const => s.item(name, CK_CONSTANT, tg, rank, ob.ty)
+    Type => {
+      let kind = if ob.tkind == "struct" { CK_STRUCT } else if ob.tkind == "enum" { CK_ENUM } else if ob.tkind == "interface" { CK_INTERFACE } else { CK_CLASS }
+      s.item(name, kind, tg, rank, -1)
+    }
+    _ => Item{label: name, kind: CK_VARIABLE, rank: rank}
+  }
+}
+
+/// The public (or, in module m, every) member of module mo.
+fn (var s: Session) module_items(mo: Int, m: Int, rank: Int, pub_only: Bool) -> List[Item] {
+  var out: List[Item] = []
+  let c = s.res[0].c
+  var names: List[Bytes] = []
+  for (n, _) in c.mods[mo].members {
+    names.push(n)
+  }
+  for n in names.sort_by(fn(b) { check.text(b) }) {
+    let o = c.mods[mo].members.get(n) ?? -1
+    if o < 0 {
+      continue
+    }
+    let ob = c.objs[o]
+    if !(ob.kind is Func | Const | Type) {
+      continue
+    }
+    if (pub_only || mo != m) && !ob.is_pub && !c.mods[mo].is_std {
+      continue
+    }
+    if n.is_empty() || n[0] == '_' {
+      continue
+    }
+    out.push(s.obj_item(o, rank))
+  }
+  out
+}
+
+/// The variants and static functions of type object to (after `T.`).
+fn (var s: Session) static_items(to: Int) -> List[Item] {
+  var out: List[Item] = []
+  let c = s.res[0].c
+  let ob = c.objs[to]
+  for (i, vi) in ob.variants.indexed() {
+    let tg = LspTarget{kind: "enumMember", what: "variant", oi: to, sub: i}
+    out.push(s.item(check.text(vi.name), CK_ENUM_MEMBER, tg, 1, -1))
+  }
+  var names: List[Bytes] = []
+  for (n, _) in ob.statics {
+    names.push(n)
+  }
+  for n in names.sort_by(fn(b) { check.text(b) }) {
+    let fo = ob.statics.get(n) ?? -1
+    if fo >= 0 {
+      var it = s.obj_item(fo, 1)
+      if c.objs[fo].static_const {
+        it.kind = CK_CONSTANT
+      }
+      out.push(it)
+    }
+  }
+  out
+}
+
+/// The fields and methods of a value of type t, seen from module m.
+fn (var s: Session) value_items(t0: Int, m: Int, depth: Int) -> List[Item] {
+  var out: List[Item] = []
+  if t0 < 0 || depth > 4 {
+    return out
+  }
+  let c = s.res[0].c
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      let o = x.obj
+      let ob = c.objs[o]
+      let other = ob.module != m && !(ob.module >= 0 && c.mods[ob.module].is_std)
+      if ob.tkind == "interface" {
+        for mo in ob.iface_meths {
+          out.push(s.obj_item(mo, 1))
+        }
+        return out
+      }
+      for (i, fl) in ob.fields.indexed() {
+        if other && !fl.is_pub {
+          continue
+        }
+        let tg = LspTarget{kind: "property", what: "field", oi: o, sub: i}
+        out.push(s.item(check.text(fl.name), CK_FIELD, tg, 1, fl.ty))
+      }
+      var names: List[Bytes] = []
+      for (n, _) in ob.methods {
+        names.push(n)
+      }
+      for n in names.sort_by(fn(b) { check.text(b) }) {
+        let fo = ob.methods.get(n) ?? -1
+        if fo < 0 || (other && !c.objs[fo].is_pub) {
+          continue
+        }
+        var it = s.obj_item(fo, 1)
+        it.kind = CK_METHOD
+        out.push(it)
+      }
+      if ob.tkind == "newtype" || ob.tkind == "alias" {
+        if ob.tkind == "alias" {
+          out = out + s.value_items(ob.target, m, depth + 1)
+        }
+      }
+    }
+    Param => {
+      let ct = c.objs[x.obj].constraint
+      if ct >= 0 {
+        return s.value_items(ct, m, depth + 1)
+      }
+    }
+    Tuple => {
+      for (i, a) in x.args.indexed() {
+        out.push(Item{label: "${i}", kind: CK_FIELD, detail: "${i}: ${c.show(a)}", rank: 1, ty: a})
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+/// The items after `xx.` in file f.
+fn (var s: Session) member_items(f: Int, xx: Expr) -> List[Item] {
+  let c = s.res[0].c
+  let m = c.files[f].module
+  if let Ident(xid) = xx {
+    if c.var_of(f, xid) < 0 {
+      if let Some(im) = c.files[f].imports.get(xid.name) {
+        if im.module >= 0 {
+          return s.module_items(im.module, m, 1, true)
+        }
+      }
+      var r = s.res[0]
+      let tg = r.type_name(f, [xid], "")
+      s.res[0] = r
+      if tg.what == "type" {
+        return s.static_items(tg.oi)
+      }
+    }
+  }
+  if let SelectorExpr(_, px, sel) = xx {
+    if let Ident(pid) = px {
+      if c.var_of(f, pid) < 0 {
+        if let Some(im) = c.files[f].imports.get(pid.name) {
+          if im.module >= 0 {
+            let o = c.mods[im.module].members.get(sel.name) ?? -1
+            if o >= 0 && c.objs[o].kind == check.ObjKind.Type {
+              return s.static_items(o)
+            }
+          }
+        }
+      }
+    }
+  }
+  var t = c.nat_in(f, xx)
+  if t < 0 {
+    t = c.type_in(f, xx)
+  }
+  s.value_items(t, m, 0)
+}
+
+/// The bindings of file f in scope at off, by name (the innermost).
+fn (s: Session) locals_at(f: Int, off: Int) -> List[Int] {
+  let c = s.res[0].c
+  let w = walk_file(c, f)
+  let scopes = w.scopes
+  var best: Map[Str, (Int, Int)] = {}
+  for (key, o) in c.decl_at {
+    if key / 268435456 != f {
+      continue
+    }
+    let d = key % 268435456
+    if d >= off {
+      continue
+    }
+    var visible = true
+    for (a, b) in scopes {
+      if a <= d && d < b && !(a <= off && off <= b) {
+        visible = false
+        break
+      }
+    }
+    // the bindings a `let` declares are not in scope in its own value
+    // (a closure's parameters inside the value are)
+    for (a, b) in w.lets {
+      if a <= d && d < b && a <= off && off <= b {
+        var inner = false
+        for (a2, b2) in scopes {
+          if a <= a2 && b2 <= b && a2 <= d && d < b2 {
+            inner = true
+          }
+        }
+        if !inner {
+          visible = false
+          break
+        }
+      }
+    }
+    if !visible {
+      continue
+    }
+    let name = check.text(c.objs[o].name)
+    if name.is_empty() || name == "_" || name == PLACEHOLDER {
+      continue
+    }
+    match best.get(name) {
+      Some((pd, _)) => {
+        if pd < d {
+          best[name] = (d, o)
+        }
+      }
+      None => best[name] = (d, o)
+    }
+  }
+  // a test block's `os` and `for` parameters have no declaring name
+  for d in c.files[f].ast.decls {
+    if let TestDecl(td) = d {
+      if td.span.start.offset <= off && off <= td.span.end.offset {
+        let to = c.test_os_of(f, td)
+        if to >= 0 && !best.contains("os") {
+          best["os"] = (0, to)
+        }
+        for pv in c.test_params_of(f, td) {
+          let n = check.text(c.objs[pv].name)
+          if !best.contains(n) {
+            best[n] = (0, pv)
+          }
+        }
+      }
+    }
+  }
+  var out: List[(Str, Int)] = []
+  for (n, p) in best {
+    out.push((n, p.1))
+  }
+  out.sort_by(fn(x) { x.0 }).map(fn(x) { x.1 })
+}
+
+/// The items of a name typed at off in file f: bindings in scope, the
+/// module's names, imports, the prelude, keywords.
+fn (var s: Session) scope_items(f: Int, off: Int) -> List[Item] {
+  var out: List[Item] = []
+  let c = s.res[0].c
+  for o in s.locals_at(f, off) {
+    let tg = LspTarget{kind: "variable", what: "local", oi: o}
+    out.push(s.item(check.text(c.objs[o].name), CK_VARIABLE, tg, 1, c.objs[o].ty))
+  }
+  let m = c.files[f].module
+  if m >= 0 {
+    out = out + s.module_items(m, m, 2, false)
+  }
+  var imps: List[Bytes] = []
+  for (n, _) in c.files[f].imports {
+    imps.push(n)
+  }
+  for n in imps.sort_by(fn(b) { check.text(b) }) {
+    if let Some(im) = c.files[f].imports.get(n) {
+      out.push(Item{label: check.text(n), kind: CK_MODULE, detail: "use ${check.text(im.path)}", rank: 3})
+    }
+  }
+  if c.prelude >= 0 {
+    out = out + s.module_items(c.prelude, m, 4, true)
+  }
+  for k in lexer.keywords().sort() + ["true", "false", "self"] {
+    out.push(Item{label: k, kind: CK_KEYWORD, rank: 5})
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// the expected type (ranking)
+
+/// The innermost scope range of f that holds off.
+fn (s: Session) enclosing_fn(f: Int, off: Int) -> Int {
+  let c = s.res[0].c
+  for (i, d) in c.files[f].ast.decls.indexed() {
+    if let FnDecl(fd) = d {
+      if fd.span.start.offset <= off && off <= fd.span.end.offset {
+        return c.files[f].decl_objs.get(i) ?? -1
+      }
+    }
+  }
+  -1
+}
+
+/// The type expected for the name at off of file f, or -1: the declared
+/// type of a `let` or `var` it initializes, the parameter it is an
+/// argument for, or the result type of the function it returns from.
+fn (var s: Session) expected_type(f: Int, off: Int, site: List[Site]) -> Int {
+  let c = s.res[0].c
+  let src = c.files[f].src
+  // an argument: the innermost open `(` before off is a call
+  let opens = open_brackets(src, off)
+  if !opens.is_empty() {
+    let top = opens[opens.len() - 1]
+    if top.ch == '(' {
+      match s.callee_at(f, top.off) {
+        Some(fo) => {
+          let ps = c.objs[fo].params
+          if top.commas < ps.len() {
+            return ps[top.commas].ty
+          }
+        }
+        None => {}
+      }
+      return -1
+    }
+    if top.ch != '{' {
+      return -1
+    }
+  }
+  // the text before the name on its line
+  var ls = off
+  while ls > 0 && src[ls - 1] != '\n' {
+    ls -= 1
+  }
+  let before = (src[ls..off].to_str() ?? "").trim()
+  if before == "return" {
+    let fo = s.enclosing_fn(f, off)
+    if fo >= 0 {
+      return c.objs[fo].result
+    }
+    return -1
+  }
+  if (before.starts_with("let ") || before.starts_with("var ")) && before.ends_with("=") && before.contains(":") {
+    // the binding declared on this line before the name
+    for st in s.sites_of(f) {
+      let d = st.id.span.start.offset
+      if d >= ls && d < off {
+        let v = c.var_of(f, st.id)
+        if v >= 0 && c.objs[v].ty >= 0 {
+          return c.objs[v].ty
+        }
+      }
+    }
+  }
+  let _ = site
+  -1
+}
+
+// ---------------------------------------------------------------------------
+// signature help
+
+/// The function called by the call whose `(` is at paren in file f, or
+/// None: the name just before the `(` resolved as hover resolves it.
+fn (var s: Session) callee_at(f: Int, paren: Int) -> Int? {
+  let c = s.res[0].c
+  let src = c.files[f].src
+  var e = paren
+  while e > 0 && (src[e - 1] == ' ' || src[e - 1] == '\t') {
+    e -= 1
+  }
+  for st in s.sites_of(f) {
+    if st.id.span.end.offset == e && !st.id.name.is_empty() {
+      let tg = s.resolve(f, st)
+      if tg.what == "func" && tg.oi >= 0 {
+        return Some(tg.oi)
+      }
+      return None
+    }
+  }
+  None
+}
+
+/// The callee's site and target (for variants as well as functions).
+fn (var s: Session) callee_target(f: Int, paren: Int) -> LspTarget? {
+  let c = s.res[0].c
+  let src = c.files[f].src
+  var e = paren
+  while e > 0 && (src[e - 1] == ' ' || src[e - 1] == '\t') {
+    e -= 1
+  }
+  for st in s.sites_of(f) {
+    if st.id.span.end.offset == e && !st.id.name.is_empty() {
+      return Some(s.resolve(f, st))
+    }
+  }
+  None
+}
+
+fn (var s: Session) signature_help(os: Os, params: J) -> J uses (stdio, fs, env) {
+  let path = uri_to_path(uri_of(params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
+    None => return J.Null
+  }
+  let t = new_text(src)
+  let (pl, pc) = pos_of(get(params, "position"))
+  let off = t.offset(pl, pc)
+  let opens = open_brackets(src, off)
+  // the innermost open `(` (brackets of a list or a struct literal inside
+  // the arguments keep the call's)
+  var call: List[Open] = []
+  var i = opens.len() - 1
+  while i >= 0 {
+    if opens[i].ch == '(' {
+      call = [opens[i]]
+      break
+    }
+    if opens[i].ch == '{' {
+      break
+    }
+    i -= 1
+  }
+  let top = match call.first() {
+    Some(o) => o
+    None => return J.Null
+  }
+  // a call left open gets its `)` so the text parses
+  let patched: Bytes? = if unclosed(src, top.off) { Some(src[0..off] + b")" + src[off..src.len()]) } else { None }
+  let (v0, f) = match s.view_for(os, path, src, patched) {
+    Some(x) => x
+    None => return J.Null
+  }
+  var v = v0
+  let tg = match v.callee_target(f, top.off) {
+    Some(x) => x
+    None => return J.Null
+  }
+  let c = v.res[0].c
+  var label = ""
+  var ps: List[Str] = []
+  var result = ""
+  if tg.what == "func" && tg.oi >= 0 {
+    let ob = c.objs[tg.oi]
+    label = c.display_name(tg.oi)
+    for p in ob.params {
+      let kw = if p.is_var { "var " } else { "" }
+      ps.push(kw + "${check.text(p.name)}: ${c.show(p.ty)}")
+    }
+    if ob.result >= 0 && ob.result != c.unit_ty {
+      result = " -> ${c.show(ob.result)}"
+    }
+    if ob.err >= 0 {
+      result = result + " ! ${c.show(ob.err)}"
+    }
+  } else if tg.what == "variant" && tg.oi >= 0 {
+    let vi = c.objs[tg.oi].variants[tg.sub]
+    label = "${check.text(c.objs[tg.oi].name)}.${check.text(vi.name)}"
+    for vf in vi.fields {
+      if vf.from {
+        ps.push("from ${c.show(vf.ty)}")
+      } else if !vf.name.is_empty() {
+        ps.push("${check.text(vf.name)}: ${c.show(vf.ty)}")
+      } else {
+        ps.push(c.show(vf.ty))
+      }
+    }
+  } else {
+    return J.Null
+  }
+  let (_, doc) = v.describe(tg)
+  var text = label + "("
+  var pj: List[J] = []
+  for (k, p) in ps.indexed() {
+    if k > 0 {
+      text = text + ", "
+    }
+    let a = utf16_len(text.bytes())
+    text = text + p
+    pj.push(jobj(["label"], [jarr([jint(a), jint(utf16_len(text.bytes()))])]))
+  }
+  text = text + ")" + result
+  var keys = ["label"]
+  var vals = [jstr(text)]
+  if !doc.is_empty() {
+    keys.push("documentation")
+    vals.push(jobj(["kind", "value"], [jstr("markdown"), jstr(doc)]))
+  }
+  keys.push("parameters")
+  vals.push(jarr(pj))
+  var active = top.commas
+  if active >= ps.len() && ps.len() > 0 {
+    active = ps.len() - 1
+  }
+  jobj(["signatures", "activeSignature", "activeParameter"], [jarr([jobj(keys, vals)]), jint(0), jint(active)])
+}

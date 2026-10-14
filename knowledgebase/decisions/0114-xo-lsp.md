@@ -45,6 +45,7 @@ bench/paper on 2026-10-10).
   with errors) has no definition or semantic token, and the TextMate
   grammar colors it instead.
 - No completion or signature help yet.
+  (2026-10-13: decision 0219 adds both.)
 
 ## Alternatives
 
