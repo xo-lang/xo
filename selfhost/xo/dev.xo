@@ -50,23 +50,44 @@ fn build_each_cmd(os: Os, args: List[Str]) -> Int {
   var flags: List[Str] = []
   var pairs: List[Str] = []
   var sep = false
+  var from_stdin = false
   for a in args {
     if !sep && a == "--" {
       sep = true
     } else if sep {
       pairs.push(a)
+    } else if a == "--stdin" {
+      from_stdin = true
     } else {
       flags.push(a)
     }
   }
-  if pairs.is_empty() || pairs.len() % 2 != 0 {
-    os.stdio.eprintln("usage: xo dev build-each [build flags] -- OUT DIR [OUT DIR ...]")
+  if (!from_stdin && pairs.is_empty()) || pairs.len() % 2 != 0 {
+    os.stdio.eprintln("usage: xo dev build-each [--stdin] [build flags] -- OUT DIR [OUT DIR ...]")
     return 2
   }
   let goos = host_os(os)
   var pc: Map[Str, check.ParseEntry] = {}
   var i = 0
-  while i < pairs.len() {
+  while {
+    if i >= pairs.len() {
+      if !from_stdin {
+        break
+      }
+      // --stdin: the next `OUT<tab>DIR` line, until the input ends
+      let line = os.stdio.read_line().ok() ?? None
+      match line {
+        Some(l) => {
+          let f = l.split("\t")
+          if f.len() != 2 {
+            continue
+          }
+          pairs.push(f[0])
+          pairs.push(f[1])
+        }
+        None => break
+      }
+    }
     let out = pairs[i]
     let dir = pairs[i + 1]
     os.stdio.println("== build ${dir}")
