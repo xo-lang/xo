@@ -11,6 +11,9 @@ struct SplitConfig {
   modules: Int = 1
   jobs: Int = 6
   lto: Str = "thin"
+  /// clang's optimization level of the program's IR ($XO_LLVM_OPT: O0,
+  /// O1, O2, O3; a release build always O2, decision 0220)
+  opt: Str = "-O2"
 }
 
 /// LLVMSplitConfig from the environment.
@@ -27,6 +30,10 @@ fn split_config(os: Os) -> SplitConfig {
   let l = os.env.get("XO_LLVM_LTO") ?? ""
   if l == "none" || l == "thin" {
     c.lto = l
+  }
+  let o = os.env.get("XO_LLVM_OPT") ?? ""
+  if o is "O0" | "O1" | "O2" | "O3" {
+    c.opt = "-${o}"
   }
   c
 }
@@ -407,7 +414,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   var fails: List[Str] = []
   while next < lls.len() || !running.is_empty() {
     while next < lls.len() && running.len() < c.jobs {
-      let args = ["-O2"] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
+      let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
       match os.proc.cmd(clang, args).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")

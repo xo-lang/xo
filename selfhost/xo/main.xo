@@ -418,7 +418,10 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       lap(os, phases, "print", t)
       return Native{}
     }
-    let split = split_config(os)
+    var split = split_config(os)
+    if release {
+      split.opt = "-O2"
+    }
     let parts = split_ir(code, split.modules)
     var dir = "${bdir}/llvm"
     if ltarget != host {
@@ -443,7 +446,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, ltarget, false)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos)
     lk.flags = cross + lk.flags
-    var mode_flags = ["llvm", "-O2"]
+    var mode_flags = ["llvm", split.opt]
     if lls.len() > 1 {
       mode_flags = mode_flags + ["split", split.lto]
     }
@@ -457,7 +460,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       let msg = if lls.len() > 1 {
         split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags, tls)
       } else {
-        cc_build(os, lctx, cc, ["-O2", "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
+        cc_build(os, lctx, cc, [split.opt, "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
