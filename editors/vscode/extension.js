@@ -108,10 +108,15 @@ async function start(context) {
     );
     return;
   }
+  // xo takes its working directory from $PWD, not the OS, so PWD must
+  // match cwd: VS Code started from the Dock passes PWD=/, and the server
+  // then cannot place std files, so definitions in std came back empty.
+  const folders = vscode.workspace.workspaceFolders || [];
+  const cwd = folders.length > 0 ? folders[0].uri.fsPath : require("os").homedir();
   client = new LanguageClient(
     "xo",
     "Xo",
-    { command, args: ["lsp"] },
+    { command, args: ["lsp"], options: { cwd, env: { ...process.env, PWD: cwd } } },
     {
       documentSelector: [{ scheme: "file", language: "xo" }],
       // A failed request (hover over a package whose xo.mod does not load)
