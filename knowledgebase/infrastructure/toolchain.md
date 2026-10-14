@@ -834,7 +834,11 @@ Last verified: 2026-10-07
   through the heavy lock. Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
-- `XO_LLRT_C=sched` (2026-10-13, decision 0212): the C runtime's own
+- `XO_LLRT_C=sched` (deleted 2026-10-14, zero-C audit item W1: the C
+  below, sched_c.xo, and -DXO_SCHED_C are gone, and the name now fails
+  the build like every deleted one; TestRuntimeTasks and
+  TestRuntimeEventLoop run the Xo path only; the history follows)
+  (2026-10-13, decision 0212): the C runtime's own
   scheduler core (the fiber switch assembly, `__thread` context and
   worker, the run queue ring, fiber run, park, wake, start, task
   states: xo_rt.c compiled with -DXO_SCHED_C, which both drivers add
@@ -858,7 +862,7 @@ Last verified: 2026-10-07
   xo_x_scope_add, xo_x_scope_join, xo_x_worker_main, ...; the C services
   pool.xo calls are xo_sched_rt). Measure it with XO_SPIN_ROUNDS=0 too:
   the spinning worker's instructions are part of a ping pong's per
-  operation count. Last verified: 2026-10-13.
+  operation count. Last verified: 2026-10-14 (deleted).
 - Checking selfhost/macho against clang after an arm64 emitter change
   (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
   -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without
