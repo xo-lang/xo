@@ -3,7 +3,7 @@
 // rt.xo, imported only by runtime modules (`use native/sys_darwin`,
 // decision 0074): each bodiless function is a call of the libSystem
 // symbol of its name with the C ABI. An Int argument is one word (a C
-// int, size_t, or pointer: an address made with rt.bytes_addr), a Bytes
+// int, size_t, or pointer: an address made with raw.bytes_addr), a Bytes
 // argument the address of its data (kept alive across the call), a
 // Float a double; an Int32 result is a C int, sign extended. Parameters
 // from the first one named `va_*` on are the variadic arguments of a C

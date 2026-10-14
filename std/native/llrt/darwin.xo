@@ -4,10 +4,11 @@
 // not stable; Go calls libSystem too). Its API is linux.xo's: a call
 // returns its result (>= 0), or a negative errno (read from __error()
 // right after the call, on the same thread). Structures are Bytes
-// buffers (rt.bytes_buf, rt.sys_buf) read by word.
+// buffers (raw.bytes_buf, the scratch of obj.scratch) read by word.
 //
 // Only the macOS arms of std/native/llrt/sysio.xo call this module; the
 // SSA builders make its platform calls faults on another OS.
+use native/llrt/obj
 use native/llrt/raw
 use native/rt
 use native/sys_darwin
@@ -51,13 +52,13 @@ fn ret_keep(b: Bytes, r: Int) -> Int { keep(b, ret(r)) }
 
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let r = ret(sys_darwin.read(fd, rt.bytes_addr(buf) + off, n))
+  let r = ret(sys_darwin.read(fd, raw.bytes_addr(buf) + off, n))
   keep(buf, r)
 }
 
 /// write(2) of the bytes lo..hi of b.
 pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
-  let r = ret(sys_darwin.write(fd, rt.bytes_addr(b) + lo, hi - lo))
+  let r = ret(sys_darwin.write(fd, raw.bytes_addr(b) + lo, hi - lo))
   keep(b, r)
 }
 
@@ -106,28 +107,28 @@ pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
 /// stat(2) of path (lstat(2) unless follow): the facts and 0, or the
 /// errno.
 pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
-  let buf = rt.sys_buf()
+  let buf = obj.scratch()
   let z = cpath(path)
-  let r = if follow { sys_darwin.stat(z, rt.bytes_addr(buf)) } else { sys_darwin.lstat(z, rt.bytes_addr(buf)) }
+  let r = if follow { sys_darwin.stat(z, buf) } else { sys_darwin.lstat(z, buf) }
   facts(buf, ret_keep(z, Int(r)))
 }
 
 /// fstat(2) of the open descriptor fd.
 pub fn fstat(fd: Int) -> (Stat, Int) {
-  let buf = rt.sys_buf()
-  facts(buf, ret(Int(sys_darwin.fstat(fd, rt.bytes_addr(buf)))))
+  let buf = obj.scratch()
+  facts(buf, ret(Int(sys_darwin.fstat(fd, buf))))
 }
 
-/// The facts of the struct stat in buf (st_mode a 16 bit field at 4,
+/// The facts of the struct stat at address buf (st_mode a 16 bit field at 4,
 /// st_mtimespec at 48, st_size at 96), or the errno of r < 0.
-fn facts(buf: Bytes, r: Int) -> (Stat, Int) {
+fn facts(buf: Int, r: Int) -> (Stat, Int) {
   if r < 0 {
     return (Stat{mode: 0, size: 0, mtime: 0}, -r)
   }
-  let mode = (rt.bytes_word(buf, 0) >> 32) & 65535
-  let size = rt.bytes_word(buf, 96)
-  let sec = rt.bytes_word(buf, 48)
-  let nsec = rt.bytes_word(buf, 56)
+  let mode = (rt.mem_load(buf, 0, 8) >> 32) & 65535
+  let size = rt.mem_load(buf, 96, 8)
+  let sec = rt.mem_load(buf, 48, 8)
+  let nsec = rt.mem_load(buf, 56, 8)
   (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec}, 0)
 }
 
@@ -171,8 +172,8 @@ pub fn mkdir(path: Str, mode: Int) -> Int {
 /// utimensat(2) of path: both times set to sec and nsec.
 pub fn utimens(path: Str, sec: Int, nsec: Int) -> Int {
   let z = cpath(path)
-  let ts = rt.bytes_buf(32)
-  let a = rt.bytes_addr(ts)
+  let ts = raw.bytes_buf(32)
+  let a = raw.bytes_addr(ts)
   rt.mem_store(a, 0, sec, 8)
   rt.mem_store(a, 8, nsec, 8)
   rt.mem_store(a, 16, sec, 8)
@@ -199,12 +200,12 @@ pub fn symlink(target: Str, path: Str) -> Int {
 /// 0, or the errno.
 pub fn readlink(path: Str) -> (Str, Int) {
   let z = zpath(path)
-  let buf = rt.bytes_buf(4096)
-  let r = ret_keep(z, sys_darwin.readlink(z, rt.bytes_addr(buf), 4096))
+  let buf = raw.bytes_buf(4096)
+  let r = ret_keep(z, sys_darwin.readlink(z, raw.bytes_addr(buf), 4096))
   if r < 0 {
     return ("", -r)
   }
-  let t = raw.str_at(rt.bytes_addr(buf), r)
+  let t = raw.str_at(raw.bytes_addr(buf), r)
   keep(buf, 0)
   (t, 0)
 }
@@ -212,8 +213,8 @@ pub fn readlink(path: Str) -> (Str, Int) {
 /// getcwd(3): the working directory, "." when the system has none to
 /// give (as the C runtime's).
 pub fn getcwd() -> Str {
-  let buf = rt.bytes_buf(4096)
-  let a = rt.bytes_addr(buf)
+  let buf = raw.bytes_buf(4096)
+  let a = raw.bytes_addr(buf)
   if sys_darwin.getcwd(a, 4096) == 0 {
     keep(buf, 0)
     return "."
@@ -263,22 +264,22 @@ fn zpath(path: Str) -> Bytes {
 /// clock_gettime(3) of clock id: nanoseconds (Unix time for
 /// CLOCK_REALTIME), or the negative errno.
 pub fn clock_ns(id: Int) -> Int {
-  let buf = rt.sys_buf()
-  let r = ret(Int(sys_darwin.clock_gettime(id, rt.bytes_addr(buf))))
+  let buf = obj.scratch()
+  let r = ret(Int(sys_darwin.clock_gettime(id, buf)))
   if r < 0 {
     return r
   }
-  rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
+  rt.mem_load(buf, 0, 8) * 1000000000 + rt.mem_load(buf, 8, 8)
 }
 
 /// getentropy(2) of n bytes, 256 at a time (as the C runtime's
 /// cr_entropy did): the bytes and 0, or the errno.
 pub fn random(n: Int) -> (Bytes, Int) {
-  let buf = rt.bytes_buf(n)
+  let buf = raw.bytes_buf(n)
   var off = 0
   while off < n {
     let k = if n - off > 256 { 256 } else { n - off }
-    let r = ret(Int(sys_darwin.getentropy(rt.bytes_addr(buf) + off, k)))
+    let r = ret(Int(sys_darwin.getentropy(raw.bytes_addr(buf) + off, k)))
     if r < 0 {
       return (b"", -r)
     }

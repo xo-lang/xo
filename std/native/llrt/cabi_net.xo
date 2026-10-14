@@ -113,7 +113,7 @@ fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, st
     let sa = sock.sockaddr(a.ip, pv, a.zone)
     let at = out + 32 * n
     rt.mem_set(at, 0, 32)
-    rt.mem_copy(at, rt.bytes_addr(sa), sa.len())
+    rt.mem_copy(at, raw.bytes_addr(sa), sa.len())
     let _k = sock.keep(sa, 0)
     n += 1
   }

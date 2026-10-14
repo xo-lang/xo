@@ -5,11 +5,13 @@
 // poller's epoll) calls them through the exports of cabi_net.xo and
 // cabi.xo when the Xo path is on (net.xo), and the resolver (dns.xo)
 // makes its queries with them. Addresses are Ints: the C's buffers, or
-// rt.bytes_addr of a Bytes kept alive past the call. A call returns
+// raw.bytes_addr of a Bytes kept alive past the call. A call returns
 // what the kernel returns: a result >= 0, or a negative errno.
 //
 // Only the Linux arms of the callers reach this module; on other
 // targets it is dead code (core 12.2).
+use native/llrt/obj
+use native/llrt/raw
 use native/rt
 
 // Address families and socket types (the same on arm64 and x86_64).
@@ -123,8 +125,7 @@ pub fn nonblock(fd: Int) -> Int {
 /// errno, 0 for none; the negative errno of getsockopt itself when it
 /// fails.
 pub fn sock_err(fd: Int) -> Int {
-  let buf = rt.sys_buf()
-  let a = rt.bytes_addr(buf)
+  let a = obj.scratch()
   rt.mem_store(a, 0, 0, 4)
   rt.mem_store(a, 8, 4, 4)
   // SOL_SOCKET 1, SO_ERROR 4
@@ -137,8 +138,7 @@ pub fn sock_err(fd: Int) -> Int {
 
 /// setsockopt(2) of a C int value v: 0, or the negative errno.
 pub fn set_int(fd: Int, level: Int, opt: Int, v: Int) -> Int {
-  let buf = rt.sys_buf()
-  let a = rt.bytes_addr(buf)
+  let a = obj.scratch()
   rt.mem_store(a, 0, v, 4)
   setsockopt(fd, level, opt, a, 4)
 }
@@ -191,10 +191,9 @@ pub fn sockaddr_ip(sa: Bytes) -> Bytes {
 /// The local address a connected socket fd has (getsockname), as a
 /// sockaddr, or empty.
 pub fn local_addr(fd: Int) -> Bytes {
-  let buf = rt.bytes_buf(128)
-  let a = rt.bytes_addr(buf)
-  let lens = rt.sys_buf()
-  let lp = rt.bytes_addr(lens)
+  let buf = raw.bytes_buf(128)
+  let a = raw.bytes_addr(buf)
+  let lp = obj.scratch()
   rt.mem_store(lp, 0, 128, 4)
   let r = sockname(fd, a, lp)
   if r < 0 {
@@ -204,20 +203,20 @@ pub fn local_addr(fd: Int) -> Bytes {
   if n > 128 {
     n = 128
   }
-  rt.rs_bytes_len(buf, n)
+  raw.bytes_len(buf, n)
 }
 
 /// Sends the bytes of b on the connected socket fd: the count sent, or
 /// the negative errno.
 pub fn send_bytes(fd: Int, b: Bytes) -> Int {
   // MSG_NOSIGNAL 0x4000
-  let r = send(fd, rt.bytes_addr(b), b.len(), 16384)
+  let r = send(fd, raw.bytes_addr(b), b.len(), 16384)
   keep(b, r)
 }
 
 /// connect(2) to the sockaddr sa.
 pub fn connect_to(fd: Int, sa: Bytes) -> Int {
-  let r = connect(fd, rt.bytes_addr(sa), sa.len())
+  let r = connect(fd, raw.bytes_addr(sa), sa.len())
   keep(sa, r)
 }
 

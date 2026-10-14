@@ -14,6 +14,8 @@
 // for those cases.
 use native/llrt/darwin
 use native/llrt/linux
+use native/llrt/obj
+use native/llrt/raw
 use native/llrt/windows
 use native/rt
 use native/sys_darwin
@@ -172,7 +174,7 @@ pub fn clock_now() -> Int {
 
 /// The wall clock in Unix nanoseconds, never the virtual clock (the C
 /// runtime's xo_clock_now and xo_tz_now through cabi.xo's real_ns).
-pub fn real_ns() -> Int { clock_read(true, rt.bytes_addr(rt.sys_buf())) }
+pub fn real_ns() -> Int { clock_read(true, obj.scratch()) }
 
 /// The monotonic clock in nanoseconds (the time of the scheduler, the
 /// timers, and the budgets; the C runtime's mono_ns through cabi.xo):
@@ -182,7 +184,7 @@ pub fn mono_ns() -> Int {
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
   if f > 0 {
     // the timespec in words 5 and 6 of the thread's runtime table (an
-    // address without a call, unlike rt.sys_buf's)
+    // address without a call, unlike obj.scratch's)
     let a = rt.int_wrap(0, rt.tlocal_addr(), TLS_CLOCK_AT)
     let r = rt.call_c2(f, linux.CLOCK_MONOTONIC, a)
     if r < 0 {
@@ -356,7 +358,7 @@ fn read_file(l: Int, op: Str) -> (Bytes, Int) {
   if size >= 512 {
     cap = size + 1
   }
-  var buf = rt.bytes_buf(cap)
+  var buf = raw.bytes_buf(cap)
   var n = 0
   while true {
     let r = read(l, fd, buf, n, cap - n)
@@ -377,11 +379,11 @@ fn read_file(l: Int, op: Str) -> (Bytes, Int) {
       cap *= 2
       var g = BytesBuilder.with_capacity(cap)
       g.write(buf)
-      buf = rt.rs_bytes_len(g.freeze(), cap)
+      buf = raw.bytes_len(g.freeze(), cap)
     }
   }
   close(l, fd)
-  (rt.rs_bytes_len(buf, n), 0)
+  (raw.bytes_len(buf, n), 0)
 }
 
 /// os.WriteFile's calls: 0, or the errno (of the open, the first failed
