@@ -422,3 +422,14 @@ s), after the Python scripts were deleted:
   before the program's output, which want.txt (made from a built binary)
   does not hold. `xo run` passing check notes through to the program's
   stderr is the open question; the build then run mode is the default.
+
+## After the .data fix (EC2, 9b6862d6)
+
+Request harness-linux4 (warm r8g.8xlarge; bin/xo from the seed in 472
+s; origin/main merged, which added one golden to each set): `go test
+./internal/devgoldens` with XO_DEV_JOBS=16 passes every test:
+TestDevGoldensArm64 180 of 180 (27.98 s), TestDevGoldensLLVM 180 of 180
+(32.98 s), TestDevGoldensGo 137 of 137 (15.05 s), TestDevGoldensELF 180
+of 180 (28.75 s; the first complete ELF goldens run on Linux, run
+directly with no C toolchain in the link), TestDevErrorcheck 15 of 15,
+TestDevCodegen 11 patterns; 105.215 s for the package.
