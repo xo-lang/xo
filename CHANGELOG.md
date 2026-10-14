@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std: `Fs.cwd_path()` is the working directory's absolute path from the
+  OS (decision 0218), on the Go, arm64, and LLVM backends; a test's MemFs
+  gives `/`. The toolchain uses it instead of `$PWD`, so `xo lsp` started
+  without a shell (VS Code from the macOS Dock passes `PWD=/`) resolves
+  std paths again and Go to Definition into std works.
 - The Go implementation of the compiler is deleted (decision 0215): Go
   cmd/xo, the hidden comparison dumps, and the Go compiler packages
   (lexer, parser, checker, SSA builder, Go, arm64, and LLVM emitters,

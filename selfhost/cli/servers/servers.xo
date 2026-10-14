@@ -25,7 +25,7 @@ pub fn is_command(cmd: Str) -> Bool {
 pub fn self_program(os: Os) -> Str uses env {
   let p = os.env.program()
   if p.contains("/") && !p.starts_with("/") {
-    let wd = os.env.get("PWD") ?? ""
+    let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     if !wd.is_empty() {
       return wd.trim_suffix("/") + "/" + p.trim_prefix("./")
     }

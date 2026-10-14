@@ -65,7 +65,7 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
   c.check_dirs(dirs)?
   var failed: Map[Str, Str] = {}
   var tried: Set[Str] = #{}
-  let wd = os.env.get("PWD") ?? ""
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   // a few rounds: a new binding can import more
   for _ in 0..4 {
     var again = false

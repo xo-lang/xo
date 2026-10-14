@@ -1,6 +1,6 @@
 # xo takes its working directory from $PWD
 
-Status: Observed (2026-10-13)
+Status: Observed (2026-10-13); root fix landed (decision 0218, 2026-10-13)
 
 Symptom: in VS Code, Go to Definition on a std name (`http.Request` in
 examples/notes-service/main_test.xo) said "No definition found", while
@@ -17,8 +17,11 @@ no file. Reproduced with `PWD=/ bin/xo lsp`: the same request returns
 null; with PWD equal to the real directory it returns
 `<user cache>/xo/lsp-std/std/http.xo`.
 
-Fix: editors/vscode/extension.js starts `xo lsp` with `cwd` and `PWD` set
-to the same directory (the first workspace folder, else the home
-directory). Any other program that spawns xo without a shell must do the
-same. The root fix is a working directory call in std (the OS getcwd) for
-the toolchain to use instead of `$PWD`.
+Fix: the root fix landed with decision 0218: `os.fs.cwd_path()` asks
+the OS (getcwd; `$PWD` only when it names the same directory), and every
+place in selfhost/ that read `$PWD` uses it, with `$PWD` only when getcwd
+fails. `PWD=/ bin/xo lsp` now answers the definition. The earlier
+workaround stays and is harmless: editors/vscode/extension.js starts
+`xo lsp` with `cwd` and `PWD` set to the same directory (the first
+workspace folder, else the home directory). An xo older than the fix
+still needs a spawner to set PWD equal to cwd.
