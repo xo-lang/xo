@@ -12,8 +12,9 @@ import (
 // `--status` says why no pack is used, and a bad target or a target other
 // than the host without --cc is an error (decision 0157).
 func TestRTPackCommand(t *testing.T) {
+	t.Parallel()
 	var out, errb bytes.Buffer
-	if code := run([]string{"rtpack", "--key", "--target=linux/arm64"}, &out, &errb); code != 0 {
+	if code := run(t, []string{"rtpack", "--key", "--target=linux/arm64"}, &out, &errb); code != 0 {
 		t.Fatalf("--key: exit %d: %s", code, errb.String())
 	}
 	// the key itself is the pack manifest's (selfhost/xo rtpack.xo); the
@@ -21,13 +22,13 @@ func TestRTPackCommand(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9a-f]{16,64}\n$`).MatchString(out.String()) {
 		t.Errorf("--key printed %q, want a hex key", out.String())
 	}
-	t.Setenv("XO_RTPACK", "off")
+	setenv(t, "XO_RTPACK", "off")
 	out.Reset()
-	if code := run([]string{"rtpack", "--status"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "off (XO_RTPACK=off)") {
+	if code := run(t, []string{"rtpack", "--status"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "off (XO_RTPACK=off)") {
 		t.Errorf("--status: exit %d: %q", code, out.String())
 	}
 	errb.Reset()
-	if code := run([]string{"rtpack", "--target=plan9/mips", "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "prebuilt runtimes are built for") {
+	if code := run(t, []string{"rtpack", "--target=plan9/mips", "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "prebuilt runtimes are built for") {
 		t.Errorf("bad target: exit %d: %s", code, errb.String())
 	}
 	other := "linux/arm64"
@@ -35,7 +36,7 @@ func TestRTPackCommand(t *testing.T) {
 		other = "darwin/arm64"
 	}
 	errb.Reset()
-	if code := run([]string{"rtpack", "--target=" + other, "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "needs a cross compiler") {
+	if code := run(t, []string{"rtpack", "--target=" + other, "-o", t.TempDir()}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "needs a cross compiler") {
 		t.Errorf("cross without --cc: exit %d: %s", code, errb.String())
 	}
 }

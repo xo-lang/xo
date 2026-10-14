@@ -44,22 +44,30 @@ func Git(t testing.TB, dir string, args ...string) string {
 // clears XO_OFFLINE and XO_WORK.
 func Setup(t testing.TB, src string, compare func(a, b string) int) *Env {
 	t.Helper()
+	return SetupWith(t, src, compare, t.Setenv)
+}
+
+// SetupWith is Setup with the variables set through setenv instead of
+// t.Setenv, for parallel tests that pass them to the processes they
+// start (cmd/xo's env_test.go).
+func SetupWith(t testing.TB, src string, compare func(a, b string) int, setenv func(key, value string)) *Env {
+	t.Helper()
 	root := t.TempDir()
 	e := &Env{Repos: filepath.Join(root, "repos"), Cache: filepath.Join(root, "cache")}
 	// the cache is read only: make it removable before TempDir's cleanup
 	t.Cleanup(func() { MakeWritable(e.Cache) })
-	t.Setenv("XO_GIT_BASE", e.Repos)
-	t.Setenv("XO_GIT_REWRITE", "")
-	t.Setenv("XO_MODCACHE", e.Cache)
-	t.Setenv("XO_OFFLINE", "")
-	t.Setenv("XO_WORK", "")
-	t.Setenv("XO_NO_SERVE", "1")
+	setenv("XO_GIT_BASE", e.Repos)
+	setenv("XO_GIT_REWRITE", "")
+	setenv("XO_MODCACHE", e.Cache)
+	setenv("XO_OFFLINE", "")
+	setenv("XO_WORK", "")
+	setenv("XO_NO_SERVE", "1")
 	// fetch from git only, without a checksum log, whatever the
 	// developer's environment says (decisions 0124, 0126)
-	t.Setenv("XO_PROXY", "direct")
-	t.Setenv("XO_NOPROXY", "")
-	t.Setenv("XO_SUMDB", "off")
-	t.Setenv("XO_NOSUMDB", "")
+	setenv("XO_PROXY", "direct")
+	setenv("XO_NOPROXY", "")
+	setenv("XO_SUMDB", "off")
+	setenv("XO_NOSUMDB", "")
 	versions := map[string][]string{}
 	entries, err := findVersionDirs(src)
 	if err != nil {

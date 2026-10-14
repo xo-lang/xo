@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ import (
 // 50, zero based) answers std's http.xo, not null
 // (gotchas/xo-working-dir-is-pwd.md).
 func TestLSPStalePWD(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("runs xo lsp")
 	}
@@ -29,9 +29,9 @@ func TestLSPStalePWD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(xoBin(t), "lsp")
+	cmd := command(t, xoBin(t), "lsp")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "PWD=/")
+	cmd.Env = append(cmd.Env, "PWD=/")
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 // consuming module's attenuations and the capabilities it passes into
 // dependencies; unused vouches; the exit status.
 func TestAudit(t *testing.T) {
+	t.Parallel()
 	repoWorld(t, map[string]string{
 		"github.com/acme/osx@v1.0.0/xo.mod":     "module github.com/acme/osx\nedition preview\n",
 		"github.com/acme/osx@v1.0.0/osx.xo":     "use go \"os\"\n\npub fn pid() -> Int uses go { os.getpid() }\n",

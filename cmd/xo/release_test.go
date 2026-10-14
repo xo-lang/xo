@@ -15,6 +15,7 @@ import (
 // site (XO1309), `xo get` printing the API and effect changes, ceilings
 // on xo.work `use` lines, and /vN major version paths.
 func TestEffectCeilings(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	modtest.WriteFiles(t, src, map[string]string{
 		"github.com/acme/tick@v1.0.0/xo.mod":  "module github.com/acme/tick\nedition preview\n",
@@ -22,7 +23,7 @@ func TestEffectCeilings(t *testing.T) {
 		"github.com/acme/tick@v1.1.0/xo.mod":  "module github.com/acme/tick\nedition preview\n",
 		"github.com/acme/tick@v1.1.0/tick.xo": "pub fn now() -> Int uses env { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
 	})
-	env := modtest.Setup(t, src, modtest.Compare)
+	env := modSetup(t, src)
 	v2 := t.TempDir()
 	modtest.WriteFiles(t, v2, map[string]string{
 		"xo.mod":  "module github.com/acme/tick/v2\nedition preview\n",
@@ -145,8 +146,9 @@ func (p publishOut) codes() string {
 // TestPublish drives decision 0086 step 4: `xo publish --check` against
 // the previous tag of a local git repository.
 func TestPublish(t *testing.T) {
-	t.Setenv("XO_NO_SERVE", "1")
-	t.Setenv("XO_WORK", "")
+	t.Parallel()
+	setenv(t, "XO_NO_SERVE", "1")
+	setenv(t, "XO_WORK", "")
 	repo := t.TempDir()
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
 	modtest.WriteFiles(t, repo, map[string]string{
@@ -214,6 +216,7 @@ func TestPublish(t *testing.T) {
 // TestInit checks `xo init`: xo.mod, and xo.work in .gitignore for a
 // single module repository but not under a workspace.
 func TestInit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	xo(t, "init", "--dir", dir, "github.com/acme/new").want(0)
 	data, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))

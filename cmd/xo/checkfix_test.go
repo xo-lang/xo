@@ -13,11 +13,12 @@ import (
 // the file alone, --fix applies the machine fixes, reformats, and lists
 // them under "applied".
 func TestCheckFix(t *testing.T) {
+	t.Parallel()
 	src := "fn f(n: Int) -> Int {\n  if n > 0 {\n    return 1\n  }\n  else {\n    return 2\n  }\n}\nfn main(os: Os) {\n  os.stdio.println(\"${f(1)}\")\n}\n"
 	dir := writeFiles(t, map[string]string{"app/main.xo": src})
 	file := filepath.Join(dir, "app", "main.xo")
 	var out, errOut bytes.Buffer
-	if code := run([]string{"check", "--json", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"check", "--json", dir}, &out, &errOut); code != 1 {
 		t.Fatalf("plain check: exit %d, want 1: %s%s", code, out.String(), errOut.String())
 	}
 	if strings.Contains(out.String(), `"applied"`) {
@@ -28,7 +29,7 @@ func TestCheckFix(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("check --fix: exit %d: %s%s", code, out.String(), errOut.String())
 	}
 	var res struct {
@@ -50,11 +51,11 @@ func TestCheckFix(t *testing.T) {
 	}
 	// Nothing left to fix: an empty list, not an absent one.
 	out.Reset()
-	if code := run([]string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"applied": []`) {
+	if code := run(t, []string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"applied": []`) {
 		t.Errorf("second run: exit %d\n%s", code, out.String())
 	}
 	errOut.Reset()
-	if code := run([]string{"check", "--fix", dir}, &out, &errOut); code != 0 || !strings.Contains(errOut.String(), "0 fix(es) applied") {
+	if code := run(t, []string{"check", "--fix", dir}, &out, &errOut); code != 0 || !strings.Contains(errOut.String(), "0 fix(es) applied") {
 		t.Errorf("human: exit %d\n%s", code, errOut.String())
 	}
 }

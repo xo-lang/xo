@@ -116,6 +116,7 @@ func globTestFile() (string, int) {
 // on the Go backend and on both native backends (decision 0198 deleted
 // the C path); every test passes and the reports are the same.
 func TestGlobDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds test binaries on every backend")
 	}
@@ -129,7 +130,7 @@ func TestGlobDiff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "glob_test.xo"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	goCode, goOut := xoTest(t, "-v", dir)
 	if goCode != 0 {
 		t.Fatalf("go backend: exit %d\n%s", goCode, goOut)

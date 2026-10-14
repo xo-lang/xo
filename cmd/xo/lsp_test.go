@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,10 +24,10 @@ type lspClient struct {
 
 func startLSP(t *testing.T, dir string) *lspClient {
 	t.Helper()
-	cmd := exec.Command(xoBin(t), "lsp")
+	cmd := command(t, xoBin(t), "lsp")
 	cmd.Dir = dir
 	// xo reads its working directory from $PWD (decision 0218 replaces it)
-	cmd.Env = append(os.Environ(), "PWD="+dir)
+	cmd.Env = append(cmd.Env, "PWD="+dir)
 	cmd.Stderr = os.Stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -173,6 +172,7 @@ func completionLabels(t *testing.T, res any) map[string]map[string]any {
 // members, package members, and names in scope, signature help, and hover
 // and definition into std.
 func TestLSPCompletion(t *testing.T) {
+	t.Parallel()
 	src := `use std/http
 
 struct Point {
