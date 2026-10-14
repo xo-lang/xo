@@ -56,6 +56,9 @@ struct Opts {
   dirs: List[Str] = []
   /// run: the program's arguments (after the directory, or after --).
   prog_args: List[Str] = []
+  /// The std parses of an earlier build of this process (`xo dev
+  /// build-each`, decision 0209); empty for a command line.
+  parse_cache: Map[Str, check.ParseEntry] = {}
 }
 
 /// The flags that take a value (every other known flag is a boolean).

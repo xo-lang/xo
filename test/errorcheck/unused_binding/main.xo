@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let x = 1 // ERROR XO0110 "`x` is never used"
+  os.stdio.println("hi")
+}

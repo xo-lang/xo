@@ -1,0 +1,3 @@
+fn main(os: Os) {
+  os.stdio.println(y) // ERROR XO0601 "name `y` not found"
+}

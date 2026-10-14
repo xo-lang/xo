@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let n = 1__0 // ERROR XO0154
+  os.stdio.println("${n}")
+}

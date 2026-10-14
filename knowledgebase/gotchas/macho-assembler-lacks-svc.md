@@ -24,3 +24,14 @@ Fix: selfhost/macho/enc.xo encodes `svc #imm16` (0xD4000001 | imm16 <<
 Mac then needs a linux/arm64 runtime pack (XO_RTPACK, or lib/xo/rtpack);
 on a linux/arm64 host the ELF goldens run directly (`xo dev goldens
 --flags='--target=linux/arm64 --ld=macho'`, decision 0209).
+
+Second gap (Observed 2026-10-14, fixed): with svc encoded, the first ELF
+goldens run on linux/arm64 (`xo dev goldens --flags='--target=linux/arm64
+--ld=macho'`, r8g.8xlarge) passed 166 of 179; the other 13 (every network
+and clock program: clock_timers, http_client, http_fault, http_server,
+http_stream, http_tls, http_wire, net_echo, net_only, request_eq,
+select_arm_order, sys_files_clock, unix_kill) stopped on `unsupported
+directive .data`, which the linux arm64 emitter writes for writable data
+(selfhost/arm64/gen.xo section "data"). selfhost/macho's ELF path now
+takes `.data` as `.section .data` (elf.xo elf_directive), with a test in
+macho_test.xo.

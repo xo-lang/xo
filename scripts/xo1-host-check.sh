@@ -19,9 +19,9 @@
 #      checkout's selfhost/xo
 #   2. that xo1 builds a hello program with the native backend; the
 #      hello program must print its line
-#   3. scripts/selfhost-goldens.py with that xo1 and XO1_BACKEND=llvm
-#      (the want.txt goldens and internal/arm64/testdata/run against the
-#      recorded Go backend outputs)
+#   3. `xo1 dev goldens --backend=llvm` (decision 0209: the want.txt
+#      goldens and internal/arm64/testdata/run against the recorded Go
+#      backend outputs in runwant)
 #   4. scripts/bootstrap-xo.sh with that xo1 as the seed (no Go on PATH):
 #      s1, s2, s3 and the fixed point
 #   5. the goldens with s3 (no Go on PATH)
@@ -98,10 +98,10 @@ cp "$xo1" "$out/xo1"
 
 rc=0
 if [ "${XO_HOST_CHECK_SKIP_GOLDENS:-}" != 1 ]; then
-  XO1_BACKEND=llvm XO_GOLD_DIR="$out/gold" \
-    timed goldens python3 scripts/selfhost-goldens.py "$out/xo1" || rc=1
+  XO_STD="$PWD/std" \
+    timed goldens "$out/xo1" dev goldens --backend=llvm --no-cache --out="$out/gold" internal/llvm/testdata/golden internal/arm64/testdata/run || rc=1
   say "goldens (xo1 built by $backend, programs by llvm): $(head -1 "$out/goldens.log")"
-  grep -q ' 0 fail$' "$out/goldens.log" || rc=1
+  grep -q ' 0 fail ' "$out/goldens.log" || rc=1
 fi
 
 timed bootstrap scripts/bootstrap-xo.sh "$out/xo1" "$out/bootstrap" || rc=1
@@ -109,12 +109,12 @@ grep -E '^bootstrap: (fixed point|s1 equals|s3 |FAIL|ok|FAILED)' "$out/bootstrap
 sed 's/^/stage time: /' "$out/bootstrap/times.txt" | tee -a "$log" >&2
 
 if [ "${XO_HOST_CHECK_SKIP_GOLDENS:-}" != 1 ] && [ -x "$out/bootstrap/s3/xo" ]; then
-  # without Go: only the system directories on PATH (clang, cc, python3)
+  # without Go: only the system directories on PATH (clang, cc)
   if PATH=/usr/bin:/bin command -v go >/dev/null; then say "FAIL: go in /usr/bin or /bin"; exit 1; fi
-  PATH=/usr/bin:/bin XO_GO=/nonexistent/go XO1_BACKEND=llvm XO_GOLD_DIR="$out/gold-s3" \
-    timed goldens-s3 python3 scripts/selfhost-goldens.py "$out/bootstrap/s3/xo" || rc=1
+  PATH=/usr/bin:/bin XO_GO=/nonexistent/go XO_STD="$PWD/std" \
+    timed goldens-s3 "$out/bootstrap/s3/xo" dev goldens --backend=llvm --no-cache --out="$out/gold-s3" internal/llvm/testdata/golden internal/arm64/testdata/run || rc=1
   say "goldens with s3 (no Go): $(head -1 "$out/goldens-s3.log")"
-  grep -q ' 0 fail$' "$out/goldens-s3.log" || rc=1
+  grep -q ' 0 fail ' "$out/goldens-s3.log" || rc=1
 fi
 [ $rc -eq 0 ] && say "ok" || say "FAILED"
 exit $rc
