@@ -105,23 +105,6 @@ shutdown /s /f /t 0 /c xo-ci-idle
     Expand-Archive -Force "$D\runner.zip" $R
     Remove-Item "$D\runner.zip"
   }
-  Set-Content -Encoding ascii "$D\register.json" ('{"name":"' + $NAME + '"}')
-  & $aws lambda invoke --function-name ${register_fn} --cli-binary-format raw-in-base64-out --payload "file://$D/register.json" "$D\register.out" | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'register Lambda failed' }
-  $reg = Get-Content "$D\register.out" -Raw | ConvertFrom-Json
-  Remove-Item "$D\register.out"
-  if (-not $reg.exists -or -not (Test-Path "$R\.runner")) {
-    "registering $NAME ($LABELS)"
-    # the old service and registration go first: config.cmd will not
-    # configure over them, even with --replace
-    Get-Service 'actions.runner.*' -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service $_.Name -Force; sc.exe delete $_.Name | Out-Null }
-    Remove-Item -Force -ErrorAction SilentlyContinue "$R\.runner", "$R\.credentials", "$R\.credentials_rsaparams", "$R\.service"
-    Push-Location $R
-    & .\config.cmd --unattended --replace --url ${repo_url} --token $reg.token --name $NAME --labels $LABELS --work _work --runasservice --windowslogonaccount 'NT AUTHORITY\SYSTEM'
-    $rc = $LASTEXITCODE
-    Pop-Location
-    if ($rc -ne 0) { throw "config.cmd failed ($rc)" }
-  }
   # job environment: Git Bash first on PATH (the workflow's shell: bash
   # steps), then the toolchain; the job's home is Administrator's, so the
   # warm machine's caches (Go, xo) stay in use under the SYSTEM service
@@ -135,10 +118,35 @@ shutdown /s /f /t 0 /c xo-ci-idle
     'GOPATH=C:\Users\Administrator\go',
     "AWS_REGION=$env:AWS_REGION"
   )
+  # written before config.cmd, which starts the service; a restart right
+  # after that start makes GitHub refuse the new session for a while
+  # (Conflict: "A session for this runner already exists")
+  $old = if (Test-Path "$R\.env") { Get-Content -Raw "$R\.env" } else { '' }
   Set-Content -Encoding ascii "$R\.env" $envs
+  $envChanged = $old -ne (Get-Content -Raw "$R\.env")
+  Set-Content -Encoding ascii "$D\register.json" ('{"name":"' + $NAME + '"}')
+  & $aws lambda invoke --function-name ${register_fn} --cli-binary-format raw-in-base64-out --payload "file://$D/register.json" "$D\register.out" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'register Lambda failed' }
+  $reg = Get-Content "$D\register.out" -Raw | ConvertFrom-Json
+  Remove-Item "$D\register.out"
+  $configured = $false
+  if (-not $reg.exists -or -not (Test-Path "$R\.runner")) {
+    $configured = $true
+    "registering $NAME ($LABELS)"
+    # the old service and registration go first: config.cmd will not
+    # configure over them, even with --replace
+    Get-Service 'actions.runner.*' -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service $_.Name -Force; sc.exe delete $_.Name | Out-Null }
+    Remove-Item -Force -ErrorAction SilentlyContinue "$R\.runner", "$R\.credentials", "$R\.credentials_rsaparams", "$R\.service"
+    Push-Location $R
+    & .\config.cmd --unattended --replace --url ${repo_url} --token $reg.token --name $NAME --labels $LABELS --work _work --runasservice --windowslogonaccount 'NT AUTHORITY\SYSTEM'
+    $rc = $LASTEXITCODE
+    Pop-Location
+    if ($rc -ne 0) { throw "config.cmd failed ($rc)" }
+  }
   $svc = Get-Service 'actions.runner.*' -ErrorAction SilentlyContinue
   if (-not $svc) { throw 'no runner service after config.cmd' }
-  Restart-Service $svc.Name -Force
+  if ($envChanged -and -not $configured) { Restart-Service $svc.Name -Force }
+  elseif ($svc.Status -ne 'Running') { Start-Service $svc.Name }
   "== ready $NAME ($LABELS)"
 } catch {
   "boot failed: $_"
