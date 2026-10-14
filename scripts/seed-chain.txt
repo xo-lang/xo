@@ -11,3 +11,13 @@
 # go-compiler-final std (311 s on the Mac, 2026-10-13), and that xo
 # builds today's sources (gotchas/seed-older-than-intrinsics.md).
 4f792c5592bdbfae4b8d5d963b20a06e673b127c std=87873aa5480676efa23c21ae08eb4107bb5d1d80
+#
+# B08 (Rand in Xo, 2026-10-14) changed what the SSA builders emit for
+# Rand, and main 8fe3afd1 then deleted the C Rand that older compilers
+# call (gotchas/runtime-c-the-seed-still-calls.md), so 3217d1aa's xo can
+# no longer build today's sources. Two more hops: main 9b6cd014 (the
+# 0.9.0 seed's commit, which the chain above built for the linux-amd64
+# and darwin-amd64 0.9.0 seeds), then main 4ab09c25 (the 0.10.0 seed's
+# commit: B08 with the C Rand still present).
+5e21dc31cbbe01e46a07cb26a285f52c8ef9a90b
+23ce8ce23fbba99d77c0577b20c7ad7b77b10b6a
