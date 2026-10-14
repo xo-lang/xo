@@ -34,8 +34,8 @@ bar: within 5 percent of main's instructions on arm64 and LLVM).
   1.091 (arm64) and 1.106 (LLVM) times main's instructions: every big
   list was mapped, faulted in, and unmapped again, where malloc reused
   its large frees (gotchas/large-blocks-need-a-cache.md).
-- The chunks mapped are a static word (rt.xo's table: words 17 and 22 to
-  25 are heapos.xo's; 14 to 16 and 18 to 21 went to fault.xo, ctx.xo, and
+- The chunks mapped are a static word (rt.xo's table: words 22 to 26 are
+  heapos.xo's; 14 to 16 and 18 to 21 went to fault.xo, ctx.xo, and
   tzhost.xo meanwhile), read through
   cabi.xo by the heap statistics and std/llrt/testdata tasks.c and
   alloc_threads.c.
@@ -49,74 +49,92 @@ bar: within 5 percent of main's instructions on arm64 and LLVM).
   calloc, the lists of all and of spare heaps, heaps_mu) and when the
   forwarders go.
 
+## A race found by the fixed point (linux/arm64)
+
+The first CI run failed only the fixed point: on linux/arm64 the
+branch's xo segfaulted about 5 minutes into stage s1 (building
+selfhost/xo; 176 s and no crash with XO_EMIT_JOBS=1, against 21 to 38 s
+for main's), printing nothing; the Mac passed everything. gdb (run
+38645392364) stopped in alloc.alloc popping a free list whose head was
+1: a block handed out twice. A temporary switch sending each part back
+to the C (runs 38645272128 to 38649163658) was confounded by B17 taking
+static words 15 and 16, which heapos.xo used then. The cause: heapos.xo
+defined its own slot orders as ACQUIRE 2 and RELEASE 3, where rt.xo's
+are 1 acquire and 2 release (0 relaxed, 3 acq_rel, 4 seq_cst), so the
+central lists' lock took the word with a release compare and swap, no
+acquire, and threads read the lists before holding it. With rt.xo's
+values (6544efe3) s1 passes in 34 and 20 s (run 38650558123); strace -c
+of it: 901 futex calls, 5,483 mmap, 1,870 munmap, 44,239 brk. The 5x
+time was the same race (threads contending a lock that did not exclude).
+
 ## macOS figures (darwin/arm64)
 
 As bench/results/string-list-objects-2026-10-14.md's stage 3: A is main
-010ed599 (its xo, built by seed 0.11.0, and its std), B the branch (its
+0d25c89c (its xo, built by seed 0.11.0, and its std), B the branch (its
 xo, built by the same seed, and its std); min of 5 instructions retired,
 net of the none row, two rounds, every checksum equal.
 
 | Workload | Backend | A round 1 | B round 1 | B / A | A round 2 | B round 2 | B / A |
 |---|---|---|---|---|---|---|---|
-| text split | arm64 | 96,434,316 | 97,542,050 | 1.016 | 96,341,021 | 97,534,072 | 1.017 |
-| text lines | arm64 | 153,706,619 | 155,824,174 | 1.016 | 153,644,963 | 155,793,766 | 1.017 |
-| text int_fmt | arm64 | 80,017,911 | 80,004,633 | 1.000 | 79,995,971 | 79,975,006 | 1.000 |
-| text quote | arm64 | 130,617,669 | 130,837,119 | 1.002 | 130,564,550 | 130,819,498 | 1.002 |
-| text replace | arm64 | 82,648,078 | 82,837,315 | 1.004 | 82,555,000 | 82,751,558 | 1.004 |
-| text debug | arm64 | 227,159,556 | 227,229,610 | 1.000 | 227,086,594 | 227,202,912 | 1.001 |
-| text float_fmt | arm64 | 147,503,737 | 147,463,776 | 1.000 | 147,490,714 | 147,505,466 | 1.000 |
-| text trim | arm64 | 154,698,087 | 156,318,760 | 1.013 | 154,666,695 | 156,253,357 | 1.012 |
-| text split | llvm | 79,281,112 | 81,094,805 | 1.029 | 79,254,023 | 81,042,936 | 1.028 |
-| text lines | llvm | 129,925,343 | 133,226,805 | 1.029 | 129,895,828 | 133,194,252 | 1.029 |
-| text int_fmt | llvm | 64,878,564 | 64,975,762 | 1.000 | 64,869,034 | 64,957,934 | 1.000 |
-| text quote | llvm | 112,660,107 | 112,020,212 | 0.992 | 112,697,209 | 112,060,935 | 0.992 |
-| text replace | llvm | 65,445,067 | 65,815,554 | 1.006 | 65,418,375 | 65,823,681 | 1.007 |
-| text debug | llvm | 201,391,801 | 201,133,316 | 0.998 | 201,351,009 | 201,072,221 | 0.998 |
-| text float_fmt | llvm | 108,730,022 | 108,847,330 | 1.000 | 108,649,599 | 108,813,111 | 1.001 |
-| text trim | llvm | 143,447,351 | 145,944,761 | 1.020 | 143,438,162 | 145,931,080 | 1.019 |
-| json small | arm64 | 344,883,463 | 345,264,261 | 1.001 | 344,863,589 | 345,209,624 | 1.001 |
-| json ints | arm64 | 234,320,145 | 234,769,446 | 1.002 | 234,282,057 | 234,800,952 | 1.002 |
-| json strings | arm64 | 360,850,545 | 361,610,198 | 1.002 | 360,871,150 | 361,635,896 | 1.002 |
-| json maps | arm64 | 337,693,511 | 338,427,912 | 1.002 | 337,696,147 | 338,429,923 | 1.002 |
-| json parse | arm64 | 285,353,427 | 288,446,508 | 1.012 | 285,331,481 | 288,428,637 | 1.012 |
-| json enc_small | arm64 | 150,841,212 | 150,904,110 | 1.000 | 150,788,159 | 150,925,989 | 1.000 |
-| json enc_strings | arm64 | 191,872,585 | 191,943,391 | 1.000 | 191,802,337 | 191,915,129 | 1.000 |
-| json small | llvm | 304,909,908 | 303,823,682 | 0.996 | 304,908,369 | 303,825,419 | 0.996 |
-| json ints | llvm | 210,768,361 | 209,157,544 | 0.992 | 210,805,231 | 209,031,387 | 0.990 |
-| json strings | llvm | 304,319,398 | 301,973,815 | 0.992 | 304,341,446 | 301,827,160 | 0.991 |
-| json maps | llvm | 307,142,984 | 303,821,143 | 0.988 | 307,102,170 | 303,824,308 | 0.988 |
-| json parse | llvm | 251,052,783 | 254,010,363 | 1.014 | 251,082,730 | 254,006,572 | 1.014 |
-| json enc_small | llvm | 133,820,942 | 133,749,504 | 1.001 | 133,821,884 | 133,768,185 | 1.000 |
-| json enc_strings | llvm | 182,749,685 | 182,584,841 | 1.000 | 182,738,213 | 182,674,840 | 1.000 |
-| alloc small | arm64 | 292,155,276 | 292,149,636 | 1.000 | 292,146,556 | 292,030,111 | 1.000 |
-| alloc strings | arm64 | 301,319,375 | 303,163,165 | 1.006 | 301,373,906 | 303,137,628 | 1.006 |
-| alloc maps | arm64 | 303,530,564 | 303,661,466 | 1.000 | 303,566,529 | 303,673,435 | 1.000 |
-| alloc mixed | arm64 | 472,553,975 | 472,517,720 | 1.000 | 472,570,432 | 472,512,896 | 1.000 |
-| alloc grow | arm64 | 67,126,349 | 67,099,852 | 0.998 | 67,141,162 | 67,088,520 | 0.999 |
-| alloc tasks | arm64 | 880,500,558 | 884,318,067 | 1.004 | 878,765,713 | 884,633,916 | 1.007 |
-| alloc small | llvm | 247,839,010 | 247,836,016 | 1.000 | 247,892,593 | 247,893,565 | 1.000 |
-| alloc strings | llvm | 285,018,839 | 277,862,418 | 0.974 | 285,020,101 | 277,815,599 | 0.973 |
-| alloc maps | llvm | 267,113,476 | 266,674,237 | 0.998 | 267,112,324 | 266,636,917 | 0.998 |
-| alloc mixed | llvm | 462,278,048 | 462,311,832 | 1.000 | 462,196,958 | 462,214,147 | 1.000 |
-| alloc grow | llvm | 64,453,748 | 64,449,133 | 1.000 | 64,468,352 | 64,379,536 | 0.999 |
-| alloc tasks | llvm | 779,636,222 | 784,827,199 | 1.007 | 778,875,181 | 784,062,479 | 1.007 |
-| nested push | arm64 | 18,015,691 | 17,977,673 | 0.998 | 18,019,547 | 17,984,998 | 0.998 |
-| nested strappend | arm64 | 18,920,118 | 18,807,112 | 0.994 | 18,930,555 | 18,904,050 | 0.999 |
-| nested walk | arm64 | 31,675,358 | 31,692,480 | 1.001 | 31,692,722 | 31,695,141 | 1.000 |
-| nested push | llvm | 15,052,829 | 15,187,695 | 1.009 | 15,033,008 | 15,177,600 | 1.010 |
-| nested strappend | llvm | 15,939,192 | 16,000,008 | 1.004 | 15,935,796 | 16,058,021 | 1.008 |
-| nested walk | llvm | 27,637,889 | 27,809,403 | 1.006 | 27,659,502 | 27,828,726 | 1.006 |
+| text split | arm64 | 96,207,325 | 97,354,707 | 1.017 | 96,198,983 | 97,383,455 | 1.017 |
+| text lines | arm64 | 153,521,612 | 155,611,461 | 1.016 | 153,506,312 | 155,622,666 | 1.017 |
+| text int_fmt | arm64 | 79,843,465 | 79,849,749 | 1.001 | 79,865,058 | 79,857,309 | 1.001 |
+| text quote | arm64 | 130,426,133 | 130,627,359 | 1.002 | 130,435,623 | 130,622,109 | 1.002 |
+| text replace | arm64 | 82,458,889 | 82,668,077 | 1.004 | 82,460,388 | 82,670,428 | 1.004 |
+| text debug | arm64 | 226,918,338 | 226,969,635 | 1.001 | 226,906,750 | 227,039,574 | 1.001 |
+| text float_fmt | arm64 | 147,309,925 | 147,321,146 | 1.001 | 147,310,888 | 147,285,934 | 1.000 |
+| text trim | arm64 | 154,511,799 | 156,104,842 | 1.013 | 154,505,428 | 156,096,487 | 1.013 |
+| text split | llvm | 79,341,871 | 81,151,169 | 1.030 | 79,398,871 | 81,147,476 | 1.028 |
+| text lines | llvm | 130,022,439 | 133,163,987 | 1.028 | 130,021,504 | 133,309,549 | 1.029 |
+| text int_fmt | llvm | 64,988,528 | 65,065,117 | 1.001 | 64,997,103 | 65,104,995 | 1.001 |
+| text quote | llvm | 112,802,509 | 112,165,646 | 0.993 | 112,784,712 | 112,148,813 | 0.992 |
+| text replace | llvm | 65,511,278 | 65,917,172 | 1.008 | 65,572,325 | 65,859,559 | 1.005 |
+| text debug | llvm | 201,454,857 | 201,199,647 | 0.998 | 201,436,567 | 201,199,404 | 0.998 |
+| text float_fmt | llvm | 108,826,730 | 108,932,877 | 1.001 | 108,846,713 | 108,942,423 | 1.000 |
+| text trim | llvm | 143,563,337 | 146,066,761 | 1.020 | 143,582,398 | 146,012,523 | 1.019 |
+| json small | arm64 | 344,789,496 | 345,145,863 | 1.001 | 344,823,453 | 345,197,577 | 1.001 |
+| json ints | arm64 | 234,235,346 | 234,710,631 | 1.002 | 234,225,787 | 234,663,884 | 1.002 |
+| json strings | arm64 | 360,785,351 | 361,545,729 | 1.002 | 360,806,277 | 361,513,280 | 1.002 |
+| json maps | arm64 | 337,619,066 | 338,345,438 | 1.002 | 337,636,178 | 338,319,787 | 1.002 |
+| json parse | arm64 | 285,249,572 | 288,415,651 | 1.013 | 285,179,200 | 288,280,684 | 1.012 |
+| json enc_small | arm64 | 150,778,137 | 150,804,698 | 1.000 | 150,708,426 | 150,779,224 | 1.000 |
+| json enc_strings | arm64 | 191,774,573 | 191,831,712 | 1.000 | 191,791,139 | 191,825,708 | 1.000 |
+| json small | llvm | 304,993,344 | 303,848,148 | 0.996 | 304,985,817 | 303,871,892 | 0.996 |
+| json ints | llvm | 210,817,645 | 209,077,437 | 0.990 | 210,797,245 | 209,182,700 | 0.991 |
+| json strings | llvm | 304,392,311 | 301,954,030 | 0.991 | 304,379,445 | 301,965,577 | 0.991 |
+| json maps | llvm | 307,196,326 | 303,888,429 | 0.988 | 307,146,730 | 303,897,369 | 0.988 |
+| json parse | llvm | 251,122,361 | 253,977,581 | 1.013 | 251,068,346 | 254,059,753 | 1.014 |
+| json enc_small | llvm | 133,889,188 | 133,826,414 | 1.000 | 133,898,631 | 133,836,710 | 1.000 |
+| json enc_strings | llvm | 182,759,904 | 182,671,440 | 1.000 | 182,808,796 | 182,753,018 | 1.000 |
+| alloc small | arm64 | 292,070,369 | 292,050,653 | 1.000 | 291,976,934 | 292,038,167 | 1.000 |
+| alloc strings | arm64 | 301,251,254 | 303,052,739 | 1.006 | 301,273,662 | 303,090,754 | 1.006 |
+| alloc maps | arm64 | 303,467,129 | 303,586,526 | 1.000 | 303,480,879 | 303,589,074 | 1.000 |
+| alloc mixed | arm64 | 472,435,814 | 472,437,846 | 1.000 | 472,352,732 | 472,443,856 | 1.000 |
+| alloc grow | arm64 | 67,027,288 | 67,035,380 | 1.000 | 67,008,707 | 67,022,410 | 1.000 |
+| alloc tasks | arm64 | 880,844,649 | 885,009,061 | 1.005 | 880,077,454 | 885,456,416 | 1.006 |
+| alloc small | llvm | 247,953,181 | 247,942,572 | 1.000 | 247,981,872 | 247,948,010 | 1.000 |
+| alloc strings | llvm | 285,040,884 | 277,784,265 | 0.973 | 285,091,699 | 277,878,698 | 0.973 |
+| alloc maps | llvm | 267,154,968 | 266,687,830 | 0.998 | 267,178,943 | 266,646,434 | 0.998 |
+| alloc mixed | llvm | 462,309,515 | 462,346,009 | 1.000 | 462,373,721 | 462,363,296 | 1.000 |
+| alloc grow | llvm | 64,499,716 | 64,486,108 | 1.000 | 64,466,546 | 64,496,826 | 1.001 |
+| alloc tasks | llvm | 779,590,472 | 784,471,669 | 1.006 | 777,899,228 | 786,219,127 | 1.011 |
+| nested push | arm64 | 17,953,447 | 17,933,590 | 0.999 | 17,898,679 | 17,915,733 | 1.001 |
+| nested strappend | arm64 | 18,907,049 | 18,860,805 | 0.998 | 18,841,937 | 18,843,804 | 1.000 |
+| nested walk | arm64 | 31,635,446 | 31,645,543 | 1.000 | 31,647,980 | 31,639,960 | 1.000 |
+| nested push | llvm | 15,101,530 | 15,229,461 | 1.008 | 15,106,127 | 15,200,053 | 1.006 |
+| nested strappend | llvm | 15,979,573 | 16,105,388 | 1.008 | 15,975,645 | 16,084,403 | 1.007 |
+| nested walk | llvm | 27,676,716 | 27,851,687 | 1.006 | 27,607,055 | 27,849,954 | 1.009 |
 
-Every row is within the bar: 0.973 to 1.029. text split and lines are
-1.016 and 1.017 (arm64) and 1.028 to 1.029 (LLVM), trim 1.012 and
+Every row is within the bar: 0.973 to 1.030. text split and lines are
+1.016 and 1.017 (arm64) and 1.028 to 1.030 (LLVM), trim 1.013 and
 1.020; not page faults or chunks (one chunk, 400 page reclaims, in A
 and B alike) and not a large block's growth (room for twice the size
 changed nothing); next: count the large block calls of text split, and
 time the cache's lock and search against malloc's free path.
 
 The self build (each xo first rebuilt by itself, then building main's
-selfhost/xo with main's std): A 107,225,767,501 and 107,116,938,864, B
-106,871,172,933 and 106,652,720,019 instructions (0.997 and 0.996); the
+selfhost/xo with main's std): A 106,666,658,218 and 106,474,308,496, B
+106,830,673,971 and 106,894,122,761 instructions (1.002 and 1.004); the
 two outputs byte identical.
 
 Behavior on the Mac: internal/arm64 TestGoldenRun and internal/llvm

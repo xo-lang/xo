@@ -227,14 +227,14 @@ fn prefetch(a: Int)
 /// functions' addresses); 14 std/native/llrt/fault.xo (the address of
 /// xo_rt.c fault_raise_msg, decision 0228); 15 std/native/llrt/ctx.xo (the
 /// address of xo_rt.c ctx_root, decision 0229); 16 ctx.xo (the address of
-/// xo_rt.c's pool record); 17 and 22 to 25 std/native/llrt/heapos.xo
-/// (whether to map through the C library; the central lists' lock, the
-/// chunks mapped, the big block cache's lock and table); 32 to 39 the
+/// xo_rt.c's pool record); 22 to 26 std/native/llrt/heapos.xo (the
+/// central lists' lock, the chunks mapped, the big block cache's lock
+/// and table, whether to map through the C library); 32 to 39 the
 /// test world's (std/native/llrt/testworld.xo W_*: whether it runs, the
 /// effects made real, its lock, Rand's PCG state, the MemFs lock and
 /// state, the state record); 18 to 21 std/native/llrt/tzhost.xo (the
-/// kept zones' lock and vector: its address, length, and capacity); 26
-/// to 31 and 40 to 63 unused.
+/// kept zones' lock and vector: its address, length, and capacity); 17,
+/// 27 to 31, and 40 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

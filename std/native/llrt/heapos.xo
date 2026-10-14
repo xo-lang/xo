@@ -40,7 +40,7 @@ use native/sys_windows
 /// table (0 until the first large block is given back).
 const W_LOCK = 22
 const W_CHUNKS = 23
-const W_LIBC = 17
+const W_LIBC = 26
 const W_CLOCK = 24
 const W_CACHE = 25
 
@@ -58,7 +58,8 @@ const GRAIN = 65536
 const CHUNK = 4194304
 
 // slot atomics' orders (rt.xo: 0 relaxed, 1 acquire, 2 release, 3
-// acq_rel, 4 seq_cst; gotchas/heapos-lock-without-acquire.md)
+// acq_rel, 4 seq_cst: an order off by one left the central lists' lock
+// without acquire, bench/results/heap-platform-2026-10-14.md)
 const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2

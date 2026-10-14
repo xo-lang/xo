@@ -11,8 +11,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (std/native/llrt/heapos.xo: mmap, VirtualAlloc) instead of the C
   library's malloc, with a cache of given back mappings, and the central
   lists' lock is a lock word instead of a pthread mutex. bench/perf
-  text, json, alloc, and nested are 0.973 to 1.029 of main's
-  instructions, the self build 0.997 and 0.996
+  text, json, alloc, and nested are 0.973 to 1.030 of main's
+  instructions, the self build 1.002 and 1.004
   (bench/results/heap-platform-2026-10-14.md).
 - Native runtime (zero-C audit item B17, decision 0229): the shields of
   deferred code, the unwinding flag, and resource budgets are Xo
