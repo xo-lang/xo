@@ -252,6 +252,47 @@ func isDir(p string) bool {
 	return err == nil && st.IsDir()
 }
 
+// TestGobindDir is a `use go` binding cache (XO_GOBIND_DIR) for test
+// binaries that is kept across runs: <user cache>/xo/testgobind/<key>,
+// keyed by the xo binary's contents (the binder is xo's
+// selfhost/cli/bind) and the go command's version (the bindings read Go's
+// export data). A fresh directory per run bound every `use go` golden
+// again (about 0.8 s each) and so missed XO_BIN_CACHE as well. Entries
+// unused for a week are removed.
+func TestGobindDir() (string, error) {
+	bin, err := Path()
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(bin)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	gover, err := exec.Command("go", "env", "GOVERSION", "GOROOT").Output()
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(h, "\ngobind v1\n%s/%s\n%s", runtime.GOOS, runtime.GOARCH, gover)
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Join(base, "xo", "testgobind")
+	trimCCCache(root, 7*24*time.Hour)
+	dir := filepath.Join(root, hex.EncodeToString(h.Sum(nil))[:20])
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	now := time.Now()
+	os.Chtimes(dir, now, now)
+	return dir, nil
+}
+
 // trimCCCache removes the entries (and leftover temporary directories)
 // of dir not used within age.
 func trimCCCache(dir string, age time.Duration) {
