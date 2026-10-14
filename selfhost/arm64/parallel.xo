@@ -28,6 +28,7 @@ struct Part {
   skipped: List[Str] = []
   restorer_ref: Bool = false
   words_ref: Bool = false
+  static_ref: Bool = false
   clone_ref: Bool = false
   sched_ref: Bool = false
   personality_ref: Bool = false
@@ -244,6 +245,7 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
     skipped = skipped + part.skipped
     g.restorer_ref = g.restorer_ref || part.restorer_ref
     g.words_ref = g.words_ref || part.words_ref
+    g.static_ref = g.static_ref || part.static_ref
     g.clone_ref = g.clone_ref || part.clone_ref
     g.sched_ref = g.sched_ref || part.sched_ref
     g.personality_ref = g.personality_ref || part.personality_ref
@@ -286,5 +288,5 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   if os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }
-  Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, wants: g.wants}
+  Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, wants: g.wants}
 }
