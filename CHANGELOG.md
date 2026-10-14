@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster native builds (decision 0220 stage 1): the arm64 backend
+  generates a large program's functions in parts on parallel tasks and
+  assembles the parts apart before one link; reference counting and the
+  inlined module's verification run on tasks too; the runtime flags come
+  from one scan of the assembly. xo builds itself in 59.00 s on the
+  development Mac (was 337.28 s) and 49.83 s on r8g.8xlarge with
+  `XO_EMIT_JOBS=16` (was 496.82 s), the output byte identical for any
+  job count. `XO_EMIT_JOBS` sets the tasks (default the cores, at most
+  8); `--phase-times` prints the `assemble` phase.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop

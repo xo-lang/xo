@@ -1,8 +1,12 @@
 # 0220: Fast builds: parallel whole-program stages, then per-module caching, then per-module compilation
 
 Status: Accepted in stages (owner delegated to the lead, 2026-10-13).
-Each stage is gated on the measurement of the one before. Stage 1 in
-progress (2026-10-13).
+Each stage is gated on the measurement of the one before. Stage 1
+implemented (2026-10-14; items 1, 2, and 4 for arm64, item 3 measured,
+not the default): the arm64 self build of xo 337.28 s to 59.00 s on the
+Mac and 496.82 s to 87.84 s on r8g.8xlarge, output byte identical for 8
+and 3 jobs, goldens passing (bench/results/fast-builds-2026-10-13.md
+"Stage 1 results"). Stage 2 waits for the lead.
 
 ## Context
 
@@ -136,7 +140,7 @@ run time (bench/ three-arm suite) besides build time.
 - **Process level parallelism** (several xo processes, each emitting a
   share of the functions after its own check and SSA): no shared memory
   needed, but each process repeats the front end and the passes (about
-  45 s on the Mac) and holds its own copy of the program (about 8 GB);
+  44 s on the Mac) and holds its own copy of the program (about 6 GB);
   the native task runtime already shares the module across threads
   (decision 0058's shared counts).
 - **Smaller output instead of faster stages**: the assembly is dominated
