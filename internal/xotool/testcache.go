@@ -11,12 +11,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-// The C compile cache of the tests (bench/results/short-tests-2026-10-14.md):
+// Caches the test binaries keep across runs (bench/results/short-tests-2026-10-14.md):
+// the C compile cache (below), the `use go` bindings (TestGobindDir), and
+// content keyed program directories (TestProgramDir).
+//
+// The C compile cache:
 // the runtime tests of internal/llvm compile the same C drivers with
 // sanitizers on every run (http_diff.c with AddressSanitizer took about
 // 5 s, three times per run). With XO_CC_CACHE set (EnableTestCCache sets
@@ -291,6 +296,71 @@ func TestGobindDir() (string, error) {
 	now := time.Now()
 	os.Chtimes(dir, now, now)
 	return dir, nil
+}
+
+// TestProgramDir is a directory holding files (slash paths to contents)
+// that stays the same across runs and worktrees:
+// <user cache>/xo/testprog/<kind>/<hash of the files>. A program built
+// from a fresh t.TempDir() never reuses a binary of XO_BIN_CACHE, because
+// the build information records the program's directory; one built here
+// does, while its generated code is the same. The files are written
+// once, each under a temporary name and renamed, so concurrent tests see
+// whole files. Callers keep their outputs elsewhere (t.TempDir()).
+// Entries unused for a week are removed.
+func TestProgramDir(kind string, files map[string]string) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, n := range names {
+		fmt.Fprintf(h, "%s %d\n%s", n, len(files[n]), files[n])
+	}
+	root := filepath.Join(base, "xo", "testprog", kind)
+	testProgTrim.Do(func() { trimCCCache(root, 7*24*time.Hour) })
+	dir := filepath.Join(root, hex.EncodeToString(h.Sum(nil))[:20])
+	for _, n := range names {
+		p := filepath.Join(dir, filepath.FromSlash(n))
+		if data, err := os.ReadFile(p); err == nil && string(data) == files[n] {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return "", err
+		}
+		if err := writeAtomicUnique(p, []byte(files[n])); err != nil {
+			return "", err
+		}
+	}
+	now := time.Now()
+	os.Chtimes(dir, now, now)
+	return dir, nil
+}
+
+var testProgTrim sync.Once
+
+// writeAtomicUnique writes p through a temporary file of its own (safe
+// for concurrent writers of the same p) renamed into place.
+func writeAtomicUnique(p string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(p), ".w-*")
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return err
+	}
+	os.Chmod(f.Name(), 0o644)
+	return os.Rename(f.Name(), p)
 }
 
 // trimCCCache removes the entries (and leftover temporary directories)
