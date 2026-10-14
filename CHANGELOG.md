@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B02, part 2): the Bytes primitives of
+  the system call layers (`bytes_addr`, `bytes_buf`, `bytes_len`) are Xo
+  in std/native/llrt/raw.xo, and the per thread system call scratch is
+  256 bytes of the thread's heap record (obj.xo `scratch`) in place of a
+  C `__thread` buffer; std/llrt/xo_sys.c loses 48 lines net.
 - Native runtime (zero-C audit item B05, decision 0221 stage 3): a fault
   on glibc linux/arm64 unwinds through the Xo unwinder
   (std/native/llrt/unwind.xo) instead of libgcc's forced unwind; shared

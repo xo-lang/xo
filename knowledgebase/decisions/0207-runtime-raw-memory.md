@@ -289,14 +289,24 @@ Item 2 landed as decision 0212's `rt.tlocal_get/tlocal_set/tlocal_addr`
   LLVM and 137 of 137 on the Go backend, TestSelfhostWasm 134 pass, 21
   unsupported, 0 fail of 155 (log_state passes on wasm), and
   TestLogAttribution.
-- **Not moved yet** (xo_sys.c): `sys_scratch` (a per thread immortal
-  Bytes object behind `rt.sys_buf`), `xo_bytes_addr`, `xo_bytes_buf`,
-  and `xo_rs_bytes_len` need a Bytes form of `obj_addr`/`obj_at` (the
-  SSA builder accepts Str, List, and handles), which the seed's SSA
-  builder would reject in std code, so they wait for the next seed;
-  `xo_tw_fake`, `xo_fs_set_err` (the `n_fs_*` thread locals shared with
-  xo_fs.c and xo_bytes.c), and `xo_auxval` move with their items (B14,
-  B16, B04/B26).
+- **Moved in part 2** (2026-10-14, xo_sys.c 54 lines deleted, 6 added):
+  `xo_bytes_addr`, `xo_bytes_buf`, and `xo_rs_bytes_len` are Xo
+  (std/native/llrt/raw.xo `bytes_addr`, `bytes_buf`, `bytes_len`). No
+  Bytes form of `obj_addr`/`obj_at` was needed: Bytes and Str are one
+  type to the SSA builders, so `rt.cast[Bytes, Str]` (and back) is no
+  instruction, and the Str intrinsics `obj_addr`, `rs_with_cap`, and
+  `rs_set_len` do the rest; the 0.11.0 seed builds it. The per thread
+  scratch (`__thread sys_scratch`, `rt.sys_buf`) is 256 bytes of the
+  heap record (xo_rt.c `struct xo_heap` `scratch`, offset 1880, checked
+  by a `_Static_assert`), whose address obj.xo `scratch` returns:
+  heap records of exited threads are reused, so it is never freed and
+  never leaks per thread. Its users take the address (Int), not a
+  Bytes. `rt.bytes_addr`, `bytes_buf`, `rs_bytes_len`, and `sys_buf`
+  are gone from rt.xo. Still C: `xo_sys_clock_buf` (it reads the C test
+  world's `tw.virt`; it now returns the heap record's scratch),
+  `xo_tw_fake`, `xo_tw_exit`, `xo_fs_set_err` (the `n_fs_*` thread
+  locals shared with xo_fs.c and xo_bytes.c), and `xo_auxval`, which
+  move with their items (B15, B16, B04/B26).
 
 ## Consequences
 
