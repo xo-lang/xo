@@ -903,9 +903,25 @@ struct h2c {
 	int64_t nencset, cencset;
 	h2s **encq; // the streams whose heads Xo encodes (the lock is held)
 	int64_t nencq, cencq;
+	// the header block's :path as Xo parsed it (h2_fields; url.
+	// ParseRequestURI and the query, http1.xo): tgt_set once a fragment
+	// of the block had one, tgt_ok when it parsed
+	int tgt_set, tgt_ok;
+	hstr tgt_raw;
+	hurl tgt_url;
+	hlist tgt_query;
 };
 
 enum { H2P_NONE, H2P_INPUT, H2P_ENCODED };
+
+// h2_tgt_clear forgets the :path of the header block before.
+static void h2_tgt_clear(h2c *c) {
+	hs_free(&c->tgt_raw);
+	hu_free(&c->tgt_url);
+	hl_free(&c->tgt_query);
+	c->tgt_set = 0;
+	c->tgt_ok = 0;
+}
 
 static void h2_wake(h2c *c) {
 	if (c->waiter) {
@@ -1183,7 +1199,6 @@ static int h2_parse_uint63(const char *s, int64_t n, int64_t *out) {
 // h2_request makes st's request from the fields f (processHeaders,
 // newWriterAndRequest): 0 when it is malformed (a stream error).
 static int h2_request(h2c *c, h2s *st, h2_fields *f, int end_stream) {
-	(void)c;
 	hstr method = h2_pseudo(&f->f, ":method"), path = h2_pseudo(&f->f, ":path"), scheme = h2_pseudo(&f->f, ":scheme");
 	hstr auth = h2_pseudo(&f->f, ":authority"), proto = h2_pseudo(&f->f, ":protocol");
 	if (proto.p) {
@@ -1235,12 +1250,14 @@ static int h2_request(h2c *c, h2s *st, h2_fields *f, int end_stream) {
 		r->url.host = hs_dup(auth.p, auth.n);
 	} else {
 		r->target = hs_dup(path.p, path.n);
-		if (!h_parse_target(path.p, path.n, 0, &r->url)) {
+		// the URL and its query, parsed by Xo (h2_fields)
+		if (!c->tgt_set || !c->tgt_ok || c->tgt_raw.n != path.n || memcmp(c->tgt_raw.p, path.p, (size_t)path.n) != 0) {
 			return 0;
 		}
-		if (r->url.rawquery.n > 0) {
-			h_parse_query(r->url.rawquery.p, r->url.rawquery.n, &r->query);
-		}
+		r->url = c->tgt_url;
+		c->tgt_url = (hurl){0};
+		r->query = c->tgt_query;
+		c->tgt_query = (hlist){0};
 	}
 	st->declen = -1;
 	if (!end_stream) {
@@ -1730,6 +1747,7 @@ static void h2_frame(h2c *c, const uint8_t *h, const uint8_t *p) {
 			hl_free(&c->hf.f);
 			c->hf = (h2_fields){.remain = H2_MAX_HLIST};
 			c->hfirst = 1;
+			h2_tgt_clear(c);
 		}
 		// a fragment far over what the header list may still hold, or
 		// one after an invalid field: the connection ends (CVE-2024-27316,
@@ -1949,8 +1967,9 @@ static int hp_cmp_key(const void *a, const void *b) {
 // h (canonical names) as writeChunk sends it with p, the first bytes of
 // the body (all of it when done): :status, the fields sorted by name in
 // lower case (invalid ones, Connection, and Content-Length left out),
-// then content-type (sniffed), content-length, and date. *close is set
-// when the handler asked for Connection: close.
+// then content-type (sniffed), content-length, and date (the sniffing
+// and the Date are the HTTP/1.1 writer's, std/native/llrt/http1w.xo).
+// *close is set when the handler asked for Connection: close.
 static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64_t pn, int done, hlist *out, int *close) {
 	char st[24];
 	h2_status_text(st, status);
@@ -1958,7 +1977,7 @@ static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64
 	int allowed = h_body_allowed(status);
 	hstr clen = {NULL, 0};
 	int64_t ci = hl_find(h, "Content-Length");
-	char cbuf[24];
+	char cbuf[32];
 	if (ci >= 0) {
 		int64_t v;
 		if (h2_parse_uint63(h->a[ci].v.p, h->a[ci].v.n, &v)) {
@@ -1966,13 +1985,14 @@ static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64
 		}
 	}
 	if (!clen.p && done && allowed && (pn > 0 || !head_req)) {
-		int cn = h_itoa(cbuf, pn);
+		int cn = fmt_int(cbuf, pn);
 		clen = (hstr){cbuf, cn};
 	}
 	const char *ctype = NULL;
+	char ctbuf[64];
 	int64_t cei = hl_find(h, "Content-Encoding");
 	if (hl_find(h, "Content-Type") < 0 && !(cei >= 0 && h->a[cei].v.n > 0) && allowed && pn > 0) {
-		ctype = h_sniff((const unsigned char *)p, pn);
+		ctype = h_sniff(p, pn, ctbuf);
 	}
 	int64_t ki = hl_find(h, "Connection");
 	if (ki >= 0 && hs_eq(h->a[ki].v, "close")) {
@@ -2071,8 +2091,8 @@ static int64_t h2_respond(xo_hconn *hc, int64_t status, const char *body, int64_
 	h2c *c = st->c;
 	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
 		// std/rt: Content-Length on a body over net/http's 2048 bytes
-		char cl[24];
-		int cn = h_itoa(cl, bn);
+		char cl[32];
+		int cn = fmt_int(cl, bn);
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
 	int head = hs_eq(hc->req.method, "HEAD");
@@ -2372,6 +2392,7 @@ static void h2c_free(h2c *c) {
 	free(c->encq);
 	free(c->hb.p);
 	hl_free(&c->hf.f);
+	h2_tgt_clear(c);
 	free(c->wb.p);
 	pthread_mutex_destroy(&c->mu);
 	free(c);
@@ -2783,14 +2804,32 @@ static uint32_t h2_le32(const char *p) {
 // xo_h2_fields goes on with the fragment Xo decoded: ok (0 a decoding
 // error), how far it got, the fields (their names and values one after
 // the other in d, their lengths in the List[Int] lens, a word a field:
-// the name's in the low 32 bits, the value's above), and whether the
-// block's first representation is still to come. True when a 100
-// Continue is to be encoded now (h2_enc_job, h2_encoded).
-int64_t xo_h2_fields(xo_hconn *hc, int64_t ok, int64_t used, const char *d, int64_t dn, xo_rlist *lens, int64_t first) {
+// the name's in the low 32 bits, the value's above), whether the
+// block's first representation is still to come, and the parse of the
+// fragment's first :path field (the List[Str] tgt: empty when it has
+// none, else the path, "1" when it parsed, then url_parts' scheme, host,
+// path, and raw query, then the query's keys and values; h2_request
+// takes the block's first). True when a 100 Continue is to be encoded
+// now (h2_enc_job, h2_encoded).
+int64_t xo_h2_fields(xo_hconn *hc, int64_t ok, int64_t used, const char *d, int64_t dn, xo_rlist *lens, int64_t first, xo_rlist *tgt) {
 	h2c *c = hc->h2;
 	pthread_mutex_lock(&c->mu);
 	c->dec_pending = 0;
 	c->hfirst = (int)first;
+	if (tgt->len >= 6 && !c->tgt_set) {
+		xo_rstr **ts = (xo_rstr **)rl_data(tgt);
+		const int64_t *tl = (const int64_t *)rl_data(tgt);
+		c->tgt_set = 1;
+		c->tgt_raw = hs_dup(ts[0]->data, tl[1]);
+		c->tgt_ok = tl[3] == 1;
+		hstr *parts[] = {&c->tgt_url.scheme, &c->tgt_url.host, &c->tgt_url.path, &c->tgt_url.rawquery};
+		for (int k = 0; k < 4; k++) {
+			*parts[k] = hs_dup(ts[2 * (k + 2)]->data, tl[2 * (k + 2) + 1]);
+		}
+		for (int64_t i = 6; i + 1 < tgt->len; i += 2) {
+			hl_add(&c->tgt_query, hs_dup(ts[2 * i]->data, tl[2 * i + 1]), hs_dup(ts[2 * i + 2]->data, tl[2 * i + 3]));
+		}
+	}
 	int64_t off = 0;
 	const int64_t *l = (const int64_t *)rl_data(lens);
 	for (int64_t i = 0; i < lens->len; i++) {
@@ -3335,7 +3374,7 @@ static int h2cc_process(h2cc *pc, h2rq *q, const uint8_t *h, xo_cresp *r, const 
 // came (reading the body) has why starting with \1: net/http reports it
 // from the body's Read, without the method and URL. *retry is set when
 // the server did not take the request (it may go on another connection).
-static int h2cc_exchange(h2cc *pc, const char *method, hurl *u, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when,
+static int h2cc_exchange(h2cc *pc, const char *method, hstr path, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when,
                          xo_cresp *r, char *why, size_t wn, int *retry) {
 	*retry = 0;
 	// checkConnHeaders
@@ -3371,26 +3410,12 @@ static int h2cc_exchange(h2cc *pc, const char *method, hurl *u, hstr host, hlist
 	pc->next_id += 2;
 	q.swin = pc->peer_win;
 	q.sin.avail = (int64_t)4 << 20;
-	// the header block
+	// the header block (path: the request target, escaped by Xo)
 	nbuf blk = {0};
-	nbuf path = {0};
-	if (hs_eq(u->path, "*")) {
-		nbuf_byte(&path, '*');
-	} else {
-		if (u->path.n == 0) {
-			nbuf_byte(&path, '/');
-		}
-		h_escape_path(&path, u->path.p, u->path.n);
-	}
-	if (u->rawquery.n > 0) {
-		nbuf_byte(&path, '?');
-		nbuf_put(&path, u->rawquery.p, u->rawquery.n);
-	}
 	hp_encode(&pc->enc, &blk, ":authority", 10, host.p, host.n);
 	hp_encode(&pc->enc, &blk, ":method", 7, method, (int64_t)strlen(method));
 	hp_encode(&pc->enc, &blk, ":path", 5, path.p, path.n);
 	hp_encode(&pc->enc, &blk, ":scheme", 7, "https", 5);
-	free(path.p);
 	int did_ua = 0;
 	for (int64_t i = 0; i < hdr->n; i++) {
 		hstr k = hdr->a[i].k, v = hdr->a[i].v;
@@ -3433,8 +3458,8 @@ static int h2cc_exchange(h2cc *pc, const char *method, hurl *u, hstr host, hlist
 		hs_free(&lk);
 	}
 	if (bn > 0 || strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0) {
-		char cl[24];
-		int cn = h_itoa(cl, bn);
+		char cl[32];
+		int cn = fmt_int(cl, bn);
 		hp_encode(&pc->enc, &blk, "content-length", 14, cl, cn);
 	}
 	if (hl_find(hdr, "Accept-Encoding") < 0 && hl_find(hdr, "Range") < 0 && strcmp(method, "HEAD") != 0) {
@@ -3545,7 +3570,7 @@ static int h2cc_exchange(h2cc *pc, const char *method, hurl *u, hstr host, hlist
 // h2_cl_pooled sends the request on an idle connection of the pool:
 // *done is 0 when there was none, or the server did not take the
 // request (it goes on a new connection then).
-static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, hurl *u, hstr host, hlist *hdr, const char *body,
+static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr, const char *body,
                         int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, int *done) {
 	*done = 0;
 	h2cc *pc = h2_pool_take(roots, key);
@@ -3553,7 +3578,7 @@ static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, h
 		return CC_ERR;
 	}
 	int retry = 0;
-	int s = h2cc_exchange(pc, method, u, host, hdr, body, bn, when, r, why, wn, &retry);
+	int s = h2cc_exchange(pc, method, path, host, hdr, body, bn, when, r, why, wn, &retry);
 	if (retry) {
 		h2cc_free(pc);
 		why[0] = 0;
@@ -3569,11 +3594,11 @@ static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, h
 
 // h2_cl_fresh sends the request on a new connection (cn with its TLS
 // state c, taken over), kept in the pool afterwards.
-static int h2_cl_fresh(xo_conn *cn, ccon *c, xo_troots *roots, const char *key, const char *method, hurl *u, hstr host, hlist *hdr,
+static int h2_cl_fresh(xo_conn *cn, ccon *c, xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr,
                        const char *body, int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, char **alert) {
 	h2cc *pc = h2cc_new(cn, c, roots, key);
 	int retry = 0;
-	int s = h2cc_exchange(pc, method, u, host, hdr, body, bn, when, r, why, wn, &retry);
+	int s = h2cc_exchange(pc, method, path, host, hdr, body, bn, when, r, why, wn, &retry);
 	if (s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0]) {
 		const char *ta = tls_alert(pc->c.tls);
 		*alert = ta ? strdup(ta) : NULL;

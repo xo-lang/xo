@@ -293,9 +293,9 @@ MISSING.
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
-| B10 HTTP/1.1 client parser, URL and text helpers | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
+| B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
 | B11 client HPACK | 583 | GLUE 583 | xo_h2.c 87-669 |
-| B12 HTTP response writer | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
+| B12 HTTP response writer (done 2026-10-14: http1w.xo; 514 lines deleted, 112 of glue added; http-writer-2026-10-14.md) | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
 | B13 string and list objects | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
 | B15 test world, part 2 | 494 | PORT 494 | xo_testing.c 212-331, 748-994, 1195-1321 |
@@ -411,6 +411,20 @@ frees the 533 (a) lines.)
   query_parts replace it. Xo about 240 lines, low; two items. Proof:
   TestHTTP1ParseDiff (internal/llvm/http1_diff_test.go:242), http_fuzz.c,
   the goldens http_client, http_wire.
+  **Done 2026-10-14** (`http-client-2026-10-14.md`): the client's loop
+  is Xo (http1.xo client_do: URL, redirects, parse_response), the C
+  keeps the connection, TLS, HTTP/2, and request writing (xo_cl_start,
+  then xo_cl_input, cl_fill, cl_take, cl_end); the HTTP/2 server gets
+  its :path parse from Xo (h2_target through h2_fields). Deleted from
+  xo_http.c: the URL and query parsers, hp_head, hb_chunked,
+  h_escape_path, h_split_hostport, cl_read_response, cl_once, xo_cl_do
+  (3,925 to 2,543 lines); hp_head, hb_chunked, and the URL parser are
+  test data in testdata/http_ref.c for http_diff.c and http_fuzz.c.
+  Kept: h_tchar, h_lower, h_canon, h_server_token, h_has_token (B12 and
+  xo_h2.c call them), h_valid_port, hurl, hp_cmp, h_go_quote (the
+  HTTP/2 client's errors), h2_request's checks. Bar: client 0.953 to
+  1.001, HTTP/2 server 1.006 to 1.008. Proof: TestHTTP1ClientDiff (457
+  responses byte for byte as the C client).
 - **B11 client HPACK.** xo_h2.c 87-669 is used only by the HTTP/2 client
   (its callers are in 2982-3444). hpack.xo has the decoder and encoder;
   it needs an encode one field entry (about 30 lines) and the client's
@@ -418,7 +432,15 @@ frees the 533 (a) lines.)
 - **B12 response writer.** Status text, DetectContentType, Date, and the
   HTTP/1.1 writer rules (xo_http.c 274-341, 1398-1866): pure text, a new
   http1w.xo that HTTP/2's h2_head also uses. Xo about 500 lines, medium
-  (the bar on the http workloads).
+  (the bar on the http workloads). **Done 2026-10-14**
+  (http-writer-2026-10-14.md): std/native/llrt/http1w.xo (951 lines)
+  through cabi_http.xo's five exports, weak C definitions that fault for
+  programs without std/http; xo_http.c keeps wrappers that reserve the
+  buffer room and pack the request's flags, and h_body_allowed (112
+  lines added, 514 deleted); h2_head sniffs and dates through it; the
+  C harnesses link the writer from a std/http program's IR (cOnlyHTTP).
+  HTTP/1.1 workloads 0.976 to 1.001 of the C's instructions, HTTP/2
+  within noise.
 - **B13 string and list objects.** rs_new, append, concat, list new,
   copy, share, grow, free, handles, the drop worklist, real-time
   sections; xo_std.c and xo_bytes.c builders (push_byte, push_word,
@@ -588,10 +610,10 @@ nothing new.
 | 1 | B01 clocks (done 2026-10-14, Windows measured: Clock.now 0.928 to 0.952 of the C path's cycles) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals (rt.static_word and std/log done 2026-10-14; xo_sys.c after the next seed) | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
-| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand stays until the seed has B08 |
-| 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | http1.xo parse_response; then h2_request and xo_cl_do over url_parts; TestHTTP1ParseDiff, http_fuzz.c |
+| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand deleted once seed 0.10.0-23ce8ce2 had B08 (2026-10-14) |
+| 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | **Done 2026-10-14** (http-client-2026-10-14.md): client_do and parse_response in http1.xo, h2_request's URL from h2_target; 1,629 runtime C lines deleted, 265 added; bar 0.953 to 1.008 |
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
-| 7 | B12 response writer | 537 | nothing | http1w.xo: status text, sniff, Date, hw_*; bar on the http workloads |
+| 7 | B12 response writer | 537 | nothing | **Done 2026-10-14** (http-writer-2026-10-14.md): http1w.xo through cabi_http.xo; the C wrappers (112 lines) go with B10's and the connection code's ports |
 | 8 | B13 string and list objects (two items) | 816 | 2 | reroute http1.xo str_find and show.xo rune_count first (retires 50 lines in an hour) |
 | 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |

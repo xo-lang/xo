@@ -33,7 +33,7 @@ import (
 
 // tlsSymbols are the runtime functions only a program using std/http
 // calls (internal/ssa's lowering of std/native/http.xo).
-var tlsSymbols = []string{"xo_cl_do", "xo_srv_new", "xo_tls_"}
+var tlsSymbols = []string{"xo_cl_start", "xo_srv_new", "xo_tls_"}
 
 // needsTLS reports whether generated code (LLVM IR or assembly) calls a
 // std/http runtime function, so its link needs the TLS library.

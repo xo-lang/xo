@@ -1,5 +1,7 @@
 // http_diff.c: the native HTTP/1.1 server's reading and writing
-// (xo_http.c) on connections given as inputs, for internal/llvm's
+// (xo_http.c, with the response writer std/native/llrt/http1w.xo linked
+// from the LLVM IR of a std/http program, cOnlyHTTP) on connections
+// given as inputs, for internal/llvm's
 // TestHTTPParseDiff, which sends the same bytes to a Go net/http server
 // with the same handler and compares the answers byte for byte (Date
 // values aside).
@@ -17,9 +19,10 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "http_ref.c"
 
 // read_req is xo_hc_read with the C request parser (hp_head, hb_chunked,
-// which the client keeps) in the part std/native/llrt/http1.xo plays in
+// http_ref.c's test copies) in the part std/native/llrt/http1.xo plays in
 // a program: decision 0198 deleted the server's own C path, so
 // xo_hc_read returns 3 for a head and 4 for a chunked body to parse.
 static int64_t read_req(xo_hconn *hc) {

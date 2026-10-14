@@ -5,8 +5,9 @@
 //
 //   - the server's connection code (xo_hc_read and xo_hc_respond on a
 //     connection without a socket): request line, header, target and
-//     query, Content-Length and chunked bodies, trailers, responses;
-//   - the client's response reader (cl_read_response);
+//     query, Content-Length and chunked bodies, trailers, responses (the
+//     writer std/native/llrt/http1w.xo, linked from the LLVM IR of a
+//     std/http program, cOnlyHTTP);
 //   - HTTP/2 (xo_h2.c, decision 0121): mutated frame sequences through the
 //     server's frame code (preface, frames, HPACK, streams, the handlers'
 //     whole and streamed responses and resets, the sending of it all)
@@ -18,9 +19,10 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "http_ref.c"
 
 // read_req is xo_hc_read with the C request parser (hp_head, hb_chunked,
-// which the client keeps) in the part std/native/llrt/http1.xo plays in
+// http_ref.c's test copies) in the part std/native/llrt/http1.xo plays in
 // a program: decision 0198 deleted the server's own C path, so
 // xo_hc_read returns 3 for a head and 4 for a chunked body to parse.
 static int64_t read_req(xo_hconn *hc) {
@@ -167,21 +169,6 @@ static void run_server(const char *in, int64_t n) {
 	hl_free(&hc.resp);
 	free(out.p);
 }
-
-static void run_client(const char *in, int64_t n) {
-	ccon c = {.fd = -1};
-	c.buf = malloc((size_t)n + 1);
-	memcpy(c.buf, in, (size_t)n);
-	c.n = c.cap = n;
-	xo_cresp r;
-	memset(&r, 0, sizeof r);
-	char why[300];
-	cl_read_response(&c, rnd() % 4 == 0 ? "HEAD" : "GET", &r, why, sizeof why);
-	free(c.buf);
-	hl_free(&r.hdr);
-	free(r.body.p);
-}
-
 
 // HTTP/2 (decision 0121): frame sequences for the server's frame code
 // (h2_input, the handlers' responses, h2_schedule) and the client's
@@ -360,7 +347,6 @@ int main(void) {
 				mutate(&b);
 			}
 			run_server(b.p ? b.p : "", b.n);
-			run_client(b.p ? b.p : "", b.n);
 			free(b.p);
 			// HTTP/2 frames
 			nbuf h = {0};

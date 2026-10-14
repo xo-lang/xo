@@ -689,7 +689,6 @@ int64_t xo_x_b64_val(int64_t c);
 int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
 int64_t xo_x_split_hostport(int64_t a, int64_t host, int64_t hn, int64_t port, int64_t pn);
 int64_t xo_x_port_out_of_range(int64_t p);
-int64_t xo_x_net_admits(int64_t lp, int64_t ln, int64_t hp, int64_t hn, int64_t pp, int64_t pn);
 int64_t xo_x_net_admits_addr(int64_t lp, int64_t ln, int64_t a, int64_t n);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
@@ -5500,10 +5499,6 @@ static int split_hostport(const char *a, char *host, size_t hn, char *port, size
 }
 
 static int port_out_of_range(const char *port) { return (int)xo_x_port_out_of_range(XO_ADDR(port)); }
-
-static int net_admits(const char *lp, size_t ln, const char *hp, size_t hn, const char *pp, size_t pn) {
-	return (int)xo_x_net_admits(XO_ADDR(lp), (int64_t)ln, XO_ADDR(hp), (int64_t)hn, XO_ADDR(pp), (int64_t)pn);
-}
 
 static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n) {
 	return (int)xo_x_net_admits_addr(XO_ADDR(lp), ln, XO_ADDR(a), n);
