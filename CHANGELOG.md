@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Developer tooling (decision 0209): hidden `xo dev goldens|errorcheck|
+  codegen|dump|rtpack|build-each` in xo. Golden programs are built,
+  run, and compared byte for byte by xo itself, in parallel workers,
+  largest first, with passes cached by input hash (arm64 set: 49.74 s
+  with the Python script, 16.93 s with `-j 8`, 0.21 s cached). Error
+  check and codegen pattern suites start in test/ (decision 0217).
+  selfhost/macho assembles `svc`, so linux/arm64 `--ld=macho` builds
+  work again.
+
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop

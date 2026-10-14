@@ -251,3 +251,40 @@ Go comparisons.
    (scripts/selfhost-switchover.sh, scripts/xo1-host-check.sh), the
    toolchain.md lines, and internal/diag's TestScriptsReadWantBytes
    pointed at the new command.
+
+## Implementation (2026-10-13 to 2026-10-14)
+
+What landed (figures in bench/results/xo-dev-harness-2026-10-13.md,
+"Phase 2"):
+
+- selfhost/cli/dev: `xo dev goldens` (compare.xo: the one stderr filter
+  and the byte exact comparison; key.xo: the pass cache; goldens.xo:
+  programs, order, workers, timeouts), `xo dev errorcheck`, `xo dev
+  codegen`, with inline test blocks. selfhost/xo/dev.xo: the dispatch,
+  `xo dev dump` (each component's main became `dump_main(os, args)`,
+  which its own binary and xo share), `xo dev rtpack`, and `xo dev
+  build-each` (the worker).
+- The child timeout needed no new std API: cancelling the task that
+  waits on a child kills it (std.md 3.8), so `task.with_timeout(clock,
+  d, fn() { cmd.output() })` is the per child timeout.
+- Lever 1 as built: std is parsed once per worker, not checked once.
+  check.Checker keeps the parses of std files (parse_cache) for the next
+  checker of the process; `xo dev build-each --stdin` builds one program
+  after another in one process carrying it, and the harness's workers
+  take programs from a queue. Parsing std/native is about half of the
+  per program check (67 of 126 ms); the other half, checking the native
+  modules' bodies again, is not shared yet (next: a checked std snapshot
+  that a checker forks, gated on byte identical dumps).
+- Lever 2: passes keyed by the SHA-256 of the xo binary, std, flags,
+  host, and the program's files and want; `--force`, `--no-cache`.
+- Lever 3: `-j` workers, largest first by the last run's build times.
+- `xo dev record` is not built: decision 0217 keeps no back end
+  recordings, and the front end ones are refreshed by the existing
+  scripts/selfhost-record-goldens.sh until they are deleted.
+- The suites live in test/errorcheck and test/codegen (outside the
+  module walks of internal/selfhost); internal/devgoldens holds the thin
+  Go tests (TestDevGoldens{Arm64,LLVM,Go,ELF}, TestDevErrorcheck,
+  TestDevCodegen).
+- The duplicate units (cli/modules with cli/modules/xomod, cli/bind with
+  cli/bind/xobind) are not golden programs; the harness builds program
+  directories only, so they are not built twice here.
