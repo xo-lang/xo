@@ -228,7 +228,7 @@ MISSING.
 
 | Item | Retires | Kinds | Ranges |
 |---|---|---|---|
-| B01 clocks off Linux | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
+| B01 clocks off Linux (done 2026-10-14: the clocks in Xo, 27 lines net retired, the rest GLUE of later items; notes) | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
 | B02 runtime globals and thread locals | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
@@ -275,6 +275,15 @@ frees the 533 (a) lines.)
   (gotchas/arm64-match-target-not-folded.md); Windows is LLVM only, so
   it can be measured now. Also the monotonic clock (mono_ns, xo_rt.c
   2022-2033) that budgets and timers read. Xo about 100 lines, low.
+  **Done 2026-10-14** (bench/results/clocks-2026-10-14.md): the clocks
+  are Xo on every OS (sysio.xo clock_now, real_ns, mono_ns, the clock
+  chosen once into word 0 of rt.sys_words); xo_win.c's clock_gettime
+  shim (27 lines) and every C clock_gettime call are gone; std/llrt
+  shrank by 27 lines net (46 deleted, 19 added). What stays is GLUE
+  for later items: mono_ns and xo_tz_now as one line forwards to
+  cabi.xo's exports (they go with their C callers, B17 to B22 and B27),
+  xo_clock_now as the virtual clock of the test world (B14, B15) and
+  the real time for xo_http.c's Date (B28), xo_sys_clock_buf (B02).
 - **B02 globals and thread locals.** C `__thread` left: xo_bytes.c:296-297,
   xo_fs.c:15 and 224, xo_stdin.c:27-28, xo_http.c:1546-1547 and
   3101-3102, xo_sys.c:49, xo_rt.c:5626 (and xo_nolibc.c's errno). Thread
@@ -505,7 +514,7 @@ nothing new.
 |---|---|---|---|---|
 | W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | delete the seven dead groups and their rt.xo declarations; selfhost/xo/link.xo:308-369, 380-393; cc.go:55-109, 119-133; the stale test flags listed above; grep the goldens' objects for the symbols first |
 | W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | the deletion list under "XO_LLRT_C=sched" |
-| 1 | B01 clocks | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
+| 1 | B01 clocks (done 2026-10-14, Windows measurement pending) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
 | 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | SHA-512 into digest.xo beside SHA-256; TestCryptoDiff covers it |

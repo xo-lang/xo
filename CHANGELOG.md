@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The clocks are read from Xo on every OS (work item B01, decision
+  0213 item 6): Clock.now on macOS (clock_gettime_nsec_np) and Windows
+  (GetSystemTimePreciseAsFileTime), and the monotonic clock of the
+  scheduler, timers, and budgets everywhere (the vDSO on Linux,
+  libSystem on macOS, QueryPerformanceCounter on Windows), the clock of
+  the build chosen once into a word so the hot path tests no target.
+  The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
+  exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
+  workload.
 - `xo lsp` answers `textDocument/completion` and
   `textDocument/signatureHelp` (decision 0219): fields and methods
   after `x.` (prelude methods included), variants and statics after a

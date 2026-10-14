@@ -134,6 +134,11 @@ const CLOCK_LIBSYSTEM = -2
 /// QueryPerformanceCounter.
 const CLOCK_KERNEL32 = -3
 
+/// The byte offset of words 5 and 6 of the thread local table
+/// (rt.tlocal_addr, sched.xo TLS_*): the monotonic clock's timespec or
+/// counter.
+const TLS_CLOCK_AT = 40
+
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
 /// virtual clock (the C runtime's, while it runs). On Linux the vDSO's
 /// clock_gettime called from Xo (decision 0206 stage 2: the system call
@@ -175,10 +180,20 @@ pub fn real_ns() -> Int { clock_read(true, rt.bytes_addr(rt.sys_buf())) }
 /// Windows.
 pub fn mono_ns() -> Int {
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  if f > 0 {
+    // the timespec in words 5 and 6 of the thread's runtime table (an
+    // address without a call, unlike rt.sys_buf's)
+    let a = rt.int_wrap(0, rt.tlocal_addr(), TLS_CLOCK_AT)
+    let r = rt.call_c2(f, linux.CLOCK_MONOTONIC, a)
+    if r < 0 {
+      return r
+    }
+    return rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+  }
   if f == CLOCK_LIBSYSTEM {
     return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_MONOTONIC)
   }
-  clock_read(false, rt.bytes_addr(rt.sys_buf()))
+  clock_read(false, rt.int_wrap(0, rt.tlocal_addr(), TLS_CLOCK_AT))
 }
 
 /// The wall clock (real) or the monotonic clock in nanoseconds, with 16

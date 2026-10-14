@@ -202,7 +202,8 @@ pub fn clock_ns(a: Int) -> Int {
 
 /// QueryPerformanceCounter in nanoseconds (as xo_win.c's clock_gettime
 /// of CLOCK_MONOTONIC did), the counter through the 8 bytes of scratch at
-/// a. The frequency is read once and kept in word 2 of rt.sys_words.
+/// a (16 bytes). The frequency is read once and kept in word 2 of
+/// rt.sys_words.
 pub fn mono_ns(a: Int) -> Int {
   let w = rt.sys_words()
   var q = rt.slot_load[Int](w, 2, 0)
