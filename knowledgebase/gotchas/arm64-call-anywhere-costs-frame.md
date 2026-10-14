@@ -23,3 +23,12 @@ offsets of `rt.mem_load`/`mem_store` and constant addends of
 learned the immediate forms (same commit). A tail call in the
 emitters (a call whose result is returned, in a function that is
 otherwise a leaf, as `b`) would remove the remaining frame of `free`.
+
+Update (2026-10-14, decision 0224): selfhost/arm64 now shrink wraps
+(the frame made only in the region of blocks that need it, entered and
+left through save and restore blocks) and emits tail calls (`b sym`
+after the epilogue). alloc.alloc and alloc.free have no frame at all;
+a rare call still costs the frame on its own path. The rules above
+still help where shrink wrapping does not apply: functions with landing
+pads, stack arguments or results, more than six region edges, or a
+value kept across a call on the common path.

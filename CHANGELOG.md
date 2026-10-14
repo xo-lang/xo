@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend (decision 0224): shrink wrapping and tail calls. A
+  function makes its frame (frame record, callee saved registers) only
+  on the paths that need it, and a call whose results are returned as
+  they are is a branch after the epilogue. The self build of xo runs
+  0.985 of the instructions; bench/perf 0.963 to 1.004 of before; the
+  Xo list objects of B13 move from 1.242 to 1.201 (alloc small) of the
+  C's instructions on the Mac (bench/results/shrink-wrapping-2026-10-14.md).
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in
