@@ -529,6 +529,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         Ok(obj) => write_or_fail(os, dir, prog, obj)
         Err(e) => fail(os, "assembler: ${e}")
       }
+      t = lap(os, phases, "assemble", t)
     }
     let srcs = [prog] + lk.srcs
     let tls = needs_tls(code) && !nolibc(os, tgoos)
