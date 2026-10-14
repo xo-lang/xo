@@ -5,8 +5,9 @@ same day: seed 0.10.0-23ce8ce2 has B08, and the seed compatibility
 block (xo_crypto.c's xo_rand_*, xo_win.c's xo_w_entropy) is deleted.
 Applies again to a new intrinsic: decision 0222's `rt.ct_barrier`,
 which seed 0.10.0-23ce8ce2 lowers as a call of `xo_ct_barrier`, keeps
-that function in xo_crypto.c (anticipated: selfhost/xo reaches
-std/crypto through sumdb's ed25519_verify) until a seed has 0222.
+that function in xo_crypto.c until a seed has 0222: selfhost/xo
+reaches Ed25519 through sumdb's ed25519_verify, and the seed built it
+(2026-10-14, 37 s and 44 s on the Mac) with that function present.
 
 Symptom: after Rand moved to std/native/llrt/rand.xo (the SSA builders
 call the native prelude's llrt_rand_* instead of rt.rand_*) and

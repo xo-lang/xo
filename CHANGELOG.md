@@ -9,8 +9,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Native runtime (zero-C audit item B09, decision 0222): a value barrier
   for constant time runtime code (`rt.ct_barrier`, internal: no
   instruction on arm64, an empty asm on LLVM) and constant time masks in
-  std/native/llrt/ct.xo; `crypto.equal` and verify_password's comparison
-  are Xo (the C deleted), the same results. `xo dev codegen` patterns can
+  std/native/llrt/ct.xo; `crypto.equal`, verify_password's comparison,
+  and Ed25519 (std/native/llrt/ed25519.xo) are Xo, the same results, the
+  C deleted (std/llrt/xo_crypto.c 540 lines to 16). Ed25519 takes 0.944
+  to 0.971 of the C's instructions on arm64 and 0.757 to 0.768 on LLVM
+  (bench/results/ed25519-consttime-2026-10-14.md) and now builds for
+  wasm too. `xo dev codegen` patterns can
   name another module's function with a `// func MOD.NAME` line
   (test/codegen/consttime). Tests: internal/llvm TestConstantTimeLLVM
   (clang -O2 keeps the barriers; no branch or select in the masks) and

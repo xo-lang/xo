@@ -292,7 +292,7 @@ MISSING.
 | B05 unwinder without libgcc | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
-| B09 constant time, crypto.equal, Ed25519 (steps 1 and 2 done 2026-10-14: decision 0222, crypto.equal in Xo; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
+| B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
 | B11 client HPACK | 583 | GLUE 583 | xo_h2.c 87-669 |
 | B12 HTTP response writer | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
@@ -387,8 +387,10 @@ frees the 533 (a) lines.)
   Xo about 560 lines, high; two items. Prerequisite 5 and crypto.equal
   done 2026-10-14 (decision 0222: `rt.ct_barrier`, std/native/llrt/ct.xo,
   test/codegen/consttime, internal/llvm TestConstantTimeLLVM and
-  TestCryptoXoDiff); xo_crypto.c keeps `xo_ct_barrier` (8 lines) for the
-  seed.
+  TestCryptoXoDiff), Ed25519 too (std/native/llrt/ed25519.xo, 0.944 to
+  0.971 of the C's instructions on arm64, 0.757 to 0.768 on LLVM,
+  bench/results/ed25519-consttime-2026-10-14.md); xo_crypto.c is 16
+  lines, `xo_ct_barrier` for the seed.
 - **B10 HTTP client parser.** Since decision 0198 the C request head
   parser hp_head (xo_http.c 817-1278) is called only from hb_chunked's
   trailer parse (1368), and hb_chunked (1279-1397) only from the client's

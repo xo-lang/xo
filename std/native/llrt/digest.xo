@@ -582,20 +582,26 @@ fn sha512_feed(var st: List[Int], q: Int, k0: Int, p: Int, n: Int) -> Int {
 /// little endian words (the 64 bytes read 8 at a time), as Ed25519 uses
 /// them (ed25519.xo).
 pub fn sha512_le(a: Bytes, b: Bytes, c: Bytes) -> List[Int] {
-  var st = sha512_state(rt.bytes_addr(a), a.len(), rt.bytes_addr(b), b.len(), rt.bytes_addr(c), c.len())
+  var st = sha512_state(bytes_data(a), a.len(), bytes_data(b), b.len(), bytes_data(c), c.len())
   for j in 0..8 {
     st[j] = rt.int_wrap(7, st[j], 0)
   }
   st
 }
 
+/// The address of the first byte of b (its string object's data, as
+/// raw.data; no C call, and the wasm backend lowers it too).
+fn bytes_data(b: Bytes) -> Int { rt.int_wrap(0, rt.obj_addr(b), rt.layout(0)) }
+
 /// SHA-512's state after the an bytes at a, then the bn at b, then the
 /// cn at c, padded.
 fn sha512_state(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int) -> List[Int] {
   // SHA-512's initial state (FIPS 180-4 5.3.5) is BLAKE2b's IV
   var st = digest_tables.blake2b_iv()
-  let buf = rt.bytes_buf(256)
-  let q = rt.bytes_addr(buf)
+  // the block buffer: a string with room for two blocks (its bytes are
+  // written before they are read)
+  let buf = rt.rs_with_cap(256)
+  let q = raw.data(buf)
   var k = sha512_feed(st, q, 0, a, an)
   k = sha512_feed(st, q, k, b, bn)
   k = sha512_feed(st, q, k, c, cn)
