@@ -286,7 +286,7 @@ MISSING.
 | Item | Retires | Kinds | Ranges |
 |---|---|---|---|
 | B01 clocks off Linux (done 2026-10-14: the clocks in Xo, 27 lines net retired, the rest GLUE of later items; notes) | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
-| B02 runtime globals and thread locals | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
+| B02 runtime globals and thread locals (partly done 2026-10-14: rt.static_word, std/log state, 66 lines; notes) | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
 | B05 unwinder without libgcc | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
@@ -349,6 +349,20 @@ frees the 533 (a) lines.)
   0207, not in std/native/rt.xo) for process globals: the test world
   state, the zone table, std/log's state, the HTTP stream tables. Xo
   about 130 lines plus emitter work, low to medium.
+  **Partly done 2026-10-14** (decision 0207, "Process globals as
+  implemented"): `rt.static_word(k)` (64 words) is in std/native/rt.xo
+  and the arm64, LLVM, and wasm emitters (wasm also lowers the thread
+  local words now), with a 2 line C seed shim (`xo_static_word`,
+  xo_sys.c) until the next seed. std/log's state is Xo
+  (std/native/llrt/logstate.xo): static words 0 to 2, thread local words
+  7 and 8 (words 5 and 6 went to B01's monotonic clock); the xo_http.c
+  logging section (66 lines, with the `__thread` xlog_from) is deleted.
+  Left: xo_sys.c's sys_scratch, bytes_addr, bytes_buf, rs_bytes_len need
+  a Bytes form of obj_addr/obj_at, which the seed's SSA builder rejects
+  in std, so they follow the next seed; tw_fake, fs_set_err (the n_fs_*
+  thread locals of xo_bytes.c and xo_fs.c), and auxval go with B14,
+  B16, and B04/B26. B03, B13, B14, B16, B21, and B27 can use
+  rt.static_word now.
 - **B03 stdio, exit, env, args.** The 64 KiB stdout buffer (xo_rt.c
   548-668) needs an `xo_x_flush` export for the C fault and exit paths;
   env.get and env.vars (7398-7454) need the environment block (Linux:
@@ -594,7 +608,7 @@ nothing new.
 | W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | **Done 2026-10-14** (see "W0 done" below) |
 | W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | **Done 2026-10-14** (see "W1 done" below): 1,284 lines of xo_rt.c |
 | 1 | B01 clocks (done 2026-10-14, Windows measured: Clock.now 0.928 to 0.952 of the C path's cycles) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
-| 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
+| 2 | B02 globals and thread locals (rt.static_word and std/log done 2026-10-14; xo_sys.c after the next seed) | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
 | 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand deleted once seed 0.10.0-23ce8ce2 had B08 (2026-10-14) |
 | 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | **Done 2026-10-14** (http-client-2026-10-14.md): client_do and parse_response in http1.xo, h2_request's URL from h2_target; 1,629 runtime C lines deleted, 265 added; bar 0.953 to 1.008 |

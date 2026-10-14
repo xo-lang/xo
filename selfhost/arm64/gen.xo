@@ -109,12 +109,20 @@ fn (g: G) shared_code(var out: List[Str]) {
   }
 }
 
-/// The process words of rt.sys_words, and the end of an ELF file.
+/// The process words of rt.sys_words and rt.static_word, and the end of an ELF file.
 fn (g: G) end_data(var out: List[Str]) {
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
     out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")
     for _ in 0..16 {
+      out.push("\t.quad 0\n")
+    }
+  }
+  if g.static_ref {
+    // rt.static_word (decision 0207, work item B02): 64 words of process
+    // globals, zero at start
+    out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
+    for _ in 0..64 {
       out.push("\t.quad 0\n")
     }
   }

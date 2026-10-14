@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Runtime process globals (zero-C work item B02, decision 0207): an
+  internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
+  LLVM, and wasm emitters; std/log's state (log.configure's level,
+  format, and output; the dependency attribution of decision 0173 as a
+  thread local word; the record time) is Xo, and the 66 line logging
+  section of the C runtime is gone. The wasm backend now lowers the
+  runtime's thread local words and runs std/log programs.
 - Native runtime (zero-C audit item B12): the HTTP/1.1 response writer
   is Xo (std/native/llrt/http1w.xo: status text, DetectContentType, the
   Date header, chunkWriter.writeHeader's rules, the error answers),

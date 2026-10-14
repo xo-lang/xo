@@ -36,7 +36,11 @@ waits for it forever.
   fields)`. Native backends: the SSA builder emits `rt.log_from(<const>)`
   after the arguments and just before the call (`callAsVia`), and
   std/native/log.xo takes it at entry (`xo_log_from_take`, a thread
-  local in xo_http.c; no task switch happens in between).
+  local in xo_http.c; no task switch happens in between). Since work
+  item B02 (2026-10-14) the call is the native prelude's
+  `llrt_log_from(<const>)`, which keeps the constant's address and
+  length in words 7 and 8 of the thread local table
+  (std/native/llrt/logstate.xo), and the C is gone.
 - `xo audit` lists each dependency's log call sites and the attribution
   its records carry (`log_attribution`, `log_sites`).
 - Not covered: `log.info` used as a function value from a dependency
