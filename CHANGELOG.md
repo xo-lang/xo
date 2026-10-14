@@ -16,7 +16,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   wasm binary by xo's name, wasip1/wasm (xotool.Target);
   TestSelfhostLLVMEndToEnd compares its IR with the recording only when
   dump replays are on (decision 0217) and keeps its build and output
-  check.
+  check. From the linux/amd64 milestone: internal/llvm's diff tests skip
+  the arm64 backend off arm64 hosts (xotool.Arm64Skip), and TestHarness
+  builds xo before the Python self test (its 600 s adapter timeout no
+  longer includes the build).
 - Native runtime (zero-C audit item B08): SHA-512 is Xo
   (std/native/llrt/digest.xo, called by the C Ed25519 through
   cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
