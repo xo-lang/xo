@@ -938,7 +938,12 @@ Last verified: 2026-10-07
   connection of its own; prints `<w> <backend> <min instructions
   retired>` of the client. The C client is gone: an xo from before B10
   (main 16524ee6) with its own std measures it. PORT (18095). Through
-  the heavy lock. Last verified: 2026-10-14.
+  the heavy lock. Since B11 (2026-10-14) also h2len and h2big: HTTP/2
+  over TLS (serve/ on PORT+1 with a certificate it makes and writes to
+  the out dir's ca.pem), every request on one pooled connection; the C
+  HPACK is measured with main c013b78d's xo, whose copy needs std and
+  third_party next to it (gotchas/baseline-xo-needs-third-party.md).
+  Last verified: 2026-10-14.
 - `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
   working directory, and process environments (mkdir, tree, remove,

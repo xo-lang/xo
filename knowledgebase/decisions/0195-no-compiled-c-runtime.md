@@ -15,7 +15,11 @@ seed has B08; `bench/results/sha512-rand-2026-10-14.md`). Work item
 B10 done 2026-10-14 (the HTTP/1.1 client's response reading,
 redirects, and URLs in Xo, the HTTP/2 server's :path parse from Xo;
 1,629 runtime C lines deleted; client 0.953 to 1.001 of the C's
-instructions; `bench/results/http-client-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
+instructions; `bench/results/http-client-2026-10-14.md`). Work item
+B11 done 2026-10-14 (the HTTP/2 client's HPACK in Xo, xo_h2.c's C HPACK
+deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
+to 1.009 of the C's instructions;
+`bench/results/http2-client-hpack-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
 2026-10-13: decision 0201. Prerequisite 3 (system calls) on Linux:
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc
