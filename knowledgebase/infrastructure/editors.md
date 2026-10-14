@@ -1,6 +1,6 @@
 # Editor support
 
-Last verified: 2026-10-10 (VS Code 1.141.0, Node 22.22.1, vscode-tmgrammar-test 0.1.3, vscode-languageclient 9.0.1)
+Last verified: 2026-10-13 (xo 0.9.0; VS Code 1.141.0, Node 22.22.1, vscode-tmgrammar-test 0.1.3, vscode-languageclient 9.0.1)
 
 ## VS Code extension (`editors/vscode/`)
 
@@ -15,14 +15,14 @@ semantic highlighting, and formatting.
 | `language-configuration.json` | `//` comments, brackets, auto closing pairs, indentation. |
 | `syntaxes/xo.tmLanguage.json` | Grammar, scope `source.xo`. Built from spec/core.md section 1. |
 | `syntaxes/xo.markdown.tmLanguage.json` | Injection: ` ```xo ` fences in Markdown use `source.xo`. |
-| `extension.js` | Starts `xo lsp` with vscode-languageclient 9.0.1. Binary: setting `xo.path`, else `.tools/bin/xo` in or above a workspace folder or the active file, else `.tools/bin/xo` of the checkout the extension is symlinked from, else `xo` on PATH (2026-10-10: the first version only checked workspace folder roots and failed for a folder outside the checkout). Command "Xo: Restart Language Server". Setting `xo.lsp.enabled`. |
+| `extension.js` | Starts `xo lsp` with vscode-languageclient 9.0.1. Binary: setting `xo.path`, else, in or above a workspace folder or the active file, `bin/xo` of an Xo checkout (a directory with `selfhost/xo/main.xo`) then `.tools/bin/xo`, else the same in the checkout the extension is symlinked from, else `xo` on PATH (2026-10-10: the first version only checked workspace folder roots; 2026-10-13: `bin/xo` added ahead of `.tools/bin/xo`, see gotcha). The output channel "Xo" logs the binary and its `xo version` at start. Failed requests go to that channel, not popups (`revealOutputChannelOn: Never`). Command "Xo: Restart Language Server". Setting `xo.lsp.enabled`. |
 | `test/syntax.xo` | Tokenization assertions (`// ^^^ scope` lines), run by `npm test`. |
-| `grammar_test.go` | Go test: grammar keywords equal `token.Keywords()`, manifest matches grammar. Runs in `go test -short`. |
+| `grammar_test.go` | Go test: grammar keywords equal `KEYWORDS` in `selfhost/lexer/token.xo`, manifest matches grammar. Runs in `go test -short`. |
 
 Install for local use (picks up edits on window reload, no packaging):
 
 ```
-go build -o .tools/bin/xo ./cmd/xo                  # the server the extension starts
+go run ./scripts/xobuild                            # bin/xo, the server the extension starts
 (cd editors/vscode && npm ci)                       # vscode-languageclient
 ln -s "$PWD/editors/vscode" ~/.vscode/extensions/xo-lang.xo-0.0.1
 # then in VS Code: Developer: Reload Window
@@ -35,15 +35,14 @@ A shareable `.vsix`: `cd editors/vscode && npx @vscode/vsce package
 --allow-missing-repository --skip-license`, then
 `code --install-extension xo-0.0.1.vsix`.
 
-Rebuild `.tools/bin/xo` after compiler changes, then run "Xo: Restart
-Language Server" (or reload the window).
+Rebuild `bin/xo` (`go run ./scripts/xobuild`) after compiler changes, then
+run "Xo: Restart Language Server" (or reload the window). Outside a
+checkout, put an xo at `.tools/bin/xo` or on PATH, or set `xo.path`.
 
 Tests:
 
 ```
 go test -short ./editors/...            # keyword drift against the lexer
-go test ./internal/lsp/                 # protocol, every feature, a corpus panic check
-XO_LSP_CORPUS=../../bench:../../internal:../../std go test -run TestCorpus ./internal/lsp/  # the whole repo, about 1 min
 cd editors/vscode && npm ci && npm test # tokenization assertions (needs Node)
 ```
 
@@ -54,22 +53,28 @@ own `markdown-basics` grammar.
 When the lexical structure changes (a keyword, a literal form, a
 contextual word, a predeclared name), update the grammar and
 `test/syntax.xo` in the same change as `spec/core.md`. The builtin type
-and interface lists in the grammar mirror `protectedNames` in
-`internal/check/decl.go`; only keywords are checked automatically.
+and interface lists in the grammar mirror `is_protected` in
+`selfhost/check/base.xo` (equal on 2026-10-13); only keywords are checked
+automatically.
 
-## `xo lsp` (`internal/lsp/`)
+## `xo lsp` (`selfhost/cli/servers/`)
+
+The Go server of `internal/lsp` was deleted with the Go compiler
+(decision 0215); its Xo port (decision 0178 stage 5) is what `xo lsp`
+runs.
 
 | File | Purpose |
 |---|---|
-| `jsonrpc.go` | Content-Length framing, message types. |
-| `server.go` | Session loop, document sync (full and incremental), recheck with overlay, diagnostics, hover, definition, references, rename, code actions. |
-| `resolve.go` | Every identifier of a file (reflection walk, unlike `check.Inspect` it covers declarations, types, patterns) and what it names, from `check.Info`. |
-| `features.go` | Semantic tokens, document symbols, formatting. |
-| `text.go` | Byte column to UTF-16 conversion, file URIs. |
+| `lsp.xo` | JSON-RPC framing, session loop, document sync, recheck with overlay (debounced 150 ms), diagnostics, code actions, document symbols, request dispatch. A failed hover, definition, or references answers error -32803 with the load error (a bad `xo.mod`, for example), also sent once as `window/logMessage`. |
+| `lsp_features.xo` | Hover, definition, references, rename, formatting, semantic tokens. |
+| `resolve.xo` | Every identifier of a file and what it names. |
+
+No Go test drives `xo lsp` since decision 0215 (the protocol and corpus
+tests were in `internal/lsp`).
 
 Hand testing without an editor: send `initialize`, `textDocument/didOpen`,
 then a request, each framed as `Content-Length: N\r\n\r\n<json>` on the
-stdin of `.tools/bin/xo lsp`.
+stdin of `bin/xo lsp`.
 
 Notes:
 
