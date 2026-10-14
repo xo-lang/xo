@@ -1566,8 +1566,9 @@ NL_USED int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
 
 // ---------------------------------------------------------------------------
 // Unwinding is not here: fault_raise calls the Xo unwinder
-// (std/native/llrt/unwind.xo through cabi_nolibc.xo's unwind_fault), and
-// the link defines xo_personality as cabi_nolibc.xo's personality
-// (decision 0221). No C library unwinder function is called.
+// (std/native/llrt/unwind.xo through cabi.xo's unwind_fault); the unwind
+// tables name cabi.xo's export xo_x_personality, and the link defines
+// xo_personality as it for linux/amd64's (decision 0221). No C library
+// unwinder function is called.
 
 #endif

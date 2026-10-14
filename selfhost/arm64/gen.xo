@@ -112,10 +112,11 @@ fn (g: G) shared_code(var out: List[Str]) {
   if g.personality_ref {
     // the personality routine through a data word, as ELF compilers
     // refer to it from the unwind tables
-    out.push("\t.hidden DW.ref.xo_personality\n\t.weak DW.ref.xo_personality\n" +
-      "\t.section .data.DW.ref.xo_personality,\"awG\",@progbits,DW.ref.xo_personality,comdat\n" +
-      "\t.p2align 3\n\t.type DW.ref.xo_personality, @object\n\t.size DW.ref.xo_personality, 8\n" +
-      "DW.ref.xo_personality:\n\t.xword xo_personality\n")
+    let p = personality_name(g.os)
+    out.push("\t.hidden DW.ref.${p}\n\t.weak DW.ref.${p}\n" +
+      "\t.section .data.DW.ref.${p},\"awG\",@progbits,DW.ref.${p},comdat\n" +
+      "\t.p2align 3\n\t.type DW.ref.${p}, @object\n\t.size DW.ref.${p}, 8\n" +
+      "DW.ref.${p}:\n\t.xword ${p}\n")
   }
 }
 

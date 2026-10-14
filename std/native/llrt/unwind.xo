@@ -4,11 +4,11 @@
 // fault, in Xo over raw memory, for programs linked with glibc (stage 3)
 // and with no C library (XO_NOLIBC=1, stage 1). The C runtime's
 // fault_raise calls raise (cabi.xo unwind_fault) with the context's
-// exception object, boundary, and the address of xo_personality; raise
+// exception object, boundary, and the personality's addresses; raise
 // walks the frames from its own up through the .eh_frame_hdr tables of
 // the program and of the shared objects it loaded (ld.so's link_map) and
 // the DWARF call frame information of .eh_frame, and at the first frame
-// of generated code (its CIE names xo_personality) whose call site has a
+// of generated code (its CIE names xo_x_personality) whose call site has a
 // landing pad it restores that frame's registers and jumps there
 // (rt.unwind_resume), with the exception in x0 as the personality
 // routine's protocol sets it. Frames with another personality (C
@@ -130,9 +130,11 @@ const EXC_CLASS = 6363304799676486988
 /// Unwinds the calling thread's frames for the fault whose exception
 /// object is at exc, running the first landing pad it finds below the
 /// boundary (a stack address; 0: none) in a frame whose personality
-/// routine is pers (xo_personality's address): never returns then. 0
-/// when nothing catches the fault.
-pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
+/// routine is pers (xo_x_personality's address) or pers_old (the C
+/// forwarder xo_personality, which code from an xo before the emitters
+/// named the export refers to): never returns then. 0 when nothing
+/// catches the fault.
+pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
   match target.arch {
     TargetArch.Arm64 => {}
     TargetArch.Amd64 | TargetArch.Wasm32 => return 0
@@ -170,7 +172,8 @@ pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
       }
       // a frame of generated code with a call site table; another
       // personality's frame is passed over
-      if rt.mem_load(s, H_LSDA, 8) != 0 && rt.mem_load(s, H_PERS, 8) == pers {
+      let fp = rt.mem_load(s, H_PERS, 8)
+      if rt.mem_load(s, H_LSDA, 8) != 0 && fp != 0 && (fp == pers || fp == pers_old) {
         rt.mem_store(s, H_CUR, cur, 8)
         if personality(1, UA_CLEANUP_PHASE | UA_FORCE_UNWIND, EXC_CLASS, exc, s) == URC_INSTALL_CONTEXT {
           rt.unwind_resume(cur)
@@ -255,7 +258,7 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
   0
 }
 
-/// The personality routine of generated code on macOS (xo_personality,
+/// The personality routine of generated code on macOS (xo_x_personality,
 /// called by libunwind's _Unwind_ForcedUnwind with its context uc): the
 /// protocol of personality, through libunwind's accessors. version and
 /// actions are C ints (their high bits are not defined).
@@ -704,7 +707,7 @@ fn read_cie(s: Int, cie: Int) -> Bool {
         p += 1
       } else if c == 80 {
         // 'P': the personality routine (raise compares it with
-        // xo_personality's address and does not call it)
+        // xo_x_personality's address and does not call it)
         let (pv, q2) = read_ptr(p + 1, rt.mem_load(p, 0, 1), 0)
         pers = pv
         p = q2

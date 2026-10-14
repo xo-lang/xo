@@ -132,12 +132,18 @@ resume primitive, and the personality routine with its LSDA reader.
    (NSS in getaddrinfo) could be missed: the walk then ends and the
    fault is reported. A static program has no DT_DEBUG and reads only
    its own table.
-7. **The personality's name**: the unwind tables still name
-   xo_personality. With no C library the link defines it as the export
-   (--defsym, as in stage 1). With glibc and on macOS it is a 3 line C
-   forwarder to `xo_x_personality`, kept until the emitters name the
-   export and a seed has them (seed 0.11.0's link has no --defsym for
-   C library builds).
+7. **The personality's name**: since 2026-10-14 (after stage 3's
+   merge) the emitters name the export `xo_x_personality` in the unwind
+   tables (selfhost/arm64 emit.xo personality_name, selfhost/llvm gen.xo
+   personality), except on Windows (the C handler of decision 0197) and
+   linux/amd64 (libgcc and the C personality until stage 2), which keep
+   xo_personality. Code from an older xo (seed 0.11.0 builds the next xo
+   with it) still names xo_personality. With no C library the link
+   defines that as the export (--defsym, as in stage 1); with glibc and
+   on macOS it is a 3 line C forwarder to the export. So fault_raise
+   passes both addresses (unwind_fault's pers and pers_old), and the
+   walker enters frames of either. Once a seed's emitters name the
+   export, the forwarder and pers_old go.
 8. **macOS keeps libunwind** (decision 0195: a platform library; it
    reads the compact unwind of `__unwind_info`, which unwind.xo does
    not). The personality routine is Xo (unwind.xo darwin_personality:

@@ -450,16 +450,17 @@ fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) { pool.scope_join(pl, s,
 // ---------------------------------------------------------------------------
 // Fault unwinding (decision 0221): xo_rt.c's fault_raise calls
 // unwind_fault on Linux; on macOS libunwind's forced unwind calls
-// xo_personality, which the unwind tables of generated code name, and
-// it calls personality. With no C
-// library the link defines xo_personality as personality's export
-// (selfhost/xo link.xo sys_link_args).
+// personality's export, which the unwind tables of generated code name
+// (xo_x_personality; its C forwarder xo_personality in code from an
+// older xo). With no C library the link defines xo_personality as the
+// export (selfhost/xo link.xo sys_link_args).
 
 /// The forced unwind of a fault on Linux (std/native/llrt/unwind.xo
 /// raise): runs the first landing pad below the boundary in a frame whose
-/// personality routine is pers (xo_personality's address) and never
+/// personality routine is pers (xo_x_personality's address) or pers_old
+/// (xo_personality's, the name an older xo's emitters write) and never
 /// returns then; 0 when nothing catches the fault.
-fn unwind_fault(exc: Int, boundary: Int, pers: Int) -> Int { unwind.raise(exc, boundary, pers) }
+fn unwind_fault(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int { unwind.raise(exc, boundary, pers, pers_old) }
 
 /// The personality routine of generated code (unwind.xo
 /// darwin_personality; on Linux unwind_fault reads the call site tables
