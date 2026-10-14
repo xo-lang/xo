@@ -459,23 +459,8 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 		return "", err
 	}
 	fmt.Fprintf(log, "xotool: building the %s seed in %s\n", SeedTag, tree)
-	arch := exec.Command("git", "-C", root, "archive", "--format=tar", commit)
-	untar := exec.Command("tar", "-x", "-f", "-", "-C", tree)
-	pipe, err := arch.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	untar.Stdin = pipe
-	var e1, e2 bytes.Buffer
-	arch.Stderr, untar.Stderr = &e1, &e2
-	if err := untar.Start(); err != nil {
-		return "", err
-	}
-	if err := arch.Run(); err != nil {
-		return "", fmt.Errorf("git archive %s: %v %s", SeedTag, err, e1.String())
-	}
-	if err := untar.Wait(); err != nil {
-		return "", fmt.Errorf("tar: %v %s", err, e2.String())
+	if err := archiveTree(root, commit, tree); err != nil {
+		return "", fmt.Errorf("%s: %v", SeedTag, err)
 	}
 	goXo := filepath.Join(dir, "goxo")
 	if out, err := runIn(tree, nil, "go", "build", "-o", goXo, "./cmd/xo"); err != nil {

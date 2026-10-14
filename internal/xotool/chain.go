@@ -1,6 +1,7 @@
 package xotool
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"fmt"
@@ -133,28 +134,92 @@ func orSelf(a, b string) string {
 	return a
 }
 
-// archiveTree writes commit's tree (git archive) into dir.
+// archiveTree writes commit's tree (git archive) into dir. The tar stream
+// is unpacked here (archive/tar), not by an external tar: on Windows the
+// Git Bash tar misreads a C:\ path for -C and exits, and with the pipe's
+// read end still held by this process git then blocks writing forever
+// (gotchas/xotool-tar-pipe-windows.md).
 func archiveTree(root, commit, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	arch := exec.Command("git", "-C", root, "archive", "--format=tar", commit)
-	untar := exec.Command("tar", "-x", "-f", "-", "-C", dir)
-	pipe, err := arch.StdoutPipe()
+	var e1 bytes.Buffer
+	arch.Stderr = &e1
+	out, err := arch.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	untar.Stdin = pipe
-	var e1, e2 bytes.Buffer
-	arch.Stderr, untar.Stderr = &e1, &e2
-	if err := untar.Start(); err != nil {
+	if err := arch.Start(); err != nil {
 		return err
 	}
-	if err := arch.Run(); err != nil {
-		return fmt.Errorf("git archive %s: %v %s", commit, err, e1.String())
+	uerr := untarTo(out, dir)
+	// drain what is left so git can exit, then wait for it
+	io.Copy(io.Discard, out)
+	werr := arch.Wait()
+	if werr != nil {
+		return fmt.Errorf("git archive %s: %v %s", commit, werr, e1.String())
 	}
-	if err := untar.Wait(); err != nil {
-		return fmt.Errorf("tar: %v %s", err, e2.String())
+	if uerr != nil {
+		return fmt.Errorf("unpacking git archive %s: %v", commit, uerr)
 	}
 	return nil
+}
+
+// untarTo unpacks a tar stream into dir: directories, regular files (with
+// their executable bits), and symbolic links (copied as files where the OS
+// refuses links). Paths that leave dir are rejected.
+func untarTo(r io.Reader, dir string) error {
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := filepath.FromSlash(h.Name)
+		if !filepath.IsLocal(name) {
+			return fmt.Errorf("unsafe path %q", h.Name)
+		}
+		path := filepath.Join(dir, name)
+		switch h.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(h.Mode)&0o777|0o600)
+			if err != nil {
+				return err
+			}
+			_, cerr := io.Copy(f, tr)
+			if err := f.Close(); cerr == nil {
+				cerr = err
+			}
+			if cerr != nil {
+				return cerr
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(h.Linkname, path); err != nil {
+				// no symlink permission (Windows): keep a copy if the
+				// target is a file already unpacked, else skip it
+				target := filepath.Join(filepath.Dir(path), filepath.FromSlash(h.Linkname))
+				if b, rerr := os.ReadFile(target); rerr == nil {
+					if err := os.WriteFile(path, b, 0o644); err != nil {
+						return err
+					}
+				}
+			}
+		case tar.TypeXGlobalHeader:
+			// git archive's commit id comment
+		}
+	}
 }
