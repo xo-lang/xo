@@ -14,6 +14,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the assemble phase drops from about 6 s to 1.5 s on the Mac, and the
   binary is the same as without the cache
   (bench/results/fast-builds-2026-10-13.md).
+- Native runtime (zero-C audit item B09, decision 0222): a value barrier
+  for constant time runtime code (`rt.ct_barrier`, internal: no
+  instruction on arm64, an empty asm on LLVM) and constant time masks in
+  std/native/llrt/ct.xo; `crypto.equal`, verify_password's comparison,
+  and Ed25519 (std/native/llrt/ed25519.xo) are Xo, the same results, the
+  C deleted (std/llrt/xo_crypto.c 540 lines to 16). Ed25519 takes 0.944
+  to 0.971 of the C's instructions on arm64 and 0.757 to 0.768 on LLVM
+  (bench/results/ed25519-consttime-2026-10-14.md) and now builds for
+  wasm too. `xo dev codegen` patterns can
+  name another module's function with a `// func MOD.NAME` line
+  (test/codegen/consttime). Tests: internal/llvm TestConstantTimeLLVM
+  (clang -O2 keeps the barriers; no branch or select in the masks) and
+  TestCryptoXoDiff (crypto.equal and Ed25519 against Go on both native
+  backends).
 - Runtime process globals (zero-C work item B02, decision 0207): an
   internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
   LLVM, and wasm emitters; std/log's state (log.configure's level,
