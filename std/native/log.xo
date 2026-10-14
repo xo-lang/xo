@@ -3,9 +3,9 @@
 // key=value fields; JSON: an object with sorted keys).
 use std/log
 use native/llrt/logstate
+use native/llrt/testworld
 use native/rt
 use native/rtjson
-use native/rttest
 
 // Each takes the dependency that calls it (decision 0173) at entry: the
 // code generator sets it just before a dependency's call.
@@ -41,7 +41,7 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
     return
   }
   let line = format(level, msg, fields, from)
-  if rttest.test_on() {
+  if testworld.on() {
     // a test keeps its records (testing.logs, decision 0083); without a
     // configured output the line goes to the test's buffer (printed when
     // the test fails), with one to the fake standard error (std/rt's
@@ -53,10 +53,10 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
       vals.push(rt.dyn_text(v))
     }
     if !logstate.configured() {
-      rttest.test_log(level, msg, from, keys, vals, line)
+      testworld.log(level, msg, from, keys, vals, line)
       return
     }
-    rttest.test_log(level, msg, from, keys, vals, "")
+    testworld.log(level, msg, from, keys, vals, "")
   }
   // the native backends' SSA builders call std/native/llrt/stdio.xo for
   // it (the native prelude's llrt_eprintln, work item B03)

@@ -16,6 +16,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0.883 to 1.021 of the C's instructions on arm64 and LLVM, the self
   build 1.000 (bench/results/string-list-objects-2026-10-14.md). The
   string objects stay C.
+- Native runtime (zero-C audit item B14): the test world's part 1 is
+  Xo (std/native/llrt/testworld.xo): `xo test --real`'s switches, seeded
+  Rand, the generators of property tests and testing.gen, captured
+  output, FakeEnv, FakeProc.exit_code and on_run, FakeStdio.set_input,
+  log records, FakeNet's handlers, failures, and requests, MemFs, and
+  the cleanup; std/llrt loses 916 lines and gains 87. Test reports are
+  unchanged (TestNoGCTests, TestNoGCTestLeaks on both native backends);
+  instructions in bench/results/test-world-2026-10-14.md (every test within
+  5 percent of the C, rand 1.006 and gen 0.924 on arm64). The virtual
+  clock, in memory listeners, and testing.run_main stay C (B15).
+- Compiler: a constant Int expression (`const MIN_INT: Int =
+  -9223372036854775807 - 1`, `5 - 1`) is one constant at every use, not
+  its operations; testing.gen's generators no longer record their
+  choices (only property tests report them).
 - arm64 backend (decision 0224): shrink wrapping and tail calls. A
   function makes its frame (frame record, callee saved registers) only
   on the paths that need it, and a call whose results are returned as

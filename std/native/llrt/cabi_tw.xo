@@ -1,0 +1,59 @@
+// The C ABI exports of the test world (decisions 0204, 0207; the zero-C
+// audit's B14): like cabi.xo, every top level function here is called
+// by the C runtime as xo_x_<name>. The SSA builders build them in test
+// binaries only (selfhost/ssa build.xo declare_exports); the C calls
+// them only in the test world (tw.on), and has weak definitions for the
+// programs without them (std/llrt/xo_testing.c). The state is
+// testworld.xo's. A list result is its list object's address, counted
+// once for the C caller.
+use native/llrt/testworld
+use native/rt
+
+/// Records the start's variable k (testworld.V_*): the n bytes at p, or
+/// unset when n < 0.
+fn tw_setenv(k: Int, p: Int, n: Int) { testworld.setenv(k, p, n) }
+
+/// Starts the test world; the effects `xo test --real` makes real
+/// (xo_rt.c TW_REAL_* bits).
+fn tw_init() -> Int { testworld.init() }
+
+/// Captures the n bytes at p written to standard output (err 0) or
+/// standard error.
+fn tw_write(err: Int, p: Int, n: Int) { testworld.write_raw(err != 0, p, n) }
+
+/// FakeEnv's env.get of the name of the n bytes at p (a list of one or
+/// none).
+fn tw_env_get(p: Int, n: Int) -> Int { testworld.hand(testworld.env_get_raw(p, n)) }
+
+/// FakeEnv.vars().
+fn tw_env_vars() -> Int { testworld.hand(testworld.env_vars()) }
+
+/// FakeEnv's env.args().
+fn tw_env_args() -> Int { testworld.hand(testworld.args()) }
+
+/// FakeEnv.set_args of the List[Str] at l (testing.run_main's args).
+fn tw_set_args(l: Int) { testworld.set_args(rt.obj_at[List[Str]](l)) }
+
+/// Records os.proc.exit's code.
+fn tw_set_exit(code: Int) { testworld.set_exit(code) }
+
+/// The code os.proc.exit recorded.
+fn tw_exit_value() -> Int { testworld.exit_value() }
+
+/// The values the test world keeps, at the end of the test: a malloc'd
+/// block of their count and addresses, for the C to release and free.
+fn tw_cleanup() -> Int { testworld.cleanup() }
+
+/// A read of FakeStdio's standard input (testworld.stdin_read's mode and
+/// max): the string object, counted once for the C caller; its length
+/// and xo_stdin_status's status at out (two words).
+fn tw_stdin_read(mode: Int, max: Int, out: Int) -> Int {
+  let (s, st) = testworld.stdin_read(mode, max)
+  rt.mem_store(out, 0, s.len(), 8)
+  rt.mem_store(out, 8, st, 8)
+  testworld.hand_str(s)
+}
+
+/// FakeProc.on_run's entry for the command of the n bytes at p, or 0
+/// (kept until the test ends).
+fn tw_proc_find(p: Int, n: Int) -> Int { testworld.proc_find_raw(p, n) }

@@ -10,24 +10,25 @@ use std/path
 use std/sql
 use std/testing
 use native/llrt/glob
+use native/llrt/testworld
 use native/rt
 use native/rttest
 
 /// The records logged so far in this test, oldest first (std.md 8.6).
 fn logs() -> List[log.Record] {
   var out: List[log.Record] = []
-  for i in 0..rttest.test_log_count() {
+  for i in 0..testworld.log_count() {
     var fields: Map[Str, Str] = {}
-    for j in 0..rttest.test_log_nfields(i) {
-      fields.put(rttest.test_log_key(i, j), rttest.test_log_val(i, j))
+    for j in 0..testworld.log_nfields(i) {
+      fields.put(testworld.log_key(i, j), testworld.log_val(i, j))
     }
-    let level = match rttest.test_log_level(i) {
+    let level = match testworld.log_level(i) {
       1 => log.Level.Debug
       2 => log.Level.Info
       3 => log.Level.Warn
       _ => log.Level.Error
     }
-    out.push(log.Record{level: level, msg: rttest.test_log_msg(i), fields: fields, module: rttest.test_log_module(i)})
+    out.push(log.Record{level: level, msg: testworld.log_msg(i), fields: fields, module: testworld.log_module(i)})
   }
   out
 }
@@ -68,25 +69,25 @@ fn split_fake(pattern: Str) -> (Str, Str, Str) {
 
 fn fakenet_handle(n: testing.FakeNet, pattern: Str, h: fn(http.Request) -> http.Response) {
   let (method, prefix, path) = split_fake(pattern)
-  rttest.test_fake_handle(method, prefix, path, rt.any_of(h))
+  testworld.fake_handle(method, prefix, path, rt.any_of(h))
 }
 
 fn fakenet_fail(n: testing.FakeNet, pattern: Str, err: http.ClientErr) {
   let (method, prefix, path) = split_fake(pattern)
-  rttest.test_fake_fail(method, prefix, path, rt.any_of(err), false)
+  testworld.fake_fail(method, prefix, path, rt.any_of(err), false)
 }
 
 fn fakenet_fail_next(n: testing.FakeNet, pattern: Str, err: http.ClientErr) {
   let (method, prefix, path) = split_fake(pattern)
-  rttest.test_fake_fail(method, prefix, path, rt.any_of(err), true)
+  testworld.fake_fail(method, prefix, path, rt.any_of(err), true)
 }
 
-fn fakenet_clear_failures(n: testing.FakeNet) { rttest.test_fake_clear() }
+fn fakenet_clear_failures(n: testing.FakeNet) { testworld.fake_clear() }
 
 fn fakenet_requests(n: testing.FakeNet) -> List[http.Request] {
   var out: List[http.Request] = []
-  for i in 0..rttest.test_req_count() {
-    if let Some(r) = rt.any_get[http.Request](rttest.test_req_get(i)) {
+  for i in 0..testworld.req_count() {
+    if let Some(r) = rt.any_get[http.Request](testworld.req_get(i)) {
       out.push(r)
     }
   }
@@ -122,7 +123,7 @@ struct MemState {
 }
 
 fn memfs_load() -> MemState {
-  let l = rttest.test_memfs_take()
+  let l = testworld.memfs_take()
   if let Some(a) = l.get(0) {
     if let Some(st) = rt.any_get[MemState](a) {
       return st
@@ -133,7 +134,7 @@ fn memfs_load() -> MemState {
   MemState{nodes: nodes, case_sensitive: true, fails: [], temp_seq: 0}
 }
 
-fn memfs_store(st: MemState) { rttest.test_memfs_put(rt.any_of(st)) }
+fn memfs_store(st: MemState) { testworld.memfs_put(rt.any_of(st)) }
 
 fn memfs_key(st: MemState, p: Str) -> Str {
   if st.case_sensitive {

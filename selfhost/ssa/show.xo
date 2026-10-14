@@ -648,6 +648,13 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     ConstDecl(d) => d.value
     _ => fault("not a constant")
   }
+  if t == b.int_t() {
+    // a constant Int expression is one constant, not its operations at
+    // every use (MIN_INT = -9223372036854775807 - 1)
+    if let Some(n) = b.c.const_int(f, value, 0) {
+      return b.add(Op.Const, t, Aux.I(n: n), [])
+    }
+  }
   if !b.m.heap(t) || b.tkind(t) == Kind.Str {
     return b.foreign_value(value, f, t)
   }

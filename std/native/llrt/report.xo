@@ -6,13 +6,13 @@
 // line with the generator's choices, an `XO-PROP-INPUT name = value` line
 // per input, and while shrinking `XO-PROP-NOT-SMALLER` (exit 3) for a
 // case whose choices are not shortlex smaller than the best so far
-// (XO_PROP_BEST), which std/rt skips. The C runtime keeps the generator,
-// the write, and the exit (rttest.gen_choices, test_write, prop_best,
-// test_quit). The failure and log lines (XO-TEST-FAIL, XO-TEST-LOG) stay
-// C: they frame text the generated code made and decide nothing.
+// (XO_PROP_BEST), which std/rt skips. The generator and XO_PROP_BEST are
+// testworld.xo's; the C runtime keeps the write on the real standard
+// output and the exit (rttest.test_write, test_quit).
 // Decision 0198 deleted the C path (`XO_LLRT_C=report`).
 use native/llrt/scan
 use native/llrt/show
+use native/llrt/testworld
 use native/rt
 use native/rttest
 
@@ -22,7 +22,7 @@ const MIN_INT: Int = -9223372036854775807 - 1
 /// value` lines) of a property test's case to the harness; exits 3 when
 /// shrinking and the choices are not smaller than the best so far.
 pub fn prop_report(g: Int, input: Str) {
-  let rec = rttest.gen_choices(g)
+  let rec = testworld.gen_choices(g)
   var o = rt.rs_append(rt.rs_with_cap(32 + 20 * rec.len() + input.len()), "XO-PROP-CHOICES ")
   var i = 0
   while i < rec.len() {
@@ -47,55 +47,11 @@ pub fn prop_report(g: Int, input: Str) {
     start = end + 1
   }
   rttest.test_write(o)
-  let best = rttest.prop_best()
-  if best.len() > 0 && !shorter(rec, choices(best[0])) {
+  let best = testworld.prop_best()
+  if best.len() > 0 && !shorter(rec, testworld.choices(best[0])) {
     rttest.test_write("XO-PROP-NOT-SMALLER\n")
     rttest.test_quit(3)
   }
-}
-
-/// The choices of the text "c1,c2,..." (decimal, as strtoull reads
-/// each: leading white space, a sign, at most 2^64 - 1), up to the first
-/// that is not a number.
-fn choices(s: Str) -> List[Int] {
-  let b = s.bytes()
-  let n = b.len()
-  var out: List[Int] = []
-  var i = 0
-  while i < n {
-    var j = i
-    while j < n && (b[j] == 32 || (b[j] >= 9 && b[j] <= 13)) {
-      j += 1
-    }
-    var neg = false
-    if j < n && (b[j] == 43 || b[j] == 45) {
-      neg = b[j] == 45
-      j += 1
-    }
-    let d0 = j
-    var v = 0
-    var over = false
-    while j < n && b[j] >= 48 && b[j] <= 57 {
-      let c = Int(b[j]) - 48
-      // v * 10 + c above 2^64 - 1 saturates (unsigned compares)
-      if ult(1844674407370955161, v) || (v == 1844674407370955161 && c > 5) {
-        over = true
-      }
-      v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c)
-      j += 1
-    }
-    if j == d0 {
-      break
-    }
-    if over {
-      v = -1
-    } else if neg {
-      v = rt.int_wrap(1, 0, v)
-    }
-    out.push(v)
-    i = if j < n && b[j] == 44 { j + 1 } else { j }
-  }
-  out
 }
 
 /// a < b as UInt64s.

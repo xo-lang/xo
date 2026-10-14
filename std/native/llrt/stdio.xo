@@ -22,6 +22,7 @@ use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/pool
 use native/llrt/raw
+use native/llrt/testworld
 use native/llrt/windows
 use native/rt
 
@@ -66,7 +67,7 @@ fn mode(w: Int) -> Int {
   }
   // before the first print, while one thread runs, or from several
   // threads that all store the same answer
-  let k = m | ASKED | (if rt.tw_fake(TW_STDIO) { FAKE } else { 0 })
+  let k = m | ASKED | (if testworld.fake(TW_STDIO) { FAKE } else { 0 })
   rt.mem_store(w, MODE, k, 8)
   k
 }
@@ -153,9 +154,9 @@ fn put_locked(w: Int, p: Int, n: Int) {
 /// fake (m is the mode).
 fn out_slow(w: Int, m: Int, p: Int, n: Int, nl: Bool) {
   if m & FAKE != 0 {
-    rt.tw_write(0, p, n)
+    testworld.write_raw(false, p, n)
     if nl {
-      rt.tw_write(0, raw.data("\n"), 1)
+      testworld.write_raw(false, raw.data("\n"), 1)
     }
     return
   }
@@ -196,9 +197,9 @@ pub fn err(p: Int, n: Int, nl: Bool) {
   let w = rt.static_word(WORDS)
   let m = mode(w)
   if m & FAKE != 0 {
-    rt.tw_write(1, p, n)
+    testworld.write_raw(true, p, n)
     if nl {
-      rt.tw_write(1, raw.data("\n"), 1)
+      testworld.write_raw(true, raw.data("\n"), 1)
     }
     return
   }

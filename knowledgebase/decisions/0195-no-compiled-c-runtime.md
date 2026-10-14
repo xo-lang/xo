@@ -25,7 +25,9 @@ measured in Xo and kept C: arm64 1.27 times the C on bench/perf/alloc
 small without shrink wrapping; `bench/results/string-list-objects-2026-10-14.md`).
 Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
-`bench/results/http-writer-2026-10-14.md`). Work item B16 part 1
+`bench/results/http-writer-2026-10-14.md`). Work item B14 done 2026-10-14 (the test world's part 1 in
+Xo, std/native/llrt/testworld.xo; 916 runtime C lines deleted, 87
+added; `bench/results/test-world-2026-10-14.md`). Work item B16 part 1
 done 2026-10-14 (the Fs operations past read, write, and stat in Xo
 on Linux and darwin/arm64, std/native/llrt/fsops.xo, with the flock
 wait through `rt.clock_sleep_or_cancel`; 0.683 to 1.003 of the C's

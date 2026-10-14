@@ -1,0 +1,61 @@
+// The test world of native test binaries (decision 0083), part 1, which
+// the zero-C audit's B14 moved from std/llrt/xo_testing.c to
+// std/native/llrt/testworld.xo: each test leans on one part (captured
+// output, FakeEnv, seeded Rand, log records, the generators, MemFs);
+// "none" is the setup to subtract. measure.sh runs each test of the
+// binary itself and counts its instructions.
+use std/log
+
+test "none" {
+  expect(1 + 1) == 2
+}
+
+test "stdio" {
+  for i in 0..200000 {
+    os.stdio.println("line ${i}")
+  }
+  expect(os.stdio.output().len() > 0)
+}
+
+test "env" {
+  for i in 0..2000 {
+    os.env.set("K${i}", "v${i}")
+  }
+  var n = 0
+  for i in 0..100000 {
+    if os.env.get("K${i % 2000}") != None {
+      n += 1
+    }
+  }
+  expect(n) == 100000
+}
+
+test "rand" {
+  var s = 0
+  for _ in 0..300000 {
+    s += os.rand.int(0, 1000)
+  }
+  expect(s > 0)
+}
+
+test "log" {
+  for i in 0..20000 {
+    log.info("event", {"i": i})
+  }
+  expect(testing.logs().len()) == 20000
+}
+
+test "gen" {
+  var n = 0
+  for i in 0..20000 {
+    n += testing.gen[List[Str]](i).len()
+  }
+  expect(n >= 0)
+}
+
+test "memfs" {
+  for i in 0..3000 {
+    os.fs.write("d/f${i % 50}.txt", "x${i}".bytes())?
+    expect(os.fs.read_text("d/f${i % 50}.txt")?) == "x${i}"
+  }
+}

@@ -7,9 +7,9 @@
 // here.
 use std/time
 use native/llrt/cabi_time
+use native/llrt/testworld
 use native/llrt/tz
 use native/rt
-use native/rttest
 
 // ---------------------------------------------------------------------------
 // Zones (std.md 13.1)
@@ -87,7 +87,7 @@ fn local(env: Env) -> Zone ! time.ZoneErr uses env {
       }
     }
     None => {
-      if rttest.test_fake(16) {
+      if testworld.fake(16) {
         // a test's Env is a fake one: without TZ it gives UTC
         return Ok(utc())
       }

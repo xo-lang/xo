@@ -81,7 +81,7 @@ fn (var b: Builder) build_tests() {
     file = decls[0].file
   }
   let saved = b.begin(fi, file)
-  let idx = b.rt("test_index", it, [])
+  let idx = b.tw_rt("test_index", it, [])
   for t in tests {
     let tr = decls[t.i]
     b.s.file = tr.file
@@ -116,7 +116,7 @@ fn (var b: Builder) build_tests() {
         let (no2, join2) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ei)]))
         let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
         let msg = b.append_display(b.const_str("error: "), e, err_ct)
-        b.rt("test_fail", -1, [msg])
+        b.tw_rt("test_fail", -1, [msg])
         b.add(Op.Unreachable, -1, Aux.None, [])
         b.dead()
         b.if_then_end(no2, join2)
@@ -125,7 +125,7 @@ fn (var b: Builder) build_tests() {
     }
     b.if_then_end(no, join)
   }
-  b.rt("test_fail", -1, [b.const_str("no test with this index")])
+  b.tw_rt("test_fail", -1, [b.const_str("no test with this index")])
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.dead()
   b.finish_fn()
@@ -221,7 +221,7 @@ fn (var b: Builder) root_scope_end(h: Int, sc: Int, sites: List[SpawnSite], mode
 
 /// Fails the test with msg; it does not return (testFail).
 fn (var b: Builder) test_fail(msg: Int) {
-  b.rt("test_fail", -1, [msg])
+  b.tw_rt("test_fail", -1, [msg])
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.dead()
 }
@@ -318,9 +318,9 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.call(key, b.unit_t(), "", [r, a]))
     }
     "Stdio.set_input" | "Stdio.set_input_bytes" => {
-      // reads take the text (std/llrt/xo_stdin.c)
+      // reads take the text (std/native/llrt/testworld.xo)
       b.expr(ci.recv[0])
-      b.rt("tw_set_input", -1, [b.tc_arg(es, 0, st)])
+      b.tw_rt("tw_set_input", -1, [b.tc_arg(es, 0, st)])
       return Some(b.unit())
     }
     "Stdio.set_tty" => {
@@ -329,8 +329,8 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       b.rt("tw_set_tty", -1, [b.tc_arg(es, 0, b.int_t())])
       return Some(b.unit())
     }
-    "Stdio.output" => return Some(b.rt("test_output", st, [b.cint(1)]))
-    "Stdio.errors" => return Some(b.rt("test_output", st, [b.cint(2)]))
+    "Stdio.output" => return Some(b.tw_rt("test_output", st, [b.cint(1)]))
+    "Stdio.errors" => return Some(b.tw_rt("test_output", st, [b.cint(2)]))
     "Clock.advance" => {
       b.need_conc = true
       if !b.conc {
@@ -347,11 +347,11 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Env.set" => {
       let k = b.tc_arg(es, 0, st)
       let v = b.tc_arg(es, 1, st)
-      b.rt("test_env_set", -1, [k, v])
+      b.tw_rt("test_env_set", -1, [k, v])
       return Some(b.unit())
     }
     "Env.set_args" => {
-      b.rt("test_set_args", -1, [b.tc_arg(es, 0, b.m.list(st))])
+      b.tw_rt("test_set_args", -1, [b.tc_arg(es, 0, b.m.list(st))])
       return Some(b.unit())
     }
     "Env.program" => return Some(b.const_str("test"))
@@ -360,7 +360,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.unit())
     }
     "Proc.exit_code" => {
-      let l = b.rt("test_exit_code", b.m.list(it), [])
+      let l = b.tw_rt("test_exit_code", b.m.list(it), [])
       return Some(b.pop_one(l, nt))
     }
     "Proc.killed" => {
@@ -368,7 +368,8 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.rt("proc_killed", b.m.list(st), []))
     }
     "Proc.on_run" => {
-      // the outputs a later run of the command gives (std/llrt/xo_proc.c)
+      // the outputs a later run of the command gives
+      // (std/native/llrt/testworld.xo)
       b.expr(ci.recv[0])
       let cmd = b.tc_arg(es, 0, st)
       let out = b.expr(es[1] ?? fault("on_run"))
@@ -380,7 +381,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       let f0 = b.add(Op.Field, b.m.types[ot].fields[0].ty, Aux.I(n: 0), [out])
       let f1 = b.add(Op.Field, b.m.types[ot].fields[1].ty, Aux.I(n: 1), [out])
       let f2 = b.add(Op.Field, b.m.types[ot].fields[2].ty, Aux.I(n: 2), [out])
-      b.rt("proc_on_run", -1, [cmd, f0, f1, f2])
+      b.tw_rt("proc_on_run", -1, [cmd, f0, f1, f2])
       return Some(b.unit())
     }
     _ => {}
@@ -457,10 +458,10 @@ fn (var b: Builder) testing_gen(x: Expr, ci: check.CallInfo) -> Int {
       return b.undef(t)
     }
   }
-  let g = b.rt("gen_new", it, [b.value_as(e0, it)])
+  let g = b.tw_rt("gen_new", it, [b.value_as(e0, it)])
   let f = b.gen_value_func(b.nat_check(x))
   let v = b.call(f, t, "", [g])
-  b.rt("gen_free", -1, [g])
+  b.tw_rt("gen_free", -1, [g])
   v
 }
 
@@ -470,7 +471,7 @@ fn (var b: Builder) testing_gen(x: Expr, ci: check.CallInfo) -> Int {
 fn (var b: Builder) prop_inputs(params: List[Int]) -> List[Int] {
   let st = b.str_t()
   let it = b.int_t()
-  let g = b.rt("gen_prop", it, [])
+  let g = b.tw_rt("gen_prop", it, [])
   var vals: List[Int] = []
   for vo in params {
     let ct = b.c.objs[vo].ty
@@ -555,7 +556,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
     let e = b.add(Op.Payload, b.m.types[ret].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
     let msg = b.append_display(b.const_str("error: "), e, b.prelude_type("Error", []))
     let line = b.call("str.concat", st, "", [msg, b.const_str("\n")])
-    b.rt("test_eprint", -1, [line])
+    b.tw_rt("test_eprint", -1, [line])
     b.jump(join, [b.cint(1)])
     b.s.cur = no
     b.jump(join, [b.cint(0)])
@@ -611,8 +612,22 @@ fn (var b: Builder) gen_rt(name: Str, t: Int, args: List[Int]) -> Int {
   v
 }
 
+/// A call of the test world's name (test_index, test_output, gen_new,
+/// ...; t -1 is unit): the native prelude's llrt_<name>
+/// (std/native/llrt/testworld.xo, the zero-C audit's B14), or without
+/// the native prelude the C runtime's rt.<name>, which it no longer has.
+fn (var b: Builder) tw_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    return b.rt(name, t, args)
+  }
+  let f = b.declare(impl, [])
+  let rt = if t < 0 { b.unit_t() } else { b.m.funcs[f].results[0] }
+  b.call(b.m.funcs[f].name, rt, "", args)
+}
+
 fn (var b: Builder) gen_intn(g: Int, n: Int) -> Int {
-  b.rt("gen_intn", b.int_t(), [g, b.cint(n)])
+  b.tw_rt("gen_intn", b.int_t(), [g, b.cint(n)])
 }
 
 fn (var b: Builder) eq_int(v: Int, k: Int) -> Int {
@@ -691,7 +706,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_named(ct, ["List"]) && b.tkind(t) == Kind.List {
-    b.rt("gen_enter", -1, [g])
+    b.tw_rt("gen_enter", -1, [g])
     let cnt = b.gen_rt("gen_size", it, [g])
     let xs = b.local()
     b.write_var(xs, b.call("list.new", t, "", []))
@@ -701,7 +716,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     let e = b.gen_sub(g, args[0], b.m.types[t].elems[0])
     b.write_var(xs, b.call("list.push", t, "", [cur, e]))
     b.for_up_to_end(i, iv, head, exit)
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(b.read(xs))
     return
   }
@@ -709,7 +724,7 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     // a Set is a generated List made a set (std/rt): the same choices as
     // entries put one by one
     let put = b.map_put(t)
-    b.rt("gen_enter", -1, [g])
+    b.tw_rt("gen_enter", -1, [g])
     let cnt = b.gen_rt("gen_size", it, [g])
     let mv = b.local()
     b.write_var(mv, b.empty_map(t))
@@ -723,39 +738,39 @@ fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
     let cur = b.read(mv)
     b.write_var(mv, b.call(put, t, "", [cur, k, v]))
     b.for_up_to_end(i, iv, head, exit)
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(b.read(mv))
     return
   }
   if b.is_prelude_named(ct, ["Option"]) && b.tkind(t) == Kind.Enum {
     let none = b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "None")), [])
-    let (no, join) = b.if_then_begin(b.rt("gen_deep", bt, [g]))
+    let (no, join) = b.if_then_begin(b.tw_rt("gen_deep", bt, [g]))
     b.retv(none)
     b.if_then_end(no, join)
     let (no2, join2) = b.if_then_begin(b.eq_int(b.gen_intn(g, 4), 0))
     b.retv(none)
     b.if_then_end(no2, join2)
-    b.rt("gen_enter", -1, [g])
+    b.tw_rt("gen_enter", -1, [g])
     let si = b.m.variant_index(t, "Some")
     let p = b.gen_sub(g, args[0], b.m.types[t].variants[si].fields[0].ty)
     let v = b.add(Op.Variant, t, Aux.I(n: si), [p])
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(v)
     return
   }
   if b.is_prelude_named(ct, ["Result"]) && b.tkind(t) == Kind.Enum {
     let oi = b.m.variant_index(t, "Ok")
     let ei = b.m.variant_index(t, "Err")
-    b.rt("gen_enter", -1, [g])
+    b.tw_rt("gen_enter", -1, [g])
     let (no, join) = b.if_then_begin(b.eq_int(b.gen_intn(g, 3), 0))
     let ev = b.gen_sub(g, args[1], b.m.types[t].variants[ei].fields[0].ty)
     let v = b.variant(t, "Err", [ev])
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(v)
     b.if_then_end(no, join)
     let ov = b.gen_sub(g, args[0], b.m.types[t].variants[oi].fields[0].ty)
     let v2 = b.add(Op.Variant, t, Aux.I(n: oi), [ov])
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(v2)
     return
   }
@@ -805,7 +820,7 @@ fn (var b: Builder) gen_struct(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, I
   if !b.invariant_of(obj).is_empty() {
     inv = b.invariant_func(ct, obj, t)
   }
-  b.rt("gen_enter", -1, [g])
+  b.tw_rt("gen_enter", -1, [g])
   let iv = b.local()
   let (try, head, exit) = b.for_up_to_begin(b.cint(1001), iv)
   var fs: List[Int] = []
@@ -840,7 +855,7 @@ fn (var b: Builder) gen_struct(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, I
       ok = b.add(Op.Or, bt, Aux.None, [c1, c2])
     }
     let (no, join) = b.if_then_begin(ok)
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(v)
     b.if_then_end(no, join)
   }
@@ -860,11 +875,11 @@ fn (var b: Builder) gen_enum(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, Int
       units.push(i)
     }
   }
-  b.rt("gen_enter", -1, [g])
+  b.tw_rt("gen_enter", -1, [g])
   let iv = b.local()
   b.write_var(iv, b.gen_intn(g, variants.len()))
   if !units.is_empty() {
-    let (no, join) = b.if_then_begin(b.rt("gen_deep", b.bool_t(), [g]))
+    let (no, join) = b.if_then_begin(b.tw_rt("gen_deep", b.bool_t(), [g]))
     let k = b.gen_intn(g, units.len())
     b.write_var(iv, b.cint(units[0]))
     var j = 1
@@ -890,7 +905,7 @@ fn (var b: Builder) gen_enum(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, Int
       vargs.push(b.gen_sub(g, b.c.subst(f.ty, sb), b.m.types[t].variants[vi].fields[fi].ty))
     }
     let v = b.add(Op.Variant, t, Aux.I(n: vi), vargs)
-    b.rt("gen_leave", -1, [g])
+    b.tw_rt("gen_leave", -1, [g])
     b.retv(v)
     b.if_then_end(no, join)
   }
@@ -927,7 +942,7 @@ fn (var b: Builder) test_fs_body(memfs: Int, real: Int) {
   for p in b.s.f.blocks[0].params {
     args.push(p)
   }
-  let mode = b.rt("test_fs_real", it, [])
+  let mode = b.tw_rt("test_fs_real", it, [])
   let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [mode, b.cint(0)]))
   var as_ = args
   if !as_.is_empty() && b.is_fs(b.vty(as_[0])) {

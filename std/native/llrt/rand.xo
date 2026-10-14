@@ -3,13 +3,14 @@
 // operating system's generator, as Go's crypto/rand (getrandom on Linux,
 // getentropy on macOS, BCryptGenRandom on Windows, through linux.xo,
 // darwin.xo, windows.xo), or in a test binary the test world's seeded
-// generator (std/rt's seededRand: the C runtime's PCG, tw_rand_u64,
-// whose state the test world owns). The SSA builders call these as the
+// generator (std/rt's seededRand: testworld.xo's PCG, the zero-C
+// audit's B14). The SSA builders call these as the
 // native prelude's llrt_rand_*; a WASI module keeps the wasm runtime's
 // rand (selfhost/wasm/rt2.xo).
 use native/llrt/darwin
 use native/llrt/ints
 use native/llrt/linux
+use native/llrt/testworld
 use native/llrt/windows
 use native/rt
 
@@ -48,8 +49,8 @@ fn entropy(n: Int) -> Bytes {
 /// A random word: the test world's seeded generator in a test binary,
 /// else 8 bytes of the system's, the first lowest.
 pub fn next_u64() -> Int {
-  if rt.tw_seeded() {
-    return rt.tw_rand_u64()
+  if testworld.seeded() {
+    return testworld.rand_u64()
   }
   rt.bytes_word(entropy(8), 0)
 }
@@ -58,12 +59,12 @@ pub fn next_u64() -> Int {
 /// per byte (its low byte), as std/rt's seededRand.M_bytes.
 pub fn next_bytes(n0: Int) -> Bytes {
   let n = if n0 < 0 { 0 } else { n0 }
-  if !rt.tw_seeded() {
+  if !testworld.seeded() {
     return entropy(n)
   }
   var s = rt.rs_with_cap(n)
   for _ in 0..n {
-    s = rt.rs_push_byte(s, rt.tw_rand_u64() & 0xFF)
+    s = rt.rs_push_byte(s, testworld.rand_u64() & 0xFF)
   }
   s.bytes()
 }
@@ -77,15 +78,29 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
   // above limit are rejected
   let span = rt.int_wrap(1, hi, lo)
-  let limit = rt.int_wrap(1, -1, ints.u64_rem(-1, span))
+  let limit = rt.int_wrap(1, -1, max_rem(span))
   let flip = -9223372036854775807 - 1
   while true {
     let v = next_u64()
     if (v ^ flip) < (limit ^ flip) {
-      return rt.int_wrap(0, lo, ints.u64_rem(v, span))
+      // both below 2^63 (the common case): the signed remainder, inline
+      let r = if v >= 0 && span > 0 { v % span } else { ints.u64_rem(v, span) }
+      return rt.int_wrap(0, lo, r)
     }
   }
   0
+}
+
+/// 2^64 - 1 mod span as UInt64s. For 0 < span <= 2^62 (every range
+/// that fits in an Int's half) without the unsigned division:
+/// 2^64 - 1 = 2 (2^63 - 1) + 1, so it is 2 m + 1, less span when that
+/// reaches it, where m = (2^63 - 1) mod span.
+fn max_rem(span: Int) -> Int {
+  if span > 0 && span <= 4611686018427387904 {
+    let r = rt.int_wrap(0, rt.int_wrap(2, 9223372036854775807 % span, 2), 1)
+    return if r >= span { r - span } else { r }
+  }
+  ints.u64_rem(-1, span)
 }
 
 /// `rand.float()`: uniform in [0, 1) with 53 bits.

@@ -9,15 +9,15 @@
 //     blocked (the deadlock check, xo_rt.c), tw_kick moves the clock to
 //     the earliest timer and fires every timer due then. With no timer
 //     left the test deadlocked (XO-F001).
-//   - Rand is seeded (Go's math/rand/v2 PCG with the seeds std/rt uses),
-//     the environment starts empty, standard output and error are
-//     captured (FakeStdio.output, errors), the file system is empty, log
-//     records are kept for testing.logs() and echoed to the harness.
+//   - Rand is seeded, the environment starts empty, standard output and
+//     error are captured, the file system is empty, log records are kept
+//     for testing.logs() and echoed to the harness, FakeNet's handlers
+//     and failures are kept: that is std/native/llrt/testworld.xo (the
+//     zero-C audit's B14), which the C reaches through cabi_tw.xo's
+//     exports (xo_x_tw_*).
 //   - FakeNet.listen gives an in memory listener; http.server serves it
 //     by registering its router here, and the http client of the test
-//     reaches a served router in process (std/native/http.xo). Handlers
-//     and failures registered with FakeNet.handle and fail are kept here
-//     too.
+//     reaches a served router in process (std/native/http.xo).
 //   - testing.run_main runs main below a node of its own: the stop state
 //     of xo_rt.c (two phase shutdown) is reset for it, its root is that
 //     node, and the signals of FakeProc.signal_after are virtual timers.
@@ -29,14 +29,6 @@
 // Static helpers are prefixed tw_ (gotchas/llrt-static-names-in-tests.md).
 
 #define TW_EPOCH ((int64_t)1767225600 * 1000000000) // 2026-01-01T00:00:00Z
-
-typedef struct {
-	int64_t level;
-	char *msg;
-	char *module; // the dependency that wrote it (decision 0173), "" for the main module
-	int nf;
-	char **keys, **vals;
-} tw_rec;
 
 // an in memory listener
 typedef struct tw_ml {
@@ -53,39 +45,33 @@ typedef struct tw_ml {
 	struct tw_ml *next;
 } tw_ml;
 
-// a handler or a failure of FakeNet
-typedef struct {
-	char *method, *prefix, *path;
-	xo_any *v; // the handler closure, or the ClientErr
-	int once;
-} tw_fake;
-
 static struct {
 	xo_lock mu;
-	char **ekeys, **evals;
-	int en;
-	char **args;
-	int nargs;
-	nbuf out, err;
 	int64_t *sleeps;
 	int nsleeps;
 	int64_t *signals; // signal_after before run_main, from its start
 	int nsignals;
-	uint64_t rng_hi, rng_lo;
-	tw_rec *recs;
-	int nrec;
 	tw_ml *mls;
 	int next_port;
-	tw_fake *handlers, *fails;
-	int nhandlers, nfails;
-	xo_any **reqs;
-	int nreqs;
 	xo_node *outer; // the node run_main restores
 	xo_node *main_node;
-	int64_t exit_code;
-	int has_exit;
 	int exiting; // os.proc.exit unwinds main to testing.run_main
 } tws;
+
+// The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
+// the weak definitions keep other programs linking (they never reach
+// them: the C calls them only in the test world).
+#define TW_WEAK __attribute__((weak))
+TW_WEAK void xo_x_tw_setenv(int64_t k, int64_t p, int64_t n) { (void)k, (void)p, (void)n; }
+TW_WEAK int64_t xo_x_tw_init(void) { return 0; }
+TW_WEAK void xo_x_tw_write(int64_t err, int64_t p, int64_t n) { (void)err, (void)p, (void)n; }
+TW_WEAK int64_t xo_x_tw_env_get(int64_t p, int64_t n) { (void)p, (void)n; return (int64_t)(intptr_t)&empty_list; }
+TW_WEAK int64_t xo_x_tw_env_vars(void) { return (int64_t)(intptr_t)&empty_list; }
+TW_WEAK int64_t xo_x_tw_env_args(void) { return (int64_t)(intptr_t)&empty_list; }
+TW_WEAK void xo_x_tw_set_args(int64_t l) { (void)l; }
+TW_WEAK void xo_x_tw_set_exit(int64_t code) { (void)code; }
+TW_WEAK int64_t xo_x_tw_exit_value(void) { return 0; }
+TW_WEAK int64_t xo_x_tw_cleanup(void) { return 0; }
 
 static void *tw_grow(void *p, int n, size_t size) {
 	// room for element n (doubling at powers of two)
@@ -98,96 +84,35 @@ static void *tw_grow(void *p, int n, size_t size) {
 	return p;
 }
 
-static char *tw_strdup(const char *p, int64_t n) { return cstr_of(p, n); }
-
 __attribute__((unused)) static void tw_init(void) {
-	tw.on = 1;
-	tw.vnow = TW_EPOCH;
+	// the variables testworld.xo reads (its V_*)
+	static const char *const vars[] = {"XO_TEST_REAL", "XO_TEST_SEED", "XO_TEST", "XO_PROP_REPLAY", "XO_PROP_SEED", "XO_PROP_BEST"};
+	for (int k = 0; k < (int)(sizeof vars / sizeof vars[0]); k++) {
+		const char *v = getenv(vars[k]);
+		xo_x_tw_setenv(k, (int64_t)(intptr_t)v, v ? (int64_t)strlen(v) : -1);
+	}
 	// `xo test --real` (decision 0120): the effects the test declares are
 	// real; with `clock`, `net`, or `proc` the clock is the real one (a
 	// socket or child process wait is not a virtual wait, and its
 	// deadlines are real time)
-	const char *real = getenv("XO_TEST_REAL");
-	for (const char *e = real; e && *e;) {
-		const char *end = strchr(e, ',');
-		size_t k = end ? (size_t)(end - e) : strlen(e);
-		static const struct {
-			const char *name;
-			int bits;
-		} eff[] = {
-		    {"fs", TW_REAL_FS_READ | TW_REAL_FS_WRITE},
-		    {"fs.read", TW_REAL_FS_READ},
-		    {"fs.write", TW_REAL_FS_WRITE},
-		    {"net", TW_REAL_NET | TW_REAL_CLOCK},
-		    {"net.dial", TW_REAL_NET | TW_REAL_CLOCK},
-		    {"net.listen", TW_REAL_NET | TW_REAL_CLOCK},
-		    {"clock", TW_REAL_CLOCK},
-		    {"env", TW_REAL_ENV},
-		    {"stdio", TW_REAL_STDIO},
-		    {"proc", TW_REAL_PROC | TW_REAL_CLOCK},
-		};
-		for (size_t i = 0; i < sizeof eff / sizeof eff[0]; i++) {
-			if (strlen(eff[i].name) == k && strncmp(eff[i].name, e, k) == 0) {
-				tw.real |= eff[i].bits;
-			}
-		}
-		e = end ? end + 1 : NULL;
-	}
+	tw.real = (int)xo_x_tw_init();
 	tw.virt = !(tw.real & TW_REAL_CLOCK);
-	int64_t seed = 1;
-	const char *s = getenv("XO_TEST_SEED");
-	if (s && *s) {
-		seed = strtoll(s, NULL, 10);
-	}
-	tws.rng_hi = (uint64_t)seed;
-	tws.rng_lo = (uint64_t)seed ^ 0x9e3779b97f4a7c15ULL;
+	tw.vnow = TW_EPOCH;
+	tw.on = 1;
 #ifndef _WIN32
 	signal(SIGPIPE, SIG_IGN);
 #endif
 }
 
-// xo_test_index is the test to run (XO_TEST).
-int64_t xo_test_index(void) {
-	const char *s = getenv("XO_TEST");
-	return s ? strtoll(s, NULL, 10) : -1;
-}
+// tw_write captures what the program writes to standard output (err 0)
+// or error.
+static void tw_write(int err, const char *p, int64_t n) { xo_x_tw_write(err, (int64_t)(intptr_t)p, n); }
 
-// xo_test_on reports whether the program runs in the test world.
-int64_t xo_test_on(void) { return tw.on; }
+__attribute__((unused)) static xo_rlist *tw_env_get(const char *p, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_tw_env_get((int64_t)(intptr_t)p, n); }
 
-// xo_test_fake reports whether the effect real (TW_REAL_*) is a fake in
-// this test: the test world without `xo test --real` for it.
-int64_t xo_test_fake(int64_t real) { return tw_is_fake((int)real); }
+__attribute__((unused)) static xo_rlist *tw_env_vars(void) { return (xo_rlist *)(intptr_t)xo_x_tw_env_vars(); }
 
-// xo_test_fs_real is the mode bits of a real Fs in this test (decision
-// 0120): -1 for the MemFs, 0 read and write, 2 read only, 4 write only
-// (std/rt's realCaps).
-int64_t xo_test_fs_real(void) {
-	int r = tw.on ? tw.real & (TW_REAL_FS_READ | TW_REAL_FS_WRITE) : 0;
-	switch (r) {
-	case TW_REAL_FS_READ | TW_REAL_FS_WRITE:
-		return 0;
-	case TW_REAL_FS_READ:
-		return 2;
-	case TW_REAL_FS_WRITE:
-		return 4;
-	}
-	return -1;
-}
-
-// tw_report writes a line for the harness on the real standard output.
-static void tw_report(const char *tag, const char *p, int64_t n) {
-	write_all(1, tag, strlen(tag));
-	write_all(1, p, (size_t)n);
-	write_all(1, "\n", 1);
-}
-
-// xo_test_fail fails the test with msg (a failed expect, an error
-// returned by the test body): it does not return.
-XO_NORETURN void xo_test_fail(const char *p, int64_t n) {
-	tw_report("XO-TEST-FAIL\n", p, n);
-	_exit(1);
-}
+__attribute__((unused)) static xo_rlist *tw_env_args(void) { return (xo_rlist *)(intptr_t)xo_x_tw_env_args(); }
 
 // tw_exit is os.proc.exit in a test (std.md 8.4): the code is recorded
 // (FakeProc.exit_code). Outside testing.run_main the test ends and
@@ -196,10 +121,7 @@ XO_NORETURN void xo_test_fail(const char *p, int64_t n) {
 // here (generated code checks after the call), and xo_test_main_end
 // gives the code as main's status.
 __attribute__((unused)) static void tw_exit(int64_t code) {
-	lk(&tws.mu);
-	tws.exit_code = code;
-	tws.has_exit = 1;
-	unlk(&tws.mu);
+	xo_x_tw_set_exit(code);
 	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE) && tws.main_node) {
 		__atomic_store_n(&tws.exiting, 1, __ATOMIC_RELEASE);
 		node_cancel(tws.main_node);
@@ -329,428 +251,16 @@ void xo_test_advance(int64_t d) {
 // xo_test_clock_set is FakeClock.set(t).
 void xo_test_clock_set(int64_t t) { __atomic_store_n(&tw.vnow, t, __ATOMIC_RELEASE); }
 
-// Seeded random numbers: Go's math/rand/v2 PCG (std/rt's seededRand)
-
-static uint64_t tw_rand_u64(void) {
-	lk(&tws.mu);
-	const uint64_t mulHi = 2549297995355413924ULL, mulLo = 4865540595714422341ULL;
-	const uint64_t incHi = 6364136223846793005ULL, incLo = 1442695040888963407ULL;
-	unsigned __int128 m = (unsigned __int128)tws.rng_lo * mulLo;
-	uint64_t hi = (uint64_t)(m >> 64), lo = (uint64_t)m;
-	hi += tws.rng_hi * mulLo + tws.rng_lo * mulHi;
-	uint64_t lo2 = lo + incLo;
-	uint64_t c = lo2 < lo;
-	hi = hi + incHi + c;
-	tws.rng_lo = lo2;
-	tws.rng_hi = hi;
-	unlk(&tws.mu);
-	const uint64_t cheapMul = 0xda942042e4dd58b5ULL;
-	hi ^= hi >> 32;
-	hi *= cheapMul;
-	hi ^= hi >> 48;
-	hi *= (lo2 | 1);
-	return hi;
-}
-
-// xo_tw_seeded and xo_tw_rand_u64 are the test world's Rand for
-// std/native/llrt/rand.xo (the zero-C audit's B08): whether a test runs
-// (Rand is then seeded), and the next draw.
-int64_t xo_tw_seeded(void) { return tw.on; }
-
-int64_t xo_tw_rand_u64(void) { return (int64_t)tw_rand_u64(); }
-
-// ---------------------------------------------------------------------------
-// Generated values: property tests (`test "x" for v: T`, core 9.2) and
-// testing.gen (std.md 8.5), decision 0120. The same choices as std/rt's
-// GenRand (gen.go): Go's math/rand/v2 PCG seeded (seed, seed ^
-// 0x2545f4914f6cdd1d), every choice recorded, so a test binary makes the
-// Go backend's values for a seed, and a failing case can be shrunk by
-// replaying edited choices (cmd/xo nativetest.go). internal/ssa generates
-// the values of compound types (build_gen.go) on these primitives.
-
-typedef struct {
-	uint64_t hi, lo;
-	int depth;
-	int small; // contract fuzzing's small numbers (std/rt's Small)
-	uint64_t *rec;
-	int64_t nrec, crec;
-	uint64_t *replay;
-	int64_t nreplay, pos;
-	int replaying;
-} xo_gen;
-
-static uint64_t gen_pcg(xo_gen *g) {
-	const uint64_t mulHi = 2549297995355413924ULL, mulLo = 4865540595714422341ULL;
-	const uint64_t incHi = 6364136223846793005ULL, incLo = 1442695040888963407ULL;
-	unsigned __int128 m = (unsigned __int128)g->lo * mulLo;
-	uint64_t hi = (uint64_t)(m >> 64), lo = (uint64_t)m;
-	hi += g->hi * mulLo + g->lo * mulHi;
-	uint64_t lo2 = lo + incLo;
-	uint64_t c = lo2 < lo;
-	hi = hi + incHi + c;
-	g->lo = lo2;
-	g->hi = hi;
-	const uint64_t cheapMul = 0xda942042e4dd58b5ULL;
-	hi ^= hi >> 32;
-	hi *= cheapMul;
-	hi ^= hi >> 48;
-	hi *= (lo2 | 1);
-	return hi;
-}
-
-// gen_u64n is Go's (*rand.Rand).Uint64N: a mask for powers of two, else
-// Lemire's multiply with rejection.
-static uint64_t gen_u64n(xo_gen *g, uint64_t n) {
-	if ((n & (n - 1)) == 0) {
-		return gen_pcg(g) & (n - 1);
-	}
-	unsigned __int128 p = (unsigned __int128)gen_pcg(g) * n;
-	uint64_t hi = (uint64_t)(p >> 64), lo = (uint64_t)p;
-	if (lo < n) {
-		uint64_t thresh = (0 - n) % n;
-		while (lo < thresh) {
-			p = (unsigned __int128)gen_pcg(g) * n;
-			hi = (uint64_t)(p >> 64);
-			lo = (uint64_t)p;
-		}
-	}
-	return hi;
-}
-
-// gen_draw is a choice in [0, n), or any 64 bit value when n is 0.
-static uint64_t gen_draw(xo_gen *g, uint64_t n) {
-	uint64_t v;
-	if (g->replaying) {
-		v = g->pos < g->nreplay ? g->replay[g->pos] : 0;
-		g->pos++;
-		if (n > 0) {
-			v %= n;
-		}
-	} else if (n == 0) {
-		v = gen_pcg(g);
-	} else {
-		v = gen_u64n(g, n);
-	}
-	if (g->nrec == g->crec) {
-		g->crec = g->crec ? 2 * g->crec : 64;
-		g->rec = realloc(g->rec, (size_t)g->crec * sizeof(uint64_t));
-		if (!g->rec) {
-			xo_oom();
-		}
-	}
-	g->rec[g->nrec++] = v;
-	return v;
-}
-
-static xo_gen *gen_of(int64_t h) { return (xo_gen *)(uintptr_t)h; }
-
-static xo_gen *gen_alloc(void) {
-	xo_gen *g = calloc(1, sizeof(xo_gen));
-	if (!g) {
-		xo_oom();
-	}
-	return g;
-}
-
-// xo_gen_new is a generator seeded with seed (testing.gen, std/rt's
-// NewGenRand).
-int64_t xo_gen_new(int64_t seed) {
-	xo_gen *g = gen_alloc();
-	g->hi = (uint64_t)seed;
-	g->lo = (uint64_t)seed ^ 0x2545f4914f6cdd1dULL;
-	return (int64_t)(uintptr_t)g;
-}
-
-// xo_gen_free frees generator h.
-void xo_gen_free(int64_t h) {
-	xo_gen *g = gen_of(h);
-	free(g->rec);
-	free(g->replay);
-	free(g);
-}
-
-// gen_choices parses "c1,c2,..." (decimal) into a new array.
-static uint64_t *gen_choices(const char *s, int64_t *n) {
-	int64_t cap = 16, k = 0;
-	uint64_t *out = malloc((size_t)cap * sizeof(uint64_t));
-	if (!out) {
-		xo_oom();
-	}
-	while (s && *s) {
-		char *end;
-		uint64_t v = strtoull(s, &end, 10);
-		if (end == s) {
-			break;
-		}
-		if (k == cap) {
-			cap *= 2;
-			out = realloc(out, (size_t)cap * sizeof(uint64_t));
-			if (!out) {
-				xo_oom();
-			}
-		}
-		out[k++] = v;
-		s = *end == ',' ? end + 1 : end;
-	}
-	*n = k;
-	return out;
-}
-
-// xo_gen_prop is the generator of a property test's case: the harness
-// sets XO_PROP_REPLAY (choices to replay, shrinking) or XO_PROP_SEED (the
-// case's seed: std/rt's seed*1000003 + case).
-int64_t xo_gen_prop(void) {
-	xo_gen *g = gen_alloc();
-	const char *r = getenv("XO_PROP_REPLAY");
-	if (r) {
-		g->replaying = 1;
-		g->replay = gen_choices(r, &g->nreplay);
-		return (int64_t)(uintptr_t)g;
-	}
-	const char *s = getenv("XO_PROP_SEED");
-	uint64_t seed = s ? strtoull(s, NULL, 10) : 0;
-	g->hi = seed;
-	g->lo = seed ^ 0x2545f4914f6cdd1dULL;
-	return (int64_t)(uintptr_t)g;
-}
-
-// The report of a property test's case is std/native/llrt/report.xo
-// (decision 0193 step 5), over the primitives below.
-
-// xo_gen_choices is the choices generator h made so far (report.xo).
-xo_rlist *xo_gen_choices(int64_t h) {
-	xo_gen *g = gen_of(h);
-	xo_rlist *l = xo_rl_new_n(g->nrec, 8);
-	memcpy(rl_data(l), g->rec, (size_t)g->nrec * sizeof(uint64_t));
-	l->len = g->nrec;
-	return l;
-}
+// The report of a property test's case (std/native/llrt/report.xo) and
+// a failure (testworld.xo fail) write on the real standard output and
+// end the binary here, until the standard streams and exit are Xo.
 
 // xo_test_write writes the n bytes at p on the real standard output: a
-// report for the harness (report.xo).
+// report for the harness.
 void xo_test_write(const char *p, int64_t n) { write_all(1, p, (size_t)n); }
 
-// xo_prop_best is $XO_PROP_BEST (the best choices while shrinking) in a
-// list of one, or the empty list (report.xo).
-xo_rlist *xo_prop_best(void) {
-	const char *best = getenv("XO_PROP_BEST");
-	if (!best) {
-		return &empty_list;
-	}
-	return str_list(best, (int64_t)strlen(best));
-}
-
-// xo_test_quit ends the test binary with status code at once (a case
-// not smaller than the best, report.xo).
+// xo_test_quit ends the test binary with status code at once.
 XO_NORETURN void xo_test_quit(int64_t code) { _exit((int)code); }
-
-// xo_gen_intn is GenRand.Intn: a choice in [0, n), no choice for n <= 1.
-int64_t xo_gen_intn(int64_t h, int64_t n) {
-	if (n <= 1) {
-		return 0;
-	}
-	return (int64_t)gen_draw(gen_of(h), (uint64_t)n);
-}
-
-// xo_gen_draw is a choice in [0, n), or any 64 bit value when n is 0,
-// recorded (std/native/llrt/gen.xo, decision 0195).
-int64_t xo_gen_draw(int64_t h, int64_t n) { return (int64_t)gen_draw(gen_of(h), (uint64_t)n); }
-
-// xo_gen_depth is the nesting depth of the value being generated.
-int64_t xo_gen_depth(int64_t h) { return gen_of(h)->depth; }
-
-// xo_gen_enter and xo_gen_leave bracket a nested value; xo_gen_deep
-// tells when nested values stop growing (GenRand.Deep).
-void xo_gen_enter(int64_t h) { gen_of(h)->depth++; }
-
-void xo_gen_leave(int64_t h) { gen_of(h)->depth--; }
-
-int64_t xo_gen_deep(int64_t h) { return gen_of(h)->depth >= 4; }
-
-// Standard streams and the environment
-
-static void tw_write(int err, const char *p, int64_t n) {
-	lk(&tws.mu);
-	nbuf_put(err ? &tws.err : &tws.out, p, n);
-	unlk(&tws.mu);
-}
-
-// xo_test_output is FakeStdio.output() (which 1) or errors() (2).
-xo_rstr *xo_test_output(int64_t which, int64_t *len) {
-	lk(&tws.mu);
-	nbuf *b = which == 2 ? &tws.err : &tws.out;
-	xo_rstr *s = nstr(b->p ? b->p : "", b->n, len);
-	unlk(&tws.mu);
-	return s;
-}
-
-// xo_test_eprint writes to the fake standard error.
-void xo_test_eprint(const char *p, int64_t n) { tw_write(1, p, n); }
-
-__attribute__((unused)) static xo_rlist *tw_env_get(const char *p, int64_t n) {
-	xo_rlist *l = &empty_list;
-	lk(&tws.mu);
-	for (int i = tws.en - 1; i >= 0; i--) {
-		if ((int64_t)strlen(tws.ekeys[i]) == n && memcmp(tws.ekeys[i], p, (size_t)n) == 0) {
-			l = str_list(tws.evals[i], (int64_t)strlen(tws.evals[i]));
-			break;
-		}
-	}
-	unlk(&tws.mu);
-	return l;
-}
-
-// tw_env_vars is FakeEnv.vars(): NAME=VALUE in the order set.
-__attribute__((unused)) static xo_rlist *tw_env_vars(void) {
-	lk(&tws.mu);
-	xo_rlist *l = n_str_list_new(tws.en);
-	for (int i = 0; i < tws.en; i++) {
-		nbuf b = {0};
-		nbuf_str(&b, tws.ekeys[i]);
-		nbuf_byte(&b, '=');
-		nbuf_str(&b, tws.evals[i]);
-		l = n_str_list_add(l, b.p, b.n);
-		free(b.p);
-	}
-	unlk(&tws.mu);
-	return l;
-}
-
-// xo_test_env_set is FakeEnv.set(name, value).
-void xo_test_env_set(const char *k, int64_t kn, const char *v, int64_t vn) {
-	lk(&tws.mu);
-	for (int i = 0; i < tws.en; i++) {
-		if ((int64_t)strlen(tws.ekeys[i]) == kn && memcmp(tws.ekeys[i], k, (size_t)kn) == 0) {
-			free(tws.evals[i]);
-			tws.evals[i] = tw_strdup(v, vn);
-			unlk(&tws.mu);
-			return;
-		}
-	}
-	tws.ekeys = tw_grow(tws.ekeys, tws.en, sizeof(char *));
-	tws.evals = tw_grow(tws.evals, tws.en, sizeof(char *));
-	tws.ekeys[tws.en] = tw_strdup(k, kn);
-	tws.evals[tws.en] = tw_strdup(v, vn);
-	tws.en++;
-	unlk(&tws.mu);
-}
-
-// xo_test_set_args is FakeEnv.set_args(args) (and run_main's args).
-void xo_test_set_args(xo_rlist *l) {
-	lk(&tws.mu);
-	for (int i = 0; i < tws.nargs; i++) {
-		free(tws.args[i]);
-	}
-	free(tws.args);
-	tws.args = calloc((size_t)(l->len + 1), sizeof(char *));
-	if (!tws.args) {
-		xo_oom();
-	}
-	for (int64_t i = 0; i < l->len; i++) {
-		xo_rstr *s = ((xo_rstr **)rl_data(l))[2 * i];
-		int64_t n = ((int64_t *)rl_data(l))[2 * i + 1];
-		tws.args[i] = tw_strdup(s->data, n);
-	}
-	tws.nargs = (int)l->len;
-	unlk(&tws.mu);
-}
-
-__attribute__((unused)) static xo_rlist *tw_env_args(void) {
-	lk(&tws.mu);
-	xo_rlist *l = n_str_list_new(tws.nargs);
-	for (int i = 0; i < tws.nargs; i++) {
-		l = n_str_list_add(l, tws.args[i], (int64_t)strlen(tws.args[i]));
-	}
-	unlk(&tws.mu);
-	return l;
-}
-
-// xo_test_exit_code is FakeProc.exit_code(): the code os.proc.exit
-// recorded, in a list of one, or the empty list.
-xo_rlist *xo_test_exit_code(void) {
-	xo_rlist *l = xo_rl_new(4, 8);
-	lk(&tws.mu);
-	if (tws.has_exit) {
-		((int64_t *)rl_data(l))[0] = tws.exit_code;
-		l->len = 1;
-	}
-	unlk(&tws.mu);
-	return l;
-}
-
-// Log records (testing.logs, std.md 8.6)
-
-// xo_test_log keeps a record and echoes its text line to the harness (an
-// empty line is not echoed: a configured log output got the record).
-void xo_test_log(int64_t level, const char *m, int64_t mn, const char *from, int64_t fn, xo_rlist *keys, xo_rlist *vals, const char *line, int64_t ln) {
-	tw_rec r = {.level = level, .msg = tw_strdup(m, mn), .module = tw_strdup(from, fn), .nf = (int)keys->len};
-	r.keys = calloc((size_t)r.nf + 1, sizeof(char *));
-	r.vals = calloc((size_t)r.nf + 1, sizeof(char *));
-	if (!r.keys || !r.vals) {
-		xo_oom();
-	}
-	for (int i = 0; i < r.nf; i++) {
-		xo_rstr *k = ((xo_rstr **)rl_data(keys))[2 * i];
-		xo_rstr *v = ((xo_rstr **)rl_data(vals))[2 * i];
-		r.keys[i] = tw_strdup(k->data, ((int64_t *)rl_data(keys))[2 * i + 1]);
-		r.vals[i] = tw_strdup(v->data, ((int64_t *)rl_data(vals))[2 * i + 1]);
-	}
-	lk(&tws.mu);
-	tws.recs = tw_grow(tws.recs, tws.nrec, sizeof(tw_rec));
-	tws.recs[tws.nrec++] = r;
-	if (ln > 0) {
-		tw_report("XO-TEST-LOG ", line, ln);
-	}
-	unlk(&tws.mu);
-}
-
-int64_t xo_test_log_count(void) {
-	lk(&tws.mu);
-	int64_t n = tws.nrec;
-	unlk(&tws.mu);
-	return n;
-}
-
-static tw_rec *tw_rec_at(int64_t i) {
-	lk(&tws.mu);
-	tw_rec *r = i >= 0 && i < tws.nrec ? &tws.recs[i] : NULL;
-	unlk(&tws.mu);
-	return r;
-}
-
-int64_t xo_test_log_level(int64_t i) {
-	tw_rec *r = tw_rec_at(i);
-	return r ? r->level : 0;
-}
-
-xo_rstr *xo_test_log_msg(int64_t i, int64_t *len) {
-	tw_rec *r = tw_rec_at(i);
-	const char *s = r ? r->msg : "";
-	return nstr(s, (int64_t)strlen(s), len);
-}
-
-int64_t xo_test_log_nfields(int64_t i) {
-	tw_rec *r = tw_rec_at(i);
-	return r ? r->nf : 0;
-}
-
-xo_rstr *xo_test_log_key(int64_t i, int64_t j, int64_t *len) {
-	tw_rec *r = tw_rec_at(i);
-	const char *s = r && j >= 0 && j < r->nf ? r->keys[j] : "";
-	return nstr(s, (int64_t)strlen(s), len);
-}
-
-xo_rstr *xo_test_log_module(int64_t i, int64_t *len) {
-	tw_rec *r = tw_rec_at(i);
-	const char *s = r ? r->module : "";
-	return nstr(s, (int64_t)strlen(s), len);
-}
-
-xo_rstr *xo_test_log_val(int64_t i, int64_t j, int64_t *len) {
-	tw_rec *r = tw_rec_at(i);
-	const char *s = r && j >= 0 && j < r->nf ? r->vals[j] : "";
-	return nstr(s, (int64_t)strlen(s), len);
-}
 
 // In memory listeners (std/rt's memListener)
 
@@ -999,181 +509,22 @@ void xo_test_mem_end(const char *hp, int64_t n) {
 	unlk(&tws.mu);
 }
 
-// FakeNet handlers and failures, and the requests seen
-
-static void tw_fake_add(tw_fake **list, int *n, const char *m, int64_t mn, const char *pre, int64_t pn, const char *path, int64_t an, xo_any *v, int once) {
-	h_retain(v);
-	lk(&tws.mu);
-	*list = tw_grow(*list, *n, sizeof(tw_fake));
-	(*list)[*n] = (tw_fake){.method = tw_strdup(m, mn), .prefix = tw_strdup(pre, pn), .path = tw_strdup(path, an), .v = v, .once = once};
-	(*n)++;
-	unlk(&tws.mu);
-}
-
-// xo_test_fake_handle is FakeNet.handle: method ("" any), the URL prefix
-// (scheme://host[:port], "" any), the path pattern, and the handler.
-void xo_test_fake_handle(const char *m, int64_t mn, const char *pre, int64_t pn, const char *path, int64_t an, xo_any *h) {
-	tw_fake_add(&tws.handlers, &tws.nhandlers, m, mn, pre, pn, path, an, h, 0);
-}
-
-// xo_test_fake_fail is FakeNet.fail (once: fail_next) with the ClientErr.
-void xo_test_fake_fail(const char *m, int64_t mn, const char *pre, int64_t pn, const char *path, int64_t an, xo_any *e, int64_t once) {
-	tw_fake_add(&tws.fails, &tws.nfails, m, mn, pre, pn, path, an, e, (int)once);
-}
-
-// xo_test_fake_clear is FakeNet.clear_failures.
-void xo_test_fake_clear(void) {
-	lk(&tws.mu);
-	int n = tws.nfails;
-	tw_fake *fs = tws.fails;
-	tws.fails = NULL;
-	tws.nfails = 0;
-	unlk(&tws.mu);
-	for (int i = 0; i < n; i++) {
-		free(fs[i].method);
-		free(fs[i].prefix);
-		free(fs[i].path);
-		h_release(fs[i].v);
-	}
-	free(fs);
-}
-
-static tw_fake *tw_fake_at(int kind, int64_t i) {
-	tw_fake *list = kind ? tws.fails : tws.handlers;
-	int n = kind ? tws.nfails : tws.nhandlers;
-	return i >= 0 && i < n ? &list[i] : NULL;
-}
-
-// xo_test_fake_count is the number of handlers (kind 0) or failures (1).
-int64_t xo_test_fake_count(int64_t kind) {
-	lk(&tws.mu);
-	int64_t n = kind ? tws.nfails : tws.nhandlers;
-	unlk(&tws.mu);
-	return n;
-}
-
-// xo_test_fake_text is the method (what 0), prefix (1), or path pattern
-// (2) of handler or failure i.
-xo_rstr *xo_test_fake_text(int64_t kind, int64_t i, int64_t what, int64_t *len) {
-	lk(&tws.mu);
-	tw_fake *f = tw_fake_at((int)kind, i);
-	const char *s = !f ? "" : what == 0 ? f->method : what == 1 ? f->prefix : f->path;
-	xo_rstr *r = nstr(s, (int64_t)strlen(s), len);
-	unlk(&tws.mu);
-	return r;
-}
-
-// xo_test_fake_value is the handler or the error of entry i (a
-// reference).
-xo_any *xo_test_fake_value(int64_t kind, int64_t i) {
-	lk(&tws.mu);
-	tw_fake *f = tw_fake_at((int)kind, i);
-	xo_any *v = f ? f->v : NULL;
-	if (v) {
-		h_retain(v);
-	}
-	unlk(&tws.mu);
-	return v ? v : xo_h_zero();
-}
-
-// xo_test_fake_used is called when failure i matched: one of fail_next
-// is removed.
-void xo_test_fake_used(int64_t i) {
-	lk(&tws.mu);
-	tw_fake *f = tw_fake_at(1, i);
-	if (!f || !f->once) {
-		unlk(&tws.mu);
-		return;
-	}
-	tw_fake gone = *f;
-	memmove(&tws.fails[i], &tws.fails[i + 1], (size_t)(tws.nfails - i - 1) * sizeof(tw_fake));
-	tws.nfails--;
-	unlk(&tws.mu);
-	free(gone.method);
-	free(gone.prefix);
-	free(gone.path);
-	h_release(gone.v);
-}
-
-// xo_test_record keeps a request a client made (FakeNet.requests).
-void xo_test_record(xo_any *req) {
-	h_retain(req);
-	lk(&tws.mu);
-	tws.reqs = tw_grow(tws.reqs, tws.nreqs, sizeof(xo_any *));
-	tws.reqs[tws.nreqs++] = req;
-	unlk(&tws.mu);
-}
-
-int64_t xo_test_req_count(void) {
-	lk(&tws.mu);
-	int64_t n = tws.nreqs;
-	unlk(&tws.mu);
-	return n;
-}
-
-xo_any *xo_test_req_get(int64_t i) {
-	lk(&tws.mu);
-	xo_any *v = i >= 0 && i < tws.nreqs ? tws.reqs[i] : NULL;
-	if (v) {
-		h_retain(v);
-	}
-	unlk(&tws.mu);
-	return v ? v : xo_h_zero();
-}
-
-// MemFs (std.md 8.3, decision 0108): std/native/testing.xo keeps the file
-// system as an Xo value (testing.MemState) here between operations. An
-// operation takes it (locking the store), works on it without waiting,
-// and puts it back (unlocking): operations are atomic, as the Go
-// backend's under its mutex.
-static struct {
-	pthread_mutex_t mu;
-	xo_any *st;
-} tw_memfs = {.mu = PTHREAD_MUTEX_INITIALIZER};
-
-// xo_test_memfs_take locks the store and moves the state out (a list of
-// one, or empty before the first operation).
-xo_rlist *xo_test_memfs_take(void) {
-	pthread_mutex_lock(&tw_memfs.mu);
-	xo_rlist *l = xo_rl_new(4, 8);
-	if (tw_memfs.st) {
-		((xo_any **)rl_data(l))[0] = tw_memfs.st;
-		l->len = 1;
-		tw_memfs.st = NULL;
-	}
-	return l;
-}
-
-// xo_test_memfs_put stores the state and unlocks the store.
-void xo_test_memfs_put(xo_any *st) {
-	h_retain(st);
-	tw_memfs.st = st;
-	pthread_mutex_unlock(&tw_memfs.mu);
-}
-
 // xo_test_now is the virtual clock's now (MemFs modified times).
 int64_t xo_test_now(void) { return xo_clock_now(); }
 
-// tw_cleanup releases the values the test world keeps (handlers,
-// failures, requests, served routers, the MemFs) when the test ends, for
-// the leak check.
+// tw_cleanup releases the values the test world keeps (testworld.xo's,
+// and the routers served) when the test ends, for the leak check.
 __attribute__((unused)) static void tw_cleanup(void) {
-	xo_test_fake_clear();
-	pthread_mutex_lock(&tw_memfs.mu);
-	xo_any *mst = tw_memfs.st;
-	tw_memfs.st = NULL;
-	pthread_mutex_unlock(&tw_memfs.mu);
-	if (mst) {
-		h_release(mst);
+	// testworld.xo hands over its values (a malloc'd block: the count,
+	// then the objects); they are released here, on the C main thread
+	int64_t *kept = (int64_t *)(intptr_t)xo_x_tw_cleanup();
+	if (kept) {
+		for (int64_t i = 1; i <= kept[0]; i++) {
+			h_release((void *)(intptr_t)kept[i]);
+		}
+		free(kept - 1);
 	}
 	lk(&tws.mu);
-	int nh = tws.nhandlers, nr = tws.nreqs;
-	tw_fake *hs = tws.handlers;
-	xo_any **rs = tws.reqs;
-	tws.handlers = NULL;
-	tws.nhandlers = 0;
-	tws.reqs = NULL;
-	tws.nreqs = 0;
 	xo_any *routers[64];
 	int nrouters = 0;
 	for (tw_ml *ml = tws.mls; ml && nrouters < 64; ml = ml->next) {
@@ -1183,17 +534,6 @@ __attribute__((unused)) static void tw_cleanup(void) {
 		}
 	}
 	unlk(&tws.mu);
-	for (int i = 0; i < nh; i++) {
-		free(hs[i].method);
-		free(hs[i].prefix);
-		free(hs[i].path);
-		h_release(hs[i].v);
-	}
-	free(hs);
-	for (int i = 0; i < nr; i++) {
-		h_release(rs[i]);
-	}
-	free(rs);
 	for (int i = 0; i < nrouters; i++) {
 		h_release(routers[i]);
 	}
@@ -1238,7 +578,7 @@ void xo_test_signal_after(int64_t d) {
 // below the test's, the stop state is fresh, and the queued signals are
 // armed.
 void xo_test_main_begin(xo_rlist *args) {
-	xo_test_set_args(args);
+	xo_x_tw_set_args((int64_t)(intptr_t)args);
 	xo_ctx *c = ctx();
 	xo_node *n = calloc(1, sizeof(xo_node));
 	if (!n) {
@@ -1299,10 +639,7 @@ static int64_t tw_main_status(int64_t code, int *exited) {
 	if (__atomic_exchange_n(&tws.exiting, 0, __ATOMIC_ACQ_REL) && !node_canceled(c->node)) {
 		// os.proc.exit unwound main (tw_exit): its code is the status
 		c->unwinding = 0;
-		lk(&tws.mu);
-		int64_t ec = tws.exit_code;
-		unlk(&tws.mu);
-		return ec;
+		return xo_x_tw_exit_value();
 	}
 	if (c->unwinding && __atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE) && !node_canceled(c->node)) {
 		c->unwinding = 0;
@@ -1318,10 +655,7 @@ int64_t xo_test_main_end(int64_t code) {
 	int exited = 0;
 	int64_t r = tw_main_status(code, &exited);
 	if (exited) {
-		lk(&tws.mu);
-		tws.exit_code = 130;
-		tws.has_exit = 1;
-		unlk(&tws.mu);
+		xo_x_tw_set_exit(130);
 		r = 130;
 	}
 	return r;

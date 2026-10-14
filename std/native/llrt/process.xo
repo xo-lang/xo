@@ -8,7 +8,7 @@
 // are kept in process globals (rt.static_word words 7 to 9). The entry
 // in Xo (work item B26) will take them from the entry stack. A test
 // binary whose world fakes env (decision 0120) asks the C runtime's
-// test world instead (rt.tw_env_*). The
+// test world instead (testworld.xo). The
 // SSA builders call the native prelude's llrt_exit for os.proc.exit and
 // for the end of a program whose main returned an error (after its
 // message); the C runtime's xo_exit, which compilers before B03 call,
@@ -20,7 +20,7 @@ use native/llrt/linux
 use native/llrt/raw
 use native/llrt/stdio
 use native/rt
-use native/rttest
+use native/llrt/testworld
 use native/sys_darwin
 use native/sys_windows
 
@@ -29,7 +29,7 @@ use native/sys_windows
 /// libSystem's exit on macOS, ExitProcess on Windows. In a test binary
 /// the test world's tw_exit, which returns inside testing.run_main.
 pub fn exit(code: Int) {
-  if rttest.test_on() {
+  if testworld.on() {
     rt.tw_exit(code)
     return
   }
@@ -72,8 +72,8 @@ fn arg(i: Int) -> Str { cstr(rt.mem_load(rt.mem_load(rt.static_word(WORDS), ARGV
 
 /// env.args(): the arguments after the program name.
 pub fn args() -> List[Str] {
-  if rt.tw_fake(TW_ENV) {
-    return rt.tw_env_args()
+  if testworld.fake(TW_ENV) {
+    return testworld.args()
   }
   let n = rt.mem_load(rt.static_word(WORDS), ARGC, 8)
   var out: List[Str] = []
@@ -87,7 +87,7 @@ pub fn args() -> List[Str] {
 /// on the Go backend), with / separators on Windows (std.md 3.1, 3.5);
 /// "test" in a test whose world fakes env.
 pub fn program() -> Str {
-  if rt.tw_fake(TW_ENV) {
+  if testworld.fake(TW_ENV) {
     return "test"
   }
   if rt.mem_load(rt.static_word(WORDS), ARGC, 8) <= 0 {
@@ -137,8 +137,8 @@ fn fold_case() -> Bool {
 /// env.get(name): the value in a list of one, or the empty list when it
 /// is not set.
 pub fn env_get(name: Str) -> List[Str] {
-  if rt.tw_fake(TW_ENV) {
-    return rt.tw_env_get(name)
+  if testworld.fake(TW_ENV) {
+    return testworld.env_get_raw(raw.data(name), name.len())
   }
   let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
   if envp == 0 {
@@ -166,8 +166,8 @@ pub fn env_get(name: Str) -> List[Str] {
 /// std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
 /// FakeEnv in the order of its variables.
 pub fn env_vars() -> List[Str] {
-  if rt.tw_fake(TW_ENV) {
-    return rt.tw_env_vars()
+  if testworld.fake(TW_ENV) {
+    return testworld.env_vars()
   }
   let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
   var out: List[Str] = []

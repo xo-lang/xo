@@ -297,7 +297,7 @@ MISSING.
 | B11 client HPACK (**done 2026-10-14**, http2-client-hpack-2026-10-14.md: 786 runtime lines deleted, 242 added) | 583 | GLUE 583 | xo_h2.c 87-669 |
 | B12 HTTP response writer (done 2026-10-14: http1w.xo; 514 lines deleted, 112 of glue added; http-writer-2026-10-14.md) | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
 | B13 string and list objects (stage 1 done 2026-10-14: http1.xo through scan.xo, xo_str_find deleted, the trace padding through scan.rune_count; stage 2 done 2026-10-14 for the list objects and the drop worklist (decision 0226, obj.xo, called from arm64 generated code without a C level; the C entries remain as forwarders for LLVM and the seed); the string objects stay C; string-list-objects-2026-10-14.md) | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
-| B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
+| B14 test world, part 1 (done 2026-10-14: testworld.xo, 916 lines deleted, 87 added; test-world-2026-10-14.md) | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
 | B15 test world, part 2 | 494 | PORT 494 | xo_testing.c 212-331, 748-994, 1195-1321 |
 | B16 Fs operations (fsops.xo; part 1, POSIX, done 2026-10-14: no C deleted yet, notes) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
 | B17 contexts, budgets, shields (0212 stage 3) | 454 | PORT 439, GLUE 15 | xo_rt.c 1534-1588, 1597-1643, 2034-2319, 6618-6683 |
@@ -495,6 +495,12 @@ frees the 533 (a) lines.)
   run_main 1195-1321) needs the timers (B22), wait lists (B18), and
   shutdown (B26). C reads `tw.on`, `tw.real`, `tw.virt` throughout
   (xo_rt.c 511-547). Xo about 890 plus 460 lines; three items.
+  **Part 1 done 2026-10-14** (bench/results/test-world-2026-10-14.md):
+  std/native/llrt/testworld.xo (static words 32 to 39 and a malloc'd
+  record), the C's exports in cabi_tw.xo (test binaries only, weak C
+  definitions elsewhere); xo_rt.c's `tw` struct stays, set by tw_init
+  from Xo's answer. Left C for B15: the virtual clock, the in memory
+  listeners, run_main, signal_after, tw_exit's unwinding.
 - **B16 Fs operations.** Over the existing layers (linux.xo, darwin.xo,
   windows.xo; the FsErr tables are already Xo in sysio.xo). darwin/amd64
   still reaches xo_fs_stat, xo_fs_write, xo_fs_read (xo_fs.c 60-146,
