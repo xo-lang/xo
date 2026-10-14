@@ -32,7 +32,7 @@ levels; the arm64 emitter cannot inline across the C boundary.
    thread's heap record (heap_slow, for the threaded case, after the
    thread local word 3), and the real-time section paths of xo_rl_free
    and xo_rc_defer (the C's section queue, rt_defer, and its rtstats
-   counts stay C). A C constructor sets them before anything allocates (so C test programs with their own main have them too);
+   counts stay C). The C main sets them before anything allocates (a constructor does in the C test programs with their own main, XO_RT_NO_MAIN; xo's ELF linker takes no constructors, gotchas/runtime-c-no-constructors.md);
    xo_rt_threads_begin sets word 10 to 0 when it clears solo_heap.
    Element size and drop reach the real-time list path through two words
    of the heap record (pend_esize, pend_drop), since rt.call_c2 passes
