@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B08): SHA-512 is Xo
+  (std/native/llrt/digest.xo, called by the C Ed25519 through
+  cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
+  on LLVM, bench/results/sha512-rand-2026-10-14.md) and Rand is Xo
+  (std/native/llrt/rand.xo over getrandom, getentropy, BCryptGenRandom,
+  or the test world's seeded draws, the same values as before). The C
+  SHA-512 is deleted; the C Rand functions stay until the seed is a
+  release with this change (gotchas/runtime-c-the-seed-still-calls.md).
 - Native runtime: the C with no caller is deleted (zero-C audit item
   W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
   lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
