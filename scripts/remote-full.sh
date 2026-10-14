@@ -139,6 +139,7 @@ sgarg=""; [ -n "$sg" ] && sgarg="--security-group-ids $sg"
 log "launching $TYPE ($([ -n "$MARKET" ] && echo spot || echo on-demand)) for $commit, self-terminating after ${MAXMIN} min"
 # shellcheck disable=SC2086
 id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-name xo-ci $sgarg \
+  --iam-instance-profile Name=xo-ci-seed-read \
   $MARKET --instance-initiated-shutdown-behavior terminate \
   --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=120,VolumeType=gp3,DeleteOnTermination=true}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=xo-ci},{Key=purpose,Value=xo-remote-full}]' \

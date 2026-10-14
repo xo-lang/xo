@@ -208,8 +208,13 @@ s3 runs hello.
   6.09 GB peak on the Mac with a cached xo1 as the seed, 391 s,
   2026-10-13) unless `XO_CLI` names one; the build is shared by
   worktrees with the same sources.
-- A host with no xo needs Go and git once, for the go-compiler-final
-  seed; after that, any xo builds the next (scripts/bootstrap-xo.sh).
+- A host with no xo needs the aws CLI with read access to the seed
+  bucket, for the newest prebuilt seed (decision 0216 item 1, 2026-10-13),
+  or, opted in (`XO_SEED_FALLBACK=chain` or `xobuild --from-source`),
+  Go and git once, for the go-compiler-final seed and the seed chain;
+  without either the build fails with the cause; after that, any xo
+  builds the next
+  (scripts/bootstrap-xo.sh).
 
 ## Alternatives
 
