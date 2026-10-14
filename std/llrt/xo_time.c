@@ -503,6 +503,7 @@ int64_t xo_x_real_ns(void);
 int64_t xo_tz_now(void) { return xo_x_real_ns() / 1000000000; }
 
 xo_rstr *xo_tz_local_name(int64_t *len) {
+#ifndef _WIN32 // no link names /etc/localtime there
 	char buf[1024];
 	ssize_t r = readlink("/etc/localtime", buf, sizeof buf - 1);
 	if (r > 0) {
@@ -512,6 +513,7 @@ xo_rstr *xo_tz_local_name(int64_t *len) {
 			return rs_of_cstr(z + strlen("zoneinfo/"), len);
 		}
 	}
+#endif
 	return rs_of_cstr("Local", len);
 }
 

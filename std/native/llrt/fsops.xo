@@ -4,12 +4,11 @@
 // directory names, rename, remove, set_modified, the system calls under
 // fspath.xo, file handles, copy, modes, links, and advisory locks, with
 // the C runtime's semantics (std/llrt/xo_fs.c, Go's os package) and its
-// messages. Linux (linux.xo, raw system calls) and darwin/arm64
-// (darwin.xo, libSystem) make their calls from Xo. Windows (until its
-// layer gets these calls), darwin/amd64 (sysio.layer 0: the stat and
-// dirent symbols there are `$INODE64` ones,
-// gotchas/darwin-amd64-stat-inode64.md), and wasm call the C runtime
-// (rt.fs_*), which stays for them.
+// messages. Linux (linux.xo, raw system calls), darwin/arm64 (darwin.xo,
+// libSystem), and Windows (windows.xo, kernel32, part 2) make their calls
+// from Xo. darwin/amd64 (sysio.layer 0: the stat and dirent symbols there
+// are `$INODE64` ones, gotchas/darwin-amd64-stat-inode64.md) and wasm
+// call the C runtime (rt.fs_*), which stays for them.
 //
 // A handle is the C runtime's record (rt.fs_raw_file, rt.fs_raw_lock), so
 // a handle dropped without close still closes its descriptor (and
@@ -20,6 +19,7 @@ use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/raw
 use native/llrt/sysio
+use native/llrt/windows
 use native/rt
 
 /// The read buffer of a file handle (Go's bufio.Reader size).
@@ -50,15 +50,9 @@ const LOW7S: Int = 9187201950435737471
 const HIGHS: Int = -9187201950435737472
 const NEWLINES: Int = 723401728380766730
 
-/// The layer this module calls: 1 Linux, 2 macOS on arm64, 0 the C
-/// runtime (Windows, darwin/amd64, wasm).
-fn layer() -> Int {
-  let l = sysio.layer()
-  if l == 1 || l == 2 {
-    return l
-  }
-  0
-}
+/// The layer this module calls: 1 Linux, 2 macOS on arm64, 3 Windows, 0
+/// the C runtime (darwin/amd64, wasm).
+fn layer() -> Int { sysio.layer() }
 
 /// Records errno e of layer l for the Xo path x: the status.
 fn fail(l: Int, e: Int, x: Str) -> Int {
@@ -98,6 +92,9 @@ fn open(l: Int, p: Str, k: Int, mode: Int) -> Int {
 }
 
 fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
+  if l == 3 {
+    return windows.open_kind(p, k, mode)
+  }
   if l == 2 {
     let f = match k {
       0 => darwin.O_RDONLY
@@ -119,6 +116,9 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
 }
 
 fn close(l: Int, fd: Int) -> Int {
+  if l == 3 {
+    return windows.close(fd)
+  }
   if l == 2 {
     return darwin.close(fd)
   }
@@ -127,6 +127,9 @@ fn close(l: Int, fd: Int) -> Int {
 
 /// read(2) of at most n bytes to the address a (EINTR retried).
 fn read_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.read_at(fd, a, n)
+  }
   while true {
     let r = if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
     if r != -EINTR {
@@ -139,6 +142,9 @@ fn read_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
 /// Writes the n bytes at the address a (EINTR and short writes retried):
 /// 0, or the errno.
 fn write_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.write_at(fd, a, n)
+  }
   var off = 0
   while off < n {
     let w = if l == 2 { darwin.write_at(fd, a + off, n - off) } else { linux.write_at(fd, a + off, n - off) }
@@ -155,6 +161,9 @@ fn write_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
 
 /// stat(2) of p (lstat(2) unless follow): st_mode and 0, or the errno.
 fn stat_mode(l: Int, p: Str, follow: Bool) -> (Int, Int) {
+  if l == 3 {
+    return windows.stat_mode(p, follow)
+  }
   if l == 2 {
     let (s, e) = darwin.stat(p, follow)
     return (s.mode, e)
@@ -165,6 +174,9 @@ fn stat_mode(l: Int, p: Str, follow: Bool) -> (Int, Int) {
 
 /// fstat(2) of fd: st_mode and 0, or the errno.
 fn fstat_mode(l: Int, fd: Int) -> (Int, Int) {
+  if l == 3 {
+    return windows.fstat_mode(fd)
+  }
   if l == 2 {
     let (s, e) = darwin.fstat(fd)
     return (s.mode, e)
@@ -177,6 +189,9 @@ fn fstat_mode(l: Int, fd: Int) -> (Int, Int) {
 fn mode_dir(m: Int) -> Bool { (m & 61440) == 16384 }
 
 fn unlink(l: Int, p: Str, dir: Bool) -> Int {
+  if l == 3 {
+    return windows.unlink(p, dir)
+  }
   if l == 2 {
     return darwin.unlink(p, dir)
   }
@@ -184,6 +199,9 @@ fn unlink(l: Int, p: Str, dir: Bool) -> Int {
 }
 
 fn chmod(l: Int, p: Str, mode: Int) -> Int {
+  if l == 3 {
+    return windows.chmod(p, mode)
+  }
   if l == 2 {
     return darwin.chmod(p, mode)
   }
@@ -191,6 +209,9 @@ fn chmod(l: Int, p: Str, mode: Int) -> Int {
 }
 
 fn flock(l: Int, fd: Int, op: Int) -> Int {
+  if l == 3 {
+    return windows.flock(fd, op)
+  }
   if l == 2 {
     return darwin.flock(fd, op)
   }
@@ -198,6 +219,9 @@ fn flock(l: Int, fd: Int, op: Int) -> Int {
 }
 
 fn dir_names(l: Int, p: Str) -> (List[Str], Int) {
+  if l == 3 {
+    return windows.names(p)
+  }
   if l == 2 {
     return darwin.names(p)
   }
@@ -237,7 +261,7 @@ pub fn rename(a: Str, b: Str, x: Str) -> Int {
   if l == 0 {
     return rt.fs_rename(a, b, x)
   }
-  done(l, if l == 2 { darwin.rename(a, b) } else { linux.rename(a, b) }, x)
+  done(l, if l == 3 { windows.rename(a, b) } else if l == 2 { darwin.rename(a, b) } else { linux.rename(a, b) }, x)
 }
 
 /// os.Remove(p): unlink, then rmdir; the rmdir's error unless it is
@@ -271,7 +295,7 @@ pub fn chtimes(p: Str, t: Int, x: Str) -> Int {
     ns += 1000000000
     s -= 1
   }
-  done(l, if l == 2 { darwin.utimens(p, s, ns) } else { linux.utimens(p, s, ns) }, x)
+  done(l, if l == 3 { windows.utimens(p, s, ns) } else if l == 2 { darwin.utimens(p, s, ns) } else { linux.utimens(p, s, ns) }, x)
 }
 
 /// Whether paths are case sensitive: not on macOS and Windows (std/rt).
@@ -293,7 +317,7 @@ pub fn raw_mkdir(p: Str) -> Int {
   if l == 0 {
     return rt.fs_raw_mkdir(p)
   }
-  errno_of(if l == 2 { darwin.mkdir(p, 493) } else { linux.mkdir(p, 493) })
+  errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, 493) } else { linux.mkdir(p, 493) })
 }
 
 pub fn raw_rmdir(p: Str) -> Int {
@@ -355,7 +379,7 @@ pub fn raw_getcwd() -> Str {
   if l == 0 {
     return rt.fs_raw_getcwd()
   }
-  if l == 2 { darwin.getcwd() } else { linux.getcwd() }
+  if l == 3 { windows.getcwd() } else if l == 2 { darwin.getcwd() } else { linux.getcwd() }
 }
 
 /// Records err (0: success) for the Xo path x: the operation's status.
@@ -559,7 +583,7 @@ pub fn file_write(f: rt.FsFile, data: Bytes, x: Str) -> Int {
     return rt.fs_file_write(f, data, x)
   }
   let fd = rt.mem_load(rt.obj_addr(f), F_FD, 8)
-  let e = if l == 2 { darwin.write_all(fd, data) } else { linux.write_all(fd, data) }
+  let e = if l == 3 { windows.write_all(fd, data) } else if l == 2 { darwin.write_all(fd, data) } else { linux.write_all(fd, data) }
   if e != 0 {
     return fail(l, e, x)
   }
@@ -684,7 +708,7 @@ pub fn symlink(target: Str, p: Str, x: Str) -> Int {
   if l == 0 {
     return rt.fs_symlink(target, p, x)
   }
-  done(l, if l == 2 { darwin.symlink(target, p) } else { linux.symlink(target, p) }, x)
+  done(l, if l == 3 { windows.symlink(target, p) } else if l == 2 { darwin.symlink(target, p) } else { linux.symlink(target, p) }, x)
 }
 
 /// The target of the link p in a list of one, the empty list when p is
@@ -703,7 +727,7 @@ pub fn read_link(p: Str, x: Str) -> List[Str] {
     ok()
     return []
   }
-  let (t, re) = if l == 2 { darwin.readlink(p) } else { linux.readlink(p) }
+  let (t, re) = if l == 3 { windows.readlink(p) } else if l == 2 { darwin.readlink(p) } else { linux.readlink(p) }
   if re != 0 {
     fail(l, re, x)
     return []
@@ -734,7 +758,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
     return rt.fs_raw_lock(-1, false)
   }
   let op = if shared { linux.LOCK_SH } else { linux.LOCK_EX }
-  let busy = if l == 2 { darwin.EAGAIN } else { linux.EAGAIN }
+  let busy = if l == 3 { windows.EWOULDBLOCK } else if l == 2 { darwin.EAGAIN } else { linux.EAGAIN }
   while true {
     let r = flock(l, fd, op | linux.LOCK_NB)
     if r >= 0 {
