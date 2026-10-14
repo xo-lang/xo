@@ -5566,14 +5566,31 @@ static int nx_epoll_create(void) {
 	return nx_ret(xo_x_poll_create());
 }
 
+// nx_poll_sync stands for the epoll instance in ThreadSanitizer builds.
+// A registration publishes its xo_pd (calloc'd and initialized on the
+// registering thread) through the kernel, and the poller reads it from
+// the event epoll_wait returns: the kernel orders the two, and the C
+// library's epoll_ctl and epoll_wait interceptors tell ThreadSanitizer so
+// (a release of the epoll descriptor, an acquire when events return).
+// The Xo system calls (cabi_poll.xo, decision 0206 stage 3) bypass those
+// interceptors, so without the same pair here it reported pd_new's calloc
+// against the poller's lock of the descriptor as a race (Linux,
+// 2026-10-13, gotcha tsan-raw-epoll-no-edge).
+static char nx_poll_sync;
+
 static int nx_epoll_ctl(int ep, int op, int fd, struct epoll_event *e) {
 	NX_LIBC(epoll_ctl(ep, op, fd, e));
+	TSAN_RELEASE(&nx_poll_sync);
 	return nx_ret(xo_x_poll_ctl(ep, op, fd, XO_ADDR(e)));
 }
 
 static int nx_epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
 	NX_LIBC(epoll_wait(ep, evs, n, ms));
-	return nx_ret(xo_x_poll_wait(ep, XO_ADDR(evs), n, ms));
+	int r = nx_ret(xo_x_poll_wait(ep, XO_ADDR(evs), n, ms));
+	if (r > 0) {
+		TSAN_ACQUIRE(&nx_poll_sync);
+	}
+	return r;
 }
 
 // nx_getaddrinfo is getaddrinfo(host, port, hints) for the runtime's

@@ -15,6 +15,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   aside) now fails with `XO_LLRT_C=<name>: no C path named <name>`
   instead of silently building the Xo path; the live names are net,
   sched, and text.
+- `xo lsp` answers `textDocument/completion` and
+  `textDocument/signatureHelp` (decision 0219): fields and methods
+  after `x.` (prelude methods included), variants and statics after a
+  type name, public members after a package name, and elsewhere the
+  locals in scope, the module's names, imports, prelude names, and
+  keywords, with the hover's declaration line and doc comment, ranked
+  first when their type is the one expected at the cursor; signature
+  help shows the callee and its active parameter. A dangling `.` or an
+  open call no longer needs to parse: the server checks a copy patched
+  at the cursor.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop
