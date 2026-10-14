@@ -78,7 +78,9 @@ How other self hosted languages handle it:
 - A fresh host with the aws CLI and bucket access needs neither Go's
   compiler build of go-compiler-final nor the hops: one download and one
   build of selfhost/xo. On a fresh EC2 machine the chain took 1,491 to
-  1,936 s (decision 0215, toolchain.md "Bootstrapping without Go").
+  1,936 s (decision 0215, toolchain.md "Bootstrapping without Go"); on
+  the Mac with empty caches and a local seed directory it took 325 s
+  (toolchain.md "Prebuilt seeds", 2026-10-13).
 - A runtime addition the compiler itself uses costs a new seed (and a
   recorded hop for the fallback until that seed is uploaded).
 - The replay chain grows with each release; its cost is one EC2 run per

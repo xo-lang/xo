@@ -3316,6 +3316,18 @@ read the lead's darwin-arm64 tarball of 0.9.0-5e21dc31 from a local copy
 and unpacked it in 0.5 s, and its xo printed `xo 0.9.0 darwin/arm64`
 (2026-10-13). Last verified: 2026-10-13.
 
+A fresh machine's xobuild with a seed, measured on the development Mac
+(2026-10-13, commit 18ee6242, other agents running, through heavy.sh):
+no bin/xo, no xo on PATH, empty caches (`XO_CHECKOUT_CACHE`,
+`XO_BUILD_DIR`, `XO_RTOBJ_CACHE`, `XO_TLS_CACHE` fresh, `XO_BIN_CACHE=off`,
+`XO_RTPACK=off`), and `XO_SEED_URL` a local directory holding a seed
+packed by seed-pack.sh from the checkout's bin/xo (4 s, a 36,656,384
+byte tarball, the earlier lib/xo layout): the seed unpacked in 0.6 s and
+`go run ./scripts/xobuild` took 325 s end to end (one build of
+selfhost/xo; 9.16 GB maximum resident set size by /usr/bin/time -l),
+against 1,491 to 1,936 s for the chain on a fresh EC2 machine. On EC2
+the download from S3 is added; the lead measures it there.
+
 `scripts/seed-pack.sh XO OUTDIR` packs a built xo in that shape: a
 checkout's bin/xo (std at bin/../std; the tracked std/ files) or a
 release's bin/xo (lib/xo/std beside it), into
