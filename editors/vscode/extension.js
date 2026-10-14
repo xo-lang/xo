@@ -11,6 +11,9 @@ const vscode = require("vscode");
 const { LanguageClient, RevealOutputChannelOn } = require("vscode-languageclient/node");
 
 let client;
+// output is the one "Xo" output channel; each LanguageClient would
+// otherwise open its own, one more per restart.
+let output;
 
 function isFile(p) {
   try {
@@ -114,6 +117,7 @@ async function start(context) {
       // A failed request (hover over a package whose xo.mod does not load)
       // goes to the output channel, not a popup per mouse move.
       revealOutputChannelOn: RevealOutputChannelOn.Never,
+      outputChannel: output,
       synchronize: {
         fileEvents: vscode.workspace.createFileSystemWatcher("**/{*.xo,xo.mod,xo.work}"),
       },
@@ -133,12 +137,14 @@ async function stop() {
   if (client) {
     const c = client;
     client = undefined;
-    await c.stop();
+    await c.dispose();
   }
 }
 
 function activate(context) {
+  output = vscode.window.createOutputChannel("Xo");
   context.subscriptions.push(
+    output,
     vscode.commands.registerCommand("xo.restartServer", async () => {
       await stop();
       await start(context);
