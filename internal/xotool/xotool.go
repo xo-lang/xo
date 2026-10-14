@@ -243,7 +243,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bin := filepath.Join(root, "bin", "xo")
+	bin := filepath.Join(root, "bin", exeName("xo"))
 	keyFile := filepath.Join(root, "bin", "xo.key")
 	if k, err := os.ReadFile(keyFile); err == nil && strings.TrimSpace(string(k)) == key && isFile(bin) {
 		return bin, nil
@@ -252,7 +252,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	built := filepath.Join(base, "checkout", key, "xo")
+	built := filepath.Join(base, "checkout", key, exeName("xo"))
 	if !isFile(built) {
 		if err := buildLocked(root, built, log); err != nil {
 			return "", err
@@ -394,9 +394,9 @@ func Seeds(root string) ([]Seed, error) {
 		out = append(out, Seed{Path: p, Why: why})
 	}
 	add(os.Getenv("XO_SEED"), "$XO_SEED")
-	add(filepath.Join(root, "bin", "xo"), "the checkout's earlier bin/xo")
+	add(filepath.Join(root, "bin", exeName("xo")), "the checkout's earlier bin/xo")
 	if base, err := cacheBase(); err == nil {
-		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", "xo"))
+		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
 		sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
 		if len(ms) > 0 {
 			add(ms[0], "the newest earlier build "+ms[0])
@@ -436,7 +436,7 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 	commit := strings.TrimSpace(string(rev))
 	dir := filepath.Join(base, "seed", commit[:12])
 	tree := filepath.Join(dir, "tree")
-	bin := filepath.Join(tree, "bin", "xo")
+	bin := filepath.Join(tree, "bin", exeName("xo"))
 	if isFile(bin) {
 		return bin, nil
 	}
@@ -462,7 +462,7 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 	if err := archiveTree(root, commit, tree); err != nil {
 		return "", fmt.Errorf("%s: %v", SeedTag, err)
 	}
-	goXo := filepath.Join(dir, "goxo")
+	goXo := filepath.Join(dir, exeName("goxo"))
 	if out, err := runIn(tree, nil, "go", "build", "-o", goXo, "./cmd/xo"); err != nil {
 		return "", fmt.Errorf("go build ./cmd/xo at %s: %v\n%s", SeedTag, err, out)
 	}
@@ -476,6 +476,16 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 		return "", fmt.Errorf("the %s Go xo building its selfhost/xo: %v\n%s", SeedTag, err, out)
 	}
 	return bin, os.Rename(tmp, bin)
+}
+
+// exeName is name with the host's executable suffix: Windows only runs
+// a program by path when it ends in .exe (gotchas/xotool-tar-pipe-windows.md
+// covers the fresh Windows build this broke along with the tar pipe).
+func exeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
 }
 
 // hostBackend is the backend that builds xo on this host and the

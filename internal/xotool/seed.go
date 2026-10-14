@@ -149,12 +149,7 @@ func FetchSeed(log io.Writer) (string, error) {
 	return fetchSeedVersion(base, v, plat, log)
 }
 
-func seedExe() string {
-	if runtime.GOOS == "windows" {
-		return "xo.exe"
-	}
-	return "xo"
-}
+func seedExe() string { return exeName("xo") }
 
 // newestCachedSeed is the bin/xo of the highest version unpacked in
 // base/seeds for plat ("" when none).

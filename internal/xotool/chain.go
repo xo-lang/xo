@@ -82,7 +82,7 @@ func Chain(root, seed string, log io.Writer) (string, error) {
 			name += "-std-" + short(h.Std)
 		}
 		dir := filepath.Join(base, "seed", name)
-		bin := filepath.Join(dir, "xo")
+		bin := filepath.Join(dir, exeName("xo"))
 		if isFile(bin) {
 			cur = bin
 			continue
