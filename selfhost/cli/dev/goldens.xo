@@ -49,6 +49,9 @@ pub struct Config {
   pub build_only: Bool = false
   /// The host, keyed in.
   pub host: Str = ""
+  /// Build the native programs in `xo dev build-each` worker processes
+  /// (std parsed once per worker) instead of one `xo build` each.
+  pub each: Bool = true
 }
 
 /// The result of one program.
@@ -188,7 +191,7 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
     return Outcome{name: p.name, dir: p.dir, status: "cached"}
   }
-  let bin = "${cfg.out}/${p.dir.replace("/", "_")}"
+  let bin = bin_path(cfg, p)
   os.fs.remove(bin).ok()
   let test_prog = cfg.backend == "go" && p.name.starts_with("test_")
   let cmd = if test_prog { "test" } else { "build" }
@@ -221,6 +224,16 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
     Err(task.Timed.TimedOut) => return fail("build: timed out after ${cfg.timeout.seconds()} s")
     Err(task.Timed.Failed(e)) => return fail("build: ${e}")
   }
+  finish(os, cfg, key, p, build_ms)
+}
+
+fn bin_path(cfg: Config, p: Prog) -> Str {
+  "${cfg.out}/${p.dir.replace("/", "_")}"
+}
+
+/// finish runs the built program p and compares its run with its want.
+fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
+  let bin = bin_path(cfg, p)
   if cfg.build_only {
     if !key.is_empty() {
       mark(os.fs, cfg.cache, key)
@@ -284,21 +297,147 @@ pub fn run_goldens(os: Os, cfg: Config, dirs: List[Str]) -> List[Outcome] uses (
   let times = read_times(os.fs, times_path)
   let base = if cfg.cache.is_empty() { "" } else { base_key(os.fs, cfg) }
   let ordered = order(progs, times)
-  let results = task.map_concurrent(ordered, cfg.jobs.max(1), fn(p: Prog) {
-    let key = if base.is_empty() { "" } else { prog_key(os.fs, base, p) }
-    one(os, cfg, key, p)
-  })
   var outs: List[Outcome] = []
-  for r in results {
-    match r {
-      Ok(o) => outs.push(o)
-      Err(_) => {}
+  if cfg.each && (cfg.backend is "arm64" | "llvm") {
+    // worker processes that each build a share of the programs, so std
+    // is parsed once per worker (xo dev build-each); the cached passes
+    // are done first
+    var keys: Map[Str, Str] = {}
+    var todo: List[Prog] = []
+    for p in ordered {
+      let key = if base.is_empty() { "" } else { prog_key(os.fs, base, p) }
+      keys[p.dir] = key
+      if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "cached"})
+      } else {
+        todo.push(p)
+      }
+    }
+    let groups = share(todo, times, cfg.jobs.max(1))
+    let results = task.map_concurrent(groups, cfg.jobs.max(1), fn(g: List[Prog]) { build_group(os, cfg, keys, g) })
+    for r in results {
+      match r {
+        Ok(os2) => outs = outs + os2
+        Err(_) => {}
+      }
+    }
+  } else {
+    let results = task.map_concurrent(ordered, cfg.jobs.max(1), fn(p: Prog) {
+      let key = if base.is_empty() { "" } else { prog_key(os.fs, base, p) }
+      one(os, cfg, key, p)
+    })
+    for r in results {
+      match r {
+        Ok(o) => outs.push(o)
+        Err(_) => {}
+      }
     }
   }
   if !times_path.is_empty() {
     write_times(os.fs, times_path, times, outs)
   }
   outs.sort_by(fn(o: Outcome) { o.dir })
+}
+
+/// share deals the programs (largest first) into n groups of about equal
+/// estimated build time (the longest processing time rule): each next
+/// program goes to the group with the least so far.
+pub fn share(progs: List[Prog], times: Map[Str, Int], n: Int) -> List[List[Prog]] {
+  var groups: List[List[Prog]] = []
+  var load: List[Int] = []
+  for _ in 0..n {
+    groups.push([])
+    load.push(0)
+  }
+  for p in progs {
+    var best = 0
+    for i in 1..n {
+      if load[i] < load[best] {
+        best = i
+      }
+    }
+    // without a timing, a build takes about 1 ms per 4 bytes of source
+    // plus a fixed 400 ms (the std check and the link)
+    let est = times.get(p.dir) ?? (400 + p.size / 4)
+    var gl = groups[best]
+    gl.push(p)
+    groups.set(best, gl)
+    load.set(best, load[best] + est.max(1))
+  }
+  groups.filter(fn(g: List[Prog]) { !g.is_empty() })
+}
+
+test "share balances" {
+  let ps = [Prog{dir: "a", name: "a", want: "", size: 0}, Prog{dir: "b", name: "b", want: "", size: 0}, Prog{dir: "c", name: "c", want: "", size: 0}]
+  let g = share(ps, {"a": 1000, "b": 600, "c": 500}, 2)
+  expect(g.len() == 2)
+  expect(g[0].map(fn(p: Prog) { p.dir }) == ["a"])
+  expect(g[1].map(fn(p: Prog) { p.dir }) == ["b", "c"])
+  expect(share([], {}, 3).is_empty())
+}
+
+/// build_group builds the programs of g in `xo dev build-each` processes
+/// (one, and another for the rest after a build that fails, since a
+/// failing build ends its process), then runs and compares each built one.
+fn build_group(os: Os, cfg: Config, keys: Map[Str, Str], g: List[Prog]) -> List[Outcome] {
+  var outs: List[Outcome] = []
+  var rest = g
+  while !rest.is_empty() {
+    var args = ["dev", "build-each", "--backend=${cfg.backend}"]
+    for f in cfg.flags {
+      args.push(f)
+    }
+    args.push("--std=${cfg.std}")
+    args.push("--")
+    for p in rest {
+      os.fs.remove(bin_path(cfg, p)).ok()
+      args.push(bin_path(cfg, p))
+      args.push(p.dir)
+    }
+    let r = task.with_timeout(os.clock, cfg.timeout * rest.len(), fn() { os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build").output() })
+    let (stdout, stderr, why) = match r {
+      Ok(o) => (o.stdout.to_str() ?? "", o.stderr.to_str() ?? "", "")
+      Err(task.Timed.TimedOut) => ("", "", "build: timed out")
+      Err(task.Timed.Failed(e)) => ("", "", "build: ${e}")
+    }
+    var built: Map[Str, Int] = {}
+    var started = ""
+    for l in stdout.split("\n") {
+      if l.starts_with("== build ") {
+        started = l.trim_prefix("== build ")
+      } else if l.starts_with("== built ") {
+        let f = l.trim_prefix("== built ").split(" ")
+        if f.len() == 2 {
+          built[f[0]] = Int.parse(f[1]) ?? 0
+        }
+        started = ""
+      }
+    }
+    var next: List[Prog] = []
+    var after = false
+    for p in rest {
+      if let Some(ms) = built.get(p.dir) {
+        outs.push(finish(os, cfg, keys.get(p.dir) ?? "", p, ms))
+      } else if p.dir == started || (started.is_empty() && !after) {
+        // the build that ended the process (or, with no marker, the first
+        // one not built): its error is the last line of stderr
+        let lines = stderr.trim().split("\n")
+        let w = if !why.is_empty() { why } else { "build: ${lines[lines.len() - 1]}" }
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: w})
+        after = true
+      } else {
+        next.push(p)
+      }
+    }
+    if !why.is_empty() {
+      for p in next {
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: why})
+      }
+      next = []
+    }
+    rest = next
+  }
+  outs
 }
 
 fn read_times(fs: Fs, path: Str) -> Map[Str, Int] uses fs.read {

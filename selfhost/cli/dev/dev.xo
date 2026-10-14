@@ -58,6 +58,7 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
   fl.int_flag("timeout", 120, "seconds a build or a run may take")
   fl.bool_flag("build-only", "build, do not run (a cross target)")
   fl.bool_flag("no-cache", "neither read nor write the pass cache")
+  fl.bool_flag("no-each", "one `xo build` process per program (no build-each workers)")
   if !fl.parse(os, args) {
     return 2
   }
@@ -98,6 +99,7 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
     timeout: 1s * fl.get_int("timeout"),
     build_only: fl.get_bool("build-only"),
     host: h.host,
+    each: !fl.get_bool("no-each"),
   }
   let t0 = os.clock.now()
   let outs = run_goldens(os, cfg, fl.args)

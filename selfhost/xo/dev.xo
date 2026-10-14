@@ -24,6 +24,7 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   match args[0] {
     "dump" => dump_cmd(os, args[1..])
     "rtpack" => rtpack_cmd(os, args[1..])
+    "build-each" => build_each_cmd(os, args[1..])
     _ => {
       let goos = host_os(os)
       let h = dev.Host{
@@ -35,6 +36,51 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
       dev.run(os, h, args)
     }
   }
+}
+
+/// build_each_cmd is `xo dev build-each [build flags] -- OUT DIR [OUT DIR
+/// ...]`: the native build of each program DIR into OUT, one after
+/// another in this process, carrying the checker's std parses from one
+/// build to the next (decision 0209, std once per worker). It prints
+/// `== build DIR` before and `== built DIR MS` after each; a build that
+/// fails ends the process as `xo build` does, after its marker, so the
+/// caller (xo dev goldens) knows which one failed and starts another
+/// worker for the rest.
+fn build_each_cmd(os: Os, args: List[Str]) -> Int {
+  var flags: List[Str] = []
+  var pairs: List[Str] = []
+  var sep = false
+  for a in args {
+    if !sep && a == "--" {
+      sep = true
+    } else if sep {
+      pairs.push(a)
+    } else {
+      flags.push(a)
+    }
+  }
+  if pairs.is_empty() || pairs.len() % 2 != 0 {
+    os.stdio.eprintln("usage: xo dev build-each [build flags] -- OUT DIR [OUT DIR ...]")
+    return 2
+  }
+  let goos = host_os(os)
+  var pc: Map[Str, check.ParseEntry] = {}
+  var i = 0
+  while i < pairs.len() {
+    let out = pairs[i]
+    let dir = pairs[i + 1]
+    os.stdio.println("== build ${dir}")
+    let t0 = os.clock.now()
+    var o = parse_args(os, ["build"] + flags + ["-o", out, dir])
+    o.parse_cache = pc
+    let ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+    let backend = if o.backend.is_empty() { "arm64" } else { o.backend }
+    let nb = build_native(os, ctx, o, backend)
+    pc = nb.pc
+    os.stdio.println("== built ${dir} ${os.clock.since(t0).millis()}")
+    i += 2
+  }
+  0
 }
 
 /// dump_cmd is `xo dev dump KIND args...`: the component's command line,
