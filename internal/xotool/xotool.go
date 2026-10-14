@@ -17,11 +17,17 @@
 // $XO_CHECKOUT_CACHE overrides the directory) and is copied to bin/xo,
 // whose std is <repo>/std (xo1 looks for std at <bin>/../std). The seed,
 // the xo that compiles it, is the first of: $XO_SEED; <repo>/bin/xo; the
-// newest earlier build in the cache; `xo` on PATH; the xo1 of the
+// newest earlier build in the cache; `xo` on PATH; the newest prebuilt
+// seed (decision 0216 item 1: seeds/latest.txt of $XO_SEED_URL or
+// s3://$XO_SEED_BUCKET, fetched with the aws CLI into
+// <user cache>/xo/seeds; seed.go). A seed that fails is reported and
+// the next one tried; when none builds, Ensure fails (owner,
+// 2026-10-13). Only with XO_SEED_FALLBACK=chain (or from-source: the
+// root alone, `xobuild --from-source`) does the xo1 of the
 // go-compiler-final tag (the last commit with the Go compiler, built
 // once with `go build ./cmd/xo` from `git archive go-compiler-final`
-// into <user cache>/xo/seed). A seed that fails is reported and the next
-// one tried. The backend is the host's: the Go backend on Windows (as
+// into <user cache>/xo/seed) build through the hops of
+// scripts/seed-chain.txt. The backend is the host's: the Go backend on Windows (as
 // scripts/windows-batch.sh builds xo1), arm64 on an arm64 host, else LLVM
 // split into 12 modules without LTO (decision 0168), as
 // scripts/bootstrap-xo.sh builds xo.
@@ -264,6 +270,15 @@ func Ensure(root string, log io.Writer) (string, error) {
 	return bin, nil
 }
 
+// SeedFallback is $XO_SEED_FALLBACK: "" (the default: no build from
+// source; a failed fetch of the prebuilt seed is an error), "chain"
+// (after the other seeds, the go-compiler-final root through the seed
+// chain), or "from-source" (only that: the replay from source, decision
+// 0216 item 3, or a new platform; `xobuild --from-source`). Owner,
+// 2026-10-13: the chain costs 25 to 37 minutes and hid fetch failures,
+// so it runs only when asked for.
+func SeedFallback() string { return strings.TrimSpace(os.Getenv("XO_SEED_FALLBACK")) }
+
 // buildLocked builds root's selfhost/xo into out once across processes.
 func buildLocked(root, out string, log io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
@@ -281,34 +296,30 @@ func buildLocked(root, out string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
+	chain := SeedFallback() != ""
 	var errs []string
 	for _, s := range seeds {
 		if s.Path == "" {
-			p, err := SeedFromTag(root, log)
+			p, err := s.Resolve(log)
 			if err != nil {
+				fmt.Fprintf(log, "xotool: no seed from %s: %v\n", s.Why, err)
 				errs = append(errs, s.Why+": "+err.Error())
 				continue
 			}
-			// the root seed goes through the recorded hops first: the
-			// chain is recorded because the root cannot build these
-			// sources directly (an EC2 run spent minutes failing the
-			// direct build, 2026-10-13)
-			if hop, err := Chain(root, p, log); err != nil {
-				errs = append(errs, s.Why+" through the seed chain: "+err.Error())
-				continue
-			} else {
-				p = hop
-			}
 			s.Path = p
 		}
-		fmt.Fprintf(log, "xotool: building xo (selfhost/xo of %s) with %s, a few minutes, into %s\n", root, s.Why, out)
+		fmt.Fprintf(log, "xotool: building xo (selfhost/xo of %s) with %s (%s), a few minutes, into %s\n", root, s.Why, s.Path, out)
 		t0 := time.Now()
 		err := BuildXo(root, s.Path, out)
 		if err != nil {
 			fmt.Fprintf(log, "xotool: %s failed: %v\n", s.Why, err)
 			errs = append(errs, s.Why+": "+err.Error())
+			if s.NoChain || !chain {
+				continue
+			}
 			// the recorded intermediate hops (decision 0216 item 2),
 			// then the checkout
+			fmt.Fprintf(log, "xotool: walking scripts/seed-chain.txt from %s (XO_SEED_FALLBACK=%s)\n", s.Why, SeedFallback())
 			hop, herr := Chain(root, s.Path, log)
 			if herr != nil {
 				errs = append(errs, s.Why+" through the seed chain: "+herr.Error())
@@ -322,19 +333,57 @@ func buildLocked(root, out string, log io.Writer) error {
 				continue
 			}
 		}
-		fmt.Fprintf(log, "xotool: built in %.0f s\n", time.Since(t0).Seconds())
+		fmt.Fprintf(log, "xotool: built in %.0f s with %s\n", time.Since(t0).Seconds(), s.Why)
 		return nil
 	}
-	return fmt.Errorf("xotool: no seed built xo (set XO_SEED to an xo, or XO_CLI to skip the build):\n  %s", strings.Join(errs, "\n  "))
+	msg := "xotool: no seed built xo"
+	if !chain {
+		msg += fmt.Sprintf(" and building from source is opt in: the prebuilt seed comes from %s/seeds/ (latest.txt, then seeds/<seed>/%s.tar.gz; needs the aws CLI and read access, toolchain.md \"Prebuilt seeds\"). Fix the cause below, or set XO_SEED to an xo, or XO_CLI to skip the build; only to rebuild from the %s root through scripts/seed-chain.txt (25 to 37 minutes, needs Go and git) set XO_SEED_FALLBACK=chain or run `go run ./scripts/xobuild --from-source`", SeedURL(), HostPlatform(), SeedTag)
+	} else {
+		msg += " (set XO_SEED to an xo, or XO_CLI to skip the build)"
+	}
+	return fmt.Errorf("%s:\n  %s", msg, strings.Join(errs, "\n  "))
 }
 
 // Seed is an xo that can compile selfhost/xo, and where it came from.
-// An empty Path is the go-compiler-final seed, built when it is reached
-// (SeedFromTag).
-type Seed struct{ Path, Why string }
+// An empty Path is resolved when the seed is reached (Resolve): the
+// prebuilt seed (FetchSeed) and the go-compiler-final root through the
+// seed chain (SeedFromTag, Chain). NoChain skips the seed chain when
+// the seed fails to build the checkout.
+type Seed struct {
+	Path, Why string
+	Resolve   func(io.Writer) (string, error)
+	NoChain   bool
+}
 
-// Seeds are the candidate seeds of root, in order (the package comment).
+// Seeds are the candidate seeds of root, in order (the package comment):
+// $XO_SEED, the checkout's bin/xo, the newest earlier build, xo on PATH,
+// the prebuilt seed, and, only with XO_SEED_FALLBACK=chain, the
+// go-compiler-final root through the seed chain. XO_SEED_FALLBACK=
+// from-source gives the root alone.
 func Seeds(root string) ([]Seed, error) {
+	rootSeed := Seed{Why: "the " + SeedTag + " root through scripts/seed-chain.txt", Resolve: func(log io.Writer) (string, error) {
+		fmt.Fprintf(log, "xotool: building the %s root and walking scripts/seed-chain.txt (XO_SEED_FALLBACK=%s; needs Go and git)\n", SeedTag, SeedFallback())
+		p, err := SeedFromTag(root, log)
+		if err != nil {
+			return "", err
+		}
+		// the root goes through the recorded hops first: the chain is
+		// recorded because the root cannot build these sources directly
+		// (an EC2 run spent minutes failing the direct build, 2026-10-13)
+		hop, err := Chain(root, p, log)
+		if err != nil {
+			return "", fmt.Errorf("the seed chain: %v", err)
+		}
+		return hop, nil
+	}, NoChain: true}
+	switch SeedFallback() {
+	case "", "chain":
+	case "from-source":
+		return []Seed{rootSeed}, nil
+	default:
+		return nil, fmt.Errorf("xotool: XO_SEED_FALLBACK=%s: want chain or from-source (or unset)", SeedFallback())
+	}
 	var out []Seed
 	seen := map[string]bool{}
 	add := func(p, why string) {
@@ -342,7 +391,7 @@ func Seeds(root string) ([]Seed, error) {
 			return
 		}
 		seen[p] = true
-		out = append(out, Seed{p, why})
+		out = append(out, Seed{Path: p, Why: why})
 	}
 	add(os.Getenv("XO_SEED"), "$XO_SEED")
 	add(filepath.Join(root, "bin", "xo"), "the checkout's earlier bin/xo")
@@ -356,7 +405,13 @@ func Seeds(root string) ([]Seed, error) {
 	if p, err := exec.LookPath("xo"); err == nil {
 		add(p, "xo on PATH ("+p+")")
 	}
-	out = append(out, Seed{"", "the seed of the last commit with the Go compiler"})
+	if loc := SeedURL(); loc != "off" {
+		// one hop from the newest seed (decision 0216 item 1)
+		out = append(out, Seed{Why: "the prebuilt seed of " + loc, Resolve: FetchSeed, NoChain: true})
+	}
+	if SeedFallback() == "chain" {
+		out = append(out, rootSeed)
+	}
 	return out, nil
 }
 
