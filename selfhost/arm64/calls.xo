@@ -841,6 +841,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
     }
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    // decision 0222: the value barrier is the operand itself (this
+    // emitter neither folds through a call's result nor turns masks
+    // into branches; test/codegen/consttime checks it)
+    "rt.ct_barrier" => g.set(v, [g.word(x.args[0])])
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
     "rt.f32_round" => g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
@@ -891,6 +895,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.words_ref = true
       g.set(v, [g.sym_addr(g.tramp("xo_sys_words"))])
     }
+    "rt.static_word" => {
+      // word k of the process globals (decision 0207, work item B02): the
+      // table's address plus 8 * k (k a constant the SSA builder checked)
+      g.static_ref = true
+      let base = g.sym_addr(g.tramp("xo_static"))
+      let (k, _) = g.const_int(x.args[0])
+      if k == 0 {
+        g.set(v, [base])
+      } else {
+        g.set(v, [g.def1(false, "add $d0, $u0, #${8 * k}", [g.real(base)])])
+      }
+    }
     "rt.sys_clone" => {
       // a call of the clone trampoline (gen.xo), written at the end
       g.clone_ref = true
@@ -899,6 +915,13 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         args.push(rsrc(g.word(x.args[k])))
       }
       g.set(v, g.call(g.tramp("xo_clone"), args, [false]))
+    }
+    "rt.unwind_save" | "rt.unwind_resume" => {
+      // calls of the unwinder's trampolines (decision 0221), written with
+      // the clone trampoline: only programs with no C library use either
+      g.clone_ref = true
+      let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
+      g.set(v, [])
     }
     "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       // calls of the functions sched.xo emits (decision 0212)

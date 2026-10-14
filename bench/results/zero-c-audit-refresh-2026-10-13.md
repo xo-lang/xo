@@ -286,15 +286,15 @@ MISSING.
 | Item | Retires | Kinds | Ranges |
 |---|---|---|---|
 | B01 clocks off Linux (done 2026-10-14: the clocks in Xo, 27 lines net retired, the rest GLUE of later items; notes) | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
-| B02 runtime globals and thread locals | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
+| B02 runtime globals and thread locals (partly done 2026-10-14: rt.static_word, std/log state, 66 lines; notes) | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
-| B05 unwinder without libgcc | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
+| B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
-| B09 constant time, crypto.equal, Ed25519 | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
+| B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
-| B11 client HPACK | 583 | GLUE 583 | xo_h2.c 87-669 |
+| B11 client HPACK (**done 2026-10-14**, http2-client-hpack-2026-10-14.md: 786 runtime lines deleted, 242 added) | 583 | GLUE 583 | xo_h2.c 87-669 |
 | B12 HTTP response writer (done 2026-10-14: http1w.xo; 514 lines deleted, 112 of glue added; http-writer-2026-10-14.md) | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
 | B13 string and list objects | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
@@ -349,6 +349,20 @@ frees the 533 (a) lines.)
   0207, not in std/native/rt.xo) for process globals: the test world
   state, the zone table, std/log's state, the HTTP stream tables. Xo
   about 130 lines plus emitter work, low to medium.
+  **Partly done 2026-10-14** (decision 0207, "Process globals as
+  implemented"): `rt.static_word(k)` (64 words) is in std/native/rt.xo
+  and the arm64, LLVM, and wasm emitters (wasm also lowers the thread
+  local words now), with a 2 line C seed shim (`xo_static_word`,
+  xo_sys.c) until the next seed. std/log's state is Xo
+  (std/native/llrt/logstate.xo): static words 0 to 2, thread local words
+  7 and 8 (words 5 and 6 went to B01's monotonic clock); the xo_http.c
+  logging section (66 lines, with the `__thread` xlog_from) is deleted.
+  Left: xo_sys.c's sys_scratch, bytes_addr, bytes_buf, rs_bytes_len need
+  a Bytes form of obj_addr/obj_at, which the seed's SSA builder rejects
+  in std, so they follow the next seed; tw_fake, fs_set_err (the n_fs_*
+  thread locals of xo_bytes.c and xo_fs.c), and auxval go with B14,
+  B16, and B04/B26. B03, B13, B14, B16, B21, and B27 can use
+  rt.static_word now.
 - **B03 stdio, exit, env, args.** The 64 KiB stdout buffer (xo_rt.c
   548-668) needs an `xo_x_flush` export for the C fault and exit paths;
   env.get and env.vars (7398-7454) need the environment block (Linux:
@@ -365,7 +379,20 @@ frees the 533 (a) lines.)
   (selfhost/llvm/call.xo:655-690). printf, FILE, strto*, qsort
   (749-1196) go as their C callers move (B03, B06, B13). Two items,
   medium.
-- **B05 unwinder.** MISSING: a DWARF CFI unwinder over .eh_frame and
+- **B05 unwinder.** Stage 1 done 2026-10-14 (decision 0221, commit
+  c38a15f8): std/native/llrt/unwind.xo has the .eh_frame_hdr lookup, the
+  DWARF CFI interpreter, and the personality routine and LSDA reader as
+  cabi_nolibc.xo exports (`xo_x_unwind_fault`, `xo_x_personality`, which
+  the static link names xo_personality); rt.unwind_save and
+  rt.unwind_resume are trampolines of the arm64 and LLVM emitters. With
+  XO_NOLIBC=1 on linux/arm64 the 12 fault goldens pass on both backends
+  (arm64 143 of 154 goldens, LLVM 144, the rest do not link). Retired:
+  xo_nolibc.c 1567-1614 (its `_Unwind_*` stubs, 41 lines net). Left:
+  x86_64 (decision 0221 stage 2: trampolines and register numbers), then
+  the C library builds (stage 3: xo_rt.c 1737-1777 fault_stop and the
+  forced unwind, 1880-1927 and 1974-2021 the C LSDA reader and
+  personality, kept for glibc and macOS). The original note follows.
+  MISSING: a DWARF CFI unwinder over .eh_frame and
   .eh_frame_hdr in Xo, and a register restore and resume intrinsic;
   the personality routine (1974-2021) and LSDA reader (1880-1927) as a
   C ABI export named by `.cfi_personality`. Until then XO_NOLIBC faults
@@ -384,7 +411,13 @@ frees the 533 (a) lines.)
 - **B09 constant time.** MISSING: decision 0195 prerequisite 5 (value
   barrier, constant time select, a check). Then crypto.equal (129-141;
   verify_password calls it, digest.xo:524, 541) and Ed25519 (290-737).
-  Xo about 560 lines, high; two items.
+  Xo about 560 lines, high; two items. Prerequisite 5 and crypto.equal
+  done 2026-10-14 (decision 0222: `rt.ct_barrier`, std/native/llrt/ct.xo,
+  test/codegen/consttime, internal/llvm TestConstantTimeLLVM and
+  TestCryptoXoDiff), Ed25519 too (std/native/llrt/ed25519.xo, 0.944 to
+  0.971 of the C's instructions on arm64, 0.757 to 0.768 on LLVM,
+  bench/results/ed25519-consttime-2026-10-14.md); xo_crypto.c is 16
+  lines, `xo_ct_barrier` for the seed.
 - **B10 HTTP client parser.** Since decision 0198 the C request head
   parser hp_head (xo_http.c 817-1278) is called only from hb_chunked's
   trailer parse (1368), and hb_chunked (1279-1397) only from the client's
@@ -415,6 +448,14 @@ frees the 533 (a) lines.)
   (its callers are in 2982-3444). hpack.xo has the decoder and encoder;
   it needs an encode one field entry (about 30 lines) and the client's
   hand off. Low.
+  **Done 2026-10-14** (`http2-client-hpack-2026-10-14.md`): cl_start
+  sets the HTTP/2 exchange up and Xo drives it (http1.xo h2_exchange:
+  the field list, hpack.Enc.field, cl_h2_send, then cl_h2_next stops at
+  each response block for hpack's decoder, cl_h2_end); the HPACK state
+  is an rt.Any the C keeps with the pooled connection. xo_h2.c 3,606 to
+  3,056 lines; h2len 0.982 to 1.006, h2big 0.996 to 1.009 of the C's
+  instructions. The server's driver moved from hpack.xo to http1.xo
+  (H2Conn) to keep the imports acyclic.
 - **B12 response writer.** Status text, DetectContentType, Date, and the
   HTTP/1.1 writer rules (xo_http.c 274-341, 1398-1866): pure text, a new
   http1w.xo that HTTP/2's h2_head also uses. Xo about 500 lines, medium
@@ -594,7 +635,7 @@ nothing new.
 | W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | **Done 2026-10-14** (see "W0 done" below) |
 | W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | **Done 2026-10-14** (see "W1 done" below): 1,284 lines of xo_rt.c |
 | 1 | B01 clocks (done 2026-10-14, Windows measured: Clock.now 0.928 to 0.952 of the C path's cycles) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
-| 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
+| 2 | B02 globals and thread locals (rt.static_word and std/log done 2026-10-14; xo_sys.c after the next seed) | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
 | 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand deleted once seed 0.10.0-23ce8ce2 had B08 (2026-10-14) |
 | 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | **Done 2026-10-14** (http-client-2026-10-14.md): client_do and parse_response in http1.xo, h2_request's URL from h2_target; 1,629 runtime C lines deleted, 265 added; bar 0.953 to 1.008 |
@@ -603,7 +644,7 @@ nothing new.
 | 8 | B13 string and list objects (two items) | 816 | 2 | reroute http1.xo str_find and show.xo rune_count first (retires 50 lines in an hour) |
 | 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |
-| 11 | B05 unwinder (three items) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
+| 11 | B05 unwinder (three items; stage 1 done 2026-10-14, XO_NOLIBC linux/arm64, decision 0221) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
 | 12 | B06 faults in Xo | 319 | 3, 11 | the fault record and fault_exit; then Windows RtlVirtualUnwind through sys_windows.xo |
 | 13 | B14 test world part 1 (two items) | 1,059 | 2 | testworld.xo records and the generator draws (gen.xo already calls them) |
 | 14 | B16 Fs operations (two items) | 1,383 | 2 | fsops.xo POSIX over linux.xo and darwin.xo; then the Windows layer and xo_win.c 542-1029; the `stat$INODE64` name for darwin/amd64 |

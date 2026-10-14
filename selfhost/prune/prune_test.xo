@@ -1,0 +1,132 @@
+// Tests of the cache pruning (decision 0223), on the in memory file system
+// and the virtual clock: no real time passes.
+
+/// Writes a file of n bytes (its time is the virtual clock's now).
+fn put(os: testing.TestOs, path: Str, n: Int) {
+  os.fs.write(path, "x".repeat(n).bytes()).or_fault("write ${path}")
+}
+
+fn there(os: testing.TestOs, path: Str) -> Bool {
+  os.fs.exists(path).or_fault("exists ${path}")
+}
+
+test "entries unused past the age limit go, recent ones stay" {
+  put(os, "c/aa/old", 10)
+  os.clock.advance(30h)
+  put(os, "c/bb/new", 10)
+  let st = run(os.fs, os.clock, "c", Policy{})
+  expect(st.ran) == true
+  expect(st.removed) == ["c/aa/old"]
+  expect(there(os, "c/aa/old")) == false
+  expect(there(os, "c/bb/new")) == true
+  expect(st.bytes) == 10
+}
+
+test "an entry in use is never removed, over the age and the cap" {
+  put(os, "c/aa/busy", 100)
+  put(os, "c/aa/idle", 100)
+  os.clock.advance(30h)
+  // a reader hits busy: marked used, so it is not stale
+  mark_used(os.fs, os.clock, "c/aa/busy")
+  // even with a cap of one byte, an entry used within KEEP stays
+  let st = run(os.fs, os.clock, "c", Policy{max_bytes: 1})
+  expect(st.removed) == ["c/aa/idle"]
+  expect(there(os, "c/aa/busy")) == true
+  expect(st.bytes) == 100
+}
+
+test "mark_used costs one stat within the hour and refreshes after it" {
+  put(os, "c/aa/e", 1)
+  os.clock.advance(30m)
+  mark_used(os.fs, os.clock, "c/aa/e")
+  let fi = os.fs.stat("c/aa/e").or_fault("stat").or_fault("missing")
+  expect(os.clock.since(fi.modified)) == 30m
+  os.clock.advance(31m)
+  mark_used(os.fs, os.clock, "c/aa/e")
+  let fj = os.fs.stat("c/aa/e").or_fault("stat").or_fault("missing")
+  expect(os.clock.since(fj.modified)) == 0s
+}
+
+test "over the cap the least recently used go first, until under it" {
+  put(os, "c/aa/1", 40)
+  os.clock.advance(3h)
+  put(os, "c/aa/2", 40)
+  os.clock.advance(3h)
+  put(os, "c/bb/3", 40)
+  os.clock.advance(3h)
+  let st = run(os.fs, os.clock, "c", Policy{max_bytes: 100})
+  expect(st.removed) == ["c/aa/1"]
+  expect(st.bytes) == 80
+  expect(there(os, "c/aa/2")) == true
+}
+
+test "the stamp limits prunes to one per interval" {
+  put(os, "c/aa/1", 1)
+  expect(run(os.fs, os.clock, "c", Policy{}).ran) == true
+  os.clock.advance(30h)
+  let st = run(os.fs, os.clock, "c", Policy{every: 31h})
+  expect(st.ran) == false
+  expect(there(os, "c/aa/1")) == true
+  os.clock.advance(1h)
+  expect(run(os.fs, os.clock, "c", Policy{every: 31h}).removed) == ["c/aa/1"]
+}
+
+test "top level files (stamps, locks) are never entries" {
+  put(os, "c/xo-cache.lock", 5)
+  put(os, "c/trim.txt", 5)
+  os.clock.advance(100h)
+  let st = run(os.fs, os.clock, "c", Policy{max_bytes: 1})
+  expect(st.removed.len()) == 0
+  expect(there(os, "c/xo-cache.lock")) == true
+}
+
+test "temporary files are left alone while recent and removed when old" {
+  put(os, "c/aa/x.tmp-123", 5)
+  os.clock.advance(1h)
+  run(os.fs, os.clock, "c", Policy{})
+  expect(there(os, "c/aa/x.tmp-123")) == true
+  os.clock.advance(2h)
+  run(os.fs, os.clock, "c", Policy{})
+  expect(there(os, "c/aa/x.tmp-123")) == false
+}
+
+test "directory entries go whole, sized by their files, timed by the directory" {
+  put(os, "b/one/m/a.go", 30)
+  put(os, "b/one/bin/p", 30)
+  os.clock.advance(5h)
+  put(os, "b/two/a.go", 30)
+  os.clock.advance(5h)
+  // one was used again (build_dir sets the directory's time)
+  os.fs.set_modified("b/one", os.clock.now()).or_fault("touch")
+  put(os, "b/three/a.go", 30)
+  let st = run(os.fs, os.clock, "b", Policy{max_bytes: 100, dirs: true})
+  expect(st.removed) == ["b/two"]
+  expect(there(os, "b/two/a.go")) == false
+  expect(there(os, "b/one/bin/p")) == true
+  expect(st.bytes) == 90
+}
+
+test "zero age and zero cap turn pruning off" {
+  put(os, "c/aa/1", 5)
+  os.clock.advance(1000h)
+  let st = run(os.fs, os.clock, "c", Policy{max_age: 0s, max_bytes: 0})
+  expect(st.ran) == false
+  expect(there(os, "c/aa/1")) == true
+}
+
+test "the environment sets the age and the cap" {
+  os.env.set("XO_CACHE_MAX_AGE", "6h")
+  os.env.set("XO_CACHE_MAX_GB", "0.5")
+  let p = from_env(os.env, Policy{})
+  expect(p.max_age) == 6h
+  expect(p.max_bytes) == GB / 2
+  os.env.set("XO_CACHE_MAX_AGE", "0")
+  os.env.set("XO_CACHE_MAX_GB", "junk")
+  let q = from_env(os.env, Policy{})
+  expect(q.max_age) == 0s
+  expect(q.max_bytes) == 20 * GB
+}
+
+test "a missing cache directory is no prune" {
+  expect(run(os.fs, os.clock, "nothing", Policy{}).ran) == false
+}

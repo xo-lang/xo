@@ -11,7 +11,9 @@
 // item B10 (2026-10-14) the client is here too (client_do: the URL, the
 // redirects, the reading of a response, parse_response), and so is the
 // parse of an HTTP/2 request's :path (h2_target); xo_http.c's C parser
-// is test data only (std/llrt/testdata/http_ref.c).
+// is test data only (std/llrt/testdata/http_ref.c). The header blocks of
+// HTTP/2 pass through here to hpack.xo: the server's (H2Conn) and, since
+// audit item B11, the client's (h2_exchange).
 //
 // C never calls compiled Xo (decision 0180), so the connection's task
 // (std/native/http.xo, serve_conn) calls the C reader (rthttp.hc_read)
@@ -20,6 +22,7 @@
 // chunked body (the result to rthttp.hc_chunked). The C keeps the socket,
 // the buffer, the body reading, and the error answers; the parsed head
 // stays here and becomes the Request.
+use native/llrt/hpack
 use native/llrt/http1_tables
 use native/llrt/netpolicy
 use native/rt
@@ -1680,11 +1683,226 @@ pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
 }
 
 // ---------------------------------------------------------------------------
+// The HTTP/2 server's header blocks (xo_h2.c, decision 0193 step 6)
+//
+// The connection's frames are read and written by C under the
+// connection's lock, which stream tasks share. So the HTTP/2
+// connection's fiber (std/native/http.xo, serve_conn) calls the C
+// (rthttp.h2_next) until it stops at a header block: 2, a block fragment
+// to decode (rthttp.h2_block gives it, rthttp.h2_fields takes the
+// fields, with the parse of their :path by h2_target); 3, response heads
+// to encode in the order they go out (rthttp.h2_enc_job,
+// rthttp.h2_encoded; the C holds the connection's lock until they are
+// in, so the order and the table stay the peer's). A 100 Continue is
+// encoded the same way when rthttp.h2_fields asks for one.
+
+/// The HPACK state of an HTTP/2 server connection.
+pub struct H2Conn {
+  h: rthttp.HConn
+  dec: hpack.Dec
+  enc: hpack.Enc
+}
+
+/// The HPACK state of the connection, whose header blocks pass through
+/// Xo.
+pub fn h2_conn(h: rthttp.HConn) -> H2Conn {
+  H2Conn{h: h, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder()}
+}
+
+/// The largest header list (and string) the server takes (H2_MAX_HLIST:
+/// DefaultMaxHeaderBytes plus 10 times 32).
+const H2_MAX_HLIST: Int = 1048896
+
+/// Runs the HTTP/2 connection until a request is ready for a handler
+/// (true; rthttp.h2_take hands it out) or the connection is done.
+pub fn (var c: H2Conn) next() -> Bool {
+  while true {
+    let r = rthttp.h2_next(c.h)
+    if r == 2 {
+      let f = c.dec.decode_part(rthttp.h2_block(c.h), rthttp.h2_block_first(c.h), H2_MAX_HLIST)
+      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first, h2_target(f.data, f.lens)) {
+        // a 100 Continue goes out after the request's HEADERS
+        rthttp.h2_encoded(c.h, c.enc.encode_job(rthttp.h2_enc_job(c.h)))
+      }
+    } else if r == 3 {
+      rthttp.h2_encoded(c.h, c.enc.encode_job(rthttp.h2_enc_job(c.h)))
+    } else {
+      return r == 1
+    }
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// The HTTP/2 client's header blocks (xo_h2.c's hp_encode and hp_decode
+// until audit item B11, 2026-10-14)
+//
+// rthttp.cl_start sets an HTTP/2 exchange up (a pooled connection, or a
+// new one whose ALPN chose h2) and returns before its HEADERS: Xo lists
+// the request's fields (httpcommon.EncodeHeaders) and encodes them with
+// the connection's encoder (rthttp.cl_h2_send), then the C runs the
+// exchange (rthttp.cl_h2_next) and stops at each response header block,
+// which Xo decodes (rthttp.cl_h2_block, rthttp.cl_h2_fields). The
+// connection's HPACK state is Xo's: the C keeps it with the connection
+// between requests (rthttp.cl_h2_take, rthttp.cl_h2_end).
+
+/// The HPACK state of a client HTTP/2 connection.
+struct H2State {
+  dec: hpack.Dec
+  enc: hpack.Enc
+}
+
+/// The largest response header block (and string) the client decodes:
+/// the 10 MiB of its SETTINGS_MAX_HEADER_LIST_SIZE.
+const H2_MAX_RESP: Int = 10485760
+
+/// checkConnHeaders: why HTTP/2 refuses the request's header (names
+/// canonical, each once), "" when it does not.
+fn h2_check(names: List[Str], values: List[Str]) -> Str {
+  var i = 0
+  while i < names.len() && i < values.len() {
+    let k = names[i]
+    let v = values[i]
+    let bad = if k == "Upgrade" || k == "Transfer-Encoding" {
+      !v.is_empty() && v != "chunked"
+    } else if k == "Connection" {
+      !v.is_empty() && v != "close" && v != "keep-alive"
+    } else {
+      false
+    }
+    if bad {
+      return "http2: invalid " + k + " request header: [" + go_quote(v) + "]"
+    }
+    i += 1
+  }
+  ""
+}
+
+/// The value of the header's field k, and whether it has one.
+fn h2_field(names: List[Str], values: List[Str], k: Str) -> (Str, Bool) {
+  var i = 0
+  while i < names.len() && i < values.len() {
+    if names[i] == k {
+      return (values[i], true)
+    }
+    i += 1
+  }
+  ("", false)
+}
+
+/// The ASCII lower case of s.
+fn ascii_lower(s: Str) -> Str {
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() {
+    if Int(b[i]) >= 65 && Int(b[i]) <= 90 {
+      break
+    }
+    i += 1
+  }
+  if i == b.len() {
+    return s
+  }
+  var out = rt.str_slice(s, 0, i)
+  while i < b.len() {
+    out = rt.rs_push_word(out, lower(Int(b[i])), 1)
+    i += 1
+  }
+  out
+}
+
+/// The header block of the request (httpcommon.EncodeHeaders): the
+/// pseudo fields, the header's fields in lower case but the hop by hop
+/// ones, a cookie field per pair (RFC 9113 8.2.3), content-length,
+/// accept-encoding, and user-agent.
+fn (var st: H2State) block(method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) -> Str {
+  var blk = st.enc.field("", ":authority", host)
+  blk = st.enc.field(blk, ":method", method)
+  blk = st.enc.field(blk, ":path", target)
+  blk = st.enc.field(blk, ":scheme", "https")
+  var did_ua = false
+  var i = 0
+  while i < names.len() && i < values.len() {
+    let k = names[i]
+    let v = values[i]
+    i += 1
+    if k == "Host" || k == "Content-Length" || k == "Connection" || k == "Proxy-Connection" || k == "Transfer-Encoding" || k == "Upgrade" || k == "Keep-Alive" {
+      continue
+    }
+    if k == "User-Agent" {
+      did_ua = true
+      if !v.is_empty() {
+        blk = st.enc.field(blk, "user-agent", v)
+      }
+    } else if k == "Cookie" {
+      let b = v.bytes()
+      let n = b.len()
+      var s = 0
+      while true {
+        let semi = bfind(b, 59, s, n)
+        if semi < 0 {
+          break
+        }
+        blk = st.enc.field(blk, "cookie", rt.str_slice(v, s, semi))
+        s = semi + 1
+        while s < n && b[s] == 32 {
+          s += 1
+        }
+      }
+      if s < n {
+        blk = st.enc.field(blk, "cookie", rt.str_slice(v, s, n))
+      }
+    } else {
+      blk = st.enc.field(blk, ascii_lower(k), v)
+    }
+  }
+  if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
+    blk = st.enc.field(blk, "content-length", "${bn}")
+  }
+  let (_, has_ae) = h2_field(names, values, "Accept-Encoding")
+  let (_, has_range) = h2_field(names, values, "Range")
+  if !has_ae && !has_range && method != "HEAD" {
+    blk = st.enc.field(blk, "accept-encoding", "gzip")
+  }
+  if !did_ua {
+    blk = st.enc.field(blk, "user-agent", "Go-http-client/2.0")
+  }
+  blk
+}
+
+/// Makes the HTTP/2 request rthttp.cl_start set up on r: its header
+/// block, then the response's (the body went with the C), and the
+/// connection's HPACK state back to the C. rthttp.cl_retry tells
+/// whether the request goes again on a new connection.
+fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) {
+  var st = H2State{dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder()}
+  let kept = rthttp.cl_h2_take(r)
+  if let Some(a) = kept.get(0) {
+    if let Some(s) = rt.any_get[H2State](a) {
+      st = s
+    }
+  }
+  st.enc.set_sizes(rthttp.cl_h2_sizes(r))
+  let why = h2_check(names, values)
+  if why.is_empty() {
+    rthttp.cl_h2_send(r, st.block(method, target, host, names, values, bn), "")
+  } else {
+    rthttp.cl_h2_send(r, "", why)
+  }
+  while rthttp.cl_h2_next(r) {
+    let blk = rthttp.cl_h2_block(r)
+    let f = st.dec.decode_part(blk, true, H2_MAX_RESP)
+    rthttp.cl_h2_fields(r, f.ok == 1 && f.used == blk.len(), f.data, f.lens)
+  }
+  rthttp.cl_h2_end(r, rt.any_of(st))
+}
+
+// ---------------------------------------------------------------------------
 // The client (xo_http.c's xo_cl_do and cl_read_response until audit item
 // B10, 2026-10-14): the URL and the redirects of net/http's Client, and
 // the reading of an HTTP/1.1 response (ReadResponse, readTransfer). The
-// C keeps the connection, TLS, HTTP/2, and the writing of the request
-// (rthttp.cl_start); C never calls compiled Xo (decision 0180), so an
+// C keeps the connection, TLS, HTTP/2's frames (its header blocks are
+// h2_exchange's), and the writing of the request (rthttp.cl_start); C never calls compiled Xo (decision 0180), so an
 // HTTP/1.1 exchange returns with the request sent and Xo reads the
 // response through rthttp.cl_input, cl_fill, and cl_take, then ends it
 // with rthttp.cl_end.
@@ -2107,7 +2325,19 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     if !u.rawquery.is_empty() {
       target = target + "?" + u.rawquery
     }
-    let r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, url_op(method) + " " + q)
+    let prefix = url_op(method) + " " + q
+    var r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, true)
+    if rthttp.cl_h2(r) {
+      h2_exchange(r, method, target, u.host, hk, hv, body.len())
+      if rthttp.cl_retry(r) {
+        // the server did not take the request on the pooled connection:
+        // it goes on a new one, as Transport retries it
+        r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, false)
+        if rthttp.cl_h2(r) {
+          h2_exchange(r, method, target, u.host, hk, hv, body.len())
+        }
+      }
+    }
     var status = 0
     var headers: List[Str] = []
     var rbody = b""

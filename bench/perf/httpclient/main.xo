@@ -1,19 +1,29 @@
-// The client of bench/perf/httpclient (audit item B10): N requests with
-// std/http's client to the server of serve/ at ADDR for the path of
-// workload W, each over a connection of its own (as the native client
-// speaks HTTP/1.1), so the response reading (status line, header,
-// Content-Length and chunked bodies, redirects) is the measured work
-// next to the connections. Prints the bytes of the bodies it got.
+// The client of bench/perf/httpclient (audit items B10 and B11): N
+// requests with std/http's client to the server of serve/ at ADDR for
+// the path of workload W. Over HTTP/1.1 each request has a connection of
+// its own (as the native client speaks HTTP/1.1), so the response
+// reading (status line, header, Content-Length and chunked bodies,
+// redirects) is the measured work next to the connections. A workload
+// named h2... goes to the HTTP/2 server at TLSADDR (its certificate in
+// the PEM file CA): the requests share one pooled connection, so the
+// header blocks (HPACK) and frames are the measured work next to TLS.
+// Prints the bytes of the bodies it got.
 use std/http
 
 fn main(os: Os) ! {
   let addr = os.env.get("ADDR") ?? "127.0.0.1:18095"
   let w = os.env.get("W") ?? "len"
   let n = Int.parse(os.env.get("N") ?? "1000") ?? 1000
-  let c = http.client(os.net)
+  var c = http.client(os.net)
+  var url = "http://${addr}/${w}"
+  if w.starts_with("h2") {
+    let ca = os.fs.read(os.env.get("CA") ?? "ca.pem")?
+    c = c.with_roots(ca).or_fault("roots")
+    url = "https://${os.env.get("TLSADDR") ?? "127.0.0.1:18096"}/${w}"
+  }
   var total = 0
   for _ in 0..n {
-    match c.get("http://${addr}/${w}") {
+    match c.get(url) {
       Ok(r) => total += r.body.len() + r.headers.len()
       Err(e) => {
         os.stdio.println("error: ${e}")

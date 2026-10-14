@@ -8,6 +8,7 @@
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/gen
+use github.com/xo-lang/xo/selfhost/prune
 use std/crypto
 use std/internal
 
@@ -257,6 +258,19 @@ fn hold_go_cache(os: Os, ctx: Ctx) -> internal.SharedLock? {
   cache
 }
 
+/// Prunes the Go cache per file (prune.run; decision 0223): at most
+/// hourly, files unused past $XO_CACHE_MAX_AGE (default 24h), then the
+/// least recently used over $XO_CACHE_MAX_GB (default 20, or
+/// $XO_GOCACHE_MAX bytes). Go refreshes a file's time when it uses it
+/// and the time is over an hour old, and treats a missing file as a
+/// miss, so removing files unused for two hours is safe without the
+/// cache lock: a go command in flight uses only files it refreshed (or
+/// wrote) within the hour. Top level files (README, trim.txt, the
+/// xo-*.lock files) are never removed.
+fn prune_go_cache(os: Os, ctx: Ctx) {
+  prune.run(os.fs, os.clock, go_cache_dir(os, ctx), cap_env(os, prune.from_env(os.env, prune.Policy{}), "XO_GOCACHE_MAX"))
+}
+
 fn release_go_cache(l: internal.SharedLock?) {
   if let Some(h) = l {
     h.unlock()
@@ -295,6 +309,7 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
   if br.code == 0 {
     store_bin(os, entry, out)
   }
+  prune_go_cache(os, ctx)
   Ok((br.code, (br.stdout + br.stderr).to_str() ?? ""))
 }
 

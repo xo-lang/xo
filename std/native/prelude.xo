@@ -10,6 +10,7 @@ use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
 use native/llrt/jsontext
+use native/llrt/logstate
 use native/llrt/procspec
 use native/llrt/rand
 use native/llrt/num
@@ -2245,6 +2246,12 @@ fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
 // path).
 
 fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
+
+// The dependency that writes the next log record (decision 0173), as
+// the SSA builder sets it before a dependency's call of std/log: a
+// thread local word in Xo (std/native/llrt/logstate.xo, work item B02).
+
+fn llrt_log_from(s: Str) { logstate.set_from(s) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo

@@ -12,11 +12,21 @@
 
 /// The body of xo_stack_switch.
 fn stack_switch_body() -> List[Str] {
-  ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]",
-    "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]",
-    "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]",
-    "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]",
-    "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
+  ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]", "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]", "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]", "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]", "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
+}
+
+/// The body of xo_unwind_save (rt.unwind_save, decision 0221): the
+/// callee saved registers, the return address (x30), and sp stored at
+/// x0 by DWARF register number (word n at 8 * n; d8 to d15 are 72 to
+/// 79). The LLVM emitter writes the same lines (selfhost/llvm sched.xo).
+pub fn unwind_save_body() -> List[Str] {
+  ["stp x19, x20, [x0, #152]", "stp x21, x22, [x0, #168]", "stp x23, x24, [x0, #184]", "stp x25, x26, [x0, #200]", "stp x27, x28, [x0, #216]", "stp x29, x30, [x0, #232]", "mov x9, sp", "str x9, [x0, #248]", "str d8, [x0, #576]", "str d9, [x0, #584]", "str d10, [x0, #592]", "str d11, [x0, #600]", "str d12, [x0, #608]", "str d13, [x0, #616]", "str d14, [x0, #624]", "str d15, [x0, #632]", "ret"]
+}
+
+/// The body of xo_unwind_resume (rt.unwind_resume): those registers, x0
+/// and x1, and sp loaded from x0's words, then a jump to word 96.
+pub fn unwind_resume_body() -> List[Str] {
+  ["mov x16, x0", "ldp x19, x20, [x16, #152]", "ldp x21, x22, [x16, #168]", "ldp x23, x24, [x16, #184]", "ldp x25, x26, [x16, #200]", "ldp x27, x28, [x16, #216]", "ldp x29, x30, [x16, #232]", "ldr d8, [x16, #576]", "ldr d9, [x16, #584]", "ldr d10, [x16, #592]", "ldr d11, [x16, #600]", "ldr d12, [x16, #608]", "ldr d13, [x16, #616]", "ldr d14, [x16, #624]", "ldr d15, [x16, #632]", "ldr x17, [x16, #248]", "mov sp, x17", "ldp x0, x1, [x16, #0]", "ldr x17, [x16, #768]", "br x17"]
 }
 
 /// One function of sched_asm: its symbol (global or not) and body.

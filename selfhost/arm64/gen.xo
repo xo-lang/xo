@@ -90,6 +90,10 @@ fn (g: G) trampolines(var out: List[Str]) {
     // thread (exit, 93)
     out.push("${g.tramp_def("xo_clone")}\t.p2align 2\n${g.tramp("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
       "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
+    // rt.unwind_save and rt.unwind_resume (decision 0221), which only the
+    // same programs (no C library) use
+    out.push("${g.tramp_def("xo_unwind_save")}\t.p2align 2\n${g.tramp("xo_unwind_save")}:\n\t${unwind_save_body().join("\n\t")}\n")
+    out.push("${g.tramp_def("xo_unwind_resume")}\t.p2align 2\n${g.tramp("xo_unwind_resume")}:\n\t${unwind_resume_body().join("\n\t")}\n")
   }
 }
 
@@ -109,12 +113,20 @@ fn (g: G) shared_code(var out: List[Str]) {
   }
 }
 
-/// The process words of rt.sys_words, and the end of an ELF file.
+/// The process words of rt.sys_words and rt.static_word, and the end of an ELF file.
 fn (g: G) end_data(var out: List[Str]) {
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
     out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")
     for _ in 0..16 {
+      out.push("\t.quad 0\n")
+    }
+  }
+  if g.static_ref {
+    // rt.static_word (decision 0207, work item B02): 64 words of process
+    // globals, zero at start
+    out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
+    for _ in 0..64 {
       out.push("\t.quad 0\n")
     }
   }

@@ -14,6 +14,42 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bindings and generated programs across runs, the harness self test
   runs per method in parallel; scripts/seed-pack.sh takes
   XO_SEED_GZIP_LEVEL (bench/results/short-tests-2026-10-14.md).
+- Native runtime (zero-C audit item B11): the HTTP/2 client's header
+  blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
+  the server already used); the client's request fields are listed in
+  Xo (http1.xo `h2_exchange`) and the C HPACK copy leaves the runtime
+  (xo_h2.c 3,606 to 3,056 lines). HTTP/2 client requests measure 0.982
+  to 1.009 times the C's instructions
+  (bench/results/http2-client-hpack-2026-10-14.md; new h2len and h2big
+  workloads in bench/perf/httpclient).
+- Native runtime (zero-C audit item B09, decision 0222): a value barrier
+  for constant time runtime code (`rt.ct_barrier`, internal: no
+  instruction on arm64, an empty asm on LLVM) and constant time masks in
+  std/native/llrt/ct.xo; `crypto.equal`, verify_password's comparison,
+  and Ed25519 (std/native/llrt/ed25519.xo) are Xo, the same results, the
+  C deleted (std/llrt/xo_crypto.c 540 lines to 16). Ed25519 takes 0.944
+  to 0.971 of the C's instructions on arm64 and 0.757 to 0.768 on LLVM
+  (bench/results/ed25519-consttime-2026-10-14.md) and now builds for
+  wasm too. `xo dev codegen` patterns can
+  name another module's function with a `// func MOD.NAME` line
+  (test/codegen/consttime). Tests: internal/llvm TestConstantTimeLLVM
+  (clang -O2 keeps the barriers; no branch or select in the masks) and
+  TestCryptoXoDiff (crypto.equal and Ed25519 against Go on both native
+  backends).
+- xo prunes its caches by age and size again (decision 0223): the build
+  directories and the Go backend's cache (whose trims went away with the
+  Go driver), the binary cache, and the test harness's xo builds
+  (`checkout/<key>`, the newest 4 kept). Entries unused for 24 hours go
+  (`XO_CACHE_MAX_AGE`, e.g. `6h`, `0` off), then the least recently used
+  past 20 GiB per cache (`XO_CACHE_MAX_GB`); nothing used within two
+  hours is removed, and a prune runs at most once an hour.
+- Runtime process globals (zero-C work item B02, decision 0207): an
+  internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
+  LLVM, and wasm emitters; std/log's state (log.configure's level,
+  format, and output; the dependency attribution of decision 0173 as a
+  thread local word; the record time) is Xo, and the 66 line logging
+  section of the C runtime is gone. The wasm backend now lowers the
+  runtime's thread local words and runs std/log programs.
 - Native runtime (zero-C audit item B12): the HTTP/1.1 response writer
   is Xo (std/native/llrt/http1w.xo: status text, DetectContentType, the
   Date header, chunkWriter.writeHeader's rules, the error answers),
@@ -22,6 +58,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   on the wire are unchanged; http workloads 0.976 to 1.001 of the C's
   instructions on HTTP/1.1, HTTP/2 within noise
   (bench/results/http-writer-2026-10-14.md).
+- Programs linked with no C library (XO_NOLIBC=1) on linux/arm64 unwind
+  faults: deferred code runs and tasks and `task.isolate` catch faults,
+  through an unwinder written in Xo (std/native/llrt/unwind.xo:
+  .eh_frame_hdr lookup, DWARF CFI interpreter, the personality routine;
+  decision 0221). The 12 fault goldens that ended at the fault now pass
+  on the arm64 and LLVM backends; xo_nolibc.c loses its unwinder stubs.
 - Native runtime (zero-C audit item B10): std/http's client reads
   HTTP/1.1 responses, follows redirects, and parses URLs in Xo
   (std/native/llrt/http1.xo `client_do`, `parse_response`); the C keeps

@@ -127,8 +127,8 @@ fn (var b: Builder) check_no_alloc() {
 
 /// Whether a reference count or heap function may call the function
 /// named n (check_no_alloc): the inline raw memory and atomic
-/// intrinsics, memcpy, and the prefetch hint, the C paths' rt.rc_*_c and
-/// rt.alloc_*_c, and the heap's platform calls rt.heap_* (malloc,
+/// intrinsics, memcpy, the prefetch hint, the process globals
+/// (rt.static_word), the C paths' rt.rc_*_c and rt.alloc_*_c, and the heap's platform calls rt.heap_* (malloc,
 /// realloc, free, a new chunk, the central lists' mutex: they exit on
 /// out of memory, never fault).
 /// In the scheduler core (sched.xo, decision 0212) also the task
@@ -144,7 +144,7 @@ fn rc_callee_ok(n: Str) -> Bool {
   if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" {
     return true
   }
-  n is "rt.prefetch" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint"
+  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.ct_barrier"
 }
 
 /// A `requires` clause (core 9.1): without `else` a false condition

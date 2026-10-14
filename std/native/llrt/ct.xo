@@ -1,0 +1,61 @@
+// Constant time code in the native runtime (decision 0222; decision 0195
+// prerequisite 5, the zero-C audit's B09). A mask is 0 or -1 (every bit
+// set). Secret values go only through bitwise operations, rt.int_wrap
+// (wrapping arithmetic, never a checked one: an overflow check is a
+// branch), rt.u64_mul_hi, and these helpers; never through `if`,
+// `match`, `&&`, `||`, a comparison, or an index. rt.ct_barrier hides a
+// value from the compiler: a mask made from a secret passes through it
+// before it selects, so LLVM cannot learn that it is 0 or -1 and turn
+// the masked pick into a branch (test/codegen/consttime checks the code on
+// arm64 and LLVM, internal/llvm's TestConstantTimeLLVM the optimized
+// LLVM output on arm64 and x86-64).
+use native/rt
+
+/// x, which the compiler may not reason about.
+pub fn barrier(x: Int) -> Int { rt.ct_barrier(x) }
+
+/// -1 when the low bit of b is 1, else 0.
+pub fn mask_bit(b: Int) -> Int { rt.ct_barrier(rt.int_wrap(1, 0, b & 1)) }
+
+/// -1 when x is not 0, else 0.
+pub fn mask_nonzero(x: Int) -> Int {
+  // the top bit of x | -x is set exactly when x is not 0
+  let top = rt.int_wrap(4, x | rt.int_wrap(1, 0, x), 63)
+  rt.ct_barrier(rt.int_wrap(1, 0, top))
+}
+
+/// -1 when a == b, else 0.
+pub fn mask_eq(a: Int, b: Int) -> Int { ~mask_nonzero(a ^ b) }
+
+/// -1 when a < b as unsigned 64 bit words, else 0 (the borrow of a - b,
+/// as Go's bits.Sub64).
+pub fn mask_lt(a: Int, b: Int) -> Int {
+  let d = rt.int_wrap(1, a, b)
+  let borrow = rt.int_wrap(4, (~a & b) | (~(a ^ b) & d), 63)
+  rt.ct_barrier(rt.int_wrap(1, 0, borrow))
+}
+
+/// a when m is -1, b when m is 0.
+pub fn pick(m: Int, a: Int, b: Int) -> Int { b ^ (rt.ct_barrier(m) & (a ^ b)) }
+
+/// Whether a and b hold the same bytes, in a time that depends on their
+/// lengths only (subtle.ConstantTimeCompare; the lengths are public).
+pub fn bytes_equal(a: Bytes, b: Bytes) -> Bool {
+  let n = a.len()
+  if n != b.len() {
+    return false
+  }
+  // the barrier in the loop keeps the compiler from leaving it early
+  // once d has every bit set
+  var d = 0
+  var i = 0
+  while i + 8 <= n {
+    d = rt.ct_barrier(d | (rt.bytes_word(a, i) ^ rt.bytes_word(b, i)))
+    i += 8
+  }
+  while i < n {
+    d = rt.ct_barrier(d | (Int(a[i]) ^ Int(b[i])))
+    i += 1
+  }
+  mask_nonzero(d) == 0
+}

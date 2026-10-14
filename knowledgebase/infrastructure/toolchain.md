@@ -263,7 +263,7 @@ XO_CLI=/abs/xo go test ./cmd/xo -run 'TestCLIHelp|TestCLIPattern' [-update-help]
 go test ./internal/selfhost -run TestSelfhostFormat     # the formatter of selfhost/cli/core/format against internal/format on every .xo file of the repository and on copies with changed blanks, byte for byte (go backend, about 10 s) (last verified: 2026-10-12)
 go test ./internal/diag -run TestSelfhostExplainData [-update-explain]   # selfhost/cli/core/explain_data.xo is generated from explain.go and codes.go; rewrite it after changing a text (last verified: 2026-10-12)
 xo dev goldens [--backend=arm64|llvm|go] [--flags='--target=linux/arm64 --ld=macho'] [-j N] [--force|--no-cache] [--no-each] [--json] [--sample=N] [--only=a,b] [--timeout=S] [--build-only] [--cmd=run] [--build-path=P] DIR...   # hidden (decision 0209, selfhost/cli/dev): the golden programs under DIR (a program dir has .xo files and want.txt, or ../<parent>want/<name>.txt as internal/arm64/testdata/runwant) built by this xo (or --xo), run with args.txt, env.txt, stdin.txt, XO_LEAKCHECK=1 on native backends, compared byte for byte; native builds go to `xo dev build-each` workers that parse std once each, largest first; passes cached under <user cache>/xo/dev/goldens/pass by the hash of the xo binary, std, flags, host, and program files (--force ignores, --no-cache neither reads nor writes); --cmd=run builds and runs each with one `xo run` in its directory; the ELF goldens (--flags='--target=linux/arm64 --ld=macho') run directly on a linux/arm64 host and need a linux/arm64 runtime pack in XO_RTPACK (TestDevGoldensELF builds one with `xo dev rtpack --target=linux/arm64` into <user cache>/xo/devgoldens/rtpack/<pack key>, 2026-10-14); it replaced scripts/selfhost-goldens.py, selfhost-gogoldens.py, and elf-goldens.py (deleted 2026-10-14 after both agreed on the Mac and on linux/arm64); go test ./internal/devgoldens wraps it (-short: every 25th, XO_DEV_FORCE=1, XO_DEV_JOBS) (last verified: 2026-10-13)
-xo dev errorcheck DIR... | xo dev codegen [--backend=arm64,llvm] DIR...   # hidden (decision 0217): diagnostics against `// ERROR XOnnnn "re"` comments (test/errorcheck), and per function patterns `// arm64: "re" -"re"` on `xo asm` output (test/codegen) (last verified: 2026-10-13)
+xo dev errorcheck DIR... | xo dev codegen [--backend=arm64,llvm] DIR...   # hidden (decision 0217): diagnostics against `// ERROR XOnnnn "re"` comments (test/errorcheck), and per function patterns `// arm64: "re" -"re"` on `xo asm` output (test/codegen); a `// func MOD.NAME` line names a function of another module (a std runtime module's, as `xo asm` names it) for the patterns below it (test/codegen/consttime, decision 0222) (last verified: 2026-10-14)
 xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH... | xo dev rtpack ...   # hidden: each compiler component's own command line (its dump_main) inside xo, --std of this xo by default; rtpack as `xo rtpack` (decision 0209; last verified: 2026-10-13)
 xo1 build|run|test [flags] [dir ...]                 # decision 0178 stage 1: xo build|run|test's flags with Go's flag rules (--targets, -o, --json, --release, --error-args, --stamp, --no-mono, --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore, --record, --run, --cases, -v, --offline, --workspace) plus --std --wd --cc --asm --go-tree --phase-times; several directories are one program; the check's diagnostics printed as xo prints them (human, or --json's indented object); the build goes to the Go driver's build directory (<user cache>/xo/build/<hash>/arm64|llvm|..., XO_BIN_CACHE shared with xo under the same keys), prints `os/arch: path`; XO_LLVM_SPLIT/JOBS/LTO split LLVM builds; `run DIR -- ARGS` execs the program, its exit status passed through; not in xo1 yet: --ci, --hybrid, --real on native tests, XO1201 diagnostics (last verified: 2026-10-12)
 (cd selfhost && go run ../cmd/xo build --backend=arm64 -o macho ./macho) && ./macho asm [-o OUT.o] [--minos=X.Y] [--bench=N] IN.s   # the self hosted Mach-O assembler (decision 0182): the arm64 emitter's assembly into an MH_OBJECT with the sections, relocations, compact unwind entries, and eh_frame of `cc -c`; LC_BUILD_VERSION minos default 11.0 (last verified: 2026-10-12)
@@ -271,7 +271,7 @@ python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; xo dev goldens --flags='--as=macho' runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant (and TLS library); else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
-xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), std/llrt/xo_nolibc.c defining the C library functions the runtime calls, linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
+xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), std/llrt/xo_nolibc.c defining the C library functions the runtime calls, linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
 xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO_RTPACK=DIR xo dev goldens --flags=--ld=macho --build-path=/nonexistent builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
 python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
@@ -938,7 +938,12 @@ Last verified: 2026-10-07
   connection of its own; prints `<w> <backend> <min instructions
   retired>` of the client. The C client is gone: an xo from before B10
   (main 16524ee6) with its own std measures it. PORT (18095). Through
-  the heavy lock. Last verified: 2026-10-14.
+  the heavy lock. Since B11 (2026-10-14) also h2len and h2big: HTTP/2
+  over TLS (serve/ on PORT+1 with a certificate it makes and writes to
+  the out dir's ca.pem), every request on one pooled connection; the C
+  HPACK is measured with main c013b78d's xo, whose copy needs std and
+  third_party next to it (gotchas/baseline-xo-needs-third-party.md).
+  Last verified: 2026-10-14.
 - `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
   working directory, and process environments (mkdir, tree, remove,
@@ -1279,6 +1284,8 @@ selfhost/arm64/         the arm64 emitter in Xo (decision 0158): state.xo (the e
                         slots and branches), rc.xo (counting helpers), closures.xo (closures, boxes,
                         equality), byref.xo (decisions 0151, 0153), inline.xo, stages.xo (what a stage
                         of the port does not emit yet), main.xo (CLI)
+selfhost/prune/         age and size pruning of xo's caches (decision 0223): prune.xo (run, mark_used,
+                        Policy, from_env), prune_test.xo (MemFs and the fake clock; last verified: 2026-10-14)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)
@@ -3071,10 +3078,36 @@ before); the runtime itself is about 13 MB per variant (with and without
 `xo_nohttp`). Last verified: 2026-10-09.
 
 Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
-`<user cache>/xo/gocache`, `gotool.CacheDir`), trimmed by least recent use to stay under
-`XO_GOCACHE_MAX` bytes (default 8 GiB). Entries younger than 2 hours are never trimmed, so concurrent builds keep their files. See `gotchas/go-build-cache-growth.md` and `gotchas/go-cache-trim-races-builds.md`.
+`<user cache>/xo/gocache`, `gotool.CacheDir`), pruned as "Cache pruning"
+below describes. See `gotchas/go-build-cache-growth.md`.
 
-Per program build directories (`<user cache>/xo/build/<hash>`) are trimmed the same way to `XO_BUILD_DIR_MAX` bytes (default 4 GiB), least recently used first, skipping any used in the last 2 hours; a directory chosen with `XO_BUILD_DIR` is never trimmed (gotchas/build-dir-growth.md). Last verified: 2026-10-10.
+### Cache pruning (decision 0223)
+
+One routine, `selfhost/prune`, prunes xo's caches; internal/xotool
+prunes its own `checkout/<key>` with the same stamp format. An entry's
+time is its last use (refreshed on a hit when over an hour old); a
+cache's last prune is the time of `DIR/prune-stamp`. A prune removes
+entries unused for longer than the age limit, then the least recently
+used until the cache is under its cap. Nothing used within the last two
+hours is removed, so a cache can sit above its cap by that much.
+
+| Cache | Entry | When | Age | Cap |
+|---|---|---|---|---|
+| `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory | build_dir, at most hourly | `XO_CACHE_MAX_AGE` | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |
+| `$XO_GOCACHE` (`<user cache>/xo/gocache`) | each file below the top level | after a go build, at most hourly | `XO_CACHE_MAX_AGE` | `XO_GOCACHE_MAX` bytes, else `XO_CACHE_MAX_GB` |
+| `$XO_BIN_CACHE` (`testbin/` in tests) | each file below the top level | after a store, at most once a minute | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else 6 GiB |
+| `<cache base>/checkout/<key>` (xotool) | each key directory | xotool Ensure, at most hourly | `XO_CACHE_MAX_AGE`, past the newest `XO_CHECKOUT_KEEP` (default 4) | none |
+
+- `XO_CACHE_MAX_AGE`: a Go duration (`6h`, `90m`), default `24h`; `0`
+  turns age pruning off (and the checkout pruning).
+- `XO_CACHE_MAX_GB`: GiB, a decimal, default `20`; `0` turns the size cap
+  off for `build/` and `gocache/`.
+- `rtobj/` keeps its own 512 MiB size trim; `dev/`, `mbedtls/`, `seed/`,
+  and `seeds/` are not pruned.
+- Tests: `xo test selfhost/prune` (TestSelfhostPruneXoTests, merge tier;
+  MemFs and the fake clock), `go test -run Prune ./internal/xotool`.
+
+Last verified: 2026-10-14.
 
 Every go command the repo runs (tests, cmd/xo, scripts) uses Xo's cache
 or has a listed reason not to (decision 0176, audit of 2026-10-12): tests

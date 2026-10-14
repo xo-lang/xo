@@ -120,7 +120,9 @@ mutexes, stdio for faults, malloc, getenv).
     linker relaxes TLS sequences to local exec already.
   - Signals in Xo: rt_sigaction with rt.sys_restorer (done), handlers
     as C ABI entries, sigaltstack for stack overflow faults.
-  - Unwinding without libgcc: a DWARF CFI unwinder over .eh_frame (and
+  - Unwinding without libgcc (**done for linux/arm64, decision 0221**,
+    2026-10-14: std/native/llrt/unwind.xo; the 12 fault goldens pass
+    with XO_NOLIBC=1): a DWARF CFI unwinder over .eh_frame (and
     .eh_frame_hdr's table) in Xo, driving the existing personality
     routine, or the frame walk xo_rt.c does on Windows over
     RtlVirtualUnwind done over .eh_frame; until then faults end the

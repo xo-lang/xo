@@ -20,6 +20,26 @@ fn (var g: Gen) sched_switch() {
   g.helpers.push(naked_fn("void @xo_fiber_entry()", start))
 }
 
+/// Defines xo_unwind_save and xo_unwind_resume (rt.unwind_save and
+/// rt.unwind_resume, decision 0221) at the first use: the lines of
+/// selfhost/arm64 sched.xo unwind_save_body and unwind_resume_body on
+/// arm64; on x86_64, which has no Xo unwinder yet, the save stores
+/// nothing and the resume traps.
+fn (var g: Gen) unwind_fns() {
+  if g.emitted.contains("@xo_unwind_save") {
+    return
+  }
+  g.emitted["@xo_unwind_save"] = true
+  g.emitted["@xo_unwind_resume"] = true
+  if g.arch() == "amd64" {
+    g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["retq"]))
+    g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["ud2"]))
+    return
+  }
+  g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["stp x19, x20, [x0, #152]", "stp x21, x22, [x0, #168]", "stp x23, x24, [x0, #184]", "stp x25, x26, [x0, #200]", "stp x27, x28, [x0, #216]", "stp x29, x30, [x0, #232]", "mov x9, sp", "str x9, [x0, #248]", "str d8, [x0, #576]", "str d9, [x0, #584]", "str d10, [x0, #592]", "str d11, [x0, #600]", "str d12, [x0, #608]", "str d13, [x0, #616]", "str d14, [x0, #624]", "str d15, [x0, #632]", "ret"]))
+  g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["mov x16, x0", "ldp x19, x20, [x16, #152]", "ldp x21, x22, [x16, #168]", "ldp x23, x24, [x16, #184]", "ldp x25, x26, [x16, #200]", "ldp x27, x28, [x16, #216]", "ldp x29, x30, [x16, #232]", "ldr d8, [x16, #576]", "ldr d9, [x16, #584]", "ldr d10, [x16, #592]", "ldr d11, [x16, #600]", "ldr d12, [x16, #608]", "ldr d13, [x16, #616]", "ldr d14, [x16, #624]", "ldr d15, [x16, #632]", "ldr x17, [x16, #248]", "mov sp, x17", "ldp x0, x1, [x16, #0]", "ldr x17, [x16, #768]", "br x17"]))
+}
+
 /// Defines the thread local table and its functions at the first use.
 fn (var g: Gen) sched_tlocal() {
   if g.emitted.contains("@xo_tlocal_get") {
@@ -65,38 +85,17 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
 }
 
 fn arm64_switch() -> List[Str] {
-  ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]",
-    "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]",
-    "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]",
-    "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]",
-    "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
+  ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]", "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]", "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]", "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]", "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
 }
 
 fn arm64_win_switch() -> List[Str] {
-  ["sub sp, sp, #192", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]",
-    "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]",
-    "stp d14, d15, [sp, #144]", "ldr x9, [x18, #8]", "ldr x10, [x18, #16]", "stp x9, x10, [sp, #160]", "ldr x9, [x18, #0x1478]",
-    "str x9, [sp, #176]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x9, x10, [sp, #160]", "str x9, [x18, #8]",
-    "str x10, [x18, #16]", "ldr x9, [sp, #176]", "str x9, [x18, #0x1478]", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]",
-    "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]",
-    "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #192", "ret"]
+  ["sub sp, sp, #192", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]", "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]", "stp d14, d15, [sp, #144]", "ldr x9, [x18, #8]", "ldr x10, [x18, #16]", "stp x9, x10, [sp, #160]", "ldr x9, [x18, #0x1478]", "str x9, [sp, #176]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x9, x10, [sp, #160]", "str x9, [x18, #8]", "str x10, [x18, #16]", "ldr x9, [sp, #176]", "str x9, [x18, #0x1478]", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]", "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]", "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #192", "ret"]
 }
 
 fn amd64_win_switch() -> List[Str] {
-  ["pushq %rbp", "pushq %rbx", "pushq %rdi", "pushq %rsi", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $192, %rsp",
-    "movq %gs:0x1478, %rax", "movq %rax, 184(%rsp)", "movq %gs:0x10, %rax", "movq %rax, 176(%rsp)", "movq %gs:0x08, %rax",
-    "movq %rax, 168(%rsp)", "movdqu %xmm6, 8(%rsp)", "movdqu %xmm7, 24(%rsp)", "movdqu %xmm8, 40(%rsp)", "movdqu %xmm9, 56(%rsp)",
-    "movdqu %xmm10, 72(%rsp)", "movdqu %xmm11, 88(%rsp)", "movdqu %xmm12, 104(%rsp)", "movdqu %xmm13, 120(%rsp)",
-    "movdqu %xmm14, 136(%rsp)", "movdqu %xmm15, 152(%rsp)", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rcx)", "movq %rdx, %rsp",
-    "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "movdqu 8(%rsp), %xmm6", "movdqu 24(%rsp), %xmm7", "movdqu 40(%rsp), %xmm8",
-    "movdqu 56(%rsp), %xmm9", "movdqu 72(%rsp), %xmm10", "movdqu 88(%rsp), %xmm11", "movdqu 104(%rsp), %xmm12",
-    "movdqu 120(%rsp), %xmm13", "movdqu 136(%rsp), %xmm14", "movdqu 152(%rsp), %xmm15", "movq 168(%rsp), %rax",
-    "movq %rax, %gs:0x08", "movq 176(%rsp), %rax", "movq %rax, %gs:0x10", "movq 184(%rsp), %rax", "movq %rax, %gs:0x1478",
-    "addq $192, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rsi", "popq %rdi", "popq %rbx", "popq %rbp", "ret"]
+  ["pushq %rbp", "pushq %rbx", "pushq %rdi", "pushq %rsi", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $192, %rsp", "movq %gs:0x1478, %rax", "movq %rax, 184(%rsp)", "movq %gs:0x10, %rax", "movq %rax, 176(%rsp)", "movq %gs:0x08, %rax", "movq %rax, 168(%rsp)", "movdqu %xmm6, 8(%rsp)", "movdqu %xmm7, 24(%rsp)", "movdqu %xmm8, 40(%rsp)", "movdqu %xmm9, 56(%rsp)", "movdqu %xmm10, 72(%rsp)", "movdqu %xmm11, 88(%rsp)", "movdqu %xmm12, 104(%rsp)", "movdqu %xmm13, 120(%rsp)", "movdqu %xmm14, 136(%rsp)", "movdqu %xmm15, 152(%rsp)", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rcx)", "movq %rdx, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "movdqu 8(%rsp), %xmm6", "movdqu 24(%rsp), %xmm7", "movdqu 40(%rsp), %xmm8", "movdqu 56(%rsp), %xmm9", "movdqu 72(%rsp), %xmm10", "movdqu 88(%rsp), %xmm11", "movdqu 104(%rsp), %xmm12", "movdqu 120(%rsp), %xmm13", "movdqu 136(%rsp), %xmm14", "movdqu 152(%rsp), %xmm15", "movq 168(%rsp), %rax", "movq %rax, %gs:0x08", "movq 176(%rsp), %rax", "movq %rax, %gs:0x10", "movq 184(%rsp), %rax", "movq %rax, %gs:0x1478", "addq $192, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rsi", "popq %rdi", "popq %rbx", "popq %rbp", "ret"]
 }
 
 fn amd64_switch() -> List[Str] {
-  ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)",
-    "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15",
-    "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "ret"]
+  ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "ret"]
 }
