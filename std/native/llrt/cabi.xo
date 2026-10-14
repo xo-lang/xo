@@ -19,6 +19,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
+use native/llrt/sysio
 use native/llrt/text
 use native/llrt/unicode
 use native/rt
@@ -315,6 +316,18 @@ fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
   let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 }
+
+// ---------------------------------------------------------------------------
+// The clocks (work item B01): xo_rt.c mono_ns, the real time of
+// xo_clock_now, and xo_time.c xo_tz_now read them here, through sysio.xo
+// (vDSO, libSystem, or kernel32 calls).
+
+/// The wall clock in Unix nanoseconds (never the test world's virtual
+/// clock, which the C serves itself).
+fn real_ns() -> Int { sysio.real_ns() }
+
+/// The monotonic clock in nanoseconds.
+fn mono_ns() -> Int { sysio.mono_ns() }
 
 // ---------------------------------------------------------------------------
 // Reference counts (decision 0207 stage 2): xo_rt.c rc_inc, rc_dec,

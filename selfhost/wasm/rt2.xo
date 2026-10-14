@@ -1316,7 +1316,7 @@ fn rt2_text(var g: Gen) -> Str {
       drop)
 
     ;; random numbers: WASI random_get (the platform's entropy, as
-    ;; xo_crypto.c's cr_entropy)
+    ;; the native runtime's rand.xo)
     (func $rand_u64 (result i64)
       i32.const 16
       i32.const 8

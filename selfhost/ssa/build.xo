@@ -1992,6 +1992,17 @@ fn (var b: Builder) clock_now() -> Int {
   b.llrt("clock_now", it, [])
 }
 
+/// A call of Rand's name (rand_int, rand_float, rand_bool, rand_bytes):
+/// the native prelude's llrt_<name> (std/native/llrt/rand.xo, the zero-C
+/// audit's B08); in a WASI module, or without the native prelude, the
+/// runtime's rt.<name> (the wasm runtime's random_get).
+fn (var b: Builder) rand_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  if b.wasm || b.prelude_impl("llrt_${name}") < 0 {
+    return b.rt(name, t, args)
+  }
+  b.llrt(name, t, args)
+}
+
 /// A call of std/json's tape reader or text function name (json_str,
 /// rs_append_json_str, b64_ok, ...) for the codecs json.xo generates:
 /// the native prelude's llrt_<name> (std/native/llrt/jsontext.xo,

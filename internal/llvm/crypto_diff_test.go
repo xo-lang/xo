@@ -33,7 +33,9 @@ import (
 // with a secret and associated data) and the x/crypto outputs of
 // std/rt/testdata/argon2id_xcrypto.txt; verify_password on valid and
 // mutated PHC and PBKDF2 strings against std/rt's.
-// SHA-512 and Ed25519 against Go and RFC 8032 (ed25519Cases).
+// SHA-512 (std/native/llrt/digest.xo through its C ABI export, the
+// zero-C audit's B08) and Ed25519 against Go and RFC 8032
+// (ed25519Cases).
 func TestCryptoDiff(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	if _, err := xotool.Clang(); err != nil {
@@ -41,8 +43,11 @@ func TestCryptoDiff(t *testing.T) {
 	}
 	src := filepath.Join(rtDir, "testdata", "crypto_diff.c")
 	bin := filepath.Join(t.TempDir(), "crypto_diff")
-	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), cOnly(t, src), bin); err != nil {
-		if err2 := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err2 != nil {
+	// a program that uses std/crypto, so that its exports (SHA-512 in
+	// std/native/llrt/cabi_crypto.xo, the zero-C audit's B08) are built
+	srcs := cOnlyWith(t, src, "cexports-crypto", "use std/crypto\n\nfn main(os: Os) {\n  if crypto.ed25519_verify(b\"\", b\"\", b\"\") {\n    os.stdio.println(\"yes\")\n  }\n}\n")
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), srcs, bin); err != nil {
+		if err2 := xotool.CompileC([]string{"-O1", "-g"}, srcs, bin); err2 != nil {
 			t.Fatal(err2)
 		}
 	}

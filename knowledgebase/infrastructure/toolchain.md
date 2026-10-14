@@ -930,14 +930,20 @@ Last verified: 2026-10-07
   `XO_LLRT_C=fspath,procspec` builds the C paths. The counts include the
   kernel's instructions. Last verified: 2026-10-13.
 - `bench/perf/sysio/measure.sh <xo1> <std dir> <out dir> <backend...>`
-  (2026-10-13, decision 0206, Linux only): os.fs.read, write, stat and
-  Clock.now (read, read_big, write, stat, clock, none) built three ways
-  (xo: the Xo path; c: `XO_LLRT_C=sysio`; nolibc: `XO_NOLIBC=1`),
-  printing the minimum of 5 runs of user and kernel instructions and
-  task-clock ms from `perf stat` (needs kernel.perf_event_paranoid <= 1
-  for the kernel count; `dnf install perf` on AL2023). Ran on EC2 hosts
-  (bench/results/linux-syscalls-2026-10-13.md). VARIANTS and WORKLOADS
-  override the lists. Last verified: 2026-10-13.
+  (2026-10-13, decision 0206; macOS mode with `/usr/bin/time -l`,
+  decision 0213): os.fs.read, write, stat, Clock.now, channels, and
+  sleeps (read, read_big, write, stat, clock, chan, sleep, none) built
+  as xo (the Xo path) and nolibc (`XO_NOLIBC=1`, Linux); the c variant
+  (`XO_LLRT_C=sysio`) is gone (decision 0198 deleted the C path, and
+  an unknown XO_LLRT_C name fails the build since W0), so a C
+  baseline is the same program built with an earlier commit's std
+  (an archive of that commit's std/ tree passed as the std dir; the
+  clocks of work item B01 were measured so,
+  bench/results/clocks-2026-10-14.md). Prints the minimum of 5 runs of
+  user and kernel instructions and task-clock ms from `perf stat`
+  (needs kernel.perf_event_paranoid <= 1 for the kernel count; `dnf
+  install perf` on AL2023). VARIANTS and WORKLOADS override the lists.
+  Last verified: 2026-10-14.
 - `bench/perf/net/measure.sh <xo1> <std dir> <out dir> <backend...>`
   (2026-10-13, decision 0206 stage 3, Linux only): loopback echo round
   trips, dials to 127.0.0.1, and dials to localhost (/etc/hosts and the
