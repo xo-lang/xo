@@ -591,9 +591,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   finish(os, o, c, root, bins, tests)
 }
 
-/// The tasks the arm64 emitter generates a large module's parts on
-/// (arm64.generate_parallel): $XO_EMIT_JOBS, else the cores, at most 8.
-/// The assembly does not depend on it.
+/// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
+/// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
+/// the cores, at most 8. The output does not depend on it.
 fn emit_jobs(os: Os) -> Int {
   let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
   if j > 0 {
@@ -671,7 +671,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "add_landings", t)
   b.cleanup_all()
   t = lap(os, o.phases, "cleanup", t)
-  b.insert_rc()
+  b.insert_rc_jobs(emit_jobs(os))
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t}
 }
