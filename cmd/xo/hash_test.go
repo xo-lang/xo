@@ -47,8 +47,9 @@ func queryHashOf(t *testing.T, dir, name string) string {
 // private ones and those changed through a callee, where the API diff
 // sees nothing.
 func TestQueryHashAndPublish(t *testing.T) {
-	t.Setenv("XO_NO_SERVE", "1")
-	t.Setenv("XO_WORK", "")
+	t.Parallel()
+	setenv(t, "XO_NO_SERVE", "1")
+	setenv(t, "XO_WORK", "")
 	repo := t.TempDir()
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
 	modtest.WriteFiles(t, repo, map[string]string{"xo.mod": "module example.com/lib\nedition preview\n", "lib.xo": hashLib})

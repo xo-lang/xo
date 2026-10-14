@@ -136,7 +136,12 @@ printf 'seed %s\nversion %s\ncommit %s\ndate %s\nplatform %s\n' "$seed" "$versio
 tgz="$out/$plat.tar.gz"
 taropts=()
 if tar --version 2>/dev/null | grep -q bsdtar; then taropts=(--no-xattrs --no-mac-metadata); fi
-COPYFILE_DISABLE=1 tar ${taropts[@]+"${taropts[@]}"} -C "$stage" -czf "$tgz.tmp" xo
+# gzip's level: XO_SEED_GZIP_LEVEL (1 to 9, default 6, gzip's and tar
+# -z's default); internal/xotool's TestSeedPackHello packs at 1, which
+# took about 1 s instead of 4 for the 87 MB xo
+level=${XO_SEED_GZIP_LEVEL:-6}
+echo "$level" | grep -Eq '^[1-9]$' || die "XO_SEED_GZIP_LEVEL=$level: want 1 to 9"
+COPYFILE_DISABLE=1 tar ${taropts[@]+"${taropts[@]}"} -C "$stage" -cf - xo | gzip -n "-$level" > "$tgz.tmp"
 mv "$tgz.tmp" "$tgz"
 echo "$(sha256 "$tgz")  $plat.tar.gz" > "$tgz.sha256"
 printf 'seed %s\nversion %s\ncommit %s\ndate %s\nnote %s\n' "$seed" "$version" "$commit" "$date" \

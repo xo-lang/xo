@@ -25,6 +25,7 @@
 use native/llrt/hpack
 use native/llrt/http1_tables
 use native/llrt/netpolicy
+use native/llrt/scan
 use native/rt
 use native/rthttp
 
@@ -63,20 +64,21 @@ fn unhex(c: Int) -> Int { if c <= 57 { c - 48 } else { (c | 32) - 87 } }
 
 fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 
-/// The index of the first byte c of s in [from, to), or -1.
-fn find(s: Str, c: Str, from: Int, to: Int) -> Int {
-  if from >= to {
+/// The index of the first byte c of s in [from, to), or -1 (from and to
+/// clamped to s): one scan of the range, where rt.str_find searched on
+/// to the end of the string.
+fn find(s: Str, c: Int, from: Int, to: Int) -> Int {
+  let b = s.bytes()
+  let f = if from < 0 { 0 } else { from }
+  let t = if to > b.len() { b.len() } else { to }
+  if f >= t {
     return -1
   }
-  let k = rt.str_find(s, c, from)
-  if k < 0 || k >= to {
-    return -1
-  }
-  k
+  scan.find_byte(b, f, t, c)
 }
 
 /// The index of the first byte c of b in [from, to), or -1: a short
-/// range (rt.str_find would search on to the end of the string).
+/// range (scan.find would search on to the end of the string).
 fn bfind(b: Bytes, c: Int, from: Int, to: Int) -> Int {
   var i = from
   while i < to {
@@ -350,7 +352,7 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str) {
     }
     return unescape(b, s, lo, hi, U_HOST)
   }
-  let colon = find(s, ":", lo, hi)
+  let colon = find(s, 58, lo, hi)
   if colon >= 0 {
     if rfind(b, 58, hi) != colon {
       // strict colons (Go 1.26): only one colon outside brackets
@@ -468,9 +470,9 @@ fn url_parse(s: Str, via_request: Bool) -> Url {
     if via_request {
       return url_fail("invalid URI for request")
     }
-    let sl = find(s, "/", rest, rn)
+    let sl = find(s, 47, rest, rn)
     let segn = if sl < 0 { rn } else { sl }
-    if find(s, ":", rest, segn) >= 0 {
+    if find(s, 58, rest, segn) >= 0 {
       return url_fail("first path segment in URL cannot contain colon")
     }
   }
@@ -479,7 +481,7 @@ fn url_parse(s: Str, via_request: Bool) -> Url {
   let authority = rn - rest >= 2 && b[rest] == 47 && b[rest + 1] == 47 && (!scheme.is_empty() || (!via_request && !(rn - rest >= 3 && b[rest + 2] == 47)))
   if authority {
     let a = rest + 2
-    let slash = find(s, "/", a, rn)
+    let slash = find(s, 47, a, rn)
     let ae = if slash < 0 { rn } else { slash }
     p = ae
     var at = -1
@@ -565,16 +567,16 @@ pub fn query_parts(q: Str) -> List[Str] {
   var out: List[Str] = []
   i = 0
   while i < n {
-    var j = rt.str_find(q, "&", i)
+    var j = scan.find(q, "&", i)
     if j < 0 {
       j = n
     }
     let lo = i
     i = j + 1
-    if j == lo || find(q, ";", lo, j) >= 0 {
+    if j == lo || find(q, 59, lo, j) >= 0 {
       continue
     }
-    let eq = find(q, "=", lo, j)
+    let eq = find(q, 61, lo, j)
     let ke = if eq < 0 { j } else { eq }
     let (kok, k) = unescape(b, q, lo, ke, U_QUERY)
     if !kok {
@@ -645,7 +647,7 @@ fn split_hostport(host: Str) -> (Str, Str) {
 pub fn url_parts(s: Str, request: Bool) -> List[Str] {
   var t = s
   if !request {
-    let h = rt.str_find(s, "#", 0)
+    let h = scan.find(s, "#", 0)
     if h >= 0 {
       t = rt.str_slice(s, 0, h)
     }
@@ -661,7 +663,7 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
 /// The text of url.Parse's error: parse "url": reason; "" when it parses.
 pub fn url_error(s: Str) -> Str {
   var t = s
-  let h = rt.str_find(s, "#", 0)
+  let h = scan.find(s, "#", 0)
   if h >= 0 {
     t = rt.str_slice(s, 0, h)
   }
@@ -674,7 +676,7 @@ pub fn url_error(s: Str) -> Str {
 
 /// url.PathUnescape, "" when an escape is invalid.
 pub fn path_unescape(s: Str) -> Str {
-  if rt.str_find(s, "%", 0) < 0 {
+  if scan.find(s, "%", 0) < 0 {
     return s
   }
   let b = s.bytes()
@@ -881,7 +883,7 @@ fn fail_status(code: Int, reason: Str, used: Int) -> Parse { Parse{res: STATUS, 
 /// the start of the next). Not found when there is no \n yet (at eof the
 /// rest is the line, bufio's ReadLine).
 fn line_at(s: Str, b: Bytes, i: Int, n: Int, eof: Bool) -> (Bool, Int, Int) {
-  let nl = if i < n { rt.str_find(s, "\n", i) } else { -1 }
+  let nl = if i < n { scan.find_byte(s.bytes(), i, s.len(), 10) } else { -1 }
   if nl < 0 {
     if eof && i < n {
       return (true, n, n)
@@ -1026,11 +1028,11 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     return fail(TOO_LARGE)
   }
   // METHOD SP target SP proto (strings.Cut on single spaces)
-  let sp1 = find(s, " ", 0, le)
+  let sp1 = find(s, 32, 0, le)
   if sp1 < 0 {
     return fail(BAD)
   }
-  let sp2 = find(s, " ", sp1 + 1, le)
+  let sp2 = find(s, 32, sp1 + 1, le)
   if sp2 < 0 || sp1 == 0 {
     return fail(BAD)
   }
@@ -1088,7 +1090,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
       break
     }
     // a field line: it must have a colon
-    if find(s, ":", i, e) < 0 {
+    if find(s, 58, i, e) < 0 {
       return fail(BAD)
     }
     // trim (spaces and tabs) and join continuation lines
@@ -1130,7 +1132,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     // key: up to the first colon; token bytes, or spaces (kept as is)
     let cb = cont.bytes()
     let cn = cb.len()
-    let colon = rt.str_find(cont, ":", 0)
+    let colon = scan.find(cont, ":", 0)
     if colon <= 0 {
       return fail(BAD)
     }
@@ -1398,7 +1400,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
   var i = 0
   var excess = 0
   while true {
-    let nl = if i < n { rt.str_find(s, "\n", i) } else { -1 }
+    let nl = if i < n { scan.find_byte(s.bytes(), i, s.len(), 10) } else { -1 }
     if nl < 0 {
       if n - i >= 4096 {
         return Chunked{res: HB_ERR, used: 0, body: out} // header line too long
@@ -1602,7 +1604,7 @@ fn req_of(h: Head) -> Req {
     var j = 0
     var k = 0
     if n > 0 && hb[0] == 91 {
-      let end = rt.str_find(h.host, "]", 0)
+      let end = scan.find(h.host, "]", 0)
       if end < 0 || end + 1 != colon {
         ok = false
       } else {
@@ -1611,10 +1613,10 @@ fn req_of(h: Head) -> Req {
         j = 1
         k = end + 1
       }
-    } else if find(h.host, ":", 0, colon) >= 0 {
+    } else if find(h.host, 58, 0, colon) >= 0 {
       ok = false
     }
-    if ok && (rt.str_find(h.host, "[", j) >= 0 || rt.str_find(h.host, "]", k) >= 0) {
+    if ok && (scan.find(h.host, "[", j) >= 0 || scan.find(h.host, "]", k) >= 0) {
       ok = false
     }
     if ok {
@@ -1963,7 +1965,7 @@ pub fn parse_response(s: Str) -> RespHead {
   let n = b.len()
   // the end of the head: \n\n or \n\r\n
   var end = -1
-  var nl = rt.str_find(s, "\n", 0)
+  var nl = scan.find(s, "\n", 0)
   while nl >= 0 && nl + 1 < n {
     if b[nl + 1] == 10 {
       end = nl + 2
@@ -1973,18 +1975,18 @@ pub fn parse_response(s: Str) -> RespHead {
       end = nl + 3
       break
     }
-    nl = rt.str_find(s, "\n", nl + 1)
+    nl = scan.find(s, "\n", nl + 1)
   }
   if end < 0 {
     return resp_fail(if n > MAX_HEAD { TOO_LARGE } else { NEED }, "")
   }
   // the status line: HTTP/x.y code reason
-  let nl0 = rt.str_find(s, "\n", 0)
+  let nl0 = scan.find(s, "\n", 0)
   var ll = nl0
   if ll > 0 && b[ll - 1] == 13 {
     ll -= 1
   }
-  let sp = find(s, " ", 0, ll)
+  let sp = find(s, 32, 0, ll)
   if sp < 8 || !s.starts_with("HTTP/") {
     // at most 80 bytes of the line, up to a NUL (C's %.*s)
     var k = 0
@@ -2011,7 +2013,7 @@ pub fn parse_response(s: Str) -> RespHead {
   var clen = -1
   var i = nl0 + 1
   while i < end {
-    let e = rt.str_find(s, "\n", i)
+    let e = scan.find_byte(s.bytes(), i, s.len(), 10)
     var le = e
     if e > i && b[e - 1] == 13 {
       le = e - 1
@@ -2019,7 +2021,7 @@ pub fn parse_response(s: Str) -> RespHead {
     if le == i {
       break
     }
-    let colon = find(s, ":", i, le)
+    let colon = find(s, 58, i, le)
     if colon >= 0 {
       let k = canonical_key(rt.str_slice(s, i, colon))
       let (a, z) = trim_sp(b, colon + 1, le)
@@ -2254,7 +2256,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
   var redirects = 0
   while true {
     var cut = raw
-    let hash = rt.str_find(raw, "#", 0)
+    let hash = scan.find(raw, "#", 0)
     if hash >= 0 {
       cut = rt.str_slice(raw, 0, hash)
     }
@@ -2270,7 +2272,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       // decision 0175): std/rt's CheckRedirect, whose error names the
       // Location
       if !netpolicy.admits(lists, name, port) {
-        let hn = if rt.str_find(name, ":", 0) >= 0 { "[" + name + "]" } else { name }
+        let hn = if scan.find(name, ":", 0) >= 0 { "[" + name + "]" } else { name }
         return cfail(4, op + " " + go_quote(last_loc) + ": denied by Net.only: redirect to " + hn + ":" + port)
       }
     }
@@ -2320,7 +2322,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     // the request: the address (host:port, 80 or 443 by default), the
     // target (the escaped path and the query)
-    let addr = if rt.str_find(name, ":", 0) >= 0 { "[" + name + "]:" + port } else { name + ":" + port }
+    let addr = if scan.find(name, ":", 0) >= 0 { "[" + name + "]:" + port } else { name + ":" + port }
     var target = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escape_path(u.path) }
     if !u.rawquery.is_empty() {
       target = target + "?" + u.rawquery
@@ -2379,7 +2381,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     has_referer = true
     // the new URL: the Location resolved against this one
     let loc = last_loc
-    if rt.str_find(loc, ":", 0) >= 0 && !loc.starts_with("/") {
+    if scan.find(loc, ":", 0) >= 0 && !loc.starts_with("/") {
       raw = loc
     } else if loc.starts_with("//") {
       raw = u.scheme + ":" + loc

@@ -34,8 +34,10 @@ import (
 // XO_COMPILE_PROPS=N builds N (seeds 1..N) in the full suite (default
 // compilePropFull; bench/nightly.sh builds 500, decision 0111).
 // XO_COMPILE_PROP_SEED=S builds only seed S, and XO_COMPILE_PROP_KEEP=dir
-// keeps the programs there. The programs live in temporary directories,
-// so the test runs beside the other top level tests.
+// keeps the programs there. The programs live in directories named by
+// their contents (xotool.TestProgramDir: an unchanged program reuses its
+// binaries across runs) and the builds go to temporary ones, so the test
+// runs beside the other top level tests.
 func TestCompileProperty(t *testing.T) {
 	t.Parallel()
 	n := compilePropFull
@@ -67,21 +69,30 @@ func TestCompileProperty(t *testing.T) {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
 			src := progen.Program(int64(seed))
-			dir := t.TempDir()
-			if keep != "" {
-				dir = filepath.Join(keep, fmt.Sprint(seed))
-				os.MkdirAll(dir, 0o755)
+			files := map[string]string{"xo.mod": "module example.com/prop\n", "main.xo": src}
+			// the program in a directory named by its contents, so an
+			// unchanged program reuses its binaries across runs
+			// (xotool.TestProgramDir); outputs and runs in out
+			out := t.TempDir()
+			dir, err := xotool.TestProgramDir("compileprop", files)
+			if keep != "" || err != nil {
+				dir = out
+				if keep != "" {
+					dir = filepath.Join(keep, fmt.Sprint(seed))
+					os.MkdirAll(dir, 0o755)
+				}
+				for name, text := range files {
+					os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
+				}
 			}
-			os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/prop\n"), 0o644)
-			os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644)
-			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog")})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(out, "prog")})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
 			if native == "" {
 				return
 			}
-			nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: native, Out: filepath.Join(dir, "prog-native")})
+			nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: native, Out: filepath.Join(out, "prog-native")})
 			if nres != nil && nres.Failed && err == nil && onlyNoGC(nres.Diagnostics) {
 				t.Logf("seed %d: not native (%s)", seed, firstMsg(nres.Diagnostics))
 				return
@@ -91,7 +102,7 @@ func TestCompileProperty(t *testing.T) {
 			}
 			// both run alike: the same exit status, output, and
 			// standard error (runProp)
-			gr, nr := runProp(t, res.Binaries[xotool.Host()], dir), runProp(t, nres.Binaries[xotool.Host()], dir)
+			gr, nr := runProp(t, res.Binaries[xotool.Host()], out), runProp(t, nres.Binaries[xotool.Host()], out)
 			if gr != nr {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
 			}

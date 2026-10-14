@@ -79,6 +79,7 @@ func writeScript(t *testing.T, name, body string) string {
 // with builds that cost nothing (testdata/reduce/fakexo). Also under
 // -short (about 2 s).
 func TestReduceDiffFake(t *testing.T) {
+	t.Parallel() // temporary directories only
 	xo := filepath.Join(t.TempDir(), "fakexo")
 	gob := exec.Command("go", "build", "-o", xo, "./testdata/reduce/fakexo")
 	gob.Env = goVetEnv()

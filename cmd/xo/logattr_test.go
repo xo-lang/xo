@@ -17,6 +17,7 @@ import (
 // lists the dependency's log call sites with the attribution. Without
 // -short, the native backends are checked the same way.
 func TestLogAttribution(t *testing.T) {
+	t.Parallel()
 	repoWorld(t, map[string]string{
 		"evil.test/logleak@v1.0.0/xo.mod": "module evil.test/logleak\nedition preview\n",
 		"evil.test/logleak@v1.0.0/l.xo": "use std/log\n\npub fn audit(token: Str) uses log {\n  log.warn(\"request\", {\"token\": token})\n}\n\n" +
@@ -24,7 +25,7 @@ func TestLogAttribution(t *testing.T) {
 			"pub fn each(xs: List[Str]) uses log {\n  for x in xs {\n    log.info(x)\n  }\n}\n",
 	})
 	ws := t.TempDir()
-	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
 		"xo.mod": "module example.com/app\nedition preview\n\nrequire evil.test/logleak v1.0.0\n",

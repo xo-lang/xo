@@ -587,6 +587,19 @@ fn (var b: Builder) frame_args_body(names: List[Str], cts: List[Int], cap_ts: Li
   b.finish_fn()
 }
 
+/// The rune count of the Str value s: the native prelude's str_rune_count
+/// (std/native/llrt/scan.xo's rune_count, zero-C audit B13); without
+/// the native prelude (the wasm runtime) rt.str_rune_count.
+fn (var b: Builder) rune_count(s: Int) -> Int {
+  let it = b.int_t()
+  let impl = b.prelude_impl("str_rune_count")
+  if b.wasm || impl < 0 {
+    return b.rt("str_rune_count", it, [s])
+  }
+  let f = b.declare(impl, [])
+  b.call(b.m.funcs[f].name, it, "", [s])
+}
+
 /// Writes the frames of trace tr to standard error (printTrace).
 fn (var b: Builder) print_trace(tr: Int) {
   let st = b.str_t()
@@ -610,7 +623,7 @@ fn (var b: Builder) print_trace(tr: Int) {
   let at = b.const_str("  at ")
   b.write_var(line, b.call("str.concat", st, "", [at, label]))
   let c34 = b.cint(34)
-  let pad = b.add(Op.Sub, it, Aux.None, [c34, b.rt("str_rune_count", it, [label])])
+  let pad = b.add(Op.Sub, it, Aux.None, [c34, b.rune_count(label)])
   let (no, join) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [pad, b.cint(0)]))
   let cur = b.read(line)
   let sp = b.const_str(" ")
@@ -618,7 +631,7 @@ fn (var b: Builder) print_trace(tr: Int) {
   b.if_then_end(no, join)
   let out = b.call("str.concat", st, "", [b.read(line), b.const_str(" ")])
   let loc = b.add(Op.Field, st, Aux.I(n: 1), [fr])
-  b.rt("eprintln", -1, [b.call("str.concat", st, "", [out, loc])])
+  b.eprintln_rt(b.call("str.concat", st, "", [out, loc]))
   b.for_up_to_end(i, iv, head, exit)
 }
 

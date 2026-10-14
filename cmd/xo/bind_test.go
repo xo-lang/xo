@@ -13,16 +13,17 @@ import (
 // TestBind runs `xo bind` (decision 0041): the binding lands in the cache
 // under the project's xo.mod root, and `xo check` then uses it.
 func TestBind(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("runs go list")
 	}
-	t.Setenv("XO_GOBIND_DIR", "")
+	setenv(t, "XO_GOBIND_DIR", "")
 	dir := writeFiles(t, map[string]string{
 		"xo.mod":      "module ex\n",
 		"app/main.xo": "use go \"strings\"\n\nfn main(os: Os) {\n  os.stdio.println(strings.to_upper(\"x\"))\n}\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run([]string{"bind", "--dir", filepath.Join(dir, "app"), "strings", "no/such/pkg"}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"bind", "--dir", filepath.Join(dir, "app"), "strings", "no/such/pkg"}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1 (one package fails): %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "strings: functions") || !strings.Contains(errOut.String(), `cannot bind Go package "no/such/pkg"`) {
@@ -33,7 +34,7 @@ func TestBind(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"bind", "--json", "--dir", dir, "strconv"}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"bind", "--json", "--dir", dir, "strconv"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	var res []bindResult
@@ -42,7 +43,7 @@ func TestBind(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"check", filepath.Join(dir, "app")}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", filepath.Join(dir, "app")}, &out, &errOut); code != 0 {
 		t.Fatalf("check exit %d: %s", code, errOut.String())
 	}
 }
@@ -51,10 +52,11 @@ func TestBind(t *testing.T) {
 // of the module lands in the project's .xo/cbind, with its coverage;
 // `xo check` says `use c` needs --no-gc and `xo check --no-gc` accepts it.
 func TestBindC(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("clang"); err != nil && os.Getenv("XO_CLANG") == "" {
 		t.Skip("clang not found")
 	}
-	t.Setenv("XO_CBIND_DIR", "")
+	setenv(t, "XO_CBIND_DIR", "")
 	dir := writeFiles(t, map[string]string{
 		"xo.mod":      "module ex\n",
 		"app/two.h":   "int two_add(int a, int b);\nvoid two_out(int *p);\n",
@@ -63,7 +65,7 @@ func TestBindC(t *testing.T) {
 	})
 	app := filepath.Join(dir, "app")
 	var out, errOut bytes.Buffer
-	if code := run([]string{"bind", "--c", "--dir", app, "--link", "two.c", "two.h", "no_such_xo.h"}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"bind", "--c", "--dir", app, "--link", "two.c", "two.h", "no_such_xo.h"}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1 (one header fails): %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "two.h (") || !strings.Contains(out.String(), "functions 1/2 bound, 1 skipped") || !strings.Contains(errOut.String(), `cannot bind C header "no_such_xo.h"`) {
@@ -74,7 +76,7 @@ func TestBindC(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"bind", "--c", "--json", "--dir", app, "two.h"}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"bind", "--c", "--json", "--dir", app, "two.h"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	var res []cBindResult
@@ -83,12 +85,12 @@ func TestBindC(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"check", app}, &out, &errOut); code == 0 || !strings.Contains(out.String()+errOut.String(), "XO1201") {
+	if code := run(t, []string{"check", app}, &out, &errOut); code == 0 || !strings.Contains(out.String()+errOut.String(), "XO1201") {
 		t.Errorf("check without --no-gc: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run([]string{"check", "--no-gc", app}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", "--no-gc", app}, &out, &errOut); code != 0 {
 		t.Fatalf("check --no-gc exit %d: %s%s", code, out.String(), errOut.String())
 	}
 }
