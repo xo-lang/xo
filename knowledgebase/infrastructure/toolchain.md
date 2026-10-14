@@ -3325,7 +3325,7 @@ name is its version and commit, `<version>-<commit, 8 hex>`. Layout (the
 first seed, 0.9.0-5e21dc31 from main 5e21dc31, uploaded by the lead on
 2026-10-13 for darwin-arm64 and linux-arm64):
 
-    seeds/latest.txt                               the newest seed name, one line (0.9.0-5e21dc31)
+    seeds/latest.txt                               the newest seed name, one line (0.10.0-23ce8ce2)
     seeds/<seed>/<goos>-<goarch>.tar.gz            the tree: xo/bin/xo, xo/std (xo finds std at bin/../std)
     seeds/<seed>/<goos>-<goarch>.tar.gz.sha256     "<hex>  <goos>-<goarch>.tar.gz" (sha256sum format)
     seeds/<seed>/manifest.txt                      "version V", "commit <10 hex>", "commit_full <40 hex>",
@@ -3335,7 +3335,17 @@ A seed carries no rtpack, xo-gobind, third_party, or zone data: it only
 builds selfhost/xo, against the checkout's `--std` (the TLS sources
 then come from the checkout's third_party). From the next seed on, each
 seed bumps the minor version (`selfhost/cli/core` `VERSION`, the lead's
-commit on main; 0.10.0 next).
+commit on main; 0.11.0 next).
+
+Seeds uploaded: 0.9.0-5e21dc31 (2026-10-13, built natively and through
+the chain, Windows cross built) and 0.10.0-23ce8ce2 (2026-10-14, the
+version bump 23ce8ce2 on main after fast builds round 2: darwin-arm64
+built natively on the Mac at clang -O2 after the fixed point; linux-arm64,
+linux-amd64, windows-amd64, and darwin-amd64 cross built on the Mac by
+that xo with `--backend=go --targets=<os>/<arch>`, 16 to 24 s each;
+tarballs 14 to 16 MB, darwin-arm64 35 MB). The owner had 0.10.0 uploaded
+without a separate verification run; the next builds from it are its
+check (owner, 2026-10-14). Last verified: 2026-10-14.
 
 internal/xotool (seed.go) fetches a seed when no local xo is found:
 seeds/latest.txt, then `<host>.tar.gz.sha256` and `<host>.tar.gz` with
@@ -3386,7 +3396,7 @@ TestSeedPackHello packs the checkout's bin/xo, fetches it from a local
 directory, and runs hello with the unpacked xo (no XO_STD, a working
 directory without std); it skips without a built xo.
 
-Packing and uploading seed 0.10.0 (the lead, after the version bump
+Packing and uploading a seed (the lead, after the version bump
 commit on main, from a clean checkout of it; OUTDIR outside the repo,
 since release.sh deletes dist/):
 
@@ -3397,7 +3407,10 @@ since release.sh deletes dist/):
     # arm64; LLVM split 12 on amd64): on an instance of that arch
     #   cd ~/xo && go run ./scripts/xobuild && bash scripts/seed-pack.sh bin/xo ~/seed
     # then copy ~/seed/linux-*.tar.gz, .tar.gz.sha256 and .info into "$out";
-    # or cross built on the Mac by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
+    # or cross built on the Mac with the Go backend (how 0.10.0 was made,
+    # 16 to 24 s per platform; std from `git ls-files std` beside bin/):
+    #   bin/xo build --backend=go --targets=linux/arm64 --std=$PWD/std -o X/bin/xo selfhost/xo
+    # or by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
     scripts/release.sh 0.10.0
     XO_SEED_VERSION=0.10.0 XO_SEED_PLATFORM=linux-arm64 XO_SEED_COMMIT=$c \
       scripts/seed-pack.sh dist/xo-0.10.0-linux-arm64/bin/xo "$out"

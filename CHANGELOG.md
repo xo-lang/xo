@@ -17,6 +17,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and its answers to 457 responses match the C client's byte for byte.
   Chunked bodies decode faster (5 to 6 percent fewer instructions for
   the server's chunked requests).
+- Version 0.10.0 and its prebuilt seeds (decision 0216); the C Rand
+  that only the 0.9.0 seed called is deleted (113 lines of xo_crypto.c
+  and xo_win.c).
 - Smaller native output and faster x86 self builds (decision 0220):
   reference counting releases a dead struct once instead of once per
   heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
