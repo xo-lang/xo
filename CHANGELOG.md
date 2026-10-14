@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B13, stage 1): std/http's parser
+  and client search text with std/native/llrt/scan.xo (SIMD) instead of
+  the C `xo_str_find`, which is deleted; single byte searches scan only
+  their range. The stack trace's padding counts runes in Xo. HTTP/1.1
+  server 0.961 to 1.013 of the C's instructions
+  (bench/results/string-list-objects-2026-10-14.md).
 - Native runtime (zero-C audit item B09, decision 0222): a value barrier
   for constant time runtime code (`rt.ct_barrier`, internal: no
   instruction on arm64, an empty asm on LLVM) and constant time masks in
