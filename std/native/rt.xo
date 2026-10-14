@@ -501,6 +501,18 @@ fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_shared(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_held(l: FsLock) -> Bool
 fn fs_unlock(l: FsLock)
+/// The handles of std/native/llrt/fsops.xo (work item B16): the C
+/// runtime's records of a descriptor fd (fsops.xo reads and writes their
+/// words through obj_addr), which close fd when freed. A file handle
+/// owns a 64 KiB read buffer when buffered; a lock handle holds fd's
+/// flock when held (fd -1: none).
+fn fs_raw_file(fd: Int, buffered: Bool) -> FsFile
+fn fs_raw_lock(fd: Int, held: Bool) -> FsLock
+/// `clock.sleep_or_cancel(d)` for the runtime's polls: 1 when the task
+/// was canceled before or during the sleep, else 0 (the fs lock's wait).
+fn clock_sleep_or_cancel(d: Int) -> Int
+/// Writes what standard output holds buffered.
+fn flush()
 /// A Time of Unix nanoseconds, and back (both lowered as Int).
 fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int

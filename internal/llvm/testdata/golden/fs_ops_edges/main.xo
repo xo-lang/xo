@@ -1,0 +1,213 @@
+// The Fs operations of std/native/llrt/fsops.xo at their edges (work item
+// B16): read_line over lines longer than the 64 KiB read buffer and \r\n
+// split by it, reads larger and smaller than the buffer, the errors of
+// each operation and their FsErr, set_modified before the epoch, links,
+// handle states, permission bits, locks, and a lock that waits (the
+// 10 ms polls) until another task unlocks.
+
+fn lines(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  var b = BytesBuilder.new()
+  for i in 0..70000 {
+    b.write_byte(UInt8(97 + i % 26))
+  }
+  b.write(b"\r\n")
+  for _ in 0..65533 {
+    b.write_byte(UInt8(65))
+  }
+  b.write(b"\r\nshort\n\n\r\nlast")
+  fs.write("long.txt", b.freeze())?
+  let f = fs.open("long.txt")?
+  while let Some(l) = f.read_line()? {
+    out.println("line ${l.len()} ${l.ends_with("\r")} ${l[0..(if l.len() < 5 { l.len() } else { 5 })]}")
+  }
+  match f.read_line() {
+    Ok(x) => out.println("after end: ${x ?? "none"}")
+    Err(e) => out.println("after end: ${e}")
+  }
+  f.close()?
+  let g = fs.open("long.txt")?
+  let a = g.read(10)? ?? b""
+  let c = g.read(200000)? ?? b""
+  let d = g.read(1 << 22)? ?? b""
+  out.println("reads ${a.len()} ${c.len()} ${d.len()}")
+  var total = 0
+  while let Some(x) = g.read(100000)? {
+    total += x.len()
+  }
+  out.println("rest ${total}")
+  g.close()?
+  let h = fs.open("long.txt")?
+  let first = h.read_line()? ?? ""
+  let next = h.read(3)? ?? b""
+  out.println("mixed ${first.len()} ${next.to_str() ?? ""}")
+}
+
+fn errors(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  match fs.read_dir("long.txt") {
+    Ok(_) => out.println("read_dir of a file: ok")
+    Err(e) => out.println("read_dir of a file: ${e}")
+  }
+  match fs.read_dir("nope") {
+    Ok(_) => out.println("read_dir missing: ok")
+    Err(e) => out.println("read_dir missing: ${e}")
+  }
+  fs.create_dir_all("d/e")?
+  fs.write("d/e/x", b"x")?
+  fs.write("d/w", b"www")?
+  match fs.remove("d") {
+    Ok(_) => out.println("remove non empty: ok")
+    Err(e) => out.println("remove non empty: ${e}")
+  }
+  match fs.remove("nope") {
+    Ok(_) => out.println("remove missing: ok")
+    Err(e) => out.println("remove missing: ${e}")
+  }
+  match fs.rename("nope", "x") {
+    Ok(_) => out.println("rename missing: ok")
+    Err(e) => out.println("rename missing: ${e}")
+  }
+  fs.rename("d/e/x", "d/y")?
+  match fs.copy("d", "z") {
+    Ok(_) => out.println("copy a dir: ok")
+    Err(e) => out.println("copy a dir: ${e}")
+  }
+  match fs.copy("d/w", "nodir/z") {
+    Ok(_) => out.println("copy to missing dir: ok")
+    Err(e) => out.println("copy to missing dir: ${e}")
+  }
+  match fs.mode("nope") {
+    Ok(_) => out.println("mode missing: ok")
+    Err(e) => out.println("mode missing: ${e}")
+  }
+  match fs.set_mode("nope", 0o600) {
+    Ok(_) => out.println("set_mode missing: ok")
+    Err(e) => out.println("set_mode missing: ${e}")
+  }
+  match fs.read_link("nope") {
+    Ok(_) => out.println("read_link missing: ok")
+    Err(e) => out.println("read_link missing: ${e}")
+  }
+  match fs.set_modified("nope", Time.from_unix(5)) {
+    Ok(_) => out.println("set_modified missing: ok")
+    Err(e) => out.println("set_modified missing: ${e}")
+  }
+  fs.set_modified("d/y", Time.from_unix_millis(-1500))?
+  let fi = fs.stat("d/y")? ?? FileInfo{name: "", path: "", is_dir: false, size: 0, modified: Time.UNIX_EPOCH}
+  out.println("modified ${fi.modified.unix_millis()}")
+  fs.set_modified("d/y", Time.from_unix_millis(1700000000123))?
+  let fj = fs.stat("d/y")? ?? fi
+  out.println("modified ${fj.modified.unix_millis()}")
+  for e in fs.read_dir("d")? {
+    out.println("entry ${e.name} ${e.is_dir} ${if e.is_dir { 0 } else { e.size }}")
+  }
+  for e in fs.walk(".")? {
+    out.println("walk ${e.path}")
+  }
+  match fs.symlink("d/w", "d/w") {
+    Ok(_) => out.println("symlink over a file: ok")
+    Err(e) => out.println("symlink over a file: ${e}")
+  }
+  fs.symlink("w", "d/lw")?
+  out.println("read_link ${fs.read_link("d/lw")? ?? "-"}")
+  match fs.open("nodir/f") {
+    Ok(_) => out.println("open missing: ok")
+    Err(e) => out.println("open missing: ${e}")
+  }
+  match fs.create("nodir/f") {
+    Ok(_) => out.println("create in missing dir: ok")
+    Err(e) => out.println("create in missing dir: ${e}")
+  }
+  match fs.open_append("d") {
+    Ok(_) => out.println("append to a dir: ok")
+    Err(e) => out.println("append to a dir: ${e}")
+  }
+  let w = fs.create("w.txt")?
+  w.write(b"abc")?
+  match w.read(1) {
+    Ok(_) => out.println("read a write handle: ok")
+    Err(e) => out.println("read a write handle: ${e}")
+  }
+  match w.read_line() {
+    Ok(_) => out.println("read_line a write handle: ok")
+    Err(e) => out.println("read_line a write handle: ${e}")
+  }
+  w.close()?
+  match w.write(b"x") {
+    Ok(_) => out.println("write after close: ok")
+    Err(e) => out.println("write after close: ${e}")
+  }
+  out.println("w.txt ${fs.read_text("w.txt")?}")
+  fs.write("ro.txt", b"r")?
+  fs.set_mode("ro.txt", 0o400)?
+  out.println("mode ${fs.mode("ro.txt")?}")
+  match fs.write("ro.txt", b"x") {
+    Ok(_) => out.println("write read only: ok")
+    Err(e) => out.println("write read only: ${e}")
+  }
+  fs.copy("ro.txt", "ro2.txt")?
+  out.println("copied mode ${fs.mode("ro2.txt")?}")
+  fs.remove_all("d")?
+  out.println("d exists ${fs.exists("d")?}")
+  let t = fs.create_temp(".", "tmp-")?
+  out.println("temp ${t.starts_with("tmp-")} ${fs.read(t)?.len()}")
+}
+
+fn locks(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  let held = fs.lock("l")?
+  match fs.try_lock("l")? {
+    Some(_) => out.println("while held: acquired")
+    None => out.println("while held: held")
+  }
+  held.unlock()
+  match fs.try_lock("l")? {
+    Some(k) => {
+      out.println("after unlock: acquired")
+      k.unlock()
+    }
+    None => out.println("after unlock: still held")
+  }
+  match fs.lock("nodir/l") {
+    Ok(_) => out.println("lock in missing dir: ok")
+    Err(e) => out.println("lock in missing dir: ${e}")
+  }
+  match fs.lock("") {
+    Ok(_) => out.println("lock of the root: ok")
+    Err(e) => out.println("lock of the root: ${e}")
+  }
+}
+
+fn waits(fs: Fs, clock: Clock, out: Stdio) -> () ! FsErr uses (fs, clock, stdio) {
+  let k = fs.lock("w.lock")?
+  let got = scope s {
+    s.spawn(fn() {
+      clock.sleep(50ms)
+      k.unlock()
+    })
+    let t0 = clock.now()
+    let k2 = fs.lock("w.lock")
+    let waited = clock.now() - t0
+    match k2 {
+      Ok(x) => {
+        x.unlock()
+        waited >= 30ms
+      }
+      Err(_) => false
+    }
+  }
+  out.println("waited for the lock: ${got}")
+}
+
+fn main(os: Os) ! {
+  let cwd = os.fs.cwd()
+  let dir = cwd.create_temp(".", "fs-edge-")?
+  cwd.remove(dir)?
+  cwd.create_dir_all(dir)?
+  let fs = cwd.sub(dir)
+  defer {
+    cwd.remove_all(dir).ignore_err("the test's directory")
+  }
+  lines(fs, os.stdio)?
+  errors(fs, os.stdio)?
+  locks(fs, os.stdio)?
+  waits(fs, os.clock, os.stdio)?
+}

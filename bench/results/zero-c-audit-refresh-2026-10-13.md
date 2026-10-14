@@ -299,7 +299,7 @@ MISSING.
 | B13 string and list objects | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
 | B15 test world, part 2 | 494 | PORT 494 | xo_testing.c 212-331, 748-994, 1195-1321 |
-| B16 Fs operations (fsops.xo) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
+| B16 Fs operations (fsops.xo; part 1, POSIX, done 2026-10-14: no C deleted yet, notes) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
 | B17 contexts, budgets, shields (0212 stage 3) | 454 | PORT 439, GLUE 15 | xo_rt.c 1534-1588, 1597-1643, 2034-2319, 6618-6683 |
 | B18 wait lists, await, task record and end, scopes (0212 stage 3) | 588 | PORT 571, GLUE 17 | xo_rt.c 3018-3248, 3284-3349, 3379-3390, 3986-4037, 4304-4332, 4357-4505, 4538-4586 |
 | B19 channels, select, Mutex[T], Atomic object | 775 | PORT 775 | xo_rt.c 4587-5310, 6567-6617 |
@@ -504,6 +504,19 @@ frees the 533 (a) lines.)
   from Xo for the polled flock (xo_fs.c 736-828). Retires xo_win.c's
   stat, dirent, and path shim (542-1029). Xo about 950 lines, medium;
   two items (POSIX; Windows).
+  **Part 1 (POSIX) done 2026-10-14** (bench/results/fs-ops-2026-10-14.md):
+  std/native/llrt/fsops.xo makes every Fs operation's calls from Xo on
+  Linux and darwin/arm64 (the timed wait is `rt.clock_sleep_or_cancel`,
+  the C's own wait declared in rt.xo); workloads 0.683 to 1.003 times
+  the C path's instructions. No C deleted yet: Windows, darwin/amd64,
+  and the unfolded `target` arms still reach xo_fs.c (it grew by 23
+  lines: int64 record fields and the handle constructors
+  xo_fs_raw_file and xo_fs_raw_lock, GLUE until Xo can make a record
+  whose release runs Xo code). Left for part 2: the Windows calls
+  (windows.xo) and xo_win.c 542-1029, then xo_fs.c 1-848 and xo_bytes.c
+  299-365 (the status thread locals, which the C of the other targets
+  writes) go; darwin/amd64 needs `stat$INODE64`, `opendir$INODE64`,
+  `readdir$INODE64` names first (gotchas/darwin-amd64-stat-inode64.md).
 - **B17 to B20 the scheduler's rest** (decision 0212 stage 3). MISSING:
   stack slots for wait records, or one wait entry per context (xo_ctx
   holds at most one wait). Contexts and budgets need the monotonic clock

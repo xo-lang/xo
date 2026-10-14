@@ -355,12 +355,13 @@ int64_t xo_fs_canceled(void) { return ctx_canceled(ctx()); }
 
 #define FS_BUF (64 << 10)
 
+// The layout std/native/llrt/fsops.xo reads and writes on Linux and
+// darwin/arm64 (work item B16): fd at 16, buf at 24, r at 32, w at 40.
 typedef struct {
 	xo_hdr h;
-	int fd; // -1 once closed
+	int64_t fd; // -1 once closed
 	char *buf;
 	int64_t r, w; // the buffered bytes are buf[r:w]
-	int eof;
 } xo_fsfile;
 
 static void fsfile_free(void *p) {
@@ -377,6 +378,17 @@ static xo_fsfile *fsfile_new(int fd) {
 	memset(f, 0, sizeof *f);
 	h_init(f, fsfile_free);
 	f->fd = fd;
+	return f;
+}
+
+// xo_fs_raw_file is the handle of the descriptor fd that fsops.xo opened
+// (with the 64 KiB read buffer when buffered): the record is fsops.xo's,
+// freeing it closes fd.
+xo_fsfile *xo_fs_raw_file(int64_t fd, int64_t buffered) {
+	xo_fsfile *f = fsfile_new((int)fd);
+	if (buffered && !(f->buf = malloc(FS_BUF))) {
+		xo_oom();
+	}
 	return f;
 }
 
@@ -732,11 +744,12 @@ xo_rlist *xo_fs_read_link(const char *p, int64_t n, const char *x, int64_t xn) {
 }
 
 // Advisory locks: a lock handle holds the descriptor flock(2) locked.
+// fsops.xo reads and writes fd at 16 and held at 24.
 
 typedef struct {
 	xo_hdr h;
-	int fd;
-	int held;
+	int64_t fd;
+	int64_t held;
 } xo_fslock;
 
 static void fslock_free(void *p) {
@@ -745,6 +758,16 @@ static void fslock_free(void *p) {
 		close(l->fd); // releases the lock
 	}
 	xo_free(l);
+}
+
+// xo_fs_raw_lock is the lock handle of the descriptor fd that fsops.xo
+// opened (-1 for none), held or not: freeing it closes fd.
+xo_fslock *xo_fs_raw_lock(int64_t fd, int64_t held) {
+	xo_fslock *l = xo_alloc(sizeof(xo_fslock));
+	h_init(l, fslock_free);
+	l->fd = fd;
+	l->held = held;
+	return l;
 }
 
 // xo_fs_lock takes the lock of p (created if missing): wait tells to
