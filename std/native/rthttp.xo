@@ -91,11 +91,36 @@ fn cl_deadline(timeout: Int) -> Int
 /// name tls_host, verified against roots), the request target (the
 /// escaped path and query), the Host, a header of canonical names and
 /// values, the body, the deadline (0: none), and the start of its
-/// errors (the method and the quoted URL). Over HTTP/2 (ALPN h2) the
-/// response is in the CResp (cr_status, ...); over HTTP/1.1 cl_reading
-/// is true and Xo reads it (cl_input, cl_fill, cl_take), then calls
-/// cl_end. A failure sets cr_err.
-fn cl_start(method: Str, https: Bool, addr: Str, tls_host: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, when: Int, roots: Roots, prefix: Str) -> CResp
+/// errors (the method and the quoted URL); pool: an idle HTTP/2
+/// connection to the same address may take it. Over HTTP/2 (ALPN h2)
+/// cl_h2 is true and Xo makes the exchange (cl_h2_take to cl_h2_end),
+/// whose response is then in the CResp (cr_status, ...); over HTTP/1.1
+/// cl_reading is true and Xo reads it (cl_input, cl_fill, cl_take), then
+/// calls cl_end. A failure sets cr_err.
+fn cl_start(method: Str, https: Bool, addr: Str, tls_host: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, when: Int, roots: Roots, prefix: Str, pool: Bool) -> CResp
+/// An HTTP/2 exchange waits for its header block (audit item B11,
+/// std/native/llrt/http1.xo h2_exchange).
+fn cl_h2(r: CResp) -> Bool
+/// The connection's HPACK state, moved out (a list of one; empty for a
+/// new connection), and the server's SETTINGS_HEADER_TABLE_SIZE values
+/// its encoder has not applied (4 bytes little endian each).
+fn cl_h2_take(r: CResp) -> List[rt.Any]
+fn cl_h2_sizes(r: CResp) -> Str
+/// Sends the request's header block and body, or fails the request with
+/// why when it is not "".
+fn cl_h2_send(r: CResp, blk: Str, why: Str)
+/// Runs the exchange until a response header block is to be decoded
+/// (true: cl_h2_block is the block, cl_h2_fields takes its fields as
+/// hpack.Fields') or the exchange is over (false).
+fn cl_h2_next(r: CResp) -> Bool
+fn cl_h2_block(r: CResp) -> Str
+fn cl_h2_fields(r: CResp, ok: Bool, data: Str, lens: List[Int])
+/// Ends the exchange: the connection keeps the HPACK state st and goes
+/// back to the pool (or closes), and a failure sets cr_err, unless
+/// cl_retry: the server did not take the request on a pooled
+/// connection, which goes on a new one (cl_start without pool).
+fn cl_h2_end(r: CResp, st: rt.Any)
+fn cl_retry(r: CResp) -> Bool
 fn cl_reading(r: CResp) -> Bool
 /// The unread response up to the end of its first head (mode 0), or all
 /// of it (mode 2).

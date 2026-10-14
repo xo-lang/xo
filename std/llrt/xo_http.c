@@ -2155,6 +2155,8 @@ typedef struct {
 	int64_t status;
 	hlist hdr;
 	nbuf body;
+	struct h2x *h2; // an HTTP/2 exchange Xo drives (http1.xo h2_exchange)
+	int retry;      // it goes again on a new connection
 	// an HTTP/1.1 exchange whose response Xo reads
 	int reading;
 	ccon c;
@@ -2176,8 +2178,17 @@ static void cl_close(xo_cresp *r) {
 	r->reading = 0;
 }
 
+// HTTP/2 (xo_h2.c)
+typedef struct h2cc h2cc;
+typedef struct h2x h2x;
+static h2cc *h2_pool_take(xo_troots *roots, const char *key);
+static h2cc *h2cc_new(xo_conn *cn, ccon *c, xo_troots *roots, const char *key);
+static void h2x_start(xo_cresp *r, h2cc *pc, int pooled, const char *method, const char *body, int64_t bn, int64_t when, hlist *hdr);
+static void h2x_free(h2x *x);
+
 static void cresp_free(void *p) {
 	xo_cresp *r = p;
+	h2x_free(r->h2);
 	cl_close(r);
 	free(r->msg);
 	free(r->prefix);
@@ -2312,13 +2323,6 @@ static void cl_finish(xo_cresp *r, int s, const char *why, const char *alert) {
 	}
 }
 
-// HTTP/2 (xo_h2.c)
-typedef struct h2cc h2cc;
-static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr, const char *body,
-                        int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, int *done);
-static int h2_cl_fresh(xo_conn *cn, ccon *c, xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr,
-                       const char *body, int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, char **alert);
-
 // xo_cl_deadline is the deadline of a client's timeout (ns, > 0).
 int64_t xo_cl_deadline(int64_t timeout) { return deadline(timeout); }
 
@@ -2329,12 +2333,14 @@ int64_t xo_cl_deadline(int64_t timeout) { return deadline(timeout); }
 // none); prefix is the start of its errors. An https server whose ALPN
 // chose h2 gets the request over HTTP/2 (xo_h2.c) on a connection kept
 // for the next request with the same addr and tls_host (key), as
-// net/http's Transport keeps it, and the response is in r. Otherwise
-// the request goes out over HTTP/1.1 and cl_reading is true: Xo reads
-// the response and calls cl_end. A failure sets r's error.
+// net/http's Transport keeps it (pool: an idle one may take it): r is
+// set up for the exchange, which Xo makes (cl_h2 is true; its header
+// blocks are Xo's, http1.xo h2_exchange), and the response is then in r.
+// Otherwise the request goes out over HTTP/1.1 and cl_reading is true:
+// Xo reads the response and calls cl_end. A failure sets r's error.
 xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, int64_t an, const char *tp, int64_t tn, const char *gp,
                       int64_t gn, const char *hp, int64_t hn, xo_rlist *names, xo_rlist *values, const char *body, int64_t bn, int64_t when,
-                      xo_troots *roots, const char *pp, int64_t pn) {
+                      xo_troots *roots, const char *pp, int64_t pn, int64_t pool) {
 	xo_cresp *r = xo_alloc(sizeof(xo_cresp));
 	memset(r, 0, sizeof *r);
 	h_init(r, cresp_free);
@@ -2367,10 +2373,10 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		nbuf_str(&k, tls_host);
 		nbuf_byte(&k, 0);
 		key = k.p;
-		int done = 0;
-		s = h2_cl_pooled(roots, key, method, target, host, &hdr, body, bn, when, r, why, sizeof why, &done);
-		if (done) {
-			goto finish;
+		h2cc *pc = pool ? h2_pool_take(roots, key) : NULL;
+		if (pc) {
+			h2x_start(r, pc, 1, method, body, bn, when, &hdr);
+			goto out;
 		}
 	}
 	int64_t d = when ? when - mono_ns() : 0;
@@ -2417,8 +2423,8 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		}
 	}
 	if (c.tls && tls_alpn_h2(c.tls)) {
-		s = h2_cl_fresh(cn, &c, roots, key, method, target, host, &hdr, body, bn, when, r, why, sizeof why, &alert);
-		goto finish;
+		h2x_start(r, h2cc_new(cn, &c, roots, key), 0, method, body, bn, when, &hdr);
+		goto out;
 	}
 	// the request (net/http Request.write with Transport's additions)
 	nbuf o = {0};

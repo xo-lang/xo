@@ -17,11 +17,15 @@
 //     NO_ERROR when serve stops (streams in flight finish), and the rapid
 //     reset limit of scheduleHandler (at most 250 handlers run, 1000 more
 //     wait, beyond that GOAWAY ENHANCE_YOUR_CALM);
-//   - the client: one request per connection (the native client does not
+//   - the client: connections kept for the next request (Transport's
 //     pool), the header fields of httpcommon.EncodeHeaders
 //     (User-Agent: Go-http-client/2.0, Accept-Encoding: gzip,
-//     Content-Length), flow control both ways, and Go's error texts
+//     Content-Length; listed and encoded by Xo, std/native/llrt/
+//     http1.xo h2_exchange), flow control both ways, and Go's error texts
 //     ("stream error: stream ID 1; INTERNAL_ERROR; received from peer").
+//
+// HPACK is Xo's (std/native/llrt/hpack.xo): the server's since decision
+// 0193 step 6, the client's since zero-C audit item B11 (2026-10-14).
 //
 // A connection's frames are read and written by one fiber, the
 // connection's task (h2_next): it decodes requests and hands each
@@ -82,589 +86,6 @@ static const char *h2_err_name(uint32_t c, char *buf, size_t bn) {
 	}
 	snprintf(buf, bn, "unknown error code 0x%x", (unsigned)c);
 	return buf;
-}
-
-// ---------------------------------------------------------------------------
-// HPACK (RFC 7541)
-
-// RFC 7541 Appendix B: the Huffman code of each byte (and its length in bits)
-static const uint32_t hp_huff_code[256] = {
-	0x1ff8, 0x7fffd8, 0xfffffe2, 0xfffffe3, 0xfffffe4, 0xfffffe5, 0xfffffe6, 0xfffffe7,
-	0xfffffe8, 0xffffea, 0x3ffffffc, 0xfffffe9, 0xfffffea, 0x3ffffffd, 0xfffffeb, 0xfffffec,
-	0xfffffed, 0xfffffee, 0xfffffef, 0xffffff0, 0xffffff1, 0xffffff2, 0x3ffffffe, 0xffffff3,
-	0xffffff4, 0xffffff5, 0xffffff6, 0xffffff7, 0xffffff8, 0xffffff9, 0xffffffa, 0xffffffb,
-	0x14, 0x3f8, 0x3f9, 0xffa, 0x1ff9, 0x15, 0xf8, 0x7fa,
-	0x3fa, 0x3fb, 0xf9, 0x7fb, 0xfa, 0x16, 0x17, 0x18,
-	0x0, 0x1, 0x2, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
-	0x1e, 0x1f, 0x5c, 0xfb, 0x7ffc, 0x20, 0xffb, 0x3fc,
-	0x1ffa, 0x21, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62,
-	0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a,
-	0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72,
-	0xfc, 0x73, 0xfd, 0x1ffb, 0x7fff0, 0x1ffc, 0x3ffc, 0x22,
-	0x7ffd, 0x3, 0x23, 0x4, 0x24, 0x5, 0x25, 0x26,
-	0x27, 0x6, 0x74, 0x75, 0x28, 0x29, 0x2a, 0x7,
-	0x2b, 0x76, 0x2c, 0x8, 0x9, 0x2d, 0x77, 0x78,
-	0x79, 0x7a, 0x7b, 0x7ffe, 0x7fc, 0x3ffd, 0x1ffd, 0xffffffc,
-	0xfffe6, 0x3fffd2, 0xfffe7, 0xfffe8, 0x3fffd3, 0x3fffd4, 0x3fffd5, 0x7fffd9,
-	0x3fffd6, 0x7fffda, 0x7fffdb, 0x7fffdc, 0x7fffdd, 0x7fffde, 0xffffeb, 0x7fffdf,
-	0xffffec, 0xffffed, 0x3fffd7, 0x7fffe0, 0xffffee, 0x7fffe1, 0x7fffe2, 0x7fffe3,
-	0x7fffe4, 0x1fffdc, 0x3fffd8, 0x7fffe5, 0x3fffd9, 0x7fffe6, 0x7fffe7, 0xffffef,
-	0x3fffda, 0x1fffdd, 0xfffe9, 0x3fffdb, 0x3fffdc, 0x7fffe8, 0x7fffe9, 0x1fffde,
-	0x7fffea, 0x3fffdd, 0x3fffde, 0xfffff0, 0x1fffdf, 0x3fffdf, 0x7fffeb, 0x7fffec,
-	0x1fffe0, 0x1fffe1, 0x3fffe0, 0x1fffe2, 0x7fffed, 0x3fffe1, 0x7fffee, 0x7fffef,
-	0xfffea, 0x3fffe2, 0x3fffe3, 0x3fffe4, 0x7ffff0, 0x3fffe5, 0x3fffe6, 0x7ffff1,
-	0x3ffffe0, 0x3ffffe1, 0xfffeb, 0x7fff1, 0x3fffe7, 0x7ffff2, 0x3fffe8, 0x1ffffec,
-	0x3ffffe2, 0x3ffffe3, 0x3ffffe4, 0x7ffffde, 0x7ffffdf, 0x3ffffe5, 0xfffff1, 0x1ffffed,
-	0x7fff2, 0x1fffe3, 0x3ffffe6, 0x7ffffe0, 0x7ffffe1, 0x3ffffe7, 0x7ffffe2, 0xfffff2,
-	0x1fffe4, 0x1fffe5, 0x3ffffe8, 0x3ffffe9, 0xffffffd, 0x7ffffe3, 0x7ffffe4, 0x7ffffe5,
-	0xfffec, 0xfffff3, 0xfffed, 0x1fffe6, 0x3fffe9, 0x1fffe7, 0x1fffe8, 0x7ffff3,
-	0x3fffea, 0x3fffeb, 0x1ffffee, 0x1ffffef, 0xfffff4, 0xfffff5, 0x3ffffea, 0x7ffff4,
-	0x3ffffeb, 0x7ffffe6, 0x3ffffec, 0x3ffffed, 0x7ffffe7, 0x7ffffe8, 0x7ffffe9, 0x7ffffea,
-	0x7ffffeb, 0xffffffe, 0x7ffffec, 0x7ffffed, 0x7ffffee, 0x7ffffef, 0x7fffff0, 0x3ffffee,
-};
-static const uint8_t hp_huff_len[256] = {
-	13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
-	28, 28, 28, 28, 28, 28, 30, 28, 28, 28, 28, 28, 28, 28, 28, 28,
-	6, 10, 10, 12, 13, 6, 8, 11, 10, 10, 8, 11, 8, 6, 6, 6,
-	5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 7, 8, 15, 6, 12, 10,
-	13, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 8, 7, 8, 13, 19, 13, 14, 6,
-	15, 5, 6, 5, 6, 5, 6, 6, 6, 5, 7, 7, 6, 6, 6, 5,
-	6, 7, 6, 5, 5, 6, 7, 7, 7, 7, 7, 15, 11, 14, 13, 28,
-	20, 22, 20, 20, 22, 22, 22, 23, 22, 23, 23, 23, 23, 23, 24, 23,
-	24, 24, 22, 23, 24, 23, 23, 23, 23, 21, 22, 23, 22, 23, 23, 24,
-	22, 21, 20, 22, 22, 23, 23, 21, 23, 22, 22, 24, 21, 22, 23, 23,
-	21, 21, 22, 21, 23, 22, 23, 23, 20, 22, 22, 22, 23, 22, 22, 23,
-	26, 26, 20, 19, 22, 23, 22, 25, 26, 26, 26, 27, 27, 26, 24, 25,
-	19, 21, 26, 27, 27, 26, 27, 24, 21, 21, 26, 26, 28, 27, 27, 27,
-	20, 24, 20, 21, 22, 21, 21, 23, 22, 22, 25, 25, 24, 24, 26, 23,
-	26, 27, 26, 26, 27, 27, 27, 27, 27, 28, 27, 27, 27, 27, 27, 26,
-};
-// RFC 7541 Appendix A: the static table (index 1 is the first entry)
-static const char *const hp_static[61][2] = {
-	{":authority", ""},
-	{":method", "GET"},
-	{":method", "POST"},
-	{":path", "/"},
-	{":path", "/index.html"},
-	{":scheme", "http"},
-	{":scheme", "https"},
-	{":status", "200"},
-	{":status", "204"},
-	{":status", "206"},
-	{":status", "304"},
-	{":status", "400"},
-	{":status", "404"},
-	{":status", "500"},
-	{"accept-charset", ""},
-	{"accept-encoding", "gzip, deflate"},
-	{"accept-language", ""},
-	{"accept-ranges", ""},
-	{"accept", ""},
-	{"access-control-allow-origin", ""},
-	{"age", ""},
-	{"allow", ""},
-	{"authorization", ""},
-	{"cache-control", ""},
-	{"content-disposition", ""},
-	{"content-encoding", ""},
-	{"content-language", ""},
-	{"content-length", ""},
-	{"content-location", ""},
-	{"content-range", ""},
-	{"content-type", ""},
-	{"cookie", ""},
-	{"date", ""},
-	{"etag", ""},
-	{"expect", ""},
-	{"expires", ""},
-	{"from", ""},
-	{"host", ""},
-	{"if-match", ""},
-	{"if-modified-since", ""},
-	{"if-none-match", ""},
-	{"if-range", ""},
-	{"if-unmodified-since", ""},
-	{"last-modified", ""},
-	{"link", ""},
-	{"location", ""},
-	{"max-forwards", ""},
-	{"proxy-authenticate", ""},
-	{"proxy-authorization", ""},
-	{"range", ""},
-	{"referer", ""},
-	{"refresh", ""},
-	{"retry-after", ""},
-	{"server", ""},
-	{"set-cookie", ""},
-	{"strict-transport-security", ""},
-	{"transfer-encoding", ""},
-	{"user-agent", ""},
-	{"vary", ""},
-	{"via", ""},
-	{"www-authenticate", ""},
-};
-
-// A dynamic table: entries in a ring, the newest at the end. An entry's
-// size is its name and value lengths plus 32 (section 4.1).
-typedef struct {
-	char *p; // name then value (malloc'd)
-	uint32_t nn, vn;
-} hp_ent;
-
-typedef struct {
-	hp_ent *e;
-	uint32_t cap, first, n;
-	uint64_t size, max;
-} hp_tab;
-
-// hp_at is entry i, 0 the newest.
-static hp_ent *hp_at(hp_tab *t, uint32_t i) { return &t->e[(t->first + t->n - 1 - i) % t->cap]; }
-
-static void hp_evict(hp_tab *t) {
-	hp_ent *e = &t->e[t->first];
-	t->size -= (uint64_t)e->nn + e->vn + 32;
-	free(e->p);
-	e->p = NULL;
-	t->first = (t->first + 1) % t->cap;
-	t->n--;
-}
-
-static void hp_setmax(hp_tab *t, uint64_t max) {
-	t->max = max;
-	while (t->size > t->max) {
-		hp_evict(t);
-	}
-}
-
-static void hp_add(hp_tab *t, const char *n, uint32_t nn, const char *v, uint32_t vn) {
-	uint64_t sz = (uint64_t)nn + vn + 32;
-	while (t->n > 0 && t->size + sz > t->max) {
-		hp_evict(t);
-	}
-	if (sz > t->max) {
-		return; // an entry larger than the table empties it (4.4)
-	}
-	if (t->n == t->cap) {
-		uint32_t nc = t->cap ? t->cap * 2 : 16;
-		hp_ent *ne = malloc(sizeof(hp_ent) * nc);
-		if (!ne) {
-			xo_oom();
-		}
-		for (uint32_t i = 0; i < t->n; i++) {
-			ne[i] = t->e[(t->first + i) % t->cap];
-		}
-		free(t->e);
-		t->e = ne;
-		t->cap = nc;
-		t->first = 0;
-	}
-	hp_ent *e = &t->e[(t->first + t->n) % t->cap];
-	e->p = malloc((size_t)nn + vn + 1);
-	if (!e->p) {
-		xo_oom();
-	}
-	if (nn) {
-		memcpy(e->p, n, nn);
-	}
-	if (vn) {
-		memcpy(e->p + nn, v, vn);
-	}
-	e->nn = nn;
-	e->vn = vn;
-	t->n++;
-	t->size += sz;
-}
-
-static void hp_tab_free(hp_tab *t) {
-	while (t->n > 0) {
-		hp_evict(t);
-	}
-	free(t->e);
-	memset(t, 0, sizeof *t);
-}
-
-// Huffman decoding walks a tree of the codes: a child is the index of an
-// inner node, or minus one more than a symbol (256 is EOS).
-static int16_t hp_tree[256][2];
-static int hp_tree_n;
-static pthread_once_t hp_once = PTHREAD_ONCE_INIT;
-
-static void hp_tree_add(uint32_t code, int len, int sym) {
-	int node = 0;
-	for (int b = len - 1; b >= 0; b--) {
-		int bit = (code >> b) & 1;
-		if (b == 0) {
-			hp_tree[node][bit] = (int16_t)(-(sym + 1));
-			return;
-		}
-		if (hp_tree[node][bit] == 0) {
-			hp_tree[node][bit] = (int16_t)++hp_tree_n;
-		}
-		node = hp_tree[node][bit];
-	}
-}
-
-static void hp_tree_init(void) {
-	for (int s = 0; s < 256; s++) {
-		hp_tree_add(hp_huff_code[s], hp_huff_len[s], s);
-	}
-	hp_tree_add(0x3fffffff, 30, 256);
-}
-
-// hp_huff_dec appends the decoding of p to o: 0 when the code is invalid
-// (EOS, padding longer than 7 bits or not all ones) or the result longer
-// than max (0: no limit), as hpack.huffmanDecode.
-static int hp_huff_dec(const uint8_t *p, int64_t n, nbuf *o, int64_t max) {
-	pthread_once(&hp_once, hp_tree_init);
-	int node = 0, depth = 0, ones = 1;
-	for (int64_t i = 0; i < n; i++) {
-		for (int b = 7; b >= 0; b--) {
-			int bit = (p[i] >> b) & 1;
-			int16_t nx = hp_tree[node][bit];
-			depth++;
-			ones &= bit;
-			if (nx < 0) {
-				int sym = -nx - 1;
-				if (sym == 256) {
-					return 0;
-				}
-				if (max && o->n >= max) {
-					return 0;
-				}
-				nbuf_byte(o, (char)sym);
-				node = 0;
-				depth = 0;
-				ones = 1;
-			} else {
-				node = nx;
-			}
-		}
-	}
-	return depth <= 7 && ones;
-}
-
-static int64_t hp_huff_len_of(const char *s, int64_t n) {
-	uint64_t bits = 0;
-	for (int64_t i = 0; i < n; i++) {
-		bits += hp_huff_len[(unsigned char)s[i]];
-	}
-	return (int64_t)((bits + 7) / 8);
-}
-
-static void hp_huff_enc(nbuf *o, const char *s, int64_t n) {
-	uint64_t acc = 0;
-	int bits = 0;
-	for (int64_t i = 0; i < n; i++) {
-		unsigned c = (unsigned char)s[i];
-		acc = (acc << hp_huff_len[c]) | hp_huff_code[c];
-		bits += hp_huff_len[c];
-		while (bits >= 8) {
-			bits -= 8;
-			nbuf_byte(o, (char)(acc >> bits));
-		}
-		acc &= ((uint64_t)1 << bits) - 1;
-	}
-	if (bits > 0) {
-		nbuf_byte(o, (char)((acc << (8 - bits)) | (0xffu >> bits)));
-	}
-}
-
-// hp_put_int writes v with an n bit prefix whose other bits are first.
-static void hp_put_int(nbuf *o, unsigned first, int prefix, uint64_t v) {
-	uint64_t max = ((uint64_t)1 << prefix) - 1;
-	if (v < max) {
-		nbuf_byte(o, (char)(first | v));
-		return;
-	}
-	nbuf_byte(o, (char)(first | max));
-	v -= max;
-	while (v >= 128) {
-		nbuf_byte(o, (char)(v % 128 + 128));
-		v /= 128;
-	}
-	nbuf_byte(o, (char)v);
-}
-
-// hp_get_int reads an integer with an n bit prefix at p[*i]: 1, -1 when
-// the input ends first, 0 when it overflows (hpack.readVarInt).
-static int hp_get_int(const uint8_t *p, int64_t n, int64_t *i, int prefix, uint64_t *out) {
-	if (*i >= n) {
-		return -1;
-	}
-	uint64_t max = ((uint64_t)1 << prefix) - 1;
-	uint64_t v = p[*i] & max;
-	(*i)++;
-	if (v < max) {
-		*out = v;
-		return 1;
-	}
-	int m = 0;
-	for (;;) {
-		if (*i >= n) {
-			return -1;
-		}
-		uint8_t b = p[(*i)++];
-		v += (uint64_t)(b & 127) << m;
-		if (!(b & 128)) {
-			break;
-		}
-		m += 7;
-		if (m >= 63) {
-			return 0;
-		}
-	}
-	*out = v;
-	return 1;
-}
-
-static void hp_put_str(nbuf *o, const char *s, int64_t n) {
-	int64_t hl = hp_huff_len_of(s, n);
-	if (hl < n) {
-		hp_put_int(o, 0x80, 7, (uint64_t)hl);
-		hp_huff_enc(o, s, n);
-	} else {
-		hp_put_int(o, 0, 7, (uint64_t)n);
-		nbuf_put(o, s, n);
-	}
-}
-
-// hp_get_str reads a string literal into o (emptied first): 1, -1 when
-// the input ends first, 0 when it is invalid or longer than max (0: no
-// limit; hpack.Decoder.readString).
-static int hp_get_str(const uint8_t *p, int64_t n, int64_t *i, nbuf *o, int64_t max) {
-	if (*i >= n) {
-		return -1;
-	}
-	int huff = p[*i] & 0x80;
-	uint64_t len;
-	int g = hp_get_int(p, n, i, 7, &len);
-	if (g != 1) {
-		return g;
-	}
-	if (max && len > (uint64_t)max) {
-		return 0;
-	}
-	if (len > (uint64_t)(n - *i)) {
-		return -1;
-	}
-	o->n = 0;
-	if (huff) {
-		if (!hp_huff_dec(p + *i, (int64_t)len, o, max)) {
-			return 0;
-		}
-	} else {
-		if (max && (int64_t)len > max) {
-			return 0;
-		}
-		nbuf_put(o, (const char *)p + *i, (int64_t)len);
-	}
-	*i += (int64_t)len;
-	return 1;
-}
-
-// A decoder: the dynamic table and the largest size a table size update
-// may set (the SETTINGS_HEADER_TABLE_SIZE this side announced).
-typedef struct {
-	hp_tab t;
-	uint32_t limit;
-	nbuf n, v;
-} hp_dec;
-
-typedef void (*hp_emit_fn)(void *arg, const char *n, int64_t nn, const char *v, int64_t vn);
-
-static void hp_dec_init(hp_dec *d, uint32_t limit) {
-	memset(d, 0, sizeof *d);
-	d->limit = limit;
-	d->t.max = limit;
-}
-
-static void hp_dec_free(hp_dec *d) {
-	hp_tab_free(&d->t);
-	free(d->n.p);
-	free(d->v.p);
-}
-
-// hp_decode_part decodes the whole field representations of p (the next
-// part of a header block, hpack.Decoder.Write): *used is how far it got
-// (a representation cut by the end of p waits for the next part). 1, or
-// 0 for a decoding error (a COMPRESSION_ERROR). Each field goes to
-// emit; maxstr bounds a string. *first is set while no representation
-// of the block was decoded (a table size update must come first).
-static int hp_decode_part(hp_dec *d, const uint8_t *p, int64_t n, int64_t *used, int *first, int64_t maxstr, hp_emit_fn emit, void *arg) {
-	int64_t i = 0;
-	*used = 0;
-	while (i < n) {
-		int64_t start = i;
-		uint8_t b = p[i];
-		int g;
-		if (b & 0x80) {
-			uint64_t idx;
-			g = hp_get_int(p, n, &i, 7, &idx);
-			if (g < 0) {
-				*used = start;
-				return 1;
-			}
-			if (g == 0 || idx == 0) {
-				return 0;
-			}
-			if (idx <= 61) {
-				const char *hn = hp_static[idx - 1][0], *hv = hp_static[idx - 1][1];
-				emit(arg, hn, (int64_t)strlen(hn), hv, (int64_t)strlen(hv));
-			} else if (idx - 62 < d->t.n) {
-				hp_ent *e = hp_at(&d->t, (uint32_t)(idx - 62));
-				emit(arg, e->p, e->nn, e->p + e->nn, e->vn);
-			} else {
-				return 0;
-			}
-			*first = 0;
-			*used = i;
-			continue;
-		}
-		if ((b & 0xe0) == 0x20) {
-			// a dynamic table size update: at the start of a block only
-			uint64_t v;
-			if (!*first && d->t.size > 0) {
-				return 0;
-			}
-			g = hp_get_int(p, n, &i, 5, &v);
-			if (g < 0) {
-				*used = start;
-				return 1;
-			}
-			if (g == 0 || v > d->limit) {
-				return 0;
-			}
-			hp_setmax(&d->t, v);
-			*first = 0;
-			*used = i;
-			continue;
-		}
-		int indexing = (b & 0xc0) == 0x40;
-		uint64_t idx;
-		g = hp_get_int(p, n, &i, indexing ? 6 : 4, &idx);
-		if (g < 0) {
-			*used = start;
-			return 1;
-		}
-		if (g == 0) {
-			return 0;
-		}
-		if (idx == 0) {
-			g = hp_get_str(p, n, &i, &d->n, maxstr);
-			if (g < 0) {
-				*used = start;
-				return 1;
-			}
-			if (g == 0) {
-				return 0;
-			}
-		} else if (idx <= 61) {
-			d->n.n = 0;
-			nbuf_str(&d->n, hp_static[idx - 1][0]);
-		} else if (idx - 62 < d->t.n) {
-			hp_ent *e = hp_at(&d->t, (uint32_t)(idx - 62));
-			d->n.n = 0;
-			nbuf_put(&d->n, e->p, e->nn);
-		} else {
-			return 0;
-		}
-		g = hp_get_str(p, n, &i, &d->v, maxstr);
-		if (g < 0) {
-			*used = start;
-			return 1;
-		}
-		if (g == 0) {
-			return 0;
-		}
-		const char *np = d->n.p ? d->n.p : "", *vp = d->v.p ? d->v.p : "";
-		emit(arg, np, d->n.n, vp, d->v.n);
-		if (indexing) {
-			hp_add(&d->t, np, (uint32_t)d->n.n, vp, (uint32_t)d->v.n);
-		}
-		*first = 0;
-		*used = i;
-	}
-	return 1;
-}
-
-// hp_decode decodes a whole header block: 1, or 0 for a decoding error.
-static int hp_decode(hp_dec *d, const uint8_t *p, int64_t n, int64_t maxstr, hp_emit_fn emit, void *arg) {
-	int64_t used;
-	int first = 1;
-	return hp_decode_part(d, p, n, &used, &first, maxstr, emit, arg) && used == n;
-}
-
-// An encoder (hpack.Encoder): fields are indexed when the static or the
-// dynamic table has them, else written as literals added to the dynamic
-// table, strings Huffman coded when that is shorter.
-typedef struct {
-	hp_tab t;
-	uint32_t min_size;
-	int update;
-} hp_enc;
-
-static void hp_enc_init(hp_enc *e) {
-	memset(e, 0, sizeof *e);
-	e->t.max = H2_TABLE;
-	e->min_size = UINT32_MAX;
-}
-
-// hp_enc_setmax applies the peer's SETTINGS_HEADER_TABLE_SIZE.
-static void hp_enc_setmax(hp_enc *e, uint32_t v) {
-	if (v > H2_TABLE) {
-		v = H2_TABLE;
-	}
-	if (v < e->min_size) {
-		e->min_size = v;
-	}
-	e->update = 1;
-	hp_setmax(&e->t, v);
-}
-
-static void hp_encode(hp_enc *e, nbuf *o, const char *n, int64_t nn, const char *v, int64_t vn) {
-	if (e->update) {
-		e->update = 0;
-		if (e->min_size < e->t.max) {
-			hp_put_int(o, 0x20, 5, e->min_size);
-		}
-		e->min_size = UINT32_MAX;
-		hp_put_int(o, 0x20, 5, e->t.max);
-	}
-	uint64_t si = 0, di = 0;
-	for (int k = 0; k < 61; k++) {
-		const char *sn = hp_static[k][0];
-		if ((int64_t)strlen(sn) == nn && memcmp(sn, n, (size_t)nn) == 0) {
-			const char *sv = hp_static[k][1];
-			if ((int64_t)strlen(sv) == vn && memcmp(sv, v, (size_t)vn) == 0) {
-				hp_put_int(o, 0x80, 7, (uint64_t)k + 1);
-				return;
-			}
-			si = (uint64_t)k + 1; // the last entry of the name, as hpack's byName
-		}
-	}
-	for (uint32_t k = 0; k < e->t.n; k++) {
-		hp_ent *x = hp_at(&e->t, k);
-		if (x->nn == nn && memcmp(x->p, n, (size_t)nn) == 0) {
-			if (x->vn == vn && memcmp(x->p + nn, v, (size_t)vn) == 0) {
-				hp_put_int(o, 0x80, 7, 62 + (uint64_t)k);
-				return;
-			}
-			if (!di) {
-				di = 62 + (uint64_t)k;
-			}
-		}
-	}
-	uint64_t idx = si ? si : di;
-	int indexing = (uint64_t)nn + (uint64_t)vn + 32 <= e->t.max;
-	hp_put_int(o, indexing ? 0x40 : 0, indexing ? 6 : 4, idx);
-	if (!idx) {
-		hp_put_str(o, n, nn);
-	}
-	hp_put_str(o, v, vn);
-	if (indexing) {
-		hp_add(&e->t, n, (uint32_t)nn, v, (uint32_t)vn);
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2953,8 +2374,8 @@ typedef struct h2cc {
 	char *key; // the address and the server name
 	xo_conn *cn;
 	ccon c;
-	hp_dec dec;
-	hp_enc enc;
+	xo_any *hp;   // the HPACK state, Xo's (http1.xo H2State); NULL before the first request
+	nbuf sizes;   // the server's SETTINGS_HEADER_TABLE_SIZE values Xo's encoder has not applied
 	uint32_t peer_frame;
 	int64_t peer_win, win; // the server's initial stream window, its connection window
 	h2_inflow in;          // our connection window
@@ -2979,6 +2400,7 @@ typedef struct {
 	nbuf hb;
 	int hb_on, hb_flags;
 	uint32_t hb_sid;
+	int dec; // the block in hb waits for Xo's decoder (cl_h2_block, cl_h2_fields)
 	hlist fields;
 } h2rq;
 
@@ -2997,8 +2419,10 @@ static void h2cc_free(h2cc *pc) {
 	h_release(pc->cn);
 	h_release(pc->roots);
 	free(pc->c.buf);
-	hp_dec_free(&pc->dec);
-	hp_tab_free(&pc->enc.t);
+	if (pc->hp) {
+		h_release(pc->hp);
+	}
+	free(pc->sizes.p);
 	free(pc->out.p);
 	free(pc->key);
 	free(pc->goaway_debug);
@@ -3016,8 +2440,6 @@ static h2cc *h2cc_new(xo_conn *cn, ccon *c, xo_troots *roots, const char *key) {
 	h_retain(roots);
 	pc->roots = roots;
 	pc->key = strdup(key);
-	hp_dec_init(&pc->dec, H2_TABLE);
-	hp_enc_init(&pc->enc);
 	pc->peer_frame = 16384;
 	pc->peer_win = 65535;
 	pc->win = 65535;
@@ -3130,19 +2552,27 @@ static int h2cc_frame(ccon *c, const uint8_t **h) {
 	}
 }
 
-static void h2rq_emit(void *arg, const char *n, int64_t nn, const char *v, int64_t vn) {
-	h2rq *q = arg;
-	hl_add(&q->fields, hs_dup(n, nn), hs_dup(v, vn));
-}
-
-// h2rq_headers takes a header block of the response into r: 0 when it is
-// malformed (why says how).
-static int h2rq_headers(h2cc *pc, h2rq *q, xo_cresp *r, int end, char *why, size_t wn) {
+// h2rq_headers takes a header block of the response into r, the fields
+// Xo decoded from it (ok: 0 a decoding error; the names and values one
+// after the other in d, their lengths in lens as xo_h2_fields'): 0 when
+// it is malformed (why says how).
+static int h2rq_headers(h2cc *pc, h2rq *q, xo_cresp *r, int ok, const char *d, int64_t dn, xo_rlist *lens, char *why, size_t wn) {
+	int end = q->hb_flags & H2F_END_STREAM;
 	hl_clear(&q->fields);
-	if (!hp_decode(&pc->dec, (const uint8_t *)(q->hb.p ? q->hb.p : ""), q->hb.n, 10 << 20, h2rq_emit, q)) {
+	if (!ok) {
 		pc->broken = 1;
 		snprintf(why, wn, "connection error: COMPRESSION_ERROR");
 		return 0;
+	}
+	int64_t off = 0;
+	const int64_t *l = (const int64_t *)rl_data(lens);
+	for (int64_t i = 0; i < lens->len; i++) {
+		int64_t nn = l[i] & 0xffffffff, vn = (int64_t)((uint64_t)l[i] >> 32);
+		if (off + nn + vn > dn) {
+			break;
+		}
+		hl_add(&q->fields, hs_dup(d + off, nn), hs_dup(d + off + nn, vn));
+		off += nn + vn;
 	}
 	if (q->hb_sid != q->id) {
 		return 1; // another stream's (an old one's trailers): only the table counts
@@ -3224,7 +2654,9 @@ static int h2cc_process(h2cc *pc, h2rq *q, const uint8_t *h, xo_cresp *r, const 
 			} else if (id == H2S_MAX_FRAME && v >= 16384 && v < (1 << 24)) {
 				pc->peer_frame = v;
 			} else if (id == H2S_HEADER_TABLE) {
-				hp_enc_setmax(&pc->enc, v);
+				// for Xo's encoder, before the next request's block
+				char w[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)};
+				nbuf_put(&pc->sizes, w, 4);
 			}
 		}
 		h2_fh(&pc->out, 0, H2_SETTINGS, H2F_ACK, 0);
@@ -3313,9 +2745,7 @@ static int h2cc_process(h2cc *pc, h2rq *q, const uint8_t *h, xo_cresp *r, const 
 			break;
 		}
 		q->hb_on = 0;
-		if (!h2rq_headers(pc, q, r, q->hb_flags & H2F_END_STREAM, why, wn)) {
-			return 0;
-		}
+		q->dec = 1; // Xo decodes it (xo_cl_h2_next returns)
 		break;
 	}
 	case H2_DATA: {
@@ -3366,121 +2796,129 @@ static int h2cc_process(h2cc *pc, h2rq *q, const uint8_t *h, xo_cresp *r, const 
 	return 1;
 }
 
-// h2cc_exchange makes the request of cl_once on HTTP/2 connection pc
-// (http2 Transport.RoundTrip, httpcommon.EncodeHeaders): CC_OK with the
-// response in r, or the failure. A failure after the response header
-// came (reading the body) has why starting with \1: net/http reports it
-// from the body's Read, without the method and URL. *retry is set when
-// the server did not take the request (it may go on another connection).
-static int h2cc_exchange(h2cc *pc, const char *method, hstr path, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when,
-                         xo_cresp *r, char *why, size_t wn, int *retry) {
-	*retry = 0;
-	// checkConnHeaders
-	static const struct {
-		const char *k;
-		const char *ok1, *ok2;
-	} chk[] = {{"Upgrade", "chunked", NULL}, {"Transfer-Encoding", "chunked", NULL}, {"Connection", "close", "keep-alive"}};
-	for (int i = 0; i < 3; i++) {
-		int64_t at = hl_find(hdr, chk[i].k);
-		if (at < 0) {
-			continue;
-		}
-		hstr v = hdr->a[at].v;
-		if (v.n == 0 || hs_eq(v, chk[i].ok1) || (chk[i].ok2 && hs_eq(v, chk[i].ok2))) {
-			continue;
-		}
-		nbuf q = {0};
-		h_go_quote(&q, v.p, v.n);
-		nbuf_byte(&q, 0);
-		snprintf(why, wn, "http2: invalid %s request header: [%s]", chk[i].k, q.p);
-		free(q.p);
-		return CC_ERR;
+// An exchange on HTTP/2 connection pc (http2 Transport.RoundTrip), which
+// Xo drives (http1.xo h2_exchange) since its header blocks are Xo's: C
+// never calls compiled Xo (decision 0180), so it stops where Xo encodes
+// the request's block (xo_cl_h2_send) and at each response block Xo
+// decodes (xo_cl_h2_next, xo_cl_h2_fields), then xo_cl_h2_end puts the
+// connection back and sets the response or the failure. A failure after
+// the response header came (reading the body) has why starting with \1:
+// net/http reports it from the body's Read, without the method and URL.
+struct h2x {
+	h2cc *pc;
+	int pooled; // pc came from the pool (a failure before an answer is retried)
+	h2rq q;
+	char *method;
+	char *body;
+	int64_t bn, off; // the body and how much of it went out
+	int close;       // Connection: close (pc is not reused)
+	int res;         // CC_OK while the exchange goes on, else how it ended
+	char why[400];
+};
+
+// h2x_start sets r up for the exchange of the request on pc (the method,
+// the body, the deadline, the header: names canonical, each once).
+static void h2x_start(xo_cresp *r, h2cc *pc, int pooled, const char *method, const char *body, int64_t bn, int64_t when, hlist *hdr) {
+	h2x *x = calloc(1, sizeof(h2x));
+	char *b = malloc(bn > 0 ? (size_t)bn : 1);
+	if (!x || !b) {
+		xo_oom();
 	}
+	memcpy(b, body, (size_t)bn);
+	x->pc = pc;
+	x->pooled = pooled;
+	x->method = strdup(method);
+	x->body = b;
+	x->bn = bn;
 	int64_t ci = hl_find(hdr, "Connection");
-	if (ci >= 0 && hs_eq(hdr->a[ci].v, "close")) {
-		pc->broken = 1; // not reused after this request
-	}
+	x->close = ci >= 0 && hs_eq(hdr->a[ci].v, "close");
+	x->res = CC_OK;
+	r->h2 = x;
 	pc->c.when = when;
 	tls_set_when(pc->c.tls, when);
-	h2rq q;
-	memset(&q, 0, sizeof q);
-	q.id = pc->next_id;
+}
+
+// h2x_free frees x; an exchange Xo did not end drops its connection.
+static void h2x_free(h2x *x) {
+	if (!x) {
+		return;
+	}
+	h2cc_free(x->pc);
+	hl_free(&x->q.fields);
+	free(x->q.hb.p);
+	free(x->method);
+	free(x->body);
+	free(x);
+}
+
+int64_t xo_cl_h2(xo_cresp *r) { return r->h2 != NULL; }
+
+int64_t xo_cl_retry(xo_cresp *r) { return r->retry; }
+
+// xo_cl_h2_take moves the connection's HPACK state out to Xo: a list of
+// one, empty before the connection's first request.
+xo_rlist *xo_cl_h2_take(xo_cresp *r) {
+	h2cc *pc = r->h2->pc;
+	xo_rlist *l = xo_rl_new(4, 8);
+	if (pc->hp) {
+		((xo_any **)rl_data(l))[0] = pc->hp;
+		l->len = 1;
+		pc->hp = NULL;
+	}
+	return l;
+}
+
+// xo_cl_h2_sizes is the server's SETTINGS_HEADER_TABLE_SIZE values since
+// the connection's last request (4 bytes little endian each), for Xo's
+// encoder.
+xo_rstr *xo_cl_h2_sizes(xo_cresp *r, int64_t *len) {
+	h2cc *pc = r->h2->pc;
+	xo_rstr *s = nstr(pc->sizes.p ? pc->sizes.p : "", pc->sizes.n, len);
+	pc->sizes.n = 0;
+	return s;
+}
+
+// xo_cl_h2_send sends the HEADERS of the request with the block Xo
+// encoded (and as much of the body as the windows allow, in
+// xo_cl_h2_next), or fails the request with why (checkConnHeaders).
+void xo_cl_h2_send(xo_cresp *r, const char *blk, int64_t bn, const char *why, int64_t wn) {
+	h2x *x = r->h2;
+	h2cc *pc = x->pc;
+	h2rq *q = &x->q;
+	if (wn > 0) {
+		snprintf(x->why, sizeof x->why, "%.*s", (int)wn, why);
+		x->res = CC_ERR;
+		return;
+	}
+	if (x->close) {
+		pc->broken = 1; // not reused after this request
+	}
+	q->id = pc->next_id;
 	pc->next_id += 2;
-	q.swin = pc->peer_win;
-	q.sin.avail = (int64_t)4 << 20;
-	// the header block (path: the request target, escaped by Xo)
-	nbuf blk = {0};
-	hp_encode(&pc->enc, &blk, ":authority", 10, host.p, host.n);
-	hp_encode(&pc->enc, &blk, ":method", 7, method, (int64_t)strlen(method));
-	hp_encode(&pc->enc, &blk, ":path", 5, path.p, path.n);
-	hp_encode(&pc->enc, &blk, ":scheme", 7, "https", 5);
-	int did_ua = 0;
-	for (int64_t i = 0; i < hdr->n; i++) {
-		hstr k = hdr->a[i].k, v = hdr->a[i].v;
-		if (hs_eq(k, "Host") || hs_eq(k, "Content-Length") || hs_eq(k, "Connection") || hs_eq(k, "Proxy-Connection") ||
-		    hs_eq(k, "Transfer-Encoding") || hs_eq(k, "Upgrade") || hs_eq(k, "Keep-Alive")) {
-			continue;
-		}
-		hstr lk = hs_dup(k.p, k.n);
-		for (int64_t j = 0; j < lk.n; j++) {
-			lk.p[j] = (char)h_lower((unsigned char)lk.p[j]);
-		}
-		if (hs_eq(k, "User-Agent")) {
-			did_ua = 1;
-			if (v.n > 0) {
-				hp_encode(&pc->enc, &blk, lk.p, lk.n, v.p, v.n);
-			}
-		} else if (hs_eq(k, "Cookie")) {
-			// a field per cookie pair (8.1.2.5)
-			const char *s = v.p;
-			int64_t sn = v.n;
-			for (;;) {
-				const char *semi = memchr(s, ';', (size_t)sn);
-				if (!semi) {
-					break;
-				}
-				hp_encode(&pc->enc, &blk, "cookie", 6, s, semi - s);
-				int64_t at = semi - s + 1;
-				while (at < sn && s[at] == ' ') {
-					at++;
-				}
-				s += at;
-				sn -= at;
-			}
-			if (sn > 0) {
-				hp_encode(&pc->enc, &blk, "cookie", 6, s, sn);
-			}
-		} else {
-			hp_encode(&pc->enc, &blk, lk.p, lk.n, v.p, v.n);
-		}
-		hs_free(&lk);
-	}
-	if (bn > 0 || strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0) {
-		char cl[24];
-		int cn = h_itoa(cl, bn);
-		hp_encode(&pc->enc, &blk, "content-length", 14, cl, cn);
-	}
-	if (hl_find(hdr, "Accept-Encoding") < 0 && hl_find(hdr, "Range") < 0 && strcmp(method, "HEAD") != 0) {
-		hp_encode(&pc->enc, &blk, "accept-encoding", 15, "gzip", 4);
-	}
-	if (!did_ua) {
-		hp_encode(&pc->enc, &blk, "user-agent", 10, "Go-http-client/2.0", 18);
-	}
-	h2_put_block(&pc->out, q.id, blk.p, blk.n, bn == 0, pc->peer_frame);
-	free(blk.p);
-	int res = cc_send(&pc->c, pc->out.p, pc->out.n);
+	q->swin = pc->peer_win;
+	q->sin.avail = (int64_t)4 << 20;
+	h2_put_block(&pc->out, q->id, blk, bn, x->bn == 0, pc->peer_frame);
+	x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
 	pc->out.n = 0;
 	r->body.n = 0;
-	int64_t off = 0;
-	while (res == CC_OK && !q.ended) {
+}
+
+// xo_cl_h2_next runs the exchange: 1 when a response header block waits
+// for Xo's decoder (xo_cl_h2_block, xo_cl_h2_fields), 0 when the
+// exchange is over (xo_cl_h2_end).
+int64_t xo_cl_h2_next(xo_cresp *r) {
+	h2x *x = r->h2;
+	h2cc *pc = x->pc;
+	h2rq *q = &x->q;
+	while (x->res == CC_OK && !q->ended) {
 		// the body, as the windows allow
-		while (off < bn && !q.ended) {
-			int64_t k = bn - off;
+		while (x->off < x->bn && !q->ended) {
+			int64_t k = x->bn - x->off;
 			if (k > pc->peer_frame) {
 				k = pc->peer_frame;
 			}
-			if (k > q.swin) {
-				k = q.swin;
+			if (k > q->swin) {
+				k = q->swin;
 			}
 			if (k > pc->win) {
 				k = pc->win;
@@ -3488,22 +2926,22 @@ static int h2cc_exchange(h2cc *pc, const char *method, hstr path, hstr host, hli
 			if (k <= 0) {
 				break;
 			}
-			h2_fh(&pc->out, (uint32_t)k, H2_DATA, off + k == bn ? H2F_END_STREAM : 0, q.id);
-			nbuf_put(&pc->out, body + off, k);
-			off += k;
-			q.swin -= k;
+			h2_fh(&pc->out, (uint32_t)k, H2_DATA, x->off + k == x->bn ? H2F_END_STREAM : 0, q->id);
+			nbuf_put(&pc->out, x->body + x->off, k);
+			x->off += k;
+			q->swin -= k;
 			pc->win -= k;
 			if (pc->out.n >= (64 << 10)) {
 				break;
 			}
 		}
 		if (pc->out.n > 0) {
-			res = cc_send(&pc->c, pc->out.p, pc->out.n);
+			x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
 			pc->out.n = 0;
-			if (res != CC_OK) {
+			if (x->res != CC_OK) {
 				break;
 			}
-			if (off < bn && q.swin > 0 && pc->win > 0) {
+			if (x->off < x->bn && q->swin > 0 && pc->win > 0) {
 				continue;
 			}
 		}
@@ -3516,91 +2954,103 @@ static int h2cc_exchange(h2cc *pc, const char *method, hstr path, hstr host, hli
 				nbuf gq = {0};
 				h_go_quote(&gq, pc->goaway_debug ? pc->goaway_debug : "", pc->goaway_debug ? (int64_t)strlen(pc->goaway_debug) : 0);
 				nbuf_byte(&gq, 0);
-				snprintf(why, wn, "%shttp2: server sent GOAWAY and closed the connection; LastStreamID=%u, ErrCode=%s, debug=%s",
-				         q.headers ? "\1" : "", (unsigned)pc->goaway_last, h2_err_name(pc->goaway_code, nb, sizeof nb), gq.p);
+				snprintf(x->why, sizeof x->why, "%shttp2: server sent GOAWAY and closed the connection; LastStreamID=%u, ErrCode=%s, debug=%s",
+				         q->headers ? "\1" : "", (unsigned)pc->goaway_last, h2_err_name(pc->goaway_code, nb, sizeof nb), gq.p);
 				free(gq.p);
 			} else {
-				snprintf(why, wn, "%sunexpected EOF", q.headers ? "\1" : "");
+				snprintf(x->why, sizeof x->why, "%sunexpected EOF", q->headers ? "\1" : "");
 			}
-			res = CC_ERR;
+			x->res = CC_ERR;
 			break;
 		}
 		if (f == CC_ERR + 100) {
 			pc->broken = 1;
-			snprintf(why, wn, "%shttp2: frame too large", q.headers ? "\1" : "");
-			res = CC_ERR;
+			snprintf(x->why, sizeof x->why, "%shttp2: frame too large", q->headers ? "\1" : "");
+			x->res = CC_ERR;
 			break;
 		}
 		if (f != CC_OK) {
-			res = f;
+			x->res = f;
 			break;
 		}
-		int had = q.headers;
+		int had = q->headers;
 		char m[300] = "";
-		if (!h2cc_process(pc, &q, h, r, method, m, sizeof m)) {
-			snprintf(why, wn, "%s%s", had ? "\1" : "", m);
-			res = CC_ERR;
+		if (!h2cc_process(pc, q, h, r, x->method, m, sizeof m)) {
+			snprintf(x->why, sizeof x->why, "%s%s", had ? "\1" : "", m);
+			x->res = CC_ERR;
 			break;
+		}
+		if (q->dec) {
+			return 1;
 		}
 		if (pc->out.n > 0) {
-			res = cc_send(&pc->c, pc->out.p, pc->out.n);
+			x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
 			pc->out.n = 0;
 		}
 	}
+	return 0;
+}
+
+// xo_cl_h2_block is the response header block Xo decodes.
+xo_rstr *xo_cl_h2_block(xo_cresp *r, int64_t *len) {
+	h2rq *q = &r->h2->q;
+	return nstr(q->hb.p ? q->hb.p : "", q->hb.n, len);
+}
+
+// xo_cl_h2_fields takes the fields Xo decoded from the block (ok: 0 a
+// decoding error; d and lens as xo_h2_fields'); xo_cl_h2_next goes on.
+void xo_cl_h2_fields(xo_cresp *r, int64_t ok, const char *d, int64_t dn, xo_rlist *lens) {
+	h2x *x = r->h2;
+	h2rq *q = &x->q;
+	q->dec = 0;
+	int had = q->headers;
+	char m[300] = "";
+	if (!h2rq_headers(x->pc, q, r, (int)ok, d, dn, lens, m, sizeof m)) {
+		snprintf(x->why, sizeof x->why, "%s%s", had ? "\1" : "", m);
+		x->res = CC_ERR;
+	}
+}
+
+// xo_cl_h2_end ends the exchange: the connection keeps Xo's HPACK state
+// st and goes back to the pool (or closes), and r gets the failure. A
+// request the server did not take on a pooled connection (it closed it,
+// a GOAWAY that excludes it, REFUSED_STREAM) sets cl_retry instead: Xo
+// sends it again on a new connection, as Transport retries it.
+void xo_cl_h2_end(xo_cresp *r, xo_any *st) {
+	h2x *x = r->h2;
+	h2cc *pc = x->pc;
+	h2rq *q = &x->q;
+	h_retain(st);
+	if (pc->hp) {
+		h_release(pc->hp);
+	}
+	pc->hp = st;
+	int res = x->res;
 	if (res != CC_OK && res != CC_ERR) {
 		pc->broken = 1; // a timeout or cancellation left the stream open
 	}
-	if (res != CC_OK && !q.seen && (q.refused || (res == CC_ERR && pc->broken && !q.headers))) {
-		*retry = 1;
-	}
-	if (q.refused) {
-		*retry = 1;
-	}
-	if (res == CC_OK && off < bn) {
+	int retry = q->refused || (res != CC_OK && !q->seen && res == CC_ERR && pc->broken && !q->headers);
+	if (res == CC_OK && x->off < x->bn) {
 		// the response came before the whole body: the stream is reset
 		pc->broken = 1;
 	}
-	hl_free(&q.fields);
-	free(q.hb.p);
-	return res;
-}
-
-// h2_cl_pooled sends the request on an idle connection of the pool:
-// *done is 0 when there was none, or the server did not take the
-// request (it goes on a new connection then).
-static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr, const char *body,
-                        int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, int *done) {
-	*done = 0;
-	h2cc *pc = h2_pool_take(roots, key);
-	if (!pc) {
-		return CC_ERR;
-	}
-	int retry = 0;
-	int s = h2cc_exchange(pc, method, path, host, hdr, body, bn, when, r, why, wn, &retry);
-	if (retry) {
+	x->pc = NULL;
+	if (x->pooled && retry) {
 		h2cc_free(pc);
-		why[0] = 0;
 		r->status = 0;
 		hl_free(&r->hdr);
 		r->body.n = 0;
-		return s;
+		r->retry = 1;
+	} else {
+		char *alert = NULL;
+		if (!x->pooled && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && !x->why[0]) {
+			const char *ta = tls_alert(pc->c.tls);
+			alert = ta ? strdup(ta) : NULL;
+		}
+		h2_pool_put(pc);
+		cl_finish(r, res, x->why, alert);
+		free(alert);
 	}
-	*done = 1;
-	h2_pool_put(pc);
-	return s;
-}
-
-// h2_cl_fresh sends the request on a new connection (cn with its TLS
-// state c, taken over), kept in the pool afterwards.
-static int h2_cl_fresh(xo_conn *cn, ccon *c, xo_troots *roots, const char *key, const char *method, hstr path, hstr host, hlist *hdr,
-                       const char *body, int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, char **alert) {
-	h2cc *pc = h2cc_new(cn, c, roots, key);
-	int retry = 0;
-	int s = h2cc_exchange(pc, method, path, host, hdr, body, bn, when, r, why, wn, &retry);
-	if (s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0]) {
-		const char *ta = tls_alert(pc->c.tls);
-		*alert = ta ? strdup(ta) : NULL;
-	}
-	h2_pool_put(pc);
-	return s;
+	r->h2 = NULL;
+	h2x_free(x);
 }
