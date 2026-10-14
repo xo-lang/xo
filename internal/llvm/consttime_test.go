@@ -157,7 +157,7 @@ var ctChecks = []ctCheck{
 	// the barriers clang -O2 turns the latter's masks into five csel on
 	// arm64: TestConstantTimeLLVM logs that control); the branches left
 	// are the loops' and the workspace's bounds checks (public indices)
-	{fn: "ed25519.ge_cmov", barriers: 1, noSelect: true},
+	{fn: "ed25519.ge_cmov", barriers: 1, branchFree: true, noSelect: true},
 	{fn: "ed25519.sc_reduce", barriers: 1, noSelect: true},
 	{fn: "ed25519.ge_mul", noSelect: true},
 }

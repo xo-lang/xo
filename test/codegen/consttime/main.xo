@@ -27,11 +27,17 @@ fn main(os: Os) {
 // llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select"
 // arm64: "and x[0-9]+, x[0-9]+, x[0-9]+" -"\tb\." -"cbn?z" -"tbn?z" -"csel"
 
-// Ed25519 (std/native/llrt/ed25519.xo): the ladder's conditional move
-// and the scalar reduction's conditional subtraction select with masks
-// (their branches are loops and bounds checks on public indices).
+// Ed25519 (std/native/llrt/ed25519.xo): the window table's lookup
+// (a conditional move of every entry with a mask), the scalar
+// multiplication, and the scalar reduction's conditional subtraction
+// select with masks (the branches left are loops and bounds checks on
+// public indices).
 // func ed25519.ge_cmov
+// arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+" -"\tb\." -"cbn?z" -"tbn?z" -"csel" -"cset"
+// llvm: "call i64 @\"x.ct.pick\"" -"br i1" -"select"
+// func ed25519.ge_mul
 // arm64: -"csel" -"cset"
+// llvm: "call i64 @\"x.ct.mask_eq\"" -"select"
 // func ed25519.sc_reduce
 // llvm: "call i64 @\"x.ct.mask_bit\"" "call i64 @\"x.ct.pick\"" -"select"
 // arm64: -"csel" -"cset"
