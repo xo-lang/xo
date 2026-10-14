@@ -245,6 +245,11 @@ fn sys_buf() -> Bytes
 /// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
 /// the C runtime, which serves the fake.
 fn tw_fake(real: Int) -> Bool
+/// Whether Rand is the test world's seeded generator (a test binary).
+fn tw_seeded() -> Bool
+/// The next word of the test world's seeded generator (std/rt's
+/// seededRand: Go's math/rand/v2 PCG).
+fn tw_rand_u64() -> Int
 /// The address of the calling thread's 16 bytes of scratch for Clock.now's
 /// timespec, or 0 while the test world's virtual clock runs (one call on
 /// the clock's path; decision 0206 stage 2); always 0 off Linux.
@@ -417,8 +422,6 @@ fn fs_raw_names(p: Str) -> List[Str]
 fn fs_raw_errno() -> Int
 /// Creates the file p (O_EXCL, 0600).
 fn fs_raw_create(p: Str) -> Int
-/// A random number below 2^32.
-fn fs_raw_rand() -> Int
 /// The working directory as the system gives it.
 fn fs_raw_getcwd() -> Str
 /// Records err (0: success) for the Xo path x: the operation's status.

@@ -300,9 +300,6 @@ int64_t xo_fs_raw_create(const char *p, int64_t n) {
 	return 0;
 }
 
-// xo_fs_raw_rand is a random number below 2^32 (os.CreateTemp's names).
-int64_t xo_fs_raw_rand(void) { return (int64_t)(uint32_t)cr_rand_u64(); }
-
 // xo_fs_raw_getcwd is the working directory as the system gives it.
 xo_rstr *xo_fs_raw_getcwd(int64_t *len) {
 	char buf[4096];

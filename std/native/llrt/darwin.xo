@@ -143,7 +143,7 @@ pub fn clock_ns(id: Int) -> Int {
 pub fn realtime_ns() -> Int { sys_darwin.clock_gettime_nsec_np(CLOCK_REALTIME) }
 
 /// getentropy(2) of n bytes, 256 at a time (as the C runtime's
-/// cr_entropy): the bytes and 0, or the errno.
+/// cr_entropy did): the bytes and 0, or the errno.
 pub fn random(n: Int) -> (Bytes, Int) {
   let buf = rt.bytes_buf(n)
   var off = 0

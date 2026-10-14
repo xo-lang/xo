@@ -2,11 +2,12 @@
 // (decisions 0193 and 0195; they were std/llrt/xo_crypto.c): SHA-256
 // (FIPS 180-4), HMAC-SHA256 (RFC 2104), PBKDF2-HMAC-SHA256 (RFC 8018),
 // BLAKE2b (RFC 7693) and Argon2id (RFC 9106) as x/crypto computes them,
-// unpadded base64, and the parsing and key derivation of
-// verify_password. The results are std/rt's crypto.go (Go's crypto
-// packages). What must be constant time stays C: crypto.equal (the
-// comparison of verify_password) and Ed25519 with its SHA-512 (the
-// zero-C audit's group (5)). std/native/crypto.xo calls these.
+// unpadded base64, the parsing and key derivation of verify_password,
+// and SHA-512 (FIPS 180-4) for the C Ed25519 (through cabi_crypto.xo,
+// the zero-C audit's B08). The results are std/rt's crypto.go (Go's
+// crypto packages). What must be constant time stays C: crypto.equal
+// (the comparison of verify_password) and Ed25519 (the zero-C audit's
+// B09). std/native/crypto.xo calls these.
 // Decision 0198 deleted the C path (`XO_LLRT_C=digest`).
 //
 // Words are Ints: a 32 bit word in the low half (the high half zero), a
@@ -541,5 +542,69 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
       rtcrypto.crypto_equal(pbkdf2(pw, salt, iter, want.len()), want)
     }
     _ => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SHA-512 (the compression is digest_tables.sha512_block), for the C
+// Ed25519 through cabi_crypto.xo: the input is raw memory
+
+/// The bytes at p, n of them, hashed into st after the k bytes held in
+/// the block buffer at q (128 bytes): the bytes then held.
+fn sha512_feed(var st: List[Int], q: Int, k0: Int, p: Int, n: Int) -> Int {
+  if n <= 0 {
+    return k0
+  }
+  var k = k0
+  var i = 0
+  if k > 0 {
+    // fill the held block first
+    let m = if 128 - k < n { 128 - k } else { n }
+    rt.mem_copy(q + k, p, m)
+    k += m
+    i = m
+    if k < 128 {
+      return k
+    }
+    digest_tables.sha512_block(st, q)
+    k = 0
+  }
+  while n - i >= 128 {
+    digest_tables.sha512_block(st, p + i)
+    i += 128
+  }
+  if i < n {
+    rt.mem_copy(q, p + i, n - i)
+  }
+  n - i
+}
+
+/// SHA-512 (FIPS 180-4) of the an bytes at a, then the bn at b, then the
+/// cn at c (none read when 0), into the 64 bytes at out.
+pub fn sha512_3(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int, out: Int) {
+  // SHA-512's initial state (FIPS 180-4 5.3.5) is BLAKE2b's IV
+  var st = digest_tables.blake2b_iv()
+  let buf = rt.bytes_buf(256)
+  let q = rt.bytes_addr(buf)
+  var k = sha512_feed(st, q, 0, a, an)
+  k = sha512_feed(st, q, k, b, bn)
+  k = sha512_feed(st, q, k, c, cn)
+  // 0x80, zeros, and the length in bits as 16 bytes big endian: one
+  // block or two
+  let end = if k < 112 { 128 } else { 256 }
+  rt.mem_store(q, k, 0x80, 1)
+  rt.mem_set(q + k + 1, 0, end - 8 - k - 1)
+  rt.mem_store(q, end - 8, rt.int_wrap(7, rt.int_wrap(3, rt.int_wrap(0, rt.int_wrap(0, an, bn), cn), 3), 0), 8)
+  digest_tables.sha512_block(st, q)
+  if end == 256 {
+    digest_tables.sha512_block(st, q + 128)
+  }
+  for j in 0..8 {
+    rt.mem_store(out, 8 * j, rt.int_wrap(7, st[j], 0), 8)
+  }
+  // a use of buf after the last block, so that reference counting keeps
+  // it alive until here (darwin.xo's keep)
+  if buf.len() < 0 {
+    return
   }
 }

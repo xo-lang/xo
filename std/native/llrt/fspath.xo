@@ -6,6 +6,7 @@
 // and the working directory with / separators on Windows (std.md 3.1).
 // They were C (std/llrt/xo_fs.c; decision 0198 deleted that C path,
 // `XO_LLRT_C=fspath`); the system calls stay C (rt.fs_raw_*).
+use native/llrt/rand
 use native/rt
 
 // The errno values the walks test: the same on darwin, Linux, and the
@@ -101,7 +102,7 @@ pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str {
   var name = ""
   var i = 0
   while i < 10000 && err == EEXIST {
-    name = prefix + "${rt.fs_raw_rand()}"
+    name = prefix + "${rand.next_u64() & 0xFFFFFFFF}"
     err = rt.fs_raw_create(dir + "/" + name)
     i += 1
   }
