@@ -39,13 +39,18 @@ fn sched_fn(os: Str, name: Str, global: Bool, body: List[Str]) -> Str {
   b.join("")
 }
 
-/// The text of the functions and the thread local table on os.
-fn sched_asm(os: Str) -> Str {
+/// The text of the functions and the thread local table on os; with
+/// split (a split generation, generate_parallel) the fiber entry is a
+/// hidden global symbol, which the other files reach.
+fn sched_asm(os: Str, split: Bool) -> Str {
   var b: List[Str] = []
   b.push(if os == "darwin" { "\t.section __TEXT,__text,regular,pure_instructions\n" } else { "\t.text\n" })
   b.push(sched_fn(os, "xo_stack_switch", true, stack_switch_body()))
   // a new fiber's first frame holds its argument in x19 and its function
   // in x20 (std/native/llrt/sched.xo fiber_frame)
+  if split {
+    b.push(if os == "darwin" { "\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n" } else { "\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n" })
+  }
   b.push(sched_fn(os, "xo_fiber_entry", false, ["mov x0, x19", "blr x20", "brk #1"]))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and

@@ -273,6 +273,10 @@ fn find_cc(os: Os) -> Str {
 /// The C compiler flags of the runtime's Fs operations, standard input,
 /// and Proc.run, when the code calls them (internal/build IOFlags).
 fn io_flags(code: Str) -> List[Str] {
+  // one scan of the code for the runtime names, where a scan per name
+  // took about a minute on the 437 MB of selfhost/xo's assembly
+  // (bench/results/fast-builds-2026-10-13.md)
+  let syms = code_syms(code)
   var out: List[Str] = []
   for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove",
     "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
@@ -282,25 +286,25 @@ fn io_flags(code: Str) -> List[Str] {
     "xo_fs_lock", "xo_fs_unlock",
     // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
     "xo_fs_raw_"] {
-    if calls_sym(code, sym) {
+    if has_sym(syms, sym) {
       out.push("-DXO_FS")
       break
     }
   }
   for sym in ["xo_stdin_", "xo_tw_set_input", "xo_tw_set_tty", "xo_isatty", "xo_term_width"] {
-    if calls_sym(code, sym) {
+    if has_sym(syms, sym) {
       out.push("-DXO_STDIN")
       break
     }
   }
-  if calls_sym(code, "xo_proc_") {
+  if has_sym(syms, "xo_proc_") {
     out.push("-DXO_PROC")
   }
   // the C path of the number and time text (decision 0193), which only
   // XO_LLRT_C=text builds call
   for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
     "xo_time_parse"] {
-    if calls_sym(code, sym) {
+    if has_sym(syms, sym) {
       out.push("-DXO_TEXT_C")
       break
     }
@@ -313,24 +317,57 @@ fn io_flags(code: Str) -> List[Str] {
   // decision 0195)
   for sym in ["xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits",
     "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {
-    if calls_sym(code, sym) {
+    if has_sym(syms, sym) {
       out.push("-DXO_INTS_C")
       break
     }
   }
   // and of the scheduler core (decision 0212, XO_LLRT_C=sched)
-  if calls_sym(code, "xo_sched_c") {
+  if has_sym(syms, "xo_sched_c") {
     out.push("-DXO_SCHED_C")
   }
   out
 }
 
-/// Whether code refers to the runtime symbol sym, not only names it in a
-/// string literal (internal/build callsSym): xo1's own tables above are
-/// string data in its assembly.
-fn calls_sym(code: Str, sym: Str) -> Bool {
-  for p in [" ", "\t", "_", "@", ":", ","] {
-    if code.contains(p + sym) {
+/// The names code refers to that may be runtime symbols, not only names
+/// in a string literal (internal/build callsSym): every identifier that
+/// starts with xo_ after a space, tab, _, @, :, or comma, but the names
+/// of Xo functions (xo_f_). xo1's own tables above are string data in
+/// its assembly, after a quote.
+fn code_syms(code: Str) -> Set[Str] {
+  let bs = code.bytes()
+  let n = bs.len()
+  var out: Set[Str] = #{}
+  var i = 1
+  while i + 3 <= n {
+    if bs[i] == 'x' && bs[i + 1] == 'o' && bs[i + 2] == '_' {
+      let p = bs[i - 1]
+      if p == ' ' || p == '\t' || p == '_' || p == '@' || p == ':' || p == ',' {
+        var j = i + 3
+        while j < n && ident_byte(bs[j]) {
+          j += 1
+        }
+        if !(j > i + 4 && bs[i + 3] == 'f' && bs[i + 4] == '_') {
+          out.add(bs[i..j].to_str() ?? "")
+        }
+        i = j
+        continue
+      }
+    }
+    i += 1
+  }
+  out
+}
+
+fn ident_byte(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+/// Whether the code of syms (code_syms) refers to the runtime symbol
+/// sym, or with sym a prefix, to one that starts with it.
+fn has_sym(syms: Set[Str], sym: Str) -> Bool {
+  for s in syms {
+    if s.starts_with(sym) {
       return true
     }
   }
