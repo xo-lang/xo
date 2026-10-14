@@ -57,10 +57,11 @@ const GRAIN = 65536
 /// The bytes of a chunk (xo_rt.c XO_CHUNK).
 const CHUNK = 4194304
 
-// slot atomics' orders (rt.xo)
+// slot atomics' orders (rt.xo: 0 relaxed, 1 acquire, 2 release, 3
+// acq_rel, 4 seq_cst; gotchas/heapos-lock-without-acquire.md)
 const RELAXED = 0
-const ACQUIRE = 2
-const RELEASE = 3
+const ACQUIRE = 1
+const RELEASE = 2
 
 /// Whether the build maps through the C library.
 pub fn set_libc(on: Int) { rt.mem_store(rt.static_word(W_LIBC), 0, on, 8) }

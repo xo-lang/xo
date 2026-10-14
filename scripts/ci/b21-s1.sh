@@ -17,3 +17,15 @@ for v in "$@"; do
   tail -5 "$d/log"
   rm -rf "$d"
 done
+# strace -c of one more s1 (the system calls' counts), when strace exists
+command -v strace >/dev/null || sudo -n dnf install -y -q strace >/dev/null 2>&1 || true
+if command -v strace >/dev/null; then
+  d=$(mktemp -d)
+  cd "$d"
+  t0=$(date +%s)
+  XO_BUILD_DIR="$d/b" strace -f -c -o "$d/strace.txt" "$XO_CLI" build --backend=arm64 --std="$root/std" -o "$d/xo" "$root/selfhost/xo" > "$d/log" 2>&1
+  echo "== strace rc=$? secs=$(( $(date +%s) - t0 ))"
+  head -25 "$d/strace.txt"
+  cd "$root"
+  rm -rf "$d"
+fi
