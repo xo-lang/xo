@@ -79,7 +79,7 @@ with Go and clang, so a failing suite can be reproduced locally.
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
 | `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it. A directory new on the branch (none on main) runs the branch's measure.sh for both, so main's xo and std build the branch's workload |
 | `windows` | on the `xo-windows` runner: `scripts/windows-batch.sh` (xo1 built with the Go backend, the LLVM goldens for windows/amd64 run and windows/arm64 cross built, the LLVM runtime tests that run on Windows, `xo test` LLVM against Go). The plan job first cross builds a Go backend `xo.exe` from the tested tree on Linux (`suite.sh xcross`, to `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe`); the job puts it in `bin/xo.exe` and sets `XO_CLI`, because the windows-amd64 seed cannot build xo on Windows (gotchas/windows-seed-xo1306-module-not-required.md). Best effort, not a gate (CLAUDE.md, arm64 only) |
-| `script` | `packages` is `PATH [ARG...]`: runs PATH from the ref (`.sh` with bash, `.ps1` with Windows PowerShell 5.1, else as an executable) on `runner` (default xo-arm64; `-f runner=xo-windows` gets the cross built xo.exe as for `windows`). Environment: `XO_CLI` (the checkout's xo), `XO_CI_STD` (the checkout's std), `XO_CI_BASE_STD` (main's std, from a worktree of `XO_CI_BASE`), `XO_CI_OUT` (uploaded as the run's artifact `script-out`: `gh run download RUN_ID -n script-out`); native paths on Windows. For one-off comparisons like a bench/perf measure-windows.ps1 against main's std. Smoke tests: scripts/ci/script-env.sh and .ps1 (runs 38629095020, 38629098943, 2026-10-14) |
+| `script` | `packages` is `PATH [ARG...]`: runs PATH from the ref (`.sh` with bash, `.ps1` with Windows PowerShell 5.1, else as an executable) on `runner` (default xo-arm64; `-f runner=xo-windows` gets the cross built xo.exe as for `windows`). Environment: `XO_CLI` (the checkout's xo), `XO_CI_STD` (the checkout's std), `XO_CI_BASE_STD` (main's std, from a worktree of `XO_CI_BASE`), `XO_CI_OUT` (uploaded as the run's artifact `script-out`: `gh run download RUN_ID -n script-out`); native paths on Windows. For one-off comparisons like a bench/perf measure-windows.ps1 against main's std: `-f packages="bench/perf/sysio/windows-ci.sh [N]"` builds bench/perf/sysio with both stds and runs measure-windows.ps1 on each for two rounds (base, branch, base, branch; N runs per workload, default 15; WORKLOADS overrides the list) into `sysio-windows.txt` of the artifact (added 2026-10-14, not yet run). Smoke tests: scripts/ci/script-env.sh and .ps1 (runs 38629095020, 38629098943, 2026-10-14) |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with
@@ -404,14 +404,19 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
    input; the fixed point there uses the LLVM backend.
 3. Windows known issues (best effort, recorded, not gates; Last
    verified: 2026-10-14, run 38627432745):
-   - the golden `proc_cmd` fails under the runner (a service running as
-     SYSTEM, HOME pointed at Administrator's profile) but passes with
-     the same xo1 and checkout run as Administrator over SSH, so the
-     difference is the job's environment. TestGoldenWant logs want and
-     got; windows-batch.sh now prints those blocks (it printed only the
-     summary before), so the next `suite=windows` run shows the diff.
-   - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
-     forces the cross built xo.exe; once fixed, xcross can go and the
-     job builds xo itself.
+   - the golden `proc_cmd` failed under the runner (fixed 2026-10-14,
+     run 38629617435 showed the diff): it printed the child shell's
+     `$HOME` with HOME left out of the environment, which Git Bash's sh
+     fills from the account's profile, so want_windows.txt held the
+     Administrator path and the SYSTEM service printed
+     `/c/Windows/system32/config/systemprofile`. The echo no longer
+     prints HOME.
+   - XO1306 on Windows (gotchas/windows-seed-xo1306-module-not-required.md):
+     fixed 2026-10-14 in internal/xotool (/ paths to xo); a Windows
+     runner now builds xo from the 0.11.0 seed in 56 s
+     (scripts/ci/xobuild.sh, run 38629916521). Next: drop the plan
+     job's xo.exe cross build (`suite.sh xcross`) and let the windows
+     and script jobs build xo on the runner.
+   - `suite=windows` passes in full: run 38630848188.
 4. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.

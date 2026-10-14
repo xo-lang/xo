@@ -11,7 +11,7 @@ code 0 out "in the dir\n" err ""
 code 0 out "pwd ok\n" err ""
 err NotFound(cmd: "cat")
 code 0 out "home set\n" err ""
-code 0 out "[/c/Users/Administrator] [a1] [b2]\n" err ""
+code 0 out "[a1] [b2]\n" err ""
 code 0 out "[two]\n" err ""
 only get true true vars XO_GOLDEN_A
 home Missing(name: "HOME")
