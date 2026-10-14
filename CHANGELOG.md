@@ -12,6 +12,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0.083 to 0.123 of libunwind's instructions on the Mac. C frames
   between a fault and its catch are passed over on macOS arm64 too.
   darwin/amd64 keeps libunwind until stage 2.
+- Native runtime (zero-C audit item B16, part 2): on Windows the Fs
+  operations past read, write, and stat (directory names, rename,
+  remove, set_modified, file handles, copy, modes, links, locks) call
+  kernel32 from Xo (std/native/llrt/windows.xo under fsops.xo), with
+  the C path's errors and messages. xo_win.c's POSIX shims for them are
+  deleted (260 lines); xo_fs.c's operations stay only for darwin/amd64.
+  macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
 - Native runtime (zero-C audit item B02, part 2): the Bytes primitives of
   the system call layers (`bytes_addr`, `bytes_buf`, `bytes_len`) are Xo
   in std/native/llrt/raw.xo, and the per thread system call scratch is

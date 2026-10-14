@@ -58,3 +58,31 @@ fn CreateThread(security: Int, stack: Int, f: Int, arg: Int, flags: Int, tid: In
 /// SetThreadStackGuarantee: the stack the calling thread keeps for its
 /// stack overflow handler (a ULONG at the address size).
 fn SetThreadStackGuarantee(size: Int) -> Int32
+
+// The Fs operations of std/native/llrt/fsops.xo (work item B16, part 2):
+// a path is a UTF-16 Bytes with its NUL; a BOOL result is nonzero on
+// success.
+
+fn CreateDirectoryW(name: Bytes, security: Int) -> Int32
+fn RemoveDirectoryW(name: Bytes) -> Int32
+fn DeleteFileW(name: Bytes) -> Int32
+fn MoveFileExW(from: Bytes, to: Bytes, flags: Int) -> Int32
+fn SetFileAttributesW(name: Bytes, attrs: Int) -> Int32
+/// SetFileTime of the FILETIMEs at the addresses created, accessed, and
+/// written (0: unchanged).
+fn SetFileTime(h: Int, created: Int, accessed: Int, written: Int) -> Int32
+/// GetCurrentDirectoryW into the n UTF-16 units at buf: the units
+/// written without the NUL, the size needed when it does not fit, or 0.
+fn GetCurrentDirectoryW(n: Int, buf: Int) -> UInt32
+/// CreateSymbolicLinkW: a BOOLEAN (only the low byte is defined).
+fn CreateSymbolicLinkW(link: Bytes, target: Bytes, flags: Int) -> Int32
+fn DeviceIoControl(h: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int, got: Int, overlapped: Int) -> Int32
+/// LockFileEx and UnlockFileEx of the byte range low, high (DWORDs) at
+/// the offset of the OVERLAPPED at the address o.
+fn LockFileEx(h: Int, flags: Int, reserved: Int, low: Int, high: Int, o: Int) -> Int32
+fn UnlockFileEx(h: Int, reserved: Int, low: Int, high: Int, o: Int) -> Int32
+/// FindFirstFileExW into the WIN32_FIND_DATAW at the address data: the
+/// search handle, or INVALID_HANDLE_VALUE (-1).
+fn FindFirstFileExW(name: Bytes, level: Int, data: Int, op: Int, filter: Int, flags: Int) -> Int
+fn FindNextFileW(h: Int, data: Int) -> Int32
+fn FindClose(h: Int) -> Int32

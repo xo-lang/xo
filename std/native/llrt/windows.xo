@@ -60,19 +60,20 @@ const STD_ERROR_HANDLE: Int = 4294967284
 /// The handle of op opened for reading, as the C runtime's
 /// _wopen(_O_RDONLY | _O_BINARY | _O_NOINHERIT) opens it, or the negative
 /// errno.
-pub fn open_read(path: Str) -> Int { open(path, GENERIC_READ, OPEN_EXISTING) }
+pub fn open_read(path: Str) -> Int { open(path, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL) }
 
 /// The handle of op created or truncated for writing (_wopen with
 /// _O_WRONLY | _O_CREAT | _O_TRUNC, mode 0644: not read-only), or the
 /// negative errno.
-pub fn open_write(path: Str) -> Int { open(path, GENERIC_WRITE, CREATE_ALWAYS) }
+pub fn open_write(path: Str) -> Int { open(path, GENERIC_WRITE, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL) }
 
 /// CreateFileW as _wopen calls it (shared for reading and writing, not
-/// inherited, normal attributes), the error refined as xo_w_open does.
-fn open(path: Str, access: Int, disposition: Int) -> Int {
+/// inherited, the attributes attr of a new file), the error refined as
+/// xo_w_open does.
+fn open(path: Str, access: Int, disposition: Int, attr: Int) -> Int {
   let p = cpath(path)
   let w = wide(p)
-  let h = sys_windows.CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, disposition, FILE_ATTRIBUTE_NORMAL, 0)
+  let h = sys_windows.CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, disposition, attr, 0)
   // the last error read while w is alive: a release between the call
   // and GetLastError would run the allocator
   let le = keep(w, if h == -1 { Int(sys_windows.GetLastError()) } else { 0 })
@@ -157,6 +158,8 @@ pub struct Stat {
   pub is_dir: Bool
   pub size: Int
   pub mtime: Int
+  /// st_mode as xo_w_fill_stat gives it
+  pub mode: Int
 }
 
 /// The size of the open file h, or -1.
@@ -183,7 +186,7 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
   // w alive until the last error is read (as in open)
   e = keep(w, e)
   if h == -1 {
-    return (Stat{is_dir: false, size: 0, mtime: 0}, fix(p, shim_errno(e), false))
+    return (Stat{is_dir: false, size: 0, mtime: 0, mode: 0}, fix(p, shim_errno(e), false))
   }
   let r = info(h, !follow)
   sys_windows.CloseHandle(h)
@@ -195,7 +198,7 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
 fn info(h: Int, link: Bool) -> (Stat, Int) {
   let buf = obj.scratch()
   if Int(sys_windows.GetFileInformationByHandle(h, buf)) == 0 {
-    return (Stat{is_dir: false, size: 0, mtime: 0}, shim_errno(Int(sys_windows.GetLastError())))
+    return (Stat{is_dir: false, size: 0, mtime: 0, mode: 0}, shim_errno(Int(sys_windows.GetLastError())))
   }
   // BY_HANDLE_FILE_INFORMATION: dwFileAttributes at 0, ftLastWriteTime
   // at 20, nFileSizeHigh at 32 and nFileSizeLow at 36
@@ -203,10 +206,12 @@ fn info(h: Int, link: Bool) -> (Stat, Int) {
   let ft = rt.mem_load(buf, 20, 8)
   let size = ((rt.mem_load(buf, 32, 8) & 4294967295) << 32) | (rt.mem_load(buf, 36, 8) & 4294967295)
   var dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
+  var mode = if dir { S_IFDIR_ALL } else if (attrs & FILE_ATTRIBUTE_READONLY) != 0 { S_IFREG | 292 } else { S_IFREG | 438 }
   if link && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
     dir = false
+    mode = S_IFLNK_ALL
   }
-  (Stat{is_dir: dir, size: size, mtime: (ft - 116444736000000000) * 100}, 0)
+  (Stat{is_dir: dir, size: size, mtime: (ft - 116444736000000000) * 100, mode: mode}, 0)
 }
 
 /// GetSystemTimePreciseAsFileTime: Unix nanoseconds (as xo_win.c's
@@ -517,4 +522,380 @@ pub fn fs_status(e: Int) -> Int {
     13 | 1 => 6
     _ => 7
   }
+}
+
+// ---------------------------------------------------------------------------
+// The Fs operations of std/native/llrt/fsops.xo (work item B16, part 2):
+// xo_win.c's POSIX shims over kernel32 (unlink, rmdir, mkdir, rename,
+// chmod, utimensat, getcwd, symlink, readlink, flock, opendir and
+// readdir, and _wopen's flags), each returning >= 0 or the negative
+// errno the C path set. A handle is the HANDLE itself (the C path's was
+// a C runtime descriptor over it).
+
+/// The C runtime's EWOULDBLOCK: a lock another handle holds.
+pub const EWOULDBLOCK: Int = 140
+
+const FILE_APPEND_DATA: Int = 4
+const FILE_WRITE_ATTRIBUTES: Int = 256
+const OPEN_ALWAYS: Int = 4
+const CREATE_NEW: Int = 1
+const FILE_ATTRIBUTE_READONLY: Int = 1
+const FILE_TYPE_DISK: Int = 1
+const MOVEFILE_REPLACE_EXISTING: Int = 1
+const SYMBOLIC_LINK_FLAG_DIRECTORY: Int = 1
+const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: Int = 2
+const FSCTL_GET_REPARSE_POINT: Int = 589992
+const IO_REPARSE_TAG_SYMLINK: Int = 2684354572
+const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: Int = 16384
+const LOCKFILE_FAIL_IMMEDIATELY: Int = 1
+const LOCKFILE_EXCLUSIVE_LOCK: Int = 2
+const MAXDWORD: Int = 4294967295
+const ERROR_DIRECTORY: Int = 267
+const ERROR_LOCK_VIOLATION: Int = 33
+const ERROR_IO_PENDING: Int = 997
+// st_mode values xo_w_fill_stat and xo_w_fstat give
+const S_IFCHR: Int = 8192
+const S_IFDIR_ALL: Int = 16895
+const S_IFLNK_ALL: Int = 41471
+const S_IFREG: Int = 32768
+
+/// The handle of p opened as fsops.xo's kind k (0 read, 1 created or
+/// truncated for writing, 2 appended to, 3 read and write, 4 a new file
+/// for read and write), as _wopen opens it: a new file is read-only when
+/// mode lacks the owner's write bit. The handle or the negative errno.
+pub fn open_kind(path: Str, k: Int, mode: Int) -> Int {
+  let attr = if (mode & 128) == 0 && k != 0 { FILE_ATTRIBUTE_READONLY } else { FILE_ATTRIBUTE_NORMAL }
+  match k {
+    0 => open(path, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL)
+    1 => open(path, GENERIC_WRITE, CREATE_ALWAYS, attr)
+    2 => open(path, FILE_APPEND_DATA, OPEN_ALWAYS, attr)
+    3 => open(path, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS, attr)
+    _ => open(path, GENERIC_READ | GENERIC_WRITE, CREATE_NEW, attr)
+  }
+}
+
+/// ReadFile of at most n bytes to the address a, as read but without a
+/// Bytes.
+pub fn read_at(h: Int, a: Int, n: Int) -> Int {
+  let done = obj.scratch()
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  if Int(sys_windows.ReadFile(h, a, k, done, 0)) == 0 {
+    let e = Int(sys_windows.GetLastError())
+    if e == ERROR_BROKEN_PIPE {
+      return 0
+    }
+    return if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) }
+  }
+  rt.mem_load(done, 0, 8) & 4294967295
+}
+
+/// Writes the n bytes at the address a: 0, or the errno.
+pub fn write_at(h: Int, a: Int, n: Int) -> Int {
+  let done = obj.scratch()
+  var off = 0
+  while off < n {
+    let k = if n - off > 2147483647 { 2147483647 } else { n - off }
+    if Int(sys_windows.WriteFile(h, a + off, k, done, 0)) == 0 {
+      let e = Int(sys_windows.GetLastError())
+      return if e == ERROR_ACCESS_DENIED { EBADF } else { dos_errno(e) }
+    }
+    off += rt.mem_load(done, 0, 8) & 4294967295
+  }
+  0
+}
+
+/// The st_mode of path (of a final link itself unless follow), as
+/// xo_w_stat_path gives it, and 0, or the errno.
+pub fn stat_mode(path: Str, follow: Bool) -> (Int, Int) {
+  let (s, e) = stat(path, follow)
+  (s.mode, e)
+}
+
+/// fstat of the handle h: a console or a pipe is S_IFCHR.
+pub fn fstat_mode(h: Int) -> (Int, Int) {
+  if Int(sys_windows.GetFileType(h)) != FILE_TYPE_DISK {
+    return (S_IFCHR, 0)
+  }
+  let (s, e) = info(h, false)
+  (s.mode, e)
+}
+
+/// DeleteFileW, or RemoveDirectoryW when dir: 0, or the negative errno.
+pub fn unlink(path: Str, dir: Bool) -> Int {
+  let p = cpath(path)
+  let w = wide(p)
+  let ok = if dir { sys_windows.RemoveDirectoryW(w) } else { sys_windows.DeleteFileW(w) }
+  path_result(p, w, Int(ok))
+}
+
+/// CreateDirectoryW: 0, or the negative errno.
+pub fn mkdir(path: Str) -> Int {
+  let p = cpath(path)
+  let w = wide(p)
+  path_result(p, w, Int(sys_windows.CreateDirectoryW(w, 0)))
+}
+
+/// The result of a path call that returned the BOOL ok on w (of p): its
+/// last error read while w is alive, refined by fix.
+fn path_result(p: Bytes, w: Bytes, ok: Int) -> Int {
+  let e = keep(w, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
+  if ok == 0 {
+    return -fix(p, shim_errno(e), false)
+  }
+  0
+}
+
+/// MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING): 0, or the negative
+/// errno (refined on a).
+pub fn rename(a: Str, b: Str) -> Int {
+  let pa = cpath(a)
+  let wa = wide(pa)
+  let wb = wide(cpath(b))
+  let ok = Int(sys_windows.MoveFileExW(wa, wb, MOVEFILE_REPLACE_EXISTING))
+  let e = keep(wa, keep(wb, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }))
+  if ok == 0 {
+    return -fix(pa, shim_errno(e), false)
+  }
+  0
+}
+
+/// xo_w_chmod: Windows keeps only the read-only attribute (the owner's
+/// write bit), as Go's os.Chmod. 0, or the negative errno.
+pub fn chmod(path: Str, mode: Int) -> Int {
+  let w = wide(cpath(path))
+  var a = Int(sys_windows.GetFileAttributesW(w))
+  var ok = a != INVALID_FILE_ATTRIBUTES
+  if ok {
+    a = if (mode & 128) != 0 { a & (MAXDWORD - FILE_ATTRIBUTE_READONLY) } else { a | FILE_ATTRIBUTE_READONLY }
+    ok = Int(sys_windows.SetFileAttributesW(w, a)) != 0
+  }
+  let e = keep(w, if ok { 0 } else { Int(sys_windows.GetLastError()) })
+  if ok { 0 } else { -shim_errno(e) }
+}
+
+/// utimensat of path to the access and modification time s seconds and
+/// ns nanoseconds after the epoch (SetFileTime): 0, or the negative
+/// errno.
+pub fn utimens(path: Str, s: Int, ns: Int) -> Int {
+  let h = open_meta(path, FILE_WRITE_ATTRIBUTES, true)
+  if h < 0 {
+    return h
+  }
+  let a = obj.scratch()
+  let t = (s * 1000000000 + ns) / 100 + 116444736000000000
+  rt.mem_store(a, 0, t, 8)
+  let ok = Int(sys_windows.SetFileTime(h, 0, a, a))
+  let e = if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }
+  sys_windows.CloseHandle(h)
+  if ok == 0 { -shim_errno(e) } else { 0 }
+}
+
+/// xo_w_open_meta: path opened for its attributes (a directory too),
+/// following a final link when follow (a reparse point the system cannot
+/// follow is opened itself, as stat): the handle, or the negative errno.
+fn open_meta(path: Str, access: Int, follow: Bool) -> Int {
+  let p = cpath(path)
+  let w = wide(p)
+  let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+  let link = if follow { 0 } else { FILE_FLAG_OPEN_REPARSE_POINT }
+  var h = sys_windows.CreateFileW(w, access, share, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | link, 0)
+  var e = Int(sys_windows.GetLastError())
+  if h == -1 && follow && e == ERROR_CANT_ACCESS_FILE {
+    h = sys_windows.CreateFileW(w, access, share, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0)
+    e = Int(sys_windows.GetLastError())
+  }
+  e = keep(w, e)
+  if h == -1 {
+    return -fix(p, shim_errno(e), false)
+  }
+  h
+}
+
+/// GetCurrentDirectoryW in UTF-8, "." when it does not fit 4096 units
+/// (xo_fs.c's fallback).
+pub fn getcwd() -> Str {
+  let buf = raw.bytes_buf(8192)
+  let k = Int(sys_windows.GetCurrentDirectoryW(4096, raw.bytes_addr(buf)))
+  if k == 0 || k >= 4096 {
+    return "."
+  }
+  narrow(buf, 0, k)
+}
+
+/// CreateSymbolicLinkW of path to target (unprivileged where developer
+/// mode allows it; a directory link when target names a directory,
+/// relative to the working directory as the C path checks it; / made \):
+/// 0, or the negative errno.
+pub fn symlink(target: Str, path: Str) -> Int {
+  let wt = wide(cpath(target))
+  let wp = wide(cpath(path))
+  var flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+  let a = Int(sys_windows.GetFileAttributesW(wt))
+  if a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0 {
+    flags = flags | SYMBOLIC_LINK_FLAG_DIRECTORY
+  }
+  let wt2 = backslashes(wt)
+  let ok = Int(sys_windows.CreateSymbolicLinkW(wp, wt2, flags)) & 255
+  let e = keep(wp, keep(wt2, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }))
+  if ok == 0 { -shim_errno(e) } else { 0 }
+}
+
+/// The UTF-16 w with each / unit made \.
+fn backslashes(w: Bytes) -> Bytes {
+  var s = BytesBuilder.with_capacity(w.len())
+  var i = 0
+  while i + 1 < w.len() {
+    if w[i] == 47 && w[i + 1] == 0 {
+      unit(s, 92)
+    } else {
+      s.write_byte(w[i])
+      s.write_byte(w[i + 1])
+    }
+    i += 2
+  }
+  s.freeze()
+}
+
+/// The target of the symbolic link path (its print name with / for \,
+/// as Fs.read_link gives it, std.md 3.1) and 0, or the errno.
+pub fn readlink(path: Str) -> (Str, Int) {
+  let h = open_meta(path, 0, false)
+  if h < 0 {
+    return ("", -h)
+  }
+  let buf = raw.bytes_buf(MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
+  let got = obj.scratch()
+  let ok = Int(sys_windows.DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, 0, 0, raw.bytes_addr(buf), MAXIMUM_REPARSE_DATA_BUFFER_SIZE, got, 0))
+  let e = keep(buf, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
+  sys_windows.CloseHandle(h)
+  if ok == 0 {
+    return ("", shim_errno(e))
+  }
+  // REPARSE_DATA_BUFFER: the tag at 0, the print name's offset and
+  // length (bytes) at 12 and 14, the path buffer at 20
+  let ra = raw.bytes_addr(buf)
+  if rt.mem_load(ra, 0, 4) != IO_REPARSE_TAG_SYMLINK {
+    return ("", EINVAL)
+  }
+  let off = rt.mem_load(ra, 12, 2) + 20
+  let n = rt.mem_load(ra, 14, 2) / 2
+  (narrow_slash(buf, off, n), 0)
+}
+
+/// flock of the handle h with op (LOCK_SH 1, LOCK_EX 2, LOCK_NB 4,
+/// LOCK_UN 8) over the whole file: LockFileEx or UnlockFileEx. 0, or the
+/// negative errno (EWOULDBLOCK when another handle holds it).
+pub fn flock(h: Int, op: Int) -> Int {
+  // a zeroed OVERLAPPED (32 bytes: the offset 0 and no event; bytes_buf
+  // is not zeroed, and a stale hEvent fails the call)
+  let o = raw.bytes_buf(32)
+  let a = raw.bytes_addr(o)
+  rt.mem_store(a, 0, 0, 8)
+  rt.mem_store(a, 8, 0, 8)
+  rt.mem_store(a, 16, 0, 8)
+  rt.mem_store(a, 24, 0, 8)
+  let ok = if (op & 8) != 0 {
+    Int(sys_windows.UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, a))
+  } else {
+    let f = (if (op & 2) != 0 { LOCKFILE_EXCLUSIVE_LOCK } else { 0 }) | (if (op & 4) != 0 { LOCKFILE_FAIL_IMMEDIATELY } else { 0 })
+    Int(sys_windows.LockFileEx(h, f, 0, MAXDWORD, MAXDWORD, a))
+  }
+  let e = keep(o, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
+  if ok != 0 {
+    return 0
+  }
+  if e == ERROR_LOCK_VIOLATION || e == ERROR_IO_PENDING { -EWOULDBLOCK } else { -shim_errno(e) }
+}
+
+/// The entries of directory path (not `.` and `..`, in no order) and 0,
+/// or the errno: FindFirstFileExW of path\*, as xo_win.c's opendir and
+/// readdir.
+pub fn names(path: Str) -> (List[Str], Int) {
+  let p = cpath(path)
+  var s = BytesBuilder.with_capacity(p.len() + 2)
+  s.write(p[0..p.len() - 1])
+  s.write_byte(UInt8(92))
+  s.write_byte(UInt8(42))
+  s.write_byte(UInt8(0))
+  let w = wide(s.freeze())
+  // WIN32_FIND_DATAW (592 bytes): cFileName at 44
+  let fd = raw.bytes_buf(592)
+  let fa = raw.bytes_addr(fd)
+  let h = sys_windows.FindFirstFileExW(w, 1, fa, 0, 0, 0)
+  let e = keep(w, if h == -1 { Int(sys_windows.GetLastError()) } else { 0 })
+  if h == -1 {
+    // FindFirstFile on a file reports a missing path
+    let (m, se) = stat_mode(path, true)
+    if e == ERROR_DIRECTORY || (se == 0 && (m & 61440) != 16384) {
+      return ([], ENOTDIR)
+    }
+    return ([], fix(p, shim_errno(e), false))
+  }
+  var out: List[Str] = []
+  while true {
+    var n = 0
+    while n < 260 && rt.mem_load(fa, 44 + 2 * n, 2) != 0 {
+      n += 1
+    }
+    let c0 = rt.mem_load(fa, 44, 2)
+    let c1 = rt.mem_load(fa, 46, 2)
+    if !(n == 1 && c0 == 46) && !(n == 2 && c0 == 46 && c1 == 46) {
+      out.push(narrow(fd, 44, n))
+    }
+    if Int(sys_windows.FindNextFileW(h, fa)) == 0 {
+      break
+    }
+  }
+  sys_windows.FindClose(h)
+  (out, keep(fd, 0))
+}
+
+/// The UTF-8 of the n UTF-16 units at offset off of b
+/// (WideCharToMultiByte: an unpaired surrogate is U+FFFD).
+fn narrow(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }
+
+/// narrow with each \ made /.
+fn narrow_slash(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, true) }
+
+fn utf8_of(b: Bytes, off: Int, n: Int, slash: Bool) -> Str {
+  let a = raw.bytes_addr(b) + off
+  var s = BytesBuilder.with_capacity(3 * n)
+  var i = 0
+  while i < n {
+    var c = rt.mem_load(a, 2 * i, 2)
+    i += 1
+    if c >= 55296 && c < 56320 && i < n {
+      let d = rt.mem_load(a, 2 * i, 2)
+      if d >= 56320 && d < 57344 {
+        c = 65536 + ((c - 55296) << 10) + (d - 56320)
+        i += 1
+      }
+    }
+    if c >= 55296 && c < 57344 {
+      c = 65533
+    }
+    if slash && c == 92 {
+      c = 47
+    }
+    if c < 128 {
+      s.write_byte(UInt8(c))
+    } else if c < 2048 {
+      s.write_byte(UInt8(192 | (c >> 6)))
+      s.write_byte(UInt8(128 | (c & 63)))
+    } else if c < 65536 {
+      s.write_byte(UInt8(224 | (c >> 12)))
+      s.write_byte(UInt8(128 | ((c >> 6) & 63)))
+      s.write_byte(UInt8(128 | (c & 63)))
+    } else {
+      s.write_byte(UInt8(240 | (c >> 18)))
+      s.write_byte(UInt8(128 | ((c >> 12) & 63)))
+      s.write_byte(UInt8(128 | ((c >> 6) & 63)))
+      s.write_byte(UInt8(128 | (c & 63)))
+    }
+  }
+  keep(b, 0)
+  let u = s.freeze()
+  let r = raw.str_at(raw.bytes_addr(u), u.len())
+  keep(u, 0)
+  r
 }

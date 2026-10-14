@@ -12,6 +12,11 @@
 #include <sys/time.h>
 #endif
 
+// Windows makes these calls from Xo (fsops.xo over windows.xo, work item
+// B16 part 2): the operations below are compiled for the other C
+// runtime targets (darwin/amd64, sysio layer 0) only; the stubs at the
+// end keep Windows links of fsops.xo's layer 0 arms.
+#ifndef _WIN32
 static __thread int64_t n_fs_info[3]; // is_dir, size, modified (ns)
 
 // fs_fail records err for path (the Xo path the error names) and returns
@@ -321,6 +326,7 @@ int64_t xo_fs_raw_fail(int64_t err, const char *x, int64_t xn) {
 	free(xp);
 	return st;
 }
+#endif
 
 // xo_fs_case_sensitive is false on macOS and Windows (std/rt).
 int64_t xo_fs_case_sensitive(void) {
@@ -364,10 +370,18 @@ typedef struct {
 	int64_t r, w; // the buffered bytes are buf[r:w]
 } xo_fsfile;
 
+// fs_close closes the descriptor of a handle record: on Windows the
+// HANDLE fsops.xo opened.
+#ifdef _WIN32
+#define fs_close(fd) CloseHandle((HANDLE)(intptr_t)(fd))
+#else
+#define fs_close(fd) close((int)(fd))
+#endif
+
 static void fsfile_free(void *p) {
 	xo_fsfile *f = p;
 	if (f->fd >= 0) {
-		close(f->fd);
+		fs_close(f->fd);
 	}
 	free(f->buf);
 	xo_free(f);
@@ -392,6 +406,7 @@ xo_fsfile *xo_fs_raw_file(int64_t fd, int64_t buffered) {
 	return f;
 }
 
+#ifndef _WIN32
 // xo_fs_open opens the OS path p: mode 0 for reading, 1 created or
 // truncated, 2 appended to (created if missing); the error names x.
 xo_fsfile *xo_fs_open(const char *p, int64_t n, int64_t mode, const char *x, int64_t xn) {
@@ -742,6 +757,7 @@ xo_rlist *xo_fs_read_link(const char *p, int64_t n, const char *x, int64_t xn) {
 	fs_ok();
 	return l;
 }
+#endif
 
 // Advisory locks: a lock handle holds the descriptor flock(2) locked.
 // fsops.xo reads and writes fd at 16 and held at 24.
@@ -755,7 +771,7 @@ typedef struct {
 static void fslock_free(void *p) {
 	xo_fslock *l = p;
 	if (l->fd >= 0) {
-		close(l->fd); // releases the lock
+		fs_close(l->fd); // releases the lock
 	}
 	xo_free(l);
 }
@@ -770,6 +786,7 @@ xo_fslock *xo_fs_raw_lock(int64_t fd, int64_t held) {
 	return l;
 }
 
+#ifndef _WIN32
 // xo_fs_lock takes the lock of p (created if missing): wait tells to
 // wait (polling every 10 ms, a cancellation point). The handle holds the
 // lock when xo_fs_lock_held says so; else the status tells an error
@@ -846,3 +863,45 @@ void xo_fs_unlock(xo_fslock *l) {
 	close(l->fd);
 	l->fd = -1;
 }
+#else
+// fsops.xo's layer 0 arms name these on Windows too: every arm of a
+// `match` on target lowers, and a development build (XO_LLVM_OPT=O0,
+// decision 0220) keeps the calls. They are never run there.
+XO_NORETURN static void fs_dead(void) {
+	static const char m[] = "a C Fs operation on Windows";
+	xo_fault_raise(m, sizeof m - 1, "", 0);
+}
+#define FS_DEAD(t, name, ...)                                                                                              \
+	t name(__VA_ARGS__) { fs_dead(); }
+FS_DEAD(int64_t, xo_fs_stat, const char *p, int64_t n, int64_t follow, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_info, int64_t which)
+FS_DEAD(xo_rlist *, xo_fs_names, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_write, const char *p, int64_t n, const char *data, int64_t dn, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_rename, const char *a, int64_t an, const char *b, int64_t bn, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_remove, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_chtimes, const char *p, int64_t n, int64_t t, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_raw_mkdir, const char *p, int64_t n)
+FS_DEAD(int64_t, xo_fs_raw_rmdir, const char *p, int64_t n)
+FS_DEAD(int64_t, xo_fs_raw_unlink, const char *p, int64_t n)
+FS_DEAD(int64_t, xo_fs_raw_kind, const char *p, int64_t n, int64_t follow)
+FS_DEAD(xo_rlist *, xo_fs_raw_names, const char *p, int64_t n)
+FS_DEAD(int64_t, xo_fs_raw_errno, void)
+FS_DEAD(int64_t, xo_fs_raw_create, const char *p, int64_t n)
+FS_DEAD(xo_rstr *, xo_fs_raw_getcwd, int64_t *len)
+FS_DEAD(int64_t, xo_fs_raw_fail, int64_t err, const char *x, int64_t xn)
+FS_DEAD(xo_fsfile *, xo_fs_open, const char *p, int64_t n, int64_t mode, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_file_closed, xo_fsfile *f)
+FS_DEAD(xo_rlist *, xo_fs_file_read, xo_fsfile *f, int64_t max, const char *x, int64_t xn)
+FS_DEAD(xo_rlist *, xo_fs_file_read_line, xo_fsfile *f, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_file_write, xo_fsfile *f, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_file_close, xo_fsfile *f, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_copy, const char *a, int64_t an, const char *b, int64_t bn, const char *xa, int64_t xan, const char *xb, int64_t xbn)
+FS_DEAD(int64_t, xo_fs_perm, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_chmod, const char *p, int64_t n, int64_t mode, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_symlink, const char *t, int64_t tn, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(xo_rlist *, xo_fs_read_link, const char *p, int64_t n, const char *x, int64_t xn)
+FS_DEAD(xo_fslock *, xo_fs_lock, const char *p, int64_t n, int64_t wait, const char *x, int64_t xn)
+FS_DEAD(xo_fslock *, xo_fs_lock_shared, const char *p, int64_t n, int64_t wait, const char *x, int64_t xn)
+FS_DEAD(int64_t, xo_fs_lock_held, xo_fslock *l)
+FS_DEAD(void, xo_fs_unlock, xo_fslock *l)
+#endif
