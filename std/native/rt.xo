@@ -215,10 +215,11 @@ fn prefetch(a: Int)
 /// the test world fakes stdio, whether several threads run); 7 to 9
 /// std/native/llrt/process.xo (argc, argv, the environment); 10 to 13
 /// std/native/llrt/obj.xo (the single threaded heap record and three C
-/// functions' addresses); 32 to 39 the test world's
+/// functions' addresses); 14 std/native/llrt/fault.xo (the address of
+/// xo_rt.c fault_raise_msg, decision 0228); 32 to 39 the test world's
 /// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
 /// real, its lock, Rand's PCG state, the MemFs lock and state, the state
-/// record); 14 to 31 and 40 to 63 unused.
+/// record); 15 to 31 and 40 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

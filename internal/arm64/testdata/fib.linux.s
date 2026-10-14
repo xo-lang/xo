@@ -130,7 +130,7 @@ xo_f_main:
 	adrp x3, .Lxo_loc0
 	add x3, x3, :lo12:.Lxo_loc0
 .Lf1_cs1a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf1_cs1b:
 	brk #1
 	.cfi_endproc
@@ -175,7 +175,7 @@ xo_f_fib:
 	mov x1, #43
 	adrp x3, .Lxo_loc1
 	add x3, x3, :lo12:.Lxo_loc1
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc
 

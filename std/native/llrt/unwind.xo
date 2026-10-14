@@ -109,6 +109,11 @@ const ST_STACK = 4976
 const ST_BYTES = 1584
 /// step's new values, by register number (NREG words).
 const TMP = 17664
+/// The message of a fault being raised (fault.xo msg_buf; MSG_BYTES
+/// bytes): written before raise runs, copied into the context's record
+/// first.
+const MSG = 19456
+pub const MSG_BYTES = 1024
 const ST_DEPTH_MAX = 8
 const S_VAL = 768
 const S_CFA_REG = 1536
@@ -286,6 +291,16 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
 /// (a C++ exception through Xo frames, which nothing raises) is told to
 /// go on.
 pub fn export_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int { URC_CONTINUE_UNWIND }
+
+/// The calling thread's buffer for a fault's message (MSG_BYTES bytes in
+/// its scratch record), or 0 when the record cannot be mapped.
+pub fn msg_buf() -> Int {
+  let s = scratch()
+  if s == 0 {
+    return 0
+  }
+  s + MSG
+}
 
 /// The calling thread's scratch record, mapped at its first use; 0 when
 /// it cannot be.

@@ -127,7 +127,7 @@ fn (var g: G) def1(fp: Bool, text: Str, us: List[Int]) -> Int {
 
 /// Gives instruction i of the current block the fault side exit.
 fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
-  let sym = g.sym(fname)
+  let sym = g.sym(fault_entry(fname))
   let pad = g.cur_pad
   let b = g.cur
   g.blocks[b].insts[i].has_fault = true
@@ -140,6 +140,17 @@ fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
       g.blocks[b].insts[i].us.push(a.v)
     }
   }
+}
+
+/// The symbol of the fault entry point the C runtime named fname
+/// (xo_fault_index, xo_fault): the runtime's Xo export that writes the
+/// message and raises (std/native/llrt/cabi.xo fault_raise_*, decision
+/// 0228), xo_x_fault_raise_index and xo_x_fault_raise_text.
+pub fn fault_entry(fname: Str) -> Str {
+  if fname == "xo_fault" {
+    return "xo_x_fault_raise_text"
+  }
+  "xo_x_fault_raise_${fname.trim_prefix("xo_fault_")}"
 }
 
 /// Adds a flag setting instruction with a fault side exit.
@@ -946,7 +957,7 @@ fn (var g: G) instr1(v: Int) {
       let d = g.def1(false, "add $d0, $u0, #16", [ws[0]])
       let w1 = g.real(ws[1])
       let l = g.loc_label(x.pos)
-      let _c = g.add(Inst{kind: K_CALL, sym: g.sym("xo_fault"), srcs: [rsrc(d), rsrc(ws[1]), symsrc(l)], us: [d, w1], noret: true})
+      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(ws[1]), symsrc(l)], us: [d, w1], noret: true})
       let _t = g.add(Inst{kind: K_TRAP})
     }
     Retain => {

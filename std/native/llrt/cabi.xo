@@ -82,47 +82,33 @@ fn stdio_threads() { stdio.threads() }
 fn proc_start(argc: Int, argv: Int, envp: Int) { process.start(argc, argv, envp) }
 
 // ---------------------------------------------------------------------------
-// Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero
-// byte at buf (at least 160 bytes) and returns its length; C raises it.
+// The fault entry points of generated code (decision 0228; fault.xo
+// raise_*): the arm64 and LLVM emitters call these exports directly
+// (loc is the zero terminated location); xo_rt.c's xo_fault_* forward
+// to them for code from an xo whose emitters named those. None returns.
 
-fn fault_overflow(buf: Int, a: Int, op: Int, b: Int) -> Int {
-  raw.put_cstr(buf, "integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int")
-}
+fn fault_raise_text(p: Int, n: Int, loc: Int) { fault.raise_text(p, n, loc) }
 
-fn fault_shl(buf: Int, a: Int, b: Int) -> Int {
-  raw.put_cstr(buf, "integer overflow: ${a} << ${b} does not fit Int")
-}
+fn fault_raise_overflow(a: Int, op: Int, b: Int, loc: Int) { fault.raise_overflow(a, op, b, loc) }
 
-fn fault_shift(buf: Int, n: Int) -> Int {
-  raw.put_cstr(buf, "shift amount ${n} out of range for Int")
-}
+fn fault_raise_shl(a: Int, b: Int, loc: Int) { fault.raise_shl(a, b, loc) }
 
-fn fault_divzero(buf: Int, a: Int, op: Int) -> Int {
-  raw.put_cstr(buf, "division by zero: ${a} ${raw.byte_str(op)} 0")
-}
+fn fault_raise_shift(n: Int, loc: Int) { fault.raise_shift(n, loc) }
 
-fn fault_neg(buf: Int, a: Int) -> Int {
-  raw.put_cstr(buf, "integer overflow: -(${a}) does not fit Int")
-}
+fn fault_raise_divzero(a: Int, op: Int, loc: Int) { fault.raise_divzero(a, op, loc) }
 
-fn fault_abs(buf: Int, a: Int) -> Int {
-  raw.put_cstr(buf, "integer overflow: abs(${a}) does not fit Int")
-}
+fn fault_raise_neg(a: Int, loc: Int) { fault.raise_neg(a, loc) }
 
-fn fault_index(buf: Int, i: Int, n: Int) -> Int {
-  raw.put_cstr(buf, "index ${i} out of range for List of length ${n}")
-}
+fn fault_raise_abs(a: Int, loc: Int) { fault.raise_abs(a, loc) }
 
-fn fault_bytes_index(buf: Int, i: Int, n: Int) -> Int {
-  raw.put_cstr(buf, "index ${i} out of range for Bytes of length ${n}")
-}
+fn fault_raise_index(i: Int, n: Int, loc: Int) { fault.raise_index(i, n, loc) }
 
-fn fault_float_int(buf: Int, f: Float) -> Int {
-  if f != f {
-    return raw.put_cstr(buf, "cannot convert NaN to Int")
-  }
-  raw.put_cstr(buf, "${num.go_g_text(f)} is out of range for Int")
-}
+fn fault_raise_bytes_index(i: Int, n: Int, loc: Int) { fault.raise_bytes_index(i, n, loc) }
+
+fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
+
+/// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
+fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
 
 // ---------------------------------------------------------------------------
 // UTF-8 (xo_std.c n_utf8_decode, n_utf8_encode, n_is_space)

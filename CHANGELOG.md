@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native code generation (decision 0228, zero-C audit item B06 part 2):
+  a failed check (overflow, division by zero, an index out of range, a
+  shift, a Float to Int conversion) and `fault(msg)` call the runtime's
+  Xo exports `xo_x_fault_raise_*` directly; the C entry points forward
+  to them until the next seed. The fault paths on the Mac are 0.962 to
+  1.036 of main's instructions.
 - Native runtime (zero-C audit item B06, part 1): a context's fault
   record and the report of an uncaught fault are Xo
   (std/native/llrt/fault.xo); xo_rt.c loses 57 lines and gains 23. The
