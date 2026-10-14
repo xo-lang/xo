@@ -89,26 +89,31 @@ Keep the layout: `bin/xo` finds std and the runtime in `../lib/xo`
 
 From a checkout, an existing `xo` builds the next one: there is no Go
 implementation of the compiler any more (decision 0215). The seed is a
-previous `xo` (a release's `bin/xo`, or an earlier build), or, with no
-`xo` at all, the one built from the `go-compiler-final` tag, the last
-commit with the Go compiler (Go 1.26 or later). One command does it:
+previous `xo`: a release's `bin/xo`, an earlier build, or a prebuilt
+seed (decision 0216: release N is built by release N-1; the project's
+prebuilt seeds are kept privately and are not public downloads). One
+command does it:
 
 ```
-go run ./scripts/xobuild          # prints the path of bin/xo
-XO_SEED=/path/to/xo go run ./scripts/xobuild
+XO_SEED=/path/to/xo go run ./scripts/xobuild   # prints the path of bin/xo
+go run ./scripts/xobuild                       # with an earlier build or xo on PATH
 ```
 
 It builds `bin/xo` (git ignored) from the checkout's `selfhost/xo` when
 its sources changed, with the arm64 backend on an arm64 host (Apple
-Silicon, arm64 Linux) and the LLVM backend split into 12 modules on an
-x86-64 host (clang needed; about 36 minutes and 10 GB of memory on a 16
-vCPU Linux machine, bench/results/xo1-x86-2026-10-12.md "The README seed
-path on x86-64"). The seed order (`$XO_SEED`, the checkout's earlier
-`bin/xo`, the newest earlier build in `<user cache>/xo/checkout`, `xo`
-on PATH, then the `go-compiler-final` seed, built once with Go into
-`<user cache>/xo/seed`) is internal/xotool's. `bin/xo` finds `std` at
-`../std`, as a release's finds `lib/xo/std`. After that, any Xo `xo`
-rebuilds itself without Go (`scripts/bootstrap-xo.sh`).
+Silicon, arm64 Linux) and the LLVM backend on an x86-64 host (clang
+needed). The seed order (`$XO_SEED`, the checkout's earlier `bin/xo`,
+the newest earlier build in `<user cache>/xo/checkout`, `xo` on PATH,
+then the project's prebuilt seed) is internal/xotool's; when none is
+found, it stops with an error instead of building one.
+
+With no `xo` at all, build from source (opt in, slow):
+`go run ./scripts/xobuild --from-source` builds the `go-compiler-final`
+tag (the last commit with the Go compiler; Go 1.26 or later), then the
+hops in `scripts/seed-chain.txt`, then the checkout (25 to 37 minutes on
+a 16 vCPU machine as of 2026-10-13, decision 0216). `bin/xo` finds
+`std` at `../std`, as a release's finds `lib/xo/std`. After that, any Xo
+`xo` rebuilds itself without Go (`scripts/bootstrap-xo.sh`).
 
 The module path is `github.com/xo-lang/xo` (local name; see
 `knowledgebase/infrastructure/toolchain.md`).
