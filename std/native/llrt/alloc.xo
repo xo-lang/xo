@@ -121,6 +121,45 @@ pub fn alloc(h: Int, n: Int) -> Int {
   r
 }
 
+/// alloc's common cases, small enough for the arm64 inliner: a block of
+/// n bytes (at most SMALL_MAX) popped from its class's free list, or
+/// carved from the chunk when it has room, and counted as alloc counts
+/// it; else 0 (the caller then calls alloc: a new chunk, or a real-time
+/// section). It makes no call, so a caller that inlines it keeps its
+/// values in registers with no frame on these paths (obj.xo try_new,
+/// bench/results/string-list-objects-2026-10-14.md).
+pub fn alloc_fast(h: Int, n: Int) -> Int {
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    return 0
+  }
+  var c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+  if c == 0 {
+    c = 1
+  }
+  let size = rt.int_wrap(3, c, 4)
+  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  var r = rt.mem_load(fl, FREE_LISTS, 8)
+  if r != 0 {
+    let next = rt.mem_load(r, 0, 8)
+    rt.mem_store(fl, FREE_LISTS, next, 8)
+    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    rt.prefetch(next)
+  } else {
+    let need = rt.int_wrap(0, size, 8)
+    let cur = rt.mem_load(h, BUMP_CUR, 8)
+    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+      return 0
+    }
+    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(cur, 0, c, 8)
+    r = rt.int_wrap(0, cur, 8)
+  }
+  rt.mem_store(h, LAST, size, 8)
+  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  r
+}
+
 /// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
 /// list, or to free for a block from malloc. Counts the free.
 pub fn free(h: Int, p: Int) {

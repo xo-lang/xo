@@ -396,11 +396,21 @@ fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(
 
 fn obj_rl_new(hw: Int, cap: Int, esize: Int) -> Int { obj.rl_new(hw, cap, esize) }
 
-fn obj_rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy(hw, l, esize, dup, drop) }
+// arm64 generated code calls these directly, with no C level: obj.xo
+// finds the heap itself (no hw).
+fn obj_rl_new_n(n: Int, esize: Int) -> Int { obj.rl_new_n(n, esize) }
+
+fn obj_rl_grow_n(l: Int, esize: Int) -> Int { obj.rl_grow_n(l, esize) }
+
+fn obj_rl_free_n(l: Int, esize: Int, drop: Int) { obj.rl_free_n(l, esize, drop) }
+
+fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n(l, esize, dup, drop) }
+
+fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
+
+fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int) { obj.heap_init(h, slow, rl_free_rt, rc_defer_rt) }
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
-
-fn obj_rl_grow(hw: Int, l: Int, esize: Int) -> Int { obj.rl_grow(hw, l, esize) }
 
 fn obj_rl_free(hw: Int, l: Int, esize: Int, drop: Int) { obj.rl_free(hw, l, esize, drop) }
 

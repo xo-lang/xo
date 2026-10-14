@@ -147,6 +147,9 @@ typedef struct xo_heap {
 	void *defer_q;
 	int64_t defer_n, defer_cap;
 	int64_t defer_busy;
+	// xo_rl_free's element size and drop, from obj.xo rl_free_n_slow to
+	// rl_free_rt (a real-time section; rt.call_c2 passes two words)
+	int64_t pend_esize, pend_drop;
 	struct xo_heap *next;  // all heaps, for the leak check
 	struct xo_heap *spare; // the list of heaps of exited threads
 	// the frees deferred by real-time sections (a fixed queue, so
@@ -159,6 +162,7 @@ typedef struct xo_heap {
 _Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) == 56 && offsetof(xo_heap, central) == 64 && offsetof(xo_heap, last_size) == 72, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872, "obj.xo's heap record offsets");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second
@@ -227,6 +231,25 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt);
+
+// hw_slow_c is the calling thread's heap record for obj.xo's heap_word
+// (called through rt.call_c2: two Int arguments, unused).
+static int64_t hw_slow_c(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	return (int64_t)(intptr_t)heap_slow();
+}
+
+// rl_free_rt and rc_defer_rt are obj.xo's way back to the C in a
+// real-time section (its queue, rt_defer): rl_free_n_slow and
+// rc_defer_n call them through rt.call_c2.
+static int64_t rl_free_rt(int64_t l, int64_t h);
+static int64_t rc_defer_rt(int64_t obj, int64_t drop);
+
+static void obj_heap_init(xo_heap *h) {
+	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt);
+}
 
 void xo_rt_threads_begin(void) {
 	if (__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED)) {
@@ -234,6 +257,7 @@ void xo_rt_threads_begin(void) {
 	}
 	tls_heap = &main_heap;
 	__atomic_store_n(&solo_heap, NULL, __ATOMIC_RELAXED);
+	obj_heap_init(NULL);
 	__atomic_store_n(&xo_threaded, 1, __ATOMIC_RELAXED);
 	// standard output's buffer takes its lock from now on (stdio.xo)
 	xo_x_stdio_threads();
@@ -371,8 +395,11 @@ void xo_free(void *p) {
 }
 
 // xo_resize returns a block of n bytes with the first old bytes of p (a
-// block of old bytes, which is freed).
-static void *xo_resize(void *p, int64_t old, int64_t n) {
+// block of old bytes, which is freed). Out of line: rs_append is its only
+// caller since the lists went to obj.xo, and inlined there it made the
+// in place append save registers on every call (LLVM text replace and
+// json enc_small 1.03 to 1.05 times the instructions).
+__attribute__((noinline)) static void *xo_resize(void *p, int64_t old, int64_t n) {
 	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
 	int64_t mt = 0;
 	if (__builtin_expect(!h, 0)) {
@@ -397,9 +424,7 @@ void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 // calling thread's heap record, plus 1 when other threads run (obj.xo
 // then takes alloc_mt's, free_mt's, and xo_resize's paths).
 int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
-int64_t xo_x_obj_rl_copy(int64_t hw, int64_t l, int64_t esize, int64_t dup, int64_t drop);
 void xo_x_obj_rl_share(int64_t l, int64_t esize, int64_t share);
-int64_t xo_x_obj_rl_grow(int64_t hw, int64_t l, int64_t esize);
 void xo_x_obj_rl_free(int64_t hw, int64_t l, int64_t esize, int64_t drop);
 void xo_x_obj_rc_defer(int64_t h, int64_t obj, int64_t drop);
 
@@ -437,8 +462,16 @@ void xo_rc_free(void *p) {
 // closures capturing closures) uses a worklist, not the C stack. Marking
 // a value shared uses the same worklist (drop is then the function that
 // marks the children of a box or an environment). The worklist is the
-// calling thread's (obj.xo rc_defer).
-void xo_rc_defer(void *obj, xo_drop_fn drop) {
+// calling thread's (obj.xo rc_defer_n, which arm64 generated code calls
+// directly; LLVM generated code and the seed's call this entry, which LTO
+// folds into its callers).
+void xo_x_obj_rc_defer_n(int64_t obj, int64_t drop);
+
+void xo_rc_defer(void *obj, xo_drop_fn drop) { XO_INLINE_CALL xo_x_obj_rc_defer_n((int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop); }
+
+// rc_defer_c is xo_rc_defer in a real-time section (obj.xo rc_defer_n
+// through rc_defer_rt): the section's queue, else the worklist.
+static void rc_defer_c(void *obj, xo_drop_fn drop) {
 	xo_heap *h = heap();
 	if (__builtin_expect(h->rt_depth != 0, 0) && !h->defer_busy && rt_defer(h, RT_DEFER, obj, 0, (void *)drop)) {
 		return;
@@ -836,9 +869,22 @@ xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
 	return (xo_rlist *)(intptr_t)l;
 }
 
+// The entries generated code calls (LLVM generated code and the seed's;
+// arm64 generated code calls the obj_*_n exports directly): they forward
+// to obj.xo's entries, which find the heap themselves, so LTO folds this
+// level into the caller.
+int64_t xo_x_obj_rl_new_n(int64_t n, int64_t esize);
+int64_t xo_x_obj_rl_grow_n(int64_t l, int64_t esize);
+void xo_x_obj_rl_free_n(int64_t l, int64_t esize, int64_t drop);
+int64_t xo_x_obj_rl_copy_n(int64_t l, int64_t esize, int64_t dup, int64_t drop);
+
 // xo_rl_new_n is an empty list with room for n elements (at least 4):
 // `list.new` with a size, for results whose length is known.
-xo_rlist *xo_rl_new_n(int64_t n, int64_t esize) { return xo_rl_new(n < 4 ? 4 : n, esize); }
+xo_rlist *xo_rl_new_n(int64_t n, int64_t esize) {
+	int64_t l;
+	XO_INLINE_CALL l = xo_x_obj_rl_new_n(n, esize);
+	return (xo_rlist *)(intptr_t)l;
+}
 
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
 
@@ -847,7 +893,7 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
 // xo_rl_copy is the slow path of `reuse`: l's count is not 1 (obj.xo
 // rl_copy).
 __attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup, xo_elem_fn drop) {
-	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy(hw(), XO_A(l), esize, XO_A(dup), XO_A(drop));
+	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy_n(XO_A(l), esize, XO_A(dup), XO_A(drop));
 }
 
 // xo_rl_share marks the elements of a list that was just marked shared
@@ -857,11 +903,15 @@ __attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_el
 void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) { xo_x_obj_rl_share(XO_A(l), esize, XO_A(share)); }
 
 // xo_rl_grow doubles the capacity of a unique full list (obj.xo rl_grow).
-__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow(hw(), XO_A(l), esize); }
+__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow_n(XO_A(l), esize); }
 
 // xo_rl_free frees a list whose count reached zero, releasing its
-// elements first (obj.xo rl_free); a real-time section defers it.
-void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
+// elements first (obj.xo rl_free_n); a real-time section defers it.
+void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { XO_INLINE_CALL xo_x_obj_rl_free_n(XO_A(l), esize, XO_A(drop)); }
+
+// rl_free_c is xo_rl_free in a real-time section (obj.xo rl_free_n
+// through rl_free_rt): the section's queue, else freed at once.
+static void rl_free_c(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
 	int64_t w = hw();
 	xo_heap *h = XO_HW_HEAP(w);
 	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_LIST, l, esize, (void *)drop)) {
@@ -874,6 +924,17 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
 		return;
 	}
 	xo_x_obj_rl_free(w, XO_A(l), esize, XO_A(drop));
+}
+
+static int64_t rl_free_rt(int64_t l, int64_t h) {
+	xo_heap *hp = (xo_heap *)(intptr_t)h;
+	rl_free_c((xo_rlist *)(intptr_t)l, hp->pend_esize, (xo_elem_fn)(intptr_t)hp->pend_drop);
+	return 0;
+}
+
+static int64_t rc_defer_rt(int64_t obj, int64_t drop) {
+	rc_defer_c((void *)(intptr_t)obj, (xo_drop_fn)(intptr_t)drop);
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -6329,6 +6390,10 @@ static void win_init(int *argc, char ***argv) {
 void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
 
 int main(int argc, char **argv) {
+	// the heap words of obj.xo (rl_new_n, which arm64 generated code
+	// calls without a C level): the single threaded heap, heap_slow's
+	// address; first, before anything allocates
+	obj_heap_init(&main_heap);
 #ifdef _WIN32
 	win_init(&argc, &argv);
 #endif

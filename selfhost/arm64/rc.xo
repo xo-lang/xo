@@ -111,7 +111,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
           if g.heap(et) {
             b.push(imm_text(g.esize(et), "x1"))
             b.push(g.addr("x2", g.elem_helper("share", et)))
-            b.push("\tb ${g.sym("xo_rl_share")}\n")
+            b.push("\tb ${g.sym("xo_x_obj_rl_share")}\n")
           }
         }
         b.push("${ret}:\n\tret\n")
@@ -129,7 +129,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
           } else {
             b.push("\tmov x2, #0\n")
           }
-          b.push("\tb ${g.sym("xo_rl_free")}\n")
+          b.push("\tb ${g.sym("xo_x_obj_rl_free_n")}\n")
         }
       }
     }
@@ -239,14 +239,14 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, base: Int, lbl: St
       return
     }
     b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
-    b.push("${lbl}_free:\n\tldr x1, [x0, #8]\n\tbl ${g.sym("xo_rc_defer")}\n${lbl}_done:\n")
+    b.push("${lbl}_free:\n\tldr x1, [x0, #8]\n\tbl ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
     return
   } else if lk == ssa.Kind.Box {
     b.push("\tldr x0, [sp, #${base + 8 * l.off}]\n")
     b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
     b.push("${lbl}_free:\n")
     b.push(g.addr("x1", g.box_drop(l.t)))
-    b.push("\tbl ${g.sym("xo_rc_defer")}\n${lbl}_done:\n")
+    b.push("\tbl ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
     return
   }
   let n = g.leaf_words(l.t)
@@ -415,10 +415,10 @@ fn (g: G) func_rc(var b: List[Str], kind: Str, sym: Str) {
     b.push(g.inc_text("x1", "x9", "w10", sym, true))
   } else if kind == "drop" {
     b.push(g.dec_text("x1", "x9", "w10", sym, "${sym}_free", ""))
-    b.push("${sym}_free:\n\tmov x0, x1\n\tldr x1, [x0, #8]\n\tb ${g.sym("xo_rc_defer")}\n")
+    b.push("${sym}_free:\n\tmov x0, x1\n\tldr x1, [x0, #8]\n\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
   } else if kind == "share" {
     b.push(mark_text("x1", "x9", "${sym}_none"))
-    b.push("\tmov x0, x1\n\tldr x1, [x0, #16]\n\tb ${g.sym("xo_rc_defer")}\n")
+    b.push("\tmov x0, x1\n\tldr x1, [x0, #16]\n\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
   }
   b.push("${sym}_none:\n\tret\n")
 }
@@ -434,13 +434,13 @@ fn (var g: G) box_rc(var b: List[Str], kind: Str, sym: Str, t: Int) {
     b.push(g.dec_text("x0", "x9", "w10", sym, "${sym}_free", ""))
     b.push("${sym}_free:\n")
     b.push(g.addr("x1", g.box_drop(t)))
-    b.push("\tb ${g.sym("xo_rc_defer")}\n")
+    b.push("\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
   } else if kind == "share" {
     b.push(mark_text("x0", "x9", "${sym}_ret"))
     if g.heap(g.m.types[t].elems[0]) {
       // the contents through the worklist
       b.push(g.addr("x1", g.box_share(t)))
-      b.push("\tb ${g.sym("xo_rc_defer")}\n")
+      b.push("\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
     }
     b.push("${sym}_ret:\n\tret\n")
   }

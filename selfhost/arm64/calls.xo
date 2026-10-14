@@ -94,7 +94,7 @@ fn (var g: G) reuse(v: Int) {
   let es = g.esize(et)
   let dup = g.elem_fn("dup", et)
   let drop = g.elem_fn("drop", et)
-  let cp = g.rt("xo_rl_copy", [rsrc(l), isrc(es), dup, drop], [false])
+  let cp = g.rt("xo_x_obj_rl_copy_n", [rsrc(l), isrc(es), dup, drop], [false])
   g.pmove([r], regs([cp[0]]))
   let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
   g.cur = cont
@@ -553,9 +553,11 @@ fn (var g: G) call_op(v: Int) {
     "list.new" => {
       let es = g.esize(g.m.types[x.ty].elems[0])
       if x.args.len() == 1 {
-        // with room for a number of elements
+        // with room for a number of elements: std/native/llrt/obj.xo
+        // rl_new_n through its export, with no C level (the C's
+        // xo_rl_new_n stays for code of earlier compilers)
         let n = g.word(x.args[0])
-        g.set(v, g.rt("xo_rl_new_n", [rsrc(n), isrc(es)], [false]))
+        g.set(v, g.rt("xo_x_obj_rl_new_n", [rsrc(n), isrc(es)], [false]))
         return
       }
       // the shared empty list, immortal: the first push allocates
@@ -621,7 +623,7 @@ fn (var g: G) call_op(v: Int) {
       g.pmove([lm], regs([l]))
       let _j = g.add(Inst{kind: K_JUMP, targets: [room]})
       g.cur = grow
-      let l2 = g.rt("xo_rl_grow", [rsrc(l), isrc(g.esize(et))], [false])
+      let l2 = g.rt("xo_x_obj_rl_grow_n", [rsrc(l), isrc(g.esize(et))], [false])
       g.pmove([lm], regs([l2[0]]))
       let _j2 = g.add(Inst{kind: K_JUMP, targets: [room]})
       g.cur = room

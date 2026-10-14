@@ -220,7 +220,7 @@ fn (var g: G) dec_or_defer(p0: Int, drop: DropFn) -> Int {
     EnvWord(env) => rsrc(g.def1(false, "ldr $d0, [$u0, #8]", [env]))
     BoxDrop(t) => symsrc(g.box_drop(t))
   }
-  let _r = g.rt("xo_rc_defer", [rsrc(p), d], [])
+  let _r = g.rt("xo_x_obj_rc_defer_n", [rsrc(p), d], [])
   let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
   cont
 }

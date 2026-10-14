@@ -1,13 +1,16 @@
 // List objects in Xo (zero-C audit item B13, decision 0195; decision
 // 0207's raw memory): a new list, the copy of a list that is not unique,
 // a full list's growth, the release of a list's elements, and the
-// worklist of drops. The C runtime keeps its entry points (xo_rl_new,
-// xo_rl_copy, xo_rl_grow, xo_rl_share, xo_rl_free, xo_rc_defer in
-// std/llrt/xo_rt.c, which generated code and the seed compiler call by
-// name) and calls these through cabi.xo's `obj_*` exports with the
-// calling thread's heap word. The string objects (rs_new, rs_append)
-// stay C: in Xo they took 1.06 to 1.12 times the C's instructions on
-// arm64's text workloads (bench/results/string-list-objects-2026-10-14.md).
+// worklist of drops. arm64 generated code calls the `*_n` entries
+// directly through cabi.xo's `obj_*_n` exports, with no C level (decision
+// 0226): they find the calling thread's heap themselves (heap_word). The
+// C runtime's entry points (xo_rl_new_n, xo_rl_copy, xo_rl_grow,
+// xo_rl_share, xo_rl_free, xo_rc_defer in std/llrt/xo_rt.c) stay for LLVM
+// generated code and the seed compiler, which call them by name; they
+// forward to the same exports (LTO folds that level), and C code calls
+// xo_rl_new with a heap word. The string objects (rs_new, rs_append) stay
+// C: in Xo they took 1.06 to 1.12 times the C's instructions on arm64's
+// text workloads (bench/results/string-list-objects-2026-10-14.md).
 //
 // The heap word hw is the calling thread's heap record's address
 // (alloc.xo), plus 1 when other threads run (the C's alloc_mt, free_mt,
@@ -36,6 +39,33 @@ const DEFER_N = 1840
 const DEFER_CAP = 1848
 const DEFER_BUSY = 1856
 
+/// rt.static_word: the heap words (rt.xo's table, set by heap_init):
+/// the single threaded heap record (0 once several threads run), then
+/// the addresses of three C functions of two Int arguments (called
+/// through rt.call_c2): the calling thread's heap record (xo_rt.c
+/// heap_slow), a list freed in a real-time section (xo_rl_free with the
+/// heap record's PEND words), and an object deferred in one
+/// (xo_rc_defer).
+const HEAP = 10
+const H_SLOW = 8
+const H_RL_FREE = 16
+const H_RC_DEFER = 24
+
+/// The heap record's words that carry xo_rl_free's element size and drop
+/// to the C in a real-time section (xo_rt.c pend_esize, pend_drop).
+const PEND_ESIZE = 1864
+const PEND_DROP = 1872
+
+/// The heap record's real-time section depth (alloc.xo RT_DEPTH).
+const RT_DEPTH = 40
+
+/// The thread local word of the calling thread's heap record (sched.xo
+/// TLS_HEAP, xo_rt.c tls_heap).
+const TLS_HEAP = 3
+
+/// The largest block alloc.alloc_fast serves (alloc.xo SMALL_MAX).
+const SMALL_MAX = 1024
+
 /// The header bytes of a list object.
 const L_HDR = 24
 
@@ -48,51 +78,72 @@ fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
 // ---------------------------------------------------------------------------
 // The heap through the heap word
 
-// The single threaded heap calls (alloc.alloc, alloc.free) are written
-// out at each use, the multi threaded ones are alloc_mt and free_mt,
-// which the arm64 inliner must keep out of line: copied in, refill's
-// registers are saved on every call of the single threaded path (no
-// shrink wrapping; an inlined refill made bench/perf/alloc small 1.33
-// times the C's instructions). Each calls itself on a path the callers
-// never take, which keeps it out (selfhost/arm64/inline.xo: a function
-// on a call cycle is not inlined).
+// The heap calls: every allocation and free of this module goes through
+// halloc and hfree, so alloc.alloc and alloc.free each have one call site
+// here. The arm64 inliner copies a large function only into at most two
+// call sites (selfhost/arm64/inline.xo INLINE_FEW_SITES): with more here,
+// cabi.heap_alloc and heap_free (xo_alloc and xo_free, every C
+// allocation) lost their inlined copies and took about 1.02 times the
+// instructions on bench/perf/alloc strings. halloc and hfree stay out of
+// line themselves: each calls itself on a path the callers never take,
+// and the inliner never copies a function on a call cycle.
 
-/// A block of n bytes from heap word hw with other threads running
-/// (xo_rt.c alloc_mt): the class is refilled from the central lists
-/// first.
-fn alloc_mt(hw: Int, n: Int) -> Int {
-  if hw & 1 == 0 {
-    return alloc_mt(hw | 1, n) // not taken: the inliner's cycle
+/// A block of n bytes from heap word hw (xo_rt.c xo_alloc): with other
+/// threads running (alloc_mt) the class is refilled from the central
+/// lists first.
+fn halloc(hw: Int, n: Int) -> Int {
+  if n < 0 {
+    return halloc(hw, 0) // not taken: the inliner's cycle
   }
-  let h = subw(hw, 1)
-  alloc.refill(h, n)
+  let mt = hw & 1
+  let h = subw(hw, mt)
+  if mt != 0 {
+    alloc.refill(h, n)
+  }
   alloc.alloc(h, n)
 }
 
-/// Frees the block p with other threads running (xo_rt.c free_mt).
-fn free_mt(hw: Int, p: Int) {
+/// Frees the block p to heap word hw (xo_rt.c xo_free; free_mt with
+/// other threads running).
+fn hfree(hw: Int, p: Int) {
+  if p == 0 {
+    hfree(hw, p) // not taken: the inliner's cycle
+    return
+  }
   if hw & 1 == 0 {
-    free_mt(hw | 1, p) // not taken: the inliner's cycle
+    free1(hw, p)
     return
   }
   alloc.free_mt(subw(hw, 1), p)
 }
 
+/// alloc.free on heap h (one thread): the module's one call site of it
+/// (see halloc), small enough that the inliner copies it into its two
+/// callers (rl_free_n's common case and hfree).
+fn free1(h: Int, p: Int) { alloc.free(h, p) }
+
 /// A block of n bytes holding the first old bytes of p, which is freed
-/// (xo_resize): in place or moved by the heap, else moved here.
+/// (xo_resize): in place or moved by the heap (alloc.resize, which makes
+/// no call but a tail call), else moved by hmove, a tail call; so a
+/// caller's path through it has no frame.
 fn hresize(hw: Int, p: Int, old: Int, n: Int) -> Int {
   let mt = hw & 1
   let q = alloc.resize(subw(hw, mt), p, old, n, mt)
   if q != 0 {
     return q
   }
-  let r = if mt == 0 { alloc.alloc(hw, n) } else { alloc_mt(hw, n) }
-  rt.mem_copy(r, p, if old < n { old } else { n })
-  if mt == 0 {
-    alloc.free(hw, p)
-  } else {
-    free_mt(hw, p)
+  hmove(hw, p, old, n)
+}
+
+/// hresize's move: a new block, the copy, the free of p. Out of line
+/// (it calls itself on a path never taken, so the inliner keeps it out).
+fn hmove(hw: Int, p: Int, old: Int, n: Int) -> Int {
+  if n < 0 {
+    return hmove(hw, p, old, 0) // not taken: the inliner's cycle
   }
+  let r = halloc(hw, n)
+  rt.mem_copy(r, p, if old < n { old } else { n })
+  hfree(hw, p)
   r
 }
 
@@ -103,23 +154,142 @@ fn hresize(hw: Int, p: Int, old: Int, n: Int) -> Int {
 /// (xo_rl_new).
 pub fn rl_new(hw: Int, cap: Int, esize: Int) -> Int {
   let n = addw(L_HDR, mulw(cap, esize))
-  let l = if hw & 1 == 0 { alloc.alloc(hw, n) } else { alloc_mt(hw, n) }
+  let l = halloc(hw, n)
   rt.mem_store(l, 0, 1, 8)
   rt.mem_store(l, 8, 0, 8)
   rt.mem_store(l, 16, cap, 8)
   l
 }
 
+// The entry points generated code calls (cabi.xo's obj_*_n exports):
+// the heap comes from static word HEAP (one thread) or the thread local
+// table (heap_word). Their common cases (one thread, no real-time
+// section, a small block from its class's free list or the chunk) make
+// no call, so they have no frame; the rest are tail calls
+// (bench/results/string-list-objects-2026-10-14.md).
+
+/// A new list of cap elements of esize bytes from the free list of heap
+/// h (alloc.alloc_fast), else 0.
+fn try_new(h: Int, cap: Int, esize: Int) -> Int {
+  let b = addw(L_HDR, mulw(cap, esize))
+  if b > SMALL_MAX {
+    return 0
+  }
+  let l = alloc.alloc_fast(h, b)
+  if l != 0 {
+    rt.mem_store(l, 0, 1, 8)
+    rt.mem_store(l, 8, 0, 8)
+    rt.mem_store(l, 16, cap, 8)
+  }
+  l
+}
+
+/// A new empty list object with room for n elements (at least 4) of esize
+/// bytes (xo_rl_new_n).
+pub fn rl_new_n(n: Int, esize: Int) -> Int {
+  let cap = if n < 4 { 4 } else { n }
+  let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
+  if h != 0 {
+    let l = try_new(h, cap, esize)
+    if l != 0 {
+      return l
+    }
+    return rl_new(h, cap, esize)
+  }
+  rl_new(heap_word(), cap, esize)
+}
+
+/// rl_grow for generated code (xo_rl_grow): the first push to an empty
+/// literal's list is its common case.
+pub fn rl_grow_n(l: Int, esize: Int) -> Int {
+  let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
+  if h != 0 {
+    if rt.mem_load(l, 0, 8) == IMMORTAL {
+      let n = try_new(h, 4, esize)
+      if n != 0 {
+        return n
+      }
+    }
+    return grow(h, l, esize)
+  }
+  rl_grow(heap_word(), l, esize)
+}
+
+/// rl_free for generated code (xo_rl_free): a list whose count reached
+/// zero; a real-time section defers it (the C's queue).
+pub fn rl_free_n(l: Int, esize: Int, drop: Int) {
+  let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
+  if h != 0 && rt.mem_load(h, RT_DEPTH, 8) == 0 {
+    if drop == 0 {
+      free1(h, l)
+      return
+    }
+    rl_free(h, l, esize, drop)
+    return
+  }
+  rl_free_n_slow(l, esize, drop)
+}
+
+fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
+  let hw = heap_word()
+  let h = hw & -2
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    rt.mem_store(h, PEND_ESIZE, esize, 8)
+    rt.mem_store(h, PEND_DROP, drop, 8)
+    let _r = rt.call_c2(rt.mem_load(rt.static_word(HEAP), H_RL_FREE, 8), l, h)
+    return
+  }
+  rl_free(hw, l, esize, drop)
+}
+
+/// rl_copy for generated code (xo_rl_copy).
+pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_word(), l, esize, dup, drop) }
+
+/// rc_defer for generated code (xo_rc_defer); a real-time section defers
+/// the object (the C's queue) unless a drain runs.
+pub fn rc_defer_n(obj: Int, drop: Int) {
+  let h = heap_word() & -2
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt.mem_load(h, DEFER_BUSY, 8) == 0 {
+    let _r = rt.call_c2(rt.mem_load(rt.static_word(HEAP), H_RC_DEFER, 8), obj, drop)
+    return
+  }
+  rc_defer(h, obj, drop)
+}
+
+/// The calling thread's heap word (xo_rt.c hw): the single threaded heap
+/// record, else the thread's heap record (thread local TLS_HEAP, which the
+/// C sets on the thread's first allocation, heap_slow) plus 1.
+fn heap_word() -> Int {
+  let w = rt.static_word(HEAP)
+  let h = rt.mem_load(w, 0, 8)
+  if h != 0 {
+    return h
+  }
+  var t = rt.tlocal_get(TLS_HEAP)
+  if t == 0 {
+    t = rt.call_c2(rt.mem_load(w, H_SLOW, 8), 0, 0)
+  }
+  t | 1
+}
+
+/// Sets the heap words (C main, before the program runs, with the main
+/// heap record; xo_rt_threads_begin with 0, before a second thread runs).
+pub fn heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int) {
+  let w = rt.static_word(HEAP)
+  rt.mem_store(w, 0, h, 8)
+  rt.mem_store(w, H_SLOW, slow, 8)
+  rt.mem_store(w, H_RL_FREE, rl_free_rt, 8)
+  rt.mem_store(w, H_RC_DEFER, rc_defer_rt, 8)
+}
+
 /// Calls f (a C function of generated code) on each element of the list
 /// l of esize byte elements.
 fn each(l: Int, esize: Int, f: Int) {
-  let n = rt.mem_load(l, 8, 8)
   var e = addw(l, L_HDR)
-  var i = 0
-  while i < n {
+  let end = addw(e, mulw(rt.mem_load(l, 8, 8), esize))
+  while e < end {
     let _r = rt.call_c2(f, e, 0)
     e = addw(e, esize)
-    i = addw(i, 1)
   }
 }
 
@@ -157,11 +327,23 @@ pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
   if rt.mem_load(l, 0, 8) == IMMORTAL {
     return rl_new(hw, 4, esize)
   }
+  grow(hw, l, esize)
+}
+
+/// rl_grow of a list that is not the empty literal's. Out of line (it
+/// calls itself on a path never taken): the resize it inlines saves
+/// registers that rl_grow's other path does not need.
+fn grow(hw: Int, l: Int, esize: Int) -> Int {
   let cap = rt.mem_load(l, 16, 8)
+  if cap < 0 {
+    return grow(hw, l, esize) // not taken: the inliner's cycle
+  }
   let ncap = if cap < 4 { 4 } else { addw(cap, cap) }
-  let n = hresize(hw, l, addw(L_HDR, mulw(cap, esize)), addw(L_HDR, mulw(ncap, esize)))
-  rt.mem_store(n, 16, ncap, 8)
-  n
+  // the new capacity first: the resize keeps the block or copies its
+  // first bytes (the header with them), so nothing is live after the
+  // call and it is a tail call
+  rt.mem_store(l, 16, ncap, 8)
+  hresize(hw, l, addw(L_HDR, mulw(cap, esize)), addw(L_HDR, mulw(ncap, esize)))
 }
 
 /// Frees a list whose count reached zero, releasing its elements first
@@ -170,11 +352,7 @@ pub fn rl_free(hw: Int, l: Int, esize: Int, drop: Int) {
   if drop != 0 {
     each(l, esize, drop)
   }
-  if hw & 1 == 0 {
-    alloc.free(hw, l)
-  } else {
-    free_mt(hw, l)
-  }
+  hfree(hw, l)
 }
 
 // ---------------------------------------------------------------------------

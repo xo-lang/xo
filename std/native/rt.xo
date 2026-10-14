@@ -213,8 +213,9 @@ fn prefetch(a: Int)
 /// format, and output of log.configure); 3 to 6 std/native/llrt/stdio.xo
 /// (standard output's buffer, its length, its lock, and the mode: whether
 /// the test world fakes stdio, whether several threads run); 7 to 9
-/// std/native/llrt/process.xo (argc, argv, the environment); 10 to 63
-/// unused.
+/// std/native/llrt/process.xo (argc, argv, the environment); 10 to 13
+/// std/native/llrt/obj.xo (the single threaded heap record and three C
+/// functions' addresses); 14 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
