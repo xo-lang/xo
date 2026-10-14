@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Smaller native output and faster x86 self builds (decision 0220):
+  reference counting releases a dead struct once instead of once per
+  heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
+  calls; LLVM IR 72 percent smaller); `XO_LLVM_OPT` sets clang's level,
+  and development builds of xo on x86 use -O0 (xo rebuilds itself in
+  1:23 on c7i.8xlarge, was about 42 minutes); parallel jobs default to
+  the physical cores and the memory.
+- Native runtime (zero-C audit item W1): the scheduler's C fallback,
+  `XO_LLRT_C=sched`, is deleted: 1,284 lines of std/llrt/xo_rt.c (its
+  fiber switch assembly, thread locals, run queue ring, worker pool,
+  parks, fiber stacks, spawn and join copies), std/native/llrt/sched_c.xo,
+  `rt.sched_c`, and -DXO_SCHED_C. The scheduler is sched.xo and pool.xo
+  only; `XO_LLRT_C=sched` now fails the build. The live C path names
+  are net and text.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's

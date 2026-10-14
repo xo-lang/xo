@@ -222,3 +222,132 @@ assembly and the link. Next, ranked by expected gain:
    is inlined, so the order matters; a snapshot of the callees would
    make it parallel at the cost of changing the inlined code).
 5. The LLVM build: one clang job per core and more split modules.
+
+## The LLVM path on x86-64 (c7i.8xlarge, 2026-10-14)
+
+On linux/amd64 xo builds itself with the LLVM backend (no arm64
+emitter), so stage 1's emitter work does not reach it. Measured: the
+linux-amd64 seed (0.9.0-5e21dc31) building selfhost/xo of ce8fe687
+(`--backend=llvm --phase-times`, `XO_LLVM_LTO=none`, a fresh build
+directory, `XO_BIN_CACHE=off`), on the warm on demand c7i.8xlarge (32
+vCPUs, 16 cores, 61 GB), clang 15.0.7; each clang's time from a wrapper.
+
+| | split 12, 6 jobs (the bootstrap's setting) | split 32, 32 jobs |
+|---|---|---|
+| check, ssa, early passes | 4.70 s | 4.81 s |
+| insert_rc (the seed's, serial) | 41.00 s | 41.91 s |
+| emit (IR) | 14.05 s | 14.13 s |
+| write | 7.48 s | 7.58 s |
+| cc: clang per module, then the link | 2,443.28 s | 1,067.73 s |
+| **wall** | **2,510.80 s (41:50.80)** | **1,136.45 s (18:56.45)** |
+| CPU busy | 452% | 1,727% |
+| user CPU | 11,338.19 s | 19,589.60 s |
+| peak RSS (xo) | 8.17 GB | 8.06 GB |
+| IR per module | 92.3 to 92.7 MB | 35.3 to 35.7 MB |
+| clang -O2 per module | 658.73 to 1,234.94 s, sum 11,186.2 s | 434.20 to 976.66 s, sum 19,474.1 s |
+| link | about 1 s | about 1 s |
+| binary | 289,672,992 B | 293,422,408 B |
+
+One 92,687,914 byte module alone, by optimization level:
+
+| clang | time | peak RSS | object |
+|---|---|---|---|
+| -O0 | 142.96 s | 2.98 GB | 77,232,432 B |
+| -O1 | 554.73 s | 3.55 GB | 33,350,016 B |
+| -O2 | 614.10 s | 3.54 GB | 33,119,416 B |
+
+What dominates: clang, 97 and 94 percent of the wall at the two settings.
+xo's own share (about 67 s: insert_rc 41 s, emit 14 s, write 7.5 s, the front end 4.7 s) is
+what stage 1's insert_rc_jobs already parallelizes (not yet in the seed
+measured). The IR is 1.11 GB (2.5 times the arm64 assembly's 437 MB),
+and clang compiles it at about 0.15 MB/s per process at -O2 and 0.65
+MB/s at -O0. More modules and jobs cut the wall 2.2 times but raised the
+total CPU 1.7 times: 32 clangs on 16 cores (two hyperthreads each) and
+the copies of shared declarations in every module. -O1 saves only 10
+percent over -O2; -O0 is 4.3 times faster than -O2 but its object is 2.3
+times larger (and the code slower).
+
+Against the target (the arm64 build's 88 s class on r8g.8xlarge): at
+-O2 the clang CPU alone is about 11,200 s, at least 700 s on 16 cores
+with perfect parallelism, so -O2 cannot reach it with this IR. Ranked
+next steps for x86:
+
+1. Smaller IR, the same lever as arm64's spill and reference counting
+   lines: 1.11 GB for 6,103 functions is about 180 KB per function.
+   Measure what the IR is made of (per instruction kind, as for the
+   assembly above) and cut its largest source.
+2. `-O0` or `-O1` for development self builds (the bootstrap and test
+   compilers), -O2 for releases: -O0 alone would be about 1,700 s of
+   clang CPU, about 110 s on 16 cores with 16 jobs.
+3. Jobs by physical cores, not vCPUs (16 here), with splits a multiple
+   of them, to stop the 32 way CPU inflation.
+4. A native x86-64 emitter in the arm64 emitter's style (decision 0158),
+   which takes clang out of the path entirely; the larger piece of work.
+
+## clang levels for development builds of xo (c7i.8xlarge, 2026-10-14)
+
+`XO_LLVM_OPT` (O0, O1, O2, O3) sets clang's level for the program's IR
+(aea4893e; a `--release` build stays -O2). Chain per level, commit
+aea4893e, split 16 with 16 jobs (the physical cores), `XO_LLVM_LTO=none`:
+s1 is the linux-amd64 seed building the tree (at -O2, 20:56.74); s2 is
+s1 building it at the level; s3 is s2 building it at the level (the
+time an xo of that level takes to build itself); then the LLVM goldens
+(scripts/selfhost-goldens.py, programs at the default -O2) with s2.
+
+| level | s2 (by the -O2 s1) | s3 (by s2, the per-change self build) | s2 = s3 | binary | goldens with s2 |
+|---|---|---|---|---|---|
+| -O0 | 3:07.29 (clang 143.97 s) | 3:45.17 | identical | 806,235,896 B | 180/180, 2:57.93 |
+| -O1 | 17:22.43 (clang 999.32 s) | 17:31.50 | identical | 291,279,936 B | 180/180, 1:56.12 |
+| -O2 | 19:02.76 (clang 1,100.18 s) | 18:51.09 | identical | 290,243,648 B | 180/180, 1:56.03 |
+
+Per change (rebuild xo, then the goldens): -O0 6:43, -O1 19:28, -O2
+20:47. -O1 saves under 10 percent of the clang time; -O0 cuts the self
+build 5 times, and the -O0 xo is about 1.5 times slower as a compiler
+(the goldens 2:58 against 1:56; the arm64-free x86 path compiles every
+program through clang either way). Decision: development builds of xo on
+the LLVM path at -O0 (`go run ./scripts/xobuild` and
+scripts/bootstrap-xo.sh set `XO_LLVM_OPT=O0` unless it is set);
+releases at -O2 (scripts/release.sh does not set it; `--release` forces
+-O2). The fixed point holds within each level.
+
+## Joining the releases of a root (44a5c677, both backends)
+
+The 437 MB of arm64 assembly held 21,180 runs of four or more
+consecutive field drops from one base, 3.4 million drop calls and 8.6
+million lines (38 percent), from only 370 distinct sequences: when a
+value of a struct type dies, reference counting released each heap leaf
+separately (decision 0046), and the emitter loaded each field and called
+its drop. `group_releases` (selfhost/ssa/rc.xo, after the cancel and
+reuse passes) replaces the releases of every leaf of one root, sitting
+together in a run of field reads and releases, by one release of the
+root; the arm64 emitter releases a struct or tuple of more than 8 words
+through a per type helper that drops its leaves from memory (`mem_drop`,
+in place when the value is held in memory). The verifier counts a
+release of the root as one release of each leaf.
+
+arm64, r8g.8xlarge (chain H, `XO_EMIT_JOBS=16`, s2 built by the commit's
+s1):
+
+| | G (ad890617) | H (44a5c677) |
+|---|---|---|
+| self build (s2) | 49.83 s | 34.15 s |
+| insert_rc, inline, emit, assemble, cc | 7.95, 4.42, 24.75, 3.66, 0.51 s | 8.70, 2.14, 6.98, 3.21, 4.79 s |
+| peak RSS | 19.86 GB | 7.57 GB |
+| assembly | 463,614,149 B (22.8 million lines in s1) | 391,602,465 B, 18,890,108 lines |
+| calls (`bl`) | 4,640,107 | 1,270,080 |
+| binary | 88,365,824 B | 73,118,712 B |
+| s3 with 3 jobs | 2:33.64 | 1:25.15 |
+| s2 = s3, goldens arm64, LLVM | identical, 180/180, 180/180 | identical, 180/180, 180/180 |
+
+LLVM, c7i.8xlarge (44a5c677, -O0, split 16 with 16 jobs):
+
+| | aea4893e | 44a5c677 |
+|---|---|---|
+| IR | 1,115,982,991 B (the s1 build's) | 312,670,309 B |
+| s2 at -O0 (by the -O2 s1) | 3:07.29 | 1:01.10 (clang 40.81 s) |
+| s3 at -O0 (the -O0 xo building itself) | 3:45.17 | 1:23.10 |
+| binary at -O0 | 806,235,896 B | 347,542,824 B |
+| s2 = s3, LLVM goldens | identical, 180/180 (2:57.93) | identical, 180/180 (2:46.47) |
+
+The x86 development self build went from 2,510.80 s (split 12, 6 jobs,
+-O2, before) to 83.10 s.

@@ -141,7 +141,7 @@ fn rc_callee_ok(n: Str) -> Bool {
   if n.starts_with("rt.heap_") {
     return true
   }
-  if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" | "rt.sched_c" {
+  if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" {
     return true
   }
   n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint"

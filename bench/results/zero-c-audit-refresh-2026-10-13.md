@@ -154,6 +154,27 @@ ranges, sched_c.xo, `rt.sched_c` and its rt.xo declaration,
 selfhost/xo/link.xo:395-397, internal/xotool/cc.go:137-138, and the
 second flag set at threads_test.go:268 and 299.
 
+**W1 done (2026-10-14, after the linux/arm64 full tier at 2fc5af45;
+owner: arm64 only).** xo_rt.c went from 7,802 to 6,518 lines (1,293
+deleted, 9 added: 1,284 net): every `#ifdef XO_SCHED_C` arm and the
+`#else` arms of `#ifndef XO_SCHED_C` (`unifdef -UXO_SCHED_C`, then the
+comments that named the C path). Also deleted: std/native/llrt/sched_c.xo
+(44 lines), `rt.sched_c` (std/native/rt.xo) and its entry in
+selfhost/ssa contract.xo, the -DXO_SCHED_C lines of selfhost/xo/link.xo
+and internal/xotool/cc.go, and the -DXO_SCHED_C variants of
+TestRuntimeTasks and TestRuntimeEventLoop (the Xo runs stay). With no
+sched_c.xo, `XO_LLRT_C=sched` now fails the build (decision 0198, W0).
+The comment edits in pool.xo, sched.xo, and cabi.xo keep their line
+counts, since the arm64 assembly goldens hold their positions
+(gotchas/ssa-goldens-hold-llrt-line-numbers.md). Verification on the
+Mac (arm64): `go test -short` over the repo passes; `xo dev goldens`
+"180 programs: 180 pass, 0 fail" on arm64 and on LLVM;
+TestRuntimeTasks, TestRuntimeEventLoop, and TestGoldenTasks (36
+programs under ThreadSanitizer) pass (TestGoldenThreads went with
+decision 0215); scripts/bootstrap-xo.sh "fixed point: s2 and s3
+binaries identical (90792576 bytes)", assembly identical (475632418
+bytes), s1, s2, s3 59, 58, 58 s.
+
 ### `XO_LLRT_C=net`: no standalone C, nothing to delete with the switch alone
 
 The libc path is one `NX_LIBC(call)` line at the top of each Linux
@@ -549,7 +570,7 @@ nothing new.
 | # | Item | Retires | Needs first | First step |
 |---|---|---|---|---|
 | W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | **Done 2026-10-14** (see "W0 done" below) |
-| W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | the deletion list under "XO_LLRT_C=sched" |
+| W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | **Done 2026-10-14** (see "W1 done" below): 1,284 lines of xo_rt.c |
 | 1 | B01 clocks (done 2026-10-14, Windows measured: Clock.now 0.928 to 0.952 of the C path's cycles) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |

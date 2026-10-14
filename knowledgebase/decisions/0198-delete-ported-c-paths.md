@@ -3,7 +3,9 @@
 Status: Accepted (2026-10-13, by the lead under the owner's decision
 0195 direction). Implemented for unicode, strings, num, and jsontext;
 the second round (2026-10-13, below) deleted tz, report, show, and the
-C paths added since; text, sched, and net keep theirs.
+C paths added since; text, sched, and net keep theirs. sched's went on
+2026-10-14 (zero-C audit item W1, after the linux/arm64 full tier at
+2fc5af45); text and net keep theirs.
 
 ## Context
 
@@ -243,7 +245,8 @@ count of show.xo or prelude.xo broke internal/ssa's goldens
 ### Consequences
 
 - `XO_LLRT_C` selects only text, sched, and net; any other name selects
-  nothing. bench/perf scripts that compared a deleted C path now build
+  nothing (since W0, 2026-10-14, it fails the build; since W1 the same
+  day, sched is gone too: text and net remain). bench/perf scripts that compared a deleted C path now build
   the Xo path twice (a note in each); the results files keep the
   comparisons.
 - The http1 and hpack servers have no C fallback; the client keeps the
