@@ -6,6 +6,7 @@
 use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/cabi_nolibc
+use native/llrt/fsops
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -819,7 +820,7 @@ fn fs_real_path(p: Str) -> Str {
       continue
     }
     let q = "${out}/${part}"
-    match rt.fs_read_link(q, q).get(0) {
+    match fsops.read_link(q, q).get(0) {
       Some(t) => {
         hops += 1
         if hops > 40 {
@@ -840,7 +841,7 @@ fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
 
 fn fs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }
 
-fn fs_case_sensitive(_f: Fs) -> Bool { rt.fs_case_sensitive() }
+fn fs_case_sensitive(_f: Fs) -> Bool { fsops.case_sensitive() }
 
 fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
   let op = fs_check(f, p, false)?
@@ -876,7 +877,7 @@ fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
 
 fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
   let op = fs_check(f, dir, false)?
-  let names = rt.fs_names(op, dir)
+  let names = fsops.names(op, dir)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, dir))
@@ -893,7 +894,7 @@ fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
 }
 
 fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! FsErr {
-  let names = rt.fs_names(osdir, xodir)
+  let names = fsops.names(osdir, xodir)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, xodir))
@@ -948,7 +949,7 @@ fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
 fn fs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
   let a = fs_check(f, from, true)?
   let b = fs_check(f, to, true)?
-  let st = rt.fs_rename(a, b, from)
+  let st = fsops.rename(a, b, from)
   if st != 0 {
     return Err(fs_err(st, from))
   }
@@ -956,7 +957,7 @@ fn fs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
 
 fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_remove(op, p)
+  let st = fsops.remove(op, p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -980,7 +981,7 @@ fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
 
 fn fs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_chtimes(op, rt.time_ns(t), p)
+  let st = fsops.chtimes(op, rt.time_ns(t), p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -1002,7 +1003,7 @@ struct FileLock {
 
 fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
   let op = fs_check(f, p, mode != 0)?
-  let h = rt.fs_open(op, mode, p)
+  let h = fsops.open_file(op, mode, p)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, p))
@@ -1022,7 +1023,7 @@ fn file_state(f: File, write: Bool) -> () ! FsErr {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  if rt.fs_file_closed(f.h) {
+  if fsops.file_closed(f.h) {
     return Err(FsErr.Io(path: f.path, msg: "file already closed"))
   }
   if f.write && !write {
@@ -1038,7 +1039,7 @@ fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
   if max <= 0 {
     return Some(b"")
   }
-  let l = rt.fs_file_read(f.h, max, f.path)
+  let l = fsops.file_read(f.h, max, f.path)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, f.path))
@@ -1048,7 +1049,7 @@ fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
 
 fn file_read_line(f: File) -> Str? ! FsErr {
   file_state(f, false)?
-  let l = rt.fs_file_read_line(f.h, f.path)
+  let l = fsops.file_read_line(f.h, f.path)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, f.path))
@@ -1058,14 +1059,14 @@ fn file_read_line(f: File) -> Str? ! FsErr {
 
 fn file_write(f: File, data: Bytes) -> () ! FsErr {
   file_state(f, true)?
-  let st = rt.fs_file_write(f.h, data, f.path)
+  let st = fsops.file_write(f.h, data, f.path)
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
 }
 
 fn file_close(f: File) -> () ! FsErr {
-  let st = rt.fs_file_close(f.h, f.path)
+  let st = fsops.file_close(f.h, f.path)
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
@@ -1088,7 +1089,7 @@ fn fs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
   let src = fs_check(f, from, false)?
   let dst = fs_check(f, to, true)?
-  let st = rt.fs_copy(src, dst, from, to)
+  let st = fsops.copy(src, dst, from, to)
   if st != 0 {
     return Err(fs_err(st, rt.fs_msg()[0]))
   }
@@ -1096,7 +1097,7 @@ fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
 
 fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
   let op = fs_check(f, p, false)?
-  let m = rt.fs_perm(op, p)
+  let m = fsops.perm(op, p)
   if m < 0 {
     return Err(fs_err(rt.fs_status(), p))
   }
@@ -1105,7 +1106,7 @@ fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
 
 fn fs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = rt.fs_chmod(op, mode, p)
+  let st = fsops.set_perm(op, mode, p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -1161,7 +1162,7 @@ fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
   if (rt.fs_mode(f) & 1) != 0 && link_escapes(link, target) {
     return Err(FsErr.Denied(path: link))
   }
-  let st = rt.fs_symlink(target, op, link)
+  let st = fsops.symlink(target, op, link)
   if st != 0 {
     return Err(fs_err(st, link))
   }
@@ -1169,7 +1170,7 @@ fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
 
 fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
   let op = fs_check(f, p, false)?
-  let l = rt.fs_read_link(op, p)
+  let l = fsops.read_link(op, p)
   let st = rt.fs_status()
   if st != 0 {
     return Err(fs_err(st, p))
@@ -1179,8 +1180,8 @@ fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
 
 fn fs_lock_wait(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
   let op = fs_check(f, p, true)?
-  let h = rt.fs_lock(op, wait, p)
-  if rt.fs_lock_held(h) {
+  let h = fsops.lock(op, wait, p, false)
+  if fsops.lock_held(h) {
     return Some(FileLock{h: h})
   }
   let st = rt.fs_status()
@@ -1199,7 +1200,7 @@ fn fs_lock(f: Fs, p: Str) -> FileLock ! FsErr {
 
 fn fs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { fs_lock_wait(f, p, false) }
 
-fn filelock_unlock(l: FileLock) { rt.fs_unlock(l.h) }
+fn filelock_unlock(l: FileLock) { fsops.unlock(l.h) }
 
 // Globs (std/rt fsGlob): Go's path.Match on each segment, `**` for any
 // number of directories, through read_dir and exists.

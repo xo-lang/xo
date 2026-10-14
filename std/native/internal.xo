@@ -1,5 +1,6 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
+use native/llrt/fsops
 use native/rt
 
 struct SharedLock {
@@ -13,8 +14,8 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  let h = rt.fs_lock_shared(p, true, p)
-  if rt.fs_lock_held(h) {
+  let h = fsops.lock(p, true, p, true)
+  if fsops.lock_held(h) {
     return SharedLock{h: h}
   }
   // the status as native/prelude's fs_err maps it
@@ -28,4 +29,4 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
   }
 }
 
-fn (l: SharedLock) unlock() { rt.fs_unlock(l.h) }
+fn (l: SharedLock) unlock() { fsops.unlock(l.h) }

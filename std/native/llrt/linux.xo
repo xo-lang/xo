@@ -546,3 +546,166 @@ pub fn fs_status(e: Int) -> Int {
     _ => 7
   }
 }
+
+// ---------------------------------------------------------------------------
+// The calls of std/native/llrt/fsops.xo (work item B16 of
+// bench/results/zero-c-audit-refresh-2026-10-13.md): the system calls of
+// the C runtime's xo_fs.c, each the *at form relative to the working
+// directory. Each returns the kernel's result: >= 0, or a negative errno.
+
+/// flock(2) operations (the same on macOS).
+pub const LOCK_SH: Int = 1
+pub const LOCK_EX: Int = 2
+pub const LOCK_NB: Int = 4
+pub const LOCK_UN: Int = 8
+
+/// unlinkat's flag for a directory.
+const AT_REMOVEDIR: Int = 512
+
+/// O_DIRECTORY, which differs between arm64 and x86_64.
+fn o_directory() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => 16384
+    TargetArch.Amd64 | TargetArch.Wasm32 => 65536
+  }
+}
+
+/// read(2) of at most n bytes to the address a.
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, n, 0, 0, 0) }
+
+/// write(2) of the n bytes at the address a.
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(64, 1), fd, a, n, 0, 0, 0) }
+
+/// renameat(2) of a to b (as written: "" is no file, as for the C
+/// runtime's rename).
+pub fn rename(a: Str, b: Str) -> Int {
+  let za = zpath(a)
+  let zb = zpath(b)
+  let r = rt.sys6(nr(38, 264), AT_FDCWD, rt.bytes_addr(za), AT_FDCWD, rt.bytes_addr(zb), 0, 0)
+  keep(za, keep(zb, r))
+}
+
+/// unlinkat(2) of path, a directory when dir (rmdir).
+pub fn unlink(path: Str, dir: Bool) -> Int {
+  let z = cpath(path)
+  let r = rt.sys6(nr(35, 263), AT_FDCWD, rt.bytes_addr(z), if dir { AT_REMOVEDIR } else { 0 }, 0, 0, 0)
+  keep(z, r)
+}
+
+/// mkdirat(2) of path with mode.
+pub fn mkdir(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  let r = rt.sys6(nr(34, 258), AT_FDCWD, rt.bytes_addr(z), mode, 0, 0, 0)
+  keep(z, r)
+}
+
+/// utimensat(2) of path: both times set to sec and nsec.
+pub fn utimens(path: Str, sec: Int, nsec: Int) -> Int {
+  let z = cpath(path)
+  let ts = words([sec, nsec, sec, nsec])
+  let r = rt.sys6(nr(88, 280), AT_FDCWD, rt.bytes_addr(z), rt.bytes_addr(ts), 0, 0, 0)
+  keep(ts, keep(z, r))
+}
+
+/// fchmodat(2) of path (following links) to mode.
+pub fn chmod(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  let r = rt.sys6(nr(53, 268), AT_FDCWD, rt.bytes_addr(z), mode, 0, 0, 0)
+  keep(z, r)
+}
+
+/// symlinkat(2): a link at path to target (both as written).
+pub fn symlink(target: Str, path: Str) -> Int {
+  let zt = zpath(target)
+  let zp = zpath(path)
+  let r = rt.sys6(nr(36, 266), rt.bytes_addr(zt), AT_FDCWD, rt.bytes_addr(zp), 0, 0, 0)
+  keep(zt, keep(zp, r))
+}
+
+/// readlinkat(2) of path (as written), at most 4096 bytes: the target
+/// and 0, or the errno.
+pub fn readlink(path: Str) -> (Str, Int) {
+  let z = zpath(path)
+  let buf = rt.bytes_buf(4096)
+  let r = rt.sys6(nr(78, 267), AT_FDCWD, rt.bytes_addr(z), rt.bytes_addr(buf), 4096, 0, 0)
+  if keep(z, r) < 0 {
+    return ("", -r)
+  }
+  let t = raw.str_at(rt.bytes_addr(buf), r)
+  keep(buf, 0)
+  (t, 0)
+}
+
+/// getcwd(2): the working directory, "." when the system has none to
+/// give (as the C runtime's).
+pub fn getcwd() -> Str {
+  let buf = rt.bytes_buf(4096)
+  let a = rt.bytes_addr(buf)
+  let r = rt.sys6(nr(17, 79), a, 4096, 0, 0, 0, 0)
+  if r <= 1 || rt.mem_load(a, 0, 1) != 47 {
+    keep(buf, 0)
+    return "."
+  }
+  // the length counts the zero byte
+  let w = raw.str_at(a, r - 1)
+  keep(buf, 0)
+  w
+}
+
+/// flock(2) of fd with op.
+pub fn flock(fd: Int, op: Int) -> Int { rt.sys6(nr(32, 73), fd, op, 0, 0, 0, 0) }
+
+/// The entries of the directory path (not `.` and `..`, in the order
+/// getdents64(2) gives) and 0, or the errno of its open (as the C
+/// runtime's readdir loop, a failed read ends the list).
+pub fn names(path: Str) -> (List[Str], Int) {
+  var fd = open(path, O_RDONLY | O_CLOEXEC | o_directory(), 0)
+  while fd == -EINTR {
+    fd = open(path, O_RDONLY | O_CLOEXEC | o_directory(), 0)
+  }
+  if fd < 0 {
+    return ([], -fd)
+  }
+  var out: List[Str] = []
+  let buf = rt.bytes_buf(16384)
+  let a = rt.bytes_addr(buf)
+  while true {
+    let n = rt.sys6(nr(61, 217), fd, a, 16384, 0, 0, 0)
+    if n == -EINTR {
+      continue
+    }
+    if n <= 0 {
+      break
+    }
+    // struct linux_dirent64: d_reclen at 16, d_name (zero terminated)
+    // at 19
+    var off = 0
+    while off < n {
+      let name = a + off + 19
+      let k = raw.cstr_len(name)
+      if !dots(name, k) {
+        out.push(raw.str_at(name, k))
+      }
+      off += rt.mem_load(a + off, 16, 2)
+    }
+  }
+  keep(buf, 0)
+  close(fd)
+  (out, 0)
+}
+
+/// Whether the k bytes at the address name are `.` or `..`.
+pub fn dots(name: Int, k: Int) -> Bool {
+  if k == 1 {
+    return rt.mem_load(name, 0, 1) == 46
+  }
+  k == 2 && rt.mem_load(name, 0, 2) == 11822
+}
+
+/// path and a NUL byte as written ("" stays empty).
+fn zpath(path: Str) -> Bytes {
+  var s = BytesBuilder.with_capacity(path.len() + 1)
+  s.write(path.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
+}

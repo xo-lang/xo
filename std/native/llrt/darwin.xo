@@ -8,6 +8,7 @@
 //
 // Only the macOS arms of std/native/llrt/sysio.xo call this module; the
 // SSA builders make its platform calls faults on another OS.
+use native/llrt/raw
 use native/rt
 use native/sys_darwin
 
@@ -125,6 +126,138 @@ fn facts(buf: Bytes, r: Int) -> (Stat, Int) {
   let sec = rt.bytes_word(buf, 48)
   let nsec = rt.bytes_word(buf, 56)
   (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec}, 0)
+}
+
+// ---------------------------------------------------------------------------
+// The calls of std/native/llrt/fsops.xo (work item B16 of
+// bench/results/zero-c-audit-refresh-2026-10-13.md): the libSystem calls
+// of the C runtime's xo_fs.c.
+
+pub const EAGAIN: Int = 35
+pub const O_RDWR: Int = 2
+pub const O_APPEND: Int = 8
+pub const O_EXCL: Int = 2048
+
+/// utimensat's directory for paths relative to the working directory.
+const AT_FDCWD: Int = -2
+
+/// read(2) of at most n bytes to the address a.
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.read(fd, a, n)) }
+
+/// write(2) of the n bytes at the address a.
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.write(fd, a, n)) }
+
+/// rename(2) of a to b (as written: "" is no file).
+pub fn rename(a: Str, b: Str) -> Int {
+  let za = zpath(a)
+  let zb = zpath(b)
+  let r = Int(sys_darwin.rename(za, zb))
+  keep(za, ret_keep(zb, r))
+}
+
+/// unlink(2) of path, or rmdir(2) when dir.
+pub fn unlink(path: Str, dir: Bool) -> Int {
+  let z = cpath(path)
+  let r = if dir { sys_darwin.rmdir(z) } else { sys_darwin.unlink(z) }
+  ret_keep(z, Int(r))
+}
+
+/// mkdir(2) of path with mode.
+pub fn mkdir(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  ret_keep(z, Int(sys_darwin.mkdir(z, mode)))
+}
+
+/// utimensat(2) of path: both times set to sec and nsec.
+pub fn utimens(path: Str, sec: Int, nsec: Int) -> Int {
+  let z = cpath(path)
+  let ts = rt.bytes_buf(32)
+  let a = rt.bytes_addr(ts)
+  rt.mem_store(a, 0, sec, 8)
+  rt.mem_store(a, 8, nsec, 8)
+  rt.mem_store(a, 16, sec, 8)
+  rt.mem_store(a, 24, nsec, 8)
+  let r = Int(sys_darwin.utimensat(AT_FDCWD, z, a, 0))
+  keep(ts, ret_keep(z, r))
+}
+
+/// chmod(2) of path to mode.
+pub fn chmod(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  ret_keep(z, Int(sys_darwin.chmod(z, mode)))
+}
+
+/// symlink(2): a link at path to target (both as written).
+pub fn symlink(target: Str, path: Str) -> Int {
+  let zt = zpath(target)
+  let zp = zpath(path)
+  let r = Int(sys_darwin.symlink(zt, zp))
+  keep(zt, ret_keep(zp, r))
+}
+
+/// readlink(2) of path (as written), at most 4096 bytes: the target and
+/// 0, or the errno.
+pub fn readlink(path: Str) -> (Str, Int) {
+  let z = zpath(path)
+  let buf = rt.bytes_buf(4096)
+  let r = ret_keep(z, sys_darwin.readlink(z, rt.bytes_addr(buf), 4096))
+  if r < 0 {
+    return ("", -r)
+  }
+  let t = raw.str_at(rt.bytes_addr(buf), r)
+  keep(buf, 0)
+  (t, 0)
+}
+
+/// getcwd(3): the working directory, "." when the system has none to
+/// give (as the C runtime's).
+pub fn getcwd() -> Str {
+  let buf = rt.bytes_buf(4096)
+  let a = rt.bytes_addr(buf)
+  if sys_darwin.getcwd(a, 4096) == 0 {
+    keep(buf, 0)
+    return "."
+  }
+  let w = raw.str_at(a, raw.cstr_len(a))
+  keep(buf, 0)
+  w
+}
+
+/// flock(2) of fd with op (linux.LOCK_*).
+pub fn flock(fd: Int, op: Int) -> Int { ret(Int(sys_darwin.flock(fd, op))) }
+
+/// The entries of the directory path (not `.` and `..`, in readdir's
+/// order) and 0, or the errno of opendir (as the C runtime's loop, a
+/// failed read ends the list).
+pub fn names(path: Str) -> (List[Str], Int) {
+  let z = cpath(path)
+  let d = sys_darwin.opendir(z)
+  if d == 0 {
+    return ([], keep(z, errno()))
+  }
+  var out: List[Str] = []
+  while true {
+    let e = sys_darwin.readdir(d)
+    if e == 0 {
+      break
+    }
+    // struct dirent (64 bit inodes): d_namlen at 18, d_name at 21
+    let k = rt.mem_load(e, 18, 2)
+    let name = e + 21
+    if !(k == 1 && rt.mem_load(name, 0, 1) == 46) && !(k == 2 && rt.mem_load(name, 0, 2) == 11822) {
+      out.push(raw.str_at(name, k))
+    }
+  }
+  let _c = sys_darwin.closedir(d)
+  (out, 0)
+}
+
+/// path and a NUL byte as written ("" stays empty).
+fn zpath(path: Str) -> Bytes {
+  var s = BytesBuilder.with_capacity(path.len() + 1)
+  s.write(path.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
 }
 
 /// clock_gettime(3) of clock id: nanoseconds (Unix time for
