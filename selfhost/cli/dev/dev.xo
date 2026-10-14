@@ -59,6 +59,8 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
   fl.bool_flag("build-only", "build, do not run (a cross target)")
   fl.bool_flag("no-cache", "neither read nor write the pass cache")
   fl.bool_flag("no-each", "one `xo build` process per program (no build-each workers)")
+  fl.str_flag("cmd", "build", "build: xo build then run the binary; run: xo run in the program's directory")
+  fl.str_flag("build-path", "", "the PATH of the build command (/nonexistent: no external tool)")
   if !fl.parse(os, args) {
     return 2
   }
@@ -100,6 +102,8 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
     build_only: fl.get_bool("build-only"),
     host: h.host,
     each: !fl.get_bool("no-each"),
+    run_cmd: fl.get_str("cmd") == "run",
+    build_path: fl.get_str("build-path"),
   }
   let t0 = os.clock.now()
   let outs = run_goldens(os, cfg, fl.args)

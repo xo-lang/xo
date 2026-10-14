@@ -52,6 +52,10 @@ pub struct Config {
   /// Build the native programs in `xo dev build-each` worker processes
   /// (std parsed once per worker) instead of one `xo build` each.
   pub each: Bool = true
+  /// Build and run each program with one `xo run` in its directory.
+  pub run_cmd: Bool = false
+  /// The PATH of the build command, "" to keep the harness's.
+  pub build_path: Str = ""
 }
 
 /// The result of one program.
@@ -191,6 +195,9 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
     return Outcome{name: p.name, dir: p.dir, status: "cached"}
   }
+  if cfg.run_cmd {
+    return run_one(os, cfg, key, p)
+  }
   let bin = bin_path(cfg, p)
   os.fs.remove(bin).ok()
   let test_prog = cfg.backend == "go" && p.name.starts_with("test_")
@@ -205,7 +212,7 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   args.push(p.dir)
   let had_regress = os.fs.exists("${p.dir}/regressions_test.xo").ok() ?? false
   let t0 = os.clock.now()
-  let b = task.with_timeout(os.clock, cfg.timeout, fn() { os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build").output() })
+  let b = task.with_timeout(os.clock, cfg.timeout, fn() { with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).output() })
   let build_ms = os.clock.since(t0).millis()
   if !had_regress {
     // `xo test` writes shrunk contract fuzz failures into the module
@@ -258,6 +265,12 @@ fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
     Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", build_ms: build_ms, run_ms: run_ms}
     Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", build_ms: build_ms, run_ms: run_ms}
   }
+  judge(os, cfg, key, p, out, build_ms, run_ms)
+}
+
+/// judge compares a run of p with its want, checks for leaks, and caches
+/// a pass.
+fn judge(os: Os, cfg: Config, key: Str, p: Prog, out: ProcOutput, build_ms: Int, run_ms: Int) -> Outcome {
   let rl = rules(cfg.backend)
   let got = layout(out.code, out.stdout, out.stderr, rl)
   let want = os.fs.read(p.want).ok() ?? "".bytes()
@@ -274,6 +287,51 @@ fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
     mark(os.fs, cfg.cache, key)
   }
   Outcome{name: p.name, dir: p.dir, status: "pass", build_ms: build_ms, run_ms: run_ms}
+}
+
+/// with_path gives the build command the PATH of --build-path when set
+/// (/nonexistent shows a build needs no external tool, decision 0182).
+fn with_path(cfg: Config, c: Cmd) -> Cmd {
+  if cfg.build_path.is_empty() { c } else { c.set_env("PATH", cfg.build_path) }
+}
+
+/// run_one is p through `xo run` in its own directory (--cmd=run): the
+/// build and the run in one command, its output compared as a run's.
+fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
+  let h = harness(os.fs, p.dir)
+  var args = ["run", "--backend=${cfg.backend}"]
+  for f in cfg.flags {
+    args.push(f)
+  }
+  args.push("--std=${cfg.std}")
+  args.push(".")
+  args.push("--")
+  for a in h.args {
+    args.push(a)
+  }
+  let wd = os.env.get("PWD") ?? "."
+  let abs = if p.dir.starts_with("/") { p.dir } else { "${wd}/${p.dir}" }
+  var c = os.proc.cmd(cfg.xo, args).dir(p.dir).stdin(h.stdin).set_env("XO_LEAKCHECK", "1").set_env("PWD", abs)
+  // env.txt is the program's environment, and xo sees it too: a HOME such
+  // as env_dirs' /home/test has no user cache to build in
+  c = c.set_env("XO_BUILD_DIR", "${cfg.out}/runbuild")
+  for (k, v) in h.env {
+    c = c.set_env(k, v)
+  }
+  let t0 = os.clock.now()
+  let r = task.with_timeout(os.clock, cfg.timeout, fn() { c.output() })
+  let ms = os.clock.since(t0).millis()
+  let out = match r {
+    Ok(o) => o
+    Err(task.Timed.TimedOut) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: timed out after ${cfg.timeout.seconds()} s", run_ms: ms}
+    Err(task.Timed.Failed(e)) => return Outcome{name: p.name, dir: p.dir, status: "fail", why: "run: ${e}", run_ms: ms}
+  }
+  let se = out.stderr.to_str() ?? ""
+  if out.code != 0 && (se.starts_with("xo: ") || se.starts_with("xo1: ")) {
+    let lines = se.trim().split("\n")
+    return Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${lines[lines.len() - 1]}", run_ms: ms}
+  }
+  judge(os, cfg, key, p, out, 0, ms)
 }
 
 /// run_goldens runs every program of dirs and returns the outcomes in
@@ -298,7 +356,7 @@ pub fn run_goldens(os: Os, cfg: Config, dirs: List[Str]) -> List[Outcome] uses (
   let base = if cfg.cache.is_empty() { "" } else { base_key(os.fs, cfg) }
   let ordered = order(progs, times)
   var outs: List[Outcome] = []
-  if cfg.each && (cfg.backend is "arm64" | "llvm") {
+  if cfg.each && !cfg.run_cmd && (cfg.backend is "arm64" | "llvm") {
     // worker processes that each build a share of the programs, so std
     // is parsed once per worker (xo dev build-each); the cached passes
     // are done first
@@ -361,7 +419,7 @@ fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[O
     args.push(f)
   }
   args.push("--std=${cfg.std}")
-  let cmd = os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build").merge_stderr()
+  let cmd = with_path(cfg, os.proc.cmd(cfg.xo, args).set_env("XO_BUILD_DIR", "${cfg.out}/build")).merge_stderr()
   var child: Child? = None
   while let Some(p) = queue.recv() {
     let bin = bin_path(cfg, p)

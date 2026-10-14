@@ -37,7 +37,7 @@ pub fn tree_hash(fs: Fs, dir: Str) -> Str uses fs.read {
 /// base_key is the part of every program's key shared by the run.
 fn base_key(fs: Fs, cfg: Config) -> Str uses fs.read {
   var b = BytesBuilder.new()
-  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only}\n")
+  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path}\n")
   b.write(crypto.sha256(fs.read(cfg.xo).ok() ?? "".bytes()))
   b.write_str(tree_hash(fs, cfg.std))
   crypto.sha256(b.freeze()).to_hex()
