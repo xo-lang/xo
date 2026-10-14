@@ -30,6 +30,11 @@ v8.setFlagsFromString('--no-wasm-lazy-compilation');
 // `concurrent_marking_handle_ implies !concurrent_marking_handle_->IsValid()`
 // (status 133; gotchas/wasm-busy-loop-crashes-node.md).
 v8.setFlagsFromString('--no-incremental-marking');
+// more V8 flags for a debugging run (XO_WASM_V8_FLAGS="--liftoff
+// --no-wasm-tier-up", ...), set before the worker's isolate exists
+for (const f of (process.env.XO_WASM_V8_FLAGS || '').split(/\s+/)) {
+  if (f) v8.setFlagsFromString(f);
+}
 
 if (isMainThread) {
   const [file, ...args] = process.argv.slice(2);
