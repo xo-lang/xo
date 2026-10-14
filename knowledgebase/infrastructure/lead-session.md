@@ -3,13 +3,13 @@
 Last verified: 2026-10-14
 
 How the lead session (merging agents' work, the EC2 queue, seeds) stood
-on 2026-10-14 at 09:15, so a new session can resume (owner,
+on 2026-10-14 at 10:45, so a new session can resume (owner,
 2026-10-14). The tools are in scripts/lead (its README says how to run
 them).
 
 ## Main
 
-- origin/main 37bcf829, version 0.10.0. Seed 0.10.0-23ce8ce2 is in the
+- origin/main 310d3850, version 0.10.0. Seed 0.10.0-23ce8ce2 is in the
   seed bucket for all five platforms and seeds/latest.txt names it
   (decision 0216).
 - The fixed point on 37bcf829 holds (s2 = s3, 52,710,416 byte binaries,
@@ -30,26 +30,29 @@ them).
 
 ## In flight
 
-Branches survive a session end; the agents working on them do not.
+No agents are running (owner, 2026-10-14 10:00: start no more; all
+finished work is merged). Since 09:15, fast builds stage C (67fe56a2:
+one-module edit rebuild of xo 30.60 s to about 11 to 12 s on the Mac)
+and shrink wrapping with tail calls (310d3850, decision 0224: self
+build 0.985 of the instructions) landed.
 
-- Fast builds stage C, insert_rc per function caching:
-  worktree-agent-af7cdd8f4029070d9.
-- Shrink wrapping in selfhost/arm64: worktree-agent-aaff51dc67b6a2d8b.
+Held on branches, not merged (both correct, both miss decision 0180's
+bar on arm64 only):
+
 - B14, the test world part 1 in Xo (916 C lines deleted):
-  worktree-agent-adf33485f07a2fcac at 0726c7ba, held because arm64
-  misses decision 0180's bar on rand (1.142) and gen (1.126) on the Mac
-  (bench/results/test-world-2026-10-14.md, "The Mac"). Recheck after
-  shrink wrapping.
-- B13 stage 2 (string and list objects in Xo, commit 3da29c8b, reverted
-  by 082476d4): correct, but arm64 missed the bar (alloc small 1.266,
-  nested walk 1.115, text split 1.098;
-  bench/results/string-list-objects-2026-10-14.md). Recheck after
-  shrink wrapping.
+  worktree-agent-adf33485f07a2fcac at 0726c7ba. rand 1.100 and gen
+  1.094 of the C after shrink wrapping
+  (bench/results/shrink-wrapping-2026-10-14.md:89-91). Next: inlining
+  in rand.next_int.
+- B13 stage 2, string and list objects in Xo (commit 3da29c8b, reverted
+  by 082476d4, both in main's history): after shrink wrapping alloc
+  small 1.201, nested walk 1.036, text split 1.058 (same file :61-66).
+  Next: remove the C entry level on the allocation path.
 
 ## Next, in order
 
-1. Merge stage C and shrink wrapping when they report; recheck B13 stage
-   2 and B14.
+1. B14 (inlining in rand.next_int) and B13 stage 2 (the allocation
+   path's C entry level), then recheck both against the bar.
 2. Cut seed 0.11.0 (scripts/lead/seeds), then delete the C the 0.10.0
    seed still calls: xo_static_word, xo_ct_barrier, B03's xo_print
    forwards, xo_exit, xo_env_*, xo_str_rune_count
