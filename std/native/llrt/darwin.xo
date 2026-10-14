@@ -29,6 +29,7 @@ pub const O_TRUNC: Int = 1024
 pub const O_CLOEXEC: Int = 16777216
 
 pub const CLOCK_REALTIME: Int = 0
+pub const CLOCK_MONOTONIC: Int = 6
 
 /// The calling thread's errno.
 fn errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
@@ -136,11 +137,6 @@ pub fn clock_ns(id: Int) -> Int {
   }
   rt.bytes_word(buf, 0) * 1000000000 + rt.bytes_word(buf, 8)
 }
-
-/// The wall clock in Unix nanoseconds: clock_gettime_nsec_np of
-/// CLOCK_REALTIME, the C runtime's clock_gettime in one call without a
-/// structure.
-pub fn realtime_ns() -> Int { sys_darwin.clock_gettime_nsec_np(CLOCK_REALTIME) }
 
 /// getentropy(2) of n bytes, 256 at a time (as the C runtime's
 /// cr_entropy): the bytes and 0, or the errno.

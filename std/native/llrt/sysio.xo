@@ -8,13 +8,15 @@
 // system calls on Linux (linux.xo), libSystem on macOS (darwin.xo),
 // kernel32 on Windows (windows.xo). In a wasm module, on darwin/amd64,
 // and where a test binary's world fakes the capability, they call the C
-// runtime; Clock.now calls it on every OS for now. Decision 0198
+// runtime; Clock.now calls it only for the test world's virtual clock
+// (and in a wasm module, whose runtime has its own). Decision 0198
 // deleted the selectable C path (`XO_LLRT_C=sysio`); the C functions stay
 // for those cases.
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/windows
 use native/rt
+use native/sys_darwin
 
 /// The facts of fs_stat: the status (0, or FsErr's tag plus one), and on
 /// success whether it is a directory, its size, and its modification time
@@ -110,31 +112,107 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
   i
 }
 
+// ---------------------------------------------------------------------------
+// The clocks (decision 0206 stage 2 on Linux; work item B01 of
+// bench/results/zero-c-audit-refresh-2026-10-13.md off Linux): the wall
+// clock of Clock.now and the monotonic clock of the scheduler, the
+// timers, and the budgets, read from Xo on every OS. The C runtime reads
+// them through cabi.xo's real_ns and mono_ns.
+//
+// The clock of the build is chosen once into word 0 of rt.sys_words, so
+// the hot paths test no `target` (the arm64 emitter does not fold a
+// `match` on it, gotchas/arm64-match-target-not-folded.md): on Linux the
+// address of the vDSO's clock_gettime (> 0) or CLOCK_SYSCALL, on macOS
+// CLOCK_LIBSYSTEM, on Windows CLOCK_KERNEL32; 0 until the first read.
+
+/// Word 0 of rt.sys_words on Linux without a vDSO: the system call
+/// (linux.vdso_clock's -1).
+const CLOCK_SYSCALL = -1
+/// Word 0 of rt.sys_words on macOS: clock_gettime_nsec_np.
+const CLOCK_LIBSYSTEM = -2
+/// Word 0 of rt.sys_words on Windows: GetSystemTimePreciseAsFileTime and
+/// QueryPerformanceCounter.
+const CLOCK_KERNEL32 = -3
+
 /// Clock.now: Unix nanoseconds of the wall clock, or the test world's
-/// virtual clock. On Linux the vDSO's clock_gettime called from Xo
-/// (decision 0206 stage 2: the system call it replaced cost 4.3 times
-/// the time per call, bench/results/linux-syscalls-2026-10-13.md); on
-/// other OSes, and while the virtual clock runs, the C runtime's (on
-/// macOS the Xo path, darwin.realtime_ns, missed decision 0180's bar on
-/// the arm64 backend by the compares of the `match` on `target`,
-/// bench/results/platform-calls-2026-10-13.md; Windows's
-/// windows.clock_ns waits with it). This is the clock's hot path,
+/// virtual clock (the C runtime's, while it runs). On Linux the vDSO's
+/// clock_gettime called from Xo (decision 0206 stage 2: the system call
+/// it replaced cost 4.3 times the time per call,
+/// bench/results/linux-syscalls-2026-10-13.md), on macOS
+/// clock_gettime_nsec_np, on Windows GetSystemTimePreciseAsFileTime
+/// (bench/results/clocks-2026-10-14.md). This is the clock's hot path,
 /// written for the arm64 emitter, which neither folds `target` nor
-/// inlines across modules: rt.sys_clock_buf answers 0 off Linux and in a
-/// WASI module (the wasm emitter lowers it to 0) as under the virtual
-/// clock, so no target is tested here, and the vDSO call is inline.
+/// inlines across modules: rt.sys_clock_buf answers 0 while the virtual
+/// clock runs and in a WASI module (the wasm emitter lowers it to 0), and
+/// the Linux and macOS calls are inline.
 pub fn clock_now() -> Int {
   let a = rt.sys_clock_buf()
   if a == 0 {
     return rt.clock_now()
   }
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
-  let r = if f > 0 { rt.call_c2(f, linux.CLOCK_REALTIME, a) } else { linux.clock_gettime(linux.CLOCK_REALTIME, a) }
-  if r < 0 {
-    return r
+  if f > 0 {
+    let r = rt.call_c2(f, linux.CLOCK_REALTIME, a)
+    if r < 0 {
+      return r
+    }
+    // a timespec of the wall clock never overflows: wrapping, as C's
+    return rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
   }
-  // a timespec of the wall clock never overflows: wrapping, as C's
-  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+  if f == CLOCK_LIBSYSTEM {
+    return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_REALTIME)
+  }
+  clock_read(true, a)
+}
+
+/// The wall clock in Unix nanoseconds, never the virtual clock (the C
+/// runtime's xo_clock_now and xo_tz_now through cabi.xo's real_ns).
+pub fn real_ns() -> Int { clock_read(true, rt.bytes_addr(rt.sys_buf())) }
+
+/// The monotonic clock in nanoseconds (the time of the scheduler, the
+/// timers, and the budgets; the C runtime's mono_ns through cabi.xo):
+/// CLOCK_MONOTONIC on Linux and macOS, QueryPerformanceCounter on
+/// Windows.
+pub fn mono_ns() -> Int {
+  let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  if f == CLOCK_LIBSYSTEM {
+    return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_MONOTONIC)
+  }
+  clock_read(false, rt.bytes_addr(rt.sys_buf()))
+}
+
+/// The wall clock (real) or the monotonic clock in nanoseconds, with 16
+/// bytes of scratch at a for the timespec or the counter, or a negative
+/// errno from Linux's clock_gettime; chooses the clock of the build at
+/// the first call.
+fn clock_read(real: Bool, a: Int) -> Int {
+  var f = rt.slot_load[Int](rt.sys_words(), 0, 0)
+  if f == 0 {
+    f = clock_choose()
+  }
+  if f == CLOCK_LIBSYSTEM {
+    return sys_darwin.clock_gettime_nsec_np(if real { darwin.CLOCK_REALTIME } else { darwin.CLOCK_MONOTONIC })
+  }
+  if f == CLOCK_KERNEL32 {
+    return if real { windows.clock_ns(a) } else { windows.mono_ns(a) }
+  }
+  linux.clock_ns(if real { linux.CLOCK_REALTIME } else { linux.CLOCK_MONOTONIC }, a)
+}
+
+/// Chooses the clock of the build into word 0 of rt.sys_words (on Linux
+/// linux.vdso_clock's lookup stores it) and answers it. A choice racing
+/// another stores the same word.
+fn clock_choose() -> Int {
+  let l = match target.os {
+    TargetOs.Darwin => CLOCK_LIBSYSTEM
+    TargetOs.Windows => CLOCK_KERNEL32
+    TargetOs.Linux | TargetOs.Wasi => 0
+  }
+  if l == 0 {
+    return linux.vdso_clock()
+  }
+  rt.slot_store[Int](rt.sys_words(), 0, l, 0)
+  l
 }
 
 // ---------------------------------------------------------------------------

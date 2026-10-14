@@ -499,11 +499,8 @@ xo_rlist *xo_tz_keep(const char *p, int64_t n, xo_rlist *z) {
 
 // xo_tz_now is the wall clock in seconds (the time of a load: Go fills
 // its cache with the zone in effect then).
-int64_t xo_tz_now(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	return (int64_t)ts.tv_sec;
-}
+int64_t xo_x_real_ns(void);
+int64_t xo_tz_now(void) { return xo_x_real_ns() / 1000000000; }
 
 xo_rstr *xo_tz_local_name(int64_t *len) {
 	char buf[1024];

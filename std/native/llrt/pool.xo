@@ -18,6 +18,7 @@
 // current context and never unwinds into its C callers.
 use native/llrt/linux
 use native/llrt/sched
+use native/llrt/sysio
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -121,7 +122,6 @@ const TLS_SCRATCH_AT = 32
 const RT_STAT = 0
 const RT_DL_CHECK = 1
 const RT_TW_KICK = 2
-const RT_NOW = 3
 const RT_FIBER_MAPPED = 4
 const RT_FIBER_UNMAPPED = 5
 const RT_MAP_FAILED = 6
@@ -164,15 +164,6 @@ fn layer() -> Int {
         TargetOs.Wasi => 0
       }
     }
-  }
-}
-
-/// The monotonic clock in nanoseconds (xo_rt.c mono_ns): libSystem's
-/// CLOCK_MONOTONIC on macOS, else the C's.
-fn now() -> Int {
-  match layer() {
-    2 => sys_darwin.clock_gettime_nsec_np(6)
-    _ => rt.sched_rt(RT_NOW, 0, 0)
   }
 }
 
@@ -497,7 +488,7 @@ pub fn pool_push(p: Int, t: Int) {
   if w == 0 {
     inject_add(p, 0, 0, t)
   } else if (t & 1) != 0 && rt.mem_load(w, W_NONEXT, 8) == 0 {
-    rt.slot_store(w, W_NEXT_AT / 8, now(), RELAXED)
+    rt.slot_store(w, W_NEXT_AT / 8, sysio.mono_ns(), RELAXED)
     let old = rt.slot_swap(w, W_NEXT_I, t, SEQ_CST)
     if old != 0 {
       rq_put(p, w, old)
@@ -553,7 +544,7 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
     }
     if t == 0 && last != 0 {
       let x = rt.slot_load(v, W_NEXT_I, ACQUIRE)
-      if x != 0 && rt.int_wrap(1, now(), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
+      if x != 0 && rt.int_wrap(1, sysio.mono_ns(), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
         t = x
       }
     }
