@@ -1,0 +1,229 @@
+// `xo dev codegen` (decisions 0209, 0217): optimizations verified by
+// patterns on the code emitted for one function, as Go's test/codegen
+// does, never by whole files. A comment inside a function's body names a
+// backend and regular expressions the function's assembly (arm64) or IR
+// (llvm) must match, or with a leading `-` must not:
+//
+//   fn shift(x: Int) -> Int {
+//     // arm64: "lsl\tx[0-9]+, x[0-9]+, #3" -"mul"
+//     // llvm: "shl i64"
+//     x * 8
+//   }
+//
+// The function is the nearest `fn name(` line above the comment (a
+// function of the program's root module: its symbol is the bare name).
+// `xo asm --backend=B DIR` prints the code: arm64 functions start at a
+// `// func NAME` line, LLVM ones at `define ... @"x.NAME"(` and end at a
+// line `}`.
+
+use std/regexp
+use std/task
+use github.com/xo-lang/xo/selfhost/cli/core
+
+/// One pattern on one function.
+pub struct Pattern {
+  pub file: Str
+  pub line: Int
+  pub func: Str
+  pub backend: Str
+  pub re: Str
+  /// true: the code must not match.
+  pub negate: Bool = false
+}
+
+/// patterns parses the backend comments of one file.
+pub fn patterns(file: Str, src: Str) -> List[Pattern] {
+  var out: List[Pattern] = []
+  let fn_re = regexp.must("^\\s*(?:pub\\s+)?fn\\s+([a-z_][a-z0-9_]*)\\s*[(\\[]")
+  let item = regexp.must("(-?)\"((?:[^\"\\\\]|\\\\.)*)\"")
+  var cur = ""
+  for (i, l) in src.split("\n").indexed() {
+    match fn_re.captures(l) {
+      Some(c) => cur = c[1] ?? ""
+      None => {}
+    }
+    let t = l.trim()
+    for be in ["arm64", "llvm"] {
+      let head = "// ${be}: "
+      if !t.starts_with(head) {
+        continue
+      }
+      for m in item.find_all(t[head.len()..]) {
+        match item.captures(m) {
+          Some(c) => {
+            let re = unescape(c[2] ?? "")
+            out.push(Pattern{file: file, line: i + 1, func: cur, backend: be, re: re, negate: (c[1] ?? "") == "-"})
+          }
+          None => {}
+        }
+      }
+    }
+  }
+  out
+}
+
+/// unescape turns the `\"`, `\\`, and `\t` of a quoted pattern into the
+/// characters; other escapes stay for the regular expression.
+fn unescape(s: Str) -> Str {
+  s.replace("\\\"", "\"").replace("\\t", "\t")
+}
+
+test "patterns" {
+  let src = "fn a(x: Int) -> Int {\n  // arm64: \"lsl\\tx\" -\"mul\"\n  x * 8\n}\npub fn b() {\n  // llvm: \"shl i64\"\n}\n"
+  let ps = patterns("m.xo", src)
+  expect(ps.len() == 3)
+  expect(ps[0].func == "a" && ps[0].re == "lsl\tx" && !ps[0].negate && ps[0].backend == "arm64")
+  expect(ps[1].negate && ps[1].re == "mul")
+  expect(ps[2].func == "b" && ps[2].backend == "llvm" && ps[2].line == 6)
+}
+
+/// functions cuts the output of `xo asm` into functions by name.
+pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
+  var out: Map[Str, Str] = {}
+  var name = ""
+  var body: List[Str] = []
+  for l in code.split("\n") {
+    if backend == "arm64" {
+      if l.starts_with("// func ") {
+        if !name.is_empty() {
+          out[name] = body.join("\n")
+        }
+        name = l.trim_prefix("// func ").trim()
+        body = []
+        continue
+      }
+      if !name.is_empty() {
+        body.push(l)
+      }
+    } else {
+      if l.starts_with("define ") {
+        match l.find("@\"x.") {
+          Some(k) => {
+            let rest = l[k + 4..]
+            name = match rest.find("\"") {
+              Some(e) => rest[0..e]
+              None => ""
+            }
+          }
+          None => name = ""
+        }
+        body = []
+      }
+      if !name.is_empty() {
+        body.push(l)
+        if l == "}" {
+          out[name] = body.join("\n")
+          name = ""
+        }
+      }
+    }
+  }
+  if backend == "arm64" && !name.is_empty() {
+    out[name] = body.join("\n")
+  }
+  out
+}
+
+test "functions" {
+  let s = "// func a\n_xo_f_a:\n\tmul x0, x0, x1\n// func b\n_xo_f_b:\n\tret\n"
+  let fs = functions("arm64", s)
+  expect((fs.get("a") ?? "").contains("mul") && !(fs.get("b") ?? "").contains("mul"))
+  let ir = "define internal i64 @\"x.a\"(i64 %v0) #1 {\n  %v1 = shl i64 %v0, 3\n  ret i64 %v1\n}\n"
+  expect((functions("llvm", ir).get("a") ?? "").contains("shl i64"))
+}
+
+/// verify checks the patterns of one backend against its functions.
+pub fn verify(ps: List[Pattern], fns: Map[Str, Str]) -> List[Str] {
+  var problems: List[Str] = []
+  for p in ps {
+    let code = match fns.get(p.func) {
+      Some(c) => c
+      None => {
+        problems.push("${p.file}:${p.line}: no ${p.backend} code for function ${p.func.quote()}")
+        continue
+      }
+    }
+    match regexp.compile(p.re) {
+      Ok(r) => {
+        let hit = r.is_match(code)
+        if hit && p.negate {
+          problems.push("${p.file}:${p.line}: ${p.func}: ${p.backend} code matches -${p.re.quote()}")
+        } else if !hit && !p.negate {
+          problems.push("${p.file}:${p.line}: ${p.func}: ${p.backend} code does not match ${p.re.quote()}")
+        }
+      }
+      Err(e) => problems.push("${p.file}:${p.line}: bad pattern ${p.re.quote()}: ${e}")
+    }
+  }
+  problems
+}
+
+fn codegen_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  var fl = core.new_flags("dev codegen")
+  fl.str_flag("xo", "", "the xo that compiles (default this one)")
+  fl.str_flag("backend", "arm64,llvm", "the backends whose patterns are checked")
+  fl.int_flag("j", 4, "programs at once")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.is_empty() {
+    os.stdio.eprintln("usage: xo dev codegen [--backend=arm64,llvm] [-j N] DIR...")
+    return 2
+  }
+  let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
+  let backends = fl.get_str("backend").split(",")
+  let dirs = module_dirs(os.fs, fl.args)
+  var jobs: List[(Str, Str)] = []
+  for d in dirs {
+    for b in backends {
+      jobs.push((d, b))
+    }
+  }
+  let t0 = os.clock.now()
+  let res = task.map_concurrent(jobs, fl.get_int("j").max(1), fn(j: (Str, Str)) {
+    let (d, b) = j
+    codegen_one(os, h, xo, d, b)
+  })
+  var fails = 0
+  var checked = 0
+  for (i, r) in res.indexed() {
+    let (n, ps) = match r {
+      Ok(x) => x
+      Err(_) => (0, ["internal error"])
+    }
+    checked += n
+    let (d, b) = jobs[i]
+    if !ps.is_empty() {
+      fails += 1
+      for p in ps {
+        os.stdio.println("FAIL ${d} ${b} ${p}")
+      }
+    }
+  }
+  os.stdio.println("${jobs.len()} program builds, ${checked} patterns: ${jobs.len() - fails} pass, ${fails} fail (${os.clock.since(t0).millis()} ms)")
+  if fails == 0 { 0 } else { 1 }
+}
+
+fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str]) uses (env, fs.read, proc) {
+  var ps: List[Pattern] = []
+  for e in os.fs.read_dir(d).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      for p in patterns("${d}/${e.name}", os.fs.read_text("${d}/${e.name}").ok() ?? "") {
+        if p.backend == backend {
+          ps.push(p)
+        }
+      }
+    }
+  }
+  if ps.is_empty() {
+    return (0, [])
+  }
+  let out = match os.proc.cmd(xo, ["asm", "--backend=${backend}", "--std=${h.std}", d]).set_env("XO_LLVM_SPLIT", "1").output() {
+    Ok(o) => o
+    Err(e) => return (ps.len(), ["xo asm: ${e}"])
+  }
+  if out.code != 0 {
+    return (ps.len(), ["xo asm: ${(out.stderr.to_str() ?? "").trim()}"])
+  }
+  (ps.len(), verify(ps, functions(backend, out.stdout.to_str() ?? "")))
+}

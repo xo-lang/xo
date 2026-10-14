@@ -32,7 +32,7 @@ fn main(os: Os) ! {
   var lax = false
   var annotate = false
   var std_dir = "std"
-  var wd = os.env.get("PWD") ?? ""
+  var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
   let args = os.env.args()
   var i = 0

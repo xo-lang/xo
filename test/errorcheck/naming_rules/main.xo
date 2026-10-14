@@ -1,0 +1,5 @@
+fn camelCase() -> Int { 1 } // ERROR XO0101
+
+fn main(os: Os) {
+  os.stdio.println("${camelCase()}")
+}

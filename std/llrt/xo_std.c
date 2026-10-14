@@ -100,16 +100,6 @@ static int64_t n_mem_index(const char *p, int64_t n, const char *q, int64_t m) {
 	return -1;
 }
 
-int64_t xo_str_contains(const char *p, int64_t n, const char *q, int64_t m) { return n_mem_index(p, n, q, m) >= 0; }
-
-int64_t xo_str_starts_with(const char *p, int64_t n, const char *q, int64_t m) {
-	return m <= n && memcmp(p, q, (size_t)m) == 0;
-}
-
-int64_t xo_str_ends_with(const char *p, int64_t n, const char *q, int64_t m) {
-	return m <= n && memcmp(p + n - m, q, (size_t)m) == 0;
-}
-
 int64_t xo_str_find(const char *p, int64_t n, const char *q, int64_t m, int64_t from) {
 	if (from < 0) {
 		from = 0;
@@ -176,51 +166,6 @@ static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n) {
 	((xo_rstr **)rl_data(l))[2 * l->len] = s;
 	((int64_t *)rl_data(l))[2 * l->len + 1] = n;
 	l->len++;
-	return l;
-}
-
-// xo_str_split is strings.Split: an empty separator splits into UTF-8
-// sequences (an invalid byte alone).
-xo_rlist *xo_str_split(const char *p, int64_t n, const char *q, int64_t m) {
-	xo_rlist *l = n_str_list_new(4);
-	if (m == 0) {
-		const unsigned char *s = (const unsigned char *)p;
-		for (int64_t i = 0; i < n;) {
-			int size;
-			n_utf8_decode(s + i, n - i, &size);
-			l = n_str_list_add(l, p + i, size);
-			i += size;
-		}
-		return l;
-	}
-	int64_t start = 0;
-	for (;;) {
-		int64_t i = n_mem_index(p + start, n - start, q, m);
-		if (i < 0) {
-			break;
-		}
-		l = n_str_list_add(l, p + start, i);
-		start += i + m;
-	}
-	return n_str_list_add(l, p + start, n - start);
-}
-
-
-// xo_str_lines splits on \n and strips a trailing \r; a final newline
-// gives no empty last line.
-xo_rlist *xo_str_lines(const char *p, int64_t n) {
-	xo_rlist *l = n_str_list_new(4);
-	int64_t start = 0;
-	while (start < n) {
-		const char *nl = memchr(p + start, '\n', (size_t)(n - start));
-		int64_t end = nl ? nl - p : n;
-		int64_t e = end;
-		if (e > start && p[e - 1] == '\r') {
-			e--;
-		}
-		l = n_str_list_add(l, p + start, e - start);
-		start = end + 1;
-	}
 	return l;
 }
 
@@ -566,11 +511,7 @@ void xo_exit(int64_t code) {
 }
 
 // ---------------------------------------------------------------------------
-// Conversions for std/json: base64, durations, RFC 3339 times
-
-static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
+// Conversions for std/json: durations, RFC 3339 times
 
 #ifdef XO_TEXT_C
 // the C path of the number and time text (decision 0193): only

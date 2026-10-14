@@ -13,53 +13,44 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// TestSysioParity builds testdata/sysio_parity with the Xo path of the
-// files (std/native/llrt/sysio.xo over the OS layer: linux.xo, darwin.xo,
-// windows.xo; decisions 0206 and 0213) and with the C path
-// (XO_LLRT_C=sysio), runs both, and requires the same output byte for
-// byte: each FsErr and each message, which is the C library's strerror
-// text on every OS. XO_GOLDEN_WANT_XO=path builds with that xo (xo1)
-// instead of the Go driver.
+// TestSysioParity builds testdata/sysio_parity with the files in Xo
+// (std/native/llrt/sysio.xo over the OS layer: linux.xo, darwin.xo,
+// windows.xo; decisions 0206 and 0213), runs it, and checks the output's
+// shape. It compared the Xo path with the C path (XO_LLRT_C=sysio) until
+// decision 0198 deleted that path; TestErrnoTables now holds the layers'
+// messages to the C library's strerror text. XO_GOLDEN_WANT_XO=path
+// builds with that xo (xo1) instead of the Go driver.
 func TestSysioParity(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds and runs a program twice")
+		t.Skip("builds and runs a program")
 	}
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	dir := filepath.Join("testdata", "sysio_parity")
-	xo1 := os.Getenv("XO_GOLDEN_WANT_XO")
-	run := func(cpath string) string {
-		t.Setenv("XO_LLRT_C", cpath)
-		var bin string
-		if xo1 != "" {
-			b, out, err := xo1Build(xo1, dir, "sysio_parity", xotool.Host())
-			if err != nil {
-				t.Fatalf("xo1 build (XO_LLRT_C=%q): %v\n%s", cpath, err, out)
-			}
-			bin = b
-		} else {
-			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM})
-			if err != nil || res.Failed {
-				t.Fatalf("build (XO_LLRT_C=%q): %v %+v", cpath, err, res)
-			}
-			bin = res.Binaries[xotool.Host()]
+	var bin string
+	if xo1 := os.Getenv("XO_GOLDEN_WANT_XO"); xo1 != "" {
+		b, out, err := xo1Build(xo1, dir, "sysio_parity", xotool.Host())
+		if err != nil {
+			t.Fatalf("xo1 build: %v\n%s", err, out)
 		}
-		got, err := runBinary(bin, dir)
-		if err != nil || got.exit != 0 {
-			t.Fatalf("run (XO_LLRT_C=%q): %v exit %d\n%s\n%s", cpath, err, got.exit, got.stdout, got.stderr)
+		bin = b
+	} else {
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM})
+		if err != nil || res.Failed {
+			t.Fatalf("build: %v %+v", err, res)
 		}
-		return got.stdout
+		bin = res.Binaries[xotool.Host()]
 	}
-	xo := run("")
-	c := run("sysio")
-	if xo != c {
-		t.Errorf("the Xo path and the C path differ\n--- Xo\n%s\n--- C\n%s", xo, c)
+	got, err := runBinary(bin, dir)
+	if err != nil || got.exit != 0 {
+		t.Fatalf("run: %v exit %d\n%s\n%s", err, got.exit, got.stdout, got.stderr)
 	}
+	xo := got.stdout
 	if !strings.HasSuffix(xo, "done\n") || !strings.Contains(xo, "read nope: NotFound") {
 		t.Errorf("unexpected output:\n%s", xo)
 	}
-	t.Logf("%s/%s: %d lines identical", runtime.GOOS, runtime.GOARCH, strings.Count(xo, "\n"))
+	t.Logf("%s/%s: %d lines", runtime.GOOS, runtime.GOARCH, strings.Count(xo, "\n"))
 }
 
 // TestErrnoTables compares the C library's strerror texts with the

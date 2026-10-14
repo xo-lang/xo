@@ -1,16 +1,18 @@
 #!/bin/sh
 # Measures bench/perf/sysio (decisions 0206 and 0213): builds the program
 # with the xo1 binary given for each backend and each variant (xo: the
-# Xo path; c: XO_LLRT_C=sysio; nolibc: the Xo path linked with
-# XO_NOLIBC=1, Linux only), runs every workload 5 times in a fresh
+# Xo path; nolibc: the Xo path linked with XO_NOLIBC=1, Linux only), runs every workload 5 times in a fresh
 # scratch directory, and prints "<workload> <backend> <variant> <min user
 # instructions> <min kernel instructions> <min ms> <checksum>". On Linux
 # the counts are perf stat's (run as a user who may count kernel events,
 # e.g. with sudo or kernel.perf_event_paranoid <= 1). On macOS they are
 # /usr/bin/time -l's: "instructions retired" of the process in the user
 # column, "-" for kernel, and user plus system milliseconds.
-# Decision 0198 deleted the C path of sysio (2026-10-13): naming it in
-# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
+# Decision 0198 deleted the C path of sysio (2026-10-13), so the c variant
+# (XO_LLRT_C=sysio) is gone: a deleted XO_LLRT_C name now fails the
+# build. A C baseline is the same program built with an earlier commit's
+# std as the std dir (bench/results/clocks-2026-10-14.md); earlier
+# results files keep the comparisons.
 #
 # usage: bench/perf/sysio/measure.sh <xo1 binary> <std dir> <out dir> <backend...>
 # WORKLOADS overrides the list; VARIANTS the variants.
@@ -21,9 +23,9 @@ OUT=$3
 shift 3
 SRC=$(cd "$(dirname "$0")" && pwd)
 OS=$(uname -s)
-DEFV="xo c nolibc"
+DEFV="xo nolibc"
 if [ "$OS" = Darwin ]; then
-	DEFV="xo c"
+	DEFV="xo"
 fi
 mkdir -p "$OUT"
 for be in "$@"; do
@@ -32,14 +34,13 @@ for be in "$@"; do
 		mkdir -p "$OUT/src-$be-$v"
 		cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be-$v/"
 		case $v in
-		c) env="XO_LLRT_C=sysio" ;;
 		nolibc) env="XO_NOLIBC=1" ;;
 		*) env="XO_LLRT_C=" ;;
 		esac
 		(cd "$OUT/src-$be-$v" && env $env "$XO" build --std="$STD" --backend="$be" -o "$OUT/t-$be-$v" . >/dev/null)
 	done
 done
-for w in ${WORKLOADS:-none read read_big write stat clock chan}; do
+for w in ${WORKLOADS:-none read read_big write stat clock chan sleep}; do
 	for be in "$@"; do
 		for v in ${VARIANTS:-$DEFV}; do
 			bu=""

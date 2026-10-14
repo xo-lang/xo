@@ -414,6 +414,19 @@ only: `FileInfo.path`, `create_temp`, `read_link`, `glob`, and
 `Env.program`, `home`, `config_dir`, and `cache_dir` (3.5). On other OSes
 `\` is an ordinary character of a name, as before.
 
+`cwd_path` (decision 0218) is the working directory as an absolute path
+with `/` separators, the directory `cwd()` is rooted at, asked of the OS
+(getcwd; `GetCurrentDirectoryW` on Windows) and never taken from `$PWD`
+alone: `$PWD` is used only when it names the same directory (it keeps
+the links the shell's path has, as Go's `os.Getwd` does), so a stale
+`$PWD` from a parent that started the program without a shell (`PWD=/`
+from the macOS Dock) is ignored. It is the same on every capability
+derived from `os.fs`. It fails with `Io` when the OS cannot give it
+(a removed directory). WASI has no working directory: there it fails
+with `Io` (planned: the wasm backend reports the call as unsupported
+today, as it does `cwd()`).
+A test's `MemFs` gives `/`, its root, where its `cwd()` is rooted.
+
 ```
 enum FsErr {
   NotFound(path: Str)
@@ -436,6 +449,7 @@ struct FileInfo {
 
 fn (f: Fs) sub(dir: Str) -> Fs                               // lazy: dir need not exist yet
 fn (f: Fs) cwd() -> Fs                                       // sub capability at the working directory
+fn (f: Fs) cwd_path() -> Str ! FsErr                         // the working directory's absolute path, from the OS
 fn (f: Fs) read_only() -> Fs
 fn (f: Fs) write_only() -> Fs                // reads fail with Denied
 fn (f: Fs) case_sensitive() -> Bool                          // of the underlying filesystem

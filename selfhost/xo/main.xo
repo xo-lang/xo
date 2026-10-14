@@ -55,7 +55,6 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
-use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
 use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/cli/modules
@@ -71,7 +70,7 @@ fn main(os: Os) ! {
     os.proc.exit(fr.code)
   }
   let args = fr.args
-  if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.env.get("PWD") ?? "", args)) }
+  if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", args)) }
   if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run(os, args)) }
   if let Some(code) = servers.forward_cli(os, args) {
     // a running `xo serve` answered check or query
@@ -87,8 +86,13 @@ fn main(os: Os) ! {
     os.proc.exit(core.run(os, args))
   }
   if !args.is_empty() && args[0] == "rtpack" {
-    // hidden: the release's prebuilt runtime (rtpack.xo)
+    // hidden: the release's prebuilt runtime (rtpack.xo); also `xo dev
+    // rtpack`
     os.proc.exit(rtpack_cmd(os, args[1..]))
+  }
+  if !args.is_empty() && args[0] == "dev" {
+    // hidden: the developer commands (dev.xo, decision 0209)
+    os.proc.exit(dev_cmd(os, args[1..]))
   }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
     os.stdio.eprint("xo: unknown command ${(if args.is_empty() { "" } else { args[0] }).quote()}\n\n${cmdhelp.top()}")
@@ -189,6 +193,9 @@ fn main(os: Os) ! {
 struct Native {
   bin: Str = ""
   tests: List[TestInfo] = []
+  /// The checker's std parses, for the next build of the process
+  /// (`xo dev build-each`, decision 0209).
+  pc: Map[Str, check.ParseEntry] = {}
 }
 
 /// The targets of --targets (internal/build ParseTargets): the host when
@@ -233,19 +240,36 @@ fn core_ctx(os: Os, o: Opts) -> core.Ctx {
   core.Ctx{std: o.std, wd: o.wd, offline: offline, work: work}
 }
 
+/// The names in $XO_LLRT_C (comma separated; `all` selects every C
+/// path). A name with no std/native/llrt/<name>_c.xo fails the build:
+/// decision 0198 deleted most C paths, and a deleted name that was
+/// ignored built the Xo path while claiming to test the C one
+/// (knowledgebase/gotchas/deleted-llrt-switch-still-set.md).
+fn llrt_c_names(os: Os, std: Str) -> List[Str] {
+  var names: List[Str] = []
+  for n0 in (os.env.get("XO_LLRT_C") ?? "").split(",") {
+    let n = n0.trim()
+    if n.is_empty() {
+      continue
+    }
+    if n != "all" && os.fs.read("${std}/native/llrt/${n}_c.xo").is_err() {
+      fail(os, "XO_LLRT_C=${n}: no C path named ${n} (std/native/llrt/${n}_c.xo); the C paths left are the std/native/llrt/*_c.xo files, decision 0198 deleted the others")
+    }
+    names.push(n)
+  }
+  names
+}
+
 /// The checker of a build: the native implementation modules when
 /// native, the module environment, and the check of dirs; a check that
 /// fails prints its diagnostics (or, with --json on build, the JSON
 /// result) and exits 1. Warnings are printed and the build goes on.
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
+  c.parse_cache = o.parse_cache
   c.native = native
   // the C paths of ported runtime modules (decisions 0193, 0206)
-  for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
-    if !n.trim().is_empty() {
-      c.llrt_c.push(n.trim())
-    }
-  }
+  c.llrt_c = llrt_c_names(os, o.std)
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"
@@ -359,7 +383,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let tu = lo.tu
   if backend == "wasm" {
     build_wasm(os, b.m, o.out, o.wd, o.dirs[0])
-    return Native{}
+    return Native{pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
   let mode = if tests { 1 } else { 0 }
@@ -401,7 +425,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if o.cmd == "asm" {
       os.stdio.print(code)
       lap(os, phases, "print", t)
-      return Native{}
+      return Native{pc: c.parse_cache}
     }
     let split = split_config(os)
     let parts = split_ir(code, split.modules)
@@ -460,7 +484,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var cur_tu = tu
   var cur_os = tgoos
   var mi = cur.m
-  var inl = arm64.inline_step(mi)
+  var inl = arm64.inline_step_jobs(mi, emit_jobs(os))
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
@@ -472,11 +496,12 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cur_tu = l.tu
       cur_os = tgoos
       mi = cur.m
-      inl = arm64.inline_step(mi)
+      inl = arm64.inline_step_jobs(mi, emit_jobs(os))
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
-    let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(cur.m, tgoos) }
+    let jobs = emit_jobs(os)
+    let p = if inl { arm64.generate_parallel(mi, tgoos, jobs) } else { arm64.generate_parallel(cur.m, tgoos, jobs) }
     t = lap(os, phases, "emit", t)
     if !p.err.is_empty() {
       fail(os, p.err)
@@ -521,16 +546,34 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, tg, false)
     let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos)
     let flags = ["-O2"] + lk.flags
-    var prog = s
-    if macho_as {
-      // the object from selfhost/macho (decision 0182)
-      prog = "${dir}/prog-${tgoos}.o"
-      match if tgoos == "linux" { macho.assemble_elf(code.bytes()) } else { macho.assemble(code.bytes()) } {
-        Ok(obj) => write_or_fail(os, dir, prog, obj)
-        Err(e) => fail(os, "assembler: ${e}")
+    // the program's assembly: one file, or the files of a parallel
+    // generation, which assemble apart (arm64.generate_parallel)
+    var progs = [s]
+    if p.parts.len() > 1 {
+      progs = []
+      for (i, part) in p.parts.indexed() {
+        let ps = "${dir}/prog-${tgoos}.${i}.s"
+        write_or_fail(os, dir, ps, part.bytes())
+        progs.push(ps)
       }
     }
-    let srcs = [prog] + lk.srcs
+    if macho_as {
+      // the objects from selfhost/macho (decision 0182), on parallel
+      // tasks for the parts
+      let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
+      var objs: List[Str] = []
+      for (i, r) in macho_objects(srcs, tgoos == "linux", jobs).indexed() {
+        let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
+        match r {
+          Ok(b) => write_or_fail(os, dir, obj, b)
+          Err(e) => fail(os, "assembler: ${e}")
+        }
+        objs.push(obj)
+      }
+      progs = objs
+      t = lap(os, phases, "assemble", t)
+    }
+    let srcs = progs + lk.srcs
     let tls = needs_tls(code) && !nolibc(os, tgoos)
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -546,7 +589,18 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
-      let msg = cc_build(os, ctx, cc, flags, srcs, bin, tls)
+      var lsrcs = srcs
+      if progs.len() > 1 && !macho_as {
+        // the parts assembled by parallel cc processes, then linked
+        let (objs, why) = cc_assemble(os, cc, flags + memo_sysroot(os, ctx), progs, jobs)
+        if !why.is_empty() {
+          os.stdio.eprint(why)
+          fail(os, "${cc} failed")
+        }
+        lsrcs = objs + lk.srcs
+        t = lap(os, phases, "assemble", t)
+      }
+      let msg = cc_build(os, ctx, cc, flags, lsrcs, bin, tls)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
@@ -557,9 +611,20 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     bins.push((tg, bin))
   }
   if o.cmd == "asm" {
-    return Native{}
+    return Native{pc: c.parse_cache}
   }
   finish(os, o, c, root, bins, tests)
+}
+
+/// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
+/// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
+/// the cores, at most 8. The output does not depend on it.
+fn emit_jobs(os: Os) -> Int {
+  let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
+  if j > 0 {
+    return j
+  }
+  ncpu(os).min(8)
 }
 
 /// The linker of a host link with no --ld (decision 0182 next step 1):
@@ -631,7 +696,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "add_landings", t)
   b.cleanup_all()
   t = lap(os, o.phases, "cleanup", t)
-  b.insert_rc()
+  b.insert_rc_jobs(emit_jobs(os))
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t}
 }
@@ -645,7 +710,7 @@ fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], 
     host_bin = p
   }
   if tests {
-    return Native{bin: host_bin, tests: test_infos(c, root, o.wd)}
+    return Native{bin: host_bin, tests: test_infos(c, root, o.wd), pc: c.parse_cache}
   }
   if o.cmd == "build" {
     if o.json {
@@ -656,7 +721,7 @@ fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], 
       }
     }
   }
-  Native{bin: host_bin}
+  Native{bin: host_bin, pc: c.parse_cache}
 }
 
 /// The sources and flags a native link adds to the program's code

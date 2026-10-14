@@ -33,9 +33,9 @@ func genDiffFile() string {
 
 // TestGenDiff compares the values testing.gen makes on the Go backend
 // and on both native backends, with the scalar values in Xo
-// (std/native/llrt/gen.xo, decision 0195) and with their C path
-// (XO_LLRT_C=gen): every test fails, printing its values, and the
-// reports are the same.
+// (std/native/llrt/gen.xo, decision 0195; decision 0198 deleted the C
+// path): every test fails, printing its values, and the reports are the
+// same.
 func TestGenDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds test binaries on every backend")
@@ -54,13 +54,10 @@ func TestGenDiff(t *testing.T) {
 	if goCode == 0 || strings.Count(goOut, "--- FAIL") < 550 {
 		t.Fatalf("go backend: exit %d, %d failures, want most of 600\n%s", goCode, strings.Count(goOut, "--- FAIL"), goOut)
 	}
-	for _, p := range []string{"", "gen"} {
-		t.Setenv("XO_LLRT_C", p)
-		for _, be := range backends {
-			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
-			if code != goCode || out != goOut {
-				t.Errorf("XO_LLRT_C=%q on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", p, be, goCode, code, goOut, be, out)
-			}
+	for _, be := range backends {
+		code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
+		if code != goCode || out != goOut {
+			t.Errorf("%s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", be, goCode, code, goOut, be, out)
 		}
 	}
 }

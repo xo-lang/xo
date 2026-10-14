@@ -309,6 +309,9 @@ fn memfs_sub(f: Fs, dir: Str) -> Fs {
 
 fn memfs_cwd(f: Fs) -> Fs { f }
 
+// A MemFs's working directory is its root (memfs_cwd).
+fn memfs_cwd_path(_f: Fs) -> Str ! FsErr { "/" }
+
 fn memfs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
 
 fn memfs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }

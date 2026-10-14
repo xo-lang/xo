@@ -1,0 +1,7 @@
+pub fn shout(os: Os) { // ERROR XO0701 "pure, but performs `stdio`"
+  os.stdio.println("hi")
+}
+
+fn main(os: Os) {
+  shout(os)
+}

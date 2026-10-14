@@ -32,9 +32,9 @@ pub fn run(os: Os, args: List[Str]) -> Int uses env, fs, stdio, proc {
   }
 }
 
-/// The working directory: $PWD.
+/// The working directory from the OS (decision 0218), $PWD if that fails.
 fn wd_of(os: Os) -> Str {
-  os.env.get("PWD") ?? "."
+  os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "."
 }
 
 /// p cleaned (filepath.Clean of a slash path).

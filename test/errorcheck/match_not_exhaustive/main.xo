@@ -1,0 +1,16 @@
+enum Color {
+  Red
+  Green
+  Blue
+}
+
+fn name(c: Color) -> Str {
+  match c { // ERROR XO0301
+    Red => "red"
+    Green => "green"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(name(Color.Blue))
+}

@@ -6,6 +6,66 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B08): SHA-512 is Xo
+  (std/native/llrt/digest.xo, called by the C Ed25519 through
+  cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
+  on LLVM, bench/results/sha512-rand-2026-10-14.md) and Rand is Xo
+  (std/native/llrt/rand.xo over getrandom, getentropy, BCryptGenRandom,
+  or the test world's seeded draws, the same values as before). The C
+  SHA-512 is deleted; the C Rand functions stay until the seed is a
+  release with this change (gotchas/runtime-c-the-seed-still-calls.md).
+- The clocks are read from Xo on every OS (work item B01, decision
+  0213 item 6): Clock.now on macOS (clock_gettime_nsec_np) and Windows
+  (GetSystemTimePreciseAsFileTime), and the monotonic clock of the
+  scheduler, timers, and budgets everywhere (the vDSO on Linux,
+  libSystem on macOS, QueryPerformanceCounter on Windows), the clock of
+  the build chosen once into a word so the hot path tests no target.
+  The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
+  exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
+  workload.
+- Native runtime: the C with no caller is deleted (zero-C audit item
+  W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
+  lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
+  their std/native/rt.xo declarations), and the -D flags of deleted C
+  paths that xo's io_flags still added. A build with an `XO_LLRT_C`
+  name that has no C path (no `std/native/llrt/<name>_c.xo`; `all`
+  aside) now fails with `XO_LLRT_C=<name>: no C path named <name>`
+  instead of silently building the Xo path; the live names are net,
+  sched, and text.
+- Faster native builds (decision 0220 stage 1): the arm64 backend
+  generates a large program's functions in parts on parallel tasks and
+  assembles the parts apart before one link; reference counting and the
+  inlined module's verification run on tasks too; the runtime flags come
+  from one scan of the assembly. xo builds itself in 59.00 s on the
+  development Mac (was 337.28 s) and 49.83 s on r8g.8xlarge with
+  `XO_EMIT_JOBS=16` (was 496.82 s), the output byte identical for any
+  job count. `XO_EMIT_JOBS` sets the tasks (default the cores, at most
+  8); `--phase-times` prints the `assemble` phase.
+- Developer tooling (decision 0209): hidden `xo dev goldens|errorcheck|
+  codegen|dump|rtpack|build-each` in xo. Golden programs are built,
+  run, and compared byte for byte by xo itself, in parallel workers,
+  largest first, with passes cached by input hash (arm64 set: 49.74 s
+  with the Python script, 16.93 s with `-j 8`, 0.21 s cached). Error
+  check and codegen pattern suites start in test/ (decision 0217).
+  selfhost/macho assembles `svc`, so linux/arm64 `--ld=macho` builds
+  work again.
+- `xo lsp` answers `textDocument/completion` and
+  `textDocument/signatureHelp` (decision 0219): fields and methods
+  after `x.` (prelude methods included), variants and statics after a
+  type name, public members after a package name, and elsewhere the
+  locals in scope, the module's names, imports, prelude names, and
+  keywords, with the hover's declaration line and doc comment, ranked
+  first when their type is the one expected at the cursor; signature
+  help shows the callee and its active parameter. A dangling `.` or an
+  open call no longer needs to parse: the server checks a copy patched
+  at the cursor.
+- std: `Fs.cwd_path()` is the working directory's absolute path from the
+  OS (decision 0218), on the Go, arm64, and LLVM backends; a test's MemFs
+  gives `/`. The toolchain uses it instead of `$PWD`, so `xo lsp` started
+  without a shell (VS Code from the macOS Dock passes `PWD=/`) resolves
+  std paths again and Go to Definition into std works.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop

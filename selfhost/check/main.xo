@@ -16,7 +16,7 @@
 // prints absolute and for xo.mod and xo.work files above it; XO_MODCACHE,
 // XO_OFFLINE, and XO_WORK are read as internal/mod reads them.
 
-fn main(os: Os) ! {
+fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0
   var each = false
   var native = false
@@ -26,9 +26,9 @@ fn main(os: Os) ! {
   var diags = true
   var full = true
   var std_dir = "std"
-  var wd = os.env.get("PWD") ?? ""
+  var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
-  for a in os.env.args() {
+  for a in args {
     if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
     } else if a.starts_with("--section=") {
@@ -68,12 +68,19 @@ fn main(os: Os) ! {
       runs.push([d])
     }
   }
+  // the std parses carried from one checker to the next (decision 0209);
+  // XO_CHECK_NO_PARSE_CACHE=1 parses std every time (to measure it)
+  let reuse = (os.env.get("XO_CHECK_NO_PARSE_CACHE") ?? "") != "1"
+  var pc: Map[Str, ParseEntry] = {}
   if repeat > 0 {
     let t0 = os.clock.now()
     var mods = 0
     for _ in 0..repeat {
       for r in runs {
         var c = new_checker(os.fs, std_dir)
+        if reuse {
+          c.parse_cache = pc
+        }
         c.native = native
         c.set_mod_env(wd, modcache, home, xdg, offline, work)
         c.cbind_dir = cbind
@@ -82,6 +89,7 @@ fn main(os: Os) ! {
           Ok(_) => mods += c.root_mods.len()
           Err(e) => fault("check: ${e}")
         }
+        pc = c.parse_cache
       }
     }
     let elapsed = os.clock.now() - t0
@@ -94,11 +102,16 @@ fn main(os: Os) ! {
       out.write("=== check ${r[0]}\n")
     }
     var c = new_checker(os.fs, std_dir)
+    if reuse {
+      c.parse_cache = pc
+    }
     c.native = native
     c.set_mod_env(wd, modcache, home, xdg, offline, work)
     c.cbind_dir = cbind
     c.gobind_dir = gobind
-    match c.check_dirs(r) {
+    let checked = c.check_dirs(r)
+    pc = c.parse_cache
+    match checked {
       Ok(_) => {
         if c.unsupported.is_empty() {
           out.write(c.dump(names, types, sigs, diags, full))
@@ -110,4 +123,21 @@ fn main(os: Os) ! {
     }
   }
   os.stdio.print(out.freeze())
+}
+
+/// dump_main is this component's command line with args, for `xo dev
+/// dump` (decision 0209) as for the component's own binary; the exit
+/// status.
+pub fn dump_main(os: Os, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  match dump_body(os, args) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("${e.debug()}")
+      1
+    }
+  }
+}
+
+fn main(os: Os) {
+  os.proc.exit(dump_main(os, os.env.args()))
 }

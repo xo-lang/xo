@@ -192,15 +192,38 @@ fn info(h: Int, link: Bool) -> (Stat, Int) {
 }
 
 /// GetSystemTimePreciseAsFileTime: Unix nanoseconds (as xo_win.c's
-/// clock_gettime of CLOCK_REALTIME).
-pub fn clock_ns() -> Int {
-  let buf = rt.sys_buf()
-  sys_windows.GetSystemTimePreciseAsFileTime(rt.bytes_addr(buf))
-  (rt.bytes_word(buf, 0) - 116444736000000000) * 100
+/// clock_gettime of CLOCK_REALTIME did), the FILETIME through the 8
+/// bytes of scratch at a.
+pub fn clock_ns(a: Int) -> Int {
+  sys_windows.GetSystemTimePreciseAsFileTime(a)
+  // 100 ns intervals since 1601-01-01
+  rt.int_wrap(2, rt.int_wrap(1, rt.mem_load(a, 0, 8), 116444736000000000), 100)
+}
+
+/// QueryPerformanceCounter in nanoseconds (as xo_win.c's clock_gettime
+/// of CLOCK_MONOTONIC did), the counter through the 8 bytes of scratch at
+/// a (16 bytes). The frequency is read once and kept in word 2 of
+/// rt.sys_words.
+pub fn mono_ns(a: Int) -> Int {
+  let w = rt.sys_words()
+  var q = rt.slot_load[Int](w, 2, 0)
+  if q <= 0 {
+    let _f = sys_windows.QueryPerformanceFrequency(a)
+    q = rt.mem_load(a, 0, 8)
+    if q <= 0 {
+      q = 1
+    }
+    rt.slot_store[Int](w, 2, q, 0)
+  }
+  let _c = sys_windows.QueryPerformanceCounter(a)
+  let c = rt.mem_load(a, 0, 8)
+  // whole seconds and the rest, as the C did: no overflow for a
+  // frequency below 9.2e9
+  rt.int_wrap(0, rt.int_wrap(2, c / q, 1000000000), rt.int_wrap(2, c % q, 1000000000) / q)
 }
 
 /// BCryptGenRandom of n bytes, 256 at a time (as the C runtime's
-/// cr_entropy): the bytes and 0, or EIO.
+/// cr_entropy did): the bytes and 0, or EIO.
 pub fn random(n: Int) -> (Bytes, Int) {
   let buf = rt.bytes_buf(n)
   var off = 0

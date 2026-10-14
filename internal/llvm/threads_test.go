@@ -32,9 +32,8 @@ var rtDir = filepath.Join("..", "..", "std", "llrt")
 // the test when the host's clang cannot. Where ThreadSanitizer compiles
 // but cannot run, it compiles without it.
 var (
-	cExportsOnce sync.Once
-	cExportsLL   string
-	cExportsErr  error
+	cExportsMu sync.Mutex
+	cExportsLL = map[string]string{}
 )
 
 // cOnly is the sources of a C only test of the runtime (a file of
@@ -42,27 +41,37 @@ var (
 // C file and the LLVM IR of an empty program, which defines the C ABI
 // exports the runtime calls (std/native/llrt/cabi.xo, decision 0207).
 func cOnly(t *testing.T, src string) []string {
+	return cOnlyWith(t, src, "cexports", "fn main() {}\n")
+}
+
+// cOnlyWith is cOnly with the program main (in the build directory dir)
+// in place of the empty one: a feature's exports
+// (std/native/llrt/cabi_<feature>.xo) are built only into a program
+// that uses the feature.
+func cOnlyWith(t *testing.T, src, dir, main string) []string {
 	t.Helper()
-	cExportsOnce.Do(func() {
-		dir := filepath.Join(testDir, "cexports")
-		if cExportsErr = os.MkdirAll(dir, 0o755); cExportsErr != nil {
-			return
-		}
-		if cExportsErr = os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main() {}\n"), 0o644); cExportsErr != nil {
-			return
-		}
-		ir, err := xotool.LLVMIR(dir)
-		if err != nil {
-			cExportsErr = err
-			return
-		}
-		cExportsLL = filepath.Join(dir, "exports.ll")
-		cExportsErr = os.WriteFile(cExportsLL, ir, 0o644)
-	})
-	if cExportsErr != nil {
-		t.Fatalf("the C ABI exports: %v", cExportsErr)
+	cExportsMu.Lock()
+	defer cExportsMu.Unlock()
+	if ll, ok := cExportsLL[dir]; ok {
+		return []string{src, ll}
 	}
-	return []string{src, cExportsLL}
+	d := filepath.Join(testDir, dir)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "main.xo"), []byte(main), 0o644); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	ir, err := xotool.LLVMIR(d)
+	if err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	ll := filepath.Join(d, "exports.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	cExportsLL[dir] = ll
+	return []string{src, ll}
 }
 
 func tsanBuild(t *testing.T, flags, srcs []string) string {
@@ -201,14 +210,12 @@ func TestRuntimeThreads(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "rc_threads.c")
 	// the counts in Xo (std/native/llrt/rc.xo through the C ABI exports,
-	// decision 0207 stage 2), then the C path (XO_LLRT_C=rc's -DXO_RC_C)
-	for _, flags := range [][]string{nil, {"-DXO_RC_C"}} {
-		bin := tsanBuild(t, flags, cOnly(t, src))
-		out := runTSan(t, bin, ".")
-		for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal", "model"} {
-			if !strings.Contains(out, name+": ok") {
-				t.Errorf("%v: test %s did not pass:\n%s", flags, name, out)
-			}
+	// decision 0207 stage 2; decision 0198 deleted the C path)
+	bin := tsanBuild(t, nil, cOnly(t, src))
+	out := runTSan(t, bin, ".")
+	for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal", "model"} {
+		if !strings.Contains(out, name+": ok") {
+			t.Errorf("test %s did not pass:\n%s", name, out)
 		}
 	}
 	if testing.Short() {
@@ -225,31 +232,27 @@ func TestRuntimeThreads(t *testing.T) {
 // 0207 stage 3): random sizes over every class and malloc, resizes,
 // frees on other threads, and waves of blocks freed by one thread, with
 // every block's contents checked, for the heap in Xo
-// (std/native/llrt/alloc.xo through the C ABI exports) and for the C
-// path (XO_LLRT_C=alloc's -DXO_ALLOC_C): under ThreadSanitizer, then
-// optimized with more iterations.
+// (std/native/llrt/alloc.xo through the C ABI exports; decision 0198
+// deleted the C path): under ThreadSanitizer, then optimized with more
+// iterations.
 func TestRuntimeAlloc(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "alloc_threads.c")
-	for _, flags := range [][]string{nil, {"-DXO_ALLOC_C"}} {
-		bin := tsanBuild(t, flags, cOnly(t, src))
-		out := runTSan(t, bin, ".")
-		for _, name := range []string{"solo", "threads", "waves"} {
-			if !strings.Contains(out, name+": ok") {
-				t.Errorf("%v: test %s did not pass:\n%s", flags, name, out)
-			}
+	bin := tsanBuild(t, nil, cOnly(t, src))
+	out := runTSan(t, bin, ".")
+	for _, name := range []string{"solo", "threads", "waves"} {
+		if !strings.Contains(out, name+": ok") {
+			t.Errorf("test %s did not pass:\n%s", name, out)
 		}
 	}
 	if testing.Short() {
 		return
 	}
-	for _, flags := range [][]string{nil, {"-DXO_ALLOC_C"}} {
-		opt := exe(filepath.Join(t.TempDir(), "opt"))
-		if err := xotool.CompileC(append([]string{"-O2", "-DITER=30000"}, flags...), cOnly(t, src), opt); err != nil {
-			t.Fatal(err)
-		}
-		runTSan(t, opt, ".")
+	opt := exe(filepath.Join(t.TempDir(), "opt"))
+	if err := xotool.CompileC([]string{"-O2", "-DITER=30000"}, cOnly(t, src), opt); err != nil {
+		t.Fatal(err)
 	}
+	runTSan(t, opt, ".")
 }
 
 // TestRuntimeTasks runs the C stress test of the task runtime (decision

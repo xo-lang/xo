@@ -443,6 +443,9 @@ struct FileInfo {
 interface Fs {
   fn sub(self, dir: Str) -> Fs
   fn cwd(self) -> Fs
+  /// The working directory as an absolute path with / separators, from
+  /// the OS (getcwd), not $PWD (std.md 3.1, decision 0218).
+  fn cwd_path(self) -> Str ! FsErr
   fn read_only(self) -> Fs
   fn write_only(self) -> Fs
   fn case_sensitive(self) -> Bool
