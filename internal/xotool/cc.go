@@ -196,13 +196,15 @@ func (e *ClangError) Error() string { return "clang: " + e.Output }
 // ($XO_CLANG, else clang) and flags, with unwind tables (the runtime
 // raises faults through every frame, decision 0085), the -l flags after
 // the sources, and -lm -lpthread (or lld on Windows); on macOS it tries
-// the SDKs of sysrootCandidates until one links. It does not link the
-// TLS library: a program using std/http's TLS is built with Build.
+// the SDKs of sysrootCandidates until one links. When generated code in
+// srcs calls std/http's runtime it also compiles with the TLS library's
+// flags and links the library (tls.go), built for the sanitizers of flags.
 func CompileC(flags, srcs []string, bin string) error {
 	clang, err := Clang()
 	if err != nil {
 		return err
 	}
+	tls := usesTLS(srcs)
 	var other, libs []string
 	for _, f := range flags {
 		if strings.HasPrefix(f, "-l") && len(f) > 2 {
@@ -216,7 +218,18 @@ func CompileC(flags, srcs []string, bin string) error {
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}
+		var tlsLink []string
+		if tls {
+			// std/http's TLS (decision 0105)
+			c, l, err := tlsArgs(clang, other, root)
+			if err != nil {
+				return err.Error(), err
+			}
+			args = append(args, c...)
+			tlsLink = l
+		}
 		args = append(args, srcs...)
+		args = append(args, tlsLink...)
 		args = append(args, libs...)
 		if runtime.GOOS == "windows" {
 			args = append(args, "-fuse-ld=lld", "-Wl,/Brepro")

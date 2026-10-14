@@ -297,6 +297,8 @@ const ENCODINGS: List[(Str, Int)] = [
   ("nop", 0xd503201f),
   ("ret x1", 0xd65f0020),
   ("brk #0xf000", 0xd43e0000),
+  ("svc #0", 0xd4000001),
+  ("svc #0x80", 0xd4001001),
   ("lsr x0, x1, #3", 0xd343fc20),
   ("lsr x0, x1, x2", 0x9ac22420),
   ("ror x0, x1, #7", 0x93c11c20),

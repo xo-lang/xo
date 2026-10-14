@@ -7,7 +7,7 @@
 # job costs its test time plus about a minute of start, not 5 to 6
 # minutes of setup.
 #
-# Usage: scripts/warm-run.sh ARCH COMMIT CMD   (ARCH arm64 or amd64)
+# Usage: scripts/warm-run.sh ARCH COMMIT CMD   (ARCH arm64, amd64, arm64-big, amd64-big)
 #   CMD runs in ~/xo checked out at COMMIT, with go on PATH; its output
 #   goes to $XO_REMOTE_OUT (default bench/results/remote/warm-<commit>.log).
 #   Exit status is CMD's.
@@ -45,11 +45,15 @@ fi
 
 arch=$1 commit=$2 cmd=$3
 case "$arch" in
-  arm64) TYPE=${XO_WARM_TYPE:-r8g.4xlarge}; AMIARCH=arm64;;
-  amd64) TYPE=${XO_WARM_TYPE:-m7i.4xlarge}; AMIARCH=x86_64;;
-  *) echo "warm-run: ARCH must be arm64 or amd64" >&2; exit 2;;
+  arm64) TYPE=${XO_WARM_TYPE:-r8g.4xlarge}; AMIARCH=arm64; goarch=arm64;;
+  amd64) TYPE=${XO_WARM_TYPE:-m7i.4xlarge}; AMIARCH=x86_64; goarch=amd64;;
+  # the big warm machines (32 vCPUs) for runs that need the cores: same
+  # reuse of ~/.cache/xo (seed chain, xo1, runtime objects) between jobs
+  arm64-big) TYPE=${XO_WARM_TYPE:-r8g.8xlarge}; AMIARCH=arm64; goarch=arm64;;
+  amd64-big) TYPE=${XO_WARM_TYPE:-c7i.8xlarge}; AMIARCH=x86_64; goarch=amd64;;
+  *) echo "warm-run: ARCH must be arm64, amd64, arm64-big or amd64-big" >&2; exit 2;;
 esac
-root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
+root=${XO_REPO:-$(cd "$(dirname "$0")/.." && pwd)}; cd "$root"
 full=$(git rev-parse "$commit^{commit}")
 out=${XO_REMOTE_OUT:-$root/bench/results/remote/warm-${full:0:10}.log}
 mkdir -p "$(dirname "$out")"
@@ -85,12 +89,13 @@ WantedBy=multi-user.target
 UNIT
 systemctl enable --now xo-warm-cap.service
 dnf install -y git clang llvm gcc tar gzip make nodejs >/var/log/xo-setup.log 2>&1
-curl -fsSL https://go.dev/dl/go$GOVER.linux-$arch.tar.gz | tar -C /usr/local -xz
+curl -fsSL https://go.dev/dl/go$GOVER.linux-$goarch.tar.gz | tar -C /usr/local -xz
 touch /var/lib/xo-ready
 EOF
 )
   log "creating warm $arch instance ($TYPE, on demand, stops when idle)"
   id=$(aws ec2 run-instances --image-id "$ami" --instance-type "$TYPE" --key-name xo-ci --security-group-ids "$sg" \
+    --iam-instance-profile Name=xo-ci-seed-read \
     --instance-initiated-shutdown-behavior stop \
     --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=120,VolumeType=gp3,DeleteOnTermination=true}' \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=xo-warm},{Key=role,Value=$arch},{Key=purpose,Value=xo-warm-run}]" \
