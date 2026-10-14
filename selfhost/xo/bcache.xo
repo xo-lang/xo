@@ -1,15 +1,16 @@
-// The back-end cache (decision 0220 addendum): the objects of the parts
-// of a split arm64 assembly by the hash of their assembly and the
-// assembler's identity, in <user cache>/xo/backend ($XO_BACKEND_CACHE_DIR),
-// so an unchanged part is not assembled again. $XO_BACKEND_CACHE=off turns
-// it off. Entries are files named by their key; a hit refreshes the
-// file's modification time, and a store prunes the directory (at most
-// once an hour) of entries unused for $XO_BACKEND_CACHE_DAYS days
-// (default 7), then of the least recently used past
-// $XO_BACKEND_CACHE_MAX bytes (default 8 GiB).
+// The back-end cache (decision 0220 addendum) in <user cache>/xo/backend
+// ($XO_BACKEND_CACHE_DIR): obj/, the objects of the parts of a split arm64
+// assembly by the hash of their assembly and the assembler's identity
+// (stage A), and fn/, the canonical texts of functions by the hash of
+// what their code depends on (stage B, selfhost/arm64 fcache.xo).
+// $XO_BACKEND_CACHE: on (the default), verify (every function generated
+// and compared with its entry; a difference fails the build), off. Entries
+// are files named by their key, marked used and pruned by selfhost/prune
+// (decision 0223).
 
 use github.com/xo-lang/xo/selfhost/arm64
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/prune
 use github.com/xo-lang/xo/selfhost/ssa
 use std/crypto
 
@@ -98,12 +99,12 @@ fn entry_path(dir: Str, kind: Str, key: Str) -> Str {
   "${dir}/${kind}/${key[0..2]}/${key}"
 }
 
-/// The entry at path, its modification time refreshed; None when the
+/// The entry at path, marked used (prune.mark_used); None when the
 /// cache does not hold it.
 fn cache_get(os: Os, path: Str) -> Option[Bytes] {
   match os.fs.read(path) {
     Ok(b) => {
-      os.fs.set_modified(path, os.clock.now()).ignore_err("only the prune order")
+      prune.mark_used(os.fs, os.clock, path)
       Some(b)
     }
     Err(_) => None
@@ -129,61 +130,11 @@ fn cache_put(os: Os, path: Str, data: Bytes) {
   }
 }
 
-/// At most once an hour (a stamp file): removes the entries of dir unused
-/// for $XO_BACKEND_CACHE_DAYS days (default 7), then the least recently
-/// used ones while the rest is over $XO_BACKEND_CACHE_MAX bytes (default
-/// 8 GiB), down to three quarters of it; temporary files over an hour
-/// old go too.
+/// Prunes the cache (prune.run, decision 0223, at most once an hour):
+/// the entries unused for a week ($XO_CACHE_MAX_AGE), then the least
+/// recently used past 8 GiB ($XO_BACKEND_CACHE_MAX bytes, or
+/// $XO_CACHE_MAX_GB).
 fn prune_backend_cache(os: Os, dir: Str) {
-  let stamp = "${dir}/prune-stamp"
-  match os.fs.stat(stamp) {
-    Ok(Some(fi)) => {
-      if os.clock.since(fi.modified) < 1h {
-        return
-      }
-    }
-    _ => {}
-  }
-  os.fs.create_dir_all(dir).ignore_err("the stamp write fails then")
-  os.fs.write(stamp, b"").ignore_err("the stamp only limits prunes")
-  let all = match os.fs.walk(dir) {
-    Ok(fs) => fs
-    Err(_) => return
-  }
-  let days = Int.parse(os.env.get("XO_BACKEND_CACHE_DAYS") ?? "") ?? 0
-  let max_age = (if days > 0 { days } else { 7 }) * 24h
-  let max0 = Int.parse(os.env.get("XO_BACKEND_CACHE_MAX") ?? "") ?? 0
-  let limit = if max0 > 0 { max0 } else { 8 * 1024 * 1024 * 1024 }
-  var kept: List[FileInfo] = []
-  var total = 0
-  for fi in all {
-    if fi.is_dir || fi.name == "prune-stamp" {
-      continue
-    }
-    let age = os.clock.since(fi.modified)
-    if fi.name.contains(".tmp-") {
-      if age > 1h {
-        os.fs.remove(fi.path).ignore_err("another process may own it")
-      }
-      continue
-    }
-    if age > max_age {
-      os.fs.remove(fi.path).ignore_err("another process may have removed it")
-      continue
-    }
-    kept.push(fi)
-    total += fi.size
-  }
-  if total <= limit {
-    return
-  }
-  for fi in kept.sort_by(fn(f) { f.modified.unix_millis() }) {
-    if total <= limit / 4 * 3 {
-      break
-    }
-    match os.fs.remove(fi.path) {
-      Ok(_) => total -= fi.size
-      Err(_) => {}
-    }
-  }
+  let p = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: 8 * prune.GB})
+  let _s = prune.run(os.fs, os.clock, dir, cap_env(os, p, "XO_BACKEND_CACHE_MAX"))
 }
