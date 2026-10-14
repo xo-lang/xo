@@ -127,6 +127,10 @@ struct Inst {
   /// K_PMOVE: the copies of shrink wrapping (shrink.xo), whose two sides
   /// must not share a location (never coalesced)
   nocoal: Bool = false
+  /// K_CALL: a tail call (shrink.xo mark_tails): its results are the
+  /// function's, returned by nothing but moves and jumps; emitted as the
+  /// frame undone and a branch
+  tail: Bool = false
   /// the landing pad block of a call or of a fault stub's call (decision
   /// 0085), -1 for none
   pad: Int = -1

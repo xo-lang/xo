@@ -1027,6 +1027,9 @@ fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
 /// Emits a copy of latch t (after the branch to its other target).
 fn (var g: G) emit_latch(var b: List[Str], t: Int, next: Int) {
   for inst in g.blocks[t].insts {
+    if g.ended {
+      break
+    }
     g.emit_inst(b, inst, next)
   }
 }

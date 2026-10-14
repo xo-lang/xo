@@ -250,6 +250,12 @@ struct G {
   shrink: Bool = false
   fl: List[Bool] = []
   pro: Int = -1
+  /// per block: 1 a save block, 2 a restore block, 0 neither; and
+  /// whether it is in the framed region (shrink.xo)
+  fedge: List[Int] = []
+  region: List[Bool] = []
+  /// the current block's code ended at a tail call
+  ended: Bool = false
   stubs: List[Str] = []
   nstub: Int = 0
   /// the memos (a block's memo is an index into them)
@@ -336,6 +342,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.shrink = false
   g.fl = []
   g.pro = -1
+  g.fedge = []
+  g.region = []
   g.stubs = []
   g.nstub = 0
   g.memos = []
