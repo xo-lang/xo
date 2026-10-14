@@ -7,6 +7,10 @@ on 2026-10-14 at 10:45, so a new session can resume (owner,
 2026-10-14). The tools are in scripts/lead (its README says how to run
 them).
 
+The main checkout is ~/godev/claude-space/xolang/xo
+(moved from claude-space/codelang on 2026-10-14; the lead scripts use the
+new path).
+
 ## Main
 
 - origin/main 310d3850, version 0.10.0. Seed 0.10.0-23ce8ce2 is in the
