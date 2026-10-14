@@ -216,7 +216,9 @@ seed 0.9.0-5e21dc31 lowers Rand to it when it builds the checkout's xo
 (gotchas/runtime-c-the-seed-still-calls.md); delete it after the next
 seed. SHA-512 0.887 of the C's instructions on arm64, 0.641 on LLVM.
 TestCryptoDiff (4,086 operations), goldens 180 of 180 on both backends,
-seeded Rand identical to the Go backend, TESTWASM, FIXEDPOINT.
+seeded Rand identical to the Go backend, TestSelfhostWasm 133 pass, 21
+unsupported, 0 fail of 154, and the fixed point from the prebuilt seed
+(s2 and s3 identical, 88,878,128 bytes).
 
 **W0 done (2026-10-14, commit 83eef9ee on the W0 branch).** The seven
 groups are deleted: 141 lines (xo_rt.c 49, xo_std.c 59, xo_bytes.c 33;
