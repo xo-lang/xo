@@ -1,0 +1,15 @@
+enum E {
+  Bad
+} derive Display
+
+fn may(n: Int) -> Int ! E {
+  if n < 0 {
+    return Err(E.Bad)
+  }
+  n
+}
+
+fn main(os: Os) {
+  may(1) // ERROR XO0201
+  os.stdio.println("x")
+}

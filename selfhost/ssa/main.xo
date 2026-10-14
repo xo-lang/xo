@@ -15,7 +15,7 @@
 
 use github.com/xo-lang/xo/selfhost/check
 
-fn main(os: Os) ! {
+fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0
   var each = false
   var all = false
@@ -24,7 +24,7 @@ fn main(os: Os) ! {
   var std_dir = "std"
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
-  for a in os.env.args() {
+  for a in args {
     if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
     } else if a.starts_with("--std=") {
@@ -194,4 +194,21 @@ pub fn (var b: Builder) dump(all: Bool, stages: Bool) -> Str {
     out.write(l)
   }
   out.freeze()
+}
+
+/// dump_main is this component's command line with args, for `xo dev
+/// dump` (decision 0209) as for the component's own binary; the exit
+/// status.
+pub fn dump_main(os: Os, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  match dump_body(os, args) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("${e.debug()}")
+      1
+    }
+  }
+}
+
+fn main(os: Os) {
+  os.proc.exit(dump_main(os, os.env.args()))
 }

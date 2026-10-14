@@ -259,7 +259,7 @@ func moduleDirs(t testing.TB, root string) []string {
 		}
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
-		if d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || rel == "std" || rel == "runs" || rel == "output" || rel == hatchesFixture) {
+		if d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || rel == "std" || rel == "runs" || rel == "output" || rel == "test" || rel == hatchesFixture) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(p, ".xo") {

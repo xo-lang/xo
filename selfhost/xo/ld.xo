@@ -15,14 +15,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   if ctx.goos != "darwin" {
     return "--ld=macho links darwin/arm64 executables on darwin only"
   }
-  // srcs: the program, the runtime's source, then objects (the zone
-  // data) and C sources to compile
-  var objs = [srcs[0]]
-  for src in srcs[2..] {
-    if !src.ends_with(".o") {
-      return "--ld=macho links no C sources (${src}): link with cc"
-    }
-    objs.push(src)
+  let (objs, bad) = ld_objects(srcs)
+  if !bad.is_empty() {
+    return bad
   }
   let (obj, lib) = shipped_runtime(os, ctx, ctx.std, flags, tls)
   if obj.is_empty() {
@@ -68,16 +63,35 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   }
 }
 
-/// The ELF link of stage 3: the program's object (and the zone data's)
+/// The objects a --ld=macho link takes from srcs, and why not ("" when
+/// it can). srcs are the program's objects (one, or one per part of a
+/// parallel generation, decision 0220), the runtime's source (xo_rt.c,
+/// which the pack's object replaces), then objects (the zone data) and C
+/// sources, which this linker cannot compile. Taking only srcs[0] as the
+/// program dropped the later parts of a split program and read the
+/// runtime's source as a C source to compile
+/// (gotchas/macho-link-split-objects.md).
+fn ld_objects(srcs: List[Str]) -> (List[Str], Str) {
+  var objs: List[Str] = []
+  for src in srcs {
+    if base_name(src) == "xo_rt.c" {
+      continue
+    }
+    if !src.ends_with(".o") {
+      return ([], "--ld=macho links no C sources (${src}): link with cc")
+    }
+    objs.push(src)
+  }
+  (objs, "")
+}
+
+/// The ELF link of stage 3:the program's object (and the zone data's)
 /// with the linux/arm64 pack's runtime (and TLS library) into out; "" on
 /// success, else why not.
 fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
-  var objs = [srcs[0]]
-  for src in srcs[2..] {
-    if !src.ends_with(".o") {
-      return "--ld=macho links no C sources (${src}): link with cc"
-    }
-    objs.push(src)
+  let (objs, bad) = ld_objects(srcs)
+  if !bad.is_empty() {
+    return bad
   }
   var lctx = ctx
   lctx.goos = "linux"

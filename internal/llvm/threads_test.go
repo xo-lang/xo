@@ -32,9 +32,8 @@ var rtDir = filepath.Join("..", "..", "std", "llrt")
 // the test when the host's clang cannot. Where ThreadSanitizer compiles
 // but cannot run, it compiles without it.
 var (
-	cExportsOnce sync.Once
-	cExportsLL   string
-	cExportsErr  error
+	cExportsMu sync.Mutex
+	cExportsLL = map[string]string{}
 )
 
 // cOnly is the sources of a C only test of the runtime (a file of
@@ -42,27 +41,37 @@ var (
 // C file and the LLVM IR of an empty program, which defines the C ABI
 // exports the runtime calls (std/native/llrt/cabi.xo, decision 0207).
 func cOnly(t *testing.T, src string) []string {
+	return cOnlyWith(t, src, "cexports", "fn main() {}\n")
+}
+
+// cOnlyWith is cOnly with the program main (in the build directory dir)
+// in place of the empty one: a feature's exports
+// (std/native/llrt/cabi_<feature>.xo) are built only into a program
+// that uses the feature.
+func cOnlyWith(t *testing.T, src, dir, main string) []string {
 	t.Helper()
-	cExportsOnce.Do(func() {
-		dir := filepath.Join(testDir, "cexports")
-		if cExportsErr = os.MkdirAll(dir, 0o755); cExportsErr != nil {
-			return
-		}
-		if cExportsErr = os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main() {}\n"), 0o644); cExportsErr != nil {
-			return
-		}
-		ir, err := xotool.LLVMIR(dir)
-		if err != nil {
-			cExportsErr = err
-			return
-		}
-		cExportsLL = filepath.Join(dir, "exports.ll")
-		cExportsErr = os.WriteFile(cExportsLL, ir, 0o644)
-	})
-	if cExportsErr != nil {
-		t.Fatalf("the C ABI exports: %v", cExportsErr)
+	cExportsMu.Lock()
+	defer cExportsMu.Unlock()
+	if ll, ok := cExportsLL[dir]; ok {
+		return []string{src, ll}
 	}
-	return []string{src, cExportsLL}
+	d := filepath.Join(testDir, dir)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "main.xo"), []byte(main), 0o644); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	ir, err := xotool.LLVMIR(d)
+	if err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	ll := filepath.Join(d, "exports.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatalf("the C ABI exports: %v", err)
+	}
+	cExportsLL[dir] = ll
+	return []string{src, ll}
 }
 
 func tsanBuild(t *testing.T, flags, srcs []string) string {

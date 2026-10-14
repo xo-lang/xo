@@ -203,6 +203,23 @@ the link.xo entry removed. No run needed beyond the goldens.
 
 ### Dead: 144 lines with no caller in native builds, deletable now
 
+**B08 done (2026-10-14, sha512-rand-2026-10-14.md).** SHA-512 is
+digest.xo (`sha512_3`, generated `sha512_block`), exported to the C
+Ed25519 by std/native/llrt/cabi_crypto.xo (a weak C definition that
+faults covers programs without std/crypto); its C, 129 lines, is
+deleted. Rand is std/native/llrt/rand.xo, called as the native
+prelude's llrt_rand_* (wasm keeps rt.rand_*), over linux.xo, darwin.xo,
+windows.xo `random` and the test world's `xo_tw_seeded` and
+`xo_tw_rand_u64` exports; xo_fs_raw_rand is deleted. The C Rand (95
+lines of xo_crypto.c, 7 of xo_win.c) stays as seed compatibility: the
+seed 0.9.0-5e21dc31 lowers Rand to it when it builds the checkout's xo
+(gotchas/runtime-c-the-seed-still-calls.md); delete it after the next
+seed. SHA-512 0.887 of the C's instructions on arm64, 0.641 on LLVM.
+TestCryptoDiff (4,086 operations), goldens 180 of 180 on both backends,
+seeded Rand identical to the Go backend, TestSelfhostWasm 133 pass, 21
+unsupported, 0 fail of 154, and the fixed point from the prebuilt seed
+(s2 and s3 identical, 88,878,128 bytes).
+
 **W0 done (2026-10-14, commit 83eef9ee on the W0 branch).** The seven
 groups are deleted: 141 lines (xo_rt.c 49, xo_std.c 59, xo_bytes.c 33;
 the audit's 144 counted the blank lines between groups), with their
@@ -247,13 +264,13 @@ MISSING.
 
 | Item | Retires | Kinds | Ranges |
 |---|---|---|---|
-| B01 clocks off Linux | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
+| B01 clocks off Linux (done 2026-10-14: the clocks in Xo, 27 lines net retired, the rest GLUE of later items; notes) | 132 | PORT 75, SHIM 57 | xo_rt.c 2022-2033, 6512-6566; xo_win.c 216-272; xo_time.c 500-507 |
 | B02 runtime globals and thread locals | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
 | B05 unwinder without libgcc | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
-| B08 SHA-512 and rand | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
+| B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
 | B11 client HPACK | 583 | GLUE 583 | xo_h2.c 87-669 |
@@ -294,6 +311,15 @@ frees the 533 (a) lines.)
   (gotchas/arm64-match-target-not-folded.md); Windows is LLVM only, so
   it can be measured now. Also the monotonic clock (mono_ns, xo_rt.c
   2022-2033) that budgets and timers read. Xo about 100 lines, low.
+  **Done 2026-10-14** (bench/results/clocks-2026-10-14.md): the clocks
+  are Xo on every OS (sysio.xo clock_now, real_ns, mono_ns, the clock
+  chosen once into word 0 of rt.sys_words); xo_win.c's clock_gettime
+  shim (27 lines) and every C clock_gettime call are gone; std/llrt
+  shrank by 27 lines net (46 deleted, 19 added). What stays is GLUE
+  for later items: mono_ns and xo_tz_now as one line forwards to
+  cabi.xo's exports (they go with their C callers, B17 to B22 and B27),
+  xo_clock_now as the virtual clock of the test world (B14, B15) and
+  the real time for xo_http.c's Date (B28), xo_sys_clock_buf (B02).
 - **B02 globals and thread locals.** C `__thread` left: xo_bytes.c:296-297,
   xo_fs.c:15 and 224, xo_stdin.c:27-28, xo_http.c:1546-1547 and
   3101-3102, xo_sys.c:49, xo_rt.c:5626 (and xo_nolibc.c's errno). Thread
@@ -524,10 +550,10 @@ nothing new.
 |---|---|---|---|---|
 | W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | **Done 2026-10-14** (see "W0 done" below) |
 | W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | the deletion list under "XO_LLRT_C=sched" |
-| 1 | B01 clocks | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
+| 1 | B01 clocks (done 2026-10-14, Windows measurement pending) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
-| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | SHA-512 into digest.xo beside SHA-256; TestCryptoDiff covers it |
+| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand stays until the seed has B08 |
 | 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | http1.xo parse_response; then h2_request and xo_cl_do over url_parts; TestHTTP1ParseDiff, http_fuzz.c |
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
 | 7 | B12 response writer | 537 | nothing | http1w.xo: status text, sniff, Date, hw_*; bar on the http workloads |

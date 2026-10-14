@@ -13,6 +13,36 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and development builds of xo on x86 use -O0 (xo rebuilds itself in
   1:23 on c7i.8xlarge, was about 42 minutes); parallel jobs default to
   the physical cores and the memory.
+- Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
+  links every object of a program whose assembly was split into parts
+  (decision 0220; it took only the first and rejected the runtime's
+  source); `xo bind` finds or builds the Go binder xo-gobind from the
+  std beside xo instead of "std" in the working directory. Tests:
+  TestDevGoldensELF builds the linux/arm64 runtime pack it links with
+  (`xo dev rtpack`, cached by pack key); TestCrossCompile looks up the
+  wasm binary by xo's name, wasip1/wasm (xotool.Target);
+  TestSelfhostLLVMEndToEnd compares its IR with the recording only when
+  dump replays are on (decision 0217) and keeps its build and output
+  check.
+- Native runtime (zero-C audit item B08): SHA-512 is Xo
+  (std/native/llrt/digest.xo, called by the C Ed25519 through
+  cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
+  on LLVM, bench/results/sha512-rand-2026-10-14.md) and Rand is Xo
+  (std/native/llrt/rand.xo over getrandom, getentropy, BCryptGenRandom,
+  or the test world's seeded draws, the same values as before). The C
+  SHA-512 is deleted; the C Rand functions stay until the seed is a
+  release with this change (gotchas/runtime-c-the-seed-still-calls.md).
+- The clocks are read from Xo on every OS (work item B01, decision
+  0213 item 6): Clock.now on macOS (clock_gettime_nsec_np) and Windows
+  (GetSystemTimePreciseAsFileTime), and the monotonic clock of the
+  scheduler, timers, and budgets everywhere (the vDSO on Linux,
+  libSystem on macOS, QueryPerformanceCounter on Windows), the clock of
+  the build chosen once into a word so the hot path tests no target.
+  The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
+  exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
+  workload.
 - Native runtime: the C with no caller is deleted (zero-C audit item
   W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
   lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
@@ -31,6 +61,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_EMIT_JOBS=16` (was 496.82 s), the output byte identical for any
   job count. `XO_EMIT_JOBS` sets the tasks (default the cores, at most
   8); `--phase-times` prints the `assemble` phase.
+- Developer tooling (decision 0209): hidden `xo dev goldens|errorcheck|
+  codegen|dump|rtpack|build-each` in xo. Golden programs are built,
+  run, and compared byte for byte by xo itself, in parallel workers,
+  largest first, with passes cached by input hash (arm64 set: 49.74 s
+  with the Python script, 16.93 s with `-j 8`, 0.21 s cached). Error
+  check and codegen pattern suites start in test/ (decision 0217).
+  selfhost/macho assembles `svc`, so linux/arm64 `--ld=macho` builds
+  work again.
 - `xo lsp` answers `textDocument/completion` and
   `textDocument/signatureHelp` (decision 0219): fields and methods
   after `x.` (prelude methods included), variants and statics after a

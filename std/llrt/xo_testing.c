@@ -331,7 +331,7 @@ void xo_test_clock_set(int64_t t) { __atomic_store_n(&tw.vnow, t, __ATOMIC_RELEA
 
 // Seeded random numbers: Go's math/rand/v2 PCG (std/rt's seededRand)
 
-__attribute__((unused)) static uint64_t tw_rand_u64(void) {
+static uint64_t tw_rand_u64(void) {
 	lk(&tws.mu);
 	const uint64_t mulHi = 2549297995355413924ULL, mulLo = 4865540595714422341ULL;
 	const uint64_t incHi = 6364136223846793005ULL, incLo = 1442695040888963407ULL;
@@ -351,6 +351,13 @@ __attribute__((unused)) static uint64_t tw_rand_u64(void) {
 	hi *= (lo2 | 1);
 	return hi;
 }
+
+// xo_tw_seeded and xo_tw_rand_u64 are the test world's Rand for
+// std/native/llrt/rand.xo (the zero-C audit's B08): whether a test runs
+// (Rand is then seeded), and the next draw.
+int64_t xo_tw_seeded(void) { return tw.on; }
+
+int64_t xo_tw_rand_u64(void) { return (int64_t)tw_rand_u64(); }
 
 // ---------------------------------------------------------------------------
 // Generated values: property tests (`test "x" for v: T`, core 9.2) and

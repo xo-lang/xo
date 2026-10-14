@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  break // ERROR XO0607
+  os.stdio.println("x")
+}

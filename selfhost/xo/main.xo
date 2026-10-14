@@ -71,7 +71,7 @@ fn main(os: Os) ! {
   }
   let args = fr.args
   if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", args)) }
-  if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run(os, args)) }
+  if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run_std(os, args, check.std_dir(os.env, os.fs))) }
   if let Some(code) = servers.forward_cli(os, args) {
     // a running `xo serve` answered check or query
     os.proc.exit(code)
@@ -86,8 +86,13 @@ fn main(os: Os) ! {
     os.proc.exit(core.run(os, args))
   }
   if !args.is_empty() && args[0] == "rtpack" {
-    // hidden: the release's prebuilt runtime (rtpack.xo)
+    // hidden: the release's prebuilt runtime (rtpack.xo); also `xo dev
+    // rtpack`
     os.proc.exit(rtpack_cmd(os, args[1..]))
+  }
+  if !args.is_empty() && args[0] == "dev" {
+    // hidden: the developer commands (dev.xo, decision 0209)
+    os.proc.exit(dev_cmd(os, args[1..]))
   }
   if args.is_empty() || !(args[0] is "build" | "run" | "asm" | "keys" | "test") {
     os.stdio.eprint("xo: unknown command ${(if args.is_empty() { "" } else { args[0] }).quote()}\n\n${cmdhelp.top()}")
@@ -188,6 +193,9 @@ fn main(os: Os) ! {
 struct Native {
   bin: Str = ""
   tests: List[TestInfo] = []
+  /// The checker's std parses, for the next build of the process
+  /// (`xo dev build-each`, decision 0209).
+  pc: Map[Str, check.ParseEntry] = {}
 }
 
 /// The targets of --targets (internal/build ParseTargets): the host when
@@ -258,6 +266,7 @@ fn llrt_c_names(os: Os, std: Str) -> List[Str] {
 /// result) and exits 1. Warnings are printed and the build goes on.
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
+  c.parse_cache = o.parse_cache
   c.native = native
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
@@ -374,7 +383,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let tu = lo.tu
   if backend == "wasm" {
     build_wasm(os, b.m, o.out, o.wd, o.dirs[0])
-    return Native{}
+    return Native{pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
   let mode = if tests { 1 } else { 0 }
@@ -416,7 +425,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if o.cmd == "asm" {
       os.stdio.print(code)
       lap(os, phases, "print", t)
-      return Native{}
+      return Native{pc: c.parse_cache}
     }
     var split = split_config(os)
     if release {
@@ -605,7 +614,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     bins.push((tg, bin))
   }
   if o.cmd == "asm" {
-    return Native{}
+    return Native{pc: c.parse_cache}
   }
   finish(os, o, c, root, bins, tests)
 }
@@ -707,7 +716,7 @@ fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], 
     host_bin = p
   }
   if tests {
-    return Native{bin: host_bin, tests: test_infos(c, root, o.wd)}
+    return Native{bin: host_bin, tests: test_infos(c, root, o.wd), pc: c.parse_cache}
   }
   if o.cmd == "build" {
     if o.json {
@@ -718,7 +727,7 @@ fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], 
       }
     }
   }
-  Native{bin: host_bin}
+  Native{bin: host_bin, pc: c.parse_cache}
 }
 
 /// The sources and flags a native link adds to the program's code

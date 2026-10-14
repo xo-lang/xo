@@ -3,7 +3,8 @@
 Status: Item 1 Accepted (owner, 2026-10-13), with the seeds in a
 private S3 bucket; item 2 Accepted as an opt in fallback (the seed
 chain, implemented 2026-10-13; it never runs unasked, owner,
-2026-10-13); item 3 Proposed
+2026-10-13); item 3 Accepted as occasional, deferred (owner,
+2026-10-14)
 
 ## Context
 
@@ -66,7 +67,14 @@ How other self hosted languages handle it:
    seed exists past a runtime break, a new seed after each such break
    replaces adding hops, and the hops older than the newest seed are
    used only by that opt in.
-3. **Replay from source (proposed, owner to confirm).** The tag
+3. **Replay from source (Accepted as occasional, deferred; owner,
+   2026-10-14: "Occasionally but not now", after much better build
+   speedups).** Not per release: on linux/arm64 only (the fastest
+   path), at significant points such as before a public release or
+   1.0, and not before the build speed work of decision 0220 lands. The
+   oldest hops (the go-compiler-final Go compiler, then 0.9.0) keep
+   their own speed forever (about 40 minutes per hop on Linux arm64,
+   2026-10-14); only hops after the speedups get cheaper. The tag
    go-compiler-final (87873aa5) is the root: the Go toolchain builds that
    tree's `xo`, which builds xo1, which builds each later release in order
    to the current one. The lead replays the chain on EC2 once per release
@@ -78,8 +86,8 @@ How other self hosted languages handle it:
 - Answered 2026-10-13: the N-1 rule (1) with prebuilt seeds in a private
   bucket; the two hop procedure (2) as an opt in fallback, never
   automatic (owner, 2026-10-13).
-- Open: require the replay from source (3) per release, or only
-  occasionally?
+- Answered 2026-10-14: the replay from source (3) is occasional, not
+  per release, and deferred until builds are much faster.
 
 ## Consequences
 

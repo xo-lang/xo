@@ -56,8 +56,9 @@ type Options struct {
 
 // Result is what a Build made.
 type Result struct {
-	// Binaries maps the host target ("os/arch", Host) to the binary,
-	// when one was written.
+	// Binaries maps each target xo built ("os/arch" in Go's names:
+	// wasip1/wasm, not wasi/wasm32; Target converts) to its binary;
+	// a single target build's binary is under Host.
 	Binaries map[string]string
 	// Failed reports that xo exited with an error and wrote no binary
 	// (a check error, a build error); Output says why.
@@ -98,6 +99,24 @@ func (d Diagnostic) Human() string {
 
 // Host is this machine's target, "os/arch".
 func Host() string { return runtime.GOOS + "/" + runtime.GOARCH }
+
+// Target is the os/arch name xo prints for target s and Result.Binaries
+// is keyed by (build.ParseTargets of the Go compiler, parse_targets of
+// selfhost/xo): Go's names, so the spec's wasi/wasm32 (core 12.1) is
+// wasip1/wasm; other names are returned as they are.
+func Target(s string) string {
+	os_, arch, ok := strings.Cut(strings.TrimSpace(s), "/")
+	if !ok {
+		return s
+	}
+	if os_ == "wasi" {
+		os_ = "wasip1"
+	}
+	if arch == "wasm32" {
+		arch = "wasm"
+	}
+	return os_ + "/" + arch
+}
 
 // Build builds dirs with the xo binary (Path): `xo build|test
 // [--backend=B] [--no-gc] [flags] -o OUT dirs...`. A missing xo is the

@@ -16,8 +16,11 @@ Cause: the SSA passes do not fold a `match` on the predeclared `target`
 arm64 emitter does not fold a branch or switch on a constant; LLVM's
 optimizer does.
 
-Fix: keep the choice of an OS layer out of per call hot paths on arm64
-(Clock.now stays on the C runtime for now), or fold constant switches:
+Fix: keep the choice of an OS layer out of per call hot paths on arm64:
+choose it once and keep it in a word, as sysio.xo's clocks do since
+work item B01 (2026-10-14: word 0 of rt.sys_words holds the vDSO
+address on Linux or a negative code naming libSystem or kernel32, set
+by the first read; bench/results/clocks-2026-10-14.md). Or fold constant switches:
 a branch on a constant tag in selfhost/arm64's isel (mirrored in
 internal/arm64 while the differential tests compare the two) would turn
 the chain into one jump; then remeasure `WORKLOADS=clock

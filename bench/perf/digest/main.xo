@@ -3,7 +3,8 @@
 // (XO_LLRT_C=digest). Usage: digest <workload>. Each workload prints
 // "<workload> <checksum> <elapsed microseconds>"; the checksum must be
 // the same on every backend (the Go backend is the reference). The
-// hashes verified were made by the Go backend.
+// hashes verified were made by the Go backend. ed25519_big less
+// ed25519_small is SHA-512 of 25 MiB (B08).
 use std/crypto
 
 const ARGON = "$argon2id$v=19$m=4096,t=2,p=1$Sq7qcSFHnntGP751Zt8Ssw$vQ40zTV7CHGDXUhZ+Yl813FMSv7jAvWlN7XMlaUQE8U"
@@ -71,6 +72,18 @@ fn argon2() -> Int {
   n
 }
 
+/// Ed25519 signatures of 64 KiB, 200 times: SHA-512 of the message twice
+/// a signature (B08: SHA-512 in Xo against the C); ed25519_small is the
+/// same of an empty message, the rest of the signature, to subtract.
+fn ed25519(data: Bytes) -> Int {
+  let seed = data[0..32]
+  var h = 0
+  for _ in 0..200 {
+    h = (h + sum_of(crypto.ed25519_sign(seed, data))) % 1000000007
+  }
+  h
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "sha256_big"
@@ -92,6 +105,8 @@ fn main(os: Os) {
     "hmac" => hmac(msgs)
     "pbkdf2" => pbkdf2()
     "argon2" => argon2()
+    "ed25519_big" => ed25519(data)
+    "ed25519_small" => ed25519(data[0..32])
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

@@ -1,0 +1,97 @@
+// The pass cache of `xo dev goldens` (decision 0209, lever 2): a program
+// that passed is skipped while nothing it depends on changed. The key is
+// the SHA-256 of the harness version, the xo binary's bytes, the
+// backend, flags, and host, the std tree (hashed once per run: std/llrt
+// and the runtime sources are under it), and every file of the program
+// directory with its want file. Only passes are cached (an empty file
+// named by the key under the cache directory); --force ignores them.
+// The `use go` and `use c` binding caches (.xo/gobind, .xo/cbind) are
+// part of the program directory's files when they exist there, so a
+// stale binding changes the key instead of reusing a pass.
+
+use std/crypto
+
+/// The bump that invalidates every cached pass when the harness's
+/// comparison changes.
+const HARNESS_VERSION = "xo dev goldens v1"
+
+/// tree_hash hashes every file under dir (paths relative to dir, sorted,
+/// with their bytes), skipping nothing; "" when dir cannot be read.
+pub fn tree_hash(fs: Fs, dir: Str) -> Str uses fs.read {
+  let files = fs.walk(dir).ok() ?? []
+  var paths: List[Str] = []
+  for f in files {
+    if !f.is_dir {
+      paths.push(f.path)
+    }
+  }
+  var b = BytesBuilder.new()
+  for p in paths.sort() {
+    let data = fs.read(p).ok() ?? "".bytes()
+    b.write_str("${p.trim_prefix(dir)} ${data.len()}\n")
+    b.write(crypto.sha256(data))
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// base_key is the part of every program's key shared by the run.
+fn base_key(fs: Fs, cfg: Config) -> Str uses fs.read {
+  var b = BytesBuilder.new()
+  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path}\n")
+  b.write(crypto.sha256(fs.read(cfg.xo).ok() ?? "".bytes()))
+  b.write_str(tree_hash(fs, cfg.std))
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// prog_key is program p's key under the run's base.
+fn prog_key(fs: Fs, base: Str, p: Prog) -> Str uses fs.read {
+  var b = BytesBuilder.new()
+  b.write_str("${base}\n${p.dir}\n")
+  b.write_str(tree_hash(fs, p.dir))
+  b.write(crypto.sha256(fs.read(p.want).ok() ?? "".bytes()))
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+fn cached(fs: Fs, cache: Str, key: Str) -> Bool uses fs.read {
+  fs.exists("${cache}/pass/${key[0..2]}/${key}").ok() ?? false
+}
+
+fn mark(fs: Fs, cache: Str, key: Str) uses fs.write {
+  fs.create_dir_all("${cache}/pass/${key[0..2]}").ok()
+  fs.write("${cache}/pass/${key[0..2]}/${key}", "".bytes()).ok()
+}
+
+/// json_str is s as a JSON string (encoding/json's escapes).
+pub fn json_str(s: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("\"")
+  for r in s.runes() {
+    let n = Int(r)
+    if r == '"' {
+      b.write("\\\"")
+    } else if r == '\\' {
+      b.write("\\\\")
+    } else if r == '\n' {
+      b.write("\\n")
+    } else if r == '\r' {
+      b.write("\\r")
+    } else if r == '\t' {
+      b.write("\\t")
+    } else if n < 32 {
+      b.write("\\u00${hex2(n)}")
+    } else {
+      b.write("${r}")
+    }
+  }
+  b.write("\"")
+  b.freeze()
+}
+
+fn hex2(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  "${digits[n / 16..n / 16 + 1]}${digits[n % 16..n % 16 + 1]}"
+}
+
+test "json_str" {
+  expect(json_str("a\"b\\\n\u{1}") == "\"a\\\"b\\\\\\n\\u0001\"")
+}

@@ -1,6 +1,6 @@
 # Python text mode reads of want.txt turn `\r` into `\n`
 
-Status: Observed (2026-10-13), fixed in scripts/selfhost-goldens.py,
+Status: Observed (2026-10-13), fixed in scripts/selfhost-goldens.py (the scripts were deleted on 2026-10-14 for `xo dev goldens`, decision 0209, which reads want files as bytes),
 scripts/selfhost-gogoldens.py, and scripts/elf-goldens.py.
 
 Symptom: scripts/selfhost-goldens.py reported 172 of 173 programs
