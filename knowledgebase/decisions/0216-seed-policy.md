@@ -27,14 +27,16 @@ How other self hosted languages handle it:
 ## Decision
 
 1. **N-1 rule, prebuilt seeds (Accepted, owner, 2026-10-13).** Release N
-   is built by release N-1. Each seed is a release shaped tarball per
-   platform (bin/xo, lib/xo/std, lib/xo/third_party, lib/xo/SEED), built
-   at a recorded commit by `scripts/seed-pack.sh`, and kept in the
+   is built by release N-1. Each seed is a tarball per platform of the
+   directory xo/ (xo/bin/xo and xo/std; xo finds std at bin/../std),
+   built at a recorded commit (`scripts/seed-pack.sh`), and kept in the
    private S3 bucket `xo-seeds-ACCOUNT_ID` (us-east-1, public access
-   blocked, versioned): `seeds/<version>/<goos>-<goarch>.tar.gz` with a
-   `.sha256` beside it, `seeds/<version>/manifest.txt`, and
-   `seeds/latest.txt` naming the newest version. Seeds are not public
-   releases. Each seed bumps the minor version (0.10.0 is the first).
+   blocked, versioned): `seeds/<seed>/<goos>-<goarch>.tar.gz` with a
+   `.tar.gz.sha256` beside it, `seeds/<seed>/manifest.txt`, and
+   `seeds/latest.txt` naming the newest seed, where a seed's name is
+   `<version>-<commit, 8 hex>` (the first, 0.9.0-5e21dc31, uploaded by
+   the lead on 2026-10-13). Seeds are not public releases. From the next
+   seed on, each bumps the minor version (0.10.0 next).
    internal/xotool fetches the newest seed with the aws CLI when no
    local xo is found (the development Mac's AWS user; EC2 instances
    with the instance profile `xo-ci-seed-read`, read only), checks its

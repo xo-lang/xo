@@ -21,18 +21,19 @@ import (
 )
 
 // Prebuilt seeds (decision 0216 item 1, accepted 2026-10-13): release N
-// is built by release N-1. A seed is a release shaped tree (bin/xo,
-// lib/xo/std, lib/xo/third_party, lib/xo/SEED) packed by
+// is built by release N-1. A seed is a tarball of the directory xo/
+// (xo/bin/xo and xo/std; xo finds std at bin/../std), packed by
 // scripts/seed-pack.sh and kept in a private S3 bucket:
 //
-//	seeds/latest.txt                         the newest version, one line
-//	seeds/<version>/<goos>-<goarch>.tar.gz   the tree
-//	seeds/<version>/<goos>-<goarch>.sha256   "<hex>  <goos>-<goarch>.tar.gz"
-//	seeds/<version>/manifest.txt             version, commit, date, sha256s
+//	seeds/latest.txt                               the newest seed, one line (0.9.0-9b6cd014)
+//	seeds/<seed>/<goos>-<goarch>.tar.gz            the tree
+//	seeds/<seed>/<goos>-<goarch>.tar.gz.sha256     "<hex>  <goos>-<goarch>.tar.gz"
+//	seeds/<seed>/manifest.txt                      version, commit, date, sha256s
 //
+// A seed's name is its version and commit (<version>-<8 hex>).
 // FetchSeed reads latest.txt, downloads the host's tarball with the aws
 // CLI, checks its sha256, and unpacks it into
-// <user cache>/xo/seeds/<version>/<goos>-<goarch>/tree.
+// <user cache>/xo/seeds/<seed>/<goos>-<goarch>/tree (bin: tree/xo/bin/xo).
 
 // DefaultSeedBucket is the bucket seeds are read from when
 // $XO_SEED_BUCKET is unset.
@@ -45,7 +46,7 @@ const defaultSeedRegion = "us-east-1"
 // s3://bucket[/prefix] URL, a file:// URL, or a local directory; "off"
 // turns fetching off), else s3://$XO_SEED_BUCKET (default
 // DefaultSeedBucket; it may carry a /prefix). The location holds
-// seeds/latest.txt and seeds/<version>/.
+// seeds/latest.txt and seeds/<seed>/.
 func SeedURL() string {
 	if u := strings.TrimSpace(os.Getenv("XO_SEED_URL")); u != "" {
 		return strings.TrimRight(u, "/")
@@ -60,7 +61,7 @@ func SeedURL() string {
 // HostPlatform is the seed platform of this host, <goos>-<goarch>.
 func HostPlatform() string { return runtime.GOOS + "-" + runtime.GOARCH }
 
-var seedVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$`)
+var seedNameRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$`)
 
 // seedStore reads objects under a seed location.
 type seedStore struct{ loc string }
@@ -121,8 +122,8 @@ func LatestSeedVersion() (string, error) {
 		return "", fmt.Errorf("reading %s/seeds/latest.txt: %v", loc, err)
 	}
 	v := strings.TrimSpace(string(b))
-	if !seedVersionRE.MatchString(v) {
-		return "", fmt.Errorf("%s/seeds/latest.txt: %q is not a version", loc, v)
+	if !seedNameRE.MatchString(v) {
+		return "", fmt.Errorf("%s/seeds/latest.txt: %q is not a seed name", loc, v)
 	}
 	return v, nil
 }
@@ -158,10 +159,10 @@ func seedExe() string {
 // newestCachedSeed is the bin/xo of the highest version unpacked in
 // base/seeds for plat ("" when none).
 func newestCachedSeed(base, plat string) string {
-	ms, _ := filepath.Glob(filepath.Join(base, "seeds", "*", plat, "tree", "bin", seedExe()))
+	ms, _ := filepath.Glob(filepath.Join(base, "seeds", "*", plat, "tree", "xo", "bin", seedExe()))
 	best, bestV := "", ""
 	for _, m := range ms {
-		v := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(m)))))
+		v := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(m))))))
 		if isFile(m) && (best == "" || versionLess(bestV, v)) {
 			best, bestV = m, v
 		}
@@ -191,7 +192,7 @@ func versionLess(a, b string) bool {
 func fetchSeedVersion(base, v, plat string, log io.Writer) (string, error) {
 	dir := filepath.Join(base, "seeds", v, plat)
 	tree := filepath.Join(dir, "tree")
-	bin := filepath.Join(tree, "bin", seedExe())
+	bin := filepath.Join(tree, "xo", "bin", seedExe())
 	if isFile(bin) {
 		return bin, nil
 	}
@@ -208,13 +209,13 @@ func fetchSeedVersion(base, v, plat string, log io.Writer) (string, error) {
 	}
 	st := seedStore{SeedURL()}
 	rel := "seeds/" + v + "/" + plat
-	sum, err := st.read(rel + ".sha256")
+	sum, err := st.read(rel + ".tar.gz.sha256")
 	if err != nil {
-		return "", fmt.Errorf("no seed %s for %s at %s (%s.sha256: %v)", v, plat, st.loc, rel, err)
+		return "", fmt.Errorf("no seed %s for %s at %s (%s.tar.gz.sha256: %v)", v, plat, st.loc, rel, err)
 	}
 	want := strings.ToLower(firstField(string(sum)))
 	if len(want) != 64 {
-		return "", fmt.Errorf("%s/%s.sha256: no sha256 in %q", st.loc, rel, strings.TrimSpace(string(sum)))
+		return "", fmt.Errorf("%s/%s.tar.gz.sha256: no sha256 in %q", st.loc, rel, strings.TrimSpace(string(sum)))
 	}
 	fmt.Fprintf(log, "xotool: fetching seed %s for %s from %s\n", v, plat, st.loc)
 	t0 := time.Now()
@@ -228,7 +229,7 @@ func fetchSeedVersion(base, v, plat string, log io.Writer) (string, error) {
 		return "", err
 	}
 	if got != want {
-		return "", fmt.Errorf("%s/%s.tar.gz: sha256 %s, want %s (the .sha256 beside it)", st.loc, rel, got, want)
+		return "", fmt.Errorf("%s/%s.tar.gz: sha256 %s, want %s (the .tar.gz.sha256 beside it)", st.loc, rel, got, want)
 	}
 	tmp := tree + ".tmp"
 	os.RemoveAll(tmp)
@@ -236,9 +237,9 @@ func fetchSeedVersion(base, v, plat string, log io.Writer) (string, error) {
 		os.RemoveAll(tmp)
 		return "", fmt.Errorf("unpacking %s.tar.gz: %v", rel, err)
 	}
-	if !isFile(filepath.Join(tmp, "bin", seedExe())) {
+	if !isFile(filepath.Join(tmp, "xo", "bin", seedExe())) {
 		os.RemoveAll(tmp)
-		return "", fmt.Errorf("%s.tar.gz has no bin/%s", rel, seedExe())
+		return "", fmt.Errorf("%s.tar.gz has no xo/bin/%s", rel, seedExe())
 	}
 	os.RemoveAll(tree)
 	if err := os.Rename(tmp, tree); err != nil {

@@ -4,21 +4,25 @@
 # seeds"). No upload: the lead uploads OUTDIR with `aws s3 cp`.
 #
 # XO is a built xo in its layout: a checkout's bin/xo (std at
-# bin/../std, the tracked files of std/ and third_party/ are packed) or
-# a release's bin/xo (lib/xo/std and lib/xo/third_party beside it).
-# Writes, for the platform <goos>-<goarch>:
+# bin/../std; the tracked files of std/ are packed) or a release's
+# bin/xo (lib/xo/std beside it). For the platform <goos>-<goarch> it
+# writes, in the shape of the bucket's seeds/<seed>/ directory:
 #
-#   OUTDIR/<goos>-<goarch>.tar.gz   bin/xo, lib/xo/std, lib/xo/third_party,
-#                                   lib/xo/SEED (version, commit, date, platform)
-#   OUTDIR/<goos>-<goarch>.sha256   "<hex>  <goos>-<goarch>.tar.gz"
-#   OUTDIR/<goos>-<goarch>.info     version, commit, date (for the manifest)
-#   OUTDIR/manifest.txt             rebuilt from every .info and .sha256 in OUTDIR
+#   OUTDIR/<goos>-<goarch>.tar.gz          xo/bin/xo and xo/std (xo finds std
+#                                          at bin/../std), xo/SEED
+#   OUTDIR/<goos>-<goarch>.tar.gz.sha256   "<hex>  <goos>-<goarch>.tar.gz"
+#   OUTDIR/<goos>-<goarch>.info            version, commit, date, note (for the manifest)
+#   OUTDIR/manifest.txt                    rebuilt from every .info in OUTDIR
+#
+# and prints the seed name, <version>-<commit, 8 hex> (the directory
+# under seeds/ and the line of seeds/latest.txt), e.g. 0.9.0-9b6cd014.
 #
 # The version and platform come from `XO version`; for an xo of another
 # host (a cross built linux xo) set XO_SEED_VERSION and XO_SEED_PLATFORM
-# (e.g. 0.10.0 and linux-arm64). The commit is $XO_SEED_COMMIT, else the
-# HEAD of the checkout holding XO's std, else of the working directory.
-# A checkout with changes under selfhost/, std/ or third_party/ is
+# (e.g. 0.10.0 and linux-arm64). The commit (full hash) is
+# $XO_SEED_COMMIT, else the HEAD of the checkout holding XO's std, else
+# of the working directory. XO_SEED_NOTE is the manifest note (default:
+# the layout packed). A checkout with changes under selfhost/ or std/ is
 # refused unless XO_SEED_ALLOW_DIRTY=1.
 #
 #   seed-pack.sh --manifest OUTDIR   only rebuild OUTDIR/manifest.txt
@@ -26,23 +30,30 @@ set -euo pipefail
 
 die() { echo "seed-pack: $*" >&2; exit 1; }
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+field() { sed -n "s/^$1 //p" "$2"; }
 
 manifest() {
-  local out=$1 v="" c="" d="" f pv pc pd
+  local out=$1 v="" c="" d="" f plat
   local tmp="$out/manifest.txt.tmp"
   : > "$tmp.plats"
   for f in "$out"/*.info; do
     [ -f "$f" ] || continue
-    pv=$(sed -n 's/^version //p' "$f"); pc=$(sed -n 's/^commit //p' "$f"); pd=$(sed -n 's/^date //p' "$f")
-    [ -z "$v" ] && { v=$pv; c=$pc; d=$pd; }
-    [ "$pv" = "$v" ] || die "$f: version $pv, but another platform in $out is $v"
-    [ "$pc" = "$c" ] || die "$f: commit $pc, but another platform in $out is $c"
-    local plat; plat=$(basename "$f" .info)
-    [ -f "$out/$plat.sha256" ] || die "$out/$plat.sha256 missing"
-    echo "sha256 $plat $(cut -d' ' -f1 "$out/$plat.sha256")" >> "$tmp.plats"
+    plat=$(basename "$f" .info)
+    if [ -z "$v" ]; then v=$(field version "$f"); c=$(field commit "$f"); d=$(field date "$f"); fi
+    [ "$(field version "$f")" = "$v" ] || die "$f: version $(field version "$f"), another platform in $out is $v"
+    [ "$(field commit "$f")" = "$c" ] || die "$f: commit $(field commit "$f"), another platform in $out is $c"
+    [ -f "$out/$plat.tar.gz.sha256" ] || die "$out/$plat.tar.gz.sha256 missing"
+    echo "$plat $(cut -d' ' -f1 "$out/$plat.tar.gz.sha256") ($(field note "$f"))" >> "$tmp.plats"
   done
   [ -n "$v" ] || die "no .info files in $out"
-  { echo "version $v"; echo "commit $c"; echo "date $d"; sort "$tmp.plats"; } > "$tmp"
+  {
+    echo "version $v"
+    echo "commit ${c:0:10}"
+    echo "commit_full $c"
+    echo "date $d"
+    echo "layout xo/bin/xo plus xo/std (xo finds std at bin/../std)"
+    sort "$tmp.plats"
+  } > "$tmp"
   rm -f "$tmp.plats"
   mv "$tmp" "$out/manifest.txt"
 }
@@ -59,9 +70,9 @@ bindir=$(dirname "$xo"); prefix=$(dirname "$bindir")
 
 # the layout: a release's lib/xo, else a checkout
 if [ -d "$prefix/lib/xo/std" ]; then
-  layout=release; stdroot=$prefix/lib/xo
+  layout=release; std=$prefix/lib/xo/std
 elif [ -d "$prefix/std" ]; then
-  layout=checkout; stdroot=$prefix
+  layout=checkout; std=$prefix/std
 else
   die "$xo: no lib/xo/std or std beside its bin directory (not a release or checkout layout)"
 fi
@@ -78,7 +89,7 @@ else
   [ -n "${XO_SEED_VERSION:-}" ] && [ -n "${XO_SEED_PLATFORM:-}" ] || die "$xo does not run here: set XO_SEED_VERSION and XO_SEED_PLATFORM"
   version=$XO_SEED_VERSION; plat=$XO_SEED_PLATFORM
 fi
-echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$' || die "version $version"
+echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "version $version"
 echo "$plat" | grep -Eq '^[a-z0-9]+-[a-z0-9]+$' || die "platform $plat"
 
 # commit
@@ -88,39 +99,41 @@ if [ -n "${XO_SEED_COMMIT:-}" ]; then
   commit=$XO_SEED_COMMIT
 elif [ -n "$gitroot" ]; then
   commit=$(git -C "$gitroot" rev-parse HEAD)
-elif git rev-parse --git-dir >/dev/null 2>&1; then
-  commit=$(git rev-parse HEAD)
 else
-  commit=unknown
+  commit=$(git rev-parse HEAD 2>/dev/null) || die "no commit: set XO_SEED_COMMIT"
 fi
-if [ -n "$gitroot" ] && [ -z "${XO_SEED_ALLOW_DIRTY:-}" ] && [ -n "$(git -C "$gitroot" status --porcelain -- selfhost std third_party)" ]; then
-  die "$gitroot has changes under selfhost/, std/ or third_party/ (commit them, or XO_SEED_ALLOW_DIRTY=1)"
+echo "$commit" | grep -Eq '^[0-9a-f]{40}$' || die "commit $commit: want a full hash"
+if [ -n "$gitroot" ] && [ -z "${XO_SEED_ALLOW_DIRTY:-}" ] && [ -n "$(git -C "$gitroot" status --porcelain -- selfhost std)" ]; then
+  die "$gitroot has changes under selfhost/ or std/ (commit them, or XO_SEED_ALLOW_DIRTY=1)"
 fi
 date=$(date -u +%Y-%m-%d)
+seed=$version-${commit:0:8}
 
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 stage=$(mktemp -d "${TMPDIR:-/tmp}/seed-pack.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
-mkdir -p "$stage/bin" "$stage/lib/xo"
-cp "$xo" "$stage/bin/$(basename "$xo")"
-chmod 755 "$stage/bin/$(basename "$xo")"
+mkdir -p "$stage/xo/bin"
+cp "$xo" "$stage/xo/bin/$(basename "$xo")"
+chmod 755 "$stage/xo/bin/$(basename "$xo")"
 if [ -n "$gitroot" ]; then
-  # the tracked files only (a checkout's std holds no build output, but be sure)
-  (cd "$gitroot" && git ls-files -z -- std third_party | tar -c -f - --null -T -) | tar -xf - -C "$stage/lib/xo"
+  # the tracked files only
+  (cd "$gitroot" && git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$stage/xo"
 else
-  (cd "$stage/lib/xo" && cp -R "$stdroot/std" . && { [ ! -d "$stdroot/third_party" ] || cp -R "$stdroot/third_party" .; })
+  cp -R "$std" "$stage/xo/std"
 fi
-[ -f "$stage/lib/xo/std/prelude.xo" ] || die "packed std has no prelude.xo"
-printf 'version %s\ncommit %s\ndate %s\nplatform %s\n' "$version" "$commit" "$date" "$plat" > "$stage/lib/xo/SEED"
+[ -f "$stage/xo/std/prelude.xo" ] || die "packed std has no prelude.xo"
+printf 'seed %s\nversion %s\ncommit %s\ndate %s\nplatform %s\n' "$seed" "$version" "$commit" "$date" "$plat" > "$stage/xo/SEED"
 
 tgz="$out/$plat.tar.gz"
 taropts=()
 if tar --version 2>/dev/null | grep -q bsdtar; then taropts=(--no-xattrs --no-mac-metadata); fi
-COPYFILE_DISABLE=1 tar ${taropts[@]+"${taropts[@]}"} -C "$stage" -czf "$tgz.tmp" bin lib
+COPYFILE_DISABLE=1 tar ${taropts[@]+"${taropts[@]}"} -C "$stage" -czf "$tgz.tmp" xo
 mv "$tgz.tmp" "$tgz"
-echo "$(sha256 "$tgz")  $plat.tar.gz" > "$out/$plat.sha256"
-printf 'version %s\ncommit %s\ndate %s\n' "$version" "$commit" "$date" > "$out/$plat.info"
+echo "$(sha256 "$tgz")  $plat.tar.gz" > "$tgz.sha256"
+printf 'seed %s\nversion %s\ncommit %s\ndate %s\nnote %s\n' "$seed" "$version" "$commit" "$date" \
+  "${XO_SEED_NOTE:-seed-pack.sh from a $layout layout}" > "$out/$plat.info"
 manifest "$out"
-echo "seed-pack: $tgz ($(wc -c < "$tgz" | tr -d ' ') bytes, $layout layout, xo $version, commit $commit)"
-cat "$out/$plat.sha256"
+echo "seed-pack: $tgz ($(wc -c < "$tgz" | tr -d ' ') bytes, $layout layout, xo $version, commit $commit)" >&2
+cat "$tgz.sha256" >&2
+echo "$seed"
