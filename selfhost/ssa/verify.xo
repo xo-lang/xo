@@ -1089,6 +1089,76 @@ fn (var b: Builder) verify_mutants(n: Int) -> Str {
 /// function order (Module.Verify): the structural checks of every
 /// function, then, when they pass, the ownership balance (selfhost/arm64
 /// verifies the module again after inlining, decision 0158).
+/// verify_all on up to jobs tasks, by runs of functions: the same errors
+/// in the same order. Each task checks against its own copy of the
+/// module, which the checks may intern types into.
+pub fn (var m: Module) verify_all_jobs(jobs: Int) -> List[Str] {
+  let n = m.funcs.len()
+  let nc = (n / 64).min(64)
+  if jobs <= 1 || nc <= 1 {
+    return m.verify_all()
+  }
+  var bounds: List[Int] = []
+  for k in 0..nc + 1 {
+    bounds.push(n * k / nc)
+  }
+  let base = m
+  let starts = bounds
+  // the structural checks, then (when they pass) the reference counts
+  for pass in 0..2 {
+    let faults = if pass == 1 { base.may_fault() } else { [] }
+    let next = Atomic[Int].new(0)
+    let done = scope s {
+      var ts = []
+      for _ in 0..jobs.min(nc) {
+        ts.push(s.spawn(fn() -> List[(Int, List[Str])] {
+          var mine: List[(Int, List[Str])] = []
+          var mm = base
+          var r = rc_checker(base)
+          while true {
+            let k = next.add(1) - 1
+            if k >= nc {
+              break
+            }
+            var errs: List[Str] = []
+            for fi in starts[k]..starts[k + 1] {
+              let f = base.funcs[fi]
+              if pass == 0 {
+                errs = errs + mm.verify_func(f)
+              } else {
+                r.fi = fi
+                errs = errs + r.verify_rc(base, f, faults)
+              }
+            }
+            mine.push((k, errs))
+          }
+          mine
+        }))
+      }
+      var all: List[(Int, List[Str])] = []
+      for t in ts {
+        all = all + t.await
+      }
+      all
+    }
+    var by_chunk: List[List[Str]] = []
+    for _ in 0..nc {
+      by_chunk.push([])
+    }
+    for (k, errs) in done {
+      by_chunk[k] = errs
+    }
+    var errs: List[Str] = []
+    for e in by_chunk {
+      errs = errs + e
+    }
+    if !errs.is_empty() {
+      return errs
+    }
+  }
+  []
+}
+
 pub fn (var m: Module) verify_all() -> List[Str] {
   var errs: List[Str] = []
   for f in m.funcs {

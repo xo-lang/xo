@@ -136,6 +136,21 @@ struct G {
   lay: List[List[Bool]] = []
   /// Type.Heap by type: -1 not computed, 0, 1
   heap_c: List[Int] = []
+  /// the namespace of this emitter's string, position, and helper
+  /// labels: "" for a whole module, "pN_" for part N of a parallel
+  /// generation (generate_parallel), whose labels must not collide
+  ns: Str = ""
+  /// the assembly is cut into files assembled apart (generate_parallel):
+  /// the functions and the system call trampolines are global symbols
+  /// with hidden visibility, so the other files reach them
+  split: Bool = false
+  /// a part of a split generation: the reference counting, equality,
+  /// box, and closure helpers are only named (helper_ext) and wanted,
+  /// and the last file generates each once
+  defer_helpers: Bool = false
+  wants: List[Want] = []
+  /// the last file of a split generation: the helper of each global name
+  ext_keys: Map[Str, Str] = {}
   strs: Map[Bytes, Str] = {}
   str_ord: List[Bytes] = []
   locs: Map[Str, Str] = {}

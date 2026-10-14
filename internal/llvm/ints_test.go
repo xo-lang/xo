@@ -209,8 +209,8 @@ func intsCorpus() string {
 
 // TestIntsDiff runs intsDiffProg over intsCorpus on the Go backend and on
 // both native backends, with the sized integer operations inline and their
-// faults in Xo (std/native/llrt/ints.xo, decision 0195) and with their C
-// path (XO_LLRT_C=ints), and requires the Go backend's lines: every
+// faults in Xo (std/native/llrt/ints.xo, decision 0195; decision 0198
+// deleted the C path), and requires the Go backend's lines: every
 // operation of every sized type at its bounds, faults included.
 func TestIntsDiff(t *testing.T) {
 	if testing.Short() {
@@ -230,12 +230,9 @@ func TestIntsDiff(t *testing.T) {
 	}
 	want := strings.Split(strings.TrimSuffix(ref.stdout, "\n"), "\n")
 	t.Logf("%d input lines, %d output lines", strings.Count(in, "\n"), len(want))
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "ints")
-				}
 				r := buildAndRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)

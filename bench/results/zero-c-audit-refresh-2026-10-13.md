@@ -203,6 +203,25 @@ the link.xo entry removed. No run needed beyond the goldens.
 
 ### Dead: 144 lines with no caller in native builds, deletable now
 
+**W0 done (2026-10-14, commit 83eef9ee on the W0 branch).** The seven
+groups are deleted: 141 lines (xo_rt.c 49, xo_std.c 59, xo_bytes.c 33;
+the audit's 144 counted the blank lines between groups), with their
+nine std/native/rt.xo declarations. b64_alpha and b64_val moved to
+std/llrt/testdata/crypto_ref.c, the one remaining user (TestCryptoDiff).
+selfhost/xo/link.xo io_flags and internal/xotool/cc.go IOFlags dropped
+the -D entries of the deleted C paths (XO_SHOW_C, XO_REPORT_C,
+XO_TZ_C, XO_ATOMIC_C, XO_FSPATH_C, XO_GEN_C, XO_GLOB_C, XO_DIGEST_C,
+XO_RC_C, XO_ALLOC_C) and the symbols no C defines; the tests that set
+deleted switches lost those variants (internal/llvm threads, ints, tz,
+digest, scan, sysio, http1_diff; cmd/xo glob and gen_diff). xo now
+fails a build on an XO_LLRT_C name with no std/native/llrt/<name>_c.xo
+(cmd/xo TestLLRTCUnknownName). Verification on linux/arm64
+(r8g.8xlarge, EC2 queue job w0-verify): selfhost-goldens.py with the
+built xo, arm64 "179 programs: 179 pass, 0 fail", LLVM "179 programs:
+179 pass, 0 fail"; nm finds 0 of the nine deleted symbols in the golden
+binaries; TestSelfhostWasm ok; scripts/bootstrap-xo.sh "fixed point: s2
+and s3 binaries identical (87478368 bytes)", s1 equals s2.
+
 | Where | Lines | What | Why dead |
 |---|---|---|---|
 | xo_rt.c 7349-7397 | 49 | xo_utf8_valid | native builds call scan.xo utf8_valid (std/native/prelude.xo:130); the C is the fallback without a native prelude (selfhost/ssa/build.xo:2003-2012) |
@@ -512,7 +531,7 @@ nothing new.
 
 | # | Item | Retires | Needs first | First step |
 |---|---|---|---|---|
-| W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | delete the seven dead groups and their rt.xo declarations; selfhost/xo/link.xo:308-369, 380-393; cc.go:55-109, 119-133; the stale test flags listed above; grep the goldens' objects for the symbols first |
+| W0 | Dead C and stale switch plumbing | 144 C lines, plus the stale -D entries and test flags | nothing | **Done 2026-10-14** (see "W0 done" below) |
 | W1 | (a) sched path | 1,285 | the next milestone run (Linux full tier and Windows batch on a main with sched stage 2) | the deletion list under "XO_LLRT_C=sched" |
 | 1 | B01 clocks (done 2026-10-14, Windows measurement pending) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |

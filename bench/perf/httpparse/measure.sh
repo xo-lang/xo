@@ -11,7 +11,7 @@
 # overrides the list ("none" is the start and the stop alone); N the
 # requests per workload (default 20000); PORT (default 18090).
 # Decision 0198 deleted the C path of http1 and hpack (2026-10-13): naming it in
-# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
+# A deleted XO_LLRT_C name now fails the build; earlier results files keep the comparisons.
 set -e
 XO=$1
 OUT=$2

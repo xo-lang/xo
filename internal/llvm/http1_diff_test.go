@@ -236,9 +236,8 @@ func http1DiffInputs(n int, seed int64) []string {
 // TestHTTPParseDiff, malformed requests, header limits, chunked bodies
 // and trailers, request targets, mutated random requests), each sent on
 // a connection of its own whose sending side then closes; the answers
-// must be equal byte for byte (Date values aside). XO_LLRT_C=http1 checks
-// the C path the same way; XO_HTTP_DIFF_N sets the number of random
-// requests (default 2000).
+// must be equal byte for byte (Date values aside). XO_HTTP_DIFF_N sets
+// the number of random requests (default 2000).
 func TestHTTP1ParseDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds an HTTP server with three backends")
@@ -276,17 +275,6 @@ func TestHTTP1ParseDiff(t *testing.T) {
 		seed = v
 	}
 	inputs := http1DiffInputs(n, seed)
-	if strings.Contains(","+os.Getenv("XO_LLRT_C")+",", ",http1,") || os.Getenv("XO_LLRT_C") == "all" {
-		// the C path's inet_pton (the platform's) takes an IPv4 part
-		// with a leading zero, net/url does not
-		var kept []string
-		for _, in := range inputs {
-			if !strings.Contains(in, "[::1.2.3.04]") {
-				kept = append(kept, in)
-			}
-		}
-		inputs = kept
-	}
 	outs := make([][]string, len(inputs))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 16)

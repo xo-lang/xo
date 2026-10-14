@@ -7363,55 +7363,6 @@ void xo_conn_write(xo_conn *cn, const char *p, int64_t n) {
 
 void xo_conn_close(xo_conn *cn) { pd_close(cn->pd); }
 
-// xo_utf8_valid reports whether the n bytes at p are valid UTF-8 (as Go's
-// utf8.Valid: no surrogates, no overlong forms, at most U+10FFFF), for
-// `Bytes.to_str()`.
-int64_t xo_utf8_valid(const char *p, int64_t n) {
-	const unsigned char *s = (const unsigned char *)p;
-	int64_t i = 0;
-	while (i < n) {
-		unsigned c = s[i];
-		if (c < 0x80) {
-			i++;
-			continue;
-		}
-		int k;
-		unsigned lo = 0x80, hi = 0xBF;
-		if (c >= 0xC2 && c <= 0xDF) {
-			k = 1;
-		} else if (c >= 0xE0 && c <= 0xEF) {
-			k = 2;
-			if (c == 0xE0) {
-				lo = 0xA0;
-			} else if (c == 0xED) {
-				hi = 0x9F;
-			}
-		} else if (c >= 0xF0 && c <= 0xF4) {
-			k = 3;
-			if (c == 0xF0) {
-				lo = 0x90;
-			} else if (c == 0xF4) {
-				hi = 0x8F;
-			}
-		} else {
-			return 0;
-		}
-		if (i + k >= n) {
-			return 0; // cut short
-		}
-		if (s[i + 1] < lo || s[i + 1] > hi) {
-			return 0;
-		}
-		for (int j = 2; j <= k; j++) {
-			if (s[i + j] < 0x80 || s[i + j] > 0xBF) {
-				return 0;
-			}
-		}
-		i += k + 1;
-	}
-	return 1;
-}
-
 // ---------------------------------------------------------------------------
 // Environment (std.md 3.5)
 

@@ -102,9 +102,12 @@ fn (var g: G) env_drop(fi: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 2, kind: "", t: -1, fi: fi}) {
+    return g.helped.get(key) ?? ""
+  }
   let sym = g.helper_label("envdrop")
   g.helped[key] = sym
-  var b: List[Str] = ["// envdrop ${g.m.funcs[fi].name}\n\t.p2align 2\n${sym}:\n"]
+  var b: List[Str] = ["// envdrop ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
   var ls: List[Leaf] = []
   for (i, c) in g.m.funcs[fi].captures.indexed() {
     let (off, _) = g.capture_words(fi, i)
@@ -122,9 +125,12 @@ fn (var g: G) env_share(fi: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 3, kind: "", t: -1, fi: fi}) {
+    return g.helped.get(key) ?? ""
+  }
   let sym = g.helper_label("envshare")
   g.helped[key] = sym
-  var b: List[Str] = ["// envshare ${g.m.funcs[fi].name}\n\t.p2align 2\n${sym}:\n"]
+  var b: List[Str] = ["// envshare ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
   var ls: List[Leaf] = []
   for (i, c) in g.m.funcs[fi].captures.indexed() {
     let (off, _) = g.capture_words(fi, i)
@@ -313,12 +319,15 @@ fn (var g: G) eq_helper(t: Int) -> Str {
   if let Some(s) = g.helped.get(key) {
     return s
   }
+  if g.defers(key, Want{op: 4, kind: "", t: t, fi: -1}) {
+    return g.helped.get(key) ?? ""
+  }
   let sym = g.helper_label("eq")
   g.helped[key] = sym
   let yes = g.helper_label("eq_yes")
   let no = g.helper_label("eq_no")
   let done = g.helper_label("eq_done")
-  var b: List[Str] = ["// eq ${g.tname(t)}\n\t.p2align 2\n${sym}:\n"]
+  var b: List[Str] = ["// eq ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
   var frame = 32
   let k = g.kind(t)
   match k {
