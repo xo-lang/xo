@@ -121,10 +121,10 @@ fn blk_free(b: Int) {
 fn vec_room(v: Int, n: Int, size: Int) {
   let len = rt.mem_load(v, 8, 8)
   let cap = rt.mem_load(v, 16, 8)
-  if len + n <= cap {
+  if rt.int_wrap(0, len, n) <= cap {
     return
   }
-  var c = if cap == 0 { 4 } else { 2 * cap }
+  var c = if cap == 0 { 64 } else { 2 * cap }
   while c < len + n {
     c = 2 * c
   }
@@ -141,18 +141,23 @@ fn vec_at(v: Int, i: Int) -> Int { rt.mem_load(rt.mem_load(v, 0, 8), 8 * i, 8) }
 fn vec_set(v: Int, i: Int, x: Int) { rt.mem_store(rt.mem_load(v, 0, 8), 8 * i, x, 8) }
 
 fn vec_push(v: Int, x: Int) {
-  vec_room(v, 1, 8)
-  let n = vec_len(v)
-  vec_set(v, n, x)
-  rt.mem_store(v, 8, n + 1, 8)
+  let n = rt.mem_load(v, 8, 8)
+  if n >= rt.mem_load(v, 16, 8) {
+    vec_room(v, 1, 8)
+  }
+  rt.mem_store(rt.mem_load(v, 0, 8), rt.int_wrap(3, n, 3), x, 8)
+  rt.mem_store(v, 8, rt.int_wrap(0, n, 1), 8)
 }
 
 /// Appends the n bytes at p to the byte vector at v.
 fn vec_put(v: Int, p: Int, n: Int) {
-  vec_room(v, n, 1)
-  let len = vec_len(v)
-  rt.mem_copy(rt.mem_load(v, 0, 8) + len, p, n)
-  rt.mem_store(v, 8, len + n, 8)
+  let len = rt.mem_load(v, 8, 8)
+  let end = rt.int_wrap(0, len, n)
+  if end > rt.mem_load(v, 16, 8) {
+    vec_room(v, n, 1)
+  }
+  rt.mem_copy(rt.int_wrap(0, rt.mem_load(v, 0, 8), len), p, n)
+  rt.mem_store(v, 8, end, 8)
 }
 
 /// Removes element i of the word vector at v.
@@ -415,7 +420,7 @@ fn pcg(a: Int) -> Int {
   var hi = rt.u64_mul_hi(s_lo, 4865540595714422341)
   hi = rt.int_wrap(0, hi, rt.int_wrap(0, rt.int_wrap(2, s_hi, 4865540595714422341), rt.int_wrap(2, s_lo, 2549297995355413924)))
   let lo2 = rt.int_wrap(0, lo, 1442695040888963407)
-  let c = if ult(lo2, lo) { 1 } else { 0 }
+  let c = if (lo2 ^ MIN_INT) < (lo ^ MIN_INT) { 1 } else { 0 }
   hi = rt.int_wrap(0, rt.int_wrap(0, hi, 6364136223846793005), c)
   rt.mem_store(a, 0, hi, 8)
   rt.mem_store(a, 8, lo2, 8)
@@ -427,13 +432,18 @@ fn pcg(a: Int) -> Int {
 }
 
 /// Whether Rand is the seeded generator (a test binary).
-pub fn seeded() -> Bool { on() }
+pub fn seeded() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
 
 /// The next word of Rand's seeded generator.
 pub fn rand_u64() -> Int {
-  lock()
+  let l = rt.static_word(W_LOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
   let v = pcg(rt.static_word(W_RNG))
-  unlock()
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
   v
 }
 
@@ -511,15 +521,16 @@ pub fn gen_prop() -> Int {
 /// Go's (*rand.Rand).Uint64N (n not 0): a mask for powers of two, else
 /// Lemire's multiply with rejection.
 fn u64n(g: Int, n: Int) -> Int {
-  if n & rt.int_wrap(1, n, 1) == 0 {
-    return pcg(g) & rt.int_wrap(1, n, 1)
+  let m = rt.int_wrap(1, n, 1)
+  if n & m == 0 {
+    return pcg(g) & m
   }
   var x = pcg(g)
   var hi = rt.u64_mul_hi(x, n)
   var lo = rt.int_wrap(2, x, n)
-  if ult(lo, n) {
+  if (lo ^ MIN_INT) < (n ^ MIN_INT) {
     let thresh = ints.u64_rem(rt.int_wrap(1, 0, n), n)
-    while ult(lo, thresh) {
+    while (lo ^ MIN_INT) < (thresh ^ MIN_INT) {
       x = pcg(g)
       hi = rt.u64_mul_hi(x, n)
       lo = rt.int_wrap(2, x, n)
@@ -546,7 +557,13 @@ pub fn gen_draw(g: Int, n: Int) -> Int {
   } else {
     v = u64n(g, n)
   }
-  vec_push(g + G_REC, v)
+  let r = rt.int_wrap(0, g, G_REC)
+  let k = rt.mem_load(r, 8, 8)
+  if k >= rt.mem_load(r, 16, 8) {
+    vec_room(r, 1, 8)
+  }
+  rt.mem_store(rt.mem_load(r, 0, 8), rt.int_wrap(3, k, 3), v, 8)
+  rt.mem_store(r, 8, rt.int_wrap(0, k, 1), 8)
   v
 }
 
@@ -596,9 +613,18 @@ pub fn prop_best() -> List[Str] {
 /// standard error when err.
 pub fn write_raw(err: Bool, p: Int, n: Int) {
   let off = if err { S_ERR } else { S_OUT }
-  lock()
-  vec_put(st() + off, p, n)
-  unlock()
+  var s = rt.slot_load(rt.static_word(W_STATE), 0, ACQUIRE)
+  if s == 0 {
+    s = st()
+  }
+  let l = rt.static_word(W_LOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+  vec_put(rt.int_wrap(0, s, off), p, n)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
 }
 
 /// Captures s (FakeStdio's eprint when err).
