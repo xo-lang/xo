@@ -1,13 +1,16 @@
-// The fault unwinder of the native runtime on Linux (decision 0221; the
-// zero-C audit's item B05): what libgcc's _Unwind_ForcedUnwind, a stop
-// function at the context's boundary, and a personality routine do for a
-// fault, in Xo over raw memory, for programs linked with glibc (stage 3)
-// and with no C library (XO_NOLIBC=1, stage 1). The C runtime's
+// The fault unwinder of the native runtime on Linux and macOS (decision
+// 0221; the zero-C audit's item B05): what libgcc's (and libunwind's)
+// _Unwind_ForcedUnwind, a stop function at the context's boundary, and a
+// personality routine do for a fault, in Xo over raw memory, for
+// programs linked with glibc and on macOS (stage 3) and with no C
+// library (XO_NOLIBC=1, stage 1). The C runtime's
 // fault_raise calls raise (cabi.xo unwind_fault) with the context's
 // exception object, boundary, and the personality's addresses; raise
 // walks the frames from its own up through the .eh_frame_hdr tables of
 // the program and of the shared objects it loaded (ld.so's link_map) and
-// the DWARF call frame information of .eh_frame, and at the first frame
+// the DWARF call frame information of .eh_frame (on macOS the compact
+// unwind of __unwind_info, dframe and cstep, and the FDEs of __eh_frame
+// it points to), and at the first frame
 // of generated code (its CIE names xo_x_personality) whose call site has a
 // landing pad it restores that frame's registers and jumps there
 // (rt.unwind_resume), with the exception in x0 as the personality
@@ -21,14 +24,10 @@
 // (a DWARF expression, an unknown instruction); fault_raise then reports
 // it and ends the program, as before this module.
 //
-// linux/arm64 only for now: on x86_64 raise returns 0 at once (the
-// registers and the trampolines are arm64's), and glibc linux/amd64 keeps
-// libgcc's forced unwind (stage 2). macOS keeps libunwind (a platform
-// library, decision 0195; it reads the compact unwind of __unwind_info):
-// there only the personality routine is Xo (darwin_personality); the
-// stop function stays in xo_rt.c, since it must end the program itself:
-// libunwind's _Unwind_Resume (a C cleanup resuming the unwind) aborts
-// when the stop function returns.
+// arm64 only for now: on x86_64 raise returns 0 at once (the registers
+// and the trampolines are arm64's), and with a C library x86_64 keeps the
+// platform's forced unwind (libgcc, libunwind) and the C personality
+// (stage 2).
 //
 // Nothing here allocates, faults, or keeps a counted value: the scratch
 // record is one mapping per thread, kept in thread local word UNW_TLS;
@@ -76,6 +75,19 @@ const H_PERS = 128
 /// The CIE whose fields are in the header and whose rules are ST_INIT
 /// (unwind tables do not change while a program runs), or 0.
 const H_CIE_ADDR = 136
+/// macOS: the frame's compact unwind encoding (0: its rules are DWARF's,
+/// in ST_CUR), and the program's image, read at the thread's first
+/// fault: its Mach-O header, __unwind_info, __eh_frame, and __TEXT
+/// range.
+const H_ENC = 144
+const H_MH = 152
+const H_UI = 160
+const H_EHF = 168
+const H_TLO = 176
+const H_THI = 184
+/// The cached CIE's personality routine (H_PERS is the frame's: a
+/// compact frame on macOS sets it without reading a CIE).
+const H_CIE_PERS = 192
 /// The register set: word n is DWARF register n (x0 to x30, sp 31, v0
 /// to v31 at 64 to 95), word 96 the frame's pc (its return address).
 /// step updates it in place to the caller's.
@@ -139,12 +151,20 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
     TargetArch.Arm64 => {}
     TargetArch.Amd64 | TargetArch.Wasm32 => return 0
   }
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
   let s = scratch()
   if s == 0 {
     return 0
   }
   // the program's table, found at the thread's first fault
-  if rt.mem_load(s, H_HDR, 8) == 0 {
+  if darwin {
+    if rt.mem_load(s, H_MH, 8) == 0 && !image(s, sys_darwin._dyld_get_image_header(0), s + H_MH) {
+      return 0
+    }
+  } else if rt.mem_load(s, H_HDR, 8) == 0 {
     let hdr = eh_frame_hdr()
     if hdr == 0 {
       return 0
@@ -159,7 +179,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
   var first = true
   while true {
     let pc = rt.mem_load(cur, PC, 8)
-    if pc == 0 || !frame(s, pc) {
+    if pc == 0 || !(if darwin { dframe(s, pc) } else { frame(s, pc) }) {
       // the end of the stack (_UA_END_OF_STACK: fault_stop reports)
       return 0
     }
@@ -182,7 +202,8 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
       }
     }
     first = false
-    if !step(s, cur) {
+    let enc = rt.mem_load(s, H_ENC, 8)
+    if !(if darwin && enc != 0 { cstep(cur, enc) } else { step(s, cur) }) {
       return 0
     }
   }
@@ -258,36 +279,13 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
   0
 }
 
-/// The personality routine of generated code on macOS (xo_x_personality,
-/// called by libunwind's _Unwind_ForcedUnwind with its context uc): the
-/// protocol of personality, through libunwind's accessors. version and
-/// actions are C ints (their high bits are not defined).
-pub fn darwin_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
-  match target.os {
-    TargetOs.Darwin => {}
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => return URC_CONTINUE_UNWIND
-  }
-  if (version & 4294967295) != 1 {
-    return URC_FATAL_PHASE1_ERROR
-  }
-  if (actions & UA_CLEANUP_PHASE) == 0 {
-    return URC_CONTINUE_UNWIND
-  }
-  let lsda = sys_darwin._Unwind_GetLanguageSpecificData(uc)
-  if lsda == 0 {
-    return URC_CONTINUE_UNWIND
-  }
-  let lp = landing(lsda, sys_darwin._Unwind_GetRegionStart(uc), sys_darwin._Unwind_GetIP(uc) - 1)
-  if lp == 0 {
-    return URC_CONTINUE_UNWIND
-  }
-  // __builtin_eh_return_data_regno(0) and (1): x0 and x1 on arm64, rax
-  // and rdx on x86_64, numbers 0 and 1 on both
-  sys_darwin._Unwind_SetGR(uc, 0, exc)
-  sys_darwin._Unwind_SetGR(uc, 1, 0)
-  sys_darwin._Unwind_SetIP(uc, lp)
-  URC_INSTALL_CONTEXT
-}
+/// The personality routine export of generated code (cabi.xo
+/// personality, xo_x_personality, which the unwind tables name). raise
+/// does not call it: it compares a frame's personality with its address
+/// and reads the call site table itself. A foreign unwinder calling it
+/// (a C++ exception through Xo frames, which nothing raises) is told to
+/// go on.
+pub fn export_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int { URC_CONTINUE_UNWIND }
 
 /// The calling thread's scratch record, mapped at its first use; 0 when
 /// it cannot be.
@@ -296,8 +294,12 @@ fn scratch() -> Int {
   if s != 0 {
     return s
   }
-  // PROT_READ | PROT_WRITE; MAP_PRIVATE | MAP_ANONYMOUS
-  let m = linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+  // PROT_READ | PROT_WRITE; MAP_PRIVATE | MAP_ANONYMOUS (0x20 on
+  // Linux, 0x1000 on macOS)
+  let m = match target.os {
+    TargetOs.Darwin => sys_darwin.mmap(0, SCRATCH, 3, 2 | 4096, -1, 0)
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+  }
   if m < 0 && m > -4096 {
     return 0
   }
@@ -417,6 +419,251 @@ fn object_hdr_of(base: Int, pc: Int) -> Int {
     return 0
   }
   hdr
+}
+
+// macOS: the compact unwind of __unwind_info (mach-o/compact_unwind_
+// encoding.h), as libunwind reads it; a function whose encoding is DWARF
+// goes to the FDE in __eh_frame it names.
+
+/// Reads the Mach-O image whose header is at mh into the five words at
+/// out: mh, its __unwind_info and __eh_frame (0 when it has none), and
+/// its __TEXT range. Whether it has __unwind_info.
+fn image(s: Int, mh: Int, out: Int) -> Bool {
+  // mach_header_64: magic 0xfeedfacf, ncmds at 16; load commands from 32
+  if mh == 0 || rt.mem_load(mh, 0, 4) != 4277009103 {
+    return false
+  }
+  let n = rt.mem_load(mh, 16, 4)
+  var lc = mh + 32
+  var slide = 0
+  var text = 0
+  var text_size = 0
+  var ui = 0
+  var ehf = 0
+  for _ in 0..n {
+    // LC_SEGMENT_64 (0x19): segname at 8, vmaddr 24, vmsize 32, nsects
+    // 64, sections (section_64, 80 bytes: sectname 0, addr 32) from 72
+    if rt.mem_load(lc, 0, 4) == 25 && rt.mem_load(lc, 8, 8) == 92738097012575 && rt.mem_load(lc, 16, 8) == 0 {
+      // "__TEXT"
+      text = rt.mem_load(lc, 24, 8)
+      text_size = rt.mem_load(lc, 32, 8)
+      slide = mh - text
+      let ns = rt.mem_load(lc, 64, 4)
+      for i in 0..ns {
+        let sec = lc + 72 + 80 * i
+        let a = rt.mem_load(sec, 0, 8)
+        let b = rt.mem_load(sec, 8, 8)
+        // "__unwind_info", "__eh_frame"
+        if a == 7236837612906176351 && b == 478459881823 {
+          ui = rt.mem_load(sec, 32, 8)
+        } else if a == 7021787328983424863 && b == 25965 {
+          ehf = rt.mem_load(sec, 32, 8)
+        }
+      }
+    }
+    lc += rt.mem_load(lc, 4, 4)
+  }
+  if ui == 0 {
+    return false
+  }
+  rt.mem_store(out, 0, mh, 8)
+  rt.mem_store(out, 8, ui + slide, 8)
+  rt.mem_store(out, 16, if ehf == 0 { 0 } else { ehf + slide }, 8)
+  rt.mem_store(out, 24, text + slide, 8)
+  rt.mem_store(out, 32, text + slide + text_size, 8)
+  true
+}
+
+/// Reads the unwind information of the frame whose return address is pc
+/// on macOS into s: the function's start, LSDA, and personality, and its
+/// compact encoding (H_ENC), or for a DWARF encoding the FDE's rules (as
+/// frame does) and H_ENC 0. A pc outside the program is looked up in its
+/// image (dladdr). Whether there is one.
+fn dframe(s: Int, pc: Int) -> Bool {
+  var img = s + H_MH
+  if pc - 1 < rt.mem_load(s, H_TLO, 8) || pc - 1 >= rt.mem_load(s, H_THI, 8) {
+    // Dl_info: dli_fname, dli_fbase (the image's header), ...; read
+    // into TMP, the image into TMP + 32
+    let info = s + TMP
+    if sys_darwin.dladdr(pc - 1, info) == 0 || !image(s, rt.mem_load(info, 8, 8), info + 32) {
+      return false
+    }
+    img = info + 32
+  }
+  let mh = rt.mem_load(img, 0, 8)
+  let ui = rt.mem_load(img, 8, 8)
+  let off = pc - 1 - mh
+  // unwind_info_section_header: version, common encodings (offset,
+  // count), personalities (offset, count), index (offset, count)
+  if rt.mem_load(ui, 0, 4) != 1 {
+    return false
+  }
+  let common = ui + rt.mem_load(ui, 4, 4)
+  let ncommon = rt.mem_load(ui, 8, 4)
+  let idx = ui + rt.mem_load(ui, 20, 4)
+  let nidx = rt.mem_load(ui, 24, 4)
+  // the first level: the last entry (12 bytes: function offset, second
+  // level page, LSDA index) whose function offset is at most off; the
+  // last entry is a sentinel
+  var lo = 0
+  var hi = nidx - 1
+  if hi < 1 || rt.mem_load(idx, 0, 4) > off || rt.mem_load(idx, 12 * hi, 4) <= off {
+    return false
+  }
+  while hi - lo > 1 {
+    let mid = lo + (hi - lo) / 2
+    if rt.mem_load(idx, 12 * mid, 4) <= off {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  let e = idx + 12 * lo
+  let page = rt.mem_load(e, 4, 4)
+  if page == 0 {
+    return false
+  }
+  let p = ui + page
+  var fstart = 0
+  var enc = 0
+  let kind = rt.mem_load(p, 0, 4)
+  if kind == 2 {
+    // regular: entries (function offset, encoding) from entryPageOffset
+    let ents = p + rt.mem_load(p, 4, 2)
+    let n = rt.mem_load(p, 6, 2)
+    let i = last_le(ents, n, 8, off, 0)
+    if i < 0 {
+      return false
+    }
+    fstart = rt.mem_load(ents, 8 * i, 4)
+    enc = rt.mem_load(ents, 8 * i + 4, 4)
+  } else if kind == 3 {
+    // compressed: 32 bit entries, the function offset from the first
+    // level's in the low 24 bits, the encoding's index in the high 8
+    let ents = p + rt.mem_load(p, 4, 2)
+    let n = rt.mem_load(p, 6, 2)
+    let base = rt.mem_load(e, 0, 4)
+    let i = last_le(ents, n, 4, off - base, 16777215)
+    if i < 0 {
+      return false
+    }
+    let w = rt.mem_load(ents, 4 * i, 4)
+    fstart = base + (w & 16777215)
+    let ei = w / 16777216
+    if ei < ncommon {
+      enc = rt.mem_load(common, 4 * ei, 4)
+    } else {
+      enc = rt.mem_load(p + rt.mem_load(p, 8, 2), 4 * (ei - ncommon), 4)
+    }
+  } else {
+    return false
+  }
+  if enc == 0 {
+    // no unwind information
+    return false
+  }
+  if (enc & 251658240) == 50331648 {
+    // UNWIND_ARM64_MODE_DWARF: the FDE at the low 24 bits' offset in
+    // __eh_frame
+    let ehf = rt.mem_load(img, 16, 8)
+    if ehf == 0 || !read_fde(s, ehf + (enc & 16777215), pc - 1) {
+      return false
+    }
+    rt.mem_store(s, H_ENC, 0, 8)
+    copy_rules(s + ST_CUR, s + ST_INIT)
+    rt.mem_store(s, H_DEPTH, 0, 8)
+    return exec(s, rt.mem_load(s, H_FDE, 8), rt.mem_load(s, H_FDE_END, 8), pc, false)
+  }
+  rt.mem_store(s, H_ENC, enc, 8)
+  rt.mem_store(s, H_BEGIN, mh + fstart, 8)
+  // the personality: its index (UNWIND_PERSONALITY_MASK) into the
+  // personality array, offsets of pointers to it
+  var pers = 0
+  let pi = (enc / 268435456) & 3
+  if pi != 0 && pi <= rt.mem_load(ui, 16, 4) {
+    pers = rt.mem_load(mh + rt.mem_load(ui + rt.mem_load(ui, 12, 4), 4 * (pi - 1), 4), 0, 8)
+  }
+  rt.mem_store(s, H_PERS, pers, 8)
+  // the LSDA (UNWIND_HAS_LSDA): the first level entry's LSDA index
+  // (function offset, LSDA offset), up to the next entry's
+  var lsda = 0
+  if (enc & 1073741824) != 0 {
+    let la = ui + rt.mem_load(e, 8, 4)
+    let ln = (rt.mem_load(e, 20, 4) - rt.mem_load(e, 8, 4)) / 8
+    let i = last_le(la, ln, 8, fstart, 0)
+    if i >= 0 && rt.mem_load(la, 8 * i, 4) == fstart {
+      lsda = mh + rt.mem_load(la, 8 * i + 4, 4)
+    }
+  }
+  rt.mem_store(s, H_LSDA, lsda, 8)
+  true
+}
+
+/// The index of the last of the n entries of size bytes at a whose
+/// first 32 bit word (masked with mask, when it is not 0) is at most v,
+/// or -1.
+fn last_le(a: Int, n: Int, size: Int, v: Int, mask: Int) -> Int {
+  var lo = 0
+  var hi = n
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    var w = rt.mem_load(a, size * mid, 4)
+    if mask != 0 {
+      w = w & mask
+    }
+    if w <= v {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo - 1
+}
+
+/// The registers of the caller of the frame whose registers are at regs,
+/// in place, by its arm64 compact encoding enc (libunwind's
+/// CompactUnwinder_arm64): a frame (UNWIND_ARM64_MODE_FRAME, and
+/// FRAME_PAUTH_LR) has the frame record at x29 and the saved pairs right
+/// below it; a frameless leaf (MODE_FRAMELESS) has its pairs right below
+/// sp plus its stack size and the return address in x30. Whether enc is
+/// one of those.
+fn cstep(regs: Int, enc: Int) -> Bool {
+  let mode = enc & 251658240
+  if mode == 67108864 || mode == 83886080 {
+    let fp = rt.mem_load(regs, 8 * 29, 8)
+    restore_pairs(regs, enc, fp)
+    rt.mem_store(regs, 8 * 29, rt.mem_load(fp, 0, 8), 8)
+    rt.mem_store(regs, SP, fp + 16, 8)
+    // the return address's address bits (an arm64e signed one)
+    rt.mem_store(regs, PC, rt.mem_load(fp, 8, 8) & 281474976710655, 8)
+    return true
+  }
+  if mode == 33554432 {
+    let top = rt.mem_load(regs, SP, 8) + 16 * ((enc / 4096) & 4095)
+    restore_pairs(regs, enc, top)
+    rt.mem_store(regs, SP, top, 8)
+    rt.mem_store(regs, PC, rt.mem_load(regs, 8 * 30, 8) & 281474976710655, 8)
+    return true
+  }
+  false
+}
+
+/// Loads the callee saved pairs enc names (x19 and x20 to x27 and x28,
+/// then d8 and d9 to d14 and d15, in that order) from the words below
+/// top, the first of each pair the higher.
+fn restore_pairs(regs: Int, enc: Int, top: Int) {
+  var loc = top
+  for k in 0..9 {
+    // bits 0 to 4 the x pairs, 8 to 11 the d pairs (DWARF 72 is d8)
+    let bit = if k < 5 { k } else { k + 3 }
+    if (enc & rt.int_wrap(3, 1, bit)) != 0 {
+      let r = if k < 5 { 19 + 2 * k } else { 72 + 2 * (k - 5) }
+      loc -= 8
+      rt.mem_store(regs, 8 * r, rt.mem_load(loc, 0, 8), 8)
+      loc -= 8
+      rt.mem_store(regs, 8 * (r + 1), rt.mem_load(loc, 0, 8), 8)
+    }
+  }
 }
 
 /// v, the low bits bits of a two's complement number, sign extended.
@@ -647,6 +894,7 @@ fn read_fde(s: Int, fde: Int, pc: Int) -> Bool {
     p = p3 + alen
   }
   rt.mem_store(s, H_LSDA, lsda, 8)
+  rt.mem_store(s, H_PERS, rt.mem_load(s, H_CIE_PERS, 8), 8)
   rt.mem_store(s, H_FDE, p, 8)
   rt.mem_store(s, H_FDE_END, end, 8)
   true
@@ -728,7 +976,7 @@ fn read_cie(s: Int, cie: Int) -> Bool {
   rt.mem_store(s, H_FENC, fenc, 8)
   rt.mem_store(s, H_LENC, lenc, 8)
   rt.mem_store(s, H_AUGZ, augz, 8)
-  rt.mem_store(s, H_PERS, pers, 8)
+  rt.mem_store(s, H_CIE_PERS, pers, 8)
   rt.mem_store(s, H_CIE, p, 8)
   rt.mem_store(s, H_CIE_END, end, 8)
   true

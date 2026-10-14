@@ -1023,10 +1023,10 @@ fn (g: Gen) arch() -> Str {
 /// The personality routine the unwind tables name (decision 0221): the
 /// runtime's export xo_x_personality (std/native/llrt/cabi.xo, defined
 /// in the module), but the C xo_personality on Windows (decision 0197)
-/// and on linux/amd64, whose C library builds still unwind with libgcc
-/// until decision 0221's stage 2.
+/// and on x86_64, whose C library builds still unwind with libgcc or
+/// libunwind until decision 0221's stage 2.
 fn (g: Gen) personality() -> Str {
-  if g.os() == "windows" || (g.os() == "linux" && g.arch() == "amd64") {
+  if g.os() == "windows" || g.arch() == "amd64" {
     return "xo_personality"
   }
   "xo_x_personality"

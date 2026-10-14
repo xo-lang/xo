@@ -1,7 +1,9 @@
 # libunwind aborts when a forced unwind's stop function returns from _Unwind_Resume
 
 Status: Observed (2026-10-14, decision 0221 stage 3, macOS arm64,
-TestRuntimeFaultResume)
+TestRuntimeFaultResume). Since decision 0221 point 10, macOS arm64 does
+not use libunwind for faults; this still holds for x86_64 (libgcc and
+libunwind) and for any future stop function.
 
 Symptom: with the stop function of a fault's forced unwind moved to an
 Xo export that returned a nonzero code at the context's boundary (so

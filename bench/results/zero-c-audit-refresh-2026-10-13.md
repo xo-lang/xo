@@ -416,8 +416,11 @@ frees the 533 (a) lines.)
   stage 2, which needs an amd64 machine to verify on. A 3 line C
   forwarder xo_personality stays until a seed's emitters name
   xo_x_personality (the emitters do since 2026-10-14, decision 0221
-  point 7; the next seed after that lets it go). The original note
-  follows.
+  point 7; the next seed after that lets it go). macOS arm64 then moved
+  off libunwind too (decision 0221 point 10, the same day): unwind.xo
+  reads __unwind_info, the C fault_stop and the macOS fault_raise are
+  deleted, and faults cost 0.083 to 0.123 of libunwind's instructions.
+  The original note follows.
   MISSING: a DWARF CFI unwinder over .eh_frame and
   .eh_frame_hdr in Xo, and a register restore and resume intrinsic;
   the personality routine (1974-2021) and LSDA reader (1880-1927) as a

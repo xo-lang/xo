@@ -88,8 +88,32 @@ investigated; it is about 56,000 instructions of start up.
   (XO_UNWIND_LIBGCC in xo_rt.c), so the C fault_stop, forced unwind,
   personality, and LSDA reader are still in the source. There is no
   amd64 CI runner yet to verify the x86_64 trampolines on.
-- macOS pays about 137,000 instructions per fault in libunwind (isolate
+- macOS paid about 137,000 instructions per fault in libunwind (isolate
   arm64: 2.74e9 / 20,000), against about 22,000 for the Xo walker on
-  Linux. An Xo walker of `__unwind_info` (compact unwind) would cut that.
-  It would also retire the C stop function, which must otherwise end the
-  program itself (gotchas/libunwind-stop-must-not-return.md).
+  Linux. Done the same day: see "macOS on the Xo walker" below.
+
+## macOS on the Xo walker (decision 0221 point 10)
+
+Branch b05-macos: unwind.xo reads `__unwind_info` itself (dframe,
+cstep) and macOS no longer calls libunwind for a fault. `/usr/bin/time
+-l` instructions retired on the Mac. The baseline is main f3b31866
+(libunwind with the Xo personality) built by the 0.11.0 xo; the branch
+is built by the branch's own xo (its emitters name xo_x_personality).
+
+| workload | backend | libunwind | Xo walker | ratio |
+|---|---|---|---|---|
+| none | arm64 | 16,677,177 | 16,128,856 | 0.967 |
+| none | llvm | 14,222,450 | 13,709,050 | 0.964 |
+| isolate | arm64 | 2,741,011,601 | 274,420,202 | 0.100 |
+| isolate | llvm | 3,747,809,157 | 312,368,060 | 0.083 |
+| defer | arm64 | 13,474,154,714 | 1,572,320,835 | 0.117 |
+| defer | llvm | 13,898,460,239 | 1,306,115,201 | 0.094 |
+| owned | arm64 | 7,450,270,065 | 913,649,472 | 0.123 |
+| owned | llvm | 7,966,888,440 | 765,008,144 | 0.096 |
+
+A fault caught 8 frames deep (isolate, arm64) now costs about 13,700
+instructions, against 137,000 before. The Mac's goldens pass 157 of
+157 on both backends, as do TestRuntimeFaultResume (the C cleanup is
+now passed over on macOS too), TestRuntimeTasks, TestRuntimeThreads,
+and TestGoldenTasks (TSan).
+

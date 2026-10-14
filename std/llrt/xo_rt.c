@@ -1419,10 +1419,9 @@ int64_t xo_unwinding(void) {
 // ---------------------------------------------------------------------------
 // Fault unwinding (core 8, decision 0085)
 //
-// A fault is raised as a forced unwind (decision 0221): on Linux the Xo
-// unwinder walks the frames (std/native/llrt/unwind.xo raise), on macOS
-// libunwind's _Unwind_ForcedUnwind with an Xo stop function and
-// personality, on Windows the system's unwinder (decision 0197); glibc
+// A fault is raised as a forced unwind (decision 0221): on Linux and
+// macOS the Xo unwinder walks the frames (std/native/llrt/unwind.xo
+// raise), on Windows the system's unwinder (decision 0197); glibc
 // linux/amd64 keeps libgcc's forced unwind until decision 0221's stage 2.
 // Every frame of generated code has unwind tables, and its landing pads (the
 // cleanup paths of internal/ssa's checks, landing.go) run the deferred
@@ -1436,11 +1435,13 @@ int64_t xo_unwinding(void) {
 // (xo_personality) reads the call site table of the language specific
 // data area that both backends emit (the GCC format for cleanups).
 // Frames of C with cleanups between a fault and its catch are passed
-// over on Linux, their cleanups not run (the runtime's C has none).
+// over, their cleanups not run (the runtime's C has none).
 
-// XO_UNWIND_LIBGCC: glibc linux/amd64, which still raises a fault with
-// libgcc's _Unwind_ForcedUnwind and the C personality below.
-#if !defined(_WIN32) && !defined(__APPLE__) && !defined(XO_NOLIBC) && !defined(__aarch64__)
+// XO_UNWIND_LIBGCC: x86_64 with a C library (glibc linux/amd64 and
+// darwin/amd64), which still raise a fault with the platform's
+// _Unwind_ForcedUnwind (libgcc, libunwind) and the C personality below,
+// until decision 0221's stage 2 gives the Xo unwinder x86_64.
+#if !defined(_WIN32) && !defined(XO_NOLIBC) && !defined(__aarch64__)
 #define XO_UNWIND_LIBGCC 1
 #endif
 
@@ -1520,40 +1521,6 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	}
 	fault_exit(c);
 }
-#elif defined(__APPLE__)
-// fault_stop is the stop function of a fault's forced unwind on macOS
-// (libunwind; it reads the compact unwind of __unwind_info, a platform
-// library under decision 0195): the frames past the context's boundary
-// are the runtime's, where nothing catches a fault. It ends the program
-// itself: returning would make a C cleanup's _Unwind_Resume abort.
-static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
-	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
-	(void)version;
-	(void)cls;
-	(void)e;
-	xo_ctx *c = arg;
-	if ((actions & _UA_END_OF_STACK) || (c->boundary && (uintptr_t)_Unwind_GetCFA(uc) > c->boundary)) {
-		fault_exit(c);
-	}
-	return _URC_NO_REASON;
-}
-
-// fault_raise on macOS: libunwind's forced unwind with fault_stop and
-// the Xo personality (unwind.xo darwin_personality). The exception
-// object is the context's: generated landing pads never resume it
-// (xo_fault_continue raises anew, reusing it), but a C cleanup does,
-// after the frame of this call is gone.
-XO_NORETURN static void fault_raise(xo_ctx *c) {
-	rt_fault_leave();
-	c->faulting = 1;
-	c->unwinding = 1;
-	struct _Unwind_Exception *exc = &c->fault_exc;
-	memset(exc, 0, sizeof *exc);
-	exc->exception_class = XO_EXC_CLASS;
-	_Unwind_ForcedUnwind(exc, fault_stop, c);
-	// the unwinder found no way up
-	fault_exit(c);
-}
 #elif !defined(XO_UNWIND_LIBGCC)
 int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
@@ -1563,9 +1530,10 @@ int xo_personality(void); // the link's --defsym of xo_x_personality
 int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
 #endif
 
-// fault_raise on Linux (decision 0221): the unwinder is Xo
+// fault_raise on Linux and macOS (decision 0221): the unwinder is Xo
 // (std/native/llrt/unwind.xo over the .eh_frame_hdr tables of the
-// program and its shared objects), which runs the first landing pad of
+// program and its shared objects on Linux, the compact unwind of
+// __unwind_info and __eh_frame on macOS), which runs the first landing pad of
 // a frame of generated code (its personality is xo_x_personality, or
 // the forwarder xo_personality that an xo before decision 0221's
 // emitter change names) below the context's boundary, and returns when
@@ -1724,10 +1692,11 @@ xo_rstr *xo_fault_loc(int64_t *len) {
 // landing pad is a cleanup, entered on the second phase. The language
 // specific data is GCC's: an LPStart and a TType encoding (omitted), the
 // call site encoding, and the call sites (start, length, landing pad,
-// action), offsets from the function's start. It is Xo (decision 0221:
-// unwind.xo darwin_personality, the export xo_x_personality, which the
-// emitters name) but on Windows and glibc linux/amd64; on Linux the Xo
-// unwinder only compares a frame's personality with its address. With
+// action), offsets from the function's start. It is C on Windows and
+// x86_64 (glibc linux/amd64 and darwin/amd64, until decision 0221's
+// stage 2). Elsewhere the Xo unwinder reads the call site tables itself
+// and only compares a frame's personality with the address of the
+// export xo_x_personality, which the emitters name. With
 // no C library the link defines xo_personality as the export; otherwise
 // it is the forwarder below, for code from an xo whose emitters still
 // name xo_personality (the seed 0.11.0 builds the next xo with them):

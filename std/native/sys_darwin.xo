@@ -81,17 +81,11 @@ fn pthread_attr_destroy(attr: Int) -> Int32
 /// pthread_create: the thread runs the C function at f with arg.
 fn pthread_create(tid: Int, attr: Int, f: Int, arg: Int) -> Int32
 
-// The accessors of libunwind's unwind context (unwind.h) that the
-// personality routine of std/native/llrt/unwind.xo uses during a
-// fault's forced unwind (decision 0221 stage 3).
+// The image lookups of std/native/llrt/unwind.xo's compact unwind
+// walker (decision 0221 stage 3, macOS).
 
-/// The language specific data area of the context's frame, or 0.
-fn _Unwind_GetLanguageSpecificData(uc: Int) -> Int
-/// The first address of the context's function.
-fn _Unwind_GetRegionStart(uc: Int) -> Int
-/// The context's pc (the frame's return address).
-fn _Unwind_GetIP(uc: Int) -> Int
-/// Sets register r (DWARF numbering) of the context to v.
-fn _Unwind_SetGR(uc: Int, r: Int, v: Int)
-/// Sets the context's pc: where it resumes.
-fn _Unwind_SetIP(uc: Int, v: Int)
+/// The Mach-O header of loaded image i (0: the program), or 0.
+fn _dyld_get_image_header(i: Int) -> Int
+/// dladdr(3): fills the Dl_info at info (dli_fbase, the header of the
+/// image holding addr, at 8); 0 when no image holds it.
+fn dladdr(addr: Int, info: Int) -> Int32

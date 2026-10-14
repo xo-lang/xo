@@ -14,13 +14,14 @@ import (
 
 // TestRuntimeFaultResume raises a fault through a C frame with a
 // cleanup (std/llrt/testdata/fault_resume.c). The fault is reported past
-// the boundary and the process exits 70. Where libunwind or libgcc runs
-// the unwind (macOS, glibc linux/amd64) the C cleanup runs and resumes
-// the unwind after scribbling over the stack the raising frames used, so
-// the fault's exception object must outlive those frames
+// the boundary and the process exits 70. Where libgcc or libunwind runs
+// the unwind (x86_64) the C cleanup runs and resumes the unwind after
+// scribbling over the stack the raising frames used, so the fault's
+// exception object must outlive those frames
 // (gotchas/tsan-resumes-fault-unwind.md); where the Xo unwinder runs it
-// (Linux arm64, decision 0221 stage 3) a frame whose personality is not
-// xo_personality is passed over and its cleanup does not run. Built
+// (arm64 Linux and macOS, decision 0221 stage 3) a frame whose
+// personality is not xo_x_personality is passed over and its cleanup
+// does not run. Built
 // plainly and with ThreadSanitizer.
 func TestRuntimeFaultResume(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
@@ -56,9 +57,9 @@ func TestRuntimeFaultResume(t *testing.T) {
 }
 
 // cCleanupsRun reports whether a fault runs the cleanups of C frames it
-// unwinds: not where the Xo unwinder walks the frames (Linux arm64,
-// decision 0221 stage 3), which enters only generated code's landing
-// pads.
+// unwinds: not where the Xo unwinder walks the frames (arm64 Linux and
+// macOS, decision 0221 stage 3), which enters only generated code's
+// landing pads.
 func cCleanupsRun() bool {
-	return !(runtime.GOOS == "linux" && runtime.GOARCH == "arm64")
+	return runtime.GOOS == "windows" || runtime.GOARCH != "arm64"
 }

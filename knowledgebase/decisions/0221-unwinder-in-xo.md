@@ -153,7 +153,34 @@ resume primitive, and the personality routine with its LSDA reader.
    resumes the unwind (`_Unwind_Resume`) aborts when the stop function
    returns a stop code (gotchas/libunwind-stop-must-not-return.md, seen
    on TestRuntimeFaultResume). An Xo walker of `__unwind_info` remains
-   the alternative if libunwind must go.
+   the alternative if libunwind must go. **Superseded for arm64 by point
+   10.**
+10. **macOS arm64 on the Xo walker (2026-10-14, after point 8)**: libunwind
+   cost about 137,000 instructions per fault, so the walker reads the
+   compact unwind itself. At a thread's first fault, unwind.xo `image`
+   reads the program's Mach-O header (`_dyld_get_image_header(0)`) for
+   `__TEXT`, `__unwind_info`, and `__eh_frame`. A pc outside `__TEXT`
+   goes through `dladdr` to its image's header. `dframe` looks the pc up
+   in the two level index (regular and compressed second level pages)
+   and takes the function's start, its personality (the encoding's
+   personality index into the personality array, offsets of pointer
+   slots), and its LSDA (the first level entry's LSDA index). `cstep`
+   applies an arm64 frame encoding (the frame record at x29, saved pairs
+   x19 to x28 and d8 to d15 right below it, in register order) or a
+   frameless one (pairs below sp plus the stack size, the return address
+   in x30). A DWARF encoding names its FDE in `__eh_frame`, which goes
+   to the DWARF path; the CIE's personality is kept apart from the
+   frame's (H_CIE_PERS), because a compact frame sets H_PERS without a
+   CIE, and the CIE cache would otherwise hand a later DWARF frame a
+   stale personality (seen in fault_unwind). fault_raise is the Linux
+   one; the C fault_stop and the libunwind call are gone, and the
+   personality export (unwind.xo export_personality) only tells a
+   foreign unwinder to go on. darwin/amd64 keeps libunwind and the C
+   personality with linux/amd64 (XO_UNWIND_LIBGCC now means any x86_64
+   with a C library) until stage 2. bench/perf/fault on the Mac: 0.083
+   to 0.123 of libunwind's instructions
+   (bench/results/unwinder-glibc-2026-10-14.md, "macOS on the Xo
+   walker").
 9. **ThreadSanitizer**: TSan's function entry and exit instrumentation
    adds a cleanup pad to every function that calls, which resumes
    through libgcc, in generated IR under xo_personality too. The Xo

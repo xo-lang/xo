@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0221 point 10): a fault on macOS arm64
+  unwinds through the Xo walker, which reads the compact unwind of
+  `__unwind_info` itself, instead of libunwind. bench/perf/fault is
+  0.083 to 0.123 of libunwind's instructions on the Mac. C frames
+  between a fault and its catch are passed over on macOS arm64 too.
+  darwin/amd64 keeps libunwind until stage 2.
 - Native code generation (decision 0221 point 7): the unwind tables name
   the runtime's Xo personality export `xo_x_personality` directly, except
   on Windows and linux/amd64. The C forwarder `xo_personality` stays for
