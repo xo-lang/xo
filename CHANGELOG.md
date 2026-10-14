@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B06, part 1): a context's fault
+  record and the report of an uncaught fault are Xo
+  (std/native/llrt/fault.xo); xo_rt.c loses 57 lines and gains 23. The
+  fault paths on the Mac are 0.993 to 1.006 of main's instructions. A
+  new test raises a fault through the C library's qsort, covering the
+  unwinder's shared object lookup on macOS and Linux.
 - Native runtime (decision 0221 point 10): a fault on macOS arm64
   unwinds through the Xo walker, which reads the compact unwind of
   `__unwind_info` itself, instead of libunwind. bench/perf/fault is

@@ -1,0 +1,120 @@
+// The fault record of a context (core 8, decision 0085; the zero-C
+// audit's item B06): the message, location, and detail line of the fault
+// unwinding a context, and the report of a fault nothing caught. The
+// record lives in the C runtime's xo_ctx (std/llrt/xo_rt.c asserts the
+// offsets below): `faulting`, and three zero terminated strings in
+// malloc'd blocks (rt.heap_large), which the C scheduler hands from a
+// faulted task to the scope that joins it. The C calls these through
+// cabi.xo (fault_record_*); raising stays C (fault_raise), and the
+// messages of the checked operations are cabi.xo's fault_* writers.
+//
+// Nothing here faults.
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/stdio
+use native/rt
+
+/// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
+/// location, and detail (char pointers, NULL when unset).
+const C_UNWINDING = 8
+const C_FAULTING = 80
+const C_MSG = 88
+const C_LOC = 96
+const C_DETAIL = 104
+
+/// A zero terminated copy of the n bytes at p in a block from malloc,
+/// at the block's own address (rt.heap_large returns the address after
+/// its 8 byte prefix; the C frees these strings with free, so the string
+/// starts where the prefix was).
+fn dup(p: Int, n: Int) -> Int {
+  let b = rt.heap_large(n + 1) - 8
+  rt.mem_copy(b, p, n)
+  rt.mem_store(b, n, 0, 1)
+  b
+}
+
+/// Frees the string in the field at off of the context c and clears it.
+fn drop(c: Int, off: Int) {
+  let b = rt.mem_load(c, off, 8)
+  if b != 0 {
+    rt.heap_release(b)
+    rt.mem_store(c, off, 0, 8)
+  }
+}
+
+/// Records the fault of the context c: the mn bytes at mp its message,
+/// the ln bytes at lp its location (a fault raised while one unwinds
+/// replaces it, as a panic in Go's deferred code does). The detail line,
+/// set just before by detail, stays.
+pub fn set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) {
+  let m = dup(mp, mn)
+  let l = dup(lp, ln)
+  drop(c, C_MSG)
+  drop(c, C_LOC)
+  rt.mem_store(c, C_MSG, m, 8)
+  rt.mem_store(c, C_LOC, l, 8)
+}
+
+/// Sets the line printed under the next fault of the context c (the
+/// values of a failed contract, core 9.1): the n bytes at p.
+pub fn detail(c: Int, p: Int, n: Int) {
+  let d = dup(p, n)
+  drop(c, C_DETAIL)
+  rt.mem_store(c, C_DETAIL, d, 8)
+}
+
+/// Clears the record of the context c.
+pub fn clear(c: Int) {
+  rt.mem_store(c, C_FAULTING, 0, 4)
+  drop(c, C_MSG)
+  drop(c, C_LOC)
+  drop(c, C_DETAIL)
+}
+
+/// Catches the fault unwinding the context c (task.isolate): 1 and the
+/// context goes on normally, the record kept for the message and the
+/// location; 0 when it is not a fault (cancellation, which goes on
+/// unwinding).
+pub fn take(c: Int) -> Int {
+  if rt.mem_load(c, C_FAULTING, 4) == 0 {
+    return 0
+  }
+  rt.mem_store(c, C_FAULTING, 0, 4)
+  rt.mem_store(c, C_UNWINDING, 0, 4)
+  1
+}
+
+/// Reports the fault of the context c that nothing caught and ends the
+/// process with status 70: standard output flushed, then "fault: MSG at
+/// LOC" and the detail line, if any, on standard error in one write.
+pub fn exit(c: Int) {
+  stdio.flush()
+  let m = rt.mem_load(c, C_MSG, 8)
+  let l = rt.mem_load(c, C_LOC, 8)
+  let d = rt.mem_load(c, C_DETAIL, 8)
+  let mn = if m == 0 { 5 } else { raw.cstr_len(m) }
+  let ln = if l == 0 { 1 } else { raw.cstr_len(l) }
+  let dn = if d == 0 { 0 } else { raw.cstr_len(d) }
+  let n = 7 + mn + 4 + ln + 1 + dn + (if dn > 0 { 1 } else { 0 })
+  let b = rt.heap_large(n)
+  var o = put(b, 0, "fault: ")
+  o = if m == 0 { put(b, o, "fault") } else { put_at(b, o, m, mn) }
+  o = put(b, o, " at ")
+  o = if l == 0 { put(b, o, "?") } else { put_at(b, o, l, ln) }
+  o = put(b, o, "\n")
+  if dn > 0 {
+    o = put_at(b, o, d, dn)
+    o = put(b, o, "\n")
+  }
+  stdio.write_all(2, b, o)
+  process.os_exit(70)
+}
+
+/// Copies s to b + o: the offset after it.
+fn put(b: Int, o: Int, s: Str) -> Int { put_at(b, o, raw.data(s), s.len()) }
+
+/// Copies the n bytes at p to b + o: the offset after them.
+fn put_at(b: Int, o: Int, p: Int, n: Int) -> Int {
+  rt.mem_copy(b + o, p, n)
+  o + n
+}

@@ -95,7 +95,7 @@ fn unlock(w: Int, m: Int) {
 /// Writes the n bytes at p to the descriptor fd (1 or 2), retrying after
 /// a short write or EINTR; it gives up at the first other error (as the
 /// C runtime's write_all did: output that cannot be written is lost).
-fn write_all(fd: Int, p: Int, n: Int) {
+pub fn write_all(fd: Int, p: Int, n: Int) {
   var off = 0
   while off < n {
     let w = write(fd, add(p, off), rt.int_wrap(1, n, off))
