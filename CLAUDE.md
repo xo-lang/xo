@@ -23,6 +23,10 @@ implementation the language started with was deleted (decision 0215).
 - `spec/std.md`: prelude methods and standard library surface.
 - `knowledgebase/infrastructure/`: toolchain, repo layout, build and test
   commands, CI, namespaces (GitHub org, Homebrew, etc.).
+- [`knowledgebase/infrastructure/ci.md`](knowledgebase/infrastructure/ci.md):
+  on demand CI (decision 0225): how to run it, the suites, the
+  self-hosted EC2 runners (`infra/ci-runners`), the AWS and GitHub App
+  inventory, operations, measurements, and cost.
 - `knowledgebase/decisions/`: design decisions as numbered ADRs
   (`NNNN-short-title.md`).
 - `knowledgebase/gotchas/`: traps and surprises, with how to avoid them.
@@ -119,7 +123,7 @@ Update the knowledgebase in the same change as the work, not later:
     short, vet, merge (`-f packages=...`), fixed-point, full (`-f
     runner=xo-arm64-big`). This replaces the lead's EC2 queue. The Mac
     keeps Mac only checks and runs that write files into the worktree.
-    knowledgebase/infrastructure/ci.md.
+    Full reference: [ci.md](knowledgebase/infrastructure/ci.md).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
     58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout

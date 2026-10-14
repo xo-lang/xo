@@ -2,7 +2,9 @@
 
 The on demand CI of decision 0225: the warm EC2 machines run GitHub
 Actions jobs for `josephspurrier/xo`, start when a job is queued, and
-stop themselves when idle. How to run CI: `knowledgebase/infrastructure/ci.md`.
+stop themselves when idle. The full reference (running CI, how it
+works, inventory, operations, cost) is `knowledgebase/infrastructure/ci.md`;
+this file covers the Terraform pieces.
 
 ## Pieces
 
