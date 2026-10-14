@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B10): std/http's client reads
+  HTTP/1.1 responses, follows redirects, and parses URLs in Xo
+  (std/native/llrt/http1.xo `client_do`, `parse_response`); the C keeps
+  the connection, TLS, HTTP/2, and the request's writing. The HTTP/2
+  server's request URLs are parsed by Xo too. 1,629 lines of C leave the
+  runtime (the C request parser stays as test data for the C fuzzers);
+  the client measures 0.953 to 1.001 and the HTTP/2 server 1.006 to
+  1.008 times the C's instructions (bench/results/http-client-2026-10-14.md),
+  and its answers to 457 responses match the C client's byte for byte.
+  Chunked bodies decode faster (5 to 6 percent fewer instructions for
+  the server's chunked requests).
 - Smaller native output and faster x86 self builds (decision 0220):
   reference counting releases a dead struct once instead of once per
   heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
