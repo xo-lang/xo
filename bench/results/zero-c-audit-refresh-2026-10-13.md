@@ -606,7 +606,17 @@ frees the 533 (a) lines.)
   abbreviation table. std/llrt/xo_time.c (519 lines) is deleted. The
   compiler does not use std/time, so the 0.11.0 seed was unaffected.
   Verified: TestTZDiff (embedded, system, zoneinfo) on arm64 and LLVM,
-  the goldens on both, a leak check of a zone loading program (0 live).
+  the goldens on both, a leak check of a zone loading program (0 live),
+  CI auto and windows (runs 38638196744, 38638200760), and Windows'
+  "Local" against the Go backend's time.Local under six system zones
+  (scripts/ci/tzlocal-windows.sh, run 38640206795): every sample is the
+  same except times before the first of Go's transitions in zones with
+  daylight saving (Pacific, Morocco at 1906): Go's initLocalFromTZI
+  writes transitions for the years now - 100 to now + 100 and uses the
+  first standard zone before them, while the TZif made here (as
+  xo_time.c's did) has none and extends the rule to every year. A known
+  difference that predates B27; next: write Go's transitions into the
+  TZif.
 - **B28 and B29 HTTP loops.** The HTTP/2 frame reader, writer, and
   sending (xo_h2.c 670-2335) are bytes only and can move before the
   loops; the connection loops need await (B18), the poller (B22),
