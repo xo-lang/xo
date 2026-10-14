@@ -8,6 +8,9 @@ which seed 0.10.0-23ce8ce2 lowers as a call of `xo_ct_barrier`, keeps
 that function in xo_crypto.c until a seed has 0222: selfhost/xo
 reaches Ed25519 through sumdb's ed25519_verify, and the seed built it
 (2026-10-14, 37 s and 44 s on the Mac) with that function present.
+Again for zero-C audit B13 (2026-10-14): the stack trace's padding
+moved from `rt.str_rune_count` to the native prelude's str_rune_count,
+so xo_std.c's `xo_str_rune_count` stays, labeled, until a seed has B13.
 
 Symptom: after Rand moved to std/native/llrt/rand.xo (the SSA builders
 call the native prelude's llrt_rand_* instead of rt.rand_*) and

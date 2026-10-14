@@ -11,7 +11,9 @@
 // ---------------------------------------------------------------------------
 // Strings
 
-/// The byte index of the first sub at or after from, or -1.
+/// The byte index of the first sub at or after from, or -1: only the
+/// wasm runtime has it (selfhost/wasm/rt.xo); the native backends use
+/// std/native/llrt/scan.xo's find (zero-C audit B13 deleted the C).
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str

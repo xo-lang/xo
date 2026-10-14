@@ -296,7 +296,7 @@ MISSING.
 | B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
 | B11 client HPACK (**done 2026-10-14**, http2-client-hpack-2026-10-14.md: 786 runtime lines deleted, 242 added) | 583 | GLUE 583 | xo_h2.c 87-669 |
 | B12 HTTP response writer (done 2026-10-14: http1w.xo; 514 lines deleted, 112 of glue added; http-writer-2026-10-14.md) | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
-| B13 string and list objects | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
+| B13 string and list objects (stage 1 done 2026-10-14: http1.xo through scan.xo, xo_str_find deleted, the trace padding through scan.rune_count; stage 2 measured and kept C, arm64 misses the bar until shrink wrapping; string-list-objects-2026-10-14.md) | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
 | B15 test world, part 2 | 494 | PORT 494 | xo_testing.c 212-331, 748-994, 1195-1321 |
 | B16 Fs operations (fsops.xo; part 1, POSIX, done 2026-10-14: no C deleted yet, notes) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
@@ -666,7 +666,7 @@ nothing new.
 | 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | **Done 2026-10-14** (http-client-2026-10-14.md): client_do and parse_response in http1.xo, h2_request's URL from h2_target; 1,629 runtime C lines deleted, 265 added; bar 0.953 to 1.008 |
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
 | 7 | B12 response writer | 537 | nothing | **Done 2026-10-14** (http-writer-2026-10-14.md): http1w.xo through cabi_http.xo; the C wrappers (112 lines) go with B10's and the connection code's ports |
-| 8 | B13 string and list objects (two items) | 816 | 2 | reroute http1.xo str_find and show.xo rune_count first (retires 50 lines in an hour) |
+| 8 | B13 string and list objects (two items; stage 1 done 2026-10-14) | 816 | 2 | stage 1 done (string-list-objects-2026-10-14.md: xo_str_find deleted, xo_str_rune_count a seed shim until a seed has B13); stage 2 kept C (Xo lists 1.266 on arm64 alloc small): shrink wrapping in selfhost/arm64 first, then rerun 3da29c8b's obj.xo |
 | 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |
 | 11 | B05 unwinder (three items; stage 1 done 2026-10-14, XO_NOLIBC linux/arm64, decision 0221) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |

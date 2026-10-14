@@ -42,6 +42,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions, the rest within noise
   (bench/results/fs-ops-2026-10-14.md). Windows and darwin/amd64 still
   use the C runtime's xo_fs.c.
+- Native runtime (zero-C audit item B13, stage 1): std/http's parser
+  and client search text with std/native/llrt/scan.xo (SIMD) instead of
+  the C `xo_str_find`, which is deleted; single byte searches scan only
+  their range. The stack trace's padding counts runes in Xo. HTTP/1.1
+  server 0.961 to 1.013 of the C's instructions
+  (bench/results/string-list-objects-2026-10-14.md). The string and
+  list objects were ported to Xo and measured, and stay C: on arm64
+  they took up to 1.27 times the C's instructions (no shrink wrapping
+  in the arm64 emitters); the results file ranks the next steps.
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in
