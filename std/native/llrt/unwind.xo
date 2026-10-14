@@ -73,27 +73,38 @@ const H_CUR = 112
 const H_DEPTH = 120
 /// The CIE's personality routine (its 'P' augmentation), or 0.
 const H_PERS = 128
-/// The register sets: word n is DWARF register n (x0 to x30, sp 31, v0
+/// The CIE whose fields are in the header and whose rules are ST_INIT
+/// (unwind tables do not change while a program runs), or 0.
+const H_CIE_ADDR = 136
+/// The register set: word n is DWARF register n (x0 to x30, sp 31, v0
 /// to v31 at 64 to 95), word 96 the frame's pc (its return address).
+/// step updates it in place to the caller's.
 const REGS_A = 256
-const REGS_B = 1032
 const PC = 768
 const SP = 248
 const NREG = 96
 /// The rule sets: the rule kind of register n at word n, its operand at
 /// S_VAL + 8 * n, then the CFA's register and offset, whether the return
-/// address is signed (DW_CFA_AARCH64_negate_ra_state), and whether the
-/// CFA is an expression (not read).
+/// address is signed (DW_CFA_AARCH64_negate_ra_state), whether the CFA
+/// is an expression (not read), and two words of bits, register n's bit
+/// n of the first (n < 64) or n - 64 of the second: only the registers
+/// whose bit is set have a rule (the kind and operand of the others are
+/// stale; no rule is R_SAME). A frame's rules touch a few registers, so
+/// reset, copy, and step go by the bits, not over all NREG.
 const ST_CUR = 1808
-const ST_INIT = 3376
-const ST_STACK = 4944
-const ST_BYTES = 1568
+const ST_INIT = 3392
+const ST_STACK = 4976
+const ST_BYTES = 1584
+/// step's new values, by register number (NREG words).
+const TMP = 17664
 const ST_DEPTH_MAX = 8
 const S_VAL = 768
 const S_CFA_REG = 1536
 const S_CFA_OFF = 1544
 const S_RA_SIGNED = 1552
 const S_CFA_EXPR = 1560
+const S_MASK0 = 1568
+const S_MASK1 = 1576
 
 // Rule kinds: the register keeps its value (same value, or no rule), is
 // saved at CFA + operand, is CFA + operand, is in register operand, is
@@ -135,8 +146,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
     return 0
   }
   rt.mem_store(s, H_HDR, hdr, 8)
-  var cur = s + REGS_A
-  var nxt = s + REGS_B
+  let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
   rt.unwind_save(cur)
   // this function's frame first: its pc is the save's return address
@@ -166,12 +176,9 @@ pub fn raise(exc: Int, boundary: Int, pers: Int) -> Int {
       }
     }
     first = false
-    if !step(s, cur, nxt) {
+    if !step(s, cur) {
       return 0
     }
-    let t = cur
-    cur = nxt
-    nxt = t
   }
   0
 }
@@ -518,14 +525,40 @@ fn frame(s: Int, pc: Int) -> Bool {
       return false
     }
   }
-  let st = s + ST_CUR
-  rt.mem_set(st, 0, ST_BYTES)
+  copy_rules(s + ST_CUR, s + ST_INIT)
   rt.mem_store(s, H_DEPTH, 0, 8)
-  if !exec(s, rt.mem_load(s, H_CIE, 8), rt.mem_load(s, H_CIE_END, 8), 0, true) {
-    return false
-  }
-  rt.mem_copy(s + ST_INIT, st, ST_BYTES)
   exec(s, rt.mem_load(s, H_FDE, 8), rt.mem_load(s, H_FDE_END, 8), pc, false)
+}
+
+/// Clears the rule set at st: no register has a rule, the CFA none.
+fn reset(st: Int) {
+  rt.mem_store(st, S_CFA_REG, 0, 8)
+  rt.mem_store(st, S_CFA_OFF, 0, 8)
+  rt.mem_store(st, S_RA_SIGNED, 0, 8)
+  rt.mem_store(st, S_CFA_EXPR, 0, 8)
+  rt.mem_store(st, S_MASK0, 0, 8)
+  rt.mem_store(st, S_MASK1, 0, 8)
+}
+
+/// Copies the rule set at src to dst: the CFA's rule, the bits, and the
+/// rules of the registers whose bit is set.
+fn copy_rules(dst: Int, src: Int) {
+  rt.mem_store(dst, S_CFA_REG, rt.mem_load(src, S_CFA_REG, 8), 8)
+  rt.mem_store(dst, S_CFA_OFF, rt.mem_load(src, S_CFA_OFF, 8), 8)
+  rt.mem_store(dst, S_RA_SIGNED, rt.mem_load(src, S_RA_SIGNED, 8), 8)
+  rt.mem_store(dst, S_CFA_EXPR, rt.mem_load(src, S_CFA_EXPR, 8), 8)
+  var w = 0
+  while w < 2 {
+    var m = rt.mem_load(src, S_MASK0 + 8 * w, 8)
+    rt.mem_store(dst, S_MASK0 + 8 * w, m, 8)
+    while m != 0 {
+      let o = 8 * (64 * w + rt.ctz(m))
+      m = m & rt.int_wrap(1, m, 1)
+      rt.mem_store(dst, o, rt.mem_load(src, o, 8), 8)
+      rt.mem_store(dst, S_VAL + o, rt.mem_load(src, S_VAL + o, 8), 8)
+    }
+    w += 1
+  }
 }
 
 /// The FDE of the function holding pc in the sorted table of the
@@ -576,8 +609,20 @@ fn read_fde(s: Int, fde: Int, pc: Int) -> Bool {
   let end = body + n
   // the CIE pointer: the distance back from this field to the CIE
   let cie = body - rt.mem_load(body, 0, 4)
-  if !read_cie(s, cie) {
-    return false
+  if cie != rt.mem_load(s, H_CIE_ADDR, 8) {
+    // a CIE other than the last one: its fields, and the rules after
+    // its instructions (ST_INIT, the start of every frame's)
+    rt.mem_store(s, H_CIE_ADDR, 0, 8)
+    if !read_cie(s, cie) {
+      return false
+    }
+    reset(s + ST_CUR)
+    rt.mem_store(s, H_DEPTH, 0, 8)
+    if !exec(s, rt.mem_load(s, H_CIE, 8), rt.mem_load(s, H_CIE_END, 8), 0, true) {
+      return false
+    }
+    copy_rules(s + ST_INIT, s + ST_CUR)
+    rt.mem_store(s, H_CIE_ADDR, cie, 8)
   }
   let fenc = rt.mem_load(s, H_FENC, 8)
   let (begin, p1) = read_ptr(body + 4, fenc, 0)
@@ -689,8 +734,13 @@ fn set_rule(st: Int, r: Int, kind: Int, val: Int) {
   if r >= 0 && r < NREG {
     rt.mem_store(st, 8 * r, kind, 8)
     rt.mem_store(st, S_VAL + 8 * r, val, 8)
+    let w = S_MASK0 + 8 * (r / 64)
+    rt.mem_store(st, w, rt.mem_load(st, w, 8) | rt.int_wrap(3, 1, r % 64), 8)
   }
 }
+
+/// Whether register r has a rule in the rule set at st.
+fn has_rule(st: Int, r: Int) -> Bool { (rt.mem_load(st, S_MASK0 + 8 * (r / 64), 8) & rt.int_wrap(3, 1, r % 64)) != 0 }
 
 /// Runs the call frame instructions from p to end on s's rule set
 /// (libgcc's execute_cfa_program): all of them for the CIE, else the
@@ -773,7 +823,7 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       if d >= ST_DEPTH_MAX {
         return false
       }
-      rt.mem_copy(s + ST_STACK + d * ST_BYTES, st, ST_BYTES)
+      copy_rules(s + ST_STACK + d * ST_BYTES, st)
       rt.mem_store(s, H_DEPTH, d + 1, 8)
     } else if op == 11 {
       // DW_CFA_restore_state
@@ -781,7 +831,7 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       if d == 0 {
         return false
       }
-      rt.mem_copy(st, s + ST_STACK + (d - 1) * ST_BYTES, ST_BYTES)
+      copy_rules(st, s + ST_STACK + (d - 1) * ST_BYTES)
       rt.mem_store(s, H_DEPTH, d - 1, 8)
     } else if op == 12 {
       // DW_CFA_def_cfa
@@ -850,54 +900,77 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
 fn restore(s: Int, r: Int) {
   if r >= 0 && r < NREG {
     let init = s + ST_INIT
-    set_rule(s + ST_CUR, r, rt.mem_load(init, 8 * r, 8), rt.mem_load(init, S_VAL + 8 * r, 8))
+    if has_rule(init, r) {
+      set_rule(s + ST_CUR, r, rt.mem_load(init, 8 * r, 8), rt.mem_load(init, S_VAL + 8 * r, 8))
+    } else {
+      set_rule(s + ST_CUR, r, R_SAME, 0)
+    }
   }
 }
 
-/// The registers of the caller of the frame whose registers are at cur,
-/// by s's rule set, into nxt (libgcc's uw_update_context): its stack
-/// pointer is the frame's CFA, its pc the return address. Whether the
-/// rules could be applied.
-fn step(s: Int, cur: Int, nxt: Int) -> Bool {
+/// The registers of the caller of the frame whose registers are at regs,
+/// by s's rule set, in place (libgcc's uw_update_context): its stack
+/// pointer is the frame's CFA, its pc the return address. The new values
+/// of the registers with rules are computed from the old ones first
+/// (TMP), then stored. Whether the rules could be applied.
+fn step(s: Int, regs: Int) -> Bool {
   let st = s + ST_CUR
   let cr = rt.mem_load(st, S_CFA_REG, 8)
   if rt.mem_load(st, S_CFA_EXPR, 8) != 0 || cr < 0 || cr >= NREG {
     return false
   }
-  let cfa = rt.int_wrap(0, rt.mem_load(cur, 8 * cr, 8), rt.mem_load(st, S_CFA_OFF, 8))
-  for r in 0..NREG {
-    let k = rt.mem_load(st, 8 * r, 8)
-    let v = rt.mem_load(st, S_VAL + 8 * r, 8)
-    var x = rt.mem_load(cur, 8 * r, 8)
-    if k == R_OFFSET {
-      x = rt.mem_load(rt.int_wrap(0, cfa, v), 0, 8)
-    } else if k == R_VAL_OFFSET {
-      x = rt.int_wrap(0, cfa, v)
-    } else if k == R_REG {
-      if v < 0 || v >= NREG {
+  let cfa = rt.int_wrap(0, rt.mem_load(regs, 8 * cr, 8), rt.mem_load(st, S_CFA_OFF, 8))
+  let tmp = s + TMP
+  var w = 0
+  while w < 2 {
+    var m = rt.mem_load(st, S_MASK0 + 8 * w, 8)
+    while m != 0 {
+      let o = 8 * (64 * w + rt.ctz(m))
+      m = m & rt.int_wrap(1, m, 1)
+      let k = rt.mem_load(st, o, 8)
+      let v = rt.mem_load(st, S_VAL + o, 8)
+      var x = rt.mem_load(regs, o, 8)
+      if k == R_OFFSET {
+        x = rt.mem_load(rt.int_wrap(0, cfa, v), 0, 8)
+      } else if k == R_VAL_OFFSET {
+        x = rt.int_wrap(0, cfa, v)
+      } else if k == R_REG {
+        if v < 0 || v >= NREG {
+          return false
+        }
+        x = rt.mem_load(regs, 8 * v, 8)
+      } else if k == R_UNDEF {
+        x = 0
+      } else if k == R_EXPR {
         return false
       }
-      x = rt.mem_load(cur, 8 * v, 8)
-    } else if k == R_UNDEF {
-      x = 0
-    } else if k == R_EXPR {
-      return false
+      rt.mem_store(tmp, o, x, 8)
     }
-    rt.mem_store(nxt, 8 * r, x, 8)
+    w += 1
   }
-  if rt.mem_load(st, SP, 8) == R_SAME {
-    rt.mem_store(nxt, SP, cfa, 8)
+  w = 0
+  while w < 2 {
+    var m = rt.mem_load(st, S_MASK0 + 8 * w, 8)
+    while m != 0 {
+      let o = 8 * (64 * w + rt.ctz(m))
+      m = m & rt.int_wrap(1, m, 1)
+      rt.mem_store(regs, o, rt.mem_load(tmp, o, 8), 8)
+    }
+    w += 1
+  }
+  if !has_rule(st, SP / 8) || rt.mem_load(st, SP, 8) == R_SAME {
+    rt.mem_store(regs, SP, cfa, 8)
   }
   let rar = rt.mem_load(s, H_RAREG, 8)
   if rar < 0 || rar >= NREG {
     return false
   }
-  var ra = rt.mem_load(nxt, 8 * rar, 8)
+  var ra = rt.mem_load(regs, 8 * rar, 8)
   if rt.mem_load(st, S_RA_SIGNED, 8) != 0 {
     // a return address signed with pointer authentication: its address
     // bits (user addresses are below 2^48)
     ra = ra & 281474976710655
   }
-  rt.mem_store(nxt, PC, ra, 8)
+  rt.mem_store(regs, PC, ra, 8)
   true
 }
