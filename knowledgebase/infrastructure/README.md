@@ -6,3 +6,4 @@
 - [website.md](website.md): xolang.dev: the separate Hugo site repo, its commands (preview, build, sync spec and release notes, publish), and what it takes from this repo.
 - [playground.md](playground.md): the browser playground at xolang.dev/play: `cmd/xoplay`, `build.Generate`, the `xo_playground` tag, `scripts/build-playground.py`, the workers, sizes, and how it was verified.
 - [lead-session.md](lead-session.md): the lead session's resume point (2026-10-14): main, branches in flight, next steps; tools in scripts/lead.
+- [ci.md](ci.md): on demand CI (decision 0225): `gh workflow run ci.yml`, the suites of scripts/ci/suite.sh, the self-hosted EC2 runners of infra/ci-runners.
