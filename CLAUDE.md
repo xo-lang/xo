@@ -125,7 +125,8 @@ Update the knowledgebase in the same change as the work, not later:
     soon as the owner sees it; run it in the background, or a Monitor
     loop that prints on a status change with `sleep 10` and stops on
     completed), `gh run view RUN_ID --log-failed`. Other suites:
-    short, vet, merge (`-f packages=...`), fixed-point, full, measure
+    short, vet, merge (`-f packages=...`), fixed-point, full, windows
+    (best effort, xo-windows runner), measure
     (`-f packages=<bench/perf dir>`: Linux instruction counts, main
     against the branch). This replaces the lead's EC2 queue. The Mac
     keeps Mac only checks and runs that write files into the worktree.

@@ -33,5 +33,15 @@
       "xo-arm64"
     ],
     "import_id": "i-EXAMPLE29"
+  },
+  "windows": {
+    "type": "c7i.4xlarge",
+    "arch": "amd64",
+    "os": "windows",
+    "labels": [
+      "xo-windows"
+    ],
+    "az": "us-east-1a",
+    "import_id": "i-EXAMPLE47"
   }
 }
