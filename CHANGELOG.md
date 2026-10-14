@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B17, decision 0229): the shields of
+  deferred code, the unwinding flag, and resource budgets are Xo
+  (std/native/llrt/ctx.xo, budget.xo), which generated code calls
+  directly; ctx.xo holds the context record's layout as one asserted
+  table. xo_rt.c loses 287 lines and gains 87; bench/perf/ctx 0.921 to
+  1.029 of main's instructions on the Mac. XO-F005 prints its time as a
+  Duration, as the Go backend does.
 - Native runtime (zero-C audit item B27): std/time's zone data and the
   table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
   program's zone data through a `xo_tz_table` accessor the build writes
