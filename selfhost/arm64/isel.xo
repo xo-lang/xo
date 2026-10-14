@@ -31,6 +31,7 @@ fn (var g: G) function(fi: Int) {
   g.hoist_consts()
   g.reuse_flags()
   g.place_latches()
+  g.shrink_split()
   g.regalloc()
   g.emit()
 }

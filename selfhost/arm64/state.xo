@@ -244,6 +244,12 @@ struct G {
   saved: List[Int] = []
   /// the frame of the function being emitted
   fr: Frame = Frame{}
+  /// shrink wrapping (shrink.xo): planned before register allocation,
+  /// kept by emission when it holds; the blocks that run without the
+  /// frame, and the one block whose head makes it
+  shrink: Bool = false
+  fl: List[Bool] = []
+  pro: Int = -1
   stubs: List[Str] = []
   nstub: Int = 0
   /// the memos (a block's memo is an index into them)
@@ -327,6 +333,9 @@ fn (var g: G) begin_func(fi: Int) {
   g.base = 0
   g.saved = []
   g.fr = Frame{}
+  g.shrink = false
+  g.fl = []
+  g.pro = -1
   g.stubs = []
   g.nstub = 0
   g.memos = []

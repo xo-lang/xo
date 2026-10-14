@@ -177,6 +177,7 @@ fn (var g: G) emit() {
     g.fail("frame of ${g.f.name} too large (${fr.size} bytes)")
   }
   g.fr = fr
+  g.shrink_plan()
   var b: List[Str] = []
   b.push("// func ${g.f.name}\n")
   g.func_header(b, g.fname(g.f.name), false)
@@ -187,8 +188,10 @@ fn (var g: G) emit() {
     }
   }
   g.cfi_start(b, pads)
-  g.prologue(b)
-  g.cfi_frame(b)
+  if !g.shrink {
+    g.prologue(b)
+    g.cfi_frame(b)
+  }
   // blocks reached once branches skip the blocks that only jump
   var live: List[Bool] = []
   for _ in 0..g.blocks.len() {
@@ -227,6 +230,11 @@ fn (var g: G) emit() {
     }
     b.push("${g.label(mb)}:\n")
     g.cur = mb
+    if g.shrink && mb == g.pro {
+      // the frame on the one way into the blocks that need it (shrink.xo)
+      g.prologue(b)
+      g.cfi_frame(b)
+    }
     let head = g.check_head(mb)
     let ins = g.blocks[mb].insts
     for (k, inst) in ins.indexed() {
@@ -523,7 +531,7 @@ fn (g: G) saves(var b: List[Str], one: Str, two: Str) {
 
 fn (g: G) epilogue(var b: List[Str]) {
   let fr = g.fr
-  if fr.leaf {
+  if fr.leaf || (g.shrink && g.pro >= 0 && g.fl[g.cur]) {
     b.push("\tret\n")
     return
   }
@@ -668,7 +676,7 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       return
     }
     let ti = g.blocks[t].insts
-    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur {
+    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur && g.same_frame(t) {
       // a loop header that only tests: test here (one taken branch per
       // iteration instead of two)
       g.emit_inst(b, ti[0], next)
@@ -888,6 +896,10 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     if g.fr.leaf {
       // a frame record for the unwinder (the call overwrites x30)
       sb.push("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+    } else if g.shrink && g.fl[g.cur] {
+      // a block that runs without the frame: the stub makes it, so the
+      // stubs' unwind rules are the frame's (shrink.xo)
+      g.prologue(sb)
     }
     var ms = g.call_moves(inst.fargs, "sp", 0)
     g.recover_operand(sb, inst, ms)
@@ -1217,6 +1229,10 @@ fn (var g: G) lsda(sites: List[CallSite]) {
 fn (g: G) fwd(b0: Int) -> Int {
   var b = b0
   for _ in 0..8 {
+    if b == g.pro {
+      // its head makes the frame (shrink.xo)
+      return b
+    }
     let ins = g.blocks[b].insts
     let n = ins.len()
     if n == 0 || ins[n - 1].kind != K_JUMP || ins[n - 1].targets[0] == b || ins[n - 1].targets.len() > 1 {

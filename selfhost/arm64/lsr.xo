@@ -554,7 +554,7 @@ fn (g: G) check_head(b: Int) -> Bool {
 /// with a check, as the check and a branch past it; false when it does
 /// not apply.
 fn (var g: G) rotate_jump(var b: List[Str], t: Int) -> Bool {
-  if !g.check_head(t) {
+  if !g.check_head(t) || !g.same_frame(t) {
     return false
   }
   var back = false
@@ -1017,7 +1017,7 @@ fn (g: G) copyable(b: Int) -> Bool {
 fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
   for l in [t, f] {
     let o = if l == t { f } else { t }
-    if g.dup_ok.contains(l) && o == next && l != next && l != g.cur {
+    if g.dup_ok.contains(l) && o == next && l != next && l != g.cur && g.same_frame(l) {
       return l
     }
   }

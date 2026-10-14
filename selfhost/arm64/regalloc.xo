@@ -364,7 +364,7 @@ fn (var g: G) regalloc() {
   for b in g.order {
     let wt = pow8(imin(g.blocks[b].depth, 6))
     for inst in g.blocks[b].insts {
-      if inst.kind == K_PMOVE {
+      if inst.kind == K_PMOVE && !inst.nocoal {
         for (k, d) in inst.defs.indexed() {
           let a = inst.srcs[k]
           if a.kind == S_REG && a.v != 0 {

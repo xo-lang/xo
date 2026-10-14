@@ -1,0 +1,344 @@
+// Shrink wrapping (decision 0224): a function whose blocks that need the
+// frame (a call, a callee saved register, a spill slot, the frame's
+// memory) are all entered through one block makes the frame at the head
+// of that block instead of at its entry, so a path that returns before
+// it runs without the prologue and the epilogue
+// (gotchas/arm64-call-anywhere-costs-frame.md).
+//
+// Before register allocation, shrink_split finds the blocks that need
+// the frame by their instructions alone (calls, the $OUT slot, the
+// frame's memory) and every block after one of them: the framed region.
+// When one block t is the only way into it, the registers named on both
+// sides get new names inside it, those live into t copied at t's head,
+// so a value live across one of the region's calls takes a callee saved
+// register only inside the region. After allocation, shrink_plan checks
+// the plan against the locations (a block outside the region that
+// touches a callee saved register or a slot joins it) and keeps it when
+// one block is still the only way in. Emission then lays the blocks
+// without the frame out first, makes the frame after t's label (the
+// unwind rules change once, there), returns from the others with a bare
+// `ret`, and gives their fault stubs the whole prologue, so every stub
+// unwinds through the frame's rules.
+
+/// Whether inst needs the frame whatever the allocation: a call, the
+/// $OUT slot, the frame's memory.
+fn needs_frame0(inst: Inst) -> Bool {
+  if inst.kind == K_CALL || inst.text.contains("$OUT") {
+    return true
+  }
+  for a in inst.srcs {
+    if a.kind == S_FRAME || a.kind == S_MEM {
+      return true
+    }
+  }
+  for a in inst.fargs {
+    if a.kind == S_FRAME || a.kind == S_MEM {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether a location list has a stack word (an argument or a result
+/// past the registers: addressed from the frame's size).
+fn stack_words(ls: List[Loc]) -> Bool {
+  for l in ls {
+    if l.reg < 0 {
+      return true
+    }
+  }
+  false
+}
+
+/// The blocks of need and every block reached from one of them.
+fn (g: G) frame_closure(need: List[Bool]) -> List[Bool] {
+  var out: List[Bool] = List.with_capacity(need.len())
+  var work: List[Int] = []
+  for (b, n) in need.indexed() {
+    out.push(n)
+    if n {
+      work.push(b)
+    }
+  }
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for t in g.msuccs(b) {
+      if !out[t] {
+        out[t] = true
+        work.push(t)
+      }
+    }
+  }
+  out
+}
+
+/// The one block through which the blocks outside framed enter it, or
+/// -1: the entry is framed, no block outside returns (nothing to gain),
+/// more than one block is entered, or the one entered also has a
+/// predecessor inside (its head could not make the frame).
+fn (g: G) frame_entry(order: List[Int], framed: List[Bool]) -> Int {
+  if order.is_empty() || framed[order[0]] {
+    return -1
+  }
+  var t = -1
+  var ret = false
+  for b in order {
+    if framed[b] {
+      continue
+    }
+    if g.term_kind(b) == K_RET {
+      ret = true
+    }
+    for s in g.msuccs(b) {
+      if framed[s] {
+        if t >= 0 && t != s {
+          return -1
+        }
+        t = s
+      }
+    }
+  }
+  if t < 0 || !ret {
+    return -1
+  }
+  for b in order {
+    if framed[b] {
+      for s in g.msuccs(b) {
+        if s == t {
+          return -1
+        }
+      }
+    }
+  }
+  t
+}
+
+fn rename_regs(vs: List[Int], m: List[Int]) -> List[Int] {
+  var out: List[Int] = List.with_capacity(vs.len())
+  for v in vs {
+    out.push(m[v])
+  }
+  out
+}
+
+fn rename_srcs(ss: List[Src], m: List[Int]) -> List[Src] {
+  var out: List[Src] = List.with_capacity(ss.len())
+  for s in ss {
+    var c = s
+    if c.kind == S_REG {
+      c.v = m[c.v]
+    }
+    out.push(c)
+  }
+  out
+}
+
+/// Plans shrink wrapping before register allocation (see the top of the
+/// file): renames the registers the framed region shares with the rest
+/// and copies those live into its entry at the entry's head.
+fn (var g: G) shrink_split() {
+  g.shrink = false
+  g.pro = -1
+  let order = g.hot + g.cold
+  if order.is_empty() {
+    return
+  }
+  let nb = g.blocks.len()
+  var need: List[Bool] = List.with_capacity(nb)
+  for _ in 0..nb {
+    need.push(false)
+  }
+  for b in order {
+    for inst in g.blocks[b].insts {
+      // landing pads (decision 0085) and stack words keep the frame at
+      // the entry
+      if inst.pad >= 0 || (inst.kind == K_JUMP && inst.targets.len() > 1) {
+        return
+      }
+      if inst.kind == K_ENTRY && stack_words(g.abi_locs(regs(inst.defs))) {
+        return
+      }
+      if inst.kind == K_RET && stack_words(g.abi_locs(inst.srcs)) {
+        return
+      }
+      if needs_frame0(inst) {
+        need[b] = true
+      }
+    }
+  }
+  let framed = g.frame_closure(need)
+  let t = g.frame_entry(order, framed)
+  if t < 0 {
+    return
+  }
+  let n = g.fp.len()
+  // the registers live into t (regalloc's liveness)
+  var idx: List[Int] = List.with_capacity(nb)
+  for _ in 0..nb {
+    idx.push(-1)
+  }
+  for (k, b) in order.indexed() {
+    idx[b] = k
+  }
+  var gens: List[List[Int]] = []
+  var kills: List[List[Int]] = []
+  var succs: List[List[Int]] = []
+  var kst: List[Int] = List.with_capacity(n)
+  var ust: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    kst.push(0)
+    ust.push(0)
+  }
+  for (k, b) in order.indexed() {
+    var gl: List[Int] = []
+    var kl: List[Int] = []
+    gen_kill(g.blocks[b].insts, k + 1, gl, kl, kst, ust)
+    gens.push(gl)
+    kills.push(kl)
+    var ss: List[Int] = []
+    for s in g.msuccs(b) {
+      ss.push(idx[s])
+    }
+    succs.push(ss)
+  }
+  let lv = solve_live(succs, gens, kills, n)
+  let live_t = lv.ins[idx[t]]
+  // the registers named on both sides: bit 1 outside, bit 2 inside
+  var side: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    side.push(0)
+  }
+  for b in order {
+    let bit = if framed[b] { 2 } else { 1 }
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        side[d] = side[d] | bit
+      }
+      for u in inst.us {
+        side[u] = side[u] | bit
+      }
+    }
+  }
+  var m: List[Int] = List.with_capacity(n)
+  for v in 0..n {
+    m.push(v)
+  }
+  for v in 1..n {
+    if side[v] == 3 {
+      m[v] = g.new_vreg(g.fp[v])
+    }
+  }
+  for b in order {
+    if !framed[b] {
+      continue
+    }
+    var out: List[Inst] = List.with_capacity(g.blocks[b].insts.len())
+    for inst in g.blocks[b].insts {
+      var c = inst
+      c.defs = rename_regs(inst.defs, m)
+      c.us = rename_regs(inst.us, m)
+      c.srcs = rename_srcs(inst.srcs, m)
+      c.fargs = rename_srcs(inst.fargs, m)
+      out.push(c)
+    }
+    g.blocks[b].insts = out
+  }
+  var defs: List[Int] = []
+  var srcs: List[Src] = []
+  var us: List[Int] = []
+  for v in live_t {
+    if v != 0 && m[v] != v {
+      defs.push(m[v])
+      srcs.push(rsrc(v))
+      us.push(v)
+    }
+  }
+  if !defs.is_empty() {
+    let head = [Inst{kind: K_PMOVE, defs: defs, srcs: srcs, us: us, nocoal: true}]
+    g.blocks[t].insts = head + g.blocks[t].insts
+  }
+  g.shrink = true
+}
+
+/// Whether v's location is one the frame holds or saves.
+fn (g: G) frame_loc(v: Int) -> Bool {
+  if v == 0 {
+    return false
+  }
+  let l = g.loc[v]
+  if l.reg >= 0 {
+    return is_callee(l.reg)
+  }
+  l.slot >= 0
+}
+
+/// Whether block b needs the frame after allocation.
+fn (g: G) block_needs_frame(b: Int) -> Bool {
+  for inst in g.blocks[b].insts {
+    if needs_frame0(inst) {
+      return true
+    }
+    for d in inst.defs {
+      if g.frame_loc(d) {
+        return true
+      }
+    }
+    for u in inst.us {
+      if g.frame_loc(u) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// Keeps the plan of shrink_split when the allocation allows it: sets
+/// fl (the blocks without the frame) and pro (the block whose head makes
+/// it), and lays the blocks without the frame out first.
+fn (var g: G) shrink_plan() {
+  if !g.shrink {
+    return
+  }
+  g.shrink = false
+  if g.fr.leaf || g.base != 0 {
+    return
+  }
+  let nb = g.blocks.len()
+  var need: List[Bool] = List.with_capacity(nb)
+  for _ in 0..nb {
+    need.push(false)
+  }
+  for b in g.order {
+    need[b] = g.block_needs_frame(b)
+  }
+  let framed = g.frame_closure(need)
+  let t = g.frame_entry(g.order, framed)
+  if t < 0 {
+    return
+  }
+  var fl: List[Bool] = List.with_capacity(nb)
+  for b in 0..nb {
+    fl.push(!framed[b])
+  }
+  g.fl = fl
+  g.pro = t
+  g.shrink = true
+  var out: List[Int] = []
+  for b in g.order {
+    if !framed[b] {
+      out.push(b)
+    }
+  }
+  for b in g.order {
+    if framed[b] {
+      out.push(b)
+    }
+  }
+  g.order = out
+}
+
+/// Whether block t runs with the frame exactly when the current block
+/// does: a branch may copy t's code or go past its head only then.
+fn (g: G) same_frame(t: Int) -> Bool {
+  !g.shrink || g.pro < 0 || g.fl[t] == g.fl[g.cur]
+}
