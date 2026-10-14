@@ -71,7 +71,9 @@ func devGoldens(t *testing.T, args ...string) {
 	full = append(full, args...)
 	cmd := exec.Command(xo, full...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	// xo takes its working directory from $PWD, which go test leaves at
+	// the package directory; a wrong one hid gc_config's xo.mod gc lines
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -155,7 +157,9 @@ func devRun(t *testing.T, args ...string) {
 	}
 	cmd := exec.Command(xo, append([]string{"dev"}, args...)...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	// xo takes its working directory from $PWD, which go test leaves at
+	// the package directory; a wrong one hid gc_config's xo.mod gc lines
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
 	out, err := cmd.CombinedOutput()
 	t.Logf("%s", bytes.TrimSpace(out))
 	if err != nil {
