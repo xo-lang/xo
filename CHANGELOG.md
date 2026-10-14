@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B18, part 2): the spawn and a scope's
+  open and close are Xo (std/native/llrt/tasks.xo), which generated code
+  calls directly; xo_rt.c loses 145 lines and gains 70. Single threaded
+  spawn and await on the Mac are 1.006 to 1.026 of main's instructions.
 - Native runtime (zero-C audit item B18, part 1): a task's end, `await`,
   a scope's failed task, `s.cancel()`, and `os.tasks` are Xo
   (std/native/llrt/tasks.xo), which generated code calls directly; a
