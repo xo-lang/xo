@@ -144,6 +144,10 @@ pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
   rt.mem_load(done, 0, 8) & 4294967295
 }
 
+/// GetDynamicTimeZoneInformation into the 432 bytes at z: whether the
+/// system has a time zone setting (std/native/llrt/tzhost.xo).
+pub fn zone_info(z: Int) -> Bool { Int(sys_windows.GetDynamicTimeZoneInformation(z)) != -1 }
+
 /// CloseHandle: 0, or the negative errno.
 pub fn close(h: Int) -> Int {
   if Int(sys_windows.CloseHandle(h)) == 0 {

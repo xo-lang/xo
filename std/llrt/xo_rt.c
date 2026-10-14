@@ -6275,8 +6275,9 @@ static char **xo_argv;
 // constants of collection types (xo_bytes.c)
 void xo_consts_free(void);
 
-// xo_tz_exit_free releases the zones std/native/llrt/tz.xo kept
-// (xo_time.c), set when one is kept: the leak check sees them freed.
+// xo_tz_exit_free releases the zones std/native/llrt/tzhost.xo kept
+// (set in programs that use std/time, xo_std.c): the leak check sees
+// them freed.
 __attribute__((unused)) static void (*xo_tz_exit_free)(void);
 
 #ifndef XO_RT_NO_MAIN

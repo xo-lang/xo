@@ -218,7 +218,11 @@ static inline int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) { retur
 #endif
 
 // std/time zones (decision 0094): only in programs that use std/time,
-// which the build compiles with XO_TIME and their zone data (xo_tzdata.c)
+// which the build compiles with XO_TIME and their zone data (xo_tzdata.c).
+// The zone data and the kept zones are Xo (std/native/llrt/tzhost.xo,
+// work item B27); the leak check frees the kept zones through
+// cabi_time.xo's export.
 #ifdef XO_TIME
-#include "xo_time.c"
+void xo_x_tz_free(void);
+__attribute__((constructor)) static void tz_free_hook(void) { xo_tz_exit_free = xo_x_tz_free; }
 #endif

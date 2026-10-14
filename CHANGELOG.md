@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B27): std/time's zone data and the
+  table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
+  program's zone data through a `xo_tz_table` accessor the build writes
+  beside it, the host's zone files, and Windows' local zone from
+  GetDynamicTimeZoneInformation. std/llrt/xo_time.c (519 lines) is
+  deleted.
 - Native runtime (decision 0227): the C path of the number and time text
   (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
   std/llrt/xo_std.c) is deleted; the owner accepted Duration text at

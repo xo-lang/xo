@@ -354,6 +354,11 @@ fn tz_source(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
     }
   }
   b.write_str("\t{0, 0, 0},\n};\n")
+  // the table std/native/llrt/tzhost.xo reads through rttime.tz_table
+  // (work item B27): the mode, the zip and its length, the blobs
+  let zl = if sel.mode == 1 { sel.zip.len() } else { 0 }
+  b.write_str("\nconst void *const xo_tz_tab[4] = {(const void *)(intptr_t)${sel.mode}, xo_tz_zip, (const void *)(intptr_t)${zl}, xo_tz_blobs};\n")
+  b.write_str("int64_t xo_tz_table(void) { return (int64_t)(intptr_t)xo_tz_tab; }\n")
   let path = "${dir}/xo_tzdata.c"
   os.fs.write(path, b.freeze())?
   Ok(path)

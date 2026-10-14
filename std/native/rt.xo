@@ -219,7 +219,9 @@ fn prefetch(a: Int)
 /// functions' addresses); 32 to 39 the test world's
 /// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
 /// real, its lock, Rand's PCG state, the MemFs lock and state, the state
-/// record); 14 to 31 and 40 to 63 unused.
+/// record); 14 to 17 std/native/llrt/tzhost.xo (the kept zones' lock and
+/// vector: its address, length, and capacity); 18 to 31 and 40 to 63
+/// unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

@@ -132,7 +132,8 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: 
 }
 
 /// tzSource as an object: the zone data std/time reads (xo_tz_mode,
-/// xo_tz_zip_len, xo_tz_zip, xo_tz_blobs of std/llrt/xo_time.c), as
+/// xo_tz_zip_len, xo_tz_zip, xo_tz_blobs, and the table of them that
+/// xo_tz_table returns to std/native/llrt/tzhost.xo), as
 /// assembly for selfhost/macho (Mach-O, or ELF for goos linux); the path
 /// of the object.
 fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str) -> Str ! FsErr {
@@ -170,6 +171,10 @@ fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str) -> Str ! FsErr {
     b.write_str("\t.quad Lxo_tzn${i}\n\t.quad Lxo_tzd${i}\n\t.quad ${sel.data[i].len()}\n")
   }
   b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
+  // the table std/native/llrt/tzhost.xo reads through rttime.tz_table
+  // (work item B27): the mode, the zip and its length, the blobs
+  b.write_str("\t.p2align 3\nLxo_tzt:\n\t.quad ${sel.mode}\n\t.quad _xo_tz_zip\n\t.quad ${zip.len()}\n\t.quad _xo_tz_blobs\n")
+  b.write_str("\t.section __TEXT,__text,regular,pure_instructions\n\t.globl _xo_tz_table\n\t.p2align 2\n_xo_tz_table:\n\tadrp x0, Lxo_tzt@PAGE\n\tadd x0, x0, Lxo_tzt@PAGEOFF\n\tret\n")
   let obj = match macho.assemble(b.freeze()) {
     Ok(o) => o
     Err(e) => fault("the zone data does not assemble: ${e}")
@@ -213,6 +218,9 @@ fn tz_object_elf(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
     b.write_str("\t.quad .Lxo_tzn${i}\n\t.quad .Lxo_tzd${i}\n\t.quad ${sel.data[i].len()}\n")
   }
   b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
+  // the table of tz_object's Mach-O form
+  b.write_str("\t.p2align 3\n.Lxo_tzt:\n\t.quad ${sel.mode}\n\t.quad xo_tz_zip\n\t.quad ${zip.len()}\n\t.quad xo_tz_blobs\n")
+  b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 2\nxo_tz_table:\n\tadrp x0, .Lxo_tzt\n\tadd x0, x0, :lo12:.Lxo_tzt\n\tret\n")
   let obj = match macho.assemble_elf(b.freeze()) {
     Ok(o) => o
     Err(e) => fault("the zone data does not assemble: ${e}")
