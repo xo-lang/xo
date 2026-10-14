@@ -183,9 +183,12 @@ run time (bench/ three-arm suite) besides build time.
   around queries. Stage 2's per module keys get most of the rebuild
   benefit with far less change.
 
-## Addendum (Proposed, 2026-10-14): a per-function back-end cache before stage 2
+## Addendum (Accepted, 2026-10-14): a per-function back-end cache before stage 2
 
-Status: Proposed (fastbuild agent, 2026-10-14); the lead decides.
+Status: Accepted (proposed by the fastbuild agent; accepted by the lead,
+to whom the owner delegated 0220, 2026-10-14). Built in stages: A, the
+objects per part (item 3); B, the per-function assembly cache (items 1
+and 2); C, insert_rc per function (item 4), reported on first.
 
 Stage 2 measured (bench/results/fast-builds-2026-10-13.md, "Stage 2
 measured"): the front end is 3.3 s of the 37 s self build on the Mac
