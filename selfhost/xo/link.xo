@@ -81,8 +81,7 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
 /// whether it succeeded, and whether the local compile of the runtime
 /// failed. rti is the index of the runtime in srcs (-1 for none), shipped
 /// the pack's object and TLS library ("" when none is used).
-fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, tls: Bool,
-  root: Str, rti: Int, shipped: (Str, Str)) -> (Str, Bool, Bool) {
+fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, tls: Bool, root: Str, rti: Int, shipped: (Str, Str)) -> (Str, Bool, Bool) {
   // the C runtime raises faults through the frames of generated code
   // and its own (decision 0085): every frame needs unwind tables
   var args = flags + ["-fexceptions", "-funwind-tables", "-o", bin]
@@ -142,13 +141,16 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
 /// identical (gotchas/windows-lld-link-time-stamp.md). A Linux link with
 /// XO_NOLIBC=1 (the runtime compiled with nolibc_flags) is static with no
 /// C library, keeping only the sections the program reaches (decision
-/// 0206).
+/// 0206), with the .eh_frame_hdr table the Xo unwinder searches (a
+/// static link has none by default) and xo_personality, which the unwind
+/// tables name, defined as std/native/llrt/cabi_nolibc.xo's export
+/// (decision 0221).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
     return ["-fuse-ld=lld", "-Wl,/Brepro"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
-    return ["-static", "-nostdlib", "-Wl,--gc-sections"]
+    return ["-static", "-nostdlib", "-Wl,--gc-sections", "-Wl,--eh-frame-hdr", "-Wl,--defsym=xo_personality=xo_x_personality"]
   }
   ["-lm", "-lpthread"]
 }
@@ -278,14 +280,9 @@ fn io_flags(code: Str) -> List[Str] {
   // (bench/results/fast-builds-2026-10-13.md)
   let syms = code_syms(code)
   var out: List[Str] = []
-  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove",
-    "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
-    "xo_time_of", "xo_time_ns",
+  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns", "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock", "xo_fs_raw_"] {
     // handles, copies, modes, links, locks (decision 0172)
-    "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link",
-    "xo_fs_lock", "xo_fs_unlock",
     // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
-    "xo_fs_raw_"] {
     if has_sym(syms, sym) {
       out.push("-DXO_FS")
       break
@@ -302,8 +299,7 @@ fn io_flags(code: Str) -> List[Str] {
   }
   // the C path of the number and time text (decision 0193), which only
   // XO_LLRT_C=text builds call
-  for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse",
-    "xo_time_parse"] {
+  for sym in ["xo_int_parse", "xo_rs_append_duration", "xo_rs_append_time", "xo_rs_append_quote", "xo_duration_parse", "xo_time_parse"] {
     if has_sym(syms, sym) {
       out.push("-DXO_TEXT_C")
       break
@@ -315,8 +311,7 @@ fn io_flags(code: Str) -> List[Str] {
   // xo_fs_create_temp, or xo_fs_cwd any more.
   // The C versions of the intrinsics (a non-constant op of int_wrap;
   // decision 0195)
-  for sym in ["xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits",
-    "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {
+  for sym in ["xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {
     if has_sym(syms, sym) {
       out.push("-DXO_INTS_C")
       break

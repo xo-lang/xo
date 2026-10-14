@@ -349,6 +349,26 @@ func mutateHTTP(r *rand.Rand, s []byte) []byte {
 	return s
 }
 
+// httpExportsMain uses std/http's server, so the LLVM IR of the program
+// carries the C ABI exports of std/native/llrt/cabi_http.xo: the response
+// writer (http1w.xo, the zero-C audit's B12) that xo_http.c calls.
+const httpExportsMain = `use std/http
+
+fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  match http.server(l, http.router()).serve() {
+    Ok(_) => ()
+    Err(e) => os.stdio.println("serve: ${e}")
+  }
+}
+`
+
+// cOnlyHTTP is cOnly for http_diff.c and http_fuzz.c: with std/http's
+// exports.
+func cOnlyHTTP(t *testing.T, src string) []string {
+	return cOnlyWith(t, src, "cexports-http", httpExportsMain)
+}
+
 // buildHTTPDiff compiles http_diff.c with AddressSanitizer and
 // UndefinedBehaviorSanitizer when the host's clang has them.
 func buildHTTPDiff(t *testing.T) (string, bool) {
@@ -357,10 +377,10 @@ func buildHTTPDiff(t *testing.T) (string, bool) {
 	}
 	src := filepath.Join(rtDir, "testdata", "http_diff.c")
 	bin := filepath.Join(t.TempDir(), "http_diff")
-	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err == nil {
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnlyHTTP(t, src), bin); err == nil {
 		return bin, true
 	}
-	if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+	if err := xotool.CompileC([]string{"-O1", "-g"}, cOnlyHTTP(t, src), bin); err != nil {
 		t.Fatal(err)
 	}
 	return bin, false
@@ -490,8 +510,8 @@ func startDiffDriver(t *testing.T) {
 			return
 		}
 		bin := filepath.Join(dir, "http_diff")
-		if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
-			if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+		if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnlyHTTP(t, src), bin); err != nil {
+			if err := xotool.CompileC([]string{"-O1", "-g"}, cOnlyHTTP(t, src), bin); err != nil {
 				diffDriver.err = err
 				return
 			}
@@ -585,9 +605,9 @@ func TestHTTPFuzz(t *testing.T) {
 	src := filepath.Join(rtDir, "testdata", "http_fuzz.c")
 	bin := filepath.Join(t.TempDir(), "http_fuzz")
 	sanitized := true
-	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnly(t, src), bin); err != nil {
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"), cOnlyHTTP(t, src), bin); err != nil {
 		sanitized = false
-		if err := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err != nil {
+		if err := xotool.CompileC([]string{"-O1", "-g"}, cOnlyHTTP(t, src), bin); err != nil {
 			t.Fatal(err)
 		}
 	}

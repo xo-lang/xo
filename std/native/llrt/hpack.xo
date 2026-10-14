@@ -14,15 +14,16 @@
 // tasks share. So the HTTP/2 connection's fiber (std/native/http.xo,
 // serve_conn) calls the C (rthttp.h2_next) until it stops at a header
 // block: 2, a block fragment to decode (rthttp.h2_block gives it,
-// rthttp.h2_fields takes the fields); 3, response heads to encode in the
+// rthttp.h2_fields takes the fields, with the parse of their :path by
+// http1.h2_target); 3, response heads to encode in the
 // order they go out (rthttp.h2_enc_job, rthttp.h2_encoded; the C holds
 // the connection's lock until they are in, so the order and the table
 // stay the peer's). A 100 Continue is encoded the same way when
 // rthttp.h2_fields asks for one.
 use native/llrt/hpack_tables
+use native/llrt/http1
 use native/rt
 use native/rthttp
-
 
 /// A dynamic table (RFC 7541 2.3.2): entry i is nv[i], its name then its
 /// value, the name nl[i] bytes long; the entries are those from first on,
@@ -584,7 +585,7 @@ pub fn (var c: Conn) next() -> Bool {
     let r = rthttp.h2_next(c.h)
     if r == 2 {
       let f = c.dec.decode_part(rthttp.h2_block(c.h), rthttp.h2_block_first(c.h), MAX_HLIST)
-      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first) {
+      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first, http1.h2_target(f.data, f.lens)) {
         // a 100 Continue goes out after the request's HEADERS
         rthttp.h2_encoded(c.h, c.encode_job(rthttp.h2_enc_job(c.h)))
       }
