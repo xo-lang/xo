@@ -13,6 +13,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   table. xo_rt.c loses 287 lines and gains 87; bench/perf/ctx 0.921 to
   1.029 of main's instructions on the Mac. XO-F005 prints its time as a
   Duration, as the Go backend does.
+- std/time on Windows: `time.local` builds the zone as Go's time.Local
+  does (transitions for 100 years each side of now, no rule past them,
+  Go's abbreviations), so times before 1926 and after 2125 match the Go
+  backend; the C before it extended the current rule to every year.
 - Native runtime (zero-C audit item B27): std/time's zone data and the
   table of loaded zones are Xo (std/native/llrt/tzhost.xo): the
   program's zone data through a `xo_tz_table` accessor the build writes
@@ -48,6 +52,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Xo exports `xo_x_fault_raise_*` directly; the C entry points forward
   to them until the next seed. The fault paths on the Mac are 0.962 to
   1.036 of main's instructions.
+- Native runtime (zero-C audit item B16, option D): macOS on x86_64
+  makes its file calls from Xo too (std/native/llrt/darwin.xo, through
+  libSystem's stat64, lstat64, fstat64, and __getdirentries64, which
+  both macOS architectures now use), so the C Fs operations
+  (std/llrt/xo_fs.c) and the C fs.read are deleted: 831 lines net.
+  macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
 - Native runtime (decision 0227): the C path of the number and time text
   (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
   std/llrt/xo_std.c) is deleted; the owner accepted Duration text at

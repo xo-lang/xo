@@ -33,28 +33,21 @@ pub struct Info {
 /// The OS layer the build calls from Xo: 1 Linux system calls (a Linux
 /// target that is not a WASI module: a wasm build keeps the host's
 /// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
-/// (macOS on arm64; on x86_64 the stat symbols are the `$INODE64` ones,
-/// not declared, gotchas/darwin-amd64-stat-inode64.md), 3 kernel32
-/// (Windows), 0 the C runtime. The SSA passes do not fold a `match` on
-/// `target`, so every arm is lowered; the builders make the platform
-/// calls of another OS faults, and a native backend's optimizer or a
-/// dead branch leaves the other arms unused.
+/// (macOS, arm64 and x86_64: the stat and directory calls are the 64 bit
+/// inode ones under plain names, gotchas/darwin-amd64-stat-inode64.md),
+/// 3 kernel32 (Windows), 0 the wasm runtime. The SSA passes do not fold a
+/// `match` on `target`, so every arm is lowered; the builders make the
+/// platform calls of another OS faults, and a native backend's optimizer
+/// or a dead branch leaves the other arms unused.
 pub fn layer() -> Int {
   match target.arch {
     TargetArch.Wasm32 => 0
-    TargetArch.Arm64 => {
+    TargetArch.Arm64 | TargetArch.Amd64 => {
       match target.os {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
         TargetOs.Windows => 3
         TargetOs.Wasi => 0
-      }
-    }
-    TargetArch.Amd64 => {
-      match target.os {
-        TargetOs.Linux => 1
-        TargetOs.Windows => 3
-        TargetOs.Darwin | TargetOs.Wasi => 0
       }
     }
   }
@@ -64,8 +57,13 @@ pub fn layer() -> Int {
 /// with the status set (the error names the OS path, as xo_fs_read's).
 pub fn fs_read(op: Str) -> List[Bytes] {
   let l = layer()
-  if l == 0 || rt.tw_fake(1) {
+  if l == 0 {
     return rt.fs_read(op)
+  }
+  if rt.tw_fake(1) {
+    // a test's MemFs starts empty (std.md 8.3): ENOENT on every layer
+    rt.fs_set_err(fs_status(l, 2), op, err_msg(l, 2))
+    return []
   }
   let (b, e) = read_file(l, op)
   if e != 0 {

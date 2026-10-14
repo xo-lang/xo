@@ -1,6 +1,6 @@
 # macOS x86_64's `stat` symbol is the old structure
 
-Status: Anticipated (2026-10-13, decision 0213)
+Status: Observed (2026-10-13, decision 0213; the fix verified on an Intel Mac 2026-10-14)
 
 Symptom (expected): an Xo platform call of `stat`, `lstat`, or `fstat`
 declared in std/native/sys_darwin.xo would read garbage sizes and times
@@ -13,17 +13,16 @@ structure; the plain `_stat` symbol keeps the old layout for old
 binaries. arm64 has only the 64 bit inode functions under the plain
 names. An Xo function name cannot contain `$`.
 
-Fix: sysio.xo uses libSystem only on darwin/arm64 (layer 2); darwin/amd64
-stays on the C runtime. The same holds for std/native/llrt/fsops.xo
-(work item B16, 2026-10-14): `opendir` and `readdir` are
-`opendir$INODE64` and `readdir$INODE64` on x86_64 (struct dirent's
-64 bit inode layout, d_namlen at 18, d_name at 21, is the arm64 one),
-so every Fs operation of fsops.xo calls the C runtime (xo_fs.c) on
-darwin/amd64, and xo_fs.c's operations stay compiled there until the
-platform declarations can name a symbol (Windows calls kernel32 from
-Xo since B16 part 2). x86_64 libSystem also exports `stat64`,
-`lstat64`, `fstat64`, `fstatat64` (the 64 bit inode structure) and
-`__getdirentries64` under plain names (the SDK's libsystem_kernel.tbd,
-2026-10-14), a way to darwin/amd64 in Xo without a `$` in a name. To extend it, give the platform declaration a
-way to name the symbol (`stat$INODE64`) or declare an x86_64 variant,
-then run TestSysioParity on an Intel Mac (scripts/intel-mac-test.sh).
+Fix (2026-10-14, B16 option D): std/native/sys_darwin.xo declares
+`stat64`, `lstat64`, and `fstat64` (the 64 bit inode structure under
+plain names, exported on x86_64 and arm64 alike) and
+`__getdirentries64` (what readdir calls; its records are the 64 bit
+inode struct dirent, d_reclen at 16, d_namlen at 18, d_name at 21) in
+place of stat, lstat, fstat, opendir, and readdir, on both
+architectures, so darwin/arm64 runs the same code. sysio.layer() is 2
+on darwin/amd64 too, and xo_fs.c's operations are gone. Of the other
+declared symbols only open, read, write, and close have variants on
+x86_64 (`$NOCANCEL`), whose plain names are the right ones (the
+Xcode SDK's .tbd files, 2026-10-14). On an Intel Mac (scripts/intel-mac-test.sh,
+2026-10-14, 88341497): TestSysioParity, TestErrnoTables, and the fs
+goldens pass (bench/results/fs-ops-2026-10-14.md, "darwin/amd64").

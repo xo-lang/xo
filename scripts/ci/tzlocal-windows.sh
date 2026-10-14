@@ -16,7 +16,7 @@ use std/time
 fn main(os: Os) {
   match time.local(os.env) {
     Ok(z) => {
-      for s in [-2000000000, 0, 1000000000, 1700000000, 1720000000, 4000000000] {
+      for s in [-4000000000, -2000000000, 0, 1000000000, 1700000000, 1720000000, 1730000000, 4000000000, 5000000000] {
         let t = Time.UNIX_EPOCH + Duration.from_secs_int(s)
         os.stdio.println("${s} ${z.offset_at(t)} ${z.abbreviation_at(t)}")
       }

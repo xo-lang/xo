@@ -299,7 +299,7 @@ MISSING.
 | B13 string and list objects (stage 1 done 2026-10-14: http1.xo through scan.xo, xo_str_find deleted, the trace padding through scan.rune_count; stage 2 done 2026-10-14 for the list objects and the drop worklist (decision 0226, obj.xo, called from arm64 generated code without a C level; the C entries remain as forwarders for LLVM and the seed); stage 3 2026-10-14: the string objects' appends and builders (rs_append, push_byte, push_word, push_words, append_bytes, with_cap) in obj.xo, called from arm64 generated code and std/native without a C level, the C entries forwarding; 0.776 to 1.040 of main, std/llrt net 91 lines fewer; the C rs_new and the other C string creators stay; string-list-objects-2026-10-14.md) | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 (done 2026-10-14: testworld.xo, 916 lines deleted, 87 added; test-world-2026-10-14.md) | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
 | B15 test world, part 2 | 494 | PORT 494 | xo_testing.c 212-331, 748-994, 1195-1321 |
-| B16 Fs operations (fsops.xo; part 1, POSIX, done 2026-10-14: no C deleted yet; part 2, Windows, 2026-10-14: kernel32 from windows.xo, xo_win.c's Fs shims deleted (260 lines), xo_fs.c's operations compiled off Windows behind faulting link stubs; the rest stays for darwin/amd64 (layer 0) until option D; fs-ops-2026-10-14.md) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
+| B16 Fs operations (fsops.xo; part 1, POSIX, done 2026-10-14: no C deleted yet; part 2, Windows, 2026-10-14: kernel32 from windows.xo, xo_win.c's Fs shims deleted (260 lines), xo_fs.c's operations compiled off Windows behind faulting link stubs; option D, 2026-10-14: macOS x86_64 through stat64 and __getdirentries64 (sysio layer 2), xo_fs.c's operations and xo_bytes.c's xo_fs_read deleted (831 lines net); the handle records, the status thread locals, and faulting link stubs stay; fs-ops-2026-10-14.md) | 1,383 | PORT 876, SHIM 488, GLUE 19 | xo_fs.c 1-828; xo_bytes.c 299-365; xo_win.c 542-1029 |
 | B17 contexts, budgets, shields (0212 stage 3; done 2026-10-14, decision 0229: ctx.xo and budget.xo, 287 lines deleted and 87 added; held_check and the root context stay C for B18 to B20; contexts-2026-10-14.md) | 454 | PORT 439, GLUE 15 | xo_rt.c 1534-1588, 1597-1643, 2034-2319, 6618-6683 |
 | B18 wait lists, await, task record and end, scopes (0212 stage 3) | 588 | PORT 571, GLUE 17 | xo_rt.c 3018-3248, 3284-3349, 3379-3390, 3986-4037, 4304-4332, 4357-4505, 4538-4586 |
 | B19 channels, select, Mutex[T], Atomic object | 775 | PORT 775 | xo_rt.c 4587-5310, 6567-6617 |
@@ -620,9 +620,14 @@ frees the 533 (a) lines.)
   daylight saving (Pacific, Morocco at 1906): Go's initLocalFromTZI
   writes transitions for the years now - 100 to now + 100 and uses the
   first standard zone before them, while the TZif made here (as
-  xo_time.c's did) has none and extends the rule to every year. A known
-  difference that predates B27; next: write Go's transitions into the
-  TZif.
+  xo_time.c's did) has none and extends the rule to every year. Fixed
+  the same day (branch tz-win-local): tzhost.xo writes Go's two
+  transitions a year for the 100 years each side of now with no footer,
+  and takes the abbreviations in Go 1.26's order (the standard name,
+  then the key name for Go's registry lookup, then the capitals without
+  a default); scripts/ci/tzlocal-windows.sh run 38642276054: eight
+  system zones (both hemispheres, half hour, no daylight saving) the
+  same as the Go backend at nine times from 1843 to 2128.
 - **B28 and B29 HTTP loops.** The HTTP/2 frame reader, writer, and
   sending (xo_h2.c 670-2335) are bytes only and can move before the
   loops; the connection loops need await (B18), the poller (B22),
