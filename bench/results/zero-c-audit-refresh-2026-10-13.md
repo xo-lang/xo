@@ -294,7 +294,7 @@ MISSING.
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
-| B11 client HPACK | 583 | GLUE 583 | xo_h2.c 87-669 |
+| B11 client HPACK (**done 2026-10-14**, http2-client-hpack-2026-10-14.md: 786 runtime lines deleted, 242 added) | 583 | GLUE 583 | xo_h2.c 87-669 |
 | B12 HTTP response writer (done 2026-10-14: http1w.xo; 514 lines deleted, 112 of glue added; http-writer-2026-10-14.md) | 537 | PORT 537 | xo_http.c 274-341, 1398-1866 |
 | B13 string and list objects (stage 1 done 2026-10-14: http1.xo through scan.xo, xo_str_find deleted, the trace padding through scan.rune_count; string-list-objects-2026-10-14.md) | 816 | PORT 797, GLUE 19 | xo_rt.c 395-446, 779-1096, 1146-1231; xo_std.c 80-102, 113-164, 227-268; xo_bytes.c 1-7, 24-130, 149-195, 423-463; xo_http.c 2931-2971 |
 | B14 test world, part 1 | 1,059 | PORT 1,059 | xo_testing.c 1-211, 332-747, 995-1194; xo_rt.c 511-547; xo_stdin.c 59-106; xo_proc.c 148-221, 1201-1273 |
@@ -448,6 +448,14 @@ frees the 533 (a) lines.)
   (its callers are in 2982-3444). hpack.xo has the decoder and encoder;
   it needs an encode one field entry (about 30 lines) and the client's
   hand off. Low.
+  **Done 2026-10-14** (`http2-client-hpack-2026-10-14.md`): cl_start
+  sets the HTTP/2 exchange up and Xo drives it (http1.xo h2_exchange:
+  the field list, hpack.Enc.field, cl_h2_send, then cl_h2_next stops at
+  each response block for hpack's decoder, cl_h2_end); the HPACK state
+  is an rt.Any the C keeps with the pooled connection. xo_h2.c 3,606 to
+  3,056 lines; h2len 0.982 to 1.006, h2big 0.996 to 1.009 of the C's
+  instructions. The server's driver moved from hpack.xo to http1.xo
+  (H2Conn) to keep the imports acyclic.
 - **B12 response writer.** Status text, DetectContentType, Date, and the
   HTTP/1.1 writer rules (xo_http.c 274-341, 1398-1866): pure text, a new
   http1w.xo that HTTP/2's h2_head also uses. Xo about 500 lines, medium

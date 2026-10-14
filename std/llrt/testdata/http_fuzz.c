@@ -290,8 +290,6 @@ static void run_h2_server(const char *in, int64_t n) {
 static void run_h2_client(const char *in, int64_t n) {
 	h2cc pc;
 	memset(&pc, 0, sizeof pc);
-	hp_dec_init(&pc.dec, H2_TABLE);
-	hp_enc_init(&pc.enc);
 	pc.peer_frame = 16384;
 	pc.peer_win = pc.win = 65535;
 	pc.in.avail = (int64_t)1 << 30;
@@ -311,13 +309,14 @@ static void run_h2_client(const char *in, int64_t n) {
 	const char *method = rnd() % 4 == 0 ? "HEAD" : "GET";
 	for (;;) {
 		const uint8_t *h;
-		if (h2cc_frame(&pc.c, &h) != CC_OK || !h2cc_process(&pc, &q, h, &r, method, why, sizeof why) || q.ended) {
+		// a header block's decoding is Xo's (http1.xo h2_exchange): the
+		// run stops there, as run_h2_server's does
+		if (h2cc_frame(&pc.c, &h) != CC_OK || !h2cc_process(&pc, &q, h, &r, method, why, sizeof why) || q.ended || q.dec) {
 			break;
 		}
 	}
 	free(pc.c.buf);
-	hp_dec_free(&pc.dec);
-	hp_tab_free(&pc.enc.t);
+	free(pc.sizes.p);
 	free(pc.out.p);
 	free(pc.goaway_debug);
 	hl_free(&q.fields);

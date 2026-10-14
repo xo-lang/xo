@@ -12,6 +12,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   their range. The stack trace's padding counts runes in Xo. HTTP/1.1
   server 0.961 to 1.013 of the C's instructions
   (bench/results/string-list-objects-2026-10-14.md).
+- Native runtime (zero-C audit item B11): the HTTP/2 client's header
+  blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
+  the server already used); the client's request fields are listed in
+  Xo (http1.xo `h2_exchange`) and the C HPACK copy leaves the runtime
+  (xo_h2.c 3,606 to 3,056 lines). HTTP/2 client requests measure 0.982
+  to 1.009 times the C's instructions
+  (bench/results/http2-client-hpack-2026-10-14.md; new h2len and h2big
+  workloads in bench/perf/httpclient).
 - Native runtime (zero-C audit item B09, decision 0222): a value barrier
   for constant time runtime code (`rt.ct_barrier`, internal: no
   instruction on arm64, an empty asm on LLVM) and constant time masks in
