@@ -69,6 +69,11 @@ stages:
    graph) are computed once.
 5. **The LLVM backend**: its split build (decision 0168) is the same
    idea at the clang level; its emitter can take the same parts.
+   Measured on c7i.8xlarge (2026-10-14): clang is 94 to 97 percent of
+   the x86 self build (2,510.80 s at split 12 with 6 jobs, 1,136.45 s at
+   32 with 32), about 11,200 s of -O2 CPU on 1.11 GB of IR, so the
+   arm64 build's 88 s class needs smaller IR or a lower -O level for
+   development builds, not only more jobs.
 
 ### Stage 2: per-module caching of front end results
 

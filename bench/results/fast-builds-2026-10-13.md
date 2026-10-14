@@ -222,3 +222,64 @@ assembly and the link. Next, ranked by expected gain:
    is inlined, so the order matters; a snapshot of the callees would
    make it parallel at the cost of changing the inlined code).
 5. The LLVM build: one clang job per core and more split modules.
+
+## The LLVM path on x86-64 (c7i.8xlarge, 2026-10-14)
+
+On linux/amd64 xo builds itself with the LLVM backend (no arm64
+emitter), so stage 1's emitter work does not reach it. Measured: the
+linux-amd64 seed (0.9.0-5e21dc31) building selfhost/xo of ce8fe687
+(`--backend=llvm --phase-times`, `XO_LLVM_LTO=none`, a fresh build
+directory, `XO_BIN_CACHE=off`), on the warm on demand c7i.8xlarge (32
+vCPUs, 16 cores, 61 GB), clang 15.0.7; each clang's time from a wrapper.
+
+| | split 12, 6 jobs (the bootstrap's setting) | split 32, 32 jobs |
+|---|---|---|
+| check, ssa, early passes | 4.70 s | 4.81 s |
+| insert_rc (the seed's, serial) | 41.00 s | 41.91 s |
+| emit (IR) | 14.05 s | 14.13 s |
+| write | 7.48 s | 7.58 s |
+| cc: clang per module, then the link | 2,443.28 s | 1,067.73 s |
+| **wall** | **2,510.80 s (41:50.80)** | **1,136.45 s (18:56.45)** |
+| CPU busy | 452% | 1,727% |
+| user CPU | 11,338.19 s | 19,589.60 s |
+| peak RSS (xo) | 8.17 GB | 8.06 GB |
+| IR per module | 92.3 to 92.7 MB | 35.3 to 35.7 MB |
+| clang -O2 per module | 658.73 to 1,234.94 s, sum 11,186.2 s | 434.20 to 976.66 s, sum 19,474.1 s |
+| link | about 1 s | about 1 s |
+| binary | 289,672,992 B | 293,422,408 B |
+
+One 92,687,914 byte module alone, by optimization level:
+
+| clang | time | peak RSS | object |
+|---|---|---|---|
+| -O0 | 142.96 s | 2.98 GB | 77,232,432 B |
+| -O1 | 554.73 s | 3.55 GB | 33,350,016 B |
+| -O2 | 614.10 s | 3.54 GB | 33,119,416 B |
+
+What dominates: clang, 97 and 94 percent of the wall at the two settings.
+xo's own share (about 67 s: insert_rc 41 s, emit 14 s, write 7.5 s, the front end 4.7 s) is
+what stage 1's insert_rc_jobs already parallelizes (not yet in the seed
+measured). The IR is 1.11 GB (2.5 times the arm64 assembly's 437 MB),
+and clang compiles it at about 0.15 MB/s per process at -O2 and 0.65
+MB/s at -O0. More modules and jobs cut the wall 2.2 times but raised the
+total CPU 1.7 times: 32 clangs on 16 cores (two hyperthreads each) and
+the copies of shared declarations in every module. -O1 saves only 10
+percent over -O2; -O0 is 4.3 times faster than -O2 but its object is 2.3
+times larger (and the code slower).
+
+Against the target (the arm64 build's 88 s class on r8g.8xlarge): at
+-O2 the clang CPU alone is about 11,200 s, at least 700 s on 16 cores
+with perfect parallelism, so -O2 cannot reach it with this IR. Ranked
+next steps for x86:
+
+1. Smaller IR, the same lever as arm64's spill and reference counting
+   lines: 1.11 GB for 6,103 functions is about 180 KB per function.
+   Measure what the IR is made of (per instruction kind, as for the
+   assembly above) and cut its largest source.
+2. `-O0` or `-O1` for development self builds (the bootstrap and test
+   compilers), -O2 for releases: -O0 alone would be about 1,700 s of
+   clang CPU, about 110 s on 16 cores with 16 jobs.
+3. Jobs by physical cores, not vCPUs (16 here), with splits a multiple
+   of them, to stop the 32 way CPU inflation.
+4. A native x86-64 emitter in the arm64 emitter's style (decision 0158),
+   which takes clang out of the path entirely; the larger piece of work.
