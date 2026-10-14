@@ -903,7 +903,11 @@ fn (var g: Gen) rt_call(v: Int) {
   }
   let x = g.f.values[v]
   let name = aux_str(x.aux)
-  let sym = "@xo_${name.trim_prefix("rt.")}"
+  // the shields and budgets are ctx.xo's and budget.xo's exports,
+  // defined in the module (decision 0229): called directly, their
+  // pointers passed as Ints, with no declaration
+  let export = xo_export(name)
+  let sym = if export.is_empty() { "@xo_${name.trim_prefix("rt.")}" } else { "@${export}" }
   // `rt.rs_*` functions take their Str operands as the string object
   // (the first is consumed, decision 0074); the others its bytes
   let obj = name.starts_with("rt.rs_")
@@ -964,7 +968,14 @@ fn (var g: Gen) rt_call(v: Int) {
       return
     }
   }
-  if !g.emitted.contains(sym) && !g.decls.contains(" ${sym}(") {
+  if !export.is_empty() {
+    for i in 0..args.len() {
+      if args[i].starts_with("ptr ") {
+        let p = g.def("ptrtoint ${args[i]} to i64")
+        args[i] = "i64 ${p}"
+      }
+    }
+  } else if !g.emitted.contains(sym) && !g.decls.contains(" ${sym}(") {
     g.emitted[sym] = true
     var attr = "#2"
     if runtime_raises(name) {
@@ -1095,4 +1106,17 @@ fn (var g: Gen) platform_call(v: Int) {
     }
     _ => g.set(v, c)
   }
+}
+
+/// The Xo export a runtime call name goes to directly (decision 0229:
+/// ctx.xo's shields, budget.xo's tick, open, and end), or "" for the C
+/// runtime's xo_<name>.
+fn xo_export(name: Str) -> Str {
+  if name is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
+    return "xo_x_ctx_${name.trim_prefix("rt.")}"
+  }
+  if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
+    return "xo_x_budget_${name.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  ""
 }

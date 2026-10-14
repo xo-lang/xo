@@ -38,11 +38,11 @@ use native/sys_windows
 /// whether to map through the C library (a sanitizer build, set by
 /// obj.heap_init), the large block cache's lock word, and the cache's
 /// table (0 until the first large block is given back).
-const W_LOCK = 15
-const W_CHUNKS = 16
+const W_LOCK = 22
+const W_CHUNKS = 23
 const W_LIBC = 17
-const W_CLOCK = 22
-const W_CACHE = 23
+const W_CLOCK = 24
+const W_CACHE = 25
 
 /// The cache's table (a mapping of GRAIN bytes): its own size (word 0),
 /// the bytes of the mappings it holds (word 1), their number (word 2),

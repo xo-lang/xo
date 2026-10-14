@@ -14,6 +14,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   text, json, alloc, and nested are 0.973 to 1.029 of main's
   instructions, the self build 0.997 and 0.996
   (bench/results/heap-platform-2026-10-14.md).
+- Native runtime (zero-C audit item B17, decision 0229): the shields of
+  deferred code, the unwinding flag, and resource budgets are Xo
+  (std/native/llrt/ctx.xo, budget.xo), which generated code calls
+  directly; ctx.xo holds the context record's layout as one asserted
+  table. xo_rt.c loses 287 lines and gains 87; bench/perf/ctx 0.921 to
+  1.029 of main's instructions on the Mac. XO-F005 prints its time as a
+  Duration, as the Go backend does.
 - std/time on Windows: `time.local` builds the zone as Go's time.Local
   does (transitions for 100 years each side of now, no rule past them,
   Go's abbreviations), so times before 1926 and after 2125 match the Go

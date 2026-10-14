@@ -1,0 +1,132 @@
+// The context record (decision 0229; the zero-C audit's B17, decision
+// 0212 stage 3): a running context, the program's main or a task, is the
+// C runtime's xo_ctx (std/llrt/xo_rt.c), whose fields both the C and Xo
+// read and write at the offsets below. xo_rt.c asserts every one
+// (`ctx.xo C_*`); a module that reads a field takes its offset from here
+// (fault.xo, pool.xo, and sched.xo still keep copies of theirs, asserted
+// the same way). The current context is thread local word 0
+// (sched.xo TLS_CUR).
+//
+// Here: the shields of deferred code (core 3.5, decision 0022) and the
+// unwinding flag, which generated code reaches through cabi.xo's exports
+// (the arm64 and LLVM emitters call them directly; older xo's code
+// through the C xo_shield_* and xo_unwinding forwarders). The budgets
+// are budget.xo's. The Mutexes a context holds (C_HELD, XO-F004) stay
+// with the C Mutex code until B19. Making a root context for a bare thread stays C (ctx_root:
+// the deadlock counter and the park's setup are the scheduler's, B18 to
+// B20).
+//
+// Nothing here allocates on the common path.
+use native/llrt/fault
+use native/llrt/sysio
+use native/llrt/text
+use native/rt
+
+/// xo_ctx (224 bytes; the owner of each field in decision 0229):
+/// the innermost cancellation node (a scope body or the task's node).
+pub const C_NODE = 0
+/// unwinding: the context unwinds (cancellation or a fault; a C int).
+pub const C_UNWINDING = 8
+/// shield: the depth of deferred code running (a C int).
+pub const C_SHIELD = 12
+/// park: the context's parking record (pool.xo PK_*, 32 bytes).
+pub const C_PARK = 16
+/// held, nheld, capheld: the Mutexes the context holds (24 byte entries:
+/// the mutex, the location and its length; C ints for the counts).
+pub const C_HELD = 48
+pub const C_NHELD = 56
+pub const C_CAPHELD = 60
+/// net_status, net_msg: the outcome of the last network operation.
+pub const C_NET_STATUS = 64
+pub const C_NET_MSG = 72
+/// faulting and the fault record (fault.xo C_*).
+pub const C_FAULTING = 80
+pub const C_FAULT_MSG = 88
+pub const C_FAULT_LOC = 96
+pub const C_FAULT_DETAIL = 104
+/// boundary: the stack address the unwinding never passes.
+pub const C_BOUNDARY = 112
+/// fault_exc: the exception object (32 bytes, 16 aligned).
+pub const C_FAULT_EXC = 128
+/// The budget (decision 0175): its record (a reference) or 0, the polls
+/// left and the quantum, the charged stretch's start, allocation mark,
+/// and heap, and the pause depth (a C int).
+pub const C_BUD = 160
+pub const C_BUD_LEFT = 168
+pub const C_BUD_Q = 176
+pub const C_BUD_RUN = 184
+pub const C_BUD_AMARK = 192
+pub const C_BUD_HEAP = 200
+pub const C_BUD_PAUSED = 208
+pub const C_SIZE = 224
+
+/// rt.static_word: the address of xo_rt.c ctx_root (two ignored
+/// arguments; the current context, made for a thread that runs Xo code
+/// outside any task), and the address of the C's worker pool record (the
+/// pl of pool.xo), set by init.
+const ROOT = 15
+const POOL = 16
+
+/// Sets the address of the C's ctx_root and of its pool (at start).
+pub fn init(root: Int, pl: Int) {
+  rt.mem_store(rt.static_word(ROOT), 0, root, 8)
+  rt.mem_store(rt.static_word(POOL), 0, pl, 8)
+}
+
+/// The C's worker pool record (pool.xo's pl).
+pub fn pool() -> Int { rt.mem_load(rt.static_word(POOL), 0, 8) }
+
+/// The current context: thread local word 0, or a root context the C
+/// makes for a thread that has none yet.
+pub fn cur() -> Int {
+  let c = rt.tlocal_get(0)
+  if c != 0 {
+    return c
+  }
+  rt.call_c2(rt.mem_load(rt.static_word(ROOT), 0, 8), 0, 0)
+}
+
+/// Starts deferred code (xo_shield_begin): it is shielded from
+/// cancellation, and on the unwind path the unwinding flag is clear while
+/// it runs. The token shield_end takes: the start time and the flag.
+pub fn shield_begin() -> Int {
+  let c = cur()
+  let tok = rt.int_wrap(3, sysio.mono_ns(), 1) | (rt.mem_load(c, C_UNWINDING, 4) & 1)
+  rt.mem_store(c, C_UNWINDING, 0, 4)
+  rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) + 1, 4)
+  tok
+}
+
+/// Ends deferred code started with token tok (xo_shield_end): the flag
+/// is set again, and deferred code that ran longer than 5 seconds faults
+/// (XO-F005, as the Go backend checks it when the code returns) at the ln
+/// bytes at lp.
+pub fn shield_end(tok: Int, lp: Int, ln: Int) {
+  let c = cur()
+  rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) - 1, 4)
+  rt.mem_store(c, C_UNWINDING, tok & 1, 4)
+  let el = sysio.mono_ns() - tok / 2
+  if el > 5000000000 {
+    let m = text.append_duration("XO-F005: a shielded defer ran for ", el) + ", longer than 5s"
+    fault.raise_str_at(m, lp, ln)
+  }
+}
+
+/// Ends deferred code started with token tok that faulted
+/// (xo_shield_abort, decision 0085): as shield_end, without its time
+/// check.
+pub fn shield_abort(tok: Int) {
+  let c = cur()
+  rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) - 1, 4)
+  rt.mem_store(c, C_UNWINDING, tok & 1, 4)
+}
+
+/// Whether the current context unwinds (xo_unwinding: generated code
+/// asks after a cancellation point); 0 on a thread with no context.
+pub fn unwinding() -> Int {
+  let c = rt.tlocal_get(0)
+  if c == 0 {
+    return 0
+  }
+  rt.mem_load(c, C_UNWINDING, 4)
+}
