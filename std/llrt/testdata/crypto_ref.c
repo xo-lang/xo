@@ -9,6 +9,10 @@
 
 // b64_alpha and b64_val were xo_std.c's, which only this C used after
 // the runtime's base64 moved to Xo (num.xo, digest.xo).
+// cr_ror64 was xo_crypto.c's, for SHA-512 and this C; SHA-512 moved to
+// digest.xo (the zero-C audit's B08).
+static uint64_t cr_ror64(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }
+
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
