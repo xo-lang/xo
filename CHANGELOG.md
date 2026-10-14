@@ -6,6 +6,42 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B12): the HTTP/1.1 response writer
+  is Xo (std/native/llrt/http1w.xo: status text, DetectContentType, the
+  Date header, chunkWriter.writeHeader's rules, the error answers),
+  called by the C connection code through cabi_http.xo's exports; HTTP/2
+  sniffs and dates through it. 514 lines of xo_http.c deleted; the bytes
+  on the wire are unchanged; http workloads 0.976 to 1.001 of the C's
+  instructions on HTTP/1.1, HTTP/2 within noise
+  (bench/results/http-writer-2026-10-14.md).
+- Native runtime (zero-C audit item B10): std/http's client reads
+  HTTP/1.1 responses, follows redirects, and parses URLs in Xo
+  (std/native/llrt/http1.xo `client_do`, `parse_response`); the C keeps
+  the connection, TLS, HTTP/2, and the request's writing. The HTTP/2
+  server's request URLs are parsed by Xo too. 1,629 lines of C leave the
+  runtime (the C request parser stays as test data for the C fuzzers);
+  the client measures 0.953 to 1.001 and the HTTP/2 server 1.006 to
+  1.008 times the C's instructions (bench/results/http-client-2026-10-14.md),
+  and its answers to 457 responses match the C client's byte for byte.
+  Chunked bodies decode faster (5 to 6 percent fewer instructions for
+  the server's chunked requests).
+- Version 0.10.0 and its prebuilt seeds (decision 0216); the C Rand
+  that only the 0.9.0 seed called is deleted (113 lines of xo_crypto.c
+  and xo_win.c).
+- Smaller native output and faster x86 self builds (decision 0220):
+  reference counting releases a dead struct once instead of once per
+  heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
+  calls; LLVM IR 72 percent smaller); `XO_LLVM_OPT` sets clang's level,
+  and development builds of xo on x86 use -O0 (xo rebuilds itself in
+  1:23 on c7i.8xlarge, was about 42 minutes); parallel jobs default to
+  the physical cores and the memory.
+- Native runtime (zero-C audit item W1): the scheduler's C fallback,
+  `XO_LLRT_C=sched`, is deleted: 1,284 lines of std/llrt/xo_rt.c (its
+  fiber switch assembly, thread locals, run queue ring, worker pool,
+  parks, fiber stacks, spawn and join copies), std/native/llrt/sched_c.xo,
+  `rt.sched_c`, and -DXO_SCHED_C. The scheduler is sched.xo and pool.xo
+  only; `XO_LLRT_C=sched` now fails the build. The live C path names
+  are net and text.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's

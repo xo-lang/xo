@@ -38,7 +38,9 @@ How other self hosted languages handle it:
    `seeds/latest.txt` naming the newest seed, where a seed's name is
    `<version>-<commit, 8 hex>` (the first, 0.9.0-5e21dc31, uploaded by
    the lead on 2026-10-13). Seeds are not public releases. From the next
-   seed on, each bumps the minor version (0.10.0 next).
+   seed on, each bumps the minor version (0.10.0-23ce8ce2, uploaded
+   2026-10-14, cross built on the Mac for every platform but
+   darwin-arm64; 0.11.0 next).
    internal/xotool fetches the newest seed with the aws CLI when no
    local xo is found (the development Mac's AWS user; EC2 instances
    with the instance profile `xo-ci-seed-read`, read only), checks its
