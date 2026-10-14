@@ -115,6 +115,13 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
       a.text()
       true
     }
+    ".data" => {
+      // the arm64 emitter's `.data` on Linux (G.section "data": the
+      // socket and poll state of decision 0206 stage 3), as
+      // `.section .data`
+      a.elf_section_directive(".data".bytes())
+      true
+    }
     ".file" => {
       // `.file "NAME"`: an STT_FILE symbol (the emitter's fixed name
       // keeps linked binaries reproducible)

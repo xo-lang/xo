@@ -605,6 +605,15 @@ test "a .file directive is an STT_FILE symbol first in the symbol table" {
   }
 }
 
+test "a .data directive switches to a writable .data section" {
+  // the linux emitter's `.data` (G.section "data"); every network
+  // golden of the ELF run failed on it before (2026-10-14)
+  let o = elf_obj("\t.text\n\t.globl main\nmain:\n\tret\n\t.data\n\t.p2align 3\nv:\n\t.quad 7\n")
+  let d = sect_named(o, ".data")
+  expect(d.data.len()) == 8
+  expect(rd32(d.data, 0)) == 7
+}
+
 test "numeric labels go back to the last definition and forward to the next" {
   let o = elf_obj("\tb 1f\n1:\n\tb 1b\n1:\n\tb 1b\n")
   let t = sect_named(o, ".text").data

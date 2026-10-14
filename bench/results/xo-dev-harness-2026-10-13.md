@@ -343,3 +343,82 @@ modules' bodies again for each program) is not shared yet. Wall time
 moves within the run to run noise at -j 8 on arm64 and gains 2 s on
 LLVM. Build-each is the default for the native backends; `--no-each`
 keeps one `xo build` per program.
+
+## Per change total after decisions 0209 and 0217 (Mac)
+
+Measured 2026-10-14 01:26 to 01:29 on the shared Mac under the heavy
+lock (load average 1.7 at the start), branch at 17fd54d1 (origin/main
+merged, so every replay of decision 0217 is skipped by default):
+
+| step | wall | CPU (user + sys) |
+|---|---|---|
+| rebuild bin/xo after a selfhost change (scripts/xobuild) | 332 to 354 s (four rebuilds on 2026-10-13 and 14: 327.84, 332.07, 348, 354 s) | 311.56 to 313.96 s user |
+| `go test ./internal/selfhost` (merge tier) | 85.30 s | 160.97 s |
+| `go test ./internal/devgoldens` (arm64, LLVM, Go goldens at -j 8, error check, codegen; no cache) | 61.04 s | 431.44 s |
+
+(The devgoldens run of this table found one failure, gc_config on the Go
+backend, which was the wrapper's $PWD; fixed in 46529f21,
+knowledgebase/gotchas/go-test-pwd-misleads-xo.md; the backend's 136
+programs pass from a shell and from the fixed wrapper.)
+
+Total for a compiler change: about 354 + 85 + 61 = 500 s, 8.3 minutes,
+plus the fixed point; the low end of the phase 1 estimate of 7 to 12
+minutes. Without the xo rebuild (a change outside selfhost/ and the std
+modules xo uses) the tests take 146 s, 2.4 minutes, under decision
+0217's 3 to 5 minutes. A rerun with nothing changed in the goldens takes
+0.21 s per backend from the pass cache. The xo rebuild is now 71
+percent of the total, so it is where the next minutes are: the
+fast-builds work (decision 0209 lever 3 applied to the compiler itself:
+per function parallel emission).
+
+## Phase 2 on linux/arm64 (EC2)
+
+A warm r8g.8xlarge (32 vCPUs), commit a84c8182 (build-each with static
+shares), request harness-linux2, 2026-10-14; bin/xo built from the
+0.9.0-5e21dc31 seed in 431 s. GNU `time` (children included in user and
+sys). One run each.
+
+| harness | Python (4 workers) | xo dev |
+|---|---|---|
+| arm64 | 61.56 s, 172.43 s CPU | -j 4: 32.98 s (--no-each), 31.45 s (build-each, 109.27 s CPU against 128.72 s); -j 16: 26.30 s; -j 32: 25.95 s |
+| LLVM | 124.02 s, 427.04 s CPU | -j 16: 44.08 s, 401.47 s CPU |
+| Go backend | 30.69 s, 389.11 s CPU (the first Go builds of the instance: a cold Go build cache) | -j 16: 6.37 s, 41.94 s CPU |
+
+Agreement: every program passes both ways (arm64 179, LLVM 179, Go
+136), the same sets as on the Mac. On this evidence the three Python
+scripts were deleted (64fa162c).
+
+- More workers stop helping at 16 on arm64 (26.30 s at 16, 25.95 s at
+  32): the longest program, huge_frame (about 16 s to build), is the
+  floor, the same shape as the selfhost recording's.
+- The ELF goldens, never run before on Linux (elf-goldens.py needs
+  Docker): with a linux/arm64 runtime pack (`xo rtpack
+  --target=linux/arm64`, 5.89 s) and `--flags='--target=linux/arm64
+  --ld=macho'`, 166 of 179 pass, run directly on the host. The 13
+  failures are selfhost/macho gaps for ELF, among them `unsupported
+  directive .data` (sys_files_clock, unix_kill); the full list is in the
+  final Linux run below.
+- TestDevGoldensGo failed gc_config there too, from the wrapper's $PWD
+  (fixed in 46529f21, gotchas/go-test-pwd-misleads-xo.md); `xo dev
+  goldens --backend=go` itself passed 136 of 136.
+
+## Final linux/arm64 run (EC2, 64fa162c)
+
+Request harness-linux3 (warm r8g.8xlarge, bin/xo from the seed in 495
+s), after the Python scripts were deleted:
+
+- `go test ./internal/devgoldens`: TestDevGoldensArm64 179 of 179
+  (30.11 s), TestDevGoldensLLVM 179 of 179 (33.36 s), TestDevGoldensGo
+  136 of 136 (25.05 s, the $PWD fix), TestDevErrorcheck 15 of 15,
+  TestDevCodegen 11 patterns; TestDevGoldensELF 166 of 179.
+- The 13 ELF failures have one cause: selfhost/macho's ELF path did not
+  take the `.data` directive the linux emitter writes (every network and
+  clock program). Fixed after this run (gotchas/macho-assembler-lacks-svc.md,
+  second gap), with an assembler test; the ELF rerun is pending a
+  linux/arm64 host.
+- `--cmd=run` (`xo run` in the program's directory): 178 of 179 on Linux
+  and on the Mac (21.73 s at -j 8): tz_table's run prints the checker's
+  note `zone "Not/AZone" is not in the zone database` on standard error
+  before the program's output, which want.txt (made from a built binary)
+  does not hold. `xo run` passing check notes through to the program's
+  stderr is the open question; the build then run mode is the default.
