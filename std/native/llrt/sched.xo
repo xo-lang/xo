@@ -28,7 +28,8 @@ const SEQ_CST = 4
 /// the current context, the fiber running on the thread, the thread's
 /// worker record, the thread's heap (xo_rt.c tls_heap, decision 0207's
 /// heap record); 4 pool.xo's scratch word, 5 and 6 sysio.xo's
-/// monotonic clock (TLS_CLOCK_AT); 7 to 15 unused.
+/// monotonic clock (TLS_CLOCK_AT), 7 and 8 logstate.xo's attribution
+/// (work item B02); 9 to 15 unused.
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1
 pub const TLS_W: Int = 2

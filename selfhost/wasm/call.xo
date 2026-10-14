@@ -108,6 +108,11 @@ fn (var g: Gen) call(v: Int) {
       g.push(x.args[1])
       g.e("i64.store offset=${at}")
     }
+    "rt.test_on" => {
+      // a WASI module is never a test binary (std/native/log.xo asks)
+      g.e("i32.const 0")
+      g.def(v)
+    }
     "rt.tlocal_addr" => {
       g.e("i64.const ${g.static_table("tlocal", 16)}")
       g.def(v)
@@ -395,10 +400,11 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "bytes_addr" | "bytes_buf" | "rs_bytes_len" | "sys_buf" | "tw_fake" | "fs_set_err" {
+      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "bytes_addr" | "bytes_buf" | "rs_bytes_len" | "sys_buf" | "tw_fake" | "fs_set_err" | "test_log" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
-        // in `target.os` arms the passes may leave in a WASI module
+        // in `target.os` arms the passes may leave in a WASI module, and
+        // std/native/log.xo's test world record behind rt.test_on (false)
         let msg = "the wasm backend does not support the call `${name}`"
         g.e("i32.const ${g.str_obj(msg.bytes())}")
         g.e("i32.const ${msg.len()}")

@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Runtime process globals (zero-C work item B02, decision 0207): an
+  internal `rt.static_word(k)` intrinsic (64 zeroed words) in the arm64,
+  LLVM, and wasm emitters; std/log's state (log.configure's level,
+  format, and output; the dependency attribution of decision 0173 as a
+  thread local word; the record time) is Xo, and the 66 line logging
+  section of the C runtime is gone. The wasm backend now lowers the
+  runtime's thread local words and runs std/log programs.
 - Smaller native output and faster x86 self builds (decision 0220):
   reference counting releases a dead struct once instead of once per
   heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
