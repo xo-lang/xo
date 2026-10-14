@@ -1,7 +1,11 @@
 # 0195: No compiled C in the runtime
 
 Status: Accepted as a direction (owner, 2026-10-12). The audit landed
-(2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`); the per step
+(2026-10-13, `bench/results/zero-c-audit-2026-10-13.md`), refreshed at
+d79ad79b as a finite checklist with an order of agent sized items
+(`bench/results/zero-c-audit-refresh-2026-10-13.md`: std/llrt 26,743
+lines, (a) 2,060, (b) 24,678 in 31 items, (c) 5, third party
+200,915); the per step
 plan below ("Plan") is Proposed until the owner approves it and answers
 owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
 item 6: 1,040 of its 1,799 lines out of default builds,
