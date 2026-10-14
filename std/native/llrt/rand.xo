@@ -83,7 +83,9 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   while true {
     let v = next_u64()
     if (v ^ flip) < (limit ^ flip) {
-      return rt.int_wrap(0, lo, ints.u64_rem(v, span))
+      // both below 2^63 (the common case): the signed remainder, inline
+      let r = if v >= 0 && span > 0 { v % span } else { ints.u64_rem(v, span) }
+      return rt.int_wrap(0, lo, r)
     }
   }
   0
