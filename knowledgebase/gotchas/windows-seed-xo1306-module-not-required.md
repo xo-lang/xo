@@ -30,7 +30,9 @@ Windows. The driver accepts native paths too (2026-10-14): on Windows
 selfhost/xo opts.xo `front` turns `\` into `/` in directory arguments
 and the values of path flags (`-o`, `--std`, `--wd`, `--tzdata`,
 `--cc`, ...), never in a `run` program's arguments or after `--`
-(scripts/ci/winpaths.sh checks it on the Windows runner). It reaches
+(scripts/ci/winpaths.sh checks it on the Windows runner: passes with
+the change, run 38635797157; main's xo without it fails XO1306, run
+38637803546). It reaches
 seeds from the next one cut; xotool's `/` paths cover older seeds.
 
 Old workaround (used until the fix, 2026-10-14): a Go backend cross
