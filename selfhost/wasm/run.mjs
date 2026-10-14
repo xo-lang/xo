@@ -16,7 +16,8 @@
 // XO_WASM_SEED_LOG. XO_WASM_V8_FLAGS adds V8 flags, XO_WASM_NO_V8_FLAGS=1
 // leaves out the three below, XO_WASM_NO_WORKER=1 runs the module on the
 // main thread, and XO_WASM_STACK_MB sizes the worker's stack.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
 import { WASI } from 'node:wasi';
 import process from 'node:process';
@@ -82,12 +83,38 @@ function runModule(file, args) {
       return 0;
     },
   };
+  // XO_WASM_MEMTRACE=FILE: the MD5 of the memory before each WASI call,
+  // one line each, into FILE; with XO_WASM_MEMREF=FILE (an earlier
+  // trace), the first call whose memory differs dumps the memory then
+  // (FILE.at<k>) and at the call before (FILE.at<k-1>);
+  // XO_WASM_MEMDUMP_AT=k dumps the memory before call k into
+  // FILE.at<k> (to diff a good run's against a bad one's)
+  const trace = process.env.XO_WASM_MEMTRACE;
+  const ref = trace && process.env.XO_WASM_MEMREF ? readFileSync(process.env.XO_WASM_MEMREF, 'utf8').split('\n') : null;
+  const dumpAt = Number(process.env.XO_WASM_MEMDUMP_AT || -1);
+  const hashes = [];
+  let prev = null;
+  let diverged = false;
+  const snap = (name) => {
+    const k = hashes.length;
+    const mem = new Uint8Array(inst.exports.memory.buffer);
+    const h = createHash('md5').update(mem).digest('hex');
+    hashes.push(`${h} ${name} ${mem.length}`);
+    if (k === dumpAt) writeFileSync(`${trace}.at${k}`, mem);
+    if (ref && !diverged && ref[k] !== undefined && ref[k] !== hashes[k]) {
+      diverged = true;
+      writeFileSync(`${trace}.at${k}`, mem);
+      if (prev) writeFileSync(`${trace}.at${k - 1}`, prev);
+    }
+    if (ref && !diverged) prev = mem.slice();
+  };
   // every WASI call counted, with the errors (nonzero results) it returned
   const calls = {};
   const imports = {};
   for (const [name, fn] of Object.entries(wasi.wasiImport)) {
     const f = own[name] || fn;
     imports[name] = (...a) => {
+      if (trace) snap(name);
       const r = f(...a);
       const c = calls[name] || (calls[name] = { n: 0, errs: {} });
       c.n++;
@@ -110,6 +137,10 @@ function runModule(file, args) {
     }
     code = 134;
     trapped = true;
+  }
+  if (trace) {
+    if (trapped) writeFileSync(`${trace}.trap`, new Uint8Array(inst.exports.memory.buffer));
+    writeFileSync(trace, hashes.join('\n') + '\n');
   }
   if (trapped || process.env.XO_LEAKCHECK || process.env.XO_WASM_SEED_LOG) {
     const cs = Object.entries(calls).sort().map(([n, c]) => {
