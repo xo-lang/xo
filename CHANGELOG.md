@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B18, part 1): a task's end, `await`,
+  a scope's failed task, `s.cancel()`, and `os.tasks` are Xo
+  (std/native/llrt/tasks.xo), which generated code calls directly; a
+  context's wait list entry is part of the context. xo_rt.c loses 158
+  lines and gains 71; bench/perf/ctx 0.942 to 1.022 on the Mac.
 - Native runtime (zero-C audit item B17, decision 0229): the shields of
   deferred code, the unwinding flag, and resource budgets are Xo
   (std/native/llrt/ctx.xo, budget.xo), which generated code calls

@@ -1301,6 +1301,15 @@ typedef struct {
 
 struct xo_task;
 
+// A wait list entry: a context's park in the list of an object it waits
+// on (tasks.xo E_*).
+typedef struct xo_went {
+	xo_park *park;
+	struct xo_went *prev, *next;
+	int writer;  // a Mutex waiter that wants the lock exclusively
+	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
+} xo_went;
+
 // xo_ctx is a running context: the main program, or a task.
 typedef struct xo_ctx {
 	xo_node *node; // innermost: a scope body, or the task's node
@@ -1340,6 +1349,9 @@ typedef struct xo_ctx {
 	int64_t bud_left, bud_q, bud_run, bud_amark;
 	struct xo_heap *bud_heap;
 	int bud_paused; // bud_pause depth
+	// the context's entry in the wait list it waits on (wl_wait_as,
+	// tasks.xo wl_wait: one at a time, decision 0212 stage 3)
+	xo_went went;
 } xo_ctx;
 
 // Thread locals are read and written only through these functions, which
@@ -1396,7 +1408,8 @@ _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 &
                "ctx.xo C_*");
 _Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
                    offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
-                   offsetof(xo_ctx, bud_paused) == 208 && sizeof(xo_ctx) == 224,
+                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && sizeof(xo_ctx) == 256 &&
+                   sizeof(xo_went) == 32 && offsetof(xo_went, writer) == 24,
                "ctx.xo C_BUD_*");
 
 // ctx_root is ctx for ctx.xo cur (its address in rt.static_word 15).
@@ -2096,13 +2109,8 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1); }
 
 // A wait list: the parks of the contexts waiting on an object, signaled
-// all at once when its state changes (they check again).
-typedef struct xo_went {
-	xo_park *park;
-	struct xo_went *prev, *next;
-	int writer;  // a Mutex waiter that wants the lock exclusively
-	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
-} xo_went;
+// all at once when its state changes (they check again). The entry
+// (xo_went, above) is the waiting context's own (xo_ctx.went).
 
 typedef struct {
 	xo_went *first, *last;
@@ -2143,13 +2151,14 @@ static void wl_wake(xo_wl *l) {
 // held again on return. It reports 0 when the context was canceled.
 // writer marks a Mutex waiter that wants the lock exclusively.
 static int wl_wait_as(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable, int writer) {
-	xo_went e = {.park = &c->park, .writer = writer};
+	xo_went *e = &c->went;
+	*e = (xo_went){.park = &c->park, .writer = writer};
 	park_reset(&c->park);
-	wl_add(l, &e);
+	wl_add(l, e);
 	unlk(mu);
 	park_wait(c, cancelable);
 	lk(mu);
-	wl_del(l, &e);
+	wl_del(l, e);
 	return !(cancelable && ctx_canceled(c));
 }
 
@@ -2256,61 +2265,27 @@ xo_scope *xo_scope_open(void) {
 	return s;
 }
 
-// xo_scope_group is `s.group()`: the same scope behind a Group handle.
-xo_scope *xo_scope_group(xo_scope *s) {
-	h_retain(s);
-	return s;
-}
+// xo_scope_group is `s.group()` (tasks.xo scope_group).
+int64_t xo_x_scope_group(int64_t s);
+xo_scope *xo_scope_group(xo_scope *s) { return (xo_scope *)(intptr_t)xo_x_scope_group(XO_ADDR(s)); }
 
-// The program's task group, `os.tasks` (core 7.1, decision 0109): the
-// group of the scope generated code opens around main (and around each
-// test), set while it is open.
-static xo_scope *prog_group;
+// The program's task group (os.tasks) and s.cancel() are tasks.xo's
+// (B18), which generated code calls through its exports; these forward
+// for older xo's code.
+void xo_x_prog_group_set(int64_t s);
+int64_t xo_x_prog_group(void);
+void xo_x_scope_cancel(int64_t s);
 
-// xo_prog_group_set makes s (NULL: none) the group os.tasks gives.
-void xo_prog_group_set(xo_scope *s) {
-	if (s) {
-		h_retain(s);
-	}
-	xo_scope *old = __atomic_exchange_n(&prog_group, s, __ATOMIC_ACQ_REL);
-	if (old) {
-		h_release(old);
-	}
-}
+void xo_prog_group_set(xo_scope *s) { xo_x_prog_group_set(XO_ADDR(s)); }
 
-// xo_prog_group_clear ends the program's group (its scope closed).
-void xo_prog_group_clear(void) { xo_prog_group_set(NULL); }
+void xo_prog_group_clear(void) { xo_x_prog_group_set(0); }
 
-// xo_prog_group is `os.tasks`: a reference to the program's group.
-xo_scope *xo_prog_group(void) {
-	xo_scope *s = __atomic_load_n(&prog_group, __ATOMIC_ACQUIRE);
-	if (!s) {
-		static const char m[] = "os.tasks is not available here";
-		xo_fault(m, (int64_t)sizeof m - 1, "");
-	}
-	h_retain(s);
-	return s;
-}
+xo_scope *xo_prog_group(void) { return (xo_scope *)(intptr_t)xo_x_prog_group(); }
 
-// xo_scope_cancel is `s.cancel()`: cancels the scope's tasks, not the
-// body; tasks spawned later start under a fresh node.
-void xo_scope_cancel(xo_scope *s) {
-	xo_node *fresh = calloc(1, sizeof(xo_node));
-	if (!fresh) {
-		xo_oom();
-	}
-	lk(&s->mu);
-	xo_node *old = s->tasks;
-	s->old = realloc(s->old, (size_t)(s->nold + 1) * sizeof(xo_node *));
-	if (!s->old) {
-		xo_oom();
-	}
-	s->old[s->nold++] = old;
-	node_link(fresh, &s->body);
-	s->tasks = fresh;
-	unlk(&s->mu);
-	node_cancel(old);
-}
+void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
+
+_Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
+               "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
 
 static void task_free(void *p) {
 	xo_task *t = p;
@@ -2740,6 +2715,14 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
 		return 0;
+	case 17: // context a waits on its park (cancelable: b; tasks.xo wl_wait)
+		park_wait((xo_ctx *)(intptr_t)a, (int)b);
+		return 0;
+	case 18: // the list a canceled operation returns
+		return XO_ADDR(&empty_list);
+	case 19: // drop a reference to handle a (h_release)
+		h_release((void *)(intptr_t)a);
+		return 0;
 	}
 	(void)b;
 	return 0;
@@ -2830,111 +2813,41 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	return t;
 }
 
-// xo_task_done records the result of the current task (a shared list of
-// one, consumed); failed tells that it is an error, which fails the
-// scope unless the handle is awaited or the task was canceled.
-void xo_task_done(xo_task *t, xo_rlist *rl, int64_t failed) {
-	t->result = rl;
-	if (!failed || t->consumed || node_canceled(&t->node)) {
-		return;
-	}
-	xo_scope *s = t->scope;
-	lk(&s->mu);
-	int first = s->fail == NULL;
-	if (first) {
-		h_retain(t);
-		s->fail = t;
-	}
-	unlk(&s->mu);
-	if (first) {
-		// the body and every task (core 7.1, child failure)
-		node_cancel(&s->body);
-	}
-}
+// The task's end, await, and the scope's failed task are tasks.xo's
+// (B18), which generated code calls through its exports; these forward
+// to them for older xo's code.
+void xo_x_task_done(int64_t t, int64_t rl, int64_t failed);
+void xo_x_task_unwound(int64_t t);
+int64_t xo_x_task_await(int64_t t, int64_t lp, int64_t ln);
+int64_t xo_x_task_result(int64_t t);
+int64_t xo_x_scope_fail_task(int64_t s);
+int64_t xo_x_scope_fail_site(int64_t s);
+int64_t xo_x_scope_group(int64_t s);
+void xo_x_fault_rethrow(int64_t s);
 
-// xo_task_unwound ends the current task that unwound (canceled), or
-// faulted (decision 0085): its scope then treats it like a failed child
-// (cancels the body and every task) and raises the fault where it closes.
-void xo_task_unwound(xo_task *t) {
-	xo_ctx *c = cur_get();
-	c->unwinding = 0;
-	t->unwound = 1;
-	if (!c->faulting) {
-		return;
-	}
-	c->faulting = 0;
-	t->fault_msg = c->fault_msg;
-	t->fault_loc = c->fault_loc;
-	t->fault_detail = c->fault_detail;
-	c->fault_msg = c->fault_loc = c->fault_detail = NULL;
-	xo_scope *s = t->scope;
-	lk(&s->mu);
-	int first = s->fault == NULL;
-	if (first) {
-		h_retain(t);
-		s->fault = t;
-	}
-	unlk(&s->mu);
-	if (first) {
-		node_cancel(&s->body);
-	}
-}
+void xo_task_done(xo_task *t, xo_rlist *rl, int64_t failed) { xo_x_task_done(XO_ADDR(t), XO_ADDR(rl), failed); }
 
-// xo_fault_rethrow raises the fault of a task of s in the context that
-// closed s (status 3 of xo_scope_close).
+void xo_task_unwound(xo_task *t) { xo_x_task_unwound(XO_ADDR(t)); }
+
 XO_NORETURN void xo_fault_rethrow(xo_scope *s) {
-	xo_ctx *c = ctx();
-	xo_task *t = s->fault;
-	fault_clear(c);
-	if (t->fault_detail) {
-		xo_fault_detail(t->fault_detail, (int64_t)strlen(t->fault_detail));
-	}
-	fault_set(c, t->fault_msg, t->fault_loc);
-	fault_raise(c);
+	xo_x_fault_rethrow(XO_ADDR(s));
+	__builtin_unreachable();
 }
 
-// xo_task_await is `t.await` (core 7.1): waits for t (a cancellation
-// point that unwinds) and returns its result list (a reference).
-xo_rlist *xo_task_await(xo_task *t, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	if (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != T_DONE) {
-		if (canceled(c)) {
-			return &empty_list;
-		}
-		run_task(t); // not started yet: run it here
-		lk(&t->mu);
-		while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != T_DONE) {
-			if (!wl_wait(c, &t->mu, &t->waiters, 1)) {
-				unlk(&t->mu);
-				c->unwinding = 1;
-				return &empty_list;
-			}
-		}
-		unlk(&t->mu);
-	}
-	if (t->unwound) {
-		if (canceled(c)) {
-			return &empty_list;
-		}
-		fault_at("awaited a task that was canceled before it finished", loc, n);
-	}
-	rc_inc(&t->result->rc);
-	return t->result;
-}
+xo_rlist *xo_task_await(xo_task *t, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_task_await(XO_ADDR(t), XO_ADDR(loc), n); }
 
-// xo_task_result returns the result list of a finished task (a
-// reference): the error of a failed task, for its scope.
-xo_rlist *xo_task_result(xo_task *t) {
-	rc_inc(&t->result->rc);
-	return t->result;
-}
+xo_rlist *xo_task_result(xo_task *t) { return (xo_rlist *)(intptr_t)xo_x_task_result(XO_ADDR(t)); }
 
-xo_task *xo_scope_fail_task(xo_scope *s) {
-	h_retain(s->fail);
-	return s->fail;
-}
+xo_task *xo_scope_fail_task(xo_scope *s) { return (xo_task *)(intptr_t)xo_x_scope_fail_task(XO_ADDR(s)); }
 
-int64_t xo_scope_fail_site(xo_scope *s) { return s->fail ? s->fail->site : -1; }
+int64_t xo_scope_fail_site(xo_scope *s) { return xo_x_scope_fail_site(XO_ADDR(s)); }
+
+_Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 112 && offsetof(xo_task, unwound) == 120 &&
+                   offsetof(xo_task, consumed) == 128 && offsetof(xo_task, site) == 136 && offsetof(xo_task, mu) == 144 &&
+                   offsetof(xo_task, waiters) == 152 && offsetof(xo_task, fault_msg) == 184 && offsetof(xo_task, fault_loc) == 192 &&
+                   offsetof(xo_task, fault_detail) == 200,
+               "tasks.xo T_*");
+_Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 && offsetof(xo_scope, fault) == 424, "tasks.xo S_*");
 
 // xo_scope_close ends scope s (core 7.1 exit rules). mode 0: the body
 // completed (background tasks are canceled); 1: it exits early (return,

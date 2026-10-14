@@ -5,7 +5,8 @@
 // with a defer), mutex (2,000,000 uncontended Mutex.with), spawn (20,000
 // tasks spawned and joined in scopes of 10), budget (a loop of 20,000,000
 // iterations under task.with_budget, which polls the budget at each:
-// rt.tick), none (the setup alone).
+// rt.tick), await (20,000 tasks spawned, each awaited: the task's end
+// and t.await), none (the setup alone).
 // Each prints "<workload> <checksum>".
 use std/task
 
@@ -43,6 +44,18 @@ fn main(os: Os) {
     match task.with_budget(os.clock, task.budget(steps: 1000000000), fn() -> Int { count(20000000) }) {
       Ok(v) => sum = v
       Err(_) => sum = -1
+    }
+  } else if w == "await" {
+    for i in 0..2000 {
+      scope s {
+        var hs: List[Task[Int, Never]] = []
+        for k in 0..10 {
+          hs.push(s.spawn(fn() -> Int { i + k }))
+        }
+        for h in hs {
+          sum += h.await
+        }
+      }
     }
   } else if w == "spawn" {
     for _ in 0..2000 {

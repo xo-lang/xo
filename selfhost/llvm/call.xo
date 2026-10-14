@@ -969,6 +969,8 @@ fn (var g: Gen) rt_call(v: Int) {
     }
   }
   if !export.is_empty() {
+    // the exports return Ints: a pointer result comes back through an
+    // inttoptr below
     for i in 0..args.len() {
       if args[i].starts_with("ptr ") {
         let p = g.def("ptrtoint ${args[i]} to i64")
@@ -982,6 +984,12 @@ fn (var g: Gen) rt_call(v: Int) {
       attr = "#5" // it raises faults: not nounwind (decision 0085)
     }
     g.rt_decls.push("declare ${ret} ${sym}(${params.join(", ")}) ${attr}\n")
+  }
+  if !export.is_empty() && ret == "ptr" {
+    let r = g.tmp()
+    g.raise(r, "i64 ${sym}(${args.join(", ")})")
+    g.set(v, "inttoptr i64 ${r} to ptr")
+    return
   }
   let c = "${ret} ${sym}(${args.join(", ")})"
   match g.kind(x.ty) {
@@ -1109,11 +1117,15 @@ fn (var g: Gen) platform_call(v: Int) {
 }
 
 /// The Xo export a runtime call name goes to directly (decision 0229:
-/// ctx.xo's shields, budget.xo's tick, open, and end), or "" for the C
+/// ctx.xo's shields, budget.xo's tick, open, and end, tasks.xo
+/// and scopes), or "" for the C
 /// runtime's xo_<name>.
 fn xo_export(name: Str) -> Str {
   if name is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
     return "xo_x_ctx_${name.trim_prefix("rt.")}"
+  }
+  if name is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" {
+    return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     return "xo_x_budget_${name.trim_prefix("rt.").trim_prefix("budget_")}"

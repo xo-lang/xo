@@ -24,6 +24,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
+use native/llrt/tasks
 use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/text
@@ -552,3 +553,32 @@ fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
 fn budget_pause(c: Int) { budget.pause(c) }
 
 fn budget_resume(c: Int) { budget.resume(c) }
+
+// ---------------------------------------------------------------------------
+// Tasks and scopes (std/native/llrt/tasks.xo, the zero-C audit's B18):
+// generated code calls these directly; xo_rt.c's entry points forward.
+// Addresses (t a task, s a scope, rl a list) are Ints.
+
+fn task_done(t: Int, rl: Int, failed: Int) { tasks.task_done(t, rl, failed) }
+
+fn task_unwound(t: Int) { tasks.task_unwound(t) }
+
+fn task_await(t: Int, lp: Int, ln: Int) -> Int { tasks.task_await(t, lp, ln) }
+
+fn task_result(t: Int) -> Int { tasks.task_result(t) }
+
+fn scope_fail_task(s: Int) -> Int { tasks.scope_fail_task(s) }
+
+fn scope_fail_site(s: Int) -> Int { tasks.scope_fail_site(s) }
+
+fn scope_group(s: Int) -> Int { tasks.scope_group(s) }
+
+fn fault_rethrow(s: Int) { tasks.fault_rethrow(s) }
+
+fn scope_cancel(s: Int) { tasks.scope_cancel(s) }
+
+fn prog_group_set(s: Int) { tasks.prog_group_set(s) }
+
+fn prog_group_clear() { tasks.prog_group_set(0) }
+
+fn prog_group() -> Int { tasks.prog_group() }

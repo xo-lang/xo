@@ -1,0 +1,315 @@
+// Tasks and scopes (core 7.1; the zero-C audit's B18, decision 0212
+// stage 3, decision 0229's rules): the task's end, `t.await`, a scope's
+// failed task and group handle, a task's fault raised where its scope
+// closes, `s.cancel()`, and the program's task group (`os.tasks`). The task and scope records stay the C runtime's
+// (xo_rt.c xo_task, xo_scope: allocation, the queue, the run, the
+// scope's open and close); this module reads and writes them at the
+// offsets below, which xo_rt.c asserts (`tasks.xo T_*`, `tasks.xo S_*`).
+// The C's services it needs (a context's wait, which flushes the pending
+// work, helps on a root thread, and tells ThreadSanitizer; running a
+// task here; the empty list) are rt.sched_rt ops (pool.xo RT_*).
+//
+// Generated code calls the exports (cabi.xo) directly; the C entry
+// points forward for older xo's code.
+use native/llrt/budget
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sched
+use native/rt
+
+/// xo_task (216 bytes): the header (count, free function), the
+/// cancellation node (56 bytes), the scope (not counted), the state
+/// (atomic: 0 queued, 1 running, 2 done), the entry function, the result
+/// list's drop function, the closure (a list of one) until it runs, the
+/// result (a shared list of one), whether it unwound (a C int), whether
+/// it is background and its handle consumed (C ints), the spawn site,
+/// the lock of the waiters, the wait list of its awaiters, the scope
+/// list's link, the gone count (atomic), the fault that ended it (three
+/// malloc'd strings), the budget it was started under.
+const T_NODE = 16
+const T_SCOPE = 72
+const T_STATE = 80
+const T_RESULT = 112
+const T_UNWOUND = 120
+const T_CONSUMED = 128
+const T_SITE = 136
+const T_MU = 144
+const T_WAITERS = 152
+const T_FAULT_MSG = 184
+const T_FAULT_LOC = 192
+const T_FAULT_DETAIL = 200
+const T_DONE = 2
+
+/// xo_scope (464 bytes): the body's node, the lock of the list and the
+/// failure fields, the first failed task and the first faulted task
+/// (references).
+const S_BODY = 16
+const S_TASKS = 72
+const S_OLD = 80
+const S_NOLD = 88
+const S_MU = 104
+const S_FAIL = 392
+const S_FAULT = 424
+
+/// A cancellation node's canceled word (pool.xo N_CANCELED).
+const N_CANCELED = 32
+
+/// A wait list (xo_wl): its first and last entry. An entry (xo_went, 32
+/// bytes, the context's own: ctx.xo C_WENT, a context waits on one list
+/// at a time): the park, the previous and next entry, writer and granted
+/// (C ints, the Mutex's).
+const WL_FIRST = 0
+const WL_LAST = 8
+const E_PARK = 0
+const E_PREV = 8
+const E_NEXT = 16
+const E_WRITER = 24
+
+/// The C's services (pool.xo RT_*).
+const RT_RUN_CLAIMED = 16
+const RT_PARK_WAIT = 17
+const RT_EMPTY_LIST = 18
+const RT_H_RELEASE = 19
+const ACQ_REL = 3
+
+const ACQUIRE = 1
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
+
+fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
+
+fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
+
+/// The list the C returns while a canceled operation unwinds (immortal).
+fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+
+/// A cancellation point of the context c (xo_rt.c canceled): whether it
+/// reports cancellation, c then unwinding.
+fn canceled(c: Int) -> Bool {
+  if budget.canceled(c) {
+    st4(c, ctx.C_UNWINDING, 1)
+    return true
+  }
+  false
+}
+
+/// Adds entry e at the end of wait list l (the oldest waiter is first).
+fn wl_add(l: Int, e: Int) {
+  st(e, E_NEXT, 0)
+  let last = ld(l, WL_LAST)
+  st(e, E_PREV, last)
+  if last != 0 {
+    st(last, E_NEXT, e)
+  } else {
+    st(l, WL_FIRST, e)
+  }
+  st(l, WL_LAST, e)
+}
+
+fn wl_del(l: Int, e: Int) {
+  let p = ld(e, E_PREV)
+  let n = ld(e, E_NEXT)
+  if p != 0 {
+    st(p, E_NEXT, n)
+  } else {
+    st(l, WL_FIRST, n)
+  }
+  if n != 0 {
+    st(n, E_PREV, p)
+  } else {
+    st(l, WL_LAST, p)
+  }
+}
+
+/// Waits on wait list l of an object whose lock mu is held, mu held
+/// again on return (xo_rt.c wl_wait): false when the context c was
+/// canceled (and cancelable).
+fn wl_wait(c: Int, mu: Int, l: Int, cancelable: Bool) -> Bool {
+  let e = c + ctx.C_WENT
+  st(e, E_PARK, c + ctx.C_PARK)
+  st4(e, E_WRITER, 0)
+  st4(e, E_WRITER + 4, 0)
+  pool.park_reset(c + ctx.C_PARK)
+  wl_add(l, e)
+  pool.unlock(mu)
+  let _r = rt.sched_rt(RT_PARK_WAIT, c, if cancelable { 1 } else { 0 })
+  pool.lock(mu)
+  wl_del(l, e)
+  !(cancelable && budget.canceled(c))
+}
+
+/// Records the result of the current task t (xo_task_done: a shared list
+/// of one, consumed); failed tells that it is an error, which fails the
+/// scope unless the handle is awaited or the task was canceled.
+pub fn task_done(t: Int, rl: Int, failed: Int) {
+  st(t, T_RESULT, rl)
+  if failed == 0 || ld4(t, T_CONSUMED) != 0 || node_canceled(t + T_NODE) {
+    return
+  }
+  fail_scope(t, S_FAIL)
+}
+
+/// Records t as the scope's first failed (off S_FAIL) or faulted
+/// (S_FAULT) task, when it is the first, and then cancels the body and
+/// every task (core 7.1, child failure).
+fn fail_scope(t: Int, off: Int) {
+  let s = ld(t, T_SCOPE)
+  pool.lock(s + S_MU)
+  let first = ld(s, off) == 0
+  if first {
+    rc.inc(t)
+    st(s, off, t)
+  }
+  pool.unlock(s + S_MU)
+  if first {
+    pool.node_cancel(ctx.pool(), s + S_BODY)
+  }
+}
+
+/// Ends the current task t that unwound (xo_task_unwound: canceled, or
+/// faulted, decision 0085): its scope then treats it like a failed child
+/// and raises the fault where it closes. The fault record moves from the
+/// context to the task.
+pub fn task_unwound(t: Int) {
+  let c = rt.tlocal_get(0)
+  st4(c, ctx.C_UNWINDING, 0)
+  st4(t, T_UNWOUND, 1)
+  if ld4(c, ctx.C_FAULTING) == 0 {
+    return
+  }
+  st4(c, ctx.C_FAULTING, 0)
+  st(t, T_FAULT_MSG, ld(c, ctx.C_FAULT_MSG))
+  st(t, T_FAULT_LOC, ld(c, ctx.C_FAULT_LOC))
+  st(t, T_FAULT_DETAIL, ld(c, ctx.C_FAULT_DETAIL))
+  st(c, ctx.C_FAULT_MSG, 0)
+  st(c, ctx.C_FAULT_LOC, 0)
+  st(c, ctx.C_FAULT_DETAIL, 0)
+  fail_scope(t, S_FAULT)
+}
+
+/// Raises the fault of a task of scope s in the context that closed s
+/// (xo_fault_rethrow, status 3 of xo_scope_close).
+pub fn fault_rethrow(s: Int) {
+  let c = ctx.cur()
+  let t = ld(s, S_FAULT)
+  fault.clear(c)
+  let d = ld(t, T_FAULT_DETAIL)
+  if d != 0 {
+    fault.detail(c, d, raw.cstr_len(d))
+  }
+  fault.raise_cstrs(ld(t, T_FAULT_MSG), ld(t, T_FAULT_LOC))
+}
+
+/// `t.await` (xo_task_await, core 7.1): waits for t (a cancellation
+/// point that unwinds) and returns its result list (a reference). The
+/// location is the ln bytes at lp.
+pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
+  let c = ctx.cur()
+  if rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {
+    if canceled(c) {
+      return empty_list()
+    }
+    // not started yet: run it here
+    if sched.task_claim(t) != 0 {
+      let _r = rt.sched_rt(RT_RUN_CLAIMED, t, 2)
+    }
+    pool.lock(t + T_MU)
+    while rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {
+      if !wl_wait(c, t + T_MU, t + T_WAITERS, true) {
+        pool.unlock(t + T_MU)
+        st4(c, ctx.C_UNWINDING, 1)
+        return empty_list()
+      }
+    }
+    pool.unlock(t + T_MU)
+  }
+  if ld4(t, T_UNWOUND) != 0 {
+    if canceled(c) {
+      return empty_list()
+    }
+    fault.raise_str_at("awaited a task that was canceled before it finished", lp, ln)
+  }
+  task_result(t)
+}
+
+/// The result list of a finished task (xo_task_result, a reference): the
+/// error of a failed task, for its scope.
+pub fn task_result(t: Int) -> Int {
+  let rl = ld(t, T_RESULT)
+  rc.inc(rl)
+  rl
+}
+
+/// The first failed task of scope s (a reference).
+pub fn scope_fail_task(s: Int) -> Int {
+  let f = ld(s, S_FAIL)
+  rc.inc(f)
+  f
+}
+
+/// The spawn site of scope s's first failed task, or -1.
+pub fn scope_fail_site(s: Int) -> Int {
+  let f = ld(s, S_FAIL)
+  if f == 0 {
+    return -1
+  }
+  ld(f, T_SITE)
+}
+
+/// `s.group()`: the same scope behind a Group handle (a reference).
+pub fn scope_group(s: Int) -> Int {
+  rc.inc(s)
+  s
+}
+
+/// `s.cancel()` (xo_scope_cancel): cancels the scope's tasks, not the
+/// body; tasks spawned later start under a fresh node. The node and the
+/// array of the replaced ones are malloc'd at their own address (the C's
+/// scope_free frees them).
+pub fn scope_cancel(s: Int) {
+  let fresh = rt.heap_large(56) - 8
+  rt.mem_set(fresh, 0, 56)
+  pool.lock(s + S_MU)
+  let old = ld(s, S_TASKS)
+  let n = ld4(s, S_NOLD)
+  let a0 = ld(s, S_OLD)
+  let a = if a0 == 0 { rt.heap_large(8 * (n + 1)) - 8 } else { rt.heap_large_resize(a0, 8 * (n + 1)) - 8 }
+  st(a, 8 * n, old)
+  st(s, S_OLD, a)
+  st4(s, S_NOLD, n + 1)
+  pool.node_link(fresh, s + S_BODY)
+  st(s, S_TASKS, fresh)
+  pool.unlock(s + S_MU)
+  pool.node_cancel(ctx.pool(), old)
+}
+
+/// Makes scope s (0: none) the group `os.tasks` gives (xo_prog_group_set:
+/// the group of the scope generated code opens around main and around
+/// each test, core 7.1, decision 0109).
+pub fn prog_group_set(s: Int) {
+  if s != 0 {
+    rc.inc(s)
+  }
+  let old = rt.slot_swap[Int](ctx.prog_group_word(), 0, s, ACQ_REL)
+  if old != 0 {
+    let _r = rt.sched_rt(RT_H_RELEASE, old, 0)
+  }
+}
+
+/// `os.tasks` (xo_prog_group): a reference to the program's group.
+pub fn prog_group() -> Int {
+  let s = rt.slot_load[Int](ctx.prog_group_word(), 0, ACQUIRE)
+  if s == 0 {
+    let q = "?"
+    fault.raise_str_at("os.tasks is not available here", raw.data(q), 0)
+  }
+  rc.inc(s)
+  s
+}
