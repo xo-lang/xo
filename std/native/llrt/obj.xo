@@ -8,9 +8,8 @@
 // xo_rl_share, xo_rl_free, xo_rc_defer in std/llrt/xo_rt.c) stay for LLVM
 // generated code and the seed compiler, which call them by name; they
 // forward to the same exports (LTO folds that level), and C code calls
-// xo_rl_new with a heap word. The string objects (rs_new, rs_append) stay
-// C: in Xo they took 1.06 to 1.12 times the C's instructions on arm64's
-// text workloads (bench/results/string-list-objects-2026-10-14.md).
+// xo_rl_new with a heap word. The string objects (below) follow the same
+// shape.
 //
 // The heap word hw is the calling thread's heap record's address
 // (alloc.xo), plus 1 when other threads run (the C's alloc_mt, free_mt,
@@ -415,3 +414,179 @@ pub fn rc_defer(h: Int, obj: Int, drop: Int) {
   }
   rt.mem_store(h, DEFER_BUSY, 0, 8)
 }
+
+// ---------------------------------------------------------------------------
+// Strings (zero-C audit B13: xo_rt.c rs_new and rs_append, the bodies of
+// xo_rs_concat, xo_rs_append, and the builders of xo_bytes.c). A string
+// object is its count, its capacity (the bytes its block holds past the
+// header), then its bytes; a literal's count is IMMORTAL. The first
+// string of each entry is consumed (decision 0074): the result is it,
+// updated in place when it is unique and has the room, else a grown or
+// new object (and a loses the reference the caller gave up). The common
+// case (unique, room) makes no call; reserve_slow is out of line.
+
+/// The header bytes of a string object.
+const S_HDR = 16
+
+/// The heap record's word with the size class of its last allocation
+/// (alloc.xo LAST): a string's capacity is that less the header.
+const H_LAST = 72
+
+/// A new string object with room for at least n bytes (xo_rt.c rs_new).
+fn rs_new(hw: Int, n: Int) -> Int {
+  let s = halloc(hw, addw(S_HDR, n))
+  rt.mem_store(s, 0, 1, 8)
+  rt.mem_store(s, 8, subw(rt.mem_load(hw & -2, H_LAST, 8), S_HDR), 8)
+  s
+}
+
+/// rs_new from the calling thread's heap: a small block from its free
+/// list or chunk without a call (alloc.alloc_fast) when one thread runs.
+fn rs_new_n(n: Int) -> Int {
+  let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
+  if h != 0 {
+    let b = addw(S_HDR, n)
+    if b <= SMALL_MAX {
+      let s = alloc.alloc_fast(h, b)
+      if s != 0 {
+        rt.mem_store(s, 0, 1, 8)
+        rt.mem_store(s, 8, subw(rt.mem_load(h, H_LAST, 8), S_HDR), 8)
+        return s
+      }
+    }
+    return rs_new(h, n)
+  }
+  rs_new(heap_word(), n)
+}
+
+/// The string a (an bytes, consumed) with room for k more bytes, unique:
+/// a itself when its count is 1 and it has the room.
+fn reserve(a: Int, an: Int, k: Int) -> Int {
+  let need = addw(an, k)
+  if rt.mem_load(a, 0, 8) == 1 && rt.mem_load(a, 8, 8) >= need {
+    return a
+  }
+  reserve_slow(a, an, need)
+}
+
+/// reserve's other paths (xo_rt.c rs_append): a unique string (rc.claim:
+/// a shared one held only by the caller too) grows in place, doubling
+/// (Perceus reuse, so a loop of `s = s + x` is linear); otherwise the
+/// bytes go to a new string with room for need (at least 16), and a
+/// loses the reference the caller gave up. Out of line (it calls itself
+/// on a path never taken).
+fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
+  if need < 0 {
+    return reserve_slow(a, an, 0) // not taken: the inliner's cycle
+  }
+  let hw = heap_word()
+  if rc.claim(a) != 0 {
+    let cap = rt.mem_load(a, 8, 8)
+    if cap >= need {
+      return a
+    }
+    var want = addw(cap, cap)
+    if want < need {
+      want = need
+    }
+    let s = hresize(hw, a, addw(S_HDR, an), addw(S_HDR, want))
+    rt.mem_store(s, 8, subw(rt.mem_load(hw & -2, H_LAST, 8), S_HDR), 8)
+    return s
+  }
+  let s = rs_new(hw, if need < 16 { 16 } else { need })
+  rt.mem_copy(addw(s, S_HDR), addw(a, S_HDR), an)
+  // a literal (common: `"w${i}"` appends to one), or one with other
+  // references, or a shared one freed here when the others went
+  if rt.mem_load(a, 0, 8) != IMMORTAL && rc.dec(a) != 0 {
+    hfree(hw, a)
+  }
+  s
+}
+
+/// a + the n bytes at p (xo_rs_concat's rs_append): p may be inside a
+/// string the caller holds, so the bytes are moved after the reserve.
+pub fn rs_append(a: Int, an: Int, p: Int, n: Int) -> Int {
+  let s = reserve(a, an, n)
+  rt.mem_move(addw(addw(s, S_HDR), an), p, n)
+  s
+}
+
+/// a + the byte x (xo_rs_push_byte).
+pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
+  let s = reserve(a, an, 1)
+  rt.mem_store(addw(s, S_HDR), an, x, 1)
+  s
+}
+
+/// a + the n (0 to 8) low bytes of w, the lowest first
+/// (xo_rs_push_word): whole words are stored, so 8 bytes of room are
+/// reserved; text alone (appended to the literal "") gets a new string
+/// of 32.
+pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
+  var s = a
+  if rt.mem_load(a, 0, 8) != 1 || subw(rt.mem_load(a, 8, 8), an) < 8 {
+    s = push_slow(a, an, 8, 32)
+  }
+  rt.mem_store(addw(s, S_HDR), an, w, 8)
+  s
+}
+
+/// a + four words of up to 8 bytes, their lengths in the nibbles of lens
+/// (xo_rs_push_words): each whole word stored over the slack of the one
+/// before, so 32 bytes of room.
+pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Int {
+  var s = a
+  if rt.mem_load(a, 0, 8) != 1 || subw(rt.mem_load(a, 8, 8), an) < 32 {
+    s = push_slow(a, an, 32, 64)
+  }
+  var d = addw(addw(s, S_HDR), an)
+  rt.mem_store(d, 0, w0, 8)
+  d = addw(d, lens & 15)
+  rt.mem_store(d, 0, w1, 8)
+  d = addw(d, (lens >> 4) & 15)
+  rt.mem_store(d, 0, w2, 8)
+  d = addw(d, (lens >> 8) & 15)
+  rt.mem_store(d, 0, w3, 8)
+  s
+}
+
+/// The push paths with no room: the empty literal becomes a new string
+/// of fresh bytes, else reserve's slow path.
+fn push_slow(a: Int, an: Int, k: Int, fresh: Int) -> Int {
+  if an == 0 && rt.mem_load(a, 0, 8) == IMMORTAL {
+    return rs_new_n(fresh)
+  }
+  reserve_slow(a, an, addw(an, k))
+}
+
+/// a + the bytes lo..hi of the string or Bytes object b, their ASCII
+/// letters lowered (mode 1) or raised (mode 2) (xo_rs_append_bytes).
+pub fn rs_append_bytes(a: Int, an: Int, b: Int, lo: Int, hi: Int, mode: Int) -> Int {
+  let n = subw(hi, lo)
+  let s = reserve(a, an, n)
+  let d = addw(addw(s, S_HDR), an)
+  rt.mem_move(d, addw(addw(b, S_HDR), lo), n)
+  if mode != 0 {
+    fold(d, n, mode)
+  }
+  s
+}
+
+/// The n bytes at d with their ASCII letters lowered (mode 1) or raised
+/// (mode 2).
+fn fold(d: Int, n: Int, mode: Int) {
+  // the first letter of the case to change, and the change
+  let first = if mode == 1 { 65 } else { 97 }
+  let delta = if mode == 1 { 32 } else { -32 }
+  var i = 0
+  while i < n {
+    let c = rt.mem_load(d, i, 1)
+    if subw(c, first) < 26 && c >= first {
+      rt.mem_store(d, i, addw(c, delta), 1)
+    }
+    i = addw(i, 1)
+  }
+}
+
+/// An empty string with room for n bytes, at least 16 (xo_rs_with_cap).
+pub fn rs_with_cap(n: Int) -> Int { rs_new_n(if n < 16 { 16 } else { n }) }
