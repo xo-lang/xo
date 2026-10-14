@@ -79,6 +79,44 @@ fn (var g: Gen) call(v: Int) {
       g.e("call ${g.rc_fn("dup", x.ty)}")
     }
     "rt.prefetch" => {} // a hint; wasm has none (decision 0207 stage 3)
+    "rt.static_word" => {
+      // word k of the process globals, a static table (work item B02)
+      let at = g.static_table("static", 64)
+      g.push(x.args[0])
+      g.e("i64.const 3")
+      g.e("i64.shl")
+      g.e("i64.const ${at}")
+      g.e("i64.add")
+      g.def(v)
+    }
+    // the thread locals of decision 0212: one thread, so a static table
+    "rt.tlocal_get" => {
+      let at = g.static_table("tlocal", 16)
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.e("i32.const 3")
+      g.e("i32.shl")
+      g.e("i64.load offset=${at}")
+      g.def(v)
+    }
+    "rt.tlocal_set" => {
+      let at = g.static_table("tlocal", 16)
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.e("i32.const 3")
+      g.e("i32.shl")
+      g.push(x.args[1])
+      g.e("i64.store offset=${at}")
+    }
+    "rt.test_on" => {
+      // a WASI module is never a test binary (std/native/log.xo asks)
+      g.e("i32.const 0")
+      g.def(v)
+    }
+    "rt.tlocal_addr" => {
+      g.e("i64.const ${g.static_table("tlocal", 16)}")
+      g.def(v)
+    }
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.slot_op(v)
     "rt.rl_empty" => {
       g.e("i32.const ${g.empty_list}")
@@ -362,10 +400,11 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "bytes_addr" | "bytes_buf" | "rs_bytes_len" | "sys_buf" | "tw_fake" | "fs_set_err" {
+      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "bytes_addr" | "bytes_buf" | "rs_bytes_len" | "sys_buf" | "tw_fake" | "fs_set_err" | "test_log" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
-        // in `target.os` arms the passes may leave in a WASI module
+        // in `target.os` arms the passes may leave in a WASI module, and
+        // std/native/log.xo's test world record behind rt.test_on (false)
         let msg = "the wasm backend does not support the call `${name}`"
         g.e("i32.const ${g.str_obj(msg.bytes())}")
         g.e("i32.const ${msg.len()}")
