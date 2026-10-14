@@ -81,7 +81,7 @@ paths against `/` and Go to Definition into std answered null
 - Fixed point at 2117be24 (scripts/bootstrap-xo.sh with the branch's
   bin/xo): s2 and s3 assembly identical (437,224,619 bytes), binaries
   identical (87,387,360 bytes); s1 319 s, s2 317 s, s3 317 s.
-- Goldens fs_cwd_path and fs_paths_os pass on arm64, LLVM, and Go;
+- Golden fs_cwd_path (PWD=/) passes on arm64, LLVM, and Go, fs_paths_os on arm64 and LLVM;
   TestSelfhostWasm passes; TestLSPStalePWD passes.
 - LSP repro (`PWD=/ xo lsp` in the repository, definition at
   examples/notes-service/main_test.xo line 70 character 50): the old
