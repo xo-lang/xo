@@ -50,19 +50,23 @@ fn (var g: G) defers(key: Str, w: Want) -> Bool {
   true
 }
 
-/// The global name of the helper of key in a split generation: xo_h_ and
+/// The global name of the helper of key in a split generation: xo_h and
 /// the FNV-1a hash of the key, so every part names it alike.
 fn (g: G) helper_ext(key: Str) -> Str {
   var h = -3750763034362895579
   for c in key.bytes() {
     h = (h ^ Int(c)).wrapping_mul(1099511628211)
   }
+  // 60 bits of it in ten base 62 digits: the name is in every call of
+  // the helper (millions of lines of selfhost/xo), so it is kept short
+  let digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  var v = h & 1152921504606846975
   var b = StrBuilder.new()
-  b.write("xo_h_")
-  var k = 56
-  while k >= 0 {
-    b.write(hex2((h >> k) & 255))
-    k -= 8
+  b.write("xo_h")
+  for _ in 0..10 {
+    let d = v % 62
+    b.write(digits[d..d + 1])
+    v = v / 62
   }
   g.sym(b.freeze())
 }

@@ -97,7 +97,7 @@ fn (g: G) trampolines(var out: List[Str]) {
 /// once per program.
 fn (g: G) shared_code(var out: List[Str]) {
   if g.sched_ref {
-    out.push(sched_asm(g.os))
+    out.push(sched_asm(g.os, g.split))
   }
   if g.personality_ref {
     // the personality routine through a data word, as ELF compilers

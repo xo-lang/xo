@@ -53,6 +53,21 @@ fn assemble_one(src: Str, elf: Bool) -> Result[Bytes, Str] {
   if elf { macho.assemble_elf(src.bytes()) } else { macho.assemble(src.bytes()) }
 }
 
+/// The -isysroot of the SDK the last link used (cc_build's memo), so the
+/// parts' objects are built for the SDK the link targets; none when there
+/// is no memo.
+fn memo_sysroot(os: Os, ctx: Ctx) -> List[Str] {
+  let memo = sysroot_memo(os, ctx)
+  if memo.is_empty() {
+    return []
+  }
+  let root = (os.fs.read_text(memo).ok() ?? "").trim()
+  if root.is_empty() {
+    return []
+  }
+  ["-isysroot", root]
+}
+
 /// Assembles the files srcs with `cc -c` (the flags a compile takes from
 /// the link's), at most jobs processes at once: the objects beside them,
 /// and the output of the first failure ("" when none failed).

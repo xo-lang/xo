@@ -567,7 +567,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let (objs, why) = cc_assemble(os, cc, flags, progs, jobs)
+        let (objs, why) = cc_assemble(os, cc, flags + memo_sysroot(os, ctx), progs, jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail(os, "${cc} failed")
