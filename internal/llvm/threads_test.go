@@ -80,7 +80,13 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 		t.Skip("clang not found")
 	}
 	bin := exe(filepath.Join(t.TempDir(), "prog"))
-	san := []string{"-fsanitize=thread"}
+	// without the instrumentation of function entry and exit: it gives
+	// every function that calls a cleanup landing pad that resumes the
+	// unwind (__tsan_func_exit, then _Unwind_Resume), which the Xo fault
+	// unwinder cannot resume (decision 0221 stage 3,
+	// gotchas/tsan-func-exit-pads.md); reports lose the stack above the
+	// racing frame
+	san := []string{"-fsanitize=thread", "-mllvm", "-tsan-instrument-func-entry-exit=0"}
 	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
 		// it compiles but cannot start (x86-64 emulation): still run the
 		// program, without the sanitizer

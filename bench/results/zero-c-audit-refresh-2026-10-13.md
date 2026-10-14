@@ -289,7 +289,7 @@ MISSING.
 | B02 runtime globals and thread locals (partly done 2026-10-14: rt.static_word, std/log state, 66 lines; notes) | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats (done 2026-10-14 in Xo: stdio-2026-10-14.md; the seed forwards and the env C go with the next seed; notes) | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
-| B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
+| B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; stage 3 done 2026-10-14 for glibc linux/arm64 and macOS, the libgcc path compiled only for glibc linux/amd64 until stage 2; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
@@ -403,7 +403,19 @@ frees the 533 (a) lines.)
   x86_64 (decision 0221 stage 2: trampolines and register numbers), then
   the C library builds (stage 3: xo_rt.c 1737-1777 fault_stop and the
   forced unwind, 1880-1927 and 1974-2021 the C LSDA reader and
-  personality, kept for glibc and macOS). The original note follows.
+  personality, kept for glibc and macOS). Stage 3 done 2026-10-14
+  (unwinder-glibc-2026-10-14.md): glibc linux/arm64 faults through
+  unwind.xo (shared objects through ld.so's link_map; only frames whose
+  personality is xo_personality are entered), and macOS through
+  libunwind with the personality in Xo (unwind.xo darwin_personality;
+  the stop function stays C, gotchas/libunwind-stop-must-not-return.md).
+  The C fault_stop, forced unwind, personality, and LSDA reader are now
+  compiled only for glibc linux/amd64 (XO_UNWIND_LIBGCC) and the LSDA
+  reader for Windows, so no C lines are deleted yet (xo_rt.c +77 -16,
+  most of it comments and the macOS and Linux fault_raise): they go with
+  stage 2, which needs an amd64 machine to verify on. A 3 line C
+  forwarder xo_personality stays until the emitters name
+  xo_x_personality and a seed has them. The original note follows.
   MISSING: a DWARF CFI unwinder over .eh_frame and
   .eh_frame_hdr in Xo, and a register restore and resume intrinsic;
   the personality routine (1974-2021) and LSDA reader (1880-1927) as a

@@ -5,19 +5,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// TestRuntimeFaultResume raises a fault through a C frame whose cleanup
-// resumes the unwind and scribbles over the stack the raising frames
-// used (std/llrt/testdata/fault_resume.c). The fault's exception object
-// must outlive those frames: the cleanup runs, the fault is reported past
-// the boundary, and the process exits 70. Built plainly and with
-// ThreadSanitizer, whose instrumentation adds such a cleanup to every
-// function (the Linux CI failure of 2026-10-09).
+// TestRuntimeFaultResume raises a fault through a C frame with a
+// cleanup (std/llrt/testdata/fault_resume.c). The fault is reported past
+// the boundary and the process exits 70. Where libunwind or libgcc runs
+// the unwind (macOS, glibc linux/amd64) the C cleanup runs and resumes
+// the unwind after scribbling over the stack the raising frames used, so
+// the fault's exception object must outlive those frames
+// (gotchas/tsan-resumes-fault-unwind.md); where the Xo unwinder runs it
+// (Linux arm64, decision 0221 stage 3) a frame whose personality is not
+// xo_personality is passed over and its cleanup does not run. Built
+// plainly and with ThreadSanitizer.
 func TestRuntimeFaultResume(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	if _, err := xotool.Clang(); err != nil {
@@ -39,13 +43,22 @@ func TestRuntimeFaultResume(t *testing.T) {
 			continue
 		}
 		text := string(out)
-		for _, want := range []string{"cleanup ran\n", "fault: boom at fault_resume.xo:3:5\n"} {
-			if !strings.Contains(text, want) {
-				t.Errorf("%s: output lacks %q:\n%s", name, want, text)
-			}
+		if !strings.Contains(text, "fault: boom at fault_resume.xo:3:5\n") {
+			t.Errorf("%s: output lacks the fault's report:\n%s", name, text)
+		}
+		if ran := strings.Contains(text, "cleanup ran\n"); ran != cCleanupsRun() {
+			t.Errorf("%s: the C cleanup ran: %v, want %v:\n%s", name, ran, cCleanupsRun(), text)
 		}
 		if strings.Contains(text, "unreachable") || strings.Contains(text, "ThreadSanitizer") {
 			t.Errorf("%s: unexpected output:\n%s", name, text)
 		}
 	}
+}
+
+// cCleanupsRun reports whether a fault runs the cleanups of C frames it
+// unwinds: not where the Xo unwinder walks the frames (Linux arm64,
+// decision 0221 stage 3), which enters only generated code's landing
+// pads.
+func cCleanupsRun() bool {
+	return !(runtime.GOOS == "linux" && runtime.GOARCH == "arm64")
 }

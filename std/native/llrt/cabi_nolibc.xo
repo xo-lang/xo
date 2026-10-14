@@ -9,7 +9,6 @@
 // the main thread has its thread pointer.
 use native/llrt/linux
 use native/llrt/obj
-use native/llrt/unwind
 use native/rt
 
 const FUTEX_WAIT_PRIVATE: Int = 128
@@ -262,17 +261,3 @@ fn thread_join(t: Int) -> Int {
   linux.munmap(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8))
   0
 }
-
-// ---------------------------------------------------------------------------
-// Unwinding (decision 0221): fault_raise calls unwind_fault, and the link
-// defines xo_personality, which the unwind tables of generated code name,
-// as personality's export (selfhost/xo link.xo sys_link_args).
-
-/// The forced unwind of a fault (std/native/llrt/unwind.xo raise): runs
-/// the first landing pad below the boundary and never returns then; 0
-/// when nothing catches the fault.
-fn unwind_fault(exc: Int, boundary: Int) -> Int { unwind.raise(exc, boundary) }
-
-/// The personality routine of generated code over unwind.xo's record
-/// (only unwind.raise calls it).
-fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int { unwind.personality(version, actions, cls, exc, ctx) }

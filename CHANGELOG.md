@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B05, decision 0221 stage 3): a fault
+  on glibc linux/arm64 unwinds through the Xo unwinder
+  (std/native/llrt/unwind.xo) instead of libgcc's forced unwind; shared
+  objects' unwind tables are found through ld.so's link_map. On macOS
+  the personality routine is Xo over libunwind. C frames between a
+  fault and its catch are passed over on Linux arm64 and their cleanups
+  no longer run (only the runtime's own C can sit there; `use c` cannot
+  call back into Xo). The TSan test builds drop function entry and exit
+  instrumentation. bench/perf/fault is 1.001 to 1.009 of the C's
+  instructions on the Mac and 0.405 to 0.624 of libgcc's on Linux arm64
+  (bench/results/unwinder-glibc-2026-10-14.md).
+  glibc linux/amd64 keeps libgcc until stage 2.
 - Native runtime: the C the 0.10.0 seed still called is deleted now that
   seed 0.11.0 is out (xo_static_word, xo_ct_barrier and xo_crypto.c,
   the print, exit, env, and rune count forwards; about 200 lines), and
