@@ -267,10 +267,28 @@ func CC() (string, error) {
 // NativeBackend is the native backend of this host: arm64 on a darwin
 // or linux arm64 host, else llvm.
 func NativeBackend() string {
-	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+	if Arm64Host() {
 		return BackendArm64
 	}
 	return BackendLLVM
+}
+
+// Arm64Host reports whether this host can build and run the arm64
+// backend's programs: darwin/arm64 or linux/arm64. Elsewhere `xo build
+// --backend=arm64` hands arm64 assembly to the host's assembler (an x86
+// one fails on `stp x29,x30,...`), so a test skips the arm64 backend
+// (Arm64Skip; gotchas/arm64-tests-on-x86-hosts.md).
+func Arm64Host() bool {
+	return runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux")
+}
+
+// Arm64Skip is why backend cannot build on this host ("" when it can):
+// the arm64 backend off an arm64 host (Arm64Host).
+func Arm64Skip(backend string) string {
+	if backend == BackendArm64 && !Arm64Host() {
+		return "the arm64 backend builds on darwin/arm64 and linux/arm64 hosts, not " + Host()
+	}
+	return ""
 }
 
 // EnableTestBinCache points $XO_BIN_CACHE (xo's cache of linked
