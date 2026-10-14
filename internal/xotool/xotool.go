@@ -506,6 +506,12 @@ func hostBackend() (string, []string) {
 	if os.Getenv("XO_LLVM_LTO") == "" {
 		env = append(env, "XO_LLVM_LTO=none")
 	}
+	// a development build of xo: clang -O0 (decision 0220; c7i.8xlarge:
+	// 3:45 against 18:51 at -O2, its compiles about 1.5 times slower);
+	// releases keep -O2 (scripts/release.sh, xo build --release)
+	if os.Getenv("XO_LLVM_OPT") == "" {
+		env = append(env, "XO_LLVM_OPT=O0")
+	}
 	return "llvm", env
 }
 
