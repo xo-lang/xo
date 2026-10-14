@@ -8,10 +8,16 @@
 
 use github.com/xo-lang/xo/selfhost/ssa
 
-/// The functions per part a module is cut into at least, and the most
-/// parts.
-const PART_FUNCS = 128
-const MAX_PARTS = 32
+/// A module of fewer functions than PART_FUNCS is one part. A larger one
+/// is cut by its contents (decision 0220 addendum): after a function whose
+/// name hashes to 0 modulo PART_CUT once the part has PART_MIN functions,
+/// or at PART_MAX functions; a short last part joins the one before. An
+/// edit moves the cuts of its own part at most, so the other parts'
+/// assembly (and their cached objects) stay the same.
+const PART_FUNCS = 256
+const PART_MIN = 64
+const PART_CUT = 128
+const PART_MAX = 512
 
 /// What one part generated: its assembly (text, helpers, call site
 /// tables, data), its failure and skipped functions, and the program
@@ -53,22 +59,31 @@ fn (var g: G) defers(key: Str, w: Want) -> Bool {
 /// The global name of the helper of key in a split generation: xo_h and
 /// the FNV-1a hash of the key, so every part names it alike.
 fn (g: G) helper_ext(key: Str) -> Str {
-  var h = -3750763034362895579
-  for c in key.bytes() {
-    h = (h ^ Int(c)).wrapping_mul(1099511628211)
-  }
   // 60 bits of it in ten base 62 digits: the name is in every call of
   // the helper (millions of lines of selfhost/xo), so it is kept short
+  g.sym("xo_h${base62(fnv(key), 10)}")
+}
+
+/// The FNV-1a hash of s.
+fn fnv(s: Str) -> Int {
+  var h = -3750763034362895579
+  for c in s.bytes() {
+    h = (h ^ Int(c)).wrapping_mul(1099511628211)
+  }
+  h
+}
+
+/// The low 60 bits of h in n base 62 digits, the lowest first.
+fn base62(h: Int, n: Int) -> Str {
   let digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   var v = h & 1152921504606846975
   var b = StrBuilder.new()
-  b.write("xo_h")
-  for _ in 0..10 {
+  for _ in 0..n {
     let d = v % 62
     b.write(digits[d..d + 1])
     v = v / 62
   }
-  g.sym(b.freeze())
+  b.freeze()
 }
 
 /// The global label that names the helper of key in the last file of a
@@ -118,29 +133,43 @@ fn (var g: G) gen_want(w: Want) {
   }
 }
 
-/// The first function of each part and, last, the count of functions:
-/// contiguous runs of about equal SSA size (values), at most MAX_PARTS
-/// and at least PART_FUNCS functions each; [0, n] is one part.
+/// The first function of each part and, last, the count of functions
+/// (the cuts by contents above); [0, n] is one part.
 pub fn part_bounds(m: ssa.Module) -> List[Int] {
   let n = m.funcs.len()
-  let np = (n / PART_FUNCS).min(MAX_PARTS).max(1)
-  if np == 1 {
+  if n < PART_FUNCS {
     return [0, n]
   }
-  var total = 0
-  for f in m.funcs {
-    total += f.values.len() + 1
-  }
   var out = [0]
-  var acc = 0
+  var start = 0
   for (fi, f) in m.funcs.indexed() {
-    acc += f.values.len() + 1
-    // the end of part k when the running size passes k/np of the total
-    if out.len() < np && acc * np >= total * out.len() && fi + 1 < n {
+    let k = fi + 1 - start
+    if fi + 1 < n && k >= PART_MIN && (k >= PART_MAX || fnv(f.name) % PART_CUT == 0) {
       out.push(fi + 1)
+      start = fi + 1
     }
   }
+  if out.len() > 1 && n - start < PART_MIN {
+    out.pop()
+  }
   out.push(n)
+  out
+}
+
+/// The label namespace of each part: "p", the hash of its first
+/// function's name, and "_", so a part's labels do not depend on the
+/// parts before it; a repeated one gets the part's index too.
+fn part_names(m: ssa.Module, bounds: List[Int]) -> List[Str] {
+  var seen: Map[Str, Bool] = {}
+  var out: List[Str] = []
+  for p in 0..bounds.len() - 1 {
+    var ns = "p${base62(fnv(m.funcs[bounds[p]].name), 6)}_"
+    if let Some(_) = seen.get(ns) {
+      ns = "${ns}${p}_"
+    }
+    seen[ns] = true
+    out.push(ns)
+  }
   out
 }
 
@@ -162,11 +191,12 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
     return Program{asm: "", err: "arm64 backend: no main", skipped: []}
   }
   let taken = g.addr_taken
+  let names = part_names(m, bounds)
   var parts: List[Part] = []
   let w = jobs.min(np)
   if w <= 1 {
     for p in 0..np {
-      parts.push(gen_part(m, os, taken, bounds[p], bounds[p + 1], p))
+      parts.push(gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p]))
     }
   } else {
     // each task takes the next part until none is left
@@ -181,7 +211,7 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
             if p >= np {
               break
             }
-            mine.push((p, gen_part(m, os, taken, bounds[p], bounds[p + 1], p)))
+            mine.push((p, gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p])))
           }
           mine
         }))
@@ -236,16 +266,14 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
   Program{asm: files.join(""), err: g.err, skipped: skipped + g.skipped, parts: files}
 }
 
-/// Part p: functions lo..hi of m by an emitter of its own, its labels in
-/// namespace "pN_" and its functions numbered as in the whole module, as
-/// a file of its own.
-fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, p: Int) -> Part {
+/// Part functions lo..hi of m by an emitter of its own, its labels in
+/// namespace ns and its functions numbered from 0, as a file of its own.
+fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns: Str) -> Part {
   var g = new_gen(m, os)
   g.addr_taken = taken
-  g.ns = "p${p}_"
+  g.ns = ns
   g.split = true
   g.defer_helpers = true
-  g.nfunc = lo
   for fi in lo..hi {
     g.function(fi)
   }

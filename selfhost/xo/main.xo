@@ -565,7 +565,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       // tasks for the parts
       let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
       var objs: List[Str] = []
-      for (i, r) in macho_objects(srcs, tgoos == "linux", jobs).indexed() {
+      let (assembled, nasm) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", jobs)
+      for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
           Ok(b) => write_or_fail(os, dir, obj, b)
@@ -575,6 +576,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
       progs = objs
       t = lap(os, phases, "assemble", t)
+      cache_note(os, phases, "objects", srcs.len() - nasm, srcs.len())
     }
     let srcs = progs + lk.srcs
     let tls = needs_tls(code) && !nolibc(os, tgoos)
@@ -595,13 +597,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let (objs, why) = cc_assemble(os, cc, flags + memo_sysroot(os, ctx), progs, jobs)
+        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, p.parts, jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail(os, "${cc} failed")
         }
         lsrcs = objs + lk.srcs
         t = lap(os, phases, "assemble", t)
+        cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
       let msg = cc_build(os, ctx, cc, flags, lsrcs, bin, tls)
       if !msg.is_empty() {

@@ -1,0 +1,145 @@
+// The back-end cache (decision 0220 addendum): the objects of the parts
+// of a split arm64 assembly by the hash of their assembly and the
+// assembler's identity, in <user cache>/xo/backend ($XO_BACKEND_CACHE_DIR),
+// so an unchanged part is not assembled again. $XO_BACKEND_CACHE=off turns
+// it off. Entries are files named by their key; a hit refreshes the
+// file's modification time, and a store prunes the directory (at most
+// once an hour) of entries unused for $XO_BACKEND_CACHE_DAYS days
+// (default 7), then of the least recently used past
+// $XO_BACKEND_CACHE_MAX bytes (default 8 GiB).
+
+use github.com/xo-lang/xo/selfhost/check
+use std/crypto
+
+/// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
+fn backend_cache_mode(os: Os) -> Str {
+  let v = os.env.get("XO_BACKEND_CACHE") ?? ""
+  if v == "off" || v == "verify" { v } else { "on" }
+}
+
+/// The cache's directory, "" when it is off.
+fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
+  if backend_cache_mode(os) == "off" {
+    return ""
+  }
+  let d = os.env.get("XO_BACKEND_CACHE_DIR") ?? ""
+  if !d.is_empty() {
+    return d
+  }
+  "${ctx.cache}/xo/backend"
+}
+
+/// The identity of the running compiler: the SHA-256 of its executable;
+/// "" when it cannot be read (the cache is then not used).
+fn self_id(os: Os) -> Str {
+  let p = check.executable(os.env, os.fs)
+  if p.is_empty() {
+    return ""
+  }
+  match os.fs.read(p) {
+    Ok(b) => crypto.sha256(b).to_hex()
+    Err(_) => ""
+  }
+}
+
+/// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.
+fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
+  if on {
+    os.stdio.eprintln("cache ${what} ${hits}/${total} reused")
+  }
+}
+
+/// The path of the entry of key in the cache dir under kind ("obj").
+fn entry_path(dir: Str, kind: Str, key: Str) -> Str {
+  "${dir}/${kind}/${key[0..2]}/${key}"
+}
+
+/// The entry at path, its modification time refreshed; None when the
+/// cache does not hold it.
+fn cache_get(os: Os, path: Str) -> Option[Bytes] {
+  match os.fs.read(path) {
+    Ok(b) => {
+      os.fs.set_modified(path, os.clock.now()).ignore_err("only the prune order")
+      Some(b)
+    }
+    Err(_) => None
+  }
+}
+
+/// Stores data as the entry at path: written under a temporary name and
+/// renamed into place, so a reader never sees half of it.
+fn cache_put(os: Os, path: Str, data: Bytes) {
+  match os.fs.create_dir_all(dir_name(path)) {
+    Ok(_) => {}
+    Err(_) => return
+  }
+  let tmp = "${path}.tmp-${os.rand.bytes(6).to_hex()}"
+  match os.fs.write(tmp, data) {
+    Ok(_) => {
+      match os.fs.rename(tmp, path) {
+        Ok(_) => {}
+        Err(_) => os.fs.remove(tmp).ignore_err("another process stored it")
+      }
+    }
+    Err(_) => os.fs.remove(tmp).ignore_err("a failed store")
+  }
+}
+
+/// At most once an hour (a stamp file): removes the entries of dir unused
+/// for $XO_BACKEND_CACHE_DAYS days (default 7), then the least recently
+/// used ones while the rest is over $XO_BACKEND_CACHE_MAX bytes (default
+/// 8 GiB), down to three quarters of it; temporary files over an hour
+/// old go too.
+fn prune_backend_cache(os: Os, dir: Str) {
+  let stamp = "${dir}/prune-stamp"
+  match os.fs.stat(stamp) {
+    Ok(Some(fi)) => {
+      if os.clock.since(fi.modified) < 1h {
+        return
+      }
+    }
+    _ => {}
+  }
+  os.fs.create_dir_all(dir).ignore_err("the stamp write fails then")
+  os.fs.write(stamp, b"").ignore_err("the stamp only limits prunes")
+  let all = match os.fs.walk(dir) {
+    Ok(fs) => fs
+    Err(_) => return
+  }
+  let days = Int.parse(os.env.get("XO_BACKEND_CACHE_DAYS") ?? "") ?? 0
+  let max_age = (if days > 0 { days } else { 7 }) * 24h
+  let max0 = Int.parse(os.env.get("XO_BACKEND_CACHE_MAX") ?? "") ?? 0
+  let limit = if max0 > 0 { max0 } else { 8 * 1024 * 1024 * 1024 }
+  var kept: List[FileInfo] = []
+  var total = 0
+  for fi in all {
+    if fi.is_dir || fi.name == "prune-stamp" {
+      continue
+    }
+    let age = os.clock.since(fi.modified)
+    if fi.name.contains(".tmp-") {
+      if age > 1h {
+        os.fs.remove(fi.path).ignore_err("another process may own it")
+      }
+      continue
+    }
+    if age > max_age {
+      os.fs.remove(fi.path).ignore_err("another process may have removed it")
+      continue
+    }
+    kept.push(fi)
+    total += fi.size
+  }
+  if total <= limit {
+    return
+  }
+  for fi in kept.sort_by(fn(f) { f.modified.unix_millis() }) {
+    if total <= limit / 4 * 3 {
+      break
+    }
+    match os.fs.remove(fi.path) {
+      Ok(_) => total -= fi.size
+      Err(_) => {}
+    }
+  }
+}

@@ -326,6 +326,12 @@ fn (var g: G) begin_func(fi: Int) {
   g.fr = Frame{}
   g.stubs = []
   g.nstub = 0
+  if g.split {
+    // the call site labels numbered per function, so a function's
+    // assembly in a part does not depend on the functions before it
+    // (decision 0220 addendum)
+    g.ncs = 0
+  }
   g.memos = []
   g.mm = -1
   g.cm = Memo{blk: -1}
