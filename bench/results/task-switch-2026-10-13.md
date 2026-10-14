@@ -285,3 +285,36 @@ Await and the wait lists, the task's record and end (allocation, the
 entry call, drops, fault text), contexts and budgets, the deadlock check
 and the test world's clock, Linux thread starts in libc builds, the
 pool's setup: decision 0212's Stage 3 lists what each needs.
+
+## Linux network fixes (netfix agent, 2026-10-13)
+
+The ThreadSanitizer race on a poll descriptor and the Windows net_only
+crash found by the stage 2 platform runs above.
+
+### ThreadSanitizer: a blind spot, not a race
+
+pd_new initializes the xo_pd, then registers it with epoll; the poller
+locks it only after epoll_wait returns it, so the kernel orders the two.
+The C library's epoll interceptors give ThreadSanitizer that edge; the Xo
+system calls of decision 0206 stage 3 do not
+(gotchas/tsan-raw-epoll-no-edge.md). Fix: e8dfb608 (a release before
+nx_epoll_ctl's system call, an acquire after nx_epoll_wait returns
+events, TSan builds only) and TestRuntimeRawPoll (rawpoll.c). The TSan
+builds of http_wire and net_only also needed 450a3aee: xotool.CompileC
+had linked no TLS library since decision 0215
+(gotchas/xotool-compilec-tls.md).
+
+Linux arm64 (EC2 warm r8g.4xlarge, 16 vCPUs, i-EXAMPLE06), each
+TestGoldenTasks run is three thread counts per golden:
+
+- e8dfb608 without the fix (its parent's xo_rt.c): TestRuntimeRawPoll
+  reports the race (pd_new's calloc against pthread_mutex_lock in
+  pd_ready); net_echo races 2 of 2 runs.
+- e8dfb608 with the fix: TestRuntimeRawPoll passes; net_echo clean 2 of 2.
+- 450a3aee without the fix: net_echo, http_wire, and net_only race 3 of 3
+  runs each; with XO_LLRT_C=net (the C library's epoll) and no fix, all
+  three are clean 3 of 3.
+- 450a3aee with the fix: the three goldens and TestRuntimeRawPoll clean
+  3 of 3; TestGoldenASan (the http goldens, net_echo, net_only) passes.
+- Mac (kqueue through the C library, never affected): the three goldens
+  under TSan and TestGoldenASan pass at 450a3aee.
