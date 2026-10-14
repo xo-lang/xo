@@ -3259,15 +3259,108 @@ reaches through `use`; xotool.Inputs). The build goes into `<user
 cache>/xo/checkout/<key>/xo` once per key, under a file lock, shared by
 worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
 the checkout's earlier bin/xo, the newest earlier build in that cache,
-`xo` on PATH, and the go-compiler-final seed (built once into `<user
-cache>/xo/seed/<commit>`, from `git archive` of the tag, or of commit
-its commit in a clone without tags; needs Go and git); a seed that fails
-is reported and the next one tried. The backend: arm64 on an arm64
+`xo` on PATH, the newest prebuilt seed (below; needs the aws CLI and
+read access to the seed bucket), and the go-compiler-final seed (built
+once into `<user cache>/xo/seed/<commit>`, from `git archive` of the
+tag, or of its commit in a clone without tags; needs Go and git) through
+the seed chain; a seed that fails is reported and the next one tried,
+and the log names the path taken ("xotool: building xo ... with the
+prebuilt seed of s3://...", or "xotool: falling back to the
+go-compiler-final root"). The backend: arm64 on an arm64
 host, the LLVM backend split into 12 modules without LTO on x86-64, the
 Go backend on Windows. `XO_CHECKOUT_CACHE` moves the cache. The Go tests
 build it on first use unless `XO_CLI` names an xo. On the development
 Mac a build with a cached xo1 as the seed took 391 s and 6.09 GB peak
 RSS (2026-10-13, other agents running). Last verified: 2026-10-13.
+
+### Prebuilt seeds (decision 0216 item 1)
+
+Release N is built by release N-1 (owner, 2026-10-13). Seeds are not
+public releases: they live in the private S3 bucket
+`xo-seeds-ACCOUNT_ID` (us-east-1, all public access blocked,
+versioned), readable by the development Mac's AWS user and by EC2
+instances launched with the instance profile `xo-ci-seed-read`
+(s3:GetObject and s3:ListBucket on that bucket only; remote-full.sh and
+remote-windows.sh pass it; AL2023 ships the aws CLI, and
+remote-windows.sh installs it when the Windows AMI lacks it). Layout:
+
+    s3://xo-seeds-ACCOUNT_ID/seeds/latest.txt                         the newest version, one line (0.10.0)
+    s3://xo-seeds-ACCOUNT_ID/seeds/<version>/<goos>-<goarch>.tar.gz   the seed tree
+    s3://xo-seeds-ACCOUNT_ID/seeds/<version>/<goos>-<goarch>.sha256   "<hex>  <goos>-<goarch>.tar.gz"
+    s3://xo-seeds-ACCOUNT_ID/seeds/<version>/manifest.txt             "version V", "commit C", "date D",
+                                                                        then "sha256 <goos>-<goarch> <hex>" per platform
+
+A seed tarball is release shaped, with no top directory: `bin/xo`,
+`lib/xo/std` and `lib/xo/third_party` (the tracked files), and
+`lib/xo/SEED` (version, commit, date, platform). The unpacked bin/xo
+finds its own std at bin/../lib/xo/std. It carries no rtpack, xo-gobind,
+or zone data: a seed only builds selfhost/xo, against the checkout's
+`--std`. Each seed bumps the minor version (`selfhost/cli/core`
+`VERSION`, the lead's commit on main): 0.9.0 has no seed, the first seed
+is 0.10.0.
+
+internal/xotool (seed.go) fetches a seed when no local xo is found:
+seeds/latest.txt, then `<host>.sha256` and `<host>.tar.gz` with `aws s3
+cp` (`--region us-east-1`, or `$XO_SEED_REGION`), checks the sha256, and
+unpacks into `<user cache>/xo/seeds/<version>/<goos>-<goarch>/tree`
+(once, under a file lock); that xo builds the checkout's selfhost/xo in
+one hop. When latest.txt cannot be read, the newest seed already
+unpacked is used. A failed fetch (no aws CLI, no access, no seed for the
+host) or a failed build falls back to the go-compiler-final root and the
+chain. Variables: `XO_SEED_BUCKET` (bucket[/prefix], default
+xo-seeds-ACCOUNT_ID), `XO_SEED_URL` (the location instead:
+`s3://bucket[/prefix]`, `file:///dir`, or a directory laid out like the
+bucket; `off` skips fetching). `XO_SEED` still comes first. Last
+verified: 2026-10-13.
+
+`scripts/seed-pack.sh XO OUTDIR` packs a built xo, a checkout's bin/xo
+(std at bin/../std; the tracked std/ and third_party/ files) or a
+release's bin/xo (lib/xo beside it), into OUTDIR/<goos>-<goarch>.tar.gz,
+`.sha256`, and `.info`, and rebuilds OUTDIR/manifest.txt from every
+platform packed there (they must agree on version and commit;
+`seed-pack.sh --manifest OUTDIR` only rebuilds it). The version and
+platform come from `XO version`; an xo of another host needs
+`XO_SEED_VERSION` and `XO_SEED_PLATFORM`. The commit is
+`$XO_SEED_COMMIT`, else the checkout's HEAD; a checkout with changes
+under selfhost/, std/ or third_party/ is refused
+(`XO_SEED_ALLOW_DIRTY=1` overrides). It uploads nothing. internal/xotool
+TestSeedPackHello packs the checkout's bin/xo, fetches it from a local
+directory, and runs hello with the unpacked xo (no XO_STD, a working
+directory without std); it skips without a built xo.
+
+Packing and uploading seed 0.10.0 (the lead, after the version bump
+commit on main, from a clean checkout of it; OUTDIR outside the repo,
+since release.sh deletes dist/):
+
+    v=0.10.0; out=$HOME/xo-seeds/$v; c=$(git rev-parse HEAD)
+    # darwin/arm64, on the Mac
+    go run ./scripts/xobuild && scripts/seed-pack.sh bin/xo "$out"
+    # linux/arm64 and linux/amd64: cross built on the Mac by release.sh
+    # (its stages dist/xo-$v-<os>-<arch>/ stay after the run) ...
+    scripts/release.sh $v
+    XO_SEED_VERSION=$v XO_SEED_PLATFORM=linux-arm64 XO_SEED_COMMIT=$c \
+      scripts/seed-pack.sh dist/xo-$v-linux-arm64/bin/xo "$out"
+    XO_SEED_VERSION=$v XO_SEED_PLATFORM=linux-amd64 XO_SEED_COMMIT=$c \
+      scripts/seed-pack.sh dist/xo-$v-linux-amd64/bin/xo "$out"
+    # ... or natively on EC2: scripts/remote-full.sh --hold [--arch amd64] $c,
+    # then over ssh: cd ~/xo && go run ./scripts/xobuild &&
+    #   bash scripts/seed-pack.sh bin/xo ~/seed
+    # scp ~/seed/linux-*.tar.gz ~/seed/linux-*.sha256 ~/seed/linux-*.info into "$out",
+    # then: scripts/seed-pack.sh --manifest "$out"
+    cat "$out/manifest.txt"
+    aws s3 cp --recursive "$out" s3://xo-seeds-ACCOUNT_ID/seeds/$v/ \
+      --exclude '*' --include '*.tar.gz' --include '*.sha256' --include manifest.txt
+    echo $v > "$out/latest.txt"
+    aws s3 cp "$out/latest.txt" s3://xo-seeds-ACCOUNT_ID/seeds/latest.txt
+    aws s3 ls s3://xo-seeds-ACCOUNT_ID/seeds/$v/
+
+Upload latest.txt last, after every platform of the version is in
+place: a host whose platform is missing from the newest version falls
+back to the chain. release.sh's linux/amd64 xo is built by the Go
+backend and its linux/arm64 xo by selfhost/macho's ELF link (both passed
+release-verify.sh on EC2, 2026-10-12); the EC2 route builds with the
+backends xobuild uses there (arm64; LLVM split 12 on amd64). There is no
+Windows seed yet: a Windows host falls back to the chain.
 
 The seed chain (decision 0216 item 2): an xo older than an intrinsic
 the sources use cannot build them (gotchas/seed-older-than-intrinsics.md).

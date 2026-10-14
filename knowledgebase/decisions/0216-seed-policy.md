@@ -1,7 +1,8 @@
 # 0216: Bootstrap seeds after the Go compiler: N-1 releases and a replay from source
 
-Status: Proposed (owner asked for the write-up, 2026-10-13; awaiting the
-owner's choice on the two questions below)
+Status: Item 1 Accepted (owner, 2026-10-13), with the seeds in a
+private S3 bucket; item 2 Accepted as the fallback (the seed chain,
+implemented 2026-10-13); item 3 Proposed
 
 ## Context
 
@@ -23,18 +24,36 @@ How other self hosted languages handle it:
 - Zig: commits a WebAssembly build of its compiler (zig1.wasm) and runs it
   through wasm2c and a C compiler, so a C compiler is the only seed.
 
-## Decision (proposed)
+## Decision
 
-1. **N-1 rule.** Each release's `xo` must be buildable by the previous
-   release's `xo` on every platform it ships for. Released seed binaries
-   are kept per platform. Between releases, main must build with the
-   latest release or with a recorded intermediate seed (below).
-2. **Runtime changes go in two hops.** A change that makes the compiler's
-   own code call new runtime functions lands so that an older seed first
-   builds an intermediate `xo` from a tree that has the new runtime, and
-   that one builds the final `xo`. `scripts/bootstrap-xo.sh` gets a seed
-   chain option (a list of commits or seeds) and the change records the
-   intermediate commit; a gotcha documents the trap.
+1. **N-1 rule, prebuilt seeds (Accepted, owner, 2026-10-13).** Release N
+   is built by release N-1. Each seed is a release shaped tarball per
+   platform (bin/xo, lib/xo/std, lib/xo/third_party, lib/xo/SEED), built
+   at a recorded commit by `scripts/seed-pack.sh`, and kept in the
+   private S3 bucket `xo-seeds-ACCOUNT_ID` (us-east-1, public access
+   blocked, versioned): `seeds/<version>/<goos>-<goarch>.tar.gz` with a
+   `.sha256` beside it, `seeds/<version>/manifest.txt`, and
+   `seeds/latest.txt` naming the newest version. Seeds are not public
+   releases. Each seed bumps the minor version (0.10.0 is the first).
+   internal/xotool fetches the newest seed with the aws CLI when no
+   local xo is found (the development Mac's AWS user; EC2 instances
+   with the instance profile `xo-ci-seed-read`, read only), checks its
+   sha256, unpacks it into the user cache by version, and builds the
+   checkout in one hop. Layout, variables, and the lead's pack and
+   upload commands: infrastructure/toolchain.md "Prebuilt seeds".
+2. **Runtime changes go in two hops (Accepted as the fallback).** A
+   change that makes the compiler's own code call new runtime functions
+   lands so that an older seed first builds an intermediate `xo` from a
+   tree that has the new runtime, and that one builds the final `xo`.
+   scripts/seed-chain.txt records the intermediate commits;
+   `scripts/bootstrap-xo.sh` (XO_SEED_CHAIN) and internal/xotool apply
+   them; gotchas/seed-older-than-intrinsics.md documents the trap. With
+   prebuilt seeds the chain is the fallback for a host that cannot fetch
+   one (no aws CLI, no bucket access, no seed for its platform), and it
+   is only needed from the go-compiler-final root: once a seed exists
+   past a runtime break, a new seed after each such break replaces
+   adding hops, and the hops older than the newest seed are used only
+   by that fallback.
 3. **Replay from source (proposed, owner to confirm).** The tag
    go-compiler-final (87873aa5) is the root: the Go toolchain builds that
    tree's `xo`, which builds xo1, which builds each later release in order
@@ -44,14 +63,22 @@ How other self hosted languages handle it:
 
 ## Questions for the owner
 
-- Accept the N-1 rule (1) and the two hop procedure (2)?
-- Require the replay from source (3) per release, or only occasionally?
+- Answered 2026-10-13: the N-1 rule (1) with prebuilt seeds in a private
+  bucket; the two hop procedure (2) as the fallback.
+- Open: require the replay from source (3) per release, or only
+  occasionally?
 
 ## Consequences
 
-- Releases must publish seed binaries before the next release can be cut.
-- Every runtime addition the compiler itself uses costs one extra build
-  hop and a recorded intermediate commit.
+- A seed must be packed and uploaded (all platforms, then latest.txt)
+  before the next version can rely on it; until then hosts build from
+  the previous seed or the chain.
+- A fresh host with the aws CLI and bucket access needs neither Go's
+  compiler build of go-compiler-final nor the hops: one download and one
+  build of selfhost/xo. On a fresh EC2 machine the chain took 1,491 to
+  1,936 s (decision 0215, toolchain.md "Bootstrapping without Go").
+- A runtime addition the compiler itself uses costs a new seed (and a
+  recorded hop for the fallback until that seed is uploaded).
 - The replay chain grows with each release; its cost is one EC2 run per
   release (each hop is one self build, about 6 minutes on the Mac).
 

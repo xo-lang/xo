@@ -103,8 +103,17 @@ Invoke-WebRequest -UseBasicParsing (Get-Asset 'llvm/llvm-project' '^LLVM-[0-9.]+
 Start-Process -Wait msiexec -ArgumentList '/i',"\$d\llvm.msi",'/qn','/norestart'
 Invoke-WebRequest -UseBasicParsing https://aka.ms/vs/17/release/vs_BuildTools.exe -OutFile \$d\vsbt.exe
 Start-Process -Wait \$d\vsbt.exe -ArgumentList '--quiet','--wait','--norestart','--nocache','--add','Microsoft.VisualStudio.Workload.VCTools','--add','Microsoft.VisualStudio.Component.VC.Tools.x86.x64','--add','Microsoft.VisualStudio.Component.VC.Tools.ARM64','--includeRecommended'
+# the aws CLI, for internal/xotool's prebuilt seeds (instance profile
+# xo-ci-seed-read; decision 0216): installed unless the AMI has one (not
+# confirmed for Windows Server 2025 base AMIs, 2026-10-13); the
+# transcript records which
+if (Get-Command aws -ErrorAction SilentlyContinue) { aws --version } else {
+  Invoke-WebRequest -UseBasicParsing https://awscli.amazonaws.com/AWSCLIV2.msi -OutFile \$d\awscli.msi
+  Start-Process -Wait msiexec -ArgumentList '/i',"\$d\awscli.msi",'/qn','/norestart'
+  & 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' --version
+}
 \$p = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-[Environment]::SetEnvironmentVariable('Path', "\$p;C:\Program Files\LLVM\bin;C:\Program Files\Go\bin;C:\Program Files\Git\cmd", 'Machine')
+[Environment]::SetEnvironmentVariable('Path', "\$p;C:\Program Files\LLVM\bin;C:\Program Files\Go\bin;C:\Program Files\Git\cmd;C:\Program Files\Amazon\AWSCLIV2", 'Machine')
 Restart-Service sshd
 Set-Content -Path C:\xo-ready -Value ready
 Stop-Transcript
@@ -113,6 +122,7 @@ EOF
 )
 log "launching $TYPE (on demand, Windows Server 2025 $ami) for $commit, self-terminating after ${MAXMIN} min"
 id=$(aws ec2 run-instances $DRY --image-id "$ami" --instance-type "$TYPE" --key-name xo-ci --security-group-ids "$sg" \
+  --iam-instance-profile Name=xo-ci-seed-read \
   --instance-initiated-shutdown-behavior terminate \
   --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=120,VolumeType=gp3,DeleteOnTermination=true}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=xo-ci-windows},{Key=purpose,Value=xo-remote-windows}]' \
