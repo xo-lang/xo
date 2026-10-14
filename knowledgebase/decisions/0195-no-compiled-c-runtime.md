@@ -19,7 +19,11 @@ instructions; `bench/results/http-client-2026-10-14.md`). Work item
 B11 done 2026-10-14 (the HTTP/2 client's HPACK in Xo, xo_h2.c's C HPACK
 deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
 to 1.009 of the C's instructions;
-`bench/results/http2-client-hpack-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
+`bench/results/http2-client-hpack-2026-10-14.md`). Work item B13 stage 1 done 2026-10-14 (http1.xo's searches
+through scan.xo, xo_str_find deleted; the string and list objects
+measured in Xo and kept C: arm64 1.27 times the C on bench/perf/alloc
+small without shrink wrapping; `bench/results/string-list-objects-2026-10-14.md`).
+Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
 `bench/results/http-writer-2026-10-14.md`). Prerequisite 5
 (constant time) done 2026-10-14: decision 0222 (`rt.ct_barrier`,

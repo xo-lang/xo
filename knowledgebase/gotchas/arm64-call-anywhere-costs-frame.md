@@ -23,3 +23,14 @@ offsets of `rt.mem_load`/`mem_store` and constant addends of
 learned the immediate forms (same commit). A tail call in the
 emitters (a call whose result is returned, in a function that is
 otherwise a leaf, as `b`) would remove the remaining frame of `free`.
+
+Seen again (2026-10-14, zero-C audit B13,
+bench/results/string-list-objects-2026-10-14.md): the list and string
+objects in Xo missed the bar on arm64 (alloc small 1.266, nested walk
+1.115, text split 1.098) mostly through this: rl_free's drop loop saved
+five register pairs on the path with no drop, and an inlined
+alloc.refill five pairs on every allocation. Two workarounds, both
+measured: test the cheap case in the C entry before calling Xo, and
+keep a rare large path out of the arm64 inliner with a call of itself
+on a path never taken (selfhost/arm64/inline.xo does not inline a
+function on a call cycle). The fix is shrink wrapping in the emitters.

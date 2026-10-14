@@ -51,37 +51,107 @@ Run 1's 1.051 to 1.082 did not repeat (run 2, the same binaries'
 sources, at most 1.021); the client waits on a local server, and its
 counts move by several percent between runs of the same build.
 
-## Stage 2: the objects
+## Stage 2: the objects stay C (measured; they miss the bar on arm64)
 
-### The string objects stay C (measured, did not meet the bar)
+Two Xo versions of the objects were built and measured; neither met
+decision 0180's bar on arm64, so the string and list objects, the drop
+worklist, the real-time sections, the builders, and const_once stay C.
+The Xo code is in commit 3da29c8b (std/native/llrt/obj.xo, cabi.xo's
+`obj_*` exports, xo_rt.c forwarders with a heap word: the thread's heap
+record, plus 1 when other threads run), reverted after the measurement.
 
-std/native/llrt/obj.xo first held rs_new and rs_append too (the C's
-rs_new, rs_append, xo_rs_concat's body), called from xo_rt.c through
-cabi.xo exports with a heap word. Same method (std A at 5733ae10, std B
-the change), bench/perf/alloc, text, json, nested, xo:
+### Version 1: strings and lists (Mac, `/usr/bin/time -l`)
+
+obj.xo held rs_new, rs_append (the body of xo_rs_concat and every C
+builder), xo_rl_new, rl_copy, rl_share, rl_grow, rl_free, and
+xo_rc_defer's worklist. Std A at 5733ae10, std B the change, min of 5:
 
 | Workload | arm64 | LLVM |
 |---|---|---|
-| alloc small (first version) | 1.326 | 1.158 |
-| alloc small (mt paths out of line) | 1.224 | 1.071 |
-| alloc strings | 1.076 | 0.955 |
-| alloc maps | 1.053 | 1.012 |
-| text split | 1.094 | 1.029 |
-| text lines | 1.077 | 1.025 |
-| text int_fmt | 1.064 | 1.037 |
-| text debug | 1.058 | 0.949 |
-| json enc_small (first version) | 1.055 | 0.924 |
-| nested walk (first version) | 1.068 | 1.009 |
-| xo, 18 workloads (first version) | 0.999 to 1.009 | 0.991 to 1.001 |
+| alloc small | 1.326 | 1.158 |
+| alloc small (multi threaded paths out of line) | 1.224 | 1.071 |
+| alloc strings (same) | 1.076 | 0.955 |
+| alloc maps (same) | 1.053 | 1.012 |
+| text split (same) | 1.094 | 1.029 |
+| text lines (same) | 1.077 | 1.025 |
+| text int_fmt (same) | 1.064 | 1.037 |
+| text debug (same) | 1.058 | 0.949 |
+| json enc_small | 1.055 | 0.924 |
+| nested walk | 1.068 | 1.009 |
+| xo, 18 workloads | 0.999 to 1.009 | 0.991 to 1.001 |
 
-Causes, read in the arm64 assembly (`xo build --asm`): the arm64
-emitters save every callee saved register a function uses in its
-prologue, on every path (no shrink wrapping), so rs_append's in place
-path saves four register pairs that only its copy path needs;
-`rt.mem_move` and `rt.mem_copy` are calls of memmove and memcpy where
-clang stores a one byte append (xo_rs_push_byte) inline; and each Xo
-level adds a frame record that the C, inlined by clang, does not have.
-In the first version obj.xo's single threaded allocation also carried an
-inlined alloc.refill (five register pairs saved per call); obj.xo now
-keeps the multi threaded paths out of line (a never taken self call,
-since the arm64 inliner skips functions on a call cycle).
+### Version 2: lists and the worklist only (linux/arm64, EC2)
+
+The string objects back in C; obj.xo with xo_rl_new, rl_copy,
+rl_share, rl_grow, rl_free's element loop (a list without a drop
+freed by the C directly), and xo_rc_defer's worklist. The Mac was out of
+disk (7 GB free, its local runs paused by the lead), so this ran on a
+warm r8g (i-EXAMPLE06, commit 3da29c8b, clang 15.0.7):
+`perf stat -e instructions:u`, min of 5, the same A and B std trees.
+
+| Workload | arm64 | LLVM |
+|---|---|---|
+| alloc small | 1.266 | 1.093 |
+| alloc strings | 1.045 | 1.010 |
+| alloc maps | 1.037 | 0.994 |
+| alloc mixed, grow | 1.002 to 1.020 | 0.994 to 0.998 |
+| nested walk | 1.115 | 1.023 |
+| nested shared | 1.017 | 0.992 |
+| nested, the other 6 | 1.000 to 1.005 | 0.993 to 1.013 |
+| xo, 18 workloads | 1.000 to 1.005 | 1.000 to 1.001 |
+| text split | 1.098 | 0.998 |
+| text lines | 1.069 | 0.993 |
+| text int_fmt | 1.053 | 0.999 |
+| text quote, replace, float_fmt, debug | 1.004 to 1.027 | 0.986 to 1.011 |
+| json, 6 workloads | 1.003 to 1.029 | 0.996 to 1.018 |
+
+The self build (xo built from std A and from std B, each compiling
+selfhost/xo with the same std, `XO_LEAKCHECK=1`, two runs, perf counts
+the cc children too): 1,404,959,722,773 and 1,405,012,040,955
+instructions (A), 1,420,893,176,316 and 1,420,803,199,718 (B), 1.011;
+both 0 live of about 1,096 million allocations; the two outputs
+byte identical.
+
+The same commit passed (so the Xo version is correct, only slower):
+`xo dev goldens` 181 of 181 on arm64 and on LLVM, internal/llvm
+TestRuntime*, TestCABIDiff, TestLeakCheck, TestHTTP1*, and the fixed
+point (scripts/bootstrap-xo.sh: s2 and s3 assembly and binaries
+identical, 52,292,040 bytes; i-EXAMPLE01). internal/arm64
+TestGoldenAsm differed (its fib and sieve goldens hold the program's
+cabi exports, which obj.xo added to).
+
+### Why arm64 misses it (read in `xo build --asm`)
+
+- No shrink wrapping: an arm64 function saves every callee saved
+  register it uses in its prologue, on every path. rl_free's loop over
+  the drops saved five register pairs on the path with no drop (hence
+  the C fast path in version 2), rs_append's in place path four pairs
+  that only its copy path needs, and the first version's single
+  threaded allocation five pairs for an inlined alloc.refill
+  (version 1's 1.326, out of line in the second row: a never taken
+  self call keeps a function out, since selfhost/arm64/inline.xo does
+  not inline a function on a call cycle).
+- `rt.mem_copy` and `rt.mem_move` are calls of memcpy and memmove;
+  clang stores a constant one byte append (xo_rs_push_byte) inline.
+- Each level costs a frame record: generated code to the C entry (kept:
+  generated code and seed 0.10.0-23ce8ce2 call xo_rl_new and the others
+  by name), the export's branch, the export, then alloc.xo. clang
+  inlines the C's levels; LLVM's LTO inlines the Xo ones, which is why
+  LLVM sits near 1.0 while arm64 does not.
+
+### Next experiments (ranked by likelihood)
+
+1. Shrink wrapping in selfhost/arm64 (save callee saved registers only
+   on the paths that use them), then rerun version 2: check out
+   3da29c8b's obj.xo, cabi.xo, xo_rt.c and run this file's A/B on
+   bench/perf/alloc small, nested walk, text split and lines.
+2. Inline `rt.mem_copy` and `rt.mem_move` for a length known small
+   (one to sixteen bytes: loads and stores) in both arm64 emitters,
+   then version 1's string objects.
+3. The export symbol as an alias of the Xo function instead of a
+   branch (raw-memory-2026-10-13.md's own next step), and generated
+   code calling `xo_x_obj_*` directly once a seed has them (the C
+   entry points then go with the next seed).
+4. Port only the cold list paths (rl_copy, rl_share, rl_grow: 0.992 to
+   1.017 on their workloads in version 2) once the hot ones can follow,
+   so the list code is not in both languages meanwhile.
