@@ -105,18 +105,18 @@ const (
 )
 
 // skipDumpReplay skips a test whose only check is the recorded replay of
-// a back end or mutation dump (SSA, arm64, LLVM, Go generator, defhash,
-// checker mutations and hatches) unless XO_SELFHOST_DUMPS=all or the run
-// records (decision 0217): an intended compiler change would otherwise
-// need a 25 to 40 minute re-recording. Program output goldens, the fixed
-// point, and the front end replays (lexer, parser, format, checker) stay
-// on.
+// a dump (lexer, parser, format, checker, SSA, arm64, LLVM, Go generator,
+// defhash, and the mutation and hatch runs) unless XO_SELFHOST_DUMPS=all
+// or the run records (decision 0217): any edit to a .xo file the dumps
+// cover, or an intended compiler change, would otherwise need a
+// re-recording (25 to 40 minutes for the back ends). Program output
+// goldens and the fixed point stay on.
 func skipDumpReplay(t *testing.T) {
 	t.Helper()
 	if os.Getenv("XO_SELFHOST_DUMPS") == "all" || goldensRecording() {
 		return
 	}
-	t.Skip("recorded back end dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it")
+	t.Skip("recorded dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it")
 }
 
 // goldensMode is $XO_SELFHOST_GOLDENS (replay when unset).

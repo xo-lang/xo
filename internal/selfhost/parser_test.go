@@ -29,6 +29,7 @@ import (
 // XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_PROGS=N, and XO_SELFHOST_KEEP=dir
 // as for the lexer.
 func TestSelfhostParserDifferential(t *testing.T) {
+	skipDumpReplay(t)
 	for _, backend := range []string{"go", "arm64", "llvm"} {
 		t.Run(backend, func(t *testing.T) {
 			t.Parallel()

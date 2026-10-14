@@ -14,6 +14,15 @@ and selfhost/gen with the same three commands, built by `xo build
 programs with the language of that tag. The table below describes the
 pieces as of that tag.
 
+The tag itself is not wasip1 clean: internal/build/bincache.go uses
+`syscall.ForkLock` (added in 15b3a46d), which wasip1 does not define, so
+`cmd/xoplay` at 87873aa5 does not build for wasip1 as is. The site's
+build-playground.py extracts the tag with `git archive` and drops those
+three lock calls in the extracted copy only (xoplay never uses the binary
+cache); deployed 2026-10-13 (site 454a6ca), test-playground.mjs passing.
+The Xo xoplay replacement removes the workaround. Last verified:
+2026-10-13.
+
 ## Pieces
 
 | Piece | Where | What |

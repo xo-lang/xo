@@ -161,4 +161,127 @@ server per run, 5,500 units minus 500 units over 5,000, the minimum of
 
 Task spawn, done, await, and scope close; the inject queue, idle
 workers, and steal rounds; fiber stacks; worker threads: what each
-needs is in decision 0212's Stage 2.
+needs is in decision 0212's Stage 2 (done: the section below).
+
+## Stage 2: the pool, locks, parks, stacks, threads, spawn and join
+
+Decision 0212 stage 2: std/native/llrt/pool.xo (worker pool, the
+locks' slow paths and futex waits, worker thread starts, fiber stacks,
+parks, the cancellation tree, a spawn's link and queueing, a close's
+help and join), called by xo_rt.c through cabi.xo; `XO_LLRT_C=sched`
+still builds the C path. Host as above (Apple M-series, darwin/arm64,
+about ten agents; instructions retired from `/usr/bin/time -l`). The
+per operation pairs are stage 1's (spawn 200 and 600 rounds of 1000
+tasks, pingpong 100k and 300k round trips, XO_THREADS=1, median of 9;
+C path / Xo, Xo over C). Scratch scripts, through the heavy lock.
+
+### C moved (against main at 4f792c55, which the branch merged)
+
+| | main 4f792c55 | ac6797ee |
+|---|---|---|
+| std/llrt/xo_rt.c, all lines | 7,569 | 7,834 |
+| active in a default build (`unifdef -UXO_SCHED_C`) | 7,088 | 6,565 (523 fewer) |
+| compiled only with -DXO_SCHED_C (the C path) | 481 | 1,269 |
+| compiled only without it (wrappers, declarations) | 114 | 190 |
+| std/native/llrt/pool.xo | | 1,308 |
+
+### Per operation, the Go driver
+
+| commit | change | spawn arm64 C / Xo | ratio | spawn LLVM C / Xo | ratio | pingpong arm64 C / Xo | ratio | pingpong LLVM C / Xo | ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| 73335916 | first cut | 2,139 / 2,258 | 1.056 | 1,931 / 1,900 | 0.984 | 3,724 / 4,362 | 1.171 | 3,654 / 3,741 | 1.024 |
+| 8c55740f | the lock's first try at each site, the wait's flush and budget in the C | 2,137 / 2,245 | 1.050 | 1,928 / 1,896 | 0.983 | 3,758 / 4,195 | 1.116 | 3,599 / 3,737 | 1.039 |
+| 8c55740f | the same, XO_SPIN_ROUNDS=0 | 2,128 / 2,236 | 1.051 | 1,908 / 1,882 | 0.986 | 2,922 / 3,031 | 1.037 | 2,687 / 2,847 | 1.059 |
+| 68b1c7b7 | the C finds a wait's fiber and root record, libSystem's clock, the spinner's pauses unrolled | 2,140 / 2,244 | 1.049 | 1,928 / 1,898 | 0.984 | 3,682 / 3,787 | 1.028 | 3,465 / 3,469 | 1.001 |
+| 24ec38e3 | a spawn queues in the spawner's ring the C found | 2,142 / 2,213 | 1.033 | 1,928 / 1,873 | 0.971 | 3,703 / 3,828 | 1.034 | 3,536 / 3,502 | 0.990 |
+| ac6797ee | merged with main (final) | 2,136 / 2,217 | 1.038 | 1,925 / 1,872 | 0.973 | 3,723 / 3,804 | 1.022 | 3,531 / 3,537 | 1.002 |
+| ac6797ee | the same, XO_SPIN_ROUNDS=0 | 2,135 / 2,215 | 1.038 | 1,923 / 1,870 | 0.972 | 3,512 / 3,728 | 1.062 | 3,382 / 3,374 | 0.998 |
+
+The first cut missed the bar on arm64. With spinning off, arm64 ping
+pong fell from 1.116 to 1.037: most of its difference was the spinning
+worker, whose 32 pauses per round were a counted loop in Xo (128
+instructions) where clang unrolls the C's to 32 yields
+(gotchas/scheduler-instruction-counts-spin.md). The rest came from C
+services called per operation (the root record and the fiber per wait,
+the clock per wake) and a thread local read per spawn, now passed in
+by the C or read from libSystem directly. At ac6797ee every pair is
+within the bar with spinning on; with it off arm64 ping pong measured
+1.062 (its C count moved from 2,922 to 3,512 between the two spin-off
+rounds: ping pong per round trip still varies by 15 to 20 percent
+between rounds, as stage 1 found).
+
+### Per operation, xo1 (the self hosted driver, s3 of the fixed point at 8c55740f)
+
+| spawn arm64 C / Xo | ratio | spawn LLVM C / Xo | ratio | pingpong arm64 C / Xo | ratio | pingpong LLVM C / Xo | ratio |
+|---|---|---|---|---|---|---|---|
+| 2,134 / 2,249 | 1.054 | 1,928 / 1,893 | 0.982 | 3,707 / 4,167 | 1.124 | 3,523 / 3,709 | 1.053 |
+
+xo1 counted like the Go driver at that commit (both before the fixes
+of 68b1c7b7 and 24ec38e3); xo1 was not measured again at ac6797ee (the
+owner moved long runs off the Mac; the Go driver's ac6797ee pairs above
+are the final figures).
+
+### HTTP (server instructions per cycle unit, XO_THREADS=1, min of 5)
+
+| commit | arm64 C / Xo | ratio | LLVM C / Xo | ratio |
+|---|---|---|---|---|
+| 73335916 | 647,120 / 654,300 | 1.011 | 594,058 / 591,651 | 0.996 |
+| ac6797ee | 644,043 / 644,483 | 1.001 | 590,884 / 588,971 | 0.997 |
+
+### Correctness
+
+- Task goldens (20: clock_timers, every conc_*, fault_task*,
+  select_arm_order, task_budget*, task_native) with the Go driver, arm64
+  and LLVM, default and XO_LLRT_C=sched: 20 of 20 in all four at every
+  stage 2 commit. Every golden (153) on both backends with the leak
+  check at e1e30654: 153 pass each.
+- internal/llvm TestRuntimeTasks, TestRuntimeEventLoop,
+  TestRuntimeThreads, TestGoldenThreads (ThreadSanitizer), TestGoldenTasks,
+  TestRuntimeAlloc: pass at 7f4ae2a3 and ac6797ee. cmd/xo TestNoGCTests
+  (shutdown), TestRecordReplayCLI, TestRecordReplayStamp, TestXoReplay,
+  TestSchedGoCallbackSeed, TestSchedSameSeedSameInterleaving (the
+  deterministic scheduler is the Go backend's std/rt, unchanged): pass
+  at 73335916 and ac6797ee. TestSelfhostWasm: pass at 73335916 and
+  ac6797ee.
+- Fixed point on the Mac at 8c55740f (seed: a cached xo1): s2 and s3
+  assembly identical (436,743,854 bytes), binaries identical
+  (87,305,136 bytes), s1 equals s2; s3's goldens 153 of 153 with arm64
+  and with LLVM. The final commit's fixed point ran on Linux arm64 (below).
+- `go test -short` over the repository: pass, but cmd/xo's run after the
+  merge timed out at 600 s while its first native build rebuilt xo1
+  (std changed); with XO_SELF_DRIVER=0 it passes in 51 s.
+- Linux arm64 (EC2, r8g.8xlarge, at ac6797ee): internal/arm64 goldens
+  and runtime tests pass; internal/llvm passes but for
+  ThreadSanitizer races in net goldens (below); the C path goldens,
+  TestNoGCTests and the scheduler tests pass; xo1 built by the Go `xo`,
+  its goldens 153 of 153 with arm64 (cc) and 153 of 153 with LLVM;
+  fixed point: s2 and s3 assembly identical (446,868,117 bytes),
+  binaries identical (87,479,096 bytes), s1 equals s2. The XO_NOLIBC=1
+  golden summary was not captured (the request printed only the
+  failures' tails: fault goldens, a known limit of those builds).
+- Linux amd64 (EC2, c7i.8xlarge, at ac6797ee): the C path goldens,
+  TestNoGCTests and the scheduler tests pass; TestGoldenThreads reports a
+  ThreadSanitizer race on a poll descriptor (pd_new's calloc on the
+  dialing thread, the poller's lock of it). Main at 4f792c55 reports the
+  same races (net_echo, http_wire, net_only) on the same host type: the
+  poller's epoll calls are Xo system calls since decision 0206 stage 3,
+  which ThreadSanitizer's epoll interceptors do not see. Not this
+  change.
+- Windows (EC2, scripts/windows-batch.sh, at ac6797ee): windows/amd64
+  152 of 153 goldens pass, windows/arm64 153 of 153 built; the runtime
+  tests fail only on net_only; `xo test` LLVM against Go 16 same.
+  net_only crashes (SIGSEGV, exit 139 under Git Bash) after its
+  redirect checks with the default path and with XO_LLRT_C=sched alike,
+  and at main 4f792c55 too: not this change.
+
+EC2 instances (launched and terminated by the lead's queue):
+i-EXAMPLE54 (Linux arm64), i-EXAMPLE40 (Linux amd64),
+i-EXAMPLE05 (Linux amd64, main), i-EXAMPLE50,
+i-EXAMPLE11, i-EXAMPLE25 (Windows).
+
+### Not done (decision 0212 stage 3)
+
+Await and the wait lists, the task's record and end (allocation, the
+entry call, drops, fault text), contexts and budgets, the deadlock check
+and the test world's clock, Linux thread starts in libc builds, the
+pool's setup: decision 0212's Stage 3 lists what each needs.
