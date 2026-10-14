@@ -1199,11 +1199,10 @@ fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
 }
 
 /// The personality routine the unwind tables name on os (decision 0221):
-/// the runtime's export xo_x_personality (std/native/llrt/cabi.xo), but
-/// the C xo_personality on Windows (decision 0197).
-pub fn personality_name(os: Str) -> Str {
-  if os == "windows" { "xo_personality" } else { "xo_x_personality" }
-}
+/// the runtime's export xo_x_personality (std/native/llrt/cabi.xo; on
+/// Windows the language handler, which passes every system exception
+/// on, decision 0197).
+pub fn personality_name(os: Str) -> Str { "xo_x_personality" }
 
 fn (g: G) func_begin() -> Str {
   g.local("${g.lbl_prefix()}_begin")

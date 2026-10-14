@@ -1435,7 +1435,7 @@ XO_NORETURN static void fault_exit(xo_ctx *c) {
 }
 
 #if !defined(XO_UNWIND_LIBGCC)
-int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old);
+int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old, int64_t wcx);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #if defined(_WIN32)
 EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
@@ -1459,7 +1459,15 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality));
+#ifdef _WIN32
+	// the walk starts here, so the unwinder's own frames are not unwound
+	// on every raise (unwind.xo win_raise)
+	CONTEXT cx;
+	RtlCaptureContext(&cx);
+	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
+#else
+	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
+#endif
 	fault_exit(c);
 }
 #else

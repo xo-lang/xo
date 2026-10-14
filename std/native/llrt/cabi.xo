@@ -488,8 +488,9 @@ fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) { pool.scope_join(pl, s,
 /// raise): runs the first landing pad below the boundary in a frame whose
 /// personality routine is pers (xo_x_personality's address) or pers_old
 /// (xo_personality's, the name an older xo's emitters write) and never
-/// returns then; 0 when nothing catches the fault.
-fn unwind_fault(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int { unwind.raise(exc, boundary, pers, pers_old) }
+/// returns then; 0 when nothing catches the fault. wcx: on Windows, the
+/// caller's CONTEXT, where the walk starts.
+fn unwind_fault(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int { unwind.raise(exc, boundary, pers, pers_old, wcx) }
 
 /// The personality routine of generated code (unwind.xo
 /// export_personality: unwind_fault reads the call site tables itself,

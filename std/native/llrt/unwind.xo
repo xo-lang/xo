@@ -151,10 +151,12 @@ const EXC_CLASS = 6363304799676486988
 /// routine is pers (xo_x_personality's address) or pers_old (the C
 /// forwarder xo_personality, which code from an xo before the emitters
 /// named the export refers to): never returns then. 0 when nothing
-/// catches the fault.
-pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
+/// catches the fault. wcx: on Windows, the CONTEXT the C fault_raise
+/// captured (where the walk starts; 0: this function's own), unused
+/// elsewhere.
+pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int {
   match target.os {
-    TargetOs.Windows => return win_raise(exc, boundary, pers, pers_old)
+    TargetOs.Windows => return win_raise(exc, boundary, pers, pers_old, wcx)
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
   }
   match target.arch {
@@ -294,8 +296,15 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
 /// does not call it: it compares a frame's personality with its address
 /// and reads the call site table itself. A foreign unwinder calling it
 /// (a C++ exception through Xo frames, which nothing raises) is told to
-/// go on.
-pub fn export_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int { URC_CONTINUE_UNWIND }
+/// go on: on Windows, where the system's exception dispatcher calls it as
+/// the language handler of frames of generated code (rec, frame, cx,
+/// disp), ExceptionContinueSearch (1).
+pub fn export_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
+  match target.os {
+    TargetOs.Windows => 1
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => URC_CONTINUE_UNWIND
+  }
+}
 
 /// The calling thread's buffer for a fault's message (MSG_BYTES bytes in
 /// its scratch record), or 0 when the record cannot be mapped.
@@ -730,7 +739,7 @@ const WA_R1 = 16
 /// exception in the first register (RtlRestoreContext, which does not
 /// return). 0 when nothing catches the fault: past the boundary, or a
 /// frame with no unwind data (the end of the stack).
-fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
+fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int {
   let s = scratch()
   if s == 0 {
     return 0
@@ -744,7 +753,14 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
   let o_sp = if arm { WA_SP } else { WX_SP }
   let cx = s + W_CX
   let here = s + W_HERE
-  sys_windows.RtlCaptureContext(cx)
+  // the walk starts at the C fault_raise, whose context it captured:
+  // the unwinder's own frames (the export, raise, win_raise) are not
+  // unwound on every raise (wcx 0: from here)
+  if wcx != 0 {
+    rt.mem_copy(cx, wcx, size)
+  } else {
+    sys_windows.RtlCaptureContext(cx)
+  }
   while true {
     let pc = rt.mem_load(cx, o_pc, 8)
     if pc == 0 {
