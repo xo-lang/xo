@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let n: Int = "text" // ERROR XO0401
+  os.stdio.println("${n}")
+}

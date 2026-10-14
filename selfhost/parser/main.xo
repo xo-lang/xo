@@ -7,11 +7,11 @@
 // of `xo astdump` (internal/parser); --sig parses in signature mode (std
 // declaration files).
 
-fn main(os: Os) ! {
+fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0
   var sig = false
   var files: List[Str] = []
-  for a in os.env.args() {
+  for a in args {
     if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
     } else if a == "--sig" {
@@ -45,4 +45,21 @@ fn main(os: Os) ! {
     out.write(dump(f, src, sig))
   }
   os.stdio.print(out.freeze())
+}
+
+/// dump_main is this component's command line with args, for `xo dev
+/// dump` (decision 0209) as for the component's own binary; the exit
+/// status.
+pub fn dump_main(os: Os, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+  match dump_body(os, args) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("${e.debug()}")
+      1
+    }
+  }
+}
+
+fn main(os: Os) {
+  os.proc.exit(dump_main(os, os.env.args()))
 }

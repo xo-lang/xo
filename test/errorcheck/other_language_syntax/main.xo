@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  x := 1 // ERROR XO0177
+  os.stdio.println("${x}")
+}

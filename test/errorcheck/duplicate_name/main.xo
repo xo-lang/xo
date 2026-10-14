@@ -1,0 +1,7 @@
+fn twice() -> Int { 1 }
+
+fn twice() -> Int { 2 } // ERROR XO0603
+
+fn main(os: Os) {
+  os.stdio.println("${twice()}")
+}

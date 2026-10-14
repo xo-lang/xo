@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let n = 1
+  n = 2 // ERROR XO0502
+  os.stdio.println("${n}")
+}

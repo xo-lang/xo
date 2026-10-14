@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let m: Map[Str, Int] = {"a": 1}
+  os.stdio.println("${m["a"]}") // ERROR XO0410
+}
