@@ -26,6 +26,11 @@
 # refused unless XO_SEED_ALLOW_DIRTY=1.
 #
 #   seed-pack.sh --manifest OUTDIR   only rebuild OUTDIR/manifest.txt
+#
+# Seeds are built at clang -O2: an xo whose bin/xo.opt names another
+# level (`go run ./scripts/xobuild` builds xo at -O0 on an LLVM host,
+# decision 0220) is refused unless XO_SEED_ALLOW_OPT=1; rebuild it with
+# XO_LLVM_OPT=O2 go run ./scripts/xobuild.
 set -euo pipefail
 
 die() { echo "seed-pack: $*" >&2; exit 1; }
@@ -67,6 +72,9 @@ xo=$1; out=$2
 [ -f "$xo" ] || die "$xo: no such file"
 xo=$(cd "$(dirname "$xo")" && pwd)/$(basename "$xo")
 bindir=$(dirname "$xo"); prefix=$(dirname "$bindir")
+if [ -f "$bindir/xo.opt" ] && [ "$(cat "$bindir/xo.opt")" != O2 ] && [ "${XO_SEED_ALLOW_OPT:-0}" != 1 ]; then
+  die "$xo was built at clang -$(cat "$bindir/xo.opt") (bin/xo.opt); seeds are -O2: XO_LLVM_OPT=O2 go run ./scripts/xobuild"
+fi
 
 # the layout: a release's lib/xo, else a checkout
 if [ -d "$prefix/lib/xo/std" ]; then

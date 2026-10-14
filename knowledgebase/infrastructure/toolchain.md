@@ -237,7 +237,8 @@ go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc,verify,mutants
 go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--test] [--stages] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder: the build stage of xo ssadump for the functions it completes, then (--stages, when it skipped nothing) the stages unwind, landings, cleanup, rc, verify, and mutants, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
 go run ./cmd/xo asmdump [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # hidden: the arm64 assembly of internal/arm64 (build.Arm64AsmDump: the SSA as xo ssadump builds it, verified, InsertRC, generated, again without inlining when the inlined module does not verify); --each prints === asm <dir> before each run; --bench=N times arm64.Generate alone (decision 0158; last verified: 2026-10-11)
 XO_PHASE_TIMES=1 xo asmdump <dir>  /  xo1 asm|build|test --phase-times <dir>   # per phase wall clock on stderr as `phase NAME MS ms` (Go: check, ssa, verify, insert_rc, verify, inline, emit, print; xo1: check, ssa, tz, prune_unwind, add_landings, cleanup, insert_rc, inline, emit, print or write, assemble (selfhost/macho, or the parallel `cc -c` of a split assembly), then cc or link); bench/results/xo1-perf-2026-10-12.md, bench/results/fast-builds-2026-10-13.md (last verified: 2026-10-14)
-XO_EMIT_JOBS=N xo build --backend=arm64 ...          # decision 0220 stage 1: the tasks of insert_rc, the inlined module's verification, the arm64 emitter's parts, and the parts' assembly (default the cores, at most 8); a module of 256 or more functions is generated in parts (at least 128 functions each, at most 32), each part one file `prog-<os>.<i>.s` assembled apart (parallel `cc -c`, or selfhost/macho tasks with --as=macho) and linked once; the output does not depend on N. The self build of xo: 59.00 s on the Mac (was 337.28 s), 87.84 s on r8g.8xlarge at 8 jobs and 49.83 s at 16 (was 496.82 s), peak RSS 19.86 GB at 16 (last verified: 2026-10-14)
+XO_LLVM_OPT=O0|O1|O2|O3 xo build --backend=llvm ...  # decision 0220: clang's level for the program's IR (default O2; --release always O2); `go run ./scripts/xobuild` and scripts/bootstrap-xo.sh build xo at O0 unless it is set (x86 self build 1:23 on c7i.8xlarge at O0 against 18:51 at O2); xobuild records the level in bin/xo.opt and keys its cache by it; scripts/seed-pack.sh refuses an xo whose bin/xo.opt is not O2 (seeds and releases are O2; release.sh sets XO_LLVM_OPT=O2 for the Windows build); XO_LLVM_JOBS defaults to the physical cores, at most memory/4 GB (last verified: 2026-10-14)
+XO_EMIT_JOBS=N xo build --backend=arm64 ...          # decision 0220 stage 1: the tasks of insert_rc, the inlined module's verification, the arm64 emitter's parts, and the parts' assembly (default the physical cores, at most 16 and memory/3 GB); a module of 256 or more functions is generated in parts (at least 128 functions each, at most 32), each part one file `prog-<os>.<i>.s` assembled apart (parallel `cc -c`, or selfhost/macho tasks with --as=macho) and linked once; the output does not depend on N. The self build of xo: 59.00 s on the Mac (was 337.28 s), 87.84 s on r8g.8xlarge at 8 jobs and 49.83 s at 16 (was 496.82 s), peak RSS 19.86 GB at 16 (last verified: 2026-10-14)
 XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
@@ -833,7 +834,11 @@ Last verified: 2026-10-07
   through the heavy lock. Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
-- `XO_LLRT_C=sched` (2026-10-13, decision 0212): the C runtime's own
+- `XO_LLRT_C=sched` (deleted 2026-10-14, zero-C audit item W1: the C
+  below, sched_c.xo, and -DXO_SCHED_C are gone, and the name now fails
+  the build like every deleted one; TestRuntimeTasks and
+  TestRuntimeEventLoop run the Xo path only; the history follows)
+  (2026-10-13, decision 0212): the C runtime's own
   scheduler core (the fiber switch assembly, `__thread` context and
   worker, the run queue ring, fiber run, park, wake, start, task
   states: xo_rt.c compiled with -DXO_SCHED_C, which both drivers add
@@ -857,7 +862,7 @@ Last verified: 2026-10-07
   xo_x_scope_add, xo_x_scope_join, xo_x_worker_main, ...; the C services
   pool.xo calls are xo_sched_rt). Measure it with XO_SPIN_ROUNDS=0 too:
   the spinning worker's instructions are part of a ping pong's per
-  operation count. Last verified: 2026-10-13.
+  operation count. Last verified: 2026-10-14 (deleted).
 - Checking selfhost/macho against clang after an arm64 emitter change
   (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
   -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without
@@ -923,6 +928,17 @@ Last verified: 2026-10-07
   <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
   the C paths; PORT (18090). Through the heavy lock, with
   `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/httpclient/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-14, audit item B10): builds the client of
+  bench/perf/httpclient with each backend, starts serve/ (a Go server of
+  fixed raw responses, built into the out dir, stopped by its own PID at
+  the end), and for each workload (len, chunked, big, redirect; `none`
+  is the start and the end) runs the client 5 times under
+  `/usr/bin/time -l` with N requests (default 3000), each on a
+  connection of its own; prints `<w> <backend> <min instructions
+  retired>` of the client. The C client is gone: an xo from before B10
+  (main 16524ee6) with its own std measures it. PORT (18095). Through
+  the heavy lock. Last verified: 2026-10-14.
 - `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
   working directory, and process environments (mkdir, tree, remove,
@@ -2256,7 +2272,7 @@ Last verified: 2026-10-10.
   script and here, and run `go test ./third_party/mbedtls ./internal/build`
   and `go test ./internal/llvm -run 'TestTLSDiff|TestGolden.*/http_tls'`.
 - Build (internal/build/tls.go): a native link whose generated code names
-  a std/http runtime function (`xo_cl_do`, `xo_srv_new`, `xo_tls_*`) is
+  a std/http runtime function (`xo_cl_start`, `xo_srv_new`, `xo_tls_*`) is
   compiled with `-DXO_TLS`, the library's include directories and
   configuration defines, and linked with `libxotls.a` (plus `-framework
   Security -framework CoreFoundation` on macOS, for the system's roots).
@@ -3309,7 +3325,7 @@ name is its version and commit, `<version>-<commit, 8 hex>`. Layout (the
 first seed, 0.9.0-5e21dc31 from main 5e21dc31, uploaded by the lead on
 2026-10-13 for darwin-arm64 and linux-arm64):
 
-    seeds/latest.txt                               the newest seed name, one line (0.9.0-5e21dc31)
+    seeds/latest.txt                               the newest seed name, one line (0.10.0-23ce8ce2)
     seeds/<seed>/<goos>-<goarch>.tar.gz            the tree: xo/bin/xo, xo/std (xo finds std at bin/../std)
     seeds/<seed>/<goos>-<goarch>.tar.gz.sha256     "<hex>  <goos>-<goarch>.tar.gz" (sha256sum format)
     seeds/<seed>/manifest.txt                      "version V", "commit <10 hex>", "commit_full <40 hex>",
@@ -3319,7 +3335,17 @@ A seed carries no rtpack, xo-gobind, third_party, or zone data: it only
 builds selfhost/xo, against the checkout's `--std` (the TLS sources
 then come from the checkout's third_party). From the next seed on, each
 seed bumps the minor version (`selfhost/cli/core` `VERSION`, the lead's
-commit on main; 0.10.0 next).
+commit on main; 0.11.0 next).
+
+Seeds uploaded: 0.9.0-5e21dc31 (2026-10-13, built natively and through
+the chain, Windows cross built) and 0.10.0-23ce8ce2 (2026-10-14, the
+version bump 23ce8ce2 on main after fast builds round 2: darwin-arm64
+built natively on the Mac at clang -O2 after the fixed point; linux-arm64,
+linux-amd64, windows-amd64, and darwin-amd64 cross built on the Mac by
+that xo with `--backend=go --targets=<os>/<arch>`, 16 to 24 s each;
+tarballs 14 to 16 MB, darwin-arm64 35 MB). The owner had 0.10.0 uploaded
+without a separate verification run; the next builds from it are its
+check (owner, 2026-10-14). Last verified: 2026-10-14.
 
 internal/xotool (seed.go) fetches a seed when no local xo is found:
 seeds/latest.txt, then `<host>.tar.gz.sha256` and `<host>.tar.gz` with
@@ -3370,7 +3396,7 @@ TestSeedPackHello packs the checkout's bin/xo, fetches it from a local
 directory, and runs hello with the unpacked xo (no XO_STD, a working
 directory without std); it skips without a built xo.
 
-Packing and uploading seed 0.10.0 (the lead, after the version bump
+Packing and uploading a seed (the lead, after the version bump
 commit on main, from a clean checkout of it; OUTDIR outside the repo,
 since release.sh deletes dist/):
 
@@ -3381,7 +3407,10 @@ since release.sh deletes dist/):
     # arm64; LLVM split 12 on amd64): on an instance of that arch
     #   cd ~/xo && go run ./scripts/xobuild && bash scripts/seed-pack.sh bin/xo ~/seed
     # then copy ~/seed/linux-*.tar.gz, .tar.gz.sha256 and .info into "$out";
-    # or cross built on the Mac by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
+    # or cross built on the Mac with the Go backend (how 0.10.0 was made,
+    # 16 to 24 s per platform; std from `git ls-files std` beside bin/):
+    #   bin/xo build --backend=go --targets=linux/arm64 --std=$PWD/std -o X/bin/xo selfhost/xo
+    # or by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
     scripts/release.sh 0.10.0
     XO_SEED_VERSION=0.10.0 XO_SEED_PLATFORM=linux-arm64 XO_SEED_COMMIT=$c \
       scripts/seed-pack.sh dist/xo-0.10.0-linux-arm64/bin/xo "$out"

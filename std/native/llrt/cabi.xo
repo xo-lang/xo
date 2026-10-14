@@ -268,15 +268,6 @@ fn b64_val(c: Int) -> Int {
 // lists, hosts, ports, and addresses are bytes at an address and a length,
 // or zero terminated where the C keeps them so.
 
-/// 1 when every list of the ln bytes at lp admits the host and the port
-/// (onlyNet.admits), else 0.
-fn net_admits(lp: Int, ln: Int, hp: Int, hn: Int, pp: Int, pn: Int) -> Int {
-  if netpolicy.admits(raw.str_at(lp, ln), raw.str_at(hp, hn), raw.str_at(pp, pn)) {
-    return 1
-  }
-  0
-}
-
 /// 1 when the lists admit the dial or listen address of the n bytes at a
 /// (onlyNet.admitsAddr), else 0.
 fn net_admits_addr(lp: Int, ln: Int, a: Int, n: Int) -> Int {
@@ -365,12 +356,12 @@ fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task
-// states, in sched.xo (sched_c.xo with XO_LLRT_C=sched, whose C then
-// calls its own copies), and the worker pool, the locks' slow paths, and
-// the fiber stacks, in pool.xo (stage 2; the C path then calls none of
-// these). Addresses are of the C runtime's records; nothing here
-// allocates Xo values, counts, or faults. fiber_main's and worker_main's
-// addresses are where a fiber and a worker thread start.
+// states, in sched.xo, and the worker pool, the locks' slow paths, and
+// the fiber stacks, in pool.xo (stage 2; their C path, XO_LLRT_C=sched,
+// was deleted on 2026-10-14). Addresses are of the C runtime's
+// records; nothing here allocates Xo values, counts, or faults.
+// fiber_main's and worker_main's addresses are where a fiber and a
+// worker thread start.
 
 fn fiber_main(f: Int) { sched.fiber_main(f) }
 

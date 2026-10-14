@@ -1611,9 +1611,9 @@ fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.pr
 fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
 
 /// Net.only (decision 0175): the entries trimmed and lowered (std/rt's
-/// normHosts); the C runtime checks dial, listen, and a client's
-/// redirects against the lists (net_admits), std/native/http.xo each
-/// request.
+/// normHosts); the C runtime checks dial and listen against the lists
+/// (net_admits_addr), std/native/http.xo each request and http1.xo a
+/// client's redirects.
 fn net_only(n: Net, hosts: List[Str]) -> Net {
   var norm: List[Str] = []
   for h in hosts {

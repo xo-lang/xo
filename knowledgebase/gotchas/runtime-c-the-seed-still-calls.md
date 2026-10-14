@@ -1,6 +1,8 @@
 # Runtime C that the seed still calls cannot be deleted yet
 
-Status: Observed (2026-10-14, B08 of the zero-C audit)
+Status: Observed (2026-10-14, B08 of the zero-C audit). Resolved the
+same day: seed 0.10.0-23ce8ce2 has B08, and the seed compatibility
+block (xo_crypto.c's xo_rand_*, xo_win.c's xo_w_entropy) is deleted.
 
 Symptom: after Rand moved to std/native/llrt/rand.xo (the SSA builders
 call the native prelude's llrt_rand_* instead of rt.rand_*) and
