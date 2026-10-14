@@ -128,24 +128,6 @@ xo_rstr *xo_rs_append_bytes(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 	return a;
 }
 
-// xo_bytes_span is the end of the run of bytes of b from i in the class
-// cls: 0 ASCII (below 0x80), 1 printable ASCII other than `"` and `\`
-// (what strconv.Quote keeps): the bulk scans of
-// std/native/llrt/unicode.xo (decision 0180).
-int64_t xo_bytes_span(const char *p, int64_t n, int64_t i, int64_t cls) {
-	const unsigned char *s = (const unsigned char *)p;
-	if (cls == 0) {
-		while (i < n && s[i] < 0x80) {
-			i++;
-		}
-		return i;
-	}
-	while (i < n && s[i] >= 0x20 && s[i] < 0x7F && s[i] != '"' && s[i] != '\\') {
-		i++;
-	}
-	return i;
-}
-
 // xo_rs_with_cap is an empty string with room for n bytes
 // (BytesBuilder.with_capacity).
 xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) {
@@ -191,21 +173,6 @@ int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
 	int size;
 	int32_t r = n_utf8_decode((const unsigned char *)p + i, n - i, &size);
 	return ((int64_t)r << 3) | size;
-}
-
-// xo_bytes_rune_count is utf8.RuneCount (an invalid byte is one rune).
-int64_t xo_bytes_rune_count(const char *p, int64_t n) { return xo_str_rune_count(p, n); }
-
-// xo_bytes_hex is the lowercase hex of the bytes (Bytes.to_hex).
-xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
-	static const char hex[] = "0123456789abcdef";
-	xo_rstr *s = rs_new(2 * n);
-	for (int64_t i = 0; i < n; i++) {
-		s->data[2 * i] = hex[(unsigned char)p[i] >> 4];
-		s->data[2 * i + 1] = hex[(unsigned char)p[i] & 15];
-	}
-	*len = 2 * n;
-	return s;
 }
 
 // The C versions of the runtime intrinsics (decisions 0193 and 0195):

@@ -11,9 +11,6 @@
 // ---------------------------------------------------------------------------
 // Strings
 
-fn str_contains(s: Str, sub: Str) -> Bool
-fn str_starts_with(s: Str, p: Str) -> Bool
-fn str_ends_with(s: Str, p: Str) -> Bool
 /// The byte index of the first sub at or after from, or -1.
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
@@ -21,8 +18,6 @@ fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 /// The byte at i (0 to 255), or -1 out of range.
 fn str_byte(s: Str, i: Int) -> Int
 fn str_rune_count(s: Str) -> Int
-fn str_split(s: Str, sep: Str) -> List[Str]
-fn str_lines(s: Str) -> List[Str]
 fn str_repeat(s: Str, n: Int) -> Str
 fn str_join(xs: List[Str], sep: Str) -> Str
 /// The string of one byte (0 to 255).
@@ -38,9 +33,6 @@ fn rs_append_duration(s: Str, d: Int) -> Str
 /// (mode 1) or raised (mode 2); mode 0 copies (std/native/llrt/unicode.xo,
 /// decision 0180).
 fn rs_append_bytes(s: Str, b: Bytes, lo: Int, hi: Int, mode: Int) -> Str
-/// The end of the run of bytes of b from i in the class cls: 0 ASCII, 1
-/// printable ASCII other than `"` and `\` (std/native/llrt/unicode.xo).
-fn bytes_span(b: Bytes, i: Int, cls: Int) -> Int
 /// s + the byte x (0 to 255; BytesBuilder.write_byte).
 fn rs_push_byte(s: Str, x: Int) -> Str
 /// s + the n (0 to 8) low bytes of w, the lowest first: short text
@@ -108,12 +100,6 @@ fn duration_parse_ok(s: Str) -> Bool
 fn duration_parse(s: Str) -> Int
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
-/// utf8.ValidString (std/native/llrt/jsontext.xo).
-fn utf8_valid(s: Str) -> Bool
-/// utf8.RuneCount.
-fn bytes_rune_count(b: Bytes) -> Int
-/// The lowercase hex of b.
-fn bytes_hex(b: Bytes) -> Str
 /// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
 /// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
 /// backends lower a constant op inline (decision 0193 step 3). Decision

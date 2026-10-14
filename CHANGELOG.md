@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: the C with no caller is deleted (zero-C audit item
+  W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
+  lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
+  their std/native/rt.xo declarations), and the -D flags of deleted C
+  paths that xo's io_flags still added. A build with an `XO_LLRT_C`
+  name that has no C path (no `std/native/llrt/<name>_c.xo`; `all`
+  aside) now fails with `XO_LLRT_C=<name>: no C path named <name>`
+  instead of silently building the Xo path; the live names are net,
+  sched, and text.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop
