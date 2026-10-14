@@ -73,8 +73,11 @@ How other self hosted languages handle it:
    path), at significant points such as before a public release or
    1.0, and not before the build speed work of decision 0220 lands. The
    oldest hops (the go-compiler-final Go compiler, then 0.9.0) keep
-   their own speed forever (about 40 minutes per hop on Linux arm64,
-   2026-10-14); only hops after the speedups get cheaper. The tag
+   their own speed forever; only hops after the speedups get cheaper.
+   Measured per hop (2026-10-13/14): 411 s on linux/arm64 r8g.8xlarge
+   and 311 s on the Mac (decision 0215), against 2,308 s on linux/amd64
+   c7i.8xlarge and 3,541 s on the Intel Mac (both through LLVM), which is
+   why the replay runs on arm64. The tag
    go-compiler-final (87873aa5) is the root: the Go toolchain builds that
    tree's `xo`, which builds xo1, which builds each later release in order
    to the current one. The lead replays the chain on EC2 once per release
