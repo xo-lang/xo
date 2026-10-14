@@ -37,7 +37,7 @@ const ccCacheEnv = "XO_CC_CACHE"
 
 // EnableTestCCache turns the C compile cache on for a test binary
 // (TestMain), unless XO_CC_CACHE is already set, and removes entries
-// unused for a week.
+// unused for XO_CACHE_MAX_AGE (testCacheAge).
 func EnableTestCCache() {
 	if _, ok := os.LookupEnv(ccCacheEnv); ok {
 		return
@@ -48,7 +48,7 @@ func EnableTestCCache() {
 	}
 	dir := filepath.Join(c, "xo", "testcc")
 	os.Setenv(ccCacheEnv, dir)
-	trimCCCache(dir, 7*24*time.Hour)
+	trimCCCache(dir, testCacheAge())
 }
 
 func ccCacheDir() string {
@@ -263,7 +263,7 @@ func isDir(p string) bool {
 // selfhost/cli/bind) and the go command's version (the bindings read Go's
 // export data). A fresh directory per run bound every `use go` golden
 // again (about 0.8 s each) and so missed XO_BIN_CACHE as well. Entries
-// unused for a week are removed.
+// unused for XO_CACHE_MAX_AGE are removed (testCacheAge).
 func TestGobindDir() (string, error) {
 	bin, err := Path()
 	if err != nil {
@@ -288,7 +288,7 @@ func TestGobindDir() (string, error) {
 		return "", err
 	}
 	root := filepath.Join(base, "xo", "testgobind")
-	trimCCCache(root, 7*24*time.Hour)
+	trimCCCache(root, testCacheAge())
 	dir := filepath.Join(root, hex.EncodeToString(h.Sum(nil))[:20])
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -306,7 +306,7 @@ func TestGobindDir() (string, error) {
 // does, while its generated code is the same. The files are written
 // once, each under a temporary name and renamed, so concurrent tests see
 // whole files. Callers keep their outputs elsewhere (t.TempDir()).
-// Entries unused for a week are removed.
+// Entries unused for XO_CACHE_MAX_AGE are removed (testCacheAge).
 func TestProgramDir(kind string, files map[string]string) (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -322,7 +322,7 @@ func TestProgramDir(kind string, files map[string]string) (string, error) {
 		fmt.Fprintf(h, "%s %d\n%s", n, len(files[n]), files[n])
 	}
 	root := filepath.Join(base, "xo", "testprog", kind)
-	testProgTrim.Do(func() { trimCCCache(root, 7*24*time.Hour) })
+	testProgTrim.Do(func() { trimCCCache(root, testCacheAge()) })
 	dir := filepath.Join(root, hex.EncodeToString(h.Sum(nil))[:20])
 	for _, n := range names {
 		p := filepath.Join(dir, filepath.FromSlash(n))
@@ -363,9 +363,30 @@ func writeAtomicUnique(p string, data []byte) error {
 	return os.Rename(f.Name(), p)
 }
 
+// testCacheAge is how long an unused entry of these caches stays:
+// XO_CACHE_MAX_AGE (a Go duration, 0 keeps everything) as for xo's
+// caches (decision 0223), default 24 hours, and never under two hours
+// (an entry in use is touched at most when used, the same margin as
+// selfhost/prune).
+func testCacheAge() time.Duration {
+	age := 24 * time.Hour
+	if v := os.Getenv("XO_CACHE_MAX_AGE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			age = d
+		}
+	}
+	if age <= 0 {
+		return 0
+	}
+	return max(age, 2*time.Hour)
+}
+
 // trimCCCache removes the entries (and leftover temporary directories)
-// of dir not used within age.
+// of dir not used within age (nothing when age is 0).
 func trimCCCache(dir string, age time.Duration) {
+	if age <= 0 {
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
