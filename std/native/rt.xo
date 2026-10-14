@@ -230,6 +230,17 @@ fn auxval(k: Int) -> Int
 /// f(arg), and exits the thread. The parent gets the child's id, or the
 /// negative errno (decision 0206 stage 2).
 fn sys_clone(flags: Int, sp: Int, tid: Int, tls: Int) -> Int
+/// Stores the caller's callee saved registers at the address regs, by
+/// DWARF register number (word n is register n: x19 to x30 and sp, the
+/// return address in x30's word; d8 to d15 at words 72 to 79), for the
+/// unwinder of std/native/llrt/unwind.xo (decision 0221). A call of a
+/// trampoline the emitters write at its first use (arm64; on x86_64 it
+/// stores nothing).
+fn unwind_save(regs: Int)
+/// Restores the registers at regs (unwind_save's words, and x0 and x1)
+/// and jumps to the address in word 96 with the stack pointer of word
+/// 31: never returns (decision 0221; arm64 only, a trap on x86_64).
+fn unwind_resume(regs: Int)
 /// The address of b's first byte (valid while b is alive; the kernel may
 /// write there only when b is unique, as bytes_buf's and sys_buf's are).
 fn bytes_addr(b: Bytes) -> Int

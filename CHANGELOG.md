@@ -14,6 +14,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   on the wire are unchanged; http workloads 0.976 to 1.001 of the C's
   instructions on HTTP/1.1, HTTP/2 within noise
   (bench/results/http-writer-2026-10-14.md).
+- Programs linked with no C library (XO_NOLIBC=1) on linux/arm64 unwind
+  faults: deferred code runs and tasks and `task.isolate` catch faults,
+  through an unwinder written in Xo (std/native/llrt/unwind.xo:
+  .eh_frame_hdr lookup, DWARF CFI interpreter, the personality routine;
+  decision 0221). The 12 fault goldens that ended at the fault now pass
+  on the arm64 and LLVM backends; xo_nolibc.c loses its unwinder stubs.
 - Native runtime (zero-C audit item B10): std/http's client reads
   HTTP/1.1 responses, follows redirects, and parses URLs in Xo
   (std/native/llrt/http1.xo `client_do`, `parse_response`); the C keeps

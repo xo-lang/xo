@@ -90,6 +90,10 @@ fn (g: G) trampolines(var out: List[Str]) {
     // thread (exit, 93)
     out.push("${g.tramp_def("xo_clone")}\t.p2align 2\n${g.tramp("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
       "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
+    // rt.unwind_save and rt.unwind_resume (decision 0221), which only the
+    // same programs (no C library) use
+    out.push("${g.tramp_def("xo_unwind_save")}\t.p2align 2\n${g.tramp("xo_unwind_save")}:\n\t${unwind_save_body().join("\n\t")}\n")
+    out.push("${g.tramp_def("xo_unwind_resume")}\t.p2align 2\n${g.tramp("xo_unwind_resume")}:\n\t${unwind_resume_body().join("\n\t")}\n")
   }
 }
 

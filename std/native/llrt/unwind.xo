@@ -1,0 +1,748 @@
+// The fault unwinder of programs linked with no C library (XO_NOLIBC=1,
+// decision 0221; the zero-C audit's item B05): what libgcc's
+// _Unwind_ForcedUnwind, xo_rt.c's fault_stop, and its xo_personality do
+// for a fault, in Xo over raw memory. The C runtime's fault_raise calls
+// raise (cabi_nolibc.xo unwind_fault) with the context's exception object
+// and boundary; raise walks the frames from its own up through the
+// program's .eh_frame_hdr table and the DWARF call frame information of
+// .eh_frame, and at the first frame of generated code whose call site has
+// a landing pad it restores that frame's registers and jumps there
+// (rt.unwind_resume), with the exception in x0 as the personality
+// routine's protocol sets it. The landing pad runs the cleanups and calls
+// xo_fault_continue, which raises again from there. raise returns 0 when
+// nothing catches the fault: past the boundary (the runtime's frames),
+// at the end of the stack, or on unwind information it does not read
+// (a DWARF expression, an unknown instruction); fault_raise then reports
+// it and ends the program, as before this module.
+//
+// linux/arm64 only for now: on x86_64 raise returns 0 at once (the
+// registers and the trampolines are arm64's).
+//
+// Nothing here allocates, faults, or keeps a counted value: the scratch
+// record is one mapping per thread, kept in thread local word UNW_TLS;
+// arithmetic that could overflow on bad tables wraps (rt.int_wrap).
+use native/llrt/linux
+use native/rt
+
+/// The thread local word holding the thread's scratch record
+/// (std/native/llrt/sched.xo lists the table's words).
+const UNW_TLS = 7
+/// The record's bytes (one mapping).
+const SCRATCH = 20480
+
+// The record (byte offsets): a header, two register sets, the rule set
+// of the frame being read, the rules after the CIE's instructions (for
+// DW_CFA_restore), and the stack of DW_CFA_remember_state.
+/// The frame's function: its first address and the end of its range.
+const H_BEGIN = 0
+const H_END = 8
+/// Its language specific data area (the call site table), or 0.
+const H_LSDA = 16
+/// The CIE's return address register, alignment factors, and the FDE's
+/// pointer encoding.
+const H_RAREG = 24
+const H_CALIGN = 32
+const H_DALIGN = 40
+const H_FENC = 48
+/// The CIE's LSDA encoding and whether it has augmentation data ('z').
+const H_LENC = 56
+const H_AUGZ = 64
+/// The CIE's and the FDE's instructions (start and end).
+const H_CIE = 72
+const H_CIE_END = 80
+const H_FDE = 88
+const H_FDE_END = 96
+/// The .eh_frame_hdr section's address.
+const H_HDR = 104
+/// The register set of the frame being read (the personality's view).
+const H_CUR = 112
+/// The depth of the remember_state stack.
+const H_DEPTH = 120
+/// The register sets: word n is DWARF register n (x0 to x30, sp 31, v0
+/// to v31 at 64 to 95), word 96 the frame's pc (its return address).
+const REGS_A = 256
+const REGS_B = 1032
+const PC = 768
+const SP = 248
+const NREG = 96
+/// The rule sets: the rule kind of register n at word n, its operand at
+/// S_VAL + 8 * n, then the CFA's register and offset, whether the return
+/// address is signed (DW_CFA_AARCH64_negate_ra_state), and whether the
+/// CFA is an expression (not read).
+const ST_CUR = 1808
+const ST_INIT = 3376
+const ST_STACK = 4944
+const ST_BYTES = 1568
+const ST_DEPTH_MAX = 8
+const S_VAL = 768
+const S_CFA_REG = 1536
+const S_CFA_OFF = 1544
+const S_RA_SIGNED = 1552
+const S_CFA_EXPR = 1560
+
+// Rule kinds: the register keeps its value (same value, or no rule), is
+// saved at CFA + operand, is CFA + operand, is in register operand, is
+// undefined, or is a DWARF expression (not read).
+const R_SAME = 0
+const R_OFFSET = 1
+const R_VAL_OFFSET = 2
+const R_REG = 3
+const R_UNDEF = 4
+const R_EXPR = 5
+
+// The personality protocol (unwind.h): _URC_FATAL_PHASE1_ERROR,
+// _URC_INSTALL_CONTEXT, _URC_CONTINUE_UNWIND; _UA_CLEANUP_PHASE,
+// _UA_FORCE_UNWIND.
+const URC_FATAL_PHASE1_ERROR = 3
+const URC_INSTALL_CONTEXT = 7
+const URC_CONTINUE_UNWIND = 8
+const UA_CLEANUP_PHASE = 2
+const UA_FORCE_UNWIND = 8
+/// xo_rt.c XO_EXC_CLASS ("XO\0\0FAUL").
+const EXC_CLASS = 6363304799676486988
+
+/// Unwinds the calling thread's frames for the fault whose exception
+/// object is at exc, running the first landing pad it finds below the
+/// boundary (a stack address; 0: none): never returns then. 0 when
+/// nothing catches the fault.
+pub fn raise(exc: Int, boundary: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => {}
+    TargetArch.Amd64 | TargetArch.Wasm32 => return 0
+  }
+  let s = scratch()
+  if s == 0 {
+    return 0
+  }
+  let hdr = eh_frame_hdr()
+  if hdr == 0 {
+    return 0
+  }
+  rt.mem_store(s, H_HDR, hdr, 8)
+  var cur = s + REGS_A
+  var nxt = s + REGS_B
+  rt.mem_set(cur, 0, PC + 8)
+  rt.unwind_save(cur)
+  // this function's frame first: its pc is the save's return address
+  rt.mem_store(cur, PC, rt.mem_load(cur, 240, 8), 8)
+  var first = true
+  while true {
+    let pc = rt.mem_load(cur, PC, 8)
+    if pc == 0 || !frame(s, pc) {
+      // the end of the stack (_UA_END_OF_STACK: fault_stop reports)
+      return 0
+    }
+    if !first {
+      // fault_stop: the frames past the boundary are the runtime's,
+      // where nothing catches a fault (_Unwind_GetCFA is the frame's
+      // stack pointer at its call)
+      if boundary != 0 && rt.mem_load(cur, SP, 8) > boundary {
+        return 0
+      }
+      if rt.mem_load(s, H_LSDA, 8) != 0 {
+        rt.mem_store(s, H_CUR, cur, 8)
+        if personality(1, UA_CLEANUP_PHASE | UA_FORCE_UNWIND, EXC_CLASS, exc, s) == URC_INSTALL_CONTEXT {
+          rt.unwind_resume(cur)
+          return 0
+        }
+      }
+    }
+    first = false
+    if !step(s, cur, nxt) {
+      return 0
+    }
+    let t = cur
+    cur = nxt
+    nxt = t
+  }
+  0
+}
+
+/// The personality routine of generated code (xo_rt.c xo_personality,
+/// which the link names xo_personality with no C library): every landing
+/// pad is a cleanup, entered on the second phase. The language specific
+/// data is GCC's: an LPStart and a TType encoding (omitted), the call
+/// site encoding, and the call sites (start, length, landing pad,
+/// action), offsets from the function's start. ctx is raise's record: at
+/// a landing pad the frame's registers get the exception in x0, 0 in x1,
+/// and the pad as the pc (_URC_INSTALL_CONTEXT).
+pub fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int {
+  if (version & 4294967295) != 1 {
+    return URC_FATAL_PHASE1_ERROR
+  }
+  if (actions & UA_CLEANUP_PHASE) == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  let lsda = rt.mem_load(ctx, H_LSDA, 8)
+  if lsda == 0 {
+    return URC_CONTINUE_UNWIND
+  }
+  let regs = rt.mem_load(ctx, H_CUR, 8)
+  let func = rt.mem_load(ctx, H_BEGIN, 8)
+  let ip = rt.mem_load(regs, PC, 8) - 1
+  var p = lsda
+  let lpenc = rt.mem_load(p, 0, 1)
+  p += 1
+  if lpenc != 255 {
+    let (_, q) = read_val(p, lpenc)
+    p = q
+  }
+  let ttenc = rt.mem_load(p, 0, 1)
+  p += 1
+  if ttenc != 255 {
+    let (_, q) = uleb(p)
+    p = q
+  }
+  let csenc = rt.mem_load(p, 0, 1)
+  let (cslen, p1) = uleb(p + 1)
+  let end = p1 + cslen
+  p = p1
+  while p < end {
+    let (start, p2) = read_val(p, csenc)
+    let (len, p3) = read_val(p2, csenc)
+    let (lp, p4) = read_val(p3, csenc)
+    let (_, p5) = uleb(p4)
+    p = p5
+    if ip < func + start {
+      break
+    }
+    if ip < func + start + len {
+      if lp == 0 {
+        return URC_CONTINUE_UNWIND
+      }
+      rt.mem_store(regs, 0, exc, 8)
+      rt.mem_store(regs, 8, 0, 8)
+      rt.mem_store(regs, PC, func + lp, 8)
+      return URC_INSTALL_CONTEXT
+    }
+  }
+  URC_CONTINUE_UNWIND
+}
+
+/// The calling thread's scratch record, mapped at its first use; 0 when
+/// it cannot be.
+fn scratch() -> Int {
+  let s = rt.tlocal_get(UNW_TLS)
+  if s != 0 {
+    return s
+  }
+  // PROT_READ | PROT_WRITE; MAP_PRIVATE | MAP_ANONYMOUS
+  let m = linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+  if m < 0 && m > -4096 {
+    return 0
+  }
+  rt.tlocal_set(UNW_TLS, m)
+  m
+}
+
+/// The address of the program's .eh_frame_hdr (its PT_GNU_EH_FRAME
+/// segment, through AT_PHDR; the load bias from PT_PHDR when there is
+/// one), or 0.
+fn eh_frame_hdr() -> Int {
+  let ph = rt.auxval(linux.AT_PHDR)
+  let n = rt.auxval(linux.AT_PHNUM)
+  if ph == 0 {
+    return 0
+  }
+  var bias = 0
+  var hdr = 0
+  for i in 0..n {
+    // Elf64_Phdr, 56 bytes: p_type at 0, p_vaddr at 16; PT_PHDR 6,
+    // PT_GNU_EH_FRAME 0x6474e550
+    let p = ph + 56 * i
+    let t = rt.mem_load(p, 0, 4)
+    if t == 6 {
+      bias = ph - rt.mem_load(p, 16, 8)
+    } else if t == 1685382480 {
+      hdr = rt.mem_load(p, 16, 8)
+    }
+  }
+  if hdr == 0 {
+    return 0
+  }
+  hdr + bias
+}
+
+/// v, the low bits bits of a two's complement number, sign extended.
+fn sx(v: Int, bits: Int) -> Int {
+  let half = rt.int_wrap(3, 1, bits - 1)
+  if v >= half {
+    return v - half - half
+  }
+  v
+}
+
+/// The unsigned LEB128 number at p, and the address after it.
+fn uleb(p: Int) -> (Int, Int) {
+  var v = 0
+  var q = p
+  var shift = 0
+  var b = 128
+  while b >= 128 {
+    b = rt.mem_load(q, 0, 1)
+    q += 1
+    if shift < 64 {
+      v = v | rt.int_wrap(3, b & 127, shift)
+    }
+    shift += 7
+  }
+  (v, q)
+}
+
+/// The signed LEB128 number at p, and the address after it.
+fn sleb(p: Int) -> (Int, Int) {
+  var v = 0
+  var q = p
+  var shift = 0
+  var b = 128
+  while b >= 128 {
+    b = rt.mem_load(q, 0, 1)
+    q += 1
+    if shift < 64 {
+      v = v | rt.int_wrap(3, b & 127, shift)
+    }
+    shift += 7
+  }
+  if shift < 64 && (b & 64) != 0 {
+    v = v | rt.int_wrap(3, -1, shift)
+  }
+  (v, q)
+}
+
+/// The value at p in the format of pointer encoding enc (DW_EH_PE_*,
+/// its low four bits; xo_rt.c lsda_read), and the address after it.
+fn read_val(p: Int, enc: Int) -> (Int, Int) {
+  let f = enc & 15
+  if f == 1 {
+    return uleb(p)
+  }
+  if f == 9 {
+    return sleb(p)
+  }
+  if f == 2 {
+    return (rt.mem_load(p, 0, 2), p + 2)
+  }
+  if f == 10 {
+    return (sx(rt.mem_load(p, 0, 2), 16), p + 2)
+  }
+  if f == 3 {
+    return (rt.mem_load(p, 0, 4), p + 4)
+  }
+  if f == 11 {
+    return (sx(rt.mem_load(p, 0, 4), 32), p + 4)
+  }
+  // absptr, udata8, sdata8
+  (rt.mem_load(p, 0, 8), p + 8)
+}
+
+/// The pointer encoded with enc at p (applied: pc relative to p, data
+/// relative to data; indirect through the word it names), and the
+/// address after it. DW_EH_PE_omit reads nothing.
+fn read_ptr(p: Int, enc: Int, data: Int) -> (Int, Int) {
+  if enc == 255 {
+    return (0, p)
+  }
+  let (v0, q) = read_val(p, enc)
+  var v = v0
+  if v != 0 {
+    let app = enc & 112
+    if app == 16 {
+      v = rt.int_wrap(0, v, p)
+    } else if app == 48 {
+      v = rt.int_wrap(0, v, data)
+    }
+    if (enc & 128) != 0 {
+      v = rt.mem_load(v, 0, 8)
+    }
+  }
+  (v, q)
+}
+
+/// Reads the unwind information of the frame whose return address is pc
+/// into s: its FDE (through .eh_frame_hdr's sorted table) and CIE, and
+/// the rules of the row that holds at pc - 1. Whether there is one.
+fn frame(s: Int, pc: Int) -> Bool {
+  let fde = find_fde(rt.mem_load(s, H_HDR, 8), pc - 1)
+  if fde == 0 || !read_fde(s, fde, pc - 1) {
+    return false
+  }
+  let st = s + ST_CUR
+  rt.mem_set(st, 0, ST_BYTES)
+  rt.mem_store(s, H_DEPTH, 0, 8)
+  if !exec(s, rt.mem_load(s, H_CIE, 8), rt.mem_load(s, H_CIE_END, 8), 0, true) {
+    return false
+  }
+  rt.mem_copy(s + ST_INIT, st, ST_BYTES)
+  exec(s, rt.mem_load(s, H_FDE, 8), rt.mem_load(s, H_FDE_END, 8), pc, false)
+}
+
+/// The FDE of the function holding pc in the sorted table of the
+/// .eh_frame_hdr at hdr (version 1, the table's entries datarel sdata4
+/// pairs, as GNU ld and lld write it), or 0.
+fn find_fde(hdr: Int, pc: Int) -> Int {
+  if rt.mem_load(hdr, 0, 1) != 1 || rt.mem_load(hdr, 3, 1) != 59 {
+    return 0
+  }
+  let (_, p1) = read_ptr(hdr + 4, rt.mem_load(hdr, 1, 1), hdr)
+  let (count, table) = read_ptr(p1, rt.mem_load(hdr, 2, 1), hdr)
+  if count <= 0 {
+    return 0
+  }
+  // the last entry whose start is at most pc
+  var lo = 0
+  var hi = count
+  while hi - lo > 1 {
+    let mid = lo + (hi - lo) / 2
+    if hdr + sx(rt.mem_load(table, 8 * mid, 4), 32) <= pc {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  if hdr + sx(rt.mem_load(table, 8 * lo, 4), 32) > pc {
+    return 0
+  }
+  hdr + sx(rt.mem_load(table, 8 * lo + 4, 4), 32)
+}
+
+/// The length of the CIE or FDE at p (a 32 bit length, or 0xffffffff
+/// and a 64 bit one) and the address of its body.
+fn entry_len(p: Int) -> (Int, Int) {
+  let n = rt.mem_load(p, 0, 4)
+  if n == 4294967295 {
+    return (rt.mem_load(p, 4, 8), p + 12)
+  }
+  (n, p + 4)
+}
+
+/// Reads the FDE at fde and its CIE into s: whether it covers pc.
+fn read_fde(s: Int, fde: Int, pc: Int) -> Bool {
+  let (n, body) = entry_len(fde)
+  if n == 0 {
+    return false
+  }
+  let end = body + n
+  // the CIE pointer: the distance back from this field to the CIE
+  let cie = body - rt.mem_load(body, 0, 4)
+  if !read_cie(s, cie) {
+    return false
+  }
+  let fenc = rt.mem_load(s, H_FENC, 8)
+  let (begin, p1) = read_ptr(body + 4, fenc, 0)
+  let (range, p2) = read_val(p1, fenc)
+  rt.mem_store(s, H_BEGIN, begin, 8)
+  rt.mem_store(s, H_END, rt.int_wrap(0, begin, range), 8)
+  if pc < begin || pc >= rt.int_wrap(0, begin, range) {
+    return false
+  }
+  var p = p2
+  var lsda = 0
+  if rt.mem_load(s, H_AUGZ, 8) != 0 {
+    let (alen, p3) = uleb(p2)
+    let (l, _) = read_ptr(p3, rt.mem_load(s, H_LENC, 8), 0)
+    lsda = l
+    p = p3 + alen
+  }
+  rt.mem_store(s, H_LSDA, lsda, 8)
+  rt.mem_store(s, H_FDE, p, 8)
+  rt.mem_store(s, H_FDE_END, end, 8)
+  true
+}
+
+/// Reads the CIE at cie into s (its alignment factors, return address
+/// register, augmentation, and instructions): whether it is one this
+/// unwinder reads.
+fn read_cie(s: Int, cie: Int) -> Bool {
+  let (n, body) = entry_len(cie)
+  if n == 0 || rt.mem_load(body, 0, 4) != 0 {
+    return false
+  }
+  let end = body + n
+  let ver = rt.mem_load(body, 4, 1)
+  let aug = body + 5
+  var p = aug
+  while rt.mem_load(p, 0, 1) != 0 {
+    p += 1
+  }
+  p += 1
+  // 'e', 'h': an old GCC's pointer before the factors
+  if rt.mem_load(aug, 0, 1) == 101 && rt.mem_load(aug, 1, 1) == 104 {
+    p += 8
+  }
+  let (ca, p1) = uleb(p)
+  let (da, p2) = sleb(p1)
+  var ra = 0
+  p = p2
+  if ver == 1 {
+    ra = rt.mem_load(p, 0, 1)
+    p += 1
+  } else {
+    let (r, q) = uleb(p)
+    ra = r
+    p = q
+  }
+  var fenc = 0
+  var lenc = 255
+  var augz = 0
+  if rt.mem_load(aug, 0, 1) == 122 {
+    // 'z': the augmentation data's length, then a field per letter
+    augz = 1
+    let (alen, q) = uleb(p)
+    let data_end = q + alen
+    p = q
+    var a = aug + 1
+    var c = rt.mem_load(a, 0, 1)
+    while c != 0 {
+      if c == 76 {
+        // 'L': the LSDA's encoding
+        lenc = rt.mem_load(p, 0, 1)
+        p += 1
+      } else if c == 82 {
+        // 'R': the FDE's pointer encoding
+        fenc = rt.mem_load(p, 0, 1)
+        p += 1
+      } else if c == 80 {
+        // 'P': the personality routine (raise does not call it: every
+        // frame with a call site table is generated code's)
+        let (_, q2) = read_ptr(p + 1, rt.mem_load(p, 0, 1), 0)
+        p = q2
+      } else if c != 83 && c != 66 && c != 71 {
+        // not 'S' (a signal frame), 'B' or 'G' (arm64's pointer
+        // authentication key and memory tags): unknown, the data
+        // length skips it and the rest
+        break
+      }
+      a += 1
+      c = rt.mem_load(a, 0, 1)
+    }
+    p = data_end
+  }
+  rt.mem_store(s, H_CALIGN, ca, 8)
+  rt.mem_store(s, H_DALIGN, da, 8)
+  rt.mem_store(s, H_RAREG, ra, 8)
+  rt.mem_store(s, H_FENC, fenc, 8)
+  rt.mem_store(s, H_LENC, lenc, 8)
+  rt.mem_store(s, H_AUGZ, augz, 8)
+  rt.mem_store(s, H_CIE, p, 8)
+  rt.mem_store(s, H_CIE_END, end, 8)
+  true
+}
+
+/// Sets the rule of register r in the rule set at st (registers past
+/// the ones the record keeps are ignored).
+fn set_rule(st: Int, r: Int, kind: Int, val: Int) {
+  if r >= 0 && r < NREG {
+    rt.mem_store(st, 8 * r, kind, 8)
+    rt.mem_store(st, S_VAL + 8 * r, val, 8)
+  }
+}
+
+/// Runs the call frame instructions from p to end on s's rule set
+/// (libgcc's execute_cfa_program): all of them for the CIE, else the
+/// ones whose row starts before ra (the frame's return address).
+/// Whether they were all ones this unwinder reads.
+fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
+  let st = s + ST_CUR
+  let ca = rt.mem_load(s, H_CALIGN, 8)
+  let da = rt.mem_load(s, H_DALIGN, 8)
+  var loc = rt.mem_load(s, H_BEGIN, 8)
+  var p = p0
+  while p < end {
+    if !cie && loc >= ra {
+      break
+    }
+    let op = rt.mem_load(p, 0, 1)
+    p += 1
+    let hi = op & 192
+    let lo = op & 63
+    if hi == 64 {
+      // DW_CFA_advance_loc
+      loc = rt.int_wrap(0, loc, rt.int_wrap(2, lo, ca))
+    } else if hi == 128 {
+      // DW_CFA_offset
+      let (o, q) = uleb(p)
+      p = q
+      set_rule(st, lo, R_OFFSET, rt.int_wrap(2, o, da))
+    } else if hi == 192 {
+      // DW_CFA_restore
+      restore(s, lo)
+    } else if op == 0 {
+      // DW_CFA_nop
+    } else if op == 1 {
+      // DW_CFA_set_loc
+      let (l, q) = read_ptr(p, rt.mem_load(s, H_FENC, 8), 0)
+      loc = l
+      p = q
+    } else if op == 2 {
+      // DW_CFA_advance_loc1, 2, 4
+      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 1), ca))
+      p += 1
+    } else if op == 3 {
+      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 2), ca))
+      p += 2
+    } else if op == 4 {
+      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 4), ca))
+      p += 4
+    } else if op == 5 || op == 20 || op == 47 {
+      // DW_CFA_offset_extended, val_offset, GNU_negative_offset_extended
+      let (r, q) = uleb(p)
+      let (o, q2) = uleb(q)
+      p = q2
+      if op == 5 {
+        set_rule(st, r, R_OFFSET, rt.int_wrap(2, o, da))
+      } else if op == 20 {
+        set_rule(st, r, R_VAL_OFFSET, rt.int_wrap(2, o, da))
+      } else {
+        set_rule(st, r, R_OFFSET, rt.int_wrap(1, 0, rt.int_wrap(2, o, da)))
+      }
+    } else if op == 6 || op == 7 || op == 8 {
+      // DW_CFA_restore_extended, undefined, same_value
+      let (r, q) = uleb(p)
+      p = q
+      if op == 6 {
+        restore(s, r)
+      } else if op == 7 {
+        set_rule(st, r, R_UNDEF, 0)
+      } else {
+        set_rule(st, r, R_SAME, 0)
+      }
+    } else if op == 9 {
+      // DW_CFA_register
+      let (r, q) = uleb(p)
+      let (r2, q2) = uleb(q)
+      p = q2
+      set_rule(st, r, R_REG, r2)
+    } else if op == 10 {
+      // DW_CFA_remember_state: the whole row, the CFA rule included
+      let d = rt.mem_load(s, H_DEPTH, 8)
+      if d >= ST_DEPTH_MAX {
+        return false
+      }
+      rt.mem_copy(s + ST_STACK + d * ST_BYTES, st, ST_BYTES)
+      rt.mem_store(s, H_DEPTH, d + 1, 8)
+    } else if op == 11 {
+      // DW_CFA_restore_state
+      let d = rt.mem_load(s, H_DEPTH, 8)
+      if d == 0 {
+        return false
+      }
+      rt.mem_copy(st, s + ST_STACK + (d - 1) * ST_BYTES, ST_BYTES)
+      rt.mem_store(s, H_DEPTH, d - 1, 8)
+    } else if op == 12 {
+      // DW_CFA_def_cfa
+      let (r, q) = uleb(p)
+      let (o, q2) = uleb(q)
+      p = q2
+      rt.mem_store(st, S_CFA_REG, r, 8)
+      rt.mem_store(st, S_CFA_OFF, o, 8)
+      rt.mem_store(st, S_CFA_EXPR, 0, 8)
+    } else if op == 13 {
+      // DW_CFA_def_cfa_register
+      let (r, q) = uleb(p)
+      p = q
+      rt.mem_store(st, S_CFA_REG, r, 8)
+      rt.mem_store(st, S_CFA_EXPR, 0, 8)
+    } else if op == 14 {
+      // DW_CFA_def_cfa_offset
+      let (o, q) = uleb(p)
+      p = q
+      rt.mem_store(st, S_CFA_OFF, o, 8)
+    } else if op == 15 {
+      // DW_CFA_def_cfa_expression (not read)
+      let (n, q) = uleb(p)
+      p = q + n
+      rt.mem_store(st, S_CFA_EXPR, 1, 8)
+    } else if op == 16 || op == 22 {
+      // DW_CFA_expression, val_expression (not read)
+      let (r, q) = uleb(p)
+      let (n, q2) = uleb(q)
+      p = q2 + n
+      set_rule(st, r, R_EXPR, 0)
+    } else if op == 17 || op == 21 {
+      // DW_CFA_offset_extended_sf, val_offset_sf
+      let (r, q) = uleb(p)
+      let (o, q2) = sleb(q)
+      p = q2
+      set_rule(st, r, if op == 17 { R_OFFSET } else { R_VAL_OFFSET }, rt.int_wrap(2, o, da))
+    } else if op == 18 {
+      // DW_CFA_def_cfa_sf
+      let (r, q) = uleb(p)
+      let (o, q2) = sleb(q)
+      p = q2
+      rt.mem_store(st, S_CFA_REG, r, 8)
+      rt.mem_store(st, S_CFA_OFF, rt.int_wrap(2, o, da), 8)
+      rt.mem_store(st, S_CFA_EXPR, 0, 8)
+    } else if op == 19 {
+      // DW_CFA_def_cfa_offset_sf
+      let (o, q) = sleb(p)
+      p = q
+      rt.mem_store(st, S_CFA_OFF, rt.int_wrap(2, o, da), 8)
+    } else if op == 45 {
+      // DW_CFA_AARCH64_negate_ra_state: the return address is signed
+      rt.mem_store(st, S_RA_SIGNED, 1 - rt.mem_load(st, S_RA_SIGNED, 8), 8)
+    } else if op == 46 {
+      // DW_CFA_GNU_args_size
+      let (_, q) = uleb(p)
+      p = q
+    } else {
+      return false
+    }
+  }
+  true
+}
+
+/// DW_CFA_restore of register r: its rule after the CIE's instructions.
+fn restore(s: Int, r: Int) {
+  if r >= 0 && r < NREG {
+    let init = s + ST_INIT
+    set_rule(s + ST_CUR, r, rt.mem_load(init, 8 * r, 8), rt.mem_load(init, S_VAL + 8 * r, 8))
+  }
+}
+
+/// The registers of the caller of the frame whose registers are at cur,
+/// by s's rule set, into nxt (libgcc's uw_update_context): its stack
+/// pointer is the frame's CFA, its pc the return address. Whether the
+/// rules could be applied.
+fn step(s: Int, cur: Int, nxt: Int) -> Bool {
+  let st = s + ST_CUR
+  let cr = rt.mem_load(st, S_CFA_REG, 8)
+  if rt.mem_load(st, S_CFA_EXPR, 8) != 0 || cr < 0 || cr >= NREG {
+    return false
+  }
+  let cfa = rt.int_wrap(0, rt.mem_load(cur, 8 * cr, 8), rt.mem_load(st, S_CFA_OFF, 8))
+  for r in 0..NREG {
+    let k = rt.mem_load(st, 8 * r, 8)
+    let v = rt.mem_load(st, S_VAL + 8 * r, 8)
+    var x = rt.mem_load(cur, 8 * r, 8)
+    if k == R_OFFSET {
+      x = rt.mem_load(rt.int_wrap(0, cfa, v), 0, 8)
+    } else if k == R_VAL_OFFSET {
+      x = rt.int_wrap(0, cfa, v)
+    } else if k == R_REG {
+      if v < 0 || v >= NREG {
+        return false
+      }
+      x = rt.mem_load(cur, 8 * v, 8)
+    } else if k == R_UNDEF {
+      x = 0
+    } else if k == R_EXPR {
+      return false
+    }
+    rt.mem_store(nxt, 8 * r, x, 8)
+  }
+  if rt.mem_load(st, SP, 8) == R_SAME {
+    rt.mem_store(nxt, SP, cfa, 8)
+  }
+  let rar = rt.mem_load(s, H_RAREG, 8)
+  if rar < 0 || rar >= NREG {
+    return false
+  }
+  var ra = rt.mem_load(nxt, 8 * rar, 8)
+  if rt.mem_load(st, S_RA_SIGNED, 8) != 0 {
+    // a return address signed with pointer authentication: its address
+    // bits (user addresses are below 2^48)
+    ra = ra & 281474976710655
+  }
+  rt.mem_store(nxt, PC, ra, 8)
+  true
+}
