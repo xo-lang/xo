@@ -1066,7 +1066,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
     let impl = b.prelude_impl("llrt_log_from")
     if impl >= 0 {
       let f = b.declare(impl, [])
-      b.call(b.m.funcs[f].name, -1, "", [b.const_str(log_from)])
+      b.call(b.m.funcs[f].name, b.unit_t(), "", [b.const_str(log_from)])
     }
   }
   // a call of a real-time function from code that is not real-time is a
