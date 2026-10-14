@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Programs linked with no C library (XO_NOLIBC=1) on linux/arm64 unwind
+  faults: deferred code runs and tasks and `task.isolate` catch faults,
+  through an unwinder written in Xo (std/native/llrt/unwind.xo:
+  .eh_frame_hdr lookup, DWARF CFI interpreter, the personality routine;
+  decision 0221). The 12 fault goldens that ended at the fault now pass
+  on the arm64 and LLVM backends; xo_nolibc.c loses its unwinder stubs.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's

@@ -268,7 +268,7 @@ MISSING.
 | B02 runtime globals and thread locals | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
-| B05 unwinder without libgcc | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
+| B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
@@ -344,7 +344,20 @@ frees the 533 (a) lines.)
   (selfhost/llvm/call.xo:655-690). printf, FILE, strto*, qsort
   (749-1196) go as their C callers move (B03, B06, B13). Two items,
   medium.
-- **B05 unwinder.** MISSING: a DWARF CFI unwinder over .eh_frame and
+- **B05 unwinder.** Stage 1 done 2026-10-14 (decision 0221, commit
+  c38a15f8): std/native/llrt/unwind.xo has the .eh_frame_hdr lookup, the
+  DWARF CFI interpreter, and the personality routine and LSDA reader as
+  cabi_nolibc.xo exports (`xo_x_unwind_fault`, `xo_x_personality`, which
+  the static link names xo_personality); rt.unwind_save and
+  rt.unwind_resume are trampolines of the arm64 and LLVM emitters. With
+  XO_NOLIBC=1 on linux/arm64 the 12 fault goldens pass on both backends
+  (arm64 143 of 154 goldens, LLVM 144, the rest do not link). Retired:
+  xo_nolibc.c 1567-1614 (its `_Unwind_*` stubs, 41 lines net). Left:
+  x86_64 (decision 0221 stage 2: trampolines and register numbers), then
+  the C library builds (stage 3: xo_rt.c 1737-1777 fault_stop and the
+  forced unwind, 1880-1927 and 1974-2021 the C LSDA reader and
+  personality, kept for glibc and macOS). The original note follows.
+  MISSING: a DWARF CFI unwinder over .eh_frame and
   .eh_frame_hdr in Xo, and a register restore and resume intrinsic;
   the personality routine (1974-2021) and LSDA reader (1880-1927) as a
   C ABI export named by `.cfi_personality`. Until then XO_NOLIBC faults
@@ -560,7 +573,7 @@ nothing new.
 | 8 | B13 string and list objects (two items) | 816 | 2 | reroute http1.xo str_find and show.xo rune_count first (retires 50 lines in an hour) |
 | 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |
-| 11 | B05 unwinder (three items) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
+| 11 | B05 unwinder (three items; stage 1 done 2026-10-14, XO_NOLIBC linux/arm64, decision 0221) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
 | 12 | B06 faults in Xo | 319 | 3, 11 | the fault record and fault_exit; then Windows RtlVirtualUnwind through sys_windows.xo |
 | 13 | B14 test world part 1 (two items) | 1,059 | 2 | testworld.xo records and the generator draws (gen.xo already calls them) |
 | 14 | B16 Fs operations (two items) | 1,383 | 2 | fsops.xo POSIX over linux.xo and darwin.xo; then the Windows layer and xo_win.c 542-1029; the `stat$INODE64` name for darwin/amd64 |
