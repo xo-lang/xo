@@ -670,7 +670,9 @@ fn label_def(l: Str) -> Str {
 }
 
 fn is_label_byte(c: UInt8) -> Bool {
-  c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
+  // 1 delimits the tokens of a canonical text (fcache.xo FP_TOKEN), which
+  // stand for letters, digits, and `_`
+  c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == 1
 }
 
 /// The labels the lines of text and ext refer to (every `L` and the

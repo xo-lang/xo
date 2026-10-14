@@ -1,0 +1,140 @@
+// The back-end cache (decision 0220 addendum) in <user cache>/xo/backend
+// ($XO_BACKEND_CACHE_DIR): obj/, the objects of the parts of a split arm64
+// assembly by the hash of their assembly and the assembler's identity
+// (stage A), and fn/, the canonical texts of functions by the hash of
+// what their code depends on (stage B, selfhost/arm64 fcache.xo).
+// $XO_BACKEND_CACHE: on (the default), verify (every function generated
+// and compared with its entry; a difference fails the build), off. Entries
+// are files named by their key, marked used and pruned by selfhost/prune
+// (decision 0223).
+
+use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/prune
+use github.com/xo-lang/xo/selfhost/ssa
+use std/crypto
+
+/// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
+fn backend_cache_mode(os: Os) -> Str {
+  let v = os.env.get("XO_BACKEND_CACHE") ?? ""
+  if v == "off" || v == "verify" { v } else { "on" }
+}
+
+/// The cache's directory, "" when it is off.
+fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
+  if backend_cache_mode(os) == "off" {
+    return ""
+  }
+  let d = os.env.get("XO_BACKEND_CACHE_DIR") ?? ""
+  if !d.is_empty() {
+    return d
+  }
+  "${ctx.cache}/xo/backend"
+}
+
+/// The identity of the running compiler: the SHA-256 of its executable;
+/// "" when it cannot be read (the cache is then not used).
+fn self_id(os: Os) -> Str {
+  let p = check.executable(os.env, os.fs)
+  if p.is_empty() {
+    return ""
+  }
+  match os.fs.read(p) {
+    Ok(b) => crypto.sha256(b).to_hex()
+    Err(_) => ""
+  }
+}
+
+/// The per-function cache of an arm64 generation of m for tgoos (stage
+/// B, selfhost/arm64 fcache.xo): every function's key and the entries the
+/// cache holds for them, and the cache directory; none (an empty
+/// FnCache, "") when the cache is off, for a --release build, or for a
+/// module of one part.
+fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> (arm64.FnCache, Str) {
+  let dir = backend_cache_dir(os, ctx)
+  if dir.is_empty() || release {
+    return (arm64.FnCache{}, "")
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return (arm64.FnCache{}, "")
+  }
+  let keys = arm64.function_keys(m, tgoos, id, jobs)
+  if keys.is_empty() {
+    return (arm64.FnCache{}, "")
+  }
+  var entries: Map[Str, Bytes] = {}
+  for k in keys {
+    if k.is_empty() || entries.contains(k) {
+      continue
+    }
+    match cache_get(os, entry_path(dir, "fn", k)) {
+      Some(b) => entries[k] = b
+      None => {}
+    }
+  }
+  (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir)
+}
+
+/// Stores the entries a cached generation made (fn_cache_load's dir).
+fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
+  if dir.is_empty() || stores.is_empty() {
+    return
+  }
+  for (k, e) in stores {
+    cache_put(os, entry_path(dir, "fn", k), e)
+  }
+  prune_backend_cache(os, dir)
+}
+
+/// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.
+fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
+  if on {
+    os.stdio.eprintln("cache ${what} ${hits}/${total} reused")
+  }
+}
+
+/// The path of the entry of key in the cache dir under kind ("obj").
+fn entry_path(dir: Str, kind: Str, key: Str) -> Str {
+  "${dir}/${kind}/${key[0..2]}/${key}"
+}
+
+/// The entry at path, marked used (prune.mark_used); None when the
+/// cache does not hold it.
+fn cache_get(os: Os, path: Str) -> Option[Bytes] {
+  match os.fs.read(path) {
+    Ok(b) => {
+      prune.mark_used(os.fs, os.clock, path)
+      Some(b)
+    }
+    Err(_) => None
+  }
+}
+
+/// Stores data as the entry at path: written under a temporary name and
+/// renamed into place, so a reader never sees half of it.
+fn cache_put(os: Os, path: Str, data: Bytes) {
+  match os.fs.create_dir_all(dir_name(path)) {
+    Ok(_) => {}
+    Err(_) => return
+  }
+  let tmp = "${path}.tmp-${os.rand.bytes(6).to_hex()}"
+  match os.fs.write(tmp, data) {
+    Ok(_) => {
+      match os.fs.rename(tmp, path) {
+        Ok(_) => {}
+        Err(_) => os.fs.remove(tmp).ignore_err("another process stored it")
+      }
+    }
+    Err(_) => os.fs.remove(tmp).ignore_err("a failed store")
+  }
+}
+
+/// Prunes the cache (prune.run, decision 0223, at most once an hour):
+/// the entries unused for a week ($XO_CACHE_MAX_AGE), then the least
+/// recently used past 8 GiB ($XO_BACKEND_CACHE_MAX bytes, or
+/// $XO_CACHE_MAX_GB).
+fn prune_backend_cache(os: Os, dir: Str) {
+  let p = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: 8 * prune.GB})
+  let _s = prune.run(os.fs, os.clock, dir, cap_env(os, p, "XO_BACKEND_CACHE_MAX"))
+}

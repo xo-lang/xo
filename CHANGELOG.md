@@ -14,6 +14,24 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bindings and generated programs across runs, the harness self test
   runs per method in parallel; scripts/seed-pack.sh takes
   XO_SEED_GZIP_LEVEL (bench/results/short-tests-2026-10-14.md).
+- Faster arm64 rebuilds, per function (decision 0220 addendum stage B):
+  each function's assembly is cached in <user cache>/xo/backend under
+  the hash of its SSA, the types it reaches, the signatures of the
+  functions it names, and the compiler, so a rebuild generates only the
+  functions an edit changed; `XO_BACKEND_CACHE=verify` generates every
+  function and fails on a cached text that differs, `off` turns the
+  cache off, and all three give the same binary. After a one-module
+  edit of xo the emit phase drops from 6 to 9.5 s to about 0.2 s and
+  the build's CPU time from about 140 s to about 65 s on the Mac.
+  --release builds do not use it.
+- Faster arm64 rebuilds (decision 0220 addendum stage A): the parts of a
+  large program's assembly are cut by their contents and named by their
+  first function, and each part's object is cached in
+  <user cache>/xo/backend (`XO_BACKEND_CACHE=off` turns it off), so an
+  unchanged part is not assembled again: after a one-module edit of xo
+  the assemble phase drops from about 6 s to 1.5 s on the Mac, and the
+  binary is the same as without the cache
+  (bench/results/fast-builds-2026-10-13.md).
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in
