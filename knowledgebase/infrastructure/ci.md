@@ -79,6 +79,7 @@ with Go and clang, so a failing suite can be reproduced locally.
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
 | `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it. A directory new on the branch (none on main) runs the branch's measure.sh for both, so main's xo and std build the branch's workload |
 | `windows` | on the `xo-windows` runner: `scripts/windows-batch.sh` (xo1 built with the Go backend, the LLVM goldens for windows/amd64 run and windows/arm64 cross built, the LLVM runtime tests that run on Windows, `xo test` LLVM against Go). The plan job first cross builds a Go backend `xo.exe` from the tested tree on Linux (`suite.sh xcross`, to `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe`); the job puts it in `bin/xo.exe` and sets `XO_CLI`, because the windows-amd64 seed cannot build xo on Windows (gotchas/windows-seed-xo1306-module-not-required.md). Best effort, not a gate (CLAUDE.md, arm64 only) |
+| `script` | `packages` is `PATH [ARG...]`: runs PATH from the ref (`.sh` with bash, `.ps1` with Windows PowerShell 5.1, else as an executable) on `runner` (default xo-arm64; `-f runner=xo-windows` gets the cross built xo.exe as for `windows`). Environment: `XO_CLI` (the checkout's xo), `XO_CI_STD` (the checkout's std), `XO_CI_BASE_STD` (main's std, from a worktree of `XO_CI_BASE`), `XO_CI_OUT` (uploaded as the run's artifact `script-out`: `gh run download RUN_ID -n script-out`); native paths on Windows. For one-off comparisons like a bench/perf measure-windows.ps1 against main's std. Smoke tests: scripts/ci/script-env.sh and .ps1 (runs 38629095020, 38629098943, 2026-10-14) |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with
@@ -406,14 +407,11 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
    - the golden `proc_cmd` fails under the runner (a service running as
      SYSTEM, HOME pointed at Administrator's profile) but passes with
      the same xo1 and checkout run as Administrator over SSH, so the
-     difference is the job's environment. The golden test prints no
-     diff; next step: have TestGoldenWant log the actual output on a
-     failure (internal/llvm/golden_want_test.go), rerun `suite=windows`.
+     difference is the job's environment. TestGoldenWant logs want and
+     got; windows-batch.sh now prints those blocks (it printed only the
+     summary before), so the next `suite=windows` run shows the diff.
    - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
      forces the cross built xo.exe; once fixed, xcross can go and the
      job builds xo itself.
-4. A per-job script input for Windows (run a given bash or .ps1 from
-   the ref, e.g. a bench/perf measure-windows.ps1 against main's std),
-   so one-off Windows reruns go through CI instead of a warm machine.
-5. Decide whether four big machines are needed; each stopped one costs
+4. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.

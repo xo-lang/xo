@@ -126,7 +126,9 @@ Update the knowledgebase in the same change as the work, not later:
     loop that prints on a status change with `sleep 10` and stops on
     completed), `gh run view RUN_ID --log-failed`. Other suites:
     short, vet, merge (`-f packages=...`), fixed-point, full, windows
-    (best effort, xo-windows runner), measure
+    (best effort, xo-windows runner), script (`-f packages="PATH
+    ARG..."`: a .sh or .ps1 from the ref with XO_CLI, the checkout's
+    and main's std, and an uploaded output directory), measure
     (`-f packages=<bench/perf dir>`: Linux instruction counts, main
     against the branch). This replaces the lead's EC2 queue. The Mac
     keeps Mac only checks and runs that write files into the worktree.

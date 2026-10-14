@@ -55,6 +55,8 @@ if want 2; then
       go test -count=1 -timeout 60m -run 'TestGoldenWant$' -v ./internal/llvm 2>&1 | tee "$HOME/batch-goldens-${t#*/}.log" | grep 'golden summary')
     say "2 $t: ${line#*: }"
     grep -E 'golden [^ ]+: fail' "$HOME/batch-goldens-${t#*/}.log" | sed 's/^ */batch:   /'
+    # TestGoldenWant logs want and got of each differing program: print them
+    awk '/output differs from want.txt/ {p=1} /^ *--- (PASS|FAIL|SKIP)|^=== / {p=0} p' "$HOME/batch-goldens-${t#*/}.log"
     case "$line" in *" 0 fail"*) ;; *) failed=$((failed + 1)) ;; esac
   done
 fi
