@@ -191,6 +191,12 @@ the big machines also carry `xo-arm64`, a default job can run on one
 when it is already up (GitHub picks any idle runner with the labels; the
 autostart only decides which stopped machine to start).
 
+The first boot showed a trap: restarting the runner service right after
+`config.cmd --runasservice` started it made GitHub refuse the new
+session ("Conflict: A session for this runner already exists") for a
+few minutes; boot.ps1 now writes `.env` before config.cmd and restarts
+only when `.env` changed on an existing registration.
+
 Not runners (still plain warm machines, tag `purpose=xo-warm-run`):
 three c7i.8xlarge amd64 (i-EXAMPLE02, i-EXAMPLE56,
 i-EXAMPLE08).
@@ -329,6 +335,8 @@ From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
 | the same through the one minute sweep only (webhook broken at the time) | 75 s |
 | idle stop after the last job | 5 min 24 s |
 | `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
+| xo-ci-windows first boot after adoption (boot.ps1 start to registered; the toolchain was already there) | 14 s |
+| `windows` (run 38627432745): plan with the xo.exe cross build 18 s, then the Windows job (checkout, windows-batch.sh steps 1 to 4) | 5 min 33 s job; 156 of 157 windows/amd64 goldens pass (proc_cmd fails, below), 157 of 157 windows/arm64 built, LLVM runtime tests ok, `xo test` LLVM against Go 16 same, 0 differ |
 | `fixed-point` on xo-ci-arm64-big | 2 min 24 s job: s1 36 s, s2 36 s, s3 24 s; s2 and s3 assembly (297,336,303 bytes) and binaries (53,485,152 bytes) identical |
 
 Earlier figures for comparison (from the knowledgebase): one self build
@@ -393,9 +401,19 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
 2. amd64 runners (best effort): `runners.sh adopt` the three c7i.8xlarge
    machines with label `xo-amd64`, add the choice to `ci.yml`'s `runner`
    input; the fixed point there uses the LLVM backend.
-3. The Windows runner's first boot and a timed `suite=windows` run
-   (Last verified: not yet, 2026-10-14). The seed bug that forces the
-   cross built xo.exe (gotchas/windows-seed-xo1306-module-not-required.md)
-   is open; once fixed, xcross can go and the job builds xo itself.
-4. Decide whether four big machines are needed; each stopped one costs
+3. Windows known issues (best effort, recorded, not gates; Last
+   verified: 2026-10-14, run 38627432745):
+   - the golden `proc_cmd` fails under the runner (a service running as
+     SYSTEM, HOME pointed at Administrator's profile) but passes with
+     the same xo1 and checkout run as Administrator over SSH, so the
+     difference is the job's environment. The golden test prints no
+     diff; next step: have TestGoldenWant log the actual output on a
+     failure (internal/llvm/golden_want_test.go), rerun `suite=windows`.
+   - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
+     forces the cross built xo.exe; once fixed, xcross can go and the
+     job builds xo itself.
+4. A per-job script input for Windows (run a given bash or .ps1 from
+   the ref, e.g. a bench/perf measure-windows.ps1 against main's std),
+   so one-off Windows reruns go through CI instead of a warm machine.
+5. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.
