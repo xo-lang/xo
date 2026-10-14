@@ -437,7 +437,10 @@ frees the 533 (a) lines.)
   xo_fault_loc, and the entry points of generated code. Next: the entry
   points as Xo exports the emitters call (with C forwarders until a
   seed has them, as decision 0221 point 7 did for the personality), and
-  the Windows walk. The original note follows.
+  the Windows walk. Part 2 done 2026-10-14 (decision 0228): generated
+  code calls cabi.xo's xo_x_fault_raise_*, fault.xo writes the message
+  and raises through fault_raise_msg; the C xo_fault_* are 3 line
+  forwarders until the next seed. The original note follows.
   The fault record (1778-1879), fault_exit (1644-1673),
   the Windows frame walk over RtlVirtualUnwind (1674-1736) through
   sys_windows.xo, its personality stub (1928-1973). Xo about 250 lines,
@@ -596,7 +599,7 @@ frees the 533 (a) lines.)
   is a call of `xo_<name>`). std/native/llrt/tzhost.xo has the rest in
   Xo: the zone data per mode, the host's files ($ZONEINFO as a directory
   or a zip, the system directories, /etc/localtime), the table of kept
-  zones (static words 14 to 17, a lock, a vector of name blocks and
+  zones (static words 18 to 21, a lock, a vector of name blocks and
   shared List[Int] zones), the exit free for the leak check (cabi_time.xo
   `tz_free`, hooked in xo_std.c under XO_TIME), the /etc/localtime link
   name, and Windows' "Local" from GetDynamicTimeZoneInformation with Go's

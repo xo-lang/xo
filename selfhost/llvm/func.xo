@@ -154,7 +154,8 @@ fn (var g: Gen) raise(res: Str, c: Str) {
   g.start(cont)
 }
 
-/// Branches to a fault call (call: `@xo_fault_...(args)`) when cond
+/// Branches to a fault call (call: `@xo_x_fault_raise_...(args)`, the
+/// runtime's Xo exports, decision 0228) when cond
 /// holds (faultIf).
 fn (var g: Gen) fault_if(cond: Str, call: Str) {
   let bad = g.new_label("fault")
@@ -695,7 +696,7 @@ fn (var g: Gen) instr_body(v: Int) {
       let b0 = g.op(args[0])
       let b1 = g.op(args[1])
       let l = g.loc(v)
-      g.fault_if(ov, "@xo_fault_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ptr ${l})")
+      g.fault_if(ov, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
       g.set(v, "extractvalue { i64, i1 } ${r}, 0")
     }
     Div | Rem => {
@@ -714,7 +715,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let z = g.def("icmp eq i64 ${a1}, 0")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(z, "@xo_fault_divzero(i64 ${b0}, i64 ${op_char(x.op)}, ptr ${l})")
+        g.fault_if(z, "@xo_x_fault_raise_divzero(i64 ${b0}, i64 ${op_char(x.op)}, i64 ptrtoint (ptr ${l} to i64))")
       }
       if x.op == ssa.Op.Div {
         if !x.pos.is_empty() && !(is_const && k != -1) {
@@ -726,7 +727,7 @@ fn (var g: Gen) instr_body(v: Int) {
           let b0 = g.op(args[0])
           let b1 = g.op(args[1])
           let l = g.loc(v)
-          g.fault_if(both, "@xo_fault_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ptr ${l})")
+          g.fault_if(both, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
         }
         let a0 = g.op(args[0])
         let a1 = g.op(args[1])
@@ -764,7 +765,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("icmp uge i64 ${a1}, 64")
         let b1 = g.op(args[1])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_fault_shift(i64 ${b1}, ptr ${l})")
+        g.fault_if(bad, "@xo_x_fault_raise_shift(i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
       }
       if x.op == ssa.Op.Shr {
         let a0 = g.op(args[0])
@@ -783,7 +784,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let c0 = g.op(args[0])
         let c1 = g.op(args[1])
         let l = g.loc(v)
-        g.fault_if(lost, "@xo_fault_shl(i64 ${c0}, i64 ${c1}, ptr ${l})")
+        g.fault_if(lost, "@xo_x_fault_raise_shl(i64 ${c0}, i64 ${c1}, i64 ptrtoint (ptr ${l} to i64))")
       }
       g.alias(v, r)
     }
@@ -798,7 +799,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_fault_neg(i64 ${b0}, ptr ${l})")
+        g.fault_if(bad, "@xo_x_fault_raise_neg(i64 ${b0}, i64 ptrtoint (ptr ${l} to i64))")
       }
       let a0 = g.op(args[0])
       g.set(v, "sub nsw i64 0, ${a0}")
@@ -879,7 +880,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("xor i1 ${inr}, true")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_fault_float_int(double ${b0}, ptr ${l})")
+        g.fault_if(bad, "@xo_x_fault_raise_float_int(double ${b0}, i64 ptrtoint (ptr ${l} to i64))")
       }
       g.set(v, "fptosi double ${t} to i64")
     }
@@ -1058,7 +1059,8 @@ fn (var g: Gen) instr_body(v: Int) {
       let n = g.def("extractvalue %xo.str ${m}, 1")
       let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
       let l = g.loc(v)
-      g.emit("call void @xo_fault(ptr ${data}, i64 ${n}, ptr ${l})")
+      let pd = g.def("ptrtoint ptr ${data} to i64")
+      g.emit("call void @xo_x_fault_raise_text(i64 ${pd}, i64 ${n}, i64 ptrtoint (ptr ${l} to i64))")
       g.emit("unreachable")
     }
     Retain => {

@@ -78,8 +78,8 @@ with Go and clang, so a failing suite can be reproduced locally.
 | `merge` | `go test -timeout 60m` of `packages` (default: the touched ones) |
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
 | `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it. A directory new on the branch (none on main) runs the branch's measure.sh for both, so main's xo and std build the branch's workload |
-| `windows` | on the `xo-windows` runner: `scripts/windows-batch.sh` (xo1 built with the Go backend, the LLVM goldens for windows/amd64 run and windows/arm64 cross built, the LLVM runtime tests that run on Windows, `xo test` LLVM against Go). The plan job first cross builds a Go backend `xo.exe` from the tested tree on Linux (`suite.sh xcross`, to `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe`); the job puts it in `bin/xo.exe` and sets `XO_CLI`, because the windows-amd64 seed cannot build xo on Windows (gotchas/windows-seed-xo1306-module-not-required.md). Best effort, not a gate (CLAUDE.md, arm64 only) |
-| `script` | `packages` is `PATH [ARG...]`: runs PATH from the ref (`.sh` with bash, `.ps1` with Windows PowerShell 5.1, else as an executable) on `runner` (default xo-arm64; `-f runner=xo-windows` gets the cross built xo.exe as for `windows`). Environment: `XO_CLI` (the checkout's xo), `XO_CI_STD` (the checkout's std), `XO_CI_BASE_STD` (main's std, from a worktree of `XO_CI_BASE`), `XO_CI_OUT` (uploaded as the run's artifact `script-out`: `gh run download RUN_ID -n script-out`); native paths on Windows. For one-off comparisons like a bench/perf measure-windows.ps1 against main's std: `-f packages="bench/perf/sysio/windows-ci.sh [N]"` builds bench/perf/sysio with both stds and runs measure-windows.ps1 on each for two rounds (base, branch, base, branch; N runs per workload, default 15; WORKLOADS overrides the list) into `sysio-windows.txt` of the artifact (added 2026-10-14, not yet run). Smoke tests: scripts/ci/script-env.sh and .ps1 (runs 38629095020, 38629098943, 2026-10-14) |
+| `windows` | on the `xo-windows` runner: `scripts/windows-batch.sh` (xo1 built on the runner from the seed by scripts/xobuild with the Go backend, the LLVM goldens for windows/amd64 run and windows/arm64 cross built, the LLVM runtime tests that run on Windows, `xo test` LLVM against Go). Best effort, not a gate (CLAUDE.md, arm64 only) |
+| `script` | `packages` is `PATH [ARG...]`: runs PATH from the ref (`.sh` with bash, `.ps1` with Windows PowerShell 5.1, else as an executable) on `runner` (default xo-arm64, or `-f runner=xo-windows`). Environment: `XO_CLI` (the checkout's xo), `XO_CI_STD` (the checkout's std), `XO_CI_BASE_STD` (main's std, from a worktree of `XO_CI_BASE`), `XO_CI_OUT` (uploaded as the run's artifact `script-out`: `gh run download RUN_ID -n script-out`); native paths on Windows. For one-off comparisons like a bench/perf measure-windows.ps1 against main's std: `-f packages="bench/perf/sysio/windows-ci.sh [N]"` builds bench/perf/sysio with both stds and runs measure-windows.ps1 on each for two rounds (base, branch, base, branch; N runs per workload, default 15; WORKLOADS overrides the list) into `sysio-windows.txt` of the artifact (added 2026-10-14, not yet run). Smoke tests: scripts/ci/script-env.sh and .ps1 (runs 38629095020, 38629098943, 2026-10-14) |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with
@@ -241,7 +241,6 @@ Account ACCOUNT_ID, us-east-1. Everything below is Terraform managed
 | function URL | xo-ci-autostart | auth NONE; resource policy: public InvokeFunctionUrl and InvokeFunction only via the URL; the handler checks GitHub's `X-Hub-Signature-256` |
 | schedule | EventBridge rule `xo-ci-autostart-sweep` | `rate(1 minute)`, input `{"sweep": true}` |
 | boot scripts | `s3://xo-seeds-ACCOUNT_ID/ci/boot/linux.sh`, `.../windows.ps1` | rendered from boot/linux.sh and boot/windows.ps1 |
-| CI build outputs | `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe` | the windows job's cross built xo; written by the plan job |
 | webhook secret | SSM `/xo-ci/webhook-secret` (SecureString) | random, 48 characters |
 | GitHub App | `xo-lang-ci`, id 5318159, installation 171424164 | NOT Terraform: made by `infra/ci-runners/github-app/create-app.py` (manifest flow); installed on josephspurrier/xo only; permissions administration write, actions read, webhooks write, metadata read |
 | App credentials | SSM `/xo-ci/github-app/{app-id,slug,installation-id,private-key}` | NOT Terraform (written by create-app.py); the key is a SecureString and was never printed or written to disk |
@@ -338,6 +337,7 @@ From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
 | `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
 | xo-ci-windows first boot after adoption (boot.ps1 start to registered; the toolchain was already there) | 14 s |
 | `windows` (run 38627432745): plan with the xo.exe cross build 18 s, then the Windows job (checkout, windows-batch.sh steps 1 to 4) | 5 min 33 s job; 156 of 157 windows/amd64 goldens pass (proc_cmd fails, below), 157 of 157 windows/arm64 built, LLVM runtime tests ok, `xo test` LLVM against Go 16 same, 0 differ |
+| `windows` without the cross build (run 38633141732): plan 4 s, the Windows job with xo built on the runner (scripts/xobuild, seed cached) | 6 min 43 s job; 157 of 157 goldens pass, 157 arm64 built, runtime ok, 16 same |
 | `fixed-point` on xo-ci-arm64-big | 2 min 24 s job: s1 36 s, s2 36 s, s3 24 s; s2 and s3 assembly (297,336,303 bytes) and binaries (53,485,152 bytes) identical |
 
 Earlier figures for comparison (from the knowledgebase): one self build
@@ -413,10 +413,10 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
      prints HOME.
    - XO1306 on Windows (gotchas/windows-seed-xo1306-module-not-required.md):
      fixed 2026-10-14 in internal/xotool (/ paths to xo); a Windows
-     runner now builds xo from the 0.11.0 seed in 56 s
-     (scripts/ci/xobuild.sh, run 38629916521). Next: drop the plan
-     job's xo.exe cross build (`suite.sh xcross`) and let the windows
-     and script jobs build xo on the runner.
+     runner builds xo from the 0.11.0 seed in 56 s
+     (scripts/ci/xobuild.sh, run 38629916521), so the plan job's cross
+     build of xo.exe (2026-10-14 runs up to 38632543739) is gone.
+     Still open: the driver accepting `C:\` arguments itself.
    - `suite=windows` passes in full: run 38630848188.
 4. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.

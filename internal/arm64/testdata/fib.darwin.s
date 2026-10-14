@@ -129,7 +129,7 @@ Lf1_fault1:
 	adrp x3, Lxo_loc0@PAGE
 	add x3, x3, Lxo_loc0@PAGEOFF
 Lf1_cs1a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf1_cs1b:
 	brk #1
 	.cfi_endproc
@@ -173,7 +173,7 @@ Lf2_fault1:
 	mov x1, #43
 	adrp x3, Lxo_loc1@PAGE
 	add x3, x3, Lxo_loc1@PAGEOFF
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc
 

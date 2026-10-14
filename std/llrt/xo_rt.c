@@ -261,7 +261,11 @@ static void obj_heap_init(xo_heap *h) {
 // constructor always: xo's own ELF linker takes no .init_array
 // (gotchas/runtime-c-no-constructors.md).
 #ifdef XO_RT_NO_MAIN
-__attribute__((constructor)) static void obj_heap_words(void) { obj_heap_init(&main_heap); }
+static void fault_init(void);
+__attribute__((constructor)) static void obj_heap_words(void) {
+	obj_heap_init(&main_heap);
+	fault_init();
+}
 #endif
 
 void xo_rt_threads_begin(void) {
@@ -625,15 +629,6 @@ static void flush_pending(void) { xo_x_flush(); }
 
 int64_t xo_x_fmt_int(int64_t buf, int64_t v);
 int64_t xo_x_fmt_float(int64_t buf, double f);
-int64_t xo_x_fault_overflow(int64_t buf, int64_t a, int64_t op, int64_t b);
-int64_t xo_x_fault_shl(int64_t buf, int64_t a, int64_t b);
-int64_t xo_x_fault_shift(int64_t buf, int64_t n);
-int64_t xo_x_fault_divzero(int64_t buf, int64_t a, int64_t op);
-int64_t xo_x_fault_neg(int64_t buf, int64_t a);
-int64_t xo_x_fault_abs(int64_t buf, int64_t a);
-int64_t xo_x_fault_index(int64_t buf, int64_t i, int64_t n);
-int64_t xo_x_fault_bytes_index(int64_t buf, int64_t i, int64_t n);
-int64_t xo_x_fault_float_int(int64_t buf, double f);
 int64_t xo_x_utf8_decode(int64_t p, int64_t n);
 int64_t xo_x_utf8_encode(int64_t p, int64_t r);
 int64_t xo_x_is_space(int64_t r);
@@ -669,62 +664,63 @@ XO_NORETURN static void fault_text(const char *msg, const char *loc) { fault_rai
 // of a failed contract, core 9.1).
 void xo_fault_detail(const char *p, int64_t n);
 
+// The fault entry points of generated code are cabi.xo's fault_raise_*
+// exports (decision 0228: fault.xo writes the message and calls
+// fault_raise_msg, whose address fault_init gives it), which the
+// emitters name. These forward to them for code from an xo whose
+// emitters named xo_fault_* (seed 0.11.0 builds the next xo with them):
+// delete them once a seed names the exports.
+void xo_x_fault_raise_text(int64_t p, int64_t n, int64_t loc);
+void xo_x_fault_raise_overflow(int64_t a, int64_t op, int64_t b, int64_t loc);
+void xo_x_fault_raise_shl(int64_t a, int64_t b, int64_t loc);
+void xo_x_fault_raise_shift(int64_t n, int64_t loc);
+void xo_x_fault_raise_divzero(int64_t a, int64_t op, int64_t loc);
+void xo_x_fault_raise_neg(int64_t a, int64_t loc);
+void xo_x_fault_raise_abs(int64_t a, int64_t loc);
+void xo_x_fault_raise_index(int64_t i, int64_t n, int64_t loc);
+void xo_x_fault_raise_float_int(double f, int64_t loc);
+void xo_x_fault_init(int64_t raise_msg);
+
 XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {
-	char *m = malloc((size_t)n + 1);
-	memcpy(m, msg, (size_t)n);
-	m[n] = 0;
-	fault_text(m, loc);
+	xo_x_fault_raise_text(XO_ADDR(msg), n, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
-// The messages of the checked operations are written by cabi.xo.
-
 XO_NORETURN void xo_fault_overflow(int64_t a, int64_t op, int64_t b, const char *loc) {
-	char m[160];
-	xo_x_fault_overflow(XO_ADDR(m), a, op, b);
-	fault_text(m, loc);
+	xo_x_fault_raise_overflow(a, op, b, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_shl(int64_t a, int64_t b, const char *loc) {
-	char m[160];
-	xo_x_fault_shl(XO_ADDR(m), a, b);
-	fault_text(m, loc);
+	xo_x_fault_raise_shl(a, b, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_shift(int64_t n, const char *loc) {
-	char m[160];
-	xo_x_fault_shift(XO_ADDR(m), n);
-	fault_text(m, loc);
+	xo_x_fault_raise_shift(n, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_divzero(int64_t a, int64_t op, const char *loc) {
-	char m[160];
-	xo_x_fault_divzero(XO_ADDR(m), a, op);
-	fault_text(m, loc);
+	xo_x_fault_raise_divzero(a, op, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_neg(int64_t a, const char *loc) {
-	char m[160];
-	xo_x_fault_neg(XO_ADDR(m), a);
-	fault_text(m, loc);
+	xo_x_fault_raise_neg(a, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_abs(int64_t a, const char *loc) {
-	char m[160];
-	xo_x_fault_abs(XO_ADDR(m), a);
-	fault_text(m, loc);
+	xo_x_fault_raise_abs(a, XO_ADDR(loc));
+	__builtin_unreachable();
 }
-
 XO_NORETURN void xo_fault_index(int64_t i, int64_t n, const char *loc) {
-	char m[160];
-	xo_x_fault_index(XO_ADDR(m), i, n);
-	fault_text(m, loc);
+	xo_x_fault_raise_index(i, n, XO_ADDR(loc));
+	__builtin_unreachable();
+}
+XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
+	xo_x_fault_raise_float_int(f, XO_ADDR(loc));
+	__builtin_unreachable();
 }
 
-XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
-	char m[160];
-	xo_x_fault_float_int(XO_ADDR(m), f);
-	fault_text(m, loc);
-}
+// fault_init gives fault.xo the address of fault_raise_msg (with the heap
+// words: first in main, or in XO_RT_NO_MAIN's constructor).
+static void fault_init(void) { xo_x_fault_init(XO_ADDR(fault_raise_msg)); }
 
 // ---------------------------------------------------------------------------
 // Strings
@@ -6308,6 +6304,7 @@ void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
 
 int main(int argc, char **argv) {
 	obj_heap_init(&main_heap);
+	fault_init();
 #ifdef _WIN32
 	win_init(&argc, &argv);
 #endif

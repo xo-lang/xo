@@ -23,10 +23,10 @@ use native/rttime
 // from rt.heap_large, its length, its capacity) of entries of two words,
 // the name (a block: its length, then its bytes) and the zone (the
 // address of its List[Int], shared, holding one reference).
-const W_LOCK = 14
-const W_VEC = 15
-const W_LEN = 16
-const W_CAP = 17
+const W_LOCK = 18
+const W_VEC = 19
+const W_LEN = 20
+const W_CAP = 21
 
 /// The most zones the table keeps (xo_time.c's TZ_MAX).
 const TZ_MAX = 4096

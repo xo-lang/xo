@@ -143,7 +143,7 @@ Lf1_fault1:
 	mov x1, #43
 	adrp x3, Lxo_loc0@PAGE
 	add x3, x3, Lxo_loc0@PAGEOFF
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 	brk #1
 Lf1_fault2:
 	mov x0, x22
@@ -152,7 +152,7 @@ Lf1_fault2:
 	adrp x3, Lxo_loc1@PAGE
 	add x3, x3, Lxo_loc1@PAGEOFF
 Lf1_cs1a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf1_cs1b:
 	brk #1
 	.cfi_endproc
@@ -310,7 +310,7 @@ Lf2_fault1:
 	adrp x3, Lxo_loc2@PAGE
 	add x3, x3, Lxo_loc2@PAGEOFF
 Lf2_cs4a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf2_cs4b:
 	brk #1
 Lf2_fault2:
@@ -319,7 +319,7 @@ Lf2_fault2:
 	adrp x2, Lxo_loc3@PAGE
 	add x2, x2, Lxo_loc3@PAGEOFF
 Lf2_cs5a:
-	bl _xo_fault_index
+	bl _xo_x_fault_raise_index
 Lf2_cs5b:
 	brk #1
 Lf2_fault3:
@@ -331,7 +331,7 @@ Lf2_fault3:
 	adrp x3, Lxo_loc4@PAGE
 	add x3, x3, Lxo_loc4@PAGEOFF
 Lf2_cs6a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf2_cs6b:
 	brk #1
 Lf2_fault4:
@@ -341,7 +341,7 @@ Lf2_fault4:
 	adrp x3, Lxo_loc5@PAGE
 	add x3, x3, Lxo_loc5@PAGEOFF
 Lf2_cs7a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf2_cs7b:
 	brk #1
 Lf2_fault5:
@@ -350,7 +350,7 @@ Lf2_fault5:
 	adrp x2, Lxo_loc6@PAGE
 	add x2, x2, Lxo_loc6@PAGEOFF
 Lf2_cs8a:
-	bl _xo_fault_index
+	bl _xo_x_fault_raise_index
 Lf2_cs8b:
 	brk #1
 Lf2_fault6:
@@ -361,7 +361,7 @@ Lf2_fault6:
 	adrp x3, Lxo_loc7@PAGE
 	add x3, x3, Lxo_loc7@PAGEOFF
 Lf2_cs9a:
-	bl _xo_fault_overflow
+	bl _xo_x_fault_raise_overflow
 Lf2_cs9b:
 	brk #1
 	.cfi_endproc

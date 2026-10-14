@@ -37,7 +37,7 @@ jobs:
   # runners, and the run passes only when every job does.
   plan:
     runs-on: [self-hosted, xo-arm64]
-    timeout-minutes: 30
+    timeout-minutes: 10
     outputs:
       ref_sha: ${{ steps.plan.outputs.ref_sha }}
       main_sha: ${{ steps.plan.outputs.main_sha }}
@@ -55,7 +55,6 @@ jobs:
           PACKAGES: ${{ inputs.packages }}
           RUNNER: ${{ inputs.runner }}
           MERGE_MAIN: ${{ inputs.merge_main }}
-          XO_EXE: s3://xo-seeds-ACCOUNT_ID/dev/ci/${{ github.run_id }}/xo.exe
         # inputs reach the shell through env, never pasted into the script
         run: |
           git fetch -q origin main
@@ -79,10 +78,6 @@ jobs:
           fi
           echo "$jobs"
           echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
-          # a Windows job gets xo.exe cross built here (scripts/ci/suite.sh xcross)
-          if grep -q xo-windows <<<"$jobs"; then
-            scripts/ci/suite.sh xcross "$XO_EXE"
-          fi
 
   test:
     needs: plan
@@ -112,7 +107,6 @@ jobs:
       - name: ${{ matrix.args }}
         env:
           XO_CI_BASE: ${{ needs.plan.outputs.main_sha }}
-          XO_CI_XO_EXE: ${{ matrix.runner == 'xo-windows' && format('s3://xo-seeds-ACCOUNT_ID/dev/ci/{0}/xo.exe', github.run_id) || '' }}
           ARGS: ${{ matrix.args }}
         run: scripts/ci/suite.sh job $ARGS
       - name: Upload script output

@@ -24,6 +24,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   for the C's own string creators.
 - bench/perf/sysio/windows-ci.sh runs the sysio Windows measurement on
   CI's Windows runner (`-f suite=script -f runner=xo-windows`).
+- `XO_LEAKCHECK=1` on a native program that ends with `os.proc.exit` (or
+  whose main returns an error) prints `xo leakcheck: skipped
+  (os.proc.exit)` instead of nothing: the report runs only when main
+  returns (gotchas/leakcheck-skipped-at-exit.md).
+- Native code generation (decision 0228, zero-C audit item B06 part 2):
+  a failed check (overflow, division by zero, an index out of range, a
+  shift, a Float to Int conversion) and `fault(msg)` call the runtime's
+  Xo exports `xo_x_fault_raise_*` directly; the C entry points forward
+  to them until the next seed. The fault paths on the Mac are 0.962 to
+  1.036 of main's instructions.
 - Native runtime (decision 0227): the C path of the number and time text
   (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
   std/llrt/xo_std.c) is deleted; the owner accepted Duration text at

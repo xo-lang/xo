@@ -31,13 +31,8 @@ Windows. Still open: the driver itself should accept `C:\x` arguments
 `\` to `/` before the checker sees it; that is a selfhost/ change and
 reaches seeds only from the next one.
 
-Old workaround (no longer needed once the above is in the seed's
-caller): build xo.exe elsewhere. A Go backend cross build from
-macOS or Linux works: `xo build --backend=go --targets=windows/amd64
---std=$PWD/std -o xo.exe selfhost/xo`, put it in the checkout's
-`bin/xo.exe` (so it finds std at bin/../std; an xo.exe elsewhere fails
-with "std library not found" unless XO_STD is set), and set
-`XO_CLI` to it. CI's `suite=windows` does this (`scripts/ci/suite.sh
-xcross` in the plan job, knowledgebase/infrastructure/ci.md); the lead
-uses scripts/lead/xcross.sh. Next step: reproduce with `xo check
-selfhost/xo` under the seed on Windows and trace the module lookup.
+Old workaround (used until the fix, 2026-10-14): a Go backend cross
+built xo.exe from macOS or Linux in the checkout's `bin/xo.exe` (so it
+finds std at bin/../std) with `XO_CLI` set to it. CI's plan job did
+this (`suite.sh xcross`) and the lead's scripts/lead/xcross.sh; both are
+deleted.
