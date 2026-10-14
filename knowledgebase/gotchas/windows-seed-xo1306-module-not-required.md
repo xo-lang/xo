@@ -26,10 +26,12 @@ Git Bash runs worked because the shell passes `C:/...`.
 
 Fix: xotool passes paths through `xoPath` (filepath.ToSlash) and sets
 `PWD` the same way, so every seed, including 0.11.0, builds xo on
-Windows. Still open: the driver itself should accept `C:\x` arguments
-(spec 3.1 calls them absolute), by converting a drive path argument's
-`\` to `/` before the checker sees it; that is a selfhost/ change and
-reaches seeds only from the next one.
+Windows. The driver accepts native paths too (2026-10-14): on Windows
+selfhost/xo opts.xo `front` turns `\` into `/` in directory arguments
+and the values of path flags (`-o`, `--std`, `--wd`, `--tzdata`,
+`--cc`, ...), never in a `run` program's arguments or after `--`
+(scripts/ci/winpaths.sh checks it on the Windows runner). It reaches
+seeds from the next one cut; xotool's `/` paths cover older seeds.
 
 Old workaround (used until the fix, 2026-10-14): a Go backend cross
 built xo.exe from macOS or Linux in the checkout's `bin/xo.exe` (so it

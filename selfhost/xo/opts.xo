@@ -140,7 +140,7 @@ fn front(os: Os, args: List[Str]) -> Front {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var out: List[Str] = []
   for k in 0..i + 1 {
-    out.push(args[k])
+    out.push(path_arg(args[k]))
   }
   var j = i + 1
   var program = false
@@ -157,11 +157,12 @@ fn front(os: Os, args: List[Str]) -> Front {
       return Front{code: 0}
     }
     if a.starts_with("-") && a != "-" {
-      out.push(a)
+      out.push(path_arg(a))
       // a value flag given without = takes the next argument
-      if !a.contains("=") && vals.contains(a.trim_prefix("-").trim_prefix("-")) && j + 1 < args.len() {
+      let flag = a.trim_prefix("-").trim_prefix("-")
+      if !a.contains("=") && vals.contains(flag) && j + 1 < args.len() {
         j += 1
-        out.push(args[j])
+        out.push(if path_flags().contains(flag) { os_path(args[j]) } else { args[j] })
       }
       j += 1
       continue
@@ -180,9 +181,9 @@ fn front(os: Os, args: List[Str]) -> Front {
         os.stdio.eprintln(cmdhelp.no_match_error(cmd, a))
         return Front{code: 1}
       }
-      out.push(d)
+      out.push(os_path(d))
     } else {
-      out.push(a)
+      out.push(if dirs { os_path(a) } else { a })
     }
     if cmd == "run" {
       // the directory; the program's arguments follow
@@ -191,6 +192,31 @@ fn front(os: Os, args: List[Str]) -> Front {
     j += 1
   }
   Front{args: out}
+}
+
+/// The value flags that name a file or directory.
+fn path_flags() -> List[Str] {
+  ["o", "std", "wd", "tzdata", "record", "cc", "asm", "go-tree", "workspace", "as", "ld"]
+}
+
+/// A path argument as the rest of xo takes it: on Windows `\` is a
+/// separator (std.md 3.1: `C:\data` is absolute), and the checker and
+/// driver split paths only at `/`, so `C:\x\selfhost\xo` becomes
+/// `C:/x/selfhost/xo` (gotchas/windows-seed-xo1306-module-not-required.md);
+/// elsewhere `\` is an ordinary character of a name.
+fn os_path(p: Str) -> Str {
+  if is_windows() { p.replace("\\", "/") } else { p }
+}
+
+/// arg with os_path applied to the value of a path flag (`-o=C:\x`,
+/// `--std=C:\x`); other arguments unchanged.
+fn path_arg(arg: Str) -> Str {
+  if !arg.starts_with("-") || !arg.contains("=") {
+    return arg
+  }
+  let eq = arg.find("=") ?? 0
+  let name = arg[0..eq]
+  if path_flags().contains(name.trim_prefix("-").trim_prefix("-")) { "${name}=${os_path(arg[eq + 1..])}" } else { arg }
 }
 
 /// p against the working directory wd (unless absolute).
