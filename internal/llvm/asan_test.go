@@ -29,7 +29,7 @@ func TestGoldenASan(t *testing.T) {
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no http goldens: %v", err)
 	}
-	dirs = append(dirs, filepath.Join("testdata", "golden", "net_echo"))
+	dirs = append(dirs, filepath.Join("testdata", "golden", "net_echo"), filepath.Join("testdata", "golden", "net_only"))
 	rt := filepath.Join(rtDir, "xo_rt.c")
 	for _, dir := range dirs {
 		dir := dir
