@@ -1434,82 +1434,23 @@ XO_NORETURN static void fault_exit(xo_ctx *c) {
 	__builtin_unreachable();
 }
 
-#ifdef _WIN32
-static int lsda_landing(const uint8_t *p, uintptr_t func, uintptr_t ip, uintptr_t *lp);
-EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
-
-// fault_raise on Windows (decision 0197): there is no _Unwind_ForcedUnwind
-// in the MSVC environment, so the runtime walks the frames itself with the
-// Windows unwinder (the .pdata and .xdata every function has) from here
-// to the nearest frame of generated code whose call site has a landing
-// pad (its handler is xo_personality, its handler data the GCC call site
-// table LLVM emits for a non MSVC personality), and resumes there with
-// that frame's registers. The landing pad runs the cleanups and calls
-// xo_fault_continue, which raises again from there: one frame of
-// landing pads at a time, as the forced unwind does. Past the boundary
-// (or with no unwind data: the end of the stack) the fault is reported.
-XO_NORETURN static void fault_raise(xo_ctx *c) {
-	rt_fault_leave();
-	c->faulting = 1;
-	c->unwinding = 1;
-	struct _Unwind_Exception *exc = &c->fault_exc;
-	memset(exc, 0, sizeof *exc);
-	exc->exception_class = XO_EXC_CLASS;
-	CONTEXT cx, here;
-	RtlCaptureContext(&cx);
-	for (;;) {
-#if defined(_M_ARM64) || defined(__aarch64__)
-		DWORD64 pc = cx.Pc;
-#else
-		DWORD64 pc = cx.Rip;
-#endif
-		DWORD64 base = 0;
-		PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(pc, &base, NULL);
-		if (!fn || pc == 0) {
-			break;
-		}
-		here = cx;
-		void *data = NULL;
-		DWORD64 establisher = 0;
-		PEXCEPTION_ROUTINE h = RtlVirtualUnwind(UNW_FLAG_UHANDLER, base, pc, fn, &cx, &data, &establisher, NULL);
-#if defined(_M_ARM64) || defined(__aarch64__)
-		uintptr_t cfa = (uintptr_t)cx.Sp;
-#else
-		uintptr_t cfa = (uintptr_t)cx.Rsp;
-#endif
-		if (c->boundary && cfa > c->boundary) {
-			break;
-		}
-		uintptr_t lp;
-		if (h == (PEXCEPTION_ROUTINE)xo_personality && data &&
-			lsda_landing(data, (uintptr_t)(base + fn->BeginAddress), (uintptr_t)pc - 1, &lp)) {
-#if defined(_M_ARM64) || defined(__aarch64__)
-			here.Pc = lp;
-			here.X0 = (DWORD64)(uintptr_t)exc;
-			here.X1 = 0;
-#else
-			here.Rip = lp;
-			here.Rax = (DWORD64)(uintptr_t)exc;
-			here.Rdx = 0;
-#endif
-			RtlRestoreContext(&here, NULL);
-		}
-	}
-	fault_exit(c);
-}
-#elif !defined(XO_UNWIND_LIBGCC)
+#if !defined(XO_UNWIND_LIBGCC)
 int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
-#ifdef XO_NOLIBC
+#if defined(_WIN32)
+EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
+#elif defined(XO_NOLIBC)
 int xo_personality(void); // the link's --defsym of xo_x_personality
 #else
 int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
 #endif
 
-// fault_raise on Linux and macOS (decision 0221): the unwinder is Xo
+// fault_raise on Linux, macOS, and Windows (decision 0221; Windows,
+// decision 0197 and the zero-C audit's B06): the unwinder is Xo
 // (std/native/llrt/unwind.xo over the .eh_frame_hdr tables of the
 // program and its shared objects on Linux, the compact unwind of
-// __unwind_info and __eh_frame on macOS), which runs the first landing pad of
+// __unwind_info and __eh_frame on macOS, the system's RtlVirtualUnwind
+// on Windows, win_raise), which runs the first landing pad of
 // a frame of generated code (its personality is xo_x_personality, or
 // the forwarder xo_personality that an xo before decision 0221's
 // emitter change names) below the context's boundary, and returns when
@@ -1645,7 +1586,21 @@ int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc) {
 }
 #endif
 
-#if defined(_WIN32) || defined(XO_UNWIND_LIBGCC)
+#if defined(_WIN32)
+// xo_personality is, on Windows, the language handler the system's
+// exception dispatcher calls for frames of generated code (and the
+// handler unwind.xo win_raise looks for): faults never go through the
+// dispatcher, so it passes every system exception on.
+EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp) {
+	(void)rec;
+	(void)frame;
+	(void)cx;
+	(void)disp;
+	return ExceptionContinueSearch;
+}
+#endif
+
+#if defined(XO_UNWIND_LIBGCC)
 static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
 	const uint8_t *q = *p;
 	uintptr_t v = 0;
@@ -1689,52 +1644,6 @@ static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
 
 static uintptr_t uleb(const uint8_t **p) { return lsda_read(p, 0x01); }
 
-#ifdef _WIN32
-// lsda_landing finds the landing pad of the call site at ip in the call
-// site table p of the function at func: 1 and *lp when it has one.
-static int lsda_landing(const uint8_t *p, uintptr_t func, uintptr_t ip, uintptr_t *lp) {
-	uint8_t lpenc = *p++;
-	if (lpenc != 0xff) {
-		lsda_read(&p, lpenc);
-	}
-	uint8_t ttenc = *p++;
-	if (ttenc != 0xff) {
-		uleb(&p);
-	}
-	uint8_t csenc = *p++;
-	uintptr_t cslen = uleb(&p);
-	const uint8_t *end = p + cslen;
-	while (p < end) {
-		uintptr_t start = lsda_read(&p, csenc);
-		uintptr_t len = lsda_read(&p, csenc);
-		uintptr_t pad = lsda_read(&p, csenc);
-		uleb(&p); // action
-		if (ip < func + start) {
-			break;
-		}
-		if (ip < func + start + len) {
-			if (pad == 0) {
-				return 0;
-			}
-			*lp = func + pad;
-			return 1;
-		}
-	}
-	return 0;
-}
-
-// xo_personality is, on Windows, the language handler the system's
-// exception dispatcher calls for frames of generated code: faults never
-// go through the dispatcher (fault_raise walks the frames itself), so it
-// passes every system exception on.
-EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp) {
-	(void)rec;
-	(void)frame;
-	(void)cx;
-	(void)disp;
-	return ExceptionContinueSearch;
-}
-#else
 _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t cls,
 	struct _Unwind_Exception *e, struct _Unwind_Context *uc) {
 	(void)cls;
@@ -1781,8 +1690,7 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 	}
 	return _URC_CONTINUE_UNWIND;
 }
-#endif
-#endif // _WIN32 || XO_UNWIND_LIBGCC
+#endif // XO_UNWIND_LIBGCC
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 

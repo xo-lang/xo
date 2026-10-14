@@ -97,3 +97,47 @@ On the Mac, with the branch's xo:
 - TestRuntimeFault* (FaultResume, FaultShared), TestRuntimeTasks,
   TestRuntimeThreads, and TestGoldenTasks (TSan) pass;
 - the arm64 asm goldens change only in the 10 fault calls.
+
+## Part 3: the Windows walk
+
+Branch b06-windows. Before this branch, xo_rt.c's Windows fault_raise
+walked the frames in C. unwind.xo `win_raise` now does it in Xo:
+- RtlCaptureContext, then for each frame RtlLookupFunctionEntry and
+  RtlVirtualUnwind with UNW_FLAG_UHANDLER, through sys_windows.xo
+  declarations. CONTEXT offsets are given for x64 and arm64.
+- The call site table goes through the LSDA reader shared with the other
+  OSes (`landing`).
+- At a landing pad, RtlRestoreContext with the exception in Rax (X0).
+Windows now uses the common fault_raise. The C Windows walk and
+lsda_landing are deleted: xo_rt.c is 116 lines deleted and 24 added
+against main. The C xo_personality stub stays, since it is the handler
+the walk looks for.
+
+Windows (CI's xo-windows runner, c7i.4xlarge, windows/amd64, LLVM),
+bench/perf/fault/measure-windows.ps1 through the script suite.
+Measure-Command wall clock milliseconds, minimum of 5 runs; the same
+xo.exe builds against main's std (830c6cb4) and the branch's. Windows
+has no instruction count at hand, so this is a best effort comparison,
+not decision 0180's bar.
+
+| workload | C walk | Xo walk (run 38637550599) | Xo walk with the lookup cache (run 38638886262) |
+|---|---|---|---|
+| none | 14.2 | 13.5 | 14.4 |
+| isolate | 35.5 | 38.6 | 33.3 (0.94) |
+| defer | 119.2 | 146.6 | 130.6 (1.10) |
+| owned | 71.4 | 85.3 | 73.4 (1.03) |
+
+The C column is from run 38638886262; run 38637550599's base was 13.7,
+36.2, 119.8, and 71.3.
+
+The first Xo walk was 1.07 to 1.22 times the C's. Every raise walks the
+unwinder's own frames too (the cabi export, raise, win_raise), each a
+RtlLookupFunctionEntry and a RtlVirtualUnwind. A cache of the function
+entry lookup by pc (256 entries in the scratch record) brought it to
+0.94 to 1.10. defer is the slowest at 1.10: each of its 9 raises per
+fault walks those frames again.
+
+CI windows: windows/amd64 157 of 157 goldens, windows/arm64 157 built,
+the LLVM runtime tests ok (run 38633766335, before the cache; run
+38640009496 at the head). CI auto green (runs 38633770035 and
+38640013605).

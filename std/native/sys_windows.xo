@@ -90,3 +90,17 @@ fn UnlockFileEx(h: Int, reserved: Int, low: Int, high: Int, o: Int) -> Int32
 fn FindFirstFileExW(name: Bytes, level: Int, data: Int, op: Int, filter: Int, flags: Int) -> Int
 fn FindNextFileW(h: Int, data: Int) -> Int32
 fn FindClose(h: Int) -> Int32
+
+// The fault unwinder of std/native/llrt/unwind.xo (win_raise, the
+// zero-C audit's B06; decision 0197's walk).
+
+/// RtlCaptureContext: the caller's registers into the CONTEXT at cx.
+fn RtlCaptureContext(cx: Int)
+/// RtlLookupFunctionEntry: the RUNTIME_FUNCTION of pc (0: none), its
+/// image base stored at the address base.
+fn RtlLookupFunctionEntry(pc: Int, base: Int, history: Int) -> Int
+/// RtlVirtualUnwind: unwinds the CONTEXT at cx one frame and returns the
+/// frame's handler (with UNW_FLAG_UHANDLER), its data stored at data.
+fn RtlVirtualUnwind(kind: Int, base: Int, pc: Int, f: Int, cx: Int, data: Int, establisher: Int, ptrs: Int) -> Int
+/// RtlRestoreContext: resumes the CONTEXT at cx (does not return).
+fn RtlRestoreContext(cx: Int, rec: Int)
