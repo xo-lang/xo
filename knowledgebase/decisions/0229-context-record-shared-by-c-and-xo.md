@@ -64,6 +64,14 @@ or writes these fields.
    address is rt.static_word 16 (budget.xo cancels a scope's node
    through pool.xo).
 
+6. **B18 (2026-10-14)**: the task and scope records follow the same rules
+   (std/native/llrt/tasks.xo T_* and S_*, asserted in xo_rt.c; the C
+   owns them, tasks.xo writes the result, the unwound flag, the fault
+   strings, the failure fields, and the cancel node). The context gained
+   `went` (C_WENT 216; xo_ctx is 256 bytes, 16 aligned), its own wait
+   list entry, which the C's wl_wait_as and tasks.xo's wl_wait both use.
+   rt.static_word 17 (ctx.xo's range) holds the program's task group.
+
 ## Consequences
 
 - xo_rt.c: 287 lines deleted, 87 added (the asserts, the budget record,
