@@ -16,6 +16,10 @@ fn CreateFileW(name: Bytes, access: Int, share: Int, security: Int, disposition:
 fn ReadFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
 fn WriteFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
 fn CloseHandle(h: Int) -> Int32
+/// GetStdHandle: the handle of standard input, output, or error (n is
+/// STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, or STD_ERROR_HANDLE), or 0 or
+/// INVALID_HANDLE_VALUE.
+fn GetStdHandle(n: Int) -> Int
 fn GetLastError() -> UInt32
 /// GetFileInformationByHandle into the BY_HANDLE_FILE_INFORMATION (52
 /// bytes) at the address info.

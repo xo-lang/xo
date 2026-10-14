@@ -26,3 +26,11 @@ operation's lowering (C that only other C calls, such as SHA-512 for
 Ed25519) can delete the C at once. Check with `go run
 ./scripts/xobuild` (it builds with the seed) before deleting runtime
 C that generated code calls.
+
+Open seed shims (delete each with the first seed that has its item):
+xo_sys.c `xo_static_word` (B02); xo_rt.c `xo_print`, `xo_println`,
+`xo_eprint`, `xo_eprintln` (B03 stage 1, 2026-10-14: one line forwards
+to cabi.xo's exports, since seed 0.10.0 lowers Stdio.print and the SSA
+builder's rt.eprintln to them). std/native/log.xo's WASI arm still
+names rt.eprintln; check that a native build does not reference
+xo_eprintln (nm) before deleting it.

@@ -1538,7 +1538,7 @@ fn (var b: Builder) main_wrapper(mf: Int, et: Int) {
   b.s.cur = yes
   let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
   let msg = b.append_display(b.const_str("error: "), e, et)
-  b.rt("eprintln", -1, [msg])
+  b.eprintln_rt(msg)
   b.print_trace(b.err_trace(r, ei))
   b.rt("exit", -1, [b.cint(1)])
   if !b.is_dead() {
@@ -2001,6 +2001,33 @@ fn (var b: Builder) rand_rt(name: Str, t: Int, args: List[Int]) -> Int {
     return b.rt(name, t, args)
   }
   b.llrt(name, t, args)
+}
+
+/// A write of the Str s by Stdio's name (print, println, eprint,
+/// eprintln): the native prelude's llrt_<name> (std/native/llrt/stdio.xo,
+/// the zero-C audit's B03), and true; false in a WASI module (its runtime
+/// prints) or without the native prelude, where the caller makes the
+/// runtime's call.
+fn (var b: Builder) stdio_llrt(name: Str, s: Int) -> Bool {
+  if b.wasm {
+    return false
+  }
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    return false
+  }
+  let f = b.declare(impl, [])
+  b.call(b.m.funcs[f].name, b.unit_t(), "", [s])
+  true
+}
+
+/// msg and a newline on standard error, for the builder's own messages
+/// (an error main returned, a fault's trace): stdio_llrt, else the
+/// runtime's rt.eprintln.
+fn (var b: Builder) eprintln_rt(msg: Int) {
+  if !b.stdio_llrt("eprintln", msg) {
+    b.rt("eprintln", -1, [msg])
+  }
 }
 
 /// A call of std/json's tape reader or text function name (json_str,

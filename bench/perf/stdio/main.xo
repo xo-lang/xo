@@ -1,0 +1,39 @@
+// Standard output and error on the native backends (the zero-C audit's
+// work item B03: std/native/llrt/stdio.xo against the C runtime's
+// buffer, which an earlier commit's std gives; bench/perf/stdio/measure.sh).
+// Usage: stdio <workload>. Workloads: lines (1,000,000 println of a
+// constant), ints (500,000 println of an interpolated Int), small
+// (2,000,000 print of one byte), big (5,000 prints of 40,000 bytes,
+// written at once past the buffer), err (20,000 eprintln: unbuffered),
+// mixed (20,000 println and eprint pairs: each eprint flushes), none
+// (nothing). Run with standard output and error sent to /dev/null.
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  if w == "lines" {
+    for _ in 0..1000000 {
+      os.stdio.println("hello, world")
+    }
+  } else if w == "ints" {
+    for i in 0..500000 {
+      os.stdio.println("line ${i}")
+    }
+  } else if w == "small" {
+    for _ in 0..2000000 {
+      os.stdio.print("x")
+    }
+  } else if w == "big" {
+    let s = "y".repeat(40000)
+    for _ in 0..5000 {
+      os.stdio.print(s)
+    }
+  } else if w == "err" {
+    for _ in 0..20000 {
+      os.stdio.eprintln("e")
+    }
+  } else if w == "mixed" {
+    for _ in 0..20000 {
+      os.stdio.println("out")
+      os.stdio.eprint("e")
+    }
+  }
+}

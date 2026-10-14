@@ -228,6 +228,8 @@ static inline xo_heap *heap(void) {
 // xo_rt_threads_begin switches the runtime to several threads. The
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
+void xo_x_stdio_threads(void);
+
 void xo_rt_threads_begin(void) {
 	if (__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED)) {
 		return;
@@ -235,6 +237,8 @@ void xo_rt_threads_begin(void) {
 	tls_heap = &main_heap;
 	__atomic_store_n(&solo_heap, NULL, __ATOMIC_RELAXED);
 	__atomic_store_n(&xo_threaded, 1, __ATOMIC_RELAXED);
+	// standard output's buffer takes its lock from now on (stdio.xo)
+	xo_x_stdio_threads();
 }
 
 // xo_rt_live returns the blocks allocated and not freed, and the blocks
@@ -542,10 +546,9 @@ static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
 static void tw_write(int err, const char *p, int64_t n);
 
 // ---------------------------------------------------------------------------
-// Output
-
-static char obuf[1 << 16];
-static size_t olen;
+// Output: standard output's buffer is Xo (std/native/llrt/stdio.xo, the
+// zero-C audit's work item B03); the C flushes it through cabi.xo's
+// exports before a wait, at exit, and before a fault's message.
 
 static void write_all(int fd, const char *p, size_t n) {
 	while (n > 0) {
@@ -558,109 +561,27 @@ static void write_all(int fd, const char *p, size_t n) {
 	}
 }
 
-// With several threads (xo_rt_threads_begin) the buffer is locked; one
-// print's text stays together.
-static pthread_mutex_t out_mu = PTHREAD_MUTEX_INITIALIZER;
+void xo_x_print(int64_t p, int64_t n);
+void xo_x_println(int64_t p, int64_t n);
+void xo_x_eprint(int64_t p, int64_t n);
+void xo_x_eprintln(int64_t p, int64_t n);
+void xo_x_flush(void);
+void xo_x_flush_try(void);
 
-static inline int out_lock(void) {
-	if (__builtin_expect(!__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED), 1)) {
-		return 0;
-	}
-	pthread_mutex_lock(&out_mu);
-	return 1;
-}
+void xo_flush(void) { xo_x_flush(); }
 
-static inline void out_unlock(int locked) {
-	if (locked) {
-		pthread_mutex_unlock(&out_mu);
-	}
-}
+// flush_pending writes buffered output before the caller waits (decision
+// 0069; nothing when the buffer is empty).
+static void flush_pending(void) { xo_x_flush(); }
 
-// out_dirty tells that the buffer holds text (atomic): a context about
-// to wait flushes it (decision 0069), so a program's output shows before
-// it waits for a signal or a connection.
-static int out_dirty;
-
-static void flush_locked(void) {
-	if (olen > 0) {
-		write_all(1, obuf, olen);
-		olen = 0;
-		__atomic_store_n(&out_dirty, 0, __ATOMIC_RELAXED);
-	}
-}
-
-static void print_locked(const char *p, int64_t n) {
-	if ((size_t)n > sizeof obuf / 2) {
-		flush_locked();
-		write_all(1, p, (size_t)n);
-		return;
-	}
-	if (olen + (size_t)n > sizeof obuf) {
-		flush_locked();
-	}
-	memcpy(obuf + olen, p, (size_t)n);
-	olen += (size_t)n;
-	__atomic_store_n(&out_dirty, 1, __ATOMIC_RELAXED);
-}
-
-void xo_flush(void) {
-	int l = out_lock();
-	flush_locked();
-	out_unlock(l);
-}
-
-// flush_pending writes buffered output before the caller waits.
-static void flush_pending(void) {
-	if (__atomic_load_n(&out_dirty, __ATOMIC_RELAXED)) {
-		xo_flush();
-	}
-}
-
-void xo_print(const char *p, int64_t n) {
-	if (tw_is_fake(TW_REAL_STDIO)) {
-		tw_write(0, p, n);
-		return;
-	}
-	int l = out_lock();
-	print_locked(p, n);
-	out_unlock(l);
-}
-
-void xo_println(const char *p, int64_t n) {
-	if (tw_is_fake(TW_REAL_STDIO)) {
-		tw_write(0, p, n);
-		tw_write(0, "\n", 1);
-		return;
-	}
-	int l = out_lock();
-	print_locked(p, n);
-	print_locked("\n", 1);
-	out_unlock(l);
-}
-
-void xo_eprint(const char *p, int64_t n) {
-	if (tw_is_fake(TW_REAL_STDIO)) {
-		tw_write(1, p, n);
-		return;
-	}
-	int l = out_lock();
-	flush_locked();
-	write_all(2, p, (size_t)n);
-	out_unlock(l);
-}
-
-void xo_eprintln(const char *p, int64_t n) {
-	if (tw_is_fake(TW_REAL_STDIO)) {
-		tw_write(1, p, n);
-		tw_write(1, "\n", 1);
-		return;
-	}
-	int l = out_lock();
-	flush_locked();
-	write_all(2, p, (size_t)n);
-	write_all(2, "\n", 1);
-	out_unlock(l);
-}
+// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): an xo
+// before B03 compiles Stdio.print and friends, and the SSA builder's
+// rt.eprintln, as calls of these. Delete them with the first seed that
+// has B03.
+void xo_print(const char *p, int64_t n) { xo_x_print((int64_t)(intptr_t)p, n); }
+void xo_println(const char *p, int64_t n) { xo_x_println((int64_t)(intptr_t)p, n); }
+void xo_eprint(const char *p, int64_t n) { xo_x_eprint((int64_t)(intptr_t)p, n); }
+void xo_eprintln(const char *p, int64_t n) { xo_x_eprintln((int64_t)(intptr_t)p, n); }
 
 // ---------------------------------------------------------------------------
 // C ABI exports (decisions 0204, 0207): functions of
@@ -6274,13 +6195,7 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 	static const char m[] = "fatal error: stack overflow\n";
 	DWORD w;
 	// the program's buffered output first, unless a writer holds it
-	if (TryAcquireSRWLockExclusive(&out_mu)) {
-		if (olen > 0) {
-			WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), obuf, (DWORD)olen, &w, NULL);
-			olen = 0;
-		}
-		ReleaseSRWLockExclusive(&out_mu);
-	}
+	xo_x_flush_try();
 	WriteFile(GetStdHandle(STD_ERROR_HANDLE), m, sizeof m - 1, &w, NULL);
 	TerminateProcess(GetCurrentProcess(), 2);
 	return EXCEPTION_CONTINUE_SEARCH;

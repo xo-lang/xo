@@ -51,6 +51,9 @@ const ERROR_ACCESS_DENIED: Int = 5
 const ERROR_BROKEN_PIPE: Int = 109
 const ERROR_CANT_ACCESS_FILE: Int = 1920
 const BCRYPT_USE_SYSTEM_PREFERRED_RNG: Int = 2
+// GetStdHandle's arguments, (DWORD)-11 and (DWORD)-12 (processenv.h)
+const STD_OUTPUT_HANDLE: Int = 4294967285
+const STD_ERROR_HANDLE: Int = 4294967284
 
 /// The handle of op opened for reading, as the C runtime's
 /// _wopen(_O_RDONLY | _O_BINARY | _O_NOINHERIT) opens it, or the negative
@@ -123,6 +126,19 @@ pub fn write_all(h: Int, b: Bytes) -> Int {
     off += w
   }
   keep(b, 0)
+}
+
+/// WriteFile of the n bytes at the address a (at most 2 GiB of them) to
+/// standard output (fd 1) or standard error (2): the bytes written, or
+/// the negative errno (std/native/llrt/stdio.xo).
+pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
+  let h = sys_windows.GetStdHandle(if fd == 2 { STD_ERROR_HANDLE } else { STD_OUTPUT_HANDLE })
+  let done = rt.sys_buf()
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  if Int(sys_windows.WriteFile(h, a, k, rt.bytes_addr(done), 0)) == 0 {
+    return keep(done, -dos_errno(Int(sys_windows.GetLastError())))
+  }
+  keep(done, rt.bytes_word(done, 0) & 4294967295)
 }
 
 /// CloseHandle: 0, or the negative errno.

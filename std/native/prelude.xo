@@ -17,6 +17,7 @@ use native/llrt/num
 use native/llrt/report
 use native/llrt/scan
 use native/llrt/show
+use native/llrt/stdio as stdiort
 use native/llrt/strings
 use native/llrt/sysio
 use native/llrt/cabi_poll
@@ -2252,6 +2253,18 @@ fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 // thread local word in Xo (std/native/llrt/logstate.xo, work item B02).
 
 fn llrt_log_from(s: Str) { logstate.set_from(s) }
+
+// Stdio.print, println, eprint, and eprintln, and the SSA builder's own
+// messages to standard error (an error main returned, a fault's trace):
+// in Xo (std/native/llrt/stdio.xo, the zero-C audit's work item B03).
+
+fn llrt_print(s: Str) { stdiort.print(s, false) }
+
+fn llrt_println(s: Str) { stdiort.print(s, true) }
+
+fn llrt_eprint(s: Str) { stdiort.eprint(s, false) }
+
+fn llrt_eprintln(s: Str) { stdiort.eprint(s, true) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo

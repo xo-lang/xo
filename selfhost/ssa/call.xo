@@ -1554,6 +1554,9 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       if fname is "print" | "println" | "eprint" | "eprintln" {
         let rv = b.expr(ci.recv[0])
         let mv = b.value_as(args[0].value, b.str_t())
+        if b.stdio_llrt(fname, mv) {
+          return b.unit()
+        }
         return b.call("Stdio.${fname}", b.unit_t(), "", [rv, mv])
       }
       if fname is "write" | "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes" | "stdin_is_tty" | "stdout_is_tty" | "stderr_is_tty" | "width" {
