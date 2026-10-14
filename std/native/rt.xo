@@ -210,21 +210,19 @@ fn prefetch(a: Int)
 /// process globals, zero at start (decision 0207's design, work item
 /// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
 /// static address on wasm; reached with mem_load/mem_store or the slot
-/// atomics. The words: 0 to 2 std/native/llrt/logstate.xo (the level,
-/// format, and output of log.configure); 3 to 6 std/native/llrt/stdio.xo
-/// (standard output's buffer, its length, its lock, and the mode: whether
-/// the test world fakes stdio, whether several threads run); 7 to 9
-/// std/native/llrt/process.xo (argc, argv, the environment); 10 to 13
-/// std/native/llrt/obj.xo (the single threaded heap record and three C
-/// functions' addresses); 14 std/native/llrt/fault.xo (the address of
-/// xo_rt.c fault_raise_msg, decision 0228); 15 std/native/llrt/ctx.xo (the
-/// address of xo_rt.c ctx_root, decision 0229); 16 ctx.xo (the address of
-/// xo_rt.c's pool record); 32 to 39 the test world's
-/// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
-/// real, its lock, Rand's PCG state, the MemFs lock and state, the state
-/// record); 18 to 21 std/native/llrt/tzhost.xo (the kept zones' lock and
-/// vector: its address, length, and capacity); 17, 22 to 31, and 40 to
-/// 63 unused.
+/// atomics. The words, one range per module (internal/repotest
+/// TestStaticWords checks that every `rt.static_word(K)` of a module
+/// falls in its range and that no two ranges overlap; claim a range
+/// here in the change that first uses it, after checking current main):
+///
+///   0-2 std/native/llrt/logstate.xo: the level, format, and output of log.configure
+///   3-6 std/native/llrt/stdio.xo: standard output's buffer, its length, its lock, the mode
+///   7-9 std/native/llrt/process.xo: argc, argv, the environment
+///   10-13 std/native/llrt/obj.xo: the single threaded heap record, three C functions' addresses
+///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
+///   15-16 std/native/llrt/ctx.xo: the addresses of ctx_root and the pool record (decision 0229)
+///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)
+///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

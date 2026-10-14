@@ -33,7 +33,7 @@ const TZ_MAX = 4096
 
 const RELAXED = 0
 const ACQUIRE = 1
-const RELEASE = 3
+const RELEASE = 2
 
 // ---------------------------------------------------------------------------
 // Zone data

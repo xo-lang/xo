@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -209,5 +210,119 @@ func TestSpecListsEveryFaultCode(t *testing.T) {
 		if !used[c] {
 			t.Errorf("core 10.6 lists %s, which no runtime raises", c)
 		}
+	}
+}
+
+// TestStaticWords keeps the program's 64 static words (rt.static_word,
+// std/native/rt.xo) from being taken twice: sessions working in parallel
+// each claimed words in 14 to 23 on 2026-10-14 (fault.xo, tzhost.xo,
+// ctx.xo, heapos.xo), and a collision corrupts both modules' state at
+// run time with no build error. rt.xo's doc lists one range per module;
+// every rt.static_word(K) of a module (K a literal or a const of the
+// same file) must fall in that module's range, and no two ranges may
+// overlap.
+func TestStaticWords(t *testing.T) {
+	rtSrc, err := os.ReadFile(filepath.Join(root, "std", "native", "rt.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type span struct{ lo, hi int }
+	ranges := map[string]span{}
+	owner := make([]string, 64)
+	entry := regexp.MustCompile(`(?m)^///\s+(\d+)(?:-(\d+))?\s+(std/native/\S+\.xo):`)
+	for _, m := range entry.FindAllStringSubmatch(string(rtSrc), -1) {
+		lo, _ := strconv.Atoi(m[1])
+		hi := lo
+		if m[2] != "" {
+			hi, _ = strconv.Atoi(m[2])
+		}
+		if lo > hi || hi > 63 {
+			t.Errorf("rt.xo: static words %d-%d of %s: not a range in 0 to 63", lo, hi, m[3])
+			continue
+		}
+		if _, dup := ranges[m[3]]; dup {
+			t.Errorf("rt.xo: %s has two ranges of static words", m[3])
+		}
+		ranges[m[3]] = span{lo, hi}
+		for k := lo; k <= hi; k++ {
+			if owner[k] != "" {
+				t.Errorf("rt.xo: static word %d is listed for both %s and %s", k, owner[k], m[3])
+			}
+			owner[k] = m[3]
+		}
+	}
+	if len(ranges) == 0 {
+		t.Fatal("rt.xo: no table of static words found (lines `///   LO-HI std/native/...xo: ...`)")
+	}
+	use := regexp.MustCompile(`rt\.static_word\(\s*([A-Za-z_][A-Za-z_0-9]*|\d+)\s*\)`)
+	err = filepath.WalkDir(filepath.Join(root, "std", "native"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".xo") {
+			return err
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		uses := use.FindAllStringSubmatch(string(src), -1)
+		if len(uses) == 0 {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		if rel == "std/native/rt.xo" {
+			return nil
+		}
+		r, ok := ranges[rel]
+		if !ok {
+			t.Errorf("%s calls rt.static_word but rt.xo's table lists no range for it", rel)
+			return nil
+		}
+		for _, u := range uses {
+			k, err := strconv.Atoi(u[1])
+			if err != nil {
+				c := regexp.MustCompile(`(?m)^(?:pub\s+)?const\s+` + u[1] + `(?:\s*:\s*Int)?\s*=\s*(\d+)\s*$`).FindStringSubmatch(string(src))
+				if c == nil {
+					t.Errorf("%s: rt.static_word(%s): no `const %s = N` in the same file", rel, u[1], u[1])
+					continue
+				}
+				k, _ = strconv.Atoi(c[1])
+			}
+			if k < r.lo || k > r.hi {
+				t.Errorf("%s: rt.static_word(%s) is word %d, outside its range %d-%d in rt.xo's table", rel, u[1], k, r.lo, r.hi)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAtomicOrderConstants keeps every module's copy of the slot
+// atomics' orders equal to rt.xo's (0 relaxed, 1 acquire, 2 release, 3
+// acq_rel, 4 seq_cst): B21's heapos.xo defined ACQUIRE = 2 (release) and
+// its central lists' lock took no acquire, so on arm64 two threads got
+// one magazine (2026-10-14); tzhost.xo had RELEASE = 3 (acq_rel).
+func TestAtomicOrderConstants(t *testing.T) {
+	want := map[string]int{"RELAXED": 0, "ACQUIRE": 1, "RELEASE": 2, "ACQ_REL": 3, "SEQ_CST": 4}
+	def := regexp.MustCompile(`(?m)^(?:pub\s+)?const\s+(RELAXED|ACQUIRE|RELEASE|ACQ_REL|SEQ_CST)(?:\s*:\s*Int)?\s*=\s*(\d+)\s*$`)
+	err := filepath.WalkDir(filepath.Join(root, "std"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".xo") {
+			return err
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, m := range def.FindAllStringSubmatch(string(src), -1) {
+			if v, _ := strconv.Atoi(m[2]); v != want[m[1]] {
+				rel, _ := filepath.Rel(root, p)
+				t.Errorf("%s: const %s = %d, want %d (rt.xo's slot atomics' orders)", filepath.ToSlash(rel), m[1], v, want[m[1]])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
