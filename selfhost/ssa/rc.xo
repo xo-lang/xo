@@ -1274,36 +1274,47 @@ fn (var r: Rc) group_releases(var f: Func) {
       while j < ins.len() && (f.values[ins[j]].op is Op.Field | Op.Release) {
         j += 1
       }
-      // the leaves released in the run, by root
-      var by_root: Map[Int, List[Str]] = {}
-      var roots: List[Int] = []
+      // the leaves released in the run, by group: a root, or for the
+      // results of a call one result (the arm64 emitter reads a call's
+      // `var` results in place while only field reads use the call,
+      // byref.xo lazy_result, and a release of the whole call would load
+      // every word: bench/results/fast-builds-2026-10-13.md)
+      var by_group: Map[Str, List[Str]] = {}
+      var groups: List[Str] = []
+      var gsite: Map[Str, (Int, Int)] = {}
+      var bad: Set[Str] = #{}
       for k in i..j {
         let v = ins[k]
         if f.values[v].op != Op.Release {
           continue
         }
         let a = f.values[v].args[0]
-        let root = r.base(f, a).root
-        if !by_root.contains(root) {
-          by_root[root] = []
-          roots.push(root)
-        }
-        var ks = by_root.get(root) ?? []
-        for l in r.leaves(f, a) {
+        let ls = r.leaves(f, a)
+        var mine: Set[Str] = #{}
+        for l in ls {
+          let (g, root, comp) = r.leaf_group(f, l)
+          mine.add(g)
+          if !by_group.contains(g) {
+            by_group[g] = []
+            groups.push(g)
+            gsite[g] = (root, comp)
+          }
+          var ks = by_group.get(g) ?? []
           ks.push(leaf_key(l))
+          by_group[g] = ks
         }
-        by_root[root] = ks
+        if mine.len() > 1 {
+          for g in mine {
+            bad.add(g)
+          }
+        }
       }
-      var joined: Map[Int, Bool] = {}
-      for root in roots {
-        let ks = by_root.get(root) ?? []
-        let all = r.leaves(f, root)
-        // not the results of a call: the arm64 emitter reads a call's
-        // `var` results in place while only field reads use them
-        // (lazy_result), and a release of the whole call would load
-        // every word (bench/results/fast-builds-2026-10-13.md: 5.6
-        // percent more instructions in the self build)
-        if all.len() < GROUP_LEAVES || ks.len() != all.len() || (f.values[root].op is Op.Call | Op.CallValue) {
+      var joined: Map[Str, Bool] = {}
+      for g in groups {
+        let ks = by_group.get(g) ?? []
+        let (root, comp) = gsite.get(g) ?? (-1, -1)
+        let all = r.group_leaves(f, root, comp)
+        if bad.contains(g) || all.len() < GROUP_LEAVES || ks.len() != all.len() {
           continue
         }
         var want: Set[Str] = #{}
@@ -1315,18 +1326,24 @@ fn (var r: Rc) group_releases(var f: Func) {
           got.add(s)
         }
         if got.len() == want.len() && got.len() == ks.len() && got.difference(want).is_empty() {
-          joined[root] = true
+          joined[g] = true
         }
       }
-      var placed: Set[Int] = #{}
+      var placed: Set[Str] = #{}
       for k in i..j {
         let v = ins[k]
         if f.values[v].op == Op.Release {
-          let root = r.base(f, f.values[v].args[0]).root
-          if joined.contains(root) {
-            if !placed.contains(root) {
-              placed.add(root)
-              out.push(new_value(f, bl, Op.Release, -1, Aux.None, [root]))
+          let ls = r.leaves(f, f.values[v].args[0])
+          let (g, root, comp) = r.leaf_group(f, ls[0])
+          if joined.contains(g) {
+            if !placed.contains(g) {
+              placed.add(g)
+              var w = root
+              if comp >= 0 {
+                w = new_value(f, bl, Op.Field, r.field_type(f.values[root].ty, comp), Aux.I(n: comp), [root])
+                out.push(w)
+              }
+              out.push(new_value(f, bl, Op.Release, -1, Aux.None, [w]))
               any = true
             }
             continue
@@ -1342,6 +1359,29 @@ fn (var r: Rc) group_releases(var f: Func) {
     // the field reads only the joined releases used
     remove_dead_fields(f)
   }
+}
+
+/// The group of leaf l in group_releases: its key, its root, and, for a
+/// root that is a call, the result it belongs to (else -1).
+fn (r: Rc) leaf_group(f: Func, l: Leaf) -> (Str, Int, Int) {
+  if (f.values[l.root].op is Op.Call | Op.CallValue) && l.path.len() > 1 {
+    let first = l.path[1..l.path.len()].split(".")[0]
+    let comp = Int.parse(first) ?? -1
+    return ("${l.root}.${comp}", l.root, comp)
+  }
+  ("${l.root}", l.root, -1)
+}
+
+/// Every heap leaf of a group of group_releases.
+fn (var r: Rc) group_leaves(f: Func, root: Int, comp: Int) -> List[Leaf] {
+  if comp < 0 {
+    return r.leaves(f, root)
+  }
+  var out: List[Leaf] = []
+  for lp in r.leaf_paths(r.field_type(f.values[root].ty, comp)) {
+    out.push(Leaf{root: root, path: ".${comp}${lp}"})
+  }
+  out
 }
 
 fn remove_dead_fields(var f: Func) {
