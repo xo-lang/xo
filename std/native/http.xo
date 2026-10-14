@@ -776,20 +776,22 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     names.push(k)
     values.push(v)
   }
-  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots, c.lists)
-  match rthttp.cr_err(r) {
+  let r = http1.client_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots, c.lists)
+  match r.err {
     0 => ()
-    1 => return Err(http.ClientErr.InvalidUrl(msg: rthttp.cr_msg(r)))
-    2 => return Err(http.ClientErr.Connect(msg: rthttp.cr_msg(r)))
+    1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
+    2 => return Err(http.ClientErr.Connect(msg: r.msg))
     3 => return Err(http.ClientErr.Timeout)
     5 => return Err(http.ClientErr.Canceled)
-    _ => return Err(http.ClientErr.Protocol(msg: rthttp.cr_msg(r)))
+    _ => return Err(http.ClientErr.Protocol(msg: r.msg))
   }
   var h: Map[Str, Str] = {}
-  for i in 0..rthttp.cr_nheaders(r) {
-    h.put(rthttp.cr_hname(r, i), rthttp.cr_hval(r, i))
+  var i = 0
+  while i + 1 < r.headers.len() {
+    h.put(r.headers[i], r.headers[i + 1])
+    i += 2
   }
-  http.Response{status: rthttp.cr_status(r), headers: h, body: rthttp.cr_body(r)}
+  http.Response{status: r.status, headers: h, body: r.body}
 }
 
 // ---------------------------------------------------------------------------

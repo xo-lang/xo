@@ -1,0 +1,25 @@
+// The client of bench/perf/httpclient (audit item B10): N requests with
+// std/http's client to the server of serve/ at ADDR for the path of
+// workload W, each over a connection of its own (as the native client
+// speaks HTTP/1.1), so the response reading (status line, header,
+// Content-Length and chunked bodies, redirects) is the measured work
+// next to the connections. Prints the bytes of the bodies it got.
+use std/http
+
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? "127.0.0.1:18095"
+  let w = os.env.get("W") ?? "len"
+  let n = Int.parse(os.env.get("N") ?? "1000") ?? 1000
+  let c = http.client(os.net)
+  var total = 0
+  for _ in 0..n {
+    match c.get("http://${addr}/${w}") {
+      Ok(r) => total += r.body.len() + r.headers.len()
+      Err(e) => {
+        os.stdio.println("error: ${e}")
+        return
+      }
+    }
+  }
+  os.stdio.println("${total}")
+}

@@ -11,7 +11,11 @@ owner decisions A to D. The "(0) portable now" group moved (2026-10-13,
 item 6: 1,040 of its 1,799 lines out of default builds,
 `bench/results/runtime-port-portable-2026-10-13.md`). Work item B08
 done 2026-10-14 (SHA-512 and Rand in Xo; the C Rand stays until the
-seed has B08; `bench/results/sha512-rand-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
+seed has B08; `bench/results/sha512-rand-2026-10-14.md`). Work item
+B10 done 2026-10-14 (the HTTP/1.1 client's response reading,
+redirects, and URLs in Xo, the HTTP/2 server's :path parse from Xo;
+1,629 runtime C lines deleted; client 0.953 to 1.001 of the C's
+instructions; `bench/results/http-client-2026-10-14.md`). Prerequisite 4 (SIMD and word scans) done
 2026-10-13: decision 0201. Prerequisite 3 (system calls) on Linux:
 stage 1 done (decision 0206, 2026-10-13: `rt.sys6`,
 std/native/llrt/linux.xo, files routed, static programs with no libc

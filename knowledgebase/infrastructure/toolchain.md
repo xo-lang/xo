@@ -928,6 +928,17 @@ Last verified: 2026-10-07
   <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
   the C paths; PORT (18090). Through the heavy lock, with
   `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/httpclient/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-14, audit item B10): builds the client of
+  bench/perf/httpclient with each backend, starts serve/ (a Go server of
+  fixed raw responses, built into the out dir, stopped by its own PID at
+  the end), and for each workload (len, chunked, big, redirect; `none`
+  is the start and the end) runs the client 5 times under
+  `/usr/bin/time -l` with N requests (default 3000), each on a
+  connection of its own; prints `<w> <backend> <min instructions
+  retired>` of the client. The C client is gone: an xo from before B10
+  (main 16524ee6) with its own std measures it. PORT (18095). Through
+  the heavy lock. Last verified: 2026-10-14.
 - `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
   working directory, and process environments (mkdir, tree, remove,
@@ -2261,7 +2272,7 @@ Last verified: 2026-10-10.
   script and here, and run `go test ./third_party/mbedtls ./internal/build`
   and `go test ./internal/llvm -run 'TestTLSDiff|TestGolden.*/http_tls'`.
 - Build (internal/build/tls.go): a native link whose generated code names
-  a std/http runtime function (`xo_cl_do`, `xo_srv_new`, `xo_tls_*`) is
+  a std/http runtime function (`xo_cl_start`, `xo_srv_new`, `xo_tls_*`) is
   compiled with `-DXO_TLS`, the library's include directories and
   configuration defines, and linked with `libxotls.a` (plus `-framework
   Security -framework CoreFoundation` on macOS, for the system's roots).
