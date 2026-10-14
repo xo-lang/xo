@@ -186,7 +186,7 @@ pub fn forward(os: Os, args: List[Str]) -> (Int, Bool) uses (env, proc, net, fs,
   if !(os.fs.exists(path).ok() ?? false) {
     return (0, false)
   }
-  let cwd = os.env.get("PWD") ?? ""
+  let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   if cwd.is_empty() {
     return (0, false)
   }
@@ -403,7 +403,7 @@ fn run_request(os: Os, ex: Exec, s: Server, args: List[Str], cwd: Str) -> Resp u
   if !(args[0] is "check" | "query") {
     return not_served(2, "xo serve: ${args[0]} is not served\n")
   }
-  let dir = if cwd.is_empty() { os.env.get("PWD") ?? "" } else { cwd }
+  let dir = if cwd.is_empty() { os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "" } else { cwd }
   if !cwd.is_empty() && !(os.fs.exists(cwd).ok() ?? false) {
     return Resp{code: 2, error: "chdir ${cwd}: no such file or directory"}
   }
