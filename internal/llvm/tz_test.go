@@ -165,8 +165,8 @@ func tzZip(t *testing.T) string {
 }
 
 // TestTZDiff runs tzDiffProg over tzCorpus on the Go backend and on both
-// native backends, with the zone rules in Xo (std/native/llrt/tz.xo) and
-// with their C path (XO_LLRT_C=tz), and requires the Go backend's lines
+// native backends, with the zone rules in Xo (std/native/llrt/tz.xo;
+// decision 0198 deleted the C path), and requires the Go backend's lines
 // (decision 0193 step 5): offsets, abbreviations, civil times and their
 // instants in every zone across its DST transitions and historical rules.
 // The zone data is the embedded zoneinfo.zip, then the host's
@@ -210,12 +210,9 @@ func tzDiff(t *testing.T, dir, in, tzdata string) {
 	inLines := strings.Split(in, "\n")
 	unknown := strings.Count(ref.stdout, "unknown time zone")
 	t.Logf("%d input lines, %d output lines, %d unknown zones; a sample:\n%s", len(inLines), len(want), unknown, strings.Join(want[len(want)/2:len(want)/2+8], "\n"))
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "tz")
-				}
 				r := buildAndRun(t, dir, xotool.Options{Backend: be, TZData: tzdata})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)

@@ -1,8 +1,7 @@
 // The errors of os.fs read, write, and stat, as std/native/llrt/sysio.xo's
 // OS layers record them (decisions 0206 and 0213): TestSysioParity builds
-// this program with the Xo path and with the C path (XO_LLRT_C=sysio)
-// and requires the same output byte for byte, statuses and messages
-// (strerror's text on each OS) alike.
+// and runs this program (decision 0198 deleted the C path it was once
+// compared with); the messages are strerror's text on each OS.
 
 fn r(x: Result[Bytes, FsErr]) -> Str {
   match x {

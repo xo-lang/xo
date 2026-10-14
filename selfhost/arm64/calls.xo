@@ -870,7 +870,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.sys_restorer" => {
       g.restorer_ref = true
-      g.set(v, [g.sym_addr(g.local("xo_sigreturn"))])
+      g.set(v, [g.sym_addr(g.tramp("xo_sigreturn"))])
     }
     "rt.call_c2" => {
       // a C ABI call of an address (decision 0206 stage 2): the
@@ -889,7 +889,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.sys_words" => {
       g.words_ref = true
-      g.set(v, [g.sym_addr(g.local("xo_sys_words"))])
+      g.set(v, [g.sym_addr(g.tramp("xo_sys_words"))])
     }
     "rt.sys_clone" => {
       // a call of the clone trampoline (gen.xo), written at the end
@@ -898,7 +898,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       for k in 0..4 {
         args.push(rsrc(g.word(x.args[k])))
       }
-      g.set(v, g.call(g.local("xo_clone"), args, [false]))
+      g.set(v, g.call(g.tramp("xo_clone"), args, [false]))
     }
     "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       // calls of the functions sched.xo emits (decision 0212)

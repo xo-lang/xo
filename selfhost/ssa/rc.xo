@@ -659,6 +659,19 @@ struct RcFunc {
 /// Inserts reference counting into every function of the module
 /// (InsertRC).
 pub fn (var b: Builder) insert_rc() {
+  b.insert_rc_jobs(1)
+}
+
+/// The functions per chunk of a parallel insert_rc at least, and the
+/// most chunks.
+const RC_CHUNK_FUNCS = 64
+const RC_MAX_CHUNKS = 64
+
+/// insert_rc with the functions after borrow inference on up to jobs
+/// tasks (bench/results/fast-builds-2026-10-13.md): each function's
+/// passes read only the whole-program facts (the borrowed parameters,
+/// the types), so the module is the same for any number of jobs.
+pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
   var r = Rc{types: b.m.types}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
@@ -671,23 +684,91 @@ pub fn (var b: Builder) insert_rc() {
     b.m.funcs[fi] = f
   }
   r.infer_borrows(b.m.funcs)
-  for fi in 0..n {
-    var f = b.m.funcs[fi]
-    b.m.funcs[fi] = Func{name: ""}
-    r.fi = fi
-    var c = RcFunc{}
-    r.borrow_projections(f)
-    r.liveness(f, c)
-    r.insert(f, c)
-    r.cancel(f)
-    r.reuse(f)
-    r.sink_landings(f)
-    prune_landings(f)
-    renumber(f)
-    f.borrowed = r.borrowed[fi]
-    b.m.funcs[fi] = f
+  let nc = (n / RC_CHUNK_FUNCS).min(RC_MAX_CHUNKS)
+  if jobs <= 1 || nc <= 1 {
+    for fi in 0..n {
+      var f = b.m.funcs[fi]
+      b.m.funcs[fi] = Func{name: ""}
+      r.rc_func(f, fi)
+      b.m.funcs[fi] = f
+    }
+    r.bproj = {}
+    return
   }
-  r.bproj = {}
+  // chunks of about equal size (values), moved out of the module and
+  // handed to the tasks through a channel, so each holds its functions
+  // alone
+  var total = 0
+  for f in b.m.funcs {
+    total += f.values.len() + 1
+  }
+  var bounds = [0]
+  var acc = 0
+  for (fi, f) in b.m.funcs.indexed() {
+    acc += f.values.len() + 1
+    if bounds.len() < nc && acc * nc >= total * bounds.len() && fi + 1 < n {
+      bounds.push(fi + 1)
+    }
+  }
+  bounds.push(n)
+  let work = Chan[(Int, List[Func])].new(bounds.len())
+  for k in 0..bounds.len() - 1 {
+    var cl: List[Func] = []
+    for fi in bounds[k]..bounds[k + 1] {
+      cl.push(b.m.funcs[fi])
+      b.m.funcs[fi] = Func{name: ""}
+    }
+    work.send((k, cl))
+  }
+  work.close()
+  let base = r
+  let starts = bounds
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(bounds.len() - 1) {
+      ts.push(s.spawn(fn() -> List[(Int, List[Func])] {
+        var mine: List[(Int, List[Func])] = []
+        var rc = base
+        for item in work {
+          let k = item.0
+          var cl = item.1
+          for i in 0..cl.len() {
+            var f = cl[i]
+            cl[i] = Func{name: ""}
+            rc.rc_func(f, starts[k] + i)
+            cl[i] = f
+          }
+          mine.push((k, cl))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[Func])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  for (k, cl) in done {
+    for (i, f) in cl.indexed() {
+      b.m.funcs[starts[k] + i] = f
+    }
+  }
+}
+
+/// The reference counting of function fi (f), after borrow inference.
+fn (var r: Rc) rc_func(var f: Func, fi: Int) {
+  r.fi = fi
+  var c = RcFunc{}
+  r.borrow_projections(f)
+  r.liveness(f, c)
+  r.insert(f, c)
+  r.cancel(f)
+  r.reuse(f)
+  r.sink_landings(f)
+  prune_landings(f)
+  renumber(f)
+  f.borrowed = r.borrowed[fi]
 }
 
 fn (var r: Rc) liveness(f: Func, var c: RcFunc) {

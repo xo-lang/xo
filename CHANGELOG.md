@@ -6,6 +6,24 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: the C with no caller is deleted (zero-C audit item
+  W0): xo_utf8_valid, xo_str_contains, starts_with, ends_with, split,
+  lines, xo_bytes_span, rune_count, and hex (141 lines of std/llrt,
+  their std/native/rt.xo declarations), and the -D flags of deleted C
+  paths that xo's io_flags still added. A build with an `XO_LLRT_C`
+  name that has no C path (no `std/native/llrt/<name>_c.xo`; `all`
+  aside) now fails with `XO_LLRT_C=<name>: no C path named <name>`
+  instead of silently building the Xo path; the live names are net,
+  sched, and text.
+- Faster native builds (decision 0220 stage 1): the arm64 backend
+  generates a large program's functions in parts on parallel tasks and
+  assembles the parts apart before one link; reference counting and the
+  inlined module's verification run on tasks too; the runtime flags come
+  from one scan of the assembly. xo builds itself in 59.00 s on the
+  development Mac (was 337.28 s) and 49.83 s on r8g.8xlarge with
+  `XO_EMIT_JOBS=16` (was 496.82 s), the output byte identical for any
+  job count. `XO_EMIT_JOBS` sets the tasks (default the cores, at most
+  8); `--phase-times` prints the `assemble` phase.
 - `xo lsp` answers `textDocument/completion` and
   `textDocument/signatureHelp` (decision 0219): fields and methods
   after `x.` (prelude methods included), variants and statics after a

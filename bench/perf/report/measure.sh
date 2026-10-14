@@ -9,7 +9,7 @@
 # usage: bench/perf/report/measure.sh <xo binary> <out dir> <backend...>
 # XO_LLRT_C=report in the environment builds the C path.
 # Decision 0198 deleted the C path of report (2026-10-13): naming it in
-# XO_LLRT_C now builds the Xo path; earlier results files keep the comparisons.
+# A deleted XO_LLRT_C name now fails the build; earlier results files keep the comparisons.
 set -e
 XO=$1
 OUT=$2

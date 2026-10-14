@@ -551,6 +551,13 @@ fn (var a: Asm) directive(l: Bytes) {
     a.syms[i].global = true
     return
   }
+  if d == ".private_extern" {
+    // a global symbol the image does not export (N_PEXT)
+    let i = a.sym(rest)
+    a.syms[i].global = true
+    a.syms[i].hidden = true
+    return
+  }
   if d.starts_with(".cfi_") {
     a.cfi(d, rest)
     return

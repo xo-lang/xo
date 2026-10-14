@@ -495,7 +495,7 @@ func digestCorpus(t *testing.T) (string, []string) {
 
 // TestDigestDiff runs digestDiffProg over digestCorpus on both native
 // backends, with the hashes in Xo (std/native/llrt/digest.xo, decision
-// 0195) and with their C path (XO_LLRT_C=digest), and requires the lines
+// 0195; decision 0198 deleted the C path), and requires the lines
 // of Go's crypto packages and std/rt's verify_password.
 func TestDigestDiff(t *testing.T) {
 	if testing.Short() {
@@ -510,12 +510,9 @@ func TestDigestDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d input lines", len(want))
-	for _, path := range []string{"xo", "c"} {
+	for _, path := range []string{"xo"} {
 		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				if path == "c" {
-					t.Setenv("XO_LLRT_C", "digest")
-				}
 				r := buildAndRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
