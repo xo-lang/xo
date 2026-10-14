@@ -1,0 +1,227 @@
+// List objects in Xo (zero-C audit item B13, decision 0195; decision
+// 0207's raw memory): a new list, the copy of a list that is not unique,
+// a full list's growth, the release of a list's elements, and the
+// worklist of drops. The C runtime keeps its entry points (xo_rl_new,
+// xo_rl_copy, xo_rl_grow, xo_rl_share, xo_rl_free, xo_rc_defer in
+// std/llrt/xo_rt.c, which generated code and the seed compiler call by
+// name) and calls these through cabi.xo's `obj_*` exports with the
+// calling thread's heap word. The string objects (rs_new, rs_append)
+// stay C: in Xo they took 1.06 to 1.12 times the C's instructions on
+// arm64's text workloads (bench/results/string-list-objects-2026-10-14.md).
+//
+// The heap word hw is the calling thread's heap record's address
+// (alloc.xo), plus 1 when other threads run (the C's alloc_mt, free_mt,
+// and xo_resize's mt paths). A list object is its count, its length,
+// its capacity, then its elements. Callbacks (an element's dup, drop, or
+// share, a drop of the worklist) are C ABI functions of generated code,
+// called through rt.call_c2.
+//
+// The no allocation, no counting rule of rc.xo and alloc.xo is kept by
+// hand (decision 0207, design 3): Int words only, rt.int_wrap for the
+// arithmetic, no Str, List, closure, or interpolation, nothing that can
+// fault. check_no_alloc does not check it: it calls alloc.xo's and
+// rc.xo's functions, which that check allows no module.
+use native/llrt/alloc
+use native/llrt/rc
+use native/rt
+
+/// The immortal count of a literal (never written).
+const IMMORTAL: Int = -9223372036854775807 - 1
+
+/// Words of the heap record (xo_rt.c struct xo_heap, checked by its
+/// _Static_assert): the drop worklist (its array, length, capacity, and
+/// whether a drain runs).
+const DEFER_Q = 1832
+const DEFER_N = 1840
+const DEFER_CAP = 1848
+const DEFER_BUSY = 1856
+
+/// The header bytes of a list object.
+const L_HDR = 24
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+// ---------------------------------------------------------------------------
+// The heap through the heap word
+
+// The single threaded heap calls (alloc.alloc, alloc.free) are written
+// out at each use, the multi threaded ones are alloc_mt and free_mt,
+// which the arm64 inliner must keep out of line: copied in, refill's
+// registers are saved on every call of the single threaded path (no
+// shrink wrapping; an inlined refill made bench/perf/alloc small 1.33
+// times the C's instructions). Each calls itself on a path the callers
+// never take, which keeps it out (selfhost/arm64/inline.xo: a function
+// on a call cycle is not inlined).
+
+/// A block of n bytes from heap word hw with other threads running
+/// (xo_rt.c alloc_mt): the class is refilled from the central lists
+/// first.
+fn alloc_mt(hw: Int, n: Int) -> Int {
+  if hw & 1 == 0 {
+    return alloc_mt(hw | 1, n) // not taken: the inliner's cycle
+  }
+  let h = subw(hw, 1)
+  alloc.refill(h, n)
+  alloc.alloc(h, n)
+}
+
+/// Frees the block p with other threads running (xo_rt.c free_mt).
+fn free_mt(hw: Int, p: Int) {
+  if hw & 1 == 0 {
+    free_mt(hw | 1, p) // not taken: the inliner's cycle
+    return
+  }
+  alloc.free_mt(subw(hw, 1), p)
+}
+
+/// A block of n bytes holding the first old bytes of p, which is freed
+/// (xo_resize): in place or moved by the heap, else moved here.
+fn hresize(hw: Int, p: Int, old: Int, n: Int) -> Int {
+  let mt = hw & 1
+  let q = alloc.resize(subw(hw, mt), p, old, n, mt)
+  if q != 0 {
+    return q
+  }
+  let r = if mt == 0 { alloc.alloc(hw, n) } else { alloc_mt(hw, n) }
+  rt.mem_copy(r, p, if old < n { old } else { n })
+  if mt == 0 {
+    alloc.free(hw, p)
+  } else {
+    free_mt(hw, p)
+  }
+  r
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+
+/// A new empty list object with room for cap elements of esize bytes
+/// (xo_rl_new).
+pub fn rl_new(hw: Int, cap: Int, esize: Int) -> Int {
+  let n = addw(L_HDR, mulw(cap, esize))
+  let l = if hw & 1 == 0 { alloc.alloc(hw, n) } else { alloc_mt(hw, n) }
+  rt.mem_store(l, 0, 1, 8)
+  rt.mem_store(l, 8, 0, 8)
+  rt.mem_store(l, 16, cap, 8)
+  l
+}
+
+/// Calls f (a C function of generated code) on each element of the list
+/// l of esize byte elements.
+fn each(l: Int, esize: Int, f: Int) {
+  let n = rt.mem_load(l, 8, 8)
+  var e = addw(l, L_HDR)
+  var i = 0
+  while i < n {
+    let _r = rt.call_c2(f, e, 0)
+    e = addw(e, esize)
+    i = addw(i, 1)
+  }
+}
+
+/// The slow path of `reuse` (xo_rl_copy): l's count is not 1. A shared
+/// list held only by the caller (rc.claim) is updated in place. Otherwise
+/// the update goes to a copy, which holds its own references to the
+/// elements (dup, when not 0), and l loses the one the caller gave up
+/// (freed with drop when the other references went meanwhile).
+pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
+  if rc.claim(l) != 0 {
+    return l
+  }
+  let len = rt.mem_load(l, 8, 8)
+  let c = rl_new(hw, if len < 4 { 4 } else { len }, esize)
+  rt.mem_store(c, 8, len, 8)
+  rt.mem_copy(addw(c, L_HDR), addw(l, L_HDR), mulw(len, esize))
+  if dup != 0 {
+    each(c, esize, dup)
+  }
+  if rc.dec(l) != 0 {
+    rl_free(hw, l, esize, drop)
+  }
+  c
+}
+
+/// Marks the elements of a list that was just marked shared (xo_rl_share;
+/// share is the element callback of generated code).
+pub fn rl_share(l: Int, esize: Int, share: Int) { each(l, esize, share) }
+
+/// The unique full list l with its capacity doubled (xo_rl_grow); the
+/// shared empty list of an empty literal (xo_rl_empty, immortal: the
+/// arm64 backend makes `[]` without allocating, and the first push lands
+/// here) becomes a new list.
+pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
+  if rt.mem_load(l, 0, 8) == IMMORTAL {
+    return rl_new(hw, 4, esize)
+  }
+  let cap = rt.mem_load(l, 16, 8)
+  let ncap = if cap < 4 { 4 } else { addw(cap, cap) }
+  let n = hresize(hw, l, addw(L_HDR, mulw(cap, esize)), addw(L_HDR, mulw(ncap, esize)))
+  rt.mem_store(n, 16, ncap, 8)
+  n
+}
+
+/// Frees a list whose count reached zero, releasing its elements first
+/// (drop, when not 0; xo_rl_free after its real-time check).
+pub fn rl_free(hw: Int, l: Int, esize: Int, drop: Int) {
+  if drop != 0 {
+    each(l, esize, drop)
+  }
+  if hw & 1 == 0 {
+    alloc.free(hw, l)
+  } else {
+    free_mt(hw, l)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The drop worklist
+
+/// Runs drop(obj) for an object whose count reached zero, a closure
+/// environment or a box (xo_rc_defer after its real-time check; h the
+/// thread's heap record). drop releases the object's children and frees
+/// it; a child that reaches zero meanwhile is queued instead of dropped
+/// recursively, so freeing a long chain (a list built from boxes,
+/// closures capturing closures) uses a worklist, not the stack. Marking
+/// a value shared uses the same worklist (drop is then the function that
+/// marks the children of a box or an environment). The worklist's array
+/// is from malloc (rt.heap_large, not counted by the leak check) and
+/// stays with the heap record.
+pub fn rc_defer(h: Int, obj: Int, drop: Int) {
+  if rt.mem_load(h, DEFER_BUSY, 8) != 0 {
+    let n = rt.mem_load(h, DEFER_N, 8)
+    var q = rt.mem_load(h, DEFER_Q, 8)
+    let cap = rt.mem_load(h, DEFER_CAP, 8)
+    if n == cap {
+      let ncap = if cap < 64 { 64 } else { addw(cap, cap) }
+      if q == 0 {
+        q = rt.heap_large(mulw(ncap, 16))
+      } else {
+        q = rt.heap_large_resize(subw(q, 8), mulw(ncap, 16))
+      }
+      rt.mem_store(h, DEFER_Q, q, 8)
+      rt.mem_store(h, DEFER_CAP, ncap, 8)
+    }
+    let e = addw(q, mulw(n, 16))
+    rt.mem_store(e, 0, obj, 8)
+    rt.mem_store(e, 8, drop, 8)
+    rt.mem_store(h, DEFER_N, addw(n, 1), 8)
+    return
+  }
+  rt.mem_store(h, DEFER_BUSY, 1, 8)
+  let _r = rt.call_c2(drop, obj, 0)
+  while true {
+    let n = rt.mem_load(h, DEFER_N, 8)
+    if n == 0 {
+      break
+    }
+    let k = subw(n, 1)
+    rt.mem_store(h, DEFER_N, k, 8)
+    let e = addw(rt.mem_load(h, DEFER_Q, 8), mulw(k, 16))
+    let _d = rt.call_c2(rt.mem_load(e, 8, 8), rt.mem_load(e, 0, 8), 0)
+  }
+  rt.mem_store(h, DEFER_BUSY, 0, 8)
+}
