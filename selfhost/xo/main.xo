@@ -476,7 +476,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
-    let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(cur.m, tgoos) }
+    let jobs = emit_jobs(os)
+    let p = if inl { arm64.generate_parallel(mi, tgoos, jobs) } else { arm64.generate_parallel(cur.m, tgoos, jobs) }
     t = lap(os, phases, "emit", t)
     if !p.err.is_empty() {
       fail(os, p.err)
@@ -561,6 +562,17 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     return Native{}
   }
   finish(os, o, c, root, bins, tests)
+}
+
+/// The tasks the arm64 emitter generates a large module's parts on
+/// (arm64.generate_parallel): $XO_EMIT_JOBS, else the cores, at most 8.
+/// The assembly does not depend on it.
+fn emit_jobs(os: Os) -> Int {
+  let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
+  if j > 0 {
+    return j
+  }
+  ncpu(os).min(8)
 }
 
 /// The linker of a host link with no --ld (decision 0182 next step 1):

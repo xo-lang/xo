@@ -64,7 +64,7 @@ fn mark_text(obj: Str, t: Str, done: Str) -> Str {
 /// A fresh assembler label for generated helpers.
 fn (var g: G) helper_label(hint: Str) -> Str {
   g.nhelp += 1
-  g.local("xo_${hint}${g.nhelp}")
+  g.local("xo_${g.ns}${hint}${g.nhelp}")
 }
 
 /// The symbol of the dup, drop, or share helper of t.
@@ -77,7 +77,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   // id names this helper's labels: helpers of the leaves are generated
   // while this one is, and advance nhelp
   let id = g.nhelp
-  let sym = g.local("xo_${kind}${id}")
+  let sym = g.local("xo_${g.ns}${kind}${id}")
   g.helped[key] = sym
   var b: List[Str] = []
   b.push("// ${kind} ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
@@ -90,7 +90,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         b.push(g.inc_text("x0", "x1", "w2", sym, true))
       } else if kind == "drop" {
-        let free = g.local("xo_${kind}${id}_free")
+        let free = g.local("xo_${g.ns}${kind}${id}_free")
         b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
         b.push("${free}:\n\tb ${g.sym("xo_h_free")}\n")
       } else {
@@ -101,7 +101,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         b.push(g.inc_text("x0", "x1", "w2", sym, true))
       } else if kind == "share" {
-        let ret = g.local("xo_${kind}${id}_ret")
+        let ret = g.local("xo_${g.ns}${kind}${id}_ret")
         b.push(mark_text("x0", "x1", ret))
         if g.kind(t) == ssa.Kind.List {
           let et = g.m.types[t].elems[0]
@@ -113,7 +113,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
         }
         b.push("${ret}:\n\tret\n")
       } else {
-        let free = g.local("xo_${kind}${id}_free")
+        let free = g.local("xo_${g.ns}${kind}${id}_free")
         b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
         b.push("${free}:\n")
         if g.kind(t) == ssa.Kind.Str {
@@ -175,7 +175,7 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
       b.push("\tldr x9, [sp, #${frame + 8 * (k - 8)}]\n\tstr x9, [sp, #${base + 8 * k}]\n")
     }
   }
-  let done = g.local("xo_${kind}${id}_done")
+  let done = g.local("xo_${g.ns}${kind}${id}_done")
   if x.kind == ssa.Kind.Enum {
     for (vi, v) in x.variants.indexed() {
       var ls: List[Leaf] = []
@@ -186,7 +186,7 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
       if ls.is_empty() {
         continue
       }
-      let next = g.local("xo_${kind}${id}_v${vi}")
+      let next = g.local("xo_${g.ns}${kind}${id}_v${vi}")
       b.push("\tldr x9, [sp, #${base}]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
       for (li, l) in ls.indexed() {
         g.leaf_call(b, kind, l, base, "${sym}_v${vi}l${li}")
@@ -263,7 +263,7 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
     return s
   }
   g.nhelp += 1
-  let sym = g.local("xo_${kind}p${g.nhelp}")
+  let sym = g.local("xo_${g.ns}${kind}p${g.nhelp}")
   g.helped[key] = sym
   let inner = g.rc_helper(kind, t)
   var b: List[Str] = []

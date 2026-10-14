@@ -136,6 +136,10 @@ struct G {
   lay: List[List[Bool]] = []
   /// Type.Heap by type: -1 not computed, 0, 1
   heap_c: List[Int] = []
+  /// the namespace of this emitter's string, position, and helper
+  /// labels: "" for a whole module, "pN_" for part N of a parallel
+  /// generation (generate_parallel), whose labels must not collide
+  ns: Str = ""
   strs: Map[Bytes, Str] = {}
   str_ord: List[Bytes] = []
   locs: Map[Str, Str] = {}
