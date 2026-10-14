@@ -3,9 +3,10 @@
 # B27, std/native/llrt/tzhost.xo windows_local: the system's setting from
 # GetDynamicTimeZoneInformation made into TZif data) against the Go
 # backend's time.Local, under the runner's zone and each zone given as
-# an argument (set with tzutil, the runner's zone restored at the end).
+# an argument (set with tzutil, the runner's zone restored at the end;
+# `_` for a space, since suite=script splits its arguments at spaces).
 #   gh workflow run ci.yml -f ref=BRANCH -f suite=script -f runner=xo-windows \
-#     -f packages="scripts/ci/tzlocal-windows.sh 'Pacific Standard Time' 'India Standard Time'"
+#     -f packages="scripts/ci/tzlocal-windows.sh Pacific_Standard_Time India_Standard_Time"
 set -euo pipefail
 w=$(mktemp -d)
 printf 'module example.com/tzlocal\nedition preview\n' > "$w/xo.mod"
@@ -38,7 +39,7 @@ check() {
 }
 check
 for z in "$@"; do
-  tzutil //s "$z"
+  tzutil //s "${z//_/ }"
   check
 done
 exit $fail
