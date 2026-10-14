@@ -1112,7 +1112,7 @@ fn (var g: Gen) platform_call(v: Int) {
 /// ctx.xo's shields, budget.xo's tick, open, and end), or "" for the C
 /// runtime's xo_<name>.
 fn xo_export(name: Str) -> Str {
-  if name is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" {
+  if name is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
     return "xo_x_ctx_${name.trim_prefix("rt.")}"
   }
   if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {

@@ -1406,10 +1406,10 @@ static int64_t ctx_root(int64_t a, int64_t b) {
 	return XO_ADDR(ctx());
 }
 
-int64_t xo_unwinding(void) {
-	xo_ctx *c = cur_get();
-	return c ? c->unwinding : 0;
-}
+// xo_unwinding is ctx.xo unwinding, which generated code calls directly
+// (this forwards for older xo's code).
+int64_t xo_x_ctx_unwinding(void);
+int64_t xo_unwinding(void) { return xo_x_ctx_unwinding(); }
 
 // ---------------------------------------------------------------------------
 // Fault unwinding (core 8, decision 0085)
@@ -1818,6 +1818,10 @@ static int canceled(xo_ctx *c) {
 	return 0;
 }
 
+// held_check and held_del (the Mutexes a context holds, XO-F004) stay C
+// with the C Mutex code that calls them on every Mutex.with: a call into
+// Xo from there cost about 67 instructions per with on arm64 (B17,
+// bench/perf/ctx mutex 1.146); they move with the Mutexes (B19).
 static void held_check(xo_ctx *c, void *m, const char *what, const char *loc, int64_t n) {
 	for (int i = 0; i < c->nheld; i++) {
 		if (c->held[i].m == m) {

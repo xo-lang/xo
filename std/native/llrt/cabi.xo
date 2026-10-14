@@ -525,6 +525,8 @@ fn ctx_shield_end(tok: Int, lp: Int, ln: Int) { ctx.shield_end(tok, lp, ln) }
 
 fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 
+fn ctx_unwinding() -> Int { ctx.unwinding() }
+
 /// The addresses of xo_rt.c ctx_root and its pool record, at start
 /// (ctx.xo init).
 fn ctx_init(root: Int, pl: Int) { ctx.init(root, pl) }

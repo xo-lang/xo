@@ -7,10 +7,14 @@
 // the same way). The current context is thread local word 0
 // (sched.xo TLS_CUR).
 //
-// Here so far: the shields of deferred code (core 3.5, decision 0022)
-// and their cancellation flag, called by arm64 generated code through
-// cabi.xo's exports, by LLVM code and older xo's code through the C
-// xo_shield_* forwarders.
+// Here: the shields of deferred code (core 3.5, decision 0022) and the
+// unwinding flag, which generated code reaches through cabi.xo's exports
+// (the arm64 and LLVM emitters call them directly; older xo's code
+// through the C xo_shield_* and xo_unwinding forwarders). The budgets
+// are budget.xo's. The Mutexes a context holds (C_HELD, XO-F004) stay
+// with the C Mutex code until B19. Making a root context for a bare thread stays C (ctx_root:
+// the deadlock counter and the park's setup are the scheduler's, B18 to
+// B20).
 //
 // Nothing here allocates on the common path.
 use native/llrt/fault
@@ -115,4 +119,14 @@ pub fn shield_abort(tok: Int) {
   let c = cur()
   rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) - 1, 4)
   rt.mem_store(c, C_UNWINDING, tok & 1, 4)
+}
+
+/// Whether the current context unwinds (xo_unwinding: generated code
+/// asks after a cancellation point); 0 on a thread with no context.
+pub fn unwinding() -> Int {
+  let c = rt.tlocal_get(0)
+  if c == 0 {
+    return 0
+  }
+  rt.mem_load(c, C_UNWINDING, 4)
 }

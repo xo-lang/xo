@@ -1318,7 +1318,7 @@ fn (var g: G) rt_call(v: Int) {
     // (the C entries stay for code of earlier compilers)
     name = "xo_x_obj_${name0.trim_prefix("rt.")}"
   }
-  if name0 is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" {
+  if name0 is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
     // ctx.xo's shields through their exports (decision 0229; the C
     // entries stay for LLVM and older xo's code)
     name = "xo_x_ctx_${name0.trim_prefix("rt.")}"
