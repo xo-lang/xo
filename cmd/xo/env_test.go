@@ -123,6 +123,15 @@ func environ(t testing.TB) []string {
 	testEnvMu.Lock()
 	vars, _ := resolved(t)
 	testEnvMu.Unlock()
+	if _, ok := vars["XO_BUILD_DIR"]; !ok && os.Getenv("XO_BUILD_DIR") == "" {
+		// a build directory of the test's own: tests run at the same
+		// time, and builds of one program into the shared
+		// <user cache>/xo/build overwrite each other's files
+		// (gotchas/parallel-xo-builds-share-build-dir.md)
+		dir := filepath.Join(t.TempDir(), "build")
+		setenv(t, "XO_BUILD_DIR", dir)
+		vars["XO_BUILD_DIR"] = dir
+	}
 	vars["PWD"] = workdir(t)
 	var out []string
 	for _, kv := range os.Environ() {
