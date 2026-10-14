@@ -4,13 +4,9 @@
 // The hashes, base64, and verify_password are std/native/llrt/digest.xo
 // (decision 0195; decision 0198 deleted their C, and crypto_sha256 and
 // crypto_b64 stay declared for the wasm runtime, selfhost/wasm).
-// Ed25519 stays C (constant time) until the zero-C audit's B09 step 3;
-// crypto.equal is std/native/llrt/ct.xo (decision 0222).
+// crypto.equal and Ed25519 are std/native/llrt/ct.xo and ed25519.xo
+// (decision 0222).
 
 fn crypto_sha256(data: Bytes) -> Bytes
 /// Unpadded base64: URL safe when url is set, else standard.
 fn crypto_b64(data: Bytes, url: Bool) -> Str
-/// Ed25519 (decision 0189); the seed is 32 bytes (crypto.xo checks it).
-fn crypto_ed25519_public_key(seed: Bytes) -> Bytes
-fn crypto_ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
-fn crypto_ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool

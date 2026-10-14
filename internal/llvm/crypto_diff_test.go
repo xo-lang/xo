@@ -7,7 +7,6 @@ import (
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -31,11 +30,8 @@ import (
 // against the RFC 9106 section 5 vectors (Argon2d, Argon2i, Argon2id
 // with a secret and associated data) and the x/crypto outputs of
 // std/rt/testdata/argon2id_xcrypto.txt; verify_password on valid and
-// mutated PHC and PBKDF2 strings against std/rt's. crypto.equal is Xo
-// (decision 0222): TestCryptoXoDiff.
-// SHA-512 (std/native/llrt/digest.xo through its C ABI export, the
-// zero-C audit's B08) and Ed25519 against Go and RFC 8032
-// (ed25519Cases).
+// mutated PHC and PBKDF2 strings against std/rt's. crypto.equal and
+// Ed25519 are Xo (decision 0222): TestCryptoXoDiff.
 func TestCryptoDiff(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	if _, err := xotool.Clang(); err != nil {
@@ -43,8 +39,8 @@ func TestCryptoDiff(t *testing.T) {
 	}
 	src := filepath.Join(rtDir, "testdata", "crypto_diff.c")
 	bin := filepath.Join(t.TempDir(), "crypto_diff")
-	// a program that uses std/crypto, so that its exports (SHA-512 in
-	// std/native/llrt/cabi_crypto.xo, the zero-C audit's B08) are built
+	// a program that uses std/crypto, for the runtime's C ABI exports
+	// (crypto_ref.c calls xo_x_b64_val)
 	srcs := cOnlyWith(t, src, "cexports-crypto", "use std/crypto\n\nfn main(os: Os) {\n  if crypto.ed25519_verify(b\"\", b\"\", b\"\") {\n    os.stdio.println(\"yes\")\n  }\n}\n")
 	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), srcs, bin); err != nil {
 		if err2 := xotool.CompileC([]string{"-O1", "-g"}, srcs, bin); err2 != nil {
@@ -165,9 +161,6 @@ func TestCryptoDiff(t *testing.T) {
 			cs = append(cs, kase{"verify " + hx([]byte(pw)) + " " + hx(s), bit(rt.Crypto_verify_password(nil, pw, string(s)))})
 		}
 	}
-	for _, c := range ed25519Cases(r, n) {
-		cs = append(cs, kase{c.in, c.want})
-	}
 	var in bytes.Buffer
 	for _, c := range cs {
 		in.WriteString(c.in + "\n")
@@ -193,7 +186,7 @@ func TestCryptoDiff(t *testing.T) {
 	t.Logf("%d operations agree", len(cs))
 }
 
-// ed25519Cases are the SHA-512 and Ed25519 operations of TestCryptoDiff
+// ed25519Cases are the Ed25519 operations of TestCryptoXoDiff
 // (decision 0189): the RFC 8032 section 7.1 vectors, then random seeds
 // and messages signed and verified as Go's crypto/ed25519 does, with
 // mutated signatures, keys, and messages, random public keys (about
@@ -226,16 +219,14 @@ func ed25519Cases(r *rand.Rand, n int) []struct{ in, want string } {
 	} {
 		cs = append(cs, kase{"edpub " + v[0], v[1]}, kase{"edsign " + v[0] + " " + v[2], v[3]}, kase{"edverify " + v[1] + " " + v[2] + " " + v[3], "1"})
 	}
-	// SHA-512 of the FIPS 180-4 examples and of random lengths around
-	// the block and padding boundaries
-	for _, m := range [][]byte{nil, []byte("abc"), []byte("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")} {
-		sum := sha512.Sum512(m)
-		cs = append(cs, kase{"sha512 " + hx(m), hx(sum[:])})
-	}
-	for _, k := range []int{111, 112, 113, 127, 128, 129, 239, 240, 255, 256, 1000} {
-		m := rb(k)
-		sum := sha512.Sum512(m)
-		cs = append(cs, kase{"sha512 " + hx(m), hx(sum[:])})
+	// messages whose SHA-512 inputs (32 byte prefix + message, 64 bytes
+	// of R and A + message) end around the block and padding boundaries
+	// of SHA-512 (std/native/llrt/digest.xo's sha512_le)
+	for _, k := range []int{47, 48, 49, 63, 64, 65, 79, 80, 81, 95, 96, 97, 111, 112, 113, 127, 128, 129, 175, 176, 177, 191, 192, 193, 207, 208, 209, 223, 224, 225, 1000} {
+		seed, msg := rb(32), rb(k)
+		priv := ed25519.NewKeyFromSeed(seed)
+		sig := ed25519.Sign(priv, msg)
+		cs = append(cs, kase{"edsign " + hx(seed) + " " + hx(msg), hx(sig)}, kase{"edverify " + hx([]byte(priv.Public().(ed25519.PublicKey))) + " " + hx(msg) + " " + hx(sig), "1"})
 	}
 	verify := func(pub, msg, sig []byte) kase {
 		ok := len(pub) == ed25519.PublicKeySize && len(sig) == ed25519.SignatureSize && ed25519.Verify(ed25519.PublicKey(pub), msg, sig)

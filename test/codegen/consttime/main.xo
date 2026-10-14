@@ -7,7 +7,8 @@ use std/crypto
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${crypto.equal(b"abcdefghij", "abcdefghi${n}".bytes())}")
+  let seed = "0123456789abcdef0123456789abcde${n}".bytes()
+  os.stdio.println("${crypto.equal(b"abcdefghij", "abcdefghi${n}".bytes())} ${crypto.ed25519_sign(seed, b"m").to_hex()}")
 }
 
 // The comparison's accumulator goes through the barrier in both loops
@@ -20,3 +21,17 @@ fn main(os: Os) {
 // func ct.mask_nonzero
 // llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select" -"icmp"
 // arm64: "lsr x[0-9]+, x[0-9]+, #63" -"\tb\." -"cbn?z" -"tbn?z" -"csel" -"cset"
+
+// A masked pick is and and xor on the barrier's value.
+// func ct.pick
+// llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select"
+// arm64: "and x[0-9]+, x[0-9]+, x[0-9]+" -"\tb\." -"cbn?z" -"tbn?z" -"csel"
+
+// Ed25519 (std/native/llrt/ed25519.xo): the ladder's conditional move
+// and the scalar reduction's conditional subtraction select with masks
+// (their branches are loops and bounds checks on public indices).
+// func ed25519.ge_cmov
+// arm64: -"csel" -"cset"
+// func ed25519.sc_reduce
+// llvm: "call i64 @\"x.ct.mask_bit\"" "call i64 @\"x.ct.pick\"" -"select"
+// arm64: -"csel" -"cset"

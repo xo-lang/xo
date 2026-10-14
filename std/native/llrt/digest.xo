@@ -3,11 +3,10 @@
 // (FIPS 180-4), HMAC-SHA256 (RFC 2104), PBKDF2-HMAC-SHA256 (RFC 8018),
 // BLAKE2b (RFC 7693) and Argon2id (RFC 9106) as x/crypto computes them,
 // unpadded base64, the parsing and key derivation of verify_password,
-// and SHA-512 (FIPS 180-4) for the C Ed25519 (through cabi_crypto.xo,
-// the zero-C audit's B08). The results are std/rt's crypto.go (Go's
+// and SHA-512 (FIPS 180-4) for Ed25519 (ed25519.xo; the zero-C audit's
+// B08). The results are std/rt's crypto.go (Go's
 // crypto packages). verify_password compares with ct.bytes_equal
-// (constant time, decision 0222); Ed25519 stays C until the zero-C
-// audit's B09 step 3. std/native/crypto.xo calls these.
+// (constant time, decision 0222). std/native/crypto.xo calls these.
 // Decision 0198 deleted the C path (`XO_LLRT_C=digest`).
 //
 // Words are Ints: a 32 bit word in the low half (the high half zero), a
@@ -546,8 +545,8 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
 }
 
 // ---------------------------------------------------------------------------
-// SHA-512 (the compression is digest_tables.sha512_block), for the C
-// Ed25519 through cabi_crypto.xo: the input is raw memory
+// SHA-512 (the compression is digest_tables.sha512_block), for
+// Ed25519 (ed25519.xo through sha512_le): the input is raw memory
 
 /// The bytes at p, n of them, hashed into st after the k bytes held in
 /// the block buffer at q (128 bytes): the bytes then held.
@@ -579,9 +578,20 @@ fn sha512_feed(var st: List[Int], q: Int, k0: Int, p: Int, n: Int) -> Int {
   n - i
 }
 
-/// SHA-512 (FIPS 180-4) of the an bytes at a, then the bn at b, then the
-/// cn at c (none read when 0), into the 64 bytes at out.
-pub fn sha512_3(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int, out: Int) {
+/// SHA-512 (FIPS 180-4) of a, then b, then c: the digest as eight
+/// little endian words (the 64 bytes read 8 at a time), as Ed25519 uses
+/// them (ed25519.xo).
+pub fn sha512_le(a: Bytes, b: Bytes, c: Bytes) -> List[Int] {
+  var st = sha512_state(rt.bytes_addr(a), a.len(), rt.bytes_addr(b), b.len(), rt.bytes_addr(c), c.len())
+  for j in 0..8 {
+    st[j] = rt.int_wrap(7, st[j], 0)
+  }
+  st
+}
+
+/// SHA-512's state after the an bytes at a, then the bn at b, then the
+/// cn at c, padded.
+fn sha512_state(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int) -> List[Int] {
   // SHA-512's initial state (FIPS 180-4 5.3.5) is BLAKE2b's IV
   var st = digest_tables.blake2b_iv()
   let buf = rt.bytes_buf(256)
@@ -599,12 +609,10 @@ pub fn sha512_3(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int, out: Int) {
   if end == 256 {
     digest_tables.sha512_block(st, q + 128)
   }
-  for j in 0..8 {
-    rt.mem_store(out, 8 * j, rt.int_wrap(7, st[j], 0), 8)
-  }
   // a use of buf after the last block, so that reference counting keeps
   // it alive until here (darwin.xo's keep)
   if buf.len() < 0 {
-    return
+    return []
   }
+  st
 }

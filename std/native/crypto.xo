@@ -1,13 +1,13 @@
 // std/crypto on the native backends (decision 0083). std/rt/crypto.go is
 // the reference; the hashes are Xo (std/native/llrt/digest.xo, decision
-// 0195), crypto.equal is constant time Xo (std/native/llrt/ct.xo,
-// decision 0222), Ed25519 C (std/llrt/xo_crypto.c), and random bytes
-// come from the Rand capability (the operating system's generator).
-use native/llrt/cabi_crypto
+// 0195), crypto.equal and Ed25519 constant time Xo
+// (std/native/llrt/ct.xo and ed25519.xo, decision 0222), and random
+// bytes come from the Rand capability (the operating system's
+// generator).
 use native/llrt/ct
 use native/llrt/digest
+use native/llrt/ed25519
 use native/rt
-use native/rtcrypto
 
 fn sha256(data: Bytes) -> Bytes { digest.sha256(data) }
 
@@ -49,14 +49,14 @@ fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
   if seed.len() != 32 {
     rt.fault_at("crypto.ed25519_public_key: the seed is ${seed.len()} bytes, want 32", at)
   }
-  rtcrypto.crypto_ed25519_public_key(seed)
+  ed25519.public_key(seed)
 }
 
 fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
   if seed.len() != 32 {
     rt.fault_at("crypto.ed25519_sign: the seed is ${seed.len()} bytes, want 32", at)
   }
-  rtcrypto.crypto_ed25519_sign(seed, msg)
+  ed25519.sign(seed, msg)
 }
 
-fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool { rtcrypto.crypto_ed25519_verify(public_key, msg, sig) }
+fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool { ed25519.verify(public_key, msg, sig) }

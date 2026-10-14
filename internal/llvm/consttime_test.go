@@ -102,9 +102,6 @@ func TestCryptoXoDiff(t *testing.T) {
 		add("equal "+hx(a)+" "+hx(b), w)
 	}
 	for _, c := range ed25519Cases(r, 200) {
-		if strings.HasPrefix(c.in, "sha512 ") {
-			continue // not part of std/crypto's surface
-		}
 		add(c.in, c.want)
 	}
 	dir := t.TempDir()
@@ -155,6 +152,14 @@ var ctChecks = []ctCheck{
 	// the loops keep a barrier each (no early exit); their branches and
 	// selects are on the public lengths
 	{fn: "ct.bytes_equal", barriers: 2},
+	// Ed25519 (std/native/llrt/ed25519.xo): the ladder's conditional
+	// move and the scalar reduction's conditional subtraction (without
+	// the barriers clang -O2 turns the latter's masks into five csel on
+	// arm64: TestConstantTimeLLVM logs that control); the branches left
+	// are the loops' and the workspace's bounds checks (public indices)
+	{fn: "ed25519.ge_cmov", barriers: 1, noSelect: true},
+	{fn: "ed25519.sc_reduce", barriers: 1, noSelect: true},
+	{fn: "ed25519.ge_mul", noSelect: true},
 }
 
 // TestConstantTimeLLVM compiles the LLVM IR xo emits for ctLLVMProg with
@@ -196,24 +201,35 @@ func TestConstantTimeLLVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ll := filepath.Join(dir, "prog.ll")
-	if err := os.WriteFile(ll, []byte(kept), 0o644); err != nil {
-		t.Fatal(err)
+	compile := func(name, ir string) string {
+		ll := filepath.Join(dir, name+".ll")
+		if err := os.WriteFile(ll, []byte(ir), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		asm := filepath.Join(dir, name+".s")
+		cmd := exec.Command(clang, "-O2", "-S", "-Wno-override-module", "-o", asm, ll)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("clang -O2: %v\n%s", err, stderr.String())
+		}
+		out, err := os.ReadFile(asm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
 	}
-	asm := filepath.Join(dir, "prog.s")
-	cmd := exec.Command(clang, "-O2", "-S", "-Wno-override-module", "-o", asm, ll)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("clang -O2: %v\n%s", err, stderr.String())
-	}
-	out, err := os.ReadFile(asm)
-	if err != nil {
-		t.Fatal(err)
+	out := compile("prog", kept)
+	// the control: the same IR with each barrier an add of 0
+	plain := compile("nobarrier", regexp.MustCompile(`call i64 asm "", "=r,0"\(i64 ([^)]*)\)`).ReplaceAllString(kept, "add i64 $1, 0"))
+	for _, c := range ctChecks {
+		if c.noSelect {
+			t.Logf("without the barriers %s has %d conditional selects", c.fn, len(selectRE.FindAllString(ctAsmFunc(plain, "x."+c.fn), -1)))
+		}
 	}
 	asmRE := regexp.MustCompile(`(?m)InlineAsm Start|^\s*[#/;]+APP$`)
 	for _, c := range ctChecks {
-		body := ctAsmFunc(string(out), "x."+c.fn)
+		body := ctAsmFunc(out, "x."+c.fn)
 		if body == "" {
 			t.Errorf("%s: no function in clang's output", c.fn)
 			continue
