@@ -1,9 +1,12 @@
 # 0225: On demand CI on self-hosted EC2 runners
 
-Status: Accepted (owner, 2026-10-14), stage 1 implemented: one runner
-(xo-ci-arm64, r8g.4xlarge) ran `ci short main` in 51 s on 2026-10-14;
-the other warm machines are adopted next, then the Mac queue scripts
-retire. How to run: infrastructure/ci.md; machines: infra/ci-runners.
+Status: Accepted (owner, 2026-10-14), implemented for linux/arm64:
+runners xo-ci-arm64 (r8g.4xlarge) and xo-ci-arm64-big, -big2, -big3
+(r8g.8xlarge), adopted from the warm machines. Verified 2026-10-14:
+`short` 51 s, the autostart from a stopped machine 75 s, `fixed-point`
+2 min 24 s (s2 and s3 identical). The amd64 and Windows warm machines
+are not runners yet (best effort, decision on arm64 only testing). How
+to run: infrastructure/ci.md; machines: infra/ci-runners.
 
 ## Context
 

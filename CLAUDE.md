@@ -108,13 +108,23 @@ Update the knowledgebase in the same change as the work, not later:
     code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
     scripts/xobuild, scripts/seed-chain.txt). Other merges (tests, docs,
     test-only tooling) need vet and -short only. Long pass/fail runs go
-    to the lead's EC2 queue (warm arm64 machines), not the Mac's single
-    heavy slot.
+    to on demand CI, not the Mac's single heavy slot.
+  - CI (decision 0225, owner 2026-10-14): GitHub Actions on self-hosted
+    linux/arm64 EC2 runners (infra/ci-runners), started only by hand,
+    never on push: push the branch, then `gh workflow run ci.yml -f
+    ref=BRANCH -f suite=auto` (short, the touched packages' full tests,
+    the selfhost merge tier, and the fixed point when the paths above
+    changed; tested merged with main), `gh run watch RUN_ID
+    --exit-status`, `gh run view RUN_ID --log-failed`. Other suites:
+    short, vet, merge (`-f packages=...`), fixed-point, full (`-f
+    runner=xo-arm64-big`). This replaces the lead's EC2 queue. The Mac
+    keeps Mac only checks and runs that write files into the worktree.
+    knowledgebase/infrastructure/ci.md.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
     58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
     120m`); `XO_SELFHOST_JOBS` sizes its worker pool (default
-    min(GOMAXPROCS, 4)); full runs nightly, before tagging, and
+    min(GOMAXPROCS, 4)); full runs on demand (ci.yml suite=full), before tagging, and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
 - The Go compiler is gone (decision 0215, 2026-10-13; the last commit
