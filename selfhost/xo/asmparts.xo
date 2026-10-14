@@ -1,0 +1,108 @@
+// The assembly files of a parallel arm64 generation (arm64
+// generate_parallel, bench/results/fast-builds-2026-10-13.md) assemble
+// apart: by selfhost/macho on parallel tasks, or by parallel `cc -c`
+// processes, before one link.
+
+use github.com/xo-lang/xo/selfhost/macho
+
+/// The objects of the assembly files srcs (ELF when elf, else Mach-O) by
+/// selfhost/macho, on up to jobs tasks, in the order of srcs.
+fn macho_objects(srcs: List[Str], elf: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
+  let n = srcs.len()
+  let w = jobs.min(n)
+  if w <= 1 {
+    var out: List[Result[Bytes, Str]] = []
+    for s in srcs {
+      out.push(assemble_one(s, elf))
+    }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope sc {
+    var ts = []
+    for _ in 0..w {
+      ts.push(sc.spawn(fn() -> List[(Int, Result[Bytes, Str])] {
+        var mine: List[(Int, Result[Bytes, Str])] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          mine.push((i, assemble_one(srcs[i], elf)))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Result[Bytes, Str])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[Result[Bytes, Str]] = []
+  for _ in 0..n {
+    out.push(Err("not assembled"))
+  }
+  for (i, r) in done {
+    out[i] = r
+  }
+  out
+}
+
+fn assemble_one(src: Str, elf: Bool) -> Result[Bytes, Str] {
+  if elf { macho.assemble_elf(src.bytes()) } else { macho.assemble(src.bytes()) }
+}
+
+/// Assembles the files srcs with `cc -c` (the flags a compile takes from
+/// the link's), at most jobs processes at once: the objects beside them,
+/// and the output of the first failure ("" when none failed).
+fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) -> (List[Str], Str) {
+  var cflags: List[Str] = []
+  for f in flags {
+    if !(f.starts_with("-l") || f.starts_with("-L") || f.starts_with("-Wl,") || f.ends_with(".a") || f.ends_with(".o")) {
+      cflags.push(f)
+    }
+  }
+  var objs: List[Str] = []
+  for s in srcs {
+    objs.push(s.trim_suffix(".s") + ".o")
+  }
+  var next = 0
+  var running: List[(Int, Child)] = []
+  var fails: List[Str] = []
+  while next < srcs.len() || !running.is_empty() {
+    while next < srcs.len() && running.len() < jobs.max(1) {
+      match os.proc.cmd(cc, cflags + ["-c", srcs[next], "-o", objs[next]]).merge_stderr().spawn() {
+        Ok(ch) => running.push((next, ch))
+        Err(e) => fails.push("${srcs[next]}: ${e}\n")
+      }
+      next += 1
+    }
+    if running.is_empty() {
+      break
+    }
+    // the oldest first: its output, then its status
+    let (k, ch) = running[0]
+    running = running[1..running.len()]
+    var outb = BytesBuilder.new()
+    var reading = true
+    while reading {
+      match ch.read(65536) {
+        Ok(Some(data)) => outb.write(data)
+        _ => reading = false
+      }
+    }
+    match ch.wait() {
+      Ok(code) => {
+        if code != 0 {
+          fails.push("${srcs[k]}: exit status ${code}\n${outb.freeze().to_str() ?? ""}")
+        }
+      }
+      Err(e) => fails.push("${srcs[k]}: ${e}\n")
+    }
+  }
+  if !fails.is_empty() {
+    return (objs, fails[0])
+  }
+  (objs, "")
+}

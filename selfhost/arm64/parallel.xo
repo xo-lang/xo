@@ -108,14 +108,15 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
       parts[p] = part
     }
   }
-  // the entry and exports, and the program wide code the parts use
+  // the last file: the entry and exports, and the program wide code the
+  // parts use
+  g.split = true
   g.entry(main)
   g.exports()
-  var out: List[Str] = []
-  g.file_header(out)
+  var files: List[Str] = []
   var skipped: List[Str] = []
   for part in parts {
-    out.push(part.asm)
+    files.push(part.asm)
     if g.err.is_empty() && !part.err.is_empty() {
       g.err = part.err
     }
@@ -126,6 +127,8 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
     g.sched_ref = g.sched_ref || part.sched_ref
     g.personality_ref = g.personality_ref || part.personality_ref
   }
+  var out: List[Str] = []
+  g.file_header(out)
   out.push(g.section("text"))
   out.push(g.text.join(""))
   out.push(g.helpers.join(""))
@@ -134,24 +137,31 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
-  Program{asm: out.join(""), err: g.err, skipped: skipped + g.skipped}
+  files.push(out.join(""))
+  Program{asm: files.join(""), err: g.err, skipped: skipped + g.skipped, parts: files}
 }
 
 /// Part p: functions lo..hi of m by an emitter of its own, its labels in
-/// namespace "pN_" and its functions numbered as in the whole module.
+/// namespace "pN_" and its functions numbered as in the whole module, as
+/// a file of its own.
 fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, p: Int) -> Part {
   var g = new_gen(m, os)
   g.addr_taken = taken
   g.ns = "p${p}_"
+  g.split = true
   g.nfunc = lo
   for fi in lo..hi {
     g.function(fi)
   }
   var out: List[Str] = []
+  g.file_header(out)
   out.push(g.section("text"))
   out.push(g.text.join(""))
   out.push(g.helpers.join(""))
   out.push(g.lsdas.join(""))
   g.data(out)
+  if os == "linux" {
+    out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
+  }
   Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref}
 }

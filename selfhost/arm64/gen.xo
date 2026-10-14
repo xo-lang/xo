@@ -32,6 +32,10 @@ pub struct Program {
   pub asm: Str
   pub err: Str
   pub skipped: List[Str]
+  /// the assembly cut into files that assemble apart, whose objects link
+  /// into the program (generate_parallel), or none; asm is their text
+  /// joined
+  pub parts: List[Str] = []
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly
@@ -77,14 +81,14 @@ fn (g: G) trampolines(var out: List[Str]) {
   if g.restorer_ref {
     // rt_sigaction's sa_restorer (decision 0206): rt_sigreturn, number 139
     // (in the text section: the call site tables after it switch away)
-    out.push("\t.p2align 2\n${g.local("xo_sigreturn")}:\n\tmov x8, #139\n\tsvc #0\n")
+    out.push("${g.tramp_def("xo_sigreturn")}\t.p2align 2\n${g.tramp("xo_sigreturn")}:\n\tmov x8, #139\n\tsvc #0\n")
   }
   if g.clone_ref {
     // rt.sys_clone (decision 0206 stage 2): clone(flags x0, stack x1,
     // parent tid x2, tls x3, child tid x4 = x2); the child loads the
     // function and its argument from its stack, calls it, and exits the
     // thread (exit, 93)
-    out.push("\t.p2align 2\n${g.local("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
+    out.push("${g.tramp_def("xo_clone")}\t.p2align 2\n${g.tramp("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
       "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
   }
 }
@@ -109,7 +113,7 @@ fn (g: G) shared_code(var out: List[Str]) {
 fn (g: G) end_data(var out: List[Str]) {
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
-    out.push("${g.section("data")}\t.p2align 3\n${g.local("xo_sys_words")}:\n")
+    out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")
     for _ in 0..16 {
       out.push("\t.quad 0\n")
     }
@@ -204,11 +208,41 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
   b.push("\t.p2align 2\n")
   if global {
     b.push("\t.globl ${s}\n")
+  } else if g.split {
+    b.push(g.hidden_global(s))
   }
   if g.os == "linux" {
     b.push("\t.type ${s}, %function\n")
   }
   b.push("${s}:\n")
+}
+
+/// The directives that make s a global symbol of hidden visibility: the
+/// other files of a split assembly (generate_parallel) reach it, the
+/// program does not export it.
+fn (g: G) hidden_global(s: Str) -> Str {
+  if g.os == "darwin" {
+    return "\t.globl ${s}\n\t.private_extern ${s}\n"
+  }
+  "\t.globl ${s}\n\t.hidden ${s}\n"
+}
+
+/// The label of the system call trampoline or process words name: an
+/// assembler local label, or with a split assembly a hidden global
+/// symbol.
+fn (g: G) tramp(name: Str) -> Str {
+  if g.split {
+    return g.sym(name)
+  }
+  g.local(name)
+}
+
+/// The directives before trampoline name's label (tramp).
+fn (g: G) tramp_def(name: Str) -> Str {
+  if g.split {
+    return g.hidden_global(g.sym(name))
+  }
+  ""
 }
 
 /// The label of the immortal object of a string literal.

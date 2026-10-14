@@ -140,6 +140,10 @@ struct G {
   /// labels: "" for a whole module, "pN_" for part N of a parallel
   /// generation (generate_parallel), whose labels must not collide
   ns: Str = ""
+  /// the assembly is cut into files assembled apart (generate_parallel):
+  /// the functions and the system call trampolines are global symbols
+  /// with hidden visibility, so the other files reach them
+  split: Bool = false
   strs: Map[Bytes, Str] = {}
   str_ord: List[Bytes] = []
   locs: Map[Str, Str] = {}

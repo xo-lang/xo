@@ -55,7 +55,6 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
-use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
 use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/cli/modules
@@ -522,17 +521,34 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, tg, false)
     let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos)
     let flags = ["-O2"] + lk.flags
-    var prog = s
-    if macho_as {
-      // the object from selfhost/macho (decision 0182)
-      prog = "${dir}/prog-${tgoos}.o"
-      match if tgoos == "linux" { macho.assemble_elf(code.bytes()) } else { macho.assemble(code.bytes()) } {
-        Ok(obj) => write_or_fail(os, dir, prog, obj)
-        Err(e) => fail(os, "assembler: ${e}")
+    // the program's assembly: one file, or the files of a parallel
+    // generation, which assemble apart (arm64.generate_parallel)
+    var progs = [s]
+    if p.parts.len() > 1 {
+      progs = []
+      for (i, part) in p.parts.indexed() {
+        let ps = "${dir}/prog-${tgoos}.${i}.s"
+        write_or_fail(os, dir, ps, part.bytes())
+        progs.push(ps)
       }
+    }
+    if macho_as {
+      // the objects from selfhost/macho (decision 0182), on parallel
+      // tasks for the parts
+      let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
+      var objs: List[Str] = []
+      for (i, r) in macho_objects(srcs, tgoos == "linux", jobs).indexed() {
+        let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
+        match r {
+          Ok(b) => write_or_fail(os, dir, obj, b)
+          Err(e) => fail(os, "assembler: ${e}")
+        }
+        objs.push(obj)
+      }
+      progs = objs
       t = lap(os, phases, "assemble", t)
     }
-    let srcs = [prog] + lk.srcs
+    let srcs = progs + lk.srcs
     let tls = needs_tls(code) && !nolibc(os, tgoos)
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -548,7 +564,18 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
-      let msg = cc_build(os, ctx, cc, flags, srcs, bin, tls)
+      var lsrcs = srcs
+      if progs.len() > 1 && !macho_as {
+        // the parts assembled by parallel cc processes, then linked
+        let (objs, why) = cc_assemble(os, cc, flags, progs, jobs)
+        if !why.is_empty() {
+          os.stdio.eprint(why)
+          fail(os, "${cc} failed")
+        }
+        lsrcs = objs + lk.srcs
+        t = lap(os, phases, "assemble", t)
+      }
+      let msg = cc_build(os, ctx, cc, flags, lsrcs, bin, tls)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
