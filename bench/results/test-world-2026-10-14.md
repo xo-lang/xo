@@ -86,3 +86,27 @@ next_u64 inlines testworld's lock (inlining the remainder of a draw,
 call). The Mac's arm64 code has the atomics
 inline (LSE), so the Mac numbers, the bar's platform, are still to be
 taken.
+
+## The Mac (the bar's platform)
+
+The same measure.sh on the Mac (arm64, /usr/bin/time -l instructions
+retired), 2026-10-14 after the disk was cleared: base a58401a7 against
+the branch at 56971145. Ratio whole, and net of "none" (the setup:
+17.7 and 17.5 million on arm64, 14.2 and 14.4 million on LLVM).
+
+| Test | arm64 base | arm64 new | ratio | net | LLVM base | LLVM new | ratio | net |
+|---|---|---|---|---|---|---|---|---|
+| stdio | 121,358,825 | 122,238,825 | 1.007 | 1.010 | 110,458,818 | 105,422,156 | 0.954 | 0.946 |
+| env | 4,616,402,570 | 2,919,759,409 | 0.632 | 0.631 | 4,592,400,242 | 2,695,791,355 | 0.587 | 0.586 |
+| rand | 63,162,981 | 69,438,195 | 1.099 | 1.142 | 39,823,875 | 36,734,037 | 0.922 | 0.871 |
+| log | 1,748,410,724 | 701,646,197 | 0.401 | 0.395 | 1,724,919,025 | 668,550,284 | 0.388 | 0.382 |
+| gen | 78,133,707 | 85,518,224 | 1.095 | 1.126 | 67,298,270 | 68,319,059 | 1.015 | 1.015 |
+| memfs | 69,183,491 | 69,164,279 | 1.000 | 1.004 | 53,124,567 | 53,068,586 | 0.999 | 0.993 |
+
+Within decision 0180's 5 percent on the Mac: every LLVM row, and on
+arm64 stdio, env, log, memfs. Not met on arm64: rand 1.142 and gen
+1.126 (net). Both are short hot functions that call others (the lock's
+slow paths, pcg, u64n, the record's growth); the arm64 backend's
+prologues and epilogues on their fast paths are the likely cost (shrink
+wrapping, found by B13, is being added to selfhost/arm64), so B14's
+arm64 rows are rechecked after it.
