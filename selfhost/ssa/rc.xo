@@ -1298,7 +1298,12 @@ fn (var r: Rc) group_releases(var f: Func) {
       for root in roots {
         let ks = by_root.get(root) ?? []
         let all = r.leaves(f, root)
-        if all.len() < GROUP_LEAVES || ks.len() != all.len() {
+        // not the results of a call: the arm64 emitter reads a call's
+        // `var` results in place while only field reads use them
+        // (lazy_result), and a release of the whole call would load
+        // every word (bench/results/fast-builds-2026-10-13.md: 5.6
+        // percent more instructions in the self build)
+        if all.len() < GROUP_LEAVES || ks.len() != all.len() || (f.values[root].op is Op.Call | Op.CallValue) {
           continue
         }
         var want: Set[Str] = #{}
