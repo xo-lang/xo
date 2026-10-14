@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B14): the test world's part 1 is
+  Xo (std/native/llrt/testworld.xo): `xo test --real`'s switches, seeded
+  Rand, the generators of property tests and testing.gen, captured
+  output, FakeEnv, FakeProc.exit_code and on_run, FakeStdio.set_input,
+  log records, FakeNet's handlers, failures, and requests, MemFs, and
+  the cleanup; std/llrt loses 916 lines and gains 87. Test reports are
+  unchanged (TestNoGCTests, TestNoGCTestLeaks on both native backends);
+  instructions in bench/results/test-world-2026-10-14.md. The virtual
+  clock, in memory listeners, and testing.run_main stay C (B15).
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in

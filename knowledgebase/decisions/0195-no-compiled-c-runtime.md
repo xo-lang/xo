@@ -21,7 +21,9 @@ deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
 to 1.009 of the C's instructions;
 `bench/results/http2-client-hpack-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
-`bench/results/http-writer-2026-10-14.md`). Prerequisite 5
+`bench/results/http-writer-2026-10-14.md`). Work item B14 done 2026-10-14 (the test world's part 1 in
+Xo, std/native/llrt/testworld.xo; 916 runtime C lines deleted, 87
+added; `bench/results/test-world-2026-10-14.md`). Prerequisite 5
 (constant time) done 2026-10-14: decision 0222 (`rt.ct_barrier`,
 std/native/llrt/ct.xo; crypto.equal and Ed25519 in Xo, work item B09,
 below the C's instructions on both backends). Prerequisite 4 (SIMD and word scans) done
