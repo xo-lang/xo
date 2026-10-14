@@ -466,6 +466,28 @@ fn (var g: G) box_share(t: Int) -> Str {
   sym
 }
 
+/// The function that releases the heap leaves of a struct or tuple of
+/// type t in memory at x0 (a release of a whole value of many words,
+/// ssa group_releases).
+fn (var g: G) mem_drop(t: Int) -> Str {
+  let key = "dropm ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  if g.defers(key, Want{op: 7, t: t}) {
+    return g.helped.get(key) ?? ""
+  }
+  let sym = g.helper_label("dropm")
+  g.helped[key] = sym
+  var b: List[Str] = []
+  b.push("// dropm ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  var ls: List[Leaf] = []
+  g.heap_leaves(t, 0, ls)
+  g.leaves_and_then(b, "drop", ls, 0, "")
+  g.helpers.push(b.join(""))
+  sym
+}
+
 /// The function that releases the contents of a box of type t and frees
 /// the cell (x0).
 fn (var g: G) box_drop(t: Int) -> Str {
