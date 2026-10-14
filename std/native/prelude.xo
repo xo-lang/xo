@@ -1504,7 +1504,7 @@ fn stdio_write(_s: Stdio, data: Bytes) -> () ! IoErr {
   if rt.fs_canceled() {
     return Err(IoErr.Canceled)
   }
-  rt.print(data)
+  stdiort.out(rt.bytes_addr(data), data.len(), false)
 }
 
 fn stdin_err(st: Int) -> IoErr {

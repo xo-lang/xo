@@ -7,13 +7,17 @@ xo_f_main:
 	.cfi_startproc
 	.cfi_personality 155, DW.ref.xo_personality
 	.cfi_lsda 27, .Lf1_lsda
-	stp x29, x30, [sp, #-32]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
-	str x19, [sp, #16]
-	.cfi_def_cfa w29, 32
-	.cfi_offset w29, -32
-	.cfi_offset w30, -24
-	.cfi_offset w19, -16
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -32
+	.cfi_offset w19, -24
+	.cfi_offset w22, -16
+	.cfi_offset w21, -8
 .Lf1_b0:
 	mov x0, #40
 	bl xo_f_fib
@@ -23,30 +27,104 @@ xo_f_main:
 	add x0, x0, :lo12:.Lxo_str0
 	mov x1, #4
 	bl xo_f_num_2eappend__int
-	mov x19, x0
+	mov x22, x0
+	mov x2, x1
 .Lf1_b5:
-	adds x0, x19, #16
+	adds x12, x22, #16
 	b.vs .Lf1_fault1
-.Lf1_b6:
-	mov x2, #1
-.Lf1_cs2a:
-	bl xo_f_stdio_2eout
-.Lf1_cs2b:
+.Lf1_b7:
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x21, x9, #24
+	ldr x9, [x21, #24]
+	cmp x9, #1
+	b.ne .Lf1_b29
 .Lf1_b8:
-.Lf1_b11:
-	mov x0, x19
-	ldr x19, [sp, #16]
-	ldp x29, x30, [sp], #32
-	b .Lxo_drop1
+	ldp x20, x10, [x21, #0]
 .Lf1_b9:
-	mov x0, x19
-	bl .Lxo_drop1
+	add x19, x10, x2
 .Lf1_b10:
-	ldr x19, [sp, #16]
-	ldp x29, x30, [sp], #32
+	cmp x20, #0
+	b.eq .Lf1_b29
+.Lf1_b11:
+	mov x9, #32768
+	cmp x2, x9
+	b.gt .Lf1_b29
+.Lf1_b14:
+	movz x9, #1, lsl #16
+	cmp x19, x9
+	b.ge .Lf1_b29
+.Lf1_b18:
+	add x0, x20, x10
+.Lf1_b19:
+	mov x1, x12
+.Lf1_cs2a:
+	bl memcpy
+.Lf1_cs2b:
+.Lf1_b20:
+	mov x9, #10
+	strb w9, [x20, x19]
+.Lf1_b21:
+	add x9, x19, #1
+.Lf1_b22:
+	str x9, [x21, #8]
+	b .Lf1_b46
+.Lf1_b29:
+	ldr x1, [x21, #24]
+	and x9, x1, #1
+	cmp x9, #0
+	b.ne .Lf1_b43
+.Lf1_b32:
+	orr x11, x1, #1
+.Lf1_b34:
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x9, x9, #256
+	add x9, x9, #0
+	ldar x10, [x9]
+	cmp x10, #0
+	b.eq .Lf1_b41
+.Lf1_b36:
+	adrp x9, .Lxo_static
+	add x9, x9, :lo12:.Lxo_static
+	add x9, x9, #264
+	ldr x9, [x9, #0]
+	and x9, x9, #32
+	cmp x9, #0
+	b.ne .Lf1_b41
+.Lf1_b40:
+	mov x9, #2
+	b .Lf1_b42
+.Lf1_b41:
+	mov x9, #0
+.Lf1_b42:
+	orr x1, x11, x9
+	str x1, [x21, #24]
+.Lf1_b43:
+	mov x4, #1
+	mov x0, x21
+	mov x3, x2
+	mov x2, x12
+.Lf1_cs3a:
+	bl xo_f_stdio_2eout__slow
+.Lf1_cs3b:
+.Lf1_b46:
+.Lf1_b49:
+	mov x0, x22
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b .Lxo_drop1
+.Lf1_b47:
+	mov x0, x22
+	bl .Lxo_drop1
+.Lf1_b48:
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x29, x30, [sp], #48
 	b xo_fault_continue
 .Lf1_fault1:
-	mov x0, x19
+	mov x0, x22
 	mov x1, #43
 	mov x2, #16
 	adrp x3, .Lxo_loc0

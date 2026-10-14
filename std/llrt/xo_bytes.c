@@ -340,49 +340,6 @@ xo_rlist *xo_fs_msg(void) {
 	return n_str_list_add(l, m, (int64_t)strlen(m));
 }
 
-// Seed compatibility (xo_rt.c xo_env_get): env.args and env.program are
-// Xo (std/native/llrt/process.xo, B03 stage 3).
-//
-// xo_env_args is `env.args()`: the arguments after the program name.
-static xo_rlist *tw_env_args(void);
-
-xo_rlist *xo_env_args(void) {
-	if (tw_is_fake(TW_REAL_ENV)) {
-		return tw_env_args();
-	}
-	xo_rlist *l = n_str_list_new(xo_argc);
-	for (int i = 1; i < xo_argc; i++) {
-		l = n_str_list_add(l, xo_argv[i], (int64_t)strlen(xo_argv[i]));
-	}
-	return l;
-}
-
-// xo_env_program is `env.program()`: the program's name as it was run
-// (argv[0], os.Args[0] on the Go backend), in a list of one.
-xo_rlist *xo_env_program(void) {
-	xo_rlist *l = n_str_list_new(1);
-	if (tw_is_fake(TW_REAL_ENV)) {
-		return n_str_list_add(l, "test", 4);
-	}
-	const char *p = xo_argc > 0 ? xo_argv[0] : "";
-#ifdef _WIN32
-	// with / separators, as every path Xo is given (std.md 3.1, 3.5)
-	size_t pn = strlen(p);
-	char *q = malloc(pn + 1);
-	if (!q) {
-		xo_oom();
-	}
-	for (size_t i = 0; i <= pn; i++) {
-		q[i] = p[i] == '\\' ? '/' : p[i];
-	}
-	l = n_str_list_add(l, q, (int64_t)pn);
-	free(q);
-	return l;
-#else
-	return n_str_list_add(l, p, (int64_t)strlen(p));
-#endif
-}
-
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
 XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {
 	char m[160];

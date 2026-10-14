@@ -1243,8 +1243,8 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   }
   if name is "eprintln" | "env_get" | "env_vars" {
     // the runtime's standard error and environment in Xo (the zero-C
-    // audit's B03): the native prelude's llrt_<name>; the C runtime's
-    // functions stay for compilers before B03 and a WASI module's runtime
+    // audit's B03): the native prelude's llrt_<name>; rt.<name> only in a
+    // WASI module (its runtime's)
     if let Some(v) = b.llrt_or_none(name, nt, vs) {
       return v
     }

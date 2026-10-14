@@ -576,8 +576,6 @@ fn env_vars() -> List[Str]
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 
-/// Writes b to standard output (buffered with print and println).
-fn print(b: Bytes)
 /// A line (all false) or the rest of standard input; stdin_status tells
 /// 0 the text, 1 the end of input, 2 an error (stdin_msg), 3 canceled.
 fn stdin_read(all: Bool) -> Str

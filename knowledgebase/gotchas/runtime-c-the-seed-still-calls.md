@@ -1,7 +1,7 @@
 # Runtime C that the seed still calls cannot be deleted yet
 
-Status: Observed (2026-10-14, B08 of the zero-C audit). Resolved the
-same day: seed 0.10.0-23ce8ce2 has B08, and the seed compatibility
+Status: Observed (2026-10-14, B08 of the zero-C audit). Every shim
+deleted with seed 0.11.0 (below). Resolved the same day for B08: seed 0.10.0-23ce8ce2 has B08, and the seed compatibility
 block (xo_crypto.c's xo_rand_*, xo_win.c's xo_w_entropy) is deleted.
 Applies again to a new intrinsic: decision 0222's `rt.ct_barrier`,
 which seed 0.10.0-23ce8ce2 lowers as a call of `xo_ct_barrier`, keeps
@@ -35,12 +35,22 @@ Ed25519) can delete the C at once. Check with `go run
 ./scripts/xobuild` (it builds with the seed) before deleting runtime
 C that generated code calls.
 
-Open seed shims (delete each with the first seed that has its item):
-xo_sys.c `xo_static_word` (B02); xo_rt.c `xo_print`, `xo_println`,
-`xo_eprint`, `xo_eprintln` (B03 stage 1, 2026-10-14: one line forwards
-to cabi.xo's exports, since seed 0.10.0 lowers Stdio.print and the SSA
-builder's rt.eprintln to them); xo_std.c `xo_exit` (B03 stage 2, a one
-line forward); xo_rt.c `xo_env_get`, `xo_env_vars` and xo_bytes.c
-`xo_env_args`, `xo_env_program` (B03 stage 3, whole: the seed lowers
-Env.args and the prelude's rt.env_get to them). Before deleting, check
-with nm that a program built by the new xo references none of them.
+Open seed shims: none. Seed 0.11.0-ae2587fd (2026-10-14) has B02, B03,
+B09, and B13, and the shims were deleted that day: xo_sys.c
+`xo_static_word`, xo_crypto.c (`xo_ct_barrier`, the whole file),
+xo_rt.c `xo_println`, `xo_eprint`, `xo_eprintln`, `xo_env_get`,
+`xo_env_vars`, xo_bytes.c `xo_env_args`, `xo_env_program`, xo_std.c
+`xo_exit`, `xo_str_rune_count`, with what only they used (cabi.xo's
+print, println, eprint, eprintln, and exit exports; the test world's C
+tw_write and tw_env_* forwarders and cabi_tw.xo's exports for them).
+Checked by building selfhost/xo with the 0.11.0 seed itself
+(`XO_SEED=<unpacked seed>/xo/bin/xo go run ./scripts/xobuild`, which
+would fail to link on any call it still makes) and with nm on the
+result.
+
+`xo_print` was not only a shim: building with the seed found the native
+prelude's stdio_write (`Stdio.write`) still calling `rt.print`, the C
+`xo_print`, which B03 had missed. It now writes through stdio.xo's out,
+and rt.print is gone. A shim's removal is checked by building with the
+seed, not by reading the compiler: the std's own calls of `rt.<name>`
+count too.

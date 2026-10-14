@@ -17,20 +17,6 @@ fn tw_setenv(k: Int, p: Int, n: Int) { testworld.setenv(k, p, n) }
 /// (xo_rt.c TW_REAL_* bits).
 fn tw_init() -> Int { testworld.init() }
 
-/// Captures the n bytes at p written to standard output (err 0) or
-/// standard error.
-fn tw_write(err: Int, p: Int, n: Int) { testworld.write_raw(err != 0, p, n) }
-
-/// FakeEnv's env.get of the name of the n bytes at p (a list of one or
-/// none).
-fn tw_env_get(p: Int, n: Int) -> Int { testworld.hand(testworld.env_get_raw(p, n)) }
-
-/// FakeEnv.vars().
-fn tw_env_vars() -> Int { testworld.hand(testworld.env_vars()) }
-
-/// FakeEnv's env.args().
-fn tw_env_args() -> Int { testworld.hand(testworld.args()) }
-
 /// FakeEnv.set_args of the List[Str] at l (testing.run_main's args).
 fn tw_set_args(l: Int) { testworld.set_args(rt.obj_at[List[Str]](l)) }
 

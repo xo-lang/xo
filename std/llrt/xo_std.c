@@ -105,27 +105,6 @@ xo_rstr *xo_str_of_byte(int64_t b, int64_t *len) {
 	return nstr(&c, 1, len);
 }
 
-// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): the
-// SSA builders lower the stack trace's padding to the native prelude's
-// str_rune_count (scan.rune_count, zero-C audit B13); seed
-// 0.10.0-4ab09c25 still emits rt.str_rune_count. Delete with a seed
-// that has B13.
-int64_t xo_str_rune_count(const char *p, int64_t n) {
-	const unsigned char *s = (const unsigned char *)p;
-	int64_t c = 0;
-	for (int64_t i = 0; i < n;) {
-		if (s[i] < 0x80) {
-			i++;
-		} else {
-			int size;
-			n_utf8_decode(s + i, n - i, &size);
-			i += size;
-		}
-		c++;
-	}
-	return c;
-}
-
 // str_list_new is an empty List[Str] with room for cap elements.
 static xo_rlist *n_str_list_new(int64_t cap) { return xo_rl_new(cap < 4 ? 4 : cap, 16); }
 
@@ -473,14 +452,6 @@ xo_rstr *xo_rs_append_quote(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 // The test world's os.proc.exit (xo_testing.c; xo_tw_exit, xo_sys.c).
 static void tw_exit(int64_t code);
 
-void xo_x_exit(int64_t code);
-
-// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): an xo
-// before B03 stage 2 lowers os.proc.exit to this; the end of the process
-// is std/native/llrt/process.xo. Delete it with the first seed that has
-// B03.
-void xo_exit(int64_t code) { xo_x_exit(code); }
-
 // ---------------------------------------------------------------------------
 // Conversions for std/json: durations, RFC 3339 times
 
@@ -747,9 +718,6 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
-
-// std/crypto and the Rand capability (decision 0083)
-#include "xo_crypto.c"
 
 // the Fs operations besides read (decision 0102), compiled only into
 // programs that call them (XO_FS, internal/build ioFlags)

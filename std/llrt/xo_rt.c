@@ -588,7 +588,6 @@ static struct {
 // tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
 static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
 
-static void tw_write(int err, const char *p, int64_t n);
 
 // ---------------------------------------------------------------------------
 // Output: standard output's buffer is Xo (std/native/llrt/stdio.xo, the
@@ -606,10 +605,6 @@ static void write_all(int fd, const char *p, size_t n) {
 	}
 }
 
-void xo_x_print(int64_t p, int64_t n);
-void xo_x_println(int64_t p, int64_t n);
-void xo_x_eprint(int64_t p, int64_t n);
-void xo_x_eprintln(int64_t p, int64_t n);
 void xo_x_flush(void);
 void xo_x_flush_try(void);
 
@@ -618,15 +613,6 @@ void xo_flush(void) { xo_x_flush(); }
 // flush_pending writes buffered output before the caller waits (decision
 // 0069; nothing when the buffer is empty).
 static void flush_pending(void) { xo_x_flush(); }
-
-// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): an xo
-// before B03 compiles Stdio.print and friends, and the SSA builder's
-// rt.eprintln, as calls of these. Delete them with the first seed that
-// has B03.
-void xo_print(const char *p, int64_t n) { xo_x_print((int64_t)(intptr_t)p, n); }
-void xo_println(const char *p, int64_t n) { xo_x_println((int64_t)(intptr_t)p, n); }
-void xo_eprint(const char *p, int64_t n) { xo_x_eprint((int64_t)(intptr_t)p, n); }
-void xo_eprintln(const char *p, int64_t n) { xo_x_eprintln((int64_t)(intptr_t)p, n); }
 
 // ---------------------------------------------------------------------------
 // C ABI exports (decisions 0204, 0207): functions of
@@ -6056,68 +6042,14 @@ void xo_conn_write(xo_conn *cn, const char *p, int64_t n) {
 
 void xo_conn_close(xo_conn *cn) { pd_close(cn->pd); }
 
-// ---------------------------------------------------------------------------
-// Environment (std.md 3.5)
-
-// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): env.get
-// and env.vars are Xo (std/native/llrt/process.xo, B03 stage 3), but an
-// xo before B03 compiles the native prelude's rt.env_get and rt.env_vars
-// as calls of these. Delete them, with xo_bytes.c's xo_env_args and
-// xo_env_program, with the first seed that has B03.
-//
-// xo_env_get is `env.get(name)`: the value in a list of one, or the empty
-// list when it is not set.
-static xo_rlist *tw_env_get(const char *p, int64_t n);
-
-xo_rlist *xo_env_get(const char *p, int64_t n) {
-	if (tw_is_fake(TW_REAL_ENV)) {
-		return tw_env_get(p, n);
-	}
-	char *name = cstr_of(p, n);
-	const char *v = getenv(name);
-	free(name);
-	if (!v) {
-		return &empty_list;
-	}
-	return str_list(v, (int64_t)strlen(v));
-}
-
-// xo_env_vars is the NAME=VALUE entries of the environment, sorted as
-// std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
-// FakeEnv in the order of its variables.
+// The process environment, which C main hands to process.xo
+// (xo_x_proc_start below).
 #ifdef _WIN32
 #undef environ // the C runtime's (stdlib.h)
 #define environ (xo_w_environ()) // UTF-8 (xo_win.c)
 #else
 extern char **environ;
 #endif
-static xo_rlist *tw_env_vars(void);
-static xo_rlist *n_str_list_new(int64_t cap);
-static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n);
-
-static int env_cmp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
-
-xo_rlist *xo_env_vars(void) {
-	if (tw_is_fake(TW_REAL_ENV)) {
-		return tw_env_vars();
-	}
-	int n = 0;
-	while (environ[n]) {
-		n++;
-	}
-	char **v = malloc(((size_t)n + 1) * sizeof(char *));
-	if (!v) {
-		xo_oom();
-	}
-	memcpy(v, environ, (size_t)n * sizeof(char *));
-	qsort(v, (size_t)n, sizeof(char *), env_cmp);
-	xo_rlist *l = n_str_list_new(n);
-	for (int i = 0; i < n; i++) {
-		l = n_str_list_add(l, v[i], (int64_t)strlen(v[i]));
-	}
-	free(v);
-	return l;
-}
 
 // ---------------------------------------------------------------------------
 // Signals and two phase shutdown (core 7.5, decision 0042)

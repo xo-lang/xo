@@ -7,14 +7,6 @@
 // set without a copy, and a per thread scratch buffer for small
 // structures (timespec, statx).
 
-// xo_static_word is a seed shim (work item B02): rt.static_word's process
-// globals are lowered inline by every emitter since B02, but an xo older
-// than it (the 0.9.0 seed that builds selfhost/xo against this std)
-// compiles its calls as calls of xo_static_word. Delete it with the
-// first seed that has B02 (gotchas/seed-older-than-intrinsics.md).
-static int64_t xo_static_seed[64];
-int64_t xo_static_word(int64_t k) { return (int64_t)(uintptr_t)&xo_static_seed[k]; }
-
 // xo_bytes_addr is the address of the first byte of b.
 int64_t xo_bytes_addr(const char *p, int64_t n) {
 	(void)n;

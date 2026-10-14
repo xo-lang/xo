@@ -64,10 +64,6 @@ static struct {
 #define TW_WEAK __attribute__((weak))
 TW_WEAK void xo_x_tw_setenv(int64_t k, int64_t p, int64_t n) { (void)k, (void)p, (void)n; }
 TW_WEAK int64_t xo_x_tw_init(void) { return 0; }
-TW_WEAK void xo_x_tw_write(int64_t err, int64_t p, int64_t n) { (void)err, (void)p, (void)n; }
-TW_WEAK int64_t xo_x_tw_env_get(int64_t p, int64_t n) { (void)p, (void)n; return (int64_t)(intptr_t)&empty_list; }
-TW_WEAK int64_t xo_x_tw_env_vars(void) { return (int64_t)(intptr_t)&empty_list; }
-TW_WEAK int64_t xo_x_tw_env_args(void) { return (int64_t)(intptr_t)&empty_list; }
 TW_WEAK void xo_x_tw_set_args(int64_t l) { (void)l; }
 TW_WEAK void xo_x_tw_set_exit(int64_t code) { (void)code; }
 TW_WEAK int64_t xo_x_tw_exit_value(void) { return 0; }
@@ -103,16 +99,6 @@ __attribute__((unused)) static void tw_init(void) {
 	signal(SIGPIPE, SIG_IGN);
 #endif
 }
-
-// tw_write captures what the program writes to standard output (err 0)
-// or error.
-static void tw_write(int err, const char *p, int64_t n) { xo_x_tw_write(err, (int64_t)(intptr_t)p, n); }
-
-__attribute__((unused)) static xo_rlist *tw_env_get(const char *p, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_tw_env_get((int64_t)(intptr_t)p, n); }
-
-__attribute__((unused)) static xo_rlist *tw_env_vars(void) { return (xo_rlist *)(intptr_t)xo_x_tw_env_vars(); }
-
-__attribute__((unused)) static xo_rlist *tw_env_args(void) { return (xo_rlist *)(intptr_t)xo_x_tw_env_args(); }
 
 // tw_exit is os.proc.exit in a test (std.md 8.4): the code is recorded
 // (FakeProc.exit_code). Outside testing.run_main the test ends and

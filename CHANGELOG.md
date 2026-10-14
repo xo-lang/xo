@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: the C the 0.10.0 seed still called is deleted now that
+  seed 0.11.0 is out (xo_static_word, xo_ct_barrier and xo_crypto.c,
+  the print, exit, env, and rune count forwards; about 200 lines), and
+  `Stdio.write` writes through std/native/llrt/stdio.xo instead of the C
+  `xo_print` (gotchas/runtime-c-the-seed-still-calls.md).
 - Native runtime (zero-C audit item B13, stage 2; decision 0226): the
   list objects (a new list, growth, the copy of a shared list, the
   release of a list's elements) and the drop worklist are Xo
