@@ -337,6 +337,7 @@ From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
 | `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
 | xo-ci-windows first boot after adoption (boot.ps1 start to registered; the toolchain was already there) | 14 s |
 | `windows` (run 38627432745): plan with the xo.exe cross build 18 s, then the Windows job (checkout, windows-batch.sh steps 1 to 4) | 5 min 33 s job; 156 of 157 windows/amd64 goldens pass (proc_cmd fails, below), 157 of 157 windows/arm64 built, LLVM runtime tests ok, `xo test` LLVM against Go 16 same, 0 differ |
+| `windows` without the cross build (run 38633141732): plan 4 s, the Windows job with xo built on the runner (scripts/xobuild, seed cached) | 6 min 43 s job; 157 of 157 goldens pass, 157 arm64 built, runtime ok, 16 same |
 | `fixed-point` on xo-ci-arm64-big | 2 min 24 s job: s1 36 s, s2 36 s, s3 24 s; s2 and s3 assembly (297,336,303 bytes) and binaries (53,485,152 bytes) identical |
 
 Earlier figures for comparison (from the knowledgebase): one self build
