@@ -6241,10 +6241,12 @@ static char **xo_argv;
 // constants of collection types (xo_bytes.c)
 void xo_consts_free(void);
 
-// xo_tz_exit_free releases the zones std/native/llrt/tzhost.xo kept
-// (set in programs that use std/time, xo_std.c): the leak check sees
-// them freed.
-__attribute__((unused)) static void (*xo_tz_exit_free)(void);
+// xo_x_tz_free (std/native/llrt/cabi_time.xo) releases the zones
+// std/native/llrt/tzhost.xo kept, in programs that use std/time
+// (XO_TIME): the leak check sees them freed.
+#ifdef XO_TIME
+void xo_x_tz_free(void);
+#endif
 
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
@@ -6364,9 +6366,9 @@ int main(int argc, char **argv) {
 	}
 	if (getenv("XO_LEAKCHECK")) {
 		xo_consts_free();
-		if (xo_tz_exit_free) {
-			xo_tz_exit_free();
-		}
+#ifdef XO_TIME
+		xo_x_tz_free();
+#endif
 		int64_t live, total;
 		xo_rt_live(&live, &total);
 		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);

@@ -5,5 +5,5 @@
 use native/llrt/tzhost
 
 /// Releases the zones std/native/llrt/tzhost.xo kept, at exit under
-/// XO_LEAKCHECK (xo_rt.c's xo_tz_exit_free, set in xo_std.c).
+/// XO_LEAKCHECK (xo_rt.c's end of main, under XO_TIME).
 fn tz_free() { tzhost.free() }
