@@ -29,7 +29,7 @@ Inputs of `.github/workflows/ci.yml`:
 | input | default | meaning |
 |---|---|---|
 | `ref` | `main` | branch, tag, or commit to test (push it first) |
-| `suite` | `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package); `./internal/selfhost` (merge tier) when anything under `selfhost/` or `std/` changed; `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). The log prints the changed paths and the package list |
+| `suite` | `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package); `./internal/selfhost` (merge tier) when anything under `selfhost/` or `std/` changed; `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). The log prints the changed paths and the package list. Verified 2026-10-14 (run 38599119717, a branch changing selfhost/lexer/dump.xo and adding a file under internal/gen/testdata): `./internal/gen` and `./internal/selfhost` tested, fixed point identical, 6.5 min |
 | `packages` | empty | for `suite=merge`: space separated packages (`./cmd/xo ./internal/llvm`); empty means the touched ones |
 | `merge_main` | true | test REF merged with the current main, without pushing anything; a conflict fails in seconds and lists the files |
 | `runner` | `xo-arm64` | runner label; `xo-arm64-big` for heavy runs (the full tier) |
@@ -314,14 +314,12 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
 
 1. Time the full tier on CI: `gh workflow run ci.yml -f suite=full -f
    runner=xo-arm64-big`.
-2. The first `suite=auto` run on a real agent branch (auto's path rules
-   are untested on a branch with changes).
-3. amd64 runners (best effort): `runners.sh adopt` the three c7i.8xlarge
+2. amd64 runners (best effort): `runners.sh adopt` the three c7i.8xlarge
    machines with label `xo-amd64`, add the choice to `ci.yml`'s `runner`
    input; the fixed point there uses the LLVM backend.
-4. A Windows runner (best effort): a PowerShell boot script
+3. A Windows runner (best effort): a PowerShell boot script
    (`boot/windows.ps1`) with Defender exclusions (see
    scripts/remote-windows.sh), user data `<powershell>` with
    `<persist>true</persist>`.
-5. Decide whether four big machines are needed; each stopped one costs
+4. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.
