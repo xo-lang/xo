@@ -459,7 +459,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var cur_tu = tu
   var cur_os = tgoos
   var mi = cur.m
-  var inl = arm64.inline_step(mi)
+  var inl = arm64.inline_step_jobs(mi, emit_jobs(os))
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
@@ -471,7 +471,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cur_tu = l.tu
       cur_os = tgoos
       mi = cur.m
-      inl = arm64.inline_step(mi)
+      inl = arm64.inline_step_jobs(mi, emit_jobs(os))
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
