@@ -351,3 +351,61 @@ LLVM, c7i.8xlarge (44a5c677, -O0, split 16 with 16 jobs):
 
 The x86 development self build went from 2,510.80 s (split 12, 6 jobs,
 -O2, before) to 83.10 s.
+
+## The run time of code with joined releases (the Mac, 2026-10-14)
+
+The compiler is the workload: A is an xo whose code has no joined
+releases (main's xo of 2026-10-13 building this tree), B is A building
+the tree (its code has them); each then builds the tree twice with
+`XO_EMIT_JOBS=8` (`/usr/bin/time -l`; the two outputs differ only in 49
+bytes, the code signature's identifier, which names the output file).
+
+| B's code | A (instructions) | B (instructions) | B / A | binaries A, B |
+|---|---|---|---|---|
+| 44a5c677 (join at 2 leaves; arm64 helper from memory, and from a frame copy of the words in registers) | 1,448.6 billion (46.16 s), 1,445.7 (37.59 s) | 1,546.0 billion (39.79 s), 1,547.8 (37.30 s) | +6.9% | 90.8 MB, 74.4 MB |
+| leaves in registers released one by one | 1,468.5, 1,468.5 | 1,551.3, 1,551.3 | +5.6% | 90.9 MB, 67.8 MB |
+| no word count limit | 1,469.7, 1,469.6 | 1,551.7, 1,551.7 | +5.6% | 90.9 MB, 67.8 MB |
+| the memory helper only for 16 leaves or more | 1,485.9, 1,493.6 | 1,600.7, 1,597.3 | +7.3% | 90.9 MB, 68.1 MB |
+| 9dde75fd: no joined release of a call's results | 1,941.2, 1,942.1 (37.12, 37.14 s) | 1,940.2, 1,941.5 (37.84, 37.12 s) | -0.05% | 90.9 MB, 66.5 MB |
+| ff12d428: a call's results joined one result at a time | 1,259.2, 1,261.2 | 1,260.4, 1,258.2 | -0.0% | 90.9 MB, 51.6 MB |
+
+(The last row's builds produce a different, smaller program than the
+earlier rows', 17.0 million lines of assembly; compare within a row.)
+
+The cause, found with perf on r8g.8xlarge (A and B building
+acd142c7, 199 Hz): B spent 10 percent of its samples more in
+`arm64.G.field_words` (1,370 samples against 301). Its code had grown to
+5,057 lines: after each call that writes back the emitter's state
+(a `var` parameter of about 300 words), it loaded and spilled every word
+of the state to release its 200 heap leaves at once. The arm64 emitter
+reads a call's `var` results in place while only field reads use them
+(byref.xo `lazy_result`); a release of the whole result is not a field
+read, so every word was loaded. `group_releases` no longer joins the
+releases of a call's results as a whole (9dde75fd); ff12d428 joins
+them one result at a time (a release of `Field(call, k)`), which keeps
+the in place reads and the smaller output.
+
+r8g.8xlarge, chain L (ff12d428, seed 0.10.0-23ce8ce2, s2 with 16 jobs):
+s2 33.84 s (insert_rc 9.33, emit 6.06, assemble 2.11 s), s3 with 3 jobs
+1:06.62; assembly 275,918,567 bytes, 13,648,294 lines (22.8 million
+before joined releases), 1,517,461 calls; binary 52,023,736 bytes (88.4
+MB before); peak RSS 7.09 GB; s2 = s3 (assembly and binary); goldens
+180/180 arm64 and LLVM (`xo dev goldens --force`). Chain K (9dde75fd):
+s2 39.79 s, 17.4 million lines, 2.76 million calls, 66.8 MB. The bench/perf/llvm/xo programs (collatz,
+fib, interp, nbody, sieve, sort, strings) ran the same before and after
+(within 2 percent, best of 3), with identical binary sizes: they have no
+values of four or more heap leaves.
+
+## Stage 2 measured: the front end's share (the Mac, 2026-10-14)
+
+| build | check | ssa | rest | wall |
+|---|---|---|---|---|
+| `xo check selfhost/xo` | | | | 1.09 to 1.22 s |
+| `xo build --backend=arm64 selfhost/xo` (9dde75fd, 8 jobs) | 1.15 s | 2.1 s | insert_rc 7.83, inline 2.14, emit 15.38, assemble 7.48 s | 37.28 s |
+| examples/notes-service after a one-line edit | 0.20 s | 0.24 to 0.27 s | add_landings 0.08, insert_rc 0.07, emit 0.15, assemble 0.29, cc 0.07 s | 1.18 to 1.26 s |
+| a 40 line program after an edit | | | emit 0.05, cc 0.14 s | 0.40 s |
+
+Per-module caching of the front end (stage 2) can save at most the check
+and SSA phases: about 3.3 s of a 37 s self build (9 percent) and 0.45 s
+of a 1.2 s service build. `xo check` of the whole compiler already takes
+about a second.
