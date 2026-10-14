@@ -196,3 +196,7 @@ pub fn raise_str_at(m: Str, lp: Int, ln: Int) {
   rt.mem_store(l, ln, 0, 1)
   fire(text(m), l)
 }
+
+/// Raises the fault whose zero terminated message is at m, at the zero
+/// terminated location loc (C strings the record copies): never returns.
+pub fn raise_cstrs(m: Int, loc: Int) { fire(m, loc) }

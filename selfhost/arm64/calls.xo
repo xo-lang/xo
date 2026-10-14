@@ -1323,6 +1323,10 @@ fn (var g: G) rt_call(v: Int) {
     // entries stay for LLVM and older xo's code)
     name = "xo_x_ctx_${name0.trim_prefix("rt.")}"
   }
+  if name0 is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" {
+    // tasks.xo through its exports (B18), likewise
+    name = "xo_x_${name0.trim_prefix("rt.")}"
+  }
   if name0 is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     // budget.xo through its exports, likewise
     name = "xo_x_budget_${name0.trim_prefix("rt.").trim_prefix("budget_")}"

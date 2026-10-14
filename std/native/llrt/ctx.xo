@@ -22,7 +22,7 @@ use native/llrt/sysio
 use native/llrt/text
 use native/rt
 
-/// xo_ctx (224 bytes; the owner of each field in decision 0229):
+/// xo_ctx (256 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
 pub const C_NODE = 0
 /// unwinding: the context unwinds (cancellation or a fault; a C int).
@@ -58,7 +58,10 @@ pub const C_BUD_RUN = 184
 pub const C_BUD_AMARK = 192
 pub const C_BUD_HEAP = 200
 pub const C_BUD_PAUSED = 208
-pub const C_SIZE = 224
+/// went: the context's wait list entry (xo_went, 32 bytes: tasks.xo E_*;
+/// a context waits on one list at a time, decision 0212 stage 3).
+pub const C_WENT = 216
+pub const C_SIZE = 256
 
 /// rt.static_word: the address of xo_rt.c ctx_root (two ignored
 /// arguments; the current context, made for a thread that runs Xo code
