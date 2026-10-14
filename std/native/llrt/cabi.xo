@@ -574,3 +574,11 @@ fn scope_fail_site(s: Int) -> Int { tasks.scope_fail_site(s) }
 fn scope_group(s: Int) -> Int { tasks.scope_group(s) }
 
 fn fault_rethrow(s: Int) { tasks.fault_rethrow(s) }
+
+fn scope_cancel(s: Int) { tasks.scope_cancel(s) }
+
+fn prog_group_set(s: Int) { tasks.prog_group_set(s) }
+
+fn prog_group_clear() { tasks.prog_group_set(0) }
+
+fn prog_group() -> Int { tasks.prog_group() }

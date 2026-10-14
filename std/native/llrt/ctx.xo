@@ -69,6 +69,9 @@ pub const C_SIZE = 256
 /// pl of pool.xo), set by init.
 const ROOT = 15
 const POOL = 16
+/// rt.static_word: the program's task group (`os.tasks`, a reference to
+/// a scope, or 0), tasks.xo's.
+const PROG = 17
 
 /// Sets the address of the C's ctx_root and of its pool (at start).
 pub fn init(root: Int, pl: Int) {
@@ -78,6 +81,9 @@ pub fn init(root: Int, pl: Int) {
 
 /// The C's worker pool record (pool.xo's pl).
 pub fn pool() -> Int { rt.mem_load(rt.static_word(POOL), 0, 8) }
+
+/// The address of the word holding the program's task group.
+pub fn prog_group_word() -> Int { rt.static_word(PROG) }
 
 /// The current context: thread local word 0, or a root context the C
 /// makes for a thread that has none yet.

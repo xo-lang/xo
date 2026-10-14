@@ -1,7 +1,7 @@
 // Tasks and scopes (core 7.1; the zero-C audit's B18, decision 0212
 // stage 3, decision 0229's rules): the task's end, `t.await`, a scope's
-// failed task and group handle, and a task's fault raised where its
-// scope closes. The task and scope records stay the C runtime's
+// failed task and group handle, a task's fault raised where its scope
+// closes, `s.cancel()`, and the program's task group (`os.tasks`). The task and scope records stay the C runtime's
 // (xo_rt.c xo_task, xo_scope: allocation, the queue, the run, the
 // scope's open and close); this module reads and writes them at the
 // offsets below, which xo_rt.c asserts (`tasks.xo T_*`, `tasks.xo S_*`).
@@ -47,6 +47,9 @@ const T_DONE = 2
 /// failure fields, the first failed task and the first faulted task
 /// (references).
 const S_BODY = 16
+const S_TASKS = 72
+const S_OLD = 80
+const S_NOLD = 88
 const S_MU = 104
 const S_FAIL = 392
 const S_FAULT = 424
@@ -69,6 +72,8 @@ const E_WRITER = 24
 const RT_RUN_CLAIMED = 16
 const RT_PARK_WAIT = 17
 const RT_EMPTY_LIST = 18
+const RT_H_RELEASE = 19
+const ACQ_REL = 3
 
 const ACQUIRE = 1
 
@@ -260,6 +265,51 @@ pub fn scope_fail_site(s: Int) -> Int {
 
 /// `s.group()`: the same scope behind a Group handle (a reference).
 pub fn scope_group(s: Int) -> Int {
+  rc.inc(s)
+  s
+}
+
+/// `s.cancel()` (xo_scope_cancel): cancels the scope's tasks, not the
+/// body; tasks spawned later start under a fresh node. The node and the
+/// array of the replaced ones are malloc'd at their own address (the C's
+/// scope_free frees them).
+pub fn scope_cancel(s: Int) {
+  let fresh = rt.heap_large(56) - 8
+  rt.mem_set(fresh, 0, 56)
+  pool.lock(s + S_MU)
+  let old = ld(s, S_TASKS)
+  let n = ld4(s, S_NOLD)
+  let a0 = ld(s, S_OLD)
+  let a = if a0 == 0 { rt.heap_large(8 * (n + 1)) - 8 } else { rt.heap_large_resize(a0, 8 * (n + 1)) - 8 }
+  st(a, 8 * n, old)
+  st(s, S_OLD, a)
+  st4(s, S_NOLD, n + 1)
+  pool.node_link(fresh, s + S_BODY)
+  st(s, S_TASKS, fresh)
+  pool.unlock(s + S_MU)
+  pool.node_cancel(ctx.pool(), old)
+}
+
+/// Makes scope s (0: none) the group `os.tasks` gives (xo_prog_group_set:
+/// the group of the scope generated code opens around main and around
+/// each test, core 7.1, decision 0109).
+pub fn prog_group_set(s: Int) {
+  if s != 0 {
+    rc.inc(s)
+  }
+  let old = rt.slot_swap[Int](ctx.prog_group_word(), 0, s, ACQ_REL)
+  if old != 0 {
+    let _r = rt.sched_rt(RT_H_RELEASE, old, 0)
+  }
+}
+
+/// `os.tasks` (xo_prog_group): a reference to the program's group.
+pub fn prog_group() -> Int {
+  let s = rt.slot_load[Int](ctx.prog_group_word(), 0, ACQUIRE)
+  if s == 0 {
+    let q = "?"
+    fault.raise_str_at("os.tasks is not available here", raw.data(q), 0)
+  }
   rc.inc(s)
   s
 }

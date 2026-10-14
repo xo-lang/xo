@@ -219,12 +219,13 @@ fn prefetch(a: Int)
 /// functions' addresses); 14 std/native/llrt/fault.xo (the address of
 /// xo_rt.c fault_raise_msg, decision 0228); 15 std/native/llrt/ctx.xo (the
 /// address of xo_rt.c ctx_root, decision 0229); 16 ctx.xo (the address of
-/// xo_rt.c's pool record); 32 to 39 the test world's
+/// xo_rt.c's pool record); 17 ctx.xo (the program's task group,
+/// tasks.xo's); 32 to 39 the test world's
 /// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
 /// real, its lock, Rand's PCG state, the MemFs lock and state, the state
 /// record); 18 to 21 std/native/llrt/tzhost.xo (the kept zones' lock and
-/// vector: its address, length, and capacity); 17, 22 to 31, and 40 to
-/// 63 unused.
+/// vector: its address, length, and capacity); 22 to 31 and 40 to 63
+/// unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

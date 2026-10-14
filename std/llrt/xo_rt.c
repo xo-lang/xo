@@ -2269,55 +2269,23 @@ xo_scope *xo_scope_open(void) {
 int64_t xo_x_scope_group(int64_t s);
 xo_scope *xo_scope_group(xo_scope *s) { return (xo_scope *)(intptr_t)xo_x_scope_group(XO_ADDR(s)); }
 
-// The program's task group, `os.tasks` (core 7.1, decision 0109): the
-// group of the scope generated code opens around main (and around each
-// test), set while it is open.
-static xo_scope *prog_group;
+// The program's task group (os.tasks) and s.cancel() are tasks.xo's
+// (B18), which generated code calls through its exports; these forward
+// for older xo's code.
+void xo_x_prog_group_set(int64_t s);
+int64_t xo_x_prog_group(void);
+void xo_x_scope_cancel(int64_t s);
 
-// xo_prog_group_set makes s (NULL: none) the group os.tasks gives.
-void xo_prog_group_set(xo_scope *s) {
-	if (s) {
-		h_retain(s);
-	}
-	xo_scope *old = __atomic_exchange_n(&prog_group, s, __ATOMIC_ACQ_REL);
-	if (old) {
-		h_release(old);
-	}
-}
+void xo_prog_group_set(xo_scope *s) { xo_x_prog_group_set(XO_ADDR(s)); }
 
-// xo_prog_group_clear ends the program's group (its scope closed).
-void xo_prog_group_clear(void) { xo_prog_group_set(NULL); }
+void xo_prog_group_clear(void) { xo_x_prog_group_set(0); }
 
-// xo_prog_group is `os.tasks`: a reference to the program's group.
-xo_scope *xo_prog_group(void) {
-	xo_scope *s = __atomic_load_n(&prog_group, __ATOMIC_ACQUIRE);
-	if (!s) {
-		static const char m[] = "os.tasks is not available here";
-		xo_fault(m, (int64_t)sizeof m - 1, "");
-	}
-	h_retain(s);
-	return s;
-}
+xo_scope *xo_prog_group(void) { return (xo_scope *)(intptr_t)xo_x_prog_group(); }
 
-// xo_scope_cancel is `s.cancel()`: cancels the scope's tasks, not the
-// body; tasks spawned later start under a fresh node.
-void xo_scope_cancel(xo_scope *s) {
-	xo_node *fresh = calloc(1, sizeof(xo_node));
-	if (!fresh) {
-		xo_oom();
-	}
-	lk(&s->mu);
-	xo_node *old = s->tasks;
-	s->old = realloc(s->old, (size_t)(s->nold + 1) * sizeof(xo_node *));
-	if (!s->old) {
-		xo_oom();
-	}
-	s->old[s->nold++] = old;
-	node_link(fresh, &s->body);
-	s->tasks = fresh;
-	unlk(&s->mu);
-	node_cancel(old);
-}
+void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
+
+_Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
+               "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
 
 static void task_free(void *p) {
 	xo_task *t = p;
@@ -2752,6 +2720,9 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
+	case 19: // drop a reference to handle a (h_release)
+		h_release((void *)(intptr_t)a);
+		return 0;
 	}
 	(void)b;
 	return 0;
