@@ -1,8 +1,9 @@
 # Proc.run on Windows read a NULL command line
 
-Status: Observed (2026-10-14, netfix agent, windows/amd64 on EC2). The fix
-is not yet verified on Windows (owner, 2026-10-14: Windows is best effort,
-no more Windows jobs for it).
+Status: Observed (2026-10-14, netfix agent, windows/amd64 on EC2). Fixed
+in 1a53b12c and verified on Windows on 2026-10-14 (queue job
+winfix-netonly on the warm instance: net_only passes, golden set 154 of
+154).
 
 Symptom: the net_only golden crashed on windows/amd64 with an access
 violation (exit 3221225477, or 139 under Git Bash) after its redirect
