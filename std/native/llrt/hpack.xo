@@ -1,29 +1,20 @@
-// HPACK (RFC 7541) of the native HTTP/2 server, written in Xo (decision
-// 0193 step 6): the decoder of request header blocks (integers, string
-// literals, Huffman codes, the dynamic table and its size updates) and
-// the encoder of response header blocks (hpack.Encoder of Go 1.26: a
-// field the static or dynamic table holds is indexed, else a literal
-// added to the dynamic table, its strings Huffman coded when shorter).
-// They were C (std/llrt/xo_h2.c, which keeps its copy for the client);
-// the semantics are the same, so a peer observes what net/http's
-// bundled HTTP/2 sends. Decision 0198 deleted the C path
-// (`XO_LLRT_C=hpack`).
+// HPACK (RFC 7541) of the native HTTP/2 server and client, written in Xo
+// (decision 0193 step 6 for the server, zero-C audit item B11 for the
+// client): the decoder of header blocks (integers, string literals,
+// Huffman codes, the dynamic table and its size updates) and the encoder
+// (hpack.Encoder of Go 1.26: a field the static or dynamic table holds
+// is indexed, else a literal added to the dynamic table, its strings
+// Huffman coded when shorter). They were C (std/llrt/xo_h2.c); the
+// semantics are the same, so a peer observes what net/http's bundled
+// HTTP/2 sends. Decision 0198 deleted the server's C path
+// (`XO_LLRT_C=hpack`), B11 the client's C copy.
 //
-// C never calls compiled Xo (decision 0180), and the connection's frames
-// are read and written by C under the connection's lock, which stream
-// tasks share. So the HTTP/2 connection's fiber (std/native/http.xo,
-// serve_conn) calls the C (rthttp.h2_next) until it stops at a header
-// block: 2, a block fragment to decode (rthttp.h2_block gives it,
-// rthttp.h2_fields takes the fields, with the parse of their :path by
-// http1.h2_target); 3, response heads to encode in the
-// order they go out (rthttp.h2_enc_job, rthttp.h2_encoded; the C holds
-// the connection's lock until they are in, so the order and the table
-// stay the peer's). A 100 Continue is encoded the same way when
-// rthttp.h2_fields asks for one.
+// C never calls compiled Xo (decision 0180), so the C stops where a
+// header block is to be encoded or decoded and Xo goes on with it:
+// http1.xo drives both sides (the server's H2Conn.next through
+// rthttp.h2_next, the client's h2_exchange through rthttp.cl_h2_next).
 use native/llrt/hpack_tables
-use native/llrt/http1
 use native/rt
-use native/rthttp
 
 /// A dynamic table (RFC 7541 2.3.2): entry i is nv[i], its name then its
 /// value, the name nl[i] bytes long; the entries are those from first on,
@@ -295,14 +286,14 @@ pub fn decoder(limit: Int) -> Dec { Dec{t: new_table(limit), limit: limit} }
 /// low 32 bits, the value's above).
 pub struct Fields {
   /// 1, or 0 for a decoding error (a COMPRESSION_ERROR).
-  ok: Int
+  pub ok: Int
   /// How far the fragment was decoded: a representation its end cuts
   /// waits for the next fragment.
-  used: Int
-  data: Str
-  lens: List[Int]
+  pub used: Int
+  pub data: Str
+  pub lens: List[Int]
   /// No representation of the block was decoded yet.
-  first: Bool
+  pub first: Bool
 }
 
 /// Decodes the whole field representations of blk, the next part of a
@@ -429,8 +420,9 @@ pub struct Enc {
   update: Bool
 }
 
-/// The table size of the server's encoder (H2_TABLE).
-const TABLE: Int = 4096
+/// The table size of the encoders and decoders, the server's and the
+/// client's (H2_TABLE, the SETTINGS_HEADER_TABLE_SIZE default).
+pub const TABLE: Int = 4096
 
 const NO_MIN: Int = 4294967295
 
@@ -555,62 +547,44 @@ fn (var e: Enc) encode(out0: Str, job: Str, at: Int, nn: Int, vn: Int) -> Str {
   out
 }
 
+/// out + the representation of the field name: value (the HTTP/2
+/// client's request fields, which http1.xo h2_exchange lists; audit item
+/// B11).
+pub fn (var e: Enc) field(out: Str, name: Str, value: Str) -> Str {
+  e.encode(out, name + value, 0, name.len(), value.len())
+}
+
 // ---------------------------------------------------------------------------
-// The HTTP/2 server's header blocks (xo_h2.c)
+// The jobs of xo_h2.c (http1.xo drives the HTTP/2 connections: the
+// server's H2Conn, the client's h2_exchange)
 
 /// The 4 byte little endian number at b[i].
 fn u32_at(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24) }
 
-/// The HPACK state of an HTTP/2 server connection.
-pub struct Conn {
-  h: rthttp.HConn
-  dec: Dec
-  enc: Enc
-}
-
-/// The HPACK state of the connection, whose header blocks pass through
-/// Xo.
-pub fn conn(h: rthttp.HConn) -> Conn {
-  Conn{h: h, dec: decoder(TABLE), enc: encoder()}
-}
-
-/// The largest header list (and string) the server takes (H2_MAX_HLIST:
-/// DefaultMaxHeaderBytes plus 10 times 32).
-const MAX_HLIST: Int = 1048896
-
-/// Runs the HTTP/2 connection until a request is ready for a handler
-/// (true; rthttp.h2_take hands it out) or the connection is done.
-pub fn (var c: Conn) next() -> Bool {
-  while true {
-    let r = rthttp.h2_next(c.h)
-    if r == 2 {
-      let f = c.dec.decode_part(rthttp.h2_block(c.h), rthttp.h2_block_first(c.h), MAX_HLIST)
-      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first, http1.h2_target(f.data, f.lens)) {
-        // a 100 Continue goes out after the request's HEADERS
-        rthttp.h2_encoded(c.h, c.encode_job(rthttp.h2_enc_job(c.h)))
-      }
-    } else if r == 3 {
-      rthttp.h2_encoded(c.h, c.encode_job(rthttp.h2_enc_job(c.h)))
-    } else {
-      return r == 1
-    }
+/// Applies the peer's table size settings in s, 4 bytes little endian
+/// each, in the order they came (the client's rthttp.cl_h2_sizes).
+pub fn (var e: Enc) set_sizes(s: Str) {
+  let b = s.bytes()
+  var i = 0
+  while i + 4 <= b.len() {
+    e.set_max(u32_at(b, i))
+    i += 4
   }
-  false
 }
 
-/// Encodes the response heads of a job of rthttp.h2_enc_job: the peer's
-/// table size settings since the last job (a count, then each), then for
-/// each head its number of fields and each field's name and value
-/// lengths and the name and the value, the numbers 4 bytes little
-/// endian. The blocks, each after its length.
-fn (var c: Conn) encode_job(job: Str) -> Str {
+/// Encodes the response heads of a job of the server's
+/// rthttp.h2_enc_job: the peer's table size settings since the last job
+/// (a count, then each), then for each head its number of fields and
+/// each field's name and value lengths and the name and the value, the
+/// numbers 4 bytes little endian. The blocks, each after its length.
+pub fn (var e: Enc) encode_job(job: Str) -> Str {
   let b = job.bytes()
   var i = 0
   let ns = u32_at(b, i)
   i += 4
   var k = 0
   while k < ns {
-    c.enc.set_max(u32_at(b, i))
+    e.set_max(u32_at(b, i))
     i += 4
     k += 1
   }
@@ -626,7 +600,7 @@ fn (var c: Conn) encode_job(job: Str) -> Str {
     while f < nf {
       let nn = u32_at(b, i)
       let vn = u32_at(b, i + 4)
-      blk = c.enc.encode(blk, job, i + 8, nn, vn)
+      blk = e.encode(blk, job, i + 8, nn, vn)
       i += 8 + nn + vn
       f += 1
     }

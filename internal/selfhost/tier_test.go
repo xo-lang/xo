@@ -89,7 +89,7 @@ func mergeHeavy(d string) bool {
 	switch d {
 	case "internal/arm64/testdata/run/huge_frame":
 		return true
-	case "selfhost/lexer", "selfhost/parser":
+	case "selfhost/lexer", "selfhost/parser", "selfhost/prune":
 		return false
 	}
 	return strings.HasPrefix(d, "selfhost/")

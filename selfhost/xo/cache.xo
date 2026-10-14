@@ -4,6 +4,7 @@
 // and find each other's linked binaries in the same cache (XO_BIN_CACHE,
 // off by default; decision 0178 stage 1).
 
+use github.com/xo-lang/xo/selfhost/prune
 use std/crypto
 
 /// filepath.Clean of a slash separated path.
@@ -60,11 +61,16 @@ fn prog_name(wd: Str, dirs: List[Str]) -> Str {
 /// buildDir: a stable directory per program and mode under the user
 /// cache ($XO_BUILD_DIR, else <user cache>/xo/build), named by the hash
 /// of the absolute directories, the mode (0 build, 1 test), and the
-/// variants; it is created and its modification time set (trimming
-/// is left to the Go driver).
+/// variants; it is created and its modification time set (its last use,
+/// decision 0223). The default base is then pruned (prune.run, a
+/// directory per entry: at most hourly, entries unused past
+/// $XO_CACHE_MAX_AGE, default 24h, then the least recently used over
+/// $XO_CACHE_MAX_GB, default 20, or $XO_BUILD_DIR_MAX bytes); a base the
+/// user chose is never pruned.
 fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, no_ranges: Bool, arenas: Bool, variants: List[Str]) -> Str ! FsErr {
   var base = os.env.get("XO_BUILD_DIR") ?? ""
-  if base.is_empty() {
+  let chosen = !base.is_empty()
+  if !chosen {
     base = "${ctx.cache}/xo/build"
   }
   var h = BytesBuilder.new()
@@ -89,7 +95,10 @@ fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, 
   h.write_str(" layout=2")
   let dir = "${base}/${crypto.sha256(h.freeze()).to_hex()[0..16]}"
   os.fs.create_dir_all(dir)?
-  os.fs.set_modified(dir, os.clock.now()).ignore_err("only the trim order")
+  os.fs.set_modified(dir, os.clock.now()).ignore_err("only the prune order")
+  if !chosen {
+    prune.run(os.fs, os.clock, base, cap_env(os, prune.from_env(os.env, prune.Policy{dirs: true}), "XO_BUILD_DIR_MAX"))
+  }
   Ok(dir)
 }
 
@@ -114,6 +123,18 @@ fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
     return out
   }
   "${dir}/bin/${name}${exe}"
+}
+
+/// p with its size cap set by $name (bytes) when that is a positive
+/// integer: the caches' own caps (XO_BUILD_DIR_MAX, XO_GOCACHE_MAX,
+/// XO_BIN_CACHE_MAX) take precedence over $XO_CACHE_MAX_GB.
+fn cap_env(os: Os, p: prune.Policy, name: Str) -> prune.Policy {
+  let max = Int.parse(os.env.get(name) ?? "") ?? 0
+  var q = p
+  if max > 0 {
+    q.max_bytes = max
+  }
+  q
 }
 
 /// BinCacheDir: $XO_BIN_CACHE, "" (off) when unset or "off".
@@ -256,7 +277,7 @@ fn fetch_bin(os: Os, key: Str, bin: Str) -> (Bool, Str) {
   match os.fs.stat(entry) {
     Ok(Some(fi)) => {
       if !fi.is_dir {
-        os.fs.set_modified(entry, os.clock.now()).ignore_err("only the trim order")
+        prune.mark_used(os.fs, os.clock, entry)
         os.fs.create_dir_all(dir_name(bin)).ignore_err("the copy reports it")
         let tmp = "${bin}.tmp-xo1-${os.rand.bytes(6).to_hex()}"
         match os.fs.copy(entry, tmp) {
@@ -279,7 +300,10 @@ fn fetch_bin(os: Os, key: Str, bin: Str) -> (Bool, Str) {
 
 /// withBinCache, second half: the linked bin is added to the cache as
 /// entry (a copy under a temporary name, renamed into place), and the
-/// cache trimmed to XO_BIN_CACHE_MAX bytes (default 6 GiB).
+/// cache pruned (prune.run, at most once a minute): entries unused past
+/// $XO_CACHE_MAX_AGE (default 24h), then the least recently used over
+/// XO_BIN_CACHE_MAX bytes (default 6 GiB); entries used within two hours
+/// stay (decision 0223).
 fn store_bin(os: Os, entry: Str, bin: Str) {
   if entry.is_empty() {
     return
@@ -301,6 +325,6 @@ fn store_bin(os: Os, entry: Str, bin: Str) {
       return
     }
   }
-  let max = Int.parse(os.env.get("XO_BIN_CACHE_MAX") ?? "") ?? 0
-  trim_cache_dir(os, bin_cache_dir(os), if max > 0 { max } else { 6 * 1024 * 1024 * 1024 })
+  let p = prune.from_env(os.env, prune.Policy{max_bytes: 6 * prune.GB, every: 1m})
+  prune.run(os.fs, os.clock, bin_cache_dir(os), cap_env(os, p, "XO_BIN_CACHE_MAX"))
 }
