@@ -85,6 +85,11 @@ func buildAndRun(t *testing.T, dir string, opts xotool.Options) runResult {
 // result.
 func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool.Result) {
 	t.Helper()
+	if why := xotool.Arm64Skip(opts.Backend); why != "" {
+		// every arm64 subtest of the diff tests (TestCABIDiff,
+		// TestTZDiff, ...) comes through here
+		t.Skip(why)
+	}
 	res, err := xotool.Build([]string{dir}, opts)
 	if err != nil {
 		t.Fatalf("build (%s): %v", opts.Backend, err)
