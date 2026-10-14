@@ -1,0 +1,666 @@
+// The per-function back-end cache (decision 0220 addendum stage B): the
+// functions of a part are generated as canonical texts, whose labels,
+// strings, fault positions, and helpers are tokens and lists
+// independent of the functions before them in the part, then placed
+// (place_text) as the plain generation would have written them. A
+// function's canonical text is cached under the hash of what its code
+// depends on (fn_key: its SSA after inlining and reference counting,
+// the signatures of the functions it names, the layouts of the types it
+// reaches, the target, and the compiler); on a hit the emitter skips
+// isel, the MIR passes, and register allocation for it. selfhost/xo
+// reads and writes the entries (XO_BACKEND_CACHE=on|verify|off).
+
+use github.com/xo-lang/xo/selfhost/ssa
+use std/crypto
+
+/// The token of a function's label prefix ("<ns>f<n>").
+const FP_TOKEN = "\x01F\x01"
+
+/// The token of a function's call site table number on Mach-O
+/// ("<ns><n>").
+const FN_TOKEN = "\x01N\x01"
+
+/// The version of the entries and keys.
+const FN_CACHE_VERSION = "xo fn cache v1"
+
+/// What a generation takes from the cache: the key of each function of
+/// the module ("" for a function not cached; none when the cache is
+/// off), the entries the cache holds for them, and whether every
+/// function is generated and compared with its entry (verify).
+pub struct FnCache {
+  pub keys: List[Str] = []
+  pub entries: Map[Str, Bytes] = {}
+  pub verify: Bool = false
+}
+
+/// A function's canonical text and what placing it needs.
+struct FnRec {
+  text: Str = ""
+  lsda: Str = ""
+  strs: List[Bytes] = []
+  locs: List[Str] = []
+  /// the helpers it names, in first use: key, op, kind, type name,
+  /// function name
+  wants: List[(Str, Int, Str, Str, Str)] = []
+  /// the program wide code it uses (ref_flags)
+  flags: Int = 0
+}
+
+// ---------------------------------------------------------------------------
+// Canonical texts
+
+/// The token of string literal s in the function's canonical text.
+fn (var g: G) canon_str(s: Bytes) -> Str {
+  if let Some(i) = g.cstr_at.get(s) {
+    return "\x01S${i}\x01"
+  }
+  let i = g.cstrs.len()
+  g.cstr_at[s] = i
+  g.cstrs.push(s)
+  "\x01S${i}\x01"
+}
+
+/// The token of fault position s in the function's canonical text.
+fn (var g: G) canon_loc(s: Str) -> Str {
+  if let Some(i) = g.cloc_at.get(s) {
+    return "\x01L${i}\x01"
+  }
+  let i = g.clocs.len()
+  g.cloc_at[s] = i
+  g.clocs.push(s)
+  "\x01L${i}\x01"
+}
+
+/// The program wide code the emitter has been asked for, as bits.
+fn (g: G) ref_flags() -> Int {
+  var f = 0
+  if g.restorer_ref {
+    f = f | 1
+  }
+  if g.words_ref {
+    f = f | 2
+  }
+  if g.static_ref {
+    f = f | 4
+  }
+  if g.clone_ref {
+    f = f | 8
+  }
+  if g.sched_ref {
+    f = f | 16
+  }
+  if g.personality_ref {
+    f = f | 32
+  }
+  f
+}
+
+/// Sets the program wide code flags to f.
+fn (var g: G) set_ref_flags(f: Int) {
+  g.restorer_ref = f & 1 != 0
+  g.words_ref = f & 2 != 0
+  g.static_ref = f & 4 != 0
+  g.clone_ref = f & 8 != 0
+  g.sched_ref = f & 16 != 0
+  g.personality_ref = f & 32 != 0
+}
+
+/// Generates function fi as a canonical text: its record, and the
+/// helpers it wants with their ids.
+fn (var g: G) canon_function(fi: Int) -> (FnRec, List[(Str, Want)]) {
+  g.cstrs = []
+  g.cstr_at = {}
+  g.clocs = []
+  g.cloc_at = {}
+  g.cwants = []
+  // the helpers named are recorded per function (defers)
+  g.helped = {}
+  let saved = g.ref_flags()
+  g.set_ref_flags(0)
+  let t0 = g.text.len()
+  let l0 = g.lsdas.len()
+  g.function(fi)
+  var r = FnRec{strs: g.cstrs, locs: g.clocs, flags: g.ref_flags()}
+  g.set_ref_flags(saved)
+  if g.text.len() > t0 {
+    r.text = g.text.pop() ?? ""
+  }
+  if g.lsdas.len() > l0 {
+    r.lsda = g.lsdas.pop() ?? ""
+  }
+  (r, g.cwants)
+}
+
+/// Places a function's canonical text (just generated, or from the
+/// cache) in the part: its strings and positions interned, its helpers
+/// wanted, its flags set, and its tokens replaced, as the plain
+/// generation writes it.
+fn (var g: G) place_text(r: FnRec, wants: List[(Str, Want)]) {
+  g.canon = false
+  var sl: List[Str] = []
+  for s in r.strs {
+    sl.push(g.str_obj(s))
+  }
+  var ll: List[Str] = []
+  for s in r.locs {
+    ll.push(g.loc_label(s))
+  }
+  g.canon = true
+  for (k, w) in wants {
+    if !g.wanted.contains(k) {
+      g.wanted[k] = true
+      g.wants.push(w)
+    }
+  }
+  g.set_ref_flags(g.ref_flags() | r.flags)
+  let fp = "${g.ns}f${g.nfunc}"
+  let fnum = "${g.ns}${g.nfunc}"
+  if !r.text.is_empty() {
+    g.text.push(subst_tokens(r.text, fp, fnum, sl, ll))
+  }
+  if !r.lsda.is_empty() {
+    g.lsdas.push(subst_tokens(r.lsda, fp, fnum, sl, ll))
+  }
+}
+
+/// t with its tokens replaced: F by fp, N by fnum, S<i> by sl[i], L<i>
+/// by ll[i].
+fn subst_tokens(t: Str, fp: Str, fnum: Str, sl: List[Str], ll: List[Str]) -> Str {
+  if !t.contains("\x01") {
+    return t
+  }
+  var b = StrBuilder.new()
+  for (i, p) in t.split("\x01").indexed() {
+    if i % 2 == 0 {
+      b.write(p)
+    } else if p == "F" {
+      b.write(fp)
+    } else if p == "N" {
+      b.write(fnum)
+    } else if p.starts_with("S") {
+      b.write(sl[Int.parse(p[1..p.len()]) ?? 0])
+    } else {
+      b.write(ll[Int.parse(p[1..p.len()]) ?? 0])
+    }
+  }
+  b.freeze()
+}
+
+/// The wants of a record with names for ids; false when a name does
+/// not lead back to its id (two types or functions of one name): such a
+/// function is not cached.
+fn (g: G) name_wants(ws: List[(Str, Want)]) -> (List[(Str, Int, Str, Str, Str)], Bool) {
+  var out: List[(Str, Int, Str, Str, Str)] = []
+  for (k, w) in ws {
+    var tn = ""
+    if w.t >= 0 {
+      tn = g.m.types[w.t].name
+      if (g.m.type_at.get(tn) ?? -1) != w.t {
+        return (out, false)
+      }
+    }
+    var fname = ""
+    if w.fi >= 0 {
+      fname = g.m.funcs[w.fi].name
+      if (g.by_name.get(fname) ?? -1) != w.fi {
+        return (out, false)
+      }
+    }
+    out.push((k, w.op, w.kind, tn, fname))
+  }
+  (out, true)
+}
+
+/// The wants of a cached record with this module's ids; false when a
+/// name is not in the module.
+fn (g: G) resolve_wants(ws: List[(Str, Int, Str, Str, Str)]) -> (List[(Str, Want)], Bool) {
+  var out: List[(Str, Want)] = []
+  for (k, op, kind, tn, fname) in ws {
+    var t = -1
+    if !tn.is_empty() {
+      t = g.m.type_at.get(tn) ?? -1
+      if t < 0 {
+        return (out, false)
+      }
+    }
+    var fi = -1
+    if !fname.is_empty() {
+      fi = g.by_name.get(fname) ?? -1
+      if fi < 0 {
+        return (out, false)
+      }
+    }
+    out.push((k, Want{op: op, kind: kind, t: t, fi: fi}))
+  }
+  (out, true)
+}
+
+// ---------------------------------------------------------------------------
+// Entries: length prefixed fields
+
+fn put_field(var b: BytesBuilder, d: Bytes) {
+  b.write_str("${d.len()}:")
+  b.write(d)
+}
+
+fn encode_rec(r: FnRec, ws: List[(Str, Int, Str, Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  put_field(b, FN_CACHE_VERSION.bytes())
+  put_field(b, r.text.bytes())
+  put_field(b, r.lsda.bytes())
+  put_field(b, "${r.flags}".bytes())
+  put_field(b, "${r.strs.len()}".bytes())
+  for s in r.strs {
+    put_field(b, s)
+  }
+  put_field(b, "${r.locs.len()}".bytes())
+  for s in r.locs {
+    put_field(b, s.bytes())
+  }
+  put_field(b, "${ws.len()}".bytes())
+  for (k, op, kind, tn, fname) in ws {
+    put_field(b, k.bytes())
+    put_field(b, "${op}".bytes())
+    put_field(b, kind.bytes())
+    put_field(b, tn.bytes())
+    put_field(b, fname.bytes())
+  }
+  b.freeze()
+}
+
+/// A reader of length prefixed fields; ok turns false on a malformed
+/// entry.
+struct FieldReader {
+  d: Bytes
+  at: Int = 0
+  ok: Bool = true
+}
+
+fn (var r: FieldReader) next() -> Bytes {
+  var n = 0
+  var i = r.at
+  while i < r.d.len() && r.d[i] != 58 {
+    let c = Int(r.d[i])
+    if c < 48 || c > 57 {
+      r.ok = false
+      return b""
+    }
+    n = n * 10 + c - 48
+    i += 1
+  }
+  if i >= r.d.len() || i + 1 + n > r.d.len() {
+    r.ok = false
+    return b""
+  }
+  let out = r.d[i + 1..i + 1 + n]
+  r.at = i + 1 + n
+  out
+}
+
+fn (var r: FieldReader) str() -> Str {
+  let b = r.next()
+  match b.to_str() {
+    Some(s) => s
+    None => {
+      r.ok = false
+      ""
+    }
+  }
+}
+
+fn (var r: FieldReader) int() -> Int {
+  match Int.parse(r.str()) {
+    Some(n) => n
+    None => {
+      r.ok = false
+      0
+    }
+  }
+}
+
+/// The record of an entry; None for a malformed one or another version.
+fn decode_rec(d: Bytes) -> Option[(FnRec, List[(Str, Int, Str, Str, Str)])] {
+  var r = FieldReader{d: d}
+  if r.str() != FN_CACHE_VERSION {
+    return None
+  }
+  var rec = FnRec{}
+  rec.text = r.str()
+  rec.lsda = r.str()
+  rec.flags = r.int()
+  let ns = r.int()
+  for _ in 0..ns {
+    if !r.ok {
+      return None
+    }
+    rec.strs.push(r.next())
+  }
+  let nl = r.int()
+  for _ in 0..nl {
+    if !r.ok {
+      return None
+    }
+    rec.locs.push(r.str())
+  }
+  let nw = r.int()
+  var ws: List[(Str, Int, Str, Str, Str)] = []
+  for _ in 0..nw {
+    if !r.ok {
+      return None
+    }
+    let k = r.str()
+    let op = r.int()
+    let kind = r.str()
+    let tn = r.str()
+    let fname = r.str()
+    ws.push((k, op, kind, tn, fname))
+  }
+  if !r.ok || r.at != d.len() {
+    return None
+  }
+  Some((rec, ws))
+}
+
+// ---------------------------------------------------------------------------
+// Keys
+
+/// The kind of a type as text.
+fn kind_text(k: ssa.Kind) -> Str {
+  match k {
+    Unit => "unit"
+    Int => "int"
+    Float => "float"
+    Bool => "bool"
+    Str => "str"
+    Struct => "struct"
+    Enum => "enum"
+    Tuple => "tuple"
+    List => "list"
+    Cap => "cap"
+    Func => "func"
+    Box => "box"
+    Handle => "handle"
+    Bad => "bad"
+  }
+}
+
+/// The types type t names directly.
+fn type_refs(x: ssa.SType) -> List[Int] {
+  var out: List[Int] = []
+  for f in x.fields {
+    out.push(f.ty)
+  }
+  for v in x.variants {
+    for f in v.fields {
+      out.push(f.ty)
+    }
+  }
+  for e in x.elems {
+    out.push(e)
+  }
+  if x.ret >= 0 {
+    out.push(x.ret)
+  }
+  out
+}
+
+/// Type t one level deep: its kind, name, flags, and fields, the types
+/// it names by name.
+fn type_desc(m: ssa.Module, t: Int) -> Str {
+  let x = m.types[t]
+  var b = StrBuilder.new()
+  b.write("${kind_text(x.kind)} ${x.name.len()}:${x.name} ${x.coll} ${x.bits} ${x.unsigned} ret=")
+  b.write(if x.ret >= 0 { m.types[x.ret].name } else { "-" })
+  b.write(" fields")
+  for f in x.fields {
+    b.write(" ${f.name.len()}:${f.name}=${m.types[f.ty].name.len()}:${m.types[f.ty].name}")
+  }
+  b.write(" variants")
+  for v in x.variants {
+    b.write(" ${v.name.len()}:${v.name}(")
+    for f in v.fields {
+      b.write(" ${f.name.len()}:${f.name}=${m.types[f.ty].name.len()}:${m.types[f.ty].name}")
+    }
+    b.write(")")
+  }
+  b.write(" elems")
+  for e in x.elems {
+    b.write(" ${m.types[e].name.len()}:${m.types[e].name}")
+  }
+  b.freeze()
+}
+
+/// Tarjan's strongly connected components over the types, each given
+/// the hash of its members' descriptions and the hashes of the
+/// components it reaches: a type's hash covers every type reachable
+/// from it, and stays when an unrelated type is added.
+struct TypeHasher {
+  m: ssa.Module
+  index: List[Int] = []
+  low: List[Int] = []
+  on: List[Bool] = []
+  stack: List[Int] = []
+  next: Int = 0
+  hash: List[Str] = []
+}
+
+fn (var h: TypeHasher) visit(t: Int) {
+  h.index[t] = h.next
+  h.low[t] = h.next
+  h.next += 1
+  h.stack.push(t)
+  h.on[t] = true
+  for u in type_refs(h.m.types[t]) {
+    if h.index[u] < 0 {
+      h.visit(u)
+      h.low[t] = h.low[t].min(h.low[u])
+    } else if h.on[u] {
+      h.low[t] = h.low[t].min(h.index[u])
+    }
+  }
+  if h.low[t] != h.index[t] {
+    return
+  }
+  var members: List[Int] = []
+  while true {
+    let u = h.stack.pop() ?? t
+    h.on[u] = false
+    members.push(u)
+    if u == t {
+      break
+    }
+  }
+  var inside: Map[Int, Bool] = {}
+  for u in members {
+    inside[u] = true
+  }
+  var descs: List[Str] = []
+  var outs: List[Str] = []
+  for u in members {
+    descs.push(type_desc(h.m, u))
+    for v in type_refs(h.m.types[u]) {
+      if !inside.contains(v) {
+        outs.push(h.hash[v])
+      }
+    }
+  }
+  var b = StrBuilder.new()
+  for d in descs.sort() {
+    b.write("${d.len()}:${d}\n")
+  }
+  b.write("reaches\n")
+  for o in outs.sort() {
+    b.write("${o}\n")
+  }
+  let sum = crypto.sha256(b.freeze().bytes()).to_hex()[0..32]
+  for u in members {
+    h.hash[u] = sum
+  }
+}
+
+/// Each type's key: its name and the hash of every type it reaches.
+fn type_keys(m: ssa.Module) -> List[Str] {
+  var h = TypeHasher{m: m}
+  for _ in 0..m.types.len() {
+    h.index.push(-1)
+    h.low.push(0)
+    h.on.push(false)
+    h.hash.push("")
+  }
+  for t in 0..m.types.len() {
+    if h.index[t] < 0 {
+      h.visit(t)
+    }
+  }
+  var out: List[Str] = []
+  for (t, x) in m.types.indexed() {
+    out.push("${x.name.len()}:${x.name}#${h.hash[t]}")
+  }
+  out
+}
+
+fn tk_of(tk: List[Str], t: Int) -> Str {
+  if t < 0 || t >= tk.len() { "-" } else { tk[t] }
+}
+
+fn ints_text(xs: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  b.write("[")
+  for x in xs {
+    b.write(" ${x}")
+  }
+  b.write("]")
+  b.freeze()
+}
+
+/// What the code of a call or a reference to function n depends on
+/// beyond its name (byref.xo by_ref_of, kept_results, closures.xo).
+fn func_sig(m: ssa.Module, n: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
+  let fi = by_name.get(n) ?? -1
+  if fi < 0 {
+    return "none"
+  }
+  let f = m.funcs[fi]
+  var b = StrBuilder.new()
+  b.write("fn indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} taken=${taken.contains(n)} first=${(m.func_at.get(n) ?? -1) == fi} var=${ints_text(f.var_params)} skip=${f.skip.len()}")
+  b.write(" results")
+  for r in f.results {
+    b.write(" ${tk_of(tk, r)}")
+  }
+  b.write(" params")
+  if !f.blocks.is_empty() {
+    for p in f.blocks[0].params {
+      b.write(" ${tk_of(tk, f.values[p].ty)}")
+    }
+  }
+  b.write(" captures")
+  for c in f.captures {
+    b.write(" ${tk_of(tk, c)}")
+  }
+  b.write(" borrowed")
+  for x in f.borrowed {
+    b.write(" ${x}")
+  }
+  b.freeze()
+}
+
+fn aux_text(a: ssa.Aux) -> Str {
+  match a {
+    None => "n"
+    I(n) => "i${n}"
+    F(f) => "f${float_bits(f)}"
+    B(x) => "b${x}"
+    S(s) => "s${s.len()}:${s}"
+    Bs(x) => "y${x.len()}:${x.to_hex()}"
+    P(tag, field) => "p${tag},${field}"
+  }
+}
+
+/// The key of function fi: the SHA-256 of the compiler's identity, the
+/// target, the function's SSA printed in full with its types by key,
+/// and the signatures of itself and every function it names.
+fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
+  let f = m.funcs[fi]
+  var b = StrBuilder.new()
+  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch}\n")
+  b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
+  b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
+  var lr: List[Int] = []
+  for (k, _) in f.land_rest {
+    lr.push(k)
+  }
+  b.write("land_rest ${ints_text(lr.sort())}\n")
+  for (bi, bl) in f.blocks.indexed() {
+    b.write("b${bi} ${ints_text(bl.params)} ${ints_text(bl.instrs)} ${ints_text(bl.preds)}\n")
+  }
+  var names: List[Str] = []
+  var seen: Map[Str, Bool] = {}
+  for (vi, x) in f.values.indexed() {
+    b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, x.ty)} ${ints_text(x.args)} ${aux_text(x.aux)} ${x.block} ${ints_text(x.succs)} ${x.pad} ${x.pos.len()}:${x.pos}\n")
+    match x.aux {
+      S(s) => {
+        if !seen.contains(s) {
+          seen[s] = true
+          names.push(s)
+        }
+      }
+      _ => {}
+    }
+  }
+  for (ei, e) in f.edges.indexed() {
+    b.write("e${ei} ${e.from} ${e.to} ${ints_text(e.args)}\n")
+  }
+  for n in names {
+    b.write("callee ${n.len()}:${n} ${func_sig(m, n, taken, by_name, tk)}\n")
+  }
+  crypto.sha256(b.freeze().bytes()).to_hex()
+}
+
+/// The cache key of every function of m generated for os by the
+/// compiler of identity id, on up to jobs tasks; none for a module of
+/// one part (generated whole, not cached).
+pub fn function_keys(m: ssa.Module, os: Str, id: Str, jobs: Int) -> List[Str] {
+  let bounds = part_bounds(m)
+  if bounds.len() <= 2 {
+    return []
+  }
+  var g = new_gen(m, os)
+  g.find_addr_taken()
+  let taken = g.addr_taken
+  let by_name = g.by_name
+  let tk = type_keys(m)
+  let n = m.funcs.len()
+  let w = jobs.min(n).max(1)
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..w {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for fi in i..(i + 64).min(n) {
+            mine.push((fi, fn_key(m, fi, os, id, taken, by_name, tk)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[Str] = []
+  for _ in 0..n {
+    out.push("")
+  }
+  for (fi, k) in done {
+    out[fi] = k
+  }
+  out
+}

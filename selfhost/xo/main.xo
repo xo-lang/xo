@@ -504,8 +504,21 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
     let jobs = emit_jobs(os)
-    let p = if inl { arm64.generate_parallel(mi, tgoos, jobs) } else { arm64.generate_parallel(cur.m, tgoos, jobs) }
+    // with the per-function cache (decision 0220 addendum stage B)
+    let gm = if inl { mi } else { cur.m }
+    let (fc, fdir) = fn_cache_load(os, ctx, gm, tgoos, jobs, release)
+    if !fdir.is_empty() {
+      t = lap(os, phases, "fn_keys", t)
+    }
+    let p = arm64.generate_cached(gm, tgoos, jobs, fc)
     t = lap(os, phases, "emit", t)
+    if !fdir.is_empty() {
+      fn_cache_store(os, fdir, p.stores)
+      cache_note(os, phases, "functions", p.reused, fc.keys.len())
+      if !p.mismatches.is_empty() {
+        fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")
+      }
+    }
     if !p.err.is_empty() {
       fail(os, p.err)
     }

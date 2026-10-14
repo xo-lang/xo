@@ -113,7 +113,7 @@ fn (g: G) frame_bound(saved: Int) -> Int {
 }
 
 fn (g: G) label(b: Int) -> Str {
-  g.local("${g.ns}f${g.nfunc}_b${g.blocks[b].id}")
+  g.local("${g.lbl_prefix()}_b${g.blocks[b].id}")
 }
 
 /// The location of v, or none (a register never allocated).
@@ -289,21 +289,21 @@ fn (g: G) far_tests(text: Str) -> Str {
     let f = fields_of(l)
     if f.len() == 4 && (f[0] == "tbz" || f[0] == "tbnz") {
       k += 1
-      let skip = g.local("${g.ns}f${g.nfunc}_far${k}")
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
       let o = if f[0] == "tbz" { "tbnz" } else { "tbz" }
       b.push("\t${o} ${f[1]} ${f[2]} ${skip}\n\tb ${f[3]}\n${skip}:")
       continue
     }
     if n >= FAR_COND_LIMIT && f.len() == 3 && (f[0] == "cbz" || f[0] == "cbnz") {
       k += 1
-      let skip = g.local("${g.ns}f${g.nfunc}_far${k}")
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
       let o = if f[0] == "cbz" { "cbnz" } else { "cbz" }
       b.push("\t${o} ${f[1]} ${skip}\n\tb ${f[2]}\n${skip}:")
       continue
     }
     if n >= FAR_COND_LIMIT && f.len() == 2 && f[0].starts_with("b.") && !inv_cond(f[0][2..f[0].len()]).is_empty() {
       k += 1
-      let skip = g.local("${g.ns}f${g.nfunc}_far${k}")
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
       b.push("\tb.${inv_cond(f[0][2..f[0].len()])} ${skip}\n\tb ${f[1]}\n${skip}:")
       continue
     }
@@ -483,7 +483,7 @@ fn (g: G) prologue(var b: List[Str]) {
   if fr.rec == 0 && fr.size <= 504 {
     b.push("\tstp x29, x30, [sp, #-${fr.size}]!\n\tmov x29, sp\n")
   } else {
-    probe_sp(b, fr.size, g.local("${g.ns}f${g.nfunc}_probe"))
+    probe_sp(b, fr.size, g.local("${g.lbl_prefix()}_probe"))
     if fr.rec <= 504 {
       b.push("\tstp x29, x30, [sp, #${fr.rec}]\n")
     } else {
@@ -881,7 +881,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   b.push(out.freeze())
   if inst.has_fault {
     g.nstub += 1
-    let l = g.local("${g.ns}f${g.nfunc}_fault${g.nstub}")
+    let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
     b.push("\tb.${inst.fcond} ${l}\n")
     var sb: List[Str] = []
     sb.push("${l}:\n")
@@ -1120,7 +1120,7 @@ fn (g: G) pad_of(pad: Int) -> Int {
 fn (var g: G) call_site_labels() -> (Str, Str) {
   g.ncs += 1
   let n = g.ncs
-  (g.local("${g.ns}f${g.nfunc}_cs${n}a"), g.local("${g.ns}f${g.nfunc}_cs${n}b"))
+  (g.local("${g.lbl_prefix()}_cs${n}a"), g.local("${g.lbl_prefix()}_cs${n}b"))
 }
 
 /// Opens the unwind information of the function (decision 0085): its
@@ -1141,15 +1141,28 @@ fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
 }
 
 fn (g: G) func_begin() -> Str {
-  g.local("${g.ns}f${g.nfunc}_begin")
+  g.local("${g.lbl_prefix()}_begin")
+}
+
+/// The prefix of the function's labels: its namespace and number, or in
+/// a part's canonical text (fcache.xo) a token put in place when the
+/// function's text is placed.
+fn (g: G) lbl_prefix() -> Str {
+  if g.canon {
+    return FP_TOKEN
+  }
+  "${g.ns}f${g.nfunc}"
 }
 
 /// The function's call site table: a symbol on Mach-O (decision 0085).
 fn (g: G) lsda_label() -> Str {
   if g.os == "darwin" {
+    if g.canon {
+      return "GCC_except_table_xo${FN_TOKEN}"
+    }
     return "GCC_except_table_xo${g.ns}${g.nfunc}"
   }
-  g.local("${g.ns}f${g.nfunc}_lsda")
+  g.local("${g.lbl_prefix()}_lsda")
 }
 
 /// Describes the frame the prologue made.
@@ -1201,8 +1214,8 @@ fn (var g: G) lsda(sites: List[CallSite]) {
     b.push("\t.section .gcc_except_table,\"a\",@progbits\n")
   }
   let fb = g.func_begin()
-  let beg = g.local("${g.ns}f${g.nfunc}_cst")
-  let end = g.local("${g.ns}f${g.nfunc}_cste")
+  let beg = g.local("${g.lbl_prefix()}_cst")
+  let end = g.local("${g.lbl_prefix()}_cste")
   b.push("\t.p2align 2\n${g.lsda_label()}:\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")
   for c in sites {
     let pad = g.label(g.fwd(c.pad))

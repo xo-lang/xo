@@ -36,6 +36,12 @@ pub struct Program {
   /// into the program (generate_parallel), or none; asm is their text
   /// joined
   pub parts: List[Str] = []
+  /// the per-function cache (fcache.xo, generate_cached): the entries to
+  /// store (key, entry), the functions placed from entries, and the
+  /// functions whose generated text differs from their entry (verify)
+  pub stores: List[(Str, Bytes)] = []
+  pub reused: Int = 0
+  pub mismatches: List[Str] = []
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly
@@ -259,6 +265,9 @@ fn (g: G) tramp_def(name: Str) -> Str {
 
 /// The label of the immortal object of a string literal.
 fn (var g: G) str_obj(s: Bytes) -> Str {
+  if g.canon {
+    return g.canon_str(s)
+  }
   if let Some(l) = g.strs.get(s) {
     return l
   }
@@ -270,6 +279,9 @@ fn (var g: G) str_obj(s: Bytes) -> Str {
 
 /// The label of the NUL terminated text of a fault position.
 fn (var g: G) loc_label(s: Str) -> Str {
+  if g.canon {
+    return g.canon_loc(s)
+  }
   if let Some(l) = g.locs.get(s) {
     return l
   }

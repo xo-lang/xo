@@ -8,7 +8,9 @@
 // (default 7), then of the least recently used past
 // $XO_BACKEND_CACHE_MAX bytes (default 8 GiB).
 
+use github.com/xo-lang/xo/selfhost/arm64
 use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
 use std/crypto
 
 /// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
@@ -40,6 +42,48 @@ fn self_id(os: Os) -> Str {
     Ok(b) => crypto.sha256(b).to_hex()
     Err(_) => ""
   }
+}
+
+/// The per-function cache of an arm64 generation of m for tgoos (stage
+/// B, selfhost/arm64 fcache.xo): every function's key and the entries the
+/// cache holds for them, and the cache directory; none (an empty
+/// FnCache, "") when the cache is off, for a --release build, or for a
+/// module of one part.
+fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> (arm64.FnCache, Str) {
+  let dir = backend_cache_dir(os, ctx)
+  if dir.is_empty() || release {
+    return (arm64.FnCache{}, "")
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return (arm64.FnCache{}, "")
+  }
+  let keys = arm64.function_keys(m, tgoos, id, jobs)
+  if keys.is_empty() {
+    return (arm64.FnCache{}, "")
+  }
+  var entries: Map[Str, Bytes] = {}
+  for k in keys {
+    if k.is_empty() || entries.contains(k) {
+      continue
+    }
+    match cache_get(os, entry_path(dir, "fn", k)) {
+      Some(b) => entries[k] = b
+      None => {}
+    }
+  }
+  (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir)
+}
+
+/// Stores the entries a cached generation made (fn_cache_load's dir).
+fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
+  if dir.is_empty() || stores.is_empty() {
+    return
+  }
+  for (k, e) in stores {
+    cache_put(os, entry_path(dir, "fn", k), e)
+  }
+  prune_backend_cache(os, dir)
 }
 
 /// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.
