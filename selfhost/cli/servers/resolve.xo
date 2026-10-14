@@ -108,6 +108,17 @@ struct Walk {
   c: check.Checker
   f: Int
   out: List[Site] = []
+  /// The byte ranges that scope local bindings (blocks, functions,
+  /// closures, loops, `if`, match and select arms), for completion's
+  /// names in scope (lsp_complete.xo).
+  scopes: List[(Int, Int)] = []
+  /// The byte ranges of `let` and `var` statements: what one declares is
+  /// not in scope inside it.
+  lets: List[(Int, Int)] = []
+}
+
+fn (var w: Walk) open_scope(sp: Span) {
+  w.scopes.push((sp.start.offset, sp.end.offset))
 }
 
 fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: SiteCtx) {
@@ -116,6 +127,11 @@ fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: SiteCtx) {
 
 /// The identifiers of file f of c in the Go walk's order.
 fn idents_of(c: check.Checker, f: Int) -> List[Site] {
+  walk_file(c, f).out
+}
+
+/// The walk of file f of c: its identifiers and scope ranges.
+fn walk_file(c: check.Checker, f: Int) -> Walk {
   var w = Walk{c: c, f: f}
   let file = c.files[f].ast
   for u in file.imports {
@@ -129,7 +145,7 @@ fn idents_of(c: check.Checker, f: Int) -> List[Site] {
   for (i, d) in file.decls.indexed() {
     w.decl(d, c.files[f].decl_objs.get(i) ?? -1)
   }
-  w.out
+  w
 }
 
 fn (var w: Walk) effects(es: List[parser.Effect]) {
@@ -215,6 +231,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
     }
     ConstDecl(x) => w.const_decl(x, if o >= 0 && w.c.objs[o].kind == check.ObjKind.Const { o } else { -1 })
     TestDecl(x) => {
+      w.open_scope(x.span)
       if let Some(n) = x.name {
         w.string_lit(n)
       }
@@ -242,6 +259,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
 /// A function declaration: fo is FuncOf (or the interface's method),
 /// pv the function whose parameter bindings its parameters are (FuncOf).
 fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
+  w.open_scope(x.span)
   if let Some(r) = x.recv {
     w.add(r.name, "Name", -1, SiteCtx.Receiver(fo: pv))
     w.typ(r.typ)
@@ -345,6 +363,7 @@ fn (var w: Walk) typ(t: parser.Type) {
 }
 
 fn (var w: Walk) block(b: parser.Block) {
+  w.open_scope(b.span)
   for st in b.stmts {
     w.stmt(st)
   }
@@ -358,14 +377,16 @@ fn (var w: Walk) opt_label(l: parser.Ident?) {
 
 fn (var w: Walk) stmt(st: parser.Stmt) {
   match st {
-    LetStmt(_, pattern, typ, value) => {
+    LetStmt(lsp, pattern, typ, value) => {
+      w.lets.push((lsp.start.offset, lsp.end.offset))
       w.pat(pattern)
       if let Some(t) = typ {
         w.typ(t)
       }
       w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
-    VarStmt(_, name, typ, value) => {
+    VarStmt(vsp, name, typ, value) => {
+      w.lets.push((vsp.start.offset, vsp.end.offset))
       w.add(name, "Name", -1, SiteCtx.Other)
       if let Some(t) = typ {
         w.typ(t)
@@ -392,7 +413,8 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
         w.add(id, "Label", -1, SiteCtx.Other)
       }
     }
-    ForStmt(_, label, pattern, iter, bound, body, _) => {
+    ForStmt(fsp, label, pattern, iter, bound, body, _) => {
+      w.open_scope(fsp)
       w.opt_label(label)
       w.pat(pattern)
       w.expr(iter, "Iter", -1, SiteCtx.Other, [])
@@ -401,7 +423,8 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
       }
       w.block(body)
     }
-    WhileStmt(_, label, cond, pattern, value, bound, body) => {
+    WhileStmt(wsp, label, cond, pattern, value, bound, body) => {
+      w.open_scope(wsp)
       w.opt_label(label)
       if let Some(e) = cond {
         w.expr(e, "Cond", -1, SiteCtx.Other, [])
@@ -521,6 +544,7 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[
     MatchExpr(_, subject, arms) => {
       w.expr(subject, "Subject", -1, SiteCtx.Other, [])
       for arm in arms {
+        w.open_scope(arm.span)
         w.pat(arm.pattern)
         if let Some(g) = arm.guard {
           w.expr(g, "Guard", -1, SiteCtx.Other, [])
@@ -536,6 +560,7 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[
     }
     SelectExpr(_, arms) => {
       for arm in arms {
+        w.open_scope(arm.span)
         if let Some(b) = arm.bind {
           w.add(b, "Bind", -1, SiteCtx.Other)
         }
@@ -552,6 +577,7 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[
     }
     Block(b) => w.block(b)
     FnLit(lit) => {
+      w.open_scope(lit.span)
       w.params(lit.params, w.c.closure_params(w.f, lit))
       if let Some(t) = lit.result {
         w.typ(t)
@@ -566,6 +592,7 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[
 }
 
 fn (var w: Walk) if_expr(ie: parser.IfExpr) {
+  w.open_scope(ie.span)
   if let Some(x) = ie.cond {
     w.expr(x, "Cond", -1, SiteCtx.Other, [])
   }

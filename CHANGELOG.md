@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo lsp` answers `textDocument/completion` and
+  `textDocument/signatureHelp` (decision 0219): fields and methods
+  after `x.` (prelude methods included), variants and statics after a
+  type name, public members after a package name, and elsewhere the
+  locals in scope, the module's names, imports, prelude names, and
+  keywords, with the hover's declaration line and doc comment, ranked
+  first when their type is the one expected at the cursor; signature
+  help shows the callee and its active parameter. A dangling `.` or an
+  open call no longer needs to parse: the server checks a copy patched
+  at the cursor.
 - The Go implementation of the compiler is deleted (decision 0215): Go
   cmd/xo, the hidden comparison dumps, and the Go compiler packages
   (lexer, parser, checker, SSA builder, Go, arm64, and LLVM emitters,
