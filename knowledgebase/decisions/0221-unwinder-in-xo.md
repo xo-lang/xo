@@ -3,7 +3,9 @@
 Status: Accepted (2026-10-14, the lead's B05 assignment from the zero-C
 audit, bench/results/zero-c-audit-refresh-2026-10-13.md item B05 and row
 11 of its ordered list). Stage 1 implemented for XO_NOLIBC linux/arm64
-(both native backends); stages 2 and 3 not started.
+(both native backends); stage 3 implemented 2026-10-14 for glibc
+linux/arm64 and macOS (below, "Stage 3"); stage 2 (linux/amd64) not
+started, so glibc linux/amd64 keeps libgcc's forced unwind.
 
 Evidence (stage 1, commit c38a15f8, linux/arm64 warm EC2 r8g, xo built
 from the checkout): with XO_NOLIBC=1 the 12 fault goldens that failed
@@ -87,7 +89,8 @@ resume primitive, and the personality routine with its LSDA reader.
 
 - **Stage 1 (this decision, implemented 2026-10-14)**: XO_NOLIBC
   linux/arm64, arm64 and LLVM backends.
-- **Stage 2**: XO_NOLIBC linux/amd64: the x86_64 trampolines (rbx, rbp,
+- **Stage 2**: XO_NOLIBC linux/amd64 (and with it glibc linux/amd64,
+  which keeps the libgcc path, XO_UNWIND_LIBGCC in xo_rt.c, until then): the x86_64 trampolines (rbx, rbp,
   r12 to r15, rsp, the return address at the CFA; resume with rax and
   rdx) and DWARF register numbers per architecture in unwind.xo.
 - **Stage 3**: the C library builds (glibc Linux and macOS) on the Xo
@@ -97,7 +100,77 @@ resume primitive, and the personality routine with its LSDA reader.
   callback such as qsort can sit between a fault and its catch;
   macOS has compact unwind in `__unwind_info` and keeps libunwind, a
   platform library under decision 0195, so there only the personality
-  routine would move).
+  routine would move). Implemented 2026-10-14 for glibc linux/arm64 and
+  macOS: see "Stage 3" below.
+
+### Stage 3 (2026-10-14)
+
+5. **Linux (glibc and no C library alike)**: fault_raise calls
+   `xo_x_unwind_fault(exc, boundary, pers)` (now in cabi.xo, built into
+   every native program) with pers the address of xo_personality.
+   unwind.raise enters a frame's landing pad only when the frame's CIE
+   names that personality (its 'P' augmentation, kept in the record);
+   frames with another personality (C cleanups under
+   `__gcc_personality_v0`, C++) are passed over, **their cleanups not
+   run, as with C's longjmp**. This is a change of the runtime's
+   contract (libgcc ran them). No program can see it today: `use c`
+   cannot pass an Xo function to C (spec/core.md 4.5 skips function
+   pointers, XO1105), and `use go` callbacks exist only on the Go
+   backend, so the only foreign frames between a fault and its catch are
+   the runtime's own C, which has no cleanups. If C callbacks into Xo
+   are ever added, the spec must state this. fault_stop, fault_cleanup,
+   the forced unwind, and the C personality and LSDA reader are not
+   compiled on Linux arm64; they stay for glibc linux/amd64 (stage 2)
+   and the LSDA reader for Windows (decision 0197).
+6. **Shared objects**: a pc outside the program's table is looked up in
+   ld.so's link_map list (the program's PT_DYNAMIC, DT_DEBUG, r_debug's
+   r_map; each object's program headers read from its ELF header at
+   l_addr), in Xo. Not `_dl_find_object` (glibc 2.35; the ELF linker's
+   imports and the Debian builds are glibc 2.31) and not
+   `dl_iterate_phdr` (it needs a callback, an Xo function's address in
+   C). The list is read without ld.so's lock, so a dlopen racing a fault
+   (NSS in getaddrinfo) could be missed: the walk then ends and the
+   fault is reported. A static program has no DT_DEBUG and reads only
+   its own table.
+7. **The personality's name**: since 2026-10-14 (after stage 3's
+   merge) the emitters name the export `xo_x_personality` in the unwind
+   tables (selfhost/arm64 emit.xo personality_name, selfhost/llvm gen.xo
+   personality), except on Windows (the C handler of decision 0197) and
+   linux/amd64 (libgcc and the C personality until stage 2), which keep
+   xo_personality. Code from an older xo (seed 0.11.0 builds the next xo
+   with it) still names xo_personality. With no C library the link
+   defines that as the export (--defsym, as in stage 1); with glibc and
+   on macOS it is a 3 line C forwarder to the export. So fault_raise
+   passes both addresses (unwind_fault's pers and pers_old), and the
+   walker enters frames of either. Once a seed's emitters name the
+   export, the forwarder and pers_old go.
+8. **macOS keeps libunwind** (decision 0195: a platform library; it
+   reads the compact unwind of `__unwind_info`, which unwind.xo does
+   not). The personality routine is Xo (unwind.xo darwin_personality:
+   the LSDA reader shared with Linux, `landing`, over libunwind's
+   accessors declared in std/native/sys_darwin.xo). The stop function
+   stays C: it must end the program itself, because a C cleanup that
+   resumes the unwind (`_Unwind_Resume`) aborts when the stop function
+   returns a stop code (gotchas/libunwind-stop-must-not-return.md, seen
+   on TestRuntimeFaultResume). An Xo walker of `__unwind_info` remains
+   the alternative if libunwind must go.
+9. **ThreadSanitizer**: TSan's function entry and exit instrumentation
+   adds a cleanup pad to every function that calls, which resumes
+   through libgcc, in generated IR under xo_personality too. The Xo
+   unwinder cannot follow it, so the TSan test builds
+   (internal/llvm tsanBuild) pass `-mllvm
+   -tsan-instrument-func-entry-exit=0`. They have no pads then, and
+   reports lose the call stack above the racing frame
+   (gotchas/tsan-func-exit-pads.md). `xo build` has no sanitizer mode.
+   TestRuntimeFaultResume now expects the C cleanup to run where
+   libunwind or libgcc unwinds (macOS, linux/amd64) and not on Linux
+   arm64.
+
+Evidence (stage 3): on the Mac (darwin/arm64), internal/llvm's 157
+goldens pass on the arm64 and LLVM backends (`xo dev goldens --force`),
+as do TestRuntimeFaultResume, TestRuntimeTasks, and TestRuntimeThreads.
+For bench/perf/fault, bench/results/unwinder-glibc-2026-10-14.md has the
+Mac instruction counts and Linux CI's, against the C path.
 
 ## Consequences
 
@@ -111,6 +184,11 @@ resume primitive, and the personality routine with its LSDA reader.
   header and a datarel sdata4 table); a link without the table, or a
   frame whose CFI uses DWARF expressions, ends the walk (the fault is
   reported, the program ends with status 70, as before).
+- Stage 3: a fault on glibc linux/arm64 calls no libgcc unwinder
+  function;
+  foreign frames' cleanups do not run on a fault on Linux arm64 (point
+  5); macOS keeps libunwind and a C stop function; the TSan tests lose
+  the call stacks of their reports.
 - A fault from a signal handler cannot unwind past the kernel's signal
   frame (libgcc recognises the sigreturn trampoline; unwind.xo does not):
   it is reported. No runtime path raises a fault from a handler today.

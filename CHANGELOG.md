@@ -13,6 +13,27 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the C path's errors and messages. xo_win.c's POSIX shims for them are
   deleted (260 lines); xo_fs.c's operations stay only for darwin/amd64.
   macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
+- Native runtime (zero-C audit item B02, part 2): the Bytes primitives of
+  the system call layers (`bytes_addr`, `bytes_buf`, `bytes_len`) are Xo
+  in std/native/llrt/raw.xo, and the per thread system call scratch is
+  256 bytes of the thread's heap record (obj.xo `scratch`) in place of a
+  C `__thread` buffer; std/llrt/xo_sys.c loses 48 lines net.
+- Native code generation (decision 0221 point 7): the unwind tables name
+  the runtime's Xo personality export `xo_x_personality` directly, except
+  on Windows and linux/amd64. The C forwarder `xo_personality` stays for
+  code built by the 0.11.0 seed and goes after the next seed.
+- Native runtime (zero-C audit item B05, decision 0221 stage 3): a fault
+  on glibc linux/arm64 unwinds through the Xo unwinder
+  (std/native/llrt/unwind.xo) instead of libgcc's forced unwind; shared
+  objects' unwind tables are found through ld.so's link_map. On macOS
+  the personality routine is Xo over libunwind. C frames between a
+  fault and its catch are passed over on Linux arm64 and their cleanups
+  no longer run (only the runtime's own C can sit there; `use c` cannot
+  call back into Xo). The TSan test builds drop function entry and exit
+  instrumentation. bench/perf/fault is 1.001 to 1.009 of the C's
+  instructions on the Mac and 0.405 to 0.624 of libgcc's on Linux arm64
+  (bench/results/unwinder-glibc-2026-10-14.md).
+  glibc linux/amd64 keeps libgcc until stage 2.
 - Native runtime: the C the 0.10.0 seed still called is deleted now that
   seed 0.11.0 is out (xo_static_word, xo_ct_barrier and xo_crypto.c,
   the print, exit, env, and rune count forwards; about 200 lines), and

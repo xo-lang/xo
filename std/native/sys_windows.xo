@@ -4,7 +4,7 @@
 // native/sys_windows`, decision 0074): each bodiless function is a call
 // of the DLL export of its name (dllimport: kernel32 and bcrypt, which
 // the runtime links) with the C ABI. An Int argument is one word (a
-// HANDLE, DWORD, or pointer: an address made with rt.bytes_addr), a
+// HANDLE, DWORD, or pointer: an address made with raw.bytes_addr), a
 // Bytes argument the address of its data (a UTF-16 path with its NUL),
 // kept alive across the call; an Int32 result is a BOOL or NTSTATUS, a
 // UInt32 one a DWORD. The SSA builders make a call for another target OS

@@ -422,7 +422,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   var out: List[Str] = []
   var pers = ""
   if g.npad > 0 {
-    pers = " personality ptr @xo_personality"
+    pers = " personality ptr @${g.personality()}"
   }
   let rl = g.res_ll(fi)
   out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) #1${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")

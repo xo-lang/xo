@@ -5,7 +5,7 @@
 xo_f_main:
 .Lf1_begin:
 	.cfi_startproc
-	.cfi_personality 155, DW.ref.xo_personality
+	.cfi_personality 155, DW.ref.xo_x_personality
 	.cfi_lsda 27, .Lf1_lsda
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp

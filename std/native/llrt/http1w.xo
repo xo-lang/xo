@@ -311,10 +311,10 @@ pub fn put_date(d: Int, at: Int) -> Int {
 }
 
 /// Whether the n bytes at p begin with sig.
-fn pre(p: Int, n: Int, sig: Bytes) -> Bool { n >= sig.len() && raw.mem_eq(p, rt.bytes_addr(sig), sig.len()) }
+fn pre(p: Int, n: Int, sig: Bytes) -> Bool { n >= sig.len() && raw.mem_eq(p, raw.bytes_addr(sig), sig.len()) }
 
 /// Whether the bytes at p + at are sig (the caller checked the length).
-fn at_is(p: Int, at: Int, sig: Bytes) -> Bool { raw.mem_eq(p + at, rt.bytes_addr(sig), sig.len()) }
+fn at_is(p: Int, at: Int, sig: Bytes) -> Bool { raw.mem_eq(p + at, raw.bytes_addr(sig), sig.len()) }
 
 /// The k-th of DetectContentType's 17 HTML signatures.
 fn html_sig(k: Int) -> Str {

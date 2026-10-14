@@ -13,6 +13,7 @@
 //
 // Only the Windows arms of std/native/llrt/sysio.xo call this module; the
 // SSA builders make its platform calls faults on another OS.
+use native/llrt/obj
 use native/llrt/raw
 use native/rt
 use native/sys_windows
@@ -91,9 +92,9 @@ fn open(path: Str, access: Int, disposition: Int, attr: Int) -> Int {
 /// ReadFile of at most n bytes into buf from off on: the count (0 at the
 /// end, or after a broken pipe, as _read), or the negative errno.
 pub fn read(h: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
-  let ok = sys_windows.ReadFile(h, rt.bytes_addr(buf) + off, k, rt.bytes_addr(done), 0)
+  let ok = sys_windows.ReadFile(h, raw.bytes_addr(buf) + off, k, done, 0)
   if Int(ok) == 0 {
     let e = Int(sys_windows.GetLastError())
     if e == ERROR_BROKEN_PIPE {
@@ -104,23 +105,23 @@ pub fn read(h: Int, buf: Bytes, off: Int, n: Int) -> Int {
     }
     return keep(buf, -dos_errno(e))
   }
-  keep(buf, rt.bytes_word(done, 0) & 4294967295)
+  keep(buf, rt.mem_load(done, 0, 8) & 4294967295)
 }
 
 /// Writes all of b (WriteFile until it is written, as _write): 0, or the
 /// errno.
 pub fn write_all(h: Int, b: Bytes) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   var off = 0
   let n = b.len()
   while off < n {
     let k = if n - off > 2147483647 { 2147483647 } else { n - off }
-    let ok = sys_windows.WriteFile(h, rt.bytes_addr(b) + off, k, rt.bytes_addr(done), 0)
+    let ok = sys_windows.WriteFile(h, raw.bytes_addr(b) + off, k, done, 0)
     if Int(ok) == 0 {
       let e = Int(sys_windows.GetLastError())
       return keep(b, if e == ERROR_ACCESS_DENIED { EBADF } else { dos_errno(e) })
     }
-    let w = rt.bytes_word(done, 0) & 4294967295
+    let w = rt.mem_load(done, 0, 8) & 4294967295
     if w == 0 {
       // nothing written and no error: _write's ENOSPC
       return keep(b, ENOSPC)
@@ -135,12 +136,12 @@ pub fn write_all(h: Int, b: Bytes) -> Int {
 /// the negative errno (std/native/llrt/stdio.xo).
 pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
   let h = sys_windows.GetStdHandle(if fd == 2 { STD_ERROR_HANDLE } else { STD_OUTPUT_HANDLE })
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
-  if Int(sys_windows.WriteFile(h, a, k, rt.bytes_addr(done), 0)) == 0 {
-    return keep(done, -dos_errno(Int(sys_windows.GetLastError())))
+  if Int(sys_windows.WriteFile(h, a, k, done, 0)) == 0 {
+    return -dos_errno(Int(sys_windows.GetLastError()))
   }
-  keep(done, rt.bytes_word(done, 0) & 4294967295)
+  rt.mem_load(done, 0, 8) & 4294967295
 }
 
 /// CloseHandle: 0, or the negative errno.
@@ -195,15 +196,15 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
 /// GetFileInformationByHandle of h (xo_w_fill_stat; link: a reparse
 /// point is a link, not a directory).
 fn info(h: Int, link: Bool) -> (Stat, Int) {
-  let buf = rt.sys_buf()
-  if Int(sys_windows.GetFileInformationByHandle(h, rt.bytes_addr(buf))) == 0 {
+  let buf = obj.scratch()
+  if Int(sys_windows.GetFileInformationByHandle(h, buf)) == 0 {
     return (Stat{is_dir: false, size: 0, mtime: 0, mode: 0}, shim_errno(Int(sys_windows.GetLastError())))
   }
   // BY_HANDLE_FILE_INFORMATION: dwFileAttributes at 0, ftLastWriteTime
   // at 20, nFileSizeHigh at 32 and nFileSizeLow at 36
-  let attrs = rt.bytes_word(buf, 0) & 4294967295
-  let ft = rt.bytes_word(buf, 20)
-  let size = ((rt.bytes_word(buf, 32) & 4294967295) << 32) | (rt.bytes_word(buf, 36) & 4294967295)
+  let attrs = rt.mem_load(buf, 0, 8) & 4294967295
+  let ft = rt.mem_load(buf, 20, 8)
+  let size = ((rt.mem_load(buf, 32, 8) & 4294967295) << 32) | (rt.mem_load(buf, 36, 8) & 4294967295)
   var dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
   var mode = if dir { S_IFDIR_ALL } else if (attrs & FILE_ATTRIBUTE_READONLY) != 0 { S_IFREG | 292 } else { S_IFREG | 438 }
   if link && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
@@ -247,11 +248,11 @@ pub fn mono_ns(a: Int) -> Int {
 /// BCryptGenRandom of n bytes, 256 at a time (as the C runtime's
 /// cr_entropy did): the bytes and 0, or EIO.
 pub fn random(n: Int) -> (Bytes, Int) {
-  let buf = rt.bytes_buf(n)
+  let buf = raw.bytes_buf(n)
   var off = 0
   while off < n {
     let k = if n - off > 256 { 256 } else { n - off }
-    if Int(sys_windows.BCryptGenRandom(0, rt.bytes_addr(buf) + off, k, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) != 0 {
+    if Int(sys_windows.BCryptGenRandom(0, raw.bytes_addr(buf) + off, k, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) != 0 {
       return (b"", EIO)
     }
     off += k
@@ -576,31 +577,31 @@ pub fn open_kind(path: Str, k: Int, mode: Int) -> Int {
 /// ReadFile of at most n bytes to the address a, as read but without a
 /// Bytes.
 pub fn read_at(h: Int, a: Int, n: Int) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
-  if Int(sys_windows.ReadFile(h, a, k, rt.bytes_addr(done), 0)) == 0 {
+  if Int(sys_windows.ReadFile(h, a, k, done, 0)) == 0 {
     let e = Int(sys_windows.GetLastError())
     if e == ERROR_BROKEN_PIPE {
-      return keep(done, 0)
+      return 0
     }
-    return keep(done, if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) })
+    return if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) }
   }
-  keep(done, rt.bytes_word(done, 0) & 4294967295)
+  rt.mem_load(done, 0, 8) & 4294967295
 }
 
 /// Writes the n bytes at the address a: 0, or the errno.
 pub fn write_at(h: Int, a: Int, n: Int) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   var off = 0
   while off < n {
     let k = if n - off > 2147483647 { 2147483647 } else { n - off }
-    if Int(sys_windows.WriteFile(h, a + off, k, rt.bytes_addr(done), 0)) == 0 {
+    if Int(sys_windows.WriteFile(h, a + off, k, done, 0)) == 0 {
       let e = Int(sys_windows.GetLastError())
-      return keep(done, if e == ERROR_ACCESS_DENIED { EBADF } else { dos_errno(e) })
+      return if e == ERROR_ACCESS_DENIED { EBADF } else { dos_errno(e) }
     }
-    off += rt.bytes_word(done, 0) & 4294967295
+    off += rt.mem_load(done, 0, 8) & 4294967295
   }
-  keep(done, 0)
+  0
 }
 
 /// The st_mode of path (of a final link itself unless follow), as
@@ -680,12 +681,11 @@ pub fn utimens(path: Str, s: Int, ns: Int) -> Int {
   if h < 0 {
     return h
   }
-  let ft = rt.sys_buf()
+  let a = obj.scratch()
   let t = (s * 1000000000 + ns) / 100 + 116444736000000000
-  let a = rt.bytes_addr(ft)
   rt.mem_store(a, 0, t, 8)
   let ok = Int(sys_windows.SetFileTime(h, 0, a, a))
-  let e = keep(ft, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
+  let e = if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }
   sys_windows.CloseHandle(h)
   if ok == 0 { -shim_errno(e) } else { 0 }
 }
@@ -714,8 +714,8 @@ fn open_meta(path: Str, access: Int, follow: Bool) -> Int {
 /// GetCurrentDirectoryW in UTF-8, "." when it does not fit 4096 units
 /// (xo_fs.c's fallback).
 pub fn getcwd() -> Str {
-  let buf = rt.bytes_buf(8192)
-  let k = Int(sys_windows.GetCurrentDirectoryW(4096, rt.bytes_addr(buf)))
+  let buf = raw.bytes_buf(8192)
+  let k = Int(sys_windows.GetCurrentDirectoryW(4096, raw.bytes_addr(buf)))
   if k == 0 || k >= 4096 {
     return "."
   }
@@ -763,21 +763,22 @@ pub fn readlink(path: Str) -> (Str, Int) {
   if h < 0 {
     return ("", -h)
   }
-  let buf = rt.bytes_buf(MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
-  let got = rt.sys_buf()
-  let ok = Int(sys_windows.DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, 0, 0, rt.bytes_addr(buf), MAXIMUM_REPARSE_DATA_BUFFER_SIZE, rt.bytes_addr(got), 0))
-  let e = keep(got, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
+  let buf = raw.bytes_buf(MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
+  let got = obj.scratch()
+  let ok = Int(sys_windows.DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, 0, 0, raw.bytes_addr(buf), MAXIMUM_REPARSE_DATA_BUFFER_SIZE, got, 0))
+  let e = keep(buf, if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 })
   sys_windows.CloseHandle(h)
   if ok == 0 {
     return ("", shim_errno(e))
   }
   // REPARSE_DATA_BUFFER: the tag at 0, the print name's offset and
   // length (bytes) at 12 and 14, the path buffer at 20
-  if (rt.bytes_word(buf, 0) & 4294967295) != IO_REPARSE_TAG_SYMLINK {
+  let ra = raw.bytes_addr(buf)
+  if rt.mem_load(ra, 0, 4) != IO_REPARSE_TAG_SYMLINK {
     return ("", EINVAL)
   }
-  let off = (rt.bytes_word(buf, 12) & 65535) + 20
-  let n = (rt.bytes_word(buf, 14) & 65535) / 2
+  let off = rt.mem_load(ra, 12, 2) + 20
+  let n = rt.mem_load(ra, 14, 2) / 2
   (narrow_slash(buf, off, n), 0)
 }
 
@@ -787,8 +788,8 @@ pub fn readlink(path: Str) -> (Str, Int) {
 pub fn flock(h: Int, op: Int) -> Int {
   // a zeroed OVERLAPPED (32 bytes: the offset 0 and no event; bytes_buf
   // is not zeroed, and a stale hEvent fails the call)
-  let o = rt.bytes_buf(32)
-  let a = rt.bytes_addr(o)
+  let o = raw.bytes_buf(32)
+  let a = raw.bytes_addr(o)
   rt.mem_store(a, 0, 0, 8)
   rt.mem_store(a, 8, 0, 8)
   rt.mem_store(a, 16, 0, 8)
@@ -818,8 +819,9 @@ pub fn names(path: Str) -> (List[Str], Int) {
   s.write_byte(UInt8(0))
   let w = wide(s.freeze())
   // WIN32_FIND_DATAW (592 bytes): cFileName at 44
-  let fd = rt.bytes_buf(592)
-  let h = sys_windows.FindFirstFileExW(w, 1, rt.bytes_addr(fd), 0, 0, 0)
+  let fd = raw.bytes_buf(592)
+  let fa = raw.bytes_addr(fd)
+  let h = sys_windows.FindFirstFileExW(w, 1, fa, 0, 0, 0)
   let e = keep(w, if h == -1 { Int(sys_windows.GetLastError()) } else { 0 })
   if h == -1 {
     // FindFirstFile on a file reports a missing path
@@ -832,15 +834,15 @@ pub fn names(path: Str) -> (List[Str], Int) {
   var out: List[Str] = []
   while true {
     var n = 0
-    while n < 260 && (rt.bytes_word(fd, 44 + 2 * n) & 65535) != 0 {
+    while n < 260 && rt.mem_load(fa, 44 + 2 * n, 2) != 0 {
       n += 1
     }
-    let c0 = rt.bytes_word(fd, 44) & 65535
-    let c1 = rt.bytes_word(fd, 46) & 65535
+    let c0 = rt.mem_load(fa, 44, 2)
+    let c1 = rt.mem_load(fa, 46, 2)
     if !(n == 1 && c0 == 46) && !(n == 2 && c0 == 46 && c1 == 46) {
       out.push(narrow(fd, 44, n))
     }
-    if Int(sys_windows.FindNextFileW(h, rt.bytes_addr(fd))) == 0 {
+    if Int(sys_windows.FindNextFileW(h, fa)) == 0 {
       break
     }
   }
@@ -856,7 +858,7 @@ fn narrow(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }
 fn narrow_slash(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, true) }
 
 fn utf8_of(b: Bytes, off: Int, n: Int, slash: Bool) -> Str {
-  let a = rt.bytes_addr(b) + off
+  let a = raw.bytes_addr(b) + off
   var s = BytesBuilder.with_capacity(3 * n)
   var i = 0
   while i < n {
@@ -893,7 +895,7 @@ fn utf8_of(b: Bytes, off: Int, n: Int, slash: Bool) -> Str {
   }
   keep(b, 0)
   let u = s.freeze()
-  let r = raw.str_at(rt.bytes_addr(u), u.len())
+  let r = raw.str_at(raw.bytes_addr(u), u.len())
   keep(u, 0)
   r
 }

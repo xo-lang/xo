@@ -50,6 +50,8 @@
 // Criteria in brackets ([NOTFOUND=return]) are not honoured: glibc's
 // would stop at dns.
 use native/llrt/linux
+use native/llrt/obj
+use native/llrt/raw
 use native/llrt/sock
 use native/llrt/tlsname
 use native/rt
@@ -107,7 +109,7 @@ fn read_file(path: Str) -> Bytes? {
     return None
   }
   var out = BytesBuilder.new()
-  let buf = rt.bytes_buf(4096)
+  let buf = raw.bytes_buf(4096)
   while out.len() < 16777216 {
     let r = linux.read(fd, buf, 0, 4096)
     if r < 0 {
@@ -261,8 +263,8 @@ fn zone_index(zone: Str) -> Int {
     return -1
   }
   // struct ifreq: the name (16 bytes, zero padded), then ifr_ifindex
-  let req = rt.bytes_buf(40)
-  let a = rt.bytes_addr(req)
+  let req = raw.bytes_buf(40)
+  let a = raw.bytes_addr(req)
   rt.mem_set(a, 0, 40)
   let zb = zone.bytes()
   for i in 0..zb.len() {
@@ -633,8 +635,8 @@ pub fn parse_resolv(lines0: List[Str]?, hostname: Str) -> Config {
 
 /// The host name (uname's nodename), or "".
 fn hostname() -> Str {
-  let buf = rt.bytes_buf(390)
-  let a = rt.bytes_addr(buf)
+  let buf = raw.bytes_buf(390)
+  let a = raw.bytes_addr(buf)
   rt.mem_set(a, 0, 390)
   // uname: 160 on arm64, 63 on x86_64
   let nrv = match target.arch {
@@ -1220,7 +1222,7 @@ pub fn answer(m: Bytes, id: Int, name: Str, qtype: Int) -> (Int, List[Addr]) {
 // Exchanges
 
 /// The monotonic clock in nanoseconds.
-fn now() -> Int { linux.clock_ns(linux.CLOCK_MONOTONIC, rt.bytes_addr(rt.sys_buf())) }
+fn now() -> Int { linux.clock_ns(linux.CLOCK_MONOTONIC, obj.scratch()) }
 
 /// A random query ID (getrandom; the clock when it fails).
 fn new_id() -> Int {
@@ -1236,8 +1238,8 @@ fn new_id() -> Int {
 /// per descriptor, all zero at the deadline; None on a poll failure.
 fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
   let n = fds.len()
-  let pb = rt.bytes_buf(8 * n + 16)
-  let p = rt.bytes_addr(pb)
+  let pb = raw.bytes_buf(8 * n + 16)
+  let p = raw.bytes_addr(pb)
   let ts = p + 8 * n
   while true {
     for i in 0..n {
@@ -1306,7 +1308,7 @@ fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int,
     }
     fds.push(fd)
   }
-  let buf = rt.bytes_buf(MAX_PACKET)
+  let buf = raw.bytes_buf(MAX_PACKET)
   while true {
     var live: List[Int] = []
     var idx: List[Int] = []
@@ -1331,7 +1333,7 @@ fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int,
       any = true
       let i = idx[k]
       let fd = fds[i]
-      let r = sock.recv(fd, rt.bytes_addr(buf), MAX_PACKET, 0)
+      let r = sock.recv(fd, raw.bytes_addr(buf), MAX_PACKET, 0)
       if r == -sock.EAGAIN || r == -sock.EINTR {
         continue
       }
@@ -1439,8 +1441,8 @@ fn read_full(fd: Int, n: Int, deadline: Int) -> Bytes {
   if n == 0 {
     return b""
   }
-  let buf = rt.bytes_buf(n)
-  let a = rt.bytes_addr(buf)
+  let buf = raw.bytes_buf(n)
+  let a = raw.bytes_addr(buf)
   var got = 0
   while got < n {
     let r = sock.recv(fd, a + got, n - got, 0)
@@ -1459,7 +1461,7 @@ fn read_full(fd: Int, n: Int, deadline: Int) -> Bytes {
     }
     got += r
   }
-  rt.rs_bytes_len(buf, got)
+  raw.bytes_len(buf, got)
 }
 
 /// The sockaddr of server port 53.

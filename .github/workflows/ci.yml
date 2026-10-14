@@ -15,46 +15,93 @@ on:
       suite:
         description: What to run (scripts/ci/suite.sh)
         type: choice
-        options: [auto, short, vet, merge, fixed-point, full]
+        options: [auto, short, vet, merge, fixed-point, full, measure]
         default: auto
       packages:
-        description: "Packages for suite=merge, space separated (default: the touched ones)"
+        description: "suite=auto: packages added to the full tests; merge: the packages (default: the touched ones); measure: the bench/perf directory"
         default: ""
       merge_main:
         description: Test REF merged with the current main (fails fast on a conflict)
         type: boolean
         default: true
       runner:
-        description: Runner label
+        description: "Runner label for a single job suite; planned: auto plans its own jobs, others take xo-arm64-big for full, merge, and measure, else xo-arm64"
         type: choice
-        options: [xo-arm64, xo-arm64-big]
-        default: xo-arm64
+        options: [planned, xo-arm64, xo-arm64-big]
+        default: planned
 
 jobs:
-  test:
-    runs-on: [self-hosted, "${{ inputs.runner }}"]
-    timeout-minutes: ${{ inputs.suite == 'full' && 150 || 90 }}
+  # One run, several jobs: plan fixes the commits (the ref and main as
+  # they are now, so every job tests the same merge) and lists the jobs
+  # (scripts/ci/suite.sh plan); test runs them in parallel on the
+  # runners, and the run passes only when every job does.
+  plan:
+    runs-on: [self-hosted, xo-arm64]
+    timeout-minutes: 10
+    outputs:
+      ref_sha: ${{ steps.plan.outputs.ref_sha }}
+      main_sha: ${{ steps.plan.outputs.main_sha }}
+      jobs: ${{ steps.plan.outputs.jobs }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+      - name: Plan
+        id: plan
+        env:
+          REF: ${{ inputs.ref }}
+          SUITE: ${{ inputs.suite }}
+          PACKAGES: ${{ inputs.packages }}
+          RUNNER: ${{ inputs.runner }}
+          MERGE_MAIN: ${{ inputs.merge_main }}
+        # inputs reach the shell through env, never pasted into the script
+        run: |
+          git fetch -q origin main
+          echo "ref_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+          if [ "$MERGE_MAIN" = true ]; then
+            if ! git -c user.name=xo-ci -c user.email=xo-ci@localhost merge -q --no-edit origin/main; then
+              echo "::error::$REF does not merge cleanly with main"
+              git diff --name-only --diff-filter=U
+              exit 1
+            fi
+          fi
+          git log --oneline -1
+          if [ "$SUITE" = auto ]; then
+            jobs=$(XO_CI_BASE=origin/main scripts/ci/suite.sh plan auto $PACKAGES)
+          else
+            jobs=$(XO_CI_BASE=origin/main scripts/ci/suite.sh plan "$SUITE" $PACKAGES)
+            if [ "$RUNNER" != planned ]; then
+              jobs=$(sed "s/\"runner\": *\"[^\"]*\"/\"runner\":\"$RUNNER\"/" <<<"$jobs")
+            fi
+          fi
+          echo "$jobs"
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: plan
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
+    timeout-minutes: ${{ startsWith(matrix.args, 'full') && 150 || 90 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref_sha }}
+          fetch-depth: 0
       - name: Merge main
         if: inputs.merge_main
         env:
-          REF: ${{ inputs.ref }}
+          MAIN: ${{ needs.plan.outputs.main_sha }}
         run: |
           git fetch -q origin main
-          if ! git -c user.name=xo-ci -c user.email=xo-ci@localhost merge -q --no-edit origin/main; then
-            echo "::error::$REF does not merge cleanly with main"
-            git diff --name-only --diff-filter=U
-            exit 1
-          fi
+          git -c user.name=xo-ci -c user.email=xo-ci@localhost merge -q --no-edit "$MAIN"
           git log --oneline -1
-      - name: Suite ${{ inputs.suite }}
+      - name: ${{ matrix.args }}
         env:
-          XO_CI_BASE: origin/main
-          SUITE: ${{ inputs.suite }}
-          PACKAGES: ${{ inputs.packages }}
-        # inputs reach the shell through env, never pasted into the script
-        run: scripts/ci/suite.sh "$SUITE" $PACKAGES
+          XO_CI_BASE: ${{ needs.plan.outputs.main_sha }}
+          ARGS: ${{ matrix.args }}
+        run: scripts/ci/suite.sh job $ARGS

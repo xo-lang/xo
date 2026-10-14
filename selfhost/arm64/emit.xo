@@ -1191,11 +1191,18 @@ fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
     return
   }
   if g.os == "darwin" {
-    b.push("\t.cfi_personality 155, ${g.sym("xo_personality")}\n\t.cfi_lsda 16, ${g.lsda_label()}\n")
+    b.push("\t.cfi_personality 155, ${g.sym(personality_name(g.os))}\n\t.cfi_lsda 16, ${g.lsda_label()}\n")
   } else {
     g.personality_ref = true
-    b.push("\t.cfi_personality 155, DW.ref.xo_personality\n\t.cfi_lsda 27, ${g.lsda_label()}\n")
+    b.push("\t.cfi_personality 155, DW.ref.${personality_name(g.os)}\n\t.cfi_lsda 27, ${g.lsda_label()}\n")
   }
+}
+
+/// The personality routine the unwind tables name on os (decision 0221):
+/// the runtime's export xo_x_personality (std/native/llrt/cabi.xo), but
+/// the C xo_personality on Windows (decision 0197).
+pub fn personality_name(os: Str) -> Str {
+  if os == "windows" { "xo_personality" } else { "xo_x_personality" }
 }
 
 fn (g: G) func_begin() -> Str {

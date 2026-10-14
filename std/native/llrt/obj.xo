@@ -63,6 +63,10 @@ const RT_DEPTH = 40
 /// TLS_HEAP, xo_rt.c tls_heap).
 const TLS_HEAP = 3
 
+/// The offset of a heap record's 256 byte scratch (xo_rt.c xo_heap
+/// scratch, checked there).
+const H_SCRATCH = 1880
+
 /// The largest block alloc.alloc_fast serves (alloc.xo SMALL_MAX).
 const SMALL_MAX = 1024
 
@@ -256,6 +260,13 @@ pub fn rc_defer_n(obj: Int, drop: Int) {
   }
   rc_defer(h, obj, drop)
 }
+
+/// The calling thread's 256 byte scratch for the structures of system
+/// calls (timespec, statx, sigaction): the scratch of its heap record
+/// (xo_rt.c struct xo_heap), valid until its next system call through
+/// it. Heap records of exited threads are reused, so it is never freed
+/// (work item B02; was the C thread local sys_scratch of xo_sys.c).
+pub fn scratch() -> Int { addw(heap_word() & -2, H_SCRATCH) }
 
 /// The calling thread's heap word (xo_rt.c hw): the single threaded heap
 /// record, else the thread's heap record (thread local TLS_HEAP, which the

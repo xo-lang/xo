@@ -7,6 +7,28 @@ use native/rt
 /// The address of the first byte of s (its string object's data).
 pub fn data(s: Str) -> Int { rt.obj_addr(s) + rt.layout(0) }
 
+/// The address of b's first byte (valid while b is alive; the kernel may
+/// write there only when b is unique, as bytes_buf's are). Bytes and Str
+/// are one type to the SSA builders, so rt.cast is no instruction.
+pub fn bytes_addr(b: Bytes) -> Int { rt.obj_addr(rt.cast[Bytes, Str](b)) + rt.layout(0) }
+
+/// A unique Bytes of n bytes (none for n < 0) for a system call to fill
+/// (not zeroed: what the call does not fill is cut off with bytes_len, or
+/// written first).
+pub fn bytes_buf(n: Int) -> Bytes {
+  let k = if n < 0 { 0 } else { n }
+  rt.cast[Str, Bytes](rt.rs_set_len(rt.rs_with_cap(k), k))
+}
+
+/// b with its length set to n, clamped to 0 and b's capacity, consuming
+/// b: the bytes a read filled, without a copy.
+pub fn bytes_len(b: Bytes, n: Int) -> Bytes {
+  let s = rt.cast[Bytes, Str](b)
+  let cap = rt.mem_load(rt.obj_addr(s), rt.layout(1), 8)
+  let k = if n < 0 { 0 } else if n > cap { cap } else { n }
+  rt.cast[Str, Bytes](rt.rs_set_len(s, k))
+}
+
 /// Writes the bytes of s at address a, then a zero byte; the length of s.
 pub fn put_cstr(a: Int, s: Str) -> Int {
   let n = s.len()

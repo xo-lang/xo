@@ -6,6 +6,7 @@
 use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/cabi_nolibc
+use native/llrt/cabi_poll
 use native/llrt/cabi_tw
 use native/llrt/fsops
 use native/llrt/fspath
@@ -13,10 +14,11 @@ use native/llrt/gen
 use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/logstate
+use native/llrt/num
 use native/llrt/process
 use native/llrt/procspec
 use native/llrt/rand
-use native/llrt/num
+use native/llrt/raw
 use native/llrt/report
 use native/llrt/scan
 use native/llrt/show
@@ -24,7 +26,6 @@ use native/llrt/stdio as stdiort
 use native/llrt/strings
 use native/llrt/sysio
 use native/llrt/testworld
-use native/llrt/cabi_poll
 use native/llrt/text
 use native/llrt/unicode
 use native/rt
@@ -1504,7 +1505,7 @@ fn stdio_write(_s: Stdio, data: Bytes) -> () ! IoErr {
   if rt.fs_canceled() {
     return Err(IoErr.Canceled)
   }
-  stdiort.out(rt.bytes_addr(data), data.len(), false)
+  stdiort.out(raw.bytes_addr(data), data.len(), false)
 }
 
 fn stdin_err(st: Int) -> IoErr {

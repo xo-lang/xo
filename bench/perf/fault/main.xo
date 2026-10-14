@@ -1,0 +1,68 @@
+// The fault paths (decision 0085) over the unwinder of decision 0221: on
+// Linux the Xo unwinder (std/native/llrt/unwind.xo), on macOS libunwind
+// with the Xo personality routine (stage 3), against the C path before
+// it (libgcc's forced unwind and the C personality; a C baseline is the
+// same program built with an earlier commit's std). Usage: fault
+// <workload>. Workloads: isolate (20,000 faults raised 8 frames deep,
+// no deferred code, each caught by task.isolate: the walk to the catch),
+// defer (20,000 faults through 8 frames with a defer each: a landing pad
+// and a raise again per frame), owned (20,000 faults through 4 frames
+// that own a list each: the landing pads release it), none (the setup
+// alone). Each prints "<workload> <checksum>".
+use std/task
+
+fn deep(n: Int, xs: List[Int]) -> Int {
+  if n == 0 {
+    return xs[n + 5]
+  }
+  deep(n - 1, xs) + 1
+}
+
+fn deferred(n: Int, a: Atomic[Int], xs: List[Int]) -> Int {
+  defer {
+    let _ = a.add(1)
+  }
+  if n == 0 {
+    return xs[n + 5]
+  }
+  deferred(n - 1, a, xs) + 1
+}
+
+fn owned(n: Int, xs: List[Int]) -> Int {
+  var mine = xs
+  mine.push(n)
+  if n == 0 {
+    return mine[n + 9]
+  }
+  owned(n - 1, mine) + mine.len()
+}
+
+fn count(r: Result[Int, task.Isolated[Never]]) -> Int {
+  match r {
+    Ok(v) => v
+    Err(task.Isolated.Faulted(_)) => 1
+    Err(task.Isolated.Failed(_)) => 2
+  }
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  let xs = [1, 2, 3]
+  let a = Atomic[Int].new(0)
+  var sum = 0
+  if w == "isolate" {
+    for _ in 0..20000 {
+      sum += count(task.isolate(fn() -> Int ! Never { deep(8, xs) }))
+    }
+  } else if w == "defer" {
+    for _ in 0..20000 {
+      sum += count(task.isolate(fn() -> Int ! Never { deferred(8, a, xs) }))
+    }
+    sum += a.get()
+  } else if w == "owned" {
+    for _ in 0..20000 {
+      sum += count(task.isolate(fn() -> Int ! Never { owned(4, xs) }))
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

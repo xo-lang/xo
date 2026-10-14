@@ -117,15 +117,17 @@ Update the knowledgebase in the same change as the work, not later:
     linux/arm64 EC2 runners (infra/ci-runners), started only by hand,
     never on push: push the branch, then `gh workflow run ci.yml -f
     ref=BRANCH -f suite=auto` (short, the touched packages' full tests,
-    the selfhost merge tier, and the fixed point when the paths above
-    changed; tested merged with main), `gh run watch RUN_ID
+    the selfhost merge tier and cmd/xo, and the fixed point when the
+    paths above changed, as parallel jobs in one run; tested merged with
+    main), `gh run watch RUN_ID
     --exit-status --interval 10` (owner 2026-10-14: poll every 10
     seconds, never 30 or 60, so a fast failure reaches the session as
     soon as the owner sees it; run it in the background, or a Monitor
     loop that prints on a status change with `sleep 10` and stops on
     completed), `gh run view RUN_ID --log-failed`. Other suites:
-    short, vet, merge (`-f packages=...`), fixed-point, full (`-f
-    runner=xo-arm64-big`). This replaces the lead's EC2 queue. The Mac
+    short, vet, merge (`-f packages=...`), fixed-point, full, measure
+    (`-f packages=<bench/perf dir>`: Linux instruction counts, main
+    against the branch). This replaces the lead's EC2 queue. The Mac
     keeps Mac only checks and runs that write files into the worktree.
     Full reference: [ci.md](knowledgebase/infrastructure/ci.md).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
