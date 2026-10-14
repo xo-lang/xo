@@ -703,6 +703,11 @@ const W_HERE = 3040
 const W_BASE = 4288
 const W_DATA = 4296
 const W_EST = 4304
+/// A cache of RtlLookupFunctionEntry by pc (every raise of a fault walks
+/// the same frames again): W_CACHE_N entries of three words (the pc,
+/// its RUNTIME_FUNCTION, its image base), direct mapped by pc.
+const W_CACHE = 4352
+const W_CACHE_N = 256
 /// sizeof(CONTEXT) on x86_64 (1232) and arm64 (912), and the offsets of
 /// its pc, stack pointer, and the two registers a landing pad receives
 /// (Rip, Rsp, Rax, Rdx; Pc, Sp, X0, X1).
@@ -745,7 +750,7 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
     if pc == 0 {
       return 0
     }
-    let f = sys_windows.RtlLookupFunctionEntry(pc, s + W_BASE, 0)
+    let f = lookup(s, pc)
     if f == 0 {
       return 0
     }
@@ -772,6 +777,23 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int {
     }
   }
   0
+}
+
+/// The RUNTIME_FUNCTION of pc, its image base stored at s + W_BASE (0:
+/// none), through the cache of the scratch record s.
+fn lookup(s: Int, pc: Int) -> Int {
+  let e = s + W_CACHE + 24 * ((pc / 4) & (W_CACHE_N - 1))
+  if rt.mem_load(e, 0, 8) == pc {
+    rt.mem_store(s, W_BASE, rt.mem_load(e, 16, 8), 8)
+    return rt.mem_load(e, 8, 8)
+  }
+  let f = sys_windows.RtlLookupFunctionEntry(pc, s + W_BASE, 0)
+  if f != 0 {
+    rt.mem_store(e, 0, pc, 8)
+    rt.mem_store(e, 8, f, 8)
+    rt.mem_store(e, 16, rt.mem_load(s, W_BASE, 8), 8)
+  }
+  f
 }
 
 /// v, the low bits bits of a two's complement number, sign extended.
