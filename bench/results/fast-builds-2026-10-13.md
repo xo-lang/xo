@@ -514,3 +514,41 @@ line on main then, fixed by a58401a7). scripts/bootstrap-xo.sh fixed
 point with a cold cache, with verify on the warm cache, and warm (s2 37
 s to 27 s, s3 33 s to 25 s); the warm run's s2, s3, and s3 assembly the
 same files as the cold run's.
+
+## Back-end cache stage C: insert_rc per function (the Mac, 2026-10-14)
+
+Decision 0220 addendum item 4. After borrow inference (whole program,
+every build), a function's reference counting reads only its own SSA,
+the types, and the borrowed parameters of itself and of the functions
+it names. Its result (the function after the pass) is cached in
+<user cache>/xo/backend/rc under the SHA-256 of the compiler's
+executable, the target, the function before the pass printed in full
+(types by name and the hash of every type they reach), and those
+borrowed flags; an entry names its types, which a hit maps back to the
+module's ids (selfhost/ssa rccache.xo). A function with a Float constant
+or a type whose name is not its own is not cached (22 of 6,732 in xo).
+verify computes every function and fails the build when an entry
+differs; --release builds and modules under 256 functions do not use it.
+
+Steps as in stage B (stageb.sh, then editb.sh), c78a686b's xo, a fresh
+cache directory, the machine quieter than in stages A and B.
+
+| build | rc reused | insert_rc | emit | wall | user CPU |
+|---|---|---|---|---|---|
+| XO_BACKEND_CACHE=off | | | | 30.60 s | 131.33 s |
+| on, cold cache | 0/6732 | 9.25 s | 6.60 s | 31.51 s | 132.89 s |
+| on, warm | 6710/6732 | 3.54 to 3.61 s | 0.15 s | 10.48 to 10.60 s | 19.64 to 19.95 s |
+| verify, warm | 0/6732 | 8.72 s | 6.54 s | 22.17 s | 100.39 s |
+| constant edit | 6709/6732 | 3.57 s | 0.15 s | 11.28 s | 20.42 s |
+| statement edit | 6696/6732 | 3.56 s | 0.15 s | 12.00 s | 23.97 s |
+| new struct field | 6694/6732 | 3.60 s | 0.16 s | 12.10 s | 25.30 s |
+
+The binaries of off, on (cold and warm), and verify are one file
+(5716a722...); each edit's verify rebuild (every function's reference
+counting and assembly computed and compared) found no difference and
+gave the edit's binary. A one-module edit of xo now rebuilds in 11.28
+to 12.10 s and 20.42 to 25.30 s of CPU, against 30.60 s and 131.33 s
+with the cache off. What is left: check 1.1 s, ssa 2.2 s, insert_rc's
+whole-program part (borrow inference, the keys, reading entries) 3.6 s,
+inline 1.35 s, keys 0.56 s, assemble 0.76 to 2.26 s, link. The cache
+holds 491 MB for one version of xo (rc/, fn/, obj/).
