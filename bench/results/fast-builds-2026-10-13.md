@@ -409,3 +409,43 @@ Per-module caching of the front end (stage 2) can save at most the check
 and SSA phases: about 3.3 s of a 37 s self build (9 percent) and 0.45 s
 of a 1.2 s service build. `xo check` of the whole compiler already takes
 about a second.
+
+## Back-end cache stage A: objects per part (the Mac, 2026-10-14)
+
+Decision 0220 addendum item 3 (accepted 2026-10-14). The parts of a split
+arm64 assembly are cut by their contents (a cut after a function whose
+name hashes to 0 modulo 128 once a part has 64 functions, at most 512),
+their labels are named by the hash of the part's first function and
+numbered from 0 within the part, and each part's object is cached under
+<user cache>/xo/backend/obj by the SHA-256 of the assembler's identity
+(cc: its `--version` and file, the flags, the source path; selfhost/macho:
+the running xo's executable) and the part's assembly. An edit therefore
+changes the assembly of the parts holding the changed functions only.
+
+Steps (scratchpad measure.sh): `xo build --backend=arm64 --phase-times -o
+OUT/xo selfhost/xo` from the worktree root, twice (warm), then after an
+edit of one constant (selfhost/cli/core/fix.xo `MAX_ROUNDS = 25` to a
+value not built before), then after adding one statement to a function
+of that file (`if v == "<new>" { return Ok([]) }` in select_rewriters),
+then on the reverted source. "base" is main dcdc040e's xo (no cache),
+"stage A" is 78892100's, the cache warmed by an earlier run. The self
+build has 42 parts plus the file of the entry and helpers. Ten agents
+shared the machine: wall clock varied by up to 2x between identical
+builds; the assemble phase and user CPU are the steadier figures.
+
+| build | parts reused | assemble | wall | user CPU |
+|---|---|---|---|---|
+| base, unchanged | | 6.17 to 6.19 s | 28.34 to 28.42 s | 130.19 to 132.19 s |
+| base, constant edit | | 19.28 s | 60.15 s | 148.72 s |
+| base, statement edit | | 14.51 s | 52.05 s | 144.27 s |
+| stage A, unchanged | 43/43 | 0.75 to 0.90 s | 20.87 to 28.26 s | 91.07 to 106.06 s |
+| stage A, constant edit | 42/43 | 1.53 s | 22.72 s | 93.63 s |
+| stage A, statement edit | 42/43 | 1.49 s | 20.88 s | 89.82 s |
+| stage A, XO_BACKEND_CACHE=off | 0/43 | 8.20 s | 29.54 s | 147.15 s |
+
+The binary with the cache on (every part reused) and off is the same
+file (sha256 a9f61377...). A part reused costs hashing its assembly (378
+MB in all, on 8 tasks) and copying its object; one edited part costs one
+`cc -c`. What a one-module edit still pays: check and ssa (about 3.5 s),
+insert_rc (8 to 11 s), inline (1.3 s), and emit (6 to 9.5 s) of every
+function, which stage B (the per-function assembly cache) attacks.

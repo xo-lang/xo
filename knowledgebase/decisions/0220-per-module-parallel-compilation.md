@@ -231,3 +231,29 @@ function and compares it with the cached text (XO_BACKEND_CACHE=verify).
 
 Alternatives: stage 2 first (smaller gain, measured above); stage 3 per
 module code generation (largest gain, largest change).
+
+### Addendum stage A: objects per part (implemented 2026-10-14)
+
+- The parts of a split arm64 assembly are cut by their contents, not by
+  equal sizes: a part ends after a function whose name's FNV-1a hash is
+  0 modulo 128 once it has 64 functions, or at 512; a module under 256
+  functions stays one part (selfhost/arm64 parallel.xo part_bounds). An
+  inserted or grown function moves the cuts of its own part at most.
+- A part's labels are in a namespace named by the hash of its first
+  function's name (`p<6 base 62 digits>_`), its functions numbered from
+  0, and call site labels numbered per function, so a part's assembly
+  depends only on its own functions (and the program wide facts they
+  read). A one-part program is generated as before.
+- Each part's object is cached in <user cache>/xo/backend/obj
+  ($XO_BACKEND_CACHE_DIR) by the SHA-256 of the assembler's identity
+  (cc's `--version` output and file, the compile flags, the source's
+  path, which an ELF object names; for selfhost/macho the running xo's
+  executable) and the part's text (selfhost/xo asmparts.xo, bcache.xo).
+  XO_BACKEND_CACHE=off turns it off. A store prunes, at most once an
+  hour, entries unused for XO_BACKEND_CACHE_DAYS (7) days, then the
+  least recently used past XO_BACKEND_CACHE_MAX (8 GiB).
+- Measured (bench/results/fast-builds-2026-10-13.md, "Back-end cache
+  stage A"): the self build's assemble phase 6.17 s to 0.75 to 0.90 s
+  when every part is reused and 1.49 to 1.53 s after a one-constant or
+  one-statement edit (42 of 43 objects reused); user CPU about 130 s to
+  about 90 s; the binary with the cache on and off is the same file.

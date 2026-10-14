@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster arm64 rebuilds (decision 0220 addendum stage A): the parts of a
+  large program's assembly are cut by their contents and named by their
+  first function, and each part's object is cached in
+  <user cache>/xo/backend (`XO_BACKEND_CACHE=off` turns it off), so an
+  unchanged part is not assembled again: after a one-module edit of xo
+  the assemble phase drops from about 6 s to 1.5 s on the Mac, and the
+  binary is the same as without the cache
+  (bench/results/fast-builds-2026-10-13.md).
 - Native runtime (zero-C audit item B12): the HTTP/1.1 response writer
   is Xo (std/native/llrt/http1w.xo: status text, DetectContentType, the
   Date header, chunkWriter.writeHeader's rules, the error answers),
