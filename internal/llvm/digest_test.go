@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bufio"
@@ -17,7 +17,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 	"github.com/xo-lang/xo/std/rt"
 )
 
@@ -448,12 +448,12 @@ func TestDigestDiff(t *testing.T) {
 	}
 	t.Logf("%d input lines", len(want))
 	for _, path := range []string{"xo", "c"} {
-		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
+		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
 				if path == "c" {
 					t.Setenv("XO_LLRT_C", "digest")
 				}
-				r := buildAndRun(t, dir, build.Options{Backend: be})
+				r := buildAndRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
 				}

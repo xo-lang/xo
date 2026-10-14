@@ -9,24 +9,21 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/ssa"
 )
 
 // TestSelfhostSSA runs the Xo SSA builder (selfhost/ssa), built with each
-// backend, and internal/ssa's builder on every directory of the
-// repository that holds .xo files, each checked as a native build checks
-// it (std/native included) and built from `main`, and compares the build
-// stage of `xo ssadump` (decision 0150, stage 1) function by function:
+// backend, on every directory of the repository that holds .xo files,
+// each checked as a native build checks it (std/native included) and
+// built from `main`, and compares its build stage with the recording
+// (the recording's `xo ssadump` until decision 0215, decision 0150 stage
+// 1) function by function:
 //
 //   - every function the Xo builder completes is identical to the Go
 //     builder's of the same name (the closures of a function, named
 //     `<function>.fn<N>` by a counter of the whole build, are compared
 //     under their rank among the closures of that function);
-//   - every type line the Xo builder prints is one the Go builder prints;
-//   - a run the Go checker rejects is rejected by the Xo checker, and one
+//   - every type line the Xo builder prints is one the recording prints;
+//   - a run the recording rejects is rejected by the Xo checker, and one
 //     without `main` is not built by either.
 //
 // Functions the Xo builder skips (a construct of a later stage) or never
@@ -35,6 +32,7 @@ import (
 // (tier_test.go); -short also takes every 25th run but the mergeHeavy ones. XO_SELFHOST_BACKEND
 // names one backend.
 func TestSelfhostSSA(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		// one backend (a development loop)
@@ -76,28 +74,6 @@ func TestSelfhostSSA(t *testing.T) {
 	setModEnv(t, root)
 	// the test binaries (stage 7) of the runs with test blocks
 	tdirs := testDirs(t, root, dirs)
-	want := map[string]goSSA{}
-	twant := map[string]goSSA{}
-	// the Go builder's results, while the subtests run the Xo builder
-	wait := background(t, func() {
-		wants := make([]goSSA, len(dirs))
-		twants := make([]goSSA, len(tdirs))
-		all := append(append([]string(nil), dirs...), tdirs...)
-		parallel(t, "Go SSA builder", all, func(i int) {
-			if i < len(dirs) {
-				wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]])
-			} else {
-				i -= len(dirs)
-				twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]])
-			}
-		})
-		for i, d := range dirs {
-			want[d] = wants[i]
-		}
-		for i, d := range tdirs {
-			twant[d] = twants[i]
-		}
-	})
 	bins := selfhostBinaries(t, "ssa", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
@@ -107,10 +83,17 @@ func TestSelfhostSSA(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runSSAStages(t, bin, root, dirs, buildOnly, "--std=std")
-			wait()
+			want := map[string]goSSA{}
+			for _, d := range dirs {
+				want[d] = goSSABuildOpts(root, d, false, !buildOnly[d], got[d])
+			}
 			st, fails := compareSSAAll(t, "", dirs, want, got)
 			t.Logf("%s", st)
 			tgot := runSSAStages(t, bin, root, tdirs, buildOnly, "--std=std", "--test")
+			twant := map[string]goSSA{}
+			for _, d := range tdirs {
+				twant[d] = goSSABuildOpts(root, d, true, !buildOnly[d], tgot[d])
+			}
 			tst, tfails := compareSSAAll(t, "test ", tdirs, twant, tgot)
 			fails = append(fails, tfails...)
 			t.Logf("test binaries: %s", tst)
@@ -154,12 +137,12 @@ func runSSAStages(t *testing.T, bin, root string, dirs []string, buildOnly map[s
 	return out
 }
 
-// goSSA is the Go builder's result for one run, cut into the pieces
+// goSSA is the recorded builder result for one run, cut into the pieces
 // compareSSA compares (gogoldens_test.go): why there is no build stage
 // (none: "rejected", "no main", or an error), else the build stage (the
 // set "build types" of its type lines, the piece "build:<function>" of
 // each function, closures renamed by canonClosures), and the stages of
-// the passes (passStages) the Go builder printed (stages): the sorted
+// the passes (passStages) the recording printed (stages): the sorted
 // lines "<stage>" of verify and mutants, the sorted type lines "<stage>
 // types" and the functions "<stage>:<function>" of the others.
 type goSSA struct {
@@ -168,15 +151,21 @@ type goSSA struct {
 	p      *goldPieces
 }
 
-// goSSARaw is the Go builder's output for one run.
+// goSSARaw is a builder's output for one run.
 type goSSARaw struct {
 	text   string
 	none   string
 	stages map[string]string
 }
 
-// ssaPieces cuts the Go builder's output into goSSA's pieces.
+// ssaPieces cuts a builder's output into goSSA's pieces.
 func ssaPieces(g goSSARaw) *goldPieces {
+	return ssaPiecesSkip(g, nil)
+}
+
+// ssaPiecesSkip is ssaPieces with the closures of the functions in skip
+// named as compareSSA names the Xo builder's (canonClosures).
+func ssaPiecesSkip(g goSSARaw, skip map[string]string) *goldPieces {
 	p := newPieces()
 	if g.none != "" {
 		p.setMeta("none", g.none)
@@ -185,7 +174,7 @@ func ssaPieces(g goSSARaw) *goldPieces {
 	types, funcs, _ := splitSSA(g.text)
 	p.addSet("build types", types...)
 	p.addFamily("build")
-	for name, text := range canonClosures(funcs, nil) {
+	for name, text := range canonClosures(funcs, skip) {
 		p.addMember("build", name, text)
 	}
 	var have []string
@@ -210,8 +199,8 @@ func ssaPieces(g goSSARaw) *goldPieces {
 	return p
 }
 
-// goSSAOf is the run of its pieces (live or replayed); without passes
-// no stage after the build.
+// goSSAOf is the run of its (replayed) pieces; without passes no stage
+// after the build.
 func goSSAOf(p *goldPieces, passes bool) goSSA {
 	g := goSSA{p: p, none: p.m("none"), stages: map[string]bool{}}
 	if p.missing {
@@ -229,9 +218,9 @@ func goSSAOf(p *goldPieces, passes bool) goSSA {
 // (decision 0150 stage 8), compared on the runs both build completely.
 var passStages = []string{"unwind", "landings", "cleanup", "rc", "verify", "mutants"}
 
-// goSSABuild checks dir as a native build does and prints the build stage
-// of its SSA, as `xo ssadump` does from root.
-func goSSABuild(root, dir string) goSSA { return goSSABuildOpts(root, dir, false, true) }
+// goSSABuild is the recorded SSA of dir checked as a native build does,
+// from root, with every pass stage; got is the Xo builder's output.
+func goSSABuild(root, dir, got string) goSSA { return goSSABuildOpts(root, dir, false, true, got) }
 
 // testDirs are the dirs whose .xo files declare test blocks (a line
 // starting with `test "`).
@@ -256,68 +245,55 @@ func testDirs(t testing.TB, root string, dirs []string) []string {
 	return out
 }
 
-// goSSABuildOpts is goSSABuild, of the test binary (`xo ssadump --test`,
-// stage 7) when tests is set, and without the passStages unless passes
-// is set. Recorded as the ssadump kind (gogoldens_test.go) with every
-// pass stage, dropped here when passes is not set.
-func goSSABuildOpts(root, dir string, tests, passes bool) goSSA {
+// goSSABuildOpts is goSSABuild, of the test binary (`--test`, stage 7)
+// when tests is set, and without the passStages unless passes is set.
+// Recorded as the ssadump kind (gogoldens_test.go) with every pass stage,
+// dropped here when passes is not set; got is the Xo builder's output for
+// dir, which a recording run records (with every stage: a recording run
+// takes the full tier, whose runs print them all).
+func goSSABuildOpts(root, dir string, tests, passes bool, got string) goSSA {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, root, dir)
 	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
-	var key []string
-	livePasses := passes
-	if goldensMode() != goldensLive {
-		key = []string{o, cx.dirKey(wd, dir, true)}
-		livePasses = true // recorded with every stage
-	}
+	key := []string{o, cx.dirKey(wd, dir, true)}
 	flags := "--each --std=std --stages --wd=" + wd
 	if tests {
 		flags += " --test"
 	}
-	hint := goldHint("TestSelfhostSSA(Mutations)?", "ssadump --stage=<stage> "+strings.TrimPrefix(strings.TrimPrefix(flags, "--each --std=std --stages --wd="+wd), " ")+" "+dir, "ssa", flags+" "+dir, wd)
-	p := recordedPieces("ssadump", dir+" "+o, hint, key, cx, func() *goldPieces { return ssaPieces(goSSALive(root, dir, tests, livePasses)) })
+	hint := goldHint("TestSelfhostSSA(Mutations)?", "ssa", flags+" "+dir, wd)
+	p := recordedPieces("ssadump", dir+" "+o, hint, key, cx, func() *goldPieces { return xoSSAPieces(got) })
 	return goSSAOf(p, passes)
 }
 
-// goSSALive is goSSABuildOpts with the Go builder run.
-func goSSALive(root, dir string, tests, passes bool) goSSARaw {
-	type goSSA = goSSARaw
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil {
-		return goSSA{none: "error " + err.Error()}
+// xoSSAPieces is the Xo builder's output for a run as the pieces a
+// recording records: why there is no build stage (rejected, no main,
+// unsupported: compareSSA counts those runs), else the build stage
+// without the functions the builder skipped, and the stages after it.
+func xoSSAPieces(got string) *goldPieces {
+	head := firstLine(got)
+	switch {
+	case head == "== rejected":
+		return ssaPieces(goSSARaw{none: "rejected"})
+	case strings.Contains(head, "no `main`"):
+		return ssaPieces(goSSARaw{none: "no main"})
+	case strings.HasPrefix(head, "== unsupported "):
+		return ssaPieces(goSSARaw{none: "unsupported: " + strings.TrimPrefix(head, "== unsupported ")})
+	case head != "== stage build":
+		return ssaPieces(goSSARaw{none: "error " + head})
 	}
-	if !ok {
-		// holes (XO0900) stop a build; the Xo checker does not report
-		// them (decision 0141), so such a run is not compared
-		holesOnly := true
-		for _, d := range res.Diagnostics {
-			if d.Severity == diag.Error && d.Code != "XO0900" {
-				holesOnly = false
-			}
-		}
-		if holesOnly {
-			return goSSA{none: "holes"}
-		}
-		return goSSA{none: "rejected"}
+	body, skipped, _ := strings.Cut(strings.TrimPrefix(got, "== stage build\n"), "== skipped\n")
+	g := goSSARaw{stages: map[string]string{}}
+	parts := stageHead.Split(body, -1)
+	for i, m := range stageHead.FindAllStringSubmatch(body, -1) {
+		g.stages[m[1]] = parts[i+1]
 	}
-	want := map[string]bool{"build": true}
-	if passes {
-		for _, s := range passStages {
-			want[s] = true
-		}
+	g.text = parts[0]
+	skip := map[string]string{}
+	for _, l := range nonEmptyLines(skipped) {
+		name, why, _ := strings.Cut(l, ": ")
+		skip[name] = why
 	}
-	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root, Tests: tests}, want)
-	if len(stages) == 0 {
-		if err != nil && strings.Contains(err.Error(), "no `main`") {
-			return goSSA{none: "no main"}
-		}
-		return goSSA{none: fmt.Sprintf("no build stage: %v", err)}
-	}
-	g := goSSA{text: stages[0].Text, stages: map[string]string{}}
-	for _, st := range stages[1:] {
-		g.stages[st.Name] = st.Text
-	}
-	return g
+	return ssaPiecesSkip(g, skip)
 }
 
 // runSSA runs the Xo builder on every dir (--each) from root, with flags
@@ -383,14 +359,14 @@ type ssaStats struct {
 	skips                                      map[string]int
 	unsupportedWhy                             map[string]int
 	// per stage after the build: runs compared, runs not compared (the
-	// Xo builder skipped a function, or the Go builder reported errors),
+	// Xo builder skipped a function, or the recording reported errors),
 	// and functions identical
 	stageRuns, stageOff, stageSame map[string]int
 }
 
 func (s ssaStats) String() string {
 	out := fmt.Sprintf("%d runs: %d built by both, %d rejected by both, %d without main, %d the Xo builder cannot build; "+
-		"the Go builder's %d functions in the runs built: %d identical, %d skipped by the Xo builder, %d not declared by it (callees of skipped code)",
+		"the recording's %d functions in the runs built: %d identical, %d skipped by the Xo builder, %d not declared by it (callees of skipped code)",
 		s.runs, s.built, s.rejected, s.noMain, s.unsupported, s.funcs, s.same, s.skipped, s.missing)
 	for _, st := range passStages {
 		what := "functions"
@@ -433,20 +409,25 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 		return nil
 	case want.none == "rejected":
 		if head != "== rejected" && !strings.HasPrefix(head, "== unsupported ") {
-			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + head}
+			return []string{dir + ": the recording rejects it, the Xo checker does not: " + head}
 		}
 		st.rejected++
 		return nil
 	case head == "== rejected":
-		return []string{dir + ": the Xo checker rejects it, the Go checker does not"}
+		return []string{dir + ": the Xo checker rejects it, the recording does not"}
 	case want.none == "no main":
 		if !strings.Contains(head, "no `main`") {
-			return []string{dir + ": no main for the Go builder, the Xo builder prints " + head}
+			return []string{dir + ": no main for the recording, the Xo builder prints " + head}
 		}
 		st.noMain++
 		return nil
+	case strings.HasPrefix(want.none, "unsupported: "):
+		// recorded from the Xo builder, which could not build it
+		st.unsupported++
+		st.unsupportedWhy["run: "+strings.TrimPrefix(want.none, "unsupported: ")]++
+		return nil
 	case want.none != "":
-		return []string{dir + ": the Go builder: " + want.none}
+		return []string{dir + ": the recording: " + want.none}
 	case strings.HasPrefix(head, "== unsupported "):
 		st.unsupported++
 		st.unsupportedWhy["run: "+strings.TrimPrefix(head, "== unsupported ")]++
@@ -475,7 +456,7 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 	var fails []string
 	for _, l := range xTypes {
 		if !g.inSet("build types", l) {
-			fails = append(fails, fmt.Sprintf("%s: the Xo builder's type line is not the Go builder's: %s", dir, l))
+			fails = append(fails, fmt.Sprintf("%s: the Xo builder's type line is not the recording's: %s", dir, l))
 		}
 	}
 	for _, name := range g.names("build:") {
@@ -495,7 +476,7 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 	}
 	for name := range xFuncs {
 		if !g.has("build:" + name) {
-			fails = append(fails, fmt.Sprintf("%s: the Xo builder makes %s, the Go builder does not", dir, name))
+			fails = append(fails, fmt.Sprintf("%s: the Xo builder makes %s, the recording does not", dir, name))
 		}
 	}
 	if st.stageRuns == nil {
@@ -509,7 +490,7 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 			st.stageRuns[stage]++
 			fails = append(fails, compareStage(dir, stage, g, x, st)...)
 		case xok:
-			fails = append(fails, fmt.Sprintf("%s: the Xo builder prints the stage %s, the Go builder does not", dir, stage))
+			fails = append(fails, fmt.Sprintf("%s: the Xo builder prints the stage %s, the recording does not", dir, stage))
 		default:
 			st.stageOff[stage]++
 		}
@@ -556,7 +537,7 @@ func compareStage(dir, stage string, want *goldPieces, got string, st *ssaStats)
 	}
 	for name := range xFuncs {
 		if !want.has(stage + ":" + name) {
-			fails = append(fails, fmt.Sprintf("%s: stage %s: the Xo builder makes %s, the Go builder does not", dir, stage, name))
+			fails = append(fails, fmt.Sprintf("%s: stage %s: the Xo builder makes %s, the recording does not", dir, stage, name))
 		}
 	}
 	return fails

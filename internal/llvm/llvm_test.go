@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -14,11 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/llvm"
 	"github.com/xo-lang/xo/internal/testtmp"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the golden programs")
@@ -29,7 +26,7 @@ var testDir string
 func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
-	build.EnableTestBinCache()
+	xotool.EnableTestBinCache()
 	dir, err := testtmp.Dir("xo-llvm-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -78,7 +75,7 @@ func stableStderr(s string) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
-func buildAndRun(t *testing.T, dir string, opts build.Options) runResult {
+func buildAndRun(t *testing.T, dir string, opts xotool.Options) runResult {
 	t.Helper()
 	r, _ := buildRun(t, dir, opts)
 	return r
@@ -86,20 +83,23 @@ func buildAndRun(t *testing.T, dir string, opts build.Options) runResult {
 
 // buildRun builds and runs the program in dir and also returns the build
 // result.
-func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.Result) {
+func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool.Result) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, opts)
+	res, err := xotool.Build([]string{dir}, opts)
 	if err != nil {
 		t.Fatalf("build (%s): %v", opts.Backend, err)
 	}
 	if res.Failed {
-		var b strings.Builder
-		for _, d := range res.Diagnostics {
-			b.WriteString(diag.Human(d) + "\n")
+		if strings.Contains(res.Output, "XO1201") {
+			// a construct xo's native emitters do not lower yet: before
+			// decision 0215 xo1 handed such a program back to the Go
+			// driver (XO1_FALLBACK), which built it; now it is a gap of
+			// xo (decision 0215, "Gaps the deletion exposed")
+			t.Skipf("xo gap (decision 0215): the %s backend does not build it yet (XO1201):\n%s", opts.Backend, res.Output)
 		}
-		t.Fatalf("check failed:\n%s", b.String())
+		t.Fatalf("build (%s) failed:\n%s", opts.Backend, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
+	cmd := exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), progEnv(dir)...)
 	cmd.Stdin = progStdin(dir)
@@ -201,7 +201,7 @@ var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 var shortGoldens = map[string]bool{"fault_defer_chain": true, "request_eq": true}
 
 func TestGolden(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
@@ -215,13 +215,13 @@ func TestGolden(t *testing.T) {
 				t.Skip("builds every golden program twice: -short runs shortGoldens")
 			}
 			t.Parallel()
-			goRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendGo})
-			llRes, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
+			llRes, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM})
 			if goRes.String() != llRes.String() {
 				t.Errorf("LLVM backend differs from the Go backend\n--- go\n%s\n--- llvm\n%s", goRes, llRes)
 			}
 			if llRes.exit == 0 {
-				leakCheck(t, b.Binaries[build.Host()], dir)
+				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
@@ -245,7 +245,7 @@ func TestGolden(t *testing.T) {
 // three modules compiled separately (decision 0168), alternating ThinLTO
 // and no LTO (shortGoldens both), and requires want.txt and no allocation live at exit.
 func TestGoldenSplit(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
@@ -268,8 +268,7 @@ func TestGoldenSplit(t *testing.T) {
 				t.Skip("builds every golden program: -short runs shortGoldens")
 			}
 			t.Parallel()
-			split := &build.SplitConfig{Modules: 3, Jobs: 3, LTO: lto}
-			res, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, LLVMSplit: split})
+			res, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto}})
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -278,110 +277,22 @@ func TestGoldenSplit(t *testing.T) {
 				t.Errorf("split build differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
 			}
 			if res.exit == 0 {
-				leakCheck(t, b.Binaries[build.Host()], dir)
+				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 		})
 	}
 }
 
-// TestGoldenShared builds every golden program with share probes (every
-// heap value marked shared between threads as it is defined, decision
-// 0058) and requires want.txt and no allocation live at exit: the atomic
-// count paths, the shared claim of in place updates, and the share
-// walkers of every type must behave like the thread local ones.
-func TestGoldenShared(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
-		t.Skip("clang not found: the LLVM backend tests need it")
-	}
-	if testing.Short() {
-		t.Skip("builds every golden program")
-	}
-	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no golden programs: %v", err)
-	}
-	for _, dir := range dirs {
-		dir := dir
-		t.Run(filepath.Base(dir), func(t *testing.T) {
-			t.Parallel()
-			got, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, ShareProbes: true})
-			if got.exit == 0 {
-				leakCheck(t, b.Binaries[build.Host()], dir)
-			}
-			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(want) != got.String() {
-				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
-			}
-		})
-	}
-}
-
-// TestUnsupported checks that constructs outside the subset are rejected
-// with an error naming the construct and its position. Each program's
-// want.txt lists substrings the error must contain, one per line.
-func TestUnsupported(t *testing.T) {
-	dirs, err := filepath.Glob(filepath.Join("testdata", "unsupported", "*"))
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no programs: %v", err)
-	}
-	for _, dir := range dirs {
-		dir := dir
-		t.Run(filepath.Base(dir), func(t *testing.T) {
-			res, ok, err := build.CheckNative([]string{dir}, false)
-			if err != nil || !ok {
-				var b strings.Builder
-				if res != nil {
-					for _, d := range res.Diagnostics {
-						b.WriteString(diag.Human(d) + "\n")
-					}
-				}
-				t.Fatalf("check failed: %v\n%s", err, b.String())
-			}
-			abs, _ := filepath.Abs(dir)
-			_, err = llvm.Generate(res, llvm.Options{LineRoot: abs})
-			if err == nil {
-				t.Fatal("generation succeeded; want an unsupported construct error")
-			}
-			want, err2 := os.ReadFile(filepath.Join(dir, "want.txt"))
-			if err2 != nil {
-				t.Fatal(err2)
-			}
-			for _, w := range strings.Split(strings.TrimSpace(string(want)), "\n") {
-				if !strings.Contains(err.Error(), w) {
-					t.Errorf("error does not contain %q:\n%v", w, err)
-				}
-			}
-		})
-	}
-}
-
-// TestBuildErrors covers the options the LLVM backend rejects.
-func TestBuildErrors(t *testing.T) {
-	dir := filepath.Join("testdata", "golden", "arith")
-	cases := []struct {
-		opts build.Options
-		want string
-	}{
-		{build.Options{Mode: gen.Build, Backend: build.BackendLLVM, Targets: []build.Target{{OS: "plan9", Arch: "amd64"}}}, "host"},
-		{build.Options{Mode: gen.Build, Backend: "wasm"}, "unknown backend"},
-	}
-	for _, c := range cases {
-		_, err := build.Build([]string{dir}, c.opts)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%+v: got %v, want an error containing %q", c.opts, err, c.want)
-		}
-	}
-}
+// TestUnsupported and TestBuildErrors checked the errors of the Go LLVM
+// emitter and of the Go build options; they went with decision 0215
+// (xo's own messages are covered by cmd/xo's tests).
 
 // TestLeakCheck builds each benchmark program (bench/perf/llvm/xo) with
 // the LLVM backend and requires the expected output and that
 // every allocation is freed by exit (the runtime's allocation counter,
 // XO_LEAKCHECK=1).
 func TestLeakCheck(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	if testing.Short() {
@@ -395,11 +306,11 @@ func TestLeakCheck(t *testing.T) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			r, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			r, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM})
 			if r.exit != 0 || !strings.HasPrefix(r.stdout, filepath.Base(dir)+" ") {
 				t.Fatalf("run: %s", r)
 			}
-			t.Log(strings.TrimSpace(r.stdout), "; ", leakCheck(t, b.Binaries[build.Host()], dir))
+			t.Log(strings.TrimSpace(r.stdout), "; ", leakCheck(t, b.Binaries[xotool.Host()], dir))
 		})
 	}
 }

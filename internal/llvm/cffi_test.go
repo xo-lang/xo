@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"os"
@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // cffiMain calls every function of internal/cbind's tiny library that
@@ -63,7 +62,7 @@ pair 2.5 0.5 true
 // here with clang and ar, once as its C source, and requires the same
 // output and no allocation live at exit.
 func TestUseC(t *testing.T) {
-	clang, err := build.Clang()
+	clang, err := xotool.Clang()
 	if err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
@@ -105,11 +104,11 @@ func TestUseC(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, be := range nativeBackends() {
-				res, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
+				res, b := buildRun(t, dir, xotool.Options{Backend: be})
 				if res.exit != 0 || res.stdout != cffiWant {
 					t.Errorf("%s: %s\nwant stdout:\n%s", be, res, cffiWant)
 				}
-				leakCheck(t, b.Binaries[build.Host()], dir)
+				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 		})
 	}
@@ -119,7 +118,7 @@ func TestUseC(t *testing.T) {
 // installed: `uses none` (a human vouched that crc32 and adler32
 // perform no effect), Bytes with a length, and a Str result.
 func TestUseCZlib(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	if testing.Short() {
@@ -130,17 +129,11 @@ func TestUseCZlib(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(main), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil || !ok {
-		for _, d := range res.Diagnostics {
-			if d.Code == "XO1104" {
-				t.Skipf("zlib.h not available: %s", d.Message)
-			}
-		}
-		t.Fatalf("check: %v %v", err, res.Diagnostics)
-	}
 	for _, be := range nativeBackends() {
-		r := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
+		if res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be}); err == nil && res.Failed && strings.Contains(res.Output, "XO1104") {
+			t.Skipf("zlib.h not available: %s", res.Output)
+		}
+		r := buildAndRun(t, dir, xotool.Options{Backend: be})
 		if want := "crc32 222957957 adler32 436929629 version true\n"; r.exit != 0 || r.stdout != want {
 			t.Errorf("%s: %s\nwant %s", be, r, want)
 		}

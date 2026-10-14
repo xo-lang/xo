@@ -18,45 +18,55 @@ import (
 	"unicode/utf8"
 )
 
-// Recorded Go outputs (decision 0178, stage 7 step 2). Every Go side of
-// a TestSelfhost* differential (the lexer's lexdump, the parser's
-// astdump, the formatter, the checker's typedump, the SSA builder's
-// ssadump, the arm64 emitter's asmdump, the LLVM emitter's llvmdump, the
-// Go generator's gendump, and internal/defhash) goes through
-// recordedPieces, which XO_SELFHOST_GOLDENS steers:
+// The recorded outputs (decision 0178 stage 7 step 2, decision 0215).
+// Every TestSelfhost* test compares the output of a self hosted component
+// (the lexer's lexdump, the parser's astdump, the formatter, the
+// checker's typedump, the SSA builder's ssadump, the arm64 emitter's
+// asmdump, the LLVM emitter's llvmdump, the recording's gendump, and
+// the definition hashes) with a recording, through recordedPieces, which
+// XO_SELFHOST_GOLDENS steers:
 //
-//   - unset or "live": the Go side runs, as before;
-//   - "record": the Go side runs and the hashes of its pieces are
-//     written to the recording; the Xo side is skipped (no self hosted
-//     binary is built) and every test takes the full tier's inputs, so
-//     one run records what every tier compares
-//     (scripts/selfhost-record-goldens.sh);
-//   - "replay": the Go side does not run; the Xo side's pieces are
-//     hashed and compared with the recorded hashes. A unit with no
-//     recording, and a piece whose hash differs, are named at the end
-//     of the run (TestMain) with how to see the full dumps.
+//   - unset or "replay": the Xo side's pieces are hashed and compared
+//     with the recorded hashes. A unit with no recording, and a piece
+//     whose hash differs, are named at the end of the run (TestMain) with
+//     how to see the full dumps.
+//   - "record": a unit recorded for its very input is kept and compared;
+//     a unit whose input or std changed takes its slot's recording under
+//     its new id (the reference stays, and the comparison says whether
+//     it still holds); only a unit with no recording at all (a new
+//     input) records the Xo side's output. Every test takes the full tier's inputs with the go
+//     backend build of its component (scripts/selfhost-record-goldens.sh).
+//   - "rerecord": as record, but every unit the run computes is recorded
+//     again: after a change that alters the output on purpose. Read the
+//     diff of the recording.
 //
-// A unit is the Go side's output for one input (a file, a run of a
-// directory) with one set of options. Its comparison cuts it into
-// pieces (goldPieces), the same way live and replayed: the whole dump
-// for the kinds compared byte for byte (lexdump, astdump, format,
-// defhash), the dump, diagnostics, and notes of typedump, and for the
-// kinds compared function by function (ssadump, llvmdump, asmdump,
-// gendump) one member per function, helper, file, or declaration in a
-// family, so a mismatch names the function. A unit records one line per
-// family (its member count and the hash of its sorted member hashes),
-// and each kind records the member hashes once, in its pool
-// (pool-<x>.txt, 48 bits each): a unit repeats the std functions every
-// other unit has (gotchas/selfhost-goldens-per-function-lines.md).
-// Replay resolves a family against the Xo side's members
-// (goldPieces.resolved). Sets (the Xo side's lines must be among the Go
-// side's) are families too; lists compared in any order are hashed
-// sorted; the few values a comparison reads (why there is no output,
-// the verdict of a run) are kept as text (meta).
+// Until decision 0215 (2026-10-13) the recording was the output of the
+// Go implementation of the compiler (the differential tests compared the
+// two implementations); the last Go recording is of main's tree on
+// 2026-10-13 with the Go compiler still in it (decision 0215). Units
+// recorded since come from the Xo side.
+//
+// A unit is the output for one input (a file, a run of a directory) with
+// one set of options. Its comparison cuts it into pieces (goldPieces),
+// the same way recorded and replayed: the whole dump for the kinds
+// compared byte for byte (lexdump, astdump, format, defhash), the dump,
+// diagnostics, and notes of typedump, and for the kinds compared function
+// by function (ssadump, llvmdump, asmdump, gendump) one member per
+// function, helper, file, or declaration in a family, so a mismatch names
+// the function. A unit records one line per family (its member count and
+// the hash of its sorted member hashes), and each kind records the member
+// hashes once, in its pool (pool-<x>.txt, 48 bits each): a unit repeats
+// the std functions every other unit has
+// (gotchas/selfhost-goldens-per-function-lines.md). Replay resolves a
+// family against the Xo side's members (goldPieces.resolved). Sets (the
+// Xo side's lines must be among the recorded ones) are families too;
+// lists compared in any order are hashed sorted; the few values a
+// comparison reads (why there is no output, the verdict of a run) are
+// kept as text (meta).
 //
 // The recording is testdata/gogoldens (or $XO_SELFHOST_GOLDENS_DIR),
-// committed: one directory per kind, its units split into
-// goldShards files by the first hex digit of their id, each line
+// committed: one directory per kind, its units split into goldShards
+// files by the first hex digit of their id, each line
 //
 //	<kind> <unit id> <piece name> <hash, or the text of a meta piece>
 //
@@ -65,48 +75,70 @@ import (
 // 64 bits of the SHA-256 of the piece, the unit id the first 64 bits of
 // the SHA-256 of the kind, the unit's options, and the content of its
 // inputs: a file's path and bytes; a run's directory, the working
-// directory, and every file of its module (the nearest xo.mod at or
-// above it, else the directory alone; under a temporary working
-// directory, the whole top level directory of a mutation). What a run
-// imports from outside that tree (std, other repository packages) is not
-// in the key: a change there shows as differing hashes, and needs a new
-// recording when it changes the Go side's output. The native kinds
-// (ssadump, asmdump, llvmdump) also key on the host's GOOS/GOARCH. The
-// repository root and the test's temporary directory are stored as
-// placeholders (in keys, piece names, hashed texts, and meta), so a
-// recording replays in any checkout. A piece name or a meta text with a
-// blank or a quote is written quoted (strconv.Quote).
+// directory, every file of its module (the nearest xo.mod at or above
+// it, else the directory alone; under a temporary working directory, the
+// whole top level directory of a mutation), and std. The native kinds
+// (ssadump, asmdump, llvmdump) also key on the host's GOOS/GOARCH. A
+// unit also records its slot (goldSlot: the id without the content of
+// the inputs); when the input or std changed since the recording, replay
+// compares with the unit recorded for the slot (a stale unit, reported
+// at the end, not a failure unless a piece differs). The repository root
+// and the test's temporary directory are stored as placeholders (in
+// keys, piece names, hashed texts, and meta), so a recording replays in
+// any checkout. A piece name or a meta text with a blank or a quote is
+// written quoted (strconv.Quote).
 //
-// Full dumps are not recorded. While the Go implementation exists, the
-// live mode (or the hidden `xo lexdump|astdump|typedump|ssadump|
-// llvmdump|asmdump|gendump` commands) prints the Go side; the Xo side is
-// always the selfhost/<component> binary of the test. After the
-// freeze, the Xo implementation regenerates both.
+// Full dumps are not recorded: the selfhost/<component> binary of the
+// test with the arguments the hint names prints the Xo side's.
 
 const (
-	goldensLive    = "live"
-	goldensRecord  = "record"
-	goldensReplay  = "replay"
-	goldensRelPath = "testdata/gogoldens"
+	goldensRecord   = "record"
+	goldensRerecord = "rerecord"
+	goldensReplay   = "replay"
+	goldensRelPath  = "testdata/gogoldens"
+	// goldSlotPiece is the meta piece of a unit holding its slot
+	// (goldSlot)
+	goldSlotPiece = "@slot"
 	// goldShards is how many files a kind's units are split into: by
 	// the first hex digit of the unit id.
 	goldShards = 16
 )
 
-// goldensMode is $XO_SELFHOST_GOLDENS (live when unset).
+// skipDumpReplay skips a test whose only check is the recorded replay of
+// a back end or mutation dump (SSA, arm64, LLVM, Go generator, defhash,
+// checker mutations and hatches) unless XO_SELFHOST_DUMPS=all or the run
+// records (decision 0217): an intended compiler change would otherwise
+// need a 25 to 40 minute re-recording. Program output goldens, the fixed
+// point, and the front end replays (lexer, parser, format, checker) stay
+// on.
+func skipDumpReplay(t *testing.T) {
+	t.Helper()
+	if os.Getenv("XO_SELFHOST_DUMPS") == "all" || goldensRecording() {
+		return
+	}
+	t.Skip("recorded back end dump replay is off by default (decision 0217); XO_SELFHOST_DUMPS=all runs it")
+}
+
+// goldensMode is $XO_SELFHOST_GOLDENS (replay when unset).
 func goldensMode() string {
 	switch v := os.Getenv("XO_SELFHOST_GOLDENS"); v {
-	case "", goldensLive:
-		return goldensLive
-	case goldensRecord, goldensReplay:
+	case "", goldensReplay:
+		return goldensReplay
+	case goldensRecord, goldensRerecord:
 		return v
+	case "live", "index":
+		panic(fmt.Sprintf("XO_SELFHOST_GOLDENS=%s: the Go implementation it ran was deleted (decision 0215); want replay, record, or rerecord", v))
 	default:
-		panic(fmt.Sprintf("XO_SELFHOST_GOLDENS=%q: want live, record, or replay", v))
+		panic(fmt.Sprintf("XO_SELFHOST_GOLDENS=%q: want replay or record", v))
 	}
 }
 
-// goldensRecording reports whether this run records the Go side only.
-func goldensRecording() bool { return goldensMode() == goldensRecord }
+// goldensRecording reports whether this run records the Xo side as the
+// reference.
+func goldensRecording() bool {
+	m := goldensMode()
+	return m == goldensRecord || m == goldensRerecord
+}
 
 // goldLine is one line of the recording (without its kind).
 type goldLine struct{ id, name, value string }
@@ -117,7 +149,10 @@ var goldens struct {
 	loaded   map[string]map[string][]goldLine // replay: kind -> unit id -> lines
 	loadErrs []error
 	missing  []string // replay: the units with no recording
+	stale    []string // replay: the units compared with their slot's recording
 	differ   []string // replay: the pieces whose hash differs, with the hint
+	// slots: kind -> slot -> the unit id recorded for it (replay)
+	slots map[string]map[string]string
 	// pool: kind -> the member hashes of every family of every unit
 	// (record: what this run recorded; replay: read)
 	pool map[string]map[string]bool
@@ -162,6 +197,34 @@ func goldID(kind string, key []string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
+
+// goldSlot is the slot of the unit of kind keyed by key: its id without
+// std's sum and, for an input of the repository, without the content of
+// its files (the 64 hex digit sums of fileKey and dirKey), so the units
+// of one input (a path, a run with its options and host) recorded at
+// different times share it. A replay whose unit is not recorded (its
+// input or std changed) compares with the unit recorded for its slot.
+// An input in the test's temporary directory (a mutation, a spec block,
+// a fuzz file) keeps its content in the slot: its name says nothing of
+// what it holds (a mutation m0027 of another source is another program),
+// so only a change of std falls back for it.
+func goldSlot(kind string, key []string) string {
+	stripped := make([]string, len(key))
+	for i, k := range key {
+		tmp := strings.Contains(k, "@TMP")
+		var keep []string
+		for _, f := range strings.Split(k, "\x00") {
+			if strings.HasPrefix(f, "std:") || !tmp && hex64.MatchString(f) {
+				continue
+			}
+			keep = append(keep, f)
+		}
+		stripped[i] = strings.Join(keep, "\x00")
+	}
+	return goldID(kind+" slot", stripped)
+}
+
+var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // goldQuote quotes a piece name or a meta text that a line could not
 // hold as it is.
@@ -341,6 +404,19 @@ func flushGoldens() error {
 		if err != nil {
 			return err
 		}
+		// a unit recorded again for its slot replaces the slot's
+		// earlier unit
+		slotOf := map[string]string{}
+		for id, ls := range goldens.recorded[kind] {
+			if s := lineSlot(ls); s != "" {
+				slotOf[s] = id
+			}
+		}
+		for id, ls := range units {
+			if nid, ok := slotOf[lineSlot(ls)]; ok && nid != id {
+				delete(units, id)
+			}
+		}
 		for id, ls := range goldens.recorded[kind] {
 			units[id] = ls
 		}
@@ -361,6 +437,16 @@ func flushGoldens() error {
 	return nil
 }
 
+// lineSlot is the slot of a unit's lines ("" when it has none).
+func lineSlot(ls []goldLine) string {
+	for _, l := range ls {
+		if l.name == goldMetaMark+goldSlotPiece {
+			return l.value
+		}
+	}
+	return ""
+}
+
 // goldensReport is what a replay run reports at its end (TestMain): the
 // units with no recording and the pieces that differ, and whether the
 // run fails for them.
@@ -372,20 +458,50 @@ func goldensReport() (string, bool) {
 		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %v\n", err)
 	}
 	if n := len(goldens.missing); n > 0 {
-		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units have no recorded Go output (record them with scripts/selfhost-record-goldens.sh --merge while the Go implementation exists), the first: %s\n",
-			n, strings.Join(goldens.missing[:min(10, n)], "; "))
+		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units have no recording, not even of an earlier input (%s), the first: %s\n",
+			n, recordAdvice, strings.Join(goldens.missing[:min(10, n)], "; "))
+	}
+	if n := len(goldens.stale); n > 0 {
+		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d units were compared with the recording of an earlier input of theirs (the input or std changed since; not a failure), the first: %s\n",
+			n, strings.Join(goldens.stale[:min(5, n)], "; "))
 	}
 	if n := len(goldens.differ); n > 0 {
 		show := 20
 		if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
 			fmt.Sscan(v, &show)
 		}
-		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d pieces differ from the recorded Go output:\n", n)
+		fmt.Fprintf(&b, "XO_SELFHOST_GOLDENS=replay: %d pieces differ from the recording (if the change is intended, %s):\n", n, recordAdvice)
 		for _, d := range goldens.differ[:min(show, n)] {
 			b.WriteString("  " + d + "\n")
 		}
 	}
 	return b.String(), len(goldens.loadErrs)+len(goldens.missing) > 0
+}
+
+// recordAdvice is how to record a missing unit.
+const recordAdvice = "check the Xo output and record it with scripts/selfhost-record-goldens.sh (RUN=<test> for one test)"
+
+// goldSlotUnit is the unit recorded for slot of kind (replay), from the
+// slot lines of the recording.
+func goldSlotUnit(kind, slot string) (string, bool) {
+	goldUnitLines(kind, "") // loads the kind
+	goldens.mu.Lock()
+	defer goldens.mu.Unlock()
+	if goldens.slots == nil {
+		goldens.slots = map[string]map[string]string{}
+	}
+	m, ok := goldens.slots[kind]
+	if !ok {
+		m = map[string]string{}
+		for id, ls := range goldens.loaded[kind] {
+			if s := lineSlot(ls); s != "" {
+				m[s] = id
+			}
+		}
+		goldens.slots[kind] = m
+	}
+	id, ok := m[slot]
+	return id, ok
 }
 
 // goldUnitLines is the recorded lines of unit id of kind (replay).
@@ -408,8 +524,8 @@ func goldUnitLines(kind, id string) ([]goldLine, bool) {
 	return ls, ok
 }
 
-// goldPieces is the Go side of one unit cut into the pieces its
-// comparison takes. Built live from the Go side's output (the texts),
+// goldPieces is the recorded side of one unit cut into the pieces its
+// comparison takes. Built live from the recorded side's output (the texts),
 // or read back from the recording (the hashes); the comparisons read it
 // through its methods only, which give the same verdicts both ways.
 type goldPieces struct {
@@ -419,6 +535,7 @@ type goldPieces struct {
 	cx      goldenCtx
 	hashed  bool // replay: parts, lists, and sets hold hashes
 	missing bool // replay: the unit is not recorded
+	stale   bool // replay: the recording is its slot's, of an earlier input
 	meta    map[string]string
 	parts   map[string]string   // name -> text, or hash; a member of family f is "<f>:<member>"
 	lists   map[string][]string // live: name -> lines (compared sorted)
@@ -537,7 +654,7 @@ func piecesFromLines(p *goldPieces, lines []goldLine) {
 	p.hashed = true
 	for _, l := range lines {
 		switch {
-		case l.name == goldMetaMark:
+		case l.name == goldMetaMark, l.name == goldMetaMark+goldSlotPiece:
 		case strings.HasPrefix(l.name, goldMetaMark):
 			p.meta[p.cx.denorm(strings.TrimPrefix(l.name, goldMetaMark))] = p.cx.denorm(l.value)
 		case strings.HasPrefix(l.name, goldListMark):
@@ -553,13 +670,13 @@ func piecesFromLines(p *goldPieces, lines []goldLine) {
 // resolved is p with family fam resolved against the Xo side's members
 // (member -> text), for a comparison that reads the family's members
 // (names, has, eq, inSet). Live it is p. Replayed, when the Xo side's
-// members hash to the recorded root, they are the Go side's members (the
+// members hash to the recorded root, they are the recorded side's members (the
 // same names, and texts equal to the Xo side's); else each Xo member is
-// the Go side's when its hash is in the kind's pool (a member of some
+// the recorded side's when its hash is in the kind's pool (a member of some
 // recorded unit: the Xo side differs elsewhere, or skips a member), and
 // differs when not (named by its comparison); the names of unknown (the
 // members the Xo side skips) and anonymous ones up to the recorded count
-// stand for the Go side's members it lacks. p itself is not changed (the
+// stand for the recorded side's members it lacks. p itself is not changed (the
 // backends compare one Go side in parallel).
 func (p *goldPieces) resolved(fam string, xo map[string]string, unknown []string) *goldPieces {
 	root, ok := p.roots[fam]
@@ -621,28 +738,39 @@ func (p *goldPieces) resolvedSet(name string, xo []string) *goldPieces {
 	return p.resolved(name, m, nil)
 }
 
-// recordedPieces is the Go side of unit label of kind, live, recorded,
-// or replayed by goldensMode; key holds the unit's options and input
-// fingerprints (goldenCtx.fileKey, goldenCtx.dirKey); compute cuts the
-// live Go side's output into pieces; hint tells how to see the full
-// dumps (goldHint).
+// recordedPieces is the recorded reference of unit label of kind,
+// replayed or (XO_SELFHOST_GOLDENS=record, rerecord) recorded from the
+// Xo side:
+// key holds the unit's options and input fingerprints (goldenCtx.fileKey,
+// goldenCtx.dirKey); compute cuts the Xo side's output into pieces as
+// the reference (nil when the test has none to record); hint tells how
+// to see the full dump (goldHint).
 func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, compute func() *goldPieces) *goldPieces {
 	mode := goldensMode()
-	if mode == goldensLive {
-		p := compute()
-		p.kind, p.label, p.hint, p.cx = kind, label, hint, cx
-		return p
-	}
 	id := goldID(kind, key)
+	slot := goldSlot(kind, key)
 	if v := os.Getenv("XO_SELFHOST_GOLDENS_DEBUG"); v != "" && strings.Contains(label, v) {
 		// the key of the units whose label holds the text (why a unit
 		// is missing)
-		fmt.Fprintf(os.Stderr, "gogoldens %s %s %s: %q\n", mode, kind, id, key)
+		fmt.Fprintf(os.Stderr, "gogoldens %s %s %s (slot %s): %q\n", mode, kind, id, slot, key)
 	}
 	out := newPieces()
 	out.kind, out.id, out.label, out.hint, out.cx = kind, id, label, hint, cx
 	if mode == goldensReplay {
 		lines, ok := goldUnitLines(kind, id)
+		if !ok {
+			// the input (or std) changed since the recording: compare
+			// with the recording of the slot's earlier input
+			if sid, found := goldSlotUnit(kind, slot); found {
+				lines, ok = goldUnitLines(kind, sid)
+				out.stale = ok
+				if ok {
+					goldens.mu.Lock()
+					goldens.stale = append(goldens.stale, kind+" "+cx.norm(label))
+					goldens.mu.Unlock()
+				}
+			}
+		}
 		if !ok {
 			out.hashed, out.missing = true, true
 			goldens.mu.Lock()
@@ -653,9 +781,51 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 		piecesFromLines(out, lines)
 		return out
 	}
+	if mode == goldensRecord {
+		// record keeps a unit recorded for this very input (the Go
+		// recording among them); rerecord replaces it too
+		if lines, ok := goldUnitLines(kind, id); ok {
+			piecesFromLines(out, lines)
+			return out
+		}
+		// a unit recorded for the slot (the input or std changed):
+		// its lines move to the new id, so the reference stays what it
+		// was (the Go side's) and the comparison says whether it still
+		// holds; rerecord takes the Xo side instead
+		if sid, found := goldSlotUnit(kind, slot); found {
+			if old, ok := goldUnitLines(kind, sid); ok {
+				var lines []goldLine
+				for _, l := range old {
+					if l.name != goldMetaMark+goldSlotPiece {
+						lines = append(lines, goldLine{id, l.name, l.value})
+					}
+				}
+				lines = append(lines, goldLine{id, goldMetaMark + goldSlotPiece, slot})
+				goldens.mu.Lock()
+				if goldens.recorded == nil {
+					goldens.recorded = map[string]map[string][]goldLine{}
+				}
+				if goldens.recorded[kind] == nil {
+					goldens.recorded[kind] = map[string][]goldLine{}
+				}
+				goldens.recorded[kind][id] = lines
+				goldens.mu.Unlock()
+				piecesFromLines(out, lines)
+				return out
+			}
+		}
+	}
+	if compute == nil {
+		goldens.mu.Lock()
+		goldens.errs = append(goldens.errs, fmt.Errorf("%s %s: the test gives no Xo side to record", kind, cx.norm(label)))
+		goldens.mu.Unlock()
+		out.hashed, out.missing = true, true
+		return out
+	}
 	live := compute()
 	live.id, live.cx = id, cx
 	lines, pool := live.recordLines()
+	lines = append(lines, goldLine{id, goldMetaMark + goldSlotPiece, slot})
 	goldens.mu.Lock()
 	if goldens.pool == nil {
 		goldens.pool = map[string]map[string]bool{}
@@ -674,9 +844,10 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 	}
 	goldens.recorded[kind][id] = lines
 	goldens.mu.Unlock()
-	// the hashed form: a recording run compares nothing, and the full
-	// tier's SSA stages, IR, and assembly of every run held at once took
-	// the run to 15 GB (2026-10-12)
+	// the hashed form, as replayed: the comparison then checks the
+	// recording against the output it was made from (and the full tier's
+	// SSA stages, IR, and assembly of every run held at once took a
+	// recording run to 15 GB, 2026-10-12)
 	piecesFromLines(out, lines)
 	return out
 }
@@ -684,7 +855,7 @@ func recordedPieces(kind, label, hint string, key []string, cx goldenCtx, comput
 // m is meta piece name ("" when there is none).
 func (p *goldPieces) m(name string) string { return p.meta[name] }
 
-// has reports whether the Go side has piece name.
+// has reports whether the recorded side has piece name.
 func (p *goldPieces) has(name string) bool {
 	_, ok := p.parts[name]
 	return ok
@@ -699,7 +870,7 @@ func (p *goldPieces) text(name string) (string, bool) {
 	return t, ok
 }
 
-// resolve is the Go side's piece name for a comparison that reads it
+// resolve is the recorded side's piece name for a comparison that reads it
 // beyond equality: its text when live; replayed, the Xo side's x when
 // the hashes agree, and ok false when they do not.
 func (p *goldPieces) resolve(name, x string) (text string, ok bool) {
@@ -712,8 +883,8 @@ func (p *goldPieces) resolve(name, x string) (text string, ok bool) {
 	return "", false
 }
 
-// eq reports whether the Xo side's x is the Go side's piece name (a
-// piece the Go side does not have is "").
+// eq reports whether the Xo side's x is the recorded side's piece name (a
+// piece the recorded side does not have is "").
 func (p *goldPieces) eq(name, x string) bool {
 	if !p.hashed {
 		return p.parts[name] == x
@@ -725,7 +896,7 @@ func (p *goldPieces) eq(name, x string) bool {
 	return h == goldSum(p.cx.norm(x))
 }
 
-// eqList reports whether the Xo side's lines are the Go side's list name
+// eqList reports whether the Xo side's lines are the recorded side's list name
 // in some order.
 func (p *goldPieces) eqList(name string, x []string) bool {
 	if !p.hashed {
@@ -737,7 +908,7 @@ func (p *goldPieces) eqList(name string, x []string) bool {
 	return !p.missing && p.listSum[name] == goldSum(p.cx.normSortJoin(x))
 }
 
-// inSet reports whether x is an element of the Go side's set name.
+// inSet reports whether x is an element of the recorded side's set name.
 func (p *goldPieces) inSet(name, x string) bool {
 	v, ok := p.parts[name+":"+x]
 	return ok && v != "!"
@@ -785,31 +956,28 @@ func (p *goldPieces) diffList(name string, x []string) string {
 func (p *goldPieces) mismatch(name string) string {
 	what := fmt.Sprintf("%s %s (unit %s), %s", p.kind, p.label, p.id, name)
 	if p.missing {
-		return "no recorded Go output for " + what
+		return "no recording for " + what
+	}
+	stale := ""
+	if p.stale {
+		stale = " of an earlier input (the input or std changed since it was recorded)"
 	}
 	goldens.mu.Lock()
-	goldens.differ = append(goldens.differ, what+": "+p.hint)
+	goldens.differ = append(goldens.differ, what+stale+": "+p.hint)
 	goldens.mu.Unlock()
-	return "the hash differs from the recorded Go output's (" + name + "); the dumps: " + p.hint
+	return "the hash differs from the recorded output's" + stale + " (" + name + "); the dumps: " + p.hint
 }
 
 // missingText is what a comparison reports for a unit with no recording
 // (TestMain fails the run for it too).
 func (p *goldPieces) missingText() string {
-	return fmt.Sprintf("no recorded Go output for %s %s (unit %s): record it with scripts/selfhost-record-goldens.sh --merge while the Go implementation exists", p.kind, p.label, p.id)
+	return fmt.Sprintf("no recording for %s %s (unit %s), not even of an earlier input: %s", p.kind, p.label, p.id, recordAdvice)
 }
 
-// goldHint tells how to see the full dumps of a unit: the Go side with
-// the hidden dump command (goCmd, run from wd) while the Go
-// implementation exists, or the test in live mode; the Xo side with the
-// test's self hosted component and its arguments.
-func goldHint(test, goCmd, component, xoArgs, wd string) string {
-	cmd := ""
-	if goCmd != "" {
-		cmd = fmt.Sprintf("`go run ./cmd/xo %s` from %s, or ", goCmd, wd)
-	}
-	return fmt.Sprintf("Go side (while the Go implementation exists): %sXO_SELFHOST_GOLDENS=live go test ./internal/selfhost -run '^%s$' for the first difference; Xo side: selfhost/%s (`xo build selfhost/%s`) with %s from %s",
-		cmd, test, component, component, xoArgs, wd)
+// goldHint tells how to see the Xo side's full dump of a unit: the
+// test's self hosted component with its arguments, from wd.
+func goldHint(test, component, xoArgs, wd string) string {
+	return fmt.Sprintf("selfhost/%s (`xo build selfhost/%s`, or the binary %s builds) with %s from %s", component, component, test, xoArgs, wd)
 }
 
 // goldenCtx holds the forms of the repository root and of the test's
@@ -945,7 +1113,7 @@ var treeSums sync.Map // directory -> fingerprint, per test binary
 // treeSum fingerprints the files of dir (with a "!" suffix, only its own
 // files; else every file below it but dot directories): names and bytes.
 func treeSum(dir string) string {
-	if goldensMode() == goldensRecord {
+	if goldensRecording() {
 		// a recording run writes no input while it runs: cache
 		if v, ok := treeSums.Load(dir); ok {
 			return v.(string)
@@ -978,7 +1146,7 @@ func treeSum(dir string) string {
 		return nil
 	})
 	s := hex.EncodeToString(h.Sum(nil))
-	if goldensMode() == goldensRecord {
+	if goldensRecording() {
 		treeSums.Store(key, s)
 	}
 	return s
@@ -991,13 +1159,4 @@ func goldensWD() string {
 		panic(err)
 	}
 	return wd
-}
-
-// skipRecording ends t after its Go side when the run records it (the
-// Xo side is not built).
-func skipRecording(t testing.TB) {
-	t.Helper()
-	if goldensRecording() {
-		t.Skip("XO_SELFHOST_GOLDENS=record: the Go side is recorded")
-	}
 }

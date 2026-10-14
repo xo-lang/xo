@@ -1,12 +1,11 @@
-package gen_test
+package gen
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestGoldenRelease builds every program under testdata/release twice,
@@ -26,11 +25,11 @@ func TestGoldenRelease(t *testing.T) {
 	}
 	variants := []struct {
 		want string
-		opts build.Options
+		opts xotool.Options
 	}{
-		{"want.debug.txt", build.Options{Mode: gen.Build}},
-		{"want.release.txt", build.Options{Mode: gen.Build, Release: true}},
-		{"want.release_noargs.txt", build.Options{Mode: gen.Build, Release: true, NoErrorArgs: true}},
+		{"want.debug.txt", xotool.Options{}},
+		{"want.release.txt", xotool.Options{Release: true}},
+		{"want.release_noargs.txt", xotool.Options{Release: true, NoErrorArgs: true}},
 	}
 	for _, dir := range dirs {
 		dir := dir

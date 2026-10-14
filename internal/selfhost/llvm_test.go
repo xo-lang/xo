@@ -10,26 +10,23 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/llvm"
 )
 
 // TestSelfhostLLVM runs the Xo LLVM emitter (selfhost/llvm, decision
-// 0166), built with each backend, and internal/llvm's GenerateSSA on
-// every directory of the repository that holds .xo files (the runs of
-// TestSelfhostSSA), each checked as a native build checks it and lowered
-// from `main`, and compares the IR:
+// 0166), built with each backend, on every directory of the repository
+// that holds .xo files (the runs of TestSelfhostSSA), each checked as a
+// native build checks it and lowered from `main`, and compares the IR
+// with the recording (the recording's `xo llvmdump` until decision
+// 0215):
 //
 //   - every function the Xo emitter lowers is identical, text for text,
-//     to the Go emitter's definition of the same name (string literals
+//     to the recording's definition of the same name (string literals
 //     and fault locations compared by their contents, not their numbers);
 //   - every helper both emit (`xo.dup.T`, `xo.eq.T`, environments) is
 //     identical, and on a run with nothing skipped the helpers, named
 //     types, and runtime declarations are the same sets;
 //   - the whole module is compared byte for byte, and counted;
-//   - a run the Go checker rejects is rejected by the Xo checker.
+//   - a run the recording rejects is rejected by the Xo checker.
 //
 // Runs the Xo SSA builder does not build completely are counted, not
 // compared (its comparison is TestSelfhostSSA); so are functions the
@@ -42,6 +39,7 @@ import (
 // XO_SELFHOST_DIRS=<texts> takes the runs whose directory contains one
 // of the comma separated texts instead.
 func TestSelfhostLLVM(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		backends = []string{v}
@@ -84,20 +82,6 @@ func TestSelfhostLLVM(t *testing.T) {
 	t.Chdir(root)
 	setModEnv(t, root)
 	tdirs := testDirs(t, root, dirs)
-	wants := make([]*goldPieces, len(dirs))
-	twants := make([]*goldPieces, len(tdirs))
-	// the Go emitter's results, while the subtests run the Xo emitter
-	wait := background(t, func() {
-		all := append(append([]string(nil), dirs...), tdirs...)
-		parallel(t, "Go LLVM emitter", all, func(i int) {
-			if i < len(dirs) {
-				wants[i] = goLLVM(root, dirs[i], false)
-			} else {
-				i -= len(dirs)
-				twants[i] = goLLVM(root, tdirs[i], true)
-			}
-		})
-	})
 	bins := selfhostBinaries(t, "llvm", backends)
 	flags := []string{"--std=std"}
 	if v := os.Getenv("XO_SELFHOST_LLVM_STAGE"); v != "" {
@@ -111,12 +95,19 @@ func TestSelfhostLLVM(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runLLVM(t, bin, root, dirs, flags...)
-			wait()
+			wants := make([]*goldPieces, len(dirs))
+			for i, d := range dirs {
+				wants[i] = goLLVM(root, d, false, got[d])
+			}
 			st, fails := compareAll(t, "compare LLVM", dirs, func(i int, st *llvmStats) []string {
 				return compareLLVM(dirs[i], wants[i], got[dirs[i]], st)
 			}, (*llvmStats).add)
 			t.Logf("%s", st)
 			tgot := runLLVM(t, bin, root, tdirs, append(flags, "--test")...)
+			twants := make([]*goldPieces, len(tdirs))
+			for i, d := range tdirs {
+				twants[i] = goLLVM(root, d, true, tgot[d])
+			}
 			tst, tfails := compareAll(t, "compare test LLVM", tdirs, func(i int, st *llvmStats) []string {
 				return compareLLVM("test "+tdirs[i], twants[i], tgot[tdirs[i]], st)
 			}, (*llvmStats).add)
@@ -138,6 +129,7 @@ func TestSelfhostLLVM(t *testing.T) {
 // XO_SELFHOST_LLVM_FUZZ=N override. The Xo emitter is built with the go
 // backend, or the one XO_SELFHOST_BACKEND names.
 func TestSelfhostLLVMMutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources (about 6 s)")
 	}
@@ -198,16 +190,11 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
-	wants := make([]*goldPieces, len(dirs))
-	wait := background(t, func() {
-		parallel(t, "Go LLVM emitter", dirs, func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
-	})
-	if goldensRecording() {
-		wait()
-		skipRecording(t)
-	}
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
-	wait()
+	wants := make([]*goldPieces, len(dirs))
+	for i, d := range dirs {
+		wants[i] = goLLVM(wd, d, false, got[d])
+	}
 	var st llvmStats
 	var fails []string
 	for i, d := range dirs {
@@ -220,39 +207,57 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	reportFails(t, fails)
 }
 
-// goIR is the Go emitter's result for one run: the IR, or why there is
-// none ("rejected", "holes", "no main", or "error <message>").
+// goIR is an emitter's result for one run: the IR, or why there is none
+// ("rejected", "holes", "no main", "unsupported", or "error <message>").
 type goIR struct {
 	ir   string
 	none string
 }
 
-// goLLVM checks dir as a native build does and lowers it as `xo
-// llvmdump` does from root (the test binary when tests is set), cut into
-// the pieces compareLLVM compares: meta "none" (why there is no IR), or
+// goLLVM is the recorded IR of dir checked as a native build does and
+// lowered from root (the test binary when tests is set), cut into the
+// pieces compareLLVM compares: meta "none" (why there is no IR), or
 // meta "split" (why the IR does not split), else "module" (the whole
 // IR), "order" (the names of the definitions in order), "d:<name>" (each
 // definition), "c:<name>" (a definition with its string literals and
 // fault locations replaced by their contents, canonGlobals, when that
-// changes it), and the sorted lists "types" and "rtdecls". Recorded as
-// the llvmdump kind (gogoldens_test.go).
-func goLLVM(root, dir string, tests bool) *goldPieces {
+// changes it), and the sorted lists "types" and "rtdecls". The llvmdump
+// kind (gogoldens_test.go); got is the Xo emitter's output for dir, which
+// a recording run records (xoLLVMPieces).
+func goLLVM(root, dir string, tests bool, got string) *goldPieces {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, root, dir)
 	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
-	var key []string
-	if goldensMode() != goldensLive {
-		key = []string{o, cx.dirKey(wd, dir, true)}
-	}
+	key := []string{o, cx.dirKey(wd, dir, true)}
 	flags := ""
 	if tests {
 		flags = "--test "
 	}
-	hint := goldHint("TestSelfhostLLVM(Mutations)?", "llvmdump "+flags+dir, "llvm", "--each --std=std --wd="+wd+" "+flags+dir, wd)
-	return recordedPieces("llvmdump", dir+" "+o, hint, key, cx, func() *goldPieces { return llvmGoldPieces(goLLVMLive(root, dir, tests)) })
+	hint := goldHint("TestSelfhostLLVM(Mutations)?", "llvm", "--each --std=std --wd="+wd+" "+flags+dir, wd)
+	return recordedPieces("llvmdump", dir+" "+o, hint, key, cx, func() *goldPieces { return llvmGoldPieces(xoIR(got)) })
 }
 
-// llvmGoldPieces cuts the Go emitter's result into goLLVM's pieces.
+// xoIR is the Xo emitter's output for a run as the result a recording
+// records (the IR without the skipped list).
+func xoIR(got string) goIR {
+	head := firstLine(got)
+	switch {
+	case head == "== rejected":
+		return goIR{none: "rejected"}
+	case strings.Contains(head, "no `main`"):
+		return goIR{none: "no main"}
+	case strings.HasPrefix(head, "== unsupported "):
+		return goIR{none: "unsupported"}
+	case strings.HasPrefix(head, "== error "):
+		return goIR{none: "error " + strings.TrimPrefix(head, "== error ")}
+	case head != "== ir":
+		return goIR{none: "error " + head}
+	}
+	body, _, _ := strings.Cut(strings.TrimPrefix(got, "== ir\n"), "== skipped\n")
+	return goIR{ir: body}
+}
+
+// llvmGoldPieces cuts an emitter's result into goLLVM's pieces.
 func llvmGoldPieces(r goIR) *goldPieces {
 	p := newPieces()
 	if r.none != "" {
@@ -278,34 +283,6 @@ func llvmGoldPieces(r goIR) *goldPieces {
 	p.addList("types", g.Types)
 	p.addList("rtdecls", g.RTDecls)
 	return p
-}
-
-// goLLVMLive is goLLVM with the Go emitter run.
-func goLLVMLive(root, dir string, tests bool) goIR {
-	res, ok, err := build.CheckNative([]string{dir}, false)
-	if err != nil {
-		return goIR{none: "error " + err.Error()}
-	}
-	if !ok {
-		holesOnly := true
-		for _, d := range res.Diagnostics {
-			if d.Severity == diag.Error && d.Code != "XO0900" {
-				holesOnly = false
-			}
-		}
-		if holesOnly {
-			return goIR{none: "holes"}
-		}
-		return goIR{none: "rejected"}
-	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: root, Tests: tests})
-	if err != nil {
-		if strings.Contains(err.Error(), "no `main`") {
-			return goIR{none: "no main"}
-		}
-		return goIR{none: "error " + err.Error()}
-	}
-	return goIR{ir: string(prog.IR)}
 }
 
 var llvmHead = regexp.MustCompile(`(?m)^=== llvm `)
@@ -356,7 +333,7 @@ func (s *llvmStats) add(o llvmStats) {
 
 type llvmStats struct {
 	runs, compared, rejected, noMain, unsupported, ssaIncomplete, goErrors int
-	// the Go emitter's functions (`x.*` and xo_entry) in the runs
+	// the recording's functions (`x.*` and xo_entry) in the runs
 	// compared: identical, skipped by the Xo emitter, differing
 	funcs, same, skipped, differ int
 	// helpers identical; modules byte identical; modules whose
@@ -370,8 +347,8 @@ type llvmStats struct {
 
 func (s llvmStats) String() string {
 	return fmt.Sprintf("%d runs: %d lowered by both and compared, %d rejected by both, %d without main, %d unsupported (use go, use c, holes), "+
-		"%d the Xo SSA builder does not build completely, %d the Go emitter reports an error for; "+
-		"the Go emitter's %d functions in the runs compared: %d identical, %d skipped by the Xo emitter, %d differing; "+
+		"%d the Xo SSA builder does not build completely, %d the recording reports an error for; "+
+		"the recording's %d functions in the runs compared: %d identical, %d skipped by the Xo emitter, %d differing; "+
 		"%d helpers identical; %d modules byte identical, %d with the definitions in the same order",
 		s.runs, s.compared, s.rejected, s.noMain, s.unsupported, s.ssaIncomplete, s.goErrors,
 		s.funcs, s.same, s.skipped, s.differ, s.helpers, s.modules, s.ordered)
@@ -443,15 +420,15 @@ func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []stri
 		return nil
 	case none == "rejected":
 		if head != "== rejected" && !strings.HasPrefix(head, "== unsupported ") {
-			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + head}
+			return []string{dir + ": the recording rejects it, the Xo checker does not: " + head}
 		}
 		st.rejected++
 		return nil
 	case head == "== rejected":
-		return []string{dir + ": the Xo checker rejects it, the Go checker does not"}
+		return []string{dir + ": the Xo checker rejects it, the recording does not"}
 	case none == "no main":
 		if !strings.Contains(head, "no `main`") {
-			return []string{dir + ": no main for the Go builder, the Xo emitter prints " + head}
+			return []string{dir + ": no main for the recording, the Xo emitter prints " + head}
 		}
 		st.noMain++
 		return nil
@@ -470,9 +447,9 @@ func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []stri
 			st.goErrors++
 			return nil
 		}
-		return []string{dir + ": the Go emitter reports " + firstLine(none) + "; the Xo emitter prints " + head}
+		return []string{dir + ": the recording reports " + firstLine(none) + "; the Xo emitter prints " + head}
 	case none != "":
-		return []string{dir + ": the Go emitter: " + none}
+		return []string{dir + ": the recording: " + none}
 	case head != "== ir":
 		return []string{dir + ": the Xo emitter prints " + head}
 	}
@@ -489,7 +466,7 @@ func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []stri
 		skip[l[:i]] = l[i+2:]
 	}
 	if e := want.m("split"); e != "" {
-		return []string{dir + ": the Go emitter's IR: " + e}
+		return []string{dir + ": the recording's IR: " + e}
 	}
 	x, err := splitIR(body)
 	if err != nil {
@@ -507,7 +484,7 @@ func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []stri
 		xskipped = append(xskipped, "x."+fn)
 	}
 	sort.Strings(xskipped)
-	// the Go side's splitIR (llvmGoldPieces)
+	// the recorded side's splitIR (llvmGoldPieces)
 	g := want.resolved("d", x.Defs, xskipped).resolved("c", xcanon, nil)
 	if g.eq("module", body) {
 		st.modules++
@@ -561,7 +538,7 @@ func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []stri
 	}
 	for _, name := range x.Order {
 		if !g.has("d:" + name) {
-			fails = append(fails, fmt.Sprintf("%s: the Xo emitter defines %s, the Go emitter does not", dir, name))
+			fails = append(fails, fmt.Sprintf("%s: the Xo emitter defines %s, the recording does not", dir, name))
 		}
 	}
 	if len(skip) == 0 {

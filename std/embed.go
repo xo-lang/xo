@@ -1,9 +1,8 @@
-// Package std embeds the xo standard library declaration files (std/*.xo)
-// and the Go source of the runtime package (std/rt) that implements them.
-// The declarations are bodiless signature listings of spec/std.md, parsed
-// in parser.SignatureMode and loaded by internal/check. The encoding of
-// spec/std.md pseudo syntax is documented at the top of prelude.xo. The
-// runtime is copied into every build directory by internal/build.
+// Package std embeds the xo standard library declaration files (std/*.xo):
+// bodiless signature listings of spec/std.md, whose encoding is
+// documented at the top of prelude.xo. Since decision 0215 its one user
+// is internal/gobind (the prelude's type names); xo itself reads std/ as
+// a directory (lib/xo/std of a release, std/ of a checkout).
 package std
 
 import "embed"
@@ -13,6 +12,3 @@ import "embed"
 //
 //go:embed *.xo
 var Files embed.FS
-
-// NativeFiles, Runtime, and LLRuntime are in embed_impl.go: the playground
-// build (tag xo_playground, cmd/xoplay) leaves them empty.

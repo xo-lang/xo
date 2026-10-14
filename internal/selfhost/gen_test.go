@@ -14,9 +14,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
 )
 
 // genFlags are the flags both generators run with: the default lowering
@@ -38,22 +35,22 @@ var genHeavy = map[string]bool{
 }
 
 // TestSelfhostGen runs the Xo Go code generator (selfhost/gen, decision
-// 0167), built with each backend, and internal/gen (build.GoGenDump, the
-// text of `xo gendump`) on every directory of the repository holding .xo
-// files, as programs and, for those with test blocks, as test binaries,
-// and compares the generated Go: every file after internal/gen's last
-// step (the Xo generator's own with --prep, blank uses and repeated
-// //line directives dropped, then gofmt here), cut into top level
-// declarations (genDecls) with the temporaries renumbered; every
-// declaration the Xo generator writes must be identical to the Go
-// generator's of the same name, and one it skips is counted, never
-// compared. A run with no declaration skipped must be identical byte for
+// 0167), built with each backend, on every directory of the repository
+// holding .xo files, as programs and, for those with test blocks, as test
+// binaries, and compares the generated Go with the recording (the Go
+// generator's `xo gendump` until decision 0215): every file after the
+// last step (the Xo generator's --prep, blank uses and repeated //line
+// directives dropped, then gofmt here), cut into top level declarations
+// (genDecls) with the temporaries renumbered; every declaration the Xo
+// generator writes must be identical to the recorded one of the same
+// name, and one it skips is counted, never compared. A run with no declaration skipped must be identical byte for
 // byte. Every fourth run is also generated with genAlt (every run in the
 // full tier). The merge tier takes every run but genHeavy; -short every 25th;
 // the go backend only except in the full tier. XO_SELFHOST_BACKEND names
 // one backend, XO_SELFHOST_KEEP=<dir> writes gen-<backend>.txt (the
 // counts).
 func TestSelfhostGen(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		backends = []string{v}
@@ -80,25 +77,6 @@ func TestSelfhostGen(t *testing.T) {
 			alts = append(alts, d)
 		}
 	}
-	wants := make([]*goldPieces, len(dirs))
-	twants := make([]*goldPieces, len(tests))
-	awants := make([]*goldPieces, len(alts))
-	// the Go generator's results, while the subtests run the Xo one
-	wait := background(t, func() {
-		all := append(append(append([]string(nil), dirs...), tests...), alts...)
-		parallel(t, "Go generator", all, func(i int) {
-			switch {
-			case i < len(dirs):
-				wants[i] = goGen(dirs[i], genFlags, false)
-			case i < len(dirs)+len(tests):
-				i -= len(dirs)
-				twants[i] = goGen(tests[i], genFlags, true)
-			default:
-				i -= len(dirs) + len(tests)
-				awants[i] = goGen(alts[i], genAlt, false)
-			}
-		})
-	})
 	bins := selfhostBinaries(t, "gen", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
@@ -110,17 +88,16 @@ func TestSelfhostGen(t *testing.T) {
 			got := runGen(t, bin, root, dirs, genFlags)
 			tgot := runGen(t, bin, root, tests, append([]string{"--test"}, genFlags...))
 			agot := runGen(t, bin, root, alts, genAlt)
-			wait()
 			var st genStats
 			var fails []string
-			for i, d := range dirs {
-				fails = append(fails, compareGen(d, wants[i], got[d], &st)...)
+			for _, d := range dirs {
+				fails = append(fails, compareGen(d, goGen(d, genFlags, false, got[d]), got[d], &st)...)
 			}
-			for i, d := range tests {
-				fails = append(fails, compareGen(d+" (test)", twants[i], tgot[d], &st)...)
+			for _, d := range tests {
+				fails = append(fails, compareGen(d+" (test)", goGen(d, genFlags, true, tgot[d]), tgot[d], &st)...)
 			}
-			for i, d := range alts {
-				fails = append(fails, compareGen(d+" (no-mono, no-ranges, release)", awants[i], agot[d], &st)...)
+			for _, d := range alts {
+				fails = append(fails, compareGen(d+" (no-mono, no-ranges, release)", goGen(d, genAlt, false, agot[d]), agot[d], &st)...)
 			}
 			t.Logf("%s", st)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
@@ -137,6 +114,7 @@ func TestSelfhostGen(t *testing.T) {
 // TestSelfhostSSAMutations): 300 in the full tier, 60 in the merge tier,
 // none with -short; XO_SELFHOST_GEN_FUZZ=N and XO_SELFHOST_SEED override.
 func TestSelfhostGenMutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources")
 	}
@@ -193,22 +171,11 @@ func TestSelfhostGenMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
-	if goldensRecording() {
-		for _, d := range dirs {
-			goGen(d, genFlags, false)
-		}
-		skipRecording(t)
-	}
-	wants := make([]*goldPieces, len(dirs))
-	wait := background(t, func() {
-		parallel(t, "Go generator", dirs, func(i int) { wants[i] = goGen(dirs[i], genFlags, false) })
-	})
 	got := runGen(t, bin, tmp, dirs, genFlags, "--std="+stdDir)
-	wait()
 	var st genStats
 	var fails []string
-	for i, d := range dirs {
-		fails = append(fails, compareGen(d, wants[i], got[d], &st)...)
+	for _, d := range dirs {
+		fails = append(fails, compareGen(d, goGen(d, genFlags, false, got[d]), got[d], &st)...)
 	}
 	t.Logf("%d mutations: %s", n, st)
 	reportFails(t, fails)
@@ -240,28 +207,58 @@ func hasHole(dir string) bool {
 	return false
 }
 
-// goGen is what `xo gendump` prints for dir with flags, cut into the
-// pieces compareGen compares: meta "head" (the first line), "file:<path>"
-// (each file), and "decl:<path> <key>" (each top level declaration of a
-// file, genDecls). Recorded as the gendump kind (gogoldens_test.go).
-func goGen(dir string, flags []string, test bool) *goldPieces {
+// goGen is the recorded generated Go of dir with flags (the gendump kind,
+// gogoldens_test.go), cut into the pieces compareGen compares: meta
+// "head" (the first line), "file:<path>" (each file), and "decl:<path>
+// <key>" (each top level declaration of a file, genDecls). got is the Xo
+// generator's output for dir, which a recording run records (xoGenDump).
+func goGen(dir string, flags []string, test bool, got string) *goldPieces {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, dir)
 	o := fmt.Sprintf("flags=%s test=%v", strings.Join(flags, ","), test)
-	var key []string
-	if goldensMode() != goldensLive {
-		key = []string{o, cx.dirKey(wd, dir, false)}
-	}
+	key := []string{o, cx.dirKey(wd, dir, false)}
 	fl := strings.Join(flags, " ")
 	if test {
 		fl = strings.TrimSpace("--test " + fl)
 	}
-	hint := goldHint("TestSelfhostGen(Mutations)?", strings.TrimSpace("gendump "+fl+" "+dir), "gen",
+	hint := goldHint("TestSelfhostGen(Mutations)?", "gen",
 		strings.TrimSpace("--each --prep --std=std --wd="+wd+" "+fl)+" "+dir, wd)
-	return recordedPieces("gendump", dir+" "+o, hint, key, cx, func() *goldPieces { return genGoldPieces(goGenLive(dir, flags, test)) })
+	return recordedPieces("gendump", dir+" "+o, hint, key, cx, func() *goldPieces { return genGoldPieces(xoGenDump(got)) })
 }
 
-// genGoldPieces cuts the Go generator's dump into goGen's pieces.
+// xoGenDump is the Xo generator's output for a run in the form of a
+// generator dump (`== file <path>` and each file, the Go files gofmt'd
+// as compareGen formats them, without the skipped list), or its first
+// line when it made no files.
+func xoGenDump(got string) string {
+	got, prepped := strings.CutPrefix(got, "== prepped\n")
+	xh := firstLine(got)
+	if strings.HasPrefix(xh, "== rejected") || strings.HasPrefix(xh, "== error") || strings.HasPrefix(xh, "== unsupported") {
+		return xh + "\n"
+	}
+	files, _ := genFiles(got)
+	var b strings.Builder
+	for _, p := range sortedKeys(files) {
+		raw := files[p]
+		if strings.HasSuffix(p, ".go") {
+			var src []byte
+			var err error
+			if prepped {
+				src, err = format.Source([]byte(raw))
+			} else {
+				src, err = formatGenFile([]byte(raw))
+			}
+			if err != nil {
+				return "== error the Xo generator's " + p + " does not format: " + err.Error() + "\n"
+			}
+			raw = string(src)
+		}
+		b.WriteString("== file " + p + "\n" + raw)
+	}
+	return b.String()
+}
+
+// genGoldPieces cuts a generator dump into goGen's pieces.
 func genGoldPieces(text string) *goldPieces {
 	p := newPieces()
 	p.setMeta("head", firstLine(text))
@@ -279,29 +276,6 @@ func genGoldPieces(text string) *goldPieces {
 		}
 	}
 	return p
-}
-
-// goGenLive is goGen with internal/gen run.
-func goGenLive(dir string, flags []string, test bool) string {
-	opts := gen.Options{Mode: gen.Build, Arenas: true}
-	if test {
-		opts.Mode = gen.Test
-	}
-	for _, f := range flags {
-		switch f {
-		case "--no-mono":
-			opts.NoMono = true
-		case "--no-ranges":
-			opts.NoRanges = true
-		case "--no-arenas":
-			opts.Arenas = false
-		case "--release":
-			opts.Release = true
-		case "--no-error-args":
-			opts.NoErrorArgs = true
-		}
-	}
-	return build.GoGenDump([]string{dir}, opts)
 }
 
 var genHead = regexp.MustCompile(`(?m)^=== gen `)
@@ -343,7 +317,7 @@ type genStats struct {
 
 func (s genStats) String() string {
 	return fmt.Sprintf("%d runs: %d compared, %d rejected by both, %d with holes, %d not checked by the Xo checker, %d failed in both generators; "+
-		"%d runs byte identical; the Go generator's %d declarations in the runs compared: %d identical, %d skipped by the Xo generator, %d not written after a skip",
+		"%d runs byte identical; the recording's %d declarations in the runs compared: %d identical, %d skipped by the Xo generator, %d not written after a skip",
 		s.runs, s.compared, s.rejected, s.holes, s.unsupported, s.errors, s.byteSame, s.decls, s.same, s.skipped, s.afterSkip)
 }
 
@@ -421,15 +395,15 @@ func compareGen(dir string, want *goldPieces, got string, st *genStats) []string
 			return nil
 		}
 		if xh != "== rejected" {
-			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + xh}
+			return []string{dir + ": the recording rejects it, the Xo checker does not: " + xh}
 		}
 		st.rejected++
 		return nil
 	case xh == "== rejected":
-		return []string{dir + ": the Xo checker rejects it, the Go checker does not"}
+		return []string{dir + ": the Xo checker rejects it, the recording does not"}
 	case strings.HasPrefix(gh, "== error"):
 		if gh != xh {
-			return []string{fmt.Sprintf("%s: the Go generator fails (%s), the Xo generator: %s", dir, gh, xh)}
+			return []string{fmt.Sprintf("%s: the recording fails (%s), the Xo generator: %s", dir, gh, xh)}
 		}
 		st.errors++
 		return nil
@@ -467,7 +441,7 @@ func compareGen(dir string, want *goldPieces, got string, st *genStats) []string
 		}
 		xfiles[p] = string(src)
 	}
-	// the Go side's genFiles (genGoldPieces)
+	// the recorded side's genFiles (genGoldPieces)
 	want = want.resolved("file", xfiles, nil)
 	gpaths := want.names("file:")
 	same := len(fails) == 0 && len(skipped) == 0 && len(gpaths) == len(xfiles)
@@ -532,13 +506,13 @@ func compareGen(dir string, want *goldPieces, got string, st *genStats) []string
 		}
 		for _, k := range sortedKeys(xd) {
 			if !dw.has(decl + k) {
-				fails = append(fails, fmt.Sprintf("%s: %s: the Xo generator writes %s, the Go generator does not", dir, p, k))
+				fails = append(fails, fmt.Sprintf("%s: %s: the Xo generator writes %s, the recording does not", dir, p, k))
 			}
 		}
 	}
 	for p := range xfiles {
 		if !want.has("file:" + p) {
-			fails = append(fails, fmt.Sprintf("%s: the Xo generator writes %s, the Go generator does not", dir, p))
+			fails = append(fails, fmt.Sprintf("%s: the Xo generator writes %s, the recording does not", dir, p))
 		}
 	}
 	sort.Strings(fails)

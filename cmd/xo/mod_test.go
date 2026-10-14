@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
@@ -57,7 +56,7 @@ const appMain = "use github.com/acme/billing/invoice\n\nfn main(os: Os) {\n  os.
 // require, xo.lock verification, xo mod tidy, xo get, offline builds,
 // vendoring, and workspaces, with local git repositories.
 func TestModules(t *testing.T) {
-	modtest.Setup(t, "../../internal/mod/testdata/repos", mod.Compare)
+	modtest.Setup(t, "../../internal/mod/testdata/repos", modtest.Compare)
 	ws := t.TempDir()
 	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
@@ -96,7 +95,7 @@ func TestModules(t *testing.T) {
 
 	// offline: from the cache; an empty cache is XO1303
 	xo(t, "check", "--offline", app).want(0)
-	if err := mod.CleanCache(); err != nil {
+	if err := modtest.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
 	r = xo(t, "check", "--offline", "--json", app).want(1)
@@ -109,7 +108,7 @@ func TestModules(t *testing.T) {
 
 	// vendor: builds use vendor/ with no cache and no network
 	xo(t, "vendor", "--dir", app).want(0)
-	if err := mod.CleanCache(); err != nil {
+	if err := modtest.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
 	xo(t, "check", "--offline", app).want(0)

@@ -1,3 +1,9 @@
+// Package main holds the tests of the xo command line (decision 0215):
+// since the Go implementation of the compiler was deleted, cmd/xo has no
+// Go program, only these tests, which drive the shipped xo (xo1, built
+// from selfhost/xo) as a process: $XO_CLI when it is set (a release's
+// bin/xo, or any built xo), else the checkout's bin/xo, built from the
+// current sources when they changed (internal/xotool).
 package main
 
 import (
@@ -6,25 +12,37 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
+	"regexp"
+	"sync"
+	"testing"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// cliEnv names another xo binary for this package's tests (decision 0178
-// stage 2): when it is set, run execs `$XO_CLI <args>` in the current
-// directory with the current environment and returns its exit status, so
-// the same tests check the self hosted CLI (xo1) against the Go one. The
-// value is split on spaces, so it may carry leading flags.
+// cliEnv names the xo binary these tests run (its fields after the first
+// are leading flags); unset, internal/xotool builds the checkout's.
 const cliEnv = "XO_CLI"
 
-// run is the command line as the tests drive it: runXo in process, or the
-// binary $XO_CLI names.
+// xoCommand is the xo command line the tests run (xotool.Command), or
+// the reason there is none.
+var xoCommand = sync.OnceValues(xotool.Command)
+
+// run is the command line as the tests drive it: the xo binary with args
+// in the current directory with the current environment, and its exit
+// status.
 func run(args []string, stdout, stderr io.Writer) int {
-	cli := strings.Fields(os.Getenv(cliEnv))
-	if len(cli) == 0 {
-		return runXo(args, stdout, stderr)
+	cli, err := xoCommand()
+	if err != nil {
+		fmt.Fprintf(stderr, "no xo to run: %v\n", err)
+		return -1
 	}
 	return execCLI(cli, args, stdout, stderr)
 }
+
+// runXo is run (the name the tests used for the in process Go command
+// line before decision 0215).
+func runXo(args []string, stdout, stderr io.Writer) int { return run(args, stdout, stderr) }
 
 // execCLI runs cli[0] with cli[1:] and args, wiring standard input to this
 // process's, and returns its exit status (-1 when it did not start or was
@@ -50,14 +68,44 @@ func execCLI(cli, args []string, stdout, stderr io.Writer) int {
 	return -1
 }
 
-// skipComparisonDump skips a test of a hidden dump command (lexdump,
-// astdump, typedump, ssadump, asmdump, gendump, llvmdump) when $XO_CLI
-// names another binary: those commands print the Go implementation's
-// output for the differential tests against selfhost/, so the self hosted
-// CLI has none (decision 0178, switch point B: "the hidden dumps used by
-// tests are not needed"; stage 7 replaces them with recorded goldens).
-func skipComparisonDump(t interface{ Skipf(string, ...any) }, cmd string) {
-	if strings.TrimSpace(os.Getenv(cliEnv)) != "" {
-		t.Skipf("xo %s is a hidden comparison dump of the Go implementation, exempt from the %s gate (decision 0178 switch point B)", cmd, cliEnv)
+// xoBin is the path of the xo binary the tests run, for a test that
+// starts it itself (a server).
+func xoBin(t testing.TB) string {
+	t.Helper()
+	cli, err := xoCommand()
+	if err != nil {
+		t.Fatalf("no xo to run: %v", err)
 	}
+	return cli[0]
+}
+
+// repoRoot is the repository root, two levels up from this package.
+var repoRoot = func() string {
+	r, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		panic(err)
+	}
+	return r
+}()
+
+// version is the version xo prints: selfhost/cli/core's VERSION.
+var version = func() string {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "selfhost", "cli", "core", "cli.xo"))
+	if err != nil {
+		panic(err)
+	}
+	m := regexp.MustCompile(`(?m)^pub const VERSION = "(.*)"$`).FindSubmatch(data)
+	if m == nil {
+		panic("no VERSION in selfhost/cli/core/cli.xo")
+	}
+	return string(m[1])
+}()
+
+// regressFile is the file `xo test` writes shrunk contract fuzz failures
+// into (spec/core.md 9.2).
+const regressFile = "regressions_test.xo"
+
+// runTest is `xo test` of args.
+func runTest(args []string, stdout, stderr io.Writer) int {
+	return run(append([]string{"test"}, args...), stdout, stderr)
 }

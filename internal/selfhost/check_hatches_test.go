@@ -27,6 +27,7 @@ const hatchesFixture = "internal/selfhost/testdata/hatches"
 // and XO1102 on a copy of hatchesFixture. The Go checker runs first: it
 // writes the `use go` bindings the Xo checker reads.
 func TestSelfhostCheckerHatches(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("binds Go packages with go list")
 	}
@@ -47,10 +48,6 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 	t.Setenv("XO_WORK", "")
 	dirs := []string{"hatch", "hatchok"}
 	wants := map[string]*goRun{}
-	for _, d := range dirs {
-		wants[d] = goCheck(d)
-	}
-	skipRecording(t)
 	text := runXoBinding(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs...), dirs)
 	parts := strings.Split(text, "=== check ")
 	if len(parts) != len(dirs)+1 {
@@ -60,6 +57,7 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 	codes := map[string]int{}
 	for j, d := range dirs {
 		got := strings.TrimPrefix(parts[j+1], d+"\n")
+		wants[d] = goCheck(d, got)
 		before := st.stagedOK
 		if msg := compareRun(d, wants[d], got, &st); msg != "" {
 			t.Error(msg)
@@ -70,7 +68,7 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported, %d not loadable; diagnostics %v",
+	t.Logf("%d runs: %d accepted by the recording (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported, %d not loadable; diagnostics %v",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported, st.errors, codes)
 	if st.acceptedOK+st.stagedOK != len(dirs) {
 		t.Errorf("want every run compared and identical, got %d of %d", st.acceptedOK+st.stagedOK, len(dirs))

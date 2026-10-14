@@ -36,6 +36,7 @@ var modFixtures = []string{
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerModuleMutations(t *testing.T) {
+	skipDumpReplay(t)
 	n := byTier(t, 40, 400, 400)
 	if v := os.Getenv("XO_SELFHOST_MOD_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
@@ -81,12 +82,6 @@ func TestSelfhostCheckerModuleMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
-	if goldensRecording() {
-		for _, d := range dirs {
-			goCheck(d)
-		}
-		skipRecording(t)
-	}
 	got := map[string]string{}
 	const batch = 100
 	for i := 0; i < len(dirs); i += batch {
@@ -105,7 +100,7 @@ func TestSelfhostCheckerModuleMutations(t *testing.T) {
 	codes := map[string]int{}
 	others := map[string]int{}
 	for _, d := range dirs {
-		want := goCheck(d)
+		want := goCheck(d, got[d])
 		before, otherBefore := st.stagedOK, st.otherRejected
 		if msg := compareRun(d, want, got[d], &st); msg != "" {
 			fails = append(fails, msg)
@@ -121,7 +116,7 @@ func TestSelfhostCheckerModuleMutations(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d module mutations (%v), %d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported, %d not loadable",
+	t.Logf("%d module mutations (%v), %d runs: %d accepted by the recording (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported, %d not loadable",
 		n, kinds, len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported, st.errors)
 	t.Logf("diagnostics of the matching rejected runs: %v", codes)
 	t.Logf("the other errors of the runs rejected otherwise: %v", others)

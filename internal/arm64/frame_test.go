@@ -1,14 +1,10 @@
-package arm64_test
+package arm64
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
 )
 
 // TestBigFrameProbes requires the function `big` of testdata/run/big_frame
@@ -67,16 +63,7 @@ func TestFarOutSlot(t *testing.T) {
 // assembly.
 func linuxAsm(t *testing.T, name string) string {
 	t.Helper()
-	lin := build.Target{OS: "linux", Arch: "arm64"}
-	res, err := build.Build([]string{filepath.Join("testdata", "run", name)}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, Targets: []build.Target{lin}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(res.Asm[lin]) // the path of the assembly file
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
+	return asm(t, filepath.Join("testdata", "run", name), "linux")
 }
 
 // TestFarFrame requires the function `huge` of testdata/run/huge_frame

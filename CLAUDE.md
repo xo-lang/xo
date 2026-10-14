@@ -1,8 +1,9 @@
 # Xo
 
 Xo is a small, statically typed language for backends and web services,
-designed for AI agents to write, check, cross compile, and debug. The P1
-prototype is a compiler written in Go that emits Go source.
+designed for AI agents to write, check, cross compile, and debug. The
+compiler and the `xo` toolchain are written in Xo (selfhost/); the Go
+implementation the language started with was deleted (decision 0215).
 
 ## Safety rules for every agent (required)
 
@@ -93,7 +94,11 @@ Update the knowledgebase in the same change as the work, not later:
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
   - platform runs at milestones (owner, 2026-10-13): agents verify on
-    the Mac only (targeted heavy runs, `-short`); Linux and Windows runs
+    the Mac only for Linux and Windows coverage (targeted heavy runs,
+    `-short`; long pass/fail runs such as package suites, xo1 goldens,
+    replays, and fixed points go to the lead's EC2 queue, warm machines,
+    not the Mac's single heavy slot; the Mac keeps short runs,
+    instruction counts, and steps that write into the worktree); Linux and Windows runs
     happen at milestones (after a stage of runtime or compiler work),
     run by the lead on EC2, and failures are bisected over the
     milestone's merges (one targeted test per probe). Code that cannot
@@ -109,24 +114,33 @@ Update the knowledgebase in the same change as the work, not later:
     min(GOMAXPROCS, 4)); full runs nightly, before tagging, and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
-- Native builds (`xo build|run|test` with `--backend=arm64|llvm` or
-  `--no-gc`) run the self hosted driver xo1 (decision 0178 switch point
-  A, 2026-10-12): `xo` builds it from its embedded selfhost/ sources
-  into `<user cache>/xo/xo1/bin/<binkey>` the first time (several
-  minutes, once per change of selfhost/ or of a std module xo1 uses;
-  other std, std/llrt, and third_party changes reuse it), so a change
-  under selfhost/ changes what native builds do. `XO_SELF_DRIVER=0` runs the Go driver; `XO1=<path>` uses a
-  prebuilt xo1.
-- Go implementation frozen (decision 0178 stage 7 step 1, switch point
-  B merged 2026-10-13, 730c67a): the shipped `xo` is xo1, and the Xo
-  implementation (selfhost/, std/) plus the spec are the source of truth.
-  No language change lands in the Go compiler packages (internal/lexer,
-  parser, check, ssa, gen, arm64, llvm, build, cmd/xo's compiler paths).
-  Every compiler change (language, backends, targets, driver) lands in
-  selfhost/ first; a Go-side change is allowed only to keep the Go side
-  building the bootstrap seed and passing its tests, or to mirror an Xo
-  change a remaining differential test needs. A new target or backend
-  feature counts as done only when xo1 builds it.
+- The Go compiler is gone (decision 0215, 2026-10-13; the last commit
+  with it is tagged `go-compiler-final`, 87873aa5): `xo` is xo1, built
+  from selfhost/xo, and the Xo implementation (selfhost/, std/) plus the
+  spec are the source of truth. Every compiler change (language,
+  backends, targets, driver) lands in selfhost/. What stays in Go: std/rt
+  (the Go backend's runtime), internal/gobind and cmd/xo-gobind (`use
+  go`), internal/gotool, the test infrastructure (internal/xotool,
+  progen, testtmp, mod/modtest), and test only packages (cmd/xo,
+  internal/llvm, gen, arm64, selfhost, repotest) that drive the xo
+  binary.
+- The xo the Go tests and scripts run (internal/xotool): `$XO_CLI`, else
+  the checkout's `bin/xo`, which `go run ./scripts/xobuild` (and any Go
+  test that needs it) rebuilds when selfhost/ or a std module it uses
+  changed: several minutes and several GB, once per source key, shared
+  by worktrees in `<user cache>/xo/checkout/<key>`. An earlier xo builds
+  it (`XO_SEED`, the earlier bin/xo, the newest cached build, `xo` on
+  PATH, else the xo1 of the go-compiler-final tag, built once with Go,
+  through the hops of scripts/seed-chain.txt, decision 0216).
+  Set `XO_CLI` to a built xo to skip rebuilds while iterating.
+- The TestSelfhost* tests compare each self hosted component with a
+  recording (internal/selfhost/testdata/gogoldens, the Go
+  implementation's output until decision 0215). A change that alters a
+  component's output on purpose, or a new or changed input with no
+  recording, needs `scripts/selfhost-record-goldens.sh` (record: units
+  with no recording of their input; `XO_SELFHOST_GOLDENS=rerecord` for
+  every unit a run computes) and a look at the recording's diff in the
+  same change.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.

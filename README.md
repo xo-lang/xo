@@ -87,28 +87,28 @@ Keep the layout: `bin/xo` finds std and the runtime in `../lib/xo`
 `bin` directory on PATH, or link `bin/xo` from a PATH directory
 (symbolic links are followed).
 
-From a checkout, the Go `cmd/xo` is the bootstrap seed (Go 1.26 or
-later) that builds the first Xo `xo`:
+From a checkout, an existing `xo` builds the next one: there is no Go
+implementation of the compiler any more (decision 0215). The seed is a
+previous `xo` (a release's `bin/xo`, or an earlier build), or, with no
+`xo` at all, the one built from the `go-compiler-final` tag, the last
+commit with the Go compiler (Go 1.26 or later). One command does it:
 
 ```
-go build -o .tools/bin/xo-seed ./cmd/xo
-XO_SELF_DRIVER=0 .tools/bin/xo-seed build --backend=arm64 -o .tools/bin/xo selfhost/xo
+go run ./scripts/xobuild          # prints the path of bin/xo
+XO_SEED=/path/to/xo go run ./scripts/xobuild
 ```
 
-on an arm64 host (Apple Silicon, arm64 Linux). On an x86-64 host the
-seed builds `xo` with the LLVM backend (clang needed):
-
-```
-go build -o .tools/bin/xo-seed ./cmd/xo
-XO_SELF_DRIVER=0 XO_LLVM_SPLIT=12 XO_LLVM_LTO=none \
-  .tools/bin/xo-seed build --backend=llvm -o .tools/bin/xo selfhost/xo
-```
-
-(about 36 minutes and 10 GB of memory on a 16 vCPU Linux machine,
-bench/results/xo1-x86-2026-10-12.md "The README seed path on x86-64"). Either
-needs `XO_STD=$PWD/std` (or the release layout) to run; after
-that, any Xo `xo` rebuilds itself without Go
-(`scripts/bootstrap-xo.sh`).
+It builds `bin/xo` (git ignored) from the checkout's `selfhost/xo` when
+its sources changed, with the arm64 backend on an arm64 host (Apple
+Silicon, arm64 Linux) and the LLVM backend split into 12 modules on an
+x86-64 host (clang needed; about 36 minutes and 10 GB of memory on a 16
+vCPU Linux machine, bench/results/xo1-x86-2026-10-12.md "The README seed
+path on x86-64"). The seed order (`$XO_SEED`, the checkout's earlier
+`bin/xo`, the newest earlier build in `<user cache>/xo/checkout`, `xo`
+on PATH, then the `go-compiler-final` seed, built once with Go into
+`<user cache>/xo/seed`) is internal/xotool's. `bin/xo` finds `std` at
+`../std`, as a release's finds `lib/xo/std`. After that, any Xo `xo`
+rebuilds itself without Go (`scripts/bootstrap-xo.sh`).
 
 The module path is `github.com/xo-lang/xo` (local name; see
 `knowledgebase/infrastructure/toolchain.md`).

@@ -80,14 +80,6 @@ fn main(os: Os) {
 	if got := diagCodes(t, r.out); got != "XO1317,XO1316" && got != "XO1316,XO1317" {
 		t.Errorf("audit diagnostics: %s", got)
 	}
-	// the text form names what matters
-	r = xo(t, "audit", "--dir", app)
-	_ = r // stdout is not a terminal in tests: JSON; the text form is printAudit
-	var b strings.Builder
-	printAudit(&rep, &b)
-	for _, want := range []string{"UNVOUCHED", "widened (locked: env), added: net.dial", "Env -> ", "UNATTENUATED", "Net.only(api.test)"} {
-		if !strings.Contains(b.String(), want) {
-			t.Errorf("text report lacks %q:\n%s", want, b.String())
-		}
-	}
+	// the text form is for a terminal only (stdout is a pipe here, so
+	// JSON); the Go printer this compared went with decision 0215
 }

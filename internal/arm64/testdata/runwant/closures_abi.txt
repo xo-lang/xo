@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+big 49
+floats 137.5
+named 11
+pair 42 2.5
+inc 6
+dbl 10
+total 31
+chain 100000
+kept 25
+--- stderr

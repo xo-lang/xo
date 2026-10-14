@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
@@ -18,7 +17,7 @@ import (
 // publish --check` all handle the prefix; the root module's tree leaves
 // the nested module out.
 func TestSubdirModules(t *testing.T) {
-	env := modtest.Setup(t, t.TempDir(), mod.Compare)
+	env := modtest.Setup(t, t.TempDir(), modtest.Compare)
 	repo := filepath.Join(env.Repos, "github.com", "acme", "tools")
 	os.MkdirAll(repo, 0o755)
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
@@ -56,10 +55,10 @@ func TestSubdirModules(t *testing.T) {
 		}
 	}
 	// the root module's tree leaves the nested module out
-	if _, err := os.Stat(filepath.Join(mod.VersionDir("github.com/acme/tools", "v1.0.0"), "cli")); err == nil {
+	if _, err := os.Stat(filepath.Join(modtest.VersionDir("github.com/acme/tools", "v1.0.0"), "cli")); err == nil {
 		t.Error("the root module's cache tree holds the nested module cli/")
 	}
-	if _, err := os.Stat(filepath.Join(mod.VersionDir("github.com/acme/tools/cli", "v1.2.0"), "flags", "flag.xo")); err != nil {
+	if _, err := os.Stat(filepath.Join(modtest.VersionDir("github.com/acme/tools/cli", "v1.2.0"), "flags", "flag.xo")); err != nil {
 		t.Errorf("the cli module's tree: %v", err)
 	}
 	r := xo(t, "run", filepath.Join(app, "main")).want(0)

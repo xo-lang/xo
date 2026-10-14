@@ -17,8 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // nativeBackends lists the native backends this host can build tests
@@ -27,12 +26,12 @@ func nativeBackends(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		if _, err := build.CC(); err == nil {
-			out = append(out, build.BackendArm64)
+		if _, err := xotool.CC(); err == nil {
+			out = append(out, xotool.BackendArm64)
 		}
 	}
-	if _, err := build.Clang(); err == nil {
-		out = append(out, build.BackendLLVM)
+	if _, err := xotool.Clang(); err == nil {
+		out = append(out, xotool.BackendLLVM)
 	}
 	if len(out) == 0 {
 		t.Skip("no native backend on this host")
@@ -106,6 +105,29 @@ func TestNoGCTests(t *testing.T) {
 
 var leakLine = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
+// testBlocks is the number of `test` blocks in the .xo files of dir (not
+// below it): the tests a native test binary of dir numbers.
+func testBlocks(t *testing.T, dir string) int {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	re := regexp.MustCompile(`(?m)^test "`)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += len(re.FindAll(src, -1))
+	}
+	if n == 0 {
+		t.Fatalf("no test blocks in %s", dir)
+	}
+	return n
+}
+
 // TestNoGCTestLeaks runs every passing test of the native test binaries
 // with XO_LEAKCHECK=1: no allocation may be live at exit.
 func TestNoGCTestLeaks(t *testing.T) {
@@ -115,23 +137,24 @@ func TestNoGCTestLeaks(t *testing.T) {
 	backends := nativeBackends(t)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service")} {
+		n := testBlocks(t, dir)
 		for _, be := range backends {
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test, NoGC: true, Backend: be})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")})
 			if err != nil || res.Failed {
-				t.Fatalf("%s on %s: %v %v", dir, be, err, res.Diagnostics)
+				t.Fatalf("%s on %s: %v %s", dir, be, err, res.Output)
 			}
-			bin := res.Binaries[build.Host()]
-			for _, ti := range res.Tests {
-				if ti.Skip != "" {
-					continue // not in the binary (a contract fuzz test)
-				}
-				ti := ti
+			bin := res.Binaries[xotool.Host()]
+			// the test binary numbers the test blocks of its root modules
+			// from 0 (contract fuzz tests are not in a native binary);
+			// the tests run in the module's directory
+			tdir, _ := filepath.Abs(dir)
+			for index := 0; index < n; index++ {
 				// one process per test: they run in parallel
-				t.Run(fmt.Sprintf("%s/%s/%d", filepath.Base(dir), be, ti.Index), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/%s/%d", filepath.Base(dir), be, index), func(t *testing.T) {
 					t.Parallel()
 					cmd := exec.Command(bin)
-					cmd.Dir = ti.Dir
-					cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(ti.Index), "XO_LEAKCHECK=1")
+					cmd.Dir = tdir
+					cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
 					var errb bytes.Buffer
 					cmd.Stdout, cmd.Stderr = io.Discard, &errb
 					if cmd.Run() != nil {
@@ -139,11 +162,11 @@ func TestNoGCTestLeaks(t *testing.T) {
 					}
 					m := leakLine.FindStringSubmatch(errb.String())
 					if m == nil {
-						t.Errorf("%s %q on %s: no leak check line:\n%s", dir, ti.Name, be, errb.String())
+						t.Errorf("%s test %d on %s: no leak check line:\n%s", dir, index, be, errb.String())
 						return
 					}
 					if m[1] != "0" {
-						t.Errorf("%s %q on %s: %s allocations live at exit (of %s)", dir, ti.Name, be, m[1], m[2])
+						t.Errorf("%s test %d on %s: %s allocations live at exit (of %s)", dir, index, be, m[1], m[2])
 					}
 				})
 			}
@@ -205,17 +228,17 @@ func TestNoGCNotesServer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the service")
 	}
-	backends := append([]string{build.BackendGo}, nativeBackends(t)...)
+	backends := append([]string{xotool.BackendGo}, nativeBackends(t)...)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := filepath.Join("..", "..", "examples", "notes-service")
 	var want string
 	for _, be := range backends {
-		opts := build.Options{Mode: gen.Build, Backend: be, NoGC: be != build.BackendGo, Out: filepath.Join(t.TempDir(), "notes")}
-		res, err := build.Build([]string{dir}, opts)
+		opts := xotool.Options{Backend: be, NoGC: be != xotool.BackendGo, Out: filepath.Join(t.TempDir(), "notes")}
+		res, err := xotool.Build([]string{dir}, opts)
 		if err != nil || res.Failed {
-			t.Fatalf("%s: %v %v", be, err, res.Diagnostics)
+			t.Fatalf("%s: %v %s", be, err, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[build.Host()])
+		cmd := exec.Command(res.Binaries[xotool.Host()])
 		cmd.Env = append(os.Environ(), "NOTES_TOKEN=t0p", "NOTES_PASSWORD=correct horse", "NOTES_ADDR=127.0.0.1:0")
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
@@ -265,7 +288,7 @@ func TestNoGCNotesServer(t *testing.T) {
 		if last := logs[len(logs)-1]; !strings.HasSuffix(last, "INFO stopped") {
 			t.Errorf("%s: last log line %q", be, last)
 		}
-		if be == build.BackendGo {
+		if be == xotool.BackendGo {
 			want = got
 		} else if got != want {
 			t.Errorf("%s answers differ from the Go backend's\n--- go\n%s--- %s\n%s", be, want, be, got)

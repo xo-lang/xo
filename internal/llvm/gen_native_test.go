@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bufio"
@@ -12,8 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestGenGoldensNative builds the programs of internal/gen's goldens
@@ -26,30 +25,30 @@ import (
 // clock, the network, or the machine; a program that stops building
 // natively (XO1201) fails the test.
 func TestGenGoldensNative(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	if testing.Short() {
 		t.Skip("builds every listed program three times")
 	}
 	names := genNativeList(t)
-	backends := []string{build.BackendLLVM}
+	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	for _, name := range names {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("..", "gen", "testdata", "golden", name)
-			goRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendGo})
+			goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 			for _, be := range backends {
-				res, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
+				res, b := buildRun(t, dir, xotool.Options{Backend: be})
 				if goRes.String() != res.String() {
 					t.Errorf("%s backend differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, goRes, be, res)
 				}
 				if res.exit == 0 {
-					leakCheck(t, b.Binaries[build.Host()], dir)
+					leakCheck(t, b.Binaries[xotool.Host()], dir)
 				}
 			}
 		})
@@ -85,22 +84,22 @@ func genNativeList(t *testing.T) []string {
 // indented lines): only the crash bundle line, which native builds do not
 // write, is left out.
 func TestErrorTracesNative(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	if testing.Short() {
 		t.Skip("builds every listed program three times")
 	}
-	backends := []string{build.BackendLLVM}
+	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	for _, name := range []string{"error_conversion", "error_frames", "error_frames_borrow", "error_frames_capture", "main_custom_err", "scope_failure", "arena_frames", "error_frames_closures", "os_tasks"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("..", "gen", "testdata", "golden", name)
-			want := fullRun(t, dir, build.BackendGo)
+			want := fullRun(t, dir, xotool.BackendGo)
 			for _, be := range backends {
 				if got := fullRun(t, dir, be); got != want {
 					t.Errorf("%s differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, want, be, got)
@@ -114,11 +113,11 @@ func TestErrorTracesNative(t *testing.T) {
 // stderr without crash bundle lines.
 func fullRun(t *testing.T, dir, be string) string {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
 	if err != nil || res.Failed {
 		t.Fatalf("build (%s): %v", be, err)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[xotool.Host()])
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

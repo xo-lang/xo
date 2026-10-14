@@ -5,67 +5,45 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/check"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/parser"
 )
 
 // TestSelfhostChecker runs the Xo checker (selfhost/check), built with
-// each backend, and the Go checker (internal/check) on every directory of
-// the repository that holds .xo files, each checked as a run of its own
-// like `xo check <dir>`, and compares the names, types, and sigs sections
-// of `xo typedump` (decision 0141, stages 1 to 3):
+// each backend, on every directory of the repository that holds .xo
+// files, each checked as a run of its own like `xo check <dir>`, and
+// compares the names, types, and sigs sections of its typedump and its
+// diagnostics with the recording (decision 0141, stages 1 to 3; the Go
+// checker's until decision 0215, gogoldens_test.go):
 //
-//   - every run the Go checker accepts (no errors) has identical names,
-//     types, and sigs sections (the effects of signatures only when
-//     compareSigEffects is set), and the Xo checker reports nothing;
-//   - every run the Go checker rejects only with diagnostics of the
-//     stages done (stageDiag: names, types, Option and Result rules,
-//     generics) gets exactly those diagnostics from the Xo checker.
+//   - every run the recording accepts (no errors) has identical names,
+//     types, and sigs sections, and the same warnings;
+//   - every run the recording rejects only with diagnostics of the
+//     stages done (stageDiag) gets exactly those diagnostics.
 //
-// `use go` runs load the binding the Go checker wrote to the gobind cache,
-// `use c` runs the one it wrote to the cbind cache (decision 0152); the
-// runs with `use c` are compared a second time checked as a native build
-// checks them (`--native`, check.Options.Native), where C interop is
-// allowed. Runs the Xo checker cannot load (a binding missing from the
-// cache, a module to fetch) and runs rejected for other reasons are
-// counted, not compared; the unsupported ones are logged by reason. The
-// coverage (runs matching / runs) is logged. The go backend only, except
-// in the full tier (tier_test.go).
+// `use go` runs load the binding in the gobind cache, `use c` runs the
+// one in the cbind cache (decision 0152); the runs with `use c` are
+// compared a second time checked as a native build checks them
+// (`--native`), where C interop is allowed. Runs the Xo checker cannot
+// load (a binding missing from the cache, a module to fetch) and runs
+// rejected for other reasons are counted, not compared; the unsupported
+// ones are logged by reason. The coverage (runs matching / runs) is
+// logged. The go backend only, except in the full tier (tier_test.go).
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
 func TestSelfhostChecker(t *testing.T) {
 	backends := tierBackends(t)
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	// The Go checker prints paths relative to the working directory, as
-	// the Xo checker run from root does.
+	// paths are relative to the working directory, as the Xo checker
+	// run from root prints them
 	t.Chdir(root)
 	setModEnv(t, root)
 	// the `use c` runs again, checked as a native build checks them
 	cDirs := useCDirs(t, root, dirs)
-	want := map[string]*goRun{}
-	wantNative := map[string]*goRun{}
-	// the Go checker's results, while the subtests run the Xo checker
-	wait := background(t, func() {
-		wants := make([]*goRun, len(dirs))
-		parallel(t, "Go checker", dirs, func(i int) { wants[i] = goCheck(dirs[i]) })
-		for i, d := range dirs {
-			want[d] = wants[i]
-		}
-		for _, d := range cDirs {
-			wantNative[d] = goCheckOpts(d, check.Options{Native: true})
-		}
-	})
 	bins := selfhostBinaries(t, "check", backends)
 	for _, b := range backends {
 		bin, ok := bins[b]
@@ -75,7 +53,10 @@ func TestSelfhostChecker(t *testing.T) {
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
 			got := runChecker(t, bin, root, dirs)
-			wait()
+			want := map[string]*goRun{}
+			for _, d := range dirs {
+				want[d] = goCheck(d, got[d])
+			}
 			var st checkStats
 			var fails []string
 			var report strings.Builder
@@ -101,18 +82,18 @@ func TestSelfhostChecker(t *testing.T) {
 				os.MkdirAll(keep, 0o755)
 				os.WriteFile(filepath.Join(keep, "check-"+b+".txt"), []byte(report.String()), 0o644)
 			}
-			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise (%d with the same staged diagnostics), %d unsupported by the Xo checker, %d not loadable",
+			t.Logf("%d runs: %d accepted by the recording (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise (%d with the same staged diagnostics), %d unsupported by the Xo checker, %d not loadable",
 				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.otherSame, st.unsupported, st.errors)
 			t.Logf("diagnostics of the matching rejected runs: %v", codes)
 			t.Logf("unsupported runs by reason: %v", why)
 			gotNative := runCheckerOpts(t, bin, root, cDirs, "--native")
 			var nst checkStats
 			for _, d := range cDirs {
-				if msg := compareRun(d, wantNative[d], gotNative[d], &nst); msg != "" {
+				if msg := compareRun(d, goCheckOpts(d, true, gotNative[d]), gotNative[d], &nst); msg != "" {
 					fails = append(fails, "native: "+msg)
 				}
 			}
-			t.Logf("%d `use c` runs checked as native builds: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported by the Xo checker",
+			t.Logf("%d `use c` runs checked as native builds: %d accepted by the recording (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported by the Xo checker",
 				len(cDirs), nst.accepted, nst.acceptedOK, nst.staged, nst.stagedOK, nst.otherRejected, nst.unsupported)
 			if len(fails) > 0 {
 				show := 10
@@ -151,7 +132,7 @@ func (s checkStats) class(before checkStats) string {
 	return "error"
 }
 
-// goRun is the Go checker's result for one run.
+// goRun is the recorded checker result of one run.
 type goRun struct {
 	err error
 	// accepted: no errors; onlyStaged: every error is a stageDiag.
@@ -164,14 +145,14 @@ type goRun struct {
 	// meta "run" the verdict, meta "error" err
 	p *goldPieces
 
-	// set by goCheckLive only
+	// set by xoRunPieces only
 	dump         string
 	staged, full []string
 }
 
-// stagedLines is the Go checker's stageDiag lines of the run whose Xo
-// output is got: replayed, the Xo checker's, valid when compareRun
-// found them the same.
+// stagedLines is the recorded stageDiag lines of the run whose Xo
+// output is got: the Xo checker's, valid when compareRun found them the
+// same.
 func (r *goRun) stagedLines(got string) []string {
 	if t, ok := r.p.text("staged"); ok {
 		return nonEmptyLines(t)
@@ -180,30 +161,48 @@ func (r *goRun) stagedLines(got string) []string {
 	return diags
 }
 
-// goCheck checks dir with the Go checker.
-func goCheck(dir string) *goRun { return goCheckOpts(dir, check.Options{}) }
+// goCheck is the recorded result of checking dir (the typedump kind,
+// gogoldens_test.go); got is the Xo checker's output for it, which a
+// recording run records.
+func goCheck(dir, got string) *goRun { return goCheckOpts(dir, false, got) }
 
-// goCheckOpts checks dir with the Go checker and options (Native),
-// recorded as the typedump kind (gogoldens_test.go).
-func goCheckOpts(dir string, opts check.Options) *goRun {
+// goCheckOpts is goCheck of a native check (--native) when native is
+// set.
+func goCheckOpts(dir string, native bool, got string) *goRun {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, dir)
-	o := fmt.Sprintf("native=%v", opts.Native)
-	var key []string
-	if goldensMode() != goldensLive {
-		key = []string{o, cx.dirKey(wd, dir, opts.Native)}
+	o := fmt.Sprintf("native=%v", native)
+	key := []string{o, cx.dirKey(wd, dir, native)}
+	flag := ""
+	if native {
+		flag = "--native "
 	}
-	native := ""
-	if opts.Native {
-		native = "--native "
-	}
-	hint := goldHint("TestSelfhostChecker(Mutations|ModuleMutations|Hatches)?", "typedump "+native+dir, "check",
-		"--each --std=std "+native+"--wd="+wd+" "+dir, wd)
-	p := recordedPieces("typedump", dir+" "+o, hint, key, cx, func() *goldPieces { return goCheckLive(dir, opts).pieces() })
+	hint := goldHint("TestSelfhostChecker(Mutations|ModuleMutations|Hatches)?", "check",
+		"--each --std=std "+flag+"--wd="+wd+" "+dir, wd)
+	p := recordedPieces("typedump", dir+" "+o, hint, key, cx, func() *goldPieces { return xoRunPieces(got) })
 	return goRunOf(p)
 }
 
-// pieces is the live run's pieces.
+// xoRunPieces is the Xo checker's output for a run as the pieces a
+// recording records: every diagnostic is a staged one (the Xo checker
+// reports the diagnostics it reproduces), the run is accepted when no
+// full line is an error; a run the Xo checker cannot load is an error,
+// not compared.
+func xoRunPieces(got string) *goldPieces {
+	if strings.HasPrefix(got, "== unsupported ") {
+		return (&goRun{err: errors.New(firstLine(got))}).pieces()
+	}
+	dump, diags, full := splitDiags(got)
+	r := &goRun{dump: dump, accepted: true, onlyStaged: true, staged: diags, full: full}
+	for _, l := range full {
+		if strings.Contains(l, `"severity":"error"`) {
+			r.accepted = false
+		}
+	}
+	return r.pieces()
+}
+
+// pieces is the run's pieces, to record.
 func (r *goRun) pieces() *goldPieces {
 	p := newPieces()
 	if r.err != nil {
@@ -217,7 +216,7 @@ func (r *goRun) pieces() *goldPieces {
 	return p
 }
 
-// goRunOf is the run of its pieces (live or replayed).
+// goRunOf is the run of its (replayed) pieces.
 func goRunOf(p *goldPieces) *goRun {
 	r := &goRun{p: p}
 	if p.missing {
@@ -244,54 +243,6 @@ func goRunOf(p *goldPieces) *goRun {
 		}
 	}
 	return r
-}
-
-// goCheckLive is goCheckOpts with the Go checker run.
-func goCheckLive(dir string, opts check.Options) *goRun {
-	res, err := check.CheckOpts([]string{dir}, opts)
-	if err != nil {
-		return &goRun{err: err}
-	}
-	r := &goRun{dump: res.Dump(check.Sections{Names: true, Types: true, Sigs: true}), accepted: true, onlyStaged: true}
-	var staged []diag.Diagnostic
-	parsed := map[string]map[string]bool{}
-	for _, d := range res.Diagnostics {
-		line := check.DiagLines([]diag.Diagnostic{d})[0]
-		isStaged := stageDiag(line) || parseDiag(parsed, d.Span.File, line)
-		if d.Severity == diag.Error {
-			r.accepted = false
-			r.onlyStaged = r.onlyStaged && isStaged
-			if !isStaged {
-				r.other = append(r.other, d.Code)
-			}
-		}
-		if isStaged {
-			staged = append(staged, d)
-		}
-	}
-	r.staged = check.DiagLines(staged)
-	r.full = check.FullLines(staged)
-	return r
-}
-
-// parseDiag reports whether line is a diagnostic the Go parser gives file:
-// the lexer's, the parser's soft errors (the habits of other languages,
-// decision 0087), and its hard errors, which the Xo parser reproduces with
-// the tree the Go parser recovers. parsed caches the parser diagnostics of
-// each file.
-func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
-	set, ok := parsed[file]
-	if !ok {
-		set = map[string]bool{}
-		if src, err := os.ReadFile(file); err == nil && !strings.HasPrefix(file, "std/") {
-			_, ds := parser.ParseFile(file, src, 0)
-			for _, l := range check.DiagLines(ds) {
-				set[l] = true
-			}
-		}
-		parsed[file] = set
-	}
-	return set[line]
 }
 
 // moduleDirs lists every directory under root that holds .xo files,
@@ -367,7 +318,7 @@ func setModEnv(t *testing.T, root string) {
 	t.Setenv("XO_WORK", "")
 }
 
-// workDir is the working directory as the Go checker sees it (os.Getwd,
+// workDir is the working directory as the recording sees it (os.Getwd,
 // which prefers $PWD), passed to the Xo checker as --wd so the absolute
 // paths both print agree.
 func workDir(t testing.TB) string {
@@ -433,7 +384,7 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	gotDump, gotDiags, gotFull := splitDiags(got)
 	p := want.p
 	gotStaged := strings.Join(gotDiags, "\n")
-	// wantStaged is the Go side's staged lines for a message (replayed:
+	// wantStaged is the recorded side's staged lines for a message (replayed:
 	// that the hash differs, and how to see them)
 	wantStaged := func(sep string) string {
 		if t, ok := p.text("staged"); ok {
@@ -454,7 +405,7 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		}
 		// an accepted run may hold staged warnings (XO0804)
 		if !p.eq("staged", gotStaged) {
-			return fmt.Sprintf("%s: the Go checker accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, wantStaged("\n"), gotStaged)
+			return fmt.Sprintf("%s: the recording accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, wantStaged("\n"), gotStaged)
 		}
 		if msg := compareFullLines(dir, gotFull, p); msg != "" {
 			return msg
@@ -590,21 +541,5 @@ func TestSelfhostCheckerXoTests(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
-	dir := filepath.Join("..", "..", "selfhost", "check")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed {
-		t.Fatalf("check failed: %+v", res.Diagnostics)
-	}
-	cmd := exec.Command(res.Binaries[build.Host()])
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("xo test selfhost/check: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "0 failed") {
-		t.Fatalf("unexpected test output:\n%s", out)
-	}
+	runXoTests(t, "check")
 }

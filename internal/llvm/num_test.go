@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // numTablesPath is the generated table module of the native runtime's
@@ -328,9 +328,9 @@ func TestNumDiff(t *testing.T) {
 	t.Logf("%d input lines", len(wantLines))
 	inLines := strings.Split(in, "\n")
 	for _, path := range []string{"xo"} {
-		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
+		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				r := buildAndRun(t, dir, build.Options{Backend: be})
+				r := buildAndRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
 				}

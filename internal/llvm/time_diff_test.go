@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"fmt"
@@ -11,8 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestTimeDiff compares std/time on the native backends (std/native/time.xo
@@ -32,12 +31,12 @@ import (
 // function value (the embedded database).
 // The native programs must free every allocation.
 func TestTimeDiff(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
-	backends := []string{build.BackendLLVM}
+	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	named := []string{"America/New_York", "Europe/London", "Australia/Lord_Howe", "Asia/Kolkata", "Pacific/Chatham",
 		"America/St_Johns", "Europe/Dublin", "Africa/Casablanca", "America/Sao_Paulo", "Antarctica/Troll",
@@ -84,7 +83,7 @@ func TestTimeDiff(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			goRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendGo})
+			goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 			if goRes.exit != 0 {
 				t.Fatalf("the Go backend's run failed:\n%s", goRes)
 			}
@@ -94,11 +93,11 @@ func TestTimeDiff(t *testing.T) {
 				os.WriteFile(out+"."+prog.name+".txt", []byte(goRes.stdout), 0o644)
 			}
 			for _, be := range backends {
-				res, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: be})
+				res, b := buildRun(t, dir, xotool.Options{Backend: be})
 				if goRes.String() != res.String() {
 					t.Errorf("%s backend differs from the Go backend:\n%s", be, firstDiff(goRes.String(), res.String()))
 				}
-				leakCheck(t, b.Binaries[build.Host()], dir)
+				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 			t.Logf("%d lines compared", strings.Count(goRes.stdout, "\n"))
 		})
@@ -433,64 +432,7 @@ const timeDiffRun = `  for (i, z) in zones.indexed() {
 }
 `
 
-// TestZoneDataPerUseNative is internal/gen's TestZoneDataPerUse for the
-// native backends: the build writes xo_tzdata.c for xo_time.c with no
-// zone for a UTC only program, the TZif data of each constant name, the
-// whole database (and the same note as the Go backend) for a name known
-// only at run time, and the host database with --tzdata=system.
-func TestZoneDataPerUseNative(t *testing.T) {
-	if _, err := build.Clang(); err != nil {
-		t.Skip("clang not found: the LLVM backend tests need it")
-	}
-	golden := filepath.Join("..", "gen", "testdata", "golden")
-	header := func(t *testing.T, res *build.Result) string {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(res.Dir, build.TZDataSource))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-	t.Run("utc", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "main.xo"), []byte("use std/time\n\nfn main(os: Os) {\n  os.stdio.println(time.format(Time.UNIX_EPOCH, time.fixed(\"X\", 2h), time.RFC3339))\n}\n"), 0o644)
-		got, res := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
-		if got.stdout != "1970-01-01T02:00:00+02:00\n" {
-			t.Errorf("stdout %q", got.stdout)
-		}
-		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 0;") || strings.Contains(h, "TZif") || len(res.Notes) > 0 {
-			t.Errorf("a UTC only program embeds zone data:\n%s\nnotes %q", h, res.Notes)
-		}
-	})
-	t.Run("constant", func(t *testing.T) {
-		_, res := buildRun(t, filepath.Join(golden, "time_zones"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
-		h := header(t, res)
-		if strings.Count(h, "TZif") < 2 || !strings.Contains(h, `{"America/New_York",`) || !strings.Contains(h, `{"Europe/Berlin",`) || strings.Count(h, "\t{\"") != 2 {
-			t.Errorf("xo_tzdata.c does not hold exactly the two zones:\n%.400s", h)
-		}
-		if len(res.Notes) != 2 || !strings.Contains(strings.Join(res.Notes, "\n"), `zone "Mars/Olympus_Mons" is not in the zone database`) {
-			t.Errorf("notes %q", res.Notes)
-		}
-	})
-	t.Run("dynamic", func(t *testing.T) {
-		_, res := buildRun(t, filepath.Join(golden, "time_dynamic_zone"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
-		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 1;") {
-			t.Errorf("xo_tzdata.c does not embed the database:\n%.300s", h)
-		}
-		if len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "main.xo:9:11: note: time.zone with a name known only at run time embeds the whole zone database") {
-			t.Errorf("notes %q", res.Notes)
-		}
-	})
-	t.Run("system", func(t *testing.T) {
-		got, res := buildRun(t, filepath.Join(golden, "time_dynamic_zone"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM, TZData: build.TZDataSystem})
-		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 2;") || strings.Contains(h, "TZif") {
-			t.Errorf("xo_tzdata.c with --tzdata=system:\n%.300s", h)
-		}
-		if len(res.Notes) != 0 {
-			t.Errorf("notes %q", res.Notes)
-		}
-		if !strings.Contains(got.stdout, "Asia/Tokyo: Wed, 01 Jul 2026 21:00:00 JST 9h0m0s") {
-			t.Errorf("stdout %q", got.stdout)
-		}
-	})
-}
+// TestZoneDataPerUseNative read the zone data file (xo_tzdata.c) the Go
+// build package wrote into its build directory; it went with decision
+// 0215 (xo's zone data selection is selfhost/xo tz.xo; the runs of the
+// time goldens check what it embeds).

@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"archive/zip"
@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // tzDiffProg prints the local zone (TZ, from env.txt) at a few instants,
@@ -202,7 +202,7 @@ func TestTZDiff(t *testing.T) {
 
 // tzDiff is TestTZDiff with the zone data tzdata.
 func tzDiff(t *testing.T, dir, in, tzdata string) {
-	ref := buildAndRun(t, dir, build.Options{Backend: build.BackendGo, TZData: tzdata})
+	ref := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo, TZData: tzdata})
 	if ref.exit != 0 {
 		t.Fatalf("go backend: exit %d: %s", ref.exit, ref.stderr)
 	}
@@ -211,12 +211,12 @@ func tzDiff(t *testing.T, dir, in, tzdata string) {
 	unknown := strings.Count(ref.stdout, "unknown time zone")
 	t.Logf("%d input lines, %d output lines, %d unknown zones; a sample:\n%s", len(inLines), len(want), unknown, strings.Join(want[len(want)/2:len(want)/2+8], "\n"))
 	for _, path := range []string{"xo", "c"} {
-		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
+		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
 				if path == "c" {
 					t.Setenv("XO_LLRT_C", "tz")
 				}
-				r := buildAndRun(t, dir, build.Options{Backend: be, TZData: tzdata})
+				r := buildAndRun(t, dir, xotool.Options{Backend: be, TZData: tzdata})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
 				}

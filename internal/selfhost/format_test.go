@@ -2,21 +2,18 @@ package selfhost
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/format"
 )
 
 // TestSelfhostFormat runs the self hosted formatter (selfhost/cli/core/
-// format, which `xo1 fmt` uses; decision 0178 stage 2) and internal/format
-// on every .xo file of the repository and requires byte identical output:
-// the same formatted text, or a syntax error in both.
+// format, which `xo fmt` uses; decision 0178 stage 2) on every .xo file
+// of the repository and requires the recorded output (internal/format's
+// until decision 0215): the same formatted text, or a syntax error.
 func TestSelfhostFormat(t *testing.T) {
 	bin, err := selfhostBinary("cli/core/format", "go")
 	if err != nil {
@@ -60,16 +57,10 @@ func TestSelfhostFormat(t *testing.T) {
 	t.Run("blanks", func(t *testing.T) { formatCompare(t, bin, tmp, moved) })
 }
 
-// formatCompare formats files (relative to root) with bin and with
-// internal/format and fails on the first differences.
+// formatCompare formats files (relative to root) with bin and fails on
+// the first differences from the recording.
 func formatCompare(t *testing.T, bin, root string, files []string) {
 	t.Helper()
-	if goldensRecording() {
-		for _, f := range files {
-			goFormat(t, root, f)
-		}
-		skipRecording(t)
-	}
 	cmd := exec.Command(bin, files...)
 	cmd.Dir = root
 	var stderr bytes.Buffer
@@ -81,14 +72,14 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 	got := splitFormatDump(string(out))
 	same, errs, bad := 0, 0, 0
 	for _, f := range files {
-		gp := goFormat(t, root, f)
+		gp := goFormat(t, root, f, got[f])
 		if gp.missing {
 			t.Error(gp.missingText())
 			bad++
 			continue
 		}
 		g, ok := got[f]
-		// replayed, the Go side's text is known when the hashes agree
+		// replayed, the recorded side's text is known when the hashes agree
 		want, known := gp.resolve("-", g)
 		switch {
 		case !known:
@@ -118,11 +109,12 @@ func formatCompare(t *testing.T, bin, root string, files []string) {
 	t.Logf("%d files: %d identical (%d syntax errors in both), %d different", len(files), same, errs, bad)
 }
 
-// goFormat is internal/format's result for file f (relative to root) as
-// the Xo formatter prints it: "\n" and the text, ` syntax errors <n>\n`,
-// or `== error <why>`. Recorded as the format kind (gogoldens_test.go:
-// the whole text is piece "-").
-func goFormat(t *testing.T, root, f string) *goldPieces {
+// goFormat is the recorded formatter result for file f (relative to
+// root) as the Xo formatter prints it: "\n" and the text, ` syntax
+// errors <n>\n`, or `== error <why>` (the format kind, gogoldens_test.go:
+// the whole text is piece "-"); x is the Xo formatter's, which a
+// recording run records.
+func goFormat(t *testing.T, root, f, x string) *goldPieces {
 	t.Helper()
 	full := filepath.Join(root, f)
 	src, err := os.ReadFile(full)
@@ -130,25 +122,12 @@ func goFormat(t *testing.T, root, f string) *goldPieces {
 		t.Fatal(err)
 	}
 	cx := newGoldenCtx(full)
-	hint := goldHint("TestSelfhostFormat", "", "cli/core/format", f, root)
+	hint := goldHint("TestSelfhostFormat", "cli/core/format", f, root)
 	return recordedPieces("format", f, hint, []string{cx.fileKey(f, src)}, cx, func() *goldPieces {
 		g := newPieces()
-		g.add("-", goFormatLive(f, src))
+		g.add("-", x)
 		return g
 	})
-}
-
-// goFormatLive is goFormat with internal/format run.
-func goFormatLive(f string, src []byte) string {
-	res, err := format.Source(f, src)
-	var pe *format.ParseError
-	switch {
-	case errors.As(err, &pe):
-		return fmt.Sprintf(" syntax errors %d\n", len(pe.Diagnostics))
-	case err != nil:
-		return "== error " + err.Error()
-	}
-	return "\n" + string(res)
 }
 
 // splitFormatDump splits the formatter's output into the text after each

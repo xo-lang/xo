@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -10,15 +10,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/gen"
-	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // Thread safety of the runtime and of shared reference counts (decision
@@ -54,18 +51,13 @@ func cOnly(t *testing.T, src string) []string {
 		if cExportsErr = os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main() {}\n"), 0o644); cExportsErr != nil {
 			return
 		}
-		res, ok, err := build.CheckNative([]string{dir}, false)
-		if err != nil || !ok {
-			cExportsErr = fmt.Errorf("check: %v", err)
-			return
-		}
-		prog, err := llvm.Generate(res, llvm.Options{LineRoot: dir})
+		ir, err := xotool.LLVMIR(dir)
 		if err != nil {
 			cExportsErr = err
 			return
 		}
 		cExportsLL = filepath.Join(dir, "exports.ll")
-		cExportsErr = os.WriteFile(cExportsLL, prog.IR, 0o644)
+		cExportsErr = os.WriteFile(cExportsLL, ir, 0o644)
 	})
 	if cExportsErr != nil {
 		t.Fatalf("the C ABI exports: %v", cExportsErr)
@@ -75,7 +67,7 @@ func cOnly(t *testing.T, src string) []string {
 
 func tsanBuild(t *testing.T, flags, srcs []string) string {
 	t.Helper()
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	bin := exe(filepath.Join(t.TempDir(), "prog"))
@@ -86,12 +78,12 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 		t.Logf("ThreadSanitizer does not run here, testing without it: %s", why)
 		san = nil
 	}
-	err := build.CompileC(append(append([]string{"-O1", "-g"}, san...), flags...), srcs, bin)
+	err := xotool.CompileC(append(append([]string{"-O1", "-g"}, san...), flags...), srcs, bin)
 	if err != nil && san != nil && runtime.GOOS == "windows" && strings.Contains(err.Error(), "unsupported option") {
 		// clang has no ThreadSanitizer for the MSVC target (decision
 		// 0197): the threads still run, without it
 		t.Logf("no ThreadSanitizer for this target, testing without it")
-		err = build.CompileC(append([]string{"-O1", "-g"}, flags...), srcs, bin)
+		err = xotool.CompileC(append([]string{"-O1", "-g"}, flags...), srcs, bin)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
@@ -154,7 +146,7 @@ func sanitizerRuns(flag string) string {
 			p.why = err.Error()
 			return
 		}
-		if err := build.CompileC([]string{"-O1", flag}, []string{src}, bin); err != nil {
+		if err := xotool.CompileC([]string{"-O1", flag}, []string{src}, bin); err != nil {
 			return // no such sanitizer: the real build reports it
 		}
 		if out, err := exec.Command(bin).CombinedOutput(); err != nil {
@@ -223,7 +215,7 @@ func TestRuntimeThreads(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2", "-DITER=20000"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2", "-DITER=20000"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -253,7 +245,7 @@ func TestRuntimeAlloc(t *testing.T) {
 	}
 	for _, flags := range [][]string{nil, {"-DXO_ALLOC_C"}} {
 		opt := exe(filepath.Join(t.TempDir(), "opt"))
-		if err := build.CompileC(append([]string{"-O2", "-DITER=30000"}, flags...), cOnly(t, src), opt); err != nil {
+		if err := xotool.CompileC(append([]string{"-O2", "-DITER=30000"}, flags...), cOnly(t, src), opt); err != nil {
 			t.Fatal(err)
 		}
 		runTSan(t, opt, ".")
@@ -288,7 +280,7 @@ func TestRuntimeTasks(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -319,7 +311,7 @@ func TestRuntimeEventLoop(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := build.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
@@ -345,85 +337,10 @@ var fiberBound = map[string]int{"conc_stress": 2000}
 
 var fiberPeakRE = regexp.MustCompile(`fiber_peak=(\d+)`)
 
-// TestGoldenThreads builds golden programs with share probes (every heap
-// value marked shared) and runs each on four threads at once
-// (-DXO_RT_TEST_THREADS=4) under ThreadSanitizer: the per thread heaps,
-// the deferred work lists, the output lock, the atomic count paths of
-// generated code, and literals shared by every thread (never written)
-// must not race, and every allocation must be freed.
-func TestGoldenThreads(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds golden programs with ThreadSanitizer")
-	}
-	t.Parallel() // builds nothing in the shared build directory
-	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no golden programs: %v", err)
-	}
-	rt := filepath.Join(rtDir, "xo_rt.c")
-	ran := 0
-	for _, dir := range dirs {
-		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.HasPrefix(want, []byte("exit 0\n")) {
-			continue // a fault exits the process from one thread
-		}
-		dir := dir
-		ran++
-		t.Run(filepath.Base(dir), func(t *testing.T) {
-			t.Parallel()
-			res, ok, err := build.CheckNative([]string{dir}, false)
-			if err != nil || !ok {
-				t.Fatalf("check: %v", err)
-			}
-			abs, _ := filepath.Abs(dir)
-			prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs, ShareProbes: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bytes.Contains(prog.IR, []byte("@xo_tz_")) {
-				// std/time: the zone data object (xo_tzdata.c) and XO_TIME
-				// come from internal/build, which this build does without
-				t.Skip("std/time needs the program's zone data")
-			}
-			ll := filepath.Join(t.TempDir(), "prog.ll")
-			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			flags := append([]string{"-DXO_RT_TEST_THREADS=4", "-Wno-override-module"}, build.IOFlags(prog.IR)...)
-			var bin string
-			if deepRecursion[filepath.Base(dir)] {
-				bin = exe(filepath.Join(t.TempDir(), "prog"))
-				if err := build.CompileC(append([]string{"-O1"}, flags...), []string{ll, rt}, bin); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				bin = tsanBuild(t, flags, []string{ll, rt})
-			}
-			out := runTSan(t, bin, dir, "XO_LEAKCHECK=1", "XO_RTSTATS=1")
-			if m := leakRE.FindStringSubmatch(out); m == nil || m[1] != "0" {
-				t.Errorf("leak check: %q", m)
-			}
-			if bound, ok := fiberBound[filepath.Base(dir)]; ok {
-				m := fiberPeakRE.FindStringSubmatch(out)
-				if m == nil {
-					t.Fatalf("no fiber_peak in the run's statistics:\n%s", out)
-				}
-				peak, _ := strconv.Atoi(m[1])
-				max := bound*4 + runtime.NumCPU()*9 + 64
-				t.Logf("fiber_peak %d of at most %d", peak, max)
-				if peak > max {
-					t.Errorf("fiber_peak %d: more fiber stacks at once than the program can park (%d)", peak, max)
-				}
-			}
-		})
-	}
-	if ran == 0 {
-		t.Fatal("no golden program exits normally")
-	}
-}
+// TestGoldenThreads built every golden program with share probes (every
+// heap value marked shared as it is defined, decision 0058) under
+// ThreadSanitizer; the probes are a pass of the Go SSA builder that
+// selfhost/ssa does not have, so it went with decision 0215.
 
 // usesTasks reports whether the golden program in dir uses scopes,
 // channels, mutexes, or atomics.
@@ -468,20 +385,15 @@ func TestGoldenTasks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, ok, err := build.CheckNative([]string{dir}, false)
-			if err != nil || !ok {
-				t.Fatalf("check: %v", err)
-			}
-			abs, _ := filepath.Abs(dir)
-			prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
+			ir, err := xotool.LLVMIR(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			ll := filepath.Join(t.TempDir(), "prog.ll")
-			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+			if err := os.WriteFile(ll, ir, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := tsanBuild(t, append([]string{"-Wno-override-module"}, build.IOFlags(prog.IR)...), []string{ll, rt})
+			bin := tsanBuild(t, append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...), []string{ll, rt})
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
@@ -535,21 +447,21 @@ func TestDeadlock(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	dir := filepath.Join("..", "gen", "testdata", "golden", "deadlock_real")
-	backends := []string{build.BackendLLVM}
+	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
-		backends = append(backends, build.BackendArm64)
+		backends = append(backends, xotool.BackendArm64)
 	}
 	for _, bk := range backends {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: bk})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: bk})
 		if err != nil || res.Failed {
 			t.Fatalf("%s: build: %v", bk, err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		cmd := exec.CommandContext(ctx, res.Binaries[build.Host()])
+		cmd := exec.CommandContext(ctx, res.Binaries[xotool.Host()])
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err = cmd.Run()

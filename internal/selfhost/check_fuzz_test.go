@@ -15,7 +15,7 @@ import (
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
 // 0141) on mutations of the single directory modules of the repository
-// that the Go checker accepts and that import only std. A seventh each
+// that the recording accepts and that import only std. A seventh each
 // are name mutations (one identifier renamed, to an unresolved name or
 // one that now resolves elsewhere, a `use` line removed, or a top level
 // declaration duplicated), type mutations (a literal replaced by one of
@@ -39,6 +39,7 @@ import (
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerMutations(t *testing.T) {
+	skipDumpReplay(t)
 	n := byTier(t, 150, 1000, 1000)
 	if v := os.Getenv("XO_SELFHOST_CHECK_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
@@ -110,12 +111,6 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	}
 	t.Chdir(tmp)
 	setModEnv(t, root)
-	if goldensRecording() {
-		for _, d := range dirs {
-			goCheck(d)
-		}
-		skipRecording(t)
-	}
 	got := map[string]string{}
 	const batch = 100
 	for i := 0; i < len(dirs); i += batch {
@@ -134,7 +129,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	codes := map[string]int{}
 	others := map[string]int{}
 	for _, d := range dirs {
-		want := goCheck(d)
+		want := goCheck(d, got[d])
 		before := st.stagedOK
 		otherBefore := st.otherRejected
 		if msg := compareRun(d, want, got[d], &st); msg != "" {
@@ -155,7 +150,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported",
+	t.Logf("%d mutations: %d accepted by the recording (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
 	t.Logf("diagnostics of the matching rejected mutations: %v", codes)
 	t.Logf("the other errors of the mutations rejected otherwise: %v", others)
@@ -200,11 +195,13 @@ type mutationSource struct {
 
 var stdUseRE = regexp.MustCompile(`(?m)^use\s+(\S+)`)
 
-// mutationSources are the single directory modules the Go checker
-// accepts that import only std modules and have no xo.mod (their copies
-// check the same).
+// mutationSources are the single directory modules the checker accepts
+// (the Xo checker, selfhost/check built with the go backend; the Go
+// checker until decision 0215, which accepted the same runs) that import
+// only std modules and have no xo.mod (their copies check the same).
 func mutationSources(t *testing.T, root string) []mutationSource {
-	var out []mutationSource
+	var cands []string
+	srcs := map[string]mutationSource{}
 	for _, d := range moduleDirs(t, root) {
 		full := filepath.Join(root, d)
 		es, err := os.ReadDir(full)
@@ -236,30 +233,42 @@ func mutationSources(t *testing.T, root string) []mutationSource {
 		if !ok || len(src.files) == 0 || hasModAbove(root, full) {
 			continue
 		}
-		res := goCheckAt(root, d)
-		if res == nil || !res.accepted {
-			continue
-		}
-		out = append(out, src)
+		cands = append(cands, d)
+		srcs[d] = src
 	}
-	return out
-}
-
-// goCheckAt checks dir (relative to root) from root.
-func goCheckAt(root, dir string) *goRun {
+	bin, err := selfhostBinary("check", "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setModEnv(t, root)
+	got := map[string]string{}
+	for _, xb := range runXoBatches(t, bin, root, []string{"--each", "--std=std", "--wd=" + root}, cands, 100) {
+		parts := strings.Split(xb.out, "=== check ")
+		if len(parts) != len(xb.paths)+1 {
+			t.Fatalf("Xo checker printed %d runs for %d directories", len(parts)-1, len(xb.paths))
+		}
+		for j, d := range xb.paths {
+			got[d] = strings.TrimPrefix(parts[j+1], d+"\n")
+		}
+	}
+	// the recorded verdict (TestSelfhostChecker's unit of the run, from
+	// root), so the sources and with them the mutations are the ones the
+	// recording holds; in moduleDirs order
 	wd, err := os.Getwd()
 	if err != nil {
-		return nil
+		t.Fatal(err)
 	}
 	if err := os.Chdir(root); err != nil {
-		return nil
+		t.Fatal(err)
 	}
 	defer os.Chdir(wd)
-	r := goCheck(dir)
-	if r.err != nil {
-		return nil
+	var out []mutationSource
+	for _, d := range cands {
+		if r := goCheck(d, got[d]); r.err == nil && r.accepted {
+			out = append(out, srcs[d])
+		}
 	}
-	return r
+	return out
 }
 
 // hasModAbove reports whether an xo.mod lies in dir or a parent below
