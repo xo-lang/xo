@@ -496,19 +496,16 @@ xo_rstr *xo_rs_append_quote(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 #endif
 
 
-// xo_exit flushes standard output and exits with status code (main
-// returned an error: status 1, after "error: <text>" on standard error).
+// The test world's os.proc.exit (xo_testing.c; xo_tw_exit, xo_sys.c).
 static void tw_exit(int64_t code);
 
-void xo_exit(int64_t code) {
-	if (tw.on) {
-		// returns only inside testing.run_main, to unwind main
-		tw_exit(code);
-		return;
-	}
-	xo_flush();
-	exit((int)code);
-}
+void xo_x_exit(int64_t code);
+
+// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): an xo
+// before B03 stage 2 lowers os.proc.exit to this; the end of the process
+// is std/native/llrt/process.xo. Delete it with the first seed that has
+// B03.
+void xo_exit(int64_t code) { xo_x_exit(code); }
 
 // ---------------------------------------------------------------------------
 // Conversions for std/json: durations, RFC 3339 times

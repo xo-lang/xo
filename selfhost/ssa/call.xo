@@ -1241,6 +1241,14 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if raw {
     return rv
   }
+  if name is "eprintln" | "env_get" | "env_vars" {
+    // the runtime's standard error and environment in Xo (the zero-C
+    // audit's B03): the native prelude's llrt_<name>; the C runtime's
+    // functions stay for compilers before B03 and a WASI module's runtime
+    if let Some(v) = b.llrt_or_none(name, nt, vs) {
+      return v
+    }
+  }
   if b.is_never(b.c.objs[fo].result) {
     b.rt(name, -1, vs)
     b.add(Op.Unreachable, -1, Aux.None, [])
@@ -1855,14 +1863,14 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   match key {
     "StrBuilder.len" | "BytesBuilder.len" => return Some(b.call("Str.len", it, "", [recv]))
     "StrBuilder.freeze" | "BytesBuilder.freeze" => return Some(recv)
-    "Env.args" => return Some(b.rt("env_args", b.m.list(st), []))
+    "Env.args" => return Some(b.llrt_or_rt("env_args", b.m.list(st), []))
     "Env.program" => {
       // argv[0] (decision 0190: the CLI servers run themselves again)
-      let l = b.rt("env_program", b.m.list(st), [])
+      let l = b.llrt_or_rt("env_program", b.m.list(st), [])
       return Some(b.call("list.index", st, "", [l, b.cint(0)]))
     }
     "Proc.exit" => {
-      b.rt("exit", -1, [b.io_arg(fo, es, 0, it)])
+      b.exit_rt(b.io_arg(fo, es, 0, it))
       if b.tests {
         // in testing.run_main the exit unwinds main back to it (decision
         // 0108): the runtime returns unwinding

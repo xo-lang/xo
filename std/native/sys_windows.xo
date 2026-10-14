@@ -21,6 +21,8 @@ fn CloseHandle(h: Int) -> Int32
 /// INVALID_HANDLE_VALUE.
 fn GetStdHandle(n: Int) -> Int
 fn GetLastError() -> UInt32
+/// ExitProcess: ends the process with exit code code.
+fn ExitProcess(code: Int)
 /// GetFileInformationByHandle into the BY_HANDLE_FILE_INFORMATION (52
 /// bytes) at the address info.
 fn GetFileInformationByHandle(h: Int, info: Int) -> Int32

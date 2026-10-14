@@ -6017,6 +6017,12 @@ void xo_conn_close(xo_conn *cn) { pd_close(cn->pd); }
 // ---------------------------------------------------------------------------
 // Environment (std.md 3.5)
 
+// Seed compatibility (gotchas/runtime-c-the-seed-still-calls.md): env.get
+// and env.vars are Xo (std/native/llrt/process.xo, B03 stage 3), but an
+// xo before B03 compiles the native prelude's rt.env_get and rt.env_vars
+// as calls of these. Delete them, with xo_bytes.c's xo_env_args and
+// xo_env_program, with the first seed that has B03.
+//
 // xo_env_get is `env.get(name)`: the value in a list of one, or the empty
 // list when it is not set.
 static xo_rlist *tw_env_get(const char *p, int64_t n);
@@ -6349,12 +6355,17 @@ static void win_init(int *argc, char ***argv) {
 }
 #endif
 
+void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
 	win_init(&argc, &argv);
 #endif
 	xo_argc = argc;
 	xo_argv = argv;
+	// env.args, env.program, env.get, and env.vars read them in Xo
+	// (std/native/llrt/process.xo; `environ` is xo_w_environ() on Windows)
+	xo_x_proc_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
 	const char *mid = getenv("XO_HEAP_MID_MAX");
 	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
 		xo_mid_max = atoll(mid);

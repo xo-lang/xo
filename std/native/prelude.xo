@@ -11,6 +11,7 @@ use native/llrt/gen
 use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/logstate
+use native/llrt/process
 use native/llrt/procspec
 use native/llrt/rand
 use native/llrt/num
@@ -2265,6 +2266,21 @@ fn llrt_println(s: Str) { stdiort.print(s, true) }
 fn llrt_eprint(s: Str) { stdiort.eprint(s, false) }
 
 fn llrt_eprintln(s: Str) { stdiort.eprint(s, true) }
+
+/// os.proc.exit, and the end of a program whose main returned an error
+/// (std/native/llrt/process.xo).
+fn llrt_exit(code: Int) { process.exit(code) }
+
+// The program's arguments and environment, for Env.args, Env.program,
+// and the runtime calls rt.env_get and rt.env_vars (std/native/llrt/process.xo).
+
+fn llrt_env_args() -> List[Str] { process.args() }
+
+fn llrt_env_program() -> List[Str] { [process.program()] }
+
+fn llrt_env_get(name: Str) -> List[Str] { process.env_get(name) }
+
+fn llrt_env_vars() -> List[Str] { process.env_vars() }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo

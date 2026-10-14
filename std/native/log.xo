@@ -3,7 +3,6 @@
 // key=value fields; JSON: an object with sorted keys).
 use std/log
 use native/llrt/logstate
-use native/llrt/stdio as stdiort
 use native/rt
 use native/rtjson
 use native/rttest
@@ -59,12 +58,9 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
     }
     rttest.test_log(level, msg, from, keys, vals, "")
   }
-  // standard output's buffer first (std/native/llrt/stdio.xo); a WASI
-  // module's runtime has its own standard error
-  match target.arch {
-    TargetArch.Wasm32 => rt.eprintln(line)
-    _ => stdiort.eprint(line, true)
-  }
+  // the native backends' SSA builders call std/native/llrt/stdio.xo for
+  // it (the native prelude's llrt_eprintln, work item B03)
+  rt.eprintln(line)
 }
 
 /// The text of a record: JSON when configured so, else text.

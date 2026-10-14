@@ -1540,7 +1540,7 @@ fn (var b: Builder) main_wrapper(mf: Int, et: Int) {
   let msg = b.append_display(b.const_str("error: "), e, et)
   b.eprintln_rt(msg)
   b.print_trace(b.err_trace(r, ei))
-  b.rt("exit", -1, [b.cint(1)])
+  b.exit_rt(b.cint(1))
   if !b.is_dead() {
     b.jump(join, [])
   }
@@ -2028,6 +2028,50 @@ fn (var b: Builder) eprintln_rt(msg: Int) {
   if !b.stdio_llrt("eprintln", msg) {
     b.rt("eprintln", -1, [msg])
   }
+}
+
+/// A call of the native prelude's llrt_<name> with result type t (t -1
+/// is unit) in place of the C runtime's rt.<name> (the zero-C audit's
+/// B03: std/native/llrt/process.xo and stdio.xo); None in a WASI module
+/// (its runtime has its own) or without the native prelude.
+fn (var b: Builder) llrt_or_none(name: Str, t0: Int, args: List[Int]) -> Int? {
+  if b.wasm {
+    return None
+  }
+  let impl = b.prelude_impl("llrt_${name}")
+  if impl < 0 {
+    return None
+  }
+  var t = t0
+  if t < 0 {
+    t = b.unit_t()
+  }
+  let f = b.declare(impl, [])
+  Some(b.call(b.m.funcs[f].name, t, "", args))
+}
+
+/// llrt_or_none, else the C runtime's rt.<name>.
+fn (var b: Builder) llrt_or_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  if let Some(v) = b.llrt_or_none(name, t, args) {
+    return v
+  }
+  b.rt(name, t, args)
+}
+
+/// The end of the process with status code (an Int value): the native
+/// prelude's llrt_exit (std/native/llrt/process.xo, the zero-C audit's
+/// B03); in a WASI module or without the native prelude the runtime's
+/// rt.exit.
+fn (var b: Builder) exit_rt(code: Int) {
+  if !b.wasm {
+    let impl = b.prelude_impl("llrt_exit")
+    if impl >= 0 {
+      let f = b.declare(impl, [])
+      b.call(b.m.funcs[f].name, b.unit_t(), "", [code])
+      return
+    }
+  }
+  b.rt("exit", -1, [code])
 }
 
 /// A call of std/json's tape reader or text function name (json_str,

@@ -203,7 +203,8 @@ fn prefetch(a: Int)
 /// atomics. The words: 0 to 2 std/native/llrt/logstate.xo (the level,
 /// format, and output of log.configure); 3 to 6 std/native/llrt/stdio.xo
 /// (standard output's buffer, its length, its lock, and the mode: whether
-/// the test world fakes stdio, whether several threads run); 7 to 63
+/// the test world fakes stdio, whether several threads run); 7 to 9
+/// std/native/llrt/process.xo (argc, argv, the environment); 10 to 63
 /// unused.
 fn static_word(k: Int) -> Int
 
@@ -272,6 +273,16 @@ fn tw_fake(real: Int) -> Bool
 /// Writes the n bytes at the address p to the test world's fake standard
 /// output (err 0) or error (err 1) (std/native/llrt/stdio.xo).
 fn tw_write(err: Int, p: Int, n: Int)
+/// os.proc.exit in a test binary (the test world's tw_exit): the code is
+/// recorded; inside testing.run_main it returns with the context
+/// unwinding, else the test ends (std/native/llrt/process.xo).
+fn tw_exit(code: Int)
+/// The test world's FakeEnv: env.get (a list of one, or empty),
+/// env.vars (NAME=VALUE in the order set), and env.args
+/// (std/native/llrt/process.xo).
+fn tw_env_get(name: Str) -> List[Str]
+fn tw_env_vars() -> List[Str]
+fn tw_env_args() -> List[Str]
 /// Whether Rand is the test world's seeded generator (a test binary).
 fn tw_seeded() -> Bool
 /// The next word of the test world's seeded generator (std/rt's

@@ -16,6 +16,7 @@ use native/llrt/alloc
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
@@ -81,6 +82,14 @@ fn flush() { stdio.flush() }
 fn flush_try() { stdio.flush_try() }
 
 fn stdio_threads() { stdio.threads() }
+
+/// The end of the process (process.xo, B03 stage 2): the C runtime's
+/// xo_exit forwards here for compilers before B03.
+fn exit(code: Int) { process.exit(code) }
+
+/// The program's arguments and environment (C main, before the program
+/// runs; process.xo).
+fn proc_start(argc: Int, argv: Int, envp: Int) { process.start(argc, argv, envp) }
 
 // ---------------------------------------------------------------------------
 // Fault messages (xo_rt.c xo_fault_*): each writes the message and a zero

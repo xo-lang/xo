@@ -207,7 +207,7 @@ fn (var b: Builder) root_scope_end(h: Int, sc: Int, sites: List[SpawnSite], mode
       } else {
         b.eprintln_rt(msg)
         b.print_trace(b.err_trace(tr, ei))
-        b.rt("exit", -1, [b.cint(1)])
+        b.exit_rt(b.cint(1))
         b.add(Op.Unreachable, -1, Aux.None, [])
       }
       b.dead()

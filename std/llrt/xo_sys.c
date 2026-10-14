@@ -70,6 +70,17 @@ int64_t xo_tw_fake(int64_t real) { return tw_is_fake((int)real); }
 // test whose stdio is a fake.
 void xo_tw_write(int64_t err, int64_t p, int64_t n) { tw_write((int)err, (const char *)(intptr_t)p, n); }
 
+// xo_tw_exit is os.proc.exit in a test binary (std/native/llrt/process.xo).
+void xo_tw_exit(int64_t code) { tw_exit(code); }
+
+// The test world's FakeEnv for std/native/llrt/process.xo.
+static xo_rlist *tw_env_get(const char *p, int64_t n);
+static xo_rlist *tw_env_vars(void);
+static xo_rlist *tw_env_args(void);
+xo_rlist *xo_tw_env_get(const char *p, int64_t n) { return tw_env_get(p, n); }
+xo_rlist *xo_tw_env_vars(void) { return tw_env_vars(); }
+xo_rlist *xo_tw_env_args(void) { return tw_env_args(); }
+
 // xo_sys_clock_buf is the address of the calling thread's scratch for
 // Clock.now's timespec (Xo calls the vDSO with it), or 0 while the test
 // world's virtual clock runs: one call on the clock's path (decision
