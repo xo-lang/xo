@@ -14,6 +14,14 @@
 #   merge        the full tests of PACKAGE... (default: the touched ones)
 #   fixed-point  scripts/bootstrap-xo.sh with the checkout's xo (s2 == s3)
 #   full         every package with XO_SELFHOST_TIER=full
+#   windows      scripts/windows-batch.sh (xo1 from the Windows seed, the
+#                LLVM goldens for windows/amd64 and arm64, the runtime
+#                tests, xo test LLVM against Go); on the xo-windows runner
+#   xcross DEST  cross builds xo.exe for windows/amd64 with the Go backend
+#                from the checkout and copies it to DEST (an s3:// URL):
+#                the plan job does this for a windows job, since the
+#                windows-amd64 seed cannot build xo on Windows (XO1306,
+#                gotchas/windows-seed-xo1306-module-not-required.md)
 #   measure DIR  bench/perf/DIR/measure.sh with main's xo and std, then
 #                with the checkout's; both outputs and new/base ratios
 #   plan SUITE [PACKAGE...]
@@ -179,12 +187,29 @@ case "$suite" in
   merge) if [ $# -gt 0 ]; then run_merge "$@"; else load_changed; run_merge $(touched_pkgs); fi ;;
   fixed-point) run_fixed_point ;;
   measure) run_measure "$@" ;;
+  xcross)
+    dest=${1:?xcross: DEST}
+    step "xo.exe for windows/amd64 (Go backend, cross built)"
+    xo=$(go run ./scripts/xobuild)
+    out=$PWD/.tools/xcross; rm -rf "$out"; mkdir -p "$out"
+    "$xo" build --backend=go --targets=windows/amd64 --std="$PWD/std" -o "$out/xo.exe" selfhost/xo
+    aws s3 cp --only-show-errors "$out/xo.exe" "$dest"
+    end ;;
+  windows)
+    # the plan job's cross built xo.exe ($XO_CI_XO_EXE), in bin/ so it
+    # finds std at bin/../std; XO_CLI makes xobuild use it as is
+    if [ -n "${XO_CI_XO_EXE:-}" ]; then
+      step "fetch xo.exe"; mkdir -p bin; aws s3 cp --only-show-errors "$XO_CI_XO_EXE" bin/xo.exe
+      export XO_CLI=$PWD/bin/xo.exe; "$XO_CLI" version; end
+    fi
+    step "scripts/windows-batch.sh"; rc=0; scripts/windows-batch.sh || rc=$?; end; exit $rc ;;
   plan)
     what=${1:?plan: SUITE}; shift
     case "$what" in
       auto) plan_auto "$@" ;;
       full) echo '{"include":[{"name":"full tier","runner":"xo-arm64-big","args":"full"}]}' ;;
       measure) echo "{\"include\":[{\"name\":\"measure $*\",\"runner\":\"xo-arm64-big\",\"args\":\"measure $*\"}]}" ;;
+      windows) echo '{"include":[{"name":"windows","runner":"xo-windows","args":"windows"}]}' ;;
       merge) echo "{\"include\":[{\"name\":\"merge $*\",\"runner\":\"xo-arm64-big\",\"args\":\"merge $*\"}]}" ;;
       *) echo "{\"include\":[{\"name\":\"$what\",\"runner\":\"xo-arm64\",\"args\":\"$what\"}]}" ;;
     esac ;;

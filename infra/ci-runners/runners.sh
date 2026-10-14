@@ -5,7 +5,8 @@
 # at boot.
 #
 #   runners.sh list                          every runner: machine state, GitHub status, labels
-#   runners.sh add NAME TYPE LABELS [AZ]     a new machine (LABELS comma separated, e.g. xo-arm64-big,xo-arm64)
+#   runners.sh add NAME TYPE LABELS [AZ]     a new machine (LABELS comma separated, e.g. xo-arm64-big,xo-arm64;
+#                                            a label starting xo-windows makes a Windows machine)
 #   runners.sh adopt NAME INSTANCE LABELS    an existing machine, its disk and caches kept (Terraform import)
 #   runners.sh remove NAME                   deregister from GitHub, then delete the machine and its disk
 #   runners.sh start|stop NAME               by hand (the Lambda starts machines; they stop when idle)
@@ -56,12 +57,14 @@ PY
     name=$1 type=$2 labels=$3 az=${4:-us-east-1d}
     arch=$(aws ec2 describe-instance-types --instance-types "$type" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures[0]' --output text)
     [ "$arch" = arm64 ] || arch=amd64
-    edit "$name" "$type" "$arch" "$labels" "$az" <<'PY'
+    os=linux; case ",$labels" in *,xo-windows*) os=windows ;; esac
+    edit "$name" "$type" "$arch" "$labels" "$az" "$os" <<'PY'
 import json, sys
-p, name, typ, arch, labels, az = sys.argv[1:]
+p, name, typ, arch, labels, az, os_ = sys.argv[1:]
 r = json.load(open(p))
 if name in r: sys.exit("runners.sh: %s already exists" % name)
 r[name] = {"type": typ, "arch": arch, "labels": labels.split(","), "az": az}
+if os_ != "linux": r[name]["os"] = os_
 json.dump(r, open(p, "w"), indent=2); open(p, "a").write("\n")
 PY
     apply
@@ -70,15 +73,17 @@ PY
   adopt)
     [ $# -eq 3 ] || die "usage: adopt NAME INSTANCE LABELS"
     name=$1 id=$2 labels=$3
-    read -r type az arch < <(aws ec2 describe-instances --instance-ids "$id" \
-      --query 'Reservations[0].Instances[0].[InstanceType,Placement.AvailabilityZone,Architecture]' --output text)
+    read -r type az arch platform < <(aws ec2 describe-instances --instance-ids "$id" \
+      --query 'Reservations[0].Instances[0].[InstanceType,Placement.AvailabilityZone,Architecture,Platform]' --output text)
     [ "$arch" = arm64 ] || arch=amd64
-    edit "$name" "$type" "$arch" "$labels" "$az" "$id" <<'PY'
+    os=linux; [ "$platform" != windows ] || os=windows
+    edit "$name" "$type" "$arch" "$labels" "$az" "$id" "$os" <<'PY'
 import json, sys
-p, name, typ, arch, labels, az, iid = sys.argv[1:]
+p, name, typ, arch, labels, az, iid, os_ = sys.argv[1:]
 r = json.load(open(p))
 if name in r: sys.exit("runners.sh: %s already exists" % name)
 r[name] = {"type": typ, "arch": arch, "labels": labels.split(","), "az": az, "import_id": iid}
+if os_ != "linux": r[name]["os"] = os_
 json.dump(r, open(p, "w"), indent=2); open(p, "a").write("\n")
 PY
     apply

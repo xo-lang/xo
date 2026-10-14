@@ -4,8 +4,9 @@
 // RFC 3339 text and the parse std/json uses, and the Debug quoting of a
 // Str or Bytes. They were C (std/llrt/xo_std.c); the semantics are still
 // the Go backend's, so the native backends print what it prints. The C
-// path stays selectable (`XO_LLRT_C=text` loads text_c.xo) until
-// bench/perf/text meets decision 0180's bar on both native backends.
+// path (`XO_LLRT_C=text`, text_c.xo) is deleted: the owner accepted
+// Duration text at 1.112 of the C on arm64 with 0.925 on LLVM
+// (decision 0227).
 //
 // Results are built in a Str through the runtime's rs_* intrinsics, as in
 // unicode.xo (decision 0180): runs of bytes that stay as they are go over

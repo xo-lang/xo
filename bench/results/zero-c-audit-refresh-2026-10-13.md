@@ -190,7 +190,7 @@ goes. Then, to delete the branches: make nx_on's poll and descriptor
 calls unconditional (cabi_poll.xo is in every native program), and keep
 the socket branches only until B23.
 
-### `XO_LLRT_C=text`: 533 lines of xo_std.c, waits on the bar, not on a run
+### `XO_LLRT_C=text`: 533 lines of xo_std.c (**deleted 2026-10-14**, decision 0227: the owner accepted Duration text at arm64 1.112 with LLVM 0.925; 514 lines of xo_std.c and text_c.xo deleted)
 
 | xo_std.c | Lines | What |
 |---|---|---|
@@ -290,7 +290,7 @@ MISSING.
 | B03 stdio, exit, env, args, stats (done 2026-10-14 in Xo: stdio-2026-10-14.md; the seed forwards and the env C go with the next seed; notes) | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
 | B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; stage 3 done 2026-10-14 for glibc linux/arm64 and macOS, the libgcc path compiled only for glibc linux/amd64 until stage 2; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
-| B06 fault record, fault exit, Windows unwind | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
+| B06 fault record, fault exit, Windows unwind (part 1 done 2026-10-14: the record and fault_exit in fault.xo, fault-record-2026-10-14.md; the entry points stay C glue, the Windows walk waits for the Windows runner) | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |
 | B09 constant time, crypto.equal, Ed25519 (done 2026-10-14: decision 0222; notes) | 505 | PORT 461, GLUE 44 | xo_crypto.c 1-18, 129-141, 290-763 |
 | B10 HTTP/1.1 client parser, URL and text helpers (**done 2026-10-14**, http-client-2026-10-14.md: 1,629 runtime lines deleted, 265 added) | 1,558 | GLUE 1,277, PORT 281 | xo_http.c 153-273, 342-1397, 2972-3071, 3279-3457; xo_h2.c 1183-1284 |
@@ -430,7 +430,15 @@ frees the 533 (a) lines.)
   goldens). macOS keeps libunwind (a platform library, decision 0195),
   so only the personality routine needs Xo there. Xo about 900 lines,
   high; three items (CFI interpreter; resume; personality and LSDA).
-- **B06 faults.** The fault record (1778-1879), fault_exit (1644-1673),
+- **B06 faults.** Part 1 done 2026-10-14 (fault-record-2026-10-14.md):
+  std/native/llrt/fault.xo keeps the record (set, detail, clear, take)
+  and writes fault_exit's report, over xo_ctx offsets xo_rt.c asserts;
+  the C keeps one line forwarders, fault_raise, xo_fault_msg and
+  xo_fault_loc, and the entry points of generated code. Next: the entry
+  points as Xo exports the emitters call (with C forwarders until a
+  seed has them, as decision 0221 point 7 did for the personality), and
+  the Windows walk. The original note follows.
+  The fault record (1778-1879), fault_exit (1644-1673),
   the Windows frame walk over RtlVirtualUnwind (1674-1736) through
   sys_windows.xo, its personality stub (1928-1973). Xo about 250 lines,
   medium; after B03 and B05.
@@ -691,7 +699,7 @@ nothing new.
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
 | 7 | B12 response writer | 537 | nothing | **Done 2026-10-14** (http-writer-2026-10-14.md): http1w.xo through cabi_http.xo; the C wrappers (112 lines) go with B10's and the connection code's ports |
 | 8 | B13 string and list objects (two items; stage 1 done 2026-10-14) | 816 | 2 | stage 1 done (string-list-objects-2026-10-14.md: xo_str_find deleted, xo_str_rune_count a seed shim until a seed has B13); stage 2 lists done (decision 0226: 0.883 to 1.021 of the C, arm64 and LLVM); next the string objects the same way, and deleting the C list entries once a seed emits the direct calls and LLVM calls the exports |
-| 9 | Duration text bar, then the (a) text path | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
+| 9 | Duration text bar, then the (a) text path (**done 2026-10-14**, decision 0227: bar accepted by the owner, the C path deleted) | 533 | nothing | decision 0194's ranked list on selfhost/arm64 (1.112 now); or ask the owner to accept LLVM's 0.925 with arm64's 1.112 |
 | 10 | B04 xo_nolibc.c shrink (two items) | 1,463 | 3 (printf, FILE), 6 for the rest | malloc to alloc.xo exports, strerror and files to linux.xo; mem* as plain-name exports |
 | 11 | B05 unwinder (three items; stage 1 done 2026-10-14, XO_NOLIBC linux/arm64, decision 0221) | 185 | nothing (XO_NOLIBC Linux first) | .eh_frame_hdr lookup and a CFI interpreter in unwind.xo; a resume intrinsic; then the personality routine as an export; the 12 nolibc fault goldens are the test |
 | 12 | B06 faults in Xo | 319 | 3, 11 | the fault record and fault_exit; then Windows RtlVirtualUnwind through sys_windows.xo |

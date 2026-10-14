@@ -34,6 +34,13 @@ pub fn exit(code: Int) {
     return
   }
   stdio.flush()
+  os_exit(code)
+}
+
+/// Ends the process with status code at once (no flush, no test world):
+/// exit_group on Linux, libSystem's exit on macOS, ExitProcess on
+/// Windows.
+pub fn os_exit(code: Int) {
   match target.os {
     TargetOs.Linux => {
       let _r = linux.exit_group(code)

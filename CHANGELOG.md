@@ -12,6 +12,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   both macOS architectures now use), so the C Fs operations
   (std/llrt/xo_fs.c) and the C fs.read are deleted: 831 lines net.
   macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
+- Native runtime (decision 0227): the C path of the number and time text
+  (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
+  std/llrt/xo_std.c) is deleted; the owner accepted Duration text at
+  1.112 of the C's instructions on arm64 with 0.925 on LLVM.
+  `XO_LLRT_C=text` now fails the build.
+- Native runtime (zero-C audit item B06, part 1): a context's fault
+  record and the report of an uncaught fault are Xo
+  (std/native/llrt/fault.xo); xo_rt.c loses 57 lines and gains 23. The
+  fault paths on the Mac are 0.993 to 1.006 of main's instructions. A
+  new test raises a fault through the C library's qsort, covering the
+  unwinder's shared object lookup on macOS and Linux.
 - Native runtime (decision 0221 point 10): a fault on macOS arm64
   unwinds through the Xo walker, which reads the compact unwind of
   `__unwind_info` itself, instead of libunwind. bench/perf/fault is

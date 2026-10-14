@@ -13,6 +13,7 @@
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
+use native/llrt/fault
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/obj
@@ -466,3 +467,18 @@ fn unwind_fault(exc: Int, boundary: Int, pers: Int, pers_old: Int) -> Int { unwi
 /// export_personality: unwind_fault reads the call site tables itself,
 /// and this tells any other unwinder to go on).
 fn personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int { unwind.export_personality(version, actions, cls, exc, uc) }
+
+// ---------------------------------------------------------------------------
+// The fault record (std/native/llrt/fault.xo, the zero-C audit's B06):
+// c is the context (xo_ctx *).
+
+fn fault_record_set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) { fault.set(c, mp, mn, lp, ln) }
+
+fn fault_record_detail(c: Int, p: Int, n: Int) { fault.detail(c, p, n) }
+
+fn fault_record_clear(c: Int) { fault.clear(c) }
+
+fn fault_record_take(c: Int) -> Int { fault.take(c) }
+
+/// Reports the fault of c and ends the process with status 70.
+fn fault_record_exit(c: Int) { fault.exit(c) }

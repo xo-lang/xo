@@ -78,6 +78,7 @@ with Go and clang, so a failing suite can be reproduced locally.
 | `merge` | `go test -timeout 60m` of `packages` (default: the touched ones) |
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
 | `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it. A directory new on the branch (none on main) runs the branch's measure.sh for both, so main's xo and std build the branch's workload |
+| `windows` | on the `xo-windows` runner: `scripts/windows-batch.sh` (xo1 built with the Go backend, the LLVM goldens for windows/amd64 run and windows/arm64 cross built, the LLVM runtime tests that run on Windows, `xo test` LLVM against Go). The plan job first cross builds a Go backend `xo.exe` from the tested tree on Linux (`suite.sh xcross`, to `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe`); the job puts it in `bin/xo.exe` and sets `XO_CLI`, because the windows-amd64 seed cannot build xo on Windows (gotchas/windows-seed-xo1306-module-not-required.md). Best effort, not a gate (CLAUDE.md, arm64 only) |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with
@@ -182,6 +183,7 @@ gh workflow run ──> GitHub queues job (runs-on: self-hosted, xo-arm64)
 | xo-ci-arm64-big | i-EXAMPLE01 | r8g.8xlarge (32 vCPU, 256 GB) | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
 | xo-ci-arm64-big2 | i-EXAMPLE46 | r8g.8xlarge | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
 | xo-ci-arm64-big3 | i-EXAMPLE29 | r8g.8xlarge | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
+| xo-ci-windows | i-EXAMPLE47 | c7i.4xlarge (16 vCPU, 32 GB), Windows Server 2025 | xo-windows | `suite=windows`, or any single job suite with `-f runner=xo-windows`; best effort |
 
 All four were the lead's warm machines (scripts/warm-run.sh), adopted
 into Terraform on 2026-10-14 with their 120 GB disks and caches. Because
@@ -189,9 +191,36 @@ the big machines also carry `xo-arm64`, a default job can run on one
 when it is already up (GitHub picks any idle runner with the labels; the
 autostart only decides which stopped machine to start).
 
+The first boot showed a trap: restarting the runner service right after
+`config.cmd --runasservice` started it made GitHub refuse the new
+session ("Conflict: A session for this runner already exists") for a
+few minutes; boot.ps1 now writes `.env` before config.cmd and restarts
+only when `.env` changed on an existing registration.
+
 Not runners (still plain warm machines, tag `purpose=xo-warm-run`):
 three c7i.8xlarge amd64 (i-EXAMPLE02, i-EXAMPLE56,
-i-EXAMPLE08) and the Windows c7i.4xlarge (i-EXAMPLE47).
+i-EXAMPLE08).
+
+The Windows runner (`"os": "windows"` in runners.json; runners.sh sets
+it for `adopt` of a Windows instance and for `add` with a label starting
+`xo-windows`) boots from `boot/windows.ps1`, the counterpart of
+linux.sh: user data `<powershell>` with `<persist>true</persist>` runs
+on every boot (EC2Launch v2) and fetches the script from
+`s3://xo-seeds-ACCOUNT_ID/ci/boot/windows.ps1`. It keeps the 8 hour
+cap (scheduled task `xo-warm-cap`), the idle stop (scheduled task
+`xo-ci-idle` every minute, `C:\ProgramData\xo-ci\idle.ps1`; the lifetime
+cap's pending shutdown is cancelled first, since Windows refuses a
+second one), Defender exclusions for the runner and build trees
+(gotchas/windows-defender-slows-builds.md), the toolchain of
+scripts/warm-run.sh's Windows user data (Git for Windows, Go, LLVM, the
+MSVC build tools, the AWS CLI; skipped when `C:\xo-ready` exists), and
+the runner as a service running as SYSTEM in `C:\actions-runner`. Its
+`.env` puts Git Bash first on PATH (the test job's steps run with
+`shell: bash`) and points HOME, USERPROFILE, LOCALAPPDATA, and GOPATH at
+Administrator's profile, so the warm machine's Go and xo caches stay in
+use. Log: `C:\ProgramData\xo-ci\boot.log`. After adoption
+scripts/warm-run.sh no longer finds it (`Name=xo-warm`) and would create
+a new Windows instance: use CI instead.
 
 The list is `infra/ci-runners/runners.json`; change it with
 `infra/ci-runners/runners.sh` (below), never by hand in the console.
@@ -210,7 +239,8 @@ Account ACCOUNT_ID, us-east-1. Everything below is Terraform managed
 | Lambdas | `xo-ci-register`, `xo-ci-autostart` | Node.js 22; code `infra/ci-runners/lambda/`; autostart 256 MB (128 MB ran at 121 MB); logs `/aws/lambda/<name>`, 14 days |
 | function URL | xo-ci-autostart | auth NONE; resource policy: public InvokeFunctionUrl and InvokeFunction only via the URL; the handler checks GitHub's `X-Hub-Signature-256` |
 | schedule | EventBridge rule `xo-ci-autostart-sweep` | `rate(1 minute)`, input `{"sweep": true}` |
-| boot script | `s3://xo-seeds-ACCOUNT_ID/ci/boot/linux.sh` | rendered from boot/linux.sh |
+| boot scripts | `s3://xo-seeds-ACCOUNT_ID/ci/boot/linux.sh`, `.../windows.ps1` | rendered from boot/linux.sh and boot/windows.ps1 |
+| CI build outputs | `s3://xo-seeds-ACCOUNT_ID/dev/ci/<run id>/xo.exe` | the windows job's cross built xo; written by the plan job |
 | webhook secret | SSM `/xo-ci/webhook-secret` (SecureString) | random, 48 characters |
 | GitHub App | `xo-lang-ci`, id 5318159, installation 171424164 | NOT Terraform: made by `infra/ci-runners/github-app/create-app.py` (manifest flow); installed on josephspurrier/xo only; permissions administration write, actions read, webhooks write, metadata read |
 | App credentials | SSM `/xo-ci/github-app/{app-id,slug,installation-id,private-key}` | NOT Terraform (written by create-app.py); the key is a SecureString and was never printed or written to disk |
@@ -305,6 +335,8 @@ From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
 | the same through the one minute sweep only (webhook broken at the time) | 75 s |
 | idle stop after the last job | 5 min 24 s |
 | `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
+| xo-ci-windows first boot after adoption (boot.ps1 start to registered; the toolchain was already there) | 14 s |
+| `windows` (run 38627432745): plan with the xo.exe cross build 18 s, then the Windows job (checkout, windows-batch.sh steps 1 to 4) | 5 min 33 s job; 156 of 157 windows/amd64 goldens pass (proc_cmd fails, below), 157 of 157 windows/arm64 built, LLVM runtime tests ok, `xo test` LLVM against Go 16 same, 0 differ |
 | `fixed-point` on xo-ci-arm64-big | 2 min 24 s job: s1 36 s, s2 36 s, s3 24 s; s2 and s3 assembly (297,336,303 bytes) and binaries (53,485,152 bytes) identical |
 
 Earlier figures for comparison (from the knowledgebase): one self build
@@ -369,9 +401,19 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
 2. amd64 runners (best effort): `runners.sh adopt` the three c7i.8xlarge
    machines with label `xo-amd64`, add the choice to `ci.yml`'s `runner`
    input; the fixed point there uses the LLVM backend.
-3. A Windows runner (best effort): a PowerShell boot script
-   (`boot/windows.ps1`) with Defender exclusions (see
-   scripts/remote-windows.sh), user data `<powershell>` with
-   `<persist>true</persist>`.
-4. Decide whether four big machines are needed; each stopped one costs
+3. Windows known issues (best effort, recorded, not gates; Last
+   verified: 2026-10-14, run 38627432745):
+   - the golden `proc_cmd` fails under the runner (a service running as
+     SYSTEM, HOME pointed at Administrator's profile) but passes with
+     the same xo1 and checkout run as Administrator over SSH, so the
+     difference is the job's environment. The golden test prints no
+     diff; next step: have TestGoldenWant log the actual output on a
+     failure (internal/llvm/golden_want_test.go), rerun `suite=windows`.
+   - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
+     forces the cross built xo.exe; once fixed, xcross can go and the
+     job builds xo itself.
+4. A per-job script input for Windows (run a given bash or .ps1 from
+   the ref, e.g. a bench/perf measure-windows.ps1 against main's std),
+   so one-off Windows reruns go through CI instead of a warm machine.
+5. Decide whether four big machines are needed; each stopped one costs
    about $9.60 a month.

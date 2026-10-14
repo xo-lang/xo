@@ -2,8 +2,8 @@
 // Int.parse, a Duration's text and Duration.parse, a Time's RFC 3339 text
 // and std/json's Time and Duration, and the Debug quoting of Str and
 // Bytes, over their edge cases. The Go backend's output is the
-// reference; the Xo path (std/native/llrt/text.xo) and the C path
-// (XO_LLRT_C=text) print the same.
+// reference; the Xo path (std/native/llrt/text.xo) prints the same (its
+// C path went in decision 0227).
 use std/json
 
 fn ints(os: Os) {

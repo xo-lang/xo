@@ -6,11 +6,10 @@
 #
 # usage: bench/perf/text/measure.sh <xo binary> <out dir> <backend...>
 # example: bench/perf/text/measure.sh .tools/bin/xo /tmp/t arm64 llvm
-# XO_LLRT_C=text (or show, tz, report) in the environment builds the C
-# path (decision 0193);
 # WORKLOADS overrides the list; "none" is the setup alone (the inputs).
-# Decision 0198 deleted the C paths of show, tz, and report (2026-10-13;
-# text keeps its): naming them in XO_LLRT_C fails the build.
+# Decision 0198 deleted the C paths of show, tz, and report (2026-10-13)
+# and decision 0227 that of text (2026-10-14): naming them in XO_LLRT_C
+# fails the build; earlier results files keep the comparisons.
 set -e
 XO=$1
 OUT=$2

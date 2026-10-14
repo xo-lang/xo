@@ -1450,15 +1450,22 @@ int64_t xo_unwinding(void) {
 
 #define XO_EXC_CLASS 0x584f00004641554cULL // "XO\0\0FAUL"
 
+// The fault record (faulting, fault_msg, fault_loc, fault_detail) is
+// kept by std/native/llrt/fault.xo (the zero-C audit's B06).
+_Static_assert(offsetof(xo_ctx, unwinding) == 8 && offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 &&
+                   offsetof(xo_ctx, fault_loc) == 96 && offsetof(xo_ctx, fault_detail) == 104,
+               "fault.xo C_*");
+void xo_x_fault_record_set(int64_t c, int64_t mp, int64_t mn, int64_t lp, int64_t ln);
+void xo_x_fault_record_detail(int64_t c, int64_t p, int64_t n);
+void xo_x_fault_record_clear(int64_t c);
+int64_t xo_x_fault_record_take(int64_t c);
+void xo_x_fault_record_exit(int64_t c);
+
+// fault_exit reports the fault of c that nothing caught and ends the
+// process with status 70 (fault.xo exit).
 XO_NORETURN static void fault_exit(xo_ctx *c) {
-	xo_flush();
-	const char *msg = c->fault_msg ? c->fault_msg : "fault";
-	const char *loc = c->fault_loc ? c->fault_loc : "?";
-	const char *d = c->fault_detail ? c->fault_detail : "";
-	char *buf = malloc(strlen(msg) + strlen(loc) + strlen(d) + 32);
-	int n = sprintf(buf, "fault: %s at %s\n%s%s", msg, loc, d, *d ? "\n" : "");
-	write_all(2, buf, (size_t)n);
-	exit(70);
+	xo_x_fault_record_exit(XO_ADDR(c));
+	__builtin_unreachable();
 }
 
 #ifdef _WIN32
@@ -1589,37 +1596,12 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 }
 #endif
 
-static char *dup_bytes(const char *p, size_t n) {
-	char *s = malloc(n + 1);
-	if (!s) {
-		xo_oom();
-	}
-	memcpy(s, p, n);
-	s[n] = 0;
-	return s;
-}
-
-// fault_set records a fault in c (a fault raised while one unwinds
-// replaces it, as a panic in Go's deferred code does). The detail line,
-// set just before by xo_fault_detail, stays.
+// fault_set records a fault in c (fault.xo set).
 static void fault_set(xo_ctx *c, const char *msg, const char *loc) {
-	free(c->fault_msg);
-	free(c->fault_loc);
-	c->fault_msg = dup_bytes(msg, strlen(msg));
-	c->fault_loc = dup_bytes(loc, strlen(loc));
+	xo_x_fault_record_set(XO_ADDR(c), XO_ADDR(msg), (int64_t)strlen(msg), XO_ADDR(loc), (int64_t)strlen(loc));
 }
 
-static void fault_clear(xo_ctx *c) {
-	c->faulting = 0;
-	if (!c->fault_msg && !c->fault_loc && !c->fault_detail) {
-		return;
-	}
-	free(c->fault_msg);
-	free(c->fault_loc);
-	free(c->fault_detail);
-	c->fault_msg = c->fault_loc = c->fault_detail = NULL;
-	c->faulting = 0;
-}
+static void fault_clear(xo_ctx *c) { xo_x_fault_record_clear(XO_ADDR(c)); }
 
 XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
 	xo_ctx *c = ctx();
@@ -1627,19 +1609,12 @@ XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
 	fault_raise(c);
 }
 
-void xo_fault_detail(const char *p, int64_t n) {
-	xo_ctx *c = ctx();
-	free(c->fault_detail);
-	c->fault_detail = dup_bytes(p, (size_t)n);
-}
+void xo_fault_detail(const char *p, int64_t n) { xo_x_fault_record_detail(XO_ADDR(ctx()), XO_ADDR(p), n); }
 
 // xo_fault_raise is `fault(msg)` and a failed contract at loc.
 XO_NORETURN void xo_fault_raise(const char *msg, int64_t n, const char *loc, int64_t ln) {
 	xo_ctx *c = ctx();
-	free(c->fault_msg);
-	free(c->fault_loc);
-	c->fault_msg = dup_bytes(msg, (size_t)n);
-	c->fault_loc = dup_bytes(loc, (size_t)ln);
+	xo_x_fault_record_set(XO_ADDR(c), XO_ADDR(msg), n, XO_ADDR(loc), ln);
 	fault_raise(c);
 }
 
@@ -1660,15 +1635,7 @@ int64_t xo_landing(void) { return 0; }
 // `task.isolate`): 1 and the context goes on normally, its message
 // available to xo_fault_msg and xo_fault_loc; 0 when it is not a fault
 // (cancellation, which goes on unwinding).
-int64_t xo_fault_take(void) {
-	xo_ctx *c = ctx();
-	if (!c->faulting) {
-		return 0;
-	}
-	c->faulting = 0;
-	c->unwinding = 0;
-	return 1;
-}
+int64_t xo_fault_take(void) { return xo_x_fault_record_take(XO_ADDR(ctx())); }
 
 static xo_rstr *rs_of_cstr(const char *s, int64_t *len) {
 	int64_t n = s ? (int64_t)strlen(s) : 0;
@@ -3179,11 +3146,10 @@ XO_NORETURN void xo_fault_rethrow(xo_scope *s) {
 	xo_ctx *c = ctx();
 	xo_task *t = s->fault;
 	fault_clear(c);
-	c->fault_msg = dup_bytes(t->fault_msg, strlen(t->fault_msg));
-	c->fault_loc = dup_bytes(t->fault_loc, strlen(t->fault_loc));
 	if (t->fault_detail) {
-		c->fault_detail = dup_bytes(t->fault_detail, strlen(t->fault_detail));
+		xo_fault_detail(t->fault_detail, (int64_t)strlen(t->fault_detail));
 	}
+	fault_set(c, t->fault_msg, t->fault_loc);
 	fault_raise(c);
 }
 
