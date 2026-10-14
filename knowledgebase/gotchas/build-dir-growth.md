@@ -9,3 +9,5 @@ Status: Observed (2026-10-10); fixed 2026-10-10.
 **Fix:** `trimBuildDirs` (internal/build/buildtrim.go) removes the least recently used directories once their total passes `XO_BUILD_DIR_MAX` bytes (default 4 GiB), down to three quarters of it, at most once a minute. `buildDir` refreshes a directory's mtime on each use, and a directory used within the last 2 hours is never removed. A directory set by `XO_BUILD_DIR` is never trimmed. Test: `TestTrimBuildDirs`.
 
 Related: go-build-cache-growth.md.
+
+Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by selfhost/prune (caches-unpruned-after-go-deletion.md, decision 0223).

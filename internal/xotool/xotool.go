@@ -15,7 +15,8 @@
 // A build (Ensure) runs once per key across processes and worktrees: the
 // binary goes into <user cache>/xo/checkout/<key>/xo (under a file lock;
 // $XO_CHECKOUT_CACHE overrides the directory) and is copied to bin/xo,
-// whose std is <repo>/std (xo1 looks for std at <bin>/../std). The seed,
+// whose std is <repo>/std (xo1 looks for std at <bin>/../std). Keys past
+// the newest four unused for a day are pruned (prune.go). The seed,
 // the xo that compiles it, is the first of: $XO_SEED; <repo>/bin/xo; the
 // newest earlier build in the cache; `xo` on PATH; the newest prebuilt
 // seed (decision 0216 item 1: seeds/latest.txt of $XO_SEED_URL or
@@ -250,12 +251,16 @@ func Ensure(root string, log io.Writer) (string, error) {
 	bin := filepath.Join(root, "bin", exeName("xo"))
 	keyFile := filepath.Join(root, "bin", "xo.key")
 	if k, err := os.ReadFile(keyFile); err == nil && strings.TrimSpace(string(k)) == key && isFile(bin) {
+		if base, err := cacheBase(); err == nil {
+			useCheckout(base, key)
+		}
 		return bin, nil
 	}
 	base, err := cacheBase()
 	if err != nil {
 		return "", err
 	}
+	defer useCheckout(base, key)
 	built := filepath.Join(base, "checkout", key, exeName("xo"))
 	if !isFile(built) {
 		if err := buildLocked(root, built, log); err != nil {

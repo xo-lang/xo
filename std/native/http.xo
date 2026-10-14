@@ -6,7 +6,6 @@ use std/json as js
 use std/log
 use std/task
 use native/rt
-use native/llrt/hpack
 use native/llrt/http1
 use native/llrt/cabi_http
 use native/llrt/cabi_tls
@@ -603,7 +602,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
     // HTTP/2 (decision 0121): each request is a task of its own, as
     // net/http runs a handler per stream; the scope ends when the
     // connection does
-    var hp = hpack.conn(hc)
+    var hp = http1.h2_conn(hc)
     scope s {
       while hp.next() {
         let st = rthttp.h2_take(hc)

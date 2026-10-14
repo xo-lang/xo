@@ -11,11 +11,6 @@
 //   argon2 <mode 0 d, 1 i, 2 id> <password> <salt> <secret> <data> <t> <m> <p> <key length>
 //   b64 <url 0 or 1> <data>
 //   verify <password> <hash>
-//   equal <a> <b>
-//   sha512 <data>
-//   edpub <seed>
-//   edsign <seed> <msg>
-//   edverify <public key> <msg> <signature>
 // Output, one line per operation: the result in hex, or 0 or 1.
 
 #define XO_RT_NO_MAIN
@@ -115,35 +110,6 @@ int main(void) {
 			printf("%lld\n", (long long)xo_crypto_verify_password((const char *)a, an, (const char *)b, bn));
 			free(a);
 			free(b);
-		} else if (strcmp(f[0], "equal") == 0 && nf == 3) {
-			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
-			printf("%lld\n", (long long)xo_crypto_equal((const char *)a, an, (const char *)b, bn));
-			free(a);
-			free(b);
-		} else if (strcmp(f[0], "sha512") == 0 && nf == 2) {
-			uint8_t *a = unhex(f[1], &an), d[64];
-			cr_sha512_3(a, an, NULL, 0, NULL, 0, d);
-			puthex(d, 64);
-			free(a);
-		} else if (strcmp(f[0], "edpub") == 0 && nf == 2) {
-			uint8_t *a = unhex(f[1], &an);
-			xo_rstr *r = xo_crypto_ed25519_public_key((const char *)a, an, &len);
-			puthex((uint8_t *)r->data, len);
-			xo_free(r);
-			free(a);
-		} else if (strcmp(f[0], "edsign") == 0 && nf == 3) {
-			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
-			xo_rstr *r = xo_crypto_ed25519_sign((const char *)a, an, (const char *)b, bn, &len);
-			puthex((uint8_t *)r->data, len);
-			xo_free(r);
-			free(a);
-			free(b);
-		} else if (strcmp(f[0], "edverify") == 0 && nf == 4) {
-			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn), *c = unhex(f[3], &cn);
-			printf("%lld\n", (long long)xo_crypto_ed25519_verify((const char *)a, an, (const char *)b, bn, (const char *)c, cn));
-			free(a);
-			free(b);
-			free(c);
 		} else {
 			printf("bad line\n");
 		}
