@@ -58,6 +58,8 @@ pub struct Gen {
   /// String objects and raw literals by their text.
   strs: Map[Str, Int] = {}
   raws: Map[Str, Int] = {}
+  /// The zeroed tables of rt.static_word and rt.tlocal_get by name.
+  statics: Map[Str, Int] = {}
   helpers: List[Str] = []
   emitted: Map[Str, Bool] = {}
   /// Comment every instruction's code with its opcode (generate_with).
@@ -358,6 +360,20 @@ fn (var g: Gen) place(b: Bytes) -> Int {
   let at = (g.data_end + 7) / 8 * 8
   g.data.push("(data (i32.const ${at}) \"${wat_bytes(b)}\")")
   g.data_end = at + b.len()
+  at
+}
+
+/// The address of a table of n zero words named name, reserved after
+/// the data at its first use (memory starts zeroed, so no segment):
+/// rt.static_word's process globals and, with one thread, the thread
+/// local table of rt.tlocal_get (decisions 0207 and 0212, work item B02).
+fn (var g: Gen) static_table(name: Str, n: Int) -> Int {
+  if let Some(a) = g.statics.get(name) {
+    return a
+  }
+  let at = (g.data_end + 7) / 8 * 8
+  g.data_end = at + 8 * n
+  g.statics[name] = at
   at
 }
 

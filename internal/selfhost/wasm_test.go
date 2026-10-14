@@ -203,6 +203,8 @@ func TestSelfhostWasmFsWrite(t *testing.T) {
 	}
 }
 
+var wasmTimeRE = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
+
 var wasmLeakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
 // parseWasmRuns maps each run of `selfhost/wasm --each` to its result line.
@@ -267,9 +269,10 @@ func runWasm(t *testing.T, node, runner, wasm, dir string, leak bool) wasmRun {
 }
 
 // stableWasmStderr keeps the lines internal/llvm's golden test keeps
-// (stableStderr there): no indented lines, no crash bundle paths, no leak
-// check line.
+// (stableStderr there): timestamps as <time> (std/log's records), no
+// indented lines, no crash bundle paths, no leak check line.
 func stableWasmStderr(s string) string {
+	s = wasmTimeRE.ReplaceAllString(s, "<time>")
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
 		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || strings.HasPrefix(l, "xo leakcheck:") || strings.HasPrefix(l, "xo wasm seed:") {
