@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B13, stage 2; decision 0226): the
+  list objects (a new list, growth, the copy of a shared list, the
+  release of a list's elements) and the drop worklist are Xo
+  (std/native/llrt/obj.xo). arm64 generated code calls them directly,
+  with no C level: they find the thread's heap themselves, and their
+  common cases make no call. The C entry points forward to them for
+  LLVM and the seed. bench/perf alloc, nested, text, json and xo are
+  0.883 to 1.021 of the C's instructions on arm64 and LLVM, the self
+  build 1.000 (bench/results/string-list-objects-2026-10-14.md). The
+  string objects stay C.
 - Native runtime (zero-C audit item B14): the test world's part 1 is
   Xo (std/native/llrt/testworld.xo): `xo test --real`'s switches, seeded
   Rand, the generators of property tests and testing.gen, captured

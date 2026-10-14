@@ -15,6 +15,7 @@
 use native/llrt/alloc
 use native/llrt/netpolicy
 use native/llrt/num
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -385,6 +386,35 @@ fn heap_refill(h: Int, n: Int) { alloc.refill(h, n) }
 fn heap_free_mt(h: Int, p: Int) { alloc.free_mt(h, p) }
 
 fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(h, p, old, n, mt) }
+
+// ---------------------------------------------------------------------------
+// Lists (zero-C audit B13): xo_rt.c xo_rl_new, xo_rl_copy, xo_rl_share, xo_rl_grow, xo_rl_free's work, and
+// xo_rc_defer's worklist, in obj.xo. hw is the calling thread's heap
+// word (the C finds it: the heap record, plus 1 when other threads run),
+// h a heap record, a and l objects, p bytes, the callbacks C functions
+// of generated code. Nothing here allocates Xo values, counts, or faults.
+
+fn obj_rl_new(hw: Int, cap: Int, esize: Int) -> Int { obj.rl_new(hw, cap, esize) }
+
+// arm64 generated code calls these directly, with no C level: obj.xo
+// finds the heap itself (no hw).
+fn obj_rl_new_n(n: Int, esize: Int) -> Int { obj.rl_new_n(n, esize) }
+
+fn obj_rl_grow_n(l: Int, esize: Int) -> Int { obj.rl_grow_n(l, esize) }
+
+fn obj_rl_free_n(l: Int, esize: Int, drop: Int) { obj.rl_free_n(l, esize, drop) }
+
+fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n(l, esize, dup, drop) }
+
+fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
+
+fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int) { obj.heap_init(h, slow, rl_free_rt, rc_defer_rt) }
+
+fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
+
+fn obj_rl_free(hw: Int, l: Int, esize: Int, drop: Int) { obj.rl_free(hw, l, esize, drop) }
+
+fn obj_rc_defer(h: Int, o: Int, drop: Int) { obj.rc_defer(h, o, drop) }
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task

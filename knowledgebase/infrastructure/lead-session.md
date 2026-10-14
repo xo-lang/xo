@@ -46,10 +46,12 @@ last section (rand 1.006, gen 0.924 on arm64; the compiler now folds
 constant Int expressions). CI runs 38604944243 (auto, fixed point
 identical) and 38604968164 (cmd/xo).
 
-In progress in another session (xo-4b), not merged: B13 stage 2, string
-and list objects in Xo, branch b13-stage2 (decision 0226, claimed):
-meets the bar on the Mac (text split 1.021 the worst, alloc small
-0.967), CI next.
+In progress in another session (xo-4b), not merged: B13 stage 2, the
+list objects in Xo, branch b13-stage2 (decision 0226): meets the bar on
+the Mac, 0.883 to 1.021 of the C on arm64 and LLVM, self build 1.000
+(bench/results/string-list-objects-2026-10-14.md, "Stage 2
+re-landed"); CI auto next, then the lead's merge. The string objects
+stay C.
 
 ## Next, in order
 

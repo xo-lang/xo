@@ -43,3 +43,8 @@ a rare call still costs the frame on its own path. The rules above
 still help where shrink wrapping does not apply: functions with landing
 pads, stack arguments or results, more than six region edges, or a
 value kept across a call on the common path.
+
+Update (2026-10-14, decision 0226): B13's list objects meet the bar
+once arm64 generated code calls obj.xo directly (no C level) and its
+common cases make no call; a new caller of a large function can undo
+an inlining elsewhere (gotchas/arm64-inline-few-sites-new-callers.md).
