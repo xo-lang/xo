@@ -78,7 +78,7 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
   // above limit are rejected
   let span = rt.int_wrap(1, hi, lo)
-  let limit = rt.int_wrap(1, -1, ints.u64_rem(-1, span))
+  let limit = rt.int_wrap(1, -1, max_rem(span))
   let flip = -9223372036854775807 - 1
   while true {
     let v = next_u64()
@@ -89,6 +89,18 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
     }
   }
   0
+}
+
+/// 2^64 - 1 mod span as UInt64s. For 0 < span <= 2^62 (every range
+/// that fits in an Int's half) without the unsigned division:
+/// 2^64 - 1 = 2 (2^63 - 1) + 1, so it is 2 m + 1, less span when that
+/// reaches it, where m = (2^63 - 1) mod span.
+fn max_rem(span: Int) -> Int {
+  if span > 0 && span <= 4611686018427387904 {
+    let r = rt.int_wrap(0, rt.int_wrap(2, 9223372036854775807 % span, 2), 1)
+    return if r >= span { r - span } else { r }
+  }
+  ints.u64_rem(-1, span)
 }
 
 /// `rand.float()`: uniform in [0, 1) with 53 bits.

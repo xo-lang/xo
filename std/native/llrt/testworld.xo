@@ -411,24 +411,28 @@ pub fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
 // Go's math/rand/v2 PCG: Rand's seeded generator (std/rt's seededRand)
 // and the generators of generated values
 
-/// The next value of the PCG whose state (high, low) is at a.
+/// The next value of the PCG whose state (high, low) is at a. Each
+/// constant is bound once so the body stays under the arm64 inliner's
+/// 40 instructions (selfhost/arm64/inline.xo): every draw inlines it.
 fn pcg(a: Int) -> Int {
+  let mul_lo = 4865540595714422341
+  let inc_lo = 1442695040888963407
   let s_hi = rt.mem_load(a, 0, 8)
   let s_lo = rt.mem_load(a, 8, 8)
   // (hi, lo) = state * mul + inc, 128 bit
-  let lo = rt.int_wrap(2, s_lo, 4865540595714422341)
-  var hi = rt.u64_mul_hi(s_lo, 4865540595714422341)
-  hi = rt.int_wrap(0, hi, rt.int_wrap(0, rt.int_wrap(2, s_hi, 4865540595714422341), rt.int_wrap(2, s_lo, 2549297995355413924)))
-  let lo2 = rt.int_wrap(0, lo, 1442695040888963407)
-  let c = if (lo2 ^ MIN_INT) < (lo ^ MIN_INT) { 1 } else { 0 }
-  hi = rt.int_wrap(0, rt.int_wrap(0, hi, 6364136223846793005), c)
+  let lo = rt.int_wrap(2, s_lo, mul_lo)
+  let lo2 = rt.int_wrap(0, lo, inc_lo)
+  // the carry of lo + inc, without a branch: the top bit of
+  // (lo & inc) | ((lo | inc) & ~lo2)
+  let c = rt.int_wrap(4, (lo & inc_lo) | ((lo | inc_lo) & (lo2 ^ -1)), 63)
+  let hi = rt.int_wrap(0, rt.int_wrap(0, rt.int_wrap(0, rt.u64_mul_hi(s_lo, mul_lo), rt.int_wrap(0, rt.int_wrap(2, s_hi, mul_lo), rt.int_wrap(2, s_lo, 2549297995355413924))), 6364136223846793005), c)
   rt.mem_store(a, 0, hi, 8)
   rt.mem_store(a, 8, lo2, 8)
   // DXSM
-  hi = hi ^ rt.int_wrap(4, hi, 32)
-  hi = rt.int_wrap(2, hi, -2696494805208442699)
-  hi = hi ^ rt.int_wrap(4, hi, 48)
-  rt.int_wrap(2, hi, lo2 | 1)
+  var h = hi ^ rt.int_wrap(4, hi, 32)
+  h = rt.int_wrap(2, h, -2696494805208442699)
+  h = h ^ rt.int_wrap(4, h, 48)
+  rt.int_wrap(2, h, lo2 | 1)
 }
 
 /// Whether Rand is the seeded generator (a test binary).
@@ -456,18 +460,27 @@ pub fn rand_u64() -> Int {
 // choices (the harness). A generator is the address of its record
 // (words): the PCG state (high, low), the depth, the record of choices
 // (address, length, capacity), the replay (address, length), its
-// position, and whether it replays.
+// position, whether it replays, and whether it records (a property
+// test's generator, whose choices prop_report sends; testing.gen's
+// values never read theirs, so its generator skips the record's block).
 const G_DEPTH = 16
 const G_REC = 24
 const G_REPLAY = 48
 const G_NREPLAY = 56
 const G_POS = 64
 const G_REPLAYING = 72
-const G_SIZE = 80
+const G_RECORDS = 80
+const G_SIZE = 88
 
 fn gen_alloc() -> Int {
   let g = rt.heap_large(G_SIZE)
-  rt.mem_set(g, 0, G_SIZE)
+  // the words past the PCG state (gen_seed stores it), without a memset
+  // call: testing.gen makes one generator per value
+  var o = G_DEPTH
+  while o < G_SIZE {
+    rt.mem_store(g, o, 0, 8)
+    o = rt.int_wrap(0, o, 8)
+  }
   g
 }
 
@@ -485,7 +498,11 @@ pub fn gen_new(seed: Int) -> Int {
 
 /// Frees generator g.
 pub fn gen_free(g: Int) {
-  vec_free(g + G_REC)
+  // the record's block only: g itself goes next
+  let rec = rt.mem_load(g, G_REC, 8)
+  if rec != 0 {
+    rt.heap_release(rec - 8)
+  }
   let r = rt.mem_load(g, G_REPLAY, 8)
   if r != 0 {
     rt.heap_release(r - 8)
@@ -498,6 +515,7 @@ pub fn gen_free(g: Int) {
 /// case's seed: std/rt's seed*1000003 + case).
 pub fn gen_prop() -> Int {
   let g = gen_alloc()
+  rt.mem_store(g, G_RECORDS, 1, 8)
   if let Some(r) = env_var(V_REPLAY) {
     let cs = choices(r)
     let n = cs.len()
@@ -556,6 +574,9 @@ pub fn gen_draw(g: Int, n: Int) -> Int {
     v = pcg(g)
   } else {
     v = u64n(g, n)
+  }
+  if rt.mem_load(g, G_RECORDS, 8) == 0 {
+    return v
   }
   let r = rt.int_wrap(0, g, G_REC)
   let k = rt.mem_load(r, 8, 8)

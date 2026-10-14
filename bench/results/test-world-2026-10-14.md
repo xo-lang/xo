@@ -110,3 +110,42 @@ slow paths, pcg, u64n, the record's growth); the arm64 backend's
 prologues and epilogues on their fast paths are the likely cost (shrink
 wrapping, found by B13, is being added to selfhost/arm64), so B14's
 arm64 rows are rechecked after it.
+
+## After main's 2026-10-14 merges, the rand and gen fixes (the bar met)
+
+Rechecked 2026-10-14 on the Mac: base origin/main 616b25a6 (shrink
+wrapping in, B03's stdio.xo and process.xo, which B14 now calls
+directly), against the branch merged with it plus three changes:
+
+- `rand.next_int` computes 2^64 - 1 mod span without the unsigned
+  division for every span up to 2^62 (`max_rem`: 2 m + 1, less span,
+  where m = (2^63 - 1) mod span): `ints.u64_rem(-1, span)` went through
+  `u64_div` on every draw.
+- `testworld.pcg` takes the carry without a branch.
+- testing.gen's generators skip the record of choices (`G_RECORDS`):
+  only a property test's generator is reported (prop_report), so
+  testing.gen no longer allocates and frees a 512 byte record per value;
+  the generator's words are zeroed with stores, not two memset calls.
+- The compiler folds a constant Int expression (`const MIN_INT: Int =
+  -9223372036854775807 - 1`) to one constant (selfhost/ssa show.xo
+  const_value through the checker's const_int, which now returns None on
+  overflow instead of faulting): every `MIN_INT` use in std was a
+  `movz`, `movk`, and `sub`.
+
+Same columns as above (none: 17.7 and 17.6 million arm64, 14.3 and
+14.3 million LLVM):
+
+| Test | arm64 base | arm64 new | ratio | net | LLVM base | LLVM new | ratio | net |
+|---|---|---|---|---|---|---|---|---|
+| stdio | 124,478,608 | 123,771,216 | 0.994 | 0.994 | 108,683,673 | 103,649,492 | 0.954 | 0.946 |
+| env | 4,616,460,543 | 2,916,325,808 | 0.632 | 0.630 | 4,591,586,779 | 2,745,936,161 | 0.598 | 0.597 |
+| rand | 63,127,455 | 63,499,794 | 1.006 | 1.010 | 39,797,583 | 36,533,922 | 0.918 | 0.870 |
+| log | 1,737,577,150 | 698,892,366 | 0.402 | 0.396 | 1,712,022,038 | 667,631,425 | 0.390 | 0.385 |
+| gen | 77,914,419 | 71,994,745 | 0.924 | 0.903 | 67,243,721 | 56,640,108 | 0.842 | 0.799 |
+| memfs | 68,402,150 | 68,620,011 | 1.003 | 1.006 | 53,138,513 | 53,118,369 | 1.000 | 0.998 |
+
+Within decision 0180's 5 percent on every row of both backends: rand
+1.006 (net 1.010) and gen 0.924 on arm64 were 1.099 and 1.095. A scratch
+split of gen (200,000 testing.gen[Int] values) showed the cost was the
+generator, not the draws: 1,097 instructions per value on main, 1,232
+on the branch, 674 with the record skipped.

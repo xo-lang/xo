@@ -463,7 +463,8 @@ fn (c: Checker) range_count(lo: Expr?, hi: Expr?, inclusive: Bool) -> Int? {
 }
 
 /// A constant Int expression: literals, `const` names, parentheses,
-/// unary minus, and + - * / % of constants.
+/// unary minus, and + - * / % & | ^ of constants; None when a step
+/// overflows (the program faults there at run time instead).
 pub fn (c: Checker) const_int(f: Int, e: Expr, depth: Int) -> Int? {
   if depth > 32 {
     return None
@@ -475,17 +476,20 @@ pub fn (c: Checker) const_int(f: Int, e: Expr, depth: Int) -> Int? {
       if op != parser.Kind.Minus {
         return None
       }
-      Some(-c.const_int(f, x, depth + 1)?)
+      0.checked_sub(c.const_int(f, x, depth + 1)?)
     }
     BinaryExpr(op: op, x: x, y: y, ..) => {
       let a = c.const_int(f, x, depth + 1)?
       let b = c.const_int(f, y, depth + 1)?
       match op {
-        Plus => Some(a + b)
-        Minus => Some(a - b)
-        Star => Some(a * b)
-        Slash => if b == 0 { None } else { Some(a / b) }
-        Percent => if b == 0 { None } else { Some(a % b) }
+        Plus => a.checked_add(b)
+        Minus => a.checked_sub(b)
+        Star => a.checked_mul(b)
+        Slash => if b == 0 { None } else { a.checked_div(b) }
+        Percent => if b == 0 || (b == -1 && a == -9223372036854775807 - 1) { None } else { Some(a % b) }
+        Amp => Some(a & b)
+        Pipe => Some(a | b)
+        Caret => Some(a ^ b)
         _ => None
       }
     }
