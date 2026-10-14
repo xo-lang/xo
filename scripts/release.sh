@@ -166,7 +166,7 @@ if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 	# bench/results/windows-2026-10-12.md, "xo1 built by Xo for Windows"
 	XO_CLANG="$win_clang" XO_AR="$(dirname "$win_clang")/llvm-ar" XO_WINSYSROOT="$XO_WINSYSROOT" \
 		XO_LLVM_SPLIT="${XO_RELEASE_WIN_SPLIT:-16}" XO_LLVM_LTO="${XO_RELEASE_WIN_LTO:-thin}" \
-		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" \
+		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" XO_LLVM_OPT=O2 \
 		"$xo1" build --backend=llvm --targets=windows/amd64 \
 		-o "$(stage_of windows/amd64)/bin/xo.exe" selfhost/xo >&2
 fi

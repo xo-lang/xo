@@ -135,6 +135,10 @@ func Key(root string) (string, error) {
 	}
 	h := sha256.New()
 	fmt.Fprintf(h, "xo checkout v1\n%s/%s\n", runtime.GOOS, runtime.GOARCH)
+	if o := LLVMOpt(); o != "" {
+		// an LLVM built xo of another clang level is another build
+		fmt.Fprintf(h, "llvm opt %s\n", o)
+	}
 	for _, n := range names {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(n)))
 		if err != nil {
@@ -266,6 +270,16 @@ func Ensure(root string, log io.Writer) (string, error) {
 	}
 	if err := writeAtomic(keyFile, []byte(key+"\n"), 0o644); err != nil {
 		return "", err
+	}
+	// the clang level of an LLVM built xo, which scripts/seed-pack.sh
+	// checks (seeds are -O2)
+	optFile := filepath.Join(root, "bin", "xo.opt")
+	if o := LLVMOpt(); o != "" {
+		if err := writeAtomic(optFile, []byte(o+"\n"), 0o644); err != nil {
+			return "", err
+		}
+	} else {
+		os.Remove(optFile)
 	}
 	return bin, nil
 }
@@ -486,6 +500,19 @@ func exeName(name string) string {
 		return name + ".exe"
 	}
 	return name
+}
+
+// LLVMOpt is the clang level xo is built at on a host whose xo is built
+// by the LLVM backend: $XO_LLVM_OPT, else O0 (decision 0220: development
+// builds; seeds and releases are -O2); "" on other hosts.
+func LLVMOpt() string {
+	if b, _ := hostBackend(); b != "llvm" {
+		return ""
+	}
+	if o := os.Getenv("XO_LLVM_OPT"); o != "" {
+		return o
+	}
+	return "O0"
 }
 
 // hostBackend is the backend that builds xo on this host and the
