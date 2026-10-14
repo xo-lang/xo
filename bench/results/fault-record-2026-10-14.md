@@ -67,3 +67,33 @@ On the Mac, with an xo built from the branch:
 - internal/llvm's 157 goldens pass on arm64 and LLVM;
 - TestRuntimeFaultResume, TestRuntimeTasks, TestRuntimeThreads,
   TestGoldenTasks (TSan), and TestRuntimeFaultShared pass.
+
+## Part 2: the entry points (decision 0228)
+
+Branch b06-entries. Generated code calls cabi.xo's `xo_x_fault_raise_*`
+exports, and the C `xo_fault_*` forward to them for older xo's code.
+bench/perf/fault on the Mac, `/usr/bin/time -l` instructions retired,
+minimum of 5 runs. Main cd150967 is built by its own xo, the branch by
+its own xo (its emitters call the exports).
+
+| workload | backend | main | part 2 | ratio |
+|---|---|---|---|---|
+| none | arm64 | 16,123,140 | 15,987,082 | 0.992 |
+| none | llvm | 13,736,071 | 13,566,554 | 0.988 |
+| isolate | arm64 | 275,737,453 | 285,772,886 | 1.036 |
+| isolate | llvm | 313,286,770 | 301,525,266 | 0.962 |
+| defer | arm64 | 1,573,594,085 | 1,578,643,932 | 1.003 |
+| defer | llvm | 1,308,342,586 | 1,312,384,685 | 1.003 |
+| owned | arm64 | 917,079,389 | 925,447,742 | 1.009 |
+| owned | llvm | 765,991,898 | 764,190,243 | 0.998 |
+
+isolate on arm64 costs about 500 instructions more per fault. That is
+the export's frame and the message's copy into the thread's buffer
+(unwind.xo msg_buf), which the C wrote straight into its stack buffer.
+It is within decision 0180's 5 percent.
+
+On the Mac, with the branch's xo:
+- internal/llvm's 157 goldens pass on arm64 and LLVM;
+- TestRuntimeFault* (FaultResume, FaultShared), TestRuntimeTasks,
+  TestRuntimeThreads, and TestGoldenTasks (TSan) pass;
+- the arm64 asm goldens change only in the 10 fault calls.

@@ -144,7 +144,7 @@ xo_f_main:
 	mov x1, #43
 	adrp x3, .Lxo_loc0
 	add x3, x3, :lo12:.Lxo_loc0
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 	brk #1
 .Lf1_fault2:
 	mov x0, x22
@@ -153,7 +153,7 @@ xo_f_main:
 	adrp x3, .Lxo_loc1
 	add x3, x3, :lo12:.Lxo_loc1
 .Lf1_cs1a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf1_cs1b:
 	brk #1
 	.cfi_endproc
@@ -312,7 +312,7 @@ xo_f_sieve:
 	adrp x3, .Lxo_loc2
 	add x3, x3, :lo12:.Lxo_loc2
 .Lf2_cs4a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf2_cs4b:
 	brk #1
 .Lf2_fault2:
@@ -321,7 +321,7 @@ xo_f_sieve:
 	adrp x2, .Lxo_loc3
 	add x2, x2, :lo12:.Lxo_loc3
 .Lf2_cs5a:
-	bl xo_fault_index
+	bl xo_x_fault_raise_index
 .Lf2_cs5b:
 	brk #1
 .Lf2_fault3:
@@ -333,7 +333,7 @@ xo_f_sieve:
 	adrp x3, .Lxo_loc4
 	add x3, x3, :lo12:.Lxo_loc4
 .Lf2_cs6a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf2_cs6b:
 	brk #1
 .Lf2_fault4:
@@ -343,7 +343,7 @@ xo_f_sieve:
 	adrp x3, .Lxo_loc5
 	add x3, x3, :lo12:.Lxo_loc5
 .Lf2_cs7a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf2_cs7b:
 	brk #1
 .Lf2_fault5:
@@ -352,7 +352,7 @@ xo_f_sieve:
 	adrp x2, .Lxo_loc6
 	add x2, x2, :lo12:.Lxo_loc6
 .Lf2_cs8a:
-	bl xo_fault_index
+	bl xo_x_fault_raise_index
 .Lf2_cs8b:
 	brk #1
 .Lf2_fault6:
@@ -363,7 +363,7 @@ xo_f_sieve:
 	adrp x3, .Lxo_loc7
 	add x3, x3, :lo12:.Lxo_loc7
 .Lf2_cs9a:
-	bl xo_fault_overflow
+	bl xo_x_fault_raise_overflow
 .Lf2_cs9b:
 	brk #1
 	.cfi_endproc
