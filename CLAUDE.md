@@ -126,9 +126,10 @@ Update the knowledgebase in the same change as the work, not later:
     Full reference: [ci.md](knowledgebase/infrastructure/ci.md).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
-    58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
-    120m`); `XO_SELFHOST_JOBS` sizes its worker pool (default
-    min(GOMAXPROCS, 4)); full runs on demand (ci.yml suite=full), before tagging, and
+    58 min cold on r8g.8xlarge, `-timeout 120m`, on demand: `gh workflow
+    run ci.yml -f suite=full -f runner=xo-arm64-big`,
+    knowledgebase/infrastructure/ci.md); `XO_SELFHOST_JOBS` sizes its
+    worker pool (default min(GOMAXPROCS, 4)); full runs before tagging and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
 - The Go compiler is gone (decision 0215, 2026-10-13; the last commit
