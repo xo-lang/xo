@@ -22,7 +22,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
   var tests = false
   var stages = false
   var std_dir = "std"
-  var wd = os.env.get("PWD") ?? ""
+  var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
   for a in args {
     if a.starts_with("--bench=") {

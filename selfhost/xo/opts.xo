@@ -137,7 +137,7 @@ fn front(os: Os, args: List[Str]) -> Front {
   }
   let dirs = cmdhelp.takes_dirs(cmd)
   let vals = if cmd is "build" | "run" | "test" { value_flags() } else { [] }
-  let wd = os.env.get("PWD") ?? ""
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var out: List[Str] = []
   for k in 0..i + 1 {
     out.push(args[k])
@@ -236,7 +236,7 @@ fn help(os: Os, cmd: Str) -> Never {
 
 /// parse_args reads the command line (args[0] is the command).
 fn parse_args(os: Os, args: List[Str]) -> Opts {
-  var o = Opts{cmd: args[0], wd: os.env.get("PWD") ?? ""}
+  var o = Opts{cmd: args[0], wd: os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""}
   // the std sources: $XO_STD, else lib/xo/std of a release layout beside
   // the binary (check.std_dir, as every command finds it); --std
   // overrides it

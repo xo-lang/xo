@@ -317,6 +317,24 @@ func TestRuntimeEventLoop(t *testing.T) {
 	runTSan(t, opt, ".")
 }
 
+// TestRuntimeRawPoll registers descriptors with the poller from another
+// thread while the poller's epoll calls are Xo system calls (decision
+// 0206 stage 3), under ThreadSanitizer: the release and acquire around
+// them must give it the edge the C library's epoll interceptors give,
+// or it reports pd_new's calloc against the poller's lock of the
+// descriptor (gotchas/tsan-raw-epoll-no-edge.md). Linux only (epoll).
+func TestRuntimeRawPoll(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the poller's epoll is Linux only")
+	}
+	t.Parallel() // builds nothing in the shared build directory
+	src := filepath.Join(rtDir, "testdata", "rawpoll.c")
+	bin := tsanBuild(t, nil, cOnly(t, src))
+	if out := runTSan(t, bin, "."); !strings.Contains(out, "rawpoll: ok") {
+		t.Errorf("rawpoll did not pass:\n%s", out)
+	}
+}
+
 // deepRecursion lists golden programs that recurse hundreds of thousands
 // of calls deep: ThreadSanitizer crashes on them even on one thread (its
 // own limit, checked 2026-10-08), so they run on four threads without it.

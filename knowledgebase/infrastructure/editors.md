@@ -67,10 +67,18 @@ runs.
 |---|---|
 | `lsp.xo` | JSON-RPC framing, session loop, document sync, recheck with overlay (debounced 150 ms), diagnostics, code actions, document symbols, request dispatch. A failed hover, definition, or references answers error -32803 with the load error (a bad `xo.mod`, for example), also sent once as `window/logMessage`. |
 | `lsp_features.xo` | Hover, definition, references, rename, formatting, semantic tokens. |
-| `resolve.xo` | Every identifier of a file and what it names. |
+| `lsp_complete.xo` | Completion (trigger `.`: fields, methods, variants, statics, package members; else locals in scope, module names, imports, prelude names, keywords; ranked by the expected type) and signature help (trigger `(` and `,`), over a check of the text patched at the cursor (decision 0219). |
+| `resolve.xo` | Every identifier of a file and what it names, and the scope ranges completion reads. |
 
-No Go test drives `xo lsp` since decision 0215 (the protocol and corpus
-tests were in `internal/lsp`).
+Tests: `cmd/xo/lsp_test.go` (`TestLSPCompletion`, runs in `-short`)
+starts `xo lsp` in a `t.TempDir()` module (`cmd.Dir` and `PWD` both the
+module) and checks initialize's capabilities, completion after `p.`,
+`http.`, and `r.`, a bare prefix, an empty name, the expected type
+ranking, signature help in an open call, and hover and definition into
+std. It is the only Go test of `xo lsp` since decision 0215 (the
+protocol and corpus tests were in `internal/lsp`). Run it alone with
+`go test -run TestLSPCompletion ./cmd/xo` (`XO_CLI` to skip the
+rebuild). Last verified: 2026-10-13.
 
 Hand testing without an editor: send `initialize`, `textDocument/didOpen`,
 then a request, each framed as `Content-Length: N\r\n\r\n<json>` on the

@@ -9,9 +9,10 @@
 // Every request of the Go server: initialize, shutdown, exit, the
 // document notifications, publishDiagnostics (with window/logMessage when
 // the check fails), codeAction (the diagnostics' machine fixes as quick
-// fixes), documentSymbol, and (lsp_features.xo, over the identifier
+// fixes), documentSymbol, (lsp_features.xo, over the identifier
 // resolution of resolve.xo) hover, definition, references, prepareRename,
-// rename, formatting, and semanticTokens. A definition in std is opened
+// rename, formatting, and semanticTokens, and (lsp_complete.xo, decision
+// 0219) completion and signatureHelp. A definition in std is opened
 // from a read only copy under <user cache dir>/xo/lsp-std, as the Go
 // server writes it.
 
@@ -787,8 +788,9 @@ fn initialize_result(version: Str) -> J {
     tm.push(jstr(x))
   }
   jobj(["capabilities", "serverInfo"], [
-    jobj(["codeActionProvider", "definitionProvider", "documentFormattingProvider", "documentSymbolProvider", "hoverProvider", "positionEncoding", "referencesProvider", "renameProvider", "semanticTokensProvider", "textDocumentSync"], [
+    jobj(["codeActionProvider", "completionProvider", "definitionProvider", "documentFormattingProvider", "documentSymbolProvider", "hoverProvider", "positionEncoding", "referencesProvider", "renameProvider", "semanticTokensProvider", "signatureHelpProvider", "textDocumentSync"], [
       jobj(["codeActionKinds"], [jarr([jstr("quickfix")])]),
+      jobj(["triggerCharacters"], [jarr([jstr(".")])]),
       jbool(true),
       jbool(true),
       jbool(true),
@@ -797,6 +799,7 @@ fn initialize_result(version: Str) -> J {
       jbool(true),
       jobj(["prepareProvider"], [jbool(true)]),
       jobj(["full", "legend"], [jbool(true), jobj(["tokenModifiers", "tokenTypes"], [jarr(tm), jarr(tt)])]),
+      jobj(["triggerCharacters"], [jarr([jstr("("), jstr(",")])]),
       jobj(["change", "openClose", "save"], [jint(2), jbool(true), jobj(["includeText"], [jbool(false)])]),
     ]),
     jobj(["name", "version"], [jstr("xo"), jstr(version)]),
@@ -811,7 +814,7 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
   if method == "shutdown" {
     return Ok(J.Null)
   }
-  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/formatting" | "textDocument/codeAction" | "textDocument/documentSymbol" | "textDocument/semanticTokens/full"
+  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/formatting" | "textDocument/codeAction" | "textDocument/documentSymbol" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
   if !reads {
     return Err((-32601, "method not supported: ${method}"))
   }
@@ -828,6 +831,8 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
   match method {
     "textDocument/formatting" => Ok(s.formatting(params))
     "textDocument/semanticTokens/full" => Ok(s.semantic_tokens(os, params))
+    "textDocument/completion" => Ok(s.completion(os, params))
+    "textDocument/signatureHelp" => Ok(s.signature_help(os, params))
     "textDocument/hover" => s.hover(os, params).map_err(failed)
     "textDocument/definition" => s.definition(os, params).map_err(failed)
     "textDocument/references" => s.references(os, params).map_err(failed)
@@ -854,7 +859,7 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
     }
   }
   let _ = ex
-  var s = Session{version: version, std_dir: std_dir(os), wd: os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
+  var s = Session{version: version, std_dir: std_dir(os), wd: os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
   let events: Chan[Ev] = Chan.new(16)
   var code = 0
   scope sc {

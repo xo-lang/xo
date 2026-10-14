@@ -15,6 +15,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   selfhost/macho assembles `svc`, so linux/arm64 `--ld=macho` builds
   work again.
 
+- `xo lsp` answers `textDocument/completion` and
+  `textDocument/signatureHelp` (decision 0219): fields and methods
+  after `x.` (prelude methods included), variants and statics after a
+  type name, public members after a package name, and elsewhere the
+  locals in scope, the module's names, imports, prelude names, and
+  keywords, with the hover's declaration line and doc comment, ranked
+  first when their type is the one expected at the cursor; signature
+  help shows the callee and its active parameter. A dangling `.` or an
+  open call no longer needs to parse: the server checks a copy patched
+  at the cursor.
+- std: `Fs.cwd_path()` is the working directory's absolute path from the
+  OS (decision 0218), on the Go, arm64, and LLVM backends; a test's MemFs
+  gives `/`. The toolchain uses it instead of `$PWD`, so `xo lsp` started
+  without a shell (VS Code from the macOS Dock passes `PWD=/`) resolves
+  std paths again and Go to Definition into std works.
 - Prebuilt seeds (decision 0216 item 1): a checkout with no xo fetches
   the newest seed (release N-1) from a private S3 bucket with the aws
   CLI, checks its sha256, and builds its xo in one hop
