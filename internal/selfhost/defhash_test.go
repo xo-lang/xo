@@ -22,6 +22,7 @@ var defhashCorpus = []string{"bench/xo", "bench/paper", "internal/check/testdata
 // byte for byte as JSON: IDs, kinds, own and deep hashes, references,
 // files, and lines (decision 0178 stage 3).
 func TestSelfhostDefhash(t *testing.T) {
+	skipDumpReplay(t)
 	if testing.Short() {
 		t.Skip("builds selfhost/cli/semantic")
 	}

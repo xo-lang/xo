@@ -25,6 +25,7 @@ import (
 // builder is built with the go backend, or the one XO_SELFHOST_BACKEND
 // names.
 func TestSelfhostSSAMutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources (about 6 s)")
 	}

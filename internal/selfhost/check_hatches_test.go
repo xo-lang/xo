@@ -27,6 +27,7 @@ const hatchesFixture = "internal/selfhost/testdata/hatches"
 // and XO1102 on a copy of hatchesFixture. The Go checker runs first: it
 // writes the `use go` bindings the Xo checker reads.
 func TestSelfhostCheckerHatches(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("binds Go packages with go list")
 	}

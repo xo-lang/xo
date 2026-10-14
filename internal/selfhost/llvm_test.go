@@ -39,6 +39,7 @@ import (
 // XO_SELFHOST_DIRS=<texts> takes the runs whose directory contains one
 // of the comma separated texts instead.
 func TestSelfhostLLVM(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		backends = []string{v}
@@ -128,6 +129,7 @@ func TestSelfhostLLVM(t *testing.T) {
 // XO_SELFHOST_LLVM_FUZZ=N override. The Xo emitter is built with the go
 // backend, or the one XO_SELFHOST_BACKEND names.
 func TestSelfhostLLVMMutations(t *testing.T) {
+	skipDumpReplay(t)
 	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources (about 6 s)")
 	}

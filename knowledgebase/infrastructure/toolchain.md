@@ -34,8 +34,8 @@ Last verified: 2026-10-12
 - `go.mod` at the repo root: `module github.com/xo-lang/xo`, `go 1.26`.
   The module path intentionally stays `github.com/xo-lang/xo` even though the
   git remote is `github.com/josephspurrier/xo` (owner's choice, 2026-10-08).
-  So `go install github.com/josephspurrier/xo/cmd/xo` does not work; build
-  from a checkout with `go build -o .tools/bin/xo ./cmd/xo`.
+  `cmd/xo` holds only tests since decision 0215; build xo from a checkout
+  with `go run ./scripts/xobuild` (writes `bin/xo`, last verified 2026-10-13).
 - Standard library only. No third party module dependencies, for the
   compiler or for generated programs. (Go packages bound with `use go` are
   dependencies of the generated program, not of the compiler; see "Go
@@ -763,8 +763,9 @@ Last verified: 2026-10-07
   `bench/go/<arm>/<task>/` also has its own `go.mod`.
 - Go analyzers for the strict arm are installed project locally in
   `.tools/bin` (staticcheck, errcheck, nilaway, exhaustive), installed with
-  `GOBIN=$PWD/.tools/bin go install <pkg>@latest`. The built `xo` binary is
-  also placed there (`go build -o .tools/bin/xo ./cmd/xo`).
+  `GOBIN=$PWD/.tools/bin go install <pkg>@latest`. A `.tools/bin/xo` left
+  there from before decision 0215 is a stale Go-built xo (0.8.0 on
+  2026-10-13); the current one is `bin/xo` (copy it over to refresh).
 - `bench/size/measure.sh <dirs>` (2026-10-09): binary size, Go build
   cache growth, peak RSS, and wall time of `xo build` per program against
   a fresh cache with the runtime warmed (`MODE=test` for `xo test`,

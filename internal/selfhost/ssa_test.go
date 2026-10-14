@@ -32,6 +32,7 @@ import (
 // (tier_test.go); -short also takes every 25th run but the mergeHeavy ones. XO_SELFHOST_BACKEND
 // names one backend.
 func TestSelfhostSSA(t *testing.T) {
+	skipDumpReplay(t)
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		// one backend (a development loop)
