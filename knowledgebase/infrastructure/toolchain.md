@@ -3460,7 +3460,7 @@ definition.
 2026-10-13) runs a targeted command on a warm, reusable on demand
 instance per architecture (tag Name=xo-warm, role arm64 r8g.4xlarge or
 amd64 m7i.4xlarge), created on first use and STOPPED (not terminated)
-after 30 idle minutes (`scripts/warm-run.sh --stop-idle 30`, run by the
+after 5 idle minutes (`scripts/warm-run.sh --stop-idle 5`, owner 2026-10-14, so idle warm machines free the vCPU quota; run by the
 lead's EC2 queue runner), so its toolchain, Go and checkout survive: a
 job on a running warm instance took 15 s end to end and one on a
 stopped instance 32 s to 67 s, against 6 to 10 minutes for a fresh
