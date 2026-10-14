@@ -48,10 +48,12 @@ bar on arm64 only):
   1.094 of the C after shrink wrapping
   (bench/results/shrink-wrapping-2026-10-14.md:89-91). Next: inlining
   in rand.next_int.
-- B13 stage 2, string and list objects in Xo (commit 3da29c8b, reverted
-  by 082476d4, both in main's history): after shrink wrapping alloc
-  small 1.201, nested walk 1.036, text split 1.058 (same file :61-66).
-  Next: remove the C entry level on the allocation path.
+- B13 stage 2, the list objects in Xo: re-landed on branch b13-stage2
+  (decision 0226, arm64 generated code calls obj.xo with no C level);
+  meets the bar on the Mac, 0.883 to 1.021 of the C on arm64 and LLVM,
+  self build 1.000 (bench/results/string-list-objects-2026-10-14.md,
+  "Stage 2 re-landed"); waiting for CI auto and the lead's merge. The
+  string objects stay C.
 
 ## Next, in order
 

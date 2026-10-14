@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B13, stage 2; decision 0226): the
+  list objects (a new list, growth, the copy of a shared list, the
+  release of a list's elements) and the drop worklist are Xo
+  (std/native/llrt/obj.xo). arm64 generated code calls them directly,
+  with no C level: they find the thread's heap themselves, and their
+  common cases make no call. The C entry points forward to them for
+  LLVM and the seed. bench/perf alloc, nested, text, json and xo are
+  0.883 to 1.021 of the C's instructions on arm64 and LLVM, the self
+  build 1.000 (bench/results/string-list-objects-2026-10-14.md). The
+  string objects stay C.
 - arm64 backend (decision 0224): shrink wrapping and tail calls. A
   function makes its frame (frame record, callee saved registers) only
   on the paths that need it, and a call whose results are returned as

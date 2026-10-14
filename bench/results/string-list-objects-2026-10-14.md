@@ -51,7 +51,10 @@ Run 1's 1.051 to 1.082 did not repeat (run 2, the same binaries'
 sources, at most 1.021); the client waits on a local server, and its
 counts move by several percent between runs of the same build.
 
-## Stage 2: the objects stay C (measured; they miss the bar on arm64)
+## Stage 2, first attempt: the objects stay C (measured; they miss the bar on arm64)
+
+Superseded by "Stage 2 re-landed" below (decision 0226): the list
+objects and the drop worklist are in Xo; the string objects stay C.
 
 Two Xo versions of the objects were built and measured; neither met
 decision 0180's bar on arm64, so the string and list objects, the drop
@@ -155,3 +158,106 @@ cabi exports, which obj.xo added to).
 4. Port only the cold list paths (rl_copy, rl_share, rl_grow: 0.992 to
    1.017 on their workloads in version 2) once the hot ones can follow,
    so the list code is not in both languages meanwhile.
+
+## Stage 2 re-landed: the lists without a C level (decision 0226)
+
+Branch b13-stage2: 3da29c8b's obj.xo, cabi.xo and xo_rt.c re-applied on
+main 97472682, then the C level removed from the allocation path. arm64
+generated code calls obj.xo's entries (`xo_x_obj_rl_new_n`, `_grow_n`,
+`_free_n`, `_copy_n`, `xo_x_obj_rc_defer_n`, `xo_x_obj_rl_share`)
+directly; they find the heap in process words 10 to 13 and the thread
+local table, and their common cases (one thread, no real-time section,
+a small block from the free list or the chunk: `alloc.alloc_fast`
+inlined) make no call and so have no frame. The C entries forward to the
+same exports for LLVM and the seed. The string objects stay C.
+
+Method: the Mac (12 cores, the heavy lock, other sessions running),
+`/usr/bin/time -l` instructions retired, minimum of 5 runs, less the
+`none` row where the program has one (alloc, text, json). A is main
+97472682 (its xo and std: the C list objects); B is this branch (its xo,
+built by itself from this tree, and its std). Same program sources;
+every checksum equal.
+
+| Workload | arm64 | LLVM |
+|---|---|---|
+| alloc small | 0.927 | 0.966 |
+| alloc strings | 1.000 | 1.000 |
+| alloc maps | 1.002 | 1.011 |
+| alloc mixed | 1.007 | 1.005 |
+| alloc grow | 1.001 | 0.999 |
+| alloc tasks | 0.998 | 0.883 |
+| nested push | 0.998 | 1.002 |
+| nested setnested | 1.001 | 1.006 |
+| nested setdeep | 0.994 | 1.000 |
+| nested mapput | 0.999 | 1.002 |
+| nested strappend | 0.997 | 1.004 |
+| nested method | 1.007 | 1.005 |
+| nested shared | 1.004 | 1.007 |
+| nested walk | 0.981 | 0.997 |
+| text split | 1.021 | 1.011 |
+| text lines | 1.001 | 0.995 |
+| text int_fmt | 1.001 | 1.001 |
+| text quote | 1.000 | 1.000 |
+| text replace | 1.002 | 1.001 |
+| text debug | 1.000 | 1.000 |
+| text float_fmt | 1.001 | 1.000 |
+| text trim | 1.001 | 1.000 |
+| json small | 0.998 | 1.000 |
+| json ints | 1.000 | 0.997 |
+| json strings | 1.000 | 0.999 |
+| json maps | 1.002 | 1.005 |
+| json parse | 1.000 | 1.000 |
+| json enc_small | 1.000 | 0.999 |
+| json enc_strings | 1.000 | 0.999 |
+| xo, 18 workloads | 0.998 to 1.003 | 0.998 to 1.001 |
+The self build: xo A and xo B each build main's selfhost/xo with main's
+std (`--std`, `XO_EMIT_JOBS=8`, fresh `XO_BUILD_DIR`, `XO_BIN_CACHE=off`,
+`XO_BACKEND_CACHE=off`, `XO_LEAKCHECK=1`; the xo process's own
+instructions, not the cc it runs), two runs: A 57,602,443,363 and
+57,474,596,555, B 57,580,146,992 and 57,548,699,968 (0.9996 and 1.0013);
+both 0 live of 28,270,317 allocations; the outputs byte identical.
+
+### What it took (each step measured on the workloads above)
+
+1. The direct entries and the heap words (rl_new_n first): alloc small
+   on arm64 still 1.212, because `[i]` is the empty literal plus a push
+   (rl_grow) and its free is xo_rl_free, both still behind the C. With
+   rl_grow_n and rl_free_n direct: alloc small 0.927, but nested walk
+   1.052 and text split 1.072 (the bump allocation and growth past four
+   took heap_word and two more levels).
+2. alloc_fast carves from the chunk too, and the single threaded cases
+   call rl_new, rl_grow and rl_free with the heap record directly: nested
+   walk 0.987, text split 1.051, lines 1.037, alloc strings 1.023.
+3. alloc strings has no list code: obj.xo's new calls of alloc.alloc and
+   alloc.free made them three sites and more, so the arm64 inliner no
+   longer copied them into cabi.heap_alloc (73 instructions to 4) and
+   heap_free (17 to 4), every C allocation's path
+   (gotchas/arm64-inline-few-sites-new-callers.md). halloc and free1 as
+   the only call sites: alloc strings 0.999, text split 1.014, lines
+   1.000; alloc tasks 1.065.
+4. alloc tasks (the threaded paths): traced with lldb, one iteration was
+   262 instructions in A and 280 in B, the excess in rl_grow's prologue
+   (five register pairs saved for the resize path the empty literal's
+   first push does not take). The resize moved to `grow`, out of line:
+   0 instructions per iteration over A on a one task microbenchmark.
+5. LLVM, whose generated code still calls the C entries: with those
+   forwarding through hw() and the hw exports, alloc small 1.250 and
+   tasks 1.103. Forwarding to the `_n` exports (LTO folds the C level):
+   0.966 and 0.883. Last, json enc_small 1.051 and text replace 1.028 on
+   LLVM: clang inlined xo_resize into rs_append once it was the only
+   caller (182 to 402 instructions); `noinline` brings them to 1.000.
+6. A bug found by the self build, not the benchmarks: rl_grow_n grew the
+   immortal empty list when its fast allocation failed (elements too
+   large for the small classes), and the xo built with it crashed at
+   once (gotchas/broken-xo-becomes-next-seed.md). Fixed before the
+   final run above; internal/llvm/testdata/golden/list_objects covers
+   it (it crashes with the bug on arm64).
+
+### Next
+
+- Delete the C entry points (xo_rl_new_n, xo_rl_grow, xo_rl_free,
+  xo_rl_copy, xo_rl_share, xo_rc_defer) once a seed emits the `_n`
+  calls and LLVM generated code calls the exports (casts at the call
+  sites, or the Xo functions by name).
+- The string objects (rs_new, rs_append, the builders): the same
+  shape, with generated code calling Xo entries directly.

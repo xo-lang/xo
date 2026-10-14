@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+bigs 39 215 13800
+tasks 101715
+words 1225 w0,w1,w2
+shared w0,w1,w2,w3 | changed,w1,w2,w3,extra
+grow 4096 4095
+--- stderr

@@ -209,6 +209,7 @@ pub fn rl_grow_n(l: Int, esize: Int) -> Int {
       if n != 0 {
         return n
       }
+      return rl_new(h, 4, esize)
     }
     return grow(h, l, esize)
   }

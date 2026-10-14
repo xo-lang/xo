@@ -251,6 +251,12 @@ static void obj_heap_init(xo_heap *h) {
 	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt);
 }
 
+// The heap words of obj.xo (its *_n entries, which arm64 generated code
+// calls without a C level) are set before anything allocates: in a
+// constructor, so a program with its own main (XO_RT_NO_MAIN: the C
+// tests of internal/llvm) has them too.
+__attribute__((constructor)) static void obj_heap_words(void) { obj_heap_init(&main_heap); }
+
 void xo_rt_threads_begin(void) {
 	if (__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED)) {
 		return;
@@ -6390,10 +6396,6 @@ static void win_init(int *argc, char ***argv) {
 void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
 
 int main(int argc, char **argv) {
-	// the heap words of obj.xo (rl_new_n, which arm64 generated code
-	// calls without a C level): the single threaded heap, heap_slow's
-	// address; first, before anything allocates
-	obj_heap_init(&main_heap);
 #ifdef _WIN32
 	win_init(&argc, &argv);
 #endif

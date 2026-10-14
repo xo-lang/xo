@@ -6429,14 +6429,14 @@ Lf78_b1:
 	add x9, x9, #80
 	ldr x13, [x9, #0]
 	cmp x13, #0
-	b.eq Lf78_b37
+	b.eq Lf78_b43
 Lf78_b2:
 	ldr x10, [x1, #0]
 	movz x9, #1, lsl #0
 	movk x9, #32768, lsl #48
 	sub x9, x9, #1
 	cmp x10, x9
-	b.ne Lf78_b34
+	b.ne Lf78_b40
 Lf78_b5:
 	mov x9, #4
 	mul x10, x9, x2
@@ -6453,7 +6453,7 @@ Lf78_b12:
 Lf78_b13:
 	mov x0, #0
 	cmp x0, #0
-	b.ne Lf78_b56
+	b.ne Lf78_b62
 	b Lf78_b34
 Lf78_b15:
 	add x9, x14, #15
@@ -6485,7 +6485,7 @@ Lf78_b20:
 Lf78_b21:
 	mov x0, #0
 	cmp x0, #0
-	b.ne Lf78_b56
+	b.ne Lf78_b62
 	b Lf78_b34
 Lf78_b23:
 	add x9, x10, x12
@@ -6512,23 +6512,30 @@ Lf78_b26:
 	str x9, [x0, #16]
 Lf78_b29:
 	cmp x0, #0
-	b.ne Lf78_b56
+	b.ne Lf78_b62
 Lf78_b34:
+	mov x9, #4
+	mul x10, x9, x2
+Lf78_b36:
+	mov x9, #24
+	add x9, x9, x10
+	b Lf78_b63
+Lf78_b40:
 	mov x0, x13
 	b _xo_f_obj_2egrow
-Lf78_b37:
+Lf78_b43:
 	adrp x9, Lxo_static@PAGE
 	add x9, x9, Lxo_static@PAGEOFF
 	add x9, x9, #80
 	ldr x0, [x9, #0]
 	cmp x0, #0
-	b.ne Lf78_b58
-	b Lf78_b57
-Lf78_b54:
+	b.ne Lf78_b66
+	b Lf78_b65
+Lf78_b60:
 	b _xo_f_obj_2egrow
-Lf78_b56:
+Lf78_b62:
 	ret
-Lf78_b57:
+Lf78_b63:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -6539,50 +6546,9 @@ Lf78_b57:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-	mov x20, x1
-	mov x21, x2
-	mov x19, x9
-Lf78_b40:
-	mov x0, #3
-	bl _xo_tlocal_get
-	cmp x0, #0
-	b.ne Lf78_b43
-Lf78_b41:
-	ldr x2, [x19, #8]
-	mov x0, #0
-	mov x1, x0
-	blr x2
-Lf78_b43:
-	orr x0, x0, #1
-	b Lf78_b45
-Lf78_b58:
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	str x21, [sp, #32]
-	mov x20, x1
-	mov x21, x2
-Lf78_b45:
-	ldr x10, [x20, #0]
-	movz x9, #1, lsl #0
-	movk x9, #32768, lsl #48
-	sub x9, x9, #1
-	cmp x10, x9
-	b.eq Lf78_b48
-Lf78_b59:
-	mov x1, x20
-	mov x2, x21
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	b Lf78_b54
-Lf78_b48:
-	mov x9, #4
-	mul x10, x9, x21
-Lf78_b50:
-	mov x9, #24
-	add x1, x9, x10
-Lf78_b51:
+	mov x1, x9
+	mov x0, x13
+Lf78_b37:
 	bl _xo_f_obj_2ehalloc
 	mov x9, #1
 	str x9, [x0, #0]
@@ -6590,7 +6556,68 @@ Lf78_b51:
 	str x9, [x0, #8]
 	mov x9, #4
 	str x9, [x0, #16]
-Lf78_b60:
+Lf78_b64:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+Lf78_b65:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x1
+	mov x21, x2
+	mov x19, x9
+Lf78_b46:
+	mov x0, #3
+	bl _xo_tlocal_get
+	cmp x0, #0
+	b.ne Lf78_b49
+Lf78_b47:
+	ldr x2, [x19, #8]
+	mov x0, #0
+	mov x1, x0
+	blr x2
+Lf78_b49:
+	orr x0, x0, #1
+	b Lf78_b51
+Lf78_b66:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x1
+	mov x21, x2
+Lf78_b51:
+	ldr x10, [x20, #0]
+	movz x9, #1, lsl #0
+	movk x9, #32768, lsl #48
+	sub x9, x9, #1
+	cmp x10, x9
+	b.eq Lf78_b54
+Lf78_b67:
+	mov x1, x20
+	mov x2, x21
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b Lf78_b60
+Lf78_b54:
+	mov x9, #4
+	mul x10, x9, x21
+Lf78_b56:
+	mov x9, #24
+	add x1, x9, x10
+Lf78_b57:
+	bl _xo_f_obj_2ehalloc
+	mov x9, #1
+	str x9, [x0, #0]
+	mov x9, #0
+	str x9, [x0, #8]
+	mov x9, #4
+	str x9, [x0, #16]
+Lf78_b68:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
@@ -13636,14 +13663,14 @@ Lf143_b0:
 	add x9, x9, #80
 	ldr x13, [x9, #0]
 	cmp x13, #0
-	b.eq Lf143_b36
+	b.eq Lf143_b42
 Lf143_b1:
 	ldr x10, [x1, #0]
 	movz x9, #1, lsl #0
 	movk x9, #32768, lsl #48
 	sub x9, x9, #1
 	cmp x10, x9
-	b.ne Lf143_b33
+	b.ne Lf143_b39
 Lf143_b4:
 	mov x9, #4
 	mul x10, x9, x2
@@ -13723,21 +13750,30 @@ Lf143_b28:
 Lf143_b29:
 	ret
 Lf143_b33:
+	mov x9, #4
+	mul x10, x9, x2
+Lf143_b35:
+	mov x9, #24
+	add x9, x9, x10
+	b Lf143_b61
+Lf143_b37:
+	ret
+Lf143_b39:
 	mov x0, x13
 	b _xo_f_obj_2egrow
-Lf143_b36:
+Lf143_b42:
 	adrp x9, Lxo_static@PAGE
 	add x9, x9, Lxo_static@PAGEOFF
 	add x9, x9, #80
 	ldr x0, [x9, #0]
 	cmp x0, #0
-	b.ne Lf143_b56
-	b Lf143_b55
-Lf143_b53:
+	b.ne Lf143_b64
+	b Lf143_b63
+Lf143_b59:
 	b _xo_f_obj_2egrow
-Lf143_b54:
+Lf143_b60:
 	ret
-Lf143_b55:
+Lf143_b61:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -13748,50 +13784,9 @@ Lf143_b55:
 	.cfi_offset w20, -32
 	.cfi_offset w19, -24
 	.cfi_offset w21, -16
-	mov x20, x1
-	mov x21, x2
-	mov x19, x9
-Lf143_b39:
-	mov x0, #3
-	bl _xo_tlocal_get
-	cmp x0, #0
-	b.ne Lf143_b42
-Lf143_b40:
-	ldr x2, [x19, #8]
-	mov x0, #0
-	mov x1, x0
-	blr x2
-Lf143_b42:
-	orr x0, x0, #1
-	b Lf143_b44
-Lf143_b56:
-	stp x29, x30, [sp, #-48]!
-	mov x29, sp
-	stp x20, x19, [sp, #16]
-	str x21, [sp, #32]
-	mov x20, x1
-	mov x21, x2
-Lf143_b44:
-	ldr x10, [x20, #0]
-	movz x9, #1, lsl #0
-	movk x9, #32768, lsl #48
-	sub x9, x9, #1
-	cmp x10, x9
-	b.eq Lf143_b47
-Lf143_b57:
-	mov x1, x20
-	mov x2, x21
-	ldp x20, x19, [sp, #16]
-	ldr x21, [sp, #32]
-	ldp x29, x30, [sp], #48
-	b Lf143_b53
-Lf143_b47:
-	mov x9, #4
-	mul x10, x9, x21
-Lf143_b49:
-	mov x9, #24
-	add x1, x9, x10
-Lf143_b50:
+	mov x1, x9
+	mov x0, x13
+Lf143_b36:
 	bl _xo_f_obj_2ehalloc
 	mov x9, #1
 	str x9, [x0, #0]
@@ -13799,7 +13794,68 @@ Lf143_b50:
 	str x9, [x0, #8]
 	mov x9, #4
 	str x9, [x0, #16]
-Lf143_b58:
+Lf143_b62:
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	ret
+Lf143_b63:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x1
+	mov x21, x2
+	mov x19, x9
+Lf143_b45:
+	mov x0, #3
+	bl _xo_tlocal_get
+	cmp x0, #0
+	b.ne Lf143_b48
+Lf143_b46:
+	ldr x2, [x19, #8]
+	mov x0, #0
+	mov x1, x0
+	blr x2
+Lf143_b48:
+	orr x0, x0, #1
+	b Lf143_b50
+Lf143_b64:
+	stp x29, x30, [sp, #-48]!
+	mov x29, sp
+	stp x20, x19, [sp, #16]
+	str x21, [sp, #32]
+	mov x20, x1
+	mov x21, x2
+Lf143_b50:
+	ldr x10, [x20, #0]
+	movz x9, #1, lsl #0
+	movk x9, #32768, lsl #48
+	sub x9, x9, #1
+	cmp x10, x9
+	b.eq Lf143_b53
+Lf143_b65:
+	mov x1, x20
+	mov x2, x21
+	ldp x20, x19, [sp, #16]
+	ldr x21, [sp, #32]
+	ldp x29, x30, [sp], #48
+	b Lf143_b59
+Lf143_b53:
+	mov x9, #4
+	mul x10, x9, x21
+Lf143_b55:
+	mov x9, #24
+	add x1, x9, x10
+Lf143_b56:
+	bl _xo_f_obj_2ehalloc
+	mov x9, #1
+	str x9, [x0, #0]
+	mov x9, #0
+	str x9, [x0, #8]
+	mov x9, #4
+	str x9, [x0, #16]
+Lf143_b66:
 	ldp x20, x19, [sp, #16]
 	ldr x21, [sp, #32]
 	ldp x29, x30, [sp], #48
