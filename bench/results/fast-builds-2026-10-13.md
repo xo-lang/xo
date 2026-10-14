@@ -502,3 +502,15 @@ placing of cached texts (0.15 to 0.25 s) plus the keys (0.4 to 1.9 s).
 What is left after an edit: check and ssa (about 3.5 s), insert_rc (8
 to 12 s, now the largest phase), inline (1.3 to 2 s), and the parts'
 hashing and link. The cache holds 331 MB for one version of xo.
+
+Verified on linux/arm64 (warm r8g, 4a6300ba, EC2 queue jobs fb2cB-a and
+fb2cB-b, 2026-10-14): the goldens 181/181 on arm64 with a cold cache,
+again with XO_BACKEND_CACHE=verify (no entry differed), and again warm;
+181/181 on LLVM. selfhost/xo built with the cache off, on (960 of 6,703
+functions already cached by the goldens' std code), on warm (6703/6703,
+emit 0.28 s against 7.66 s off), and verify: one binary. go vet clean;
+go test -short clean but TestDecisionNumbersUnique (a duplicate 0222
+line on main then, fixed by a58401a7). scripts/bootstrap-xo.sh fixed
+point with a cold cache, with verify on the warm cache, and warm (s2 37
+s to 27 s, s3 33 s to 25 s); the warm run's s2, s3, and s3 assembly the
+same files as the cold run's.
