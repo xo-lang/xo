@@ -656,7 +656,9 @@ fn (var g: G) call_op(v: Int) {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
       let n = g.def1(false, "add $d0, $u0, $u1", [a[1], b[1]])
-      let obj = g.rt("xo_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
+      // obj.xo's rs_append through its export, with no C level (the C's
+      // xo_rs_concat stays for code of earlier compilers)
+      let obj = g.rt("xo_x_obj_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
       g.set(v, [obj[0], n])
     }
     "str.concat_int" | "str.concat_float" => {
@@ -1310,7 +1312,12 @@ fn (var g: G) rt_call(v: Int) {
       _ => g.fail("the runtime call `${name0}` takes a `${g.tname(g.vty(a))}`")
     }
   }
-  let name = "xo_${name0.trim_prefix("rt.")}"
+  var name = "xo_${name0.trim_prefix("rt.")}"
+  if name0 is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
+    // obj.xo's string builders through their exports, with no C level
+    // (the C entries stay for code of earlier compilers)
+    name = "xo_x_obj_${name0.trim_prefix("rt.")}"
+  }
   match g.kind(x.ty) {
     Unit => {
       let _r = g.rt(name, args, [])

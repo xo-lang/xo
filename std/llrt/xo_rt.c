@@ -760,15 +760,10 @@ static inline void *alloc_usable(int64_t n, int64_t *bytes) {
 	return p;
 }
 
-// resize_usable is xo_resize to at least n bytes, the bytes the block
-// really has in *bytes.
-static void *xo_resize(void *p, int64_t old, int64_t n);
-static inline void *resize_usable(void *p, int64_t old, int64_t n, int64_t *bytes) {
-	void *q = xo_resize(p, old, n);
-	*bytes = heap()->last_size;
-	return q;
-}
-
+// rs_new is a new string object with room for at least n bytes: the C
+// callers' (xo_str_slice, the number text, standard input, ...), kept in
+// C so clang inlines the allocation into them (forwarding it to obj.xo
+// took text lines to 1.054 on LLVM; obj.xo's rs_new_n is the same).
 static xo_rstr *rs_new(int64_t n) {
 	int64_t bytes;
 	xo_rstr *s = alloc_usable((int64_t)sizeof(xo_rstr) + n, &bytes);
@@ -777,46 +772,21 @@ static xo_rstr *rs_new(int64_t n) {
 	return s;
 }
 
-// rs_append appends n bytes at p to a (of length an), consuming a: when
-// a is unique (xo_rc_claim) the bytes go in place, growing a by doubling
-// when it is full (Perceus reuse of a string about to be dropped), so a
-// loop of `s = s + x` is linear. Otherwise a new string is made (with
-// slack to grow into) and a loses the reference the caller gave up.
+// rs_append appends the n bytes at p to a (of length an), consuming a:
+// in place when a is unique (doubling when it is full: Perceus reuse, so
+// a loop of `s = s + x` is linear), else into a new string: obj.xo's
+// (zero-C audit B13).
+int64_t xo_x_obj_rs_append_at(int64_t a, int64_t an, int64_t p, int64_t n);
 static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
-	int64_t need = an + n;
-	if (rc_claim(&a->rc)) {
-		if (a->cap < need) {
-			int64_t want = a->cap * 2;
-			if (want < need) {
-				want = need;
-			}
-			int64_t hdr = (int64_t)sizeof(xo_rstr);
-			int64_t bytes;
-			a = resize_usable(a, hdr + an, hdr + want, &bytes);
-			a->cap = bytes - hdr;
-		}
-		memmove(a->data + an, p, (size_t)n);
-		return a;
-	}
-	xo_rstr *s = rs_new(need < 16 ? 16 : need);
-	memcpy(s->data, a->data, (size_t)an);
-	memcpy(s->data + an, p, (size_t)n);
-	// a loses the reference the caller gave up: it is a literal (common:
-	// `"w${i}"` appends to one; tested first, which measured faster), or
-	// it has others, or it is shared and freed here when the others went
-	// meanwhile
-	if (rc_load(&a->rc) == XO_RC_IMMORTAL) {
-		return s;
-	}
-	if (rc_dec(&a->rc)) {
-		xo_free(a);
-	}
-	return s;
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append_at(XO_ADDR(a), an, XO_ADDR(p), n);
 }
 
-// xo_rs_concat is `a + b` (consumes a, borrows b).
+// xo_rs_concat is `a + b` (consumes a, borrows b): obj.xo's rs_append
+// (zero-C audit B13), which arm64 generated code calls directly; LLVM
+// generated code and the seed call this.
+int64_t xo_x_obj_rs_concat(int64_t a, int64_t an, int64_t b, int64_t bn);
 xo_rstr *xo_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) {
-	return rs_append(a, an, b->data, bn);
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_concat(XO_ADDR(a), an, XO_ADDR(b), bn);
 }
 
 // xo_rs_concat_int is `a + "${v}"` without a temporary string.

@@ -33,107 +33,45 @@ xo_rstr *xo_rs_append_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
 	return rs_append(a, an, t, n);
 }
 
+// The builders are obj.xo's (zero-C audit B13), which arm64 generated
+// code calls directly; LLVM generated code and the seed call these.
+int64_t xo_x_obj_rs_push_byte(int64_t a, int64_t an, int64_t x, int64_t lenp);
+int64_t xo_x_obj_rs_push_word(int64_t a, int64_t an, int64_t w, int64_t n, int64_t lenp);
+int64_t xo_x_obj_rs_push_words(int64_t a, int64_t an, int64_t w0, int64_t w1, int64_t w2, int64_t w3, int64_t lens, int64_t lenp);
+int64_t xo_x_obj_rs_append_bytes(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t lo, int64_t hi, int64_t mode, int64_t lenp);
+int64_t xo_x_obj_rs_with_cap(int64_t n, int64_t lenp);
+
 // xo_rs_push_byte is a BytesBuilder's write_byte: s + the byte x.
 xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
-	char c = (char)x;
-	*len = an + 1;
-	return rs_append(a, an, &c, 1);
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_push_byte(XO_ADDR(a), an, x, XO_ADDR(len));
 }
 
 // xo_rs_push_word is s + the n (0 to 8) low bytes of w, the lowest
 // first: short text assembled in an Int by Xo runtime code
-// (std/native/llrt/text.xo, decision 0193), one call instead of one per
-// byte. A unique string with room takes the bytes in place.
+// (std/native/llrt/text.xo, decision 0193).
 xo_rstr *xo_rs_push_word(xo_rstr *a, int64_t an, int64_t w, int64_t n, int64_t *len) {
-	// a little endian word (every target of the native backends)
-	uint64_t u = (uint64_t)w;
-	unsigned char t[8];
-	memcpy(t, &u, 8);
-	*len = an + n;
-	int64_t c = rc_load(&a->rc);
-	if (c == 1 && a->cap - an >= 8) {
-		memcpy(a->data + an, t, 8);
-		return a;
-	}
-	if (an == 0 && c == XO_RC_IMMORTAL) {
-		// the text alone ("${v}" appends to the literal ""): a new string
-		xo_rstr *s = rs_new(32);
-		memcpy(s->data, t, 8);
-		return s;
-	}
-	return rs_append(a, an, (const char *)t, n);
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_push_word(XO_ADDR(a), an, w, n, XO_ADDR(len));
 }
 
-// xo_rs_push_words is s + four pieces of up to 8 bytes each, w0 to w3
-// (the lowest byte of each first), their lengths in the nibbles of lens
-// (w0's the lowest): a Duration's or Time's text assembled by
-// std/native/llrt/text.xo in one call (decision 0193).
+// xo_rs_push_words is s + four pieces of up to 8 bytes each, w0 to w3,
+// their lengths in the nibbles of lens (decision 0193).
 xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_t w2, int64_t w3, int64_t lens, int64_t *len) {
-	int n0 = (int)(lens & 15), n1 = (int)(lens >> 4 & 15), n2 = (int)(lens >> 8 & 15), n3 = (int)(lens >> 12 & 15);
-	int k = n0 + n1 + n2 + n3;
-	*len = an + k;
-	unsigned char t[40];
-	unsigned char *d = t;
-	int64_t c = rc_load(&a->rc);
-	int direct = c == 1 && a->cap - an >= 32;
-	if (direct) {
-		// in place: whole words stored, each overwriting the slack of the
-		// one before (the bytes past the text are never read)
-		d = (unsigned char *)a->data + an;
-	} else if (an == 0 && c == XO_RC_IMMORTAL) {
-		// the text alone ("${v}" appends to the literal ""): a new string
-		a = rs_new(64);
-		d = (unsigned char *)a->data;
-		direct = 1;
-	}
-	// whole little endian words (every target of the native backends is
-	// little endian)
-	uint64_t u;
-	u = (uint64_t)w0;
-	memcpy(d, &u, 8);
-	u = (uint64_t)w1;
-	memcpy(d + n0, &u, 8);
-	u = (uint64_t)w2;
-	memcpy(d + n0 + n1, &u, 8);
-	u = (uint64_t)w3;
-	memcpy(d + n0 + n1 + n2, &u, 8);
-	if (direct) {
-		return a;
-	}
-	return rs_append(a, an, (const char *)t, k);
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_push_words(XO_ADDR(a), an, w0, w1, w2, w3, lens, XO_ADDR(len));
 }
 
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 
-// xo_rs_append_bytes is s + the bytes lo..hi of b (0 <= lo <= hi <= the
-// length of b), their ASCII letters lowered (mode 1) or raised (mode 2):
-// the bulk byte moves of the Unicode operations written in Xo
-// (std/native/llrt/unicode.xo, decision 0180).
+// xo_rs_append_bytes is s + the bytes lo..hi of b, their ASCII letters
+// lowered (mode 1) or raised (mode 2) (std/native/llrt/unicode.xo,
+// decision 0180).
 xo_rstr *xo_rs_append_bytes(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t lo, int64_t hi, int64_t mode, int64_t *len) {
-	(void)bn;
-	int64_t n = hi - lo;
-	*len = an + n;
-	a = rs_append(a, an, b->data + lo, n);
-	unsigned char *d = (unsigned char *)a->data + an;
-	if (mode == 1) {
-		for (int64_t i = 0; i < n; i++) {
-			d[i] += (unsigned char)(d[i] - 'A' < 26u ? 32 : 0);
-		}
-	} else if (mode == 2) {
-		for (int64_t i = 0; i < n; i++) {
-			d[i] -= (unsigned char)(d[i] - 'a' < 26u ? 32 : 0);
-		}
-	}
-	return a;
+	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append_bytes(XO_ADDR(a), an, XO_ADDR(b), bn, lo, hi, mode, XO_ADDR(len));
 }
 
 // xo_rs_with_cap is an empty string with room for n bytes
 // (BytesBuilder.with_capacity).
-xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) {
-	*len = 0;
-	return rs_new(n < 16 ? 16 : n);
-}
+xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_with_cap(n, XO_ADDR(len)); }
 
 // n_slice_check faults unless lo..hi is a range of a value of length n
 // (std/rt's StrSlice, BytesSlice).
