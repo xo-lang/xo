@@ -5,10 +5,13 @@
 // ParseRequestURI) and its query (ParseQuery), chunked bodies with their
 // trailers (chunkedReader), and the text helpers of std/http (url.Parse's
 // parts and error, url.PathUnescape, url.QueryEscape, strconv.Quote,
-// CanonicalMIMEHeaderKey, EqualFold). They were C (std/llrt/xo_http.c,
-// which keeps its copy for the client; decision 0198 deleted the C path,
-// `XO_LLRT_C=http1`); the semantics are the same, so a client observes
-// what net/http answers.
+// CanonicalMIMEHeaderKey, EqualFold). They were C (std/llrt/xo_http.c;
+// decision 0198 deleted the C path, `XO_LLRT_C=http1`); the semantics
+// are the same, so a client observes what net/http answers. Since audit
+// item B10 (2026-10-14) the client is here too (client_do: the URL, the
+// redirects, the reading of a response, parse_response), and so is the
+// parse of an HTTP/2 request's :path (h2_target); xo_http.c's C parser
+// is test data only (std/llrt/testdata/http_ref.c).
 //
 // C never calls compiled Xo (decision 0180), so the connection's task
 // (std/native/http.xo, serve_conn) calls the C reader (rthttp.hc_read)
@@ -18,6 +21,7 @@
 // the buffer, the body reading, and the error answers; the parsed head
 // stays here and becomes the Request.
 use native/llrt/http1_tables
+use native/llrt/netpolicy
 use native/rt
 use native/rthttp
 
@@ -1623,4 +1627,538 @@ fn req_of(h: Head) -> Req {
     }
   }
   Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query}
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/2 request targets (xo_h2.c's h2_request)
+
+/// The parse of the first :path field of an HTTP/2 header block fragment
+/// (data and lens as hpack.Fields'): [] when it has none, else [the
+/// path, "1" when it parses (url.ParseRequestURI) or "", the URL's
+/// scheme, host, path, and raw query, then the query's keys and first
+/// values, the keys sorted] (rthttp.h2_fields, for h2_request).
+pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
+  let b = data.bytes()
+  let n = b.len()
+  var off = 0
+  for l in lens {
+    let nn = l & 0xffffffff
+    let vn = l >> 32
+    if off + nn + vn > n {
+      break
+    }
+    if nn == 5 && b[off] == 58 && b[off + 1] == 112 && b[off + 2] == 97 && b[off + 3] == 116 && b[off + 4] == 104 {
+      let v = rt.str_slice(data, off + 5, off + 5 + vn)
+      let u = url_parse(v, true)
+      if !u.ok {
+        return [v, "", "", "", "", ""]
+      }
+      var out = [v, "1", u.scheme, u.host, u.path, u.rawquery]
+      if !u.rawquery.is_empty() {
+        for x in query_parts(u.rawquery) {
+          out.push(x)
+        }
+      }
+      return out
+    }
+    off += nn + vn
+  }
+  []
+}
+
+// ---------------------------------------------------------------------------
+// The client (xo_http.c's xo_cl_do and cl_read_response until audit item
+// B10, 2026-10-14): the URL and the redirects of net/http's Client, and
+// the reading of an HTTP/1.1 response (ReadResponse, readTransfer). The
+// C keeps the connection, TLS, HTTP/2, and the writing of the request
+// (rthttp.cl_start); C never calls compiled Xo (decision 0180), so an
+// HTTP/1.1 exchange returns with the request sent and Xo reads the
+// response through rthttp.cl_input, cl_fill, and cl_take, then ends it
+// with rthttp.cl_end.
+
+// The results of the C client's reads (xo_http.c's CC_*).
+const CC_OK: Int = 0
+const CC_EOF: Int = 1
+const CC_ERR: Int = 4
+
+/// url.escape(s, encodePath) (url.URL.EscapedPath without a RawPath).
+pub fn escape_path(s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n && (cls(Int(b[i])) & PKEEP) != 0 {
+    i += 1
+  }
+  if i == n {
+    return s
+  }
+  let hex = b"0123456789ABCDEF"
+  var out = rt.rs_append_bytes(rt.rs_with_cap(n + 8), b, 0, i, 0)
+  while i < n {
+    let c = Int(b[i])
+    if (cls(c) & PKEEP) != 0 {
+      out = rt.rs_push_byte(out, c)
+    } else {
+      out = rt.rs_push_word(out, 37 | (Int(hex[c >> 4]) << 8) | (Int(hex[c & 15]) << 16), 3)
+    }
+    i += 1
+  }
+  out
+}
+
+/// A response head: res (NEED, OK, BAD, TOO_LARGE), its length (OK), the
+/// status code, the header ([name, value, ...]: canonical names, the
+/// values of a name joined with ", ", Transfer-Encoding left out),
+/// whether the body is chunked, the Content-Length (-1 when there is
+/// none), and BAD's text.
+pub struct RespHead {
+  res: Int
+  used: Int
+  status: Int
+  headers: List[Str]
+  chunked: Bool
+  clen: Int
+  why: Str
+}
+
+fn resp_fail(res: Int, why: Str) -> RespHead { RespHead{res: res, used: 0, status: 0, headers: [], chunked: false, clen: -1, why: why} }
+
+/// Reads the status line and the header at the start of s, up to the
+/// first empty line (the native client's reading, lenient where net/http
+/// is strict: a field line without a colon is skipped, the status line
+/// needs only "HTTP/", a space at 8 or later, and a code of 3 digits).
+pub fn parse_response(s: Str) -> RespHead {
+  let b = s.bytes()
+  let n = b.len()
+  // the end of the head: \n\n or \n\r\n
+  var end = -1
+  var nl = rt.str_find(s, "\n", 0)
+  while nl >= 0 && nl + 1 < n {
+    if b[nl + 1] == 10 {
+      end = nl + 2
+      break
+    }
+    if b[nl + 1] == 13 && nl + 2 < n && b[nl + 2] == 10 {
+      end = nl + 3
+      break
+    }
+    nl = rt.str_find(s, "\n", nl + 1)
+  }
+  if end < 0 {
+    return resp_fail(if n > MAX_HEAD { TOO_LARGE } else { NEED }, "")
+  }
+  // the status line: HTTP/x.y code reason
+  let nl0 = rt.str_find(s, "\n", 0)
+  var ll = nl0
+  if ll > 0 && b[ll - 1] == 13 {
+    ll -= 1
+  }
+  let sp = find(s, " ", 0, ll)
+  if sp < 8 || !s.starts_with("HTTP/") {
+    // at most 80 bytes of the line, up to a NUL (C's %.*s)
+    var k = 0
+    while k < ll && k < 80 && b[k] != 0 {
+      k += 1
+    }
+    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP response " + rt.str_slice(s, 0, k))
+  }
+  var cs = sp + 1
+  var code = 0
+  var digits = 0
+  while cs < ll && b[cs] >= 48 && b[cs] <= 57 && digits < 4 {
+    code = code * 10 + Int(b[cs]) - 48
+    cs += 1
+    digits += 1
+  }
+  if digits != 3 {
+    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP status code")
+  }
+  // the header fields
+  var keys: List[Str] = []
+  var vals: List[Str] = []
+  var chunked = false
+  var clen = -1
+  var i = nl0 + 1
+  while i < end {
+    let e = rt.str_find(s, "\n", i)
+    var le = e
+    if e > i && b[e - 1] == 13 {
+      le = e - 1
+    }
+    if le == i {
+      break
+    }
+    let colon = find(s, ":", i, le)
+    if colon >= 0 {
+      let k = canonical_key(rt.str_slice(s, i, colon))
+      let (a, z) = trim_sp(b, colon + 1, le)
+      let v = rt.str_slice(s, a, z)
+      if k == "Transfer-Encoding" {
+        chunked = z - a == 7 && equal_fold(v, "chunked")
+      } else {
+        if k == "Content-Length" {
+          if let Some(x) = Int.parse(v) {
+            clen = x
+          }
+        }
+        var at = -1
+        var q = 0
+        while q < keys.len() {
+          if keys[q] == k {
+            at = q
+            break
+          }
+          q += 1
+        }
+        if at >= 0 {
+          vals[at] = vals[at] + ", " + v
+        } else {
+          keys.push(k)
+          vals.push(v)
+        }
+      }
+    }
+    i = e + 1
+  }
+  var headers: List[Str] = []
+  var j = 0
+  while j < keys.len() {
+    headers.push(keys[j])
+    headers.push(vals[j])
+    j += 1
+  }
+  RespHead{res: OK, used: end, status: code, headers: headers, chunked: chunked, clen: clen, why: ""}
+}
+
+/// The end of one exchange: s (CC_*), the failure's text, and the
+/// response.
+struct Exchange {
+  s: Int
+  why: Str
+  status: Int
+  headers: List[Str]
+  body: Bytes
+}
+
+fn ex_fail(s: Int, why: Str) -> Exchange { Exchange{s: s, why: why, status: 0, headers: [], body: b""} }
+
+/// The index of the name k in a header ([name, value, ...]), or -1.
+fn field_at(h: List[Str], k: Str) -> Int {
+  var i = 0
+  while i + 1 < h.len() {
+    if h[i] == k {
+      return i
+    }
+    i += 2
+  }
+  -1
+}
+
+/// Reads the response to a request of method on r (net/http's
+/// ReadResponse and readTransfer): informational responses but 101 are
+/// skipped; a chunked body is decoded and its Content-Length dropped; a
+/// body ends at its Content-Length or, without one, at the end of the
+/// stream; HEAD, 1xx, 204, and 304 responses have none.
+fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
+  while true {
+    var h = parse_response(rthttp.cl_input(r, 0))
+    while h.res == NEED || h.res == TOO_LARGE {
+      if h.res == TOO_LARGE {
+        return ex_fail(CC_ERR, "net/http: server response headers exceeded 1048576 bytes; aborted")
+      }
+      let avail = rthttp.cl_avail(r)
+      let f = rthttp.cl_fill(r)
+      if f == CC_EOF {
+        return ex_fail(CC_ERR, if avail == 0 { "EOF" } else { "unexpected EOF" })
+      }
+      if f != CC_OK {
+        return ex_fail(f, "")
+      }
+      h = parse_response(rthttp.cl_input(r, 0))
+    }
+    if h.res != OK {
+      return ex_fail(CC_ERR, h.why)
+    }
+    rthttp.cl_skip(r, h.used)
+    let code = h.status
+    if code >= 100 && code <= 199 && code != 101 {
+      // an informational response: the real one follows
+      continue
+    }
+    var headers = h.headers
+    if h.chunked {
+      let at = field_at(headers, "Content-Length")
+      if at >= 0 {
+        headers.remove_at(at)
+        headers.remove_at(at)
+      }
+    }
+    if method == "HEAD" || code == 204 || code == 304 || (code >= 100 && code <= 199) {
+      return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: b""}
+    }
+    if h.chunked {
+      while true {
+        let eof = rthttp.cl_eof(r)
+        let c = chunked(rthttp.cl_input(r, 2), eof)
+        if c.res == HB_OK {
+          rthttp.cl_skip(r, c.used)
+          return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: c.body.bytes()}
+        }
+        if c.res == HB_ERR || eof {
+          return ex_fail(CC_ERR, if eof { "unexpected EOF" } else { "malformed chunked encoding" })
+        }
+        let f = rthttp.cl_fill(r)
+        if f != CC_OK && f != CC_EOF {
+          return ex_fail(f, "")
+        }
+      }
+    }
+    while true {
+      let have = rthttp.cl_avail(r)
+      if h.clen >= 0 && have >= h.clen {
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: rthttp.cl_take(r, h.clen)}
+      }
+      if rthttp.cl_eof(r) {
+        if h.clen >= 0 {
+          return ex_fail(CC_ERR, "unexpected EOF")
+        }
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: rthttp.cl_take(r, have)}
+      }
+      let f = rthttp.cl_fill(r)
+      if f != CC_OK && f != CC_EOF {
+        return ex_fail(f, "")
+      }
+    }
+  }
+  ex_fail(CC_ERR, "")
+}
+
+/// What std/http's client.send gets: err (0, or the ClientErr tag: 1
+/// InvalidUrl, 2 Connect, 3 Timeout, 4 Protocol, 5 Canceled) and its
+/// text, or the response.
+pub struct CResult {
+  pub err: Int
+  pub msg: Str
+  pub status: Int
+  /// [name, value, ...]
+  pub headers: List[Str]
+  pub body: Bytes
+}
+
+fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
+
+/// net/http's urlErrorOp: the method with its first byte kept and the
+/// rest lowered, at most 30 bytes ("Get").
+fn url_op(m: Str) -> Str {
+  let b = m.bytes()
+  let k = if b.len() < 30 { b.len() } else { 30 }
+  if k == 0 {
+    return ""
+  }
+  rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(k), b, 0, 1, 0), b, 1, k, 1)
+}
+
+/// A method is a token.
+fn valid_method(m: Str) -> Bool {
+  let b = m.bytes()
+  if b.len() == 0 {
+    return false
+  }
+  var i = 0
+  while i < b.len() {
+    if (cls(Int(b[i])) & TCHAR) == 0 {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// `client.send(req)` over the network: method to url (the text of the
+/// request's Url) with the header of names and values, the body, the
+/// client's timeout (ns, 0: none), the roots https verifies against, and
+/// the attenuation lists of the client's Net (decision 0175), following
+/// redirects as net/http's Client does (redirectBehavior,
+/// defaultCheckRedirect, the headers a redirect drops, refererForURL).
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str) -> CResult {
+  if !valid_method(m) {
+    return cfail(1, "net/http: invalid method " + go_quote(m))
+  }
+  // the initial request's header (Header.Set: canonical names, the last
+  // value of a name)
+  var ik: List[Str] = []
+  var iv: List[Str] = []
+  var n = 0
+  while n < names.len() && n < values.len() {
+    let k = canonical_key(names[n])
+    var at = -1
+    var q = 0
+    while q < ik.len() {
+      if ik[q] == k {
+        at = q
+        break
+      }
+      q += 1
+    }
+    if at >= 0 {
+      iv[at] = values[n]
+    } else {
+      ik.push(k)
+      iv.push(values[n])
+    }
+    n += 1
+  }
+  let when = if timeout > 0 { rthttp.cl_deadline(timeout) } else { 0 }
+  let op = url_op(m)
+  var method = m
+  var raw = url
+  var body = body0
+  var include_body = true
+  var strip_sensitive = false
+  var ihost = "" // the initial request's host
+  var has_ihost = false
+  var referer = "" // the URL of the previous request
+  var has_referer = false
+  var last_loc = "" // the Location being followed
+  var redirects = 0
+  while true {
+    var cut = raw
+    let hash = rt.str_find(raw, "#", 0)
+    if hash >= 0 {
+      cut = rt.str_slice(raw, 0, hash)
+    }
+    let u = url_parse(cut, false)
+    if !u.ok {
+      return cfail(if redirects == 0 { 1 } else { 4 }, "parse " + go_quote(raw) + ": " + u.err)
+    }
+    let (name, uport) = split_hostport(u.host)
+    let https = u.scheme == "https"
+    let port = if !uport.is_empty() { uport } else if https { "443" } else { "80" }
+    if redirects > 0 && !lists.is_empty() {
+      // a redirect must stay within the client's attenuated Net (Net.only,
+      // decision 0175): std/rt's CheckRedirect, whose error names the
+      // Location
+      if !netpolicy.admits(lists, name, port) {
+        let hn = if rt.str_find(name, ":", 0) >= 0 { "[" + name + "]" } else { name }
+        return cfail(4, op + " " + go_quote(last_loc) + ": denied by Net.only: redirect to " + hn + ":" + port)
+      }
+    }
+    let q = go_quote(raw)
+    if u.scheme != "http" && !https {
+      return cfail(4, op + " " + q + ": unsupported protocol scheme " + go_quote(u.scheme))
+    }
+    if u.host.is_empty() {
+      return cfail(4, op + " " + q + ": http: no Host in request URL")
+    }
+    if !has_ihost {
+      ihost = u.host
+      has_ihost = true
+    } else if ihost != u.host {
+      // another host: Authorization and cookies are not sent there
+      strip_sensitive = true
+    }
+    // this hop's header: the initial one, less what a redirect drops
+    var hk: List[Str] = []
+    var hv: List[Str] = []
+    var j = 0
+    while j < ik.len() {
+      let k = ik[j]
+      let sensitive = k == "Authorization" || k == "Www-Authenticate" || k == "Cookie" || k == "Cookie2" || k == "Proxy-Authorization" || k == "Proxy-Authenticate"
+      let bodyh = k == "Content-Encoding" || k == "Content-Language" || k == "Content-Location" || k == "Content-Type"
+      if !(redirects > 0 && ((sensitive && strip_sensitive) || (bodyh && !include_body))) {
+        hk.push(k)
+        hv.push(iv[j])
+      }
+      j += 1
+    }
+    // refererForURL: no Referer from an https URL to an http one
+    if redirects > 0 && has_referer && referer.starts_with("https://") && u.scheme == "http" {
+      has_referer = false
+    }
+    if redirects > 0 && has_referer {
+      var seen = false
+      for k in hk {
+        if k == "Referer" {
+          seen = true
+        }
+      }
+      if !seen {
+        hk.push("Referer")
+        hv.push(referer)
+      }
+    }
+    // the request: the address (host:port, 80 or 443 by default), the
+    // target (the escaped path and the query)
+    let addr = if rt.str_find(name, ":", 0) >= 0 { "[" + name + "]:" + port } else { name + ":" + port }
+    var target = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escape_path(u.path) }
+    if !u.rawquery.is_empty() {
+      target = target + "?" + u.rawquery
+    }
+    let r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, url_op(method) + " " + q)
+    var status = 0
+    var headers: List[Str] = []
+    var rbody = b""
+    if rthttp.cl_reading(r) {
+      let x = read_response(r, method)
+      rthttp.cl_end(r, x.s, x.why)
+      status = x.status
+      headers = x.headers
+      rbody = x.body
+    } else if rthttp.cr_err(r) == 0 {
+      // an HTTP/2 response
+      status = rthttp.cr_status(r)
+      for i in 0..rthttp.cr_nheaders(r) {
+        headers.push(rthttp.cr_hname(r, i))
+        headers.push(rthttp.cr_hval(r, i))
+      }
+      rbody = rthttp.cr_body(r)
+    }
+    let err = rthttp.cr_err(r)
+    if err != 0 {
+      return cfail(err, rthttp.cr_msg(r))
+    }
+    // redirects (Client.Do's redirectBehavior)
+    let li = field_at(headers, "Location")
+    let follow = (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li >= 0 && !headers[li + 1].is_empty()
+    if !follow {
+      return CResult{err: 0, msg: "", status: status, headers: headers, body: rbody}
+    }
+    last_loc = headers[li + 1]
+    if redirects == 9 {
+      // defaultCheckRedirect: the error names the Location
+      return cfail(4, op + " " + go_quote(last_loc) + ": stopped after 10 redirects")
+    }
+    // the Referer: this request's URL (url.URL.String)
+    referer = u.scheme + "://" + u.host + escape_path(u.path)
+    if !u.rawquery.is_empty() {
+      referer = referer + "?" + u.rawquery
+    }
+    has_referer = true
+    // the new URL: the Location resolved against this one
+    let loc = last_loc
+    if rt.str_find(loc, ":", 0) >= 0 && !loc.starts_with("/") {
+      raw = loc
+    } else if loc.starts_with("//") {
+      raw = u.scheme + ":" + loc
+    } else if loc.starts_with("/") {
+      raw = u.scheme + "://" + u.host + loc
+    } else {
+      // relative to the current path's directory
+      let slash = rfind(u.path.bytes(), 47, u.path.len())
+      let dir = if slash >= 0 { escape_path(rt.str_slice(u.path, 0, slash + 1)) } else { "/" }
+      raw = u.scheme + "://" + u.host + dir + loc
+    }
+    if status == 301 || status == 302 || status == 303 {
+      if method != "GET" && method != "HEAD" {
+        method = "GET"
+      }
+      // once a hop drops the body, it is never sent again
+      include_body = false
+    }
+    if !include_body {
+      body = b""
+    }
+    redirects += 1
+  }
+  cfail(4, "")
 }

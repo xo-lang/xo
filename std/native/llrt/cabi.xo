@@ -268,15 +268,6 @@ fn b64_val(c: Int) -> Int {
 // lists, hosts, ports, and addresses are bytes at an address and a length,
 // or zero terminated where the C keeps them so.
 
-/// 1 when every list of the ln bytes at lp admits the host and the port
-/// (onlyNet.admits), else 0.
-fn net_admits(lp: Int, ln: Int, hp: Int, hn: Int, pp: Int, pn: Int) -> Int {
-  if netpolicy.admits(raw.str_at(lp, ln), raw.str_at(hp, hn), raw.str_at(pp, pn)) {
-    return 1
-  }
-  0
-}
-
 /// 1 when the lists admit the dial or listen address of the n bytes at a
 /// (onlyNet.admitsAddr), else 0.
 fn net_admits_addr(lp: Int, ln: Int, a: Int, n: Int) -> Int {

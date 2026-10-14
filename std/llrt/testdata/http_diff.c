@@ -17,9 +17,10 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "http_ref.c"
 
 // read_req is xo_hc_read with the C request parser (hp_head, hb_chunked,
-// which the client keeps) in the part std/native/llrt/http1.xo plays in
+// http_ref.c's test copies) in the part std/native/llrt/http1.xo plays in
 // a program: decision 0198 deleted the server's own C path, so
 // xo_hc_read returns 3 for a head and 4 for a chunked body to parse.
 static int64_t read_req(xo_hconn *hc) {
