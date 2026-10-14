@@ -147,9 +147,6 @@ const AT_FDCWD: Int = -2
 /// read(2) of at most n bytes to the address a.
 pub fn read_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.read(fd, a, n)) }
 
-/// write(2) of the n bytes at the address a.
-pub fn write_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.write(fd, a, n)) }
-
 /// rename(2) of a to b (as written: "" is no file).
 pub fn rename(a: Str, b: Str) -> Int {
   let za = zpath(a)

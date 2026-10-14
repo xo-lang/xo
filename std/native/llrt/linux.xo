@@ -576,9 +576,6 @@ fn o_directory() -> Int {
 /// read(2) of at most n bytes to the address a.
 pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, n, 0, 0, 0) }
 
-/// write(2) of the n bytes at the address a.
-pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(64, 1), fd, a, n, 0, 0, 0) }
-
 /// renameat(2) of a to b (as written: "" is no file, as for the C
 /// runtime's rename).
 pub fn rename(a: Str, b: Str) -> Int {
