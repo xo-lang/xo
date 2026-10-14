@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+not the stale PWD: true
+the program's directory: true
+without backslash: true
+main.xo there: true
+cwd() agrees: true
+--- stderr

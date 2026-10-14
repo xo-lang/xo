@@ -1352,6 +1352,14 @@ func (f Testing_MemFs) M_sub(tk *Task, dir string) Fs {
 
 func (f Testing_MemFs) M_cwd(*Task) Fs { return f }
 
+// M_cwd_path is "/": a MemFs's working directory is its root (M_cwd).
+func (f Testing_MemFs) M_cwd_path(tk *Task) Result[string, FsErr] {
+	if f.v.real != nil {
+		return f.v.real.M_cwd_path(tk)
+	}
+	return Ok[string, FsErr]("/")
+}
+
 func (f Testing_MemFs) M_read_only(*Task) Fs {
 	c := *f.v
 	c.readOnly = true

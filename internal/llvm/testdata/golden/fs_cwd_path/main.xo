@@ -1,0 +1,14 @@
+// The working directory comes from the OS, not $PWD (std.md 3.1,
+// decision 0218): env.txt sets the stale PWD=/ that a process started
+// from the macOS Dock inherits, and the harness runs the program in its
+// own directory, so os.fs.cwd_path() must be that directory.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let wd = os.fs.cwd_path()?
+  out.println("not the stale PWD: ${wd != "/"}")
+  out.println("the program's directory: ${wd.ends_with("/fs_cwd_path")}")
+  out.println("without backslash: ${!wd.contains("\\")}")
+  out.println("main.xo there: ${os.fs.exists(wd + "/main.xo")?}")
+  out.println("cwd() agrees: ${os.fs.cwd().exists("main.xo")?}")
+}
