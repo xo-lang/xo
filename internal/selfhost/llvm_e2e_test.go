@@ -16,7 +16,8 @@ import (
 // pipeline (selfhost/check, selfhost/ssa and its passes, selfhost/llvm,
 // in the binary of selfhost/llvm built with the go backend, or the one
 // XO_SELFHOST_BACKEND names) lowers a self hosted component, its IR must
-// be the recorded one (internal/llvm's until decision 0215), and `xo
+// be the recorded one (internal/llvm's until decision 0215; a dump
+// replay, so only with XO_SELFHOST_DUMPS=all, decision 0217), and `xo
 // build --backend=llvm` (the same pipeline in xo, no binary cache) must
 // build a binary whose output on a fixed input is the go backend build's
 // output. The component is
@@ -77,17 +78,24 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	if skipped != "" {
 		t.Fatalf("the Xo emitter skipped functions:\n%s", skipped)
 	}
-	want := goLLVM(root, dir, false, string(out))
-	if want.missing {
-		t.Fatal(want.missingText())
+	// the IR against the recording is a dump replay, off by default
+	// (decision 0217); the build and the output comparison below run
+	// either way
+	if dumpReplayOn() {
+		want := goLLVM(root, dir, false, string(out))
+		if want.missing {
+			t.Fatal(want.missingText())
+		}
+		if n := want.m("none") + want.m("split"); n != "" {
+			t.Fatalf("the recording: %s", n)
+		}
+		if !want.eq("module", got) {
+			t.Fatalf("the IR differs from the recording: %s", want.diff("module", got))
+		}
+		t.Logf("the IR of %s: %d bytes, %d lines, the recorded IR byte for byte", dir, len(got), strings.Count(got, "\n"))
+	} else {
+		t.Logf("the IR of %s: %d bytes, not compared with the recording: %s", dir, len(got), dumpReplayOff)
 	}
-	if n := want.m("none") + want.m("split"); n != "" {
-		t.Fatalf("the recording: %s", n)
-	}
-	if !want.eq("module", got) {
-		t.Fatalf("the IR differs from the recording: %s", want.diff("module", got))
-	}
-	t.Logf("the IR of %s: %d bytes, %d lines, the recorded IR byte for byte", dir, len(got), strings.Count(got, "\n"))
 	t0 = time.Now()
 	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Out: filepath.Join(t.TempDir(), comp),
 		Env: []string{"XO_BIN_CACHE=off", "XO_BUILD_DIR=" + t.TempDir()}})
