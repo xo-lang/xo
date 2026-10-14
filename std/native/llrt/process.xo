@@ -34,6 +34,12 @@ pub fn exit(code: Int) {
     return
   }
   stdio.flush()
+  if !env_get("XO_LEAKCHECK").is_empty() {
+    // the leak report runs only when main returns (the C runtime's end
+    // of main): here live frames still hold values, so say it was
+    // skipped rather than print nothing (gotchas/leakcheck-skipped-at-exit.md)
+    stdio.eprint("xo leakcheck: skipped (os.proc.exit)", true)
+  }
   os_exit(code)
 }
 

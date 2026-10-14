@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_LEAKCHECK=1` on a native program that ends with `os.proc.exit` (or
+  whose main returns an error) prints `xo leakcheck: skipped
+  (os.proc.exit)` instead of nothing: the report runs only when main
+  returns (gotchas/leakcheck-skipped-at-exit.md).
 - Native runtime (decision 0227): the C path of the number and time text
   (`XO_LLRT_C=text`, std/native/llrt/text_c.xo and 514 lines of
   std/llrt/xo_std.c) is deleted; the owner accepted Duration text at
