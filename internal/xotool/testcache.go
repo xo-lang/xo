@@ -184,7 +184,7 @@ func ccDeps(clang string, flags []string, src string) ([]string, error) {
 
 // copyEntry copies the entry's binary (and its .dSYM) to bin.
 func copyEntry(entry, name, bin string) error {
-	if err := copyTree(filepath.Join(entry, name), bin); err != nil {
+	if err := copyExe(filepath.Join(entry, name), bin); err != nil {
 		return err
 	}
 	if d := filepath.Join(entry, name+".dSYM"); isDir(d) {
@@ -215,6 +215,28 @@ func storeEntry(dir, entry, name, bin string) {
 	}
 	// another process may have stored the same entry first: keep it
 	os.Rename(tmp, entry)
+}
+
+// copyExe copies the executable src to dst with cp, outside this process:
+// a test binary runs many tests at once, and a child another goroutine
+// forks while this process holds dst open for writing keeps the
+// descriptor until its exec, so running dst right after fails with
+// "text file busy" on Linux (gotchas/etxtbsy-exec-after-copy.md; Go
+// issue 22315). Windows has no such error and no cp: Go copies there.
+func copyExe(src, dst string) error {
+	if runtime.GOOS == "windows" {
+		return copyTree(src, dst)
+	}
+	tmp := fmt.Sprintf("%s.cc-%d-%d", dst, os.Getpid(), time.Now().UnixNano())
+	if out, err := exec.Command("cp", src, tmp).CombinedOutput(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("cp %s: %v %s", src, err, out)
+	}
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 // copyTree copies a file or a directory tree, keeping modes.
