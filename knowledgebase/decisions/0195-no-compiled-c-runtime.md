@@ -33,9 +33,13 @@ LLVM to 1.043 (2026-10-13): they are Xo by default, the C under
 0212 (the fiber switch and thread locals emitted by the compiler, the
 scheduler core in std/native/llrt/sched.xo, `XO_LLRT_C=sched` for the C;
 xo_rt.c's default build 156 lines shorter, no assembly;
-`bench/results/task-switch-2026-10-13.md`); spawn, join, the pool's
-locks, fiber stacks, and threads wait for platform calls and
-`rt.call_addr` (0212 stage 2).
+`bench/results/task-switch-2026-10-13.md`); stage 2 done 2026-10-13:
+the worker pool, the locks' slow paths and futex waits, worker threads,
+fiber stacks, parks, the cancellation tree, a spawn's queueing, and a
+scope's join (std/native/llrt/pool.xo; the default build of xo_rt.c 523
+lines shorter than main's at 4f792c55, 7,088 to 6,565); await, the wait
+lists, the task's record and end, contexts, and budgets are 0212's
+stage 3.
 
 ## Context
 

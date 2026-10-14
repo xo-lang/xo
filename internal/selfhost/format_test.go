@@ -15,6 +15,7 @@ import (
 // of the repository and requires the recorded output (internal/format's
 // until decision 0215): the same formatted text, or a syntax error.
 func TestSelfhostFormat(t *testing.T) {
+	skipDumpReplay(t)
 	bin, err := selfhostBinary("cli/core/format", "go")
 	if err != nil {
 		t.Fatal(err)

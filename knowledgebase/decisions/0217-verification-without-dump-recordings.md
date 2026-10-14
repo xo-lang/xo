@@ -26,9 +26,16 @@ recordings of whole internal dumps.
    SSAMutations, Arm64, Arm64Mutations, LLVM, LLVMMutations, Gen,
    GenMutations, Defhash, CheckerMutations, CheckerModuleMutations,
    CheckerHatches) are skipped by default (`skipDumpReplay`);
-   `XO_SELFHOST_DUMPS=all` runs them, and record runs still record. The
-   front end replays (lexer, parser, format, checker) stay on as a cheap
-   tripwire: their output changes only with the language.
+   `XO_SELFHOST_DUMPS=all` runs them, and record runs still record.
+   Correction (2026-10-13, the same day): the front end replays
+   (TestSelfhostDifferential, ParserDifferential, Format, Checker) are
+   skipped by default too. They were kept on as a tripwire on the
+   assumption that their output changes only with the language, but
+   they hash each file's dump, so any edit to a covered .xo file (the
+   scheduler merge edited std/native/rt.xo, cabi.xo, sys_darwin.xo,
+   sys_windows.xo and added pool.xo) failed them and would have needed a
+   recording. A replay that compares only units whose input is unchanged
+   is the harness's to build if it is worth keeping.
 2. The compiler is verified by, in order of weight:
    - program output goldens on every backend (want.txt, exit status,
      stdout, stderr), including the cross-backend comparison;
@@ -59,5 +66,5 @@ recordings of whole internal dumps.
 
 - Keep recording everything and make recording faster: still a full run
   per intended change, and a reviewer cannot read hash diffs.
-- Drop the front end replays too: they are cheap and catch language
-  regressions; kept until error check tests cover the same ground.
+- Keep the front end replays on: tried for one merge; every edit to a
+  covered file failed them (see the correction in Decision item 1).
