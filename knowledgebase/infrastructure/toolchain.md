@@ -3335,7 +3335,10 @@ checkout's sources changed (the host, selfhost/, and the std modules it
 reaches through `use`; xotool.Inputs). The build goes into `<user
 cache>/xo/checkout/<key>/xo` once per key, under a file lock, shared by
 worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
-the checkout's earlier bin/xo, the newest earlier build in that cache,
+the checkout's earlier bin/xo, the newest earlier build in that cache
+whose recorded commit (`<key>/commit`, written since 2026-10-14) is an
+ancestor of HEAD, so another branch's xo on a shared CI runner is never
+used,
 `xo` on PATH, and the newest prebuilt seed (below; needs the aws CLI
 and read access to the seed bucket); a seed that fails is reported and
 the next one tried, and the log names the path taken ("xotool: building

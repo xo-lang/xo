@@ -5,14 +5,26 @@
 // offsets below): `faulting`, and three zero terminated strings in
 // large blocks (rt.heap_large), which the C scheduler hands from a
 // faulted task to the scope that joins it. The C calls these through
-// cabi.xo (fault_record_*); raising stays C (fault_raise), and the
-// messages of the checked operations are cabi.xo's fault_* writers.
+// cabi.xo (fault_record_*).
+//
+// The fault entry points of generated code (decision 0228): the checked
+// operations and `fault(msg)` call cabi.xo's fault_raise_* exports
+// directly, which write the message here and raise it through the C's
+// fault_raise_msg (its address in rt.static_word RAISE; the unwind
+// itself stays in xo_rt.c fault_raise and unwind.xo).
 //
 // Nothing here faults.
+use native/llrt/num
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/stdio
+use native/llrt/unwind
 use native/rt
+
+/// rt.static_word: the address of xo_rt.c fault_raise_msg (a C function
+/// of a zero terminated message and location that records the fault in
+/// the current context and raises it; never returns), set by init.
+const RAISE = 14
 
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
 /// location, and detail (char pointers, NULL when unset).
@@ -117,4 +129,61 @@ fn put(b: Int, o: Int, s: Str) -> Int { put_at(b, o, raw.data(s), s.len()) }
 fn put_at(b: Int, o: Int, p: Int, n: Int) -> Int {
   rt.mem_copy(b + o, p, n)
   o + n
+}
+
+// ---------------------------------------------------------------------------
+// Raising (decision 0228)
+
+/// Sets the address of the C's fault_raise_msg (at start, before the
+/// program runs).
+pub fn init(raise_msg: Int) { rt.mem_store(rt.static_word(RAISE), 0, raise_msg, 8) }
+
+/// Raises the fault whose zero terminated message is at m, at the zero
+/// terminated location loc: never returns.
+fn fire(m: Int, loc: Int) {
+  let _r = rt.call_c2(rt.mem_load(rt.static_word(RAISE), 0, 8), m, loc)
+}
+
+/// The thread's message buffer holding s: s copied there, zero
+/// terminated (a message longer than the buffer goes to a malloc'd block,
+/// never freed, as the raise does not return).
+fn text(s: Str) -> Int { at(raw.data(s), s.len()) }
+
+/// The thread's message buffer holding the n bytes at p, zero terminated.
+fn at(p: Int, n: Int) -> Int {
+  var b = unwind.msg_buf()
+  if b == 0 || n >= unwind.MSG_BYTES {
+    b = rt.heap_large(n + 1)
+  }
+  rt.mem_copy(b, p, n)
+  rt.mem_store(b, n, 0, 1)
+  b
+}
+
+/// `fault(msg)` (xo_fault): the n bytes at p.
+pub fn raise_text(p: Int, n: Int, loc: Int) { fire(at(p, n), loc) }
+
+pub fn raise_overflow(a: Int, op: Int, b: Int, loc: Int) { fire(text("integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int"), loc) }
+
+pub fn raise_shl(a: Int, b: Int, loc: Int) { fire(text("integer overflow: ${a} << ${b} does not fit Int"), loc) }
+
+pub fn raise_shift(n: Int, loc: Int) { fire(text("shift amount ${n} out of range for Int"), loc) }
+
+pub fn raise_divzero(a: Int, op: Int, loc: Int) { fire(text("division by zero: ${a} ${raw.byte_str(op)} 0"), loc) }
+
+pub fn raise_neg(a: Int, loc: Int) { fire(text("integer overflow: -(${a}) does not fit Int"), loc) }
+
+pub fn raise_abs(a: Int, loc: Int) { fire(text("integer overflow: abs(${a}) does not fit Int"), loc) }
+
+pub fn raise_index(i: Int, n: Int, loc: Int) { fire(text("index ${i} out of range for List of length ${n}"), loc) }
+
+/// `b[i]` out of range on Bytes (std/rt BytesAt).
+pub fn raise_bytes_index(i: Int, n: Int, loc: Int) { fire(text("index ${i} out of range for Bytes of length ${n}"), loc) }
+
+pub fn raise_float_int(f: Float, loc: Int) {
+  if f != f {
+    fire(text("cannot convert NaN to Int"), loc)
+    return
+  }
+  fire(text("${num.go_g_text(f)} is out of range for Int"), loc)
 }

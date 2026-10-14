@@ -18,7 +18,8 @@
 // whose std is <repo>/std (xo1 looks for std at <bin>/../std). Keys past
 // the newest four unused for a day are pruned (prune.go). The seed,
 // the xo that compiles it, is the first of: $XO_SEED; <repo>/bin/xo; the
-// newest earlier build in the cache; `xo` on PATH; the newest prebuilt
+// newest earlier build in the cache whose recorded commit is an ancestor
+// of the checkout's HEAD (ancestorBuild); `xo` on PATH; the newest prebuilt
 // seed (decision 0216 item 1: seeds/latest.txt of $XO_SEED_URL or
 // s3://$XO_SEED_BUCKET, fetched with the aws CLI into
 // <user cache>/xo/seeds; seed.go). A seed that fails is reported and
@@ -331,7 +332,10 @@ func buildLocked(root, out string, log io.Writer) error {
 		t0 := time.Now()
 		err := BuildXo(root, s.Path, out)
 		if err != nil {
-			fmt.Fprintf(log, "xotool: %s failed: %v\n", s.Why, err)
+			// one line here; the whole output is in the error when no
+			// seed builds xo (a cached build from another branch can fail
+			// with pages of linker errors before the next seed works)
+			fmt.Fprintf(log, "xotool: %s failed (%s); trying the next seed\n", s.Why, summary(err))
 			errs = append(errs, s.Why+": "+err.Error())
 			if s.NoChain || !chain {
 				continue
@@ -353,6 +357,10 @@ func buildLocked(root, out string, log io.Writer) error {
 			}
 		}
 		fmt.Fprintf(log, "xotool: built in %.0f s with %s\n", time.Since(t0).Seconds(), s.Why)
+		if c := headCommit(root); c != "" {
+			// which commit these sources came from, for ancestorBuild
+			os.WriteFile(filepath.Join(filepath.Dir(out), "commit"), []byte(c+"\n"), 0o644)
+		}
 		return nil
 	}
 	msg := "xotool: no seed built xo"
@@ -417,8 +425,8 @@ func Seeds(root string) ([]Seed, error) {
 	if base, err := cacheBase(); err == nil {
 		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
 		sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
-		if len(ms) > 0 {
-			add(ms[0], "the newest earlier build "+ms[0])
+		if p := ancestorBuild(root, ms); p != "" {
+			add(p, "the newest earlier build "+p)
 		}
 	}
 	if p, err := exec.LookPath("xo"); err == nil {
@@ -432,6 +440,51 @@ func Seeds(root string) ([]Seed, error) {
 		out = append(out, rootSeed)
 	}
 	return out, nil
+}
+
+// ancestorBuild is the newest of the cached builds ms (newest first)
+// whose recorded commit (the commit file buildLocked writes beside it)
+// is an ancestor of root's HEAD, or "". A build of another branch can
+// emit calls into a runtime this checkout's std does not have (on a
+// shared CI runner, 2026-10-14, run 38632539643), and a build with no
+// record or outside a git checkout cannot be placed, so neither is used.
+func ancestorBuild(root string, ms []string) string {
+	head := headCommit(root)
+	if head == "" {
+		return ""
+	}
+	for i, m := range ms {
+		if i == 20 {
+			break
+		}
+		b, err := os.ReadFile(filepath.Join(filepath.Dir(m), "commit"))
+		c := strings.TrimSpace(string(b))
+		if err != nil || c == "" {
+			continue
+		}
+		if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", c, head).Run() == nil {
+			return m
+		}
+	}
+	return ""
+}
+
+// headCommit is root's HEAD commit, or "" outside a git checkout.
+func headCommit(root string) string {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// summary is the first line of err and how many lines follow it.
+func summary(err error) string {
+	ls := strings.Split(strings.TrimRight(err.Error(), "\n"), "\n")
+	if len(ls) == 1 {
+		return ls[0]
+	}
+	return fmt.Sprintf("%s; %d more lines", ls[0], len(ls)-1)
 }
 
 // SeedFromTag is the xo1 of the last commit with the Go compiler

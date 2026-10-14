@@ -279,10 +279,11 @@ xo_rlist *xo_fs_msg(void) {
 }
 
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
+// (A forwarder to cabi.xo's export for older xo's code, decision 0228.)
+void xo_x_fault_raise_bytes_index(int64_t i, int64_t n, int64_t loc);
 XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {
-	char m[160];
-	xo_x_fault_bytes_index(XO_ADDR(m), i, n);
-	fault_text(m, loc);
+	xo_x_fault_raise_bytes_index(i, n, XO_ADDR(loc));
+	__builtin_unreachable();
 }
 
 // Constants of collection types (decision 0081): each is built once, by
