@@ -265,20 +265,6 @@ fn unwind_save(regs: Int)
 /// and jumps to the address in word 96 with the stack pointer of word
 /// 31: never returns (decision 0221; arm64 only, a trap on x86_64).
 fn unwind_resume(regs: Int)
-/// The address of b's first byte (valid while b is alive; the kernel may
-/// write there only when b is unique, as bytes_buf's and sys_buf's are).
-fn bytes_addr(b: Bytes) -> Int
-/// A unique Bytes of n bytes for a system call to fill (not zeroed:
-/// what the call does not fill is cut off with rs_bytes_len, or written
-/// first).
-fn bytes_buf(n: Int) -> Bytes
-/// b with its length set to n (0 <= n <= b's capacity), consuming b: the
-/// bytes a read filled, without a copy.
-fn rs_bytes_len(b: Bytes, n: Int) -> Bytes
-/// The calling thread's 256 byte scratch buffer for the structures of
-/// system calls (timespec, statx): never freed, valid until the thread's
-/// next system call through it.
-fn sys_buf() -> Bytes
 /// Whether a test binary's world fakes the capability bits real (1
 /// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
 /// the C runtime, which serves the fake.

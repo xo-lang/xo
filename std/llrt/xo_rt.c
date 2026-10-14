@@ -150,6 +150,9 @@ typedef struct xo_heap {
 	// xo_rl_free's element size and drop, from obj.xo rl_free_n_slow to
 	// rl_free_rt (a real-time section; rt.call_c2 passes two words)
 	int64_t pend_esize, pend_drop;
+	// the thread's scratch for the structures of system calls (timespec,
+	// statx, sigaction; obj.xo scratch, work item B02)
+	char scratch[256];
 	struct xo_heap *next;  // all heaps, for the leak check
 	struct xo_heap *spare; // the list of heaps of exited threads
 	// the frees deferred by real-time sections (a fixed queue, so
@@ -162,7 +165,7 @@ typedef struct xo_heap {
 _Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) == 56 && offsetof(xo_heap, central) == 64 && offsetof(xo_heap, last_size) == 72, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872, "obj.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872 && offsetof(xo_heap, scratch) == 1880, "obj.xo's heap record offsets");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second

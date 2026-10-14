@@ -423,8 +423,8 @@ fn fill(l: Int, a: Int) -> Int {
 
 /// The n bytes at the address a.
 fn bytes_at(a: Int, n: Int) -> Bytes {
-  let b = rt.bytes_buf(n)
-  rt.mem_copy(rt.bytes_addr(b), a, n)
+  let b = raw.bytes_buf(n)
+  rt.mem_copy(raw.bytes_addr(b), a, n)
   b
 }
 
@@ -441,8 +441,8 @@ pub fn file_read(f: rt.FsFile, max: Int, x: Str) -> List[Bytes] {
   var w = rt.mem_load(a, F_W, 8)
   if r == w {
     if m >= FS_BUF {
-      let b = rt.bytes_buf(m)
-      let k = read_at(l, rt.mem_load(a, F_FD, 8), rt.bytes_addr(b), m)
+      let b = raw.bytes_buf(m)
+      let k = read_at(l, rt.mem_load(a, F_FD, 8), raw.bytes_addr(b), m)
       if k < 0 {
         fail(l, -k, x)
         return []
@@ -451,7 +451,7 @@ pub fn file_read(f: rt.FsFile, max: Int, x: Str) -> List[Bytes] {
       if k == 0 {
         return []
       }
-      return [rt.rs_bytes_len(b, k)]
+      return [raw.bytes_len(b, k)]
     }
     let k = fill(l, a)
     if k < 0 {
@@ -615,8 +615,8 @@ pub fn copy(a: Str, b: Str, xa: Str, xb: Str) -> Int {
       if fout < 0 {
         err = -fout
       } else {
-        let buf = rt.bytes_buf(FS_BUF)
-        let p = rt.bytes_addr(buf)
+        let buf = raw.bytes_buf(FS_BUF)
+        let p = raw.bytes_addr(buf)
         while true {
           let k = read_at(l, fin, p, FS_BUF)
           if k < 0 {

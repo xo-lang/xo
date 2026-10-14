@@ -13,6 +13,8 @@
 //
 // Only the Windows arms of std/native/llrt/sysio.xo call this module; the
 // SSA builders make its platform calls faults on another OS.
+use native/llrt/obj
+use native/llrt/raw
 use native/rt
 use native/sys_windows
 
@@ -89,9 +91,9 @@ fn open(path: Str, access: Int, disposition: Int) -> Int {
 /// ReadFile of at most n bytes into buf from off on: the count (0 at the
 /// end, or after a broken pipe, as _read), or the negative errno.
 pub fn read(h: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
-  let ok = sys_windows.ReadFile(h, rt.bytes_addr(buf) + off, k, rt.bytes_addr(done), 0)
+  let ok = sys_windows.ReadFile(h, raw.bytes_addr(buf) + off, k, done, 0)
   if Int(ok) == 0 {
     let e = Int(sys_windows.GetLastError())
     if e == ERROR_BROKEN_PIPE {
@@ -102,23 +104,23 @@ pub fn read(h: Int, buf: Bytes, off: Int, n: Int) -> Int {
     }
     return keep(buf, -dos_errno(e))
   }
-  keep(buf, rt.bytes_word(done, 0) & 4294967295)
+  keep(buf, rt.mem_load(done, 0, 8) & 4294967295)
 }
 
 /// Writes all of b (WriteFile until it is written, as _write): 0, or the
 /// errno.
 pub fn write_all(h: Int, b: Bytes) -> Int {
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   var off = 0
   let n = b.len()
   while off < n {
     let k = if n - off > 2147483647 { 2147483647 } else { n - off }
-    let ok = sys_windows.WriteFile(h, rt.bytes_addr(b) + off, k, rt.bytes_addr(done), 0)
+    let ok = sys_windows.WriteFile(h, raw.bytes_addr(b) + off, k, done, 0)
     if Int(ok) == 0 {
       let e = Int(sys_windows.GetLastError())
       return keep(b, if e == ERROR_ACCESS_DENIED { EBADF } else { dos_errno(e) })
     }
-    let w = rt.bytes_word(done, 0) & 4294967295
+    let w = rt.mem_load(done, 0, 8) & 4294967295
     if w == 0 {
       // nothing written and no error: _write's ENOSPC
       return keep(b, ENOSPC)
@@ -133,12 +135,12 @@ pub fn write_all(h: Int, b: Bytes) -> Int {
 /// the negative errno (std/native/llrt/stdio.xo).
 pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
   let h = sys_windows.GetStdHandle(if fd == 2 { STD_ERROR_HANDLE } else { STD_OUTPUT_HANDLE })
-  let done = rt.sys_buf()
+  let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
-  if Int(sys_windows.WriteFile(h, a, k, rt.bytes_addr(done), 0)) == 0 {
-    return keep(done, -dos_errno(Int(sys_windows.GetLastError())))
+  if Int(sys_windows.WriteFile(h, a, k, done, 0)) == 0 {
+    return -dos_errno(Int(sys_windows.GetLastError()))
   }
-  keep(done, rt.bytes_word(done, 0) & 4294967295)
+  rt.mem_load(done, 0, 8) & 4294967295
 }
 
 /// CloseHandle: 0, or the negative errno.
@@ -191,15 +193,15 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
 /// GetFileInformationByHandle of h (xo_w_fill_stat; link: a reparse
 /// point is a link, not a directory).
 fn info(h: Int, link: Bool) -> (Stat, Int) {
-  let buf = rt.sys_buf()
-  if Int(sys_windows.GetFileInformationByHandle(h, rt.bytes_addr(buf))) == 0 {
+  let buf = obj.scratch()
+  if Int(sys_windows.GetFileInformationByHandle(h, buf)) == 0 {
     return (Stat{is_dir: false, size: 0, mtime: 0}, shim_errno(Int(sys_windows.GetLastError())))
   }
   // BY_HANDLE_FILE_INFORMATION: dwFileAttributes at 0, ftLastWriteTime
   // at 20, nFileSizeHigh at 32 and nFileSizeLow at 36
-  let attrs = rt.bytes_word(buf, 0) & 4294967295
-  let ft = rt.bytes_word(buf, 20)
-  let size = ((rt.bytes_word(buf, 32) & 4294967295) << 32) | (rt.bytes_word(buf, 36) & 4294967295)
+  let attrs = rt.mem_load(buf, 0, 8) & 4294967295
+  let ft = rt.mem_load(buf, 20, 8)
+  let size = ((rt.mem_load(buf, 32, 8) & 4294967295) << 32) | (rt.mem_load(buf, 36, 8) & 4294967295)
   var dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
   if link && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
     dir = false
@@ -241,11 +243,11 @@ pub fn mono_ns(a: Int) -> Int {
 /// BCryptGenRandom of n bytes, 256 at a time (as the C runtime's
 /// cr_entropy did): the bytes and 0, or EIO.
 pub fn random(n: Int) -> (Bytes, Int) {
-  let buf = rt.bytes_buf(n)
+  let buf = raw.bytes_buf(n)
   var off = 0
   while off < n {
     let k = if n - off > 256 { 256 } else { n - off }
-    if Int(sys_windows.BCryptGenRandom(0, rt.bytes_addr(buf) + off, k, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) != 0 {
+    if Int(sys_windows.BCryptGenRandom(0, raw.bytes_addr(buf) + off, k, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) != 0 {
       return (b"", EIO)
     }
     off += k

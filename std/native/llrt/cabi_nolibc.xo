@@ -8,6 +8,7 @@
 // Ints); none may fault or allocate: tls_size and tls_init run before
 // the main thread has its thread pointer.
 use native/llrt/linux
+use native/llrt/obj
 use native/rt
 
 const FUTEX_WAIT_PRIVATE: Int = 128
@@ -92,8 +93,7 @@ fn once_run(w: Int, f: Int) -> Int {
 
 /// sigaction(sig, act, old): 0, or the negative errno.
 fn sigaction(sig: Int, act: Int, old: Int) -> Int {
-  let k = rt.sys_buf()
-  let ka = rt.bytes_addr(k)
+  let ka = obj.scratch()
   var pa = 0
   if act != 0 {
     // SA_RESTORER 0x04000000
@@ -116,8 +116,7 @@ fn sigaction(sig: Int, act: Int, old: Int) -> Int {
 /// signal(sig, h): the previous handler (SA_RESTART), or the negative
 /// errno.
 fn signal(sig: Int, h: Int) -> Int {
-  let k = rt.sys_buf()
-  let ka = rt.bytes_addr(k)
+  let ka = obj.scratch()
   // SA_RESTART 0x10000000, SA_RESTORER
   rt.mem_store(ka, 0, h, 8)
   rt.mem_store(ka, 8, 268435456 | 67108864, 8)
