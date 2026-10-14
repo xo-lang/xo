@@ -12,8 +12,36 @@ ssadump c05172fb877c9638 =@slot fb17d6399eb33950
 ssadump c05172fb877c9638 =stages unwind landings cleanup rc verify mutants
 ssadump c05172fb877c9638 ~mutants 4d2a6ca8997d45c2
 ssadump c05172fb877c9638 ~verify 2689367b205c16ce
+ssadump c068c4e82c4ea670 "#build types" 4 582205ce56bd1766
+ssadump c068c4e82c4ea670 "~cleanup types" 8020353245a24d32
+ssadump c068c4e82c4ea670 "~landings types" 8020353245a24d32
+ssadump c068c4e82c4ea670 "~rc types" 8020353245a24d32
+ssadump c068c4e82c4ea670 "~unwind types" 8020353245a24d32
+ssadump c068c4e82c4ea670 #build 152 a5f60283923ac82f
+ssadump c068c4e82c4ea670 #cleanup 152 2702e6f0742219ba
+ssadump c068c4e82c4ea670 #landings 152 581157f8ea0e5b62
+ssadump c068c4e82c4ea670 #rc 152 245161b8a0044f63
+ssadump c068c4e82c4ea670 #unwind 152 50b8d4f293ce95d5
+ssadump c068c4e82c4ea670 =@slot f614cc3cc52dd07c
+ssadump c068c4e82c4ea670 =stages unwind landings cleanup rc verify mutants
+ssadump c068c4e82c4ea670 ~mutants 446b3cc6988bb720
+ssadump c068c4e82c4ea670 ~verify 2689367b205c16ce
 ssadump c0a82b3430e91315 =@slot 0bb6a48d25522206
 ssadump c0a82b3430e91315 =none rejected
+ssadump c0bf633c1f5948be "#build types" 3 ddf8d9b9f46cd0ac
+ssadump c0bf633c1f5948be "~cleanup types" 6b9195bf9a00bad3
+ssadump c0bf633c1f5948be "~landings types" 6b9195bf9a00bad3
+ssadump c0bf633c1f5948be "~rc types" 6b9195bf9a00bad3
+ssadump c0bf633c1f5948be "~unwind types" 6b9195bf9a00bad3
+ssadump c0bf633c1f5948be #build 146 2953b392da162413
+ssadump c0bf633c1f5948be #cleanup 146 5621e04ae3ae56ba
+ssadump c0bf633c1f5948be #landings 146 4e9919f6c323aae2
+ssadump c0bf633c1f5948be #rc 146 5e06ebc2b51e1035
+ssadump c0bf633c1f5948be #unwind 146 b76ab1180d545ec7
+ssadump c0bf633c1f5948be =@slot 72f006f4e7f86ff7
+ssadump c0bf633c1f5948be =stages unwind landings cleanup rc verify mutants
+ssadump c0bf633c1f5948be ~mutants 66e82f3d7c87961e
+ssadump c0bf633c1f5948be ~verify 2689367b205c16ce
 ssadump c0cfb38c791e979f "#build types" 3 ddf8d9b9f46cd0ac
 ssadump c0cfb38c791e979f "~cleanup types" 6b9195bf9a00bad3
 ssadump c0cfb38c791e979f "~landings types" 6b9195bf9a00bad3
@@ -44,8 +72,26 @@ ssadump c12a47d5f31b8b35 =@slot f32590367d72a13b
 ssadump c12a47d5f31b8b35 =stages unwind landings cleanup rc verify mutants
 ssadump c12a47d5f31b8b35 ~mutants a37d7ce3e451e429
 ssadump c12a47d5f31b8b35 ~verify 2689367b205c16ce
+ssadump c133010282a8e218 =@slot dcc7a9068828f8d6
+ssadump c133010282a8e218 =none rejected
+ssadump c141bf05db4bac42 "#build types" 69 9a8c171086ebdf01
+ssadump c141bf05db4bac42 "~cleanup types" 0857269e5394354f
+ssadump c141bf05db4bac42 "~landings types" 0857269e5394354f
+ssadump c141bf05db4bac42 "~rc types" 0857269e5394354f
+ssadump c141bf05db4bac42 "~unwind types" 0857269e5394354f
+ssadump c141bf05db4bac42 #build 491 fbc22913941aa36c
+ssadump c141bf05db4bac42 #cleanup 492 b6ffbe0da7da5a19
+ssadump c141bf05db4bac42 #landings 492 7f91654404da796f
+ssadump c141bf05db4bac42 #rc 492 b7670040eacf6d4d
+ssadump c141bf05db4bac42 #unwind 491 13ec770c0dc288ce
+ssadump c141bf05db4bac42 =@slot e195cca19e8bb18e
+ssadump c141bf05db4bac42 =stages unwind landings cleanup rc verify mutants
+ssadump c141bf05db4bac42 ~mutants 5ea2d721bf760416
+ssadump c141bf05db4bac42 ~verify 2689367b205c16ce
 ssadump c14e9448036feac2 =@slot 205ff01af2c9bcab
 ssadump c14e9448036feac2 =none rejected
+ssadump c158da6318d53bf4 =@slot 59a697aa21f94ea6
+ssadump c158da6318d53bf4 =none no main
 ssadump c15eebd6c602eb2f "#build types" 39 560779e686f99e72
 ssadump c15eebd6c602eb2f "~cleanup types" d99db4a987f09731
 ssadump c15eebd6c602eb2f "~landings types" d99db4a987f09731
@@ -60,8 +106,36 @@ ssadump c15eebd6c602eb2f =@slot b17257036489fa5b
 ssadump c15eebd6c602eb2f =stages unwind landings cleanup rc verify mutants
 ssadump c15eebd6c602eb2f ~mutants 08500e1f3d4fe546
 ssadump c15eebd6c602eb2f ~verify 2689367b205c16ce
+ssadump c189dff63733f52f "#build types" 32 ee7d0cc59f7cf81e
+ssadump c189dff63733f52f "~cleanup types" 05660974844677ba
+ssadump c189dff63733f52f "~landings types" 05660974844677ba
+ssadump c189dff63733f52f "~rc types" 05660974844677ba
+ssadump c189dff63733f52f "~unwind types" 05660974844677ba
+ssadump c189dff63733f52f #build 323 67a9bee93f6e1093
+ssadump c189dff63733f52f #cleanup 323 b7d77609bcfb0db0
+ssadump c189dff63733f52f #landings 323 ff18f622b0fd1aaa
+ssadump c189dff63733f52f #rc 323 370364b014ca3de4
+ssadump c189dff63733f52f #unwind 323 78209130c3411da3
+ssadump c189dff63733f52f =@slot 29e2cb2dc9fd6b98
+ssadump c189dff63733f52f =stages unwind landings cleanup rc verify mutants
+ssadump c189dff63733f52f ~mutants 1f0b31b55ee8c3fc
+ssadump c189dff63733f52f ~verify 2689367b205c16ce
 ssadump c18eb8dcb721023b =@slot 752bf051a17ea226
 ssadump c18eb8dcb721023b =none rejected
+ssadump c1c3d6820fd26a68 "#build types" 8 ed8c1dabb85fddde
+ssadump c1c3d6820fd26a68 "~cleanup types" af39c5f3bc47d509
+ssadump c1c3d6820fd26a68 "~landings types" af39c5f3bc47d509
+ssadump c1c3d6820fd26a68 "~rc types" af39c5f3bc47d509
+ssadump c1c3d6820fd26a68 "~unwind types" af39c5f3bc47d509
+ssadump c1c3d6820fd26a68 #build 157 bec965199e1ee91e
+ssadump c1c3d6820fd26a68 #cleanup 157 d1c23753c1aa9535
+ssadump c1c3d6820fd26a68 #landings 157 99afb14b47dbf0d0
+ssadump c1c3d6820fd26a68 #rc 157 fa384a2f3bbb5a20
+ssadump c1c3d6820fd26a68 #unwind 157 6453beb66f81c91c
+ssadump c1c3d6820fd26a68 =@slot 60dd7da33a7ce304
+ssadump c1c3d6820fd26a68 =stages unwind landings cleanup rc verify mutants
+ssadump c1c3d6820fd26a68 ~mutants aa7171b415fc16d5
+ssadump c1c3d6820fd26a68 ~verify 2689367b205c16ce
 ssadump c1d284c2d9ac658e "#build types" 48 01c5e319fb8b75ba
 ssadump c1d284c2d9ac658e "~cleanup types" fd114a700ec6400c
 ssadump c1d284c2d9ac658e "~landings types" fd114a700ec6400c
@@ -90,8 +164,36 @@ ssadump c1d686d74a1aa5ae =@slot b84dc37dcd743160
 ssadump c1d686d74a1aa5ae =stages unwind landings cleanup rc verify mutants
 ssadump c1d686d74a1aa5ae ~mutants 4541f1c54b6853fe
 ssadump c1d686d74a1aa5ae ~verify 2689367b205c16ce
+ssadump c20babb85042bcc3 "#build types" 32 ee7d0cc59f7cf81e
+ssadump c20babb85042bcc3 "~cleanup types" 05660974844677ba
+ssadump c20babb85042bcc3 "~landings types" 05660974844677ba
+ssadump c20babb85042bcc3 "~rc types" 05660974844677ba
+ssadump c20babb85042bcc3 "~unwind types" 05660974844677ba
+ssadump c20babb85042bcc3 #build 323 f078ae676e433386
+ssadump c20babb85042bcc3 #cleanup 323 0ab149ed2188d2f0
+ssadump c20babb85042bcc3 #landings 323 65d633b3aea711e5
+ssadump c20babb85042bcc3 #rc 323 f8c9ef8463b18ad9
+ssadump c20babb85042bcc3 #unwind 323 a4018ca844009f42
+ssadump c20babb85042bcc3 =@slot 2f04ab189c43a56a
+ssadump c20babb85042bcc3 =stages unwind landings cleanup rc verify mutants
+ssadump c20babb85042bcc3 ~mutants 53a70ed95c0ebca0
+ssadump c20babb85042bcc3 ~verify 2689367b205c16ce
 ssadump c210f6c83e0f87fb =@slot e17698d2c394cd9f
 ssadump c210f6c83e0f87fb =none rejected
+ssadump c22261f7c52376a1 "#build types" 111 f911e9144c1387c3
+ssadump c22261f7c52376a1 "~cleanup types" f14156af29e22556
+ssadump c22261f7c52376a1 "~landings types" f14156af29e22556
+ssadump c22261f7c52376a1 "~rc types" f14156af29e22556
+ssadump c22261f7c52376a1 "~unwind types" f14156af29e22556
+ssadump c22261f7c52376a1 #build 680 0e826bb6f72e55d6
+ssadump c22261f7c52376a1 #cleanup 680 d16bf8d84f1ee889
+ssadump c22261f7c52376a1 #landings 680 c88d8ddfe371eb0a
+ssadump c22261f7c52376a1 #rc 680 67accac26b95537d
+ssadump c22261f7c52376a1 #unwind 680 5f71fb5cd4ba20b0
+ssadump c22261f7c52376a1 =@slot 065457a853fbc98c
+ssadump c22261f7c52376a1 =stages unwind landings cleanup rc verify mutants
+ssadump c22261f7c52376a1 ~mutants 4c673d36fbfcb581
+ssadump c22261f7c52376a1 ~verify 2689367b205c16ce
 ssadump c22f7bc8ebaf1267 "#build types" 4 1b54f53da6ba9f3d
 ssadump c22f7bc8ebaf1267 "~cleanup types" 50f92cf1e60bd76e
 ssadump c22f7bc8ebaf1267 "~landings types" 50f92cf1e60bd76e
@@ -106,6 +208,8 @@ ssadump c22f7bc8ebaf1267 =@slot f14be675231af7bb
 ssadump c22f7bc8ebaf1267 =stages unwind landings cleanup rc verify mutants
 ssadump c22f7bc8ebaf1267 ~mutants 691a5824a9201e00
 ssadump c22f7bc8ebaf1267 ~verify 2689367b205c16ce
+ssadump c24458e48d2f22e4 =@slot f08d6806c8445dc4
+ssadump c24458e48d2f22e4 =none no main
 ssadump c275b471f562578d "#build types" 3 ddf8d9b9f46cd0ac
 ssadump c275b471f562578d "~cleanup types" 6b9195bf9a00bad3
 ssadump c275b471f562578d "~landings types" 6b9195bf9a00bad3
@@ -124,6 +228,12 @@ ssadump c28a48714401f814 =@slot 59ac748d8b90d9ff
 ssadump c28a48714401f814 =none rejected
 ssadump c29b9abf649d0239 =@slot 6e05ff1008998925
 ssadump c29b9abf649d0239 =none rejected
+ssadump c2ae09b2ef34971e =@slot 975362b7c7be7cdc
+ssadump c2ae09b2ef34971e =none rejected
+ssadump c2c0b69f0aa9b578 "#build types" 108 ab49dbf641d42c96
+ssadump c2c0b69f0aa9b578 #build 580 18bd63f0e27d1349
+ssadump c2c0b69f0aa9b578 =@slot 13438bdbb74822eb
+ssadump c2c0b69f0aa9b578 =stages ""
 ssadump c2cc5fac8b3371bb "#build types" 4 b121b72835e7af36
 ssadump c2cc5fac8b3371bb "~cleanup types" c7f51dfbd961b3dd
 ssadump c2cc5fac8b3371bb "~landings types" c7f51dfbd961b3dd
@@ -140,10 +250,42 @@ ssadump c2cc5fac8b3371bb ~mutants d1a424738ed72070
 ssadump c2cc5fac8b3371bb ~verify 2689367b205c16ce
 ssadump c2d2d54e0229b627 =@slot b1d14718f69c8f82
 ssadump c2d2d54e0229b627 =none rejected
+ssadump c2db76b0cffa6458 "#build types" 3 ddf8d9b9f46cd0ac
+ssadump c2db76b0cffa6458 #build 145 530da5dae7fc6e84
+ssadump c2db76b0cffa6458 =@slot d65facb8feac5859
+ssadump c2db76b0cffa6458 =stages ""
 ssadump c2ea102b03cb732f =@slot 27ef90ea26e267cd
 ssadump c2ea102b03cb732f =none rejected
 ssadump c2f8d818790e1466 =@slot 659fb244965c8b7e
 ssadump c2f8d818790e1466 =none rejected
+ssadump c30d489459b17ecc "#build types" 9 e6ddeb8b3430c0cd
+ssadump c30d489459b17ecc "~cleanup types" b1957d4088f1c1ee
+ssadump c30d489459b17ecc "~landings types" b1957d4088f1c1ee
+ssadump c30d489459b17ecc "~rc types" b1957d4088f1c1ee
+ssadump c30d489459b17ecc "~unwind types" b1957d4088f1c1ee
+ssadump c30d489459b17ecc #build 176 23c5426101cea9fe
+ssadump c30d489459b17ecc #cleanup 176 6068d164e086b68c
+ssadump c30d489459b17ecc #landings 176 24ea92e251191b8a
+ssadump c30d489459b17ecc #rc 176 dc8385d55acaebbf
+ssadump c30d489459b17ecc #unwind 176 ab80cffeba431bc9
+ssadump c30d489459b17ecc =@slot 4323f4fd76e2015d
+ssadump c30d489459b17ecc =stages unwind landings cleanup rc verify mutants
+ssadump c30d489459b17ecc ~mutants 5c2720f74d5a3f28
+ssadump c30d489459b17ecc ~verify 2689367b205c16ce
+ssadump c30ebd57c599d7eb "#build types" 8 7ce2dadcb3bc6851
+ssadump c30ebd57c599d7eb "~cleanup types" f40543ed9d20e77f
+ssadump c30ebd57c599d7eb "~landings types" f40543ed9d20e77f
+ssadump c30ebd57c599d7eb "~rc types" f40543ed9d20e77f
+ssadump c30ebd57c599d7eb "~unwind types" f40543ed9d20e77f
+ssadump c30ebd57c599d7eb #build 150 a9ef7083f0dfd9fb
+ssadump c30ebd57c599d7eb #cleanup 150 eda693706966ee4c
+ssadump c30ebd57c599d7eb #landings 150 8785efa1d18b039f
+ssadump c30ebd57c599d7eb #rc 150 a5ce3b100d451250
+ssadump c30ebd57c599d7eb #unwind 150 421821b36dd6efb4
+ssadump c30ebd57c599d7eb =@slot b6662f59747a4444
+ssadump c30ebd57c599d7eb =stages unwind landings cleanup rc verify mutants
+ssadump c30ebd57c599d7eb ~mutants 6e86d71a0b1ace78
+ssadump c30ebd57c599d7eb ~verify 2689367b205c16ce
 ssadump c316a80cc085fd03 =@slot 4c4dd13db66b00ed
 ssadump c316a80cc085fd03 =none rejected
 ssadump c335a39b7221b1c4 "#build types" 3 ddf8d9b9f46cd0ac
@@ -160,6 +302,20 @@ ssadump c335a39b7221b1c4 =@slot 5976055692aa269a
 ssadump c335a39b7221b1c4 =stages unwind landings cleanup rc verify mutants
 ssadump c335a39b7221b1c4 ~mutants a2bbad8e4770502f
 ssadump c335a39b7221b1c4 ~verify 2689367b205c16ce
+ssadump c3487448304c72a2 "#build types" 53 ccc607f8373aea56
+ssadump c3487448304c72a2 "~cleanup types" a49a673f02dd1af2
+ssadump c3487448304c72a2 "~landings types" a49a673f02dd1af2
+ssadump c3487448304c72a2 "~rc types" a49a673f02dd1af2
+ssadump c3487448304c72a2 "~unwind types" a49a673f02dd1af2
+ssadump c3487448304c72a2 #build 464 483833c8b2a125e2
+ssadump c3487448304c72a2 #cleanup 465 2e1755bbac76a3af
+ssadump c3487448304c72a2 #landings 465 1b63be3753183771
+ssadump c3487448304c72a2 #rc 465 935c25f90ebdc529
+ssadump c3487448304c72a2 #unwind 464 3c4797f01dbea5af
+ssadump c3487448304c72a2 =@slot e80627fe723fac2f
+ssadump c3487448304c72a2 =stages unwind landings cleanup rc verify mutants
+ssadump c3487448304c72a2 ~mutants 469bcc65c41a13b5
+ssadump c3487448304c72a2 ~verify 2689367b205c16ce
 ssadump c38d09b20896c68c "#build types" 46 d99c6290ee74d537
 ssadump c38d09b20896c68c "~cleanup types" 6a926d6746466443
 ssadump c38d09b20896c68c "~landings types" 6a926d6746466443
@@ -176,6 +332,22 @@ ssadump c38d09b20896c68c ~mutants 9410d4ddca81acb1
 ssadump c38d09b20896c68c ~verify 2689367b205c16ce
 ssadump c3a560690e245ca3 =@slot 3bf68961bd7699b4
 ssadump c3a560690e245ca3 =none rejected
+ssadump c3b61126ab4c5590 =@slot 41b7ea0a744662e1
+ssadump c3b61126ab4c5590 =none unsupported: use go without a current binding of strings in internal/gen/testdata/golden/test_go_interop/.xo/gobind (a Go check or build, or `xo bind`, writes it) in internal/gen/testdata/golden/test_go_interop/main.xo
+ssadump c3b76c0bdd3575c1 "#build types" 6 4953a032cf365666
+ssadump c3b76c0bdd3575c1 "~cleanup types" e5c9efec206219a4
+ssadump c3b76c0bdd3575c1 "~landings types" e5c9efec206219a4
+ssadump c3b76c0bdd3575c1 "~rc types" e5c9efec206219a4
+ssadump c3b76c0bdd3575c1 "~unwind types" e5c9efec206219a4
+ssadump c3b76c0bdd3575c1 #build 148 ac7e5cda1c11a1bd
+ssadump c3b76c0bdd3575c1 #cleanup 148 db4e4299c089e6bd
+ssadump c3b76c0bdd3575c1 #landings 148 e823da0216c984c6
+ssadump c3b76c0bdd3575c1 #rc 148 e390e03149b3079c
+ssadump c3b76c0bdd3575c1 #unwind 148 61b1f2cd3ab1df73
+ssadump c3b76c0bdd3575c1 =@slot 973a701a24ffa869
+ssadump c3b76c0bdd3575c1 =stages unwind landings cleanup rc verify mutants
+ssadump c3b76c0bdd3575c1 ~mutants c876d5f283af3c9c
+ssadump c3b76c0bdd3575c1 ~verify 2689367b205c16ce
 ssadump c3b7e0a3c365383a "#build types" 5 b9be36139c6417d7
 ssadump c3b7e0a3c365383a "~cleanup types" cdeaa0b8bf01f7e7
 ssadump c3b7e0a3c365383a "~landings types" cdeaa0b8bf01f7e7
@@ -226,6 +398,34 @@ ssadump c46f725adef5af51 "#build types" 3 ddf8d9b9f46cd0ac
 ssadump c46f725adef5af51 #build 145 ed405b7819d081ff
 ssadump c46f725adef5af51 =@slot fff682fc4938afce
 ssadump c46f725adef5af51 =stages ""
+ssadump c48c0b6341bc3097 "#build types" 8 528225437395c923
+ssadump c48c0b6341bc3097 "~cleanup types" fe72c8542ce6326f
+ssadump c48c0b6341bc3097 "~landings types" fe72c8542ce6326f
+ssadump c48c0b6341bc3097 "~rc types" fe72c8542ce6326f
+ssadump c48c0b6341bc3097 "~unwind types" fe72c8542ce6326f
+ssadump c48c0b6341bc3097 #build 168 15b8ff2d482109e3
+ssadump c48c0b6341bc3097 #cleanup 168 9506528f6b50cd2e
+ssadump c48c0b6341bc3097 #landings 168 174b050945246b6d
+ssadump c48c0b6341bc3097 #rc 168 17e9d940c7f9a9f5
+ssadump c48c0b6341bc3097 #unwind 168 60103d7cf020ef51
+ssadump c48c0b6341bc3097 =@slot 797dde464b16950d
+ssadump c48c0b6341bc3097 =stages unwind landings cleanup rc verify mutants
+ssadump c48c0b6341bc3097 ~mutants 06c986423785295c
+ssadump c48c0b6341bc3097 ~verify 2689367b205c16ce
+ssadump c4924d6105faa164 "#build types" 11 0811ce98518255e6
+ssadump c4924d6105faa164 "~cleanup types" b616a53539cc2f37
+ssadump c4924d6105faa164 "~landings types" b616a53539cc2f37
+ssadump c4924d6105faa164 "~rc types" b616a53539cc2f37
+ssadump c4924d6105faa164 "~unwind types" b616a53539cc2f37
+ssadump c4924d6105faa164 #build 198 8daaf3c4cc394095
+ssadump c4924d6105faa164 #cleanup 198 575d69ce283e2850
+ssadump c4924d6105faa164 #landings 198 a7842f7935a6a604
+ssadump c4924d6105faa164 #rc 198 e3a6fd27e1af2f2d
+ssadump c4924d6105faa164 #unwind 198 cfed6e5b2d1dcb21
+ssadump c4924d6105faa164 =@slot 64244cefe633f4ec
+ssadump c4924d6105faa164 =stages unwind landings cleanup rc verify mutants
+ssadump c4924d6105faa164 ~mutants 1c3c51b86b828e49
+ssadump c4924d6105faa164 ~verify 2689367b205c16ce
 ssadump c49a34427bd34d5c "#build types" 22 149a1f2c01fe1266
 ssadump c49a34427bd34d5c "~cleanup types" cdab588d7c0971a0
 ssadump c49a34427bd34d5c "~landings types" cdab588d7c0971a0
@@ -272,8 +472,26 @@ ssadump c55679d6ca5edb3a =@slot 1dcf88536a363742
 ssadump c55679d6ca5edb3a =stages unwind landings cleanup rc verify mutants
 ssadump c55679d6ca5edb3a ~mutants 10116d5412452ef5
 ssadump c55679d6ca5edb3a ~verify 2689367b205c16ce
+ssadump c59f29ef2ebcbd34 =@slot d51a24117c70ad7b
+ssadump c59f29ef2ebcbd34 =none rejected
+ssadump c5a028e6ad50eed3 "#build types" 90 1670ead828417759
+ssadump c5a028e6ad50eed3 "~cleanup types" d7f37902147f3406
+ssadump c5a028e6ad50eed3 "~landings types" d7f37902147f3406
+ssadump c5a028e6ad50eed3 "~rc types" d7f37902147f3406
+ssadump c5a028e6ad50eed3 "~unwind types" d7f37902147f3406
+ssadump c5a028e6ad50eed3 #build 573 6b6ae182f16fd689
+ssadump c5a028e6ad50eed3 #cleanup 574 e3835700e6e7e1aa
+ssadump c5a028e6ad50eed3 #landings 574 b1296849133e2b24
+ssadump c5a028e6ad50eed3 #rc 574 2a15c2341e0989a4
+ssadump c5a028e6ad50eed3 #unwind 573 416bd9d277ded7a4
+ssadump c5a028e6ad50eed3 =@slot 68e97475138895d1
+ssadump c5a028e6ad50eed3 =stages unwind landings cleanup rc verify mutants
+ssadump c5a028e6ad50eed3 ~mutants 5c9388e54e76319b
+ssadump c5a028e6ad50eed3 ~verify 2689367b205c16ce
 ssadump c5c37c1abd0f5626 =@slot d692205023939ddd
 ssadump c5c37c1abd0f5626 =none rejected
+ssadump c5d30761f5aacdec =@slot 05859101b7017801
+ssadump c5d30761f5aacdec =none rejected
 ssadump c5eb6e5015352583 "#build types" 5 f9f5aa9e359c3b9c
 ssadump c5eb6e5015352583 "~cleanup types" a2d8578f352cde7e
 ssadump c5eb6e5015352583 "~landings types" a2d8578f352cde7e
@@ -288,6 +506,24 @@ ssadump c5eb6e5015352583 =@slot 4c1dff1dd146e6c0
 ssadump c5eb6e5015352583 =stages unwind landings cleanup rc verify mutants
 ssadump c5eb6e5015352583 ~mutants ab56671be2088e92
 ssadump c5eb6e5015352583 ~verify 2689367b205c16ce
+ssadump c6057faf21a3c8f7 =@slot bec088788ffbe43e
+ssadump c6057faf21a3c8f7 =none rejected
+ssadump c6083bdecdbdc1c3 =@slot 6a7a16a337be54ba
+ssadump c6083bdecdbdc1c3 =none rejected
+ssadump c61cd3550c0f6e1f "#build types" 3 ddf8d9b9f46cd0ac
+ssadump c61cd3550c0f6e1f "~cleanup types" 6b9195bf9a00bad3
+ssadump c61cd3550c0f6e1f "~landings types" 6b9195bf9a00bad3
+ssadump c61cd3550c0f6e1f "~rc types" 6b9195bf9a00bad3
+ssadump c61cd3550c0f6e1f "~unwind types" 6b9195bf9a00bad3
+ssadump c61cd3550c0f6e1f #build 159 86f082136162e4a0
+ssadump c61cd3550c0f6e1f #cleanup 159 10bd6f2e27f865f4
+ssadump c61cd3550c0f6e1f #landings 159 a9b22ad7e808f224
+ssadump c61cd3550c0f6e1f #rc 159 237f687df4257e5b
+ssadump c61cd3550c0f6e1f #unwind 159 283a722b8fb0012a
+ssadump c61cd3550c0f6e1f =@slot b8f3c0fa3f7e07d8
+ssadump c61cd3550c0f6e1f =stages unwind landings cleanup rc verify mutants
+ssadump c61cd3550c0f6e1f ~mutants d34e24e1d6a631cb
+ssadump c61cd3550c0f6e1f ~verify 2689367b205c16ce
 ssadump c633098eaadb4ba0 "#build types" 3 ddf8d9b9f46cd0ac
 ssadump c633098eaadb4ba0 "~cleanup types" 6b9195bf9a00bad3
 ssadump c633098eaadb4ba0 "~landings types" 6b9195bf9a00bad3
@@ -302,6 +538,22 @@ ssadump c633098eaadb4ba0 =@slot 0cd3882e72e0646e
 ssadump c633098eaadb4ba0 =stages unwind landings cleanup rc verify mutants
 ssadump c633098eaadb4ba0 ~mutants ac37a846aa6d285a
 ssadump c633098eaadb4ba0 ~verify 2689367b205c16ce
+ssadump c64356e30bdcb0c4 =@slot 07419c962086c2b0
+ssadump c64356e30bdcb0c4 =none unsupported: use go without a current binding of sync in internal/gen/testdata/golden/test_go_callback_deadlock/.xo/gobind (a Go check or build, or `xo bind`, writes it) in internal/gen/testdata/golden/test_go_callback_deadlock/main.xo
+ssadump c64dc548197bfb20 "#build types" 7 55850867d8e4555a
+ssadump c64dc548197bfb20 "~cleanup types" 33eabb1f72a27bce
+ssadump c64dc548197bfb20 "~landings types" 33eabb1f72a27bce
+ssadump c64dc548197bfb20 "~rc types" 33eabb1f72a27bce
+ssadump c64dc548197bfb20 "~unwind types" 33eabb1f72a27bce
+ssadump c64dc548197bfb20 #build 167 5175162d7c8bcf45
+ssadump c64dc548197bfb20 #cleanup 167 b4c0329f9f473f38
+ssadump c64dc548197bfb20 #landings 167 f355b27a125f1d90
+ssadump c64dc548197bfb20 #rc 167 d7bfe257c80f3923
+ssadump c64dc548197bfb20 #unwind 167 39aa3fefeb4dffc5
+ssadump c64dc548197bfb20 =@slot 27ca67dc763e506e
+ssadump c64dc548197bfb20 =stages unwind landings cleanup rc verify mutants
+ssadump c64dc548197bfb20 ~mutants 7ac9e26f8b408a14
+ssadump c64dc548197bfb20 ~verify 2689367b205c16ce
 ssadump c65145214bccaf32 "#build types" 43 f2f586dc6855c2c4
 ssadump c65145214bccaf32 "~cleanup types" f24664d1d9d616a3
 ssadump c65145214bccaf32 "~landings types" f24664d1d9d616a3
@@ -316,6 +568,20 @@ ssadump c65145214bccaf32 =@slot 9a7462e7d1fc9fdd
 ssadump c65145214bccaf32 =stages unwind landings cleanup rc verify mutants
 ssadump c65145214bccaf32 ~mutants d397cf2e6d452dc8
 ssadump c65145214bccaf32 ~verify 2689367b205c16ce
+ssadump c6633d3ab677f8e4 "#build types" 24 54d7ff9a1ad77cb6
+ssadump c6633d3ab677f8e4 "~cleanup types" 888ec82a34a6a1d0
+ssadump c6633d3ab677f8e4 "~landings types" 888ec82a34a6a1d0
+ssadump c6633d3ab677f8e4 "~rc types" 888ec82a34a6a1d0
+ssadump c6633d3ab677f8e4 "~unwind types" 888ec82a34a6a1d0
+ssadump c6633d3ab677f8e4 #build 254 e76fb6db1353ef5c
+ssadump c6633d3ab677f8e4 #cleanup 254 8d34a1d70a6c35a7
+ssadump c6633d3ab677f8e4 #landings 254 a65bfeb1d3c0a2eb
+ssadump c6633d3ab677f8e4 #rc 254 55fa679542a28333
+ssadump c6633d3ab677f8e4 #unwind 254 431fc15c441fee6f
+ssadump c6633d3ab677f8e4 =@slot b172ffe0e46ff49b
+ssadump c6633d3ab677f8e4 =stages unwind landings cleanup rc verify mutants
+ssadump c6633d3ab677f8e4 ~mutants b3c4e49b32156aa2
+ssadump c6633d3ab677f8e4 ~verify 2689367b205c16ce
 ssadump c66568856648a660 "#build types" 9 9a384729037a7cf6
 ssadump c66568856648a660 "~cleanup types" 2c03370c0615fa8a
 ssadump c66568856648a660 "~landings types" 2c03370c0615fa8a
@@ -330,6 +596,10 @@ ssadump c66568856648a660 =@slot a16ae0131e7480e7
 ssadump c66568856648a660 =stages unwind landings cleanup rc verify mutants
 ssadump c66568856648a660 ~mutants 798e689e116fb9b9
 ssadump c66568856648a660 ~verify 2689367b205c16ce
+ssadump c67d52d340b05dcf "#build types" 3 ddf8d9b9f46cd0ac
+ssadump c67d52d340b05dcf #build 145 96102e360bef9af2
+ssadump c67d52d340b05dcf =@slot 646e16dcbf99d7a5
+ssadump c67d52d340b05dcf =stages ""
 ssadump c6814e7d0a724d96 "#build types" 32 ee7d0cc59f7cf81e
 ssadump c6814e7d0a724d96 "~cleanup types" 05660974844677ba
 ssadump c6814e7d0a724d96 "~landings types" 05660974844677ba
@@ -374,6 +644,36 @@ ssadump c7128be62f81d552 ~mutants bf78d3a49ca84821
 ssadump c7128be62f81d552 ~verify 2689367b205c16ce
 ssadump c717a262df77c228 =@slot 6d20cdfb3026409d
 ssadump c717a262df77c228 =none rejected
+ssadump c7202960dc32c2a1 "#build types" 6 4953a032cf365666
+ssadump c7202960dc32c2a1 "~cleanup types" e5c9efec206219a4
+ssadump c7202960dc32c2a1 "~landings types" e5c9efec206219a4
+ssadump c7202960dc32c2a1 "~rc types" e5c9efec206219a4
+ssadump c7202960dc32c2a1 "~unwind types" e5c9efec206219a4
+ssadump c7202960dc32c2a1 #build 180 873cd3efd31e465e
+ssadump c7202960dc32c2a1 #cleanup 180 2d61e9177e376643
+ssadump c7202960dc32c2a1 #landings 180 bf609e4e19dc202b
+ssadump c7202960dc32c2a1 #rc 180 14671c0449af89cb
+ssadump c7202960dc32c2a1 #unwind 180 99f47efcf303d9dd
+ssadump c7202960dc32c2a1 =@slot 791e1be03da369ee
+ssadump c7202960dc32c2a1 =stages unwind landings cleanup rc verify mutants
+ssadump c7202960dc32c2a1 ~mutants 1e9111ca4def7cd4
+ssadump c7202960dc32c2a1 ~verify 2689367b205c16ce
+ssadump c726f6ae408bc207 =@slot 491ed8d62ce0769f
+ssadump c726f6ae408bc207 =none rejected
+ssadump c744e19c562ba31c "#build types" 8 0245b07e318c6fb9
+ssadump c744e19c562ba31c "~cleanup types" c6f72816b38ecfd3
+ssadump c744e19c562ba31c "~landings types" c6f72816b38ecfd3
+ssadump c744e19c562ba31c "~rc types" c6f72816b38ecfd3
+ssadump c744e19c562ba31c "~unwind types" c6f72816b38ecfd3
+ssadump c744e19c562ba31c #build 182 970ea4fcfd4dc13c
+ssadump c744e19c562ba31c #cleanup 182 083b397bca22f043
+ssadump c744e19c562ba31c #landings 182 5aaf82224efa53e8
+ssadump c744e19c562ba31c #rc 182 a9098941481a4824
+ssadump c744e19c562ba31c #unwind 182 40d4088de8fb10be
+ssadump c744e19c562ba31c =@slot 085d0487132bc727
+ssadump c744e19c562ba31c =stages unwind landings cleanup rc verify mutants
+ssadump c744e19c562ba31c ~mutants 51e8bd489cd6d3a6
+ssadump c744e19c562ba31c ~verify 2689367b205c16ce
 ssadump c77252270b91c1b5 "#build types" 8 68cf7b5f2a17e5b2
 ssadump c77252270b91c1b5 "~cleanup types" d5dc904adcc333be
 ssadump c77252270b91c1b5 "~landings types" d5dc904adcc333be
@@ -402,8 +702,56 @@ ssadump c77d89f1c8464605 =@slot fbe9e15a2023d787
 ssadump c77d89f1c8464605 =stages unwind landings cleanup rc verify mutants
 ssadump c77d89f1c8464605 ~mutants d2f4de24cab225c0
 ssadump c77d89f1c8464605 ~verify 2689367b205c16ce
+ssadump c78960b780f3754f =@slot 77f870ab8082967b
+ssadump c78960b780f3754f =none rejected
+ssadump c795f28cabcc38b0 "#build types" 4 1fc373958898bf75
+ssadump c795f28cabcc38b0 "~cleanup types" b4e12172d55787b6
+ssadump c795f28cabcc38b0 "~landings types" b4e12172d55787b6
+ssadump c795f28cabcc38b0 "~rc types" b4e12172d55787b6
+ssadump c795f28cabcc38b0 "~unwind types" b4e12172d55787b6
+ssadump c795f28cabcc38b0 #build 150 85940b8c39566291
+ssadump c795f28cabcc38b0 #cleanup 150 2ef4488ca0707774
+ssadump c795f28cabcc38b0 #landings 150 3157529dbdcac7aa
+ssadump c795f28cabcc38b0 #rc 150 86c16b6d853e5d46
+ssadump c795f28cabcc38b0 #unwind 150 e9803270388235bc
+ssadump c795f28cabcc38b0 =@slot e9717c68197f6540
+ssadump c795f28cabcc38b0 =stages unwind landings cleanup rc verify mutants
+ssadump c795f28cabcc38b0 ~mutants 011de62cfa268ae3
+ssadump c795f28cabcc38b0 ~verify 2689367b205c16ce
+ssadump c79d1dcc05660174 "#build types" 10 42ff666fbe84cc82
+ssadump c79d1dcc05660174 "~cleanup types" 69f263b201ed2418
+ssadump c79d1dcc05660174 "~landings types" 69f263b201ed2418
+ssadump c79d1dcc05660174 "~rc types" 69f263b201ed2418
+ssadump c79d1dcc05660174 "~unwind types" 69f263b201ed2418
+ssadump c79d1dcc05660174 #build 156 70ec2c46677b345e
+ssadump c79d1dcc05660174 #cleanup 156 0af9edbf7e14db33
+ssadump c79d1dcc05660174 #landings 156 c587e9ea54282a18
+ssadump c79d1dcc05660174 #rc 156 f26533c67e5bdcf6
+ssadump c79d1dcc05660174 #unwind 156 a3a107991a47dc4c
+ssadump c79d1dcc05660174 =@slot 80257e013e288455
+ssadump c79d1dcc05660174 =stages unwind landings cleanup rc verify mutants
+ssadump c79d1dcc05660174 ~mutants 059838250378b60d
+ssadump c79d1dcc05660174 ~verify 2689367b205c16ce
+ssadump c7b1bb51a2d17a0b "#build types" 3 ddf8d9b9f46cd0ac
+ssadump c7b1bb51a2d17a0b "~cleanup types" 6b9195bf9a00bad3
+ssadump c7b1bb51a2d17a0b "~landings types" 6b9195bf9a00bad3
+ssadump c7b1bb51a2d17a0b "~rc types" 6b9195bf9a00bad3
+ssadump c7b1bb51a2d17a0b "~unwind types" 6b9195bf9a00bad3
+ssadump c7b1bb51a2d17a0b #build 150 463e1cfa7b9823bf
+ssadump c7b1bb51a2d17a0b #cleanup 150 bd2d14eeb9c19b91
+ssadump c7b1bb51a2d17a0b #landings 150 81cadafef67c5f16
+ssadump c7b1bb51a2d17a0b #rc 150 6f42ffa83d571258
+ssadump c7b1bb51a2d17a0b #unwind 150 ddb95c377bf0e61d
+ssadump c7b1bb51a2d17a0b =@slot 4057d95bddcdddb5
+ssadump c7b1bb51a2d17a0b =stages unwind landings cleanup rc verify mutants
+ssadump c7b1bb51a2d17a0b ~mutants 3bc4c76ac8a95233
+ssadump c7b1bb51a2d17a0b ~verify 2689367b205c16ce
 ssadump c7b4dd71dd81884c =@slot b338a2c6536a5328
 ssadump c7b4dd71dd81884c =none no main
+ssadump c7c9c66dcdce5a55 =@slot f7d29aac45285fba
+ssadump c7c9c66dcdce5a55 =none rejected
+ssadump c7d565577d9481c2 =@slot edee559aabb8400c
+ssadump c7d565577d9481c2 =none rejected
 ssadump c812938c142686a1 "#build types" 69 9a8c171086ebdf01
 ssadump c812938c142686a1 "~cleanup types" 0857269e5394354f
 ssadump c812938c142686a1 "~landings types" 0857269e5394354f
@@ -432,6 +780,20 @@ ssadump c82546ed3153a928 =@slot b61bd8544fb9b76b
 ssadump c82546ed3153a928 =stages unwind landings cleanup rc verify mutants
 ssadump c82546ed3153a928 ~mutants fa236b272cc1ba9e
 ssadump c82546ed3153a928 ~verify 2689367b205c16ce
+ssadump c84e2ee79d18d49c "#build types" 19 77684f584f90edbd
+ssadump c84e2ee79d18d49c "~cleanup types" d7b62eefc396ecf4
+ssadump c84e2ee79d18d49c "~landings types" d7b62eefc396ecf4
+ssadump c84e2ee79d18d49c "~rc types" d7b62eefc396ecf4
+ssadump c84e2ee79d18d49c "~unwind types" d7b62eefc396ecf4
+ssadump c84e2ee79d18d49c #build 229 6443add613594e24
+ssadump c84e2ee79d18d49c #cleanup 229 e85b82466952ff91
+ssadump c84e2ee79d18d49c #landings 229 81480f7edfd394ea
+ssadump c84e2ee79d18d49c #rc 229 2feb96918cbe644c
+ssadump c84e2ee79d18d49c #unwind 229 99c8b92dbc9b92b2
+ssadump c84e2ee79d18d49c =@slot bc5a825d22756c63
+ssadump c84e2ee79d18d49c =stages unwind landings cleanup rc verify mutants
+ssadump c84e2ee79d18d49c ~mutants ea2143929215776f
+ssadump c84e2ee79d18d49c ~verify 2689367b205c16ce
 ssadump c8684ac586941f8c "#build types" 32 ee7d0cc59f7cf81e
 ssadump c8684ac586941f8c "~cleanup types" 05660974844677ba
 ssadump c8684ac586941f8c "~landings types" 05660974844677ba
@@ -446,8 +808,66 @@ ssadump c8684ac586941f8c =@slot dd0f4c1d2ba02cd4
 ssadump c8684ac586941f8c =stages unwind landings cleanup rc verify mutants
 ssadump c8684ac586941f8c ~mutants 54a7e17ba72bb1da
 ssadump c8684ac586941f8c ~verify 2689367b205c16ce
+ssadump c887e28af4843acb "#build types" 7 3a19f951e9b1cef7
+ssadump c887e28af4843acb "~cleanup types" d0088d94e0413625
+ssadump c887e28af4843acb "~landings types" d0088d94e0413625
+ssadump c887e28af4843acb "~rc types" d0088d94e0413625
+ssadump c887e28af4843acb "~unwind types" d0088d94e0413625
+ssadump c887e28af4843acb #build 199 d3ab4f885df8d65a
+ssadump c887e28af4843acb #cleanup 199 ea4ae39b4481970a
+ssadump c887e28af4843acb #landings 199 cabb718b13a7db2c
+ssadump c887e28af4843acb #rc 199 552d6eefbab56fa2
+ssadump c887e28af4843acb #unwind 199 2be8a4e197ccad69
+ssadump c887e28af4843acb =@slot 827b5a7f05b5f1cf
+ssadump c887e28af4843acb =stages unwind landings cleanup rc verify mutants
+ssadump c887e28af4843acb ~mutants f75789be903c3678
+ssadump c887e28af4843acb ~verify 2689367b205c16ce
+ssadump c89fe410e4705df9 "#build types" 5 12248886e177daf9
+ssadump c89fe410e4705df9 "~cleanup types" a477219fa0572a6e
+ssadump c89fe410e4705df9 "~landings types" a477219fa0572a6e
+ssadump c89fe410e4705df9 "~rc types" a477219fa0572a6e
+ssadump c89fe410e4705df9 "~unwind types" a477219fa0572a6e
+ssadump c89fe410e4705df9 #build 157 6cc3dd0d449bc0a8
+ssadump c89fe410e4705df9 #cleanup 158 647ac259d78295eb
+ssadump c89fe410e4705df9 #landings 158 b2a31779ec2d7586
+ssadump c89fe410e4705df9 #rc 158 a37b2b5c78e9a13b
+ssadump c89fe410e4705df9 #unwind 157 ea2563888ed6c021
+ssadump c89fe410e4705df9 =@slot 5ea531f9ea076c63
+ssadump c89fe410e4705df9 =stages unwind landings cleanup rc verify mutants
+ssadump c89fe410e4705df9 ~mutants 5d58e018fae8e453
+ssadump c89fe410e4705df9 ~verify 2689367b205c16ce
+ssadump c8c4b99cac4bea0d =@slot f9b90f6c086b77be
+ssadump c8c4b99cac4bea0d =none rejected
+ssadump c8dad9855a822b25 "#build types" 5 f449e960e8757ec6
+ssadump c8dad9855a822b25 "~cleanup types" 8abf3082336a15c6
+ssadump c8dad9855a822b25 "~landings types" 8abf3082336a15c6
+ssadump c8dad9855a822b25 "~rc types" 8abf3082336a15c6
+ssadump c8dad9855a822b25 "~unwind types" 8abf3082336a15c6
+ssadump c8dad9855a822b25 #build 148 68628344bc8c497e
+ssadump c8dad9855a822b25 #cleanup 148 55f6cf99b8ecc496
+ssadump c8dad9855a822b25 #landings 148 65db99daa60bd68d
+ssadump c8dad9855a822b25 #rc 148 26f67422ac9f88fe
+ssadump c8dad9855a822b25 #unwind 148 412508a388df7835
+ssadump c8dad9855a822b25 =@slot 46f124cb94b37c08
+ssadump c8dad9855a822b25 =stages unwind landings cleanup rc verify mutants
+ssadump c8dad9855a822b25 ~mutants 6e104da12d9b63a1
+ssadump c8dad9855a822b25 ~verify 2689367b205c16ce
 ssadump c8dcc049214ef4b8 =@slot 61323e7a97cdc5e4
 ssadump c8dcc049214ef4b8 =none rejected
+ssadump c9060a0e5cc94c5f "#build types" 7 8e3230c8adee9d87
+ssadump c9060a0e5cc94c5f "~cleanup types" 7897fd970b59fa51
+ssadump c9060a0e5cc94c5f "~landings types" 7897fd970b59fa51
+ssadump c9060a0e5cc94c5f "~rc types" 7897fd970b59fa51
+ssadump c9060a0e5cc94c5f "~unwind types" 7897fd970b59fa51
+ssadump c9060a0e5cc94c5f #build 168 afc880a16ab12df6
+ssadump c9060a0e5cc94c5f #cleanup 168 4d354b55a4233ce7
+ssadump c9060a0e5cc94c5f #landings 168 ed58eb2533fb16e2
+ssadump c9060a0e5cc94c5f #rc 168 d8836b0824b1f5e6
+ssadump c9060a0e5cc94c5f #unwind 168 8c68f35bc7d0073f
+ssadump c9060a0e5cc94c5f =@slot 011f723162ae92aa
+ssadump c9060a0e5cc94c5f =stages unwind landings cleanup rc verify mutants
+ssadump c9060a0e5cc94c5f ~mutants 8baf24ceff2d7375
+ssadump c9060a0e5cc94c5f ~verify 2689367b205c16ce
 ssadump c99d1e1b80f806be "#build types" 4 e354b965686be00d
 ssadump c99d1e1b80f806be "~cleanup types" 1f631d8db7659b93
 ssadump c99d1e1b80f806be "~landings types" 1f631d8db7659b93
@@ -462,6 +882,20 @@ ssadump c99d1e1b80f806be =@slot 3affd1bb4810e4a5
 ssadump c99d1e1b80f806be =stages unwind landings cleanup rc verify mutants
 ssadump c99d1e1b80f806be ~mutants 2cf7b2c0418990a9
 ssadump c99d1e1b80f806be ~verify 2689367b205c16ce
+ssadump c99d8065cd648161 "#build types" 21 e1bb974b3dcefb48
+ssadump c99d8065cd648161 "~cleanup types" 997cb469109e1ef1
+ssadump c99d8065cd648161 "~landings types" 997cb469109e1ef1
+ssadump c99d8065cd648161 "~rc types" 997cb469109e1ef1
+ssadump c99d8065cd648161 "~unwind types" 997cb469109e1ef1
+ssadump c99d8065cd648161 #build 243 00fc8d7214c3c482
+ssadump c99d8065cd648161 #cleanup 243 c5e86b7b28fcd352
+ssadump c99d8065cd648161 #landings 243 e3fd073f7ed95751
+ssadump c99d8065cd648161 #rc 243 b2925e765888861a
+ssadump c99d8065cd648161 #unwind 243 4c0bec4dc4846b0e
+ssadump c99d8065cd648161 =@slot 65eeae106a4f9bbf
+ssadump c99d8065cd648161 =stages unwind landings cleanup rc verify mutants
+ssadump c99d8065cd648161 ~mutants 3a7acfad57565664
+ssadump c99d8065cd648161 ~verify 2689367b205c16ce
 ssadump c9a4931ca5ca2e2d "#build types" 31 f96d9b5f061bf3aa
 ssadump c9a4931ca5ca2e2d "~cleanup types" f8ececfa2e821251
 ssadump c9a4931ca5ca2e2d "~landings types" f8ececfa2e821251
@@ -480,6 +914,36 @@ ssadump c9c7a53980c87d1c =@slot 479ba48142777cdb
 ssadump c9c7a53980c87d1c =none rejected
 ssadump c9de3f89455b6490 =@slot f0dbbae22983679b
 ssadump c9de3f89455b6490 =none rejected
+ssadump c9f67b7ba76a6b37 =@slot 748e41d9176dad9d
+ssadump c9f67b7ba76a6b37 =none rejected
+ssadump ca0ccdc5262af53a "#build types" 4 a709920ed8bbdb48
+ssadump ca0ccdc5262af53a "~cleanup types" f3337042453107cf
+ssadump ca0ccdc5262af53a "~landings types" f3337042453107cf
+ssadump ca0ccdc5262af53a "~rc types" f3337042453107cf
+ssadump ca0ccdc5262af53a "~unwind types" f3337042453107cf
+ssadump ca0ccdc5262af53a #build 149 6ec48ee5765eb052
+ssadump ca0ccdc5262af53a #cleanup 149 9354c475b92e60b1
+ssadump ca0ccdc5262af53a #landings 149 47e699f50eaf85a2
+ssadump ca0ccdc5262af53a #rc 149 184df4ccf28804cf
+ssadump ca0ccdc5262af53a #unwind 149 3351999ef55ae671
+ssadump ca0ccdc5262af53a =@slot 96e67c8c597e7b06
+ssadump ca0ccdc5262af53a =stages unwind landings cleanup rc verify mutants
+ssadump ca0ccdc5262af53a ~mutants 0e8c3d580ebd78ca
+ssadump ca0ccdc5262af53a ~verify 2689367b205c16ce
+ssadump ca1107e898b7649c "#build types" 3 ddf8d9b9f46cd0ac
+ssadump ca1107e898b7649c "~cleanup types" 6b9195bf9a00bad3
+ssadump ca1107e898b7649c "~landings types" 6b9195bf9a00bad3
+ssadump ca1107e898b7649c "~rc types" 6b9195bf9a00bad3
+ssadump ca1107e898b7649c "~unwind types" 6b9195bf9a00bad3
+ssadump ca1107e898b7649c #build 146 36b2e94c5dfc7a94
+ssadump ca1107e898b7649c #cleanup 146 95f0bc1ec6799bde
+ssadump ca1107e898b7649c #landings 146 104704e4a07ca7e8
+ssadump ca1107e898b7649c #rc 146 41e663d1b5d4fe49
+ssadump ca1107e898b7649c #unwind 146 cef78be17d2ad4d1
+ssadump ca1107e898b7649c =@slot 711a7c1858fd6eb7
+ssadump ca1107e898b7649c =stages unwind landings cleanup rc verify mutants
+ssadump ca1107e898b7649c ~mutants 6a8150f8f2cb1a16
+ssadump ca1107e898b7649c ~verify 2689367b205c16ce
 ssadump ca245feb459770e2 "#build types" 4 0820ae44669697c1
 ssadump ca245feb459770e2 "~cleanup types" 21fd6cbedd942224
 ssadump ca245feb459770e2 "~landings types" 21fd6cbedd942224
@@ -494,6 +958,8 @@ ssadump ca245feb459770e2 =@slot 604b515359c4355c
 ssadump ca245feb459770e2 =stages unwind landings cleanup rc verify mutants
 ssadump ca245feb459770e2 ~mutants f2ee9997fbe9f344
 ssadump ca245feb459770e2 ~verify 2689367b205c16ce
+ssadump ca4db361355c8e9f =@slot 337ce7bd6caa7520
+ssadump ca4db361355c8e9f =none rejected
 ssadump ca510d70c3523ceb =@slot 5262b2a49448bc72
 ssadump ca510d70c3523ceb =none rejected
 ssadump cac45f1fda2f12c4 "#build types" 24 54d7ff9a1ad77cb6
@@ -510,6 +976,8 @@ ssadump cac45f1fda2f12c4 =@slot bcad4e049cdf3fed
 ssadump cac45f1fda2f12c4 =stages unwind landings cleanup rc verify mutants
 ssadump cac45f1fda2f12c4 ~mutants b3c4e49b32156aa2
 ssadump cac45f1fda2f12c4 ~verify 2689367b205c16ce
+ssadump cac75c5b6e250f45 =@slot a5bad86201e595af
+ssadump cac75c5b6e250f45 =none rejected
 ssadump cad8fe7041e37c5c "#build types" 25 6d9f372866799447
 ssadump cad8fe7041e37c5c "~cleanup types" 67e75dfc0ae8e6dd
 ssadump cad8fe7041e37c5c "~landings types" 67e75dfc0ae8e6dd
@@ -524,10 +992,98 @@ ssadump cad8fe7041e37c5c =@slot 0637a9e75d80fb5e
 ssadump cad8fe7041e37c5c =stages unwind landings cleanup rc verify mutants
 ssadump cad8fe7041e37c5c ~mutants f1bbe1a7d6963577
 ssadump cad8fe7041e37c5c ~verify 2689367b205c16ce
+ssadump cae7f07e65e63ede "#build types" 3 ddf8d9b9f46cd0ac
+ssadump cae7f07e65e63ede "~cleanup types" 6b9195bf9a00bad3
+ssadump cae7f07e65e63ede "~landings types" 6b9195bf9a00bad3
+ssadump cae7f07e65e63ede "~rc types" 6b9195bf9a00bad3
+ssadump cae7f07e65e63ede "~unwind types" 6b9195bf9a00bad3
+ssadump cae7f07e65e63ede #build 146 418d52f360e65418
+ssadump cae7f07e65e63ede #cleanup 146 91a1d175355e38de
+ssadump cae7f07e65e63ede #landings 146 e0215cae505dbd29
+ssadump cae7f07e65e63ede #rc 146 1cd044a555240c37
+ssadump cae7f07e65e63ede #unwind 146 d11cd800d8a876a3
+ssadump cae7f07e65e63ede =@slot 1b10b487679fbbcc
+ssadump cae7f07e65e63ede =stages unwind landings cleanup rc verify mutants
+ssadump cae7f07e65e63ede ~mutants 2c0da1ae74dd3a5b
+ssadump cae7f07e65e63ede ~verify 2689367b205c16ce
+ssadump cae85f7189f40989 "#build types" 8 58dfa54dde892a1e
+ssadump cae85f7189f40989 "~cleanup types" bc05208b35c7ffa9
+ssadump cae85f7189f40989 "~landings types" bc05208b35c7ffa9
+ssadump cae85f7189f40989 "~rc types" bc05208b35c7ffa9
+ssadump cae85f7189f40989 "~unwind types" bc05208b35c7ffa9
+ssadump cae85f7189f40989 #build 183 ce3d53c6892dfaf7
+ssadump cae85f7189f40989 #cleanup 183 d568327799181f22
+ssadump cae85f7189f40989 #landings 183 54a29710db3d9d1b
+ssadump cae85f7189f40989 #rc 183 f132c2fe2d53e43c
+ssadump cae85f7189f40989 #unwind 183 55727ca27dc30387
+ssadump cae85f7189f40989 =@slot d89feb92e8826fed
+ssadump cae85f7189f40989 =stages unwind landings cleanup rc verify mutants
+ssadump cae85f7189f40989 ~mutants e19cc7a6e90f3e4d
+ssadump cae85f7189f40989 ~verify 2689367b205c16ce
+ssadump caecc6c4fb7d9450 "#build types" 10 7d8f3024f2da6c57
+ssadump caecc6c4fb7d9450 "~cleanup types" d75a90f1f21b8244
+ssadump caecc6c4fb7d9450 "~landings types" d75a90f1f21b8244
+ssadump caecc6c4fb7d9450 "~rc types" d75a90f1f21b8244
+ssadump caecc6c4fb7d9450 "~unwind types" d75a90f1f21b8244
+ssadump caecc6c4fb7d9450 #build 161 5437a8d8ceafb723
+ssadump caecc6c4fb7d9450 #cleanup 161 6dd6fb9a47a07875
+ssadump caecc6c4fb7d9450 #landings 161 b3cd1a4ab54f8f3b
+ssadump caecc6c4fb7d9450 #rc 161 17f3bf36cae47b9d
+ssadump caecc6c4fb7d9450 #unwind 161 d0440f7ed0f859e7
+ssadump caecc6c4fb7d9450 =@slot bb234a5ff252adfd
+ssadump caecc6c4fb7d9450 =stages unwind landings cleanup rc verify mutants
+ssadump caecc6c4fb7d9450 ~mutants 356d06439346f259
+ssadump caecc6c4fb7d9450 ~verify 2689367b205c16ce
+ssadump caf9bd17348b6b9e "#build types" 7 72aeace5eca9cd63
+ssadump caf9bd17348b6b9e "~cleanup types" beb9efba8eb9c690
+ssadump caf9bd17348b6b9e "~landings types" beb9efba8eb9c690
+ssadump caf9bd17348b6b9e "~rc types" beb9efba8eb9c690
+ssadump caf9bd17348b6b9e "~unwind types" beb9efba8eb9c690
+ssadump caf9bd17348b6b9e #build 169 c51bc74a7dfdc9ee
+ssadump caf9bd17348b6b9e #cleanup 169 4bda71db4e258572
+ssadump caf9bd17348b6b9e #landings 169 2925f68bbbb01723
+ssadump caf9bd17348b6b9e #rc 169 0386fc35403b66bb
+ssadump caf9bd17348b6b9e #unwind 169 bae718ace42272c6
+ssadump caf9bd17348b6b9e =@slot 52344e0d35732a51
+ssadump caf9bd17348b6b9e =stages unwind landings cleanup rc verify mutants
+ssadump caf9bd17348b6b9e ~mutants 7f6d1da051aa72e2
+ssadump caf9bd17348b6b9e ~verify 2689367b205c16ce
+ssadump cb1a2ef3ac9092da "#build types" 19 e184424c69030e1c
+ssadump cb1a2ef3ac9092da "~cleanup types" ee06eab9dd3e2714
+ssadump cb1a2ef3ac9092da "~landings types" ee06eab9dd3e2714
+ssadump cb1a2ef3ac9092da "~rc types" ee06eab9dd3e2714
+ssadump cb1a2ef3ac9092da "~unwind types" ee06eab9dd3e2714
+ssadump cb1a2ef3ac9092da #build 208 a0833c5442280cbe
+ssadump cb1a2ef3ac9092da #cleanup 208 aa25e51a598cabce
+ssadump cb1a2ef3ac9092da #landings 208 34d1486a0a6c772a
+ssadump cb1a2ef3ac9092da #rc 208 7fcab33ed86bcf01
+ssadump cb1a2ef3ac9092da #unwind 208 07539896955b01d0
+ssadump cb1a2ef3ac9092da =@slot bbd9ddb64f4b7964
+ssadump cb1a2ef3ac9092da =stages unwind landings cleanup rc verify mutants
+ssadump cb1a2ef3ac9092da ~mutants 2f8b122d6a070e45
+ssadump cb1a2ef3ac9092da ~verify 2689367b205c16ce
 ssadump cb2aa40b57b672a4 =@slot 3a5b0737a3f761e9
 ssadump cb2aa40b57b672a4 =none rejected
+ssadump cb2f013b614d6b89 =@slot 5f6de18766a95fba
+ssadump cb2f013b614d6b89 =none rejected
+ssadump cb3b9099bd6c7e1b "#build types" 5 3e3456b2658586a0
+ssadump cb3b9099bd6c7e1b "~cleanup types" 10cd92332361d02c
+ssadump cb3b9099bd6c7e1b "~landings types" 10cd92332361d02c
+ssadump cb3b9099bd6c7e1b "~rc types" 10cd92332361d02c
+ssadump cb3b9099bd6c7e1b "~unwind types" 10cd92332361d02c
+ssadump cb3b9099bd6c7e1b #build 160 f0cf08c4f8c9eb58
+ssadump cb3b9099bd6c7e1b #cleanup 160 1d27154f16f0a1d0
+ssadump cb3b9099bd6c7e1b #landings 160 009c683956965e0e
+ssadump cb3b9099bd6c7e1b #rc 160 67780978f54c81ae
+ssadump cb3b9099bd6c7e1b #unwind 160 c47aa3b29caa6e24
+ssadump cb3b9099bd6c7e1b =@slot a650b90d6c125f53
+ssadump cb3b9099bd6c7e1b =stages unwind landings cleanup rc verify mutants
+ssadump cb3b9099bd6c7e1b ~mutants af9c07cb4d3736ce
+ssadump cb3b9099bd6c7e1b ~verify 2689367b205c16ce
 ssadump cb529d2ed2b86d97 =@slot 7ae8282fe62b6a87
 ssadump cb529d2ed2b86d97 =none rejected
+ssadump cb6848e76a258828 =@slot c3e3e31c0efbf37b
+ssadump cb6848e76a258828 =none rejected
 ssadump cb6f3816e1c9fd4b "#build types" 7 8e3230c8adee9d87
 ssadump cb6f3816e1c9fd4b "~cleanup types" 7897fd970b59fa51
 ssadump cb6f3816e1c9fd4b "~landings types" 7897fd970b59fa51
@@ -556,8 +1112,54 @@ ssadump cbb63d9fb9971722 =@slot c5ef65f7b5f06923
 ssadump cbb63d9fb9971722 =stages unwind landings cleanup rc verify mutants
 ssadump cbb63d9fb9971722 ~mutants a10803a0e5710bfa
 ssadump cbb63d9fb9971722 ~verify 2689367b205c16ce
+ssadump cbb6f5f1630ad3f5 "#build types" 30 a7c49b9c0f9456ca
+ssadump cbb6f5f1630ad3f5 "~cleanup types" f77caaad90127289
+ssadump cbb6f5f1630ad3f5 "~landings types" f77caaad90127289
+ssadump cbb6f5f1630ad3f5 "~rc types" f77caaad90127289
+ssadump cbb6f5f1630ad3f5 "~unwind types" f77caaad90127289
+ssadump cbb6f5f1630ad3f5 #build 309 123ad3dc60bb0ff1
+ssadump cbb6f5f1630ad3f5 #cleanup 309 91933df0e8988c69
+ssadump cbb6f5f1630ad3f5 #landings 309 c82396125b7efbd4
+ssadump cbb6f5f1630ad3f5 #rc 309 3c07ad504f535a30
+ssadump cbb6f5f1630ad3f5 #unwind 309 5508bcbf5575ebfb
+ssadump cbb6f5f1630ad3f5 =@slot a9480fad40fd66d6
+ssadump cbb6f5f1630ad3f5 =stages unwind landings cleanup rc verify mutants
+ssadump cbb6f5f1630ad3f5 ~mutants 9718de81dac2210e
+ssadump cbb6f5f1630ad3f5 ~verify 2689367b205c16ce
+ssadump cbf46a383e2e99be =@slot 03541bec49af03cc
+ssadump cbf46a383e2e99be =none rejected
+ssadump cbf5314ebe3bc197 "#build types" 6 4953a032cf365666
+ssadump cbf5314ebe3bc197 "~cleanup types" e5c9efec206219a4
+ssadump cbf5314ebe3bc197 "~landings types" e5c9efec206219a4
+ssadump cbf5314ebe3bc197 "~rc types" e5c9efec206219a4
+ssadump cbf5314ebe3bc197 "~unwind types" e5c9efec206219a4
+ssadump cbf5314ebe3bc197 #build 159 e98310a46fadb798
+ssadump cbf5314ebe3bc197 #cleanup 159 d72d17ee9891614b
+ssadump cbf5314ebe3bc197 #landings 159 92c1df230d13d54a
+ssadump cbf5314ebe3bc197 #rc 159 2d2e8d081017ce3a
+ssadump cbf5314ebe3bc197 #unwind 159 9f3e9fdacc308f9b
+ssadump cbf5314ebe3bc197 =@slot 604f3dcc6e63f85b
+ssadump cbf5314ebe3bc197 =stages unwind landings cleanup rc verify mutants
+ssadump cbf5314ebe3bc197 ~mutants 1b755d7cd9b288f4
+ssadump cbf5314ebe3bc197 ~verify 2689367b205c16ce
+ssadump cbfea1fdd0e3f2e8 "#build types" 3 ddf8d9b9f46cd0ac
+ssadump cbfea1fdd0e3f2e8 "~cleanup types" 6b9195bf9a00bad3
+ssadump cbfea1fdd0e3f2e8 "~landings types" 6b9195bf9a00bad3
+ssadump cbfea1fdd0e3f2e8 "~rc types" 6b9195bf9a00bad3
+ssadump cbfea1fdd0e3f2e8 "~unwind types" 6b9195bf9a00bad3
+ssadump cbfea1fdd0e3f2e8 #build 172 598f32a6a2e772b3
+ssadump cbfea1fdd0e3f2e8 #cleanup 172 2e79500a3a4d8a73
+ssadump cbfea1fdd0e3f2e8 #landings 172 207daa12b7f5def1
+ssadump cbfea1fdd0e3f2e8 #rc 172 32d64dc627a77f56
+ssadump cbfea1fdd0e3f2e8 #unwind 172 7ddbd8438d7b0941
+ssadump cbfea1fdd0e3f2e8 =@slot dd2abd7922a63418
+ssadump cbfea1fdd0e3f2e8 =stages unwind landings cleanup rc verify mutants
+ssadump cbfea1fdd0e3f2e8 ~mutants 4905923bc1b0aaaa
+ssadump cbfea1fdd0e3f2e8 ~verify 2689367b205c16ce
 ssadump cc0d9bbdb9d2c1e7 =@slot 1b5e778014c44033
 ssadump cc0d9bbdb9d2c1e7 =none rejected
+ssadump cc46e1eb22a33114 =@slot 31e12a0d633239f0
+ssadump cc46e1eb22a33114 =none rejected
 ssadump cc5843ab206cd467 =@slot 2304b90631e98659
 ssadump cc5843ab206cd467 =none rejected
 ssadump cc5bb52152d95740 =@slot 572ff8c62f5a081c
@@ -576,6 +1178,22 @@ ssadump ccaa8da9ef4997a6 =@slot fe68b7b4fbd8e48f
 ssadump ccaa8da9ef4997a6 =stages unwind landings cleanup rc verify mutants
 ssadump ccaa8da9ef4997a6 ~mutants ae0b8fc6ba615414
 ssadump ccaa8da9ef4997a6 ~verify 2689367b205c16ce
+ssadump ccf21d43124fdb6f =@slot 68bd02a6931a3846
+ssadump ccf21d43124fdb6f =none unsupported: use go without a current binding of encoding/hex in internal/gen/testdata/golden/go_hex/.xo/gobind (a Go check or build, or `xo bind`, writes it) in internal/gen/testdata/golden/go_hex/main.xo
+ssadump cd01a7d4864238c2 "#build types" 22 149a1f2c01fe1266
+ssadump cd01a7d4864238c2 "~cleanup types" cdab588d7c0971a0
+ssadump cd01a7d4864238c2 "~landings types" cdab588d7c0971a0
+ssadump cd01a7d4864238c2 "~rc types" cdab588d7c0971a0
+ssadump cd01a7d4864238c2 "~unwind types" cdab588d7c0971a0
+ssadump cd01a7d4864238c2 #build 204 bfae32b865fbea78
+ssadump cd01a7d4864238c2 #cleanup 204 7d98a19186079ca8
+ssadump cd01a7d4864238c2 #landings 204 4b2a689b6bba992f
+ssadump cd01a7d4864238c2 #rc 204 5539ae115135ffd7
+ssadump cd01a7d4864238c2 #unwind 204 e2509401177e71ac
+ssadump cd01a7d4864238c2 =@slot 26eff0de1b8bd225
+ssadump cd01a7d4864238c2 =stages unwind landings cleanup rc verify mutants
+ssadump cd01a7d4864238c2 ~mutants c471f2f0e011e33b
+ssadump cd01a7d4864238c2 ~verify 2689367b205c16ce
 ssadump cd2defeb83093ac3 "#build types" 11 2e4d8f0d0ea6ff47
 ssadump cd2defeb83093ac3 "~cleanup types" 5a3516c454ee4f35
 ssadump cd2defeb83093ac3 "~landings types" 5a3516c454ee4f35
@@ -590,6 +1208,8 @@ ssadump cd2defeb83093ac3 =@slot a71b683c0b0478e9
 ssadump cd2defeb83093ac3 =stages unwind landings cleanup rc verify mutants
 ssadump cd2defeb83093ac3 ~mutants 6710779a33c57cf6
 ssadump cd2defeb83093ac3 ~verify 2689367b205c16ce
+ssadump cd5ce45fc2656688 =@slot 6e352a63eb9015bf
+ssadump cd5ce45fc2656688 =none no main
 ssadump cd62a9fc4fc6bbf6 =@slot 52d9b8ed5037f82a
 ssadump cd62a9fc4fc6bbf6 =none rejected
 ssadump cd858ca39ce90f86 =@slot d43b83a137340c70
@@ -608,10 +1228,26 @@ ssadump cd884479ff55e630 =@slot 84d6498ba9900b7a
 ssadump cd884479ff55e630 =stages unwind landings cleanup rc verify mutants
 ssadump cd884479ff55e630 ~mutants af9c07cb4d3736ce
 ssadump cd884479ff55e630 ~verify 2689367b205c16ce
+ssadump cd9212a25ae7b543 =@slot 2ad3b3cdeedec6c7
+ssadump cd9212a25ae7b543 =none unsupported: use go without a current binding of strings in internal/gen/testdata/golden/go_strings/.xo/gobind (a Go check or build, or `xo bind`, writes it) in internal/gen/testdata/golden/go_strings/main.xo
 ssadump cd934e2f07cdfc94 =@slot 6a380866042f6a0e
 ssadump cd934e2f07cdfc94 =none rejected
 ssadump cdfbc327f930ce94 =@slot 8f0c65e0a0973b50
 ssadump cdfbc327f930ce94 =none rejected
+ssadump ce17cb1378b97958 "#build types" 9 92cee89673e14b35
+ssadump ce17cb1378b97958 "~cleanup types" 75d2f0588771f5ec
+ssadump ce17cb1378b97958 "~landings types" 75d2f0588771f5ec
+ssadump ce17cb1378b97958 "~rc types" 75d2f0588771f5ec
+ssadump ce17cb1378b97958 "~unwind types" 75d2f0588771f5ec
+ssadump ce17cb1378b97958 #build 181 1d00c773335e39da
+ssadump ce17cb1378b97958 #cleanup 181 2bac7addd30c98ea
+ssadump ce17cb1378b97958 #landings 181 258a1238bb038a52
+ssadump ce17cb1378b97958 #rc 181 01a834488d188181
+ssadump ce17cb1378b97958 #unwind 181 8cf86925a9158b53
+ssadump ce17cb1378b97958 =@slot c8b066ff6919c427
+ssadump ce17cb1378b97958 =stages unwind landings cleanup rc verify mutants
+ssadump ce17cb1378b97958 ~mutants c680f7c1278ff04f
+ssadump ce17cb1378b97958 ~verify 2689367b205c16ce
 ssadump ce1b38c4df3d5e64 "#build types" 24 537736cd5781809a
 ssadump ce1b38c4df3d5e64 "~cleanup types" aa7291229deccb7f
 ssadump ce1b38c4df3d5e64 "~landings types" aa7291229deccb7f
@@ -626,8 +1262,40 @@ ssadump ce1b38c4df3d5e64 =@slot 1e04133b0ee4eccd
 ssadump ce1b38c4df3d5e64 =stages unwind landings cleanup rc verify mutants
 ssadump ce1b38c4df3d5e64 ~mutants 780d08ebcadd1cbe
 ssadump ce1b38c4df3d5e64 ~verify 2689367b205c16ce
+ssadump ce6f711cbb4bbaf2 =@slot a504c526535b3b89
+ssadump ce6f711cbb4bbaf2 =none rejected
+ssadump ceb736cd82772a90 "#build types" 11 79d7b5e4d285fa95
+ssadump ceb736cd82772a90 "~cleanup types" 2e3b7d417a573145
+ssadump ceb736cd82772a90 "~landings types" 2e3b7d417a573145
+ssadump ceb736cd82772a90 "~rc types" 2e3b7d417a573145
+ssadump ceb736cd82772a90 "~unwind types" 2e3b7d417a573145
+ssadump ceb736cd82772a90 #build 147 4694f578f61dcb49
+ssadump ceb736cd82772a90 #cleanup 147 a61a8fdca4489c3f
+ssadump ceb736cd82772a90 #landings 147 532655161482c616
+ssadump ceb736cd82772a90 #rc 147 6ad68b480bb39f31
+ssadump ceb736cd82772a90 #unwind 147 82d78bed0512b4a2
+ssadump ceb736cd82772a90 =@slot c0c908f4c704454c
+ssadump ceb736cd82772a90 =stages unwind landings cleanup rc verify mutants
+ssadump ceb736cd82772a90 ~mutants 656ab01fc4fbd03c
+ssadump ceb736cd82772a90 ~verify 2689367b205c16ce
 ssadump cefb3ae72da59c9b =@slot 1e0495b3fcc3fcdb
 ssadump cefb3ae72da59c9b =none rejected
+ssadump cf11549c42ad4c88 "#build types" 22 149a1f2c01fe1266
+ssadump cf11549c42ad4c88 "~cleanup types" cdab588d7c0971a0
+ssadump cf11549c42ad4c88 "~landings types" cdab588d7c0971a0
+ssadump cf11549c42ad4c88 "~rc types" cdab588d7c0971a0
+ssadump cf11549c42ad4c88 "~unwind types" cdab588d7c0971a0
+ssadump cf11549c42ad4c88 #build 204 ae605a9a2ba71e69
+ssadump cf11549c42ad4c88 #cleanup 204 be8a807189c3b00f
+ssadump cf11549c42ad4c88 #landings 204 768c8e398d9bb176
+ssadump cf11549c42ad4c88 #rc 204 775f35e520fcd596
+ssadump cf11549c42ad4c88 #unwind 204 63d7527d77819a9d
+ssadump cf11549c42ad4c88 =@slot ca1965ff2d305319
+ssadump cf11549c42ad4c88 =stages unwind landings cleanup rc verify mutants
+ssadump cf11549c42ad4c88 ~mutants 6af79126876839b4
+ssadump cf11549c42ad4c88 ~verify 2689367b205c16ce
+ssadump cf3a09c5598054ff =@slot 35c418d3b2cb8754
+ssadump cf3a09c5598054ff =none unsupported: use go without a current binding of sync in internal/gen/testdata/replay/gocallback/.xo/gobind (a Go check or build, or `xo bind`, writes it) in internal/gen/testdata/replay/gocallback/main.xo
 ssadump cf5eeec96ee028c7 "#build types" 4 5c8adc2a886f7728
 ssadump cf5eeec96ee028c7 "~cleanup types" 92140131b1d9829b
 ssadump cf5eeec96ee028c7 "~landings types" 92140131b1d9829b
@@ -656,8 +1324,26 @@ ssadump cf7f3aafb230ae4a =@slot 241c1ad193465043
 ssadump cf7f3aafb230ae4a =stages unwind landings cleanup rc verify mutants
 ssadump cf7f3aafb230ae4a ~mutants 9fca617f9b4fcbb7
 ssadump cf7f3aafb230ae4a ~verify 2689367b205c16ce
+ssadump cf809b2f1465601e =@slot f403822dc0810b37
+ssadump cf809b2f1465601e =none rejected
+ssadump cfa1b4bdb2135dfd =@slot 7d6072819e148773
+ssadump cfa1b4bdb2135dfd =none rejected
 ssadump cfb05c29dbf30d2c =@slot 04081010b102f52b
 ssadump cfb05c29dbf30d2c =none rejected
+ssadump cfb6e0a8784e0e5a "#build types" 12 894d07a454015b20
+ssadump cfb6e0a8784e0e5a "~cleanup types" 0bbab07ab8990a4d
+ssadump cfb6e0a8784e0e5a "~landings types" 0bbab07ab8990a4d
+ssadump cfb6e0a8784e0e5a "~rc types" 0bbab07ab8990a4d
+ssadump cfb6e0a8784e0e5a "~unwind types" 0bbab07ab8990a4d
+ssadump cfb6e0a8784e0e5a #build 152 642547847630f24e
+ssadump cfb6e0a8784e0e5a #cleanup 152 fd418d5dffd69b80
+ssadump cfb6e0a8784e0e5a #landings 152 ee227a6e61e2c7ef
+ssadump cfb6e0a8784e0e5a #rc 152 dc0982d9596757c5
+ssadump cfb6e0a8784e0e5a #unwind 152 64e112723ea790a2
+ssadump cfb6e0a8784e0e5a =@slot ee151a6e9a779ceb
+ssadump cfb6e0a8784e0e5a =stages unwind landings cleanup rc verify mutants
+ssadump cfb6e0a8784e0e5a ~mutants af4215fbc5787331
+ssadump cfb6e0a8784e0e5a ~verify 2689367b205c16ce
 ssadump cfb7789dbab94136 =@slot 25d5766543befc98
 ssadump cfb7789dbab94136 =none rejected
 ssadump cfbbf8583e495153 =@slot 51e634c579065634
