@@ -14,6 +14,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bindings and generated programs across runs, the harness self test
   runs per method in parallel; scripts/seed-pack.sh takes
   XO_SEED_GZIP_LEVEL (bench/results/short-tests-2026-10-14.md).
+- Faster native rebuilds, reference counting per function (decision
+  0220 addendum stage C): each function's reference counting is cached
+  beside its assembly, keyed by the function before the pass, the types
+  it reaches, and the borrowed parameters it calls with; verify checks
+  it too. A one-module edit of xo now rebuilds in about 12 s (31 s
+  without the cache) and 20 to 25 s of CPU (131 s) on the Mac.
 - Faster arm64 rebuilds, per function (decision 0220 addendum stage B):
   each function's assembly is cached in <user cache>/xo/backend under
   the hash of its SSA, the types it reaches, the signatures of the

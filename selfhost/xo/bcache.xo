@@ -87,6 +87,47 @@ fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
   prune_backend_cache(os, dir)
 }
 
+/// insert_rc through the per-function cache (stage C, selfhost/ssa
+/// rccache.xo) in <user cache>/xo/backend/rc; the plain insert_rc_jobs
+/// when the cache is off, for a --release build, or for a module under
+/// 256 functions. verify computes every function and fails the build
+/// when an entry differs.
+fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool) {
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  if dir.is_empty() || release || b.m.funcs.len() < 256 {
+    b.insert_rc_jobs(jobs)
+    return
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    b.insert_rc_jobs(jobs)
+    return
+  }
+  let plan = b.insert_rc_plan(id, jobs)
+  var entries: Map[Str, Bytes] = {}
+  for k in plan.keys {
+    if k.is_empty() || entries.contains(k) {
+      continue
+    }
+    match cache_get(os, entry_path(dir, "rc", k)) {
+      Some(e) => entries[k] = e
+      None => {}
+    }
+  }
+  let out = b.insert_rc_apply(plan, entries, backend_cache_mode(os) == "verify", jobs)
+  for (k, e) in out.stores {
+    cache_put(os, entry_path(dir, "rc", k), e)
+  }
+  if !out.stores.is_empty() {
+    prune_backend_cache(os, dir)
+  }
+  cache_note(os, phases, "rc", out.reused, plan.keys.len())
+  if !out.mismatches.is_empty() {
+    fail(os, "XO_BACKEND_CACHE=verify: ${out.mismatches.len()} functions' reference counting differs from their cache entries, the first ${out.mismatches[0]}")
+  }
+}
+
 /// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.
 fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
   if on {

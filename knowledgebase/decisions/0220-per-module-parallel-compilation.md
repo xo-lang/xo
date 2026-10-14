@@ -295,3 +295,29 @@ module code generation (largest gain, largest change).
   1.9 s; after a one-module edit user CPU is 62 to 68 s against about
   90 s with stage A alone and about 140 s without the cache. insert_rc
   (8 to 12 s) is now the largest phase after an edit: stage C (item 4).
+
+### Addendum stage C: insert_rc per function (implemented 2026-10-14)
+
+- insert_rc splits into its whole-program part (the `var` List
+  parameters made unique, borrow inference), run every build, and the
+  per-function part, cached (selfhost/ssa rccache.xo, rc.xo rc_run) in
+  <user cache>/xo/backend/rc for every native backend (lower in
+  selfhost/xo), for modules of 256 or more functions, not --release.
+- The key: the SHA-256 of the xo executable, the target architecture,
+  the function before the pass printed in full with its types by name
+  and reach hash (the type keys moved to selfhost/ssa and serve the
+  emitter's cache too), its own borrowed flags and whether it is the
+  last function of its name, and the borrowed flags of every function
+  it names. The entry: the function after the pass, its types by name
+  (mapped back to the module's ids on a hit), its opcodes by name. A
+  function with a Float constant (no exact text form without float bit
+  casts) or a type whose name is not its own is not cached.
+- XO_BACKEND_CACHE=verify computes every function and fails on a
+  difference; clean on the self build after the three edits, the
+  goldens, and the fixed point. off, on, and verify give one binary.
+- Measured (bench/results/fast-builds-2026-10-13.md, "Back-end cache
+  stage C"): a one-module edit of xo rebuilds in 11.28 to 12.10 s and
+  20.42 to 25.30 s of CPU (30.60 s and 131.33 s with the cache off);
+  insert_rc 9.25 s to 3.6 s. Left after an edit: check and ssa (3.3 s,
+  stage 2), borrow inference and inlining (whole program), the keys,
+  the assembly of the changed parts, the link.
