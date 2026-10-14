@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B12): the HTTP/1.1 response writer
+  is Xo (std/native/llrt/http1w.xo: status text, DetectContentType, the
+  Date header, chunkWriter.writeHeader's rules, the error answers),
+  called by the C connection code through cabi_http.xo's exports; HTTP/2
+  sniffs and dates through it. 514 lines of xo_http.c deleted; the bytes
+  on the wire are unchanged; http workloads 0.976 to 1.001 of the C's
+  instructions on HTTP/1.1, HTTP/2 within noise
+  (bench/results/http-writer-2026-10-14.md).
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's
