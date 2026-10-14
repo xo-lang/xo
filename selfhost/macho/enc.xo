@@ -283,6 +283,14 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       a.word(0xd4200000 | (v * 32))
     }
+    "svc" => {
+      // a Linux system call (decision 0206: rt.sys6, xo_clone, xo_sigreturn)
+      let v = if n == 1 { imm(ops[0]) ?? -1 } else { -1 }
+      if v < 0 || v > 65535 {
+        return a.bad(m, ops)
+      }
+      a.word(0xd4000001 | (v * 32))
+    }
     "nop" => a.word(NOP)
     "prfm" => {
       // rt.prefetch (decision 0207 stage 3): pldl1keep at [xn{, #imm}]
