@@ -81,6 +81,12 @@ shutdown /s /f /t $((MAXMIN * 60)) /c "xo lifetime"
 \$at = (Get-Date).AddMinutes($MAXMIN + 2).ToString('HH:mm')
 schtasks /create /tn xo-lifetime /sc once /st \$at /tr "shutdown /s /f /t 0" /ru SYSTEM /f
 Start-Transcript -Path C:\xo-setup.log
+# Windows Defender's real-time scan made a Go-backend build of xo take
+# hours here (MsMpEng the busiest process; the same build is 35 s on a
+# Mac): this throwaway CI instance excludes its build trees and tools
+# (gotchas/windows-defender-slows-builds.md)
+Add-MpPreference -ExclusionPath 'C:\Users\Administrator','C:\Program Files\Go','C:\Program Files\LLVM','C:\Windows\Temp'
+Add-MpPreference -ExclusionProcess 'go.exe','xo.exe','clang.exe','lld-link.exe','link.exe','compile.exe','git.exe'
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
 Set-Service sshd -StartupType Automatic
 New-NetFirewallRule -Name xo-sshd -DisplayName 'xo sshd' -Protocol TCP -LocalPort 22 -Action Allow -Direction Inbound
