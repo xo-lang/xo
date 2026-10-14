@@ -8234,97 +8234,116 @@ Lf83_b14:
 _xo_f_sysio_2emono__ns:
 Lf84_begin:
 	.cfi_startproc
-	stp x29, x30, [sp, #-48]!
+	stp x29, x30, [sp, #-32]!
 	mov x29, sp
-	stp x20, x19, [sp, #24]
-	.cfi_def_cfa w29, 48
-	.cfi_offset w29, -48
-	.cfi_offset w30, -40
-	.cfi_offset w20, -24
-	.cfi_offset w19, -16
+	stp x20, x19, [sp, #16]
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+	.cfi_offset w20, -16
+	.cfi_offset w19, -8
 Lf84_b0:
 	adrp x9, Lxo_sys_words@PAGE
 	add x9, x9, Lxo_sys_words@PAGEOFF
 	add x9, x9, #0
-	ldr x10, [x9]
-	mov x9, #-2
-	cmp x10, x9
-	b.ne Lf84_b3
+	ldr x19, [x9]
+	cmp x19, #0
+	b.le Lf84_b6
 Lf84_b1:
+	bl _xo_tlocal_addr
+	add x20, x0, #40
+	mov x0, #1
+	mov x1, x20
+	mov x2, x19
+	blr x2
+	cmp x0, #0
+	b.ge Lf84_b4
+Lf84_b2:
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+Lf84_b4:
+	ldr x10, [x20, #0]
+	movz x9, #51712, lsl #0
+	movk x9, #15258, lsl #16
+	mul x10, x10, x9
+	ldr x9, [x20, #8]
+	add x0, x10, x9
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
+	ret
+Lf84_b6:
+	mov x9, #-2
+	cmp x19, x9
+	b.ne Lf84_b9
+Lf84_b7:
 	mov x0, #6
 	bl _clock_gettime_nsec_np
-	ldp x20, x19, [sp, #24]
-	ldp x29, x30, [sp], #48
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
 	ret
-Lf84_b3:
-	add x0, sp, #16
-	bl _xo_sys_buf
-	mov x19, x0
-	ldr x1, [sp, #16]
-	add x0, x19, #16
-	bl _xo_bytes_addr
-	mov x20, x0
-	mov x0, x19
-	bl Lxo_drop1
-Lf84_b4:
+Lf84_b9:
+	bl _xo_tlocal_addr
+	add x20, x0, #40
+Lf84_b10:
 	adrp x9, Lxo_sys_words@PAGE
 	add x9, x9, Lxo_sys_words@PAGEOFF
 	add x9, x9, #0
 	ldr x0, [x9]
 	cmp x0, #0
-	b.ne Lf84_b23
-Lf84_b6:
+	b.ne Lf84_b29
+Lf84_b12:
 	mov x9, #1
 	cmp x9, #1
-	b.eq Lf84_b7
-Lf84_b8:
+	b.eq Lf84_b13
+Lf84_b14:
 	cmp x9, #2
-	b.eq Lf84_b9
-Lf84_b10:
-	cmp x9, #0
-	b.eq Lf84_b16
-Lf84_b12:
-	cmp x9, #3
-	b.eq Lf84_b16
-	b Lf84_b21
-Lf84_b7:
-	mov x0, #-2
-	b Lf84_b18
-Lf84_b9:
-	mov x0, #-3
-	b Lf84_b18
+	b.eq Lf84_b15
 Lf84_b16:
-	bl _xo_f_linux_2evdso__clock
-	b Lf84_b23
+	cmp x9, #0
+	b.eq Lf84_b22
 Lf84_b18:
+	cmp x9, #3
+	b.eq Lf84_b22
+	b Lf84_b27
+Lf84_b13:
+	mov x0, #-2
+	b Lf84_b24
+Lf84_b15:
+	mov x0, #-3
+	b Lf84_b24
+Lf84_b22:
+	bl _xo_f_linux_2evdso__clock
+	b Lf84_b29
+Lf84_b24:
 	adrp x9, Lxo_sys_words@PAGE
 	add x9, x9, Lxo_sys_words@PAGEOFF
 	add x9, x9, #0
 	str x0, [x9]
-	b Lf84_b23
-Lf84_b21:
+	b Lf84_b29
+Lf84_b27:
 	brk #1
-Lf84_b23:
+Lf84_b29:
 	mov x9, #-2
 	cmp x0, x9
-	b.ne Lf84_b29
-Lf84_b26:
+	b.ne Lf84_b35
+Lf84_b32:
 	mov x0, #6
-Lf84_b27:
+Lf84_b33:
 	bl _clock_gettime_nsec_np
-	b Lf84_b67
-Lf84_b29:
+	b Lf84_b73
+Lf84_b35:
 	mov x9, #-3
 	cmp x0, x9
-	b.ne Lf84_b41
-Lf84_b34:
+	b.ne Lf84_b47
+Lf84_b40:
 	adrp x9, Lxo_sys_words@PAGE
 	add x9, x9, Lxo_sys_words@PAGEOFF
 	add x9, x9, #16
 	ldr x10, [x9]
 	cmp x10, #0
-	b.gt Lf84_b37
-Lf84_b35:
+	b.gt Lf84_b43
+Lf84_b41:
 	adrp x9, Lxo_str21@PAGE
 	add x9, x9, Lxo_str21@PAGEOFF
 	mov x1, #70
@@ -8335,7 +8354,7 @@ Lf84_b35:
 	add x2, x9, #16
 	bl _xo_fault_raise
 	brk #1
-Lf84_b37:
+Lf84_b43:
 	adrp x9, Lxo_str23@PAGE
 	add x9, x9, Lxo_str23@PAGEOFF
 	mov x1, #68
@@ -8346,57 +8365,57 @@ Lf84_b37:
 	add x2, x9, #16
 	bl _xo_fault_raise
 	brk #1
-Lf84_b41:
+Lf84_b47:
 	mov x19, #1
-Lf84_b44:
+Lf84_b50:
 	adrp x9, Lxo_sys_words@PAGE
 	add x9, x9, Lxo_sys_words@PAGEOFF
 	add x9, x9, #0
 	ldr x2, [x9]
 	cmp x2, #0
-	b.le Lf84_b47
-Lf84_b45:
+	b.le Lf84_b53
+Lf84_b51:
 	mov x0, x19
 	mov x1, x20
 	blr x2
 	cmp x0, #0
-	b.lt Lf84_b67
-	b Lf84_b65
-Lf84_b47:
-	b.ne Lf84_b54
-Lf84_b48:
+	b.lt Lf84_b73
+	b Lf84_b71
+Lf84_b53:
+	b.ne Lf84_b60
+Lf84_b54:
 	bl _xo_f_linux_2evdso__clock
 	cmp x0, #0
-	b.le Lf84_b54
-Lf84_b51:
+	b.le Lf84_b60
+Lf84_b57:
 	bl _xo_f_linux_2evdso__clock
 	mov x1, x20
 	mov x2, x0
 	mov x0, x19
 	blr x2
 	cmp x0, #0
-	b.lt Lf84_b67
-	b Lf84_b65
-Lf84_b54:
+	b.lt Lf84_b73
+	b Lf84_b71
+Lf84_b60:
 	mov x9, #1
 	cmp x9, #1
-	b.eq Lf84_b55
-Lf84_b56:
+	b.eq Lf84_b61
+Lf84_b62:
 	cmp x9, #0
-	b.eq Lf84_b57
-Lf84_b58:
+	b.eq Lf84_b63
+Lf84_b64:
 	cmp x9, #2
-	b.eq Lf84_b59
-	b Lf84_b68
-Lf84_b55:
-	mov x6, #113
-	b Lf84_b61
-Lf84_b57:
-	mov x6, #228
-	b Lf84_b61
-Lf84_b59:
-	mov x6, #-1
+	b.eq Lf84_b65
+	b Lf84_b74
 Lf84_b61:
+	mov x6, #113
+	b Lf84_b67
+Lf84_b63:
+	mov x6, #228
+	b Lf84_b67
+Lf84_b65:
+	mov x6, #-1
+Lf84_b67:
 	mov x2, #0
 	mov x0, x19
 	mov x1, x20
@@ -8405,21 +8424,21 @@ Lf84_b61:
 	mov x5, x2
 	mov x8, x6
 	svc #0
-Lf84_b62:
+Lf84_b68:
 	cmp x0, #0
-	b.lt Lf84_b67
-Lf84_b65:
+	b.lt Lf84_b73
+Lf84_b71:
 	ldr x10, [x20, #0]
 	movz x9, #51712, lsl #0
 	movk x9, #15258, lsl #16
 	mul x10, x10, x9
 	ldr x9, [x20, #8]
 	add x0, x10, x9
-Lf84_b67:
-	ldp x20, x19, [sp, #24]
-	ldp x29, x30, [sp], #48
+Lf84_b73:
+	ldp x20, x19, [sp, #16]
+	ldp x29, x30, [sp], #32
 	ret
-Lf84_b68:
+Lf84_b74:
 	brk #1
 	.cfi_endproc
 
@@ -24611,7 +24630,7 @@ Lxo_str21:
 Lxo_str22:
 	.quad -9223372036854775808
 	.quad 30
-	.ascii "std/native/llrt/windows.xo:210"
+	.ascii "std/native/llrt/windows.xo:211"
 	.p2align 3
 Lxo_str23:
 	.quad -9223372036854775808
@@ -24621,7 +24640,7 @@ Lxo_str23:
 Lxo_str24:
 	.quad -9223372036854775808
 	.quad 30
-	.ascii "std/native/llrt/windows.xo:217"
+	.ascii "std/native/llrt/windows.xo:218"
 	.p2align 3
 Lxo_str25:
 	.quad -9223372036854775808
