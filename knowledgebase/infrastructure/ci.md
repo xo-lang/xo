@@ -77,7 +77,7 @@ with Go and clang, so a failing suite can be reproduced locally.
 | `vet` | `go vet` only |
 | `merge` | `go test -timeout 60m` of `packages` (default: the touched ones) |
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
-| `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it |
+| `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it. A directory new on the branch (none on main) runs the branch's measure.sh for both, so main's xo and std build the branch's workload |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with

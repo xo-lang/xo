@@ -163,7 +163,10 @@ run_measure() {
   git worktree add -q --detach "$out/base-tree" "$base"
   local bx; bx=$(cd "$out/base-tree" && go run ./scripts/xobuild); echo "$bx"; end
   step "xo of the checkout"; local nx; nx=$(go run ./scripts/xobuild); echo "$nx"; end
-  step "base"; sh "$out/base-tree/$m" "$bx" "$out/base" arm64 llvm | tee "$out/base.txt"; end
+  # a directory new on the branch has no base copy: the branch's
+  # measure.sh builds its own workload with main's xo and std
+  local bm="$out/base-tree/$m"; [ -f "$bm" ] || bm=$m
+  step "base"; sh "$bm" "$bx" "$out/base" arm64 llvm | tee "$out/base.txt"; end
   step "new"; sh "$m" "$nx" "$out/new" arm64 llvm | tee "$out/new.txt"; end
   echo "new/base (instructions:u, minimum of the runs):"
   awk 'FNR==NR{b[$1" "$2]=$3; next} ($1" "$2) in b && b[$1" "$2] > 0 {printf "  %s %s base %s new %s ratio %.3f\n", $1, $2, b[$1" "$2], $3, $3/b[$1" "$2]}' "$out/base.txt" "$out/new.txt"
