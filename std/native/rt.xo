@@ -208,7 +208,10 @@ fn prefetch(a: Int)
 /// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
 /// static address on wasm; reached with mem_load/mem_store or the slot
 /// atomics. The words: 0 to 2 std/native/llrt/logstate.xo (the level,
-/// format, and output of log.configure); 3 to 63 unused.
+/// format, and output of log.configure); 32 to 39 the test world's
+/// (std/native/llrt/testworld.xo W_*: whether it runs, the effects made
+/// real, its lock, Rand's PCG state, the MemFs lock and state, the state
+/// record); 3 to 31 and 40 to 63 unused.
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
@@ -273,11 +276,6 @@ fn sys_buf() -> Bytes
 /// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
 /// the C runtime, which serves the fake.
 fn tw_fake(real: Int) -> Bool
-/// Whether Rand is the test world's seeded generator (a test binary).
-fn tw_seeded() -> Bool
-/// The next word of the test world's seeded generator (std/rt's
-/// seededRand: Go's math/rand/v2 PCG).
-fn tw_rand_u64() -> Int
 /// The address of the calling thread's 16 bytes of scratch for Clock.now's
 /// timespec, or 0 while the test world's virtual clock runs (one call on
 /// the clock's path; decision 0206 stage 2; on every OS since work item

@@ -6,6 +6,7 @@
 use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/cabi_nolibc
+use native/llrt/cabi_test
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -19,6 +20,7 @@ use native/llrt/scan
 use native/llrt/show
 use native/llrt/strings
 use native/llrt/sysio
+use native/llrt/testworld
 use native/llrt/cabi_poll
 use native/llrt/text
 use native/llrt/unicode
@@ -2334,3 +2336,39 @@ fn llrt_gen_str(g: Int) -> Str { gen.str(g) }
 fn llrt_gen_duration(g: Int) -> Int { gen.duration(g) }
 
 fn llrt_gen_time(g: Int) -> Int { gen.time(g) }
+
+// The test world of test binaries, part 1 (std/native/llrt/testworld.xo,
+// the zero-C audit's B14; it was std/llrt/xo_testing.c): the test to
+// run, a failure, the captured streams, FakeEnv, FakeProc.exit_code, the
+// view of `xo test --real`, and the generators, as selfhost/ssa
+// testmode.xo calls them.
+
+fn llrt_test_index() -> Int { testworld.test_index() }
+
+fn llrt_test_fail(msg: Str) { testworld.fail(msg) }
+
+fn llrt_test_output(which: Int) -> Str { testworld.output(which) }
+
+fn llrt_test_eprint(s: Str) { testworld.write(true, s) }
+
+fn llrt_test_env_set(name: Str, value: Str) { testworld.env_set(name, value) }
+
+fn llrt_test_set_args(args: List[Str]) { testworld.set_args(args) }
+
+fn llrt_test_exit_code() -> List[Int] { testworld.exit_code() }
+
+fn llrt_test_fs_real() -> Int { testworld.fs_real() }
+
+fn llrt_gen_new(seed: Int) -> Int { testworld.gen_new(seed) }
+
+fn llrt_gen_free(g: Int) { testworld.gen_free(g) }
+
+fn llrt_gen_prop() -> Int { testworld.gen_prop() }
+
+fn llrt_gen_intn(g: Int, n: Int) -> Int { testworld.gen_intn(g, n) }
+
+fn llrt_gen_enter(g: Int) { testworld.gen_enter(g) }
+
+fn llrt_gen_leave(g: Int) { testworld.gen_leave(g) }
+
+fn llrt_gen_deep(g: Int) -> Bool { testworld.gen_deep(g) }

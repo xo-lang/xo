@@ -12,6 +12,7 @@ use native/llrt/cabi_http
 use native/llrt/cabi_tls
 use native/llrt/cabi_net
 use native/llrt/netpolicy
+use native/llrt/testworld
 use native/rthttp
 use native/rttest
 
@@ -767,7 +768,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
       return Err(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
     }
   }
-  if rttest.test_fake(4) {
+  if testworld.fake(4) {
     // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(req, raw)
   }
@@ -803,11 +804,11 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
 /// literal segments, then the router serving the in memory listener of
 /// the URL's host and port.
 fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
-  rttest.test_record(rt.any_of(req))
-  for i in 0..rttest.test_fake_count(1) {
+  testworld.record(rt.any_of(req))
+  for i in 0..testworld.fake_count(1) {
     if fake_match(1, i, req, raw) is Some(_) {
-      let e = rt.any_get[http.ClientErr](rttest.test_fake_value(1, i))
-      rttest.test_fake_used(i)
+      let e = rt.any_get[http.ClientErr](testworld.fake_value(1, i))
+      testworld.fake_used(i)
       if let Some(err) = e {
         return Err(err)
       }
@@ -816,7 +817,7 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
   var best = -1
   var best_lits = -1
   var best_params: Map[Str, Str] = {}
-  for i in 0..rttest.test_fake_count(0) {
+  for i in 0..testworld.fake_count(0) {
     if let Some((lits, params)) = fake_match(0, i, req, raw) {
       if best < 0 || lits > best_lits {
         best = i
@@ -826,7 +827,7 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
     }
   }
   if best >= 0 {
-    if let Some(h) = rt.any_get[fn(Request) -> http.Response](rttest.test_fake_value(0, best)) {
+    if let Some(h) = rt.any_get[fn(Request) -> http.Response](testworld.fake_value(0, best)) {
       return h(req with {params: best_params})
     }
   }
@@ -848,15 +849,15 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
 /// Whether handler (kind 0) or failure (1) i matches the request: the
 /// number of literal segments of its route and the route's parameters.
 fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])? {
-  let method = rttest.test_fake_text(kind, i, 0)
+  let method = testworld.fake_text(kind, i, 0)
   if !method.is_empty() && method != req.method.to_upper() {
     return None
   }
-  let prefix = rttest.test_fake_text(kind, i, 1)
+  let prefix = testworld.fake_text(kind, i, 1)
   if !prefix.is_empty() && !raw.starts_with(prefix) {
     return None
   }
-  let (_, segs) = parse_pattern(rttest.test_fake_text(kind, i, 2))
+  let (_, segs) = parse_pattern(testworld.fake_text(kind, i, 2))
   let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
   let parts = split_path(req.path)
   var uparts: List[Str] = []

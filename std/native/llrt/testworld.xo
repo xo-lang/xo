@@ -1,0 +1,1151 @@
+// The test world of native test binaries (decision 0083), part 1, in Xo
+// (the zero-C audit's B14; it was std/llrt/xo_testing.c, xo_stdin.c's
+// FakeStdio input, and xo_proc.c's FakeProc outputs): the switches of
+// `xo test --real` (decision 0120), Rand's seeded generator, the
+// generators of property tests and testing.gen, the captured standard
+// streams, the fake environment and arguments, FakeProc.exit_code, the
+// log records of testing.logs, FakeNet's handlers, failures, and the
+// requests seen, the MemFs state, and the cleanup at the end. Part 2
+// (the virtual clock, the in memory listeners, testing.run_main) stays
+// C (xo_testing.c), as do the reads of the C's `tw` switches.
+//
+// The state is process wide: words of rt.static_word (the table in
+// rt.xo) and a record from rt.heap_large (the C's malloc) whose
+// vectors hold copies of the text in malloc'd blocks, as the C kept
+// it, so no Xo object is shared between threads by this module except
+// the values FakeNet and MemFs keep (rt.Any), whose counts it changes
+// as the C's h_retain and h_release did. One lock (the C runtime's
+// lock word, pool.xo's slow path) guards the record and Rand; MemFs has
+// its own, held from memfs_take to memfs_put.
+//
+// Generated code reaches this module through the native prelude's
+// llrt_test_* and llrt_gen_* (selfhost/ssa testmode.xo), std/native's
+// testing.xo, log.xo, and http.xo directly, and the C runtime through
+// cabi_test.xo's exports (xo_x_tw_*).
+use native/llrt/ints
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/rt
+use native/rttest
+
+/// The words of rt.static_word (rt.xo's table): whether the program runs
+/// in the test world, the effects `xo test --real` makes real (REAL_*),
+/// the lock, Rand's PCG state (high, low), the MemFs lock and state (an
+/// rt.Any's object, or 0), and the state record.
+const W_ON = 32
+const W_REAL = 33
+const W_LOCK = 34
+const W_RNG = 35
+const W_MEMFS_LOCK = 37
+const W_MEMFS = 38
+const W_STATE = 39
+
+/// The effects of `xo test --real` (xo_rt.c TW_REAL_*).
+pub const REAL_FS_READ = 1
+pub const REAL_FS_WRITE = 2
+pub const REAL_NET = 4
+pub const REAL_CLOCK = 8
+pub const REAL_ENV = 16
+pub const REAL_STDIO = 32
+pub const REAL_PROC = 64
+
+/// The state record (byte offsets): vectors of three words (the
+/// address of the elements, the length, the capacity), the environment
+/// variables the C runtime read at the start (blocks, or 0 when unset),
+/// FakeProc.exit_code, and the standard input of FakeStdio.set_input.
+/// Word vectors count words, byte vectors bytes.
+const S_EKEYS = 0
+const S_EVALS = 24
+const S_ARGS = 48
+const S_OUT = 72
+const S_ERR = 96
+const S_RECS = 120
+const S_HANDLERS = 144
+const S_FAILS = 168
+const S_REQS = 192
+const S_PROCS = 216
+const S_VARS = 240
+const S_HAS_EXIT = 288
+const S_EXIT = 296
+const S_IN = 304
+const S_IN_OFF = 312
+const S_SIZE = 320
+
+/// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
+/// `--real` makes real, the seed, the test's index, the choices to
+/// replay, a property case's seed, and the best choices while shrinking.
+pub const V_REAL = 0
+pub const V_SEED = 1
+pub const V_TEST = 2
+pub const V_REPLAY = 3
+pub const V_PROP_SEED = 4
+pub const V_BEST = 5
+const NVARS = 6
+
+/// C11's orders of the slot atomics.
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+// ---------------------------------------------------------------------------
+// Raw memory: blocks of text and vectors
+
+/// A block of the n bytes at p: its length, then the bytes (malloc'd).
+fn blk_new(p: Int, n: Int) -> Int {
+  let b = rt.heap_large(n + 8)
+  rt.mem_store(b, 0, n, 8)
+  rt.mem_copy(b + 8, p, n)
+  b
+}
+
+fn blk_of(s: Str) -> Int { blk_new(raw.data(s), s.len()) }
+
+fn blk_len(b: Int) -> Int { rt.mem_load(b, 0, 8) }
+
+fn blk_str(b: Int) -> Str { raw.str_at(b + 8, blk_len(b)) }
+
+/// Whether block b holds the n bytes at p.
+fn blk_eq(b: Int, p: Int, n: Int) -> Bool { blk_len(b) == n && raw.mem_eq(b + 8, p, n) }
+
+fn blk_free(b: Int) {
+  if b != 0 {
+    rt.heap_release(b - 8)
+  }
+}
+
+/// Room for n more units of size bytes in the vector at v.
+fn vec_room(v: Int, n: Int, size: Int) {
+  let len = rt.mem_load(v, 8, 8)
+  let cap = rt.mem_load(v, 16, 8)
+  if len + n <= cap {
+    return
+  }
+  var c = if cap == 0 { 4 } else { 2 * cap }
+  while c < len + n {
+    c = 2 * c
+  }
+  let old = rt.mem_load(v, 0, 8)
+  let p = if old == 0 { rt.heap_large(c * size) } else { rt.heap_large_resize(old - 8, c * size) }
+  rt.mem_store(v, 0, p, 8)
+  rt.mem_store(v, 16, c, 8)
+}
+
+fn vec_len(v: Int) -> Int { rt.mem_load(v, 8, 8) }
+
+fn vec_at(v: Int, i: Int) -> Int { rt.mem_load(rt.mem_load(v, 0, 8), 8 * i, 8) }
+
+fn vec_set(v: Int, i: Int, x: Int) { rt.mem_store(rt.mem_load(v, 0, 8), 8 * i, x, 8) }
+
+fn vec_push(v: Int, x: Int) {
+  vec_room(v, 1, 8)
+  let n = vec_len(v)
+  vec_set(v, n, x)
+  rt.mem_store(v, 8, n + 1, 8)
+}
+
+/// Appends the n bytes at p to the byte vector at v.
+fn vec_put(v: Int, p: Int, n: Int) {
+  vec_room(v, n, 1)
+  let len = vec_len(v)
+  rt.mem_copy(rt.mem_load(v, 0, 8) + len, p, n)
+  rt.mem_store(v, 8, len + n, 8)
+}
+
+/// Removes element i of the word vector at v.
+fn vec_remove(v: Int, i: Int) {
+  let n = vec_len(v)
+  let p = rt.mem_load(v, 0, 8)
+  rt.mem_move(p + 8 * i, p + 8 * (i + 1), 8 * (n - i - 1))
+  rt.mem_store(v, 8, n - 1, 8)
+}
+
+/// Frees the elements of the vector at v and empties it.
+fn vec_free(v: Int) {
+  let p = rt.mem_load(v, 0, 8)
+  if p != 0 {
+    rt.heap_release(p - 8)
+  }
+  rt.mem_set(v, 0, 24)
+}
+
+/// A new string of the bytes of the byte vector at v.
+fn vec_str(v: Int) -> Str {
+  let n = vec_len(v)
+  if n == 0 {
+    return ""
+  }
+  raw.str_at(rt.mem_load(v, 0, 8), n)
+}
+
+// ---------------------------------------------------------------------------
+// The state and its lock
+
+/// The state record, made on first use (tw_setenv at the start of a test
+/// binary, before any thread).
+fn st() -> Int {
+  let w = rt.static_word(W_STATE)
+  let a = rt.slot_load(w, 0, ACQUIRE)
+  if a != 0 {
+    return a
+  }
+  let n = rt.heap_large(S_SIZE)
+  rt.mem_set(n, 0, S_SIZE)
+  if rt.slot_cas(w, 0, 0, n, ACQ_REL) {
+    return n
+  }
+  rt.heap_release(n - 8)
+  rt.slot_load(w, 0, ACQUIRE)
+}
+
+fn lock_at(l: Int) {
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlock_at(l: Int) {
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+fn lock() { lock_at(rt.static_word(W_LOCK)) }
+
+fn unlock() { unlock_at(rt.static_word(W_LOCK)) }
+
+/// Keeps a reference to v: its object's address.
+fn keep(v: rt.Any) -> Int {
+  let a = rt.obj_addr(v)
+  rc.inc(a)
+  a
+}
+
+/// The list l handed to a C caller (cabi_test.xo): its object's
+/// address, one reference.
+pub fn hand(l: List[Str]) -> Int {
+  let a = rt.obj_addr(l)
+  rc.inc(a)
+  a
+}
+
+/// The value kept at a, counted once more for the caller.
+fn kept(a: Int) -> rt.Any { rt.obj_at[rt.Any](a) }
+
+/// Drops the reference kept at a (h_release: the value goes when it was
+/// the last one).
+fn drop_kept(a: Int) {
+  let v = rt.obj_at[rt.Any](a)
+  let _last = rc.dec(a)
+  let _v = v
+}
+
+// ---------------------------------------------------------------------------
+// The switches (`xo test --real`, decision 0120)
+
+/// Whether the program runs in the test world.
+pub fn on() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+
+/// Whether the effect real (REAL_*) is a fake here: the test world
+/// without `xo test --real` for it.
+pub fn fake(real: Int) -> Bool { on() && rt.mem_load(rt.static_word(W_REAL), 0, 8) & real == 0 }
+
+/// The value of variable k (V_*) when the test binary started, if set.
+pub fn env_var(k: Int) -> Str? {
+  let b = rt.mem_load(st(), S_VARS + 8 * k, 8)
+  if b == 0 {
+    return None
+  }
+  Some(blk_str(b))
+}
+
+/// Records variable k (V_*): the n bytes at p, or unset when n < 0 (the
+/// C runtime's getenv at the start).
+pub fn setenv(k: Int, p: Int, n: Int) {
+  if k < 0 || k >= NVARS {
+    return
+  }
+  let a = st() + S_VARS + 8 * k
+  blk_free(rt.mem_load(a, 0, 8))
+  rt.mem_store(a, 0, if n < 0 { 0 } else { blk_new(p, n) }, 8)
+}
+
+/// Starts the test world (tw_init): the effects `--real` names
+/// (XO_TEST_REAL, as REAL_* bits; `net`, `proc`, and `clock` make the
+/// clock real) and Rand's seed (XO_TEST_SEED, 1 when unset); the bits.
+pub fn init() -> Int {
+  var bits = 0
+  if let Some(r) = env_var(V_REAL) {
+    for e in r.split(",") {
+      let b = match e {
+        "fs" => REAL_FS_READ | REAL_FS_WRITE
+        "fs.read" => REAL_FS_READ
+        "fs.write" => REAL_FS_WRITE
+        "net" | "net.dial" | "net.listen" => REAL_NET | REAL_CLOCK
+        "clock" => REAL_CLOCK
+        "env" => REAL_ENV
+        "stdio" => REAL_STDIO
+        "proc" => REAL_PROC | REAL_CLOCK
+        _ => 0
+      }
+      bits = bits | b
+    }
+  }
+  var seed = 1
+  if let Some(s) = env_var(V_SEED) {
+    if s.len() > 0 {
+      seed = first_number(s)
+    }
+  }
+  let g = rt.static_word(W_RNG)
+  rt.mem_store(g, 0, seed, 8)
+  rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
+  rt.mem_store(rt.static_word(W_REAL), 0, bits, 8)
+  rt.slot_store(rt.static_word(W_ON), 0, 1, RELEASE)
+  bits
+}
+
+/// The test to run (XO_TEST), -1 when it is not set.
+pub fn test_index() -> Int {
+  match env_var(V_TEST) {
+    Some(s) => first_number(s)
+    None => -1
+  }
+}
+
+/// The mode bits of a real Fs in this test (decision 0120): -1 for the
+/// MemFs, 0 read and write, 2 read only, 4 write only (std/rt's
+/// realCaps).
+pub fn fs_real() -> Int {
+  if !on() {
+    return -1
+  }
+  match rt.mem_load(rt.static_word(W_REAL), 0, 8) & (REAL_FS_READ | REAL_FS_WRITE) {
+    3 => 0
+    1 => 2
+    2 => 4
+    _ => -1
+  }
+}
+
+/// Fails the test with msg (a failed expect, an error the test body
+/// returned): XO-TEST-FAIL and the message on the real standard output
+/// for the harness, status 1.
+pub fn fail(msg: Str) {
+  rttest.test_write("XO-TEST-FAIL\n${msg}\n")
+  rttest.test_quit(1)
+}
+
+/// The first number of s as strtoll and strtoull read it (wrapping), 0
+/// for none.
+fn first_number(s: Str) -> Int {
+  let cs = choices(s)
+  if cs.is_empty() { 0 } else { cs[0] }
+}
+
+/// The choices of the text "c1,c2,..." (decimal, as strtoull reads
+/// each: leading white space, a sign, at most 2^64 - 1), up to the first
+/// that is not a number.
+pub fn choices(s: Str) -> List[Int] {
+  let b = s.bytes()
+  let n = b.len()
+  var out: List[Int] = []
+  var i = 0
+  while i < n {
+    var j = i
+    while j < n && (b[j] == 32 || (b[j] >= 9 && b[j] <= 13)) {
+      j += 1
+    }
+    var neg = false
+    if j < n && (b[j] == 43 || b[j] == 45) {
+      neg = b[j] == 45
+      j += 1
+    }
+    let d0 = j
+    var v = 0
+    var over = false
+    while j < n && b[j] >= 48 && b[j] <= 57 {
+      let c = Int(b[j]) - 48
+      // v * 10 + c above 2^64 - 1 saturates (unsigned compares)
+      if ult(1844674407370955161, v) || (v == 1844674407370955161 && c > 5) {
+        over = true
+      }
+      v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c)
+      j += 1
+    }
+    if j == d0 {
+      break
+    }
+    if over {
+      v = -1
+    } else if neg {
+      v = rt.int_wrap(1, 0, v)
+    }
+    out.push(v)
+    i = if j < n && b[j] == 44 { j + 1 } else { j }
+  }
+  out
+}
+
+/// a < b as UInt64s.
+pub fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
+
+// ---------------------------------------------------------------------------
+// Go's math/rand/v2 PCG: Rand's seeded generator (std/rt's seededRand)
+// and the generators of generated values
+
+/// The next value of the PCG whose state (high, low) is at a.
+fn pcg(a: Int) -> Int {
+  let s_hi = rt.mem_load(a, 0, 8)
+  let s_lo = rt.mem_load(a, 8, 8)
+  // (hi, lo) = state * mul + inc, 128 bit
+  let lo = rt.int_wrap(2, s_lo, 4865540595714422341)
+  var hi = rt.u64_mul_hi(s_lo, 4865540595714422341)
+  hi = rt.int_wrap(0, hi, rt.int_wrap(0, rt.int_wrap(2, s_hi, 4865540595714422341), rt.int_wrap(2, s_lo, 2549297995355413924)))
+  let lo2 = rt.int_wrap(0, lo, 1442695040888963407)
+  let c = if ult(lo2, lo) { 1 } else { 0 }
+  hi = rt.int_wrap(0, rt.int_wrap(0, hi, 6364136223846793005), c)
+  rt.mem_store(a, 0, hi, 8)
+  rt.mem_store(a, 8, lo2, 8)
+  // DXSM
+  hi = hi ^ rt.int_wrap(4, hi, 32)
+  hi = rt.int_wrap(2, hi, -2696494805208442699)
+  hi = hi ^ rt.int_wrap(4, hi, 48)
+  rt.int_wrap(2, hi, lo2 | 1)
+}
+
+/// Whether Rand is the seeded generator (a test binary).
+pub fn seeded() -> Bool { on() }
+
+/// The next word of Rand's seeded generator.
+pub fn rand_u64() -> Int {
+  lock()
+  let v = pcg(rt.static_word(W_RNG))
+  unlock()
+  v
+}
+
+// ---------------------------------------------------------------------------
+// Generated values: property tests (`test "x" for v: T`, core 9.2) and
+// testing.gen (std.md 8.5), decision 0120. The same choices as std/rt's
+// GenRand (gen.go): the PCG seeded (seed, seed ^ 0x2545f4914f6cdd1d),
+// every choice recorded, so a test binary makes the Go backend's values
+// for a seed, and a failing case can be shrunk by replaying edited
+// choices (the harness). A generator is the address of its record
+// (words): the PCG state (high, low), the depth, the record of choices
+// (address, length, capacity), the replay (address, length), its
+// position, and whether it replays.
+const G_DEPTH = 16
+const G_REC = 24
+const G_REPLAY = 48
+const G_NREPLAY = 56
+const G_POS = 64
+const G_REPLAYING = 72
+const G_SIZE = 80
+
+fn gen_alloc() -> Int {
+  let g = rt.heap_large(G_SIZE)
+  rt.mem_set(g, 0, G_SIZE)
+  g
+}
+
+fn gen_seed(g: Int, seed: Int) {
+  rt.mem_store(g, 0, seed, 8)
+  rt.mem_store(g, 8, seed ^ 2685821657736338717, 8)
+}
+
+/// A generator seeded with seed (testing.gen, std/rt's NewGenRand).
+pub fn gen_new(seed: Int) -> Int {
+  let g = gen_alloc()
+  gen_seed(g, seed)
+  g
+}
+
+/// Frees generator g.
+pub fn gen_free(g: Int) {
+  vec_free(g + G_REC)
+  let r = rt.mem_load(g, G_REPLAY, 8)
+  if r != 0 {
+    rt.heap_release(r - 8)
+  }
+  rt.heap_release(g - 8)
+}
+
+/// The generator of a property test's case: the harness sets
+/// XO_PROP_REPLAY (choices to replay, shrinking) or XO_PROP_SEED (the
+/// case's seed: std/rt's seed*1000003 + case).
+pub fn gen_prop() -> Int {
+  let g = gen_alloc()
+  if let Some(r) = env_var(V_REPLAY) {
+    let cs = choices(r)
+    let n = cs.len()
+    let p = rt.heap_large(8 * n)
+    for (i, c) in cs.indexed() {
+      rt.mem_store(p, 8 * i, c, 8)
+    }
+    rt.mem_store(g, G_REPLAY, p, 8)
+    rt.mem_store(g, G_NREPLAY, n, 8)
+    rt.mem_store(g, G_REPLAYING, 1, 8)
+    return g
+  }
+  var seed = 0
+  if let Some(s) = env_var(V_PROP_SEED) {
+    seed = first_number(s)
+  }
+  gen_seed(g, seed)
+  g
+}
+
+/// Go's (*rand.Rand).Uint64N (n not 0): a mask for powers of two, else
+/// Lemire's multiply with rejection.
+fn u64n(g: Int, n: Int) -> Int {
+  if n & rt.int_wrap(1, n, 1) == 0 {
+    return pcg(g) & rt.int_wrap(1, n, 1)
+  }
+  var x = pcg(g)
+  var hi = rt.u64_mul_hi(x, n)
+  var lo = rt.int_wrap(2, x, n)
+  if ult(lo, n) {
+    let thresh = ints.u64_rem(rt.int_wrap(1, 0, n), n)
+    while ult(lo, thresh) {
+      x = pcg(g)
+      hi = rt.u64_mul_hi(x, n)
+      lo = rt.int_wrap(2, x, n)
+    }
+  }
+  hi
+}
+
+/// A choice in [0, n) (n as a UInt64), or any 64 bit value when n is 0,
+/// recorded (gen.xo).
+pub fn gen_draw(g: Int, n: Int) -> Int {
+  var v = 0
+  if rt.mem_load(g, G_REPLAYING, 8) != 0 {
+    let pos = rt.mem_load(g, G_POS, 8)
+    if pos < rt.mem_load(g, G_NREPLAY, 8) {
+      v = rt.mem_load(rt.mem_load(g, G_REPLAY, 8), 8 * pos, 8)
+    }
+    rt.mem_store(g, G_POS, pos + 1, 8)
+    if n != 0 {
+      v = ints.u64_rem(v, n)
+    }
+  } else if n == 0 {
+    v = pcg(g)
+  } else {
+    v = u64n(g, n)
+  }
+  vec_push(g + G_REC, v)
+  v
+}
+
+/// GenRand.Intn: a choice in [0, n), no choice for n <= 1.
+pub fn gen_intn(g: Int, n: Int) -> Int {
+  if n <= 1 {
+    return 0
+  }
+  gen_draw(g, n)
+}
+
+/// The nesting depth of the value being generated.
+pub fn gen_depth(g: Int) -> Int { rt.mem_load(g, G_DEPTH, 8) }
+
+/// gen_enter and gen_leave bracket a nested value; gen_deep tells when
+/// nested values stop growing (GenRand.Deep).
+pub fn gen_enter(g: Int) { rt.mem_store(g, G_DEPTH, gen_depth(g) + 1, 8) }
+
+pub fn gen_leave(g: Int) { rt.mem_store(g, G_DEPTH, gen_depth(g) - 1, 8) }
+
+pub fn gen_deep(g: Int) -> Bool { gen_depth(g) >= 4 }
+
+/// The choices generator g made so far (report.xo).
+pub fn gen_choices(g: Int) -> List[Int] {
+  let v = g + G_REC
+  let n = vec_len(v)
+  var out = List[Int].with_capacity(n)
+  for i in 0..n {
+    out.push(vec_at(v, i))
+  }
+  out
+}
+
+/// $XO_PROP_BEST (the best choices while shrinking) in a list of one, or
+/// the empty list (report.xo).
+pub fn prop_best() -> List[Str] {
+  match env_var(V_BEST) {
+    Some(s) => [s]
+    None => []
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Standard streams and the environment
+
+/// Captures the n bytes at p as written to standard output, or to
+/// standard error when err.
+pub fn write_raw(err: Bool, p: Int, n: Int) {
+  let off = if err { S_ERR } else { S_OUT }
+  lock()
+  vec_put(st() + off, p, n)
+  unlock()
+}
+
+/// Captures s (FakeStdio's eprint when err).
+pub fn write(err: Bool, s: Str) { write_raw(err, raw.data(s), s.len()) }
+
+/// FakeStdio.output() (which 1) or errors() (2).
+pub fn output(which: Int) -> Str {
+  let off = if which == 2 { S_ERR } else { S_OUT }
+  lock()
+  let s = vec_str(st() + off)
+  unlock()
+  s
+}
+
+/// The index of the variable of the n bytes at p in the fake
+/// environment (the last set wins: set replaces), or -1 (the lock held).
+fn env_find(p: Int, n: Int) -> Int {
+  let ks = st() + S_EKEYS
+  var i = vec_len(ks) - 1
+  while i >= 0 {
+    if blk_eq(vec_at(ks, i), p, n) {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// FakeEnv's `env.get` of the name of the n bytes at p: the value in a
+/// list of one, or the empty list.
+pub fn env_get_raw(p: Int, n: Int) -> List[Str] {
+  lock()
+  let i = env_find(p, n)
+  let out: List[Str] = if i < 0 { [] } else { [blk_str(vec_at(st() + S_EVALS, i))] }
+  unlock()
+  out
+}
+
+/// FakeEnv.vars(): NAME=VALUE in the order set.
+pub fn env_vars() -> List[Str] {
+  lock()
+  let s = st()
+  let n = vec_len(s + S_EKEYS)
+  var out = List[Str].with_capacity(n)
+  for i in 0..n {
+    out.push("${blk_str(vec_at(s + S_EKEYS, i))}=${blk_str(vec_at(s + S_EVALS, i))}")
+  }
+  unlock()
+  out
+}
+
+/// FakeEnv.set(name, value).
+pub fn env_set(k: Str, v: Str) {
+  let nb = blk_of(v)
+  lock()
+  let s = st()
+  let i = env_find(raw.data(k), k.len())
+  if i >= 0 {
+    blk_free(vec_at(s + S_EVALS, i))
+    vec_set(s + S_EVALS, i, nb)
+  } else {
+    vec_push(s + S_EKEYS, blk_of(k))
+    vec_push(s + S_EVALS, nb)
+  }
+  unlock()
+}
+
+/// FakeEnv.set_args(args) (and run_main's args).
+pub fn set_args(args: List[Str]) {
+  var bs = List[Int].with_capacity(args.len())
+  for a in args {
+    bs.push(blk_of(a))
+  }
+  lock()
+  let v = st() + S_ARGS
+  for i in 0..vec_len(v) {
+    blk_free(vec_at(v, i))
+  }
+  rt.mem_store(v, 8, 0, 8)
+  for b in bs {
+    vec_push(v, b)
+  }
+  unlock()
+}
+
+/// FakeEnv's `env.args()`.
+pub fn args() -> List[Str] {
+  lock()
+  let v = st() + S_ARGS
+  let n = vec_len(v)
+  var out = List[Str].with_capacity(n)
+  for i in 0..n {
+    out.push(blk_str(vec_at(v, i)))
+  }
+  unlock()
+  out
+}
+
+/// Records os.proc.exit's code (FakeProc.exit_code).
+pub fn set_exit(code: Int) {
+  lock()
+  let s = st()
+  rt.mem_store(s, S_EXIT, code, 8)
+  rt.mem_store(s, S_HAS_EXIT, 1, 8)
+  unlock()
+}
+
+/// The code os.proc.exit recorded (0 when none).
+pub fn exit_value() -> Int {
+  lock()
+  let c = rt.mem_load(st(), S_EXIT, 8)
+  unlock()
+  c
+}
+
+/// FakeProc.exit_code(): the code os.proc.exit recorded, in a list of
+/// one, or the empty list.
+pub fn exit_code() -> List[Int] {
+  lock()
+  let s = st()
+  let out: List[Int] = if rt.mem_load(s, S_HAS_EXIT, 8) != 0 { [rt.mem_load(s, S_EXIT, 8)] } else { [] }
+  unlock()
+  out
+}
+
+// ---------------------------------------------------------------------------
+// FakeStdio's standard input (FakeStdio.set_input, std.md 8.4; std/rt's
+// FakeStdio): the text (a block) and how much of it was read.
+
+/// `stdio.set_input(text)`: reads start over on text.
+pub fn set_input(text: Str) {
+  let b = blk_of(text)
+  lock()
+  let s = st()
+  blk_free(rt.mem_load(s, S_IN, 8))
+  rt.mem_store(s, S_IN, b, 8)
+  rt.mem_store(s, S_IN_OFF, 0, 8)
+  unlock()
+}
+
+/// A read of the fake standard input: mode 0 a line (without its line
+/// end), 1 the rest, 2 at most max bytes; and the status of
+/// xo_stdin_status: 0 the text, 1 the end of input.
+pub fn stdin_read(mode: Int, max: Int) -> (Str, Int) {
+  lock()
+  let s = st()
+  let b = rt.mem_load(s, S_IN, 8)
+  let off = rt.mem_load(s, S_IN_OFF, 8)
+  let n = if b == 0 { 0 } else { blk_len(b) - off }
+  let p = b + 8 + off
+  if mode == 2 {
+    let k = if n > max { max } else { n }
+    let t = raw.str_at(p, k)
+    rt.mem_store(s, S_IN_OFF, off + k, 8)
+    unlock()
+    return (t, if k > 0 { 0 } else { 1 })
+  }
+  var take = n
+  var skip = 0
+  if mode == 0 {
+    if n == 0 {
+      unlock()
+      return (raw.str_at(p, 0), 1)
+    }
+    var i = 0
+    while i < n && raw.byte_at(p, i) != 10 {
+      i += 1
+    }
+    if i < n {
+      take = i
+      skip = 1
+    }
+  }
+  // a line drops the CR of a CR LF line end
+  let k = if mode == 0 && take > 0 && raw.byte_at(p, take - 1) == 13 { take - 1 } else { take }
+  let t = raw.str_at(p, k)
+  rt.mem_store(s, S_IN_OFF, off + take + skip, 8)
+  unlock()
+  (t, 0)
+}
+
+// ---------------------------------------------------------------------------
+// FakeProc (std.md 8.4, decision 0190): the outputs FakeProc.on_run
+// registered, by command. An entry is a block of words: the command, the
+// status, standard output, standard error (blocks); entries stay until
+// the test ends (the last registration of a command wins), so the C
+// runtime's fake children read one without the lock.
+
+/// `FakeProc.on_run(cmd, out)`: a later run of cmd in the test gives the
+/// outputs.
+pub fn proc_on_run(cmd: Str, code: Int, out: Bytes, err: Bytes) {
+  let e = rt.heap_large(32)
+  rt.mem_store(e, 0, blk_of(cmd), 8)
+  rt.mem_store(e, 8, code, 8)
+  rt.mem_store(e, 16, blk_new(rt.bytes_addr(out), out.len()), 8)
+  rt.mem_store(e, 24, blk_new(rt.bytes_addr(err), err.len()), 8)
+  lock()
+  vec_push(st() + S_PROCS, e)
+  unlock()
+}
+
+/// The entry of the command of the n bytes at p, or 0.
+pub fn proc_find_raw(p: Int, n: Int) -> Int {
+  lock()
+  let v = st() + S_PROCS
+  var i = vec_len(v) - 1
+  var e = 0
+  while i >= 0 {
+    if blk_eq(rt.mem_load(vec_at(v, i), 0, 8), p, n) {
+      e = vec_at(v, i)
+      break
+    }
+    i -= 1
+  }
+  unlock()
+  e
+}
+
+fn proc_find(cmd: Str) -> Int { proc_find_raw(raw.data(cmd), cmd.len()) }
+
+/// The outcome of a fake run as the C runtime gives it: "0", the status,
+/// standard output, standard error.
+fn proc_outputs(code: Int, out: Str, err: Str) -> List[Str] { ["0", "${code}", out, err] }
+
+/// Proc.run of cmd in the test world: the outputs registered, or "1"
+/// (not found).
+pub fn proc_run(cmd: Str) -> List[Str] {
+  let e = proc_find(cmd)
+  if e == 0 {
+    return ["1", ""]
+  }
+  proc_outputs(rt.mem_load(e, 8, 8), blk_str(rt.mem_load(e, 16, 8)), blk_str(rt.mem_load(e, 24, 8)))
+}
+
+/// std/rt's fakeProc output, runTerm, and pipeline of the commands of
+/// the specs (procspec.xo spec; mode as rt.proc_exec's): the outcome as
+/// rt.proc_exec gives it.
+pub fn proc_exec(specs: List[Str], mode: Int) -> List[Str] {
+  var out = ""
+  var errs = ""
+  var code = 0
+  var i = 0
+  while i + 3 < specs.len() {
+    let name = specs[i]
+    let flags = first_number(specs[i + 2])
+    i += 4 + first_number(specs[i + 3])
+    // the environment, the variables added, the command line
+    if i < specs.len() {
+      i += 1 + first_number(specs[i])
+    }
+    if i < specs.len() {
+      i += 1 + first_number(specs[i])
+    }
+    i += 1
+    let e = proc_find(name)
+    if e == 0 {
+      return ["1", name]
+    }
+    let merge = flags & 4 != 0
+    let fo = blk_str(rt.mem_load(e, 16, 8))
+    let fe = blk_str(rt.mem_load(e, 24, 8))
+    let fc = rt.mem_load(e, 8, 8)
+    if mode == 1 {
+      write(false, fo)
+      write(!merge, fe)
+      code = fc
+      break
+    }
+    out = if merge { fo + fe } else { fo }
+    if !merge {
+      errs = errs + fe
+    }
+    if mode == 0 || fc != 0 {
+      code = fc
+    }
+  }
+  proc_outputs(code, out, errs)
+}
+
+// ---------------------------------------------------------------------------
+// Log records (testing.logs, std.md 8.6): a record is a block of words:
+// the level, the message, the module that wrote it (decision 0173; ""
+// for the main module), the number of fields, and their keys and values
+// (blocks).
+
+/// Keeps a record and echoes its text line to the harness (an empty line
+/// is not echoed: a configured log output got the record).
+pub fn log(level: Int, msg: Str, module: Str, keys: List[Str], vals: List[Str], line: Str) {
+  let nf = keys.len()
+  let r = rt.heap_large(8 * (4 + 2 * nf))
+  rt.mem_store(r, 0, level, 8)
+  rt.mem_store(r, 8, blk_of(msg), 8)
+  rt.mem_store(r, 16, blk_of(module), 8)
+  rt.mem_store(r, 24, nf, 8)
+  for i in 0..nf {
+    rt.mem_store(r, 32 + 16 * i, blk_of(keys[i]), 8)
+    rt.mem_store(r, 40 + 16 * i, blk_of(if i < vals.len() { vals[i] } else { "" }), 8)
+  }
+  lock()
+  vec_push(st() + S_RECS, r)
+  if line.len() > 0 {
+    rttest.test_write("XO-TEST-LOG ${line}\n")
+  }
+  unlock()
+}
+
+pub fn log_count() -> Int {
+  lock()
+  let n = vec_len(st() + S_RECS)
+  unlock()
+  n
+}
+
+/// Record i, or 0 (records are never freed while the test runs).
+fn rec_at(i: Int) -> Int {
+  lock()
+  let v = st() + S_RECS
+  let r = if i >= 0 && i < vec_len(v) { vec_at(v, i) } else { 0 }
+  unlock()
+  r
+}
+
+pub fn log_level(i: Int) -> Int {
+  let r = rec_at(i)
+  if r == 0 { 0 } else { rt.mem_load(r, 0, 8) }
+}
+
+pub fn log_msg(i: Int) -> Str {
+  let r = rec_at(i)
+  if r == 0 { "" } else { blk_str(rt.mem_load(r, 8, 8)) }
+}
+
+/// The dependency that wrote record i (decision 0173), "" for the main
+/// module.
+pub fn log_module(i: Int) -> Str {
+  let r = rec_at(i)
+  if r == 0 { "" } else { blk_str(rt.mem_load(r, 16, 8)) }
+}
+
+pub fn log_nfields(i: Int) -> Int {
+  let r = rec_at(i)
+  if r == 0 { 0 } else { rt.mem_load(r, 24, 8) }
+}
+
+/// Key (val false) or value (val true) j of record i.
+fn log_field(i: Int, j: Int, val: Bool) -> Str {
+  let r = rec_at(i)
+  if r == 0 || j < 0 || j >= rt.mem_load(r, 24, 8) {
+    return ""
+  }
+  let off = if val { 40 } else { 32 }
+  blk_str(rt.mem_load(r, off + 16 * j, 8))
+}
+
+pub fn log_key(i: Int, j: Int) -> Str { log_field(i, j, false) }
+
+pub fn log_val(i: Int, j: Int) -> Str { log_field(i, j, true) }
+
+// ---------------------------------------------------------------------------
+// FakeNet handlers and failures, and the requests seen. An entry is a
+// block of words: the method ("" any), the URL prefix (scheme://host[:port],
+// "" any), the path pattern (blocks), the value kept (the handler
+// closure or the ClientErr, as an rt.Any), and whether it is used once
+// (fail_next).
+
+fn fake_list(kind: Int) -> Int {
+  let off = if kind == 0 { S_HANDLERS } else { S_FAILS }
+  st() + off
+}
+
+fn fake_add(kind: Int, method: Str, prefix: Str, path: Str, v: rt.Any, once: Bool) {
+  let e = rt.heap_large(40)
+  rt.mem_store(e, 0, blk_of(method), 8)
+  rt.mem_store(e, 8, blk_of(prefix), 8)
+  rt.mem_store(e, 16, blk_of(path), 8)
+  rt.mem_store(e, 24, keep(v), 8)
+  rt.mem_store(e, 32, if once { 1 } else { 0 }, 8)
+  lock()
+  vec_push(fake_list(kind), e)
+  unlock()
+}
+
+/// Frees entry e and drops its value.
+fn fake_free(e: Int) {
+  blk_free(rt.mem_load(e, 0, 8))
+  blk_free(rt.mem_load(e, 8, 8))
+  blk_free(rt.mem_load(e, 16, 8))
+  drop_kept(rt.mem_load(e, 24, 8))
+  rt.heap_release(e - 8)
+}
+
+/// FakeNet.handle: method ("" any), the URL prefix ("" any), the path
+/// pattern, and the handler.
+pub fn fake_handle(method: Str, prefix: Str, path: Str, h: rt.Any) { fake_add(0, method, prefix, path, h, false) }
+
+/// FakeNet.fail (once: fail_next) with the ClientErr.
+pub fn fake_fail(method: Str, prefix: Str, path: Str, e: rt.Any, once: Bool) { fake_add(1, method, prefix, path, e, once) }
+
+/// Takes the entries of list kind out of the state (the lock held).
+fn fake_take(kind: Int) -> List[Int] {
+  let v = fake_list(kind)
+  let n = vec_len(v)
+  var es = List[Int].with_capacity(n)
+  for i in 0..n {
+    es.push(vec_at(v, i))
+  }
+  vec_free(v)
+  es
+}
+
+/// FakeNet.clear_failures.
+pub fn fake_clear() {
+  lock()
+  let es = fake_take(1)
+  unlock()
+  for e in es {
+    fake_free(e)
+  }
+}
+
+/// The number of handlers (kind 0) or failures (1).
+pub fn fake_count(kind: Int) -> Int {
+  lock()
+  let n = vec_len(fake_list(kind))
+  unlock()
+  n
+}
+
+/// Entry i of list kind, or 0 (the lock held).
+fn fake_at(kind: Int, i: Int) -> Int {
+  let v = fake_list(kind)
+  if i >= 0 && i < vec_len(v) { vec_at(v, i) } else { 0 }
+}
+
+/// The method (what 0), prefix (1), or path pattern (2) of handler or
+/// failure i.
+pub fn fake_text(kind: Int, i: Int, what: Int) -> Str {
+  lock()
+  let e = fake_at(kind, i)
+  let s = if e == 0 { "" } else { blk_str(rt.mem_load(e, 8 * what, 8)) }
+  unlock()
+  s
+}
+
+/// The handler or the error of entry i (an empty value when there is
+/// none).
+pub fn fake_value(kind: Int, i: Int) -> rt.Any {
+  lock()
+  let e = fake_at(kind, i)
+  if e == 0 {
+    unlock()
+    return rt.any_of(0)
+  }
+  let v = kept(rt.mem_load(e, 24, 8))
+  unlock()
+  v
+}
+
+/// Failure i matched: one of fail_next is removed.
+pub fn fake_used(i: Int) {
+  lock()
+  let e = fake_at(1, i)
+  if e == 0 || rt.mem_load(e, 32, 8) == 0 {
+    unlock()
+    return
+  }
+  vec_remove(fake_list(1), i)
+  unlock()
+  fake_free(e)
+}
+
+/// Keeps a request a client made (FakeNet.requests).
+pub fn record(req: rt.Any) {
+  let a = keep(req)
+  lock()
+  vec_push(st() + S_REQS, a)
+  unlock()
+}
+
+pub fn req_count() -> Int {
+  lock()
+  let n = vec_len(st() + S_REQS)
+  unlock()
+  n
+}
+
+pub fn req_get(i: Int) -> rt.Any {
+  lock()
+  let v = st() + S_REQS
+  if i < 0 || i >= vec_len(v) {
+    unlock()
+    return rt.any_of(0)
+  }
+  let r = kept(vec_at(v, i))
+  unlock()
+  r
+}
+
+// ---------------------------------------------------------------------------
+// MemFs (std.md 8.3, decision 0108): std/native/testing.xo keeps the
+// file system as an Xo value (testing.MemState) here between operations.
+// An operation takes it (locking the store), works on it without
+// waiting, and puts it back (unlocking): operations are atomic, as the
+// Go backend's under its mutex.
+
+/// Locks the store and moves the state out (a list of one, or empty
+/// before the first operation).
+pub fn memfs_take() -> List[rt.Any] {
+  lock_at(rt.static_word(W_MEMFS_LOCK))
+  let w = rt.static_word(W_MEMFS)
+  let a = rt.mem_load(w, 0, 8)
+  if a == 0 {
+    return []
+  }
+  rt.mem_store(w, 0, 0, 8)
+  let v = kept(a)
+  let _last = rc.dec(a)
+  [v]
+}
+
+/// Stores the state and unlocks the store.
+pub fn memfs_put(s: rt.Any) {
+  rt.mem_store(rt.static_word(W_MEMFS), 0, keep(s), 8)
+  unlock_at(rt.static_word(W_MEMFS_LOCK))
+}
+
+// ---------------------------------------------------------------------------
+// The end of a test
+
+/// Releases the values the test world keeps (handlers, failures,
+/// requests, the MemFs) when the test ends, for the leak check; the C
+/// releases the routers its listeners serve.
+pub fn cleanup() {
+  fake_clear()
+  let ml = rt.static_word(W_MEMFS_LOCK)
+  lock_at(ml)
+  let w = rt.static_word(W_MEMFS)
+  let m = rt.mem_load(w, 0, 8)
+  rt.mem_store(w, 0, 0, 8)
+  unlock_at(ml)
+  if m != 0 {
+    drop_kept(m)
+  }
+  lock()
+  let hs = fake_take(0)
+  let v = st() + S_REQS
+  let n = vec_len(v)
+  var rs = List[Int].with_capacity(n)
+  for i in 0..n {
+    rs.push(vec_at(v, i))
+  }
+  vec_free(v)
+  unlock()
+  for e in hs {
+    fake_free(e)
+  }
+  for r in rs {
+    drop_kept(r)
+  }
+}
