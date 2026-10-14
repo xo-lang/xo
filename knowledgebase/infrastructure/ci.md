@@ -57,7 +57,13 @@ split by each package's weight (seconds on a big runner: internal/llvm
 320, internal/selfhost 190, cmd/xo 100, gen and arm64 90, xotool 45,
 others 30; longest first, each to the least loaded job) with the fixed
 point (150) counted as one more load. A run watched with `gh run watch`
-shows every job.
+shows every job. Verified 2026-10-14 (run 38615252053, a probe
+changing selfhost/ and std/): four jobs in parallel (short 49 s;
+selfhost, arm64, and std 3 min 19 s; cmd/xo, gen, and the fixed point
+5 min 20 s; llvm 5 min 34 s), 6 min 18 s from the plan to the last job,
+against about 8 minutes for the same tests in one job without cmd/xo.
+`measure testworld` (run 38615416032): 3 min 27 s, ratios 1.000 for an
+unchanged std.
 
 ## Suites
 
