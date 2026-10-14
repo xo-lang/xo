@@ -263,71 +263,14 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 static __thread int64_t n_fs_status;
 static __thread char *n_fs_path, *n_fs_err;
 
-// xo_fs_read is `os.fs.read(path)`: the contents in a list of one, or the
-// empty list with the status set (std/rt's mapFsErr).
+// xo_fs_read is a stub: os.fs.read is Xo on every native target
+// (std/native/llrt/sysio.xo, work item B16), whose layer 0 arm (a wasm
+// module's) still names it (gotchas/dead-target-arm-still-links.md).
 xo_rlist *xo_fs_read(const char *p, int64_t n) {
-	char *path = cstr_of(p, n);
-	FILE *f = NULL;
-	int err = 0;
-	if (tw_is_fake(TW_REAL_FS_READ)) {
-		// a test's MemFs starts empty (std.md 8.3)
-		err = ENOENT;
-	} else {
-		f = fopen(n == 0 ? "." : path, "rb");
-	}
-	nbuf b = {0};
-	if (!f && err == 0) {
-		err = errno;
-	} else if (f) {
-		char t[65536];
-		size_t k;
-		while ((k = fread(t, 1, sizeof t, f)) > 0) {
-			nbuf_put(&b, t, (int64_t)k);
-		}
-		if (ferror(f)) {
-			err = errno ? errno : EIO;
-		}
-		fclose(f);
-	}
-	if (err != 0) {
-		free(b.p);
-		int64_t st = 7;
-		switch (err) {
-		case ENOENT:
-			st = 1;
-			break;
-		case EEXIST:
-			st = 2;
-			break;
-		case ENOTEMPTY:
-			st = 3;
-			break;
-		case ENOTDIR:
-			st = 4;
-			break;
-		case EISDIR:
-			st = 5;
-			break;
-		case EACCES:
-		case EPERM:
-			st = 6;
-			break;
-		}
-		n_fs_status = st;
-		free(n_fs_path);
-		free(n_fs_err);
-		n_fs_path = path;
-		n_fs_err = strdup(strerror(err));
-		if (n_fs_err[0] >= 'A' && n_fs_err[0] <= 'Z') {
-			n_fs_err[0] = (char)(n_fs_err[0] + 32);
-		}
-		return &empty_list;
-	}
-	free(path);
-	n_fs_status = 0;
-	xo_rlist *l = str_list(b.p ? b.p : "", b.n);
-	free(b.p);
-	return l;
+	(void)p;
+	(void)n;
+	static const char m[] = "the C fs.read on a native target";
+	xo_fault_raise(m, sizeof m - 1, "", 0);
 }
 
 int64_t xo_fs_status(void) { return n_fs_status; }

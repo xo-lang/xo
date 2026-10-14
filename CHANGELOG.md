@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B16, option D): macOS on x86_64
+  makes its file calls from Xo too (std/native/llrt/darwin.xo, through
+  libSystem's stat64, lstat64, fstat64, and __getdirentries64, which
+  both macOS architectures now use), so the C Fs operations
+  (std/llrt/xo_fs.c) and the C fs.read are deleted: 831 lines net.
+  macOS figures unchanged (bench/results/fs-ops-2026-10-14.md).
 - Native runtime (decision 0221 point 10): a fault on macOS arm64
   unwinds through the Xo walker, which reads the compact unwind of
   `__unwind_info` itself, instead of libunwind. bench/perf/fault is

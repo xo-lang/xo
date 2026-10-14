@@ -3,12 +3,13 @@
 // in Xo (work item B16 of bench/results/zero-c-audit-refresh-2026-10-13.md):
 // directory names, rename, remove, set_modified, the system calls under
 // fspath.xo, file handles, copy, modes, links, and advisory locks, with
-// the C runtime's semantics (std/llrt/xo_fs.c, Go's os package) and its
-// messages. Linux (linux.xo, raw system calls), darwin/arm64 (darwin.xo,
-// libSystem), and Windows (windows.xo, kernel32, part 2) make their calls
-// from Xo. darwin/amd64 (sysio.layer 0: the stat and dirent symbols there
-// are `$INODE64` ones, gotchas/darwin-amd64-stat-inode64.md) and wasm
-// call the C runtime (rt.fs_*), which stays for them.
+// the semantics and messages of the C runtime's xo_fs.c they replaced
+// (Go's os package). Linux (linux.xo, raw system calls), macOS on arm64
+// and x86_64 (darwin.xo, libSystem), and Windows (windows.xo, kernel32)
+// make their calls from Xo; a wasm module (layer 0) names the runtime's
+// rt.fs_* functions, which its own runtime serves or faults (on the
+// native targets they are faulting link stubs in std/llrt/xo_fs.c,
+// gotchas/dead-target-arm-still-links.md).
 //
 // A handle is the C runtime's record (rt.fs_raw_file, rt.fs_raw_lock), so
 // a handle dropped without close still closes its descriptor (and
@@ -50,8 +51,8 @@ const LOW7S: Int = 9187201950435737471
 const HIGHS: Int = -9187201950435737472
 const NEWLINES: Int = 723401728380766730
 
-/// The layer this module calls: 1 Linux, 2 macOS on arm64, 3 Windows, 0
-/// the C runtime (darwin/amd64, wasm).
+/// The layer this module calls: 1 Linux, 2 macOS, 3 Windows, 0 a wasm
+/// module.
 fn layer() -> Int { sysio.layer() }
 
 /// Records errno e of layer l for the Xo path x: the status.

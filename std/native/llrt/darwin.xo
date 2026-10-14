@@ -109,14 +109,14 @@ pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
 pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
   let buf = obj.scratch()
   let z = cpath(path)
-  let r = if follow { sys_darwin.stat(z, buf) } else { sys_darwin.lstat(z, buf) }
+  let r = if follow { sys_darwin.stat64(z, buf) } else { sys_darwin.lstat64(z, buf) }
   facts(buf, ret_keep(z, Int(r)))
 }
 
 /// fstat(2) of the open descriptor fd.
 pub fn fstat(fd: Int) -> (Stat, Int) {
   let buf = obj.scratch()
-  facts(buf, ret(Int(sys_darwin.fstat(fd, buf))))
+  facts(buf, ret(Int(sys_darwin.fstat64(fd, buf))))
 }
 
 /// The facts of the struct stat at address buf (st_mode a 16 bit field at 4,
@@ -141,6 +141,11 @@ pub const EAGAIN: Int = 35
 pub const O_RDWR: Int = 2
 pub const O_APPEND: Int = 8
 pub const O_EXCL: Int = 2048
+pub const O_DIRECTORY: Int = 1048576
+
+/// The record buffer of names (readdir(3)'s is 4096 bytes on macOS; a
+/// larger one makes fewer calls).
+const DIRENT_BUF = 16384
 
 /// utimensat's directory for paths relative to the working directory.
 const AT_FDCWD: Int = -2
@@ -231,26 +236,37 @@ pub fn flock(fd: Int, op: Int) -> Int { ret(Int(sys_darwin.flock(fd, op))) }
 /// order) and 0, or the errno of opendir (as the C runtime's loop, a
 /// failed read ends the list).
 pub fn names(path: Str) -> (List[Str], Int) {
-  let z = cpath(path)
-  let d = sys_darwin.opendir(z)
-  if d == 0 {
-    return ([], keep(z, errno()))
+  // opendir(3)'s open: a file is ENOTDIR
+  let fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+  if fd < 0 {
+    return ([], -fd)
   }
   var out: List[Str] = []
+  let buf = raw.bytes_buf(DIRENT_BUF + 8)
+  let a = raw.bytes_addr(buf)
+  // the position, after the records
+  rt.mem_store(a, DIRENT_BUF, 0, 8)
   while true {
-    let e = sys_darwin.readdir(d)
-    if e == 0 {
+    // an error ends the listing, as readdir(3)'s NULL ended the C path's
+    let n = sys_darwin.__getdirentries64(fd, a, DIRENT_BUF, a + DIRENT_BUF)
+    if n <= 0 {
       break
     }
-    // struct dirent (64 bit inodes): d_namlen at 18, d_name at 21
-    let k = rt.mem_load(e, 18, 2)
-    let name = e + 21
-    if !(k == 1 && rt.mem_load(name, 0, 1) == 46) && !(k == 2 && rt.mem_load(name, 0, 2) == 11822) {
-      out.push(raw.str_at(name, k))
+    var off = 0
+    while off < n {
+      // struct dirent (64 bit inodes): d_reclen at 16, d_namlen at 18,
+      // d_name at 21
+      let e = a + off
+      let k = rt.mem_load(e, 18, 2)
+      let name = e + 21
+      if !(k == 1 && rt.mem_load(name, 0, 1) == 46) && !(k == 2 && rt.mem_load(name, 0, 2) == 11822) {
+        out.push(raw.str_at(name, k))
+      }
+      off += rt.mem_load(e, 16, 2)
     }
   }
-  let _c = sys_darwin.closedir(d)
-  (out, 0)
+  let _c = sys_darwin.close(fd)
+  (out, keep(buf, 0))
 }
 
 /// path and a NUL byte as written ("" stays empty).
