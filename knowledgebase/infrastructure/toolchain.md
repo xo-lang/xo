@@ -3231,7 +3231,7 @@ i-EXAMPLE03).
     scripts/intel-mac-test.sh --clean COMMIT -- 'XO_LLVM_JOBS=4 scripts/xo1-host-check.sh $HOME/out; cat $HOME/out/summary.txt'
 
 xo1-host-check.sh builds xo1 as a checkout does (`go run
-./scripts/xobuild` with a fresh cache: arm64 backend on arm64, LLVM
+./scripts/xobuild --from-source` with a fresh cache, since 2026-10-13 opted in to the go-compiler-final root: arm64 backend on arm64, LLVM
 split into 12 modules without LTO on x86-64; before decision 0215, as
 switch point A's Go driver did), runs scripts/selfhost-goldens.py with
 it (`XO1_BACKEND=llvm`),
@@ -3267,14 +3267,22 @@ reaches through `use`; xotool.Inputs). The build goes into `<user
 cache>/xo/checkout/<key>/xo` once per key, under a file lock, shared by
 worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
 the checkout's earlier bin/xo, the newest earlier build in that cache,
-`xo` on PATH, the newest prebuilt seed (below; needs the aws CLI and
-read access to the seed bucket), and the go-compiler-final seed (built
-once into `<user cache>/xo/seed/<commit>`, from `git archive` of the
-tag, or of its commit in a clone without tags; needs Go and git) through
-the seed chain; a seed that fails is reported and the next one tried,
-and the log names the path taken ("xotool: building xo ... with the
-prebuilt seed of s3://...", or "xotool: falling back to the
-go-compiler-final root"). The backend: arm64 on an arm64
+`xo` on PATH, and the newest prebuilt seed (below; needs the aws CLI
+and read access to the seed bucket); a seed that fails is reported and
+the next one tried, and the log names the path taken ("xotool: building
+xo ... with the prebuilt seed of s3://..."). When none builds, xobuild
+exits non-zero with every cause, the bucket path, and the opt in (owner,
+2026-10-13: the chain costs 25 to 37 minutes and hid fetch failures).
+Building from source is opt in: `XO_SEED_FALLBACK=chain` adds the
+go-compiler-final seed (built once into `<user cache>/xo/seed/<commit>`,
+from `git archive` of the tag, or of its commit in a clone without tags;
+needs Go and git) through the seed chain after the others, and lets a
+failing local xo try the chain; `go run ./scripts/xobuild --from-source`
+(`XO_SEED_FALLBACK=from-source`) uses that root alone, for the replay
+from source (decision 0216 item 3) and a new platform (a build of the
+same key already in the cache is reused: point `XO_CHECKOUT_CACHE` at an
+empty directory for a full replay); the log says "xotool: building the
+go-compiler-final root and walking scripts/seed-chain.txt". The backend: arm64 on an arm64
 host, the LLVM backend split into 12 modules without LTO on x86-64, the
 Go backend on Windows. `XO_CHECKOUT_CACHE` moves the cache. The Go tests
 build it on first use unless `XO_CLI` names an xo. On the development
@@ -3315,8 +3323,12 @@ cache>/xo/seeds/<seed>/<goos>-<goarch>/tree` (once, under a file lock;
 the xo is tree/xo/bin/xo); that xo builds the checkout's selfhost/xo in
 one hop. When latest.txt cannot be read, the newest seed already
 unpacked is used. A failed fetch (no aws CLI, no access, no seed for the
-host) or a failed build falls back to the go-compiler-final root and the
-chain. Variables: `XO_SEED_BUCKET` (bucket[/prefix], default
+host, a sha256 mismatch) or a failed build is an error naming the cause
+and the bucket path; the chain runs only with `XO_SEED_FALLBACK=chain`
+(TestFetchFailNoChain). Seeds are unpacked only into the user cache,
+never into $HOME: the tarball's top directory is xo/, and on EC2 the
+checkout is ~/xo (unpacking there overwrote its bin/xo and std,
+2026-10-13). Variables: `XO_SEED_BUCKET` (bucket[/prefix], default
 xo-seeds-ACCOUNT_ID), `XO_SEED_URL` (the location instead:
 `s3://bucket[/prefix]`, `file:///dir`, or a directory laid out like the
 bucket; `off` skips fetching). `XO_SEED` still comes first. The fetch
@@ -3377,22 +3389,23 @@ since release.sh deletes dist/):
     aws s3 ls s3://xo-seeds-ACCOUNT_ID/seeds/$s/
 
 Upload latest.txt last, after every platform of the seed is in place: a
-host whose platform is missing from the newest seed falls back to the
-chain. release.sh's linux/amd64 xo is built by the Go backend and its
-linux/arm64 xo by selfhost/macho's ELF link (both passed
+host whose platform is missing from the newest seed fails (or, opted
+in, takes the chain). release.sh's linux/amd64 xo is built by the Go
+backend and its linux/arm64 xo by selfhost/macho's ELF link (both passed
 release-verify.sh on EC2, 2026-10-12). There is no Windows seed yet: a
-Windows host falls back to the chain. In an EC2 queue command, before
-xotool fetched seeds itself, the lead's prefix was `aws s3 cp
-s3://xo-seeds-ACCOUNT_ID/seeds/0.9.0-5e21dc31/linux-arm64.tar.gz - |
-tar -xz -C $HOME && export XO_SEED=$HOME/xo/bin/xo;`; with this change
-`go run ./scripts/xobuild` does the same by itself.
+Windows host needs `XO_SEED`, or `XO_SEED_FALLBACK=chain`. In an EC2
+queue command the lead's prefix unpacks the seed into $HOME/xo-seed and
+sets XO_SEED (UPDATE 13 of 2026-10-13); with this change `go run
+./scripts/xobuild` fetches it into the user cache by itself on an
+instance with the xo-ci-seed-read profile.
 
 The seed chain (decision 0216 item 2): an xo older than an intrinsic
 the sources use cannot build them (gotchas/seed-older-than-intrinsics.md).
 scripts/seed-chain.txt records the hops, `<commit> [std=<commit>]`, in
 order: a hop builds that commit's selfhost/xo with the previous xo,
 against the std of `std=` (default its own), and the last hop builds the
-checkout. internal/xotool applies them when a seed fails (each hop built
+checkout. internal/xotool applies them only when opted in
+(`XO_SEED_FALLBACK=chain` when a seed fails, or `--from-source`; each hop built
 once into `<user cache>/xo/seed/hop-<commit>[-std-<commit>]`), and
 
     XO_SEED_CHAIN=file scripts/bootstrap-xo.sh SEED [OUTDIR]
@@ -3454,7 +3467,7 @@ On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
 launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's
 xo-ci key pair and security group, a 120 minute self poweroff plus a
 local watchdog, terminated on exit), makes the seed there (`go run
-./scripts/xobuild`: the go-compiler-final xo1 builds the commit's
+./scripts/xobuild --from-source`: the go-compiler-final xo1 and the seed chain build the commit's
 selfhost/xo), deletes the Go toolchain and caches from the machine, and
 runs bootstrap-xo.sh. The
 log goes to bench/results/remote/bootstrap-<commit>.log (git ignored).

@@ -149,8 +149,9 @@ func TestFetchSeedRejects(t *testing.T) {
 	})
 }
 
-// TestSeedOrder: the prebuilt seed comes after the local candidates and
-// before the go-compiler-final root, and XO_SEED_URL=off drops it.
+// TestSeedOrder: the prebuilt seed comes after the local candidates;
+// the go-compiler-final root only with XO_SEED_FALLBACK=chain (last) or
+// from-source (alone); XO_SEED_URL=off drops the prebuilt seed.
 func TestSeedOrder(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XO_CHECKOUT_CACHE", t.TempDir())
@@ -160,18 +161,65 @@ func TestSeedOrder(t *testing.T) {
 	t.Setenv("XO_SEED", seed)
 	t.Setenv("XO_SEED_URL", "")
 	t.Setenv("XO_SEED_BUCKET", "")
+	t.Setenv("XO_SEED_FALLBACK", "")
 	ss, _ := Seeds(root)
-	if len(ss) != 3 || ss[0].Path != seed || !strings.Contains(ss[1].Why, "s3://"+DefaultSeedBucket) || ss[2].Resolve == nil {
+	if len(ss) != 2 || ss[0].Path != seed || !strings.Contains(ss[1].Why, "s3://"+DefaultSeedBucket) {
 		t.Fatalf("seeds %+v", ss)
 	}
+	t.Setenv("XO_SEED_FALLBACK", "chain")
+	if ss, _ := Seeds(root); len(ss) != 3 || !strings.Contains(ss[2].Why, SeedTag) {
+		t.Errorf("XO_SEED_FALLBACK=chain: seeds %+v", ss)
+	}
+	t.Setenv("XO_SEED_FALLBACK", "from-source")
+	if ss, _ := Seeds(root); len(ss) != 1 || !strings.Contains(ss[0].Why, SeedTag) {
+		t.Errorf("XO_SEED_FALLBACK=from-source: seeds %+v", ss)
+	}
+	t.Setenv("XO_SEED_FALLBACK", "yes")
+	if _, err := Seeds(root); err == nil {
+		t.Error("XO_SEED_FALLBACK=yes: no error")
+	}
+	t.Setenv("XO_SEED_FALLBACK", "")
 	t.Setenv("XO_SEED_URL", "off")
-	if ss, _ := Seeds(root); len(ss) != 2 {
+	if ss, _ := Seeds(root); len(ss) != 1 {
 		t.Errorf("XO_SEED_URL=off: seeds %+v", ss)
 	}
 	t.Setenv("XO_SEED_URL", "")
 	t.Setenv("XO_SEED_BUCKET", "b/p")
 	if u := SeedURL(); u != "s3://b/p" {
 		t.Errorf("SeedURL %s", u)
+	}
+}
+
+// TestFetchFailNoChain: with no local xo and a seed location without
+// the host's seed, the build fails with an error naming the location and
+// the opt in, and never starts the go-compiler-final root or the chain
+// (owner, 2026-10-13).
+func TestFetchFailNoChain(t *testing.T) {
+	root := t.TempDir()
+	loc := t.TempDir()
+	os.MkdirAll(filepath.Join(loc, "seeds"), 0o755)
+	os.WriteFile(filepath.Join(loc, "seeds", "latest.txt"), []byte(testSeed+"\n"), 0o644)
+	t.Setenv("XO_SEED_URL", loc)
+	t.Setenv("XO_CHECKOUT_CACHE", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("XO_SEED", "")
+	t.Setenv("XO_SEED_FALLBACK", "")
+	var log bytes.Buffer
+	err := buildLocked(root, filepath.Join(t.TempDir(), "xo"), &log)
+	if err == nil {
+		t.Fatal("no error")
+	}
+	for _, want := range []string{"opt in", loc + "/seeds/", "XO_SEED_FALLBACK=chain", "no seed " + testSeed + " for " + HostPlatform()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(log.String(), "seed-chain") || strings.Contains(log.String(), "building the "+SeedTag) {
+		t.Errorf("the chain started:\n%s", log.String())
+	}
+	base, _ := cacheBase()
+	if _, err := os.Stat(filepath.Join(base, "seed")); err == nil {
+		t.Error("the root seed directory was created")
 	}
 }
 

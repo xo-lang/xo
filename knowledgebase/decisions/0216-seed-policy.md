@@ -1,8 +1,9 @@
 # 0216: Bootstrap seeds after the Go compiler: N-1 releases and a replay from source
 
 Status: Item 1 Accepted (owner, 2026-10-13), with the seeds in a
-private S3 bucket; item 2 Accepted as the fallback (the seed chain,
-implemented 2026-10-13); item 3 Proposed
+private S3 bucket; item 2 Accepted as an opt in fallback (the seed
+chain, implemented 2026-10-13; it never runs unasked, owner,
+2026-10-13); item 3 Proposed
 
 ## Context
 
@@ -43,19 +44,28 @@ How other self hosted languages handle it:
    sha256, unpacks it into the user cache by version, and builds the
    checkout in one hop. Layout, variables, and the lead's pack and
    upload commands: infrastructure/toolchain.md "Prebuilt seeds".
-2. **Runtime changes go in two hops (Accepted as the fallback).** A
+   A failed fetch (no aws CLI, no access, no seed for the host, a
+   sha256 mismatch) is an error that names the cause and the bucket
+   path and says building from source is opt in; it never starts the
+   chain (owner, 2026-10-13: the chain costs 25 to 37 minutes and hid
+   fetch failures). Seeds unpack only into the user cache, never into
+   $HOME (the tarball's top directory xo/ clashed with the EC2 checkout
+   ~/xo).
+2. **Runtime changes go in two hops (Accepted as an opt in fallback).** A
    change that makes the compiler's own code call new runtime functions
    lands so that an older seed first builds an intermediate `xo` from a
    tree that has the new runtime, and that one builds the final `xo`.
    scripts/seed-chain.txt records the intermediate commits;
    `scripts/bootstrap-xo.sh` (XO_SEED_CHAIN) and internal/xotool apply
    them; gotchas/seed-older-than-intrinsics.md documents the trap. With
-   prebuilt seeds the chain is the fallback for a host that cannot fetch
-   one (no aws CLI, no bucket access, no seed for its platform), and it
-   is only needed from the go-compiler-final root: once a seed exists
-   past a runtime break, a new seed after each such break replaces
-   adding hops, and the hops older than the newest seed are used only
-   by that fallback.
+   prebuilt seeds the chain runs only when asked for:
+   `XO_SEED_FALLBACK=chain` (after the other seeds) or `go run
+   ./scripts/xobuild --from-source` (the go-compiler-final root alone),
+   for the replay from source (item 3) and for bootstrapping a new
+   platform. It is only needed from the go-compiler-final root: once a
+   seed exists past a runtime break, a new seed after each such break
+   replaces adding hops, and the hops older than the newest seed are
+   used only by that opt in.
 3. **Replay from source (proposed, owner to confirm).** The tag
    go-compiler-final (87873aa5) is the root: the Go toolchain builds that
    tree's `xo`, which builds xo1, which builds each later release in order
@@ -66,7 +76,8 @@ How other self hosted languages handle it:
 ## Questions for the owner
 
 - Answered 2026-10-13: the N-1 rule (1) with prebuilt seeds in a private
-  bucket; the two hop procedure (2) as the fallback.
+  bucket; the two hop procedure (2) as an opt in fallback, never
+  automatic (owner, 2026-10-13).
 - Open: require the replay from source (3) per release, or only
   occasionally?
 
@@ -74,7 +85,8 @@ How other self hosted languages handle it:
 
 - A seed must be packed and uploaded (all platforms, then latest.txt)
   before the next version can rely on it; until then hosts build from
-  the previous seed or the chain.
+  the previous seed, and a host whose platform has no seed fails unless
+  given `XO_SEED` or the opt in `XO_SEED_FALLBACK=chain`.
 - A fresh host with the aws CLI and bucket access needs neither Go's
   compiler build of go-compiler-final nor the hops: one download and one
   build of selfhost/xo. On a fresh EC2 machine the chain took 1,491 to
