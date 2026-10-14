@@ -121,14 +121,14 @@ type ClangError struct{ Output string }
 
 func (e *ClangError) Error() string { return "clang: " + e.Output }
 
-// CompileC compiles and links C and LLVM IR sources into bin with clang
+// compileC (CompileC without its cache) compiles and links C and LLVM IR sources into bin with clang
 // ($XO_CLANG, else clang) and flags, with unwind tables (the runtime
 // raises faults through every frame, decision 0085), the -l flags after
 // the sources, and -lm -lpthread (or lld on Windows); on macOS it tries
 // the SDKs of sysrootCandidates until one links. When generated code in
 // srcs calls std/http's runtime it also compiles with the TLS library's
 // flags and links the library (tls.go), built for the sanitizers of flags.
-func CompileC(flags, srcs []string, bin string) error {
+func compileC(flags, srcs []string, bin string) error {
 	clang, err := Clang()
 	if err != nil {
 		return err

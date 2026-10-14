@@ -27,6 +27,8 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
 	xotool.EnableTestBinCache()
+	// identical C compiles (the sanitized drivers) reuse one binary too
+	xotool.EnableTestCCache()
 	dir, err := testtmp.Dir("xo-llvm-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

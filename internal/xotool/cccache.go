@@ -1,0 +1,269 @@
+package xotool
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+)
+
+// The C compile cache of the tests (bench/results/short-tests-2026-10-14.md):
+// the runtime tests of internal/llvm compile the same C drivers with
+// sanitizers on every run (http_diff.c with AddressSanitizer took about
+// 5 s, three times per run). With XO_CC_CACHE set (EnableTestCCache sets
+// it to <user cache>/xo/testcc), CompileC keeps each linked binary under
+// the hash of everything that decides it: clang and its version, the
+// target, $XO_SYSROOT, the flags, every source's contents, the contents
+// of every header clang -MM reports for the C sources, and the TLS
+// library's source hash when the program links it. A hit copies the
+// binary (and its .dSYM on macOS) to bin. Off ("" or "off") by default:
+// xo itself never uses it.
+
+const ccCacheEnv = "XO_CC_CACHE"
+
+// EnableTestCCache turns the C compile cache on for a test binary
+// (TestMain), unless XO_CC_CACHE is already set, and removes entries
+// unused for a week.
+func EnableTestCCache() {
+	if _, ok := os.LookupEnv(ccCacheEnv); ok {
+		return
+	}
+	c, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(c, "xo", "testcc")
+	os.Setenv(ccCacheEnv, dir)
+	trimCCCache(dir, 7*24*time.Hour)
+}
+
+func ccCacheDir() string {
+	d := os.Getenv(ccCacheEnv)
+	if d == "off" {
+		return ""
+	}
+	return d
+}
+
+// CompileC compiles and links C and LLVM IR sources into bin with clang
+// (compileC), through the cache of XO_CC_CACHE when it is set.
+func CompileC(flags, srcs []string, bin string) error {
+	dir := ccCacheDir()
+	if dir == "" {
+		return compileC(flags, srcs, bin)
+	}
+	key, err := ccKey(flags, srcs)
+	if err != nil {
+		// no key (a source clang -MM cannot read): compile, uncached
+		return compileC(flags, srcs, bin)
+	}
+	entry := filepath.Join(dir, key)
+	name := filepath.Base(bin)
+	if isFile(filepath.Join(entry, name)) {
+		if err := copyEntry(entry, name, bin); err == nil {
+			now := time.Now()
+			os.Chtimes(entry, now, now)
+			return nil
+		}
+	}
+	if err := compileC(flags, srcs, bin); err != nil {
+		return err
+	}
+	storeEntry(dir, entry, name, bin)
+	return nil
+}
+
+var (
+	ccKeyVersMu sync.Mutex
+	ccKeyVers   = map[string]string{} // clang -> its --version output
+)
+
+// ccVersion is clang's --version output (once per path).
+func ccVersion(cc string) string {
+	ccKeyVersMu.Lock()
+	defer ccKeyVersMu.Unlock()
+	ver, ok := ccKeyVers[cc]
+	if !ok {
+		out, _ := exec.Command(cc, "--version").CombinedOutput()
+		ver = string(out)
+		ccKeyVers[cc] = ver
+	}
+	return ver
+}
+
+// ccKey is the cache key of a CompileC call.
+func ccKey(flags, srcs []string) (string, error) {
+	clang, err := Clang()
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "cc1\n%s\n%s\n%s/%s\n%s\n%q\n", clang, ccVersion(clang), runtime.GOOS, runtime.GOARCH, os.Getenv("XO_SYSROOT"), flags)
+	if usesTLS(srcs) {
+		th, err := tlsSourceHash()
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "tls %s %v\n", th, tlsFlavor(flags))
+	}
+	var compile []string
+	for _, f := range flags {
+		if !strings.HasPrefix(f, "-l") && !strings.HasPrefix(f, "-Wl,") {
+			compile = append(compile, f)
+		}
+	}
+	for _, s := range srcs {
+		data, err := os.ReadFile(s)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "src %s %d\n", filepath.Base(s), len(data))
+		h.Write(data)
+		if !strings.HasSuffix(s, ".c") {
+			continue
+		}
+		deps, err := ccDeps(clang, compile, s)
+		if err != nil {
+			return "", err
+		}
+		for _, d := range deps {
+			data, err := os.ReadFile(d)
+			if err != nil {
+				// a header clang did not find (-MG): its absence is
+				// part of the key
+				fmt.Fprintf(h, "missing %s\n", d)
+				continue
+			}
+			// by name and contents, not by path, so worktrees share
+			// entries
+			fmt.Fprintf(h, "dep %s %d\n", filepath.Base(d), len(data))
+			h.Write(data)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:32], nil
+}
+
+// ccDeps lists the user headers (not system ones) that src includes
+// under the compile flags, as clang -MM -MG reports them.
+func ccDeps(clang string, flags []string, src string) ([]string, error) {
+	args := append(append([]string{}, flags...), "-MM", "-MG", src)
+	var out, errb bytes.Buffer
+	cmd := exec.Command(clang, args...)
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("clang -MM %s: %v: %s", src, err, errb.String())
+	}
+	text := strings.ReplaceAll(out.String(), "\\\n", " ")
+	_, rest, ok := strings.Cut(text, ":")
+	if !ok {
+		return nil, fmt.Errorf("clang -MM %s: no rule", src)
+	}
+	var deps []string
+	for _, f := range strings.Fields(rest) {
+		if f == filepath.Clean(src) || f == src {
+			continue
+		}
+		deps = append(deps, f)
+	}
+	return deps, nil
+}
+
+// copyEntry copies the entry's binary (and its .dSYM) to bin.
+func copyEntry(entry, name, bin string) error {
+	if err := copyTree(filepath.Join(entry, name), bin); err != nil {
+		return err
+	}
+	if d := filepath.Join(entry, name+".dSYM"); isDir(d) {
+		os.RemoveAll(bin + ".dSYM")
+		copyTree(d, bin+".dSYM")
+	}
+	return nil
+}
+
+// storeEntry puts bin (and its .dSYM) into the cache at entry, written
+// in a temporary directory and renamed, so readers see whole entries.
+func storeEntry(dir, entry, name, bin string) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	tmp, err := os.MkdirTemp(dir, "tmp-")
+	if err != nil {
+		return
+	}
+	defer os.RemoveAll(tmp)
+	if copyTree(bin, filepath.Join(tmp, name)) != nil {
+		return
+	}
+	if isDir(bin + ".dSYM") {
+		if copyTree(bin+".dSYM", filepath.Join(tmp, name+".dSYM")) != nil {
+			return
+		}
+	}
+	// another process may have stored the same entry first: keep it
+	os.Rename(tmp, entry)
+}
+
+// copyTree copies a file or a directory tree, keeping modes.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0o700)
+		}
+		in, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.CreateTemp(filepath.Dir(target), ".cc-*")
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			os.Remove(out.Name())
+			return err
+		}
+		out.Close()
+		os.Chmod(out.Name(), info.Mode().Perm())
+		return os.Rename(out.Name(), target)
+	})
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// trimCCCache removes the entries (and leftover temporary directories)
+// of dir not used within age.
+func trimCCCache(dir string, age time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < age {
+			continue
+		}
+		os.RemoveAll(filepath.Join(dir, e.Name()))
+	}
+}
