@@ -328,7 +328,7 @@ XO_LLRT_C=net and no fix all three are clean 3 of 3. So the blind spot
 and the fix are the same on both Linux architectures. (xobuild from the
 linux-amd64 seed took 2414 s on that instance.)
 
-### Windows net_only crash (known issue, fix unverified on Windows)
+### Windows net_only crash (fixed, verified on Windows)
 
 Warm Windows instance i-EXAMPLE47 (c7i.4xlarge), xo.exe cross
 built on the Mac, netfix-windbg4 at c8bb5994 (2026-10-14): net_only
@@ -343,5 +343,8 @@ xo_proc_run. Proc.run on Windows never set the command line that
 pr_w_spawn reads (gotchas/windows-proc-run-null-cmdline.md). The fix
 builds it as procspec.xo does. A Mac check of its quoting gave `sh -c
 "echo allowed" "" a\b x\"y "c:\dir with\\" "tab	here"` (Go's
-EscapeArg rules). The fix has not run on Windows: Windows is best
-effort, not a gate (owner, 2026-10-14).
+EscapeArg rules). Verified on Windows on 2026-10-14 (queue job
+winfix-netonly, same warm instance, xo.exe cross built at 1a53b12c):
+TestGoldenTasks/net_only passes (11.75 s), and the windows/amd64 golden
+set is 154 pass, 0 fail of 154. The job took about 3 minutes, including
+starting the stopped instance.
