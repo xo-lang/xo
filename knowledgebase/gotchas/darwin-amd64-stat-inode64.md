@@ -1,6 +1,6 @@
 # macOS x86_64's `stat` symbol is the old structure
 
-Status: Anticipated (2026-10-13, decision 0213)
+Status: Observed (2026-10-13, decision 0213; the fix verified on an Intel Mac 2026-10-14)
 
 Symptom (expected): an Xo platform call of `stat`, `lstat`, or `fstat`
 declared in std/native/sys_darwin.xo would read garbage sizes and times
@@ -23,6 +23,6 @@ architectures, so darwin/arm64 runs the same code. sysio.layer() is 2
 on darwin/amd64 too, and xo_fs.c's operations are gone. Of the other
 declared symbols only open, read, write, and close have variants on
 x86_64 (`$NOCANCEL`), whose plain names are the right ones (the
-Xcode SDK's .tbd files, 2026-10-14). Run TestSysioParity and the LLVM
-goldens on an Intel Mac (scripts/intel-mac-test.sh) to turn this
-Observed.
+Xcode SDK's .tbd files, 2026-10-14). On an Intel Mac (scripts/intel-mac-test.sh,
+2026-10-14, 88341497): TestSysioParity, TestErrnoTables, and the fs
+goldens pass (bench/results/fs-ops-2026-10-14.md, "darwin/amd64").
