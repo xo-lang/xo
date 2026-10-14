@@ -93,25 +93,23 @@ Update the knowledgebase in the same change as the work, not later:
     merges each report (`-short` and vet after each merge) and runs the
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
-  - platform runs at milestones (owner, 2026-10-13): agents verify on
-    the Mac only for Linux and Windows coverage (targeted heavy runs,
-    `-short`; long pass/fail runs such as package suites, xo1 goldens,
-    replays, and fixed points go to the lead's EC2 queue, warm machines,
-    not the Mac's single heavy slot; the Mac keeps short runs,
-    instruction counts, and steps that write into the worktree); Linux and Windows runs
-    happen at milestones (after a stage of runtime or compiler work),
-    run by the lead on EC2, and failures are bisected over the
-    milestone's merges (one targeted test per probe). Code that cannot
-    run on the Mac (Linux-only, Windows-only paths) gets one batched
-    platform run per agent before it reports. Every merge touching what
-    the self build compiles or runs also passes the self rebuild fixed
-    point (scripts/bootstrap-xo.sh, s2 and s3 identical) on the Mac, so
-    a miscompile cannot build the next compiler: selfhost/ (but not
+  - arm64 only (owner, 2026-10-14, replaces the platform runs at
+    milestones): "testing on just the fastest machine and arch". Agents
+    verify on the Mac (arm64); the full tier, when wanted, runs on one
+    linux/arm64 EC2 machine (r8g, warm, seed prefix). Linux amd64 and
+    Windows runs are best effort, not a gate: no milestone needs them,
+    and a failure seen only there is recorded as a known issue, not
+    chased by default. Every merge touching what the self build
+    compiles or runs also passes the self rebuild fixed point
+    (scripts/bootstrap-xo.sh, s2 and s3 identical) on arm64, so a
+    miscompile cannot build the next compiler: selfhost/ (but not
     selfhost/macho or selfhost/wasm, which the bootstrap never uses,
     and not `_test.xo` files), std/native/, std/llrt/, and the xo build
     code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
     scripts/xobuild, scripts/seed-chain.txt). Other merges (tests, docs,
-    test-only tooling) need vet and -short only (owner, 2026-10-13).
+    test-only tooling) need vet and -short only. Long pass/fail runs go
+    to the lead's EC2 queue (warm arm64 machines), not the Mac's single
+    heavy slot.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
     58 min cold on r8g.8xlarge through scripts/remote-full.sh, `-timeout
