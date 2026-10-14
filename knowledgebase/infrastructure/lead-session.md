@@ -40,23 +40,20 @@ one-module edit rebuild of xo 30.60 s to about 11 to 12 s on the Mac)
 and shrink wrapping with tail calls (310d3850, decision 0224: self
 build 0.985 of the instructions) landed.
 
-Held on branches, not merged (both correct, both miss decision 0180's
-bar on arm64 only):
+B14, the test world part 1 in Xo (916 C lines deleted), merged
+2026-10-14 after the fixes in bench/results/test-world-2026-10-14.md's
+last section (rand 1.006, gen 0.924 on arm64; the compiler now folds
+constant Int expressions). CI runs 38604944243 (auto, fixed point
+identical) and 38604968164 (cmd/xo).
 
-- B14, the test world part 1 in Xo (916 C lines deleted):
-  worktree-agent-adf33485f07a2fcac at 0726c7ba. rand 1.100 and gen
-  1.094 of the C after shrink wrapping
-  (bench/results/shrink-wrapping-2026-10-14.md:89-91). Next: inlining
-  in rand.next_int.
-- B13 stage 2, string and list objects in Xo (commit 3da29c8b, reverted
-  by 082476d4, both in main's history): after shrink wrapping alloc
-  small 1.201, nested walk 1.036, text split 1.058 (same file :61-66).
-  Next: remove the C entry level on the allocation path.
+In progress in another session (xo-4b), not merged: B13 stage 2, string
+and list objects in Xo, branch b13-stage2 (decision 0226, claimed):
+meets the bar on the Mac (text split 1.021 the worst, alloc small
+0.967), CI next.
 
 ## Next, in order
 
-1. B14 (inlining in rand.next_int) and B13 stage 2 (the allocation
-   path's C entry level), then recheck both against the bar.
+1. Merge B13 stage 2 when its CI passes.
 2. Cut seed 0.11.0 (scripts/lead/seeds), then delete the C the 0.10.0
    seed still calls: xo_static_word, xo_ct_barrier, B03's xo_print
    forwards, xo_exit, xo_env_*, xo_str_rune_count
