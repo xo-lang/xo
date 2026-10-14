@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C work item B16, part 1): on Linux and
+  darwin/arm64 every Fs operation past read, write, and stat (read_dir,
+  walk, rename, remove, remove_all, create_dir_all, create_temp,
+  cwd_path, set_modified, file handles, copy, modes, links, and locks,
+  with lock's 10 ms polled wait) makes its system calls from Xo
+  (std/native/llrt/fsops.xo over linux.xo and darwin.xo); results and
+  messages are unchanged, read_line costs 0.68 to 0.82 of the C's
+  instructions, the rest within noise
+  (bench/results/fs-ops-2026-10-14.md). Windows and darwin/amd64 still
+  use the C runtime's xo_fs.c.
 - Native runtime (zero-C audit item B11): the HTTP/2 client's header
   blocks are encoded and decoded by Xo (std/native/llrt/hpack.xo, which
   the server already used); the client's request fields are listed in
