@@ -283,6 +283,12 @@ Item 2 landed as decision 0212's `rt.tlocal_get/tlocal_set/tlocal_addr`
   (`xlog`, `__thread xlog_from`, xo_log_level, json, configured,
   configure, from, from_take, now) is deleted. Golden
   internal/llvm/testdata/golden/log_state.
+- **Verified** on linux/arm64 (EC2 r8g.8xlarge, commit 1636a998, seed
+  0.10.0-23ce8ce2): the bootstrap fixed point (s2 and s3 identical, s1
+  through the seed shim), `xo dev goldens` 181 of 181 on arm64 and on
+  LLVM and 137 of 137 on the Go backend, TestSelfhostWasm 134 pass, 21
+  unsupported, 0 fail of 155 (log_state passes on wasm), and
+  TestLogAttribution.
 - **Not moved yet** (xo_sys.c): `sys_scratch` (a per thread immortal
   Bytes object behind `rt.sys_buf`), `xo_bytes_addr`, `xo_bytes_buf`,
   and `xo_rs_bytes_len` need a Bytes form of `obj_addr`/`obj_at` (the
