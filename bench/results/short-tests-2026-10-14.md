@@ -120,6 +120,13 @@ packages that do real work.
 
 ## Left
 
+- Cold caches: the first run after a change to selfhost/ or the C
+  runtime (a new xo, new C sources) misses XO_BIN_CACHE and XO_CC_CACHE.
+  After merging origin/main into this branch (9493ac0f) the first
+  repository run took 49 s (load average 10 to 24; internal/llvm 47.9 s,
+  TestCryptoDiff 21.9 s), the next one 19 s (load 20 to 30). The merge
+  gate often runs cold, so its times sit between the two.
+
 - The run is now CPU bound: the remaining CPU is mostly real builds and
   runs. The largest share left is programs built from fresh temporary
   directories (cmd/xo's module worlds, the harness's tasks), which never
