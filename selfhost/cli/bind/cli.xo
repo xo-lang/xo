@@ -8,8 +8,20 @@
 
 use github.com/xo-lang/xo/selfhost/cli/cmdhelp
 
-/// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status.
+/// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status,
+/// with the std directory $XO_STD, else "std" in the working directory
+/// (run_std with the std the program found).
 pub fn run(os: Os, args: List[Str]) -> Int uses (fs, proc, env, stdio) {
+  let std = os.env.get("XO_STD") ?? ""
+  run_std(os, args, if std.is_empty() { "std" } else { std })
+}
+
+/// run with the std directory std_dir, whose parent is where
+/// gobind_helper looks for xo-gobind or its sources. xo passes the std
+/// it found beside its binary (check.std_dir): with "std" in the working
+/// directory, `xo bind` outside the repository found no helper and no
+/// sources to build it from (gotchas/xo-bind-std-from-wd.md).
+pub fn run_std(os: Os, args: List[Str], std_dir: Str) -> Int uses (fs, proc, env, stdio) {
   var fl = Flags{}
   fl.def("c", "bool", "", "bind C headers for `use c` (native builds, decision 0116) instead of Go packages")
   fl.def("dir", "str", ".", "a directory of the Xo project (its xo.mod root holds the cache)")
@@ -29,8 +41,7 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (fs, proc, env, stdio) {
     os.stdio.eprintln("xo bind: no Go import paths given")
     return 2
   }
-  let std = os.env.get("XO_STD") ?? ""
-  let (helper, temp) = match gobind_helper(os, if std.is_empty() { "std" } else { std }, wd) {
+  let (helper, temp) = match gobind_helper(os, std_dir, wd) {
     Ok(h) => h
     Err(e) => {
       os.stdio.eprintln("xo bind: ${e}")

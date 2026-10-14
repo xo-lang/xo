@@ -99,7 +99,8 @@ func TestCrossCompile(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	for _, tg := range targets {
-		bin := res.Binaries[tg]
+		// xo names wasi/wasm32 wasip1/wasm (xotool.Target)
+		bin := res.Binaries[xotool.Target(tg)]
 		fi, err := os.Stat(bin)
 		if err != nil || fi.Size() == 0 {
 			t.Errorf("%s: no binary at %s", tg, bin)

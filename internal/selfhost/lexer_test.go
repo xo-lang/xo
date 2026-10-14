@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -203,10 +202,7 @@ func nativeSkip(backend string) string {
 	if _, err := xotool.Clang(); err != nil {
 		return err.Error()
 	}
-	if backend == "arm64" && (runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux")) {
-		return "the arm64 backend builds on darwin/arm64 and linux/arm64 hosts"
-	}
-	return ""
+	return xotool.Arm64Skip(backend)
 }
 
 // repoXoFiles lists every .xo file under root, relative to it, skipping

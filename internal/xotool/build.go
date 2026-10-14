@@ -56,8 +56,9 @@ type Options struct {
 
 // Result is what a Build made.
 type Result struct {
-	// Binaries maps the host target ("os/arch", Host) to the binary,
-	// when one was written.
+	// Binaries maps each target xo built ("os/arch" in Go's names:
+	// wasip1/wasm, not wasi/wasm32; Target converts) to its binary;
+	// a single target build's binary is under Host.
 	Binaries map[string]string
 	// Failed reports that xo exited with an error and wrote no binary
 	// (a check error, a build error); Output says why.
@@ -98,6 +99,24 @@ func (d Diagnostic) Human() string {
 
 // Host is this machine's target, "os/arch".
 func Host() string { return runtime.GOOS + "/" + runtime.GOARCH }
+
+// Target is the os/arch name xo prints for target s and Result.Binaries
+// is keyed by (build.ParseTargets of the Go compiler, parse_targets of
+// selfhost/xo): Go's names, so the spec's wasi/wasm32 (core 12.1) is
+// wasip1/wasm; other names are returned as they are.
+func Target(s string) string {
+	os_, arch, ok := strings.Cut(strings.TrimSpace(s), "/")
+	if !ok {
+		return s
+	}
+	if os_ == "wasi" {
+		os_ = "wasip1"
+	}
+	if arch == "wasm32" {
+		arch = "wasm"
+	}
+	return os_ + "/" + arch
+}
 
 // Build builds dirs with the xo binary (Path): `xo build|test
 // [--backend=B] [--no-gc] [flags] -o OUT dirs...`. A missing xo is the
@@ -248,10 +267,28 @@ func CC() (string, error) {
 // NativeBackend is the native backend of this host: arm64 on a darwin
 // or linux arm64 host, else llvm.
 func NativeBackend() string {
-	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+	if Arm64Host() {
 		return BackendArm64
 	}
 	return BackendLLVM
+}
+
+// Arm64Host reports whether this host can build and run the arm64
+// backend's programs: darwin/arm64 or linux/arm64. Elsewhere `xo build
+// --backend=arm64` hands arm64 assembly to the host's assembler (an x86
+// one fails on `stp x29,x30,...`), so a test skips the arm64 backend
+// (Arm64Skip; gotchas/arm64-tests-on-x86-hosts.md).
+func Arm64Host() bool {
+	return runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux")
+}
+
+// Arm64Skip is why backend cannot build on this host ("" when it can):
+// the arm64 backend off an arm64 host (Arm64Host).
+func Arm64Skip(backend string) string {
+	if backend == BackendArm64 && !Arm64Host() {
+		return "the arm64 backend builds on darwin/arm64 and linux/arm64 hosts, not " + Host()
+	}
+	return ""
 }
 
 // EnableTestBinCache points $XO_BIN_CACHE (xo's cache of linked

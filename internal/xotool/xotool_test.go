@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+// TestTarget: Result.Binaries is keyed by the names xo prints, Go's, so a
+// test that names the spec's wasi/wasm32 looks up wasip1/wasm (the
+// Linux milestone run of 2026-10-14 failed TestCrossCompile on this).
+func TestTarget(t *testing.T) {
+	for in, want := range map[string]string{
+		"wasi/wasm32":   "wasip1/wasm",
+		"wasip1/wasm":   "wasip1/wasm",
+		"linux/amd64":   "linux/amd64",
+		" darwin/arm64": "darwin/arm64",
+		"all":           "all",
+	} {
+		if got := Target(in); got != want {
+			t.Errorf("Target(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	r, err := filepath.Abs(filepath.Join("..", ".."))

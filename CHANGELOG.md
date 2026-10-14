@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
+  links every object of a program whose assembly was split into parts
+  (decision 0220; it took only the first and rejected the runtime's
+  source); `xo bind` finds or builds the Go binder xo-gobind from the
+  std beside xo instead of "std" in the working directory. Tests:
+  TestDevGoldensELF builds the linux/arm64 runtime pack it links with
+  (`xo dev rtpack`, cached by pack key); TestCrossCompile looks up the
+  wasm binary by xo's name, wasip1/wasm (xotool.Target);
+  TestSelfhostLLVMEndToEnd compares its IR with the recording only when
+  dump replays are on (decision 0217) and keeps its build and output
+  check. From the linux/amd64 milestone: internal/llvm's diff tests skip
+  the arm64 backend off arm64 hosts (xotool.Arm64Skip), and TestHarness
+  builds xo before the Python self test (its 600 s adapter timeout no
+  longer includes the build).
 - Native runtime (zero-C audit item B08): SHA-512 is Xo
   (std/native/llrt/digest.xo, called by the C Ed25519 through
   cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
@@ -22,7 +36,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the build chosen once into a word so the hot path tests no target.
   The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
   exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
-  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions,
+  on Windows (LLVM) 0.928 to 0.952 times its CPU cycles
   (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
   workload.
 - Native runtime: the C with no caller is deleted (zero-C audit item
