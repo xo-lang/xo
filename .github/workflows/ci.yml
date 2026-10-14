@@ -15,10 +15,10 @@ on:
       suite:
         description: What to run (scripts/ci/suite.sh)
         type: choice
-        options: [auto, short, vet, merge, fixed-point, full, measure, windows]
+        options: [auto, short, vet, merge, fixed-point, full, measure, windows, script]
         default: auto
       packages:
-        description: "suite=auto: packages added to the full tests; merge: the packages (default: the touched ones); measure: the bench/perf directory"
+        description: "suite=auto: packages added to the full tests; merge: the packages (default: the touched ones); measure: the bench/perf directory; script: PATH [ARG...] of a .sh or .ps1 in the ref"
         default: ""
       merge_main:
         description: Test REF merged with the current main (fails fast on a conflict)
@@ -115,3 +115,10 @@ jobs:
           XO_CI_XO_EXE: ${{ matrix.runner == 'xo-windows' && format('s3://xo-seeds-ACCOUNT_ID/dev/ci/{0}/xo.exe', github.run_id) || '' }}
           ARGS: ${{ matrix.args }}
         run: scripts/ci/suite.sh job $ARGS
+      - name: Upload script output
+        if: always() && startsWith(matrix.args, 'script ')
+        uses: actions/upload-artifact@v7
+        with:
+          name: script-out
+          path: .tools/script-out
+          if-no-files-found: ignore
