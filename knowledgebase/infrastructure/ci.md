@@ -20,7 +20,7 @@ Contents: [Running CI](#running-ci), [Suites](#suites),
 git push origin BRANCH                                   # CI checks out from GitHub
 gh workflow run ci.yml -f ref=BRANCH -f suite=auto       # merged with main by default
 gh run list --workflow ci.yml --limit 5                  # run names: "ci SUITE REF [+main]"
-gh run watch RUN_ID --exit-status                        # blocks until done; exit status is the run's
+gh run watch RUN_ID --exit-status --interval 10          # blocks until done; exit status is the run's; poll every 10 s (owner 2026-10-14)
 gh run view RUN_ID --log-failed                          # only the failing step's log
 ```
 

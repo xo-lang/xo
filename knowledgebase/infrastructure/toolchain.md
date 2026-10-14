@@ -312,7 +312,7 @@ XO_THREADS=1 ./prog                                   # a native binary with one
 XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09) and real-time sections (rt_section, rt_defer, rt_overflow; decision 0133) and fiber stacks mapped now and at most at once (fiber_live, fiber_peak; 2026-10-13, gotchas/linux-tsan-fiber-stacks.md)
 sample <pid> 5 -mayDie -file prof.txt                 # native server under load: macOS sampling profiler, no root; read "Sort by top of stack" (idle threads show as __ulock_wait and kevent); the llvm build has Xo function names (x.<fn>), arm64 folds some into xo_entry (last verified 2026-10-09)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
-go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
+go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s (the programs' own functions only, since 2026-10-14; a runtime change no longer rewrites them)
 go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
@@ -886,8 +886,11 @@ Last verified: 2026-10-07
   std/llrt/testdata that includes xo_rt.c) links the exports through
   `cOnly` in internal/llvm threads_test.go. `go test ./internal/ssa -run
   'TestGolden|TestBench' -update` and `go test ./internal/arm64 -run
-  TestGoldenAsm -update` rewrite the SSA and assembly goldens, which
-  carry the exports. Last verified: 2026-10-13.
+  TestGoldenAsm -update` rewrite the SSA and assembly goldens; the
+  assembly goldens hold only the programs' own functions since
+  2026-10-14 (TestGoldenAsm's ownFuncs; the whole text is still
+  assembled as ELF), so an export or runtime change does not rewrite
+  them. Last verified: 2026-10-14.
 - `bench/perf/report/measure.sh <xo> <out dir> <backend...>` (2026-10-13,
   decision 0193 step 5): builds the test binary of report_test.xo
   (`xo test --no-gc`, kept in XO_BUILD_DIR) and runs 16 cases of each

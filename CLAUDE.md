@@ -119,7 +119,11 @@ Update the knowledgebase in the same change as the work, not later:
     ref=BRANCH -f suite=auto` (short, the touched packages' full tests,
     the selfhost merge tier, and the fixed point when the paths above
     changed; tested merged with main), `gh run watch RUN_ID
-    --exit-status`, `gh run view RUN_ID --log-failed`. Other suites:
+    --exit-status --interval 10` (owner 2026-10-14: poll every 10
+    seconds, never 30 or 60, so a fast failure reaches the session as
+    soon as the owner sees it; run it in the background, or a Monitor
+    loop that prints on a status change with `sleep 10` and stops on
+    completed), `gh run view RUN_ID --log-failed`. Other suites:
     short, vet, merge (`-f packages=...`), fixed-point, full (`-f
     runner=xo-arm64-big`). This replaces the lead's EC2 queue. The Mac
     keeps Mac only checks and runs that write files into the worktree.

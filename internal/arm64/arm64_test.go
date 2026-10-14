@@ -56,13 +56,15 @@ func asm(t *testing.T, dir, goos string) string {
 
 var benchDir = filepath.Join("..", "..", "bench", "perf", "llvm", "xo")
 
-// TestGoldenAsm compares the assembly of fib and sieve, for Darwin and
-// Linux, with testdata/*.s (-update rewrites them). On a host with clang
-// the Linux text is also assembled as ELF.
+// TestGoldenAsm compares the assembly of fib's and sieve's own functions
+// (ownFuncs: not the std runtime linked with them), for Darwin and Linux,
+// with testdata/*.s (-update rewrites them). On a host with clang the
+// whole Linux text is also assembled as ELF.
 func TestGoldenAsm(t *testing.T) {
 	for _, name := range []string{"fib", "sieve"} {
 		for _, goos := range []string{"darwin", "linux"} {
-			got := asm(t, filepath.Join(benchDir, name), goos)
+			full := asm(t, filepath.Join(benchDir, name), goos)
+			got := ownFuncs(full)
 			path := filepath.Join("testdata", name+"."+goos+".s")
 			if *update {
 				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
@@ -78,10 +80,41 @@ func TestGoldenAsm(t *testing.T) {
 				t.Errorf("%s: assembly differs from the golden file (run with -update and review the diff)", path)
 			}
 			if goos == "linux" {
-				assembleELF(t, path)
+				whole := filepath.Join(t.TempDir(), name+".s")
+				if err := os.WriteFile(whole, []byte(full), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				assembleELF(t, whole)
 			}
 		}
 	}
+}
+
+// ownFuncs is the first line of an assembly file (what made it) and the
+// functions of the program's main module: the `// func NAME` blocks
+// whose NAME has no module prefix, each up to the blank line after it.
+// The runtime's functions (std/native modules, `// func mod.name`) are
+// left out, so a runtime change does not rewrite the goldens; the
+// program output goldens and the fixed point cover the runtime.
+func ownFuncs(text string) string {
+	lines := strings.SplitAfter(text, "\n")
+	var b strings.Builder
+	if len(lines) > 0 {
+		b.WriteString(lines[0])
+	}
+	keep := false
+	for _, l := range lines[1:] {
+		if name, ok := strings.CutPrefix(l, "// func "); ok {
+			keep = !strings.Contains(name, ".")
+		}
+		if keep {
+			b.WriteString(l)
+			if l == "\n" {
+				keep = false
+			}
+		}
+	}
+	return b.String()
 }
 
 // assembleELF assembles a Linux assembly file with clang's integrated
