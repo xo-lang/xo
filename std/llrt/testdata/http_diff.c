@@ -1,5 +1,7 @@
 // http_diff.c: the native HTTP/1.1 server's reading and writing
-// (xo_http.c) on connections given as inputs, for internal/llvm's
+// (xo_http.c, with the response writer std/native/llrt/http1w.xo linked
+// from the LLVM IR of a std/http program, cOnlyHTTP) on connections
+// given as inputs, for internal/llvm's
 // TestHTTPParseDiff, which sends the same bytes to a Go net/http server
 // with the same handler and compares the answers byte for byte (Date
 // values aside).

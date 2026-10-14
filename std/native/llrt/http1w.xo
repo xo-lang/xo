@@ -1,0 +1,951 @@
+// The response writer of the native HTTP/1.1 server, written in Xo (the
+// zero-C audit's B12, decision 0195): the status text (net/http's
+// StatusText), DetectContentType, the Date header (http.TimeFormat), and
+// net/http's chunkWriter.writeHeader with std/rt's serve (the whole body
+// written at once, or a stream's first write): which of the handler's
+// fields go out, sorted and cleaned as Header.writeSubset does, which
+// fields the server adds (Date, Content-Length, Content-Type,
+// Connection, Transfer-Encoding), the chunked framing, and whether the
+// connection stays open. They were C (std/llrt/xo_http.c's h_status_text,
+// h_sniff, h_date, hw_fields, hw_status_line, hw_response_x, hw_error);
+// the bytes written are the same.
+//
+// The C connection code keeps the socket and the handler's header list
+// (an hlist: pairs of a name and a value, each an address and a length)
+// and calls these functions through the exports of cabi_http.xo
+// (decision 0204), writing into room it reserved (bound below). HTTP/2's
+// h2_head (xo_h2.c) takes the sniffed type and the Date from here too.
+use native/llrt/http1_tables
+use native/llrt/raw
+use native/llrt/sysio
+use native/rt
+
+// ---------------------------------------------------------------------------
+// The C header list: hn pairs at ha, 32 bytes each (hstr k, v: an address
+// and a length each)
+
+fn key_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i, 8) }
+
+fn key_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 8, 8) }
+
+fn val_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 16, 8) }
+
+fn val_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 24, 8) }
+
+/// Whether the n bytes at p are s.
+fn mem_is(p: Int, n: Int, s: Str) -> Bool { n == s.len() && raw.mem_eq(p, raw.data(s), n) }
+
+/// The index of the field named name (exactly, as hl_find), or -1.
+fn find(ha: Int, hn: Int, name: Str) -> Int {
+  var i = 0
+  while i < hn {
+    if mem_is(key_p(ha, i), key_n(ha, i), name) {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Whether value i is s (-1: no field, never s).
+fn val_is(ha: Int, i: Int, s: Str) -> Bool { i >= 0 && mem_is(val_p(ha, i), val_n(ha, i), s) }
+
+/// The length of value i, 0 without the field.
+fn val_len(ha: Int, i: Int) -> Int { if i < 0 { 0 } else { val_n(ha, i) } }
+
+/// Key i before key j in byte order (hp_cmp).
+fn key_less(ha: Int, i: Int, j: Int) -> Bool {
+  let a = key_n(ha, i)
+  let b = key_n(ha, j)
+  let m = if a < b { a } else { b }
+  let c = if m == 0 { 0 } else { rt.mem_cmp(key_p(ha, i), key_p(ha, j), m) }
+  if c != 0 {
+    return c < 0
+  }
+  a < b
+}
+
+/// The indexes of the fields sorted by name (a merge sort; a handler sets
+/// few fields, so mostly the insertion of the first loop).
+fn sorted(ha: Int, hn: Int) -> List[Int] {
+  var ix: List[Int] = []
+  var i = 0
+  while i < hn {
+    var j = ix.len()
+    ix.push(i)
+    if hn <= 16 {
+      while j > 0 && key_less(ha, i, ix[j - 1]) {
+        ix[j] = ix[j - 1]
+        j -= 1
+      }
+      ix[j] = i
+    }
+    i += 1
+  }
+  if hn <= 16 {
+    return ix
+  }
+  var tmp = ix
+  var w = 1
+  while w < hn {
+    var lo = 0
+    while lo < hn {
+      let mid = if lo + w < hn { lo + w } else { hn }
+      let hi = if lo + 2 * w < hn { lo + 2 * w } else { hn }
+      var a = lo
+      var b = mid
+      var k = lo
+      while k < hi {
+        if a < mid && (b >= hi || !key_less(ha, ix[b], ix[a])) {
+          tmp[k] = ix[a]
+          a += 1
+        } else {
+          tmp[k] = ix[b]
+          b += 1
+        }
+        k += 1
+      }
+      lo = hi
+    }
+    let t = ix
+    ix = tmp
+    tmp = t
+    w = w * 2
+  }
+  ix
+}
+
+// ---------------------------------------------------------------------------
+// Writing at an address: each returns the offset after what it wrote
+
+fn put(d: Int, at: Int, s: Str) -> Int {
+  let n = s.len()
+  rt.mem_copy(d + at, raw.data(s), n)
+  at + n
+}
+
+fn put_mem(d: Int, at: Int, p: Int, n: Int) -> Int {
+  if n > 0 {
+    rt.mem_copy(d + at, p, n)
+  }
+  at + n
+}
+
+fn crlf(d: Int, at: Int) -> Int {
+  rt.mem_store(d, at, 0x0a0d, 2)
+  at + 2
+}
+
+/// The decimal text of v (h_itoa).
+fn put_int(d: Int, at0: Int, v: Int) -> Int {
+  var at = at0
+  if v < 0 {
+    rt.mem_store(d, at, 45, 1)
+    at += 1
+  }
+  // the digits, counted first
+  var k = 1
+  var x = v / 10
+  while x != 0 {
+    k += 1
+    x = x / 10
+  }
+  var i = at + k
+  x = v
+  while i > at {
+    i -= 1
+    var c = x % 10
+    if c < 0 {
+      c = 0 - c
+    }
+    rt.mem_store(d, i, 48 + c, 1)
+    x = x / 10
+  }
+  at + k
+}
+
+/// The lower case hexadecimal text of v > 0 (a chunk's size).
+fn put_hex(d: Int, at: Int, v: Int) -> Int {
+  var k = 1
+  while k < 16 && (v >> (4 * k)) != 0 {
+    k += 1
+  }
+  var i = 0
+  while i < k {
+    let c = (v >> (4 * (k - 1 - i))) & 15
+    rt.mem_store(d, at + i, if c < 10 { 48 + c } else { 87 + c }, 1)
+    i += 1
+  }
+  at + k
+}
+
+// ---------------------------------------------------------------------------
+// Status text, Date, DetectContentType
+
+/// net/http's StatusText (the text of the C's table), or "".
+pub fn status_text(c: Int) -> Str {
+  if c == 200 {
+    return "OK"
+  }
+  match c {
+    100 => "Continue"
+    101 => "Switching Protocols"
+    102 => "Processing"
+    103 => "Early Hints"
+    201 => "Created"
+    202 => "Accepted"
+    203 => "Non-Authoritative Information"
+    204 => "No Content"
+    205 => "Reset Content"
+    206 => "Partial Content"
+    207 => "Multi-Status"
+    208 => "Already Reported"
+    226 => "IM Used"
+    300 => "Multiple Choices"
+    301 => "Moved Permanently"
+    302 => "Found"
+    303 => "See Other"
+    304 => "Not Modified"
+    305 => "Use Proxy"
+    307 => "Temporary Redirect"
+    308 => "Permanent Redirect"
+    400 => "Bad Request"
+    401 => "Unauthorized"
+    402 => "Payment Required"
+    403 => "Forbidden"
+    404 => "Not Found"
+    405 => "Method Not Allowed"
+    406 => "Not Acceptable"
+    407 => "Proxy Authentication Required"
+    408 => "Request Timeout"
+    409 => "Conflict"
+    410 => "Gone"
+    411 => "Length Required"
+    412 => "Precondition Failed"
+    413 => "Request Entity Too Large"
+    414 => "Request URI Too Long"
+    415 => "Unsupported Media Type"
+    416 => "Requested Range Not Satisfiable"
+    417 => "Expectation Failed"
+    418 => "I'm a teapot"
+    421 => "Misdirected Request"
+    422 => "Unprocessable Entity"
+    423 => "Locked"
+    424 => "Failed Dependency"
+    425 => "Too Early"
+    426 => "Upgrade Required"
+    428 => "Precondition Required"
+    429 => "Too Many Requests"
+    431 => "Request Header Fields Too Large"
+    451 => "Unavailable For Legal Reasons"
+    500 => "Internal Server Error"
+    501 => "Not Implemented"
+    502 => "Bad Gateway"
+    503 => "Service Unavailable"
+    504 => "Gateway Timeout"
+    505 => "HTTP Version Not Supported"
+    506 => "Variant Also Negotiates"
+    507 => "Insufficient Storage"
+    508 => "Loop Detected"
+    510 => "Not Extended"
+    511 => "Network Authentication Required"
+    _ => ""
+  }
+}
+
+/// Whether a response of status st has a body (bodyAllowedForStatus).
+pub fn body_allowed(st: Int) -> Bool { !((st >= 100 && st <= 199) || st == 204 || st == 304) }
+
+const DAYS: Str = "SunMonTueWedThuFriSat"
+const MONTHS: Str = "JanFebMarAprMayJunJulAugSepOctNovDec"
+
+fn two(d: Int, at: Int, v: Int) {
+  rt.mem_store(d, at, 48 + v / 10, 1)
+  rt.mem_store(d, at + 1, 48 + v % 10, 1)
+}
+
+/// Writes the Date header value of the wall clock now (http.TimeFormat,
+/// "Mon, 02 Jan 2006 15:04:05 GMT": 29 bytes) at d; the offset after it.
+pub fn put_date(d: Int, at: Int) -> Int {
+  var secs = sysio.real_ns() / 1000000000
+  var days = secs / 86400
+  var rem = secs % 86400
+  if rem < 0 {
+    rem += 86400
+    days -= 1
+  }
+  // days since the epoch to a civil date (Howard Hinnant's algorithm, as
+  // text.append_time)
+  let z = days + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  var y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let md = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  if m <= 2 {
+    y += 1
+  }
+  // 1970-01-01 was a Thursday (4)
+  var wd = (days + 4) % 7
+  if wd < 0 {
+    wd += 7
+  }
+  rt.mem_copy(d + at, raw.data(DAYS) + 3 * wd, 3)
+  rt.mem_store(d, at + 3, 0x202c, 2)
+  two(d, at + 5, md)
+  rt.mem_store(d, at + 7, 32, 1)
+  rt.mem_copy(d + at + 8, raw.data(MONTHS) + 3 * (m - 1), 3)
+  rt.mem_store(d, at + 11, 32, 1)
+  two(d, at + 12, y / 100 % 100)
+  two(d, at + 14, y % 100)
+  rt.mem_store(d, at + 16, 32, 1)
+  two(d, at + 17, rem / 3600)
+  rt.mem_store(d, at + 19, 58, 1)
+  two(d, at + 20, rem / 60 % 60)
+  rt.mem_store(d, at + 22, 58, 1)
+  two(d, at + 23, rem % 60)
+  put(d, at + 25, " GMT")
+}
+
+/// Whether the n bytes at p begin with sig.
+fn pre(p: Int, n: Int, sig: Bytes) -> Bool { n >= sig.len() && raw.mem_eq(p, rt.bytes_addr(sig), sig.len()) }
+
+/// Whether the bytes at p + at are sig (the caller checked the length).
+fn at_is(p: Int, at: Int, sig: Bytes) -> Bool { raw.mem_eq(p + at, rt.bytes_addr(sig), sig.len()) }
+
+/// The k-th of DetectContentType's 17 HTML signatures.
+fn html_sig(k: Int) -> Str {
+  match k {
+    0 => "<!DOCTYPE HTML"
+    1 => "<HTML"
+    2 => "<HEAD"
+    3 => "<SCRIPT"
+    4 => "<IFRAME"
+    5 => "<H1"
+    6 => "<DIV"
+    7 => "<FONT"
+    8 => "<TABLE"
+    9 => "<A"
+    10 => "<STYLE"
+    11 => "<TITLE"
+    12 => "<B"
+    13 => "<BODY"
+    14 => "<BR"
+    15 => "<P"
+    _ => "<!--"
+  }
+}
+
+/// net/http's DetectContentType of the n bytes at p (h_sniff).
+pub fn sniff(p: Int, n0: Int) -> Str {
+  let n = if n0 > 512 { 512 } else { n0 }
+  var ws = 0
+  while ws < n {
+    let c = raw.byte_at(p, ws)
+    if !(c == 9 || c == 10 || c == 12 || c == 13 || c == 32) {
+      break
+    }
+    ws += 1
+  }
+  for s in 0..17 {
+    let hb = html_sig(s).bytes()
+    let hl = hb.len()
+    if n - ws < hl + 1 {
+      continue
+    }
+    var ok = true
+    var j = 0
+    while j < hl {
+      let hc = Int(hb[j])
+      var db = raw.byte_at(p, ws + j)
+      if hc >= 65 && hc <= 90 {
+        db = db & 0xDF
+      }
+      if hc != db {
+        ok = false
+        break
+      }
+      j += 1
+    }
+    let e = raw.byte_at(p, ws + hl)
+    if ok && (e == 32 || e == 62) {
+      return "text/html; charset=utf-8"
+    }
+  }
+  if n - ws >= 5 && at_is(p, ws, b"<?xml") {
+    return "text/xml; charset=utf-8"
+  }
+  if pre(p, n, b"%PDF-") {
+    return "application/pdf"
+  }
+  if pre(p, n, b"%!PS-Adobe-") {
+    return "application/postscript"
+  }
+  if n >= 4 && pre(p, n, b"\xFE\xFF") {
+    return "text/plain; charset=utf-16be"
+  }
+  if n >= 4 && pre(p, n, b"\xFF\xFE") {
+    return "text/plain; charset=utf-16le"
+  }
+  if n >= 4 && pre(p, n, b"\xEF\xBB\xBF") {
+    return "text/plain; charset=utf-8"
+  }
+  if pre(p, n, b"\x00\x00\x01\x00") || pre(p, n, b"\x00\x00\x02\x00") {
+    return "image/x-icon"
+  }
+  if pre(p, n, b"BM") {
+    return "image/bmp"
+  }
+  if pre(p, n, b"GIF87a") || pre(p, n, b"GIF89a") {
+    return "image/gif"
+  }
+  if n >= 14 && pre(p, n, b"RIFF") && at_is(p, 8, b"WEBPVP") {
+    return "image/webp"
+  }
+  if pre(p, n, b"\x89PNG\x0D\x0A\x1A\x0A") {
+    return "image/png"
+  }
+  if pre(p, n, b"\xFF\xD8\xFF") {
+    return "image/jpeg"
+  }
+  if n >= 12 && pre(p, n, b"FORM") && at_is(p, 8, b"AIFF") {
+    return "audio/aiff"
+  }
+  if pre(p, n, b"ID3") {
+    return "audio/mpeg"
+  }
+  if pre(p, n, b"OggS\x00") {
+    return "application/ogg"
+  }
+  if pre(p, n, b"MThd\x00\x00\x00\x06") {
+    return "audio/midi"
+  }
+  if n >= 12 && pre(p, n, b"RIFF") && at_is(p, 8, b"AVI ") {
+    return "video/avi"
+  }
+  if n >= 12 && pre(p, n, b"RIFF") && at_is(p, 8, b"WAVE") {
+    return "audio/wave"
+  }
+  if n >= 12 {
+    let box = (raw.byte_at(p, 0) << 24) | (raw.byte_at(p, 1) << 16) | (raw.byte_at(p, 2) << 8) | raw.byte_at(p, 3)
+    if n >= box && box % 4 == 0 && at_is(p, 4, b"ftyp") {
+      var st = 8
+      while st < box {
+        if st != 12 && at_is(p, st, b"mp4") {
+          return "video/mp4"
+        }
+        st += 4
+      }
+    }
+  }
+  if pre(p, n, b"\x1A\x45\xDF\xA3") {
+    return "video/webm"
+  }
+  if n >= 36 {
+    var z = true
+    var k = 0
+    while k < 34 {
+      if raw.byte_at(p, k) != 0 {
+        z = false
+        break
+      }
+      k += 1
+    }
+    if z && raw.byte_at(p, 34) == 76 && raw.byte_at(p, 35) == 80 {
+      return "application/vnd.ms-fontobject"
+    }
+  }
+  if pre(p, n, b"\x00\x01\x00\x00") {
+    return "font/ttf"
+  }
+  if pre(p, n, b"OTTO") {
+    return "font/otf"
+  }
+  if pre(p, n, b"ttcf") {
+    return "font/collection"
+  }
+  if pre(p, n, b"wOFF") {
+    return "font/woff"
+  }
+  if pre(p, n, b"wOF2") {
+    return "font/woff2"
+  }
+  if pre(p, n, b"\x1F\x8B\x08") {
+    return "application/x-gzip"
+  }
+  if pre(p, n, b"PK\x03\x04") {
+    return "application/zip"
+  }
+  if pre(p, n, b"Rar!\x1A\x07\x00") || pre(p, n, b"Rar!\x1A\x07\x01\x00") {
+    return "application/x-rar-compressed"
+  }
+  if pre(p, n, b"\x00\x61\x73\x6D") {
+    return "application/wasm"
+  }
+  var k = ws
+  while k < n {
+    let c = raw.byte_at(p, k)
+    if c <= 8 || c == 11 || (c >= 14 && c <= 26) || (c >= 28 && c <= 31) {
+      return "application/octet-stream"
+    }
+    k += 1
+  }
+  "text/plain; charset=utf-8"
+}
+
+// ---------------------------------------------------------------------------
+// The head
+
+// Fields left out of the handler's (bits of fields' excl).
+pub const X_CONTENT_LENGTH: Int = 1
+pub const X_TRANSFER_ENCODING: Int = 2
+pub const X_CONTENT_TYPE: Int = 4
+pub const X_CONNECTION: Int = 8
+pub const X_HOST: Int = 16
+pub const X_USER_AGENT: Int = 32
+pub const X_TRAILER: Int = 64
+
+/// Whether the field named by the kn bytes at kp is among excl's.
+fn excluded(kp: Int, kn: Int, excl: Int) -> Bool {
+  ((excl & X_CONTENT_LENGTH) != 0 && mem_is(kp, kn, "Content-Length")) || ((excl & X_TRANSFER_ENCODING) != 0 && mem_is(kp, kn, "Transfer-Encoding")) || ((excl & X_CONTENT_TYPE) != 0 && mem_is(kp, kn, "Content-Type")) || ((excl & X_CONNECTION) != 0 && mem_is(kp, kn, "Connection")) || ((excl & X_HOST) != 0 && mem_is(kp, kn, "Host")) || ((excl & X_USER_AGENT) != 0 && mem_is(kp, kn, "User-Agent")) || ((excl & X_TRAILER) != 0 && mem_is(kp, kn, "Trailer"))
+}
+
+fn trim_byte(c: Int) -> Bool { c == 32 || c == 9 || c == 13 || c == 10 }
+
+/// Writes the handler's fields sorted by name but those of excl, as
+/// Header.writeSubset: invalid names are left out, newlines in values
+/// become spaces, values are trimmed (hw_fields). At most the sum of the
+/// fields' lengths plus 4 bytes each.
+pub fn fields(d: Int, at0: Int, ha: Int, hn: Int, excl: Int) -> Int {
+  var at = at0
+  if hn == 0 {
+    return at
+  }
+  let ix = sorted(ha, hn)
+  for i in ix {
+    let kp = key_p(ha, i)
+    let kn = key_n(ha, i)
+    if kn == 0 || excluded(kp, kn, excl) {
+      continue
+    }
+    var ok = true
+    var k = 0
+    while k < kn {
+      if (Int(http1_tables.CLASS[raw.byte_at(kp, k)]) & 1) == 0 {
+        ok = false
+        break
+      }
+      k += 1
+    }
+    if !ok {
+      continue
+    }
+    at = put_mem(d, at, kp, kn)
+    rt.mem_store(d, at, 0x203a, 2)
+    at += 2
+    // textproto.TrimString after the newline replacement
+    let vp = val_p(ha, i)
+    var a = 0
+    var z = val_n(ha, i)
+    while a < z && trim_byte(raw.byte_at(vp, a)) {
+      a += 1
+    }
+    while z > a && trim_byte(raw.byte_at(vp, z - 1)) {
+      z -= 1
+    }
+    let start = at
+    at = put_mem(d, at, vp + a, z - a)
+    // newlines become spaces (rare: looked for once)
+    var j = start
+    while j < at {
+      let c = rt.mem_load(d, j, 1)
+      if c == 10 || c == 13 {
+        rt.mem_store(d, j, 32, 1)
+      }
+      j += 1
+    }
+    at = crlf(d, at)
+  }
+  at
+}
+
+/// The status line "HTTP/1.x NNN text\r\n" (hw_status_line; code 100 to
+/// 999).
+fn status_line(d: Int, at0: Int, is11: Bool, code: Int) -> Int {
+  var at = put(d, at0, if is11 { "HTTP/1.1 " } else { "HTTP/1.0 " })
+  at = put_int(d, at, code)
+  rt.mem_store(d, at, 32, 1)
+  at += 1
+  let t = status_text(code)
+  if t.len() > 0 {
+    at = put(d, at, t)
+  } else {
+    // "%03d status code %d" (the code has three digits here)
+    at = put(d, at, "status code ")
+    at = put_int(d, at, code)
+  }
+  crlf(d, at)
+}
+
+/// strconv.ParseInt of the n bytes at p when it is 0 or more, else -1
+/// (the handler's Content-Length).
+fn parse_len(p: Int, n: Int) -> Int {
+  if n == 0 {
+    return -1
+  }
+  var i = 0
+  let c0 = raw.byte_at(p, 0)
+  if c0 == 43 || c0 == 45 {
+    if n == 1 {
+      return -1
+    }
+    i = 1
+  }
+  var v = 0
+  while i < n {
+    let c = raw.byte_at(p, i) - 48
+    if c < 0 || c > 9 {
+      return -1
+    }
+    if v > (9223372036854775807 - c) / 10 {
+      return -1
+    }
+    v = v * 10 + c
+    i += 1
+  }
+  if c0 == 45 && v != 0 {
+    return -1
+  }
+  v
+}
+
+/// net/http's hasToken (h_server_token) over the n bytes at v.
+fn server_token(v: Int, n: Int, tok: Str) -> Bool {
+  let tb = tok.bytes()
+  let tl = tb.len()
+  if tl > n || tl == 0 {
+    return false
+  }
+  var sp = 0
+  while sp + tl <= n {
+    let b = raw.byte_at(v, sp)
+    let t0 = Int(tb[0])
+    if b == t0 || (b | 32) == t0 {
+      let before = if sp > 0 { raw.byte_at(v, sp - 1) } else { 32 }
+      let e = sp + tl
+      let after = if e != n { raw.byte_at(v, e) } else { 32 }
+      if (before == 32 || before == 44 || before == 9) && (after == 32 || after == 44 || after == 9) {
+        var eq = true
+        var k = 0
+        while k < tl {
+          if lower(raw.byte_at(v, sp + k)) != lower(Int(tb[k])) {
+            eq = false
+            break
+          }
+          k += 1
+        }
+        if eq {
+          return true
+        }
+      }
+    }
+    sp += 1
+  }
+  false
+}
+
+fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// httpguts.headerValueContainsToken (h_has_token) over the n bytes at v.
+fn has_token(v: Int, n: Int, tok: Str) -> Bool {
+  let tb = tok.bytes()
+  let tl = tb.len()
+  var i = 0
+  while i <= n {
+    var j = i
+    while j < n && raw.byte_at(v, j) != 44 {
+      j += 1
+    }
+    var a = i
+    var b = j
+    while a < b && (raw.byte_at(v, a) == 32 || raw.byte_at(v, a) == 9) {
+      a += 1
+    }
+    while b > a && (raw.byte_at(v, b - 1) == 32 || raw.byte_at(v, b - 1) == 9) {
+      b -= 1
+    }
+    if b - a == tl {
+      var eq = true
+      var k = 0
+      while k < tl {
+        let c = raw.byte_at(v, a + k)
+        if c >= 128 || lower(c) != lower(Int(tb[k])) {
+          eq = false
+          break
+        }
+        k += 1
+      }
+      if eq {
+        return true
+      }
+    }
+    i = j + 1
+  }
+  false
+}
+
+// The request and the connection (response's flags).
+pub const F_HTTP11: Int = 1
+pub const F_HEAD: Int = 2
+pub const F_H2UP: Int = 4
+pub const F_WANTS10KA: Int = 8
+pub const F_WANTSCLOSE: Int = 16
+pub const F_HAS_BODY: Int = 32
+pub const F_EXPECT_UNREAD: Int = 64
+pub const F_BODY_BAD: Int = 128
+pub const F_TOO_BIG: Int = 256
+pub const F_STREAM: Int = 512
+
+// What response stores at res.
+pub const R_KEEP: Int = 1
+pub const R_CHUNKED: Int = 2
+
+/// Writes at d the response to a request (flags, F_*) with the handler's
+/// header (hn fields at ha), status, and body (bn bytes at body) as
+/// net/http does when a handler sets the header and writes the whole
+/// body at once (std/rt's serve), or, with F_STREAM, the head of a
+/// stream with its first write; stores at res whether the connection
+/// stays open (R_KEEP) and whether the body goes chunked (R_CHUNKED);
+/// returns the bytes written (hw_response_x). F_EXPECT_UNREAD: the
+/// request expected 100-continue and its body was not read to the end
+/// (net/http then closes). F_BODY_BAD: reading the request body failed
+/// (the chunked reader's error is sticky, so discarding the rest fails
+/// too); F_TOO_BIG: 256 KiB or more of a Content-Length body were never
+/// sent (net/http's requestTooLarge). The C reserves the room first
+/// (xo_http.c's hw_room: 640 bytes, the fields twice with 4 bytes each,
+/// the body, and 24 bytes a chunk).
+pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flags: Int, res: Int) -> Int {
+  let is11 = (flags & F_HTTP11) != 0
+  let head = (flags & F_HEAD) != 0
+  let stream = (flags & F_STREAM) != 0
+  let wants10ka = (flags & F_WANTS10KA) != 0
+  var status = status0
+  if status < 100 || status > 999 {
+    // net/http panics in WriteHeader: the connection closes unanswered
+    rt.mem_store(res, 0, 0, 8)
+    return 0
+  }
+  var at = 0
+  if status >= 100 && status <= 199 && status != 101 {
+    // an informational response, then 200 with the same header
+    at = status_line(d, at, is11, status)
+    at = fields(d, at, ha, hn, X_CONTENT_LENGTH | X_TRANSFER_ENCODING)
+    at = crlf(d, at)
+    status = 200
+  }
+  // response.WriteHeader: the handler's Content-Length, when valid (an
+  // invalid one is deleted from the handler's header, but the copy being
+  // written still has it: the copy was made first)
+  var content_length = -1
+  let cli = find(ha, hn, "Content-Length")
+  if cli >= 0 {
+    content_length = parse_len(val_p(ha, cli), val_n(ha, cli))
+  }
+  let body_ok = body_allowed(status)
+  // response.write: the bytes counted, and those reaching the buffer
+  let counted = if body_ok { bn } else { 0 }
+  var written = counted
+  if content_length != -1 && counted > content_length {
+    // ErrContentLength
+    written = 0
+  }
+  // chunkWriter.writeHeader(p): the whole body when it fits the 2048
+  // byte buffer (the handler is done by then), else its first 2048. A
+  // stream's head goes out with its first write while the handler is
+  // not done (p: that write)
+  let plen = if stream || written <= 2048 { written } else { 2048 }
+  let done = !stream && written <= 2048
+  var excl = 0
+  var set_ct = ""
+  var set_conn = ""
+  var set_cl = -1
+  var close = (flags & F_H2UP) != 0
+  let tei = find(ha, hn, "Transfer-Encoding")
+  let has_te = val_len(ha, tei) > 0
+  if done && !has_te && body_ok && cli < 0 && (!head || plen > 0) {
+    content_length = plen
+    set_cl = plen
+  }
+  let conni = find(ha, hn, "Connection")
+  if wants10ka && cli >= 0 && val_n(ha, cli) > 0 && val_is(ha, conni, "keep-alive") {
+    close = false
+  }
+  var has_cl = content_length != -1
+  if wants10ka && (head || has_cl || !body_ok) {
+    if conni < 0 {
+      set_conn = "keep-alive"
+    }
+  } else if !is11 || (flags & F_WANTSCLOSE) != 0 {
+    close = true
+  }
+  if val_is(ha, conni, "close") || (flags & F_EXPECT_UNREAD) != 0 {
+    close = true
+  }
+  var too_large = false
+  if (flags & F_HAS_BODY) != 0 && !close {
+    // what remains of the request body is discarded
+    if (flags & F_BODY_BAD) != 0 {
+      close = true
+    } else if (flags & F_TOO_BIG) != 0 {
+      close = true
+      too_large = true
+    }
+  }
+  if body_ok {
+    let cei = find(ha, hn, "Content-Encoding")
+    if val_len(ha, cei) == 0 && find(ha, hn, "Content-Type") < 0 && !has_te && plen > 0 {
+      set_ct = sniff(body, plen)
+    }
+  } else {
+    excl = X_CONTENT_LENGTH | X_TRANSFER_ENCODING
+    if status == 304 {
+      excl = excl | X_CONTENT_TYPE
+    }
+  }
+  let date = find(ha, hn, "Date") < 0
+  if has_cl && has_te && !val_is(ha, tei, "identity") {
+    excl = excl | X_CONTENT_LENGTH
+    set_cl = -1
+    has_cl = false
+  }
+  var chunking = false
+  if head || !body_ok || status == 204 || has_cl {
+    excl = excl | X_TRANSFER_ENCODING
+  } else if is11 {
+    if has_te && val_is(ha, tei, "identity") {
+      close = true
+      excl = excl | X_TRANSFER_ENCODING
+    } else {
+      chunking = true
+      if has_te && val_is(ha, tei, "chunked") {
+        excl = excl | X_TRANSFER_ENCODING
+      }
+    }
+  } else {
+    close = true
+    excl = excl | X_TRANSFER_ENCODING
+  }
+  if chunking {
+    excl = excl | X_CONTENT_LENGTH
+    set_cl = -1
+  }
+  // isProtocolSwitchResponse: 101 with Upgrade and Connection: upgrade
+  let cp = if conni >= 0 { val_p(ha, conni) } else { 0 }
+  let cn = val_len(ha, conni)
+  let upi = find(ha, hn, "Upgrade")
+  let proto_switch = status == 101 && val_len(ha, upi) > 0 && conni >= 0 && has_token(cp, cn, "upgrade")
+  if too_large {
+    excl = excl | X_CONNECTION
+    set_conn = "close"
+  }
+  if close && !server_token(cp, cn, "close") && !proto_switch {
+    excl = excl | X_CONNECTION
+    if is11 {
+      set_conn = "close"
+    }
+  }
+  at = status_line(d, at, is11, status)
+  at = fields(d, at, ha, hn, excl)
+  if date {
+    at = put(d, at, "Date: ")
+    at = put_date(d, at)
+    at = crlf(d, at)
+  }
+  if set_cl >= 0 {
+    at = put(d, at, "Content-Length: ")
+    at = put_int(d, at, set_cl)
+    at = crlf(d, at)
+  }
+  if set_ct.len() > 0 {
+    at = put(d, at, "Content-Type: ")
+    at = put(d, at, set_ct)
+    at = crlf(d, at)
+  }
+  if set_conn.len() > 0 {
+    at = put(d, at, "Connection: ")
+    at = put(d, at, set_conn)
+    at = crlf(d, at)
+  }
+  if chunking {
+    at = put(d, at, "Transfer-Encoding: chunked\r\n")
+  }
+  at = crlf(d, at)
+  var out = 0
+  if chunking && !head && body_ok {
+    out = R_CHUNKED
+  }
+  if !head && body_ok && written > 0 {
+    if chunking {
+      var left = written
+      var p = body
+      while left > 0 {
+        let c = if left > 2048 && !stream { 2048 } else { left }
+        at = put_hex(d, at, c)
+        at = crlf(d, at)
+        at = put_mem(d, at, p, c)
+        at = crlf(d, at)
+        p += c
+        left -= c
+      }
+    } else {
+      at = put_mem(d, at, body, written)
+    }
+  }
+  if stream {
+    // the stream's later writes and its end follow (the C's sink)
+    if !close {
+      out = out | R_KEEP
+    }
+    rt.mem_store(res, 0, out, 8)
+    return at
+  }
+  if chunking {
+    at = put(d, at, "0\r\n\r\n")
+  }
+  // shouldReuseConnection: a body shorter or longer than its length
+  if !head && content_length != -1 && body_ok && content_length != counted {
+    close = true
+  }
+  if !close {
+    out = out | R_KEEP
+  }
+  rt.mem_store(res, 0, out, 8)
+  at
+}
+
+// The kinds of a head's parse that hw_error answers (http1.xo's).
+const STATUS: Int = 4
+const TOO_LARGE: Int = 5
+const BAD_TE: Int = 6
+
+/// The answer of conn.serve to a request it could not read (hw_error),
+/// at most 255 bytes, written at d (room for 256); its length.
+pub fn error_answer(d: Int, kind: Int, code: Int, reason: Str) -> Int {
+  let hdrs = "\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n"
+  let s = if kind == TOO_LARGE {
+    "HTTP/1.1 431 Request Header Fields Too Large${hdrs}431 Request Header Fields Too Large"
+  } else if kind == BAD_TE {
+    "HTTP/1.1 501 Not Implemented${hdrs}Unsupported transfer encoding"
+  } else if kind == STATUS {
+    let t = "${code} ${status_text(code)}: ${reason}"
+    "HTTP/1.1 ${t}${hdrs}${t}"
+  } else {
+    "HTTP/1.1 400 Bad Request${hdrs}400 Bad Request"
+  }
+  let n = if s.len() > 255 { 255 } else { s.len() }
+  rt.mem_copy(d, raw.data(s), n)
+  n
+}

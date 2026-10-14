@@ -14,6 +14,52 @@
 // bounds them); more is 431.
 #define HTTP_MAX_FIELDS 10000
 
+// (moved from xo_http.c with B12: only the parser here calls them)
+// h_server_token is net/http's hasToken (server.go: wantsClose,
+// expectsContinue, the Connection checks of writeHeader): tok anywhere
+// in v between space, comma, or tab boundaries, ASCII case insensitive.
+static int h_server_token(const char *v, int64_t n, const char *tok) {
+	int64_t tl = (int64_t)strlen(tok);
+	if (tl > n || tl == 0) {
+		return 0;
+	}
+	for (int64_t sp = 0; sp + tl <= n; sp++) {
+		unsigned b = (unsigned char)v[sp];
+		if (b != (unsigned char)tok[0] && (b | 0x20) != (unsigned char)tok[0]) {
+			continue;
+		}
+		if (sp > 0 && !(v[sp - 1] == ' ' || v[sp - 1] == ',' || v[sp - 1] == '\t')) {
+			continue;
+		}
+		int64_t e = sp + tl;
+		if (e != n && !(v[e] == ' ' || v[e] == ',' || v[e] == '\t')) {
+			continue;
+		}
+		int eq = 1;
+		for (int64_t k = 0; k < tl; k++) {
+			if (h_lower((unsigned char)v[sp + k]) != h_lower((unsigned char)tok[k])) {
+				eq = 0;
+				break;
+			}
+		}
+		if (eq) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// hp_cmp orders fields by name (bytes).
+static int hp_cmp(const void *a, const void *b) {
+	const hpair *x = a, *y = b;
+	int64_t n = x->k.n < y->k.n ? x->k.n : y->k.n;
+	int c = memcmp(x->k.p, y->k.p, (size_t)n);
+	if (c) {
+		return c;
+	}
+	return x->k.n < y->k.n ? -1 : x->k.n > y->k.n;
+}
+
 static int h_vbyte(unsigned c) { return c >= 0x80 || (c >= 0x21 && c <= 0x7e) || c == ' ' || c == '\t'; }
 
 // ---------------------------------------------------------------------------
@@ -875,7 +921,6 @@ out:
 	}
 	return res;
 }
-
 
 // hb_chunked decodes a chunked body at the start of b (n bytes; eof: no
 // more will come) into out, as net/http's chunkedReader and the trailer

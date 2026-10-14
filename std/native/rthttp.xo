@@ -164,21 +164,6 @@ fn stream_put(f: rt.Any) -> Int
 /// The function of stream id, or none; take removes it.
 fn stream_get(id: Int, take: Bool) -> List[rt.Any]
 
-/// Logging (std.md 6): the level and format of log.configure.
-fn log_level() -> Int
-fn log_json() -> Bool
-/// log.configure was called (records go to standard error, the fake one
-/// in a test, as std/rt's configured logSink.out).
-fn log_configured() -> Bool
-fn log_configure(level: Int, json: Bool)
-/// The dependency that writes the next record (decision 0173): set by
-/// the code generator before a dependency's log call, taken (and
-/// cleared) by the log function at entry; "" for the main module.
-fn log_from(from: Str)
-fn log_from_take() -> Str
-/// The time now as RFC 3339 (nano: with nanoseconds) in UTC.
-fn log_now(nano: Bool) -> Str
-
 /// TLS (decision 0105, std/llrt/xo_tls.c): a certificate chain with its
 /// private key (xo_tcert) and the roots a client trusts (xo_troots).
 struct TCert {}

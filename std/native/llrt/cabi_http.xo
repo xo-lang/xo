@@ -1,0 +1,37 @@
+// The C ABI exports of the HTTP runtime (decisions 0204, 0207): like
+// cabi.xo, every top level function here is called by the C runtime as
+// xo_x_<name>; xo_http.c and xo_h2.c call them, so std/native/http.xo
+// imports this module and only programs that use std/http carry them
+// (the C has weak definitions that fault, for the programs without).
+// The response writer itself is http1w.xo (the zero-C audit's B12).
+use native/llrt/http1w
+use native/llrt/raw
+use native/rt
+
+/// Writes at d the response of status with the handler's header (hn
+/// pairs at ha) and the bn bytes of body at body for a request of flags
+/// (http1w.F_*); stores http1w.R_* at res; the bytes written. The caller
+/// reserved hw_room's bytes at d.
+fn hw_response(d: Int, ha: Int, hn: Int, status: Int, body: Int, bn: Int, flags: Int, res: Int) -> Int { http1w.response(d, ha, hn, status, body, bn, flags, res) }
+
+/// Writes at d the hn fields at ha sorted, but the names of excl
+/// (http1w.X_*), as Header.writeSubset; the bytes written (at most the
+/// fields' names and values and 4 bytes each).
+fn hw_fields(d: Int, ha: Int, hn: Int, excl: Int) -> Int { http1w.fields(d, 0, ha, hn, excl) }
+
+/// Writes at d (256 bytes of room) the answer to a request that could
+/// not be read: kind of http1.xo's parse results, code and the rn bytes
+/// of the reason at rp for a status answer; its length.
+fn hw_error(d: Int, kind: Int, code: Int, rp: Int, rn: Int) -> Int { http1w.error_answer(d, kind, code, raw.str_at(rp, rn)) }
+
+/// Writes DetectContentType of the n bytes at p and a zero byte at buf
+/// (64 bytes of room); its length.
+fn hw_sniff(buf: Int, p: Int, n: Int) -> Int { raw.put_cstr(buf, http1w.sniff(p, n)) }
+
+/// Writes the Date header value of now and a zero byte at buf (32 bytes
+/// of room); its length (29).
+fn hw_date(buf: Int) -> Int {
+  let n = http1w.put_date(buf, 0)
+  rt.mem_store(buf, n, 0, 1)
+  n
+}

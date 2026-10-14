@@ -21,11 +21,11 @@
 //     mutexes, once), threads (clone with a stack and a TLS block per
 //     thread, joined through CLONE_CHILD_CLEARTID), the TLS block's
 //     layout;
-//   - not here (stage 2): unwinding (_Unwind_ForcedUnwind finds no
-//     frames: a fault is reported and ends the program, without running
-//     deferred code), floating point printf conversions and strtod (they
-//     end the program with a message); stage 3: sockets past shutdown,
-//     DNS (getaddrinfo is not defined).
+//   - unwinding is Xo (decision 0221, std/native/llrt/unwind.xo): no
+//     _Unwind_* function is defined or called;
+//   - not here (stage 2): floating point printf conversions and strtod
+//     (they end the program with a message); stage 3: sockets past
+//     shutdown, DNS (getaddrinfo is not defined).
 // The system call layer of Xo code is std/native/llrt/linux.xo; this
 // file serves the C runtime only, and shrinks as the runtime moves to Xo.
 
@@ -1565,50 +1565,9 @@ NL_USED int sched_yield(void) { return (int)nl_ret(nl_sys0(SYS_sched_yield)); }
 // cabi_poll.xo for them (sock.xo, dns.xo; decision 0206 stage 3).
 
 // ---------------------------------------------------------------------------
-// Unwinding is stage 2: the forced unwind of a fault finds no frames, so
-// the runtime reports the fault and ends the program (fault_exit).
-
-NL_USED _Unwind_Reason_Code _Unwind_ForcedUnwind(struct _Unwind_Exception *e, _Unwind_Stop_Fn stop, void *arg) {
-	(void)e;
-	(void)stop;
-	(void)arg;
-	return _URC_END_OF_STACK;
-}
-
-NL_USED _Unwind_Word _Unwind_GetCFA(struct _Unwind_Context *c) {
-	(void)c;
-	return 0;
-}
-
-NL_USED _Unwind_Ptr _Unwind_GetIP(struct _Unwind_Context *c) {
-	(void)c;
-	return 0;
-}
-
-NL_USED void *_Unwind_GetLanguageSpecificData(struct _Unwind_Context *c) {
-	(void)c;
-	return NULL;
-}
-
-NL_USED _Unwind_Ptr _Unwind_GetRegionStart(struct _Unwind_Context *c) {
-	(void)c;
-	return 0;
-}
-
-NL_USED void _Unwind_SetGR(struct _Unwind_Context *c, int i, _Unwind_Word v) {
-	(void)c;
-	(void)i;
-	(void)v;
-}
-
-NL_USED void _Unwind_SetIP(struct _Unwind_Context *c, _Unwind_Ptr v) {
-	(void)c;
-	(void)v;
-}
-
-NL_USED void _Unwind_Resume(struct _Unwind_Exception *e) {
-	(void)e;
-	nl_die("_Unwind_Resume: unwinding is not available");
-}
+// Unwinding is not here: fault_raise calls the Xo unwinder
+// (std/native/llrt/unwind.xo through cabi_nolibc.xo's unwind_fault), and
+// the link defines xo_personality as cabi_nolibc.xo's personality
+// (decision 0221). No C library unwinder function is called.
 
 #endif

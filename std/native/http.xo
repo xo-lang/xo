@@ -7,6 +7,7 @@ use std/log
 use std/task
 use native/rt
 use native/llrt/http1
+use native/llrt/cabi_http
 use native/llrt/cabi_tls
 use native/llrt/cabi_net
 use native/llrt/netpolicy

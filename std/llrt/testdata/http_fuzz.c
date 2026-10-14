@@ -5,7 +5,9 @@
 //
 //   - the server's connection code (xo_hc_read and xo_hc_respond on a
 //     connection without a socket): request line, header, target and
-//     query, Content-Length and chunked bodies, trailers, responses;
+//     query, Content-Length and chunked bodies, trailers, responses (the
+//     writer std/native/llrt/http1w.xo, linked from the LLVM IR of a
+//     std/http program, cOnlyHTTP);
 //   - HTTP/2 (xo_h2.c, decision 0121): mutated frame sequences through the
 //     server's frame code (preface, frames, HPACK, streams, the handlers'
 //     whole and streamed responses and resets, the sending of it all)

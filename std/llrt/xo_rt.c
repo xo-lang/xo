@@ -1560,6 +1560,21 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	}
 	fault_exit(c);
 }
+#elif defined(XO_NOLIBC)
+int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary);
+
+// fault_raise with no C library (decision 0221): the unwinder is Xo
+// (std/native/llrt/unwind.xo over the program's .eh_frame_hdr), which
+// does what the forced unwind below does, fault_stop's boundary and
+// xo_personality's landing pads included, and returns when nothing
+// catches the fault.
+XO_NORETURN static void fault_raise(xo_ctx *c) {
+	rt_fault_leave();
+	c->faulting = 1;
+	c->unwinding = 1;
+	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary);
+	fault_exit(c);
+}
 #else
 static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
 	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
@@ -1707,7 +1722,10 @@ xo_rstr *xo_fault_loc(int64_t *len) {
 // landing pad is a cleanup, entered on the second phase. The language
 // specific data is GCC's: an LPStart and a TType encoding (omitted), the
 // call site encoding, and the call sites (start, length, landing pad,
-// action), offsets from the function's start.
+// action), offsets from the function's start. With no C library it is
+// Xo (decision 0221: unwind.xo personality; the link defines
+// xo_personality as its export).
+#ifndef XO_NOLIBC
 static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
 	const uint8_t *q = *p;
 	uintptr_t v = 0;
@@ -1844,6 +1862,7 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 	return _URC_CONTINUE_UNWIND;
 }
 #endif
+#endif // XO_NOLIBC
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 

@@ -2,20 +2,20 @@
 // error as std/rt/log.go writes them (text: time, level, message, then
 // key=value fields; JSON: an object with sorted keys).
 use std/log
+use native/llrt/logstate
 use native/rt
 use native/rtjson
-use native/rthttp
 use native/rttest
 
 // Each takes the dependency that calls it (decision 0173) at entry: the
 // code generator sets it just before a dependency's call.
-fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields, rthttp.log_from_take()) }
+fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields, logstate.take_from()) }
 
-fn info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, fields, rthttp.log_from_take()) }
+fn info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, fields, logstate.take_from()) }
 
-fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields, rthttp.log_from_take()) }
+fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields, logstate.take_from()) }
 
-fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields, rthttp.log_from_take()) }
+fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields, logstate.take_from()) }
 
 fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format = log.Format.Text) uses stdio {
   let n = match level {
@@ -24,7 +24,7 @@ fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format =
     log.Level.Warn => 3
     log.Level.Error => 4
   }
-  rthttp.log_configure(n, format is log.Format.Json)
+  logstate.configure(n, format is log.Format.Json)
 }
 
 fn level_name(level: Int) -> Str {
@@ -37,7 +37,7 @@ fn level_name(level: Int) -> Str {
 }
 
 fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
-  if level < rthttp.log_level() {
+  if level < logstate.level() {
     return
   }
   let line = format(level, msg, fields, from)
@@ -52,7 +52,7 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
       keys.push(k)
       vals.push(rt.dyn_text(v))
     }
-    if !rthttp.log_configured() {
+    if !logstate.configured() {
       rttest.test_log(level, msg, from, keys, vals, line)
       return
     }
@@ -63,10 +63,10 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) {
 
 /// The text of a record: JSON when configured so, else text.
 fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
-  if rthttp.log_json() {
+  if logstate.json() {
     // encoding/json of a map: keys sorted
     var keys: List[Str] = ["time", "level", "msg"]
-    var vals: List[Str] = [rtjson.json_enc("", rthttp.log_now(true)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", msg)]
+    var vals: List[Str] = [rtjson.json_enc("", logstate.now(true)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", msg)]
     for (k, v) in fields {
       let text = rt.dyn_text(v)
       var j = rtjson.json_enc("", text)
@@ -117,7 +117,7 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
   if from != "" {
     tag = "[${from}] "
   }
-  var line = "${rthttp.log_now(false)} ${level_name(level)} ${tag}${msg}"
+  var line = "${logstate.now(false)} ${level_name(level)} ${tag}${msg}"
   for (k, v) in fields {
     line = line + " ${k}=${rt.dyn_text(v)}"
   }

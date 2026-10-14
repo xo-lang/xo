@@ -12,7 +12,8 @@
 //     bodies), the C reads the socket and the body and gives Go's error
 //     answers (400 with or without a reason, 431, 501, 505, 417),
 //     Expect: 100-continue, keep-alive (shouldClose), pipelining;
-//   - writing a response (hw_response): chunkWriter.writeHeader with a
+//   - writing a response (hw_response, whose rules are
+//     std/native/llrt/http1w.xo since the zero-C audit's B12): chunkWriter.writeHeader with a
 //     whole body: the status line, the handler's headers sorted, Date,
 //     Content-Length when the body fits the 2048 byte buffer of
 //     net/http (chunked above that, in 2048 byte chunks), Content-Type
@@ -200,40 +201,6 @@ static void h_canon(char *p, int64_t n) {
 	}
 }
 
-// h_server_token is net/http's hasToken (server.go: wantsClose,
-// expectsContinue, the Connection checks of writeHeader): tok anywhere
-// in v between space, comma, or tab boundaries, ASCII case insensitive.
-static int h_server_token(const char *v, int64_t n, const char *tok) {
-	int64_t tl = (int64_t)strlen(tok);
-	if (tl > n || tl == 0) {
-		return 0;
-	}
-	for (int64_t sp = 0; sp + tl <= n; sp++) {
-		unsigned b = (unsigned char)v[sp];
-		if (b != (unsigned char)tok[0] && (b | 0x20) != (unsigned char)tok[0]) {
-			continue;
-		}
-		if (sp > 0 && !(v[sp - 1] == ' ' || v[sp - 1] == ',' || v[sp - 1] == '\t')) {
-			continue;
-		}
-		int64_t e = sp + tl;
-		if (e != n && !(v[e] == ' ' || v[e] == ',' || v[e] == '\t')) {
-			continue;
-		}
-		int eq = 1;
-		for (int64_t k = 0; k < tl; k++) {
-			if (h_lower((unsigned char)v[sp + k]) != h_lower((unsigned char)tok[k])) {
-				eq = 0;
-				break;
-			}
-		}
-		if (eq) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
 // h_has_token is httpguts.headerValueContainsToken (shouldClose).
 static int h_has_token(const char *v, int64_t n, const char *tok) {
 	int64_t tl = (int64_t)strlen(tok);
@@ -268,74 +235,6 @@ static int h_has_token(const char *v, int64_t n, const char *tok) {
 	return 0;
 }
 
-static const char *h_status_text(int64_t c) {
-	switch (c) {
-	case 100: return "Continue";
-	case 101: return "Switching Protocols";
-	case 102: return "Processing";
-	case 103: return "Early Hints";
-	case 200: return "OK";
-	case 201: return "Created";
-	case 202: return "Accepted";
-	case 203: return "Non-Authoritative Information";
-	case 204: return "No Content";
-	case 205: return "Reset Content";
-	case 206: return "Partial Content";
-	case 207: return "Multi-Status";
-	case 208: return "Already Reported";
-	case 226: return "IM Used";
-	case 300: return "Multiple Choices";
-	case 301: return "Moved Permanently";
-	case 302: return "Found";
-	case 303: return "See Other";
-	case 304: return "Not Modified";
-	case 305: return "Use Proxy";
-	case 307: return "Temporary Redirect";
-	case 308: return "Permanent Redirect";
-	case 400: return "Bad Request";
-	case 401: return "Unauthorized";
-	case 402: return "Payment Required";
-	case 403: return "Forbidden";
-	case 404: return "Not Found";
-	case 405: return "Method Not Allowed";
-	case 406: return "Not Acceptable";
-	case 407: return "Proxy Authentication Required";
-	case 408: return "Request Timeout";
-	case 409: return "Conflict";
-	case 410: return "Gone";
-	case 411: return "Length Required";
-	case 412: return "Precondition Failed";
-	case 413: return "Request Entity Too Large";
-	case 414: return "Request URI Too Long";
-	case 415: return "Unsupported Media Type";
-	case 416: return "Requested Range Not Satisfiable";
-	case 417: return "Expectation Failed";
-	case 418: return "I'm a teapot";
-	case 421: return "Misdirected Request";
-	case 422: return "Unprocessable Entity";
-	case 423: return "Locked";
-	case 424: return "Failed Dependency";
-	case 425: return "Too Early";
-	case 426: return "Upgrade Required";
-	case 428: return "Precondition Required";
-	case 429: return "Too Many Requests";
-	case 431: return "Request Header Fields Too Large";
-	case 451: return "Unavailable For Legal Reasons";
-	case 500: return "Internal Server Error";
-	case 501: return "Not Implemented";
-	case 502: return "Bad Gateway";
-	case 503: return "Service Unavailable";
-	case 504: return "Gateway Timeout";
-	case 505: return "HTTP Version Not Supported";
-	case 506: return "Variant Also Negotiates";
-	case 507: return "Insufficient Storage";
-	case 508: return "Loop Detected";
-	case 510: return "Not Extended";
-	case 511: return "Network Authentication Required";
-	}
-	return "";
-}
-
 // ---------------------------------------------------------------------------
 // The parts of a request's URL. Request targets (net/url ParseRequestURI)
 // and queries are parsed in Xo (std/native/llrt/http1.xo): HTTP/1.1's
@@ -367,17 +266,6 @@ static void hu_free(hurl *u) {
 	hs_free(&u->host);
 	hs_free(&u->path);
 	hs_free(&u->rawquery);
-}
-
-// hp_cmp orders fields by name (bytes).
-static int hp_cmp(const void *a, const void *b) {
-	const hpair *x = a, *y = b;
-	int64_t n = x->k.n < y->k.n ? x->k.n : y->k.n;
-	int c = memcmp(x->k.p, y->k.p, (size_t)n);
-	if (c) {
-		return c;
-	}
-	return x->k.n < y->k.n ? -1 : x->k.n > y->k.n;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,471 +313,138 @@ enum { HB_NEED, HB_OK, HB_ERR };
 
 // ---------------------------------------------------------------------------
 // Writing a response
+//
+// The writer is std/native/llrt/http1w.xo (the zero-C audit's B12): the
+// status text, DetectContentType, the Date header, and the rules of
+// chunkWriter.writeHeader, through the C ABI exports of cabi_http.xo
+// (decision 0204), which a program carries when it uses std/http. A
+// program without std/http never reaches the server but links this C:
+// the weak definitions here keep it linking, and fault if one ever ran.
+// The C reserves the room each writes into.
 
-// h_sniff is net/http's DetectContentType.
-static const char *h_sniff(const unsigned char *d, int64_t n) {
-	if (n > 512) {
-		n = 512;
-	}
-	int64_t ws = 0;
-	while (ws < n && (d[ws] == '\t' || d[ws] == '\n' || d[ws] == '\x0c' || d[ws] == '\r' || d[ws] == ' ')) {
-		ws++;
-	}
-	static const char *html[] = {"<!DOCTYPE HTML", "<HTML", "<HEAD", "<SCRIPT", "<IFRAME", "<H1", "<DIV", "<FONT", "<TABLE", "<A",
-	                             "<STYLE", "<TITLE", "<B", "<BODY", "<BR", "<P", "<!--"};
-	for (size_t k = 0; k < sizeof html / sizeof html[0]; k++) {
-		const char *h = html[k];
-		int64_t hl = (int64_t)strlen(h);
-		if (n - ws < hl + 1) {
-			continue;
-		}
-		int ok = 1;
-		for (int64_t j = 0; j < hl; j++) {
-			unsigned db = d[ws + j];
-			if (h[j] >= 'A' && h[j] <= 'Z') {
-				db &= 0xDF;
-			}
-			if ((unsigned char)h[j] != db) {
-				ok = 0;
-				break;
-			}
-		}
-		if (ok && (d[ws + hl] == ' ' || d[ws + hl] == '>')) {
-			return "text/html; charset=utf-8";
-		}
-	}
-	if (n - ws >= 5 && memcmp(d + ws, "<?xml", 5) == 0) {
-		return "text/xml; charset=utf-8";
-	}
-#define PREFIX(s, ct)                                                          \
-	if (n >= (int64_t)(sizeof(s) - 1) && memcmp(d, s, sizeof(s) - 1) == 0) { \
-		return ct;                                                             \
-	}
-	PREFIX("%PDF-", "application/pdf");
-	PREFIX("%!PS-Adobe-", "application/postscript");
-	if (n >= 4 && d[0] == 0xFE && d[1] == 0xFF) {
-		return "text/plain; charset=utf-16be";
-	}
-	if (n >= 4 && d[0] == 0xFF && d[1] == 0xFE) {
-		return "text/plain; charset=utf-16le";
-	}
-	if (n >= 4 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF) {
-		return "text/plain; charset=utf-8";
-	}
-	PREFIX("\x00\x00\x01\x00", "image/x-icon");
-	PREFIX("\x00\x00\x02\x00", "image/x-icon");
-	PREFIX("BM", "image/bmp");
-	PREFIX("GIF87a", "image/gif");
-	PREFIX("GIF89a", "image/gif");
-	if (n >= 14 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WEBPVP", 6) == 0) {
-		return "image/webp";
-	}
-	PREFIX("\x89PNG\x0D\x0A\x1A\x0A", "image/png");
-	PREFIX("\xFF\xD8\xFF", "image/jpeg");
-	if (n >= 12 && memcmp(d, "FORM", 4) == 0 && memcmp(d + 8, "AIFF", 4) == 0) {
-		return "audio/aiff";
-	}
-	PREFIX("ID3", "audio/mpeg");
-	PREFIX("OggS\x00", "application/ogg");
-	PREFIX("MThd\x00\x00\x00\x06", "audio/midi");
-	if (n >= 12 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "AVI ", 4) == 0) {
-		return "video/avi";
-	}
-	if (n >= 12 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WAVE", 4) == 0) {
-		return "audio/wave";
-	}
-	if (n >= 12) {
-		int64_t box = (int64_t)d[0] << 24 | (int64_t)d[1] << 16 | (int64_t)d[2] << 8 | d[3];
-		if (n >= box && box % 4 == 0 && memcmp(d + 4, "ftyp", 4) == 0) {
-			for (int64_t st = 8; st < box; st += 4) {
-				if (st == 12) {
-					continue;
-				}
-				if (memcmp(d + st, "mp4", 3) == 0) {
-					return "video/mp4";
-				}
-			}
-		}
-	}
-	PREFIX("\x1A\x45\xDF\xA3", "video/webm");
-	if (n >= 36) {
-		int z = 1;
-		for (int k = 0; k < 34; k++) {
-			if (d[k] != 0) {
-				z = 0;
-				break;
-			}
-		}
-		if (z && d[34] == 'L' && d[35] == 'P') {
-			return "application/vnd.ms-fontobject";
-		}
-	}
-	PREFIX("\x00\x01\x00\x00", "font/ttf");
-	PREFIX("OTTO", "font/otf");
-	PREFIX("ttcf", "font/collection");
-	PREFIX("wOFF", "font/woff");
-	PREFIX("wOF2", "font/woff2");
-	PREFIX("\x1F\x8B\x08", "application/x-gzip");
-	PREFIX("PK\x03\x04", "application/zip");
-	PREFIX("Rar!\x1A\x07\x00", "application/x-rar-compressed");
-	PREFIX("Rar!\x1A\x07\x01\x00", "application/x-rar-compressed");
-	PREFIX("\x00\x61\x73\x6D", "application/wasm");
-#undef PREFIX
-	for (int64_t k = ws; k < n; k++) {
-		unsigned c = d[k];
-		if (c <= 0x08 || c == 0x0B || (c >= 0x0E && c <= 0x1A) || (c >= 0x1C && c <= 0x1F)) {
-			return "application/octet-stream";
-		}
-	}
-	return "text/plain; charset=utf-8";
+__attribute__((weak)) int64_t xo_x_hw_response(int64_t d, int64_t ha, int64_t hn, int64_t status, int64_t body, int64_t bn, int64_t flags, int64_t res) {
+	(void)d, (void)ha, (void)hn, (void)status, (void)body, (void)bn, (void)flags, (void)res;
+	fault_text("HTTP without std/http's exports", "");
 }
 
-// h_itoa writes v in decimal at out (room for 21 bytes and a NUL) and
-// returns its length.
-static int h_itoa(char *out, int64_t v) {
-	char t[24];
-	int n = 0;
-	uint64_t u = v < 0 ? -(uint64_t)v : (uint64_t)v;
-	do {
-		t[n++] = (char)('0' + u % 10);
-		u /= 10;
-	} while (u);
-	int k = 0;
-	if (v < 0) {
-		out[k++] = '-';
-	}
-	while (n) {
-		out[k++] = t[--n];
-	}
-	out[k] = 0;
-	return k;
+__attribute__((weak)) int64_t xo_x_hw_fields(int64_t d, int64_t ha, int64_t hn, int64_t excl) {
+	(void)d, (void)ha, (void)hn, (void)excl;
+	fault_text("HTTP without std/http's exports", "");
 }
 
-// h_date writes the Date header value of now (http.TimeFormat), made at
-// most once a second per thread (each response used to format it with
-// gmtime_r and snprintf).
-static void h_date(char *out) {
-	static const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-	static const char *mons[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-	static __thread time_t last = -1;
-	static __thread char text[40];
-	time_t t = time(NULL);
-	if (t != last) {
-		struct tm tm;
-		gmtime_r(&t, &tm);
-		snprintf(text, sizeof text, "%s, %02d %s %04d %02d:%02d:%02d GMT", days[tm.tm_wday], tm.tm_mday, mons[tm.tm_mon], tm.tm_year + 1900,
-		         tm.tm_hour, tm.tm_min, tm.tm_sec);
-		last = t;
-	}
-	memcpy(out, text, sizeof text);
+__attribute__((weak)) int64_t xo_x_hw_error(int64_t d, int64_t kind, int64_t code, int64_t rp, int64_t rn) {
+	(void)d, (void)kind, (void)code, (void)rp, (void)rn;
+	fault_text("HTTP without std/http's exports", "");
 }
+
+__attribute__((weak)) int64_t xo_x_hw_sniff(int64_t buf, int64_t p, int64_t n) {
+	(void)buf, (void)p, (void)n;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_hw_date(int64_t buf) {
+	(void)buf;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+// http1w.xo's request flags (F_*), results (R_*), and left out fields (X_*)
+enum {
+	HW_F_HTTP11 = 1,
+	HW_F_HEAD = 2,
+	HW_F_H2UP = 4,
+	HW_F_WANTS10KA = 8,
+	HW_F_WANTSCLOSE = 16,
+	HW_F_HAS_BODY = 32,
+	HW_F_EXPECT_UNREAD = 64,
+	HW_F_BODY_BAD = 128,
+	HW_F_TOO_BIG = 256,
+	HW_F_STREAM = 512,
+	HW_R_KEEP = 1,
+	HW_R_CHUNKED = 2,
+	HW_X_CONTENT_LENGTH = 1,
+	HW_X_TRANSFER_ENCODING = 2,
+	HW_X_HOST = 16,
+	HW_X_USER_AGENT = 32,
+	HW_X_TRAILER = 64,
+};
+
+// h_sniff is net/http's DetectContentType of p (http1w.xo), written into
+// buf (64 bytes).
+static const char *h_sniff(const char *p, int64_t n, char *buf) {
+	xo_x_hw_sniff(XO_ADDR(buf), XO_ADDR(p), n);
+	return buf;
+}
+
+// h_date writes the Date header value of now (http.TimeFormat) and a
+// zero byte at out (32 bytes).
+static void h_date(char *out) { xo_x_hw_date(XO_ADDR(out)); }
 
 static int h_body_allowed(int64_t st) { return !((st >= 100 && st <= 199) || st == 204 || st == 304); }
 
-// hw_header_block writes the handler's header fields sorted by name, as
-// Header.writeSubset: invalid names are left out, newlines in values
-// become spaces, values are trimmed.
-static void hw_fields(nbuf *o, hlist *h, const char **excl, int nexcl) {
-	hpair *s = malloc((size_t)(h->n ? h->n : 1) * sizeof(hpair));
-	if (!s) {
-		xo_oom();
-	}
-	if (h->n) {
-		memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
-	}
-	qsort(s, (size_t)h->n, sizeof(hpair), hp_cmp);
+// hw_fields_room is the room hw_fields needs for h: its names and values
+// with 4 bytes each.
+static int64_t hw_fields_room(hlist *h) {
+	int64_t n = 0;
 	for (int64_t i = 0; i < h->n; i++) {
-		int skip = s[i].k.n == 0;
-		for (int e = 0; e < nexcl && !skip; e++) {
-			skip = hs_eq(s[i].k, excl[e]);
-		}
-		for (int64_t k = 0; k < s[i].k.n && !skip; k++) {
-			skip = !h_tchar((unsigned char)s[i].k.p[k]);
-		}
-		if (skip) {
-			continue;
-		}
-		nbuf_put(o, s[i].k.p, s[i].k.n);
-		nbuf_put(o, ": ", 2);
-		const char *v = s[i].v.p;
-		int64_t vn = s[i].v.n;
-		// textproto.TrimString after the newline replacement
-		int64_t a = 0, z = vn;
-		while (a < z && strchr(" \t\r\n", v[a]) && v[a]) {
-			a++;
-		}
-		while (z > a && strchr(" \t\r\n", v[z - 1]) && v[z - 1]) {
-			z--;
-		}
-		for (int64_t k = a; k < z; k++) {
-			nbuf_byte(o, v[k] == '\n' || v[k] == '\r' ? ' ' : v[k]);
-		}
-		nbuf_put(o, "\r\n", 2);
+		n += h->a[i].k.n + h->a[i].v.n + 4;
 	}
-	free(s);
+	return n;
 }
 
-static void hw_status_line(nbuf *o, int is11, int64_t code) {
-	char line[96];
-	const char *t = h_status_text(code);
-	if (t[0] && code >= 100 && code <= 999) {
-		// "HTTP/1.x NNN text\r\n" (snprintf per response showed in profiles)
-		int k = 0;
-		memcpy(line, is11 ? "HTTP/1.1 " : "HTTP/1.0 ", 9);
-		k = 9;
-		k += h_itoa(line + k, code);
-		line[k++] = ' ';
-		size_t tn = strlen(t);
-		if (tn > sizeof line - (size_t)k - 3) {
-			tn = sizeof line - (size_t)k - 3;
-		}
-		memcpy(line + k, t, tn);
-		k += (int)tn;
-		line[k++] = '\r';
-		line[k++] = '\n';
-		line[k] = 0;
-	} else if (t[0]) {
-		snprintf(line, sizeof line, "HTTP/1.%d %lld %s\r\n", is11, (long long)code, t);
-	} else {
-		snprintf(line, sizeof line, "HTTP/1.%d %03lld status code %lld\r\n", is11, (long long)code, (long long)code);
+// hw_fields writes the fields of h but those of excl (HW_X_*) sorted by
+// name, as Header.writeSubset (http1w.fields).
+static void hw_fields(nbuf *o, hlist *h, int64_t excl) {
+	if (h->n == 0) {
+		return;
 	}
-	nbuf_str(o, line);
+	nbuf_grow(o, hw_fields_room(h));
+	o->n += xo_x_hw_fields(XO_ADDR(o->p + o->n), XO_ADDR(h->a), h->n, excl);
 }
 
-// hw_response writes the response to request r (handler header h,
+// hw_response_x writes the response to request r (handler header h,
 // status, body of bn bytes) as net/http does when a handler sets the
-// header and writes the whole body at once (std/rt's serve), and reports
-// whether the connection stays open. expect_unread: the request expected
-// 100-continue and its body was not read to the end (net/http then
-// closes). body_bad: reading the request body failed (the chunked
-// reader's error is sticky, so discarding the rest fails too); too_big:
-// 256 KiB or more of a Content-Length body were never sent (net/http's
-// requestTooLarge).
+// header and writes the whole body at once (std/rt's serve), or with
+// stream the head of a stream with its first write, and reports whether
+// the connection stays open (http1w.response). expect_unread: the
+// request expected 100-continue and its body was not read to the end;
+// body_bad: reading the request body failed; too_big: 256 KiB or more of
+// a Content-Length body were never sent. *chunked: the body goes chunked.
 static int hw_response_x(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big, int stream, int *chunked) {
-	int is11 = r->major > 1 || (r->major == 1 && r->minor >= 1);
-	int head = hs_eq(r->method, "HEAD");
-	if (status < 100 || status > 999) {
-		// net/http panics in WriteHeader: the connection closes unanswered
-		return 0;
+	int64_t f = 0;
+	if (r->major > 1 || (r->major == 1 && r->minor >= 1)) {
+		f |= HW_F_HTTP11;
 	}
-	if (status >= 100 && status <= 199 && status != 101) {
-		// an informational response, then 200 with the same header
-		hw_status_line(o, is11, status);
-		static const char *nb[] = {"Content-Length", "Transfer-Encoding"};
-		hw_fields(o, h, nb, 2);
-		nbuf_put(o, "\r\n", 2);
-		status = 200;
-	}
-	// response.WriteHeader: the handler's Content-Length, when valid
-	int64_t contentLength = -1;
-	int64_t cli = hl_find(h, "Content-Length");
-	if (cli >= 0) {
-		// an invalid one is deleted from the handler's header, but the
-		// copy being written still has it (the copy was made first)
-		int64_t v;
-		if (n_parse_int(h->a[cli].v.p, h->a[cli].v.n, &v) && v >= 0) {
-			contentLength = v;
-		}
-	}
-	int body_ok = h_body_allowed(status);
-	// response.write: the bytes counted, and those reaching the buffer
-	int64_t counted = body_ok ? bn : 0;
-	int64_t written = counted;
-	if (contentLength != -1 && counted > contentLength) {
-		written = 0; // ErrContentLength
-	}
-	// chunkWriter.writeHeader(p): the whole body when it fits the 2048
-	// byte buffer (the handler is done by then), else its first 2048. A
-	// stream's head goes out with its first write while the handler is
-	// not done (p: that write)
-	int64_t plen = stream || written <= 2048 ? written : 2048;
-	int done = !stream && written <= 2048;
-	const char *excl[8];
-	int nexcl = 0;
-	const char *set_ct = NULL, *set_conn = NULL, *set_te = NULL;
-	char set_cl[24] = {0}, date[40] = {0};
-	int close = r->h2up;
-	int64_t tei = hl_find(h, "Transfer-Encoding");
-	const char *te = tei >= 0 ? h->a[tei].v.p : "";
-	int hasTE = te[0] != 0;
-	if (done && !hasTE && body_ok && cli < 0 && (!head || plen > 0)) {
-		contentLength = plen;
-		h_itoa(set_cl, plen);
-	}
-	int64_t conni = hl_find(h, "Connection");
-	const char *connv = conni >= 0 ? h->a[conni].v.p : "";
-	int64_t connn = conni >= 0 ? h->a[conni].v.n : 0;
-	if (r->wants10ka && cli >= 0 && h->a[cli].v.n > 0 && strcmp(connv, "keep-alive") == 0) {
-		close = 0;
-	}
-	int hasCL = contentLength != -1;
-	if (r->wants10ka && (head || hasCL || !body_ok)) {
-		if (conni < 0) {
-			set_conn = "keep-alive";
-		}
-	} else if (!is11 || r->wantsclose) {
-		close = 1;
-	}
-	if (strcmp(connv, "close") == 0) {
-		close = 1;
-	}
-	if (expect_unread) {
-		close = 1;
-	}
-	int too_large = 0;
-	if (r->clen != 0 && !close) {
-		// what remains of the request body is discarded
-		if (body_bad) {
-			close = 1;
-		} else if (too_big) {
-			close = 1;
-			too_large = 1;
-		}
-	}
-	if (body_ok) {
-		int64_t cti = hl_find(h, "Content-Type");
-		int64_t cei = hl_find(h, "Content-Encoding");
-		int hasCE = cei >= 0 && h->a[cei].v.n > 0;
-		if (!hasCE && cti < 0 && !hasTE && plen > 0) {
-			set_ct = h_sniff((const unsigned char *)body, plen);
-		}
-	} else {
-		excl[nexcl++] = "Content-Length";
-		excl[nexcl++] = "Transfer-Encoding";
-		if (status == 304) {
-			excl[nexcl++] = "Content-Type";
-		}
-	}
-	if (hl_find(h, "Date") < 0) {
-		h_date(date);
-	}
-	if (hasCL && hasTE && strcmp(te, "identity") != 0) {
-		excl[nexcl++] = "Content-Length";
-		set_cl[0] = 0;
-		hasCL = 0;
-	}
-	int chunking = 0;
-	if (head || !body_ok || status == 204) {
-		excl[nexcl++] = "Transfer-Encoding";
-	} else if (hasCL) {
-		excl[nexcl++] = "Transfer-Encoding";
-	} else if (is11) {
-		if (hasTE && strcmp(te, "identity") == 0) {
-			close = 1;
-			excl[nexcl++] = "Transfer-Encoding";
-		} else {
-			chunking = 1;
-			set_te = "chunked";
-			if (hasTE && strcmp(te, "chunked") == 0) {
-				excl[nexcl++] = "Transfer-Encoding";
-			}
-		}
-	} else {
-		close = 1;
-		excl[nexcl++] = "Transfer-Encoding";
-	}
-	if (chunking) {
-		excl[nexcl++] = "Content-Length";
-		set_cl[0] = 0;
-	}
-	// isProtocolSwitchResponse: 101 with Upgrade and Connection: upgrade
-	int64_t upi = hl_find(h, "Upgrade");
-	int proto_switch = status == 101 && upi >= 0 && h->a[upi].v.n > 0 && conni >= 0 && h_has_token(connv, connn, "upgrade");
-	if (too_large) {
-		excl[nexcl++] = "Connection";
-		set_conn = "close";
-	}
-	if (close && !h_server_token(connv, connn, "close") && !proto_switch) {
-		excl[nexcl++] = "Connection";
-		if (is11) {
-			set_conn = "close";
-		}
-	}
-	hw_status_line(o, is11, status);
-	hw_fields(o, h, excl, nexcl);
-	if (date[0]) {
-		nbuf_str(o, "Date: ");
-		nbuf_str(o, date);
-		nbuf_put(o, "\r\n", 2);
-	}
-	if (set_cl[0]) {
-		nbuf_str(o, "Content-Length: ");
-		nbuf_str(o, set_cl);
-		nbuf_put(o, "\r\n", 2);
-	}
-	if (set_ct) {
-		nbuf_str(o, "Content-Type: ");
-		nbuf_str(o, set_ct);
-		nbuf_put(o, "\r\n", 2);
-	}
-	if (set_conn) {
-		nbuf_str(o, "Connection: ");
-		nbuf_str(o, set_conn);
-		nbuf_put(o, "\r\n", 2);
-	}
-	if (set_te) {
-		nbuf_str(o, "Transfer-Encoding: ");
-		nbuf_str(o, set_te);
-		nbuf_put(o, "\r\n", 2);
-	}
-	nbuf_put(o, "\r\n", 2);
+	f |= hs_eq(r->method, "HEAD") ? HW_F_HEAD : 0;
+	f |= r->h2up ? HW_F_H2UP : 0;
+	f |= r->wants10ka ? HW_F_WANTS10KA : 0;
+	f |= r->wantsclose ? HW_F_WANTSCLOSE : 0;
+	f |= r->clen != 0 ? HW_F_HAS_BODY : 0;
+	f |= expect_unread ? HW_F_EXPECT_UNREAD : 0;
+	f |= body_bad ? HW_F_BODY_BAD : 0;
+	f |= too_big ? HW_F_TOO_BIG : 0;
+	f |= stream ? HW_F_STREAM : 0;
+	// the room: the status lines and the fields the server adds, the
+	// handler's fields twice (an informational status repeats them), the
+	// body, and a chunk's size line and end per 2048 bytes
+	nbuf_grow(o, 640 + 2 * hw_fields_room(h) + bn + 24 * (bn / 2048 + 2));
+	int64_t res = 0;
+	o->n += xo_x_hw_response(XO_ADDR(o->p + o->n), XO_ADDR(h->a), h->n, status, XO_ADDR(body), bn, f, XO_ADDR(&res));
 	if (chunked) {
-		*chunked = chunking && !head && body_ok;
+		*chunked = (res & HW_R_CHUNKED) != 0;
 	}
-	if (!head && body_ok && written > 0) {
-		if (chunking) {
-			int64_t left = written;
-			const char *p = body;
-			while (left > 0) {
-				int64_t c = left > 2048 && !stream ? 2048 : left;
-				char hx[24];
-				snprintf(hx, sizeof hx, "%llx\r\n", (long long)c);
-				nbuf_str(o, hx);
-				nbuf_put(o, p, c);
-				nbuf_put(o, "\r\n", 2);
-				p += c;
-				left -= c;
-			}
-		} else {
-			nbuf_put(o, body, written);
-		}
-	}
-	if (stream) {
-		// the stream's later writes and its end follow (hs_*)
-		return !close;
-	}
-	if (chunking) {
-		nbuf_str(o, "0\r\n\r\n");
-	}
-	// shouldReuseConnection: a body shorter or longer than its length
-	if (!head && contentLength != -1 && body_ok && contentLength != counted) {
-		close = 1;
-	}
-	return !close;
+	return (res & HW_R_KEEP) != 0;
 }
 
 static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big) {
 	return hw_response_x(o, r, h, status, body, bn, expect_unread, body_bad, too_big, 0, NULL);
 }
 
-// hw_error is the answer of conn.serve to a request it could not read.
+// hw_error is the answer of conn.serve to a request it could not read
+// (http1w.error_answer, at most 255 bytes).
 static void hw_error(nbuf *o, int kind, int code, const char *reason) {
-	const char *hdrs = "\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n";
-	char line[256];
-	switch (kind) {
-	case HP_TOO_LARGE:
-		snprintf(line, sizeof line, "HTTP/1.1 431 Request Header Fields Too Large%s431 Request Header Fields Too Large", hdrs);
-		break;
-	case HP_BAD_TE:
-		snprintf(line, sizeof line, "HTTP/1.1 501 Not Implemented%sUnsupported transfer encoding", hdrs);
-		break;
-	case HP_STATUS:
-		snprintf(line, sizeof line, "HTTP/1.1 %d %s: %s%s%d %s: %s", code, h_status_text(code), reason, hdrs, code, h_status_text(code), reason);
-		break;
-	default:
-		snprintf(line, sizeof line, "HTTP/1.1 400 Bad Request%s400 Bad Request", hdrs);
-	}
-	nbuf_str(o, line);
+	const char *rs = kind == HP_STATUS && reason ? reason : "";
+	nbuf_grow(o, 256);
+	o->n += xo_x_hw_error(XO_ADDR(o->p + o->n), kind, code, XO_ADDR(rs), (int64_t)strlen(rs));
 }
 
 // ---------------------------------------------------------------------------
@@ -1691,8 +1246,8 @@ int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn
 	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
 		// std/rt sets Content-Length on a whole body net/http would
 		// otherwise chunk (above its 2048 byte buffer); match it
-		char cl[24];
-		int cn = h_itoa(cl, bn);
+		char cl[32];
+		int cn = fmt_int(cl, bn);
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
 	int keep = hw_response(o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
@@ -2063,72 +1618,6 @@ static void h_go_quote(nbuf *o, const char *p, int64_t n) {
 }
 
 // ---------------------------------------------------------------------------
-// Logging (std.md 6)
-
-static struct {
-	int level; // 0: not configured (Info)
-	int json;
-	int out; // log.configure was called: records go to standard error
-	         // (the fake one in a test) instead of the test's buffer
-} xlog;
-
-int64_t xo_log_level(void) {
-	int l = __atomic_load_n(&xlog.level, __ATOMIC_ACQUIRE);
-	return l ? l : 2;
-}
-
-int64_t xo_log_json(void) { return __atomic_load_n(&xlog.json, __ATOMIC_ACQUIRE); }
-
-int64_t xo_log_configured(void) { return __atomic_load_n(&xlog.out, __ATOMIC_ACQUIRE); }
-
-void xo_log_configure(int64_t level, int64_t json) {
-	__atomic_store_n(&xlog.out, 1, __ATOMIC_RELEASE);
-	__atomic_store_n(&xlog.json, (int)json, __ATOMIC_RELEASE);
-	__atomic_store_n(&xlog.level, (int)level, __ATOMIC_RELEASE);
-}
-
-// The dependency that writes the next record (decision 0173): the
-// native code generator calls xo_log_from just before a dependency's call
-// of log.debug/info/warn/error, whose implementation takes it at entry
-// (no task switch in between, so a thread local holds it).
-static __thread char *xlog_from;
-static __thread int64_t xlog_from_n;
-
-void xo_log_from(const char *p, int64_t n) {
-	free(xlog_from);
-	xlog_from = malloc((size_t)n + 1);
-	if (!xlog_from) {
-		xo_oom();
-	}
-	memcpy(xlog_from, p, (size_t)n);
-	xlog_from[n] = 0;
-	xlog_from_n = n;
-}
-
-xo_rstr *xo_log_from_take(int64_t *len) {
-	if (!xlog_from) {
-		return nstr("", 0, len);
-	}
-	xo_rstr *s = nstr(xlog_from, xlog_from_n, len);
-	free(xlog_from);
-	xlog_from = NULL;
-	xlog_from_n = 0;
-	return s;
-}
-
-// xo_log_now is the time now in UTC as RFC 3339 (with nanoseconds when
-// nano, as time.RFC3339Nano).
-xo_rstr *xo_log_now(int64_t nano, int64_t *len) {
-	char b[64];
-	int64_t t = xo_clock_now();
-	if (!nano) {
-		t -= ((t % 1000000000) + 1000000000) % 1000000000;
-	}
-	int k = (int)xo_x_fmt_time(XO_ADDR(b), t);
-	return nstr(b, k, len);
-}
-
-// ---------------------------------------------------------------------------
 // The client (std.md 4.5): one exchange over a connection of its own, or
 // a stream of a pooled HTTP/2 connection. Xo drives it (std/native/llrt/
 // http1.xo client_do: the URL, the redirects net/http's Client follows,
@@ -2447,8 +1936,7 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		snprintf(cl, sizeof cl, "Content-Length: %lld\r\n", (long long)bn);
 		nbuf_str(&o, cl);
 	}
-	static const char *ex[] = {"Host", "User-Agent", "Content-Length", "Transfer-Encoding", "Trailer"};
-	hw_fields(&o, &hdr, ex, 5);
+	hw_fields(&o, &hdr, HW_X_HOST | HW_X_USER_AGENT | HW_X_CONTENT_LENGTH | HW_X_TRANSFER_ENCODING | HW_X_TRAILER);
 	if (hl_find(&hdr, "Accept-Encoding") < 0 && hl_find(&hdr, "Range") < 0 && strcmp(method, "HEAD") != 0) {
 		nbuf_str(&o, "Accept-Encoding: gzip\r\n");
 	}
