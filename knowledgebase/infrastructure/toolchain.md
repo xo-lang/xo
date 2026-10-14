@@ -3460,8 +3460,13 @@ job on a running warm instance took 15 s end to end and one on a
 stopped instance 32 s to 67 s, against 6 to 10 minutes for a fresh
 remote-full.sh launch (about 5 to 6 minutes of setup). Every boot
 schedules a poweroff after 8 hours; one job at a time per instance (a
-local lock). Full suites still use remote-full.sh's fresh 32 vCPU
-instances.
+local lock). Roles arm64-big (r8g.8xlarge) and amd64-big (c7i.8xlarge)
+are 32 vCPU warm instances for runs that need the cores; the lead's
+queue sends a KIND=cmd request with TYPE=r8g.8xlarge or c7i.8xlarge to
+them, and one with no TYPE to the 16 vCPU role. Warm instances carry the
+instance profile xo-ci-seed-read (read only on the seed bucket, decision
+0216); `XO_REPO` names the checkout when the script runs from a copy.
+Full suites still use remote-full.sh's fresh 32 vCPU instances.
 
 On a clean machine: `scripts/remote-bootstrap.sh [--dry-run] [COMMIT]`
 launches one EC2 Graviton instance (c8g.4xlarge on demand, remote-full.sh's
