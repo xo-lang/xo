@@ -552,3 +552,13 @@ with the cache off. What is left: check 1.1 s, ssa 2.2 s, insert_rc's
 whole-program part (borrow inference, the keys, reading entries) 3.6 s,
 inline 1.35 s, keys 0.56 s, assemble 0.76 to 2.26 s, link. The cache
 holds 491 MB for one version of xo (rc/, fn/, obj/).
+
+Verified on linux/arm64 (warm r8g, 72ffd2c7, EC2 queue jobs fb2cC-a and
+fb2cC-b, 2026-10-14): the goldens 182/182 on arm64 cold, with
+XO_BACKEND_CACHE=verify, and warm; 182/182 on LLVM cold and with verify.
+selfhost/xo with the cache off, on (1,223 of 6,847 functions' reference
+counting already cached by the goldens), on warm (6825/6847 rc,
+6847/6847 functions, 48/48 objects), and verify: one binary. go vet and
+go test -short clean. scripts/bootstrap-xo.sh fixed point cold, with
+verify warm, and warm (s2 38 s to 24 s, s3 35 s to 23 s); the warm
+run's s2, s3, and s3 assembly the same files as the cold run's.
