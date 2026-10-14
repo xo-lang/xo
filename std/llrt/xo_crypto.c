@@ -4,9 +4,114 @@
 // of std/rt's crypto.go (Go's crypto/subtle and crypto/ed25519).
 // std/llrt/testdata/crypto_diff.c checks them against Go (internal/llvm's
 // TestCryptoDiff) and the RFC 8032 vectors. The Rand capability is
-// std/native/llrt/rand.xo (B08).
+// std/native/llrt/rand.xo (B08); its C below stays for the seed.
 //
 // Static helpers are prefixed cr_ (gotchas/llrt-static-names-in-tests.md).
+
+// ---------------------------------------------------------------------------
+// Seed compatibility (B08, decision 0216): Rand is std/native/llrt/rand.xo,
+// which the SSA builders call since B08, but the prebuilt seed
+// (0.9.0-9b6cd014) still lowers Rand to the C functions below, and it
+// builds this checkout's xo with this runtime
+// (gotchas/runtime-c-the-seed-still-calls.md). No program a later xo
+// builds calls them; delete this block (and xo_win.c's xo_w_entropy)
+// once the seed is a release with B08.
+
+#if defined(__APPLE__)
+#include <sys/random.h>
+#elif defined(__linux__)
+#include <sys/random.h>
+#endif
+
+// ---------------------------------------------------------------------------
+// Random bytes (the operating system's generator, as crypto/rand)
+
+// cr_entropy fills p with n bytes from getentropy (macOS) or getrandom
+// (Linux); faults when the system has none.
+static void cr_entropy(uint8_t *p, int64_t n) {
+	while (n > 0) {
+		size_t k = n > 256 ? 256 : (size_t)n;
+#if defined(__linux__)
+		ssize_t got = getrandom(p, k, 0);
+		if (got < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			fault_text("the system random number generator failed", "");
+		}
+		k = (size_t)got;
+#elif defined(_WIN32)
+		if (xo_w_entropy(p, k) != 0) {
+			fault_text("the system random number generator failed", "");
+		}
+#else
+		if (getentropy(p, k) != 0) {
+			fault_text("the system random number generator failed", "");
+		}
+#endif
+		p += k;
+		n -= (int64_t)k;
+	}
+}
+
+static uint64_t tw_rand_u64(void);
+
+static uint64_t cr_rand_u64(void) {
+	if (tw.on) {
+		// a test's Rand is seeded (std/rt's seededRand)
+		return tw_rand_u64();
+	}
+	uint8_t b[8];
+	cr_entropy(b, 8);
+	uint64_t v = 0;
+	for (int i = 0; i < 8; i++) {
+		v |= (uint64_t)b[i] << (8 * i);
+	}
+	return v;
+}
+
+// xo_rand_bytes is `rand.bytes(n)`: n random bytes (none when n <= 0).
+xo_rstr *xo_rand_bytes(int64_t n, int64_t *len) {
+	if (n < 0) {
+		n = 0;
+	}
+	xo_rstr *s = rs_new(n);
+	if (tw.on) {
+		// seeded: one draw per byte, as std/rt's seededRand.M_bytes
+		for (int64_t i = 0; i < n; i++) {
+			s->data[i] = (char)(uint8_t)tw_rand_u64();
+		}
+	} else {
+		cr_entropy((uint8_t *)s->data, n);
+	}
+	*len = n;
+	return s;
+}
+
+// xo_rand_int is `rand.int(lo, hi)`: uniform in [lo, hi) (std/rt's
+// randRange); faults on an empty range.
+int64_t xo_rand_int(int64_t lo, int64_t hi, const char *loc, int64_t ln) {
+	if (hi <= lo) {
+		char m[128];
+		snprintf(m, sizeof m, "rand.int(%lld, %lld): the range is empty", (long long)lo, (long long)hi);
+		fault_at(m, loc, ln);
+	}
+	uint64_t span = (uint64_t)hi - (uint64_t)lo;
+	uint64_t limit = UINT64_MAX - (UINT64_MAX % span);
+	for (;;) {
+		uint64_t v = cr_rand_u64();
+		if (v < limit) {
+			return (int64_t)((uint64_t)lo + v % span);
+		}
+	}
+}
+
+// xo_rand_float is `rand.float()`: uniform in [0, 1) with 53 bits.
+double xo_rand_float(void) { return (double)(cr_rand_u64() >> 11) / (double)(1ULL << 53); }
+
+// xo_rand_bool is `rand.bool()`.
+int64_t xo_rand_bool(void) { return (int64_t)(cr_rand_u64() & 1); }
+
 
 // SHA-256, HMAC, PBKDF2, BLAKE2b, Argon2, unpadded base64, and
 // verify_password are std/native/llrt/digest.xo (decisions 0193 and
