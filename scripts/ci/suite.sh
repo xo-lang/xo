@@ -152,6 +152,11 @@ run_measure() {
   local m=bench/perf/$dir/measure.sh
   [ -f "$m" ] || { echo "no $m"; return 2; }
   head -20 "$m" | grep -q 'usage: .*<xo binary> <out dir> <backend' || { echo "$m does not take <xo> <out> <backend...>"; return 2; }
+  if [ "$(uname)" = Linux ] && ! command -v perf >/dev/null; then
+    # measure.sh counts with perf stat on Linux; the runners' AL2023 image
+    # has no perf until it is installed (once per machine, it stays)
+    step "install perf"; sudo dnf install -y -q perf; end
+  fi
   local out=$PWD/.tools/measure; rm -rf "$out"; mkdir -p "$out"
   step "xo of $base"
   git worktree remove --force "$out/base-tree" 2>/dev/null || true

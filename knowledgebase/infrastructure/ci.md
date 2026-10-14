@@ -29,10 +29,10 @@ Inputs of `.github/workflows/ci.yml`:
 | input | default | meaning |
 |---|---|---|
 | `ref` | `main` | branch, tag, or commit to test (push it first) |
-| `suite` | `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package); `./internal/selfhost` (merge tier) when anything under `selfhost/` or `std/` changed; `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). The log prints the changed paths and the package list. Verified 2026-10-14 (run 38599119717, a branch changing selfhost/lexer/dump.xo and adding a file under internal/gen/testdata): `./internal/gen` and `./internal/selfhost` tested, fixed point identical, 6.5 min |
-| `packages` | empty | for `suite=merge`: space separated packages (`./cmd/xo ./internal/llvm`); empty means the touched ones |
+| `suite` | `auto` | what to run, see [Suites](#suites); `auto` fans out into parallel jobs |
+| `packages` | empty | `auto`: packages added to the full tests (`./internal/progen`); `merge`: the packages (empty: the touched ones); `measure`: the `bench/perf` directory (`testworld`) |
 | `merge_main` | true | test REF merged with the current main, without pushing anything; a conflict fails in seconds and lists the files |
-| `runner` | `xo-arm64` | runner label; `xo-arm64-big` for heavy runs (the full tier) |
+| `runner` | `planned` | for a single job suite, a runner label in place of the planned one (`full`, `merge`, `measure`: `xo-arm64-big`; the rest `xo-arm64`); `auto` always plans its own |
 
 Runs never cancel each other: a concurrency group on REF and suite let an
 agent's run cancel the lead's gate on the same ref, and every dispatch is
@@ -42,8 +42,22 @@ environment variables, never pasted into the script. The checkout step is
 `actions/checkout@v7` (Node 24; v4 printed a Node 20 deprecation warning).
 
 The workflow file must exist on main for `gh workflow run` to find it;
-`ref` then chooses which commit's tree is tested (the workflow
-definition itself comes from main).
+`ref` then chooses which commit's tree is tested, and the workflow
+definition comes from main (`gh workflow run ci.yml --ref BRANCH` takes
+it from BRANCH instead, to try a change to ci.yml).
+
+One run, several jobs (2026-10-14): the `plan` job (small runner, about
+10 s) checks out REF, records REF's commit and main's, merges them, and
+lists the jobs with `suite.sh plan`; the `test` jobs then run in
+parallel, each on its own runner, each checking out the same two
+commits, and the run passes only when every job does (`fail-fast` off,
+so one failure does not stop the others). For `auto` the jobs are
+`short` on `xo-arm64` and up to three on `xo-arm64-big`: the full tests
+split by each package's weight (seconds on a big runner: internal/llvm
+320, internal/selfhost 190, cmd/xo 100, gen and arm64 90, xotool 45,
+others 30; longest first, each to the least loaded job) with the fixed
+point (150) counted as one more load. A run watched with `gh run watch`
+shows every job.
 
 ## Suites
 
@@ -52,11 +66,12 @@ with Go and clang, so a failing suite can be reproduced locally.
 
 | suite | runs |
 |---|---|
-| `auto` | `short`; then the full tests of the Go packages with a changed `.go` file; `./internal/selfhost` (merge tier) when anything under `selfhost/` or `std/` changed; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`) |
+| `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package), `./internal/selfhost` (merge tier) and `./cmd/xo` when anything under `selfhost/` or `std/` changed, `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed, and `packages`; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). In the workflow these are parallel jobs (above); `suite.sh auto` on a machine runs them in order |
 | `short` | `go vet` and `go test -short` over every package but `runs/` |
 | `vet` | `go vet` only |
 | `merge` | `go test -timeout 60m` of `packages` (default: the touched ones) |
 | `fixed-point` | `go run ./scripts/xobuild` (the checkout's xo, from the newest seed) then `scripts/bootstrap-xo.sh` (s1, s2, s3; s2 and s3 identical) |
+| `measure` | `bench/perf/<packages>/measure.sh` (one taking `<xo> <out dir> <backend...>`) with main's xo and std, then with the branch's, on arm64 and LLVM: both outputs (instructions:u, perf stat) and a `new/base` ratio per line. Linux numbers; decision 0180's bar stays the Mac's. It installs perf (`dnf install perf`) on a runner that lacks it |
 | `full` | every package with `XO_SELFHOST_TIER=full`, `-timeout 120m` (job limit 150 minutes); on demand only, before tagging or for a change the merge tier does not exercise |
 
 "Touched" is `git diff --name-only $XO_CI_BASE...HEAD` (merge base with
@@ -66,7 +81,8 @@ directory still has `.go` files.
 
 What stays on the Mac: Mac only checks (Mach-O, code signing, the darwin
 fixed point), runs that write files back into a worktree (golden
-recording; CI returns only logs), and instruction count measurements.
+recording; CI returns only logs), and the instruction counts the bar is
+judged on (decision 0180: the Mac); `measure` adds Linux counts.
 
 ## How it works
 
