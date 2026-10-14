@@ -88,3 +88,15 @@ both workloads, so h2big's spread is the noise of TLS and frames over
   (the C client's measurement run printed 196,629,000 for 3,000 h2big
   requests, the same 65,543), no live allocations at exit.
 - linux/arm64 batch: see "Batch" below.
+
+## Batch
+
+linux/arm64, two warm r8g instances (i-EXAMPLE06 and
+i-EXAMPLE29), at 9661e986, seed 0.10.0-23ce8ce2, 2026-10-14:
+`xo dev goldens` 180 of 180 with `--backend=arm64` and 180 of 180 with
+`--backend=llvm`; internal/llvm TestHTTP1ClientDiff,
+TestHTTP1ParseDiff, TestHTTPParseDiff, TestHTTPFuzz, TestH2Diff,
+TestH2Sanitizers, TestGoldenASan, TestTLSDiff pass; TestSelfhostWasm
+passes; `go vet ./internal/llvm ./internal/xotool` clean; `go test
+-short ./...` with no failure; the fixed point (scripts/bootstrap-xo.sh)
+ok (s1, s2, s3 37 s each). On the Mac: `go test -short ./...` passes.
