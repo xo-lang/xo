@@ -3,6 +3,17 @@
 Decision 0144. Everything runs in the visitor's browser; there is no server.
 Last verified: 2026-10-10 (Go 1.26.1, Chrome headless).
 
+**Since decision 0215 (2026-10-13) `cmd/xoplay` is not in this repository:**
+it was the Go compiler (internal/check, format, gen, build) built for
+wasip1, and the Go compiler is deleted. The site's
+`scripts/build-playground.py` must build xoplay from the
+`go-compiler-final` tag (87873aa5) until a self hosted replacement exists
+(next step: an Xo program over selfhost/check, selfhost/cli/core/format,
+and selfhost/gen with the same three commands, built by `xo build
+--backend=go --targets=wasip1/wasm`). The playground then compiles
+programs with the language of that tag. The table below describes the
+pieces as of that tag.
+
 ## Pieces
 
 | Piece | Where | What |

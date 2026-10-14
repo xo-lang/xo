@@ -1,6 +1,8 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
 Status: Accepted (owner, 2026-10-12): switch points A and B approved;
+**stage 7 done (2026-10-13): the Go implementation is deleted, decision
+0215** (switch point A's internal/selfdriver went with it);
 B takes effect when its gate passes (it passed on 2026-10-12: section
 "Switch point B gate", with the flip proposal). **Switch point B done
 (2026-10-12)**: the release archives ship xo1 as `bin/xo`, verified on

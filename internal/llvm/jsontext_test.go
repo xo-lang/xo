@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"encoding/hex"
@@ -12,7 +12,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // jsonTextDiffProg reads lines of `<op> <arg>` from standard input and
@@ -211,7 +211,7 @@ func TestJSONTextDiff(t *testing.T) {
 	}
 	inLines := strings.Split(strings.TrimSuffix(in, "\n"), "\n")
 	t.Logf("%d input lines", len(inLines))
-	ref := buildAndRun(t, dir, build.Options{Backend: build.BackendGo})
+	ref := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 	if ref.exit != 0 {
 		t.Fatalf("go backend: exit %d: %s", ref.exit, ref.stderr)
 	}
@@ -220,9 +220,9 @@ func TestJSONTextDiff(t *testing.T) {
 		t.Fatalf("go backend: %d lines for %d inputs", len(want), len(inLines))
 	}
 	for _, path := range []string{"xo"} {
-		for _, be := range []string{build.BackendArm64, build.BackendLLVM} {
+		for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 			t.Run(path+"/"+be, func(t *testing.T) {
-				r, res := buildRun(t, dir, build.Options{Backend: be})
+				r, res := buildRun(t, dir, xotool.Options{Backend: be})
 				if r.exit != 0 {
 					t.Fatalf("exit %d: %s", r.exit, r.stderr)
 				}
@@ -250,8 +250,8 @@ func TestJSONTextDiff(t *testing.T) {
 				if bad > 0 {
 					t.Errorf("%d of %d lines differ", bad, len(want))
 				}
-				if be == build.BackendLLVM {
-					leakCheck(t, res.Binaries[build.Host()], dir)
+				if be == xotool.BackendLLVM {
+					leakCheck(t, res.Binaries[xotool.Host()], dir)
 				}
 			})
 		}

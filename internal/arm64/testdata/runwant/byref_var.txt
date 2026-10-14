@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+run 25: s: log 5 tags 4/4 total 25 x 17.65625 y 42.96875 w 1.5 e e
+deep 41: s: log 6 tags 8/8 total 31 x 28.984375 y 42.96875 w 2.5 e e4
+swap t: log 7 tags 9/9 total 32 x 45.9765625 y 42.96875 w 2.75 e e4 | s: log 1 tags 0/0 total 1 x 2.0 y 2.0 w 0.5 e e
+pair 2004: t: log 10 tags 10/10 total 38 x 168.4833984375 y 42.96875 w 3.0 e e4 | s: log 3 tags 1/1 total 3 x 5.75 y 2.0 w 0.75 e e
+keep t: log 10 tags 10/10 total 38 x 168.4833984375 y 42.96875 w 3.0 e e4 -> t: log 11 tags 11/11 total 43 x 255.72509765625 y 42.96875 w 3.25 e e4
+mixed 365
+self_merge 219: t: log 15 tags 13/13 total 219 x 3658.5404357910156 y 42.96875 w 3.75 e e4
+chain 1067
+reset false t: log 15 tags 13/13 total 1219 x 3658.5404357910156 y 42.96875 w 3.75 e e4
+reset true t!: log 0 tags 0/0 total 0 x 1.0 y 2.0 w 0.5 e e
+huge 21 huge++ 7 14
+many: fault index 3 out of range for List of length 2
+many again 90: u: log 5 tags 0/0 total 30 x 14.1875 y 2.0 w 0.5 e e
+canceled
+--- stderr

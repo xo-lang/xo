@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+nodes true false true
+head 999999
+expr 3.5 true false false
+big true a
+--- stderr

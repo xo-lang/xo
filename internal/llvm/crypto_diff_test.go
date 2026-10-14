@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bufio"
@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/xotool"
 	"github.com/xo-lang/xo/std/rt"
 )
 
@@ -36,13 +36,13 @@ import (
 // SHA-512 and Ed25519 against Go and RFC 8032 (ed25519Cases).
 func TestCryptoDiff(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	src := filepath.Join(rtDir, "testdata", "crypto_diff.c")
 	bin := filepath.Join(t.TempDir(), "crypto_diff")
-	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), cOnly(t, src), bin); err != nil {
-		if err2 := build.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err2 != nil {
+	if err := xotool.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), cOnly(t, src), bin); err != nil {
+		if err2 := xotool.CompileC([]string{"-O1", "-g"}, cOnly(t, src), bin); err2 != nil {
 			t.Fatal(err2)
 		}
 	}

@@ -6,24 +6,134 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/serve"
 )
 
-// TestMain keeps every test in process: a developer's running `xo serve`
-// (built from other code) must not answer the tests' check and query runs.
-// The serve test turns forwarding back on for its own temporary socket.
+// TestMain keeps a developer's running `xo serve` (built from other code)
+// from answering the tests' check and query runs (XO_NO_SERVE); the serve
+// test turns forwarding back on for its own temporary socket. Identical
+// builds reuse one binary, within and across runs (XO_BIN_CACHE).
 func TestMain(m *testing.M) {
-	os.Setenv(serve.DisableEnv, "1")
-	// identical builds reuse one binary, within and across runs
-	build.EnableTestBinCache()
+	os.Setenv(serveDisableEnv, "1")
+	if _, ok := os.LookupEnv("XO_BIN_CACHE"); !ok {
+		if c, err := os.UserCacheDir(); err == nil {
+			os.Setenv("XO_BIN_CACHE", filepath.Join(c, "xo", "testbin"))
+		}
+	}
 	os.Exit(m.Run())
+}
+
+// The `xo serve` protocol (decision 0086): one JSON request per
+// connection on a unix socket, one JSON response.
+const (
+	serveSocketEnv  = "XO_SERVE_SOCKET"
+	serveDisableEnv = "XO_NO_SERVE"
+)
+
+type serveRequest struct {
+	Op   string   `json:"op"`
+	Args []string `json:"args,omitempty"`
+	Cwd  string   `json:"cwd,omitempty"`
+}
+
+type serveResponse struct {
+	Code   int         `json:"code"`
+	Stdout string      `json:"stdout"`
+	Stderr string      `json:"stderr"`
+	Cached bool        `json:"cached"`
+	Error  string      `json:"error,omitempty"`
+	Stats  *serveStats `json:"stats,omitempty"`
+}
+
+type serveStats struct {
+	Hits    int `json:"hits"`
+	Misses  int `json:"misses"`
+	Entries int `json:"entries"`
+}
+
+// serveCall sends req to the server at path and returns its response.
+func serveCall(path string, req serveRequest) (*serveResponse, error) {
+	conn, err := net.DialTimeout("unix", path, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(2 * time.Minute))
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write(append(data, '\n')); err != nil {
+		return nil, err
+	}
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		return nil, err
+	}
+	var resp serveResponse
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// startServe starts `xo serve --socket=sock` and waits until it answers.
+func startServe(t *testing.T, sock string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(xoBin(t), "serve", "--socket="+sock)
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		if _, err := serveCall(sock, serveRequest{Op: "ping"}); err == nil {
+			return cmd
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cmd.Process.Kill() // the process this test started
+	cmd.Wait()
+	t.Fatalf("xo serve did not answer: %s", errOut.String())
+	return nil
+}
+
+// startMCP starts `xo mcp` with pipes; wait closes its input and returns
+// its exit status and standard error.
+func startMCP(t *testing.T) (c *mcpClient, wait func() (int, string)) {
+	t.Helper()
+	cmd := exec.Command(xoBin(t), "mcp")
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	c = &mcpClient{t: t, in: in, out: bufio.NewReader(out)}
+	return c, func() (int, string) {
+		in.Close()
+		err := cmd.Wait()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else if err != nil {
+			code = -1
+		}
+		return code, errOut.String()
+	}
 }
 
 const knownErrorModule = "enum E { A }\nfn g() -> Int ! E { 1 }\nfn main(os: Os) {\n  g()\n}\n"
@@ -31,7 +141,7 @@ const knownErrorModule = "enum E { A }\nfn g() -> Int ! E { 1 }\nfn main(os: Os)
 // mcpClient drives `xo mcp` through pipes.
 type mcpClient struct {
 	t   *testing.T
-	in  *io.PipeWriter
+	in  io.WriteCloser
 	out *bufio.Reader
 	id  int
 }
@@ -95,16 +205,7 @@ func (c *mcpClient) tool(name string, args map[string]any) (map[string]any, bool
 
 func TestMCPSession(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"app/main.xo": knownErrorModule})
-	inR, inW := io.Pipe()
-	outR, outW := io.Pipe()
-	var errOut bytes.Buffer
-	done := make(chan int)
-	go func() {
-		code := runMCP(nil, inR, outW, &errOut)
-		outW.Close()
-		done <- code
-	}()
-	c := &mcpClient{t: t, in: inW, out: bufio.NewReader(outR)}
+	c, wait := startMCP(t)
 
 	init := c.call("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}})
 	if init["protocolVersion"] != "2025-06-18" || init["serverInfo"].(map[string]any)["name"] != "xo" {
@@ -179,24 +280,25 @@ func TestMCPSession(t *testing.T) {
 		t.Errorf("unknown method = %s", line)
 	}
 
-	inW.Close()
-	if code := <-done; code != 0 {
-		t.Errorf("xo mcp exit %d: %s", code, errOut.String())
+	if code, errOut := wait(); code != 0 {
+		t.Errorf("xo mcp exit %d: %s", code, errOut)
 	}
 }
 
 func TestMCPTestTool(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds a Go binary")
+		t.Skip("builds a test binary")
 	}
 	dir := writeFiles(t, map[string]string{
 		"m/m.xo":      "fn add(a: Int, b: Int) -> Int { a + b }\n",
 		"m/m_test.xo": "test \"adds\" {\n  expect(add(1, 2)) == 3\n}\n\ntest \"wrong\" {\n  expect(add(1, 1)) == 3\n}\n",
 	})
-	var out bytes.Buffer
-	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test","arguments":{"dirs":["` + filepath.Join(dir, "m") + `"]}}}` + "\n")
-	if code := runMCP(nil, in, &out, io.Discard); code != 0 {
-		t.Fatalf("exit %d", code)
+	var out, errOut bytes.Buffer
+	cmd := exec.Command(xoBin(t), "mcp")
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test","arguments":{"dirs":["` + filepath.Join(dir, "m") + `"]}}}` + "\n")
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("xo mcp: %v\n%s", err, errOut.String())
 	}
 	var resp struct {
 		Result struct {
@@ -231,15 +333,11 @@ func TestServe(t *testing.T) {
 	}
 	defer os.RemoveAll(sockDir)
 	sock := filepath.Join(sockDir, "s.sock")
-	ln, err := serve.Listen(sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := serve.NewServer(serveRun)
+	srv := startServe(t, sock)
 	stopped := make(chan error, 1)
-	go func() { stopped <- srv.Serve(ln) }()
+	go func() { stopped <- srv.Wait() }()
 	defer func() {
-		if _, err := serve.Call(sock, serve.Request{Op: "shutdown"}); err != nil {
+		if _, err := serveCall(sock, serveRequest{Op: "shutdown"}); err != nil {
 			t.Errorf("shutdown: %v", err)
 		}
 		select {
@@ -248,11 +346,12 @@ func TestServe(t *testing.T) {
 				t.Errorf("serve: %v", err)
 			}
 		case <-time.After(10 * time.Second):
+			srv.Process.Kill() // the process this test started
 			t.Error("server did not stop")
 		}
 	}()
-	t.Setenv(serve.SocketEnv, sock)
-	t.Setenv(serve.DisableEnv, "")
+	t.Setenv(serveSocketEnv, sock)
+	t.Setenv(serveDisableEnv, "")
 
 	dir := writeFiles(t, map[string]string{"app/main.xo": knownErrorModule})
 	app := filepath.Join(dir, "app")
@@ -263,9 +362,9 @@ func TestServe(t *testing.T) {
 		run([]string{"check", "--json", app}, &out, &errOut)
 		return out.String(), time.Since(start)
 	}
-	stats := func() serve.Stats {
+	stats := func() serveStats {
 		t.Helper()
-		r, err := serve.Call(sock, serve.Request{Op: "stats"})
+		r, err := serveCall(sock, serveRequest{Op: "stats"})
 		if err != nil || r.Stats == nil {
 			t.Fatalf("stats: %v", err)
 		}
@@ -288,7 +387,7 @@ func TestServe(t *testing.T) {
 	}
 	t.Logf("check: first %v, cached %v", d1, d2)
 
-	r, err := serve.Call(sock, serve.Request{Op: "run", Args: []string{"check", "--json", app}})
+	r, err := serveCall(sock, serveRequest{Op: "run", Args: []string{"check", "--json", app}})
 	if err != nil || !r.Cached || r.Code != 1 {
 		t.Errorf("direct run = %+v, %v", r, err)
 	}

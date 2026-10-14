@@ -3,16 +3,17 @@
 # (decision 0182 stage 3), run in a linux/arm64 container with no C
 # toolchain: scripts/elf-goldens.py <compiler> builds every
 # internal/llvm/testdata/golden program (want.txt) and every
-# internal/arm64/testdata/run program (the Go backend's output, run on the
-# host) with `<compiler> build --target=linux/arm64 --ld=macho`, runs them
+# internal/arm64/testdata/run program (the Go backend's output, recorded
+# in internal/arm64/testdata/runwant by the Go `xo` of the
+# go-compiler-final tag, decision 0215) with `<compiler> build
+# --target=linux/arm64 --ld=macho`, runs them
 # all in one `docker run` of $ELF_IMAGE (default debian:bullseye, glibc
 # 2.31, the runtime pack's floor) with XO_LEAKCHECK=1, the golden's
 # args.txt, env.txt, and stdin.txt, its directory as the working
 # directory, and compares as scripts/selfhost-goldens.py does.
 # ELF_BINS=DIR skips the builds and runs DIR/<golden name> instead;
 # XO_GOLD_DIR: where the binaries and results go (default
-# .tools/elfgold); XO_GO_XO: the Go `xo` for the references (default
-# .tools/xo); XO1_FLAGS: more build flags. Docker must already be running;
+# .tools/elfgold); XO1_FLAGS: more build flags. Docker must already be running;
 # this script never starts it.
 import os, re, shutil, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
@@ -57,15 +58,10 @@ def build(d):
 
 
 def want_go(d):
-    b = os.path.join(out, name_of(d) + '.go')
-    subprocess.run([os.environ.get('XO_GO_XO', os.path.join(root, '.tools/xo')), 'build', '-o', b, d], check=True, capture_output=True)
-    args = (read(d, 'args.txt') or b'').decode().split()
-    env = dict(os.environ)
-    for kv in (read(d, 'env.txt') or b'').decode().split():
-        k, _, v = kv.partition('=')
-        env[k] = v
-    p = subprocess.run([b] + args, cwd=d, capture_output=True, env=env, input=read(d, 'stdin.txt') or b'')
-    return 'exit %d\n--- stdout\n%s--- stderr\n%s' % (p.returncode, p.stdout.decode('utf-8', 'replace'), stable(p.stderr.decode('utf-8', 'replace')))
+    # the Go backend's output recorded by the Go `xo` of the
+    # go-compiler-final tag (decision 0215)
+    p = os.path.join('internal/arm64/testdata/runwant', os.path.basename(d.rstrip('/')) + '.txt')
+    return open(p, encoding='utf-8', newline='').read()
 
 
 def main():

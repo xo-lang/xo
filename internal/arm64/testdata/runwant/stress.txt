@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+many 863.5
+pressure 1445 11409
+pow2 -5392 -2432 -520 -224 10269 -4611686018427387903 -3
+got -1.25 21
+none
+pts 40 222.5 1335 1000 -1.25
+num 2.5
+pair 3 -0.5
+many 1
+num 1e+100
+nothing
+word there5
+copy many 3 word hi
+recs 5 4 replaced r1 t2
+grow 15 55 42 0
+floats -2.0 7.25 true false true 2.5
+words c2 c2! true true true false
+--- stderr

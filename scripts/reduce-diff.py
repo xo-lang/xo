@@ -4,7 +4,7 @@
 Usage:
     python3 -I scripts/reduce-diff.py [options] XO BACKEND_A BACKEND_B IN.xo [OUT.xo]
 
-XO is an xo binary (go build -o /some/dir/xo ./cmd/xo). A backend is
+XO is an xo binary (go run ./scripts/xobuild prints one). A backend is
 `go` (the default Go backend), or a native one (`arm64`, `llvm`), which
 builds with --backend=NAME --no-gc. IN.xo is a single file program (it
 becomes main.xo of a module). The reducer keeps the smallest program

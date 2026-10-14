@@ -54,11 +54,6 @@ func TestLogAttribution(t *testing.T) {
 	if d.LogTag != "evil.test/logleak@v1.0.0" || len(d.LogSites) != 3 || d.LogSites[0].Call != "log.warn" || d.LogSites[0].Line != 4 {
 		t.Errorf("audit log sites: %+v", d)
 	}
-	var b strings.Builder
-	printAudit(&rep, &b)
-	if !strings.Contains(b.String(), "logs: 3 call sites, records attributed [evil.test/logleak@v1.0.0]") {
-		t.Errorf("text audit:\n%s", b.String())
-	}
 	if testing.Short() {
 		return
 	}

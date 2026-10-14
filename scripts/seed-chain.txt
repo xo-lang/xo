@@ -1,0 +1,13 @@
+# The seed chain (decision 0216 item 2; internal/xotool Chain,
+# scripts/bootstrap-xo.sh XO_SEED_CHAIN=file): the hops an older xo
+# builds, in order, before it builds the checkout's selfhost/xo. One per
+# line: <commit> [std=<commit>]; a hop builds the commit's selfhost/xo
+# against the std of std=<commit> (default: its own). The root is the
+# go-compiler-final tag (4fd10d38), built with Go.
+#
+# syscalls2 (decision 0206 stage 2) added intrinsics (xo_call_c2,
+# xo_sys_clone, xo_sys_words) that std/native uses and older emitters do
+# not lower: an older xo builds main 3217d1aa's compiler against the
+# go-compiler-final std (311 s on the Mac, 2026-10-13), and that xo
+# builds today's sources (gotchas/seed-older-than-intrinsics.md).
+4f792c5592bdbfae4b8d5d963b20a06e673b127c std=87873aa5480676efa23c21ae08eb4107bb5d1d80

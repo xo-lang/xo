@@ -4,7 +4,8 @@
 # (Git Bash, in the checkout): `scripts/remote-windows.sh --batch [COMMIT]`
 # runs it there and fetches the log.
 #
-#   1. the Go seed (cmd/xo) builds xo1, the shipped xo, from selfhost/xo
+#   1. go run ./scripts/xobuild: an earlier xo, or the xo1 of the
+#      go-compiler-final commit, builds xo1, the shipped xo, from selfhost/xo
 #      with the Go backend;
 #   2. xo1 builds every LLVM golden for windows/amd64 and runs it
 #      (TestGoldenWant with XO_GOLDEN_WANT_XO), then cross builds them all
@@ -28,7 +29,9 @@ say() { echo "batch: $*"; }
 want() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
 
 if want 1; then
-  if go build -o xo.exe ./cmd/xo && XO_SELF_DRIVER=0 ./xo.exe build -o "$xo1" ./selfhost/xo; then
+  # decision 0215: an earlier xo (else the go-compiler-final seed, built
+  # with Go) builds bin/xo.exe with the Go backend (internal/xotool)
+  if built=$(go run ./scripts/xobuild) && cp "$built" "$xo1"; then
     say "1 xo1 built: $xo1"
   else
     say "1 FAIL: building xo1"; failed=$((failed + 1))
@@ -49,7 +52,7 @@ fi
 
 if want 3; then
   run='TestRuntimeThreads|TestRuntimeTasks|TestRuntimeEventLoop|TestGoldenThreads|TestGoldenTasks|TestDeadlock|TestNativeSignal|TestTLSDiff|TestTLSLeaks|TestH2Diff'
-  if XO_SELF_DRIVER=0 go test -count=1 -timeout 60m -run "$run" ./internal/llvm > "$HOME/batch-llvm.log" 2>&1; then
+  if go test -count=1 -timeout 60m -run "$run" ./internal/llvm > "$HOME/batch-llvm.log" 2>&1; then
     say "3 LLVM runtime tests: ok"
   else
     say "3 FAIL: LLVM runtime tests (log $HOME/batch-llvm.log)"

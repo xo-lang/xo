@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+n=0 sieve=0 count=0 sum=0 last=-1 skips=0 once=0
+n=1 sieve=0 count=0 sum=0 last=-1 skips=1 once=0
+n=2 sieve=1 count=1 sum=2 last=2 skips=2 once=0
+n=3 sieve=2 count=2 sum=5 last=3 skips=3 once=2
+n=4 sieve=2 count=2 sum=5 last=3 skips=4 once=2
+n=10 sieve=4 count=4 sum=17 last=7 skips=10 once=14
+n=30 sieve=10 count=10 sum=129 last=29 skips=30 once=150
+n=100 sieve=25 count=25 sum=1060 last=97 skips=100 once=1634
+n=1000 sieve=168 count=168 sum=76127 last=997 skips=1000 once=166334
+n=65536 sieve=6542 count=6542 sum=202288087 last=65521 skips=65536 once=715806038
+--- stderr

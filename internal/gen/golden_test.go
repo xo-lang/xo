@@ -1,4 +1,4 @@
-package gen_test
+package gen
 
 import (
 	"bytes"
@@ -13,11 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/gotool"
 	"github.com/xo-lang/xo/internal/testtmp"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the golden programs")
@@ -25,7 +23,7 @@ var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the go
 func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
-	build.EnableTestBinCache()
+	xotool.EnableTestBinCache()
 	// a -race program sleeps 1 s at exit by default (the race runtime's
 	// atexit_sleep_ms) so other threads can report; reports during the
 	// run are unaffected, and the replay tests run their -race build 32
@@ -96,31 +94,27 @@ func dropGoFrames(s string) string { return goFrameRE.ReplaceAllString(s, "") }
 
 // buildAndRun builds the program in dir and runs it with the arguments in
 // args.txt and the input in stdin.txt.
-func buildAndRun(t *testing.T, dir string, mode gen.Mode, extra ...string) (runResult, *build.Result) {
+func buildAndRun(t *testing.T, dir string, mode string, extra ...string) (runResult, *xotool.Result) {
 	t.Helper()
-	return buildAndRunOpts(t, dir, build.Options{Mode: mode}, extra...)
+	return buildAndRunOpts(t, dir, xotool.Options{Mode: mode}, extra...)
 }
 
 // buildAndRunOpts is buildAndRun with full build options.
-func buildAndRunOpts(t *testing.T, dir string, opts build.Options, extra ...string) (runResult, *build.Result) {
+func buildAndRunOpts(t *testing.T, dir string, opts xotool.Options, extra ...string) (runResult, *xotool.Result) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, opts)
+	res, err := xotool.Build([]string{dir}, opts)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	if res.Failed {
-		var b strings.Builder
-		for _, d := range res.Diagnostics {
-			b.WriteString(diag.Human(d) + "\n")
-		}
-		t.Fatalf("check failed:\n%s", b.String())
+		t.Fatalf("build failed:\n%s", res.Output)
 	}
 	var args []string
 	if data, err := os.ReadFile(filepath.Join(dir, "args.txt")); err == nil {
 		args = strings.Fields(string(data))
 	}
 	args = append(args, extra...)
-	cmd := exec.Command(res.Binaries[build.Host()], args...)
+	cmd := exec.Command(res.Binaries[xotool.Host()], args...)
 	cmd.Dir = dir
 	cmd.Env = goldenEnv()
 	if data, err := os.ReadFile(filepath.Join(dir, "env.txt")); err == nil {
@@ -199,11 +193,11 @@ func testGolden(t *testing.T, noMono, noArenas bool) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			skipOffline(t, dir)
-			mode := gen.Build
+			mode := xotool.ModeBuild
 			if strings.HasPrefix(filepath.Base(dir), "test_") {
-				mode = gen.Test
+				mode = xotool.ModeTest
 			}
-			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, NoMono: noMono, NoArenas: noArenas})
+			got, _ := buildAndRunOpts(t, dir, xotool.Options{Mode: mode, NoMono: noMono, NoArenas: noArenas})
 			got.stderr = stableStderr(got.stderr)
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden && noMono {

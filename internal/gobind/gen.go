@@ -15,7 +15,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/xo-lang/xo/internal/token"
 	"github.com/xo-lang/xo/std"
 )
 
@@ -172,10 +171,19 @@ func xoName(s string) string {
 	if s == "" || s == "_" {
 		return s
 	}
-	if token.Lookup(s) != token.Ident || s == "true" || s == "false" || s == "self" || s == "static" || s == "go" {
+	if xoKeywords[s] || s == "true" || s == "false" || s == "self" || s == "static" || s == "go" {
 		return s + "_"
 	}
 	return s
+}
+
+// xoKeywords are the keywords of Xo (core 1.4; the keys of KEYWORDS in
+// selfhost/lexer/token.xo, TestKeywordsMatchLexer).
+var xoKeywords = map[string]bool{
+	"as": true, "break": true, "const": true, "continue": true, "defer": true, "else": true, "ensures": true,
+	"enum": true, "fn": true, "for": true, "if": true, "in": true, "interface": true, "invariant": true,
+	"let": true, "match": true, "pub": true, "requires": true, "return": true, "scope": true, "select": true,
+	"struct": true, "test": true, "type": true, "use": true, "uses": true, "var": true, "while": true,
 }
 
 func upperSnake(name string) string { return strings.ToUpper(snake(name)) }

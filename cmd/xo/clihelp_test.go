@@ -20,39 +20,19 @@ var clihelpDir, _ = filepath.Abs(filepath.Join("testdata", "clihelp"))
 var helpCommands = []string{"build", "run", "test", "check", "parse", "fmt", "fix", "vet", "query", "edit", "doc", "explain", "init", "get", "mod", "vendor", "publish", "audit", "bind", "dump", "replay", "lsp", "mcp", "serve", "version"}
 
 // shippedXo is the shipped xo (xo1, decision 0178 switch point B) whose
-// command line the help tests drive: $XO_CLI, else, without -short,
-// selfhost/xo built with the Go backend (about 20 s).
+// command line the help tests drive: the binary the other tests run
+// (cli_test.go: $XO_CLI, else the checkout's bin/xo, which finds std at
+// <bin>/../std as a release's finds lib/xo/std), with no $XO_STD, since
+// commands that check (TestCLIPattern) run from a directory with no std/
+// (gotcha shipped-xo-test-needs-release-layout).
 func shippedXo(t *testing.T) []string {
 	t.Helper()
-	if cli := strings.Fields(os.Getenv(cliEnv)); len(cli) > 0 {
-		return cli
-	}
-	if testing.Short() {
-		t.Skip("builds xo1 (selfhost/xo); set XO_CLI to run it with -short")
-	}
-	// a release layout (bin/xo, lib/xo/std): xo1 finds std beside itself
-	// through Env.program, since commands that check (TestCLIPattern) run
-	// with no $XO_STD from a directory with no std/ (gotcha
-	// shipped-xo-test-needs-release-layout)
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin", "xo")
-	std, err := filepath.Abs(filepath.Join("..", "..", "std"))
+	cli, err := xoCommand()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("no xo to run: %v", err)
 	}
-	os.MkdirAll(filepath.Join(root, "lib", "xo"), 0o755)
-	os.MkdirAll(filepath.Join(root, "bin"), 0o755)
-	if err := os.Symlink(std, filepath.Join(root, "lib", "xo", "std")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
-	var out, errOut bytes.Buffer
-	if code := runXo([]string{"build", "-o", bin, filepath.Join("..", "..", "selfhost", "xo")}, &out, &errOut); code != 0 {
-		t.Fatalf("building xo1: exit %d\n%s%s", code, out.String(), errOut.String())
-	}
-	// unset for the runs (the build above is the Go driver's)
 	t.Setenv("XO_STD", "")
-	return []string{bin}
+	return cli
 }
 
 // helpGolden is testdata/clihelp/NAME.txt.

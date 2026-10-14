@@ -1,15 +1,15 @@
 package main
 
 import (
-	"crypto/rand"
-	"net/http/httptest"
-	"os"
+	"bytes"
+	"net"
+	"net/http"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
-	"github.com/xo-lang/xo/internal/sumdb"
 )
 
 // emptyCache points XO_MODCACHE at a new, empty module cache.
@@ -20,10 +20,44 @@ func emptyCache(t *testing.T) {
 	t.Setenv("XO_MODCACHE", c)
 }
 
+// startProxy starts `xo mod proxy serve --fetch root` on a free loopback
+// port and returns its URL once it answers; the process stops with the
+// test.
+func startProxy(t *testing.T, root string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	cmd := exec.Command(xoBin(t), "mod", "proxy", "serve", "--addr="+addr, "--fetch", root)
+	var errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &errOut, &errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cmd.Process.Kill() // the process this test started
+		cmd.Wait()
+	})
+	url := "http://" + addr
+	for i := 0; i < 200; i++ {
+		if r, err := http.Get(url + "/"); err == nil {
+			r.Body.Close()
+			return url
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("xo mod proxy serve did not answer on %s: %s", addr, errOut.String())
+	return ""
+}
+
 // TestModProxy: xo mod tidy and xo check fetch through a caching module
-// proxy (decision 0126) on loopback, never from git themselves.
+// proxy (decision 0126, `xo mod proxy serve --fetch`) on loopback, never
+// from git themselves.
 func TestModProxy(t *testing.T) {
-	modtest.Setup(t, "../../internal/mod/testdata/repos", mod.Compare)
+	modtest.Setup(t, "../../internal/mod/testdata/repos", modtest.Compare)
 	ws := t.TempDir()
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
@@ -32,17 +66,15 @@ func TestModProxy(t *testing.T) {
 	})
 	root := t.TempDir()
 	t.Cleanup(func() { modtest.MakeWritable(root) })
-	srv := httptest.NewServer(mod.ProxyHandler(root, true))
-	defer srv.Close()
+	srv := startProxy(t, root)
 
 	emptyCache(t)
-	t.Setenv("XO_PROXY", srv.URL)
+	t.Setenv("XO_PROXY", srv)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	xo(t, "check", app).want(0)
 	xo(t, "get", "--dir", app, "github.com/acme/money@v1.3.0").want(0)
-	// a second client with an empty cache, and the repositories out of
-	// reach (the proxy in this process shares XO_GIT_BASE, so it now
-	// serves only what it cached)
+	// a second client with an empty cache and no repositories in reach:
+	// everything comes through the proxy
 	emptyCache(t)
 	t.Setenv("XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
 	xo(t, "check", app).want(0)
@@ -57,41 +89,7 @@ func TestModProxy(t *testing.T) {
 	xo(t, "mod", "proxy", "serve", "a", "b").want(2)
 }
 
-// TestChecksumLogCommand: xo mod tidy checks first fetches against a
-// checksum log on loopback (decision 0124); a tag moved after the log
-// recorded it is XO1313.
-func TestChecksumLogCommand(t *testing.T) {
-	env := modtest.Setup(t, "../../internal/mod/testdata/repos", mod.Compare)
-	signer, verifier, err := sumdb.GenerateKey("sum.test", rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, _ := sumdb.ParseSigner(signer)
-	logCache := t.TempDir()
-	t.Cleanup(func() { modtest.MakeWritable(logCache) })
-	srv := httptest.NewServer(sumdb.NewServer(s, func(path, version string) ([]byte, error) {
-		return mod.LogRecord(logCache, path, version)
-	}))
-	defer srv.Close()
-	t.Setenv("XO_SUMDB", verifier+" "+srv.URL)
-
-	ws := t.TempDir()
-	app := filepath.Join(ws, "app")
-	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
-		"main/main.xo": appMain,
-	})
-	emptyCache(t)
-	xo(t, "mod", "tidy", "--dir", app).want(0)
-	xo(t, "check", app).want(0)
-
-	other := t.TempDir()
-	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition preview\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 7 }\n"})
-	env.Commit(t, "github.com/acme/money", "v1.1.0", other, true)
-	os.Remove(filepath.Join(app, "xo.lock"))
-	emptyCache(t)
-	r := xo(t, "mod", "tidy", "--json", "--dir", app).want(1)
-	if got := diagCodes(t, r.out); got != "XO1313" {
-		t.Errorf("moved tag under the log: %s\n%s", got, r.out)
-	}
-}
+// TestChecksumLogCommand (a checksum log on loopback, decision 0124) went
+// with decision 0215: its log server was the Go internal/sumdb, and xo
+// has no server of its own yet (the client is selfhost/cli/modules
+// sumdb.xo). See decision 0215, "Tests not carried over".

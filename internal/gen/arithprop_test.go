@@ -1,4 +1,4 @@
-package gen_test
+package gen
 
 import (
 	"fmt"
@@ -9,10 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/check"
-	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/progen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // arithSeeds is the seeds to run: XO_ARITH_PROP_SEED=S runs only S,
@@ -57,9 +55,8 @@ func reduceCmd(seed int64, be, src string) string {
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		return fmt.Sprintf("(could not keep the program: %v)", err)
 	}
-	xo := filepath.Join(os.TempDir(), "xo-reduce-bin")
 	min := strings.TrimSuffix(p, ".xo") + ".min.xo"
-	return fmt.Sprintf("go build -o %s ./cmd/xo && python3 -I scripts/reduce-diff.py %s go %s %s %s\n", xo, xo, be, p, min)
+	return fmt.Sprintf("python3 -I scripts/reduce-diff.py $(go run ./scripts/xobuild) go %s %s %s\n", be, p, min)
 }
 
 func writeArith(t *testing.T, seed int64) (string, string) {
@@ -76,12 +73,12 @@ func writeArith(t *testing.T, seed int64) (string, string) {
 func TestArithChecks(t *testing.T) {
 	for _, seed := range arithSeeds(t, 300) {
 		dir, src := writeArith(t, seed)
-		res, err := check.Check([]string{dir})
+		ds, err := xotool.Check([]string{dir})
 		if err != nil {
 			t.Fatalf("seed %d: %v", seed, err)
 		}
-		if len(res.Diagnostics) > 0 {
-			t.Fatalf("seed %d: the program does not check:\n%s--- program\n%s", seed, diagText(&build.Result{Diagnostics: res.Diagnostics}), numbered(src))
+		if len(ds) > 0 {
+			t.Fatalf("seed %d: the program does not check:\n%s--- program\n%s", seed, diagText(&xotool.Result{Diagnostics: ds}), numbered(src))
 		}
 	}
 }
@@ -99,11 +96,11 @@ func TestArithProperty(t *testing.T) {
 		t.Skip("builds every program with each backend; run without -short")
 	}
 	var natives []string
-	if _, err := build.Clang(); err == nil {
-		natives = append(natives, build.BackendLLVM)
+	if _, err := xotool.Clang(); err == nil {
+		natives = append(natives, xotool.BackendLLVM)
 	}
 	if runtime.GOARCH == "arm64" {
-		natives = append(natives, build.BackendArm64)
+		natives = append(natives, xotool.BackendArm64)
 	}
 	t.Logf("native backends: %v", natives)
 	for _, seed := range arithSeeds(t, 25) {
@@ -111,24 +108,25 @@ func TestArithProperty(t *testing.T) {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
 			dir, src := writeArith(t, seed)
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Out: filepath.Join(dir, "prog")})
+			tree := filepath.Join(dir, "gotree")
+			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
 			pkgs := []string{"."}
-			if _, err := os.Stat(filepath.Join(res.Dir, "m")); err == nil {
+			if _, err := os.Stat(filepath.Join(tree, "m")); err == nil {
 				pkgs = append(pkgs, "./m/...")
 			}
-			if out, err := run(res.Dir, "go", append([]string{"vet"}, pkgs...)...); err != nil {
+			if out, err := run(tree, "go", append([]string{"vet"}, pkgs...)...); err != nil {
 				t.Errorf("seed %d: go vet: %v\n%s--- program\n%s", seed, err, out, numbered(src))
 			}
-			want := runProp(t, res.Binaries[build.Host()], dir)
+			want := runProp(t, res.Binaries[xotool.Host()], dir)
 			for _, be := range natives {
-				nres, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, NoGC: true, Backend: be, Out: filepath.Join(dir, "prog-"+be)})
+				nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: be, Out: filepath.Join(dir, "prog-"+be)})
 				if err != nil || nres.Failed {
 					t.Fatalf("seed %d: the %s build failed: %v\n%s\n--- program\n%s", seed, be, err, diagText(nres), numbered(src))
 				}
-				if got := runProp(t, nres.Binaries[build.Host()], dir); got != want {
+				if got := runProp(t, nres.Binaries[xotool.Host()], dir); got != want {
 					t.Errorf("seed %d: %s runs differently from the Go backend\n--- go\n%s\n--- %s\n%s\n--- program\n%s--- reduce it\n%s", seed, be, want, be, got, numbered(src), reduceCmd(seed, be, src))
 				}
 			}

@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+lcg 50271147 masked 3279876672 signed -513764
+halves -174411 -20 -325638
+grow 720618962331271
+--- stderr
+fault: integer overflow: 4727981011855472311 * 3 does not fit Int at main.xo:45:9

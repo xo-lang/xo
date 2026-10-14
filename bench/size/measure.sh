@@ -6,7 +6,7 @@
 #
 #   XO=/path/to/xo bench/size/measure.sh <dir>...
 #
-# XO defaults to an xo built from this checkout. RSS is the largest child
+# XO defaults to the checkout's bin/xo (go run ./scripts/xobuild). RSS is the largest child
 # process (compile or link). Temporary directories are removed at the end.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -14,8 +14,8 @@ tmp=$(mktemp -d)
 trap 'chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
 xo=${XO:-}
 if [ -z "$xo" ]; then
-	(cd "$root" && go build -o "$tmp/xo" ./cmd/xo)
-	xo=$tmp/xo
+	# the checkout's bin/xo, built by an earlier xo (decision 0215)
+	xo=$(cd "$root" && go run ./scripts/xobuild)
 fi
 export XO_GOCACHE=$tmp/gocache XO_BUILD_DIR=$tmp/build
 mkdir -p "$tmp/warm" "$tmp/warmhttp"

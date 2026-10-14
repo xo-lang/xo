@@ -1,4 +1,4 @@
-package llvm_test
+package llvm
 
 import (
 	"bytes"
@@ -14,9 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xo-lang/xo/internal/build"
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestGoldenWant builds every golden program with the LLVM backend alone
@@ -27,12 +25,12 @@ import (
 // with XO1504); unsupported programs do not fail the test, and failures
 // fail it only with XO_GOLDEN_WANT_STRICT=1, so one run counts them all.
 // XO_GOLDEN_WANT_XO=path builds with that xo binary (xo1) instead of the
-// Go driver.
+// one the tests run (internal/xotool).
 func TestGoldenWant(t *testing.T) {
 	if os.Getenv("XO_GOLDEN_WANT") != "1" {
 		t.Skip("set XO_GOLDEN_WANT=1 to compare LLVM builds with want.txt alone")
 	}
-	if _, err := build.Clang(); err != nil {
+	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
 	}
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
@@ -40,20 +38,27 @@ func TestGoldenWant(t *testing.T) {
 		t.Fatalf("no golden programs: %v", err)
 	}
 	strict := os.Getenv("XO_GOLDEN_WANT_STRICT") == "1"
-	// XO_GOLDEN_WANT_XO=path: build with that xo (the shipped xo1)
-	// instead of the Go driver in process
+	// XO_GOLDEN_WANT_XO=path: build with that xo instead of the one the
+	// tests run (internal/xotool)
 	xo1 := os.Getenv("XO_GOLDEN_WANT_XO")
+	if xo1 == "" {
+		p, err := xotool.Path()
+		if err != nil {
+			t.Fatal(err)
+		}
+		xo1 = p
+	}
 	// XO_GOLDEN_WANT_TARGET=os/arch: build for that target instead
-	// (a cross build, build.LLVMCrossTriple) and stop there; "built"
-	// counts the programs that compiled and linked
-	target := build.Host()
+	// (a cross build) and stop there; "built" counts the programs that
+	// compiled and linked
+	target := xotool.Host()
 	if v := os.Getenv("XO_GOLDEN_WANT_TARGET"); v != "" {
-		goos, goarch, ok := strings.Cut(v, "/")
-		if !ok {
+		if !strings.Contains(v, "/") {
 			t.Fatalf("XO_GOLDEN_WANT_TARGET=%q: want os/arch", v)
 		}
-		target = build.Target{OS: goos, Arch: goarch}
+		target = v
 	}
+	hostOS, _, _ := strings.Cut(xotool.Host(), "/")
 	var mu sync.Mutex
 	outcome := map[string]string{}
 	t.Cleanup(func() {
@@ -67,13 +72,13 @@ func TestGoldenWant(t *testing.T) {
 		for _, n := range names {
 			t.Logf("golden %s: %s", n, outcome[n])
 		}
-		if target != build.Host() {
-			t.Logf("golden summary (%s/%s built on %s/%s, not run): %d built, %d fail, %d unsupported, of %d",
-				target.OS, target.Arch, build.Host().OS, build.Host().Arch, count["built"], count["fail"], count["unsupported"], len(names))
+		if target != xotool.Host() {
+			t.Logf("golden summary (%s built on %s, not run): %d built, %d fail, %d unsupported, of %d",
+				target, xotool.Host(), count["built"], count["fail"], count["unsupported"], len(names))
 			return
 		}
-		t.Logf("golden summary (%s/%s): %d pass, %d fail, %d unsupported, of %d",
-			build.Host().OS, build.Host().Arch, count["pass"], count["fail"], count["unsupported"], len(names))
+		t.Logf("golden summary (%s): %d pass, %d fail, %d unsupported, of %d",
+			xotool.Host(), count["pass"], count["fail"], count["unsupported"], len(names))
 	})
 	for _, dir := range dirs {
 		dir := dir
@@ -87,7 +92,7 @@ func TestGoldenWant(t *testing.T) {
 			}
 			// a program whose output names the target (`target.os`) has
 			// a want_<os>.txt for the other targets
-			want, err := os.ReadFile(filepath.Join(dir, "want_"+build.Host().OS+".txt"))
+			want, err := os.ReadFile(filepath.Join(dir, "want_"+hostOS+".txt"))
 			if err != nil {
 				want, err = os.ReadFile(filepath.Join(dir, "want.txt"))
 			}
@@ -95,66 +100,25 @@ func TestGoldenWant(t *testing.T) {
 				set("fail (no want.txt)")
 				return
 			}
-			if xo1 != "" {
-				// the shipped xo builds it (decision 0178's frozen Go
-				// compiler: a target counts as done when xo1 builds it)
-				bin, out, err := xo1Build(xo1, dir, name, target)
-				switch {
-				case err != nil && strings.Contains(out, string(diag.TargetUnsupported)):
-					set("unsupported (" + firstLine(out) + ")")
-					return
-				case err != nil:
-					set("fail (build: " + firstLine(out) + ")")
-					if strict {
-						t.Errorf("xo1 build: %v\n%s", err, out)
-					}
-					return
-				}
-				if target != build.Host() {
-					set("built")
-					return
-				}
-				runAndCompare(t, bin, dir, want, strict, set)
+			// the shipped xo builds it (a target counts as done when xo
+			// builds it, decision 0178)
+			bin, out, err := xo1Build(xo1, dir, name, target)
+			switch {
+			case err != nil && strings.Contains(out, "XO1504"):
+				set("unsupported (" + firstLine(out) + ")")
 				return
-			}
-			opts := build.Options{Mode: gen.Build, Backend: build.BackendLLVM}
-			if target != build.Host() {
-				opts.Targets = []build.Target{target}
-			}
-			res, err := build.Build([]string{dir}, opts)
-			if err != nil {
-				set("fail (build: " + firstLine(err.Error()) + ")")
+			case err != nil:
+				set("fail (build: " + firstLine(out) + ")")
 				if strict {
-					t.Errorf("build: %v", err)
+					t.Errorf("xo build: %v\n%s", err, out)
 				}
 				return
 			}
-			if res.Failed {
-				for _, d := range res.Diagnostics {
-					if d.Code == string(diag.TargetUnsupported) {
-						set("unsupported (" + d.Message + ")")
-						return
-					}
-				}
-				var b strings.Builder
-				for _, d := range res.Diagnostics {
-					b.WriteString(diag.Human(d) + "; ")
-				}
-				set("fail (check: " + b.String() + ")")
-				if strict {
-					t.Errorf("check failed: %s", b.String())
-				}
-				return
-			}
-			if target != build.Host() {
-				if _, err := os.Stat(res.Binaries[target]); err != nil {
-					set("fail (no binary: " + err.Error() + ")")
-					return
-				}
+			if target != xotool.Host() {
 				set("built")
 				return
 			}
-			runAndCompare(t, res.Binaries[build.Host()], dir, want, strict, set)
+			runAndCompare(t, bin, dir, want, strict, set)
 		})
 	}
 }
@@ -198,18 +162,18 @@ func runAndCompare(t *testing.T, bin, dir string, want []byte, strict bool, set 
 // (XO_GOLDEN_WANT_XO) and the LLVM backend for target: the binary, the
 // build's output, and its error. xo1 reads the working directory from
 // PWD, with / separators on Windows (std.md 3.1).
-func xo1Build(xo1, dir, name string, target build.Target) (string, string, error) {
+func xo1Build(xo1, dir, name, target string) (string, string, error) {
 	out, err := os.MkdirTemp("", "xo-golden-want-")
 	if err != nil {
 		return "", "", err
 	}
 	bin := filepath.Join(out, name)
-	if target.OS == "windows" {
+	if strings.HasPrefix(target, "windows/") {
 		bin += ".exe"
 	}
 	args := []string{"build", "--backend=llvm", "-o", filepath.ToSlash(bin)}
-	if target != build.Host() {
-		args = append(args, "--targets="+target.OS+"/"+target.Arch)
+	if target != xotool.Host() {
+		args = append(args, "--targets="+target)
 	}
 	cmd := exec.Command(xo1, append(args, filepath.ToSlash(dir))...)
 	wd, _ := os.Getwd()

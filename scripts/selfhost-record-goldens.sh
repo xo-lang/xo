@@ -1,38 +1,42 @@
 #!/bin/sh
-# selfhost-record-goldens.sh: record the Go side of every TestSelfhost*
-# differential (decision 0178, stage 7 step 2) as hashes into
-# $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens,
-# committed: one directory per kind, 16 sorted text files each, one line
-# per piece, `<kind> <unit id> <piece> <hash>`, a piece being a whole
-# dump or one function, helper, file, or declaration; the format is in
-# internal/selfhost/gogoldens_test.go). The Go compiler packages compute
-# every unit the full tier compares (every repository run, the spec
-# blocks, the rune files, and every corpus and mutation at the full
-# tier's sizes); no self hosted binary is built. Afterwards
+# selfhost-record-goldens.sh: record the output of the self hosted
+# components as the reference of the TestSelfhost* tests (decision 0178
+# stage 7 step 2, decision 0215) into $XO_SELFHOST_GOLDENS_DIR (default
+# internal/selfhost/testdata/gogoldens, committed: one directory per
+# kind, 16 sorted text files each, one line per piece, `<kind> <unit id>
+# <piece> <hash>`, a piece being a whole dump or one function, helper,
+# file, or declaration; the format is in
+# internal/selfhost/gogoldens_test.go). Until decision 0215 the recording
+# was the Go implementation's output (the last one at the tree of the
+# go-compiler-final tag and then at the merged main of 2026-10-13); since
+# then a recording run takes the Xo side's output as the reference: run
+# it after a change that alters the output on purpose, and read the diff
+# of the recording. The run takes the full tier's inputs with the go
+# backend build of each component. Afterwards
 #
-#   XO_SELFHOST_GOLDENS=replay go test ./internal/selfhost
+#   go test ./internal/selfhost
 #
-# compares the hashes of the Xo side's pieces with the recording instead
-# of running the Go side (any tier, any -run). Usage:
+# compares the Xo side with the recording (replay, the default). Usage:
 #
-#   scripts/selfhost-record-goldens.sh            # replace the recording
-#   scripts/selfhost-record-goldens.sh --merge    # add to it (keep units
-#                                                 # no test computes now)
-#   RUN='^TestSelfhostLLVM$' scripts/selfhost-record-goldens.sh --merge
+#   scripts/selfhost-record-goldens.sh            # add to the recording (keep
+#                                                 # the units no test computes now)
+#   RUN='^TestSelfhostLLVM$' scripts/selfhost-record-goldens.sh
+#   scripts/selfhost-record-goldens.sh --replace  # start from nothing: this
+#                                                 # drops the Go recording
 #
-# Once the Go implementation is frozen (stage 7 step 1) and deleted, the
-# recording is regenerated from the Xo implementation instead (see
-# knowledgebase/decisions/0178-retire-go-implementation-plan.md).
+# A unit recorded again for an input replaces the unit recorded before
+# for it (its slot). The components are built by the xo internal/xotool
+# names ($XO_CLI, else the checkout's bin/xo).
 set -eu
 cd "$(dirname "$0")/.."
 out=${XO_SELFHOST_GOLDENS_DIR:-internal/selfhost/testdata/gogoldens}
 case "$out" in /*) ;; *) out=$(pwd)/$out ;; esac
-if [ "${1:-}" != "--merge" ]; then
+if [ "${1:-}" = "--replace" ]; then
   rm -rf "$out"
 fi
 run=${RUN:-'^TestSelfhost(Differential|ParserDifferential|Format|Checker|CheckerMutations|CheckerModuleMutations|CheckerHatches|SSA|SSAMutations|Arm64|Arm64Mutations|LLVM|LLVMMutations|Gen|GenMutations|Defhash)$'}
 start=$(date +%s)
-XO_SELFHOST_GOLDENS=record XO_SELFHOST_GOLDENS_DIR="$out" XO_SELF_DRIVER=0 \
+XO_SELFHOST_GOLDENS=record XO_SELFHOST_GOLDENS_DIR="$out" \
   go test -count=1 -timeout 3h -run "$run" ./internal/selfhost
 echo "recorded in $(( $(date +%s) - start )) s into $out:"
 for k in "$out"/*/; do

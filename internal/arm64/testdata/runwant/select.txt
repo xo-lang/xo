@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+less 1921 3709156 less_w 231194 mixed 22076
+--- stderr
