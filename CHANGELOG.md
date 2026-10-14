@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B10): std/http's client reads
+  HTTP/1.1 responses, follows redirects, and parses URLs in Xo
+  (std/native/llrt/http1.xo `client_do`, `parse_response`); the C keeps
+  the connection, TLS, HTTP/2, and the request's writing. The HTTP/2
+  server's request URLs are parsed by Xo too. 1,629 lines of C leave the
+  runtime (the C request parser stays as test data for the C fuzzers);
+  the client measures 0.953 to 1.001 and the HTTP/2 server 1.006 to
+  1.008 times the C's instructions (bench/results/http-client-2026-10-14.md),
+  and its answers to 457 responses match the C client's byte for byte.
+  Chunked bodies decode faster (5 to 6 percent fewer instructions for
+  the server's chunked requests).
+- Version 0.10.0 and its prebuilt seeds (decision 0216); the C Rand
+  that only the 0.9.0 seed called is deleted (113 lines of xo_crypto.c
+  and xo_win.c).
 - Smaller native output and faster x86 self builds (decision 0220):
   reference counting releases a dead struct once instead of once per
   heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
@@ -13,6 +27,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and development builds of xo on x86 use -O0 (xo rebuilds itself in
   1:23 on c7i.8xlarge, was about 42 minutes); parallel jobs default to
   the physical cores and the memory.
+- Native runtime (zero-C audit item W1): the scheduler's C fallback,
+  `XO_LLRT_C=sched`, is deleted: 1,284 lines of std/llrt/xo_rt.c (its
+  fiber switch assembly, thread locals, run queue ring, worker pool,
+  parks, fiber stacks, spawn and join copies), std/native/llrt/sched_c.xo,
+  `rt.sched_c`, and -DXO_SCHED_C. The scheduler is sched.xo and pool.xo
+  only; `XO_LLRT_C=sched` now fails the build. The live C path names
+  are net and text.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's
@@ -23,7 +44,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   wasm binary by xo's name, wasip1/wasm (xotool.Target);
   TestSelfhostLLVMEndToEnd compares its IR with the recording only when
   dump replays are on (decision 0217) and keeps its build and output
-  check.
+  check. From the linux/amd64 milestone: internal/llvm's diff tests skip
+  the arm64 backend off arm64 hosts (xotool.Arm64Skip), and TestHarness
+  builds xo before the Python self test (its 600 s adapter timeout no
+  longer includes the build).
 - Native runtime (zero-C audit item B08): SHA-512 is Xo
   (std/native/llrt/digest.xo, called by the C Ed25519 through
   cabi_crypto.xo's export; 0.887 of the C's instructions on arm64, 0.641
@@ -40,7 +64,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the build chosen once into a word so the hot path tests no target.
   The C runtime's mono_ns, xo_clock_now, and xo_tz_now call the Xo
   exports; xo_win.c's clock_gettime shim is deleted. Clock.now on macOS
-  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions
+  takes 0.969 (arm64) and 0.977 (LLVM) times the C path's instructions,
+  on Windows (LLVM) 0.928 to 0.952 times its CPU cycles
   (bench/results/clocks-2026-10-14.md). bench/perf/sysio gains a sleep
   workload.
 - Native runtime: the C with no caller is deleted (zero-C audit item

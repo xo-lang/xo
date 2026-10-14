@@ -69,9 +69,10 @@ fn h2_next(h: HConn) -> Int
 /// representation is still to come.
 fn h2_block(h: HConn) -> Str
 fn h2_block_first(h: HConn) -> Bool
-/// Goes on with the decoded fields (hpack.Fields); true when a 100
-/// Continue is to be encoded now (h2_enc_job, h2_encoded).
-fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: List[Int], first: Bool) -> Bool
+/// Goes on with the decoded fields (hpack.Fields) and the parse of their
+/// first :path (http1.h2_target); true when a 100 Continue is to be
+/// encoded now (h2_enc_job, h2_encoded).
+fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: List[Int], first: Bool, target: List[Str]) -> Bool
 /// The table size settings and heads to encode (after 3, or h2_fields
 /// true), and the blocks encoded for them.
 fn h2_enc_job(h: HConn) -> Str
@@ -83,16 +84,38 @@ fn h2_take(h: HConn) -> HConn
 /// the stream.
 fn h2_end(h: HConn)
 
-/// Client: a request to url (absolute, http or https) with a header of
-/// names and values, a body, a timeout in ns, and the roots https
-/// verifies against, following redirects as net/http's Client does; a
-/// redirect to an address the attenuation lists of the client's Net do
-/// not admit fails (decision 0175).
-fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots, lists: Str) -> CResp
+/// Client (std/native/llrt/http1.xo client_do drives it, redirects
+/// included): the deadline of a timeout in ns (> 0).
+fn cl_deadline(timeout: Int) -> Int
+/// One request: method to addr (host:port; https: TLS with the server
+/// name tls_host, verified against roots), the request target (the
+/// escaped path and query), the Host, a header of canonical names and
+/// values, the body, the deadline (0: none), and the start of its
+/// errors (the method and the quoted URL). Over HTTP/2 (ALPN h2) the
+/// response is in the CResp (cr_status, ...); over HTTP/1.1 cl_reading
+/// is true and Xo reads it (cl_input, cl_fill, cl_take), then calls
+/// cl_end. A failure sets cr_err.
+fn cl_start(method: Str, https: Bool, addr: Str, tls_host: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, when: Int, roots: Roots, prefix: Str) -> CResp
+fn cl_reading(r: CResp) -> Bool
+/// The unread response up to the end of its first head (mode 0), or all
+/// of it (mode 2).
+fn cl_input(r: CResp, mode: Int) -> Str
+fn cl_avail(r: CResp) -> Int
+fn cl_eof(r: CResp) -> Bool
+/// Reads more: 0 (CC_OK), 1 none came (CC_EOF), else the failure
+/// (2 timeout, 3 canceled, 4 an error).
+fn cl_fill(r: CResp) -> Int
+/// Takes n bytes of the input, or skips them.
+fn cl_take(r: CResp, n: Int) -> Bytes
+fn cl_skip(r: CResp, n: Int)
+/// Ends the exchange with result s (cl_fill's) and the failure's text:
+/// the connection closes and a failure sets cr_err.
+fn cl_end(r: CResp, s: Int, why: Str)
 /// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
 /// 3 Timeout, 4 Protocol, 5 Canceled).
 fn cr_err(r: CResp) -> Int
 fn cr_msg(r: CResp) -> Str
+/// An HTTP/2 response.
 fn cr_status(r: CResp) -> Int
 fn cr_nheaders(r: CResp) -> Int
 fn cr_hname(r: CResp, i: Int) -> Str

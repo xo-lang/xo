@@ -318,3 +318,33 @@ TestGoldenTasks run is three thread counts per golden:
   3 of 3; TestGoldenASan (the http goldens, net_echo, net_only) passes.
 - Mac (kqueue through the C library, never affected): the three goldens
   under TSan and TestGoldenASan pass at 450a3aee.
+
+Linux amd64 (EC2 warm c7i.8xlarge class, 32 vCPUs, i-EXAMPLE02,
+at d2311546, 2026-10-14), the same steps as arm64 at 450a3aee: with the
+fix the three goldens and TestRuntimeRawPoll clean 3 of 3 and
+TestGoldenASan passes; without it TestRuntimeRawPoll reports the race and
+net_echo, http_wire, and net_only race 3 of 3 runs each; with
+XO_LLRT_C=net and no fix all three are clean 3 of 3. So the blind spot
+and the fix are the same on both Linux architectures. (xobuild from the
+linux-amd64 seed took 2414 s on that instance.)
+
+### Windows net_only crash (fixed, verified on Windows)
+
+Warm Windows instance i-EXAMPLE47 (c7i.4xlarge), xo.exe cross
+built on the Mac, netfix-windbg4 at c8bb5994 (2026-10-14): net_only
+crashed in 3 of 3 runs, also with XO_THREADS=1. So did its variants
+without the sql step, without the redirect scope, and with stderr
+markers. The markers reached "MARK after sql", so the crash is after
+the sql step. The golden set for windows/amd64 was 153 pass and 1 fail
+(net_only, exit 3221225477) of 154. A `-O0 -g` build with a PDB and a
+vectored handler put the fault at a read of address 0 in strlen, called
+from nbuf_str (xo_std.c:63), pr_w_spawn (xo_proc.c:876), pr_start, and
+xo_proc_run. Proc.run on Windows never set the command line that
+pr_w_spawn reads (gotchas/windows-proc-run-null-cmdline.md). The fix
+builds it as procspec.xo does. A Mac check of its quoting gave `sh -c
+"echo allowed" "" a\b x\"y "c:\dir with\\" "tab	here"` (Go's
+EscapeArg rules). Verified on Windows on 2026-10-14 (queue job
+winfix-netonly, same warm instance, xo.exe cross built at 1a53b12c):
+TestGoldenTasks/net_only passes (11.75 s), and the windows/amd64 golden
+set is 154 pass, 0 fail of 154. The job took about 3 minutes, including
+starting the stopped instance.

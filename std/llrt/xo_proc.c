@@ -1122,6 +1122,73 @@ static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
 }
 
 #ifdef _WIN32
+// pr_w_quote appends s quoted as procspec.xo's quote (Go's
+// syscall.EscapeArg, and also when s holds a line end or another space).
+static void pr_w_quote(nbuf *b, const char *s) {
+	size_t n = strlen(s);
+	if (n == 0) {
+		nbuf_str(b, "\"\"");
+		return;
+	}
+	int bs = 0, sp = 0;
+	for (size_t i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)s[i];
+		bs |= c == '"' || c == '\\';
+		sp |= c == ' ' || (c >= 9 && c <= 13);
+	}
+	if (!bs && !sp) {
+		nbuf_str(b, s);
+		return;
+	}
+	if (!bs) {
+		nbuf_byte(b, '"');
+		nbuf_str(b, s);
+		nbuf_byte(b, '"');
+		return;
+	}
+	if (sp) {
+		nbuf_byte(b, '"');
+	}
+	int slashes = 0;
+	for (size_t i = 0; i < n; i++) {
+		char c = s[i];
+		if (c == '\\') {
+			slashes++;
+		} else if (c == '"') {
+			for (; slashes > 0; slashes--) {
+				nbuf_byte(b, '\\');
+			}
+			nbuf_byte(b, '\\');
+		} else {
+			slashes = 0;
+		}
+		nbuf_byte(b, c);
+	}
+	if (sp) {
+		for (; slashes > 0; slashes--) {
+			nbuf_byte(b, '\\');
+		}
+		nbuf_byte(b, '"');
+	}
+}
+
+// pr_w_cmdline is the command line of argv (NULL ended) as procspec.xo
+// builds Proc.cmd's: each argument quoted, joined by spaces. Proc.run
+// has no spec, so it is built here; without it pr_w_spawn read a NULL
+// command line (net_only's Proc.run faulted, 2026-10-14, gotcha
+// windows-proc-run-null-cmdline).
+static char *pr_w_cmdline(char **argv) {
+	nbuf b = {0};
+	for (int i = 0; argv[i]; i++) {
+		if (i > 0) {
+			nbuf_byte(&b, ' ');
+		}
+		pr_w_quote(&b, argv[i]);
+	}
+	nbuf_byte(&b, 0);
+	return b.p;
+}
+
 // xo_proc_run on Windows: the command with its standard input NUL and
 // its output and error collected, through pr_start (as xo_proc_exec's
 // Cmd.output).
@@ -1158,6 +1225,7 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	for (int64_t i = 0; i < na; i++) {
 		pc.argv[i + 1] = pr_lstr(args, i);
 	}
+	pc.cmdline = pr_w_cmdline(pc.argv);
 	int o[2] = {-1, -1}, e[2] = {-1, -1};
 	char st = '2';
 	char *msg = NULL;

@@ -29,6 +29,17 @@ func TestHarness(t *testing.T) {
 	xotool.EnableTestBinCache()
 	cmd := exec.Command(py, "-I", script)
 	cmd.Env = os.Environ()
+	// the xo the harness runs, built here (internal/xotool) and passed as
+	// $XO_BIN: otherwise the first adapter test builds it through `go run
+	// ./scripts/xobuild` inside its 600 s subprocess timeout, which a
+	// cold build on linux/amd64 exceeded (gotchas/harness-timeout-includes-xo-build.md)
+	if _, ok := os.LookupEnv("XO_BIN"); !ok {
+		xo, err := xotool.Path()
+		if err != nil {
+			t.Fatalf("no xo for the harness: %v", err)
+		}
+		cmd.Env = append(cmd.Env, "XO_BIN="+xo)
+	}
 	if _, ok := os.LookupEnv("GORACE"); !ok {
 		cmd.Env = append(cmd.Env, "GORACE=atexit_sleep_ms=0")
 	}

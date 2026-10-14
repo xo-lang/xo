@@ -834,7 +834,11 @@ Last verified: 2026-10-07
   through the heavy lock. Results in
   `bench/results/raw-memory-2026-10-13.md` (stage 3). Last verified:
   2026-10-13.
-- `XO_LLRT_C=sched` (2026-10-13, decision 0212): the C runtime's own
+- `XO_LLRT_C=sched` (deleted 2026-10-14, zero-C audit item W1: the C
+  below, sched_c.xo, and -DXO_SCHED_C are gone, and the name now fails
+  the build like every deleted one; TestRuntimeTasks and
+  TestRuntimeEventLoop run the Xo path only; the history follows)
+  (2026-10-13, decision 0212): the C runtime's own
   scheduler core (the fiber switch assembly, `__thread` context and
   worker, the run queue ring, fiber run, park, wake, start, task
   states: xo_rt.c compiled with -DXO_SCHED_C, which both drivers add
@@ -858,7 +862,7 @@ Last verified: 2026-10-07
   xo_x_scope_add, xo_x_scope_join, xo_x_worker_main, ...; the C services
   pool.xo calls are xo_sched_rt). Measure it with XO_SPIN_ROUNDS=0 too:
   the spinning worker's instructions are part of a ping pong's per
-  operation count. Last verified: 2026-10-13.
+  operation count. Last verified: 2026-10-14 (deleted).
 - Checking selfhost/macho against clang after an arm64 emitter change
   (2026-10-13, gotchas/selfhost-assembler-lags-emitters.md): `xo build
   -o macho ./selfhost/macho`, `xo asmdump [--os=linux] DIR` (without
@@ -924,6 +928,17 @@ Last verified: 2026-10-07
   <backend> <min instructions retired>`. `XO_LLRT_C=http1,hpack` builds
   the C paths; PORT (18090). Through the heavy lock, with
   `XO_SELF_DRIVER=0`. Last verified: 2026-10-13.
+- `bench/perf/httpclient/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-14, audit item B10): builds the client of
+  bench/perf/httpclient with each backend, starts serve/ (a Go server of
+  fixed raw responses, built into the out dir, stopped by its own PID at
+  the end), and for each workload (len, chunked, big, redirect; `none`
+  is the start and the end) runs the client 5 times under
+  `/usr/bin/time -l` with N requests (default 3000), each on a
+  connection of its own; prints `<w> <backend> <min instructions
+  retired>` of the client. The C client is gone: an xo from before B10
+  (main 16524ee6) with its own std measures it. PORT (18095). Through
+  the heavy lock. Last verified: 2026-10-14.
 - `bench/perf/fsproc/measure.sh <xo> <out dir> <backend...>`
   (2026-10-13, decision 0193 step 6): the Fs walks, CreateTemp, the
   working directory, and process environments (mkdir, tree, remove,
@@ -2257,7 +2272,7 @@ Last verified: 2026-10-10.
   script and here, and run `go test ./third_party/mbedtls ./internal/build`
   and `go test ./internal/llvm -run 'TestTLSDiff|TestGolden.*/http_tls'`.
 - Build (internal/build/tls.go): a native link whose generated code names
-  a std/http runtime function (`xo_cl_do`, `xo_srv_new`, `xo_tls_*`) is
+  a std/http runtime function (`xo_cl_start`, `xo_srv_new`, `xo_tls_*`) is
   compiled with `-DXO_TLS`, the library's include directories and
   configuration defines, and linked with `libxotls.a` (plus `-framework
   Security -framework CoreFoundation` on macOS, for the system's roots).
@@ -3310,7 +3325,7 @@ name is its version and commit, `<version>-<commit, 8 hex>`. Layout (the
 first seed, 0.9.0-5e21dc31 from main 5e21dc31, uploaded by the lead on
 2026-10-13 for darwin-arm64 and linux-arm64):
 
-    seeds/latest.txt                               the newest seed name, one line (0.9.0-5e21dc31)
+    seeds/latest.txt                               the newest seed name, one line (0.10.0-23ce8ce2)
     seeds/<seed>/<goos>-<goarch>.tar.gz            the tree: xo/bin/xo, xo/std (xo finds std at bin/../std)
     seeds/<seed>/<goos>-<goarch>.tar.gz.sha256     "<hex>  <goos>-<goarch>.tar.gz" (sha256sum format)
     seeds/<seed>/manifest.txt                      "version V", "commit <10 hex>", "commit_full <40 hex>",
@@ -3320,7 +3335,17 @@ A seed carries no rtpack, xo-gobind, third_party, or zone data: it only
 builds selfhost/xo, against the checkout's `--std` (the TLS sources
 then come from the checkout's third_party). From the next seed on, each
 seed bumps the minor version (`selfhost/cli/core` `VERSION`, the lead's
-commit on main; 0.10.0 next).
+commit on main; 0.11.0 next).
+
+Seeds uploaded: 0.9.0-5e21dc31 (2026-10-13, built natively and through
+the chain, Windows cross built) and 0.10.0-23ce8ce2 (2026-10-14, the
+version bump 23ce8ce2 on main after fast builds round 2: darwin-arm64
+built natively on the Mac at clang -O2 after the fixed point; linux-arm64,
+linux-amd64, windows-amd64, and darwin-amd64 cross built on the Mac by
+that xo with `--backend=go --targets=<os>/<arch>`, 16 to 24 s each;
+tarballs 14 to 16 MB, darwin-arm64 35 MB). The owner had 0.10.0 uploaded
+without a separate verification run; the next builds from it are its
+check (owner, 2026-10-14). Last verified: 2026-10-14.
 
 internal/xotool (seed.go) fetches a seed when no local xo is found:
 seeds/latest.txt, then `<host>.tar.gz.sha256` and `<host>.tar.gz` with
@@ -3371,7 +3396,7 @@ TestSeedPackHello packs the checkout's bin/xo, fetches it from a local
 directory, and runs hello with the unpacked xo (no XO_STD, a working
 directory without std); it skips without a built xo.
 
-Packing and uploading seed 0.10.0 (the lead, after the version bump
+Packing and uploading a seed (the lead, after the version bump
 commit on main, from a clean checkout of it; OUTDIR outside the repo,
 since release.sh deletes dist/):
 
@@ -3382,7 +3407,10 @@ since release.sh deletes dist/):
     # arm64; LLVM split 12 on amd64): on an instance of that arch
     #   cd ~/xo && go run ./scripts/xobuild && bash scripts/seed-pack.sh bin/xo ~/seed
     # then copy ~/seed/linux-*.tar.gz, .tar.gz.sha256 and .info into "$out";
-    # or cross built on the Mac by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
+    # or cross built on the Mac with the Go backend (how 0.10.0 was made,
+    # 16 to 24 s per platform; std from `git ls-files std` beside bin/):
+    #   bin/xo build --backend=go --targets=linux/arm64 --std=$PWD/std -o X/bin/xo selfhost/xo
+    # or by release.sh (dist/xo-0.10.0-linux-*/ stay after it):
     scripts/release.sh 0.10.0
     XO_SEED_VERSION=0.10.0 XO_SEED_PLATFORM=linux-arm64 XO_SEED_COMMIT=$c \
       scripts/seed-pack.sh dist/xo-0.10.0-linux-arm64/bin/xo "$out"
@@ -3461,7 +3489,7 @@ definition.
 2026-10-13) runs a targeted command on a warm, reusable on demand
 instance per architecture (tag Name=xo-warm, role arm64 r8g.4xlarge or
 amd64 m7i.4xlarge), created on first use and STOPPED (not terminated)
-after 30 idle minutes (`scripts/warm-run.sh --stop-idle 30`, run by the
+after 5 idle minutes (`scripts/warm-run.sh --stop-idle 5`, owner 2026-10-14, so idle warm machines free the vCPU quota; run by the
 lead's EC2 queue runner), so its toolchain, Go and checkout survive: a
 job on a running warm instance took 15 s end to end and one on a
 stopped instance 32 s to 67 s, against 6 to 10 minutes for a fresh
