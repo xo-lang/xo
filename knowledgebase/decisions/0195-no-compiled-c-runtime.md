@@ -15,7 +15,11 @@ seed has B08; `bench/results/sha512-rand-2026-10-14.md`). Work item
 B10 done 2026-10-14 (the HTTP/1.1 client's response reading,
 redirects, and URLs in Xo, the HTTP/2 server's :path parse from Xo;
 1,629 runtime C lines deleted; client 0.953 to 1.001 of the C's
-instructions; `bench/results/http-client-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
+instructions; `bench/results/http-client-2026-10-14.md`). Work item
+B11 done 2026-10-14 (the HTTP/2 client's HPACK in Xo, xo_h2.c's C HPACK
+deleted, 786 runtime C lines deleted and 242 added; HTTP/2 client 0.982
+to 1.009 of the C's instructions;
+`bench/results/http2-client-hpack-2026-10-14.md`). Work item B12 done 2026-10-14 (the HTTP/1.1 response writer in
 Xo, std/native/llrt/http1w.xo, which HTTP/2's h2_head uses too;
 `bench/results/http-writer-2026-10-14.md`). Prerequisite 5
 (constant time) done 2026-10-14: decision 0222 (`rt.ct_barrier`,
