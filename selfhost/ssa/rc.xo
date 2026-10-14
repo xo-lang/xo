@@ -1245,8 +1245,10 @@ fn (var r: Rc) cancel(var f: Func) {
 
 /// Deletes field reads whose result is unused (removeDeadFields).
 /// The least heap leaves of a root whose separate releases group_releases
-/// joins into one release of the root.
-const GROUP_LEAVES = 2
+/// joins into one release of the root: a value of a few leaves in
+/// registers costs more to pass whole to its drop helper (every word
+/// moved to an argument register) than its leaves' own releases.
+const GROUP_LEAVES = 4
 
 /// Joins the releases of every heap leaf of one root into one release of
 /// the root, where they sit together in a run of field reads and
