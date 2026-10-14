@@ -151,4 +151,15 @@ percent cheaper (gotchas/str-find-searches-to-the-end.md).
 
 ## Batch
 
-PENDING
+linux/arm64, the warm r8g instance (i-EXAMPLE06), at da5deb5f
+(this work merged with main), seed 0.9.0-5e21dc31, 2026-10-14: `go vet
+./internal/llvm ./internal/xotool` clean; `go test -short ./...` with
+no failure; `xo dev goldens` 180 of 180 with `--backend=arm64` and 180
+of 180 with `--backend=llvm` (internal/llvm/testdata/golden and
+internal/arm64/testdata/run); internal/llvm TestHTTP1ClientDiff,
+TestHTTP1ParseDiff, TestHTTPParseDiff, TestHTTPFuzz, TestH2Diff,
+TestH2Sanitizers, TestGoldenASan, TestTLSDiff, TestHTTP1Tables pass;
+the fixed point (scripts/bootstrap-xo.sh) ok (s1 38 s, s2 40 s, s3
+40 s). On the Mac: TestHTTP1ClientDiff and the seven http goldens on
+arm64 pass, and `go test -short ./...` passes after the asm goldens'
+update.
