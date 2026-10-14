@@ -15,8 +15,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Native runtime (zero-C audit item B06, part 3): a fault on Windows
   unwinds through the Xo walker (std/native/llrt/unwind.xo win_raise,
   over RtlVirtualUnwind) instead of xo_rt.c's C walk, which is deleted
-  with its LSDA reader. Windows goldens 157 of 157; fault paths 0.94 to
-  1.10 of the C walk's wall clock time on windows/amd64.
+  with its LSDA reader. Windows goldens 157 of 157. The walk starts at
+  the C fault_raise's captured context, and the unwind tables name the
+  Xo personality export on Windows too; fault paths about 0.97 to 1.02
+  of the C walk's wall clock time on windows/amd64.
 - Native runtime (zero-C audit item B13, stage 3): the string objects'
   appends and builders are Xo (std/native/llrt/obj.xo): `a + b`, and
   the runtime's rs_append, push_byte, push_word, push_words,

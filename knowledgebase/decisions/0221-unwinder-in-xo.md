@@ -207,7 +207,13 @@ Mac instruction counts and Linux CI's, against the C path.
    in the scratch record (on Windows, the scratch record is VirtualAlloc'd).
    Windows reaches it through the common fault_raise; the C
    xo_personality stub stays as the handler the walk compares
-   (bench/results/fault-record-2026-10-14.md, "Part 3").
+   (bench/results/fault-record-2026-10-14.md, "Part 3"). Then (branch
+   b06-win2) the C fault_raise captures its CONTEXT and the walk starts
+   there (unwind_fault's `wcx`), and the emitters name xo_x_personality
+   on Windows too: the export returns ExceptionContinueSearch to the
+   system's dispatcher, and the C stub stays only for older xo's code
+   (delete after a seed). Only x86_64 Linux and macOS still name
+   xo_personality (stage 2).
 
 ## Consequences
 
