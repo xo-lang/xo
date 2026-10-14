@@ -141,3 +141,27 @@ CI windows: windows/amd64 157 of 157 goldens, windows/arm64 157 built,
 the LLVM runtime tests ok (run 38633766335, before the cache; run
 38640009496 at the head). CI auto green (runs 38633770035 and
 38640013605).
+
+### Starting the walk at fault_raise (branch b06-win2)
+
+On Windows the C fault_raise captures its own CONTEXT and passes it to
+the export (unwind_fault's `wcx`), so win_raise starts the walk there.
+The unwinder's own frames (the export, raise, win_raise) are no longer
+unwound on every raise. Run 38642486536; its base is main 338a1ff9, the
+Xo walk with the cache.
+
+| workload | Xo walk, main | starting at fault_raise | ratio | C walk (run 38638886262) |
+|---|---|---|---|---|
+| none | 14.7 | 14.4 | 0.98 | 14.2 |
+| isolate | 34.4 | 34.3 | 1.00 | 35.5 |
+| defer | 130.3 | 121.3 | 0.93 | 119.2 |
+| owned | 74.4 | 69.3 | 0.93 | 71.4 |
+
+Against the C walk of the earlier run (a different run, so the
+comparison is noisier): isolate 0.97, defer 1.02, owned 0.97.
+
+The same branch has the emitters name xo_x_personality on Windows too.
+unwind.xo export_personality returns ExceptionContinueSearch there; the
+C xo_personality stub stays for older xo's code. CI windows 38642483014
+gives windows/amd64 157 of 157, windows/arm64 157 built, and the
+runtime tests ok; CI auto 38642490000 is green.
