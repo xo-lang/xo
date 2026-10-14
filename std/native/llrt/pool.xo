@@ -5,8 +5,8 @@
 // fiber stacks (mapped with a guard page, kept in caches). The C runtime
 // (std/llrt/xo_rt.c) calls them through cabi.xo (xo_x_pool_push and
 // friends); sched.xo below them is the run queue ring and the fibers'
-// switches. With XO_LLRT_C=sched the C keeps its own copies (compiled
-// with -DXO_SCHED_C) and calls none of these.
+// switches. Their C path (XO_LLRT_C=sched, -DXO_SCHED_C) was deleted on
+// 2026-10-14.
 //
 // The records are xo_rt.c's (the pool, xo_worker, the fiber cache, the
 // lock), asserted there with _Static_assert against the constants

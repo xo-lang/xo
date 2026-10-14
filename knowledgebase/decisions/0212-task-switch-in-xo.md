@@ -7,8 +7,10 @@ the fibers' life, the run queue ring, and the task states (stage 1);
 the worker pool, the locks' slow paths and futex waits, worker threads,
 fiber stacks, parks, the cancellation tree, a spawn's link and queueing,
 and a scope close's help and join (stage 2, std/native/llrt/pool.xo)
-are Xo by default; `XO_LLRT_C=sched` keeps the C path until a full tier
-passes on main. Await, the wait lists, the task's record and end,
+are Xo; `XO_LLRT_C=sched` kept the C path until the linux/arm64 full
+tier passed (2fc5af45), and the C path was deleted on 2026-10-14
+(zero-C audit item W1, decision 0198: 1,284 lines of xo_rt.c,
+sched_c.xo, `rt.sched_c`, -DXO_SCHED_C). Await, the wait lists, the task's record and end,
 contexts, and budgets stay C (what blocks each: Stage 3).
 Files: `std/native/rt.xo` (the intrinsics), `std/native/llrt/sched.xo`,
 `sched_c.xo`, `cabi.xo` (the exports); the emitters (internal/arm64
@@ -106,7 +108,8 @@ its heap pointer left a C thread local until thread locals exist.
    (`xo_fiber_switch`, `xo_fiber_start`), thread locals, ring, and fiber
    code (427 lines compiled only there). The emitted start is named
    `xo_fiber_entry` so the C only tests, which link the default exports
-   with either C, never see two definitions.
+   with either C, never see two definitions. Deleted on 2026-10-14
+   (zero-C audit item W1) with the stage 2 copies below.
 
 ## Stage 2 (2026-10-13): the pool, locks, parks, stacks, threads, spawn and join
 
@@ -114,8 +117,8 @@ Implemented in `std/native/llrt/pool.xo` (C ABI exports in cabi.xo),
 over xo_rt.c's records (`pool`, `xo_worker`, `fibers`, `xo_fiber`,
 `xo_park`, `xo_node`, `xo_ctx`, `xo_scope`, `xo_task`), whose layouts
 are asserted against pool.xo's constants with `_Static_assert`. The C
-path is the same switch: `XO_LLRT_C=sched` (-DXO_SCHED_C) compiles
-xo_rt.c's own copies and calls none of pool.xo. No compiler change: the
+path was the same switch: `XO_LLRT_C=sched` (-DXO_SCHED_C) compiled
+xo_rt.c's own copies and called none of pool.xo (deleted 2026-10-14). No compiler change: the
 new C services are one `rt.sched_rt(op, a, b)` declaration (a call of
 `xo_sched_rt`, lowered like every `rt.` call), and the platform calls
 are new declarations in std/native/sys_darwin.xo and sys_windows.xo

@@ -11,11 +11,15 @@ struct SplitConfig {
   modules: Int = 1
   jobs: Int = 6
   lto: Str = "thin"
+  /// clang's optimization level of the program's IR ($XO_LLVM_OPT: O0,
+  /// O1, O2, O3; a release build always O2, decision 0220)
+  opt: Str = "-O2"
 }
 
 /// LLVMSplitConfig from the environment.
 fn split_config(os: Os) -> SplitConfig {
-  var c = SplitConfig{jobs: min(ncpu(os), 6)}
+  // a clang of a 90 MB module takes about 3.5 GB (bench/results/fast-builds-2026-10-13.md)
+  var c = SplitConfig{jobs: ncores(os).min(mem_gb(os) / 4).max(1)}
   let n = Int.parse(os.env.get("XO_LLVM_SPLIT") ?? "") ?? 0
   if n > 1 {
     c.modules = n
@@ -27,6 +31,10 @@ fn split_config(os: Os) -> SplitConfig {
   let l = os.env.get("XO_LLVM_LTO") ?? ""
   if l == "none" || l == "thin" {
     c.lto = l
+  }
+  let o = os.env.get("XO_LLVM_OPT") ?? ""
+  if o is "O0" | "O1" | "O2" | "O3" {
+    c.opt = "-${o}"
   }
   c
 }
@@ -46,6 +54,59 @@ fn ncpu(os: Os) -> Int {
     }
   }
   1
+}
+
+/// The physical cores (decision 0220: parallel jobs by cores, not
+/// hardware threads): sysctl hw.physicalcpu, else the distinct (core,
+/// socket) pairs of lscpu, else ncpu.
+fn ncores(os: Os) -> Int {
+  let (out, err) = combined(os, "sysctl", ["-n", "hw.physicalcpu"])
+  if err.is_empty() {
+    if let Some(n) = Int.parse(out.trim()) {
+      if n > 0 {
+        return n
+      }
+    }
+  }
+  let (out2, err2) = combined(os, "lscpu", ["-p=Core,Socket"])
+  if err2.is_empty() {
+    var seen: Set[Str] = #{}
+    for l in out2.split("\n") {
+      let t = l.trim()
+      if !t.is_empty() && !t.starts_with("#") {
+        seen.add(t)
+      }
+    }
+    if seen.len() > 0 {
+      return seen.len()
+    }
+  }
+  ncpu(os)
+}
+
+/// The machine's memory in GB (hw.memsize, else /proc/meminfo's
+/// MemTotal), 16 when neither answers.
+fn mem_gb(os: Os) -> Int {
+  let (out, err) = combined(os, "sysctl", ["-n", "hw.memsize"])
+  if err.is_empty() {
+    if let Some(n) = Int.parse(out.trim()) {
+      return n / 1000000000
+    }
+  }
+  match os.fs.read_text("/proc/meminfo") {
+    Ok(t) => {
+      for l in t.split("\n") {
+        if l.starts_with("MemTotal:") {
+          let f = l.trim_prefix("MemTotal:").trim().trim_suffix("kB").trim()
+          if let Some(kb) = Int.parse(f) {
+            return kb / 1000000
+          }
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  16
 }
 
 /// ltoFlags of a split build.
@@ -407,7 +468,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   var fails: List[Str] = []
   while next < lls.len() || !running.is_empty() {
     while next < lls.len() && running.len() < c.jobs {
-      let args = ["-O2"] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
+      let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
       match os.proc.cmd(clang, args).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")

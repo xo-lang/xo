@@ -1151,11 +1151,4 @@ static const char *xo_w_getenv(const char *name) {
 }
 #define getenv(n) xo_w_getenv(n)
 
-// ---------------------------------------------------------------------------
-// Random bytes (xo_crypto.c's seed compatibility block, B08)
-
-static int xo_w_entropy(void *p, size_t n) {
-	return BCryptGenRandom(NULL, (PUCHAR)p, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : -1;
-}
-
 #endif

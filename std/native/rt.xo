@@ -372,9 +372,6 @@ fn tlocal_set(k: Int, v: Int)
 /// and stores (a function on a scheduler's own stack, which never moves,
 /// keeps it across its switches).
 fn tlocal_addr() -> Int
-/// The C path of sched.xo (XO_LLRT_C=sched, -DXO_SCHED_C): operation op
-/// of the C runtime's own scheduler (std/llrt/xo_rt.c xo_sched_c).
-fn sched_c(op: Int, a: Int, b: Int, c: Int) -> Int
 /// A hook of the C runtime around a switch of sched.xo's fiber code
 /// (sanitizers and statistics; xo_rt.c xo_sched_hook).
 fn sched_hook(kind: Int, w: Int, f: Int)

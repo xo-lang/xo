@@ -955,7 +955,20 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       let a = x.args[0]
-      g.release(g.vty(a), g.words(a))
+      let t = g.vty(a)
+      if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple) && g.nwords(t) > 8 && 8 * g.nwords(t) <= 32760 {
+        // a whole value of many words (ssa group_releases): its leaves
+        // released from memory, in place when it is held there
+        let (p0, ok) = g.mem_of(a)
+        var ptr = p0
+        if !ok {
+          ptr = g.area_addr(g.frame_area(t, 0))
+          g.store_words_at(ptr, 0, g.words(a))
+        }
+        let _r = g.call(g.mem_drop(t), regs([ptr]), [])
+        return
+      }
+      g.release(t, g.words(a))
     }
     Reuse => g.reuse(v)
     Share => {
