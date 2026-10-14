@@ -574,7 +574,7 @@ nothing new.
 | 1 | B01 clocks (done 2026-10-14, Windows measured: Clock.now 0.928 to 0.952 of the C path's cycles) | 132 | nothing | Windows: route sysio.clock_now's Windows arm and measure on LLVM (`WORKLOADS=clock bench/perf/sysio/measure.sh` in the Windows batch); darwin: choose the layer once into a word (as the vDSO address in `rt.sys_words` word 0) so clock_now has no `match target` |
 | 2 | B02 globals and thread locals | 188 | nothing | `rt.static_word(k)` in std/native/rt.xo and the three self hosted emitters (decision 0207's design), then xo_sys.c's helpers |
 | 3 | B03 stdio, exit, env, args | 343 | 2 | stdio.xo with an `xo_x_flush` export the C fault and exit paths call |
-| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand stays until the seed has B08 |
+| 4 | B08 SHA-512 and rand | 258 | nothing (rand: a tw_rand_u64 export) | **Done 2026-10-14** (see "B08 done" below): SHA-512 deleted; the C Rand deleted once seed 0.10.0-23ce8ce2 had B08 (2026-10-14) |
 | 5 | B10 HTTP/1.1 client parser (two items) | 1,558 | nothing | http1.xo parse_response; then h2_request and xo_cl_do over url_parts; TestHTTP1ParseDiff, http_fuzz.c |
 | 6 | B11 client HPACK | 583 | 5's hand off pattern | hpack.xo encode one field; the client's decode through hpack.xo |
 | 7 | B12 response writer | 537 | nothing | http1w.xo: status text, sniff, Date, hw_*; bar on the http workloads |
