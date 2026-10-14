@@ -6,7 +6,12 @@ Symptom: on Windows, `go run ./scripts/xobuild` with the 0.11.0
 windows-amd64 seed fails with XO1306, "module of
 github.com/xo-lang/xo/selfhost/check is not required by xo.mod", for
 every import between selfhost packages. The same seed version builds xo
-on macOS and Linux.
+on macOS and Linux. CI run 38626156792 (2026-10-14) showed it is not
+the seed alone: a Go backend xo.exe cross built from current main fails
+the same way when xobuild uses it as the seed on Windows. Any xo running
+on Windows fails to build selfhost/xo; xo.exe itself works for other
+work (the LLVM goldens, runtime tests, and `xo test` all passed in that
+run with it as XO_CLI).
 
 Cause: not yet found. Probably a Windows path bug in how xo maps a
 package directory to its module (backslashes or a drive letter in the
