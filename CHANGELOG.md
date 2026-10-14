@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Smaller native output and faster x86 self builds (decision 0220):
+  reference counting releases a dead struct once instead of once per
+  heap field (arm64 assembly of xo 17 percent smaller, 73 percent fewer
+  calls; LLVM IR 72 percent smaller); `XO_LLVM_OPT` sets clang's level,
+  and development builds of xo on x86 use -O0 (xo rebuilds itself in
+  1:23 on c7i.8xlarge, was about 42 minutes); parallel jobs default to
+  the physical cores and the memory.
 - Fixes from the Linux arm64 milestone run of 2026-10-14: `--ld=macho`
   links every object of a program whose assembly was split into parts
   (decision 0220; it took only the first and rejected the runtime's

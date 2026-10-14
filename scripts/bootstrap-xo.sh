@@ -90,7 +90,9 @@ if [ -z "$backend" ]; then
   case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac
 fi
 if [ "$backend" = llvm ]; then
-  export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none}
+  # clang -O0 for the development fixed point (decision 0220); the
+  # fixed point holds within one level
+  export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none} XO_LLVM_OPT=${XO_LLVM_OPT:-O0}
 fi
 if command -v go >/dev/null 2>&1; then
   say "FAIL: go is still on PATH ($(command -v go))"
