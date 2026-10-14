@@ -5,8 +5,7 @@
 // atomics (decision 0200), and raw memory (decision 0207). The C runtime
 // (std/llrt/xo_rt.c) calls them through cabi.xo (xo_x_rq_put and
 // friends) and keeps what needs locks, system calls, or allocation: the
-// inject queue, idle workers, fiber stacks, spawning and joining. The C
-// path is sched_c.xo (XO_LLRT_C=sched), which calls xo_rt.c's own copies.
+// inject queue, idle workers, fiber stacks, spawning and joining.
 //
 // The layouts are xo_rt.c's (xo_runq, xo_worker, xo_fiber, xo_task,
 // xo_scope), asserted there with _Static_assert against the constants
