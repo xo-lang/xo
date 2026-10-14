@@ -594,6 +594,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.sched_switch()
       return false
     }
+    "rt.unwind_save" | "rt.unwind_resume" => {
+      // calls of the unwinder's trampolines (decision 0221)
+      g.unwind_fns()
+      return false
+    }
     "rt.fiber_start_addr" => {
       g.sched_switch()
       g.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
