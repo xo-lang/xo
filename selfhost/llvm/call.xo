@@ -584,6 +584,16 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.set(v, "ptrtoint ptr @.xo.sys_words to i64")
     }
+    "rt.static_word" => {
+      // word k of 64 words of process globals (decision 0207, work item
+      // B02): weak, one object for every module of a split build
+      if !g.emitted.contains("@.xo.static") {
+        g.emitted["@.xo.static"] = true
+        g.helpers.push("@.xo.static = weak global [64 x i64] zeroinitializer, align 8\n\n")
+      }
+      let p = g.def("getelementptr [64 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
+      g.set(v, "ptrtoint ptr ${p} to i64")
+    }
     "rt.sys_clone" => {
       g.clone_tramp()
       var ops: List[Str] = []
