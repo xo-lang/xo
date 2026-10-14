@@ -44,7 +44,9 @@ fn main(os: Os) ! {
   // the environment: inherited, replaced, narrowed, added to
   out.println(show(p.cmd("sh", ["-c", r"echo ${HOME:+home set}"]).output()))
   let narrow = os.env.only(["PATH", "XO_GOLDEN_A"])
-  out.println(show(p.cmd("sh", ["-c", r#"echo "[${HOME:-}] [${XO_GOLDEN_A:-}] [${XO_GOLDEN_B:-}]""#]).env(narrow).set_env("XO_GOLDEN_B", "b2").output()))
+  // not $HOME: Git Bash's sh on Windows sets it from the account's
+  // profile when it is unset (the narrowed HOME is checked below)
+  out.println(show(p.cmd("sh", ["-c", r#"echo "[${XO_GOLDEN_A:-}] [${XO_GOLDEN_B:-}]""#]).env(narrow).set_env("XO_GOLDEN_B", "b2").output()))
   out.println(show(p.cmd("sh", ["-c", r#"echo "[${XO_GOLDEN_B:-}]""#]).set_env("XO_GOLDEN_B", "one").set_env("XO_GOLDEN_B", "two").output()))
   out.println("only get ${narrow.get("HOME").is_none()} ${narrow.get("PATH").is_some()} vars ${narrow.vars().keys().filter(fn(k) { k.starts_with("XO_GOLDEN") || k == "HOME" }).join(",")}")
   match narrow.home() {

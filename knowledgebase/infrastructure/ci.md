@@ -404,12 +404,13 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
    input; the fixed point there uses the LLVM backend.
 3. Windows known issues (best effort, recorded, not gates; Last
    verified: 2026-10-14, run 38627432745):
-   - the golden `proc_cmd` fails under the runner (a service running as
-     SYSTEM, HOME pointed at Administrator's profile) but passes with
-     the same xo1 and checkout run as Administrator over SSH, so the
-     difference is the job's environment. TestGoldenWant logs want and
-     got; windows-batch.sh now prints those blocks (it printed only the
-     summary before), so the next `suite=windows` run shows the diff.
+   - the golden `proc_cmd` failed under the runner (fixed 2026-10-14,
+     run 38629617435 showed the diff): it printed the child shell's
+     `$HOME` with HOME left out of the environment, which Git Bash's sh
+     fills from the account's profile, so want_windows.txt held the
+     Administrator path and the SYSTEM service printed
+     `/c/Windows/system32/config/systemprofile`. The echo no longer
+     prints HOME.
    - the XO1306 bug (gotchas/windows-seed-xo1306-module-not-required.md)
      forces the cross built xo.exe; once fixed, xcross can go and the
      job builds xo itself.
