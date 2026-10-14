@@ -65,5 +65,7 @@ HTTP/1.1 is 0.976 to 1.001 of the C. No regression past the noise.
   TestHTTPFuzz pass with the Xo writer linked into the C harness.
 - `xo dev goldens --only=http_client,http_fault,http_server,http_stream,http_tls,http_wire,net_only,request_eq,std_error_display`:
   9 of 9 on arm64 and on LLVM (the Mac).
-- The full TestHTTPParseDiff, TestHTTP1ParseDiff, TestH2Diff, and
-  TestCryptoDiff went to the EC2 queue (linux/arm64, request b12-tests).
+- linux/arm64 (EC2 queue request b12-tests, warm r8g instance
+  i-EXAMPLE06, 1f077021): the same goldens 9 of 9 on arm64 and
+  on LLVM; `go test -run 'TestHTTPParseDiff|TestHTTPFuzz|TestHTTP1ParseDiff|TestH2Diff|TestCryptoDiff' ./internal/llvm`
+  ok (49.7 s).
