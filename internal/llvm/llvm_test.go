@@ -322,3 +322,46 @@ func TestLeakCheck(t *testing.T) {
 		})
 	}
 }
+
+// leakExitProg ends with os.proc.exit, which skips the leak report.
+const leakExitProg = `fn main(os: Os) {
+  os.stdio.println("bye")
+  os.proc.exit(3)
+}
+`
+
+// TestLeakCheckExit: XO_LEAKCHECK=1 on a program that ends with
+// os.proc.exit prints that the report was skipped (it runs only when
+// main returns), and nothing without XO_LEAKCHECK.
+func TestLeakCheckExit(t *testing.T) {
+	if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(leakExitProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
+		t.Run(be, func(t *testing.T) {
+			r, b := buildRun(t, dir, xotool.Options{Backend: be})
+			if r.exit != 3 || r.stdout != "bye\n" || strings.Contains(r.stderr, "xo leakcheck") {
+				t.Fatalf("run without XO_LEAKCHECK: %s", r)
+			}
+			cmd := exec.Command(b.Binaries[xotool.Host()])
+			cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) || ee.ExitCode() != 3 {
+				t.Fatalf("exit: %v", err)
+			}
+			if stdout.String() != "bye\n" || stderr.String() != "xo leakcheck: skipped (os.proc.exit)\n" {
+				t.Fatalf("stdout %q, stderr %q", stdout.String(), stderr.String())
+			}
+		})
+	}
+}
