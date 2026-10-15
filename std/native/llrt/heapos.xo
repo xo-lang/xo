@@ -17,8 +17,7 @@
 // map, fault in, and unmap their pages every time (json parse took 1.1
 // times the instructions); a resize within the mapping stays in place.
 // A sanitizer build
-// maps through the C library (the C runtime's xo_sched_rt services 11 and
-// 12): ThreadSanitizer keeps a program's mappings in its application
+// maps through the C library (sanhook.xo heap_map): ThreadSanitizer keeps a program's mappings in its application
 // ranges through its mmap interceptor, which a system call bypasses
 // (as pool.xo's fiber stacks).
 //

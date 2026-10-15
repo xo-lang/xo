@@ -202,24 +202,6 @@ __attribute__((weak)) xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
 #define zero_handle xo_zero_handle
 #define empty_list xo_empty_list
 
-// ThreadSanitizer does not see the Xo code's synchronization (it is not
-// instrumented): a task claimed from a queue acquires its spawn's release
-// (decision 0212 stage 2).
-#if defined(__has_feature)
-#if __has_feature(thread_sanitizer)
-#define XO_TSAN_ANN 1
-#endif
-#endif
-#if defined(__SANITIZE_THREAD__)
-#define XO_TSAN_ANN 1
-#endif
-#ifdef XO_TSAN_ANN
-void __tsan_acquire(void *addr);
-#define TSAN_ACQUIRE(a) __tsan_acquire(a)
-#else
-#define TSAN_ACQUIRE(a) ((void)(a))
-#endif
-
 // ---------------------------------------------------------------------------
 // Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_msg
 // and fault_raise_cur record the fault and unwind with unwind.xo up to
@@ -229,46 +211,32 @@ void __tsan_acquire(void *addr);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 
 // fault_init starts fault.xo and ctx.xo (cabi.xo rt_start; its second
-// personality routine is the first), then the services records of
-// poll.xo and stop.xo.
+// personality routine is the first), has poll.xo make the event loop's
+// record, and fills stop.xo's services record.
 void xo_x_rt_start(int64_t pers_old);
-static void pd_svc_init(void);
+int64_t xo_x_poll_svc(void);
 static void stop_svc_init(void);
 static void fault_init(void) {
 	xo_x_rt_start(XO_ADDR(xo_x_personality));
-	pd_svc_init();
+	// the event loop's record, before any descriptor
+	(void)xo_x_poll_svc();
 	stop_svc_init();
 }
 
 // ---------------------------------------------------------------------------
-// The scheduler's C services (rt.sched_rt, pool.xo RT_*): a claimed
-// task's run with ThreadSanitizer's annotation, and the empty list.
-
-void xo_x_run_claimed(int64_t t, int64_t units);
-
-static void run_claimed(int64_t t, int64_t units) { xo_x_run_claimed(t, units); }
+// The scheduler's C services (rt.sched_rt, xo_sched_rt) are gone (decision
+// 0233 step 2): the empty list is a `[]` in tasks.xo, a claimed task runs
+// through tasks.xo's run_claimed, the virtual clock's kick through
+// twflags.xo.
 
 // the C name of cabi.xo fiber_run_task for code of compilers before the
 // emitters named the export (the 0.13.0 seed's)
 void xo_x_fiber_run_task(int64_t f);
 void xo_sched_run_task(int64_t f) { xo_x_fiber_run_task(f); }
 
-int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
-	switch (op) {
-	case 16: // task a, claimed, runs here (its queue entry still queued)
-		TSAN_ACQUIRE((void *)(intptr_t)a);
-		run_claimed(a, b);
-		return 0;
-	case 18: // the list a canceled operation returns
-		return XO_ADDR(&empty_list);
-	}
-	(void)b;
-	return 0;
-}
-
 // ---------------------------------------------------------------------------
-// The event loop is poll.xo's (B22): pd_svc_init has it make its record;
-// ev_start is the entry's (the C tests' ev_poke is in testdata/xrec.h).
+// The event loop is poll.xo's (B22): fault_init has it make its record;
+// ev_start is the C tests' (their ev_poke is in testdata/xrec.h).
 
 #if defined(_WIN32)
 // the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
@@ -282,11 +250,6 @@ static void ev_start(void) { xo_x_poll_ev_start(); }
 // poll.xo reads the completions GetQueuedCompletionStatusEx returns
 _Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8, "poll.xo's OVERLAPPED_ENTRY");
 #endif
-
-int64_t xo_x_poll_svc(void);
-static void pd_svc_init(void) {
-	(void)xo_x_poll_svc();
-}
 
 // ---------------------------------------------------------------------------
 // The network is netconn.xo's (cabi_net.xo); the C tests' view of its
@@ -302,21 +265,12 @@ extern char **environ;
 #endif
 
 // ---------------------------------------------------------------------------
-// Two phase shutdown (core 7.5) is stop.xo's; stop_svc holds the C words
-// entry.xo reads (its E_ words, 88 on), and the handlers below.
+// Two phase shutdown (core 7.5) is stop.xo's; stop_svc holds the one C
+// word entry.xo reads (E_OVERFLOW: Windows' on_overflow, below).
 
 void xo_x_stop_init(int64_t svc);
 
-#ifndef _WIN32
-// SIGINT and SIGTERM's handler is poll.xo's (cabi.xo on_signal).
-void xo_x_on_signal(int64_t sig);
-#endif
-
 #ifdef _WIN32
-// Ctrl-C, Ctrl-Break, and closing the console are Windows' SIGINT and
-// SIGTERM: poll.xo on_console counts them and wakes the poller.
-int64_t xo_x_on_console(int64_t kind);
-
 // on_overflow reports a stack overflow (decision 0197, stage 5): not a
 // fault (decision 0085), so nothing unwinds; the program ends as the Go
 // backend's does, with "fatal error: stack overflow" and status 2, where
@@ -337,34 +291,16 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 }
 #endif
 
-// functions that take no arguments are called through rt.call_c2 as they
-// are (its two arguments are ignored on every target's C convention)
-void xo_x_consts_free(void);
-void xo_x_heap_set_mid_max(int64_t m);
-static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
-	(void)b;
-	xo_x_heap_set_mid_max(m);
-	return 0;
-}
-
-int64_t xo_x_rtstats_counts(void);
-int64_t xo_x_rtstats_switch(void);
 static int64_t stop_svc[20];
 static void stop_svc_init(void) {
-	// word 11 (the test world's start) is unused: a test binary's main
-	// starts it (the native prelude's llrt_tw_start)
-	stop_svc[12] = XO_ADDR(&ev_start);
+	// the rest are Xo (decision 0233 step 2): word 11 (the test world's
+	// start) since a test binary's main starts it, 17 (std/time's
+	// tz_free) atexit.xo's, and 12, 13, 15, 16, 18 and 19 (the poller's
+	// start, the signal or console handler, mid_max, consts_free, the
+	// statistics) entry.xo's calls through rt.fn_addr and heapos.xo
 #ifdef _WIN32
-	stop_svc[13] = XO_ADDR(&xo_x_on_console);
 	stop_svc[14] = XO_ADDR(&on_overflow);
-#else
-	stop_svc[13] = XO_ADDR(&xo_x_on_signal);
 #endif
-	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
-	stop_svc[16] = XO_ADDR(&xo_x_consts_free);
-	// word 17 (std/time's tz_free) is atexit.xo's since decision 0233
-	stop_svc[18] = xo_x_rtstats_counts();
-	stop_svc[19] = xo_x_rtstats_switch();
 	xo_x_stop_init(XO_ADDR(stop_svc));
 }
 

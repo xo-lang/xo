@@ -681,7 +681,7 @@ fn cleanup() {
 
 // ---------------------------------------------------------------------------
 // The virtual clock's move (the scheduler calls kick after a deadlock
-// check, xo_rt.c xo_sched_rt; it was xo_testing.c's)
+// check, through twflags.xo kick; it was xo_testing.c's)
 
 /// Runs after a deadlock check found every context blocked: the clock
 /// moves to the earliest timer and every timer due then fires; with none

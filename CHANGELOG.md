@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233 step 2, the last services): rt.sched_rt
+  and xo_rt.c's xo_sched_rt are gone (the empty list a canceled
+  operation returns is a `[]` in tasks.xo; op 16 had no caller left).
+  entry.xo starts the poller, installs the signal or console handler,
+  frees the constants, reads the statistics and sets the heap's mid_max
+  itself (rt.fn_addr of cabi.xo's exports, heapos.xo), so the C's
+  stop_svc keeps only Windows' on_overflow, and fault_init makes the
+  event loop's record. xo_rt.c 348 lines.
 - Native emitters, before the 0.14.0 seed (zero-C inventory's emitter
   items): rt.flush and rt.set_grace call cabi.xo's flush and
   stop_set_grace; the LLVM emitter calls obj.xo's rl_copy_n and rl_grow_n

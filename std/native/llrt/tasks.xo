@@ -5,9 +5,8 @@
 // (xo_rt.c xo_task, xo_scope: allocation, the queue, the run, the
 // scope's open and close); this module reads and writes them at the
 // offsets below, which xo_rt.c asserts (`tasks.xo T_*`, `tasks.xo S_*`).
-// The C's services it needs (a context's wait, which flushes the pending
-// work, helps on a root thread, and tells ThreadSanitizer; running a
-// task here; the empty list) are rt.sched_rt ops (pool.xo RT_*).
+// It needs no C services: the empty list a canceled operation returns
+// is a `[]` (empty_list; rt.sched_rt went in decision 0233 step 2).
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
@@ -109,7 +108,6 @@ const E_NEXT = 16
 const E_WRITER = 24
 
 /// The C's services (pool.xo RT_*).
-const RT_EMPTY_LIST = 18
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
@@ -127,8 +125,13 @@ fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 
 fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
 
-/// The list the C returns while a canceled operation unwinds (immortal).
-pub fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+/// The list a canceled operation returns while it unwinds: the immortal
+/// empty list (xo_rt.c xo_empty_list), which a `[]` is (the emitters give
+/// its address, rt.rl_empty).
+pub fn empty_list() -> Int {
+  let e: List[Int] = []
+  rt.obj_addr(e)
+}
 
 /// Blocks the context c until its park is signaled or, when cancelable,
 /// its node is canceled (the C's park_wait: it flushes the pending
