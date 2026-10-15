@@ -153,6 +153,11 @@ __attribute__((weak)) int64_t xo_x_h2_request_check(int64_t ha, int64_t hn, int6
 	fault_text("HTTP without std/http's exports", "");
 }
 
+__attribute__((weak)) int64_t xo_x_h2_settings_check(int64_t p, int64_t n) {
+	(void)p, (void)n;
+	fault_text("HTTP without std/http's exports", "");
+}
+
 // frame_check's results
 enum { H2_FC_OK, H2_FC_IGNORE, H2_FC_CONN, H2_FC_STREAM };
 
@@ -866,26 +871,23 @@ static void h2_on_settings(h2c *c, int flags, const uint8_t *p, int64_t n) {
 		}
 		return;
 	}
-	if (n % 6 != 0) {
-		h2_conn_err(c, H2E_FRAME_SIZE);
+	// the checks that need no state (h2w.xo settings_check): the first
+	// failing setting fails when the loop reaches it
+	int64_t chk = xo_x_h2_settings_check(XO_ADDR(p), n), bad = chk >> 4, k = n / 6;
+	if ((chk & 15) == 0) {
+		bad = -1;
+	} else if (bad == 0) {
+		// the payload's shape, a duplicate, or the first setting
+		h2_conn_err(c, (uint32_t)(chk & 15));
 		return;
-	}
-	int64_t k = n / 6;
-	if (k > 100) {
-		h2_conn_err(c, H2E_PROTOCOL);
-		return;
-	}
-	for (int64_t i = 0; i < k; i++) {
-		for (int64_t j = 0; j < i; j++) {
-			if (p[6 * i] == p[6 * j] && p[6 * i + 1] == p[6 * j + 1]) {
-				h2_conn_err(c, H2E_PROTOCOL);
-				return;
-			}
-		}
 	}
 	for (int64_t i = 0; i < k; i++) {
 		int id = p[6 * i] << 8 | p[6 * i + 1];
 		uint32_t v = h2_get32(p + 6 * i + 2);
+		if (i == bad) {
+			h2_conn_err(c, (uint32_t)(chk & 15));
+			return;
+		}
 		switch (id) {
 		case H2S_HEADER_TABLE:
 			// applied by Xo's encoder before its next block
@@ -898,18 +900,7 @@ static void h2_on_settings(h2c *c, int flags, const uint8_t *p, int64_t n) {
 			}
 			c->encset[c->nencset++] = v;
 			break;
-		case H2S_ENABLE_PUSH:
-		case H2S_CONNECT:
-			if (v > 1) {
-				h2_conn_err(c, H2E_PROTOCOL);
-				return;
-			}
-			break;
 		case H2S_INITIAL_WINDOW: {
-			if (v > 0x7fffffff) {
-				h2_conn_err(c, H2E_FLOW);
-				return;
-			}
 			int64_t growth = (int64_t)v - c->peer_win;
 			c->peer_win = v;
 			for (int64_t s = 0; s < c->ntab; s++) {
@@ -922,10 +913,6 @@ static void h2_on_settings(h2c *c, int flags, const uint8_t *p, int64_t n) {
 			break;
 		}
 		case H2S_MAX_FRAME:
-			if (v < 16384 || v > (1 << 24) - 1) {
-				h2_conn_err(c, H2E_PROTOCOL);
-				return;
-			}
 			c->peer_frame = v;
 			break;
 		default:

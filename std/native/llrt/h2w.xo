@@ -561,3 +561,57 @@ pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
   }
   K_APP
 }
+
+// ---------------------------------------------------------------------------
+// SETTINGS
+
+// The settings the checks know (RFC 9113 6.5.2, RFC 8441).
+const S_ENABLE_PUSH: Int = 2
+const S_INITIAL_WINDOW: Int = 4
+const S_MAX_FRAME: Int = 5
+const S_CONNECT: Int = 8
+const E_FLOW: Int = 3
+
+/// The checks of the n bytes of a SETTINGS frame's payload at p (not an
+/// ACK) that need no state (SettingsFrame's and serverConn.processSetting's):
+/// the index of the first setting that fails one, times 16, plus its error
+/// code; the number of settings times 16 when none fails. A payload that
+/// is not whole settings, has more than 100, or names one twice fails at
+/// 0, before any setting applies.
+pub fn settings_check(p: Int, n: Int) -> Int {
+  if n % 6 != 0 {
+    return E_FRAME_SIZE
+  }
+  let k = n / 6
+  if k > 100 {
+    return E_PROTOCOL
+  }
+  var i = 0
+  while i < k {
+    let id = rt.mem_load(p, 6 * i, 1) << 8 | rt.mem_load(p, 6 * i + 1, 1)
+    var j = 0
+    while j < i {
+      if id == (rt.mem_load(p, 6 * j, 1) << 8 | rt.mem_load(p, 6 * j + 1, 1)) {
+        return E_PROTOCOL
+      }
+      j += 1
+    }
+    i += 1
+  }
+  i = 0
+  while i < k {
+    let id = rt.mem_load(p, 6 * i, 1) << 8 | rt.mem_load(p, 6 * i + 1, 1)
+    let v = get32(p + 6 * i + 2)
+    if (id == S_ENABLE_PUSH || id == S_CONNECT) && v > 1 {
+      return 16 * i + E_PROTOCOL
+    }
+    if id == S_INITIAL_WINDOW && v > 0x7FFFFFFF {
+      return 16 * i + E_FLOW
+    }
+    if id == S_MAX_FRAME && (v < 16384 || v > 16777215) {
+      return 16 * i + E_PROTOCOL
+    }
+    i += 1
+  }
+  16 * k
+}

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 5): HTTP/2 the SETTINGS
+  checks that need no state (the payload's shape, duplicates,
+  ENABLE_PUSH, INITIAL_WINDOW, MAX_FRAME_SIZE) are Xo (h2w.xo
+  settings_check); a failing setting still fails when the C reaches it,
+  after the ones before it apply.
 - Native runtime (zero-C audit item B28, part 4): HTTP/2 the server's
   request checks (malformed pseudo fields, 431 for a cut header list,
   the 400 texts of connection specific fields and TE, OPTIONS *) are Xo

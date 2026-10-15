@@ -85,3 +85,8 @@ fn h2_pseudos_ok(ha: Int, hn: Int, resp: Int) -> Int { if h2w.pseudos_ok(ha, hn,
 /// What a request of the hn checked fields at ha is (h2w.request_check:
 /// one of h2w.K_*, the 400's text at msg).
 fn h2_request_check(ha: Int, hn: Int, truncated: Int, msg: Int) -> Int { h2w.request_check(ha, hn, truncated != 0, msg) }
+
+/// The stateless checks of a SETTINGS payload (h2w.settings_check: the
+/// failing setting's index times 16 plus its code, else the count times
+/// 16).
+fn h2_settings_check(p: Int, n: Int) -> Int { h2w.settings_check(p, n) }
