@@ -264,15 +264,21 @@ fn (var g: Gen) call(v: Int) {
       let (_, ad, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (_, bd, bn) = g.str_parts(a1)
-      let r = g.def("call i32 @xo_str_eq(ptr ${ad}, i64 ${an}, ptr ${bd}, i64 ${bn})")
-      g.set(v, "icmp ne i32 ${r}, 0")
+      // obj.xo's str_eq, inlined at the call (xo_str_eq stays for code of
+      // earlier compilers)
+      let pa = g.def("ptrtoint ptr ${ad} to i64")
+      let pb = g.def("ptrtoint ptr ${bd} to i64")
+      let r = g.def("call i64 @xo_x_obj_str_eq(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
+      g.set(v, "icmp ne i64 ${r}, 0")
     }
     "str.cmp" => {
       let a0 = g.op(args[0])
       let (_, ad, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (_, bd, bn) = g.str_parts(a1)
-      g.set(v, "call i64 @xo_str_cmp(ptr ${ad}, i64 ${an}, ptr ${bd}, i64 ${bn})")
+      let pa = g.def("ptrtoint ptr ${ad} to i64")
+      let pb = g.def("ptrtoint ptr ${bd} to i64")
+      g.set(v, "call i64 @xo_x_obj_str_cmp(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
     }
     "str.of_int" | "str.of_float" => {
       let slot = g.alloca("i64")

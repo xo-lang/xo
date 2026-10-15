@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (generated-code entries): string equality and order
+  are obj.xo's str_eq and str_cmp (rt.mem_cmp) called through their
+  exports on both backends; xo_str_eq and xo_str_cmp stay for code of
+  the 0.12.0 seed.
 - Windows runtime (zero-C B32 part 3): with Mbed TLS gone, xo_win.c's
   shims only its threading and xo_tls.c used (pthread mutexes, condition
   variables, pthread_once, localtime_r) are deleted; xo_win.c is at 331

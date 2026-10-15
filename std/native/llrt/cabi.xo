@@ -699,3 +699,9 @@ fn fs_lock_free(p: Int) { fsops.lock_free(p) }
 fn const_once(f: Int, drop: Int, id: Int) -> Int { consts.once(f, drop, id) }
 
 fn consts_free() { consts.free_all() }
+
+/// String equality and order for generated code (obj.xo; xo_str_eq and
+/// xo_str_cmp stay for code of earlier compilers).
+fn obj_str_eq(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.str_eq(a, an, b, bn) }
+
+fn obj_str_cmp(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.str_cmp(a, an, b, bn) }

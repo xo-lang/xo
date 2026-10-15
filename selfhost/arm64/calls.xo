@@ -692,10 +692,10 @@ fn (var g: G) call_op(v: Int) {
       let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
       let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
       if name == "str.cmp" {
-        g.set(v, g.rt("xo_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
+        g.set(v, g.rt("xo_x_obj_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
         return
       }
-      let r = g.rt("xo_str_eq", regs([xd, a[1], yd, b[1]]), [false])
+      let r = g.rt("xo_x_obj_str_eq", regs([xd, a[1], yd, b[1]]), [false])
       g.set(v, [g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [r[0]])])
     }
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
