@@ -1,0 +1,24 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the CPU
+// instructions of std/native/llrt/cpu.xo (decision 0231) reach the hot
+// loops of the field arithmetic. On arm64 each carry is cmn (or cmp) and
+// cset, with no branch; on LLVM llvm.uadd.with.overflow and
+// llvm.usub.with.overflow.
+use std/internal
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  let k = "0123456789abcdef0123456789abcde${n}".bytes()
+  let p = internal.crypto_op("p256.public", k, b"", b"", b"")
+  os.stdio.println(p.to_hex())
+}
+
+// P-256's Montgomery product: the carries are flags (the branches
+// left are the prologue's checks, on no data).
+// func nistec.mul4
+// arm64: "cmn x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cs"
+// llvm: "llvm.uadd.with.overflow.i64"
+
+// The final subtraction's borrows.
+// func nistec.sub4
+// arm64: "cmp x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cc"
+// llvm: "llvm.usub.with.overflow.i64"

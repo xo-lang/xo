@@ -541,6 +541,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
+    // decision 0231: the carry out of a + b and the borrow out of a - b
+    // (std/native/llrt/cpu.xo), which arm64 selects as adds/adcs chains
+    "rt.u64_carry" | "rt.u64_borrow" => {
+      let f = if aux_str(x.aux) == "rt.u64_carry" { "uadd" } else { "usub" }
+      g.llvm_decl("@llvm.${f}.with.overflow.i64", "declare {i64, i1} @llvm.${f}.with.overflow.i64(i64, i64)")
+      let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
+    }
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
     "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")

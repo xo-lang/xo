@@ -139,7 +139,36 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     }
     return b.std_call(x, ci)
   }
+  if fm >= 0 && b.c.mods[fm].path == "native/llrt/cpu" && !b.wasm {
+    if let Some(v) = b.cpu_call(x, ci) {
+      return v
+    }
+  }
   b.call_as(x, ci, fo)
+}
+
+/// A call of std/native/llrt/cpu.xo's functions the native emitters
+/// lower to instructions (decision 0231): rt.<name>, with the arguments
+/// of the call; None for the others, and in a wasm module (their Xo
+/// bodies run there, as with an older xo, which does not know them).
+fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let name = match b.obj_name(fo) {
+    "carry" => "u64_carry"
+    "borrow" => "u64_borrow"
+    _ => ""
+  }
+  if name.is_empty() {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  var vs: List[Int] = []
+  for (i, p) in b.c.objs[fo].params.indexed() {
+    let e = es[i] ?? fault("arg")
+    vs.push(b.value_as(e, b.typ(p.ty)))
+  }
+  b.rt(name, b.nat_of(x), vs)
 }
 
 fn (var b: Builder) is_proc_run(fo: Int) -> Bool {

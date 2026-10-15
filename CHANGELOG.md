@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- TLS performance (decision 0231 part 1): the carries of the P-256,
+  P-384, and RSA field products are CPU flags (std/native/llrt/cpu.xo,
+  cmn/cmp and cset on arm64, llvm.uadd.with.overflow on LLVM, a
+  constant time Xo body elsewhere and for older xo builds). LLVM
+  handshakes: X25519 with a P-256 chain 14.7M to 10.9M instructions,
+  P-256 18.6M to 13.4M, P-384 33.6M to 23.7M, RSA-2048 12.3M to 9.4M.
+  UNTESTED on linux and windows.
 - Native runtime (zero-C audit item B22, remnants batch 2): on Linux and
   macOS the event loop starts in Xo (std/native/llrt/poll.xo ev_start:
   the self pipe, kqueue or epoll, the poller thread), and registers

@@ -8,6 +8,7 @@
 // arithmetic, rt.u64_mul_hi, masks, no branch or index on a secret; the
 // sizes (limb counts, an exponent's length) are public. exp_public is
 // the one variable time operation, for public exponents.
+use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/raw
 use native/rt
@@ -51,22 +52,18 @@ pub fn keep(xs: List[Int]) {
 // ---------------------------------------------------------------------------
 // Words (nistec.xo's)
 
-fn carry(x: Int, y: Int, s: Int) -> Int { rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63) }
-
-fn borrow(x: Int, y: Int, d: Int) -> Int { rt.int_wrap(4, (~x & y) | (~(x ^ y) & d), 63) }
-
 fn adc(h: Int, off: Int, x: Int, y: Int, cin: Int) -> Int {
   let s1 = rt.int_wrap(0, x, y)
   let s = rt.int_wrap(0, s1, cin)
   st(h, off, s)
-  carry(x, y, s1) | carry(s1, cin, s)
+  cpu.carry(x, y) | cpu.carry(s1, cin)
 }
 
 fn sbb(h: Int, off: Int, x: Int, y: Int, bin: Int) -> Int {
   let d1 = rt.int_wrap(1, x, y)
   let d = rt.int_wrap(1, d1, bin)
   st(h, off, d)
-  borrow(x, y, d1) | borrow(d1, bin, d)
+  cpu.borrow(x, y) | cpu.borrow(d1, bin)
 }
 
 fn mac(t: Int, off: Int, a: Int, b: Int, cin: Int) -> Int {
@@ -76,7 +73,7 @@ fn mac(t: Int, off: Int, a: Int, b: Int, cin: Int) -> Int {
   let s1 = rt.int_wrap(0, lo, x)
   let s2 = rt.int_wrap(0, s1, cin)
   st(t, off, s2)
-  rt.int_wrap(0, hi, carry(lo, x, s1) + carry(s1, cin, s2))
+  rt.int_wrap(0, hi, cpu.carry(lo, x) + cpu.carry(s1, cin))
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +277,7 @@ fn mul_at(md: Mod, h: Int, f: Int, g: Int) {
     let x = ld(t, 8 * n)
     let s = rt.int_wrap(0, x, cy)
     st(t, 8 * n, s)
-    st(t, 8 * (n + 1), carry(x, cy, s))
+    st(t, 8 * (n + 1), cpu.carry(x, cy))
     let q = rt.int_wrap(2, ld(t, 0), inv)
     cy = mac(t, 0, q, ld(m, 0), 0)
     j = 1
@@ -292,7 +289,7 @@ fn mul_at(md: Mod, h: Int, f: Int, g: Int) {
     let x2 = ld(t, 8 * n)
     let s2 = rt.int_wrap(0, x2, cy)
     st(t, 8 * (n - 1), s2)
-    st(t, 8 * n, rt.int_wrap(0, ld(t, 8 * (n + 1)), carry(x2, cy, s2)))
+    st(t, 8 * n, rt.int_wrap(0, ld(t, 8 * (n + 1)), cpu.carry(x2, cy)))
     i += 1
   }
   final_sub(md, h, t, ld(t, 8 * n))

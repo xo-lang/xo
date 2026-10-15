@@ -1,0 +1,22 @@
+// Instructions of the CPU that Xo cannot name, as functions with a
+// portable body (decision 0231): the native emitters (arm64 and LLVM)
+// lower a call of each to its instruction (selfhost/ssa cpu_call); a wasm
+// module, and an xo older than the decision (a seed building xo), run the
+// body. Each is constant time either way: no branch, no table, no
+// comparison in the body.
+use native/rt
+
+/// The carry out of x + y as UInt64s, 0 or 1 (bits.Add64's): the carry
+/// flag of adds on arm64, llvm.uadd.with.overflow on LLVM.
+pub fn carry(x: Int, y: Int) -> Int {
+  let s = rt.int_wrap(0, x, y)
+  rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63)
+}
+
+/// The borrow out of x - y as UInt64s, 0 or 1 (bits.Sub64's): the
+/// carry flag of subs, inverted, on arm64; llvm.usub.with.overflow on
+/// LLVM.
+pub fn borrow(x: Int, y: Int) -> Int {
+  let d = rt.int_wrap(1, x, y)
+  rt.int_wrap(4, (~x & y) | (~(x ^ y) & d), 63)
+}
