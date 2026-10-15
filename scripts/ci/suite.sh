@@ -168,7 +168,14 @@ run_measure() {
   if [ "$(uname)" = Linux ] && ! command -v perf >/dev/null; then
     # measure.sh counts with perf stat on Linux; the runners' AL2023 image
     # has no perf until it is installed (once per machine, it stays)
-    step "install perf"; sudo dnf install -y -q perf; end
+    step "install perf"; sudo dnf install -y -q perf || true; end
+  fi
+  if [ "$(uname)" = Linux ]; then
+    # a darwin-only measure.sh (/usr/bin/time -l) fails on Linux with GNU
+    # time's exit code 125 and no measurement line
+    grep -q 'perf stat' "$m" || { echo "measure: $m counts only on darwin (no perf stat); port it like bench/perf/testworld/measure.sh"; return 2; }
+    command -v perf >/dev/null || { echo "measure: perf is not installed and dnf install perf failed"; return 2; }
+    perf stat -x, -e instructions:u -o /dev/null true || { echo "measure: perf stat -e instructions:u refused (kernel.perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid))"; return 2; }
   fi
   local out=$PWD/.tools/measure; rm -rf "$out"; mkdir -p "$out"
   step "xo of $base"
@@ -179,6 +186,9 @@ run_measure() {
   # a directory new on the branch has no base copy: the branch's
   # measure.sh builds its own workload with main's xo and std
   local bm="$out/base-tree/$m"; [ -f "$bm" ] || bm=$m
+  # main's copy may still be darwin-only: run the branch's script next to
+  # main's workload sources (measure.sh reads them from its own directory)
+  if [ "$(uname)" = Linux ] && ! grep -q 'perf stat' "$bm"; then cp "$m" "$bm"; fi
   step "base"; sh "$bm" "$bx" "$out/base" arm64 llvm | tee "$out/base.txt"; end
   step "new"; sh "$m" "$nx" "$out/new" arm64 llvm | tee "$out/new.txt"; end
   echo "new/base (instructions:u, minimum of the runs):"
