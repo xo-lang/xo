@@ -47,15 +47,20 @@ until grep -q ready "$OUT/serve.txt" 2>/dev/null; do
 	fi
 	sleep 0.02
 done
-for w in ${WORKLOADS:-x25519 p256 p384 rsa2048 ed25519 tls12 aes128 aes256 chacha aes128tls13}; do
+for w in ${WORKLOADS:-x25519 x25519only p256 p384 rsa2048 ed25519 tls12 aes128 aes256 chacha aes128tls13}; do
 	n=$N
+	# x25519only: the x25519 handshake with no ML-KEM share offered
+	# (XO_TLS_MLKEM=0, std.md), as Mbed TLS offers none; x25519 is the
+	# client's default, X25519MLKEM768 and X25519 as Go 1.26
+	mlkem=""
+	case $w in x25519only) mlkem=0 ;; esac
 	case $w in aes128 | aes256 | chacha | aes128tls13) n=1 ;; esac
 	for be in "$@"; do
 		for t in ${TLSES:-xo mbed}; do
 			best=""
 			bt=""
 			for k in 1 2 3 4 5; do
-				W=$w N=$n SIZE=$SIZE PORT=$PORT CA="$OUT/ca.pem" /usr/bin/time -l "$OUT/c-$be-$t" >"$OUT/out.txt" 2>"$OUT/time.txt"
+				XO_TLS_MLKEM=$mlkem W=$w N=$n SIZE=$SIZE PORT=$PORT CA="$OUT/ca.pem" /usr/bin/time -l "$OUT/c-$be-$t" >"$OUT/out.txt" 2>"$OUT/time.txt"
 				if grep -q error "$OUT/out.txt"; then
 					# a side that cannot do the workload (Mbed's TLS has no
 					# Ed25519 certificates): its error instead of numbers
