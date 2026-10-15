@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- bench/perf/tls: TLS handshakes per group and server key, and bulk
+  reads per AEAD, of std/http's client with the Xo TLS against Mbed TLS
+  (`XO_LLRT_C=tlsio`), against crypto/tls servers. Baseline in
+  bench/results/tls-perf-2026-10-15.md: the Xo handshakes take 3.8 to
+  8.9 times Mbed's instructions on LLVM (P-256 field arithmetic about 90%
+  of them), bulk AES-GCM about 10 times and ChaCha20-Poly1305 7.8 times.
 - Native runtime (B31, TLS 1.2 part 2): the TLS 1.2 server in Xo
   (std/native/llrt/tls12srv.xo, as Go's handshake_server.go): the
   server's suite order (ChaCha20-Poly1305 first when the client prefers

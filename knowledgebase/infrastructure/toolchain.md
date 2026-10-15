@@ -807,6 +807,16 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
   2026-10-13.
+- `bench/perf/tls/measure.sh <xo> <out dir> <backend...>` (2026-10-15,
+  decision 0202): TLS handshakes per group and server key (X25519,
+  P-256, P-384; ECDSA P-256, RSA-2048, Ed25519; TLS 1.2) and bulk reads
+  (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) of std/http's client
+  against crypto/tls servers (serve/, its own PID, stopped at the end),
+  built with the Xo TLS and with Mbed TLS (`XO_LLRT_C=tlsio`); prints
+  `<workload> <backend> <xo|mbed> <min instructions> <best wall ms>`
+  (N handshakes, default 200; SIZE bytes, default 64 MiB; PORT and the
+  next 9). Through the heavy lock. Results in
+  `bench/results/tls-perf-2026-10-15.md`. Last verified: 2026-10-15.
 - `XO_LLRT_C=rc` (deleted 2026-10-13 by decision 0198's second round:
   since 2026-10-14 the name fails the build; kept for the results files): the C runtime's
   own reference counts (rc_inc, rc_dec, rc_claim, xo_rc_mark compiled
