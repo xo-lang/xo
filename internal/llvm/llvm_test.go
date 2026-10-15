@@ -365,3 +365,44 @@ func TestLeakCheckExit(t *testing.T) {
 		})
 	}
 }
+
+// TestNoBareLibcExportsInLibcBuild: the C library functions of
+// cabi_libc.xo are exported under their C names only in an XO_NOLIBC
+// build (decision 0230); in a build that links the system's C library
+// a bare malloc of Xo's would silently replace the system's. A program
+// built with each native backend defines none of them.
+func TestNoBareLibcExportsInLibcBuild(t *testing.T) {
+	if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	nm, err := exec.LookPath("nm")
+	if err != nil {
+		t.Skip("no nm")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(leakExitProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
+		t.Run(be, func(t *testing.T) {
+			_, b := buildRun(t, dir, xotool.Options{Backend: be})
+			out, err := exec.Command(nm, "-g", b.Binaries[xotool.Host()]).Output()
+			if err != nil {
+				t.Fatalf("nm: %v", err)
+			}
+			for _, line := range strings.Split(string(out), "\n") {
+				f := strings.Fields(line)
+				if len(f) != 3 || f[1] != "T" {
+					continue
+				}
+				switch strings.TrimPrefix(f[2], "_") {
+				case "malloc", "free", "calloc", "realloc":
+					t.Errorf("the program defines %s (cabi_libc.xo exported in a libc build)", f[2])
+				}
+			}
+		})
+	}
+}

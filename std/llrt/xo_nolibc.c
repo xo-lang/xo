@@ -12,8 +12,10 @@
 //   - process entry (_start: arguments, environment, the auxiliary vector,
 //     the thread pointer and the static TLS block, a 1 GiB stack for main
 //     as the runtime's main thread has), exit;
-//   - memory (malloc and friends over mmap), strings, integer parsing,
-//     qsort, a printf family without floating point conversions;
+//   - strings, integer parsing, qsort, a printf family without floating
+//     point conversions (memory, malloc and friends, is Xo:
+//     std/native/llrt/libcmem.xo through cabi_libc.xo under the C names,
+//     decision 0230);
 //   - files, directories, pipes, epoll, getrandom;
 //   - forwarded to Xo (stage 2, std/native/llrt/cabi_nolibc.xo, called
 //     as xo_x_<name>): the clock (the vDSO's clock_gettime), signals
@@ -222,170 +224,9 @@ __asm__(".text\n.global _start\n.type _start, @function\n_start:\n"
 #endif
 
 // ---------------------------------------------------------------------------
-// Memory: malloc over mmap. Blocks up to 64 KiB come from free lists by
-// power of two size class (carved from 1 MiB regions), larger ones are
-// mapped one by one; a 16 byte header keeps the class or the mapped size.
-
-#define NL_MIN_SHIFT 4
-#define NL_MAX_SHIFT 16
-#define NL_REGION (1L << 20)
-
-typedef struct nl_free {
-	struct nl_free *next;
-} nl_free;
-
-static nl_free *nl_lists[NL_MAX_SHIFT + 1];
-static char *nl_cur, *nl_end;
-static long nl_mu;
-
-static void nl_lock(long *f) { xo_x_mutex_lock((int64_t)f); }
-static void nl_unlock(long *f) { xo_x_mutex_unlock((int64_t)f); }
-
-static void *nl_map(long n) {
-	long r = nl_sys6(SYS_mmap, 0, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (r < 0 && r > -4096) {
-		return NULL;
-	}
-	return (void *)r;
-}
-
-// Freed mappings are kept for reuse (up to NL_BIG of them, 64 MiB at
-// most each): the runtime frees and allocates large blocks in loops (a
-// file's contents), and a fresh mapping costs page faults every time.
-#define NL_BIG 16
-static char *nl_big[NL_BIG];
-static long nl_big_n[NL_BIG];
-
-// nl_big_take is a kept mapping of total bytes to 2 * total, or NULL.
-static char *nl_big_take(long total) {
-	char *p = NULL;
-	nl_lock(&nl_mu);
-	for (int i = 0; i < NL_BIG; i++) {
-		if (nl_big[i] && nl_big_n[i] >= total && nl_big_n[i] <= 2 * total) {
-			p = nl_big[i];
-			nl_big[i] = NULL;
-			((long *)p)[0] = -nl_big_n[i];
-			break;
-		}
-	}
-	nl_unlock(&nl_mu);
-	return p;
-}
-
-// nl_big_keep keeps the mapping h of total bytes for reuse, or says no.
-static int nl_big_keep(char *h, long total) {
-	if (total > 64L << 20) {
-		return 0;
-	}
-	int ok = 0;
-	nl_lock(&nl_mu);
-	for (int i = 0; i < NL_BIG; i++) {
-		if (!nl_big[i]) {
-			nl_big[i] = h;
-			nl_big_n[i] = total;
-			ok = 1;
-			break;
-		}
-	}
-	nl_unlock(&nl_mu);
-	return ok;
-}
-
-NL_USED void *malloc(size_t n) {
-	if (n == 0) {
-		n = 1;
-	}
-	if (n + 16 > (size_t)1 << NL_MAX_SHIFT) {
-		long total = (long)((n + 16 + (size_t)nl_pagesz - 1) & ~((size_t)nl_pagesz - 1));
-		char *p = nl_big_take(total);
-		if (p) {
-			return p + 16;
-		}
-		p = nl_map(total);
-		if (!p) {
-			nl_errno = ENOMEM;
-			return NULL;
-		}
-		((long *)p)[0] = -total;
-		return p + 16;
-	}
-	int c = NL_MIN_SHIFT;
-	while (((size_t)1 << c) < n + 16) {
-		c++;
-	}
-	nl_lock(&nl_mu);
-	nl_free *b = nl_lists[c];
-	if (b) {
-		nl_lists[c] = b->next;
-	} else {
-		long size = 1L << c;
-		if (!nl_cur || nl_end - nl_cur < size) {
-			nl_cur = nl_map(NL_REGION);
-			if (!nl_cur) {
-				nl_unlock(&nl_mu);
-				nl_errno = ENOMEM;
-				return NULL;
-			}
-			nl_end = nl_cur + NL_REGION;
-		}
-		b = (nl_free *)nl_cur;
-		nl_cur += size;
-	}
-	nl_unlock(&nl_mu);
-	((long *)b)[0] = c;
-	return (char *)b + 16;
-}
-
-NL_USED void free(void *p) {
-	if (!p) {
-		return;
-	}
-	char *h = (char *)p - 16;
-	long c = ((long *)h)[0];
-	if (c < 0) {
-		if (!nl_big_keep(h, -c)) {
-			nl_sys2(SYS_munmap, h, -c);
-		}
-		return;
-	}
-	nl_lock(&nl_mu);
-	((nl_free *)h)->next = nl_lists[c];
-	nl_lists[c] = (nl_free *)h;
-	nl_unlock(&nl_mu);
-}
-
-// no_builtin: the optimizer would fold malloc and a zeroing memset back
-// into a call of calloc (itself).
-NL_USED NL_NOBUILTIN void *calloc(size_t n, size_t m) {
-	size_t t;
-	if (__builtin_mul_overflow(n, m, &t)) {
-		nl_errno = ENOMEM;
-		return NULL;
-	}
-	void *p = malloc(t);
-	if (p) {
-		memset(p, 0, t);
-	}
-	return p;
-}
-
-NL_USED void *realloc(void *p, size_t n) {
-	if (!p) {
-		return malloc(n);
-	}
-	long c = ((long *)((char *)p - 16))[0];
-	size_t have = c < 0 ? (size_t)(-c - 16) : ((size_t)1 << c) - 16;
-	if (n <= have && c >= 0) {
-		return p;
-	}
-	void *q = malloc(n);
-	if (!q) {
-		return NULL;
-	}
-	__builtin_memcpy(q, p, have < n ? have : n);
-	free(p);
-	return q;
-}
+// Memory: malloc, free, calloc, and realloc are Xo
+// (std/native/llrt/libcmem.xo, exported under these names by
+// cabi_libc.xo, decision 0230).
 
 // ---------------------------------------------------------------------------
 // Strings and memory (no_builtin: the compiler must not turn these loops

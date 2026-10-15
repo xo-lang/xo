@@ -1,0 +1,235 @@
+// The memory functions of the C library of an XO_NOLIBC build (malloc,
+// free, calloc, realloc; the zero-C audit's B04, decision 0230):
+// std/native/llrt/cabi_libc.xo exports them under the C names. None may
+// fault or allocate Xo values (rt.int_wrap for the arithmetic).
+use native/llrt/linux
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Memory (xo_nolibc.c's nl_malloc): blocks up to 64 KiB come from free
+// lists by power of two size class, carved from 1 MiB regions; larger
+// ones are mapped one by one, and a given back mapping is kept for reuse
+// (16 of them, 64 MiB at most each: the runtime frees and allocates large
+// blocks in loops, a file's contents, and a fresh mapping costs page
+// faults every time). A block's 16 byte header keeps its class, or minus
+// its mapping's size; the address handed out is 16 byte aligned, as C
+// requires of malloc.
+//
+// This is not alloc.xo's heap: that heap's blocks are 8 byte aligned, and
+// it counts every block for the leak check and the resource budgets,
+// which the C runtime's records (from malloc for the life of the
+// program) must not be (decision 0230).
+
+/// rt.static_word: the lock word, and the address of the state (a mapped
+/// page, made by the first malloc).
+const W_LOCK = 30
+const W_STATE = 31
+
+/// The state's words: the free list heads by class (classes 4 to 16, at
+/// 8 * class), the current region's next and end addresses, then the kept
+/// mappings (address, size) in 16 pairs.
+const S_CUR = 136
+const S_END = 144
+const S_BIG = 152
+const BIG_N = 16
+const STATE_SIZE = 4096
+
+const MIN_SHIFT = 4
+const MAX_SHIFT = 16
+const REGION = 1048576
+const BIG_KEEP_MAX = 67108864
+const PAGE = 4096
+
+// slot atomics' orders (rt.xo)
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+/// n bytes of zeroed memory mapped from the system, or 0.
+fn map(n: Int) -> Int {
+  // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+  let r = linux.mmap(0, n, 3, 34, -1, 0)
+  if r < 0 && r > -4096 {
+    return 0
+  }
+  r
+}
+
+fn lock() {
+  let l = rt.static_word(W_LOCK)
+  while !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    // FUTEX_WAIT_PRIVATE while held (2 tells the holder to wake)
+    if rt.slot_swap(l, 0, 2, ACQUIRE) == 0 {
+      return
+    }
+    linux.futex(l, 128, 2, 0)
+  }
+}
+
+fn unlock() {
+  let l = rt.static_word(W_LOCK)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    // FUTEX_WAKE_PRIVATE
+    linux.futex(l, 129, 1, 0)
+  }
+}
+
+/// The state's address (lock held), mapped on the first use.
+fn state() -> Int {
+  let w = rt.static_word(W_STATE)
+  var s = rt.mem_load(w, 0, 8)
+  if s == 0 {
+    s = map(STATE_SIZE)
+    rt.mem_store(w, 0, s, 8)
+  }
+  s
+}
+
+/// A kept mapping of total bytes to twice that (lock held), or 0.
+fn big_take(s: Int, total: Int) -> Int {
+  var i = 0
+  while i < BIG_N {
+    let e = addw(addw(s, S_BIG), rt.int_wrap(3, i, 4))
+    let p = rt.mem_load(e, 0, 8)
+    let n = rt.mem_load(e, 8, 8)
+    if p != 0 && n >= total && n <= addw(total, total) {
+      rt.mem_store(e, 0, 0, 8)
+      rt.mem_store(p, 0, subw(0, n), 8)
+      return p
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
+/// Keeps the mapping h of total bytes (lock held): whether it was kept.
+fn big_keep(s: Int, h: Int, total: Int) -> Bool {
+  if total > BIG_KEEP_MAX {
+    return false
+  }
+  var i = 0
+  while i < BIG_N {
+    let e = addw(addw(s, S_BIG), rt.int_wrap(3, i, 4))
+    if rt.mem_load(e, 0, 8) == 0 {
+      rt.mem_store(e, 0, h, 8)
+      rt.mem_store(e, 8, total, 8)
+      return true
+    }
+    i = addw(i, 1)
+  }
+  false
+}
+
+/// malloc(n): a 16 byte aligned block of at least n bytes, or 0.
+pub fn malloc(n0: Int) -> Int {
+  let n = if n0 == 0 { 1 } else { n0 }
+  if addw(n, 16) > rt.int_wrap(3, 1, MAX_SHIFT) {
+    let total = addw(n, 16 + PAGE - 1) & (0 - PAGE)
+    lock()
+    let s = state()
+    var p = if s == 0 { 0 } else { big_take(s, total) }
+    unlock()
+    if p == 0 {
+      p = map(total)
+      if p == 0 {
+        return 0
+      }
+      rt.mem_store(p, 0, subw(0, total), 8)
+    }
+    return addw(p, 16)
+  }
+  var c = MIN_SHIFT
+  while rt.int_wrap(3, 1, c) < addw(n, 16) {
+    c = addw(c, 1)
+  }
+  lock()
+  let s = state()
+  if s == 0 {
+    unlock()
+    return 0
+  }
+  let head = addw(s, rt.int_wrap(3, c, 3))
+  var b = rt.mem_load(head, 0, 8)
+  if b != 0 {
+    rt.mem_store(head, 0, rt.mem_load(b, 0, 8), 8)
+  } else {
+    let size = rt.int_wrap(3, 1, c)
+    var cur = rt.mem_load(s, S_CUR, 8)
+    if cur == 0 || subw(rt.mem_load(s, S_END, 8), cur) < size {
+      cur = map(REGION)
+      if cur == 0 {
+        unlock()
+        return 0
+      }
+      rt.mem_store(s, S_END, addw(cur, REGION), 8)
+    }
+    b = cur
+    rt.mem_store(s, S_CUR, addw(cur, size), 8)
+  }
+  unlock()
+  rt.mem_store(b, 0, c, 8)
+  addw(b, 16)
+}
+
+/// free(p).
+pub fn free(p: Int) {
+  if p == 0 {
+    return
+  }
+  let h = subw(p, 16)
+  let c = rt.mem_load(h, 0, 8)
+  if c < 0 {
+    lock()
+    let s = state()
+    let kept = s != 0 && big_keep(s, h, subw(0, c))
+    unlock()
+    if !kept {
+      let _r = linux.munmap(h, subw(0, c))
+    }
+    return
+  }
+  lock()
+  let s = state()
+  let head = addw(s, rt.int_wrap(3, c, 3))
+  rt.mem_store(h, 0, rt.mem_load(head, 0, 8), 8)
+  rt.mem_store(head, 0, h, 8)
+  unlock()
+}
+
+/// calloc(n, m): n * m zeroed bytes, or 0 (also when the product
+/// overflows).
+pub fn calloc(n: Int, m: Int) -> Int {
+  if rt.u64_mul_hi(n, m) != 0 || rt.int_wrap(2, n, m) < 0 {
+    return 0
+  }
+  let t = rt.int_wrap(2, n, m)
+  let p = malloc(t)
+  if p != 0 {
+    rt.mem_set(p, 0, t)
+  }
+  p
+}
+
+/// realloc(p, n): the block of n bytes with p's first bytes (p given
+/// back), or p itself when its class has the room; 0 on failure (p kept).
+pub fn realloc(p: Int, n: Int) -> Int {
+  if p == 0 {
+    return malloc(n)
+  }
+  let c = rt.mem_load(subw(p, 16), 0, 8)
+  let have = if c < 0 { subw(subw(0, c), 16) } else { subw(rt.int_wrap(3, 1, c), 16) }
+  if n <= have && c >= 0 {
+    return p
+  }
+  let q = malloc(n)
+  if q == 0 {
+    return 0
+  }
+  rt.mem_copy(q, p, if have < n { have } else { n })
+  free(p)
+  q
+}

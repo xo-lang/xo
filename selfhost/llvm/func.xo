@@ -426,7 +426,12 @@ fn (var g: Gen) lower_func(fi: Int) {
     pers = " personality ptr @${g.personality()}"
   }
   let rl = g.res_ll(fi)
-  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) #1${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")
+  // the C library of an XO_NOLIBC build (cabi_libc.xo and the libc*.xo
+  // modules it calls, decision 0230): no-builtins, so the optimizer does
+  // not turn memcpy's own loop into a call of memcpy, or calloc's malloc
+  // and memset into a call of calloc
+  let attrs = if g.f.name.starts_with("cabi_libc.") || g.f.name.starts_with("libc") { "#7" } else { "#1" }
+  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")
   for b in 0..g.f.blocks.len() {
     out.push("${bname(b)}:\n")
     if b != 0 {

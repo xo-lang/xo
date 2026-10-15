@@ -237,6 +237,7 @@ fn runtime_decls() -> Str {
     "attributes #4 = { nounwind alwaysinline }",
     "attributes #5 = { \"xo-raises\" }",
     "attributes #6 = { alwaysinline }",
+    "attributes #7 = { uwtable \"no-builtins\" }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -754,10 +755,17 @@ fn (var h: H) w(s: Str) {
 /// the Xo function; a Str result is returned as its string object, its
 /// length stored through the pointer after the parameters.
 fn (var g: Gen) exports() {
+  // the C library's functions (bare names, cabi_libc.xo, decision 0230)
+  // are kept through LTO: code generation may call one (calloc, memcpy)
+  // after the optimizer dropped an unreferenced definition
+  var used: List[Str] = []
   for fi in 0..g.m.funcs.len() {
     let f = g.m.funcs[fi]
     if f.export.is_empty() {
       continue
+    }
+    if !f.export.starts_with("xo_x_") {
+      used.push("ptr @${f.export}")
     }
     var ps: List[Str] = []
     var as_: List[Str] = []
@@ -776,6 +784,9 @@ fn (var g: Gen) exports() {
       Unit => g.funcs.push("define void @${f.export}(${ps.join(", ")}) #1 {\n  ${call}\n  ret void\n}\n")
       _ => g.funcs.push("define ${rl} @${f.export}(${ps.join(", ")}) #1 {\n  %r = ${call}\n  ret ${rl} %r\n}\n")
     }
+  }
+  if !used.is_empty() {
+    g.funcs.push("@llvm.used = appending global [${used.len()} x ptr] [${used.join(", ")}], section \"llvm.metadata\"\n")
   }
 }
 
