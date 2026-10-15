@@ -519,4 +519,17 @@ XO_LLRT_C=tlsio,tlssrv (Mbed TLS under the Xo HTTP/2 code).
   client decrypting the big body, AES-GCM's record path on arm64 (26M
   instructions a MiB against llvm's 18M and Mbed's 14M, results file
   step 8). That is the next step.
+- After that step (aa859eb0: the keystream written in place, the body
+  read in place, GHASH as a loop over H's words; tls-perf step 10), the
+  same method again:
+
+| Workload | Backend | main | zero-c | zero-c/main | zero-c + Mbed/main |
+|---|---|---|---|---|---|
+| httpclient h2big (M instr) | arm64 | 5220 | 6067 | 1.162 | 1.025 |
+| httpclient h2big (M instr) | llvm | 5231 | 5207 | 0.995 | 1.011 |
+| httpclient h2len (M instr) | arm64 | 617 | 670 | 1.086 | 1.045 |
+| httpclient h2len (M instr) | llvm | 603 | 608 | 1.007 | 1.012 |
+
+  h2big is at main on llvm; arm64's 1.16x is the arm64 backend's
+  AES-GCM code (17.7M instructions a MiB against llvm's 14.1M).
 
