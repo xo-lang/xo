@@ -71,6 +71,10 @@ fn __getdirentries64(fd: Int, buf: Int, n: Int, base: Int) -> Int
 /// mmap(2): the address, or MAP_FAILED (-1) with errno set.
 fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int
 fn mprotect(addr: Int, len: Int, prot: Int) -> Int32
+/// kevent(2): apply nchanges changes and collect at most nevents events
+/// (struct kevent, 32 bytes) into events, waiting at most the struct
+/// timespec at timeout (0: no limit): the events, or -1.
+fn kevent(kq: Int, changes: Int, nchanges: Int, events: Int, nevents: Int, timeout: Int) -> Int32
 fn munmap(addr: Int, len: Int) -> Int32
 /// __ulock_wait (libSystem's futex, what libc++'s std::atomic::wait
 /// calls): sleeps while the 32 bit word at addr holds value.

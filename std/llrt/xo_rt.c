@@ -3655,7 +3655,7 @@ int64_t xo_x_poll_timer_first(void);
 #define th_remove(t) xo_x_poll_timer_remove((int64_t)(intptr_t)(t))
 
 typedef struct xo_pd {
-	pthread_mutex_t mu;
+	xo_lock mu; // a lock word (std/native/llrt/poll.xo takes it too)
 	int fd;
 	int closed; // close was called
 	int ops;    // operations running (the socket closes when none runs)
@@ -3677,11 +3677,11 @@ typedef struct xo_pd {
 
 static struct {
 	pthread_once_t once;
-	pthread_mutex_t mu; // the timer heap and ev.dead
+	xo_lock mu; // the timer heap and ev.dead (a lock word: poll.xo takes it too)
 	int pfd[2]; // the self pipe
 	int poll;   // the kqueue or epoll descriptor
 	xo_pd *dead;
-	int sigs; // signals not handled yet (atomic)
+	int64_t sigs; // signals not handled yet (atomic; a word: poll.xo swaps it)
 #ifdef XO_WINPOLL
 	HANDLE iocp, afd; // the completion port and the AFD device (NULL: WSAPoll)
 	int wr, ww;     // the self pipe: a connected loopback socket pair
@@ -3691,7 +3691,13 @@ static struct {
 	xo_pd **pwho;
 	int cpoll;
 #endif
-} ev ={.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER};
+} ev ={.once = PTHREAD_ONCE_INIT};
+_Static_assert(offsetof(xo_pd, mu) == 0 && offsetof(xo_pd, fd) == 8 && offsetof(xo_pd, closed) == 12 && offsetof(xo_pd, ops) == 16 &&
+                   offsetof(xo_pd, rready) == 20 && offsetof(xo_pd, wready) == 24 && offsetof(xo_pd, rwait) == 32 &&
+                   offsetof(xo_pd, wwait) == 40 && offsetof(xo_pd, next) == 48,
+               "poll.xo's descriptor offsets");
+_Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, fired) == 40,
+               "poll.xo's timer offsets");
 
 __attribute__((noinline, unused)) static int64_t x_ret(int64_t r) {
 	if (r < 0) {
@@ -4198,9 +4204,9 @@ static void timer_add(xo_timer *t) {
 		// virtual clock moves (tw_kick)
 		ev_start();
 	}
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	int first = (int)xo_x_poll_timer_push((int64_t)(intptr_t)t);
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 	if (first && !tw.virt) {
 		ev_poke();
 	}
@@ -4208,11 +4214,11 @@ static void timer_add(xo_timer *t) {
 
 // timer_del disarms t; after it returns t's function does not run.
 static void timer_del(xo_timer *t) {
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	if (t->idx >= 0) {
 		th_remove(t);
 	}
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 }
 
 // deadline is the monotonic time d from now (saturating).
@@ -4226,29 +4232,10 @@ static int64_t deadline(int64_t d) {
 
 // Socket descriptors
 
-static void pd_ready(xo_pd *pd, int mode) {
-	STAT(poll_event);
-	pthread_mutex_lock(&pd->mu);
-	if (mode & 1) {
-		if (pd->rwait) {
-			STAT(poll_wake);
-			park_signal(pd->rwait);
-			pd->rwait = NULL;
-		} else {
-			pd->rready = 1;
-		}
-	}
-	if (mode & 2) {
-		if (pd->wwait) {
-			STAT(poll_wake);
-			park_signal(pd->wwait);
-			pd->wwait = NULL;
-		} else {
-			pd->wready = 1;
-		}
-	}
-	pthread_mutex_unlock(&pd->mu);
-}
+// pd_ready hands readiness mode (1 read, 2 write) to pd's waiters, or
+// keeps it for the next wait: std/native/llrt/poll.xo's (B22).
+void xo_x_poll_pd_ready(int64_t pd, int64_t mode);
+static void pd_ready(xo_pd *pd, int mode) { xo_x_poll_pd_ready(XO_ADDR(pd), mode); }
 
 // pd_new registers socket fd (nonblocking) with the poller; write tells
 // to watch write readiness too. NULL when the poller refuses it (errno).
@@ -4258,7 +4245,6 @@ static xo_pd *pd_new(int fd, int write) {
 	if (!pd) {
 		xo_oom();
 	}
-	mu_init(&pd->mu);
 	pd->fd = fd;
 #if defined(XO_WINPOLL)
 	(void)write;
@@ -4275,7 +4261,7 @@ static xo_pd *pd_new(int fd, int write) {
 	}
 	// WSAPoll is level triggered: the poller polls a descriptor only in
 	// the directions someone waits in (pd_wait_until pokes it)
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	if (ev.nreg == ev.creg) {
 		ev.creg = ev.creg ? ev.creg * 2 : 64;
 		ev.regs = realloc(ev.regs, (size_t)ev.creg * sizeof(xo_pd *));
@@ -4284,7 +4270,7 @@ static xo_pd *pd_new(int fd, int write) {
 		}
 	}
 	ev.regs[ev.nreg++] = pd;
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 	int r = 0;
 #elif defined(XO_KQUEUE)
 	struct kevent k[2];
@@ -4297,7 +4283,6 @@ static xo_pd *pd_new(int fd, int write) {
 	int r = nx_epoll_ctl(ev.poll, EPOLL_CTL_ADD, fd, &e);
 #endif
 	if (r < 0) {
-		pthread_mutex_destroy(&pd->mu);
 		free(pd);
 		return NULL;
 	}
@@ -4306,23 +4291,23 @@ static xo_pd *pd_new(int fd, int write) {
 
 // pd_begin starts an operation: 0 when the descriptor is closed.
 static int pd_begin(xo_pd *pd) {
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	int ok = !pd->closed;
 	if (ok) {
 		pd->ops++;
 	}
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 	return ok;
 }
 
 static void pd_end(xo_pd *pd) {
 	int fd = -1;
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	if (--pd->ops == 0 && pd->closed && pd->fd >= 0) {
 		fd = pd->fd;
 		pd->fd = -1;
 	}
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 	if (fd >= 0) {
 		nx_close(fd);
 	}
@@ -4332,7 +4317,7 @@ static void pd_end(xo_pd *pd) {
 // socket closes once no operation runs.
 static void pd_close(xo_pd *pd) {
 	int fd = -1;
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	if (!pd->closed) {
 		pd->closed = 1;
 		if (pd->fd >= 0) {
@@ -4368,7 +4353,7 @@ static void pd_close(xo_pd *pd) {
 		fd = pd->fd;
 		pd->fd = -1;
 	}
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 	if (fd >= 0) {
 		nx_close(fd);
 	}
@@ -4423,7 +4408,7 @@ static void pd_arm(xo_pd *pd) {
 // the readiness to its waiters, then a new poll while someone waits; a
 // descriptor pd_free gave up is freed now that no poll runs.
 static void afd_done(xo_pd *pd) {
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	pd->armed = 0;
 	pd->rearm = 0;
 	int mode = 0;
@@ -4432,18 +4417,17 @@ static void afd_done(xo_pd *pd) {
 		mode = ((e & XO_AFD_READ) ? 1 : 0) | ((e & XO_AFD_WRITE) ? 2 : 0);
 	}
 	int dying = pd->dying;
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 	if (dying) {
-		pthread_mutex_destroy(&pd->mu);
 		free(pd);
 		return;
 	}
 	if (mode) {
 		pd_ready(pd, mode);
 	}
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	pd_arm(pd);
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 }
 #endif
 
@@ -4453,10 +4437,10 @@ static void pd_free(xo_pd *pd) {
 		return;
 	}
 	pd_close(pd);
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	pd->next = ev.dead;
 	ev.dead = pd;
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 }
 
 enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
@@ -4475,15 +4459,15 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 			res = PD_CANCELED;
 			break;
 		}
-		pthread_mutex_lock(&pd->mu);
+		lk(&pd->mu);
 		if (pd->closed) {
-			pthread_mutex_unlock(&pd->mu);
+			unlk(&pd->mu);
 			res = PD_CLOSED;
 			break;
 		}
 		if (*ready) {
 			*ready = 0;
-			pthread_mutex_unlock(&pd->mu);
+			unlk(&pd->mu);
 			res = PD_READY;
 			break;
 		}
@@ -4494,7 +4478,7 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 			pd_arm(pd);
 		}
 #endif
-		pthread_mutex_unlock(&pd->mu);
+		unlk(&pd->mu);
 #ifdef XO_WINPOLL
 		if (!ev.afd) {
 			ev_poke(); // the poller polls the directions waited in
@@ -4507,13 +4491,13 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 		if (!(when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE))) {
 			park_wait_n(c, 1, 0);
 		}
-		pthread_mutex_lock(&pd->mu);
+		lk(&pd->mu);
 		int mine = *slot == &c->park;
 		if (mine) {
 			*slot = NULL;
 		}
 		int closed = pd->closed;
-		pthread_mutex_unlock(&pd->mu);
+		unlk(&pd->mu);
 		if (closed) {
 			res = PD_CLOSED;
 			break;
@@ -4545,54 +4529,55 @@ typedef struct {
 	xo_pd *pd;
 	int mode;
 } xo_event;
-#elif defined(XO_KQUEUE)
-typedef struct kevent xo_event;
-#else
-typedef struct epoll_event xo_event;
 #endif
 
-// ev_dispatch hands the readiness of socket event e to its descriptor's
-// waiters: 0 when e is the self pipe's.
-static int ev_dispatch(xo_event *e) {
-#if defined(XO_WINPOLL)
-	xo_pd *pd = e->pd;
-	int mode = e->mode;
-#elif defined(XO_KQUEUE)
-	xo_pd *pd = e->udata;
-	int mode = e->filter == EVFILT_READ ? 1 : e->filter == EVFILT_WRITE ? 2 : 0;
-	if (e->flags & EV_ERROR) {
-		mode = 3;
-	}
-#else
-	xo_pd *pd = e->data.ptr;
-	uint32_t f = e->events;
-	int mode = ((f & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) ? 1 : 0) | ((f & (EPOLLOUT | EPOLLHUP | EPOLLERR)) ? 2 : 0);
-#endif
-	if (!pd) {
-		return 0;
-	}
-	pd_ready(pd, mode);
-	return 1;
+// The poller thread's loop is std/native/llrt/poll.xo's on Linux and
+// macOS (poll_main, B22): it frees the dead descriptors, fires the timers
+// that are due, waits in kqueue or epoll, hands readiness to the
+// descriptors, and drains the self pipe and its signals. The C keeps
+// creating the poll descriptor, the self pipe, and the thread (ev_init),
+// and Windows' loop below (B22 stage 4); poll.xo calls back into these.
+void xo_x_poll_main(int64_t poll, int64_t pipe_r, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
+static int64_t poll_signal_cb(int64_t p, int64_t b) {
+	(void)b;
+	park_signal((xo_park *)(intptr_t)p);
+	return 0;
+}
+static int64_t poll_stop_cb(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	stop_signal();
+	return 0;
+}
+static int64_t poll_free_cb(int64_t pd, int64_t b) {
+	(void)b;
+	free((void *)(intptr_t)pd);
+	return 0;
 }
 
 static void *poller_main(void *arg) {
 	(void)arg;
+#ifndef XO_WINPOLL
+	xo_x_poll_main(ev.poll, ev.pfd[0], XO_ADDR(&ev.mu), XO_ADDR(&ev.dead), XO_ADDR(&ev.sigs), XO_ADDR(&poll_signal_cb), XO_ADDR(&poll_stop_cb),
+	               XO_ADDR(&poll_free_cb));
+	return NULL;
+#else
 	xo_event evs[64];
 	for (;;) {
-		pthread_mutex_lock(&ev.mu);
+		lk(&ev.mu);
 		while (ev.dead) {
 			xo_pd *pd = ev.dead;
 			ev.dead = pd->next;
 #ifdef XO_WINPOLL
 			if (ev.afd) {
 				// a poll in flight still names it: freed by its completion
-				pthread_mutex_lock(&pd->mu);
+				lk(&pd->mu);
 				int armed = pd->armed != 0;
 				if (armed) {
 					pd->dying = 1;
 					CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
 				}
-				pthread_mutex_unlock(&pd->mu);
+				unlk(&pd->mu);
 				if (armed) {
 					continue;
 				}
@@ -4604,7 +4589,6 @@ static void *poller_main(void *arg) {
 				}
 			}
 #endif
-			pthread_mutex_destroy(&pd->mu);
 			free(pd);
 		}
 		int64_t now = mono_ns();
@@ -4619,7 +4603,7 @@ static void *poller_main(void *arg) {
 		}
 		xo_timer *first = th_first();
 		int64_t wait = first ? first->when - now : -1;
-		pthread_mutex_unlock(&ev.mu);
+		unlk(&ev.mu);
 #if defined(XO_WINPOLL)
 		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
 		if (wait > (int64_t)1 << 40) {
@@ -4644,7 +4628,7 @@ static void *poller_main(void *arg) {
 			continue;
 		}
 		// the descriptors someone waits on, in the directions waited for
-		pthread_mutex_lock(&ev.mu);
+		lk(&ev.mu);
 		if (ev.cpoll < ev.nreg + 1) {
 			ev.cpoll = (ev.nreg + 1) * 2;
 			ev.pfds = realloc(ev.pfds, (size_t)ev.cpoll * sizeof(WSAPOLLFD));
@@ -4660,7 +4644,7 @@ static void *poller_main(void *arg) {
 		ev.pwho[nf++] = NULL;
 		for (int i = 0; i < ev.nreg; i++) {
 			xo_pd *pd = ev.regs[i];
-			pthread_mutex_lock(&pd->mu);
+			lk(&pd->mu);
 			short want = 0;
 			if (!pd->closed && pd->fd >= 0) {
 				want = (short)((pd->rwait ? POLLRDNORM : 0) | (pd->wwait ? POLLWRNORM : 0));
@@ -4671,9 +4655,9 @@ static void *poller_main(void *arg) {
 				ev.pfds[nf].revents = 0;
 				ev.pwho[nf++] = pd;
 			}
-			pthread_mutex_unlock(&pd->mu);
+			unlk(&pd->mu);
 		}
-		pthread_mutex_unlock(&ev.mu);
+		unlk(&ev.mu);
 		int got = WSAPoll(ev.pfds, (ULONG)nf, (INT)(ms == INFINITE ? -1 : (int)ms));
 		STAT(poll_return);
 		(void)evs;
@@ -4693,32 +4677,10 @@ static void *poller_main(void *arg) {
 		for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
 			stop_signal();
 		}
-		int n = 0;
-#elif defined(XO_KQUEUE)
-		struct timespec ts = {.tv_sec = wait / 1000000000, .tv_nsec = wait % 1000000000};
-		int n = kevent(ev.poll, NULL, 0, evs, 64, wait < 0 ? NULL : &ts);
-		STAT(poll_return);
-#else
-		int ms = wait < 0 ? -1 : (int)((wait + 999999) / 1000000);
-		if (wait > (int64_t)1 << 40) {
-			ms = 1 << 30;
-		}
-		int n = nx_epoll_wait(ev.poll, evs, 64, ms);
-		STAT(poll_return);
 #endif
-		for (int i = 0; i < n; i++) {
-			if (ev_dispatch(&evs[i])) {
-				continue;
-			}
-			char b[64];
-			while (read(ev.pfd[0], b, sizeof b) > 0) {
-			}
-			for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
-				stop_signal();
-			}
-		}
 	}
 	return NULL;
+#endif
 }
 
 // ---------------------------------------------------------------------------

@@ -1921,7 +1921,7 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 	int64_t when = c->deadline;
 	pthread_mutex_unlock(&c->mu);
 	int res = 1;
-	pthread_mutex_lock(&pd->mu);
+	lk(&pd->mu);
 	if (pd->closed) {
 		res = 0;
 	} else if (pd->rready) {
@@ -1934,7 +1934,7 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 			pd_arm(pd);
 		}
 #endif
-		pthread_mutex_unlock(&pd->mu);
+		unlk(&pd->mu);
 #ifdef XO_WINPOLL
 		if (!ev.afd) {
 			ev_poke();
@@ -1957,7 +1957,7 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 				res = 0;
 			}
 		}
-		pthread_mutex_lock(&pd->mu);
+		lk(&pd->mu);
 		if (pd->rwait == &x->park) {
 			pd->rwait = NULL;
 		}
@@ -1965,7 +1965,7 @@ static int h2_wait(h2c *c, xo_ctx *x) {
 			res = 0;
 		}
 	}
-	pthread_mutex_unlock(&pd->mu);
+	unlk(&pd->mu);
 	pthread_mutex_lock(&c->mu);
 	if (c->waiter == &x->park) {
 		c->waiter = NULL;

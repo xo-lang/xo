@@ -487,6 +487,14 @@ fn poll_timer_remove(t: Int) { poll.timer_remove(t) }
 
 fn poll_timer_first() -> Int { poll.timer_first() }
 
+fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
+
+/// The poller thread's loop (never returns; xo_rt.c poller_main on Linux
+/// and macOS).
+fn poll_main(pfd: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
+  poll.poll_main(pfd, pipe_r, mu, dead, sigs, signal_fn, stop_fn, free_fn)
+}
+
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task
 // states, in sched.xo, and the worker pool, the locks' slow paths, and

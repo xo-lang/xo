@@ -1,12 +1,18 @@
 // The event loop's poller in Xo (the zero-C audit's work item B22,
-// decision 0069's design): stage 1, the timer heap. A timer is the C
+// decision 0069's design): the timer heap, the readiness of the
+// descriptors, and the poller thread's loop over kqueue (macOS) and epoll
+// (Linux; Windows' loop stays C until stage 4). A timer is the C
 // runtime's record (xo_rt.c struct xo_timer, its offsets asserted there):
 // its deadline in monotonic ns and its place in the heap (-1 when not in
 // it); the heap is an array of timer addresses ordered by deadline (a
 // binary heap), from the C runtime's malloc (rt.heap_large). The C holds
 // the event loop's mutex (ev.mu) around every call here. Nothing here
 // allocates Xo values or faults.
+use native/llrt/pool
+use native/llrt/sock
+use native/llrt/sysio
 use native/rt
+use native/sys_darwin
 
 /// A timer's words (xo_rt.c struct xo_timer).
 const T_WHEN = 0
@@ -107,4 +113,223 @@ pub fn timer_first() -> Int {
     return 0
   }
   at(0)
+}
+
+// ---------------------------------------------------------------------------
+// Descriptors (xo_rt.c xo_pd, its offsets asserted there): a lock word,
+// the socket (-1 once closed), whether close was called, the operations
+// running, readiness that came while nobody waited (read, write), the
+// parks waiting (read, write), and the link of the dead list.
+
+const D_MU = 0
+const D_RREADY = 20
+const D_WREADY = 24
+const D_RWAIT = 32
+const D_WWAIT = 40
+const D_NEXT = 48
+
+/// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
+const T_PARK = 16
+const T_FN = 24
+const T_FIRED = 40
+
+/// rt.static_word: the C's park_signal (called through rt.call_c2, which
+/// keeps its ThreadSanitizer annotation), set by poll_main.
+const W_SIGNAL = 43
+
+/// rt.sched_rt's statistics (xo_rt.c st: poll_return, poll_event,
+/// poll_wake).
+const ST_POLL_RETURN = 15
+const ST_POLL_EVENT = 16
+const ST_POLL_WAKE = 17
+
+// slot atomics' orders (rt.xo)
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn stat(k: Int) {
+  let _r = rt.sched_rt(0, k, 0)
+}
+
+/// Takes and releases the lock word at l (xo_rt.c lk and unlk).
+fn lk(l: Int) {
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlk(l: Int) {
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+fn signal(p: Int) {
+  let _r = rt.call_c2(rt.mem_load(rt.static_word(W_SIGNAL), 0, 8), p, 0)
+}
+
+/// Hands readiness mode (1 read, 2 write, 3 both) to the descriptor pd's
+/// waiters, or keeps it for the next wait (xo_rt.c pd_ready).
+pub fn pd_ready(pd: Int, mode: Int) {
+  stat(ST_POLL_EVENT)
+  lk(addw(pd, D_MU))
+  if (mode & 1) != 0 {
+    let w = rt.mem_load(pd, D_RWAIT, 8)
+    if w != 0 {
+      stat(ST_POLL_WAKE)
+      signal(w)
+      rt.mem_store(pd, D_RWAIT, 0, 8)
+    } else {
+      rt.mem_store(pd, D_RREADY, 1, 4)
+    }
+  }
+  if (mode & 2) != 0 {
+    let w = rt.mem_load(pd, D_WWAIT, 8)
+    if w != 0 {
+      stat(ST_POLL_WAKE)
+      signal(w)
+      rt.mem_store(pd, D_WWAIT, 0, 8)
+    } else {
+      rt.mem_store(pd, D_WREADY, 1, 4)
+    }
+  }
+  unlk(addw(pd, D_MU))
+}
+
+// ---------------------------------------------------------------------------
+// The poller thread (xo_rt.c poller_main)
+
+/// The events one wait collects.
+const NEVENTS = 64
+
+/// The poller thread's loop, which never returns: poll is the kqueue or
+/// epoll descriptor, pipe_r the self pipe's read end, mu the event loop's
+/// lock word (ev.mu), dead the address of the list of descriptors to
+/// free, sigs the address of the count of signals not handled yet (a C
+/// int), and signal_fn, stop_fn, free_fn the C's park_signal, stop_signal,
+/// and free of a descriptor (called through rt.call_c2).
+pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+  // the events (struct kevent of 32 bytes, struct epoll_event of 16 or
+  // 12), a struct timespec, and the pipe's drain buffer
+  let evs = rt.heap_large(addw(rt.int_wrap(2, NEVENTS, 32), 16 + 64))
+  let ts = addw(evs, rt.int_wrap(2, NEVENTS, 32))
+  let drain = addw(ts, 16)
+  while true {
+    lk(mu)
+    var pd = rt.mem_load(dead, 0, 8)
+    while pd != 0 {
+      let next = rt.mem_load(pd, D_NEXT, 8)
+      let _f = rt.call_c2(free_fn, pd, 0)
+      pd = next
+    }
+    rt.mem_store(dead, 0, 0, 8)
+    let now = sysio.mono_ns()
+    var t = timer_first()
+    while t != 0 && dl(t) <= now {
+      timer_remove(t)
+      rt.fence(RELEASE)
+      rt.mem_store(t, T_FIRED, 1, 4)
+      let p = rt.mem_load(t, T_PARK, 8)
+      if p != 0 {
+        signal(p)
+      } else {
+        let _c = rt.call_c2(rt.mem_load(t, T_FN, 8), t, 0)
+      }
+      t = timer_first()
+    }
+    let first = timer_first()
+    let wait = if first == 0 { -1 } else { subw(dl(first), now) }
+    unlk(mu)
+    let n = wait_events(poll, evs, ts, wait)
+    stat(ST_POLL_RETURN)
+    var i = 0
+    while i < n {
+      let (p, mode) = event(evs, i)
+      if p != 0 {
+        pd_ready(p, mode)
+      } else {
+        // the self pipe: drain it, then the signals that wrote to it
+        while read_fd(pipe_r, drain, 64) > 0 {}
+        var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
+        while k > 0 {
+          let _s = rt.call_c2(stop_fn, 0, 0)
+          k = subw(k, 1)
+        }
+      }
+      i = addw(i, 1)
+    }
+  }
+}
+
+const ACQ_REL = 3
+
+/// Waits for at most NEVENTS events into evs, at most wait ns (-1: no
+/// limit): the count (0 on an error or a timeout).
+fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => {
+      var tp = 0
+      if wait >= 0 {
+        rt.mem_store(ts, 0, wait / 1000000000, 8)
+        rt.mem_store(ts, 8, wait % 1000000000, 8)
+        tp = ts
+      }
+      let r = Int(sys_darwin.kevent(poll, 0, 0, evs, NEVENTS, tp))
+      if r < 0 { 0 } else { r }
+    }
+    TargetOs.Linux => {
+      var ms = -1
+      if wait >= 0 {
+        ms = if wait > 1099511627776 { 1073741824 } else { addw(wait, 999999) / 1000000 }
+      }
+      let r = sock.epoll_wait(poll, evs, NEVENTS, ms)
+      if r < 0 { 0 } else { r }
+    }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+/// Event i of evs: its descriptor (0: the self pipe) and its readiness (1
+/// read, 2 write, 3 both).
+fn event(evs: Int, i: Int) -> (Int, Int) {
+  match target.os {
+    TargetOs.Darwin => {
+      // struct kevent: filter (int16) at 8, flags (uint16) at 10, udata
+      // at 24; EVFILT_READ -1, EVFILT_WRITE -2, EV_ERROR 0x4000
+      let e = addw(evs, rt.int_wrap(3, i, 5))
+      let f = rt.mem_load(e, 8, 2)
+      var mode = if f == 65535 { 1 } else if f == 65534 { 2 } else { 0 }
+      if (rt.mem_load(e, 10, 2) & 16384) != 0 {
+        mode = 3
+      }
+      (rt.mem_load(e, 24, 8), mode)
+    }
+    TargetOs.Linux => {
+      // struct epoll_event: events (uint32) at 0, data at 8 (arm64) or 4
+      // (x86_64, packed); EPOLLIN 1, EPOLLOUT 4, EPOLLERR 8, EPOLLHUP 16,
+      // EPOLLRDHUP 0x2000
+      let size = match target.arch {
+        TargetArch.Amd64 => 12
+        TargetArch.Arm64 | TargetArch.Wasm32 => 16
+      }
+      let e = addw(evs, rt.int_wrap(2, i, size))
+      let f = rt.mem_load(e, 0, 4)
+      let data = rt.mem_load(e, subw(size, 8), 8)
+      let r = if (f & (1 | 8192 | 16 | 8)) != 0 { 1 } else { 0 }
+      let w = if (f & (4 | 16 | 8)) != 0 { 2 } else { 0 }
+      (data, r | w)
+    }
+    TargetOs.Windows | TargetOs.Wasi => (0, 0)
+  }
+}
+
+/// read(2) of at most n bytes into the address a.
+fn read_fd(fd: Int, a: Int, n: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => sys_darwin.read(fd, a, n)
+    TargetOs.Linux => sock.read(fd, a, n)
+    TargetOs.Windows | TargetOs.Wasi => -1
+  }
 }

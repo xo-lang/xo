@@ -146,21 +146,21 @@ static int tw_kick_once(void) {
 		return 0;
 	}
 	int parks = 0;
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	if (((verdict - 1) & 1) || verdict - 1 != __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST)) {
 		// stale: two threads can each find every context blocked at
 		// the same instant and both take the verdict (one from the
 		// other's store); the clock moved since (or was moving), and
 		// what it woke may not have run yet
 		// (gotchas/virtual-clock-double-kick.md)
-		pthread_mutex_unlock(&ev.mu);
+		unlk(&ev.mu);
 		return 0;
 	}
 	// odd while the clock moves: a check that reads the epoch now is
 	// stale too (a signal's callback runs with ev.mu released)
 	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
 	if (!th_first()) {
-		pthread_mutex_unlock(&ev.mu);
+		unlk(&ev.mu);
 		// std/rt's test world names the timers too
 		static const char m[] = "fault: XO-F001: deadlock: every task is blocked and no timer is pending\n";
 		write_all(2, m, sizeof m - 1);
@@ -183,7 +183,7 @@ static int tw_kick_once(void) {
 	// what the timers woke is visible (queued, or a root counted
 	// awake): checks that read the epoch from here on see it
 	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 	return parks == 0;
 }
 
@@ -529,9 +529,9 @@ __attribute__((unused)) static void tw_cleanup(void) {
 static void tw_signal_fire(xo_timer *t) {
 	// ev.mu is held: stop_signal takes stop.mu, then may add a timer
 	// (ev.mu): run it unlocked
-	pthread_mutex_unlock(&ev.mu);
+	unlk(&ev.mu);
 	stop_signal();
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	free(t);
 }
 
