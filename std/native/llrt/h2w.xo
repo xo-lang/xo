@@ -1,0 +1,273 @@
+// The HTTP/2 frame writer of the native std/http, written in Xo (the
+// zero-C audit's B28, its bytes only part): the frames the server and
+// the client send (RFC 9113 4.1, 6) and the server's response heads as
+// net/http's responseWriterState.writeChunk makes them. They were C
+// (std/llrt/xo_h2.c's h2_fh, h2_put_rst, h2_put_winup, h2_put_goaway,
+// h2_put_setting, h2_put_block, h2_head); the bytes written are the
+// same, but for a handler that sets one field name twice in different
+// cases, whose fields now keep their order (Go's sort.Strings of the
+// keys keeps each key's values in order; qsort did not promise it).
+//
+// The C connection code keeps the connection's buffers and calls these
+// through the exports of cabi_http.xo (decision 0204), writing into room
+// it reserved (each function says how much).
+use native/llrt/http1_tables
+use native/llrt/http1w
+use native/llrt/raw
+use native/rt
+
+// The frame types and flags (RFC 9113 6).
+const T_HEADERS: Int = 1
+const T_RST: Int = 3
+const T_SETTINGS: Int = 4
+const T_GOAWAY: Int = 7
+const T_WINUP: Int = 8
+const T_CONT: Int = 9
+const F_END_STREAM: Int = 1
+const F_END_HEADERS: Int = 4
+
+fn byte(d: Int, at: Int, v: Int) { rt.mem_store(d, at, v & 255, 1) }
+
+/// v as 4 bytes, the most significant first.
+fn be32(d: Int, at: Int, v: Int) {
+  byte(d, at, v >> 24)
+  byte(d, at + 1, v >> 16)
+  byte(d, at + 2, v >> 8)
+  byte(d, at + 3, v)
+}
+
+/// v as 4 bytes little endian (the encoder job's numbers, xo_h2.c
+/// xo_h2_enc_job).
+fn le32(d: Int, at: Int, v: Int) { rt.mem_store(d, at, v & 0xFFFFFFFF, 4) }
+
+// ---------------------------------------------------------------------------
+// Frames
+
+/// Writes the 9 byte header of a frame at d: the payload's length, the
+/// type, the flags, the stream (its reserved bit clear); 9.
+pub fn frame_head(d: Int, len: Int, ty: Int, flags: Int, sid: Int) -> Int {
+  byte(d, 0, len >> 16)
+  byte(d, 1, len >> 8)
+  byte(d, 2, len)
+  byte(d, 3, ty)
+  byte(d, 4, flags)
+  be32(d, 5, sid & 0x7FFFFFFF)
+  9
+}
+
+/// RST_STREAM of the stream with the error code; 13.
+pub fn rst(d: Int, sid: Int, code: Int) -> Int {
+  let n = frame_head(d, 4, T_RST, 0, sid)
+  be32(d, n, code)
+  n + 4
+}
+
+/// WINDOW_UPDATE of the stream (0: the connection) by inc; 13.
+pub fn winup(d: Int, sid: Int, inc: Int) -> Int {
+  let n = frame_head(d, 4, T_WINUP, 0, sid)
+  be32(d, n, inc)
+  n + 4
+}
+
+/// GOAWAY with the last stream, the error code, and the dn bytes of debug
+/// data at dp; 17 + dn.
+pub fn goaway(d: Int, last: Int, code: Int, dp: Int, dn: Int) -> Int {
+  let n = frame_head(d, 8 + dn, T_GOAWAY, 0, 0)
+  be32(d, n, last)
+  be32(d, n + 4, code)
+  if dn > 0 {
+    rt.mem_copy(d + n + 8, dp, dn)
+  }
+  n + 8 + dn
+}
+
+/// One setting of a SETTINGS frame's payload: the id, the value; 6.
+pub fn setting(d: Int, id: Int, v: Int) -> Int {
+  byte(d, 0, id >> 8)
+  byte(d, 1, id)
+  be32(d, 2, v)
+  6
+}
+
+/// The room block needs for bn bytes in frames of at most max.
+pub fn block_room(bn: Int, max: Int) -> Int { bn + 9 * (bn / max + 1) }
+
+/// The bn bytes of the header block at bp as a HEADERS frame and
+/// CONTINUATION frames of at most max bytes each, END_STREAM on the first
+/// when end_stream; the bytes written (block_room's bound).
+pub fn block(d: Int, sid: Int, bp: Int, bn: Int, end_stream: Bool, max: Int) -> Int {
+  var at = 0
+  var off = 0
+  var first = true
+  while first || off < bn {
+    let k = if bn - off > max { max } else { bn - off }
+    var flags = 0
+    if off + k == bn {
+      flags = flags | F_END_HEADERS
+    }
+    if first && end_stream {
+      flags = flags | F_END_STREAM
+    }
+    at += frame_head(d + at, k, if first { T_HEADERS } else { T_CONT }, flags, sid)
+    if k > 0 {
+      rt.mem_copy(d + at, bp + off, k)
+    }
+    at += k
+    off += k
+    first = false
+  }
+  at
+}
+
+// ---------------------------------------------------------------------------
+// Response heads
+
+/// strconv.ParseUint(s, 10, 63) of the n bytes at p: the value, or -1.
+pub fn parse_uint63(p: Int, n: Int) -> Int {
+  if n == 0 {
+    return -1
+  }
+  var v = 0
+  var i = 0
+  while i < n {
+    let c = rt.mem_load(p, i, 1)
+    if c < 48 || c > 57 || v > (9223372036854775807 - (c - 48)) / 10 {
+      return -1
+    }
+    v = v * 10 + (c - 48)
+    i += 1
+  }
+  v
+}
+
+/// validWireHeaderFieldName of a name once lower cased: ASCII token
+/// bytes.
+fn name_ok(p: Int, n: Int) -> Bool {
+  if n == 0 {
+    return false
+  }
+  var i = 0
+  while i < n {
+    let c = rt.mem_load(p, i, 1)
+    if c >= 0x80 || (Int(http1_tables.CLASS[lower(c)]) & 1) == 0 {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// httpguts.ValidHeaderFieldValue: no control bytes but tab.
+fn value_ok(p: Int, n: Int) -> Bool {
+  var i = 0
+  while i < n {
+    let c = rt.mem_load(p, i, 1)
+    if (c < 32 && c != 9) || c == 0x7f {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// One field of a head in the job's form: the name's and the value's
+/// lengths, the name, the value; the offset after it.
+fn field(d: Int, at: Int, k: Str, vp: Int, vn: Int) -> Int {
+  le32(d, at, k.len())
+  le32(d, at + 4, vn)
+  let a = http1w.put(d, at + 8, k)
+  if vn > 0 {
+    rt.mem_copy(d + a, vp, vn)
+  }
+  a + vn
+}
+
+/// The room head needs for the hn fields at ha: each field's name and
+/// value and 8 bytes, and 256 for the count and the fields it adds.
+pub fn head_room(ha: Int, hn: Int) -> Int {
+  var n = 256
+  var i = 0
+  while i < hn {
+    n += http1w.key_n(ha, i) + http1w.val_n(ha, i) + 8
+    i += 1
+  }
+  n
+}
+
+/// Writes at d the response head of status for the handler's hn fields
+/// at ha (canonical names) as writeChunk sends it with the pn bytes at p,
+/// the first bytes of the body (all of it when done), in the form of the
+/// encoder's job (xo_h2.c xo_h2_enc_job: the number of fields, then each
+/// as field writes it): :status, the fields sorted by name in lower case
+/// (invalid ones, Connection, Content-Length, and Transfer-Encoding but
+/// "trailers" left out), then content-type (sniffed), content-length, and
+/// date. head_req: the request is HEAD. Stores 1 at res when the handler
+/// asked for Connection: close, else 0. The bytes written (head_room's
+/// bound).
+pub fn head(d: Int, ha: Int, hn: Int, status: Int, head_req: Bool, p: Int, pn: Int, done: Bool, res: Int) -> Int {
+  var nf = 1
+  var at = field(d, 4, ":status", 0, 0)
+  // the status text after the field's lengths were written
+  let st = "${status}"
+  le32(d, 8, st.len())
+  at = http1w.put(d, at, st)
+  let allowed = http1w.body_allowed(status)
+  let ci = http1w.find(ha, hn, "Content-Length")
+  let has_clen = ci >= 0 && parse_uint63(http1w.val_p(ha, ci), http1w.val_n(ha, ci)) >= 0
+  let cei = http1w.find(ha, hn, "Content-Encoding")
+  let sniff = http1w.find(ha, hn, "Content-Type") < 0 && http1w.val_len(ha, cei) == 0 && allowed && pn > 0
+  let close = http1w.val_is(ha, http1w.find(ha, hn, "Connection"), "close")
+  rt.mem_store(res, 0, if close { 1 } else { 0 }, 8)
+  for i in http1w.sorted(ha, hn) {
+    let kp = http1w.key_p(ha, i)
+    let kn = http1w.key_n(ha, i)
+    let vp = http1w.val_p(ha, i)
+    let vn = http1w.val_n(ha, i)
+    if http1w.mem_is(kp, kn, "Content-Length") || http1w.mem_is(kp, kn, "Connection") {
+      continue
+    }
+    if !name_ok(kp, kn) || !value_ok(vp, vn) {
+      continue
+    }
+    // the name lower cased in place after its lengths
+    le32(d, at, kn)
+    le32(d, at + 4, vn)
+    var j = 0
+    while j < kn {
+      byte(d, at + 8 + j, lower(rt.mem_load(kp, j, 1)))
+      j += 1
+    }
+    if http1w.mem_is(d + at + 8, kn, "transfer-encoding") && !http1w.mem_is(vp, vn, "trailers") {
+      continue
+    }
+    if vn > 0 {
+      rt.mem_copy(d + at + 8 + kn, vp, vn)
+    }
+    at += 8 + kn + vn
+    nf += 1
+  }
+  if sniff {
+    let ct = http1w.sniff(p, pn)
+    at = field(d, at, "content-type", raw.data(ct), ct.len())
+    nf += 1
+  }
+  if has_clen {
+    at = field(d, at, "content-length", http1w.val_p(ha, ci), http1w.val_n(ha, ci))
+    nf += 1
+  } else if done && allowed && (pn > 0 || !head_req) {
+    let cl = "${pn}"
+    at = field(d, at, "content-length", raw.data(cl), cl.len())
+    nf += 1
+  }
+  if http1w.find(ha, hn, "Date") < 0 {
+    le32(d, at, 4)
+    le32(d, at + 4, 29)
+    let a = http1w.put(d, at + 8, "date")
+    at = http1w.put_date(d, a)
+    nf += 1
+  }
+  le32(d, 0, nf)
+  at
+}

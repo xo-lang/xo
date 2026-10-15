@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 1): the HTTP/2 frames the
+  server and the client write (frame headers, RST_STREAM, WINDOW_UPDATE,
+  GOAWAY, SETTINGS, HEADERS and CONTINUATION) and the server's response
+  heads (writeChunk's :status, sorted and checked fields, content-type,
+  content-length, date) are Xo (std/native/llrt/h2w.xo); a head goes to
+  the HPACK encoder as bytes instead of a C header list. xo_h2.c loses
+  152 lines and gains 78 (40 of them the weak definitions). A handler
+  setting one name twice keeps the values' order (qsort did not).
 - Native runtime (zero-C audit item B25, stage 1): Proc.kill,
   FakeProc.killed, and the environment and working directory a command
   starts from are Xo (std/native/llrt/proc.xo); xo_proc.c loses 106

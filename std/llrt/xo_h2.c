@@ -91,75 +91,84 @@ static const char *h2_err_name(uint32_t c, char *buf, size_t bn) {
 // ---------------------------------------------------------------------------
 // Frames
 
-static void h2_put32(char *p, uint32_t v) {
-	p[0] = (char)(v >> 24);
-	p[1] = (char)(v >> 16);
-	p[2] = (char)(v >> 8);
-	p[3] = (char)v;
-}
-
 static uint32_t h2_get32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 
+// The frames are written by Xo (std/native/llrt/h2w.xo, the zero-C
+// audit's B28) through the exports of cabi_http.xo, into room the C
+// reserves; a program without std/http links the weak definitions,
+// which fault if one ever ran (it never reaches HTTP/2).
+
+__attribute__((weak)) int64_t xo_x_h2_fh(int64_t d, int64_t len, int64_t type, int64_t flags, int64_t sid) {
+	(void)d, (void)len, (void)type, (void)flags, (void)sid;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_rst(int64_t d, int64_t sid, int64_t code) {
+	(void)d, (void)sid, (void)code;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_winup(int64_t d, int64_t sid, int64_t inc) {
+	(void)d, (void)sid, (void)inc;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_goaway(int64_t d, int64_t last, int64_t code, int64_t dp, int64_t dn) {
+	(void)d, (void)last, (void)code, (void)dp, (void)dn;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_setting(int64_t d, int64_t id, int64_t v) {
+	(void)d, (void)id, (void)v;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_block(int64_t d, int64_t sid, int64_t bp, int64_t bn, int64_t end_stream, int64_t max) {
+	(void)d, (void)sid, (void)bp, (void)bn, (void)end_stream, (void)max;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_head_room(int64_t ha, int64_t hn) {
+	(void)ha, (void)hn;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_head(int64_t d, int64_t ha, int64_t hn, int64_t status, int64_t head_req, int64_t p, int64_t pn, int64_t done, int64_t res) {
+	(void)d, (void)ha, (void)hn, (void)status, (void)head_req, (void)p, (void)pn, (void)done, (void)res;
+	fault_text("HTTP without std/http's exports", "");
+}
+
 static void h2_fh(nbuf *o, uint32_t len, int type, int flags, uint32_t sid) {
-	char h[9];
-	h[0] = (char)(len >> 16);
-	h[1] = (char)(len >> 8);
-	h[2] = (char)len;
-	h[3] = (char)type;
-	h[4] = (char)flags;
-	h2_put32(h + 5, sid & 0x7fffffff);
-	nbuf_put(o, h, 9);
+	nbuf_grow(o, 9);
+	o->n += xo_x_h2_fh(XO_ADDR(o->p + o->n), len, type, flags, sid);
 }
 
 static void h2_put_rst(nbuf *o, uint32_t sid, uint32_t code) {
-	char b[4];
-	h2_fh(o, 4, H2_RST, 0, sid);
-	h2_put32(b, code);
-	nbuf_put(o, b, 4);
+	nbuf_grow(o, 13);
+	o->n += xo_x_h2_rst(XO_ADDR(o->p + o->n), sid, code);
 }
 
 static void h2_put_winup(nbuf *o, uint32_t sid, uint32_t inc) {
-	char b[4];
-	h2_fh(o, 4, H2_WINUP, 0, sid);
-	h2_put32(b, inc);
-	nbuf_put(o, b, 4);
+	nbuf_grow(o, 13);
+	o->n += xo_x_h2_winup(XO_ADDR(o->p + o->n), sid, inc);
 }
 
 static void h2_put_goaway(nbuf *o, uint32_t last, uint32_t code, const char *debug) {
-	char b[8];
 	int64_t dn = debug ? (int64_t)strlen(debug) : 0;
-	h2_fh(o, (uint32_t)(8 + dn), H2_GOAWAY, 0, 0);
-	h2_put32(b, last);
-	h2_put32(b + 4, code);
-	nbuf_put(o, b, 8);
-	nbuf_put(o, debug, dn);
+	nbuf_grow(o, 17 + dn);
+	o->n += xo_x_h2_goaway(XO_ADDR(o->p + o->n), last, code, XO_ADDR(debug), dn);
 }
 
 static void h2_put_setting(nbuf *o, int id, uint32_t v) {
-	char b[6];
-	b[0] = (char)(id >> 8);
-	b[1] = (char)id;
-	h2_put32(b + 2, v);
-	nbuf_put(o, b, 6);
+	nbuf_grow(o, 6);
+	o->n += xo_x_h2_setting(XO_ADDR(o->p + o->n), id, v);
 }
 
 // h2_put_block writes header block blk as a HEADERS frame and
 // CONTINUATION frames of at most max bytes.
 static void h2_put_block(nbuf *o, uint32_t sid, const char *blk, int64_t bn, int end_stream, uint32_t max) {
-	int64_t off = 0;
-	int firstf = 1;
-	do {
-		int64_t k = bn - off;
-		if (k > max) {
-			k = max;
-		}
-		int last = off + k == bn;
-		int flags = (last ? H2F_END_HEADERS : 0) | (firstf && end_stream ? H2F_END_STREAM : 0);
-		h2_fh(o, (uint32_t)k, firstf ? H2_HEADERS : H2_CONT, flags, sid);
-		nbuf_put(o, blk + off, k);
-		off += k;
-		firstf = 0;
-	} while (off < bn);
+	nbuf_grow(o, bn + 9 * (bn / max + 1));
+	o->n += xo_x_h2_block(XO_ADDR(o->p + o->n), sid, XO_ADDR(blk), bn, end_stream, max);
 }
 
 // A window of received bytes (http2inflow): updates are batched until
@@ -178,9 +187,6 @@ static int64_t h2_inflow_add(h2_inflow *f, int64_t n) {
 	f->unsent = 0;
 	return u;
 }
-
-// h2_status_text is the :status value (http2httpCodeString).
-static void h2_status_text(char *out, int64_t st) { snprintf(out, 24, "%lld", (long long)st); }
 
 // h2_valid_name is validWireHeaderFieldName: token bytes, no upper case.
 static int h2_valid_name(const char *n, int64_t nn) {
@@ -252,7 +258,7 @@ struct h2s {
 	int expect100;
 	h2_inflow in;
 	// the response (under c->mu)
-	hlist rh; // the header fields, ready when rh_ready
+	nbuf rh; // the head in the encoder job's form (h2_head), ready when rh_ready
 	int rh_ready, rh_sent;
 	int nobody; // HEAD or a status without a body: no DATA
 	nbuf out;
@@ -358,7 +364,7 @@ static void h2s_free(h2s *st) {
 		hr_free(&st->req);
 	}
 	free(st->body.p);
-	hl_free(&st->rh);
+	free(st->rh.p);
 	free(st->out.p);
 	free(st->hblk.p);
 	free(st->msg);
@@ -1374,109 +1380,35 @@ static int h2_input(h2c *c, const char *b, int64_t n, int64_t *off) {
 // ---------------------------------------------------------------------------
 // Responses (responseWriterState.writeChunk with std/rt's serve)
 
-static int hp_cmp_key(const void *a, const void *b) {
-	const hpair *x = a, *y = b;
-	int64_t n = x->k.n < y->k.n ? x->k.n : y->k.n;
-	int r = memcmp(x->k.p, y->k.p, (size_t)n);
-	if (r != 0) {
-		return r;
-	}
-	return x->k.n < y->k.n ? -1 : x->k.n > y->k.n;
-}
-
-// h2_head makes the response header of status from the handler's fields
+// h2_head writes the response head of status from the handler's fields
 // h (canonical names) as writeChunk sends it with p, the first bytes of
-// the body (all of it when done): :status, the fields sorted by name in
-// lower case (invalid ones, Connection, and Content-Length left out),
-// then content-type (sniffed), content-length, and date (the sniffing
-// and the Date are the HTTP/1.1 writer's, std/native/llrt/http1w.xo).
-// *close is set when the handler asked for Connection: close.
-static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64_t pn, int done, hlist *out, int *close) {
-	char st[24];
-	h2_status_text(st, status);
-	hl_add(out, hs_dup(":status", 7), hs_dup(st, (int64_t)strlen(st)));
-	int allowed = h_body_allowed(status);
-	hstr clen = {NULL, 0};
-	int64_t ci = hl_find(h, "Content-Length");
-	char cbuf[32];
-	if (ci >= 0) {
-		int64_t v;
-		if (h2_parse_uint63(h->a[ci].v.p, h->a[ci].v.n, &v)) {
-			clen = h->a[ci].v;
-		}
-	}
-	if (!clen.p && done && allowed && (pn > 0 || !head_req)) {
-		int cn = fmt_int(cbuf, pn);
-		clen = (hstr){cbuf, cn};
-	}
-	const char *ctype = NULL;
-	char ctbuf[64];
-	int64_t cei = hl_find(h, "Content-Encoding");
-	if (hl_find(h, "Content-Type") < 0 && !(cei >= 0 && h->a[cei].v.n > 0) && allowed && pn > 0) {
-		ctype = h_sniff(p, pn, ctbuf);
-	}
-	int64_t ki = hl_find(h, "Connection");
-	if (ki >= 0 && hs_eq(h->a[ki].v, "close")) {
+// the body (all of it when done), in the form of the encoder's job
+// (xo_h2_enc_job): std/native/llrt/h2w.xo's head. *close is set when the
+// handler asked for Connection: close.
+static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64_t pn, int done, nbuf *out, int *close) {
+	nbuf_grow(out, xo_x_h2_head_room(XO_ADDR(h->a), h->n));
+	int64_t res = 0;
+	out->n += xo_x_h2_head(XO_ADDR(out->p + out->n), XO_ADDR(h->a), h->n, status, head_req, XO_ADDR(p), pn, done, XO_ADDR(&res));
+	if (res) {
 		*close = 1;
-	}
-	hpair *s = malloc((size_t)(h->n ? h->n : 1) * sizeof(hpair));
-	if (!s) {
-		xo_oom();
-	}
-	// h->a is NULL for a handler that set no field: memcpy's and qsort's
-	// pointers are declared nonnull even for a zero count (glibc;
-	// UndefinedBehaviorSanitizer reported it on Linux, 2026-10-12)
-	if (h->n > 0) {
-		memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
-		qsort(s, (size_t)h->n, sizeof(hpair), hp_cmp_key);
-	}
-	for (int64_t i = 0; i < h->n; i++) {
-		hstr k = s[i].k, v = s[i].v;
-		if (hs_eq(k, "Content-Length") || hs_eq(k, "Connection")) {
-			continue;
-		}
-		hstr lk = hs_dup(k.p, k.n);
-		int ascii = 1;
-		for (int64_t j = 0; j < lk.n; j++) {
-			unsigned c = (unsigned char)lk.p[j];
-			if (c >= 0x80) {
-				ascii = 0;
-			}
-			lk.p[j] = (char)h_lower((int)c);
-		}
-		if (!ascii || !h2_valid_name(lk.p, lk.n) || !h2_valid_value(v.p, v.n) || (hs_eq(lk, "transfer-encoding") && !hs_eq(v, "trailers"))) {
-			hs_free(&lk);
-			continue;
-		}
-		hl_add(out, lk, hs_dup(v.p, v.n));
-	}
-	free(s);
-	if (ctype) {
-		hl_add(out, hs_dup("content-type", 12), hs_dup(ctype, (int64_t)strlen(ctype)));
-	}
-	if (clen.p) {
-		hl_add(out, hs_dup("content-length", 14), hs_dup(clen.p, clen.n));
-	}
-	if (hl_find(h, "Date") < 0) {
-		char d[40];
-		h_date(d);
-		hl_add(out, hs_dup("date", 4), hs_dup(d, (int64_t)strlen(d)));
 	}
 }
 
 // h2_queue puts a response header (when head is not NULL, taken over),
 // body bytes, and the end of the body on st, for the connection's fiber
 // (c->mu held).
-static void h2_queue_locked(h2c *c, h2s *st, hlist *head, int nobody, const char *p, int64_t n, int end) {
+static void h2_queue_locked(h2c *c, h2s *st, nbuf *head, int nobody, const char *p, int64_t n, int end) {
 	if (st->dead || st->end) {
 		if (head) {
-			hl_free(head);
+			free(head->p);
+			*head = (nbuf){0};
 		}
 		return;
 	}
 	if (head) {
+		free(st->rh.p);
 		st->rh = *head;
-		*head = (hlist){0};
+		*head = (nbuf){0};
 		st->rh_ready = 1;
 		st->nobody = nobody;
 		if (nobody) {
@@ -1498,7 +1430,7 @@ static int h2_is_head(h2s *st) { return hs_eq(st->req.method, "HEAD"); }
 // OPTIONS *): a whole response, as a handler of net/http would write it.
 static int h2_respond_internal(h2c *c, h2s *st, int64_t status, hlist *h, const char *body, int64_t bn) {
 	hlist empty = {0};
-	hlist out = {0};
+	nbuf out = {0};
 	int close = 0;
 	int head = h2_is_head(st);
 	h2_head(h ? h : &empty, status, head, body, bn, 1, &out, &close);
@@ -1517,7 +1449,7 @@ static int64_t h2_respond(xo_hconn *hc, int64_t status, const char *body, int64_
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
 	int head = hs_eq(hc->req.method, "HEAD");
-	hlist out = {0};
+	nbuf out = {0};
 	int close = 0;
 	// a body over the 4 KiB buffer is written before the handler ends
 	h2_head(&hc->resp, status, head, body, bn, bn <= H2_CHUNK, &out, &close);
@@ -1558,7 +1490,7 @@ static int h2_wait_backlog(h2s *st) {
 static int h2_sink_emit(xo_hconn *hc, int64_t status, int *started, const char *p, int64_t n) {
 	h2s *st = hc->h2s;
 	h2c *c = st->c;
-	hlist out = {0};
+	nbuf out = {0};
 	int head = hs_eq(hc->req.method, "HEAD");
 	int close = 0;
 	if (!*started) {
@@ -1573,7 +1505,7 @@ static int h2_sink_emit(xo_hconn *hc, int64_t status, int *started, const char *
 		h2_wake(c);
 	}
 	pthread_mutex_unlock(&c->mu);
-	hl_free(&out);
+	free(out.p);
 	return h2_wait_backlog(st);
 }
 
@@ -2298,14 +2230,8 @@ xo_rstr *xo_h2_enc_job(xo_hconn *hc, int64_t *len) {
 	} else {
 		h2_job_u32(&b, (uint32_t)c->nencq);
 		for (int64_t k = 0; k < c->nencq; k++) {
-			hlist *h = &c->encq[k]->rh;
-			h2_job_u32(&b, (uint32_t)h->n);
-			for (int64_t i = 0; i < h->n; i++) {
-				h2_job_u32(&b, (uint32_t)h->a[i].k.n);
-				h2_job_u32(&b, (uint32_t)h->a[i].v.n);
-				nbuf_put(&b, h->a[i].k.p, h->a[i].k.n);
-				nbuf_put(&b, h->a[i].v.p, h->a[i].v.n);
-			}
+			nbuf *h = &c->encq[k]->rh;
+			nbuf_put(&b, h->p, h->n);
 		}
 	}
 	xo_rstr *s = nstr(b.p ? b.p : "", b.n, len);

@@ -24,19 +24,19 @@ use native/rt
 // The C header list: hn pairs at ha, 32 bytes each (hstr k, v: an address
 // and a length each)
 
-fn key_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i, 8) }
+pub fn key_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i, 8) }
 
-fn key_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 8, 8) }
+pub fn key_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 8, 8) }
 
-fn val_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 16, 8) }
+pub fn val_p(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 16, 8) }
 
-fn val_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 24, 8) }
+pub fn val_n(ha: Int, i: Int) -> Int { rt.mem_load(ha, 32 * i + 24, 8) }
 
 /// Whether the n bytes at p are s.
-fn mem_is(p: Int, n: Int, s: Str) -> Bool { n == s.len() && raw.mem_eq(p, raw.data(s), n) }
+pub fn mem_is(p: Int, n: Int, s: Str) -> Bool { n == s.len() && raw.mem_eq(p, raw.data(s), n) }
 
 /// The index of the field named name (exactly, as hl_find), or -1.
-fn find(ha: Int, hn: Int, name: Str) -> Int {
+pub fn find(ha: Int, hn: Int, name: Str) -> Int {
   var i = 0
   while i < hn {
     if mem_is(key_p(ha, i), key_n(ha, i), name) {
@@ -48,10 +48,10 @@ fn find(ha: Int, hn: Int, name: Str) -> Int {
 }
 
 /// Whether value i is s (-1: no field, never s).
-fn val_is(ha: Int, i: Int, s: Str) -> Bool { i >= 0 && mem_is(val_p(ha, i), val_n(ha, i), s) }
+pub fn val_is(ha: Int, i: Int, s: Str) -> Bool { i >= 0 && mem_is(val_p(ha, i), val_n(ha, i), s) }
 
 /// The length of value i, 0 without the field.
-fn val_len(ha: Int, i: Int) -> Int { if i < 0 { 0 } else { val_n(ha, i) } }
+pub fn val_len(ha: Int, i: Int) -> Int { if i < 0 { 0 } else { val_n(ha, i) } }
 
 /// Key i before key j in byte order (hp_cmp).
 fn key_less(ha: Int, i: Int, j: Int) -> Bool {
@@ -67,7 +67,7 @@ fn key_less(ha: Int, i: Int, j: Int) -> Bool {
 
 /// The indexes of the fields sorted by name (a merge sort; a handler sets
 /// few fields, so mostly the insertion of the first loop).
-fn sorted(ha: Int, hn: Int) -> List[Int] {
+pub fn sorted(ha: Int, hn: Int) -> List[Int] {
   var ix: List[Int] = []
   var i = 0
   while i < hn {
@@ -118,7 +118,7 @@ fn sorted(ha: Int, hn: Int) -> List[Int] {
 // ---------------------------------------------------------------------------
 // Writing at an address: each returns the offset after what it wrote
 
-fn put(d: Int, at: Int, s: Str) -> Int {
+pub fn put(d: Int, at: Int, s: Str) -> Int {
   let n = s.len()
   rt.mem_copy(d + at, raw.data(s), n)
   at + n
