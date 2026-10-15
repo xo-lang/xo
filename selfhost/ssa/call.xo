@@ -1237,6 +1237,9 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if name == "sym_present" {
     return b.sym_present(x, es)
   }
+  if name == "fn_addr" {
+    return b.fn_addr(es)
+  }
   if name is "fs_root" | "fs_mode" {
     let v = b.expr(es[0] ?? fault("arg"))
     if !b.is_fs(b.vty(v)) {
@@ -1335,6 +1338,44 @@ fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
     return b.cbool(false)
   }
   b.add(Op.Call, b.bool_t(), Aux.S(s: "rt.pc.cp.${sym}"), [])
+}
+
+/// rt.fn_addr("name") (decision 0233): the address of the C ABI export
+/// xo_x_<name>, a FuncAddr of its symbol (an aux that starts with `@`,
+/// which the emitters take as a C symbol, not a function of the
+/// module). The argument is a string literal naming an export of the
+/// program.
+fn (var b: Builder) fn_addr(es: List[Expr?]) -> Int {
+  let it = b.int_t()
+  let name = match es[0] ?? fault("arg") {
+    StringLit(s) => if s.parts.len() == 1 && s.parts[0].expr == None { check.text(s.parts[0].text) } else { "" }
+    _ => ""
+  }
+  if name.is_empty() {
+    b.unsupported("rt.fn_addr of anything but a string literal")
+    return b.undef(it)
+  }
+  // a top-level function of an export module (the exports themselves
+  // are declared after the build's queue, declare_exports; the verifier
+  // checks that the program has the symbol)
+  var found = false
+  for m in b.c.mods {
+    if m.path == "native/llrt/cabi" || m.path.starts_with("native/llrt/cabi_") {
+      let o = m.members.get(name.bytes()) ?? -1
+      if o >= 0 && b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
+        found = true
+      }
+    }
+  }
+  if !found {
+    b.unsupported("rt.fn_addr of `${name}`, which no C ABI export module (native/llrt/cabi*) defines")
+    return b.undef(it)
+  }
+  if b.wasm {
+    // no exports in a WASI module: a call that faults if it runs
+    return b.rt("fn_addr", it, [])
+  }
+  b.add(Op.FuncAddr, it, Aux.S(s: "@xo_x_${name}"), [])
 }
 
 /// Whether rt.<name> is served only by a wasm module's runtime: the calls

@@ -796,6 +796,10 @@ fn (var g: Gen) inline_walk(sites: Map[Str, Int], fi: Int, var state: Map[Str, I
       var ci = -1
       if x.op == ssa.Op.Call {
         ci = g.by_name.get(aux_str(x.aux)) ?? -1
+        if aux_str(x.aux) == "rt.frame_addr" {
+          // its frame is the function's own (decision 0233)
+          c.bad = true
+        }
       }
       if ci < 0 {
         c.instrs += 1

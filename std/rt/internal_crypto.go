@@ -77,6 +77,17 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		// std/native/internal.xo sysc_op: getpid called and linked, no
 		// ThreadSanitizer in a Go build
 		r, ok = Bytes([]byte{1, 1, 0}), what == "present"
+	case "rt":
+		// std/native/internal.xo rt_op (decision 0233): a Go build has no
+		// C ABI exports or frame records; it answers what they give,
+		// "12345"'s length and first byte, and the three frame facts
+		switch what {
+		case "fn_addr":
+			s := strconv.Itoa(12345)
+			r, ok = Bytes([]byte{byte(len(s)), s[0]}), true
+		case "frame_addr":
+			r, ok = Bytes([]byte{1, 1, 1}), true
+		}
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
 	case "sha3":

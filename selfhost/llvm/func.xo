@@ -12,6 +12,16 @@ fn aux_str(a: ssa.Aux) -> Str {
   }
 }
 
+/// Whether the function being written calls the runtime's name.
+fn (g: Gen) calls_rt(name: Str) -> Bool {
+  for x in g.f.values {
+    if x.op == ssa.Op.Call && aux_str(x.aux) == name {
+      return true
+    }
+  }
+  false
+}
+
 fn aux_int(a: ssa.Aux) -> Int {
   match a {
     I(n) => n
@@ -430,7 +440,12 @@ fn (var g: Gen) lower_func(fi: Int) {
   // modules it calls, decision 0230): no-builtins, so the optimizer does
   // not turn memcpy's own loop into a call of memcpy, or calloc's malloc
   // and memset into a call of calloc
-  let attrs = if g.f.name.starts_with("cabi_libc.") || g.f.name.starts_with("libc") { "#7" } else { "#1" }
+  var attrs = if g.f.name.starts_with("cabi_libc.") || g.f.name.starts_with("libc") { "#7" } else { "#1" }
+  if g.calls_rt("rt.frame_addr") {
+    // its own frame (decision 0233): never inlined, the frame pointer kept
+    g.frame_attrs()
+    attrs = "#9"
+  }
   out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")
   for b in 0..g.f.blocks.len() {
     out.push("${bname(b)}:\n")
@@ -999,7 +1014,12 @@ fn (var g: Gen) instr_body(v: Int) {
       let t0 = g.def("insertvalue { ptr, ptr } undef, ptr ${fname(g.m.funcs[callee].name)}, 0")
       g.set(v, "insertvalue { ptr, ptr } ${t0}, ptr ${env}, 1")
     }
-    FuncAddr => g.set(v, "ptrtoint ptr ${fname(aux_str(x.aux))} to i64")
+    FuncAddr => {
+      let n = aux_str(x.aux)
+      // rt.fn_addr (decision 0233): `@` and a C ABI export's symbol
+      let p = if n.starts_with("@") { n } else { fname(n) }
+      g.set(v, "ptrtoint ptr ${p} to i64")
+    }
     Rebind => {
       let a0 = g.op(args[0])
       g.set(v, "insertvalue { ptr, ptr } ${a0}, ptr ${fname(aux_str(x.aux))}, 0")

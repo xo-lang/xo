@@ -508,9 +508,23 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     FuncAddr => {
-      let ci = m.func_index(aux_name(x.aux))
-      if ci < 0 || !m.funcs[ci].entry || n != 0 || x.ty < 0 || tk != Kind.Int {
-        return "funcaddr of a function that is not an entry, or not an Int"
+      let fname = aux_name(x.aux)
+      if fname.starts_with("@") {
+        // rt.fn_addr (decision 0233): a C ABI export's symbol
+        var found = false
+        for f in m.funcs {
+          if f.export == fname[1..fname.len()] {
+            found = true
+          }
+        }
+        if !found || n != 0 || x.ty < 0 || tk != Kind.Int {
+          return "funcaddr of a symbol that no C ABI export has, or not an Int"
+        }
+      } else {
+        let ci = m.func_index(fname)
+        if ci < 0 || !m.funcs[ci].entry || n != 0 || x.ty < 0 || tk != Kind.Int {
+          return "funcaddr of a function that is not an entry, or not an Int"
+        }
       }
     }
     Capture => {

@@ -120,6 +120,10 @@ struct Inst {
   vfix: Int = -1
   /// a plain instruction that makes a constant (hoistConsts may move it)
   konst: Bool = false
+  /// a plain instruction that reads the frame pointer (rt.frame_addr,
+  /// decision 0233): the function is not a leaf, and its block has the
+  /// frame (shrink wrapping)
+  frame: Bool = false
   /// a plain instruction with a memory effect (an atomic, decision
   /// 0200): kept when its definitions are dead, never folded into a
   /// branch

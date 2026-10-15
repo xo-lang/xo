@@ -998,6 +998,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.sched_ref = true
       g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
     }
+    "rt.frame_addr" => {
+      // the frame record the prologue makes (decision 0233): x29, with
+      // the frame kept for this instruction's block (Inst.frame)
+      let d = g.new_vreg(false)
+      let i = g.plain("mov $d0, x29", [d], [])
+      g.blocks[g.cur].insts[i].frame = true
+      g.set(v, [d])
+    }
     // the runtime's immortal placeholders (an unwinding operation's
     // result, the empty list): their addresses, no call (xo_rt.c
     // xo_empty_list, xo_zero_handle)

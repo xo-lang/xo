@@ -28,7 +28,7 @@
 /// Whether inst needs the frame whatever the allocation: a call but a
 /// tail call, the $OUT slot, the frame's memory.
 fn needs_frame0(inst: Inst) -> Bool {
-  if (inst.kind == K_CALL && !inst.tail) || inst.text.contains("$OUT") {
+  if (inst.kind == K_CALL && !inst.tail) || inst.text.contains("$OUT") || inst.frame {
     return true
   }
   for a in inst.srcs {

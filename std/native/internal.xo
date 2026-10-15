@@ -72,6 +72,36 @@ fn sysc_op(what: Str) -> Bytes? {
   Some(s.bytes())
 }
 
+/// The address intrinsics of decision 0233, for the golden rt_addrs and
+/// test/codegen/fnaddr (no module xo's own build reaches calls them
+/// before a seed has them). "fn_addr": cabi.xo's fmt_int called through
+/// its address, the text's length and first byte (5 and '1' for 12345).
+/// "frame_addr": whether the frame address is not 0, a callee's frame
+/// is below it, and within 64 KiB.
+fn rt_op(what: Str) -> Bytes? {
+  var s = rt.rs_with_cap(3)
+  if what == "fn_addr" {
+    let buf = rt.heap_large(32)
+    let n = rt.call_c2(rt.fn_addr("fmt_int"), buf, 12345)
+    s = rt.rs_push_byte(s, n)
+    s = rt.rs_push_byte(s, rt.mem_load(buf, 0, 1))
+    rt.heap_release(buf - 8)
+    return Some(s.bytes())
+  }
+  if what == "frame_addr" {
+    let a = rt.frame_addr()
+    let c = frame_below()
+    s = rt.rs_push_byte(s, if a != 0 { 1 } else { 0 })
+    s = rt.rs_push_byte(s, if c != 0 && c < a { 1 } else { 0 })
+    s = rt.rs_push_byte(s, if a - c < 65536 { 1 } else { 0 })
+    return Some(s.bytes())
+  }
+  None
+}
+
+/// The frame address of a function rt_op calls.
+fn frame_below() -> Int { rt.frame_addr() }
+
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
   let area = op.split(".")[0]
   let what = op.trim_prefix("${area}.")
@@ -93,6 +123,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "sha1" => sha1.op(what, a, b, c, d)
     "cpu" => cpu.op(what, a, b, c, d)
     "sysc" => sysc_op(what)
+    "rt" => rt_op(what)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
     "sha3" => sha3.op(what, a, b, c, d)

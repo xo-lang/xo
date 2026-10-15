@@ -1,7 +1,9 @@
 # 0233: Xo function addresses (rt.fn_addr) and frame address
 
-Status: Proposed (2026-10-15, xo-4 for the lead; waiting on the owner).
-Nothing is implemented.
+Status: Accepted (owner, 2026-10-15). Step 1 implemented 2026-10-15
+(xo-4, see Implementation): the intrinsics, with no use in a module
+xo's own build reaches. Step 2 (the uses and the C deletions) waits for
+seed 0.13.0.
 
 ## Context
 
@@ -57,14 +59,15 @@ Two std-internal intrinsics, declared in std/native/rt.xo next to
 rt.fiber_start_addr (decision 0212), the existing intrinsic that already
 yields a code address.
 
-### 1. `rt.fn_addr(f) -> Int`: an Xo export's address
+### 1. `rt.fn_addr(name) -> Int`: an Xo export's address
 
-- **Semantics.** The argument is a reference to a top-level function of
-  a C ABI export module: cabi.xo, cabi_*.xo, or any module whose
-  functions the SSA builder declares as exports (selfhost/ssa build.xo
+- **Semantics.** The argument names a top-level function of a C ABI
+  export module: cabi.xo, cabi_*.xo, or any module whose functions the
+  SSA builder declares as exports (selfhost/ssa build.xo
   declare_exports_of). The result is the address of its exported symbol
-  `xo_x_<name>` (or the bare name in cabi_libc.xo's XO_NOLIBC builds,
-  decision 0230), as an Int word.
+  `xo_x_<name>`, as an Int word. The draft took a reference to the
+  function; the implementation takes its name as a string literal (see
+  Implementation).
 - **Calling it.** The address is called with the C calling convention
   through rt.call_c2 (decision 0207), or stored where C or the system
   expects a function pointer: the services record words, sigaction's
@@ -76,10 +79,9 @@ yields a code address.
   calling convention (closures, `var` parameters, multiple results,
   generics) is the compiler's own and may change. Its address would be
   a pointer nothing can call safely.
-- **Errors.** Any other argument (a closure, a method, a generic
-  function, a function of a module that is not an export module, a
-  value that is not a direct reference) is a compile error from the SSA
-  builder's unsupported path. It never reaches an emitter.
+- **Errors.** Any other argument (not a string literal, or a name no
+  export module defines) is a compile error from the SSA builder's
+  unsupported path. It never reaches an emitter.
 
 ### 2. `rt.frame_addr() -> Int`: the calling function's frame address
 
@@ -110,7 +112,7 @@ yields a code address.
 
 ### Lowering
 
-| Backend | rt.fn_addr(f) | rt.frame_addr() |
+| Backend | rt.fn_addr(name) | rt.frame_addr() |
 |---|---|---|
 | arm64 (selfhost/arm64) | the symbol's address: `adrp` and `add` with :lo12:, through g.sym_addr, as rt.fiber_start_addr does for xo_fiber_entry (calls.xo); Mach-O and ELF relocations already exist for that path | the frame pointer x29 after the prologue; the function is marked to keep a frame (the arm64 frame decision, gotchas/arm64-call-anywhere-costs-frame.md) and never inlined |
 | LLVM (selfhost/llvm) | `ptrtoint ptr @xo_x_<name> to i64`, as call.xo lowers rt.fiber_start_addr; the export is already declared or defined in the module | `call ptr @llvm.frameaddress.p0(i32 0)` then ptrtoint; the function gets `noinline` and `"frame-pointer"="all"` |
@@ -150,6 +152,55 @@ So the work lands in two steps:
 
 Step 1 is not a seed bump by itself. Step 2 waits for a seed the cycle
 cuts anyway, so no extra seed and no chain hop.
+
+## Implementation (step 1, 2026-10-15)
+
+- **By name, not by reference.** `rt.fn_addr("name")` takes a string
+  literal, as rt.sym_present does (decision 0232). The export modules
+  import ctx.xo, poll.xo, tasks.xo and the rest, so the modules that
+  need the addresses (ctx.xo init, poll.xo, stop.xo) cannot import
+  cabi.xo to name `cabi.task_free` without a cycle. The name resolves to
+  the symbol `xo_x_<name>` at link time, which no import needs.
+- **Checked twice.** The SSA builder (selfhost/ssa call.xo fn_addr)
+  requires a top-level function of that name in native/llrt/cabi or a
+  native/llrt/cabi_* module. The exports themselves are declared only
+  after the build's queue (declare_exports), so the builder cannot see
+  the symbol yet. The verifier (verify.xo) then requires that some
+  function of the module exports the symbol.
+- **SSA.** A FuncAddr whose aux starts with `@` (`@xo_x_<name>`): a C
+  symbol, not a function of the module. arm64 (isel.xo) and LLVM
+  (func.xo) take that symbol's address; the passes that look a FuncAddr
+  up by name fall back as for any unknown name.
+- **rt.frame_addr.**
+  - arm64: `mov $d0, x29` with Inst.frame, so the function is not a
+    leaf (emit.xo) and the block has the frame (shrink.xo needs_frame0).
+  - LLVM: `call ptr @llvm.frameaddress.p0(i32 0)`, and the function gets
+    attributes #9 (`uwtable noinline "frame-pointer"="all"`); both are
+    declared at the first use (sched.xo frame_attrs).
+  - Both backends' SSA inliners (arm64 inline.xo, LLVM ranges.xo)
+    treat a function that calls it as not inlinable. On LLVM this
+    matters beyond the attribute: a call site marked #6 (alwaysinline)
+    inlines a noinline callee
+    (gotchas/llvm-callsite-alwaysinline-beats-noinline.md).
+- **wasm.** Both are calls in selfhost/wasm call.xo's list that fault
+  when run.
+- **Go backend.** It runs std/rt, so it never compiles them. Its
+  std/internal answers the test hook with what the native ops give
+  (std/rt internal_crypto.go "rt").
+- **Tests.**
+  - The golden rt_addrs (internal/llvm/testdata/golden, every backend)
+    goes through std/internal's crypto_op area "rt"
+    (std/native/internal.xo rt_op). xo's own build calls only
+    internal.lock_shared, so it never builds rt_op.
+  - rt_op calls cabi.xo's fmt_int through its address, and compares
+    rt.frame_addr with a callee's.
+  - test/codegen/fnaddr checks the `adrp` of xo_x_fmt_int on arm64, the
+    `ptrtoint ptr @xo_x_fmt_int` on LLVM, and the frame-keeping
+    lowering of rt.frame_addr on both.
+- **Gate (Mac, arm64).** selfhost/xo built by the 0.12.0 seed run
+  directly (it links, so nothing xo builds reaches the intrinsics), hello
+  on both backends, go test -short, rt_addrs on LLVM and arm64,
+  codegen 6 of 6.
 
 ## Consequences
 

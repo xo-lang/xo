@@ -9,6 +9,16 @@
 // that only xo_tlocal_at names (a split build, decision 0168, copies a
 // global into each module that uses it).
 
+/// The declaration of llvm.frameaddress and the attributes of a function
+/// that calls rt.frame_addr (decision 0233), at the first use.
+fn (var g: Gen) frame_attrs() {
+  if g.emitted.contains("@llvm.frameaddress.p0") {
+    return
+  }
+  g.emitted["@llvm.frameaddress.p0"] = true
+  g.helpers.push("declare ptr @llvm.frameaddress.p0(i32)\nattributes #9 = { uwtable noinline \"frame-pointer\"=\"all\" }\n\n")
+}
+
 /// Defines xo_stack_switch and xo_fiber_entry at the first use.
 fn (var g: Gen) sched_switch() {
   if g.emitted.contains("@xo_stack_switch") {

@@ -952,7 +952,15 @@ fn (var g: G) instr1(v: Int) {
     Capture => g.capture_op(v)
     CallValue => g.call_value_op(v)
     Box => g.box_op(v)
-    FuncAddr => g.set(v, [g.sym_addr(g.fname(aux_str(x.aux)))])
+    FuncAddr => {
+      let n = aux_str(x.aux)
+      if n.starts_with("@") {
+        // rt.fn_addr (decision 0233): a C ABI export's symbol
+        g.set(v, [g.sym_addr(g.sym(n[1..n.len()]))])
+      } else {
+        g.set(v, [g.sym_addr(g.fname(n))])
+      }
+    }
     Rebind => {
       // the new code word and the environment word of Args[0]
       let code = g.sym_addr(g.fname(aux_str(x.aux)))

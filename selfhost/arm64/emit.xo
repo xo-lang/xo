@@ -135,7 +135,7 @@ fn (var g: G) emit() {
   var calls = false
   for b in g.order {
     for inst in g.blocks[b].insts {
-      calls = calls || (inst.kind == K_CALL && !inst.tail)
+      calls = calls || (inst.kind == K_CALL && !inst.tail) || inst.frame
     }
   }
   fr.leaf = !calls && g.saved.is_empty() && g.slots == 0 && !g.out && g.mem_bytes == 0

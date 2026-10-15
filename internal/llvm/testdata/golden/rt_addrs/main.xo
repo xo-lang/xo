@@ -1,0 +1,11 @@
+// The address intrinsics of decision 0233 through std/internal's test
+// hook (std/native/internal.xo rt_op): cabi.xo's fmt_int called through
+// rt.fn_addr's address (05 31: the length of "12345" and its "1"), and
+// rt.frame_addr (01 01 01: not 0, a callee's frame below it, within
+// 64 KiB).
+use std/internal
+
+fn main(os: Os) {
+  os.stdio.println(internal.crypto_op("rt.fn_addr", b"", b"", b"", b"").to_hex())
+  os.stdio.println(internal.crypto_op("rt.frame_addr", b"", b"", b"", b"").to_hex())
+}

@@ -376,6 +376,21 @@ fn stack_switch(save: Int, to: Int)
 /// function in the frame's second register slot with the first as its
 /// argument (the slots of std/native/llrt/sched.xo's fiber_frame).
 fn fiber_start_addr() -> Int
+
+// Function and frame addresses (decision 0233), for std/native only.
+
+/// The address of the C ABI export named by the string literal name (a
+/// top-level function of an export module, cabi.xo or cabi_*.xo, whose
+/// symbol is xo_x_<name>), as a word for rt.call_c2 or for a C record
+/// that holds a function pointer. By name, so a module the export
+/// module imports (ctx.xo, poll.xo) can name it; a name no export of
+/// the program has is a compile error.
+fn fn_addr(name: Str) -> Int
+/// The frame address of the calling function (C's
+/// __builtin_frame_address(0)): its frame record, valid until it
+/// returns. The calling function always keeps a frame and is never
+/// inlined.
+fn frame_addr() -> Int
 /// Word k (0 to 15, a constant) of the calling thread's table of
 /// runtime thread locals; zero in a new thread.
 fn tlocal_get(k: Int) -> Int

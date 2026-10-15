@@ -722,6 +722,13 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.sched_switch()
       g.set(v, "ptrtoint ptr @xo_fiber_entry to i64")
     }
+    "rt.frame_addr" => {
+      // decision 0233: the function's frame record (its attributes #9
+      // keep the frame pointer and forbid inlining)
+      g.frame_attrs()
+      let p = g.def("call ptr @llvm.frameaddress.p0(i32 0)")
+      g.set(v, "ptrtoint ptr ${p} to i64")
+    }
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       g.sched_tlocal()
       return false
