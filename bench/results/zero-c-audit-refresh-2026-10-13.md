@@ -308,7 +308,7 @@ MISSING.
 | B22 poller (poll.xo) | 920 | PORT 831, SHIM 89 | xo_rt.c 5311-5451, 5822-6511; xo_win.c 1030-1118 |
 | B23 sockets off Linux, net API (netio.xo) | 1,304 | PORT 817, SHIM 269, GLUE 218 | xo_rt.c 5452-5821, 6684-7348; xo_win.c 273-541 |
 | B24 standard input (stdin.xo) | 387 | PORT 387 | xo_stdin.c 1-58, 107-435 |
-| B25 processes (proc.xo) | 1,764 | PORT 1,681, GLUE 83 | xo_proc.c 1-147, 222-1200, 1274-1911 |
+| B25 processes (proc.xo) (stage 1 2026-10-14, the zero-C push: Proc.kill, FakeProc.killed, environ and cwd in proc.xo and process.xo, 106 lines; spawn, pipes, and waits next) | 1,764 | PORT 1,681, GLUE 83 | xo_proc.c 1-147, 222-1200, 1274-1911 |
 | B26 signals, shutdown, entry | 475 | PORT 372, SHIM 103 | xo_rt.c 7455-7826; xo_nolibc.c 120-222 |
 | B27 zone data host side (tz.xo) (**done 2026-10-14**: std/native/llrt/tzhost.xo, xo_time.c deleted, 519 lines; notes) | 512 | PORT 453, GLUE 59 | xo_time.c 1-499, 508-520 |
 | B28 HTTP/1.1 server loop, HTTP/2 server | 3,278 | PORT 2,705, GLUE 573 | xo_http.c 1867-2930; xo_h2.c 1-86, 670-1182, 1285-2899 |

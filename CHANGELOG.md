@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B25, stage 1): Proc.kill,
+  FakeProc.killed, and the environment and working directory a command
+  starts from are Xo (std/native/llrt/proc.xo); xo_proc.c loses 106
+  lines.
 - Native runtime (zero-C audit item B21, part 2): a thread's heap record
   and the list of every record are std/native/llrt/heapos.xo's (a
   mapping, a lock word) instead of calloc and a pthread mutex; the
