@@ -1558,6 +1558,14 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 /// linker leaves it 0 when nothing defines it (macOS's ld needs `-U` for
 /// that, which the driver adds for each weak reference).
 fn (var g: G) weak_ref(sym: Str) {
+  for f in g.m.funcs {
+    if f.export == sym {
+      // the module defines it (an XO_NOLIBC build's C library,
+      // cabi_libc.xo: __errno_location); `.weak` and then `.globl` is an
+      // error in LLVM's assembler ("changed binding to STB_GLOBAL")
+      return
+    }
+  }
   let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
   g.store("${d} ${g.sym(sym)}", [])
 }

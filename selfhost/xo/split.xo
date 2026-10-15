@@ -152,6 +152,9 @@ struct IRItem {
 /// The IR cut into its header, constants, and functions (parseIR).
 struct ParsedIR {
   header: Str = ""
+  /// The `module asm` lines (the XO_NOLIBC process entry): one module
+  /// defines them, or _start is defined twice.
+  masm: Str = ""
   globals: List[IRItem] = []
   global_at: Map[Str, Int] = {}
   defs: List[IRItem] = []
@@ -217,7 +220,11 @@ fn parse_ir(ir: Str) -> ParsedIR {
       i += 1
       continue
     }
-    header.write(line)
+    if line.starts_with("module asm ") {
+      p.masm = p.masm + line
+    } else {
+      header.write(line)
+    }
     i += 1
   }
   p.header = header.freeze()
@@ -440,6 +447,9 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
   for m in 0..n {
     var b = StrBuilder.new()
     b.write(p.header)
+    if m == 0 {
+      b.write(p.masm)
+    }
     b.write("\n")
     for g in p.globals {
       if used[m].contains(g.name) {

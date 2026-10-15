@@ -149,6 +149,9 @@ fn (g: G) end_data(var out: List[Str]) {
   let zh = g.sym("xo_zero_handle")
   out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
     "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
+  if g.os == "linux" && g.m.nolibc_start {
+    out.push(ssa.entry_stub_arm64())
+  }
   if g.os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }

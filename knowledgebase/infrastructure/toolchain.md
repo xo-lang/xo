@@ -275,7 +275,7 @@ python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; xo dev goldens --flags='--as=macho' runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant; else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
-xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo under the C names, decision 0230; std/llrt/xo_nolibc.c keeps _start and the variadic printf shells), linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
+xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo under the C names, decision 0230; std/llrt/xo_nolibc.c keeps the data symbols environ, stdin, stdout, stderr and the variadic printf shells; _start is the backends' since 2026-10-15, XO_NOLIBC_C_START=1 selects the C one), linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
 xo1 build --backend=arm64 with XO_INLINE_STRICT=1   # a build whose inlined arm64 module does not verify fails (selfhost/xo main.xo inline_or_say); without it the build says so on standard error, naming the function and the first error, and goes on without inlining. internal/xotool sets it for every Go test; XO_INLINE_BREAK=1 breaks the inlined module on purpose (internal/arm64 TestInlineFallbackLoud). Last verified: 2026-10-15
 xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; a program calling the Security framework adds it and CoreFoundation); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO_RTPACK=DIR xo dev goldens --flags=--ld=macho --build-path=/nonexistent builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
@@ -3244,6 +3244,33 @@ volume makes it splat without symlinks.) A cross build:
 
 (windows/arm64 the same). It links a PE32+ executable; nothing runs it
 on the Mac. Last verified: 2026-10-15 (clang 23.1.3, xwin 0.10.0).
+
+### XO_NOLIBC cross links on the Mac
+
+Since 2026-10-15 (xo-fa, the backend entry stubs) an XO_NOLIBC=1 program
+cross links on the Mac for linux/amd64 through the LLVM backend (the
+x86_64 cross setup below; the sysroot's headers are only for xo_rt.c,
+nothing of glibc is linked):
+
+    XO_NOLIBC=1 XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_LINUXSYSROOT=$R \
+      xo build --backend=llvm --target=linux/amd64 -o prog .
+
+linux/arm64 through the arm64 backend writes only the assembly on the Mac
+(a cross build with cc links nothing); link it by hand with arm64
+headers (Debian's libc6-dev and linux-libc-dev for arm64, unpacked as
+below into $RA) and the outline atomics file a Linux arm64 build writes
+(xo_atomics.s, selfhost/xo link.xo nolibc_atomics):
+
+    XO_NOLIBC=1 xo build --backend=arm64 --target=linux/arm64 .   # prints the .s path
+    $X/LLVM-23.1.3-macOS-ARM64/bin/clang --target=aarch64-linux-gnu --sysroot=$RA -fuse-ld=lld \
+      -O2 -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE \
+      -mno-outline-atomics -static -nostdlib -Wl,--gc-sections -Wl,--eh-frame-hdr \
+      -Wl,--defsym=xo_personality=xo_x_personality -o prog prog-linux.s std/llrt/xo_rt.c xo_atomics.s
+
+XO_NOLIBC_C_START=1 builds the C process entry of std/llrt/xo_nolibc.c
+instead of the backends' (the driver passes -DXO_NOLIBC_C_START and
+leaves ssa.Module.nolibc_start off). Nothing runs either binary on the
+Mac. Last verified: 2026-10-15.
 
 ### x86_64 cross builds on the Mac
 

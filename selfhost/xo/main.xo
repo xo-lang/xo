@@ -420,7 +420,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
     // with no C library, no libgcc: arm64 atomics inline (decision 0206)
-    let attr_flags = if nolibc(os, lctx.tgoos) && host_arch() == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
+    let attr_flags = if nolibc(os, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
     let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
     if o.cmd == "asm" {
       os.stdio.print(code)
@@ -453,7 +453,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, ltarget, false)
-    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos)
+    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch)
     lk.flags = cross + lk.flags
     let lto1 = single_lto(split)
     var mode_flags = ["llvm", split.opt]
@@ -561,7 +561,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, "arm64")
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
@@ -679,6 +679,7 @@ struct Lowered {
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
   var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, tgoos))
+  b.m.nolibc_start = !wasm && nolibc(os, tgoos) && !nolibc_c_start(os)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -750,7 +751,7 @@ struct LinkInputs {
   flags: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
   // the C runtime (writeRuntime)
   match os.fs.read_dir("${ctx.std}/llrt") {
     Ok(fis) => {
@@ -806,8 +807,13 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
         fail(os, "XO_NOLIBC=1: XO_LLRT_C=net selects the C library's sockets and getaddrinfo (decision 0206 stage 3)")
       }
     }
-    let arch = if o.backend == "llvm" { host_arch() } else { "arm64" }
+    // the target's (a linux/amd64 cross build from an arm64 Mac took the
+    // host's: arm64 flags and atomics assembly for an x86_64 link)
+    let arch = tgoarch
     lk.flags = lk.flags + nolibc_flags(arch)
+    if nolibc_c_start(os) {
+      lk.flags.push("-DXO_NOLIBC_C_START")
+    }
     if arch == "arm64" {
       // the arm64 emitter's read modify writes call libgcc's outline
       // atomics on Linux, which a link with no C library lacks

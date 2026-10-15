@@ -57,10 +57,14 @@ every other std/llrt file was deleted or ported). It is C by design:
   the Winsock, errno and OVERLAPPED_ENTRY constants and layouts sock.xo,
   cabi_net.xo and poll.xo hard code (the only check of them; trimming
   the header list waits for a Windows compile).
-- **xo_nolibc.c** (XO_NOLIBC builds): _start and the stack switch to
-  main's stack (inline asm, arm64's tpidr_el0), the C data symbols
-  environ, stdin, stdout and stderr, and the variadic printf family
-  (va_start), which hand their va_list to Xo.
+- **xo_nolibc.c** (XO_NOLIBC builds): the C data symbols environ,
+  stdin, stdout and stderr, and the variadic printf family (va_start),
+  which hand their va_list to Xo. Since 2026-10-15 (xo-fa) the process
+  entry (_start, the thread pointer, the switch to main's stack, the
+  call of main with argc, argv and envp) is emitted by the backends
+  (selfhost/ssa ir.xo entry_stub_arm64 and entry_stub_amd64: the arm64
+  emitter's assembly, the LLVM emitter's module asm); the C entry stays
+  behind XO_NOLIBC_C_START=1 until CI has run the stubs, then goes.
 
 Outside std/llrt, also C by design: the generated `use c` adapters
 (decision 0205) and the C tests of std/llrt/testdata.
@@ -319,6 +323,7 @@ MISSING.
 | B02 runtime globals and thread locals (part 1 done 2026-10-14: rt.static_word, std/log state, 66 lines; part 2 done 2026-10-14: the Bytes primitives and the scratch in Xo, xo_sys.c 54 lines deleted, the `__thread` sys_scratch gone; notes) | 188 | PORT 72, GLUE 116 | xo_sys.c 1-106; xo_bytes.c 293-298, 366-375; xo_http.c 3072-3137 |
 | B03 stdio, exit, env, args, stats (done 2026-10-14 in Xo: stdio-2026-10-14.md; the seed forwards and the env C go with the next seed; notes) | 343 | PORT 281, SHIM 62 | xo_rt.c 548-668, 1097-1145, 7398-7454; xo_std.c 554-567; xo_bytes.c 376-415; xo_win.c 1119-1180 |
 | B04 xo_nolibc.c shrink (2026-10-14, decision 0230: stage (a) malloc in libcmem.xo; stages (b) to (d) mem*, str*, strerror, strto*, qsort in libcstr.xo, the system calls, errno, exit, signals, locks, threads in libcsys.xo and cabi_libc.xo; stage (e) the start, getenv, getauxval, vsnprintf, vfprintf, FILE, directories in libcio.xo, the threads and locks in libcthr.xo; UNTESTED on linux; C keeps _start's asm, environ and the std FILE pointers, the variadic printf shells: 128 lines) | 1,463 | SHIM 1,160, GLUE 303 | xo_nolibc.c 1-119, 223-1566 |
+| B04 entry stubs (2026-10-15, xo-fa: _start, tpidr_el0, main's stack and the call of main emitted by the arm64 and LLVM backends from selfhost/ssa ir.xo entry_stub_arm64 and entry_stub_amd64; the C entry behind XO_NOLIBC_C_START=1 until CI runs the stubs; cross linked on the Mac for linux/arm64 and linux/amd64, UNTESTED on linux) | 0 by default (the C entry under XO_NOLIBC_C_START: 51) | GLUE | xo_nolibc.c 48-98 |
 | B05 unwinder without libgcc (stage 1 done 2026-10-14, decision 0221: XO_NOLIBC linux/arm64; stage 3 done 2026-10-14 for glibc linux/arm64 and macOS, the libgcc path compiled only for glibc linux/amd64 until stage 2; stage 2 done 2026-10-15, xo-fa: unwind.xo on x86_64 (DWARF register numbering per architecture, x86_64 compact unwind on macOS), the LLVM emitter's x86_64 unwind_save and unwind_resume and xo_x_personality on every target, xo_rt.c's XO_UNWIND_LIBGCC path and C personality deleted, the C xo_personality forwarder kept for seed 0.12.0's x86_64 code; UNTESTED on linux/amd64 and darwin/amd64, cross linked on the Mac; notes) | 185 | PORT 137, SHIM 48 | xo_rt.c 1737-1777, 1880-1927, 1974-2021; xo_nolibc.c 1567-1614 |
 | B06 fault record, fault exit, Windows unwind (done 2026-10-14: part 1 the record and fault_exit in fault.xo; part 2 the entry points as Xo exports, decision 0228, C forwarders until a seed; part 3 the Windows walk in unwind.xo win_raise; fault-record-2026-10-14.md; 2026-10-15, xo-fa: the root context of a thread running Xo outside any task is ctx.xo root (xo_rt.c ctx forwards; rt_once, rt_init, cur_set, park_init deleted); 2026-10-15, xo-fa, the last fault entries as Xo exports: cabi.xo fault_raise, fault_continue, fault_take, fault_msg, fault_loc, fault_detail (fault.xo raise, cont, take, msg, loc, detail) for the emitters to name (Xo Lang 3's emitter switch), the C xo_fault_raise, continue, take, msg, loc and detail now forwarders, fault_raise_msg with a null message raising the fault already recorded, rs_of_cstr, fault_clear and three record exports deleted. GLUE for the end pass, by generated code or the seed: xo_fault_*, xo_fault_take, xo_fault_msg and xo_fault_loc (C strings to Str), xo_landing, xo_is_canceled, xo_personality's forwarder; by platform: the libgcc forced unwind and C personality of x86_64 with a C library (until decision 0221's stage 2, done 2026-10-15; fault_raise's Windows context capture moved to unwind.xo win_raise 2026-10-15, xo-fa, inventory rank 14), and the environ shim (xo_w_environ on Windows) C main hands to process.xo) | 319 | PORT 241, GLUE 78 | xo_rt.c 708-778, 1644-1736, 1778-1879, 1928-1973; xo_bytes.c 416-422 |
 | B08 SHA-512 and rand (done 2026-10-14) | 258 | PORT 258 | xo_crypto.c 19-128, 142-289 |

@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- XO_NOLIBC=1 (Linux, no C library): the process entry is emitted by
+  the backends (selfhost/ssa ir.xo entry_stub_arm64 and
+  entry_stub_amd64, through the arm64 emitter's assembly and the LLVM
+  emitter's module asm, first split module only): _start records the
+  initial stack in Xo, stores environ and the standard streams, sets
+  tpidr_el0 (arm64), switches to main's 1 GiB stack, and calls
+  main(argc, argv, envp), then exit. std/llrt/xo_nolibc.c's C entry
+  stays behind XO_NOLIBC_C_START=1 until CI has run the stubs. Also: the
+  nolibc flags follow the target architecture (a linux/amd64 LLVM cross
+  build from an arm64 Mac took arm64's), and a weak platform call of a
+  name the module exports (__errno_location) no longer declares it a
+  second time. Cross linked on the Mac for linux/arm64 and linux/amd64
+  (hello and five goldens); UNTESTED on linux.
 - LLVM builds of one module pick their LTO by optimization level:
   none at `-O0`, full otherwise, `XO_LLVM_LTO=full|thin|none` to
   choose. The LLVM self build of selfhost/xo at O0 takes 129 s instead

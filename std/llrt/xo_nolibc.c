@@ -16,10 +16,12 @@
 // end the program with a message; getaddrinfo is not defined (the network
 // is cabi_net.xo's); unwinding is Xo (decision 0221, unwind.xo).
 //
-// What stays here needs C: _start (the initial stack pointer), the stack
-// switch to main's 1 GiB stack and arm64's thread pointer register (asm),
-// the data symbols environ, stdin, stdout, and stderr, and the variadic
-// printf functions (va_start), which hand their va_list to Xo.
+// What stays here needs C: the data symbols environ, stdin, stdout, and
+// stderr, and the variadic printf functions (va_start), which hand their
+// va_list to Xo. The process entry (_start, the thread pointer, the switch
+// to main's 1 GiB stack, the call of main) is the backends' (selfhost/ssa
+// ir.xo entry_stub_arm64); the C one below is built only with
+// XO_NOLIBC_C_START=1, until CI has run the stubs.
 
 // The Xo exports the start calls (std/native/llrt/cabi_nolibc.xo), before
 // the main thread has its thread pointer.
@@ -42,10 +44,15 @@ char **environ;
 FILE *stdin;
 FILE *stdout;
 FILE *stderr;
-static int nl_argc;
-static char **nl_argv;
+
+#ifdef XO_NOLIBC_C_START
+// The C process entry, kept selectable (XO_NOLIBC_C_START=1) until CI has
+// run the backends' (selfhost/ssa ir.xo entry_stub_arm64 and
+// entry_stub_amd64, which do the same with no C), then deleted.
 
 extern int main(int, char **);
+static int nl_argc;
+static char **nl_argv;
 
 NL_USED __attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv)); }
 
@@ -88,6 +95,7 @@ __asm__(".text\n.global _start\n.type _start, @function\n_start:\n"
 #else
 #error "XO_NOLIBC: arm64 or x86_64 Linux only"
 #endif
+#endif // XO_NOLIBC_C_START
 
 // ---------------------------------------------------------------------------
 // The variadic printf functions: va_start, then Xo's vsnprintf and
