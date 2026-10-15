@@ -85,6 +85,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   anyval.xo's Any directly; the C forwarders stay for code of earlier
   compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
   alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
+- Tests (zero-C audit B28 follow up): the HTTP parser coverage the C
+  drivers had is back, in Xo. TestHTTPParseDiff and FuzzHTTPDiff send
+  their corpus and random requests (3,081 inputs) to http1DiffProgram
+  built with LLVM and arm64 and compare with net/http in process;
+  TestHTTPFuzz mutation fuzzes the HTTP/1.1 server, HTTP/2 frames and
+  HPACK over TLS, the client's response reading, and std/json decoding,
+  each program run with XO_LEAKCHECK=1 (XO_FUZZ_SECONDS, FUZZ_SEED,
+  XO_FUZZ_REPLAY). std/llrt/testdata/http_diff.c, http_fuzz.c and
+  http_ref.c deleted.
+- std/http: a fault in a middleware (`r.wrap`) is isolated as a
+  handler's (500, logged, the server keeps serving) on every backend. It
+  was not: the Go backend dropped the connection (net/http's recover),
+  and the native server stopped answering anyone
+  (gotchas/native-server-unisolated-fault-wedges.md). Found by
+  TestHTTPFuzz; golden http_fault has the case.
 - Native runtime (zero-C audit item B31, part 19, decision 0202): the
   Xo TLS client offers Go 1.26's groups in its order: X25519MLKEM768,
   SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521

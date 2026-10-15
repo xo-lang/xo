@@ -208,7 +208,22 @@ fn call_raw(r: Router, req: Request) -> http.Response {
     return dispatch(r, req)
   }
   let h = chain(r.mws, fn(q: Request) -> http.Response { dispatch(r, q) })
-  h(req)
+  // a fault in the middleware is isolated as a handler's (std.md 4.2):
+  // it used to reach the connection's task, which stopped the server
+  isolated(fn() -> http.Response { h(req) })
+}
+
+/// f's response, or 500 when it faults (logged; std/rt's
+/// isolateHandler, decision 0085).
+fn isolated(f: fn() -> http.Response) -> http.Response {
+  match task.isolate(fn() -> http.Response ! () { f() }) {
+    Ok(resp) => resp
+    Err(task.Isolated.Faulted(info)) => {
+      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
+      json_error(500, "internal error")
+    }
+    Err(_) => json_error(500, "internal error")
+  }
 }
 
 fn literals(rt: Route) -> Int {
@@ -317,14 +332,7 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   let q = req with {params: bind_params(route, parts, uparts)}
   // a fault in the handler is isolated: 500 (std/rt's isolateHandler,
   // decision 0085)
-  match task.isolate(fn() -> http.Response ! () { h(q) }) {
-    Ok(resp) => resp
-    Err(task.Isolated.Faulted(info)) => {
-      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
-      json_error(500, "internal error")
-    }
-    Err(_) => json_error(500, "internal error")
-  }
+  isolated(fn() -> http.Response { h(q) })
 }
 
 /// A handler's or middleware's error as a response (std.md 4.2).

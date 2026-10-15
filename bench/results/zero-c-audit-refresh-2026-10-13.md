@@ -768,8 +768,8 @@ run by internal/llvm tests through internal/xotool CompileC:
 | crypto_ref.c | 804 | the hashes decision 0198 deleted from xo_crypto.c, kept as test data, included by crypto_diff.c | (with crypto_diff.c) |
 | evloop.c | 363 | event loop and fibers: timers, socket echo, cancellation, select after, a child's pipe; both sched paths | TestRuntimeEventLoop (threads_test.go:295) |
 | fault_resume.c | 50 | a fault unwinding through a C cleanup that calls _Unwind_Resume | TestRuntimeFaultResume (fault_resume_test.go:21) |
-| http_diff.c | 205 | the HTTP/1.1 server's reading and writing against Go's net/http | TestHTTPParseDiff (http_diff_test.go:419) |
-| http_fuzz.c | 395 | mutation fuzzer of the server, the client's response reader, HTTP/2 server and client, under ASan and UBSan | TestHTTPFuzz (http_diff_test.go:580) |
+| http_diff.c | 205 | deleted 2026-10-15 (B28 follow up, xo-4b): TestHTTPParseDiff and FuzzHTTPDiff now send their inputs to the Xo server program http1DiffProgram built with the native backends and compare with net/http in process | TestHTTPParseDiff, FuzzHTTPDiff (http_diff_test.go) |
+| http_fuzz.c, http_ref.c | 395, 1,123 | deleted 2026-10-15: TestHTTPFuzz mutation fuzzes the Xo parsers through built programs (the HTTP/1.1 server over TCP, HTTP/2 frames and HPACK over TLS, the client's response reading, std/json) with XO_LEAKCHECK=1; it found a middleware fault stopping the native server (fixed) | TestHTTPFuzz (http_diff_test.go) |
 | rc_threads.c | 547 | shared reference counts between threads (the only caller of xo_rc_inc, xo_rc_dec, xo_rc_claim at xo_rt.c 498-505) | TestRuntimeThreads (threads_test.go:200) |
 | realtime.c | 185 | real-time sections (deferred frees) | TestRuntimeRealtime (realtime_test.go:100) |
 | tasks.c | 550 | the task runtime: spawn, channels, mutexes, cancellation; both sched paths | TestRuntimeTasks (threads_test.go:262) |

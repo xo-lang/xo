@@ -963,7 +963,9 @@ When a handler returns `Err(e)`:
 - otherwise the response is 500 with `{"error": "internal error"}` and the
   error is logged with its frames.
 
-A fault in a handler is isolated: 500, logged, crash bundle written. On the
+A fault in a handler or a middleware is isolated: 500, logged, crash
+bundle written (the middleware registered before a faulting one sees no
+response: the 500 replaces the whole chain's). On the
 native backends (`--no-gc`, decisions 0074, 0083, and 0085) it is isolated
 the same way (the handler unwinds, the server keeps serving) but no crash
 bundle is written, and the error of a 500 is logged without frames.
