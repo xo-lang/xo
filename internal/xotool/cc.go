@@ -19,17 +19,10 @@ import (
 // clang.xo) has its own; TestIOFlagsMatchXo keeps the tables the same.
 
 // IOFlags returns the C compiler flags that compile the runtime's
-// standard input reads (XO_STDIN), and Proc.run (xo_proc.c, XO_PROC) into a
-// native program whose code calls them
-// (decision 0102), so programs without them do not grow.
+// Proc.run (xo_proc.c, XO_PROC) into a native program whose code calls
+// it (decision 0102), so programs without it do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
-	for _, sym := range []string{"xo_stdin_"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_STDIN")
-			break
-		}
-	}
 	if callsSym(code, "xo_proc_") {
 		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
 		out = append(out, "-DXO_PROC")
@@ -39,7 +32,8 @@ func IOFlags(code []byte) []string {
 	// with their -D flags, and no C defines xo_fs_mkdir_all,
 	// xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
 	// the C path of text (-DXO_TEXT_C); the C Fs operations (-DXO_FS)
-	// and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed.
+	// and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed, and
+	// -DXO_STDIN with xo_stdin.c (B32 part 2).
 	return out
 }
 

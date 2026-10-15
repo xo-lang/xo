@@ -149,7 +149,7 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], key: St
   // the variants
   var cmds: List[List[Str]] = []
   var labels: List[Str] = []
-  for i in 0..16 {
+  for i in 0..VARIANTS {
     let args = cc + base + variant_defines(i)
     cmds.push(args + ["-c", "-o", "${stage}/${variant_file(i)}", rt])
     labels.push("compiling the runtime (${variant_file(i)})")

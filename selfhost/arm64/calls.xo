@@ -554,8 +554,7 @@ fn (var g: G) call_op(v: Int) {
       let es = g.esize(g.m.types[x.ty].elems[0])
       if x.args.len() == 1 {
         // with room for a number of elements: std/native/llrt/obj.xo
-        // rl_new_n through its export, with no C level (the C's
-        // xo_rl_new_n stays for code of earlier compilers)
+        // rl_new_n through its export, with no C level
         let n = g.word(x.args[0])
         g.set(v, g.rt("xo_x_obj_rl_new_n", [rsrc(n), isrc(es)], [false]))
         return
@@ -656,8 +655,7 @@ fn (var g: G) call_op(v: Int) {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
       let n = g.def1(false, "add $d0, $u0, $u1", [a[1], b[1]])
-      // obj.xo's rs_append through its export, with no C level (the C's
-      // xo_rs_concat stays for code of earlier compilers)
+      // obj.xo's rs_append through its export, with no C level
       let obj = g.rt("xo_x_obj_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
       g.set(v, [obj[0], n])
     }
@@ -1002,8 +1000,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     // the runtime's immortal placeholders (an unwinding operation's
     // result, the empty list): their addresses, no call (xo_rt.c
-    // xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero stay for
-    // code of earlier compilers)
+    // xo_empty_list, xo_zero_handle)
     "rt.rl_empty" => g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
     "rt.h_zero" => g.set(v, [g.sym_addr(g.sym("xo_zero_handle"))])
     "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
@@ -1473,12 +1470,10 @@ fn (var g: G) rt_call(v: Int) {
   var name = "xo_${name0.trim_prefix("rt.")}"
   if name0 is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
     // obj.xo's string builders through their exports, with no C level
-    // (the C entries stay for code of earlier compilers)
     name = "xo_x_obj_${name0.trim_prefix("rt.")}"
   }
   if name0 is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
-    // ctx.xo's shields through their exports (decision 0229; the C
-    // entries stay for LLVM and older xo's code)
+    // ctx.xo's shields through their exports (decision 0229)
     name = "xo_x_ctx_${name0.trim_prefix("rt.")}"
   }
   if name0 is "rt.sched_hook" | "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" | "rt.mutex_new" | "rt.mutex_lock" | "rt.mutex_unlock" | "rt.mutex_rlock" | "rt.mutex_runlock" | "rt.chan_new" | "rt.chan_send" | "rt.chan_recv" | "rt.chan_try_send" | "rt.chan_try_recv" | "rt.chan_close" | "rt.chan_len" | "rt.select_new" | "rt.select_recv" | "rt.select_send" | "rt.select_wait" | "rt.select_take" | "rt.atomic_new" | "rt.const_once" {

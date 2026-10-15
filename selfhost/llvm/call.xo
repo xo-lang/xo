@@ -46,8 +46,7 @@ fn (var g: Gen) call(v: Int) {
       if args.len() == 1 {
         // with room for a number of elements
         let a0 = g.op(args[0])
-        // obj.xo's export, with no C level (xo_rl_new_n stays for code
-        // of earlier compilers)
+        // obj.xo's export, with no C level
         let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.size(et)}) #6")
         g.set(v, "inttoptr i64 ${r} to ptr")
         return
@@ -237,8 +236,7 @@ fn (var g: Gen) call(v: Int) {
       let (ao, _, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (bo, _, bn) = g.str_parts(a1)
-      // obj.xo's export, with no C level (xo_rs_concat stays for code of
-      // earlier compilers)
+      // obj.xo's export, with no C level
       let pa = g.def("ptrtoint ptr ${ao} to i64")
       let pb = g.def("ptrtoint ptr ${bo} to i64")
       let r = g.def("call i64 @xo_x_obj_rs_concat(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
@@ -729,8 +727,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       return false
     }
     // the runtime's immortal placeholders: their addresses, no call
-    // (xo_rt.c xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero
-    // stay for code of earlier compilers)
+    // (xo_rt.c xo_empty_list, xo_zero_handle)
     "rt.rl_empty" => g.alias(v, g.empty_list())
     "rt.h_zero" => {
       g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
@@ -1287,12 +1284,11 @@ fn xo_export(name: Str) -> Str {
   }
   if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
     // heapos.xo's platform calls (B21) and anyval.xo through their
-    // exports (the C forwarders stay for code of earlier compilers)
+    // exports
     return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
-    // obj.xo's string builders, as on arm64 (xo_bytes.c's and xo_std.c's
-    // forwarders stay for code of earlier compilers)
+    // obj.xo's string builders, as on arm64
     return "xo_x_obj_${name.trim_prefix("rt.")}"
   }
   // the net, clock and scope checks, shutdown and real-time sections

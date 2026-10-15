@@ -65,10 +65,6 @@ static inline int n_utf8_encode(char *p, int32_t r) { return (int)xo_x_utf8_enco
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
 
-// standard input reads are std/native/llrt/stdin.xo's on every OS (the
-// zero-C audit's B32 part 2 removed xo_stdin.c; XO_STDIN, still passed
-// by the driver for programs that read standard input, selects nothing)
-
 // Proc.run and FakeProc.on_run (decision 0107), compiled only into
 // programs that call them (XO_PROC)
 #ifdef XO_PROC

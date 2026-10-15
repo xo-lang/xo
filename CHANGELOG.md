@@ -12,6 +12,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cabi.xo's, on both backends; the LLVM module head drops the
   declarations of the C fault raisers and number builders. The C entries
   stay for seed 0.12.0's code.
+- Build: the prebuilt runtime pack is format 3, with 4 variants (the
+  subsets of -DXO_TIME and -DXO_PROC) instead of 16; -DXO_FS and
+  -DXO_STDIN, which select nothing since xo_fs.c and xo_stdin.c went,
+  are gone from selfhost/xo rt.xo, rtpack.xo and io_flags (and xotool
+  IOFlags). The emitters' comments no longer say deleted C entries stay.
+  xo_rt.c drops 13 declarations of Xo exports nothing in C calls.
 - Native backends (generated-code entries): string equality and order
   are obj.xo's str_eq and str_cmp (rt.mem_cmp) called through their
   exports on both backends; xo_str_eq and xo_str_cmp stay for code of

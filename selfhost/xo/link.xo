@@ -334,20 +334,14 @@ fn find_cc(os: Os) -> Str {
   ""
 }
 
-/// The C compiler flags of the runtime's standard input and Proc.run,
-/// when the code calls them (internal/build IOFlags).
+/// The C compiler flags of the runtime's Proc.run when the code calls it
+/// (internal/build IOFlags).
 fn io_flags(code: Str) -> List[Str] {
   // one scan of the code for the runtime names, where a scan per name
   // took about a minute on the 437 MB of selfhost/xo's assembly
   // (bench/results/fast-builds-2026-10-13.md)
   let syms = code_syms(code)
   var out: List[Str] = []
-  for sym in ["xo_stdin_"] {
-    if has_sym(syms, sym) {
-      out.push("-DXO_STDIN")
-      break
-    }
-  }
   if has_sym(syms, "xo_proc_") {
     out.push("-DXO_PROC")
   }
@@ -356,7 +350,8 @@ fn io_flags(code: Str) -> List[Str] {
   // with their -D flags, and no C defines xo_fs_mkdir_all,
   // xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
   // the C path of text (-DXO_TEXT_C); the C Fs operations (-DXO_FS)
-  // and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed.
+  // and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed, and
+  // -DXO_STDIN with xo_stdin.c (B32 part 2).
   out
 }
 

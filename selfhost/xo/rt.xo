@@ -190,29 +190,26 @@ fn rtpack_flags(goos: Str) -> List[Str] {
   f
 }
 
-/// A variant of the runtime: XO_TIME, XO_FS, XO_STDIN, XO_PROC as the
-/// bits 1, 2, 4, 8 of i (RTVariants' order).
+/// The variants of the runtime in a pack (format 3: XO_FS and XO_STDIN
+/// went with xo_fs.c and xo_stdin.c, 2026-10-15).
+const VARIANTS = 4
+
+/// A variant of the runtime: XO_TIME, XO_PROC as the bits 1, 2 of i.
 fn variant_defines(i: Int) -> List[Str] {
   var out: List[Str] = []
   if i % 2 == 1 {
     out.push("-DXO_TIME")
   }
   if i / 2 % 2 == 1 {
-    out.push("-DXO_FS")
-  }
-  if i / 4 % 2 == 1 {
-    out.push("-DXO_STDIN")
-  }
-  if i / 8 % 2 == 1 {
     out.push("-DXO_PROC")
   }
   out
 }
 
-/// RTVariant.File: rt-time-fs-stdin-proc.o with the parts it has.
+/// RTVariant.File: rt-time-proc.o with the parts it has.
 fn variant_file(i: Int) -> Str {
   var n = "rt"
-  let parts = ["time", "fs", "stdin", "proc"]
+  let parts = ["time", "proc"]
   var bit = 1
   for p in parts {
     if i / bit % 2 == 1 {
@@ -233,9 +230,9 @@ fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
 fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str ! FsErr {
   var b = BytesBuilder.new()
   // format 2: no TLS library or TLS variants (Mbed TLS removed,
-  // 2026-10-15)
-  b.write_str("xo rtpack 2\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\n")
-  for i in 0..16 {
+  // 2026-10-15); format 3: no XO_FS or XO_STDIN variants
+  b.write_str("xo rtpack 3\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\n")
+  for i in 0..VARIANTS {
     b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))}\n")
   }
   var names: List[Str] = []
@@ -406,12 +403,8 @@ fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str]) -> Str {
       opt += 1
     } else if f == "-DXO_TIME" {
       v = v + if v % 2 == 1 { 0 } else { 1 }
-    } else if f == "-DXO_FS" {
-      v = v + if v / 2 % 2 == 1 { 0 } else { 2 }
-    } else if f == "-DXO_STDIN" {
-      v = v + if v / 4 % 2 == 1 { 0 } else { 4 }
     } else if f == "-DXO_PROC" {
-      v = v + if v / 8 % 2 == 1 { 0 } else { 8 }
+      v = v + if v / 2 % 2 == 1 { 0 } else { 2 }
     } else {
       return ""
     }

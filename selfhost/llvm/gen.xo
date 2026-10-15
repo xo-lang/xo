@@ -804,9 +804,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
           let ef = g.elem_fn("drop", et)
-          // obj.xo's export, inlined at the call as the C entry inlined it
-          // (XO_INLINE_CALL; the C entry stays for code of earlier
-          // compilers)
+          // obj.xo's export, inlined at the call as the C entry
+          // xo_rl_free inlined it (XO_INLINE_CALL)
           let po = b.tmp()
           b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_free_n(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n  br label %done\n")
         }

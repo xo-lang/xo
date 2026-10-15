@@ -213,7 +213,6 @@ static inline xo_heap *heap(void) {
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
 void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t libc, int64_t hsize);
-int64_t xo_x_heap_nfree(int64_t c);
 
 // heap_libc tells heapos.xo to map the heap's memory through the C
 // library: ThreadSanitizer and AddressSanitizer see the mappings
@@ -1476,8 +1475,6 @@ _Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 
                    offsetof(xo_budget, loc) == 88 && sizeof(xo_budget) == 96,
                "budget.xo B_*");
 
-void xo_x_budget_retain(int64_t b);
-
 // The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
 // (decision 0229), which generated code calls through its exports.
 
@@ -1583,8 +1580,6 @@ static void *pool_rec(void);
 int64_t xo_x_worker_main(int64_t w);
 
 void xo_x_park_reset(int64_t p);
-int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t, int64_t w);
-void xo_x_scope_join(int64_t pl, int64_t s, int64_t c, int64_t f, int64_t rw);
 void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
@@ -1681,7 +1676,6 @@ static void *pool_rec(void) { return svc.pool; }
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
 // (twrun.xo kick) checks again after it.
-void xo_x_dl_check(int64_t p);
 XO_NORETURN void xo_x_deadlock(void);
 
 static void sched_hooks(xo_worker *w);
@@ -2251,7 +2245,6 @@ _Static_assert(offsetof(struct xo_timer, when) == 0 && offsetof(struct xo_timer,
 
 // The timer heap is std/native/llrt/poll.xo's (zero-C audit B22 stage 1),
 // ev.mu held around each call.
-int64_t xo_x_poll_timer_push(int64_t t);
 void xo_x_poll_timer_remove(int64_t t);
 int64_t xo_x_poll_timer_first(void);
 #define th_first() ((xo_timer *)(intptr_t)xo_x_poll_timer_first())
@@ -2365,9 +2358,6 @@ XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
 int64_t xo_x_fd_close(int64_t fd);
 int64_t xo_x_fd_nonblock(int64_t fd);
 int64_t xo_x_fd_shutdown(int64_t fd, int64_t how);
-int64_t xo_x_poll_create(void);
-int64_t xo_x_poll_ctl(int64_t ep, int64_t op, int64_t fd, int64_t ev);
-int64_t xo_x_poll_wait(int64_t ep, int64_t evs, int64_t n, int64_t ms);
 
 #ifdef XO_WINPOLL
 // nx_ret is a system call's result in the C library's convention.
@@ -2975,13 +2965,9 @@ void xo_x_stop_init(int64_t svc);
 void xo_x_stop_signal(void);
 void xo_x_stop_cancel(void);
 int64_t xo_x_stop_requested(void);
-int64_t xo_x_stop_canceled(void);
 int64_t xo_x_stop_stopping(int64_t drop);
-int64_t xo_x_stop_root(void);
 void xo_x_stop_set_root(int64_t n);
 void xo_x_stop_end(void);
-void xo_x_stop_reset(int64_t n);
-int64_t xo_x_stop_unroot(int64_t n);
 
 // stop_signal handles SIGINT or SIGTERM (on the poller thread).
 static void stop_signal(void) { xo_x_stop_signal(); }

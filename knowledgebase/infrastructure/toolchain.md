@@ -2210,9 +2210,10 @@ Last verified: 2026-10-11. Results:
 `bench/results/prebuilt-runtime-2026-10-11.md`.
 
 - A pack is `<root>/<os>-<arch>/`: `rt*.o`, one object of std/llrt per
-  variant (16: the subsets of `-DXO_TIME`, `-DXO_FS`, `-DXO_STDIN`,
-  `-DXO_PROC`; `RTVariant.File`; 32 with TLS and a `libxotls.a` until
-  format 2, 2026-10-15), and
+  variant (4 since format 3, 2026-10-15: the subsets of `-DXO_TIME` and
+  `-DXO_PROC`, selfhost/xo rt.xo variant_file; 16 with `-DXO_FS` and
+  `-DXO_STDIN` in format 2; 32 with TLS and a `libxotls.a` before
+  format 2), and
   `rtpack.json` (format, target, key, compiler, flags, SHA-256 per
   file). Packs exist for darwin/arm64 and linux/arm64 (the arm64
   backend's targets). About 16 MB per target.
