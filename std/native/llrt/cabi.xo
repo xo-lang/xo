@@ -29,6 +29,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
+use native/llrt/selects
 use native/llrt/tasks
 use native/llrt/stdio
 use native/llrt/sysio
@@ -698,3 +699,16 @@ fn chan_try_recv(c: Int) -> Int { chan.try_recv(c) }
 fn chan_close(c: Int) { chan.close(c) }
 
 fn chan_len(c: Int) -> Int { chan.len(c) }
+
+// select (std/native/llrt/selects.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. s a select, c a channel.
+
+fn select_new() -> Int { selects.new() }
+
+fn select_recv(s: Int, c: Int) { selects.recv(s, c) }
+
+fn select_send(s: Int, c: Int, l: Int) { selects.send(s, c, l) }
+
+fn select_wait(s: Int, lp: Int, ln: Int) -> Int { selects.wait(s, lp, ln) }
+
+fn select_take(s: Int, i: Int) -> Int { selects.take(s, i) }

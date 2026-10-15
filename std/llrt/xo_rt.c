@@ -1978,6 +1978,7 @@ static void task_free(void *p);
 static void scope_free(void *p);
 static void mutex_free(void *p);
 static void chan_free(void *p);
+static void select_free(void *p);
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -1992,16 +1993,17 @@ static struct {
 	xo_lock once; // poolsetup.xo ready's lock
 	void (*mutex_free)(void *);
 	void (*chan_free)(void *);
+	void (*select_free)(void *);
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, 0, mutex_free, chan_free};
+	&rtstats, 0, mutex_free, chan_free, select_free};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64,
                "ctx.xo SV_*");
 
 static int64_t svc_addr(void) { return XO_ADDR(&svc); }
@@ -2575,6 +2577,9 @@ void xo_sched_run_task(int64_t fa) {
 
 // xo_sched_rt is the C runtime's services for std/native/llrt/pool.xo
 // (rt.sched_rt, decision 0212 stage 2): op is pool.xo's RT_*.
+static int64_t select_timer_op(int64_t s);
+static void select_untimer_op(int64_t t);
+
 int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	switch (op) {
 	case 0: // a statistic: st's counter a
@@ -2659,6 +2664,11 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 26: // the fiber stacks' settings (pool.xo's setup)
 		fibers_setup();
+		return 0;
+	case 27: // select a's `after` arm: its timer (selects.xo wait)
+		return select_timer_op(a);
+	case 28: // timer a of a select's `after` arm goes
+		select_untimer_op(a);
 		return 0;
 	case 22:
 		TSAN_RELEASE((void *)(intptr_t)a);
@@ -2792,50 +2802,6 @@ typedef struct {
 	xo_cent *head, *tail;
 } xo_cq;
 
-static void cq_push(xo_cq *q, xo_cent *e) {
-	e->next = NULL;
-	e->prev = q->tail;
-	if (q->tail) {
-		q->tail->next = e;
-	} else {
-		q->head = e;
-	}
-	q->tail = e;
-}
-
-static void cq_del(xo_cq *q, xo_cent *e) {
-	if (e->prev) {
-		e->prev->next = e->next;
-	} else if (q->head == e) {
-		q->head = e->next;
-	} else {
-		return; // not queued
-	}
-	if (e->next) {
-		e->next->prev = e->prev;
-	} else {
-		q->tail = e->prev;
-	}
-	e->prev = e->next = NULL;
-}
-
-static int claim(int64_t *fired) {
-	int64_t z = 0;
-	return __atomic_compare_exchange_n(fired, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-}
-
-// cq_take pops the first waiter nobody has claimed, claiming it.
-static xo_cent *cq_take(xo_cq *q) {
-	while (q->head) {
-		xo_cent *e = q->head;
-		cq_del(q, e);
-		if (claim(e->fired)) {
-			return e;
-		}
-	}
-	return NULL;
-}
-
 typedef struct {
 	xo_hdr h;
 	xo_lock mu;
@@ -2859,63 +2825,9 @@ static void chan_free(void *p) {
 }
 
 
-// hand wakes the waiter of e, which a waker claimed and gave its value
-// (c->mu held).
-static void hand(xo_cent *e) {
-	if (e->chosen) {
-		__atomic_store_n(e->chosen, e->idx, __ATOMIC_RELEASE);
-	}
-	park_signal(e->park);
-}
-
-// try_send_locked sends l without blocking (c->mu held, c open).
-static int try_send_locked(xo_chan *c, xo_rlist *l) {
-	xo_cent *r = cq_take(&c->recvq);
-	if (r) {
-		r->item = l;
-		hand(r);
-		return 1;
-	}
-	if (c->len < c->cap) {
-		c->buf[(c->head + c->len) % c->cap] = l;
-		c->len++;
-		return 1;
-	}
-	return 0;
-}
-
-// try_recv_locked receives without blocking (c->mu held): 1 with *out
-// set (NULL: closed and drained), or 0 when it would block.
-static int try_recv_locked(xo_chan *c, xo_rlist **out) {
-	if (c->len > 0) {
-		*out = c->buf[c->head];
-		c->head = (c->head + 1) % c->cap;
-		c->len--;
-		xo_cent *s = cq_take(&c->sendq);
-		if (s) {
-			c->buf[(c->head + c->len) % c->cap] = s->item;
-			c->len++;
-			hand(s);
-		}
-		return 1;
-	}
-	xo_cent *s = cq_take(&c->sendq);
-	if (s) {
-		*out = s->item;
-		hand(s);
-		return 1;
-	}
-	if (c->closed) {
-		*out = NULL;
-		return 1;
-	}
-	return 0;
-}
-
 // The channel operations are chan.xo's (B19), which generated code calls
 // through its exports; these forward for older xo's code. chan_free stays
-// C (the free function the handle names). The queue helpers above stay
-// for the select (B19's next part).
+// C (the free function the handle names).
 int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
 void xo_x_chan_send(int64_t c, int64_t l, int64_t lp, int64_t ln);
 int64_t xo_x_chan_recv(int64_t c);
@@ -2986,165 +2898,31 @@ static void select_free(void *p) {
 	xo_free(s);
 }
 
-xo_select *xo_select_new(void) {
-	xo_select *s = xo_alloc(sizeof(xo_select));
-	memset(s, 0, sizeof *s);
-	h_init(s, select_free);
-	return s;
-}
+// The select's operations are selects.xo's (B19), which generated code
+// calls through its exports; these forward for older xo's code.
+// select_free stays C (the free function the handle names), and the
+// `after` arm's timer (select_timer, select_untimer: rt.sched_rt 27, 28).
+int64_t xo_x_select_new(void);
+void xo_x_select_recv(int64_t s, int64_t c);
+void xo_x_select_send(int64_t s, int64_t c, int64_t l);
+int64_t xo_x_select_wait(int64_t s, int64_t lp, int64_t ln);
+int64_t xo_x_select_take(int64_t s, int64_t i);
 
-static void select_arm(xo_select *s, xo_chan *c, int send, xo_rlist *l) {
-	if (s->n == s->cap) {
-		s->cap = s->cap ? s->cap * 2 : 4;
-		s->arms = realloc(s->arms, (size_t)s->cap * sizeof(xo_sarm));
-		if (!s->arms) {
-			xo_oom();
-		}
-	}
-	h_retain(c);
-	s->arms[s->n++] = (xo_sarm){.ch = c, .send = send, .item = l};
-}
+xo_select *xo_select_new(void) { return (xo_select *)(intptr_t)xo_x_select_new(); }
 
-// xo_select_recv adds an arm `v = ch.recv()`.
-void xo_select_recv(xo_select *s, xo_chan *c) { select_arm(s, c, 0, NULL); }
+void xo_select_recv(xo_select *s, xo_chan *c) { xo_x_select_recv(XO_ADDR(s), XO_ADDR(c)); }
 
-// xo_select_send adds an arm `ch.send(x)`, x in a list of one (consumed).
-void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { select_arm(s, c, 1, l); }
+void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { xo_x_select_send(XO_ADDR(s), XO_ADDR(c), XO_ADDR(l)); }
 
-static int chan_addr_cmp(const void *a, const void *b) {
-	uintptr_t x = (uintptr_t)*(xo_chan *const *)a, y = (uintptr_t)*(xo_chan *const *)b;
-	return x < y ? -1 : x > y;
-}
+int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) { return xo_x_select_wait(XO_ADDR(s), XO_ADDR(loc), n); }
 
-// xo_select_wait returns the index of the arm that proceeded (-1 while
-// unwinding); a send arm on a closed channel faults.
-int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		return -1;
-	}
-	xo_chan **cs = malloc((size_t)(s->n ? s->n : 1) * sizeof(xo_chan *));
-	if (!cs) {
-		xo_oom();
-	}
-	int nc = 0;
-	for (int i = 0; i < s->n; i++) {
-		cs[nc++] = s->arms[i].ch;
-	}
-	qsort(cs, (size_t)nc, sizeof(xo_chan *), chan_addr_cmp);
-	int u = 0;
-	for (int i = 0; i < nc; i++) {
-		if (u == 0 || cs[u - 1] != cs[i]) {
-			cs[u++] = cs[i];
-		}
-	}
-	nc = u;
-	s->fired = 0;
-	s->chosen = -1;
-	park_reset(&x->park);
-	for (int i = 0; i < nc; i++) {
-		lk(&cs[i]->mu);
-	}
-	int done = -1, shut = 0;
-	for (int i = 0; i < s->n && done < 0; i++) {
-		xo_sarm *a = &s->arms[i];
-		xo_chan *c = a->ch;
-		if (a->send) {
-			if (c->closed) {
-				shut = 1;
-				done = i;
-			} else if (try_send_locked(c, a->item)) {
-				a->item = NULL;
-				done = i;
-			}
-		} else {
-			xo_rlist *out;
-			if (try_recv_locked(c, &out)) {
-				a->item = out;
-				done = i;
-			}
-		}
-	}
-	if (done < 0 && s->has_after && s->after <= 0) {
-		done = -2;
-	}
-	int queued = done < 0;
-	int counted = !s->has_after;
-	if (queued) {
-		for (int i = 0; i < s->n; i++) {
-			counted = counted && !s->arms[i].ch->ext;
-			xo_sarm *a = &s->arms[i];
-			a->e = (xo_cent){.park = &x->park, .fired = &s->fired, .item = a->item, .idx = i, .chosen = &s->chosen};
-			cq_push(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
-		}
-	}
-	for (int i = nc - 1; i >= 0; i--) {
-		unlk(&cs[i]->mu);
-	}
-	int unwound = 0;
-	if (queued) {
-		struct xo_timer *tm = NULL;
-		if (s->has_after) {
-			s->park = &x->park;
-			select_timer(s, &tm);
-		}
-		for (;;) {
-			park_wait_n(x, 1, counted);
-			if (__atomic_load_n(&s->fired, __ATOMIC_ACQUIRE)) {
-				break;
-			}
-			if (ctx_canceled(x)) {
-				if (claim(&s->fired)) {
-					unwound = 1;
-				}
-				break;
-			}
-		}
-		if (tm) {
-			select_untimer(tm);
-		}
-		// take the arms off every queue; the waker's writes are visible
-		// under the channel locks
-		for (int i = 0; i < nc; i++) {
-			lk(&cs[i]->mu);
-		}
-		for (int i = 0; i < s->n; i++) {
-			xo_sarm *a = &s->arms[i];
-			cq_del(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
-		}
-		if (!unwound && (done = (int)__atomic_load_n(&s->chosen, __ATOMIC_ACQUIRE)) >= 0) {
-			xo_sarm *a = &s->arms[done];
-			if (a->send) {
-				shut = a->e.shut;
-				if (!shut) {
-					a->item = NULL; // the receiver has it
-				}
-			} else {
-				a->item = a->e.item;
-			}
-		}
-		for (int i = nc - 1; i >= 0; i--) {
-			unlk(&cs[i]->mu);
-		}
-	}
-	free(cs);
-	if (unwound) {
-		x->unwinding = 1;
-		return -1;
-	}
-	if (shut) {
-		fault_at("send on a closed channel", loc, n);
-	}
-	return done;
-}
+xo_rlist *xo_select_take(xo_select *s, int64_t i) { return (xo_rlist *)(intptr_t)xo_x_select_take(XO_ADDR(s), i); }
 
-// xo_select_take returns what receive arm i got: the value in a list of
-// one, or the empty list when its channel was closed and drained.
-xo_rlist *xo_select_take(xo_select *s, int64_t i) {
-	xo_rlist *l = s->arms[i].item;
-	s->arms[i].item = NULL;
-	return l ? l : &empty_list;
-}
+_Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && offsetof(xo_sarm, e) == 24 && sizeof(xo_sarm) == 88 &&
+                   offsetof(xo_select, arms) == 16 && offsetof(xo_select, n) == 24 && offsetof(xo_select, cap) == 28 &&
+                   offsetof(xo_select, fired) == 32 && offsetof(xo_select, chosen) == 40 && offsetof(xo_select, has_after) == 48 &&
+                   offsetof(xo_select, after) == 56 && offsetof(xo_select, park) == 64 && sizeof(xo_select) == 72,
+               "selects.xo A_*, SE_*");
 
 // ---------------------------------------------------------------------------
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
@@ -4547,7 +4325,8 @@ void xo_select_after(xo_select *s, int64_t d) {
 
 static void select_timeout(xo_timer *t) {
 	xo_select *s = t->arg;
-	if (claim(&s->fired)) {
+	int64_t z = 0;
+	if (__atomic_compare_exchange_n(&s->fired, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
 		__atomic_store_n(&s->chosen, -2, __ATOMIC_RELEASE);
 		park_signal(s->park);
 	}
@@ -5473,6 +5252,15 @@ static void select_untimer(struct xo_timer *t) {
 	timer_del(t);
 	free(t);
 }
+
+// selects.xo's ops for the `after` arm's timer (rt.sched_rt 27, 28).
+static int64_t select_timer_op(int64_t s) {
+	struct xo_timer *tm = NULL;
+	select_timer((xo_select *)(intptr_t)s, &tm);
+	return XO_ADDR(tm);
+}
+
+static void select_untimer_op(int64_t t) { select_untimer((struct xo_timer *)(intptr_t)t); }
 
 // ---------------------------------------------------------------------------
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata

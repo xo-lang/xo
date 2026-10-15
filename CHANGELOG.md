@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B19, part 3): `select` (its arms,
+  the wait over every channel's lock in address order, take) is Xo
+  (std/native/llrt/selects.xo), which generated code calls directly.
 - Native runtime (zero-C audit item B19, part 2): channels (new, send,
   recv, try_send, try_recv, close, len) are Xo
   (std/native/llrt/chan.xo), which generated code calls directly; a

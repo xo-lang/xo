@@ -22,12 +22,12 @@ use native/rt
 /// receive got (0: closed), shut (a C int: the channel closed while a
 /// send waited), a select arm's index and the address of the select's
 /// chosen word, and the queue links.
-const E_PARK = 0
-const E_FIRED = 8
-const E_ITEM = 16
-const E_SHUT = 24
-const E_IDX = 32
-const E_CHOSEN = 40
+pub const E_PARK = 0
+pub const E_FIRED = 8
+pub const E_ITEM = 16
+pub const E_SHUT = 24
+pub const E_IDX = 32
+pub const E_CHOSEN = 40
 const E_PREV = 48
 const E_NEXT = 56
 
@@ -36,16 +36,16 @@ const E_NEXT = 56
 /// closed and ext (C ints: closed from outside the program's tasks, so
 /// waiting for it does not count as blocked), the values' drop function,
 /// the receivers' and the senders' queues (head, tail).
-const CH_MU = 16
+pub const CH_MU = 16
 const CH_CAP = 24
 const CH_HEAD = 32
 const CH_LEN = 40
 const CH_BUF = 48
-const CH_CLOSED = 56
-const CH_EXT = 60
-const CH_DROP = 64
-const CH_RECVQ = 72
-const CH_SENDQ = 88
+pub const CH_CLOSED = 56
+pub const CH_EXT = 60
+pub const CH_DROP = 64
+pub const CH_RECVQ = 72
+pub const CH_SENDQ = 88
 const CH_SIZE = 104
 const Q_HEAD = 0
 const Q_TAIL = 8

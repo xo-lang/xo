@@ -1,0 +1,247 @@
+// select (core 7.3; the zero-C audit's B19, decision 0229's rules): arms
+// are added in source order, then wait performs the first arm that can
+// proceed, or waits for one (a cancellation point that unwinds). While
+// it decides, and while it takes its arms off the queues, it holds the
+// locks of all its channels (taken in address order), so no waker sees
+// a half registered select. The record is the C's xo_select (asserted,
+// `selects.xo SE_*`), a handle whose free function (the C's select_free)
+// releases the arms; the `after` arm's timer stays the C's (the poller,
+// rt.sched_rt RT_SELECT_TIMER and RT_SELECT_UNTIMER).
+//
+// Generated code calls the exports (cabi.xo select_*) directly; the C
+// entry points forward for older xo's code.
+use native/llrt/budget
+use native/llrt/chan
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/pool
+use native/llrt/rc
+use native/llrt/tasks
+use native/rt
+
+/// xo_sarm (88 bytes): the channel (a reference), send (a C int), a
+/// send's value until sent or what a receive got, the arm's queue entry
+/// (xo_cent, chan.xo E_*).
+const A_CH = 0
+const A_SEND = 8
+const A_ITEM = 16
+const A_E = 24
+const A_SIZE = 88
+
+/// xo_select (72 bytes): the header, the arms (malloc'd), their count
+/// and capacity (C ints), the fired word, the chosen arm, an `after` arm
+/// (has_after a C int, its duration), and the park its timer signals.
+const SE_ARMS = 16
+const SE_N = 24
+const SE_CAP = 28
+const SE_FIRED = 32
+const SE_CHOSEN = 40
+const SE_HAS_AFTER = 48
+const SE_AFTER = 56
+const SE_PARK = 64
+const SE_SIZE = 72
+
+/// The C's services (pool.xo RT_*): the `after` arm's timer.
+const RT_SELECT_TIMER = 27
+const RT_SELECT_UNTIMER = 28
+
+const ACQUIRE = 1
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
+
+fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
+
+/// A new select (xo_select_new).
+pub fn new() -> Int { tasks.new_handle(SE_SIZE, ctx.SV_SELECT_FREE) }
+
+/// Adds an arm on channel c (a reference taken): a receive, or a send of
+/// l (a list of one, consumed).
+fn arm(s: Int, c: Int, send: Int, l: Int) {
+  let n = ld4(s, SE_N)
+  let cap = ld4(s, SE_CAP)
+  if n == cap {
+    let nc = if cap == 0 { 4 } else { 2 * cap }
+    let a0 = ld(s, SE_ARMS)
+    // malloc'd at its own address: the C's select_free frees it
+    let a = if a0 == 0 { rt.heap_large(A_SIZE * nc) - 8 } else { rt.heap_large_resize(a0, A_SIZE * nc) - 8 }
+    st(s, SE_ARMS, a)
+    st4(s, SE_CAP, nc)
+  }
+  rc.inc(c)
+  let a = ld(s, SE_ARMS) + A_SIZE * n
+  rt.mem_set(a, 0, A_SIZE)
+  st(a, A_CH, c)
+  st4(a, A_SEND, send)
+  st(a, A_ITEM, l)
+  st4(s, SE_N, n + 1)
+}
+
+/// Adds an arm `v = ch.recv()` (xo_select_recv).
+pub fn recv(s: Int, c: Int) { arm(s, c, 0, 0) }
+
+/// Adds an arm `ch.send(x)` (xo_select_send), x in a list of one
+/// (consumed).
+pub fn send(s: Int, c: Int, l: Int) { arm(s, c, 1, l) }
+
+/// The queue of channel c an arm waits in.
+fn queue(c: Int, send: Int) -> Int { c + (if send != 0 { chan.CH_SENDQ } else { chan.CH_RECVQ }) }
+
+/// The index of the arm that proceeded (xo_select_wait; -1 while
+/// unwinding, -2 the `after` arm); a send arm on a closed channel faults
+/// at the ln bytes at lp.
+pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
+  let x = ctx.cur()
+  if tasks.canceled(x) {
+    return -1
+  }
+  let n = ld4(s, SE_N)
+  let arms = ld(s, SE_ARMS)
+  // the channels, sorted by address, each once (a malloc'd array)
+  let cs = rt.heap_large(8 * (if n > 0 { n } else { 1 }))
+  var nc = 0
+  for i in 0..n {
+    let c = ld(arms + A_SIZE * i, A_CH)
+    var j = nc
+    while j > 0 && ld(cs, 8 * (j - 1)) > c {
+      st(cs, 8 * j, ld(cs, 8 * (j - 1)))
+      j -= 1
+    }
+    if j > 0 && ld(cs, 8 * (j - 1)) == c {
+      // already there: undo the shift
+      for k in j..nc {
+        st(cs, 8 * k, ld(cs, 8 * (k + 1)))
+      }
+    } else {
+      st(cs, 8 * j, c)
+      nc += 1
+    }
+  }
+  st(s, SE_FIRED, 0)
+  st(s, SE_CHOSEN, -1)
+  pool.park_reset(x + ctx.C_PARK)
+  for i in 0..nc {
+    pool.lock(ld(cs, 8 * i) + chan.CH_MU)
+  }
+  var done = -1
+  var shut = false
+  var i = 0
+  while i < n && done < 0 {
+    let a = arms + A_SIZE * i
+    let c = ld(a, A_CH)
+    if ld4(a, A_SEND) != 0 {
+      if ld4(c, chan.CH_CLOSED) != 0 {
+        shut = true
+        done = i
+      } else if chan.try_send_locked(c, ld(a, A_ITEM)) {
+        st(a, A_ITEM, 0)
+        done = i
+      }
+    } else {
+      let (ok, got) = chan.try_recv_locked(c)
+      if ok {
+        st(a, A_ITEM, got)
+        done = i
+      }
+    }
+    i += 1
+  }
+  if done < 0 && ld4(s, SE_HAS_AFTER) != 0 && ld(s, SE_AFTER) <= 0 {
+    done = -2
+  }
+  let queued = done < 0
+  var counted = ld4(s, SE_HAS_AFTER) == 0
+  if queued {
+    for k in 0..n {
+      let a = arms + A_SIZE * k
+      let c = ld(a, A_CH)
+      counted = counted && ld4(c, chan.CH_EXT) == 0
+      let e = a + A_E
+      rt.mem_set(e, 0, 64)
+      st(e, chan.E_PARK, x + ctx.C_PARK)
+      st(e, chan.E_FIRED, s + SE_FIRED)
+      st(e, chan.E_ITEM, ld(a, A_ITEM))
+      st(e, chan.E_IDX, k)
+      st(e, chan.E_CHOSEN, s + SE_CHOSEN)
+      chan.cq_push(queue(c, ld4(a, A_SEND)), e)
+    }
+  }
+  var k = nc - 1
+  while k >= 0 {
+    pool.unlock(ld(cs, 8 * k) + chan.CH_MU)
+    k -= 1
+  }
+  var unwound = false
+  if queued {
+    var tm = 0
+    if ld4(s, SE_HAS_AFTER) != 0 {
+      st(s, SE_PARK, x + ctx.C_PARK)
+      tm = rt.sched_rt(RT_SELECT_TIMER, s, 0)
+    }
+    while true {
+      tasks.park_wait_n(x, true, counted)
+      if rt.slot_load[Int](s + SE_FIRED, 0, ACQUIRE) != 0 {
+        break
+      }
+      if budget.canceled(x) {
+        if chan.claim(s + SE_FIRED) {
+          unwound = true
+        }
+        break
+      }
+    }
+    if tm != 0 {
+      let _u = rt.sched_rt(RT_SELECT_UNTIMER, tm, 0)
+    }
+    // take the arms off every queue; the waker's writes are visible
+    // under the channel locks
+    for j in 0..nc {
+      pool.lock(ld(cs, 8 * j) + chan.CH_MU)
+    }
+    for j in 0..n {
+      let a = arms + A_SIZE * j
+      chan.cq_del(queue(ld(a, A_CH), ld4(a, A_SEND)), a + A_E)
+    }
+    if !unwound {
+      done = rt.slot_load[Int](s + SE_CHOSEN, 0, ACQUIRE)
+      if done >= 0 {
+        let a = arms + A_SIZE * done
+        if ld4(a, A_SEND) != 0 {
+          shut = ld4(a + A_E, chan.E_SHUT) != 0
+          if !shut {
+            // the receiver has it
+            st(a, A_ITEM, 0)
+          }
+        } else {
+          st(a, A_ITEM, ld(a + A_E, chan.E_ITEM))
+        }
+      }
+    }
+    var j = nc - 1
+    while j >= 0 {
+      pool.unlock(ld(cs, 8 * j) + chan.CH_MU)
+      j -= 1
+    }
+  }
+  rt.heap_release(cs - 8)
+  if unwound {
+    st4(x, ctx.C_UNWINDING, 1)
+    return -1
+  }
+  if shut {
+    fault.raise_str_at("send on a closed channel", lp, ln)
+  }
+  done
+}
+
+/// What receive arm i got (xo_select_take): the value in a list of one,
+/// or the empty list when its channel was closed and drained.
+pub fn take(s: Int, i: Int) -> Int {
+  let a = ld(s, SE_ARMS) + A_SIZE * i
+  let l = ld(a, A_ITEM)
+  st(a, A_ITEM, 0)
+  if l != 0 { l } else { tasks.empty_list() }
+}

@@ -93,6 +93,8 @@ pub const SV_ONCE = 40
 pub const SV_MUTEX_FREE = 48
 /// A channel's free function (chan.xo).
 pub const SV_CHAN_FREE = 56
+/// A select's free function (selects.xo).
+pub const SV_SELECT_FREE = 64
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).
