@@ -1164,13 +1164,15 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   `Connect("remote error: tls: handshake failure")`.
 - Tests: `FakeNet` (8.1) and in memory listeners serve `https` URLs and
   `with_tls` servers in process, without TLS.
-- The native backends (`--no-gc`, decision 0105) implement this with
-  Mbed TLS: the same behavior and texts, except that Ed25519 certificate
-  keys are not accepted (`tls_cert` fails, a server presenting one fails
-  verification), the key exchange never uses the post quantum
-  `X25519MLKEM768` group, and on macOS the system's roots are checked by
-  the Security framework through the same calls Go makes, so its texts
-  match there too.
+- The native backends (`--no-gc`) implement this in Xo (decision 0202):
+  TLS 1.3 and 1.2, client and server, Go 1.26's defaults and texts,
+  the post quantum `X25519MLKEM768` group offered first (with
+  `GODEBUG=tlsmlkem=0` in the environment the client offers it not, as
+  Go's), and on macOS the system's roots checked by the Security
+  framework through the same calls Go makes. `XO_LLRT_C=tlsio` and
+  `XO_LLRT_C=tlssrv` select the earlier Mbed TLS client and server
+  (decision 0105): the same texts, except that Ed25519 certificate keys
+  are not accepted and the key exchange never uses `X25519MLKEM768`.
 
 ---
 

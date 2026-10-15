@@ -83,6 +83,35 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
 /// rejects even a weak reference to one otherwise). An object's
 /// references are read from its source beside it (.s or .ll), when there
 /// is one.
+/// The Security and CoreFoundation frameworks on macOS when a generated
+/// source calls the framework (std/native/sys_darwin.xo's declarations,
+/// tlscert.xo apple_trust: the Xo TLS client's system roots, decision
+/// 0202), whether or not the program links Mbed TLS (needs_tls).
+fn framework_args(os: Os, srcs: List[Str]) -> List[Str] {
+  // made at run time, as needs_tls's names: a literal would be in xo1's
+  // own assembly
+  let mark = ["SecTrust", "EvaluateWithError"].join("")
+  for s in srcs {
+    var paths = [s]
+    if s.ends_with(".o") {
+      let base = s.trim_suffix(".o")
+      paths = ["${base}.s", "${base}.ll"]
+    }
+    for p in paths {
+      if !(p.ends_with(".s") || p.ends_with(".ll")) {
+        continue
+      }
+      match os.fs.read_text(p) {
+        Ok(t) => if t.contains(mark) {
+          return ["-framework", "Security", "-framework", "CoreFoundation"]
+        }
+        Err(_) => {}
+      }
+    }
+  }
+  []
+}
+
 fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
   var seen: Set[Str] = #{}
   var out: List[Str] = []
@@ -166,7 +195,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
   }
   args = args + srcs + tls_link + libs + sys_link_args(link_os(ctx), flags)
   if link_os(ctx) == "darwin" {
-    args = args + weak_undefined_args(os, srcs0)
+    args = args + weak_undefined_args(os, srcs0) + framework_args(os, srcs0)
   }
   match os.proc.run(cc, args) {
     Ok(r) => {

@@ -72,6 +72,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   anyval.xo's Any directly; the C forwarders stay for code of earlier
   compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
   alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
+- Native runtime (zero-C audit item B31, part 18, decision 0202): a
+  default https program links no Mbed TLS and no fiat-crypto (nm: 0
+  mbedtls, fiat or psa symbols on arm64 and LLVM, http_tls). tlscert.xo
+  apple_trust calls the Security and CoreFoundation frameworks directly
+  (sys_darwin.xo declarations) instead of xo_tls.c's table, which needed
+  Mbed's tls_init; the build links the two frameworks when the generated
+  code calls SecTrustEvaluateWithError (selfhost/xo link.xo
+  framework_args, ld.xo, internal/xotool FrameworkFlags). The system's
+  roots are an Xo record (tlsio.roots_system, static word 31) instead of
+  the C's sys_roots. needs_tls (selfhost/xo tls.xo, internal/xotool
+  tls.go) compiles -DXO_TLS and links libxotls.a only for the C paths'
+  symbols (xo_tls_, xo_cl_tls_: XO_LLRT_C=tlsio or tlssrv). The client
+  honors GODEBUG=tlsmlkem=0 as Go's: no X25519MLKEM768, X25519 the first
+  share (a 291 byte ClientHello instead of 1,513), for like with like
+  handshake measurements against Mbed.
 - Native runtime (zero-C audit item B31, part 17, decision 0202): the
   Xo TLS 1.3 client offers X25519MLKEM768 (0x11ec) first, as Go 1.26's
   client: groups [X25519MLKEM768, X25519, P-256, P-384], the hybrid key

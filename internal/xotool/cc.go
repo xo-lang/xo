@@ -159,6 +159,7 @@ func compileC(flags, srcs []string, bin string) error {
 		}
 		if runtime.GOOS == "darwin" {
 			args = append(args, WeakUndefinedFlags(srcs)...)
+			args = append(args, FrameworkFlags(srcs)...)
 		}
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
@@ -196,6 +197,23 @@ func compileC(flags, srcs []string, bin string) error {
 		return errors.New("clang: no SDK to try")
 	}
 	return &ClangError{Output: first}
+}
+
+// FrameworkFlags is selfhost/xo link.xo framework_args: the Security and
+// CoreFoundation frameworks when a generated source calls the framework
+// (std/native/sys_darwin.xo, tlscert.xo apple_trust), whether or not the
+// program links Mbed TLS.
+func FrameworkFlags(srcs []string) []string {
+	mark := []byte("SecTrust" + "EvaluateWithError")
+	for _, src := range srcs {
+		if !strings.HasSuffix(src, ".ll") && !strings.HasSuffix(src, ".s") {
+			continue
+		}
+		if b, err := os.ReadFile(src); err == nil && bytes.Contains(b, mark) {
+			return []string{"-framework", "Security", "-framework", "CoreFoundation"}
+		}
+	}
+	return nil
 }
 
 // WeakUndefinedFlags is selfhost/xo link.xo weak_undefined_args: the

@@ -229,3 +229,17 @@ std (decision 0074) unless the owner decides to expose a user marker.
   contradicts decision 0195.
 - (c) Platform TLS: rejected; Linux has no platform TLS and would need
   OpenSSL as a system dependency, and behavior would differ per OS.
+
+- 2026-10-15 (B31 part 18, xo-4b): the default path at zero Mbed TLS.
+  apple_trust calls the frameworks through sys_darwin.xo declarations;
+  the driver links Security and CoreFoundation when generated code names
+  SecTrustEvaluateWithError, independently of needs_tls; the system's
+  roots are an Xo record; needs_tls matches only xo_tls_ and xo_cl_tls_
+  (the XO_LLRT_C C paths). Proof: nm of a default http_tls binary has no
+  mbedtls, fiat or psa symbols (arm64 and LLVM, 3.9 MB; the C path's
+  build has 790 mbedtls symbols). GODEBUG=tlsmlkem=0 drops the hybrid
+  as Go's. Observed while checking: rsa4096 and untrusted-root
+  .badssl.com reset some connections whose ClientHello carries the
+  1,216 byte hybrid share, Go 1.26's client too (1 in 16 for Go, 4 in
+  16 for Xo, 2026-10-15); not an Xo protocol difference (the hellos match
+  Go's, extension for extension, but for Go's extra groups).

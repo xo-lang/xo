@@ -36,6 +36,8 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       Ok(b) => ins.push(macho.LinkInput{path: lib, data: b})
       Err(e) => return "${lib}: ${e}"
     }
+  }
+  if tls || !framework_args(os, srcs).is_empty() {
     dylibs.push("/System/Library/Frameworks/Security.framework/Versions/A/Security")
     dylibs.push("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation")
   }

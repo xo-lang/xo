@@ -151,6 +151,7 @@ fn keep(a: rt.Any) -> Int {
 struct RootsData {
   certs: List[x509.Cert]
   err: Str
+  system: Bool
 }
 
 fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
@@ -175,7 +176,7 @@ pub fn roots_pem(pem: Bytes) -> rthttp.Roots {
     }
   }
   let err = if certs.is_empty() { "tls: no certificates found in PEM input" } else { "" }
-  as_roots(rt.any_of(RootsData{certs: certs, err: err}))
+  as_roots(rt.any_of(RootsData{certs: certs, err: err, system: false}))
 }
 
 fn roots_data(r: Int) -> RootsData? { rt.any_get[RootsData](rt.obj_at[rt.Any](r)) }
@@ -188,8 +189,32 @@ pub fn roots_err(r: rthttp.Roots) -> Str {
   }
 }
 
-/// The client's default roots: the system's (the C's record).
-pub fn roots_system() -> rthttp.Roots { rthttp.tls_roots_system() }
+/// The client's default roots, the system's: one record per process
+/// (static word 31, so clients share pooled connections as with one
+/// record), made at the first client. On macOS the Security framework
+/// verifies and it holds no certificates; elsewhere it holds the
+/// system's, parsed then (tlscert.system_ders, x509.xo).
+pub fn roots_system() -> rthttp.Roots {
+  let w = rt.static_word(31)
+  var s = rt.slot_load(w, 0, ACQUIRE)
+  if s == 0 {
+    var certs: List[x509.Cert] = []
+    for der in tlscert.system_ders() {
+      let p = x509.parse(der)
+      if p.err == "" {
+        certs.push(p.cert)
+      }
+    }
+    let mine = keep(rt.any_of(RootsData{certs: certs, err: "", system: true}))
+    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
+      s = mine
+    } else {
+      tasks.h_release(mine)
+      s = rt.slot_load(w, 0, ACQUIRE)
+    }
+  }
+  rt.obj_at[rthttp.Roots](s)
+}
 
 /// The outcome of a handshake: CC_*, the connection (0 on a failure),
 /// the ClientErr tag of a failure (2 Connect for a server's alert, else
@@ -208,20 +233,14 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 /// deadline dl (0 none; and the 10 s TLSHandshakeTimeout), as
 /// xo_tls.c's tls_client_start.
 pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
-  let system = roots == rt.obj_addr(rthttp.tls_roots_system())
-  let apple = if system { rthttp.tls_c_apple_svc(roots) } else { 0 }
-  // the framework decides on macOS with the system's roots; elsewhere
-  // they are parsed once per process
-  let certs = if !system {
-    match roots_data(roots) {
-      Some(d) => d.certs
-      None => []
-    }
-  } else if apple != 0 {
-    []
-  } else {
-    system_certs()
+  let data = match roots_data(roots) {
+    Some(d) => d
+    None => RootsData{certs: [], err: "", system: false}
   }
+  let system = data.system
+  // the framework decides on macOS with the system's roots
+  let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
+  let certs = data.certs
   if system && apple == 0 && certs.is_empty() {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
@@ -236,6 +255,11 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]
   cf.legacy_suites = tls12.default_suites()
+  if godebug("tlsmlkem") == "0" {
+    // Go 1.24+: GODEBUG=tlsmlkem=0 offers no X25519MLKEM768, so X25519
+    // is the first share
+    cf.groups = cf.groups.filter(fn(g) { g != tls13.GROUP_HYBRID })
+  }
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
   var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
@@ -292,40 +316,25 @@ fn local_offset(now: Int) -> Int {
   }
 }
 
-/// Frees the system's roots parsed once (at exit, before the leak check:
+/// A GODEBUG setting as Go reads it: the last key=value of the comma
+/// separated list, "" when absent.
+fn godebug(key: Str) -> Str {
+  var v = ""
+  for kv in (process.real_env_get("GODEBUG").get(0) ?? "").split(",") {
+    let t = kv.trim()
+    if t.starts_with("${key}=") {
+      v = raw.str_slice(t, key.len() + 1, t.len())
+    }
+  }
+  v
+}
+
+/// Frees the system's roots record (at exit, before the leak check:
 /// cabi_http.xo's streams_free).
 pub fn roots_free() {
   let s = rt.slot_swap(rt.static_word(31), 0, 0, ACQ_REL)
   if s != 0 {
     tasks.h_release(s)
-  }
-}
-
-/// The system's roots (tlscert.system_ders, parsed by x509.xo) once per
-/// process: static word 31 holds the record of an rt.Any with them,
-/// published with a compare and swap (a loser releases its own).
-fn system_certs() -> List[x509.Cert] {
-  let w = rt.static_word(31)
-  var s = rt.slot_load(w, 0, ACQUIRE)
-  if s == 0 {
-    var certs: List[x509.Cert] = []
-    for der in tlscert.system_ders() {
-      let p = x509.parse(der)
-      if p.err == "" {
-        certs.push(p.cert)
-      }
-    }
-    let mine = keep(rt.any_of(RootsData{certs: certs, err: ""}))
-    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
-      s = mine
-    } else {
-      tasks.h_release(mine)
-      s = rt.slot_load(w, 0, ACQUIRE)
-    }
-  }
-  match roots_data(s) {
-    Some(d) => d.certs
-    None => []
   }
 }
 

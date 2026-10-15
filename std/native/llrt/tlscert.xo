@@ -20,6 +20,7 @@ use native/llrt/raw
 use native/llrt/sysio
 use native/llrt/tlsname
 use native/rt
+use native/sys_darwin
 use native/sys_windows
 
 /// The services record's words: mbedtls_x509_crt_parse_der of args (the
@@ -604,36 +605,44 @@ pub struct AppleRes {
 /// Go's systemVerify on macOS for the chain of DERs (leaf first) and the
 /// host ("" none), as apple_verify: the framework evaluates the chain for
 /// an SSL server, then Go checks the host name itself (the caller, with
-/// the leaf: code 7).
-pub fn apple_trust(svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
-  let certs = sec(svc, F_CFARRAYCREATEMUTABLE, 0, 0, rt.mem_load(svc, V_CF_CALLBACKS, 8), 0)
+/// the leaf: code 7). The framework is called directly (sys_darwin.xo;
+/// the build links it when a program calls it), so the default TLS path
+/// needs neither xo_tls.c's table nor Mbed TLS; svc is unused (kept for
+/// the callers' signatures, nonzero meaning the framework decides).
+pub fn apple_trust(_svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
+  match target.os {
+    TargetOs.Darwin => apple_trust_darwin(ders, host)
+    _ => AppleRes{code: 10, msg: "x509: no Security framework off macOS"}
+  }
+}
+
+fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
+  let callbacks = sys_darwin.dlsym(-2, "kCFTypeArrayCallBacks\x00".bytes())
+  let certs = sys_darwin.CFArrayCreateMutable(0, 0, callbacks)
   for (i, der) in ders.indexed() {
-    let d = sec(svc, F_CFDATACREATE, 0, raw.bytes_addr(der), der.len(), 0)
-    let sc = if d != 0 { sec(svc, F_SECCERTIFICATECREATEWITHDATA, 0, d, 0, 0) } else { 0 }
+    let d = sys_darwin.CFDataCreate(0, raw.bytes_addr(der), der.len())
+    let sc = if d != 0 { sys_darwin.SecCertificateCreateWithData(0, d) } else { 0 }
     if d != 0 {
-      let _r1 = sec(svc, F_CFRELEASE, d, 0, 0, 0)
+      sys_darwin.CFRelease(d)
     }
     if sc == 0 {
-      let _r2 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+      sys_darwin.CFRelease(certs)
       return AppleRes{code: 10, msg: if i == 0 { "invalid leaf certificate" } else { "x509: malformed certificate" }}
     }
-    let _r3 = sec(svc, F_CFARRAYAPPENDVALUE, certs, sc, 0, 0)
-    let _r4 = sec(svc, F_CFRELEASE, sc, 0, 0, 0)
+    sys_darwin.CFArrayAppendValue(certs, sc)
+    sys_darwin.CFRelease(sc)
   }
-  let hb = block(host.len() + 1)
-  let _n = raw.put_cstr(hb, host)
-  let name = if host.len() > 0 { sec(svc, F_CFSTRINGCREATEWITHCSTRING, 0, hb, CF_UTF8, 0) } else { 0 }
-  release(hb)
-  let pol = sec(svc, F_SECPOLICYCREATESSL, 1, name, 0, 0)
+  let name = if host.len() > 0 { sys_darwin.CFStringCreateWithCString(0, "${host}\x00".bytes(), CF_UTF8) } else { 0 }
+  let pol = sys_darwin.SecPolicyCreateSSL(1, name)
   if name != 0 {
-    let _r5 = sec(svc, F_CFRELEASE, name, 0, 0, 0)
+    sys_darwin.CFRelease(name)
   }
   let out = block(8)
   rt.mem_store(out, 0, 0, 8)
-  let st = s32(sec(svc, F_SECTRUSTCREATEWITHCERTIFICATES, certs, pol, out, 0))
-  let _r6 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+  let st = Int(sys_darwin.SecTrustCreateWithCertificates(certs, pol, out))
+  sys_darwin.CFRelease(certs)
   if pol != 0 {
-    let _r7 = sec(svc, F_CFRELEASE, pol, 0, 0, 0)
+    sys_darwin.CFRelease(pol)
   }
   let trust = rt.mem_load(out, 0, 8)
   if st != 0 || trust == 0 {
@@ -643,21 +652,21 @@ pub fn apple_trust(svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
   rt.mem_store(out, 0, 0, 8)
   var res = AppleRes{code: 0, msg: ""}
   // a C bool: only the low byte is the result
-  if sec(svc, F_SECTRUSTEVALUATEWITHERROR, trust, out, 0, 0) & 255 == 0 {
+  if sys_darwin.SecTrustEvaluateWithError(trust, out) & 255 == 0 {
     let err = rt.mem_load(out, 0, 8)
-    let code = if err != 0 { sec(svc, F_CFERRORGETCODE, err, 0, 0, 0) } else { 0 }
+    let code = if err != 0 { sys_darwin.CFErrorGetCode(err) } else { 0 }
     var desc = ""
     if err != 0 {
-      let ds = sec(svc, F_CFERRORCOPYDESCRIPTION, err, 0, 0, 0)
+      let ds = sys_darwin.CFErrorCopyDescription(err)
       if ds != 0 {
         let buf = block(600)
-        if sec(svc, F_CFSTRINGGETCSTRING, ds, buf, 600, CF_UTF8) & 255 != 0 {
+        if sys_darwin.CFStringGetCString(ds, buf, 600, CF_UTF8) & 255 != 0 {
           desc = raw.str_at(buf, raw.cstr_len(buf))
         }
         release(buf)
-        let _r8 = sec(svc, F_CFRELEASE, ds, 0, 0, 0)
+        sys_darwin.CFRelease(ds)
       }
-      let _r9 = sec(svc, F_CFRELEASE, err, 0, 0, 0)
+      sys_darwin.CFRelease(err)
     }
     res = if code == ERR_EXPIRED {
       AppleRes{code: 2, msg: "x509: certificate has expired or is not yet valid: ${desc}"}
@@ -670,7 +679,7 @@ pub fn apple_trust(svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
     }
   }
   release(out)
-  let _r10 = sec(svc, F_CFRELEASE, trust, 0, 0, 0)
+  sys_darwin.CFRelease(trust)
   res
 }
 
