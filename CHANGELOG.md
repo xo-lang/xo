@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- TLS 1.2 server session tickets (tls12srv.xo with tlsticket.xo, RFC
+  5077): golden tls12_tickets, crypto/tls's client resuming against the
+  Xo server byte for byte (a ticket issued, resumed, resumed a byte at a
+  time, and the cases Go declines). UNTESTED on linux and windows.
 - TLS performance (decision 0231 parts 2 and 3): AES-GCM uses the CPU's
   AES rounds (AESE/AESMC, AESENC) and carry-less multiply (PMULL,
   PCLMULQDQ) when it has them (std/native/llrt/cpu.xo hw(): macOS arm64,
