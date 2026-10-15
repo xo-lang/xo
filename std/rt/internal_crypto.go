@@ -14,11 +14,15 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
+	"math/big"
+	"math/bits"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +53,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoX509(what, a, b)
 	case "aes":
 		r, ok = cryptoAES(what, a, b, c, d)
+	case "chacha":
+		r, ok = cryptoChaCha(what, a, b, c, d)
 	case "chain":
 		r, ok = cryptoChain(what, a, b, c, d)
 	}
@@ -414,4 +420,130 @@ func cryptoAES(what string, a, b, c, d Bytes) (Bytes, bool) {
 		return "\x01" + Bytes(p), true
 	}
 	return "", false
+}
+
+// cryptoChaCha is chacha.xo's op. Go's standard library has no
+// ChaCha20-Poly1305 (golang.org/x/crypto does), so this is RFC 8439
+// written out, Poly1305 with math/big (the reference, not constant time).
+func cryptoChaCha(what string, a, b, c, d Bytes) (Bytes, bool) {
+	switch what {
+	case "block":
+		return Bytes(chachaBlock([]byte(a), uint32(cryptoNum(c)), []byte(b))), true
+	case "xor":
+		return Bytes(chachaXor([]byte(a), uint32(cryptoNum(c)), []byte(b), []byte(d))), true
+	case "poly1305":
+		return Bytes(poly1305([]byte(a), []byte(b))), true
+	case "seal":
+		ct := chachaXor([]byte(a), 1, []byte(b), []byte(c))
+		return Bytes(ct) + Bytes(chachaTag([]byte(a), []byte(b), ct, []byte(d))), true
+	case "open":
+		n := len(c) - 16
+		if n < 0 {
+			return "\x00", true
+		}
+		ct := []byte(c[:n])
+		if subtle.ConstantTimeCompare(chachaTag([]byte(a), []byte(b), ct, []byte(d)), []byte(c[n:])) != 1 {
+			return "\x00", true
+		}
+		return "\x01" + Bytes(chachaXor([]byte(a), 1, []byte(b), ct)), true
+	}
+	return "", false
+}
+
+func chachaBlock(key []byte, ctr uint32, nonce []byte) []byte {
+	var s, x [16]uint32
+	s[0], s[1], s[2], s[3] = 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574
+	for i := 0; i < 8; i++ {
+		s[4+i] = binary.LittleEndian.Uint32(key[4*i:])
+	}
+	s[12] = ctr
+	for i := 0; i < 3; i++ {
+		s[13+i] = binary.LittleEndian.Uint32(nonce[4*i:])
+	}
+	x = s
+	qr := func(a, b, c, d int) {
+		x[a] += x[b]
+		x[d] = bits.RotateLeft32(x[d]^x[a], 16)
+		x[c] += x[d]
+		x[b] = bits.RotateLeft32(x[b]^x[c], 12)
+		x[a] += x[b]
+		x[d] = bits.RotateLeft32(x[d]^x[a], 8)
+		x[c] += x[d]
+		x[b] = bits.RotateLeft32(x[b]^x[c], 7)
+	}
+	for i := 0; i < 10; i++ {
+		qr(0, 4, 8, 12)
+		qr(1, 5, 9, 13)
+		qr(2, 6, 10, 14)
+		qr(3, 7, 11, 15)
+		qr(0, 5, 10, 15)
+		qr(1, 6, 11, 12)
+		qr(2, 7, 8, 13)
+		qr(3, 4, 9, 14)
+	}
+	out := make([]byte, 64)
+	for i := range x {
+		binary.LittleEndian.PutUint32(out[4*i:], x[i]+s[i])
+	}
+	return out
+}
+
+func chachaXor(key []byte, ctr uint32, nonce, src []byte) []byte {
+	out := make([]byte, len(src))
+	for i := 0; i < len(src); i += 64 {
+		ks := chachaBlock(key, ctr, nonce)
+		ctr++
+		for j := i; j < len(src) && j < i+64; j++ {
+			out[j] = src[j] ^ ks[j-i]
+		}
+	}
+	return out
+}
+
+// leInt is the little endian integer of b.
+func leInt(b []byte) *big.Int {
+	r := make([]byte, len(b))
+	for i := range b {
+		r[len(b)-1-i] = b[i]
+	}
+	return new(big.Int).SetBytes(r)
+}
+
+func poly1305(key, msg []byte) []byte {
+	rb := append([]byte(nil), key[:16]...)
+	for _, i := range []int{3, 7, 11, 15} {
+		rb[i] &= 15
+	}
+	for _, i := range []int{4, 8, 12} {
+		rb[i] &= 252
+	}
+	r := leInt(rb)
+	p := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 130), big.NewInt(5))
+	acc := new(big.Int)
+	for i := 0; i < len(msg); i += 16 {
+		blk := append([]byte(nil), msg[i:min(i+16, len(msg))]...)
+		acc.Add(acc, leInt(append(blk, 1)))
+		acc.Mul(acc, r)
+		acc.Mod(acc, p)
+	}
+	acc.Add(acc, leInt(key[16:32]))
+	be := acc.FillBytes(make([]byte, 32))
+	out := make([]byte, 16)
+	for i := range out {
+		out[i] = be[31-i]
+	}
+	return out
+}
+
+func chachaTag(key, nonce, ct, aad []byte) []byte {
+	var m []byte
+	pad := func(b []byte) {
+		m = append(m, b...)
+		m = append(m, make([]byte, (16-len(b)%16)%16)...)
+	}
+	pad(aad)
+	pad(ct)
+	m = binary.LittleEndian.AppendUint64(m, uint64(len(aad)))
+	m = binary.LittleEndian.AppendUint64(m, uint64(len(ct)))
+	return poly1305(chachaBlock(key, 0, nonce)[:32], m)
 }

@@ -1,6 +1,7 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
 use native/llrt/aesgcm
+use native/llrt/chacha
 use native/llrt/fsops
 use native/llrt/hkdf
 use native/llrt/hmac
@@ -52,6 +53,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "rsa" => rsa.op(what, a, b, c, d)
     "x509" => x509.op(what, a, b, c, d)
     "aes" => aesgcm.op(what, a, b, c, d)
+    "chacha" => chacha.op(what, a, b, c, d)
     "chain" => x509verify.op(what, a, b, c, d)
     _ => None
   }

@@ -17,8 +17,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cases against Go's x509.Verify (outcome and chain). Not on the TLS path
   yet.
 
-- Native runtime (zero-C audit item B31, part 2 of the TLS primitives,
-  decision 0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
+- Native runtime (zero-C audit item B31, TLS primitives 3, decision
+  0202): ChaCha20, Poly1305, and the ChaCha20-Poly1305 AEAD in Xo
+  (std/native/llrt/chacha.xo), RFC 8439 (12 byte nonce, 16 byte tag),
+  constant time: 32 bit additions, rotations, and xors, and
+  poly1305-donna's 26 bit limbs with a masked final reduction; open
+  checks the tag with ct.bytes_equal before decrypting. crypto_op's
+  "chacha" area (Go's standard library has none, so internal_crypto.go
+  writes RFC 8439 out, Poly1305 with math/big); the golden crypto_prims
+  checks RFC 8439's 2.3.2, 2.4.2, 2.5.2, 2.6.2, 2.8.2 and appendix A.3's
+  Poly1305 edge cases, tag failures, and every length to 200 against Go.
+  Not on the TLS path yet.
+
+- Native runtime (zero-C audit item B31, TLS primitives 2, decision
+  0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
   as Go's crypto/aes and cipher.NewGCM (12 byte nonce, 16 byte tag),
   constant time: BearSSL's bitsliced aes_ct64 (no table indexed by a
   secret) and ghash_ctmul64 GHASH; open checks the tag with
@@ -43,8 +55,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   crypto/ecdsa, crypto/rsa, and crypto/x509 (PKCS #1 v1.5 signatures byte
   for byte). Not on the TLS path yet.
 
-- Native runtime (zero-C audit item B31, part 1 of the TLS primitives,
-  decision 0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
+- Native runtime (zero-C audit item B31, TLS primitives 1, decision
+  0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
   incremental with clone, SHA-384 and SHA-512 on B08's SHA-512
   compression), HMAC (hmac.xo) and HKDF with TLS 1.3's
   HKDF-Expand-Label (hkdf.xo), as Go's crypto/sha256, crypto/sha512,
