@@ -68,3 +68,8 @@ fn h2_head_room(ha: Int, hn: Int) -> Int { h2w.head_room(ha, hn) }
 /// A response head in the encoder job's form (h2w.head); 1 at res when
 /// the handler asked for Connection: close.
 fn h2_head(d: Int, ha: Int, hn: Int, status: Int, head_req: Int, p: Int, pn: Int, done: Int, res: Int) -> Int { h2w.head(d, ha, hn, status, head_req != 0, p, pn, done != 0, res) }
+
+/// Checks a frame (h2w.frame_check: the 9 byte header at h, the payload
+/// at p; hb_on 1 while a header block on stream hb_sid is open): one of
+/// h2w.FC_*, with three words at res.
+fn h2_frame_check(h: Int, p: Int, hb_on: Int, hb_sid: Int, res: Int) -> Int { h2w.frame_check(h, p, hb_on != 0, hb_sid, res) }

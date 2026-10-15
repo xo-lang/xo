@@ -271,3 +271,132 @@ pub fn head(d: Int, ha: Int, hn: Int, status: Int, head_req: Bool, p: Int, pn: I
   le32(d, 0, nf)
   at
 }
+
+// ---------------------------------------------------------------------------
+// Reading frames
+
+// The frame types the reader checks (RFC 9113 6) and the flags.
+const T_DATA: Int = 0
+const T_PRIORITY: Int = 2
+const T_PUSH: Int = 5
+const T_PING: Int = 6
+const F_PADDED: Int = 8
+const F_PRIORITY: Int = 0x20
+
+// The error codes the checks give (RFC 9113 7).
+const E_PROTOCOL: Int = 1
+const E_FRAME_SIZE: Int = 6
+
+// frame_check's results.
+pub const FC_OK: Int = 0
+pub const FC_IGNORE: Int = 1
+pub const FC_CONN: Int = 2
+pub const FC_STREAM: Int = 3
+
+fn get32(p: Int) -> Int { rt.mem_load(p, 0, 1) << 24 | rt.mem_load(p, 1, 1) << 16 | rt.mem_load(p, 2, 1) << 8 | rt.mem_load(p, 3, 1) }
+
+/// Checks the frame of the 9 byte header at h and the payload at p as
+/// the server's reader does before it acts on one (checkFrameOrder and
+/// the Framer's parsers): FC_OK with three words at res, the offset and
+/// the length of the frame's data in the payload (padding and priority
+/// taken off) and the stream a HEADERS frame depends on; FC_IGNORE for an
+/// unknown type; FC_CONN or FC_STREAM with the error code at res for a
+/// connection or a stream error. hb_on: a header block is being received,
+/// on stream hb_sid.
+pub fn frame_check(h: Int, p: Int, hb_on: Bool, hb_sid: Int, res: Int) -> Int {
+  let len = rt.mem_load(h, 0, 1) << 16 | rt.mem_load(h, 1, 1) << 8 | rt.mem_load(h, 2, 1)
+  let ty = rt.mem_load(h, 3, 1)
+  let flags = rt.mem_load(h, 4, 1)
+  let sid = get32(h + 5) & 0x7FFFFFFF
+  if hb_on {
+    if ty != T_CONT || sid != hb_sid {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+  } else if ty == T_CONT {
+    return fail(res, FC_CONN, E_PROTOCOL)
+  }
+  var off = 0
+  var dn = len
+  var dep = 0
+  if ty == T_DATA || ty == T_HEADERS {
+    if sid == 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+    var pad = 0
+    if (flags & F_PADDED) != 0 {
+      if dn < 1 {
+        return fail(res, FC_CONN, E_PROTOCOL)
+      }
+      pad = rt.mem_load(p, 0, 1)
+      off = 1
+      dn -= 1
+    }
+    if ty == T_HEADERS && (flags & F_PRIORITY) != 0 {
+      if dn < 5 {
+        return fail(res, FC_CONN, E_PROTOCOL)
+      }
+      dep = get32(p + off) & 0x7FFFFFFF
+      off += 5
+      dn -= 5
+    }
+    if pad > dn {
+      // parseHeadersFrame's is a stream error
+      return fail(res, if ty == T_HEADERS { FC_STREAM } else { FC_CONN }, E_PROTOCOL)
+    }
+    dn -= pad
+  } else if ty == T_PRIORITY {
+    if sid == 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+    if len != 5 {
+      return fail(res, FC_CONN, E_FRAME_SIZE)
+    }
+  } else if ty == T_RST {
+    if len != 4 {
+      return fail(res, FC_CONN, E_FRAME_SIZE)
+    }
+    if sid == 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+  } else if ty == T_SETTINGS {
+    if sid != 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+  } else if ty == T_PUSH || ty == T_CONT {
+    if sid == 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+  } else if ty == T_PING {
+    if len != 8 {
+      return fail(res, FC_CONN, E_FRAME_SIZE)
+    }
+    if sid != 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+  } else if ty == T_GOAWAY {
+    if sid != 0 {
+      return fail(res, FC_CONN, E_PROTOCOL)
+    }
+    if len < 8 {
+      return fail(res, FC_CONN, E_FRAME_SIZE)
+    }
+  } else if ty == T_WINUP {
+    if len != 4 {
+      return fail(res, FC_CONN, E_FRAME_SIZE)
+    }
+    if (get32(p) & 0x7FFFFFFF) == 0 {
+      return fail(res, if sid == 0 { FC_CONN } else { FC_STREAM }, E_PROTOCOL)
+    }
+  } else {
+    return FC_IGNORE
+  }
+  rt.mem_store(res, 0, off, 8)
+  rt.mem_store(res, 8, dn, 8)
+  rt.mem_store(res, 16, dep, 8)
+  FC_OK
+}
+
+fn fail(res: Int, kind: Int, code: Int) -> Int {
+  rt.mem_store(res, 0, code, 8)
+  kind
+}

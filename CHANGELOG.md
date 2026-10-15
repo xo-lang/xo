@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 2): HTTP/2 the server's
+  frame checks before it acts on a frame (checkFrameOrder and the
+  Framer's parsers: lengths, stream ids, padding, priority) are Xo
+  (std/native/llrt/h2w.xo frame_check).
 - Native runtime (zero-C audit item B28, part 1): the HTTP/2 frames the
   server and the client write (frame headers, RST_STREAM, WINDOW_UPDATE,
   GOAWAY, SETTINGS, HEADERS and CONTINUATION) and the server's response

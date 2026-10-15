@@ -138,6 +138,14 @@ __attribute__((weak)) int64_t xo_x_h2_head(int64_t d, int64_t ha, int64_t hn, in
 	fault_text("HTTP without std/http's exports", "");
 }
 
+// frame_check's results
+enum { H2_FC_OK, H2_FC_IGNORE, H2_FC_CONN, H2_FC_STREAM };
+
+__attribute__((weak)) int64_t xo_x_h2_frame_check(int64_t h, int64_t p, int64_t hb_on, int64_t hb_sid, int64_t res) {
+	(void)h, (void)p, (void)hb_on, (void)hb_sid, (void)res;
+	fault_text("HTTP without std/http's exports", "");
+}
+
 static void h2_fh(nbuf *o, uint32_t len, int type, int flags, uint32_t sid) {
 	nbuf_grow(o, 9);
 	o->n += xo_x_h2_fh(XO_ADDR(o->p + o->n), len, type, flags, sid);
@@ -1020,139 +1028,22 @@ static void h2_frame(h2c *c, const uint8_t *h, const uint8_t *p) {
 	int type = h[3], flags = h[4];
 	uint32_t sid = h2_get32(h + 5) & 0x7fffffff;
 	c->cur_sid = 0;
-	// checkFrameOrder
-	if (c->hb_on) {
-		if (type != H2_CONT || sid != c->hb_sid) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-	} else if (type == H2_CONT) {
-		h2_conn_err(c, H2E_PROTOCOL);
+	// checkFrameOrder and the Framer's parsers (connection errors of the
+	// frame's shape): std/native/llrt/h2w.xo frame_check
+	int64_t fr[3] = {0, 0, 0};
+	switch (xo_x_h2_frame_check(XO_ADDR(h), XO_ADDR(p), c->hb_on, c->hb_sid, XO_ADDR(fr))) {
+	case H2_FC_IGNORE:
+		return; // unknown frame types are ignored
+	case H2_FC_CONN:
+		h2_conn_err(c, (uint32_t)fr[0]);
+		return;
+	case H2_FC_STREAM:
+		h2_stream_err(c, sid, (uint32_t)fr[0]);
 		return;
 	}
-	// parsing (connection errors of the frame's shape)
-	const uint8_t *data = p;
-	int64_t dn = len;
-	uint32_t dep = 0;
-	switch (type) {
-	case H2_DATA:
-	case H2_HEADERS:
-		if (sid == 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		if (flags & H2F_PADDED) {
-			if (dn < 1) {
-				h2_conn_err(c, H2E_PROTOCOL);
-				return;
-			}
-			int pad = data[0];
-			data++;
-			dn--;
-			if (type == H2_HEADERS && (flags & H2F_PRIORITY)) {
-				if (dn < 5) {
-					h2_conn_err(c, H2E_PROTOCOL);
-					return;
-				}
-				dep = h2_get32(data) & 0x7fffffff;
-				data += 5;
-				dn -= 5;
-			}
-			if (pad > dn) {
-				if (type == H2_HEADERS) {
-					// parseHeadersFrame: a stream error
-					h2_stream_err(c, sid, H2E_PROTOCOL);
-				} else {
-					h2_conn_err(c, H2E_PROTOCOL);
-				}
-				return;
-			}
-			dn -= pad;
-		} else if (type == H2_HEADERS && (flags & H2F_PRIORITY)) {
-			if (dn < 5) {
-				h2_conn_err(c, H2E_PROTOCOL);
-				return;
-			}
-			dep = h2_get32(data) & 0x7fffffff;
-			data += 5;
-			dn -= 5;
-		}
-		break;
-	case H2_PRIORITY:
-		if (sid == 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		if (len != 5) {
-			h2_conn_err(c, H2E_FRAME_SIZE);
-			return;
-		}
-		break;
-	case H2_RST:
-		if (len != 4) {
-			h2_conn_err(c, H2E_FRAME_SIZE);
-			return;
-		}
-		if (sid == 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		break;
-	case H2_SETTINGS:
-		if (sid != 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		break;
-	case H2_PUSH:
-		if (sid == 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		break;
-	case H2_PING:
-		if (len != 8) {
-			h2_conn_err(c, H2E_FRAME_SIZE);
-			return;
-		}
-		if (sid != 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		break;
-	case H2_GOAWAY:
-		if (sid != 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		if (len < 8) {
-			h2_conn_err(c, H2E_FRAME_SIZE);
-			return;
-		}
-		break;
-	case H2_WINUP:
-		if (len != 4) {
-			h2_conn_err(c, H2E_FRAME_SIZE);
-			return;
-		}
-		if ((h2_get32(p) & 0x7fffffff) == 0) {
-			if (sid == 0) {
-				h2_conn_err(c, H2E_PROTOCOL);
-			} else {
-				h2_stream_err(c, sid, H2E_PROTOCOL);
-			}
-			return;
-		}
-		break;
-	case H2_CONT:
-		if (sid == 0) {
-			h2_conn_err(c, H2E_PROTOCOL);
-			return;
-		}
-		break;
-	default:
-		return; // unknown frame types are ignored
-	}
+	const uint8_t *data = p + fr[0];
+	int64_t dn = fr[1];
+	uint32_t dep = (uint32_t)fr[2];
 	// the frame parsed: processFrame's errors count its stream
 	c->cur_sid = sid;
 	// the first frame must be SETTINGS (a header block is decoded first)
