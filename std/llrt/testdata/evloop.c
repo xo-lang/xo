@@ -67,7 +67,7 @@ static void drop_str_list(xo_rlist *l) {
 
 static void release(void *h) {
 	if (rc_dec(&((xo_hdr *)h)->rc)) {
-		h_free(h);
+		xo_x_obj_h_free((int64_t)(intptr_t)h);
 	}
 }
 

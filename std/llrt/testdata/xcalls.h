@@ -63,18 +63,14 @@ int64_t xo_x_atomic_new(int64_t v);
 int64_t xo_x_ctx_unwinding(void);
 int64_t xo_x_rc_claim(int64_t p);
 int64_t xo_x_rc_mark(int64_t p);
+void xo_x_obj_rc_free(int64_t p);
+void xo_x_obj_h_free(int64_t p);
 
 static int rc_claim(int64_t *p) { return (int)xo_x_rc_claim(XO_ADDR(p)); }
 static int rc_mark(int64_t *p) { return (int)xo_x_rc_mark(XO_ADDR(p)); }
 
 static void *t_rc_alloc(int64_t n) { return xo_alloc(n); }
-static void t_rc_free(void *p) {
-	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p)) {
-		return;
-	}
-	xo_free(p);
-}
+static void t_rc_free(void *p) { xo_x_obj_rc_free(XO_ADDR(p)); }
 static void t_rc_defer(void *obj, xo_drop_fn drop) { xo_x_obj_rc_defer_n(XO_ADDR(obj), XO_ADDR(drop)); }
 static xo_rstr *t_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_concat(XO_ADDR(a), an, XO_ADDR(b), bn); }
 static void t_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { xo_x_obj_rl_free_n(XO_ADDR(l), esize, XO_ADDR(drop)); }

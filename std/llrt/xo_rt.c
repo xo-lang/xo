@@ -176,7 +176,7 @@ typedef void (*xo_drop_fn)(void *);
 // what reached a count of zero and how to free it.
 #define XO_RTQ 256
 typedef struct {
-	int kind; // RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
+	int kind; // obj.xo RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
 	void *obj;
 	int64_t esize;
 	void *fn;
@@ -460,13 +460,6 @@ static inline __attribute__((always_inline)) int64_t hw(void) {
 	return (int64_t)(intptr_t)h;
 }
 
-// rt_defer queues a free in the calling thread's real-time section
-// (obj.xo rt_defer); it returns 0 when the queue is full (the caller
-// frees at once).
-int64_t xo_x_obj_rt_defer(int64_t h, int64_t kind, int64_t obj, int64_t esize, int64_t fn);
-static inline int rt_defer(xo_heap *h, int kind, void *obj) { return (int)xo_x_obj_rt_defer((int64_t)(intptr_t)h, kind, (int64_t)(intptr_t)obj, 0, 0); }
-
-enum { RT_STR = 1, RT_LIST, RT_DEFER, RT_HANDLE };
 
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058)
@@ -509,10 +502,8 @@ static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_R
 // the C ABI exports of cabi.xo (its C path was deleted by decision 0198).
 void xo_x_rc_inc(int64_t p);
 int64_t xo_x_rc_dec(int64_t p);
-int64_t xo_x_rc_dec_shared(int64_t p);
 
 static inline __attribute__((always_inline)) void rc_inc(int64_t *p) { xo_x_rc_inc((int64_t)(intptr_t)p); }
-static inline __attribute__((always_inline)) int rc_dec_shared(int64_t *p) { return (int)xo_x_rc_dec_shared((int64_t)(intptr_t)p); }
 static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
 
 // ---------------------------------------------------------------------------
@@ -813,29 +804,6 @@ typedef struct {
 	int64_t rc;
 	xo_free_fn free;
 } xo_hdr;
-
-// h_free frees a handle whose count reached zero.
-static void h_free(void *p) {
-	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p)) {
-		return;
-	}
-	((xo_hdr *)p)->free(p);
-}
-
-static void h_init(void *p, xo_free_fn f) {
-	xo_hdr *h = p;
-	h->rc = -1;
-	h->free = f;
-}
-
-static void h_retain(void *p) { rc_inc(&((xo_hdr *)p)->rc); }
-
-static void h_release(void *p) {
-	if (rc_dec(&((xo_hdr *)p)->rc)) {
-		h_free(p);
-	}
-}
 
 // The placeholders a canceled operation returns while it unwinds (never
 // written: their counts are immortal).
@@ -2604,16 +2572,6 @@ static int64_t stopsvc_close(int64_t ch, int64_t b) {
 	xo_x_chan_close(ch);
 	return 0;
 }
-static int64_t stopsvc_retain(int64_t ch, int64_t b) {
-	(void)b;
-	h_retain((void *)(intptr_t)ch);
-	return 0;
-}
-static int64_t stopsvc_release(int64_t ch, int64_t b) {
-	(void)b;
-	h_release((void *)(intptr_t)ch);
-	return 0;
-}
 static int64_t stopsvc_exit(int64_t a, int64_t b) {
 	(void)a;
 	(void)b;
@@ -2698,8 +2656,6 @@ static void stop_svc_init(void) {
 	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
 	stop_svc[3] = XO_ADDR(&stopsvc_chan);
 	stop_svc[4] = XO_ADDR(&stopsvc_close);
-	stop_svc[5] = XO_ADDR(&stopsvc_retain);
-	stop_svc[6] = XO_ADDR(&stopsvc_release);
 	stop_svc[7] = XO_ADDR(&stopsvc_exit);
 	stop_svc[8] = XO_ADDR(&stopsvc_now);
 	stop_svc[9] = XO_ADDR(&stop_grace_fire);

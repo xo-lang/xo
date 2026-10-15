@@ -6,6 +6,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The C handle code (h_init, h_retain, h_release, h_free, rt_defer, rc_dec_shared) is gone (zero-C inventory rank 5): stop.xo retains and releases its stopping channel itself, and the C tests free through obj.xo's exports.
 - Native runtime: sanitizer builds map the heap through the C library's
   mmap (heapos.xo over sanhook.xo heap_map, decided at run time with
   rt.sym_present, as the fiber stacks are), so ThreadSanitizer and

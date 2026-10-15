@@ -12,7 +12,9 @@
 // made at start (init) and kept for the program's life, under its lock
 // word. The C functions it needs (timers, the channel, cancellation, the
 // clock, exit) are in the C's services record (S_ words).
+use native/llrt/obj
 use native/llrt/pool
+use native/llrt/rc
 use native/llrt/twflags
 use native/rt
 
@@ -43,7 +45,8 @@ const R_SIZE = 96
 
 /// The services record's words: timer_add (t), timer_del (t),
 /// node_cancel (n), the stopping channel's constructor (drop: a new
-/// channel), xo_chan_close (ch), h_retain (ch), h_release (ch), flush and
+/// channel), xo_chan_close (ch), two unused words (were the C's
+/// h_retain and h_release; rc.xo and obj.xo do them), flush and
 /// _exit(130), the clock (tnow: monotonic ns, virtual in the test world),
 /// the grace timer's C function (it calls cancel), and an unused word
 /// (was the address of the C's tw.in_main). Words 88 on are the entry's
@@ -53,8 +56,6 @@ const S_TDEL = 8
 const S_CANCEL = 16
 const S_CHAN = 24
 const S_CLOSE = 32
-const S_RETAIN = 40
-const S_RELEASE = 48
 const S_EXIT = 56
 const S_NOW = 64
 const S_FIRE = 72
@@ -206,7 +207,7 @@ pub fn stopping(drop: Int) -> Int {
       let _c = svc(S_CLOSE, ch)
     }
   }
-  let _r = svc(S_RETAIN, ch)
+  rc.inc(ch)
   unlk()
   ch
 }
@@ -237,7 +238,7 @@ pub fn end() {
   put(R_STOPPING, 0)
   unlk()
   if ch != 0 {
-    let _r = svc(S_RELEASE, ch)
+    h_release(ch)
   }
 }
 
@@ -254,7 +255,7 @@ pub fn reset(n: Int) {
   put(R_STOPPING, 0)
   unlk()
   if ch != 0 {
-    let _r = svc(S_RELEASE, ch)
+    h_release(ch)
   }
 }
 
@@ -270,4 +271,12 @@ pub fn unroot(n: Int) -> Int {
   let _d = svc(S_TDEL, get(R_TIMER))
   unlk()
   e
+}
+
+/// Drops a reference to the stopping channel ch (tasks.xo h_release,
+/// which sits above this module): the last one frees it.
+fn h_release(ch: Int) {
+  if rc.dec(ch) != 0 {
+    obj.h_free_n(ch)
+  }
 }

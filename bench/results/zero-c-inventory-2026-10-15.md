@@ -34,8 +34,8 @@ Work, by lines per unit:
 | 1 | Layout-only record types and their asserts (xo_scope, xo_mutex, xo_atomic, xo_cq, xo_sarm; xo_select after the seed) | about 130 | S | 130 | nothing |
 | 2 | Windows' WSAPoll fallback loop and its registration list | about 150 | S | 150 | a decision that every supported Windows has \Device\Afd (UNTESTED on windows) |
 | 3 | rt.fn_addr: an Xo export's address as a word, then the services records filled from Xo (svc, pd_svc, stop_svc), poll.xo's and stop.xo's callbacks as exports, the signal handlers as exports, the scheduler services that only forward back into Xo | about 300 | M | 75 | the owner's approval of an rt intrinsic; both emitters |
-| 4 | The test world record tw into twflags.xo's static words | about 45 | S | 45 | the clock forwarders' deletion (seed) |
-| 5 | The handle code h_init, h_release, h_free (rt.sched_rt ops 19 and 25 already gone, 26326187) | about 60 | S | 60 once stop.xo's release calls tasks.h_release | stop.xo's release (with rank 3) |
+| 4 | The test world record tw into twflags.xo's static words | about 45 | S | 45 | DONE a30277e8: 70 lines deleted, 16 added |
+| 5 | The handle code h_init, h_release, h_free (rt.sched_rt ops 19 and 25 already gone, 26326187) | about 60 | S | 60 | DONE: 46 lines in this batch (stop.xo does its own retain and release, no fn_addr needed) |
 | 6 | heap_libc's dead C library mapping arm (finding) | about 20 | S | 20 | a choice: delete it, or restore it before the sanitizer macros |
 | 7 | xo_worker and xo_fiber record types, after sched_hooks, fiber_map_failed, xo_sched_run_task move | about 100 | M | 25 | part of rank 3's scheduler services |
 | 8 | The C allocator entries and the main heap record (xo_alloc, xo_free, xo_resize, heap(), main_heap; xo_rt_threads_begin, obj_heap_init) | about 285 | M | 70 | the C that still allocates: the network lists (seed), the handle code (rank 5) |
