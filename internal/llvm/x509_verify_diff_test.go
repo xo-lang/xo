@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -96,6 +97,55 @@ func x509SANs(rng *mrand.Rand, t *x509.Certificate) {
 	}
 }
 
+// x509Policies gives a template random certificate policies and, for a
+// CA, policy mappings, policy constraints and inhibitAnyPolicy (raw
+// extensions).
+func x509Policies(rng *mrand.Rand, t *x509.Certificate, ca bool) {
+	pol := []asn1.ObjectIdentifier{{1, 2, 3}, {1, 2, 4}, {1, 2, 5}, {2, 5, 29, 32, 0}}
+	if rng.Intn(4) != 0 {
+		for _, o := range pick(rng, pol, 3) {
+			id, _ := x509.OIDFromInts(func() []uint64 {
+				var xs []uint64
+				for _, v := range o {
+					xs = append(xs, uint64(v))
+				}
+				return xs
+			}())
+			dup := false
+			for _, p := range t.Policies {
+				dup = dup || p.Equal(id)
+			}
+			if !dup {
+				t.Policies = append(t.Policies, id)
+			}
+		}
+	}
+	if !ca {
+		return
+	}
+	if rng.Intn(4) == 0 {
+		type mapping struct{ Issuer, Subject asn1.ObjectIdentifier }
+		var ms []mapping
+		for i := rng.Intn(3); i >= 0; i-- {
+			ms = append(ms, mapping{pol[rng.Intn(len(pol))], pol[rng.Intn(len(pol))]})
+		}
+		v, _ := asn1.Marshal(ms)
+		t.ExtraExtensions = append(t.ExtraExtensions, pkix.Extension{Id: asn1.ObjectIdentifier{2, 5, 29, 33}, Critical: rng.Intn(2) == 0, Value: v})
+	}
+	if rng.Intn(4) == 0 {
+		type pc struct {
+			Require int `asn1:"optional,tag:0,default:-1"`
+			Inhibit int `asn1:"optional,tag:1,default:-1"`
+		}
+		v, _ := asn1.Marshal(pc{Require: rng.Intn(4) - 1, Inhibit: rng.Intn(4) - 1})
+		t.ExtraExtensions = append(t.ExtraExtensions, pkix.Extension{Id: asn1.ObjectIdentifier{2, 5, 29, 36}, Critical: true, Value: v})
+	}
+	if rng.Intn(5) == 0 {
+		v, _ := asn1.Marshal(rng.Intn(3))
+		t.ExtraExtensions = append(t.ExtraExtensions, pkix.Extension{Id: asn1.ObjectIdentifier{2, 5, 29, 54}, Critical: true, Value: v})
+	}
+}
+
 func x509Pack(certs ...[]byte) []byte {
 	var out []byte
 	for _, c := range certs {
@@ -136,6 +186,9 @@ func x509Chains(n int, seed int64) []string {
 		if rng.Intn(3) != 0 {
 			x509Constraints(rng, root)
 		}
+		if rng.Intn(2) == 0 {
+			x509Policies(rng, root, true)
+		}
 		rootDER, rootCert := mk(root, nil)
 		if rootDER == nil {
 			continue
@@ -150,6 +203,9 @@ func x509Chains(n int, seed int64) []string {
 			if rng.Intn(3) == 0 {
 				x509SANs(rng, in)
 			}
+			if rng.Intn(2) == 0 {
+				x509Policies(rng, in, true)
+			}
 			inDER, inCert := mk(in, rootCert)
 			if inDER == nil {
 				continue
@@ -160,6 +216,9 @@ func x509Chains(n int, seed int64) []string {
 		leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "leaf"}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 		if rng.Intn(8) != 0 {
 			x509SANs(rng, leaf)
+		}
+		if rng.Intn(2) == 0 {
+			x509Policies(rng, leaf, false)
 		}
 		leafDER, _ := mk(leaf, parent)
 		if leafDER == nil {

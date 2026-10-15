@@ -124,10 +124,21 @@ pub struct Cert {
   pub emails: List[Str]
   pub uris: List[Str]
   pub uri_hosts: List[Str]
+  /// For Go's policiesValid: the certificate policies (OID contents),
+  /// the policy mappings (issuer and subject OID contents in turn), and
+  /// the policy constraints and inhibitAnyPolicy (present, then value).
+  pub policies: List[Bytes]
+  pub policy_maps: List[Bytes]
+  pub has_req_explicit: Bool
+  pub req_explicit: Int
+  pub has_inhibit_mapping: Bool
+  pub inhibit_mapping: Int
+  pub has_inhibit_any: Bool
+  pub inhibit_any: Int
 }
 
 fn empty() -> Cert {
-  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: []}
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0}
 }
 
 /// The result of parse: the certificate, or the error text (Go's).
@@ -853,9 +864,22 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
           Some(x) => x
           None => return "x509: invalid policy constraints extension"
         }
-        for tag in [0x80, 0x81] {
-          if cbyte.peek(pc, tag) && cbyte.read_int64_tag(pc, tag) is None {
-            return "x509: invalid policy constraints extension"
+        if cbyte.peek(pc, 0x80) {
+          match cbyte.read_int64_tag(pc, 0x80) {
+            Some(x) => {
+              c.has_req_explicit = true
+              c.req_explicit = x
+            }
+            None => return "x509: invalid policy constraints extension"
+          }
+        }
+        if cbyte.peek(pc, 0x81) {
+          match cbyte.read_int64_tag(pc, 0x81) {
+            Some(x) => {
+              c.has_inhibit_mapping = true
+              c.inhibit_mapping = x
+            }
+            None => return "x509: invalid policy constraints extension"
           }
         }
       } else if n == 37 {
@@ -881,7 +905,7 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
           None => return "x509: invalid subject key identifier"
         }
       } else if n == 32 {
-        let err = policies(v)
+        let err = policies(v, c)
         if err != "" {
           return err
         }
@@ -896,14 +920,24 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
             Some(x) => x
             None => return "x509: invalid policy mappings extension"
           }
-          if cbyte.read(one, cbyte.OBJECT_IDENTIFIER) is None || cbyte.read(one, cbyte.OBJECT_IDENTIFIER) is None {
-            return "x509: invalid policy mappings extension"
+          let iss = cbyte.read(one, cbyte.OBJECT_IDENTIFIER)
+          let sub = cbyte.read(one, cbyte.OBJECT_IDENTIFIER)
+          match (iss, sub) {
+            (Some(a), Some(b)) => {
+              c.policy_maps.push(cbyte.bytes(a))
+              c.policy_maps.push(cbyte.bytes(b))
+            }
+            _ => return "x509: invalid policy mappings extension"
           }
         }
       } else if n == 54 {
         var s = v
-        if cbyte.read_int64(s) is None {
-          return "x509: invalid inhibit any policy extension"
+        match cbyte.read_int64(s) {
+          Some(x) => {
+            c.has_inhibit_any = true
+            c.inhibit_any = x
+          }
+          None => return "x509: invalid inhibit any policy extension"
         }
       } else {
         unhandled = true
@@ -1327,8 +1361,8 @@ fn crl_points(v0: cbyte.Win) -> Str {
   ""
 }
 
-/// Go's parseCertificatePoliciesExtension.
-fn policies(v0: cbyte.Win) -> Str {
+/// Go's parseCertificatePoliciesExtension: the policies into c.
+fn policies(v0: cbyte.Win, var c: Cert) -> Str {
   var v = v0
   var ps = match cbyte.read(v, cbyte.SEQUENCE) {
     Some(x) => x
@@ -1350,6 +1384,7 @@ fn policies(v0: cbyte.Win) -> Str {
       }
     }
     seen.push(ob)
+    c.policies.push(ob)
     // newOIDFromDER: not empty, the last byte ends an arc, no arc starts
     // with 0x80
     if ob.len() == 0 || Int(ob[ob.len() - 1]) >= 128 {

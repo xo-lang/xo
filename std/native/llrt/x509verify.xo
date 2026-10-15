@@ -24,6 +24,7 @@ pub const INCOMPATIBLE_USAGE: Int = 6
 pub const HOSTNAME: Int = 7
 pub const UNHANDLED_CRITICAL: Int = 8
 pub const CHECK_LIMIT: Int = 9
+pub const NO_VALID_CHAINS: Int = 10
 
 // Go's limit on signature checks in one verification
 const MAX_CHECKS: Int = 100
@@ -75,6 +76,7 @@ pub fn error_text(r: Outcome) -> Str {
     6 => "x509: certificate specifies an incompatible key usage"
     8 => "x509: unhandled critical extension"
     9 => "x509: signature check attempts limit reached while verifying certificate chain"
+    10 => if r.hint == "" { "x509: no valid chains built" } else { "x509: no valid chains built: ${r.hint}" }
     _ => "x509: verification failed"
   }
 }
@@ -126,8 +128,15 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   // a name constraint; a constraint error (the first) wins over the usage
   // one
   var names_err = ""
+  var bad_policies = 0
+  var bad_usage = 0
   for ch in s.chains {
+    if !policies_ok(ch) {
+      bad_policies += 1
+      continue
+    }
     if !usage_ok(ch, usage) {
+      bad_usage += 1
       continue
     }
     let e = chain_constraints(ch)
@@ -142,7 +151,18 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   if names_err != "" {
     return Outcome{code: NAME_CONSTRAINTS, chain: [], bad: leaf, hint: names_err}
   }
-  Outcome{code: INCOMPATIBLE_USAGE, chain: [], bad: leaf, hint: ""}
+  if bad_usage > 0 && bad_policies == 0 {
+    return Outcome{code: INCOMPATIBLE_USAGE, chain: [], bad: leaf, hint: ""}
+  }
+  // Go's NoValidChains, with its counts
+  var details: List[Str] = []
+  if bad_usage > 0 {
+    details.push("${bad_usage} candidate chains with incompatible key usage")
+  }
+  if bad_policies > 0 {
+    details.push("${bad_policies} candidate chains with invalid policies")
+  }
+  Outcome{code: NO_VALID_CHAINS, chain: [], bad: leaf, hint: details.join(", ")}
 }
 
 /// A pool's certificates once each (CertPool.AddCert skips one it has).
@@ -975,4 +995,321 @@ fn chain_constraints(chain: List[x509.Cert]) -> Str {
     }
   }
   ""
+}
+
+// ---------------------------------------------------------------------------
+// Certificate policies (Go's policiesValid: RFC 5280 6.1 as updated by
+// RFC 9618, with Go's default options: no initial policies, nothing
+// inhibited or required by the caller)
+
+/// anyPolicy's OID contents (2.5.29.32.0).
+fn any_policy() -> Bytes { b"\x55\x1d\x20\x00" }
+
+/// A node of the policy graph: its valid policy, expected policies,
+/// parents and children (node ids), whether it is still in the graph.
+struct PNode {
+  valid: Bytes
+  expected: List[Bytes]
+  parents: List[Int]
+  children: List[Int]
+}
+
+/// The graph: the nodes, the strata (node ids per depth), the parent
+/// index of the current depth (expected policy, then node ids).
+struct PGraph {
+  nodes: List[PNode]
+  strata: List[List[Int]]
+  depth: Int
+  index_keys: List[Bytes]
+  index_vals: List[List[Int]]
+}
+
+fn pg_new() -> PGraph {
+  PGraph{nodes: [PNode{valid: any_policy(), expected: [any_policy()], parents: [], children: []}], strata: [[0]], depth: 0, index_keys: [], index_vals: []}
+}
+
+fn ids_without(xs: List[Int], x: Int) -> List[Int] {
+  var out: List[Int] = []
+  for y in xs {
+    if y != x {
+      out.push(y)
+    }
+  }
+  out
+}
+
+fn has_id(xs: List[Int], x: Int) -> Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
+}
+
+/// A new node with its parents (newPolicyGraphNode); its id.
+fn pg_node(var g: PGraph, valid: Bytes, parents: List[Int]) -> Int {
+  let id = g.nodes.len()
+  g.nodes.push(PNode{valid: valid, expected: [valid], parents: [], children: []})
+  for p in parents {
+    if !has_id(g.nodes[p].children, id) {
+      g.nodes[p].children.push(id)
+    }
+    if !has_id(g.nodes[id].parents, p) {
+      g.nodes[id].parents.push(p)
+    }
+  }
+  id
+}
+
+fn pg_insert(var g: PGraph, id: Int) {
+  g.strata[g.depth].push(id)
+}
+
+/// The node of stratum d with the valid policy, -1 for none.
+fn pg_find(g: PGraph, d: Int, valid: Bytes) -> Int {
+  for id in g.strata[d] {
+    if g.nodes[id].valid == valid {
+      return id
+    }
+  }
+  -1
+}
+
+fn pg_parents_with_expected(g: PGraph, e: Bytes) -> List[Int] {
+  if g.depth == 0 {
+    return []
+  }
+  for (k, key) in g.index_keys.indexed() {
+    if key == e {
+      return g.index_vals[k]
+    }
+  }
+  []
+}
+
+fn pg_delete_leaf(var g: PGraph, valid: Bytes) {
+  let id = pg_find(g, g.depth, valid)
+  if id < 0 {
+    return
+  }
+  for p in g.nodes[id].parents {
+    g.nodes[p].children = ids_without(g.nodes[p].children, id)
+  }
+  for ch in g.nodes[id].children {
+    g.nodes[ch].parents = ids_without(g.nodes[ch].parents, id)
+  }
+  g.strata[g.depth] = ids_without(g.strata[g.depth], id)
+}
+
+fn pg_valid_nodes(g: PGraph) -> List[Int] {
+  var out: List[Int] = []
+  var i = g.depth
+  while i >= 0 {
+    for id in g.strata[i] {
+      let n = g.nodes[id]
+      if n.valid == any_policy() {
+        continue
+      }
+      if n.parents.len() == 1 && g.nodes[n.parents[0]].valid == any_policy() {
+        out.push(id)
+      }
+    }
+    i -= 1
+  }
+  out
+}
+
+fn pg_prune(var g: PGraph) {
+  var i = g.depth - 1
+  while i > 0 {
+    for id in g.strata[i] {
+      if g.nodes[id].children.is_empty() {
+        for p in g.nodes[id].parents {
+          g.nodes[p].children = ids_without(g.nodes[p].children, id)
+        }
+        g.strata[i] = ids_without(g.strata[i], id)
+      }
+    }
+    i -= 1
+  }
+}
+
+fn pg_incr(var g: PGraph) {
+  var keys: List[Bytes] = []
+  var vals: List[List[Int]] = []
+  for id in g.strata[g.depth] {
+    for e in g.nodes[id].expected {
+      var at = -1
+      for (k, key) in keys.indexed() {
+        if key == e {
+          at = k
+        }
+      }
+      if at >= 0 {
+        vals[at].push(id)
+      } else {
+        keys.push(e)
+        vals.push([id])
+      }
+    }
+  }
+  g.index_keys = keys
+  g.index_vals = vals
+  g.depth += 1
+  g.strata.push([])
+}
+
+/// Go's policiesValid with its default options.
+fn policies_ok(chain: List[x509.Cert]) -> Bool {
+  if chain.len() == 1 {
+    return true
+  }
+  let n = chain.len() - 1
+  var g = pg_new()
+  var have_graph = true
+  var inhibit_any = n + 1
+  var explicit = n + 1
+  var mapping = n + 1
+  var i = n - 1
+  while i >= 0 {
+    let cert = chain[i]
+    let self_signed = cert.issuer == cert.subject
+    if cert.policies.is_empty() {
+      have_graph = false
+    }
+    if explicit == 0 && !have_graph {
+      return false
+    }
+    if have_graph {
+      pg_incr(g)
+      var has_any = false
+      for pol in cert.policies {
+        if pol == any_policy() {
+          has_any = true
+          continue
+        }
+        var parents = pg_parents_with_expected(g, pol)
+        if parents.is_empty() {
+          let a = if g.depth == 0 { -1 } else { pg_find(g, g.depth - 1, any_policy()) }
+          if a >= 0 {
+            parents = [a]
+          }
+        }
+        if !parents.is_empty() {
+          let id = pg_node(g, pol, parents)
+          pg_insert(g, id)
+        }
+      }
+      if has_any && (inhibit_any > 0 || (n - i < n && self_signed)) {
+        // the expected policies of the parents that no leaf has
+        var miss_keys: List[Bytes] = []
+        var miss_vals: List[List[Int]] = []
+        for p in g.strata[g.depth - 1] {
+          for e in g.nodes[p].expected {
+            if pg_find(g, g.depth, e) >= 0 {
+              continue
+            }
+            var at = -1
+            for (k, key) in miss_keys.indexed() {
+              if key == e {
+                at = k
+              }
+            }
+            if at >= 0 {
+              miss_vals[at].push(p)
+            } else {
+              miss_keys.push(e)
+              miss_vals.push([p])
+            }
+          }
+        }
+        for (k, key) in miss_keys.indexed() {
+          let id = pg_node(g, key, miss_vals[k])
+          pg_insert(g, id)
+        }
+      }
+      pg_prune(g)
+      if i != 0 && !cert.policy_maps.is_empty() {
+        var map_keys: List[Bytes] = []
+        var map_vals: List[List[Bytes]] = []
+        var m = 0
+        while m + 1 < cert.policy_maps.len() {
+          let iss = cert.policy_maps[m]
+          let sub = cert.policy_maps[m + 1]
+          if mapping > 0 {
+            if iss == any_policy() || sub == any_policy() {
+              return false
+            }
+            var at = -1
+            for (k, key) in map_keys.indexed() {
+              if key == iss {
+                at = k
+              }
+            }
+            if at >= 0 {
+              map_vals[at].push(sub)
+            } else {
+              map_keys.push(iss)
+              map_vals.push([sub])
+            }
+          } else {
+            pg_delete_leaf(g, iss)
+            pg_prune(g)
+          }
+          m += 2
+        }
+        for (k, iss) in map_keys.indexed() {
+          let matching = pg_find(g, g.depth, iss)
+          if matching >= 0 {
+            g.nodes[matching].expected = map_vals[k]
+          } else {
+            let a = pg_find(g, g.depth, any_policy())
+            if a >= 0 {
+              let id = pg_node(g, iss, [a])
+              g.nodes[id].expected = map_vals[k]
+              pg_insert(g, id)
+            }
+          }
+        }
+      }
+    }
+    if i != 0 {
+      if !self_signed {
+        if explicit > 0 {
+          explicit -= 1
+        }
+        if mapping > 0 {
+          mapping -= 1
+        }
+        if inhibit_any > 0 {
+          inhibit_any -= 1
+        }
+      }
+      if cert.has_req_explicit && cert.req_explicit >= 0 && cert.req_explicit < explicit {
+        explicit = cert.req_explicit
+      }
+      if cert.has_inhibit_mapping && cert.inhibit_mapping >= 0 && cert.inhibit_mapping < mapping {
+        mapping = cert.inhibit_mapping
+      }
+      if cert.has_inhibit_any && cert.inhibit_any >= 0 && cert.inhibit_any < inhibit_any {
+        inhibit_any = cert.inhibit_any
+      }
+    }
+    i -= 1
+  }
+  if explicit > 0 {
+    explicit -= 1
+  }
+  if chain[0].has_req_explicit && chain[0].req_explicit == 0 {
+    explicit = 0
+  }
+  var valid_n = 0
+  if have_graph {
+    valid_n = pg_valid_nodes(g).len()
+    if pg_find(g, g.depth, any_policy()) >= 0 {
+      valid_n += 1
+    }
+  }
+  !(explicit == 0 && valid_n == 0)
 }

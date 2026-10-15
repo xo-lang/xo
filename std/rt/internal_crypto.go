@@ -273,7 +273,7 @@ func cryptoChain(what string, a, b, c, d Bytes) (Bytes, bool) {
 		code = 1
 	case errors.As(err, &ci):
 		code = map[x509.InvalidReason]int{x509.Expired: 2, x509.NotAuthorizedToSign: 3, x509.TooManyIntermediates: 4,
-			x509.CANotAuthorizedForThisName: 5, x509.IncompatibleUsage: 6}[ci.Reason]
+			x509.CANotAuthorizedForThisName: 5, x509.IncompatibleUsage: 6, x509.NoValidChains: 10}[ci.Reason]
 	case errors.As(err, &he):
 		code = 7
 	case errors.As(err, &uc):

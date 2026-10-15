@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 12, decision 0202): Go's
+  certificate policy validation in x509verify.xo (policiesValid: RFC
+  5280 6.1 as updated by RFC 9618, the policy graph with Go's default
+  options), with x509.xo keeping the policies, policy mappings, policy
+  constraints and inhibitAnyPolicy, and Verify's order (policies, then
+  key usages, then name constraints) and its "x509: no valid chains
+  built: N candidate chains with invalid policies" text. This closes part
+  11's gap. TestX509VerifyDiff adds random policies, mappings, policy
+  constraints and inhibitAnyPolicy: 20,000 chains over two seeds, no
+  difference (about 5 percent refused for their policies).
+
 - Native runtime (zero-C audit item B31, part 11, decision 0202): name
   constraints as Go 1.26 checks them (its constraints.go: per
   certificate, sorted and pruned sets of IP, DNS, URI and e-mail
@@ -21,7 +32,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   name on the leaf and the intermediate) with x509verify.xo and Go's
   Verify: 20,000 chains over two seeds, no difference. Known gap, next:
   Go's certificate policy validation (policiesValid) is not done, so a
-  chain Go refuses for its policies verifies here.
+  chain Go refuses for its policies verifies here (closed by part 12).
 
 - Native runtime (zero-C audit, scheduler block S1): a context's wait
   on its park is Xo (std/native/llrt/tasks.xo park_wait_n: the output
