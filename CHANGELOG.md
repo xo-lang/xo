@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233 step 2, stop and signals): stop.xo arms
+  and disarms the grace timer, makes and closes task.stopping's channel
+  and names the timer's function through rt.fn_addr of cabi.xo's
+  exports (poll_timer_add, poll_timer_del, chan_close, the new
+  stop_chan_new, stop_cancel) instead of the C's services record; SIGINT
+  and SIGTERM's handler is poll.xo on_signal (cabi.xo on_signal: errno
+  kept on macOS, no allocation); task.await runs a claimed task through
+  tasks.xo run_claimed directly. xo_rt.c's pdsvc_tadd, pdsvc_tdel,
+  stopsvc_chan, stopsvc_close, stop_grace_fire and on_signal go;
+  stop_svc keeps only the entry's words (88 on).
 - ctx.xo's services record is Xo (decision 0233 step 2): ctx.xo init makes it, and every handle constructor names its free function with rt.fn_addr, so the C record, its initializer, asserts, free function declarations, pool_rec and the weak HTTP and network free stand-ins are gone.
 - Native runtime (the event loop): poll.xo checks a context's
   cancellation (budget.xo canceled), signals a park (pool.xo

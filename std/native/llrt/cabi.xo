@@ -454,6 +454,10 @@ fn stop_init(svc: Int) { stop.init(svc) }
 
 fn stop_signal() { stop.signal() }
 
+/// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
+/// handler: the signal number, unused).
+fn on_signal(sig: Int) { poll.on_signal() }
+
 fn stop_cancel() { stop.cancel() }
 
 fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
@@ -461,6 +465,17 @@ fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
 fn stop_canceled() -> Int { if stop.canceled() { 1 } else { 0 } }
 
 fn stop_stopping(drop: Int) -> Int { stop.stopping(drop) }
+
+/// task.stopping's channel (stop.xo calls it through rt.fn_addr: chan.xo
+/// sits above stop.xo in the imports): unbuffered, closed from outside
+/// the program's tasks (CH_EXT, so waiting for it does not count as
+/// blocked), its faults located at "task.stopping".
+fn stop_chan_new(drop: Int) -> Int {
+  let loc = "task.stopping"
+  let ch = chan.new(0, drop, raw.data(loc), loc.len())
+  rt.mem_store(ch, chan.CH_EXT, 1, 4)
+  ch
+}
 
 fn stop_set_grace(d: Int) { stop.set_grace(d) }
 

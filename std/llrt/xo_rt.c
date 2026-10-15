@@ -1633,7 +1633,8 @@ typedef struct {
 } xo_chan;
 
 // The channel operations are chan.xo's (B19), which generated code calls
-// through its exports (the stop service's channel too). chan_free stays
+// through its exports (task.stopping's channel too: stop.xo through
+// cabi.xo's stop_chan_new; the C tests through xcalls.h). chan_free stays
 // C (the free function the handle names).
 int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
 void xo_x_chan_close(int64_t c);
@@ -1909,11 +1910,6 @@ static void ev_poke(void) { xo_x_poll_poke(); }
 void xo_x_poll_ev_start(void);
 static void ev_start(void) { xo_x_poll_ev_start(); }
 
-// The timers are poll.xo's: timer_add arms one (when, and park or
-// function, set), timer_del disarms it (its function does not run after
-// it returns).
-void xo_x_poll_timer_add(int64_t t);
-void xo_x_poll_timer_del(int64_t t);
 
 // Socket descriptors
 
@@ -1958,18 +1954,6 @@ enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
 static int64_t pdsvc_wait(int64_t c, int64_t b) {
 	(void)b;
 	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
-	return 0;
-}
-// pdsvc_tadd and pdsvc_tdel are poll.xo's timer_add and timer_del for
-// stop.xo (stop_svc).
-static int64_t pdsvc_tadd(int64_t t, int64_t b) {
-	(void)b;
-	xo_x_poll_timer_add(t);
-	return 0;
-}
-static int64_t pdsvc_tdel(int64_t t, int64_t b) {
-	(void)b;
-	xo_x_poll_timer_del(t);
 	return 0;
 }
 int64_t xo_x_poll_thread(int64_t a);
@@ -2162,43 +2146,19 @@ extern char **environ;
 // (the signals counted, the stop request, the grace timer, task.stopping's
 // channel, main's root context) is std/native/llrt/stop.xo's (the zero-C
 // audit's B26, part 1). The C keeps the handlers, which count a signal
-// and wake the poller (whose thread calls stop.xo signal), and stop_svc, the
-// services record stop.xo calls through rt.call_c2 (its S_ words).
+// and wake the poller (whose thread calls stop.xo signal), and stop_svc,
+// the services record whose words 88 on entry.xo reads (its E_ words).
 
 void xo_x_stop_init(int64_t svc);
-void xo_x_stop_cancel(void);
 int64_t xo_x_stop_requested(void);
 int64_t xo_x_stop_stopping(int64_t drop);
 void xo_x_stop_set_root(int64_t n);
 void xo_x_stop_end(void);
 
 
-static int64_t stopsvc_chan(int64_t drop, int64_t b) {
-	(void)b;
-	static const char loc[] = "task.stopping";
-	xo_chan *ch = (xo_chan *)(intptr_t)xo_x_chan_new(0, drop, XO_ADDR(loc), (int64_t)sizeof loc - 1);
-	ch->ext = 1;
-	return XO_ADDR(ch);
-}
-static int64_t stopsvc_close(int64_t ch, int64_t b) {
-	(void)b;
-	xo_x_chan_close(ch);
-	return 0;
-}
-static void stop_grace_fire(xo_timer *t) {
-	(void)t;
-	xo_x_stop_cancel();
-}
 #ifndef _WIN32
-static void on_signal(int sig) {
-	(void)sig;
-	int e = errno;
-	__atomic_fetch_add(&ev.sigs, 1, __ATOMIC_ACQ_REL);
-	char b = 's';
-	ssize_t r = write(ev.pfd[1], &b, 1);
-	(void)r;
-	errno = e;
-}
+// SIGINT and SIGTERM's handler is poll.xo's (cabi.xo on_signal).
+void xo_x_on_signal(int64_t sig);
 #endif
 
 #ifdef _WIN32
@@ -2253,18 +2213,13 @@ static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
 
 static int64_t stop_svc[20];
 static void stop_svc_init(void) {
-	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
-	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
-	stop_svc[3] = XO_ADDR(&stopsvc_chan);
-	stop_svc[4] = XO_ADDR(&stopsvc_close);
-	stop_svc[9] = XO_ADDR(&stop_grace_fire);
 	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
 	stop_svc[12] = XO_ADDR(&ev_start);
 #ifdef _WIN32
 	stop_svc[13] = XO_ADDR(&on_console);
 	stop_svc[14] = XO_ADDR(&on_overflow);
 #else
-	stop_svc[13] = XO_ADDR(&on_signal);
+	stop_svc[13] = XO_ADDR(&xo_x_on_signal);
 #endif
 	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
 	stop_svc[16] = XO_ADDR(&xo_x_consts_free);

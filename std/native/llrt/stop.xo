@@ -13,9 +13,9 @@
 // word. The cancellation of main's root, the clock, and the exit are Xo
 // (pool.xo, the timers' clock as poll.xo now reads it, stdio.xo and
 // process.xo), and the stopping channel's references (rc.xo and obj.xo);
-// the C functions it still needs (timers and the channel, which sit
-// above this module in the imports) are in the C's services record (S_
-// words).
+// the timers and the channel, which sit above this module in the
+// imports, are cabi.xo exports called through rt.fn_addr (decision
+// 0233).
 use native/llrt/ctx
 use native/llrt/obj
 use native/llrt/pool
@@ -51,18 +51,13 @@ const R_STOPPING = 80
 const R_ROOT = 88
 const R_SIZE = 96
 
-/// The services record's words: timer_add (t), timer_del (t), the
-/// stopping channel's constructor (drop: a new channel), xo_chan_close
-/// (ch), and the grace timer's C function (it calls cancel). Unused:
-/// words 16, 56 and 64 (node_cancel, the exit, the clock: done here), 40
-/// and 48 (h_retain and h_release: rc.xo and obj.xo), and 80 (was the
-/// address of the C's tw.in_main). Words 88 on are the entry's
-/// (entry.xo).
-const S_TADD = 0
-const S_TDEL = 8
-const S_CHAN = 24
-const S_CLOSE = 32
-const S_FIRE = 72
+/// The C's services record: words 88 on are the entry's (entry.xo).
+/// Words 0 to 80 are unused since decision 0233 step 2 (2026-10-15):
+/// the timers, task.stopping's channel and its close, and the grace
+/// timer's function are cabi.xo exports called through rt.fn_addr
+/// (poll.xo, chan.xo and the exports sit above this module in the
+/// imports); the cancellation, the clock, the exit and the channel's
+/// references are Xo calls.
 
 /// A timer's words (xo_rt.c struct xo_timer).
 const T_WHEN = 0
@@ -82,8 +77,6 @@ const RELEASE = 2
 const ACQ_REL = 3
 
 fn rec() -> Int { rt.mem_load(rt.static_word(W_REC), 0, 8) }
-
-fn svc(k: Int, a: Int) -> Int { rt.call_c2(svc_word(k), a, 0) }
 
 /// Word k of the C's services record (entry.xo reads its own).
 pub fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
@@ -165,7 +158,7 @@ fn deadline(d: Int) -> Int {
 /// Arms the grace timer for the time left (the lock held).
 fn arm_grace() {
   let t = get(R_TIMER)
-  let _d = svc(S_TDEL, t)
+  let _d = rt.call_c2(rt.fn_addr("poll_timer_del"), t, 0)
   if canceled() {
     return
   }
@@ -175,9 +168,9 @@ fn arm_grace() {
     return
   }
   rt.mem_store(t, T_WHEN, deadline(left), 8)
-  rt.mem_store(t, T_FN, svc_word(S_FIRE), 8)
+  rt.mem_store(t, T_FN, rt.fn_addr("stop_cancel"), 8)
   rt.mem_store(t, T_PARK, 0, 8)
-  let _a = svc(S_TADD, t)
+  let _a = rt.call_c2(rt.fn_addr("poll_timer_add"), t, 0)
 }
 
 /// Handles SIGINT or SIGTERM (on the poller thread, or a test's
@@ -191,7 +184,7 @@ pub fn signal() {
     rt.slot_store(rec(), R_REQUESTED / 8, 1, RELEASE)
     let ch = get(R_STOPPING)
     if ch != 0 {
-      let _c = svc(S_CLOSE, ch)
+      let _c = rt.call_c2(rt.fn_addr("chan_close"), ch, 0)
     }
     arm_grace()
   } else if n == 2 {
@@ -218,10 +211,10 @@ pub fn stopping(drop: Int) -> Int {
   lk()
   var ch = get(R_STOPPING)
   if ch == 0 {
-    ch = svc(S_CHAN, drop)
+    ch = rt.call_c2(rt.fn_addr("stop_chan_new"), drop, 0)
     put(R_STOPPING, ch)
     if requested() {
-      let _c = svc(S_CLOSE, ch)
+      let _c = rt.call_c2(rt.fn_addr("chan_close"), ch, 0)
     }
   }
   rc.inc(ch)
@@ -285,7 +278,7 @@ pub fn unroot(n: Int) -> Int {
   }
   let e = get(R_EXITED)
   put(R_EXITED, 0)
-  let _d = svc(S_TDEL, get(R_TIMER))
+  let _d = rt.call_c2(rt.fn_addr("poll_timer_del"), get(R_TIMER), 0)
   unlk()
   e
 }

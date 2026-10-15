@@ -108,7 +108,6 @@ const E_NEXT = 16
 const E_WRITER = 24
 
 /// The C's services (pool.xo RT_*).
-const RT_RUN_CLAIMED = 16
 const RT_EMPTY_LIST = 18
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
@@ -297,9 +296,11 @@ pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
     if canceled(c) {
       return empty_list()
     }
-    // not started yet: run it here
+    // not started yet: run it here (its spawn released it for
+    // ThreadSanitizer: the queues are Xo, not instrumented)
     if sched.task_claim(t) != 0 {
-      let _r = rt.sched_rt(RT_RUN_CLAIMED, t, 2)
+      tsan(RT_TSAN_ACQUIRE, t)
+      run_claimed(t, 2)
     }
     pool.lock(t + T_MU)
     while rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {

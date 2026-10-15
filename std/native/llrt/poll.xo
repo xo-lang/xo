@@ -771,6 +771,31 @@ pub fn poke() {
 /// The C's ev record.
 fn ev() -> Int { svc_word(S_EV) }
 
+/// The SIGINT and SIGTERM handler (cabi.xo on_signal, which entry.xo
+/// installs; was xo_rt.c's): counts the signal and wakes the poller
+/// through the self pipe, whose thread runs the shutdown's step. Async
+/// signal safe: no allocation, lock, or scratch buffer (the byte written
+/// is a literal's), and errno kept (libSystem's write may set it; Linux's
+/// is a system call).
+pub fn on_signal() {
+  let e = ev()
+  let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  let b = "s"
+  let w = s32(rt.mem_load(e, EV_PIPE_W, 4))
+  match target.os {
+    TargetOs.Darwin => {
+      let ep = sys_darwin.__error()
+      let saved = rt.mem_load(ep, 0, 4)
+      let _w = sys_darwin.write(w, raw.data(b), 1)
+      rt.mem_store(ep, 0, saved, 4)
+    }
+    TargetOs.Linux => {
+      let _w = linux.write_at(w, raw.data(b), 1)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
 /// Starts the event loop once (xo_rt.c ev_start): the self pipe, the
 /// kqueue or epoll descriptor, and the poller thread; a caller that
 /// finds the start under way waits for it.
