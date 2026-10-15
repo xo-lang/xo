@@ -120,6 +120,14 @@ fn hfree(hw: Int, p: Int) {
   alloc.free_mt(subw(hw, 1), p)
 }
 
+/// A block of n bytes for a runtime object (xo_alloc): the calling
+/// thread's heap, refilled from the central lists with other threads
+/// running.
+pub fn alloc_obj(n: Int) -> Int { halloc(heap_word(), n) }
+
+/// Frees the runtime object p (xo_free).
+pub fn free_obj(p: Int) { hfree(heap_word(), p) }
+
 /// alloc.free on heap h (one thread): the module's one call site of it
 /// (see halloc), small enough that the inliner copies it into its two
 /// callers (rl_free_n's common case and hfree).

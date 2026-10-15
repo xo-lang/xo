@@ -744,3 +744,19 @@ fn select_take(s: Int, i: Int) -> Int { selects.take(s, i) }
 /// `Atomic.new(v)` (tasks.xo atomic_new): generated code calls it
 /// directly; xo_rt.c's xo_atomic_new forwards.
 fn atomic_new(v: Int) -> Int { tasks.atomic_new(v) }
+
+// The handles' free functions (B18): xo_rt.c puts these exports'
+// addresses in the services record (ctx.xo SV_*_FREE), and the objects'
+// headers name them; xo_h_free calls them.
+
+fn task_free(t: Int) { tasks.task_free(t) }
+
+fn scope_free(s: Int) { tasks.scope_free(s) }
+
+fn atomic_free(a: Int) { tasks.atomic_free(a) }
+
+fn mutex_free(m: Int) { mutex.free(m) }
+
+fn chan_free(c: Int) { chan.free(c) }
+
+fn select_free(s: Int) { selects.free(s) }

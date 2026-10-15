@@ -580,7 +580,7 @@ xo_srv *xo_srv_new(void) {
 	mu_init(&s->mu);
 	xo_scope *sc = xo_alloc(sizeof(xo_scope));
 	memset(sc, 0, sizeof *sc);
-	h_init(sc, scope_free);
+	h_init(sc, XO_FREE_FN(xo_x_scope_free));
 	sc->prune_at = 64; // finished connections leave the list (scope_prune)
 	sc->parent_node = c->node;
 	xo_node *root = (xo_node *)(intptr_t)xo_x_stop_root();

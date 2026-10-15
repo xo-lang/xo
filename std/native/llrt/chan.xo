@@ -13,6 +13,7 @@
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/tasks
 use native/rt
@@ -352,4 +353,17 @@ pub fn len(c: Int) -> Int {
   let n = ld(c, CH_LEN)
   pool.unlock(c + CH_MU)
   n
+}
+
+/// A channel's free function (chan_free): the values still buffered,
+/// the ring.
+pub fn free(c: Int) {
+  for i in 0..ld(c, CH_LEN) {
+    tasks.list_release(ld(slot(c, i), 0), ld(c, CH_DROP))
+  }
+  let b = ld(c, CH_BUF)
+  if b != 0 {
+    rt.heap_release(b)
+  }
+  obj.free_obj(c)
 }

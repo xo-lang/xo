@@ -13,6 +13,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of a thread, the exit polled with waitpid in cancelable steps; Linux
   UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
   children until stage 4b.
+- Native runtime (zero-C audit item B18): the free functions of tasks,
+  scopes, mutexes, channels, selects and Atomics are Xo (tasks.xo,
+  mutex.xo, chan.xo, selects.xo), and runtime objects allocate through
+  obj.xo's alloc_obj, which refills from the central lists when several
+  threads run.
 - Native runtime (zero-C audit item B20, part 2): the fiber stacks'
   settings (XO_TASK_STACK_MB, the page size per OS) are Xo
   (poolsetup.xo fibers_setup).

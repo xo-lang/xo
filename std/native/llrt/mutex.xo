@@ -10,6 +10,7 @@
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
@@ -286,4 +287,10 @@ pub fn runlock(m: Int, l: Int) {
   }
   pool.unlock(m + M_MU)
   held_del(ctx.cur(), m)
+}
+
+/// A Mutex's free function (mutex_free): its value.
+pub fn free(m: Int) {
+  tasks.list_release(ld(m, M_SLOT), ld(m, M_DROP))
+  obj.free_obj(m)
 }

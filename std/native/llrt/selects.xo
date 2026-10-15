@@ -14,6 +14,7 @@ use native/llrt/budget
 use native/llrt/chan
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/rc
 use native/llrt/tasks
@@ -244,4 +245,20 @@ pub fn take(s: Int, i: Int) -> Int {
   let l = ld(a, A_ITEM)
   st(a, A_ITEM, 0)
   if l != 0 { l } else { tasks.empty_list() }
+}
+
+/// A select's free function (select_free): the arms' values and channel
+/// references, the arms.
+pub fn free(s: Int) {
+  let arms = ld(s, SE_ARMS)
+  for i in 0..ld4(s, SE_N) {
+    let a = arms + A_SIZE * i
+    let c = ld(a, A_CH)
+    tasks.list_release(ld(a, A_ITEM), ld(c, chan.CH_DROP))
+    tasks.h_release(c)
+  }
+  if arms != 0 {
+    rt.heap_release(arms)
+  }
+  obj.free_obj(s)
 }

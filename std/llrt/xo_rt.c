@@ -283,7 +283,7 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 }
 
 // The runtime's records from malloc (std/native rt.heap_large): the C
-// frees some of them with free (xo_testing.c, task_free), so these stay
+// frees some of them with free (xo_testing.c, tasks.xo task_free), so these stay
 // the C library's until the runtime has an allocator of its own for them.
 //
 // xo_heap_large returns a block of n bytes from malloc (the prefix is
@@ -1974,12 +1974,15 @@ static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), 
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
 
-static void task_free(void *p);
-static void scope_free(void *p);
-static void mutex_free(void *p);
-static void chan_free(void *p);
-static void select_free(void *p);
-static void atomic_free(void *p);
+// the handles' free functions: cabi.xo's exports (tasks.xo, mutex.xo,
+// chan.xo, selects.xo; B18)
+void xo_x_task_free(int64_t p);
+void xo_x_scope_free(int64_t p);
+void xo_x_mutex_free(int64_t p);
+void xo_x_chan_free(int64_t p);
+void xo_x_select_free(int64_t p);
+void xo_x_atomic_free(int64_t p);
+#define XO_FREE_FN(f) ((void (*)(void *))(void *)(f))
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -1998,13 +2001,13 @@ static struct {
 	void (*atomic_free)(void *);
 	void *fibers;
 	int64_t fiber_main, worker_main;
-} svc = {&pool, task_free, scope_free,
+} svc = {&pool, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, {0}, mutex_free, chan_free, select_free, atomic_free, NULL, 0, 0};
+	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
                    offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96,
@@ -2201,24 +2204,6 @@ typedef struct xo_task {
 
 enum { T_QUEUED, T_RUNNING, T_DONE };
 
-static void scope_free(void *p) {
-	xo_scope *s = p;
-	bud_release(s->bud);
-	if (s->fail) {
-		h_release(s->fail);
-	}
-	if (s->fault) {
-		h_release(s->fault);
-	}
-	free(s->tasks);
-	for (int i = 0; i < s->nold; i++) {
-		free(s->old[i]);
-	}
-	free(s->old);
-	xo_free(s);
-}
-
-
 // xo_scope_group is `s.group()` (tasks.xo scope_group).
 int64_t xo_x_scope_group(int64_t s);
 xo_scope *xo_scope_group(xo_scope *s) { return (xo_scope *)(intptr_t)xo_x_scope_group(XO_ADDR(s)); }
@@ -2240,21 +2225,6 @@ void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
 
 _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
                "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
-
-static void task_free(void *p) {
-	xo_task *t = p;
-	bud_release(t->bud);
-	if (t->result) {
-		list_release(t->result, t->drop);
-	}
-	if (t->fault_msg) {
-		// large blocks of fault.xo (the address after the prefix)
-		free(t->fault_msg);
-		free(t->fault_loc);
-		free(t->fault_detail);
-	}
-	xo_free(t);
-}
 
 // scope_units_done records that one of s's tasks ended or one of its
 // queue entries was taken (units 2), or both (4); the last one wakes the
@@ -2788,16 +2758,6 @@ typedef struct {
 	xo_cq recvq, sendq;
 } xo_chan;
 
-static void chan_free(void *p) {
-	xo_chan *c = p;
-	for (int64_t i = 0; i < c->len; i++) {
-		list_release(c->buf[(c->head + i) % c->cap], c->drop);
-	}
-	free(c->buf);
-	xo_free(c);
-}
-
-
 // The channel operations are chan.xo's (B19), which generated code calls
 // through its exports; these forward for older xo's code. chan_free stays
 // C (the free function the handle names).
@@ -2861,16 +2821,6 @@ struct xo_timer;
 static void select_timer(xo_select *s, struct xo_timer **tp);
 static void select_untimer(struct xo_timer *t);
 
-static void select_free(void *p) {
-	xo_select *s = p;
-	for (int i = 0; i < s->n; i++) {
-		list_release(s->arms[i].item, s->arms[i].ch->drop);
-		h_release(s->arms[i].ch);
-	}
-	free(s->arms);
-	xo_free(s);
-}
-
 // The select's operations are selects.xo's (B19), which generated code
 // calls through its exports; these forward for older xo's code.
 // select_free stays C (the free function the handle names), and the
@@ -2915,12 +2865,6 @@ typedef struct {
 // through its exports; these forward for older xo's code. mutex_free
 // stays C (the free function the handle names, through the services
 // record).
-static void mutex_free(void *p) {
-	xo_mutex *m = p;
-	list_release(m->slot, m->drop);
-	xo_free(m);
-}
-
 int64_t xo_x_mutex_new(int64_t l, int64_t drop);
 int64_t xo_x_mutex_lock(int64_t m, int64_t lp, int64_t ln);
 void xo_x_mutex_unlock(int64_t m, int64_t l);
@@ -2962,7 +2906,6 @@ typedef struct {
 
 _Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
-static void atomic_free(void *p) { xo_free(p); }
 
 // xo_atomic_new is tasks.xo atomic_new (B19), which generated code calls
 // through its export; this forwards for older xo's code.

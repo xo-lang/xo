@@ -11,7 +11,6 @@
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
-use native/llrt/alloc
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
@@ -70,6 +69,7 @@ const S_DEADLINE = 408
 const S_FAULT = 424
 const S_PRUNE_AT = 440
 const S_CLOSING = 448
+const S_BUD = 456
 const S_SIZE = 464
 
 /// An object's header (xo_hdr): its count and its free function.
@@ -387,7 +387,7 @@ fn pool_ready() -> Int {
 /// the C free function in services record word k (ctx.xo SV_TASK_FREE,
 /// SV_SCOPE_FREE).
 fn new_object(n: Int, k: Int) -> Int {
-  let o = alloc.alloc(obj.heap(), n)
+  let o = obj.alloc_obj(n)
   rt.mem_set(o, 0, n)
   st(o, H_RC, -1)
   st(o, H_FREE, ld(ctx.svc(), k))
@@ -397,7 +397,7 @@ fn new_object(n: Int, k: Int) -> Int {
 /// Drops a reference to the object at p (xo_rt.c h_release): the last
 /// one frees it through the C (xo_h_free: its free function, deferred in
 /// a real-time section).
-fn h_release(p: Int) {
+pub fn h_release(p: Int) {
   if rc.dec(p) != 0 {
     let _r = rt.sched_rt(RT_H_FREE, p, 0)
   }
@@ -459,7 +459,7 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   let r = pool.scope_add(pl, s, t, w)
   if r == -1 {
     budget.release(bud)
-    alloc.free(obj.heap(), t)
+    obj.free_obj(t)
     if fl != empty_list() {
       let _d = rt.call_c2(fdrop, fl, 0)
     }
@@ -586,3 +586,55 @@ pub fn atomic_new(v: Int) -> Int {
   st(a, 128, v)
   a
 }
+
+// ---------------------------------------------------------------------------
+// The handles' free functions (B18): the free function an object's header
+// names (xo_h_free calls it with its last reference gone; the C takes
+// these exports' addresses for the services record's SV_*_FREE words).
+
+/// Releases the list l (a list of one) with its drop function, unless it
+/// is 0 or the empty list.
+pub fn list_release(l: Int, drop: Int) {
+  if l != 0 && l != empty_list() {
+    let _r = rt.call_c2(drop, l, 0)
+  }
+}
+
+/// Frees the block at the malloc'd address b, unless it is 0.
+fn mfree(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+/// A task's (task_free): its budget, its result, the fault that ended it.
+pub fn task_free(t: Int) {
+  budget.release(ld(t, T_BUD))
+  list_release(ld(t, T_RESULT), ld(t, T_DROP))
+  mfree(ld(t, T_FAULT_MSG))
+  mfree(ld(t, T_FAULT_LOC))
+  mfree(ld(t, T_FAULT_DETAIL))
+  obj.free_obj(t)
+}
+
+/// A scope's (scope_free): its budget, its failed and faulted tasks, the
+/// node of its tasks and the ones s.cancel() replaced.
+pub fn scope_free(s: Int) {
+  budget.release(ld(s, S_BUD))
+  if ld(s, S_FAIL) != 0 {
+    h_release(ld(s, S_FAIL))
+  }
+  if ld(s, S_FAULT) != 0 {
+    h_release(ld(s, S_FAULT))
+  }
+  mfree(ld(s, S_TASKS))
+  let old = ld(s, S_OLD)
+  for i in 0..ld4(s, S_NOLD) {
+    mfree(ld(old, 8 * i))
+  }
+  mfree(old)
+  obj.free_obj(s)
+}
+
+/// An Atomic's (atomic_free).
+pub fn atomic_free(a: Int) { obj.free_obj(a) }
