@@ -54,6 +54,12 @@ let stdio.out_slow (a cold path split off on purpose, one call site,
 under INLINE_FEW_BLOCKS once its helpers counted as no blocks) be copied
 into stdio.out, and small writes took 31% more instructions.
 
+Also not done: a cheaper cost for cold fault blocks. Overflow checks
+are not SSA blocks (the emitter adds the `b.vs`), and making the few
+blocks that end in `fault` or `unreachable` free makes no function of
+text, tls, json or alloc inlinable
+(bench/results/arm64-inline-2026-10-15.md, option (1)).
+
 In Xo (what mlkem.xo and sha3.xo do since 2026-10-15), still the way for
 a hot loop: write hot helpers as leaf functions on rt.* operations
 directly (no call of another Xo function, no checked arithmetic), and
