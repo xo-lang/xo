@@ -1,16 +1,14 @@
 // xo_win.c: the POSIX subset the runtime uses, for Windows (decision
 // 0197). xo_rt.c includes it instead of the POSIX headers when _WIN32 is
 // defined (clang --target=x86_64-pc-windows-msvc or aarch64-pc-windows-msvc,
-// with the MSVC C runtime and the Windows SDK). It maps:
+// with the MSVC C runtime and the Windows SDK). What is left (the zero-C
+// audit's B32, 2026-10-15):
 //
-//   - threads: pthread_create/join on _beginthreadex (the Windows
-//     poller's thread and sanhook.xo's seed shims);
-//   - the futex: WaitOnAddress and WakeByAddressSingle (xo_rt.c);
-//   - clocks: QueryPerformanceCounter (monotonic) and
-//     GetSystemTimePreciseAsFileTime (wall clock);
-//   - sockets: Winsock 2 (initialized on first use); readiness comes
-//     from AFD polls on the poller's completion port (xo_rt.c);
-//   - descriptors: the C runtime's _read/_write/_close, in binary mode.
+//   - threads: pthread_create/join on _beginthreadex (main's thread in
+//     xo_rt.c run_main and sanhook.xo's seed shims);
+//   - Winsock's constants and layouts, asserted for sock.xo and
+//     cabi_net.xo (the sockets, the poller, and their errors are Xo:
+//     sock.xo, poll.xo).
 //
 // Faults unwind with the Windows unwinder (RtlVirtualUnwind, xo_rt.c)
 // instead of _Unwind_ForcedUnwind, which the MSVC environment does not
@@ -150,76 +148,11 @@ static inline int pthread_join(pthread_t t, void **ret) {
 }
 
 // ---------------------------------------------------------------------------
-// Descriptors and sockets
-
-#ifndef SHUT_RDWR
-#define SHUT_RD SD_RECEIVE
-#define SHUT_WR SD_SEND
-#define SHUT_RDWR SD_BOTH
-#endif
-
-
-// xo_wsa_init starts Winsock once.
-static void xo_wsa_once(void) {
-	WSADATA d;
-	WSAStartup(MAKEWORD(2, 2), &d);
-}
-static INIT_ONCE xo_wsa_o = INIT_ONCE_STATIC_INIT;
-static BOOL CALLBACK xo_wsa_tramp(PINIT_ONCE o, PVOID p, PVOID *c) {
-	(void)o;
-	(void)p;
-	(void)c;
-	xo_wsa_once();
-	return TRUE;
-}
-static inline void xo_wsa_init(void) { InitOnceExecuteOnce(&xo_wsa_o, xo_wsa_tramp, NULL, NULL); }
-
-// errno for a Winsock error code
-static int xo_wsa_map(int code) {
-	switch (code) {
-	case WSAEWOULDBLOCK:
-		return EWOULDBLOCK;
-	case WSAEINPROGRESS:
-	case WSAEALREADY:
-		return EINPROGRESS;
-	case WSAECONNREFUSED:
-		return ECONNREFUSED;
-	case WSAECONNRESET:
-		return ECONNRESET;
-	case WSAECONNABORTED:
-		return ECONNABORTED;
-	case WSAESHUTDOWN:
-		return EPIPE;
-	case WSAETIMEDOUT:
-		return ETIMEDOUT;
-	case WSAEADDRINUSE:
-		return EADDRINUSE;
-	case WSAEADDRNOTAVAIL:
-		return EADDRNOTAVAIL;
-	case WSAEACCES:
-		return EACCES;
-	case WSAEINVAL:
-		return EINVAL;
-	case WSAEINTR:
-		return EINTR;
-	case WSAENOTSOCK:
-		return ENOTSOCK;
-	case WSAENETUNREACH:
-		return ENETUNREACH;
-	case WSAEHOSTUNREACH:
-		return EHOSTUNREACH;
-	case WSAENOTCONN:
-		return ENOTCONN;
-	case WSAEAFNOSUPPORT:
-		return EAFNOSUPPORT;
-	default:
-		return EIO;
-	}
-}
+// Winsock's constants
 
 // std/native/llrt/sock.xo's wsa_errno returns these numbers (the Windows
-// C runtime's errno.h) for Winsock's codes, as xo_wsa_map does, and
-// sock.xo and cabi_net.xo take Winsock's constants and layouts below
+// C runtime's errno.h) for Winsock's codes, and sock.xo and cabi_net.xo
+// take Winsock's constants and layouts below
 _Static_assert(EWOULDBLOCK == 140 && EINPROGRESS == 112 && ECONNREFUSED == 107 && ECONNRESET == 108 && ECONNABORTED == 106 &&
                    EPIPE == 32 && ETIMEDOUT == 138 && EADDRINUSE == 100 && EADDRNOTAVAIL == 101 && EACCES == 13 && EINVAL == 22 &&
                    EINTR == 4 && ENOTSOCK == 128 && ENETUNREACH == 118 && EHOSTUNREACH == 110 && ENOTCONN == 126 &&
@@ -236,96 +169,5 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
                    SO_ERROR == 0x1007 && AF_INET6 == 23 && sizeof(WSADATA) <= 512 && offsetof(struct addrinfo, ai_addrlen) == 16 &&
                    offsetof(struct addrinfo, ai_addr) == 32 && offsetof(struct addrinfo, ai_next) == 40,
                "sock.xo and cabi_net.xo Windows constants");
-
-// errno for the last Winsock error
-static int xo_wsa_errno(void) { return xo_wsa_map(WSAGetLastError()); }
-
-// the Winsock calls the runtime makes on int descriptors, failing with
-// errno set
-#define XO_WSA_INT(call)                                                                                                   \
-	do {                                                                                                                   \
-		int r_ = (call);                                                                                                   \
-		if (r_ == SOCKET_ERROR) {                                                                                          \
-			errno = xo_wsa_errno();                                                                                        \
-			return -1;                                                                                                     \
-		}                                                                                                                  \
-		return r_;                                                                                                         \
-	} while (0)
-static int xo_w_bind(int fd, const struct sockaddr *a, int n) { XO_WSA_INT(bind((SOCKET)fd, a, n)); }
-static int xo_w_listen(int fd, int n) { XO_WSA_INT(listen((SOCKET)fd, n)); }
-static int xo_w_getsockname(int fd, struct sockaddr *a, int *n) { XO_WSA_INT(getsockname((SOCKET)fd, a, n)); }
-#define bind(fd, a, n) xo_w_bind((fd), (a), (int)(n))
-#define listen(fd, n) xo_w_listen((fd), (n))
-#define getsockname(fd, a, n) xo_w_getsockname((fd), (a), (n))
-
-// Descriptors and sockets are both ints (stage 5): a socket is its
-// SOCKET handle's value (a multiple of 4), and a C runtime descriptor above
-// the standard three carries XO_W_FD, so the two never share a number. The
-// runtime's descriptors (0 to 2 untagged) only reach the C runtime through
-// these shims, which take the tag off. Before, both were plain small
-// numbers, and with about 550 files open a file's descriptor equaled a
-// socket's handle: closing the file closed the socket.
-#define XO_W_FD 0x40000000
-
-// xo_w_raw is the C runtime's number of a descriptor.
-static inline int xo_w_raw(int fd) { return fd > 2 && (fd & XO_W_FD) ? fd & ~XO_W_FD : fd; }
-
-// xo_w_is_sock reports whether fd names a socket.
-static inline int xo_w_is_sock(int fd) { return fd > 2 && !(fd & XO_W_FD); }
-
-// xo_w_socketpair connects two nonblocking loopback TCP sockets (the
-// poller's self pipe: WSAPoll waits on sockets only)
-static int xo_w_socketpair(int sv[2]) {
-	xo_wsa_init();
-	SOCKET l = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);
-	if (l == INVALID_SOCKET) {
-		return -1;
-	}
-	struct sockaddr_in a;
-	memset(&a, 0, sizeof a);
-	a.sin_family = AF_INET;
-	a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	int n = sizeof a;
-	SOCKET c = INVALID_SOCKET, s = INVALID_SOCKET;
-	if (bind(l, (struct sockaddr *)&a, n) == 0 && listen(l, 1) == 0 && getsockname(l, (struct sockaddr *)&a, &n) == 0) {
-		c = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);
-		if (c != INVALID_SOCKET && connect(c, (struct sockaddr *)&a, n) == 0) {
-			s = accept(l, NULL, NULL);
-		}
-	}
-	closesocket(l);
-	if (s == INVALID_SOCKET) {
-		if (c != INVALID_SOCKET) {
-			closesocket(c);
-		}
-		return -1;
-	}
-	u_long one = 1;
-	ioctlsocket(s, FIONBIO, &one);
-	ioctlsocket(c, FIONBIO, &one);
-	sv[0] = (int)s;
-	sv[1] = (int)c;
-	return 0;
-}
-
-// close closes a socket or a C runtime descriptor
-static int xo_w_close(int fd) {
-	if (fd < 0) {
-		errno = EBADF;
-		return -1;
-	}
-	if (xo_w_is_sock(fd)) {
-		if (closesocket((SOCKET)(unsigned)fd) != 0) {
-			errno = xo_wsa_errno();
-			return -1;
-		}
-		return 0;
-	}
-	return _close(xo_w_raw(fd));
-}
-#define close(fd) xo_w_close(fd)
-
-#define read(fd, p, n) _read(xo_w_raw(fd), (p), (unsigned)(n))
-#define write(fd, p, n) _write(xo_w_raw(fd), (p), (unsigned)(n))
 
 #endif

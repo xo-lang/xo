@@ -199,6 +199,26 @@ fn CancelIoEx(h: Int, ov: Int) -> Int32
 /// NtDeviceIoControlFile (ntdll.dll): an NTSTATUS (0, STATUS_PENDING
 /// 0x103, or an error).
 fn NtDeviceIoControlFile(h: Int, event: Int, apc: Int, ctx: Int, iosb: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int) -> Int32
+/// CreateIoCompletionPort: the port (a new one when existing is 0 and h
+/// INVALID_HANDLE_VALUE -1), or 0.
+fn CreateIoCompletionPort(h: Int, existing: Int, key: Int, threads: Int) -> Int
+/// PostQueuedCompletionStatus: a completion of n bytes with key and the
+/// OVERLAPPED at ov on port; nonzero on success.
+fn PostQueuedCompletionStatus(port: Int, n: Int, key: Int, ov: Int) -> Int32
+/// SetFileCompletionNotificationModes (FILE_SKIP_SET_EVENT_ON_HANDLE 2).
+fn SetFileCompletionNotificationModes(h: Int, flags: Int) -> Int32
+/// NtCreateFile (ntdll.dll): an NTSTATUS, the handle at the address hp.
+fn NtCreateFile(hp: Int, access: Int, attrs: Int, iosb: Int, alloc: Int, fattrs: Int, share: Int, disposition: Int, options: Int, ea: Int, ealen: Int) -> Int32
+/// WSAIoctl: 0, or SOCKET_ERROR (-1).
+fn WSAIoctl(s: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int, got: Int, ov: Int, cr: Int) -> Int32
+/// WSAPoll over the n WSAPOLLFD records (16 bytes: the socket, events,
+/// revents) at fds, waiting up to ms (-1: no limit): how many are ready,
+/// 0 on timeout, or SOCKET_ERROR (-1).
+fn WSAPoll(fds: Int, n: Int, ms: Int) -> Int32
+/// GetEnvironmentVariableA of the zero terminated ANSI name at the
+/// address name into the n bytes at buf: the length without the NUL, the
+/// size needed when it does not fit, or 0 when unset.
+fn GetEnvironmentVariableA(name: Int, buf: Int, n: Int) -> UInt32
 
 // The entry (the zero-C audit's B26 part 2, std/native/llrt/entry.xo):
 // the console's handler, the stack overflow handler, and the arguments

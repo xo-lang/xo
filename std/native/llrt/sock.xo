@@ -74,13 +74,50 @@ const W_WSA = 62
 
 /// Starts Winsock once (WSAStartup is counted, so a second call from a
 /// racing thread is harmless).
-fn wsa_init() {
+pub fn wsa_init() {
   if rt.slot_load(rt.static_word(W_WSA), 0, 1) == 0 {
     // WSADATA: 408 bytes on 64 bit Windows
     let d = raw.bytes_buf(512)
     let _r = keep(d, Int(sys_windows.WSAStartup(514, raw.bytes_addr(d))))
     rt.slot_store(rt.static_word(W_WSA), 0, 1, 2)
   }
+}
+
+/// Two connected loopback TCP sockets, both nonblocking (stdin.xo's
+/// pump, the Windows poller's self pipe; was xo_win.c xo_w_socketpair):
+/// (the accepted one, the connecting one), or (-1, -1).
+pub fn loopback_pair() -> (Int, Int) {
+  // AF_INET 2, SOCK_STREAM 1, IPPROTO_TCP 6
+  let l = socket(2, 1, 6)
+  if l < 0 {
+    return (-1, -1)
+  }
+  // a sockaddr_in for 127.0.0.1, port 0 (the system picks): family 2,
+  // the port, the address in network order
+  let sa = obj.scratch()
+  rt.mem_set(sa, 0, 16)
+  rt.mem_store(sa, 0, 2, 2)
+  rt.mem_store(sa, 4, 16777343, 4)
+  let lenp = rt.int_wrap(0, sa, 16)
+  rt.mem_store(lenp, 0, 16, 4)
+  var c = -1
+  var s = -1
+  if bind(l, sa, 16) == 0 && listen(l, 1) == 0 && sockname(l, sa, lenp) == 0 {
+    c = socket(2, 1, 6)
+    if c >= 0 && connect(c, sa, 16) == 0 {
+      s = accept(l, 0)
+    }
+  }
+  let _l = close(l)
+  if s < 0 {
+    if c >= 0 {
+      let _c = close(c)
+    }
+    return (-1, -1)
+  }
+  let _n = nonblock(s)
+  let _m = nonblock(c)
+  (s, c)
 }
 
 /// The C runtime's errno (the Windows CRT's numbers, asserted in

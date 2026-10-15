@@ -16,6 +16,14 @@
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 
+// pd_new registers fd with the poller (poll.xo pd_open, which xo_rt.c no
+// longer wraps): NULL when the poller refuses it.
+int64_t xo_x_poll_pd_open(int64_t fd, int64_t write);
+static xo_pd *pd_new(int fd, int write) {
+	int64_t r = xo_x_poll_pd_open(fd, write);
+	return r < 0 ? NULL : (xo_pd *)(intptr_t)r;
+}
+
 int main(void) {
 #if defined(__linux__)
 	ev_start();

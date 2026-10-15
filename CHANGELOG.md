@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows event loop (zero-C B22's Windows pass, B32 part 4): the
+  poller's start (completion port and AFD device, or the WSAPoll
+  fallback's socket pair), a socket's registration, close and shutdown,
+  the poke, and the WSAPoll loop are Xo (poll.xo; the socket pair is
+  sock.xo loopback_pair). xo_rt.c loses about 310 lines and xo_win.c's
+  socket shims go (176 lines left). UNTESTED on windows (the 16 http,
+  net, fs, proc and stdin goldens cross link for both architectures).
 - Native runtime: a started command's record is made in Xo (proc.xo
   spawn through tasks.new_handle, freed by cabi_proc.xo proc_child_drop
   through the services record's SV_PROC_CHILD_FREE); rt.proc_child_new

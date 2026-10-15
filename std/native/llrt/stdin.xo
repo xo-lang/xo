@@ -338,7 +338,7 @@ fn win_open() -> Int {
   if ft != FT_PIPE && ft != FT_CHAR {
     return 0
   }
-  let (prog, thr) = loopback_pair()
+  let (prog, thr) = sock.loopback_pair()
   if prog < 0 {
     return 0
   }
@@ -356,42 +356,6 @@ fn win_open() -> Int {
     return 0
   }
   poll.pd_new(prog, false)
-}
-
-/// Two connected loopback TCP sockets, both nonblocking (was xo_win.c
-/// xo_w_socketpair): (the accepted one, the connecting one), or (-1, -1).
-fn loopback_pair() -> (Int, Int) {
-  // AF_INET 2, SOCK_STREAM 1, IPPROTO_TCP 6
-  let l = sock.socket(2, 1, 6)
-  if l < 0 {
-    return (-1, -1)
-  }
-  // a sockaddr_in for 127.0.0.1, port 0 (the system picks): family 2,
-  // the port, the address in network order
-  let sa = obj_scratch()
-  rt.mem_set(sa, 0, 16)
-  rt.mem_store(sa, 0, 2, 2)
-  rt.mem_store(sa, 4, 16777343, 4)
-  let lenp = rt.int_wrap(0, sa, 16)
-  rt.mem_store(lenp, 0, 16, 4)
-  var c = -1
-  var s = -1
-  if sock.bind(l, sa, 16) == 0 && sock.listen(l, 1) == 0 && sock.sockname(l, sa, lenp) == 0 {
-    c = sock.socket(2, 1, 6)
-    if c >= 0 && sock.connect(c, sa, 16) == 0 {
-      s = sock.accept(l, 0)
-    }
-  }
-  let _l = sock.close(l)
-  if s < 0 {
-    if c >= 0 {
-      let _c = sock.close(c)
-    }
-    return (-1, -1)
-  }
-  let _n = sock.nonblock(s)
-  let _m = sock.nonblock(c)
-  (s, c)
 }
 
 /// The pump's thread (cabi.xo's stdin_pump_main, its address in the

@@ -381,16 +381,11 @@ fn poll_pd_free(pd: Int) { poll.pd_free(pd) }
 fn poll_pd_wait(pd: Int, write: Int, c: Int, deadline: Int) -> Int { poll.pd_wait_ctx(pd, write != 0, c, deadline) }
 
 /// Windows (B22 stage 4): an AFD poll of a descriptor's waited directions
-/// (the record's lock held; xo_h2.c arms its own waits), and the poller
-/// thread's loop over the completion port (never returns).
+/// (the record's lock held; xo_h2.c arms its own waits).
 fn poll_pd_arm(pd: Int) { poll.pd_arm(pd) }
 
-fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
-  poll.poll_main_win(iocp, mu, dead, sigs, signal_fn, stop_fn, free_fn)
-}
-
-/// Where the poller thread starts on Linux and macOS (pool.thread_start
-/// of its address, from the services record; never returns).
+/// Where the poller thread starts (pool.thread_start of its address, from
+/// the services record; never returns).
 fn poll_thread(a: Int) -> Int {
   poll.poll_thread()
   a
