@@ -98,7 +98,8 @@ fn proc_start(argc: Int, argv: Int, envp: Int) { process.start(argc, argv, envp)
 // The fault entry points of generated code (decision 0228; fault.xo
 // raise_*): the arm64 and LLVM emitters call these exports directly
 // (loc is the zero terminated location); xo_rt.c's xo_fault_* forward
-// to them for code from an xo whose emitters named those. None returns.
+// to them for code from an xo whose emitters named those. The raisers
+// never return; continue returns on a cancellation.
 
 fn fault_raise_text(p: Int, n: Int, loc: Int) { fault.raise_text(p, n, loc) }
 
@@ -119,6 +120,28 @@ fn fault_raise_index(i: Int, n: Int, loc: Int) { fault.raise_index(i, n, loc) }
 fn fault_raise_bytes_index(i: Int, n: Int, loc: Int) { fault.raise_bytes_index(i, n, loc) }
 
 fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
+
+/// `fault(msg)` and a failed contract: the n bytes of the message at p,
+/// the ln bytes of the location at lp (xo_fault_raise). Never returns.
+fn fault_raise(p: Int, n: Int, lp: Int, ln: Int) { fault.raise(p, n, lp, ln) }
+
+/// The unwind exit of a function: a fault goes on to the caller;
+/// otherwise (cancellation) it returns (xo_fault_continue).
+fn fault_continue() { fault.cont(rt.tlocal_get(0)) }
+
+/// task.isolate's catch of the fault unwinding the current context: 1,
+/// or 0 when it is a cancellation (xo_fault_take).
+fn fault_take() -> Int { fault.take(ctx.cur()) }
+
+/// The caught fault's message and location as string objects, the
+/// length stored at lenp (xo_fault_msg, xo_fault_loc; the location
+/// clears the record).
+fn fault_msg(lenp: Int) -> Int { fault.msg(ctx.cur(), lenp) }
+
+fn fault_loc(lenp: Int) -> Int { fault.loc(ctx.cur(), lenp) }
+
+/// The line printed under the next fault: the n bytes at p (xo_fault_detail).
+fn fault_detail(p: Int, n: Int) { fault.detail(ctx.cur(), p, n) }
 
 /// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
 fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
@@ -493,12 +516,6 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
 // c is the context (xo_ctx *).
 
 fn fault_record_set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) { fault.set(c, mp, mn, lp, ln) }
-
-fn fault_record_detail(c: Int, p: Int, n: Int) { fault.detail(c, p, n) }
-
-fn fault_record_clear(c: Int) { fault.clear(c) }
-
-fn fault_record_take(c: Int) -> Int { fault.take(c) }
 
 /// Reports the fault of c and ends the process with status 70.
 fn fault_record_exit(c: Int) { fault.exit(c) }

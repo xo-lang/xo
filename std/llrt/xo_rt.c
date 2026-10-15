@@ -1300,9 +1300,6 @@ _Static_assert(offsetof(xo_ctx, unwinding) == 8 && offsetof(xo_ctx, faulting) ==
                    offsetof(xo_ctx, fault_loc) == 96 && offsetof(xo_ctx, fault_detail) == 104,
                "fault.xo C_*");
 void xo_x_fault_record_set(int64_t c, int64_t mp, int64_t mn, int64_t lp, int64_t ln);
-void xo_x_fault_record_detail(int64_t c, int64_t p, int64_t n);
-void xo_x_fault_record_clear(int64_t c);
-int64_t xo_x_fault_record_take(int64_t c);
 void xo_x_fault_record_exit(int64_t c);
 
 // fault_exit reports the fault of c that nothing caught and ends the
@@ -1394,31 +1391,38 @@ static void fault_set(xo_ctx *c, const char *msg, const char *loc) {
 	xo_x_fault_record_set(XO_ADDR(c), XO_ADDR(msg), (int64_t)strlen(msg), XO_ADDR(loc), (int64_t)strlen(loc));
 }
 
-static void fault_clear(xo_ctx *c) { xo_x_fault_record_clear(XO_ADDR(c)); }
-
+// fault_raise_msg records the fault msg at loc in the current context and
+// raises it; with a null msg it raises the fault already recorded (fault.xo
+// cont, a landing pad handing it on).
 XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
 	xo_ctx *c = ctx();
-	fault_set(c, msg, loc);
+	if (msg) {
+		fault_set(c, msg, loc);
+	}
 	fault_raise(c);
 }
 
-void xo_fault_detail(const char *p, int64_t n) { xo_x_fault_record_detail(XO_ADDR(ctx()), XO_ADDR(p), n); }
+// The fault entries below are cabi.xo's fault_* exports (fault.xo), which
+// the emitters name; these forward for code from an xo whose emitters
+// named the C (seed 0.12.0 and older).
+void xo_x_fault_raise(int64_t p, int64_t n, int64_t lp, int64_t ln);
+void xo_x_fault_continue(void);
+int64_t xo_x_fault_take(void);
+int64_t xo_x_fault_msg(int64_t lenp);
+int64_t xo_x_fault_loc(int64_t lenp);
+void xo_x_fault_detail(int64_t p, int64_t n);
+
+void xo_fault_detail(const char *p, int64_t n) { xo_x_fault_detail(XO_ADDR(p), n); }
 
 // xo_fault_raise is `fault(msg)` and a failed contract at loc.
 XO_NORETURN void xo_fault_raise(const char *msg, int64_t n, const char *loc, int64_t ln) {
-	xo_ctx *c = ctx();
-	xo_x_fault_record_set(XO_ADDR(c), XO_ADDR(msg), n, XO_ADDR(loc), ln);
-	fault_raise(c);
+	xo_x_fault_raise(XO_ADDR(msg), n, XO_ADDR(loc), ln);
+	__builtin_unreachable();
 }
 
 // xo_fault_continue runs at the unwind exit of a function: a fault goes
 // on to the caller; otherwise (cancellation) the function returns.
-void xo_fault_continue(void) {
-	xo_ctx *c = cur_get();
-	if (c && c->faulting) {
-		fault_raise(c);
-	}
-}
+void xo_fault_continue(void) { xo_x_fault_continue(); }
 
 // xo_landing is never called: generated code branches on it only to
 // mark a check that only a fault takes (internal/ssa landing.go).
@@ -1428,28 +1432,13 @@ int64_t xo_landing(void) { return 0; }
 // `task.isolate`): 1 and the context goes on normally, its message
 // available to xo_fault_msg and xo_fault_loc; 0 when it is not a fault
 // (cancellation, which goes on unwinding).
-int64_t xo_fault_take(void) { return xo_x_fault_record_take(XO_ADDR(ctx())); }
-
-static xo_rstr *rs_of_cstr(const char *s, int64_t *len) {
-	int64_t n = s ? (int64_t)strlen(s) : 0;
-	xo_rstr *r = rs_new(n);
-	if (n) {
-		memcpy(r->data, s, (size_t)n);
-	}
-	*len = n;
-	return r;
-}
+int64_t xo_fault_take(void) { return xo_x_fault_take(); }
 
 // xo_fault_msg is the message of the fault xo_fault_take caught.
-xo_rstr *xo_fault_msg(int64_t *len) { return rs_of_cstr(ctx()->fault_msg, len); }
+xo_rstr *xo_fault_msg(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_msg(XO_ADDR(len)); }
 
 // xo_fault_loc is its location; the record is cleared after it.
-xo_rstr *xo_fault_loc(int64_t *len) {
-	xo_ctx *c = ctx();
-	xo_rstr *r = rs_of_cstr(c->fault_loc, len);
-	fault_clear(c);
-	return r;
-}
+xo_rstr *xo_fault_loc(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_loc(XO_ADDR(len)); }
 
 // xo_personality is the personality routine of generated code: every
 // landing pad is a cleanup, entered on the second phase. The language

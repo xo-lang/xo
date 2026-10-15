@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B06): the last fault entries of
+  generated code are Xo exports (cabi.xo fault_raise, fault_continue,
+  fault_take, fault_msg, fault_loc, fault_detail over fault.xo); the C
+  xo_fault_raise, xo_fault_continue, xo_fault_take, xo_fault_msg,
+  xo_fault_loc and xo_fault_detail forward to them for code from seed
+  0.12.0 and older. The unwind itself (fault_raise, the Windows context
+  capture and the libgcc path of x86_64 with a C library) stays in C.
 - LLVM backend: the module head no longer declares the C entries
   generated code stopped calling in the entries batches E1 to E3
   (xo_rc_alloc, rc_free, rc_defer, rs_concat, rl_new, rl_new_n,

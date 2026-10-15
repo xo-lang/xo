@@ -8,13 +8,15 @@
 // cabi.xo (fault_record_*).
 //
 // The fault entry points of generated code (decision 0228): the checked
-// operations and `fault(msg)` call cabi.xo's fault_raise_* exports
-// directly, which write the message here and raise it through the C's
-// fault_raise_msg (its address in rt.static_word RAISE; the unwind
-// itself stays in xo_rt.c fault_raise and unwind.xo).
+// operations, `fault(msg)`, a failed contract, the landing pads' hand on,
+// and task.isolate's catch call cabi.xo's fault_* exports directly, which
+// write the message here and raise it through the C's fault_raise_msg
+// (its address in rt.static_word RAISE; the unwind itself stays in
+// xo_rt.c fault_raise and unwind.xo).
 //
 // Nothing here faults.
 use native/llrt/num
+use native/llrt/obj
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/stdio
@@ -23,7 +25,8 @@ use native/rt
 
 /// rt.static_word: the address of xo_rt.c fault_raise_msg (a C function
 /// of a zero terminated message and location that records the fault in
-/// the current context and raises it; never returns), set by init.
+/// the current context and raises it, or with a null message raises the
+/// fault already recorded; never returns), set by init.
 const RAISE = 14
 
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
@@ -94,6 +97,26 @@ pub fn take(c: Int) -> Int {
   rt.mem_store(c, C_FAULTING, 0, 4)
   rt.mem_store(c, C_UNWINDING, 0, 4)
   1
+}
+
+/// A new string object holding the zero terminated string at p (empty
+/// when p is 0), its length stored at lenp.
+fn str_of(p: Int, lenp: Int) -> Int {
+  let n = if p == 0 { 0 } else { raw.cstr_len(p) }
+  rt.mem_store(lenp, 0, n, 8)
+  obj.rs_append(obj.rs_with_cap(n), 0, p, n)
+}
+
+/// The message of the fault take caught in the context c (xo_fault_msg),
+/// its length stored at lenp.
+pub fn msg(c: Int, lenp: Int) -> Int { str_of(rt.mem_load(c, C_MSG, 8), lenp) }
+
+/// Its location (xo_fault_loc), its length stored at lenp; the record is
+/// cleared after it.
+pub fn loc(c: Int, lenp: Int) -> Int {
+  let r = str_of(rt.mem_load(c, C_LOC, 8), lenp)
+  clear(c)
+  r
 }
 
 /// Reports the fault of the context c that nothing caught and ends the
@@ -188,13 +211,29 @@ pub fn raise_float_int(f: Float, loc: Int) {
   fire(text("${num.go_g_text(f)} is out of range for Int"), loc)
 }
 
-/// Raises the fault m at the ln bytes at lp (a location that is not zero
-/// terminated; its copy is never freed, as the raise does not return).
-pub fn raise_str_at(m: Str, lp: Int, ln: Int) {
-  let l = rt.heap_large(ln + 1)
-  rt.mem_copy(l, lp, ln)
-  rt.mem_store(l, ln, 0, 1)
-  fire(text(m), l)
+/// A zero terminated copy of the n bytes at p (a location that is not
+/// zero terminated; never freed, as the raise does not return).
+fn zcopy(p: Int, n: Int) -> Int {
+  let l = rt.heap_large(n + 1)
+  rt.mem_copy(l, p, n)
+  rt.mem_store(l, n, 0, 1)
+  l
+}
+
+/// Raises the fault m at the ln bytes at lp.
+pub fn raise_str_at(m: Str, lp: Int, ln: Int) { fire(text(m), zcopy(lp, ln)) }
+
+/// `fault(msg)` and a failed contract (xo_fault_raise): the n bytes at p
+/// at the ln bytes at lp.
+pub fn raise(p: Int, n: Int, lp: Int, ln: Int) { fire(at(p, n), zcopy(lp, ln)) }
+
+/// The unwind exit of a function (xo_fault_continue): when the context c
+/// (0 on a thread with none) unwinds a fault, raises it again from here,
+/// on to the caller; otherwise (cancellation) returns.
+pub fn cont(c: Int) {
+  if c != 0 && rt.mem_load(c, C_FAULTING, 4) != 0 {
+    fire(0, 0)
+  }
 }
 
 /// Raises the fault whose zero terminated message is at m, at the zero
