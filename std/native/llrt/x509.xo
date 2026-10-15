@@ -110,10 +110,24 @@ pub struct Cert {
   pub san_raw: Bytes
   pub has_key: Bool
   pub org: Str
+  /// For Go's checkChainConstraints: whether the name constraints
+  /// extension is there, its IP subtrees (address then mask, 8 or 32
+  /// bytes), e-mail and URI subtrees; the subject alternative names'
+  /// e-mail addresses and URIs, with each URI's host (url.URL.Host).
+  pub has_nc: Bool
+  pub permitted_ips: List[Bytes]
+  pub excluded_ips: List[Bytes]
+  pub permitted_emails: List[Str]
+  pub excluded_emails: List[Str]
+  pub permitted_uris: List[Str]
+  pub excluded_uris: List[Str]
+  pub emails: List[Str]
+  pub uris: List[Str]
+  pub uri_hosts: List[Str]
 }
 
 fn empty() -> Cert {
-  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: ""}
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: []}
 }
 
 /// The result of parse: the certificate, or the error text (Go's).
@@ -807,6 +821,7 @@ fn process_extensions(list: List[Ext], var c: Cert) -> Str {
           unhandled = true
         }
       } else if n == 30 {
+        c.has_nc = true
         let r = name_constraints(e.value, c)
         if r.err != "" {
           return r.err
@@ -933,6 +948,7 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
       if !ascii(d) {
         return "x509: SAN rfc822Name is malformed"
       }
+      c.emails.push(d.to_str() ?? "")
       c.san_other += 1
     } else if tag == 2 {
       if !ascii(d) {
@@ -943,10 +959,12 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
       if !ascii(d) {
         return "x509: SAN uniformResourceIdentifier is malformed"
       }
-      let ue = uri_err(d)
-      if ue != "" {
-        return ue
+      let u = uri_parse(d)
+      if u[0] != "" {
+        return u[0]
       }
+      c.uris.push(d.to_str() ?? "")
+      c.uri_hosts.push(u[1])
       c.san_other += 1
     } else if tag == 7 {
       if d.len() != 4 && d.len() != 16 {
@@ -959,7 +977,20 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
 }
 
 /// Go's url.Parse of a SAN URI (the fragment cut, then checked as
-/// escaped text) and its host's domainNameValid: "" or Go's error text.
+/// escaped text) and its host's domainNameValid: [the error text ("" for
+/// none), the URL's Host].
+fn uri_parse(d: Bytes) -> List[Str] { [uri_err(d), uri_host(d)] }
+
+/// The Host of a URI that parses.
+fn uri_host(d: Bytes) -> Str {
+  let s = d.to_str() ?? ""
+  let u = match s.find("#") {
+    Some(i) => raw.str_slice(s, 0, i)
+    None => s
+  }
+  neturl.url_parse(u, false).host
+}
+
 fn uri_err(d: Bytes) -> Str {
   let s = d.to_str() ?? ""
   let q = s.quote()
@@ -1014,6 +1045,8 @@ fn uri_err(d: Bytes) -> Str {
 
 /// Go's domainNameValid (as of Go 1.26: a trailing period, characters
 /// outside 33 to 126, and empty labels refused).
+pub fn domain_valid(d: Bytes, constraint: Bool) -> Bool { domain_ok(d, constraint) }
+
 fn domain_ok(d: Bytes, constraint: Bool) -> Bool {
   if d.len() == 0 {
     return true
@@ -1061,10 +1094,11 @@ fn atext(c: Int) -> Bool {
   (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 47 || c == 61 || c == 63 || c == 94 || c == 95 || c == 96 || c == 123 || c == 124 || c == 125 || c == 126 || c == 46
 }
 
-/// Go's parseRFC2821Mailbox: whether in is a mailbox.
-fn mailbox_ok(d: Bytes) -> Bool {
+/// Go's parseRFC2821Mailbox: the local part (unquoted) and the domain,
+/// none when d is not a mailbox.
+pub fn mailbox(d: Bytes) -> List[Str]? {
   if d.len() == 0 {
-    return false
+    return None
   }
   var i = 0
   var local: List[Int] = []
@@ -1073,7 +1107,7 @@ fn mailbox_ok(d: Bytes) -> Bool {
     var closed = false
     while !closed {
       if i >= d.len() {
-        return false
+        return None
       }
       let c = Int(d[i])
       i += 1
@@ -1081,19 +1115,19 @@ fn mailbox_ok(d: Bytes) -> Bool {
         closed = true
       } else if c == 92 {
         if i >= d.len() {
-          return false
+          return None
         }
         let q = Int(d[i])
         if q == 11 || q == 12 || (q >= 1 && q <= 9) || (q >= 14 && q <= 127) {
           local.push(q)
           i += 1
         } else {
-          return false
+          return None
         }
       } else if c == 11 || c == 12 || c == 32 || c == 33 || c == 127 || (c >= 1 && c <= 8) || (c >= 14 && c <= 31) || (c >= 35 && c <= 91) || (c >= 93 && c <= 126) {
         local.push(c)
       } else {
-        return false
+        return None
       }
     }
   } else {
@@ -1103,7 +1137,7 @@ fn mailbox_ok(d: Bytes) -> Bool {
       if c == 92 {
         i += 1
         if i >= d.len() {
-          return false
+          return None
         }
         local.push(Int(d[i]))
         i += 1
@@ -1116,18 +1150,26 @@ fn mailbox_ok(d: Bytes) -> Bool {
       c = 0
     }
     if local.is_empty() || local[0] == 46 || local[local.len() - 1] == 46 {
-      return false
+      return None
     }
     for k in 1..local.len() {
       if local[k] == 46 && local[k - 1] == 46 {
-        return false
+        return None
       }
     }
   }
   if i >= d.len() || d[i] != 64 {
-    return false
+    return None
   }
-  labels_ok(d[i + 1..d.len()])
+  let dom = d[i + 1..d.len()]
+  if !labels_ok(dom) {
+    return None
+  }
+  var ls = rt.rs_with_cap(local.len())
+  for x in local {
+    ls = rt.rs_push_byte(ls, x)
+  }
+  Some([ls.bytes().to_str() ?? "", dom.to_str() ?? ""])
 }
 
 /// Go's isValidIPMask.
@@ -1210,16 +1252,18 @@ fn name_constraints(value: Bytes, var c: Cert) -> Nc {
         if !mask_ok(d[d.len() / 2..d.len()]) {
           return nc_err("x509: IP constraint contained invalid mask ${d[d.len() / 2..d.len()].to_hex()}")
         }
+        if k == 0 { c.permitted_ips.push(d) } else { c.excluded_ips.push(d) }
         c.other_constraints += 1
       } else if base.tag == 0x81 {
         let ie = ia5_err(d)
         if ie != "" {
           return nc_err("x509: invalid constraint value: ${ie}")
         }
-        let ok = if (d.to_str() ?? "").contains("@") { mailbox_ok(d) } else { domain_ok(d, true) }
+        let ok = if (d.to_str() ?? "").contains("@") { mailbox(d) is Some(_) } else { domain_ok(d, true) }
         if !ok {
           return nc_err("x509: failed to parse rfc822Name constraint ${d.quote()}")
         }
+        if k == 0 { c.permitted_emails.push(d.to_str() ?? "") } else { c.excluded_emails.push(d.to_str() ?? "") }
         c.other_constraints += 1
       } else if base.tag == 0x86 {
         let ie = ia5_err(d)
@@ -1232,6 +1276,7 @@ fn name_constraints(value: Bytes, var c: Cert) -> Nc {
         if !domain_ok(d, true) {
           return nc_err("x509: failed to parse URI constraint ${d.quote()}")
         }
+        if k == 0 { c.permitted_uris.push(d.to_str() ?? "") } else { c.excluded_uris.push(d.to_str() ?? "") }
         c.other_constraints += 1
       } else {
         unhandled = true

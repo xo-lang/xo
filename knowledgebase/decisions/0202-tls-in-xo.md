@@ -93,6 +93,11 @@ std (decision 0074) unless the owner decides to expose a user marker.
   with such names. A verification's texts are Go's, including the
   unknown authority's hint, so the TLS fuzz's text-only differences
   must stay at zero.
+- 2026-10-15 (B31 part 11): name constraints follow Go 1.26's
+  constraints.go algorithm itself (sort, prune, binary search), not only
+  its results, because the error text names the constraint the search
+  finds. Certificate policy validation (Go's policiesValid) comes next;
+  until then it is a known gap where Xo accepts what Go refuses.
 - 2026-10-15 (TLS 1.2 client, tls12.xo): TLS 1.2 is in scope as Go's
   defaults (ECDHE over X25519, P-256 and P-384; ECDSA, RSA PKCS #1 v1.5,
   RSA-PSS and Ed25519 signatures; the AES-GCM and ChaCha20-Poly1305

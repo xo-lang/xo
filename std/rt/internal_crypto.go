@@ -226,7 +226,7 @@ func cryptoX509(what string, a, b Bytes) (Bytes, bool) {
 // cryptoChain is std/native/llrt/x509verify.xo's op: x509.Verify with
 // the outcome as x509verify.xo's code and the chain's common names.
 func cryptoChain(what string, a, b, c, d Bytes) (Bytes, bool) {
-	if what != "verify" {
+	if what != "verify" && what != "text" {
 		return "", false
 	}
 	leaf, err := x509.ParseCertificate([]byte(a))
@@ -254,7 +254,14 @@ func cryptoChain(what string, a, b, c, d Bytes) (Bytes, bool) {
 	case "1.3.6.1.5.5.7.3.2":
 		opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	}
+	if what == "text" {
+		// x509verify.xo's full_text: the time in UTC
+		opts.CurrentTime = opts.CurrentTime.UTC()
+	}
 	chains, err := leaf.Verify(opts)
+	if what == "text" && err != nil {
+		return Bytes(err.Error()), true
+	}
 	code := 0
 	var ua x509.UnknownAuthorityError
 	var ci x509.CertificateInvalidError

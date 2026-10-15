@@ -774,18 +774,7 @@ fn certificate(var c: Client, msg: Bytes) {
 }
 
 /// The text of x509.Verify's error.
-fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str {
-  if r.code == x509verify.EXPIRED {
-    let b = r.bad
-    let rel = if cf.now < b.not_before { "before" } else { "after" }
-    let limit = if cf.now < b.not_before { b.not_before } else { b.not_after }
-    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(cf.now, 0)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
-  }
-  if r.code == x509verify.HOSTNAME {
-    return tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, cf.host)
-  }
-  x509verify.error_text(r)
-}
+fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text(r, leaf, cf.host, cf.now) }
 
 fn certificate_verify(var c: Client, msg: Bytes) {
   if msg.len() < 8 || u16_at(msg, 6) != msg.len() - 8 {

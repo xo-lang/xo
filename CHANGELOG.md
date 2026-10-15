@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 11, decision 0202): name
+  constraints as Go 1.26 checks them (its constraints.go: per
+  certificate, sorted and pruned sets of IP, DNS, URI and e-mail
+  subtrees searched as Go's, wildcard names against excluded parents,
+  full mailboxes, URIs by host), replacing part 9's refusal of every
+  IP, e-mail and URI constraint; Go's texts ("x509: a root or
+  intermediate certificate is not authorized to sign for this name: IP
+  address \"10.0.0.1\" is excluded by constraint \"10.0.0.0/8\"", the
+  code 5 text gained Go's "to sign" and detail). x509verify.xo's
+  full_text gives a verification's whole Go text (tls13.xo uses it).
+  TestX509VerifyDiff (internal/llvm, not -short) verifies random chains
+  made by Go (constraints on the root and an intermediate, every kind of
+  name on the leaf and the intermediate) with x509verify.xo and Go's
+  Verify: 20,000 chains over two seeds, no difference. Known gap, next:
+  Go's certificate policy validation (policiesValid) is not done, so a
+  chain Go refuses for its policies verifies here.
+
 - Native runtime (zero-C audit, scheduler block S1): a context's wait
   on its park is Xo (std/native/llrt/tasks.xo park_wait_n: the output
   flush, the budget's pause, the root thread's helping record, the test
