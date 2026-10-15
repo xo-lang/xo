@@ -137,25 +137,29 @@ pub fn new(l: Int, drop: Int) -> Int {
 /// deadlock). The entries (24 bytes: the Mutex, the location's address
 /// and length) are a malloc'd array the C frees with the context.
 fn held_add(c: Int, m: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
+  // the usual case, no Mutex held yet and room for one, calls nothing
+  if ld4(c, ctx.C_NHELD) == 0 && ld4(c, ctx.C_CAPHELD) != 0 {
+    let e = ld(c, ctx.C_HELD)
+    st(e, 0, m)
+    st(e, 8, lp)
+    st(e, 16, ln)
+    st4(c, ctx.C_NHELD, 1)
+    return
+  }
+  held_add_slow(c, m, wp, wn, lp, ln)
+}
+
+/// held_add when the context already holds a Mutex or has no room.
+fn held_add_slow(c: Int, m: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
   let n = ld4(c, ctx.C_NHELD)
-  let h = ld(c, ctx.C_HELD)
+  var a = ld(c, ctx.C_HELD)
   for i in 0..n {
-    let e = h + 24 * i
-    if ld(e, 0) == m {
-      let prev = raw.str_at(ld(e, 8), ld(e, 16))
-      let what = raw.str_at(wp, wn)
-      fault.raise_str_at("XO-F004: Mutex.${what} called re-entrantly in one task; the mutex is already held from ${prev}", lp, ln)
+    if ld(a + 24 * i, 0) == m {
+      held_fault(a + 24 * i, wp, wn, lp, ln)
     }
   }
-  var a = h
-  let cap = ld4(c, ctx.C_CAPHELD)
-  if n == cap {
-    let nc = if cap == 0 { 4 } else { 2 * cap }
-    // malloc'd at the block's own address, as the C's realloc kept it
-    // (gotchas/heap-large-prefix-not-malloc-address.md)
-    a = raw.c_resize(h, 24 * nc)
-    st(c, ctx.C_HELD, a)
-    st4(c, ctx.C_CAPHELD, nc)
+  if n == ld4(c, ctx.C_CAPHELD) {
+    a = held_grow(c, a)
   }
   let e = a + 24 * n
   st(e, 0, m)
@@ -164,17 +168,49 @@ fn held_add(c: Int, m: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
   st4(c, ctx.C_NHELD, n + 1)
 }
 
-/// Removes m from the Mutexes the context c holds.
+/// The re-entrant use held_add found, the entry e of the Mutex. Kept out
+/// of held_add (and held_grow too) so its fast path saves fewer
+/// registers (bench/results/zero-c-perf-sweep-2026-10-15.md).
+fn held_fault(e: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
+  let prev = raw.str_at(ld(e, 8), ld(e, 16))
+  let what = raw.str_at(wp, wn)
+  fault.raise_str_at("XO-F004: Mutex.${what} called re-entrantly in one task; the mutex is already held from ${prev}", lp, ln)
+}
+
+/// Doubles the held entries of the context c (at least 4), whose array
+/// is h, and returns the new array.
+fn held_grow(c: Int, h: Int) -> Int {
+  let cap = ld4(c, ctx.C_CAPHELD)
+  let nc = if cap == 0 { 4 } else { 2 * cap }
+  // malloc'd at the block's own address, as the C's realloc kept it
+  // (gotchas/heap-large-prefix-not-malloc-address.md)
+  let a = raw.c_resize(h, 24 * nc)
+  st(c, ctx.C_HELD, a)
+  st4(c, ctx.C_CAPHELD, nc)
+  a
+}
+
+/// Removes m from the Mutexes the context c holds. Releases are usually
+/// in the reverse order of the takes, so the search starts at the last
+/// entry, which needs no move.
 fn held_del(c: Int, m: Int) {
   let n = ld4(c, ctx.C_NHELD)
   let h = ld(c, ctx.C_HELD)
-  for i in 0..n {
+  if n == 1 && ld(h, 0) == m {
+    st4(c, ctx.C_NHELD, 0)
+    return
+  }
+  var i = n - 1
+  while i >= 0 {
     let e = h + 24 * i
     if ld(e, 0) == m {
-      rt.mem_copy(e, h + 24 * (n - 1), 24)
+      if i != n - 1 {
+        rt.mem_copy(e, h + 24 * (n - 1), 24)
+      }
       st4(c, ctx.C_NHELD, n - 1)
       return
     }
+    i -= 1
   }
 }
 

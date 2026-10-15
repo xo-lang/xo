@@ -107,6 +107,29 @@ development Mac (Apple silicon, macOS 27.0). The zero-c commits after
   - testworld stdio, env, rand, log and memfs, within 3%.
   - fsproc, net, digest and fault, all within the bar.
 
+## Fixes after the sweep (xo-4, 2026-10-15)
+
+Instructions retired, the median of 3 runs. "After" is the zero-c tip
+193caa6b with the change. "Before" is the same tip without it on
+arm64, and the sweep's 8c1d123d build on LLVM.
+
+| Workload | Backend | main | before | after | after/main |
+|---|---|---|---|---|---|
+| ctx mutex | arm64 | 934.10M | 1121.0M | 972.3M | 1.041 |
+| ctx mutex | llvm | 817.96M | 769.6M | 701.4M | 0.858 |
+| sysio clock | arm64 | 93.34M | 100.4M | 92.9M | 0.995 |
+| sysio clock | llvm | 87.19M | 87.5M | 83.4M | 0.957 |
+
+- ctx mutex: in mutex.xo, held_add got a fast path that calls
+  nothing, and its fault message and growth moved out into
+  held_fault and held_grow. Before, it saved nine registers on every
+  Mutex.with (gotchas/arm64-call-anywhere-costs-frame.md). held_del
+  searches from the end, with a fast path for one entry. The rest of
+  the gap is ctx.cur, which Xo Lang 3 is taking.
+- sysio clock: sysio.clock_now goes straight to clock_gettime_nsec_np
+  on macOS. The first version, which tested the target with `==`, was
+  8% slower on arm64 (gotchas/arm64-target-enum-eq-not-folded.md).
+
 ## Results
 
 | Workload | Backend | main | zero-c | zero-c/main | spread main | spread zero-c | Other |

@@ -151,6 +151,23 @@ const TLS_CLOCK_AT = 40
 /// inlines across modules: clock_buf answers 0 while the virtual clock
 /// runs and in a WASI module, and the Linux and macOS calls are inline.
 pub fn clock_now() -> Int {
+  // macOS first: no layer call, scratch or chosen clock to load
+  // (bench/results/zero-c-perf-sweep-2026-10-15.md)
+  // match, not ==: the arm64 backend calls the enums' equality at run
+  // time (gotchas/arm64-target-enum-eq-not-folded.md)
+  let mac = match target.arch {
+    TargetArch.Wasm32 => false
+    TargetArch.Arm64 | TargetArch.Amd64 => match target.os {
+      TargetOs.Darwin => true
+      TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    }
+  }
+  if mac {
+    if twflags.virt() {
+      return rt.clock_now()
+    }
+    return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_REALTIME)
+  }
   let a = clock_buf()
   if a == 0 {
     return rt.clock_now()

@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime performance (the zero-c perf sweep,
+  bench/results/zero-c-perf-sweep-2026-10-15.md):
+  - std/native/llrt/mutex.xo: held_add has a fast path that calls
+    nothing when no Mutex is held yet and there is room for one. The
+    XO-F004 message moved into held_fault, and the growth into
+    held_grow. held_del searches from the last entry and skips the move
+    when only one entry is held. ctx mutex on arm64 went from 1.20x
+    main to 1.04x; on LLVM it is 0.86x main.
+  - std/native/llrt/sysio.xo: clock_now takes a macOS fast path, written
+    with `match` because the arm64 backend does not fold `==` on the
+    target enums (gotchas/arm64-target-enum-eq-not-folded.md). sysio
+    clock went from 1.08x main to 0.99x on arm64 and 0.96x on LLVM.
+
 - Native backends (zero-C audit, generated-code entries E1): LLVM code
   calls obj.xo's list and string entries through their exports instead of
   the C forwarders (xo_rl_free, rl_share, rc_defer, rl_new_n,

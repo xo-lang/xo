@@ -546,3 +546,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo0520-int-element-copy.md](xo0520-int-element-copy.md): Observed 2026-10-15: `var e = list[i]` then assigning e is flagged as a lost write (XO0520) even for Int elements; initialize from an expression.
 - [xo-heap-records-8-aligned.md](xo-heap-records-8-aligned.md): Observed: Xo heap blocks are 8 mod 16; a C struct needing 16 (xo_ctx's _Unwind_Exception) is misaligned (UBSan in TestGoldenASan).
 - [llvm-direct-export-call-inlines-slow-path.md](llvm-direct-export-call-inlines-slow-path.md): Observed: the LLVM emitter calling heapos.xo's exports directly let the heap's slow paths inline into alloc.xo's fast paths (alloc tasks 1.10x); call them noinline.
+- [arm64-target-enum-eq-not-folded.md](arm64-target-enum-eq-not-folded.md): Observed: `target.os == TargetOs.X` calls the enum equality at run time on arm64; test the target with `match`.
