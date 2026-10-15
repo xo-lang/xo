@@ -1621,6 +1621,8 @@ void xo_x_cresp_free(int64_t p);
 #endif
 XO_NC_REF void xo_x_nc_listener_free(int64_t l);
 XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
+// proc.xo's child records (cabi_proc.xo): weak likewise
+XO_NC_REF void xo_x_proc_child_drop(int64_t ch);
 
 // The services record of ctx.xo (SV_*): the pool record (pool.xo's,
 // which ctx.xo init makes; budget.xo and tasks.xo reach pool.xo through
@@ -1656,6 +1658,7 @@ static struct {
 	void (*conn_free)(void *);
 	int64_t dns[2]; // the resolver's state (dns.xo lookup)
 	int64_t stdin_pump; // stdin.xo's pump thread on Windows (cabi.xo stdin_pump_main)
+	void (*proc_child_free)(void *); // proc.xo's child records (ctx.xo SV_PROC_CHILD_FREE)
 } svc = {NULL, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
@@ -1664,12 +1667,12 @@ static struct {
 #endif
 	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
          XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0},
-	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}, 0};
+	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}, 0, XO_FREE_FN(xo_x_proc_child_drop)};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
                    offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
                    offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
-                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232 && offsetof(__typeof__(svc), stdin_pump) == 248,
+                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232 && offsetof(__typeof__(svc), stdin_pump) == 248 && offsetof(__typeof__(svc), proc_child_free) == 256,
                "ctx.xo SV_*");
 
 static void *pool_rec(void) { return svc.pool; }
@@ -2354,6 +2357,7 @@ XO_NX_STUB(xo_x_nc_conn_read, int64_t a, int64_t b, int64_t c)
 XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
 XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
 XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
+XO_NX_VSTUB(xo_x_proc_child_drop, int64_t a)
 #endif
 int64_t xo_x_fd_close(int64_t fd);
 int64_t xo_x_fd_nonblock(int64_t fd);

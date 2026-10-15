@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: a started command's record is made in Xo (proc.xo
+  spawn through tasks.new_handle, freed by cabi_proc.xo proc_child_drop
+  through the services record's SV_PROC_CHILD_FREE); rt.proc_child_new
+  is gone, so xo_proc.c's xo_proc_child_new and child_free_x have no
+  caller left.
 - Native backends (generated-code entries): faults (raise, continue,
   take, msg, loc, detail, at) through fault.xo's exports, and a number's
   text (`a + "${n}"`, `"${n}"` for Int and Float) through obj.xo's and

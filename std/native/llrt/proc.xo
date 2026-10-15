@@ -5,6 +5,7 @@
 // on macOS and Linux (stage 4) and Windows (stage 5: CreateProcessW and
 // PIPE_NOWAIT pipes through windows.xo, polled in steps; UNTESTED on
 // windows).
+use native/llrt/ctx
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/poll
@@ -14,6 +15,7 @@ use native/llrt/raw
 use native/llrt/sock
 use native/llrt/stdio
 use native/llrt/sysio
+use native/llrt/tasks
 use native/llrt/testworld
 use native/llrt/windows
 use native/rt
@@ -1084,8 +1086,12 @@ fn set_fail(ch: Int, s: Int, m: Str) {
 /// a pipe; its output and error stream pipes, or the program's with
 /// inherit. proc_child_start tells how the start went.
 pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
-  let h = rt.proc_child_new()
-  let ch = rt.obj_addr(h)
+  // the child's record: a handle whose free function is cabi_proc.xo's
+  // proc_child_drop (was xo_proc.c xo_proc_child_new)
+  let ch = tasks.new_handle(CH_SIZE, ctx.SV_PROC_CHILD_FREE)
+  let h = rt.obj_at[rt.ProcChild](ch)
+  // obj_at counted it once more: the value holds the one reference
+  tasks.h_release(ch)
   st(ch, CH_ST, 48)
   st(ch, CH_IN, -1)
   st(ch, CH_FD, -1)

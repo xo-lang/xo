@@ -506,9 +506,6 @@ fn flush()
 /// A started command (Child): a record of std/native/llrt/proc.xo's (its
 /// words CH_*) behind the C runtime's object header.
 struct ProcChild {}
-/// A new child record of std/native/llrt/proc.xo's (CH_SIZE bytes,
-/// zeroed, its free function the C's, which calls proc.xo child_free).
-fn proc_child_new() -> ProcChild
 
 // ---------------------------------------------------------------------------
 // The environment (decision 0172)

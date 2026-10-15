@@ -133,6 +133,9 @@ pub const SV_DNS = 232
 /// The address of cabi.xo's stdin_pump_main, standard input's pump
 /// thread on Windows (stdin.xo win_open; 0 elsewhere).
 pub const SV_STDIN_PUMP = 248
+/// The free function of a child process's record (cabi_proc.xo
+/// proc_child_drop; the C's stand in in programs without processes).
+pub const SV_PROC_CHILD_FREE = 256
 
 /// Sets the address of the C's services record (at start).
 pub fn init(svc: Int) {
