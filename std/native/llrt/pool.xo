@@ -29,8 +29,8 @@ const ACQUIRE = 1
 const RELEASE = 2
 const SEQ_CST = 4
 
-/// The pool record (xo_rt.c `pool`; word indexes for the slot atomics
-/// and byte offsets for loads): its lock (pool.mu: the idle list,
+/// The pool record (made by ctx.xo init; word indexes for the slot atomics and
+/// byte offsets for loads): its lock (pool.mu: the idle list,
 /// starting workers), the CPUs, the spin rounds, the records used, the
 /// worker threads alive, idle, and spinning, the idle list, the inject
 /// queue's lock, buffer, head, length, and capacity, the fiber cache's
@@ -930,7 +930,7 @@ const PK_SLEEPING = 16
 const PK_COUNTED = 20
 const PK_FIBER = 24
 
-/// The deadlock counts (xo_rt.c dlk, words): roots made, roots asleep in
+/// The deadlock counts (the pool record's P_DLK, words): roots made, roots asleep in
 /// a counted wait, contexts in a wait a timer, the network, or a signal
 /// can end.
 const DLK_ROOTS = 0

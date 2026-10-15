@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, scheduler block S2): the worker pool's
+  record and its deadlock counts are made by std/native/llrt/ctx.xo at
+  start instead of being C statics (xo_rt.c 3,665 to 3,638 lines).
+  Decision 0232 (Proposed, parked for the owner) describes the compiler
+  feature the sanitizer fiber hooks and the Linux C library services
+  would need to leave the C.
 - Native runtime (zero-C audit item B31, part 12, decision 0202): Go's
   certificate policy validation in x509verify.xo (policiesValid: RFC
   5280 6.1 as updated by RFC 9618, the policy graph with Go's default

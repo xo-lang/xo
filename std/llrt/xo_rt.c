@@ -1049,7 +1049,8 @@ static inline void unlk(xo_lock *l) {
 	}
 }
 
-// Deadlock detection (core 11.4, fault XO-F001), decision 0077: the
+// Deadlock detection (core 11.4, fault XO-F001), decision 0077 (pool.xo
+// dl_check, its counts in the pool record's P_DLK): the
 // program is deadlocked when nothing runs and nothing can wake anything:
 // every worker thread is idle and no queue holds an item, every root
 // context (a thread that runs Xo code outside tasks: the program's main)
@@ -1061,11 +1062,6 @@ static inline void unlk(xo_lock *l) {
 // signaled a root before it went idle is seen with the root awake. (The
 // counts used to be updated by every spawn and every task end, an atomic
 // that all workers contended for.)
-static struct {
-	int64_t roots;     // root contexts made (never fewer: decision 0068)
-	int64_t blocked;   // roots asleep in a counted wait
-	int64_t uncounted; // contexts in a wait a timer, the network, or a signal can end
-} dlk;
 
 // A park is where one context waits. signaled is also the futex word of
 // a thread (a root context) that sleeps on it; a fiber that waits parks
@@ -1074,7 +1070,7 @@ typedef struct {
 	xo_lock mu;
 	int64_t signaled; // written under mu, read atomically (the futex word: its low half)
 	int sleeping;     // a thread sleeps on signaled
-	int counted;      // a root asleep here counts in dlk.blocked
+	int counted;      // a root asleep here counts in the blocked roots (pool.xo DLK_BLOCKED)
 	// the fiber parked here (decision 0069): a signal makes it runnable
 	struct xo_fiber *fiber;
 } xo_park;
@@ -1693,7 +1689,6 @@ typedef struct {
 // x to the inject queue, are std/native/llrt/sched.xo and pool.xo
 // (decision 0212).
 
-#define XO_MAXW 4096
 #define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 #define STORE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
 #define XO_FCACHE 8
@@ -1729,27 +1724,10 @@ typedef struct xo_worker {
 	void *batch[XO_RUNQ / 2 + 1];
 } xo_worker;
 
-// The pool's record: words first, in the layout std/native/llrt/pool.xo
-// reads (decision 0212 stage 2, asserted below), the once last (its size
-// is the OS's).
-static struct {
-	xo_lock mu; // the idle list, starting workers
-	int64_t ncpu;
-	int64_t spin_rounds;
-	int64_t nw;       // records used (atomic)
-	int64_t alive;    // worker threads (atomic)
-	int64_t nidle;    // idle worker threads (atomic)
-	int64_t spinning; // spinning worker threads (atomic)
-	xo_worker *idle;  // the idle list (mu)
-	// the inject queue: items from threads without a record
-	xo_lock imu;
-	void **ibuf;
-	int64_t ihead, ilen, icap; // ilen read atomically to skip it
-	void *fibers;              // the fiber cache's record (pool.xo)
-	int64_t worker_main;       // where a worker thread starts (pool.xo)
-	void *dlk;                 // the deadlock counts (pool.xo's parks)
-	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
-} pool = {.dlk = &dlk}; // a root waits before the pool starts
+// The pool's record is pool.xo's (new_record, made at start by ctx.xo
+// init, with its deadlock counts): the C reaches it through the services
+// record (pool_rec).
+static void *pool_rec(void);
 
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker (tasks.xo
@@ -1773,11 +1751,11 @@ void xo_x_node_cancel(int64_t pl, int64_t n);
 static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
 static void park_signal(xo_park *p) {
 	TSAN_RELEASE(p);
-	xo_x_park_signal(XO_ADDR(&pool), XO_ADDR(p));
+	xo_x_park_signal(XO_ADDR(pool_rec()), XO_ADDR(p));
 }
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
-static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
+static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(pool_rec()), XO_ADDR(n)); }
 
 // the handles' free functions: cabi.xo's exports (tasks.xo, mutex.xo,
 // chan.xo, selects.xo; B18)
@@ -1807,8 +1785,9 @@ void xo_x_cresp_free(int64_t p);
 XO_NC_REF void xo_x_nc_listener_free(int64_t l);
 XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 
-// The services record of ctx.xo (SV_*): the pool record (budget.xo and
-// tasks.xo reach pool.xo through it), the free functions of a task and a
+// The services record of ctx.xo (SV_*): the pool record (pool.xo's,
+// which ctx.xo init makes; budget.xo and tasks.xo reach pool.xo through
+// it), the free functions of a task and a
 // scope (tasks.xo makes them), whether ThreadSanitizer is on, and the
 // statistics' switch.
 static struct {
@@ -1836,7 +1815,7 @@ static struct {
 	void (*listener_free)(void *); // netconn.xo's handles' free functions (ctx.xo SV_LISTENER_FREE)
 	void (*conn_free)(void *);
 	int64_t dns[2]; // the resolver's state (dns.xo lookup)
-} svc = {&pool, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
+} svc = {NULL, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
 #else
@@ -1851,6 +1830,8 @@ _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(
                    offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
                    offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232,
                "ctx.xo SV_*");
+
+static void *pool_rec(void) { return svc.pool; }
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
 // (twrun.xo kick) checks again after it.
@@ -2310,19 +2291,11 @@ _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, mu) == 104 
                "pool.xo S_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
 _Static_assert(offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), virt) == 40, "pool.xo TW_*");
-_Static_assert(offsetof(__typeof__(dlk), blocked) == 8 && offsetof(__typeof__(dlk), uncounted) == 16 && offsetof(__typeof__(pool), dlk) == 120, "pool.xo DLK_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
                    offsetof(xo_worker, fcache) == 2264 && offsetof(xo_worker, nfcache) == 2328 && offsetof(xo_worker, pool) == 2360 &&
                    offsetof(xo_worker, batch) == 2368 && sizeof(xo_worker) == 3400,
                "pool.xo W_*");
-_Static_assert(offsetof(__typeof__(pool), mu) == 0 && offsetof(__typeof__(pool), ncpu) == 8 && offsetof(__typeof__(pool), spin_rounds) == 16 &&
-                   offsetof(__typeof__(pool), nw) == 24 && offsetof(__typeof__(pool), alive) == 32 && offsetof(__typeof__(pool), nidle) == 40 &&
-                   offsetof(__typeof__(pool), spinning) == 48 && offsetof(__typeof__(pool), idle) == 56 && offsetof(__typeof__(pool), imu) == 64 &&
-                   offsetof(__typeof__(pool), ibuf) == 72 && offsetof(__typeof__(pool), ihead) == 80 && offsetof(__typeof__(pool), ilen) == 88 &&
-                   offsetof(__typeof__(pool), icap) == 96 && offsetof(__typeof__(pool), fibers) == 104 && offsetof(__typeof__(pool), worker_main) == 112 &&
-                   offsetof(__typeof__(pool), ws) == 128 && XO_MAXW == 4096,
-               "pool.xo P_*");
 _Static_assert(offsetof(__typeof__(fibers), mu) == 0 && offsetof(__typeof__(fibers), list) == 8 && offsetof(__typeof__(fibers), n) == 16 &&
                    offsetof(__typeof__(fibers), stack) == 24 && offsetof(__typeof__(fibers), page) == 32 && offsetof(__typeof__(fibers), main) == 40,
                "pool.xo FS_*");
@@ -2351,8 +2324,8 @@ _Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && 
                "tasks.xo T_*, H_FREE");
 _Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list) == 384 && offsetof(xo_scope, closed) == 400 &&
                    offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, timed_out) == 416 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
-                   sizeof(xo_scope) == 464 && offsetof(__typeof__(pool), ncpu) == 8,
-               "tasks.xo S_*, P_NCPU; poll.xo SC_*");
+                   sizeof(xo_scope) == 464,
+               "tasks.xo S_*; poll.xo SC_*");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
 // (B18), which generated code calls through its exports; these forward

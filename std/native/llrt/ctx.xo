@@ -132,12 +132,23 @@ pub const SV_CONN_FREE = 224
 pub const SV_DNS = 232
 
 /// Sets the address of the C's services record (at start).
-pub fn init(svc: Int) { rt.mem_store(rt.static_word(SVC), 0, svc, 8) }
+pub fn init(svc: Int) {
+  rt.mem_store(rt.static_word(SVC), 0, svc, 8)
+  // the worker pool's record (a root waits before the pool starts)
+  if rt.mem_load(svc, SV_POOL, 8) == 0 {
+    let p = rt.heap_large(P_SIZE)
+    rt.mem_set(p, 0, P_SIZE)
+    let d = rt.heap_large(DLK_SIZE)
+    rt.mem_set(d, 0, DLK_SIZE)
+    rt.mem_store(p, P_DLK, d, 8)
+    rt.mem_store(svc, SV_POOL, p, 8)
+  }
+}
 
 /// The C's services record.
 pub fn svc() -> Int { rt.mem_load(rt.static_word(SVC), 0, 8) }
 
-/// The C's worker pool record (pool.xo's pl).
+/// The worker pool's record (pool.xo's pl, made by init).
 pub fn pool() -> Int { rt.mem_load(svc(), SV_POOL, 8) }
 
 /// The address of the word holding the program's task group.
@@ -159,6 +170,13 @@ pub fn cur() -> Int {
 const N_BYTES = 56
 const P_DLK = 120
 const DLK_ROOTS = 0
+
+/// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
+/// records' addresses) and its deadlock counts' (three words), made by
+/// init from the runtime's malloc and never freed (were xo_rt.c's
+/// statics `pool` and `dlk`).
+const P_SIZE = 32896
+const DLK_SIZE = 24
 
 /// A root context for a thread that runs Xo code outside any task (the
 /// program's main thread; was xo_rt.c ctx): a zeroed context and
