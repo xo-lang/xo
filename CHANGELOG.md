@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- TLS 1.2 server (tls12srv.xo): every handshake message is decoded as
+  Go's unmarshalHandshakeMessage does for its type before the state
+  check (decode_error, not unexpected_message, for a message of the
+  wrong type that does not decode), and the ClientHello's
+  status_request, extended_master_secret, SCT, early_data, and
+  pre_shared_key extensions are as strict as Go's. TestTLSServerReplayDiff
+  (tls12, seeds 22 to 24, 16000 cases each): 0 byte differences (was
+  11). UNTESTED on linux and windows.
 - Native runtime (zero-C audit item B31, part 14, decision 0202): the
   Xo client's certificate expiry text shows the current time in the
   local zone as Go's (time.Local: "current time

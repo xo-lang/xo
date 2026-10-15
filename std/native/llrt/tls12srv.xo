@@ -310,7 +310,7 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
     local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
     return
   }
-  if t == tls12.HS_CLIENT_KEY_EXCHANGE && tls12.u24_at(msg, 1) != msg.len() - 4 {
+  if !go_decodes(t, msg, s.have_vers) {
     local(s, tls12.ALERT_DECODE_ERROR)
     return
   }
@@ -383,6 +383,184 @@ fn u16_list(m: Bytes, p: Int, n: Int) -> List[Int] {
     q += 2
   }
   out
+}
+
+/// Whether Go's unmarshal of a handshake message of type t (a type
+/// tls12.known_type knows) takes m (conn.go unmarshalHandshakeMessage:
+/// a message that does not is a decode_error, whichever was expected);
+/// vers tells whether the version is known (TLS 1.2: the signature
+/// algorithm of a CertificateRequest and a CertificateVerify).
+fn go_decodes(t: Int, m: Bytes, vers: Bool) -> Bool {
+  let n = m.len()
+  match t {
+    0 | 5 | 14 => n == 4
+    1 => parse_hello(m).ok
+    2 => server_hello_decodes(m)
+    4 => n >= 10 && tls12.u24_at(m, 1) == n - 4 && tls12.u16_at(m, 8) == n - 10
+    8 => encrypted_extensions_decodes(m)
+    11 => {
+      // certificateMsg: each certificate needs 4 bytes left to start
+      if n < 7 || tls12.u24_at(m, 4) + 7 != n {
+        return false
+      }
+      var p = 7
+      while p < n {
+        if n < p + 4 || n < p + 3 + tls12.u24_at(m, p) {
+          return false
+        }
+        p += 3 + tls12.u24_at(m, p)
+      }
+      true
+    }
+    12 => n >= 4
+    13 => cert_request_decodes(m, vers)
+    15 => {
+      let p = if vers { 6 } else { 4 }
+      n >= p + 2 && tls12.u16_at(m, p) == n - p - 2
+    }
+    16 => n >= 4 && tls12.u24_at(m, 1) == n - 4
+    20 => n >= 4 && tls12.u24_at(m, 1) == n - 4
+    22 => n >= 8 && Int(m[4]) == 1 && tls12.u24_at(m, 5) == n - 8 && n > 8
+    24 => n == 5 && Int(m[4]) <= 1
+    _ => false
+  }
+}
+
+/// Go's serverHelloMsg.unmarshal.
+fn server_hello_decodes(m: Bytes) -> Bool {
+  let n = m.len()
+  if n < 4 + 2 + 32 + 1 || n < 39 + Int(m[38]) + 3 {
+    return false
+  }
+  var p = 39 + Int(m[38]) + 3
+  if p == n {
+    return true
+  }
+  if n < p + 2 || tls12.u16_at(m, p) != n - p - 2 {
+    return false
+  }
+  p += 2
+  var seen: List[Int] = []
+  while p < n {
+    if n < p + 4 || n < p + 4 + tls12.u16_at(m, p + 2) {
+      return false
+    }
+    let t = tls12.u16_at(m, p)
+    let d = m[p + 4..p + 4 + tls12.u16_at(m, p + 2)]
+    p += 4 + d.len()
+    if tls12.has(seen, t) {
+      return false
+    }
+    seen.push(t)
+    let k = d.len()
+    let ok = match t {
+      5 | 35 | 23 => k == 0
+      65281 => k >= 1 && Int(d[0]) == k - 1
+      16 => k >= 2 && tls12.u16_at(d, 0) == k - 2 && k > 2 && Int(d[2]) > 0 && Int(d[2]) == k - 3
+      18 => sct_list_decodes(d)
+      43 => k == 2
+      44 => k > 2 && tls12.u16_at(d, 0) == k - 2
+      51 => k == 2 || (k >= 4 && tls12.u16_at(d, 2) == k - 4)
+      41 => k == 2
+      11 => k >= 2 && Int(d[0]) == k - 1
+      0 => k == 0
+      _ => true
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// The SCT list of a ServerHello: a non-empty vector of non-empty vectors.
+fn sct_list_decodes(d: Bytes) -> Bool {
+  let k = d.len()
+  if k < 2 || tls12.u16_at(d, 0) != k - 2 || k == 2 {
+    return false
+  }
+  var q = 2
+  while q < k {
+    if k < q + 2 || tls12.u16_at(d, q) == 0 || k < q + 2 + tls12.u16_at(d, q) {
+      return false
+    }
+    q += 2 + tls12.u16_at(d, q)
+  }
+  true
+}
+
+/// Go's encryptedExtensionsMsg.unmarshal.
+fn encrypted_extensions_decodes(m: Bytes) -> Bool {
+  let n = m.len()
+  if n < 6 || tls12.u16_at(m, 4) != n - 6 {
+    return false
+  }
+  var p = 6
+  var seen: List[Int] = []
+  while p < n {
+    if n < p + 4 || n < p + 4 + tls12.u16_at(m, p + 2) {
+      return false
+    }
+    let t = tls12.u16_at(m, p)
+    let d = m[p + 4..p + 4 + tls12.u16_at(m, p + 2)]
+    p += 4 + d.len()
+    if tls12.has(seen, t) {
+      return false
+    }
+    seen.push(t)
+    let k = d.len()
+    let ok = match t {
+      16 => k >= 2 && tls12.u16_at(d, 0) == k - 2 && k > 2 && Int(d[2]) > 0 && Int(d[2]) == k - 3
+      42 | 0 => k == 0
+      _ => true
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's certificateRequestMsg.unmarshal (TLS 1.2 and earlier).
+fn cert_request_decodes(m0: Bytes, sig: Bool) -> Bool {
+  if m0.len() < 5 || tls12.u24_at(m0, 1) != m0.len() - 4 {
+    return false
+  }
+  let nt = Int(m0[4])
+  var d = m0[5..m0.len()]
+  if nt == 0 || d.len() <= nt {
+    return false
+  }
+  d = d[nt..d.len()]
+  if sig {
+    if d.len() < 2 {
+      return false
+    }
+    let sl = tls12.u16_at(d, 0)
+    d = d[2..d.len()]
+    if sl & 1 != 0 || sl == 0 || d.len() < sl {
+      return false
+    }
+    d = d[sl..d.len()]
+  }
+  if d.len() < 2 {
+    return false
+  }
+  let cl = tls12.u16_at(d, 0)
+  d = d[2..d.len()]
+  if d.len() < cl {
+    return false
+  }
+  let cas = d[0..cl]
+  d = d[cl..d.len()]
+  var q = 0
+  while q < cas.len() {
+    if cas.len() < q + 2 || cas.len() < q + 2 + tls12.u16_at(cas, q) {
+      return false
+    }
+    q += 2 + tls12.u16_at(cas, q)
+  }
+  d.len() == 0
 }
 
 /// Go's clientHelloMsg.unmarshal.
@@ -480,8 +658,9 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     if n < 5 || n < 3 + tls12.u16_at(d, 1) + 2 {
       return false
     }
+    // a type and two vectors, nothing after
     let a = tls12.u16_at(d, 1)
-    return n == 5 + a + tls12.u16_at(d, 3 + a) || n > 5 + a + tls12.u16_at(d, 3 + a)
+    return n == 5 + a + tls12.u16_at(d, 3 + a)
   }
   if t == tls12.EXT_SUPPORTED_GROUPS || t == tls12.EXT_SIGNATURE_ALGORITHMS || t == tls12.EXT_SIGNATURE_ALGORITHMS_CERT {
     if n < 2 || tls12.u16_at(d, 0) != n - 2 || n == 2 || n & 1 != 0 {
@@ -511,7 +690,11 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
   }
   if t == tls12.EXT_EMS {
     h.ems = true
-    return true
+    return n == 0
+  }
+  if t == tls12.EXT_SCT || t == 42 {
+    // signed_certificate_timestamp and early_data: empty
+    return n == 0
   }
   if t == tls12.EXT_SESSION_TICKET {
     h.has_ticket = true
@@ -563,8 +746,35 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     return n >= 1 && Int(d[0]) == n - 1
   }
   if t == 41 {
-    // pre_shared_key, which must be the last
-    return last && n >= 2
+    // pre_shared_key, which must be the last: the identities (each a
+    // non-empty label and an age), then the binders (each non-empty)
+    if !last || n < 2 {
+      return false
+    }
+    let il = tls12.u16_at(d, 0)
+    if il == 0 || n < 2 + il + 2 {
+      return false
+    }
+    var q = 2
+    while q < 2 + il {
+      if 2 + il < q + 2 || tls12.u16_at(d, q) == 0 || 2 + il < q + 2 + tls12.u16_at(d, q) + 4 {
+        return false
+      }
+      q += 2 + tls12.u16_at(d, q) + 4
+    }
+    let bl = tls12.u16_at(d, q)
+    if bl == 0 || n != q + 2 + bl {
+      return false
+    }
+    q += 2
+    while q < n {
+      let k = Int(d[q])
+      if k == 0 || n < q + 1 + k {
+        return false
+      }
+      q += 1 + k
+    }
+    return true
   }
   true
 }
